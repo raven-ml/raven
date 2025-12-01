@@ -4,8 +4,11 @@ module Shape_expr = Rune_jit.Shape_expr
 open Bigarray_ext
 module Ir = Rune_jit.Ir
 module Var = Ir.Var
-(* Backends are selected at the JIT boundary. Outside JIT we are host-only. *)
 
+(* Mathematical constants *)
+let ln_2 = 0.6931471805599453
+let log2_e = 1.4426950408889634
+let pi_over_2 = 1.5707963267948966
 let shape_prod = Array.fold_left ( * ) 1
 
 let string_of_shape arr =
@@ -362,7 +365,7 @@ let gather_shape_expr meta_data meta_indices axis _out_shape =
 
 let nx_dtype_to_ir_dtype (type a b) (nx_dt : (a, b) Dtype.t) : a Ir.Dtype.t =
   match nx_dt with
-  | Dtype.Float32 -> Float32
+  | Nx_core.Dtype.Float32 -> Float32
   | Dtype.Int32 -> Int32
   | Dtype.UInt8 -> Uint8
   | _ ->
@@ -510,36 +513,22 @@ let get_var_and_meta state tensor =
 
 (* ───── Operation Handlers ───── *)
 
-let handle_binop state op a b =
-  let var_a, meta_a = get_var_and_meta state a in
-  let var_b, meta_b = get_var_and_meta state b in
-  let res_shape =
-    let shape_a = concrete_shape meta_a in
-    let shape_b = concrete_shape meta_b in
-    Shape.broadcast shape_a shape_b
-  in
-  let res_dtype = dtype a in
-  let shape_expr = broadcast_shape_expr [ meta_a; meta_b ] res_shape in
-  let out_var, ir_dtype =
-    allocate_buffer ?shape_expr state res_dtype res_shape
-  in
+let handle_binop state op out a b =
+  let var_a, _ = get_var_and_meta state a in
+  let var_b, _ = get_var_and_meta state b in
+  let out_var, meta_out = get_var_and_meta state out in
+  let ir_dtype = nx_dtype_to_ir_dtype (dtype out) in
   add_node state
     (Ir.Any_Node
        (Ir.binary ~op ~a_var:var_a ~b_var:var_b ~out_var ~dtype:ir_dtype));
-  let symbolic_shape = Symbolic_shape.of_ints res_shape in
-  create_symbolic_tensor state out_var res_dtype symbolic_shape
+  ignore meta_out
 
-let handle_unary state op t_in =
-  let var_in, meta_in = get_var_and_meta state t_in in
-  let shape = concrete_shape meta_in in
-  let dt = dtype t_in in
-  let out_var, ir_dtype =
-    allocate_buffer ?shape_expr:meta_in.Ir.shape_expr state dt shape
-  in
+let handle_unary state op out t_in =
+  let var_in, _ = get_var_and_meta state t_in in
+  let out_var, _ = get_var_and_meta state out in
+  let ir_dtype = nx_dtype_to_ir_dtype (dtype out) in
   add_node state
-    (Ir.Any_Node (Ir.unary ~op ~in_var:var_in ~out_var ~dtype:ir_dtype));
-  let symbolic_shape = Symbolic_shape.of_ints shape in
-  create_symbolic_tensor state out_var dt symbolic_shape
+    (Ir.Any_Node (Ir.unary ~op ~in_var:var_in ~out_var ~dtype:ir_dtype))
 
 let reduce_shape in_shape axes keepdims =
   if keepdims then
@@ -549,18 +538,14 @@ let reduce_shape in_shape axes keepdims =
     |> List.filteri (fun i _ -> not (Array.mem i axes))
     |> Array.of_list
 
-let handle_reduction state op t_in axes keepdims =
-  let var_in, meta_in = get_var_and_meta state t_in in
-  let out_shape = reduce_shape (concrete_shape meta_in) axes keepdims in
-  let dt = dtype t_in in
-  let shape_expr = reduce_shape_expr meta_in axes keepdims in
-  let out_var, ir_dtype = allocate_buffer ?shape_expr state dt out_shape in
+let handle_reduction state op out t_in axes =
+  let var_in, _ = get_var_and_meta state t_in in
+  let out_var, _ = get_var_and_meta state out in
+  let ir_dtype = nx_dtype_to_ir_dtype (dtype out) in
   add_node state
     (Ir.Any_Node
        (Ir.reduce_axis ~reduce_op_kind:op ~in_var:var_in ~axes ~out_var
-          ~dtype:ir_dtype));
-  let symbolic_shape = Symbolic_shape.of_ints out_shape in
-  create_symbolic_tensor state out_var dt symbolic_shape
+          ~dtype:ir_dtype))
 
 let bigarray_to_vconst_node (type a b) (nx_dt : (a, b) Dtype.t)
     (array : (a, b, c_layout) Array1.t) out_var =
@@ -644,84 +629,291 @@ let make_jit_handler (state : jit_tracer_state) =
                 failwith
                   (Printf.sprintf
                      "JIT: Unsupported bigarray kind for const_array"))
-    | E_add { a; b } -> Some (fun k -> continue k (handle_binop state Add a b))
-    | E_mul { a; b } -> Some (fun k -> continue k (handle_binop state Mul a b))
-    | E_idiv { a; b } ->
-        Some (fun k -> continue k (handle_binop state Idiv a b))
-    | E_fdiv { a; b } ->
-        Some (fun k -> continue k (handle_binop state Fdiv a b))
-    | E_mod { a; b } -> Some (fun k -> continue k (handle_binop state Mod a b))
-    | E_pow { a; b } -> Some (fun k -> continue k (handle_binop state Pow a b))
-    | E_max { a; b } -> Some (fun k -> continue k (handle_binop state Max a b))
-    | E_and { a; b } -> Some (fun k -> continue k (handle_binop state And a b))
-    | E_or { a; b } -> Some (fun k -> continue k (handle_binop state Or a b))
-    | E_xor { a; b } -> Some (fun k -> continue k (handle_binop state Xor a b))
-    | E_cmplt { a; b } ->
+    | E_add { out; a; b } ->
         Some
           (fun k ->
-            let var_a, meta_a = get_var_and_meta state a in
-            let var_b, meta_b = get_var_and_meta state b in
-            let res_shape =
-              Shape.broadcast (concrete_shape meta_a) (concrete_shape meta_b)
-            in
-            let res_dtype = Nx_core.Dtype.bool in
-            let shape_expr =
-              broadcast_shape_expr [ meta_a; meta_b ] res_shape
-            in
-            let out_var, ir_dtype =
-              allocate_buffer ?shape_expr state res_dtype res_shape
-            in
+            handle_binop state Add out a b;
+            continue k ())
+    | E_sub { out; a; b } ->
+        Some
+          (fun k ->
+            handle_binop state Sub out a b;
+            continue k ())
+    | E_mul { out; a; b } ->
+        Some
+          (fun k ->
+            handle_binop state Mul out a b;
+            continue k ())
+    | E_idiv { out; a; b } ->
+        Some
+          (fun k ->
+            handle_binop state Idiv out a b;
+            continue k ())
+    | E_fdiv { out; a; b } ->
+        Some
+          (fun k ->
+            handle_binop state Fdiv out a b;
+            continue k ())
+    | E_mod { out; a; b } ->
+        Some
+          (fun k ->
+            handle_binop state Mod out a b;
+            continue k ())
+    | E_pow { out; a; b } ->
+        Some
+          (fun k ->
+            handle_binop state Pow out a b;
+            continue k ())
+    | E_max { out; a; b } ->
+        Some
+          (fun k ->
+            handle_binop state Max out a b;
+            continue k ())
+    | E_min { out; a; b } ->
+        Some
+          (fun k ->
+            handle_binop state Min out a b;
+            continue k ())
+    | E_and { out; a; b } ->
+        Some
+          (fun k ->
+            handle_binop state And out a b;
+            continue k ())
+    | E_or { out; a; b } ->
+        Some
+          (fun k ->
+            handle_binop state Or out a b;
+            continue k ())
+    | E_xor { out; a; b } ->
+        Some
+          (fun k ->
+            handle_binop state Xor out a b;
+            continue k ())
+    | E_cmplt { out; a; b } ->
+        Some
+          (fun k ->
+            let var_a, _ = get_var_and_meta state a in
+            let var_b, _ = get_var_and_meta state b in
+            let out_var, _ = get_var_and_meta state out in
+            let ir_dtype = nx_dtype_to_ir_dtype (dtype out) in
             add_node state
               (Any_Node
                  (binary ~op:Cmplt ~a_var:var_a ~b_var:var_b ~out_var
                     ~dtype:ir_dtype));
-            let symbolic_shape = Symbolic_shape.of_ints res_shape in
-            continue k
-              (create_symbolic_tensor state out_var res_dtype symbolic_shape))
-    | E_cmpne { a; b } ->
+            continue k ())
+    | E_cmpne { out; a; b } ->
         Some
           (fun k ->
-            let var_a, meta_a = get_var_and_meta state a in
-            let var_b, meta_b = get_var_and_meta state b in
-            let res_shape =
-              Shape.broadcast (concrete_shape meta_a) (concrete_shape meta_b)
-            in
-            let res_dtype = Nx_core.Dtype.bool in
-            let shape_expr =
-              broadcast_shape_expr [ meta_a; meta_b ] res_shape
-            in
-            let out_var, ir_dtype =
-              allocate_buffer ?shape_expr state res_dtype res_shape
-            in
+            let var_a, _ = get_var_and_meta state a in
+            let var_b, _ = get_var_and_meta state b in
+            let out_var, _ = get_var_and_meta state out in
+            let ir_dtype = nx_dtype_to_ir_dtype (dtype out) in
             add_node state
               (Any_Node
                  (binary ~op:Cmpne ~a_var:var_a ~b_var:var_b ~out_var
                     ~dtype:ir_dtype));
-            let symbolic_shape = Symbolic_shape.of_ints res_shape in
-            continue k
-              (create_symbolic_tensor state out_var res_dtype symbolic_shape))
-    | E_neg { t_in } -> Some (fun k -> continue k (handle_unary state Neg t_in))
-    | E_log2 { t_in } ->
-        Some (fun k -> continue k (handle_unary state Log2 t_in))
-    | E_exp2 { t_in } ->
-        Some (fun k -> continue k (handle_unary state Exp2 t_in))
-    | E_sin { t_in } -> Some (fun k -> continue k (handle_unary state Sin t_in))
-    | E_sqrt { t_in } ->
-        Some (fun k -> continue k (handle_unary state Sqrt t_in))
-    | E_recip { t_in } ->
-        Some (fun k -> continue k (handle_unary state Recip t_in))
-    | E_reduce_sum { t_in; axes; keepdims } ->
+            continue k ())
+    | E_neg { out; t_in } ->
         Some
           (fun k ->
-            continue k (handle_reduction state Reduce_Sum t_in axes keepdims))
-    | E_reduce_max { t_in; axes; keepdims } ->
+            handle_unary state Neg out t_in;
+            continue k ())
+    | E_log2 { out; t_in } ->
         Some
           (fun k ->
-            continue k (handle_reduction state Reduce_Max t_in axes keepdims))
-    | E_reduce_prod { t_in; axes; keepdims } ->
+            handle_unary state Log2 out t_in;
+            continue k ())
+    | E_exp2 { out; t_in } ->
         Some
           (fun k ->
-            continue k (handle_reduction state Reduce_Prod t_in axes keepdims))
+            handle_unary state Exp2 out t_in;
+            continue k ())
+    | E_sin { out; t_in } ->
+        Some
+          (fun k ->
+            handle_unary state Sin out t_in;
+            continue k ())
+    | E_sqrt { out; t_in } ->
+        Some
+          (fun k ->
+            handle_unary state Sqrt out t_in;
+            continue k ())
+    | E_recip { out; t_in } ->
+        Some
+          (fun k ->
+            handle_unary state Recip out t_in;
+            continue k ())
+    (* Composite operations: decomposed into primitive IR ops *)
+    (* These use Float32 for intermediate constants since the mathematical
+       decompositions are specifically for float operations *)
+    | E_log { out; t_in } ->
+        (* log(x) = log2(x) * ln(2) *)
+        Some
+          (fun k ->
+            let var_in, meta_in = get_var_and_meta state t_in in
+            let out_var, _ = get_var_and_meta state out in
+            let shape = concrete_shape meta_in in
+            let ir_dtype = Ir.Dtype.Float32 in
+            (* log2(x) -> temp *)
+            let log2_var, _ =
+              allocate_buffer state Nx_core.Dtype.Float32 shape
+            in
+            add_node state
+              (Any_Node
+                 (unary ~op:Log2 ~in_var:var_in ~out_var:log2_var
+                    ~dtype:ir_dtype));
+            (* const ln(2) *)
+            let ln2_var = Var.fresh () in
+            add_node state
+              (Any_Node
+                 (Const_Scalar
+                    { value = ln_2; out_var = ln2_var; dtype = ir_dtype }));
+            record_metadata state ln2_var Nx_core.Dtype.Float32 ~shape:[||]
+              ~shape_expr:None;
+            (* log2(x) * ln(2) -> out *)
+            add_node state
+              (Any_Node
+                 (binary ~op:Mul ~a_var:log2_var ~b_var:ln2_var ~out_var
+                    ~dtype:ir_dtype));
+            continue k ())
+    | E_exp { out; t_in } ->
+        (* exp(x) = exp2(x * log2(e)) *)
+        Some
+          (fun k ->
+            let var_in, meta_in = get_var_and_meta state t_in in
+            let out_var, _ = get_var_and_meta state out in
+            let shape = concrete_shape meta_in in
+            let ir_dtype = Ir.Dtype.Float32 in
+            (* const log2(e) *)
+            let log2e_var = Var.fresh () in
+            add_node state
+              (Any_Node
+                 (Const_Scalar
+                    { value = log2_e; out_var = log2e_var; dtype = ir_dtype }));
+            record_metadata state log2e_var Nx_core.Dtype.Float32 ~shape:[||]
+              ~shape_expr:None;
+            (* x * log2(e) -> temp *)
+            let scaled_var, _ =
+              allocate_buffer state Nx_core.Dtype.Float32 shape
+            in
+            add_node state
+              (Any_Node
+                 (binary ~op:Mul ~a_var:var_in ~b_var:log2e_var
+                    ~out_var:scaled_var ~dtype:ir_dtype));
+            (* exp2(temp) -> out *)
+            add_node state
+              (Any_Node
+                 (unary ~op:Exp2 ~in_var:scaled_var ~out_var ~dtype:ir_dtype));
+            continue k ())
+    | E_cos { out; t_in } ->
+        (* cos(x) = sin(x + π/2) *)
+        Some
+          (fun k ->
+            let var_in, meta_in = get_var_and_meta state t_in in
+            let out_var, _ = get_var_and_meta state out in
+            let shape = concrete_shape meta_in in
+            let ir_dtype = Ir.Dtype.Float32 in
+            (* const π/2 *)
+            let pi2_var = Var.fresh () in
+            add_node state
+              (Any_Node
+                 (Const_Scalar
+                    { value = pi_over_2; out_var = pi2_var; dtype = ir_dtype }));
+            record_metadata state pi2_var Nx_core.Dtype.Float32 ~shape:[||]
+              ~shape_expr:None;
+            (* x + π/2 -> temp *)
+            let shifted_var, _ =
+              allocate_buffer state Nx_core.Dtype.Float32 shape
+            in
+            add_node state
+              (Any_Node
+                 (binary ~op:Add ~a_var:var_in ~b_var:pi2_var
+                    ~out_var:shifted_var ~dtype:ir_dtype));
+            (* sin(temp) -> out *)
+            add_node state
+              (Any_Node
+                 (unary ~op:Sin ~in_var:shifted_var ~out_var ~dtype:ir_dtype));
+            continue k ())
+    | E_abs { out; t_in } ->
+        (* abs(x) = where(x < 0, -x, x) *)
+        Some
+          (fun k ->
+            let var_in, meta_in = get_var_and_meta state t_in in
+            let out_var, _ = get_var_and_meta state out in
+            let shape = concrete_shape meta_in in
+            let ir_dtype = Ir.Dtype.Float32 in
+            (* const 0 *)
+            let zero_var = Var.fresh () in
+            add_node state
+              (Any_Node
+                 (Const_Scalar
+                    { value = 0.0; out_var = zero_var; dtype = ir_dtype }));
+            record_metadata state zero_var Nx_core.Dtype.Float32 ~shape:[||]
+              ~shape_expr:None;
+            (* x < 0 -> cond *)
+            let cond_var, _ = allocate_buffer state Nx_core.Dtype.UInt8 shape in
+            let bool_dtype = Ir.Dtype.Bool in
+            add_node state
+              (Any_Node
+                 (binary ~op:Cmplt ~a_var:var_in ~b_var:zero_var
+                    ~out_var:cond_var ~dtype:bool_dtype));
+            (* -x -> neg *)
+            let neg_var, _ =
+              allocate_buffer state Nx_core.Dtype.Float32 shape
+            in
+            add_node state
+              (Any_Node
+                 (unary ~op:Neg ~in_var:var_in ~out_var:neg_var ~dtype:ir_dtype));
+            (* where(cond, neg, x) -> out *)
+            add_node state
+              (Any_Node
+                 (ternary ~op:Where ~a_var:cond_var ~b_var:neg_var ~c_var:var_in
+                    ~out_var ~dtype:ir_dtype));
+            continue k ())
+    | E_reduce_sum { out; t_in; axes; keepdims = _ } ->
+        Some
+          (fun k ->
+            handle_reduction state Reduce_Sum out t_in axes;
+            continue k ())
+    | E_reduce_max { out; t_in; axes; keepdims = _ } ->
+        Some
+          (fun k ->
+            handle_reduction state Reduce_Max out t_in axes;
+            continue k ())
+    | E_reduce_prod { out; t_in; axes; keepdims = _ } ->
+        Some
+          (fun k ->
+            handle_reduction state Reduce_Prod out t_in axes;
+            continue k ())
+    | E_reduce_min { out; t_in; axes; keepdims } ->
+        (* reduce_min(x) = -reduce_max(-x) *)
+        Some
+          (fun k ->
+            let var_in, meta_in = get_var_and_meta state t_in in
+            let out_var, _ = get_var_and_meta state out in
+            let in_shape = concrete_shape meta_in in
+            let out_shape = reduce_shape in_shape axes keepdims in
+            let ir_dtype = Ir.Dtype.Float32 in
+            (* -x -> neg_in *)
+            let neg_in_var, _ =
+              allocate_buffer state Nx_core.Dtype.Float32 in_shape
+            in
+            add_node state
+              (Any_Node
+                 (unary ~op:Neg ~in_var:var_in ~out_var:neg_in_var
+                    ~dtype:ir_dtype));
+            (* reduce_max(-x) -> max_result *)
+            let max_var, _ =
+              allocate_buffer state Nx_core.Dtype.Float32 out_shape
+            in
+            add_node state
+              (Any_Node
+                 (reduce_axis ~reduce_op_kind:Reduce_Max ~in_var:neg_in_var
+                    ~axes ~out_var:max_var ~dtype:ir_dtype));
+            (* -reduce_max(-x) -> out *)
+            add_node state
+              (Any_Node (unary ~op:Neg ~in_var:max_var ~out_var ~dtype:ir_dtype));
+            continue k ())
     | E_reshape { t_in; new_shape } ->
         Some
           (fun k ->
@@ -794,25 +986,14 @@ let make_jit_handler (state : jit_tracer_state) =
             record_metadata state out_var dt ~shape:out_shape ~shape_expr;
             let symbolic_shape = Symbolic_shape.of_ints out_shape in
             continue k (create_symbolic_tensor state out_var dt symbolic_shape))
-    | E_where { condition; if_true; if_false } ->
+    | E_where { out; condition; if_true; if_false } ->
         Some
           (fun k ->
-            let cond_var, meta_cond = get_var_and_meta state condition in
-            let x_var, meta_x = get_var_and_meta state if_true in
-            let y_var, meta_y = get_var_and_meta state if_false in
-            let res_dtype = dtype if_true in
-            let res_shape =
-              let shape_cond = concrete_shape meta_cond in
-              let shape_x = concrete_shape meta_x in
-              let shape_y = concrete_shape meta_y in
-              Shape.broadcast (Shape.broadcast shape_cond shape_x) shape_y
-            in
-            let shape_expr =
-              broadcast_shape_expr [ meta_cond; meta_x; meta_y ] res_shape
-            in
-            let out_var, ir_dtype =
-              allocate_buffer ?shape_expr state res_dtype res_shape
-            in
+            let cond_var, _ = get_var_and_meta state condition in
+            let x_var, _ = get_var_and_meta state if_true in
+            let y_var, _ = get_var_and_meta state if_false in
+            let out_var, _ = get_var_and_meta state out in
+            let ir_dtype = nx_dtype_to_ir_dtype (dtype out) in
             add_node state
               (Any_Node
                  (Ternary
@@ -824,9 +1005,7 @@ let make_jit_handler (state : jit_tracer_state) =
                       out_var;
                       dtype = ir_dtype;
                     }));
-            let symbolic_shape = Symbolic_shape.of_ints res_shape in
-            continue k
-              (create_symbolic_tensor state out_var res_dtype symbolic_shape))
+            continue k ())
     | E_cast { t_in; target_dtype } ->
         Some
           (fun k ->

@@ -38,7 +38,7 @@ let unwrap_dual (type a b) (_ : (a, b) Dtype.t) (Any_dual d) : (a, b) dual =
 let ln2 = 0.693147180559945309417
 
 let float_scalar_like (type a b) (x : (a, b) t) (v : float) : (a, b) t =
-  Obj.magic (T.full (context x) (dtype x) [||] (Obj.magic v : a))
+  Obj.magic (T.full (dtype x) [||] (Obj.magic v : a))
 
 let deriv_log2 (type a b) (x : (a, b) t) : (a, b) t =
   (* d/dx log2(x) = 1 / (x * ln(2)) *)
@@ -88,10 +88,10 @@ let make_jvp_handler dual_map =
     else
       match eff with
       (* Sources *)
-      | E_const_scalar { context = ctx; value; dtype = dt } ->
+      | E_const_scalar { context = _; value; dtype = dt } ->
           Some
             (fun k ->
-              let res = T.full ctx dt [||] value in
+              let res = T.full dt [||] value in
               register res { primal = res; tangent = T.zeros_like res };
               continue k res)
       | E_const_array { context = ctx; array } ->
@@ -113,31 +113,40 @@ let make_jvp_handler dual_map =
               register res { primal = res; tangent = T.zeros_like res };
               continue k res)
       (* Binary Arithmetic *)
-      | E_add { a; b } ->
+      | E_add { out; a; b } ->
           Some
             (fun k ->
-              let res = op_add a b in
+              op_add ~out a b;
               let da = get_dual a in
               let db = get_dual b in
               let tan = T.add da.tangent db.tangent in
-              register res { primal = res; tangent = tan };
-              continue k res)
-      | E_mul { a; b } ->
+              register out { primal = out; tangent = tan };
+              continue k ())
+      | E_sub { out; a; b } ->
           Some
             (fun k ->
-              let res = op_mul a b in
+              op_sub ~out a b;
+              let da = get_dual a in
+              let db = get_dual b in
+              let tan = T.sub da.tangent db.tangent in
+              register out { primal = out; tangent = tan };
+              continue k ())
+      | E_mul { out; a; b } ->
+          Some
+            (fun k ->
+              op_mul ~out a b;
               let da = get_dual a in
               let db = get_dual b in
               (* d(a*b) = da*b + a*db *)
               let tan =
                 T.add (T.mul da.tangent db.primal) (T.mul da.primal db.tangent)
               in
-              register res { primal = res; tangent = tan };
-              continue k res)
-      | E_fdiv { a; b } ->
+              register out { primal = out; tangent = tan };
+              continue k ())
+      | E_fdiv { out; a; b } ->
           Some
             (fun k ->
-              let res = op_fdiv a b in
+              op_fdiv ~out a b;
               let da = get_dual a in
               let db = get_dual b in
               (* d(a/b) = da/b - a*db/b^2 *)
@@ -146,25 +155,25 @@ let make_jvp_handler dual_map =
                 T.div (T.mul da.primal db.tangent) (T.mul db.primal db.primal)
               in
               let tan = T.sub term1 term2 in
-              register res { primal = res; tangent = tan };
-              continue k res)
-      | E_pow { a; b } ->
+              register out { primal = out; tangent = tan };
+              continue k ())
+      | E_pow { out; a; b } ->
           Some
             (fun k ->
-              let res = op_pow a b in
+              op_pow ~out a b;
               let da = get_dual a in
               let db = get_dual b in
               let term1 =
                 T.mul da.tangent (deriv_pow_wrt_base da.primal db.primal)
               in
-              let term2 = T.mul db.tangent (deriv_pow_wrt_exp da.primal res) in
+              let term2 = T.mul db.tangent (deriv_pow_wrt_exp da.primal out) in
               let tan = T.add term1 term2 in
-              register res { primal = res; tangent = tan };
-              continue k res)
-      | E_max { a; b } ->
+              register out { primal = out; tangent = tan };
+              continue k ())
+      | E_max { out; a; b } ->
           Some
             (fun k ->
-              let res = op_max a b in
+              op_max ~out a b;
               let da = get_dual a in
               let db = get_dual b in
               (* Use cmpgt for mask_a: tangent flows from a only when a > b This
@@ -175,57 +184,107 @@ let make_jvp_handler dual_map =
               let tan =
                 T.add (T.mul da.tangent mask_a) (T.mul db.tangent mask_b)
               in
-              register res { primal = res; tangent = tan };
-              continue k res)
-      (* Unary Arithmetic *)
-      | E_neg { t_in } ->
+              register out { primal = out; tangent = tan };
+              continue k ())
+      | E_min { out; a; b } ->
           Some
             (fun k ->
-              let res = op_neg t_in in
+              op_min ~out a b;
+              let da = get_dual a in
+              let db = get_dual b in
+              (* Use cmplt for mask_a: tangent flows from a only when a < b *)
+              let mask_a = T.cast (dtype a) (T.cmplt a b) in
+              let mask_b = T.sub (T.ones_like mask_a) mask_a in
+              let tan =
+                T.add (T.mul da.tangent mask_a) (T.mul db.tangent mask_b)
+              in
+              register out { primal = out; tangent = tan };
+              continue k ())
+      (* Unary Arithmetic *)
+      | E_neg { out; t_in } ->
+          Some
+            (fun k ->
+              op_neg ~out t_in;
               let d = get_dual t_in in
               let tan = T.neg d.tangent in
-              register res { primal = res; tangent = tan };
-              continue k res)
-      | E_sin { t_in } ->
+              register out { primal = out; tangent = tan };
+              continue k ())
+      | E_sin { out; t_in } ->
           Some
             (fun k ->
-              let res = op_sin t_in in
+              op_sin ~out t_in;
               let d = get_dual t_in in
               let tan = T.mul d.tangent (deriv_sin d.primal) in
-              register res { primal = res; tangent = tan };
-              continue k res)
-      | E_log2 { t_in } ->
+              register out { primal = out; tangent = tan };
+              continue k ())
+      | E_cos { out; t_in } ->
           Some
             (fun k ->
-              let res = op_log2 t_in in
+              op_cos ~out t_in;
+              let d = get_dual t_in in
+              (* d/dx cos(x) = -sin(x) *)
+              let tan = T.mul d.tangent (T.neg (Obj.magic (T.sin (Obj.magic d.primal)))) in
+              register out { primal = out; tangent = tan };
+              continue k ())
+      | E_log2 { out; t_in } ->
+          Some
+            (fun k ->
+              op_log2 ~out t_in;
               let d = get_dual t_in in
               let tan = T.mul d.tangent (deriv_log2 d.primal) in
-              register res { primal = res; tangent = tan };
-              continue k res)
-      | E_exp2 { t_in } ->
+              register out { primal = out; tangent = tan };
+              continue k ())
+      | E_log { out; t_in } ->
           Some
             (fun k ->
-              let res = op_exp2 t_in in
+              op_log ~out t_in;
               let d = get_dual t_in in
-              let tan = T.mul d.tangent (deriv_exp2 res) in
-              register res { primal = res; tangent = tan };
-              continue k res)
-      | E_sqrt { t_in } ->
+              (* d/dx log(x) = 1/x *)
+              let tan = T.mul d.tangent (T.recip d.primal) in
+              register out { primal = out; tangent = tan };
+              continue k ())
+      | E_exp2 { out; t_in } ->
           Some
             (fun k ->
-              let res = op_sqrt t_in in
+              op_exp2 ~out t_in;
               let d = get_dual t_in in
-              let tan = T.mul d.tangent (deriv_sqrt res) in
-              register res { primal = res; tangent = tan };
-              continue k res)
-      | E_recip { t_in } ->
+              let tan = T.mul d.tangent (deriv_exp2 out) in
+              register out { primal = out; tangent = tan };
+              continue k ())
+      | E_exp { out; t_in } ->
           Some
             (fun k ->
-              let res = op_recip t_in in
+              op_exp ~out t_in;
+              let d = get_dual t_in in
+              (* d/dx exp(x) = exp(x) *)
+              let tan = T.mul d.tangent out in
+              register out { primal = out; tangent = tan };
+              continue k ())
+      | E_sqrt { out; t_in } ->
+          Some
+            (fun k ->
+              op_sqrt ~out t_in;
+              let d = get_dual t_in in
+              let tan = T.mul d.tangent (deriv_sqrt out) in
+              register out { primal = out; tangent = tan };
+              continue k ())
+      | E_recip { out; t_in } ->
+          Some
+            (fun k ->
+              op_recip ~out t_in;
               let d = get_dual t_in in
               let tan = T.mul d.tangent (deriv_recip d.primal) in
-              register res { primal = res; tangent = tan };
-              continue k res)
+              register out { primal = out; tangent = tan };
+              continue k ())
+      | E_abs { out; t_in } ->
+          Some
+            (fun k ->
+              op_abs ~out t_in;
+              let d = get_dual t_in in
+              (* d/dx |x| = sign(x) *)
+              let tan = T.mul d.tangent (T.sign d.primal) in
+              register out { primal = out; tangent = tan };
+              continue k ())
       (* Shape Operations *)
       | E_reshape { t_in; new_shape } ->
           Some
@@ -286,36 +345,53 @@ let make_jvp_handler dual_map =
               register res { primal = res; tangent = tan };
               continue k res)
       (* Reductions *)
-      | E_reduce_sum { t_in; axes; keepdims } ->
+      | E_reduce_sum { out; t_in; axes; keepdims } ->
           Some
             (fun k ->
-              let res = op_reduce_sum ~axes ~keepdims t_in in
+              op_reduce_sum ~out ~axes ~keepdims t_in;
               let d = get_dual t_in in
-              let tan = op_reduce_sum ~axes ~keepdims d.tangent in
-              register res { primal = res; tangent = tan };
-              continue k res)
-      | E_reduce_max { t_in; axes; keepdims } ->
+              let tan = T.sum d.tangent ~axes:(Array.to_list axes) ~keepdims in
+              register out { primal = out; tangent = tan };
+              continue k ())
+      | E_reduce_max { out; t_in; axes; keepdims } ->
           Some
             (fun k ->
-              let res = op_reduce_max ~axes ~keepdims t_in in
+              op_reduce_max ~out ~axes ~keepdims t_in;
               let d = get_dual t_in in
               let shape_in = T.shape t_in in
               (* Broadcast result back to input shape to create mask *)
-              let res_bc =
-                if keepdims then T.broadcast_to shape_in res
+              let out_bc =
+                if keepdims then T.broadcast_to shape_in out
                 else
-                  let kept = op_reduce_max ~axes ~keepdims:true t_in in
+                  let kept = T.max t_in ~axes:(Array.to_list axes) ~keepdims:true in
                   T.broadcast_to shape_in kept
               in
-              let mask = T.cast (dtype res) (T.equal d.primal res_bc) in
-              let tan = op_reduce_sum ~axes ~keepdims (T.mul d.tangent mask) in
-              register res { primal = res; tangent = tan };
-              continue k res)
-      (* Matrix Operations *)
-      | E_matmul { a; b } ->
+              let mask = T.cast (dtype out) (T.equal d.primal out_bc) in
+              let tan = T.sum (T.mul d.tangent mask) ~axes:(Array.to_list axes) ~keepdims in
+              register out { primal = out; tangent = tan };
+              continue k ())
+      | E_reduce_min { out; t_in; axes; keepdims } ->
           Some
             (fun k ->
-              let res = op_matmul a b in
+              op_reduce_min ~out ~axes ~keepdims t_in;
+              let d = get_dual t_in in
+              let shape_in = T.shape t_in in
+              (* Broadcast result back to input shape to create mask *)
+              let out_bc =
+                if keepdims then T.broadcast_to shape_in out
+                else
+                  let kept = T.min t_in ~axes:(Array.to_list axes) ~keepdims:true in
+                  T.broadcast_to shape_in kept
+              in
+              let mask = T.cast (dtype out) (T.equal d.primal out_bc) in
+              let tan = T.sum (T.mul d.tangent mask) ~axes:(Array.to_list axes) ~keepdims in
+              register out { primal = out; tangent = tan };
+              continue k ())
+      (* Matrix Operations *)
+      | E_matmul { out; a; b } ->
+          Some
+            (fun k ->
+              op_matmul ~out a b;
               let da = get_dual a in
               let db = get_dual b in
               (* d(A@B) = dA@B + A@dB *)
@@ -324,32 +400,54 @@ let make_jvp_handler dual_map =
                   (T.matmul da.tangent db.primal)
                   (T.matmul da.primal db.tangent)
               in
-              register res { primal = res; tangent = tan };
-              continue k res)
+              register out { primal = out; tangent = tan };
+              continue k ())
       (* Selection *)
-      | E_where { condition; if_true; if_false } ->
+      | E_where { out; condition; if_true; if_false } ->
           Some
             (fun k ->
-              let res = op_where condition if_true if_false in
+              op_where ~out condition if_true if_false;
               let dt = get_dual if_true in
               let df = get_dual if_false in
               let tan = T.where condition dt.tangent df.tangent in
-              register res { primal = res; tangent = tan };
-              continue k res)
+              register out { primal = out; tangent = tan };
+              continue k ())
       (* Comparisons (no gradient) *)
-      | E_cmplt { a; b } ->
+      | E_cmplt { out; a; b } ->
           Some
             (fun k ->
-              let res = op_cmplt a b in
-              continue k res)
-      | E_cmpne { a; b } ->
+              op_cmplt ~out a b;
+              continue k ())
+      | E_cmpne { out; a; b } ->
           Some
             (fun k ->
-              let res = op_cmpne a b in
-              continue k res)
-      | E_xor { a; b } -> Some (fun k -> continue k (op_xor a b))
-      | E_or { a; b } -> Some (fun k -> continue k (op_or a b))
-      | E_and { a; b } -> Some (fun k -> continue k (op_and a b))
+              op_cmpne ~out a b;
+              continue k ())
+      | E_cmpeq { out; a; b } ->
+          Some
+            (fun k ->
+              op_cmpeq ~out a b;
+              continue k ())
+      | E_cmple { out; a; b } ->
+          Some
+            (fun k ->
+              op_cmple ~out a b;
+              continue k ())
+      | E_xor { out; a; b } ->
+          Some
+            (fun k ->
+              op_xor ~out a b;
+              continue k ())
+      | E_or { out; a; b } ->
+          Some
+            (fun k ->
+              op_or ~out a b;
+              continue k ())
+      | E_and { out; a; b } ->
+          Some
+            (fun k ->
+              op_and ~out a b;
+              continue k ())
       (* Other *)
       | E_copy { t_in } ->
           Some
@@ -376,24 +474,24 @@ let make_jvp_handler dual_map =
               register res { primal = res; tangent = tan };
               continue k res)
       (* Reduce Prod *)
-      | E_reduce_prod { t_in; axes; keepdims } ->
+      | E_reduce_prod { out; t_in; axes; keepdims } ->
           Some
             (fun k ->
-              let res = op_reduce_prod ~axes ~keepdims t_in in
+              op_reduce_prod ~out ~axes ~keepdims t_in;
               let d = get_dual t_in in
               (* d(prod(x)) = prod(x) * sum(dx/x) over reduction axes *)
               let shape_in = T.shape t_in in
-              let res_bc =
-                if keepdims then T.broadcast_to shape_in res
+              let out_bc =
+                if keepdims then T.broadcast_to shape_in out
                 else
-                  let kept = op_reduce_prod ~axes ~keepdims:true t_in in
+                  let kept = T.prod t_in ~axes:(Array.to_list axes) ~keepdims:true in
                   T.broadcast_to shape_in kept
               in
               (* Gradient contribution: res / x_i * dx_i, summed over axes *)
-              let contrib = T.mul (T.div res_bc d.primal) d.tangent in
-              let tan = op_reduce_sum ~axes ~keepdims contrib in
-              register res { primal = res; tangent = tan };
-              continue k res)
+              let contrib = T.mul (T.div out_bc d.primal) d.tangent in
+              let tan = T.sum contrib ~axes:(Array.to_list axes) ~keepdims in
+              register out { primal = out; tangent = tan };
+              continue k ())
       (* Associative Scan (cumsum/cumprod/cummax/cummin) *)
       | E_associative_scan { t_in; axis; op } ->
           Some
@@ -610,10 +708,10 @@ let make_vjp_handler tape_by_id val_to_id seed_output =
     else
       match eff with
       (* Sources *)
-      | E_const_scalar { context = ctx; value; dtype = dt } ->
+      | E_const_scalar { context = _; value; dtype = dt } ->
           Some
             (fun k ->
-              let res = T.full ctx dt [||] value in
+              let res = T.full dt [||] value in
               let fwd = continue k res in
               let _ = get_or_init res in
               fwd)
@@ -639,70 +737,82 @@ let make_vjp_handler tape_by_id val_to_id seed_output =
               let _ = get_or_init res in
               fwd)
       (* Binary Arithmetic *)
-      | E_add { a; b } ->
+      | E_add { out; a; b } ->
           Some
             (fun k ->
-              let res = op_add a b in
-              let fwd = continue k res in
+              op_add ~out a b;
+              let fwd = continue k () in
               let twg_a = get_or_init a in
               let twg_b = get_or_init b in
-              let twg_res = get_or_init res in
-              let g = twg_res.grad in
+              let twg_out = get_or_init out in
+              let g = twg_out.grad in
               twg_a.grad <- T.add twg_a.grad (unbroadcast_grad g (T.shape a));
               twg_b.grad <- T.add twg_b.grad (unbroadcast_grad g (T.shape b));
               fwd)
-      | E_mul { a; b } ->
+      | E_sub { out; a; b } ->
           Some
             (fun k ->
-              let res = op_mul a b in
-              let fwd = continue k res in
+              op_sub ~out a b;
+              let fwd = continue k () in
               let twg_a = get_or_init a in
               let twg_b = get_or_init b in
-              let twg_res = get_or_init res in
-              let g = twg_res.grad in
+              let twg_out = get_or_init out in
+              let g = twg_out.grad in
+              twg_a.grad <- T.add twg_a.grad (unbroadcast_grad g (T.shape a));
+              twg_b.grad <- T.add twg_b.grad (unbroadcast_grad (T.neg g) (T.shape b));
+              fwd)
+      | E_mul { out; a; b } ->
+          Some
+            (fun k ->
+              op_mul ~out a b;
+              let fwd = continue k () in
+              let twg_a = get_or_init a in
+              let twg_b = get_or_init b in
+              let twg_out = get_or_init out in
+              let g = twg_out.grad in
               twg_a.grad <-
                 T.add twg_a.grad (unbroadcast_grad (T.mul g b) (T.shape a));
               twg_b.grad <-
                 T.add twg_b.grad (unbroadcast_grad (T.mul g a) (T.shape b));
               fwd)
-      | E_fdiv { a; b } ->
+      | E_fdiv { out; a; b } ->
           Some
             (fun k ->
-              let res = op_fdiv a b in
-              let fwd = continue k res in
+              op_fdiv ~out a b;
+              let fwd = continue k () in
               let twg_a = get_or_init a in
               let twg_b = get_or_init b in
-              let twg_res = get_or_init res in
-              let g = twg_res.grad in
+              let twg_out = get_or_init out in
+              let g = twg_out.grad in
               (* d/da = 1/b, d/db = -a/b^2 *)
               let ga = T.div g b in
               let gb = T.mul (T.neg g) (T.div a (T.mul b b)) in
               twg_a.grad <- T.add twg_a.grad (unbroadcast_grad ga (T.shape a));
               twg_b.grad <- T.add twg_b.grad (unbroadcast_grad gb (T.shape b));
               fwd)
-      | E_pow { a; b } ->
+      | E_pow { out; a; b } ->
           Some
             (fun k ->
-              let res = op_pow a b in
-              let fwd = continue k res in
+              op_pow ~out a b;
+              let fwd = continue k () in
               let twg_a = get_or_init a in
               let twg_b = get_or_init b in
-              let twg_res = get_or_init res in
-              let g = twg_res.grad in
+              let twg_out = get_or_init out in
+              let g = twg_out.grad in
               let ga = T.mul g (deriv_pow_wrt_base a b) in
-              let gb = T.mul g (deriv_pow_wrt_exp a res) in
+              let gb = T.mul g (deriv_pow_wrt_exp a out) in
               twg_a.grad <- T.add twg_a.grad (unbroadcast_grad ga (T.shape a));
               twg_b.grad <- T.add twg_b.grad (unbroadcast_grad gb (T.shape b));
               fwd)
-      | E_max { a; b } ->
+      | E_max { out; a; b } ->
           Some
             (fun k ->
-              let res = op_max a b in
-              let fwd = continue k res in
+              op_max ~out a b;
+              let fwd = continue k () in
               let twg_a = get_or_init a in
               let twg_b = get_or_init b in
-              let twg_res = get_or_init res in
-              let g = twg_res.grad in
+              let twg_out = get_or_init out in
+              let g = twg_out.grad in
               (* Use cmpgt for mask_a: gradient flows to a only when a > b This
                  ensures that when a == b, gradient flows to b (not a) which
                  gives correct behavior for relu(x) = max(x, 0) at x=0 *)
@@ -713,64 +823,125 @@ let make_vjp_handler tape_by_id val_to_id seed_output =
               twg_a.grad <- T.add twg_a.grad (unbroadcast_grad ga (T.shape a));
               twg_b.grad <- T.add twg_b.grad (unbroadcast_grad gb (T.shape b));
               fwd)
+      | E_min { out; a; b } ->
+          Some
+            (fun k ->
+              op_min ~out a b;
+              let fwd = continue k () in
+              let twg_a = get_or_init a in
+              let twg_b = get_or_init b in
+              let twg_out = get_or_init out in
+              let g = twg_out.grad in
+              (* Use cmplt for mask_a: gradient flows to a only when a < b *)
+              let mask_a = T.cast (dtype g) (T.cmplt a b) in
+              let mask_b = T.sub (T.ones_like mask_a) mask_a in
+              let ga = T.mul g mask_a in
+              let gb = T.mul g mask_b in
+              twg_a.grad <- T.add twg_a.grad (unbroadcast_grad ga (T.shape a));
+              twg_b.grad <- T.add twg_b.grad (unbroadcast_grad gb (T.shape b));
+              fwd)
       (* Unary Arithmetic *)
-      | E_neg { t_in } ->
+      | E_neg { out; t_in } ->
           Some
             (fun k ->
-              let res = op_neg t_in in
-              let fwd = continue k res in
+              op_neg ~out t_in;
+              let fwd = continue k () in
               let twg_in = get_or_init t_in in
-              let twg_res = get_or_init res in
-              twg_in.grad <- T.add twg_in.grad (T.neg twg_res.grad);
+              let twg_out = get_or_init out in
+              twg_in.grad <- T.add twg_in.grad (T.neg twg_out.grad);
               fwd)
-      | E_sin { t_in } ->
+      | E_sin { out; t_in } ->
           Some
             (fun k ->
-              let res = op_sin t_in in
-              let fwd = continue k res in
+              op_sin ~out t_in;
+              let fwd = continue k () in
               let twg_in = get_or_init t_in in
-              let twg_res = get_or_init res in
-              let g = T.mul twg_res.grad (deriv_sin t_in) in
+              let twg_out = get_or_init out in
+              let g = T.mul twg_out.grad (deriv_sin t_in) in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
-      | E_log2 { t_in } ->
+      | E_cos { out; t_in } ->
           Some
             (fun k ->
-              let res = op_log2 t_in in
-              let fwd = continue k res in
+              op_cos ~out t_in;
+              let fwd = continue k () in
               let twg_in = get_or_init t_in in
-              let twg_res = get_or_init res in
-              let g = T.mul twg_res.grad (deriv_log2 t_in) in
+              let twg_out = get_or_init out in
+              (* d/dx cos(x) = -sin(x) *)
+              let g = T.mul twg_out.grad (T.neg (Obj.magic (T.sin (Obj.magic t_in)))) in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
-      | E_exp2 { t_in } ->
+      | E_log2 { out; t_in } ->
           Some
             (fun k ->
-              let res = op_exp2 t_in in
-              let fwd = continue k res in
+              op_log2 ~out t_in;
+              let fwd = continue k () in
               let twg_in = get_or_init t_in in
-              let twg_res = get_or_init res in
-              let g = T.mul twg_res.grad (deriv_exp2 res) in
+              let twg_out = get_or_init out in
+              let g = T.mul twg_out.grad (deriv_log2 t_in) in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
-      | E_sqrt { t_in } ->
+      | E_log { out; t_in } ->
           Some
             (fun k ->
-              let res = op_sqrt t_in in
-              let fwd = continue k res in
+              op_log ~out t_in;
+              let fwd = continue k () in
               let twg_in = get_or_init t_in in
-              let twg_res = get_or_init res in
-              let g = T.mul twg_res.grad (deriv_sqrt res) in
+              let twg_out = get_or_init out in
+              (* d/dx log(x) = 1/x *)
+              let g = T.mul twg_out.grad (T.recip t_in) in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
-      | E_recip { t_in } ->
+      | E_exp2 { out; t_in } ->
           Some
             (fun k ->
-              let res = op_recip t_in in
-              let fwd = continue k res in
+              op_exp2 ~out t_in;
+              let fwd = continue k () in
               let twg_in = get_or_init t_in in
-              let twg_res = get_or_init res in
-              let g = T.mul twg_res.grad (deriv_recip t_in) in
+              let twg_out = get_or_init out in
+              let g = T.mul twg_out.grad (deriv_exp2 out) in
+              twg_in.grad <- T.add twg_in.grad g;
+              fwd)
+      | E_exp { out; t_in } ->
+          Some
+            (fun k ->
+              op_exp ~out t_in;
+              let fwd = continue k () in
+              let twg_in = get_or_init t_in in
+              let twg_out = get_or_init out in
+              (* d/dx exp(x) = exp(x) *)
+              let g = T.mul twg_out.grad out in
+              twg_in.grad <- T.add twg_in.grad g;
+              fwd)
+      | E_sqrt { out; t_in } ->
+          Some
+            (fun k ->
+              op_sqrt ~out t_in;
+              let fwd = continue k () in
+              let twg_in = get_or_init t_in in
+              let twg_out = get_or_init out in
+              let g = T.mul twg_out.grad (deriv_sqrt out) in
+              twg_in.grad <- T.add twg_in.grad g;
+              fwd)
+      | E_recip { out; t_in } ->
+          Some
+            (fun k ->
+              op_recip ~out t_in;
+              let fwd = continue k () in
+              let twg_in = get_or_init t_in in
+              let twg_out = get_or_init out in
+              let g = T.mul twg_out.grad (deriv_recip t_in) in
+              twg_in.grad <- T.add twg_in.grad g;
+              fwd)
+      | E_abs { out; t_in } ->
+          Some
+            (fun k ->
+              op_abs ~out t_in;
+              let fwd = continue k () in
+              let twg_in = get_or_init t_in in
+              let twg_out = get_or_init out in
+              (* d/dx |x| = sign(x) *)
+              let g = T.mul twg_out.grad (T.sign t_in) in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
       (* Shape Operations *)
@@ -874,59 +1045,84 @@ let make_vjp_handler tape_by_id val_to_id seed_output =
                 t_list;
               fwd)
       (* Reductions *)
-      | E_reduce_sum { t_in; axes; keepdims } ->
+      | E_reduce_sum { out; t_in; axes; keepdims } ->
           Some
             (fun k ->
-              let res = op_reduce_sum ~axes ~keepdims t_in in
-              let fwd = continue k res in
+              op_reduce_sum ~out ~axes ~keepdims t_in;
+              let fwd = continue k () in
               let twg_in = get_or_init t_in in
-              let twg_res = get_or_init res in
+              let twg_out = get_or_init out in
               let g =
-                if keepdims then twg_res.grad
+                if keepdims then twg_out.grad
                 else
                   let kept_shape =
-                    T.shape (op_reduce_sum ~axes ~keepdims:true t_in)
+                    T.shape (T.sum t_in ~axes:(Array.to_list axes) ~keepdims:true)
                   in
-                  T.reshape kept_shape twg_res.grad
+                  T.reshape kept_shape twg_out.grad
               in
               let g_bc = T.broadcast_to (T.shape t_in) g in
               twg_in.grad <- T.add twg_in.grad g_bc;
               fwd)
-      | E_reduce_max { t_in; axes; keepdims } ->
+      | E_reduce_max { out; t_in; axes; keepdims } ->
           Some
             (fun k ->
-              let res = op_reduce_max ~axes ~keepdims t_in in
-              let fwd = continue k res in
+              op_reduce_max ~out ~axes ~keepdims t_in;
+              let fwd = continue k () in
               let twg_in = get_or_init t_in in
-              let twg_res = get_or_init res in
+              let twg_out = get_or_init out in
               let shape_in = T.shape t_in in
-              let res_bc =
-                if keepdims then T.broadcast_to shape_in res
+              let out_bc =
+                if keepdims then T.broadcast_to shape_in out
                 else
-                  let kept = op_reduce_max ~axes ~keepdims:true t_in in
+                  let kept = T.max t_in ~axes:(Array.to_list axes) ~keepdims:true in
                   T.broadcast_to shape_in kept
               in
               let g_bc =
-                if keepdims then T.broadcast_to shape_in twg_res.grad
+                if keepdims then T.broadcast_to shape_in twg_out.grad
                 else
                   let kept_shape =
-                    T.shape (op_reduce_max ~axes ~keepdims:true t_in)
+                    T.shape (T.max t_in ~axes:(Array.to_list axes) ~keepdims:true)
                   in
-                  T.broadcast_to shape_in (T.reshape kept_shape twg_res.grad)
+                  T.broadcast_to shape_in (T.reshape kept_shape twg_out.grad)
               in
-              let mask = T.cast (dtype res) (T.equal t_in res_bc) in
+              let mask = T.cast (dtype out) (T.equal t_in out_bc) in
+              twg_in.grad <- T.add twg_in.grad (T.mul g_bc mask);
+              fwd)
+      | E_reduce_min { out; t_in; axes; keepdims } ->
+          Some
+            (fun k ->
+              op_reduce_min ~out ~axes ~keepdims t_in;
+              let fwd = continue k () in
+              let twg_in = get_or_init t_in in
+              let twg_out = get_or_init out in
+              let shape_in = T.shape t_in in
+              let out_bc =
+                if keepdims then T.broadcast_to shape_in out
+                else
+                  let kept = T.min t_in ~axes:(Array.to_list axes) ~keepdims:true in
+                  T.broadcast_to shape_in kept
+              in
+              let g_bc =
+                if keepdims then T.broadcast_to shape_in twg_out.grad
+                else
+                  let kept_shape =
+                    T.shape (T.min t_in ~axes:(Array.to_list axes) ~keepdims:true)
+                  in
+                  T.broadcast_to shape_in (T.reshape kept_shape twg_out.grad)
+              in
+              let mask = T.cast (dtype out) (T.equal t_in out_bc) in
               twg_in.grad <- T.add twg_in.grad (T.mul g_bc mask);
               fwd)
       (* Matrix Operations *)
-      | E_matmul { a; b } ->
+      | E_matmul { out; a; b } ->
           Some
             (fun k ->
-              let res = op_matmul a b in
-              let fwd = continue k res in
+              op_matmul ~out a b;
+              let fwd = continue k () in
               let twg_a = get_or_init a in
               let twg_b = get_or_init b in
-              let twg_res = get_or_init res in
-              let g = twg_res.grad in
+              let twg_out = get_or_init out in
+              let g = twg_out.grad in
               let a_shape = T.shape a in
               let b_shape = T.shape b in
               let g_shape = T.shape g in
@@ -990,26 +1186,56 @@ let make_vjp_handler tape_by_id val_to_id seed_output =
               twg_b.grad <- T.add twg_b.grad grad_b;
               fwd)
       (* Selection *)
-      | E_where { condition; if_true; if_false } ->
+      | E_where { out; condition; if_true; if_false } ->
           Some
             (fun k ->
-              let res = op_where condition if_true if_false in
-              let fwd = continue k res in
+              op_where ~out condition if_true if_false;
+              let fwd = continue k () in
               let twg_t = get_or_init if_true in
               let twg_f = get_or_init if_false in
-              let twg_res = get_or_init res in
-              let g = twg_res.grad in
+              let twg_out = get_or_init out in
+              let g = twg_out.grad in
               let mask = T.cast (dtype g) condition in
               let inv_mask = T.sub (T.ones_like mask) mask in
               twg_t.grad <- T.add twg_t.grad (T.mul g mask);
               twg_f.grad <- T.add twg_f.grad (T.mul g inv_mask);
               fwd)
       (* Comparisons (no gradient) *)
-      | E_cmplt { a; b } -> Some (fun k -> continue k (op_cmplt a b))
-      | E_cmpne { a; b } -> Some (fun k -> continue k (op_cmpne a b))
-      | E_xor { a; b } -> Some (fun k -> continue k (op_xor a b))
-      | E_or { a; b } -> Some (fun k -> continue k (op_or a b))
-      | E_and { a; b } -> Some (fun k -> continue k (op_and a b))
+      | E_cmplt { out; a; b } ->
+          Some
+            (fun k ->
+              op_cmplt ~out a b;
+              continue k ())
+      | E_cmpne { out; a; b } ->
+          Some
+            (fun k ->
+              op_cmpne ~out a b;
+              continue k ())
+      | E_cmpeq { out; a; b } ->
+          Some
+            (fun k ->
+              op_cmpeq ~out a b;
+              continue k ())
+      | E_cmple { out; a; b } ->
+          Some
+            (fun k ->
+              op_cmple ~out a b;
+              continue k ())
+      | E_xor { out; a; b } ->
+          Some
+            (fun k ->
+              op_xor ~out a b;
+              continue k ())
+      | E_or { out; a; b } ->
+          Some
+            (fun k ->
+              op_or ~out a b;
+              continue k ())
+      | E_and { out; a; b } ->
+          Some
+            (fun k ->
+              op_and ~out a b;
+              continue k ())
       (* Other *)
       | E_copy { t_in } ->
           Some
@@ -1040,36 +1266,36 @@ let make_vjp_handler tape_by_id val_to_id seed_output =
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
       (* Reduce Prod *)
-      | E_reduce_prod { t_in; axes; keepdims } ->
+      | E_reduce_prod { out; t_in; axes; keepdims } ->
           Some
             (fun k ->
-              let res = op_reduce_prod ~axes ~keepdims t_in in
-              let fwd = continue k res in
+              op_reduce_prod ~out ~axes ~keepdims t_in;
+              let fwd = continue k () in
               let twg_in = get_or_init t_in in
-              let twg_res = get_or_init res in
+              let twg_out = get_or_init out in
               let shape_in = T.shape t_in in
               (* Prepare gradient for broadcasting *)
               let g_prepared =
-                if keepdims then twg_res.grad
+                if keepdims then twg_out.grad
                 else
                   let kept_shape =
-                    T.shape (op_reduce_prod ~axes ~keepdims:true t_in)
+                    T.shape (T.prod t_in ~axes:(Array.to_list axes) ~keepdims:true)
                   in
-                  T.reshape kept_shape twg_res.grad
+                  T.reshape kept_shape twg_out.grad
               in
               let g_bc = T.broadcast_to shape_in g_prepared in
               (* Prepare result for broadcasting *)
-              let res_prepared =
-                if keepdims then res
+              let out_prepared =
+                if keepdims then out
                 else
                   let kept_shape =
-                    T.shape (op_reduce_prod ~axes ~keepdims:true t_in)
+                    T.shape (T.prod t_in ~axes:(Array.to_list axes) ~keepdims:true)
                   in
-                  T.reshape kept_shape res
+                  T.reshape kept_shape out
               in
-              let res_bc = T.broadcast_to shape_in res_prepared in
+              let out_bc = T.broadcast_to shape_in out_prepared in
               (* d(prod)/dx_i = prod / x_i *)
-              let grad_contrib = T.mul g_bc (T.div res_bc t_in) in
+              let grad_contrib = T.mul g_bc (T.div out_bc t_in) in
               twg_in.grad <- T.add twg_in.grad grad_contrib;
               fwd)
       (* Associative Scan (cumsum/cumprod) *)
@@ -1227,9 +1453,8 @@ let make_vjp_handler tape_by_id val_to_id seed_output =
               let input_numel = Array.fold_left ( * ) 1 input_shape in
               let output_numel = Array.fold_left ( * ) 1 new_shape in
               let ndim = Array.length new_shape in
-              let ctx = context t_in in
               let flat_indices =
-                T.init ctx Nx_core.Dtype.Int32 [| output_numel |]
+                T.init Nx_core.Dtype.Int32 [| output_numel |]
                   (fun out_coords ->
                     let out_flat = out_coords.(0) in
                     let out_idx = Array.make ndim 0 in
@@ -1246,7 +1471,7 @@ let make_vjp_handler tape_by_id val_to_id seed_output =
                     Int32.of_int !in_flat)
               in
               let g_flat = T.reshape [| output_numel |] g in
-              let zeros_input = T.zeros ctx (T.dtype t_in) [| input_numel |] in
+              let zeros_input = T.zeros (T.dtype t_in) [| input_numel |] in
               let grad_contrib =
                 op_scatter ~mode:`Add zeros_input flat_indices g_flat 0
               in

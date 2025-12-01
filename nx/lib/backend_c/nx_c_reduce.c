@@ -1129,6 +1129,168 @@ INT4_REDUCE_IMPL(reduce_prod, 1, i4, 1, PROD_HAS_IDENTITY, PROD_OP, CLAMP_I4)
 INT4_REDUCE_IMPL(reduce_prod, 0, u4, 1, PROD_HAS_IDENTITY, PROD_OP, CLAMP_U4)
 BUILD_DISPATCH_TABLE(reduce_prod)
 
+// Generate for reduce_min
+#define MIN_OP(acc, val) ((acc) < (val) ? (acc) : (val))
+#define MIN_IDENTITY(T) ((T)0)  // unused
+#define MIN_HAS_IDENTITY 0
+/* NaN propagation: if either operand is NaN, return NaN */
+#define MIN_OP_FLOAT(acc, val) \
+  (isnan(acc) || isnan(val) ? NAN : ((acc) < (val) ? (acc) : (val)))
+#define MIN_IDENTITY_FLOAT 0.0f   // unused
+#define MIN_COMPLEX_IDENTITY (0)  // unused
+#define MIN_COMPLEX_OP(acc, val) complex_min(acc, val)
+#define MIN_COMPLEX64_OP(acc, val) complex64_min(acc, val)
+
+// Forward declarations for optimized f32/f64 implementations
+static void nx_c_reduce_min_f32_generic_wrap(const ndarray_t *, ndarray_t *,
+                                             const int *, int, bool);
+static void nx_c_reduce_min_f64_generic_wrap(const ndarray_t *, ndarray_t *,
+                                             const int *, int, bool);
+
+// Optimized last-dim contiguous fast paths for f32/f64 reduce_min
+static void nx_c_reduce_min_f32(const ndarray_t *input, ndarray_t *output,
+                                const int *axes, int num_axes, bool keepdims) {
+  int last = input->ndim - 1;
+  if (num_axes == 1 && axes[0] == last && is_contiguous(input) &&
+      is_contiguous(output) && input->ndim >= 1) {
+    long K = input->shape[last];
+    long total = total_elements_safe(input);
+    long M = (K == 0) ? 0 : (total / K);
+    float *in = (float *)input->data;
+    float *out = (float *)output->data;
+    long in_off = input->offset;
+    long out_off = output->offset;
+    _Pragma("omp parallel for if(M > 1024)")
+    for (long r = 0; r < M; ++r) {
+      const float *row = in + in_off + r * K;
+      float acc = INFINITY;
+      for (long p = 0; p < K; ++p) {
+        float v = row[p];
+        acc = (isnan(acc) || isnan(v)) ? NAN : (v < acc ? v : acc);
+      }
+      out[out_off + r] = acc;
+    }
+    return;
+  }
+  // Fallback to generic implementation
+  nx_c_reduce_min_f32_generic_wrap(input, output, axes, num_axes, keepdims);
+}
+
+static void nx_c_reduce_min_f64(const ndarray_t *input, ndarray_t *output,
+                                const int *axes, int num_axes, bool keepdims) {
+  int last = input->ndim - 1;
+  if (num_axes == 1 && axes[0] == last && is_contiguous(input) &&
+      is_contiguous(output) && input->ndim >= 1) {
+    long K = input->shape[last];
+    long total = total_elements_safe(input);
+    long M = (K == 0) ? 0 : (total / K);
+    double *in = (double *)input->data;
+    double *out = (double *)output->data;
+    long in_off = input->offset;
+    long out_off = output->offset;
+    _Pragma("omp parallel for if(M > 1024)")
+    for (long r = 0; r < M; ++r) {
+      const double *row = in + in_off + r * K;
+      double acc = INFINITY;
+      for (long p = 0; p < K; ++p) {
+        double v = row[p];
+        acc = (isnan(acc) || isnan(v)) ? NAN : (v < acc ? v : acc);
+      }
+      out[out_off + r] = acc;
+    }
+    return;
+  }
+  // Fallback to generic implementation
+  nx_c_reduce_min_f64_generic_wrap(input, output, axes, num_axes, keepdims);
+}
+
+// Provide generic versions under alternate names to call in fallback
+#define nx_c_reduce_min_f32_generic nx_c_reduce_min_f32_fallback
+#define nx_c_reduce_min_f64_generic nx_c_reduce_min_f64_fallback
+
+REDUCE_OP_FOR_TYPE(reduce_min, int8_t, i8, MIN_IDENTITY(int8_t),
+                   MIN_HAS_IDENTITY, MIN_OP)
+REDUCE_OP_FOR_TYPE(reduce_min, uint8_t, u8, MIN_IDENTITY(uint8_t),
+                   MIN_HAS_IDENTITY, MIN_OP)
+REDUCE_OP_FOR_TYPE(reduce_min, int16_t, i16, MIN_IDENTITY(int16_t),
+                   MIN_HAS_IDENTITY, MIN_OP)
+REDUCE_OP_FOR_TYPE(reduce_min, uint16_t, u16, MIN_IDENTITY(uint16_t),
+                   MIN_HAS_IDENTITY, MIN_OP)
+REDUCE_OP_FOR_TYPE(reduce_min, int32_t, i32, MIN_IDENTITY(int32_t),
+                   MIN_HAS_IDENTITY, MIN_OP)
+REDUCE_OP_FOR_TYPE(reduce_min, int64_t, i64, MIN_IDENTITY(int64_t),
+                   MIN_HAS_IDENTITY, MIN_OP)
+REDUCE_OP_FOR_TYPE(reduce_min, intnat, inat, MIN_IDENTITY(intnat),
+                   MIN_HAS_IDENTITY, MIN_OP)
+REDUCE_OP_FOR_TYPE(reduce_min, float, f32_fallback, MIN_IDENTITY(float),
+                   MIN_HAS_IDENTITY, MIN_OP_FLOAT)
+REDUCE_OP_FOR_TYPE(reduce_min, double, f64_fallback, MIN_IDENTITY(double),
+                   MIN_HAS_IDENTITY, MIN_OP_FLOAT)
+REDUCE_OP_FOR_TYPE(reduce_min, complex32, c32, MIN_COMPLEX_IDENTITY,
+                   MIN_HAS_IDENTITY, MIN_COMPLEX_OP)
+REDUCE_OP_FOR_TYPE(reduce_min, complex64, c64, MIN_COMPLEX_IDENTITY,
+                   MIN_HAS_IDENTITY, MIN_COMPLEX64_OP)
+REDUCE_OP_FOR_TYPE(reduce_min, caml_ba_bool, bool_, MIN_IDENTITY(caml_ba_bool),
+                   MIN_HAS_IDENTITY, MIN_OP)
+REDUCE_OP_FOR_TYPE(reduce_min, caml_ba_qint8, qi8, MIN_IDENTITY(caml_ba_qint8),
+                   MIN_HAS_IDENTITY, MIN_OP)
+REDUCE_OP_FOR_TYPE(reduce_min, caml_ba_quint8, qu8,
+                   MIN_IDENTITY(caml_ba_quint8), MIN_HAS_IDENTITY, MIN_OP)
+
+LOW_PREC_REDUCE_OP_IMPL(reduce_min, uint16_t, f16, MIN_IDENTITY_FLOAT,
+                        MIN_HAS_IDENTITY, MIN_OP_FLOAT, half_to_float,
+                        float_to_half)
+LOW_PREC_REDUCE_OP_IMPL(reduce_min, caml_ba_bfloat16, bf16, MIN_IDENTITY_FLOAT,
+                        MIN_HAS_IDENTITY, MIN_OP_FLOAT, bfloat16_to_float,
+                        float_to_bfloat16)
+LOW_PREC_REDUCE_OP_IMPL(reduce_min, caml_ba_fp8_e4m3, f8e4m3,
+                        MIN_IDENTITY_FLOAT, MIN_HAS_IDENTITY, MIN_OP_FLOAT,
+                        fp8_e4m3_to_float, float_to_fp8_e4m3)
+LOW_PREC_REDUCE_OP_IMPL(reduce_min, caml_ba_fp8_e5m2, f8e5m2,
+                        MIN_IDENTITY_FLOAT, MIN_HAS_IDENTITY, MIN_OP_FLOAT,
+                        fp8_e5m2_to_float, float_to_fp8_e5m2)
+
+COMPLEX16_REDUCE_IMPL(reduce_min, MIN_COMPLEX_IDENTITY, MIN_HAS_IDENTITY,
+                      complex_min)
+INT4_REDUCE_IMPL(reduce_min, 1, i4, 0, MIN_HAS_IDENTITY, MIN_OP, CLAMP_I4)
+INT4_REDUCE_IMPL(reduce_min, 0, u4, 0, MIN_HAS_IDENTITY, MIN_OP, CLAMP_U4)
+// Define wrappers now that generic functions exist
+static void nx_c_reduce_min_f32_generic_wrap(const ndarray_t *input,
+                                             ndarray_t *output,
+                                             const int *axes, int num_axes,
+                                             bool keepdims) {
+  nx_c_reduce_min_f32_fallback(input, output, axes, num_axes, keepdims);
+}
+static void nx_c_reduce_min_f64_generic_wrap(const ndarray_t *input,
+                                             ndarray_t *output,
+                                             const int *axes, int num_axes,
+                                             bool keepdims) {
+  nx_c_reduce_min_f64_fallback(input, output, axes, num_axes, keepdims);
+}
+// Build dispatch table (bind f32/f64 to optimized versions)
+static const reduce_op_table reduce_min_table = {
+    .i8 = nx_c_reduce_min_i8,
+    .u8 = nx_c_reduce_min_u8,
+    .i16 = nx_c_reduce_min_i16,
+    .u16 = nx_c_reduce_min_u16,
+    .i32 = nx_c_reduce_min_i32,
+    .i64 = nx_c_reduce_min_i64,
+    .inat = nx_c_reduce_min_inat,
+    .f16 = nx_c_reduce_min_f16,
+    .f32 = nx_c_reduce_min_f32,
+    .f64 = nx_c_reduce_min_f64,
+    .c32 = nx_c_reduce_min_c32,
+    .c64 = nx_c_reduce_min_c64,
+    .bf16 = nx_c_reduce_min_bf16,
+    .bool_ = nx_c_reduce_min_bool_,
+    .i4 = nx_c_reduce_min_i4,
+    .u4 = nx_c_reduce_min_u4,
+    .f8e4m3 = nx_c_reduce_min_f8e4m3,
+    .f8e5m2 = nx_c_reduce_min_f8e5m2,
+    .c16 = nx_c_reduce_min_c16,
+    .qi8 = nx_c_reduce_min_qi8,
+    .qu8 = nx_c_reduce_min_qu8};
+
 // Generic dispatch function for reduction operations
 static void dispatch_reduce_op(value v_input, value v_output, int *axes,
                                int num_axes, bool keepdims,
@@ -1283,3 +1445,4 @@ static void dispatch_reduce_op(value v_input, value v_output, int *axes,
 DEFINE_FFI_STUB(reduce_sum)
 DEFINE_FFI_STUB(reduce_max)
 DEFINE_FFI_STUB(reduce_prod)
+DEFINE_FFI_STUB(reduce_min)

@@ -9,11 +9,13 @@ All notable changes to this project will be documented in this file.
 
 ### Nx
 
+- Add optional `?out` parameter to every relevant Nx function to allow users to provide pre-allocated output buffers. (@tmattio)
 - Fix critical correctness issue in fancy slicing (`L`) where permutations were ignored if the number of indices matched the dimension size (e.g., `slice [L [1; 0]] x` returned `x` unmodified). (@tmattio)
 - Rewrite `slice` implementation to use `as_strided` for contiguous operations, reducing overhead to **O(1)** for view-based slices and separating gather operations for better performance. (@tmattio)
 - Optimize `set_slice` by replacing scalar-loop index calculations with vectorized coordinate arithmetic, significantly improving performance for fancy index assignments. (@tmattio)
 - Improve `einsum` performance **8–20×** with greedy contraction path optimizer (e.g., MatMul 100×100 f32 207.83 µs → 10.76 µs, **19×**; BatchMatMul 200×200 f32 8.78 ms → 435.39 µs, **20×**) (@tmattio)
 - Rewrite `diagonal` using flatten + gather approach instead of O(N²) eye matrix masking, reducing memory from O(N²) to O(N) (@tmattio)
+- Add `?out` parameter to `matmul` allowing users to provide a pre-allocated output buffer, reducing allocation overhead by ~1μs per call for small matrices and enabling buffer reuse in tight loops (@tmattio)
 
 ### Rune
 

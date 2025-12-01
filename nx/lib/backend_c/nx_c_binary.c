@@ -960,6 +960,145 @@ static const binary_op_table cmpne_table = {.i8 = nx_c_cmpne_i8,
                                             .qi8 = nx_c_cmpne_qi8,
                                             .qu8 = nx_c_cmpne_qu8};
 
+// =========== COMPARISON - EQUAL ===========
+COMPARISON_OP_FOR_TYPE(cmpeq, int8_t, i8, CMPEQ_OP)
+COMPARISON_OP_FOR_TYPE(cmpeq, uint8_t, u8, CMPEQ_OP)
+COMPARISON_OP_FOR_TYPE(cmpeq, int16_t, i16, CMPEQ_OP)
+COMPARISON_OP_FOR_TYPE(cmpeq, uint16_t, u16, CMPEQ_OP)
+COMPARISON_OP_FOR_TYPE(cmpeq, int32_t, i32, CMPEQ_OP)
+COMPARISON_OP_FOR_TYPE(cmpeq, int64_t, i64, CMPEQ_OP)
+COMPARISON_OP_FOR_TYPE(cmpeq, intnat, inat, CMPEQ_OP)
+COMPARISON_OP_FOR_TYPE(cmpeq, float, f32, CMPEQ_OP)
+COMPARISON_OP_FOR_TYPE(cmpeq, double, f64, CMPEQ_OP)
+
+// Low precision
+static void nx_c_cmpeq_f16_kernel(void *x_data, void *y_data, void *z_data,
+                                  long x_off, long y_off, long z_off) {
+  uint16_t *x = (uint16_t *)x_data;
+  uint16_t *y = (uint16_t *)y_data;
+  uint8_t *z = (uint8_t *)z_data;
+  float a = half_to_float(x[x_off]);
+  float b = half_to_float(y[y_off]);
+  z[z_off] = a == b ? 1 : 0;
+}
+BINARY_OP_IMPL(cmpeq, uint16_t, f16)
+
+LOW_PREC_CMP_KERNEL(cmpeq, caml_ba_bfloat16, bf16, CMPEQ_OP, bfloat16_to_float)
+LOW_PREC_CMP_KERNEL(cmpeq, caml_ba_fp8_e4m3, f8e4m3, CMPEQ_OP,
+                    fp8_e4m3_to_float)
+LOW_PREC_CMP_KERNEL(cmpeq, caml_ba_fp8_e5m2, f8e5m2, CMPEQ_OP,
+                    fp8_e5m2_to_float)
+
+// Complex comparison for equality
+static void nx_c_cmpeq_c32_kernel(void *x_data, void *y_data, void *z_data,
+                                  long x_off, long y_off, long z_off) {
+  complex32 *x = (complex32 *)x_data;
+  complex32 *y = (complex32 *)y_data;
+  uint8_t *z = (uint8_t *)z_data;
+  z[z_off] = (x[x_off] == y[y_off]) ? 1 : 0;
+}
+BINARY_OP_IMPL(cmpeq, complex32, c32)
+
+static void nx_c_cmpeq_c64_kernel(void *x_data, void *y_data, void *z_data,
+                                  long x_off, long y_off, long z_off) {
+  complex64 *x = (complex64 *)x_data;
+  complex64 *y = (complex64 *)y_data;
+  uint8_t *z = (uint8_t *)z_data;
+  z[z_off] = (x[x_off] == y[y_off]) ? 1 : 0;
+}
+BINARY_OP_IMPL(cmpeq, complex64, c64)
+
+static void nx_c_cmpeq_c16_kernel(void *x_data, void *y_data, void *z_data,
+                                  long x_off, long y_off, long z_off) {
+  caml_ba_complex16 *x = (caml_ba_complex16 *)x_data;
+  caml_ba_complex16 *y = (caml_ba_complex16 *)y_data;
+  uint8_t *z = (uint8_t *)z_data;
+  z[z_off] = (x[x_off].re == y[y_off].re && x[x_off].im == y[y_off].im) ? 1 : 0;
+}
+BINARY_OP_IMPL(cmpeq, caml_ba_complex16, c16)
+
+COMPARISON_OP_FOR_TYPE(cmpeq, caml_ba_bool, bool_, CMPEQ_OP)
+COMPARISON_OP_FOR_TYPE(cmpeq, caml_ba_qint8, qi8, CMPEQ_OP)
+COMPARISON_OP_FOR_TYPE(cmpeq, caml_ba_quint8, qu8, CMPEQ_OP)
+
+static const binary_op_table cmpeq_table = {.i8 = nx_c_cmpeq_i8,
+                                            .u8 = nx_c_cmpeq_u8,
+                                            .i16 = nx_c_cmpeq_i16,
+                                            .u16 = nx_c_cmpeq_u16,
+                                            .i32 = nx_c_cmpeq_i32,
+                                            .i64 = nx_c_cmpeq_i64,
+                                            .inat = nx_c_cmpeq_inat,
+                                            .f16 = nx_c_cmpeq_f16,
+                                            .f32 = nx_c_cmpeq_f32,
+                                            .f64 = nx_c_cmpeq_f64,
+                                            .c32 = nx_c_cmpeq_c32,
+                                            .c64 = nx_c_cmpeq_c64,
+                                            .bf16 = nx_c_cmpeq_bf16,
+                                            .bool_ = nx_c_cmpeq_bool_,
+                                            .i4 = nx_c_cmpeq_i4,
+                                            .u4 = nx_c_cmpeq_u4,
+                                            .f8e4m3 = nx_c_cmpeq_f8e4m3,
+                                            .f8e5m2 = nx_c_cmpeq_f8e5m2,
+                                            .c16 = nx_c_cmpeq_c16,
+                                            .qi8 = nx_c_cmpeq_qi8,
+                                            .qu8 = nx_c_cmpeq_qu8};
+
+// =========== COMPARISON - LESS THAN OR EQUAL ===========
+COMPARISON_OP_FOR_TYPE(cmple, int8_t, i8, CMPLE_OP)
+COMPARISON_OP_FOR_TYPE(cmple, uint8_t, u8, CMPLE_OP)
+COMPARISON_OP_FOR_TYPE(cmple, int16_t, i16, CMPLE_OP)
+COMPARISON_OP_FOR_TYPE(cmple, uint16_t, u16, CMPLE_OP)
+COMPARISON_OP_FOR_TYPE(cmple, int32_t, i32, CMPLE_OP)
+COMPARISON_OP_FOR_TYPE(cmple, int64_t, i64, CMPLE_OP)
+COMPARISON_OP_FOR_TYPE(cmple, intnat, inat, CMPLE_OP)
+COMPARISON_OP_FOR_TYPE(cmple, float, f32, CMPLE_OP)
+COMPARISON_OP_FOR_TYPE(cmple, double, f64, CMPLE_OP)
+
+// Low precision comparisons
+static void nx_c_cmple_f16_kernel(void *x_data, void *y_data, void *z_data,
+                                  long x_off, long y_off, long z_off) {
+  uint16_t *x = (uint16_t *)x_data;
+  uint16_t *y = (uint16_t *)y_data;
+  uint8_t *z = (uint8_t *)z_data;
+  float a = half_to_float(x[x_off]);
+  float b = half_to_float(y[y_off]);
+  z[z_off] = a <= b ? 1 : 0;
+}
+BINARY_OP_IMPL(cmple, uint16_t, f16)
+
+LOW_PREC_CMP_KERNEL(cmple, caml_ba_bfloat16, bf16, CMPLE_OP, bfloat16_to_float)
+LOW_PREC_CMP_KERNEL(cmple, caml_ba_fp8_e4m3, f8e4m3, CMPLE_OP,
+                    fp8_e4m3_to_float)
+LOW_PREC_CMP_KERNEL(cmple, caml_ba_fp8_e5m2, f8e5m2, CMPLE_OP,
+                    fp8_e5m2_to_float)
+
+COMPARISON_OP_FOR_TYPE(cmple, caml_ba_bool, bool_, CMPLE_OP)
+COMPARISON_OP_FOR_TYPE(cmple, caml_ba_qint8, qi8, CMPLE_OP)
+COMPARISON_OP_FOR_TYPE(cmple, caml_ba_quint8, qu8, CMPLE_OP)
+
+// Build dispatch table with NULL for unsupported complex types
+static const binary_op_table cmple_table = {.i8 = nx_c_cmple_i8,
+                                            .u8 = nx_c_cmple_u8,
+                                            .i16 = nx_c_cmple_i16,
+                                            .u16 = nx_c_cmple_u16,
+                                            .i32 = nx_c_cmple_i32,
+                                            .i64 = nx_c_cmple_i64,
+                                            .inat = nx_c_cmple_inat,
+                                            .f16 = nx_c_cmple_f16,
+                                            .f32 = nx_c_cmple_f32,
+                                            .f64 = nx_c_cmple_f64,
+                                            .c32 = NULL,
+                                            .c64 = NULL,
+                                            .bf16 = nx_c_cmple_bf16,
+                                            .bool_ = nx_c_cmple_bool_,
+                                            .i4 = nx_c_cmple_i4,
+                                            .u4 = nx_c_cmple_u4,
+                                            .f8e4m3 = nx_c_cmple_f8e4m3,
+                                            .f8e5m2 = nx_c_cmple_f8e5m2,
+                                            .c16 = NULL,
+                                            .qi8 = nx_c_cmple_qi8,
+                                            .qu8 = nx_c_cmple_qu8};
+
 // =========== BITWISE XOR ===========
 #define XOR_OP(x, y) ((x) ^ (y))
 
@@ -1402,8 +1541,10 @@ DEFINE_FFI_STUB(max)
 DEFINE_FFI_STUB(min)
 DEFINE_FFI_STUB(mod)
 DEFINE_FFI_STUB(pow)
-DEFINE_CMP_FFI_STUB(cmplt)
+DEFINE_CMP_FFI_STUB(cmpeq)
 DEFINE_CMP_FFI_STUB(cmpne)
+DEFINE_CMP_FFI_STUB(cmplt)
+DEFINE_CMP_FFI_STUB(cmple)
 DEFINE_FFI_STUB(xor)
 DEFINE_FFI_STUB(or)
 DEFINE_FFI_STUB(and)

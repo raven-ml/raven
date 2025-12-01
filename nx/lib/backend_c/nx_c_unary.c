@@ -518,6 +518,190 @@ INT4_UNARY_IMPL(recip, 0, u4, INT_RECIP_OP)
 UNARY_OP_FOR_TYPE(recip, caml_ba_bool, bool_, INT_RECIP_OP)
 BUILD_DISPATCH_TABLE(recip);
 
+// Cos (floating-point and complex only)
+#define COS_FLOAT_OP(x) (cosf(x))
+#define COS_DOUBLE_OP(x) (cos(x))
+#define COMPLEX32_COS_OP(x) (ccosf(x))
+#define COMPLEX64_COS_OP(x) (ccos(x))
+GENERATE_UNARY_FLOAT_OP(cos, COS_FLOAT_OP, COS_DOUBLE_OP)
+
+LOW_PREC_OP_KERNEL(cos, uint16_t, f16, COS_FLOAT_OP, half_to_float, float_to_half)
+LOW_PREC_OP_IMPL(cos, uint16_t, f16)
+LOW_PREC_OP_KERNEL(cos, caml_ba_bfloat16, bf16, COS_FLOAT_OP, bfloat16_to_float,
+                   float_to_bfloat16)
+LOW_PREC_OP_IMPL(cos, caml_ba_bfloat16, bf16)
+LOW_PREC_OP_KERNEL(cos, caml_ba_fp8_e4m3, f8e4m3, COS_FLOAT_OP,
+                   fp8_e4m3_to_float, float_to_fp8_e4m3)
+LOW_PREC_OP_IMPL(cos, caml_ba_fp8_e4m3, f8e4m3)
+LOW_PREC_OP_KERNEL(cos, caml_ba_fp8_e5m2, f8e5m2, COS_FLOAT_OP,
+                   fp8_e5m2_to_float, float_to_fp8_e5m2)
+LOW_PREC_OP_IMPL(cos, caml_ba_fp8_e5m2, f8e5m2)
+
+UNARY_OP_FOR_TYPE(cos, complex32, c32, COMPLEX32_COS_OP)
+UNARY_OP_FOR_TYPE(cos, complex64, c64, COMPLEX64_COS_OP)
+
+COMPLEX16_OP_KERNEL(cos, COMPLEX32_COS_OP)
+UNARY_OP_IMPL(cos, caml_ba_complex16, c16)
+
+static const unary_op_table cos_table = {.i8 = NULL,
+                                         .u8 = NULL,
+                                         .i16 = NULL,
+                                         .u16 = NULL,
+                                         .i32 = NULL,
+                                         .i64 = NULL,
+                                         .inat = NULL,
+                                         .f16 = nx_c_cos_f16,
+                                         .f32 = nx_c_cos_f32,
+                                         .f64 = nx_c_cos_f64,
+                                         .c32 = nx_c_cos_c32,
+                                         .c64 = nx_c_cos_c64,
+                                         .bf16 = nx_c_cos_bf16,
+                                         .bool_ = NULL,
+                                         .i4 = NULL,
+                                         .u4 = NULL,
+                                         .f8e4m3 = nx_c_cos_f8e4m3,
+                                         .f8e5m2 = nx_c_cos_f8e5m2,
+                                         .c16 = nx_c_cos_c16,
+                                         .qi8 = NULL,
+                                         .qu8 = NULL};
+
+// Log (natural logarithm, floating-point and complex only)
+#define LOG_FLOAT_OP(x) (logf(x))
+#define LOG_DOUBLE_OP(x) (log(x))
+#define COMPLEX32_LOG_OP(x) (clogf(x))
+#define COMPLEX64_LOG_OP(x) (clog(x))
+GENERATE_UNARY_FLOAT_OP(log, LOG_FLOAT_OP, LOG_DOUBLE_OP)
+
+LOW_PREC_OP_KERNEL(log, uint16_t, f16, LOG_FLOAT_OP, half_to_float, float_to_half)
+LOW_PREC_OP_IMPL(log, uint16_t, f16)
+LOW_PREC_OP_KERNEL(log, caml_ba_bfloat16, bf16, LOG_FLOAT_OP, bfloat16_to_float,
+                   float_to_bfloat16)
+LOW_PREC_OP_IMPL(log, caml_ba_bfloat16, bf16)
+LOW_PREC_OP_KERNEL(log, caml_ba_fp8_e4m3, f8e4m3, LOG_FLOAT_OP,
+                   fp8_e4m3_to_float, float_to_fp8_e4m3)
+LOW_PREC_OP_IMPL(log, caml_ba_fp8_e4m3, f8e4m3)
+LOW_PREC_OP_KERNEL(log, caml_ba_fp8_e5m2, f8e5m2, LOG_FLOAT_OP,
+                   fp8_e5m2_to_float, float_to_fp8_e5m2)
+LOW_PREC_OP_IMPL(log, caml_ba_fp8_e5m2, f8e5m2)
+
+UNARY_OP_FOR_TYPE(log, complex32, c32, COMPLEX32_LOG_OP)
+UNARY_OP_FOR_TYPE(log, complex64, c64, COMPLEX64_LOG_OP)
+
+COMPLEX16_OP_KERNEL(log, COMPLEX32_LOG_OP)
+UNARY_OP_IMPL(log, caml_ba_complex16, c16)
+
+static const unary_op_table log_table = {.i8 = NULL,
+                                         .u8 = NULL,
+                                         .i16 = NULL,
+                                         .u16 = NULL,
+                                         .i32 = NULL,
+                                         .i64 = NULL,
+                                         .inat = NULL,
+                                         .f16 = nx_c_log_f16,
+                                         .f32 = nx_c_log_f32,
+                                         .f64 = nx_c_log_f64,
+                                         .c32 = nx_c_log_c32,
+                                         .c64 = nx_c_log_c64,
+                                         .bf16 = nx_c_log_bf16,
+                                         .bool_ = NULL,
+                                         .i4 = NULL,
+                                         .u4 = NULL,
+                                         .f8e4m3 = nx_c_log_f8e4m3,
+                                         .f8e5m2 = nx_c_log_f8e5m2,
+                                         .c16 = nx_c_log_c16,
+                                         .qi8 = NULL,
+                                         .qu8 = NULL};
+
+// Exp (natural exponential, floating-point and complex only)
+#define EXP_FLOAT_OP(x) (expf(x))
+#define EXP_DOUBLE_OP(x) (exp(x))
+#define COMPLEX32_EXP_OP(x) (cexpf(x))
+#define COMPLEX64_EXP_OP(x) (cexp(x))
+GENERATE_UNARY_FLOAT_OP(exp, EXP_FLOAT_OP, EXP_DOUBLE_OP)
+
+LOW_PREC_OP_KERNEL(exp, uint16_t, f16, EXP_FLOAT_OP, half_to_float, float_to_half)
+LOW_PREC_OP_IMPL(exp, uint16_t, f16)
+LOW_PREC_OP_KERNEL(exp, caml_ba_bfloat16, bf16, EXP_FLOAT_OP, bfloat16_to_float,
+                   float_to_bfloat16)
+LOW_PREC_OP_IMPL(exp, caml_ba_bfloat16, bf16)
+LOW_PREC_OP_KERNEL(exp, caml_ba_fp8_e4m3, f8e4m3, EXP_FLOAT_OP,
+                   fp8_e4m3_to_float, float_to_fp8_e4m3)
+LOW_PREC_OP_IMPL(exp, caml_ba_fp8_e4m3, f8e4m3)
+LOW_PREC_OP_KERNEL(exp, caml_ba_fp8_e5m2, f8e5m2, EXP_FLOAT_OP,
+                   fp8_e5m2_to_float, float_to_fp8_e5m2)
+LOW_PREC_OP_IMPL(exp, caml_ba_fp8_e5m2, f8e5m2)
+
+UNARY_OP_FOR_TYPE(exp, complex32, c32, COMPLEX32_EXP_OP)
+UNARY_OP_FOR_TYPE(exp, complex64, c64, COMPLEX64_EXP_OP)
+
+COMPLEX16_OP_KERNEL(exp, COMPLEX32_EXP_OP)
+UNARY_OP_IMPL(exp, caml_ba_complex16, c16)
+
+static const unary_op_table exp_table = {.i8 = NULL,
+                                         .u8 = NULL,
+                                         .i16 = NULL,
+                                         .u16 = NULL,
+                                         .i32 = NULL,
+                                         .i64 = NULL,
+                                         .inat = NULL,
+                                         .f16 = nx_c_exp_f16,
+                                         .f32 = nx_c_exp_f32,
+                                         .f64 = nx_c_exp_f64,
+                                         .c32 = nx_c_exp_c32,
+                                         .c64 = nx_c_exp_c64,
+                                         .bf16 = nx_c_exp_bf16,
+                                         .bool_ = NULL,
+                                         .i4 = NULL,
+                                         .u4 = NULL,
+                                         .f8e4m3 = nx_c_exp_f8e4m3,
+                                         .f8e5m2 = nx_c_exp_f8e5m2,
+                                         .c16 = nx_c_exp_c16,
+                                         .qi8 = NULL,
+                                         .qu8 = NULL};
+
+// Abs (absolute value, works on all numeric types)
+#define INT_ABS_OP(x) ((x) < 0 ? -(x) : (x))
+#define FLOAT_ABS_OP(x) (fabsf(x))
+#define DOUBLE_ABS_OP(x) (fabs(x))
+#define COMPLEX32_ABS_OP(x) (cabsf(x))
+#define COMPLEX64_ABS_OP(x) (cabs(x))
+
+UNARY_OP_FOR_TYPE(abs, int8_t, i8, INT_ABS_OP)
+UNARY_OP_FOR_TYPE(abs, uint8_t, u8, INT_ABS_OP)
+UNARY_OP_FOR_TYPE(abs, int16_t, i16, INT_ABS_OP)
+UNARY_OP_FOR_TYPE(abs, uint16_t, u16, INT_ABS_OP)
+UNARY_OP_FOR_TYPE(abs, int32_t, i32, INT_ABS_OP)
+UNARY_OP_FOR_TYPE(abs, int64_t, i64, INT_ABS_OP)
+UNARY_OP_FOR_TYPE(abs, intnat, inat, INT_ABS_OP)
+UNARY_OP_FOR_TYPE(abs, float, f32, FLOAT_ABS_OP)
+UNARY_OP_FOR_TYPE(abs, double, f64, DOUBLE_ABS_OP)
+UNARY_OP_FOR_TYPE(abs, caml_ba_qint8, qi8, INT_ABS_OP)
+UNARY_OP_FOR_TYPE(abs, caml_ba_quint8, qu8, INT_ABS_OP)
+
+LOW_PREC_OP_KERNEL(abs, uint16_t, f16, FLOAT_ABS_OP, half_to_float, float_to_half)
+LOW_PREC_OP_IMPL(abs, uint16_t, f16)
+LOW_PREC_OP_KERNEL(abs, caml_ba_bfloat16, bf16, FLOAT_ABS_OP, bfloat16_to_float,
+                   float_to_bfloat16)
+LOW_PREC_OP_IMPL(abs, caml_ba_bfloat16, bf16)
+LOW_PREC_OP_KERNEL(abs, caml_ba_fp8_e4m3, f8e4m3, FLOAT_ABS_OP,
+                   fp8_e4m3_to_float, float_to_fp8_e4m3)
+LOW_PREC_OP_IMPL(abs, caml_ba_fp8_e4m3, f8e4m3)
+LOW_PREC_OP_KERNEL(abs, caml_ba_fp8_e5m2, f8e5m2, FLOAT_ABS_OP,
+                   fp8_e5m2_to_float, float_to_fp8_e5m2)
+LOW_PREC_OP_IMPL(abs, caml_ba_fp8_e5m2, f8e5m2)
+
+// Complex abs returns real magnitude - handled separately
+// For now, use float result for complex types (stores in complex buffer as real part)
+UNARY_OP_FOR_TYPE(abs, complex32, c32, COMPLEX32_ABS_OP)
+UNARY_OP_FOR_TYPE(abs, complex64, c64, COMPLEX64_ABS_OP)
+
+COMPLEX16_OP_KERNEL(abs, COMPLEX32_ABS_OP)
+UNARY_OP_IMPL(abs, caml_ba_complex16, c16)
+INT4_UNARY_IMPL(abs, 1, i4, INT_ABS_OP)
+INT4_UNARY_IMPL(abs, 0, u4, INT_ABS_OP)
+UNARY_OP_FOR_TYPE(abs, caml_ba_bool, bool_, INT_ABS_OP)
+BUILD_DISPATCH_TABLE(abs);
+
 // Shared dispatch infrastructure
 
 // Generic dispatch function for unary operations
@@ -662,7 +846,11 @@ static void dispatch_unary_op(value v_x, value v_z, const unary_op_table *table,
 
 DEFINE_FFI_STUB(neg)
 DEFINE_FFI_STUB(log2)
+DEFINE_FFI_STUB(log)
 DEFINE_FFI_STUB(exp2)
+DEFINE_FFI_STUB(exp)
 DEFINE_FFI_STUB(sin)
+DEFINE_FFI_STUB(cos)
 DEFINE_FFI_STUB(sqrt)
+DEFINE_FFI_STUB(abs)
 DEFINE_FFI_STUB(recip)

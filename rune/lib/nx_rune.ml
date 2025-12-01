@@ -49,56 +49,87 @@ type _ Effect.t +=
       array : ('a, 'b, Bigarray_ext.c_layout) Bigarray_ext.Array1.t;
     }
       -> ('a, 'b) t Effect.t
-  | E_add : { a : ('a, 'b) t; b : ('a, 'b) t } -> ('a, 'b) t Effect.t
-  | E_mul : { a : ('a, 'b) t; b : ('a, 'b) t } -> ('a, 'b) t Effect.t
-  | E_idiv : { a : ('a, 'b) t; b : ('a, 'b) t } -> ('a, 'b) t Effect.t
-  | E_fdiv : { a : ('a, 'b) t; b : ('a, 'b) t } -> ('a, 'b) t Effect.t
-  | E_max : { a : ('a, 'b) t; b : ('a, 'b) t } -> ('a, 'b) t Effect.t
-  | E_mod : { a : ('a, 'b) t; b : ('a, 'b) t } -> ('a, 'b) t Effect.t
-  | E_pow : { a : ('a, 'b) t; b : ('a, 'b) t } -> ('a, 'b) t Effect.t
-  | E_cmplt : {
+  | E_add : { out : ('a, 'b) t; a : ('a, 'b) t; b : ('a, 'b) t } -> unit Effect.t
+  | E_sub : { out : ('a, 'b) t; a : ('a, 'b) t; b : ('a, 'b) t } -> unit Effect.t
+  | E_mul : { out : ('a, 'b) t; a : ('a, 'b) t; b : ('a, 'b) t } -> unit Effect.t
+  | E_idiv : { out : ('a, 'b) t; a : ('a, 'b) t; b : ('a, 'b) t } -> unit Effect.t
+  | E_fdiv : { out : ('a, 'b) t; a : ('a, 'b) t; b : ('a, 'b) t } -> unit Effect.t
+  | E_max : { out : ('a, 'b) t; a : ('a, 'b) t; b : ('a, 'b) t } -> unit Effect.t
+  | E_min : { out : ('a, 'b) t; a : ('a, 'b) t; b : ('a, 'b) t } -> unit Effect.t
+  | E_mod : { out : ('a, 'b) t; a : ('a, 'b) t; b : ('a, 'b) t } -> unit Effect.t
+  | E_pow : { out : ('a, 'b) t; a : ('a, 'b) t; b : ('a, 'b) t } -> unit Effect.t
+  | E_xor : { out : ('a, 'b) t; a : ('a, 'b) t; b : ('a, 'b) t } -> unit Effect.t
+  | E_or : { out : ('a, 'b) t; a : ('a, 'b) t; b : ('a, 'b) t } -> unit Effect.t
+  | E_and : { out : ('a, 'b) t; a : ('a, 'b) t; b : ('a, 'b) t } -> unit Effect.t
+  | E_cmpeq : {
+      out : (bool, Dtype.bool_elt) t;
       a : ('a, 'b) t;
       b : ('a, 'b) t;
     }
-      -> (bool, Dtype.bool_elt) t Effect.t
+      -> unit Effect.t
   | E_cmpne : {
+      out : (bool, Dtype.bool_elt) t;
       a : ('a, 'b) t;
       b : ('a, 'b) t;
     }
-      -> (bool, Dtype.bool_elt) t Effect.t
-  | E_xor : { a : ('a, 'b) t; b : ('a, 'b) t } -> ('a, 'b) t Effect.t
-  | E_or : { a : ('a, 'b) t; b : ('a, 'b) t } -> ('a, 'b) t Effect.t
-  | E_and : { a : ('a, 'b) t; b : ('a, 'b) t } -> ('a, 'b) t Effect.t
-  | E_neg : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
-  | E_log2 : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
-  | E_exp2 : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
-  | E_sin : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
-  | E_sqrt : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
-  | E_recip : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
+      -> unit Effect.t
+  | E_cmplt : {
+      out : (bool, Dtype.bool_elt) t;
+      a : ('a, 'b) t;
+      b : ('a, 'b) t;
+    }
+      -> unit Effect.t
+  | E_cmple : {
+      out : (bool, Dtype.bool_elt) t;
+      a : ('a, 'b) t;
+      b : ('a, 'b) t;
+    }
+      -> unit Effect.t
+  | E_neg : { out : ('a, 'b) t; t_in : ('a, 'b) t } -> unit Effect.t
+  | E_log2 : { out : ('a, 'b) t; t_in : ('a, 'b) t } -> unit Effect.t
+  | E_exp2 : { out : ('a, 'b) t; t_in : ('a, 'b) t } -> unit Effect.t
+  | E_sin : { out : ('a, 'b) t; t_in : ('a, 'b) t } -> unit Effect.t
+  | E_sqrt : { out : ('a, 'b) t; t_in : ('a, 'b) t } -> unit Effect.t
+  | E_recip : { out : ('a, 'b) t; t_in : ('a, 'b) t } -> unit Effect.t
+  | E_log : { out : ('a, 'b) t; t_in : ('a, 'b) t } -> unit Effect.t
+  | E_exp : { out : ('a, 'b) t; t_in : ('a, 'b) t } -> unit Effect.t
+  | E_cos : { out : ('a, 'b) t; t_in : ('a, 'b) t } -> unit Effect.t
+  | E_abs : { out : ('a, 'b) t; t_in : ('a, 'b) t } -> unit Effect.t
   | E_where : {
+      out : ('a, 'b) t;
       condition : (bool, Dtype.bool_elt) t;
       if_true : ('a, 'b) t;
       if_false : ('a, 'b) t;
     }
-      -> ('a, 'b) t Effect.t
+      -> unit Effect.t
   | E_reduce_sum : {
+      out : ('a, 'b) t;
       t_in : ('a, 'b) t;
       axes : int array;
       keepdims : bool;
     }
-      -> ('a, 'b) t Effect.t
+      -> unit Effect.t
   | E_reduce_max : {
+      out : ('a, 'b) t;
       t_in : ('a, 'b) t;
       axes : int array;
       keepdims : bool;
     }
-      -> ('a, 'b) t Effect.t
+      -> unit Effect.t
+  | E_reduce_min : {
+      out : ('a, 'b) t;
+      t_in : ('a, 'b) t;
+      axes : int array;
+      keepdims : bool;
+    }
+      -> unit Effect.t
   | E_reduce_prod : {
+      out : ('a, 'b) t;
       t_in : ('a, 'b) t;
       axes : int array;
       keepdims : bool;
     }
-      -> ('a, 'b) t Effect.t
+      -> unit Effect.t
   | E_associative_scan : {
       t_in : ('a, 'b) t;
       axis : int;
@@ -188,7 +219,12 @@ type _ Effect.t +=
       padding : (int * int) array;
     }
       -> ('a, 'b) t Effect.t
-  | E_matmul : { a : ('a, 'b) t; b : ('a, 'b) t } -> ('a, 'b) t Effect.t
+  | E_matmul : {
+      out : ('a, 'b) t;
+      a : ('a, 'b) t;
+      b : ('a, 'b) t;
+    }
+      -> unit Effect.t
   | E_fft : {
       t : (Complex.t, 'b) t;
       axes : int array;
@@ -316,37 +352,59 @@ let ensure_same_device a b =
       let ctx = context a in
       (a, to_device ctx b)
 
-let binary_op eff cpu_op a b =
+(* Helper to get concrete shape from a native tensor *)
+let get_shape t =
+  match Symbolic_shape.eval (View.shape (Nx_c.view t)) with
+  | Some arr -> arr
+  | None -> failwith "Cannot evaluate symbolic shape"
+
+(* Helper to allocate output buffer with given shape *)
+let alloc_buffer ctx dtype shape =
+  let size = Array.fold_left ( * ) 1 shape in
+  let out = Nx_c.op_buffer ctx dtype size in
+  Nx_c.op_reshape out (Symbolic_shape.of_ints shape)
+
+(* Binary ops take ~out and return unit *)
+let binary_op ~out eff cpu_op a b =
   try Effect.perform (eff ())
   with Effect.Unhandled _ -> (
     let a', b' = ensure_same_device a b in
-    match (a', b') with
-    | Native_tensor t1, Native_tensor t2 -> Native_tensor (cpu_op t1 t2)
+    match (a', b', out) with
+    | Native_tensor t1, Native_tensor t2, Native_tensor out_t ->
+        cpu_op ~out:out_t t1 t2
     | _ -> assert false)
 
-let unary_op eff cpu_op t_in =
+(* Unary ops take ~out and return unit *)
+let unary_op ~out eff cpu_op t_in =
   try Effect.perform (eff ())
   with Effect.Unhandled _ -> (
-    match t_in with
-    | Native_tensor t -> Native_tensor (cpu_op t)
-    | Symbolic_tensor _ ->
-        failwith "Cannot perform operation on symbolic tensor")
+    match (t_in, out) with
+    | Native_tensor t, Native_tensor out_t ->
+        cpu_op ~out:out_t t
+    | Symbolic_tensor _, _ ->
+        failwith "Cannot perform operation on symbolic tensor"
+    | _ -> assert false)
 
-let comparison_op eff cpu_op a b =
+(* Comparison ops take ~out and return unit *)
+let comparison_op ~out eff cpu_op a b =
   try Effect.perform (eff ())
   with Effect.Unhandled _ -> (
     let a', b' = ensure_same_device a b in
-    match (a', b') with
-    | Native_tensor t1, Native_tensor t2 -> Native_tensor (cpu_op t1 t2)
+    match (a', b', out) with
+    | Native_tensor t1, Native_tensor t2, Native_tensor out_t ->
+        cpu_op ~out:out_t t1 t2
     | _ -> assert false)
 
-let reduce_op eff cpu_op ~axes ~keepdims t_in =
+(* Reduce ops take ~out and return unit *)
+let reduce_op ~out eff cpu_op ~axes ~keepdims t_in =
   try Effect.perform (eff ())
   with Effect.Unhandled _ -> (
-    match t_in with
-    | Native_tensor t -> Native_tensor (cpu_op ~axes ~keepdims t)
-    | Symbolic_tensor _ ->
-        failwith "Cannot perform reduction on symbolic tensor")
+    match (t_in, out) with
+    | Native_tensor t, Native_tensor out_t ->
+        cpu_op ~out:out_t ~axes ~keepdims t
+    | Symbolic_tensor _, _ ->
+        failwith "Cannot perform reduction on symbolic tensor"
+    | _ -> assert false)
 
 let shape_op1 eff cpu_op symbolic_shape t_in =
   try Effect.perform (eff ())
@@ -394,28 +452,36 @@ let ternary_op eff cpu_op cond if_true if_false =
     | _ -> assert false)
 
 (* Binary operations *)
-let op_add a b = binary_op (fun () -> E_add { a; b }) Nx_c.op_add a b
-let op_mul a b = binary_op (fun () -> E_mul { a; b }) Nx_c.op_mul a b
-let op_idiv a b = binary_op (fun () -> E_idiv { a; b }) Nx_c.op_idiv a b
-let op_fdiv a b = binary_op (fun () -> E_fdiv { a; b }) Nx_c.op_fdiv a b
-let op_max a b = binary_op (fun () -> E_max { a; b }) Nx_c.op_max a b
-let op_mod a b = binary_op (fun () -> E_mod { a; b }) Nx_c.op_mod a b
-let op_pow a b = binary_op (fun () -> E_pow { a; b }) Nx_c.op_pow a b
-let op_xor a b = binary_op (fun () -> E_xor { a; b }) Nx_c.op_xor a b
-let op_or a b = binary_op (fun () -> E_or { a; b }) Nx_c.op_or a b
-let op_and a b = binary_op (fun () -> E_and { a; b }) Nx_c.op_and a b
+let op_add ~out a b = binary_op ~out (fun () -> E_add { out; a; b }) Nx_c.op_add a b
+let op_sub ~out a b = binary_op ~out (fun () -> E_sub { out; a; b }) Nx_c.op_sub a b
+let op_mul ~out a b = binary_op ~out (fun () -> E_mul { out; a; b }) Nx_c.op_mul a b
+let op_idiv ~out a b = binary_op ~out (fun () -> E_idiv { out; a; b }) Nx_c.op_idiv a b
+let op_fdiv ~out a b = binary_op ~out (fun () -> E_fdiv { out; a; b }) Nx_c.op_fdiv a b
+let op_max ~out a b = binary_op ~out (fun () -> E_max { out; a; b }) Nx_c.op_max a b
+let op_min ~out a b = binary_op ~out (fun () -> E_min { out; a; b }) Nx_c.op_min a b
+let op_mod ~out a b = binary_op ~out (fun () -> E_mod { out; a; b }) Nx_c.op_mod a b
+let op_pow ~out a b = binary_op ~out (fun () -> E_pow { out; a; b }) Nx_c.op_pow a b
+let op_xor ~out a b = binary_op ~out (fun () -> E_xor { out; a; b }) Nx_c.op_xor a b
+let op_or ~out a b = binary_op ~out (fun () -> E_or { out; a; b }) Nx_c.op_or a b
+let op_and ~out a b = binary_op ~out (fun () -> E_and { out; a; b }) Nx_c.op_and a b
 
 (* Comparison operations *)
-let op_cmplt a b = comparison_op (fun () -> E_cmplt { a; b }) Nx_c.op_cmplt a b
-let op_cmpne a b = comparison_op (fun () -> E_cmpne { a; b }) Nx_c.op_cmpne a b
+let op_cmpeq ~out a b = comparison_op ~out (fun () -> E_cmpeq { out; a; b }) Nx_c.op_cmpeq a b
+let op_cmpne ~out a b = comparison_op ~out (fun () -> E_cmpne { out; a; b }) Nx_c.op_cmpne a b
+let op_cmplt ~out a b = comparison_op ~out (fun () -> E_cmplt { out; a; b }) Nx_c.op_cmplt a b
+let op_cmple ~out a b = comparison_op ~out (fun () -> E_cmple { out; a; b }) Nx_c.op_cmple a b
 
 (* Unary operations *)
-let op_neg t_in = unary_op (fun () -> E_neg { t_in }) Nx_c.op_neg t_in
-let op_log2 t_in = unary_op (fun () -> E_log2 { t_in }) Nx_c.op_log2 t_in
-let op_exp2 t_in = unary_op (fun () -> E_exp2 { t_in }) Nx_c.op_exp2 t_in
-let op_sin t_in = unary_op (fun () -> E_sin { t_in }) Nx_c.op_sin t_in
-let op_sqrt t_in = unary_op (fun () -> E_sqrt { t_in }) Nx_c.op_sqrt t_in
-let op_recip t_in = unary_op (fun () -> E_recip { t_in }) Nx_c.op_recip t_in
+let op_neg ~out t_in = unary_op ~out (fun () -> E_neg { out; t_in }) Nx_c.op_neg t_in
+let op_log2 ~out t_in = unary_op ~out (fun () -> E_log2 { out; t_in }) Nx_c.op_log2 t_in
+let op_exp2 ~out t_in = unary_op ~out (fun () -> E_exp2 { out; t_in }) Nx_c.op_exp2 t_in
+let op_sin ~out t_in = unary_op ~out (fun () -> E_sin { out; t_in }) Nx_c.op_sin t_in
+let op_sqrt ~out t_in = unary_op ~out (fun () -> E_sqrt { out; t_in }) Nx_c.op_sqrt t_in
+let op_recip ~out t_in = unary_op ~out (fun () -> E_recip { out; t_in }) Nx_c.op_recip t_in
+let op_log ~out t_in = unary_op ~out (fun () -> E_log { out; t_in }) Nx_c.op_log t_in
+let op_exp ~out t_in = unary_op ~out (fun () -> E_exp { out; t_in }) Nx_c.op_exp t_in
+let op_cos ~out t_in = unary_op ~out (fun () -> E_cos { out; t_in }) Nx_c.op_cos t_in
+let op_abs ~out t_in = unary_op ~out (fun () -> E_abs { out; t_in }) Nx_c.op_abs t_in
 
 (* Collective primitive: parallel sum across mapped axis, to be handled by
    vmap. *)
@@ -424,19 +490,24 @@ let op_psum t_in =
   with Effect.Unhandled _ -> failwith "psum must be used under vmap"
 
 (* Reduction operations *)
-let op_reduce_sum ~axes ~keepdims t_in =
-  reduce_op
-    (fun () -> E_reduce_sum { t_in; axes; keepdims })
+let op_reduce_sum ~out ~axes ~keepdims t_in =
+  reduce_op ~out
+    (fun () -> E_reduce_sum { out; t_in; axes; keepdims })
     Nx_c.op_reduce_sum ~axes ~keepdims t_in
 
-let op_reduce_max ~axes ~keepdims t_in =
-  reduce_op
-    (fun () -> E_reduce_max { t_in; axes; keepdims })
+let op_reduce_max ~out ~axes ~keepdims t_in =
+  reduce_op ~out
+    (fun () -> E_reduce_max { out; t_in; axes; keepdims })
     Nx_c.op_reduce_max ~axes ~keepdims t_in
 
-let op_reduce_prod ~axes ~keepdims t_in =
-  reduce_op
-    (fun () -> E_reduce_prod { t_in; axes; keepdims })
+let op_reduce_min ~out ~axes ~keepdims t_in =
+  reduce_op ~out
+    (fun () -> E_reduce_min { out; t_in; axes; keepdims })
+    Nx_c.op_reduce_min ~axes ~keepdims t_in
+
+let op_reduce_prod ~out ~axes ~keepdims t_in =
+  reduce_op ~out
+    (fun () -> E_reduce_prod { out; t_in; axes; keepdims })
     Nx_c.op_reduce_prod ~axes ~keepdims t_in
 
 let op_associative_scan ~axis ~op t_in =
@@ -497,17 +568,34 @@ let op_const_array ctx array =
     match ctx with
     | Native_context ctx -> Native_tensor (Nx_c.op_const_array ctx array))
 
-(* Copy operations *)
+(* Copy operations - these return a new tensor, not using ~out *)
 let op_contiguous t_in =
-  unary_op (fun () -> E_contiguous { t_in }) Nx_c.op_contiguous t_in
+  try Effect.perform (E_contiguous { t_in })
+  with Effect.Unhandled _ -> (
+    match t_in with
+    | Native_tensor t -> Native_tensor (Nx_c.op_contiguous t)
+    | Symbolic_tensor _ ->
+        failwith "Cannot perform contiguous on symbolic tensor")
 
-let op_copy t_in = unary_op (fun () -> E_copy { t_in }) Nx_c.op_copy t_in
+let op_copy t_in =
+  try Effect.perform (E_copy { t_in })
+  with Effect.Unhandled _ -> (
+    match t_in with
+    | Native_tensor t -> Native_tensor (Nx_c.op_copy t)
+    | Symbolic_tensor _ -> failwith "Cannot perform copy on symbolic tensor")
 
-(* Where operation *)
-let op_where condition if_true if_false =
-  ternary_op
-    (fun () -> E_where { condition; if_true; if_false })
-    Nx_c.op_where condition if_true if_false
+(* Where operation - uses ~out *)
+let op_where ~out condition if_true if_false =
+  try Effect.perform (E_where { out; condition; if_true; if_false })
+  with Effect.Unhandled _ -> (
+    let ctx = context if_true in
+    let cond' = to_device ctx condition in
+    let if_true' = to_device ctx if_true in
+    let if_false' = to_device ctx if_false in
+    match (cond', if_true', if_false', out) with
+    | Native_tensor t1, Native_tensor t2, Native_tensor t3, Native_tensor out_t ->
+        Nx_c.op_where ~out:out_t t1 t2 t3
+    | _ -> assert false)
 
 (* Cat operation (special handling for lists) *)
 let op_cat t_list axis =
@@ -570,72 +658,107 @@ let op_scatter ?(mode = `Set) ?(unique_indices = false) data_template indices
         Native_tensor (Nx_c.op_scatter ~mode ~unique_indices t i u axis)
     | _ -> assert false)
 
-(* Threefry operation *)
+(* Threefry operation - returns a new tensor, not using ~out *)
 let op_threefry key ctr =
-  binary_op (fun () -> E_threefry { key; ctr }) Nx_c.op_threefry key ctr
+  try Effect.perform (E_threefry { key; ctr })
+  with Effect.Unhandled _ -> (
+    let key', ctr' = ensure_same_device key ctr in
+    match (key', ctr') with
+    | Native_tensor t1, Native_tensor t2 ->
+        Native_tensor (Nx_c.op_threefry t1 t2)
+    | _ -> assert false)
 
 (* Unfold operation *)
-let op_unfold t_in ~kernel_size ~stride ~dilation ~padding =
+let op_unfold ?out t_in ~kernel_size ~stride ~dilation ~padding =
   try Effect.perform (E_unfold { t_in; kernel_size; stride; dilation; padding })
   with Effect.Unhandled _ -> (
-    match t_in with
-    | Native_tensor t ->
+    match (t_in, out) with
+    | Native_tensor t, Some (Native_tensor o) ->
+        Native_tensor (Nx_c.op_unfold ~out:o t ~kernel_size ~stride ~dilation ~padding)
+    | Native_tensor t, None ->
         Native_tensor (Nx_c.op_unfold t ~kernel_size ~stride ~dilation ~padding)
-    | Symbolic_tensor _ -> failwith "todo: op_unfold for symbolic tensors")
+    | Symbolic_tensor _, _
+    | _, Some (Symbolic_tensor _) ->
+        failwith "todo: op_unfold for symbolic tensors")
 
 (* Fold operation *)
-let op_fold t_in ~output_size ~kernel_size ~stride ~dilation ~padding =
+let op_fold ?out t_in ~output_size ~kernel_size ~stride ~dilation ~padding =
   try
     Effect.perform
       (E_fold { t_in; output_size; kernel_size; stride; dilation; padding })
   with Effect.Unhandled _ -> (
-    match t_in with
-    | Native_tensor t ->
+    match (t_in, out) with
+    | Native_tensor t, Some (Native_tensor o) ->
+        Native_tensor
+          (Nx_c.op_fold ~out:o t ~output_size ~kernel_size ~stride ~dilation ~padding)
+    | Native_tensor t, None ->
         Native_tensor
           (Nx_c.op_fold t ~output_size ~kernel_size ~stride ~dilation ~padding)
-    | Symbolic_tensor _ -> failwith "todo: op_fold for symbolic tensors")
+    | Symbolic_tensor _, _
+    | _, Some (Symbolic_tensor _) ->
+        failwith "todo: op_fold for symbolic tensors")
 
 (* Matrix multiplication *)
-let op_matmul a b =
-  try Effect.perform (E_matmul { a; b })
+let op_matmul ~out a b =
+  try Effect.perform (E_matmul { out; a; b })
   with Effect.Unhandled _ -> (
     let a', b' = ensure_same_device a b in
-    match (a', b') with
-    | Native_tensor a_t, Native_tensor b_t ->
-        Native_tensor (Nx_c.op_matmul a_t b_t)
-    | Symbolic_tensor _, _ | _, Symbolic_tensor _ ->
+    match (a', b', out) with
+    | Native_tensor a_t, Native_tensor b_t, Native_tensor out_t ->
+        Nx_c.op_matmul ~out:out_t a_t b_t
+    | Symbolic_tensor _, _, _
+    | _, Symbolic_tensor _, _
+    | _, _, Symbolic_tensor _ ->
         failwith "todo: op_matmul for symbolic tensors")
 
 (* FFT operations *)
-let op_fft t ~axes =
+let op_fft ?out t ~axes =
   try Effect.perform (E_fft { t; axes })
   with Effect.Unhandled _ -> (
-    match t with
-    | Native_tensor t -> Native_tensor (Nx_c.op_fft t ~axes)
-    | Symbolic_tensor _ -> failwith "todo: op_fft for symbolic tensors")
+    match (t, out) with
+    | Native_tensor t, Some (Native_tensor o) ->
+        Native_tensor (Nx_c.op_fft ~out:o t ~axes)
+    | Native_tensor t, None -> Native_tensor (Nx_c.op_fft t ~axes)
+    | Symbolic_tensor _, _
+    | _, Some (Symbolic_tensor _) ->
+        failwith "todo: op_fft for symbolic tensors")
 
-let op_ifft t ~axes =
+let op_ifft ?out t ~axes =
   try Effect.perform (E_ifft { t; axes })
   with Effect.Unhandled _ -> (
-    match t with
-    | Native_tensor t -> Native_tensor (Nx_c.op_ifft t ~axes)
-    | Symbolic_tensor _ -> failwith "todo: op_ifft for symbolic tensors")
+    match (t, out) with
+    | Native_tensor t, Some (Native_tensor o) ->
+        Native_tensor (Nx_c.op_ifft ~out:o t ~axes)
+    | Native_tensor t, None -> Native_tensor (Nx_c.op_ifft t ~axes)
+    | Symbolic_tensor _, _
+    | _, Some (Symbolic_tensor _) ->
+        failwith "todo: op_ifft for symbolic tensors")
 
-let op_rfft (type a c) (t : (float, a) t) ~(dtype : (Complex.t, c) Dtype.t)
+let op_rfft (type a c) ?out (t : (float, a) t) ~(dtype : (Complex.t, c) Dtype.t)
     ~axes : (Complex.t, c) t =
-  match t with
-  | Native_tensor t ->
+  match (t, out) with
+  | Native_tensor t, Some (Native_tensor o) ->
+      let result = Nx_c.op_rfft ~out:o t ~dtype ~axes in
+      (Native_tensor result : (Complex.t, c) t)
+  | Native_tensor t, None ->
       let result = Nx_c.op_rfft t ~dtype ~axes in
       (Native_tensor result : (Complex.t, c) t)
-  | Symbolic_tensor _ -> failwith "todo: op_rfft for symbolic tensors"
+  | Symbolic_tensor _, _
+  | _, Some (Symbolic_tensor _) ->
+      failwith "todo: op_rfft for symbolic tensors"
 
-let op_irfft (type a c) (t : (Complex.t, a) t) ~(dtype : (float, c) Dtype.t)
+let op_irfft (type a c) ?out (t : (Complex.t, a) t) ~(dtype : (float, c) Dtype.t)
     ~axes ~s : (float, c) t =
-  match t with
-  | Native_tensor t ->
+  match (t, out) with
+  | Native_tensor t, Some (Native_tensor o) ->
+      let result = Nx_c.op_irfft ~out:o t ~dtype ~axes ~s in
+      (Native_tensor result : (float, c) t)
+  | Native_tensor t, None ->
       let result = Nx_c.op_irfft t ~dtype ~axes ~s in
       (Native_tensor result : (float, c) t)
-  | Symbolic_tensor _ -> failwith "todo: op_irfft for symbolic tensors"
+  | Symbolic_tensor _, _
+  | _, Some (Symbolic_tensor _) ->
+      failwith "todo: op_irfft for symbolic tensors"
 
 (* Linear algebra operations *)
 

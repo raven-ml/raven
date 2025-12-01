@@ -24,21 +24,21 @@ let prelu = prelu
 
 (* Gated Linear Units (GLUs) *)
 
-let glu x gate =
+let glu ?out x gate =
   (* x * sigmoid(gate) *)
-  mul x (sigmoid gate)
+  mul ?out x (sigmoid gate)
 
-let swiglu x =
+let swiglu ?out x =
   (* x * silu(x) *)
-  mul x (silu x)
+  mul ?out x (silu x)
 
-let geglu x gate =
+let geglu ?out x gate =
   (* x * gelu(gate) *)
-  mul x (gelu gate)
+  mul ?out x (gelu gate)
 
-let reglu x gate =
+let reglu ?out x gate =
   (* x * relu(gate) *)
-  mul x (relu gate)
+  mul ?out x (relu gate)
 
 (* Other Activations *)
 

@@ -42,6 +42,14 @@ external caml_max :
   ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
   = "caml_nx_max"
 
+external caml_min :
+  ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
+  = "caml_nx_min"
+
+external caml_sub :
+  ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
+  = "caml_nx_sub"
+
 external caml_mod :
   ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
   = "caml_nx_mod"
@@ -50,17 +58,29 @@ external caml_pow :
   ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
   = "caml_nx_pow"
 
-external caml_cmplt :
+external caml_cmpeq :
   ('a, 'b) ffi_tensor ->
   ('a, 'b) ffi_tensor ->
   (bool, Dtype.bool_elt) ffi_tensor ->
-  unit = "caml_nx_cmplt"
+  unit = "caml_nx_cmpeq"
 
 external caml_cmpne :
   ('a, 'b) ffi_tensor ->
   ('a, 'b) ffi_tensor ->
   (bool, Dtype.bool_elt) ffi_tensor ->
   unit = "caml_nx_cmpne"
+
+external caml_cmplt :
+  ('a, 'b) ffi_tensor ->
+  ('a, 'b) ffi_tensor ->
+  (bool, Dtype.bool_elt) ffi_tensor ->
+  unit = "caml_nx_cmplt"
+
+external caml_cmple :
+  ('a, 'b) ffi_tensor ->
+  ('a, 'b) ffi_tensor ->
+  (bool, Dtype.bool_elt) ffi_tensor ->
+  unit = "caml_nx_cmple"
 
 external caml_xor :
   ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
@@ -87,8 +107,20 @@ external caml_exp2 : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
 external caml_sin : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
   = "caml_nx_sin"
 
+external caml_cos : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
+  = "caml_nx_cos"
+
 external caml_sqrt : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
   = "caml_nx_sqrt"
+
+external caml_abs : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
+  = "caml_nx_abs"
+
+external caml_log : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
+  = "caml_nx_log"
+
+external caml_exp : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
+  = "caml_nx_exp"
 
 external caml_recip : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
   = "caml_nx_recip"
@@ -113,6 +145,10 @@ external caml_reduce_max :
 external caml_reduce_prod :
   ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> int array -> bool -> unit
   = "caml_nx_reduce_prod"
+
+external caml_reduce_min :
+  ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> int array -> bool -> unit
+  = "caml_nx_reduce_min"
 
 external caml_associative_scan :
   ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> int -> int -> unit
@@ -295,8 +331,8 @@ let ensure_materializable t =
       materialize t
     else t
 
-(* Generic binary operation *)
-let binary_op op_name ffi_op x y =
+(* Generic binary operation - writes to caller-provided out buffer *)
+let binary_op op_name ffi_op ~out x y =
   (* Ensure both inputs have the same shape *)
   let x_shape = shape x in
   let y_shape = shape y in
@@ -312,21 +348,16 @@ let binary_op op_name ffi_op x y =
     let x' = ensure_materializable x in
     let y' = ensure_materializable y in
 
-    (* Create output tensor *)
-    let out = create_tensor x.context x.dtype x_shape in
-
     (* Convert to FFI tensors *)
     let x_ffi = to_ffi_tensor x' in
     let y_ffi = to_ffi_tensor y' in
     let out_ffi = to_ffi_tensor out in
 
     (* Call C implementation *)
-    ffi_op x_ffi y_ffi out_ffi;
+    ffi_op x_ffi y_ffi out_ffi
 
-    out
-
-(* Comparison operation that returns bool *)
-let comparison_op op_name ffi_op x y =
+(* Comparison operation - writes bool result to caller-provided out buffer *)
+let comparison_op op_name ffi_op ~out x y =
   (* Ensure both inputs have the same shape *)
   let x_shape = shape x in
   let y_shape = shape y in
@@ -342,18 +373,13 @@ let comparison_op op_name ffi_op x y =
     let x' = ensure_materializable x in
     let y' = ensure_materializable y in
 
-    (* Create output tensor with bool dtype *)
-    let out = create_tensor x.context Dtype.bool x_shape in
-
     (* Convert to FFI tensors *)
     let x_ffi = to_ffi_tensor x' in
     let y_ffi = to_ffi_tensor y' in
     let out_ffi = to_ffi_tensor out in
 
     (* Call C implementation *)
-    ffi_op x_ffi y_ffi out_ffi;
-
-    out
+    ffi_op x_ffi y_ffi out_ffi
 
 (* Buffer allocation *)
 let op_buffer ctx dtype size_in_elements =
@@ -383,50 +409,52 @@ let op_const_array ctx array =
   (* Note: We're sharing the buffer directly, assuming it's contiguous *)
   { context = ctx; dtype; buffer = array; view }
 
-(* Generic unary operation *)
-let unary_op _op_name ffi_op x =
+(* Generic unary operation - writes to caller-provided out buffer *)
+let unary_op _op_name ffi_op ~out x =
   (* Ensure input is materializable *)
   let x' = ensure_materializable x in
-
-  (* Create output tensor with same shape *)
-  let x_shape = shape x in
-  let out = create_tensor x.context x.dtype x_shape in
 
   (* Convert to FFI tensors *)
   let x_ffi = to_ffi_tensor x' in
   let out_ffi = to_ffi_tensor out in
 
   (* Call C implementation *)
-  ffi_op x_ffi out_ffi;
-
-  out
+  ffi_op x_ffi out_ffi
 
 (* Binary operations *)
-let op_add x y = binary_op "add" caml_add x y
-let op_mul x y = binary_op "mul" caml_mul x y
-let op_idiv x y = binary_op "idiv" caml_idiv x y
-let op_fdiv x y = binary_op "fdiv" caml_fdiv x y
-let op_max x y = binary_op "max" caml_max x y
-let op_mod x y = binary_op "mod" caml_mod x y
-let op_pow x y = binary_op "pow" caml_pow x y
-let op_xor x y = binary_op "xor" caml_xor x y
-let op_or x y = binary_op "or" caml_or x y
-let op_and x y = binary_op "and" caml_and x y
+let op_add ~out x y = binary_op "add" caml_add ~out x y
+let op_sub ~out x y = binary_op "sub" caml_sub ~out x y
+let op_mul ~out x y = binary_op "mul" caml_mul ~out x y
+let op_idiv ~out x y = binary_op "idiv" caml_idiv ~out x y
+let op_fdiv ~out x y = binary_op "fdiv" caml_fdiv ~out x y
+let op_max ~out x y = binary_op "max" caml_max ~out x y
+let op_min ~out x y = binary_op "min" caml_min ~out x y
+let op_mod ~out x y = binary_op "mod" caml_mod ~out x y
+let op_pow ~out x y = binary_op "pow" caml_pow ~out x y
+let op_xor ~out x y = binary_op "xor" caml_xor ~out x y
+let op_or ~out x y = binary_op "or" caml_or ~out x y
+let op_and ~out x y = binary_op "and" caml_and ~out x y
 
 (* Comparison operations *)
-let op_cmplt x y = comparison_op "cmplt" caml_cmplt x y
-let op_cmpne x y = comparison_op "cmpne" caml_cmpne x y
+let op_cmpeq ~out x y = comparison_op "cmpeq" caml_cmpeq ~out x y
+let op_cmpne ~out x y = comparison_op "cmpne" caml_cmpne ~out x y
+let op_cmplt ~out x y = comparison_op "cmplt" caml_cmplt ~out x y
+let op_cmple ~out x y = comparison_op "cmple" caml_cmple ~out x y
 
 (* Unary operations *)
-let op_neg x = unary_op "neg" caml_neg x
-let op_log2 x = unary_op "log2" caml_log2 x
-let op_exp2 x = unary_op "exp2" caml_exp2 x
-let op_sin x = unary_op "sin" caml_sin x
-let op_sqrt x = unary_op "sqrt" caml_sqrt x
-let op_recip x = unary_op "recip" caml_recip x
+let op_neg ~out x = unary_op "neg" caml_neg ~out x
+let op_log2 ~out x = unary_op "log2" caml_log2 ~out x
+let op_log ~out x = unary_op "log" caml_log ~out x
+let op_exp2 ~out x = unary_op "exp2" caml_exp2 ~out x
+let op_exp ~out x = unary_op "exp" caml_exp ~out x
+let op_sin ~out x = unary_op "sin" caml_sin ~out x
+let op_cos ~out x = unary_op "cos" caml_cos ~out x
+let op_sqrt ~out x = unary_op "sqrt" caml_sqrt ~out x
+let op_abs ~out x = unary_op "abs" caml_abs ~out x
+let op_recip ~out x = unary_op "recip" caml_recip ~out x
 
-(* Ternary Op *)
-let op_where cond if_true if_false =
+(* Ternary Op - writes to caller-provided out buffer *)
+let op_where ~out cond if_true if_false =
   (* Ensure all inputs have the same shape *)
   let cond_shape = shape cond in
   let if_true_shape = shape if_true in
@@ -449,9 +477,6 @@ let op_where cond if_true if_false =
     let if_true' = ensure_materializable if_true in
     let if_false' = ensure_materializable if_false in
 
-    (* Create output tensor with same dtype as if_true/if_false *)
-    let out = create_tensor if_true.context if_true.dtype if_true_shape in
-
     (* Convert to FFI tensors *)
     let cond_ffi = to_ffi_tensor cond' in
     let if_true_ffi = to_ffi_tensor if_true' in
@@ -459,72 +484,43 @@ let op_where cond if_true if_false =
     let out_ffi = to_ffi_tensor out in
 
     (* Call C implementation *)
-    caml_where cond_ffi if_true_ffi if_false_ffi out_ffi;
+    caml_where cond_ffi if_true_ffi if_false_ffi out_ffi
 
-    out
-
-(* Reduction Ops *)
-let reduce_op _op_name ffi_op ~axes ~keepdims x =
+(* Reduction Ops - writes to caller-provided out buffer *)
+let reduce_op _op_name ffi_op ~out ~axes ~keepdims x =
   let input_shape = shape x in
   let ndim = Array.length input_shape in
 
-  (* Special case: if input is already a scalar (0-dimensional), just return a
-     copy *)
-  if ndim = 0 then (
-    let out = create_tensor x.context x.dtype [||] in
-    (* Copy the scalar value *)
-    Array1.set out.buffer 0 (Array1.get x.buffer 0);
-    out)
+  (* Special case: if input is already a scalar (0-dimensional), just copy *)
+  if ndim = 0 then
+    Array1.set out.buffer 0 (Array1.get x.buffer 0)
   else
     (* Normalize axes *)
     let normalized_axes =
       Array.map (fun ax -> if ax < 0 then ax + ndim else ax) axes
     in
 
-    (* Compute output shape *)
-    let output_shape =
-      if keepdims then
-        Array.mapi
-          (fun i dim -> if Array.mem i normalized_axes then 1 else dim)
-          input_shape
-      else
-        let filtered = ref [] in
-        Array.iteri
-          (fun i dim ->
-            if not (Array.mem i normalized_axes) then
-              filtered := dim :: !filtered)
-          input_shape;
-        Array.of_list (List.rev !filtered)
-    in
-
-    (* Handle empty output shape (full reduction) *)
-    let output_shape =
-      if Array.length output_shape = 0 then [||] else output_shape
-    in
-
     (* Ensure input is materializable *)
     let x' = ensure_materializable x in
-
-    (* Create output tensor *)
-    let out = create_tensor x.context x.dtype output_shape in
 
     (* Convert to FFI tensors *)
     let x_ffi = to_ffi_tensor x' in
     let out_ffi = to_ffi_tensor out in
 
     (* Call C implementation *)
-    ffi_op x_ffi out_ffi normalized_axes keepdims;
+    ffi_op x_ffi out_ffi normalized_axes keepdims
 
-    out
+let op_reduce_sum ~out ~axes ~keepdims x =
+  reduce_op "reduce_sum" caml_reduce_sum ~out ~axes ~keepdims x
 
-let op_reduce_sum ~axes ~keepdims x =
-  reduce_op "reduce_sum" caml_reduce_sum ~axes ~keepdims x
+let op_reduce_max ~out ~axes ~keepdims x =
+  reduce_op "reduce_max" caml_reduce_max ~out ~axes ~keepdims x
 
-let op_reduce_max ~axes ~keepdims x =
-  reduce_op "reduce_max" caml_reduce_max ~axes ~keepdims x
+let op_reduce_prod ~out ~axes ~keepdims x =
+  reduce_op "reduce_prod" caml_reduce_prod ~out ~axes ~keepdims x
 
-let op_reduce_prod ~axes ~keepdims x =
-  reduce_op "reduce_prod" caml_reduce_prod ~axes ~keepdims x
+let op_reduce_min ~out ~axes ~keepdims x =
+  reduce_op "reduce_min" caml_reduce_min ~out ~axes ~keepdims x
 
 let op_associative_scan ~axis ~op x =
   let x_shape = shape x in
@@ -740,7 +736,7 @@ let op_scatter ?(mode = `Set) ?(unique_indices = false) data_template indices
 
   out
 
-let op_unfold x ~kernel_size ~stride ~dilation ~padding =
+let op_unfold ?out x ~kernel_size ~stride ~dilation ~padding =
   let x' = ensure_materializable x in
 
   let in_shape = shape x in
@@ -772,13 +768,17 @@ let op_unfold x ~kernel_size ~stride ~dilation ~padding =
   let spatial_prod = Array.fold_left ( * ) 1 out_spatial in
   let out_shape = [| batch_size; in_channels * kernel_prod; spatial_prod |] in
 
-  let out = create_tensor x.context x.dtype out_shape in
+  let out =
+    match out with
+    | Some o -> o
+    | None -> create_tensor x.context x.dtype out_shape
+  in
   let x_ffi = to_ffi_tensor x' in
   let out_ffi = to_ffi_tensor out in
   caml_unfold x_ffi kernel_size stride dilation padding_flat out_ffi;
   out
 
-let op_fold x ~output_size ~kernel_size ~stride ~dilation ~padding =
+let op_fold ?out x ~output_size ~kernel_size ~stride ~dilation ~padding =
   let x' = ensure_materializable x in
 
   let in_shape = shape x in
@@ -808,53 +808,23 @@ let op_fold x ~output_size ~kernel_size ~stride ~dilation ~padding =
 
   let out_shape = Array.concat [ [| batch_size; channels |]; output_size ] in
 
-  let out = create_tensor x.context x.dtype out_shape in
+  let out =
+    match out with
+    | Some o -> o
+    | None -> create_tensor x.context x.dtype out_shape
+  in
   let x_ffi = to_ffi_tensor x' in
   let out_ffi = to_ffi_tensor out in
   caml_fold x_ffi output_size kernel_size stride dilation padding_flat out_ffi;
   out
 
-let op_matmul x y =
+let op_matmul ~out x y =
   let x' = ensure_materializable x in
   let y' = ensure_materializable y in
-
-  (* Calculate output shape for matrix multiplication *)
-  let x_shape = shape x in
-  let y_shape = shape y in
-  let x_ndim = Array.length x_shape in
-  let y_ndim = Array.length y_shape in
-
-  (* For matmul: [..., m, k] @ [..., k, n] -> [..., m, n] *)
-  let out_shape =
-    if x_ndim = 1 && y_ndim = 1 then [||] (* dot product produces scalar *)
-    else if x_ndim = 1 then
-      (* [k] @ [..., k, n] -> [..., n] *)
-      Array.init (y_ndim - 1) (fun i ->
-          if i < y_ndim - 2 then y_shape.(i) else y_shape.(y_ndim - 1))
-    else if y_ndim = 1 then
-      (* [..., m, k] @ [k] -> [..., m] *)
-      Array.init (x_ndim - 1) (fun i -> x_shape.(i))
-    else
-      (* [..., m, k] @ [..., k, n] -> [..., m, n] *)
-      let broadcast_ndim = max x_ndim y_ndim in
-      Array.init broadcast_ndim (fun i ->
-          let i_from_end = broadcast_ndim - 1 - i in
-          if i_from_end = 0 then y_shape.(y_ndim - 1)
-          else if i_from_end = 1 then x_shape.(x_ndim - 2)
-          else
-            let x_idx = i - (broadcast_ndim - x_ndim) in
-            let y_idx = i - (broadcast_ndim - y_ndim) in
-            if x_idx < 0 && y_idx >= 0 then y_shape.(y_idx)
-            else if y_idx < 0 && x_idx >= 0 then x_shape.(x_idx)
-            else max x_shape.(x_idx) y_shape.(y_idx))
-  in
-
-  let out = create_tensor x.context x.dtype out_shape in
   let x_ffi = to_ffi_tensor x' in
   let y_ffi = to_ffi_tensor y' in
   let out_ffi = to_ffi_tensor out in
-  caml_matmul x_ffi y_ffi out_ffi;
-  out
+  caml_matmul x_ffi y_ffi out_ffi
 
 (* Helper to compute contiguous strides in bytes *)
 let contiguous_strides shape elem_size =
@@ -868,10 +838,14 @@ let contiguous_strides shape elem_size =
     Array.map (fun s -> s * elem_size) strides
 
 (* Fourier transforms using PocketFFT *)
-let op_fft (type a b) (x : (a, b) t) ~axes : (a, b) t =
+let op_fft (type a b) ?out (x : (a, b) t) ~axes : (a, b) t =
   let x' = materialize x in
   let out_shape = shape x' in
-  let out = create_tensor x.context x.dtype out_shape in
+  let out =
+    match out with
+    | Some o -> o
+    | None -> create_tensor x.context x.dtype out_shape
+  in
 
   let shape_arr = out_shape in
   let elem_size = Dtype.itemsize x.dtype in
@@ -894,10 +868,14 @@ let op_fft (type a b) (x : (a, b) t) ~axes : (a, b) t =
 
   out
 
-let op_ifft (type a b) (x : (a, b) t) ~axes : (a, b) t =
+let op_ifft (type a b) ?out (x : (a, b) t) ~axes : (a, b) t =
   let x' = materialize x in
   let out_shape = shape x' in
-  let out = create_tensor x.context x.dtype out_shape in
+  let out =
+    match out with
+    | Some o -> o
+    | None -> create_tensor x.context x.dtype out_shape
+  in
 
   let shape_arr = out_shape in
   let elem_size = Dtype.itemsize x.dtype in
@@ -920,7 +898,7 @@ let op_ifft (type a b) (x : (a, b) t) ~axes : (a, b) t =
 
   out
 
-let op_rfft (type a b c d) (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes :
+let op_rfft (type a b c d) ?out (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes :
     (c, d) t =
   let x' = materialize x in
 
@@ -935,7 +913,11 @@ let op_rfft (type a b c d) (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes :
      in
      out_shape.(axis_idx) <- (in_shape.(axis_idx) / 2) + 1);
 
-  let out = create_tensor x.context dtype out_shape in
+  let out =
+    match out with
+    | Some o -> o
+    | None -> create_tensor x.context dtype out_shape
+  in
 
   let strides_in = contiguous_strides in_shape (Dtype.itemsize x.dtype) in
   let strides_out = contiguous_strides out_shape (Dtype.itemsize dtype) in
@@ -967,8 +949,8 @@ let op_rfft (type a b c d) (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes :
 
   out
 
-let op_irfft (type a b c d) (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes ~s :
-    (c, d) t =
+let op_irfft (type a b c d) ?out (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes
+    ~s : (c, d) t =
   let x' = materialize x in
 
   (* Calculate output shape for irfft *)
@@ -988,7 +970,11 @@ let op_irfft (type a b c d) (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes ~s :
      in
      out_shape.(axis_idx) <- size);
 
-  let out = create_tensor x.context dtype out_shape in
+  let out =
+    match out with
+    | Some o -> o
+    | None -> create_tensor x.context dtype out_shape
+  in
 
   let strides_in = contiguous_strides in_shape (Dtype.itemsize x.dtype) in
   let strides_out = contiguous_strides out_shape (Dtype.itemsize dtype) in

@@ -207,51 +207,66 @@ let debug_handler () =
                 | [] -> failwith "Cannot pop from an empty context stack"
                 | _ :: rest -> context_stack := rest);
                 continue k ())
-        | E_add { a; b } ->
+        | E_add { out; a; b } ->
             Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = op_add a b in
+              (fun (k : (unit, _) Effect.Deep.continuation) ->
+                op_add ~out a b;
                 log_operation !context_stack "add"
                   [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_mul { a; b } ->
+                  (Tensor_ref out);
+                continue k ())
+        | E_sub { out; a; b } ->
             Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = op_mul a b in
+              (fun (k : (unit, _) Effect.Deep.continuation) ->
+                op_sub ~out a b;
+                log_operation !context_stack "sub"
+                  [ Tensor_ref a; Tensor_ref b ]
+                  (Tensor_ref out);
+                continue k ())
+        | E_mul { out; a; b } ->
+            Some
+              (fun (k : (unit, _) Effect.Deep.continuation) ->
+                op_mul ~out a b;
                 log_operation !context_stack "mul"
                   [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_matmul { a; b } ->
+                  (Tensor_ref out);
+                continue k ())
+        | E_matmul { out; a; b } ->
             Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = op_matmul a b in
+              (fun (k : (unit, _) Effect.Deep.continuation) ->
+                op_matmul ~out a b;
                 log_operation !context_stack "matmul"
                   [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_neg { t_in } ->
+                  (Tensor_ref out);
+                continue k ())
+        | E_neg { out; t_in } ->
             Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = op_neg t_in in
+              (fun (k : (unit, _) Effect.Deep.continuation) ->
+                op_neg ~out t_in;
                 log_operation !context_stack "neg" [ Tensor_ref t_in ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_reduce_sum { t_in; axes; keepdims } ->
+                  (Tensor_ref out);
+                continue k ())
+        | E_reduce_sum { out; t_in; axes; keepdims } ->
             Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = op_reduce_sum ~axes ~keepdims t_in in
+              (fun (k : (unit, _) Effect.Deep.continuation) ->
+                op_reduce_sum ~out ~axes ~keepdims t_in;
                 log_operation !context_stack "sum" [ Tensor_ref t_in ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_reduce_max { t_in; axes; keepdims } ->
+                  (Tensor_ref out);
+                continue k ())
+        | E_reduce_max { out; t_in; axes; keepdims } ->
             Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = op_reduce_max ~axes ~keepdims t_in in
+              (fun (k : (unit, _) Effect.Deep.continuation) ->
+                op_reduce_max ~out ~axes ~keepdims t_in;
                 log_operation !context_stack "max" [ Tensor_ref t_in ]
-                  (Tensor_ref result);
-                continue k result)
+                  (Tensor_ref out);
+                continue k ())
+        | E_reduce_min { out; t_in; axes; keepdims } ->
+            Some
+              (fun (k : (unit, _) Effect.Deep.continuation) ->
+                op_reduce_min ~out ~axes ~keepdims t_in;
+                log_operation !context_stack "min" [ Tensor_ref t_in ]
+                  (Tensor_ref out);
+                continue k ())
         | E_reshape { t_in; new_shape } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
@@ -266,70 +281,70 @@ let debug_handler () =
                 log_operation !context_stack "cast" [ Tensor_ref t_in ]
                   (Tensor_ref result);
                 continue k result)
-        | E_sqrt { t_in } ->
+        | E_sqrt { out; t_in } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = op_sqrt t_in in
+                op_sqrt ~out t_in;
                 log_operation !context_stack "sqrt" [ Tensor_ref t_in ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_exp2 { t_in } ->
+                  (Tensor_ref out);
+                continue k ())
+        | E_exp2 { out; t_in } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = op_exp2 t_in in
+                op_exp2 ~out t_in;
                 log_operation !context_stack "exp2" [ Tensor_ref t_in ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_log2 { t_in } ->
+                  (Tensor_ref out);
+                continue k ())
+        | E_log2 { out; t_in } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = op_log2 t_in in
+                op_log2 ~out t_in;
                 log_operation !context_stack "log2" [ Tensor_ref t_in ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_sin { t_in } ->
+                  (Tensor_ref out);
+                continue k ())
+        | E_sin { out; t_in } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = op_sin t_in in
+                op_sin ~out t_in;
                 log_operation !context_stack "sin" [ Tensor_ref t_in ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_fdiv { a; b } ->
+                  (Tensor_ref out);
+                continue k ())
+        | E_fdiv { out; a; b } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = op_fdiv a b in
+                op_fdiv ~out a b;
                 log_operation !context_stack "div"
                   [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_pow { a; b } ->
+                  (Tensor_ref out);
+                continue k ())
+        | E_pow { out; a; b } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = op_pow a b in
+                op_pow ~out a b;
                 log_operation !context_stack "pow"
                   [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_max { a; b } ->
+                  (Tensor_ref out);
+                continue k ())
+        | E_max { out; a; b } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = op_max a b in
+                op_max ~out a b;
                 log_operation !context_stack "max"
                   [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_where { condition; if_true; if_false } ->
+                  (Tensor_ref out);
+                continue k ())
+        | E_where { out; condition; if_true; if_false } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = op_where condition if_true if_false in
+                op_where ~out condition if_true if_false;
                 log_operation !context_stack "where"
                   [
                     Tensor_ref condition;
                     Tensor_ref if_true;
                     Tensor_ref if_false;
                   ]
-                  (Tensor_ref result);
-                continue k result)
+                  (Tensor_ref out);
+                continue k ())
         | E_cat { t_list; axis } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
@@ -427,76 +442,76 @@ let debug_handler () =
                 log_operation !context_stack "const_array" []
                   (Tensor_ref result);
                 continue k result)
-        | E_idiv { a; b } ->
+        | E_idiv { out; a; b } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = op_idiv a b in
+                op_idiv ~out a b;
                 log_operation !context_stack "idiv"
                   [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_mod { a; b } ->
+                  (Tensor_ref out);
+                continue k ())
+        | E_mod { out; a; b } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = T.mod_ a b in
+                op_mod ~out a b;
                 log_operation !context_stack "mod"
                   [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_cmplt { a; b } ->
+                  (Tensor_ref out);
+                continue k ())
+        | E_cmplt { out; a; b } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = op_cmplt a b in
+                op_cmplt ~out a b;
                 log_operation !context_stack "lt"
                   [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_cmpne { a; b } ->
+                  (Tensor_ref out);
+                continue k ())
+        | E_cmpne { out; a; b } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = op_cmpne a b in
+                op_cmpne ~out a b;
                 log_operation !context_stack "ne"
                   [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_xor { a; b } ->
+                  (Tensor_ref out);
+                continue k ())
+        | E_xor { out; a; b } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = op_xor a b in
+                op_xor ~out a b;
                 log_operation !context_stack "xor"
                   [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_or { a; b } ->
+                  (Tensor_ref out);
+                continue k ())
+        | E_or { out; a; b } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = op_or a b in
+                op_or ~out a b;
                 log_operation !context_stack "or"
                   [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_and { a; b } ->
+                  (Tensor_ref out);
+                continue k ())
+        | E_and { out; a; b } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = op_and a b in
+                op_and ~out a b;
                 log_operation !context_stack "and"
                   [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_recip { t_in } ->
+                  (Tensor_ref out);
+                continue k ())
+        | E_recip { out; t_in } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = op_recip t_in in
+                op_recip ~out t_in;
                 log_operation !context_stack "recip" [ Tensor_ref t_in ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_reduce_prod { t_in; axes; keepdims } ->
+                  (Tensor_ref out);
+                continue k ())
+        | E_reduce_prod { out; t_in; axes; keepdims } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = op_reduce_prod ~axes ~keepdims t_in in
+                op_reduce_prod ~out ~axes ~keepdims t_in;
                 log_operation !context_stack "prod" [ Tensor_ref t_in ]
-                  (Tensor_ref result);
-                continue k result)
+                  (Tensor_ref out);
+                continue k ())
         | E_assign { dst; src } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->

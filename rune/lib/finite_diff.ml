@@ -11,13 +11,12 @@ let finite_diff (type a b c d) ?(eps = default_eps) ?(method_ = `Central)
   let x_shape = T.shape x in
   let x_numel = Array.fold_left ( * ) 1 x_shape in
 
-  if x_numel = 0 then T.zeros (context x) (dtype x) x_shape
+  if x_numel = 0 then T.zeros (dtype x) x_shape
   else
     (* Create epsilon scalar with proper type *)
     let eps_scalar =
-      let ctx = context x in
       let dt = dtype x in
-      T.full ctx dt [||] (Dtype.of_float dt eps)
+      T.full dt [||] (Dtype.of_float dt eps)
     in
 
     (* For simple scalar case *)
@@ -47,7 +46,7 @@ let finite_diff (type a b c d) ?(eps = default_eps) ?(method_ = `Central)
           T.cast (dtype x) (T.div result (T.cast (dtype result) eps_scalar))
     else
       (* For vector/matrix case - need to compute gradient elementwise *)
-      let grad = T.zeros (context x) (dtype x) x_shape in
+      let grad = T.zeros (dtype x) x_shape in
       let x_flat = T.reshape [| x_numel |] x in
       let grad_flat = T.reshape [| x_numel |] grad in
 
@@ -125,9 +124,7 @@ let finite_diff_jacobian (type a b c d) ?(eps = default_eps)
   let output_shape = T.shape f_x in
   let output_numel = Array.fold_left ( * ) 1 output_shape in
 
-  let jacobian =
-    T.zeros (context f_x) (dtype f_x) [| output_numel; x_numel |]
-  in
+  let jacobian = T.zeros (dtype f_x) [| output_numel; x_numel |] in
 
   if x_numel = 0 || output_numel = 0 then jacobian
   else
@@ -135,9 +132,8 @@ let finite_diff_jacobian (type a b c d) ?(eps = default_eps)
 
     (* Create epsilon scalar with proper type *)
     let eps_scalar =
-      let ctx = context x in
       let dt = dtype x in
-      T.full ctx dt [||] (Dtype.of_float dt eps)
+      T.full dt [||] (Dtype.of_float dt eps)
     in
 
     for i = 0 to x_numel - 1 do
@@ -158,9 +154,8 @@ let finite_diff_jacobian (type a b c d) ?(eps = default_eps)
           let f_minus = T.reshape [| output_numel |] (f x_minus) in
 
           let two_eps_out =
-            let ctx = context f_x in
             let dt = dtype f_x in
-            T.full ctx dt [||] (Dtype.of_float dt (2.0 *. eps))
+            T.full dt [||] (Dtype.of_float dt (2.0 *. eps))
           in
           let grad_col = T.div (T.sub f_plus f_minus) two_eps_out in
 
@@ -176,9 +171,8 @@ let finite_diff_jacobian (type a b c d) ?(eps = default_eps)
           let f_x_flat = T.reshape [| output_numel |] f_x in
 
           let eps_out =
-            let ctx = context f_x in
             let dt = dtype f_x in
-            T.full ctx dt [||] (Dtype.of_float dt eps)
+            T.full dt [||] (Dtype.of_float dt eps)
           in
           let grad_col = T.div (T.sub f_plus f_x_flat) eps_out in
 
@@ -194,9 +188,8 @@ let finite_diff_jacobian (type a b c d) ?(eps = default_eps)
           let f_minus = T.reshape [| output_numel |] (f x_minus) in
 
           let eps_out =
-            let ctx = context f_x in
             let dt = dtype f_x in
-            T.full ctx dt [||] (Dtype.of_float dt eps)
+            T.full dt [||] (Dtype.of_float dt eps)
           in
           let grad_col = T.div (T.sub f_x_flat f_minus) eps_out in
 

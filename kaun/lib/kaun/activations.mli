@@ -17,13 +17,14 @@ open Rune
     remain useful in specific contexts and serve as building blocks for modern
     variants. *)
 
-val relu : (float, 'a) t -> (float, 'a) t
-(** [relu x] applies Rectified Linear Unit activation.
+val relu : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [relu ?out x] applies Rectified Linear Unit activation.
 
     Outputs the input directly if positive, otherwise outputs zero. Simple and
     computationally efficient, but suffers from dying ReLU problem where neurons
     can become permanently inactive.
 
+    @param out Optional pre-allocated output tensor.
     @param x Input tensor of any shape.
 
     @return Tensor of same shape with ReLU applied element-wise.
@@ -48,13 +49,14 @@ val relu : (float, 'a) t -> (float, 'a) t
     - Excellent for hidden layers in deep networks
     - Zero gradient for negative inputs can halt learning *)
 
-val relu6 : (float, 'a) t -> (float, 'a) t
-(** [relu6 x] applies ReLU6 activation with upper bound.
+val relu6 : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [relu6 ?out x] applies ReLU6 activation with upper bound.
 
     Caps the output at 6 to prevent activation explosion in mobile/embedded
     models. Commonly used in MobileNet architectures for quantization-friendly
     behavior.
 
+    @param out Optional pre-allocated output tensor.
     @param x Input tensor of any shape.
 
     @return Tensor of same shape with ReLU6 applied element-wise.
@@ -78,13 +80,14 @@ val relu6 : (float, 'a) t -> (float, 'a) t
     - Used in MobileNet, EfficientNet architectures
     - Maintains ReLU's computational efficiency *)
 
-val sigmoid : (float, 'a) t -> (float, 'a) t
-(** [sigmoid x] applies sigmoid activation.
+val sigmoid : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [sigmoid ?out x] applies sigmoid activation.
 
     Maps any real number to the range (0, 1). Smooth and differentiable
     everywhere, but suffers from vanishing gradient problem for large input
     magnitudes. Primarily used in binary classification output layers.
 
+    @param out Optional pre-allocated output tensor.
     @param x Input tensor of any shape.
 
     @return Tensor of same shape with sigmoid applied element-wise.
@@ -109,13 +112,14 @@ val sigmoid : (float, 'a) t -> (float, 'a) t
     - Ideal for binary classification output layers
     - Avoid in hidden layers of deep networks *)
 
-val tanh : (float, 'a) t -> (float, 'a) t
-(** [tanh x] applies hyperbolic tangent activation.
+val tanh : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [tanh ?out x] applies hyperbolic tangent activation.
 
     Maps inputs to the range (-1, 1) with zero-centered outputs. Better than
     sigmoid for hidden layers due to zero-centered property, but still suffers
     from vanishing gradients.
 
+    @param out Optional pre-allocated output tensor.
     @param x Input tensor of any shape.
 
     @return Tensor of same shape with tanh applied element-wise.
@@ -140,13 +144,19 @@ val tanh : (float, 'a) t -> (float, 'a) t
     - Better than sigmoid for hidden layers
     - Used in LSTM/GRU gating mechanisms *)
 
-val softmax : ?axes:int list -> ?scale:float -> (float, 'a) t -> (float, 'a) t
-(** [softmax ?axes ?scale x] applies softmax normalization.
+val softmax :
+  ?out:(float, 'a) t ->
+  ?axes:int list ->
+  ?scale:float ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [softmax ?out ?axes ?scale x] applies softmax normalization.
 
     Converts a vector of real numbers into a probability distribution. The
     output values sum to 1 and are all positive. Essential for multi-class
     classification output layers.
 
+    @param out Optional pre-allocated output tensor.
     @param axes
       Axes along which to compute softmax. Defaults to last axis. Each slice
       along these axes will sum to 1.
@@ -186,13 +196,14 @@ val softmax : ?axes:int list -> ?scale:float -> (float, 'a) t -> (float, 'a) t
     classical functions. These typically provide better gradient flow, faster
     convergence, and improved performance on deep networks. *)
 
-val gelu : (float, 'a) t -> (float, 'a) t
-(** [gelu x] applies Gaussian Error Linear Unit activation.
+val gelu : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [gelu ?out x] applies Gaussian Error Linear Unit activation.
 
     Smooth approximation to ReLU that weights inputs by their percentile in a
     Gaussian distribution. Provides better gradient flow than ReLU and has
     become the standard in transformer architectures.
 
+    @param out Optional pre-allocated output tensor.
     @param x Input tensor of any shape.
 
     @return Tensor of same shape with GELU applied element-wise.
@@ -219,13 +230,14 @@ val gelu : (float, 'a) t -> (float, 'a) t
     - Non-zero gradient everywhere
     - Self-gating behavior based on input magnitude *)
 
-val silu : (float, 'a) t -> (float, 'a) t
-(** [silu x] applies Sigmoid Linear Unit (also known as Swish) activation.
+val silu : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [silu ?out x] applies Sigmoid Linear Unit (also known as Swish) activation.
 
     Multiplies input by its sigmoid, providing smooth behavior and better
     gradient properties than ReLU. Self-gating mechanism allows the function to
     selectively emphasize or suppress features.
 
+    @param out Optional pre-allocated output tensor.
     @param x Input tensor of any shape.
 
     @return Tensor of same shape with SiLU applied element-wise.
@@ -250,26 +262,28 @@ val silu : (float, 'a) t -> (float, 'a) t
     - Non-monotonic with minimum at x ≈ -0.278
     - Bounded below by -0.278x *)
 
-val swish : (float, 'a) t -> (float, 'a) t
-(** [swish x] applies Swish activation (alias for {!silu}).
+val swish : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [swish ?out x] applies Swish activation (alias for {!silu}).
 
     Identical to SiLU - different names for the same function. Swish was the
     original name from Google's research, while SiLU is the more standardized
     name in recent literature.
 
+    @param out Optional pre-allocated output tensor.
     @param x Input tensor of any shape.
 
     @return Tensor of same shape with Swish applied element-wise.
 
     See {!silu} for detailed documentation and examples. *)
 
-val mish : (float, 'a) t -> (float, 'a) t
-(** [mish x] applies Mish activation function.
+val mish : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [mish ?out x] applies Mish activation function.
 
     Smooth, non-monotonic activation that combines benefits of ReLU and Swish.
     Shows improved performance on some computer vision tasks but is
     computationally more expensive.
 
+    @param out Optional pre-allocated output tensor.
     @param x Input tensor of any shape.
 
     @return Tensor of same shape with Mish applied element-wise.
@@ -301,14 +315,16 @@ val mish : (float, 'a) t -> (float, 'a) t
     training or be tuned for specific tasks. These offer more flexibility than
     fixed activations. *)
 
-val leaky_relu : ?negative_slope:float -> (float, 'a) t -> (float, 'a) t
-(** [leaky_relu ?negative_slope x] applies Leaky ReLU with configurable negative
-    slope.
+val leaky_relu :
+  ?out:(float, 'a) t -> ?negative_slope:float -> (float, 'a) t -> (float, 'a) t
+(** [leaky_relu ?out ?negative_slope x] applies Leaky ReLU with configurable
+    negative slope.
 
     Addresses the dying ReLU problem by allowing small negative values to pass
     through. The slope for negative inputs is configurable, enabling tuning for
     specific tasks.
 
+    @param out Optional pre-allocated output tensor.
     @param negative_slope
       Slope for negative inputs. Default is 0.01. Must be positive and typically
       small (0.01 to 0.3).
@@ -339,13 +355,14 @@ val leaky_relu : ?negative_slope:float -> (float, 'a) t -> (float, 'a) t
     - Common slopes: 0.01 (default), 0.1, 0.2
     - Good alternative to ReLU in deep networks *)
 
-val elu : ?alpha:float -> (float, 'a) t -> (float, 'a) t
-(** [elu ?alpha x] applies Exponential Linear Unit activation.
+val elu : ?out:(float, 'a) t -> ?alpha:float -> (float, 'a) t -> (float, 'a) t
+(** [elu ?out ?alpha x] applies Exponential Linear Unit activation.
 
     Smooth function that approaches -α for large negative inputs. Provides
     zero-centered activations and better gradient flow than ReLU while avoiding
     the dying ReLU problem.
 
+    @param out Optional pre-allocated output tensor.
     @param alpha
       Parameter controlling the saturation value for negative inputs. Default is
       1.0. Must be positive.
@@ -376,13 +393,14 @@ val elu : ?alpha:float -> (float, 'a) t -> (float, 'a) t
     - Better gradient flow than ReLU
     - Reduces bias shift effect *)
 
-val selu : (float, 'a) t -> (float, 'a) t
-(** [selu x] applies Scaled Exponential Linear Unit activation.
+val selu : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [selu ?out x] applies Scaled Exponential Linear Unit activation.
 
     Self-normalizing activation that maintains zero mean and unit variance
     through the network when used with appropriate weight initialization. Has
     specific mathematical properties that enable self-normalization.
 
+    @param out Optional pre-allocated output tensor.
     @param x Input tensor of any shape.
 
     @return Tensor of same shape with SELU applied element-wise.
@@ -408,13 +426,16 @@ val selu : (float, 'a) t -> (float, 'a) t
     - Works best with dropout, not other normalization
     - Enables very deep networks without normalization *)
 
-val prelu : (float, 'a) t -> (float, 'a) t -> (float, 'a) t
-(** [prelu alpha x] applies Parametric ReLU with learnable slope parameters.
+val prelu :
+  ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [prelu ?out alpha x] applies Parametric ReLU with learnable slope
+    parameters.
 
     Generalizes Leaky ReLU by making the negative slope learnable. Different
     channels or elements can learn different slopes, providing more flexibility
     than fixed-slope variants.
 
+    @param out Optional pre-allocated output tensor.
     @param alpha
       Learnable slope parameters for negative inputs. Can be scalar (shared) or
       same shape as x (element-wise). Values are typically initialized to small
@@ -455,13 +476,14 @@ val prelu : (float, 'a) t -> (float, 'a) t -> (float, 'a) t
     through. Popular in transformer architectures and modern language models for
     their ability to control information flow dynamically. *)
 
-val glu : (float, 'a) t -> (float, 'a) t -> (float, 'a) t
-(** [glu x gate] applies Gated Linear Unit.
+val glu : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [glu ?out x gate] applies Gated Linear Unit.
 
     Multiplies input by sigmoid-activated gate values, allowing selective
     information flow. The gating mechanism enables the model to control which
     features are emphasized or suppressed.
 
+    @param out Optional pre-allocated output tensor.
     @param x Input values to be gated.
     @param gate Gate values that control information flow.
 
@@ -488,13 +510,14 @@ val glu : (float, 'a) t -> (float, 'a) t -> (float, 'a) t
     - Enables dynamic feature selection
     - Computationally efficient gating mechanism *)
 
-val swiglu : (float, 'a) t -> (float, 'a) t
-(** [swiglu x] applies SwiGLU (Swish Gated Linear Unit).
+val swiglu : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [swiglu ?out x] applies SwiGLU (Swish Gated Linear Unit).
 
     Self-gating variant where the input is split in half, with one half gating
     the other using SiLU/Swish activation. Popular in transformer architectures,
     especially large language models.
 
+    @param out Optional pre-allocated output tensor.
     @param x
       Input tensor where the last dimension is split in half. Last dimension
       must be even.
@@ -524,13 +547,14 @@ val swiglu : (float, 'a) t -> (float, 'a) t
     - Requires even-dimensional input
     - Combines gating with SiLU's smooth properties *)
 
-val geglu : (float, 'a) t -> (float, 'a) t -> (float, 'a) t
-(** [geglu x gate] applies GeGLU (GELU Gated Linear Unit).
+val geglu : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [geglu ?out x gate] applies GeGLU (GELU Gated Linear Unit).
 
     Uses GELU activation for gating instead of sigmoid. Combines GELU's smooth
     properties with GLU's selective information flow, popular in vision
     transformers and modern architectures.
 
+    @param out Optional pre-allocated output tensor.
     @param x Input values to be gated.
     @param gate Gate values processed with GELU activation.
 
@@ -556,13 +580,14 @@ val geglu : (float, 'a) t -> (float, 'a) t -> (float, 'a) t
     - Provides sophisticated gating mechanism
     - Popular in transformer feed-forward networks *)
 
-val reglu : (float, 'a) t -> (float, 'a) t -> (float, 'a) t
-(** [reglu x gate] applies ReGLU (ReLU Gated Linear Unit).
+val reglu : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [reglu ?out x gate] applies ReGLU (ReLU Gated Linear Unit).
 
     Uses ReLU activation for gating, providing sparse gating where only positive
     gate values allow information to pass through. Simpler and more
     computationally efficient than other GLU variants.
 
+    @param out Optional pre-allocated output tensor.
     @param x Input values to be gated.
     @param gate Gate values processed with ReLU activation.
 
@@ -591,13 +616,14 @@ val reglu : (float, 'a) t -> (float, 'a) t -> (float, 'a) t
 
 (** {1 Other Activations} *)
 
-val softplus : (float, 'a) t -> (float, 'a) t
-(** [softplus x] applies softplus activation.
+val softplus : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [softplus ?out x] applies softplus activation.
 
     Smooth approximation to ReLU that is differentiable everywhere. Always
     positive and approaches ReLU for large positive inputs. Used as a smooth
     alternative to ReLU or in probabilistic models.
 
+    @param out Optional pre-allocated output tensor.
     @param x Input tensor of any shape.
 
     @return Tensor of same shape with softplus applied element-wise.
@@ -622,12 +648,13 @@ val softplus : (float, 'a) t -> (float, 'a) t
     - Can cause numerical overflow for large x
     - Used in Mish and probabilistic models *)
 
-val softsign : (float, 'a) t -> (float, 'a) t
-(** [softsign x] applies softsign activation.
+val softsign : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [softsign ?out x] applies softsign activation.
 
     Smooth alternative to tanh that saturates more gradually. Computationally
     simpler than tanh while providing similar range and zero-centered outputs.
 
+    @param out Optional pre-allocated output tensor.
     @param x Input tensor of any shape.
 
     @return Tensor of same shape with softsign applied element-wise.
@@ -652,13 +679,19 @@ val softsign : (float, 'a) t -> (float, 'a) t
     - Polynomial rather than exponential function
     - Less commonly used than tanh or modern activations *)
 
-val hard_sigmoid : ?alpha:float -> ?beta:float -> (float, 'a) t -> (float, 'a) t
-(** [hard_sigmoid ?alpha ?beta x] applies hard sigmoid activation.
+val hard_sigmoid :
+  ?out:(float, 'a) t ->
+  ?alpha:float ->
+  ?beta:float ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [hard_sigmoid ?out ?alpha ?beta x] applies hard sigmoid activation.
 
     Piecewise linear approximation to sigmoid that is computationally efficient
     and quantization-friendly. Used in mobile and embedded applications where
     computational resources are limited.
 
+    @param out Optional pre-allocated output tensor.
     @param alpha
       Slope of the linear region. Default is 1/6 ≈ 0.167. Controls the steepness
       of the activation.
@@ -692,13 +725,14 @@ val hard_sigmoid : ?alpha:float -> ?beta:float -> (float, 'a) t -> (float, 'a) t
     - Used in MobileNet architectures
     - Default parameters chosen to approximate sigmoid *)
 
-val hard_tanh : (float, 'a) t -> (float, 'a) t
-(** [hard_tanh x] applies hard tanh activation.
+val hard_tanh : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [hard_tanh ?out x] applies hard tanh activation.
 
     Piecewise linear approximation to tanh that clips values to [-1, 1]. Simple
     and computationally efficient while maintaining tanh's zero-centered
     property.
 
+    @param out Optional pre-allocated output tensor.
     @param x Input tensor of any shape.
 
     @return Tensor of same shape with hard tanh applied element-wise.
@@ -723,13 +757,14 @@ val hard_tanh : (float, 'a) t -> (float, 'a) t
     - Sharp transitions at boundaries
     - Simple clipping operation *)
 
-val hard_swish : (float, 'a) t -> (float, 'a) t
-(** [hard_swish x] applies hard swish activation.
+val hard_swish : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [hard_swish ?out x] applies hard swish activation.
 
     Computationally efficient approximation to swish/SiLU using hard sigmoid
     instead of regular sigmoid. Designed for mobile applications requiring fast
     inference with minimal accuracy loss.
 
+    @param out Optional pre-allocated output tensor.
     @param x Input tensor of any shape.
 
     @return Tensor of same shape with hard swish applied element-wise.

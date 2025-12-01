@@ -1430,33 +1430,36 @@ val argwhere : ('a, 'b) t -> (int32, int32_elt) t
 
     Element-wise arithmetic operations and their variants. *)
 
-val add : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [add t1 t2] computes element-wise sum with broadcasting.
+val add : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [add ?out t1 t2] computes element-wise sum with broadcasting.
 
+    @param out Optional pre-allocated output tensor.
     @raise Invalid_argument if shapes incompatible *)
 
-val add_s : ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [add_s t scalar] adds scalar to each element. *)
+val add_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
+(** [add_s ?out t scalar] adds scalar to each element. *)
 
 val iadd : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [iadd target value] adds [value] to [target] in-place.
 
     Returns modified [target]. *)
 
-val radd_s : 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [radd_s scalar t] is [add_s t scalar]. *)
+val radd_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
+(** [radd_s ?out scalar t] is [add_s ?out t scalar]. *)
 
 val iadd_s : ('a, 'b) t -> 'a -> ('a, 'b) t
 (** [iadd_s t scalar] adds scalar to [t] in-place. *)
 
-val sub : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [sub t1 t2] computes element-wise difference with broadcasting. *)
+val sub : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [sub ?out t1 t2] computes element-wise difference with broadcasting.
 
-val sub_s : ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [sub_s t scalar] subtracts scalar from each element. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val rsub_s : 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [rsub_s scalar t] computes [scalar - t]. *)
+val sub_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
+(** [sub_s ?out t scalar] subtracts scalar from each element. *)
+
+val rsub_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
+(** [rsub_s ?out scalar t] computes [scalar - t]. *)
 
 val isub : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [isub target value] subtracts [value] from [target] in-place. *)
@@ -1464,14 +1467,16 @@ val isub : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 val isub_s : ('a, 'b) t -> 'a -> ('a, 'b) t
 (** [isub_s t scalar] subtracts scalar from [t] in-place. *)
 
-val mul : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [mul t1 t2] computes element-wise product with broadcasting. *)
+val mul : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [mul ?out t1 t2] computes element-wise product with broadcasting.
 
-val mul_s : ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [mul_s t scalar] multiplies each element by scalar. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val rmul_s : 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [rmul_s scalar t] is [mul_s t scalar]. *)
+val mul_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
+(** [mul_s ?out t scalar] multiplies each element by scalar. *)
+
+val rmul_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
+(** [rmul_s ?out scalar t] is [mul_s ?out t scalar]. *)
 
 val imul : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [imul target value] multiplies [target] by [value] in-place. *)
@@ -1479,8 +1484,10 @@ val imul : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 val imul_s : ('a, 'b) t -> 'a -> ('a, 'b) t
 (** [imul_s t scalar] multiplies [t] by scalar in-place. *)
 
-val div : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [div t1 t2] computes element-wise division.
+val div : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [div ?out t1 t2] computes element-wise division.
+
+    @param out Optional pre-allocated output tensor.
 
     True division for floats (result is float). Integer division for integers
     (truncates toward zero). Complex division follows standard rules.
@@ -1500,11 +1507,11 @@ val div : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
       - : (int32, int32_elt) t = [-3, 4]
     ]} *)
 
-val div_s : ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [div_s t scalar] divides each element by scalar. *)
+val div_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
+(** [div_s ?out t scalar] divides each element by scalar. *)
 
-val rdiv_s : 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [rdiv_s scalar t] computes [scalar / t]. *)
+val rdiv_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
+(** [rdiv_s ?out scalar t] computes [scalar / t]. *)
 
 val idiv : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [idiv target value] divides [target] by [value] in-place. *)
@@ -1512,14 +1519,16 @@ val idiv : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 val idiv_s : ('a, 'b) t -> 'a -> ('a, 'b) t
 (** [idiv_s t scalar] divides [t] by scalar in-place. *)
 
-val pow : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [pow base exponent] computes element-wise power. *)
+val pow : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [pow ?out base exponent] computes element-wise power.
 
-val pow_s : ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [pow_s t scalar] raises each element to scalar power. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val rpow_s : 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [rpow_s scalar t] computes [scalar ** t]. *)
+val pow_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
+(** [pow_s ?out t scalar] raises each element to scalar power. *)
+
+val rpow_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
+(** [rpow_s ?out scalar t] computes [scalar ** t]. *)
 
 val ipow : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [ipow target exponent] raises [target] to [exponent] in-place. *)
@@ -1527,14 +1536,16 @@ val ipow : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 val ipow_s : ('a, 'b) t -> 'a -> ('a, 'b) t
 (** [ipow_s t scalar] raises [t] to scalar power in-place. *)
 
-val mod_ : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [mod_ t1 t2] computes element-wise modulo. *)
+val mod_ : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [mod_ ?out t1 t2] computes element-wise modulo.
 
-val mod_s : ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [mod_s t scalar] computes modulo scalar for each element. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val rmod_s : 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [rmod_s scalar t] computes [scalar mod t]. *)
+val mod_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
+(** [mod_s ?out t scalar] computes modulo scalar for each element. *)
+
+val rmod_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
+(** [rmod_s ?out scalar t] computes [scalar mod t]. *)
 
 val imod : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [imod target divisor] computes modulo in-place. *)
@@ -1542,8 +1553,10 @@ val imod : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 val imod_s : ('a, 'b) t -> 'a -> ('a, 'b) t
 (** [imod_s t scalar] computes modulo scalar in-place. *)
 
-val neg : ('a, 'b) t -> ('a, 'b) t
-(** [neg t] negates all elements. *)
+val neg : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [neg ?out t] negates all elements.
+
+    @param out Optional pre-allocated output tensor. *)
 
 val conjugate : ('a, 'b) t -> ('a, 'b) t
 (** [conjugate x] computes the complex conjugate.
@@ -1563,13 +1576,17 @@ val conjugate : ('a, 'b) t -> ('a, 'b) t
 
     Unary mathematical operations and special functions. *)
 
-val abs : ('a, 'b) t -> ('a, 'b) t
-(** [abs t] computes absolute value. *)
+val abs : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [abs ?out t] computes absolute value.
 
-val sign : ('a, 'b) t -> ('a, 'b) t
-(** [sign t] returns -1, 0, or 1 based on sign.
+    @param out Optional pre-allocated output tensor. *)
+
+val sign : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [sign ?out t] returns -1, 0, or 1 based on sign.
 
     For unsigned types, returns 1 for all non-zero values, 0 for zero.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # let x = create float32 [| 3 |] [| -2.; 0.; 3.5 |] in
@@ -1577,52 +1594,82 @@ val sign : ('a, 'b) t -> ('a, 'b) t
       - : (float, float32_elt) t = [-1, 0, 1]
     ]} *)
 
-val square : ('a, 'b) t -> ('a, 'b) t
-(** [square t] computes element-wise square. *)
+val square : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [square ?out t] computes element-wise square.
 
-val sqrt : ('a, 'b) t -> ('a, 'b) t
-(** [sqrt t] computes element-wise square root. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val rsqrt : ('a, 'b) t -> ('a, 'b) t
-(** [rsqrt t] computes reciprocal square root. *)
+val sqrt : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [sqrt ?out t] computes element-wise square root.
 
-val recip : ('a, 'b) t -> ('a, 'b) t
-(** [recip t] computes element-wise reciprocal. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val log : (float, 'a) t -> (float, 'a) t
-(** [log t] computes natural logarithm. *)
+val rsqrt : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [rsqrt ?out t] computes reciprocal square root.
 
-val log2 : ('a, 'b) t -> ('a, 'b) t
-(** [log2 t] computes base-2 logarithm. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val exp : (float, 'a) t -> (float, 'a) t
-(** [exp t] computes exponential. *)
+val recip : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [recip ?out t] computes element-wise reciprocal.
 
-val exp2 : ('a, 'b) t -> ('a, 'b) t
-(** [exp2 t] computes 2^x. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val sin : ('a, 'b) t -> ('a, 'b) t
-(** [sin t] computes sine. *)
+val log : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [log ?out t] computes natural logarithm.
 
-val cos : (float, 'a) t -> (float, 'a) t
-(** [cos t] computes cosine. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val tan : (float, 'a) t -> (float, 'a) t
-(** [tan t] computes tangent. *)
+val log2 : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [log2 ?out t] computes base-2 logarithm.
 
-val asin : (float, 'a) t -> (float, 'a) t
-(** [asin t] computes arcsine. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val acos : (float, 'a) t -> (float, 'a) t
-(** [acos t] computes arccosine. *)
+val exp : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [exp ?out t] computes exponential.
 
-val atan : (float, 'a) t -> (float, 'a) t
-(** [atan t] computes arctangent. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val atan2 : (float, 'a) t -> (float, 'a) t -> (float, 'a) t
-(** [atan2 y x] computes arctangent of y/x using signs to determine quadrant.
+val exp2 : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [exp2 ?out t] computes 2^x.
+
+    @param out Optional pre-allocated output tensor. *)
+
+val sin : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [sin ?out t] computes sine.
+
+    @param out Optional pre-allocated output tensor. *)
+
+val cos : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [cos ?out t] computes cosine.
+
+    @param out Optional pre-allocated output tensor. *)
+
+val tan : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [tan ?out t] computes tangent.
+
+    @param out Optional pre-allocated output tensor. *)
+
+val asin : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [asin ?out t] computes arcsine.
+
+    @param out Optional pre-allocated output tensor. *)
+
+val acos : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [acos ?out t] computes arccosine.
+
+    @param out Optional pre-allocated output tensor. *)
+
+val atan : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [atan ?out t] computes arctangent.
+
+    @param out Optional pre-allocated output tensor. *)
+
+val atan2 : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [atan2 ?out y x] computes arctangent of y/x using signs to determine quadrant.
 
     Returns angle in radians in range [-π, π]. Handles x=0 correctly.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # let y = scalar float32 1. in
@@ -1639,28 +1686,42 @@ val atan2 : (float, 'a) t -> (float, 'a) t -> (float, 'a) t
       - : float = 0.
     ]} *)
 
-val sinh : (float, 'a) t -> (float, 'a) t
-(** [sinh t] computes hyperbolic sine. *)
+val sinh : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [sinh ?out t] computes hyperbolic sine.
 
-val cosh : (float, 'a) t -> (float, 'a) t
-(** [cosh t] computes hyperbolic cosine. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val tanh : (float, 'a) t -> (float, 'a) t
-(** [tanh t] computes hyperbolic tangent. *)
+val cosh : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [cosh ?out t] computes hyperbolic cosine.
 
-val asinh : (float, 'a) t -> (float, 'a) t
-(** [asinh t] computes inverse hyperbolic sine. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val acosh : (float, 'a) t -> (float, 'a) t
-(** [acosh t] computes inverse hyperbolic cosine. *)
+val tanh : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [tanh ?out t] computes hyperbolic tangent.
 
-val atanh : (float, 'a) t -> (float, 'a) t
-(** [atanh t] computes inverse hyperbolic tangent. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val hypot : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [hypot x y] computes sqrt(x² + y²) avoiding overflow.
+val asinh : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [asinh ?out t] computes inverse hyperbolic sine.
+
+    @param out Optional pre-allocated output tensor. *)
+
+val acosh : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [acosh ?out t] computes inverse hyperbolic cosine.
+
+    @param out Optional pre-allocated output tensor. *)
+
+val atanh : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [atanh ?out t] computes inverse hyperbolic tangent.
+
+    @param out Optional pre-allocated output tensor. *)
+
+val hypot : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [hypot ?out x y] computes sqrt(x² + y²) avoiding overflow.
 
     Uses numerically stable algorithm: max * sqrt(1 + (min/max)²).
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # let x = scalar float32 3. in
@@ -1673,10 +1734,12 @@ val hypot : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
       - : bool = true
     ]} *)
 
-val trunc : ('a, 'b) t -> ('a, 'b) t
-(** [trunc t] rounds toward zero.
+val trunc : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [trunc ?out t] rounds toward zero.
 
     Removes fractional part. Positive values round down, negative round up.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # let x = create float32 [| 3 |] [| 2.7; -2.7; 2.0 |] in
@@ -1684,10 +1747,12 @@ val trunc : ('a, 'b) t -> ('a, 'b) t
       - : (float, float32_elt) t = [2, -2, 2]
     ]} *)
 
-val ceil : (float, 'a) t -> (float, 'a) t
-(** [ceil t] rounds up to nearest integer.
+val ceil : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [ceil ?out t] rounds up to nearest integer.
 
     Smallest integer not less than input.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # let x = create float32 [| 4 |] [| 2.1; 2.9; -2.1; -2.9 |] in
@@ -1695,10 +1760,12 @@ val ceil : (float, 'a) t -> (float, 'a) t
       - : (float, float32_elt) t = [3, 3, -2, -2]
     ]} *)
 
-val floor : (float, 'a) t -> (float, 'a) t
-(** [floor t] rounds down to nearest integer.
+val floor : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [floor ?out t] rounds down to nearest integer.
 
     Largest integer not greater than input.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # let x = create float32 [| 4 |] [| 2.1; 2.9; -2.1; -2.9 |] in
@@ -1706,10 +1773,12 @@ val floor : (float, 'a) t -> (float, 'a) t
       - : (float, float32_elt) t = [2, 2, -3, -3]
     ]} *)
 
-val round : (float, 'a) t -> (float, 'a) t
-(** [round t] rounds to nearest integer (half away from zero).
+val round : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [round ?out t] rounds to nearest integer (half away from zero).
 
     Ties round away from zero (not banker's rounding).
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # let x = create float32 [| 4 |] [| 2.5; 3.5; -2.5; -3.5 |] in
@@ -1717,10 +1786,12 @@ val round : (float, 'a) t -> (float, 'a) t
       - : (float, float32_elt) t = [3, 4, -3, -4]
     ]} *)
 
-val lerp : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [lerp start end_ weight] computes linear interpolation.
+val lerp : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [lerp ?out start end_ weight] computes linear interpolation.
 
     Returns start + weight * (end_ - start). Weight typically in [0, 1].
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # let start = scalar float32 0. in
@@ -1735,72 +1806,156 @@ val lerp : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
       - : (float, float32_elt) t = [2, 5]
     ]} *)
 
-val lerp_scalar_weight : ('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [lerp_scalar_weight start end_ weight] interpolates with scalar weight. *)
+val lerp_scalar_weight : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
+(** [lerp_scalar_weight ?out start end_ weight] interpolates with scalar weight.
+
+    @param out Optional pre-allocated output tensor. *)
 
 (** {2 Comparison and Logical Operations}
 
     Element-wise comparisons and logical operations. *)
 
-val cmplt : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [cmplt t1 t2] returns [true] where [t1 < t2], [false] elsewhere. *)
+val cmplt :
+  ?out:(bool, bool_elt) t ->
+  ('a, 'b) t ->
+  ('a, 'b) t ->
+  (bool, bool_elt) t
+(** [cmplt ?out t1 t2] returns [true] where [t1 < t2], [false] elsewhere.
 
-val less : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [less t1 t2] is synonym for {!cmplt}. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val less_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
-(** [less_s t scalar] checks if each element is less than scalar and returns
-    booleans. *)
+val less :
+  ?out:(bool, bool_elt) t ->
+  ('a, 'b) t ->
+  ('a, 'b) t ->
+  (bool, bool_elt) t
+(** [less ?out t1 t2] is synonym for {!cmplt}.
 
-val cmpne : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [cmpne t1 t2] returns [true] where [t1 ≠ t2], [false] elsewhere. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val not_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [not_equal t1 t2] is synonym for {!cmpne}. *)
+val less_s : ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
+(** [less_s ?out t scalar] checks if each element is less than scalar and returns
+    booleans.
 
-val not_equal_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
-(** [not_equal_s t scalar] compares each element with scalar for inequality and
-    returns booleans. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val cmpeq : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [cmpeq t1 t2] returns [true] where [t1 = t2], [false] elsewhere. *)
+val cmpne :
+  ?out:(bool, bool_elt) t ->
+  ('a, 'b) t ->
+  ('a, 'b) t ->
+  (bool, bool_elt) t
+(** [cmpne ?out t1 t2] returns [true] where [t1 ≠ t2], [false] elsewhere.
 
-val equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [equal t1 t2] is synonym for {!cmpeq}. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val equal_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
-(** [equal_s t scalar] compares each element with scalar for equality and
-    returns booleans. *)
+val not_equal :
+  ?out:(bool, bool_elt) t ->
+  ('a, 'b) t ->
+  ('a, 'b) t ->
+  (bool, bool_elt) t
+(** [not_equal ?out t1 t2] is synonym for {!cmpne}.
 
-val cmpgt : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [cmpgt t1 t2] returns [true] where [t1 > t2], [false] elsewhere. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val greater : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [greater t1 t2] is synonym for {!cmpgt}. *)
+val not_equal_s : ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
+(** [not_equal_s ?out t scalar] compares each element with scalar for inequality and
+    returns booleans.
 
-val greater_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
-(** [greater_s t scalar] checks if each element is greater than scalar and
-    returns booleans. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val cmple : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [cmple t1 t2] returns [true] where [t1 ≤ t2], [false] elsewhere. *)
+val cmpeq :
+  ?out:(bool, bool_elt) t ->
+  ('a, 'b) t ->
+  ('a, 'b) t ->
+  (bool, bool_elt) t
+(** [cmpeq ?out t1 t2] returns [true] where [t1 = t2], [false] elsewhere.
 
-val less_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [less_equal t1 t2] is synonym for {!cmple}. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val less_equal_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
-(** [less_equal_s t scalar] checks if each element is less than or equal to
-    scalar and returns booleans. *)
+val equal :
+  ?out:(bool, bool_elt) t ->
+  ('a, 'b) t ->
+  ('a, 'b) t ->
+  (bool, bool_elt) t
+(** [equal ?out t1 t2] is synonym for {!cmpeq}.
 
-val cmpge : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [cmpge t1 t2] returns [true] where [t1 ≥ t2], [false] elsewhere. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val greater_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
+val equal_s : ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
+(** [equal_s ?out t scalar] compares each element with scalar for equality and
+    returns booleans.
+
+    @param out Optional pre-allocated output tensor. *)
+
+val cmpgt :
+  ?out:(bool, bool_elt) t ->
+  ('a, 'b) t ->
+  ('a, 'b) t ->
+  (bool, bool_elt) t
+(** [cmpgt ?out t1 t2] returns [true] where [t1 > t2], [false] elsewhere.
+
+    @param out Optional pre-allocated output tensor. *)
+
+val greater :
+  ?out:(bool, bool_elt) t ->
+  ('a, 'b) t ->
+  ('a, 'b) t ->
+  (bool, bool_elt) t
+(** [greater ?out t1 t2] is synonym for {!cmpgt}.
+
+    @param out Optional pre-allocated output tensor. *)
+
+val greater_s : ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
+(** [greater_s ?out t scalar] checks if each element is greater than scalar and
+    returns booleans.
+
+    @param out Optional pre-allocated output tensor. *)
+
+val cmple :
+  ?out:(bool, bool_elt) t ->
+  ('a, 'b) t ->
+  ('a, 'b) t ->
+  (bool, bool_elt) t
+(** [cmple ?out t1 t2] returns [true] where [t1 ≤ t2], [false] elsewhere.
+
+    @param out Optional pre-allocated output tensor. *)
+
+val less_equal :
+  ?out:(bool, bool_elt) t ->
+  ('a, 'b) t ->
+  ('a, 'b) t ->
+  (bool, bool_elt) t
+(** [less_equal ?out t1 t2] is synonym for {!cmple}.
+
+    @param out Optional pre-allocated output tensor. *)
+
+val less_equal_s : ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
+(** [less_equal_s ?out t scalar] checks if each element is less than or equal to
+    scalar and returns booleans.
+
+    @param out Optional pre-allocated output tensor. *)
+
+val cmpge :
+  ?out:(bool, bool_elt) t ->
+  ('a, 'b) t ->
+  ('a, 'b) t ->
+  (bool, bool_elt) t
+(** [cmpge ?out t1 t2] returns [true] where [t1 ≥ t2], [false] elsewhere.
+
+    @param out Optional pre-allocated output tensor. *)
+
+val greater_equal :
+  ?out:(bool, bool_elt) t ->
+  ('a, 'b) t ->
+  ('a, 'b) t ->
+  (bool, bool_elt) t
 (** [greater_equal t1 t2] is synonym for {!cmpge}. *)
 
-val greater_equal_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
-(** [greater_equal_s t scalar] checks if each element is greater than or equal
-    to scalar and returns booleans. *)
+val greater_equal_s : ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
+(** [greater_equal_s ?out t scalar] checks if each element is greater than or equal
+    to scalar and returns booleans.
+
+    @param out Optional pre-allocated output tensor. *)
 
 val array_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [array_equal t1 t2] returns scalar 1 if all elements equal, 0 otherwise.
@@ -1818,14 +1973,16 @@ val array_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
       - : bool = false
     ]} *)
 
-val maximum : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [maximum t1 t2] returns element-wise maximum. *)
+val maximum : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [maximum ?out t1 t2] returns element-wise maximum.
 
-val maximum_s : ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [maximum_s t scalar] returns maximum of each element and scalar. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val rmaximum_s : 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [rmaximum_s scalar t] is [maximum_s t scalar]. *)
+val maximum_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
+(** [maximum_s ?out t scalar] returns maximum of each element and scalar. *)
+
+val rmaximum_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
+(** [rmaximum_s ?out scalar t] is [maximum_s ?out t scalar]. *)
 
 val imaximum : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [imaximum target value] computes maximum in-place. *)
@@ -1833,14 +1990,16 @@ val imaximum : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 val imaximum_s : ('a, 'b) t -> 'a -> ('a, 'b) t
 (** [imaximum_s t scalar] computes maximum with scalar in-place. *)
 
-val minimum : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [minimum t1 t2] returns element-wise minimum. *)
+val minimum : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [minimum ?out t1 t2] returns element-wise minimum.
 
-val minimum_s : ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [minimum_s t scalar] returns minimum of each element and scalar. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val rminimum_s : 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [rminimum_s scalar t] is [minimum_s t scalar]. *)
+val minimum_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
+(** [minimum_s ?out t scalar] returns minimum of each element and scalar. *)
+
+val rminimum_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
+(** [rminimum_s ?out scalar t] is [minimum_s ?out t scalar]. *)
 
 val iminimum : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [iminimum target value] computes minimum in-place. *)
@@ -1848,21 +2007,29 @@ val iminimum : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 val iminimum_s : ('a, 'b) t -> 'a -> ('a, 'b) t
 (** [iminimum_s t scalar] computes minimum with scalar in-place. *)
 
-val logical_and : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [logical_and t1 t2] computes element-wise AND.
+val logical_and : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [logical_and ?out t1 t2] computes element-wise AND.
+
+    @param out Optional pre-allocated output tensor.
 
     Non-zero values are true. *)
 
-val logical_or : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [logical_or t1 t2] computes element-wise OR. *)
+val logical_or : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [logical_or ?out t1 t2] computes element-wise OR.
 
-val logical_xor : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [logical_xor t1 t2] computes element-wise XOR. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val logical_not : ('a, 'b) t -> ('a, 'b) t
-(** [logical_not t] computes element-wise NOT.
+val logical_xor : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [logical_xor ?out t1 t2] computes element-wise XOR.
+
+    @param out Optional pre-allocated output tensor. *)
+
+val logical_not : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [logical_not ?out t] computes element-wise NOT.
 
     Returns 1 - x. Non-zero values become 0, zero becomes 1.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # let x = create int32 [| 3 |] [| 0l; 1l; 5l |] in
@@ -1870,10 +2037,12 @@ val logical_not : ('a, 'b) t -> ('a, 'b) t
       - : (int32, int32_elt) t = [1, 0, -4]
     ]} *)
 
-val isinf : (float, 'a) t -> (bool, bool_elt) t
-(** [isinf t] returns 1 where infinite, 0 elsewhere.
+val isinf : ?out:(bool, bool_elt) t -> (float, 'a) t -> (bool, bool_elt) t
+(** [isinf ?out t] returns 1 where infinite, 0 elsewhere.
 
     Detects both positive and negative infinity. Non-float types return all 0s.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # let x = create float32 [| 4 |] [| 1.; Float.infinity; Float.neg_infinity; Float.nan |] in
@@ -1881,11 +2050,13 @@ val isinf : (float, 'a) t -> (bool, bool_elt) t
       - : (bool, bool_elt) t = [false, true, true, false]
     ]} *)
 
-val isnan : ('a, 'b) t -> (bool, bool_elt) t
-(** [isnan t] returns 1 where NaN, 0 elsewhere.
+val isnan : ?out:(bool, bool_elt) t -> ('a, 'b) t -> (bool, bool_elt) t
+(** [isnan ?out t] returns 1 where NaN, 0 elsewhere.
 
     NaN is the only value that doesn't equal itself. Non-float types return all
     0s.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # let x = create float32 [| 3 |] [| 1.; Float.nan; Float.infinity |] in
@@ -1893,10 +2064,12 @@ val isnan : ('a, 'b) t -> (bool, bool_elt) t
       - : (bool, bool_elt) t = [false, true, false]
     ]} *)
 
-val isfinite : (float, 'a) t -> (bool, bool_elt) t
-(** [isfinite t] returns 1 where finite, 0 elsewhere.
+val isfinite : ?out:(bool, bool_elt) t -> (float, 'a) t -> (bool, bool_elt) t
+(** [isfinite ?out t] returns 1 where finite, 0 elsewhere.
 
     Finite means not inf, -inf, or NaN. Non-float types return all 1s.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # let x = create float32 [| 4 |] [| 1.; Float.infinity; Float.nan; -0. |] in
@@ -1904,8 +2077,15 @@ val isfinite : (float, 'a) t -> (bool, bool_elt) t
       - : (bool, bool_elt) t = [true, false, false, true]
     ]} *)
 
-val where : (bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [where cond if_true if_false] selects elements based on condition.
+val where :
+  ?out:('a, 'b) t ->
+  (bool, bool_elt) t ->
+  ('a, 'b) t ->
+  ('a, 'b) t ->
+  ('a, 'b) t
+(** [where ?out cond if_true if_false] selects elements based on condition.
+
+    @param out Optional pre-allocated output tensor.
 
     Returns [if_true] where [cond] is true, [if_false] elsewhere. All three
     inputs broadcast to common shape.
@@ -1923,37 +2103,53 @@ val where : (bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
       - : (float, float32_elt) t = [0, 2, 0, 4]
     ]} *)
 
-val clamp : ?min:'a -> ?max:'a -> ('a, 'b) t -> ('a, 'b) t
-(** [clamp ?min ?max t] limits values to range.
+val clamp : ?out:('a, 'b) t -> ?min:'a -> ?max:'a -> ('a, 'b) t -> ('a, 'b) t
+(** [clamp ?out ?min ?max t] limits values to range.
 
-    Elements below [min] become [min], above [max] become [max]. *)
+    Elements below [min] become [min], above [max] become [max].
 
-val clip : ?min:'a -> ?max:'a -> ('a, 'b) t -> ('a, 'b) t
-(** [clip ?min ?max t] is synonym for {!clamp}. *)
+    @param out Optional pre-allocated output tensor. *)
+
+val clip : ?out:('a, 'b) t -> ?min:'a -> ?max:'a -> ('a, 'b) t -> ('a, 'b) t
+(** [clip ?out ?min ?max t] is synonym for {!clamp}.
+
+    @param out Optional pre-allocated output tensor. *)
 
 (** {2 Bitwise Operations}
 
     Bitwise operations on integer arrays. *)
 
-val bitwise_xor : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [bitwise_xor t1 t2] computes element-wise XOR. *)
+val bitwise_xor : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [bitwise_xor ?out t1 t2] computes element-wise XOR.
 
-val bitwise_or : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [bitwise_or t1 t2] computes element-wise OR. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val bitwise_and : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [bitwise_and t1 t2] computes element-wise AND. *)
+val bitwise_or : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [bitwise_or ?out t1 t2] computes element-wise OR.
 
-val bitwise_not : ('a, 'b) t -> ('a, 'b) t
-(** [bitwise_not t] computes element-wise NOT. *)
+    @param out Optional pre-allocated output tensor. *)
 
-val invert : ('a, 'b) t -> ('a, 'b) t
-(** [invert t] is synonym for {!bitwise_not}. *)
+val bitwise_and : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [bitwise_and ?out t1 t2] computes element-wise AND.
 
-val lshift : ('a, 'b) t -> int -> ('a, 'b) t
-(** [lshift t shift] left-shifts elements by [shift] bits.
+    @param out Optional pre-allocated output tensor. *)
+
+val bitwise_not : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [bitwise_not ?out t] computes element-wise NOT.
+
+    @param out Optional pre-allocated output tensor. *)
+
+val invert : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [invert ?out t] is synonym for {!bitwise_not}.
+
+    @param out Optional pre-allocated output tensor. *)
+
+val lshift : ?out:('a, 'b) t -> ('a, 'b) t -> int -> ('a, 'b) t
+(** [lshift ?out t shift] left-shifts elements by [shift] bits.
 
     Equivalent to multiplication by 2^shift. Overflow wraps around.
+
+    @param out Optional pre-allocated output tensor.
 
     @raise Invalid_argument if shift negative or non-integer dtype
 
@@ -1963,10 +2159,12 @@ val lshift : ('a, 'b) t -> int -> ('a, 'b) t
       - : (int32, int32_elt) t = [4, 8, 12]
     ]} *)
 
-val rshift : ('a, 'b) t -> int -> ('a, 'b) t
-(** [rshift t shift] right-shifts elements by [shift] bits.
+val rshift : ?out:('a, 'b) t -> ('a, 'b) t -> int -> ('a, 'b) t
+(** [rshift ?out t shift] right-shifts elements by [shift] bits.
 
     Equivalent to integer division by 2^shift (rounds toward zero).
+
+    @param out Optional pre-allocated output tensor.
 
     @raise Invalid_argument if shift negative or non-integer dtype
 
@@ -2130,8 +2328,15 @@ end
 
     Functions that reduce array dimensions. *)
 
-val sum : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
-(** [sum ?axes ?keepdims t] sums elements along specified axes.
+val sum :
+  ?out:('a, 'b) t ->
+  ?axes:int list ->
+  ?keepdims:bool ->
+  ('a, 'b) t ->
+  ('a, 'b) t
+(** [sum ?out ?axes ?keepdims t] sums elements along specified axes.
+
+    @param out Optional pre-allocated output tensor.
 
     Default sums all axes (returns scalar). If [keepdims] is true, retains
     reduced dimensions with size 1. Negative axes count from end.
@@ -2153,8 +2358,15 @@ val sum : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
       - : (float, float32_elt) t = [6]
     ]} *)
 
-val max : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
-(** [max ?axes ?keepdims t] finds maximum along axes.
+val max :
+  ?out:('a, 'b) t ->
+  ?axes:int list ->
+  ?keepdims:bool ->
+  ('a, 'b) t ->
+  ('a, 'b) t
+(** [max ?out ?axes ?keepdims t] finds maximum along axes.
+
+    @param out Optional pre-allocated output tensor.
 
     Default reduces all axes. NaN propagates (any NaN input gives NaN output).
 
@@ -2170,8 +2382,15 @@ val max : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
       - : (float, float32_elt) t = [[2]]
     ]} *)
 
-val min : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
-(** [min ?axes ?keepdims t] finds minimum along axes.
+val min :
+  ?out:('a, 'b) t ->
+  ?axes:int list ->
+  ?keepdims:bool ->
+  ('a, 'b) t ->
+  ('a, 'b) t
+(** [min ?out ?axes ?keepdims t] finds minimum along axes.
+
+    @param out Optional pre-allocated output tensor.
 
     Default reduces all axes. NaN propagates (any NaN input gives NaN output).
 
@@ -2184,8 +2403,15 @@ val min : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
       - : (float, float32_elt) t = [1, 2]
     ]} *)
 
-val prod : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
-(** [prod ?axes ?keepdims t] computes product along axes.
+val prod :
+  ?out:('a, 'b) t ->
+  ?axes:int list ->
+  ?keepdims:bool ->
+  ('a, 'b) t ->
+  ('a, 'b) t
+(** [prod ?out ?axes ?keepdims t] computes product along axes.
+
+    @param out Optional pre-allocated output tensor.
 
     Default multiplies all elements. Empty axes give 1.
 
@@ -2214,8 +2440,15 @@ val cummin : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
 (** [cummin ?axis t] computes the inclusive cumulative minimum. NaNs propagate
     for floating-point dtypes. Defaults to flattening when [axis] is omitted. *)
 
-val mean : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
-(** [mean ?axes ?keepdims t] computes arithmetic mean along axes.
+val mean :
+  ?out:('a, 'b) t ->
+  ?axes:int list ->
+  ?keepdims:bool ->
+  ('a, 'b) t ->
+  ('a, 'b) t
+(** [mean ?out ?axes ?keepdims t] computes arithmetic mean along axes.
+
+    @param out Optional pre-allocated output tensor.
 
     Sum of elements divided by count. NaN propagates.
 
@@ -2229,11 +2462,18 @@ val mean : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
     ]} *)
 
 val var :
-  ?axes:int list -> ?keepdims:bool -> ?ddof:int -> ('a, 'b) t -> ('a, 'b) t
-(** [var ?axes ?keepdims ?ddof t] computes variance along axes.
+  ?out:('a, 'b) t ->
+  ?axes:int list ->
+  ?keepdims:bool ->
+  ?ddof:int ->
+  ('a, 'b) t ->
+  ('a, 'b) t
+(** [var ?out ?axes ?keepdims ?ddof t] computes variance along axes.
 
     [ddof] is delta degrees of freedom. Default 0 (population variance). Use 1
     for sample variance. Variance = E[(X - E[X])²] / (N - ddof).
+
+    @param out Optional pre-allocated output tensor.
 
     @raise Invalid_argument if ddof >= number of elements
 
@@ -2247,10 +2487,17 @@ val var :
     ]} *)
 
 val std :
-  ?axes:int list -> ?keepdims:bool -> ?ddof:int -> ('a, 'b) t -> ('a, 'b) t
-(** [std ?axes ?keepdims ?ddof t] computes standard deviation.
+  ?out:('a, 'b) t ->
+  ?axes:int list ->
+  ?keepdims:bool ->
+  ?ddof:int ->
+  ('a, 'b) t ->
+  ('a, 'b) t
+(** [std ?out ?axes ?keepdims ?ddof t] computes standard deviation.
 
     Square root of variance: sqrt(var(t, ddof)). See {!var} for ddof meaning.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # let x = create float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
@@ -2261,10 +2508,17 @@ val std :
       - : float = 2.
     ]} *)
 
-val all : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (bool, bool_elt) t
-(** [all ?axes ?keepdims t] tests if all elements are true (non-zero).
+val all :
+  ?out:(bool, bool_elt) t ->
+  ?axes:int list ->
+  ?keepdims:bool ->
+  ('a, 'b) t ->
+  (bool, bool_elt) t
+(** [all ?out ?axes ?keepdims t] tests if all elements are true (non-zero).
 
     Returns [true] if all elements along axes are non-zero, [false] otherwise.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # let x = create int32 [| 3 |] [| 1l; 2l; 3l |] in
@@ -2278,11 +2532,18 @@ val all : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (bool, bool_elt) t
       - : (bool, bool_elt) t = [false, true]
     ]} *)
 
-val any : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (bool, bool_elt) t
-(** [any ?axes ?keepdims t] tests if any element is true (non-zero).
+val any :
+  ?out:(bool, bool_elt) t ->
+  ?axes:int list ->
+  ?keepdims:bool ->
+  ('a, 'b) t ->
+  (bool, bool_elt) t
+(** [any ?out ?axes ?keepdims t] tests if any element is true (non-zero).
 
     Returns [true] if any element along axes is non-zero, [false] if all are
     zero.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # let x = create int32 [| 3 |] [| 0l; 0l; 1l |] in
@@ -2399,8 +2660,10 @@ val argsort :
     Most linear algebra functions require floating-point or complex tensors.
     Functions will raise [Invalid_argument] if given integer tensors. *)
 
-val dot : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [dot a b] computes generalized dot product.
+val dot : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [dot ?out a b] computes generalized dot product.
+
+    @param out Optional pre-allocated output tensor.
 
     Important: [dot] has different broadcasting behavior than [matmul]:
     - [matmul] broadcasts batch dimensions
@@ -2442,8 +2705,8 @@ val dot : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
       - : int array = [|2; 3; 4; 6|]
     ]} *)
 
-val matmul : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [matmul a b] computes matrix multiplication with broadcasting.
+val matmul : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [matmul ?out a b] computes matrix multiplication with broadcasting.
 
     Follows NumPy's \@ operator semantics:
     - 1-D × 1-D: inner product (returns scalar tensor)
@@ -2460,6 +2723,12 @@ val matmul : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
     - Batch dims: broadcast(a.shape[:-2], b.shape[:-2])
     - Matrix dims: [..., a.shape[-2], b.shape[-1]]
     - 1-D adjustments applied after
+
+    @param out
+      Optional pre-allocated output tensor. When provided, the result is written
+      to this tensor instead of allocating a new one. This can significantly
+      improve performance in tight loops by avoiding allocation overhead. Only
+      used when both inputs are >= 2D; ignored for 1-D inputs.
 
     @raise Invalid_argument if inputs are 0-D or inner dimensions mismatch
 
@@ -2530,11 +2799,13 @@ val inner : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 
     @raise Invalid_argument if last dimensions differ *)
 
-val outer : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [outer a b] computes outer product of two vectors.
+val outer : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [outer ?out a b] computes outer product of two vectors.
 
     Given vectors a[i] and b[j], produces matrix M[i,j] = a[i] * b[j]. Input
     tensors are flattened if not already 1-D.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # outer (create float32 [|2|] [|1.; 2.|]) (create float32 [|3|] [|3.; 4.; 5.|])
@@ -2597,10 +2868,12 @@ val matrix_power : ('a, 'b) t -> int -> ('a, 'b) t
     @raise Invalid_argument if input is not float or complex
     @raise Invalid_argument if n < 0 and matrix is singular *)
 
-val cross : ?axis:int -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [cross ?axis a b] returns cross product of 3-element vectors.
+val cross :
+  ?out:('a, 'b) t -> ?axis:int -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [cross ?out ?axis a b] returns cross product of 3-element vectors.
 
-    - [axis]: axis containing vectors (default: last axis)
+    @param out Optional pre-allocated output tensor.
+    @param axis Axis containing vectors (default: last axis).
 
     @raise Invalid_argument if axis dimension is not 3 *)
 
@@ -2771,8 +3044,10 @@ val matrix_rank :
 
     @raise Invalid_argument if input is not float or complex *)
 
-val trace : ?offset:int -> ('a, 'b) t -> ('a, 'b) t
-(** [trace ?offset a] returns sum along diagonal.
+val trace : ?out:('a, 'b) t -> ?offset:int -> ('a, 'b) t -> ('a, 'b) t
+(** [trace ?out ?offset a] returns sum along diagonal.
+
+    @param out Optional pre-allocated output tensor.
 
     - [offset]: diagonal offset (default: 0, positive for upper diagonals) *)
 
@@ -2849,17 +3124,19 @@ type fft_norm = [ `Backward | `Forward | `Ortho ]
     - [`Ortho]: normalize by 1/sqrt(n) on both transforms *)
 
 val fft :
+  ?out:(Complex.t, 'a) t ->
   ?axis:int ->
   ?n:int ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (Complex.t, 'a) t
-(** [fft ?axis ?n ?norm x] computes discrete Fourier transform over specified
-    axis.
+(** [fft ?out ?axis ?n ?norm x] computes discrete Fourier transform over
+    specified axis.
 
-    - [axis]: axis to transform (default: last axis)
-    - [n]: Length of the transformed axis of the output
-    - [norm]: normalization mode (default: [`Backward])
+    @param out Optional pre-allocated output tensor for zero-allocation usage.
+    @param axis Axis to transform (default: last axis).
+    @param n Length of the transformed axis of the output.
+    @param norm Normalization mode (default: [`Backward]).
 
     Computing 1D FFT of a signal:
     {@ocaml[
@@ -2872,28 +3149,32 @@ val fft :
     ]} *)
 
 val ifft :
+  ?out:(Complex.t, 'a) t ->
   ?axis:int ->
   ?n:int ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (Complex.t, 'a) t
-(** [ifft ?axis ?s ?norm x] computes inverse discrete Fourier transform.
+(** [ifft ?out ?axis ?n ?norm x] computes inverse discrete Fourier transform.
 
-    - [axis]: axis to transform (default: last axis)
-    - [n]: Length of the transformed axis of the output
-    - [norm]: normalization mode (default: [`Backward]) *)
+    @param out Optional pre-allocated output tensor for zero-allocation usage.
+    @param axis Axis to transform (default: last axis).
+    @param n Length of the transformed axis of the output.
+    @param norm Normalization mode (default: [`Backward]). *)
 
 val fft2 :
+  ?out:(Complex.t, 'a) t ->
   ?axes:int list ->
   ?s:int list ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (Complex.t, 'a) t
-(** [fft2 ?axes ?s ?norm x] computes 2-dimensional FFT.
+(** [fft2 ?out ?axes ?s ?norm x] computes 2-dimensional FFT.
 
     Transforms last two axes by default. Truncates or pads to shape [s] if
     given.
 
+    @param out Optional pre-allocated output tensor for zero-allocation usage.
     @raise Invalid_argument if input has less than 2 dimensions
 
     Computing 2D FFT of a 2x2 matrix:
@@ -2906,47 +3187,57 @@ val fft2 :
     ]} *)
 
 val ifft2 :
+  ?out:(Complex.t, 'a) t ->
   ?axes:int list ->
   ?s:int list ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (Complex.t, 'a) t
-(** [ifft2 ?axes ?s ?norm x] computes 2-dimensional inverse FFT.
+(** [ifft2 ?out ?axes ?s ?norm x] computes 2-dimensional inverse FFT.
 
+    @param out Optional pre-allocated output tensor for zero-allocation usage.
     @raise Invalid_argument if input has less than 2 dimensions *)
 
 val fftn :
+  ?out:(Complex.t, 'a) t ->
   ?axes:int list ->
   ?s:int list ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (Complex.t, 'a) t
-(** [fftn ?axes ?s ?norm x] computes N-dimensional FFT.
+(** [fftn ?out ?axes ?s ?norm x] computes N-dimensional FFT.
+
+    @param out Optional pre-allocated output tensor for zero-allocation usage.
 
     Transforms all axes by default. *)
 
 val ifftn :
+  ?out:(Complex.t, 'a) t ->
   ?axes:int list ->
   ?s:int list ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (Complex.t, 'a) t
-(** [ifftn ?axes ?s ?norm x] computes N-dimensional inverse FFT. *)
+(** [ifftn ?out ?axes ?s ?norm x] computes N-dimensional inverse FFT.
+
+    @param out Optional pre-allocated output tensor for zero-allocation usage. *)
 
 val rfft :
+  ?out:(Complex.t, complex64_elt) t ->
   ?axis:int ->
   ?n:int ->
   ?norm:fft_norm ->
   (float, 'a) t ->
   (Complex.t, complex64_elt) t
-(** [rfft ?axis ?n ?norm x] computes FFT of real input.
+(** [rfft ?out ?axis ?n ?norm x] computes FFT of real input.
 
     Returns only non-redundant positive frequencies. Output size along last
     transformed axis is n/2+1 where n is input size.
 
-    - [axes]: axes to transform (default: last axis)
-    - [s]: shape to truncate/pad to before transform
-    - [norm]: normalization mode (default: [`Backward])
+    @param out Optional pre-allocated output tensor for zero-allocation usage.
+    @param axis Axis to transform (default: last axis).
+    @param n Shape to truncate/pad to before transform.
+    @param norm Normalization mode (default: [`Backward]).
 
     Computing real FFT:
     {@ocaml[
@@ -2957,57 +3248,69 @@ val rfft :
     ]} *)
 
 val irfft :
+  ?out:(float, float64_elt) t ->
   ?axis:int ->
   ?n:int ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (float, float64_elt) t
-(** [irfft ?axis ?n ?norm x] computes inverse FFT returning real output.
+(** [irfft ?out ?axis ?n ?norm x] computes inverse FFT returning real output.
 
     Assumes Hermitian symmetry.
 
-    - [axis]: axis to transform (default: last axis)
-    - [n]: output shape along transformed axes
-    - [norm]: normalization mode (default: [`Backward]) *)
+    @param out Optional pre-allocated output tensor for zero-allocation usage.
+    @param axis Axis to transform (default: last axis).
+    @param n Output shape along transformed axes.
+    @param norm Normalization mode (default: [`Backward]). *)
 
 val rfft2 :
+  ?out:(Complex.t, complex64_elt) t ->
   ?axes:int list ->
   ?s:int list ->
   ?norm:fft_norm ->
   (float, 'a) t ->
   (Complex.t, complex64_elt) t
-(** [rfft2 ?axes ?s ?norm x] computes 2D FFT of real input.
+(** [rfft2 ?out ?axes ?s ?norm x] computes 2D FFT of real input.
 
+    @param out Optional pre-allocated output tensor for zero-allocation usage.
     @raise Invalid_argument if input has less than 2 dimensions *)
 
 val irfft2 :
+  ?out:(float, float64_elt) t ->
   ?axes:int list ->
   ?s:int list ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (float, float64_elt) t
-(** [irfft2 ?axes ?s ?norm x] computes 2D inverse FFT returning real output.
+(** [irfft2 ?out ?axes ?s ?norm x] computes 2D inverse FFT returning real
+    output.
 
+    @param out Optional pre-allocated output tensor for zero-allocation usage.
     @raise Invalid_argument
       if input has less than 2 dimensions or if [s] not specified *)
 
 val rfftn :
+  ?out:(Complex.t, complex64_elt) t ->
   ?axes:int list ->
   ?s:int list ->
   ?norm:fft_norm ->
   (float, 'a) t ->
   (Complex.t, complex64_elt) t
-(** [rfftn ?axes ?s ?norm x] computes N-dimensional FFT of real input. *)
+(** [rfftn ?out ?axes ?s ?norm x] computes N-dimensional FFT of real input.
+
+    @param out Optional pre-allocated output tensor for zero-allocation usage. *)
 
 val irfftn :
+  ?out:(float, float64_elt) t ->
   ?axes:int list ->
   ?s:int list ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (float, float64_elt) t
-(** [irfftn ?axes ?s ?norm x] computes N-dimensional inverse FFT returning real
-    output.
+(** [irfftn ?out ?axes ?s ?norm x] computes N-dimensional inverse FFT returning
+    real output.
 
+    @param out Optional pre-allocated output tensor for zero-allocation usage.
     @raise Invalid_argument if [s] not specified for inverse real transforms *)
 
 val hfft :
@@ -3064,8 +3367,10 @@ val ifftshift : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t
 
     Neural network activation functions. *)
 
-val relu : ('a, 'b) t -> ('a, 'b) t
-(** [relu t] applies Rectified Linear Unit: max(0, x).
+val relu : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [relu ?out t] applies Rectified Linear Unit: max(0, x).
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # let x = create float32 [| 5 |] [| -2.; -1.; 0.; 1.; 2. |] in
@@ -3073,10 +3378,12 @@ val relu : ('a, 'b) t -> ('a, 'b) t
       - : (float, float32_elt) t = [0, 0, 0, 1, 2]
     ]} *)
 
-val relu6 : (float, 'a) t -> (float, 'a) t
-(** [relu6 t] applies ReLU6: min(max(0, x), 6).
+val relu6 : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [relu6 ?out t] applies ReLU6: min(max(0, x), 6).
 
     Bounded ReLU used in mobile networks. Clips to [0, 6] range.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # let x = create float32 [| 3 |] [| -1.; 3.; 8. |] in
@@ -3084,10 +3391,12 @@ val relu6 : (float, 'a) t -> (float, 'a) t
       - : (float, float32_elt) t = [0, 3, 6]
     ]} *)
 
-val sigmoid : (float, 'a) t -> (float, 'a) t
-(** [sigmoid t] applies logistic sigmoid: 1 / (1 + exp(-x)).
+val sigmoid : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [sigmoid ?out t] applies logistic sigmoid: 1 / (1 + exp(-x)).
 
     Output in range (0, 1). Symmetric around x=0 where sigmoid(0) = 0.5.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # sigmoid (scalar float32 0.) |> item []
@@ -3098,16 +3407,25 @@ val sigmoid : (float, 'a) t -> (float, 'a) t
       - : float = 0.
     ]} *)
 
-val hard_sigmoid : ?alpha:float -> ?beta:float -> (float, 'a) t -> (float, 'a) t
-(** [hard_sigmoid ?alpha ?beta t] applies piecewise linear sigmoid
+val hard_sigmoid :
+  ?out:(float, 'a) t ->
+  ?alpha:float ->
+  ?beta:float ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [hard_sigmoid ?out ?alpha ?beta t] applies piecewise linear sigmoid
     approximation.
+
+    @param out Optional pre-allocated output tensor.
 
     Default [alpha = 1/6], [beta = 0.5]. *)
 
-val softplus : (float, 'a) t -> (float, 'a) t
-(** [softplus t] applies smooth ReLU: log(1 + exp(x)).
+val softplus : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [softplus ?out t] applies smooth ReLU: log(1 + exp(x)).
 
     Smooth approximation to ReLU. Always positive, differentiable everywhere.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # softplus (scalar float32 0.) |> item [] |> Float.round
@@ -3116,10 +3434,12 @@ val softplus : (float, 'a) t -> (float, 'a) t
       - : float = infinity
     ]} *)
 
-val silu : (float, 'a) t -> (float, 'a) t
-(** [silu t] applies Sigmoid Linear Unit: x * sigmoid(x).
+val silu : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [silu ?out t] applies Sigmoid Linear Unit: x * sigmoid(x).
 
     Also called Swish. Smooth, non-monotonic activation.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # silu (scalar float32 0.) |> item []
@@ -3130,13 +3450,17 @@ val silu : (float, 'a) t -> (float, 'a) t
       - : float = -0.
     ]} *)
 
-val swish : (float, 'a) t -> (float, 'a) t
-(** Alias for {!silu}. *)
+val swish : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** Alias for {!silu}.
 
-val hard_silu : (float, 'a) t -> (float, 'a) t
-(** [hard_silu t] applies x * hard_sigmoid(x).
+    @param out Optional pre-allocated output tensor. *)
+
+val hard_silu : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [hard_silu ?out t] applies x * hard_sigmoid(x).
 
     Piecewise linear approximation of SiLU. More efficient than SiLU.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # let x = create float32 [| 3 |] [| -3.; 0.; 3. |] in
@@ -3144,18 +3468,24 @@ val hard_silu : (float, 'a) t -> (float, 'a) t
       - : (float, float32_elt) t = [-0, 0, 3]
     ]} *)
 
-val hard_swish : (float, 'a) t -> (float, 'a) t
-(** Alias for {!hard_silu}. *)
+val hard_swish : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** Alias for {!hard_silu}.
 
-val prelu : (float, 'a) t -> (float, 'a) t -> (float, 'a) t
-(** [prelu alpha x] applies Parametric ReLU: max(0,x) + alpha * min(0,x).
+    @param out Optional pre-allocated output tensor. *)
 
-    [alpha] must broadcast across the shape of [x]. *)
+val prelu : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [prelu ?out alpha x] applies Parametric ReLU: max(0,x) + alpha * min(0,x).
 
-val log_sigmoid : (float, 'a) t -> (float, 'a) t
-(** [log_sigmoid t] computes log(sigmoid(x)).
+    [alpha] must broadcast across the shape of [x].
+
+    @param out Optional pre-allocated output tensor. *)
+
+val log_sigmoid : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [log_sigmoid ?out t] computes log(sigmoid(x)).
 
     Numerically stable version of log(1/(1+exp(-x))). Always negative.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # log_sigmoid (scalar float32 0.) |> item [] |> Float.round
@@ -3164,16 +3494,21 @@ val log_sigmoid : (float, 'a) t -> (float, 'a) t
       - : bool = true
     ]} *)
 
-val leaky_relu : ?negative_slope:float -> (float, 'a) t -> (float, 'a) t
-(** [leaky_relu ?negative_slope t] applies Leaky ReLU.
+val leaky_relu :
+  ?out:(float, 'a) t -> ?negative_slope:float -> (float, 'a) t -> (float, 'a) t
+(** [leaky_relu ?out ?negative_slope t] applies Leaky ReLU.
 
     Default [negative_slope = 0.01]. Returns x if x > 0, else negative_slope *
-    x. *)
+    x.
 
-val hard_tanh : (float, 'a) t -> (float, 'a) t
-(** [hard_tanh t] clips values to [-1, 1].
+    @param out Optional pre-allocated output tensor. *)
+
+val hard_tanh : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [hard_tanh ?out t] clips values to [-1, 1].
 
     Linear in [-1, 1], saturates outside. Cheaper than tanh.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # let x = create float32 [| 5 |] [| -2.; -0.5; 0.; 0.5; 2. |] in
@@ -3181,11 +3516,13 @@ val hard_tanh : (float, 'a) t -> (float, 'a) t
       - : (float, float32_elt) t = [-1, -0.5, 0, 0.5, 1]
     ]} *)
 
-val elu : ?alpha:float -> (float, 'a) t -> (float, 'a) t
-(** [elu ?alpha t] applies Exponential Linear Unit.
+val elu : ?out:(float, 'a) t -> ?alpha:float -> (float, 'a) t -> (float, 'a) t
+(** [elu ?out ?alpha t] applies Exponential Linear Unit.
 
     Default [alpha = 1.0]. Returns x if x > 0, else alpha * (exp(x) - 1). Smooth
     for x < 0, helps with vanishing gradients.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # elu (scalar float32 1.) |> item []
@@ -3196,11 +3533,13 @@ val elu : ?alpha:float -> (float, 'a) t -> (float, 'a) t
       - : float = -1.
     ]} *)
 
-val selu : (float, 'a) t -> (float, 'a) t
-(** [selu t] applies Scaled ELU with fixed alpha=1.67326, lambda=1.0507.
+val selu : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [selu ?out t] applies Scaled ELU with fixed alpha=1.67326, lambda=1.0507.
 
     Self-normalizing activation. Preserves mean 0 and variance 1 in deep
     networks under certain conditions.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # selu (scalar float32 0.) |> item []
@@ -3209,43 +3548,60 @@ val selu : (float, 'a) t -> (float, 'a) t
       - : float = 1.
     ]} *)
 
-val celu : ?alpha:float -> (float, 'a) t -> (float, 'a) t
-(** [celu ?alpha x] applies continuously differentiable ELU.
+val celu : ?out:(float, 'a) t -> ?alpha:float -> (float, 'a) t -> (float, 'a) t
+(** [celu ?out ?alpha x] applies continuously differentiable ELU.
 
     Returns [x] if [x >= 0], else [alpha * (exp(x / alpha) - 1)]. Default
-    [alpha = 1.0]. *)
+    [alpha = 1.0].
 
-val squareplus : ?b:float -> (float, 'a) t -> (float, 'a) t
-(** [squareplus ?b x] applies smooth ReLU: 0.5 * (x + sqrt(x² + b)).
+    @param out Optional pre-allocated output tensor. *)
 
-    Default [b = 4]. *)
+val squareplus : ?out:(float, 'a) t -> ?b:float -> (float, 'a) t -> (float, 'a) t
+(** [squareplus ?out ?b x] applies smooth ReLU: 0.5 * (x + sqrt(x² + b)).
 
-val glu : ?axis:int -> (float, 'a) t -> (float, 'a) t
-(** [glu ?axis x] applies the gated linear unit.
+    Default [b = 4].
+
+    @param out Optional pre-allocated output tensor. *)
+
+val glu : ?out:(float, 'a) t -> ?axis:int -> (float, 'a) t -> (float, 'a) t
+(** [glu ?out ?axis x] applies the gated linear unit.
 
     Splits [x] into two equal parts along [axis] and returns [x1 * sigmoid(x2)].
-    Default axis is the last dimension. *)
+    Default axis is the last dimension.
 
-val sparse_plus : (float, 'a) t -> (float, 'a) t
-(** [sparse_plus x] applies the piecewise function:
+    @param out Optional pre-allocated output tensor. *)
+
+val sparse_plus : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [sparse_plus ?out x] applies the piecewise function:
 
     - 0 for x ≤ -1
     - (1/4) (x + 1)² for -1 < x < 1
-    - x for x ≥ 1 *)
+    - x for x ≥ 1
 
-val sparse_sigmoid : (float, 'a) t -> (float, 'a) t
-(** [sparse_sigmoid x] applies the piecewise sparse sigmoid:
+    @param out Optional pre-allocated output tensor. *)
+
+val sparse_sigmoid : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [sparse_sigmoid ?out x] applies the piecewise sparse sigmoid:
 
     - 0 for x ≤ -1
     - 0.5 (x + 1) for -1 < x < 1
-    - 1 for x ≥ 1 *)
+    - 1 for x ≥ 1
 
-val softmax : ?axes:int list -> ?scale:float -> (float, 'a) t -> (float, 'a) t
-(** [softmax ?axes ?scale t] applies softmax normalization.
+    @param out Optional pre-allocated output tensor. *)
+
+val softmax :
+  ?out:(float, 'a) t ->
+  ?axes:int list ->
+  ?scale:float ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [softmax ?out ?axes ?scale t] applies softmax normalization.
 
     Default axis -1. Computes exp(scale * (x - max)) / sum(exp(scale * (x -
     max))) for numerical stability. Output sums to 1 along specified axes.
     [scale] defaults to 1.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # let x = create float32 [| 3 |] [| 1.; 2.; 3. |] in
@@ -3257,72 +3613,104 @@ val softmax : ?axes:int list -> ?scale:float -> (float, 'a) t -> (float, 'a) t
     ]} *)
 
 val log_softmax :
-  ?axes:int list -> ?scale:float -> (float, 'a) t -> (float, 'a) t
-(** [log_softmax ?axes ?scale t] returns the natural logarithm of {!softmax}.
+  ?out:(float, 'a) t ->
+  ?axes:int list ->
+  ?scale:float ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [log_softmax ?out ?axes ?scale t] returns the natural logarithm of
+    {!softmax}.
 
-    Uses the same semantics as {!softmax} for [axes] and [scale]. *)
+    Uses the same semantics as {!softmax} for [axes] and [scale].
+
+    @param out Optional pre-allocated output tensor. *)
 
 val logsumexp :
-  ?axes:int list -> ?keepdims:bool -> (float, 'a) t -> (float, 'a) t
-(** [logsumexp ?axes ?keepdims t] computes log(sum(exp(t))) in a numerically
-    stable manner along [axes]. Defaults to reducing across all axes. *)
+  ?out:(float, 'a) t ->
+  ?axes:int list ->
+  ?keepdims:bool ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [logsumexp ?out ?axes ?keepdims t] computes log(sum(exp(t))) in a
+    numerically stable manner along [axes]. Defaults to reducing across all
+    axes.
+
+    @param out Optional pre-allocated output tensor. *)
 
 val logmeanexp :
-  ?axes:int list -> ?keepdims:bool -> (float, 'a) t -> (float, 'a) t
-(** [logmeanexp ?axes ?keepdims t] computes log(mean(exp(t))) in a numerically
-    stable manner along [axes]. Equivalent to {!logsumexp} minus log of the
-    number of elements. *)
+  ?out:(float, 'a) t ->
+  ?axes:int list ->
+  ?keepdims:bool ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [logmeanexp ?out ?axes ?keepdims t] computes log(mean(exp(t))) in a
+    numerically stable manner along [axes]. Equivalent to {!logsumexp} minus log
+    of the number of elements.
+
+    @param out Optional pre-allocated output tensor. *)
 
 val standardize :
+  ?out:(float, 'a) t ->
   ?axes:int list ->
   ?mean:(float, 'a) t ->
   ?variance:(float, 'a) t ->
   ?epsilon:float ->
   (float, 'a) t ->
   (float, 'a) t
-(** [standardize ?axes ?mean ?variance ?epsilon x] normalizes [x] to zero mean
-    and unit variance.
+(** [standardize ?out ?axes ?mean ?variance ?epsilon x] normalizes [x] to zero
+    mean and unit variance.
 
     If [mean] or [variance] are not provided they are computed along [axes]
     (default: all axes). The result is [(x - mean) / sqrt(variance + epsilon)].
-*)
+
+    @param out Optional pre-allocated output tensor. *)
 
 val batch_norm :
+  ?out:(float, 'a) t ->
   ?axes:int list ->
   ?epsilon:float ->
   scale:(float, 'a) t ->
   bias:(float, 'a) t ->
   (float, 'a) t ->
   (float, 'a) t
-(** [batch_norm ?axes ?epsilon ~scale ~bias x] applies batch normalization.
+(** [batch_norm ?out ?axes ?epsilon ~scale ~bias x] applies batch normalization.
 
     Normalizes [x] along [axes] (defaults to `[0]` for 2D and `[0;2;3]` for 4D)
     and applies learnable [scale] and [bias]. [scale] and [bias] must broadcast
-    across the normalized axes. *)
+    across the normalized axes.
+
+    @param out Optional pre-allocated output tensor. *)
 
 val layer_norm :
+  ?out:(float, 'a) t ->
   ?axes:int list ->
   ?epsilon:float ->
   ?gamma:(float, 'a) t ->
   ?beta:(float, 'a) t ->
   (float, 'a) t ->
   (float, 'a) t
-(** [layer_norm ?axes ?epsilon ?gamma ?beta x] applies layer normalization.
+(** [layer_norm ?out ?axes ?epsilon ?gamma ?beta x] applies layer normalization.
 
     Normalizes [x] along [axes] (default last axis), subtracting mean and
     dividing by sqrt(variance + epsilon). Optional [gamma] (scale) and [beta]
-    (offset) are broadcast across the normalized axes. *)
+    (offset) are broadcast across the normalized axes.
+
+    @param out Optional pre-allocated output tensor. *)
 
 val rms_norm :
+  ?out:(float, 'a) t ->
   ?axes:int list ->
   ?epsilon:float ->
   ?gamma:(float, 'a) t ->
   (float, 'a) t ->
   (float, 'a) t
-(** [rms_norm ?axes ?epsilon ?gamma x] applies Root Mean Square normalization.
+(** [rms_norm ?out ?axes ?epsilon ?gamma x] applies Root Mean Square
+    normalization.
 
     Normalizes [x] by the root mean square across [axes]. Optional [gamma]
-    scales the normalized output. *)
+    scales the normalized output.
+
+    @param out Optional pre-allocated output tensor. *)
 
 val embedding :
   ?scale:bool ->
@@ -3361,11 +3749,13 @@ val dot_product_attention :
       probabilities before multiplying by [v]. [dropout_seed] controls the
       random mask when supplied. *)
 
-val erf : (float, 'a) t -> (float, 'a) t
-(** [erf t] computes the error function.
+val erf : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [erf ?out t] computes the error function.
 
     The error function erf(x) = (2/√π) ∫₀ˣ e^(-t²) dt. Uses Abramowitz and
     Stegun approximation for numerical stability.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # erf (scalar float32 0.) |> item []
@@ -3375,13 +3765,15 @@ val erf : (float, 'a) t -> (float, 'a) t
       - : float = 0.8427
     ]} *)
 
-val gelu : (float, 'a) t -> (float, 'a) t
-(** [gelu t] applies exact Gaussian Error Linear Unit.
+val gelu : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [gelu ?out t] applies exact Gaussian Error Linear Unit.
 
     GELU(x) = 0.5 * x * (1 + erf(x / √2))
 
     This is the exact GELU using error function, more numerically stable than
     the approximation for gradient computation.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # gelu (scalar float32 0.) |> item []
@@ -3390,11 +3782,13 @@ val gelu : (float, 'a) t -> (float, 'a) t
       - : float = 1.
     ]} *)
 
-val gelu_approx : (float, 'a) t -> (float, 'a) t
-(** [gelu_approx t] applies Gaussian Error Linear Unit approximation.
+val gelu_approx : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [gelu_approx ?out t] applies Gaussian Error Linear Unit approximation.
 
     Smooth activation: x * Φ(x) where Φ is Gaussian CDF. This uses tanh
     approximation for efficiency.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # gelu_approx (scalar float32 0.) |> item []
@@ -3403,10 +3797,12 @@ val gelu_approx : (float, 'a) t -> (float, 'a) t
       - : float = 1.
     ]} *)
 
-val softsign : (float, 'a) t -> (float, 'a) t
-(** [softsign t] computes x / (|x| + 1).
+val softsign : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [softsign ?out t] computes x / (|x| + 1).
 
     Similar to tanh but computationally cheaper. Range (-1, 1).
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # let x = create float32 [| 3 |] [| -10.; 0.; 10. |] in
@@ -3414,10 +3810,12 @@ val softsign : (float, 'a) t -> (float, 'a) t
       - : (float, float32_elt) t = [-0.909091, 0, 0.909091]
     ]} *)
 
-val mish : (float, 'a) t -> (float, 'a) t
-(** [mish t] applies Mish activation: x * tanh(softplus(x)).
+val mish : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+(** [mish ?out t] applies Mish activation: x * tanh(softplus(x)).
 
     Self-regularizing non-monotonic activation. Smoother than ReLU.
+
+    @param out Optional pre-allocated output tensor.
 
     {@ocaml[
       # mish (scalar float32 0.) |> item [] |> Float.abs |> (fun x -> x < 0.001)
@@ -3431,22 +3829,24 @@ val mish : (float, 'a) t -> (float, 'a) t
     Neural network convolution and pooling operations. *)
 
 val im2col :
+  ?out:('a, 'b) t ->
   kernel_size:int array ->
   stride:int array ->
   dilation:int array ->
   padding:(int * int) array ->
   ('a, 'b) t ->
   ('a, 'b) t
-(** [im2col ~kernel_size ~stride ~dilation ~padding t] extracts sliding local
-    blocks from tensor.
+(** [im2col ?out ~kernel_size ~stride ~dilation ~padding t] extracts sliding
+    local blocks from tensor.
 
     Extracts patches of size kernel_size from the input tensor at the specified
     stride and dilation.
 
-    - [kernel_size]: size of sliding blocks to extract
-    - [stride]: step between consecutive blocks
-    - [dilation]: spacing between kernel elements
-    - [padding]: (before, after) padding for each spatial dimension
+    @param out Optional pre-allocated output tensor for zero-allocation usage.
+    @param kernel_size Size of sliding blocks to extract.
+    @param stride Step between consecutive blocks.
+    @param dilation Spacing between kernel elements.
+    @param padding (before, after) padding for each spatial dimension.
 
     For a 4D input [batch; channels; height; width], produces output shape
     [batch; channels * kh * kw; num_patches_h; num_patches_w] where kh, kw are
@@ -3460,6 +3860,7 @@ val im2col :
     ]} *)
 
 val col2im :
+  ?out:('a, 'b) t ->
   output_size:int array ->
   kernel_size:int array ->
   stride:int array ->
@@ -3467,17 +3868,18 @@ val col2im :
   padding:(int * int) array ->
   ('a, 'b) t ->
   ('a, 'b) t
-(** [col2im ~output_size ~kernel_size ~stride ~dilation ~padding t] combines
-    sliding local blocks into tensor.
+(** [col2im ?out ~output_size ~kernel_size ~stride ~dilation ~padding t]
+    combines sliding local blocks into tensor.
 
     This is the inverse of {!im2col}. Accumulates values from the unfolded
     representation back into spatial dimensions. Overlapping regions are summed.
 
-    - [output_size]: target spatial dimensions [height; width]
-    - [kernel_size]: size of sliding blocks
-    - [stride]: step between consecutive blocks
-    - [dilation]: spacing between kernel elements
-    - [padding]: (before, after) padding for each spatial dimension
+    @param out Optional pre-allocated output tensor for zero-allocation usage.
+    @param output_size Target spatial dimensions [height; width].
+    @param kernel_size Size of sliding blocks.
+    @param stride Step between consecutive blocks.
+    @param dilation Spacing between kernel elements.
+    @param padding (before, after) padding for each spatial dimension.
 
     For input shape [batch; channels * kh * kw; num_patches_h; num_patches_w],
     produces output [batch; channels; height; width].
