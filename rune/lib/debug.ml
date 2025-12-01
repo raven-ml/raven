@@ -288,20 +288,6 @@ let debug_handler () =
                 log_operation !context_stack "sqrt" [ Tensor_ref t_in ]
                   (Tensor_ref out);
                 continue k ())
-        | E_exp2 { out; t_in } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                op_exp2 ~out t_in;
-                log_operation !context_stack "exp2" [ Tensor_ref t_in ]
-                  (Tensor_ref out);
-                continue k ())
-        | E_log2 { out; t_in } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                op_log2 ~out t_in;
-                log_operation !context_stack "log2" [ Tensor_ref t_in ]
-                  (Tensor_ref out);
-                continue k ())
         | E_sin { out; t_in } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->

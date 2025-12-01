@@ -924,8 +924,6 @@ module Make (B : Backend_intf.S) = struct
   let invert ?out x = bitwise_not ?out x
 
   (* Math functions - assume float inputs as per B.op signatures *)
-  let log2 ?out x = unaryop ~op_name:"log2" ?out B.op_log2 x
-  let exp2 ?out x = unaryop ~op_name:"exp2" ?out B.op_exp2 x
   let sin ?out x = unaryop ~op_name:"sin" ?out B.op_sin x
   let cos ?out x = unaryop ~op_name:"cos" ?out B.op_cos x
   let sqrt ?out x = unaryop ~op_name:"sqrt" ?out B.op_sqrt x
@@ -933,6 +931,22 @@ module Make (B : Backend_intf.S) = struct
   let log ?out x = unaryop ~op_name:"log" ?out B.op_log x
   let exp ?out x = unaryop ~op_name:"exp" ?out B.op_exp x
   let abs ?out x = unaryop ~op_name:"abs" ?out B.op_abs x
+
+  (* log2(x) = log(x) / log(2) = log(x) * (1/log(2)) *)
+  let log2 ?out x =
+    let dt = dtype x in
+    let inv_ln2_val = Dtype.of_float dt (1.0 /. Stdlib.log 2.0) in
+    let inv_ln2 = B.op_const_scalar (B.context x) inv_ln2_val dt in
+    let inv_ln2_b = broadcast_to (shape x) inv_ln2 in
+    mul ?out (log x) inv_ln2_b
+
+  (* exp2(x) = exp(x * log(2)) *)
+  let exp2 ?out x =
+    let dt = dtype x in
+    let ln2_val = Dtype.of_float dt (Stdlib.log 2.0) in
+    let ln2 = B.op_const_scalar (B.context x) ln2_val dt in
+    let ln2_b = broadcast_to (shape x) ln2 in
+    exp ?out (mul x ln2_b)
 
   let tan ?out x =
     let sin_x = sin x in

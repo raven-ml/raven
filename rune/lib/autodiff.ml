@@ -40,14 +40,6 @@ let ln2 = 0.693147180559945309417
 let float_scalar_like (type a b) (x : (a, b) t) (v : float) : (a, b) t =
   Obj.magic (T.full (dtype x) [||] (Obj.magic v : a))
 
-let deriv_log2 (type a b) (x : (a, b) t) : (a, b) t =
-  (* d/dx log2(x) = 1 / (x * ln(2)) *)
-  T.div (T.ones_like x) (T.mul x (float_scalar_like x ln2))
-
-let deriv_exp2 (type a b) (exp2_x : (a, b) t) : (a, b) t =
-  (* d/dx exp2(x) = exp2(x) * ln(2) *)
-  T.mul exp2_x (float_scalar_like exp2_x ln2)
-
 let deriv_sin (type a b) (x : (a, b) t) : (a, b) t =
   (* d/dx sin(x) = cos(x) *)
   Obj.magic (T.cos (Obj.magic x))
@@ -226,14 +218,6 @@ let make_jvp_handler dual_map =
               let tan = T.mul d.tangent (T.neg (Obj.magic (T.sin (Obj.magic d.primal)))) in
               register out { primal = out; tangent = tan };
               continue k ())
-      | E_log2 { out; t_in } ->
-          Some
-            (fun k ->
-              op_log2 ~out t_in;
-              let d = get_dual t_in in
-              let tan = T.mul d.tangent (deriv_log2 d.primal) in
-              register out { primal = out; tangent = tan };
-              continue k ())
       | E_log { out; t_in } ->
           Some
             (fun k ->
@@ -241,14 +225,6 @@ let make_jvp_handler dual_map =
               let d = get_dual t_in in
               (* d/dx log(x) = 1/x *)
               let tan = T.mul d.tangent (T.recip d.primal) in
-              register out { primal = out; tangent = tan };
-              continue k ())
-      | E_exp2 { out; t_in } ->
-          Some
-            (fun k ->
-              op_exp2 ~out t_in;
-              let d = get_dual t_in in
-              let tan = T.mul d.tangent (deriv_exp2 out) in
               register out { primal = out; tangent = tan };
               continue k ())
       | E_exp { out; t_in } ->
@@ -871,16 +847,6 @@ let make_vjp_handler tape_by_id val_to_id seed_output =
               let g = T.mul twg_out.grad (T.neg (Obj.magic (T.sin (Obj.magic t_in)))) in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
-      | E_log2 { out; t_in } ->
-          Some
-            (fun k ->
-              op_log2 ~out t_in;
-              let fwd = continue k () in
-              let twg_in = get_or_init t_in in
-              let twg_out = get_or_init out in
-              let g = T.mul twg_out.grad (deriv_log2 t_in) in
-              twg_in.grad <- T.add twg_in.grad g;
-              fwd)
       | E_log { out; t_in } ->
           Some
             (fun k ->
@@ -890,16 +856,6 @@ let make_vjp_handler tape_by_id val_to_id seed_output =
               let twg_out = get_or_init out in
               (* d/dx log(x) = 1/x *)
               let g = T.mul twg_out.grad (T.recip t_in) in
-              twg_in.grad <- T.add twg_in.grad g;
-              fwd)
-      | E_exp2 { out; t_in } ->
-          Some
-            (fun k ->
-              op_exp2 ~out t_in;
-              let fwd = continue k () in
-              let twg_in = get_or_init t_in in
-              let twg_out = get_or_init out in
-              let g = T.mul twg_out.grad (deriv_exp2 out) in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
       | E_exp { out; t_in } ->

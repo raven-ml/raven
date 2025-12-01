@@ -272,106 +272,6 @@ INT4_UNARY_IMPL(neg, 0, u4, NEG_OP)
 UNARY_OP_FOR_TYPE(neg, caml_ba_bool, bool_, NEG_BOOL_OP)
 BUILD_DISPATCH_TABLE(neg);
 
-// Log2 (floating-point and complex only)
-#define LOG2_FLOAT_OP(x) (log2f(x))
-#define LOG2_DOUBLE_OP(x) (log2(x))
-#define COMPLEX32_LOG2_OP(x) (clogf(x) / logf(2.0f))
-#define COMPLEX64_LOG2_OP(x) (clog(x) / log(2.0))
-GENERATE_UNARY_FLOAT_OP(log2, LOG2_FLOAT_OP, LOG2_DOUBLE_OP)
-
-// Float16, BFloat16, FP8 variants need conversion
-LOW_PREC_OP_KERNEL(log2, uint16_t, f16, LOG2_FLOAT_OP, half_to_float,
-                   float_to_half)
-LOW_PREC_OP_IMPL(log2, uint16_t, f16)
-LOW_PREC_OP_KERNEL(log2, caml_ba_bfloat16, bf16, LOG2_FLOAT_OP,
-                   bfloat16_to_float, float_to_bfloat16)
-LOW_PREC_OP_IMPL(log2, caml_ba_bfloat16, bf16)
-LOW_PREC_OP_KERNEL(log2, caml_ba_fp8_e4m3, f8e4m3, LOG2_FLOAT_OP,
-                   fp8_e4m3_to_float, float_to_fp8_e4m3)
-LOW_PREC_OP_IMPL(log2, caml_ba_fp8_e4m3, f8e4m3)
-LOW_PREC_OP_KERNEL(log2, caml_ba_fp8_e5m2, f8e5m2, LOG2_FLOAT_OP,
-                   fp8_e5m2_to_float, float_to_fp8_e5m2)
-LOW_PREC_OP_IMPL(log2, caml_ba_fp8_e5m2, f8e5m2)
-
-UNARY_OP_FOR_TYPE(log2, complex32, c32, COMPLEX32_LOG2_OP)
-UNARY_OP_FOR_TYPE(log2, complex64, c64, COMPLEX64_LOG2_OP)
-
-COMPLEX16_OP_KERNEL(log2, COMPLEX32_LOG2_OP)
-UNARY_OP_IMPL(log2, caml_ba_complex16, c16)
-
-// Build dispatch table with only float types (integers not supported)
-static const unary_op_table log2_table = {.i8 = NULL,
-                                          .u8 = NULL,
-                                          .i16 = NULL,
-                                          .u16 = NULL,
-                                          .i32 = NULL,
-                                          .i64 = NULL,
-                                          .inat = NULL,
-                                          .f16 = nx_c_log2_f16,
-                                          .f32 = nx_c_log2_f32,
-                                          .f64 = nx_c_log2_f64,
-                                          .c32 = nx_c_log2_c32,
-                                          .c64 = nx_c_log2_c64,
-                                          .bf16 = nx_c_log2_bf16,
-                                          .bool_ = NULL,
-                                          .i4 = NULL,
-                                          .u4 = NULL,
-                                          .f8e4m3 = nx_c_log2_f8e4m3,
-                                          .f8e5m2 = nx_c_log2_f8e5m2,
-                                          .c16 = nx_c_log2_c16,
-                                          .qi8 = NULL,
-                                          .qu8 = NULL};
-
-// Exp2 (floating-point and complex only)
-#define EXP2_FLOAT_OP(x) (exp2f(x))
-#define EXP2_DOUBLE_OP(x) (exp2(x))
-#define COMPLEX32_EXP2_OP(x) (cpowf(2.0f, x))
-#define COMPLEX64_EXP2_OP(x) (cpow(2.0, x))
-GENERATE_UNARY_FLOAT_OP(exp2, EXP2_FLOAT_OP, EXP2_DOUBLE_OP)
-
-// Float16, BFloat16, FP8 variants need conversion
-LOW_PREC_OP_KERNEL(exp2, uint16_t, f16, EXP2_FLOAT_OP, half_to_float,
-                   float_to_half)
-LOW_PREC_OP_IMPL(exp2, uint16_t, f16)
-LOW_PREC_OP_KERNEL(exp2, caml_ba_bfloat16, bf16, EXP2_FLOAT_OP,
-                   bfloat16_to_float, float_to_bfloat16)
-LOW_PREC_OP_IMPL(exp2, caml_ba_bfloat16, bf16)
-LOW_PREC_OP_KERNEL(exp2, caml_ba_fp8_e4m3, f8e4m3, EXP2_FLOAT_OP,
-                   fp8_e4m3_to_float, float_to_fp8_e4m3)
-LOW_PREC_OP_IMPL(exp2, caml_ba_fp8_e4m3, f8e4m3)
-LOW_PREC_OP_KERNEL(exp2, caml_ba_fp8_e5m2, f8e5m2, EXP2_FLOAT_OP,
-                   fp8_e5m2_to_float, float_to_fp8_e5m2)
-LOW_PREC_OP_IMPL(exp2, caml_ba_fp8_e5m2, f8e5m2)
-
-UNARY_OP_FOR_TYPE(exp2, complex32, c32, COMPLEX32_EXP2_OP)
-UNARY_OP_FOR_TYPE(exp2, complex64, c64, COMPLEX64_EXP2_OP)
-
-COMPLEX16_OP_KERNEL(exp2, COMPLEX32_EXP2_OP)
-UNARY_OP_IMPL(exp2, caml_ba_complex16, c16)
-
-// Build dispatch table with only float types (integers not supported)
-static const unary_op_table exp2_table = {.i8 = NULL,
-                                          .u8 = NULL,
-                                          .i16 = NULL,
-                                          .u16 = NULL,
-                                          .i32 = NULL,
-                                          .i64 = NULL,
-                                          .inat = NULL,
-                                          .f16 = nx_c_exp2_f16,
-                                          .f32 = nx_c_exp2_f32,
-                                          .f64 = nx_c_exp2_f64,
-                                          .c32 = nx_c_exp2_c32,
-                                          .c64 = nx_c_exp2_c64,
-                                          .bf16 = nx_c_exp2_bf16,
-                                          .bool_ = NULL,
-                                          .i4 = NULL,
-                                          .u4 = NULL,
-                                          .f8e4m3 = nx_c_exp2_f8e4m3,
-                                          .f8e5m2 = nx_c_exp2_f8e5m2,
-                                          .c16 = nx_c_exp2_c16,
-                                          .qi8 = NULL,
-                                          .qu8 = NULL};
-
 // Sin (floating-point and complex only)
 #define SIN_FLOAT_OP(x) (sinf(x))
 #define SIN_DOUBLE_OP(x) (sin(x))
@@ -845,9 +745,7 @@ static void dispatch_unary_op(value v_x, value v_z, const unary_op_table *table,
   }
 
 DEFINE_FFI_STUB(neg)
-DEFINE_FFI_STUB(log2)
 DEFINE_FFI_STUB(log)
-DEFINE_FFI_STUB(exp2)
 DEFINE_FFI_STUB(exp)
 DEFINE_FFI_STUB(sin)
 DEFINE_FFI_STUB(cos)

@@ -86,8 +86,6 @@ type _ Effect.t +=
     }
       -> unit Effect.t
   | E_neg : { out : ('a, 'b) t; t_in : ('a, 'b) t } -> unit Effect.t
-  | E_log2 : { out : ('a, 'b) t; t_in : ('a, 'b) t } -> unit Effect.t
-  | E_exp2 : { out : ('a, 'b) t; t_in : ('a, 'b) t } -> unit Effect.t
   | E_sin : { out : ('a, 'b) t; t_in : ('a, 'b) t } -> unit Effect.t
   | E_sqrt : { out : ('a, 'b) t; t_in : ('a, 'b) t } -> unit Effect.t
   | E_recip : { out : ('a, 'b) t; t_in : ('a, 'b) t } -> unit Effect.t
@@ -473,8 +471,6 @@ let op_cmple ~out a b = comparison_op ~out (fun () -> E_cmple { out; a; b }) Nx_
 
 (* Unary operations *)
 let op_neg ~out t_in = unary_op ~out (fun () -> E_neg { out; t_in }) Nx_c.op_neg t_in
-let op_log2 ~out t_in = unary_op ~out (fun () -> E_log2 { out; t_in }) Nx_c.op_log2 t_in
-let op_exp2 ~out t_in = unary_op ~out (fun () -> E_exp2 { out; t_in }) Nx_c.op_exp2 t_in
 let op_sin ~out t_in = unary_op ~out (fun () -> E_sin { out; t_in }) Nx_c.op_sin t_in
 let op_sqrt ~out t_in = unary_op ~out (fun () -> E_sqrt { out; t_in }) Nx_c.op_sqrt t_in
 let op_recip ~out t_in = unary_op ~out (fun () -> E_recip { out; t_in }) Nx_c.op_recip t_in

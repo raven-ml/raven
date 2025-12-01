@@ -718,16 +718,6 @@ let make_jit_handler (state : jit_tracer_state) =
           (fun k ->
             handle_unary state Neg out t_in;
             continue k ())
-    | E_log2 { out; t_in } ->
-        Some
-          (fun k ->
-            handle_unary state Log2 out t_in;
-            continue k ())
-    | E_exp2 { out; t_in } ->
-        Some
-          (fun k ->
-            handle_unary state Exp2 out t_in;
-            continue k ())
     | E_sin { out; t_in } ->
         Some
           (fun k ->

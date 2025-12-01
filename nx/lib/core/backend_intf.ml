@@ -173,17 +173,9 @@ module type S = sig
   (** [op_exp ~out x] computes natural exponential [e ^ x] element-wise, writing
       to [out]. *)
 
-  val op_exp2 : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_exp2 ~out x] computes base-2 exponential [2 ^ x] element-wise, writing
-      to [out]. *)
-
   val op_log : out:('a, 'b) t -> ('a, 'b) t -> unit
   (** [op_log ~out x] computes natural logarithm [ln(x)] element-wise, writing to
       [out]. *)
-
-  val op_log2 : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_log2 ~out x] computes base-2 logarithm [log₂(x)] element-wise, writing
-      to [out]. *)
 
   (** {2 Trigonometric Operations} *)
 

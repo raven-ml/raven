@@ -98,12 +98,6 @@ external caml_and :
 external caml_neg : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
   = "caml_nx_neg"
 
-external caml_log2 : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
-  = "caml_nx_log2"
-
-external caml_exp2 : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
-  = "caml_nx_exp2"
-
 external caml_sin : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
   = "caml_nx_sin"
 
@@ -443,9 +437,7 @@ let op_cmple ~out x y = comparison_op "cmple" caml_cmple ~out x y
 
 (* Unary operations *)
 let op_neg ~out x = unary_op "neg" caml_neg ~out x
-let op_log2 ~out x = unary_op "log2" caml_log2 ~out x
 let op_log ~out x = unary_op "log" caml_log ~out x
-let op_exp2 ~out x = unary_op "exp2" caml_exp2 ~out x
 let op_exp ~out x = unary_op "exp" caml_exp ~out x
 let op_sin ~out x = unary_op "sin" caml_sin ~out x
 let op_cos ~out x = unary_op "cos" caml_cos ~out x

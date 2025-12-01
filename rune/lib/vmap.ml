@@ -1054,18 +1054,6 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                   op_neg ~out t_in;
                   set_bdim out (get_bdim t_in);
                   continue k ())
-          | E_exp2 { out; t_in } ->
-              Some
-                (fun k ->
-                  op_exp2 ~out t_in;
-                  set_bdim out (get_bdim t_in);
-                  continue k ())
-          | E_log2 { out; t_in } ->
-              Some
-                (fun k ->
-                  op_log2 ~out t_in;
-                  set_bdim out (get_bdim t_in);
-                  continue k ())
           | E_sin { out; t_in } ->
               Some
                 (fun k ->
