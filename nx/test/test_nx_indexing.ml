@@ -70,7 +70,8 @@ let test_index_idx_repeated () =
   let indexed = Nx.slice [ Nx.L [ 0; 1; 1; 0; 2 ] ] t in
   check_t "index idx repeated" [| 5 |] [| 10.; 20.; 20.; 10.; 30. |] indexed
 
-(* Regression test: fancy indexing should reorder even when length matches dim size *)
+(* Regression test: fancy indexing should reorder even when length matches dim
+   size *)
 let test_index_idx_reorder () =
   let t = Nx.create Nx.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   (* L [1; 2; 0] should reorder rows, not return unchanged *)
