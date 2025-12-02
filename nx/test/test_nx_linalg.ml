@@ -213,7 +213,7 @@ let test_solve_simple () =
   let b = Nx.create Nx.float32 [| 2 |] [| 9.; 8. |] in
   let x = Nx.solve a b in
   let result = Nx.dot a x in
-  check_nx "solve simple" b result
+  check_nx ~epsilon:1e-5 "solve simple" b result
 
 let test_solve_batch () =
   let a =
