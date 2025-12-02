@@ -90,6 +90,8 @@ We're closing 8 user-reported issues or feature requests and are totalling 30 co
 
 ### Hugin
 
+- Fix random `SIGBUS`/bus errors on macOS when closing `Hugin.show` windows by
+  destroying SDL windows with the correct pointer in the finalizer. (@tmattio)
 - Let `Hugin.show` windows close cleanly via the window button or `Esc`/`q`, avoiding frozen macOS REPL sessions (@tmattio)
 
 ### Rune

@@ -19,10 +19,17 @@
 
 // --- Custom Block Helpers for SDL Pointers ---
 
+// Macro to get the SDL_Window* back (with null check)
+#define Window_val(v) (*((SDL_Window**)Data_custom_val(v)))
+
 static void finalize_sdl_window(value v) {
-  SDL_Window* win = (SDL_Window*)Field(v, 0);
+  /* The window pointer lives in the custom block payload. Using Field here
+     would read the custom_ops pointer instead of the SDL_Window*, so always
+     go through Window_val/Data_custom_val. */
+  SDL_Window* win = Window_val(v);
   if (win != NULL) {
     SDL_DestroyWindow(win);
+    *((SDL_Window**)Data_custom_val(v)) = NULL;
   }
 }
 
@@ -41,9 +48,6 @@ static value Val_sdl_window(SDL_Window* win) {
   memcpy(Data_custom_val(v), &win, sizeof(SDL_Window*));
   return v;
 }
-
-// Macro to get the SDL_Window* back (with null check)
-#define Window_val(v) (*((SDL_Window**)Data_custom_val(v)))
 
 // --- Similar setup for Renderer ---
 static void finalize_sdl_renderer(value v) {
