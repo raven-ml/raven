@@ -40,7 +40,7 @@
    (echo "let is_release_mode = %{read-lines:./mode.txt}\n"))))
 
 (rule
- (targets asset_editor.ml)
+ (targets asset_editor.ml asset_editor.mli)
  (enabled_if
   (= %{profile} release))
  ; Only crunch in release mode
@@ -50,8 +50,7 @@
   (source_tree ../browser/main.bc.wasm.assets))
  (action
   (run
-   %{bin:ocaml-crunch}
-   --mode=plain
+   %{bin:quill-crunch}
    -e
    css
    -e
@@ -60,19 +59,18 @@
    wasm
    -e
    map
-   -o
-   asset_editor.ml
+   -o asset_editor.ml
    ../browser/)))
 
 (rule
- (target asset.ml)
+ (targets asset.ml asset.mli)
  (enabled_if
   (= %{profile} release))
  ; Only crunch in release mode
  (deps
   (source_tree asset/))
  (action
-  (run %{bin:ocaml-crunch} --mode=plain -o asset.ml asset/)))
+  (run %{bin:quill-crunch} -o asset.ml asset/)))
 
 (rule
  (target asset_editor.ml)

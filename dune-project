@@ -223,7 +223,6 @@
   (dream
    (>= 1.0.0~alpha8))
   ppx_deriving_yojson
-  crunch
   cmarkit
   vdom
   brr

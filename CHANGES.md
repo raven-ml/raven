@@ -27,6 +27,10 @@ All notable changes to this project will be documented in this file.
 - Add autodiff support for FFT operations (@tmattio)
 - Add autodiff support for some linear algebra operations: QR decomposition (`qr`), Cholesky decomposition (`cholesky`), and triangular solve (`triangular_solve`). (@tmattio)
 
+### Quill
+
+- Add support for 32 bit systems by replacing ocaml-crunch with a `quill-crunch` chunked asset bundler in release builds to keep generated modules under 32-bit string limits. (@tmattio)
+
 ## [1.0.0~alpha2] - 2025-11-03
 
 We're excited to announce the release of Raven 1.0.0~alpha2! Less than a month after alpha1, this release notably includes contributions from Outreachy applicants in preparation for the upcoming _two_ internships.

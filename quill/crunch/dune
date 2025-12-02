@@ -1,0 +1,5 @@
+(executable
+ (name main)
+ (public_name quill-crunch)
+ (package quill)
+ (libraries unix))
