@@ -8,21 +8,21 @@ This directory contains benchmarks for the `rune` library. We provide comparativ
 ┌───────────────────────────────┬──────────┬──────────┬──────────┬─────────┬────────────┐
 │ Name                          │ Wall/Run │  CPU/Run │  mWd/Run │ Speedup │ vs Fastest │
 ├───────────────────────────────┼──────────┼──────────┼──────────┼─────────┼────────────┤
-│ ScalarGrad Large (Rune)       │   9.10μs │   9.06μs │   3.46kw │   1.00x │       100% │
-│ ScalarGrad Medium (Rune)      │   9.57μs │   9.43μs │   3.46kw │   0.95x │       105% │
-│ ScalarGrad Small (Rune)       │   9.84μs │   9.51μs │   3.46kw │   0.92x │       108% │
-│ VectorGrad Small (Rune)       │  24.58μs │  24.37μs │   9.50kw │   0.37x │       270% │
-│ VectorGrad Medium (Rune)      │  31.24μs │  30.96μs │   9.50kw │   0.29x │       343% │
-│ VectorGrad Large (Rune)       │  39.15μs │  38.90μs │   9.50kw │   0.23x │       430% │
-│ HigherOrderGrad Small (Rune)  │ 261.77μs │ 258.28μs │  90.93kw │   0.03x │      2878% │
-│ HigherOrderGrad Medium (Rune) │ 307.21μs │ 306.49μs │  90.93kw │   0.03x │      3378% │
-│ HigherOrderGrad Large (Rune)  │ 378.72μs │ 378.57μs │  90.93kw │   0.02x │      4164% │
-│ MatMulGrad Small (Rune)       │ 570.87μs │ 841.82μs │  13.41kw │   0.02x │      6276% │
-│ ChainGrad Small (Rune)        │   3.89ms │   5.29ms │ 114.91kw │   0.00x │     42790% │
-│ MatMulGrad Medium (Rune)      │   8.70ms │  10.32ms │  13.31kw │   0.00x │     95675% │
-│ MatMulGrad Large (Rune)       │  29.81ms │  38.36ms │  13.31kw │   0.00x │    327767% │
-│ ChainGrad Medium (Rune)       │  65.81ms │  76.24ms │ 114.13kw │   0.00x │    723543% │
-│ ChainGrad Large (Rune)        │ 219.58ms │ 262.43ms │ 114.13kw │   0.00x │   2414100% │
+│ ScalarGrad Medium (Rune)      │  15.89μs │  15.80μs │   7.56kw │   1.00x │       100% │
+│ ScalarGrad Large (Rune)       │  15.90μs │  15.86μs │   7.56kw │   1.00x │       100% │
+│ ScalarGrad Small (Rune)       │  16.05μs │  16.04μs │   7.56kw │   0.99x │       101% │
+│ VectorGrad Small (Rune)       │  32.40μs │  32.39μs │  14.14kw │   0.49x │       204% │
+│ VectorGrad Medium (Rune)      │  38.72μs │  38.62μs │  14.14kw │   0.41x │       244% │
+│ VectorGrad Large (Rune)       │  46.97μs │  46.85μs │  14.14kw │   0.34x │       296% │
+│ HigherOrderGrad Small (Rune)  │ 315.85μs │ 314.07μs │ 129.23kw │   0.05x │      1988% │
+│ HigherOrderGrad Medium (Rune) │ 390.42μs │ 388.73μs │ 129.23kw │   0.04x │      2457% │
+│ HigherOrderGrad Large (Rune)  │ 538.70μs │ 537.14μs │ 129.23kw │   0.03x │      3390% │
+│ MatMulGrad Small (Rune)       │ 626.49μs │ 889.20μs │  21.82kw │   0.03x │      3942% │
+│ ChainGrad Small (Rune)        │   4.22ms │   5.49ms │ 165.53kw │   0.00x │     26572% │
+│ MatMulGrad Medium (Rune)      │  10.61ms │  12.35ms │  21.70kw │   0.00x │     66768% │
+│ MatMulGrad Large (Rune)       │  36.79ms │  46.00ms │  21.70kw │   0.00x │    231511% │
+│ ChainGrad Medium (Rune)       │  77.46ms │  88.48ms │ 164.60kw │   0.00x │    487485% │
+│ ChainGrad Large (Rune)        │ 249.58ms │ 299.02ms │ 164.60kw │   0.00x │   1570623% │
 └───────────────────────────────┴──────────┴──────────┴──────────┴─────────┴────────────┘
 ```
 

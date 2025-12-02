@@ -5,18 +5,26 @@ module T = Tensor
 (* ───── Type Definitions & Utils ───── *)
 
 module Physical_tbl = struct
+  (* A physical identity-based map using pointer hashing. Hashes on the object's
+     address (not contents), so mutations don't affect lookup. Uses physical
+     equality (==) for collision resolution. *)
+
   module Tbl = Hashtbl.Make (struct
     type t = Obj.t
 
     let equal = ( == )
-    let hash = Hashtbl.hash
+
+    let hash obj =
+      (* Hash on the object's address, not its contents. Obj.magic to nativeint
+         extracts the pointer value. *)
+      Hashtbl.hash (Obj.magic obj : nativeint)
   end)
 
   type ('k, 'v) t = 'v Tbl.t
 
-  let create size = Tbl.create size
-  let find tbl key = Tbl.find_opt tbl (Obj.repr key)
-  let add tbl key value = Tbl.replace tbl (Obj.repr key) value
+  let create n = Tbl.create n
+  let find t key = Tbl.find_opt t (Obj.repr key)
+  let add t key value = Tbl.replace t (Obj.repr key) value
 end
 
 let autodiff_enabled = ref true
@@ -96,7 +104,8 @@ let make_jvp_handler dual_map =
           Some
             (fun k ->
               let res = op_buffer ctx dt size_in_elements in
-              register res { primal = res; tangent = T.zeros_like res };
+              (* Don't register buffer here - the actual operation that fills it
+                 will register with the correct tangent *)
               continue k res)
       | E_threefry { key; ctr } ->
           Some
@@ -676,19 +685,15 @@ let unbroadcast_grad (type a b) (g : (a, b) t) (src_shape : int array) :
         if T.shape summed <> src_shape then T.reshape src_shape summed
         else summed
 
-let make_vjp_handler tape_by_id val_to_id seed_output =
+let make_vjp_handler tape seed_output =
   let open Effect.Deep in
   let get_or_init (type a b) (t : (a, b) t) : (a, b) t_with_grad =
-    match Physical_tbl.find val_to_id t with
-    | Some id -> (
-        match Hashtbl.find_opt tape_by_id id with
-        | Some (Any_twg twg) -> unwrap_twg (dtype t) (Any_twg twg)
-        | None -> failwith "VJP: inconsistent tape")
+    match Physical_tbl.find tape t with
+    | Some (Any_twg twg) -> unwrap_twg (dtype t) (Any_twg twg)
     | None ->
         let id = fresh_twg_id () in
         let twg = { v = t; grad = T.zeros_like t; id } in
-        Hashtbl.add tape_by_id id (Any_twg twg);
-        Physical_tbl.add val_to_id t id;
+        Physical_tbl.add tape t (Any_twg twg);
         twg
   in
 
@@ -1797,97 +1802,73 @@ let jvp_aux (type a b c d e) (f : (a, b) t -> (c, d) t * e) (primals : (a, b) t)
 
 let vjp (type a b c d) (f : (a, b) t -> (c, d) t) (x : (a, b) t)
     (cotangent : (c, d) t) : (c, d) t * (a, b) t =
-  let tape_by_id = Hashtbl.create 32 in
-  let val_to_id = Physical_tbl.create 32 in
-  let handler = make_vjp_handler tape_by_id val_to_id (fun _ -> cotangent) in
+  let tape = Physical_tbl.create 32 in
+  let handler = make_vjp_handler tape (fun _ -> cotangent) in
   let y = Effect.Deep.match_with f x handler in
   let grad_x =
-    match Physical_tbl.find val_to_id x with
-    | Some id -> (
-        match Hashtbl.find_opt tape_by_id id with
-        | Some (Any_twg twg) -> (unwrap_twg (dtype x) (Any_twg twg)).grad
-        | None -> T.zeros_like x)
+    match Physical_tbl.find tape x with
+    | Some (Any_twg twg) -> (unwrap_twg (dtype x) (Any_twg twg)).grad
     | None -> T.zeros_like x
   in
   (y, grad_x)
 
 let vjps (type a b c d) (f : (a, b) t list -> (c, d) t) (xs : (a, b) t list)
     (cotangent : (c, d) t) : (c, d) t * (a, b) t list =
-  let tape_by_id = Hashtbl.create 32 in
-  let val_to_id = Physical_tbl.create 32 in
-  let handler = make_vjp_handler tape_by_id val_to_id (fun _ -> cotangent) in
+  let tape = Physical_tbl.create 32 in
+  let handler = make_vjp_handler tape (fun _ -> cotangent) in
   let y = Effect.Deep.match_with f xs handler in
   let grads =
     List.map
       (fun x ->
-        match Physical_tbl.find val_to_id x with
-        | Some id -> (
-            match Hashtbl.find_opt tape_by_id id with
-            | Some (Any_twg twg) -> (unwrap_twg (dtype x) (Any_twg twg)).grad
-            | None -> T.zeros_like x)
+        match Physical_tbl.find tape x with
+        | Some (Any_twg twg) -> (unwrap_twg (dtype x) (Any_twg twg)).grad
         | None -> T.zeros_like x)
       xs
   in
   (y, grads)
 
 let grad (type a b c d) (f : (a, b) t -> (c, d) t) (x : (a, b) t) : (a, b) t =
-  let tape_by_id = Hashtbl.create 32 in
-  let val_to_id = Physical_tbl.create 32 in
-  let handler = make_vjp_handler tape_by_id val_to_id T.ones_like in
+  let tape = Physical_tbl.create 32 in
+  let handler = make_vjp_handler tape T.ones_like in
   let _ = Effect.Deep.match_with f x handler in
-  match Physical_tbl.find val_to_id x with
-  | Some id -> (
-      match Hashtbl.find_opt tape_by_id id with
-      | Some (Any_twg twg) -> (unwrap_twg (dtype x) (Any_twg twg)).grad
-      | None -> T.zeros_like x)
+  match Physical_tbl.find tape x with
+  | Some (Any_twg twg) -> (unwrap_twg (dtype x) (Any_twg twg)).grad
   | None -> T.zeros_like x
 
 let grads (type a b c d) (f : (a, b) t list -> (c, d) t) (xs : (a, b) t list) :
     (a, b) t list =
-  let tape_by_id = Hashtbl.create 32 in
-  let val_to_id = Physical_tbl.create 32 in
-  let handler = make_vjp_handler tape_by_id val_to_id T.ones_like in
+  let tape = Physical_tbl.create 32 in
+  let handler = make_vjp_handler tape T.ones_like in
   let _ = Effect.Deep.match_with f xs handler in
   List.map
     (fun x ->
-      match Physical_tbl.find val_to_id x with
-      | Some id -> (
-          match Hashtbl.find_opt tape_by_id id with
-          | Some (Any_twg twg) -> (unwrap_twg (dtype x) (Any_twg twg)).grad
-          | None -> T.zeros_like x)
+      match Physical_tbl.find tape x with
+      | Some (Any_twg twg) -> (unwrap_twg (dtype x) (Any_twg twg)).grad
       | None -> T.zeros_like x)
     xs
 
 let value_and_grad (type a b c d) (f : (a, b) t -> (c, d) t) (x : (a, b) t) :
     (c, d) t * (a, b) t =
-  let tape_by_id = Hashtbl.create 32 in
-  let val_to_id = Physical_tbl.create 32 in
-  let handler = make_vjp_handler tape_by_id val_to_id T.ones_like in
+  let tape = Physical_tbl.create 32 in
+  let handler = make_vjp_handler tape T.ones_like in
   let y = Effect.Deep.match_with f x handler in
   let grad_x =
-    match Physical_tbl.find val_to_id x with
-    | Some id -> (
-        match Hashtbl.find_opt tape_by_id id with
-        | Some (Any_twg twg) -> (unwrap_twg (dtype x) (Any_twg twg)).grad
-        | None -> T.zeros_like x)
+    match Physical_tbl.find tape x with
+    | Some (Any_twg twg) -> (unwrap_twg (dtype x) (Any_twg twg)).grad
     | None -> T.zeros_like x
   in
   (y, grad_x)
 
 let value_and_grads (type a b c d) (f : (a, b) t list -> (c, d) t)
     (xs : (a, b) t list) : (c, d) t * (a, b) t list =
-  let tape_by_id = Hashtbl.create 32 in
-  let val_to_id = Physical_tbl.create 32 in
-  let handler = make_vjp_handler tape_by_id val_to_id T.ones_like in
+  let tape = Physical_tbl.create 32 in
+  let handler = make_vjp_handler tape T.ones_like in
   let y = Effect.Deep.match_with f xs handler in
   let grads =
     List.map
       (fun x ->
-        match Physical_tbl.find val_to_id x with
-        | Some id -> (
-            match Hashtbl.find_opt tape_by_id id with
-            | Some (Any_twg twg) -> (unwrap_twg (dtype x) (Any_twg twg)).grad
-            | None -> T.zeros_like x)
+        match Physical_tbl.find tape x with
+        | Some (Any_twg twg) -> (unwrap_twg (dtype x) (Any_twg twg)).grad
         | None -> T.zeros_like x)
       xs
   in
