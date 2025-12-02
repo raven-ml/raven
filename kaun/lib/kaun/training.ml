@@ -130,7 +130,7 @@ let train_epoch ~model ~optimizer ~(state : Train_state.t) ~dataset ~loss_fn
   let batch_count = ref 0 in
   let total_time = ref 0. in
 
-  if progress then Printf.printf "Training: ";
+  if progress then Printf.printf "Training: %!";
 
   Dataset.iter
     (fun (x, y) ->
@@ -143,7 +143,7 @@ let train_epoch ~model ~optimizer ~(state : Train_state.t) ~dataset ~loss_fn
       total_time := !total_time +. step_time;
       state_ref := state';
       total_loss := !total_loss +. loss;
-      if progress && !batch_count mod 10 = 0 then Printf.printf ".")
+      if progress && !batch_count mod 10 = 0 then Printf.printf ".%!")
     dataset;
 
   if !batch_count = 0 then
@@ -451,14 +451,14 @@ let evaluate ~model ~(state : Train_state.t) ~dataset ~loss_fn
   let total_loss = ref 0. in
   let batch_count = ref 0 in
 
-  if progress then Printf.printf "Evaluating: ";
+  if progress then Printf.printf "Evaluating: %!";
 
   Dataset.iter
     (fun (x, y) ->
       incr batch_count;
       let loss = eval_step ~model ~state ~x ~y ~loss_fn in
       total_loss := !total_loss +. loss;
-      if progress && !batch_count mod 10 = 0 then Printf.printf ".")
+      if progress && !batch_count mod 10 = 0 then Printf.printf ".%!")
     dataset;
 
   if progress then Printf.printf " done\n%!";
@@ -519,7 +519,7 @@ let fit ~model ~optimizer ~loss_fn ?metrics ~train_data ?val_data ~epochs
 
   while !epoch_idx <= epochs && !continue_training do
     let epoch = !epoch_idx in
-    if progress then Printf.printf "\nEpoch %d/%d\n" epoch epochs;
+    if progress then Printf.printf "\nEpoch %d/%d\n%!" epoch epochs;
 
     let epoch_start_time = Unix.gettimeofday () in
 
@@ -557,7 +557,7 @@ let fit ~model ~optimizer ~loss_fn ?metrics ~train_data ?val_data ~epochs
         (fun (name, value) ->
           if progress then Printf.printf ", %s: %.4f" name value)
         train_metrics;
-      if progress then Printf.printf "\n";
+      if progress then Printf.printf "\n%!";
 
       history_ref :=
         {

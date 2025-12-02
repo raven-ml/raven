@@ -28,42 +28,52 @@ let train () =
   let train_data = Kaun_datasets.mnist ~train:true ~flatten:false () in
   Printf.printf "  MNIST train data loaded in %.2fs\n%!"
     (Unix.gettimeofday () -. start);
-
-  let shuffle_start = Unix.gettimeofday () in
-  let rng = Rune.Rng.key 42 in
-  let train_data_shuffled =
-    Kaun.Dataset.shuffle ~rng ~buffer_size:60000 train_data
-  in
-  Printf.printf "  Shuffle done in %.2fs\n%!"
-    (Unix.gettimeofday () -. shuffle_start);
-
-  let batch_start = Unix.gettimeofday () in
-  let train_ds =
-    Kaun.Dataset.batch_map 32
-      (fun batch ->
-        let images, labels = Array.split batch in
-        let batched_images = Rune.stack ~axis:0 (Array.to_list images) in
-        let batched_labels = Rune.stack ~axis:0 (Array.to_list labels) in
-        (batched_images, batched_labels))
-      train_data_shuffled
-  in
-  Printf.printf "  Batching done in %.2fs\n%!"
-    (Unix.gettimeofday () -. batch_start);
-
-  Printf.printf "Train dataset created in %.2fs\n%!"
-    (Unix.gettimeofday () -. start);
-
-  let start = Unix.gettimeofday () in
+  let test_load_start = Unix.gettimeofday () in
+  let test_data = Kaun_datasets.mnist ~train:false ~flatten:false () in
+  Printf.printf "Test data loaded in %.2fs\n%!"
+    (Unix.gettimeofday () -. test_load_start);
   let test_ds =
-    Kaun_datasets.mnist ~train:false ~flatten:false ()
-    |> Kaun.Dataset.batch_map 100 (fun batch ->
-           let images, labels = Array.split batch in
-           let batched_images = Rune.stack ~axis:0 (Array.to_list images) in
-           let batched_labels = Rune.stack ~axis:0 (Array.to_list labels) in
-           (batched_images, batched_labels))
+    let start = Unix.gettimeofday () in
+    let ds =
+      Kaun.Dataset.batch_map 100 (fun batch ->
+          let images, labels = Array.split batch in
+          let batched_images = Rune.stack ~axis:0 (Array.to_list images) in
+          let batched_labels = Rune.stack ~axis:0 (Array.to_list labels) in
+          (batched_images, batched_labels))
+        test_data
+    in
+    Printf.printf "Test dataset created in %.2fs\n%!"
+      (Unix.gettimeofday () -. start);
+    ds
   in
-  Printf.printf "Test dataset created in %.2fs\n%!"
-    (Unix.gettimeofday () -. start);
+
+  let make_train_ds ~epoch =
+    Kaun.Dataset.reset train_data;
+    let ds_start = Unix.gettimeofday () in
+    let shuffle_key = Rune.Rng.fold_in rngs epoch in
+    let shuffle_start = Unix.gettimeofday () in
+    let train_data_shuffled =
+      Kaun.Dataset.shuffle ~rng:shuffle_key ~buffer_size:60000 train_data
+    in
+    Printf.printf "  Shuffle done in %.2fs\n%!"
+      (Unix.gettimeofday () -. shuffle_start);
+
+    let batch_start = Unix.gettimeofday () in
+    let train_ds =
+      Kaun.Dataset.batch_map 32
+        (fun batch ->
+          let images, labels = Array.split batch in
+          let batched_images = Rune.stack ~axis:0 (Array.to_list images) in
+          let batched_labels = Rune.stack ~axis:0 (Array.to_list labels) in
+          (batched_images, batched_labels))
+        train_data_shuffled
+    in
+    Printf.printf "  Batching done in %.2fs\n%!"
+      (Unix.gettimeofday () -. batch_start);
+    Printf.printf "  Train dataset created in %.2fs\n%!"
+      (Unix.gettimeofday () -. ds_start);
+    train_ds
+  in
 
   (* Initialize model with dummy input to get params *)
   Printf.printf "Initializing model...\n%!";
@@ -83,7 +93,7 @@ let train () =
 
     (* Training *)
     Printf.printf "Starting training iteration...\n%!";
-    Metrics.Collection.reset metrics;
+    let train_ds = make_train_ds ~epoch in
     Kaun.Dataset.iter
       (fun (x_batch, y_batch) ->
         incr batch_count;
@@ -145,6 +155,7 @@ let train () =
 
     (* Evaluation *)
     Printf.printf "  Evaluating...\n%!";
+    Kaun.Dataset.reset test_ds;
     let eval_start = Unix.gettimeofday () in
     Metrics.Collection.reset metrics;
     Kaun.Dataset.iter

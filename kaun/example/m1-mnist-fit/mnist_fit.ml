@@ -46,10 +46,12 @@ let () =
     |> Dataset.prepare ~batch_size:100 ~prefetch:2
   in
 
-  Printf.printf "Datasets ready!\n\n%!";
+  Printf.printf "Datasets ready!\n%!";
+  Printf.printf "Initializing training...\n%!";
 
   (* Training with new high-level API *)
   let state, history =
+    Printf.printf "Calling Training.fit...\n%!";
     let lr = Optimizer.Schedule.constant learning_rate in
     Training.fit ~model ~optimizer:(Optimizer.adam ~lr ())
       ~loss_fn:Loss.softmax_cross_entropy_with_indices ~metrics ~train_data

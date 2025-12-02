@@ -27,6 +27,10 @@ All notable changes to this project will be documented in this file.
 - Add autodiff support for FFT operations (@tmattio)
 - Add autodiff support for some linear algebra operations: QR decomposition (`qr`), Cholesky decomposition (`cholesky`), and triangular solve (`triangular_solve`). (@tmattio)
 
+### Kaun
+
+- Reinitialize dataset each epoch to avoid iterator exhaustion (#147, @Shocker444, @tmattio)
+
 ### Quill
 
 - Add support for 32 bit systems by replacing ocaml-crunch with a `quill-crunch` chunked asset bundler in release builds to keep generated modules under 32-bit string limits. (@tmattio)
