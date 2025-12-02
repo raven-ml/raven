@@ -29,6 +29,7 @@ let df = create [
   ("name", Col.string_list ["Alice"; "Bob"; "Charlie"; "Dana"]);
   ("age", Col.int32_list [25l; 30l; 35l; 28l]);
   ("height", Col.float64_list [1.70; 1.80; 1.75; 1.65]);
+  ("weight", Col.float64_list [65.0; 82.0; 90.0; 70.0]);
   ("active", Col.bool_list [true; false; true; true])
 ]
 
@@ -52,15 +53,14 @@ let df = with_column df "bmi" Nx.float64
 
 (* Add a categorical column based on BMI *)
 let categories = 
-  match get_column_exn df "bmi" with
-  | Col.F64 arr ->
-    let arr = Nx.to_array arr in
+  match to_float64_array df "bmi" with
+  | Some arr ->
     Array.map (fun bmi ->
       if bmi < 18.5 then "underweight"
       else if bmi < 25.0 then "normal"
       else if bmi < 30.0 then "overweight"
       else "obese") arr
-  | _ -> [||]
+  | None -> [||]
 in
 let df = add_column df "category" 
   (Col.string_list (Array.to_list categories))
@@ -178,3 +178,15 @@ let sales = create [
 
 let pivoted = pivot sales ~index:"date" ~columns:"product" ~values:"amount" ()
 ```
+
+## loading and saving data
+
+Use `Talon_csv` to control types and null handling on I/O:
+
+```ocaml
+let df = Talon_csv.read ~dtype_spec:["id", `Int64; "score", `Float64] "data.csv"
+let () = Talon_csv.write df "clean.csv"
+```
+
+## Next Steps
+Check out the [Comparison with Pandas](/docs/talon/pandas-comparison/) to see how Talon's functional approach differs from Pandas.
