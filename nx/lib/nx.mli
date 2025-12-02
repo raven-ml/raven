@@ -566,7 +566,7 @@ module Rng : sig
     int array ->
     ('a, 'b) t
   (** [truncated_normal ~key dtype ~lower ~upper shape] samples from a normal
-    distribution truncated to [\[lower, upper]]. Supported for float dtypes. *)
+    distribution truncated to \[lower, upper]. Supported for float dtypes. *)
 end
 
 val rand : ('a, 'b) dtype -> key:Rng.key -> int array -> ('a, 'b) t
