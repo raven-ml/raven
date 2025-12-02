@@ -29,9 +29,10 @@ let train_mlp inputs y_true learning_rate epochs =
   (* Hidden layer size *)
   let c = dim 1 y_true in
   (* Number of outputs *)
-  let w1 = rand Float32 [| d; h |] in
+  let keys = Rng.split (Rng.key 42) in
+  let w1 = rand Float32 ~key:keys.(0) [| d; h |] in
   let b1 = zeros Float32 [| h |] in
-  let w2 = rand Float32 [| h; c |] in
+  let w2 = rand Float32 ~key:keys.(1) [| h; c |] in
   let b2 = zeros Float32 [| c |] in
   let params = [ w1; b1; w2; b2 ] in
 

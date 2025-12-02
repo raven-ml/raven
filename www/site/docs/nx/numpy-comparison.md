@@ -292,13 +292,23 @@ result = np.where(mask, arr1, arr2)
 
 ## 9. Random Number Generation
 
-**Nx:**
+**Nx (keyed, JAX-style):**
 ```ocaml
+(* Explicit key for reproducibility *)
+let key = Nx.Rng.key 0
+
 (* Generate uniform random numbers *)
-let random = Nx.rand Bigarray.float64 [|3; 3|]
+let random = Nx.rand Bigarray.float64 ~key [|3; 3|]
 
 (* Generate normal distributed random numbers *)
-let normal = Nx.randn Bigarray.float64 [|3; 3|]
+let normal = Nx.randn Bigarray.float64 ~key:(Nx.Rng.fold_in key 1) [|3; 3|]
+
+(* Splitting for multiple draws *)
+let key1, key2 =
+  match Nx.Rng.split ~n:2 key with [| a; b |] -> (a, b) | _ -> assert false
+in
+let random' = Nx.rand Bigarray.float64 ~key:key1 [|3; 3|]
+let normal' = Nx.randn Bigarray.float64 ~key:key2 [|3; 3|]
 ```
 
 **NumPy:**
@@ -315,8 +325,15 @@ normal = np.random.randn(3, 3)
 **Nx:**
 ```ocaml
 (* Generate sample data *)
+let base_key = Nx.Rng.key 0
+let data_key, noise_key =
+  match Nx.Rng.split ~n:2 base_key with [| k1; k2 |] -> (k1, k2) | _ -> assert false
+in
 let x = Nx.linspace Bigarray.float64 0.0 10.0 100
-let y = Nx.(add (mul_scalar x 2.0) (randn Bigarray.float64 [|100|]))
+let y =
+  Nx.(
+    add (mul_scalar x 2.0)
+      (randn Bigarray.float64 ~key:noise_key [|100|]))
 
 (* Reshape x for design matrix *)
 let x_design = Nx.(concatenate ~axis:1 [ones Bigarray.float64 [|100; 1|]; 

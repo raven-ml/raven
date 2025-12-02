@@ -78,7 +78,8 @@ module Replay = struct
       invalid_arg "Buffer.Replay.sample: batch_size must be positive";
     let actual_batch_size = min batch_size buffer.size in
     let raw_indices =
-      Rune.Rng.randint rng ~min:0 ~max:buffer.size [| actual_batch_size |]
+      Rune.randint Rune.int32 ~key:rng ~high:buffer.size [| actual_batch_size |]
+        0
     in
     let indices_arr : Int32.t array = Rune.to_array raw_indices in
     ( actual_batch_size,

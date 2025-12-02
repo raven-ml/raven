@@ -17,8 +17,10 @@ let benchmark_name case dtype_label =
     case.k case.n dtype_label backend_name
 
 let setup_operands (type a b) (dtype : (a, b) Nx.dtype) case =
-  let lhs = Nx.rand dtype ~seed:case.seed [| case.m; case.k |] in
-  let rhs = Nx.rand dtype ~seed:(case.seed + 1) [| case.k; case.n |] in
+  let lhs = Nx.rand dtype ~key:(Nx.Rng.key case.seed) [| case.m; case.k |] in
+  let rhs =
+    Nx.rand dtype ~key:(Nx.Rng.key (case.seed + 1)) [| case.k; case.n |]
+  in
   (lhs, rhs)
 
 let add_case benches case dtype dtype_label =

@@ -22,35 +22,44 @@ let get_batch x y batch_size batch_idx =
 
 (* Initialize parameters for LeNet *)
 let init_lenet_params =
+  let keys = Rng.split ~n:5 (Rng.key 42) in
   (* Conv1: 1 input channel, 6 output channels, 5x5 kernel *)
   let conv1_w =
-    div (randn Float32 [| 6; 1; 5; 5 |]) (scalar Float32 (Stdlib.sqrt 25.0))
+    div
+      (randn Float32 ~key:keys.(0) [| 6; 1; 5; 5 |])
+      (scalar Float32 (Stdlib.sqrt 25.0))
   in
   let conv1_b = zeros Float32 [| 6 |] in
 
   (* Conv2: 6 input channels, 16 output channels, 5x5 kernel *)
   let conv2_w =
     div
-      (randn Float32 [| 16; 6; 5; 5 |])
+      (randn Float32 ~key:keys.(1) [| 16; 6; 5; 5 |])
       (scalar Float32 (Stdlib.sqrt (6.0 *. 25.0)))
   in
   let conv2_b = zeros Float32 [| 16 |] in
 
   (* FC1: 16*4*4 = 256 inputs, 120 outputs *)
   let fc1_w =
-    div (randn Float32 [| 256; 120 |]) (scalar Float32 (Stdlib.sqrt 256.0))
+    div
+      (randn Float32 ~key:keys.(2) [| 256; 120 |])
+      (scalar Float32 (Stdlib.sqrt 256.0))
   in
   let fc1_b = zeros Float32 [| 120 |] in
 
   (* FC2: 120 inputs, 84 outputs *)
   let fc2_w =
-    div (randn Float32 [| 120; 84 |]) (scalar Float32 (Stdlib.sqrt 120.0))
+    div
+      (randn Float32 ~key:keys.(3) [| 120; 84 |])
+      (scalar Float32 (Stdlib.sqrt 120.0))
   in
   let fc2_b = zeros Float32 [| 84 |] in
 
   (* FC3: 84 inputs, 10 outputs *)
   let fc3_w =
-    div (randn Float32 [| 84; 10 |]) (scalar Float32 (Stdlib.sqrt 84.0))
+    div
+      (randn Float32 ~key:keys.(4) [| 84; 10 |])
+      (scalar Float32 (Stdlib.sqrt 84.0))
   in
   let fc3_b = zeros Float32 [| 10 |] in
 

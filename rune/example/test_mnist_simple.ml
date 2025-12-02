@@ -2,10 +2,11 @@ open Rune
 
 let () =
   (* Simulate MNIST-like input: batch=2, channels=1, 28x28 *)
-  let x = randn Float32 [| 2; 1; 28; 28 |] in
+  let keys = Rng.split (Rng.key 42) in
+  let x = randn Float32 ~key:keys.(0) [| 2; 1; 28; 28 |] in
 
   (* Conv1: 1 -> 6 channels, 5x5 kernel *)
-  let conv1_w = randn Float32 [| 6; 1; 5; 5 |] in
+  let conv1_w = randn Float32 ~key:keys.(1) [| 6; 1; 5; 5 |] in
   let conv1_b = zeros Float32 [| 6 |] in
 
   Printf.printf "Input shape: %s\n"

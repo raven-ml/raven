@@ -219,8 +219,8 @@ let perform_step ~env ~params ~state ~epsilon ~allow_update =
   let epsilon_rng_after = epsilon_keys.(0) in
   let coin_rng = epsilon_keys.(1) in
   let coin =
-    Rune.Rng.uniform coin_rng Rune.float32 [| 1 |] |> Rune.to_array
-    |> fun arr -> arr.(0)
+    Rune.rand Rune.float32 ~key:coin_rng [| 1 |] |> Rune.to_array |> fun arr ->
+    arr.(0)
   in
   let to_action idx =
     let idx_clamped = Int.max 0 (Int.min (state.n_actions - 1) idx) in
@@ -234,7 +234,8 @@ let perform_step ~env ~params ~state ~epsilon ~allow_update =
     if coin < epsilon then
       let random_idx =
         let tensor =
-          Rune.Rng.randint action_rng ~min:0 ~max:state.n_actions [| 1 |]
+          Rune.randint Rune.int32 ~key:action_rng ~high:state.n_actions [| 1 |]
+            0
         in
         Rune.to_array tensor |> fun arr -> Int32.to_int arr.(0)
       in

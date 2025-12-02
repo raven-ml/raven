@@ -404,9 +404,8 @@ let pooler ~hidden_size () =
     Kaun.init =
       (fun ~rngs ~dtype ->
         (* Initialize dense layer weights *)
-        let key = Rune.Rng.to_int rngs in
         let init_fn = (Kaun.Initializers.normal ~stddev:0.02 ()).f in
-        let dense_weight = init_fn key [| hidden_size; hidden_size |] dtype in
+        let dense_weight = init_fn rngs [| hidden_size; hidden_size |] dtype in
         let dense_bias = Rune.zeros dtype [| hidden_size |] in
         Kaun.Ptree.dict
           [
@@ -525,11 +524,9 @@ let apply_transformer_layer ~config ~context ~params ~hidden_states ~training
   let attn_dropout_rate =
     if training then config.attention_probs_dropout_prob else 0.0
   in
-  let attn_seed =
+  let attn_key =
     if attn_dropout_rate > 0.0 then
-      Some
-        (Rune.Rng.to_int
-           (Rng_stream.require rng_stream (context ^ ".attention_dropout")))
+      Some (Rng_stream.require rng_stream (context ^ ".attention_dropout"))
     else None
   in
   let attention =
@@ -537,7 +534,7 @@ let apply_transformer_layer ~config ~context ~params ~hidden_states ~training
       ~scale:(1.0 /. Stdlib.sqrt (float_of_int head_dim))
       ?dropout_rate:
         (if attn_dropout_rate > 0.0 then Some attn_dropout_rate else None)
-      ?dropout_seed:attn_seed ~is_causal:false q_heads k_heads v_heads
+      ?dropout_key:attn_key ~is_causal:false q_heads k_heads v_heads
   in
   let attention =
     attention
@@ -558,7 +555,7 @@ let apply_transformer_layer ~config ~context ~params ~hidden_states ~training
     if hidden_dropout_rate = 0.0 then tensor
     else
       let key = Rng_stream.require rng_stream (context ^ suffix) in
-      Rune.dropout ~seed:(Rune.Rng.to_int key) ~rate:hidden_dropout_rate tensor
+      Rune.dropout ~key ~rate:hidden_dropout_rate tensor
   in
   let attn_out = apply_hidden_dropout ".dropout_attn" attn_out in
   let residual = Rune.add hidden_states attn_out in
@@ -600,47 +597,25 @@ let transformer_layer_module ~config ~layer_index =
         let keys = Rune.Rng.split ~n:10 rngs in
         let init_fn = (Kaun.Initializers.glorot_uniform ()).f in
         let zeros = (Kaun.Initializers.zeros ()).f in
-        let q_weight =
-          init_fn
-            (Rune.Rng.to_int keys.(0))
-            [| hidden_size; hidden_size |]
-            dtype
-        in
-        let k_weight =
-          init_fn
-            (Rune.Rng.to_int keys.(1))
-            [| hidden_size; hidden_size |]
-            dtype
-        in
-        let v_weight =
-          init_fn
-            (Rune.Rng.to_int keys.(2))
-            [| hidden_size; hidden_size |]
-            dtype
-        in
+        let q_weight = init_fn keys.(0) [| hidden_size; hidden_size |] dtype in
+        let k_weight = init_fn keys.(1) [| hidden_size; hidden_size |] dtype in
+        let v_weight = init_fn keys.(2) [| hidden_size; hidden_size |] dtype in
         let attn_out_weight =
-          init_fn
-            (Rune.Rng.to_int keys.(3))
-            [| hidden_size; hidden_size |]
-            dtype
+          init_fn keys.(3) [| hidden_size; hidden_size |] dtype
         in
         let inter_weight =
-          init_fn
-            (Rune.Rng.to_int keys.(4))
-            [| hidden_size; intermediate_size |]
-            dtype
+          init_fn keys.(4) [| hidden_size; intermediate_size |] dtype
         in
         let out_weight =
-          init_fn
-            (Rune.Rng.to_int keys.(5))
-            [| intermediate_size; hidden_size |]
-            dtype
+          init_fn keys.(5) [| intermediate_size; hidden_size |] dtype
         in
         let attn_gamma = Rune.ones dtype [| hidden_size |] in
         let attn_beta = Rune.zeros dtype [| hidden_size |] in
         let ffn_gamma = Rune.ones dtype [| hidden_size |] in
         let ffn_beta = Rune.zeros dtype [| hidden_size |] in
-        let bias name shape = (name, Kaun.Ptree.tensor (zeros 0 shape dtype)) in
+        let bias name shape =
+          (name, Kaun.Ptree.tensor (zeros keys.(0) shape dtype))
+        in
         Kaun.Ptree.dict
           [
             ("q_weight", Kaun.Ptree.tensor q_weight);

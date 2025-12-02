@@ -1,4 +1,5 @@
 include Tensor
+module Rng = Tensor.Rng
 
 type ('a, 'b) t = ('a, 'b) Tensor.t
 type float16_t = (float, float16_elt) t
@@ -119,10 +120,6 @@ type 'a out_axes_spec = 'a Vmap.out_axes_spec =
 
 let vmap = Vmap.vmap
 let vmaps = Vmap.vmaps
-
-(* ───── RNG ───── *)
-
-module Rng = Rng
 
 (* ───── Debugging ───── *)
 

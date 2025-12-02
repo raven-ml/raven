@@ -130,7 +130,8 @@ module Discrete = struct
             let rng = default_rng rng in
             let sample_key, next_rng = take_key rng in
             let tensor =
-              Rune.Rng.randint sample_key ~min:start ~max:(start + n) [| 1 |]
+              Rune.randint Rune.int32 ~key:sample_key ~high:(start + n) [| 1 |]
+                start
             in
             let values : Int32.t array = Rune.to_array tensor in
             (Rune.scalar Rune.int32 values.(0), next_rng));
@@ -206,9 +207,7 @@ module Box = struct
           (fun ?rng () ->
             let rng = default_rng rng in
             let sample_key, next_rng = take_key rng in
-            let uniform =
-              Rune.Rng.uniform sample_key Rune.float32 [| arity |]
-            in
+            let uniform = Rune.rand Rune.float32 ~key:sample_key [| arity |] in
             let draws = Rune.to_array uniform in
             let values =
               Array.init arity (fun idx ->
@@ -289,7 +288,9 @@ module Multi_binary = struct
           (fun ?rng () ->
             let rng = default_rng rng in
             let sample_key, next_rng = take_key rng in
-            let tensor = Rune.Rng.randint sample_key ~min:0 ~max:2 [| n |] in
+            let tensor =
+              Rune.randint Rune.int32 ~key:sample_key ~high:2 [| n |] 0
+            in
             (tensor, next_rng));
         pack =
           (fun tensor ->
@@ -361,7 +362,8 @@ module Multi_discrete = struct
             let data =
               Array.init arity (fun idx ->
                   let tensor =
-                    Rune.Rng.randint keys.(idx) ~min:0 ~max:bounds.(idx) [| 1 |]
+                    Rune.randint Rune.int32 ~key:keys.(idx) ~high:bounds.(idx)
+                      [| 1 |] 0
                   in
                   let arr = Rune.to_array tensor in
                   arr.(0))
@@ -546,8 +548,8 @@ module Sequence = struct
                 if max_len = min_length then min_length
                 else
                   let tensor =
-                    Rune.Rng.randint length_key ~min:min_length
-                      ~max:(max_len + 1) [| 1 |]
+                    Rune.randint Rune.int32 ~key:length_key ~high:(max_len + 1)
+                      [| 1 |] min_length
                   in
                   let arr = Rune.to_array tensor in
                   Int32.to_int arr.(0)
@@ -638,8 +640,8 @@ module Text = struct
               if max_length = 1 then 1
               else
                 let tensor =
-                  Rune.Rng.randint length_key ~min:1 ~max:(max_length + 1)
-                    [| 1 |]
+                  Rune.randint Rune.int32 ~key:length_key ~high:(max_length + 1)
+                    [| 1 |] 1
                 in
                 let arr = Rune.to_array tensor in
                 Int32.to_int arr.(0)
@@ -648,8 +650,8 @@ module Text = struct
               if length = 0 then ""
               else
                 let idxs =
-                  Rune.Rng.randint chars_key ~min:0 ~max:charset_length
-                    [| length |]
+                  Rune.randint Rune.int32 ~key:chars_key ~high:charset_length
+                    [| length |] 0
                 in
                 let arr = Rune.to_array idxs in
                 Bytes.init length (fun idx -> charset.[Int32.to_int arr.(idx)])

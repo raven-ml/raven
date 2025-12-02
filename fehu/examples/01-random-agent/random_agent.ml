@@ -34,7 +34,7 @@ let run_random_agent () =
 
       (* Sample random action (RandomWalk has 2 actions: 0=left, 1=right) *)
       let action_tensor =
-        Rune.Rng.randint (take_agent_key ()) ~min:0 ~max:2 [| 1 |]
+        Rune.randint Rune.int32 ~key:(take_agent_key ()) ~high:2 [| 1 |] 0
       in
       let action_values : Int32.t array = Rune.to_array action_tensor in
       let action_index = Int32.to_int action_values.(0) in

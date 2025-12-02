@@ -23,39 +23,66 @@ let einsum_specs =
     { name = "ContractReduce2"; subscripts = "ij,jk->" };
   ]
 
+let make_key spec size offset =
+  Nx.Rng.key (Hashtbl.hash (spec.name, size, offset))
+
 (** Setup tensors for a given operation and dtype *)
 let setup_f32 spec size =
   match spec.name with
   | "MatMul" | "ContractReduce2" ->
       let shape = [| size; size |] in
-      [| Nx.rand Nx.Float32 shape; Nx.rand Nx.Float32 shape |]
+      [
+        Nx.rand Nx.Float32 ~key:(make_key spec size 0) shape;
+        Nx.rand Nx.Float32 ~key:(make_key spec size 1) shape;
+      ]
   | "BatchMatMul" ->
       let shape = [| 4; size; size |] in
-      [| Nx.rand Nx.Float32 shape; Nx.rand Nx.Float32 shape |]
+      [
+        Nx.rand Nx.Float32 ~key:(make_key spec size 2) shape;
+        Nx.rand Nx.Float32 ~key:(make_key spec size 3) shape;
+      ]
   | "InnerProduct" ->
       let shape = [| size |] in
-      [| Nx.rand Nx.Float32 shape; Nx.rand Nx.Float32 shape |]
+      [
+        Nx.rand Nx.Float32 ~key:(make_key spec size 4) shape;
+        Nx.rand Nx.Float32 ~key:(make_key spec size 5) shape;
+      ]
   | "ContractReduce1" ->
       (* ij,kj-> needs two (size, size) matrices *)
       let shape = [| size; size |] in
-      [| Nx.rand Nx.Float32 shape; Nx.rand Nx.Float32 shape |]
+      [
+        Nx.rand Nx.Float32 ~key:(make_key spec size 6) shape;
+        Nx.rand Nx.Float32 ~key:(make_key spec size 7) shape;
+      ]
   | _ -> failwith ("Unknown einsum operation: " ^ spec.name)
 
 let setup_f64 spec size =
   match spec.name with
   | "MatMul" | "ContractReduce2" ->
       let shape = [| size; size |] in
-      [| Nx.rand Nx.Float64 shape; Nx.rand Nx.Float64 shape |]
+      [
+        Nx.rand Nx.Float64 ~key:(make_key spec size 8) shape;
+        Nx.rand Nx.Float64 ~key:(make_key spec size 9) shape;
+      ]
   | "BatchMatMul" ->
       let shape = [| 4; size; size |] in
-      [| Nx.rand Nx.Float64 shape; Nx.rand Nx.Float64 shape |]
+      [
+        Nx.rand Nx.Float64 ~key:(make_key spec size 10) shape;
+        Nx.rand Nx.Float64 ~key:(make_key spec size 11) shape;
+      ]
   | "InnerProduct" ->
       let shape = [| size |] in
-      [| Nx.rand Nx.Float64 shape; Nx.rand Nx.Float64 shape |]
+      [
+        Nx.rand Nx.Float64 ~key:(make_key spec size 12) shape;
+        Nx.rand Nx.Float64 ~key:(make_key spec size 13) shape;
+      ]
   | "ContractReduce1" ->
       (* ij,kj-> needs two (size, size) matrices *)
       let shape = [| size; size |] in
-      [| Nx.rand Nx.Float64 shape; Nx.rand Nx.Float64 shape |]
+      [
+        Nx.rand Nx.Float64 ~key:(make_key spec size 14) shape;
+        Nx.rand Nx.Float64 ~key:(make_key spec size 15) shape;
+      ]
   | _ -> failwith ("Unknown einsum operation: " ^ spec.name)
 
 (** Build all benchmarks *)
@@ -67,7 +94,7 @@ let build_benchmarks () =
     (fun size ->
       List.iter
         (fun spec ->
-          let operands = setup_f32 spec size in
+          let operands = setup_f32 spec size |> Array.of_list in
           let bench_name = benchmark_name spec.name size "f32" in
           let fn () = ignore (Nx.einsum spec.subscripts operands) in
           benchmarks := Ubench.bench bench_name fn :: !benchmarks)
@@ -79,7 +106,7 @@ let build_benchmarks () =
     (fun size ->
       List.iter
         (fun spec ->
-          let operands = setup_f64 spec size in
+          let operands = setup_f64 spec size |> Array.of_list in
           let bench_name = benchmark_name spec.name size "f64" in
           let fn () = ignore (Nx.einsum spec.subscripts operands) in
           benchmarks := Ubench.bench bench_name fn :: !benchmarks)

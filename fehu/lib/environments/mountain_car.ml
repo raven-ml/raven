@@ -40,7 +40,7 @@ let reset _env ?options:_ () state =
   let keys = Rune.Rng.split !(state.rng) ~n:2 in
   state.rng := keys.(0);
 
-  let r = Rune.Rng.uniform keys.(1) Rune.float32 [| 1 |] in
+  let r = Rune.rand Rune.float32 ~key:keys.(1) [| 1 |] in
   let v = (Rune.to_array r).(0) in
   state.position <- -0.6 +. (v *. 0.2);
   (* Random in [-0.6, -0.4] *)

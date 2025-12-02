@@ -8,7 +8,10 @@
 type t = {
   f :
     'layout 'dev.
-    int -> int array -> (float, 'layout) Rune.dtype -> (float, 'layout) Rune.t;
+    Rune.Rng.key ->
+    int array ->
+    (float, 'layout) Rune.dtype ->
+    (float, 'layout) Rune.t;
 }
 
 (* Helper function to compute fan-in and fan-out *)
@@ -52,7 +55,7 @@ let truncated_normal_impl ~mean ~stddev ~lower ~upper seed shape dtype =
   let rec generate_until_valid max_attempts =
     if max_attempts <= 0 then
       (* Fallback to clamping after too many attempts *)
-      let z = Rune.randn dtype ~seed shape in
+      let z = Rune.randn dtype ~key:seed shape in
       let z_scaled =
         Rune.add
           (Rune.mul z (Rune.scalar dtype stddev))
@@ -64,7 +67,7 @@ let truncated_normal_impl ~mean ~stddev ~lower ~upper seed shape dtype =
       Rune.minimum clamped upper_t
     else
       (* Generate normal samples *)
-      let z = Rune.randn dtype ~seed shape in
+      let z = Rune.randn dtype ~key:seed shape in
       let z_scaled =
         Rune.add
           (Rune.mul z (Rune.scalar dtype stddev))
@@ -117,7 +120,7 @@ let uniform ?(scale = 0.01) () =
   {
     f =
       (fun seed shape dtype ->
-        let u01 = Rune.rand dtype ~seed shape in
+        let u01 = Rune.rand dtype ~key:seed shape in
         Rune.mul u01 (Rune.scalar dtype scale));
   }
 
@@ -125,7 +128,7 @@ let normal ?(stddev = 0.01) () =
   {
     f =
       (fun seed shape dtype ->
-        let z = Rune.randn dtype ~seed shape in
+        let z = Rune.randn dtype ~key:seed shape in
         Rune.mul z (Rune.scalar dtype stddev));
   }
 
@@ -155,14 +158,14 @@ let variance_scaling ~scale ~mode ~distribution ~in_axis ~out_axis () =
 
         match distribution with
         | `Normal ->
-            let z = Rune.randn dtype ~seed shape in
+            let z = Rune.randn dtype ~key:seed shape in
             Rune.mul z (Rune.scalar dtype stddev)
         | `Truncated_normal ->
             truncated_normal_impl ~mean:0.0 ~stddev ~lower:(-2.0) ~upper:2.0
               seed shape dtype
         | `Uniform ->
             let limit = sqrt (3.0 *. variance) in
-            let u01 = Rune.rand dtype ~seed shape in
+            let u01 = Rune.rand dtype ~key:seed shape in
             let scale_t = Rune.scalar dtype (2.0 *. limit) in
             let shift = Rune.scalar dtype limit in
             Rune.sub (Rune.mul u01 scale_t) shift);
@@ -222,7 +225,7 @@ let orthogonal ?(scale = 1.0) ?(column_axis = -1) () =
 
         (* Generate random matrix *)
         let flat_shape = [| !rows; !cols |] in
-        let a = Rune.randn dtype ~seed flat_shape in
+        let a = Rune.randn dtype ~key:seed flat_shape in
 
         (* Implement proper orthogonal initialization using QR-like approach *)
         (* For a proper QR decomposition, we'd need linear algebra operations *)
@@ -310,7 +313,7 @@ let uniform_range ~low ~high () =
   {
     f =
       (fun seed shape dtype ->
-        let u01 = Rune.rand dtype ~seed shape in
+        let u01 = Rune.rand dtype ~key:seed shape in
         let scale = Rune.scalar dtype (high -. low) in
         let shift = Rune.scalar dtype low in
         Rune.add (Rune.mul u01 scale) shift);
@@ -320,7 +323,7 @@ let normal_range ~mean ~stddev () =
   {
     f =
       (fun seed shape dtype ->
-        let z = Rune.randn dtype ~seed shape in
+        let z = Rune.randn dtype ~key:seed shape in
         Rune.add
           (Rune.mul z (Rune.scalar dtype stddev))
           (Rune.scalar dtype mean));

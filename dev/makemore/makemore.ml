@@ -385,13 +385,9 @@ let bow_block ~n_embd ~n_embd2 () : Layer.module_ =
       (fun ~rngs ~dtype ->
         let glorot = (Initializers.glorot_uniform ()).f in
         let keys = Rune.Rng.split ~n:2 rngs in
-        let w1 =
-          glorot (Rune.Rng.to_int keys.(0)) [| n_embd; n_embd2 |] dtype
-        in
+        let w1 = glorot keys.(0) [| n_embd; n_embd2 |] dtype in
         let b1 = Rune.zeros dtype [| n_embd2 |] in
-        let w2 =
-          glorot (Rune.Rng.to_int keys.(1)) [| n_embd2; n_embd |] dtype
-        in
+        let w2 = glorot keys.(1) [| n_embd2; n_embd |] dtype in
         let b2 = Rune.zeros dtype [| n_embd |] in
         Ptree.dict
           [

@@ -119,15 +119,15 @@ let compute_attention_from_projected ?attention_mask ?(is_causal = false)
         Some (Rune.broadcast_to target prepared)
   in
   let attn =
-    let dropout_seed =
+    let dropout_key =
       match dropout_rng with
-      | Some rng -> Some (Rune.Rng.to_int rng)
+      | Some rng -> Some rng
       | None when Option.is_some dropout_rate ->
           invalid_arg "attention dropout requires RNG"
       | None -> None
     in
-    Rune.dot_product_attention ?attention_mask ?scale ?dropout_rate
-      ?dropout_seed ~is_causal q_heads k_heads v_heads
+    Rune.dot_product_attention ?attention_mask ?scale ?dropout_rate ?dropout_key
+      ~is_causal q_heads k_heads v_heads
   in
   attn
   |> Rune.transpose ~axes:[ 0; 2; 1; 3 ]
@@ -178,28 +178,16 @@ module Multi_head = struct
     let keys = Rune.Rng.split ~n:num_keys rngs in
     let init_fn = (Initializers.glorot_uniform ()).f in
     let q_proj =
-      init_fn
-        (Rune.Rng.to_int keys.(0))
-        [| config.embed_dim; config.num_heads * head_dim |]
-        dtype
+      init_fn keys.(0) [| config.embed_dim; config.num_heads * head_dim |] dtype
     in
     let k_proj =
-      init_fn
-        (Rune.Rng.to_int keys.(1))
-        [| config.embed_dim; num_kv_heads * head_dim |]
-        dtype
+      init_fn keys.(1) [| config.embed_dim; num_kv_heads * head_dim |] dtype
     in
     let v_proj =
-      init_fn
-        (Rune.Rng.to_int keys.(2))
-        [| config.embed_dim; num_kv_heads * head_dim |]
-        dtype
+      init_fn keys.(2) [| config.embed_dim; num_kv_heads * head_dim |] dtype
     in
     let out_proj =
-      init_fn
-        (Rune.Rng.to_int keys.(3))
-        [| config.num_heads * head_dim; config.embed_dim |]
-        dtype
+      init_fn keys.(3) [| config.num_heads * head_dim; config.embed_dim |] dtype
     in
     let base =
       [

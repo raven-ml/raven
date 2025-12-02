@@ -55,7 +55,7 @@ let reset _env ?options:_ () state =
 
   (* Uniform random values in [-0.05, 0.05] *)
   let random_state i =
-    let r = Rune.Rng.uniform keys.(i + 1) Rune.float32 [| 1 |] in
+    let r = Rune.rand Rune.float32 ~key:keys.(i + 1) [| 1 |] in
     let v = (Rune.to_array r).(0) in
     (v -. 0.5) *. 0.1
   in

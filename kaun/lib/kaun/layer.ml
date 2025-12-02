@@ -62,7 +62,7 @@ let conv1d ~in_channels ~out_channels ?(kernel_size = 3) ?(stride = 1)
             let fan_out = out_channels * kernel_size in
             let limit = sqrt (6.0 /. float_of_int (fan_in + fan_out)) in
             let weight_shape = [| out_channels; in_channels; kernel_size |] in
-            let w = Rune.Rng.uniform rng1 dtype weight_shape in
+            let w = Rune.rand dtype ~key:rng1 weight_shape in
             let w =
               Rune.sub
                 (Rune.mul w (Rune.scalar dtype (2.0 *. limit)))
@@ -115,7 +115,7 @@ let conv2d ~in_channels ~out_channels ?(kernel_size = (3, 3)) () =
             let fan_out = out_channels * kh * kw in
             let limit = sqrt (6.0 /. float_of_int (fan_in + fan_out)) in
             let weight_shape = [| out_channels; in_channels; kh; kw |] in
-            let w = Rune.Rng.uniform rng1 dtype weight_shape in
+            let w = Rune.rand dtype ~key:rng1 weight_shape in
             let w =
               Rune.sub
                 (Rune.mul w (Rune.scalar dtype (2.0 *. limit)))
@@ -159,14 +159,8 @@ let linear ~in_features ~out_features ?weight_init ?bias_init () =
             let rngs_split = Rune.Rng.split rngs in
             let rng1 = rngs_split.(0) in
             let rng2 = rngs_split.(1) in
-            let w =
-              weight_init_f (Rune.Rng.to_int rng1)
-                [| in_features; out_features |]
-                dtype
-            in
-            let b =
-              bias_init_f (Rune.Rng.to_int rng2) [| out_features |] dtype
-            in
+            let w = weight_init_f rng1 [| in_features; out_features |] dtype in
+            let b = bias_init_f rng2 [| out_features |] dtype in
             Ptree.dict [ ("weight", Ptree.tensor w); ("bias", Ptree.tensor b) ]));
     apply =
       (fun (type l) (params : Ptree.t) ~training:_ ?rngs:_ (x : l tensor) ->
@@ -190,9 +184,7 @@ let dropout ~rate () =
         if (not training) || rate = 0.0 then x
         else
           match rngs with
-          | Some rng ->
-              let seed = Rune.Rng.to_int rng in
-              Rune.dropout ~seed ~rate x
+          | Some key -> Rune.dropout ~key ~rate x
           | None -> failwith "dropout requires RNG if rate > 0.0");
   }
 
@@ -293,7 +285,7 @@ let einsum ~einsum_str ~shape ?kernel_init () =
           | None -> (Initializers.glorot_uniform ()).f
         in
         let key = (Rune.Rng.split rngs).(0) in
-        let w = kernel_init_f (Rune.Rng.to_int key) shape dtype in
+        let w = kernel_init_f key shape dtype in
         Ptree.dict [ ("weight", Ptree.tensor w) ]);
     apply =
       (fun params ~training:_ ?rngs:_ x ->
@@ -313,7 +305,7 @@ let rms_norm ~dim ?(eps = 1e-6) ?scale_init () =
           | None -> (Initializers.ones ()).f
         in
         let key = (Rune.Rng.split rngs).(0) in
-        let scale = scale_init_f (Rune.Rng.to_int key) [| dim |] dtype in
+        let scale = scale_init_f key [| dim |] dtype in
         Ptree.dict [ ("scale", Ptree.tensor scale) ]);
     apply =
       (fun params ~training:_ ?rngs:_ x ->
@@ -355,9 +347,7 @@ let embedding ~vocab_size ~embed_dim ?(scale = true) ?embedding_init () =
         in
         let key = (Rune.Rng.split rngs).(0) in
         let embedding =
-          embedding_init_f (Rune.Rng.to_int key)
-            [| vocab_size; embed_dim |]
-            dtype
+          embedding_init_f key [| vocab_size; embed_dim |] dtype
         in
         Ptree.dict [ ("embedding", Ptree.tensor embedding) ]);
     apply =
@@ -395,12 +385,8 @@ let rnn ~input_size ~hidden_size ?(return_sequences = false)
       (fun ~rngs ~dtype ->
         let glorot = (Initializers.glorot_uniform ()).f in
         let keys = Rune.Rng.split ~n:2 rngs in
-        let w_xh =
-          glorot (Rune.Rng.to_int keys.(0)) [| input_size; hidden_size |] dtype
-        in
-        let w_hh =
-          glorot (Rune.Rng.to_int keys.(1)) [| hidden_size; hidden_size |] dtype
-        in
+        let w_xh = glorot keys.(0) [| input_size; hidden_size |] dtype in
+        let w_hh = glorot keys.(1) [| hidden_size; hidden_size |] dtype in
         let b = Rune.zeros dtype [| hidden_size |] in
         let base =
           [
@@ -476,18 +462,8 @@ let gru ~input_size ~hidden_size ?(return_sequences = false)
       (fun ~rngs ~dtype ->
         let glorot = (Initializers.glorot_uniform ()).f in
         let keys = Rune.Rng.split ~n:2 rngs in
-        let w_ih =
-          glorot
-            (Rune.Rng.to_int keys.(0))
-            [| input_size; hidden_size * 3 |]
-            dtype
-        in
-        let w_hh =
-          glorot
-            (Rune.Rng.to_int keys.(1))
-            [| hidden_size; hidden_size * 3 |]
-            dtype
-        in
+        let w_ih = glorot keys.(0) [| input_size; hidden_size * 3 |] dtype in
+        let w_hh = glorot keys.(1) [| hidden_size; hidden_size * 3 |] dtype in
         let b = Rune.zeros dtype [| hidden_size * 3 |] in
         let base =
           [
@@ -606,18 +582,8 @@ let lstm ~input_size ~hidden_size ?(return_sequences = false)
       (fun ~rngs ~dtype ->
         let glorot = (Initializers.glorot_uniform ()).f in
         let keys = Rune.Rng.split ~n:2 rngs in
-        let w_ih =
-          glorot
-            (Rune.Rng.to_int keys.(0))
-            [| input_size; hidden_size * 4 |]
-            dtype
-        in
-        let w_hh =
-          glorot
-            (Rune.Rng.to_int keys.(1))
-            [| hidden_size; hidden_size * 4 |]
-            dtype
-        in
+        let w_ih = glorot keys.(0) [| input_size; hidden_size * 4 |] dtype in
+        let w_hh = glorot keys.(1) [| hidden_size; hidden_size * 4 |] dtype in
         let b = Rune.zeros dtype [| hidden_size * 4 |] in
         let base =
           [
@@ -747,9 +713,7 @@ let positional_embedding_learned ~max_len ~embed_dim () =
       (fun ~rngs ~dtype ->
         let initf = (Initializers.normal_range ~mean:0.0 ~stddev:0.02 ()).f in
         let key = (Rune.Rng.split rngs).(0) in
-        let table =
-          initf (Rune.Rng.to_int key) [| max_len; embed_dim |] dtype
-        in
+        let table = initf key [| max_len; embed_dim |] dtype in
         Ptree.dict [ ("table", Ptree.tensor table) ]);
     apply =
       (fun params ~training:_ ?rngs:_ x ->

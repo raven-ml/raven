@@ -518,36 +518,86 @@ val of_bigarray_ext :
 
     Functions to generate arrays with random values. *)
 
-val rand : ('a, 'b) dtype -> ?seed:int -> int array -> ('a, 'b) t
-(** [rand dtype ?seed shape] generates uniform random values in [\[0, 1)].
+module Rng : sig
+  type key
 
-    Only supports float dtypes. Same seed produces same sequence.
+  val key : int -> key
+  (** [key seed] creates a deterministic key from an integer seed. *)
+
+  val split : ?n:int -> key -> key array
+  (** [split ?n k] deterministically expands [k] into [n] subkeys (default 2).
+  *)
+
+  val fold_in : key -> int -> key
+  (** [fold_in k data] mixes [data] into [k] to produce a new key. *)
+
+  val to_int : key -> int
+  (** [to_int k] converts a key to an int, useful when bridging APIs. *)
+
+  val uniform : key:key -> ('a, 'b) dtype -> int array -> ('a, 'b) t
+  val normal : key:key -> ('a, 'b) dtype -> int array -> ('a, 'b) t
+
+  val randint :
+    ('a, 'b) dtype -> key:key -> ?high:int -> int array -> int -> ('a, 'b) t
+  (** [randint dtype ~key ?high shape low] generates integers in [\[low, high)].
+      [high] defaults to 10. Only supports integer dtypes. *)
+
+  val bernoulli : key:key -> p:float -> int array -> bool_t
+  (** [bernoulli ?key ~p shape] samples booleans with probability [p] of true.
+  *)
+
+  val permutation : key:key -> int -> int32_t
+  (** [permutation ~key n] returns a random permutation of [0..n-1]. *)
+
+  val shuffle : key:key -> ('a, 'b) t -> ('a, 'b) t
+  (** [shuffle ~key x] shuffles the first dimension of [x]. No-op on scalars. *)
+
+  val categorical :
+    key:key -> ?axis:int -> ?shape:int array -> (float, 'a) t -> int32_t
+  (** [categorical ~key ?axis ?shape logits] samples categories using the
+      Gumbel-max trick. [shape] prepends batch dims; [axis] selects class axis
+      (default last). Logits must be floating point. *)
+
+  val truncated_normal :
+    key:key ->
+    ('a, 'b) dtype ->
+    lower:float ->
+    upper:float ->
+    int array ->
+    ('a, 'b) t
+  (** [truncated_normal ~key dtype ~lower ~upper shape] samples from a normal
+    distribution truncated to [\[lower, upper]]. Supported for float dtypes. *)
+end
+
+val rand : ('a, 'b) dtype -> key:Rng.key -> int array -> ('a, 'b) t
+(** [rand dtype ~key shape] generates uniform random values in [\[0, 1)].
+
+    Only supports float dtypes. Same key produces same sequence.
 
     @raise Invalid_argument if non-float dtype *)
 
-val randn : ('a, 'b) dtype -> ?seed:int -> int array -> ('a, 'b) t
-(** [randn dtype ?seed shape] generates standard normal random values.
+val randn : ('a, 'b) dtype -> key:Rng.key -> int array -> ('a, 'b) t
+(** [randn dtype ~key shape] generates standard normal random values.
 
     Mean 0, variance 1. Uses Box-Muller transform for efficiency. Only supports
-    float dtypes. Same seed produces same sequence.
+    float dtypes. Same key produces same sequence.
 
     @raise Invalid_argument if non-float dtype *)
 
 val randint :
-  ('a, 'b) dtype -> ?seed:int -> ?high:int -> int array -> int -> ('a, 'b) t
-(** [randint dtype ?seed ?high shape low] generates integers in [\[low, high)].
+  ('a, 'b) dtype -> key:Rng.key -> ?high:int -> int array -> int -> ('a, 'b) t
+(** [randint dtype ~key ?high shape low] generates integers in [\[low, high)].
 
-    Uniform distribution over range. Default [high = 10]. Note: [high] is
+    Uniform distribution over range. [high] defaults to 10. Note: [high] is
     exclusive (NumPy convention).
 
     @raise Invalid_argument if non-integer dtype or [low >= high] *)
 
-val dropout : ?seed:int -> rate:float -> (float, 'b) t -> (float, 'b) t
-(** [dropout ?seed ~rate x] randomly zeroes elements with probability [rate].
+val dropout : key:Rng.key -> rate:float -> (float, 'b) t -> (float, 'b) t
+(** [dropout ~key ~rate x] randomly zeroes elements with probability [rate].
 
     The remaining values are scaled by [1/(1 - rate)] keeping the expected value
-    unchanged. Requires floating-point input and rate in \[0, 1). When [seed] is
-    provided, the same mask is reproduced. *)
+    unchanged. Requires floating-point input and rate in \[0, 1). *)
 
 (** {2 Shape Manipulation}
 
@@ -3704,13 +3754,13 @@ val dot_product_attention :
   ?attention_mask:(bool, bool_elt) t ->
   ?scale:float ->
   ?dropout_rate:float ->
-  ?dropout_seed:int ->
+  ?dropout_key:Rng.key ->
   ?is_causal:bool ->
   (float, 'a) t ->
   (float, 'a) t ->
   (float, 'a) t ->
   (float, 'a) t
-(** [dot_product_attention ?attention_mask ?scale ?dropout_rate ?dropout_seed
+(** [dot_product_attention ?attention_mask ?scale ?dropout_rate ?dropout_key
      ?is_causal q k v] computes scaled dot-product attention.
 
     - [q], [k], [v] must have matching leading dimensions; the last dimension of
@@ -3722,8 +3772,8 @@ val dot_product_attention :
       shape; true values keep scores, false values set them to -∞ before
       softmax.
     - [dropout_rate], when provided, applies dropout to the attention
-      probabilities before multiplying by [v]. [dropout_seed] controls the
-      random mask when supplied. *)
+      probabilities before multiplying by [v]. [dropout_key] controls the random
+      mask when supplied. *)
 
 val erf : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
 (** [erf ?out t] computes the error function.

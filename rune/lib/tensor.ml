@@ -33,11 +33,36 @@ let of_bigarray ba = of_bigarray (Lazy.force context) ba
 let of_bigarray_ext ba = of_bigarray_ext (Lazy.force context) ba
 let to_bigarray = to_bigarray
 let to_bigarray_ext = to_bigarray_ext
-let rand dtype ?seed shape = rand (Lazy.force context) dtype ?seed shape
-let randn dtype ?seed shape = randn (Lazy.force context) dtype ?seed shape
+let rand dtype ~key shape = rand (Lazy.force context) dtype ~key shape
+let randn dtype ~key shape = randn (Lazy.force context) dtype ~key shape
 
-let randint dtype ?seed ?high shape low =
-  randint (Lazy.force context) dtype ?seed ?high shape low
+let randint dtype ~key ?high shape low =
+  randint (Lazy.force context) dtype ~key ?high shape low
+
+module Rng = struct
+  include F.Rng
+
+  let uniform ~key dtype shape =
+    F.Rng.uniform (Lazy.force context) ~key dtype shape
+
+  let normal ~key dtype shape =
+    F.Rng.normal (Lazy.force context) ~key dtype shape
+
+  let randint dtype ~key ?high shape low =
+    F.Rng.randint (Lazy.force context) dtype ~key ?high shape low
+
+  let bernoulli ~key ~p shape =
+    F.Rng.bernoulli (Lazy.force context) ~key ~p shape
+
+  let permutation ~key n = F.Rng.permutation (Lazy.force context) ~key n
+  let shuffle ~key x = F.Rng.shuffle (Lazy.force context) ~key x
+
+  let categorical ~key ?axis ?shape logits =
+    F.Rng.categorical (Lazy.force context) ~key ?axis ?shape logits
+
+  let truncated_normal ~key dtype ~(lower : float) ~(upper : float) shape =
+    F.Rng.truncated_normal (Lazy.force context) ~key dtype ~lower ~upper shape
+end
 
 (* ───── FFT ───── *)
 

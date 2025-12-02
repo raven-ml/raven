@@ -742,14 +742,14 @@ let einsum_int_dot_scalar () =
 
 let test_einsum_regression_axis_order () =
   (* Case 1: i,jk->jki should order as j, k, i *)
-  let a1 = Nx.randn Nx.float32 [| 5 |] in
-  let b1 = Nx.randn Nx.float32 [| 7; 7 |] in
+  let a1 = Nx.randn Nx.float32 ~key:(Nx.Rng.key 0) [| 5 |] in
+  let b1 = Nx.randn Nx.float32 ~key:(Nx.Rng.key 1) [| 7; 7 |] in
   let r1 = Nx.einsum "i,jk->jki" [| a1; b1 |] in
   check_shape "einsum axis order i,jk->jki" [| 7; 7; 5 |] r1;
 
   (* Case 2: ij,klj->kli should order as k, l, i *)
-  let a2 = Nx.randn Nx.float32 [| 5; 5 |] in
-  let b2 = Nx.randn Nx.float32 [| 3; 7; 5 |] in
+  let a2 = Nx.randn Nx.float32 ~key:(Nx.Rng.key 2) [| 5; 5 |] in
+  let b2 = Nx.randn Nx.float32 ~key:(Nx.Rng.key 3) [| 3; 7; 5 |] in
   let r2 = Nx.einsum "ij,klj->kli" [| a2; b2 |] in
   check_shape "einsum axis order ij,klj->kli" [| 3; 7; 5 |] r2
 

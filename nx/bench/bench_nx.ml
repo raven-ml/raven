@@ -12,8 +12,8 @@ let benchmark_name op_name size dtype_label =
 (** Generate benchmark operations for Float32 *)
 let nx_operations_f32 ~size =
   let shape = [| size; size |] in
-  let a = Nx.rand Nx.Float32 shape in
-  let b = Nx.rand Nx.Float32 shape in
+  let a = Nx.rand Nx.Float32 ~key:(Nx.Rng.key (size * 2)) shape in
+  let b = Nx.rand Nx.Float32 ~key:(Nx.Rng.key ((size * 2) + 1)) shape in
 
   let ops =
     [
@@ -35,8 +35,8 @@ let nx_operations_f32 ~size =
 (** Generate benchmark operations for Float64 *)
 let nx_operations_f64 ~size =
   let shape = [| size; size |] in
-  let a = Nx.rand Nx.Float64 shape in
-  let b = Nx.rand Nx.Float64 shape in
+  let a = Nx.rand Nx.Float64 ~key:(Nx.Rng.key (size * 3)) shape in
+  let b = Nx.rand Nx.Float64 ~key:(Nx.Rng.key ((size * 3) + 1)) shape in
 
   let ops =
     [
