@@ -46,7 +46,7 @@
   "Nx is the core component of the Raven ecosystem providing efficient numerical computation with multi-device support. It offers NumPy-like functionality with the benefits of OCaml's type system.")
  (depends
   (ocaml
-   (>= 5.3.0))
+   (>= 5.2.0))
   dune
   (dune-configurator :build)
   (conf-pkg-config :build)

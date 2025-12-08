@@ -14,6 +14,6 @@ This backend implements the Nx backend interface using OxCaml's unboxed types fo
 
 ```bash
 cd dev/nx-oxcaml
-dune --root . pkg lock 
-dune --root . build
+dune pkg lock --root . 
+dune build --root . 
 ```
