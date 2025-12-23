@@ -1,0 +1,4 @@
+(executable
+ (public_name oxcaml-expts)
+ (name main)
+ (libraries oxcaml_expts))
