@@ -1,5 +1,5 @@
 type task = { start_idx : int; end_idx : int; compute : int -> int -> unit }
-open Effect
+module Effect =  Stdlib.Effect
 type _ Effect.t += WaitCompletion : int -> unit Effect.t
 
 type pool = {

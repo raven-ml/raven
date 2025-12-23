@@ -3,6 +3,7 @@ module View = Nx_core.View
 module Shape = Nx_core.Shape
 module Symbolic_shape = Nx_core.Symbolic_shape
 module Error = Nx_core.Error
+module Parallel = Parallel_internal
 
 module Array = struct
   include Stdlib.Array
