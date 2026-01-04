@@ -121,24 +121,6 @@ let create_tensor (type a b) ctx (dtype : (a, b) Dtype.t) shape_arr : (a, b) t =
       { dtype; buffer = Int64 buffer; view; context = ctx }
   | _ -> Error.invalid ~op:"create_tensor" ~what:"unsupported dtype" ()
 
-(* Generic binary operation - writes to caller-provided out buffer *)
-let binary_op backend_op ~out x y =
-  (* Ensure both inputs have the same shape *)
-  (* Printf.printf "Running binary op: %s\n" op_name; *)
-
-  (* let x_shape = shape x in let y_shape = shape y in if x_shape <> y_shape
-     then Error.invalid ~op:op_name ~what:"shape mismatch" ~reason:
-     (Printf.sprintf "x: %s, y: %s" (Array.to_list x_shape |> List.map
-     string_of_int |> String.concat "x") (Array.to_list y_shape |> List.map
-     string_of_int |> String.concat "x")) () else *)
-  (* Convert to FFI tensors *)
-  (* let x_ffi = to_oxcaml_tensor x in
-    let y_ffi = to_oxcaml_tensor y in
-    let out_ffi = to_oxcaml_tensor out in *)
-
-  (* Call C implementation *)
-  backend_op ~out x y
-
 let caml_add (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
