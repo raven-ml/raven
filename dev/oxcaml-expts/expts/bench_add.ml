@@ -1,8 +1,8 @@
+module Dtype = Nx_core.Dtype
+module Par_ox = Oxcaml_expts.Nx_oxcaml
 (** Benchmark suite for Nx tensor operations *)
-open Parallel_optimized
 
-let sizes = [ 50; 100; 200; 500 ]
-
+let sizes = [ 200; 500; 1000]
 
 (** Helper to create benchmark name *)
 let benchmark_name op_name size dtype_label backend_name =
@@ -11,29 +11,23 @@ let benchmark_name op_name size dtype_label backend_name =
 (** Generate benchmark operations for Float32 *)
 let nx_operations_f32 ~size =
   let shape = [| size; size |] in
-  let a = Nx.rand Nx.Float32 ~key:(Nx.Rng.key (size * 2)) shape in
-  let b = Nx.rand Nx.Float32 ~key:(Nx.Rng.key ((size * 2) + 1)) shape in
+  let a = Nx.rand Nx.Float32 ~key:(Nx.Rng.key (size * 3)) shape in
+  let b = Nx.rand Nx.Float32 ~key:(Nx.Rng.key ((size * 3) + 1)) shape in
 
-  let ctx = create_context () in
+  let ctx_ox = Par_ox.create_context () in
 
-let a_p = op_buffer ctx Dtype.Float32 size in
-let b_p = op_buffer ctx Dtype.Float32 size in
-let out = op_buffer ctx Dtype.Float32 size in 
+  let a_p_ox = Par_ox.op_buffer ctx_ox Dtype.Float32 size in
+  let b_p_ox = Par_ox.op_buffer ctx_ox Dtype.Float32 size in
+  let out_ox = Par_ox.op_buffer ctx_ox Dtype.Float32 size in
+
   let ops =
     [
       ("Add", "Nx", fun () -> ignore (Nx.add a b));
-      ("Add", "Nx parallel",fun () -> ignore (op_add ~out a_p b_p));
-      (* ("Mul", fun () -> ignore (Nx.mul a b)); *)
+      ( "Add",
+        "Nx parallel",
+        fun () -> ignore (Par_ox.op_add ~out:out_ox a_p_ox b_p_ox) );
     ]
   in
-
-  (* let ops =
-    ops
-    @ [
-        ("Sum", fun () -> ignore (Nx.sum a));
-        ("Transpose", fun () -> ignore (Nx.transpose a));
-      ]
-  in *)
 
   ops
 
@@ -43,26 +37,20 @@ let nx_operations_f64 ~size =
   let a = Nx.rand Nx.Float64 ~key:(Nx.Rng.key (size * 3)) shape in
   let b = Nx.rand Nx.Float64 ~key:(Nx.Rng.key ((size * 3) + 1)) shape in
 
-  let ctx = create_context () in
-  let a_p = op_buffer ctx Dtype.Float64 size in
-let b_p = op_buffer ctx Dtype.Float64 size in
-let out = op_buffer ctx Dtype.Float64 size in 
+  let ctx_ox = Par_ox.create_context () in
+
+  let a_p_ox = Par_ox.op_buffer ctx_ox Dtype.Float64 size in
+  let b_p_ox = Par_ox.op_buffer ctx_ox Dtype.Float64 size in
+  let out_ox = Par_ox.op_buffer ctx_ox Dtype.Float64 size in
 
   let ops =
     [
-      ("Add", "Nx",fun () -> ignore (Nx.add a b));
-      ("Add", "Nx parallel",fun () -> ignore (op_add ~out a_p b_p));
-      (* ("Mul", fun () -> ignore (Nx.mul a b)); *)
+      ("Add", "Nx", fun () -> ignore (Nx.add a b));
+      ( "Add",
+        "Nx parallel",
+        fun () -> ignore (Par_ox.op_add ~out:out_ox a_p_ox b_p_ox) );
     ]
   in
-
-  (* let ops =
-    ops
-    @ [
-        ("Sum", fun () -> ignore (Nx.sum a));
-        ("Transpose", fun () -> ignore (Nx.transpose a));
-      ]
-  in *)
 
   ops
 
@@ -82,7 +70,7 @@ let build_benchmarks () =
       (* Float64 benchmarks *)
       let ops_f64 = nx_operations_f64 ~size in
       List.iter
-        (fun (op_name, backend_name,fn) ->
+        (fun (op_name, backend_name, fn) ->
           let bench_name = benchmark_name op_name size "f64" backend_name in
           benchmarks := Ubench.bench bench_name fn :: !benchmarks)
         ops_f64)
@@ -101,4 +89,3 @@ let () =
   let config = default_config () in
   (* Mirror the Python defaults for fair comparisons with NumPy benchmarks. *)
   ignore (Ubench.run ~config benchmarks)
-

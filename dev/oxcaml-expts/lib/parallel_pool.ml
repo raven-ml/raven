@@ -1,5 +1,7 @@
 type task = { start_idx : int; end_idx : int; compute : int -> int -> unit }
-module Effect =  Stdlib.Effect
+(* type task_slots = task option array [@@contended] *)
+module Effect = Stdlib.Effect
+
 type _ Effect.t += WaitCompletion : int -> unit Effect.t
 
 type pool = {
@@ -9,18 +11,20 @@ type pool = {
   generation : int Atomic.t;
   mutex : Mutex.t;
   work_available : Condition.t;
-}
+} [@@contended]
 
 let current_pool = ref None
 
 let setup_pool () =
   let num_workers = Domain.recommended_domain_count () - 1 in
-  let task_assignments = Array.make num_workers None in
+  let task_assignments =
+    Array.make num_workers None
+ in
   let completed = Atomic.make 0 in
   let generation = Atomic.make 0 in
   let mutex = Mutex.create () in
   let work_available = Condition.create () in
-  let pool =
+  let (pool:pool) =
     {
       num_workers;
       task_assignments;
@@ -92,7 +96,7 @@ let run pool f =
             | _ -> None);
       }
 
-let parallel_execute pool tasks =
+let parallel_execute pool tasks  =
   run pool (fun () ->
       let num_tasks = Array.length tasks in
       if num_tasks <> get_num_domains pool then
@@ -127,7 +131,7 @@ let parallel_for pool start end_ compute_chunk =
     in
     parallel_execute pool tasks
 
-let parallel_for_reduce pool start end_ body reduce init =
+let parallel_for_reduce (pool @ portable) start end_ body reduce init =
   let total_domains = get_num_domains pool in
   let results = Array.make total_domains init in
   let chunk_size = (end_ - start + 1) / total_domains in
@@ -137,7 +141,7 @@ let parallel_for_reduce pool start end_ body reduce init =
         let start_idx = start + (d * chunk_size) + min d remainder in
         let len = chunk_size + if d < remainder then 1 else 0 in
         let end_idx = start_idx + len in
-        let compute _ _ =
+        let compute _ _ = 
           (* Ignore args since start_idx and end_idx are captured *)
           let partial_result = body start_idx end_idx in
           results.(d) <- partial_result

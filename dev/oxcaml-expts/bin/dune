@@ -1,4 +1,0 @@
-(executable
- (public_name oxcaml-expts)
- (name bench)
- (libraries oxcaml_expts ubench stdlib_upstream_compatible))
