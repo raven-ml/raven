@@ -24,3 +24,7 @@ dev.opam
 
 # Agent files
 CLAUDE.local.md
+
+# macOS
+.DS_Store
+
