@@ -1,4 +1,0 @@
-(library
- (name oxcaml_expts)
- (public_name oxcaml-expts)
- (libraries  nx stdlib_stable stdlib_upstream_compatible))

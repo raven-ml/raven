@@ -13,8 +13,6 @@ depends: [
   "ocaml-variants" {= "5.2.0+ox"}
   "dune" {>= "3.20"}
   "nx"
-  "core"
-  "parallel"
   "odoc" {with-doc}
 ]
 build: [

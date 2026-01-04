@@ -1,9 +1,9 @@
 (executable
  (public_name oxcaml-expts-bench)
  (name bench_sub)
- (libraries nx.core ubench oxcaml_expts))
+ (libraries nx nx.core ubench oxcaml_backend))
 
 (executable
  (public_name oxcaml-expts-bench)
  (name bench_add)
- (libraries nx.core ubench oxcaml_expts))
+ (libraries nx nx.core ubench oxcaml_backend))

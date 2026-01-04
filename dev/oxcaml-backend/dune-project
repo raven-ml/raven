@@ -1,6 +1,6 @@
 (lang dune 3.20)
 
-(name oxcaml-expts)
+(name oxcaml-backend)
 
 (generate_opam_files true)
 
@@ -22,7 +22,7 @@
   (name nx)))
 
 (package
- (name oxcaml-expts)
+ (name oxcaml-backend)
  (synopsis "High-performance Nx backend using OxCaml's unboxed types")
  (description
   "An experimental backend for Nx that leverages OxCaml's unboxed types for improved performance.")
@@ -30,6 +30,4 @@
   (ocaml-variants
    (= 5.2.0+ox))
   dune
-  nx
-  core
-  parallel))
+  nx))

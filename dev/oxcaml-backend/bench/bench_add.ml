@@ -1,8 +1,9 @@
 module Dtype = Nx_core.Dtype
-module Par_ox = Oxcaml_expts.Nx_oxcaml
+
+module Nx_oxcaml = Oxcaml_backend.Nx_oxcaml
 (** Benchmark suite for Nx tensor operations *)
 
-let sizes = [ 200; 500; 1000]
+let sizes = [ 200; 500; 1000 ]
 
 (** Helper to create benchmark name *)
 let benchmark_name op_name size dtype_label backend_name =
@@ -14,18 +15,17 @@ let nx_operations_f32 ~size =
   let a = Nx.rand Nx.Float32 ~key:(Nx.Rng.key (size * 3)) shape in
   let b = Nx.rand Nx.Float32 ~key:(Nx.Rng.key ((size * 3) + 1)) shape in
 
-  let ctx_ox = Par_ox.create_context () in
-
-  let a_p_ox = Par_ox.op_buffer ctx_ox Dtype.Float32 size in
-  let b_p_ox = Par_ox.op_buffer ctx_ox Dtype.Float32 size in
-  let out_ox = Par_ox.op_buffer ctx_ox Dtype.Float32 size in
+  let ctx_ox = Nx_oxcaml.create_context () in
+  let a_p_ox = Nx_oxcaml.op_buffer ctx_ox Dtype.Float32 size in
+  let b_p_ox = Nx_oxcaml.op_buffer ctx_ox Dtype.Float32 size in
+  let out_ox = Nx_oxcaml.op_buffer ctx_ox Dtype.Float32 size in
 
   let ops =
     [
-      ("Sub", "Nx", fun () -> ignore (Nx.sub a b));
-      ( "sub",
+      ("Add", "Nx", fun () -> ignore (Nx.add a b));
+      ( "Add",
         "Nx parallel",
-        fun () -> ignore (Par_ox.op_sub ~out:out_ox a_p_ox b_p_ox) );
+        fun () -> ignore (Nx_oxcaml.op_add ~out:out_ox a_p_ox b_p_ox) );
     ]
   in
 
@@ -37,18 +37,17 @@ let nx_operations_f64 ~size =
   let a = Nx.rand Nx.Float64 ~key:(Nx.Rng.key (size * 3)) shape in
   let b = Nx.rand Nx.Float64 ~key:(Nx.Rng.key ((size * 3) + 1)) shape in
 
-  let ctx_ox = Par_ox.create_context () in
-
-  let a_p_ox = Par_ox.op_buffer ctx_ox Dtype.Float64 size in
-  let b_p_ox = Par_ox.op_buffer ctx_ox Dtype.Float64 size in
-  let out_ox = Par_ox.op_buffer ctx_ox Dtype.Float64 size in
+  let ctx_ox = Nx_oxcaml.create_context () in
+  let a_p_ox = Nx_oxcaml.op_buffer ctx_ox Dtype.Float64 size in
+  let b_p_ox = Nx_oxcaml.op_buffer ctx_ox Dtype.Float64 size in
+  let out_ox = Nx_oxcaml.op_buffer ctx_ox Dtype.Float64 size in
 
   let ops =
     [
-      ("Sub", "Nx", fun () -> ignore (Nx.sub a b));
-      ( "Sub",
+      ("Add", "Nx", fun () -> ignore (Nx.add a b));
+      ( "Add",
         "Nx parallel",
-        fun () -> ignore (Par_ox.op_sub ~out:out_ox a_p_ox b_p_ox) );
+        fun () -> ignore (Nx_oxcaml.op_add ~out:out_ox a_p_ox b_p_ox) );
     ]
   in
 
