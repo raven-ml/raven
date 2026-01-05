@@ -17,23 +17,6 @@ type ('a, 'b) t = {
   context : context;
 }
 
-(* Helper functions *)
-
-external make_float64_array : int -> float# array
-  = "caml_make_unboxed_float64_vect"
-
-external make_float32_array : int -> float32# array
-  = "caml_make_unboxed_float32_vect"
-
-external make_int32_array : int -> int32# array = "caml_make_unboxed_int32_vect"
-external make_int64_array : int -> int64# array = "caml_make_unboxed_int64_vect"
-
-let numel (v : View.t) : int =
-  (* TODO: Consider adding a function like this to view *)
-  Array.fold_left (fun acc s -> acc * s) 1 (shape v)
-
-(*  *)
-
 let view t = t.view
 let dtype t = t.dtype
 let context t = t.context
@@ -45,18 +28,42 @@ let op_buffer (type a b) context (dtype : (a, b) Dtype.t) (size : int) :
   let view = View.create sym_shape in
   match dtype with
   | Dtype.Float64 ->
-      let buffer = make_float64_array size in
+      let buffer = Array.make_float64 size in
       { dtype; buffer = Float64 buffer; view; context }
   | Dtype.Float32 ->
-      let buffer = make_float32_array size in
+      let buffer = Array.make_float32 size in
       { dtype; buffer = Float32 buffer; view; context }
   | Dtype.Int32 ->
-      let buffer = make_int32_array size in
+      let buffer = Array.make_int32 size in
       { dtype; buffer = Int32 buffer; view; context }
   | Dtype.Int64 ->
-      let buffer = make_int64_array size in
+      let buffer = Array.make_int64 size in
       { dtype; buffer = Int64 buffer; view; context }
   | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
+
+let of_float64 context (arr : float# array) : (float, Dtype.float64_elt) t =
+  let size = Array.length arr in
+  let sym_shape = Symbolic_shape.of_ints [| size |] in
+  let view = View.create sym_shape in
+  { dtype = Dtype.Float64; buffer = Float64 arr; view; context }
+
+let of_float32 context (arr : float32# array) : (float, Dtype.float32_elt) t =
+  let size = Array.length arr in
+  let sym_shape = Symbolic_shape.of_ints [| size |] in
+  let view = View.create sym_shape in
+  { dtype = Dtype.Float32; buffer = Float32 arr; view; context }
+
+let of_int32 context (arr : int32# array) : (int32, Dtype.int32_elt) t =
+  let size = Array.length arr in
+  let sym_shape = Symbolic_shape.of_ints [| size |] in
+  let view = View.create sym_shape in
+  { dtype = Dtype.Int32; buffer = Int32 arr; view; context }
+
+let of_int64 context (arr : int64# array) : (int64, Dtype.int64_elt) t =
+  let size = Array.length arr in
+  let sym_shape = Symbolic_shape.of_ints [| size |] in
+  let view = View.create sym_shape in
+  { dtype = Dtype.Int64; buffer = Int64 arr; view; context }
 
 let op_add (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in

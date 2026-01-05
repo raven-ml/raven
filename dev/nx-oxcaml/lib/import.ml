@@ -29,9 +29,23 @@ module Array = struct
     ('a : any mod non_null separable). 'a array -> int -> 'a -> unit
     = "%array_unsafe_set"
   [@@layout_poly]
+
+  external length : ('a : any mod non_null separable). 'a array -> int
+    = "%array_length"
+  [@@layout_poly]
+
+  external make_float64 : int -> float# array = "caml_make_unboxed_float64_vect"
+  external make_float32 : int -> float32# array = "caml_make_unboxed_float32_vect"
+  external make_int32 : int -> int32# array = "caml_make_unboxed_int32_vect"
+  external make_int64 : int -> int64# array = "caml_make_unboxed_int64_vect"
 end
 
 let shape (v : View.t) : int array =
   match Symbolic_shape.eval (View.shape v) with
   | Some arr -> arr
   | None -> Error.failed ~op:"shape" ~what:"symbolic shape not evaluable" ()
+
+let numel (v : View.t) : int =
+  match Symbolic_shape.eval_dim (View.numel v) with
+  | Some n -> n
+  | None -> Error.failed ~op:"numel" ~what:"symbolic numel not evaluable" ()
