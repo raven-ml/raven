@@ -1,14 +1,4 @@
-module Dtype = Nx_core.Dtype
-module View = Nx_core.View
-module Shape = Nx_core.Shape
-module Symbolic_shape = Nx_core.Symbolic_shape
-module Error = Nx_core.Error
-module Parallel = Parallel_pool
-module Float_u = Stdlib_upstream_compatible.Float_u
-module Float32_u = Stdlib_stable.Float32_u
-module Int32_u = Stdlib_upstream_compatible.Int32_u
-module Int64_u = Stdlib_upstream_compatible.Int64_u
-open Binary_ops
+open Import
 
 let sub_float64 a_arr b_arr out_arr va vb vout start_idx end_idx =
   let out_base = View.offset vout + start_idx in

@@ -1,6 +1,5 @@
 module Dtype = Nx_core.Dtype
 
-module Nx_oxcaml = Oxcaml_backend.Nx_oxcaml
 (** Benchmark suite for Nx tensor operations *)
 
 let sizes = [ 200; 500; 1000 ]

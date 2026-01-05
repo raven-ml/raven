@@ -1,8 +1,5 @@
 type task = { start_idx : int; end_idx : int; compute : int -> int -> unit }
 
-(* type task_slots = task option array [@@contended] *)
-module Effect = Stdlib.Effect
-
 type _ Effect.t += WaitCompletion : int -> unit Effect.t
 
 type pool = {
