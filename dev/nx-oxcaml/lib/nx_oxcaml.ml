@@ -20,7 +20,16 @@ type ('a, 'b) t = {
 let view t = t.view
 let dtype t = t.dtype
 let context t = t.context
-let data t = t.buffer
+
+(* [data] returns a Bigarray, but Bigarrays cannot point to OCaml heap memory.
+   Unboxed arrays are GC-managed, so we cannot create a Bigarray view of them
+   without risking memory safety. Use [data_array] to access the raw buffer. *)
+let data _ =
+  failwith
+    "Nx_oxcaml.data is not supported. Bigarrays cannot point to OCaml heap \
+     memory. Use Nx_oxcaml.data_array instead."
+
+let data_array t = t.buffer
 
 let op_buffer (type a b) context (dtype : (a, b) Dtype.t) (size : int) :
     (a, b) t =
@@ -129,8 +138,97 @@ let op_sub (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
             Op_sub.sub_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
       else Op_sub.sub_int64 a_arr b_arr out_arr va vb vout 0 vol
 
-let op_mul _out _a _b =
-  Error.invalid ~op:"op_mul" ~what:"not implemented yet" ()
+let op_mul ~out:_ _ _ = Error.invalid ~op:"op_mul" ~what:"not implemented" ()
+let op_idiv ~out:_ _ _ = Error.invalid ~op:"op_idiv" ~what:"not implemented" ()
+let op_fdiv ~out:_ _ _ = Error.invalid ~op:"op_fdiv" ~what:"not implemented" ()
+let op_mod ~out:_ _ _ = Error.invalid ~op:"op_mod" ~what:"not implemented" ()
+let op_pow ~out:_ _ _ = Error.invalid ~op:"op_pow" ~what:"not implemented" ()
 
-let op_div _out _a _b =
-  Error.invalid ~op:"op_div" ~what:"not implemented yet" ()
+let op_cmpeq ~out:_ _ _ = Error.invalid ~op:"op_cmpeq" ~what:"not implemented" ()
+let op_cmpne ~out:_ _ _ = Error.invalid ~op:"op_cmpne" ~what:"not implemented" ()
+let op_cmplt ~out:_ _ _ = Error.invalid ~op:"op_cmplt" ~what:"not implemented" ()
+let op_cmple ~out:_ _ _ = Error.invalid ~op:"op_cmple" ~what:"not implemented" ()
+
+let op_max ~out:_ _ _ = Error.invalid ~op:"op_max" ~what:"not implemented" ()
+let op_min ~out:_ _ _ = Error.invalid ~op:"op_min" ~what:"not implemented" ()
+
+let op_xor ~out:_ _ _ = Error.invalid ~op:"op_xor" ~what:"not implemented" ()
+let op_or ~out:_ _ _ = Error.invalid ~op:"op_or" ~what:"not implemented" ()
+let op_and ~out:_ _ _ = Error.invalid ~op:"op_and" ~what:"not implemented" ()
+
+let op_neg ~out:_ _ = Error.invalid ~op:"op_neg" ~what:"not implemented" ()
+let op_recip ~out:_ _ = Error.invalid ~op:"op_recip" ~what:"not implemented" ()
+let op_abs ~out:_ _ = Error.invalid ~op:"op_abs" ~what:"not implemented" ()
+let op_sqrt ~out:_ _ = Error.invalid ~op:"op_sqrt" ~what:"not implemented" ()
+let op_exp ~out:_ _ = Error.invalid ~op:"op_exp" ~what:"not implemented" ()
+let op_log ~out:_ _ = Error.invalid ~op:"op_log" ~what:"not implemented" ()
+let op_sin ~out:_ _ = Error.invalid ~op:"op_sin" ~what:"not implemented" ()
+let op_cos ~out:_ _ = Error.invalid ~op:"op_cos" ~what:"not implemented" ()
+
+let op_where ~out:_ _ _ _ = Error.invalid ~op:"op_where" ~what:"not implemented" ()
+
+let op_reduce_sum ~out:_ ~axes:_ ~keepdims:_ _ =
+  Error.invalid ~op:"op_reduce_sum" ~what:"not implemented" ()
+
+let op_reduce_prod ~out:_ ~axes:_ ~keepdims:_ _ =
+  Error.invalid ~op:"op_reduce_prod" ~what:"not implemented" ()
+
+let op_reduce_max ~out:_ ~axes:_ ~keepdims:_ _ =
+  Error.invalid ~op:"op_reduce_max" ~what:"not implemented" ()
+
+let op_reduce_min ~out:_ ~axes:_ ~keepdims:_ _ =
+  Error.invalid ~op:"op_reduce_min" ~what:"not implemented" ()
+
+let op_associative_scan ~axis:_ ~op:_ _ =
+  Error.invalid ~op:"op_associative_scan" ~what:"not implemented" ()
+
+let op_const_scalar _ _ _ =
+  Error.invalid ~op:"op_const_scalar" ~what:"not implemented" ()
+
+let op_const_array _ _ =
+  Error.invalid ~op:"op_const_array" ~what:"not implemented" ()
+
+let op_expand x shape = { x with view = View.expand x.view shape }
+let op_reshape x shape = { x with view = View.reshape x.view shape }
+let op_permute _ _ = Error.invalid ~op:"op_permute" ~what:"not implemented" ()
+let op_shrink _ _ = Error.invalid ~op:"op_shrink" ~what:"not implemented" ()
+let op_flip _ _ = Error.invalid ~op:"op_flip" ~what:"not implemented" ()
+let op_pad _ _ _ = Error.invalid ~op:"op_pad" ~what:"not implemented" ()
+let op_cat _ _ = Error.invalid ~op:"op_cat" ~what:"not implemented" ()
+let op_cast _ _ = Error.invalid ~op:"op_cast" ~what:"not implemented" ()
+let op_contiguous _ = Error.invalid ~op:"op_contiguous" ~what:"not implemented" ()
+let op_copy _ = Error.invalid ~op:"op_copy" ~what:"not implemented" ()
+let op_assign _ _ = Error.invalid ~op:"op_assign" ~what:"not implemented" ()
+let op_as_strided _ _ _ _ = Error.invalid ~op:"op_as_strided" ~what:"not implemented" ()
+
+let op_threefry _ _ = Error.invalid ~op:"op_threefry" ~what:"not implemented" ()
+let op_gather _ _ _ = Error.invalid ~op:"op_gather" ~what:"not implemented" ()
+
+let op_scatter ?mode:_ ?unique_indices:_ _ _ _ _ =
+  Error.invalid ~op:"op_scatter" ~what:"not implemented" ()
+
+let op_unfold ?out:_ _ ~kernel_size:_ ~stride:_ ~dilation:_ ~padding:_ =
+  Error.invalid ~op:"op_unfold" ~what:"not implemented" ()
+
+let op_fold ?out:_ _ ~output_size:_ ~kernel_size:_ ~stride:_ ~dilation:_ ~padding:_ =
+  Error.invalid ~op:"op_fold" ~what:"not implemented" ()
+
+let op_matmul ~out:_ _ _ = Error.invalid ~op:"op_matmul" ~what:"not implemented" ()
+
+let op_fft ?out:_ _ ~axes:_ = Error.invalid ~op:"op_fft" ~what:"not implemented" ()
+let op_ifft ?out:_ _ ~axes:_ = Error.invalid ~op:"op_ifft" ~what:"not implemented" ()
+
+let op_rfft ?out:_ _ ~dtype:_ ~axes:_ =
+  Error.invalid ~op:"op_rfft" ~what:"not implemented" ()
+
+let op_irfft ?out:_ _ ~dtype:_ ~axes:_ ~s:_ =
+  Error.invalid ~op:"op_irfft" ~what:"not implemented" ()
+
+let op_cholesky ~upper:_ _ = Error.invalid ~op:"op_cholesky" ~what:"not implemented" ()
+let op_qr ~reduced:_ _ = Error.invalid ~op:"op_qr" ~what:"not implemented" ()
+let op_svd ~full_matrices:_ _ = Error.invalid ~op:"op_svd" ~what:"not implemented" ()
+let op_eig ~vectors:_ _ = Error.invalid ~op:"op_eig" ~what:"not implemented" ()
+let op_eigh ~vectors:_ _ = Error.invalid ~op:"op_eigh" ~what:"not implemented" ()
+
+let op_triangular_solve ~upper:_ ~transpose:_ ~unit_diag:_ _ _ =
+  Error.invalid ~op:"op_triangular_solve" ~what:"not implemented" ()
