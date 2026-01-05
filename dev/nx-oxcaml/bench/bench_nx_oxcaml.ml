@@ -43,6 +43,7 @@ let ops_f64 ~size =
     ("Add", "Nx_oxcaml_frontend", fun () -> ignore (Oxfe.add a_fe b_fe));
     ("Sub", "Nx", fun () -> ignore (Nx.sub a b));
     ("Sub", "Nx_oxcaml", fun () -> Nx_oxcaml.op_sub ~out a_ox b_ox);
+    ("Mod", "Nx_oxcaml", fun () -> Nx_oxcaml.op_mod ~out a_ox b_ox);
     ("Sub", "Nx_oxcaml_frontend", fun () -> ignore (Oxfe.sub a_fe b_fe));
   ]
 

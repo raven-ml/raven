@@ -24,3 +24,5 @@ dev.opam
 
 # Agent files
 CLAUDE.local.md
+dev/nx-oxcaml/lib/.DS_Store
+dev/nx-oxcaml/lib/binary_ops/.DS_Store
