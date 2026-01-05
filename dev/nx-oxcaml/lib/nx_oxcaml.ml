@@ -1,371 +1,234 @@
-(* OxCaml backend for Nx - leverages unboxed types for performance *)
+open Import
 
-open Nx_core
+type context = { pool : Parallel.pool }
 
-type ('a, 'b) buffer = ('a, 'b) Internal.buffer
-type context = Internal.context
+let create_context () = { pool = Parallel.get_or_setup_pool () }
 
-type ('a, 'b) t = ('a, 'b) Internal.t = {
-  context : context;
+type 'b buffer =
+  | Float64 : float# array -> Dtype.float64_elt buffer
+  | Float32 : float32# array -> Dtype.float32_elt buffer
+  | Int32 : int32# array -> Dtype.int32_elt buffer
+  | Int64 : int64# array -> Dtype.int64_elt buffer
+
+type ('a, 'b) t = {
   dtype : ('a, 'b) Dtype.t;
-  buffer : ('a, 'b) buffer;
+  buffer : 'b buffer;
   view : View.t;
+  context : context;
 }
 
-(* Accessors *)
 let view t = t.view
 let dtype t = t.dtype
-let data t = t.buffer
 let context t = t.context
-let with_view t view = { t with view }
 
-(* Create a new context *)
-let create_context ?n_threads () =
-  Internal.{ pool = Some (Parallel.get_or_setup_pool ?n_threads ()) }
+(* [data] returns a Bigarray, but Bigarrays cannot point to OCaml heap memory.
+   Unboxed arrays are GC-managed, so we cannot create a Bigarray view of them
+   without risking memory safety. Use [data_array] to access the raw buffer. *)
+let data _ =
+  failwith
+    "Nx_oxcaml.data is not supported. Bigarrays cannot point to OCaml heap \
+     memory. Use Nx_oxcaml.data_array instead."
 
-(* --- Backend Ops Implementation --- *)
+let data_array t = t.buffer
 
-let op_buffer ctx dt size_in_elements =
-  let kind = Dtype.to_bigarray_kind dt in
-  let ba = Bigarray.Array1.create kind Bigarray.c_layout size_in_elements in
-  let initial_view =
-    if size_in_elements = 0 then View.create [| 0 |]
-    else View.create [| size_in_elements |]
-  in
-  { context = ctx; dtype = dt; buffer = ba; view = initial_view }
+let op_buffer (type a b) context (dtype : (a, b) Dtype.t) (size : int) :
+    (a, b) t =
+  let sym_shape = Symbolic_shape.of_ints [| size |] in
+  let view = View.create sym_shape in
+  match dtype with
+  | Dtype.Float64 ->
+      let buffer = Array.make_float64 size in
+      { dtype; buffer = Float64 buffer; view; context }
+  | Dtype.Float32 ->
+      let buffer = Array.make_float32 size in
+      { dtype; buffer = Float32 buffer; view; context }
+  | Dtype.Int32 ->
+      let buffer = Array.make_int32 size in
+      { dtype; buffer = Int32 buffer; view; context }
+  | Dtype.Int64 ->
+      let buffer = Array.make_int64 size in
+      { dtype; buffer = Int64 buffer; view; context }
+  | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
 
-let op_const_scalar ctx value dt =
-  let kind = Dtype.to_bigarray_kind dt in
-  let ba = Bigarray.Array1.create kind Bigarray.c_layout 1 in
-  Bigarray.Array1.set ba 0 value;
-  let scalar_view = View.create [||] in
-  { context = ctx; dtype = dt; buffer = ba; view = scalar_view }
+let of_float64 context (arr : float# array) : (float, Dtype.float64_elt) t =
+  let size = Array.length arr in
+  let sym_shape = Symbolic_shape.of_ints [| size |] in
+  let view = View.create sym_shape in
+  { dtype = Dtype.Float64; buffer = Float64 arr; view; context }
 
-let op_const_array ctx bigarray =
-  let dtype = Dtype.of_bigarray_kind (Bigarray.Array1.kind bigarray) in
-  let size = Bigarray.Array1.dim bigarray in
-  let t = op_buffer ctx dtype size in
-  Bigarray.Array1.blit bigarray (data t);
-  t
+let of_float32 context (arr : float32# array) : (float, Dtype.float32_elt) t =
+  let size = Array.length arr in
+  let sym_shape = Symbolic_shape.of_ints [| size |] in
+  let view = View.create sym_shape in
+  { dtype = Dtype.Float32; buffer = Float32 arr; view; context }
 
-(* Binary Operations *)
-let op_add a b =
-  let ctx = a.context in
-  let out_shape = View.shape a.view in
-  let out_size = View.numel a.view in
-  let out_tensor =
-    op_buffer ctx a.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_binary.add ctx a b out_tensor;
-  out_tensor
+let of_int32 context (arr : int32# array) : (int32, Dtype.int32_elt) t =
+  let size = Array.length arr in
+  let sym_shape = Symbolic_shape.of_ints [| size |] in
+  let view = View.create sym_shape in
+  { dtype = Dtype.Int32; buffer = Int32 arr; view; context }
 
-let op_mul a b =
-  let ctx = a.context in
-  let out_shape = View.shape a.view in
-  let out_size = View.numel a.view in
-  let out_tensor =
-    op_buffer ctx a.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_binary.mul ctx a b out_tensor;
-  out_tensor
+let of_int64 context (arr : int64# array) : (int64, Dtype.int64_elt) t =
+  let size = Array.length arr in
+  let sym_shape = Symbolic_shape.of_ints [| size |] in
+  let view = View.create sym_shape in
+  { dtype = Dtype.Int64; buffer = Int64 arr; view; context }
 
-let op_idiv a b =
-  let ctx = a.context in
-  let out_shape = View.shape a.view in
-  let out_size = View.numel a.view in
-  let out_tensor =
-    op_buffer ctx a.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_binary.idiv ctx a b out_tensor;
-  out_tensor
+let op_add (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+  let parallel_threshold = 62500 in
+  let vout = out.view in
+  let va = a.view in
+  let vb = b.view in
+  let vol = numel vout in
+  match (out.buffer, a.buffer, b.buffer) with
+  | Float64 out_arr, Float64 a_arr, Float64 b_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_add.add_float64 a_arr b_arr out_arr va vb vout start_idx end_idx)
+      else Op_add.add_float64 a_arr b_arr out_arr va vb vout 0 vol
+  | Float32 out_arr, Float32 a_arr, Float32 b_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_add.add_float32 a_arr b_arr out_arr va vb vout start_idx end_idx)
+      else Op_add.add_float32 a_arr b_arr out_arr va vb vout 0 vol
+  | Int32 out_arr, Int32 a_arr, Int32 b_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_add.add_int32 a_arr b_arr out_arr va vb vout start_idx end_idx)
+      else Op_add.add_int32 a_arr b_arr out_arr va vb vout 0 vol
+  | Int64 out_arr, Int64 a_arr, Int64 b_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_add.add_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
+      else Op_add.add_int64 a_arr b_arr out_arr va vb vout 0 vol
 
-let op_fdiv a b =
-  let ctx = a.context in
-  let out_shape = View.shape a.view in
-  let out_size = View.numel a.view in
-  let out_tensor =
-    op_buffer ctx a.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_binary.fdiv ctx a b out_tensor;
-  out_tensor
+let op_sub (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+  let parallel_threshold = 62500 in
+  let vout = out.view in
+  let va = a.view in
+  let vb = b.view in
+  let vol = numel vout in
+  match (out.buffer, a.buffer, b.buffer) with
+  | Float64 out_arr, Float64 a_arr, Float64 b_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_sub.sub_float64 a_arr b_arr out_arr va vb vout start_idx end_idx)
+      else Op_sub.sub_float64 a_arr b_arr out_arr va vb vout 0 vol
+  | Float32 out_arr, Float32 a_arr, Float32 b_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_sub.sub_float32 a_arr b_arr out_arr va vb vout start_idx end_idx)
+      else Op_sub.sub_float32 a_arr b_arr out_arr va vb vout 0 vol
+  | Int32 out_arr, Int32 a_arr, Int32 b_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_sub.sub_int32 a_arr b_arr out_arr va vb vout start_idx end_idx)
+      else Op_sub.sub_int32 a_arr b_arr out_arr va vb vout 0 vol
+  | Int64 out_arr, Int64 a_arr, Int64 b_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_sub.sub_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
+      else Op_sub.sub_int64 a_arr b_arr out_arr va vb vout 0 vol
 
-let op_max a b =
-  let ctx = a.context in
-  let out_shape = View.shape a.view in
-  let out_size = View.numel a.view in
-  let out_tensor =
-    op_buffer ctx a.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_binary.max ctx a b out_tensor;
-  out_tensor
+let op_mul ~out:_ _ _ = Error.invalid ~op:"op_mul" ~what:"not implemented" ()
+let op_idiv ~out:_ _ _ = Error.invalid ~op:"op_idiv" ~what:"not implemented" ()
+let op_fdiv ~out:_ _ _ = Error.invalid ~op:"op_fdiv" ~what:"not implemented" ()
+let op_mod ~out:_ _ _ = Error.invalid ~op:"op_mod" ~what:"not implemented" ()
+let op_pow ~out:_ _ _ = Error.invalid ~op:"op_pow" ~what:"not implemented" ()
 
-let op_mod a b =
-  let ctx = a.context in
-  let out_shape = View.shape a.view in
-  let out_size = View.numel a.view in
-  let out_tensor =
-    op_buffer ctx a.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_binary.mod_ ctx a b out_tensor;
-  out_tensor
+let op_cmpeq ~out:_ _ _ = Error.invalid ~op:"op_cmpeq" ~what:"not implemented" ()
+let op_cmpne ~out:_ _ _ = Error.invalid ~op:"op_cmpne" ~what:"not implemented" ()
+let op_cmplt ~out:_ _ _ = Error.invalid ~op:"op_cmplt" ~what:"not implemented" ()
+let op_cmple ~out:_ _ _ = Error.invalid ~op:"op_cmple" ~what:"not implemented" ()
 
-let op_pow a b =
-  let ctx = a.context in
-  let out_shape = View.shape a.view in
-  let out_size = View.numel a.view in
-  let out_tensor =
-    op_buffer ctx a.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_binary.pow ctx a b out_tensor;
-  out_tensor
+let op_max ~out:_ _ _ = Error.invalid ~op:"op_max" ~what:"not implemented" ()
+let op_min ~out:_ _ _ = Error.invalid ~op:"op_min" ~what:"not implemented" ()
 
-let op_cmplt a b =
-  let ctx = a.context in
-  let out_shape = View.shape a.view in
-  let out_size = View.numel a.view in
-  let out_tensor =
-    op_buffer ctx Dtype.Uint8 out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  (* TODO: Implement comparison *)
-  failwith "op_cmplt: not implemented yet";
-  out_tensor
+let op_xor ~out:_ _ _ = Error.invalid ~op:"op_xor" ~what:"not implemented" ()
+let op_or ~out:_ _ _ = Error.invalid ~op:"op_or" ~what:"not implemented" ()
+let op_and ~out:_ _ _ = Error.invalid ~op:"op_and" ~what:"not implemented" ()
 
-let op_cmpne a b =
-  let ctx = a.context in
-  let out_shape = View.shape a.view in
-  let out_size = View.numel a.view in
-  let out_tensor =
-    op_buffer ctx Dtype.Uint8 out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  (* TODO: Implement comparison *)
-  failwith "op_cmpne: not implemented yet";
-  out_tensor
+let op_neg ~out:_ _ = Error.invalid ~op:"op_neg" ~what:"not implemented" ()
+let op_recip ~out:_ _ = Error.invalid ~op:"op_recip" ~what:"not implemented" ()
+let op_abs ~out:_ _ = Error.invalid ~op:"op_abs" ~what:"not implemented" ()
+let op_sqrt ~out:_ _ = Error.invalid ~op:"op_sqrt" ~what:"not implemented" ()
+let op_exp ~out:_ _ = Error.invalid ~op:"op_exp" ~what:"not implemented" ()
+let op_log ~out:_ _ = Error.invalid ~op:"op_log" ~what:"not implemented" ()
+let op_sin ~out:_ _ = Error.invalid ~op:"op_sin" ~what:"not implemented" ()
+let op_cos ~out:_ _ = Error.invalid ~op:"op_cos" ~what:"not implemented" ()
 
-let op_xor a b =
-  let ctx = a.context in
-  let out_shape = View.shape a.view in
-  let out_size = View.numel a.view in
-  let out_tensor =
-    op_buffer ctx a.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_binary.xor ctx a b out_tensor;
-  out_tensor
+let op_where ~out:_ _ _ _ = Error.invalid ~op:"op_where" ~what:"not implemented" ()
 
-let op_or a b =
-  let ctx = a.context in
-  let out_shape = View.shape a.view in
-  let out_size = View.numel a.view in
-  let out_tensor =
-    op_buffer ctx a.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_binary.or_ ctx a b out_tensor;
-  out_tensor
+let op_reduce_sum ~out:_ ~axes:_ ~keepdims:_ _ =
+  Error.invalid ~op:"op_reduce_sum" ~what:"not implemented" ()
 
-let op_and a b =
-  let ctx = a.context in
-  let out_shape = View.shape a.view in
-  let out_size = View.numel a.view in
-  let out_tensor =
-    op_buffer ctx a.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_binary.and_ ctx a b out_tensor;
-  out_tensor
+let op_reduce_prod ~out:_ ~axes:_ ~keepdims:_ _ =
+  Error.invalid ~op:"op_reduce_prod" ~what:"not implemented" ()
 
-(* Unary Operations *)
-let op_neg input =
-  let ctx = input.context in
-  let out_shape = View.shape input.view in
-  let out_size = View.numel input.view in
-  let out_tensor =
-    op_buffer ctx input.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_unary.neg ctx input out_tensor;
-  out_tensor
+let op_reduce_max ~out:_ ~axes:_ ~keepdims:_ _ =
+  Error.invalid ~op:"op_reduce_max" ~what:"not implemented" ()
 
-let op_log2 input =
-  let ctx = input.context in
-  let out_shape = View.shape input.view in
-  let out_size = View.numel input.view in
-  let out_tensor =
-    op_buffer ctx input.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_unary.log2 ctx input out_tensor;
-  out_tensor
+let op_reduce_min ~out:_ ~axes:_ ~keepdims:_ _ =
+  Error.invalid ~op:"op_reduce_min" ~what:"not implemented" ()
 
-let op_exp2 input =
-  let ctx = input.context in
-  let out_shape = View.shape input.view in
-  let out_size = View.numel input.view in
-  let out_tensor =
-    op_buffer ctx input.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_unary.exp2 ctx input out_tensor;
-  out_tensor
+let op_associative_scan ~axis:_ ~op:_ _ =
+  Error.invalid ~op:"op_associative_scan" ~what:"not implemented" ()
 
-let op_sin input =
-  let ctx = input.context in
-  let out_shape = View.shape input.view in
-  let out_size = View.numel input.view in
-  let out_tensor =
-    op_buffer ctx input.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_unary.sin ctx input out_tensor;
-  out_tensor
+let op_const_scalar _ _ _ =
+  Error.invalid ~op:"op_const_scalar" ~what:"not implemented" ()
 
-let op_sqrt input =
-  let ctx = input.context in
-  let out_shape = View.shape input.view in
-  let out_size = View.numel input.view in
-  let out_tensor =
-    op_buffer ctx input.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_unary.sqrt ctx input out_tensor;
-  out_tensor
+let op_const_array _ _ =
+  Error.invalid ~op:"op_const_array" ~what:"not implemented" ()
 
-let op_recip input =
-  let ctx = input.context in
-  let out_shape = View.shape input.view in
-  let out_size = View.numel input.view in
-  let out_tensor =
-    op_buffer ctx input.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  Ops_unary.recip ctx input out_tensor;
-  out_tensor
+let op_expand x shape = { x with view = View.expand x.view shape }
+let op_reshape x shape = { x with view = View.reshape x.view shape }
+let op_permute _ _ = Error.invalid ~op:"op_permute" ~what:"not implemented" ()
+let op_shrink _ _ = Error.invalid ~op:"op_shrink" ~what:"not implemented" ()
+let op_flip _ _ = Error.invalid ~op:"op_flip" ~what:"not implemented" ()
+let op_pad _ _ _ = Error.invalid ~op:"op_pad" ~what:"not implemented" ()
+let op_cat _ _ = Error.invalid ~op:"op_cat" ~what:"not implemented" ()
+let op_cast _ _ = Error.invalid ~op:"op_cast" ~what:"not implemented" ()
+let op_contiguous _ = Error.invalid ~op:"op_contiguous" ~what:"not implemented" ()
+let op_copy _ = Error.invalid ~op:"op_copy" ~what:"not implemented" ()
+let op_assign _ _ = Error.invalid ~op:"op_assign" ~what:"not implemented" ()
+let op_as_strided _ _ _ _ = Error.invalid ~op:"op_as_strided" ~what:"not implemented" ()
 
-(* Ternary Operation *)
-let op_where cond if_true if_false =
-  (* TODO: Implement where operation *)
-  failwith "op_where: not implemented yet"
+let op_threefry _ _ = Error.invalid ~op:"op_threefry" ~what:"not implemented" ()
+let op_gather _ _ _ = Error.invalid ~op:"op_gather" ~what:"not implemented" ()
 
-(* Reduction Operations *)
-let op_reduce_sum ~axes ~keepdims input =
-  (* TODO: Implement reduction operations *)
-  failwith "op_reduce_sum: not implemented yet"
+let op_scatter ?mode:_ ?unique_indices:_ _ _ _ _ =
+  Error.invalid ~op:"op_scatter" ~what:"not implemented" ()
 
-let op_reduce_max ~axes ~keepdims input =
-  (* TODO: Implement reduction operations *)
-  failwith "op_reduce_max: not implemented yet"
+let op_unfold ?out:_ _ ~kernel_size:_ ~stride:_ ~dilation:_ ~padding:_ =
+  Error.invalid ~op:"op_unfold" ~what:"not implemented" ()
 
-let op_reduce_prod ~axes ~keepdims input =
-  (* TODO: Implement reduction operations *)
-  failwith "op_reduce_prod: not implemented yet"
+let op_fold ?out:_ _ ~output_size:_ ~kernel_size:_ ~stride:_ ~dilation:_ ~padding:_ =
+  Error.invalid ~op:"op_fold" ~what:"not implemented" ()
 
-let op_associative_scan ~axis ~op:_ input =
-  ignore axis;
-  failwith "op_associative_scan: not implemented yet"
+let op_matmul ~out:_ _ _ = Error.invalid ~op:"op_matmul" ~what:"not implemented" ()
 
-(* Movement Operations *)
-let op_expand input new_shape =
-  { input with view = View.broadcast input.view new_shape }
+let op_fft ?out:_ _ ~axes:_ = Error.invalid ~op:"op_fft" ~what:"not implemented" ()
+let op_ifft ?out:_ _ ~axes:_ = Error.invalid ~op:"op_ifft" ~what:"not implemented" ()
 
-let op_reshape input new_shape =
-  { input with view = View.reshape input.view new_shape }
+let op_rfft ?out:_ _ ~dtype:_ ~axes:_ =
+  Error.invalid ~op:"op_rfft" ~what:"not implemented" ()
 
-let op_permute input axes =
-  { input with view = View.permute input.view axes }
+let op_irfft ?out:_ _ ~dtype:_ ~axes:_ ~s:_ =
+  Error.invalid ~op:"op_irfft" ~what:"not implemented" ()
 
-let op_pad input padding fill_value =
-  (* TODO: Implement pad operation *)
-  failwith "op_pad: not implemented yet"
+let op_cholesky ~upper:_ _ = Error.invalid ~op:"op_cholesky" ~what:"not implemented" ()
+let op_qr ~reduced:_ _ = Error.invalid ~op:"op_qr" ~what:"not implemented" ()
+let op_svd ~full_matrices:_ _ = Error.invalid ~op:"op_svd" ~what:"not implemented" ()
+let op_eig ~vectors:_ _ = Error.invalid ~op:"op_eig" ~what:"not implemented" ()
+let op_eigh ~vectors:_ _ = Error.invalid ~op:"op_eigh" ~what:"not implemented" ()
 
-let op_shrink input bounds =
-  { input with view = View.slice input.view bounds }
-
-let op_flip input axes_to_flip =
-  (* TODO: Implement flip operation *)
-  failwith "op_flip: not implemented yet"
-
-let op_cat tensors axis =
-  (* TODO: Implement concatenation *)
-  failwith "op_cat: not implemented yet"
-
-(* Other Operations *)
-let op_cast input target_dtype =
-  (* TODO: Implement cast operation *)
-  failwith "op_cast: not implemented yet"
-
-let op_contiguous input =
-  if View.is_c_contiguous input.view then input
-  else (
-    let out_shape = View.shape input.view in
-    let out_size = View.numel input.view in
-    let out_tensor =
-      op_buffer input.context input.dtype out_size |> fun t ->
-      with_view t (View.create out_shape)
-    in
-    (* TODO: Copy data to make contiguous *)
-    failwith "op_contiguous: copy not implemented yet")
-
-let op_copy input =
-  let out_shape = View.shape input.view in
-  let out_size = View.numel input.view in
-  let out_tensor =
-    op_buffer input.context input.dtype out_size |> fun t ->
-    with_view t (View.create out_shape)
-  in
-  (* TODO: Copy data *)
-  failwith "op_copy: not implemented yet"
-
-let op_assign dst src =
-  (* TODO: Implement assignment *)
-  failwith "op_assign: not implemented yet"
-
-let op_threefry key counter =
-  (* TODO: Implement threefry random number generator *)
-  failwith "op_threefry: not implemented yet"
-
-(* Element Access Operations *)
-let op_gather data indices axis =
-  (* TODO: Implement gather *)
-  failwith "op_gather: not implemented yet"
-
-let op_scatter ?mode ?unique_indices data_template indices updates axis =
-  (* TODO: Implement scatter *)
-  failwith "op_scatter: not implemented yet"
-
-let op_unfold input ~kernel_size ~stride ~dilation ~padding =
-  (* TODO: Implement unfold (im2col) *)
-  failwith "op_unfold: not implemented yet"
-
-let op_fold input ~output_size ~kernel_size ~stride ~dilation ~padding =
-  (* TODO: Implement fold (col2im) *)
-  failwith "op_fold: not implemented yet"
-
-let op_matmul a b =
-  (* TODO: Implement matrix multiplication *)
-  failwith "op_matmul: not implemented yet"
-
-(* Fourier Transform Operations *)
-let op_fft input ~axes ~s =
-  (* TODO: Implement FFT *)
-  failwith "op_fft: not implemented yet"
-
-let op_ifft input ~axes ~s =
-  (* TODO: Implement inverse FFT *)
-  failwith "op_ifft: not implemented yet"
-
-let op_rfft input ~axes ~s =
-  (* TODO: Implement real FFT *)
-  failwith "op_rfft: not implemented yet"
-
-let op_irfft input ~axes ~s =
-  (* TODO: Implement inverse real FFT *)
-  failwith "op_irfft: not implemented yet"
+let op_triangular_solve ~upper:_ ~transpose:_ ~unit_diag:_ _ _ =
+  Error.invalid ~op:"op_triangular_solve" ~what:"not implemented" ()
