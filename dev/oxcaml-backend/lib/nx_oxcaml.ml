@@ -27,6 +27,14 @@ type ('a, 'b) t = {
   context : context;
 }
 
+type ('a, 'b) oxcaml_tensor = {
+  data : 'b buffer;
+  shape : int array;
+  strides : int array;
+  offset : int;
+}
+[@@warning "-69"]
+
 (* Helper functions *)
 module Array = struct
   include Stdlib.Array
@@ -119,7 +127,7 @@ let create_tensor (type a b) ctx (dtype : (a, b) Dtype.t) shape_arr : (a, b) t =
 let volume (v : View.t) : int =
   Array.fold_left (fun acc s -> acc * s) 1 (shape v)
   
-let caml_add (type a b) ~(out : (a, b) oxcaml_tensor) (a : (a, b) oxcaml_tensor) (b : (a, b) oxcaml_tensor) : unit =
+let op_add (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
   let va = a.view in
@@ -151,13 +159,13 @@ let caml_add (type a b) ~(out : (a, b) oxcaml_tensor) (a : (a, b) oxcaml_tensor)
             add_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
       else add_int64 a_arr b_arr out_arr va vb vout 0 vol
 
-let caml_sub (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let op_sub (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
   let va = a.view in
   let vb = b.view in
   let vol = volume vout in
-  match (out.data, a.data, b.data) with
+  match (out.buffer, a.buffer, b.buffer) with
   | Float64 out_arr, Float64 a_arr, Float64 b_arr ->
       if vol > parallel_threshold then
         Parallel.parallel_for out.context.pool 0 (vol - 1)
@@ -183,6 +191,3 @@ let caml_sub (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
             sub_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
       else sub_int64 a_arr b_arr out_arr va vb vout 0 vol
 
-(* Binary operations *)
-let op_add ~out x y = binary_op caml_add ~out x y
-let op_sub ~out x y = binary_op caml_sub ~out x y
