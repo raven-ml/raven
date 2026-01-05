@@ -1,6 +1,0 @@
-(include_subdirs unqualified)
-
-(library
- (name oxcaml_backend)
- (public_name oxcaml-backend)
- (libraries nx.core stdlib_stable stdlib_upstream_compatible))

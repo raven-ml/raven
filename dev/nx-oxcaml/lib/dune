@@ -1,4 +1,6 @@
+(include_subdirs unqualified)
+
 (library
  (name nx_oxcaml)
  (public_name nx-oxcaml)
- (libraries nx.core nx))
+ (libraries nx.core stdlib_stable stdlib_upstream_compatible))
