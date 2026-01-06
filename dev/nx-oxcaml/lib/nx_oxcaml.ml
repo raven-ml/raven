@@ -370,9 +370,69 @@ let op_and (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
       else Op_and.and_int64 a_arr b_arr out_arr va vb vout 0 vol
   | _ -> Error.invalid ~op:"op_and" ~what:"not implemented for unboxed ints" ()
 
-let op_neg ~out:_ _ = Error.invalid ~op:"op_neg" ~what:"not implemented" ()
+let op_neg (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+  let parallel_threshold = 62500 in
+  let vout = out.view in
+  let va = a.view in
+  let vol = numel vout in
+  match (out.buffer, a.buffer) with
+  | Float64 out_arr, Float64 a_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_neg.neg_float64 a_arr out_arr va vout start_idx end_idx)
+      else Op_neg.neg_float64 a_arr out_arr va vout 0 vol
+  | Float32 out_arr, Float32 a_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_neg.neg_float32 a_arr out_arr va vout start_idx end_idx)
+      else Op_neg.neg_float32 a_arr out_arr va vout 0 vol
+  | Int32 out_arr, Int32 a_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_neg.neg_int32 a_arr out_arr va vout start_idx end_idx)
+      else Op_neg.neg_int32 a_arr out_arr va vout 0 vol
+  | Int64 out_arr, Int64 a_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_neg.neg_int64 a_arr out_arr va vout start_idx end_idx)
+      else Op_neg.neg_int64 a_arr out_arr va vout 0 vol
+
 let op_recip ~out:_ _ = Error.invalid ~op:"op_recip" ~what:"not implemented" ()
-let op_abs ~out:_ _ = Error.invalid ~op:"op_abs" ~what:"not implemented" ()
+let op_abs (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+  let parallel_threshold = 62500 in
+  let vout = out.view in
+  let va = a.view in
+  let vol = numel vout in
+  match (out.buffer, a.buffer) with
+  | Float64 out_arr, Float64 a_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_abs.abs_float64 a_arr out_arr va vout start_idx end_idx)
+      else Op_abs.abs_float64 a_arr out_arr va vout 0 vol
+  | Float32 out_arr, Float32 a_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_abs.abs_float32 a_arr out_arr va vout start_idx end_idx)
+      else Op_abs.abs_float32 a_arr out_arr va vout 0 vol
+  | Int32 out_arr, Int32 a_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_abs.abs_int32 a_arr out_arr va vout start_idx end_idx)
+      else Op_abs.abs_int32 a_arr out_arr va vout 0 vol
+  | Int64 out_arr, Int64 a_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_abs.abs_int64 a_arr out_arr va vout start_idx end_idx)
+      else Op_abs.abs_int64 a_arr out_arr va vout 0 vol
+  
 let op_sqrt ~out:_ _ = Error.invalid ~op:"op_sqrt" ~what:"not implemented" ()
 let op_exp ~out:_ _ = Error.invalid ~op:"op_exp" ~what:"not implemented" ()
 let op_log ~out:_ _ = Error.invalid ~op:"op_log" ~what:"not implemented" ()
