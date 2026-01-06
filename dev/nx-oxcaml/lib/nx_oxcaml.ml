@@ -335,6 +335,7 @@ let op_max (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_max.max_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
       else Op_max.max_int64 a_arr b_arr out_arr va vb vout 0 vol
+
 let op_min (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
@@ -462,6 +463,7 @@ let op_neg (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
       else Op_neg.neg_int64 a_arr out_arr va vout 0 vol
 
 let op_recip ~out:_ _ = Error.invalid ~op:"op_recip" ~what:"not implemented" ()
+
 let op_abs (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
@@ -492,7 +494,7 @@ let op_abs (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_abs.abs_int64 a_arr out_arr va vout start_idx end_idx)
       else Op_abs.abs_int64 a_arr out_arr va vout 0 vol
-  
+
 let op_sqrt ~out:_ _ = Error.invalid ~op:"op_sqrt" ~what:"not implemented" ()
 let op_exp ~out:_ _ = Error.invalid ~op:"op_exp" ~what:"not implemented" ()
 let op_log ~out:_ _ = Error.invalid ~op:"op_log" ~what:"not implemented" ()

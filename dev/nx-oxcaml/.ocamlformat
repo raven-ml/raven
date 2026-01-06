@@ -1,1 +1,15 @@
+# OCamlFormat configuration file
+
+# Pin the version of OCamlFormat to ensure consistent formatting across different environments.
+# Uncomment and update this line to specify a version:
+# version = 0.26.2
+
+# The formatting style to use. Options include 'default', 'ocamlformat', and 'janestreet'.
+# 'default' is a good starting point for most projects.
 profile = default
+
+# Parse and format comments in docstrings
+parse-docstrings = true
+
+# Wrap comments and docstrings to fit within the 'max-width'
+wrap-comments = true

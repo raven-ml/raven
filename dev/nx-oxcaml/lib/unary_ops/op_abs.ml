@@ -3,9 +3,7 @@ open Import
 let abs_float64 a_arr out_arr va vout start_idx end_idx =
   let out_base = View.offset vout + start_idx in
   let a_base = View.offset va + start_idx in
-  if
-    View.is_c_contiguous vout && View.is_c_contiguous va
-  then (
+  if View.is_c_contiguous vout && View.is_c_contiguous va then (
     let i = ref 0 in
     let n = end_idx - start_idx in
     let n4 = n - 3 in
@@ -49,9 +47,7 @@ let abs_float64 a_arr out_arr va vout start_idx end_idx =
 let abs_float32 a_arr out_arr va vout start_idx end_idx =
   let out_base = View.offset vout + start_idx in
   let a_base = View.offset va + start_idx in
-  if
-    View.is_c_contiguous vout && View.is_c_contiguous va
-  then (
+  if View.is_c_contiguous vout && View.is_c_contiguous va then (
     let i = ref 0 in
     let n = end_idx - start_idx in
     let n4 = n - 3 in
@@ -95,9 +91,7 @@ let abs_float32 a_arr out_arr va vout start_idx end_idx =
 let abs_int32 a_arr out_arr va vout start_idx end_idx =
   let out_base = View.offset vout + start_idx in
   let a_base = View.offset va + start_idx in
-  if
-    View.is_c_contiguous vout && View.is_c_contiguous va
-  then (
+  if View.is_c_contiguous vout && View.is_c_contiguous va then (
     let i = ref 0 in
     let n = end_idx - start_idx in
     let n4 = n - 3 in
@@ -141,9 +135,7 @@ let abs_int32 a_arr out_arr va vout start_idx end_idx =
 let abs_int64 a_arr out_arr va vout start_idx end_idx =
   let out_base = View.offset vout + start_idx in
   let a_base = View.offset va + start_idx in
-  if
-    View.is_c_contiguous vout && View.is_c_contiguous va
-  then (
+  if View.is_c_contiguous vout && View.is_c_contiguous va then (
     let i = ref 0 in
     let n = end_idx - start_idx in
     let n4 = n - 3 in
