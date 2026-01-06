@@ -304,8 +304,68 @@ let op_cmplt ~out:_ _ _ =
 let op_cmple ~out:_ _ _ =
   Error.invalid ~op:"op_cmple" ~what:"not implemented" ()
 
-let op_max ~out:_ _ _ = Error.invalid ~op:"op_max" ~what:"not implemented" ()
-let op_min ~out:_ _ _ = Error.invalid ~op:"op_min" ~what:"not implemented" ()
+let op_max (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+  let parallel_threshold = 62500 in
+  let vout = out.view in
+  let va = a.view in
+  let vb = b.view in
+  let vol = numel vout in
+  match (out.buffer, a.buffer, b.buffer) with
+  | Float64 out_arr, Float64 a_arr, Float64 b_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_max.max_float64 a_arr b_arr out_arr va vb vout start_idx end_idx)
+      else Op_max.max_float64 a_arr b_arr out_arr va vb vout 0 vol
+  | Float32 out_arr, Float32 a_arr, Float32 b_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_max.max_float32 a_arr b_arr out_arr va vb vout start_idx end_idx)
+      else Op_max.max_float32 a_arr b_arr out_arr va vb vout 0 vol
+  | Int32 out_arr, Int32 a_arr, Int32 b_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_max.max_int32 a_arr b_arr out_arr va vb vout start_idx end_idx)
+      else Op_max.max_int32 a_arr b_arr out_arr va vb vout 0 vol
+  | Int64 out_arr, Int64 a_arr, Int64 b_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_max.max_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
+      else Op_max.max_int64 a_arr b_arr out_arr va vb vout 0 vol
+let op_min (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+  let parallel_threshold = 62500 in
+  let vout = out.view in
+  let va = a.view in
+  let vb = b.view in
+  let vol = numel vout in
+  match (out.buffer, a.buffer, b.buffer) with
+  | Float64 out_arr, Float64 a_arr, Float64 b_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_min.min_float64 a_arr b_arr out_arr va vb vout start_idx end_idx)
+      else Op_min.min_float64 a_arr b_arr out_arr va vb vout 0 vol
+  | Float32 out_arr, Float32 a_arr, Float32 b_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_min.min_float32 a_arr b_arr out_arr va vb vout start_idx end_idx)
+      else Op_min.min_float32 a_arr b_arr out_arr va vb vout 0 vol
+  | Int32 out_arr, Int32 a_arr, Int32 b_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_min.min_int32 a_arr b_arr out_arr va vb vout start_idx end_idx)
+      else Op_min.min_int32 a_arr b_arr out_arr va vb vout 0 vol
+  | Int64 out_arr, Int64 a_arr, Int64 b_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_min.min_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
+      else Op_min.min_int64 a_arr b_arr out_arr va vb vout 0 vol
 
 let op_xor (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
