@@ -35,7 +35,10 @@ module Array = struct
   [@@layout_poly]
 
   external make_float64 : int -> float# array = "caml_make_unboxed_float64_vect"
-  external make_float32 : int -> float32# array = "caml_make_unboxed_float32_vect"
+
+  external make_float32 : int -> float32# array
+    = "caml_make_unboxed_float32_vect"
+
   external make_int32 : int -> int32# array = "caml_make_unboxed_int32_vect"
   external make_int64 : int -> int64# array = "caml_make_unboxed_int64_vect"
 end

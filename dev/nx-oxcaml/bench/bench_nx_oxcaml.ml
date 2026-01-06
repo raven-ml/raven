@@ -44,21 +44,31 @@ let ops_f64 ~size =
     ("Sub", "Nx", fun () -> ignore (Nx.sub a b));
     ("Sub", "Nx_oxcaml", fun () -> Nx_oxcaml.op_sub ~out a_ox b_ox);
     ("Mod", "Nx_oxcaml", fun () -> Nx_oxcaml.op_mod ~out a_ox b_ox);
+    ("Pow", "Nx_oxcaml", fun () -> Nx_oxcaml.op_pow ~out a_ox b_ox);
     ("Sub", "Nx_oxcaml_frontend", fun () -> ignore (Oxfe.sub a_fe b_fe));
   ]
 
 let build_benchmarks () =
   List.concat_map
     (fun size ->
-      let f32 = List.map (fun (op, backend, fn) ->
-        Ubench.bench (bench_name op size "f32" backend) fn) (ops_f32 ~size) in
-      let f64 = List.map (fun (op, backend, fn) ->
-        Ubench.bench (bench_name op size "f64" backend) fn) (ops_f64 ~size) in
+      let f32 =
+        List.map
+          (fun (op, backend, fn) ->
+            Ubench.bench (bench_name op size "f32" backend) fn)
+          (ops_f32 ~size)
+      in
+      let f64 =
+        List.map
+          (fun (op, backend, fn) ->
+            Ubench.bench (bench_name op size "f64" backend) fn)
+          (ops_f64 ~size)
+      in
       f32 @ f64)
     sizes
 
 let config =
-  Ubench.Config.(default |> time_limit 1.0 |> warmup 1 |> min_measurements 5
+  Ubench.Config.(
+    default |> time_limit 1.0 |> warmup 1 |> min_measurements 5
     |> geometric_scale 1.3 |> gc_stabilization false |> build)
 
 let () = ignore (Ubench.run ~config (build_benchmarks ()))

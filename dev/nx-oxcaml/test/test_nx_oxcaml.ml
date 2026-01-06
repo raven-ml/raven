@@ -9,26 +9,34 @@ module Int32_u = Stdlib_upstream_compatible.Int32_u
 module Int64_u = Stdlib_upstream_compatible.Int64_u
 
 external array_get : ('a : any mod non_null separable). 'a array -> int -> 'a
-  = "%array_safe_get" [@@layout_poly]
+  = "%array_safe_get"
+[@@layout_poly]
 
 let failed = ref 0
 let passed = ref 0
 
 let check name cond =
   if cond then incr passed
-  else (incr failed; Printf.printf "FAIL: %s\n%!" name)
+  else (
+    incr failed;
+    Printf.printf "FAIL: %s\n%!" name)
 
 let check_float64 name ~eps exp act =
   check name (Float_u.to_float (Float_u.abs (Float_u.sub exp act)) < eps)
 
 let check_float32 name ~eps exp act =
-  check name (Float_u.to_float (Float32_u.to_float (Float32_u.abs (Float32_u.sub exp act))) < eps)
+  check name
+    (Float_u.to_float
+       (Float32_u.to_float (Float32_u.abs (Float32_u.sub exp act)))
+    < eps)
 
 let check_int32 name exp act = check name (Int32_u.equal exp act)
 let check_int64 name exp act = check name (Int64_u.equal exp act)
 
-let numel v = match Symbolic_shape.eval_dim (View.numel v) with
-  | Some n -> n | None -> failwith "symbolic numel not evaluable"
+let numel v =
+  match Symbolic_shape.eval_dim (View.numel v) with
+  | Some n -> n
+  | None -> failwith "symbolic numel not evaluable"
 
 let get64 (Nx_oxcaml.Float64 a) i = array_get a i
 let get32 (Nx_oxcaml.Float32 a) i = array_get a i
@@ -149,7 +157,8 @@ let test_add_single_element () =
   let b = Nx_oxcaml.of_float64 ctx [| #8.0 |] in
   let out = Nx_oxcaml.op_buffer ctx Dtype.Float64 1 in
   Nx_oxcaml.op_add ~out a b;
-  check_float64 "add_single[0]" ~eps:1e-9 #50.0 (get64 (Nx_oxcaml.data_array out) 0)
+  check_float64 "add_single[0]" ~eps:1e-9 #50.0
+    (get64 (Nx_oxcaml.data_array out) 0)
 
 let test_add_negative_values () =
   let ctx = Nx_oxcaml.create_context () in
@@ -183,13 +192,21 @@ let test_in_place_add () =
 
 let () =
   print_endline "Running Nx_oxcaml backend tests...";
-  test_buffer_float64 (); test_buffer_float32 ();
-  test_buffer_int32 (); test_buffer_int64 ();
-  test_add_float64 (); test_add_float32 ();
-  test_add_int32 (); test_add_int64 ();
-  test_sub_float64 (); test_sub_float32 ();
-  test_sub_int32 (); test_sub_int64 ();
-  test_add_single_element (); test_add_negative_values ();
-  test_sub_to_zero (); test_in_place_add ();
+  test_buffer_float64 ();
+  test_buffer_float32 ();
+  test_buffer_int32 ();
+  test_buffer_int64 ();
+  test_add_float64 ();
+  test_add_float32 ();
+  test_add_int32 ();
+  test_add_int64 ();
+  test_sub_float64 ();
+  test_sub_float32 ();
+  test_sub_int32 ();
+  test_sub_int64 ();
+  test_add_single_element ();
+  test_add_negative_values ();
+  test_sub_to_zero ();
+  test_in_place_add ();
   Printf.printf "\nResults: %d passed, %d failed\n" !passed !failed;
   if !failed > 0 then exit 1

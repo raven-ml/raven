@@ -136,25 +136,50 @@ let pow_int32 a_arr b_arr out_arr va vb vout start_idx end_idx =
       let i1 = i0 + 1 in
       let i2 = i0 + 2 in
       let i3 = i0 + 3 in
-      let a0 = Array.unsafe_get a_arr (a_base + i0) in
-      let b0 = Array.unsafe_get b_arr (b_base + i0) in
-      let a1 = Array.unsafe_get a_arr (a_base + i1) in
-      let b1 = Array.unsafe_get b_arr (b_base + i1) in
-      let a2 = Array.unsafe_get a_arr (a_base + i2) in
-      let b2 = Array.unsafe_get b_arr (b_base + i2) in
-      let a3 = Array.unsafe_get a_arr (a_base + i3) in
-      let b3 = Array.unsafe_get b_arr (b_base + i3) in
-      Array.unsafe_set out_arr (out_base + i0) (Int32_u.pow a0 b0);
-      Array.unsafe_set out_arr (out_base + i1) (Int32_u.pow a1 b1);
-      Array.unsafe_set out_arr (out_base + i2) (Int32_u.pow a2 b2);
-      Array.unsafe_set out_arr (out_base + i3) (Int32_u.pow a3 b3);
+      let a0 =
+        Float_u.of_int (Int32.to_int (Array.unsafe_get a_arr (a_base + i0)))
+      in
+      let b0 =
+        Float_u.of_int (Int32.to_int (Array.unsafe_get b_arr (b_base + i0)))
+      in
+      let a1 =
+        Float_u.of_int (Int32.to_int (Array.unsafe_get a_arr (a_base + i1)))
+      in
+      let b1 =
+        Float_u.of_int (Int32.to_int (Array.unsafe_get b_arr (b_base + i1)))
+      in
+      let a2 =
+        Float_u.of_int (Int32.to_int (Array.unsafe_get a_arr (a_base + i2)))
+      in
+      let b2 =
+        Float_u.of_int (Int32.to_int (Array.unsafe_get b_arr (b_base + i2)))
+      in
+      let a3 =
+        Float_u.of_int (Int32.to_int (Array.unsafe_get a_arr (a_base + i3)))
+      in
+      let b3 =
+        Float_u.of_int (Int32.to_int (Array.unsafe_get b_arr (b_base + i3)))
+      in
+      Array.unsafe_set out_arr (out_base + i0)
+        (Int32.of_int (Float_u.to_int (Float_u.pow a0 b0)));
+      Array.unsafe_set out_arr (out_base + i1)
+        (Int32.of_int (Float_u.to_int (Float_u.pow a1 b1)));
+      Array.unsafe_set out_arr (out_base + i2)
+        (Int32.of_int (Float_u.to_int (Float_u.pow a2 b2)));
+      Array.unsafe_set out_arr (out_base + i3)
+        (Int32.of_int (Float_u.to_int (Float_u.pow a3 b3)));
       i := i0 + 4
     done;
     while !i < n do
       let idx = !i in
-      let a_val = Array.unsafe_get a_arr (a_base + idx) in
-      let b_val = Array.unsafe_get b_arr (b_base + idx) in
-      Array.unsafe_set out_arr (out_base + idx) (Int32_u.pow a_val b_val);
+      let a_val =
+        Float_u.of_int (Int32.to_int (Array.unsafe_get a_arr (a_base + idx)))
+      in
+      let b_val =
+        Float_u.of_int (Int32.to_int (Array.unsafe_get b_arr (b_base + idx)))
+      in
+      Array.unsafe_set out_arr (out_base + idx)
+        (Int32.of_int (Float_u.to_int (Float_u.pow a_val b_val)));
       incr i
     done)
   else
@@ -175,9 +200,16 @@ let pow_int32 a_arr b_arr out_arr va vb vout start_idx end_idx =
       let a_lin = Shape.ravel_index a_idx a_strides in
       Shape.broadcast_index_into md_idx b_shape b_idx;
       let b_lin = Shape.ravel_index b_idx b_strides in
-      let a_val = Array.unsafe_get a_arr (a_offset + a_lin) in
-      let b_val = Array.unsafe_get b_arr (b_offset + b_lin) in
-      Array.unsafe_set out_arr (out_offset + k) (Int32_u.pow a_val b_val)
+      let a_val =
+        Float_u.of_int
+          (Int32.to_int (Array.unsafe_get a_arr (a_offset + a_lin)))
+      in
+      let b_val =
+        Float_u.of_int
+          (Int32.to_int (Array.unsafe_get b_arr (b_offset + b_lin)))
+      in
+      Array.unsafe_set out_arr (out_offset + k)
+        (Int32.of_int (Float_u.to_int (Float_u.pow a_val b_val)))
     done
 
 let pow_int64 a_arr b_arr out_arr va vb vout start_idx end_idx =
@@ -196,25 +228,30 @@ let pow_int64 a_arr b_arr out_arr va vb vout start_idx end_idx =
       let i1 = i0 + 1 in
       let i2 = i0 + 2 in
       let i3 = i0 + 3 in
-      let a0 = Array.unsafe_get a_arr (a_base + i0) in
-      let b0 = Array.unsafe_get b_arr (b_base + i0) in
-      let a1 = Array.unsafe_get a_arr (a_base + i1) in
-      let b1 = Array.unsafe_get b_arr (b_base + i1) in
-      let a2 = Array.unsafe_get a_arr (a_base + i2) in
-      let b2 = Array.unsafe_get b_arr (b_base + i2) in
-      let a3 = Array.unsafe_get a_arr (a_base + i3) in
-      let b3 = Array.unsafe_get b_arr (b_base + i3) in
-      Array.unsafe_set out_arr (out_base + i0) (Int64_u.pow a0 b0);
-      Array.unsafe_set out_arr (out_base + i1) (Int64_u.pow a1 b1);
-      Array.unsafe_set out_arr (out_base + i2) (Int64_u.pow a2 b2);
-      Array.unsafe_set out_arr (out_base + i3) (Int64_u.pow a3 b3);
+      let a0 = Float_u.of_int (Array.unsafe_get a_arr (a_base + i0)) in
+      let b0 = Float_u.of_int (Array.unsafe_get b_arr (b_base + i0)) in
+      let a1 = Float_u.of_int (Array.unsafe_get a_arr (a_base + i1)) in
+      let b1 = Float_u.of_int (Array.unsafe_get b_arr (b_base + i1)) in
+      let a2 = Float_u.of_int (Array.unsafe_get a_arr (a_base + i2)) in
+      let b2 = Float_u.of_int (Array.unsafe_get b_arr (b_base + i2)) in
+      let a3 = Float_u.of_int (Array.unsafe_get a_arr (a_base + i3)) in
+      let b3 = Float_u.of_int (Array.unsafe_get b_arr (b_base + i3)) in
+      Array.unsafe_set out_arr (out_base + i0)
+        (Int64.of_int (Float_u.to_int (Float_u.pow a0 b0)));
+      Array.unsafe_set out_arr (out_base + i1)
+        (Int64.of_int (Float_u.to_int (Float_u.pow a1 b1)));
+      Array.unsafe_set out_arr (out_base + i2)
+        (Int64.of_int (Float_u.to_int (Float_u.pow a2 b2)));
+      Array.unsafe_set out_arr (out_base + i3)
+        (Int64.of_int (Float_u.to_int (Float_u.pow a3 b3)));
       i := i0 + 4
     done;
     while !i < n do
       let idx = !i in
-      let a_val = Array.unsafe_get a_arr (a_base + idx) in
-      let b_val = Array.unsafe_get b_arr (b_base + idx) in
-      Array.unsafe_set out_arr (out_base + idx) (Int64_u.pow a_val b_val);
+      let a_val = Float_u.of_int (Array.unsafe_get a_arr (a_base + idx)) in
+      let b_val = Float_u.of_int (Array.unsafe_get b_arr (b_base + idx)) in
+      Array.unsafe_set out_arr (out_base + idx)
+        (Int64.of_int (Float_u.to_int (Float_u.pow a_val b_val)));
       incr i
     done)
   else
@@ -235,7 +272,8 @@ let pow_int64 a_arr b_arr out_arr va vb vout start_idx end_idx =
       let a_lin = Shape.ravel_index a_idx a_strides in
       Shape.broadcast_index_into md_idx b_shape b_idx;
       let b_lin = Shape.ravel_index b_idx b_strides in
-      let a_val = Array.unsafe_get a_arr (a_offset + a_lin) in
-      let b_val = Array.unsafe_get b_arr (b_offset + b_lin) in
-      Array.unsafe_set out_arr (out_offset + k) (Int64_u.pow a_val b_val)
+      let a_val = Float_u.of_int (Array.unsafe_get a_arr (a_offset + a_lin)) in
+      let b_val = Float_u.of_int (Array.unsafe_get b_arr (b_offset + b_lin)) in
+      Array.unsafe_set out_arr (out_offset + k)
+        (Int64.of_int (Float_u.to_int (Float_u.pow a_val b_val)))
     done

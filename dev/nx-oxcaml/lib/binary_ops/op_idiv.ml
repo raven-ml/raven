@@ -24,17 +24,22 @@ let idiv_float64 a_arr b_arr out_arr va vb vout start_idx end_idx =
       let b2 = Array.unsafe_get b_arr (b_base + i2) in
       let a3 = Array.unsafe_get a_arr (a_base + i3) in
       let b3 = Array.unsafe_get b_arr (b_base + i3) in
-      Array.unsafe_set out_arr (out_base + i0) (Float_u.of_int(Float_u.to_int (Float_u.div a0 b0)));
-      Array.unsafe_set out_arr (out_base + i1) (Float_u.of_int(Float_u.to_int (Float_u.div a1 b1)));
-      Array.unsafe_set out_arr (out_base + i2) (Float_u.of_int(Float_u.to_int (Float_u.div a2 b2)));
-      Array.unsafe_set out_arr (out_base + i3) (Float_u.of_int(Float_u.to_int (Float_u.div a3 b3)));
+      Array.unsafe_set out_arr (out_base + i0)
+        (Float_u.of_int (Float_u.to_int (Float_u.div a0 b0)));
+      Array.unsafe_set out_arr (out_base + i1)
+        (Float_u.of_int (Float_u.to_int (Float_u.div a1 b1)));
+      Array.unsafe_set out_arr (out_base + i2)
+        (Float_u.of_int (Float_u.to_int (Float_u.div a2 b2)));
+      Array.unsafe_set out_arr (out_base + i3)
+        (Float_u.of_int (Float_u.to_int (Float_u.div a3 b3)));
       i := i0 + 4
     done;
     while !i < n do
       let idx = !i in
       let a_val = Array.unsafe_get a_arr (a_base + idx) in
       let b_val = Array.unsafe_get b_arr (b_base + idx) in
-      Array.unsafe_set out_arr (out_base + idx) (Float_u.of_int(Float_u.to_int (Float_u.div a_val b_val)));
+      Array.unsafe_set out_arr (out_base + idx)
+        (Float_u.of_int (Float_u.to_int (Float_u.div a_val b_val)));
       incr i
     done)
   else
@@ -57,7 +62,8 @@ let idiv_float64 a_arr b_arr out_arr va vb vout start_idx end_idx =
       let b_lin = Shape.ravel_index b_idx b_strides in
       let a_val = Array.unsafe_get a_arr (a_offset + a_lin) in
       let b_val = Array.unsafe_get b_arr (b_offset + b_lin) in
-      Array.unsafe_set out_arr (out_offset + k) (Float_u.of_int(Float_u.to_int (Float_u.div a_val b_val)))
+      Array.unsafe_set out_arr (out_offset + k)
+        (Float_u.of_int (Float_u.to_int (Float_u.div a_val b_val)))
     done
 
 let idiv_float32 a_arr b_arr out_arr va vb vout start_idx end_idx =
@@ -84,17 +90,22 @@ let idiv_float32 a_arr b_arr out_arr va vb vout start_idx end_idx =
       let b2 = Array.unsafe_get b_arr (b_base + i2) in
       let a3 = Array.unsafe_get a_arr (a_base + i3) in
       let b3 = Array.unsafe_get b_arr (b_base + i3) in
-      Array.unsafe_set out_arr (out_base + i0) (Float32_u.of_int(Float32_u.to_int (Float32_u.div a0 b0)));
-      Array.unsafe_set out_arr (out_base + i1) (Float32_u.of_int(Float32_u.to_int (Float32_u.div a1 b1)));
-      Array.unsafe_set out_arr (out_base + i2) (Float32_u.of_int(Float32_u.to_int (Float32_u.div a2 b2)));
-      Array.unsafe_set out_arr (out_base + i3) (Float32_u.of_int(Float32_u.to_int (Float32_u.div a3 b3)));
+      Array.unsafe_set out_arr (out_base + i0)
+        (Float32_u.of_int (Float32_u.to_int (Float32_u.div a0 b0)));
+      Array.unsafe_set out_arr (out_base + i1)
+        (Float32_u.of_int (Float32_u.to_int (Float32_u.div a1 b1)));
+      Array.unsafe_set out_arr (out_base + i2)
+        (Float32_u.of_int (Float32_u.to_int (Float32_u.div a2 b2)));
+      Array.unsafe_set out_arr (out_base + i3)
+        (Float32_u.of_int (Float32_u.to_int (Float32_u.div a3 b3)));
       i := i0 + 4
     done;
     while !i < n do
       let idx = !i in
       let a_val = Array.unsafe_get a_arr (a_base + idx) in
       let b_val = Array.unsafe_get b_arr (b_base + idx) in
-      Array.unsafe_set out_arr (out_base + idx) (Float32_u.of_int(Float32_u.to_int (Float32_u.div a_val b_val)));
+      Array.unsafe_set out_arr (out_base + idx)
+        (Float32_u.of_int (Float32_u.to_int (Float32_u.div a_val b_val)));
       incr i
     done)
   else
@@ -117,7 +128,8 @@ let idiv_float32 a_arr b_arr out_arr va vb vout start_idx end_idx =
       let b_lin = Shape.ravel_index b_idx b_strides in
       let a_val = Array.unsafe_get a_arr (a_offset + a_lin) in
       let b_val = Array.unsafe_get b_arr (b_offset + b_lin) in
-      Array.unsafe_set out_arr (out_offset + k) (Float32_u.of_int(Float32_u.to_int (Float32_u.div a_val b_val)))
+      Array.unsafe_set out_arr (out_offset + k)
+        (Float32_u.of_int (Float32_u.to_int (Float32_u.div a_val b_val)))
     done
 
 let idiv_int32 a_arr b_arr out_arr va vb vout start_idx end_idx =
