@@ -671,37 +671,6 @@ static void eigh_f8e5m2(caml_ba_fp8_e5m2* a, caml_ba_fp8_e5m2* eigvals,
   free(eigvals_float);
 }
 
-static void eigh_complex16(caml_ba_complex16* a, caml_ba_complex16* eigvals,
-                           caml_ba_complex16* eigvecs, int n) {
-  complex32* a_complex = (complex32*)malloc(n * n * sizeof(complex32));
-  float* eigvals_float = (float*)malloc(n * sizeof(float));
-  complex32* eigvecs_complex =
-      eigvecs ? (complex32*)malloc(n * n * sizeof(complex32)) : NULL;
-  if (!a_complex || !eigvals_float || (eigvecs && !eigvecs_complex)) {
-    free(a_complex);
-    free(eigvals_float);
-    free(eigvecs_complex);
-    return;
-  }
-  for (int i = 0; i < n * n; i++) {
-    a_complex[i] = half_to_float(a[i].re) + I * half_to_float(a[i].im);
-  }
-  eigh_complex32(a_complex, eigvals_float, eigvecs_complex, n);
-  for (int i = 0; i < n; i++) {
-    eigvals[i].re = float_to_half(eigvals_float[i]);
-    eigvals[i].im = 0.0f;
-  }
-  if (eigvecs) {
-    for (int i = 0; i < n * n; i++) {
-      eigvecs[i].re = float_to_half(crealf(eigvecs_complex[i]));
-      eigvecs[i].im = float_to_half(cimagf(eigvecs_complex[i]));
-    }
-    free(eigvecs_complex);
-  }
-  free(a_complex);
-  free(eigvals_float);
-}
-
 CAMLprim value caml_nx_op_eig(value v_in, value v_vals, value v_vecs,
                               value v_symmetric, value v_compute_vectors) {
   CAMLparam5(v_in, v_vals, v_vecs, v_symmetric, v_compute_vectors);
@@ -999,32 +968,6 @@ CAMLprim value caml_nx_op_eig(value v_in, value v_vals, value v_vecs,
           }
         }
         eigh_f8e5m2(A, base_vals, base_vecs, n);
-        if (compute_vectors) {
-          for (int i = 0; i < n; i++) {
-            for (int j = 0; j < n; j++) {
-              base_vecs[i * s_vecs_row + j * s_vecs_col] = base_vecs[i * n + j];
-            }
-          }
-        }
-        free(A);
-        break;
-      }
-      case NX_BA_COMPLEX16: {
-        caml_ba_complex16* base_in = (caml_ba_complex16*)ba_in->data + off_in;
-        caml_ba_complex16* base_vals =
-            (caml_ba_complex16*)ba_vals->data + off_vals;
-        caml_ba_complex16* base_vecs =
-            compute_vectors ? (caml_ba_complex16*)ba_vecs->data + off_vecs
-                            : NULL;
-        caml_ba_complex16* A = (caml_ba_complex16*)malloc(
-            (size_t)n * n * sizeof(caml_ba_complex16));
-        if (!A) continue;
-        for (int i = 0; i < n; i++) {
-          for (int j = 0; j < n; j++) {
-            A[i * n + j] = base_in[i * s_in_row + j * s_in_col];
-          }
-        }
-        eigh_complex16(A, base_vals, base_vecs, n);
         if (compute_vectors) {
           for (int i = 0; i < n; i++) {
             for (int j = 0; j < n; j++) {

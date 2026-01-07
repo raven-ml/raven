@@ -6,8 +6,7 @@
 // - bool: Boolean values (8-bit)
 // - int4_signed/unsigned: 4-bit integers (packed 2 per byte)
 // - float8_e4m3/e5m2: 8-bit floating-point formats
-// - complex16: Half-precision complex numbers (2 x bfloat16)
-// - qint8/quint8: Quantized 8-bit integers
+// - uint32/uint64: Unsigned 32/64-bit integers
 //
 // The implementation extends the standard Ml_Bigarray class with
 // Ml_Bigarray_ext to handle get/set/fill operations for these types.
@@ -112,9 +111,8 @@ var NX_BA_INT4 = 16;
 var NX_BA_UINT4 = 17;
 var NX_BA_FP8_E4M3 = 18;
 var NX_BA_FP8_E5M2 = 19;
-var NX_BA_COMPLEX16 = 20;
-var NX_BA_QINT8 = 21;
-var NX_BA_QUINT8 = 22;
+var NX_BA_UINT32 = 20;
+var NX_BA_UINT64 = 21;
 
 //Provides: caml_nx_ba_get_size_per_element
 //Requires: caml_ba_get_size_per_element
@@ -136,11 +134,10 @@ function caml_nx_ba_get_size_per_element(kind) {
     case 18: // NX_BA_FP8_E4M3
     case 19: // NX_BA_FP8_E5M2
       return 1;
-    case 20: // NX_BA_COMPLEX16
-      return 4; // 2 x bfloat16
-    case 21: // NX_BA_QINT8
-    case 22: // NX_BA_QUINT8
-      return 1;
+    case 20: // NX_BA_UINT32
+      return 4;
+    case 21: // NX_BA_UINT64
+      return 8;
     default:
       return 1;
   }
@@ -174,15 +171,14 @@ function caml_nx_ba_create_buffer(kind, size) {
     case 19: // NX_BA_FP8_E5M2
       view = Uint8Array;
       break;
-    case 20: // NX_BA_COMPLEX16
-      view = Uint16Array;
-      size *= 2; // 2 x bfloat16
+    case 20: // NX_BA_UINT32
+      view = Uint32Array;
       break;
-    case 21: // NX_BA_QINT8
-      view = Int8Array;
-      break;
-    case 22: // NX_BA_QUINT8
-      view = Uint8Array;
+    case 21: // NX_BA_UINT64
+      if (typeof BigUint64Array === "undefined") {
+        caml_invalid_argument("Bigarray.create: uint64 not supported");
+      }
+      view = BigUint64Array;
       break;
     default:
       caml_invalid_argument("Bigarray.create: unsupported extended kind");
@@ -235,15 +231,10 @@ class Ml_Bigarray_ext extends Ml_Bigarray {
         return caml_unpackFp8_e4m3(this.data[ofs]);
       case 19: // NX_BA_FP8_E5M2
         return caml_unpackFp8_e5m2(this.data[ofs]);
-      case 20: { // NX_BA_COMPLEX16
-        var real = caml_unpackBfloat16(this.data[ofs * 2]);
-        var imag = caml_unpackBfloat16(this.data[ofs * 2 + 1]);
-        return [254, real, imag];
-      }
-      case 21: // NX_BA_QINT8
-        return this.data[ofs];
-      case 22: // NX_BA_QUINT8
-        return this.data[ofs];
+      case 20: // NX_BA_UINT32
+        return this.data[ofs] | 0;
+      case 21: // NX_BA_UINT64
+        return BigInt.asIntN(64, this.data[ofs]);
       default:
         return this.data[ofs];
     }
@@ -295,13 +286,11 @@ class Ml_Bigarray_ext extends Ml_Bigarray {
       case 19: // NX_BA_FP8_E5M2
         this.data[ofs] = caml_packFp8_e5m2(v);
         break;
-      case 20: // NX_BA_COMPLEX16
-        this.data[ofs * 2] = caml_packBfloat16(v[1]);
-        this.data[ofs * 2 + 1] = caml_packBfloat16(v[2]);
+      case 20: // NX_BA_UINT32
+        this.data[ofs] = v >>> 0;
         break;
-      case 21: // NX_BA_QINT8
-      case 22: // NX_BA_QUINT8
-        this.data[ofs] = v;
+      case 21: // NX_BA_UINT64
+        this.data[ofs] = BigInt.asUintN(64, v);
         break;
       default:
         this.data[ofs] = v;
@@ -336,18 +325,11 @@ class Ml_Bigarray_ext extends Ml_Bigarray {
       case 19: // NX_BA_FP8_E5M2
         this.data.fill(caml_packFp8_e5m2(v));
         break;
-      case 20: { // NX_BA_COMPLEX16
-        var real_packed = caml_packBfloat16(v[1]);
-        var imag_packed = caml_packBfloat16(v[2]);
-        for (var i = 0; i < this.data.length; i += 2) {
-          this.data[i] = real_packed;
-          this.data[i + 1] = imag_packed;
-        }
+      case 20: // NX_BA_UINT32
+        this.data.fill(v >>> 0);
         break;
-      }
-      case 21: // NX_BA_QINT8
-      case 22: // NX_BA_QUINT8
-        this.data.fill(v);
+      case 21: // NX_BA_UINT64
+        this.data.fill(BigInt.asUintN(64, v));
         break;
       default:
         this.data.fill(v);
@@ -437,22 +419,16 @@ function caml_nx_ba_create_float8_e5m2(layout, dims) {
   return caml_nx_ba_create(19, layout, dims);
 }
 
-//Provides: caml_nx_ba_create_complex16
+//Provides: caml_nx_ba_create_uint32
 //Requires: caml_nx_ba_create
-function caml_nx_ba_create_complex16(layout, dims) {
+function caml_nx_ba_create_uint32(layout, dims) {
   return caml_nx_ba_create(20, layout, dims);
 }
 
-//Provides: caml_nx_ba_create_qint8
+//Provides: caml_nx_ba_create_uint64
 //Requires: caml_nx_ba_create
-function caml_nx_ba_create_qint8(layout, dims) {
+function caml_nx_ba_create_uint64(layout, dims) {
   return caml_nx_ba_create(21, layout, dims);
-}
-
-//Provides: caml_nx_ba_create_quint8
-//Requires: caml_nx_ba_create
-function caml_nx_ba_create_quint8(layout, dims) {
-  return caml_nx_ba_create(22, layout, dims);
 }
 
 //Provides: caml_nx_ba_get_generic
@@ -506,9 +482,8 @@ function caml_nx_ba_kind(ba) {
     case 17: return 17; // Int4_unsigned
     case 18: return 18; // Float8_e4m3
     case 19: return 19; // Float8_e5m2
-    case 20: return 20; // Complex16
-    case 21: return 21; // Qint8
-    case 22: return 22; // Quint8
+    case 20: return 20; // Uint32
+    case 21: return 21; // Uint64
     default:
       throw new Error("Unknown bigarray kind: " + ba.kind);
   }

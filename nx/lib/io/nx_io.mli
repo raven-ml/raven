@@ -64,13 +64,13 @@ val as_bool : packed_nx -> Nx.bool_t
 (** [as_bool packed] converts a packed Nx to a [Nx.bool_t], or [Error] if dtype
     mismatch. *)
 
-val as_complex32 : packed_nx -> Nx.complex32_t
-(** [as_complex32 packed] converts a packed Nx to a [Nx.complex32_t], or [Error]
+val as_complex32 : packed_nx -> Nx.complex64_t
+(** [as_complex32 packed] converts a packed Nx to a [Nx.complex64_t], or [Error]
     if dtype mismatch. *)
 
-val as_complex64 : packed_nx -> Nx.complex64_t
-(** [as_complex64 packed] converts a packed Nx to a [Nx.complex64_t], or [Error]
-    if dtype mismatch. *)
+val as_complex64 : packed_nx -> Nx.complex128_t
+(** [as_complex64 packed] converts a packed Nx to a [Nx.complex128_t], or
+    [Error] if dtype mismatch. *)
 
 (** {1 Image Loading and Saving} *)
 
@@ -292,10 +292,10 @@ module Safe : sig
   val as_bool : packed_nx -> (Nx.bool_t, error) result
   (** Safe alias for [as_bool] *)
 
-  val as_complex32 : packed_nx -> (Nx.complex32_t, error) result
+  val as_complex32 : packed_nx -> (Nx.complex64_t, error) result
   (** Safe alias for [as_complex32] *)
 
-  val as_complex64 : packed_nx -> (Nx.complex64_t, error) result
+  val as_complex64 : packed_nx -> (Nx.complex128_t, error) result
   (** Safe alias for [as_complex64] *)
 
   (** {2 Image Loading and Saving} *)

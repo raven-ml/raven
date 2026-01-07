@@ -20,6 +20,8 @@ typedef enum {
   NX_DTYPE_U16,
   NX_DTYPE_I32,
   NX_DTYPE_I64,
+  NX_DTYPE_U32,
+  NX_DTYPE_U64,
   NX_DTYPE_INAT,
   NX_DTYPE_F16,
   NX_DTYPE_F32,
@@ -32,9 +34,6 @@ typedef enum {
   NX_DTYPE_U4,
   NX_DTYPE_F8E4M3,
   NX_DTYPE_F8E5M2,
-  NX_DTYPE_C16,
-  NX_DTYPE_QI8,
-  NX_DTYPE_QU8,
   NX_NUM_DTYPES
 } nx_dtype;
 
@@ -53,6 +52,10 @@ static nx_dtype kind_to_dtype(int kind) {
       return NX_DTYPE_I32;
     case CAML_BA_INT64:
       return NX_DTYPE_I64;
+    case NX_BA_UINT32:
+      return NX_DTYPE_U32;
+    case NX_BA_UINT64:
+      return NX_DTYPE_U64;
     case CAML_BA_CAML_INT:
     case CAML_BA_NATIVE_INT:
       return NX_DTYPE_INAT;
@@ -78,12 +81,6 @@ static nx_dtype kind_to_dtype(int kind) {
       return NX_DTYPE_F8E4M3;
     case NX_BA_FP8_E5M2:
       return NX_DTYPE_F8E5M2;
-    case NX_BA_COMPLEX16:
-      return NX_DTYPE_C16;
-    case NX_BA_QINT8:
-      return NX_DTYPE_QI8;
-    case NX_BA_QUINT8:
-      return NX_DTYPE_QU8;
     default:
       return NX_NUM_DTYPES;
   }
@@ -188,6 +185,8 @@ static inline void iterate_inner_dims2(const ndarray_t *x, const ndarray_t *z,
   SR_TYPE(u16, uint16_t)    \
   SR_TYPE(i32, int32_t)     \
   SR_TYPE(i64, int64_t)     \
+  SR_TYPE(u32, uint32_t)    \
+  SR_TYPE(u64, uint64_t)    \
   SR_TYPE(inat, intnat)     \
   SR_TYPE(f32, float)       \
   SR_TYPE(f64, double)
@@ -202,9 +201,7 @@ static inline void iterate_inner_dims2(const ndarray_t *x, const ndarray_t *z,
 // Complex types
 #define COMPLEX_TYPES                                                        \
   CP_TYPE(c32, complex32, crealf(src[src_off]), cimagf(src[src_off]), float) \
-  CP_TYPE(c64, complex64, creal(src[src_off]), cimag(src[src_off]), double)  \
-  CP_TYPE(c16, caml_ba_complex16, half_to_float(src[src_off].re),            \
-          half_to_float(src[src_off].im), float)
+  CP_TYPE(c64, complex64, creal(src[src_off]), cimag(src[src_off]), double)
 
 // Generate cast for standard real to standard real
 
@@ -225,6 +222,8 @@ static inline void iterate_inner_dims2(const ndarray_t *x, const ndarray_t *z,
   GEN_CAST_STANDARD_TO_STANDARD(src_suffix, u16, src_t, uint16_t) \
   GEN_CAST_STANDARD_TO_STANDARD(src_suffix, i32, src_t, int32_t)  \
   GEN_CAST_STANDARD_TO_STANDARD(src_suffix, i64, src_t, int64_t)  \
+  GEN_CAST_STANDARD_TO_STANDARD(src_suffix, u32, src_t, uint32_t) \
+  GEN_CAST_STANDARD_TO_STANDARD(src_suffix, u64, src_t, uint64_t) \
   GEN_CAST_STANDARD_TO_STANDARD(src_suffix, inat, src_t, intnat)  \
   GEN_CAST_STANDARD_TO_STANDARD(src_suffix, f32, src_t, float)    \
   GEN_CAST_STANDARD_TO_STANDARD(src_suffix, f64, src_t, double)
@@ -236,6 +235,8 @@ GEN_ALL_STANDARD_CASTS(i16, int16_t)
 GEN_ALL_STANDARD_CASTS(u16, uint16_t)
 GEN_ALL_STANDARD_CASTS(i32, int32_t)
 GEN_ALL_STANDARD_CASTS(i64, int64_t)
+GEN_ALL_STANDARD_CASTS(u32, uint32_t)
+GEN_ALL_STANDARD_CASTS(u64, uint64_t)
 GEN_ALL_STANDARD_CASTS(inat, intnat)
 GEN_ALL_STANDARD_CASTS(f32, float)
 GEN_ALL_STANDARD_CASTS(f64, double)
@@ -301,6 +302,8 @@ CAST_IMPL(bool, bool)
   GEN_CAST_LP_TO_STANDARD(src_suffix, u16, src_t, uint16_t, TO_FLOAT) \
   GEN_CAST_LP_TO_STANDARD(src_suffix, i32, src_t, int32_t, TO_FLOAT)  \
   GEN_CAST_LP_TO_STANDARD(src_suffix, i64, src_t, int64_t, TO_FLOAT)  \
+  GEN_CAST_LP_TO_STANDARD(src_suffix, u32, src_t, uint32_t, TO_FLOAT) \
+  GEN_CAST_LP_TO_STANDARD(src_suffix, u64, src_t, uint64_t, TO_FLOAT) \
   GEN_CAST_LP_TO_STANDARD(src_suffix, inat, src_t, intnat, TO_FLOAT)  \
   GEN_CAST_LP_TO_STANDARD(src_suffix, f32, src_t, float, TO_FLOAT)    \
   GEN_CAST_LP_TO_STANDARD(src_suffix, f64, src_t, double, TO_FLOAT)
@@ -332,6 +335,8 @@ GEN_ALL_LP_TO_STANDARD_CASTS(f8e5m2, caml_ba_fp8_e5m2, fp8_e5m2_to_float)
   GEN_CAST_STANDARD_TO_LP(u16, dst_suffix, uint16_t, dst_t, FROM_FLOAT) \
   GEN_CAST_STANDARD_TO_LP(i32, dst_suffix, int32_t, dst_t, FROM_FLOAT)  \
   GEN_CAST_STANDARD_TO_LP(i64, dst_suffix, int64_t, dst_t, FROM_FLOAT)  \
+  GEN_CAST_STANDARD_TO_LP(u32, dst_suffix, uint32_t, dst_t, FROM_FLOAT) \
+  GEN_CAST_STANDARD_TO_LP(u64, dst_suffix, uint64_t, dst_t, FROM_FLOAT) \
   GEN_CAST_STANDARD_TO_LP(inat, dst_suffix, intnat, dst_t, FROM_FLOAT)  \
   GEN_CAST_STANDARD_TO_LP(f32, dst_suffix, float, dst_t, FROM_FLOAT)    \
   GEN_CAST_STANDARD_TO_LP(f64, dst_suffix, double, dst_t, FROM_FLOAT)
@@ -426,14 +431,14 @@ GEN_CAST_LP_TO_LP(f8e5m2, f8e4m3, caml_ba_fp8_e5m2, caml_ba_fp8_e4m3,
   GEN_CAST_CP_TO_STANDARD(src_suffix, u16, src_t, uint16_t, RE_FN) \
   GEN_CAST_CP_TO_STANDARD(src_suffix, i32, src_t, int32_t, RE_FN)  \
   GEN_CAST_CP_TO_STANDARD(src_suffix, i64, src_t, int64_t, RE_FN)  \
+  GEN_CAST_CP_TO_STANDARD(src_suffix, u32, src_t, uint32_t, RE_FN) \
+  GEN_CAST_CP_TO_STANDARD(src_suffix, u64, src_t, uint64_t, RE_FN) \
   GEN_CAST_CP_TO_STANDARD(src_suffix, inat, src_t, intnat, RE_FN)  \
   GEN_CAST_CP_TO_STANDARD(src_suffix, f32, src_t, float, RE_FN)    \
   GEN_CAST_CP_TO_STANDARD(src_suffix, f64, src_t, double, RE_FN)
 
 GEN_ALL_CP_TO_STANDARD_CASTS(c32, complex32, crealf(src[src_off]))
 GEN_ALL_CP_TO_STANDARD_CASTS(c64, complex64, creal(src[src_off]))
-GEN_ALL_CP_TO_STANDARD_CASTS(c16, caml_ba_complex16,
-                             half_to_float(src[src_off].re))
 
 // Generate cast for complex to bool
 
@@ -478,7 +483,6 @@ COMPLEX_TYPES
 
 GEN_ALL_CP_TO_LP_CASTS(c32, complex32, crealf(src[src_off]))
 GEN_ALL_CP_TO_LP_CASTS(c64, complex64, creal(src[src_off]))
-GEN_ALL_CP_TO_LP_CASTS(c16, caml_ba_complex16, half_to_float(src[src_off].re))
 
 // Generate cast for standard real to c32/c64
 
@@ -493,16 +497,6 @@ GEN_ALL_CP_TO_LP_CASTS(c16, caml_ba_complex16, half_to_float(src[src_off].re))
   }                                                                        \
   CAST_IMPL(src_suffix, dst_suffix)
 
-#define GEN_CAST_STANDARD_TO_C16(src_suffix, src_t)                 \
-  static void nx_c_cast_##src_suffix##_to_c16_kernel(               \
-      void *src_data, void *dst_data, long src_off, long dst_off) { \
-    src_t *src = (src_t *)src_data;                                 \
-    caml_ba_complex16 *dst = (caml_ba_complex16 *)dst_data;         \
-    float temp = (float)src[src_off];                               \
-    dst[dst_off].re = float_to_half(temp);                          \
-    dst[dst_off].im = float_to_half(0.0f);                          \
-  }                                                                 \
-  CAST_IMPL(src_suffix, c16)
 
 // Generate all standard to complex casts for c32/c64
 #define GEN_ALL_STANDARD_TO_C32_C64_CASTS(dst_suffix, dst_t, BASE_T)     \
@@ -512,6 +506,8 @@ GEN_ALL_CP_TO_LP_CASTS(c16, caml_ba_complex16, half_to_float(src[src_off].re))
   GEN_CAST_STANDARD_TO_C32_C64(u16, dst_suffix, uint16_t, dst_t, BASE_T) \
   GEN_CAST_STANDARD_TO_C32_C64(i32, dst_suffix, int32_t, dst_t, BASE_T)  \
   GEN_CAST_STANDARD_TO_C32_C64(i64, dst_suffix, int64_t, dst_t, BASE_T)  \
+  GEN_CAST_STANDARD_TO_C32_C64(u32, dst_suffix, uint32_t, dst_t, BASE_T) \
+  GEN_CAST_STANDARD_TO_C32_C64(u64, dst_suffix, uint64_t, dst_t, BASE_T) \
   GEN_CAST_STANDARD_TO_C32_C64(inat, dst_suffix, intnat, dst_t, BASE_T)  \
   GEN_CAST_STANDARD_TO_C32_C64(f32, dst_suffix, float, dst_t, BASE_T)    \
   GEN_CAST_STANDARD_TO_C32_C64(f64, dst_suffix, double, dst_t, BASE_T)
@@ -519,16 +515,6 @@ GEN_ALL_CP_TO_LP_CASTS(c16, caml_ba_complex16, half_to_float(src[src_off].re))
 GEN_ALL_STANDARD_TO_C32_C64_CASTS(c32, complex32, float)
 GEN_ALL_STANDARD_TO_C32_C64_CASTS(c64, complex64, double)
 
-// Generate casts for standard to c16 (special case)
-GEN_CAST_STANDARD_TO_C16(i8, int8_t)
-GEN_CAST_STANDARD_TO_C16(u8, uint8_t)
-GEN_CAST_STANDARD_TO_C16(i16, int16_t)
-GEN_CAST_STANDARD_TO_C16(u16, uint16_t)
-GEN_CAST_STANDARD_TO_C16(i32, int32_t)
-GEN_CAST_STANDARD_TO_C16(i64, int64_t)
-GEN_CAST_STANDARD_TO_C16(inat, intnat)
-GEN_CAST_STANDARD_TO_C16(f32, float)
-GEN_CAST_STANDARD_TO_C16(f64, double)
 
 // Removed - Already generated above
 
@@ -546,18 +532,6 @@ GEN_CAST_STANDARD_TO_C16(f64, double)
 
 GEN_CAST_BOOL_TO_CP(c32, complex32, float)
 GEN_CAST_BOOL_TO_CP(c64, complex64, double)
-
-// Bool to c16
-
-static void nx_c_cast_bool_to_c16_kernel(void *src_data, void *dst_data,
-                                         long src_off, long dst_off) {
-  uint8_t *src = (uint8_t *)src_data;
-  caml_ba_complex16 *dst = (caml_ba_complex16 *)dst_data;
-  float temp = (float)src[src_off];
-  dst[dst_off].re = float_to_half(temp);
-  dst[dst_off].im = float_to_half(0.0f);
-}
-CAST_IMPL(bool, c16)
 
 // Low prec to c32/c64
 
@@ -580,23 +554,6 @@ CAST_IMPL(bool, c16)
 LOW_PREC_TYPES
 #undef LP_TYPE
 
-// Low prec to c16
-
-#define GEN_CAST_LP_TO_C16(src_suffix, src_t, TO_FLOAT)             \
-  static void nx_c_cast_##src_suffix##_to_c16_kernel(               \
-      void *src_data, void *dst_data, long src_off, long dst_off) { \
-    src_t *src = (src_t *)src_data;                                 \
-    caml_ba_complex16 *dst = (caml_ba_complex16 *)dst_data;         \
-    float temp = TO_FLOAT(src[src_off]);                            \
-    dst[dst_off].re = float_to_half(temp);                          \
-    dst[dst_off].im = float_to_half(0.0f);                          \
-  }                                                                 \
-  CAST_IMPL(src_suffix, c16)
-
-#define LP_TYPE(suffix, t, to_f, from_f) GEN_CAST_LP_TO_C16(suffix, t, to_f)
-LOW_PREC_TYPES
-#undef LP_TYPE
-
 // Complex to complex pairs (individual)
 
 static void nx_c_cast_c32_to_c32_kernel(void *src_data, void *dst_data,
@@ -615,14 +572,6 @@ static void nx_c_cast_c32_to_c64_kernel(void *src_data, void *dst_data,
 }
 CAST_IMPL(c32, c64)
 
-static void nx_c_cast_c32_to_c16_kernel(void *src_data, void *dst_data,
-                                        long src_off, long dst_off) {
-  complex32 *src = (complex32 *)src_data;
-  caml_ba_complex16 *dst = (caml_ba_complex16 *)dst_data;
-  dst[dst_off].re = float_to_half(crealf(src[src_off]));
-  dst[dst_off].im = float_to_half(cimagf(src[src_off]));
-}
-CAST_IMPL(c32, c16)
 
 static void nx_c_cast_c64_to_c32_kernel(void *src_data, void *dst_data,
                                         long src_off, long dst_off) {
@@ -640,40 +589,6 @@ static void nx_c_cast_c64_to_c64_kernel(void *src_data, void *dst_data,
 }
 CAST_IMPL(c64, c64)
 
-static void nx_c_cast_c64_to_c16_kernel(void *src_data, void *dst_data,
-                                        long src_off, long dst_off) {
-  complex64 *src = (complex64 *)src_data;
-  caml_ba_complex16 *dst = (caml_ba_complex16 *)dst_data;
-  dst[dst_off].re = float_to_half((float)creal(src[src_off]));
-  dst[dst_off].im = float_to_half((float)cimag(src[src_off]));
-}
-CAST_IMPL(c64, c16)
-
-static void nx_c_cast_c16_to_c32_kernel(void *src_data, void *dst_data,
-                                        long src_off, long dst_off) {
-  caml_ba_complex16 *src = (caml_ba_complex16 *)src_data;
-  complex32 *dst = (complex32 *)dst_data;
-  dst[dst_off] =
-      half_to_float(src[src_off].re) + I * half_to_float(src[src_off].im);
-}
-CAST_IMPL(c16, c32)
-
-static void nx_c_cast_c16_to_c64_kernel(void *src_data, void *dst_data,
-                                        long src_off, long dst_off) {
-  caml_ba_complex16 *src = (caml_ba_complex16 *)src_data;
-  complex64 *dst = (complex64 *)dst_data;
-  dst[dst_off] = (double)half_to_float(src[src_off].re) +
-                 I * (double)half_to_float(src[src_off].im);
-}
-CAST_IMPL(c16, c64)
-
-static void nx_c_cast_c16_to_c16_kernel(void *src_data, void *dst_data,
-                                        long src_off, long dst_off) {
-  caml_ba_complex16 *src = (caml_ba_complex16 *)src_data;
-  caml_ba_complex16 *dst = (caml_ba_complex16 *)dst_data;
-  dst[dst_off] = src[src_off];
-}
-CAST_IMPL(c16, c16)
 
 // Generate cast for i4 to standard real
 
@@ -797,22 +712,6 @@ LOW_PREC_TYPES
 GEN_CAST_I4_TO_CP(c32, complex32, float)
 GEN_CAST_I4_TO_CP(c64, complex64, double)
 
-// i4 to c16
-
-static void nx_c_cast_i4_to_c16_kernel(void *src_data, void *dst_data,
-                                       long src_off, long dst_off) {
-  uint8_t *src = (uint8_t *)src_data;
-  caml_ba_complex16 *dst = (caml_ba_complex16 *)dst_data;
-  long byte_off = src_off / 2;
-  int nib_off = src_off % 2;
-  int a = nib_off ? ((int8_t)src[byte_off] >> 4)
-                  : (int8_t)((src[byte_off] & 0x0F) << 4) >> 4;
-  float temp = (float)a;
-  dst[dst_off].re = float_to_half(temp);
-  dst[dst_off].im = float_to_half(0.0f);
-}
-CAST_IMPL(i4, c16)
-
 // Similar for u4 to c32/c64
 
 #define GEN_CAST_U4_TO_CP(dst_suffix, dst_t, BASE_T)                      \
@@ -830,21 +729,6 @@ CAST_IMPL(i4, c16)
 
 GEN_CAST_U4_TO_CP(c32, complex32, float)
 GEN_CAST_U4_TO_CP(c64, complex64, double)
-
-// u4 to c16
-
-static void nx_c_cast_u4_to_c16_kernel(void *src_data, void *dst_data,
-                                       long src_off, long dst_off) {
-  uint8_t *src = (uint8_t *)src_data;
-  caml_ba_complex16 *dst = (caml_ba_complex16 *)dst_data;
-  long byte_off = src_off / 2;
-  int nib_off = src_off % 2;
-  int a = nib_off ? (src[byte_off] >> 4) & 0x0F : src[byte_off] & 0x0F;
-  float temp = (float)a;
-  dst[dst_off].re = float_to_half(temp);
-  dst[dst_off].im = float_to_half(0.0f);
-}
-CAST_IMPL(u4, c16)
 
 // Generate cast for standard real to i4/u4
 
@@ -872,6 +756,8 @@ GEN_CAST_STANDARD_TO_PACKED(i16, int16_t, i4)
 GEN_CAST_STANDARD_TO_PACKED(u16, uint16_t, i4)
 GEN_CAST_STANDARD_TO_PACKED(i32, int32_t, i4)
 GEN_CAST_STANDARD_TO_PACKED(i64, int64_t, i4)
+GEN_CAST_STANDARD_TO_PACKED(u32, uint32_t, i4)
+GEN_CAST_STANDARD_TO_PACKED(u64, uint64_t, i4)
 GEN_CAST_STANDARD_TO_PACKED(inat, intnat, i4)
 GEN_CAST_STANDARD_TO_PACKED(f32, float, i4)
 GEN_CAST_STANDARD_TO_PACKED(f64, double, i4)
@@ -882,6 +768,8 @@ GEN_CAST_STANDARD_TO_PACKED(i16, int16_t, u4)
 GEN_CAST_STANDARD_TO_PACKED(u16, uint16_t, u4)
 GEN_CAST_STANDARD_TO_PACKED(i32, int32_t, u4)
 GEN_CAST_STANDARD_TO_PACKED(i64, int64_t, u4)
+GEN_CAST_STANDARD_TO_PACKED(u32, uint32_t, u4)
+GEN_CAST_STANDARD_TO_PACKED(u64, uint64_t, u4)
 GEN_CAST_STANDARD_TO_PACKED(inat, intnat, u4)
 GEN_CAST_STANDARD_TO_PACKED(f32, float, u4)
 GEN_CAST_STANDARD_TO_PACKED(f64, double, u4)
@@ -962,13 +850,9 @@ GEN_CAST_LP_TO_PACKED(f8e5m2, caml_ba_fp8_e5m2, fp8_e5m2_to_float, u4)
 // Generate complex to packed casts
 GEN_CAST_CP_TO_PACKED(c32, complex32, crealf(src[src_off]), i4)
 GEN_CAST_CP_TO_PACKED(c64, complex64, creal(src[src_off]), i4)
-GEN_CAST_CP_TO_PACKED(c16, caml_ba_complex16, half_to_float(src[src_off].re),
-                      i4)
 
 GEN_CAST_CP_TO_PACKED(c32, complex32, crealf(src[src_off]), u4)
 GEN_CAST_CP_TO_PACKED(c64, complex64, creal(src[src_off]), u4)
-GEN_CAST_CP_TO_PACKED(c16, caml_ba_complex16, half_to_float(src[src_off].re),
-                      u4)
 
 // Identity casts for other low-precision and special types
 static void nx_c_cast_bf16_to_bf16_kernel(void *src_data, void *dst_data,
@@ -994,369 +878,6 @@ static void nx_c_cast_f8e5m2_to_f8e5m2_kernel(void *src_data, void *dst_data,
   dst[dst_off] = src[src_off];
 }
 CAST_IMPL(f8e5m2, f8e5m2)
-
-// Bool to quantized
-static void nx_c_cast_bool_to_qi8_kernel(void *src_data, void *dst_data,
-                                         long src_off, long dst_off) {
-  uint8_t *src = (uint8_t *)src_data;
-  caml_ba_qint8 *dst = (caml_ba_qint8 *)dst_data;
-  dst[dst_off] = (caml_ba_qint8)src[src_off];
-}
-CAST_IMPL(bool, qi8)
-
-static void nx_c_cast_bool_to_qu8_kernel(void *src_data, void *dst_data,
-                                         long src_off, long dst_off) {
-  uint8_t *src = (uint8_t *)src_data;
-  caml_ba_quint8 *dst = (caml_ba_quint8 *)dst_data;
-  dst[dst_off] = (caml_ba_quint8)src[src_off];
-}
-CAST_IMPL(bool, qu8)
-
-// Packed to quantized
-static void nx_c_cast_i4_to_qi8_kernel(void *src_data, void *dst_data,
-                                       long src_off, long dst_off) {
-  uint8_t *src = (uint8_t *)src_data;
-  caml_ba_qint8 *dst = (caml_ba_qint8 *)dst_data;
-  long byte_off = src_off / 2;
-  int nib_off = src_off % 2;
-  int a = nib_off ? (src[byte_off] >> 4) & 0x0F : src[byte_off] & 0x0F;
-  // Sign extend from 4 bits
-  if (a & 0x08) a |= 0xFFFFFFF0;
-  dst[dst_off] = (caml_ba_qint8)a;
-}
-CAST_IMPL(i4, qi8)
-
-static void nx_c_cast_i4_to_qu8_kernel(void *src_data, void *dst_data,
-                                       long src_off, long dst_off) {
-  uint8_t *src = (uint8_t *)src_data;
-  caml_ba_quint8 *dst = (caml_ba_quint8 *)dst_data;
-  long byte_off = src_off / 2;
-  int nib_off = src_off % 2;
-  int a = nib_off ? (src[byte_off] >> 4) & 0x0F : src[byte_off] & 0x0F;
-  // Sign extend from 4 bits
-  if (a & 0x08) a |= 0xFFFFFFF0;
-  dst[dst_off] = (caml_ba_quint8)a;
-}
-CAST_IMPL(i4, qu8)
-
-static void nx_c_cast_u4_to_qi8_kernel(void *src_data, void *dst_data,
-                                       long src_off, long dst_off) {
-  uint8_t *src = (uint8_t *)src_data;
-  caml_ba_qint8 *dst = (caml_ba_qint8 *)dst_data;
-  long byte_off = src_off / 2;
-  int nib_off = src_off % 2;
-  int a = nib_off ? (src[byte_off] >> 4) & 0x0F : src[byte_off] & 0x0F;
-  dst[dst_off] = (caml_ba_qint8)a;
-}
-CAST_IMPL(u4, qi8)
-
-static void nx_c_cast_u4_to_qu8_kernel(void *src_data, void *dst_data,
-                                       long src_off, long dst_off) {
-  uint8_t *src = (uint8_t *)src_data;
-  caml_ba_quint8 *dst = (caml_ba_quint8 *)dst_data;
-  long byte_off = src_off / 2;
-  int nib_off = src_off % 2;
-  int a = nib_off ? (src[byte_off] >> 4) & 0x0F : src[byte_off] & 0x0F;
-  dst[dst_off] = (caml_ba_quint8)a;
-}
-CAST_IMPL(u4, qu8)
-
-// Quantized types casts
-// For now, just treat qi8/qu8 as regular i8/u8
-#define GEN_CAST_STANDARD_TO_QUANTIZED(src_suffix, dst_suffix, src_t, dst_t) \
-  static void nx_c_cast_##src_suffix##_to_##dst_suffix##_kernel(             \
-      void *src_data, void *dst_data, long src_off, long dst_off) {          \
-    src_t *src = (src_t *)src_data;                                          \
-    dst_t *dst = (dst_t *)dst_data;                                          \
-    dst[dst_off] = (dst_t)src[src_off];                                      \
-  }                                                                          \
-  CAST_IMPL(src_suffix, dst_suffix)
-
-// Generate casts from standard types to qi8/qu8
-#define GEN_ALL_TO_QI8(src_suffix, src_t) \
-  GEN_CAST_STANDARD_TO_QUANTIZED(src_suffix, qi8, src_t, caml_ba_qint8)
-
-#define GEN_ALL_TO_QU8(src_suffix, src_t) \
-  GEN_CAST_STANDARD_TO_QUANTIZED(src_suffix, qu8, src_t, caml_ba_quint8)
-
-GEN_ALL_TO_QI8(i8, int8_t)
-GEN_ALL_TO_QI8(u8, uint8_t)
-GEN_ALL_TO_QI8(i16, int16_t)
-GEN_ALL_TO_QI8(u16, uint16_t)
-GEN_ALL_TO_QI8(i32, int32_t)
-GEN_ALL_TO_QI8(i64, int64_t)
-GEN_ALL_TO_QI8(inat, intnat)
-GEN_ALL_TO_QI8(f32, float)
-GEN_ALL_TO_QI8(f64, double)
-
-GEN_ALL_TO_QU8(i8, int8_t)
-GEN_ALL_TO_QU8(u8, uint8_t)
-GEN_ALL_TO_QU8(i16, int16_t)
-GEN_ALL_TO_QU8(u16, uint16_t)
-GEN_ALL_TO_QU8(i32, int32_t)
-GEN_ALL_TO_QU8(i64, int64_t)
-GEN_ALL_TO_QU8(inat, intnat)
-GEN_ALL_TO_QU8(f32, float)
-GEN_ALL_TO_QU8(f64, double)
-
-// Low-precision to quantized
-#define GEN_LP_TO_QUANTIZED(src_suffix, dst_suffix, src_t, dst_t, TO_FLOAT) \
-  static void nx_c_cast_##src_suffix##_to_##dst_suffix##_kernel(            \
-      void *src_data, void *dst_data, long src_off, long dst_off) {         \
-    src_t *src = (src_t *)src_data;                                         \
-    dst_t *dst = (dst_t *)dst_data;                                         \
-    float temp = TO_FLOAT(src[src_off]);                                    \
-    dst[dst_off] = (dst_t)temp;                                             \
-  }                                                                         \
-  CAST_IMPL(src_suffix, dst_suffix)
-
-GEN_LP_TO_QUANTIZED(f16, qi8, uint16_t, caml_ba_qint8, half_to_float)
-GEN_LP_TO_QUANTIZED(f16, qu8, uint16_t, caml_ba_quint8, half_to_float)
-GEN_LP_TO_QUANTIZED(bf16, qi8, caml_ba_bfloat16, caml_ba_qint8,
-                    bfloat16_to_float)
-GEN_LP_TO_QUANTIZED(bf16, qu8, caml_ba_bfloat16, caml_ba_quint8,
-                    bfloat16_to_float)
-GEN_LP_TO_QUANTIZED(f8e4m3, qi8, caml_ba_fp8_e4m3, caml_ba_qint8,
-                    fp8_e4m3_to_float)
-GEN_LP_TO_QUANTIZED(f8e4m3, qu8, caml_ba_fp8_e4m3, caml_ba_quint8,
-                    fp8_e4m3_to_float)
-GEN_LP_TO_QUANTIZED(f8e5m2, qi8, caml_ba_fp8_e5m2, caml_ba_qint8,
-                    fp8_e5m2_to_float)
-GEN_LP_TO_QUANTIZED(f8e5m2, qu8, caml_ba_fp8_e5m2, caml_ba_quint8,
-                    fp8_e5m2_to_float)
-
-// Complex to quantized
-#define GEN_CP_TO_QUANTIZED(src_suffix, dst_suffix, src_t, dst_t, RE_FN) \
-  static void nx_c_cast_##src_suffix##_to_##dst_suffix##_kernel(         \
-      void *src_data, void *dst_data, long src_off, long dst_off) {      \
-    src_t *src = (src_t *)src_data;                                      \
-    dst_t *dst = (dst_t *)dst_data;                                      \
-    double temp = RE_FN;                                                 \
-    dst[dst_off] = (dst_t)temp;                                          \
-  }                                                                      \
-  CAST_IMPL(src_suffix, dst_suffix)
-
-GEN_CP_TO_QUANTIZED(c32, qi8, complex32, caml_ba_qint8, crealf(src[src_off]))
-GEN_CP_TO_QUANTIZED(c32, qu8, complex32, caml_ba_quint8, crealf(src[src_off]))
-GEN_CP_TO_QUANTIZED(c64, qi8, complex64, caml_ba_qint8, creal(src[src_off]))
-GEN_CP_TO_QUANTIZED(c64, qu8, complex64, caml_ba_quint8, creal(src[src_off]))
-GEN_CP_TO_QUANTIZED(c16, qi8, caml_ba_complex16, caml_ba_qint8,
-                    half_to_float(src[src_off].re))
-GEN_CP_TO_QUANTIZED(c16, qu8, caml_ba_complex16, caml_ba_quint8,
-                    half_to_float(src[src_off].re))
-
-// Casts from quantized types
-#define GEN_QUANTIZED_TO_STANDARD(src_suffix, dst_suffix, src_t, dst_t) \
-  static void nx_c_cast_##src_suffix##_to_##dst_suffix##_kernel(        \
-      void *src_data, void *dst_data, long src_off, long dst_off) {     \
-    src_t *src = (src_t *)src_data;                                     \
-    dst_t *dst = (dst_t *)dst_data;                                     \
-    dst[dst_off] = (dst_t)src[src_off];                                 \
-  }                                                                     \
-  CAST_IMPL(src_suffix, dst_suffix)
-
-// qi8 to all standard types
-GEN_QUANTIZED_TO_STANDARD(qi8, i8, caml_ba_qint8, int8_t)
-GEN_QUANTIZED_TO_STANDARD(qi8, u8, caml_ba_qint8, uint8_t)
-GEN_QUANTIZED_TO_STANDARD(qi8, i16, caml_ba_qint8, int16_t)
-GEN_QUANTIZED_TO_STANDARD(qi8, u16, caml_ba_qint8, uint16_t)
-GEN_QUANTIZED_TO_STANDARD(qi8, i32, caml_ba_qint8, int32_t)
-GEN_QUANTIZED_TO_STANDARD(qi8, i64, caml_ba_qint8, int64_t)
-GEN_QUANTIZED_TO_STANDARD(qi8, inat, caml_ba_qint8, intnat)
-GEN_QUANTIZED_TO_STANDARD(qi8, f32, caml_ba_qint8, float)
-GEN_QUANTIZED_TO_STANDARD(qi8, f64, caml_ba_qint8, double)
-
-// qu8 to all standard types
-GEN_QUANTIZED_TO_STANDARD(qu8, i8, caml_ba_quint8, int8_t)
-GEN_QUANTIZED_TO_STANDARD(qu8, u8, caml_ba_quint8, uint8_t)
-GEN_QUANTIZED_TO_STANDARD(qu8, i16, caml_ba_quint8, int16_t)
-GEN_QUANTIZED_TO_STANDARD(qu8, u16, caml_ba_quint8, uint16_t)
-GEN_QUANTIZED_TO_STANDARD(qu8, i32, caml_ba_quint8, int32_t)
-GEN_QUANTIZED_TO_STANDARD(qu8, i64, caml_ba_quint8, int64_t)
-GEN_QUANTIZED_TO_STANDARD(qu8, inat, caml_ba_quint8, intnat)
-GEN_QUANTIZED_TO_STANDARD(qu8, f32, caml_ba_quint8, float)
-GEN_QUANTIZED_TO_STANDARD(qu8, f64, caml_ba_quint8, double)
-
-// Quantized to low-precision, complex, bool, packed types
-// qi8/qu8 to bool
-static void nx_c_cast_qi8_to_bool_kernel(void *src_data, void *dst_data,
-                                         long src_off, long dst_off) {
-  caml_ba_qint8 *src = (caml_ba_qint8 *)src_data;
-  uint8_t *dst = (uint8_t *)dst_data;
-  dst[dst_off] = (src[src_off] != 0) ? 1 : 0;
-}
-CAST_IMPL(qi8, bool)
-
-static void nx_c_cast_qu8_to_bool_kernel(void *src_data, void *dst_data,
-                                         long src_off, long dst_off) {
-  caml_ba_quint8 *src = (caml_ba_quint8 *)src_data;
-  uint8_t *dst = (uint8_t *)dst_data;
-  dst[dst_off] = (src[src_off] != 0) ? 1 : 0;
-}
-CAST_IMPL(qu8, bool)
-
-// qi8/qu8 to low-precision
-#define GEN_QUANTIZED_TO_LP(src_suffix, dst_suffix, src_t, dst_t, FROM_FLOAT) \
-  static void nx_c_cast_##src_suffix##_to_##dst_suffix##_kernel(              \
-      void *src_data, void *dst_data, long src_off, long dst_off) {           \
-    src_t *src = (src_t *)src_data;                                           \
-    dst_t *dst = (dst_t *)dst_data;                                           \
-    float temp = (float)src[src_off];                                         \
-    dst[dst_off] = FROM_FLOAT(temp);                                          \
-  }                                                                           \
-  CAST_IMPL(src_suffix, dst_suffix)
-
-GEN_QUANTIZED_TO_LP(qi8, f16, caml_ba_qint8, uint16_t, float_to_half)
-GEN_QUANTIZED_TO_LP(qi8, bf16, caml_ba_qint8, caml_ba_bfloat16,
-                    float_to_bfloat16)
-GEN_QUANTIZED_TO_LP(qi8, f8e4m3, caml_ba_qint8, caml_ba_fp8_e4m3,
-                    float_to_fp8_e4m3)
-GEN_QUANTIZED_TO_LP(qi8, f8e5m2, caml_ba_qint8, caml_ba_fp8_e5m2,
-                    float_to_fp8_e5m2)
-
-GEN_QUANTIZED_TO_LP(qu8, f16, caml_ba_quint8, uint16_t, float_to_half)
-GEN_QUANTIZED_TO_LP(qu8, bf16, caml_ba_quint8, caml_ba_bfloat16,
-                    float_to_bfloat16)
-GEN_QUANTIZED_TO_LP(qu8, f8e4m3, caml_ba_quint8, caml_ba_fp8_e4m3,
-                    float_to_fp8_e4m3)
-GEN_QUANTIZED_TO_LP(qu8, f8e5m2, caml_ba_quint8, caml_ba_fp8_e5m2,
-                    float_to_fp8_e5m2)
-
-// qi8/qu8 to complex
-#define GEN_QUANTIZED_TO_C32_C64(src_suffix, dst_suffix, src_t, dst_t, BASE_T) \
-  static void nx_c_cast_##src_suffix##_to_##dst_suffix##_kernel(               \
-      void *src_data, void *dst_data, long src_off, long dst_off) {            \
-    src_t *src = (src_t *)src_data;                                            \
-    dst_t *dst = (dst_t *)dst_data;                                            \
-    BASE_T temp = (BASE_T)src[src_off];                                        \
-    dst[dst_off] = temp + 0.0 * I;                                             \
-  }                                                                            \
-  CAST_IMPL(src_suffix, dst_suffix)
-
-GEN_QUANTIZED_TO_C32_C64(qi8, c32, caml_ba_qint8, complex32, float)
-GEN_QUANTIZED_TO_C32_C64(qi8, c64, caml_ba_qint8, complex64, double)
-GEN_QUANTIZED_TO_C32_C64(qu8, c32, caml_ba_quint8, complex32, float)
-GEN_QUANTIZED_TO_C32_C64(qu8, c64, caml_ba_quint8, complex64, double)
-
-// qi8/qu8 to c16
-static void nx_c_cast_qi8_to_c16_kernel(void *src_data, void *dst_data,
-                                        long src_off, long dst_off) {
-  caml_ba_qint8 *src = (caml_ba_qint8 *)src_data;
-  caml_ba_complex16 *dst = (caml_ba_complex16 *)dst_data;
-  float temp = (float)src[src_off];
-  dst[dst_off].re = float_to_half(temp);
-  dst[dst_off].im = float_to_half(0.0f);
-}
-CAST_IMPL(qi8, c16)
-
-static void nx_c_cast_qu8_to_c16_kernel(void *src_data, void *dst_data,
-                                        long src_off, long dst_off) {
-  caml_ba_quint8 *src = (caml_ba_quint8 *)src_data;
-  caml_ba_complex16 *dst = (caml_ba_complex16 *)dst_data;
-  float temp = (float)src[src_off];
-  dst[dst_off].re = float_to_half(temp);
-  dst[dst_off].im = float_to_half(0.0f);
-}
-CAST_IMPL(qu8, c16)
-
-// qi8/qu8 to packed i4/u4
-static void nx_c_cast_qi8_to_i4_kernel(void *src_data, void *dst_data,
-                                       long src_off, long dst_off) {
-  caml_ba_qint8 *src = (caml_ba_qint8 *)src_data;
-  uint8_t *dst = (uint8_t *)dst_data;
-  long byte_off = dst_off / 2;
-  int nib_off = dst_off % 2;
-  int res = CLAMP_I4((int)src[src_off]);
-  uint8_t nib = res & 0x0F;
-  if (nib_off) {
-    dst[byte_off] = (dst[byte_off] & 0x0F) | (nib << 4);
-  } else {
-    dst[byte_off] = (dst[byte_off] & 0xF0) | nib;
-  }
-}
-CAST_IMPL(qi8, i4)
-
-static void nx_c_cast_qi8_to_u4_kernel(void *src_data, void *dst_data,
-                                       long src_off, long dst_off) {
-  caml_ba_qint8 *src = (caml_ba_qint8 *)src_data;
-  uint8_t *dst = (uint8_t *)dst_data;
-  long byte_off = dst_off / 2;
-  int nib_off = dst_off % 2;
-  int res = CLAMP_U4((int)src[src_off]);
-  uint8_t nib = res & 0x0F;
-  if (nib_off) {
-    dst[byte_off] = (dst[byte_off] & 0x0F) | (nib << 4);
-  } else {
-    dst[byte_off] = (dst[byte_off] & 0xF0) | nib;
-  }
-}
-CAST_IMPL(qi8, u4)
-
-static void nx_c_cast_qu8_to_i4_kernel(void *src_data, void *dst_data,
-                                       long src_off, long dst_off) {
-  caml_ba_quint8 *src = (caml_ba_quint8 *)src_data;
-  uint8_t *dst = (uint8_t *)dst_data;
-  long byte_off = dst_off / 2;
-  int nib_off = dst_off % 2;
-  int res = CLAMP_I4((int)src[src_off]);
-  uint8_t nib = res & 0x0F;
-  if (nib_off) {
-    dst[byte_off] = (dst[byte_off] & 0x0F) | (nib << 4);
-  } else {
-    dst[byte_off] = (dst[byte_off] & 0xF0) | nib;
-  }
-}
-CAST_IMPL(qu8, i4)
-
-static void nx_c_cast_qu8_to_u4_kernel(void *src_data, void *dst_data,
-                                       long src_off, long dst_off) {
-  caml_ba_quint8 *src = (caml_ba_quint8 *)src_data;
-  uint8_t *dst = (uint8_t *)dst_data;
-  long byte_off = dst_off / 2;
-  int nib_off = dst_off % 2;
-  int res = CLAMP_U4((int)src[src_off]);
-  uint8_t nib = res & 0x0F;
-  if (nib_off) {
-    dst[byte_off] = (dst[byte_off] & 0x0F) | (nib << 4);
-  } else {
-    dst[byte_off] = (dst[byte_off] & 0xF0) | nib;
-  }
-}
-CAST_IMPL(qu8, u4)
-
-// qi8/qu8 to qu8/qi8
-static void nx_c_cast_qi8_to_qu8_kernel(void *src_data, void *dst_data,
-                                        long src_off, long dst_off) {
-  caml_ba_qint8 *src = (caml_ba_qint8 *)src_data;
-  caml_ba_quint8 *dst = (caml_ba_quint8 *)dst_data;
-  dst[dst_off] = (caml_ba_quint8)src[src_off];
-}
-CAST_IMPL(qi8, qu8)
-
-static void nx_c_cast_qu8_to_qi8_kernel(void *src_data, void *dst_data,
-                                        long src_off, long dst_off) {
-  caml_ba_quint8 *src = (caml_ba_quint8 *)src_data;
-  caml_ba_qint8 *dst = (caml_ba_qint8 *)dst_data;
-  dst[dst_off] = (caml_ba_qint8)src[src_off];
-}
-CAST_IMPL(qu8, qi8)
-
-// Identity casts for quantized types
-static void nx_c_cast_qi8_to_qi8_kernel(void *src_data, void *dst_data,
-                                        long src_off, long dst_off) {
-  caml_ba_qint8 *src = (caml_ba_qint8 *)src_data;
-  caml_ba_qint8 *dst = (caml_ba_qint8 *)dst_data;
-  dst[dst_off] = src[src_off];
-}
-CAST_IMPL(qi8, qi8)
-
-static void nx_c_cast_qu8_to_qu8_kernel(void *src_data, void *dst_data,
-                                        long src_off, long dst_off) {
-  caml_ba_quint8 *src = (caml_ba_quint8 *)src_data;
-  caml_ba_quint8 *dst = (caml_ba_quint8 *)dst_data;
-  dst[dst_off] = src[src_off];
-}
-CAST_IMPL(qu8, qu8)
 
 // Packed to packed
 
@@ -1446,6 +967,8 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U16] = nx_c_cast_i8_to_u16,
                 [NX_DTYPE_I32] = nx_c_cast_i8_to_i32,
                 [NX_DTYPE_I64] = nx_c_cast_i8_to_i64,
+                [NX_DTYPE_U32] = nx_c_cast_i8_to_u32,
+                [NX_DTYPE_U64] = nx_c_cast_i8_to_u64,
                 [NX_DTYPE_INAT] = nx_c_cast_i8_to_inat,
                 [NX_DTYPE_F16] = nx_c_cast_i8_to_f16,
                 [NX_DTYPE_F32] = nx_c_cast_i8_to_f32,
@@ -1458,9 +981,6 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U4] = nx_c_cast_i8_to_u4,
                 [NX_DTYPE_F8E4M3] = nx_c_cast_i8_to_f8e4m3,
                 [NX_DTYPE_F8E5M2] = nx_c_cast_i8_to_f8e5m2,
-                [NX_DTYPE_C16] = nx_c_cast_i8_to_c16,
-                [NX_DTYPE_QI8] = nx_c_cast_i8_to_qi8,
-                [NX_DTYPE_QU8] = nx_c_cast_i8_to_qu8,
             },
         [NX_DTYPE_U8] =
             {
@@ -1470,6 +990,8 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U16] = nx_c_cast_u8_to_u16,
                 [NX_DTYPE_I32] = nx_c_cast_u8_to_i32,
                 [NX_DTYPE_I64] = nx_c_cast_u8_to_i64,
+                [NX_DTYPE_U32] = nx_c_cast_u8_to_u32,
+                [NX_DTYPE_U64] = nx_c_cast_u8_to_u64,
                 [NX_DTYPE_INAT] = nx_c_cast_u8_to_inat,
                 [NX_DTYPE_F16] = nx_c_cast_u8_to_f16,
                 [NX_DTYPE_F32] = nx_c_cast_u8_to_f32,
@@ -1482,9 +1004,6 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U4] = nx_c_cast_u8_to_u4,
                 [NX_DTYPE_F8E4M3] = nx_c_cast_u8_to_f8e4m3,
                 [NX_DTYPE_F8E5M2] = nx_c_cast_u8_to_f8e5m2,
-                [NX_DTYPE_C16] = nx_c_cast_u8_to_c16,
-                [NX_DTYPE_QI8] = nx_c_cast_u8_to_qi8,
-                [NX_DTYPE_QU8] = nx_c_cast_u8_to_qu8,
             },
         [NX_DTYPE_I16] =
             {
@@ -1494,6 +1013,8 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U16] = nx_c_cast_i16_to_u16,
                 [NX_DTYPE_I32] = nx_c_cast_i16_to_i32,
                 [NX_DTYPE_I64] = nx_c_cast_i16_to_i64,
+                [NX_DTYPE_U32] = nx_c_cast_i16_to_u32,
+                [NX_DTYPE_U64] = nx_c_cast_i16_to_u64,
                 [NX_DTYPE_INAT] = nx_c_cast_i16_to_inat,
                 [NX_DTYPE_F16] = nx_c_cast_i16_to_f16,
                 [NX_DTYPE_F32] = nx_c_cast_i16_to_f32,
@@ -1506,9 +1027,6 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U4] = nx_c_cast_i16_to_u4,
                 [NX_DTYPE_F8E4M3] = nx_c_cast_i16_to_f8e4m3,
                 [NX_DTYPE_F8E5M2] = nx_c_cast_i16_to_f8e5m2,
-                [NX_DTYPE_C16] = nx_c_cast_i16_to_c16,
-                [NX_DTYPE_QI8] = nx_c_cast_i16_to_qi8,
-                [NX_DTYPE_QU8] = nx_c_cast_i16_to_qu8,
             },
         [NX_DTYPE_U16] =
             {
@@ -1518,6 +1036,8 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U16] = nx_c_cast_u16_to_u16,
                 [NX_DTYPE_I32] = nx_c_cast_u16_to_i32,
                 [NX_DTYPE_I64] = nx_c_cast_u16_to_i64,
+                [NX_DTYPE_U32] = nx_c_cast_u16_to_u32,
+                [NX_DTYPE_U64] = nx_c_cast_u16_to_u64,
                 [NX_DTYPE_INAT] = nx_c_cast_u16_to_inat,
                 [NX_DTYPE_F16] = nx_c_cast_u16_to_f16,
                 [NX_DTYPE_F32] = nx_c_cast_u16_to_f32,
@@ -1530,9 +1050,6 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U4] = nx_c_cast_u16_to_u4,
                 [NX_DTYPE_F8E4M3] = nx_c_cast_u16_to_f8e4m3,
                 [NX_DTYPE_F8E5M2] = nx_c_cast_u16_to_f8e5m2,
-                [NX_DTYPE_C16] = nx_c_cast_u16_to_c16,
-                [NX_DTYPE_QI8] = nx_c_cast_u16_to_qi8,
-                [NX_DTYPE_QU8] = nx_c_cast_u16_to_qu8,
             },
         [NX_DTYPE_I32] =
             {
@@ -1542,6 +1059,8 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U16] = nx_c_cast_i32_to_u16,
                 [NX_DTYPE_I32] = nx_c_cast_i32_to_i32,
                 [NX_DTYPE_I64] = nx_c_cast_i32_to_i64,
+                [NX_DTYPE_U32] = nx_c_cast_i32_to_u32,
+                [NX_DTYPE_U64] = nx_c_cast_i32_to_u64,
                 [NX_DTYPE_INAT] = nx_c_cast_i32_to_inat,
                 [NX_DTYPE_F16] = nx_c_cast_i32_to_f16,
                 [NX_DTYPE_F32] = nx_c_cast_i32_to_f32,
@@ -1554,9 +1073,6 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U4] = nx_c_cast_i32_to_u4,
                 [NX_DTYPE_F8E4M3] = nx_c_cast_i32_to_f8e4m3,
                 [NX_DTYPE_F8E5M2] = nx_c_cast_i32_to_f8e5m2,
-                [NX_DTYPE_C16] = nx_c_cast_i32_to_c16,
-                [NX_DTYPE_QI8] = nx_c_cast_i32_to_qi8,
-                [NX_DTYPE_QU8] = nx_c_cast_i32_to_qu8,
             },
         [NX_DTYPE_I64] =
             {
@@ -1566,6 +1082,8 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U16] = nx_c_cast_i64_to_u16,
                 [NX_DTYPE_I32] = nx_c_cast_i64_to_i32,
                 [NX_DTYPE_I64] = nx_c_cast_i64_to_i64,
+                [NX_DTYPE_U32] = nx_c_cast_i64_to_u32,
+                [NX_DTYPE_U64] = nx_c_cast_i64_to_u64,
                 [NX_DTYPE_INAT] = nx_c_cast_i64_to_inat,
                 [NX_DTYPE_F16] = nx_c_cast_i64_to_f16,
                 [NX_DTYPE_F32] = nx_c_cast_i64_to_f32,
@@ -1578,9 +1096,52 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U4] = nx_c_cast_i64_to_u4,
                 [NX_DTYPE_F8E4M3] = nx_c_cast_i64_to_f8e4m3,
                 [NX_DTYPE_F8E5M2] = nx_c_cast_i64_to_f8e5m2,
-                [NX_DTYPE_C16] = nx_c_cast_i64_to_c16,
-                [NX_DTYPE_QI8] = nx_c_cast_i64_to_qi8,
-                [NX_DTYPE_QU8] = nx_c_cast_i64_to_qu8,
+            },
+        [NX_DTYPE_U32] =
+            {
+                [NX_DTYPE_I8] = nx_c_cast_u32_to_i8,
+                [NX_DTYPE_U8] = nx_c_cast_u32_to_u8,
+                [NX_DTYPE_I16] = nx_c_cast_u32_to_i16,
+                [NX_DTYPE_U16] = nx_c_cast_u32_to_u16,
+                [NX_DTYPE_I32] = nx_c_cast_u32_to_i32,
+                [NX_DTYPE_I64] = nx_c_cast_u32_to_i64,
+                [NX_DTYPE_U32] = nx_c_cast_u32_to_u32,
+                [NX_DTYPE_U64] = nx_c_cast_u32_to_u64,
+                [NX_DTYPE_INAT] = nx_c_cast_u32_to_inat,
+                [NX_DTYPE_F16] = nx_c_cast_u32_to_f16,
+                [NX_DTYPE_F32] = nx_c_cast_u32_to_f32,
+                [NX_DTYPE_F64] = nx_c_cast_u32_to_f64,
+                [NX_DTYPE_C32] = nx_c_cast_u32_to_c32,
+                [NX_DTYPE_C64] = nx_c_cast_u32_to_c64,
+                [NX_DTYPE_BF16] = nx_c_cast_u32_to_bf16,
+                [NX_DTYPE_BOOL] = nx_c_cast_u32_to_bool,
+                [NX_DTYPE_I4] = nx_c_cast_u32_to_i4,
+                [NX_DTYPE_U4] = nx_c_cast_u32_to_u4,
+                [NX_DTYPE_F8E4M3] = nx_c_cast_u32_to_f8e4m3,
+                [NX_DTYPE_F8E5M2] = nx_c_cast_u32_to_f8e5m2,
+            },
+        [NX_DTYPE_U64] =
+            {
+                [NX_DTYPE_I8] = nx_c_cast_u64_to_i8,
+                [NX_DTYPE_U8] = nx_c_cast_u64_to_u8,
+                [NX_DTYPE_I16] = nx_c_cast_u64_to_i16,
+                [NX_DTYPE_U16] = nx_c_cast_u64_to_u16,
+                [NX_DTYPE_I32] = nx_c_cast_u64_to_i32,
+                [NX_DTYPE_I64] = nx_c_cast_u64_to_i64,
+                [NX_DTYPE_U32] = nx_c_cast_u64_to_u32,
+                [NX_DTYPE_U64] = nx_c_cast_u64_to_u64,
+                [NX_DTYPE_INAT] = nx_c_cast_u64_to_inat,
+                [NX_DTYPE_F16] = nx_c_cast_u64_to_f16,
+                [NX_DTYPE_F32] = nx_c_cast_u64_to_f32,
+                [NX_DTYPE_F64] = nx_c_cast_u64_to_f64,
+                [NX_DTYPE_C32] = nx_c_cast_u64_to_c32,
+                [NX_DTYPE_C64] = nx_c_cast_u64_to_c64,
+                [NX_DTYPE_BF16] = nx_c_cast_u64_to_bf16,
+                [NX_DTYPE_BOOL] = nx_c_cast_u64_to_bool,
+                [NX_DTYPE_I4] = nx_c_cast_u64_to_i4,
+                [NX_DTYPE_U4] = nx_c_cast_u64_to_u4,
+                [NX_DTYPE_F8E4M3] = nx_c_cast_u64_to_f8e4m3,
+                [NX_DTYPE_F8E5M2] = nx_c_cast_u64_to_f8e5m2,
             },
         [NX_DTYPE_INAT] =
             {
@@ -1590,6 +1151,8 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U16] = nx_c_cast_inat_to_u16,
                 [NX_DTYPE_I32] = nx_c_cast_inat_to_i32,
                 [NX_DTYPE_I64] = nx_c_cast_inat_to_i64,
+                [NX_DTYPE_U32] = nx_c_cast_inat_to_u32,
+                [NX_DTYPE_U64] = nx_c_cast_inat_to_u64,
                 [NX_DTYPE_INAT] = nx_c_cast_inat_to_inat,
                 [NX_DTYPE_F16] = nx_c_cast_inat_to_f16,
                 [NX_DTYPE_F32] = nx_c_cast_inat_to_f32,
@@ -1602,9 +1165,6 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U4] = nx_c_cast_inat_to_u4,
                 [NX_DTYPE_F8E4M3] = nx_c_cast_inat_to_f8e4m3,
                 [NX_DTYPE_F8E5M2] = nx_c_cast_inat_to_f8e5m2,
-                [NX_DTYPE_C16] = nx_c_cast_inat_to_c16,
-                [NX_DTYPE_QI8] = nx_c_cast_inat_to_qi8,
-                [NX_DTYPE_QU8] = nx_c_cast_inat_to_qu8,
             },
         [NX_DTYPE_F16] =
             {
@@ -1614,6 +1174,8 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U16] = nx_c_cast_f16_to_u16,
                 [NX_DTYPE_I32] = nx_c_cast_f16_to_i32,
                 [NX_DTYPE_I64] = nx_c_cast_f16_to_i64,
+                [NX_DTYPE_U32] = nx_c_cast_f16_to_u32,
+                [NX_DTYPE_U64] = nx_c_cast_f16_to_u64,
                 [NX_DTYPE_INAT] = nx_c_cast_f16_to_inat,
                 [NX_DTYPE_F16] = nx_c_cast_f16_to_f16,
                 [NX_DTYPE_F32] = nx_c_cast_f16_to_f32,
@@ -1626,9 +1188,6 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U4] = nx_c_cast_f16_to_u4,
                 [NX_DTYPE_F8E4M3] = nx_c_cast_f16_to_f8e4m3,
                 [NX_DTYPE_F8E5M2] = nx_c_cast_f16_to_f8e5m2,
-                [NX_DTYPE_C16] = nx_c_cast_f16_to_c16,
-                [NX_DTYPE_QI8] = nx_c_cast_f16_to_qi8,
-                [NX_DTYPE_QU8] = nx_c_cast_f16_to_qu8,
             },
         [NX_DTYPE_F32] =
             {
@@ -1638,6 +1197,8 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U16] = nx_c_cast_f32_to_u16,
                 [NX_DTYPE_I32] = nx_c_cast_f32_to_i32,
                 [NX_DTYPE_I64] = nx_c_cast_f32_to_i64,
+                [NX_DTYPE_U32] = nx_c_cast_f32_to_u32,
+                [NX_DTYPE_U64] = nx_c_cast_f32_to_u64,
                 [NX_DTYPE_INAT] = nx_c_cast_f32_to_inat,
                 [NX_DTYPE_F16] = nx_c_cast_f32_to_f16,
                 [NX_DTYPE_F32] = nx_c_cast_f32_to_f32,
@@ -1650,9 +1211,6 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U4] = nx_c_cast_f32_to_u4,
                 [NX_DTYPE_F8E4M3] = nx_c_cast_f32_to_f8e4m3,
                 [NX_DTYPE_F8E5M2] = nx_c_cast_f32_to_f8e5m2,
-                [NX_DTYPE_C16] = nx_c_cast_f32_to_c16,
-                [NX_DTYPE_QI8] = nx_c_cast_f32_to_qi8,
-                [NX_DTYPE_QU8] = nx_c_cast_f32_to_qu8,
             },
         [NX_DTYPE_F64] =
             {
@@ -1662,6 +1220,8 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U16] = nx_c_cast_f64_to_u16,
                 [NX_DTYPE_I32] = nx_c_cast_f64_to_i32,
                 [NX_DTYPE_I64] = nx_c_cast_f64_to_i64,
+                [NX_DTYPE_U32] = nx_c_cast_f64_to_u32,
+                [NX_DTYPE_U64] = nx_c_cast_f64_to_u64,
                 [NX_DTYPE_INAT] = nx_c_cast_f64_to_inat,
                 [NX_DTYPE_F16] = nx_c_cast_f64_to_f16,
                 [NX_DTYPE_F32] = nx_c_cast_f64_to_f32,
@@ -1674,9 +1234,6 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U4] = nx_c_cast_f64_to_u4,
                 [NX_DTYPE_F8E4M3] = nx_c_cast_f64_to_f8e4m3,
                 [NX_DTYPE_F8E5M2] = nx_c_cast_f64_to_f8e5m2,
-                [NX_DTYPE_C16] = nx_c_cast_f64_to_c16,
-                [NX_DTYPE_QI8] = nx_c_cast_f64_to_qi8,
-                [NX_DTYPE_QU8] = nx_c_cast_f64_to_qu8,
             },
         [NX_DTYPE_C32] =
             {
@@ -1686,6 +1243,8 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U16] = nx_c_cast_c32_to_u16,
                 [NX_DTYPE_I32] = nx_c_cast_c32_to_i32,
                 [NX_DTYPE_I64] = nx_c_cast_c32_to_i64,
+                [NX_DTYPE_U32] = nx_c_cast_c32_to_u32,
+                [NX_DTYPE_U64] = nx_c_cast_c32_to_u64,
                 [NX_DTYPE_INAT] = nx_c_cast_c32_to_inat,
                 [NX_DTYPE_F16] = nx_c_cast_c32_to_f16,
                 [NX_DTYPE_F32] = nx_c_cast_c32_to_f32,
@@ -1698,9 +1257,6 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U4] = nx_c_cast_c32_to_u4,
                 [NX_DTYPE_F8E4M3] = nx_c_cast_c32_to_f8e4m3,
                 [NX_DTYPE_F8E5M2] = nx_c_cast_c32_to_f8e5m2,
-                [NX_DTYPE_C16] = nx_c_cast_c32_to_c16,
-                [NX_DTYPE_QI8] = nx_c_cast_c32_to_qi8,
-                [NX_DTYPE_QU8] = nx_c_cast_c32_to_qu8,
             },
         [NX_DTYPE_C64] =
             {
@@ -1710,6 +1266,8 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U16] = nx_c_cast_c64_to_u16,
                 [NX_DTYPE_I32] = nx_c_cast_c64_to_i32,
                 [NX_DTYPE_I64] = nx_c_cast_c64_to_i64,
+                [NX_DTYPE_U32] = nx_c_cast_c64_to_u32,
+                [NX_DTYPE_U64] = nx_c_cast_c64_to_u64,
                 [NX_DTYPE_INAT] = nx_c_cast_c64_to_inat,
                 [NX_DTYPE_F16] = nx_c_cast_c64_to_f16,
                 [NX_DTYPE_F32] = nx_c_cast_c64_to_f32,
@@ -1722,9 +1280,6 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U4] = nx_c_cast_c64_to_u4,
                 [NX_DTYPE_F8E4M3] = nx_c_cast_c64_to_f8e4m3,
                 [NX_DTYPE_F8E5M2] = nx_c_cast_c64_to_f8e5m2,
-                [NX_DTYPE_C16] = nx_c_cast_c64_to_c16,
-                [NX_DTYPE_QI8] = nx_c_cast_c64_to_qi8,
-                [NX_DTYPE_QU8] = nx_c_cast_c64_to_qu8,
             },
         [NX_DTYPE_BF16] =
             {
@@ -1734,6 +1289,8 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U16] = nx_c_cast_bf16_to_u16,
                 [NX_DTYPE_I32] = nx_c_cast_bf16_to_i32,
                 [NX_DTYPE_I64] = nx_c_cast_bf16_to_i64,
+                [NX_DTYPE_U32] = nx_c_cast_bf16_to_u32,
+                [NX_DTYPE_U64] = nx_c_cast_bf16_to_u64,
                 [NX_DTYPE_INAT] = nx_c_cast_bf16_to_inat,
                 [NX_DTYPE_F16] = nx_c_cast_bf16_to_f16,
                 [NX_DTYPE_F32] = nx_c_cast_bf16_to_f32,
@@ -1746,9 +1303,6 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U4] = nx_c_cast_bf16_to_u4,
                 [NX_DTYPE_F8E4M3] = nx_c_cast_bf16_to_f8e4m3,
                 [NX_DTYPE_F8E5M2] = nx_c_cast_bf16_to_f8e5m2,
-                [NX_DTYPE_C16] = nx_c_cast_bf16_to_c16,
-                [NX_DTYPE_QI8] = nx_c_cast_bf16_to_qi8,
-                [NX_DTYPE_QU8] = nx_c_cast_bf16_to_qu8,
             },
         [NX_DTYPE_BOOL] =
             {
@@ -1758,6 +1312,8 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U16] = nx_c_cast_bool_to_u16,
                 [NX_DTYPE_I32] = nx_c_cast_bool_to_i32,
                 [NX_DTYPE_I64] = nx_c_cast_bool_to_i64,
+                [NX_DTYPE_U32] = nx_c_cast_bool_to_u32,
+                [NX_DTYPE_U64] = nx_c_cast_bool_to_u64,
                 [NX_DTYPE_INAT] = nx_c_cast_bool_to_inat,
                 [NX_DTYPE_F16] = NULL,
                 [NX_DTYPE_F32] = nx_c_cast_bool_to_f32,
@@ -1770,9 +1326,6 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U4] = nx_c_cast_bool_to_u4,
                 [NX_DTYPE_F8E4M3] = NULL,
                 [NX_DTYPE_F8E5M2] = NULL,
-                [NX_DTYPE_C16] = nx_c_cast_bool_to_c16,
-                [NX_DTYPE_QI8] = nx_c_cast_bool_to_qi8,
-                [NX_DTYPE_QU8] = nx_c_cast_bool_to_qu8,
             },
         [NX_DTYPE_I4] =
             {
@@ -1782,6 +1335,8 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U16] = nx_c_cast_i4_to_u16,
                 [NX_DTYPE_I32] = nx_c_cast_i4_to_i32,
                 [NX_DTYPE_I64] = nx_c_cast_i4_to_i64,
+                [NX_DTYPE_U32] = nx_c_cast_i4_to_u32,
+                [NX_DTYPE_U64] = nx_c_cast_i4_to_u64,
                 [NX_DTYPE_INAT] = nx_c_cast_i4_to_inat,
                 [NX_DTYPE_F16] = nx_c_cast_i4_to_f16,
                 [NX_DTYPE_F32] = nx_c_cast_i4_to_f32,
@@ -1794,9 +1349,6 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U4] = nx_c_cast_i4_to_u4,
                 [NX_DTYPE_F8E4M3] = nx_c_cast_i4_to_f8e4m3,
                 [NX_DTYPE_F8E5M2] = nx_c_cast_i4_to_f8e5m2,
-                [NX_DTYPE_C16] = nx_c_cast_i4_to_c16,
-                [NX_DTYPE_QI8] = nx_c_cast_i4_to_qi8,
-                [NX_DTYPE_QU8] = nx_c_cast_i4_to_qu8,
             },
         [NX_DTYPE_U4] =
             {
@@ -1806,6 +1358,8 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U16] = nx_c_cast_u4_to_u16,
                 [NX_DTYPE_I32] = nx_c_cast_u4_to_i32,
                 [NX_DTYPE_I64] = nx_c_cast_u4_to_i64,
+                [NX_DTYPE_U32] = nx_c_cast_u4_to_u32,
+                [NX_DTYPE_U64] = nx_c_cast_u4_to_u64,
                 [NX_DTYPE_INAT] = nx_c_cast_u4_to_inat,
                 [NX_DTYPE_F16] = nx_c_cast_u4_to_f16,
                 [NX_DTYPE_F32] = nx_c_cast_u4_to_f32,
@@ -1818,9 +1372,6 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U4] = nx_c_cast_u4_to_u4,
                 [NX_DTYPE_F8E4M3] = nx_c_cast_u4_to_f8e4m3,
                 [NX_DTYPE_F8E5M2] = nx_c_cast_u4_to_f8e5m2,
-                [NX_DTYPE_C16] = nx_c_cast_u4_to_c16,
-                [NX_DTYPE_QI8] = nx_c_cast_u4_to_qi8,
-                [NX_DTYPE_QU8] = nx_c_cast_u4_to_qu8,
             },
         [NX_DTYPE_F8E4M3] =
             {
@@ -1830,6 +1381,8 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U16] = nx_c_cast_f8e4m3_to_u16,
                 [NX_DTYPE_I32] = nx_c_cast_f8e4m3_to_i32,
                 [NX_DTYPE_I64] = nx_c_cast_f8e4m3_to_i64,
+                [NX_DTYPE_U32] = nx_c_cast_f8e4m3_to_u32,
+                [NX_DTYPE_U64] = nx_c_cast_f8e4m3_to_u64,
                 [NX_DTYPE_INAT] = nx_c_cast_f8e4m3_to_inat,
                 [NX_DTYPE_F16] = nx_c_cast_f8e4m3_to_f16,
                 [NX_DTYPE_F32] = nx_c_cast_f8e4m3_to_f32,
@@ -1842,9 +1395,6 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U4] = nx_c_cast_f8e4m3_to_u4,
                 [NX_DTYPE_F8E4M3] = nx_c_cast_f8e4m3_to_f8e4m3,
                 [NX_DTYPE_F8E5M2] = nx_c_cast_f8e4m3_to_f8e5m2,
-                [NX_DTYPE_C16] = nx_c_cast_f8e4m3_to_c16,
-                [NX_DTYPE_QI8] = nx_c_cast_f8e4m3_to_qi8,
-                [NX_DTYPE_QU8] = nx_c_cast_f8e4m3_to_qu8,
             },
         [NX_DTYPE_F8E5M2] =
             {
@@ -1854,6 +1404,8 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U16] = nx_c_cast_f8e5m2_to_u16,
                 [NX_DTYPE_I32] = nx_c_cast_f8e5m2_to_i32,
                 [NX_DTYPE_I64] = nx_c_cast_f8e5m2_to_i64,
+                [NX_DTYPE_U32] = nx_c_cast_f8e5m2_to_u32,
+                [NX_DTYPE_U64] = nx_c_cast_f8e5m2_to_u64,
                 [NX_DTYPE_INAT] = nx_c_cast_f8e5m2_to_inat,
                 [NX_DTYPE_F16] = nx_c_cast_f8e5m2_to_f16,
                 [NX_DTYPE_F32] = nx_c_cast_f8e5m2_to_f32,
@@ -1866,82 +1418,7 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U4] = nx_c_cast_f8e5m2_to_u4,
                 [NX_DTYPE_F8E4M3] = nx_c_cast_f8e5m2_to_f8e4m3,
                 [NX_DTYPE_F8E5M2] = nx_c_cast_f8e5m2_to_f8e5m2,
-                [NX_DTYPE_C16] = nx_c_cast_f8e5m2_to_c16,
-                [NX_DTYPE_QI8] = nx_c_cast_f8e5m2_to_qi8,
-                [NX_DTYPE_QU8] = nx_c_cast_f8e5m2_to_qu8,
-            },
-        [NX_DTYPE_C16] =
-            {
-                [NX_DTYPE_I8] = nx_c_cast_c16_to_i8,
-                [NX_DTYPE_U8] = nx_c_cast_c16_to_u8,
-                [NX_DTYPE_I16] = nx_c_cast_c16_to_i16,
-                [NX_DTYPE_U16] = nx_c_cast_c16_to_u16,
-                [NX_DTYPE_I32] = nx_c_cast_c16_to_i32,
-                [NX_DTYPE_I64] = nx_c_cast_c16_to_i64,
-                [NX_DTYPE_INAT] = nx_c_cast_c16_to_inat,
-                [NX_DTYPE_F16] = nx_c_cast_c16_to_f16,
-                [NX_DTYPE_F32] = nx_c_cast_c16_to_f32,
-                [NX_DTYPE_F64] = nx_c_cast_c16_to_f64,
-                [NX_DTYPE_C32] = nx_c_cast_c16_to_c32,
-                [NX_DTYPE_C64] = nx_c_cast_c16_to_c64,
-                [NX_DTYPE_BF16] = nx_c_cast_c16_to_bf16,
-                [NX_DTYPE_BOOL] = nx_c_cast_c16_to_bool,
-                [NX_DTYPE_I4] = nx_c_cast_c16_to_i4,
-                [NX_DTYPE_U4] = nx_c_cast_c16_to_u4,
-                [NX_DTYPE_F8E4M3] = nx_c_cast_c16_to_f8e4m3,
-                [NX_DTYPE_F8E5M2] = nx_c_cast_c16_to_f8e5m2,
-                [NX_DTYPE_C16] = nx_c_cast_c16_to_c16,
-                [NX_DTYPE_QI8] = nx_c_cast_c16_to_qi8,
-                [NX_DTYPE_QU8] = nx_c_cast_c16_to_qu8,
-            },
-        [NX_DTYPE_QI8] =
-            {
-                [NX_DTYPE_I8] = nx_c_cast_qi8_to_i8,
-                [NX_DTYPE_U8] = nx_c_cast_qi8_to_u8,
-                [NX_DTYPE_I16] = nx_c_cast_qi8_to_i16,
-                [NX_DTYPE_U16] = nx_c_cast_qi8_to_u16,
-                [NX_DTYPE_I32] = nx_c_cast_qi8_to_i32,
-                [NX_DTYPE_I64] = nx_c_cast_qi8_to_i64,
-                [NX_DTYPE_INAT] = nx_c_cast_qi8_to_inat,
-                [NX_DTYPE_F16] = nx_c_cast_qi8_to_f16,
-                [NX_DTYPE_F32] = nx_c_cast_qi8_to_f32,
-                [NX_DTYPE_F64] = nx_c_cast_qi8_to_f64,
-                [NX_DTYPE_C32] = nx_c_cast_qi8_to_c32,
-                [NX_DTYPE_C64] = nx_c_cast_qi8_to_c64,
-                [NX_DTYPE_BF16] = nx_c_cast_qi8_to_bf16,
-                [NX_DTYPE_BOOL] = nx_c_cast_qi8_to_bool,
-                [NX_DTYPE_I4] = nx_c_cast_qi8_to_i4,
-                [NX_DTYPE_U4] = nx_c_cast_qi8_to_u4,
-                [NX_DTYPE_F8E4M3] = nx_c_cast_qi8_to_f8e4m3,
-                [NX_DTYPE_F8E5M2] = nx_c_cast_qi8_to_f8e5m2,
-                [NX_DTYPE_C16] = nx_c_cast_qi8_to_c16,
-                [NX_DTYPE_QI8] = nx_c_cast_qi8_to_qi8,
-                [NX_DTYPE_QU8] = nx_c_cast_qi8_to_qu8,
-            },
-        [NX_DTYPE_QU8] =
-            {
-                [NX_DTYPE_I8] = nx_c_cast_qu8_to_i8,
-                [NX_DTYPE_U8] = nx_c_cast_qu8_to_u8,
-                [NX_DTYPE_I16] = nx_c_cast_qu8_to_i16,
-                [NX_DTYPE_U16] = nx_c_cast_qu8_to_u16,
-                [NX_DTYPE_I32] = nx_c_cast_qu8_to_i32,
-                [NX_DTYPE_I64] = nx_c_cast_qu8_to_i64,
-                [NX_DTYPE_INAT] = nx_c_cast_qu8_to_inat,
-                [NX_DTYPE_F16] = nx_c_cast_qu8_to_f16,
-                [NX_DTYPE_F32] = nx_c_cast_qu8_to_f32,
-                [NX_DTYPE_F64] = nx_c_cast_qu8_to_f64,
-                [NX_DTYPE_C32] = nx_c_cast_qu8_to_c32,
-                [NX_DTYPE_C64] = nx_c_cast_qu8_to_c64,
-                [NX_DTYPE_BF16] = nx_c_cast_qu8_to_bf16,
-                [NX_DTYPE_BOOL] = nx_c_cast_qu8_to_bool,
-                [NX_DTYPE_I4] = nx_c_cast_qu8_to_i4,
-                [NX_DTYPE_U4] = nx_c_cast_qu8_to_u4,
-                [NX_DTYPE_F8E4M3] = nx_c_cast_qu8_to_f8e4m3,
-                [NX_DTYPE_F8E5M2] = nx_c_cast_qu8_to_f8e5m2,
-                [NX_DTYPE_C16] = nx_c_cast_qu8_to_c16,
-                [NX_DTYPE_QI8] = nx_c_cast_qu8_to_qi8,
-                [NX_DTYPE_QU8] = nx_c_cast_qu8_to_qu8,
-            },
+            }
 };
 
 // Dispatch function for cast operations

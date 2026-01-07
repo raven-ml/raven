@@ -25,8 +25,8 @@ let make_parse_context row col =
 
 let encode_label label row =
   match label with
-  | "M" -> 1
-  | "B" -> 0
+  | "M" -> 1l
+  | "B" -> 0l
   | _ -> failwith (Printf.sprintf "Unknown label '%s' at row %d" label row)
 
 let load () =
@@ -61,7 +61,7 @@ let load () =
   Log.info (fun m -> m "Found %d samples." num_samples);
 
   let features = Array2.create float64 c_layout num_samples num_features in
-  let labels = Array1.create int c_layout num_samples in
+  let labels = Array1.create int32 c_layout num_samples in
 
   List.iteri
     (fun i row ->

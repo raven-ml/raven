@@ -16,10 +16,10 @@ typedef void (*unary_op_t)(const ndarray_t *, ndarray_t *);
 
 // Dispatch table for each type
 typedef struct {
-  unary_op_t i8, u8, i16, u16, i32, i64, inat;
+  unary_op_t i8, u8, i16, u16, i32, i64, u32, u64, inat;
   unary_op_t f16, f32, f64;
   unary_op_t c32, c64;
-  unary_op_t bf16, bool_, i4, u4, f8e4m3, f8e5m2, c16, qi8, qu8;
+  unary_op_t bf16, bool_, i4, u4, f8e4m3, f8e5m2;
 } unary_op_table;
 
 // Macro to generate all standard type variants for an operation (ints and
@@ -32,11 +32,11 @@ typedef struct {
   UNARY_OP_FOR_TYPE(name, uint16_t, u16, OP_EXPR)      \
   UNARY_OP_FOR_TYPE(name, int32_t, i32, OP_EXPR)       \
   UNARY_OP_FOR_TYPE(name, int64_t, i64, OP_EXPR)       \
+  UNARY_OP_FOR_TYPE(name, uint32_t, u32, OP_EXPR)      \
+  UNARY_OP_FOR_TYPE(name, uint64_t, u64, OP_EXPR)      \
   UNARY_OP_FOR_TYPE(name, intnat, inat, OP_EXPR)       \
   UNARY_OP_FOR_TYPE(name, float, f32, OP_EXPR)         \
-  UNARY_OP_FOR_TYPE(name, double, f64, OP_EXPR)        \
-  UNARY_OP_FOR_TYPE(name, caml_ba_qint8, qi8, OP_EXPR) \
-  UNARY_OP_FOR_TYPE(name, caml_ba_quint8, qu8, OP_EXPR)
+  UNARY_OP_FOR_TYPE(name, double, f64, OP_EXPR)
 
 // Macro to generate floating-point only variants
 #define GENERATE_UNARY_FLOAT_OP(name, OP_FLOAT, OP_DOUBLE) \
@@ -51,6 +51,8 @@ typedef struct {
                                               .u16 = nx_c_##name##_u16,       \
                                               .i32 = nx_c_##name##_i32,       \
                                               .i64 = nx_c_##name##_i64,       \
+                                              .u32 = nx_c_##name##_u32,       \
+                                              .u64 = nx_c_##name##_u64,       \
                                               .inat = nx_c_##name##_inat,     \
                                               .f16 = nx_c_##name##_f16,       \
                                               .f32 = nx_c_##name##_f32,       \
@@ -62,10 +64,7 @@ typedef struct {
                                               .i4 = nx_c_##name##_i4,         \
                                               .u4 = nx_c_##name##_u4,         \
                                               .f8e4m3 = nx_c_##name##_f8e4m3, \
-                                              .f8e5m2 = nx_c_##name##_f8e5m2, \
-                                              .c16 = nx_c_##name##_c16,       \
-                                              .qi8 = nx_c_##name##_qi8,       \
-                                              .qu8 = nx_c_##name##_qu8}
+                                              .f8e5m2 = nx_c_##name##_f8e5m2}
 
 // Helper function to iterate over inner dimensions for unary operations
 typedef void (*unary_kernel_fn)(void *, void *, long, long);
@@ -181,18 +180,6 @@ static inline void iterate_inner_dims_unary(const ndarray_t *x,
 // For low-precision, use the impl with the special kernel
 #define LOW_PREC_OP_IMPL(name, T, suffix) UNARY_OP_IMPL(name, T, suffix)
 
-// Complex16 operations using conversion approach
-#define COMPLEX16_OP_KERNEL(name, OP)                                          \
-  static void nx_c_##name##_c16_kernel(void *x_data, void *z_data, long x_off, \
-                                       long z_off) {                           \
-    caml_ba_complex16 *x = (caml_ba_complex16 *)x_data;                        \
-    caml_ba_complex16 *z = (caml_ba_complex16 *)z_data;                        \
-    complex32 a = half_to_float(x[x_off].re) + I * half_to_float(x[x_off].im); \
-    complex32 res = OP(a);                                                     \
-    z[z_off].re = float_to_half(crealf(res));                                  \
-    z[z_off].im = float_to_half(cimagf(res));                                  \
-  }
-
 // Helper macros for int4 saturation
 #define CLAMP_I4(x) ((x) < -8 ? -8 : ((x) > 7 ? 7 : (x)))
 #define CLAMP_U4(x) ((x) < 0 ? 0 : ((x) > 15 ? 15 : (x)))
@@ -265,8 +252,6 @@ LOW_PREC_OP_IMPL(neg, caml_ba_fp8_e5m2, f8e5m2)
 UNARY_OP_FOR_TYPE(neg, complex32, c32, NEG_OP)
 UNARY_OP_FOR_TYPE(neg, complex64, c64, NEG_OP)
 
-COMPLEX16_OP_KERNEL(neg, NEG_OP)
-UNARY_OP_IMPL(neg, caml_ba_complex16, c16)
 INT4_UNARY_IMPL(neg, 1, i4, NEG_OP)
 INT4_UNARY_IMPL(neg, 0, u4, NEG_OP)
 UNARY_OP_FOR_TYPE(neg, caml_ba_bool, bool_, NEG_BOOL_OP)
@@ -296,9 +281,6 @@ LOW_PREC_OP_IMPL(sin, caml_ba_fp8_e5m2, f8e5m2)
 UNARY_OP_FOR_TYPE(sin, complex32, c32, COMPLEX32_SIN_OP)
 UNARY_OP_FOR_TYPE(sin, complex64, c64, COMPLEX64_SIN_OP)
 
-COMPLEX16_OP_KERNEL(sin, COMPLEX32_SIN_OP)
-UNARY_OP_IMPL(sin, caml_ba_complex16, c16)
-
 // Build dispatch table with only float types (integers not supported)
 static const unary_op_table sin_table = {.i8 = NULL,
                                          .u8 = NULL,
@@ -317,10 +299,7 @@ static const unary_op_table sin_table = {.i8 = NULL,
                                          .i4 = NULL,
                                          .u4 = NULL,
                                          .f8e4m3 = nx_c_sin_f8e4m3,
-                                         .f8e5m2 = nx_c_sin_f8e5m2,
-                                         .c16 = nx_c_sin_c16,
-                                         .qi8 = NULL,
-                                         .qu8 = NULL};
+                                         .f8e5m2 = nx_c_sin_f8e5m2};
 
 // Sqrt (floating-point and complex only)
 #define SQRT_FLOAT_OP(x) (sqrtf(x))
@@ -346,9 +325,6 @@ LOW_PREC_OP_IMPL(sqrt, caml_ba_fp8_e5m2, f8e5m2)
 UNARY_OP_FOR_TYPE(sqrt, complex32, c32, COMPLEX32_SQRT_OP)
 UNARY_OP_FOR_TYPE(sqrt, complex64, c64, COMPLEX64_SQRT_OP)
 
-COMPLEX16_OP_KERNEL(sqrt, COMPLEX32_SQRT_OP)
-UNARY_OP_IMPL(sqrt, caml_ba_complex16, c16)
-
 // Build dispatch table with only float types (integers not supported)
 static const unary_op_table sqrt_table = {.i8 = NULL,
                                           .u8 = NULL,
@@ -367,10 +343,7 @@ static const unary_op_table sqrt_table = {.i8 = NULL,
                                           .i4 = NULL,
                                           .u4 = NULL,
                                           .f8e4m3 = nx_c_sqrt_f8e4m3,
-                                          .f8e5m2 = nx_c_sqrt_f8e5m2,
-                                          .c16 = nx_c_sqrt_c16,
-                                          .qi8 = NULL,
-                                          .qu8 = NULL};
+                                          .f8e5m2 = nx_c_sqrt_f8e5m2};
 
 // Reciprocal - separate handling for integers (check zero) vs floats (IEEE 754)
 #define INT_RECIP_OP(x) \
@@ -386,9 +359,9 @@ UNARY_OP_FOR_TYPE(recip, int16_t, i16, INT_RECIP_OP)
 UNARY_OP_FOR_TYPE(recip, uint16_t, u16, INT_RECIP_OP)
 UNARY_OP_FOR_TYPE(recip, int32_t, i32, INT_RECIP_OP)
 UNARY_OP_FOR_TYPE(recip, int64_t, i64, INT_RECIP_OP)
+UNARY_OP_FOR_TYPE(recip, uint32_t, u32, INT_RECIP_OP)
+UNARY_OP_FOR_TYPE(recip, uint64_t, u64, INT_RECIP_OP)
 UNARY_OP_FOR_TYPE(recip, intnat, inat, INT_RECIP_OP)
-UNARY_OP_FOR_TYPE(recip, caml_ba_qint8, qi8, INT_RECIP_OP)
-UNARY_OP_FOR_TYPE(recip, caml_ba_quint8, qu8, INT_RECIP_OP)
 
 // Floating-point types use IEEE 754 semantics (no zero check)
 UNARY_OP_FOR_TYPE(recip, float, f32, FLOAT_RECIP_OP)
@@ -411,8 +384,6 @@ LOW_PREC_OP_IMPL(recip, caml_ba_fp8_e5m2, f8e5m2)
 UNARY_OP_FOR_TYPE(recip, complex32, c32, COMPLEX32_RECIP_OP)
 UNARY_OP_FOR_TYPE(recip, complex64, c64, COMPLEX64_RECIP_OP)
 
-COMPLEX16_OP_KERNEL(recip, COMPLEX32_RECIP_OP)
-UNARY_OP_IMPL(recip, caml_ba_complex16, c16)
 INT4_UNARY_IMPL(recip, 1, i4, INT_RECIP_OP)
 INT4_UNARY_IMPL(recip, 0, u4, INT_RECIP_OP)
 UNARY_OP_FOR_TYPE(recip, caml_ba_bool, bool_, INT_RECIP_OP)
@@ -440,8 +411,6 @@ LOW_PREC_OP_IMPL(cos, caml_ba_fp8_e5m2, f8e5m2)
 UNARY_OP_FOR_TYPE(cos, complex32, c32, COMPLEX32_COS_OP)
 UNARY_OP_FOR_TYPE(cos, complex64, c64, COMPLEX64_COS_OP)
 
-COMPLEX16_OP_KERNEL(cos, COMPLEX32_COS_OP)
-UNARY_OP_IMPL(cos, caml_ba_complex16, c16)
 
 static const unary_op_table cos_table = {.i8 = NULL,
                                          .u8 = NULL,
@@ -460,10 +429,7 @@ static const unary_op_table cos_table = {.i8 = NULL,
                                          .i4 = NULL,
                                          .u4 = NULL,
                                          .f8e4m3 = nx_c_cos_f8e4m3,
-                                         .f8e5m2 = nx_c_cos_f8e5m2,
-                                         .c16 = nx_c_cos_c16,
-                                         .qi8 = NULL,
-                                         .qu8 = NULL};
+                                         .f8e5m2 = nx_c_cos_f8e5m2};
 
 // Log (natural logarithm, floating-point and complex only)
 #define LOG_FLOAT_OP(x) (logf(x))
@@ -487,8 +453,6 @@ LOW_PREC_OP_IMPL(log, caml_ba_fp8_e5m2, f8e5m2)
 UNARY_OP_FOR_TYPE(log, complex32, c32, COMPLEX32_LOG_OP)
 UNARY_OP_FOR_TYPE(log, complex64, c64, COMPLEX64_LOG_OP)
 
-COMPLEX16_OP_KERNEL(log, COMPLEX32_LOG_OP)
-UNARY_OP_IMPL(log, caml_ba_complex16, c16)
 
 static const unary_op_table log_table = {.i8 = NULL,
                                          .u8 = NULL,
@@ -507,10 +471,7 @@ static const unary_op_table log_table = {.i8 = NULL,
                                          .i4 = NULL,
                                          .u4 = NULL,
                                          .f8e4m3 = nx_c_log_f8e4m3,
-                                         .f8e5m2 = nx_c_log_f8e5m2,
-                                         .c16 = nx_c_log_c16,
-                                         .qi8 = NULL,
-                                         .qu8 = NULL};
+                                         .f8e5m2 = nx_c_log_f8e5m2};
 
 // Exp (natural exponential, floating-point and complex only)
 #define EXP_FLOAT_OP(x) (expf(x))
@@ -534,8 +495,6 @@ LOW_PREC_OP_IMPL(exp, caml_ba_fp8_e5m2, f8e5m2)
 UNARY_OP_FOR_TYPE(exp, complex32, c32, COMPLEX32_EXP_OP)
 UNARY_OP_FOR_TYPE(exp, complex64, c64, COMPLEX64_EXP_OP)
 
-COMPLEX16_OP_KERNEL(exp, COMPLEX32_EXP_OP)
-UNARY_OP_IMPL(exp, caml_ba_complex16, c16)
 
 static const unary_op_table exp_table = {.i8 = NULL,
                                          .u8 = NULL,
@@ -554,10 +513,7 @@ static const unary_op_table exp_table = {.i8 = NULL,
                                          .i4 = NULL,
                                          .u4 = NULL,
                                          .f8e4m3 = nx_c_exp_f8e4m3,
-                                         .f8e5m2 = nx_c_exp_f8e5m2,
-                                         .c16 = nx_c_exp_c16,
-                                         .qi8 = NULL,
-                                         .qu8 = NULL};
+                                         .f8e5m2 = nx_c_exp_f8e5m2};
 
 // Abs (absolute value, works on all numeric types)
 #define INT_ABS_OP(x) ((x) < 0 ? -(x) : (x))
@@ -572,11 +528,11 @@ UNARY_OP_FOR_TYPE(abs, int16_t, i16, INT_ABS_OP)
 UNARY_OP_FOR_TYPE(abs, uint16_t, u16, INT_ABS_OP)
 UNARY_OP_FOR_TYPE(abs, int32_t, i32, INT_ABS_OP)
 UNARY_OP_FOR_TYPE(abs, int64_t, i64, INT_ABS_OP)
+UNARY_OP_FOR_TYPE(abs, uint32_t, u32, INT_ABS_OP)
+UNARY_OP_FOR_TYPE(abs, uint64_t, u64, INT_ABS_OP)
 UNARY_OP_FOR_TYPE(abs, intnat, inat, INT_ABS_OP)
 UNARY_OP_FOR_TYPE(abs, float, f32, FLOAT_ABS_OP)
 UNARY_OP_FOR_TYPE(abs, double, f64, DOUBLE_ABS_OP)
-UNARY_OP_FOR_TYPE(abs, caml_ba_qint8, qi8, INT_ABS_OP)
-UNARY_OP_FOR_TYPE(abs, caml_ba_quint8, qu8, INT_ABS_OP)
 
 LOW_PREC_OP_KERNEL(abs, uint16_t, f16, FLOAT_ABS_OP, half_to_float, float_to_half)
 LOW_PREC_OP_IMPL(abs, uint16_t, f16)
@@ -595,8 +551,6 @@ LOW_PREC_OP_IMPL(abs, caml_ba_fp8_e5m2, f8e5m2)
 UNARY_OP_FOR_TYPE(abs, complex32, c32, COMPLEX32_ABS_OP)
 UNARY_OP_FOR_TYPE(abs, complex64, c64, COMPLEX64_ABS_OP)
 
-COMPLEX16_OP_KERNEL(abs, COMPLEX32_ABS_OP)
-UNARY_OP_IMPL(abs, caml_ba_complex16, c16)
 INT4_UNARY_IMPL(abs, 1, i4, INT_ABS_OP)
 INT4_UNARY_IMPL(abs, 0, u4, INT_ABS_OP)
 UNARY_OP_FOR_TYPE(abs, caml_ba_bool, bool_, INT_ABS_OP)
@@ -661,6 +615,12 @@ static void dispatch_unary_op(value v_x, value v_z, const unary_op_table *table,
     case CAML_BA_INT64:
       op = table->i64;
       break;
+    case NX_BA_UINT32:
+      op = table->u32;
+      break;
+    case NX_BA_UINT64:
+      op = table->u64;
+      break;
     case CAML_BA_CAML_INT:
     case CAML_BA_NATIVE_INT:
       op = table->inat;
@@ -697,15 +657,6 @@ static void dispatch_unary_op(value v_x, value v_z, const unary_op_table *table,
       break;
     case NX_BA_FP8_E5M2:
       op = table->f8e5m2;
-      break;
-    case NX_BA_COMPLEX16:
-      op = table->c16;
-      break;
-    case NX_BA_QINT8:
-      op = table->qi8;
-      break;
-    case NX_BA_QUINT8:
-      op = table->qu8;
       break;
     default:
       cleanup_ndarray(&x);

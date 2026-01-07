@@ -11,21 +11,18 @@ type int16_elt = Bigarray_ext.int16_signed_elt
 type uint16_elt = Bigarray_ext.int16_unsigned_elt
 type int32_elt = Bigarray_ext.int32_elt
 type int64_elt = Bigarray_ext.int64_elt
-type int_elt = Bigarray_ext.int_elt
-type nativeint_elt = Bigarray_ext.nativeint_elt
 type complex32_elt = Bigarray_ext.complex32_elt
 type complex64_elt = Bigarray_ext.complex64_elt
 
 (* Extended types from Bigarray_ext *)
+type uint32_elt = Bigarray_ext.uint32_elt
+type uint64_elt = Bigarray_ext.uint64_elt
 type bfloat16_elt = Bigarray_ext.bfloat16_elt
 type bool_elt = Bigarray_ext.bool_elt
 type int4_elt = Bigarray_ext.int4_signed_elt
 type uint4_elt = Bigarray_ext.int4_unsigned_elt
 type float8_e4m3_elt = Bigarray_ext.float8_e4m3_elt
 type float8_e5m2_elt = Bigarray_ext.float8_e5m2_elt
-type complex16_elt = Bigarray_ext.complex16_elt
-type qint8_elt = Bigarray_ext.qint8_elt
-type quint8_elt = Bigarray_ext.quint8_elt
 
 (** {2 Data Type} *)
 
@@ -41,10 +38,10 @@ type ('a, 'b) t =
   | UInt16 : (int, uint16_elt) t
   | Int32 : (int32, int32_elt) t
   | Int64 : (int64, int64_elt) t
-  | Int : (int, int_elt) t
-  | NativeInt : (nativeint, nativeint_elt) t
-  | Complex32 : (Complex.t, complex32_elt) t
-  | Complex64 : (Complex.t, complex64_elt) t
+  | UInt32 : (int32, uint32_elt) t
+  | UInt64 : (int64, uint64_elt) t
+  | Complex64 : (Complex.t, complex32_elt) t
+  | Complex128 : (Complex.t, complex64_elt) t
   (* Extended types *)
   | BFloat16 : (float, bfloat16_elt) t
   | Bool : (bool, bool_elt) t
@@ -52,9 +49,6 @@ type ('a, 'b) t =
   | UInt4 : (int, uint4_elt) t
   | Float8_e4m3 : (float, float8_e4m3_elt) t
   | Float8_e5m2 : (float, float8_e5m2_elt) t
-  | Complex16 : (Complex.t, complex16_elt) t
-  | QInt8 : (int, qint8_elt) t
-  | QUInt8 : (int, quint8_elt) t
 
 (** {2 Constructors} *)
 
@@ -67,10 +61,10 @@ val int16 : (int, int16_elt) t
 val uint16 : (int, uint16_elt) t
 val int32 : (int32, int32_elt) t
 val int64 : (int64, int64_elt) t
-val int : (int, int_elt) t
-val nativeint : (nativeint, nativeint_elt) t
-val complex32 : (Complex.t, complex32_elt) t
-val complex64 : (Complex.t, complex64_elt) t
+val uint32 : (int32, uint32_elt) t
+val uint64 : (int64, uint64_elt) t
+val complex64 : (Complex.t, complex32_elt) t
+val complex128 : (Complex.t, complex64_elt) t
 
 (* Extended types *)
 val bfloat16 : (float, bfloat16_elt) t
@@ -79,9 +73,6 @@ val int4 : (int, int4_elt) t
 val uint4 : (int, uint4_elt) t
 val float8_e4m3 : (float, float8_e4m3_elt) t
 val float8_e5m2 : (float, float8_e5m2_elt) t
-val complex16 : (Complex.t, complex16_elt) t
-val qint8 : (int, qint8_elt) t
-val quint8 : (int, quint8_elt) t
 
 (** {2 Properties} *)
 

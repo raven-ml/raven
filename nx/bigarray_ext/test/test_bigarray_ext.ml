@@ -63,40 +63,6 @@ let test_create_float8_e5m2 () =
   Alcotest.(check (float 0.1)) "float8_e5m2 get" 2.0 (Array1.get arr 1);
   Alcotest.(check (float 0.1)) "float8_e5m2 get" (-0.5) (Array1.get arr 2)
 
-let test_create_complex16 () =
-  let arr = Array1.create complex16 c_layout 5 in
-  Alcotest.(check int) "complex16 array size" 5 (Array1.dim arr);
-  let c1 = Complex.{ re = 1.0; im = 2.0 } in
-  let c2 = Complex.{ re = -0.5; im = 0.5 } in
-  Array1.set arr 0 c1;
-  Array1.set arr 1 c2;
-  let c1_get = Array1.get arr 0 in
-  let c2_get = Array1.get arr 1 in
-  Alcotest.(check (float 0.1)) "complex16 real" c1.re c1_get.Complex.re;
-  Alcotest.(check (float 0.1)) "complex16 imag" c1.im c1_get.Complex.im;
-  Alcotest.(check (float 0.1)) "complex16 real" c2.re c2_get.Complex.re;
-  Alcotest.(check (float 0.1)) "complex16 imag" c2.im c2_get.Complex.im
-
-let test_create_qint8 () =
-  let arr = Array1.create qint8 c_layout 10 in
-  Alcotest.(check int) "qint8 array size" 10 (Array1.dim arr);
-  Array1.set arr 0 (-128);
-  Array1.set arr 1 127;
-  Array1.set arr 2 0;
-  Alcotest.(check int) "qint8 get" (-128) (Array1.get arr 0);
-  Alcotest.(check int) "qint8 get" 127 (Array1.get arr 1);
-  Alcotest.(check int) "qint8 get" 0 (Array1.get arr 2)
-
-let test_create_quint8 () =
-  let arr = Array1.create quint8 c_layout 10 in
-  Alcotest.(check int) "quint8 array size" 10 (Array1.dim arr);
-  Array1.set arr 0 0;
-  Array1.set arr 1 255;
-  Array1.set arr 2 128;
-  Alcotest.(check int) "quint8 get" 0 (Array1.get arr 0);
-  Alcotest.(check int) "quint8 get" 255 (Array1.get arr 1);
-  Alcotest.(check int) "quint8 get" 128 (Array1.get arr 2)
-
 (* Test multi-dimensional arrays *)
 let test_create_2d_arrays () =
   let arr_bf16 = Array2.create bfloat16 c_layout 3 4 in
@@ -191,20 +157,7 @@ let test_genarray_get_set () =
     (Genarray.get arr_fp8 [| 0; 0 |]);
   Alcotest.(check (float 0.2))
     "Genarray float8_e4m3 get" (-2.0)
-    (Genarray.get arr_fp8 [| 1; 1 |]);
-
-  (* Test complex16 *)
-  let arr_c16 = Genarray.create complex16 c_layout [| 2 |] in
-  let c1 = Complex.{ re = 1.0; im = 2.0 } in
-  let c2 = Complex.{ re = -0.5; im = 0.5 } in
-  Genarray.set arr_c16 [| 0 |] c1;
-  Genarray.set arr_c16 [| 1 |] c2;
-  let c1_get = Genarray.get arr_c16 [| 0 |] in
-  let c2_get = Genarray.get arr_c16 [| 1 |] in
-  Alcotest.(check (float 0.1)) "Genarray complex16 real" c1.re c1_get.Complex.re;
-  Alcotest.(check (float 0.1)) "Genarray complex16 imag" c1.im c1_get.Complex.im;
-  Alcotest.(check (float 0.1)) "Genarray complex16 real" c2.re c2_get.Complex.re;
-  Alcotest.(check (float 0.1)) "Genarray complex16 imag" c2.im c2_get.Complex.im
+    (Genarray.get arr_fp8 [| 1; 1 |])
 
 (* Test kind_size_in_bytes *)
 let test_kind_sizes () =
@@ -214,9 +167,8 @@ let test_kind_sizes () =
   Alcotest.(check int) "int4_unsigned size" 1 (kind_size_in_bytes int4_unsigned);
   Alcotest.(check int) "float8_e4m3 size" 1 (kind_size_in_bytes float8_e4m3);
   Alcotest.(check int) "float8_e5m2 size" 1 (kind_size_in_bytes float8_e5m2);
-  Alcotest.(check int) "complex16 size" 4 (kind_size_in_bytes complex16);
-  Alcotest.(check int) "qint8 size" 1 (kind_size_in_bytes qint8);
-  Alcotest.(check int) "quint8 size" 1 (kind_size_in_bytes quint8);
+  Alcotest.(check int) "uint32 size" 4 (kind_size_in_bytes uint32);
+  Alcotest.(check int) "uint64 size" 8 (kind_size_in_bytes uint64);
   (* Also test standard types *)
   Alcotest.(check int) "float32 size" 4 (kind_size_in_bytes float32);
   Alcotest.(check int) "float64 size" 8 (kind_size_in_bytes float64);
@@ -257,9 +209,6 @@ let () =
           test_case "create int4_unsigned" `Quick test_create_int4_unsigned;
           test_case "create float8_e4m3" `Quick test_create_float8_e4m3;
           test_case "create float8_e5m2" `Quick test_create_float8_e5m2;
-          test_case "create complex16" `Quick test_create_complex16;
-          test_case "create qint8" `Quick test_create_qint8;
-          test_case "create quint8" `Quick test_create_quint8;
         ] );
       ( "multi-dimensional",
         [

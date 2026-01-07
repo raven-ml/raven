@@ -246,17 +246,17 @@ let to_string ?(sep = ',') ?(header = true) ?(na_repr = "") df =
               | Nx.Int64 ->
                   let arr : int64 array = Nx.to_array tensor in
                   Int64.to_string arr.(i)
-              | Nx.Int ->
-                  let arr : int array = Nx.to_array tensor in
-                  string_of_int arr.(i)
-              | Nx.NativeInt ->
-                  let arr : nativeint array = Nx.to_array tensor in
-                  Nativeint.to_string arr.(i)
-              | Nx.Complex32 ->
+              | Nx.UInt32 ->
+                  let arr : int32 array = Nx.to_array tensor in
+                  Int32.to_string arr.(i)
+              | Nx.UInt64 ->
+                  let arr : int64 array = Nx.to_array tensor in
+                  Int64.to_string arr.(i)
+              | Nx.Complex64 ->
                   let arr : Complex.t array = Nx.to_array tensor in
                   let c = arr.(i) in
                   Printf.sprintf "%g+%gi" c.re c.im
-              | Nx.Complex64 ->
+              | Nx.Complex128 ->
                   let arr : Complex.t array = Nx.to_array tensor in
                   let c = arr.(i) in
                   Printf.sprintf "%g+%gi" c.re c.im
@@ -278,17 +278,7 @@ let to_string ?(sep = ',') ?(header = true) ?(na_repr = "") df =
                   let arr : float array = Nx.to_array tensor in
                   let value = arr.(i) in
                   if classify_float value = FP_nan then na_repr
-                  else string_of_float value
-              | Nx.Complex16 ->
-                  let arr : Complex.t array = Nx.to_array tensor in
-                  let c = arr.(i) in
-                  Printf.sprintf "%g+%gi" c.re c.im
-              | Nx.QInt8 ->
-                  let arr : int array = Nx.to_array tensor in
-                  string_of_int arr.(i)
-              | Nx.QUInt8 ->
-                  let arr : int array = Nx.to_array tensor in
-                  string_of_int arr.(i))
+                  else string_of_float value)
           | Col.S arr -> ( match arr.(i) with Some s -> s | None -> na_repr)
           | Col.B arr -> (
               match arr.(i) with Some b -> string_of_bool b | None -> na_repr))

@@ -40,10 +40,10 @@ typedef void (*binary_op_t)(const ndarray_t *, const ndarray_t *, ndarray_t *);
 
 // Dispatch table for each type
 typedef struct {
-  binary_op_t i8, u8, i16, u16, i32, i64, inat;
+  binary_op_t i8, u8, i16, u16, i32, i64, u32, u64, inat;
   binary_op_t f16, f32, f64;
   binary_op_t c32, c64;
-  binary_op_t bf16, bool_, i4, u4, f8e4m3, f8e5m2, c16, qi8, qu8;
+  binary_op_t bf16, bool_, i4, u4, f8e4m3, f8e5m2;
 } binary_op_table;
 
 // Macro to generate all standard type variants for an operation
@@ -55,11 +55,11 @@ typedef struct {
   BINARY_OP_FOR_TYPE(name, uint16_t, u16, OP_EXPR)      \
   BINARY_OP_FOR_TYPE(name, int32_t, i32, OP_EXPR)       \
   BINARY_OP_FOR_TYPE(name, int64_t, i64, OP_EXPR)       \
+  BINARY_OP_FOR_TYPE(name, uint32_t, u32, OP_EXPR)      \
+  BINARY_OP_FOR_TYPE(name, uint64_t, u64, OP_EXPR)      \
   BINARY_OP_FOR_TYPE(name, intnat, inat, OP_EXPR)       \
   BINARY_OP_FOR_TYPE(name, float, f32, OP_EXPR)         \
-  BINARY_OP_FOR_TYPE(name, double, f64, OP_EXPR)        \
-  BINARY_OP_FOR_TYPE(name, caml_ba_qint8, qi8, OP_EXPR) \
-  BINARY_OP_FOR_TYPE(name, caml_ba_quint8, qu8, OP_EXPR)
+  BINARY_OP_FOR_TYPE(name, double, f64, OP_EXPR)
 
 // Macro to build dispatch table
 #define BUILD_DISPATCH_TABLE(name)                                             \
@@ -69,6 +69,8 @@ typedef struct {
                                                .u16 = nx_c_##name##_u16,       \
                                                .i32 = nx_c_##name##_i32,       \
                                                .i64 = nx_c_##name##_i64,       \
+                                               .u32 = nx_c_##name##_u32,       \
+                                               .u64 = nx_c_##name##_u64,       \
                                                .inat = nx_c_##name##_inat,     \
                                                .f16 = nx_c_##name##_f16,       \
                                                .f32 = nx_c_##name##_f32,       \
@@ -80,10 +82,7 @@ typedef struct {
                                                .i4 = nx_c_##name##_i4,         \
                                                .u4 = nx_c_##name##_u4,         \
                                                .f8e4m3 = nx_c_##name##_f8e4m3, \
-                                               .f8e5m2 = nx_c_##name##_f8e5m2, \
-                                               .c16 = nx_c_##name##_c16,       \
-                                               .qi8 = nx_c_##name##_qi8,       \
-                                               .qu8 = nx_c_##name##_qu8}
+                                               .f8e5m2 = nx_c_##name##_f8e5m2}
 
 // Helper to iterate over inner dimensions with a kernel function for binary
 // operations
@@ -224,8 +223,6 @@ static inline void iterate_inner_dims(const ndarray_t *x, const ndarray_t *y,
 #define COMPLEX_SUB(x, y) ((x) - (y))
 #define COMPLEX_DIV(x, y) ((x) / (y))
 
-// Complex16 conversion helpers are defined in nx_c_shared.h
-
 // Helper macros for int4 saturation
 #define CLAMP_I4(x) ((x) < -8 ? -8 : ((x) > 7 ? 7 : (x)))
 #define CLAMP_U4(x) ((x) < 0 ? 0 : ((x) > 15 ? 15 : (x)))
@@ -310,37 +307,6 @@ LOW_PREC_OP_IMPL(add, caml_ba_fp8_e5m2, f8e5m2)
 BINARY_OP_FOR_TYPE(add, complex32, c32, COMPLEX_ADD)
 BINARY_OP_FOR_TYPE(add, complex64, c64, COMPLEX_ADD)
 
-// Complex16 operations using conversion approach
-#define COMPLEX16_OP_KERNEL(name, OP)                                          \
-  static void nx_c_##name##_c16_kernel(void *x_data, void *y_data,             \
-                                       void *z_data, long x_off, long y_off,   \
-                                       long z_off) {                           \
-    caml_ba_complex16 *x = (caml_ba_complex16 *)x_data;                        \
-    caml_ba_complex16 *y = (caml_ba_complex16 *)y_data;                        \
-    caml_ba_complex16 *z = (caml_ba_complex16 *)z_data;                        \
-    complex32 a = half_to_float(x[x_off].re) + I * half_to_float(x[x_off].im); \
-    complex32 b = half_to_float(y[y_off].re) + I * half_to_float(y[y_off].im); \
-    complex32 res = OP(a, b);                                                  \
-    z[z_off].re = float_to_half(crealf(res));                                  \
-    z[z_off].im = float_to_half(cimagf(res));                                  \
-  }
-
-// Complex16 min/max need special handling to return original values
-#define COMPLEX16_MINMAX_KERNEL(name, CMP_FUNC)                              \
-  static void nx_c_##name##_c16_kernel(void *x_data, void *y_data,           \
-                                       void *z_data, long x_off, long y_off, \
-                                       long z_off) {                         \
-    caml_ba_complex16 *x = (caml_ba_complex16 *)x_data;                      \
-    caml_ba_complex16 *y = (caml_ba_complex16 *)y_data;                      \
-    caml_ba_complex16 *z = (caml_ba_complex16 *)z_data;                      \
-    complex32 a = complex16_to_complex32(x[x_off]);                          \
-    complex32 b = complex16_to_complex32(y[y_off]);                          \
-    complex32 res = CMP_FUNC(a, b);                                          \
-    z[z_off] = (res == a) ? x[x_off] : y[y_off];                             \
-  }
-
-COMPLEX16_OP_KERNEL(add, COMPLEX_ADD)
-BINARY_OP_IMPL(add, caml_ba_complex16, c16)
 INT4_OP_IMPL(add, 1, i4, ADD_OP)
 INT4_OP_IMPL(add, 0, u4, ADD_OP)
 BINARY_OP_FOR_TYPE(add, caml_ba_bool, bool_, ADD_OP)  // Standard arithmetic
@@ -366,8 +332,6 @@ LOW_PREC_OP_IMPL(sub, caml_ba_fp8_e5m2, f8e5m2)
 BINARY_OP_FOR_TYPE(sub, complex32, c32, COMPLEX_SUB)
 BINARY_OP_FOR_TYPE(sub, complex64, c64, COMPLEX_SUB)
 
-COMPLEX16_OP_KERNEL(sub, COMPLEX_SUB)
-BINARY_OP_IMPL(sub, caml_ba_complex16, c16)
 INT4_OP_IMPL(sub, 1, i4, SUB_OP)
 INT4_OP_IMPL(sub, 0, u4, SUB_OP)
 BINARY_OP_FOR_TYPE(sub, caml_ba_bool, bool_,
@@ -394,8 +358,6 @@ LOW_PREC_OP_IMPL(mul, caml_ba_fp8_e5m2, f8e5m2)
 BINARY_OP_FOR_TYPE(mul, complex32, c32, COMPLEX_MUL)
 BINARY_OP_FOR_TYPE(mul, complex64, c64, COMPLEX_MUL)
 
-COMPLEX16_OP_KERNEL(mul, COMPLEX_MUL)
-BINARY_OP_IMPL(mul, caml_ba_complex16, c16)
 INT4_OP_IMPL(mul, 1, i4, MUL_OP)
 INT4_OP_IMPL(mul, 0, u4, MUL_OP)
 BINARY_OP_FOR_TYPE(mul, caml_ba_bool, bool_, MUL_OP)  // Standard arithmetic
@@ -412,9 +374,9 @@ BINARY_OP_FOR_TYPE(idiv, int16_t, i16, INT_DIV_OP)
 BINARY_OP_FOR_TYPE(idiv, uint16_t, u16, INT_DIV_OP)
 BINARY_OP_FOR_TYPE(idiv, int32_t, i32, INT_DIV_OP)
 BINARY_OP_FOR_TYPE(idiv, int64_t, i64, INT_DIV_OP)
+BINARY_OP_FOR_TYPE(idiv, uint32_t, u32, INT_DIV_OP)
+BINARY_OP_FOR_TYPE(idiv, uint64_t, u64, INT_DIV_OP)
 BINARY_OP_FOR_TYPE(idiv, intnat, inat, INT_DIV_OP)
-BINARY_OP_FOR_TYPE(idiv, caml_ba_qint8, qi8, INT_DIV_OP)
-BINARY_OP_FOR_TYPE(idiv, caml_ba_quint8, qu8, INT_DIV_OP)
 
 // For float types, idiv truncates the result
 #define FLOAT_IDIV_OP(x, y) (trunc((x) / (y)))
@@ -456,18 +418,6 @@ static void nx_c_idiv_c64_kernel(void *x_data, void *y_data, void *z_data,
 BINARY_OP_IMPL(idiv, complex32, c32)
 BINARY_OP_IMPL(idiv, complex64, c64)
 
-static void nx_c_idiv_c16_kernel(void *x_data, void *y_data, void *z_data,
-                                 long x_off, long y_off, long z_off) {
-  caml_ba_complex16 *x = (caml_ba_complex16 *)x_data;
-  caml_ba_complex16 *y = (caml_ba_complex16 *)y_data;
-  caml_ba_complex16 *z = (caml_ba_complex16 *)z_data;
-  complex32 a = half_to_float(x[x_off].re) + I * half_to_float(x[x_off].im);
-  complex32 b = half_to_float(y[y_off].re) + I * half_to_float(y[y_off].im);
-  complex32 res = a / b;
-  z[z_off].re = float_to_half(truncf(crealf(res)));
-  z[z_off].im = float_to_half(truncf(cimagf(res)));
-}
-BINARY_OP_IMPL(idiv, caml_ba_complex16, c16)
 
 INT4_OP_IMPL(idiv, 1, i4, INT_DIV_OP)
 INT4_OP_IMPL(idiv, 0, u4, INT_DIV_OP)
@@ -484,9 +434,9 @@ BINARY_OP_FOR_TYPE(fdiv, int16_t, i16, FLOAT_DIV_OP)
 BINARY_OP_FOR_TYPE(fdiv, uint16_t, u16, FLOAT_DIV_OP)
 BINARY_OP_FOR_TYPE(fdiv, int32_t, i32, FLOAT_DIV_OP)
 BINARY_OP_FOR_TYPE(fdiv, int64_t, i64, FLOAT_DIV_OP)
+BINARY_OP_FOR_TYPE(fdiv, uint32_t, u32, FLOAT_DIV_OP)
+BINARY_OP_FOR_TYPE(fdiv, uint64_t, u64, FLOAT_DIV_OP)
 BINARY_OP_FOR_TYPE(fdiv, intnat, inat, FLOAT_DIV_OP)
-BINARY_OP_FOR_TYPE(fdiv, caml_ba_qint8, qi8, FLOAT_DIV_OP)
-BINARY_OP_FOR_TYPE(fdiv, caml_ba_quint8, qu8, FLOAT_DIV_OP)
 
 // Floating-point types use IEEE 754 semantics
 BINARY_OP_FOR_TYPE(fdiv, float, f32, FLOAT_DIV_OP)
@@ -508,8 +458,6 @@ LOW_PREC_OP_IMPL(fdiv, caml_ba_fp8_e5m2, f8e5m2)
 BINARY_OP_FOR_TYPE(fdiv, complex32, c32, COMPLEX_DIV)
 BINARY_OP_FOR_TYPE(fdiv, complex64, c64, COMPLEX_DIV)
 
-COMPLEX16_OP_KERNEL(fdiv, COMPLEX_DIV)
-BINARY_OP_IMPL(fdiv, caml_ba_complex16, c16)
 INT4_OP_IMPL(fdiv, 1, i4, FLOAT_DIV_OP)
 INT4_OP_IMPL(fdiv, 0, u4, FLOAT_DIV_OP)
 BINARY_OP_FOR_TYPE(fdiv, caml_ba_bool, bool_, FLOAT_DIV_OP)
@@ -534,8 +482,6 @@ LOW_PREC_OP_IMPL(max, caml_ba_fp8_e5m2, f8e5m2)
 
 BINARY_OP_FOR_TYPE(max, complex32, c32, complex_max)
 BINARY_OP_FOR_TYPE(max, complex64, c64, complex64_max)
-COMPLEX16_MINMAX_KERNEL(max, complex_max)
-BINARY_OP_IMPL(max, caml_ba_complex16, c16)
 INT4_OP_IMPL(max, 1, i4, MAX_OP)
 INT4_OP_IMPL(max, 0, u4, MAX_OP)
 BINARY_OP_FOR_TYPE(max, caml_ba_bool, bool_, MAX_OP)  // Standard comparison
@@ -559,8 +505,6 @@ LOW_PREC_OP_IMPL(min, caml_ba_fp8_e5m2, f8e5m2)
 
 BINARY_OP_FOR_TYPE(min, complex32, c32, complex_min)
 BINARY_OP_FOR_TYPE(min, complex64, c64, complex64_min)
-COMPLEX16_MINMAX_KERNEL(min, complex_min)
-BINARY_OP_IMPL(min, caml_ba_complex16, c16)
 INT4_OP_IMPL(min, 1, i4, MIN_OP)
 INT4_OP_IMPL(min, 0, u4, MIN_OP)
 BINARY_OP_FOR_TYPE(min, caml_ba_bool, bool_, MIN_OP)  // Standard comparison
@@ -578,6 +522,8 @@ BINARY_OP_FOR_TYPE(mod, int16_t, i16, MOD_OP)
 BINARY_OP_FOR_TYPE(mod, uint16_t, u16, MOD_OP)
 BINARY_OP_FOR_TYPE(mod, int32_t, i32, MOD_OP)
 BINARY_OP_FOR_TYPE(mod, int64_t, i64, MOD_OP)
+BINARY_OP_FOR_TYPE(mod, uint32_t, u32, MOD_OP)
+BINARY_OP_FOR_TYPE(mod, uint64_t, u64, MOD_OP)
 BINARY_OP_FOR_TYPE(mod, intnat, inat, MOD_OP)
 
 // Float modulo uses fmod
@@ -600,8 +546,6 @@ LOW_PREC_OP_IMPL(mod, caml_ba_fp8_e5m2, f8e5m2)
 INT4_OP_IMPL(mod, 1, i4, MOD_OP)
 INT4_OP_IMPL(mod, 0, u4, MOD_OP)
 BINARY_OP_FOR_TYPE(mod, caml_ba_bool, bool_, MOD_OP)
-BINARY_OP_FOR_TYPE(mod, caml_ba_qint8, qi8, MOD_OP)
-BINARY_OP_FOR_TYPE(mod, caml_ba_quint8, qu8, MOD_OP)
 
 // Build dispatch table with NULL for unsupported complex types
 static const binary_op_table mod_table = {.i8 = nx_c_mod_i8,
@@ -610,6 +554,8 @@ static const binary_op_table mod_table = {.i8 = nx_c_mod_i8,
                                           .u16 = nx_c_mod_u16,
                                           .i32 = nx_c_mod_i32,
                                           .i64 = nx_c_mod_i64,
+                                          .u32 = nx_c_mod_u32,
+                                          .u64 = nx_c_mod_u64,
                                           .inat = nx_c_mod_inat,
                                           .f16 = nx_c_mod_f16,
                                           .f32 = nx_c_mod_f32,
@@ -621,10 +567,7 @@ static const binary_op_table mod_table = {.i8 = nx_c_mod_i8,
                                           .i4 = nx_c_mod_i4,
                                           .u4 = nx_c_mod_u4,
                                           .f8e4m3 = nx_c_mod_f8e4m3,
-                                          .f8e5m2 = nx_c_mod_f8e5m2,
-                                          .c16 = NULL,
-                                          .qi8 = nx_c_mod_qi8,
-                                          .qu8 = nx_c_mod_qu8};
+                                          .f8e5m2 = nx_c_mod_f8e5m2};
 
 // =========== POWER ===========
 #define POW_OP(x, y) (pow((double)(x), (double)(y)))
@@ -638,6 +581,8 @@ BINARY_OP_FOR_TYPE(pow, int16_t, i16, POW_OP)
 BINARY_OP_FOR_TYPE(pow, uint16_t, u16, POW_OP)
 BINARY_OP_FOR_TYPE(pow, int32_t, i32, POW_OP)
 BINARY_OP_FOR_TYPE(pow, int64_t, i64, POW_OP)
+BINARY_OP_FOR_TYPE(pow, uint32_t, u32, POW_OP)
+BINARY_OP_FOR_TYPE(pow, uint64_t, u64, POW_OP)
 BINARY_OP_FOR_TYPE(pow, intnat, inat, POW_OP)
 
 BINARY_OP_FOR_TYPE(pow, float, f32, FPOW_OP)
@@ -660,24 +605,10 @@ LOW_PREC_OP_IMPL(pow, caml_ba_fp8_e5m2, f8e5m2)
 BINARY_OP_FOR_TYPE(pow, complex32, c32, CPOW32_OP)
 BINARY_OP_FOR_TYPE(pow, complex64, c64, CPOW64_OP)
 
-static void nx_c_pow_c16_kernel(void *x_data, void *y_data, void *z_data,
-                                long x_off, long y_off, long z_off) {
-  caml_ba_complex16 *x = (caml_ba_complex16 *)x_data;
-  caml_ba_complex16 *y = (caml_ba_complex16 *)y_data;
-  caml_ba_complex16 *z = (caml_ba_complex16 *)z_data;
-  complex32 a = half_to_float(x[x_off].re) + I * half_to_float(x[x_off].im);
-  complex32 b = half_to_float(y[y_off].re) + I * half_to_float(y[y_off].im);
-  complex32 res = cpowf(a, b);
-  z[z_off].re = float_to_half(crealf(res));
-  z[z_off].im = float_to_half(cimagf(res));
-}
-BINARY_OP_IMPL(pow, caml_ba_complex16, c16)
 
 INT4_OP_IMPL(pow, 1, i4, POW_OP)
 INT4_OP_IMPL(pow, 0, u4, POW_OP)
 BINARY_OP_FOR_TYPE(pow, caml_ba_bool, bool_, POW_OP)
-BINARY_OP_FOR_TYPE(pow, caml_ba_qint8, qi8, POW_OP)
-BINARY_OP_FOR_TYPE(pow, caml_ba_quint8, qu8, POW_OP)
 BUILD_DISPATCH_TABLE(pow);
 
 // =========== COMPARISON - LESS THAN ===========
@@ -735,6 +666,8 @@ COMPARISON_OP_FOR_TYPE(cmplt, int16_t, i16, CMPLT_OP)
 COMPARISON_OP_FOR_TYPE(cmplt, uint16_t, u16, CMPLT_OP)
 COMPARISON_OP_FOR_TYPE(cmplt, int32_t, i32, CMPLT_OP)
 COMPARISON_OP_FOR_TYPE(cmplt, int64_t, i64, CMPLT_OP)
+COMPARISON_OP_FOR_TYPE(cmplt, uint32_t, u32, CMPLT_OP)
+COMPARISON_OP_FOR_TYPE(cmplt, uint64_t, u64, CMPLT_OP)
 COMPARISON_OP_FOR_TYPE(cmplt, intnat, inat, CMPLT_OP)
 COMPARISON_OP_FOR_TYPE(cmplt, float, f32, CMPLT_OP)
 COMPARISON_OP_FOR_TYPE(cmplt, double, f64, CMPLT_OP)
@@ -848,8 +781,6 @@ INT4_COMPARISON_OP_IMPL(cmpne, 1, i4, CMPNE_OP)
 INT4_COMPARISON_OP_IMPL(cmpne, 0, u4, CMPNE_OP)
 
 COMPARISON_OP_FOR_TYPE(cmplt, caml_ba_bool, bool_, CMPLT_OP)
-COMPARISON_OP_FOR_TYPE(cmplt, caml_ba_qint8, qi8, CMPLT_OP)
-COMPARISON_OP_FOR_TYPE(cmplt, caml_ba_quint8, qu8, CMPLT_OP)
 
 // Build dispatch table with NULL for unsupported complex and int4/uint4 types
 static const binary_op_table cmplt_table = {.i8 = nx_c_cmplt_i8,
@@ -858,6 +789,8 @@ static const binary_op_table cmplt_table = {.i8 = nx_c_cmplt_i8,
                                             .u16 = nx_c_cmplt_u16,
                                             .i32 = nx_c_cmplt_i32,
                                             .i64 = nx_c_cmplt_i64,
+                                            .u32 = nx_c_cmplt_u32,
+                                            .u64 = nx_c_cmplt_u64,
                                             .inat = nx_c_cmplt_inat,
                                             .f16 = nx_c_cmplt_f16,
                                             .f32 = nx_c_cmplt_f32,
@@ -869,10 +802,7 @@ static const binary_op_table cmplt_table = {.i8 = nx_c_cmplt_i8,
                                             .i4 = nx_c_cmplt_i4,
                                             .u4 = nx_c_cmplt_u4,
                                             .f8e4m3 = nx_c_cmplt_f8e4m3,
-                                            .f8e5m2 = nx_c_cmplt_f8e5m2,
-                                            .c16 = NULL,
-                                            .qi8 = nx_c_cmplt_qi8,
-                                            .qu8 = nx_c_cmplt_qu8};
+                                            .f8e5m2 = nx_c_cmplt_f8e5m2};
 
 // =========== COMPARISON - NOT EQUAL ===========
 COMPARISON_OP_FOR_TYPE(cmpne, int8_t, i8, CMPNE_OP)
@@ -881,6 +811,8 @@ COMPARISON_OP_FOR_TYPE(cmpne, int16_t, i16, CMPNE_OP)
 COMPARISON_OP_FOR_TYPE(cmpne, uint16_t, u16, CMPNE_OP)
 COMPARISON_OP_FOR_TYPE(cmpne, int32_t, i32, CMPNE_OP)
 COMPARISON_OP_FOR_TYPE(cmpne, int64_t, i64, CMPNE_OP)
+COMPARISON_OP_FOR_TYPE(cmpne, uint32_t, u32, CMPNE_OP)
+COMPARISON_OP_FOR_TYPE(cmpne, uint64_t, u64, CMPNE_OP)
 COMPARISON_OP_FOR_TYPE(cmpne, intnat, inat, CMPNE_OP)
 COMPARISON_OP_FOR_TYPE(cmpne, float, f32, CMPNE_OP)
 COMPARISON_OP_FOR_TYPE(cmpne, double, f64, CMPNE_OP)
@@ -922,20 +854,9 @@ static void nx_c_cmpne_c64_kernel(void *x_data, void *y_data, void *z_data,
 }
 BINARY_OP_IMPL(cmpne, complex64, c64)
 
-static void nx_c_cmpne_c16_kernel(void *x_data, void *y_data, void *z_data,
-                                  long x_off, long y_off, long z_off) {
-  caml_ba_complex16 *x = (caml_ba_complex16 *)x_data;
-  caml_ba_complex16 *y = (caml_ba_complex16 *)y_data;
-  uint8_t *z = (uint8_t *)z_data;
-  z[z_off] = (x[x_off].re != y[y_off].re || x[x_off].im != y[y_off].im) ? 1 : 0;
-}
-BINARY_OP_IMPL(cmpne, caml_ba_complex16, c16)
-
 // Int4 comparison not yet implemented
 
 COMPARISON_OP_FOR_TYPE(cmpne, caml_ba_bool, bool_, CMPNE_OP)
-COMPARISON_OP_FOR_TYPE(cmpne, caml_ba_qint8, qi8, CMPNE_OP)
-COMPARISON_OP_FOR_TYPE(cmpne, caml_ba_quint8, qu8, CMPNE_OP)
 
 // Build dispatch table with NULL for unsupported int4/uint4 types
 static const binary_op_table cmpne_table = {.i8 = nx_c_cmpne_i8,
@@ -944,6 +865,8 @@ static const binary_op_table cmpne_table = {.i8 = nx_c_cmpne_i8,
                                             .u16 = nx_c_cmpne_u16,
                                             .i32 = nx_c_cmpne_i32,
                                             .i64 = nx_c_cmpne_i64,
+                                            .u32 = nx_c_cmpne_u32,
+                                            .u64 = nx_c_cmpne_u64,
                                             .inat = nx_c_cmpne_inat,
                                             .f16 = nx_c_cmpne_f16,
                                             .f32 = nx_c_cmpne_f32,
@@ -955,10 +878,7 @@ static const binary_op_table cmpne_table = {.i8 = nx_c_cmpne_i8,
                                             .i4 = nx_c_cmpne_i4,
                                             .u4 = nx_c_cmpne_u4,
                                             .f8e4m3 = nx_c_cmpne_f8e4m3,
-                                            .f8e5m2 = nx_c_cmpne_f8e5m2,
-                                            .c16 = nx_c_cmpne_c16,
-                                            .qi8 = nx_c_cmpne_qi8,
-                                            .qu8 = nx_c_cmpne_qu8};
+                                            .f8e5m2 = nx_c_cmpne_f8e5m2};
 
 // =========== COMPARISON - EQUAL ===========
 COMPARISON_OP_FOR_TYPE(cmpeq, int8_t, i8, CMPEQ_OP)
@@ -967,6 +887,8 @@ COMPARISON_OP_FOR_TYPE(cmpeq, int16_t, i16, CMPEQ_OP)
 COMPARISON_OP_FOR_TYPE(cmpeq, uint16_t, u16, CMPEQ_OP)
 COMPARISON_OP_FOR_TYPE(cmpeq, int32_t, i32, CMPEQ_OP)
 COMPARISON_OP_FOR_TYPE(cmpeq, int64_t, i64, CMPEQ_OP)
+COMPARISON_OP_FOR_TYPE(cmpeq, uint32_t, u32, CMPEQ_OP)
+COMPARISON_OP_FOR_TYPE(cmpeq, uint64_t, u64, CMPEQ_OP)
 COMPARISON_OP_FOR_TYPE(cmpeq, intnat, inat, CMPEQ_OP)
 COMPARISON_OP_FOR_TYPE(cmpeq, float, f32, CMPEQ_OP)
 COMPARISON_OP_FOR_TYPE(cmpeq, double, f64, CMPEQ_OP)
@@ -1008,18 +930,7 @@ static void nx_c_cmpeq_c64_kernel(void *x_data, void *y_data, void *z_data,
 }
 BINARY_OP_IMPL(cmpeq, complex64, c64)
 
-static void nx_c_cmpeq_c16_kernel(void *x_data, void *y_data, void *z_data,
-                                  long x_off, long y_off, long z_off) {
-  caml_ba_complex16 *x = (caml_ba_complex16 *)x_data;
-  caml_ba_complex16 *y = (caml_ba_complex16 *)y_data;
-  uint8_t *z = (uint8_t *)z_data;
-  z[z_off] = (x[x_off].re == y[y_off].re && x[x_off].im == y[y_off].im) ? 1 : 0;
-}
-BINARY_OP_IMPL(cmpeq, caml_ba_complex16, c16)
-
 COMPARISON_OP_FOR_TYPE(cmpeq, caml_ba_bool, bool_, CMPEQ_OP)
-COMPARISON_OP_FOR_TYPE(cmpeq, caml_ba_qint8, qi8, CMPEQ_OP)
-COMPARISON_OP_FOR_TYPE(cmpeq, caml_ba_quint8, qu8, CMPEQ_OP)
 
 static const binary_op_table cmpeq_table = {.i8 = nx_c_cmpeq_i8,
                                             .u8 = nx_c_cmpeq_u8,
@@ -1027,6 +938,8 @@ static const binary_op_table cmpeq_table = {.i8 = nx_c_cmpeq_i8,
                                             .u16 = nx_c_cmpeq_u16,
                                             .i32 = nx_c_cmpeq_i32,
                                             .i64 = nx_c_cmpeq_i64,
+                                            .u32 = nx_c_cmpeq_u32,
+                                            .u64 = nx_c_cmpeq_u64,
                                             .inat = nx_c_cmpeq_inat,
                                             .f16 = nx_c_cmpeq_f16,
                                             .f32 = nx_c_cmpeq_f32,
@@ -1038,10 +951,7 @@ static const binary_op_table cmpeq_table = {.i8 = nx_c_cmpeq_i8,
                                             .i4 = nx_c_cmpeq_i4,
                                             .u4 = nx_c_cmpeq_u4,
                                             .f8e4m3 = nx_c_cmpeq_f8e4m3,
-                                            .f8e5m2 = nx_c_cmpeq_f8e5m2,
-                                            .c16 = nx_c_cmpeq_c16,
-                                            .qi8 = nx_c_cmpeq_qi8,
-                                            .qu8 = nx_c_cmpeq_qu8};
+                                            .f8e5m2 = nx_c_cmpeq_f8e5m2};
 
 // =========== COMPARISON - LESS THAN OR EQUAL ===========
 COMPARISON_OP_FOR_TYPE(cmple, int8_t, i8, CMPLE_OP)
@@ -1050,6 +960,8 @@ COMPARISON_OP_FOR_TYPE(cmple, int16_t, i16, CMPLE_OP)
 COMPARISON_OP_FOR_TYPE(cmple, uint16_t, u16, CMPLE_OP)
 COMPARISON_OP_FOR_TYPE(cmple, int32_t, i32, CMPLE_OP)
 COMPARISON_OP_FOR_TYPE(cmple, int64_t, i64, CMPLE_OP)
+COMPARISON_OP_FOR_TYPE(cmple, uint32_t, u32, CMPLE_OP)
+COMPARISON_OP_FOR_TYPE(cmple, uint64_t, u64, CMPLE_OP)
 COMPARISON_OP_FOR_TYPE(cmple, intnat, inat, CMPLE_OP)
 COMPARISON_OP_FOR_TYPE(cmple, float, f32, CMPLE_OP)
 COMPARISON_OP_FOR_TYPE(cmple, double, f64, CMPLE_OP)
@@ -1073,8 +985,6 @@ LOW_PREC_CMP_KERNEL(cmple, caml_ba_fp8_e5m2, f8e5m2, CMPLE_OP,
                     fp8_e5m2_to_float)
 
 COMPARISON_OP_FOR_TYPE(cmple, caml_ba_bool, bool_, CMPLE_OP)
-COMPARISON_OP_FOR_TYPE(cmple, caml_ba_qint8, qi8, CMPLE_OP)
-COMPARISON_OP_FOR_TYPE(cmple, caml_ba_quint8, qu8, CMPLE_OP)
 
 // Build dispatch table with NULL for unsupported complex types
 static const binary_op_table cmple_table = {.i8 = nx_c_cmple_i8,
@@ -1083,6 +993,8 @@ static const binary_op_table cmple_table = {.i8 = nx_c_cmple_i8,
                                             .u16 = nx_c_cmple_u16,
                                             .i32 = nx_c_cmple_i32,
                                             .i64 = nx_c_cmple_i64,
+                                            .u32 = nx_c_cmple_u32,
+                                            .u64 = nx_c_cmple_u64,
                                             .inat = nx_c_cmple_inat,
                                             .f16 = nx_c_cmple_f16,
                                             .f32 = nx_c_cmple_f32,
@@ -1094,10 +1006,7 @@ static const binary_op_table cmple_table = {.i8 = nx_c_cmple_i8,
                                             .i4 = nx_c_cmple_i4,
                                             .u4 = nx_c_cmple_u4,
                                             .f8e4m3 = nx_c_cmple_f8e4m3,
-                                            .f8e5m2 = nx_c_cmple_f8e5m2,
-                                            .c16 = NULL,
-                                            .qi8 = nx_c_cmple_qi8,
-                                            .qu8 = nx_c_cmple_qu8};
+                                            .f8e5m2 = nx_c_cmple_f8e5m2};
 
 // =========== BITWISE XOR ===========
 #define XOR_OP(x, y) ((x) ^ (y))
@@ -1109,6 +1018,8 @@ BINARY_OP_FOR_TYPE(xor, int16_t, i16, XOR_OP)
 BINARY_OP_FOR_TYPE(xor, uint16_t, u16, XOR_OP)
 BINARY_OP_FOR_TYPE(xor, int32_t, i32, XOR_OP)
 BINARY_OP_FOR_TYPE(xor, int64_t, i64, XOR_OP)
+BINARY_OP_FOR_TYPE(xor, uint32_t, u32, XOR_OP)
+BINARY_OP_FOR_TYPE(xor, uint64_t, u64, XOR_OP)
 BINARY_OP_FOR_TYPE(xor, intnat, inat, XOR_OP)
 
 // Float bitwise operations not well-defined
@@ -1116,8 +1027,6 @@ BINARY_OP_FOR_TYPE(xor, intnat, inat, XOR_OP)
 INT4_OP_IMPL(xor, 1, i4, XOR_OP)
 INT4_OP_IMPL(xor, 0, u4, XOR_OP)
 BINARY_OP_FOR_TYPE(xor, caml_ba_bool, bool_, XOR_OP)
-BINARY_OP_FOR_TYPE(xor, caml_ba_qint8, qi8, XOR_OP)
-BINARY_OP_FOR_TYPE(xor, caml_ba_quint8, qu8, XOR_OP)
 
 // Build dispatch table with NULL for unsupported float/complex types
 static const binary_op_table xor_table = {.i8 = nx_c_xor_i8,
@@ -1126,6 +1035,8 @@ static const binary_op_table xor_table = {.i8 = nx_c_xor_i8,
                                           .u16 = nx_c_xor_u16,
                                           .i32 = nx_c_xor_i32,
                                           .i64 = nx_c_xor_i64,
+                                          .u32 = nx_c_xor_u32,
+                                          .u64 = nx_c_xor_u64,
                                           .inat = nx_c_xor_inat,
                                           .f16 = NULL,
                                           .f32 = NULL,
@@ -1137,10 +1048,7 @@ static const binary_op_table xor_table = {.i8 = nx_c_xor_i8,
                                           .i4 = nx_c_xor_i4,
                                           .u4 = nx_c_xor_u4,
                                           .f8e4m3 = NULL,
-                                          .f8e5m2 = NULL,
-                                          .c16 = NULL,
-                                          .qi8 = nx_c_xor_qi8,
-                                          .qu8 = nx_c_xor_qu8};
+                                          .f8e5m2 = NULL};
 
 // =========== BITWISE OR ===========
 #define OR_OP(x, y) ((x) | (y))
@@ -1151,6 +1059,8 @@ BINARY_OP_FOR_TYPE(or, int16_t, i16, OR_OP)
 BINARY_OP_FOR_TYPE(or, uint16_t, u16, OR_OP)
 BINARY_OP_FOR_TYPE(or, int32_t, i32, OR_OP)
 BINARY_OP_FOR_TYPE(or, int64_t, i64, OR_OP)
+BINARY_OP_FOR_TYPE(or, uint32_t, u32, OR_OP)
+BINARY_OP_FOR_TYPE(or, uint64_t, u64, OR_OP)
 BINARY_OP_FOR_TYPE(or, intnat, inat, OR_OP)
 
 // Float bitwise operations not well-defined
@@ -1158,8 +1068,6 @@ BINARY_OP_FOR_TYPE(or, intnat, inat, OR_OP)
 INT4_OP_IMPL(or, 1, i4, OR_OP)
 INT4_OP_IMPL(or, 0, u4, OR_OP)
 BINARY_OP_FOR_TYPE(or, caml_ba_bool, bool_, OR_OP)
-BINARY_OP_FOR_TYPE(or, caml_ba_qint8, qi8, OR_OP)
-BINARY_OP_FOR_TYPE(or, caml_ba_quint8, qu8, OR_OP)
 
 // Build dispatch table with NULL for unsupported float/complex types
 static const binary_op_table or_table = {.i8 = nx_c_or_i8,
@@ -1168,6 +1076,8 @@ static const binary_op_table or_table = {.i8 = nx_c_or_i8,
                                          .u16 = nx_c_or_u16,
                                          .i32 = nx_c_or_i32,
                                          .i64 = nx_c_or_i64,
+                                         .u32 = nx_c_or_u32,
+                                         .u64 = nx_c_or_u64,
                                          .inat = nx_c_or_inat,
                                          .f16 = NULL,
                                          .f32 = NULL,
@@ -1179,10 +1089,7 @@ static const binary_op_table or_table = {.i8 = nx_c_or_i8,
                                          .i4 = nx_c_or_i4,
                                          .u4 = nx_c_or_u4,
                                          .f8e4m3 = NULL,
-                                         .f8e5m2 = NULL,
-                                         .c16 = NULL,
-                                         .qi8 = nx_c_or_qi8,
-                                         .qu8 = nx_c_or_qu8};
+                                         .f8e5m2 = NULL};
 
 // =========== BITWISE AND ===========
 #define AND_OP(x, y) ((x) & (y))
@@ -1193,6 +1100,8 @@ BINARY_OP_FOR_TYPE(and, int16_t, i16, AND_OP)
 BINARY_OP_FOR_TYPE(and, uint16_t, u16, AND_OP)
 BINARY_OP_FOR_TYPE(and, int32_t, i32, AND_OP)
 BINARY_OP_FOR_TYPE(and, int64_t, i64, AND_OP)
+BINARY_OP_FOR_TYPE(and, uint32_t, u32, AND_OP)
+BINARY_OP_FOR_TYPE(and, uint64_t, u64, AND_OP)
 BINARY_OP_FOR_TYPE(and, intnat, inat, AND_OP)
 
 // Float bitwise operations not well-defined
@@ -1200,8 +1109,6 @@ BINARY_OP_FOR_TYPE(and, intnat, inat, AND_OP)
 INT4_OP_IMPL(and, 1, i4, AND_OP)
 INT4_OP_IMPL(and, 0, u4, AND_OP)
 BINARY_OP_FOR_TYPE(and, caml_ba_bool, bool_, AND_OP)
-BINARY_OP_FOR_TYPE(and, caml_ba_qint8, qi8, AND_OP)
-BINARY_OP_FOR_TYPE(and, caml_ba_quint8, qu8, AND_OP)
 
 // Build dispatch table with NULL for unsupported float/complex types
 static const binary_op_table and_table = {.i8 = nx_c_and_i8,
@@ -1210,6 +1117,8 @@ static const binary_op_table and_table = {.i8 = nx_c_and_i8,
                                           .u16 = nx_c_and_u16,
                                           .i32 = nx_c_and_i32,
                                           .i64 = nx_c_and_i64,
+                                          .u32 = nx_c_and_u32,
+                                          .u64 = nx_c_and_u64,
                                           .inat = nx_c_and_inat,
                                           .f16 = NULL,
                                           .f32 = NULL,
@@ -1221,10 +1130,7 @@ static const binary_op_table and_table = {.i8 = nx_c_and_i8,
                                           .i4 = nx_c_and_i4,
                                           .u4 = nx_c_and_u4,
                                           .f8e4m3 = NULL,
-                                          .f8e5m2 = NULL,
-                                          .c16 = NULL,
-                                          .qi8 = nx_c_and_qi8,
-                                          .qu8 = nx_c_and_qu8};
+                                          .f8e5m2 = NULL};
 
 // Shared dispatch infrastructure
 
@@ -1292,6 +1198,12 @@ static void dispatch_binary_op(value v_x, value v_y, value v_z,
     case CAML_BA_INT64:
       op = table->i64;
       break;
+    case NX_BA_UINT32:
+      op = table->u32;
+      break;
+    case NX_BA_UINT64:
+      op = table->u64;
+      break;
     case CAML_BA_CAML_INT:
     case CAML_BA_NATIVE_INT:
       op = table->inat;
@@ -1328,15 +1240,6 @@ static void dispatch_binary_op(value v_x, value v_y, value v_z,
       break;
     case NX_BA_FP8_E5M2:
       op = table->f8e5m2;
-      break;
-    case NX_BA_COMPLEX16:
-      op = table->c16;
-      break;
-    case NX_BA_QINT8:
-      op = table->qi8;
-      break;
-    case NX_BA_QUINT8:
-      op = table->qu8;
       break;
     default:
       cleanup_ndarray(&x);
@@ -1438,6 +1341,12 @@ static void dispatch_comparison_op(value v_x, value v_y, value v_z,
     case CAML_BA_INT64:
       op = table->i64;
       break;
+    case NX_BA_UINT32:
+      op = table->u32;
+      break;
+    case NX_BA_UINT64:
+      op = table->u64;
+      break;
     case CAML_BA_CAML_INT:
     case CAML_BA_NATIVE_INT:
       op = table->inat;
@@ -1474,15 +1383,6 @@ static void dispatch_comparison_op(value v_x, value v_y, value v_z,
       break;
     case NX_BA_FP8_E5M2:
       op = table->f8e5m2;
-      break;
-    case NX_BA_COMPLEX16:
-      op = table->c16;
-      break;
-    case NX_BA_QINT8:
-      op = table->qi8;
-      break;
-    case NX_BA_QUINT8:
-      op = table->qu8;
       break;
     default:
       cleanup_ndarray(&x);

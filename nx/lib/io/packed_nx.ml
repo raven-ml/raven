@@ -28,5 +28,5 @@ let as_int64 packed = convert_result_with_error Nx.int64 packed
 let as_uint8 packed = convert_result_with_error Nx.uint8 packed
 let as_uint16 packed = convert_result_with_error Nx.uint16 packed
 let as_bool packed = convert_result_with_error Nx.bool packed
-let as_complex32 packed = convert_result_with_error Nx.complex32 packed
-let as_complex64 packed = convert_result_with_error Nx.complex64 packed
+let as_complex32 packed = convert_result_with_error Nx.complex64 packed
+let as_complex64 packed = convert_result_with_error Nx.complex128 packed

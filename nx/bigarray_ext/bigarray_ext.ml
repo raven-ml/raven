@@ -10,9 +10,8 @@ type int4_signed_elt = Int4_signed_elt
 type int4_unsigned_elt = Int4_unsigned_elt
 type float8_e4m3_elt = Float8_e4m3_elt (* 4 exponent bits, 3 mantissa bits *)
 type float8_e5m2_elt = Float8_e5m2_elt (* 5 exponent bits, 2 mantissa bits *)
-type complex16_elt = Complex16_elt (* Half-precision complex *)
-type qint8_elt = Qint8_elt (* Quantized int8 *)
-type quint8_elt = Quint8_elt (* Quantized uint8 *)
+type uint32_elt = Uint32_elt
+type uint64_elt = Uint64_elt
 
 (* Shadow the kind type to include our new types *)
 type ('a, 'b) kind =
@@ -36,9 +35,8 @@ type ('a, 'b) kind =
   | Int4_unsigned : (int, int4_unsigned_elt) kind
   | Float8_e4m3 : (float, float8_e4m3_elt) kind
   | Float8_e5m2 : (float, float8_e5m2_elt) kind
-  | Complex16 : (Complex.t, complex16_elt) kind
-  | Qint8 : (int, qint8_elt) kind
-  | Quint8 : (int, quint8_elt) kind
+  | Uint32 : (int32, uint32_elt) kind
+  | Uint64 : (int64, uint64_elt) kind
 
 (* Shadow the value constructors *)
 let float32 = Float32
@@ -61,9 +59,8 @@ let int4_signed = Int4_signed
 let int4_unsigned = Int4_unsigned
 let float8_e4m3 = Float8_e4m3
 let float8_e5m2 = Float8_e5m2
-let complex16 = Complex16
-let qint8 = Qint8
-let quint8 = Quint8
+let uint32 = Uint32
+let uint64 = Uint64
 
 (* Shadow kind_size_in_bytes to handle new types *)
 let kind_size_in_bytes : type a b. (a, b) kind -> int = function
@@ -87,9 +84,8 @@ let kind_size_in_bytes : type a b. (a, b) kind -> int = function
   | Int4_unsigned -> 1 (* 2 values packed per byte *)
   | Float8_e4m3 -> 1
   | Float8_e5m2 -> 1
-  | Complex16 -> 4 (* 2 x float16 *)
-  | Qint8 -> 1
-  | Quint8 -> 1
+  | Uint32 -> 4
+  | Uint64 -> 8
 
 (* Convert our extended kind to stdlib kind for fallback *)
 let to_stdlib_kind : type a b. (a, b) kind -> (a, b) Stdlib.Bigarray.kind option
@@ -114,9 +110,8 @@ let to_stdlib_kind : type a b. (a, b) kind -> (a, b) Stdlib.Bigarray.kind option
   | Int4_unsigned -> None
   | Float8_e4m3 -> None
   | Float8_e5m2 -> None
-  | Complex16 -> None
-  | Qint8 -> None
-  | Quint8 -> None
+  | Uint32 -> None
+  | Uint64 -> None
 
 (* External functions for creating arrays with new types *)
 external create_bfloat16_genarray :
@@ -142,15 +137,11 @@ external create_float8_e5m2_genarray :
   'c layout -> int array -> ('a, 'b, 'c) Genarray.t
   = "caml_nx_ba_create_float8_e5m2"
 
-external create_complex16_genarray :
-  'c layout -> int array -> ('a, 'b, 'c) Genarray.t
-  = "caml_nx_ba_create_complex16"
+external create_uint32_genarray :
+  'c layout -> int array -> ('a, 'b, 'c) Genarray.t = "caml_nx_ba_create_uint32"
 
-external create_qint8_genarray :
-  'c layout -> int array -> ('a, 'b, 'c) Genarray.t = "caml_nx_ba_create_qint8"
-
-external create_quint8_genarray :
-  'c layout -> int array -> ('a, 'b, 'c) Genarray.t = "caml_nx_ba_create_quint8"
+external create_uint64_genarray :
+  'c layout -> int array -> ('a, 'b, 'c) Genarray.t = "caml_nx_ba_create_uint64"
 
 (* External functions for get/set operations on extended types *)
 external nx_ba_get_generic : ('a, 'b, 'c) Genarray.t -> int array -> 'a
@@ -177,9 +168,8 @@ module Genarray = struct
     | Int4_unsigned -> create_int4_unsigned_genarray layout dims
     | Float8_e4m3 -> create_float8_e4m3_genarray layout dims
     | Float8_e5m2 -> create_float8_e5m2_genarray layout dims
-    | Complex16 -> create_complex16_genarray layout dims
-    | Qint8 -> create_qint8_genarray layout dims
-    | Quint8 -> create_quint8_genarray layout dims
+    | Uint32 -> create_uint32_genarray layout dims
+    | Uint64 -> create_uint64_genarray layout dims
     | _ -> (
         match to_stdlib_kind kind with
         | Some k -> Stdlib.Bigarray.Genarray.create k layout dims

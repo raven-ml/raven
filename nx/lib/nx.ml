@@ -35,9 +35,6 @@ type int4_t = (int, Bigarray_ext.int4_signed_elt) t
 type uint4_t = (int, Bigarray_ext.int4_unsigned_elt) t
 type float8_e4m3_t = (float, Bigarray_ext.float8_e4m3_elt) t
 type float8_e5m2_t = (float, Bigarray_ext.float8_e5m2_elt) t
-type complex16_t = (Complex.t, Bigarray_ext.complex16_elt) t
-type qint8_t = (int, Bigarray_ext.qint8_elt) t
-type quint8_t = (int, Bigarray_ext.quint8_elt) t
 
 (* Re-export extended dtype value constructors *)
 let bfloat16 = Nx_core.Dtype.bfloat16
@@ -46,9 +43,6 @@ let int4 = Nx_core.Dtype.int4
 let uint4 = Nx_core.Dtype.uint4
 let float8_e4m3 = Nx_core.Dtype.float8_e4m3
 let float8_e5m2 = Nx_core.Dtype.float8_e5m2
-let complex16 = Nx_core.Dtype.complex16
-let qint8 = Nx_core.Dtype.qint8
-let quint8 = Nx_core.Dtype.quint8
 
 (* ───── Overriding functions with default context ───── *)
 

@@ -847,11 +847,11 @@ let op_fft (type a b) ?out (x : (a, b) t) ~axes : (a, b) t =
   let axes_arr = Array.map (fun ax -> if ax < 0 then ndim + ax else ax) axes in
 
   (match (x.dtype : (a, b) Dtype.t) with
-  | Dtype.Complex32 ->
+  | Dtype.Complex64 ->
       Pocketfft.c2c_f32 ~shape:shape_arr ~stride_in:strides_in
         ~stride_out:strides_out ~axes:axes_arr ~forward:true ~fct:1.0
         ~data_in:x'.buffer ~data_out:out.buffer ~nthreads:1
-  | Dtype.Complex64 ->
+  | Dtype.Complex128 ->
       Pocketfft.c2c_f64 ~shape:shape_arr ~stride_in:strides_in
         ~stride_out:strides_out ~axes:axes_arr ~forward:true ~fct:1.0
         ~data_in:x'.buffer ~data_out:out.buffer ~nthreads:1
@@ -877,11 +877,11 @@ let op_ifft (type a b) ?out (x : (a, b) t) ~axes : (a, b) t =
   let axes_arr = Array.map (fun ax -> if ax < 0 then ndim + ax else ax) axes in
 
   (match (x.dtype : (a, b) Dtype.t) with
-  | Dtype.Complex32 ->
+  | Dtype.Complex64 ->
       Pocketfft.c2c_f32 ~shape:shape_arr ~stride_in:strides_in
         ~stride_out:strides_out ~axes:axes_arr ~forward:false ~fct:1.0
         ~data_in:x'.buffer ~data_out:out.buffer ~nthreads:1
-  | Dtype.Complex64 ->
+  | Dtype.Complex128 ->
       Pocketfft.c2c_f64 ~shape:shape_arr ~stride_in:strides_in
         ~stride_out:strides_out ~axes:axes_arr ~forward:false ~fct:1.0
         ~data_in:x'.buffer ~data_out:out.buffer ~nthreads:1
@@ -920,7 +920,7 @@ let op_rfft (type a b c d) ?out (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes :
   in
 
   (match ((x.dtype : (a, b) Dtype.t), (dtype : (c, d) Dtype.t)) with
-  | Dtype.Float32, Dtype.Complex32 ->
+  | Dtype.Float32, Dtype.Complex64 ->
       let data_in : (float, Dtype.float32_elt, c_layout) Array1.t = x'.buffer in
       let data_out : (Complex.t, Dtype.complex32_elt, c_layout) Array1.t =
         out.buffer
@@ -928,7 +928,7 @@ let op_rfft (type a b c d) ?out (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes :
       Pocketfft.r2c_f32 ~shape_in:in_shape ~stride_in:strides_in
         ~stride_out:strides_out ~axes:axes_normalized ~forward:true ~fct:1.0
         ~data_in ~data_out ~nthreads:1
-  | Dtype.Float64, Dtype.Complex64 ->
+  | Dtype.Float64, Dtype.Complex128 ->
       let data_in : (float, Dtype.float64_elt, c_layout) Array1.t = x'.buffer in
       let data_out : (Complex.t, Dtype.complex64_elt, c_layout) Array1.t =
         out.buffer
@@ -977,7 +977,7 @@ let op_irfft (type a b c d) ?out (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes
   in
 
   (match ((x.dtype : (a, b) Dtype.t), (dtype : (c, d) Dtype.t)) with
-  | Dtype.Complex32, Dtype.Float32 ->
+  | Dtype.Complex64, Dtype.Float32 ->
       let data_in : (Complex.t, Dtype.complex32_elt, c_layout) Array1.t =
         x'.buffer
       in
@@ -987,7 +987,7 @@ let op_irfft (type a b c d) ?out (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes
       Pocketfft.c2r_f32 ~shape_out:out_shape ~stride_in:strides_in
         ~stride_out:strides_out ~axes:axes_normalized ~forward:false ~fct:1.0
         ~data_in ~data_out ~nthreads:1
-  | Dtype.Complex64, Dtype.Float64 ->
+  | Dtype.Complex128, Dtype.Float64 ->
       let data_in : (Complex.t, Dtype.complex64_elt, c_layout) Array1.t =
         x'.buffer
       in
@@ -1088,17 +1088,17 @@ let op_eig (type a b) ~vectors (x : (a, b) t) :
   let x_shape = shape x in
   let n = x_shape.(Array.length x_shape - 1) in
 
-  (* Eigenvalues and eigenvectors are always complex64 *)
+  (* Eigenvalues and eigenvectors are always complex128 *)
   let batch_shape = Array.sub x_shape 0 (Array.length x_shape - 2) in
   let vals_shape = Array.append batch_shape [| n |] in
   let vecs_shape = x_shape in
 
-  let vals = create_tensor x.context Dtype.Complex64 vals_shape in
+  let vals = create_tensor x.context Dtype.Complex128 vals_shape in
   let vecs =
-    if vectors then create_tensor x.context Dtype.Complex64 vecs_shape
+    if vectors then create_tensor x.context Dtype.Complex128 vecs_shape
     else
       (* Create dummy tensor for C interface *)
-      create_tensor x.context Dtype.Complex64 [| 1 |]
+      create_tensor x.context Dtype.Complex128 [| 1 |]
   in
 
   let x_ffi = to_ffi_tensor x' in

@@ -500,7 +500,7 @@ let test_matrix_rank_hermitian_negative () =
 let test_matrix_rank_hermitian_complex () =
   (* Complex Hermitian matrix with full rank *)
   let a =
-    Nx.create Nx.complex64 [| 2; 2 |]
+    Nx.create Nx.complex128 [| 2; 2 |]
       [|
         Complex.{ re = 2.; im = 0. };
         Complex.{ re = 0.; im = 1.5 };
@@ -543,7 +543,7 @@ let test_pinv_hermitian_negative () =
 let test_pinv_hermitian_complex () =
   (* Complex Hermitian matrix *)
   let a =
-    Nx.create Nx.complex64 [| 2; 2 |]
+    Nx.create Nx.complex128 [| 2; 2 |]
       [|
         Complex.{ re = 4.; im = 0. };
         Complex.{ re = 1.; im = 2. };
@@ -552,7 +552,7 @@ let test_pinv_hermitian_complex () =
       |]
   in
   let pinv_a = Nx.pinv ~hermitian:true a in
-  let identity = Nx.identity Nx.complex64 2 in
+  let identity = Nx.identity Nx.complex128 2 in
   let product = Nx.matmul a pinv_a in
   check_nx ~epsilon:1e-5 "pinv hermitian complex identity" identity product;
   let recon = Nx.matmul a (Nx.matmul pinv_a a) in
@@ -574,11 +574,11 @@ let test_vdot () =
 let test_vdot_complex () =
   (* Test complex vdot with conjugation *)
   let a =
-    Nx.create Nx.complex32 [| 2 |]
+    Nx.create Nx.complex64 [| 2 |]
       [| Complex.{ re = 1.; im = 2. }; Complex.{ re = 3.; im = 4. } |]
   in
   let b =
-    Nx.create Nx.complex32 [| 2 |]
+    Nx.create Nx.complex64 [| 2 |]
       [| Complex.{ re = 5.; im = 6. }; Complex.{ re = 7.; im = 8. } |]
   in
   let result = Nx.vdot a b in
@@ -592,7 +592,7 @@ let test_vdot_complex () =
 let test_conjugate () =
   (* Test complex conjugate *)
   let x =
-    Nx.create Nx.complex32 [| 2 |]
+    Nx.create Nx.complex64 [| 2 |]
       [| Complex.{ re = 1.; im = 2. }; Complex.{ re = 3.; im = 4. } |]
   in
   let conj_x = Nx.conjugate x in
@@ -712,7 +712,7 @@ let einsum_weighted_broadcast () =
 let einsum_complex_fro_inner () =
   let open Complex in
   let a =
-    Nx.create Nx.Complex32 [| 2; 2 |]
+    Nx.create Nx.complex128 [| 2; 2 |]
       [|
         { re = 1.; im = 2. };
         { re = 3.; im = 4. };
@@ -721,7 +721,7 @@ let einsum_complex_fro_inner () =
       |]
   in
   let b =
-    Nx.create Nx.Complex32 [| 2; 2 |]
+    Nx.create Nx.complex128 [| 2; 2 |]
       [|
         { re = -2.; im = 1. };
         { re = 0.; im = 1. };

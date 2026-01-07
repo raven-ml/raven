@@ -27,8 +27,8 @@ module Make (B : Backend_intf.S) = struct
   type uint16_elt = Bigarray_ext.int16_unsigned_elt
   type int32_elt = Bigarray_ext.int32_elt
   type int64_elt = Bigarray_ext.int64_elt
-  type int_elt = Bigarray_ext.int_elt
-  type nativeint_elt = Bigarray_ext.nativeint_elt
+  type uint32_elt = Bigarray_ext.uint32_elt
+  type uint64_elt = Bigarray_ext.uint64_elt
   type complex32_elt = Bigarray_ext.complex32_elt
   type complex64_elt = Bigarray_ext.complex64_elt
 
@@ -39,9 +39,6 @@ module Make (B : Backend_intf.S) = struct
   type uint4_elt = Bigarray_ext.int4_unsigned_elt
   type float8_e4m3_elt = Bigarray_ext.float8_e4m3_elt
   type float8_e5m2_elt = Bigarray_ext.float8_e5m2_elt
-  type complex16_elt = Bigarray_ext.complex16_elt
-  type qint8_elt = Bigarray_ext.qint8_elt
-  type quint8_elt = Bigarray_ext.quint8_elt
 
   type ('a, 'b) dtype = ('a, 'b) Dtype.t =
     | Float16 : (float, float16_elt) dtype
@@ -53,10 +50,10 @@ module Make (B : Backend_intf.S) = struct
     | UInt16 : (int, uint16_elt) dtype
     | Int32 : (int32, int32_elt) dtype
     | Int64 : (int64, int64_elt) dtype
-    | Int : (int, int_elt) dtype
-    | NativeInt : (nativeint, nativeint_elt) dtype
-    | Complex32 : (Complex.t, complex32_elt) dtype
-    | Complex64 : (Complex.t, complex64_elt) dtype
+    | UInt32 : (int32, uint32_elt) dtype
+    | UInt64 : (int64, uint64_elt) dtype
+    | Complex64 : (Complex.t, complex32_elt) dtype
+    | Complex128 : (Complex.t, complex64_elt) dtype
     (* Extended types *)
     | BFloat16 : (float, bfloat16_elt) dtype
     | Bool : (bool, bool_elt) dtype
@@ -64,9 +61,6 @@ module Make (B : Backend_intf.S) = struct
     | UInt4 : (int, uint4_elt) dtype
     | Float8_e4m3 : (float, float8_e4m3_elt) dtype
     | Float8_e5m2 : (float, float8_e5m2_elt) dtype
-    | Complex16 : (Complex.t, complex16_elt) dtype
-    | QInt8 : (int, qint8_elt) dtype
-    | QUInt8 : (int, quint8_elt) dtype
 
   type float16_t = (float, float16_elt) t
   type float32_t = (float, float32_elt) t
@@ -77,10 +71,10 @@ module Make (B : Backend_intf.S) = struct
   type uint16_t = (int, uint16_elt) t
   type int32_t = (int32, int32_elt) t
   type int64_t = (int64, int64_elt) t
-  type std_int_t = (int, int_elt) t
-  type std_nativeint_t = (nativeint, nativeint_elt) t
-  type complex32_t = (Complex.t, complex32_elt) t
-  type complex64_t = (Complex.t, complex64_elt) t
+  type uint32_t = (int32, uint32_elt) t
+  type uint64_t = (int64, uint64_elt) t
+  type complex64_t = (Complex.t, complex32_elt) t
+  type complex128_t = (Complex.t, complex64_elt) t
   type bool_t = (bool, bool_elt) t
 
   (* Constructor shortcuts *)
@@ -93,10 +87,10 @@ module Make (B : Backend_intf.S) = struct
   let uint16 = UInt16
   let int32 = Int32
   let int64 = Int64
-  let int = Int
-  let nativeint = NativeInt
-  let complex32 = Complex32
   let complex64 = Complex64
+  let uint32 = UInt32
+  let uint64 = UInt64
+  let complex128 = Complex128
 
   (* Index type for tensor slicing *)
   type index =
@@ -232,24 +226,24 @@ module Make (B : Backend_intf.S) = struct
       Error.check_bounds ~op:"power_of_two" ~name:"shift_val" ~value:shift_val
         ~min:0 ();
     match dtype with
-    | Int8 | UInt8 | Int16 | UInt16 | Int | NativeInt -> (
+    | Int8 | UInt8 | Int16 | UInt16 -> (
         let power = 1 lsl shift_val in
         match dtype with
         | Int8 -> power
         | UInt8 -> power land 0xFF
         | Int16 -> power
         | UInt16 -> power land 0xFFFF
-        | Int -> power
-        | NativeInt -> Nativeint.shift_left Nativeint.one shift_val
         | _ -> Error.failed ~op:"power_of_two" ~what:"unreachable code path" ())
     | Int32 -> Int32.shift_left Int32.one shift_val
+    | UInt32 -> Int32.shift_left Int32.one shift_val
     | Int64 -> Int64.shift_left Int64.one shift_val
+    | UInt64 -> Int64.shift_left Int64.one shift_val
     | _ ->
         Error.invalid ~op:"power_of_two"
           ~what:(Printf.sprintf "dtype %s" (Dtype.to_string dtype))
           ~reason:"not an integer type"
           ~hint:
-            "use Int8, UInt8, Int16, UInt16, Int32, Int64, Int, or NativeInt"
+            "use Int8, UInt8, Int16, UInt16, Int32, UInt32, Int64, or UInt64"
           ()
 
   let array_prod arr = Array.fold_left ( * ) 1 arr
@@ -872,8 +866,7 @@ module Make (B : Backend_intf.S) = struct
     let dt = dtype x in
     let one = full (B.context x) dt (shape x) (Dtype.one dt) in
     match dt with
-    | Dtype.UInt8 | Dtype.Bool | Dtype.UInt4 | Dtype.QUInt8 ->
-        binop ?out B.op_xor x one
+    | Dtype.UInt8 | Dtype.Bool | Dtype.UInt4 -> binop ?out B.op_xor x one
     | _ -> sub ?out one x
 
   (* ───── Comparison Operations ───── *)
@@ -2455,31 +2448,24 @@ module Make (B : Backend_intf.S) = struct
         | Dtype.UInt8 -> start + (i * step)
         | Dtype.Int16 -> start + (i * step)
         | Dtype.UInt16 -> start + (i * step)
-        | Dtype.Int -> start + (i * step)
         | Dtype.Int4 -> start + (i * step)
         | Dtype.UInt4 -> start + (i * step)
-        | Dtype.QInt8 -> start + (i * step)
-        | Dtype.QUInt8 -> start + (i * step)
         | Dtype.Bool -> if i = 0 then false else true
         | Dtype.Int32 ->
             Int32.(add (of_int start) (mul (of_int i) (of_int step)))
         | Dtype.Int64 ->
             Int64.(add (of_int start) (mul (of_int i) (of_int step)))
-        | Dtype.NativeInt ->
-            Nativeint.(add (of_int start) (mul (of_int i) (of_int step)))
-        | Dtype.Complex32 ->
-            {
-              Complex.re =
-                float_of_int start +. (float_of_int i *. float_of_int step);
-              im = 0.;
-            }
+        | Dtype.UInt32 ->
+            Int32.(add (of_int start) (mul (of_int i) (of_int step)))
+        | Dtype.UInt64 ->
+            Int64.(add (of_int start) (mul (of_int i) (of_int step)))
         | Dtype.Complex64 ->
             {
               Complex.re =
                 float_of_int start +. (float_of_int i *. float_of_int step);
               im = 0.;
             }
-        | Dtype.Complex16 ->
+        | Dtype.Complex128 ->
             {
               Complex.re =
                 float_of_int start +. (float_of_int i *. float_of_int step);
@@ -4528,7 +4514,7 @@ module Make (B : Backend_intf.S) = struct
               let im = unsafe_get idx imag in
               Complex.{ re; im })
         in
-        Obj.magic (create (B.context real) complex32 real_shape complex_data)
+        Obj.magic (create (B.context real) complex64 real_shape complex_data)
     | Float64 ->
         let real = (real : (float, float64_elt) t) in
         let imag = (imag : (float, float64_elt) t) in
@@ -4539,14 +4525,14 @@ module Make (B : Backend_intf.S) = struct
               let im = unsafe_get idx imag in
               Complex.{ re; im })
         in
-        Obj.magic (create (B.context real) complex64 real_shape complex_data)
+        Obj.magic (create (B.context real) complex128 real_shape complex_data)
     | _ ->
         Error.invalid ~op:"complex" ~what:"dtype"
           ~reason:"real and imag must be float32 or float64" ()
 
   let real (type a b) (x : (a, b) t) =
     match dtype x with
-    | Complex32 ->
+    | Complex64 ->
         let x = (x : (Complex.t, complex32_elt) t) in
         let shape_x = shape x in
         let size = Array.fold_left ( * ) 1 shape_x in
@@ -4557,7 +4543,7 @@ module Make (B : Backend_intf.S) = struct
               c.Complex.re)
         in
         Obj.magic (create (B.context x) float32 shape_x real_data)
-    | Complex64 ->
+    | Complex128 ->
         let x = (x : (Complex.t, complex64_elt) t) in
         let shape_x = shape x in
         let size = Array.fold_left ( * ) 1 shape_x in
@@ -4570,11 +4556,11 @@ module Make (B : Backend_intf.S) = struct
         Obj.magic (create (B.context x) float64 shape_x real_data)
     | _ ->
         Error.invalid ~op:"real" ~what:"dtype"
-          ~reason:"input must be complex32 or complex64" ()
+          ~reason:"input must be complex64 or complex128" ()
 
   let imag (type a b) (x : (a, b) t) =
     match dtype x with
-    | Complex32 ->
+    | Complex64 ->
         let x = (x : (Complex.t, complex32_elt) t) in
         let shape_x = shape x in
         let size = Array.fold_left ( * ) 1 shape_x in
@@ -4585,7 +4571,7 @@ module Make (B : Backend_intf.S) = struct
               c.Complex.im)
         in
         Obj.magic (create (B.context x) float32 shape_x imag_data)
-    | Complex64 ->
+    | Complex128 ->
         let x = (x : (Complex.t, complex64_elt) t) in
         let shape_x = shape x in
         let size = Array.fold_left ( * ) 1 shape_x in
@@ -4598,15 +4584,15 @@ module Make (B : Backend_intf.S) = struct
         Obj.magic (create (B.context x) float64 shape_x imag_data)
     | _ ->
         Error.invalid ~op:"imag" ~what:"dtype"
-          ~reason:"input must be complex32 or complex64" ()
+          ~reason:"input must be complex64 or complex128" ()
 
   let conjugate (type a b) (x : (a, b) t) =
     match dtype x with
-    | Complex32 ->
+    | Complex64 ->
         let real_part = real x in
         let imag_part = imag x |> neg in
         complex ~real:real_part ~imag:imag_part
-    | Complex64 ->
+    | Complex128 ->
         let real_part = real x in
         let imag_part = imag x |> neg in
         complex ~real:real_part ~imag:imag_part
@@ -4633,7 +4619,7 @@ module Make (B : Backend_intf.S) = struct
 
     (* For complex types, conjugate first vector *)
     match dtype a with
-    | (Complex32 | Complex64) when dtype a = dtype b ->
+    | (Complex64 | Complex128) when dtype a = dtype b ->
         sum (mul (conjugate flat_a) flat_b)
     | _ -> sum (mul flat_a flat_b)
 
@@ -5559,8 +5545,8 @@ module Make (B : Backend_intf.S) = struct
     | Float16 -> ()
     | Float32 -> ()
     | Float64 -> ()
-    | Complex32 -> ()
     | Complex64 -> ()
+    | Complex128 -> ()
     | _ -> Error.invalid ~op ~what:"dtype" ~reason:"must be float or complex" ()
 
   let check_real (type a b) ~op (a : (a, b) t) =
@@ -5708,7 +5694,8 @@ module Make (B : Backend_intf.S) = struct
     check_float_or_complex ~op:"slogdet" a;
     let dtype_a = dtype a in
     let is_complex =
-      Dtype.equal dtype_a Dtype.complex32 || Dtype.equal dtype_a Dtype.complex64
+      Dtype.equal dtype_a Dtype.complex64
+      || Dtype.equal dtype_a Dtype.complex128
     in
     let sh = shape a in
     let rank = Array.length sh in
@@ -5798,10 +5785,11 @@ module Make (B : Backend_intf.S) = struct
     let dtype_a = dtype a in
     let eps =
       if
-        Dtype.equal dtype_a Dtype.float32 || Dtype.equal dtype_a Dtype.complex32
+        Dtype.equal dtype_a Dtype.float32 || Dtype.equal dtype_a Dtype.complex64
       then 1.2e-7
       else if
-        Dtype.equal dtype_a Dtype.float64 || Dtype.equal dtype_a Dtype.complex64
+        Dtype.equal dtype_a Dtype.float64
+        || Dtype.equal dtype_a Dtype.complex128
       then 2.2e-16
       else 1e-15 (* Default for other types *)
     in
@@ -5897,7 +5885,7 @@ module Make (B : Backend_intf.S) = struct
               let im = unsafe_get idx imag in
               Complex.{ re; im })
         in
-        Obj.magic (create (B.context real) complex32 real_shape complex_data)
+        Obj.magic (create (B.context real) complex64 real_shape complex_data)
     | Float64 ->
         let real = (real : (float, float64_elt) t) in
         let imag = (imag : (float, float64_elt) t) in
@@ -5924,10 +5912,11 @@ module Make (B : Backend_intf.S) = struct
 
     let eps_for_dtype =
       if
-        Dtype.equal dtype_a Dtype.float32 || Dtype.equal dtype_a Dtype.complex32
+        Dtype.equal dtype_a Dtype.float32 || Dtype.equal dtype_a Dtype.complex64
       then 1.2e-7
       else if
-        Dtype.equal dtype_a Dtype.float64 || Dtype.equal dtype_a Dtype.complex64
+        Dtype.equal dtype_a Dtype.float64
+        || Dtype.equal dtype_a Dtype.complex128
       then 2.2e-16
       else 1e-15
     in
@@ -6302,8 +6291,7 @@ module Make (B : Backend_intf.S) = struct
       let result = B.op_fft x_padded ~axes:(Array.of_list axes_list) in
       let scale_value =
         match B.dtype result with
-        | Complex32 | Complex64 | Complex16 ->
-            Complex.{ re = norm_scale; im = 0.0 }
+        | Complex64 | Complex128 -> Complex.{ re = norm_scale; im = 0.0 }
       in
       let scale_tensor =
         scalar (B.context result) (B.dtype result) scale_value
@@ -6373,8 +6361,7 @@ module Make (B : Backend_intf.S) = struct
       let result = B.op_ifft x_input ~axes:(Array.of_list axes_list) in
       let scale_value =
         match B.dtype result with
-        | Complex32 | Complex64 | Complex16 ->
-            Complex.{ re = norm_scale; im = 0.0 }
+        | Complex64 | Complex128 -> Complex.{ re = norm_scale; im = 0.0 }
       in
       let scale_tensor =
         scalar (B.context result) (B.dtype result) scale_value
@@ -6409,7 +6396,7 @@ module Make (B : Backend_intf.S) = struct
     (* Use Complex64 as default - matches NumPy behavior *)
     if norm_scale <> 1.0 then
       let result =
-        B.op_rfft x_padded ~dtype:Dtype.Complex64
+        B.op_rfft x_padded ~dtype:Dtype.Complex128
           ~axes:(Array.of_list axes_list)
       in
       let scale_value = Complex.{ re = norm_scale; im = 0.0 } in
@@ -6418,7 +6405,7 @@ module Make (B : Backend_intf.S) = struct
       in
       mul ?out result scale_tensor
     else
-      B.op_rfft ?out x_padded ~dtype:Dtype.Complex64
+      B.op_rfft ?out x_padded ~dtype:Dtype.Complex128
         ~axes:(Array.of_list axes_list)
 
   let irfftn ?out ?axes ?s ?(norm = `Backward) x =
@@ -8332,16 +8319,13 @@ module Make (B : Backend_intf.S) = struct
       | Int64 -> fprintf fmt "%Ld" elt
       | UInt8 -> fprintf fmt "%d" elt
       | UInt16 -> fprintf fmt "%d" elt
-      | Int -> fprintf fmt "%d" elt
-      | NativeInt -> fprintf fmt "%nd" elt
+      | UInt32 -> fprintf fmt "%ld" elt
+      | UInt64 -> fprintf fmt "%Ld" elt
       | Int4 -> fprintf fmt "%d" elt
       | UInt4 -> fprintf fmt "%d" elt
-      | QInt8 -> fprintf fmt "%d" elt
-      | QUInt8 -> fprintf fmt "%d" elt
       | Bool -> fprintf fmt "%b" elt
-      | Complex32 -> fprintf fmt "(%g+%gi)" elt.re elt.im
       | Complex64 -> fprintf fmt "(%g+%gi)" elt.re elt.im
-      | Complex16 -> fprintf fmt "(%g+%gi)" elt.re elt.im
+      | Complex128 -> fprintf fmt "(%g+%gi)" elt.re elt.im
     in
 
     if sz = 0 && ndim > 0 then fprintf fmt "[]"

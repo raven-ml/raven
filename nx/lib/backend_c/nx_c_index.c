@@ -31,10 +31,10 @@ typedef void (*elem_op_fn)(void *, long, void *, long);
 
 // Dispatch table for each type
 typedef struct {
-  elem_op_fn i8, u8, i16, u16, i32, i64, inat;
+  elem_op_fn i8, u8, i16, u16, i32, i64, u32, u64, inat;
   elem_op_fn f16, f32, f64;
   elem_op_fn c32, c64;
-  elem_op_fn bf16, bool_, i4, u4, f8e4m3, f8e5m2, c16, qi8, qu8;
+  elem_op_fn bf16, bool_, i4, u4, f8e4m3, f8e5m2;
 } elem_op_table;
 
 // Macro to generate all standard type variants for an element operation
@@ -45,11 +45,11 @@ typedef struct {
   ELEM_OP_FOR_TYPE(name, uint16_t, u16, OP_EXPR)      \
   ELEM_OP_FOR_TYPE(name, int32_t, i32, OP_EXPR)       \
   ELEM_OP_FOR_TYPE(name, int64_t, i64, OP_EXPR)       \
+  ELEM_OP_FOR_TYPE(name, uint32_t, u32, OP_EXPR)      \
+  ELEM_OP_FOR_TYPE(name, uint64_t, u64, OP_EXPR)      \
   ELEM_OP_FOR_TYPE(name, intnat, inat, OP_EXPR)       \
   ELEM_OP_FOR_TYPE(name, float, f32, OP_EXPR)         \
-  ELEM_OP_FOR_TYPE(name, double, f64, OP_EXPR)        \
-  ELEM_OP_FOR_TYPE(name, caml_ba_qint8, qi8, OP_EXPR) \
-  ELEM_OP_FOR_TYPE(name, caml_ba_quint8, qu8, OP_EXPR)
+  ELEM_OP_FOR_TYPE(name, double, f64, OP_EXPR)
 
 // Macro to build dispatch table
 #define BUILD_ELEM_OP_TABLE(name)             \
@@ -60,6 +60,8 @@ typedef struct {
       .u16 = nx_c_elem_##name##_u16,          \
       .i32 = nx_c_elem_##name##_i32,          \
       .i64 = nx_c_elem_##name##_i64,          \
+      .u32 = nx_c_elem_##name##_u32,          \
+      .u64 = nx_c_elem_##name##_u64,          \
       .inat = nx_c_elem_##name##_inat,        \
       .f16 = nx_c_elem_##name##_f16,          \
       .f32 = nx_c_elem_##name##_f32,          \
@@ -71,10 +73,7 @@ typedef struct {
       .i4 = nx_c_elem_##name##_i4,            \
       .u4 = nx_c_elem_##name##_u4,            \
       .f8e4m3 = nx_c_elem_##name##_f8e4m3,    \
-      .f8e5m2 = nx_c_elem_##name##_f8e5m2,    \
-      .c16 = nx_c_elem_##name##_c16,          \
-      .qi8 = nx_c_elem_##name##_qi8,          \
-      .qu8 = nx_c_elem_##name##_qu8}
+      .f8e5m2 = nx_c_elem_##name##_f8e5m2}
 
 // Generic element operation
 #define ELEM_OP_FOR_TYPE(name, T, suffix, OP_EXPR)                            \
@@ -107,18 +106,6 @@ typedef struct {
     T a = s[src_off];                                                         \
     T b = d[dst_off];                                                         \
     d[dst_off] = OP_EXPR(a, b);                                               \
-  }
-
-// Complex16 elem op
-#define COMPLEX16_ELEM_OP(name, OP_EXPR)                                 \
-  static void nx_c_elem_##name##_c16(void *src, long src_off, void *dst, \
-                                     long dst_off) {                     \
-    caml_ba_complex16 *s = (caml_ba_complex16 *)src;                     \
-    caml_ba_complex16 *d = (caml_ba_complex16 *)dst;                     \
-    complex32 a = complex16_to_complex32(s[src_off]);                    \
-    complex32 b = complex16_to_complex32(d[dst_off]);                    \
-    complex32 res = OP_EXPR(a, b);                                       \
-    d[dst_off] = complex32_to_complex16(res);                            \
   }
 
 // Int4 elem op (packed)
@@ -163,7 +150,6 @@ LOW_PREC_ELEM_OP(set, caml_ba_fp8_e5m2, f8e5m2, SET_EXPR, fp8_e5m2_to_float,
 
 COMPLEX_ELEM_OP_FOR_TYPE(set, complex32, c32, SET_EXPR)
 COMPLEX_ELEM_OP_FOR_TYPE(set, complex64, c64, SET_EXPR)
-COMPLEX16_ELEM_OP(set, SET_EXPR)
 INT4_ELEM_OP(set, 1, i4, SET_EXPR)
 INT4_ELEM_OP(set, 0, u4, SET_EXPR)
 ELEM_OP_FOR_TYPE(set, caml_ba_bool, bool_, SET_EXPR)
@@ -183,7 +169,6 @@ LOW_PREC_ELEM_OP(add, caml_ba_fp8_e5m2, f8e5m2, ADD_EXPR, fp8_e5m2_to_float,
 
 COMPLEX_ELEM_OP_FOR_TYPE(add, complex32, c32, ADD_EXPR)
 COMPLEX_ELEM_OP_FOR_TYPE(add, complex64, c64, ADD_EXPR)
-COMPLEX16_ELEM_OP(add, ADD_EXPR)
 INT4_ELEM_OP(add, 1, i4, ADD_EXPR)
 INT4_ELEM_OP(add, 0, u4, ADD_EXPR)
 ELEM_OP_FOR_TYPE(add, caml_ba_bool, bool_, ADD_EXPR)
@@ -242,8 +227,6 @@ static double get_elem_byte_size(int kind) {
     case NX_BA_BOOL:
     case NX_BA_FP8_E4M3:
     case NX_BA_FP8_E5M2:
-    case NX_BA_QINT8:
-    case NX_BA_QUINT8:
       return 1.0;
     case CAML_BA_SINT16:
     case CAML_BA_UINT16:
@@ -252,18 +235,18 @@ static double get_elem_byte_size(int kind) {
       return 2.0;
     case CAML_BA_INT32:
     case CAML_BA_FLOAT32:
+    case NX_BA_UINT32:
       return 4.0;
     case CAML_BA_INT64:
     case CAML_BA_NATIVE_INT:
     case CAML_BA_CAML_INT:
     case CAML_BA_FLOAT64:
+    case NX_BA_UINT64:
       return 8.0;
     case CAML_BA_COMPLEX32:
       return 8.0;
     case CAML_BA_COMPLEX64:
       return 16.0;
-    case NX_BA_COMPLEX16:
-      return 4.0;
     case NX_BA_INT4:
     case NX_BA_UINT4:
       return 0.5;
@@ -281,22 +264,21 @@ static inline size_t elem_size_from_kind(int kind) {
     case NX_BA_BOOL:
     case NX_BA_FP8_E4M3:
     case NX_BA_FP8_E5M2:
-    case NX_BA_QINT8:
-    case NX_BA_QUINT8:
       return 1;
     case CAML_BA_SINT16:
     case CAML_BA_UINT16:
     case CAML_BA_FLOAT16:
     case NX_BA_BFLOAT16:
-    case NX_BA_COMPLEX16:
       return 2;
     case CAML_BA_INT32:
     case CAML_BA_FLOAT32:
+    case NX_BA_UINT32:
       return 4;
     case CAML_BA_INT64:
     case CAML_BA_FLOAT64:
     case CAML_BA_NATIVE_INT:
     case CAML_BA_CAML_INT:
+    case NX_BA_UINT64:
       return 8;
     case CAML_BA_COMPLEX32:
       return 8;  // 2 * float32
@@ -335,23 +317,22 @@ static void copy_ndarray(const ndarray_t *src, ndarray_t *dst, int kind) {
     case NX_BA_BOOL:
     case NX_BA_FP8_E4M3:
     case NX_BA_FP8_E5M2:
-    case NX_BA_QINT8:
-    case NX_BA_QUINT8:
       elem_size = 1;
       break;
     case CAML_BA_SINT16:
     case CAML_BA_UINT16:
     case CAML_BA_FLOAT16:
     case NX_BA_BFLOAT16:
-    case NX_BA_COMPLEX16:
       elem_size = 2;
       break;
     case CAML_BA_INT32:
     case CAML_BA_FLOAT32:
+    case NX_BA_UINT32:
       elem_size = 4;
       break;
     case CAML_BA_INT64:
     case CAML_BA_FLOAT64:
+    case NX_BA_UINT64:
       elem_size = 8;
       break;
     case CAML_BA_NATIVE_INT:
@@ -574,6 +555,12 @@ static void dispatch_gather(value v_data, value v_indices, value v_out,
     case CAML_BA_INT64:
       op = set_table.i64;
       break;
+    case NX_BA_UINT32:
+      op = set_table.u32;
+      break;
+    case NX_BA_UINT64:
+      op = set_table.u64;
+      break;
     case CAML_BA_NATIVE_INT:
     case CAML_BA_CAML_INT:
       op = set_table.inat;
@@ -610,15 +597,6 @@ static void dispatch_gather(value v_data, value v_indices, value v_out,
       break;
     case NX_BA_FP8_E5M2:
       op = set_table.f8e5m2;
-      break;
-    case NX_BA_COMPLEX16:
-      op = set_table.c16;
-      break;
-    case NX_BA_QINT8:
-      op = set_table.qi8;
-      break;
-    case NX_BA_QUINT8:
-      op = set_table.qu8;
       break;
     default:
       caml_failwith("unsupported dtype for gather");
@@ -735,6 +713,12 @@ static void dispatch_scatter(value v_template, value v_indices, value v_updates,
     case CAML_BA_INT64:
       op = table->i64;
       break;
+    case NX_BA_UINT32:
+      op = table->u32;
+      break;
+    case NX_BA_UINT64:
+      op = table->u64;
+      break;
     case CAML_BA_NATIVE_INT:
     case CAML_BA_CAML_INT:
       op = table->inat;
@@ -771,15 +755,6 @@ static void dispatch_scatter(value v_template, value v_indices, value v_updates,
       break;
     case NX_BA_FP8_E5M2:
       op = table->f8e5m2;
-      break;
-    case NX_BA_COMPLEX16:
-      op = table->c16;
-      break;
-    case NX_BA_QINT8:
-      op = table->qi8;
-      break;
-    case NX_BA_QUINT8:
-      op = table->qu8;
       break;
     default:
       caml_failwith("unsupported dtype for scatter");

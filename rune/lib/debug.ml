@@ -69,19 +69,16 @@ let dtype_to_string (type a b) (dtype : (a, b) Nx_core.Dtype.t) =
   | Int8 -> "i8"
   | Int16 -> "i16"
   | UInt16 -> "u16"
-  | Int -> "int"
-  | NativeInt -> "nint"
-  | Complex32 -> "c32"
+  | UInt32 -> "u32"
+  | UInt64 -> "u64"
   | Complex64 -> "c64"
+  | Complex128 -> "c128"
   | BFloat16 -> "bf16"
   | Bool -> "bool"
   | Int4 -> "i4"
   | UInt4 -> "u4"
   | Float8_e4m3 -> "f8e4m3"
   | Float8_e5m2 -> "f8e5m2"
-  | Complex16 -> "c16"
-  | QInt8 -> "qi8"
-  | QUInt8 -> "qu8"
 
 let format_input_shapes input_tensors =
   match input_tensors with
@@ -154,13 +151,11 @@ let log_operation context_stack op_name input_tensors output_tensor =
         let num_elements = Array.fold_left ( * ) 1 shape in
         let bytes_per_element =
           match T.dtype t with
-          | Float32 | Int32 | Complex32 -> 4
-          | Float64 | Int64 | Complex64 -> 8
+          | Float32 | Int32 | UInt32 -> 4
+          | Float64 | Int64 | UInt64 | Complex64 -> 8
           | Float16 | Int16 | UInt16 | BFloat16 -> 2
-          | UInt8 | Int8 | Float8_e4m3 | Float8_e5m2 | Bool | QInt8 | QUInt8 ->
-              1
-          | Int | NativeInt -> Sys.word_size / 8
-          | Complex16 -> 4
+          | UInt8 | Int8 | Float8_e4m3 | Float8_e5m2 | Bool -> 1
+          | Complex128 -> 16
           | Int4 | UInt4 -> 1 (* 2 values packed per byte *)
         in
         let bytes = num_elements * bytes_per_element in

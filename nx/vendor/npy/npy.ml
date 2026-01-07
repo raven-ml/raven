@@ -17,6 +17,8 @@ let dtype ~packed_kind =
     match packed_kind with
     | P Bigarray_ext.Int32 -> "i4"
     | P Bigarray_ext.Int64 -> "i8"
+    | P Bigarray_ext.Uint32 -> "u4"
+    | P Bigarray_ext.Uint64 -> "u8"
     | P Bigarray_ext.Float16 -> "f2"
     | P Bigarray_ext.Float32 -> "f4"
     | P Bigarray_ext.Float64 -> "f8"
@@ -303,6 +305,8 @@ module Header = struct
       | "f8" -> P Float64
       | "i4" -> P Int32
       | "i8" -> P Int64
+      | "u4" -> P Uint32
+      | "u8" -> P Uint64
       | "u1" -> P Int8_unsigned
       | "i1" -> P Int8_signed
       | "u2" -> P Int16_unsigned
@@ -483,6 +487,8 @@ module Eq = struct
       | Int16_unsigned, Int16_unsigned -> Some W
       | Int32, Int32 -> Some W
       | Int64, Int64 -> Some W
+      | Uint32, Uint32 -> Some W
+      | Uint64, Uint64 -> Some W
       | Int, Int -> Some W
       | Nativeint, Nativeint -> Some W
       | Complex32, Complex32 -> Some W

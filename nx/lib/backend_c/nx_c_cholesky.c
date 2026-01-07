@@ -259,22 +259,6 @@ static int cholesky_f8e5m2(caml_ba_fp8_e5m2* a, int n, int upper) {
   return status;
 }
 
-static int cholesky_complex16(caml_ba_complex16* a, int n, int upper) {
-  complex32* a_complex = (complex32*)malloc(n * n * sizeof(complex32));
-  if (!a_complex) return -1;
-  for (int i = 0; i < n * n; i++) {
-    a_complex[i] = complex16_to_complex32(a[i]);
-  }
-  int status = cholesky_complex32(a_complex, n, upper);
-  if (status == 0) {
-    for (int i = 0; i < n * n; i++) {
-      a[i] = complex32_to_complex16(a_complex[i]);
-    }
-  }
-  free(a_complex);
-  return status;
-}
-
 // OCaml FFI stub
 CAMLprim value caml_nx_op_cholesky(value v_in, value v_out, value v_upper) {
   CAMLparam3(v_in, v_out, v_upper);
@@ -443,28 +427,6 @@ CAMLprim value caml_nx_op_cholesky(value v_in, value v_out, value v_upper) {
           }
         }
         status = cholesky_f8e5m2(A, n, upper);
-        if (status == 0) {
-          for (int i = 0; i < n; i++) {
-            for (int j = 0; j < n; j++) {
-              base_out[i * s_out_row + j * s_out_col] = A[i * n + j];
-            }
-          }
-        }
-        free(A);
-        break;
-      }
-      case NX_BA_COMPLEX16: {
-        caml_ba_complex16* base_in = (caml_ba_complex16*)ba_in->data + off_in;
-        caml_ba_complex16* base_out =
-            (caml_ba_complex16*)ba_out->data + off_out;
-        caml_ba_complex16* A = (caml_ba_complex16*)malloc(
-            (size_t)n * n * sizeof(caml_ba_complex16));
-        for (int i = 0; i < n; i++) {
-          for (int j = 0; j < n; j++) {
-            A[i * n + j] = base_in[i * s_in_row + j * s_in_col];
-          }
-        }
-        status = cholesky_complex16(A, n, upper);
         if (status == 0) {
           for (int i = 0; i < n; i++) {
             for (int j = 0; j < n; j++) {

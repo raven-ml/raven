@@ -74,7 +74,7 @@ val load_iris : unit -> Nx.float64_t * Nx.int32_t
     tensor of shape [|150; 1|]. Features are sepal length/width and petal
     length/width. Labels are 0 (setosa), 1 (versicolor), 2 (virginica). *)
 
-val load_breast_cancer : unit -> Nx.float64_t * (int, Nx.int_elt) Nx.t
+val load_breast_cancer : unit -> Nx.float64_t * (int32, Nx.int32_elt) Nx.t
 (** [load_breast_cancer ()] loads Breast Cancer Wisconsin dataset.
 
     Returns features as float64 tensor of shape [|569; 30|] and labels as int32

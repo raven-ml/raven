@@ -19,10 +19,10 @@ typedef void (*reduce_op_t)(const ndarray_t *, ndarray_t *, const int *, int,
 
 // Dispatch table for each type
 typedef struct {
-  reduce_op_t i8, u8, i16, u16, i32, i64, inat;
+  reduce_op_t i8, u8, i16, u16, i32, i64, u32, u64, inat;
   reduce_op_t f16, f32, f64;
   reduce_op_t c32, c64;
-  reduce_op_t bf16, bool_, i4, u4, f8e4m3, f8e5m2, c16, qi8, qu8;
+  reduce_op_t bf16, bool_, i4, u4, f8e4m3, f8e5m2;
 } reduce_op_table;
 
 // Forward declarations for optimized fallback symbols generated later
@@ -413,122 +413,6 @@ static void get_coord_from_idx(long idx, const ndarray_t *nd, int *coord) {
     free(kept_axes);                                                           \
   }
 
-// Complex16 reduce impl
-#define COMPLEX16_REDUCE_IMPL(name, IDENTITY, HAS_IDENTITY, OP)                \
-  static void nx_c_##name##_c16(const ndarray_t *input, ndarray_t *output,     \
-                                const int *axes, int num_axes,                 \
-                                bool keepdims) {                               \
-    if (!input || !output) {                                                   \
-      caml_failwith("nx_c_" #name "_c16: null pointer");                       \
-    }                                                                          \
-    bool *is_reduced = (bool *)calloc(input->ndim, sizeof(bool));              \
-    if (!is_reduced) caml_failwith("allocation failed");                       \
-    for (int i = 0; i < num_axes; ++i) {                                       \
-      if (axes[i] < 0 || axes[i] >= input->ndim) {                             \
-        free(is_reduced);                                                      \
-        caml_failwith("invalid axis");                                         \
-      }                                                                        \
-      is_reduced[axes[i]] = true;                                              \
-    }                                                                          \
-    int num_kept = input->ndim - num_axes;                                     \
-    int *kept_axes = (int *)malloc(num_kept * sizeof(int));                    \
-    if (!kept_axes) {                                                          \
-      free(is_reduced);                                                        \
-      caml_failwith("allocation failed");                                      \
-    }                                                                          \
-    int kk = 0;                                                                \
-    for (int i = 0; i < input->ndim; ++i) {                                    \
-      if (!is_reduced[i]) kept_axes[kk++] = i;                                 \
-    }                                                                          \
-    long reduce_prod = 1;                                                      \
-    bool zero_size = false;                                                    \
-    for (int i = 0; i < num_axes; ++i) {                                       \
-      long ss = input->shape[axes[i]];                                         \
-      if (ss == 0) zero_size = true;                                           \
-      reduce_prod *= ss;                                                       \
-    }                                                                          \
-    if (zero_size) reduce_prod = 0;                                            \
-    if (reduce_prod == 0 && !HAS_IDENTITY) {                                   \
-      free(is_reduced);                                                        \
-      free(kept_axes);                                                         \
-      caml_failwith("zero-size array to reduction operation " #name            \
-                    " which has no identity");                                 \
-    }                                                                          \
-    long total_out = total_elements_safe(output);                              \
-    if (total_out == 0) {                                                      \
-      free(is_reduced);                                                        \
-      free(kept_axes);                                                         \
-      return;                                                                  \
-    }                                                                          \
-    _Pragma("omp parallel for if(total_out > 1000)") for (long idx = 0;        \
-                                                          idx < total_out;     \
-                                                          ++idx) {             \
-      int *local_out_coord = (int *)calloc(output->ndim, sizeof(int));         \
-      if (!local_out_coord) caml_failwith("allocation failed");                \
-      int *local_in_coord = (int *)calloc(input->ndim, sizeof(int));           \
-      if (!local_in_coord) {                                                   \
-        free(local_out_coord);                                                 \
-        caml_failwith("allocation failed");                                    \
-      }                                                                        \
-      int *local_reduced_coord = (int *)calloc(num_axes, sizeof(int));         \
-      if (!local_reduced_coord) {                                              \
-        free(local_out_coord);                                                 \
-        free(local_in_coord);                                                  \
-        caml_failwith("allocation failed");                                    \
-      }                                                                        \
-      get_coord_from_idx(idx, output, local_out_coord);                        \
-      memset(local_in_coord, 0, input->ndim * sizeof(int));                    \
-      if (keepdims) {                                                          \
-        for (int d = 0; d < input->ndim; ++d) {                                \
-          if (!is_reduced[d]) local_in_coord[d] = local_out_coord[d];          \
-        }                                                                      \
-      } else {                                                                 \
-        for (int ii = 0; ii < num_kept; ++ii) {                                \
-          local_in_coord[kept_axes[ii]] = local_out_coord[ii];                 \
-        }                                                                      \
-      }                                                                        \
-      complex32 acc;                                                           \
-      if (reduce_prod == 0) {                                                  \
-        acc = IDENTITY;                                                        \
-      } else {                                                                 \
-        bool first = true;                                                     \
-        memset(local_reduced_coord, 0, num_axes * sizeof(int));                \
-        bool inner_done = false;                                               \
-        while (!inner_done) {                                                  \
-          for (int j = 0; j < num_axes; ++j) {                                 \
-            local_in_coord[axes[j]] = local_reduced_coord[j];                  \
-          }                                                                    \
-          long in_off = input->offset + get_offset(input, local_in_coord);     \
-          caml_ba_complex16 cval = ((caml_ba_complex16 *)input->data)[in_off]; \
-          complex32 val = complex16_to_complex32(cval);                        \
-          if (first) {                                                         \
-            acc = val;                                                         \
-            first = false;                                                     \
-          } else {                                                             \
-            acc = OP(acc, val);                                                \
-          }                                                                    \
-          inner_done = true;                                                   \
-          for (int j = num_axes - 1; j >= 0; --j) {                            \
-            local_reduced_coord[j]++;                                          \
-            if (local_reduced_coord[j] < input->shape[axes[j]]) {              \
-              inner_done = false;                                              \
-              break;                                                           \
-            }                                                                  \
-            local_reduced_coord[j] = 0;                                        \
-          }                                                                    \
-        }                                                                      \
-      }                                                                        \
-      long out_off = output->offset + get_offset(output, local_out_coord);     \
-      ((caml_ba_complex16 *)output->data)[out_off] =                           \
-          complex32_to_complex16(acc);                                         \
-      free(local_out_coord);                                                   \
-      free(local_in_coord);                                                    \
-      free(local_reduced_coord);                                               \
-    }                                                                          \
-    free(is_reduced);                                                          \
-    free(kept_axes);                                                           \
-  }
-
 // Int4/Uint4 reduce impl
 #define INT4_REDUCE_IMPL(name, signedness, suffix, IDENTITY, HAS_IDENTITY, OP, \
                          CLAMP)                                                \
@@ -669,6 +553,8 @@ static void get_coord_from_idx(long idx, const ndarray_t *nd, int *coord) {
                                                .u16 = nx_c_##name##_u16,       \
                                                .i32 = nx_c_##name##_i32,       \
                                                .i64 = nx_c_##name##_i64,       \
+                                               .u32 = nx_c_##name##_u32,       \
+                                               .u64 = nx_c_##name##_u64,       \
                                                .inat = nx_c_##name##_inat,     \
                                                .f16 = nx_c_##name##_f16,       \
                                                .f32 = nx_c_##name##_f32,       \
@@ -680,10 +566,7 @@ static void get_coord_from_idx(long idx, const ndarray_t *nd, int *coord) {
                                                .i4 = nx_c_##name##_i4,         \
                                                .u4 = nx_c_##name##_u4,         \
                                                .f8e4m3 = nx_c_##name##_f8e4m3, \
-                                               .f8e5m2 = nx_c_##name##_f8e5m2, \
-                                               .c16 = nx_c_##name##_c16,       \
-                                               .qi8 = nx_c_##name##_qi8,       \
-                                               .qu8 = nx_c_##name##_qu8};
+                                               .f8e5m2 = nx_c_##name##_f8e5m2};
 
 // Generate for reduce_sum
 #define SUM_OP(acc, val) ((acc) + (val))
@@ -705,6 +588,10 @@ REDUCE_OP_FOR_TYPE(reduce_sum, uint16_t, u16, SUM_IDENTITY(uint16_t),
 REDUCE_OP_FOR_TYPE(reduce_sum, int32_t, i32, SUM_IDENTITY(int32_t),
                    SUM_HAS_IDENTITY, SUM_OP)
 REDUCE_OP_FOR_TYPE(reduce_sum, int64_t, i64, SUM_IDENTITY(int64_t),
+                   SUM_HAS_IDENTITY, SUM_OP)
+REDUCE_OP_FOR_TYPE(reduce_sum, uint32_t, u32, SUM_IDENTITY(uint32_t),
+                   SUM_HAS_IDENTITY, SUM_OP)
+REDUCE_OP_FOR_TYPE(reduce_sum, uint64_t, u64, SUM_IDENTITY(uint64_t),
                    SUM_HAS_IDENTITY, SUM_OP)
 REDUCE_OP_FOR_TYPE(reduce_sum, intnat, inat, SUM_IDENTITY(intnat),
                    SUM_HAS_IDENTITY, SUM_OP)
@@ -857,10 +744,6 @@ REDUCE_OP_FOR_TYPE(reduce_sum, complex64, c64, SUM_COMPLEX_IDENTITY,
                    SUM_HAS_IDENTITY, SUM_COMPLEX_OP)
 REDUCE_OP_FOR_TYPE(reduce_sum, caml_ba_bool, bool_, SUM_IDENTITY(caml_ba_bool),
                    SUM_HAS_IDENTITY, SUM_OP)
-REDUCE_OP_FOR_TYPE(reduce_sum, caml_ba_qint8, qi8, SUM_IDENTITY(caml_ba_qint8),
-                   SUM_HAS_IDENTITY, SUM_OP)
-REDUCE_OP_FOR_TYPE(reduce_sum, caml_ba_quint8, qu8,
-                   SUM_IDENTITY(caml_ba_quint8), SUM_HAS_IDENTITY, SUM_OP)
 
 LOW_PREC_REDUCE_OP_IMPL(reduce_sum, uint16_t, f16, SUM_IDENTITY_FLOAT,
                         SUM_HAS_IDENTITY, SUM_OP_FLOAT, half_to_float,
@@ -875,10 +758,8 @@ LOW_PREC_REDUCE_OP_IMPL(reduce_sum, caml_ba_fp8_e5m2, f8e5m2,
                         SUM_IDENTITY_FLOAT, SUM_HAS_IDENTITY, SUM_OP_FLOAT,
                         fp8_e5m2_to_float, float_to_fp8_e5m2)
 
-COMPLEX16_REDUCE_IMPL(reduce_sum, SUM_COMPLEX_IDENTITY, SUM_HAS_IDENTITY,
-                      SUM_COMPLEX_OP)
-  INT4_REDUCE_IMPL(reduce_sum, 1, i4, 0, SUM_HAS_IDENTITY, SUM_OP, CLAMP_I4)
-  INT4_REDUCE_IMPL(reduce_sum, 0, u4, 0, SUM_HAS_IDENTITY, SUM_OP, CLAMP_U4)
+INT4_REDUCE_IMPL(reduce_sum, 1, i4, 0, SUM_HAS_IDENTITY, SUM_OP, CLAMP_I4)
+INT4_REDUCE_IMPL(reduce_sum, 0, u4, 0, SUM_HAS_IDENTITY, SUM_OP, CLAMP_U4)
 // Define wrappers now that generic functions exist
 static void nx_c_reduce_sum_f32_generic_wrap(const ndarray_t *input,
                                              ndarray_t *output,
@@ -911,10 +792,7 @@ static const reduce_op_table reduce_sum_table = {
     .i4 = nx_c_reduce_sum_i4,
     .u4 = nx_c_reduce_sum_u4,
     .f8e4m3 = nx_c_reduce_sum_f8e4m3,
-    .f8e5m2 = nx_c_reduce_sum_f8e5m2,
-    .c16 = nx_c_reduce_sum_c16,
-    .qi8 = nx_c_reduce_sum_qi8,
-    .qu8 = nx_c_reduce_sum_qu8};
+    .f8e5m2 = nx_c_reduce_sum_f8e5m2};
 
 // Generate for reduce_max
 #define MAX_OP(acc, val) ((acc) > (val) ? (acc) : (val))
@@ -1001,6 +879,10 @@ REDUCE_OP_FOR_TYPE(reduce_max, int32_t, i32, MAX_IDENTITY(int32_t),
                    MAX_HAS_IDENTITY, MAX_OP)
 REDUCE_OP_FOR_TYPE(reduce_max, int64_t, i64, MAX_IDENTITY(int64_t),
                    MAX_HAS_IDENTITY, MAX_OP)
+REDUCE_OP_FOR_TYPE(reduce_max, uint32_t, u32, MAX_IDENTITY(uint32_t),
+                   MAX_HAS_IDENTITY, MAX_OP)
+REDUCE_OP_FOR_TYPE(reduce_max, uint64_t, u64, MAX_IDENTITY(uint64_t),
+                   MAX_HAS_IDENTITY, MAX_OP)
 REDUCE_OP_FOR_TYPE(reduce_max, intnat, inat, MAX_IDENTITY(intnat),
                    MAX_HAS_IDENTITY, MAX_OP)
 REDUCE_OP_FOR_TYPE(reduce_max, float, f32_fallback, MAX_IDENTITY(float),
@@ -1013,10 +895,6 @@ REDUCE_OP_FOR_TYPE(reduce_max, complex64, c64, MAX_COMPLEX_IDENTITY,
                    MAX_HAS_IDENTITY, MAX_COMPLEX64_OP)
 REDUCE_OP_FOR_TYPE(reduce_max, caml_ba_bool, bool_, MAX_IDENTITY(caml_ba_bool),
                    MAX_HAS_IDENTITY, MAX_OP)
-REDUCE_OP_FOR_TYPE(reduce_max, caml_ba_qint8, qi8, MAX_IDENTITY(caml_ba_qint8),
-                   MAX_HAS_IDENTITY, MAX_OP)
-REDUCE_OP_FOR_TYPE(reduce_max, caml_ba_quint8, qu8,
-                   MAX_IDENTITY(caml_ba_quint8), MAX_HAS_IDENTITY, MAX_OP)
 
 LOW_PREC_REDUCE_OP_IMPL(reduce_max, uint16_t, f16, MAX_IDENTITY_FLOAT,
                         MAX_HAS_IDENTITY, MAX_OP_FLOAT, half_to_float,
@@ -1031,8 +909,6 @@ LOW_PREC_REDUCE_OP_IMPL(reduce_max, caml_ba_fp8_e5m2, f8e5m2,
                         MAX_IDENTITY_FLOAT, MAX_HAS_IDENTITY, MAX_OP_FLOAT,
                         fp8_e5m2_to_float, float_to_fp8_e5m2)
 
-COMPLEX16_REDUCE_IMPL(reduce_max, MAX_COMPLEX_IDENTITY, MAX_HAS_IDENTITY,
-                      complex_max)
 INT4_REDUCE_IMPL(reduce_max, 1, i4, 0, MAX_HAS_IDENTITY, MAX_OP, CLAMP_I4)
 INT4_REDUCE_IMPL(reduce_max, 0, u4, 0, MAX_HAS_IDENTITY, MAX_OP, CLAMP_U4)
 // Define wrappers now that generic functions exist
@@ -1067,10 +943,7 @@ static const reduce_op_table reduce_max_table = {
     .i4 = nx_c_reduce_max_i4,
     .u4 = nx_c_reduce_max_u4,
     .f8e4m3 = nx_c_reduce_max_f8e4m3,
-    .f8e5m2 = nx_c_reduce_max_f8e5m2,
-    .c16 = nx_c_reduce_max_c16,
-    .qi8 = nx_c_reduce_max_qi8,
-    .qu8 = nx_c_reduce_max_qu8};
+    .f8e5m2 = nx_c_reduce_max_f8e5m2};
 
 // Generate for reduce_prod
 #define PROD_OP(acc, val) ((acc) * (val))
@@ -1093,6 +966,10 @@ REDUCE_OP_FOR_TYPE(reduce_prod, int32_t, i32, PROD_IDENTITY(int32_t),
                    PROD_HAS_IDENTITY, PROD_OP)
 REDUCE_OP_FOR_TYPE(reduce_prod, int64_t, i64, PROD_IDENTITY(int64_t),
                    PROD_HAS_IDENTITY, PROD_OP)
+REDUCE_OP_FOR_TYPE(reduce_prod, uint32_t, u32, PROD_IDENTITY(uint32_t),
+                   PROD_HAS_IDENTITY, PROD_OP)
+REDUCE_OP_FOR_TYPE(reduce_prod, uint64_t, u64, PROD_IDENTITY(uint64_t),
+                   PROD_HAS_IDENTITY, PROD_OP)
 REDUCE_OP_FOR_TYPE(reduce_prod, intnat, inat, PROD_IDENTITY(intnat),
                    PROD_HAS_IDENTITY, PROD_OP)
 REDUCE_OP_FOR_TYPE(reduce_prod, float, f32, PROD_IDENTITY(float),
@@ -1105,10 +982,6 @@ REDUCE_OP_FOR_TYPE(reduce_prod, complex64, c64, PROD_COMPLEX_IDENTITY,
                    PROD_HAS_IDENTITY, PROD_COMPLEX_OP)
 REDUCE_OP_FOR_TYPE(reduce_prod, caml_ba_bool, bool_,
                    PROD_IDENTITY(caml_ba_bool), PROD_HAS_IDENTITY, PROD_OP)
-REDUCE_OP_FOR_TYPE(reduce_prod, caml_ba_qint8, qi8,
-                   PROD_IDENTITY(caml_ba_qint8), PROD_HAS_IDENTITY, PROD_OP)
-REDUCE_OP_FOR_TYPE(reduce_prod, caml_ba_quint8, qu8,
-                   PROD_IDENTITY(caml_ba_quint8), PROD_HAS_IDENTITY, PROD_OP)
 
 LOW_PREC_REDUCE_OP_IMPL(reduce_prod, uint16_t, f16, PROD_IDENTITY_FLOAT,
                         PROD_HAS_IDENTITY, PROD_OP_FLOAT, half_to_float,
@@ -1123,8 +996,6 @@ LOW_PREC_REDUCE_OP_IMPL(reduce_prod, caml_ba_fp8_e5m2, f8e5m2,
                         PROD_IDENTITY_FLOAT, PROD_HAS_IDENTITY, PROD_OP_FLOAT,
                         fp8_e5m2_to_float, float_to_fp8_e5m2)
 
-COMPLEX16_REDUCE_IMPL(reduce_prod, PROD_COMPLEX_IDENTITY, PROD_HAS_IDENTITY,
-                      COMPLEX_MUL)
 INT4_REDUCE_IMPL(reduce_prod, 1, i4, 1, PROD_HAS_IDENTITY, PROD_OP, CLAMP_I4)
 INT4_REDUCE_IMPL(reduce_prod, 0, u4, 1, PROD_HAS_IDENTITY, PROD_OP, CLAMP_U4)
 BUILD_DISPATCH_TABLE(reduce_prod)
@@ -1220,6 +1091,10 @@ REDUCE_OP_FOR_TYPE(reduce_min, int32_t, i32, MIN_IDENTITY(int32_t),
                    MIN_HAS_IDENTITY, MIN_OP)
 REDUCE_OP_FOR_TYPE(reduce_min, int64_t, i64, MIN_IDENTITY(int64_t),
                    MIN_HAS_IDENTITY, MIN_OP)
+REDUCE_OP_FOR_TYPE(reduce_min, uint32_t, u32, MIN_IDENTITY(uint32_t),
+                   MIN_HAS_IDENTITY, MIN_OP)
+REDUCE_OP_FOR_TYPE(reduce_min, uint64_t, u64, MIN_IDENTITY(uint64_t),
+                   MIN_HAS_IDENTITY, MIN_OP)
 REDUCE_OP_FOR_TYPE(reduce_min, intnat, inat, MIN_IDENTITY(intnat),
                    MIN_HAS_IDENTITY, MIN_OP)
 REDUCE_OP_FOR_TYPE(reduce_min, float, f32_fallback, MIN_IDENTITY(float),
@@ -1232,10 +1107,6 @@ REDUCE_OP_FOR_TYPE(reduce_min, complex64, c64, MIN_COMPLEX_IDENTITY,
                    MIN_HAS_IDENTITY, MIN_COMPLEX64_OP)
 REDUCE_OP_FOR_TYPE(reduce_min, caml_ba_bool, bool_, MIN_IDENTITY(caml_ba_bool),
                    MIN_HAS_IDENTITY, MIN_OP)
-REDUCE_OP_FOR_TYPE(reduce_min, caml_ba_qint8, qi8, MIN_IDENTITY(caml_ba_qint8),
-                   MIN_HAS_IDENTITY, MIN_OP)
-REDUCE_OP_FOR_TYPE(reduce_min, caml_ba_quint8, qu8,
-                   MIN_IDENTITY(caml_ba_quint8), MIN_HAS_IDENTITY, MIN_OP)
 
 LOW_PREC_REDUCE_OP_IMPL(reduce_min, uint16_t, f16, MIN_IDENTITY_FLOAT,
                         MIN_HAS_IDENTITY, MIN_OP_FLOAT, half_to_float,
@@ -1250,8 +1121,6 @@ LOW_PREC_REDUCE_OP_IMPL(reduce_min, caml_ba_fp8_e5m2, f8e5m2,
                         MIN_IDENTITY_FLOAT, MIN_HAS_IDENTITY, MIN_OP_FLOAT,
                         fp8_e5m2_to_float, float_to_fp8_e5m2)
 
-COMPLEX16_REDUCE_IMPL(reduce_min, MIN_COMPLEX_IDENTITY, MIN_HAS_IDENTITY,
-                      complex_min)
 INT4_REDUCE_IMPL(reduce_min, 1, i4, 0, MIN_HAS_IDENTITY, MIN_OP, CLAMP_I4)
 INT4_REDUCE_IMPL(reduce_min, 0, u4, 0, MIN_HAS_IDENTITY, MIN_OP, CLAMP_U4)
 // Define wrappers now that generic functions exist
@@ -1286,10 +1155,7 @@ static const reduce_op_table reduce_min_table = {
     .i4 = nx_c_reduce_min_i4,
     .u4 = nx_c_reduce_min_u4,
     .f8e4m3 = nx_c_reduce_min_f8e4m3,
-    .f8e5m2 = nx_c_reduce_min_f8e5m2,
-    .c16 = nx_c_reduce_min_c16,
-    .qi8 = nx_c_reduce_min_qi8,
-    .qu8 = nx_c_reduce_min_qu8};
+    .f8e5m2 = nx_c_reduce_min_f8e5m2};
 
 // Generic dispatch function for reduction operations
 static void dispatch_reduce_op(value v_input, value v_output, int *axes,
@@ -1349,6 +1215,12 @@ static void dispatch_reduce_op(value v_input, value v_output, int *axes,
     case CAML_BA_INT64:
       op = table->i64;
       break;
+    case NX_BA_UINT32:
+      op = table->u32;
+      break;
+    case NX_BA_UINT64:
+      op = table->u64;
+      break;
     case CAML_BA_CAML_INT:
     case CAML_BA_NATIVE_INT:
       op = table->inat;
@@ -1385,15 +1257,6 @@ static void dispatch_reduce_op(value v_input, value v_output, int *axes,
       break;
     case NX_BA_FP8_E5M2:
       op = table->f8e5m2;
-      break;
-    case NX_BA_COMPLEX16:
-      op = table->c16;
-      break;
-    case NX_BA_QINT8:
-      op = table->qi8;
-      break;
-    case NX_BA_QUINT8:
-      op = table->qu8;
       break;
     default:
       cleanup_ndarray(&input);
