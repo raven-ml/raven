@@ -649,6 +649,110 @@ let test_abs_int64 () =
   check_int64 "abs_int64[1]" #20L (geti64 d 1);
   check_int64 "abs_int64[2]" #0L (geti64 d 2)
 
+let test_log_float64 () =
+  let ctx = Nx_oxcaml.create_context () in
+  let a = Nx_oxcaml.of_float64 ctx [| #1.0; #2.718281828459045; #10.0 |] in
+  let out = Nx_oxcaml.op_buffer ctx Dtype.Float64 3 in
+  Nx_oxcaml.op_log ~out a;
+  let d = Nx_oxcaml.data_array out in
+  check_float64 "log_float64[0]" ~eps:1e-9 #0.0 (get64 d 0);
+  check_float64 "log_float64[1]" ~eps:1e-9 #1.0 (get64 d 1);
+  check_float64 "log_float64[2]" ~eps:1e-9 #2.302585092994046 (get64 d 2)
+
+let test_log_float32 () =
+  let ctx = Nx_oxcaml.create_context () in
+  let a = Nx_oxcaml.of_float32 ctx [| #1.0s; #2.7182817s; #10.0s |] in
+  let out = Nx_oxcaml.op_buffer ctx Dtype.Float32 3 in
+  Nx_oxcaml.op_log ~out a;
+  let d = Nx_oxcaml.data_array out in
+  check_float32 "log_float32[0]" ~eps:1e-6 #0.0s (get32 d 0);
+  check_float32 "log_float32[1]" ~eps:1e-6 #1.0s (get32 d 1);
+  check_float32 "log_float32[2]" ~eps:1e-6 #2.3025851s (get32 d 2)
+
+let test_exp_float64 () =
+  let ctx = Nx_oxcaml.create_context () in
+  let a = Nx_oxcaml.of_float64 ctx [| #0.0; #1.0; #2.0 |] in
+  let out = Nx_oxcaml.op_buffer ctx Dtype.Float64 3 in
+  Nx_oxcaml.op_exp ~out a;
+  let d = Nx_oxcaml.data_array out in
+  check_float64 "exp_float64[0]" ~eps:1e-9 #1.0 (get64 d 0);
+  check_float64 "exp_float64[1]" ~eps:1e-9 #2.718281828459045 (get64 d 1);
+  check_float64 "exp_float64[2]" ~eps:1e-9 #7.38905609893065 (get64 d 2)
+
+let test_exp_float32 () =
+  let ctx = Nx_oxcaml.create_context () in
+  let a = Nx_oxcaml.of_float32 ctx [| #0.0s; #1.0s; #2.0s |] in
+  let out = Nx_oxcaml.op_buffer ctx Dtype.Float32 3 in
+  Nx_oxcaml.op_exp ~out a;
+  let d = Nx_oxcaml.data_array out in
+  check_float32 "exp_float32[0]" ~eps:1e-6 #1.0s (get32 d 0);
+  check_float32 "exp_float32[1]" ~eps:1e-6 #2.7182817s (get32 d 1);
+  check_float32 "exp_float32[2]" ~eps:1e-6 #7.389056s (get32 d 2)
+
+let test_sin_float64 () =
+  let ctx = Nx_oxcaml.create_context () in
+  let a =
+    Nx_oxcaml.of_float64 ctx [| #0.0; #1.5707963267948966; #3.141592653589793 |]
+  in
+  let out = Nx_oxcaml.op_buffer ctx Dtype.Float64 3 in
+  Nx_oxcaml.op_sin ~out a;
+  let d = Nx_oxcaml.data_array out in
+  check_float64 "sin_float64[0]" ~eps:1e-9 #0.0 (get64 d 0);
+  check_float64 "sin_float64[1]" ~eps:1e-9 #1.0 (get64 d 1);
+  check_float64 "sin_float64[2]" ~eps:1e-9 #0.0 (get64 d 2)
+
+let test_sin_float32 () =
+  let ctx = Nx_oxcaml.create_context () in
+  let a = Nx_oxcaml.of_float32 ctx [| #0.0s; #1.5707964s; #3.1415927s |] in
+  let out = Nx_oxcaml.op_buffer ctx Dtype.Float32 3 in
+  Nx_oxcaml.op_sin ~out a;
+  let d = Nx_oxcaml.data_array out in
+  check_float32 "sin_float32[0]" ~eps:1e-6 #0.0s (get32 d 0);
+  check_float32 "sin_float32[1]" ~eps:1e-6 #1.0s (get32 d 1);
+  check_float32 "sin_float32[2]" ~eps:1e-6 #0.0s (get32 d 2)
+
+let test_cos_float64 () =
+  let ctx = Nx_oxcaml.create_context () in
+  let a =
+    Nx_oxcaml.of_float64 ctx [| #0.0; #1.5707963267948966; #3.141592653589793 |]
+  in
+  let out = Nx_oxcaml.op_buffer ctx Dtype.Float64 3 in
+  Nx_oxcaml.op_cos ~out a;
+  let d = Nx_oxcaml.data_array out in
+  check_float64 "cos_float64[0]" ~eps:1e-9 #1.0 (get64 d 0);
+  check_float64 "cos_float64[1]" ~eps:1e-9 #0.0 (get64 d 1);
+  check_float64 "cos_float64[2]" ~eps:1e-9 (-#1.0) (get64 d 2)
+
+let test_cos_float32 () =
+  let ctx = Nx_oxcaml.create_context () in
+  let a = Nx_oxcaml.of_float32 ctx [| #0.0s; #1.5707964s; #3.1415927s |] in
+  let out = Nx_oxcaml.op_buffer ctx Dtype.Float32 3 in
+  Nx_oxcaml.op_cos ~out a;
+  let d = Nx_oxcaml.data_array out in
+  check_float32 "cos_float32[0]" ~eps:1e-6 #1.0s (get32 d 0);
+  check_float32 "cos_float32[1]" ~eps:1e-6 #0.0s (get32 d 1);
+  check_float32 "cos_float32[2]" ~eps:1e-6 (-#1.0s) (get32 d 2)
+
+let test_sqrt_float64 () =
+  let ctx = Nx_oxcaml.create_context () in
+  let a = Nx_oxcaml.of_float64 ctx [| #0.0; #4.0; #9.0 |] in
+  let out = Nx_oxcaml.op_buffer ctx Dtype.Float64 3 in
+  Nx_oxcaml.op_sqrt ~out a;
+  let d = Nx_oxcaml.data_array out in
+  check_float64 "sqrt_float64[0]" ~eps:1e-9 #0.0 (get64 d 0);
+  check_float64 "sqrt_float64[1]" ~eps:1e-9 #2.0 (get64 d 1);
+  check_float64 "sqrt_float64[2]" ~eps:1e-9 #3.0 (get64 d 2)
+
+let test_sqrt_float32 () =
+  let ctx = Nx_oxcaml.create_context () in
+  let a = Nx_oxcaml.of_float32 ctx [| #0.0s; #4.0s; #9.0s |] in
+  let out = Nx_oxcaml.op_buffer ctx Dtype.Float32 3 in
+  Nx_oxcaml.op_sqrt ~out a;
+  let d = Nx_oxcaml.data_array out in
+  check_float32 "sqrt_float32[0]" ~eps:1e-6 #0.0s (get32 d 0);
+  check_float32 "sqrt_float32[1]" ~eps:1e-6 #2.0s (get32 d 1);
+  check_float32 "sqrt_float32[2]" ~eps:1e-6 #3.0s (get32 d 2)
+
 let () =
   print_endline "Running Nx_oxcaml backend tests...";
   test_buffer_float64 ();
@@ -707,5 +811,15 @@ let () =
   test_abs_float32 ();
   test_abs_int64 ();
   test_abs_int32 ();
+  test_log_float64 ();
+  test_log_float32 ();
+  test_exp_float64 ();
+  test_exp_float32 ();
+  test_sin_float64 ();
+  test_sin_float32 ();
+  test_cos_float64 ();
+  test_cos_float32 ();
+  test_sqrt_float64 ();
+  test_sqrt_float32 ();
   Printf.printf "\nResults: %d passed, %d failed\n" !passed !failed;
   if !failed > 0 then exit 1
