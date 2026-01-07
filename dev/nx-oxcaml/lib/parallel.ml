@@ -1,5 +1,4 @@
 type task = { start_idx : int; end_idx : int; compute : int -> int -> unit }
-
 type _ Effect.t += WaitCompletion : int -> unit Effect.t
 
 type pool = {
