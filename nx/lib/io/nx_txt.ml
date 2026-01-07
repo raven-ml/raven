@@ -213,30 +213,30 @@ let spec_of_dtype (type a) (type b) (dtype : (a, b) Nx.dtype) :
           | None -> Error (invalid_literal dtype_name token)
       end) in
       Some (module S : SPEC with type elt = a and type kind = b)
-  | Int ->
+  | UInt32 ->
       let module S = M (struct
-        type elt = int
-        type kind = Bigarray_ext.int_elt
+        type elt = int32
+        type kind = Bigarray_ext.uint32_elt
 
         let kind = Nx_core.Dtype.to_bigarray_ext_kind dtype
-        let print oc v = output_string oc (string_of_int v)
+        let print oc v = output_string oc (Int32.to_string v)
 
         let parse token =
-          match int_of_string_opt token with
+          match int32_of_string_opt token with
           | Some v -> Ok v
           | None -> Error (invalid_literal dtype_name token)
       end) in
       Some (module S : SPEC with type elt = a and type kind = b)
-  | NativeInt ->
+  | UInt64 ->
       let module S = M (struct
-        type elt = nativeint
-        type kind = Bigarray_ext.nativeint_elt
+        type elt = int64
+        type kind = Bigarray_ext.uint64_elt
 
         let kind = Nx_core.Dtype.to_bigarray_ext_kind dtype
-        let print oc v = output_string oc (Nativeint.to_string v)
+        let print oc v = output_string oc (Int64.to_string v)
 
         let parse token =
-          match nativeint_of_string_opt token with
+          match int64_of_string_opt token with
           | Some v -> Ok v
           | None -> Error (invalid_literal dtype_name token)
       end) in

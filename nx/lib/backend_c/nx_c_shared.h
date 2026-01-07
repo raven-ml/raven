@@ -39,20 +39,6 @@
 typedef float _Complex complex32;
 typedef double _Complex complex64;
 
-// Complex16 conversions (complex with half-precision components)
-static inline complex32 complex16_to_complex32(caml_ba_complex16 c16) {
-  float re = half_to_float(c16.re);
-  float im = half_to_float(c16.im);
-  return re + im * I;
-}
-
-static inline caml_ba_complex16 complex32_to_complex16(complex32 c32) {
-  caml_ba_complex16 result;
-  result.re = float_to_half(crealf(c32));
-  result.im = float_to_half(cimagf(c32));
-  return result;
-}
-
 // Int4/uint4 clamping macros for saturation
 #define CLAMP_I4(x) ((x) < -8 ? -8 : ((x) > 7 ? 7 : (x)))
 #define CLAMP_U4(x) ((x) < 0 ? 0 : ((x) > 15 ? 15 : (x)))
@@ -172,6 +158,8 @@ typedef struct {
   MACRO(uint16_t, u16, CAML_BA_UINT16)            \
   MACRO(int32_t, i32, CAML_BA_INT32)              \
   MACRO(int64_t, i64, CAML_BA_INT64)              \
+  MACRO(caml_ba_uint32, u32, NX_BA_UINT32)        \
+  MACRO(caml_ba_uint64, u64, NX_BA_UINT64)        \
   MACRO(intnat, inat, CAML_BA_NATIVE_INT)         \
   MACRO(uint16_t, f16, CAML_BA_FLOAT16)           \
   MACRO(float, f32, CAML_BA_FLOAT32)              \
@@ -183,10 +171,7 @@ typedef struct {
   MACRO(uint8_t, i4, NX_BA_INT4)                  \
   MACRO(uint8_t, u4, NX_BA_UINT4)                 \
   MACRO(caml_ba_fp8_e4m3, f8e4m3, NX_BA_FP8_E4M3) \
-  MACRO(caml_ba_fp8_e5m2, f8e5m2, NX_BA_FP8_E5M2) \
-  MACRO(caml_ba_complex16, c16, NX_BA_COMPLEX16)  \
-  MACRO(caml_ba_qint8, qi8, NX_BA_QINT8)          \
-  MACRO(caml_ba_quint8, qu8, NX_BA_QUINT8)
+  MACRO(caml_ba_fp8_e5m2, f8e5m2, NX_BA_FP8_E5M2)
 
 // Helper functions for safe operations
 static inline long total_elements_safe(const ndarray_t *arr) {

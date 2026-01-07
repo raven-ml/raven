@@ -564,14 +564,14 @@ let reduction_tests =
         let a = Nx.create Nx.float32 [| 4 |] [| 1.; 3.; 5.; 7. |] in
         Nx.std a |> check_t ~eps:1e-6 "std" [||] [| 2.236068 |]);
     test_case "all" `Quick (fun () ->
-        let a = Nx.create Nx.int [| 4 |] [| 1; 1; 0; 1 |] in
+        let a = Nx.create Nx.int32 [| 4 |] [| 1l; 1l; 0l; 1l |] in
         Nx.all a |> check_t "all with zero" [||] [| false |];
-        let c = Nx.create Nx.int [| 3 |] [| 1; 1; 1 |] in
+        let c = Nx.create Nx.int32 [| 3 |] [| 1l; 1l; 1l |] in
         Nx.all c |> check_t "all without zero" [||] [| true |]);
     test_case "any" `Quick (fun () ->
-        let a = Nx.create Nx.int [| 4 |] [| 0; 0; 1; 0 |] in
+        let a = Nx.create Nx.int32 [| 4 |] [| 0l; 0l; 1l; 0l |] in
         Nx.any a |> check_t "any with one" [||] [| true |];
-        let c = Nx.create Nx.int [| 3 |] [| 0; 0; 0 |] in
+        let c = Nx.create Nx.int32 [| 3 |] [| 0l; 0l; 0l |] in
         Nx.any c |> check_t "any all zeros" [||] [| false |]);
     test_case "array_equal" `Quick (fun () ->
         let a = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in

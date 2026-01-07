@@ -16,10 +16,10 @@ typedef void (*binary_op_t)(const ndarray_t *, const ndarray_t *, ndarray_t *);
 
 // Dispatch table for each type (only int32 supported for threefry)
 typedef struct {
-  binary_op_t i8, u8, i16, u16, i32, i64, inat;
+  binary_op_t i8, u8, i16, u16, i32, i64, u32, u64, inat;
   binary_op_t f16, f32, f64;
   binary_op_t c32, c64;
-  binary_op_t bf16, bool_, i4, u4, f8e4m3, f8e5m2, c16, qi8, qu8;
+  binary_op_t bf16, bool_, i4, u4, f8e4m3, f8e5m2;
 } binary_op_table;
 
 // Threefry2x32 definitions
@@ -147,6 +147,8 @@ static const binary_op_table threefry_table = {.i8 = NULL,
                                                .u16 = NULL,
                                                .i32 = nx_c_threefry_i32,
                                                .i64 = NULL,
+                                               .u32 = nx_c_threefry_i32,
+                                               .u64 = NULL,
                                                .inat = NULL,
                                                .f16 = NULL,
                                                .f32 = NULL,
@@ -158,10 +160,7 @@ static const binary_op_table threefry_table = {.i8 = NULL,
                                                .i4 = NULL,
                                                .u4 = NULL,
                                                .f8e4m3 = NULL,
-                                               .f8e5m2 = NULL,
-                                               .c16 = NULL,
-                                               .qi8 = NULL,
-                                               .qu8 = NULL};
+                                               .f8e5m2 = NULL};
 
 // Reuse dispatch from binary (compatible structure)
 static void dispatch_binary_op(value v_x, value v_y, value v_z,
@@ -227,6 +226,12 @@ static void dispatch_binary_op(value v_x, value v_y, value v_z,
     case CAML_BA_INT64:
       op = table->i64;
       break;
+    case NX_BA_UINT32:
+      op = table->u32;
+      break;
+    case NX_BA_UINT64:
+      op = table->u64;
+      break;
     case CAML_BA_CAML_INT:
     case CAML_BA_NATIVE_INT:
       op = table->inat;
@@ -263,15 +268,6 @@ static void dispatch_binary_op(value v_x, value v_y, value v_z,
       break;
     case NX_BA_FP8_E5M2:
       op = table->f8e5m2;
-      break;
-    case NX_BA_COMPLEX16:
-      op = table->c16;
-      break;
-    case NX_BA_QINT8:
-      op = table->qi8;
-      break;
-    case NX_BA_QUINT8:
-      op = table->qu8;
       break;
     default:
       cleanup_ndarray(&x);

@@ -35,7 +35,8 @@ let train () =
   let test_ds =
     let start = Unix.gettimeofday () in
     let ds =
-      Kaun.Dataset.batch_map 100 (fun batch ->
+      Kaun.Dataset.batch_map 100
+        (fun batch ->
           let images, labels = Array.split batch in
           let batched_images = Rune.stack ~axis:0 (Array.to_list images) in
           let batched_labels = Rune.stack ~axis:0 (Array.to_list labels) in

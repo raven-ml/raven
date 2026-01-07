@@ -14,11 +14,10 @@
 typedef uint16_t caml_ba_bfloat16;      /* BFloat16 */
 typedef uint8_t caml_ba_fp8_e4m3;       /* 8-bit float: 1 sign, 4 exponent, 3 mantissa */
 typedef uint8_t caml_ba_fp8_e5m2;       /* 8-bit float: 1 sign, 5 exponent, 2 mantissa */
-typedef struct { uint16_t re, im; } caml_ba_complex16; /* Complex with half-precision components */
 typedef uint8_t caml_ba_bool;           /* Bool as byte (0/1) */
 /* Note: int4/uint4 pack 2 values per byte - no single-element typedef makes sense */
-typedef int8_t caml_ba_qint8;           /* Quantized signed 8-bit */
-typedef uint8_t caml_ba_quint8;         /* Quantized unsigned 8-bit */
+typedef uint32_t caml_ba_uint32;        /* Unsigned 32-bit */
+typedef uint64_t caml_ba_uint64;        /* Unsigned 64-bit */
 
 /* Extended kind enumeration that continues from OCaml's bigarray kinds */
 enum nx_ba_extended_kind {
@@ -28,9 +27,8 @@ enum nx_ba_extended_kind {
   NX_BA_UINT4,
   NX_BA_FP8_E4M3,
   NX_BA_FP8_E5M2,
-  NX_BA_COMPLEX16,
-  NX_BA_QINT8,
-  NX_BA_QUINT8,
+  NX_BA_UINT32,
+  NX_BA_UINT64,
   NX_BA_LAST_KIND
 };
 

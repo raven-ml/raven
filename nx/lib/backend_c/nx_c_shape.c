@@ -67,17 +67,17 @@ typedef void (*copy_op_t)(const ndarray_t *, const ndarray_t *, long *);
 
 // Dispatch tables for fill and copy
 typedef struct {
-  fill_op_t i8, u8, i16, u16, i32, i64, inat;
+  fill_op_t i8, u8, i16, u16, i32, i64, u32, u64, inat;
   fill_op_t f16, f32, f64;
   fill_op_t c32, c64;
-  fill_op_t bf16, bool_, i4, u4, f8e4m3, f8e5m2, c16, qi8, qu8;
+  fill_op_t bf16, bool_, i4, u4, f8e4m3, f8e5m2;
 } fill_op_table;
 
 typedef struct {
-  copy_op_t i8, u8, i16, u16, i32, i64, inat;
+  copy_op_t i8, u8, i16, u16, i32, i64, u32, u64, inat;
   copy_op_t f16, f32, f64;
   copy_op_t c32, c64;
-  copy_op_t bf16, bool_, i4, u4, f8e4m3, f8e5m2, c16, qi8, qu8;
+  copy_op_t bf16, bool_, i4, u4, f8e4m3, f8e5m2;
 } copy_op_table;
 
 // Helper to get element size in bytes for memcpy eligibility (0 for
@@ -89,8 +89,6 @@ static int get_elem_size(int kind) {
     case NX_BA_BOOL:
     case NX_BA_FP8_E4M3:
     case NX_BA_FP8_E5M2:
-    case NX_BA_QINT8:
-    case NX_BA_QUINT8:
       return 1;
     case CAML_BA_SINT16:
     case CAML_BA_UINT16:
@@ -99,17 +97,17 @@ static int get_elem_size(int kind) {
       return 2;
     case CAML_BA_INT32:
     case CAML_BA_FLOAT32:
+    case NX_BA_UINT32:
       return 4;
     case CAML_BA_INT64:
     case CAML_BA_NATIVE_INT:
     case CAML_BA_FLOAT64:
+    case NX_BA_UINT64:
       return 8;
     case CAML_BA_COMPLEX32:
       return 8;
     case CAML_BA_COMPLEX64:
       return 16;
-    case NX_BA_COMPLEX16:
-      return 4;
     case NX_BA_INT4:
     case NX_BA_UINT4:
       return 0;  // Packed, no memcpy
@@ -222,13 +220,13 @@ static inline void iterate_inner_dims_copy(const ndarray_t *src,
   FILL_OP_FOR_TYPE(name, uint16_t, u16)      \
   FILL_OP_FOR_TYPE(name, int32_t, i32)       \
   FILL_OP_FOR_TYPE(name, int64_t, i64)       \
+  FILL_OP_FOR_TYPE(name, uint32_t, u32)      \
+  FILL_OP_FOR_TYPE(name, uint64_t, u64)      \
   FILL_OP_FOR_TYPE(name, intnat, inat)       \
   FILL_OP_FOR_TYPE(name, float, f32)         \
   FILL_OP_FOR_TYPE(name, double, f64)        \
   FILL_OP_FOR_TYPE(name, complex32, c32)     \
-  FILL_OP_FOR_TYPE(name, complex64, c64)     \
-  FILL_OP_FOR_TYPE(name, caml_ba_qint8, qi8) \
-  FILL_OP_FOR_TYPE(name, caml_ba_quint8, qu8)
+  FILL_OP_FOR_TYPE(name, complex64, c64)
 
 // For low-precision fill
 #define LOW_PREC_FILL_KERNEL(name, T, suffix, TO_FLOAT, FROM_FLOAT)      \
@@ -240,15 +238,6 @@ static inline void iterate_inner_dims_copy(const ndarray_t *src,
   }
 
 #define LOW_PREC_FILL_IMPL(name, T, suffix) FILL_OP_IMPL(name, T, suffix)
-
-// For complex16 fill
-#define COMPLEX16_FILL_KERNEL(name)                               \
-  static void nx_c_##name##_c16_kernel(void *z_data, void *val_p, \
-                                       long z_off) {              \
-    caml_ba_complex16 *z = (caml_ba_complex16 *)z_data;           \
-    caml_ba_complex16 val = *(caml_ba_complex16 *)val_p;          \
-    z[z_off] = val;                                               \
-  }
 
 // For int4 fill (packed, with saturation)
 #define INT4_FILL_IMPL(name, signedness, suffix)                         \
@@ -341,20 +330,17 @@ static inline void iterate_inner_dims_copy(const ndarray_t *src,
   COPY_OP_FOR_TYPE(name, uint16_t, u16)      \
   COPY_OP_FOR_TYPE(name, int32_t, i32)       \
   COPY_OP_FOR_TYPE(name, int64_t, i64)       \
+  COPY_OP_FOR_TYPE(name, uint32_t, u32)      \
+  COPY_OP_FOR_TYPE(name, uint64_t, u64)      \
   COPY_OP_FOR_TYPE(name, intnat, inat)       \
   COPY_OP_FOR_TYPE(name, float, f32)         \
   COPY_OP_FOR_TYPE(name, double, f64)        \
   COPY_OP_FOR_TYPE(name, complex32, c32)     \
-  COPY_OP_FOR_TYPE(name, complex64, c64)     \
-  COPY_OP_FOR_TYPE(name, caml_ba_qint8, qi8) \
-  COPY_OP_FOR_TYPE(name, caml_ba_quint8, qu8)
+  COPY_OP_FOR_TYPE(name, complex64, c64)
 
 // For low-precision copy (bitwise copy)
 #define LOW_PREC_COPY_KERNEL(name, T, suffix) COPY_OP_KERNEL(name, T, suffix)
 #define LOW_PREC_COPY_IMPL(name, T, suffix) COPY_OP_IMPL(name, T, suffix)
-
-// For complex16 copy
-#define COMPLEX16_COPY_KERNEL(name) COPY_OP_KERNEL(name, caml_ba_complex16, c16)
 
 // For int4 copy (packed)
 #define INT4_COPY_IMPL(name, signedness, suffix)                               \
@@ -432,8 +418,6 @@ LOW_PREC_FILL_KERNEL(fill, caml_ba_fp8_e4m3, f8e4m3, , float_to_fp8_e4m3)
 LOW_PREC_FILL_IMPL(fill, caml_ba_fp8_e4m3, f8e4m3)
 LOW_PREC_FILL_KERNEL(fill, caml_ba_fp8_e5m2, f8e5m2, , float_to_fp8_e5m2)
 LOW_PREC_FILL_IMPL(fill, caml_ba_fp8_e5m2, f8e5m2)
-COMPLEX16_FILL_KERNEL(fill)
-FILL_OP_IMPL(fill, caml_ba_complex16, c16)
 INT4_FILL_IMPL(fill, 1, i4)
 INT4_FILL_IMPL(fill, 0, u4)
 FILL_OP_FOR_TYPE(fill, caml_ba_bool, bool_)
@@ -445,6 +429,8 @@ static const fill_op_table fill_table = {.i8 = nx_c_fill_i8,
                                          .u16 = nx_c_fill_u16,
                                          .i32 = nx_c_fill_i32,
                                          .i64 = nx_c_fill_i64,
+                                         .u32 = nx_c_fill_u32,
+                                         .u64 = nx_c_fill_u64,
                                          .inat = nx_c_fill_inat,
                                          .f16 = nx_c_fill_f16,
                                          .f32 = nx_c_fill_f32,
@@ -456,10 +442,7 @@ static const fill_op_table fill_table = {.i8 = nx_c_fill_i8,
                                          .i4 = nx_c_fill_i4,
                                          .u4 = nx_c_fill_u4,
                                          .f8e4m3 = nx_c_fill_f8e4m3,
-                                         .f8e5m2 = nx_c_fill_f8e5m2,
-                                         .c16 = nx_c_fill_c16,
-                                         .qi8 = nx_c_fill_qi8,
-                                         .qu8 = nx_c_fill_qu8};
+                                         .f8e5m2 = nx_c_fill_f8e5m2};
 
 GENERATE_COPY_OP(copy)
 LOW_PREC_COPY_KERNEL(copy, uint16_t, f16)
@@ -470,8 +453,6 @@ LOW_PREC_COPY_KERNEL(copy, caml_ba_fp8_e4m3, f8e4m3)
 LOW_PREC_COPY_IMPL(copy, caml_ba_fp8_e4m3, f8e4m3)
 LOW_PREC_COPY_KERNEL(copy, caml_ba_fp8_e5m2, f8e5m2)
 LOW_PREC_COPY_IMPL(copy, caml_ba_fp8_e5m2, f8e5m2)
-COMPLEX16_COPY_KERNEL(copy)
-COPY_OP_IMPL(copy, caml_ba_complex16, c16)
 INT4_COPY_IMPL(copy, 1, i4)
 INT4_COPY_IMPL(copy, 0, u4)
 COPY_OP_FOR_TYPE(copy, caml_ba_bool, bool_)
@@ -482,6 +463,8 @@ static const copy_op_table copy_table = {.i8 = nx_c_copy_i8,
                                          .u16 = nx_c_copy_u16,
                                          .i32 = nx_c_copy_i32,
                                          .i64 = nx_c_copy_i64,
+                                         .u32 = nx_c_copy_u32,
+                                         .u64 = nx_c_copy_u64,
                                          .inat = nx_c_copy_inat,
                                          .f16 = nx_c_copy_f16,
                                          .f32 = nx_c_copy_f32,
@@ -493,10 +476,7 @@ static const copy_op_table copy_table = {.i8 = nx_c_copy_i8,
                                          .i4 = nx_c_copy_i4,
                                          .u4 = nx_c_copy_u4,
                                          .f8e4m3 = nx_c_copy_f8e4m3,
-                                         .f8e5m2 = nx_c_copy_f8e5m2,
-                                         .c16 = nx_c_copy_c16,
-                                         .qi8 = nx_c_copy_qi8,
-                                         .qu8 = nx_c_copy_qu8};
+                                         .f8e5m2 = nx_c_copy_f8e5m2};
 
 // ============================================================================
 // OCaml FFI Stubs
@@ -581,6 +561,14 @@ CAMLprim value caml_nx_pad(value v_input, value v_pads, value v_fill,
       fill_op = fill_table.i64;
       copy_op = copy_table.i64;
       break;
+    case NX_BA_UINT32:
+      fill_op = fill_table.u32;
+      copy_op = copy_table.u32;
+      break;
+    case NX_BA_UINT64:
+      fill_op = fill_table.u64;
+      copy_op = copy_table.u64;
+      break;
     case CAML_BA_CAML_INT:
     case CAML_BA_NATIVE_INT:
       fill_op = fill_table.inat;
@@ -630,18 +618,6 @@ CAMLprim value caml_nx_pad(value v_input, value v_pads, value v_fill,
       fill_op = fill_table.f8e5m2;
       copy_op = copy_table.f8e5m2;
       break;
-    case NX_BA_COMPLEX16:
-      fill_op = fill_table.c16;
-      copy_op = copy_table.c16;
-      break;
-    case NX_BA_QINT8:
-      fill_op = fill_table.qi8;
-      copy_op = copy_table.qi8;
-      break;
-    case NX_BA_QUINT8:
-      fill_op = fill_table.qu8;
-      copy_op = copy_table.qu8;
-      break;
     default:
       free(pad_before);
       cleanup_ndarray(&input);
@@ -657,6 +633,8 @@ CAMLprim value caml_nx_pad(value v_input, value v_pads, value v_fill,
     uint16_t u16;
     int32_t i32;
     int64_t i64;
+    uint32_t u32;
+    uint64_t u64;
     intnat inat;
     float f32;
     double f64;
@@ -666,11 +644,8 @@ CAMLprim value caml_nx_pad(value v_input, value v_pads, value v_fill,
     caml_ba_bfloat16 bf16;
     caml_ba_fp8_e4m3 f8e4m3;
     caml_ba_fp8_e5m2 f8e5m2;
-    caml_ba_complex16 c16;
     uint8_t bool_val;
     int i4_val;
-    caml_ba_qint8 qi8;
-    caml_ba_quint8 qu8;
   } fill_c;
   void *fill_p = &fill_c;
   switch (kind) {
@@ -691,6 +666,12 @@ CAMLprim value caml_nx_pad(value v_input, value v_pads, value v_fill,
       break;
     case CAML_BA_INT64:
       fill_c.i64 = Int64_val(v_fill);
+      break;
+    case NX_BA_UINT32:
+      fill_c.u32 = (uint32_t)Int32_val(v_fill);
+      break;
+    case NX_BA_UINT64:
+      fill_c.u64 = (uint64_t)Int64_val(v_fill);
       break;
     case CAML_BA_CAML_INT:
     case CAML_BA_NATIVE_INT:
@@ -734,17 +715,6 @@ CAMLprim value caml_nx_pad(value v_input, value v_pads, value v_fill,
     case NX_BA_FP8_E5M2:
       fill_c.f8e5m2 = float_to_fp8_e5m2((float)Double_val(v_fill));
       break;
-    case NX_BA_COMPLEX16:
-      if (Is_block(v_fill)) {
-        // Complex record - use Double_field to access float fields directly
-        fill_c.c16.re = float_to_half((float)Double_field(v_fill, 0));
-        fill_c.c16.im = float_to_half((float)Double_field(v_fill, 1));
-      } else {
-        // Should not happen for complex types, but handle gracefully
-        fill_c.c16.re = float_to_half(0.0f);
-        fill_c.c16.im = float_to_half(0.0f);
-      }
-      break;
     case NX_BA_BOOL:
       fill_c.bool_val = Bool_val(v_fill) ? 1 : 0;
       break;
@@ -753,12 +723,6 @@ CAMLprim value caml_nx_pad(value v_input, value v_pads, value v_fill,
       break;
     case NX_BA_UINT4:
       fill_c.i4_val = CLAMP_U4(Long_val(v_fill));
-      break;
-    case NX_BA_QINT8:
-      fill_c.qi8 = (caml_ba_qint8)Long_val(v_fill);
-      break;
-    case NX_BA_QUINT8:
-      fill_c.qu8 = (caml_ba_quint8)Long_val(v_fill);
       break;
   }
 
@@ -814,6 +778,12 @@ CAMLprim value caml_nx_cat(value v_inputs, value v_axis, value v_output) {
     case CAML_BA_INT64:
       copy_op = copy_table.i64;
       break;
+    case NX_BA_UINT32:
+      copy_op = copy_table.u32;
+      break;
+    case NX_BA_UINT64:
+      copy_op = copy_table.u64;
+      break;
     case CAML_BA_CAML_INT:
     case CAML_BA_NATIVE_INT:
       copy_op = copy_table.inat;
@@ -850,15 +820,6 @@ CAMLprim value caml_nx_cat(value v_inputs, value v_axis, value v_output) {
       break;
     case NX_BA_FP8_E5M2:
       copy_op = copy_table.f8e5m2;
-      break;
-    case NX_BA_COMPLEX16:
-      copy_op = copy_table.c16;
-      break;
-    case NX_BA_QINT8:
-      copy_op = copy_table.qi8;
-      break;
-    case NX_BA_QUINT8:
-      copy_op = copy_table.qu8;
       break;
     default:
       cleanup_ndarray(&output);

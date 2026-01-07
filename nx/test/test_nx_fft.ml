@@ -19,7 +19,7 @@ let test_fft_ifft () =
       Complex.{ re = 0.0; im = 0.0 };
     |]
   in
-  let input = Nx.create Nx.complex64 shape input_data in
+  let input = Nx.create Nx.complex128 shape input_data in
   let fft_out = Nx.fft input in
   let ifft_out = Nx.ifft fft_out in
   check_t "1D even fft/ifft" shape input_data ifft_out;
@@ -31,7 +31,7 @@ let test_fft_ifft () =
     Array.init n_odd (fun (i : int) ->
         { Complex.re = Float.of_int i; im = Float.of_int (i - 3) *. 0.1 })
   in
-  let input_odd = Nx.create Nx.complex64 shape_odd input_data_odd in
+  let input_odd = Nx.create Nx.complex128 shape_odd input_data_odd in
   let fft_odd = Nx.fft input_odd in
   let ifft_odd = Nx.ifft fft_odd in
   check_t "1D odd fft/ifft" shape_odd input_data_odd ifft_odd;
@@ -46,7 +46,7 @@ let test_fft_ifft () =
           im = Float.of_int (i mod 5) *. 0.1;
         })
   in
-  let input_2d = Nx.create Nx.complex64 shape_2d input_data_2d in
+  let input_2d = Nx.create Nx.complex128 shape_2d input_data_2d in
   let fft_2d = Nx.fft2 input_2d in
   let ifft_2d = Nx.ifft2 fft_2d in
   check_t "2D fft/ifft" shape_2d input_data_2d ifft_2d;
@@ -57,7 +57,7 @@ let test_fft_ifft () =
   let input_data_nd =
     Array.init size_nd (fun i -> { Complex.re = Float.of_int i; im = 0.0 })
   in
-  let input_nd = Nx.create Nx.complex64 shape_nd input_data_nd in
+  let input_nd = Nx.create Nx.complex128 shape_nd input_data_nd in
   let fft_nd = Nx.fftn input_nd in
   let ifft_nd = Nx.ifftn fft_nd in
   check_t "ND fft/ifft" shape_nd input_data_nd ifft_nd
@@ -69,7 +69,7 @@ let test_fft_axes () =
     Array.init size (fun i ->
         { Complex.re = Float.of_int i; im = Float.of_int (i mod 7) *. 0.1 })
   in
-  let input = Nx.create Nx.complex64 shape input_data in
+  let input = Nx.create Nx.complex128 shape input_data in
 
   (* Specific axes *)
   let fft_axis0 = Nx.fft input ~axis:0 in
@@ -93,7 +93,7 @@ let test_fft_size () =
         let angle = two_pi *. Float.of_int i /. Float.of_int n in
         { Complex.re = sin angle; im = cos angle })
   in
-  let input = Nx.create Nx.complex64 shape input_data in
+  let input = Nx.create Nx.complex128 shape input_data in
 
   (* Pad to larger size *)
   let pad_size = 16 in
@@ -138,7 +138,7 @@ let test_fft_norm () =
       Complex.{ re = 4.0; im = 4.0 };
     |]
   in
-  let input = Nx.create Nx.complex64 shape input_data in
+  let input = Nx.create Nx.complex128 shape input_data in
 
   (* Backward norm (default) *)
   let fft_backward = Nx.fft input ~norm:`Backward in
@@ -157,14 +157,14 @@ let test_fft_norm () =
 
 let test_fft_edge_cases () =
   (* Empty tensor *)
-  let empty = Nx.empty Nx.complex64 [| 0 |] in
+  let empty = Nx.empty Nx.complex128 [| 0 |] in
   let fft_empty = Nx.fft empty in
   Alcotest.(check (array int)) "fft empty" [| 0 |] (Nx.shape fft_empty);
 
   (* Size 1 *)
   let shape = [| 1 |] in
   let input_data = [| Complex.{ re = 5.0; im = -3.0 } |] in
-  let single = Nx.create Nx.complex64 shape input_data in
+  let single = Nx.create Nx.complex128 shape input_data in
   let fft_single = Nx.fft single in
   check_t "fft size 1" shape input_data fft_single;
 
@@ -174,7 +174,7 @@ let test_fft_edge_cases () =
   let input_data_non_pow2 =
     Array.init n (fun i -> { Complex.re = Float.of_int i; im = 0.0 })
   in
-  let input = Nx.create Nx.complex64 shape_non_pow2 input_data_non_pow2 in
+  let input = Nx.create Nx.complex128 shape_non_pow2 input_data_non_pow2 in
   let fft_out = Nx.fft input in
   let ifft_out = Nx.ifft fft_out in
   check_t "non-pow2" shape_non_pow2 input_data_non_pow2 ifft_out

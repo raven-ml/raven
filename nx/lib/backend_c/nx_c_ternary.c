@@ -15,10 +15,10 @@ typedef void (*ternary_op_t)(const ndarray_t *, const ndarray_t *,
 
 // Dispatch table for each type
 typedef struct {
-  ternary_op_t i8, u8, i16, u16, i32, i64, inat;
+  ternary_op_t i8, u8, i16, u16, i32, i64, u32, u64, inat;
   ternary_op_t f16, f32, f64;
   ternary_op_t c32, c64;
-  ternary_op_t bf16, bool_, i4, u4, f8e4m3, f8e5m2, c16, qi8, qu8;
+  ternary_op_t bf16, bool_, i4, u4, f8e4m3, f8e5m2;
 } ternary_op_table;
 
 // Iterator for ternary operations (4 arrays)
@@ -119,6 +119,8 @@ static inline void nd_iterator_destroy_ternary(nd_iterator_ternary_t *it) {
   TERNARY_OP_FOR_TYPE(name, uint16_t, u16)            \
   TERNARY_OP_FOR_TYPE(name, int32_t, i32)             \
   TERNARY_OP_FOR_TYPE(name, int64_t, i64)             \
+  TERNARY_OP_FOR_TYPE(name, uint32_t, u32)            \
+  TERNARY_OP_FOR_TYPE(name, uint64_t, u64)            \
   TERNARY_OP_FOR_TYPE(name, intnat, inat)             \
   TERNARY_OP_FOR_TYPE(name, float, f32)               \
   TERNARY_OP_FOR_TYPE(name, double, f64)              \
@@ -128,10 +130,7 @@ static inline void nd_iterator_destroy_ternary(nd_iterator_ternary_t *it) {
   TERNARY_OP_FOR_TYPE(name, caml_ba_bfloat16, bf16)   \
   TERNARY_OP_FOR_TYPE(name, caml_ba_fp8_e4m3, f8e4m3) \
   TERNARY_OP_FOR_TYPE(name, caml_ba_fp8_e5m2, f8e5m2) \
-  TERNARY_OP_FOR_TYPE(name, caml_ba_complex16, c16)   \
-  TERNARY_OP_FOR_TYPE(name, caml_ba_bool, bool_)      \
-  TERNARY_OP_FOR_TYPE(name, caml_ba_qint8, qi8)       \
-  TERNARY_OP_FOR_TYPE(name, caml_ba_quint8, qu8)
+  TERNARY_OP_FOR_TYPE(name, caml_ba_bool, bool_)
 
 // Macro to build dispatch table
 #define BUILD_DISPATCH_TABLE(name)               \
@@ -142,6 +141,8 @@ static inline void nd_iterator_destroy_ternary(nd_iterator_ternary_t *it) {
       .u16 = nx_c_##name##_u16,                  \
       .i32 = nx_c_##name##_i32,                  \
       .i64 = nx_c_##name##_i64,                  \
+      .u32 = nx_c_##name##_u32,                  \
+      .u64 = nx_c_##name##_u64,                  \
       .inat = nx_c_##name##_inat,                \
       .f16 = nx_c_##name##_f16,                  \
       .f32 = nx_c_##name##_f32,                  \
@@ -153,10 +154,7 @@ static inline void nd_iterator_destroy_ternary(nd_iterator_ternary_t *it) {
       .i4 = nx_c_##name##_i4,                    \
       .u4 = nx_c_##name##_u4,                    \
       .f8e4m3 = nx_c_##name##_f8e4m3,            \
-      .f8e5m2 = nx_c_##name##_f8e5m2,            \
-      .c16 = nx_c_##name##_c16,                  \
-      .qi8 = nx_c_##name##_qi8,                  \
-      .qu8 = nx_c_##name##_qu8}
+      .f8e5m2 = nx_c_##name##_f8e5m2}
 
 // Helper to iterate over inner dimensions with a kernel function for ternary
 // operations
@@ -427,6 +425,12 @@ static void dispatch_ternary_op(value v_cond, value v_x, value v_y, value v_z,
     case CAML_BA_INT64:
       op = table->i64;
       break;
+    case NX_BA_UINT32:
+      op = table->u32;
+      break;
+    case NX_BA_UINT64:
+      op = table->u64;
+      break;
     case CAML_BA_CAML_INT:
     case CAML_BA_NATIVE_INT:
       op = table->inat;
@@ -463,15 +467,6 @@ static void dispatch_ternary_op(value v_cond, value v_x, value v_y, value v_z,
       break;
     case NX_BA_FP8_E5M2:
       op = table->f8e5m2;
-      break;
-    case NX_BA_COMPLEX16:
-      op = table->c16;
-      break;
-    case NX_BA_QINT8:
-      op = table->qi8;
-      break;
-    case NX_BA_QUINT8:
-      op = table->qu8;
       break;
     default:
       cleanup_ndarray(&cond);

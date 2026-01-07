@@ -409,36 +409,7 @@ static int qr_decompose_f8e5m2(caml_ba_fp8_e5m2* a, caml_ba_fp8_e5m2* q,
   return 0;
 }
 
-static int qr_decompose_complex16(caml_ba_complex16* a, caml_ba_complex16* q,
-                                  caml_ba_complex16* r, int m, int n,
-                                  int reduced) {
-  complex32* a_complex = (complex32*)malloc(m * n * sizeof(complex32));
-  int k = reduced ? (m < n ? m : n) : m;
-  complex32* q_complex = (complex32*)malloc(m * k * sizeof(complex32));
-  complex32* r_complex = (complex32*)malloc(m * n * sizeof(complex32));
-  if (!a_complex || !q_complex || !r_complex) {
-    free(a_complex);
-    free(q_complex);
-    free(r_complex);
-    return -1;
-  }
-  for (int i = 0; i < m * n; i++) {
-    a_complex[i] = half_to_float(a[i].re) + I * half_to_float(a[i].im);
-  }
-  qr_decompose_complex32(a_complex, q_complex, r_complex, m, n, reduced);
-  for (int i = 0; i < m * k; i++) {
-    q[i].re = float_to_half(crealf(q_complex[i]));
-    q[i].im = float_to_half(cimagf(q_complex[i]));
-  }
-  for (int i = 0; i < m * n; i++) {
-    r[i].re = float_to_half(crealf(r_complex[i]));
-    r[i].im = float_to_half(cimagf(r_complex[i]));
-  }
-  free(a_complex);
-  free(q_complex);
-  free(r_complex);
-  return 0;
-}
+
 CAMLprim value caml_nx_op_qr(value v_in, value v_q, value v_r,
                              value v_reduced) {
   CAMLparam4(v_in, v_q, v_r, v_reduced);
@@ -663,39 +634,6 @@ CAMLprim value caml_nx_op_qr(value v_in, value v_q, value v_r,
           }
         }
         status = qr_decompose_f8e5m2(A, Q, R, m, n, reduced);
-        if (status == 0) {
-          for (int i = 0; i < m; i++) {
-            for (int j = 0; j < k; j++) {
-              base_q[i * s_q_row + j * s_q_col] = Q[i * k + j];
-            }
-          }
-          for (int i = 0; i < rows_r; i++) {
-            for (int j = 0; j < n; j++) {
-              base_r[i * s_r_row + j * s_r_col] = R[i * n + j];
-            }
-          }
-        }
-        free(A);
-        free(Q);
-        free(R);
-        break;
-      }
-      case NX_BA_COMPLEX16: {
-        caml_ba_complex16* base_in = (caml_ba_complex16*)ba_in->data + off_in;
-        caml_ba_complex16* base_q = (caml_ba_complex16*)ba_q->data + off_q;
-        caml_ba_complex16* base_r = (caml_ba_complex16*)ba_r->data + off_r;
-        caml_ba_complex16* A = (caml_ba_complex16*)malloc(
-            (size_t)m * n * sizeof(caml_ba_complex16));
-        caml_ba_complex16* Q = (caml_ba_complex16*)malloc(
-            (size_t)m * k * sizeof(caml_ba_complex16));
-        caml_ba_complex16* R = (caml_ba_complex16*)malloc(
-            (size_t)m * n * sizeof(caml_ba_complex16));
-        for (int i = 0; i < m; i++) {
-          for (int j = 0; j < n; j++) {
-            A[i * n + j] = base_in[i * s_in_row + j * s_in_col];
-          }
-        }
-        status = qr_decompose_complex16(A, Q, R, m, n, reduced);
         if (status == 0) {
           for (int i = 0; i < m; i++) {
             for (int j = 0; j < k; j++) {

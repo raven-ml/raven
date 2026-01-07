@@ -16,10 +16,10 @@ typedef void (*matmul_op_t)(const ndarray_t *, const ndarray_t *, ndarray_t *);
 
 // Dispatch table for each type
 typedef struct {
-  matmul_op_t i8, u8, i16, u16, i32, i64, inat;
+  matmul_op_t i8, u8, i16, u16, i32, i64, u32, u64, inat;
   matmul_op_t f16, f32, f64;
   matmul_op_t c32, c64;
-  matmul_op_t bf16, bool_, i4, u4, f8e4m3, f8e5m2, c16, qi8, qu8;
+  matmul_op_t bf16, bool_, i4, u4, f8e4m3, f8e5m2;
 } matmul_op_table;
 
 // Macro to generate all standard type variants for matmul
@@ -228,32 +228,6 @@ static inline void iterate_batch(
 // For low-precision, use the impl with the special kernel
 #define LOW_PREC_MATMUL_IMPL(suffix, T) MATMUL_OP_IMPL(suffix, sizeof(T))
 
-// Complex16 matmul kernel
-#define COMPLEX16_MATMUL_KERNEL                                               \
-  static void nx_c_matmul_c16_kernel(                                         \
-      void *a_data, long a_off, long a_rs, long a_cs, void *b_data,           \
-      long b_off, long b_rs, long b_cs, void *c_data, long c_off, long c_rs,  \
-      long c_cs, long m, long k, long n) {                                    \
-    caml_ba_complex16 *a = (caml_ba_complex16 *)a_data;                       \
-    caml_ba_complex16 *b = (caml_ba_complex16 *)b_data;                       \
-    caml_ba_complex16 *c = (caml_ba_complex16 *)c_data;                       \
-    _Pragma("omp parallel for collapse(2) if(m * n > 1000)") for (long i = 0; \
-                                                                  i < m;      \
-                                                                  i++) {      \
-      for (long j = 0; j < n; j++) {                                          \
-        complex32 sum = 0;                                                    \
-        for (long p = 0; p < k; p++) {                                        \
-          complex32 aa =                                                      \
-              complex16_to_complex32(a[a_off + i * a_rs + p * a_cs]);         \
-          complex32 bb =                                                      \
-              complex16_to_complex32(b[b_off + p * b_rs + j * b_cs]);         \
-          sum += aa * bb;                                                     \
-        }                                                                     \
-        c[c_off + i * c_rs + j * c_cs] = complex32_to_complex16(sum);         \
-      }                                                                       \
-    }                                                                         \
-  }
-
 // Special implementation for int4 (packed, unpack/mul/acc/pack with saturation)
 #define INT4_MATMUL_IMPL(signedness, suffix)                                   \
   static void nx_c_matmul_##suffix##_kernel(                                   \
@@ -311,9 +285,9 @@ GENERATE_MATMUL_OP(i16, int16_t, int64_t, (int16_t))
 GENERATE_MATMUL_OP(u16, uint16_t, uint64_t, (uint16_t))
 GENERATE_MATMUL_OP(i32, int32_t, int64_t, (int32_t))
 GENERATE_MATMUL_OP(i64, int64_t, int64_t, (int64_t))
+GENERATE_MATMUL_OP(u32, uint32_t, uint64_t, (uint32_t))
+GENERATE_MATMUL_OP(u64, uint64_t, uint64_t, (uint64_t))
 GENERATE_MATMUL_OP(inat, intnat, int64_t, (intnat))
-GENERATE_MATMUL_OP(qi8, caml_ba_qint8, int64_t, (caml_ba_qint8))
-GENERATE_MATMUL_OP(qu8, caml_ba_quint8, uint64_t, (caml_ba_quint8))
 GENERATE_MATMUL_OP(bool_, caml_ba_bool, uint64_t, (caml_ba_bool))
 
 // Float types with same-type accumulation
@@ -631,10 +605,6 @@ LOW_PREC_MATMUL_KERNEL(f8e5m2, caml_ba_fp8_e5m2, fp8_e5m2_to_float,
                        float_to_fp8_e5m2)
 LOW_PREC_MATMUL_IMPL(f8e5m2, caml_ba_fp8_e5m2)
 
-// Complex16
-COMPLEX16_MATMUL_KERNEL
-MATMUL_OP_IMPL(c16, sizeof(caml_ba_complex16))
-
 // Int4/Uint4
 INT4_MATMUL_IMPL(1, i4)
 INT4_MATMUL_IMPL(0, u4)
@@ -647,6 +617,8 @@ INT4_MATMUL_IMPL(0, u4)
                                                .u16 = nx_c_##name##_u16,       \
                                                .i32 = nx_c_##name##_i32,       \
                                                .i64 = nx_c_##name##_i64,       \
+                                               .u32 = nx_c_##name##_u32,       \
+                                               .u64 = nx_c_##name##_u64,       \
                                                .inat = nx_c_##name##_inat,     \
                                                .f16 = nx_c_##name##_f16,       \
                                                .f32 = nx_c_##name##_f32,       \
@@ -658,10 +630,7 @@ INT4_MATMUL_IMPL(0, u4)
                                                .i4 = nx_c_##name##_i4,         \
                                                .u4 = nx_c_##name##_u4,         \
                                                .f8e4m3 = nx_c_##name##_f8e4m3, \
-                                               .f8e5m2 = nx_c_##name##_f8e5m2, \
-                                               .c16 = nx_c_##name##_c16,       \
-                                               .qi8 = nx_c_##name##_qi8,       \
-                                               .qu8 = nx_c_##name##_qu8}
+                                               .f8e5m2 = nx_c_##name##_f8e5m2}
 
 BUILD_DISPATCH_TABLE(matmul);
 
@@ -713,6 +682,12 @@ static void dispatch_matmul_op(value v_a, value v_b, value v_c,
     case CAML_BA_INT64:
       op = table->i64;
       break;
+    case NX_BA_UINT32:
+      op = table->u32;
+      break;
+    case NX_BA_UINT64:
+      op = table->u64;
+      break;
     case CAML_BA_CAML_INT:
     case CAML_BA_NATIVE_INT:
       op = table->inat;
@@ -749,15 +724,6 @@ static void dispatch_matmul_op(value v_a, value v_b, value v_c,
       break;
     case NX_BA_FP8_E5M2:
       op = table->f8e5m2;
-      break;
-    case NX_BA_COMPLEX16:
-      op = table->c16;
-      break;
-    case NX_BA_QINT8:
-      op = table->qi8;
-      break;
-    case NX_BA_QUINT8:
-      op = table->qu8;
       break;
     default:
       cleanup_ndarray(&A);

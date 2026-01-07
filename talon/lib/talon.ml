@@ -1876,14 +1876,16 @@ module Agg = struct
               let arr : int64 array = Nx.to_array tensor in
               let filtered, _ = filter_int64_array mask arr in
               Array.fold_left (fun acc x -> acc +. Int64.to_float x) 0. filtered
-          | Nx.Int ->
-              let arr : int array = Nx.to_array tensor in
-              Array.fold_left (fun acc x -> acc +. float_of_int x) 0. arr
-          | Nx.NativeInt ->
-              let arr : nativeint array = Nx.to_array tensor in
-              Array.fold_left (fun acc x -> acc +. Nativeint.to_float x) 0. arr
-          | Nx.Complex32 -> failwith "Float.sum: complex numbers not supported"
+          | Nx.UInt32 ->
+              let arr : int32 array = Nx.to_array tensor in
+              let filtered, _ = filter_int32_array mask arr in
+              Array.fold_left (fun acc x -> acc +. Int32.to_float x) 0. filtered
+          | Nx.UInt64 ->
+              let arr : int64 array = Nx.to_array tensor in
+              let filtered, _ = filter_int64_array mask arr in
+              Array.fold_left (fun acc x -> acc +. Int64.to_float x) 0. filtered
           | Nx.Complex64 -> failwith "Float.sum: complex numbers not supported"
+          | Nx.Complex128 -> failwith "Float.sum: complex numbers not supported"
           | Nx.Bool -> failwith "Float.sum: boolean values not supported"
           | Nx.Int4 ->
               let arr : int array = Nx.to_array tensor in
@@ -1896,14 +1898,7 @@ module Agg = struct
               Array.fold_left ( +. ) 0. arr
           | Nx.Float8_e5m2 ->
               let arr : float array = Nx.to_array tensor in
-              Array.fold_left ( +. ) 0. arr
-          | Nx.Complex16 -> failwith "Float.sum: complex numbers not supported"
-          | Nx.QInt8 ->
-              let arr : int array = Nx.to_array tensor in
-              Array.fold_left (fun acc x -> acc +. float_of_int x) 0. arr
-          | Nx.QUInt8 ->
-              let arr : int array = Nx.to_array tensor in
-              Array.fold_left (fun acc x -> acc +. float_of_int x) 0. arr)
+              Array.fold_left ( +. ) 0. arr)
       | _ -> failwith "Float.sum: column must be numeric"
 
     let mean t name =
@@ -2014,14 +2009,6 @@ module Agg = struct
                     acc +. (diff *. diff))
                   0. arr
                 /. float_of_int (Array.length arr)
-            | Nx.Int ->
-                let arr : int array = Nx.to_array tensor in
-                Array.fold_left
-                  (fun acc x ->
-                    let diff = float_of_int x -. m in
-                    acc +. (diff *. diff))
-                  0. arr
-                /. float_of_int (Array.length arr)
             | Nx.Int32 ->
                 let arr : int32 array = Nx.to_array tensor in
                 let filtered, count = filter_int32_array mask arr in
@@ -2044,17 +2031,31 @@ module Agg = struct
                       acc +. (diff *. diff))
                     0. filtered
                   /. float_of_int count
-            | Nx.NativeInt ->
-                let arr : nativeint array = Nx.to_array tensor in
-                Array.fold_left
-                  (fun acc x ->
-                    let diff = Nativeint.to_float x -. m in
-                    acc +. (diff *. diff))
-                  0. arr
-                /. float_of_int (Array.length arr)
-            | Nx.Complex32 ->
-                failwith "Float.std: complex numbers not supported"
+            | Nx.UInt32 ->
+                let arr : int32 array = Nx.to_array tensor in
+                let filtered, count = filter_int32_array mask arr in
+                if count = 0 then Float.nan
+                else
+                  Array.fold_left
+                    (fun acc x ->
+                      let diff = Int32.to_float x -. m in
+                      acc +. (diff *. diff))
+                    0. filtered
+                  /. float_of_int count
+            | Nx.UInt64 ->
+                let arr : int64 array = Nx.to_array tensor in
+                let filtered, count = filter_int64_array mask arr in
+                if count = 0 then Float.nan
+                else
+                  Array.fold_left
+                    (fun acc x ->
+                      let diff = Int64.to_float x -. m in
+                      acc +. (diff *. diff))
+                    0. filtered
+                  /. float_of_int count
             | Nx.Complex64 ->
+                failwith "Float.std: complex numbers not supported"
+            | Nx.Complex128 ->
                 failwith "Float.std: complex numbers not supported"
             | Nx.Bool -> failwith "Float.std: boolean values not supported"
             | Nx.Int4 ->
@@ -2090,26 +2091,6 @@ module Agg = struct
                 Array.fold_left
                   (fun acc x ->
                     let diff = x -. m in
-                    acc +. (diff *. diff))
-                  0. arr
-                /. n
-            | Nx.Complex16 ->
-                failwith "Float.std: complex numbers not supported"
-            | Nx.QInt8 ->
-                let arr : int array = Nx.to_array tensor in
-                let n = float_of_int (Array.length arr) in
-                Array.fold_left
-                  (fun acc x ->
-                    let diff = float_of_int x -. m in
-                    acc +. (diff *. diff))
-                  0. arr
-                /. n
-            | Nx.QUInt8 ->
-                let arr : int array = Nx.to_array tensor in
-                let n = float_of_int (Array.length arr) in
-                Array.fold_left
-                  (fun acc x ->
-                    let diff = float_of_int x -. m in
                     acc +. (diff *. diff))
                   0. arr
                 /. n
@@ -2223,14 +2204,6 @@ module Agg = struct
                   (Array.fold_left
                      (fun acc x -> min acc (float_of_int x))
                      max_float arr)
-          | Nx.Int ->
-              let arr : int array = Nx.to_array tensor in
-              if Array.length arr = 0 then None
-              else
-                Some
-                  (Array.fold_left
-                     (fun acc x -> min acc (float_of_int x))
-                     max_float arr)
           | Nx.Int32 ->
               let arr : int32 array = Nx.to_array tensor in
               let filtered, count = filter_int32_array mask arr in
@@ -2249,16 +2222,26 @@ module Agg = struct
                   (Array.fold_left
                      (fun acc x -> min acc (Int64.to_float x))
                      max_float filtered)
-          | Nx.NativeInt ->
-              let arr : nativeint array = Nx.to_array tensor in
-              if Array.length arr = 0 then None
+          | Nx.UInt32 ->
+              let arr : int32 array = Nx.to_array tensor in
+              let filtered, count = filter_int32_array mask arr in
+              if count = 0 then None
               else
                 Some
                   (Array.fold_left
-                     (fun acc x -> min acc (Nativeint.to_float x))
-                     max_float arr)
-          | Nx.Complex32 -> failwith "Float.min: complex numbers not supported"
+                     (fun acc x -> min acc (Int32.to_float x))
+                     max_float filtered)
+          | Nx.UInt64 ->
+              let arr : int64 array = Nx.to_array tensor in
+              let filtered, count = filter_int64_array mask arr in
+              if count = 0 then None
+              else
+                Some
+                  (Array.fold_left
+                     (fun acc x -> min acc (Int64.to_float x))
+                     max_float filtered)
           | Nx.Complex64 -> failwith "Float.min: complex numbers not supported"
+          | Nx.Complex128 -> failwith "Float.min: complex numbers not supported"
           | Nx.Bool -> failwith "Float.min: boolean values not supported"
           | Nx.Int4 ->
               let arr : int array = Nx.to_array tensor in
@@ -2283,24 +2266,7 @@ module Agg = struct
           | Nx.Float8_e5m2 ->
               let arr : float array = Nx.to_array tensor in
               if Array.length arr = 0 then None
-              else Some (Array.fold_left min max_float arr)
-          | Nx.Complex16 -> failwith "Float.min: complex numbers not supported"
-          | Nx.QInt8 ->
-              let arr : int array = Nx.to_array tensor in
-              if Array.length arr = 0 then None
-              else
-                Some
-                  (Array.fold_left
-                     (fun acc x -> min acc (float_of_int x))
-                     max_float arr)
-          | Nx.QUInt8 ->
-              let arr : int array = Nx.to_array tensor in
-              if Array.length arr = 0 then None
-              else
-                Some
-                  (Array.fold_left
-                     (fun acc x -> min acc (float_of_int x))
-                     max_float arr))
+              else Some (Array.fold_left min max_float arr))
       | _ -> failwith "Float.min: column must be numeric"
 
     let max t name =
@@ -3625,17 +3591,17 @@ let print ?max_rows ?max_cols t =
               | Nx.Int64 ->
                   let arr : int64 array = Nx.to_array tensor in
                   Int64.to_string arr.(i)
-              | Nx.Int ->
-                  let arr : int array = Nx.to_array tensor in
-                  string_of_int arr.(i)
-              | Nx.NativeInt ->
-                  let arr : nativeint array = Nx.to_array tensor in
-                  Nativeint.to_string arr.(i)
-              | Nx.Complex32 ->
+              | Nx.UInt32 ->
+                  let arr : int32 array = Nx.to_array tensor in
+                  Int32.to_string arr.(i)
+              | Nx.UInt64 ->
+                  let arr : int64 array = Nx.to_array tensor in
+                  Int64.to_string arr.(i)
+              | Nx.Complex64 ->
                   let arr : Complex.t array = Nx.to_array tensor in
                   let c = arr.(i) in
                   Printf.sprintf "(%g+%gi)" c.re c.im
-              | Nx.Complex64 ->
+              | Nx.Complex128 ->
                   let arr : Complex.t array = Nx.to_array tensor in
                   let c = arr.(i) in
                   Printf.sprintf "(%g+%gi)" c.re c.im
@@ -3653,17 +3619,7 @@ let print ?max_rows ?max_cols t =
                   string_of_float arr.(i)
               | Nx.Float8_e5m2 ->
                   let arr : float array = Nx.to_array tensor in
-                  string_of_float arr.(i)
-              | Nx.Complex16 ->
-                  let arr : Complex.t array = Nx.to_array tensor in
-                  let c = arr.(i) in
-                  Printf.sprintf "(%g+%gi)" c.re c.im
-              | Nx.QInt8 ->
-                  let arr : int array = Nx.to_array tensor in
-                  string_of_int arr.(i)
-              | Nx.QUInt8 ->
-                  let arr : int array = Nx.to_array tensor in
-                  string_of_int arr.(i))
+                  string_of_float arr.(i))
           | Some (Col.S arr) -> Option.value arr.(i) ~default:"<null>"
           | Some (Col.B arr) ->
               Option.value (Option.map string_of_bool arr.(i)) ~default:"<null>"

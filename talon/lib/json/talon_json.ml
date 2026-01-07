@@ -12,9 +12,6 @@ let int32_is_null mask idx value =
 let int64_is_null mask idx value =
   if mask_true mask idx then true else value = Int64.min_int
 
-let nativeint_is_null mask idx value =
-  if mask_true mask idx then true else value = Nativeint.min_int
-
 (* Helper to convert a column value to JSON *)
 let value_to_json col idx =
   match col with
@@ -58,20 +55,22 @@ let value_to_json col idx =
           let value = arr.(idx) in
           if int64_is_null mask_opt idx value then `Null
           else `String (Int64.to_string value)
-      | Nx.Int ->
-          let arr : int array = Nx.to_array tensor in
-          if mask_true mask_opt idx then `Null else `Int arr.(idx)
-      | Nx.NativeInt ->
-          let arr : nativeint array = Nx.to_array tensor in
+      | Nx.UInt32 ->
+          let arr : int32 array = Nx.to_array tensor in
           let value = arr.(idx) in
-          if nativeint_is_null mask_opt idx value then `Null
-          else `String (Nativeint.to_string value)
-      | Nx.Complex32 ->
+          if int32_is_null mask_opt idx value then `Null
+          else `Int (Int32.to_int value)
+      | Nx.UInt64 ->
+          let arr : int64 array = Nx.to_array tensor in
+          let value = arr.(idx) in
+          if int64_is_null mask_opt idx value then `Null
+          else `String (Int64.to_string value)
+      | Nx.Complex64 ->
           let arr : Complex.t array = Nx.to_array tensor in
           let c = arr.(idx) in
           if mask_true mask_opt idx then `Null
           else `String (Printf.sprintf "%g+%gi" c.re c.im)
-      | Nx.Complex64 ->
+      | Nx.Complex128 ->
           let arr : Complex.t array = Nx.to_array tensor in
           let c = arr.(idx) in
           if mask_true mask_opt idx then `Null
@@ -92,18 +91,7 @@ let value_to_json col idx =
       | Nx.Float8_e5m2 ->
           let arr : float array = Nx.to_array tensor in
           let value = arr.(idx) in
-          if float_is_null mask_opt idx value then `Null else `Float value
-      | Nx.Complex16 ->
-          let arr : Complex.t array = Nx.to_array tensor in
-          let c = arr.(idx) in
-          if mask_true mask_opt idx then `Null
-          else `String (Printf.sprintf "%g+%gi" c.re c.im)
-      | Nx.QInt8 ->
-          let arr : int array = Nx.to_array tensor in
-          if mask_true mask_opt idx then `Null else `Int arr.(idx)
-      | Nx.QUInt8 ->
-          let arr : int array = Nx.to_array tensor in
-          if mask_true mask_opt idx then `Null else `Int arr.(idx))
+          if float_is_null mask_opt idx value then `Null else `Float value)
   | Col.S arr -> ( match arr.(idx) with Some s -> `String s | None -> `Null)
   | Col.B arr -> ( match arr.(idx) with Some b -> `Bool b | None -> `Null)
 

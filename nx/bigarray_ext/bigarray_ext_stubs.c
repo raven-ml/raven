@@ -16,9 +16,9 @@ static int nx_ba_base_kind(int kind) {
     case NX_BA_UINT4:
     case NX_BA_FP8_E4M3:
     case NX_BA_FP8_E5M2:
-    case NX_BA_QUINT8: return CAML_BA_UINT8;
-    case NX_BA_QINT8: return CAML_BA_SINT8;
-    case NX_BA_COMPLEX16: return CAML_BA_FLOAT32;
+      return CAML_BA_UINT8;
+    case NX_BA_UINT32: return CAML_BA_INT32;
+    case NX_BA_UINT64: return CAML_BA_INT64;
     default: return -1;
   }
 }
@@ -84,9 +84,8 @@ CREATE_BA_FUNCTION(bfloat16, NX_BA_BFLOAT16, 2)
 CREATE_BA_FUNCTION(bool, NX_BA_BOOL, 1)
 CREATE_BA_FUNCTION(float8_e4m3, NX_BA_FP8_E4M3, 1)
 CREATE_BA_FUNCTION(float8_e5m2, NX_BA_FP8_E5M2, 1)
-CREATE_BA_FUNCTION(complex16, NX_BA_COMPLEX16, 4) /* 2 x float16 */
-CREATE_BA_FUNCTION(qint8, NX_BA_QINT8, 1)
-CREATE_BA_FUNCTION(quint8, NX_BA_QUINT8, 1)
+CREATE_BA_FUNCTION(uint32, NX_BA_UINT32, 4)
+CREATE_BA_FUNCTION(uint64, NX_BA_UINT64, 8)
 
 /* Special handling for int4/uint4 which pack 2 values per byte */
 CAMLprim value caml_nx_ba_create_int4_signed(value vlayout, value vdim) {
@@ -221,20 +220,11 @@ CAMLprim value caml_nx_ba_get_generic(value vb, value vind) {
       res = caml_copy_double(
           (double)fp8_e5m2_to_float(((uint8_t *)b->data)[offset]));
       break;
-    case NX_BA_COMPLEX16: {
-      uint16_t *p = ((uint16_t *)b->data) + offset * 2;
-      float real = half_to_float(p[0]);
-      float imag = half_to_float(p[1]);
-      res = caml_alloc_small(2 * Double_wosize, Double_array_tag);
-      Store_double_flat_field(res, 0, (double)real);
-      Store_double_flat_field(res, 1, (double)imag);
+    case NX_BA_UINT32:
+      res = caml_copy_int32(((uint32_t *)b->data)[offset]);
       break;
-    }
-    case NX_BA_QINT8:
-      res = Val_int(((int8_t *)b->data)[offset]);
-      break;
-    case NX_BA_QUINT8:
-      res = Val_int(((uint8_t *)b->data)[offset]);
+    case NX_BA_UINT64:
+      res = caml_copy_int64(((uint64_t *)b->data)[offset]);
       break;
     default:
       caml_failwith("Unsupported bigarray kind");
@@ -314,17 +304,11 @@ CAMLprim value caml_nx_ba_set_generic(value vb, value vind, value newval) {
       ((uint8_t *)b->data)[offset] =
           float_to_fp8_e5m2((float)Double_val(newval));
       break;
-    case NX_BA_COMPLEX16: {
-      uint16_t *p = ((uint16_t *)b->data) + offset * 2;
-      p[0] = float_to_half((float)Double_flat_field(newval, 0));
-      p[1] = float_to_half((float)Double_flat_field(newval, 1));
+    case NX_BA_UINT32:
+      ((uint32_t *)b->data)[offset] = Int32_val(newval);
       break;
-    }
-    case NX_BA_QINT8:
-      ((int8_t *)b->data)[offset] = Int_val(newval);
-      break;
-    case NX_BA_QUINT8:
-      ((uint8_t *)b->data)[offset] = Int_val(newval);
+    case NX_BA_UINT64:
+      ((uint64_t *)b->data)[offset] = Int64_val(newval);
       break;
     default:
       caml_failwith("Unsupported bigarray kind");
@@ -387,9 +371,8 @@ CAMLprim value caml_nx_ba_kind(value vb) {
     case NX_BA_UINT4: return Val_int(17); /* Int4_unsigned */
     case NX_BA_FP8_E4M3: return Val_int(18); /* Float8_e4m3 */
     case NX_BA_FP8_E5M2: return Val_int(19); /* Float8_e5m2 */
-    case NX_BA_COMPLEX16: return Val_int(20); /* Complex16 */
-    case NX_BA_QINT8: return Val_int(21); /* Qint8 */
-    case NX_BA_QUINT8: return Val_int(22); /* Quint8 */
+    case NX_BA_UINT32: return Val_int(20); /* Uint32 */
+    case NX_BA_UINT64: return Val_int(21); /* Uint64 */
     default:
       caml_failwith("Unknown bigarray kind");
   }
@@ -436,9 +419,8 @@ CAMLprim value caml_nx_ba_blit(value vsrc, value vdst) {
         break;
       case NX_BA_FP8_E4M3: byte_size = num_elts; break;
       case NX_BA_FP8_E5M2: byte_size = num_elts; break;
-      case NX_BA_COMPLEX16: byte_size = num_elts * 4; break;
-      case NX_BA_QINT8: byte_size = num_elts; break;
-      case NX_BA_QUINT8: byte_size = num_elts; break;
+      case NX_BA_UINT32: byte_size = num_elts * 4; break;
+      case NX_BA_UINT64: byte_size = num_elts * 8; break;
       default:
         caml_failwith("Unknown extended bigarray kind in blit");
     }
@@ -532,27 +514,17 @@ CAMLprim value caml_nx_ba_fill(value vb, value vinit) {
         }
         break;
       }
-      case NX_BA_COMPLEX16: {
-        uint16_t re = float_to_half((float)Double_flat_field(vinit, 0));
-        uint16_t im = float_to_half((float)Double_flat_field(vinit, 1));
-        uint16_t *p = (uint16_t *)b->data;
-        for (uintnat i = 0; i < num_elts; i++) {
-          p[2*i] = re;
-          p[2*i+1] = im;
-        }
-        break;
-      }
-      case NX_BA_QINT8: {
-        int8_t init = Int_val(vinit);
-        int8_t *p = (int8_t *)b->data;
+      case NX_BA_UINT32: {
+        uint32_t init = Int32_val(vinit);
+        uint32_t *p = (uint32_t *)b->data;
         for (uintnat i = 0; i < num_elts; i++) {
           p[i] = init;
         }
         break;
       }
-      case NX_BA_QUINT8: {
-        uint8_t init = Int_val(vinit);
-        uint8_t *p = (uint8_t *)b->data;
+      case NX_BA_UINT64: {
+        uint64_t init = Int64_val(vinit);
+        uint64_t *p = (uint64_t *)b->data;
         for (uintnat i = 0; i < num_elts; i++) {
           p[i] = init;
         }

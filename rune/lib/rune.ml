@@ -11,10 +11,10 @@ type int16_t = (int, int16_elt) t
 type uint16_t = (int, uint16_elt) t
 type int32_t = (int32, int32_elt) t
 type int64_t = (int64, int64_elt) t
-type std_int_t = (int, int_elt) t
-type std_nativeint_t = (nativeint, nativeint_elt) t
-type complex32_t = (Complex.t, complex32_elt) t
-type complex64_t = (Complex.t, complex64_elt) t
+type uint32_t = (int32, uint32_elt) t
+type uint64_t = (int64, uint64_elt) t
+type complex64_t = (Complex.t, complex32_elt) t
+type complex128_t = (Complex.t, complex64_elt) t
 
 (* Re-export extended type aliases *)
 type bfloat16_t = (float, Bigarray_ext.bfloat16_elt) t
@@ -23,9 +23,6 @@ type int4_t = (int, Bigarray_ext.int4_signed_elt) t
 type uint4_t = (int, Bigarray_ext.int4_unsigned_elt) t
 type float8_e4m3_t = (float, Bigarray_ext.float8_e4m3_elt) t
 type float8_e5m2_t = (float, Bigarray_ext.float8_e5m2_elt) t
-type complex16_t = (Complex.t, Bigarray_ext.complex16_elt) t
-type qint8_t = (int, Bigarray_ext.qint8_elt) t
-type quint8_t = (int, Bigarray_ext.quint8_elt) t
 
 (* Re-export extended dtype value constructors *)
 let bfloat16 = Nx_core.Dtype.bfloat16
@@ -34,9 +31,6 @@ let int4 = Nx_core.Dtype.int4
 let uint4 = Nx_core.Dtype.uint4
 let float8_e4m3 = Nx_core.Dtype.float8_e4m3
 let float8_e5m2 = Nx_core.Dtype.float8_e5m2
-let complex16 = Nx_core.Dtype.complex16
-let qint8 = Nx_core.Dtype.qint8
-let quint8 = Nx_core.Dtype.quint8
 
 (* ───── Instrumentation Helpers ───── *)
 

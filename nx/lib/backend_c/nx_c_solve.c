@@ -568,37 +568,6 @@ static int triangular_solve_f8e5m2(const caml_ba_fp8_e5m2* a,
   return 0;
 }
 
-static int triangular_solve_complex16(const caml_ba_complex16* a,
-                                      const caml_ba_complex16* b,
-                                      caml_ba_complex16* x, int m, int n,
-                                      int upper, int transpose, int unit_diag) {
-  complex32* a_complex = (complex32*)malloc(m * m * sizeof(complex32));
-  complex32* b_complex = (complex32*)malloc(m * n * sizeof(complex32));
-  complex32* x_complex = (complex32*)malloc(m * n * sizeof(complex32));
-  if (!a_complex || !b_complex || !x_complex) {
-    free(a_complex);
-    free(b_complex);
-    free(x_complex);
-    return -1;
-  }
-  for (int i = 0; i < m * m; i++) {
-    a_complex[i] = half_to_float(a[i].re) + I * half_to_float(a[i].im);
-  }
-  for (int i = 0; i < m * n; i++) {
-    b_complex[i] = half_to_float(b[i].re) + I * half_to_float(b[i].im);
-  }
-  triangular_solve_complex32(a_complex, b_complex, x_complex, m, n, upper,
-                             transpose, unit_diag);
-  for (int i = 0; i < m * n; i++) {
-    x[i].re = float_to_half(crealf(x_complex[i]));
-    x[i].im = float_to_half(cimagf(x_complex[i]));
-  }
-   free(a_complex);
-   free(b_complex);
-   free(x_complex);
-   return 0;
- }
-
 // ============================================================================
 // General Linear System Solving (Ax = b)
 // ============================================================================
@@ -978,38 +947,6 @@ CAMLprim value caml_nx_op_triangular_solve(value v_a, value v_b, value v_out,
           }
         }
         triangular_solve_f8e5m2(A, B, X, m, bn, upper, transpose, unit_diag);
-        for (int i = 0; i < m; i++) {
-          for (int j = 0; j < bn; j++) {
-            base_out[i * s_out_row + j * s_out_col] = X[i * bn + j];
-          }
-        }
-        free(A);
-        free(B);
-        free(X);
-        break;
-      }
-      case NX_BA_COMPLEX16: {
-        caml_ba_complex16* base_a = (caml_ba_complex16*)ba_a->data + off_a;
-        caml_ba_complex16* base_b = (caml_ba_complex16*)ba_b->data + off_b;
-        caml_ba_complex16* base_out =
-            (caml_ba_complex16*)ba_out->data + off_out;
-        caml_ba_complex16* A = (caml_ba_complex16*)malloc(
-            (size_t)m * m * sizeof(caml_ba_complex16));
-        caml_ba_complex16* B = (caml_ba_complex16*)malloc(
-            (size_t)m * bn * sizeof(caml_ba_complex16));
-        caml_ba_complex16* X = (caml_ba_complex16*)malloc(
-            (size_t)m * bn * sizeof(caml_ba_complex16));
-        for (int i = 0; i < m; i++) {
-          for (int j = 0; j < m; j++) {
-            A[i * m + j] = base_a[i * s_a_row + j * s_a_col];
-          }
-        }
-        for (int i = 0; i < m; i++) {
-          for (int j = 0; j < bn; j++) {
-            B[i * bn + j] = base_b[i * s_b_row + j * s_b_col];
-          }
-        }
-        triangular_solve_complex16(A, B, X, m, bn, upper, transpose, unit_diag);
         for (int i = 0; i < m; i++) {
           for (int j = 0; j < bn; j++) {
             base_out[i * s_out_row + j * s_out_col] = X[i * bn + j];

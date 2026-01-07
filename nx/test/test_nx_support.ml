@@ -22,27 +22,17 @@ let testable_of_dtype (type a b) ?(eps = 1e-6) (dtype : (a, b) Nx.dtype) :
   | Nx.Int64 -> Alcotest.int64
   | Nx.UInt8 -> Alcotest.int
   | Nx.UInt16 -> Alcotest.int
-  | Nx.Int -> Alcotest.int
-  | Nx.NativeInt ->
-      Alcotest.testable
-        (fun ppf v -> Format.fprintf ppf "%nd" v)
-        Nativeint.equal
+  | Nx.UInt32 -> Alcotest.int32
+  | Nx.UInt64 -> Alcotest.int64
   | Nx.Int4 -> Alcotest.int
   | Nx.UInt4 -> Alcotest.int
-  | Nx.QInt8 -> Alcotest.int
-  | Nx.QUInt8 -> Alcotest.int
   | Nx.Bool -> Alcotest.bool
-  | Nx.Complex32 ->
-      Alcotest.testable
-        (fun ppf v -> Format.fprintf ppf "(%f, %f)" v.Complex.re v.Complex.im)
-        (fun a b ->
-          Float.abs (a.re -. b.re) < eps && Float.abs (a.im -. b.im) < eps)
   | Nx.Complex64 ->
       Alcotest.testable
         (fun ppf v -> Format.fprintf ppf "(%f, %f)" v.Complex.re v.Complex.im)
         (fun a b ->
           Float.abs (a.re -. b.re) < eps && Float.abs (a.im -. b.im) < eps)
-  | Nx.Complex16 ->
+  | Nx.Complex128 ->
       Alcotest.testable
         (fun ppf v -> Format.fprintf ppf "(%f, %f)" v.Complex.re v.Complex.im)
         (fun a b ->
@@ -110,9 +100,8 @@ let check_nx (type a b) ?epsilon msg (expected : (a, b) Nx.t)
     | Float16 -> test_float expected actual
     | Float32 -> test_float expected actual
     | Float64 -> test_float expected actual
-    | Complex16 -> test_complex expected actual
-    | Complex32 -> test_complex expected actual
     | Complex64 -> test_complex expected actual
+    | Complex128 -> test_complex expected actual
     | _ ->
         let equal = Nx.array_equal expected actual in
         if Nx.item [] equal = false then

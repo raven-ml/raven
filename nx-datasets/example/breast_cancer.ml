@@ -29,7 +29,7 @@ let () =
   let benign_count = ref 0 in
   for i = 0 to n_samples - 1 do
     let label = Nx.item [ i ] labels_1d in
-    if label = 1 then incr malignant_count else incr benign_count
+    if label = 1l then incr malignant_count else incr benign_count
   done;
 
   Logs.info (fun m -> m "Class distribution:");
@@ -46,7 +46,7 @@ let () =
   let benign_indices = ref [] in
   for i = 0 to n_samples - 1 do
     let label = Nx.item [ i ] labels_1d in
-    if label = 1 then malignant_indices := i :: !malignant_indices
+    if label = 1l then malignant_indices := i :: !malignant_indices
     else benign_indices := i :: !benign_indices
   done;
 

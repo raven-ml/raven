@@ -176,7 +176,7 @@ let test_complex_types () =
       [
         ( "complex",
           Col.of_tensor
-            (Nx.create Nx.complex32 [| 2 |]
+            (Nx.create Nx.complex64 [| 2 |]
                [|
                  { Complex.re = 1.0; im = 2.0 }; { Complex.re = 3.0; im = 4.0 };
                |]) );

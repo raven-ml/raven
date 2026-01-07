@@ -71,23 +71,21 @@ static long get_element_size(int kind) {
     case NX_BA_BOOL:
     case NX_BA_FP8_E4M3:
     case NX_BA_FP8_E5M2:
-    case NX_BA_QINT8:
-    case NX_BA_QUINT8:
       return 1;
     case CAML_BA_SINT16:
     case CAML_BA_UINT16:
     case CAML_BA_FLOAT16:
     case NX_BA_BFLOAT16:
       return 2;
-    case NX_BA_COMPLEX16:
-      return 4;  // two float16 components per element
     case CAML_BA_INT32:
     case CAML_BA_FLOAT32:
+    case NX_BA_UINT32:
       return 4;
     case CAML_BA_COMPLEX32:
       return 8;  // 2 * float32
     case CAML_BA_INT64:
     case CAML_BA_FLOAT64:
+    case NX_BA_UINT64:
       return 8;
     case CAML_BA_COMPLEX64:
       return 16;  // 2 * float64

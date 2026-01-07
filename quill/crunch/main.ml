@@ -17,7 +17,7 @@ let empty = { chunks = String_map.empty; files = String_map.empty }
 
 (* File System Walking *)
 
-let rec walk_directory_tree exts walkfn root_dir t =
+let walk_directory_tree exts walkfn root_dir t =
   let rec walk_dir dir rel_path t =
     let dh = Unix.opendir dir in
     let rec loop t =

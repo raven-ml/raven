@@ -36,8 +36,8 @@ type int16_elt = Bigarray_ext.int16_signed_elt
 type uint16_elt = Bigarray_ext.int16_unsigned_elt
 type int32_elt = Bigarray_ext.int32_elt
 type int64_elt = Bigarray_ext.int64_elt
-type int_elt = Bigarray_ext.int_elt
-type nativeint_elt = Bigarray_ext.nativeint_elt
+type uint32_elt = Bigarray_ext.uint32_elt
+type uint64_elt = Bigarray_ext.uint64_elt
 type complex32_elt = Bigarray_ext.complex32_elt
 type complex64_elt = Bigarray_ext.complex64_elt
 type bfloat16_elt = Bigarray_ext.bfloat16_elt
@@ -46,9 +46,6 @@ type int4_elt = Bigarray_ext.int4_signed_elt
 type uint4_elt = Bigarray_ext.int4_unsigned_elt
 type float8_e4m3_elt = Bigarray_ext.float8_e4m3_elt
 type float8_e5m2_elt = Bigarray_ext.float8_e5m2_elt
-type complex16_elt = Bigarray_ext.complex16_elt
-type qint8_elt = Bigarray_ext.qint8_elt
-type quint8_elt = Bigarray_ext.quint8_elt
 
 type ('a, 'b) dtype = ('a, 'b) Nx_core.Dtype.t =
   | Float16 : (float, float16_elt) dtype
@@ -60,19 +57,16 @@ type ('a, 'b) dtype = ('a, 'b) Nx_core.Dtype.t =
   | UInt16 : (int, uint16_elt) dtype
   | Int32 : (int32, int32_elt) dtype
   | Int64 : (int64, int64_elt) dtype
-  | Int : (int, int_elt) dtype
-  | NativeInt : (nativeint, nativeint_elt) dtype
-  | Complex32 : (Complex.t, complex32_elt) dtype
-  | Complex64 : (Complex.t, complex64_elt) dtype
+  | UInt32 : (int32, uint32_elt) dtype
+  | UInt64 : (int64, uint64_elt) dtype
+  | Complex64 : (Complex.t, complex32_elt) dtype
+  | Complex128 : (Complex.t, complex64_elt) dtype
   | BFloat16 : (float, bfloat16_elt) dtype
   | Bool : (bool, bool_elt) dtype
   | Int4 : (int, int4_elt) dtype
   | UInt4 : (int, uint4_elt) dtype
   | Float8_e4m3 : (float, float8_e4m3_elt) dtype
   | Float8_e5m2 : (float, float8_e5m2_elt) dtype
-  | Complex16 : (Complex.t, complex16_elt) dtype
-  | QInt8 : (int, qint8_elt) dtype
-  | QUInt8 : (int, quint8_elt) dtype
       (** Data type specification. Links OCaml types to bigarray element types.
       *)
 
@@ -85,19 +79,16 @@ type int16_t = (int, int16_elt) t
 type uint16_t = (int, uint16_elt) t
 type int32_t = (int32, int32_elt) t
 type int64_t = (int64, int64_elt) t
-type std_int_t = (int, int_elt) t
-type std_nativeint_t = (nativeint, nativeint_elt) t
-type complex32_t = (Complex.t, complex32_elt) t
-type complex64_t = (Complex.t, complex64_elt) t
+type uint32_t = (int32, uint32_elt) t
+type uint64_t = (int64, uint64_elt) t
+type complex64_t = (Complex.t, complex32_elt) t
+type complex128_t = (Complex.t, complex64_elt) t
 type bfloat16_t = (float, bfloat16_elt) t
 type bool_t = (bool, bool_elt) t
 type int4_t = (int, int4_elt) t
 type uint4_t = (int, uint4_elt) t
 type float8_e4m3_t = (float, float8_e4m3_elt) t
 type float8_e5m2_t = (float, float8_e5m2_elt) t
-type complex16_t = (Complex.t, complex16_elt) t
-type qint8_t = (int, qint8_elt) t
-type quint8_t = (int, quint8_elt) t
 
 val float16 : (float, float16_elt) dtype
 val float32 : (float, float32_elt) dtype
@@ -108,19 +99,16 @@ val int16 : (int, int16_elt) dtype
 val uint16 : (int, uint16_elt) dtype
 val int32 : (int32, int32_elt) dtype
 val int64 : (int64, int64_elt) dtype
-val int : (int, int_elt) dtype
-val nativeint : (nativeint, nativeint_elt) dtype
-val complex32 : (Complex.t, complex32_elt) dtype
-val complex64 : (Complex.t, complex64_elt) dtype
+val complex64 : (Complex.t, complex32_elt) dtype
+val uint32 : (int32, uint32_elt) dtype
+val uint64 : (int64, uint64_elt) dtype
+val complex128 : (Complex.t, complex64_elt) dtype
 val bfloat16 : (float, bfloat16_elt) dtype
 val bool : (bool, bool_elt) dtype
 val int4 : (int, int4_elt) dtype
 val uint4 : (int, uint4_elt) dtype
 val float8_e4m3 : (float, float8_e4m3_elt) dtype
 val float8_e5m2 : (float, float8_e5m2_elt) dtype
-val complex16 : (Complex.t, complex16_elt) dtype
-val qint8 : (int, qint8_elt) dtype
-val quint8 : (int, quint8_elt) dtype
 
 (** Index specification for tensor slicing *)
 type index =
@@ -566,11 +554,11 @@ module Rng : sig
     int array ->
     ('a, 'b) t
   (** [truncated_normal ~key dtype ~lower ~upper shape] samples from a normal
-    distribution truncated to \[lower, upper]. Supported for float dtypes. *)
+      distribution truncated to \[lower, upper\]. Supported for float dtypes. *)
 end
 
 val rand : ('a, 'b) dtype -> key:Rng.key -> int array -> ('a, 'b) t
-(** [rand dtype ~key shape] generates uniform random values in [\[0, 1)].
+(** [rand dtype ~key shape] generates uniform random values in \[0, 1).
 
     Only supports float dtypes. Same key produces same sequence.
 
@@ -1615,7 +1603,7 @@ val conjugate : ('a, 'b) t -> ('a, 'b) t
     tensors, returns the input unchanged.
 
     {@ocaml[
-      # let x = create complex32 [| 2 |]
+      # let x = create complex64 [| 2 |]
           [|Complex.{re=1.; im=2.}; Complex.{re=3.; im=4.}|] in
         conjugate x |> to_array
       - : Complex.t array =

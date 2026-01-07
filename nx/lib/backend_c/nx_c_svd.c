@@ -22,8 +22,6 @@ static long get_element_size(int kind) {
     case NX_BA_BOOL:
     case NX_BA_FP8_E4M3:
     case NX_BA_FP8_E5M2:
-    case NX_BA_QINT8:
-    case NX_BA_QUINT8:
       return 1;
     case CAML_BA_SINT16:
     case CAML_BA_UINT16:
@@ -32,14 +30,15 @@ static long get_element_size(int kind) {
       return 2;
     case CAML_BA_INT32:
     case CAML_BA_FLOAT32:
+    case NX_BA_UINT32:
       return 4;
     case CAML_BA_INT64:
     case CAML_BA_FLOAT64:
+    case NX_BA_UINT64:
     case CAML_BA_NATIVE_INT:
     case CAML_BA_CAML_INT:
       return 8;
     case CAML_BA_COMPLEX32:
-    case NX_BA_COMPLEX16:
       return 4;
     case CAML_BA_COMPLEX64:
       return 16;
@@ -1141,45 +1140,6 @@ static void svd_f8e5m2(caml_ba_fp8_e5m2* a, caml_ba_fp8_e5m2* u,
   free(vt_float);
 }
 
-static void svd_complex16(caml_ba_complex16* a, caml_ba_complex16* u,
-                          caml_ba_complex16* s, caml_ba_complex16* vt, int m,
-                          int n, int full_matrices) {
-  int minmn = m < n ? m : n;
-  complex32* a_complex = (complex32*)malloc(m * n * sizeof(complex32));
-  int u_cols = full_matrices ? m : minmn;
-  complex32* u_complex = (complex32*)malloc(m * u_cols * sizeof(complex32));
-  float* s_float = (float*)malloc(minmn * sizeof(float));
-  int vt_rows = full_matrices ? n : minmn;
-  complex32* vt_complex = (complex32*)malloc(vt_rows * n * sizeof(complex32));
-  if (!a_complex || !u_complex || !s_float || !vt_complex) {
-    free(a_complex);
-    free(u_complex);
-    free(s_float);
-    free(vt_complex);
-    return;
-  }
-  for (int i = 0; i < m * n; i++) {
-    a_complex[i] = half_to_float(a[i].re) + I * half_to_float(a[i].im);
-  }
-  svd_complex32(a_complex, u_complex, s_float, vt_complex, m, n, full_matrices);
-  for (int i = 0; i < m * u_cols; i++) {
-    u[i].re = float_to_half(crealf(u_complex[i]));
-    u[i].im = float_to_half(cimagf(u_complex[i]));
-  }
-  for (int i = 0; i < minmn; i++) {
-    s[i].re = float_to_half(s_float[i]);
-    s[i].im = 0.0f;
-  }
-  for (int i = 0; i < vt_rows * n; i++) {
-    vt[i].re = float_to_half(crealf(vt_complex[i]));
-    vt[i].im = float_to_half(cimagf(vt_complex[i]));
-  }
-  free(a_complex);
-  free(u_complex);
-  free(s_float);
-  free(vt_complex);
-}
-
 // ============================================================================
 // OCaml FFI Stubs
 // ============================================================================
@@ -1514,49 +1474,6 @@ CAMLprim value caml_nx_op_svd(value v_in, value v_u, value v_s, value v_vt,
           }
         }
         svd_f8e5m2(A, U, S, VT, m, n, full_matrices);
-        for (int i = 0; i < m; i++) {
-          for (int j = 0; j < u_cols; j++) {
-            base_u[i * s_u_row + j * s_u_col] = U[i * u_cols + j];
-          }
-        }
-        for (int i = 0; i < minmn; i++) base_s[i * s_s_stride] = S[i];
-        for (int i = 0; i < vt_rows; i++) {
-          for (int j = 0; j < n; j++) {
-            base_vt[i * s_vt_row + j * s_vt_col] = VT[i * n + j];
-          }
-        }
-        free(A);
-        free(U);
-        free(S);
-        free(VT);
-        break;
-      }
-      case NX_BA_COMPLEX16: {
-        caml_ba_complex16* base_in = (caml_ba_complex16*)ba_in->data + off_in;
-        caml_ba_complex16* base_u = (caml_ba_complex16*)ba_u->data + off_u;
-        caml_ba_complex16* base_s = (caml_ba_complex16*)ba_s->data + off_s;
-        caml_ba_complex16* base_vt = (caml_ba_complex16*)ba_vt->data + off_vt;
-        caml_ba_complex16* A = (caml_ba_complex16*)malloc(
-            (size_t)m * n * sizeof(caml_ba_complex16));
-        caml_ba_complex16* U = (caml_ba_complex16*)malloc(
-            (size_t)m * u_cols * sizeof(caml_ba_complex16));
-        caml_ba_complex16* S = (caml_ba_complex16*)malloc(
-            (size_t)minmn * sizeof(caml_ba_complex16));
-        caml_ba_complex16* VT = (caml_ba_complex16*)malloc(
-            (size_t)vt_rows * n * sizeof(caml_ba_complex16));
-        if (!A || !U || !S || !VT) {
-          free(A);
-          free(U);
-          free(S);
-          free(VT);
-          continue;
-        }
-        for (int i = 0; i < m; i++) {
-          for (int j = 0; j < n; j++) {
-            A[i * n + j] = base_in[i * s_in_row + j * s_in_col];
-          }
-        }
-        svd_complex16(A, U, S, VT, m, n, full_matrices);
         for (int i = 0; i < m; i++) {
           for (int j = 0; j < u_cols; j++) {
             base_u[i * s_u_row + j * s_u_col] = U[i * u_cols + j];

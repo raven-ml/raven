@@ -26,10 +26,10 @@ typedef struct {
 
 // Dispatch table for each type
 typedef struct {
-  type_ops_t i8, u8, i16, u16, i32, i64, inat;
+  type_ops_t i8, u8, i16, u16, i32, i64, u32, u64, inat;
   type_ops_t f16, f32, f64;
   type_ops_t c32, c64;
-  type_ops_t bf16, bool_, i4, u4, f8e4m3, f8e5m2, c16, qi8, qu8;
+  type_ops_t bf16, bool_, i4, u4, f8e4m3, f8e5m2;
 } type_ops_table_t;
 
 // Macros for standard types
@@ -66,14 +66,14 @@ GENERATE_STANDARD_OPS(int16_t, i16)
 GENERATE_STANDARD_OPS(uint16_t, u16)
 GENERATE_STANDARD_OPS(int32_t, i32)
 GENERATE_STANDARD_OPS(int64_t, i64)
+GENERATE_STANDARD_OPS(uint32_t, u32)
+GENERATE_STANDARD_OPS(uint64_t, u64)
 GENERATE_STANDARD_OPS(intnat, inat)
 GENERATE_STANDARD_OPS(float, f32)
 GENERATE_STANDARD_OPS(double, f64)
 GENERATE_STANDARD_OPS(complex32, c32)
 GENERATE_STANDARD_OPS(complex64, c64)
 GENERATE_STANDARD_OPS(caml_ba_bool, bool_)
-GENERATE_STANDARD_OPS(caml_ba_qint8, qi8)
-GENERATE_STANDARD_OPS(caml_ba_quint8, qu8)
 
 // For low-precision floats: add requires conversion, copy/zero are direct
 STANDARD_COPY(uint16_t, f16)
@@ -114,23 +114,6 @@ static void add_elem_f8e5m2(void *out, long o_off, void *in, long i_off) {
   float a = fp8_e5m2_to_float(ot[o_off]);
   float b = fp8_e5m2_to_float(it[i_off]);
   ot[o_off] = float_to_fp8_e5m2(a + b);
-}
-
-// For complex16
-STANDARD_COPY(caml_ba_complex16, c16)
-static void zero_elem_c16(void *out, long o_off) {
-  caml_ba_complex16 *ot = (caml_ba_complex16 *)out;
-  ot[o_off].re = 0;
-  ot[o_off].im = 0;
-}
-static void add_elem_c16(void *out, long o_off, void *in, long i_off) {
-  caml_ba_complex16 *ot = (caml_ba_complex16 *)out;
-  caml_ba_complex16 *it = (caml_ba_complex16 *)in;
-  complex32 a = complex16_to_complex32(ot[o_off]);
-  complex32 b = complex16_to_complex32(it[i_off]);
-  complex32 res = COMPLEX_ADD(a, b);
-  ot[o_off].re = float_to_half(crealf(res));
-  ot[o_off].im = float_to_half(cimagf(res));
 }
 
 // For int4/uint4 (packed nibbles)
@@ -234,6 +217,8 @@ static const type_ops_table_t type_ops_table = {
     .u16 = {add_elem_u16, copy_elem_u16, zero_elem_u16},
     .i32 = {add_elem_i32, copy_elem_i32, zero_elem_i32},
     .i64 = {add_elem_i64, copy_elem_i64, zero_elem_i64},
+    .u32 = {add_elem_u32, copy_elem_u32, zero_elem_u32},
+    .u64 = {add_elem_u64, copy_elem_u64, zero_elem_u64},
     .inat = {add_elem_inat, copy_elem_inat, zero_elem_inat},
     .f16 = {add_elem_f16, copy_elem_f16, zero_elem_f16},
     .f32 = {add_elem_f32, copy_elem_f32, zero_elem_f32},
@@ -245,10 +230,7 @@ static const type_ops_table_t type_ops_table = {
     .i4 = {add_elem_i4, copy_elem_i4, zero_elem_i4},
     .u4 = {add_elem_u4, copy_elem_u4, zero_elem_u4},
     .f8e4m3 = {add_elem_f8e4m3, copy_elem_f8e4m3, zero_elem_f8e4m3},
-    .f8e5m2 = {add_elem_f8e5m2, copy_elem_f8e5m2, zero_elem_f8e5m2},
-    .c16 = {add_elem_c16, copy_elem_c16, zero_elem_c16},
-    .qi8 = {add_elem_qi8, copy_elem_qi8, zero_elem_qi8},
-    .qu8 = {add_elem_qu8, copy_elem_qu8, zero_elem_qu8}};
+    .f8e5m2 = {add_elem_f8e5m2, copy_elem_f8e5m2, zero_elem_f8e5m2}};
 
 // Helper to get elem_size (for memset, etc.)
 static size_t get_elem_size(int kind) {
@@ -256,8 +238,6 @@ static size_t get_elem_size(int kind) {
     case CAML_BA_SINT8:
     case CAML_BA_UINT8:
     case NX_BA_BOOL:
-    case NX_BA_QINT8:
-    case NX_BA_QUINT8:
     case NX_BA_FP8_E4M3:
     case NX_BA_FP8_E5M2:
       return 1;
@@ -277,8 +257,6 @@ static size_t get_elem_size(int kind) {
       return 8;
     case CAML_BA_COMPLEX64:
       return 16;
-    case NX_BA_COMPLEX16:
-      return 4;
     case NX_BA_INT4:
     case NX_BA_UINT4:
       return 0;  // Special handling
@@ -583,6 +561,10 @@ static const type_ops_t *get_type_ops(int kind) {
       return &type_ops_table.i32;
     case CAML_BA_INT64:
       return &type_ops_table.i64;
+    case NX_BA_UINT32:
+      return &type_ops_table.u32;
+    case NX_BA_UINT64:
+      return &type_ops_table.u64;
     case CAML_BA_CAML_INT:
     case CAML_BA_NATIVE_INT:
       return &type_ops_table.inat;
@@ -608,12 +590,6 @@ static const type_ops_t *get_type_ops(int kind) {
       return &type_ops_table.f8e4m3;
     case NX_BA_FP8_E5M2:
       return &type_ops_table.f8e5m2;
-    case NX_BA_COMPLEX16:
-      return &type_ops_table.c16;
-    case NX_BA_QINT8:
-      return &type_ops_table.qi8;
-    case NX_BA_QUINT8:
-      return &type_ops_table.qu8;
     default:
       return NULL;
   }
