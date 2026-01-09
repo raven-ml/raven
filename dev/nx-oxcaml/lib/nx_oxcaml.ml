@@ -495,11 +495,106 @@ let op_abs (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
             Op_abs.abs_int64 a_arr out_arr va vout start_idx end_idx)
       else Op_abs.abs_int64 a_arr out_arr va vout 0 vol
 
-let op_sqrt ~out:_ _ = Error.invalid ~op:"op_sqrt" ~what:"not implemented" ()
-let op_exp ~out:_ _ = Error.invalid ~op:"op_exp" ~what:"not implemented" ()
-let op_log ~out:_ _ = Error.invalid ~op:"op_log" ~what:"not implemented" ()
-let op_sin ~out:_ _ = Error.invalid ~op:"op_sin" ~what:"not implemented" ()
-let op_cos ~out:_ _ = Error.invalid ~op:"op_cos" ~what:"not implemented" ()
+let op_sqrt (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+  let parallel_threshold = 62500 in
+  let vout = out.view in
+  let va = a.view in
+  let vol = numel vout in
+  match (out.buffer, a.buffer) with
+  | Float64 out_arr, Float64 a_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_sqrt.sqrt_float64 a_arr out_arr va vout start_idx end_idx)
+      else Op_sqrt.sqrt_float64 a_arr out_arr va vout 0 vol
+  | Float32 out_arr, Float32 a_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_sqrt.sqrt_float32 a_arr out_arr va vout start_idx end_idx)
+      else Op_sqrt.sqrt_float32 a_arr out_arr va vout 0 vol
+  | _ ->
+      Error.invalid ~op:"op_sqrt " ~what:"not implemented for unboxed ints" ()
+
+let op_exp (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+  let parallel_threshold = 62500 in
+  let vout = out.view in
+  let va = a.view in
+  let vol = numel vout in
+  match (out.buffer, a.buffer) with
+  | Float64 out_arr, Float64 a_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_exp.exp_float64 a_arr out_arr va vout start_idx end_idx)
+      else Op_exp.exp_float64 a_arr out_arr va vout 0 vol
+  | Float32 out_arr, Float32 a_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_exp.exp_float32 a_arr out_arr va vout start_idx end_idx)
+      else Op_exp.exp_float32 a_arr out_arr va vout 0 vol
+  | _ -> Error.invalid ~op:"op_exp " ~what:"not implemented for unboxed ints" ()
+
+let op_log (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+  let parallel_threshold = 62500 in
+  let vout = out.view in
+  let va = a.view in
+  let vol = numel vout in
+  match (out.buffer, a.buffer) with
+  | Float64 out_arr, Float64 a_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_log.log_float64 a_arr out_arr va vout start_idx end_idx)
+      else Op_log.log_float64 a_arr out_arr va vout 0 vol
+  | Float32 out_arr, Float32 a_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_log.log_float32 a_arr out_arr va vout start_idx end_idx)
+      else Op_log.log_float32 a_arr out_arr va vout 0 vol
+  | _ -> Error.invalid ~op:"op_log " ~what:"not implemented for unboxed ints" ()
+
+let op_sin (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+  let parallel_threshold = 62500 in
+  let vout = out.view in
+  let va = a.view in
+  let vol = numel vout in
+  match (out.buffer, a.buffer) with
+  | Float64 out_arr, Float64 a_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_sin.sin_float64 a_arr out_arr va vout start_idx end_idx)
+      else Op_sin.sin_float64 a_arr out_arr va vout 0 vol
+  | Float32 out_arr, Float32 a_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_sin.sin_float32 a_arr out_arr va vout start_idx end_idx)
+      else Op_sin.sin_float32 a_arr out_arr va vout 0 vol
+  | _ -> Error.invalid ~op:"op_sin " ~what:"not implemented for unboxed ints" ()
+
+let op_cos (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+  let parallel_threshold = 62500 in
+  let vout = out.view in
+  let va = a.view in
+  let vol = numel vout in
+  match (out.buffer, a.buffer) with
+  | Float64 out_arr, Float64 a_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_cos.cos_float64 a_arr out_arr va vout start_idx end_idx)
+      else Op_cos.cos_float64 a_arr out_arr va vout 0 vol
+  | Float32 out_arr, Float32 a_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_cos.cos_float32 a_arr out_arr va vout start_idx end_idx)
+      else Op_cos.cos_float32 a_arr out_arr va vout 0 vol
+  | _ -> Error.invalid ~op:"op_cos " ~what:"not implemented for unboxed ints" ()
 
 let op_where ~out:_ _ _ _ =
   Error.invalid ~op:"op_where" ~what:"not implemented" ()
