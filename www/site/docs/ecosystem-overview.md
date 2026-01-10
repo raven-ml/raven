@@ -97,10 +97,10 @@ Alongside these core layers, Raven includes **supporting tools** for the develop
 **Relationship to Nx**: Rune tensors (`Rune.t`) are distinct from Nx arrays (`Nx.t`). Convert between them:
 ```ocaml
 (* Nx to Rune *)
-let rune_tensor = Rune.of_bigarray_ext device (Nx.to_bigarray_ext nx_array)
+let rune_tensor = Rune.of_buffer device (Nx.to_buffer nx_array)
 
 (* Rune to Nx *)
-let nx_array = Nx.of_bigarray_ext (Rune.to_bigarray_ext rune_tensor)
+let nx_array = Nx.of_buffer (Rune.to_buffer rune_tensor)
 ```
 
 ## Application Frameworks

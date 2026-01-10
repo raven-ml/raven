@@ -18,7 +18,7 @@
   test_nx_rng)
  (package nx)
  (modules :standard \ test_nx_support)
- (libraries bigarray_ext nx nx_core alcotest test_nx_support))
+ (libraries nx_buffer nx nx_core alcotest test_nx_support))
 
 (test
  (name test_nx_io)

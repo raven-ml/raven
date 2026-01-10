@@ -1,4 +1,4 @@
-open Bigarray_ext
+open Nx_buffer
 
 type error = Error.t =
   | Io_error of string
@@ -42,7 +42,7 @@ module type SPEC = sig
   type elt
   type kind
 
-  val kind : (elt, kind) Bigarray_ext.kind
+  val kind : (elt, kind) Nx_buffer.kind
   val print : out_channel -> elt -> unit
   val parse : string -> (elt, error) result
 end
@@ -90,7 +90,7 @@ let spec_of_dtype (type a) (type b) (dtype : (a, b) Nx.dtype) :
     type elt
     type kind
 
-    val kind : (elt, kind) Bigarray_ext.kind
+    val kind : (elt, kind) Nx_buffer.kind
     val print : out_channel -> elt -> unit
     val parse : string -> (elt, error) result
   end) =
@@ -102,9 +102,9 @@ let spec_of_dtype (type a) (type b) (dtype : (a, b) Nx.dtype) :
   | Float16 ->
       let module S = M (struct
         type elt = float
-        type kind = Bigarray_ext.float16_elt
+        type kind = Nx_buffer.float16_elt
 
-        let kind = Nx_core.Dtype.to_bigarray_ext_kind dtype
+        let kind = Nx_core.Dtype.to_buffer_kind dtype
         let print oc v = Printf.fprintf oc "%.18e" v
         let parse token = parse_float dtype_name token
       end) in
@@ -112,9 +112,9 @@ let spec_of_dtype (type a) (type b) (dtype : (a, b) Nx.dtype) :
   | Float32 ->
       let module S = M (struct
         type elt = float
-        type kind = Bigarray_ext.float32_elt
+        type kind = Nx_buffer.float32_elt
 
-        let kind = Nx_core.Dtype.to_bigarray_ext_kind dtype
+        let kind = Nx_core.Dtype.to_buffer_kind dtype
         let print oc v = Printf.fprintf oc "%.18e" v
         let parse token = parse_float dtype_name token
       end) in
@@ -122,9 +122,9 @@ let spec_of_dtype (type a) (type b) (dtype : (a, b) Nx.dtype) :
   | Float64 ->
       let module S = M (struct
         type elt = float
-        type kind = Bigarray_ext.float64_elt
+        type kind = Nx_buffer.float64_elt
 
-        let kind = Nx_core.Dtype.to_bigarray_ext_kind dtype
+        let kind = Nx_core.Dtype.to_buffer_kind dtype
         let print oc v = Printf.fprintf oc "%.18e" v
         let parse token = parse_float dtype_name token
       end) in
@@ -132,9 +132,9 @@ let spec_of_dtype (type a) (type b) (dtype : (a, b) Nx.dtype) :
   | BFloat16 ->
       let module S = M (struct
         type elt = float
-        type kind = Bigarray_ext.bfloat16_elt
+        type kind = Nx_buffer.bfloat16_elt
 
-        let kind = Nx_core.Dtype.to_bigarray_ext_kind dtype
+        let kind = Nx_core.Dtype.to_buffer_kind dtype
         let print oc v = Printf.fprintf oc "%.18e" v
         let parse token = parse_float dtype_name token
       end) in
@@ -142,9 +142,9 @@ let spec_of_dtype (type a) (type b) (dtype : (a, b) Nx.dtype) :
   | Int8 ->
       let module S = M (struct
         type elt = int
-        type kind = Bigarray_ext.int8_signed_elt
+        type kind = Nx_buffer.int8_signed_elt
 
-        let kind = Nx_core.Dtype.to_bigarray_ext_kind dtype
+        let kind = Nx_core.Dtype.to_buffer_kind dtype
         let print oc v = output_string oc (string_of_int v)
 
         let parse token =
@@ -154,9 +154,9 @@ let spec_of_dtype (type a) (type b) (dtype : (a, b) Nx.dtype) :
   | UInt8 ->
       let module S = M (struct
         type elt = int
-        type kind = Bigarray_ext.int8_unsigned_elt
+        type kind = Nx_buffer.int8_unsigned_elt
 
-        let kind = Nx_core.Dtype.to_bigarray_ext_kind dtype
+        let kind = Nx_core.Dtype.to_buffer_kind dtype
         let print oc v = output_string oc (string_of_int v)
         let parse token = parse_int_with_bounds dtype_name token ~min:0 ~max:255
       end) in
@@ -164,9 +164,9 @@ let spec_of_dtype (type a) (type b) (dtype : (a, b) Nx.dtype) :
   | Int16 ->
       let module S = M (struct
         type elt = int
-        type kind = Bigarray_ext.int16_signed_elt
+        type kind = Nx_buffer.int16_signed_elt
 
-        let kind = Nx_core.Dtype.to_bigarray_ext_kind dtype
+        let kind = Nx_core.Dtype.to_buffer_kind dtype
         let print oc v = output_string oc (string_of_int v)
 
         let parse token =
@@ -176,9 +176,9 @@ let spec_of_dtype (type a) (type b) (dtype : (a, b) Nx.dtype) :
   | UInt16 ->
       let module S = M (struct
         type elt = int
-        type kind = Bigarray_ext.int16_unsigned_elt
+        type kind = Nx_buffer.int16_unsigned_elt
 
-        let kind = Nx_core.Dtype.to_bigarray_ext_kind dtype
+        let kind = Nx_core.Dtype.to_buffer_kind dtype
         let print oc v = output_string oc (string_of_int v)
 
         let parse token =
@@ -188,9 +188,9 @@ let spec_of_dtype (type a) (type b) (dtype : (a, b) Nx.dtype) :
   | Int32 ->
       let module S = M (struct
         type elt = int32
-        type kind = Bigarray_ext.int32_elt
+        type kind = Nx_buffer.int32_elt
 
-        let kind = Nx_core.Dtype.to_bigarray_ext_kind dtype
+        let kind = Nx_core.Dtype.to_buffer_kind dtype
         let print oc v = output_string oc (Int32.to_string v)
 
         let parse token =
@@ -202,9 +202,9 @@ let spec_of_dtype (type a) (type b) (dtype : (a, b) Nx.dtype) :
   | Int64 ->
       let module S = M (struct
         type elt = int64
-        type kind = Bigarray_ext.int64_elt
+        type kind = Nx_buffer.int64_elt
 
-        let kind = Nx_core.Dtype.to_bigarray_ext_kind dtype
+        let kind = Nx_core.Dtype.to_buffer_kind dtype
         let print oc v = output_string oc (Int64.to_string v)
 
         let parse token =
@@ -216,9 +216,9 @@ let spec_of_dtype (type a) (type b) (dtype : (a, b) Nx.dtype) :
   | UInt32 ->
       let module S = M (struct
         type elt = int32
-        type kind = Bigarray_ext.uint32_elt
+        type kind = Nx_buffer.uint32_elt
 
-        let kind = Nx_core.Dtype.to_bigarray_ext_kind dtype
+        let kind = Nx_core.Dtype.to_buffer_kind dtype
         let print oc v = output_string oc (Int32.to_string v)
 
         let parse token =
@@ -230,9 +230,9 @@ let spec_of_dtype (type a) (type b) (dtype : (a, b) Nx.dtype) :
   | UInt64 ->
       let module S = M (struct
         type elt = int64
-        type kind = Bigarray_ext.uint64_elt
+        type kind = Nx_buffer.uint64_elt
 
-        let kind = Nx_core.Dtype.to_bigarray_ext_kind dtype
+        let kind = Nx_core.Dtype.to_buffer_kind dtype
         let print oc v = output_string oc (Int64.to_string v)
 
         let parse token =
@@ -244,9 +244,9 @@ let spec_of_dtype (type a) (type b) (dtype : (a, b) Nx.dtype) :
   | Bool ->
       let module S = M (struct
         type elt = bool
-        type kind = Bigarray_ext.bool_elt
+        type kind = Nx_buffer.bool_elt
 
-        let kind = Nx_core.Dtype.to_bigarray_ext_kind dtype
+        let kind = Nx_core.Dtype.to_buffer_kind dtype
         let print oc v = output_string oc (if v then "1" else "0")
         let parse = parse_bool
       end) in
@@ -281,7 +281,7 @@ let save ?(sep = " ") ?(append = false) ?(newline = "\n") ?header ?footer
                 in
                 List.iter write_prefixed (split_lines_opt header);
                 let data =
-                  (Nx.to_bigarray_ext arr
+                  (Nx.to_buffer arr
                     : (S.elt, S.kind, Bigarray.c_layout) Genarray.t)
                 in
                 (match layout with
@@ -425,7 +425,7 @@ let load ?(sep = " ") ?(comments = "#") ?(skiprows = 0) ?max_rows (type a)
                     match !parse_error with
                     | Some err -> Error err
                     | None ->
-                        let tensor = Nx.of_bigarray_ext ba in
+                        let tensor = Nx.of_buffer ba in
                         let result =
                           if row_count = 1 then
                             Nx.reshape [| col_count |] tensor

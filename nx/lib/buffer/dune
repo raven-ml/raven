@@ -1,0 +1,10 @@
+(library
+ (name nx_buffer)
+ (public_name nx.buffer)
+ (install_c_headers nx_buffer_stubs)
+ (foreign_stubs
+  (language c)
+  (names nx_buffer_stubs))
+ (js_of_ocaml
+  (javascript_files nx_buffer_stubs.js))
+ (libraries))

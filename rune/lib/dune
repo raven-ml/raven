@@ -9,4 +9,4 @@
   nx_c
   nx_core
   nx
-  bigarray_ext))
+  nx_buffer))

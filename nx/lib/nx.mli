@@ -27,25 +27,25 @@
 type ('a, 'b) t
 (** [('a, 'b) t] is a tensor with OCaml type ['a] and bigarray type ['b]. *)
 
-type float16_elt = Bigarray_ext.float16_elt
-type float32_elt = Bigarray_ext.float32_elt
-type float64_elt = Bigarray_ext.float64_elt
-type int8_elt = Bigarray_ext.int8_signed_elt
-type uint8_elt = Bigarray_ext.int8_unsigned_elt
-type int16_elt = Bigarray_ext.int16_signed_elt
-type uint16_elt = Bigarray_ext.int16_unsigned_elt
-type int32_elt = Bigarray_ext.int32_elt
-type int64_elt = Bigarray_ext.int64_elt
-type uint32_elt = Bigarray_ext.uint32_elt
-type uint64_elt = Bigarray_ext.uint64_elt
-type complex32_elt = Bigarray_ext.complex32_elt
-type complex64_elt = Bigarray_ext.complex64_elt
-type bfloat16_elt = Bigarray_ext.bfloat16_elt
-type bool_elt = Bigarray_ext.bool_elt
-type int4_elt = Bigarray_ext.int4_signed_elt
-type uint4_elt = Bigarray_ext.int4_unsigned_elt
-type float8_e4m3_elt = Bigarray_ext.float8_e4m3_elt
-type float8_e5m2_elt = Bigarray_ext.float8_e5m2_elt
+type float16_elt = Nx_buffer.float16_elt
+type float32_elt = Nx_buffer.float32_elt
+type float64_elt = Nx_buffer.float64_elt
+type int8_elt = Nx_buffer.int8_signed_elt
+type uint8_elt = Nx_buffer.int8_unsigned_elt
+type int16_elt = Nx_buffer.int16_signed_elt
+type uint16_elt = Nx_buffer.int16_unsigned_elt
+type int32_elt = Nx_buffer.int32_elt
+type int64_elt = Nx_buffer.int64_elt
+type uint32_elt = Nx_buffer.uint32_elt
+type uint64_elt = Nx_buffer.uint64_elt
+type complex32_elt = Nx_buffer.complex32_elt
+type complex64_elt = Nx_buffer.complex64_elt
+type bfloat16_elt = Nx_buffer.bfloat16_elt
+type bool_elt = Nx_buffer.bool_elt
+type int4_elt = Nx_buffer.int4_signed_elt
+type uint4_elt = Nx_buffer.int4_unsigned_elt
+type float8_e4m3_elt = Nx_buffer.float8_e4m3_elt
+type float8_e5m2_elt = Nx_buffer.float8_e5m2_elt
 
 type ('a, 'b) dtype = ('a, 'b) Nx_core.Dtype.t =
   | Float16 : (float, float16_elt) dtype
@@ -126,7 +126,7 @@ type index =
 
     Functions to inspect array dimensions, memory layout, and data access. *)
 
-val data : ('a, 'b) t -> ('a, 'b, Bigarray_ext.c_layout) Bigarray_ext.Array1.t
+val data : ('a, 'b) t -> ('a, 'b, Nx_buffer.c_layout) Nx_buffer.Array1.t
 (** [data t] returns underlying bigarray buffer.
 
     Buffer may contain data beyond tensor bounds for strided views. Direct
@@ -194,9 +194,8 @@ val to_bigarray : ('a, 'b) t -> ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t
     @raise Failure
       if tensor dtype is an extended type not supported by standard Bigarray *)
 
-val to_bigarray_ext :
-  ('a, 'b) t -> ('a, 'b, Bigarray_ext.c_layout) Bigarray_ext.Genarray.t
-(** [to_bigarray_ext t] converts to extended bigarray.
+val to_buffer : ('a, 'b) t -> ('a, 'b, Nx_buffer.c_layout) Nx_buffer.Genarray.t
+(** [to_buffer t] converts to extended bigarray.
 
     Always returns contiguous copy with same shape. Use for interop with
     libraries expecting extended bigarrays (e.g., with bfloat16 support).
@@ -205,7 +204,7 @@ val to_bigarray_ext :
       # let t = create float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
       val t : (float, float32_elt) t = [[1, 2, 3],
                                         [4, 5, 6]]
-      # shape (to_bigarray_ext t |> of_bigarray_ext)
+      # shape (to_buffer t |> of_buffer)
       - : int array = [|2; 3|]
     ]} *)
 
@@ -487,17 +486,16 @@ val of_bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t -> ('a, 'b) t
                                     [0, 0, 0]]
     ]} *)
 
-val of_bigarray_ext :
-  ('a, 'b, Bigarray_ext.c_layout) Bigarray_ext.Genarray.t -> ('a, 'b) t
-(** [of_bigarray_ext ba] creates tensor from extended bigarray.
+val of_buffer : ('a, 'b, Nx_buffer.c_layout) Nx_buffer.Genarray.t -> ('a, 'b) t
+(** [of_buffer ba] creates tensor from extended bigarray.
 
     Zero-copy when bigarray is contiguous. Creates view sharing same memory.
     Modifications to either affect both. Supports extended types like bfloat16.
 
     {@ocaml[
-      # let ba = Bigarray_ext.Genarray.create Bigarray_ext.bfloat16
-                  Bigarray_ext.c_layout [| 2; 3 |] in
-        let t = of_bigarray_ext ba in
+      # let ba = Nx_buffer.Genarray.create Nx_buffer.bfloat16
+                  Nx_buffer.c_layout [| 2; 3 |] in
+        let t = of_buffer ba in
         shape t
       - : int array = [|2; 3|]
     ]} *)

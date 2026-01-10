@@ -2,7 +2,7 @@
  (name nx_io)
  (public_name nx.io)
  (libraries
-  bigarray_ext
+  nx_buffer
   nx
   nx_core
   safetensors

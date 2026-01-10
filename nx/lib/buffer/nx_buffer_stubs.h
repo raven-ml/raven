@@ -1,5 +1,5 @@
-#ifndef NX_BIGARRAY_EXT_H
-#define NX_BIGARRAY_EXT_H
+#ifndef NX_NX_BUFFER_H
+#define NX_NX_BUFFER_H
 
 #include <caml/alloc.h>
 #include <caml/bigarray.h>
@@ -299,4 +299,4 @@ static inline float fp8_e5m2_to_float(uint8_t fp8) {
   return negative ? -value : value;
 }
 
-#endif /* NX_BIGARRAY_EXT_H */
+#endif /* NX_NX_BUFFER_H */

@@ -6,7 +6,7 @@ module Fixtures = struct
   let load_image name =
     let path = Filename.concat data_dir name in
     let nx_img = Nx_io.load_image path in
-    Rune.of_bigarray_ext (Nx.to_bigarray_ext nx_img)
+    Rune.of_buffer (Nx.to_buffer nx_img)
 
   let img_1080 = lazy (load_image "img_1920x1080.png")
   let img_720 = lazy (load_image "img_1280x720.png")
@@ -17,7 +17,7 @@ module Fixtures = struct
   let gray_720 () = Lazy.force gray_720
 end
 
-let force_tensor tensor = ignore (Rune.to_bigarray_ext tensor)
+let force_tensor tensor = ignore (Rune.to_buffer tensor)
 
 let bench_grayscale img =
   let gray = Sowilo.to_grayscale img in
