@@ -13,6 +13,10 @@ type ('a, 'b) t = {
   view : View.t;
 }
 
+(* We define an FFI tensor type for easy access to the view fields in C.
+
+   XXX: probably more efficient to inline those in our [t] type and have the
+   view function create a view when called. *)
 type ('a, 'b) ffi_tensor = {
   data : ('a, 'b) buffer;
   shape : int array;
