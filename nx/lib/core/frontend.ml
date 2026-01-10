@@ -21,51 +21,46 @@ module Make (B : Backend_intf.S) = struct
 
   type ('a, 'b) t = ('a, 'b) B.t
   type context = B.context
-
-  (* Concrete types for dtypes *)
   type float16_elt = Nx_buffer.float16_elt
   type float32_elt = Nx_buffer.float32_elt
   type float64_elt = Nx_buffer.float64_elt
+  type bfloat16_elt = Nx_buffer.bfloat16_elt
+  type float8_e4m3_elt = Nx_buffer.float8_e4m3_elt
+  type float8_e5m2_elt = Nx_buffer.float8_e5m2_elt
+  type int4_elt = Nx_buffer.int4_signed_elt
+  type uint4_elt = Nx_buffer.int4_unsigned_elt
   type int8_elt = Nx_buffer.int8_signed_elt
   type uint8_elt = Nx_buffer.int8_unsigned_elt
   type int16_elt = Nx_buffer.int16_signed_elt
   type uint16_elt = Nx_buffer.int16_unsigned_elt
   type int32_elt = Nx_buffer.int32_elt
-  type int64_elt = Nx_buffer.int64_elt
   type uint32_elt = Nx_buffer.uint32_elt
+  type int64_elt = Nx_buffer.int64_elt
   type uint64_elt = Nx_buffer.uint64_elt
   type complex32_elt = Nx_buffer.complex32_elt
   type complex64_elt = Nx_buffer.complex64_elt
-
-  (* Extended types from Nx_buffer *)
-  type bfloat16_elt = Nx_buffer.bfloat16_elt
   type bool_elt = Nx_buffer.bool_elt
-  type int4_elt = Nx_buffer.int4_signed_elt
-  type uint4_elt = Nx_buffer.int4_unsigned_elt
-  type float8_e4m3_elt = Nx_buffer.float8_e4m3_elt
-  type float8_e5m2_elt = Nx_buffer.float8_e5m2_elt
 
   type ('a, 'b) dtype = ('a, 'b) Dtype.t =
     | Float16 : (float, float16_elt) dtype
     | Float32 : (float, float32_elt) dtype
     | Float64 : (float, float64_elt) dtype
+    | BFloat16 : (float, bfloat16_elt) dtype
+    | Float8_e4m3 : (float, float8_e4m3_elt) dtype
+    | Float8_e5m2 : (float, float8_e5m2_elt) dtype
+    | Int4 : (int, int4_elt) dtype
+    | UInt4 : (int, uint4_elt) dtype
     | Int8 : (int, int8_elt) dtype
     | UInt8 : (int, uint8_elt) dtype
     | Int16 : (int, int16_elt) dtype
     | UInt16 : (int, uint16_elt) dtype
     | Int32 : (int32, int32_elt) dtype
-    | Int64 : (int64, int64_elt) dtype
     | UInt32 : (int32, uint32_elt) dtype
+    | Int64 : (int64, int64_elt) dtype
     | UInt64 : (int64, uint64_elt) dtype
     | Complex64 : (Complex.t, complex32_elt) dtype
     | Complex128 : (Complex.t, complex64_elt) dtype
-    (* Extended types *)
-    | BFloat16 : (float, bfloat16_elt) dtype
     | Bool : (bool, bool_elt) dtype
-    | Int4 : (int, int4_elt) dtype
-    | UInt4 : (int, uint4_elt) dtype
-    | Float8_e4m3 : (float, float8_e4m3_elt) dtype
-    | Float8_e5m2 : (float, float8_e5m2_elt) dtype
 
   type float16_t = (float, float16_elt) t
   type float32_t = (float, float32_elt) t
@@ -82,20 +77,25 @@ module Make (B : Backend_intf.S) = struct
   type complex128_t = (Complex.t, complex64_elt) t
   type bool_t = (bool, bool_elt) t
 
-  (* Constructor shortcuts *)
   let float16 = Float16
   let float32 = Float32
   let float64 = Float64
+  let bfloat16 = BFloat16
+  let float8_e4m3 = Float8_e4m3
+  let float8_e5m2 = Float8_e5m2
+  let int4 = Int4
+  let uint4 = UInt4
   let int8 = Int8
   let uint8 = UInt8
   let int16 = Int16
   let uint16 = UInt16
   let int32 = Int32
-  let int64 = Int64
-  let complex64 = Complex64
   let uint32 = UInt32
+  let int64 = Int64
   let uint64 = UInt64
+  let complex64 = Complex64
   let complex128 = Complex128
+  let bool = Bool
 
   (* Index type for tensor slicing *)
   type index =
