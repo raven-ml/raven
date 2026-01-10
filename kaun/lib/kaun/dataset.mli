@@ -48,8 +48,8 @@ type tokenizer = string -> int array
 val whitespace_tokenizer : tokenizer
 (** Built-in whitespace tokenizer.
 
-    @warning The tokenizer maintains an internal mutable vocabulary and is not
-    thread-safe. Create a fresh tokenizer when you need an isolated
+    {b Warning:} The tokenizer maintains an internal mutable vocabulary and is
+    not thread-safe. Create a fresh tokenizer when you need an isolated
     vocabulary. *)
 
 (** {1 Dataset Creation} *)
