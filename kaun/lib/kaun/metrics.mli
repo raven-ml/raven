@@ -30,8 +30,9 @@ val accuracy : ?threshold:float -> ?top_k:int -> unit -> metric
     @param threshold Threshold for binary classification (default: 0.5)
     @param top_k
       For multi-class, count as correct if true label is in top-k predictions
-    @note For per-class or aggregated variants, combine
-      [Metrics.confusion_matrix] with custom post-processing.
+
+    For per-class or aggregated variants, combine [Metrics.confusion_matrix]
+    with custom post-processing.
 
     {4 Example}
     {[
@@ -237,7 +238,7 @@ val iou :
 (** [iou ?threshold ?per_class ~num_classes ()] creates an Intersection over
     Union metric.
 
-    Inputs must contain integer class indices in [0, num_classes). When
+    Inputs must contain integer class indices in \[0, num_classes). When
     [num_classes = 2], [threshold] binarises predictions before computing IoU.
     When [per_class = true], the metric reports one IoU per class; otherwise it
     returns the mean over classes with non-zero support. *)

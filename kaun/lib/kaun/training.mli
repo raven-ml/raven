@@ -82,7 +82,7 @@ module Callbacks : sig
     t
   (** [model_checkpoint ~filepath ?monitor ?mode ?save_best_only ?save_freq ()]
       creates a checkpoint callback.
-      - [filepath]: Path pattern for saving checkpoints (can include \{epoch\}
+      - [filepath]: Path pattern for saving checkpoints (can include an [epoch]
         placeholder)
       - [monitor]: Metric to monitor for best model (default: "val_loss")
       - [mode]: Whether to minimize or maximize the metric (default: `Min)

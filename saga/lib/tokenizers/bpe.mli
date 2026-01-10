@@ -199,7 +199,7 @@ val token_to_id : t -> string -> int option
 val id_to_token : t -> int -> string option
 (** [id_to_token model id] looks up token string by ID.
 
-    Returns [None] if ID out of bounds [0, vocab_size). *)
+    Returns [None] if ID out of bounds \[0, vocab_size). *)
 
 (** {1 Vocabulary Management} *)
 
