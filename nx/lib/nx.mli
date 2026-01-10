@@ -35,85 +35,85 @@ type ('a, 'b) t
 type float16_elt = Nx_buffer.float16_elt
 type float32_elt = Nx_buffer.float32_elt
 type float64_elt = Nx_buffer.float64_elt
+type bfloat16_elt = Nx_buffer.bfloat16_elt
+type float8_e4m3_elt = Nx_buffer.float8_e4m3_elt
+type float8_e5m2_elt = Nx_buffer.float8_e5m2_elt
+type int4_elt = Nx_buffer.int4_signed_elt
+type uint4_elt = Nx_buffer.int4_unsigned_elt
 type int8_elt = Nx_buffer.int8_signed_elt
 type uint8_elt = Nx_buffer.int8_unsigned_elt
 type int16_elt = Nx_buffer.int16_signed_elt
 type uint16_elt = Nx_buffer.int16_unsigned_elt
 type int32_elt = Nx_buffer.int32_elt
-type int64_elt = Nx_buffer.int64_elt
 type uint32_elt = Nx_buffer.uint32_elt
+type int64_elt = Nx_buffer.int64_elt
 type uint64_elt = Nx_buffer.uint64_elt
 type complex32_elt = Nx_buffer.complex32_elt
 type complex64_elt = Nx_buffer.complex64_elt
-type bfloat16_elt = Nx_buffer.bfloat16_elt
 type bool_elt = Nx_buffer.bool_elt
-type int4_elt = Nx_buffer.int4_signed_elt
-type uint4_elt = Nx_buffer.int4_unsigned_elt
-type float8_e4m3_elt = Nx_buffer.float8_e4m3_elt
-type float8_e5m2_elt = Nx_buffer.float8_e5m2_elt
 
 type ('a, 'b) dtype = ('a, 'b) Nx_core.Dtype.t =
   | Float16 : (float, float16_elt) dtype
   | Float32 : (float, float32_elt) dtype
   | Float64 : (float, float64_elt) dtype
+  | BFloat16 : (float, bfloat16_elt) dtype
+  | Float8_e4m3 : (float, float8_e4m3_elt) dtype
+  | Float8_e5m2 : (float, float8_e5m2_elt) dtype
+  | Int4 : (int, int4_elt) dtype
+  | UInt4 : (int, uint4_elt) dtype
   | Int8 : (int, int8_elt) dtype
   | UInt8 : (int, uint8_elt) dtype
   | Int16 : (int, int16_elt) dtype
   | UInt16 : (int, uint16_elt) dtype
   | Int32 : (int32, int32_elt) dtype
-  | Int64 : (int64, int64_elt) dtype
   | UInt32 : (int32, uint32_elt) dtype
+  | Int64 : (int64, int64_elt) dtype
   | UInt64 : (int64, uint64_elt) dtype
   | Complex64 : (Complex.t, complex32_elt) dtype
   | Complex128 : (Complex.t, complex64_elt) dtype
-  | BFloat16 : (float, bfloat16_elt) dtype
   | Bool : (bool, bool_elt) dtype
-  | Int4 : (int, int4_elt) dtype
-  | UInt4 : (int, uint4_elt) dtype
-  | Float8_e4m3 : (float, float8_e4m3_elt) dtype
-  | Float8_e5m2 : (float, float8_e5m2_elt) dtype
       (** Data type specification. Links OCaml types to bigarray element types.
       *)
 
 type float16_t = (float, float16_elt) t
 type float32_t = (float, float32_elt) t
 type float64_t = (float, float64_elt) t
+type bfloat16_t = (float, bfloat16_elt) t
+type float8_e4m3_t = (float, float8_e4m3_elt) t
+type float8_e5m2_t = (float, float8_e5m2_elt) t
+type int4_t = (int, int4_elt) t
+type uint4_t = (int, uint4_elt) t
 type int8_t = (int, int8_elt) t
 type uint8_t = (int, uint8_elt) t
 type int16_t = (int, int16_elt) t
 type uint16_t = (int, uint16_elt) t
 type int32_t = (int32, int32_elt) t
-type int64_t = (int64, int64_elt) t
 type uint32_t = (int32, uint32_elt) t
+type int64_t = (int64, int64_elt) t
 type uint64_t = (int64, uint64_elt) t
 type complex64_t = (Complex.t, complex32_elt) t
 type complex128_t = (Complex.t, complex64_elt) t
-type bfloat16_t = (float, bfloat16_elt) t
 type bool_t = (bool, bool_elt) t
-type int4_t = (int, int4_elt) t
-type uint4_t = (int, uint4_elt) t
-type float8_e4m3_t = (float, float8_e4m3_elt) t
-type float8_e5m2_t = (float, float8_e5m2_elt) t
 
 val float16 : (float, float16_elt) dtype
 val float32 : (float, float32_elt) dtype
 val float64 : (float, float64_elt) dtype
+val bfloat16 : (float, bfloat16_elt) dtype
+val float8_e4m3 : (float, float8_e4m3_elt) dtype
+val float8_e5m2 : (float, float8_e5m2_elt) dtype
+val int4 : (int, int4_elt) dtype
+val uint4 : (int, uint4_elt) dtype
 val int8 : (int, int8_elt) dtype
 val uint8 : (int, uint8_elt) dtype
 val int16 : (int, int16_elt) dtype
 val uint16 : (int, uint16_elt) dtype
 val int32 : (int32, int32_elt) dtype
-val int64 : (int64, int64_elt) dtype
-val complex64 : (Complex.t, complex32_elt) dtype
 val uint32 : (int32, uint32_elt) dtype
+val int64 : (int64, int64_elt) dtype
 val uint64 : (int64, uint64_elt) dtype
+val complex64 : (Complex.t, complex32_elt) dtype
 val complex128 : (Complex.t, complex64_elt) dtype
-val bfloat16 : (float, bfloat16_elt) dtype
 val bool : (bool, bool_elt) dtype
-val int4 : (int, int4_elt) dtype
-val uint4 : (int, uint4_elt) dtype
-val float8_e4m3 : (float, float8_e4m3_elt) dtype
-val float8_e5m2 : (float, float8_e5m2_elt) dtype
 
 (** Index specification for tensor slicing *)
 type index =
