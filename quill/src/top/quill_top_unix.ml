@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 let open_temp_file prefix suffix =
   let filename = Filename.temp_file prefix suffix in
   let fd = Unix.openfile filename Unix.[ O_WRONLY; O_CREAT; O_TRUNC ] 0o600 in

@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 module Col = struct
   type t =
     | P : ('a, 'b) Nx.dtype * ('a, 'b) Nx.t * bool array option -> t

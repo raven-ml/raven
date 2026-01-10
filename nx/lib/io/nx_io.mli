@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 (** Nx_io: Nx input/output for common file formats.
 
     Provides functions to load and save [Nx.t] arrays in image formats, NumPy

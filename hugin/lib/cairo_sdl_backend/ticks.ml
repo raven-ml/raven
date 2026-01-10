@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 let format_tick_value (v : float) : string =
   let epsilon = 1e-12 in
   if abs_float v < epsilon then "0.0" else Printf.sprintf "%.6g" v

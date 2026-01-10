@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 (* Adapted from ocaml-crunch (https://github.com/mirage/ocaml-crunch) *)
 
 module String_map = Map.Make (String)

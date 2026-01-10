@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 (** JSON I/O operations for Talon dataframes *)
 
 val to_string : ?orient:[ `Records | `Columns ] -> Talon.t -> string

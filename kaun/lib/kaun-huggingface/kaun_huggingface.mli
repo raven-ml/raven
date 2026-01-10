@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 (** Kaun_huggingface: HuggingFace model hub integration for Kaun.
 
     Provides seamless loading of pretrained models from HuggingFace, with

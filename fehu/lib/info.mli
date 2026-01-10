@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 (** Auxiliary information dictionaries for environment transitions.
 
     Info dictionaries attach metadata to observations and transitions, such as

@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 let set_source_color cr (color : Artist.color) =
   Cairo.set_source_rgba cr color.r color.g color.b color.a
 

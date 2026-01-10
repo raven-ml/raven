@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 (* GPT-2 Tokenizer Example
 
    Demonstrates how to use GPT-2's BPE tokenizer with Saga. *)

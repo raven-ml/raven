@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 (** GPT-2: Generative Pre-trained Transformer 2.
 
     Radford et al., 2019: "Language Models are Unsupervised Multitask Learners"

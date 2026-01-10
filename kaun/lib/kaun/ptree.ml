@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 module Dtype = Nx_core.Dtype
 
 type tensor = P : ('a, 'layout) Rune.t -> tensor

@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 let read_lines ?(buffer_size = 65536) filename =
   let ic = open_in filename in
   Fun.protect ~finally:(fun () -> close_in ic) @@ fun () ->

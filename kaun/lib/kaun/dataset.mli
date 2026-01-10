@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 (** Efficient dataset handling for machine learning pipelines This module
     provides composable dataset transformations with support for:
     - Memory-mapped file reading (no OOM on large datasets)

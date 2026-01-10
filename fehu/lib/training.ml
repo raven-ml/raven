@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 let compute_gae ~rewards ~values ~dones ~last_value ~last_done ~gamma
     ~gae_lambda =
   let n = Array.length rewards in

@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 (* Minimal symbolic shape expressions for Rune JIT.
 
    This module mirrors the capabilities we need from Nx's Symbolic_shape while

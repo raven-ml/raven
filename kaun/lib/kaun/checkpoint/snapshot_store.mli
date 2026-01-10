@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 type tensor_meta = { encoded_path : string; dtype : string; shape : int array }
 
 val save : base_path:string -> Snapshot.t -> unit

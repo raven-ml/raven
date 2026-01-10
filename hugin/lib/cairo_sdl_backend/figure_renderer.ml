@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 let render_figure cr target_width target_height (fig : Figure.t) =
   Cairo.save cr;
   Cairo.set_antialias cr ANTIALIAS_DEFAULT;

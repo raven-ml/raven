@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 open Talon
 
 let default_na_values = [ ""; "NA"; "N/A"; "null"; "NULL"; "nan"; "NaN" ]

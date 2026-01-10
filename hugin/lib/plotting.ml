@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 let plot ?color ?linewidth ?linestyle ?marker ?label ~x ~y ax =
   let artist = Artist.line2d ?color ?linewidth ?linestyle ?marker ?label x y in
   Axes.add_artist artist ax

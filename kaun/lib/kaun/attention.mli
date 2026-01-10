@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 module Ptree = Ptree
 
 val normalize_mask : ('a, 'layout) Rune.t -> Rune.bool_t

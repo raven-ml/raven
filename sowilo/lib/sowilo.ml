@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 type uint8_t = Rune.uint8_t
 type int16_t = Rune.int16_t
 type float32_t = Rune.float32_t

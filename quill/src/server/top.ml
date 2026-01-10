@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 let toplevel_envs : (string, Env.t) Hashtbl.t = Hashtbl.create 10
 let toplevel_mutex = Mutex.create ()
 
