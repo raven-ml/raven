@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 (** Helper combinators for building policies. *)
 
 type ('obs, 'act) t = 'obs -> 'act * float option * float option

@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 (** Cache directory utilities for the Raven ecosystem. *)
 
 val get_root : ?getenv:(string -> string option) -> unit -> string

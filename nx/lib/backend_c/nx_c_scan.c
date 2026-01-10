@@ -1,3 +1,8 @@
+/*---------------------------------------------------------------------------
+   Copyright (c) 2026 The Raven authors. All rights reserved.
+   SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*/
+
 #include "nx_c_shared.h"
 
 typedef void (*scan_fn_t)(const ndarray_t *, ndarray_t *, int axis);

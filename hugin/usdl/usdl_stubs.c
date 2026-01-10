@@ -1,3 +1,8 @@
+/*---------------------------------------------------------------------------
+   Copyright (c) 2026 The Raven authors. All rights reserved.
+   SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*/
+
 #define CAML_NAME_SPACE
 #include <caml/alloc.h>
 #include <caml/bigarray.h>

@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 (** Pre-tokenization for text processing pipelines.
 
     Pre-tokenizers are the first stage in text tokenization pipelines. They

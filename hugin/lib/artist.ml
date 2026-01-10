@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 type color = { r : float; g : float; b : float; a : float }
 type cmap = Viridis | Plasma | Inferno | Magma | Cividis | Coolwarm | Gray
 

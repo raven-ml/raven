@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 let softmax_cross_entropy logits labels =
   Rune.debug_with_context "softmax_cross_entropy" (fun () ->
       (* Assumes labels are one-hot encoded *)

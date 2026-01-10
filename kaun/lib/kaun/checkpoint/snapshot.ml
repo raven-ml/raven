@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 module Record = Map.Make (String)
 
 type tensor = Pack : ('a, 'layout) Rune.t -> tensor

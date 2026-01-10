@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 (** Typed render payloads shared across Fehu environments and utilities.
 
     Rendered frames can carry pixel buffers, text, or vector graphics.

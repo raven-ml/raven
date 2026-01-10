@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 let render_line2d cr (t_ctx : Transforms.context2d) (l : Artist.line2d) =
   if Nx.size l.xdata < 2 then () else Cairo.save cr;
   Render_utils.set_source_color cr l.color;

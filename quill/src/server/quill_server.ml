@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 let is_safe_path base_dir requested_path =
   let resolved_base = Unix.realpath base_dir in
   let resolved_requested = Unix.realpath requested_path in

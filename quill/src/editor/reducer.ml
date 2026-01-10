@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 let caret_for_inline document inline_id =
   match Document.find_block_of_inline document ~inline_id with
   | Some (block, _) ->

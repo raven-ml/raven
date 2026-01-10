@@ -1,3 +1,8 @@
+/*---------------------------------------------------------------------------
+   Copyright (c) 2026 The Raven authors. All rights reserved.
+   SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*/
+
 #include "nx_buffer_stubs.h"
 #include <caml/fail.h>
 #include <stdlib.h>

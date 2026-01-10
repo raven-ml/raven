@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 module Pixel = struct
   type format = [ `RGB8 | `RGBA8 | `GRAY8 | `RGBf | `RGBAf ]
 end

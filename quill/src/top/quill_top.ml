@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 type execution_result = {
   output : string; (* Captured stdout + value results *)
   error : string option; (* Captured stderr (errors and warnings) *)

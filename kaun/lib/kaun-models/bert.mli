@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 (** BERT: Bidirectional Encoder Representations from Transformers.
 
     Devlin et al., 2018: "BERT: Pre-training of Deep Bidirectional Transformers

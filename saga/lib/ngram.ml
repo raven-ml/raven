@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 type smoothing = [ `Add_k of float | `Stupid_backoff of float ]
 type stats = { vocab_size : int; total_tokens : int; unique_ngrams : int }
 

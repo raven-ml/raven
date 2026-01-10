@@ -1,3 +1,8 @@
+/*---------------------------------------------------------------------------
+   Copyright (c) 2026 The Raven authors. All rights reserved.
+   SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*/
+
 // JavaScript stubs for extended bigarray types
 // Extends the standard js_of_ocaml bigarray implementation
 //

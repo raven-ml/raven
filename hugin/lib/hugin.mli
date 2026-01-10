@@ -1,3 +1,8 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
+
 (** hugin: Functional Plotting and Visualization Library for OCaml
 
     Provides composable artists, axes, figures, and high-level plotting APIs for
