@@ -3,8 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Test gradient computation against JAX/Flax reference implementation *)
-
 open Rune
 
 let with_float_tensor node ~f =

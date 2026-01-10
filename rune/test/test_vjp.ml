@@ -9,7 +9,7 @@ module T = Rune
 
 let eps = 1e-6
 
-(* ───── binary operations ───── *)
+(* ───── Binary Operations ───── *)
 
 let test_grad_add () =
   let x = T.scalar T.float32 2.0 in
@@ -43,7 +43,7 @@ let test_grad_div () =
   check_scalar ~eps "div grad wrt x" 0.5 (scalar_value grad_x);
   check_scalar ~eps "div grad wrt y" (-1.5) (scalar_value grad_y)
 
-(* ───── unary operations ───── *)
+(* ───── Unary Operations ───── *)
 
 let test_grad_exp () =
   (* exp: d/dx e^x = e^x *)
@@ -165,7 +165,7 @@ let test_grad_cosh () =
   let grad = T.grad T.cosh x in
   check_scalar ~eps "cosh gradient at x=0" 0.0 (scalar_value grad)
 
-(* ───── reduction operations ───── *)
+(* ───── Reduction Operations ───── *)
 
 let test_grad_sum () =
   (* Sum gradient: all ones *)
@@ -206,7 +206,7 @@ let test_grad_prod () =
   let expected = T.create T.float32 [| 3 |] [| 12.; 8.; 6. |] in
   check_rune ~eps "prod gradient" expected grad
 
-(* ───── broadcasting gradients ───── *)
+(* ───── Broadcasting Gradients ───── *)
 
 let test_grad_broadcast_add () =
   (* Addition with broadcasting: [2,3] + [3] *)
@@ -288,7 +288,7 @@ let test_grad_where () =
   check_scalar ~eps "where scalar broadcast gradient" 3.0
     (scalar_value grad_y_where)
 
-(* ───── shape manipulation ───── *)
+(* ───── Shape Manipulation ───── *)
 
 let test_grad_reshape () =
   (* Reshape gradient *)
@@ -555,7 +555,7 @@ let test_grad_selu () =
   let expected = T.create T.float32 [| 2 |] [| neg_grad; scale |] in
   check_rune ~eps:1e-5 "selu gradient" expected grad
 
-(* ───── linear algebra operations ───── *)
+(* ───── Linear Algebra Operations ───── *)
 
 let test_grad_dot () =
   (* Dot product gradient *)
@@ -632,7 +632,7 @@ let test_grad_cholesky () =
         result.max_rel_error;
       fail "cholesky gradient check failed"
 
-(* ───── atomic neural network operations ───── *)
+(* ───── Atomic Neural Network Operations ───── *)
 
 let test_grad_matmul () =
   let a = T.create T.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
@@ -754,7 +754,7 @@ let test_grad_avg_pool_overlapping () =
   (* Your code will produce a result 4x larger than this. *)
   check_rune ~eps "avg_pool2d gradient with overlap" expected grad
 
-(* ───── compound operations (loss functions, layers) ───── *)
+(* ───── Compound Operations (Loss Functions, Layers) ───── *)
 
 let test_grad_linear_layer () =
   (* Combined matmul + bias pattern *)
@@ -827,7 +827,7 @@ let test_grad_binary_cross_entropy () =
   let expected_bce = T.div diff (T.scalar T.float32 n) in
   check_rune ~eps:1e-5 "sigmoid BCE gradient" expected_bce grad_bce
 
-(* ───── composition and higher-order ───── *)
+(* ───── Composition and Higher-order ───── *)
 
 let test_grad_multi_variable () =
   (* Multi-variable gradient *)
@@ -871,7 +871,7 @@ let test_grad_second_order () =
   check_scalar ~eps "second derivative of x³ at x=2" 12.0
     (scalar_value second_deriv)
 
-(* ───── api functions ───── *)
+(* ───── API Functions ───── *)
 
 let test_grad_value_and_grad () =
   (* value_and_grad *)
@@ -994,7 +994,7 @@ let test_detach_partial_grad () =
   let grad = T.grad f x |> scalar_value in
   check_scalar ~eps "detach treats operand as constant" 2.5 grad
 
-(* ───── FFT operations ───── *)
+(* ───── FFT Operations ───── *)
 
 (* Helper to check complex tensor gradients *)
 let check_complex_grad ~eps msg expected actual =

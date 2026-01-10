@@ -15,7 +15,7 @@ type t = {
   layout : layout;
 }
 
-(* ───── helpers ───── *)
+(* ───── Helpers ───── *)
 
 let prod arr = Array.fold_left ( * ) 1 arr
 
@@ -49,7 +49,7 @@ let is_c_contiguous_strides shape_arr strides mask =
   Array.length strides = Array.length expected_canonical
   && Array.for_all2 ( = ) strides expected_canonical
 
-(* ───── accessors ───── *)
+(* ───── Accessors ───── *)
 
 let shape v = v.shape
 let strides v = v.strides
@@ -90,7 +90,7 @@ let numel v =
     in
     prod_dims 1 v.shape.(0)
 
-(* ───── view creation ───── *)
+(* ───── View Creation ───── *)
 
 let create ?(offset = 0) ?strides ?mask shape =
   match Symbolic_shape.eval shape with
@@ -153,7 +153,7 @@ let create ?(offset = 0) ?strides ?mask shape =
       in
       { shape; strides = symbolic_strides; offset; mask; layout }
 
-(* ───── offset & validation ───── *)
+(* ───── Offset & Validation ───── *)
 
 let linear_index view indices =
   let ndim = Symbolic_shape.rank view.shape in
@@ -179,7 +179,7 @@ let is_valid view indices =
           (fun idx (b, e) -> idx >= b && idx < e)
           indices mask_array
 
-(* ───── view manipulation ───── *)
+(* ───── View Manipulation ───── *)
 
 let expand view new_shape =
   let old_ndim = Symbolic_shape.rank view.shape in

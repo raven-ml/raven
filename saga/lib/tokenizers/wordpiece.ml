@@ -3,8 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** WordPiece tokenization implementation *)
-
 exception Error of string
 
 type vocab = (string, int) Hashtbl.t
@@ -190,7 +188,8 @@ let from_bpe bpe =
   in
   create_internal vocab unk_token continuing_subword_prefix 100
 
-(** Serialization *)
+(* ───── Serialization ───── *)
+
 let to_yojson model =
   let vocab_list =
     Hashtbl.fold (fun k v acc -> (v, k) :: acc) model.vocab []
@@ -257,7 +256,8 @@ let from_bytes bytes =
   let str = Bytes.to_string bytes in
   of_yojson (Yojson.Basic.from_string str)
 
-(** Trainer module *)
+(* ───── Trainer ───── *)
+
 let train ~min_frequency ~vocab_size ~show_progress ~special_tokens
     ~limit_alphabet ~initial_alphabet ~continuing_subword_prefix
     ~end_of_word_suffix texts existing =

@@ -516,7 +516,7 @@ let test_dstack_invalid () =
     "concatenate: invalid dimension 1 (size 3\226\137\1602)" (fun () ->
       Nx.dstack [ t1; t2 ])
 
-(* ───── as_strided Tests ───── *)
+(* ───── As_strided Tests ───── *)
 
 let test_as_strided_basic () =
   (* Create a simple 1D array and view it as 2D with overlapping windows *)

@@ -10,7 +10,8 @@ open Nx_buffer
 module Ir = Rune_jit.Ir
 module Var = Ir.Var
 
-(* Mathematical constants *)
+(* ───── Mathematical Constants ───── *)
+
 let ln_2 = 0.6931471805599453
 let log2_e = 1.4426950408889634
 let pi_over_2 = 1.5707963267948966

@@ -3,9 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Decoding module for converting token IDs back to text. *)
-
-(** Main decoder type *)
 type t =
   | BPE of { suffix : string }
   | Byte_level
@@ -18,7 +15,8 @@ type t =
   | Strip of { left : bool; right : bool; content : char }
   | Fuse
 
-(** Decode BPE tokens *)
+(* ───── Decoder Implementations ───── *)
+
 let decode_bpe ~suffix tokens =
   let n = List.length tokens - 1 in
   List.mapi
@@ -29,7 +27,6 @@ let decode_bpe ~suffix tokens =
       else token)
     tokens
 
-(** Decode byte-level tokens *)
 let decode_byte_level tokens =
   let buffer = Buffer.create 128 in
   List.iter
@@ -39,7 +36,6 @@ let decode_byte_level tokens =
     tokens;
   Buffer.contents buffer
 
-(** Decode byte fallback tokens *)
 let decode_byte_fallback tokens =
   (* Convert tokens like <0x61> to bytes and attempt UTF-8 decoding *)
   let rec process_tokens tokens acc byte_acc =
@@ -122,7 +118,6 @@ let decode_byte_fallback tokens =
   in
   process_tokens tokens [] []
 
-(** Decode Word_piece tokens *)
 let decode_wordpiece ~prefix ~cleanup tokens =
   let decoded =
     List.mapi
@@ -140,12 +135,10 @@ let decode_wordpiece ~prefix ~cleanup tokens =
     decoded |> Str.global_replace (Str.regexp " +") " " |> String.trim
   else decoded
 
-(** Decode metaspace tokens *)
 let decode_metaspace ~replacement ~add_prefix_space:_ tokens =
   String.concat "" tokens
   |> String.map (fun c -> if c = replacement then ' ' else c)
 
-(** Decode CTC tokens *)
 let decode_ctc ~pad_token ~word_delimiter_token ~cleanup tokens =
   (* Remove consecutive duplicates first *)
   let rec dedup = function
@@ -170,12 +163,10 @@ let decode_ctc ~pad_token ~word_delimiter_token ~cleanup tokens =
         if replaced = "" then None else Some replaced)
     deduped
 
-(** Apply replace decoder *)
 let decode_replace ~pattern ~replacement tokens =
   let text = String.concat "" tokens in
   Str.global_replace (Str.regexp pattern) replacement text
 
-(** Apply strip decoder *)
 let decode_strip ~left ~right ~content tokens =
   let text = String.concat "" tokens in
   let strip_char s c =
@@ -196,10 +187,10 @@ let decode_strip ~left ~right ~content tokens =
   in
   strip_char text content
 
-(** Fuse tokens *)
 let decode_fuse tokens = String.concat "" tokens
 
-(** Main decode function - returns a list of tokens *)
+(* ───── Main Decode Function ───── *)
+
 let rec decode_chain decoder tokens =
   match decoder with
   | BPE { suffix } -> decode_bpe ~suffix tokens
@@ -220,12 +211,11 @@ let rec decode_chain decoder tokens =
       (* Chain decoders on list of tokens *)
       List.fold_left (fun toks dec -> decode_chain dec toks) tokens decoders
 
-(** Main decode function - returns a string *)
 let decode decoder tokens = String.concat "" (decode_chain decoder tokens)
 
-(** Constructors *)
-let bpe ?(suffix = "") () = BPE { suffix }
+(* ───── Constructors ───── *)
 
+let bpe ?(suffix = "") () = BPE { suffix }
 let byte_level () = Byte_level
 let byte_fallback () = Byte_fallback
 
@@ -247,7 +237,8 @@ let strip ?(left = false) ?(right = false) ?(content = ' ') () =
 
 let fuse () = Fuse
 
-(** Serialization *)
+(* ───── Serialization ───── *)
+
 let rec to_json = function
   | BPE { suffix } ->
       `Assoc [ ("type", `String "BPEDecoder"); ("suffix", `String suffix) ]

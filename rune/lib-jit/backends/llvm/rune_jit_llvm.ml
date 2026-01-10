@@ -7,7 +7,7 @@
 
 open Rune_jit
 
-(* ───── Opaque native handles ───── *)
+(* ───── Opaque Native Handles ───── *)
 
 type device_info = {
   context : Llvm.llcontext;
@@ -29,7 +29,7 @@ type compiled_artifact_native = {
 
 type callable_kernel_native = { name : string }
 
-(* ───── Public record wrappers ───── *)
+(* ───── Public Record Wrappers ───── *)
 
 type nonrec 'a device_buffer =
   ('a, device_buffer_native) Backend_intf.device_buffer
@@ -43,7 +43,7 @@ type nonrec compiled_artifact =
 type nonrec callable_kernel =
   callable_kernel_native Backend_intf.callable_kernel
 
-(* ───── Helper functions ───── *)
+(* ───── Helper Functions ───── *)
 
 let dtype_to_llvm_type context (Ir.Dtype.Any_Dtype dt) =
   match dt with

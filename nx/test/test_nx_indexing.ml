@@ -103,7 +103,7 @@ let test_index_mixed () =
     let indexed = Nx.slice [ Nx.M mask ] t in
     check_t "index mask" [| 3 |] [| 3.; 4.; 5. |] indexed *)
 
-(* ───── set_slice Tests ───── *)
+(* ───── Set_slice Tests ───── *)
 
 let test_set_slice_at () =
   let t = Nx.zeros Nx.float32 [| 3; 4 |] in
@@ -123,7 +123,7 @@ let test_set_slice_idx () =
   Nx.set_slice [ Nx.L [ 0; 2; 4 ] ] t value;
   check_t "set_slice idx" [| 5 |] [| 10.; 0.; 20.; 0.; 30. |] t
 
-(* ───── item and set_item Tests ───── *)
+(* ───── Item and Set_item Tests ───── *)
 
 let test_item () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
@@ -140,7 +140,7 @@ let test_set_item () =
   Nx.set_item [ 1; 2 ] 99.0 t;
   check (float 1e-6) "set_item" 99.0 (Nx.item [ 1; 2 ] t)
 
-(* ───── take Tests ───── *)
+(* ───── Take Tests ───── *)
 
 let test_take_basic () =
   let t = Nx.create Nx.float32 [| 5 |] [| 10.; 20.; 30.; 40.; 50. |] in
@@ -175,7 +175,7 @@ let test_take_negative_indices () =
   let result = Nx.take ~mode:`wrap indices t in
   check_t "take negative indices" [| 2 |] [| 5.; 4. |] result
 
-(* ───── take_along_axis Tests ───── *)
+(* ───── Take_along_axis Tests ───── *)
 
 let test_take_along_axis_1d () =
   let t = Nx.create Nx.float32 [| 5 |] [| 3.; 1.; 4.; 1.; 5. |] in
@@ -190,7 +190,7 @@ let test_take_along_axis_2d () =
   let maxvals = Nx.take_along_axis ~axis:1 indices t in
   check_t "take_along_axis 2d" [| 2; 1 |] [| 4.; 6. |] maxvals
 
-(* ───── put Tests ───── *)
+(* ───── Put Tests ───── *)
 
 let test_put_basic () =
   let t = Nx.zeros Nx.float32 [| 5 |] in
@@ -239,7 +239,7 @@ let test_index_put_mode_wrap () =
   Nx.index_put ~indices:[| rows; cols |] ~values ~mode:`wrap t;
   check_t "index_put mode wrap" [| 2; 2 |] [| 0.; 2.; 1.; 3. |] t
 
-(* ───── put_along_axis Tests ───── *)
+(* ───── Put_along_axis Tests ───── *)
 
 let test_put_along_axis () =
   let t = Nx.zeros Nx.float32 [| 2; 3 |] in
@@ -248,7 +248,7 @@ let test_put_along_axis () =
   Nx.put_along_axis ~axis:1 ~indices ~values t;
   check_t "put_along_axis" [| 2; 3 |] [| 0.; 10.; 0.; 20.; 0.; 0. |] t
 
-(* ───── compress Tests ───── *)
+(* ───── Compress Tests ───── *)
 
 let test_compress_no_axis () =
   let t = Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
@@ -275,7 +275,7 @@ let test_compress_empty_result () =
   let result = Nx.compress ~condition t in
   check_shape "compress empty result" [| 0 |] result
 
-(* ───── extract Tests ───── *)
+(* ───── Extract Tests ───── *)
 
 let test_extract_basic () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
@@ -291,7 +291,7 @@ let test_extract_from_comparison () =
   let result = Nx.extract ~condition t in
   check_t "extract from comparison" [| 4 |] [| 5.; 6.; 7.; 8. |] result
 
-(* ───── nonzero Tests ───── *)
+(* ───── Nonzero Tests ───── *)
 
 let test_nonzero_1d () =
   let t = Nx.create Nx.float32 [| 5 |] [| 0.; 1.; 0.; 3.; 0. |] in
@@ -322,7 +322,7 @@ let test_nonzero_empty () =
   (check int) "nonzero empty length" 2 (Array.length indices);
   Array.iter (fun idx -> check_shape "nonzero empty shape" [| 0 |] idx) indices
 
-(* ───── argwhere Tests ───── *)
+(* ───── Argwhere Tests ───── *)
 
 let test_argwhere_basic () =
   let t =

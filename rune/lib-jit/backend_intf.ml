@@ -23,21 +23,21 @@ type 'b any_device_buffer =
 module type S = sig
   val name : string
 
-  (* ───── shared opaque handles ───── *)
+  (* ───── Shared Opaque Handles ───── *)
 
   type device_info
   type device_buffer_native
   type compiled_artifact_native
   type callable_kernel_native
 
-  (* ───── high-level buffer wrappers ───── *)
+  (* ───── High-level Buffer Wrappers ───── *)
 
   type nonrec 'a device_buffer = ('a, device_buffer_native) device_buffer
   type nonrec any_device_buffer = device_buffer_native any_device_buffer
   type nonrec compiled_artifact = compiled_artifact_native compiled_artifact
   type nonrec callable_kernel = callable_kernel_native callable_kernel
 
-  (* ───── sub-module interfaces ───── *)
+  (* ───── Sub-module Interfaces ───── *)
 
   module Device_info : sig
     val get_default : unit -> device_info

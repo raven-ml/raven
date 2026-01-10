@@ -665,7 +665,7 @@ let fresh_twg_id () =
   incr twg_id_counter;
   !twg_id_counter
 
-(** Reduce gradient to match source shape (for broadcasting). *)
+(* Reduce gradient to match source shape (for broadcasting). *)
 let unbroadcast_grad (type a b) (g : (a, b) t) (src_shape : int array) :
     (a, b) t =
   let dst_shape = T.shape g in

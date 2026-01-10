@@ -107,7 +107,7 @@ let truncated_normal_impl ~mean ~stddev ~lower ~upper seed shape dtype =
 
   generate_until_valid 100
 
-(* Basic initializers *)
+(* ───── Basic Initializers ───── *)
 
 let constant value : t =
   {
@@ -188,7 +188,8 @@ let glorot_normal ?(in_axis = -2) ?(out_axis = -1) () =
 let xavier_uniform = glorot_uniform
 let xavier_normal = glorot_normal
 
-(* LeCun initializers *)
+(* ───── LeCun Initializers ───── *)
+
 let lecun_uniform ?(in_axis = -2) ?(out_axis = -1) () =
   variance_scaling ~scale:1.0 ~mode:`Fan_in ~distribution:`Uniform ~in_axis
     ~out_axis ()
@@ -209,7 +210,8 @@ let he_normal ?(in_axis = -2) ?(out_axis = -1) () =
 let kaiming_uniform = he_uniform
 let kaiming_normal = he_normal
 
-(* Orthogonal initializers *)
+(* ───── Orthogonal Initializers ───── *)
+
 let orthogonal ?(scale = 1.0) ?(column_axis = -1) () =
   {
     f =
@@ -313,7 +315,8 @@ let delta_orthogonal ?(scale = 1.0) ?(column_axis = -1) () =
         result);
   }
 
-(* Utility initializers *)
+(* ───── Utility Initializers ───── *)
+
 let uniform_range ~low ~high () =
   {
     f =

@@ -253,7 +253,7 @@ let execute (type device_buffer_native callable_kernel_native)
     outputs;
   Ok result_tbl
 
-(* ───── convenience wrappers ───── *)
+(* ───── Convenience Wrappers ───── *)
 
 let allocate_buffer (type device_buffer_native)
     ~(backend :

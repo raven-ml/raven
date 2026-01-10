@@ -20,7 +20,7 @@ type t = {
 
 let empty = { chunks = String_map.empty; files = String_map.empty }
 
-(* File System Walking *)
+(* ───── File System Walking ───── *)
 
 let walk_directory_tree exts walkfn root_dir t =
   let rec walk_dir dir rel_path t =
@@ -55,7 +55,7 @@ let walk_directory_tree exts walkfn root_dir t =
   in
   walk_dir root_dir "" t
 
-(* Chunking Logic *)
+(* ───── Chunking Logic ───── *)
 
 let scan_file t root name =
   let full_name = Filename.concat root name in
@@ -101,7 +101,7 @@ let scan_file t root name =
   let entry = { chunk_digests; file_digest; size = len } in
   { chunks = new_chunks_map; files = String_map.add name entry t.files }
 
-(* Code Generation *)
+(* ───── Code Generation ───── *)
 
 let header binary =
   Printf.sprintf
@@ -111,7 +111,6 @@ let header binary =
 
 let static_reader_impl =
   {|
-(** Internal implementation of efficient partial reading *)
 module Reader = struct
   let rec read_range chunks cur_pos target_start target_end acc =
     match chunks with
@@ -223,7 +222,7 @@ val read : string -> string option
 val read_range : string -> ?offset:int -> ?len:int -> unit -> string option
 |}
 
-(* Argument Parsing *)
+(* ───── Argument Parsing ───── *)
 
 let () =
   let dirs = ref [] in

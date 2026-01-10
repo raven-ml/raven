@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Core types *)
+(* ───── Core Types ───── *)
 
 type reduction = Mean | Sum
 
@@ -26,7 +26,7 @@ type metric =
     }
       -> metric
 
-(** Helper functions *)
+(* ───── Helper Functions ───── *)
 
 let scalar_tensor dtype value = Rune.scalar dtype value
 let ones_like t = Rune.ones (Rune.dtype t) (Rune.shape t)
@@ -431,7 +431,7 @@ let prepare_rank_curve_inputs preds targets weights =
   in
   (positives, negatives)
 
-(** Core metric operations *)
+(* ───── Core Metric Operations ───── *)
 
 let update : type layout.
     metric ->
@@ -468,7 +468,7 @@ let clone (Metric metric) =
 
 let name (Metric metric) = metric.name
 
-(** Custom metric creation *)
+(* ───── Custom Metric Creation ───── *)
 
 let create_custom ~dtype ~name ~init ~update ~compute ~reset =
   Metric
@@ -484,7 +484,7 @@ let create_custom ~dtype ~name ~init ~update ~compute ~reset =
       reset_fn = reset;
     }
 
-(** Classification Metrics *)
+(* ───── Classification Metrics ───── *)
 
 let accuracy ?(threshold = 0.5) ?top_k () =
   let name =
@@ -915,7 +915,7 @@ let confusion_matrix ~num_classes ?(normalize = `None) () =
       | _ -> failwith "Invalid confusion_matrix state")
     ~reset:(fun _ -> [])
 
-(** Regression Metrics *)
+(* ───── Regression Metrics ───── *)
 
 let mse ?(reduction = Mean) () =
   create_custom ~dtype:Rune.float32 ~name:"mse"
@@ -1003,7 +1003,9 @@ let mae ?(reduction = Mean) () =
       | _ -> failwith "Invalid mae state")
     ~reset:(fun _ -> [])
 
-(** Loss Metric - tracks running average of loss values *)
+(* ───── Loss Metric ───── *)
+
+(* Tracks running average of loss values *)
 
 let loss () =
   let dtype = Rune.float32 in
@@ -1210,7 +1212,7 @@ let explained_variance () =
       | _ -> failwith "Invalid explained_variance state")
     ~reset:(fun _ -> [])
 
-(** Probabilistic Metrics *)
+(* ───── Probabilistic Metrics ───── *)
 
 let cross_entropy ?(from_logits = true) () =
   let dtype_ref = ref None in
@@ -1845,7 +1847,7 @@ let dice ?(threshold = 0.5) ?(per_class = false) ~num_classes () =
       | _ -> failwith "Invalid dice state")
     ~reset:(fun _ -> [])
 
-(** Metric Collections *)
+(* ───── Metric Collections ───── *)
 
 (* Capture outer module functions to avoid shadowing *)
 let compute_metric = compute
@@ -1902,7 +1904,7 @@ module Collection = struct
     tbl
 end
 
-(** Utilities *)
+(* ───── Utilities ───── *)
 
 let is_better _metric ~higher_better ~old_val ~new_val =
   if higher_better then new_val > old_val else new_val < old_val

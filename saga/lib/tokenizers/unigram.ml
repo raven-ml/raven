@@ -3,8 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Simple Unigram tokenizer implementation. *)
-
 type vocab_entry = string * float
 type token_map = (string, int) Hashtbl.t
 type vocab = vocab_entry array

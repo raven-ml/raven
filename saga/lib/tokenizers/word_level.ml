@@ -3,8 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Word-level tokenizer implementation. *)
-
 type vocab = (string, int) Hashtbl.t
 type vocab_r = (int, string) Hashtbl.t
 type t = { vocab : vocab; vocab_r : vocab_r; unk_token : string }

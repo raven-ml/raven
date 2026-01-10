@@ -18,7 +18,7 @@ type cluster_t = {
   vars_metadata : (Var.t, var_metadata) Hashtbl.t;
 }
 
-(* Helpers on nodes *)
+(* ───── Helpers on Nodes ───── *)
 
 let get_node_input_vars (Any_Node node) : Var.t list =
   match node with
@@ -137,7 +137,7 @@ let is_fusible_elementwise (Any_Node node) =
       true
   | _ -> false
 
-(* Public API *)
+(* ───── Public API ───── *)
 
 let group (graph : Ir.graph_t) : cluster_t list =
   let scheduled = ref [] in

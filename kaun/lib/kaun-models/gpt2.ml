@@ -7,7 +7,7 @@ open Rune
 module Ptree = Kaun.Ptree
 module Activations = Kaun.Activations
 
-(* Configuration *)
+(* ───── Configuration ───── *)
 
 type config = {
   vocab_size : int;
@@ -65,7 +65,7 @@ let gpt2_large =
 
 let gpt2_xl = { default_config with n_embd = 1600; n_layer = 48; n_head = 25 }
 
-(* Input type *)
+(* ───── Input Type ───── *)
 type inputs = {
   input_ids : (int32, int32_elt) Rune.t;
   attention_mask : (int32, int32_elt) Rune.t option;
@@ -342,7 +342,7 @@ let embeddings ~config () =
         embeddings);
   }
 
-(* Main Model *)
+(* ───── Main Model ───── *)
 
 type 'a gpt2 = {
   model : Kaun.Layer.module_;
@@ -879,7 +879,7 @@ let forward gpt2 inputs ?(training = false) ?(output_hidden_states = false)
   (* Return structured output *)
   { last_hidden_state; hidden_states; attentions }
 
-(* Language Modeling Head *)
+(* ───── Language Modeling Head ───── *)
 
 module For_causal_lm = struct
   let create ?(config = default_config) () =
@@ -955,7 +955,7 @@ module For_causal_lm = struct
     (logits, loss)
 end
 
-(* Utilities *)
+(* ───── Utilities ───── *)
 
 let parse_gpt2_config json =
   (* Parse GPT-2 specific configuration from HuggingFace JSON *)

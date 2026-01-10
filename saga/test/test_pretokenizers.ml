@@ -3,20 +3,15 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Comprehensive test suite for all pre-tokenizers *)
-
 open Alcotest
 module Pre = Saga_tokenizers.Pre_tokenizers
 
-(** Helper to check tokenization with offsets *)
 let check_tokenization name input expected =
   check (list (pair string (pair int int))) name expected input
 
-(** Helper to check just the strings *)
 let check_strings name input expected =
   check (list string) name expected (List.map fst input)
 
-(** Test GPT-2 ByteLevel pre-tokenizer *)
 let test_byte_level_basic () =
   let tokenizer = Pre.byte_level ~add_prefix_space:false ~use_regex:true () in
 
@@ -202,7 +197,6 @@ let test_byte_level_edge_cases () =
   let result = tokenizer "hello\tworld\nfoo\rbar" in
   check bool "Handles tabs and newlines" true (List.length result > 0)
 
-(** Test BERT pre-tokenizer *)
 let test_bert_pretokenizer () =
   let test_case text expected =
     let result = Pre.bert () text in
@@ -233,7 +227,6 @@ let test_bert_pretokenizer () =
   test_case "" [];
   test_case "   " []
 
-(** Test Whitespace pre-tokenizer *)
 let test_whitespace_pretokenizer () =
   let test_case text expected =
     let result = Pre.whitespace () text in
@@ -255,7 +248,6 @@ let test_whitespace_pretokenizer () =
       ("a", (0, 1)); ("+", (1, 2)); ("b", (2, 3)); ("=", (3, 4)); ("c", (4, 5));
     ]
 
-(** Test WhitespaceSplit pre-tokenizer *)
 let test_whitespace_split () =
   let test_case text expected =
     let result = Pre.whitespace_split () text in
@@ -272,7 +264,6 @@ let test_whitespace_split () =
   test_case "" [];
   test_case "   " []
 
-(** Test Punctuation pre-tokenizer *)
 let test_punctuation_pretokenizer () =
   (* Test different behaviors *)
   let test_isolated text expected =
@@ -312,7 +303,6 @@ let test_punctuation_pretokenizer () =
   test_isolated "test—end" [ ("test", (0, 4)); ("—", (4, 7)); ("end", (7, 10)) ]
 (* em dash is 3 bytes *)
 
-(** Test Digits pre-tokenizer *)
 let test_digits_pretokenizer () =
   let test_individual text expected =
     let tokenizer = Pre.digits ~individual_digits:true () in
@@ -339,7 +329,6 @@ let test_digits_pretokenizer () =
     [ ("a", (0, 1)); ("123", (1, 4)); ("b", (4, 5)); ("456", (5, 8)) ];
   test_grouped "3.14" [ ("3", (0, 1)); (".", (1, 2)); ("14", (2, 4)) ]
 
-(** Test Split pre-tokenizer *)
 let test_split_pretokenizer () =
   let test_case pattern behavior text expected =
     let tokenizer = Pre.split ~pattern ~behavior () in
@@ -376,7 +365,6 @@ let test_split_pretokenizer () =
       ("a", (0, 1)); ("::", (1, 3)); ("b", (3, 4)); ("::", (4, 6)); ("c", (6, 7));
     ]
 
-(** Test CharDelimiterSplit pre-tokenizer *)
 let test_char_delimiter_split () =
   let test_case delim text expected =
     let result = Pre.char_delimiter_split ~delimiter:delim () text in
@@ -392,7 +380,6 @@ let test_char_delimiter_split () =
   test_case ',' "" [];
   test_case ',' "," []
 
-(** Test Sequence pre-tokenizer *)
 let test_sequence_pretokenizer () =
   (* Combine whitespace split then punctuation isolation *)
   let tokenizers =
@@ -420,7 +407,6 @@ let test_sequence_pretokenizer () =
       ("!", (22, 23));
     ]
 
-(** Test FixedLength pre-tokenizer *)
 let test_fixed_length () =
   let test_case length text expected =
     let result = Pre.fixed_length ~length text in
@@ -439,7 +425,6 @@ let test_fixed_length () =
   test_case 2 "café" [ ("ca", (0, 2)); ("fé", (2, 5)) ]
 (* é is 2 bytes *)
 
-(** Test UnicodeScripts pre-tokenizer *)
 let test_unicode_scripts () =
   let test_case text desc =
     let tokenizer = Pre.unicode_scripts () in
@@ -458,7 +443,6 @@ let test_unicode_scripts () =
   test_case "こんにちは世界" "Japanese";
   test_case "" "Empty string"
 
-(** Test Metaspace pre-tokenizer (already tested in test_metaspace.ml) *)
 let test_metaspace_basic () =
   let test_case text expected =
     let result =
@@ -471,7 +455,6 @@ let test_metaspace_basic () =
   test_case " starts with space" [ "_starts"; "_with"; "_space" ];
   test_case "" []
 
-(** Main test suite *)
 let () =
   let open Alcotest in
   run "Pre-tokenizers Test Suite"

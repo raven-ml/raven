@@ -3,8 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Ergonomic tokenizer API built on Saga's primitives. *)
-
 module Unicode = Unicode
 module Normalizers = Normalizers
 module Pre_tokenizers = Pre_tokenizers
@@ -42,7 +40,8 @@ type data =
 type sequence = { text : string; pair : string option }
 type pad_spec = { token : string; id : int option; type_id : int option }
 
-(* Special token constructors *)
+(* ───── Special Token Constructors ───── *)
+
 module Special = struct
   let make ?(single_word = false) ?(lstrip = false) ?(rstrip = false)
       ?(normalized = false) token =

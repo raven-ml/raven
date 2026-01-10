@@ -3,13 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Demo.ml - Micrograd demo with nx-datasets *)
-
 open Nx
 module Engine = Micrograd.Engine
 module Nn = Micrograd.Nn
 
-(** Convert nx tensor to engine values *)
 let tensor_to_values tensor =
   let shape = Nx.shape tensor in
   let n_samples = shape.(0) in
@@ -21,12 +18,11 @@ let tensor_to_values tensor =
           let idx = (i * n_features) + j in
           Engine.scalar float32 data.(idx)))
 
-(** Convert labels to -1 or 1 for SVM loss *)
 let prepare_labels labels =
   let labels_arr = Nx.to_array labels |> Array.map Int32.to_int in
   Array.map (fun y -> if y = 0 then -1.0 else 1.0) labels_arr
 
-(** SVM max-margin loss function *)
+(* SVM max-margin loss function *)
 let loss model x_batch y_batch =
   let batch_size = Array.length x_batch in
 
@@ -90,7 +86,6 @@ let loss model x_batch y_batch =
 
   (total_loss, accuracy)
 
-(** Create mini-batch *)
 let get_batch x_data y_data batch_size =
   let n_samples = Array.length x_data in
 
@@ -101,7 +96,6 @@ let get_batch x_data y_data batch_size =
     let y_batch = Array.map (fun i -> y_data.(i)) indices in
     (x_batch, y_batch)
 
-(** Evaluate model on test data *)
 let evaluate_model model x_data y_data =
   (* Make predictions *)
   let predictions =
@@ -126,7 +120,6 @@ let evaluate_model model x_data y_data =
 
   predictions
 
-(** Main demo *)
 let () =
   Random.self_init ();
 

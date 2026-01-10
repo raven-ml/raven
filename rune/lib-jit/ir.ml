@@ -70,7 +70,7 @@ module SymVar = struct
   type t = { name : string; min_val : int; max_val : int }
 end
 
-(* ───── Misc enums & types ───── *)
+(* ───── Misc Enums & Types ───── *)
 
 module Special_index_kind = struct
   type t =
@@ -109,7 +109,7 @@ and view = {
   mask : (int * int) array option; (* for masked/valid regions *)
 }
 
-(* ───── Operation kinds ───── *)
+(* ───── Operation Kinds ───── *)
 
 type binop_kind =
   | Add

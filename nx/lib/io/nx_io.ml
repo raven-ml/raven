@@ -7,7 +7,7 @@ open Nx_buffer
 open Error
 module Cache_dir = Cache_dir
 
-(* Type definitions *)
+(* ───── Type Definitions ───── *)
 
 type packed_nx = Packed_nx.t = P : ('a, 'b) Nx.t -> packed_nx
 type archive = (string, packed_nx) Hashtbl.t

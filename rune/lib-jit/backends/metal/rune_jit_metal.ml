@@ -7,7 +7,7 @@
 
 open Rune_jit
 
-(* ───── Misc helpers ───── *)
+(* ───── Misc Helpers ───── *)
 
 let foreign_memcpy =
   Foreign.foreign "memcpy"
@@ -16,7 +16,7 @@ let foreign_memcpy =
 let memcpy_bytes ~dst ~src ~len =
   if len > 0 then ignore (foreign_memcpy dst src (Unsigned.Size_t.of_int len))
 
-(* ───── Opaque native handles ───── *)
+(* ───── Opaque Native Handles ───── *)
 
 type device_info = {
   device : Metal.Device.t;
@@ -28,7 +28,7 @@ type device_buffer_native = Metal.Buffer.t
 type compiled_artifact_native = Metal.Library.t
 type callable_kernel_native = Metal.ComputePipelineState.t
 
-(* ───── Public record wrappers (match backend_intf) ───── *)
+(* ───── Public Record Wrappers (Match backend_intf) ───── *)
 
 type nonrec 'a device_buffer =
   ('a, device_buffer_native) Backend_intf.device_buffer

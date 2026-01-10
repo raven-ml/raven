@@ -51,7 +51,8 @@ type ('a, 'b) t =
 (* The type parameter ['a] is the OCaml representation and ['b] is the
    corresponding Bigarray element kind (layout). *)
 
-(* Constructor shortcuts *)
+(* ───── Constructor Shortcuts ───── *)
+
 let float16 = Float16
 let float32 = Float32
 let float64 = Float64
@@ -66,7 +67,8 @@ let uint64 = UInt64
 let complex64 = Complex64
 let complex128 = Complex128
 
-(* Extended types *)
+(* ───── Extended Types ───── *)
+
 let bfloat16 = BFloat16
 let bool = Bool
 let int4 = Int4

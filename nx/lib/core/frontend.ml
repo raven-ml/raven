@@ -262,8 +262,7 @@ module Make (B : Backend_intf.S) = struct
             ~reason:"cannot contain infer (-1) dimensions" ())
       shape
 
-  (** Integer ceiling division: (a + b - 1) / b for integers a, b where b > 0.
-  *)
+  (* Integer ceiling division: (a + b - 1) / b for integers a, b where b > 0. *)
   let ceildiv a b =
     Error.check_bounds ~op:"ceildiv" ~name:"divisor" ~value:b ~min:1 ();
     (a + b - 1) / b
@@ -7660,28 +7659,18 @@ module Make (B : Backend_intf.S) = struct
     correlate_nd_general ~groups stride_s_arr ~padding_mode dilation_s_arr
       ?fillvalue num_spatial_dims ?bias ~op_type:`Correlation x w
 
-  (** Correlate1D (cross-correlation). x: input tensor (bs, cin_total, iw) w:
-      weight tensor (cout, cin_per_group, kw) bias: optional bias tensor (cout)
-      stride, dilation: integers for the spatial dimension. padding_mode:
-      [ `Full | `Valid | `Same ] fillvalue: optional scalar to fill padding.
-      Defaults to 0 of x's dtype. *)
   let correlate1d ?groups ?(stride = 1) ?padding_mode ?(dilation = 1) ?fillvalue
       ?bias x w =
     correlate_nd ?groups [| stride |] ?padding_mode [| dilation |] ?fillvalue 1
       ?bias x w
 
-  (** Correlate2D (cross-correlation). x: input tensor (bs, cin_total, ih, iw)
-      w: weight tensor (cout, cin_per_group, kh, kw) bias: optional bias tensor
-      (cout) stride, dilation: (int*int) tuples for (h,w) spatial dimensions.
-      padding_mode: [ `Full | `Valid | `Same ] fillvalue: optional scalar to
-      fill padding. Defaults to 0 of x's dtype. *)
   let correlate2d ?groups ?(stride = (1, 1)) ?padding_mode ?(dilation = (1, 1))
       ?fillvalue ?bias x w =
     correlate_nd ?groups (pair_to_array stride) ?padding_mode
       (pair_to_array dilation) ?fillvalue 2 ?bias x w
 
-  (** ConvolveND - Generic N-Dimensional version. This flips the kernel
-      (weights) along all its spatial dimensions then calls correlate_nd. *)
+  (* Flips the kernel (weights) along all its spatial dimensions then calls
+     correlate_nd. *)
   let convolve_nd ?groups stride_s_arr ?padding_mode dilation_s_arr ?fillvalue
       num_spatial_dims ?bias x w =
     let w_ndim = ndim w in
@@ -7706,23 +7695,16 @@ module Make (B : Backend_intf.S) = struct
     correlate_nd_general ~groups stride_s_arr ~padding_mode dilation_s_arr
       ?fillvalue num_spatial_dims ?bias ~op_type:`Convolution x w_flipped
 
-  (** Convolve1D. x: input tensor (bs, cin_total, iw) w: weight tensor (cout,
-      cin_per_group, kw) *)
   let convolve1d ?groups ?(stride = 1) ?padding_mode ?(dilation = 1) ?fillvalue
       ?bias x w =
     convolve_nd ?groups [| stride |] ?padding_mode [| dilation |] ?fillvalue 1
       ?bias x w
 
-  (** Convolve2D. x: input tensor (bs, cin_total, ih, iw) w: weight tensor
-      (cout, cin_per_group, kh, kw) *)
   let convolve2d ?groups ?(stride = (1, 1)) ?padding_mode ?(dilation = (1, 1))
       ?fillvalue ?bias x w =
     convolve_nd ?groups (pair_to_array stride) ?padding_mode
       (pair_to_array dilation) ?fillvalue 2 ?bias x w
 
-  (** Helper to resolve padding specification for pooling/convolution
-      operations. Input `padding_spec` is user-facing. Output `(int*int) array`
-      is for `B.op_pad`, (pad_before, pad_after) for each spatial dimension. *)
   let resolve_padding_for_ops padding_spec ~input_spatial_shape ~k_s ~s_s ~d_s
       ~op_type =
     match padding_spec with
@@ -7730,10 +7712,7 @@ module Make (B : Backend_intf.S) = struct
         calculate_padding_for_mode input_spatial_shape ~k_s ~s_s ~d_s
           ~mode:padding_spec ~op_type
 
-  (** Helper to adjust padding for ceil_mode=true. Analogous to tinygrad's
-      _apply_ceil_mode. Input `current_pads_pairs` is (pad_before, pad_after)
-      for each spatial dim. Output is new (pad_before, pad_after) array for each
-      spatial dim. *)
+  (* Adjust padding for ceil_mode=true. *)
   let apply_ceil_mode ~current_pads_pairs ~input_spatial_shape ~k_s ~s_s ~d_s =
     let num_spatial_dims = Array.length k_s in
     let pads_adj = Array.copy current_pads_pairs in
@@ -8073,7 +8052,6 @@ module Make (B : Backend_intf.S) = struct
       ?dilation:(Option.map pair_to_array dilation)
       ~padding_spec ~ceil_mode ~return_indices ~num_spatial_dims:2
 
-  (** Internal N-Dimensional min pooling using unfold and reduce. *)
   let min_pool_nd ~kernel_size ?stride ?dilation ~padding_spec ~ceil_mode
       ~return_indices ~num_spatial_dims x =
     let x_ndim = ndim x in
@@ -8194,8 +8172,6 @@ module Make (B : Backend_intf.S) = struct
       ?dilation:(Option.map pair_to_array dilation)
       ~padding_spec ~ceil_mode ~return_indices ~num_spatial_dims:2
 
-  (** Helper for N-dim one-hot encoding. Creates a new last dimension for
-      classes. *)
   let one_hot ~num_classes index_tensor =
     let index_dt = dtype index_tensor in
     if not (Dtype.is_int index_dt || Dtype.is_uint index_dt) then
@@ -8223,7 +8199,6 @@ module Make (B : Backend_intf.S) = struct
     let bool_tensor = cmpeq index_expanded arange_b in
     bool_to_uint bool_tensor
 
-  (** Internal N-Dimensional max unpooling. *)
   let max_unpool_nd ~kernel_size ?stride ?dilation ~padding_spec
       ?output_size_opt ~num_spatial_dims input_x indices_x =
     let bs = dim 0 input_x in
@@ -8505,7 +8480,7 @@ module Make (B : Backend_intf.S) = struct
     done;
     !acc
 
-  (* ───── Infix operators ───── *)
+  (* ───── Infix Operators ───── *)
 
   module Infix = struct
     let ( + ) a b = add a b

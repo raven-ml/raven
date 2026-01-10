@@ -3,9 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Benchmark suite for Nx 2D convolution operations *)
-
-(** Configuration - common CNN layer sizes *)
+(* Configuration - common CNN layer sizes *)
 let configs =
   [
     (* (batch, in_channels, out_channels, input_size, kernel_size) *)
@@ -19,7 +17,6 @@ let configs =
 
 let backend_name = "Nx"
 
-(** Helper to create benchmark name *)
 let benchmark_name op_name batch in_ch out_ch img_size kernel_size dtype_label =
   Printf.sprintf "%s B%d C%d->%d %dx%d K%d %s (%s)" op_name batch in_ch out_ch
     img_size img_size kernel_size dtype_label backend_name
@@ -32,9 +29,7 @@ type conv_spec = {
   img_size : int;
   kernel_size : int;
 }
-(** Conv2d operation specification *)
 
-(** Create conv specs from configs *)
 let conv_specs =
   List.map
     (fun (batch, in_ch, out_ch, img_size, kernel_size) ->
@@ -48,7 +43,6 @@ let conv_specs =
       })
     configs
 
-(** Setup tensors for Float32 *)
 let setup_f32 spec =
   let input_shape =
     [| spec.batch; spec.in_channels; spec.img_size; spec.img_size |]
@@ -70,7 +64,6 @@ let setup_f32 spec =
   in
   (input, kernel)
 
-(** Setup tensors for Float64 *)
 let setup_f64 spec =
   let input_shape =
     [| spec.batch; spec.in_channels; spec.img_size; spec.img_size |]
@@ -92,7 +85,6 @@ let setup_f64 spec =
   in
   (input, kernel)
 
-(** Build all benchmarks *)
 let build_benchmarks () =
   let benchmarks = ref [] in
 
@@ -122,13 +114,11 @@ let build_benchmarks () =
 
   List.rev !benchmarks
 
-(** Default configuration *)
 let default_config () =
   let open Ubench.Config in
   default |> time_limit 1.0 |> warmup 1 |> min_measurements 5
   |> geometric_scale 1.3 |> gc_stabilization false |> build
 
-(** Main entry point *)
 let () =
   let benchmarks = build_benchmarks () in
   let config = default_config () in

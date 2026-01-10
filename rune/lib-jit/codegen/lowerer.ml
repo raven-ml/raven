@@ -10,7 +10,7 @@ open Ir
 (* Alias to the grouper spec so types match the new pipeline *)
 type kernel_spec = Grouper.cluster_t
 
-(* ───── helpers ───── *)
+(* ───── Helpers ───── *)
 
 let const_to_string : type a. a Dtype.t -> a -> string =
  fun dt v ->
@@ -22,7 +22,7 @@ let const_to_string : type a. a Dtype.t -> a -> string =
   | Dtype.Bool -> if v then "true" else "false"
   | Dtype.Unit -> "0"
 
-(* ───── lowering context ───── *)
+(* ───── Lowering Context ───── *)
 
 type lowering_ctx = {
   meta : (Var.t, var_metadata) Hashtbl.t; (* merged graph + kernel md *)
@@ -46,7 +46,7 @@ let add_instr ctx i = ctx.instrs := i :: !(ctx.instrs)
 let ensure_meta ctx v meta = Hashtbl.replace ctx.meta v meta
 let meta_of ctx v = Hashtbl.find_opt ctx.meta v
 
-(* ───── mapping helpers ───── *)
+(* ───── Mapping Helpers ───── *)
 
 let ll_of_hl ctx hl ~buffer =
   let tbl = if buffer then ctx.buffer_map else ctx.scalar_map in
@@ -58,7 +58,7 @@ let ll_of_hl ctx hl ~buffer =
       Option.iter (ensure_meta ctx ll) (meta_of ctx hl);
       ll
 
-(* ───── frequently used snippets ───── *)
+(* ───── Frequently Used Snippets ───── *)
 
 let gtid ctx =
   let v = Var.fresh () in
@@ -95,7 +95,7 @@ let load_scalar ctx ~hl_buffer ~idx ~dtype =
            { dst; buf; idx; dtype = Dtype.Any_Dtype dtype; valid = None });
       dst
 
-(* ───── node lowering ───── *)
+(* ───── Node Lowering ───── *)
 
 let lower_node ctx (Any_Node n) kernel_outs =
   let open Lowered in
@@ -570,7 +570,7 @@ let lower_node ctx (Any_Node n) kernel_outs =
         (L_Const { dtype = Dtype.Any_Dtype dtype; value = "0"; out = ll });
       ()
 
-(* ───── top-level entry ───── *)
+(* ───── Top-level Entry ───── *)
 
 let lower_kernel ~(kernel_spec : kernel_spec) ~original_graph_vars_metadata =
   let ctx = new_ctx original_graph_vars_metadata kernel_spec.vars_metadata in

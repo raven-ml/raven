@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Modern text generation with composable logits processors *)
+(* Modern text generation with composable logits processors *)
 
-(** String.contains_substring implementation *)
+(* String.contains_substring implementation *)
 module String = struct
   include String
 
@@ -23,7 +23,7 @@ module String = struct
       check 0
 end
 
-(** List.take implementation *)
+(* List.take implementation *)
 module List = struct
   include List
 
@@ -36,12 +36,12 @@ module List = struct
     aux n [] lst
 end
 
-(** {1 Core Types} *)
+(* ───── Core Types ───── *)
 
 type logits = float array
 type token_ids = int list
 
-(** {2 Logits Processors} *)
+(* ───── Logits Processors ───── *)
 
 type logits_processor = {
   name : string;
@@ -50,7 +50,7 @@ type logits_processor = {
 
 type logits_processor_list = logits_processor list
 
-(** {2 Stopping Criteria} *)
+(* ───── Stopping Criteria ───── *)
 
 type stopping_criterion = {
   name : string;
@@ -59,7 +59,7 @@ type stopping_criterion = {
 
 type stopping_criteria_list = stopping_criterion list
 
-(** {2 Generation Configuration} *)
+(* ───── Generation Configuration ───── *)
 
 type generation_config = {
   max_length : int;
@@ -88,7 +88,7 @@ type generation_config = {
   eos_token_ids : int list;
 }
 
-(** Default generation configuration *)
+(* Default generation configuration *)
 let default =
   {
     max_length = 100;
@@ -118,7 +118,7 @@ let default =
     eos_token_ids = [];
   }
 
-(** {2 Builder Pattern for Configuration} *)
+(* ───── Builder Pattern for Configuration ───── *)
 
 let with_temperature temperature config = { config with temperature }
 let with_top_k top_k config = { config with top_k }
@@ -141,7 +141,7 @@ let with_no_repeat_ngram no_repeat_ngram_size config =
 let with_num_beams num_beams config = { config with num_beams }
 let with_do_sample do_sample config = { config with do_sample }
 
-(** {2 Preset Configurations} *)
+(* ───── Preset Configurations ───── *)
 
 let creative_writing =
   default |> with_do_sample true |> with_temperature 0.8 |> with_top_p 0.9
@@ -170,11 +170,10 @@ let from_preset = function
   | "factual" -> factual
   | _ -> default
 
-(** {1 Logits Processors} *)
+(* ───── Logits Processors ───── *)
 
 let neg_infinity = -1e10
 
-(** Temperature scaling processor *)
 let temperature_warper ~temperature =
   {
     name = Printf.sprintf "temperature(%.2f)" temperature;
@@ -184,7 +183,6 @@ let temperature_warper ~temperature =
         else Array.map (fun x -> x /. temperature) logits);
   }
 
-(** Top-k filtering processor *)
 let top_k_warper ~k =
   {
     name = Printf.sprintf "top_k(%d)" k;
@@ -202,7 +200,6 @@ let top_k_warper ~k =
           result);
   }
 
-(** Top-p (nucleus) filtering processor *)
 let top_p_warper ~p =
   {
     name = Printf.sprintf "top_p(%.2f)" p;
@@ -241,7 +238,6 @@ let top_p_warper ~p =
           result);
   }
 
-(** Repetition penalty processor *)
 let repetition_penalty ~penalty =
   {
     name = Printf.sprintf "repetition_penalty(%.2f)" penalty;
@@ -260,7 +256,6 @@ let repetition_penalty ~penalty =
           result);
   }
 
-(** No repeat n-gram processor *)
 let no_repeat_ngram ~ngram_size =
   {
     name = Printf.sprintf "no_repeat_ngram(%d)" ngram_size;
@@ -292,7 +287,6 @@ let no_repeat_ngram ~ngram_size =
           result);
   }
 
-(** Min length processor *)
 let min_length ~min_length ~eos_token_ids =
   {
     name = Printf.sprintf "min_length(%d)" min_length;
@@ -309,7 +303,6 @@ let min_length ~min_length ~eos_token_ids =
           result);
   }
 
-(** Min new tokens processor *)
 let min_new_tokens ~min_new_tokens ~eos_token_ids =
   {
     name = Printf.sprintf "min_new_tokens(%d)" min_new_tokens;
@@ -327,7 +320,6 @@ let min_new_tokens ~min_new_tokens ~eos_token_ids =
           result);
   }
 
-(** Bad words processor *)
 let bad_words ~bad_words_ids =
   {
     name = "bad_words";
@@ -350,7 +342,6 @@ let bad_words ~bad_words_ids =
         result);
   }
 
-(** Force words processor *)
 let force_words ~force_words_ids ~iteration =
   {
     name = "force_words";
@@ -368,12 +359,10 @@ let force_words ~force_words_ids ~iteration =
           result);
   }
 
-(** Custom processor *)
 let custom ~name ~process = { name; process }
 
-(** {1 Stopping Criteria} *)
+(* ───── Stopping Criteria ───── *)
 
-(** Max length stopping criterion *)
 let max_length_criteria ~max_length =
   {
     name = Printf.sprintf "max_length(%d)" max_length;
@@ -382,7 +371,6 @@ let max_length_criteria ~max_length =
         List.length tokens >= max_length);
   }
 
-(** Max new tokens stopping criterion *)
 let max_new_tokens_criteria ~max_new_tokens =
   {
     name = Printf.sprintf "max_new_tokens(%d)" max_new_tokens;
@@ -391,7 +379,6 @@ let max_new_tokens_criteria ~max_new_tokens =
         List.length tokens - prompt_length >= max_new_tokens);
   }
 
-(** EOS token stopping criterion *)
 let eos_token_criteria ~eos_token_ids =
   {
     name = "eos_token";
@@ -402,7 +389,6 @@ let eos_token_criteria ~eos_token_ids =
         | last :: _ -> List.mem last eos_token_ids);
   }
 
-(** Max time stopping criterion *)
 let max_time_criteria ~max_time =
   {
     name = Printf.sprintf "max_time(%.1fs)" max_time;
@@ -413,7 +399,6 @@ let max_time_criteria ~max_time =
         Unix.gettimeofday () -. start_time > max_time);
   }
 
-(** Stop strings criterion *)
 let stop_strings_criteria ~stop_strings ~decoder =
   {
     name = "stop_strings";
@@ -425,24 +410,21 @@ let stop_strings_criteria ~stop_strings ~decoder =
           stop_strings);
   }
 
-(** Custom stopping criterion *)
 let custom_criteria ~name ~should_stop = { name; should_stop }
 
-(** {1 Utilities} *)
+(* ───── Utilities ───── *)
 
-(** Apply all processors in the list *)
 let apply_processors ~processors ~prompt_length ~tokens ~logits =
   List.fold_left
     (fun acc processor -> processor.process ~prompt_length tokens acc)
     logits processors
 
-(** Check all stopping criteria *)
 let check_stopping ~criteria ~prompt_length ~start_time ~tokens =
   List.exists
     (fun criterion -> criterion.should_stop ~prompt_length ~start_time tokens)
     criteria
 
-(** {1 Main Generation Functions} *)
+(* ───── Main Generation Functions ───── *)
 
 type generation_output = {
   sequences : int list list;
@@ -451,7 +433,6 @@ type generation_output = {
   hidden_states : float array list option;
 }
 
-(** Helper: sample from logits *)
 let sample_from_logits logits =
   (* Find max for numerical stability *)
   let max_logit = Array.fold_left max neg_infinity logits in
@@ -473,7 +454,6 @@ let sample_from_logits logits =
    with Exit -> ());
   !result
 
-(** Helper: greedy selection *)
 let argmax logits =
   let max_idx = ref 0 in
   let max_val = ref logits.(0) in
@@ -611,7 +591,6 @@ let generate ~model ?(input_ids = []) ?(generation_config = default)
     hidden_states = None;
   }
 
-(** Simplified text generation *)
 let generate_text ~model ~tokenizer ~decoder ?(prompt = "")
     ?(generation_config = default) ?(logits_processor = [])
     ?(stopping_criteria = []) () =

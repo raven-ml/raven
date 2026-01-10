@@ -10,7 +10,7 @@ open Dom_utils
 let log fmt =
   Printf.ksprintf (fun s -> Console.(log [ Jstr.v ("[events] " ^ s) ])) fmt
 
-(* Selection Handling *)
+(* ───── Selection Handling ───── *)
 
 let handle_selectionchange mounted_app dom_el (_ev : Ev.Type.void Ev.t) =
   match Window.get_selection G.window with
@@ -38,7 +38,7 @@ let handle_selectionchange mounted_app dom_el (_ev : Ev.Type.void Ev.t) =
                 log "selectionchange: No element found at offset %d" offset)
       else log "selectionchange: Selection is not collapsed"
 
-(* Input Handling *)
+(* ───── Input Handling ───── *)
 
 let handle_input mounted_app (dom_el : El.t) (_ev : Ev.Input.t Ev.t) =
   let new_document = Model_dom.parse_dom dom_el in
@@ -48,7 +48,7 @@ let handle_input mounted_app (dom_el : El.t) (_ev : Ev.Input.t Ev.t) =
   Vdom_blit.after_redraw mounted_app (fun () ->
       set_caret_offset_within dom_el offset)
 
-(* Remove Handling *)
+(* ───── Remove Handling ───── *)
 
 let handle_remove ~is_backspace mounted_app dom_el =
   let editor_div =
@@ -98,7 +98,7 @@ let handle_remove ~is_backspace mounted_app dom_el =
         set_caret_offset_within editor_div new_offset));
   true (* Prevent default behavior *)
 
-(* Keydown Handling *)
+(* ───── Keydown Handling ───── *)
 
 let handle_execute_code ~code_execution_handler =
   let range_opt = get_current_range () in

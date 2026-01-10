@@ -3,8 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Minimal SDL2 Bindings Implementation *)
-
 module Window = struct
   type t
 end
