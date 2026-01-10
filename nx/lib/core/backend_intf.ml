@@ -48,11 +48,14 @@ module type S = sig
   val context : ('a, 'b) t -> context
   (** [context t] returns the execution context of [t]. *)
 
-  val data : ('a, 'b) t -> ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
-  (** [data t] returns the raw buffer of [t].
+  val to_host : ('a, 'b) t -> ('a, 'b, Nx_buffer.c_layout) Nx_buffer.Array1.t
+  (** [to_host t] returns the raw buffer of [t] as host memory.
 
-      The buffer is a flat, contiguous C-layout Bigarray. Use {!view} to
-      interpret the logical structure. *)
+      The buffer is a flat, contiguous C-layout Nx_buffer. Use {!view} to
+      interpret the logical structure.
+
+      Copy semantics are backend-dependent: CPU backends return a direct
+      reference (no copy), while GPU backends copy from device to host. *)
 
   (** {1 Buffer Allocation} *)
 
@@ -68,12 +71,14 @@ module type S = sig
 
       Returns a tensor containing the single value [value] with type [dtype]. *)
 
-  val op_const_array :
-    context -> ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> ('a, 'b) t
-  (** [op_const_array context array] creates a tensor from [array].
+  val from_host :
+    context -> ('a, 'b, Nx_buffer.c_layout) Nx_buffer.Array1.t -> ('a, 'b) t
+  (** [from_host context buffer] creates a tensor from a host memory buffer.
 
-      The input [array] must be C-contiguous. The resulting tensor may share the
-      buffer or copy it, depending on the backend. *)
+      The input [buffer] must be C-contiguous.
+
+      Copy semantics are backend-dependent: CPU backends may share the buffer
+      directly (no copy), while GPU backends copy from host to device. *)
 
   (** {1 Element-wise Binary Operations}
 

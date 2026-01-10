@@ -104,7 +104,7 @@ module Make (B : Backend_intf.S) = struct
 
   (* ───── Basic Tensor Properties ───── *)
 
-  let data x = B.data x
+  let data x = B.to_host x
 
   let shape x =
     let view = B.view x in
@@ -594,7 +594,7 @@ module Make (B : Backend_intf.S) = struct
     done;
 
     (* Create flat tensor and reshape if needed *)
-    let tensor_1d = B.op_const_array ctx bigarray in
+    let tensor_1d = B.from_host ctx bigarray in
     if Array.length shape = 1 && shape.(0) = n then tensor_1d
     else B.op_reshape tensor_1d (Symbolic_shape.of_ints shape)
 
@@ -726,7 +726,7 @@ module Make (B : Backend_intf.S) = struct
     let size = Array.fold_left ( * ) 1 (Nx_buffer.Genarray.dims ba) in
     let arr = Nx_buffer.reshape_1 ba size in
     let shape = Nx_buffer.Genarray.dims ba in
-    let flat_xensor = B.op_const_array ctx arr in
+    let flat_xensor = B.from_host ctx arr in
     reshape shape flat_xensor
 
   let of_bigarray ctx ba =
@@ -8285,7 +8285,7 @@ module Make (B : Backend_intf.S) = struct
   let pp_data (type a b) fmt (x : (a, b) t) =
     let open Format in
     let view = B.view x in
-    let buffer = B.data x in
+    let buffer = B.to_host x in
     let dtype = dtype x in
     let shape =
       match Symbolic_shape.eval (View.shape view) with

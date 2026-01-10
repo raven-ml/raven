@@ -94,10 +94,10 @@ let make_jvp_handler dual_map =
               let res = T.full dt [||] value in
               register res { primal = res; tangent = T.zeros_like res };
               continue k res)
-      | E_const_array { context = ctx; array } ->
+      | E_from_host { context = ctx; array } ->
           Some
             (fun k ->
-              let res = op_const_array ctx array in
+              let res = from_host ctx array in
               register res { primal = res; tangent = T.zeros_like res };
               continue k res)
       | E_buffer { context = ctx; dtype = dt; size_in_elements } ->
@@ -710,10 +710,10 @@ let make_vjp_handler tape seed_output =
               let fwd = continue k res in
               let _ = get_or_init res in
               fwd)
-      | E_const_array { context = ctx; array } ->
+      | E_from_host { context = ctx; array } ->
           Some
             (fun k ->
-              let res = op_const_array ctx array in
+              let res = from_host ctx array in
               let fwd = continue k res in
               let _ = get_or_init res in
               fwd)

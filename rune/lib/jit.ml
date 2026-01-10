@@ -587,7 +587,7 @@ let make_jit_handler (state : jit_tracer_state) =
             record_metadata state var dtype ~shape ~shape_expr:(Some shape_expr);
             let symbolic_shape = Symbolic_shape.of_ints [||] in
             continue k (create_symbolic_tensor state var dtype symbolic_shape))
-    | E_const_array { array; _ } ->
+    | E_from_host { array; _ } ->
         Some
           (fun k ->
             let kind = Array1.kind array in
@@ -1332,7 +1332,7 @@ let execute_compiled_fn (type kernel_native)
   in
   let input_ba =
     match input with
-    | Native_tensor cpu_t -> Nx_c.data cpu_t
+    | Native_tensor cpu_t -> Nx_c.to_host cpu_t
     | Symbolic_tensor _ -> failwith "JIT: Cannot execute with symbolic tensor"
   in
 
@@ -1397,7 +1397,7 @@ let execute_compiled_fn (type kernel_native)
   match input with
   | Native_tensor _ ->
       let cpu_ctx = Nx_rune.create_context () in
-      Nx_rune.op_const_array cpu_ctx out_ba
+      Nx_rune.from_host cpu_ctx out_ba
   | Symbolic_tensor _ -> assert false
 
 (* ───── Main JIT Function ───── *)

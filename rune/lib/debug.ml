@@ -416,12 +416,11 @@ let debug_handler () =
                 log_operation !context_stack "const_scalar" []
                   (Tensor_ref result);
                 continue k result)
-        | E_const_array { context; array } ->
+        | E_from_host { context; array } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = op_const_array context array in
-                log_operation !context_stack "const_array" []
-                  (Tensor_ref result);
+                let result = from_host context array in
+                log_operation !context_stack "from_host" [] (Tensor_ref result);
                 continue k result)
         | E_idiv { out; a; b } ->
             Some

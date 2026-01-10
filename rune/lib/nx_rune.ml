@@ -44,7 +44,7 @@ type _ Effect.t +=
       dtype : ('a, 'b) Dtype.t;
     }
       -> ('a, 'b) t Effect.t
-  | E_const_array : {
+  | E_from_host : {
       context : context;
       array : ('a, 'b, Nx_buffer.c_layout) Nx_buffer.Array1.t;
     }
@@ -389,9 +389,9 @@ let view_shape_expr view = shape_expr_of_symbolic (View.shape view)
 let view_shape_eval view = Symbolic_shape.eval (View.shape view)
 let shape_upper_bound shape_expr = Shape_expr.upper_bounds shape_expr
 
-let data : type a b. (a, b) t -> (a, b, Nx_buffer.c_layout) Nx_buffer.Array1.t =
-  function
-  | Native_tensor t -> Nx_c.data t
+let to_host : type a b.
+    (a, b) t -> (a, b, Nx_buffer.c_layout) Nx_buffer.Array1.t = function
+  | Native_tensor t -> Nx_c.to_host t
   | Symbolic_tensor { id; _ } ->
       failwith (Printf.sprintf "Cannot extract data from symbolic tensor %d" id)
 
@@ -657,11 +657,11 @@ let op_const_scalar ctx value dtype =
     match ctx with
     | Native_context ctx -> Native_tensor (Nx_c.op_const_scalar ctx value dtype))
 
-let op_const_array ctx array =
-  try Effect.perform (E_const_array { context = ctx; array })
+let from_host ctx array =
+  try Effect.perform (E_from_host { context = ctx; array })
   with Effect.Unhandled _ -> (
     match ctx with
-    | Native_context ctx -> Native_tensor (Nx_c.op_const_array ctx array))
+    | Native_context ctx -> Native_tensor (Nx_c.from_host ctx array))
 
 (* Copy operations - these return a new tensor, not using ~out *)
 let op_contiguous t_in =

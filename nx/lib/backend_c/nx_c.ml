@@ -259,7 +259,7 @@ external caml_threefry :
 
 let view t = t.view
 let dtype t = t.dtype
-let data t = t.buffer
+let to_host t = t.buffer
 let context t = t.context
 
 let shape t =
@@ -394,7 +394,7 @@ let op_const_scalar ctx value dtype =
   let view = View.create shape in
   { context = ctx; dtype; buffer; view }
 
-let op_const_array ctx array =
+let from_host ctx array =
   let dtype = Dtype.of_buffer_kind (Array1.kind array) in
   let size = Array1.dim array in
   (* Create a view for the 1D array *)

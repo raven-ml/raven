@@ -677,10 +677,10 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                   PhysicalTbl.set_bdim batched_tensors result ~level:env.level
                     ~bdim:None;
                   continue k result)
-          | E_const_array { context; array } ->
+          | E_from_host { context; array } ->
               Some
                 (fun k ->
-                  let result = op_const_array context array in
+                  let result = from_host context array in
                   (* Register as unbatched at ALL levels from 0 to current *)
                   for lv = 0 to env.level do
                     PhysicalTbl.set_bdim env.shared result ~level:lv ~bdim:None

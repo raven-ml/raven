@@ -21,12 +21,12 @@ let view t = t.view
 let dtype t = t.dtype
 let context t = t.context
 
-(* [data] returns a Bigarray, but Bigarrays cannot point to OCaml heap memory.
+(* [to_host] returns a Bigarray, but Bigarrays cannot point to OCaml heap memory.
    Unboxed arrays are GC-managed, so we cannot create a Bigarray view of them
    without risking memory safety. Use [data_array] to access the raw buffer. *)
-let data _ =
+let to_host _ =
   failwith
-    "Nx_oxcaml.data is not supported. Bigarrays cannot point to OCaml heap \
+    "Nx_oxcaml.to_host is not supported. Bigarrays cannot point to OCaml heap \
      memory. Use Nx_oxcaml.data_array instead."
 
 let data_array t = t.buffer
@@ -617,8 +617,8 @@ let op_associative_scan ~axis:_ ~op:_ _ =
 let op_const_scalar _ _ _ =
   Error.invalid ~op:"op_const_scalar" ~what:"not implemented" ()
 
-let op_const_array _ _ =
-  Error.invalid ~op:"op_const_array" ~what:"not implemented" ()
+let from_host _ _ =
+  Error.invalid ~op:"from_host" ~what:"not implemented" ()
 
 let op_expand x shape = { x with view = View.expand x.view shape }
 let op_reshape x shape = { x with view = View.reshape x.view shape }
