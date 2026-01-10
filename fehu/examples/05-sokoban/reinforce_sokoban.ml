@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** REINFORCE training for Sokoban using Fehu Algorithms *)
+(* REINFORCE training for Sokoban using Fehu Algorithms *)
 
 open Fehu
 open Kaun
@@ -37,7 +37,7 @@ let make_demo_env ?render_mode ~max_steps () =
   Sokoban_env.sokoban ?render_mode ~max_steps
     ~initial_state_fn:random_demo_state ()
 
-(** Custom layer to reshape flat observations into 2D grid for conv layers *)
+(* Custom layer to reshape flat observations into 2D grid for conv layers *)
 let add_channel_dim ~n_channels () =
   {
     init = (fun ~rngs:_ ~dtype:_ -> Ptree.List []);
@@ -50,7 +50,7 @@ let add_channel_dim ~n_channels () =
         Rune.reshape [| batch; n_channels; grid_size; grid_size |] x);
   }
 
-(** Create policy network with CNN architecture *)
+(* Create policy network with CNN architecture *)
 let create_policy_network n_actions =
   Layer.sequential
     [
@@ -67,7 +67,7 @@ let create_policy_network n_actions =
       Layer.linear ~in_features:128 ~out_features:n_actions ();
     ]
 
-(** Create value network (baseline) *)
+(* Create value network (baseline) *)
 let create_value_network () =
   Layer.sequential
     [
@@ -164,7 +164,7 @@ type train_config = {
   max_steps : int;
   seed : int;
 }
-(** Training configuration *)
+(* Training configuration *)
 
 let default_config =
   {
@@ -178,7 +178,7 @@ let default_config =
     seed = 42;
   }
 
-(** Train REINFORCE agent *)
+(* Train REINFORCE agent *)
 let train ?record_dir env config =
   Printf.printf "Starting REINFORCE training%s\n%!"
     (if config.use_baseline then " with baseline" else "");
@@ -325,7 +325,7 @@ let train ?record_dir env config =
 
   (params, state, policy_net)
 
-(** Evaluate policy and compute win rate *)
+(* Evaluate policy and compute win rate *)
 let evaluate_with_wins ~policy_net ~params env ~n_episodes =
   let wins = ref 0 in
   let total_reward = ref 0.0 in
@@ -356,7 +356,7 @@ let evaluate_with_wins ~policy_net ~params env ~n_episodes =
   let n = float_of_int n_episodes in
   (float_of_int !wins /. n *. 100.0, !total_reward /. n)
 
-(** Main entry point *)
+(* Main entry point *)
 let () =
   Printexc.record_backtrace true;
 

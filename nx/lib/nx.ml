@@ -49,7 +49,7 @@ let uint4 = Nx_core.Dtype.uint4
 let float8_e4m3 = Nx_core.Dtype.float8_e4m3
 let float8_e5m2 = Nx_core.Dtype.float8_e5m2
 
-(* ───── Overriding functions with default context ───── *)
+(* ───── Overriding Functions With Default Context ───── *)
 
 let create dtype shape arr = F.create (Lazy.force context) dtype shape arr
 let init dtype shape f = F.init (Lazy.force context) dtype shape f

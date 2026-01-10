@@ -190,10 +190,9 @@ let numel shape =
     in
     compute_product 0 (Some 1)
 
-(** Special dimension value representing "infer from context" (like -1 in NumPy
-    reshape) *)
+(* Special dimension value representing "infer from context" (like -1 in NumPy
+   reshape) *)
 let infer = Const (-1)
-
 let is_infer dim = match eval_dim dim with Some -1 -> true | _ -> false
 
 let resolve_reshape ~from_shape ~to_shape =

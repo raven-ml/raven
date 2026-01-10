@@ -3,11 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Minimal gradient benchmark suite for Rune autodiff *)
-
 open Rune
 
-(** Benchmark sizes - focus on realistic ML workload sizes *)
 let sizes =
   [
     ("Small", 100);
@@ -20,11 +17,10 @@ let sizes =
 
 let backend_name = "Rune"
 
-(** Helper to create benchmark name *)
 let benchmark_name op_name size_name =
   Printf.sprintf "%s %s (%s)" op_name size_name backend_name
 
-(** 1. Scalar→Scalar: f(x) = x^2 *)
+(* Scalar→Scalar: f(x) = x^2 *)
 let scalar_grad_benchmarks () =
   let f x = square x in
 
@@ -35,7 +31,7 @@ let scalar_grad_benchmarks () =
       Ubench.bench bench_name (fun () -> ignore (grad f x)))
     sizes
 
-(** 2. Vector→Scalar: f(x) = sum(x^2) (L2 norm squared) *)
+(* Vector→Scalar: f(x) = sum(x^2) (L2 norm squared) *)
 let vector_scalar_grad_benchmarks () =
   let key = Rng.key 42 in
   List.mapi
@@ -47,7 +43,7 @@ let vector_scalar_grad_benchmarks () =
       Ubench.bench bench_name (fun () -> ignore (grad f x)))
     sizes
 
-(** 3. MatMul gradient: f(x) = sum(matmul(x, W)) *)
+(* MatMul gradient: f(x) = sum(matmul(x, W)) *)
 let matmul_grad_benchmarks () =
   let key = Rng.key 43 in
   List.mapi
@@ -60,7 +56,7 @@ let matmul_grad_benchmarks () =
       Ubench.bench bench_name (fun () -> ignore (grad f x)))
     sizes
 
-(** 4. Chain of operations: f(x) = sum(exp(tanh(x^2))) *)
+(* Chain of operations: f(x) = sum(exp(tanh(x^2))) *)
 let chain_grad_benchmarks () =
   let key = Rng.key 44 in
   List.mapi
@@ -72,7 +68,7 @@ let chain_grad_benchmarks () =
       Ubench.bench bench_name (fun () -> ignore (grad f x)))
     sizes
 
-(** 5. Higher-order gradient: grad(grad(f)) where f(x) = sum(x^3) *)
+(* Higher-order gradient: grad(grad(f)) where f(x) = sum(x^3) *)
 let higher_order_grad_benchmarks () =
   let key = Rng.key 45 in
   List.mapi
@@ -87,7 +83,6 @@ let higher_order_grad_benchmarks () =
       Ubench.bench bench_name (fun () -> ignore (grad_grad_f x)))
     sizes
 
-(** Build all benchmarks *)
 let build_benchmarks () =
   List.concat
     [
@@ -98,7 +93,6 @@ let build_benchmarks () =
       higher_order_grad_benchmarks ();
     ]
 
-(** Main entry point *)
 let () =
   let benchmarks = build_benchmarks () in
   Ubench.run_cli benchmarks

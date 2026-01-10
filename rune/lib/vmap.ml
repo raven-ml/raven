@@ -28,7 +28,8 @@ let extract_out_axis_spec = function
   | OutSingle spec -> spec
   | OutContainer _ -> failwith "vmap: container out_axes not yet supported"
 
-(* Utility functions for batch level management *)
+(* ───── Utility Functions for Batch Level Management ───── *)
+
 let insert_at (arr : 'a array) (pos : int) (x : 'a) : 'a array =
   let n = Array.length arr in
   if pos < 0 || pos > n then
@@ -183,7 +184,7 @@ module PhysicalTbl = struct
     List.iter (fun (_, map) -> Hashtbl.remove map level) !tbl
 end
 
-(* ───── Vmap environment (dynamic scope) ───── *)
+(* ───── Vmap Environment (Dynamic Scope) ───── *)
 type env = {
   level : int;
   shared : PhysicalTbl.t;

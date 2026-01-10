@@ -353,7 +353,7 @@ let to_device (target_ctx : context) (t : ('a, 'b) t) : ('a, 'b) t =
   (* Symbolic tensors update their context *)
   | _, Symbolic_tensor _ -> failwith "Cannot transfer symbolic tensor to device"
 
-(* Lenses *)
+(* ───── Lenses ───── *)
 let view (type a b) (x : (a, b) t) : View.t =
   try Effect.perform (E_view x)
   with Effect.Unhandled _ -> (
@@ -508,7 +508,7 @@ let ternary_op eff cpu_op cond if_true if_false =
         Native_tensor (cpu_op t1 t2 t3)
     | _ -> assert false)
 
-(* Binary operations *)
+(* ───── Binary Operations ───── *)
 let op_add ~out a b =
   binary_op ~out (fun () -> E_add { out; a; b }) Nx_c.op_add a b
 
@@ -545,7 +545,7 @@ let op_or ~out a b =
 let op_and ~out a b =
   binary_op ~out (fun () -> E_and { out; a; b }) Nx_c.op_and a b
 
-(* Comparison operations *)
+(* ───── Comparison Operations ───── *)
 let op_cmpeq ~out a b =
   comparison_op ~out (fun () -> E_cmpeq { out; a; b }) Nx_c.op_cmpeq a b
 
@@ -558,7 +558,7 @@ let op_cmplt ~out a b =
 let op_cmple ~out a b =
   comparison_op ~out (fun () -> E_cmple { out; a; b }) Nx_c.op_cmple a b
 
-(* Unary operations *)
+(* ───── Unary Operations ───── *)
 let op_neg ~out t_in =
   unary_op ~out (fun () -> E_neg { out; t_in }) Nx_c.op_neg t_in
 
@@ -589,7 +589,7 @@ let op_psum t_in =
   try Effect.perform (E_psum { t_in })
   with Effect.Unhandled _ -> failwith "psum must be used under vmap"
 
-(* Reduction operations *)
+(* ───── Reduction Operations ───── *)
 let op_reduce_sum ~out ~axes ~keepdims t_in =
   reduce_op ~out
     (fun () -> E_reduce_sum { out; t_in; axes; keepdims })
@@ -618,7 +618,7 @@ let op_associative_scan ~axis ~op t_in =
     | Symbolic_tensor _ ->
         failwith "Cannot perform associative_scan on symbolic tensor")
 
-(* Shape operations *)
+(* ───── Shape Operations ───── *)
 let op_reshape t_in new_shape =
   shape_op1
     (fun () -> E_reshape { t_in; new_shape })
@@ -648,7 +648,7 @@ let op_pad t_in padding_config fill_value =
     | Native_tensor t -> Native_tensor (Nx_c.op_pad t padding_config fill_value)
     | Symbolic_tensor _ -> failwith "Cannot pad symbolic tensor")
 
-(* Creation operations *)
+(* ───── Creation Operations ───── *)
 let op_buffer ctx dtype size_in_elements =
   try Effect.perform (E_buffer { context = ctx; dtype; size_in_elements })
   with Effect.Unhandled _ -> (
@@ -716,7 +716,6 @@ let op_cat t_list axis =
           in
           Native_tensor (Nx_c.op_cat cpu_list axis))
 
-(* Cast operation *)
 let op_cast : type a b c d. (a, b) t -> (c, d) Dtype.t -> (c, d) t =
  fun t_in target_dtype ->
   try Effect.perform (E_cast { t_in; target_dtype })
@@ -725,7 +724,6 @@ let op_cast : type a b c d. (a, b) t -> (c, d) Dtype.t -> (c, d) t =
     | Native_tensor t -> Native_tensor (Nx_c.op_cast t target_dtype)
     | Symbolic_tensor _ -> failwith "Cannot cast symbolic tensor")
 
-(* Assign operation *)
 let op_assign dst src =
   try Effect.perform (E_assign { dst; src })
   with Effect.Unhandled _ -> (
@@ -734,7 +732,6 @@ let op_assign dst src =
     | Native_tensor d, Native_tensor s -> Nx_c.op_assign d s
     | _ -> assert false)
 
-(* Gather operation *)
 let op_gather data indices axis =
   try Effect.perform (E_gather { data; indices; axis })
   with Effect.Unhandled _ -> (
@@ -744,7 +741,6 @@ let op_gather data indices axis =
         Native_tensor (Nx_c.op_gather d i axis)
     | _ -> assert false)
 
-(* Scatter operation *)
 let op_scatter ?(mode = `Set) ?(unique_indices = false) data_template indices
     updates axis =
   try Effect.perform (E_scatter { data_template; indices; updates; axis })
@@ -769,7 +765,6 @@ let op_threefry key ctr =
         Native_tensor (Nx_c.op_threefry t1 t2)
     | _ -> assert false)
 
-(* Unfold operation *)
 let op_unfold ?out t_in ~kernel_size ~stride ~dilation ~padding =
   try Effect.perform (E_unfold { t_in; kernel_size; stride; dilation; padding })
   with Effect.Unhandled _ -> (
@@ -782,7 +777,6 @@ let op_unfold ?out t_in ~kernel_size ~stride ~dilation ~padding =
     | Symbolic_tensor _, _ | _, Some (Symbolic_tensor _) ->
         failwith "todo: op_unfold for symbolic tensors")
 
-(* Fold operation *)
 let op_fold ?out t_in ~output_size ~kernel_size ~stride ~dilation ~padding =
   try
     Effect.perform
@@ -799,7 +793,6 @@ let op_fold ?out t_in ~output_size ~kernel_size ~stride ~dilation ~padding =
     | Symbolic_tensor _, _ | _, Some (Symbolic_tensor _) ->
         failwith "todo: op_fold for symbolic tensors")
 
-(* Matrix multiplication *)
 let op_matmul ~out a b =
   try Effect.perform (E_matmul { out; a; b })
   with Effect.Unhandled _ -> (
@@ -812,7 +805,8 @@ let op_matmul ~out a b =
     | _, _, Symbolic_tensor _ ->
         failwith "todo: op_matmul for symbolic tensors")
 
-(* FFT operations *)
+(* ───── FFT Operations ───── *)
+
 let op_fft ?out t ~axes =
   try Effect.perform (E_fft { t; axes })
   with Effect.Unhandled _ -> (
@@ -857,7 +851,7 @@ let op_irfft (type a c) ?out (t : (Complex.t, a) t)
   | Symbolic_tensor _, _ | _, Some (Symbolic_tensor _) ->
       failwith "todo: op_irfft for symbolic tensors"
 
-(* Linear algebra operations *)
+(* ───── Linear Algebra Operations ───── *)
 
 let op_cholesky ~upper t_in =
   try Effect.perform (E_cholesky { t_in; upper })

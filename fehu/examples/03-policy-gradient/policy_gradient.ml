@@ -3,12 +3,12 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Policy gradient training for RandomWalk using Fehu Algorithms *)
+(* Policy gradient training for RandomWalk using Fehu Algorithms *)
 
 open Fehu
 open Kaun
 
-(** Create a simple policy network *)
+(* Create a simple policy network *)
 let create_policy_network () =
   Layer.sequential
     [

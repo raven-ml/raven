@@ -5,7 +5,7 @@
 
 open Rune
 
-(* Configuration *)
+(* ───── Configuration ───── *)
 
 type config = {
   num_classes : int;
@@ -44,7 +44,7 @@ let cifar10_config =
     dropout_rate = Some 0.5;
   }
 
-(* Model Definition *)
+(* ───── Model Definition ───── *)
 
 type t = Kaun.module_
 
@@ -113,7 +113,7 @@ let create ?(config = default_config) () =
 let for_mnist () = create ~config:mnist_config ()
 let for_cifar10 () = create ~config:cifar10_config ()
 
-(* Forward Pass *)
+(* ───── Forward Pass ───── *)
 
 let forward ~model ~params ~training ~input =
   Kaun.apply model params ~training input
@@ -123,7 +123,7 @@ let extract_features ~model:_ ~params:_ ~input:_ =
   (* For now, just return a dummy tensor *)
   failwith "extract_features not implemented yet"
 
-(* Model Statistics *)
+(* ───── Model Statistics ───── *)
 
 let num_parameters params =
   let tensors = Kaun.Ptree.flatten_with_paths params in
@@ -171,7 +171,7 @@ let parameter_breakdown params =
 
   Buffer.contents breakdown
 
-(* Training Helpers *)
+(* ───── Training Helpers ───── *)
 
 type train_config = {
   learning_rate : float;

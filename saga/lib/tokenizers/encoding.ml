@@ -3,8 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Encoding module - represents the output of a tokenizer *)
-
 type t = {
   ids : int array;
   type_ids : int array;
@@ -16,15 +14,12 @@ type t = {
   mutable overflowing : t list;
   sequence_ranges : (int, int * int) Hashtbl.t;
 }
-(** Internal type definition *)
 
-(** Truncation direction *)
 type truncation_direction = Left | Right
-
-(** Padding direction *)
 type padding_direction = Left | Right
 
-(** Create a new encoding *)
+(* ───── Constructors ───── *)
+
 let create ~ids ~type_ids ~tokens ~words ~offsets ~special_tokens_mask
     ~attention_mask ~overflowing ~sequence_ranges =
   {
@@ -39,7 +34,6 @@ let create ~ids ~type_ids ~tokens ~words ~offsets ~special_tokens_mask
     sequence_ranges;
   }
 
-(** Create an empty encoding with given capacity *)
 let with_capacity len =
   {
     ids = Array.make len 0;
@@ -53,7 +47,6 @@ let with_capacity len =
     sequence_ranges = Hashtbl.create 1;
   }
 
-(** Create encoding from tokens *)
 let from_tokens tokens ~type_id =
   let length = List.length tokens in
   let ids = Array.make length 0 in
@@ -79,26 +72,21 @@ let from_tokens tokens ~type_id =
     sequence_ranges = Hashtbl.create 1;
   }
 
-(** Check if encoding is empty *)
-let is_empty t = Array.length t.ids = 0
+(* ───── Accessors ───── *)
 
-(** Get the length of the encoding *)
+let is_empty t = Array.length t.ids = 0
 let length t = Array.length t.ids
 
-(** Get the number of sequences in the encoding *)
 let n_sequences t =
   if Hashtbl.length t.sequence_ranges = 0 then 1
   else Hashtbl.length t.sequence_ranges
 
-(** Set sequence id for the whole encoding *)
 let set_sequence_id t sequence_id =
   let new_ranges = Hashtbl.copy t.sequence_ranges in
   Hashtbl.replace new_ranges sequence_id (0, length t);
   { t with sequence_ranges = new_ranges }
 
-(** Getters *)
 let get_ids t = t.ids
-
 let get_type_ids t = t.type_ids
 let get_tokens t = t.tokens
 let get_word_ids t = t.words
@@ -106,20 +94,14 @@ let get_offsets t = t.offsets
 let get_special_tokens_mask t = t.special_tokens_mask
 let get_attention_mask t = t.attention_mask
 let get_overflowing t = t.overflowing
-
-(** Set type IDs *)
 let set_type_ids t type_ids = { t with type_ids }
-
-(** Set overflowing *)
 let set_overflowing t overflowing = { t with overflowing }
 
-(** Take overflowing *)
 let take_overflowing t =
   let overflowing = t.overflowing in
   t.overflowing <- [];
   (t, overflowing)
 
-(** Get sequence IDs for each token *)
 let get_sequence_ids t =
   let sequences = Array.make (length t) None in
   for seq_id = 0 to n_sequences t - 1 do
@@ -132,13 +114,11 @@ let get_sequence_ids t =
   done;
   sequences
 
-(** Get the range for a given sequence *)
 let sequence_range t sequence_id =
   match Hashtbl.find_opt t.sequence_ranges sequence_id with
   | Some range -> range
   | None -> (0, length t)
 
-(** Get the sequence index containing the given token *)
 let token_to_sequence t token =
   if token >= length t then None
   else if Hashtbl.length t.sequence_ranges = 0 then Some 0
@@ -150,7 +130,8 @@ let token_to_sequence t token =
         | None -> if token >= start && token < stop then Some seq_id else None)
       t.sequence_ranges None
 
-(** Get the tokens corresponding to the given word *)
+(* ───── Token/Word/Char Lookup ───── *)
+
 let word_to_tokens t ~word ~sequence_id =
   let start_ref = ref None in
   let end_ref = ref None in
@@ -168,7 +149,6 @@ let word_to_tokens t ~word ~sequence_id =
   | Some start, Some end_pos -> Some (start, end_pos)
   | _ -> None
 
-(** Get the character offsets of the given word *)
 let word_to_chars t ~word ~sequence_id =
   match word_to_tokens t ~word ~sequence_id with
   | Some (start, end_pos) when end_pos > 0 ->
@@ -177,14 +157,12 @@ let word_to_chars t ~word ~sequence_id =
       Some (start_offset, end_offset)
   | _ -> None
 
-(** Get the character offsets of the given token *)
 let token_to_chars t token =
   match token_to_sequence t token with
   | Some seq_id when token < Array.length t.offsets ->
       Some (seq_id, t.offsets.(token))
   | _ -> None
 
-(** Get the word containing the given token *)
 let token_to_word t token =
   match token_to_sequence t token with
   | Some seq_id -> (
@@ -193,7 +171,6 @@ let token_to_word t token =
       | None -> None)
   | None -> None
 
-(** Get the token containing the given character position *)
 let char_to_token t ~pos ~sequence_id =
   let seq_start, seq_end = sequence_range t sequence_id in
   let rec find_token i =
@@ -205,17 +182,16 @@ let char_to_token t ~pos ~sequence_id =
   in
   find_token seq_start
 
-(** Get the word containing the given character position *)
 let char_to_word t ~pos ~sequence_id =
   match char_to_token t ~pos ~sequence_id with
   | Some token -> Option.bind t.words.(token) (fun w -> Some w)
   | None -> None
 
-(** Helper to copy array slice *)
+(* ───── Truncation ───── *)
+
 let array_slice arr start stop =
   Array.init (stop - start) (fun i -> arr.(start + i))
 
-(** Truncate the encoding *)
 let truncate t ~max_length ~stride ~(direction : truncation_direction) =
   let encoding_len = length t in
   if max_length >= encoding_len then t
@@ -291,7 +267,8 @@ let truncate t ~max_length ~stride ~(direction : truncation_direction) =
 
         new_encoding)
 
-(** Merge multiple encodings *)
+(* ───── Merge ───── *)
+
 let rec merge encodings ~growing_offsets =
   let rec merge_list acc = function
     | [] -> acc
@@ -299,7 +276,6 @@ let rec merge encodings ~growing_offsets =
   in
   match encodings with [] -> with_capacity 0 | e :: rest -> merge_list e rest
 
-(** Merge with another encoding *)
 and merge_with t1 t2 ~growing_offsets =
   let original_len = length t1 in
 
@@ -360,7 +336,8 @@ and merge_with t1 t2 ~growing_offsets =
     sequence_ranges = new_ranges;
   }
 
-(** Pad the encoding *)
+(* ───── Pad ───── *)
+
 let rec pad t ~target_length ~pad_id ~pad_type_id ~pad_token ~direction =
   (* First pad all overflowing encodings *)
   let padded_overflowing =
@@ -412,6 +389,8 @@ let rec pad t ~target_length ~pad_id ~pad_type_id ~pad_token ~direction =
           sequence_ranges = t.sequence_ranges;
         }
 
+(* Encoding data for serialization - currently unused but may be needed for JSON
+   serialization *)
 type encoding_data = {
   ids : int array;
   type_ids : int array;
@@ -424,8 +403,6 @@ type encoding_data = {
   sequence_ids : int option array;
   n_sequences : int;
 }
-(** Encoding data for serialization - currently unused but may be needed for
-    JSON serialization *)
 
 let _to_data (t : t) : encoding_data =
   {

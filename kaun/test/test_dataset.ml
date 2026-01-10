@@ -42,7 +42,8 @@ let with_temp_csv content f =
   close_out oc;
   Fun.protect ~finally:(fun () -> Sys.remove temp_file) (fun () -> f temp_file)
 
-(** Test dataset creation *)
+(* ───── Test Dataset Creation ───── *)
+
 let test_from_array () =
   let arr = [| 1; 2; 3; 4; 5 |] in
   let dataset = from_array arr in
@@ -63,7 +64,8 @@ let test_from_seq () =
   let collected = collect_dataset dataset in
   Alcotest.(check (list int)) "collected values" [ 10; 20; 30 ] collected
 
-(** Test text file reading *)
+(* ───── Test Text File Reading ───── *)
+
 let test_from_text_file () =
   let content = "line1\nline2\nline3\n" in
   with_temp_file content (fun path ->
@@ -295,7 +297,8 @@ let test_enumerate () =
     [ (0, "a"); (1, "b"); (2, "c") ]
     collected
 
-(** Test text processing *)
+(* ───── Test Text Processing ───── *)
+
 let test_normalize () =
   let dataset =
     from_list [ "Hello WORLD!"; "  multiple   spaces  " ]
@@ -356,7 +359,8 @@ let test_tokenize_padding () =
       Alcotest.(check int) "padding value" 0 tokens.(4)
   | _ -> Alcotest.fail "Expected one tokenized sample"
 
-(** Test batching *)
+(* ───── Test Batching ───── *)
+
 let test_batch_basic () =
   let dataset = from_list [ 1; 2; 3; 4; 5 ] |> batch_map 2 Fun.id in
   let collected = collect_dataset dataset in
@@ -392,7 +396,8 @@ let test_bucket_by_length () =
      "dddd", "ggg"] *)
   Alcotest.(check bool) "has batches" true (List.length collected > 0)
 
-(** Test iteration control *)
+(* ───── Test Iteration Control ───── *)
+
 let test_take () =
   let dataset = from_list [ 1; 2; 3; 4; 5 ] |> take 3 in
   let collected = collect_dataset dataset in
@@ -438,7 +443,8 @@ let test_window_drop_remainder () =
   Alcotest.(check int) "number of complete windows" 1 (List.length collected);
   assert_equal_int_array [| 1; 2; 3 |] (List.nth collected 0)
 
-(** Test shuffling and sampling *)
+(* ───── Test Shuffling And Sampling ───── *)
+
 let test_shuffle () =
   let dataset = from_list [ 1; 2; 3; 4; 5 ] |> shuffle ~buffer_size:3 in
   let collected = collect_dataset dataset in
@@ -490,7 +496,8 @@ let test_weighted_sample () =
   let c_count = List.filter (( = ) "c") collected |> List.length in
   Alcotest.(check bool) "mostly c" true (c_count >= 5)
 
-(** Test caching and prefetching *)
+(* ───── Test Caching And Prefetching ───── *)
+
 let test_cache_in_memory () =
   (* Create a dataset that tracks how many times it's been accessed *)
   let access_count = ref 0 in
@@ -521,7 +528,8 @@ let test_prefetch () =
   let collected = collect_dataset dataset in
   Alcotest.(check (list int)) "prefetched" [ 1; 2; 3; 4; 5 ] collected
 
-(** Test parallel processing *)
+(* ───── Test Parallel Processing ───── *)
+
 let test_parallel_map () =
   let dataset =
     from_list [ 1; 2; 3; 4; 5 ] |> parallel_map ~num_workers:2 (fun x -> x * x)
@@ -544,7 +552,8 @@ let test_parallel_interleave () =
   Alcotest.(check (list int))
     "all values present" [ 1; 2; 3; 10; 20; 30 ] sorted
 
-(** Test iteration functions *)
+(* ───── Test Iteration Functions ───── *)
+
 let test_iter () =
   let sum = ref 0 in
   from_list [ 1; 2; 3; 4; 5 ] |> iter (fun x -> sum := !sum + x);
@@ -570,7 +579,8 @@ let test_to_array () =
   let arr = to_array dataset in
   assert_equal_string_array [| "a"; "b"; "c" |] arr
 
-(** Test dataset information *)
+(* ───── Test Dataset Information ───── *)
+
 let test_cardinality_finite () =
   let dataset = from_list [ 1; 2; 3 ] in
   match cardinality dataset with
@@ -595,7 +605,8 @@ let test_element_spec () =
   | Unknown -> () (* Default spec for from_list *)
   | _ -> Alcotest.fail "Expected unknown element spec"
 
-(** Test pipelines *)
+(* ───── Test Pipelines ───── *)
+
 let test_text_classification_pipeline () =
   let dataset =
     from_list [ "hello world"; "foo bar baz" ]
@@ -625,7 +636,8 @@ let test_language_model_pipeline () =
         && Rune.shape target |> Array.length > 0)
   | _ -> Alcotest.fail "Expected batch of input/target pairs"
 
-(** Test edge cases *)
+(* ───── Test Edge Cases ───── *)
+
 let test_empty_dataset () =
   let dataset = from_list [] in
   let collected = collect_dataset dataset in
@@ -649,7 +661,8 @@ let test_chain_many_operations () =
   assert_equal_int_array [| 4; 8 |] (List.nth collected 0);
   assert_equal_int_array [| 12 |] (List.nth collected 1)
 
-(** Test suite *)
+(* ───── Test Suite ───── *)
+
 let () =
   let open Alcotest in
   run "Dataset"

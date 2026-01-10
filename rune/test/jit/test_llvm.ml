@@ -7,7 +7,7 @@ open Alcotest
 open Rune_jit
 open Support
 
-(* ───── helpers ───── *)
+(* ───── Helpers ───── *)
 
 let device_info = Rune_jit_llvm.Device_info.get_default ()
 
@@ -25,7 +25,7 @@ let make_llvm_ir graph =
   Rune_jit_llvm.Renderer.render ~device_info ~lowered_ir:lowered
     ~kernel_name:spec.name
 
-(* ───── sanity test ───── *)
+(* ───── Sanity Test ───── *)
 
 let test_sanity () =
   let _a, _b, _c, g = simple_add_graph () in
@@ -33,7 +33,7 @@ let test_sanity () =
   (* Basic sanity check that we can create IR *)
   check bool "can create IR" true true
 
-(* ───── end-to-end execution ───── *)
+(* ───── End-to-end Execution ───── *)
 
 let bigarray_float32 ?(eps = 1e-3) () =
   let open Bigarray in
@@ -285,7 +285,7 @@ let test_e2e_mulacc () =
   in
   check (bigarray_float32 ()) "result" expected ba_res
 
-(* ───── test suite ───── *)
+(* ───── Test Suite ───── *)
 
 let () =
   Alcotest.run "LLVM backend"

@@ -30,7 +30,8 @@ type ('a, 'b) ffi_tensor = {
 }
 [@@warning "-69"]
 
-(* External FFI declarations *)
+(* ───── External FFI Declarations ───── *)
+
 external caml_add :
   ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
   = "caml_nx_add"
@@ -103,7 +104,8 @@ external caml_and :
   ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
   = "caml_nx_and"
 
-(* Unary operation FFI declarations *)
+(* ───── Unary Operation FFI Declarations ───── *)
+
 external caml_neg : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
   = "caml_nx_neg"
 
@@ -128,7 +130,8 @@ external caml_exp : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
 external caml_recip : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
   = "caml_nx_recip"
 
-(* Ternary operation FFI declarations *)
+(* ───── Ternary Operation FFI Declarations ───── *)
+
 external caml_where :
   (bool, Dtype.bool_elt) ffi_tensor ->
   ('a, 'b) ffi_tensor ->
@@ -136,7 +139,8 @@ external caml_where :
   ('a, 'b) ffi_tensor ->
   unit = "caml_nx_where"
 
-(* Reduction operation FFI declarations *)
+(* ───── Reduction Operation FFI Declarations ───── *)
+
 external caml_reduce_sum :
   ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> int array -> bool -> unit
   = "caml_nx_reduce_sum"
@@ -161,7 +165,8 @@ external caml_associative_scan :
 external caml_cast : ('a, 'b) ffi_tensor -> ('c, 'd) ffi_tensor -> unit
   = "caml_nx_cast"
 
-(* Memory operation FFI declarations *)
+(* ───── Memory Operation FFI Declarations ───── *)
+
 external caml_copy : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor = "caml_nx_copy"
 
 external caml_contiguous : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor
@@ -170,7 +175,8 @@ external caml_contiguous : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor
 external caml_assign : ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> unit
   = "caml_nx_assign"
 
-(* Index operation FFI declarations *)
+(* ───── Index Operation FFI Declarations ───── *)
+
 external caml_gather :
   ('a, 'b) ffi_tensor ->
   (int32, Dtype.int32_elt) ffi_tensor ->
@@ -188,7 +194,8 @@ external caml_scatter :
   bool ->
   unit = "caml_nx_op_scatter_bc" "caml_nx_op_scatter"
 
-(* Linear algebra operation FFI declarations *)
+(* ───── Linear Algebra Operation FFI Declarations ───── *)
+
 external caml_cholesky :
   ('a, 'b) ffi_tensor -> ('a, 'b) ffi_tensor -> bool -> unit
   = "caml_nx_op_cholesky"
@@ -229,7 +236,8 @@ external caml_svd :
   bool ->
   unit = "caml_nx_op_svd"
 
-(* Shape operation FFI declarations *)
+(* ───── Shape Operation FFI Declarations ───── *)
+
 external caml_cat :
   ('a, 'b) ffi_tensor list -> int -> ('a, 'b) ffi_tensor -> unit = "caml_nx_cat"
 
@@ -237,7 +245,8 @@ external caml_pad :
   ('a, 'b) ffi_tensor -> int array -> 'a -> ('a, 'b) ffi_tensor -> unit
   = "caml_nx_pad"
 
-(* Window operation FFI declarations *)
+(* ───── Window Operation FFI Declarations ───── *)
+
 external caml_unfold :
   ('a, 'b) ffi_tensor ->
   int array ->
@@ -257,14 +266,15 @@ external caml_fold :
   ('a, 'b) ffi_tensor ->
   unit = "caml_nx_op_fold_bc" "caml_nx_op_fold"
 
-(* Random operation FFI declarations *)
+(* ───── Random Operation FFI Declarations ───── *)
+
 external caml_threefry :
   (int32, Dtype.int32_elt) ffi_tensor ->
   (int32, Dtype.int32_elt) ffi_tensor ->
   (int32, Dtype.int32_elt) ffi_tensor ->
   unit = "caml_nx_threefry"
 
-(* Helper functions *)
+(* ───── Helper Functions ───── *)
 
 let view t = t.view
 let dtype t = t.dtype
@@ -384,7 +394,8 @@ let comparison_op op_name ffi_op ~out x y =
     (* Call C implementation *)
     ffi_op x_ffi y_ffi out_ffi
 
-(* Buffer allocation *)
+(* ───── Buffer Allocation ───── *)
+
 let op_buffer ctx dtype size_in_elements =
   let kind = Dtype.to_buffer_kind dtype in
   let buffer = Array1.create kind c_layout size_in_elements in
@@ -393,7 +404,8 @@ let op_buffer ctx dtype size_in_elements =
   let view = View.create shape in
   { context = ctx; dtype; buffer; view }
 
-(* Constant creation ops *)
+(* ───── Constant Creation Ops ───── *)
+
 let op_const_scalar ctx value dtype =
   let kind = Dtype.to_buffer_kind dtype in
   let buffer = Array1.create kind c_layout 1 in
@@ -424,7 +436,8 @@ let unary_op _op_name ffi_op ~out x =
   (* Call C implementation *)
   ffi_op x_ffi out_ffi
 
-(* Binary operations *)
+(* ───── Binary Operations ───── *)
+
 let op_add ~out x y = binary_op "add" caml_add ~out x y
 let op_sub ~out x y = binary_op "sub" caml_sub ~out x y
 let op_mul ~out x y = binary_op "mul" caml_mul ~out x y
@@ -438,13 +451,15 @@ let op_xor ~out x y = binary_op "xor" caml_xor ~out x y
 let op_or ~out x y = binary_op "or" caml_or ~out x y
 let op_and ~out x y = binary_op "and" caml_and ~out x y
 
-(* Comparison operations *)
+(* ───── Comparison Operations ───── *)
+
 let op_cmpeq ~out x y = comparison_op "cmpeq" caml_cmpeq ~out x y
 let op_cmpne ~out x y = comparison_op "cmpne" caml_cmpne ~out x y
 let op_cmplt ~out x y = comparison_op "cmplt" caml_cmplt ~out x y
 let op_cmple ~out x y = comparison_op "cmple" caml_cmple ~out x y
 
-(* Unary operations *)
+(* ───── Unary Operations ───── *)
+
 let op_neg ~out x = unary_op "neg" caml_neg ~out x
 let op_log ~out x = unary_op "log" caml_log ~out x
 let op_exp ~out x = unary_op "exp" caml_exp ~out x
@@ -612,7 +627,8 @@ let op_cat tensors axis =
       caml_cat tensors_ffi norm_axis out_ffi;
       out
 
-(* Other Ops *)
+(* ───── Other Ops ───── *)
+
 let op_cast (type a b c d) (x : (a, b) t) (target_dtype : (c, d) Dtype.t) :
     (c, d) t =
   (* Ensure input is materializable *)
@@ -677,7 +693,8 @@ let op_threefry key counter =
   caml_threefry key_ffi counter_ffi out_ffi;
   out
 
-(* Element Access Ops *)
+(* ───── Element Access Ops ───── *)
+
 let op_gather data indices axis =
   (* Ensure inputs are materializable. Preserve broadcasted strides for indices
      to enable C fast paths (e.g., memcpy row gather). *)
@@ -837,7 +854,8 @@ let contiguous_strides shape elem_size =
     done;
     Array.map (fun s -> s * elem_size) strides
 
-(* Fourier transforms using PocketFFT *)
+(* ───── Fourier Transforms Using PocketFFT ───── *)
+
 let op_fft (type a b) ?out (x : (a, b) t) ~axes : (a, b) t =
   let x' = materialize x in
   let out_shape = shape x' in
@@ -1010,7 +1028,8 @@ let op_irfft (type a b c d) ?out (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes
 
   out
 
-(* Linear algebra operations *)
+(* ───── Linear Algebra Operations ───── *)
+
 let op_cholesky ~upper x =
   (* Ensure input is materializable *)
   let x' = ensure_materializable x in

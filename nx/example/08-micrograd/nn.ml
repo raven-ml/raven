@@ -3,11 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Nn.ml - Neural network components using Engine *)
-
 open Nx
 
-(** Base module type for neural network components *)
+(* Base module type for neural network components *)
 module type MODULE = sig
   type t
 
@@ -15,7 +13,7 @@ module type MODULE = sig
   val parameters : t -> float32_t Engine.value list
 end
 
-(** Single neuron implementation *)
+(* Single neuron implementation *)
 module Neuron = struct
   type t = {
     weights : float32_t Engine.value list;
@@ -23,7 +21,6 @@ module Neuron = struct
     nonlin : bool;
   }
 
-  (** Create a neuron with nin inputs *)
   let create nin ?(nonlin = true) () =
     Random.self_init ();
     let weights =
@@ -35,7 +32,6 @@ module Neuron = struct
     let bias = Engine.scalar float32 0.0 in
     { weights; bias; nonlin }
 
-  (** Forward pass through neuron *)
   let call neuron inputs =
     if List.length inputs <> List.length neuron.weights then
       failwith "Input size doesn't match neuron weights";
@@ -49,48 +45,37 @@ module Neuron = struct
 
     if neuron.nonlin then Engine.relu act else act
 
-  (** Get all parameters *)
   let parameters neuron = neuron.bias :: neuron.weights
-
-  (** Zero gradients *)
   let zero_grad neuron = Engine.zero_grad (parameters neuron)
 
-  (** String representation *)
   let to_string neuron =
     let activation = if neuron.nonlin then "ReLU" else "Linear" in
     Printf.sprintf "%sNeuron(%d)" activation (List.length neuron.weights)
 end
 
-(** Layer of neurons *)
+(* Layer of neurons *)
 module Layer = struct
   type t = { neurons : Neuron.t list }
 
-  (** Create a layer with nin inputs and nout outputs *)
   let create nin nout ?(nonlin = true) () =
     let neurons = List.init nout (fun _ -> Neuron.create nin ~nonlin ()) in
     { neurons }
 
-  (** Forward pass through layer *)
   let call layer inputs =
     List.map (fun neuron -> Neuron.call neuron inputs) layer.neurons
 
-  (** Get all parameters *)
   let parameters layer = List.flatten (List.map Neuron.parameters layer.neurons)
-
-  (** Zero gradients *)
   let zero_grad layer = List.iter Neuron.zero_grad layer.neurons
 
-  (** String representation *)
   let to_string layer =
     let neuron_strs = List.map Neuron.to_string layer.neurons in
     Printf.sprintf "Layer of [%s]" (String.concat ", " neuron_strs)
 end
 
-(** Multi-Layer Perceptron *)
+(* Multi-Layer Perceptron *)
 module MLP = struct
   type t = { layers : Layer.t list }
 
-  (** Create MLP with nin inputs and nouts list of layer sizes *)
   let create nin nouts =
     let sizes = nin :: nouts in
     let num_layers = List.length nouts in
@@ -105,22 +90,15 @@ module MLP = struct
     in
     { layers }
 
-  (** Forward pass through MLP *)
   let call mlp inputs =
-    (* Ensure inputs is a list of values *)
     let input_list =
       match inputs with [] -> failwith "Empty input list" | _ -> inputs
     in
-
     List.fold_left (fun x layer -> Layer.call layer x) input_list mlp.layers
 
-  (** Get all parameters *)
   let parameters mlp = List.flatten (List.map Layer.parameters mlp.layers)
-
-  (** Zero gradients *)
   let zero_grad mlp = List.iter Layer.zero_grad mlp.layers
 
-  (** String representation *)
   let to_string mlp =
     let layer_strs = List.map Layer.to_string mlp.layers in
     Printf.sprintf "MLP of [%s]" (String.concat ", " layer_strs)

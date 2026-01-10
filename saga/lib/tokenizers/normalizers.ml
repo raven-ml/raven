@@ -3,16 +3,12 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Text normalization module matching HuggingFace tokenizers. *)
-
 type normalized_string = {
   normalized : string;
   original : string;
   alignments : (int * int) array;
 }
-(** Type representing a normalized string with alignment information *)
 
-(** Main normalizer type - abstract *)
 type t =
   | Bert of {
       clean_text : bool;
@@ -32,7 +28,8 @@ type t =
   | ByteLevel of { add_prefix_space : bool; use_regex : bool }
   | Sequence of t list
 
-(** Helper functions for character checking *)
+(* ───── Character Checking ───── *)
+
 let is_whitespace c =
   match c with
   | '\t' | '\n' | '\r' -> true
@@ -63,7 +60,8 @@ let is_combining_mark c =
   let u = Uchar.of_char c in
   Uucp.Gc.general_category u = `Mn
 
-(** Transform operations on normalized strings *)
+(* ───── Transform Operations ───── *)
+
 let transform_string str transformations =
   let buf = Buffer.create (String.length str * 2) in
   let alignments = ref [] in
@@ -82,7 +80,6 @@ let transform_string str transformations =
     alignments = Array.of_list (List.rev !alignments);
   }
 
-(** Filter characters from a string *)
 let filter_string str pred =
   let buf = Buffer.create (String.length str) in
   let alignments = ref [] in
@@ -102,7 +99,6 @@ let filter_string str pred =
     alignments = Array.of_list (List.rev !alignments);
   }
 
-(** Map characters in a string *)
 let map_string str f =
   let buf = Buffer.create (String.length str) in
   let alignments = ref [] in
@@ -122,7 +118,6 @@ let map_string str f =
     alignments = Array.of_list (List.rev !alignments);
   }
 
-(** Apply Unicode normalization *)
 let apply_unicode_normalization form str =
   let normalized = Unicode.normalize form str in
   (* Simple alignment - can be improved *)
@@ -130,7 +125,8 @@ let apply_unicode_normalization form str =
   let alignments = Array.init len (fun i -> (i, i + 1)) in
   { normalized; original = str; alignments }
 
-(** BERT text cleaning *)
+(* ───── BERT Normalization ───── *)
+
 let do_clean_text ns =
   let ns' =
     filter_string ns.normalized (fun c ->
@@ -139,7 +135,6 @@ let do_clean_text ns =
   in
   map_string ns'.normalized (fun c -> if is_whitespace c then ' ' else c)
 
-(** Handle Chinese characters *)
 let do_handle_chinese_chars ns =
   let transformations = ref [] in
   String.iter
@@ -150,15 +145,12 @@ let do_handle_chinese_chars ns =
     ns.normalized;
   transform_string ns.original (List.rev !transformations)
 
-(** Strip accents *)
 let do_strip_accents ns =
   let ns = apply_unicode_normalization Unicode.NFD ns.normalized in
   filter_string ns.normalized (fun c -> not (is_combining_mark c))
 
-(** Lowercase *)
 let do_lowercase ns = map_string ns.normalized Char.lowercase_ascii
 
-(** Strip whitespace *)
 let strip_whitespace ns ~left ~right =
   let s = ns.normalized in
   let len = String.length s in
@@ -186,7 +178,6 @@ let strip_whitespace ns ~left ~right =
   let alignments = Array.sub ns.alignments start (stop - start) in
   { normalized; original = ns.original; alignments }
 
-(** Apply regex replacement *)
 let apply_replace ns ~pattern ~replacement =
   let regex = Str.regexp pattern in
   let normalized = Str.global_replace regex replacement ns.normalized in
@@ -197,7 +188,6 @@ let apply_replace ns ~pattern ~replacement =
   in
   { normalized; original = ns.original; alignments }
 
-(** Prepend string *)
 let prepend_string ns ~prepend =
   if String.length ns.normalized = 0 then ns
   else
@@ -214,7 +204,8 @@ let prepend_string ns ~prepend =
     in
     { normalized; original = ns.original; alignments }
 
-(** Byte-level encoding *)
+(* ───── Byte-Level Encoding ───── *)
+
 let bytes_char =
   let chars = ref [] in
   (* Add base characters *)
@@ -255,7 +246,8 @@ let apply_byte_level ns ~add_prefix_space ~use_regex:_ =
 
   transform_string ns.original (List.rev !transformations)
 
-(** Main normalization function *)
+(* ───── Normalization Implementation ───── *)
+
 let rec normalize_impl normalizer ns =
   match normalizer with
   | Bert { clean_text; handle_chinese_chars; strip_accents; lowercase } ->
@@ -359,7 +351,8 @@ and of_json = function
       | _ -> failwith "Invalid normalizer JSON")
   | _ -> failwith "Invalid normalizer JSON"
 
-(** Constructors *)
+(* ───── Constructors ───── *)
+
 let bert ?(clean_text = true) ?(handle_chinese_chars = true)
     ?(strip_accents = None) ?(lowercase = true) () =
   Bert { clean_text; handle_chinese_chars; strip_accents; lowercase }
@@ -379,7 +372,8 @@ let byte_level ?(add_prefix_space = false) ?(use_regex = false) () =
 
 let sequence normalizers = Sequence normalizers
 
-(** Operations *)
+(* ───── Operations ───── *)
+
 let normalize t str =
   let initial =
     {
@@ -394,7 +388,8 @@ let normalize_str t str =
   let ns = normalize t str in
   ns.normalized
 
-(** Serialization *)
+(* ───── Serialization ───── *)
+
 let rec to_json = function
   | Bert { clean_text; handle_chinese_chars; strip_accents; lowercase } ->
       `Assoc

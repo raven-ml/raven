@@ -7,7 +7,7 @@ open Alcotest
 open Test_rune_support
 module T = Rune
 
-(* ───── Test finite differences ───── *)
+(* ───── Test Finite Differences ───── *)
 
 let test_finite_diff_simple () =
   let x = T.scalar T.float32 2.0 in
@@ -50,7 +50,7 @@ let test_finite_diff_methods () =
   check_scalar ~eps:1e-2 "backward difference exp'(1)" exp_1
     (scalar_value grad_backward)
 
-(* ───── Test gradient checking ───── *)
+(* ───── Test Gradient Checking ───── *)
 
 let test_check_gradient_pass () =
   let x = T.create T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
@@ -159,7 +159,7 @@ let test_finite_diff_jacobian () =
   let expected_shape = [| 2; 2 |] in
   check (array int) "jacobian shape" expected_shape (T.shape jacobian)
 
-(* ───── Test suite ───── *)
+(* ───── Test Suite ───── *)
 
 let () =
   run "Gradient Checking"

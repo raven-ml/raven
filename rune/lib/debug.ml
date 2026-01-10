@@ -8,7 +8,8 @@ module T = Tensor
 
 type tensor_ref = Tensor_ref : ('a, 'b) T.t -> tensor_ref
 
-(* Debug context effects *)
+(* ───── Debug Context Effects ───── *)
+
 type _ Effect.t +=
   | E_push_debug_context : string -> unit Effect.t
   | E_pop_debug_context : unit Effect.t

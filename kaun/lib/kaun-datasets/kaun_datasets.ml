@@ -3,18 +3,16 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Ready-to-use datasets for machine learning *)
-
 (* Set up logging *)
 let src = Logs.Src.create "kaun.datasets" ~doc:"Kaun datasets module"
 
 module Log = (val Logs.src_log src : Logs.LOG)
 
-(** {1 Core Types} *)
+(* ───── Core Types ───── *)
 
 type ('elt, 'kind) tensor_dataset = ('elt, 'kind) Rune.t Kaun.Dataset.t
 
-(** {1 Vision Datasets} *)
+(* ───── Vision Datasets ───── *)
 
 let mnist ?(train = true) ?(flatten = false) ?(normalize = true)
     ?(data_format = `NCHW) ?cache_dir:_ () =
@@ -172,7 +170,7 @@ let fashion_mnist ?(train = true) ?(flatten = false) ?(normalize = true)
 
   Kaun.Dataset.from_tensors (x, y)
 
-(** {1 Text Datasets} *)
+(* ───── Text Datasets ───── *)
 
 let imdb ?(train = true) ?tokenizer ?(max_length = 512) ?cache_dir:_ () =
   (* TODO: Load actual IMDB data when available in nx-datasets *)
@@ -249,7 +247,7 @@ let wikitext ?(dataset_name = `Wikitext2) ?tokenizer ?(sequence_length = 1024)
 
   Kaun.Dataset.from_array windows
 
-(** {1 Structured Data} *)
+(* ───── Structured Data ───── *)
 
 let iris ?(normalize = true) ?(train_split = 0.8) ?shuffle_seed () =
   let _ = train_split in
@@ -312,7 +310,7 @@ let boston_housing ?(normalize = true) ?(train_split = 0.8) () =
 
   Kaun.Dataset.from_tensors (x, y)
 
-(** {1 Dataset Utilities} *)
+(* ───── Dataset Utilities ───── *)
 
 let download_and_extract ~url ~cache_dir ?(extract = true) () =
   (* Ensure directory exists *)

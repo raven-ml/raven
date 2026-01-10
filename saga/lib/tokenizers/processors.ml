@@ -3,8 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Post-processing module for tokenization output. *)
-
 type encoding = {
   ids : int array;
   type_ids : int array;
@@ -15,9 +13,7 @@ type encoding = {
   overflowing : encoding list;
   sequence_ranges : (int * int * int) list;
 }
-(** Type representing an encoding to be processed *)
 
-(** Main post-processor type *)
 type sequence_id = Sequence_a | Sequence_b
 
 type template_piece =
@@ -49,7 +45,8 @@ type t =
     }
   | Sequence of t list
 
-(** Helper functions *)
+(* ───── Helpers ───── *)
+
 let create_empty_encoding () =
   {
     ids = [||];
@@ -75,7 +72,8 @@ let add_token encoding token_str token_id type_id is_special =
     offsets = Array.append encoding.offsets [| (0, 0) |];
   }
 
-(** Process BERT encoding *)
+(* ───── Processor Implementations ───── *)
+
 let process_bert ~sep ~cls encodings ~add_special_tokens =
   if not add_special_tokens then encodings
   else
@@ -154,7 +152,6 @@ let process_bert ~sep ~cls encodings ~add_special_tokens =
         [ result ]
     | _ -> encodings (* More than 2 sequences not supported *)
 
-(** Process RoBERTa encoding *)
 let process_roberta ~sep ~cls ~pad:_ ~trim_offsets:_ ~add_prefix_space:_
     encodings ~add_special_tokens =
   if not add_special_tokens then encodings
@@ -237,7 +234,6 @@ let process_roberta ~sep ~cls ~pad:_ ~trim_offsets:_ ~add_prefix_space:_
         [ result ]
     | _ -> encodings
 
-(** Process byte-level encoding *)
 let process_byte_level ~trim_offsets encodings ~add_special_tokens:_ =
   if not trim_offsets then encodings
   else
@@ -528,7 +524,6 @@ let build_encoding_from_pieces pieces source_encodings special_lookup =
     sequence_ranges = [];
   }
 
-(** Process template encoding *)
 let process_template ~single ~pair ~special_tokens encodings ~add_special_tokens
     =
   if not add_special_tokens then encodings
@@ -556,7 +551,8 @@ let process_template ~single ~pair ~special_tokens encodings ~add_special_tokens
         [ encoding ]
     | _ -> encodings
 
-(** Main process function *)
+(* ───── Main Process Function ───── *)
+
 let rec process processor encodings ~add_special_tokens =
   match processor with
   | Bert { sep; cls } -> process_bert ~sep ~cls encodings ~add_special_tokens
@@ -573,7 +569,6 @@ let rec process processor encodings ~add_special_tokens =
         (fun encs proc -> process proc encs ~add_special_tokens)
         encodings processors
 
-(** Get number of added tokens *)
 let rec added_tokens processor ~is_pair =
   match processor with
   | Bert _ ->
@@ -605,7 +600,8 @@ let rec added_tokens processor ~is_pair =
         (fun acc proc -> acc + added_tokens proc ~is_pair)
         0 processors
 
-(** Constructors *)
+(* ───── Constructors ───── *)
+
 let bert ~sep ~cls () = Bert { sep; cls }
 
 let roberta ~sep ~cls ?(trim_offsets = true) ?(add_prefix_space = true) () =
@@ -643,7 +639,8 @@ let template ~single ?pair ?(special_tokens = []) () =
 
 let sequence processors = Sequence processors
 
-(** Serialization *)
+(* ───── Serialization ───── *)
+
 let rec to_json = function
   | Bert { sep = sep_str, sep_id; cls = cls_str, cls_id } ->
       `Assoc

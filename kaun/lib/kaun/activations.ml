@@ -5,7 +5,7 @@
 
 open Rune
 
-(* Standard Activations *)
+(* ───── Standard Activations ───── *)
 
 let relu = relu
 let relu6 = relu6
@@ -13,14 +13,14 @@ let sigmoid = sigmoid
 let tanh = tanh
 let softmax = softmax
 
-(* Modern Activations *)
+(* ───── Modern Activations ───── *)
 
 let gelu = gelu
 let silu = silu
 let swish = swish
 let mish = mish
 
-(* Parametric Activations *)
+(* ───── Parametric Activations ───── *)
 
 let leaky_relu = leaky_relu
 let elu = elu
@@ -45,7 +45,7 @@ let reglu ?out x gate =
   (* x * relu(gate) *)
   mul ?out x (relu gate)
 
-(* Other Activations *)
+(* ───── Other Activations ───── *)
 
 let softplus = softplus
 let softsign = softsign

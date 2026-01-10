@@ -16,7 +16,8 @@ let check_option_bool_array = Alcotest.(check (option (array bool)))
 let mask_of_column df name =
   match get_column_exn df name with Col.P (_, _, mask) -> mask | _ -> None
 
-(* Test column creation *)
+(* ───── Test Column Creation ───── *)
+
 let test_col_creation () =
   let df1 = create [ ("c", Col.float32 [| 1.0; 2.0; 3.0 |]) ] in
   check_int "float32 col rows" 3 (num_rows df1);
@@ -70,7 +71,8 @@ let test_fill_nulls_respects_mask () =
       check_bool "null filled" true (arr.(1) = 0l)
   | _ -> Alcotest.fail "expected int32 column"
 
-(* Test dataframe creation *)
+(* ───── Test Dataframe Creation ───── *)
+
 let test_df_creation () =
   let df =
     create
@@ -96,7 +98,8 @@ let test_df_empty () =
   check_int "empty cols" 0 cols;
   check_bool "is empty" true (is_empty df)
 
-(* Test column operations *)
+(* ───── Test Column Operations ───── *)
+
 let test_column_access () =
   let df =
     create
@@ -148,7 +151,8 @@ let test_select () =
   let df3 = select_loose df [ "a"; "missing"; "c" ] in
   Alcotest.(check (list string)) "loose select" [ "a"; "c" ] (column_names df3)
 
-(* Test row operations *)
+(* ───── Test Row Operations ───── *)
+
 let test_head_tail () =
   let df = create [ ("x", Col.int32_list [ 1l; 2l; 3l; 4l; 5l ]) ] in
 
@@ -238,7 +242,8 @@ let test_drop_duplicates () =
   let unique = drop_duplicates df in
   check_int "unique rows" 3 (num_rows unique)
 
-(* Test concatenation *)
+(* ───── Test Concatenation ───── *)
+
 let test_concat_rows () =
   let df1 = create [ ("x", Col.int32_list [ 1l; 2l ]) ] in
   let df2 = create [ ("x", Col.int32_list [ 3l; 4l ]) ] in
@@ -253,7 +258,8 @@ let test_concat_cols () =
   let combined = concat ~axis:`Columns [ df1; df2 ] in
   check_int "concat cols" 2 (num_columns combined)
 
-(* Test Row module *)
+(* ───── Test Row Module ───── *)
+
 let test_row_accessors () =
   let df =
     create
@@ -292,7 +298,8 @@ let test_row_map () =
   | Some arr -> check_bool "mapped values" true (arr = [| 2l; 4l; 6l |])
   | None -> Alcotest.fail "doubled column should exist"
 
-(* Test sorting *)
+(* ───── Test Sorting ───── *)
+
 let test_sort () =
   let df =
     create
@@ -319,7 +326,8 @@ let test_group_by () =
   let groups = group_by_column df "key" in
   check_int "group count" 2 (List.length groups)
 
-(* Test aggregations *)
+(* ───── Test Aggregations ───── *)
+
 let test_agg_float () =
   let df = create [ ("x", Col.float32_list [ 1.0; 2.0; 3.0; 4.0 ]) ] in
 
@@ -374,7 +382,8 @@ let test_agg_nulls () =
   check_bool "non-null" false nulls.(0);
   check_int "count non-null" 2 (Agg.count df "x")
 
-(* Test type conversions *)
+(* ───── Test Type Conversions ───── *)
+
 let test_to_arrays () =
   let df =
     create
@@ -426,7 +435,8 @@ let test_from_nx () =
   check_int "from_nx cols" 3 (num_columns df);
   check_bool "from_nx not empty" false (is_empty df)
 
-(* Test edge cases *)
+(* ───── Test Edge Cases ───── *)
+
 let test_empty_operations () =
   let df = empty in
 
@@ -456,7 +466,8 @@ let test_cast_column () =
   | Some arr -> check_bool "cast to float32" true (Array.length arr = 3)
   | None -> Alcotest.fail "should be able to extract as float32 after cast"
 
-(* Test suites *)
+(* ───── Test Suites ───── *)
+
 let col_tests =
   [
     ("creation", `Quick, test_col_creation);
@@ -678,7 +689,8 @@ let edge_tests =
     ("single_row", `Quick, test_single_row);
   ]
 
-(* Test wide operations with mapHomo *)
+(* ───── Test Wide Operations with mapHomo ───── *)
+
 let test_map_list_product () =
   (* Create a dataframe with 6 int32 columns *)
   let df =
@@ -872,7 +884,8 @@ let wide_tests =
     ("sequence/all equivalence", `Quick, test_sequence_all_equivalence);
   ]
 
-(* Test ergonomic APIs *)
+(* ───── Test Ergonomic APIs ───── *)
+
 let test_with_columns () =
   let df =
     create

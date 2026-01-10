@@ -3,8 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Implementation of efficient dataset handling *)
-
 (* Exception types for dataset errors *)
 exception Dataset_error of string
 exception File_not_found of string
@@ -14,8 +12,8 @@ type cardinality = Finite of int | Unknown | Infinite
 
 type element_spec =
   | Unknown
-  | Scalar of string  (** e.g., "string" or "int" *)
-  | Tensor of int array * string  (** shape * dtype *)
+  | Scalar of string
+  | Tensor of int array * string
   | Tuple of element_spec list
   | Array of element_spec
 
@@ -120,7 +118,7 @@ let read_mmap_chunk handle ~offset ~length =
     done;
     Bytes.unsafe_to_string bytes
 
-(** {1 Dataset Creation} *)
+(* ───── Dataset Creation ───── *)
 
 let from_array arr =
   let idx = ref 0 in
@@ -241,7 +239,7 @@ let from_tensors (x, y) =
           [ Tensor (x_slice_shape, x_dtype); Tensor (y_slice_shape, y_dtype) ]);
   }
 
-(* Text Data Sources *)
+(* ───── Text Data Sources ───── *)
 let from_text_file ?(encoding = `UTF8) ?(chunk_size = 65536) path =
   let decoder_encoding, preprocess_chunk =
     match encoding with
@@ -615,7 +613,7 @@ let sliding_window ~block_size ~tokenize texts =
   let y = Rune.create Rune.float32 [| total |] y_idx in
   from_tensors (x, y)
 
-(** {1 Transformations} *)
+(* ───── Transformations ───── *)
 
 let map ?spec f dataset =
   let spec_fn =
@@ -747,7 +745,7 @@ let interleave datasets =
     spec = (fun () -> Unknown);
   }
 
-(* Text Processing *)
+(* ───── Text Processing ───── *)
 
 let enumerate dataset =
   let counter = ref 0 in
@@ -814,7 +812,7 @@ let normalize ?lowercase ?remove_punctuation ?collapse_whitespace text_dataset =
       text)
     text_dataset
 
-(* Batching *)
+(* ───── Batching ───── *)
 
 (* Internal helper for generic batching *)
 let batch_generic ?(drop_remainder = false) size dataset =
@@ -968,7 +966,7 @@ let bucket_by_length ?boundaries ?batch_sizes ?(drop_remainder = false)
     spec = (fun () -> Array Unknown);
   }
 
-(* Iteration Control *)
+(* ───── Iteration Control ───── *)
 
 let take n dataset =
   if n < 0 then
@@ -1123,7 +1121,7 @@ let window ?(shift = -1) ?(stride = 1) ?(drop_remainder = false) size dataset =
     spec = (fun () -> Array (dataset.spec ()));
   }
 
-(* Shuffling and Sampling *)
+(* ───── Shuffling And Sampling ───── *)
 
 let shuffle ?rng ?(buffer_size = 10000) dataset =
   if buffer_size <= 0 then
@@ -1357,7 +1355,7 @@ let weighted_sample ?rng ~weights n dataset =
     spec = dataset.spec;
   }
 
-(* Caching and Prefetching *)
+(* ───── Caching And Prefetching ───── *)
 
 let rec cache ?directory dataset =
   match directory with
@@ -1541,7 +1539,7 @@ let prefetch ?(buffer_size = 2) dataset =
 
   { next; cardinality = dataset.cardinality; reset; spec = dataset.spec }
 
-(* Parallel Processing *)
+(* ───── Parallel Processing ───── *)
 
 let parallel_map ?pool ?num_workers f dataset =
   let default_workers =
@@ -1865,7 +1863,7 @@ let parallel_interleave ?num_workers ?block_length f dataset =
     spec = (fun () -> Unknown);
   }
 
-(** {1 Iteration} *)
+(* ───── Iteration ───── *)
 
 let iter f dataset =
   let continue = ref true in
@@ -1892,16 +1890,16 @@ let to_seq dataset =
 let to_list dataset = List.rev (fold (fun acc x -> x :: acc) [] dataset)
 let to_array dataset = Array.of_list (to_list dataset)
 
-(** {1 Dataset Information} *)
+(* ───── Dataset Information ───── *)
 
 let cardinality dataset = dataset.cardinality ()
 let element_spec dataset = dataset.spec ()
 
-(** {1 Dataset Control} *)
+(* ───── Dataset Control ───── *)
 
 let reset dataset = match dataset.reset with Some f -> f () | None -> ()
 
-(** {1 Common Pipelines} *)
+(* ───── Common Pipelines ───── *)
 
 let text_classification_pipeline ?tokenizer ?max_length ?(batch_size = 32)
     ?(shuffle_buffer = 10000) ?num_workers text_dataset =

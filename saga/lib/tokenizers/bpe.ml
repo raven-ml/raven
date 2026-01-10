@@ -3,7 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Byte Pair Encoding implementation *)
 module IntPair = struct
   type t = int * int
 

@@ -5,7 +5,7 @@
 
 open Fehu
 
-(** Core Sokoban game types *)
+(* Core Sokoban game types *)
 module Core = struct
   type cell =
     | Empty
@@ -147,7 +147,7 @@ module Core = struct
     done;
     Stdlib.Buffer.contents buffer
 
-  (** Deadlock detection for unsolvable states *)
+  (* Deadlock detection for unsolvable states *)
 
   let is_corner pos state =
     let x, y = pos in
@@ -301,7 +301,7 @@ module Core = struct
     num_boxes = num_targets && num_boxes > 0 && not (has_deadlock state)
 end
 
-(** Level generation module *)
+(* Level generation module *)
 module Level_gen = struct
   open Core
 
@@ -323,7 +323,7 @@ module Level_gen = struct
       state.grid.(y).(state.width - 1) <- Wall
     done
 
-  (** Shuffle a list using Fisher-Yates *)
+  (* Shuffle a list using Fisher-Yates *)
   let shuffle lst =
     let arr = Array.of_list lst in
     for i = Array.length arr - 1 downto 1 do
@@ -596,7 +596,7 @@ module Level_gen = struct
     { grid = layout; player_pos = (3, 3); width = 7; height = 7 }
 end
 
-(** Curriculum learning module *)
+(* Curriculum learning module *)
 module Curriculum = struct
   type stage = Corridor of int | Room of int | Multi_box of int | Complex
 
@@ -794,7 +794,7 @@ let observation_space =
 
 let action_space = Space.Discrete.create 4
 
-(** Create observation tensor from game state with padding *)
+(* Create observation tensor from game state with padding *)
 let make_observation game_state =
   let g = max_grid_size in
   let data = Array.make observation_flat_size 0.0 in
@@ -882,7 +882,7 @@ let has_any_move state =
   let mask = action_mask state in
   mask.(0) || mask.(1) || mask.(2) || mask.(3)
 
-(** Convert action tensor to direction *)
+(* Convert action tensor to direction *)
 let action_to_direction action =
   let action_val =
     let tensor = Rune.reshape [| 1 |] action in
@@ -895,7 +895,7 @@ let action_to_direction action =
   | 2 -> Core.Left
   | _ -> Core.Right
 
-(** Get stage info string for curriculum *)
+(* Get stage info string for curriculum *)
 let stage_info curriculum_config =
   match curriculum_config with
   | Some config ->

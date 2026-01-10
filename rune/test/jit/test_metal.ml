@@ -7,7 +7,7 @@ open Alcotest
 open Rune_jit
 open Support
 
-(* ───── helpers ───── *)
+(* ───── Helpers ───── *)
 
 let device_info = Rune_jit_metal.Device_info.get_default ()
 
@@ -38,7 +38,7 @@ let read_file path =
     ~finally:(fun () -> close_in ic)
     (fun () -> really_input_string ic (in_channel_length ic))
 
-(* ───── golden-source cases ───── *)
+(* ───── Golden-source Cases ───── *)
 
 type golden_case = { name : string; graph : Ir.graph_t; golden : string }
 
@@ -66,7 +66,7 @@ let test_golden { name; graph; golden } () =
   let exp = read_file golden in
   check string_t (name ^ " golden") exp got
 
-(* ───── sanity test ───── *)
+(* ───── Sanity Test ───── *)
 
 let count_occ sub s =
   let len_sub = String.length sub and len_s = String.length s in
@@ -87,7 +87,7 @@ let test_sanity () =
   let src = make_metal_source g in
   check int "three buffer params" 3 (count_occ "device float* v" src)
 
-(* ───── end-to-end execution ───── *)
+(* ───── End-to-end Execution ───── *)
 
 let bigarray_float32 ?(eps = 1e-3) () =
   let open Bigarray in
@@ -183,7 +183,7 @@ let test_e2e_add () =
   in
   check (bigarray_float32 ()) "result" expected ba_res
 
-(* ───── test suite ───── *)
+(* ───── Test Suite ───── *)
 
 let () =
   Alcotest.run "Metal backend"

@@ -5,7 +5,7 @@
 
 open Rune
 
-(* Configuration *)
+(* ───── Configuration ───── *)
 
 type config = {
   vocab_size : int;
@@ -439,7 +439,7 @@ let pooler ~hidden_size () =
         tanh pooled);
   }
 
-(* Main Model *)
+(* ───── Main Model ───── *)
 
 type 'a bert = {
   model : Kaun.Layer.module_;
@@ -1386,7 +1386,7 @@ let parse_bert_config json =
     classifier_dropout = None;
   }
 
-(* Utilities *)
+(* ───── Utilities ───── *)
 
 let create_attention_mask (type a) ~(input_ids : (int32, int32_elt) Rune.t)
     ~pad_token_id ~(dtype : (float, a) dtype) : (float, a) Rune.t =
@@ -1417,7 +1417,8 @@ let parameter_stats params =
   Printf.sprintf "BERT parameters: %d (%.2f MB)" total_params
     (float_of_int total_bytes /. 1024. /. 1024.)
 
-(* Common BERT model configurations *)
+(* ───── Common BERT Model Configurations ───── *)
+
 let load_bert_base_uncased ~dtype () =
   from_pretrained ~model_id:"bert-base-uncased" ~dtype ()
 

@@ -3,8 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Check Kaun's BERT output against HuggingFace reference values. *)
-
 module Bert = Kaun_models.Bert
 open Rune
 

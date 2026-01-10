@@ -3,8 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Benchmarks for dense matrix multiplication on the Nx backend. *)
-
 let backend_name = "Nx"
 
 type matmul_case = { name : string; m : int; k : int; n : int; seed : int }

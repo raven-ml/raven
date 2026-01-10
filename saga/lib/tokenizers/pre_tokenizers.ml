@@ -3,8 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Pre-tokenizers implementation *)
-
 type t = string -> (string * (int * int)) list
 
 let utf8_next s pos =
@@ -52,7 +50,7 @@ let is_punctuation code =
 
 let is_whitespace code = Uucp.White.is_white_space (Uchar.of_int code)
 
-(** Pre-computed byte ↔ unicode mappings for byte-level encode/decode. *)
+(* Pre-computed byte ↔ unicode mappings for byte-level encode/decode *)
 let byte_to_unicode, unicode_to_byte =
   let is_direct = Array.make 256 false in
   for i = 33 to 126 do
@@ -85,7 +83,6 @@ let byte_to_unicode, unicode_to_byte =
   done;
   (byte_to_unicode, unicode_to_byte)
 
-(** Apply ByteLevel encoding to text *)
 let byte_level_encode text =
   let result = Buffer.create (String.length text * 2) in
   let i = ref 0 in
@@ -97,7 +94,6 @@ let byte_level_encode text =
   done;
   Buffer.contents result
 
-(** Decode ByteLevel encoded text back to original bytes *)
 let byte_level_decode text =
   (* Convert text to list of unicode codepoints *)
   let result = Buffer.create (String.length text) in
@@ -118,7 +114,6 @@ let byte_level_decode text =
   done;
   Buffer.contents result
 
-(** GPT-2 pattern splitting that matches Python tokenizers exactly *)
 let split_gpt2_pattern text =
   let len = String.length text in
   if len = 0 then []
@@ -263,7 +258,8 @@ let split_gpt2_pattern text =
     match_at_pos ();
     List.rev !tokens
 
-(** Whitespace split *)
+(* ───── Pre-Tokenizers ───── *)
+
 let whitespace_split () text =
   let pieces = ref [] in
   let current = Buffer.create 16 in
@@ -291,7 +287,6 @@ let whitespace_split () text =
   flush_current ();
   List.rev !pieces
 
-(** Whitespace tokenizer with pattern \w+|[^\w\s]+ *)
 let whitespace () text =
   let pieces = ref [] in
   let current = Buffer.create 16 in
@@ -342,7 +337,6 @@ let whitespace () text =
   flush_current ();
   List.rev !pieces
 
-(** ByteLevel pre-tokenizer *)
 let byte_level ?(add_prefix_space = true) ?(use_regex = true)
     ?(trim_offsets = true) () text =
   let _ = trim_offsets in
@@ -393,7 +387,6 @@ let byte_level ?(add_prefix_space = true) ?(use_regex = true)
     (fun (piece, offsets) -> (byte_level_encode piece, offsets))
     pieces_with_offsets
 
-(** BERT pre-tokenizer *)
 let bert () text =
   let pieces = ref [] in
   let current = Buffer.create 16 in
@@ -432,7 +425,6 @@ type behavior =
   | `Merged_with_next
   | `Contiguous ]
 
-(** Punctuation splitter *)
 let punctuation ?(behavior = `Isolated) () text =
   let pieces = ref [] in
   let current = Buffer.create 16 in
@@ -486,7 +478,6 @@ let punctuation ?(behavior = `Isolated) () text =
   flush_current ();
   List.rev !pieces
 
-(** Split on pattern *)
 let split ~pattern ?(behavior = `Removed) ?(invert = false) () text =
   let plen = String.length pattern in
   if plen = 0 then [ (text, (0, String.length text)) ]
@@ -541,12 +532,10 @@ let split ~pattern ?(behavior = `Removed) ?(invert = false) () text =
     flush_current ();
     List.rev !pieces
 
-(** Character delimiter split *)
 let char_delimiter_split ~delimiter () text =
   let delim = delimiter in
   split ~pattern:(String.make 1 delim) ~behavior:`Removed ~invert:false () text
 
-(** Digits splitter *)
 let digits ?(individual_digits = false) () text =
   let pieces = ref [] in
   let current = Buffer.create 16 in
@@ -585,7 +574,6 @@ let digits ?(individual_digits = false) () text =
   List.rev !pieces
 
 type prepend_scheme = [ `First | `Never | `Always ]
-(** Metaspace pre-tokenizer *)
 
 let metaspace ?(replacement = '_') ?(prepend_scheme = `Always) ?(split = true)
     () text =
@@ -642,7 +630,6 @@ let metaspace ?(replacement = '_') ?(prepend_scheme = `Always) ?(split = true)
     List.rev !splits)
   else [ (transformed, (0, String.length text)) ]
 
-(** Sequence of pre-tokenizers *)
 let sequence tokenizers text =
   let initial = [ (text, (0, String.length text)) ] in
   List.fold_left
@@ -657,7 +644,6 @@ let sequence tokenizers text =
         pieces)
     initial tokenizers
 
-(** FixedLength pre-tokenizer *)
 let fixed_length ~length text =
   if length = 0 then []
   else
@@ -679,7 +665,6 @@ let fixed_length ~length text =
       List.rev !pieces
 
 type script = [ `Any | Uucp.Script.t ]
-(** UnicodeScripts pre-tokenizer *)
 
 let get_script code = Uucp.Script.script (Uchar.of_int code)
 
@@ -720,7 +705,6 @@ let unicode_scripts () text =
   flush_current ();
   List.rev !pieces
 
-(** Pre-tokenize a string using the given pre-tokenizer *)
 let pre_tokenize_str pre_tokenizer text =
   (* Pre_tokenizers.t is already a function from string to (string * (int *
      int)) list *)

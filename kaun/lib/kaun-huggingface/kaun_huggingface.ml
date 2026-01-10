@@ -5,9 +5,7 @@
 
 open Rune
 
-(** Implementation of HuggingFace model hub integration for Kaun *)
-
-(* Types *)
+(* ───── Types ───── *)
 
 type model_id = string
 type revision = Latest | Tag of string | Commit of string
@@ -21,7 +19,7 @@ type download_progress = {
 
 type 'a download_result = Cached of 'a | Downloaded of 'a * download_progress
 
-(* Configuration *)
+(* ───── Configuration ───── *)
 
 module Config = struct
   type t = {
@@ -64,7 +62,7 @@ module Config = struct
     }
 end
 
-(* Model Registry *)
+(* ───── Model Registry ───── *)
 
 module Registry = struct
   type ('params, 'a, 'dev) model_spec = {
@@ -82,7 +80,7 @@ module Registry = struct
     try Some (Obj.obj (Hashtbl.find registry name)) with Not_found -> None
 end
 
-(* Utilities *)
+(* ───── Utilities ───── *)
 
 let ensure_dir dir =
   let rec mkdir_p path =
@@ -113,7 +111,7 @@ let cache_path config ~model_id ~filename ~revision =
   Filename.concat config.Config.cache_dir
     (Filename.concat model_dir (Filename.concat revision_str filename))
 
-(* Core Loading Functions *)
+(* ───── Core Loading Functions ───── *)
 
 let download_with_progress ~url ~dest ~show_progress =
   ensure_dir (Filename.dirname dest);
@@ -376,7 +374,7 @@ let load_config ?(config = Config.default) ?(revision = Latest) ~model_id () =
   | Cached _ -> Cached json
   | Downloaded (_, progress) -> Downloaded (json, progress)
 
-(* High-level Model Loading *)
+(* ───── High-level Model Loading ───── *)
 
 let from_pretrained ?(config = Config.default) ?(revision = Latest) ~model_id ()
     =
@@ -385,7 +383,7 @@ let from_pretrained ?(config = Config.default) ?(revision = Latest) ~model_id ()
   | Cached params -> params
   | Downloaded (params, _) -> params
 
-(* Utilities *)
+(* ───── Utilities ───── *)
 
 let list_cached_models ?(config = Config.default) () =
   if not (Sys.file_exists config.cache_dir) then []
