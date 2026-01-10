@@ -66,7 +66,7 @@
   "A collection of common datasets for machine learning tasks, including image classification, regression, and more. This package provides easy access to popular datasets in a format compatible with Nx.")
  (depends
   (ocaml
-   (>= 5.3.0))
+   (>= 5.2.0))
   dune
   ocurl
   csv
@@ -84,7 +84,7 @@
   "Text processing library that extends Nx with natural language processing capabilities. Provides tokenization, encoding, and text manipulation functionality compatible with the Nx tensor library.")
  (depends
   (ocaml
-   (>= 5.3.0))
+   (>= 5.2.0))
   dune
   (nx
    (= :version))
@@ -104,7 +104,7 @@
   "Talon provides efficient tabular data manipulation with heterogeneous column types, inspired by pandas and polars.")
  (depends
   (ocaml
-   (>= 5.3.0))
+   (>= 5.2.0))
   dune
   (nx
    (= :version))
@@ -123,7 +123,7 @@
   "Rune provides automatic differentiation capabilities and experimental JIT compilation for the Raven ecosystem. It enables gradient-based optimization and supports functional transformations like grad, value_and_grad, and vmap, making it the foundation for deep learning in OCaml.")
  (depends
   (ocaml
-   (>= 5.3.0))
+   (>= 5.2.0))
   dune
   (dune-configurator :build)
   (conf-llvm-static
@@ -152,7 +152,7 @@
   "Kaun brings modern deep learning to OCaml with a flexible, type-safe API for building and training neural networks. It leverages Rune for automatic differentiation and computation graph optimization while maintaining OCaml's functional programming advantages.")
  (depends
   (ocaml
-   (>= 5.3.0))
+   (>= 5.2.0))
   dune
   logs
   (yojson
@@ -176,7 +176,7 @@
   "Computer vision operations and algorithms built on top of the Rune library. Provides image processing, feature extraction, and other vision-related functionality.")
  (depends
   (ocaml
-   (>= 5.3.0))
+   (>= 5.2.0))
   dune
   (rune
    (= :version))
@@ -191,7 +191,7 @@
   "Fehu is a reinforcement learning framework built on Raven's ecosystem, providing environments, algorithms, and training utilities")
  (depends
   (ocaml
-   (>= 5.3.0))
+   (>= 5.2.0))
   dune
   (rune
    (= :version))
@@ -213,7 +213,7 @@
   (lib toplevel_libs))
  (depends
   (ocaml
-   (>= 5.3.0))
+   (>= 5.2.0))
   dune
   (dune-site
    (>= 3.19.0))
@@ -253,7 +253,7 @@
   "Hugin is a powerful visualization library for OCaml that produces publication-quality plots and charts. It integrates with the Raven ecosystem to provide visualization of Nx data.")
  (depends
   (ocaml
-   (>= 5.3.0))
+   (>= 5.2.0))
   dune
   (dune-configurator :build)
   conf-sdl2

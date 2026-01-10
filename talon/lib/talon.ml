@@ -3,6 +3,14 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let list_take n l =
+  let[@tail_mod_cons] rec aux n l =
+    match n, l with
+    | 0, _ | _, [] -> []
+    | n, x :: l -> x :: aux (n - 1) l
+  in
+  if n <= 0 then [] else aux n l
+
 module Col = struct
   type t =
     | P : ('a, 'b) Nx.dtype * ('a, 'b) Nx.t * bool array option -> t
@@ -3556,7 +3564,7 @@ let print ?max_rows ?max_cols t =
   let rows_to_show = min max_rows n_rows in
   let cols_to_show = min max_cols n_cols in
   let names = column_names t in
-  let names_to_show = List.take cols_to_show names in
+  let names_to_show = list_take cols_to_show names in
   Printf.printf "Shape: (%d, %d)\n" n_rows n_cols;
   Printf.printf "%s\n" (String.concat "\t" names_to_show);
   for i = 0 to rows_to_show - 1 do
