@@ -347,6 +347,22 @@ GEN_ALL_STANDARD_TO_LP_CASTS(bf16, caml_ba_bfloat16, float_to_bfloat16)
 GEN_ALL_STANDARD_TO_LP_CASTS(f8e4m3, caml_ba_fp8_e4m3, float_to_fp8_e4m3)
 GEN_ALL_STANDARD_TO_LP_CASTS(f8e5m2, caml_ba_fp8_e5m2, float_to_fp8_e5m2)
 
+// Bool to low prec
+#define GEN_CAST_BOOL_TO_LP(dst_suffix, dst_t, FROM_FLOAT)            \
+  static void nx_c_cast_bool_to_##dst_suffix##_kernel(                \
+      void *src_data, void *dst_data, long src_off, long dst_off) {   \
+    uint8_t *src = (uint8_t *)src_data;                               \
+    dst_t *dst = (dst_t *)dst_data;                                   \
+    float temp = (src[src_off] != 0) ? 1.0f : 0.0f;                   \
+    dst[dst_off] = FROM_FLOAT(temp);                                  \
+  }                                                                   \
+  CAST_IMPL(bool, dst_suffix)
+
+GEN_CAST_BOOL_TO_LP(f16, uint16_t, float_to_half)
+GEN_CAST_BOOL_TO_LP(bf16, caml_ba_bfloat16, float_to_bfloat16)
+GEN_CAST_BOOL_TO_LP(f8e4m3, caml_ba_fp8_e4m3, float_to_fp8_e4m3)
+GEN_CAST_BOOL_TO_LP(f8e5m2, caml_ba_fp8_e5m2, float_to_fp8_e5m2)
+
 // Generate cast for low prec to bool
 
 #define GEN_CAST_LP_TO_BOOL(src_suffix, src_t, TO_FLOAT)            \
@@ -1315,17 +1331,17 @@ static const cast_op_t cast_table[NX_NUM_DTYPES][NX_NUM_DTYPES] =
                 [NX_DTYPE_U32] = nx_c_cast_bool_to_u32,
                 [NX_DTYPE_U64] = nx_c_cast_bool_to_u64,
                 [NX_DTYPE_INAT] = nx_c_cast_bool_to_inat,
-                [NX_DTYPE_F16] = NULL,
+                [NX_DTYPE_F16] = nx_c_cast_bool_to_f16,
                 [NX_DTYPE_F32] = nx_c_cast_bool_to_f32,
                 [NX_DTYPE_F64] = nx_c_cast_bool_to_f64,
                 [NX_DTYPE_C32] = nx_c_cast_bool_to_c32,
                 [NX_DTYPE_C64] = nx_c_cast_bool_to_c64,
-                [NX_DTYPE_BF16] = NULL,
+                [NX_DTYPE_BF16] = nx_c_cast_bool_to_bf16,
                 [NX_DTYPE_BOOL] = nx_c_cast_bool_to_bool,
                 [NX_DTYPE_I4] = nx_c_cast_bool_to_i4,
                 [NX_DTYPE_U4] = nx_c_cast_bool_to_u4,
-                [NX_DTYPE_F8E4M3] = NULL,
-                [NX_DTYPE_F8E5M2] = NULL,
+                [NX_DTYPE_F8E4M3] = nx_c_cast_bool_to_f8e4m3,
+                [NX_DTYPE_F8E5M2] = nx_c_cast_bool_to_f8e5m2,
             },
         [NX_DTYPE_I4] =
             {

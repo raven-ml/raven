@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 
 ### Nx
 
+- Add missing bool→low-precision cast support (f16/bf16/fp8) in the C backend. (@tmattio)
 - Add UInt32/UInt64 dtypes, rename complex dtypes to Complex64/Complex128, and drop Complex16/QInt8/QUInt8/Int/NativeInt as tensor element dtypes. (@tmattio)
 - Move the `Rng` module from Rune into Nx. All random number generation functions (`rand`, `randn`, `randint`, etc.) now require an explicit `~key:Rng.key` parameter for reproducibility and stateless RNG. Use `Rng.key seed` to create a key and `Rng.split` to derive independent subkeys. (@tmattio)
 - Add instrumentation support with `Nx_core.Instrumentation` module for tracing and profiling Nx operations. All frontend functions now emit spans via configurable hooks. (@tmattio)
