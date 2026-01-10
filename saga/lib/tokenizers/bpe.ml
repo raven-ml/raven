@@ -3,6 +3,13 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+let list_drop n l =
+  let rec aux i = function
+    | _ :: l when i < n -> aux (i + 1) l
+    | rest -> rest
+  in
+  if n <= 0 then l else aux 0 l
+
 module IntPair = struct
   type t = int * int
 
@@ -599,7 +606,7 @@ let train ~min_frequency ~vocab_size ~show_progress ~special_tokens
     | Some limit -> max 0 (List.length kept - limit)
     | None -> 0
   in
-  let kept = List.drop to_remove kept in
+  let kept = list_drop to_remove kept in
   let kept = List.sort (fun (k1, _) (k2, _) -> compare k1 k2) kept in
   List.iter
     (fun (c, _) ->
