@@ -175,7 +175,7 @@ module Genarray = struct
         | Some k -> Stdlib.Bigarray.Genarray.create k layout dims
         | None -> failwith "Internal error: unhandled kind")
 
-  (* Override kind to return Bigarray_ext.kind *)
+  (* Override kind to return Nx_buffer.kind *)
   let kind : type a b c. (a, b, c) t -> (a, b) kind = nx_ba_kind
 
   (* Shadow get to handle extended types *)
@@ -290,7 +290,7 @@ module Array1 = struct
    fun kind layout dim ->
     array1_of_genarray (Genarray.create kind layout [| dim |])
 
-  (* Override kind to return Bigarray_ext.kind *)
+  (* Override kind to return Nx_buffer.kind *)
   let kind : type a b c. (a, b, c) t -> (a, b) kind =
    fun arr -> Genarray.kind (genarray_of_array1 arr)
 
@@ -352,7 +352,7 @@ module Array2 = struct
    fun kind layout dim1 dim2 ->
     array2_of_genarray (Genarray.create kind layout [| dim1; dim2 |])
 
-  (* Override kind to return Bigarray_ext.kind *)
+  (* Override kind to return Nx_buffer.kind *)
   let kind : type a b c. (a, b, c) t -> (a, b) kind =
    fun arr -> Genarray.kind (genarray_of_array2 arr)
 
@@ -401,7 +401,7 @@ module Array2 = struct
     for i = 0 to dim1 - 1 do
       let row = data.(i) in
       if Array.length row <> dim2 then
-        invalid_arg "Bigarray_ext.Array2.of_array: non-rectangular data";
+        invalid_arg "Nx_buffer.Array2.of_array: non-rectangular data";
       for j = 0 to dim2 - 1 do
         unsafe_set ba (i + ofs) (j + ofs) row.(j)
       done
@@ -425,7 +425,7 @@ module Array3 = struct
    fun kind layout dim1 dim2 dim3 ->
     array3_of_genarray (Genarray.create kind layout [| dim1; dim2; dim3 |])
 
-  (* Override kind to return Bigarray_ext.kind *)
+  (* Override kind to return Nx_buffer.kind *)
   let kind : type a b c. (a, b, c) t -> (a, b) kind =
    fun arr -> Genarray.kind (genarray_of_array3 arr)
 
@@ -479,11 +479,11 @@ module Array3 = struct
     for i = 0 to dim1 - 1 do
       let row = data.(i) in
       if Array.length row <> dim2 then
-        invalid_arg "Bigarray_ext.Array3.of_array: non-cubic data";
+        invalid_arg "Nx_buffer.Array3.of_array: non-cubic data";
       for j = 0 to dim2 - 1 do
         let col = row.(j) in
         if Array.length col <> dim3 then
-          invalid_arg "Bigarray_ext.Array3.of_array: non-cubic data";
+          invalid_arg "Nx_buffer.Array3.of_array: non-cubic data";
         for k = 0 to dim3 - 1 do
           unsafe_set ba (i + ofs) (j + ofs) (k + ofs) col.(k)
         done

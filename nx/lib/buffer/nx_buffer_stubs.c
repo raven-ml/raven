@@ -1,4 +1,4 @@
-#include "bigarray_ext_stubs.h"
+#include "nx_buffer_stubs.h"
 #include <caml/fail.h>
 #include <stdlib.h>
 #include <string.h>

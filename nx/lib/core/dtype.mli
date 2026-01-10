@@ -2,27 +2,27 @@
 
 (** {2 Element Types} *)
 
-type float16_elt = Bigarray_ext.float16_elt
-type float32_elt = Bigarray_ext.float32_elt
-type float64_elt = Bigarray_ext.float64_elt
-type int8_elt = Bigarray_ext.int8_signed_elt
-type uint8_elt = Bigarray_ext.int8_unsigned_elt
-type int16_elt = Bigarray_ext.int16_signed_elt
-type uint16_elt = Bigarray_ext.int16_unsigned_elt
-type int32_elt = Bigarray_ext.int32_elt
-type int64_elt = Bigarray_ext.int64_elt
-type complex32_elt = Bigarray_ext.complex32_elt
-type complex64_elt = Bigarray_ext.complex64_elt
+type float16_elt = Nx_buffer.float16_elt
+type float32_elt = Nx_buffer.float32_elt
+type float64_elt = Nx_buffer.float64_elt
+type int8_elt = Nx_buffer.int8_signed_elt
+type uint8_elt = Nx_buffer.int8_unsigned_elt
+type int16_elt = Nx_buffer.int16_signed_elt
+type uint16_elt = Nx_buffer.int16_unsigned_elt
+type int32_elt = Nx_buffer.int32_elt
+type int64_elt = Nx_buffer.int64_elt
+type complex32_elt = Nx_buffer.complex32_elt
+type complex64_elt = Nx_buffer.complex64_elt
 
-(* Extended types from Bigarray_ext *)
-type uint32_elt = Bigarray_ext.uint32_elt
-type uint64_elt = Bigarray_ext.uint64_elt
-type bfloat16_elt = Bigarray_ext.bfloat16_elt
-type bool_elt = Bigarray_ext.bool_elt
-type int4_elt = Bigarray_ext.int4_signed_elt
-type uint4_elt = Bigarray_ext.int4_unsigned_elt
-type float8_e4m3_elt = Bigarray_ext.float8_e4m3_elt
-type float8_e5m2_elt = Bigarray_ext.float8_e5m2_elt
+(* Extended types from Nx_buffer *)
+type uint32_elt = Nx_buffer.uint32_elt
+type uint64_elt = Nx_buffer.uint64_elt
+type bfloat16_elt = Nx_buffer.bfloat16_elt
+type bool_elt = Nx_buffer.bool_elt
+type int4_elt = Nx_buffer.int4_signed_elt
+type uint4_elt = Nx_buffer.int4_unsigned_elt
+type float8_e4m3_elt = Nx_buffer.float8_e4m3_elt
+type float8_e5m2_elt = Nx_buffer.float8_e5m2_elt
 
 (** {2 Data Type} *)
 
@@ -124,9 +124,8 @@ val max_value : ('a, 'b) t -> 'a
 val of_float : ('a, 'b) t -> float -> 'a
 (** [of_float dtype f] converts float to dtype value. *)
 
-val of_bigarray_ext_kind : ('a, 'b) Bigarray_ext.kind -> ('a, 'b) t
-(** [of_bigarray_ext_kind kind] returns corresponding dtype from Bigarray_ext
-    kind. *)
+val of_buffer_kind : ('a, 'b) Nx_buffer.kind -> ('a, 'b) t
+(** [of_buffer_kind kind] returns corresponding dtype from Nx_buffer kind. *)
 
 val to_bigarray_kind : ('a, 'b) t -> ('a, 'b) Bigarray.kind
 (** [to_bigarray_kind dtype] returns corresponding standard Bigarray kind.
@@ -134,9 +133,9 @@ val to_bigarray_kind : ('a, 'b) t -> ('a, 'b) Bigarray.kind
     @raise Failure
       if dtype is an extended type not supported by standard Bigarray *)
 
-val to_bigarray_ext_kind : ('a, 'b) t -> ('a, 'b) Bigarray_ext.kind
-(** [to_bigarray_ext_kind dtype] returns corresponding Bigarray_ext kind. Works
-    for all types including extended ones. *)
+val to_buffer_kind : ('a, 'b) t -> ('a, 'b) Nx_buffer.kind
+(** [to_buffer_kind dtype] returns corresponding Nx_buffer kind. Works for all
+    types including extended ones. *)
 
 val of_bigarray_kind : ('a, 'b) Bigarray.kind -> ('a, 'b) t
 (** [of_bigarray_kind kind] returns corresponding dtype from standard Bigarray

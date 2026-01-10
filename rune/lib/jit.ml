@@ -1,7 +1,7 @@
 open Nx_core
 open Nx_rune
 module Shape_expr = Rune_jit.Shape_expr
-open Bigarray_ext
+open Nx_buffer
 module Ir = Rune_jit.Ir
 module Var = Ir.Var
 

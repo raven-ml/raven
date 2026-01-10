@@ -17,12 +17,12 @@ type complex64_t = (Complex.t, complex32_elt) t
 type complex128_t = (Complex.t, complex64_elt) t
 
 (* Re-export extended type aliases *)
-type bfloat16_t = (float, Bigarray_ext.bfloat16_elt) t
-type bool_t = (bool, Bigarray_ext.bool_elt) t
-type int4_t = (int, Bigarray_ext.int4_signed_elt) t
-type uint4_t = (int, Bigarray_ext.int4_unsigned_elt) t
-type float8_e4m3_t = (float, Bigarray_ext.float8_e4m3_elt) t
-type float8_e5m2_t = (float, Bigarray_ext.float8_e5m2_elt) t
+type bfloat16_t = (float, Nx_buffer.bfloat16_elt) t
+type bool_t = (bool, Nx_buffer.bool_elt) t
+type int4_t = (int, Nx_buffer.int4_signed_elt) t
+type uint4_t = (int, Nx_buffer.int4_unsigned_elt) t
+type float8_e4m3_t = (float, Nx_buffer.float8_e4m3_elt) t
+type float8_e5m2_t = (float, Nx_buffer.float8_e5m2_elt) t
 
 (* Re-export extended dtype value constructors *)
 let bfloat16 = Nx_core.Dtype.bfloat16

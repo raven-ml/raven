@@ -30,9 +30,9 @@ let geomspace dtype ?endpoint start stop num =
   geomspace (Lazy.force context) dtype ?endpoint start stop num
 
 let of_bigarray ba = of_bigarray (Lazy.force context) ba
-let of_bigarray_ext ba = of_bigarray_ext (Lazy.force context) ba
+let of_buffer ba = of_buffer (Lazy.force context) ba
 let to_bigarray = to_bigarray
-let to_bigarray_ext = to_bigarray_ext
+let to_buffer = to_buffer
 let rand dtype ~key shape = rand (Lazy.force context) dtype ~key shape
 let randn dtype ~key shape = randn (Lazy.force context) dtype ~key shape
 

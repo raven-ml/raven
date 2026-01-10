@@ -1,4 +1,4 @@
-open Bigarray_ext
+open Nx_buffer
 
 (* Test creation of different array types *)
 let test_create_bfloat16 () =
@@ -199,7 +199,7 @@ let test_array0 () =
 (* Test suite *)
 let () =
   let open Alcotest in
-  run "Bigarray_ext tests"
+  run "Nx_buffer tests"
     [
       ( "creation",
         [

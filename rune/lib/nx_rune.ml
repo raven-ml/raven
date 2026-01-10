@@ -46,7 +46,7 @@ type _ Effect.t +=
       -> ('a, 'b) t Effect.t
   | E_const_array : {
       context : context;
-      array : ('a, 'b, Bigarray_ext.c_layout) Bigarray_ext.Array1.t;
+      array : ('a, 'b, Nx_buffer.c_layout) Nx_buffer.Array1.t;
     }
       -> ('a, 'b) t Effect.t
   | E_add : {
@@ -389,8 +389,8 @@ let view_shape_expr view = shape_expr_of_symbolic (View.shape view)
 let view_shape_eval view = Symbolic_shape.eval (View.shape view)
 let shape_upper_bound shape_expr = Shape_expr.upper_bounds shape_expr
 
-let data : type a b.
-    (a, b) t -> (a, b, Bigarray_ext.c_layout) Bigarray_ext.Array1.t = function
+let data : type a b. (a, b) t -> (a, b, Nx_buffer.c_layout) Nx_buffer.Array1.t =
+  function
   | Native_tensor t -> Nx_c.data t
   | Symbolic_tensor { id; _ } ->
       failwith (Printf.sprintf "Cannot extract data from symbolic tensor %d" id)

@@ -29,12 +29,12 @@ module Rng = struct
 end
 
 (* Re-export extended type aliases *)
-type bfloat16_t = (float, Bigarray_ext.bfloat16_elt) t
-type bool_t = (bool, Bigarray_ext.bool_elt) t
-type int4_t = (int, Bigarray_ext.int4_signed_elt) t
-type uint4_t = (int, Bigarray_ext.int4_unsigned_elt) t
-type float8_e4m3_t = (float, Bigarray_ext.float8_e4m3_elt) t
-type float8_e5m2_t = (float, Bigarray_ext.float8_e5m2_elt) t
+type bfloat16_t = (float, Nx_buffer.bfloat16_elt) t
+type bool_t = (bool, Nx_buffer.bool_elt) t
+type int4_t = (int, Nx_buffer.int4_signed_elt) t
+type uint4_t = (int, Nx_buffer.int4_unsigned_elt) t
+type float8_e4m3_t = (float, Nx_buffer.float8_e4m3_elt) t
+type float8_e5m2_t = (float, Nx_buffer.float8_e5m2_elt) t
 
 (* Re-export extended dtype value constructors *)
 let bfloat16 = Nx_core.Dtype.bfloat16
@@ -72,9 +72,9 @@ let geomspace dtype ?endpoint start stop num =
   F.geomspace (Lazy.force context) dtype ?endpoint start stop num
 
 let of_bigarray ba = F.of_bigarray (Lazy.force context) ba
-let of_bigarray_ext ba = F.of_bigarray_ext (Lazy.force context) ba
+let of_buffer ba = F.of_buffer (Lazy.force context) ba
 let to_bigarray = F.to_bigarray
-let to_bigarray_ext = F.to_bigarray_ext
+let to_buffer = F.to_buffer
 let rand dtype ~key shape = F.rand (Lazy.force context) dtype ~key shape
 let randn dtype ~key shape = F.randn (Lazy.force context) dtype ~key shape
 

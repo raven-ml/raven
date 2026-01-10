@@ -9,7 +9,7 @@
 // - uint32/uint64: Unsigned 32/64-bit integers
 //
 // The implementation extends the standard Ml_Bigarray class with
-// Ml_Bigarray_ext to handle get/set/fill operations for these types.
+// Ml_Nx_buffer to handle get/set/fill operations for these types.
 
 //Provides: caml_unpackBfloat16
 function caml_unpackBfloat16(bytes) {
@@ -187,12 +187,12 @@ function caml_nx_ba_create_buffer(kind, size) {
   return new view(size);
 }
 
-//Provides: Ml_Bigarray_ext
+//Provides: Ml_Nx_buffer
 //Requires: Ml_Bigarray, caml_invalid_argument
 //Requires: caml_unpackBfloat16, caml_packBfloat16
 //Requires: caml_unpackFp8_e4m3, caml_packFp8_e4m3
 //Requires: caml_unpackFp8_e5m2, caml_packFp8_e5m2
-class Ml_Bigarray_ext extends Ml_Bigarray {
+class Ml_Nx_buffer extends Ml_Bigarray {
   get(ofs) {
     // Handle standard types
     if (this.kind < 14) {
@@ -339,7 +339,7 @@ class Ml_Bigarray_ext extends Ml_Bigarray {
 }
 
 //Provides: caml_nx_ba_create_unsafe
-//Requires: Ml_Bigarray_ext, Ml_Bigarray_c_1_1, Ml_Bigarray
+//Requires: Ml_Nx_buffer, Ml_Bigarray_c_1_1, Ml_Bigarray
 //Requires: caml_ba_get_size, caml_nx_ba_get_size_per_element
 //Requires: caml_invalid_argument
 function caml_nx_ba_create_unsafe(kind, layout, dims, data) {
@@ -357,7 +357,7 @@ function caml_nx_ba_create_unsafe(kind, layout, dims, data) {
   
   // Use extended class for extended types
   if (kind >= 14) {
-    return new Ml_Bigarray_ext(kind, layout, dims, data);
+    return new Ml_Nx_buffer(kind, layout, dims, data);
   }
   
   // Use standard classes for standard types
@@ -456,7 +456,7 @@ function caml_nx_ba_set_generic(ba, i, v) {
 }
 
 //Provides: caml_nx_ba_kind
-//Requires: Ml_Bigarray_ext
+//Requires: Ml_Nx_buffer
 function caml_nx_ba_kind(ba) {
   // Map bigarray kind to our extended kind enum values
   // These must match the OCaml type constructor order

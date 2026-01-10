@@ -15,7 +15,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "bigarray_ext_stubs.h"  // For extended kinds, caml_ba_* typedefs, and conversions
+#include "nx_buffer_stubs.h"  // For extended kinds, caml_ba_* typedefs, and conversions
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -148,7 +148,7 @@ typedef struct {
   int *strides;
 } nd_single_iterator_t;
 
-// Macro to iterate over all types (extended to include bigarray_ext types)
+// Macro to iterate over all types (extended to include nx_buffer types)
 // Note: int4/uint4 need special handling (2 values per byte)
 // Note: float16 uses caml_ba_uint16 like the standard library
 #define FOR_EACH_TYPE(MACRO)                      \

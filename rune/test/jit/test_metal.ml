@@ -105,9 +105,9 @@ let bigarray_float32 ?(eps = 1e-3) () =
   testable pp eq
 
 let get_ba_from_buf (type a b) (Backend_intf.Any_Device_Buffer buf)
-    ~(dtype : a Ir.Dtype.t) ~(kind : (a, b) Bigarray_ext.kind) ~len label =
+    ~(dtype : a Ir.Dtype.t) ~(kind : (a, b) Nx_buffer.kind) ~len label =
   let _ = dtype in
-  let host = Bigarray_ext.Array1.create kind Bigarray_ext.c_layout len in
+  let host = Nx_buffer.Array1.create kind Nx_buffer.c_layout len in
   (match
      Rune_jit.copy_from_device
        ~backend:(module Rune_jit_metal)
@@ -130,12 +130,10 @@ let test_e2e_add () =
   let arr_a = [| 1.0; 2.0; 3.0; 4.0 |] in
   let arr_b = [| 0.1; 0.2; 0.3; 0.4 |] in
   let ba_a =
-    Bigarray_ext.Array1.of_array Bigarray_ext.float32 Bigarray_ext.c_layout
-      arr_a
+    Nx_buffer.Array1.of_array Nx_buffer.float32 Nx_buffer.c_layout arr_a
   in
   let ba_b =
-    Bigarray_ext.Array1.of_array Bigarray_ext.float32 Bigarray_ext.c_layout
-      arr_b
+    Nx_buffer.Array1.of_array Nx_buffer.float32 Nx_buffer.c_layout arr_b
   in
   let len = Array.length arr_a in
   (* allocate device buffers *)
@@ -143,7 +141,7 @@ let test_e2e_add () =
     Result.get_ok
       (Rune_jit.allocate_buffer
          ~backend:(module Rune_jit_metal)
-         ~size_in_bytes:(Bigarray_ext.Array1.size_in_bytes host)
+         ~size_in_bytes:(Nx_buffer.Array1.size_in_bytes host)
          ~dtype:Ir.Dtype.Float32)
   in
   let buf_a = alloc ba_a and buf_b = alloc ba_b in
@@ -171,11 +169,11 @@ let test_e2e_add () =
   in
   let buf_c = Hashtbl.find outs c in
   let ba_res =
-    get_ba_from_buf buf_c ~dtype:Ir.Dtype.Float32 ~kind:Bigarray_ext.float32
-      ~len "c"
+    get_ba_from_buf buf_c ~dtype:Ir.Dtype.Float32 ~kind:Nx_buffer.float32 ~len
+      "c"
   in
   let expected =
-    Bigarray_ext.Array1.of_array Bigarray_ext.float32 Bigarray_ext.c_layout
+    Nx_buffer.Array1.of_array Nx_buffer.float32 Nx_buffer.c_layout
       [| 1.1; 2.2; 3.3; 4.4 |]
   in
   check (bigarray_float32 ()) "result" expected ba_res

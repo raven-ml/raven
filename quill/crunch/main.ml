@@ -58,7 +58,7 @@ let scan_file t root name =
   let len = in_channel_length ic in
   let buffer_size = 4096 in
   let buffer = Bytes.create buffer_size in
-  
+
   let rec read_chunks chunks_acc =
     match input ic buffer 0 buffer_size with
     | 0 -> List.rev chunks_acc
@@ -67,7 +67,7 @@ let scan_file t root name =
         let digest = Digest.to_hex (Digest.string s) in
         read_chunks ((digest, s) :: chunks_acc)
   in
-  
+
   let chunks_raw = read_chunks [] in
   close_in ic;
 
@@ -79,23 +79,22 @@ let scan_file t root name =
         | None -> String_map.add dig content acc
         | Some existing ->
             if existing <> content then
-              failwith (Printf.sprintf "Hash collision on chunk %s in file %s" dig name)
+              failwith
+                (Printf.sprintf "Hash collision on chunk %s in file %s" dig name)
             else acc)
       t.chunks chunks_raw
   in
 
   let chunk_digests = List.map fst chunks_raw in
-  
-  (* Calculate full file digest from the concatenation of chunks to match legacy behavior
-     or just hash the whole file. Here we re-hash the chunks for simplicity. *)
+
+  (* Calculate full file digest from the concatenation of chunks to match legacy
+     behavior or just hash the whole file. Here we re-hash the chunks for
+     simplicity. *)
   let full_content = String.concat "" (List.map snd chunks_raw) in
   let file_digest = Digest.to_hex (Digest.string full_content) in
 
   let entry = { chunk_digests; file_digest; size = len } in
-  {
-    chunks = new_chunks_map;
-    files = String_map.add name entry t.files;
-  }
+  { chunks = new_chunks_map; files = String_map.add name entry t.files }
 
 (* Code Generation *)
 
@@ -139,21 +138,22 @@ end
 let output_ml t oc binary =
   let pf fmt = Printf.fprintf oc fmt in
   pf "%s" (header binary);
-  
+
   (* Internal Module containing raw data *)
   pf "module Internal = struct\n";
   pf "  (* Chunk definitions *)\n";
-  String_map.iter (fun hash content ->
-    pf "  let c_%s = %S\n" hash content
-  ) t.chunks;
-  
+  String_map.iter
+    (fun hash content -> pf "  let c_%s = %S\n" hash content)
+    t.chunks;
+
   pf "\n  (* File to chunk mapping *)\n";
   pf "  let file_chunks = function\n";
-  String_map.iter (fun name { chunk_digests; _ } ->
-    pf "    | %S -> Some [" name;
-    List.iter (fun d -> pf "c_%s; " d) chunk_digests;
-    pf "]\n"
-  ) t.files;
+  String_map.iter
+    (fun name { chunk_digests; _ } ->
+      pf "    | %S -> Some [" name;
+      List.iter (fun d -> pf "c_%s; " d) chunk_digests;
+      pf "]\n")
+    t.files;
   pf "    | _ -> None\n";
 
   pf "\n  let file_list = [\n";
@@ -168,15 +168,15 @@ let output_ml t oc binary =
   pf "let file_list = Internal.file_list\n\n";
 
   pf "let size = function\n";
-  String_map.iter (fun name { size; _ } ->
-    pf "  | %S -> Some %d\n" name size
-  ) t.files;
+  String_map.iter
+    (fun name { size; _ } -> pf "  | %S -> Some %d\n" name size)
+    t.files;
   pf "  | _ -> None\n\n";
 
   pf "let hash = function\n";
-  String_map.iter (fun name { file_digest; _ } ->
-    pf "  | %S -> Some %S\n" name file_digest
-  ) t.files;
+  String_map.iter
+    (fun name { file_digest; _ } -> pf "  | %S -> Some %S\n" name file_digest)
+    t.files;
   pf "  | _ -> None\n\n";
 
   pf "let read_range name ?(offset=0) ?len () = \n";
@@ -184,10 +184,12 @@ let output_ml t oc binary =
   pf "  | None -> None\n";
   pf "  | Some chunks ->\n";
   pf "      let total_size = match size name with Some s -> s | None -> 0 in\n";
-  pf "      let len = match len with Some l -> l | None -> total_size - offset in\n";
+  pf
+    "      let len = match len with Some l -> l | None -> total_size - offset in\n";
   pf "      if offset < 0 || len < 0 || offset + len > total_size then None\n";
   pf "      else\n";
-  pf "        let slices = Reader.read_range chunks 0 offset (offset + len) [] in\n";
+  pf
+    "        let slices = Reader.read_range chunks 0 offset (offset + len) [] in\n";
   pf "        Some (String.concat \"\" slices)\n\n";
 
   pf "let read name = read_range name ~offset:0 ()\n"
@@ -195,7 +197,8 @@ let output_ml t oc binary =
 let output_mli oc binary =
   let pf fmt = Printf.fprintf oc fmt in
   pf "%s" (header binary);
-  pf {|
+  pf
+    {|
 (** [file_list] is the list of all files in the store *)
 val file_list : string list
 
@@ -223,20 +226,23 @@ let () =
   let output = ref "generated.ml" in
   let silent = ref false in
 
-  let spec = [
-    ("-o", Arg.Set_string output, "OUTPUT Output file (default: generated.ml)");
-    ("-e", Arg.String (fun s -> exts := s :: !exts), "EXT Include only specific extensions (e.g. 'txt')");
-    ("-s", Arg.Set silent, " Silent mode");
-  ] in
+  let spec =
+    [
+      ("-o", Arg.Set_string output, "OUTPUT Output file (default: generated.ml)");
+      ( "-e",
+        Arg.String (fun s -> exts := s :: !exts),
+        "EXT Include only specific extensions (e.g. 'txt')" );
+      ("-s", Arg.Set silent, " Silent mode");
+    ]
+  in
 
   let usage = "Usage: ocaml-crunch [options] <directories...>" in
-  
+
   Arg.parse spec (fun s -> dirs := s :: !dirs) usage;
 
   if !dirs = [] then (
     Arg.usage spec usage;
-    exit 1
-  );
+    exit 1);
 
   let binary = Sys.argv.(0) in
   let dirs = List.rev !dirs in
@@ -244,9 +250,10 @@ let () =
 
   if not !silent then Printf.printf "Scanning directories...\n%!";
 
-  let t = List.fold_left 
-    (fun t dir -> walk_directory_tree exts scan_file dir t) 
-    empty dirs 
+  let t =
+    List.fold_left
+      (fun t dir -> walk_directory_tree exts scan_file dir t)
+      empty dirs
   in
 
   if not !silent then Printf.printf "Generating %s...\n%!" !output;
@@ -257,9 +264,8 @@ let () =
 
   (* Optional: Generate .mli if output ends in .ml *)
   if Filename.check_suffix !output ".ml" then (
-    let mli = (Filename.chop_suffix !output ".ml") ^ ".mli" in
+    let mli = Filename.chop_suffix !output ".ml" ^ ".mli" in
     if not !silent then Printf.printf "Generating %s...\n%!" mli;
     let oc_mli = open_out mli in
     output_mli oc_mli binary;
-    close_out oc_mli
-  )
+    close_out oc_mli)

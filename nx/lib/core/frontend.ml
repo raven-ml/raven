@@ -1,5 +1,5 @@
 (* High-level tensor operations built on backend [B]. *)
-open Bigarray_ext
+open Nx_buffer
 
 module Make (B : Backend_intf.S) = struct
   module B = B
@@ -18,27 +18,27 @@ module Make (B : Backend_intf.S) = struct
   type context = B.context
 
   (* Concrete types for dtypes *)
-  type float16_elt = Bigarray_ext.float16_elt
-  type float32_elt = Bigarray_ext.float32_elt
-  type float64_elt = Bigarray_ext.float64_elt
-  type int8_elt = Bigarray_ext.int8_signed_elt
-  type uint8_elt = Bigarray_ext.int8_unsigned_elt
-  type int16_elt = Bigarray_ext.int16_signed_elt
-  type uint16_elt = Bigarray_ext.int16_unsigned_elt
-  type int32_elt = Bigarray_ext.int32_elt
-  type int64_elt = Bigarray_ext.int64_elt
-  type uint32_elt = Bigarray_ext.uint32_elt
-  type uint64_elt = Bigarray_ext.uint64_elt
-  type complex32_elt = Bigarray_ext.complex32_elt
-  type complex64_elt = Bigarray_ext.complex64_elt
+  type float16_elt = Nx_buffer.float16_elt
+  type float32_elt = Nx_buffer.float32_elt
+  type float64_elt = Nx_buffer.float64_elt
+  type int8_elt = Nx_buffer.int8_signed_elt
+  type uint8_elt = Nx_buffer.int8_unsigned_elt
+  type int16_elt = Nx_buffer.int16_signed_elt
+  type uint16_elt = Nx_buffer.int16_unsigned_elt
+  type int32_elt = Nx_buffer.int32_elt
+  type int64_elt = Nx_buffer.int64_elt
+  type uint32_elt = Nx_buffer.uint32_elt
+  type uint64_elt = Nx_buffer.uint64_elt
+  type complex32_elt = Nx_buffer.complex32_elt
+  type complex64_elt = Nx_buffer.complex64_elt
 
-  (* Extended types from Bigarray_ext *)
-  type bfloat16_elt = Bigarray_ext.bfloat16_elt
-  type bool_elt = Bigarray_ext.bool_elt
-  type int4_elt = Bigarray_ext.int4_signed_elt
-  type uint4_elt = Bigarray_ext.int4_unsigned_elt
-  type float8_e4m3_elt = Bigarray_ext.float8_e4m3_elt
-  type float8_e5m2_elt = Bigarray_ext.float8_e5m2_elt
+  (* Extended types from Nx_buffer *)
+  type bfloat16_elt = Nx_buffer.bfloat16_elt
+  type bool_elt = Nx_buffer.bool_elt
+  type int4_elt = Nx_buffer.int4_signed_elt
+  type uint4_elt = Nx_buffer.int4_unsigned_elt
+  type float8_e4m3_elt = Nx_buffer.float8_e4m3_elt
+  type float8_e5m2_elt = Nx_buffer.float8_e5m2_elt
 
   type ('a, 'b) dtype = ('a, 'b) Dtype.t =
     | Float16 : (float, float16_elt) dtype
@@ -585,12 +585,12 @@ module Make (B : Backend_intf.S) = struct
         ();
 
     (* Create bigarray buffer with proper dtype *)
-    let kind = Dtype.to_bigarray_ext_kind dtype in
-    let bigarray = Bigarray_ext.Array1.create kind c_layout n in
+    let kind = Dtype.to_buffer_kind dtype in
+    let bigarray = Nx_buffer.Array1.create kind c_layout n in
 
     (* Copy data from OCaml array to bigarray *)
     for i = 0 to n - 1 do
-      Bigarray_ext.Array1.unsafe_set bigarray i arr.(i)
+      Nx_buffer.Array1.unsafe_set bigarray i arr.(i)
     done;
 
     (* Create flat tensor and reshape if needed *)
@@ -700,51 +700,49 @@ module Make (B : Backend_intf.S) = struct
 
   (* ───── Tensor Conversion ───── *)
 
-  let to_bigarray_ext x =
-    let@ _ = span ~op:"to_bigarray_ext" () in
+  let to_buffer x =
+    let@ _ = span ~op:"to_buffer" () in
     (* Ensure we have a materialized view with matching buffer size. *)
     let ensure_contiguous_size t =
       let t = if is_c_contiguous t && offset t = 0 then t else contiguous t in
       let buffer = data t in
-      let buffer_elems = Bigarray_ext.Array1.dim buffer in
+      let buffer_elems = Nx_buffer.Array1.dim buffer in
       if buffer_elems = numel t then t else copy t
     in
     let t_to_use = ensure_contiguous_size x in
     let array1 = data t_to_use in
-    Bigarray_ext.reshape
-      (Bigarray_ext.genarray_of_array1 array1)
-      (shape t_to_use)
+    Nx_buffer.reshape (Nx_buffer.genarray_of_array1 array1) (shape t_to_use)
 
   let to_bigarray x =
     let@ _ = span ~op:"to_bigarray" () in
-    let ba_ext = to_bigarray_ext x in
+    let ba_ext = to_buffer x in
     (* Verify dtype is supported by standard Bigarray *)
     let _ = Dtype.to_bigarray_kind (B.dtype x) in
     (* Cast to standard Bigarray - safe because they have same memory layout *)
     (Obj.magic ba_ext : ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t)
 
-  let of_bigarray_ext ctx ba =
-    let@ _ = span ~op:"of_bigarray_ext" () in
-    let size = Array.fold_left ( * ) 1 (Bigarray_ext.Genarray.dims ba) in
-    let arr = Bigarray_ext.reshape_1 ba size in
-    let shape = Bigarray_ext.Genarray.dims ba in
+  let of_buffer ctx ba =
+    let@ _ = span ~op:"of_buffer" () in
+    let size = Array.fold_left ( * ) 1 (Nx_buffer.Genarray.dims ba) in
+    let arr = Nx_buffer.reshape_1 ba size in
+    let shape = Nx_buffer.Genarray.dims ba in
     let flat_xensor = B.op_const_array ctx arr in
     reshape shape flat_xensor
 
   let of_bigarray ctx ba =
     let@ _ = span ~op:"of_bigarray" () in
-    (* Cast to Bigarray_ext - safe because they have same memory layout *)
-    let ba_ext : ('a, 'b, Bigarray_ext.c_layout) Bigarray_ext.Genarray.t =
+    (* Cast to Nx_buffer - safe because they have same memory layout *)
+    let ba_ext : ('a, 'b, Nx_buffer.c_layout) Nx_buffer.Genarray.t =
       Obj.magic ba
     in
-    of_bigarray_ext ctx ba_ext
+    of_buffer ctx ba_ext
 
   let to_array x =
     let@ _ = span ~op:"to_array" () in
     let t_contiguous = contiguous x in
     let ba = data t_contiguous in
     let n = numel t_contiguous in
-    Array.init n (fun i -> Bigarray_ext.Array1.get ba i)
+    Array.init n (fun i -> Nx_buffer.Array1.get ba i)
 
   (* ───── Element-wise Binary Operations ───── *)
 

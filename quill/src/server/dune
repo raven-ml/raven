@@ -59,7 +59,8 @@
    wasm
    -e
    map
-   -o asset_editor.ml
+   -o
+   asset_editor.ml
    ../browser/)))
 
 (rule

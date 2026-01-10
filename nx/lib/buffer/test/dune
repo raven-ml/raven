@@ -1,0 +1,4 @@
+(test
+ (name test_nx_buffer)
+ (package nx)
+ (libraries nx_buffer alcotest))

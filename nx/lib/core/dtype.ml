@@ -1,28 +1,26 @@
 (* Runtime representations of scalar types. *)
 
-module BA = Bigarray_ext
+type float16_elt = Nx_buffer.float16_elt
+type float32_elt = Nx_buffer.float32_elt
+type float64_elt = Nx_buffer.float64_elt
+type int8_elt = Nx_buffer.int8_signed_elt
+type uint8_elt = Nx_buffer.int8_unsigned_elt
+type int16_elt = Nx_buffer.int16_signed_elt
+type uint16_elt = Nx_buffer.int16_unsigned_elt
+type int32_elt = Nx_buffer.int32_elt
+type int64_elt = Nx_buffer.int64_elt
+type complex32_elt = Nx_buffer.complex32_elt
+type complex64_elt = Nx_buffer.complex64_elt
 
-type float16_elt = BA.float16_elt
-type float32_elt = BA.float32_elt
-type float64_elt = BA.float64_elt
-type int8_elt = BA.int8_signed_elt
-type uint8_elt = BA.int8_unsigned_elt
-type int16_elt = BA.int16_signed_elt
-type uint16_elt = BA.int16_unsigned_elt
-type int32_elt = BA.int32_elt
-type int64_elt = BA.int64_elt
-type complex32_elt = BA.complex32_elt
-type complex64_elt = BA.complex64_elt
-
-(* Extended types from Bigarray_ext *)
-type uint32_elt = BA.uint32_elt
-type uint64_elt = BA.uint64_elt
-type bfloat16_elt = BA.bfloat16_elt
-type bool_elt = BA.bool_elt
-type int4_elt = BA.int4_signed_elt
-type uint4_elt = BA.int4_unsigned_elt
-type float8_e4m3_elt = BA.float8_e4m3_elt
-type float8_e5m2_elt = BA.float8_e5m2_elt
+(* Extended types from Nx_buffer *)
+type uint32_elt = Nx_buffer.uint32_elt
+type uint64_elt = Nx_buffer.uint64_elt
+type bfloat16_elt = Nx_buffer.bfloat16_elt
+type bool_elt = Nx_buffer.bool_elt
+type int4_elt = Nx_buffer.int4_signed_elt
+type uint4_elt = Nx_buffer.int4_unsigned_elt
+type float8_e4m3_elt = Nx_buffer.float8_e4m3_elt
+type float8_e5m2_elt = Nx_buffer.float8_e5m2_elt
 
 type ('a, 'b) t =
   | Float16 : (float, float16_elt) t
@@ -213,28 +211,28 @@ let itemsize : type a b. (a, b) t -> int = function
   | Float8_e4m3 -> 1
   | Float8_e5m2 -> 1
 
-(* Inverse of [to_bigarray_ext_kind]. *)
-let of_bigarray_ext_kind : type a b. (a, b) BA.kind -> (a, b) t = function
-  | BA.Float16 -> Float16
-  | BA.Float32 -> Float32
-  | BA.Float64 -> Float64
-  | BA.Int8_signed -> Int8
-  | BA.Int8_unsigned -> UInt8
-  | BA.Int16_signed -> Int16
-  | BA.Int16_unsigned -> UInt16
-  | BA.Int32 -> Int32
-  | BA.Int64 -> Int64
-  | BA.Uint32 -> UInt32
-  | BA.Uint64 -> UInt64
-  | BA.Complex32 -> Complex64
-  | BA.Complex64 -> Complex128
+(* Inverse of [to_buffer_kind]. *)
+let of_buffer_kind : type a b. (a, b) Nx_buffer.kind -> (a, b) t = function
+  | Nx_buffer.Float16 -> Float16
+  | Nx_buffer.Float32 -> Float32
+  | Nx_buffer.Float64 -> Float64
+  | Nx_buffer.Int8_signed -> Int8
+  | Nx_buffer.Int8_unsigned -> UInt8
+  | Nx_buffer.Int16_signed -> Int16
+  | Nx_buffer.Int16_unsigned -> UInt16
+  | Nx_buffer.Int32 -> Int32
+  | Nx_buffer.Int64 -> Int64
+  | Nx_buffer.Uint32 -> UInt32
+  | Nx_buffer.Uint64 -> UInt64
+  | Nx_buffer.Complex32 -> Complex64
+  | Nx_buffer.Complex64 -> Complex128
   (* Extended types *)
-  | BA.Bfloat16 -> BFloat16
-  | BA.Bool -> Bool
-  | BA.Int4_signed -> Int4
-  | BA.Int4_unsigned -> UInt4
-  | BA.Float8_e4m3 -> Float8_e4m3
-  | BA.Float8_e5m2 -> Float8_e5m2
+  | Nx_buffer.Bfloat16 -> BFloat16
+  | Nx_buffer.Bool -> Bool
+  | Nx_buffer.Int4_signed -> Int4
+  | Nx_buffer.Int4_unsigned -> UInt4
+  | Nx_buffer.Float8_e4m3 -> Float8_e4m3
+  | Nx_buffer.Float8_e5m2 -> Float8_e5m2
   | _ ->
       Error.invalid ~op:"of_bigarray_kind" ~what:"bigarray kind"
         ~reason:"unsupported kind" ()
@@ -260,30 +258,30 @@ let to_bigarray_kind : type a b. (a, b) t -> (a, b) Bigarray.kind =
       Error.invalid ~op:"to_bigarray_kind" ~what:"dtype"
         ~reason:"extended type not supported by standard Bigarray" ()
 
-(* Map a dtype to the corresponding Bigarray_ext kind. Works for all types
+(* Map a dtype to the corresponding Nx_buffer kind. Works for all types
    including extended ones. *)
-let to_bigarray_ext_kind : type a b. (a, b) t -> (a, b) Bigarray_ext.kind =
+let to_buffer_kind : type a b. (a, b) t -> (a, b) Nx_buffer.kind =
  fun dtype ->
   match dtype with
-  | Float16 -> Bigarray_ext.Float16
-  | Float32 -> Bigarray_ext.Float32
-  | Float64 -> Bigarray_ext.Float64
-  | Int8 -> Bigarray_ext.Int8_signed
-  | Int16 -> Bigarray_ext.Int16_signed
-  | UInt8 -> Bigarray_ext.Int8_unsigned
-  | UInt16 -> Bigarray_ext.Int16_unsigned
-  | Int32 -> Bigarray_ext.Int32
-  | Int64 -> Bigarray_ext.Int64
-  | UInt32 -> Bigarray_ext.Uint32
-  | UInt64 -> Bigarray_ext.Uint64
-  | Complex64 -> Bigarray_ext.Complex32
-  | Complex128 -> Bigarray_ext.Complex64
-  | BFloat16 -> Bigarray_ext.Bfloat16
-  | Bool -> Bigarray_ext.Bool
-  | Int4 -> Bigarray_ext.Int4_signed
-  | UInt4 -> Bigarray_ext.Int4_unsigned
-  | Float8_e4m3 -> Bigarray_ext.Float8_e4m3
-  | Float8_e5m2 -> Bigarray_ext.Float8_e5m2
+  | Float16 -> Nx_buffer.Float16
+  | Float32 -> Nx_buffer.Float32
+  | Float64 -> Nx_buffer.Float64
+  | Int8 -> Nx_buffer.Int8_signed
+  | Int16 -> Nx_buffer.Int16_signed
+  | UInt8 -> Nx_buffer.Int8_unsigned
+  | UInt16 -> Nx_buffer.Int16_unsigned
+  | Int32 -> Nx_buffer.Int32
+  | Int64 -> Nx_buffer.Int64
+  | UInt32 -> Nx_buffer.Uint32
+  | UInt64 -> Nx_buffer.Uint64
+  | Complex64 -> Nx_buffer.Complex32
+  | Complex128 -> Nx_buffer.Complex64
+  | BFloat16 -> Nx_buffer.Bfloat16
+  | Bool -> Nx_buffer.Bool
+  | Int4 -> Nx_buffer.Int4_signed
+  | UInt4 -> Nx_buffer.Int4_unsigned
+  | Float8_e4m3 -> Nx_buffer.Float8_e4m3
+  | Float8_e5m2 -> Nx_buffer.Float8_e5m2
 
 (* Inverse of [to_bigarray_kind]. Only handles standard Bigarray kinds. *)
 let of_bigarray_kind : type a b. (a, b) Bigarray.kind -> (a, b) t = function

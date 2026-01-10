@@ -5,32 +5,32 @@ let read_error fmt = Printf.ksprintf (fun s -> raise (Read_error s)) fmt
 let magic_string = "\147NUMPY"
 let magic_string_len = String.length magic_string
 
-type packed_kind = P : (_, _) Bigarray_ext.kind -> packed_kind
+type packed_kind = P : (_, _) Nx_buffer.kind -> packed_kind
 
 let dtype ~packed_kind =
   let endianness =
     match packed_kind with
-    | P Bigarray_ext.Char -> "|"
+    | P Nx_buffer.Char -> "|"
     | P _ -> if Sys.big_endian then ">" else "<"
   in
   let kind =
     match packed_kind with
-    | P Bigarray_ext.Int32 -> "i4"
-    | P Bigarray_ext.Int64 -> "i8"
-    | P Bigarray_ext.Uint32 -> "u4"
-    | P Bigarray_ext.Uint64 -> "u8"
-    | P Bigarray_ext.Float16 -> "f2"
-    | P Bigarray_ext.Float32 -> "f4"
-    | P Bigarray_ext.Float64 -> "f8"
-    | P Bigarray_ext.Int8_unsigned -> "u1"
-    | P Bigarray_ext.Int8_signed -> "i1"
-    | P Bigarray_ext.Int16_unsigned -> "u2"
-    | P Bigarray_ext.Int16_signed -> "i2"
-    | P Bigarray_ext.Char -> "S1"
-    | P Bigarray_ext.Complex32 -> "c8" (* 2 32bits float. *)
-    | P Bigarray_ext.Complex64 -> "c16" (* 2 64bits float. *)
-    | P Bigarray_ext.Int -> failwith "Int is not supported"
-    | P Bigarray_ext.Nativeint -> failwith "Nativeint is not supported."
+    | P Nx_buffer.Int32 -> "i4"
+    | P Nx_buffer.Int64 -> "i8"
+    | P Nx_buffer.Uint32 -> "u4"
+    | P Nx_buffer.Uint64 -> "u8"
+    | P Nx_buffer.Float16 -> "f2"
+    | P Nx_buffer.Float32 -> "f4"
+    | P Nx_buffer.Float64 -> "f8"
+    | P Nx_buffer.Int8_unsigned -> "u1"
+    | P Nx_buffer.Int8_signed -> "i1"
+    | P Nx_buffer.Int16_unsigned -> "u2"
+    | P Nx_buffer.Int16_signed -> "i2"
+    | P Nx_buffer.Char -> "S1"
+    | P Nx_buffer.Complex32 -> "c8" (* 2 32bits float. *)
+    | P Nx_buffer.Complex64 -> "c16" (* 2 64bits float. *)
+    | P Nx_buffer.Int -> failwith "Int is not supported"
+    | P Nx_buffer.Nativeint -> failwith "Nativeint is not supported."
   in
   endianness ^ kind
 
@@ -38,9 +38,9 @@ let dtype ~packed_kind =
    by creating the array in memory and using C stubs *)
    
 (* External functions for file I/O with bigarrays *)
-external write_bigarray_to_fd : Unix.file_descr -> ('a, 'b, 'c) Bigarray_ext.Genarray.t -> unit 
+external write_bigarray_to_fd : Unix.file_descr -> ('a, 'b, 'c) Nx_buffer.Genarray.t -> unit 
   = "caml_npy_write_bigarray"
-external read_fd_to_bigarray : Unix.file_descr -> ('a, 'b, 'c) Bigarray_ext.Genarray.t -> unit
+external read_fd_to_bigarray : Unix.file_descr -> ('a, 'b, 'c) Nx_buffer.Genarray.t -> unit
   = "caml_npy_read_bigarray"
 
 let extended_file_blit src dst file_descr pos =
@@ -55,13 +55,13 @@ let map_file file_descr ~pos kind layout shared shape =
   
   (* Create the array first *)
   let array = 
-    match Bigarray_ext.to_stdlib_kind kind with
+    match Nx_buffer.to_stdlib_kind kind with
     | Some std_kind ->
         (* Standard bigarray type - use Unix.map_file for efficiency *)
         Unix.map_file file_descr ~pos std_kind layout shared actual_shape
     | None ->
         (* Extended type - create in memory and read if needed *)
-        let arr = Bigarray_ext.Genarray.create kind layout actual_shape in
+        let arr = Nx_buffer.Genarray.create kind layout actual_shape in
         if not shared then begin
           (* Reading mode - read the file data into the array *)
           ignore (Unix.lseek file_descr (Int64.to_int pos) Unix.SEEK_SET);
@@ -70,12 +70,12 @@ let map_file file_descr ~pos kind layout shared shape =
         (* For writing mode (shared=true), we'll handle it when blit is called *)
         arr
   in
-  if is_scalar then Bigarray_ext.reshape array [||] else array
+  if is_scalar then Nx_buffer.reshape array [||] else array
 
-let fortran_order (type a) ~(layout : a Bigarray_ext.layout) =
+let fortran_order (type a) ~(layout : a Nx_buffer.layout) =
   match layout with
-  | Bigarray_ext.C_layout -> "False"
-  | Bigarray_ext.Fortran_layout -> "True"
+  | Nx_buffer.C_layout -> "False"
+  | Nx_buffer.Fortran_layout -> "True"
 
 let shape ~dims =
   match dims with
@@ -125,35 +125,35 @@ let write ?header_len bigarray filename =
       full_header
         ()
         ?header_len
-        ~layout:(Bigarray_ext.Genarray.layout bigarray)
-        ~packed_kind:(P (Bigarray_ext.Genarray.kind bigarray))
-        ~dims:(Bigarray_ext.Genarray.dims bigarray)
+        ~layout:(Nx_buffer.Genarray.layout bigarray)
+        ~packed_kind:(P (Nx_buffer.Genarray.kind bigarray))
+        ~dims:(Nx_buffer.Genarray.dims bigarray)
 
     in
     let full_header_len = String.length full_header in
     if Unix.write_substring file_descr full_header 0 full_header_len <> full_header_len
     then raise Cannot_write;
-    let kind = Bigarray_ext.Genarray.kind bigarray in
+    let kind = Nx_buffer.Genarray.kind bigarray in
     let file_array =
       map_file
         ~pos:(Int64.of_int full_header_len)
         file_descr
         kind
-        (Bigarray_ext.Genarray.layout bigarray)
+        (Nx_buffer.Genarray.layout bigarray)
         true
-        (Bigarray_ext.Genarray.dims bigarray)
+        (Nx_buffer.Genarray.dims bigarray)
     in
-    match Bigarray_ext.to_stdlib_kind kind with
+    match Nx_buffer.to_stdlib_kind kind with
     | Some _ ->
         (* Standard type - normal blit works with memory mapping *)
-        Bigarray_ext.Genarray.blit bigarray file_array
+        Nx_buffer.Genarray.blit bigarray file_array
     | None ->
         (* Extended type - we created a dummy array, need custom file write *)
         extended_file_blit bigarray file_array file_descr full_header_len)
 
-let write1 array1 filename = write (Bigarray_ext.genarray_of_array1 array1) filename
-let write2 array2 filename = write (Bigarray_ext.genarray_of_array2 array2) filename
-let write3 array3 filename = write (Bigarray_ext.genarray_of_array3 array3) filename
+let write1 array1 filename = write (Nx_buffer.genarray_of_array1 array1) filename
+let write2 array2 filename = write (Nx_buffer.genarray_of_array2 array2) filename
+let write3 array3 filename = write (Nx_buffer.genarray_of_array3 array3) filename
 
 module Batch_writer = struct
   let header_len = 128
@@ -165,32 +165,32 @@ module Batch_writer = struct
     }
 
   let append t bigarray =
-    let kind = Bigarray_ext.Genarray.kind bigarray in
-    let size_in_bytes = Bigarray_ext.Genarray.size_in_bytes bigarray in
+    let kind = Nx_buffer.Genarray.kind bigarray in
+    let size_in_bytes = Nx_buffer.Genarray.size_in_bytes bigarray in
     let file_array =
       map_file
         ~pos:(Int64.of_int t.bytes_written_so_far)
         t.file_descr
         kind
-        (Bigarray_ext.Genarray.layout bigarray)
+        (Nx_buffer.Genarray.layout bigarray)
         true
-        (Bigarray_ext.Genarray.dims bigarray)
+        (Nx_buffer.Genarray.dims bigarray)
     in
-    (match Bigarray_ext.to_stdlib_kind kind with
+    (match Nx_buffer.to_stdlib_kind kind with
     | Some _ ->
         (* Standard type - normal blit works *)
-        Bigarray_ext.Genarray.blit bigarray file_array
+        Nx_buffer.Genarray.blit bigarray file_array
     | None ->
         (* Extended type - need custom file write *)
         extended_file_blit bigarray file_array t.file_descr t.bytes_written_so_far);
     t.bytes_written_so_far <- t.bytes_written_so_far + size_in_bytes;
     match t.dims_and_packed_kind with
     | None ->
-      let dims = Bigarray_ext.Genarray.dims bigarray in
-      let kind = Bigarray_ext.Genarray.kind bigarray in
+      let dims = Nx_buffer.Genarray.dims bigarray in
+      let kind = Nx_buffer.Genarray.kind bigarray in
       t.dims_and_packed_kind <- Some (dims, P kind)
     | Some (dims, _kind) ->
-      let dims' = Bigarray_ext.Genarray.dims bigarray in
+      let dims' = Nx_buffer.Genarray.dims bigarray in
       let incorrect_dimensions =
         match Array.to_list dims, Array.to_list dims' with
         | [], _ | _, [] -> true
@@ -232,7 +232,7 @@ let really_read fd len =
   Bytes.to_string buffer
 
 module Header = struct
-  type packed_kind = P : (_, _) Bigarray_ext.kind -> packed_kind
+  type packed_kind = P : (_, _) Nx_buffer.kind -> packed_kind
 
   type t =
     { kind : packed_kind
@@ -333,10 +333,10 @@ module Header = struct
     { kind; fortran_order; shape }
 end
 
-type packed_array = P : (_, _, _) Bigarray_ext.Genarray.t -> packed_array
-type packed_array1 = P1 : (_, _, _) Bigarray_ext.Array1.t -> packed_array1
-type packed_array2 = P2 : (_, _, _) Bigarray_ext.Array2.t -> packed_array2
-type packed_array3 = P3 : (_, _, _) Bigarray_ext.Array3.t -> packed_array3
+type packed_array = P : (_, _, _) Nx_buffer.Genarray.t -> packed_array
+type packed_array1 = P1 : (_, _, _) Nx_buffer.Array1.t -> packed_array1
+type packed_array2 = P2 : (_, _, _) Nx_buffer.Array2.t -> packed_array2
+type packed_array3 = P3 : (_, _, _) Nx_buffer.Array3.t -> packed_array3
 
 let read_mmap filename ~shared =
   let access = if shared then Unix.O_RDWR else O_RDONLY in
@@ -378,38 +378,38 @@ let read_mmap filename ~shared =
 
 let read_mmap1 filename ~shared =
   let (P array) = read_mmap filename ~shared in
-  P1 (Bigarray_ext.array1_of_genarray array)
+  P1 (Nx_buffer.array1_of_genarray array)
 
 let read_mmap2 filename ~shared =
   let (P array) = read_mmap filename ~shared in
-  P2 (Bigarray_ext.array2_of_genarray array)
+  P2 (Nx_buffer.array2_of_genarray array)
 
 let read_mmap3 filename ~shared =
   let (P array) = read_mmap filename ~shared in
-  P3 (Bigarray_ext.array3_of_genarray array)
+  P3 (Nx_buffer.array3_of_genarray array)
 
 let read_copy filename =
   let (P array) = read_mmap filename ~shared:false in
   let result =
-    Bigarray_ext.Genarray.create
-      (Bigarray_ext.Genarray.kind array)
-      (Bigarray_ext.Genarray.layout array)
-      (Bigarray_ext.Genarray.dims array)
+    Nx_buffer.Genarray.create
+      (Nx_buffer.Genarray.kind array)
+      (Nx_buffer.Genarray.layout array)
+      (Nx_buffer.Genarray.dims array)
   in
-  Bigarray_ext.Genarray.blit array result;
+  Nx_buffer.Genarray.blit array result;
   P result
 
 let read_copy1 filename =
   let (P array) = read_copy filename in
-  P1 (Bigarray_ext.array1_of_genarray array)
+  P1 (Nx_buffer.array1_of_genarray array)
 
 let read_copy2 filename =
   let (P array) = read_copy filename in
-  P2 (Bigarray_ext.array2_of_genarray array)
+  P2 (Nx_buffer.array2_of_genarray array)
 
 let read_copy3 filename =
   let (P array) = read_copy filename in
-  P3 (Bigarray_ext.array3_of_genarray array)
+  P3 (Nx_buffer.array3_of_genarray array)
 
 module Npz = struct
   let npy_suffix = ".npy"
@@ -470,7 +470,7 @@ module Eq = struct
   (** An equality type to extract type equalities *)
   type ('a, 'b) t = W : ('a, 'a) t
 
-  open Bigarray_ext
+  open Nx_buffer
 
   (** Type equalities for bigarray kinds *)
   module Kind = struct
@@ -512,52 +512,52 @@ end
 
 let to_bigarray
       (type a b c)
-      (layout : c Bigarray_ext.layout)
-      (kind : (a, b) Bigarray_ext.kind)
+      (layout : c Nx_buffer.layout)
+      (kind : (a, b) Nx_buffer.kind)
       (P x)
   =
-  match Eq.Layout.(Bigarray_ext.Genarray.layout x === layout) with
+  match Eq.Layout.(Nx_buffer.Genarray.layout x === layout) with
   | None -> None
   | Some Eq.W ->
-    (match Eq.Kind.(Bigarray_ext.Genarray.kind x === kind) with
+    (match Eq.Kind.(Nx_buffer.Genarray.kind x === kind) with
      | None -> None
-     | Some Eq.W -> Some (x : (a, b, c) Bigarray_ext.Genarray.t))
+     | Some Eq.W -> Some (x : (a, b, c) Nx_buffer.Genarray.t))
 
 let to_bigarray1
       (type a b c)
-      (layout : c Bigarray_ext.layout)
-      (kind : (a, b) Bigarray_ext.kind)
+      (layout : c Nx_buffer.layout)
+      (kind : (a, b) Nx_buffer.kind)
       (P1 x)
   =
-  match Eq.Layout.(Bigarray_ext.Array1.layout x === layout) with
+  match Eq.Layout.(Nx_buffer.Array1.layout x === layout) with
   | None -> None
   | Some Eq.W ->
-    (match Eq.Kind.(Bigarray_ext.Array1.kind x === kind) with
+    (match Eq.Kind.(Nx_buffer.Array1.kind x === kind) with
      | None -> None
-     | Some Eq.W -> Some (x : (a, b, c) Bigarray_ext.Array1.t))
+     | Some Eq.W -> Some (x : (a, b, c) Nx_buffer.Array1.t))
 
 let to_bigarray2
       (type a b c)
-      (layout : c Bigarray_ext.layout)
-      (kind : (a, b) Bigarray_ext.kind)
+      (layout : c Nx_buffer.layout)
+      (kind : (a, b) Nx_buffer.kind)
       (P2 x)
   =
-  match Eq.Layout.(Bigarray_ext.Array2.layout x === layout) with
+  match Eq.Layout.(Nx_buffer.Array2.layout x === layout) with
   | None -> None
   | Some Eq.W ->
-    (match Eq.Kind.(Bigarray_ext.Array2.kind x === kind) with
+    (match Eq.Kind.(Nx_buffer.Array2.kind x === kind) with
      | None -> None
-     | Some Eq.W -> Some (x : (a, b, c) Bigarray_ext.Array2.t))
+     | Some Eq.W -> Some (x : (a, b, c) Nx_buffer.Array2.t))
 
 let to_bigarray3
       (type a b c)
-      (layout : c Bigarray_ext.layout)
-      (kind : (a, b) Bigarray_ext.kind)
+      (layout : c Nx_buffer.layout)
+      (kind : (a, b) Nx_buffer.kind)
       (P3 x)
   =
-  match Eq.Layout.(Bigarray_ext.Array3.layout x === layout) with
+  match Eq.Layout.(Nx_buffer.Array3.layout x === layout) with
   | None -> None
   | Some Eq.W ->
-    (match Eq.Kind.(Bigarray_ext.Array3.kind x === kind) with
+    (match Eq.Kind.(Nx_buffer.Array3.kind x === kind) with
      | None -> None
-     | Some Eq.W -> Some (x : (a, b, c) Bigarray_ext.Array3.t))
+     | Some Eq.W -> Some (x : (a, b, c) Nx_buffer.Array3.t))

@@ -1,5 +1,5 @@
 open Nx_core
-open Bigarray_ext
+open Nx_buffer
 
 type ('a, 'b) buffer = ('a, 'b, c_layout) Array1.t
 type context = unit
@@ -290,7 +290,7 @@ let to_ffi_tensor t =
 (* Create a new tensor with given shape *)
 let create_tensor ctx dtype shape_arr =
   let size = Array.fold_left ( * ) 1 shape_arr in
-  let kind = Dtype.to_bigarray_ext_kind dtype in
+  let kind = Dtype.to_buffer_kind dtype in
   let buffer = Array1.create kind c_layout size in
   let shape = Symbolic_shape.of_ints shape_arr in
   let view = View.create shape in
@@ -377,7 +377,7 @@ let comparison_op op_name ffi_op ~out x y =
 
 (* Buffer allocation *)
 let op_buffer ctx dtype size_in_elements =
-  let kind = Dtype.to_bigarray_ext_kind dtype in
+  let kind = Dtype.to_buffer_kind dtype in
   let buffer = Array1.create kind c_layout size_in_elements in
   (* Create a flat view for the buffer *)
   let shape = Symbolic_shape.of_ints [| size_in_elements |] in
@@ -386,7 +386,7 @@ let op_buffer ctx dtype size_in_elements =
 
 (* Constant creation ops *)
 let op_const_scalar ctx value dtype =
-  let kind = Dtype.to_bigarray_ext_kind dtype in
+  let kind = Dtype.to_buffer_kind dtype in
   let buffer = Array1.create kind c_layout 1 in
   Array1.set buffer 0 value;
   (* Create a scalar view (0-dimensional) *)
@@ -395,7 +395,7 @@ let op_const_scalar ctx value dtype =
   { context = ctx; dtype; buffer; view }
 
 let op_const_array ctx array =
-  let dtype = Dtype.of_bigarray_ext_kind (Array1.kind array) in
+  let dtype = Dtype.of_buffer_kind (Array1.kind array) in
   let size = Array1.dim array in
   (* Create a view for the 1D array *)
   let shape = Symbolic_shape.of_ints [| size |] in

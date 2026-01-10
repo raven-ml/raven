@@ -7,8 +7,8 @@ let convert_result_with_error : type a b.
   match packed with
   | P nx -> (
       let source_dtype = Nx.dtype nx in
-      let source_ba_kind = Nx_core.Dtype.to_bigarray_ext_kind source_dtype in
-      let target_ba_kind = Nx_core.Dtype.to_bigarray_ext_kind target_dtype in
+      let source_ba_kind = Nx_core.Dtype.to_buffer_kind source_dtype in
+      let target_ba_kind = Nx_core.Dtype.to_buffer_kind target_dtype in
       (* Try Npy.Eq.Kind first for standard types *)
       match Npy.Eq.Kind.( === ) source_ba_kind target_ba_kind with
       | Some Npy.Eq.W -> Ok nx
