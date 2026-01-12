@@ -604,17 +604,77 @@ let op_cos (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
 let op_where ~out:_ _ _ _ =
   Error.invalid ~op:"op_where" ~what:"not implemented" ()
 
-let op_reduce_sum ~out:_ ~axes:_ ~keepdims:_ _ =
-  Error.invalid ~op:"op_reduce_sum" ~what:"not implemented" ()
+let op_reduce_sum (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
+    unit =
+  let vout = out.view in
+  let va = a.view in
+  match (out.buffer, a.buffer) with
+  | Float64 out_arr, Float64 a_arr ->
+      Reduce_ops.reduce_sum_float64 out.context.pool ~out_arr ~a_arr ~va ~vout
+        ~axes ~keepdims
+  | Float32 out_arr, Float32 a_arr ->
+      Reduce_ops.reduce_sum_float32 out.context.pool ~out_arr ~a_arr ~va ~vout
+        ~axes ~keepdims
+  | Int32 out_arr, Int32 a_arr ->
+      Reduce_ops.reduce_sum_int32 out.context.pool ~out_arr ~a_arr ~va ~vout
+        ~axes ~keepdims
+  | Int64 out_arr, Int64 a_arr ->
+      Reduce_ops.reduce_sum_int64 out.context.pool ~out_arr ~a_arr ~va ~vout
+        ~axes ~keepdims
 
-let op_reduce_prod ~out:_ ~axes:_ ~keepdims:_ _ =
-  Error.invalid ~op:"op_reduce_prod" ~what:"not implemented" ()
+let op_reduce_prod (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t)
+    : unit =
+  let vout = out.view in
+  let va = a.view in
+  match (out.buffer, a.buffer) with
+  | Float64 out_arr, Float64 a_arr ->
+      Reduce_ops.reduce_prod_float64 out.context.pool ~out_arr ~a_arr ~va ~vout
+        ~axes ~keepdims
+  | Float32 out_arr, Float32 a_arr ->
+      Reduce_ops.reduce_prod_float32 out.context.pool ~out_arr ~a_arr ~va ~vout
+        ~axes ~keepdims
+  | Int32 out_arr, Int32 a_arr ->
+      Reduce_ops.reduce_prod_int32 out.context.pool ~out_arr ~a_arr ~va ~vout
+        ~axes ~keepdims
+  | Int64 out_arr, Int64 a_arr ->
+      Reduce_ops.reduce_prod_int64 out.context.pool ~out_arr ~a_arr ~va ~vout
+        ~axes ~keepdims
 
-let op_reduce_max ~out:_ ~axes:_ ~keepdims:_ _ =
-  Error.invalid ~op:"op_reduce_max" ~what:"not implemented" ()
+let op_reduce_max (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
+    unit =
+  let vout = out.view in
+  let va = a.view in
+  match (out.buffer, a.buffer) with
+  | Float64 out_arr, Float64 a_arr ->
+      Reduce_ops.reduce_max_float64 out.context.pool ~out_arr ~a_arr ~va ~vout
+        ~axes ~keepdims
+  | Float32 out_arr, Float32 a_arr ->
+      Reduce_ops.reduce_max_float32 out.context.pool ~out_arr ~a_arr ~va ~vout
+        ~axes ~keepdims
+  | Int32 out_arr, Int32 a_arr ->
+      Reduce_ops.reduce_max_int32 out.context.pool ~out_arr ~a_arr ~va ~vout
+        ~axes ~keepdims
+  | Int64 out_arr, Int64 a_arr ->
+      Reduce_ops.reduce_max_int64 out.context.pool ~out_arr ~a_arr ~va ~vout
+        ~axes ~keepdims
 
-let op_reduce_min ~out:_ ~axes:_ ~keepdims:_ _ =
-  Error.invalid ~op:"op_reduce_min" ~what:"not implemented" ()
+let op_reduce_min (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
+    unit =
+  let vout = out.view in
+  let va = a.view in
+  match (out.buffer, a.buffer) with
+  | Float64 out_arr, Float64 a_arr ->
+      Reduce_ops.reduce_min_float64 out.context.pool ~out_arr ~a_arr ~va ~vout
+        ~axes ~keepdims
+  | Float32 out_arr, Float32 a_arr ->
+      Reduce_ops.reduce_min_float32 out.context.pool ~out_arr ~a_arr ~va ~vout
+        ~axes ~keepdims
+  | Int32 out_arr, Int32 a_arr ->
+      Reduce_ops.reduce_min_int32 out.context.pool ~out_arr ~a_arr ~va ~vout
+        ~axes ~keepdims
+  | Int64 out_arr, Int64 a_arr ->
+      Reduce_ops.reduce_min_int64 out.context.pool ~out_arr ~a_arr ~va ~vout
+        ~axes ~keepdims
 
 let op_associative_scan ~axis:_ ~op:_ _ =
   Error.invalid ~op:"op_associative_scan" ~what:"not implemented" ()

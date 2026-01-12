@@ -17,10 +17,12 @@ let ops_f32 ~size =
   let a = Nx.rand Nx.Float32 ~key:(Nx.Rng.key (size * 3)) shape in
   let b = Nx.rand Nx.Float32 ~key:(Nx.Rng.key ((size * 3) + 1)) shape in
   let out_c = Nx.empty Nx.float32 shape in
+  let out_c_scalar = Nx.empty Nx.float32 [||] in
   let ctx = Nx_oxcaml.create_context () in
   let a_fe = Nx_ox.empty ctx Nx_ox.float32 shape in
   let b_fe = Nx_ox.empty ctx Nx_ox.float32 shape in
   let out_fe = Nx_ox.empty ctx Nx_ox.float32 shape in
+  let out_fe_scalar = Nx_ox.empty ctx Nx_ox.float32 [||] in
   let bin_pair name nx_op ox_op =
     [
       (name, "Nx (C)", fun () -> ignore (nx_op ~out:out_c a b));
@@ -33,6 +35,13 @@ let ops_f32 ~size =
       (name, "Nx (C)", fun () -> ignore (nx_op ~out:out_c a));
       (name, "Nx (OxCaml)", fun () ->
           ignore (ox_op ~out:out_fe a_fe));
+    ]
+  in
+  let reduce_pair name nx_op ox_op =
+    [
+      (name, "Nx (C)", fun () -> ignore (nx_op ~out:out_c_scalar a));
+      (name, "Nx (OxCaml)", fun () ->
+          ignore (ox_op ~out:out_fe_scalar a_fe));
     ]
   in
   [
@@ -51,6 +60,10 @@ let ops_f32 ~size =
     (* unary_pair "Log" (fun ~out a -> Nx.log ~out a) (fun ~out a -> Nx_ox.log ~out a); *)
     (* unary_pair "Sin" (fun ~out a -> Nx.sin ~out a) (fun ~out a -> Nx_ox.sin ~out a); *)
     (* unary_pair "Cos" (fun ~out a -> Nx.cos ~out a) (fun ~out a -> Nx_ox.cos ~out a); *)
+    (* reduce_pair "Reduce_sum" (fun ~out a -> Nx.sum ~out a) (fun ~out a -> Nx_ox.sum ~out a); *)
+    (* reduce_pair "Reduce_prod" (fun ~out a -> Nx.prod ~out a) (fun ~out a -> Nx_ox.prod ~out a); *)
+    (* reduce_pair "Reduce_max" (fun ~out a -> Nx.max ~out a) (fun ~out a -> Nx_ox.max ~out a); *)
+    (* reduce_pair "Reduce_min" (fun ~out a -> Nx.min ~out a) (fun ~out a -> Nx_ox.min ~out a); *)
   ]
   |> List.concat
 
@@ -59,10 +72,12 @@ let ops_f64 ~size =
   let a = Nx.rand Nx.Float64 ~key:(Nx.Rng.key (size * 3)) shape in
   let b = Nx.rand Nx.Float64 ~key:(Nx.Rng.key ((size * 3) + 1)) shape in
   let out_c = Nx.empty Nx.float64 shape in
+  let out_c_scalar = Nx.empty Nx.float64 [||] in
   let ctx = Nx_oxcaml.create_context () in
   let a_fe = Nx_ox.empty ctx Nx_ox.float64 shape in
   let b_fe = Nx_ox.empty ctx Nx_ox.float64 shape in
   let out_fe = Nx_ox.empty ctx Nx_ox.float64 shape in
+  let out_fe_scalar = Nx_ox.empty ctx Nx_ox.float64 [||] in
   let bin_pair name nx_op ox_op =
     [
       (name, "Nx (C)", fun () -> ignore (nx_op ~out:out_c a b));
@@ -75,6 +90,13 @@ let ops_f64 ~size =
       (name, "Nx (C)", fun () -> ignore (nx_op ~out:out_c a));
       (name, "Nx (OxCaml)", fun () ->
           ignore (ox_op ~out:out_fe a_fe));
+    ]
+  in
+  let reduce_pair name nx_op ox_op =
+    [
+      (name, "Nx (C)", fun () -> ignore (nx_op ~out:out_c_scalar a));
+      (name, "Nx (OxCaml)", fun () ->
+          ignore (ox_op ~out:out_fe_scalar a_fe));
     ]
   in
   [
@@ -93,6 +115,10 @@ let ops_f64 ~size =
     (* unary_pair "Log" (fun ~out a -> Nx.log ~out a) (fun ~out a -> Nx_ox.log ~out a); *)
     (* unary_pair "Sin" (fun ~out a -> Nx.sin ~out a) (fun ~out a -> Nx_ox.sin ~out a); *)
     (* unary_pair "Cos" (fun ~out a -> Nx.cos ~out a) (fun ~out a -> Nx_ox.cos ~out a); *)
+    (* reduce_pair "Reduce_sum" (fun ~out a -> Nx.sum ~out a) (fun ~out a -> Nx_ox.sum ~out a); *)
+    (* reduce_pair "Reduce_prod" (fun ~out a -> Nx.prod ~out a) (fun ~out a -> Nx_ox.prod ~out a); *)
+    (* reduce_pair "Reduce_max" (fun ~out a -> Nx.max ~out a) (fun ~out a -> Nx_ox.max ~out a); *)
+    (* reduce_pair "Reduce_min" (fun ~out a -> Nx.min ~out a) (fun ~out a -> Nx_ox.min ~out a); *)
   ]
   |> List.concat
 
