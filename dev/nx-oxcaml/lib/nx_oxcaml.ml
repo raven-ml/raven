@@ -1,26 +1,5 @@
 open Import
 
-type context = { pool : Parallel.pool }
-
-let create_context () = { pool = Parallel.get_or_setup_pool () }
-
-type 'b buffer =
-  | Float64 : float# array -> Dtype.float64_elt buffer
-  | Float32 : float32# array -> Dtype.float32_elt buffer
-  | Int32 : int32# array -> Dtype.int32_elt buffer
-  | Int64 : int64# array -> Dtype.int64_elt buffer
-
-type ('a, 'b) t = {
-  dtype : ('a, 'b) Dtype.t;
-  buffer : 'b buffer;
-  view : View.t;
-  context : context;
-}
-
-let view t = t.view
-let dtype t = t.dtype
-let context t = t.context
-
 (* [data] returns a Bigarray, but Bigarrays cannot point to OCaml heap memory.
    Unboxed arrays are GC-managed, so we cannot create a Bigarray view of them
    without risking memory safety. Use [data_array] to access the raw buffer. *)
@@ -50,25 +29,25 @@ let op_buffer (type a b) context (dtype : (a, b) Dtype.t) (size : int) :
       { dtype; buffer = Int64 buffer; view; context }
   | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
 
-let of_float64 context (arr : float# array) : (float, Dtype.float64_elt) t =
+let of_float64 context (arr : float #array) : (float, Dtype.float64_elt) t =
   let size = Array.length arr in
   let sym_shape = Symbolic_shape.of_ints [| size |] in
   let view = View.create sym_shape in
   { dtype = Dtype.Float64; buffer = Float64 arr; view; context }
 
-let of_float32 context (arr : float32# array) : (float, Dtype.float32_elt) t =
+let of_float32 context (arr : float32 #array) : (float, Dtype.float32_elt) t =
   let size = Array.length arr in
   let sym_shape = Symbolic_shape.of_ints [| size |] in
   let view = View.create sym_shape in
   { dtype = Dtype.Float32; buffer = Float32 arr; view; context }
 
-let of_int32 context (arr : int32# array) : (int32, Dtype.int32_elt) t =
+let of_int32 context (arr : int32 #array) : (int32, Dtype.int32_elt) t =
   let size = Array.length arr in
   let sym_shape = Symbolic_shape.of_ints [| size |] in
   let view = View.create sym_shape in
   { dtype = Dtype.Int32; buffer = Int32 arr; view; context }
 
-let of_int64 context (arr : int64# array) : (int64, Dtype.int64_elt) t =
+let of_int64 context (arr : int64 #array) : (int64, Dtype.int64_elt) t =
   let size = Array.length arr in
   let sym_shape = Symbolic_shape.of_ints [| size |] in
   let view = View.create sym_shape in
@@ -504,8 +483,71 @@ let op_cos ~out:_ _ = Error.invalid ~op:"op_cos" ~what:"not implemented" ()
 let op_where ~out:_ _ _ _ =
   Error.invalid ~op:"op_where" ~what:"not implemented" ()
 
-let op_reduce_sum ~out:_ ~axes:_ ~keepdims:_ _ =
-  Error.invalid ~op:"op_reduce_sum" ~what:"not implemented" ()
+let op_reduce_sum (type a b) ~axes ~keepdims (a : (a, b) t) (out : (a, b) t) =
+  let vout = out.view in
+  let va = a.view in
+  let in_shape = shape a.view in
+  let rank = Array.length in_shape in
+  let axes_to_reduce =
+    List.sort_uniq compare
+      (List.map
+         (fun ax ->
+           let ax' = if ax < 0 then ax + rank else ax in
+           if ax' < 0 || ax' >= rank then
+             invalid_arg
+               (Printf.sprintf "sum: invalid axis %d for tensor with rank %d" ax
+                  rank)
+           else ax')
+         (Array.to_list axes))
+  in
+  if axes_to_reduce = [] then blit a out
+  else if rank = 0 then blit a out
+  else
+    let out_shape =
+      Reduce_ops.reduction_output_shape in_shape axes_to_reduce keepdims
+    in
+    let num_output_elements = Array.fold_left ( * ) 1 out_shape in
+    let num_input_elements = Array.fold_left ( * ) 1 in_shape in
+    if num_output_elements = 1 && num_input_elements > 0 then
+      let total_sum_value =
+        match a.dtype with
+        | Float64 -> parallel_sum_all_f64 out.context a
+        | Float32 -> parallel_sum_all_f32 out.context a
+        | Int64 -> parallel_sum_all_i64 out.context a
+        | Int32 -> parallel_sum_all_i32 out.context a
+      in
+      let out_buf = out.buffer in
+      Array.unsafe_set out_buf (offset out) total_sum_value
+    else if num_output_elements > 0 && num_input_elements > 0 then
+      match (out.buffer, a.buffer) with
+      | Float64 out_arr, Float64 a_arr ->
+          if vol > parallel_threshold then
+            Parallel.parallel_for context.pool 0 (num_output_elements - 1)
+              (fun start_idx end_idx ->
+                kernel_sum_axis a_arr out_arr va vout axes_to_reduce start_idx
+                  end_idx)
+          else Op_abs.abs_float64 a_arr out_arr va vout 0 vol
+      | Float32 out_arr, Float32 a_arr ->
+          if vol > parallel_threshold then
+            Parallel.parallel_for context.pool 0 (num_output_elements - 1)
+              (fun start_idx end_idx ->
+                kernel_sum_axis a_arr out_arr va vout axes_to_reduce start_idx
+                  end_idx)
+          else Op_abs.abs_float32 a_arr out_arr va vout 0 vol
+      | Int32 out_arr, Int32 a_arr ->
+          if vol > parallel_threshold then
+            Parallel.parallel_for context.pool 0 (num_output_elements - 1)
+              (fun start_idx end_idx ->
+                kernel_sum_axis a_arr out_arr va vout axes_to_reduce start_idx
+                  end_idx)
+          else Op_abs.abs_int32 a_arr out_arr va vout 0 vol
+      | Int64 out_arr, Int64 a_arr ->
+          if vol > parallel_threshold then
+            Parallel.parallel_for context.pool 0 (num_output_elements - 1)
+              (fun start_idx end_idx ->
+                kernel_sum_axis a_arr out_arr va vout axes_to_reduce start_idx
+                  end_idx)
+          else Op_abs.abs_int64 a_arr out_arr va vout 0 vol
 
 let op_reduce_prod ~out:_ ~axes:_ ~keepdims:_ _ =
   Error.invalid ~op:"op_reduce_prod" ~what:"not implemented" ()

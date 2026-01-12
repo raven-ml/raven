@@ -649,6 +649,19 @@ let test_abs_int64 () =
   check_int64 "abs_int64[1]" #20L (geti64 d 1);
   check_int64 "abs_int64[2]" #0L (geti64 d 2)
 
+let test_reduce_sum_float64_axis0 () =
+  let ctx = Nx_oxcaml.create_context () in
+  let a =
+    Nx_oxcaml.of_float64 ctx ~shape:[| 2; 3 |]
+      [| #1.0; #2.0; #3.0; #4.0; #5.0; #6.0 |]
+  in
+  let out = Nx_oxcaml.op_buffer ctx Dtype.Float64 3 in
+  Nx_oxcaml.op_reduce_sum ~out ~axes:[| 0 |] ~keepdims:false a;
+  let d = Nx_oxcaml.data_array out in
+  check_float64 "reduce_sum_axis0[0]" ~eps:1e-9 #5.0 (get64 d 0);
+  check_float64 "reduce_sum_axis0[1]" ~eps:1e-9 #7.0 (get64 d 1);
+  check_float64 "reduce_sum_axis0[2]" ~eps:1e-9 #9.0 (get64 d 2)
+
 let () =
   print_endline "Running Nx_oxcaml backend tests...";
   test_buffer_float64 ();
@@ -707,5 +720,6 @@ let () =
   test_abs_float32 ();
   test_abs_int64 ();
   test_abs_int32 ();
+  test_reduce_sum_float64_axis0 ();
   Printf.printf "\nResults: %d passed, %d failed\n" !passed !failed;
   if !failed > 0 then exit 1
