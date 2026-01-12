@@ -1223,7 +1223,7 @@ let tabulate ?(confidence = 0.95) ?(cpu_selector = `Process)
     (1. -. confidence);
   flush stdout
 
-let print_pretty_table ?(ascii_only = false) results =
+let print_pretty_table ?(ascii_only = false) ?(sort_by_wall = true) results =
   if results = [] then (
     Printf.printf "No benchmark results to display.\n";
     exit 0);
@@ -1311,11 +1311,13 @@ let print_pretty_table ?(ascii_only = false) results =
       Float.max_float results
   in
 
-  (* Sort results by wall-clock time *)
+  (* Sort results by wall-clock time unless disabled. *)
   let sorted_results =
-    List.sort
-      (fun r1 r2 -> Float.compare r1.wall_stats.avg r2.wall_stats.avg)
-      results
+    if sort_by_wall then
+      List.sort
+        (fun r1 r2 -> Float.compare r1.wall_stats.avg r2.wall_stats.avg)
+        results
+    else results
   in
 
   (* Create row data with coloring *)
@@ -1526,7 +1528,7 @@ let bench_param :
 let create_param = bench_param (* Keep for backwards compatibility *)
 
 let run_with_cli_config quota output_format fork_benchmarks warmup stabilize_gc
-    verbose ascii_only benchmarks =
+    verbose ascii_only sort_by_wall benchmarks =
   let config =
     {
       mode = Throughput 1.0;
@@ -1592,7 +1594,8 @@ let run_with_cli_config quota output_format fork_benchmarks warmup stabilize_gc
 
   Printf.printf "\nBenchmark Results:\n";
   (match output_format with
-  | Pretty_table -> print_pretty_table ~ascii_only:config.ascii_only results
+  | Pretty_table ->
+      print_pretty_table ~ascii_only:config.ascii_only ~sort_by_wall results
   | JSON -> print_json results
   | CSV -> print_csv results);
 
@@ -1646,12 +1649,13 @@ let run_silent ?(config = default_config) benchmarks =
   results
 
 let run_and_print ?(config = default_config) ?(output_format = Pretty_table)
-    ?(verbose = false) benchmarks =
+    ?(verbose = false) ?(sort_by_wall = true) benchmarks =
   let results = run_silent ~config benchmarks in
 
   Printf.printf "\nBenchmark Results:\n";
   (match output_format with
-  | Pretty_table -> print_pretty_table ~ascii_only:config.ascii_only results
+  | Pretty_table ->
+      print_pretty_table ~ascii_only:config.ascii_only ~sort_by_wall results
   | JSON -> print_json results
   | CSV -> print_csv results);
 
@@ -1660,12 +1664,13 @@ let run_and_print ?(config = default_config) ?(output_format = Pretty_table)
 
 let run ?(config = default_config) ?(output_format = Pretty_table)
     ?(verbose = false) ?(quota = config.quota)
-    ?(warmup = config.warmup_iterations) ?(format = output_format) benchmarks =
+    ?(warmup = config.warmup_iterations) ?(format = output_format)
+    ?(sort_by_wall = true) benchmarks =
   let config =
     (config |> fun c -> { c with quota }) |> fun c ->
     { c with warmup_iterations = warmup }
   in
-  run_and_print ~config ~output_format:format ~verbose benchmarks
+  run_and_print ~config ~output_format:format ~verbose ~sort_by_wall benchmarks
 
 (* CLI using standard library Arg module *)
 let run_cli benchmarks =
@@ -1733,7 +1738,7 @@ let run_cli benchmarks =
     (* Run benchmarks with parsed configuration *)
     ignore
       (run_with_cli_config !quota !output_format !fork_benchmarks !warmup
-         !stabilize_gc !verbose !ascii_only benchmarks)
+         !stabilize_gc !verbose !ascii_only true benchmarks)
   with
   | Arg.Bad msg ->
       Printf.eprintf "%s\n" msg;

@@ -365,9 +365,11 @@ val run :
   ?quota:quota ->
   ?warmup:int ->
   ?format:output_format ->
+  ?sort_by_wall:bool ->
   benchmark list ->
   analysis_result list
-(** [run ?config ?output_format ?verbose ?quota ?warmup ?format benchmarks]
+(** [run ?config ?output_format ?verbose ?quota ?warmup ?format ?sort_by_wall
+    benchmarks]
     executes the given benchmarks and returns analysis results.
 
     Results are automatically printed using the specified output format. The
@@ -380,7 +382,9 @@ val run :
     @param verbose Whether to print regression analysis (defaults to [false])
     @param quota Quick override for execution quota
     @param warmup Quick override for warmup iterations
-    @param format Alias for output_format for convenience *)
+    @param format Alias for output_format for convenience
+    @param sort_by_wall Sort table output by wall-clock time (defaults to [true])
+*)
 
 val run_silent : ?config:Config.t -> benchmark list -> analysis_result list
 (** [run_silent ?config benchmarks] executes benchmarks without printing
@@ -393,9 +397,11 @@ val run_and_print :
   ?config:Config.t ->
   ?output_format:output_format ->
   ?verbose:bool ->
+  ?sort_by_wall:bool ->
   benchmark list ->
   analysis_result list
-(** [run_and_print ?config ?output_format ?verbose benchmarks] executes
+(** [run_and_print ?config ?output_format ?verbose ?sort_by_wall benchmarks]
+    executes
     benchmarks and prints results.
 
     Equivalent to [run] but with explicit naming to distinguish from
@@ -515,10 +521,13 @@ val run_bench_with_config : Config.t -> (unit -> unit) -> bench_data
 
 (** {1 Output Formatting} *)
 
-val print_pretty_table : ?ascii_only:bool -> analysis_result list -> unit
-(** [print_pretty_table ?ascii_only results] prints results as formatted table.
+val print_pretty_table :
+  ?ascii_only:bool -> ?sort_by_wall:bool -> analysis_result list -> unit
+(** [print_pretty_table ?ascii_only ?sort_by_wall results] prints results as
+    formatted table.
 
     @param ascii_only Use ASCII characters only (defaults to [false])
+    @param sort_by_wall Sort rows by wall-clock time (defaults to [true])
 
     Uses colors and Unicode box-drawing characters unless [ascii_only] is true.
     Shows time per run, memory allocation, and comparison to fastest. *)
