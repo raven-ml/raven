@@ -37,6 +37,7 @@ let check_float32 name ~eps exp act =
 
 let check_int32 name exp act = check name (Int32_u.equal exp act)
 let check_int64 name exp act = check name (Int64_u.equal exp act)
+let check_bool name exp act = check name (exp == act)
 
 let numel v =
   match Symbolic_shape.eval_dim (View.numel v) with
@@ -47,6 +48,7 @@ let get64 (Nx_oxcaml.Float64 a) i = array_get a i
 let get32 (Nx_oxcaml.Float32 a) i = array_get a i
 let geti32 (Nx_oxcaml.Int32 a) i = array_get a i
 let geti64 (Nx_oxcaml.Int64 a) i = array_get a i
+let getbool (Nx_oxcaml.Bool a) i = array_get a i
 
 let test_buffer_float64 () =
   let t = Nx_oxcaml.op_buffer (Nx_oxcaml.create_context ()) Dtype.Float64 5 in
@@ -758,6 +760,49 @@ let test_sqrt_float32 () =
   check_float32 "sqrt_float32[1]" ~eps:1e-6 #2.0s (get32 d 1);
   check_float32 "sqrt_float32[2]" ~eps:1e-6 #3.0s (get32 d 2)
 
+let test_cmpeq_int64 () =
+  let ctx = Nx_oxcaml.create_context () in
+  let a = Nx_oxcaml.of_int64 ctx [| #1L; #2L; #3L |] in
+  let b = Nx_oxcaml.of_int64 ctx [| #1L; #2L; #4L |] in
+  let out = Nx_oxcaml.op_buffer ctx Dtype.Bool 3 in
+  Nx_oxcaml.op_cmpeq ~out a b;
+  let d = Nx_oxcaml.data_array out in
+  check_bool "or_bool[0]" true (getbool d 0);
+  check_bool "or_bool[1]" true (getbool d 1);
+  check_bool "or_bool[2]" false (getbool d 2)
+
+let test_cmpeq_float64 () =
+  let ctx = Nx_oxcaml.create_context () in
+  let a = Nx_oxcaml.of_float64 ctx [| #1.0; #2.0; #3.0 |] in
+  let b = Nx_oxcaml.of_float64 ctx [| #1.0; #2.0; #4.0 |] in
+  let out = Nx_oxcaml.op_buffer ctx Dtype.Bool 3 in
+  Nx_oxcaml.op_cmpeq ~out a b;
+  let d = Nx_oxcaml.data_array out in
+  check_bool "or_bool[0]" true (getbool d 0);
+  check_bool "or_bool[1]" true (getbool d 1);
+  check_bool "or_bool[2]" false (getbool d 2)
+
+  let test_cmpneq_int64 () =
+    let ctx = Nx_oxcaml.create_context () in
+    let a = Nx_oxcaml.of_int64 ctx [| #1L; #2L; #3L |] in
+    let b = Nx_oxcaml.of_int64 ctx [| #1L; #2L; #4L |] in
+    let out = Nx_oxcaml.op_buffer ctx Dtype.Bool 3 in
+    Nx_oxcaml.op_cmpne ~out a b;
+    let d = Nx_oxcaml.data_array out in
+    check_bool "or_bool[0]" false (getbool d 0);
+    check_bool "or_bool[1]" false (getbool d 1);
+    check_bool "or_bool[2]" true (getbool d 2)
+  
+  let test_cmpneq_float64 () =
+    let ctx = Nx_oxcaml.create_context () in
+    let a = Nx_oxcaml.of_float64 ctx [| #1.0; #2.0; #3.0 |] in
+    let b = Nx_oxcaml.of_float64 ctx [| #1.0; #2.0; #4.0 |] in
+    let out = Nx_oxcaml.op_buffer ctx Dtype.Bool 3 in
+    Nx_oxcaml.op_cmpne ~out a b;
+    let d = Nx_oxcaml.data_array out in
+    check_bool "or_bool[0]" false (getbool d 0);
+    check_bool "or_bool[1]" false (getbool d 1);
+    check_bool "or_bool[2]" true (getbool d 2)
 let () =
   print_endline "Running Nx_oxcaml backend tests...";
   test_buffer_float64 ();
@@ -826,5 +871,9 @@ let () =
   test_cos_float32 ();
   test_sqrt_float64 ();
   test_sqrt_float32 ();
+  test_cmpeq_int64 ();
+  test_cmpeq_float64 ();
+  test_cmpneq_int64 ();
+  test_cmpneq_float64 ();
   Printf.printf "\nResults: %d passed, %d failed\n" !passed !failed;
   if !failed > 0 then exit 1
