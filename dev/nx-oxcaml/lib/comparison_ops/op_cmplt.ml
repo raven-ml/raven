@@ -29,17 +29,27 @@ let cmplt_float64 a_arr b_arr out_arr va vb vout start_idx end_idx =
       let b2 = Array.unsafe_get b_arr (b_base + i2) in
       let a3 = Array.unsafe_get a_arr (a_base + i3) in
       let b3 = Array.unsafe_get b_arr (b_base + i3) in
-      Array.unsafe_set out_arr (out_base + i0) (Float_u.compare a0 b0 < 0);
-      Array.unsafe_set out_arr (out_base + i1) (Float_u.compare a1 b1 < 0);
-      Array.unsafe_set out_arr (out_base + i2) (Float_u.compare a2 b2 < 0);
-      Array.unsafe_set out_arr (out_base + i3) (Float_u.compare a3 b3 < 0);
+      Array.unsafe_set out_arr (out_base + i0)
+        (Float_u.equal a0 a0 && Float_u.equal b0 b0
+        && Float_u.compare a0 b0 < 0);
+      Array.unsafe_set out_arr (out_base + i1)
+        (Float_u.equal a1 a1 && Float_u.equal b1 b1
+        && Float_u.compare a1 b1 < 0);
+      Array.unsafe_set out_arr (out_base + i2)
+        (Float_u.equal a2 a2 && Float_u.equal b2 b2
+        && Float_u.compare a2 b2 < 0);
+      Array.unsafe_set out_arr (out_base + i3)
+        (Float_u.equal a3 a3 && Float_u.equal b3 b3
+        && Float_u.compare a3 b3 < 0);
       i := i0 + 4
     done;
     while !i < n do
       let idx = !i in
       let a_val = Array.unsafe_get a_arr (a_base + idx) in
       let b_val = Array.unsafe_get b_arr (b_base + idx) in
-      Array.unsafe_set out_arr (out_base + idx) (Float_u.compare a_val b_val < 0);
+      Array.unsafe_set out_arr (out_base + idx)
+        (Float_u.equal a_val a_val && Float_u.equal b_val b_val
+        && Float_u.compare a_val b_val < 0);
       incr i
     done)
   else
@@ -62,7 +72,9 @@ let cmplt_float64 a_arr b_arr out_arr va vb vout start_idx end_idx =
       let b_lin = Shape.ravel_index b_idx b_strides in
       let a_val = Array.unsafe_get a_arr (a_offset + a_lin) in
       let b_val = Array.unsafe_get b_arr (b_offset + b_lin) in
-      Array.unsafe_set out_arr (out_offset + k) (Float_u.compare a_val b_val < 0)
+      Array.unsafe_set out_arr (out_offset + k)
+        (Float_u.equal a_val a_val && Float_u.equal b_val b_val
+        && Float_u.compare a_val b_val < 0)
     done
 
 let cmplt_float32 a_arr b_arr out_arr va vb vout start_idx end_idx =
@@ -89,17 +101,27 @@ let cmplt_float32 a_arr b_arr out_arr va vb vout start_idx end_idx =
       let b2 = Array.unsafe_get b_arr (b_base + i2) in
       let a3 = Array.unsafe_get a_arr (a_base + i3) in
       let b3 = Array.unsafe_get b_arr (b_base + i3) in
-      Array.unsafe_set out_arr (out_base + i0) (Float32_u.compare a0 b0 < 0);
-    Array.unsafe_set out_arr (out_base + i1) (Float32_u.compare a1 b1 < 0);
-    Array.unsafe_set out_arr (out_base + i2) (Float32_u.compare a2 b2 < 0);
-    Array.unsafe_set out_arr (out_base + i3) (Float32_u.compare a3 b3 < 0);
-    i := i0 + 4
+      Array.unsafe_set out_arr (out_base + i0)
+        (Float32_u.equal a0 a0 && Float32_u.equal b0 b0
+        && Float32_u.compare a0 b0 < 0);
+      Array.unsafe_set out_arr (out_base + i1)
+        (Float32_u.equal a1 a1 && Float32_u.equal b1 b1
+        && Float32_u.compare a1 b1 < 0);
+      Array.unsafe_set out_arr (out_base + i2)
+        (Float32_u.equal a2 a2 && Float32_u.equal b2 b2
+        && Float32_u.compare a2 b2 < 0);
+      Array.unsafe_set out_arr (out_base + i3)
+        (Float32_u.equal a3 a3 && Float32_u.equal b3 b3
+        && Float32_u.compare a3 b3 < 0);
+      i := i0 + 4
     done;
     while !i < n do
       let idx = !i in
       let a_val = Array.unsafe_get a_arr (a_base + idx) in
       let b_val = Array.unsafe_get b_arr (b_base + idx) in
-      Array.unsafe_set out_arr (out_base + idx) (Float32_u.compare a_val b_val < 0);
+      Array.unsafe_set out_arr (out_base + idx)
+        (Float32_u.equal a_val a_val && Float32_u.equal b_val b_val
+        && Float32_u.compare a_val b_val < 0);
       incr i
     done)
   else
@@ -122,7 +144,9 @@ let cmplt_float32 a_arr b_arr out_arr va vb vout start_idx end_idx =
       let b_lin = Shape.ravel_index b_idx b_strides in
       let a_val = Array.unsafe_get a_arr (a_offset + a_lin) in
       let b_val = Array.unsafe_get b_arr (b_offset + b_lin) in
-      Array.unsafe_set out_arr (out_offset + k) (Float32_u.compare a_val b_val < 0)
+      Array.unsafe_set out_arr (out_offset + k)
+        (Float32_u.equal a_val a_val && Float32_u.equal b_val b_val
+        && Float32_u.compare a_val b_val < 0)
     done
 
 let cmplt_int32 a_arr b_arr out_arr va vb vout start_idx end_idx =
@@ -150,10 +174,10 @@ let cmplt_int32 a_arr b_arr out_arr va vb vout start_idx end_idx =
       let a3 = Array.unsafe_get a_arr (a_base + i3) in
       let b3 = Array.unsafe_get b_arr (b_base + i3) in
       Array.unsafe_set out_arr (out_base + i0) (Int32_u.compare a0 b0 < 0);
-    Array.unsafe_set out_arr (out_base + i1) (Int32_u.compare a1 b1 < 0);
-    Array.unsafe_set out_arr (out_base + i2) (Int32_u.compare a2 b2 < 0);
-    Array.unsafe_set out_arr (out_base + i3) (Int32_u.compare a3 b3 < 0);
-    i := i0 + 4
+      Array.unsafe_set out_arr (out_base + i1) (Int32_u.compare a1 b1 < 0);
+      Array.unsafe_set out_arr (out_base + i2) (Int32_u.compare a2 b2 < 0);
+      Array.unsafe_set out_arr (out_base + i3) (Int32_u.compare a3 b3 < 0);
+      i := i0 + 4
     done;
     while !i < n do
       let idx = !i in
@@ -209,11 +233,11 @@ let cmplt_int64 a_arr b_arr out_arr va vb vout start_idx end_idx =
       let b2 = Array.unsafe_get b_arr (b_base + i2) in
       let a3 = Array.unsafe_get a_arr (a_base + i3) in
       let b3 = Array.unsafe_get b_arr (b_base + i3) in
-      Array.unsafe_set out_arr (out_base + i0) (Int64_u.compare a0 b0< 0);
-    Array.unsafe_set out_arr (out_base + i1) (Int64_u.compare a1 b1< 0);
-    Array.unsafe_set out_arr (out_base + i2) (Int64_u.compare a2 b2< 0);
-    Array.unsafe_set out_arr (out_base + i3) (Int64_u.compare a3 b3< 0);
-    i := i0 + 4
+      Array.unsafe_set out_arr (out_base + i0) (Int64_u.compare a0 b0 < 0);
+      Array.unsafe_set out_arr (out_base + i1) (Int64_u.compare a1 b1 < 0);
+      Array.unsafe_set out_arr (out_base + i2) (Int64_u.compare a2 b2 < 0);
+      Array.unsafe_set out_arr (out_base + i3) (Int64_u.compare a3 b3 < 0);
+      i := i0 + 4
     done;
     while !i < n do
       let idx = !i in
@@ -242,5 +266,5 @@ let cmplt_int64 a_arr b_arr out_arr va vb vout start_idx end_idx =
       let b_lin = Shape.ravel_index b_idx b_strides in
       let a_val = Array.unsafe_get a_arr (a_offset + a_lin) in
       let b_val = Array.unsafe_get b_arr (b_offset + b_lin) in
-      Array.unsafe_set out_arr (out_offset + k) (Int64_u.compare a_val b_val< 0)
+      Array.unsafe_set out_arr (out_offset + k) (Int64_u.compare a_val b_val < 0)
     done
