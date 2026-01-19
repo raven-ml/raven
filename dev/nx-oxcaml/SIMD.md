@@ -5,15 +5,15 @@
 | Kernel                    | Float32  | Float64  | Int32    | Int64    | Int16     | Int8      | Notes                           |
 | ------------------------- | -------- | -------- | -------- | -------- | --------- | --------- | ------------------------------- |
 | **Binary Operations**     |          |          |          |          |           |           |
-| add                       | ✅ SIMD   | ✅ SIMD   | ✅ SIMD   | ✅ SIMD   | ❌ Blocked | ❌ Blocked | Missing array primitives        |
-| sub                       | ✅ SIMD   | ✅ SIMD   | ✅ SIMD   | ✅ SIMD   | ❌ Blocked | ❌ Blocked | Missing array primitives        |
-| mul                       | ✅ SIMD   | ✅ SIMD   | ✅ SIMD   | ✅ SIMD   | ❌ Blocked | ❌ Blocked | Missing array primitives        |
+| add                       | ✅ SIMD   | ✅ SIMD   | ✅ SIMD   | ✅ SIMD   | ❌ Blocked | ❌ Blocked | 4x unrolled for f32/f64         |
+| sub                       | ✅ SIMD   | ✅ SIMD   | ✅ SIMD   | ✅ SIMD   | ❌ Blocked | ❌ Blocked | 4x unrolled for f32/f64         |
+| mul                       | ✅ SIMD   | ✅ SIMD   | ✅ SIMD   | ✅ SIMD   | ❌ Blocked | ❌ Blocked | 4x unrolled for f32/f64         |
 | fdiv                      | ✅ SIMD   | ✅ SIMD   | N/A      | N/A      | N/A       | N/A       | Float only                      |
 | idiv                      | N/A      | N/A      | ❌ Scalar | ❌ Scalar | ❌ Scalar  | ❌ Scalar  | No SIMD idiv in hardware        |
 | mod                       | ❌ Scalar | ❌ Scalar | ❌ Scalar | ❌ Scalar | ❌ Scalar  | ❌ Scalar  | No SIMD mod in hardware         |
 | pow                       | ❌ Scalar | ❌ Scalar | ❌ Scalar | ❌ Scalar | ❌ Scalar  | ❌ Scalar  | No SIMD pow in hardware         |
-| min                       | ✅ SIMD   | ✅ SIMD   | ✅ SIMD   | ✅ SIMD   | ❌ Blocked | ❌ Blocked | Missing array primitives        |
-| max                       | ✅ SIMD   | ✅ SIMD   | ✅ SIMD   | ✅ SIMD   | ❌ Blocked | ❌ Blocked | Missing array primitives        |
+| min                       | ✅ SIMD   | ✅ SIMD   | ✅ SIMD   | ✅ SIMD   | ❌ Blocked | ❌ Blocked | 4x unrolled for f32/f64         |
+| max                       | ✅ SIMD   | ✅ SIMD   | ✅ SIMD   | ✅ SIMD   | ❌ Blocked | ❌ Blocked | 4x unrolled for f32/f64         |
 | **Unary Operations**      |          |          |          |          |           |           |
 | neg                       | ✅ SIMD   | ✅ SIMD   | ✅ SIMD   | ✅ SIMD   | ❌ Blocked | ❌ Blocked | Int32/Int64 already use SIMD    |
 | abs                       | ✅ SIMD   | ✅ SIMD   | ✅ SIMD   | ❌ Scalar | ❌ Blocked | ❌ Blocked | Int64 needs cross-platform impl |
@@ -33,7 +33,10 @@
 | or                        | N/A      | N/A      | ✅ SIMD   | ✅ SIMD   | ❌ Blocked | ❌ Blocked | Int32/Int64 now use SIMD        |
 | xor                       | N/A      | N/A      | ✅ SIMD   | ✅ SIMD   | ❌ Blocked | ❌ Blocked | Int32/Int64 now use SIMD        |
 | **Reduce Operations**     |          |          |          |          |           |           |
-| sum                       | ❌ Scalar | ❌ Scalar | ❌ Scalar | ❌ Scalar | ❌ Scalar  | ❌ Scalar  | Could use hadd chain            |
+| sum                       | ✅ SIMD   | ✅ SIMD   | ❌ Scalar | ❌ Scalar | ❌ Scalar  | ❌ Scalar  | 4x unrolled with hadd           |
+| prod                      | ✅ SIMD   | ✅ SIMD   | ❌ Scalar | ❌ Scalar | ❌ Scalar  | ❌ Scalar  | 4x unrolled                     |
+| max                       | ✅ SIMD   | ✅ SIMD   | ❌ Scalar | ❌ Scalar | ❌ Scalar  | ❌ Scalar  | 4x unrolled                     |
+| min                       | ✅ SIMD   | ✅ SIMD   | ❌ Scalar | ❌ Scalar | ❌ Scalar  | ❌ Scalar  | 4x unrolled                     |
 
 ### Legend
 
@@ -102,12 +105,14 @@ A portable implementation could use: `abs(x) = (x XOR mask) - mask` where `mask 
 ### Completed:
 
 1. ✅ SIMD bitwise operations (and, or, xor) for Int32/Int64
+2. ✅ SIMD reduction operations (sum, prod, max, min) for Float32/Float64 with 4x loop unrolling
+3. ✅ 4x loop unrolling for binary ops (add, sub, mul, max, min) for Float32/Float64
 
 ### Remaining opportunities:
 
 1. **Int64 abs SIMD** - Requires adding portable `abs` to Int64x2 module first
 2. **Comparison ops** - Complex due to output format (mask vs bool array)
-3. **Reduce sum** - Complex, needs multi-stage horizontal add
+3. **Int32/Int64 reduction ops** - Could add SIMD for integer reductions
 
 ### Blocked by missing oxcaml primitives:
 
