@@ -1,0 +1,270 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  Distributed under the ISC license, see terms at the end of the file.
+
+  Based on ocaml_simd (https://github.com/janestreet/ocaml_simd)
+  Copyright (c) 2025-2026 Jane Street Group, LLC
+  Released under the MIT license.
+  ---------------------------------------------------------------------------*)
+
+type t = int16x8#
+
+(* ───── Constants and Lane Ops ───── *)
+
+external low_of : int16# -> t @@ portable
+  = "caml_vec128_unreachable" "caml_int16x8_low_of_int16"
+  [@@noalloc] [@@builtin]
+
+external low_to : t -> int16# @@ portable
+  = "caml_vec128_unreachable" "caml_int16x8_low_to_int16"
+  [@@noalloc] [@@builtin]
+
+external const1 : int16# -> t @@ portable
+  = "caml_vec128_unreachable" "caml_int16x8_const1"
+  [@@noalloc] [@@builtin]
+
+external dup : t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_dup"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external insert : (int[@untagged]) -> (t[@unboxed]) -> (int[@untagged]) -> (t[@unboxed]) @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_insert"
+  [@@noalloc] [@@builtin]
+
+external extract : (int[@untagged]) -> (t[@unboxed]) -> (int[@untagged]) @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_extract"
+  [@@noalloc] [@@builtin]
+
+(* ───── Casts ───── *)
+
+external of_int8x16 : int8x16# -> t @@ portable
+  = "caml_vec128_unreachable" "caml_vec128_cast"
+  [@@noalloc] [@@builtin]
+
+external of_int32x4 : int32x4# -> t @@ portable
+  = "caml_vec128_unreachable" "caml_vec128_cast"
+  [@@noalloc] [@@builtin]
+
+external of_int64x2 : int64x2# -> t @@ portable
+  = "caml_vec128_unreachable" "caml_vec128_cast"
+  [@@noalloc] [@@builtin]
+
+external of_float16x8 : float16x8# -> t @@ portable
+  = "caml_vec128_unreachable" "caml_vec128_cast"
+  [@@noalloc] [@@builtin]
+
+external of_float32x4 : float32x4# -> t @@ portable
+  = "caml_vec128_unreachable" "caml_vec128_cast"
+  [@@noalloc] [@@builtin]
+
+external of_float64x2 : float64x2# -> t @@ portable
+  = "caml_vec128_unreachable" "caml_vec128_cast"
+  [@@noalloc] [@@builtin]
+
+(* ───── Arithmetic ───── *)
+
+external add : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_add"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external sub : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_sub"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external add_saturating : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_add_saturating"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external add_saturating_unsigned : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_add_saturating_unsigned"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external sub_saturating : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_sub_saturating"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external sub_saturating_unsigned : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_sub_saturating_unsigned"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external abs : t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_abs"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external neg : t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_neg"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+(* ───── Min/Max ───── *)
+
+external max : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_max"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external min : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_min"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external max_unsigned : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_max_unsigned"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external min_unsigned : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_min_unsigned"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+(* ───── Comparison ───── *)
+
+external cmpeq : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_cmpeq"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external cmpgt : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_cmpgt"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external cmpltz : t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_cmpltz"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+(* ───── Horizontal Operations ───── *)
+
+external horizontal_add : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_hadd"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external horizontal_sub : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_hsub"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external horizontal_add_saturating : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_hadd_saturating"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external horizontal_sub_saturating : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_hsub_saturating"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+(* ───── Shifts ───── *)
+
+external sll : t -> int64x2# -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_sll"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external srl : t -> int64x2# -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_srl"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external sra : t -> int64x2# -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_sra"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+(* ───── Bitwise ───── *)
+
+external and_ : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_bitwise_and"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external or_ : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_bitwise_or"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external xor : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_bitwise_xor"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external bitwise_not : t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_bitwise_not"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+let[@inline] andnot ~not:mask t = and_ (bitwise_not mask) t
+
+(* ───── Multiply ───── *)
+
+external mul_low : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_mul_low"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external mul_high : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_mul_high"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external mul_high_unsigned : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_mul_high_unsigned"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external mul_horizontal_add : t -> t -> int32x4# @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_mul_hadd_int32x4"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external mul_round : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_mul_round"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+(* mul_sign: result[i] = a[i] * sign(b[i]) *)
+let[@inline] mul_sign a b =
+  let sign_mask = cmpltz b in
+  let negated = neg a in
+  let zero_mask = cmpeq b (sub b b) in
+  let result = or_ (and_ sign_mask negated) (and_ (bitwise_not sign_mask) a) in
+  and_ (bitwise_not zero_mask) result
+
+(* ───── Average ───── *)
+
+external avg_unsigned : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_avg_unsigned"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external minpos_unsigned : t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int16x8_minpos_unsigned"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+(* ───── Interleave ───── *)
+
+external interleave_high_16 : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_simd_vec128_interleave_high_16"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external interleave_low_16 : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_simd_vec128_interleave_low_16"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external interleave_low_32 : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_simd_vec128_interleave_low_32"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external interleave_low_64 : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_simd_vec128_interleave_low_64"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+(* ───── Shuffle ───── *)
+
+external shuffle_8 : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_vec128_shuffle_8"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+(* ───── Conversions ───── *)
+
+external cvt_si8 : t -> t -> int8x16# @@ portable
+  = "caml_vec128_unreachable" "caml_neon_cvt_int16x8_int8x16_saturating"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external cvt_su8 : t -> t -> int8x16# @@ portable
+  = "caml_vec128_unreachable" "caml_neon_cvt_int16x8_int8x16_saturating_unsigned"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external cvtsx_i32 : t -> int32x4# @@ portable
+  = "caml_vec128_unreachable" "caml_neon_cvtsx_int16x8_int32x4"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external cvtzx_i32 : t -> int32x4# @@ portable
+  = "caml_vec128_unreachable" "caml_neon_cvtzx_int16x8_int32x4"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external cvtsx_i64 : t -> int64x2# @@ portable
+  = "caml_vec128_unreachable" "caml_neon_cvtsx_int16x8_int64x2"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external cvtzx_i64 : t -> int64x2# @@ portable
+  = "caml_vec128_unreachable" "caml_neon_cvtzx_int16x8_int64x2"
+  [@@noalloc] [@@unboxed] [@@builtin]

@@ -15,25 +15,14 @@ let sub_float64 a_arr b_arr out_arr va vb vout start_idx end_idx =
   then (
     let i = ref 0 in
     let n = end_idx - start_idx in
-    let n4 = n - 3 in
-    while !i < n4 do
-      let i0 = !i in
-      let i1 = i0 + 1 in
-      let i2 = i0 + 2 in
-      let i3 = i0 + 3 in
-      let a0 = Array.unsafe_get a_arr (a_base + i0) in
-      let b0 = Array.unsafe_get b_arr (b_base + i0) in
-      let a1 = Array.unsafe_get a_arr (a_base + i1) in
-      let b1 = Array.unsafe_get b_arr (b_base + i1) in
-      let a2 = Array.unsafe_get a_arr (a_base + i2) in
-      let b2 = Array.unsafe_get b_arr (b_base + i2) in
-      let a3 = Array.unsafe_get a_arr (a_base + i3) in
-      let b3 = Array.unsafe_get b_arr (b_base + i3) in
-      Array.unsafe_set out_arr (out_base + i0) (Float_u.sub a0 b0);
-      Array.unsafe_set out_arr (out_base + i1) (Float_u.sub a1 b1);
-      Array.unsafe_set out_arr (out_base + i2) (Float_u.sub a2 b2);
-      Array.unsafe_set out_arr (out_base + i3) (Float_u.sub a3 b3);
-      i := i0 + 4
+    let n2 = n - 1 in
+    while !i < n2 do
+      let idx = !i in
+      let a_vec = Float64x2.Array.unsafe_get a_arr ~idx:(a_base + idx) in
+      let b_vec = Float64x2.Array.unsafe_get b_arr ~idx:(b_base + idx) in
+      let out_vec = Float64x2.sub a_vec b_vec in
+      Float64x2.Array.unsafe_set out_arr ~idx:(out_base + idx) out_vec;
+      i := idx + 2
     done;
     while !i < n do
       let idx = !i in
@@ -77,23 +66,12 @@ let sub_float32 a_arr b_arr out_arr va vb vout start_idx end_idx =
     let n = end_idx - start_idx in
     let n4 = n - 3 in
     while !i < n4 do
-      let i0 = !i in
-      let i1 = i0 + 1 in
-      let i2 = i0 + 2 in
-      let i3 = i0 + 3 in
-      let a0 = Array.unsafe_get a_arr (a_base + i0) in
-      let b0 = Array.unsafe_get b_arr (b_base + i0) in
-      let a1 = Array.unsafe_get a_arr (a_base + i1) in
-      let b1 = Array.unsafe_get b_arr (b_base + i1) in
-      let a2 = Array.unsafe_get a_arr (a_base + i2) in
-      let b2 = Array.unsafe_get b_arr (b_base + i2) in
-      let a3 = Array.unsafe_get a_arr (a_base + i3) in
-      let b3 = Array.unsafe_get b_arr (b_base + i3) in
-      Array.unsafe_set out_arr (out_base + i0) (Float32_u.sub a0 b0);
-      Array.unsafe_set out_arr (out_base + i1) (Float32_u.sub a1 b1);
-      Array.unsafe_set out_arr (out_base + i2) (Float32_u.sub a2 b2);
-      Array.unsafe_set out_arr (out_base + i3) (Float32_u.sub a3 b3);
-      i := i0 + 4
+      let idx = !i in
+      let a_vec = Float32x4.Array.unsafe_get a_arr ~idx:(a_base + idx) in
+      let b_vec = Float32x4.Array.unsafe_get b_arr ~idx:(b_base + idx) in
+      let out_vec = Float32x4.sub a_vec b_vec in
+      Float32x4.Array.unsafe_set out_arr ~idx:(out_base + idx) out_vec;
+      i := idx + 4
     done;
     while !i < n do
       let idx = !i in
@@ -257,23 +235,12 @@ let sub_int32 a_arr b_arr out_arr va vb vout start_idx end_idx =
     let n = end_idx - start_idx in
     let n4 = n - 3 in
     while !i < n4 do
-      let i0 = !i in
-      let i1 = i0 + 1 in
-      let i2 = i0 + 2 in
-      let i3 = i0 + 3 in
-      let a0 = Array.unsafe_get a_arr (a_base + i0) in
-      let b0 = Array.unsafe_get b_arr (b_base + i0) in
-      let a1 = Array.unsafe_get a_arr (a_base + i1) in
-      let b1 = Array.unsafe_get b_arr (b_base + i1) in
-      let a2 = Array.unsafe_get a_arr (a_base + i2) in
-      let b2 = Array.unsafe_get b_arr (b_base + i2) in
-      let a3 = Array.unsafe_get a_arr (a_base + i3) in
-      let b3 = Array.unsafe_get b_arr (b_base + i3) in
-      Array.unsafe_set out_arr (out_base + i0) (Int32_u.sub a0 b0);
-      Array.unsafe_set out_arr (out_base + i1) (Int32_u.sub a1 b1);
-      Array.unsafe_set out_arr (out_base + i2) (Int32_u.sub a2 b2);
-      Array.unsafe_set out_arr (out_base + i3) (Int32_u.sub a3 b3);
-      i := i0 + 4
+      let idx = !i in
+      let a_vec = Int32x4.Array.unsafe_get a_arr ~idx:(a_base + idx) in
+      let b_vec = Int32x4.Array.unsafe_get b_arr ~idx:(b_base + idx) in
+      let out_vec = Int32x4.sub a_vec b_vec in
+      Int32x4.Array.unsafe_set out_arr ~idx:(out_base + idx) out_vec;
+      i := idx + 4
     done;
     while !i < n do
       let idx = !i in
@@ -315,25 +282,14 @@ let sub_int64 a_arr b_arr out_arr va vb vout start_idx end_idx =
   then (
     let i = ref 0 in
     let n = end_idx - start_idx in
-    let n4 = n - 3 in
-    while !i < n4 do
-      let i0 = !i in
-      let i1 = i0 + 1 in
-      let i2 = i0 + 2 in
-      let i3 = i0 + 3 in
-      let a0 = Array.unsafe_get a_arr (a_base + i0) in
-      let b0 = Array.unsafe_get b_arr (b_base + i0) in
-      let a1 = Array.unsafe_get a_arr (a_base + i1) in
-      let b1 = Array.unsafe_get b_arr (b_base + i1) in
-      let a2 = Array.unsafe_get a_arr (a_base + i2) in
-      let b2 = Array.unsafe_get b_arr (b_base + i2) in
-      let a3 = Array.unsafe_get a_arr (a_base + i3) in
-      let b3 = Array.unsafe_get b_arr (b_base + i3) in
-      Array.unsafe_set out_arr (out_base + i0) (Int64_u.sub a0 b0);
-      Array.unsafe_set out_arr (out_base + i1) (Int64_u.sub a1 b1);
-      Array.unsafe_set out_arr (out_base + i2) (Int64_u.sub a2 b2);
-      Array.unsafe_set out_arr (out_base + i3) (Int64_u.sub a3 b3);
-      i := i0 + 4
+    let n2 = n - 1 in
+    while !i < n2 do
+      let idx = !i in
+      let a_vec = Int64x2.Array.unsafe_get a_arr ~idx:(a_base + idx) in
+      let b_vec = Int64x2.Array.unsafe_get b_arr ~idx:(b_base + idx) in
+      let out_vec = Int64x2.sub a_vec b_vec in
+      Int64x2.Array.unsafe_set out_arr ~idx:(out_base + idx) out_vec;
+      i := idx + 2
     done;
     while !i < n do
       let idx = !i in

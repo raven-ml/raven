@@ -1,0 +1,72 @@
+; Copy architecture-specific internal modules and stubs
+(rule
+ (enabled_if
+  (= %{architecture} arm64))
+ (targets
+  int8x16_internal.ml
+  int16x8_internal.ml
+  int32x4_internal.ml
+  int64x2_internal.ml
+  float16x8_internal.ml
+  float32x4_internal.ml
+  float64x2_internal.ml
+  stubs.c)
+ (deps
+  neon/int8x16_internal.ml
+  neon/int16x8_internal.ml
+  neon/int32x4_internal.ml
+  neon/int64x2_internal.ml
+  neon/float16x8_internal.ml
+  neon/float32x4_internal.ml
+  neon/float64x2_internal.ml
+  neon/neon_stubs.c)
+ (action
+  (progn
+   (copy neon/int8x16_internal.ml int8x16_internal.ml)
+   (copy neon/int16x8_internal.ml int16x8_internal.ml)
+   (copy neon/int32x4_internal.ml int32x4_internal.ml)
+   (copy neon/int64x2_internal.ml int64x2_internal.ml)
+   (copy neon/float16x8_internal.ml float16x8_internal.ml)
+   (copy neon/float32x4_internal.ml float32x4_internal.ml)
+   (copy neon/float64x2_internal.ml float64x2_internal.ml)
+   (copy neon/neon_stubs.c stubs.c))))
+
+(rule
+ (enabled_if
+  (= %{architecture} amd64))
+ (targets
+  int8x16_internal.ml
+  int16x8_internal.ml
+  int32x4_internal.ml
+  int64x2_internal.ml
+  float16x8_internal.ml
+  float32x4_internal.ml
+  float64x2_internal.ml
+  stubs.c)
+ (deps
+  sse/int8x16_internal.ml
+  sse/int16x8_internal.ml
+  sse/int32x4_internal.ml
+  sse/int64x2_internal.ml
+  sse/float16x8_internal.ml
+  sse/float32x4_internal.ml
+  sse/float64x2_internal.ml
+  sse/sse_stubs.c)
+ (action
+  (progn
+   (copy sse/int8x16_internal.ml int8x16_internal.ml)
+   (copy sse/int16x8_internal.ml int16x8_internal.ml)
+   (copy sse/int32x4_internal.ml int32x4_internal.ml)
+   (copy sse/int64x2_internal.ml int64x2_internal.ml)
+   (copy sse/float16x8_internal.ml float16x8_internal.ml)
+   (copy sse/float32x4_internal.ml float32x4_internal.ml)
+   (copy sse/float64x2_internal.ml float64x2_internal.ml)
+   (copy sse/sse_stubs.c stubs.c))))
+
+(library
+ (name simd)
+ (public_name nx-oxcaml.simd)
+ (foreign_stubs
+  (language c)
+  (names stubs))
+ (libraries stdlib_stable stdlib_upstream_compatible))

@@ -3,4 +3,4 @@
 (library
  (name nx_oxcaml)
  (public_name nx-oxcaml)
- (libraries nx.core stdlib_stable stdlib_upstream_compatible))
+ (libraries nx.core nx-oxcaml.simd stdlib_stable stdlib_upstream_compatible))
