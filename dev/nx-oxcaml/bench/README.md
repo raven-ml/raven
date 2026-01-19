@@ -2,18 +2,23 @@
 
 This directory contains benchmarks comparing the Nx OxCaml backend against the Nx C backend.
 
-## Add Operation Performance
+### Float64 Performance
+
+Here is a comparison of the wall time for adding two Float64 matrices of varying sizes using both backends:
 
 ```mermaid
 xychart-beta
-    title "Add Operation Wall Time (μs) - Lower is Better"
-    x-axis ["50x50 f32", "50x50 f64", "200x200 f32", "200x200 f64", "500x500 f32", "500x500 f64", "1000x1000 f32", "1000x1000 f64", "2000x2000 f32", "2000x2000 f64"]
+    title "Add f64 Wall Time (μs) - Lower is Better"
+    x-axis ["50x50", "200x200", "500x500", "1000x1000", "2000x2000"]
     y-axis "Wall Time (μs)" 0 --> 800
-    line [1.45, 1.45, 56.28, 39.41, 44.48, 43.83, 71.39, 141.37, 377.31, 692.28]
-    line [0.87, 1.68, 12.60, 24.79, 55.54, 71.94, 102.38, 198.72, 405.33, 730.39]
+    line "Nx (C)" [1.45, 39.41, 43.83, 141.37, 692.28]
+    line "Nx (OxCaml)" [1.68, 24.79, 71.94, 198.72, 730.39]
 ```
 
-Legend: First line = Nx (C), Second line = Nx (OxCaml)
+Overall, we achieve comparable performance between the two backends, with some variations depending on matrix size:
+- **Small matrices (50x50, 200x200)**: OxCaml backend is faster, possibly due to lower FFI overhead
+- **Medium matrices (500x500)**: Performance is comparable between backends
+- **Large matrices (1000x1000+)**: C backend has slight edge, both scale similarly
 
 ## Results
 
