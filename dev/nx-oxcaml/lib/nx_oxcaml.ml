@@ -29,9 +29,10 @@ let view t = t.view
 let dtype t = t.dtype
 let context t = t.context
 
-(* [to_host] returns a Bigarray, but Bigarrays cannot point to OCaml heap memory.
-   Unboxed arrays are GC-managed, so we cannot create a Bigarray view of them
-   without risking memory safety. Use [data_array] to access the raw buffer. *)
+(* [to_host] returns a Bigarray, but Bigarrays cannot point to OCaml heap
+   memory. Unboxed arrays are GC-managed, so we cannot create a Bigarray view of
+   them without risking memory safety. Use [data_array] to access the raw
+   buffer. *)
 let to_host _ =
   failwith
     "Nx_oxcaml.to_host is not supported. Bigarrays cannot point to OCaml heap \
@@ -63,8 +64,8 @@ let op_buffer (type a b) context (dtype : (a, b) Dtype.t) (size : int) :
       let buffer = Array.make_int64 size in
       { dtype; buffer = Int64 buffer; view; context }
   | Dtype.Bool ->
-    let buffer = Array.make size false in
-    { dtype; buffer = Bool buffer; view; context }
+      let buffer = Array.make size false in
+      { dtype; buffer = Bool buffer; view; context }
   | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
 
 let of_float64 context (arr : float# array) : (float, Dtype.float64_elt) t =
@@ -122,7 +123,7 @@ let op_add (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_add.add_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
       else Op_add.add_int64 a_arr b_arr out_arr va vb vout 0 vol
-      | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
+  | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
 
 let op_sub (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
@@ -155,7 +156,7 @@ let op_sub (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_sub.sub_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
       else Op_sub.sub_int64 a_arr b_arr out_arr va vb vout 0 vol
-      | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
+  | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
 
 let op_mul (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
@@ -188,7 +189,7 @@ let op_mul (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_mul.mul_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
       else Op_mul.mul_int64 a_arr b_arr out_arr va vb vout 0 vol
-      | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
+  | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
 
 let op_idiv (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
@@ -223,7 +224,7 @@ let op_idiv (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_idiv.idiv_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
       else Op_idiv.idiv_int64 a_arr b_arr out_arr va vb vout 0 vol
-      | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
+  | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
 
 let op_fdiv (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
@@ -315,7 +316,8 @@ let op_pow (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   | _ ->
       Error.invalid ~op:"op_cmpow" ~what:"not implemented for unboxed ints" ()
 
-let op_cmpeq (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let op_cmpeq (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t)
+    (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
   let va = a.view in
@@ -326,29 +328,34 @@ let op_cmpeq (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t) (b 
       if vol > parallel_threshold then
         Parallel.parallel_for out.context.pool 0 (vol - 1)
           (fun start_idx end_idx ->
-            Op_cmpeq.cmpeq_float64 a_arr b_arr out_arr va vb vout start_idx end_idx)
+            Op_cmpeq.cmpeq_float64 a_arr b_arr out_arr va vb vout start_idx
+              end_idx)
       else Op_cmpeq.cmpeq_float64 a_arr b_arr out_arr va vb vout 0 vol
   | Bool out_arr, Float32 a_arr, Float32 b_arr ->
       if vol > parallel_threshold then
         Parallel.parallel_for out.context.pool 0 (vol - 1)
           (fun start_idx end_idx ->
-            Op_cmpeq.cmpeq_float32 a_arr b_arr out_arr va vb vout start_idx end_idx)
+            Op_cmpeq.cmpeq_float32 a_arr b_arr out_arr va vb vout start_idx
+              end_idx)
       else Op_cmpeq.cmpeq_float32 a_arr b_arr out_arr va vb vout 0 vol
   | Bool out_arr, Int32 a_arr, Int32 b_arr ->
       if vol > parallel_threshold then
         Parallel.parallel_for out.context.pool 0 (vol - 1)
           (fun start_idx end_idx ->
-            Op_cmpeq.cmpeq_int32 a_arr b_arr out_arr va vb vout start_idx end_idx)
+            Op_cmpeq.cmpeq_int32 a_arr b_arr out_arr va vb vout start_idx
+              end_idx)
       else Op_cmpeq.cmpeq_int32 a_arr b_arr out_arr va vb vout 0 vol
   | Bool out_arr, Int64 a_arr, Int64 b_arr ->
       if vol > parallel_threshold then
         Parallel.parallel_for out.context.pool 0 (vol - 1)
           (fun start_idx end_idx ->
-            Op_cmpeq.cmpeq_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
+            Op_cmpeq.cmpeq_int64 a_arr b_arr out_arr va vb vout start_idx
+              end_idx)
       else Op_cmpeq.cmpeq_int64 a_arr b_arr out_arr va vb vout 0 vol
   | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
 
-let op_cmpne (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let op_cmpne (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t)
+    (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
   let va = a.view in
@@ -359,29 +366,34 @@ let op_cmpne (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t) (b 
       if vol > parallel_threshold then
         Parallel.parallel_for out.context.pool 0 (vol - 1)
           (fun start_idx end_idx ->
-            Op_cmpne.cmpne_float64 a_arr b_arr out_arr va vb vout start_idx end_idx)
+            Op_cmpne.cmpne_float64 a_arr b_arr out_arr va vb vout start_idx
+              end_idx)
       else Op_cmpne.cmpne_float64 a_arr b_arr out_arr va vb vout 0 vol
   | Bool out_arr, Float32 a_arr, Float32 b_arr ->
       if vol > parallel_threshold then
         Parallel.parallel_for out.context.pool 0 (vol - 1)
           (fun start_idx end_idx ->
-            Op_cmpne.cmpne_float32 a_arr b_arr out_arr va vb vout start_idx end_idx)
+            Op_cmpne.cmpne_float32 a_arr b_arr out_arr va vb vout start_idx
+              end_idx)
       else Op_cmpne.cmpne_float32 a_arr b_arr out_arr va vb vout 0 vol
   | Bool out_arr, Int32 a_arr, Int32 b_arr ->
       if vol > parallel_threshold then
         Parallel.parallel_for out.context.pool 0 (vol - 1)
           (fun start_idx end_idx ->
-            Op_cmpne.cmpne_int32 a_arr b_arr out_arr va vb vout start_idx end_idx)
+            Op_cmpne.cmpne_int32 a_arr b_arr out_arr va vb vout start_idx
+              end_idx)
       else Op_cmpne.cmpne_int32 a_arr b_arr out_arr va vb vout 0 vol
   | Bool out_arr, Int64 a_arr, Int64 b_arr ->
       if vol > parallel_threshold then
         Parallel.parallel_for out.context.pool 0 (vol - 1)
           (fun start_idx end_idx ->
-            Op_cmpne.cmpne_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
+            Op_cmpne.cmpne_int64 a_arr b_arr out_arr va vb vout start_idx
+              end_idx)
       else Op_cmpne.cmpne_int64 a_arr b_arr out_arr va vb vout 0 vol
   | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
 
-let op_cmplt (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let op_cmplt (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t)
+    (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
   let va = a.view in
@@ -392,29 +404,34 @@ let op_cmplt (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t) (b 
       if vol > parallel_threshold then
         Parallel.parallel_for out.context.pool 0 (vol - 1)
           (fun start_idx end_idx ->
-            Op_cmplt.cmplt_float64 a_arr b_arr out_arr va vb vout start_idx end_idx)
+            Op_cmplt.cmplt_float64 a_arr b_arr out_arr va vb vout start_idx
+              end_idx)
       else Op_cmplt.cmplt_float64 a_arr b_arr out_arr va vb vout 0 vol
   | Bool out_arr, Float32 a_arr, Float32 b_arr ->
       if vol > parallel_threshold then
         Parallel.parallel_for out.context.pool 0 (vol - 1)
           (fun start_idx end_idx ->
-            Op_cmplt.cmplt_float32 a_arr b_arr out_arr va vb vout start_idx end_idx)
+            Op_cmplt.cmplt_float32 a_arr b_arr out_arr va vb vout start_idx
+              end_idx)
       else Op_cmplt.cmplt_float32 a_arr b_arr out_arr va vb vout 0 vol
   | Bool out_arr, Int32 a_arr, Int32 b_arr ->
       if vol > parallel_threshold then
         Parallel.parallel_for out.context.pool 0 (vol - 1)
           (fun start_idx end_idx ->
-            Op_cmplt.cmplt_int32 a_arr b_arr out_arr va vb vout start_idx end_idx)
+            Op_cmplt.cmplt_int32 a_arr b_arr out_arr va vb vout start_idx
+              end_idx)
       else Op_cmplt.cmplt_int32 a_arr b_arr out_arr va vb vout 0 vol
   | Bool out_arr, Int64 a_arr, Int64 b_arr ->
       if vol > parallel_threshold then
         Parallel.parallel_for out.context.pool 0 (vol - 1)
           (fun start_idx end_idx ->
-            Op_cmplt.cmplt_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
+            Op_cmplt.cmplt_int64 a_arr b_arr out_arr va vb vout start_idx
+              end_idx)
       else Op_cmplt.cmplt_int64 a_arr b_arr out_arr va vb vout 0 vol
   | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
 
-let op_cmple (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let op_cmple (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t)
+    (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
   let va = a.view in
@@ -425,25 +442,29 @@ let op_cmple (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t) (b 
       if vol > parallel_threshold then
         Parallel.parallel_for out.context.pool 0 (vol - 1)
           (fun start_idx end_idx ->
-            Op_cmple.cmple_float64 a_arr b_arr out_arr va vb vout start_idx end_idx)
+            Op_cmple.cmple_float64 a_arr b_arr out_arr va vb vout start_idx
+              end_idx)
       else Op_cmple.cmple_float64 a_arr b_arr out_arr va vb vout 0 vol
   | Bool out_arr, Float32 a_arr, Float32 b_arr ->
       if vol > parallel_threshold then
         Parallel.parallel_for out.context.pool 0 (vol - 1)
           (fun start_idx end_idx ->
-            Op_cmple.cmple_float32 a_arr b_arr out_arr va vb vout start_idx end_idx)
+            Op_cmple.cmple_float32 a_arr b_arr out_arr va vb vout start_idx
+              end_idx)
       else Op_cmple.cmple_float32 a_arr b_arr out_arr va vb vout 0 vol
   | Bool out_arr, Int32 a_arr, Int32 b_arr ->
       if vol > parallel_threshold then
         Parallel.parallel_for out.context.pool 0 (vol - 1)
           (fun start_idx end_idx ->
-            Op_cmple.cmple_int32 a_arr b_arr out_arr va vb vout start_idx end_idx)
+            Op_cmple.cmple_int32 a_arr b_arr out_arr va vb vout start_idx
+              end_idx)
       else Op_cmple.cmple_int32 a_arr b_arr out_arr va vb vout 0 vol
   | Bool out_arr, Int64 a_arr, Int64 b_arr ->
       if vol > parallel_threshold then
         Parallel.parallel_for out.context.pool 0 (vol - 1)
           (fun start_idx end_idx ->
-            Op_cmple.cmple_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
+            Op_cmple.cmple_int64 a_arr b_arr out_arr va vb vout start_idx
+              end_idx)
       else Op_cmple.cmple_int64 a_arr b_arr out_arr va vb vout 0 vol
   | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
 
@@ -795,8 +816,8 @@ let op_reduce_sum (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
         ~axes ~keepdims
   | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
 
-let op_reduce_prod (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t)
-    : unit =
+let op_reduce_prod (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
+    unit =
   let vout = out.view in
   let va = a.view in
   match (out.buffer, a.buffer) with
@@ -851,15 +872,14 @@ let op_reduce_min (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
       Reduce_ops.reduce_min_int64 out.context.pool ~out_arr ~a_arr ~va ~vout
         ~axes ~keepdims
   | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
+
 let op_associative_scan ~axis:_ ~op:_ _ =
   Error.invalid ~op:"op_associative_scan" ~what:"not implemented" ()
 
 let op_const_scalar _ _ _ =
   Error.invalid ~op:"op_const_scalar" ~what:"not implemented" ()
 
-let from_host _ _ =
-  Error.invalid ~op:"from_host" ~what:"not implemented" ()
-
+let from_host _ _ = Error.invalid ~op:"from_host" ~what:"not implemented" ()
 let op_expand x shape = { x with view = View.expand x.view shape }
 let op_reshape x shape = { x with view = View.reshape x.view shape }
 let op_permute _ _ = Error.invalid ~op:"op_permute" ~what:"not implemented" ()
