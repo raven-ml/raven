@@ -1,0 +1,4 @@
+(library
+ (name kaun_console)
+ (public_name kaun.console)
+ (libraries kaun yojson unix))

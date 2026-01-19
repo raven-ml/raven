@@ -128,7 +128,7 @@ let eval_step ~model ~(state : Train_state.t) ~x ~y ~loss_fn =
   Rune.item [] loss
 
 let train_epoch ~model ~optimizer ~(state : Train_state.t) ~dataset ~loss_fn
-    ?(progress = false) () =
+    ?(progress = false) ?on_batch () =
   let state = Train_state.reset_metrics state in
   let state_ref = ref state in
   let total_loss = ref 0. in
@@ -148,6 +148,9 @@ let train_epoch ~model ~optimizer ~(state : Train_state.t) ~dataset ~loss_fn
       total_time := !total_time +. step_time;
       state_ref := state';
       total_loss := !total_loss +. loss;
+      (match on_batch with
+      | Some f -> f !state_ref loss
+      | None -> ());
       if progress && !batch_count mod 10 = 0 then Printf.printf ".%!")
     dataset;
 
@@ -172,7 +175,7 @@ module Callbacks = struct
     model : Layer.module_;
     optimizer : Optimizer.algorithm;
     history : History.t;
-    train_loss : float option;
+    train_loss : float option;  (* batch loss during on_batch_end, epoch avg during on_epoch_end *)
     val_loss : float option;
     train_metrics : (string * float) list;
     val_metrics : (string * float) list;
@@ -181,6 +184,7 @@ module Callbacks = struct
   type t = {
     on_epoch_begin : context -> bool;
     on_epoch_end : context -> bool;
+    on_batch_end : context -> unit;
     on_train_begin : context -> unit;
     on_train_end : context -> unit;
   }
@@ -242,6 +246,7 @@ module Callbacks = struct
                           else true))
               in
               continue);
+      on_batch_end = (fun _ -> ());
       on_train_begin = (fun _ -> ());
       on_train_end = (fun _ -> ());
     }
@@ -305,6 +310,7 @@ module Callbacks = struct
           in
           if should_save then save_checkpoint ctx;
           true);
+      on_batch_end = (fun _ -> ());
       on_train_begin = (fun _ -> ());
       on_train_end = (fun _ -> ());
     }
@@ -388,54 +394,48 @@ module Callbacks = struct
                         cooldown_counter := cooldown;
                         true)
                       else true)));
+      on_batch_end = (fun _ -> ());
       on_train_begin = (fun _ -> ());
       on_train_end = (fun _ -> ());
     }
 
-  let tensorboard ~log_dir ?(update_freq = `Epoch) () =
-    let _ = Sys.command (Printf.sprintf "mkdir -p %s" log_dir) in
-    let batch_counter = ref 0 in
-
+  let logging ?(log_every = 10) logger =
     {
-      on_epoch_begin =
-        (fun _ ->
-          batch_counter := 0;
-          true);
+      on_epoch_begin = (fun _ -> true);
       on_epoch_end =
         (fun ctx ->
-          let should_log =
-            match update_freq with
-            | `Epoch -> true
-            | `Batch n -> !batch_counter mod n = 0
-          in
-          if should_log then (
-            let log_file = Filename.concat log_dir "metrics.log" in
-            let oc = open_out_gen [ Open_append; Open_creat ] 0o644 log_file in
-            Printf.fprintf oc "Epoch %d: " ctx.epoch;
-            (match ctx.train_loss with
-            | Some loss -> Printf.fprintf oc "train_loss=%.4f " loss
-            | None -> ());
-            List.iter
-              (fun (name, value) ->
-                Printf.fprintf oc "train_%s=%.4f " name value)
-              ctx.train_metrics;
-            (match ctx.val_loss with
-            | Some loss -> Printf.fprintf oc "val_loss=%.4f " loss
-            | None -> ());
-            List.iter
-              (fun (name, value) -> Printf.fprintf oc "val_%s=%.4f " name value)
-              ctx.val_metrics;
-            Printf.fprintf oc "\n";
-            close_out oc);
-          incr batch_counter;
+          let step = ctx.state.Train_state.step in
+          let epoch = ctx.epoch in
+          (* Log epoch-level metrics with epoch number *)
+          List.iter
+            (fun (name, value) ->
+              Log.log_scalar logger ~step ~epoch ~tag:("train/" ^ name) value)
+            ctx.train_metrics;
+          (match ctx.val_loss with
+          | Some loss -> Log.log_scalar logger ~step ~epoch ~tag:"val/loss" loss
+          | None -> ());
+          List.iter
+            (fun (name, value) ->
+              Log.log_scalar logger ~step ~epoch ~tag:("val/" ^ name) value)
+            ctx.val_metrics;
           true);
+      on_batch_end =
+        (fun ctx ->
+          let step = ctx.state.Train_state.step in
+          let epoch = ctx.epoch in
+          if step mod log_every = 0 then
+            match ctx.train_loss with
+            | Some loss ->
+                Log.log_scalar logger ~step ~epoch ~tag:"train/loss" loss
+            | None -> ());
       on_train_begin = (fun _ -> ());
       on_train_end = (fun _ -> ());
     }
 
   let custom ?(on_epoch_begin = fun _ -> true) ?(on_epoch_end = fun _ -> true)
-      ?(on_train_begin = fun _ -> ()) ?(on_train_end = fun _ -> ()) () =
-    { on_epoch_begin; on_epoch_end; on_train_begin; on_train_end }
+      ?(on_batch_end = fun _ -> ()) ?(on_train_begin = fun _ -> ())
+      ?(on_train_end = fun _ -> ()) () =
+    { on_epoch_begin; on_epoch_end; on_batch_end; on_train_begin; on_train_end }
 
   let combine callbacks =
     {
@@ -443,6 +443,8 @@ module Callbacks = struct
         (fun ctx -> List.for_all (fun cb -> cb.on_epoch_begin ctx) callbacks);
       on_epoch_end =
         (fun ctx -> List.for_all (fun cb -> cb.on_epoch_end ctx) callbacks);
+      on_batch_end =
+        (fun ctx -> List.iter (fun cb -> cb.on_batch_end ctx) callbacks);
       on_train_begin =
         (fun ctx -> List.iter (fun cb -> cb.on_train_begin ctx) callbacks);
       on_train_end =
@@ -551,9 +553,31 @@ let fit ~model ~optimizer ~loss_fn ?metrics ~train_data ?val_data ~epochs
     | None -> ());
 
     if !continue_training then (
+      let on_batch =
+        match callback with
+        | Some cb ->
+            Some
+              (fun state loss ->
+                let ctx =
+                  Callbacks.
+                    {
+                      epoch;
+                      state;
+                      model;
+                      optimizer;
+                      history = !history_ref;
+                      train_loss = Some loss;
+                      val_loss = None;
+                      train_metrics = [];
+                      val_metrics = [];
+                    }
+                in
+                cb.on_batch_end ctx)
+        | None -> None
+      in
       let state', train_loss, train_metrics =
         train_epoch ~model ~optimizer ~state:!state_ref ~dataset:train_data
-          ~loss_fn ~progress ()
+          ~loss_fn ~progress ?on_batch ()
       in
       state_ref := state';
 

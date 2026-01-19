@@ -1,3 +1,3 @@
 (executables
  (names mnist_fit)
- (libraries rune kaun kaun.datasets unix))
+ (libraries rune kaun kaun.datasets kaun.console unix threads))

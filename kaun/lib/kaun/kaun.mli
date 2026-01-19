@@ -73,3 +73,6 @@ module Activations = Activations
 
 module Training = Training
 (** @inline *)
+
+module Log = Log
+(** @inline *)

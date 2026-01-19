@@ -15,6 +15,18 @@ let () =
   let dtype = Rune.float32 in
   let rngs = Rune.Rng.key 0 in
 
+  (* Create logger for monitoring *)
+  let logger =
+    Log.create ~experiment:"mnist"
+      ~config:
+        [
+          ("epochs", `Int epochs);
+          ("batch_size", `Int batch_size);
+          ("learning_rate", `Float learning_rate);
+        ]
+      ()
+  in
+
   (* Define model using explicit dimensions *)
   let model =
     Layer.sequential
@@ -39,8 +51,6 @@ let () =
   in
 
   (* Prepare datasets *)
-  Printf.printf "Loading datasets...\n%!";
-
   let train_data =
     Kaun_datasets.mnist ~train:true ~flatten:false ()
     |> Dataset.prepare ~shuffle_buffer:60000 ~batch_size ~prefetch:2
@@ -51,37 +61,22 @@ let () =
     |> Dataset.prepare ~batch_size:100 ~prefetch:2
   in
 
-  Printf.printf "Datasets ready!\n%!";
-  Printf.printf "Initializing training...\n%!";
+  (* Launch dashboard in a separate thread *)
+  let _dashboard_thread =
+    Thread.create
+      (fun () -> Kaun_console.run ~runs:[ Log.run_id logger ] ())
+      ()
+  in
 
   (* Training with new high-level API *)
-  let state, history =
-    Printf.printf "Calling Training.fit...\n%!";
+  let _state, _history =
     let lr = Optimizer.Schedule.constant learning_rate in
     Training.fit ~model ~optimizer:(Optimizer.adam ~lr ())
       ~loss_fn:Loss.softmax_cross_entropy_with_indices ~metrics ~train_data
-      ~val_data:test_data ~epochs ~progress:true ~rngs ~dtype ()
+      ~val_data:test_data ~epochs ~progress:false
+      ~callbacks:[ Training.Callbacks.logging logger ]
+      ~rngs ~dtype ()
   in
 
-  (* Print final results using new History API *)
-  Printf.printf "\n=== Training Complete ===\n";
-
-  (match Training.History.final_train_loss history with
-  | Some loss -> Printf.printf "Final train loss: %.4f\n" loss
-  | None -> ());
-
-  List.iter
-    (fun (name, value) -> Printf.printf "Final train %s: %.4f\n" name value)
-    (Training.History.final_train_metrics history);
-
-  (match Training.History.final_val_loss history with
-  | Some loss -> Printf.printf "Final val loss: %.4f\n" loss
-  | None -> ());
-
-  (match Training.History.best_val_loss history with
-  | Some loss -> Printf.printf "Best val loss: %.4f\n" loss
-  | None -> ());
-
-  (* State contains final parameters *)
-  let _ = state in
-  ()
+  (* Close logger - TUI will continue showing final metrics *)
+  Log.close logger

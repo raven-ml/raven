@@ -41,3 +41,4 @@ module Optimizer = Optimizer
 module Activations = Activations
 module Dataset = Dataset
 module Training = Training
+module Log = Log

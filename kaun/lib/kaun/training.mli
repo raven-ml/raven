@@ -112,23 +112,38 @@ module Callbacks : sig
         (default: 0)
       - [min_lr]: Lower bound on learning rate (default: 0.0) *)
 
-  val tensorboard :
-    log_dir:string -> ?update_freq:[ `Epoch | `Batch of int ] -> unit -> t
-  (** [tensorboard ~log_dir ?update_freq ()] creates a TensorBoard logging
-      callback.
-      - [log_dir]: Directory where to save TensorBoard logs
-      - [update_freq]: How often to write logs (default: `Epoch) *)
+  val logging : ?log_every:int -> Log.t -> t
+  (** [logging ?log_every logger] creates a callback that logs metrics to a
+      {!Log.t} session.
+
+      The callback logs using [state.step] as the step value:
+      - [train/loss] is logged every [log_every] steps (default: 10)
+      - [train/<metric>] and [val/<metric>] are logged at epoch end
+      - [val/loss] is logged at epoch end
+
+      {b Note}: The callback does not close the logger. Call {!Log.close}
+      explicitly when training is complete.
+
+      {4 Example}
+      {[
+        let logger = Log.create ~experiment:"mnist" () in
+        let _, _ = Training.fit ~callbacks:[ Callbacks.logging logger ] ... in
+        Log.close logger
+      ]} *)
 
   val custom :
     ?on_epoch_begin:(context -> bool) ->
     ?on_epoch_end:(context -> bool) ->
+    ?on_batch_end:(context -> unit) ->
     ?on_train_begin:(context -> unit) ->
     ?on_train_end:(context -> unit) ->
     unit ->
     t
-  (** [custom ?on_epoch_begin ?on_epoch_end ?on_train_begin ?on_train_end ()]
-      creates a custom callback with user-defined hooks. Returning false from
-      epoch callbacks stops training. *)
+  (** [custom ?on_epoch_begin ?on_epoch_end ?on_batch_end ?on_train_begin
+       ?on_train_end ()] creates a custom callback with user-defined hooks.
+      Returning false from epoch callbacks stops training. The [on_batch_end]
+      hook is called after each training batch with [train_loss] set to the
+      batch loss. *)
 
   val combine : t list -> t
   (** Combine multiple callbacks into one *)
@@ -170,9 +185,13 @@ val train_epoch :
     (float, 'layout) Rune.t ->
     (float, 'layout) Rune.t) ->
   ?progress:bool ->
+  ?on_batch:(Train_state.t -> float -> unit) ->
   unit ->
   Train_state.t * float * (string * float) list
-(** Run one training epoch and report average loss and metrics. *)
+(** Run one training epoch and report average loss and metrics.
+
+    @param on_batch Optional callback called after each batch with the current
+    state and batch loss. Used internally by {!fit} for batch-level callbacks. *)
 
 val evaluate :
   model:Layer.module_ ->
