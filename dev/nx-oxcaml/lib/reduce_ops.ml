@@ -370,20 +370,41 @@ let sum_all_partial_float64 a_arr va start_idx end_idx =
   else if View.is_c_contiguous va then (
     let base = View.offset va + start_idx in
     let n = end_idx - start_idx in
-    let n2 = n - 1 in
-    let rec simd_loop i (acc_vec : float64x2#) =
-      if i < n2 then
-        let vec = Float64x2.Array.unsafe_get a_arr ~idx:(base + i) in
-        simd_loop (i + 2) (Float64x2.add acc_vec vec)
-      else acc_vec
+    (* 4x unrolled: process 8 elements (4 vectors of 2) per iteration *)
+    let n8 = n - 7 in
+    let rec unrolled_loop i (acc0 : float64x2#) (acc1 : float64x2#)
+        (acc2 : float64x2#) (acc3 : float64x2#) =
+      if i < n8 then
+        let v0 = Float64x2.Array.unsafe_get a_arr ~idx:(base + i) in
+        let v1 = Float64x2.Array.unsafe_get a_arr ~idx:(base + i + 2) in
+        let v2 = Float64x2.Array.unsafe_get a_arr ~idx:(base + i + 4) in
+        let v3 = Float64x2.Array.unsafe_get a_arr ~idx:(base + i + 6) in
+        unrolled_loop (i + 8) (Float64x2.add acc0 v0) (Float64x2.add acc1 v1)
+          (Float64x2.add acc2 v2) (Float64x2.add acc3 v3)
+      else #(acc0, acc1, acc2, acc3, i)
     in
-    let acc_vec = simd_loop 0 (Float64x2.zero ()) in
+    let #(acc0, acc1, acc2, acc3, i) =
+      unrolled_loop 0 (Float64x2.zero ()) (Float64x2.zero ()) (Float64x2.zero ())
+        (Float64x2.zero ())
+    in
+    let acc01 = Float64x2.add acc0 acc1 in
+    let acc23 = Float64x2.add acc2 acc3 in
+    let acc_vec = Float64x2.add acc01 acc23 in
+    (* Handle remaining 2-element chunks *)
+    let n2 = n - 1 in
+    let rec simd_loop j (acc : float64x2#) =
+      if j < n2 then
+        let vec = Float64x2.Array.unsafe_get a_arr ~idx:(base + j) in
+        simd_loop (j + 2) (Float64x2.add acc vec)
+      else acc
+    in
+    let acc_vec = simd_loop i acc_vec in
     let h = Float64x2.horizontal_add acc_vec acc_vec in
     let simd_result = Float64x2.extract0 h in
     let start_remainder = (n / 2) * 2 in
-    let rec scalar_loop i (acc : float#) =
-      if i < n then
-        scalar_loop (i + 1) (Float_u.add acc (Array.unsafe_get a_arr (base + i)))
+    let rec scalar_loop k (acc : float#) =
+      if k < n then
+        scalar_loop (k + 1) (Float_u.add acc (Array.unsafe_get a_arr (base + k)))
       else acc
     in
     scalar_loop start_remainder simd_result)
@@ -408,21 +429,42 @@ let sum_all_partial_float32 a_arr va start_idx end_idx =
   else if View.is_c_contiguous va then (
     let base = View.offset va + start_idx in
     let n = end_idx - start_idx in
-    let n4 = n - 3 in
-    let rec simd_loop i (acc_vec : float32x4#) =
-      if i < n4 then
-        let vec = Float32x4.Array.unsafe_get a_arr ~idx:(base + i) in
-        simd_loop (i + 4) (Float32x4.add acc_vec vec)
-      else acc_vec
+    (* 4x unrolled: process 16 elements (4 vectors of 4) per iteration *)
+    let n16 = n - 15 in
+    let rec unrolled_loop i (acc0 : float32x4#) (acc1 : float32x4#)
+        (acc2 : float32x4#) (acc3 : float32x4#) =
+      if i < n16 then
+        let v0 = Float32x4.Array.unsafe_get a_arr ~idx:(base + i) in
+        let v1 = Float32x4.Array.unsafe_get a_arr ~idx:(base + i + 4) in
+        let v2 = Float32x4.Array.unsafe_get a_arr ~idx:(base + i + 8) in
+        let v3 = Float32x4.Array.unsafe_get a_arr ~idx:(base + i + 12) in
+        unrolled_loop (i + 16) (Float32x4.add acc0 v0) (Float32x4.add acc1 v1)
+          (Float32x4.add acc2 v2) (Float32x4.add acc3 v3)
+      else #(acc0, acc1, acc2, acc3, i)
     in
-    let acc_vec = simd_loop 0 (Float32x4.zero ()) in
+    let #(acc0, acc1, acc2, acc3, i) =
+      unrolled_loop 0 (Float32x4.zero ()) (Float32x4.zero ()) (Float32x4.zero ())
+        (Float32x4.zero ())
+    in
+    let acc01 = Float32x4.add acc0 acc1 in
+    let acc23 = Float32x4.add acc2 acc3 in
+    let acc_vec = Float32x4.add acc01 acc23 in
+    (* Handle remaining 4-element chunks *)
+    let n4 = n - 3 in
+    let rec simd_loop j (acc : float32x4#) =
+      if j < n4 then
+        let vec = Float32x4.Array.unsafe_get a_arr ~idx:(base + j) in
+        simd_loop (j + 4) (Float32x4.add acc vec)
+      else acc
+    in
+    let acc_vec = simd_loop i acc_vec in
     let h1 = Float32x4.horizontal_add acc_vec acc_vec in
     let h2 = Float32x4.horizontal_add h1 h1 in
     let simd_result = Float32x4.extract0 h2 in
     let start_remainder = (n / 4) * 4 in
-    let rec scalar_loop i (acc : float32#) =
-      if i < n then
-        scalar_loop (i + 1) (Float32_u.add acc (Array.unsafe_get a_arr (base + i)))
+    let rec scalar_loop k (acc : float32#) =
+      if k < n then
+        scalar_loop (k + 1) (Float32_u.add acc (Array.unsafe_get a_arr (base + k)))
       else acc
     in
     scalar_loop start_remainder simd_result)
@@ -675,20 +717,41 @@ let prod_all_partial_float64 a_arr va start_idx end_idx =
   else if View.is_c_contiguous va then (
     let base = View.offset va + start_idx in
     let n = end_idx - start_idx in
-    let n2 = n - 1 in
-    let rec simd_loop i (acc_vec : float64x2#) =
-      if i < n2 then
-        let vec = Float64x2.Array.unsafe_get a_arr ~idx:(base + i) in
-        simd_loop (i + 2) (Float64x2.mul acc_vec vec)
-      else acc_vec
+    (* 4x unrolled: process 8 elements (4 vectors of 2) per iteration *)
+    let n8 = n - 7 in
+    let rec unrolled_loop i (acc0 : float64x2#) (acc1 : float64x2#)
+        (acc2 : float64x2#) (acc3 : float64x2#) =
+      if i < n8 then
+        let v0 = Float64x2.Array.unsafe_get a_arr ~idx:(base + i) in
+        let v1 = Float64x2.Array.unsafe_get a_arr ~idx:(base + i + 2) in
+        let v2 = Float64x2.Array.unsafe_get a_arr ~idx:(base + i + 4) in
+        let v3 = Float64x2.Array.unsafe_get a_arr ~idx:(base + i + 6) in
+        unrolled_loop (i + 8) (Float64x2.mul acc0 v0) (Float64x2.mul acc1 v1)
+          (Float64x2.mul acc2 v2) (Float64x2.mul acc3 v3)
+      else #(acc0, acc1, acc2, acc3, i)
     in
-    let acc_vec = simd_loop 0 (Float64x2.one ()) in
+    let #(acc0, acc1, acc2, acc3, i) =
+      unrolled_loop 0 (Float64x2.one ()) (Float64x2.one ()) (Float64x2.one ())
+        (Float64x2.one ())
+    in
+    let acc01 = Float64x2.mul acc0 acc1 in
+    let acc23 = Float64x2.mul acc2 acc3 in
+    let acc_vec = Float64x2.mul acc01 acc23 in
+    (* Handle remaining 2-element chunks *)
+    let n2 = n - 1 in
+    let rec simd_loop j (acc : float64x2#) =
+      if j < n2 then
+        let vec = Float64x2.Array.unsafe_get a_arr ~idx:(base + j) in
+        simd_loop (j + 2) (Float64x2.mul acc vec)
+      else acc
+    in
+    let acc_vec = simd_loop i acc_vec in
     let #(v0, v1) = Float64x2.splat acc_vec in
     let simd_result = Float_u.mul v0 v1 in
     let start_remainder = (n / 2) * 2 in
-    let rec scalar_loop i (acc : float#) =
-      if i < n then
-        scalar_loop (i + 1) (Float_u.mul acc (Array.unsafe_get a_arr (base + i)))
+    let rec scalar_loop k (acc : float#) =
+      if k < n then
+        scalar_loop (k + 1) (Float_u.mul acc (Array.unsafe_get a_arr (base + k)))
       else acc
     in
     scalar_loop start_remainder simd_result)
@@ -713,20 +776,41 @@ let prod_all_partial_float32 a_arr va start_idx end_idx =
   else if View.is_c_contiguous va then (
     let base = View.offset va + start_idx in
     let n = end_idx - start_idx in
-    let n4 = n - 3 in
-    let rec simd_loop i (acc_vec : float32x4#) =
-      if i < n4 then
-        let vec = Float32x4.Array.unsafe_get a_arr ~idx:(base + i) in
-        simd_loop (i + 4) (Float32x4.mul acc_vec vec)
-      else acc_vec
+    (* 4x unrolled: process 16 elements (4 vectors of 4) per iteration *)
+    let n16 = n - 15 in
+    let rec unrolled_loop i (acc0 : float32x4#) (acc1 : float32x4#)
+        (acc2 : float32x4#) (acc3 : float32x4#) =
+      if i < n16 then
+        let v0 = Float32x4.Array.unsafe_get a_arr ~idx:(base + i) in
+        let v1 = Float32x4.Array.unsafe_get a_arr ~idx:(base + i + 4) in
+        let v2 = Float32x4.Array.unsafe_get a_arr ~idx:(base + i + 8) in
+        let v3 = Float32x4.Array.unsafe_get a_arr ~idx:(base + i + 12) in
+        unrolled_loop (i + 16) (Float32x4.mul acc0 v0) (Float32x4.mul acc1 v1)
+          (Float32x4.mul acc2 v2) (Float32x4.mul acc3 v3)
+      else #(acc0, acc1, acc2, acc3, i)
     in
-    let acc_vec = simd_loop 0 (Float32x4.one ()) in
+    let #(acc0, acc1, acc2, acc3, i) =
+      unrolled_loop 0 (Float32x4.one ()) (Float32x4.one ()) (Float32x4.one ())
+        (Float32x4.one ())
+    in
+    let acc01 = Float32x4.mul acc0 acc1 in
+    let acc23 = Float32x4.mul acc2 acc3 in
+    let acc_vec = Float32x4.mul acc01 acc23 in
+    (* Handle remaining 4-element chunks *)
+    let n4 = n - 3 in
+    let rec simd_loop j (acc : float32x4#) =
+      if j < n4 then
+        let vec = Float32x4.Array.unsafe_get a_arr ~idx:(base + j) in
+        simd_loop (j + 4) (Float32x4.mul acc vec)
+      else acc
+    in
+    let acc_vec = simd_loop i acc_vec in
     let #(v0, v1, v2, v3) = Float32x4.splat acc_vec in
     let simd_result = Float32_u.mul (Float32_u.mul v0 v1) (Float32_u.mul v2 v3) in
     let start_remainder = (n / 4) * 4 in
-    let rec scalar_loop i (acc : float32#) =
-      if i < n then
-        scalar_loop (i + 1) (Float32_u.mul acc (Array.unsafe_get a_arr (base + i)))
+    let rec scalar_loop k (acc : float32#) =
+      if k < n then
+        scalar_loop (k + 1) (Float32_u.mul acc (Array.unsafe_get a_arr (base + k)))
       else acc
     in
     scalar_loop start_remainder simd_result)
@@ -986,21 +1070,41 @@ let min_all_float64 a_arr va start_idx end_idx =
     let n = end_idx - start_idx in
     if n < 2 then Array.unsafe_get a_arr base
     else
+      (* 4x unrolled: process 8 elements (4 vectors of 2) per iteration *)
+      let n8 = n - 7 in
       let first_vec = Float64x2.Array.unsafe_get a_arr ~idx:base in
-      let n2 = n - 1 in
-      let rec simd_loop i (acc_vec : float64x2#) =
-        if i < n2 then
-          let vec = Float64x2.Array.unsafe_get a_arr ~idx:(base + i) in
-          simd_loop (i + 2) (Float64x2.min acc_vec vec)
-        else acc_vec
+      let rec unrolled_loop i (acc0 : float64x2#) (acc1 : float64x2#)
+          (acc2 : float64x2#) (acc3 : float64x2#) =
+        if i < n8 then
+          let v0 = Float64x2.Array.unsafe_get a_arr ~idx:(base + i) in
+          let v1 = Float64x2.Array.unsafe_get a_arr ~idx:(base + i + 2) in
+          let v2 = Float64x2.Array.unsafe_get a_arr ~idx:(base + i + 4) in
+          let v3 = Float64x2.Array.unsafe_get a_arr ~idx:(base + i + 6) in
+          unrolled_loop (i + 8) (Float64x2.min acc0 v0) (Float64x2.min acc1 v1)
+            (Float64x2.min acc2 v2) (Float64x2.min acc3 v3)
+        else #(acc0, acc1, acc2, acc3, i)
       in
-      let acc_vec = simd_loop 2 first_vec in
+      let #(acc0, acc1, acc2, acc3, i) =
+        unrolled_loop 2 first_vec first_vec first_vec first_vec
+      in
+      let acc01 = Float64x2.min acc0 acc1 in
+      let acc23 = Float64x2.min acc2 acc3 in
+      let acc_vec = Float64x2.min acc01 acc23 in
+      (* Handle remaining 2-element chunks *)
+      let n2 = n - 1 in
+      let rec simd_loop j (acc : float64x2#) =
+        if j < n2 then
+          let vec = Float64x2.Array.unsafe_get a_arr ~idx:(base + j) in
+          simd_loop (j + 2) (Float64x2.min acc vec)
+        else acc
+      in
+      let acc_vec = simd_loop i acc_vec in
       let #(v0, v1) = Float64x2.splat acc_vec in
       let simd_result = Float_u.min v0 v1 in
       let start_remainder = (n / 2) * 2 in
-      let rec scalar_loop i (acc : float#) =
-        if i < n then
-          scalar_loop (i + 1) (Float_u.min acc (Array.unsafe_get a_arr (base + i)))
+      let rec scalar_loop k (acc : float#) =
+        if k < n then
+          scalar_loop (k + 1) (Float_u.min acc (Array.unsafe_get a_arr (base + k)))
         else acc
       in
       scalar_loop start_remainder simd_result)
@@ -1034,21 +1138,41 @@ let min_all_float32 a_arr va start_idx end_idx =
       in
       scalar_loop 1 (Array.unsafe_get a_arr base))
     else
+      (* 4x unrolled: process 16 elements (4 vectors of 4) per iteration *)
+      let n16 = n - 15 in
       let first_vec = Float32x4.Array.unsafe_get a_arr ~idx:base in
-      let n4 = n - 3 in
-      let rec simd_loop i (acc_vec : float32x4#) =
-        if i < n4 then
-          let vec = Float32x4.Array.unsafe_get a_arr ~idx:(base + i) in
-          simd_loop (i + 4) (Float32x4.min acc_vec vec)
-        else acc_vec
+      let rec unrolled_loop i (acc0 : float32x4#) (acc1 : float32x4#)
+          (acc2 : float32x4#) (acc3 : float32x4#) =
+        if i < n16 then
+          let v0 = Float32x4.Array.unsafe_get a_arr ~idx:(base + i) in
+          let v1 = Float32x4.Array.unsafe_get a_arr ~idx:(base + i + 4) in
+          let v2 = Float32x4.Array.unsafe_get a_arr ~idx:(base + i + 8) in
+          let v3 = Float32x4.Array.unsafe_get a_arr ~idx:(base + i + 12) in
+          unrolled_loop (i + 16) (Float32x4.min acc0 v0) (Float32x4.min acc1 v1)
+            (Float32x4.min acc2 v2) (Float32x4.min acc3 v3)
+        else #(acc0, acc1, acc2, acc3, i)
       in
-      let acc_vec = simd_loop 4 first_vec in
+      let #(acc0, acc1, acc2, acc3, i) =
+        unrolled_loop 4 first_vec first_vec first_vec first_vec
+      in
+      let acc01 = Float32x4.min acc0 acc1 in
+      let acc23 = Float32x4.min acc2 acc3 in
+      let acc_vec = Float32x4.min acc01 acc23 in
+      (* Handle remaining 4-element chunks *)
+      let n4 = n - 3 in
+      let rec simd_loop j (acc : float32x4#) =
+        if j < n4 then
+          let vec = Float32x4.Array.unsafe_get a_arr ~idx:(base + j) in
+          simd_loop (j + 4) (Float32x4.min acc vec)
+        else acc
+      in
+      let acc_vec = simd_loop i acc_vec in
       let #(v0, v1, v2, v3) = Float32x4.splat acc_vec in
       let simd_result = Float32_u.min (Float32_u.min v0 v1) (Float32_u.min v2 v3) in
       let start_remainder = (n / 4) * 4 in
-      let rec scalar_loop i (acc : float32#) =
-        if i < n then
-          scalar_loop (i + 1) (Float32_u.min acc (Array.unsafe_get a_arr (base + i)))
+      let rec scalar_loop k (acc : float32#) =
+        if k < n then
+          scalar_loop (k + 1) (Float32_u.min acc (Array.unsafe_get a_arr (base + k)))
         else acc
       in
       scalar_loop start_remainder simd_result)
@@ -1314,21 +1438,41 @@ let max_all_float64 a_arr va start_idx end_idx =
     let n = end_idx - start_idx in
     if n < 2 then Array.unsafe_get a_arr base
     else
+      (* 4x unrolled: process 8 elements (4 vectors of 2) per iteration *)
+      let n8 = n - 7 in
       let first_vec = Float64x2.Array.unsafe_get a_arr ~idx:base in
-      let n2 = n - 1 in
-      let rec simd_loop i (acc_vec : float64x2#) =
-        if i < n2 then
-          let vec = Float64x2.Array.unsafe_get a_arr ~idx:(base + i) in
-          simd_loop (i + 2) (Float64x2.max acc_vec vec)
-        else acc_vec
+      let rec unrolled_loop i (acc0 : float64x2#) (acc1 : float64x2#)
+          (acc2 : float64x2#) (acc3 : float64x2#) =
+        if i < n8 then
+          let v0 = Float64x2.Array.unsafe_get a_arr ~idx:(base + i) in
+          let v1 = Float64x2.Array.unsafe_get a_arr ~idx:(base + i + 2) in
+          let v2 = Float64x2.Array.unsafe_get a_arr ~idx:(base + i + 4) in
+          let v3 = Float64x2.Array.unsafe_get a_arr ~idx:(base + i + 6) in
+          unrolled_loop (i + 8) (Float64x2.max acc0 v0) (Float64x2.max acc1 v1)
+            (Float64x2.max acc2 v2) (Float64x2.max acc3 v3)
+        else #(acc0, acc1, acc2, acc3, i)
       in
-      let acc_vec = simd_loop 2 first_vec in
+      let #(acc0, acc1, acc2, acc3, i) =
+        unrolled_loop 2 first_vec first_vec first_vec first_vec
+      in
+      let acc01 = Float64x2.max acc0 acc1 in
+      let acc23 = Float64x2.max acc2 acc3 in
+      let acc_vec = Float64x2.max acc01 acc23 in
+      (* Handle remaining 2-element chunks *)
+      let n2 = n - 1 in
+      let rec simd_loop j (acc : float64x2#) =
+        if j < n2 then
+          let vec = Float64x2.Array.unsafe_get a_arr ~idx:(base + j) in
+          simd_loop (j + 2) (Float64x2.max acc vec)
+        else acc
+      in
+      let acc_vec = simd_loop i acc_vec in
       let #(v0, v1) = Float64x2.splat acc_vec in
       let simd_result = Float_u.max v0 v1 in
       let start_remainder = (n / 2) * 2 in
-      let rec scalar_loop i (acc : float#) =
-        if i < n then
-          scalar_loop (i + 1) (Float_u.max acc (Array.unsafe_get a_arr (base + i)))
+      let rec scalar_loop k (acc : float#) =
+        if k < n then
+          scalar_loop (k + 1) (Float_u.max acc (Array.unsafe_get a_arr (base + k)))
         else acc
       in
       scalar_loop start_remainder simd_result)
@@ -1362,21 +1506,41 @@ let max_all_float32 a_arr va start_idx end_idx =
       in
       scalar_loop 1 (Array.unsafe_get a_arr base))
     else
+      (* 4x unrolled: process 16 elements (4 vectors of 4) per iteration *)
+      let n16 = n - 15 in
       let first_vec = Float32x4.Array.unsafe_get a_arr ~idx:base in
-      let n4 = n - 3 in
-      let rec simd_loop i (acc_vec : float32x4#) =
-        if i < n4 then
-          let vec = Float32x4.Array.unsafe_get a_arr ~idx:(base + i) in
-          simd_loop (i + 4) (Float32x4.max acc_vec vec)
-        else acc_vec
+      let rec unrolled_loop i (acc0 : float32x4#) (acc1 : float32x4#)
+          (acc2 : float32x4#) (acc3 : float32x4#) =
+        if i < n16 then
+          let v0 = Float32x4.Array.unsafe_get a_arr ~idx:(base + i) in
+          let v1 = Float32x4.Array.unsafe_get a_arr ~idx:(base + i + 4) in
+          let v2 = Float32x4.Array.unsafe_get a_arr ~idx:(base + i + 8) in
+          let v3 = Float32x4.Array.unsafe_get a_arr ~idx:(base + i + 12) in
+          unrolled_loop (i + 16) (Float32x4.max acc0 v0) (Float32x4.max acc1 v1)
+            (Float32x4.max acc2 v2) (Float32x4.max acc3 v3)
+        else #(acc0, acc1, acc2, acc3, i)
       in
-      let acc_vec = simd_loop 4 first_vec in
+      let #(acc0, acc1, acc2, acc3, i) =
+        unrolled_loop 4 first_vec first_vec first_vec first_vec
+      in
+      let acc01 = Float32x4.max acc0 acc1 in
+      let acc23 = Float32x4.max acc2 acc3 in
+      let acc_vec = Float32x4.max acc01 acc23 in
+      (* Handle remaining 4-element chunks *)
+      let n4 = n - 3 in
+      let rec simd_loop j (acc : float32x4#) =
+        if j < n4 then
+          let vec = Float32x4.Array.unsafe_get a_arr ~idx:(base + j) in
+          simd_loop (j + 4) (Float32x4.max acc vec)
+        else acc
+      in
+      let acc_vec = simd_loop i acc_vec in
       let #(v0, v1, v2, v3) = Float32x4.splat acc_vec in
       let simd_result = Float32_u.max (Float32_u.max v0 v1) (Float32_u.max v2 v3) in
       let start_remainder = (n / 4) * 4 in
-      let rec scalar_loop i (acc : float32#) =
-        if i < n then
-          scalar_loop (i + 1) (Float32_u.max acc (Array.unsafe_get a_arr (base + i)))
+      let rec scalar_loop k (acc : float32#) =
+        if k < n then
+          scalar_loop (k + 1) (Float32_u.max acc (Array.unsafe_get a_arr (base + k)))
         else acc
       in
       scalar_loop start_remainder simd_result)
