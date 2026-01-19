@@ -13,6 +13,8 @@ module Float_u = Stdlib_upstream_compatible.Float_u
 module Float32_u = Stdlib_stable.Float32_u
 module Int32_u = Stdlib_upstream_compatible.Int32_u
 module Int64_u = Stdlib_upstream_compatible.Int64_u
+module Int8_u = Stdlib_stable.Int8_u
+module Int16_u = Stdlib_stable.Int16_u
 
 module Array = struct
   include Stdlib.Array
@@ -46,6 +48,9 @@ module Array = struct
 
   external make_int32 : int -> int32# array = "caml_make_unboxed_int32_vect"
   external make_int64 : int -> int64# array = "caml_make_unboxed_int64_vect"
+  external make_int8 : int -> int8# array = "caml_make_untagged_int8_vect"
+  external make_int16 : int -> int16# array
+    = "caml_make_untagged_int16_vect"
 end
 
 let shape (v : View.t) : int array =
