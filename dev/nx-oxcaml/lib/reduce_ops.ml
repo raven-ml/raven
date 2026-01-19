@@ -367,57 +367,80 @@ let sum_axis_int64 a_arr out_arr va vout axes keepdims start_idx end_idx =
 
 let sum_all_partial_float64 a_arr va start_idx end_idx =
   if start_idx >= end_idx then Float_u.of_int 0
+  else if View.is_c_contiguous va then (
+    let base = View.offset va + start_idx in
+    let n = end_idx - start_idx in
+    let n2 = n - 1 in
+    let rec simd_loop i (acc_vec : float64x2#) =
+      if i < n2 then
+        let vec = Float64x2.Array.unsafe_get a_arr ~idx:(base + i) in
+        simd_loop (i + 2) (Float64x2.add acc_vec vec)
+      else acc_vec
+    in
+    let acc_vec = simd_loop 0 (Float64x2.zero ()) in
+    let h = Float64x2.horizontal_add acc_vec acc_vec in
+    let simd_result = Float64x2.extract0 h in
+    let start_remainder = (n / 2) * 2 in
+    let rec scalar_loop i (acc : float#) =
+      if i < n then
+        scalar_loop (i + 1) (Float_u.add acc (Array.unsafe_get a_arr (base + i)))
+      else acc
+    in
+    scalar_loop start_remainder simd_result)
   else
     let acc = Array.make_float64 1 in
     Array.unsafe_set acc 0 (Float_u.of_int 0);
-    if View.is_c_contiguous va then (
-      let base = View.offset va + start_idx in
-      let last = View.offset va + end_idx in
-      for i = base to last - 1 do
-        let cur = Array.unsafe_get acc 0 in
-        Array.unsafe_set acc 0 (Float_u.add cur (Array.unsafe_get a_arr i))
-      done;
-      Array.unsafe_get acc 0)
-    else
-      let a_shape = shape va in
-      let a_strides = View.strides va in
-      let a_offset = View.offset va in
-      let md_index = Array.make (Array.length a_shape) 0 in
-      for k = start_idx to end_idx - 1 do
-        Shape.unravel_index_into k a_shape md_index;
-        let a_lin = Shape.ravel_index md_index a_strides in
-        let v = Array.unsafe_get a_arr (a_offset + a_lin) in
-        let cur = Array.unsafe_get acc 0 in
-        Array.unsafe_set acc 0 (Float_u.add cur v)
-      done;
-      Array.unsafe_get acc 0
+    let a_shape = shape va in
+    let a_strides = View.strides va in
+    let a_offset = View.offset va in
+    let md_index = Array.make (Array.length a_shape) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k a_shape md_index;
+      let a_lin = Shape.ravel_index md_index a_strides in
+      let v = Array.unsafe_get a_arr (a_offset + a_lin) in
+      let cur = Array.unsafe_get acc 0 in
+      Array.unsafe_set acc 0 (Float_u.add cur v)
+    done;
+    Array.unsafe_get acc 0
 
 let sum_all_partial_float32 a_arr va start_idx end_idx =
   if start_idx >= end_idx then Float32_u.of_int 0
+  else if View.is_c_contiguous va then (
+    let base = View.offset va + start_idx in
+    let n = end_idx - start_idx in
+    let n4 = n - 3 in
+    let rec simd_loop i (acc_vec : float32x4#) =
+      if i < n4 then
+        let vec = Float32x4.Array.unsafe_get a_arr ~idx:(base + i) in
+        simd_loop (i + 4) (Float32x4.add acc_vec vec)
+      else acc_vec
+    in
+    let acc_vec = simd_loop 0 (Float32x4.zero ()) in
+    let h1 = Float32x4.horizontal_add acc_vec acc_vec in
+    let h2 = Float32x4.horizontal_add h1 h1 in
+    let simd_result = Float32x4.extract0 h2 in
+    let start_remainder = (n / 4) * 4 in
+    let rec scalar_loop i (acc : float32#) =
+      if i < n then
+        scalar_loop (i + 1) (Float32_u.add acc (Array.unsafe_get a_arr (base + i)))
+      else acc
+    in
+    scalar_loop start_remainder simd_result)
   else
     let acc = Array.make_float32 1 in
     Array.unsafe_set acc 0 (Float32_u.of_int 0);
-    if View.is_c_contiguous va then (
-      let base = View.offset va + start_idx in
-      let last = View.offset va + end_idx in
-      for i = base to last - 1 do
-        let cur = Array.unsafe_get acc 0 in
-        Array.unsafe_set acc 0 (Float32_u.add cur (Array.unsafe_get a_arr i))
-      done;
-      Array.unsafe_get acc 0)
-    else
-      let a_shape = shape va in
-      let a_strides = View.strides va in
-      let a_offset = View.offset va in
-      let md_index = Array.make (Array.length a_shape) 0 in
-      for k = start_idx to end_idx - 1 do
-        Shape.unravel_index_into k a_shape md_index;
-        let a_lin = Shape.ravel_index md_index a_strides in
-        let v = Array.unsafe_get a_arr (a_offset + a_lin) in
-        let cur = Array.unsafe_get acc 0 in
-        Array.unsafe_set acc 0 (Float32_u.add cur v)
-      done;
-      Array.unsafe_get acc 0
+    let a_shape = shape va in
+    let a_strides = View.strides va in
+    let a_offset = View.offset va in
+    let md_index = Array.make (Array.length a_shape) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k a_shape md_index;
+      let a_lin = Shape.ravel_index md_index a_strides in
+      let v = Array.unsafe_get a_arr (a_offset + a_lin) in
+      let cur = Array.unsafe_get acc 0 in
+      Array.unsafe_set acc 0 (Float32_u.add cur v)
+    done;
+    Array.unsafe_get acc 0
 
 let sum_all_partial_int8 a_arr va start_idx end_idx =
   if start_idx >= end_idx then #0s
@@ -649,57 +672,79 @@ let prod_axis_int64 a_arr out_arr va vout axes keepdims start_idx end_idx =
 
 let prod_all_partial_float64 a_arr va start_idx end_idx =
   if start_idx >= end_idx then Float_u.of_int 1
+  else if View.is_c_contiguous va then (
+    let base = View.offset va + start_idx in
+    let n = end_idx - start_idx in
+    let n2 = n - 1 in
+    let rec simd_loop i (acc_vec : float64x2#) =
+      if i < n2 then
+        let vec = Float64x2.Array.unsafe_get a_arr ~idx:(base + i) in
+        simd_loop (i + 2) (Float64x2.mul acc_vec vec)
+      else acc_vec
+    in
+    let acc_vec = simd_loop 0 (Float64x2.one ()) in
+    let #(v0, v1) = Float64x2.splat acc_vec in
+    let simd_result = Float_u.mul v0 v1 in
+    let start_remainder = (n / 2) * 2 in
+    let rec scalar_loop i (acc : float#) =
+      if i < n then
+        scalar_loop (i + 1) (Float_u.mul acc (Array.unsafe_get a_arr (base + i)))
+      else acc
+    in
+    scalar_loop start_remainder simd_result)
   else
     let acc = Array.make_float64 1 in
     Array.unsafe_set acc 0 (Float_u.of_int 1);
-    if View.is_c_contiguous va then (
-      let base = View.offset va + start_idx in
-      let last = View.offset va + end_idx in
-      for i = base to last - 1 do
-        let cur = Array.unsafe_get acc 0 in
-        Array.unsafe_set acc 0 (Float_u.mul cur (Array.unsafe_get a_arr i))
-      done;
-      Array.unsafe_get acc 0)
-    else
-      let a_shape = shape va in
-      let a_strides = View.strides va in
-      let a_offset = View.offset va in
-      let md_index = Array.make (Array.length a_shape) 0 in
-      for k = start_idx to end_idx - 1 do
-        Shape.unravel_index_into k a_shape md_index;
-        let a_lin = Shape.ravel_index md_index a_strides in
-        let v = Array.unsafe_get a_arr (a_offset + a_lin) in
-        let cur = Array.unsafe_get acc 0 in
-        Array.unsafe_set acc 0 (Float_u.mul cur v)
-      done;
-      Array.unsafe_get acc 0
+    let a_shape = shape va in
+    let a_strides = View.strides va in
+    let a_offset = View.offset va in
+    let md_index = Array.make (Array.length a_shape) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k a_shape md_index;
+      let a_lin = Shape.ravel_index md_index a_strides in
+      let v = Array.unsafe_get a_arr (a_offset + a_lin) in
+      let cur = Array.unsafe_get acc 0 in
+      Array.unsafe_set acc 0 (Float_u.mul cur v)
+    done;
+    Array.unsafe_get acc 0
 
 let prod_all_partial_float32 a_arr va start_idx end_idx =
   if start_idx >= end_idx then Float32_u.of_int 1
+  else if View.is_c_contiguous va then (
+    let base = View.offset va + start_idx in
+    let n = end_idx - start_idx in
+    let n4 = n - 3 in
+    let rec simd_loop i (acc_vec : float32x4#) =
+      if i < n4 then
+        let vec = Float32x4.Array.unsafe_get a_arr ~idx:(base + i) in
+        simd_loop (i + 4) (Float32x4.mul acc_vec vec)
+      else acc_vec
+    in
+    let acc_vec = simd_loop 0 (Float32x4.one ()) in
+    let #(v0, v1, v2, v3) = Float32x4.splat acc_vec in
+    let simd_result = Float32_u.mul (Float32_u.mul v0 v1) (Float32_u.mul v2 v3) in
+    let start_remainder = (n / 4) * 4 in
+    let rec scalar_loop i (acc : float32#) =
+      if i < n then
+        scalar_loop (i + 1) (Float32_u.mul acc (Array.unsafe_get a_arr (base + i)))
+      else acc
+    in
+    scalar_loop start_remainder simd_result)
   else
     let acc = Array.make_float32 1 in
     Array.unsafe_set acc 0 (Float32_u.of_int 1);
-    if View.is_c_contiguous va then (
-      let base = View.offset va + start_idx in
-      let last = View.offset va + end_idx in
-      for i = base to last - 1 do
-        let cur = Array.unsafe_get acc 0 in
-        Array.unsafe_set acc 0 (Float32_u.mul cur (Array.unsafe_get a_arr i))
-      done;
-      Array.unsafe_get acc 0)
-    else
-      let a_shape = shape va in
-      let a_strides = View.strides va in
-      let a_offset = View.offset va in
-      let md_index = Array.make (Array.length a_shape) 0 in
-      for k = start_idx to end_idx - 1 do
-        Shape.unravel_index_into k a_shape md_index;
-        let a_lin = Shape.ravel_index md_index a_strides in
-        let v = Array.unsafe_get a_arr (a_offset + a_lin) in
-        let cur = Array.unsafe_get acc 0 in
-        Array.unsafe_set acc 0 (Float32_u.mul cur v)
-      done;
-      Array.unsafe_get acc 0
+    let a_shape = shape va in
+    let a_strides = View.strides va in
+    let a_offset = View.offset va in
+    let md_index = Array.make (Array.length a_shape) 0 in
+    for k = start_idx to end_idx - 1 do
+      Shape.unravel_index_into k a_shape md_index;
+      let a_lin = Shape.ravel_index md_index a_strides in
+      let v = Array.unsafe_get a_arr (a_offset + a_lin) in
+      let cur = Array.unsafe_get acc 0 in
+      Array.unsafe_set acc 0 (Float32_u.mul cur v)
+    done;
+    Array.unsafe_get acc 0
 
 let prod_all_partial_int8 a_arr va start_idx end_idx =
   if start_idx >= end_idx then #1s
@@ -936,17 +981,31 @@ let min_axis_int64 a_arr out_arr va vout axes keepdims start_idx end_idx =
   done
 
 let min_all_float64 a_arr va start_idx end_idx =
-  let acc = Array.make_float64 1 in
   if View.is_c_contiguous va then (
     let base = View.offset va + start_idx in
-    let last = View.offset va + end_idx in
-    Array.unsafe_set acc 0 (Array.unsafe_get a_arr base);
-    for i = base + 1 to last - 1 do
-      let cur = Array.unsafe_get acc 0 in
-      Array.unsafe_set acc 0 (Float_u.min cur (Array.unsafe_get a_arr i))
-    done;
-    Array.unsafe_get acc 0)
+    let n = end_idx - start_idx in
+    if n < 2 then Array.unsafe_get a_arr base
+    else
+      let first_vec = Float64x2.Array.unsafe_get a_arr ~idx:base in
+      let n2 = n - 1 in
+      let rec simd_loop i (acc_vec : float64x2#) =
+        if i < n2 then
+          let vec = Float64x2.Array.unsafe_get a_arr ~idx:(base + i) in
+          simd_loop (i + 2) (Float64x2.min acc_vec vec)
+        else acc_vec
+      in
+      let acc_vec = simd_loop 2 first_vec in
+      let #(v0, v1) = Float64x2.splat acc_vec in
+      let simd_result = Float_u.min v0 v1 in
+      let start_remainder = (n / 2) * 2 in
+      let rec scalar_loop i (acc : float#) =
+        if i < n then
+          scalar_loop (i + 1) (Float_u.min acc (Array.unsafe_get a_arr (base + i)))
+        else acc
+      in
+      scalar_loop start_remainder simd_result)
   else
+    let acc = Array.make_float64 1 in
     let a_shape = shape va in
     let a_strides = View.strides va in
     let a_offset = View.offset va in
@@ -964,17 +1023,37 @@ let min_all_float64 a_arr va start_idx end_idx =
     Array.unsafe_get acc 0
 
 let min_all_float32 a_arr va start_idx end_idx =
-  let acc = Array.make_float32 1 in
   if View.is_c_contiguous va then (
     let base = View.offset va + start_idx in
-    let last = View.offset va + end_idx in
-    Array.unsafe_set acc 0 (Array.unsafe_get a_arr base);
-    for i = base + 1 to last - 1 do
-      let cur = Array.unsafe_get acc 0 in
-      Array.unsafe_set acc 0 (Float32_u.min cur (Array.unsafe_get a_arr i))
-    done;
-    Array.unsafe_get acc 0)
+    let n = end_idx - start_idx in
+    if n < 4 then (
+      let rec scalar_loop i (acc : float32#) =
+        if i < n then
+          scalar_loop (i + 1) (Float32_u.min acc (Array.unsafe_get a_arr (base + i)))
+        else acc
+      in
+      scalar_loop 1 (Array.unsafe_get a_arr base))
+    else
+      let first_vec = Float32x4.Array.unsafe_get a_arr ~idx:base in
+      let n4 = n - 3 in
+      let rec simd_loop i (acc_vec : float32x4#) =
+        if i < n4 then
+          let vec = Float32x4.Array.unsafe_get a_arr ~idx:(base + i) in
+          simd_loop (i + 4) (Float32x4.min acc_vec vec)
+        else acc_vec
+      in
+      let acc_vec = simd_loop 4 first_vec in
+      let #(v0, v1, v2, v3) = Float32x4.splat acc_vec in
+      let simd_result = Float32_u.min (Float32_u.min v0 v1) (Float32_u.min v2 v3) in
+      let start_remainder = (n / 4) * 4 in
+      let rec scalar_loop i (acc : float32#) =
+        if i < n then
+          scalar_loop (i + 1) (Float32_u.min acc (Array.unsafe_get a_arr (base + i)))
+        else acc
+      in
+      scalar_loop start_remainder simd_result)
   else
+    let acc = Array.make_float32 1 in
     let a_shape = shape va in
     let a_strides = View.strides va in
     let a_offset = View.offset va in
@@ -1230,17 +1309,31 @@ let max_axis_int64 a_arr out_arr va vout axes keepdims start_idx end_idx =
   done
 
 let max_all_float64 a_arr va start_idx end_idx =
-  let acc = Array.make_float64 1 in
   if View.is_c_contiguous va then (
     let base = View.offset va + start_idx in
-    let last = View.offset va + end_idx in
-    Array.unsafe_set acc 0 (Array.unsafe_get a_arr base);
-    for i = base + 1 to last - 1 do
-      let cur = Array.unsafe_get acc 0 in
-      Array.unsafe_set acc 0 (Float_u.max cur (Array.unsafe_get a_arr i))
-    done;
-    Array.unsafe_get acc 0)
+    let n = end_idx - start_idx in
+    if n < 2 then Array.unsafe_get a_arr base
+    else
+      let first_vec = Float64x2.Array.unsafe_get a_arr ~idx:base in
+      let n2 = n - 1 in
+      let rec simd_loop i (acc_vec : float64x2#) =
+        if i < n2 then
+          let vec = Float64x2.Array.unsafe_get a_arr ~idx:(base + i) in
+          simd_loop (i + 2) (Float64x2.max acc_vec vec)
+        else acc_vec
+      in
+      let acc_vec = simd_loop 2 first_vec in
+      let #(v0, v1) = Float64x2.splat acc_vec in
+      let simd_result = Float_u.max v0 v1 in
+      let start_remainder = (n / 2) * 2 in
+      let rec scalar_loop i (acc : float#) =
+        if i < n then
+          scalar_loop (i + 1) (Float_u.max acc (Array.unsafe_get a_arr (base + i)))
+        else acc
+      in
+      scalar_loop start_remainder simd_result)
   else
+    let acc = Array.make_float64 1 in
     let a_shape = shape va in
     let a_strides = View.strides va in
     let a_offset = View.offset va in
@@ -1258,17 +1351,37 @@ let max_all_float64 a_arr va start_idx end_idx =
     Array.unsafe_get acc 0
 
 let max_all_float32 a_arr va start_idx end_idx =
-  let acc = Array.make_float32 1 in
   if View.is_c_contiguous va then (
     let base = View.offset va + start_idx in
-    let last = View.offset va + end_idx in
-    Array.unsafe_set acc 0 (Array.unsafe_get a_arr base);
-    for i = base + 1 to last - 1 do
-      let cur = Array.unsafe_get acc 0 in
-      Array.unsafe_set acc 0 (Float32_u.max cur (Array.unsafe_get a_arr i))
-    done;
-    Array.unsafe_get acc 0)
+    let n = end_idx - start_idx in
+    if n < 4 then (
+      let rec scalar_loop i (acc : float32#) =
+        if i < n then
+          scalar_loop (i + 1) (Float32_u.max acc (Array.unsafe_get a_arr (base + i)))
+        else acc
+      in
+      scalar_loop 1 (Array.unsafe_get a_arr base))
+    else
+      let first_vec = Float32x4.Array.unsafe_get a_arr ~idx:base in
+      let n4 = n - 3 in
+      let rec simd_loop i (acc_vec : float32x4#) =
+        if i < n4 then
+          let vec = Float32x4.Array.unsafe_get a_arr ~idx:(base + i) in
+          simd_loop (i + 4) (Float32x4.max acc_vec vec)
+        else acc_vec
+      in
+      let acc_vec = simd_loop 4 first_vec in
+      let #(v0, v1, v2, v3) = Float32x4.splat acc_vec in
+      let simd_result = Float32_u.max (Float32_u.max v0 v1) (Float32_u.max v2 v3) in
+      let start_remainder = (n / 4) * 4 in
+      let rec scalar_loop i (acc : float32#) =
+        if i < n then
+          scalar_loop (i + 1) (Float32_u.max acc (Array.unsafe_get a_arr (base + i)))
+        else acc
+      in
+      scalar_loop start_remainder simd_result)
   else
+    let acc = Array.make_float32 1 in
     let a_shape = shape va in
     let a_strides = View.strides va in
     let a_offset = View.offset va in
