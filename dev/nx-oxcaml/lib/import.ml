@@ -15,6 +15,10 @@ module Int32_u = Stdlib_upstream_compatible.Int32_u
 module Int64_u = Stdlib_upstream_compatible.Int64_u
 module Int8_u = Stdlib_stable.Int8_u
 module Int16_u = Stdlib_stable.Int16_u
+module Float32x4 = Simd.Float32x4
+module Float64x2 = Simd.Float64x2
+module Int32x4 = Simd.Int32x4
+module Int64x2 = Simd.Int64x2
 
 module Array = struct
   include Stdlib.Array
