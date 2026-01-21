@@ -971,7 +971,50 @@ let test_where_int64_zero_negative () =
   check_int64 "where_int64_zero_neg[2]" #7L (geti64 d 2);
   check_int64 "where_int64_zero_neg[3]" #3L (geti64 d 3)
             
-          
+  let test_where_int8_basic () =
+    let ctx = Nx_oxcaml.create_context () in
+    let cond =
+      Nx_oxcaml.of_bool ctx
+        [| true; false; true; false |]
+    in
+    let if_true =
+      Nx_oxcaml.of_int8 ctx
+        [| #1s; #2s; #3s; #4s |]
+    in
+    let if_false =
+      Nx_oxcaml.of_int8 ctx
+        [| #10s; #20s; #30s; #40s |]
+    in
+    let out = Nx_oxcaml.op_buffer ctx Dtype.Int8 4 in
+    Nx_oxcaml.op_where ~out cond if_true if_false;
+    let d = Nx_oxcaml.data_array out in
+    check_int8 "where_int8[0]" #1s (geti8 d 0);
+    check_int8 "where_int8[1]" #20s (geti8 d 1);
+    check_int8 "where_int8[2]" #3s (geti8 d 2);
+    check_int8 "where_int8[3]" #40s (geti8 d 3)
+
+    let test_where_int16_zero_negative () =
+      let ctx = Nx_oxcaml.create_context () in
+      let cond =
+        Nx_oxcaml.of_bool ctx
+          [| true; false; false; true |]
+      in
+      let if_true =
+        Nx_oxcaml.of_int16 ctx
+          [| #0S; -#1S; -#2S; #3S |]
+      in
+      let if_false =
+        Nx_oxcaml.of_int16 ctx
+          [| #5S; #6S; #7S; #8S |]
+      in
+      let out = Nx_oxcaml.op_buffer ctx Dtype.Int16 4 in
+      Nx_oxcaml.op_where ~out cond if_true if_false;
+      let d = Nx_oxcaml.data_array out in
+      check_int16 "where_int16_zero_neg[0]" #0S (geti16 d 0);
+      check_int16 "where_int16_zero_neg[1]" #6S (geti16 d 1);
+      check_int16 "where_int16_zero_neg[2]" #7S (geti16 d 2);
+      check_int16 "where_int16_zero_neg[3]" #3S (geti16 d 3)
+    
 let () =
   print_endline "Running Nx_oxcaml backend tests...";
   test_buffer_float64 ();
@@ -1054,5 +1097,7 @@ let () =
   test_where_int32_basic ();
   test_where_int32_zero_negative ();
   test_where_int64_zero_negative ();
+  test_where_int8_basic ();
+  test_where_int16_zero_negative ();
   Printf.printf "\nResults: %d passed, %d failed\n" !passed !failed;
   if !failed > 0 then exit 1
