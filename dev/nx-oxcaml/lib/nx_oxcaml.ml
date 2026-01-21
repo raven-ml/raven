@@ -80,18 +80,6 @@ let of_float32 context (arr : float32# array) : (float, Dtype.float32_elt) t =
   let view = View.create sym_shape in
   { dtype = Dtype.Float32; buffer = Float32 arr; view; context }
 
-let of_int16 context (arr : int16# array) : (int16, Dtype.int16_elt) t =
-  let size = Array.length arr in
-  let sym_shape = Symbolic_shape.of_ints [| size |] in
-  let view = View.create sym_shape in
-  { dtype = Dtype.Int16; buffer = Int16 arr; view; context }
-  
-let of_int8 context (arr : int8# array) : (int8, Dtype.int8_elt) t =
-  let size = Array.length arr in
-  let sym_shape = Symbolic_shape.of_ints [| size |] in
-  let view = View.create sym_shape in
-  { dtype = Dtype.Int8; buffer = Int8 arr; view; context }
-
 let of_int32 context (arr : int32# array) : (int32, Dtype.int32_elt) t =
   let size = Array.length arr in
   let sym_shape = Symbolic_shape.of_ints [| size |] in
@@ -856,24 +844,6 @@ let op_where (type a b) ~(out : (a, b) t) (cond : (bool, Nx_buffer.bool_elt) t)
             vtrue vfalse vout start_idx end_idx)
     else
       Op_where.where_int32 cond_arr true_arr false_arr out_arr vcond vtrue
-        vfalse vout 0 vol
-  | Int16 out_arr, Bool cond_arr, Int16 true_arr, Int16 false_arr ->
-    if vol > parallel_threshold then
-      Parallel.parallel_for out.context.pool 0 (vol - 1)
-        (fun start_idx end_idx ->
-          Op_where.where_int16 cond_arr true_arr false_arr out_arr vcond
-            vtrue vfalse vout start_idx end_idx)
-    else
-      Op_where.where_int16 cond_arr true_arr false_arr out_arr vcond vtrue
-        vfalse vout 0 vol
-  | Int8 out_arr, Bool cond_arr, Int8 true_arr, Int8 false_arr ->
-    if vol > parallel_threshold then
-      Parallel.parallel_for out.context.pool 0 (vol - 1)
-        (fun start_idx end_idx ->
-          Op_where.where_int8 cond_arr true_arr false_arr out_arr vcond
-            vtrue vfalse vout start_idx end_idx)
-    else
-      Op_where.where_int8 cond_arr true_arr false_arr out_arr vcond vtrue
         vfalse vout 0 vol
   | _ -> Error.invalid ~op:"op_where " ~what:"not implemented for this dtype" ()
 
