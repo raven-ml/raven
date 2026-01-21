@@ -857,6 +857,121 @@ let test_cmple_float64 () =
     check_bool "cmple_bool[0]" true (getbool d 0);
     check_bool "cmple_bool[1]" true (getbool d 1);
     check_bool "cmple_bool[2]" false (getbool d 2)
+
+let test_where_float64_basic () =
+  let ctx = Nx_oxcaml.create_context () in
+  let cond =
+    Nx_oxcaml.of_bool
+      ctx
+      [| true; false; true; false |]
+  in
+  let if_true =
+    Nx_oxcaml.of_float64
+      ctx
+      [| #1.0; #2.0; #3.0; #4.0 |]
+  in
+  let if_false =
+    Nx_oxcaml.of_float64
+      ctx
+      [| #10.0; #20.0; #30.0; #40.0 |]
+  in
+  let out = Nx_oxcaml.op_buffer ctx Dtype.Float64 4 in
+  Nx_oxcaml.op_where ~out cond if_true if_false;
+  let d = Nx_oxcaml.data_array out in
+  check_float64 "where_basic[0]" ~eps:1e-9 #1.0 (get64 d 0);
+  check_float64 "where_basic[1]" ~eps:1e-9 #20.0 (get64 d 1);
+  check_float64 "where_basic[2]" ~eps:1e-9 #3.0 (get64 d 2);
+  check_float64 "where_basic[3]" ~eps:1e-9 #40.0 (get64 d 3)
+
+  let test_where_float32_basic () =
+    let ctx = Nx_oxcaml.create_context () in
+    let cond =
+      Nx_oxcaml.of_bool ctx
+        [| true; false; true; false |]
+    in
+    let if_true =
+      Nx_oxcaml.of_float32 ctx
+        [| #1.0s; #2.0s; #3.0s; #4.0s |]
+    in
+    let if_false =
+      Nx_oxcaml.of_float32 ctx
+        [| #10.0s; #20.0s; #30.0s; #40.0s |]
+    in
+    let out = Nx_oxcaml.op_buffer ctx Dtype.Float32 4 in
+    Nx_oxcaml.op_where ~out cond if_true if_false;
+    let d = Nx_oxcaml.data_array out in
+    check_float32 "where_float32[0]" ~eps:1e-6 #1.0s (get32 d 0);
+    check_float32 "where_float32[1]" ~eps:1e-6 #20.0s (get32 d 1);
+    check_float32 "where_float32[2]" ~eps:1e-6 #3.0s (get32 d 2);
+    check_float32 "where_float32[3]" ~eps:1e-6 #40.0s (get32 d 3)      
+
+let test_where_int32_basic () =
+  let ctx = Nx_oxcaml.create_context () in
+  let cond =
+    Nx_oxcaml.of_bool ctx
+      [| true; false; true; false |]
+  in
+  let if_true =
+    Nx_oxcaml.of_int32 ctx
+      [| #1l; #2l; #3l; #4l |]
+  in
+  let if_false =
+    Nx_oxcaml.of_int32 ctx
+      [| #10l; #20l; #30l; #40l |]
+  in
+  let out = Nx_oxcaml.op_buffer ctx Dtype.Int32 4 in
+  Nx_oxcaml.op_where ~out cond if_true if_false;
+  let d = Nx_oxcaml.data_array out in
+  check_int32 "where_int32[0]" #1l (geti32 d 0);
+  check_int32 "where_int32[1]" #20l (geti32 d 1);
+  check_int32 "where_int32[2]" #3l (geti32 d 2);
+  check_int32 "where_int32[3]" #40l (geti32 d 3)
+
+let test_where_int32_zero_negative () =
+  let ctx = Nx_oxcaml.create_context () in
+  let cond =
+    Nx_oxcaml.of_bool ctx
+      [| true; false; false; true |]
+  in
+  let if_true =
+    Nx_oxcaml.of_int32 ctx
+      [| #0l; -#1l; -#2l; #3l |]
+  in
+  let if_false =
+    Nx_oxcaml.of_int32 ctx
+      [| #5l; #6l; #7l; #8l |]
+  in
+  let out = Nx_oxcaml.op_buffer ctx Dtype.Int32 4 in
+  Nx_oxcaml.op_where ~out cond if_true if_false;
+  let d = Nx_oxcaml.data_array out in
+  check_int32 "where_int32_zero_neg[0]" #0l (geti32 d 0);
+  check_int32 "where_int32_zero_neg[1]" #6l (geti32 d 1);
+  check_int32 "where_int32_zero_neg[2]" #7l (geti32 d 2);
+  check_int32 "where_int32_zero_neg[3]" #3l (geti32 d 3)
+
+let test_where_int64_zero_negative () =
+  let ctx = Nx_oxcaml.create_context () in
+  let cond =
+    Nx_oxcaml.of_bool ctx
+      [| true; false; false; true |]
+  in
+  let if_true =
+    Nx_oxcaml.of_int64 ctx
+      [| #0L; -#1L; -#2L; #3L |]
+  in
+  let if_false =
+    Nx_oxcaml.of_int64 ctx
+      [| #5L; #6L; #7L; #8L |]
+  in
+  let out = Nx_oxcaml.op_buffer ctx Dtype.Int64 4 in
+  Nx_oxcaml.op_where ~out cond if_true if_false;
+  let d = Nx_oxcaml.data_array out in
+  check_int64 "where_int64_zero_neg[0]" #0L (geti64 d 0);
+  check_int64 "where_int64_zero_neg[1]" #6L (geti64 d 1);
+  check_int64 "where_int64_zero_neg[2]" #7L (geti64 d 2);
+  check_int64 "where_int64_zero_neg[3]" #3L (geti64 d 3)
+            
+          
 let () =
   print_endline "Running Nx_oxcaml backend tests...";
   test_buffer_float64 ();
@@ -934,5 +1049,10 @@ let () =
   test_cmple_float64 ();
   test_cmple_int64 ();
   test_recip_float64 ();
+  test_where_float64_basic ();
+  test_where_float32_basic ();
+  test_where_int32_basic ();
+  test_where_int32_zero_negative ();
+  test_where_int64_zero_negative ();
   Printf.printf "\nResults: %d passed, %d failed\n" !passed !failed;
   if !failed > 0 then exit 1

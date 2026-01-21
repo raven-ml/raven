@@ -92,6 +92,12 @@ let of_int64 context (arr : int64# array) : (int64, Dtype.int64_elt) t =
   let view = View.create sym_shape in
   { dtype = Dtype.Int64; buffer = Int64 arr; view; context }
 
+let of_bool context (arr : bool array) : (bool, Dtype.bool_elt) t =
+  let size = Array.length arr in
+  let sym_shape = Symbolic_shape.of_ints [| size |] in
+  let view = View.create sym_shape in
+  { dtype = Dtype.Bool; buffer = Bool arr; view; context }
+
 let op_add (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
@@ -794,8 +800,52 @@ let op_cos (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
       else Op_cos.cos_float32 a_arr out_arr va vout 0 vol
   | _ -> Error.invalid ~op:"op_cos " ~what:"not implemented for unboxed ints" ()
 
-let op_where ~out:_ _ _ _ =
-  Error.invalid ~op:"op_where" ~what:"not implemented" ()
+let op_where (type a b) ~(out : (a, b) t) (cond : (bool, Nx_buffer.bool_elt) t)
+    (if_true : (a, b) t) (if_false : (a, b) t) : unit =
+  let parallel_threshold = 62500 in
+  let vout = out.view in
+  let vtrue = if_true.view in
+  let vfalse = if_false.view in
+  let vcond = cond.view in
+  let vol = numel vout in
+  match (out.buffer, cond.buffer, if_true.buffer, if_false.buffer) with
+  | Float64 out_arr, Bool cond_arr, Float64 true_arr, Float64 false_arr ->
+      if vol > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (vol - 1)
+          (fun start_idx end_idx ->
+            Op_where.where_float64 cond_arr true_arr false_arr out_arr vcond
+              vtrue vfalse vout start_idx end_idx)
+      else
+        Op_where.where_float64 cond_arr true_arr false_arr out_arr vcond vtrue
+          vfalse vout 0 vol
+  | Float32 out_arr, Bool cond_arr, Float32 true_arr, Float32 false_arr ->
+    if vol > parallel_threshold then
+      Parallel.parallel_for out.context.pool 0 (vol - 1)
+        (fun start_idx end_idx ->
+          Op_where.where_float32 cond_arr true_arr false_arr out_arr vcond
+            vtrue vfalse vout start_idx end_idx)
+    else
+      Op_where.where_float32 cond_arr true_arr false_arr out_arr vcond vtrue
+        vfalse vout 0 vol
+  | Int64 out_arr, Bool cond_arr, Int64 true_arr, Int64 false_arr ->
+    if vol > parallel_threshold then
+      Parallel.parallel_for out.context.pool 0 (vol - 1)
+        (fun start_idx end_idx ->
+          Op_where.where_int64 cond_arr true_arr false_arr out_arr vcond
+            vtrue vfalse vout start_idx end_idx)
+    else
+      Op_where.where_int64 cond_arr true_arr false_arr out_arr vcond vtrue
+        vfalse vout 0 vol
+  | Int32 out_arr, Bool cond_arr, Int32 true_arr, Int32 false_arr ->
+    if vol > parallel_threshold then
+      Parallel.parallel_for out.context.pool 0 (vol - 1)
+        (fun start_idx end_idx ->
+          Op_where.where_int32 cond_arr true_arr false_arr out_arr vcond
+            vtrue vfalse vout start_idx end_idx)
+    else
+      Op_where.where_int32 cond_arr true_arr false_arr out_arr vcond vtrue
+        vfalse vout 0 vol
+  | _ -> Error.invalid ~op:"op_where " ~what:"not implemented for this dtype" ()
 
 let op_reduce_sum (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
     unit =
