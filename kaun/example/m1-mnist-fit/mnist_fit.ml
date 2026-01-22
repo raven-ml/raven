@@ -61,12 +61,22 @@ let () =
     |> Dataset.prepare ~batch_size:100 ~prefetch:2
   in
 
+  (* Info to guide the user, can comment out *)
+  Printf.printf "Starting training...\n";
+  Printf.printf "Run ID: %s\n" (Log.run_id logger);
+  Printf.printf "Run directory: %s\n" (Log.run_dir logger);
+  Printf.printf "\n";
+  Printf.printf "To monitor this run, open another terminal and run:\n";
+  Printf.printf "  dune exec kaun-console\n";
+  Printf.printf "\n%!";
+
   (* Launch dashboard in a separate thread *)
-  let _dashboard_thread =
-    Thread.create
-      (fun () -> Kaun_console.run ~runs:[ Log.run_id logger ] ())
-      ()
-  in
+  (* COMMENTED OUT: Console is now a standalone executable *)
+  (* let _dashboard_thread =
+   *     Thread.create
+   *       (fun () -> Kaun_console.run ~runs:[ Log.run_id logger ] ())
+   *       ()
+   *   in *)
 
   (* Training with new high-level API *)
   let _state, _history =
