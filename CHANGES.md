@@ -31,6 +31,7 @@ All notable changes to this project will be documented in this file.
 
 ### Kaun
 
+- Implemented event_reader module for incremental JSONL reading. (#166, @Arsalaan-Alam)
 - Reinitialize dataset each epoch to avoid iterator exhaustion (#147, @Shocker444, @tmattio)
 
 ### Quill
