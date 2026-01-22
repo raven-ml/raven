@@ -178,7 +178,7 @@ let[@inline] of_int16x8_bits x = of_int16x8 x
 let[@inline] of_int32x4_bits x = of_int32x4 x
 let[@inline] of_int64x2_bits x = of_int64x2 x
 let[@inline] unsafe_of_float32 x = low_of x
-(* let[@inline] of_int32x4 x = Int32x4.cvt_f32 x *)
+let[@inline] cvt_of_int32x4 x = Int32x4.cvt_f32 x
 let[@inline] of_float64x2 x = Float64x2.cvt_float32x4 x
 
 (* ───── String Conversion ───── *)
