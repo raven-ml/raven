@@ -28,10 +28,9 @@ val run :
   ?runs:string list ->
   unit ->
   unit
-(** [run ?base_dir ?experiment ?tags ?runs ()] launches the interactive
-    dashboard. Blocks until the user quits.
+(** [run ?base_dir ?experiment ?tags ?runs ()] launches the dashboard.
 
     @param base_dir Directory containing runs (default: ["./runs"])
-    @param experiment Filter to runs with this experiment name
-    @param tags Filter to runs containing all these tags
-    @param runs Specific run IDs to display (overrides experiment/tags filters) *)
+    @param experiment Filter to runs with this experiment name (not yet implemented)
+    @param tags Filter to runs containing all these tags (not yet implemented)
+    @param runs Specific run IDs to display (currently requires exactly one) *)
