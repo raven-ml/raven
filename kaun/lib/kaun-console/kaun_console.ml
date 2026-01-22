@@ -9,14 +9,14 @@ let latest_values events =
   let table = Hashtbl.create 16 in
   List.iter
     (function
-      | Event_reader.Scalar s ->
+      | Event.Scalar s ->
           let update =
             match Hashtbl.find_opt table s.tag with
             | Some (prev_step, _, _) -> s.step > prev_step
             | None -> true
           in
           if update then Hashtbl.replace table s.tag (s.step, s.epoch, s.value)
-      | Event_reader.Unknown _ -> ())
+      | Event.Unknown _ | Event.Malformed _ -> ())
     events;
   Hashtbl.fold
     (fun tag (step, epoch, value) acc -> (tag, step, epoch, value) :: acc)
@@ -28,8 +28,11 @@ let latest_epoch events =
   List.fold_left
     (fun acc event ->
       match event with
-      | Event_reader.Scalar s -> max acc s.epoch
-      | Event_reader.Unknown _ -> acc)
+      | Event.Scalar s -> (
+          match s.epoch with
+          | Some e -> max acc e
+          | None -> acc)
+      | Event.Unknown _ | Event.Malformed _ -> acc)
     0 events
 
 (* ───── Terminal Helpers ───── *)
@@ -53,7 +56,11 @@ let render ~run_id ~events =
     Printf.printf "Metrics:\n";
     List.iter
       (fun (tag, step, epoch, value) ->
-        let epoch_str = if epoch > 0 then Printf.sprintf ", epoch %d" epoch else "" in
+        let epoch_str =
+          match epoch with
+          | Some e when e > 0 -> Printf.sprintf ", epoch %d" e
+          | _ -> ""
+        in
         Printf.printf "  %-30s %8.4f  (step %d%s)\n" tag value step epoch_str)
       latest);
 
