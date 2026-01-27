@@ -7,6 +7,7 @@
 
 module Dtype = Nx_core.Dtype
 module View = Nx_core.View
+module Nx_ox = Nx_core.Make_frontend (Nx_oxcaml)
 module Symbolic_shape = Nx_core.Symbolic_shape
 module Float_u = Stdlib_upstream_compatible.Float_u
 module Float32_u = Stdlib_stable.Float32_u
@@ -1020,6 +1021,18 @@ let test_where_int16_zero_negative () =
   check_int16 "where_int16_zero_neg[1]" #6S (geti16 d 1);
   check_int16 "where_int16_zero_neg[2]" #7S (geti16 d 2);
   check_int16 "where_int16_zero_neg[3]" #3S (geti16 d 3)
+
+  let test_matmul_2d () =
+    let ctx = Nx_oxcaml.create_context () in
+    let a = Nx_oxcaml.of_float64_multidim ctx [|#1.; #1.; #1.; #1.|] [|2; 2|] in
+    let b = Nx_oxcaml.of_float64_multidim ctx [|#1.; #1.; #1.; #1.|] [|2; 2|] in
+    let out = Nx_ox.empty ctx Dtype.Float64 [|2; 2|] in
+    Nx_oxcaml.op_matmul ~out a b;
+    let d = Nx_oxcaml.data_array out in
+    check_float64 "mm[0,0]" ~eps:1e-9 #2.0 (get64 d 0);
+    check_float64 "mm[1,1]" ~eps:1e-9 #2.0 (get64 d 1);
+    check_float64 "mm[2,2]" ~eps:1e-9 #2.0 (get64 d 2);
+    check_float64 "mm[0,1]" ~eps:1e-9 #2.0 (get64 d 3)
     
 let () =
   print_endline "Running Nx_oxcaml backend tests...";
@@ -1105,5 +1118,6 @@ let () =
   test_where_int64_zero_negative ();
   test_where_int8_basic ();
   test_where_int16_zero_negative ();
+  test_matmul_2d ();
   Printf.printf "\nResults: %d passed, %d failed\n" !passed !failed;
   if !failed > 0 then exit 1
