@@ -319,7 +319,7 @@ let max_int32 a_arr b_arr out_arr va vb vout start_idx end_idx =
       let b_val = Array.unsafe_get b_arr (b_offset + b_lin) in
       Array.unsafe_set out_arr (out_offset + k) (Int32_u.max a_val b_val)
     done
-
+(* 
 let max_int64 a_arr b_arr out_arr va vb vout start_idx end_idx =
   let out_base = View.offset vout + start_idx in
   let a_base = View.offset va + start_idx in
@@ -383,4 +383,4 @@ let max_int64 a_arr b_arr out_arr va vb vout start_idx end_idx =
       let a_val = Array.unsafe_get a_arr (a_offset + a_lin) in
       let b_val = Array.unsafe_get b_arr (b_offset + b_lin) in
       Array.unsafe_set out_arr (out_offset + k) (Int64_u.max a_val b_val)
-    done
+    done *)

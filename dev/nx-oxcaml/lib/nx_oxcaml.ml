@@ -10,12 +10,12 @@ type context = { pool : Parallel.pool }
 let create_context () = { pool = Parallel.get_or_setup_pool () }
 
 type 'b buffer =
-  | Float64 : float #array -> Dtype.float64_elt buffer
-  | Float32 : float32 #array -> Dtype.float32_elt buffer
-  | Int8 : int8 #array -> Dtype.int8_elt buffer
-  | Int16 : int16 #array -> Dtype.int16_elt buffer
-  | Int32 : int32 #array -> Dtype.int32_elt buffer
-  | Int64 : int64 #array -> Dtype.int64_elt buffer
+  | Float64 : float# array -> Dtype.float64_elt buffer
+  | Float32 : float32# array -> Dtype.float32_elt buffer
+  | Int8 : int8# array -> Dtype.int8_elt buffer
+  | Int16 : int16# array -> Dtype.int16_elt buffer
+  | Int32 : int32# array -> Dtype.int32_elt buffer
+  | Int64 : int64# array -> Dtype.int64_elt buffer
   | Bool : bool array -> Dtype.bool_elt buffer
 
 type ('a, 'b) t = {
@@ -44,7 +44,6 @@ let op_buffer (type a b) context (dtype : (a, b) Dtype.t) (size : int) :
     (a, b) t =
   let sym_shape = Symbolic_shape.of_ints [| size |] in
   let view = View.create sym_shape in
-  (* let op_reshape x shape = { x with view = View.reshape x.view shape } in *)
   match dtype with
   | Dtype.Float64 ->
       let buffer = Array.make_float64 size in
@@ -69,7 +68,7 @@ let op_buffer (type a b) context (dtype : (a, b) Dtype.t) (size : int) :
       { dtype; buffer = Bool buffer; view; context }
   | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
 
-let of_float64_multidim context (arr : float #array) (shape : int array) :
+let of_float64_multidim context (arr : float# array) (shape : int array) :
     (float, Dtype.float64_elt) t =
   let size = Array.length arr in
   let sym_shape = Symbolic_shape.of_ints [| size |] in
@@ -79,37 +78,37 @@ let of_float64_multidim context (arr : float #array) (shape : int array) :
     { dtype = Dtype.Float64; buffer = Float64 arr; view; context }
     (Symbolic_shape.of_ints shape)
 
-let of_float64 context (arr : float #array) : (float, Dtype.float64_elt) t =
+let of_float64 context (arr : float# array) : (float, Dtype.float64_elt) t =
   let size = Array.length arr in
   let sym_shape = Symbolic_shape.of_ints [| size |] in
   let view = View.create sym_shape in
   { dtype = Dtype.Float64; buffer = Float64 arr; view; context }
 
-let of_float32 context (arr : float32 #array) : (float, Dtype.float32_elt) t =
+let of_float32 context (arr : float32# array) : (float, Dtype.float32_elt) t =
   let size = Array.length arr in
   let sym_shape = Symbolic_shape.of_ints [| size |] in
   let view = View.create sym_shape in
   { dtype = Dtype.Float32; buffer = Float32 arr; view; context }
 
-let of_int8 context (arr : int8 #array) : (int, Dtype.int8_elt) t =
+let of_int8 context (arr : int8# array) : (int, Dtype.int8_elt) t =
   let size = Array.length arr in
   let sym_shape = Symbolic_shape.of_ints [| size |] in
   let view = View.create sym_shape in
   { dtype = Dtype.Int8; buffer = Int8 arr; view; context }
 
-let of_int16 context (arr : int16 #array) : (int, Dtype.int16_elt) t =
+let of_int16 context (arr : int16# array) : (int, Dtype.int16_elt) t =
   let size = Array.length arr in
   let sym_shape = Symbolic_shape.of_ints [| size |] in
   let view = View.create sym_shape in
   { dtype = Dtype.Int16; buffer = Int16 arr; view; context }
 
-let of_int32 context (arr : int32 #array) : (int32, Dtype.int32_elt) t =
+let of_int32 context (arr : int32# array) : (int32, Dtype.int32_elt) t =
   let size = Array.length arr in
   let sym_shape = Symbolic_shape.of_ints [| size |] in
   let view = View.create sym_shape in
   { dtype = Dtype.Int32; buffer = Int32 arr; view; context }
 
-let of_int64 context (arr : int64 #array) : (int64, Dtype.int64_elt) t =
+let of_int64 context (arr : int64# array) : (int64, Dtype.int64_elt) t =
   let size = Array.length arr in
   let sym_shape = Symbolic_shape.of_ints [| size |] in
   let view = View.create sym_shape in
@@ -504,12 +503,12 @@ let op_max (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let vb = b.view in
   let vol = numel vout in
   match (out.buffer, a.buffer, b.buffer) with
-  | Float64 out_arr, Float64 a_arr, Float64 b_arr ->
+  (* | Float64 out_arr, Float64 a_arr, Float64 b_arr ->
       if vol > parallel_threshold then
         Parallel.parallel_for out.context.pool 0 (vol - 1)
           (fun start_idx end_idx ->
             Op_max.max_float64 a_arr b_arr out_arr va vb vout start_idx end_idx)
-      else Op_max.max_float64 a_arr b_arr out_arr va vb vout 0 vol
+      else Op_max.max_float64 a_arr b_arr out_arr va vb vout 0 vol *)
   | Float32 out_arr, Float32 a_arr, Float32 b_arr ->
       if vol > parallel_threshold then
         Parallel.parallel_for out.context.pool 0 (vol - 1)
@@ -522,13 +521,13 @@ let op_max (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_max.max_int32 a_arr b_arr out_arr va vb vout start_idx end_idx)
       else Op_max.max_int32 a_arr b_arr out_arr va vb vout 0 vol
-  | Int64 out_arr, Int64 a_arr, Int64 b_arr ->
+  (* | Int64 out_arr, Int64 a_arr, Int64 b_arr ->
       if vol > parallel_threshold then
         Parallel.parallel_for out.context.pool 0 (vol - 1)
           (fun start_idx end_idx ->
             Op_max.max_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
-      else Op_max.max_int64 a_arr b_arr out_arr va vb vout 0 vol
-  | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
+      else Op_max.max_int64 a_arr b_arr out_arr va vb vout 0 vol *)
+  | _ -> Error.invalid ~op:"op_max" ~what:"unsupported dtype" ()
 
 let op_min (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
@@ -555,13 +554,13 @@ let op_min (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_min.min_int32 a_arr b_arr out_arr va vb vout start_idx end_idx)
       else Op_min.min_int32 a_arr b_arr out_arr va vb vout 0 vol
-  | Int64 out_arr, Int64 a_arr, Int64 b_arr ->
+  (* | Int64 out_arr, Int64 a_arr, Int64 b_arr ->
       if vol > parallel_threshold then
         Parallel.parallel_for out.context.pool 0 (vol - 1)
           (fun start_idx end_idx ->
             Op_min.min_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
-      else Op_min.min_int64 a_arr b_arr out_arr va vb vout 0 vol
-  | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
+      else Op_min.min_int64 a_arr b_arr out_arr va vb vout 0 vol *)
+  | _ -> Error.invalid ~op:"op_min" ~what:"unsupported dtype" ()
 
 let op_xor (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
