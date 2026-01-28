@@ -3,6 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Kaun_filesystem
+
 type metric = {
   step : int;
   epoch : int option;
@@ -42,7 +44,7 @@ let should_replace ~prev ~next =
     | Some _, None -> false
     | Some a, Some b -> b > a
 
-let update store (events : Event.t list) =
+let update store (events : Kaun_filesystem.Event.t list) =
   List.iter
     (function
       | Event.Scalar s ->

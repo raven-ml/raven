@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-
 open Mosaic
+open Kaun_filesystem
 
 (* ───── Model ───── *)
 
@@ -133,7 +133,7 @@ let run ?(base_dir = "./runs") ?experiment:_ ?tags:_ ?runs () =
   match runs with
   | Some [ run_id ] ->
       let run_dir = Filename.concat base_dir run_id in
-      let events_path = Filename.concat run_dir "events.jsonl" in
+      let events_path = Manifest.events_path ~run_dir in
 
       let init () = init ~run_id ~events_path in
       Mosaic.run { init; update; view; subscriptions }

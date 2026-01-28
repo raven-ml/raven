@@ -1,12 +1,12 @@
 (library
  (name kaun_console)
  (public_name kaun.console)
- (modules event event_reader metric_store kaun_console)
- (libraries kaun yojson unix mosaic mosaic.ui))
+ (modules metric_store kaun_console)
+ (libraries kaun kaun.filesystem yojson unix mosaic mosaic.ui))
 
 (executable
  (name cli)
  (public_name kaun-console)
  (package kaun)
- (modules cli run_discovery)
- (libraries kaun.console yojson unix))
+ (modules cli)
+ (libraries kaun.console kaun.filesystem yojson unix))

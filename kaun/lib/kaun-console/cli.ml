@@ -52,18 +52,19 @@ let () =
           match List.rev !tags with [] -> None | ts -> Some ts
         in
         (match
-           Run_discovery.get_latest_run ~base_dir:!base_dir
+           Kaun_filesystem.Run_discovery.get_latest_run ~base_dir:!base_dir
              ?experiment:!experiment ?tags:tags_opt ()
          with
-        | Some info ->
-            Printf.printf "Auto-discovered run: %s\n" info.run_id;
-            (match info.experiment with
+        | Some manifest ->
+            Printf.printf "Auto-discovered run: %s\n" manifest.Kaun_filesystem.Manifest.run_id;
+            (match manifest.Kaun_filesystem.Manifest.experiment with
             | Some exp -> Printf.printf "  Experiment: %s\n" exp
             | None -> ());
-            if info.tags <> [] then
-              Printf.printf "  Tags: %s\n" (String.concat ", " info.tags);
+            if manifest.Kaun_filesystem.Manifest.tags <> [] then
+              Printf.printf "  Tags: %s\n"
+                (String.concat ", " manifest.Kaun_filesystem.Manifest.tags);
             Printf.printf "\n%!";
-            info.run_id
+            manifest.Kaun_filesystem.Manifest.run_id
         | None ->
             Printf.eprintf "Error: No runs found in %s\n" !base_dir;
             (match !experiment with
