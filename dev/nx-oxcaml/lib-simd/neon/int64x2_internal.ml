@@ -23,6 +23,24 @@ external neg : t -> t @@ portable
   = "caml_vec128_unreachable" "caml_neon_int64x2_neg"
   [@@noalloc] [@@unboxed] [@@builtin]
 
+(* ───── Min/Max ───── *)
+
+external min : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int32x4_min"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external max : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int32x4_max"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external min_unsigned : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int32x4_min_unsigned"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external max_unsigned : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_int32x4_max_unsigned"
+  [@@noalloc] [@@unboxed] [@@builtin]
+  
 (* ───── Bitwise ───── *)
 
 external bitwise_or : t -> t -> t @@ portable
