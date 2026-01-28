@@ -19,7 +19,7 @@ type backend = run_dir:string -> writer
 (* ───── JSONL Backend ───── *)
 
 let jsonl_writer ~run_dir =
-  let events_path = Filename.concat run_dir "events.jsonl" in
+  let events_path = Kaun_filesystem.Manifest.events_path ~run_dir in
   let channel = open_out_gen [ Open_append; Open_creat ] 0o644 events_path in
   let mutex = Mutex.create () in
   let write_line line =
@@ -134,52 +134,21 @@ let multi backends : backend = multi_writer backends
 
 (* ───── Run ID and Directory Management ───── *)
 
-let generate_run_id ?experiment () =
-  let now = Unix.gettimeofday () in
-  let tm = Unix.localtime now in
-  let date =
-    Printf.sprintf "%04d-%02d-%02d_%02d-%02d-%02d" (tm.Unix.tm_year + 1900)
-      (tm.Unix.tm_mon + 1) tm.Unix.tm_mday tm.Unix.tm_hour tm.Unix.tm_min
-      tm.Unix.tm_sec
-  in
-  Option.fold ~none:date ~some:(Printf.sprintf "%s_%s" date) experiment
-
-let ensure_dir_recursive path =
-  let rec ensure acc parts =
-    match parts with
-    | [] -> ()
-    | part :: rest ->
-        let next = if acc = "" then part else acc ^ "/" ^ part in
-        if next <> "" && not (Sys.file_exists next) then Unix.mkdir next 0o755;
-        ensure next rest
-  in
-  ensure "" (String.split_on_char '/' path)
+(* Use filesystem library for run operations *)
+let generate_run_id = Kaun_filesystem.Manifest.generate_run_id
+let ensure_dir_recursive = Kaun_filesystem.Manifest.ensure_run_dir
+let run_dir = Kaun_filesystem.Manifest.run_dir
 
 (* ───── Run Manifest ───── *)
 
 (* The manifest (run.json) stores immutable run metadata written once at creation.
    Separating this from the event stream avoids re-parsing events for run info. *)
 
-let write_manifest ~run_dir ~run_id ?experiment ~tags ~config () =
-  let experiment_field =
-    Option.map (fun e -> ("experiment", `String e)) experiment |> Option.to_list
-  in
+let write_manifest ~run_dir ~run_id ?experiment ?(tags = []) ~config () =
   let manifest =
-    `Assoc
-      ([
-         ("schema_version", `Int 1);
-         ("run_id", `String run_id);
-         ("created_at", `Float (Unix.gettimeofday ()));
-         ("tags", `List (List.map (fun t -> `String t) tags));
-         ("config", `Assoc config);
-       ]
-      @ experiment_field)
+    Kaun_filesystem.Manifest.create ~run_id ?experiment ~tags ~config ()
   in
-  let path = Filename.concat run_dir "run.json" in
-  let oc = open_out path in
-  output_string oc (Yojson.Basic.pretty_to_string manifest);
-  output_char oc '\n';
-  close_out oc
+  Kaun_filesystem.Manifest.write ~run_dir manifest
 
 (* ───── Logger Type ───── *)
 
@@ -190,11 +159,11 @@ type t = { run_id : string; run_dir : string; writer : writer }
 let create ?(backend = jsonl) ?(base_dir = "./runs") ?experiment ?(tags = [])
     ?(config = []) () =
   let run_id = generate_run_id ?experiment () in
-  let run_dir = Filename.concat base_dir run_id in
-  ensure_dir_recursive run_dir;
-  write_manifest ~run_dir ~run_id ?experiment ~tags ~config ();
-  let writer = backend ~run_dir in
-  let t = { run_id; run_dir; writer } in
+  let run_dir_path = run_dir ~base_dir ~run_id in
+  ensure_dir_recursive ~run_dir:run_dir_path;
+  write_manifest ~run_dir:run_dir_path ~run_id ?experiment ~tags ~config ();
+  let writer = backend ~run_dir:run_dir_path in
+  let t = { run_id; run_dir = run_dir_path; writer } in
   (* Auto-log config as hparams *)
   if config <> [] then writer.write_hparams config;
   t

@@ -3,4 +3,4 @@
 (library
  (name kaun)
  (public_name kaun)
- (libraries rune unix str nx nx_buffer nx.core nx.io yojson domainslib uutf))
+ (libraries rune unix str nx nx_buffer nx.core nx.io yojson domainslib uutf kaun.filesystem))
