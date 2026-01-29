@@ -5,49 +5,99 @@
 
 open Import
 
-let matmul_float64_fast a_buf b_buf c_buf va vb vout start_idx end_idx = 
+let matmul_float64_fast a_buf b_buf c_buf va vb vout start_idx end_idx =
   let mc = 128 in
   let nc = 128 in
   let kc = 64 in
+
   let rank = Array.length (shape vout) in
   let n = (shape vout).(rank - 1) in
   let k = (shape va).(rank - 1) in
 
   let a_rs = k and b_rs = n and c_rs = n in
-  let a0 = View.offset va and b0 = View.offset vb and c0 = View.offset vout in
-
+  let a0 = View.offset va
+  and b0 = View.offset vb
+  and c0 = View.offset vout in
 
   let rec jc_loop jc =
     if jc >= n then ()
     else
       let nc' = min nc (n - jc) in
+
       let rec pc_loop pc =
         if pc >= k then ()
         else
           let kc' = min kc (k - pc) in
+
           let rec ic_loop ic =
             if ic >= end_idx then ()
             else
               let mc' = min mc (end_idx - ic) in
+
               for i = ic to ic + mc' - 1 do
-                let a_row = a0 + (i * a_rs) + pc
-                and c_row = c0 + (i * c_rs) + jc in
-                for j = jc to jc + nc' - 1 do
+                let a_row = a0 + (i * a_rs) + pc in
+                let c_row = c0 + (i * c_rs) + jc in
+
+                (* SIMD over j, 2 columns at a time *)
+                let j_simd_end = (nc' land lnot 1) in
+                for j = 0 to j_simd_end - 1 do
+                  if j land 1 = 0 then begin
+                    let a_idx0 = a_row in
+                    let b_idx0 = b0 + (pc * b_rs) + (jc + j) in
+                    let c_idx = c_row + j in
+
+                    let acc =
+                      if pc = 0 then Float64x2.set1 #0.0
+                      else
+                        Float64x2.Array.unsafe_get c_buf ~idx:c_idx
+                    in
+
+                    let rec loop p a_idx b_idx acc =
+                      if p = kc' then acc
+                      else
+                        let av = Array.unsafe_get a_buf a_idx in
+                        let a_v = Float64x2.set1 av in
+                        let b_v = Float64x2.Array.unsafe_get b_buf ~idx:b_idx in
+                        loop
+                          (p + 1)
+                          (a_idx + 1)
+                          (b_idx + b_rs)
+                          (Float64x2.add (Float64x2.mul a_v b_v) acc)
+                    in
+
+                    let acc = loop 0 a_idx0 b_idx0 acc in
+                    Float64x2.Array.unsafe_set c_buf ~idx:c_idx acc
+                  end
+                done;
+
+                (* scalar cleanup for odd column *)
+                if (nc' land 1) <> 0 then begin
+                  let j = nc' - 1 in
                   let a_idx0 = a_row in
-                  let b_idx0 = b0 + (pc * b_rs) + j in
-                  
+                  let b_idx0 = b0 + (pc * b_rs) + (jc + j) in
+                  let c_idx = c_row + j in
+
                   let rec loop p a_idx b_idx acc =
-                    if p = kc' then
-                      acc
+                    if p = kc' then acc
                     else
                       let av = Array.unsafe_get a_buf a_idx in
                       let bv = Array.unsafe_get b_buf b_idx in
-                      loop (p + 1) (a_idx + 1) (b_idx + b_rs) (Float_u.fma av bv acc)
+                      loop
+                        (p + 1)
+                        (a_idx + 1)
+                        (b_idx + b_rs)
+                        (Float_u.fma av bv acc)
                   in
-                  let sum = loop 0 a_idx0 b_idx0 #0.0 in
-                  Array.unsafe_set c_buf (c_row + j - jc) sum
-                done
+
+                  let partial = loop 0 a_idx0 b_idx0 (#0.0) in
+                  let acc =
+                    if pc = 0 then partial
+                    else Float_u.add (Array.unsafe_get c_buf c_idx) partial
+                  in
+                  Array.unsafe_set c_buf c_idx acc
+                end
               done;
+
               ic_loop (ic + mc')
           in
           ic_loop start_idx;
