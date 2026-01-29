@@ -43,6 +43,10 @@ external hadd : t -> t -> t @@ portable
   = "caml_vec128_unreachable" "caml_neon_float32x4_hadd"
   [@@noalloc] [@@unboxed] [@@builtin]
 
+  external mul_add : t -> t -> t @@ portable
+  = "caml_vec128_unreachable" "caml_neon_float32x4_fma"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
 (* hsub, addsub, dp: Not available on ARM64 NEON.
    These are SSE3/SSE4.1 specific instructions. *)
 
