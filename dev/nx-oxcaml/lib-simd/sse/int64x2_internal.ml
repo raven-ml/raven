@@ -225,35 +225,3 @@ external movemask_64
   @@ portable
   = "ocaml_simd_sse_unreachable" "caml_sse2_vec128_movemask_64"
 [@@noalloc] [@@builtin]
-
-external max
-  :  t
-  -> t
-  -> t
-  @@ portable
-  = "ocaml_simd_sse_unreachable" "caml_sse41_int64x2_max"
-[@@noalloc] [@@builtin]
-
-external max_unsigned
-  :  t
-  -> t
-  -> t
-  @@ portable
-  = "ocaml_simd_sse_unreachable" "caml_sse41_int64x2_max_unsigned"
-[@@noalloc] [@@builtin]
-
-external min
-  :  t
-  -> t
-  -> t
-  @@ portable
-  = "ocaml_simd_sse_unreachable" "caml_sse41_int64x2_min"
-[@@noalloc] [@@builtin]
-
-external min_unsigned
-  :  t
-  -> t
-  -> t
-  @@ portable
-  = "ocaml_simd_sse_unreachable" "caml_sse41_int64x2_min_unsigned"
-[@@noalloc] [@@builtin]

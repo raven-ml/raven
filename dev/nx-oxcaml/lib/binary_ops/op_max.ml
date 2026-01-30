@@ -320,6 +320,11 @@ let max_int32 a_arr b_arr out_arr va vb vout start_idx end_idx =
       Array.unsafe_set out_arr (out_offset + k) (Int32_u.max a_val b_val)
     done
 
+(* Neither NEON nor SSE have native int64x2 max; emulate via cmpgt + blendv *)
+let[@inline] int64x2_max a b =
+  let mask = Int64x2.cmpgt a b in
+  Int64x2.blendv b a mask
+
 let max_int64 a_arr b_arr out_arr va vb vout start_idx end_idx =
   let out_base = View.offset vout + start_idx in
   let a_base = View.offset va + start_idx in
@@ -341,10 +346,10 @@ let max_int64 a_arr b_arr out_arr va vb vout start_idx end_idx =
       let b2 = Int64x2.Array.unsafe_get b_arr ~idx:(b_base + idx + 4) in
       let a3 = Int64x2.Array.unsafe_get a_arr ~idx:(a_base + idx + 6) in
       let b3 = Int64x2.Array.unsafe_get b_arr ~idx:(b_base + idx + 6) in
-      Int64x2.Array.unsafe_set out_arr ~idx:(out_base + idx) (Int64x2.max a0 b0);
-      Int64x2.Array.unsafe_set out_arr ~idx:(out_base + idx + 2) (Int64x2.max a1 b1);
-      Int64x2.Array.unsafe_set out_arr ~idx:(out_base + idx + 4) (Int64x2.max a2 b2);
-      Int64x2.Array.unsafe_set out_arr ~idx:(out_base + idx + 6) (Int64x2.max a3 b3);
+      Int64x2.Array.unsafe_set out_arr ~idx:(out_base + idx) (int64x2_max a0 b0);
+      Int64x2.Array.unsafe_set out_arr ~idx:(out_base + idx + 2) (int64x2_max a1 b1);
+      Int64x2.Array.unsafe_set out_arr ~idx:(out_base + idx + 4) (int64x2_max a2 b2);
+      Int64x2.Array.unsafe_set out_arr ~idx:(out_base + idx + 6) (int64x2_max a3 b3);
       i := idx + 8
     done;
     let n2 = n - 1 in
@@ -352,7 +357,7 @@ let max_int64 a_arr b_arr out_arr va vb vout start_idx end_idx =
       let idx = !i in
       let a_vec = Int64x2.Array.unsafe_get a_arr ~idx:(a_base + idx) in
       let b_vec = Int64x2.Array.unsafe_get b_arr ~idx:(b_base + idx) in
-      Int64x2.Array.unsafe_set out_arr ~idx:(out_base + idx) (Int64x2.max a_vec b_vec);
+      Int64x2.Array.unsafe_set out_arr ~idx:(out_base + idx) (int64x2_max a_vec b_vec);
       i := idx + 2
     done;
     while !i < n do
