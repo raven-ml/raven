@@ -233,8 +233,8 @@ let test_txt_bool_roundtrip () =
       let lines =
         read_file path |> String.split_on_char '\n'
         |> List.filter_map (fun line ->
-               let trimmed = String.trim line in
-               if trimmed = "" then None else Some trimmed)
+            let trimmed = String.trim line in
+            if trimmed = "" then None else Some trimmed)
       in
       match lines with
       | [ first; second ] ->

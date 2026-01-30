@@ -391,7 +391,7 @@ let list_cached_models ?(config = Config.default) () =
     let entries = Sys.readdir config.cache_dir in
     Array.to_list entries
     |> List.filter (fun e ->
-           Sys.is_directory (Filename.concat config.cache_dir e))
+        Sys.is_directory (Filename.concat config.cache_dir e))
     |> List.map (fun e -> String.map (fun c -> if c = '-' then '/' else c) e)
 
 let clear_cache ?(config = Config.default) ?model_id () =

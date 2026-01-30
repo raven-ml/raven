@@ -61,10 +61,8 @@ let save model ~folder () =
   let json_vocab =
     Array.to_list model.vocab
     |> List.mapi (fun id (token, prob) ->
-           `Assoc
-             [
-               ("id", `Int id); ("token", `String token); ("prob", `Float prob);
-             ])
+        `Assoc
+          [ ("id", `Int id); ("token", `String token); ("prob", `Float prob) ])
   in
   let json =
     `Assoc [ ("type", `String "Unigram"); ("vocab", `List json_vocab) ]

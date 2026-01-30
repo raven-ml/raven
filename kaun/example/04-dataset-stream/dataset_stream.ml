@@ -32,9 +32,9 @@ let build_pipeline () =
   |> Dataset.map to_tensor_pair
   |> Dataset.shuffle ~buffer_size:256
   |> Dataset.batch_map 8 (fun batch ->
-         let inputs = Array.map fst batch |> batch_stack in
-         let targets = Array.map snd batch |> batch_stack in
-         (inputs, targets))
+      let inputs = Array.map fst batch |> batch_stack in
+      let targets = Array.map snd batch |> batch_stack in
+      (inputs, targets))
   |> Dataset.prefetch ~buffer_size:2
 
 let shape_to_string shape =

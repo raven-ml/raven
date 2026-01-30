@@ -94,9 +94,9 @@ let rec value_to_yojson = function
             `List
               (Array.to_list arr
               |> List.map (fun f ->
-                     match classify_float f with
-                     | FP_normal | FP_subnormal | FP_zero -> `Float f
-                     | _ -> encode_special_float f)) );
+                  match classify_float f with
+                  | FP_normal | FP_subnormal | FP_zero -> `Float f
+                  | _ -> encode_special_float f)) );
         ]
   | Bool_array arr ->
       `Assoc

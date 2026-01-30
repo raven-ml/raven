@@ -148,7 +148,7 @@ let tokenize_algorithm algorithm text =
   | Alg_wordpiece model ->
       Wordpiece.tokenize model text
       |> List.map (fun (tok : Wordpiece.token) ->
-             (tok.id, tok.value, tok.offsets))
+          (tok.id, tok.value, tok.offsets))
   | Alg_wordlevel model -> Word_level.tokenize model text
   | Alg_unigram model -> Unigram.tokenize model text
   | Alg_chars model -> Chars.tokenize model text
@@ -927,7 +927,7 @@ module Tokenizer = struct
     in
     pre_tokens
     |> List.concat_map (fun (fragment, _) ->
-           tokenize_algorithm t.algorithm fragment)
+        tokenize_algorithm t.algorithm fragment)
     |> tokens_to_encoding
 
   let apply_post_processor t ~add_special primary pair =
@@ -1085,12 +1085,12 @@ module Tokenizer = struct
     let tokens =
       Array.to_list ids
       |> List.filter_map (fun id ->
-             match id_to_token_algorithm t.algorithm id with
-             | None -> None
-             | Some token
-               when skip_special_tokens && Hashtbl.mem t.special_lookup token ->
-                 None
-             | Some token -> Some token)
+          match id_to_token_algorithm t.algorithm id with
+          | None -> None
+          | Some token
+            when skip_special_tokens && Hashtbl.mem t.special_lookup token ->
+              None
+          | Some token -> Some token)
     in
     match t.decoder with
     | Some decoder -> Decoders.decode decoder tokens
@@ -1461,8 +1461,8 @@ module Tokenizer = struct
     let added_tokens =
       config_to_special_list t.specials_config
       |> List.filter_map (fun spec ->
-             List.find_opt (fun (token, _) -> token = spec.token) vocab_list
-             |> Option.map (fun (_, id) -> added_token_to_json ~id spec))
+          List.find_opt (fun (token, _) -> token = spec.token) vocab_list
+          |> Option.map (fun (_, id) -> added_token_to_json ~id spec))
     in
     (* Serialize model based on algorithm type *)
     let model_json =
@@ -1611,15 +1611,15 @@ module Tokenizer = struct
             let merges_json =
               model_json |> member "merges" |> to_list
               |> List.map (function
-                   | `List [ a; b ] -> (to_string a, to_string b)
-                   | `String s -> (
-                       match String.split_on_char ' ' s with
-                       | [ a; b ] -> (a, b)
-                       | _ -> failwith "Invalid merge string format")
-                   | json ->
-                       failwith
-                         (Printf.sprintf "Invalid merge entry: %s"
-                            (Yojson.Basic.to_string json)))
+                | `List [ a; b ] -> (to_string a, to_string b)
+                | `String s -> (
+                    match String.split_on_char ' ' s with
+                    | [ a; b ] -> (a, b)
+                    | _ -> failwith "Invalid merge string format")
+                | json ->
+                    failwith
+                      (Printf.sprintf "Invalid merge entry: %s"
+                         (Yojson.Basic.to_string json)))
             in
             let unk_token =
               model_json |> member "unk_token" |> string_or_null

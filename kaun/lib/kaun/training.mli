@@ -190,8 +190,9 @@ val train_epoch :
   Train_state.t * float * (string * float) list
 (** Run one training epoch and report average loss and metrics.
 
-    @param on_batch Optional callback called after each batch with the current
-    state and batch loss. Used internally by {!fit} for batch-level callbacks. *)
+    @param on_batch
+      Optional callback called after each batch with the current state and batch
+      loss. Used internally by {!fit} for batch-level callbacks. *)
 
 val evaluate :
   model:Layer.module_ ->

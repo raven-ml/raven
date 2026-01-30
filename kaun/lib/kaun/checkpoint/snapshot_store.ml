@@ -95,8 +95,8 @@ let encode_tree =
         `Assoc
           (Snapshot.Record.bindings record
           |> List.map (fun (key, value) ->
-                 let child = if prefix = "" then key else prefix ^ "." ^ key in
-                 (key, aux child tensors scalars value)))
+              let child = if prefix = "" then key else prefix ^ "." ^ key in
+              (key, aux child tensors scalars value)))
   in
   fun snapshot ->
     let tensors = ref [] in

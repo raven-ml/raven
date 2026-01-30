@@ -59,7 +59,7 @@ let save model ~folder () =
     get_vocab model
     |> List.sort (fun (_, id1) (_, id2) -> compare id1 id2)
     |> List.map (fun (token, id) ->
-           `Assoc [ ("token", `String token); ("id", `Int id) ])
+        `Assoc [ ("token", `String token); ("id", `Int id) ])
   in
   let json =
     `Assoc

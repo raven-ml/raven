@@ -56,7 +56,7 @@ let train_mlp inputs y_true learning_rate epochs =
 
     List.combine params grad_params
     |> List.iter (fun (param, grad) ->
-           isub param (mul (scalar Float32 learning_rate) grad) |> ignore)
+        isub param (mul (scalar Float32 learning_rate) grad) |> ignore)
   done;
   params
 

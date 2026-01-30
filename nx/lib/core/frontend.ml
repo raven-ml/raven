@@ -7122,7 +7122,7 @@ module Make (B : Backend_intf.S) = struct
             let unaffected_axes =
               Array.init ndim Fun.id |> Array.to_list
               |> List.filter (fun ax ->
-                     not (List.exists (( = ) ax) axes_normalized))
+                  not (List.exists (( = ) ax) axes_normalized))
             in
             let core_shape =
               Array.of_list (List.map (fun ax -> x_shape.(ax)) unaffected_axes)
