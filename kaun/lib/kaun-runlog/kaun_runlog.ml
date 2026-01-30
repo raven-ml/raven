@@ -12,13 +12,11 @@ let discover ?base_dir () =
   else
     Sys.readdir dir |> Array.to_list
     |> List.filter_map (fun entry ->
-           let run_dir = Filename.concat dir entry in
-           if Sys.is_directory run_dir then Run.load run_dir else None)
+        let run_dir = Filename.concat dir entry in
+        if Sys.is_directory run_dir then Run.load run_dir else None)
     |> List.sort (fun a b -> compare (Run.created_at b) (Run.created_at a))
 
 let latest ?base_dir () =
-  match discover ?base_dir () with
-  | [] -> None
-  | h :: _ -> Some h
+  match discover ?base_dir () with [] -> None | h :: _ -> Some h
 
 let create_run = Run.create

@@ -37,8 +37,9 @@ let jsonl : backend = jsonl_writer
 
 (* ───── TensorBoard Backend ───── *)
 
-(* Writes a simple CSV format that can be visualized or imported into TensorBoard.
-   For full TensorBoard protobuf format, a dedicated library would be needed. *)
+(* Writes a simple CSV format that can be visualized or imported into
+   TensorBoard. For full TensorBoard protobuf format, a dedicated library would
+   be needed. *)
 
 let tensorboard_writer ~run =
   let run_dir = Kaun_runlog.Run.dir run in
@@ -63,8 +64,8 @@ let tensorboard_writer ~run =
       (fun ~step ~epoch ~tag value ->
         let epoch_str = Option.fold ~none:"" ~some:string_of_int epoch in
         let line =
-          Printf.sprintf "%.6f,%d,%s,%s,%.6f" (Unix.gettimeofday ()) step epoch_str tag
-            value
+          Printf.sprintf "%.6f,%d,%s,%s,%.6f" (Unix.gettimeofday ()) step
+            epoch_str tag value
         in
         write_line line);
     close =
@@ -119,4 +120,3 @@ let log_metrics t ~step ~epoch ~prefix collection =
       let tag = prefix ^ "/" ^ name in
       log_scalar t ~step ~epoch ~tag value)
     metrics
-

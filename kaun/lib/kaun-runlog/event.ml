@@ -24,13 +24,11 @@ let of_json (json : Yojson.Safe.t) : (t, string) result =
         let epoch = Util.member "epoch" json |> Util.to_int_option in
         let wall_time =
           Util.member "wall_time" json
-          |> Util.to_number_option
-          |> Option.value ~default:0.0
+          |> Util.to_number_option |> Option.value ~default:0.0
         in
         Ok (Scalar { step; epoch; tag; value; wall_time })
     | other -> Error ("unknown event type: " ^ other)
-  with
-  | Util.Type_error (msg, _) -> Error msg
+  with Util.Type_error (msg, _) -> Error msg
 
 let to_json (Scalar { step; epoch; tag; value; wall_time }) : Yojson.Safe.t =
   let epoch_field =

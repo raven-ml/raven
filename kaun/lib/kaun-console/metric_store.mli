@@ -5,17 +5,11 @@
 
 (** Incremental metric aggregation.
 
-    The dashboard should not rescan all historical events every refresh.
-    This store maintains the latest value per tag (and latest epoch) as new
-    events arrive.
-*)
+    The dashboard should not rescan all historical events every refresh. This
+    store maintains the latest value per tag (and latest epoch) as new events
+    arrive. *)
 
-type metric = {
-  step : int;
-  epoch : int option;
-  value : float;
-}
-
+type metric = { step : int; epoch : int option; value : float }
 type t
 
 val create : ?initial_size:int -> unit -> t

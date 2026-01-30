@@ -3,4 +3,15 @@
 (library
  (name kaun)
  (public_name kaun)
- (libraries rune unix str nx nx_buffer nx.core nx.io yojson domainslib uutf kaun.runlog))
+ (libraries
+  rune
+  unix
+  str
+  nx
+  nx_buffer
+  nx.core
+  nx.io
+  yojson
+  domainslib
+  uutf
+  kaun.runlog))

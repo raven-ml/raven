@@ -34,9 +34,7 @@ let ensure_dir dir =
     match parts with
     | [] -> ()
     | part :: rest ->
-        let next =
-          if acc = "" then part else acc ^ Filename.dir_sep ^ part
-        in
+        let next = if acc = "" then part else acc ^ Filename.dir_sep ^ part in
         if next <> "" && not (Sys.file_exists next) then Unix.mkdir next 0o755;
         loop next rest
   in
@@ -72,21 +70,17 @@ let load dir =
       let run_id = Util.member "run_id" json |> Util.to_string in
       let created_at =
         Util.member "created_at" json
-        |> Util.to_number_option
-        |> Option.value ~default:0.0
+        |> Util.to_number_option |> Option.value ~default:0.0
       in
       let experiment_name =
         Util.member "experiment" json |> Util.to_string_option
       in
       let tags =
-        Util.member "tags" json
-        |> Util.to_list
+        Util.member "tags" json |> Util.to_list
         |> List.filter_map Util.to_string_option
       in
       let config =
-        match Util.member "config" json with
-        | `Assoc pairs -> pairs
-        | _ -> []
+        match Util.member "config" json with `Assoc pairs -> pairs | _ -> []
       in
       Some { run_id; created_at; experiment_name; tags; config; dir }
     with _ -> None
@@ -97,9 +91,7 @@ let write_manifest t =
     |> Option.to_list
   in
   let config_field =
-    match t.config with
-    | [] -> []
-    | pairs -> [ ("config", `Assoc pairs) ]
+    match t.config with [] -> [] | pairs -> [ ("config", `Assoc pairs) ]
   in
   let json =
     `Assoc
@@ -109,8 +101,7 @@ let write_manifest t =
          ("created_at", `Float t.created_at);
          ("tags", `List (List.map (fun s -> `String s) t.tags));
        ]
-      @ experiment_field
-      @ config_field)
+      @ experiment_field @ config_field)
   in
   let path = manifest_path t.dir in
   let oc = open_out path in
@@ -191,7 +182,7 @@ let close_events stream =
   Option.iter
     (fun ic ->
       stream.channel <- None;
-      (try close_in ic with _ -> ()))
+      try close_in ic with _ -> ())
     stream.channel
 
 let reset_stream stream =
@@ -216,9 +207,7 @@ let ensure_channel stream =
 (* JSONL chunk parsing - handles incomplete lines *)
 
 let is_whitespace c =
-  match c with
-  | ' ' | '\t' | '\r' | '\n' -> true
-  | _ -> false
+  match c with ' ' | '\t' | '\r' | '\n' -> true | _ -> false
 
 let is_blank s =
   let len = String.length s in

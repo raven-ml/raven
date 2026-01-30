@@ -5,8 +5,9 @@
 
 (** Command-line interface for kaun-console.
 
-    This executable provides a standalone tool for monitoring Kaun training runs.
-    It can automatically discover the latest run or monitor a specific run by ID.
+    This executable provides a standalone tool for monitoring Kaun training
+    runs. It can automatically discover the latest run or monitor a specific run
+    by ID.
 
     {2 Usage}
 

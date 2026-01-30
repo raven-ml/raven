@@ -59,8 +59,8 @@ val tensorboard : backend
 (** TensorBoard backend. Writes event files compatible with TensorBoard.
 
     {b Note}: Writes a simple CSV format that can be imported into TensorBoard.
-    For full TensorBoard integration, consider using the TensorBoard callback
-    or a dedicated TensorBoard library. *)
+    For full TensorBoard integration, consider using the TensorBoard callback or
+    a dedicated TensorBoard library. *)
 
 val multi : backend list -> backend
 (** [multi backends] combines multiple backends. Events are written to all. *)
@@ -68,8 +68,8 @@ val multi : backend list -> backend
 (** {1 Logger Sessions} *)
 
 type t
-(** A logging session for a single training run. Each session writes to its
-    own run directory containing a manifest and event log. Thread-safe. *)
+(** A logging session for a single training run. Each session writes to its own
+    run directory containing a manifest and event log. Thread-safe. *)
 
 val create :
   ?backend:backend ->
@@ -83,8 +83,9 @@ val create :
     logging session.
 
     @param backend Output backend (default: {!jsonl})
-    @param base_dir Directory for all runs. Defaults to [RAVEN_RUNS_DIR] if set,
-    otherwise [XDG_CACHE_HOME/raven/runs].
+    @param base_dir
+      Directory for all runs. Defaults to [RAVEN_RUNS_DIR] if set, otherwise
+      [XDG_CACHE_HOME/raven/runs].
     @param experiment Name to identify this experiment
     @param tags List of tags for filtering runs
     @param config Hyperparameters/configuration stored in the run manifest *)
@@ -125,14 +126,13 @@ val log_scalars : t -> step:int -> epoch:int -> (string * float) list -> unit
 
 val log_metrics :
   t -> step:int -> epoch:int -> prefix:string -> Metrics.Collection.t -> unit
-(** [log_metrics logger ~step ~epoch ~prefix collection] logs all metrics from
-    a Collection.
+(** [log_metrics logger ~step ~epoch ~prefix collection] logs all metrics from a
+    Collection.
 
-    Metric names are prefixed: ["train"] -> ["train/accuracy"],
-    ["train/loss"], etc.
+    Metric names are prefixed: ["train"] -> ["train/accuracy"], ["train/loss"],
+    etc.
 
     {4 Example}
     {[
       log_metrics logger ~step:state.step ~epoch:5 ~prefix:"train" collection
     ]} *)
-

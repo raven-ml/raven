@@ -15,8 +15,7 @@ type t =
       tag : string;  (** Metric name (e.g., ["loss"], ["accuracy"]). *)
       value : float;  (** Metric value. *)
       wall_time : float;  (** Unix timestamp when the event was recorded. *)
-    }
-      (** A scalar metric observation. *)
+    }  (** A scalar metric observation. *)
 
 (** {1 Serialization} *)
 
@@ -26,8 +25,8 @@ val of_json : Yojson.Safe.t -> (t, string) result
     Expects a ["type"] field to determine the event variant. For ["scalar"],
     requires ["step"], ["tag"], and ["value"] fields; ["epoch"] is optional.
 
-    Returns [Error msg] if the JSON structure is invalid or the type is
-    unknown. *)
+    Returns [Error msg] if the JSON structure is invalid or the type is unknown.
+*)
 
 val to_json : t -> Yojson.Safe.t
 (** [to_json event] serializes an event to a JSON object.

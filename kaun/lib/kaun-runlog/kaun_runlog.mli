@@ -6,8 +6,8 @@
 (** Training run logging and discovery.
 
     This library provides persistent storage and discovery of machine learning
-    training runs. Runs are stored as directories containing a JSON manifest
-    and a JSONL event log.
+    training runs. Runs are stored as directories containing a JSON manifest and
+    a JSONL event log.
 
     {1 Directory Structure}
 
@@ -20,8 +20,10 @@
     Create a run and log metrics:
     {[
       let run = Kaun_runlog.create_run ~experiment:"mnist" () in
-      Run.append_event run (Event.Scalar { step = 0; epoch = None; tag = "loss"; value = 2.3 });
-      Run.append_event run (Event.Scalar { step = 100; epoch = Some 1; tag = "loss"; value = 0.5 })
+      Run.append_event run
+        (Event.Scalar { step = 0; epoch = None; tag = "loss"; value = 2.3 });
+      Run.append_event run
+        (Event.Scalar { step = 100; epoch = Some 1; tag = "loss"; value = 0.5 })
     ]}
 
     Discover and read existing runs:
@@ -45,8 +47,9 @@ val discover : ?base_dir:string -> unit -> Run.t list
     Returns an empty list if the base directory does not exist. Subdirectories
     that do not contain a valid [run.json] manifest are silently skipped.
 
-    @param base_dir Directory containing run subdirectories. Defaults to
-    [RAVEN_RUNS_DIR] if set, otherwise [XDG_CACHE_HOME/raven/runs]. *)
+    @param base_dir
+      Directory containing run subdirectories. Defaults to [RAVEN_RUNS_DIR] if
+      set, otherwise [XDG_CACHE_HOME/raven/runs]. *)
 
 val latest : ?base_dir:string -> unit -> Run.t option
 (** [latest ?base_dir ()] returns the most recent run, or [None] if no runs
@@ -68,8 +71,9 @@ val create_run :
 
     Alias for {!Run.create}.
 
-    @param base_dir Parent directory for runs. Defaults to [RAVEN_RUNS_DIR] if
-    set, otherwise [XDG_CACHE_HOME/raven/runs].
+    @param base_dir
+      Parent directory for runs. Defaults to [RAVEN_RUNS_DIR] if set, otherwise
+      [XDG_CACHE_HOME/raven/runs].
     @param experiment Optional experiment name, appended to the run ID.
     @param tags Metadata tags stored in the run manifest.
     @param config Hyperparameters/configuration stored in the run manifest.

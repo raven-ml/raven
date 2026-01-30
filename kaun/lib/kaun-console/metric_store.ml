@@ -5,16 +5,8 @@
 
 open Kaun_runlog
 
-type metric = {
-  step : int;
-  epoch : int option;
-  value : float;
-}
-
-type t = {
-  table : (string, metric) Hashtbl.t;
-  mutable max_epoch : int option;
-}
+type metric = { step : int; epoch : int option; value : float }
+type t = { table : (string, metric) Hashtbl.t; mutable max_epoch : int option }
 
 let create ?(initial_size = 32) () =
   { table = Hashtbl.create initial_size; max_epoch = None }
@@ -28,10 +20,7 @@ let update_epoch s (epoch : int option) =
   | None -> ()
   | Some e ->
       s.max_epoch <-
-        Some
-          (match s.max_epoch with
-           | None -> e
-           | Some prev -> max prev e)
+        Some (match s.max_epoch with None -> e | Some prev -> max prev e)
 
 let should_replace ~prev ~next =
   (* Prefer higher step. If equal step, prefer higher epoch when present. *)

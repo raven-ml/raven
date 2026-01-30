@@ -32,7 +32,9 @@ let () =
     ]
   in
 
-  let usage_msg = "Usage: kaun-console [options]\n\nMonitor Kaun training runs." in
+  let usage_msg =
+    "Usage: kaun-console [options]\n\nMonitor Kaun training runs."
+  in
 
   (* Parse arguments *)
   Arg.parse specs
@@ -48,24 +50,24 @@ let () =
     | explicit_id :: _ ->
         (* User provided explicit run ID *)
         explicit_id
-    | [] ->
+    | [] -> (
         (* Auto-discover latest run with optional filtering *)
         let all_runs = Kaun_runlog.discover ~base_dir:!base_dir () in
         let filtered =
           all_runs
           |> List.filter (fun run ->
-                 match !experiment with
-                 | None -> true
-                 | Some exp -> Run.experiment_name run = Some exp)
+              match !experiment with
+              | None -> true
+              | Some exp -> Run.experiment_name run = Some exp)
           |> List.filter (fun run ->
-                 match List.rev !tags with
-                 | [] -> true
-                 | required_tags ->
-                     List.for_all
-                       (fun t -> List.mem t (Run.tags run))
-                       required_tags)
+              match List.rev !tags with
+              | [] -> true
+              | required_tags ->
+                  List.for_all
+                    (fun t -> List.mem t (Run.tags run))
+                    required_tags)
         in
-        (match filtered with
+        match filtered with
         | run :: _ ->
             Printf.printf "Auto-discovered run: %s\n" (Run.run_id run);
             (match Run.experiment_name run with
@@ -78,8 +80,7 @@ let () =
         | [] ->
             Printf.eprintf "Error: No runs found in %s\n" !base_dir;
             (match !experiment with
-            | Some exp ->
-                Printf.eprintf "  (filtered by experiment: %s)\n" exp
+            | Some exp -> Printf.eprintf "  (filtered by experiment: %s)\n" exp
             | None -> ());
             if List.length !tags > 0 then
               Printf.eprintf "  (filtered by tags: %s)\n"
@@ -88,8 +89,7 @@ let () =
   in
 
   (* Launch console with discovered/explicit run_id *)
-  try Kaun_console.run ~base_dir:!base_dir ~runs:[ run_id ] ()
-  with
+  try Kaun_console.run ~base_dir:!base_dir ~runs:[ run_id ] () with
   | Failure msg ->
       Printf.eprintf "Error: %s\n" msg;
       exit 1

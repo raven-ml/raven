@@ -13,8 +13,8 @@
     [YYYY-MM-DD_HH-MM-SS_XXXX_experiment]. Timestamps use local time. *)
 
 type t
-(** A training run handle. The run directory and manifest are created eagerly
-    on {!create}. *)
+(** A training run handle. The run directory and manifest are created eagerly on
+    {!create}. *)
 
 (** {1 Accessors} *)
 
@@ -25,7 +25,8 @@ val created_at : t -> float
 (** [created_at t] returns the Unix timestamp when the run was created. *)
 
 val experiment_name : t -> string option
-(** [experiment_name t] returns the experiment name, if specified at creation. *)
+(** [experiment_name t] returns the experiment name, if specified at creation.
+*)
 
 val tags : t -> string list
 (** [tags t] returns the metadata tags associated with this run. *)
@@ -51,10 +52,12 @@ val create :
     The run directory is created immediately, including any missing parent
     directories.
 
-    @param base_dir Parent directory for runs. Defaults to [RAVEN_RUNS_DIR] if
-    set, otherwise [XDG_CACHE_HOME/raven/runs].
-    @param experiment Optional experiment name, appended to the run ID for
-    easier identification.
+    @param base_dir
+      Parent directory for runs. Defaults to [RAVEN_RUNS_DIR] if set, otherwise
+      [XDG_CACHE_HOME/raven/runs].
+    @param experiment
+      Optional experiment name, appended to the run ID for easier
+      identification.
     @param tags Metadata tags stored in the manifest. Defaults to [[]].
     @param config Hyperparameters/configuration stored in the manifest.
     @raise Sys_error if the directory or manifest cannot be created.
@@ -87,14 +90,14 @@ val append_event : t -> Event.t -> unit
     poll for new events without re-reading the entire log. *)
 
 type event_stream
-(** Handle for incremental event reading. Tracks file position and detects
-    log rotation or truncation. *)
+(** Handle for incremental event reading. Tracks file position and detects log
+    rotation or truncation. *)
 
 val open_events : t -> event_stream
 (** [open_events t] opens the event log for incremental reading.
 
-    The stream starts at position 0. The underlying file is opened lazily on
-    the first call to {!read_events}. *)
+    The stream starts at position 0. The underlying file is opened lazily on the
+    first call to {!read_events}. *)
 
 val read_events : event_stream -> Event.t list
 (** [read_events stream] reads events appended since the last call.

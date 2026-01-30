@@ -47,7 +47,7 @@ let view_header ~run_id store =
             [
               text
                 ~style:(Ansi.Style.make ~bold:true ~fg:Ansi.Color.white ())
-                "LIVE"
+                "LIVE";
             ];
         ];
     ]
@@ -72,19 +72,16 @@ let view_metrics store =
                box ~flex_direction:Row ~gap:(gap 2)
                  [
                    text ~style:hint_style (Printf.sprintf "  %-30s" tag);
-                   text
-                     ~style:metric_value_style
+                   text ~style:metric_value_style
                      (Printf.sprintf "%8.4f" m.value);
-                   text
-                     ~style:hint_style
+                   text ~style:hint_style
                      (Printf.sprintf "(step %d%s)" m.step epoch_str);
                  ])
              latest);
       ]
 
 let view_footer () =
-  box ~padding:(padding 1)
-    [ text ~style:hint_style "(Press Ctrl-C to quit)" ]
+  box ~padding:(padding 1) [ text ~style:hint_style "(Press Ctrl-C to quit)" ]
 
 let view m =
   box ~flex_direction:Column
@@ -138,6 +135,5 @@ let run ?(base_dir = "./runs") ?experiment:_ ?tags:_ ?runs () =
       | Some run ->
           let init () = init ~run in
           Mosaic.run { init; update; view; subscriptions }
-      | None ->
-          Printf.printf "kaun-console: run not found: %s\n%!" run_id)
+      | None -> Printf.printf "kaun-console: run not found: %s\n%!" run_id)
   | _ -> Printf.printf "kaun-console: please specify a single run\n%!"
