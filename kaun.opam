@@ -15,6 +15,7 @@ depends: [
   "ocaml" {>= "5.2.0"}
   "dune" {>= "3.19"}
   "logs"
+  "mosaic"
   "yojson" {>= "2.0.0"}
   "domainslib" {>= "0.5.0"}
   "saga" {= version}

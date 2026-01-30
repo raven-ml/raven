@@ -29,15 +29,30 @@
 
 (generate_opam_files true)
 
-(pin
- (url git+https://github.com/PataphysicalSociety/soupault#5.0.0)
- (package
-  (name soupault)))
+; (pin
+;  (url git+https://github.com/PataphysicalSociety/soupault#5.0.0)
+;  (package
+;   (name soupault)))
 
-(package
- (name dev)
- (allow_empty)
- (depends odoc odoc-driver soupault lambdasoup landmarks landmarks-ppx))
+(pin
+ (url git+https://github.com/tmattio/mosaic)
+ (package
+  (name matrix)))
+
+(pin
+ (url git+https://github.com/tmattio/mosaic)
+ (package
+  (name toffee)))
+
+(pin
+ (url git+https://github.com/tmattio/mosaic)
+ (package
+  (name mosaic)))
+
+; (package
+;  (name dev)
+;  (allow_empty)
+;  (depends odoc odoc-driver soupault lambdasoup landmarks landmarks-ppx))
 
 (package
  (name nx)
@@ -155,6 +170,7 @@
    (>= 5.2.0))
   dune
   logs
+  mosaic
   (yojson
    (>= 2.0.0))
   (domainslib
