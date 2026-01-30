@@ -4,14 +4,14 @@
   ---------------------------------------------------------------------------*)
 
 open Mosaic
-open Kaun_filesystem
+open Kaun_runlog
 
 (* ───── Model ───── *)
 
 type model = {
   run_id : string;
   store : Metric_store.t;
-  reader : Event_reader.t;
+  stream : Run.event_stream;
 }
 
 type msg = Tick of float | Quit
@@ -99,22 +99,23 @@ let view m =
 
 (* ───── TEA Core ───── *)
 
-let init ~run_id ~events_path =
-  let reader = Event_reader.create ~file_path:events_path in
+let init ~run =
+  let run_id = Run.run_id run in
+  let stream = Run.open_events run in
   let store = Metric_store.create () in
   (* Load initial events *)
-  let initial_events = Event_reader.read_new reader in
+  let initial_events = Run.read_events stream in
   Metric_store.update store initial_events;
-  ({ run_id; store; reader }, Cmd.none)
+  ({ run_id; store; stream }, Cmd.none)
 
 let update msg m =
   match msg with
   | Tick _ ->
-      let new_events = Event_reader.read_new m.reader in
+      let new_events = Run.read_events m.stream in
       Metric_store.update m.store new_events;
       ({ m with store = m.store }, Cmd.none)
   | Quit ->
-      Event_reader.close m.reader;
+      Run.close_events m.stream;
       (m, Cmd.quit)
 
 let subscriptions _model =
@@ -131,11 +132,12 @@ let subscriptions _model =
 
 let run ?(base_dir = "./runs") ?experiment:_ ?tags:_ ?runs () =
   match runs with
-  | Some [ run_id ] ->
+  | Some [ run_id ] -> (
       let run_dir = Filename.concat base_dir run_id in
-      let events_path = Manifest.events_path ~run_dir in
-
-      let init () = init ~run_id ~events_path in
-      Mosaic.run { init; update; view; subscriptions }
-  | _ ->
-   Printf.printf "kaun-console: please specify a single run\n%!"
+      match Run.load run_dir with
+      | Some run ->
+          let init () = init ~run in
+          Mosaic.run { init; update; view; subscriptions }
+      | None ->
+          Printf.printf "kaun-console: run not found: %s\n%!" run_id)
+  | _ -> Printf.printf "kaun-console: please specify a single run\n%!"

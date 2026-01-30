@@ -31,7 +31,7 @@ All notable changes to this project will be documented in this file.
 
 ### Kaun
 
-- Implemented kaun-console CLI & consolidated logging and reader modules into kaun-filestystem. (#167, @Arsalaan-Alam)
+- Implemented kaun-console CLI & consolidated logging and reader modules into kaun-runlog. (#167, @Arsalaan-Alam)
 - Implemented event_reader module for incremental JSONL reading. (#166, @Arsalaan-Alam)
 - Reinitialize dataset each epoch to avoid iterator exhaustion (#147, @Shocker444, @tmattio)
 

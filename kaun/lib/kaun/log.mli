@@ -76,21 +76,18 @@ val create :
   ?base_dir:string ->
   ?experiment:string ->
   ?tags:string list ->
-  ?config:(string * Yojson.Basic.t) list ->
+  ?config:(string * Yojson.Safe.t) list ->
   unit ->
   t
 (** [create ?backend ?base_dir ?experiment ?tags ?config ()] creates a new
     logging session.
 
-    When [config] is provided, it is automatically logged as hyperparameters
-    (in addition to being stored in the run manifest), so you don't need to
-    call {!log_hparams} separately.
-
     @param backend Output backend (default: {!jsonl})
-    @param base_dir Directory for all runs (default: ["./runs"])
+    @param base_dir Directory for all runs. Defaults to [RAVEN_RUNS_DIR] if set,
+    otherwise [XDG_CACHE_HOME/raven/runs].
     @param experiment Name to identify this experiment
     @param tags List of tags for filtering runs
-    @param config Configuration stored in manifest and auto-logged as hparams *)
+    @param config Hyperparameters/configuration stored in the run manifest *)
 
 val run_id : t -> string
 (** [run_id logger] returns the unique run identifier (timestamp-based). *)
@@ -139,21 +136,3 @@ val log_metrics :
       log_metrics logger ~step:state.step ~epoch:5 ~prefix:"train" collection
     ]} *)
 
-(** {1 Hyperparameters} *)
-
-val log_hparams : t -> (string * Yojson.Basic.t) list -> unit
-(** [log_hparams logger params] logs hyperparameters.
-
-    Unlike scalars, hyperparameters are configuration values that don't change
-    during training. They are displayed differently in the dashboard (as a
-    table, not a time series). Typically called once at the start of training.
-
-    {4 Example}
-    {[
-      log_hparams logger
-        [
-          ("learning_rate", `Float 0.001);
-          ("batch_size", `Int 32);
-          ("model", `String "resnet18");
-        ]
-    ]} *)

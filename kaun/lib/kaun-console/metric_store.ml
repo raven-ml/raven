@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Kaun_filesystem
+open Kaun_runlog
 
 type metric = {
   step : int;
@@ -44,18 +44,16 @@ let should_replace ~prev ~next =
     | Some _, None -> false
     | Some a, Some b -> b > a
 
-let update store (events : Kaun_filesystem.Event.t list) =
+let update store (events : Kaun_runlog.Event.t list) =
   List.iter
-    (function
-      | Event.Scalar s ->
-          update_epoch store s.epoch;
-          let next = { step = s.step; epoch = s.epoch; value = s.value } in
-          (match Hashtbl.find_opt store.table s.tag with
-           | None -> Hashtbl.replace store.table s.tag next
-           | Some prev ->
-               if should_replace ~prev ~next then
-                 Hashtbl.replace store.table s.tag next)
-      | Event.Unknown _ | Event.Malformed _ -> ())
+    (fun (Event.Scalar s) ->
+      update_epoch store s.epoch;
+      let next = { step = s.step; epoch = s.epoch; value = s.value } in
+      match Hashtbl.find_opt store.table s.tag with
+      | None -> Hashtbl.replace store.table s.tag next
+      | Some prev ->
+          if should_replace ~prev ~next then
+            Hashtbl.replace store.table s.tag next)
     events
 
 let latest_epoch store = store.max_epoch

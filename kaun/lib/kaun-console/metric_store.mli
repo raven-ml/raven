@@ -21,7 +21,7 @@ type t
 val create : ?initial_size:int -> unit -> t
 (** [create ()] constructs a new store. *)
 
-val update : t -> Kaun_filesystem.Event.t list -> unit
+val update : t -> Kaun_runlog.Event.t list -> unit
 (** [update store events] incorporates newly read events into the store. *)
 
 val latest_epoch : t -> int option

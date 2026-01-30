@@ -5,6 +5,8 @@
 
 (** Command-line interface for kaun-console. *)
 
+open Kaun_runlog
+
 let () =
   (* Default values *)
   let base_dir = ref "./runs" in
@@ -47,25 +49,33 @@ let () =
         (* User provided explicit run ID *)
         explicit_id
     | [] ->
-        (* Auto-discover latest run *)
-        let tags_opt =
-          match List.rev !tags with [] -> None | ts -> Some ts
+        (* Auto-discover latest run with optional filtering *)
+        let all_runs = Kaun_runlog.discover ~base_dir:!base_dir () in
+        let filtered =
+          all_runs
+          |> List.filter (fun run ->
+                 match !experiment with
+                 | None -> true
+                 | Some exp -> Run.experiment_name run = Some exp)
+          |> List.filter (fun run ->
+                 match List.rev !tags with
+                 | [] -> true
+                 | required_tags ->
+                     List.for_all
+                       (fun t -> List.mem t (Run.tags run))
+                       required_tags)
         in
-        (match
-           Kaun_filesystem.Run_discovery.get_latest_run ~base_dir:!base_dir
-             ?experiment:!experiment ?tags:tags_opt ()
-         with
-        | Some manifest ->
-            Printf.printf "Auto-discovered run: %s\n" manifest.Kaun_filesystem.Manifest.run_id;
-            (match manifest.Kaun_filesystem.Manifest.experiment with
+        (match filtered with
+        | run :: _ ->
+            Printf.printf "Auto-discovered run: %s\n" (Run.run_id run);
+            (match Run.experiment_name run with
             | Some exp -> Printf.printf "  Experiment: %s\n" exp
             | None -> ());
-            if manifest.Kaun_filesystem.Manifest.tags <> [] then
-              Printf.printf "  Tags: %s\n"
-                (String.concat ", " manifest.Kaun_filesystem.Manifest.tags);
+            if Run.tags run <> [] then
+              Printf.printf "  Tags: %s\n" (String.concat ", " (Run.tags run));
             Printf.printf "\n%!";
-            manifest.Kaun_filesystem.Manifest.run_id
-        | None ->
+            Run.run_id run
+        | [] ->
             Printf.eprintf "Error: No runs found in %s\n" !base_dir;
             (match !experiment with
             | Some exp ->

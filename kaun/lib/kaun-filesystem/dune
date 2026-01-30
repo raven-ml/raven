@@ -1,5 +1,0 @@
-(library
- (name kaun_filesystem)
- (public_name kaun.filesystem)
- (modules event event_reader manifest run_discovery)
- (libraries yojson unix))
