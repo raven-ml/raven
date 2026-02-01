@@ -15,6 +15,7 @@ module Int8_u = Stdlib_stable.Int8_u
 module Int16_u = Stdlib_stable.Int16_u
 module Int32_u = Stdlib_upstream_compatible.Int32_u
 module Int64_u = Stdlib_upstream_compatible.Int64_u
+module Shape = Nx_core.Shape
 
 external array_get : ('a : any mod non_null separable). 'a array -> int -> 'a
   = "%array_safe_get"
@@ -1033,6 +1034,38 @@ let test_where_int16_zero_negative () =
     check_float64 "mm[1,1]" ~eps:1e-9 #2.0 (get64 d 1);
     check_float64 "mm[2,2]" ~eps:1e-9 #2.0 (get64 d 2);
     check_float64 "mm[0,1]" ~eps:1e-9 #2.0 (get64 d 3)
+  
+    let test_matmul_identity () =
+      let ctx = Nx_oxcaml.create_context () in
+      let a =
+        Nx_oxcaml.of_float64_multidim ctx
+          [| #1.; #2.; #3.; #4.; #5.; #6. |]
+          [|2; 3|]
+      in
+      let id =
+        Nx_oxcaml.of_float64_multidim ctx
+          [| #1.; #0.; #0.; #0.; #1.; #0.; #0.; #0.; #1. |]
+          [|3; 3|]
+      in
+      let out = Nx_ox.empty ctx Dtype.Float64 [|2; 3|] in
+      Nx_oxcaml.op_matmul ~out a id;
+      let d = Nx_oxcaml.data_array out in
+    
+      (* let len = 6 in
+      for i = 0 to len - 1 do
+        let v : float# = get64 d i in
+        Printf.printf "d[%d] = %.10f\n" i (Float_u.to_float v)
+      done
+       *)
+      check_float64 "id@0" ~eps:1e-9 #1. (get64 d 0);
+      check_float64 "id@1" ~eps:1e-9 #2. (get64 d 1);
+      check_float64 "id@2" ~eps:1e-9 #3. (get64 d 2);
+      check_float64 "id@3" ~eps:1e-9 #4. (get64 d 3);
+      check_float64 "id@4" ~eps:1e-9 #5. (get64 d 4);
+      check_float64 "id@5" ~eps:1e-9 #6. (get64 d 5)
+
+      
+      
     
 let () =
   print_endline "Running Nx_oxcaml backend tests...";
@@ -1119,5 +1152,6 @@ let () =
   test_where_int8_basic ();
   test_where_int16_zero_negative ();
   test_matmul_2d ();
+  test_matmul_identity ();
   Printf.printf "\nResults: %d passed, %d failed\n" !passed !failed;
   if !failed > 0 then exit 1

@@ -39,36 +39,36 @@ let matmul_float64_fast a_buf b_buf c_buf va vb vout start_idx end_idx =
                 let c_row = c0 + (i * c_rs) + jc in
 
                 (* SIMD over j, 2 columns at a time *)
-                let j_simd_end = (nc' land lnot 1) in
-                for j = 0 to j_simd_end - 1 do
-                  if j land 1 = 0 then begin
-                    let a_idx0 = a_row in
-                    let b_idx0 = b0 + (pc * b_rs) + (jc + j) in
-                    let c_idx = c_row + j in
+                let j_simd_end = nc' - (nc' land 1) in
+let j = ref 0 in
+while !j < j_simd_end do
+  let a_idx0 = a_row in
+  let b_idx0 = b0 + (pc * b_rs) + (jc + !j) in
+  let c_idx = c_row + !j in
 
-                    let acc =
-                      if pc = 0 then Float64x2.set1 #0.0
-                      else
-                        Float64x2.Array.unsafe_get c_buf ~idx:c_idx
-                    in
+  let acc =
+    if pc = 0 then Float64x2.set1 #0.0
+    else Float64x2.Array.unsafe_get c_buf ~idx:c_idx
+  in
 
-                    let rec loop p a_idx b_idx acc =
-                      if p = kc' then acc
-                      else
-                        let av = Array.unsafe_get a_buf a_idx in
-                        let a_v = Float64x2.set1 av in
-                        let b_v = Float64x2.Array.unsafe_get b_buf ~idx:b_idx in
-                        loop
-                          (p + 1)
-                          (a_idx + 1)
-                          (b_idx + b_rs)
-                          (Float64x2.add (Float64x2.mul a_v b_v) acc)
-                    in
+  let rec loop p a_idx b_idx acc =
+    if p = kc' then acc
+    else
+      let av = Array.unsafe_get a_buf a_idx in
+      let a_v = Float64x2.set1 av in
+      let b_v = Float64x2.Array.unsafe_get b_buf ~idx:b_idx in
+      loop
+        (p + 1)
+        (a_idx + 1)
+        (b_idx + b_rs)
+        (Float64x2.add (Float64x2.mul a_v b_v) acc)
+  in
 
-                    let acc = loop 0 a_idx0 b_idx0 acc in
-                    Float64x2.Array.unsafe_set c_buf ~idx:c_idx acc
-                  end
-                done;
+  let acc = loop 0 a_idx0 b_idx0 acc in
+  Float64x2.Array.unsafe_set c_buf ~idx:c_idx acc;
+
+  j := !j + 2
+done;
 
                 (* scalar cleanup for odd column *)
                 if (nc' land 1) <> 0 then begin
