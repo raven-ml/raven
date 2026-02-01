@@ -1023,50 +1023,133 @@ let test_where_int16_zero_negative () =
   check_int16 "where_int16_zero_neg[2]" #7S (geti16 d 2);
   check_int16 "where_int16_zero_neg[3]" #3S (geti16 d 3)
 
-  let test_matmul_2d () =
+let test_matmul_2d () =
+  let ctx = Nx_oxcaml.create_context () in
+  let a = Nx_oxcaml.of_float64_multidim ctx [|#1.; #1.; #1.; #1.|] [|2; 2|] in
+  let b = Nx_oxcaml.of_float64_multidim ctx [|#1.; #1.; #1.; #1.|] [|2; 2|] in
+  let out = Nx_ox.empty ctx Dtype.Float64 [|2; 2|] in
+  Nx_oxcaml.op_matmul ~out a b;
+  let d = Nx_oxcaml.data_array out in
+  check_float64 "mm[0,0]" ~eps:1e-9 #2.0 (get64 d 0);
+  check_float64 "mm[1,1]" ~eps:1e-9 #2.0 (get64 d 1);
+  check_float64 "mm[2,2]" ~eps:1e-9 #2.0 (get64 d 2);
+  check_float64 "mm[0,1]" ~eps:1e-9 #2.0 (get64 d 3)
+
+let test_matmul_identity () =
+  let ctx = Nx_oxcaml.create_context () in
+  let a =
+    Nx_oxcaml.of_float64_multidim ctx
+      [| #1.; #2.; #3.; #4.; #5.; #6. |]
+      [|2; 3|]
+  in
+  let id =
+    Nx_oxcaml.of_float64_multidim ctx
+      [| #1.; #0.; #0.; #0.; #1.; #0.; #0.; #0.; #1. |]
+      [|3; 3|]
+  in
+  let out = Nx_ox.empty ctx Dtype.Float64 [|2; 3|] in
+  Nx_oxcaml.op_matmul ~out a id;
+  let d = Nx_oxcaml.data_array out in
+
+  (* let len = 6 in
+  for i = 0 to len - 1 do
+    let v : float# = get64 d i in
+    Printf.printf "d[%d] = %.10f\n" i (Float_u.to_float v)
+  done
+    *)
+  check_float64 "id@0" ~eps:1e-9 #1. (get64 d 0);
+  check_float64 "id@1" ~eps:1e-9 #2. (get64 d 1);
+  check_float64 "id@2" ~eps:1e-9 #3. (get64 d 2);
+  check_float64 "id@3" ~eps:1e-9 #4. (get64 d 3);
+  check_float64 "id@4" ~eps:1e-9 #5. (get64 d 4);
+  check_float64 "id@5" ~eps:1e-9 #6. (get64 d 5)
+
+  let test_matmul_rectangular () =
     let ctx = Nx_oxcaml.create_context () in
-    let a = Nx_oxcaml.of_float64_multidim ctx [|#1.; #1.; #1.; #1.|] [|2; 2|] in
-    let b = Nx_oxcaml.of_float64_multidim ctx [|#1.; #1.; #1.; #1.|] [|2; 2|] in
-    let out = Nx_ox.empty ctx Dtype.Float64 [|2; 2|] in
+    let a =
+      Nx_oxcaml.of_float64_multidim ctx
+        [|
+          #1.; #2.; #3.;
+          #4.; #5.; #6.;
+        |]
+        [|2; 3|]
+    in
+    let b =
+      Nx_oxcaml.of_float64_multidim ctx
+        [|
+          #7.;  #8.;  #9.;  #10.;
+          #11.; #12.; #13.; #14.;
+          #15.; #16.; #17.; #18.;
+        |]
+        [|3; 4|]
+    in
+    let out = Nx_ox.empty ctx Dtype.Float64 [|2; 4|] in
     Nx_oxcaml.op_matmul ~out a b;
     let d = Nx_oxcaml.data_array out in
-    check_float64 "mm[0,0]" ~eps:1e-9 #2.0 (get64 d 0);
-    check_float64 "mm[1,1]" ~eps:1e-9 #2.0 (get64 d 1);
-    check_float64 "mm[2,2]" ~eps:1e-9 #2.0 (get64 d 2);
-    check_float64 "mm[0,1]" ~eps:1e-9 #2.0 (get64 d 3)
-  
-    let test_matmul_identity () =
-      let ctx = Nx_oxcaml.create_context () in
-      let a =
-        Nx_oxcaml.of_float64_multidim ctx
-          [| #1.; #2.; #3.; #4.; #5.; #6. |]
-          [|2; 3|]
-      in
-      let id =
-        Nx_oxcaml.of_float64_multidim ctx
-          [| #1.; #0.; #0.; #0.; #1.; #0.; #0.; #0.; #1. |]
-          [|3; 3|]
-      in
-      let out = Nx_ox.empty ctx Dtype.Float64 [|2; 3|] in
-      Nx_oxcaml.op_matmul ~out a id;
-      let d = Nx_oxcaml.data_array out in
-    
-      (* let len = 6 in
-      for i = 0 to len - 1 do
-        let v : float# = get64 d i in
-        Printf.printf "d[%d] = %.10f\n" i (Float_u.to_float v)
-      done
-       *)
-      check_float64 "id@0" ~eps:1e-9 #1. (get64 d 0);
-      check_float64 "id@1" ~eps:1e-9 #2. (get64 d 1);
-      check_float64 "id@2" ~eps:1e-9 #3. (get64 d 2);
-      check_float64 "id@3" ~eps:1e-9 #4. (get64 d 3);
-      check_float64 "id@4" ~eps:1e-9 #5. (get64 d 4);
-      check_float64 "id@5" ~eps:1e-9 #6. (get64 d 5)
+  (* row 0 *)
+  check_float64 "rect[0,0]" ~eps:1e-9 #74.  (get64 d 0);
+  check_float64 "rect[0,1]" ~eps:1e-9 #80.  (get64 d 1);
+  check_float64 "rect[0,2]" ~eps:1e-9 #86.  (get64 d 2);
+  check_float64 "rect[0,3]" ~eps:1e-9 #92.  (get64 d 3);
 
-      
-      
-    
+  (* row 1 *)
+  check_float64 "rect[1,0]" ~eps:1e-9 #173. (get64 d 4);
+  check_float64 "rect[1,1]" ~eps:1e-9 #188. (get64 d 5);
+  check_float64 "rect[1,2]" ~eps:1e-9 #203. (get64 d 6);
+  check_float64 "rect[1,3]" ~eps:1e-9 #218. (get64 d 7)
+  
+  let test_matmul_batched () =
+  let ctx = Nx_oxcaml.create_context () in
+  let a =
+    Nx_oxcaml.of_float64_multidim ctx
+      [|
+        #1.; #0.; #0.; #1.;   (* batch 0: I *)
+        #2.; #0.; #0.; #2.;   (* batch 1: 2I *)
+      |]
+      [|2; 2; 2|]
+  in
+  let b =
+    Nx_oxcaml.of_float64_multidim ctx
+      [|
+        #3.; #4.; #5.; #6.;
+        #1.; #1.; #1.; #1.;
+      |]
+      [|2; 2; 2|]
+  in
+  let out = Nx_ox.empty ctx Dtype.Float64 [|2; 2; 2|] in
+  Nx_oxcaml.op_matmul ~out a b;
+  let d = Nx_oxcaml.data_array out in
+
+  (* batch 0 *)
+  check_float64 "bat0[0,0]" ~eps:1e-9 #3. (get64 d 0);
+  check_float64 "bat0[0,1]" ~eps:1e-9 #4. (get64 d 1);
+  check_float64 "bat0[1,0]" ~eps:1e-9 #5. (get64 d 2);
+  check_float64 "bat0[1,1]" ~eps:1e-9 #6. (get64 d 3);
+
+  (* batch 1 *)
+  check_float64 "bat1[0,0]" ~eps:1e-9 #2. (get64 d 4);
+  check_float64 "bat1[0,1]" ~eps:1e-9 #2. (get64 d 5);
+  check_float64 "bat1[1,0]" ~eps:1e-9 #2. (get64 d 6);
+  check_float64 "bat1[1,1]" ~eps:1e-9 #2. (get64 d 7)
+  
+let test_matmul_dot_product () =
+  let ctx = Nx_oxcaml.create_context () in
+  let a =
+    Nx_oxcaml.of_float64_multidim ctx
+      [| #1.; #2.; #3. |]
+      [|1; 3|]
+  in
+  let b =
+    Nx_oxcaml.of_float64_multidim ctx
+      [| #4.; #5.; #6. |]
+      [|3; 1|]
+  in
+  let out = Nx_ox.empty ctx Dtype.Float64 [|1; 1|] in
+  Nx_oxcaml.op_matmul ~out a b;
+  let d = Nx_oxcaml.data_array out in
+
+  check_float64 "dot" ~eps:1e-9 #32. (get64 d 0)
+
 let () =
   print_endline "Running Nx_oxcaml backend tests...";
   test_buffer_float64 ();
@@ -1153,5 +1236,8 @@ let () =
   test_where_int16_zero_negative ();
   test_matmul_2d ();
   test_matmul_identity ();
+  test_matmul_rectangular ();
+  test_matmul_batched ();
+  test_matmul_dot_product ();
   Printf.printf "\nResults: %d passed, %d failed\n" !passed !failed;
   if !failed > 0 then exit 1
