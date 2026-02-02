@@ -1038,6 +1038,32 @@ let op_matmul (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit
       else
         Parallel.parallel_for out.context.pool 0 (total_units - 1) (fun s e ->
             Op_matmul.matmul_float32_slow a b c va vb vout s e)
+  | Int64 c, Int64 a, Int64 b ->
+    if
+      View.is_c_contiguous va && View.is_c_contiguous vb
+      && View.offset va = 0
+      && View.offset vb = 0
+      && Array.length (shape va) = 2
+      && Array.length (shape vb) = 2
+    then
+      Parallel.parallel_for out.context.pool 0 (m - 1) (fun s e ->
+          Op_matmul.matmul_int64_fast a b c va vb vout s e)
+    else
+      Parallel.parallel_for out.context.pool 0 (total_units - 1) (fun s e ->
+          Op_matmul.matmul_int64_slow a b c va vb vout s e)
+| Int32 c, Int32 a, Int32 b ->
+    if
+      View.is_c_contiguous va && View.is_c_contiguous vb
+      && View.offset va = 0
+      && View.offset vb = 0
+      && Array.length (shape va) = 2
+      && Array.length (shape vb) = 2
+    then
+      Parallel.parallel_for out.context.pool 0 (m - 1) (fun s e ->
+          Op_matmul.matmul_int32_fast a b c va vb vout s e)
+    else
+      Parallel.parallel_for out.context.pool 0 (total_units - 1) (fun s e ->
+          Op_matmul.matmul_int32_slow a b c va vb vout s e)
   | _ ->
       Error.invalid ~op:"op_matmul" ~what:"not implemented for unboxed ints" ()
 
