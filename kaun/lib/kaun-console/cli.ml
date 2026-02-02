@@ -9,7 +9,8 @@ open Kaun_runlog
 
 let () =
   (* Default values *)
-  let base_dir = ref "./runs" in
+  let default_base_dir = Kaun_runlog__Env.base_dir () in
+  let base_dir = ref default_base_dir in
   let runs = ref [] in
   let experiment = ref None in
   let tags = ref [] in
@@ -19,7 +20,7 @@ let () =
     [
       ( "--base-dir",
         Arg.Set_string base_dir,
-        "DIR Directory containing training runs (default: ./runs)" );
+        Printf.sprintf "DIR Directory containing training runs (default: %s)" default_base_dir );
       ( "--runs",
         Arg.String (fun s -> runs := s :: !runs),
         "ID Specific run ID to monitor" );
