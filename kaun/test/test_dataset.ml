@@ -543,7 +543,7 @@ let test_parallel_interleave () =
   let dataset =
     from_list [ 1; 2; 3 ]
     |> parallel_interleave ~num_workers:2 ~block_length:1 (fun x ->
-           from_list [ x; x * 10 ])
+        from_list [ x; x * 10 ])
   in
   let collected = collect_dataset dataset in
   Alcotest.(check int) "correct number of elements" 6 (List.length collected);

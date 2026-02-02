@@ -858,10 +858,10 @@ let batch_generic ?(drop_remainder = false) size dataset =
 let batch ?(drop_remainder = false) size dataset =
   batch_generic ~drop_remainder size dataset
   |> map (fun batch_arr ->
-         (* Stack the batch of tensor pairs into batched tensors *)
-         let images, labels = Array.split batch_arr in
-         ( Rune.stack ~axis:0 (Array.to_list images),
-           Rune.stack ~axis:0 (Array.to_list labels) ))
+      (* Stack the batch of tensor pairs into batched tensors *)
+      let images, labels = Array.split batch_arr in
+      ( Rune.stack ~axis:0 (Array.to_list images),
+        Rune.stack ~axis:0 (Array.to_list labels) ))
 
 let batch_map ?(drop_remainder = false) size f dataset =
   let batched = batch_generic ~drop_remainder size dataset in

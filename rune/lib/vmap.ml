@@ -299,14 +299,14 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
   let copy_bdims_insert ~src ~dst ~insert_pos =
     PhysicalTbl.get_all_bdims env.shared src
     |> List.iter (fun (lv, pos) ->
-           let new_pos = if pos >= insert_pos then pos + 1 else pos in
-           PhysicalTbl.set_bdim env.shared dst ~level:lv ~bdim:(Some new_pos))
+        let new_pos = if pos >= insert_pos then pos + 1 else pos in
+        PhysicalTbl.set_bdim env.shared dst ~level:lv ~bdim:(Some new_pos))
   in
 
   let copy_bdims_same ~src ~dst =
     PhysicalTbl.get_all_bdims env.shared src
     |> List.iter (fun (lv, pos) ->
-           PhysicalTbl.set_bdim env.shared dst ~level:lv ~bdim:(Some pos))
+        PhysicalTbl.set_bdim env.shared dst ~level:lv ~bdim:(Some pos))
   in
 
   (* Broadcast a canonicalized tensor (batch dims at front) to a target physical
@@ -373,8 +373,8 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
     done;
     PhysicalTbl.get_all_bdims env.shared src
     |> List.iter (fun (lv, pos) ->
-           let new_pos = if pos >= 0 && pos < n then inv.(pos) else pos in
-           PhysicalTbl.set_bdim env.shared dst ~level:lv ~bdim:(Some new_pos))
+        let new_pos = if pos >= 0 && pos < n then inv.(pos) else pos in
+        PhysicalTbl.set_bdim env.shared dst ~level:lv ~bdim:(Some new_pos))
   in
 
   (* Removed helpers no longer needed after robust prefix handling in
@@ -426,7 +426,7 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
       let t_missing =
         like_bdims
         |> List.filter (fun (lv, _) ->
-               not (PhysicalTbl.has_level env.shared t lv))
+            not (PhysicalTbl.has_level env.shared t lv))
         |> List.sort (fun (_, a) (_, b) -> compare b a)
       in
       if t_missing = [] then t
@@ -555,10 +555,10 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                 PhysicalTbl.set_bdim env.shared r' ~level:env.level ~bdim:None;
                 PhysicalTbl.get_all_bdims env.shared result
                 |> List.iter (fun (lv, pos) ->
-                       if lv <> env.level then
-                         let new_pos = if pos > p then pos - 1 else pos in
-                         PhysicalTbl.set_bdim env.shared r' ~level:lv
-                           ~bdim:(Some new_pos));
+                    if lv <> env.level then
+                      let new_pos = if pos > p then pos - 1 else pos in
+                      PhysicalTbl.set_bdim env.shared r' ~level:lv
+                        ~bdim:(Some new_pos));
                 r')
         | Some out_pos -> (
             (* Move batch dimension to specified position *)
@@ -606,10 +606,10 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                         ~bdim:None;
                       PhysicalTbl.get_all_bdims env.shared t_in
                       |> List.iter (fun (lv, pos) ->
-                             if lv <> env.level then
-                               let new_pos = if pos > p then pos - 1 else pos in
-                               PhysicalTbl.set_bdim env.shared result ~level:lv
-                                 ~bdim:(Some new_pos));
+                          if lv <> env.level then
+                            let new_pos = if pos > p then pos - 1 else pos in
+                            PhysicalTbl.set_bdim env.shared result ~level:lv
+                              ~bdim:(Some new_pos));
                       continue k result)
           (* CRITICAL: Intercept view to return unbatched view *)
           | E_view tensor ->

@@ -5,9 +5,7 @@
 
 let list_take n l =
   let[@tail_mod_cons] rec aux n l =
-    match n, l with
-    | 0, _ | _, [] -> []
-    | n, x :: l -> x :: aux (n - 1) l
+    match (n, l) with 0, _ | _, [] -> [] | n, x :: l -> x :: aux (n - 1) l
   in
   if n <= 0 then [] else aux n l
 
@@ -352,8 +350,8 @@ module Cols = struct
   let numeric t =
     column_types t
     |> List.filter (function
-         | _, (`Float32 | `Float64 | `Int32 | `Int64) -> true
-         | _ -> false)
+      | _, (`Float32 | `Float64 | `Int32 | `Int64) -> true
+      | _ -> false)
     |> List.map fst
 
   let float t =
@@ -402,7 +400,7 @@ module Cols = struct
     in
     column_types t
     |> List.filter (fun (_, typ) ->
-           List.exists (fun t -> matches_type typ t) types)
+        List.exists (fun t -> matches_type typ t) types)
     |> List.map fst
 end
 

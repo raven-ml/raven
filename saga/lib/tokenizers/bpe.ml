@@ -506,7 +506,7 @@ let save model ~path ?name () =
       (fun k v acc -> (k, (`Int v : Yojson.Basic.t)) :: acc)
       model.vocab []
     |> List.sort (fun (_, a) (_, b) ->
-           match (a, b) with `Int x, `Int y -> compare x y | _ -> 0)
+        match (a, b) with `Int x, `Int y -> compare x y | _ -> 0)
   in
   let vocab_json = `Assoc vocab_items in
   let oc = open_out vocab_file in

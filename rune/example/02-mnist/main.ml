@@ -182,10 +182,9 @@ let train_lenet x_train y_train_onehot y_train_labels x_test y_test_onehot
       (* Update parameters with gradient clipping *)
       List.combine params grad_params
       |> List.iter (fun (param, grad) ->
-             (* Clip gradients to prevent NaN *)
-             let grad_clipped = clip grad ~min:(-1.0) ~max:1.0 in
-             isub param (mul (scalar Float32 learning_rate) grad_clipped)
-             |> ignore);
+          (* Clip gradients to prevent NaN *)
+          let grad_clipped = clip grad ~min:(-1.0) ~max:1.0 in
+          isub param (mul (scalar Float32 learning_rate) grad_clipped) |> ignore);
 
       (* Print progress *)
       Printf.printf "Epoch %d, Batch %d/%d: Loss = %.4f\n%!" epoch batch_idx

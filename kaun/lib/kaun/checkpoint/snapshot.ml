@@ -114,8 +114,8 @@ let rec flatten_tensors ?(prefix = "") = function
   | Record record ->
       Record.bindings record
       |> List.map (fun (key, value) ->
-             let path = if prefix = "" then key else prefix ^ "." ^ key in
-             flatten_tensors ~prefix:path value)
+          let path = if prefix = "" then key else prefix ^ "." ^ key in
+          flatten_tensors ~prefix:path value)
       |> List.concat
 
 let rec flatten_scalars ?(prefix = "") = function
@@ -134,8 +134,8 @@ let rec flatten_scalars ?(prefix = "") = function
   | Record record ->
       Record.bindings record
       |> List.map (fun (key, value) ->
-             let path = if prefix = "" then key else prefix ^ "." ^ key in
-             flatten_scalars ~prefix:path value)
+          let path = if prefix = "" then key else prefix ^ "." ^ key in
+          flatten_scalars ~prefix:path value)
       |> List.concat
 
 let scalar_to_yojson = function

@@ -29,15 +29,30 @@
 
 (generate_opam_files true)
 
-(pin
- (url git+https://github.com/PataphysicalSociety/soupault#5.0.0)
- (package
-  (name soupault)))
+; (pin
+;  (url git+https://github.com/PataphysicalSociety/soupault#5.0.0)
+;  (package
+;   (name soupault)))
 
-(package
- (name dev)
- (allow_empty)
- (depends odoc odoc-driver soupault lambdasoup landmarks landmarks-ppx))
+(pin
+ (url git+https://github.com/tmattio/mosaic)
+ (package
+  (name matrix)))
+
+(pin
+ (url git+https://github.com/tmattio/mosaic)
+ (package
+  (name toffee)))
+
+(pin
+ (url git+https://github.com/tmattio/mosaic)
+ (package
+  (name mosaic)))
+
+; (package
+;  (name dev)
+;  (allow_empty)
+;  (depends odoc odoc-driver soupault lambdasoup landmarks landmarks-ppx))
 
 (package
  (name nx)
@@ -155,6 +170,7 @@
    (>= 5.2.0))
   dune
   logs
+  mosaic
   (yojson
    (>= 2.0.0))
   (domainslib
@@ -204,49 +220,6 @@
   (reinforcement-learning machine-learning ai environments agents)))
 
 (package
- (name quill)
- (allow_empty)
- (synopsis "Interactive notebook for OCaml data science")
- (description
-  "Quill is an interactive notebook application for data exploration, prototyping, and knowledge sharing in OCaml. It provides a Jupyter-like experience with rich visualization and documentation capabilities.")
- (sites
-  (lib toplevel_libs))
- (depends
-  (ocaml
-   (>= 5.2.0))
-  dune
-  (dune-site
-   (>= 3.19.0))
-  cmdliner
-  wasm_of_ocaml-compiler
-  js_of_ocaml-toplevel
-  (dream
-   (>= 1.0.0~alpha8))
-  ppx_deriving_yojson
-  cmarkit
-  vdom
-  brr
-  (base64
-   (>= 3.1.0))
-  (nx
-   (= :version))
-  (nx-datasets
-   (= :version))
-  (saga
-   (= :version))
-  (rune
-   (= :version))
-  (kaun
-   (= :version))
-  (sowilo
-   (= :version))
-  (hugin
-   (= :version))
-  (alcotest :with-test))
- (tags
-  (notebook interactive-computing data-science literate-programming)))
-
-(package
  (name hugin)
  (synopsis "Visualization library for OCaml")
  (description
@@ -272,7 +245,7 @@
  (allow_empty)
  (synopsis "Meta package for the Raven ML ecosystem")
  (description
-  "Raven is a comprehensive machine learning ecosystem for OCaml. This meta package installs all Raven components including Nx (tensors), Hugin (plotting), Quill (notebooks), Rune (autodiff), Kaun (neural networks), and Sowilo (computer vision).")
+  "Raven is a comprehensive machine learning ecosystem for OCaml. This meta package installs all Raven components including Nx (tensors), Hugin (plotting), Rune (autodiff), Kaun (neural networks), and Sowilo (computer vision).")
  (depends
   (nx
    (= :version))
@@ -289,8 +262,6 @@
   (sowilo
    (= :version))
   (fehu
-   (= :version))
-  (quill
    (= :version))
   (hugin
    (= :version))

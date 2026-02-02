@@ -148,9 +148,7 @@ let train_epoch ~model ~optimizer ~(state : Train_state.t) ~dataset ~loss_fn
       total_time := !total_time +. step_time;
       state_ref := state';
       total_loss := !total_loss +. loss;
-      (match on_batch with
-      | Some f -> f !state_ref loss
-      | None -> ());
+      (match on_batch with Some f -> f !state_ref loss | None -> ());
       if progress && !batch_count mod 10 = 0 then Printf.printf ".%!")
     dataset;
 
@@ -175,7 +173,8 @@ module Callbacks = struct
     model : Layer.module_;
     optimizer : Optimizer.algorithm;
     history : History.t;
-    train_loss : float option;  (* batch loss during on_batch_end, epoch avg during on_epoch_end *)
+    train_loss : float option;
+        (* batch loss during on_batch_end, epoch avg during on_epoch_end *)
     val_loss : float option;
     train_metrics : (string * float) list;
     val_metrics : (string * float) list;
