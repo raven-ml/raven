@@ -393,7 +393,7 @@ let test_mod_int64 () =
   check_int64 "mod_int64[2]" #0L (geti64 d 2)
 (* 3000 mod 3 = 0 *)
 
-(*let test_max_float64 () =
+let test_max_float64 () =
   let ctx = Nx_oxcaml.create_context () in
   let a = Nx_oxcaml.of_float64 ctx [| #1.0; #2.0; #2.0 |] in
   let b = Nx_oxcaml.of_float64 ctx [| #0.0; #2.5; #1.5 |] in
@@ -435,7 +435,7 @@ let test_max_int32 () =
   let d = Nx_oxcaml.data_array out in
   check_int64 "max_int64[0]" #1500L (geti64 d 0);
   check_int64 "max_int64[1]" #2000L (geti64 d 1);
-  check_int64 "max_int64[2]" #3000L (geti64 d 2) *)
+  check_int64 "max_int64[2]" #3000L (geti64 d 2)
 
 let test_min_float64 () =
   let ctx = Nx_oxcaml.create_context () in
@@ -470,7 +470,7 @@ let test_min_int32 () =
   check_int32 "min_int32[1]" #2l (geti32 d 1);
   check_int32 "min_int32[2]" #2l (geti32 d 2)
 
-(* let test_min_int64 () =
+let test_min_int64 () =
   let ctx = Nx_oxcaml.create_context () in
   let a = Nx_oxcaml.of_int64 ctx [| #1000L; #2000L; #3000L |] in
   let b = Nx_oxcaml.of_int64 ctx [| #1500L; #1500L; #1000L |] in
@@ -479,7 +479,7 @@ let test_min_int32 () =
   let d = Nx_oxcaml.data_array out in
   check_int64 "min_int64[0]" #1000L (geti64 d 0);
   check_int64 "min_int64[1]" #1500L (geti64 d 1);
-  check_int64 "min_int64[2]" #1000L (geti64 d 2) *)
+  check_int64 "min_int64[2]" #1000L (geti64 d 2)
 
 let test_pow_float64 () =
   let ctx = Nx_oxcaml.create_context () in
@@ -1186,12 +1186,12 @@ let () =
   test_mod_int32 ();
   test_min_float64 ();
   test_min_float32 ();
-  (* test_min_int64 (); *)
+  test_min_int64 ();
   test_min_int32 ();
-  (* test_max_float64 ();
-  test_max_float32 (); *)
-  (* test_max_int64 (); *)
-  (* test_max_int32 (); *)
+  test_max_float64 ();
+  test_max_float32 ();
+  test_max_int64 ();
+  test_max_int32 ();
   test_pow_float64 ();
   test_pow_float32 ();
   test_xor_int64 ();
