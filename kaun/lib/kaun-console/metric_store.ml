@@ -6,24 +6,13 @@
 open Kaun_runlog
 
 type metric = { step : int; epoch : int option; value : float }
-type history_point = { step : int; value : float }
-
-type t = {
-  table : (string, metric) Hashtbl.t;
-  history : (string, history_point list) Hashtbl.t;
-  mutable max_epoch : int option;
-}
+type t = { table : (string, metric) Hashtbl.t; mutable max_epoch : int option }
 
 let create ?(initial_size = 32) () =
-  {
-    table = Hashtbl.create initial_size;
-    history = Hashtbl.create initial_size;
-    max_epoch = None;
-  }
+  { table = Hashtbl.create initial_size; max_epoch = None }
 
 let clear s =
   Hashtbl.clear s.table;
-  Hashtbl.clear s.history;
   s.max_epoch <- None
 
 let update_epoch s (epoch : int option) =
@@ -31,12 +20,9 @@ let update_epoch s (epoch : int option) =
   | None -> ()
   | Some e ->
       s.max_epoch <-
-        Some
-          (match s.max_epoch with
-          | None -> e
-          | Some prev -> max prev e)
+        Some (match s.max_epoch with None -> e | Some prev -> max prev e)
 
-let should_replace ~(prev : metric) ~(next : metric) =
+let should_replace ~prev ~next =
   (* Prefer higher step. If equal step, prefer higher epoch when present. *)
   if next.step > prev.step then true
   else if next.step < prev.step then false
@@ -52,18 +38,11 @@ let update store (events : Kaun_runlog.Event.t list) =
     (fun (Event.Scalar s) ->
       update_epoch store s.epoch;
       let next = { step = s.step; epoch = s.epoch; value = s.value } in
-      (* Update latest value *)
-      (match Hashtbl.find_opt store.table s.tag with
+      match Hashtbl.find_opt store.table s.tag with
       | None -> Hashtbl.replace store.table s.tag next
       | Some prev ->
           if should_replace ~prev ~next then
-            Hashtbl.replace store.table s.tag next);
-      (* Append to history *)
-      let history_point = { step = s.step; value = s.value } in
-      match Hashtbl.find_opt store.history s.tag with
-      | None -> Hashtbl.replace store.history s.tag [ history_point ]
-      | Some hist ->
-          Hashtbl.replace store.history s.tag (hist @ [ history_point ]))
+            Hashtbl.replace store.table s.tag next)
     events
 
 let latest_epoch store = store.max_epoch
@@ -71,8 +50,3 @@ let latest_epoch store = store.max_epoch
 let latest_metrics store =
   Hashtbl.fold (fun tag metric acc -> (tag, metric) :: acc) store.table []
   |> List.sort (fun (a, _) (b, _) -> String.compare a b)
-
-let history_for_tag store tag =
-  Hashtbl.find_opt store.history tag
-  |> Option.value ~default:[]
-  |> List.map (fun p -> (p.step, p.value))
