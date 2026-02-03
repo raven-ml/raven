@@ -181,62 +181,154 @@ let matmul_float64_fast a_buf b_buf c_buf va vb vout start_idx end_idx =
   in
   jc_loop 0
 
-let matmul_float64_slow a_buf b_buf c_buf va vb vout start_idx end_idx = 
-  let nd_a, nd_b, nd_out =
-  (Array.length (shape va), Array.length (shape vb), Array.length (shape vout))
-in
-let rank = Array.length (shape vout) in
-let m = (shape vout).(rank - 2) in
-let n = (shape vout).(rank - 1) in
-let k = (shape va).(rank - 1) in
-  let a_idx = Array.make nd_a 0
-  and b_idx = Array.make nd_b 0
-  and out_idx = Array.make nd_out 0 in
-  let a_str = View.strides va
-  and b_str = View.strides vb
-  and out_str = View.strides vout in
-  let nd_out = Array.length (shape vout) in
-  let batch_shape = Array.sub (shape vout) 0 (max 0 (nd_out - 2)) in
-  let batch_sz =
-    if Array.length batch_shape = 0 then 1 else Shape.numel batch_shape
-  in
+  let matmul_float64_slow a_buf b_buf c_buf va vb vout start_idx end_idx =
+    let nd_a = Array.length (shape va)
+    and nd_b = Array.length (shape vb)
+    and nd_out = Array.length (shape vout) in
+  
+    let rank = nd_out in
+    let m = (shape vout).(rank - 2) in
+    let n = (shape vout).(rank - 1) in
+    let k = (shape va).(rank - 1) in
+  
+    let a_idx0 = Array.make nd_a 0
+    and a_idx1 = Array.make nd_a 0
+    and b_idx = Array.make nd_b 0
+    and out_idx0 = Array.make nd_out 0
+    and out_idx1 = Array.make nd_out 0 in
+  
+    let a_str = View.strides va
+    and b_str = View.strides vb
+    and out_str = View.strides vout in
+  
+    let batch_shape = Array.sub (shape vout) 0 (max 0 (nd_out - 2)) in
+    let batch_sz =
+      if Array.length batch_shape = 0 then 1 else Shape.numel batch_shape
+    in
+  
+    let work = ref start_idx in
+    while !work < end_idx do
+      let i0 = !work mod m in
+      let batch = !work / m in
+      let has_row1 = (i0 + 1 < m) && (!work + 1 < end_idx) in
+  
+      if batch_sz <> 1 then begin
+        Shape.unravel_index_into batch batch_shape out_idx0;
+        if has_row1 then Shape.unravel_index_into batch batch_shape out_idx1
+      end;
+  
+      Shape.broadcast_index_into out_idx0 (shape va) a_idx0;
+      Shape.broadcast_index_into out_idx0 (shape vb) b_idx;
+      if has_row1 then Shape.broadcast_index_into out_idx0 (shape va) a_idx1;
+  
+      out_idx0.(nd_out - 2) <- i0;
+      a_idx0.(nd_a - 2) <- i0;
+  
+      if has_row1 then begin
+        out_idx1.(nd_out - 2) <- i0 + 1;
+        a_idx1.(nd_a - 2) <- i0 + 1
+      end;
+  
+      let j = ref 0 in
+      while !j + 1 < n do
+        out_idx0.(nd_out - 1) <- !j;
+        b_idx.(nd_b - 1) <- !j;
+  
+        if has_row1 then out_idx1.(nd_out - 1) <- !j;
 
-  for work = start_idx to end_idx - 1 do
-    let batch = work / m and i = work mod m in
-    (* unravel batch index into leading dims of C *)
-    if batch_sz <> 1 then Shape.unravel_index_into batch batch_shape out_idx;
-    (* broadcast batch into a_idx / b_idx *)
-    Shape.broadcast_index_into out_idx (shape va) a_idx;
-    Shape.broadcast_index_into out_idx (shape vb) b_idx;
-    (* set row index *)
-    out_idx.(nd_out - 2) <- i;
-    a_idx.(nd_a - 2) <- i;
-    for j = 0 to n - 1 do
-      out_idx.(nd_out - 1) <- j;
-      b_idx.(nd_b - 1) <- j;
-      let rec loop l acc =
-        if l = k then
-          acc
-        else (
-          a_idx.(nd_a - 1) <- l;
-          b_idx.(nd_b - 2) <- l;
-      
-          let av =
-            Array.unsafe_get a_buf (View.offset va + Shape.ravel_index a_idx a_str)
+  
+        let rec kloop_r0 l acc0 =
+          if l = k then acc0
+          else begin
+            a_idx0.(nd_a - 1) <- l;
+            b_idx.(nd_b - 2) <- l;
+            let av0 =
+              Array.unsafe_get a_buf
+                (View.offset va + Shape.ravel_index a_idx0 a_str)
+            in
+            let bv =
+              Float64x2.Array.unsafe_get b_buf
+                ~idx:(View.offset vb + Shape.ravel_index b_idx b_str)
+            in
+            let a0v = Float64x2.set1 av0 in
+            kloop_r0 (l + 1) (Float64x2.add (Float64x2.mul a0v bv) acc0)
+          end
+        in
+          let rec kloop_r1 l acc1=
+            if l = k then acc1
+            else begin
+              a_idx1.(nd_a - 1) <- l;
+              b_idx.(nd_b - 2) <- l;
+              let bv =
+                Float64x2.Array.unsafe_get b_buf
+                  ~idx:(View.offset vb + Shape.ravel_index b_idx b_str)
+              in
+              let av1 =
+                Array.unsafe_get a_buf
+                  (View.offset va + Shape.ravel_index a_idx1 a_str)
+              in
+              let a1v = Float64x2.set1 av1 in
+              kloop_r1 (l + 1) (Float64x2.add (Float64x2.mul a1v bv) acc1)
+            end
+        in
+        let acc0 = kloop_r0 0 (Float64x2.set1 #0.0) in
+        let out_off0 =
+          View.offset vout + Shape.ravel_index out_idx0 out_str
+        in
+        Float64x2.Array.unsafe_set c_buf ~idx:out_off0 acc0;
+  
+        if has_row1 then begin
+          let acc1 = kloop_r1 0 (Float64x2.set1 #0.0) in
+          let out_off1 =
+            View.offset vout + Shape.ravel_index out_idx1 out_str
           in
-          let bv =
-            Array.unsafe_get b_buf (View.offset vb + Shape.ravel_index b_idx b_str)
+          Float64x2.Array.unsafe_set c_buf ~idx:out_off1 acc1
+        end;
+  
+        j := !j + 2
+      done;
+  
+      (* odd column cleanup *)
+      if (!j < n) then begin
+        out_idx0.(nd_out - 1) <- !j;
+        b_idx.(nd_b - 1) <- !j;
+  
+        let rec scalar l acc =
+          if l = k then acc
+          else begin
+            a_idx0.(nd_a - 1) <- l;
+            b_idx.(nd_b - 2) <- l;
+  
+            let av =
+              Array.unsafe_get a_buf
+                (View.offset va + Shape.ravel_index a_idx0 a_str)
+            in
+            let bv =
+              Array.unsafe_get b_buf
+                (View.offset vb + Shape.ravel_index b_idx b_str)
+            in
+            scalar (l + 1) (Float_u.fma av bv acc)
+          end
+        in
+  
+        let sum0 = scalar 0 #0.0 in
+        let out0 =
+          View.offset vout + Shape.ravel_index out_idx0 out_str
+        in
+        Array.unsafe_set c_buf out0 sum0;
+  
+        if has_row1 then begin
+          out_idx1.(nd_out - 1) <- !j;
+          let sum1 = scalar 0 #0.0 in
+          let out1 =
+            View.offset vout + Shape.ravel_index out_idx1 out_str
           in
-      
-          loop (l + 1) (Float_u.fma av bv acc)
-        )
-      in
-      let sum = loop 0 #0.0 in
-      
-      let out_off = View.offset vout + Shape.ravel_index out_idx out_str in
-      Array.unsafe_set c_buf out_off sum
+          Array.unsafe_set c_buf out1 sum1
+        end
+      end;
+  
+      work := !work + (if has_row1 then 2 else 1)
     done
-  done
 
   let matmul_float32_fast a_buf b_buf c_buf va vb vout start_idx end_idx =
     let mc = 128 in
