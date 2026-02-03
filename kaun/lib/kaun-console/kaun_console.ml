@@ -15,6 +15,7 @@ type model = {
   stream : Run.event_stream;
   screen_height : int;
   current_batch : int;
+  sys_panel : Sys_panel.t;
 }
 
 type msg = Tick of float | Quit | Resize of int * int | Next_batch | Prev_batch
@@ -169,10 +170,6 @@ let view_imp_info () =
   box ~padding:(padding 1)
     [ text ~style:(Ansi.Style.make ~bold:true ()) "imp info" ]
 
-let view_sys_panel () =
-  box ~padding:(padding 1)
-    [ text ~style:(Ansi.Style.make ~bold:true ()) "sys panel" ]
-
 let view_footer () =
   box ~padding:(padding 1)
     [ text ~style:hint_style "(Press Ctrl-C to quit)" ]
@@ -204,7 +201,7 @@ let view m =
           (* Right column: sys panel *)
           scroll_box ~scroll_y:true ~scroll_x:false
             ~size:{ width = pct 33; height = pct 100 }
-            [ view_sys_panel () ];
+            [ Sys_panel.view m.sys_panel ];
         ];
       view_footer ();
     ]
@@ -230,14 +227,17 @@ let init ~run =
   Metric_store.update store initial_events;
   (* Get actual terminal height at startup *)
   let initial_height = get_initial_terminal_height () in
-  ({ run_id; store; stream; screen_height = initial_height; current_batch = 0 }, Cmd.none)
+  (* Initialize system panel *)
+  let sys_panel = Sys_panel.create () in
+  ({ run_id; store; stream; screen_height = initial_height; current_batch = 0; sys_panel }, Cmd.none)
 
 let update msg m =
   match msg with
-  | Tick _ ->
+  | Tick dt ->
       let new_events = Run.read_events m.stream in
       Metric_store.update m.store new_events;
-      ({ m with store = m.store }, Cmd.none)
+      let sys_panel = Sys_panel.update m.sys_panel ~dt in
+      ({ m with store = m.store; sys_panel }, Cmd.none)
   | Resize (_width, height) ->
       (* Recalculate current batch to ensure it's still valid after resize *)
       let latest = Metric_store.latest_metrics m.store in
