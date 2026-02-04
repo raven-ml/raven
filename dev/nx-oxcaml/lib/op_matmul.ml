@@ -599,7 +599,7 @@ let matmul_float32_slow a_buf b_buf c_buf va vb vout start_idx end_idx =
     end;
 
     let j = ref 0 in
-    while !j + 1 < n do
+    while !j < n -3 do
       out_idx0.(nd_out - 1) <- !j;
       b_idx.(nd_b - 1) <- !j;
 
