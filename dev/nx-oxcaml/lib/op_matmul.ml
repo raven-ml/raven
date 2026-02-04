@@ -76,7 +76,7 @@ let matmul_float64_fast a_buf b_buf c_buf va vb vout start_idx end_idx =
                       in
                       kloop_r0
                         (p + 1)
-                        (Float64x2.add (Float64x2.mul a0v bv) acc0)
+                        (Float64x2.mul_add a0v bv acc0)
                     in
                   let rec kloop_r1 p acc1 =
                     if p = kc' then acc1
@@ -91,7 +91,7 @@ let matmul_float64_fast a_buf b_buf c_buf va vb vout start_idx end_idx =
                       in
                       kloop_r1
                         (p + 1)
-                        (Float64x2.add (Float64x2.mul a1v bv) acc1)
+                        (Float64x2.mul_add a1v bv acc1)
                   in
 
                   let acc0 = kloop_r0 0 acc0 in
@@ -249,22 +249,22 @@ let matmul_float64_slow a_buf b_buf c_buf va vb vout start_idx end_idx =
           kloop_r0 (l + 1) (Float64x2.add (Float64x2.mul a0v bv) acc0)
         end
       in
-        let rec kloop_r1 l acc1=
-          if l = k then acc1
-          else begin
-            a_idx1.(nd_a - 1) <- l;
-            b_idx.(nd_b - 2) <- l;
-            let bv =
-              Float64x2.Array.unsafe_get b_buf
-                ~idx:(View.offset vb + Shape.ravel_index b_idx b_str)
-            in
-            let av1 =
-              Array.unsafe_get a_buf
-                (View.offset va + Shape.ravel_index a_idx1 a_str)
-            in
-            let a1v = Float64x2.set1 av1 in
-            kloop_r1 (l + 1) (Float64x2.add (Float64x2.mul a1v bv) acc1)
-          end
+      let rec kloop_r1 l acc1=
+        if l = k then acc1
+        else begin
+          a_idx1.(nd_a - 1) <- l;
+          b_idx.(nd_b - 2) <- l;
+          let bv =
+            Float64x2.Array.unsafe_get b_buf
+              ~idx:(View.offset vb + Shape.ravel_index b_idx b_str)
+          in
+          let av1 =
+            Array.unsafe_get a_buf
+              (View.offset va + Shape.ravel_index a_idx1 a_str)
+          in
+          let a1v = Float64x2.set1 av1 in
+          kloop_r1 (l + 1) (Float64x2.add (Float64x2.mul a1v bv) acc1)
+        end
       in
       let acc0 = kloop_r0 0 (Float64x2.set1 #0.0) in
       let out_off0 =
@@ -324,6 +324,7 @@ let matmul_float64_slow a_buf b_buf c_buf va vb vout start_idx end_idx =
 
     work := !work + (if has_row1 then 2 else 1)
   done
+
 let matmul_float32_fast a_buf b_buf c_buf va vb vout start_idx end_idx =
   let mc = 128 in
   let nc = 128 in
@@ -395,7 +396,7 @@ let matmul_float32_fast a_buf b_buf c_buf va vb vout start_idx end_idx =
                       in
                       kloop_r0
                         (p + 1)
-                        (Float32x4.add (Float32x4.mul a0v bv) acc0)
+                        (Float32x4.mul_add a0v bv acc0)
                     in
                   let rec kloop_r1 p acc1 =
                     if p = kc' then acc1
@@ -410,7 +411,7 @@ let matmul_float32_fast a_buf b_buf c_buf va vb vout start_idx end_idx =
                       in
                       kloop_r1
                         (p + 1)
-                        (Float32x4.add (Float32x4.mul a1v bv) acc1)
+                        (Float32x4.mul_add a1v bv acc1)
                   in
 
                   let acc0 = kloop_r0 0 acc0 in

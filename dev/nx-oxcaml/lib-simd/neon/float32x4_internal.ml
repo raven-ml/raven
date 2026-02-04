@@ -43,9 +43,7 @@ external hadd : t -> t -> t @@ portable
   = "caml_vec128_unreachable" "caml_neon_float32x4_hadd"
   [@@noalloc] [@@unboxed] [@@builtin]
 
-  external mul_add : t -> t -> t @@ portable
-  = "caml_vec128_unreachable" "caml_neon_float32x4_fma"
-  [@@noalloc] [@@unboxed] [@@builtin]
+
 
 (* hsub, addsub, dp: Not available on ARM64 NEON.
    These are SSE3/SSE4.1 specific instructions. *)
@@ -58,7 +56,7 @@ external min : t -> t -> t @@ portable
 
 external max : t -> t -> t @@ portable
   = "caml_vec128_unreachable" "caml_neon_float32x4_max"
-  [@@noalloc] [@@unboxed] [@@builtin]
+  [@@noalloc] [@@unboxed] 
 
 (* ───── Comparison ───── *)
 
@@ -81,6 +79,10 @@ external cmle : (t[@unboxed]) -> (t[@unboxed]) -> (int32x4#[@unboxed]) @@ portab
 external cmlt : (t[@unboxed]) -> (t[@unboxed]) -> (int32x4#[@unboxed]) @@ portable
   = "caml_vec128_unreachable" "caml_neon_float32x4_cmlt"
   [@@noalloc] [@@builtin]
+
+external mul_add : (t[@unboxed]) -> (t[@unboxed]) -> (t[@unboxed]) -> (t[@unboxed]) @@ portable
+= "caml_vec128_unreachable" "caml_neon_float32x4_fma"
+[@@noalloc] 
 
 (* ───── Rounding ───── *)
 

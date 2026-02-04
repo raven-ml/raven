@@ -72,7 +72,7 @@ external cmlt : (t[@unboxed]) -> (t[@unboxed]) -> (int64x2#[@unboxed]) @@ portab
 
   external mul_add : (t[@unboxed]) -> (t[@unboxed]) -> (t[@unboxed]) -> (t[@unboxed]) @@ portable
   = "caml_vec128_unreachable" "caml_neon_float64x2_fma"
-  [@@noalloc] [@@builtin]
+  [@@noalloc]
 
 (* ───── Rounding ───── *)
 

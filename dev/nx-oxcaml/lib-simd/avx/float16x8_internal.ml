@@ -7,7 +7,7 @@
   Released under the MIT license.
   ---------------------------------------------------------------------------*)
 
-  include Ocaml_simd_sse.Float16x8
+include Ocaml_simd_sse.Float16x8
 
 external of_float16x16
   :  float16x16#
