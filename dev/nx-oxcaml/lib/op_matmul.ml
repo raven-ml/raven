@@ -473,7 +473,7 @@ let matmul_float32_fast a_buf b_buf c_buf va vb vout start_idx end_idx =
                   Float32x4.Array.unsafe_set c_buf ~idx:c_idx0 acc0;
                   Float32x4.Array.unsafe_set c_buf ~idx:c_idx1 acc1;
 
-                  j := !j + 2
+                  j := !j + 4
                 done;
 
                 while !j < nc' do
