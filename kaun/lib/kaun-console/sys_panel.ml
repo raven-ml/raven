@@ -43,7 +43,7 @@ let create () : t =
   in
   let sparkline_mem =
     Charts.Sparkline.create
-      ~style:(Ansi.Style.make ~fg:Ansi.Color.magenta ())
+      ~style:(Ansi.Style.make ~fg:Ansi.Color.blue ())
       ~auto_max:false ~max_value:100. ~capacity:15 ()
   in
   (* Initial CPU sample *)
@@ -102,7 +102,7 @@ let update (t : t) ~(dt : float) : t =
 
 let muted = Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:14) ()
 let bold_cyan = Ansi.Style.make ~bold:true ~fg:Ansi.Color.cyan ()
-let bold_magenta = Ansi.Style.make ~bold:true ~fg:Ansi.Color.magenta ()
+let bold_blue = Ansi.Style.make ~bold:true ~fg:Ansi.Color.blue ()
 let bold_green = Ansi.Style.make ~bold:true ~fg:Ansi.Color.green ()
 let bold_yellow = Ansi.Style.make ~bold:true ~fg:Ansi.Color.yellow ()
 
@@ -146,7 +146,7 @@ let view_mem_bar (mem : Sysstat.Mem.t) =
   let color =
     if mem_pct > 90. then Ansi.Color.red
     else if mem_pct > 70. then Ansi.Color.yellow
-    else Ansi.Color.magenta
+    else Ansi.Color.blue
   in
   box ~flex_direction:Column ~gap:(gap 0)
     ~size:{ width = pct 100; height = auto }
@@ -206,7 +206,7 @@ let view_process (proc : Sysstat.Proc.Self.stats) =
       box ~flex_direction:Row ~justify_content:Space_between ~align_items:Center
         [
           text ~style:muted "RSS:";
-          text ~style:bold_magenta
+          text ~style:bold_blue
             (Printf.sprintf "%.1f MB" (bytes_to_mb proc.rss_bytes));
         ];
     ]
@@ -219,7 +219,7 @@ let view_memory_detail (mem : Sysstat.Mem.t) =
       box ~flex_direction:Row ~justify_content:Space_between ~align_items:Center
         [
           text ~style:muted "Used:";
-          text ~style:bold_magenta
+          text ~style:bold_blue
             (Printf.sprintf "%.1f GB" (bytes_to_gb mem.used));
         ];
       box ~flex_direction:Row ~justify_content:Space_between ~align_items:Center
