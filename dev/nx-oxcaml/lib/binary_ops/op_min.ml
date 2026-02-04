@@ -388,4 +388,4 @@ let min_int64 a_arr b_arr out_arr va vb vout start_idx end_idx =
       let a_val = Array.unsafe_get a_arr (a_offset + a_lin) in
       let b_val = Array.unsafe_get b_arr (b_offset + b_lin) in
       Array.unsafe_set out_arr (out_offset + k) (Int64_u.min a_val b_val)
-    done *)
+    done

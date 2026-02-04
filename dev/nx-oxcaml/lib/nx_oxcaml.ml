@@ -78,7 +78,17 @@ let of_float64_multidim context (arr : float# array) (shape : int array) :
     { dtype = Dtype.Float64; buffer = Float64 arr; view; context }
     (Symbolic_shape.of_ints shape)
 
-let of_float64 context (arr : float# array) : (float, Dtype.float64_elt) t =
+let of_float32_multidim context (arr : float32 #array) (shape : int array) :
+    (float, Dtype.float32_elt) t =
+  let size = Array.length arr in
+  let sym_shape = Symbolic_shape.of_ints [| size |] in
+  let view = View.create sym_shape in
+  let op_reshape x shape = { x with view = View.reshape x.view shape } in
+  op_reshape
+    { dtype = Dtype.Float32; buffer = Float32 arr; view; context }
+    (Symbolic_shape.of_ints shape)
+
+let of_float64 context (arr : float #array) : (float, Dtype.float64_elt) t =
   let size = Array.length arr in
   let sym_shape = Symbolic_shape.of_ints [| size |] in
   let view = View.create sym_shape in
@@ -503,12 +513,12 @@ let op_max (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let vb = b.view in
   let vol = numel vout in
   match (out.buffer, a.buffer, b.buffer) with
-  (* | Float64 out_arr, Float64 a_arr, Float64 b_arr ->
+  | Float64 out_arr, Float64 a_arr, Float64 b_arr ->
       if vol > parallel_threshold then
         Parallel.parallel_for out.context.pool 0 (vol - 1)
           (fun start_idx end_idx ->
             Op_max.max_float64 a_arr b_arr out_arr va vb vout start_idx end_idx)
-      else Op_max.max_float64 a_arr b_arr out_arr va vb vout 0 vol *)
+      else Op_max.max_float64 a_arr b_arr out_arr va vb vout 0 vol
   | Float32 out_arr, Float32 a_arr, Float32 b_arr ->
       if vol > parallel_threshold then
         Parallel.parallel_for out.context.pool 0 (vol - 1)
@@ -521,12 +531,12 @@ let op_max (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_max.max_int32 a_arr b_arr out_arr va vb vout start_idx end_idx)
       else Op_max.max_int32 a_arr b_arr out_arr va vb vout 0 vol
-  (* | Int64 out_arr, Int64 a_arr, Int64 b_arr ->
+  | Int64 out_arr, Int64 a_arr, Int64 b_arr ->
       if vol > parallel_threshold then
         Parallel.parallel_for out.context.pool 0 (vol - 1)
           (fun start_idx end_idx ->
             Op_max.max_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
-      else Op_max.max_int64 a_arr b_arr out_arr va vb vout 0 vol *)
+      else Op_max.max_int64 a_arr b_arr out_arr va vb vout 0 vol
   | _ -> Error.invalid ~op:"op_max" ~what:"unsupported dtype" ()
 
 let op_min (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
@@ -554,12 +564,12 @@ let op_min (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_min.min_int32 a_arr b_arr out_arr va vb vout start_idx end_idx)
       else Op_min.min_int32 a_arr b_arr out_arr va vb vout 0 vol
-  (* | Int64 out_arr, Int64 a_arr, Int64 b_arr ->
+  | Int64 out_arr, Int64 a_arr, Int64 b_arr ->
       if vol > parallel_threshold then
         Parallel.parallel_for out.context.pool 0 (vol - 1)
           (fun start_idx end_idx ->
             Op_min.min_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
-      else Op_min.min_int64 a_arr b_arr out_arr va vb vout 0 vol *)
+      else Op_min.min_int64 a_arr b_arr out_arr va vb vout 0 vol
   | _ -> Error.invalid ~op:"op_min" ~what:"unsupported dtype" ()
 
 let op_xor (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
@@ -1039,33 +1049,33 @@ let op_matmul (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit
         Parallel.parallel_for out.context.pool 0 (total_units - 1) (fun s e ->
             Op_matmul.matmul_float32_slow a b c va vb vout s e)
   | Int64 c, Int64 a, Int64 b ->
-    if
-      View.is_c_contiguous va && View.is_c_contiguous vb
-      && View.offset va = 0
-      && View.offset vb = 0
-      && Array.length (shape va) = 2
-      && Array.length (shape vb) = 2
-    then
-      Parallel.parallel_for out.context.pool 0 (m - 1) (fun s e ->
-          Op_matmul.matmul_int64_fast a b c va vb vout s e)
-    else
-      Parallel.parallel_for out.context.pool 0 (total_units - 1) (fun s e ->
-          Op_matmul.matmul_int64_slow a b c va vb vout s e)
-| Int32 c, Int32 a, Int32 b ->
-    if
-      View.is_c_contiguous va && View.is_c_contiguous vb
-      && View.offset va = 0
-      && View.offset vb = 0
-      && Array.length (shape va) = 2
-      && Array.length (shape vb) = 2
-    then
-      Parallel.parallel_for out.context.pool 0 (m - 1) (fun s e ->
-          Op_matmul.matmul_int32_fast a b c va vb vout s e)
-    else
-      Parallel.parallel_for out.context.pool 0 (total_units - 1) (fun s e ->
-          Op_matmul.matmul_int32_slow a b c va vb vout s e)
+      if
+        View.is_c_contiguous va && View.is_c_contiguous vb
+        && View.offset va = 0
+        && View.offset vb = 0
+        && Array.length (shape va) = 2
+        && Array.length (shape vb) = 2
+      then
+        Parallel.parallel_for out.context.pool 0 (m - 1) (fun s e ->
+            Op_matmul.matmul_int64_fast a b c va vb vout s e)
+      else
+        Parallel.parallel_for out.context.pool 0 (total_units - 1) (fun s e ->
+            Op_matmul.matmul_int64_slow a b c va vb vout s e)
+  | Int32 c, Int32 a, Int32 b ->
+      if
+        View.is_c_contiguous va && View.is_c_contiguous vb
+        && View.offset va = 0
+        && View.offset vb = 0
+        && Array.length (shape va) = 2
+        && Array.length (shape vb) = 2
+      then
+        Parallel.parallel_for out.context.pool 0 (m - 1) (fun s e ->
+            Op_matmul.matmul_int32_fast a b c va vb vout s e)
+      else
+        Parallel.parallel_for out.context.pool 0 (total_units - 1) (fun s e ->
+            Op_matmul.matmul_int32_slow a b c va vb vout s e)
   | _ ->
-      Error.invalid ~op:"op_matmul" ~what:"not implemented for unboxed ints" ()
+      Error.invalid ~op:"op_matmul" ~what:"not implemented for small unboxed ints" ()
 
 let op_fft ?out:_ _ ~axes:_ =
   Error.invalid ~op:"op_fft" ~what:"not implemented" ()
