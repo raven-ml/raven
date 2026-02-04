@@ -54,7 +54,6 @@ BUILTIN(caml_neon_float32x4_cmge)
 BUILTIN(caml_neon_float32x4_cmgt)
 BUILTIN(caml_neon_float32x4_cmle)
 BUILTIN(caml_neon_float32x4_cmlt)
-BUILTIN(caml_neon_float32x4_fma)
 BUILTIN(caml_neon_float32x4_round_near)
 BUILTIN(caml_neon_cvt_float32x4_to_int32x4)
 BUILTIN(caml_neon_cvtt_float32x4_to_int32x4)
@@ -74,7 +73,6 @@ BUILTIN(caml_neon_float64x2_cmge)
 BUILTIN(caml_neon_float64x2_cmgt)
 BUILTIN(caml_neon_float64x2_cmle)
 BUILTIN(caml_neon_float64x2_cmlt)
-BUILTIN(caml_neon_float64x2_fma)
 BUILTIN(caml_neon_float64x2_round_near)
 BUILTIN(caml_neon_float64x2_round_current)
 BUILTIN(caml_neon_cvt_float64x2_to_int64x2)
@@ -240,3 +238,27 @@ BUILTIN(caml_neon_vec128_shuffle_8)
 /* SSE blend ops (used in shared code) */
 BUILTIN(caml_sse41_vec128_blend_32)
 BUILTIN(caml_sse41_vec128_blend_64)
+
+#include <caml/mlvalues.h>
+#include <caml/alloc.h>
+#include <caml/simd.h>
+
+#ifdef __ARM_NEON
+#include <arm_neon.h>
+
+// fma: a + b * c
+CAMLprim value caml_neon_float32x4_fma(value va, value vb, value vc) {
+    float32x4_t a = Vec128_val(va);
+    float32x4_t b = Vec128_val(vb);
+    float32x4_t c = Vec128_val(vc);
+    return caml_copy_vec128(vfmaq_f32(a, b, c));
+}
+
+CAMLprim value caml_neon_float64x2_fma(value va, value vb, value vc) {
+    float64x2_t a = Vec128_vald(va);
+    float64x2_t b = Vec128_vald(vb);
+    float64x2_t c = Vec128_vald(vc);
+    return caml_copy_vec128d(vfmaq_f64(a, b, c));
+}
+
+#endif
