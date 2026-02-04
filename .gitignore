@@ -27,3 +27,9 @@ CLAUDE.local.md
 
 # Run logs
 runs/
+
+examples/
+
+context-log1.md
+context-log2.md
+LOGGING_REVIEW.md

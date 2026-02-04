@@ -1,8 +1,8 @@
 (library
  (name kaun_console)
  (public_name kaun.console)
- (modules metric_store sys_panel kaun_console)
- (libraries kaun kaun.runlog kaun.sysstat yojson unix mosaic mosaic.ui matrix.charts matrix.grid))
+ (modules metric_store kaun_console)
+ (libraries kaun kaun.runlog kaun_console_components yojson unix mosaic mosaic.ui))
 
 (executable
  (name cli)
