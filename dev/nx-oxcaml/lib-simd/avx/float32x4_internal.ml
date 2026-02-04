@@ -7,92 +7,96 @@
   Released under the MIT license.
   ---------------------------------------------------------------------------*)
 
-include Ocaml_simd_sse.Float32x4
-module Raw = Load_store.Vec128.Raw_Float32x4
+type t = float32x4#
 
-external set1
-  :  float32#
-  -> t
-  @@ portable
-  = "ocaml_simd_avx_unreachable" "caml_avx_vec128_broadcast_32"
-[@@noalloc] [@@builtin]
+(* ───── Arithmetic ───── *)
 
-external permute
-  :  (Ocaml_simd.Permute4.t[@untagged])
-  -> t
-  -> t
-  @@ portable
-  = "ocaml_simd_avx_unreachable" "caml_avx_vec128_permute_32"
-[@@noalloc] [@@builtin]
+external add : t -> t -> t @@ portable
+  = "caml_sse2_unreachable" "caml_sse_float32x4_add"
+  [@@noalloc] [@@unboxed] [@@builtin]
 
-external permute_by
-  :  t
-  -> idx:int32x4#
-  -> t
-  @@ portable
-  = "ocaml_simd_avx_unreachable" "caml_avx_vec128_permutev_32"
-[@@noalloc] [@@builtin]
+external sub : t -> t -> t @@ portable
+  = "caml_sse2_unreachable" "caml_sse_float32x4_sub"
+  [@@noalloc] [@@unboxed] [@@builtin]
 
-external mul_add
-  :  t
-  -> t
-  -> t
-  -> t
-  @@ portable
-  = "ocaml_simd_avx_unreachable" "caml_fma_float32x4_mul_add"
-[@@noalloc] [@@builtin]
+external mul : t -> t -> t @@ portable
+  = "caml_sse2_unreachable" "caml_sse_float32x4_mul"
+  [@@noalloc] [@@unboxed] [@@builtin]
 
-external mul_sub
-  :  t
-  -> t
-  -> t
-  -> t
-  @@ portable
-  = "ocaml_simd_avx_unreachable" "caml_fma_float32x4_mul_sub"
-[@@noalloc] [@@builtin]
+external div : t -> t -> t @@ portable
+  = "caml_sse2_unreachable" "caml_sse_float32x4_div"
+  [@@noalloc] [@@unboxed] [@@builtin]
 
-external mul_add_sub
-  :  t
-  -> t
-  -> t
-  -> t
-  @@ portable
-  = "ocaml_simd_avx_unreachable" "caml_fma_float32x4_mul_addsub"
-[@@noalloc] [@@builtin]
+external sqrt : t -> t @@ portable
+  = "caml_sse2_unreachable" "caml_sse_float32x4_sqrt"
+  [@@noalloc] [@@unboxed] [@@builtin]
 
-external mul_sub_add
-  :  t
-  -> t
-  -> t
-  -> t
-  @@ portable
-  = "ocaml_simd_avx_unreachable" "caml_fma_float32x4_mul_subadd"
-[@@noalloc] [@@builtin]
+external rcp : t -> t @@ portable
+  = "caml_sse2_unreachable" "caml_sse_float32x4_rcp"
+  [@@noalloc] [@@unboxed] [@@builtin]
 
-external neg_mul_add
-  :  t
-  -> t
-  -> t
-  -> t
-  @@ portable
-  = "ocaml_simd_avx_unreachable" "caml_fma_float32x4_neg_mul_add"
-[@@noalloc] [@@builtin]
+external rsqrt : t -> t @@ portable
+  = "caml_sse2_unreachable" "caml_sse_float32x4_rsqrt"
+  [@@noalloc] [@@unboxed] [@@builtin]
 
-external neg_mul_sub
-  :  t
-  -> t
-  -> t
-  -> t
-  @@ portable
-  = "ocaml_simd_avx_unreachable" "caml_fma_float32x4_neg_mul_sub"
-[@@noalloc] [@@builtin]
+external hadd : t -> t -> t @@ portable
+  = "caml_sse2_unreachable" "caml_sse3_float32x4_hadd"
+  [@@noalloc] [@@unboxed] [@@builtin]
 
-external of_float16x8
-  :  float16x8#
-  -> t
-  @@ portable
-  = "ocaml_simd_avx_unreachable" "caml_f16c_cvt_float16x8_float32x4"
-[@@noalloc] [@@builtin]
+(* ───── Min/Max ───── *)
 
-let[@inline] of_float64x4 x = Float64x4_internal.cvt_f32 x
-let[@inline] of_float32x8 x = Float32x8_internal.low_to_f32x4 x
+external min : t -> t -> t @@ portable
+  = "caml_sse2_unreachable" "caml_sse_float32x4_min"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external max : t -> t -> t @@ portable
+  = "caml_sse2_unreachable" "caml_sse_float32x4_max"
+  [@@noalloc] [@@unboxed]
+
+(* ───── Comparison ───── *)
+
+external cmeq : (t[@unboxed]) -> (t[@unboxed]) -> (int32x4#[@unboxed]) @@ portable
+  = "caml_sse2_unreachable" "caml_sse_float32x4_cmpeq"
+  [@@noalloc] [@@builtin]
+
+external cmge : (t[@unboxed]) -> (t[@unboxed]) -> (int32x4#[@unboxed]) @@ portable
+  = "caml_sse2_unreachable" "caml_sse_float32x4_cmpge"
+  [@@noalloc] [@@builtin]
+
+external cmgt : (t[@unboxed]) -> (t[@unboxed]) -> (int32x4#[@unboxed]) @@ portable
+  = "caml_sse2_unreachable" "caml_sse_float32x4_cmpgt"
+  [@@noalloc] [@@builtin]
+
+external cmle : (t[@unboxed]) -> (t[@unboxed]) -> (int32x4#[@unboxed]) @@ portable
+  = "caml_sse2_unreachable" "caml_sse_float32x4_cmple"
+  [@@noalloc] [@@builtin]
+
+external cmlt : (t[@unboxed]) -> (t[@unboxed]) -> (int32x4#[@unboxed]) @@ portable
+  = "caml_sse2_unreachable" "caml_sse_float32x4_cmplt"
+  [@@noalloc] [@@builtin]
+
+(* ───── FMA ───── *)
+
+external mul_add : (t[@unboxed]) -> (t[@unboxed]) -> (t[@unboxed]) -> (t[@unboxed]) @@ portable
+  = "caml_sse2_unreachable" "caml_fma_float32x4_fmadd"
+  [@@noalloc]
+
+(* ───── Rounding ───── *)
+
+external round_near : (t[@unboxed]) -> (t[@unboxed]) @@ portable
+  = "caml_sse2_unreachable" "caml_sse41_float32x4_round_near"
+  [@@noalloc] [@@builtin]
+
+(* ───── Conversions ───── *)
+
+external cvt_int32x4 : t -> int32x4# @@ portable
+  = "caml_sse2_unreachable" "caml_sse2_cvt_float32x4_to_int32x4"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external cvtt_int32x4 : t -> int32x4# @@ portable
+  = "caml_sse2_unreachable" "caml_sse2_cvtt_float32x4_to_int32x4"
+  [@@noalloc] [@@unboxed] [@@builtin]
+
+external cvt_float64x2 : t -> float64x2# @@ portable
+  = "caml_sse2_unreachable" "caml_sse2_cvt_float32x2_to_float64x2"
+  [@@noalloc] [@@unboxed] [@@builtin]
