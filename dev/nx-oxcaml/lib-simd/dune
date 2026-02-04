@@ -60,7 +60,7 @@
   sse/float16x8_internal.ml
   sse/float32x4_internal.ml
   sse/float64x2_internal.ml
-  sse/avx_stubs.c)
+  sse/sse_stubs.c)
  (action
   (progn
    (copy avx/int8x16_internal.ml int8x16_internal.ml)

@@ -9,6 +9,7 @@
 #include <assert.h>
 
 void ocaml_simd_avx_unreachable() { assert(!"SIMD is not supported in bytecode mode."); }
+void caml_sse2_unreachable() { assert(!"SIMD is not supported in bytecode mode."); }
 
 #define BUILTIN(name)                                                                    \
   void name() { assert(!"Didn't use [@@builtin] intrinsic."); }
