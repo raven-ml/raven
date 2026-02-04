@@ -9,7 +9,7 @@ open Kaun_runlog
 
 let () =
   (* Default values *)
-  let default_base_dir = Kaun_runlog__Env.base_dir () in
+  let default_base_dir = Kaun_runlog.base_dir () in
   let base_dir = ref default_base_dir in
   let runs = ref [] in
   let experiment = ref None in
