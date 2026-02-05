@@ -26,8 +26,18 @@ let matmul_float64_fast a_buf b_buf c_buf va vb vout start_idx end_idx =
 
       let rec pc_loop pc =
         if pc >= k then ()
-        else
-          let kc' = min kc (k - pc) in
+        else if pc == 0 then begin
+
+          let kc' = min kc k in
+          let bp = Array.make_float64 (kc' * nc') in
+          for p = 0 to kc' - 1 do
+            let kk = pc + p in
+            let b_row = b0 + kk * b_rs + jc in
+            let bp_row = p * nc' in
+            for j = 0 to nc' - 1 do
+              Array.unsafe_set bp (bp_row + j) (Array.unsafe_get b_buf (b_row + j))
+            done
+          done;
 
           let rec ic_loop ic =
             if ic >= end_idx then ()
@@ -54,48 +64,23 @@ let matmul_float64_fast a_buf b_buf c_buf va vb vout start_idx end_idx =
                   let c_idx0 = crow0 + col in
                   let c_idx1 = crow1 + col in
 
-                  let acc0 =
-                    if pc = 0 then Float64x2.set1 #0.0
-                    else Float64x2.Array.unsafe_get c_buf ~idx:c_idx0
+                  let acc0 = Float64x2.set1 #0.0
                   in
-                  let acc1 =
-                    if pc = 0 then Float64x2.set1 #0.0
-                    else Float64x2.Array.unsafe_get c_buf ~idx:c_idx1
+                  let acc1 = Float64x2.set1 #0.0
                   in
 
-                  let rec kloop_r0 p acc0 =
-                    if p = kc' then acc0
+                  let rec kloop p acc0 acc1 =
+                    if p = kc' then #(acc0, acc1)
                     else
                       let kk = pc + p in
-                      let a0v =
-                        Float64x2.set1 (Array.unsafe_get a_buf (row0 + kk))
-                      in
-                      let bv =
-                        Float64x2.Array.unsafe_get b_buf
-                          ~idx:(b0 + kk * b_rs + col)
-                      in
-                      kloop_r0
-                        (p + 1)
+                      let bv = Float64x2.Array.unsafe_get b_buf ~idx:(p * nc' + !j) in  (* load once *)
+                      let a0v = Float64x2.set1 (Array.unsafe_get a_buf (row0 + kk)) in
+                      let a1v = Float64x2.set1 (Array.unsafe_get a_buf (row1 + kk)) in
+                      kloop (p + 1)
                         (Float64x2.mul_add a0v bv acc0)
-                    in
-                  let rec kloop_r1 p acc1 =
-                    if p = kc' then acc1
-                    else
-                      let kk = pc + p in
-                      let a1v =
-                        Float64x2.set1 (Array.unsafe_get a_buf (row1 + kk))
-                      in
-                      let bv =
-                        Float64x2.Array.unsafe_get b_buf
-                          ~idx:(b0 + kk * b_rs + col)
-                      in
-                      kloop_r1
-                        (p + 1)
                         (Float64x2.mul_add a1v bv acc1)
                   in
-
-                  let acc0 = kloop_r0 0 acc0 in
-                  let acc1 = kloop_r1 0 acc1 in
+                  let #(acc0, acc1) = kloop 0 acc0 acc1 in
                   Float64x2.Array.unsafe_set c_buf ~idx:c_idx0 acc0;
                   Float64x2.Array.unsafe_set c_buf ~idx:c_idx1 acc1;
 
@@ -104,40 +89,138 @@ let matmul_float64_fast a_buf b_buf c_buf va vb vout start_idx end_idx =
 
                 while !j < nc' do
                   let col = jc + !j in
-                  let rec scalar_r0 p acc0  =
-                    if p = kc' then acc0
+                  let rec scalar p acc0 acc1 =
+                    if p = kc' then #(acc0, acc1)
+                    else
+                      let a0 = Array.unsafe_get a_buf (row0 + p) in
+                      let a1 = Array.unsafe_get a_buf (row1 + p) in
+                      let b  = Array.unsafe_get bp (p * nc' + !j) in
+                      scalar
+                        (p + 1)
+                        (Float_u.fma a0 b acc0)
+                        (Float_u.fma a1 b acc1)
+                  in
+                    let #(acc0, acc1) = scalar 0 #0.0 #0.0 in
+                  Array.unsafe_set c_buf (crow0 + col) acc0;
+                  Array.unsafe_set c_buf (crow1 + col) acc1;
+                    j := !j + 1
+                    done;
+                i := !i + 2
+              done;
+
+              if !i < i_end then begin
+                let row = !i in
+                let arow = a0 + row * a_rs in
+                let crow = c0 + row * c_rs in
+
+                for j = 0 to nc' - 1 do
+                  let col = jc + j in
+                  let rec scalar p acc =
+                    if p = kc' then acc
+                    else
+                      let a = Array.unsafe_get a_buf (arow + p) in
+                      let b = Array.unsafe_get bp (p * nc' + j) in
+                      scalar (p + 1) (Float_u.fma a b acc)
+                  in
+                  let acc = scalar 0 #0.0
+                  in
+                  Array.unsafe_set c_buf (crow + col) acc
+                done
+              end;
+
+              ic_loop (ic + mc')
+          in
+          ic_loop start_idx;
+          pc_loop (kc')
+        end
+        else
+          let kc' = min kc (k - pc) in
+          let bp = Array.make_float64 (kc' * nc') in
+          for p = 0 to kc' - 1 do
+            let kk = pc + p in
+            let b_row = b0 + kk * b_rs + jc in
+            let bp_row = p * nc' in
+            for j = 0 to nc' - 1 do
+              Array.unsafe_set bp (bp_row + j) (Array.unsafe_get b_buf (b_row + j))
+            done
+          done;
+
+          let rec ic_loop ic =
+            if ic >= end_idx then ()
+            else
+              let mc' = min mc (end_idx - ic) in
+              let i_end = ic + mc' in
+              let i = ref ic in
+
+              (* ===== 2×2 SIMD ROW LOOP ===== *)
+              while !i + 1 < i_end do
+                let i0 = !i in
+                let i1 = i0 + 1 in
+
+                let row0 = a0 + i0 * a_rs in
+                let row1 = a0 + i1 * a_rs in
+                let crow0 = c0 + i0 * c_rs in
+                let crow1 = c0 + i1 * c_rs in
+
+                let j = ref 0 in
+                let j4 = nc'-3 in
+                while !j < j4 do
+                  let col = jc + !j in
+
+                  let c_idx0 = crow0 + col in
+                  let c_idx1 = crow1 + col in
+
+                  let acc0 = Float64x2.Array.unsafe_get c_buf ~idx:c_idx0
+                  in
+                  let acc1 = Float64x2.Array.unsafe_get c_buf ~idx:c_idx1
+                  in
+
+                  let rec kloop p acc0 acc1 =
+                    if p = kc' then #(acc0, acc1)
+                    else
+                      let kk = pc + p in
+                      let a0v =
+                        Float64x2.set1 (Array.unsafe_get a_buf (row0 + kk))
+                      in
+                      let a1v =
+                        Float64x2.set1 (Array.unsafe_get a_buf (row0 + kk))
+                      in
+                      let bv =
+                        Float64x2.Array.unsafe_get bp
+                          ~idx:(p * nc' + !j)
+                      in
+                      kloop
+                        (p + 1)
+                        (Float64x2.mul_add a0v bv acc0)
+                        (Float64x2.mul_add a1v bv acc1)
+                    in
+                  let #(acc0, acc1) = kloop 0 acc0 acc1 in
+                  Float64x2.Array.unsafe_set c_buf ~idx:c_idx0 acc0;
+                  Float64x2.Array.unsafe_set c_buf ~idx:c_idx1 acc1;
+
+                  j := !j + 4
+                done;
+
+                while !j < nc' do
+                  let col = jc + !j in
+                  let rec scalar p acc0 acc1 =
+                    if p = kc' then #(acc0, acc1)
                     else
                       let kk = pc + p in
                       let a0 = Array.unsafe_get a_buf (row0 + kk) in
-                      let b  = Array.unsafe_get b_buf (b0 + kk * b_rs + col) in
-                      scalar_r0
+                      let a1 = Array.unsafe_get a_buf (row1 + kk) in
+                      let b  = Array.unsafe_get bp (p * nc' + !j) in
+                      scalar
                         (p + 1)
                         (Float_u.fma a0 b acc0)
-                  in
-                  let rec scalar_r1 p acc1 =
-                    if p = kc' then acc1
-                    else
-                      let kk = pc + p in
-                      let a1 = Array.unsafe_get a_buf (row1 + kk) in
-                      let b  = Array.unsafe_get b_buf (b0 + kk * b_rs + col) in
-                      scalar_r1
-                        (p + 1)
                         (Float_u.fma a1 b acc1)
                   in
-                  if pc = 0 then 
-                    let acc0 = scalar_r0 0 #0.0 in
-                    let acc1 = scalar_r1 0 #0.0 
-                  in
-                  Array.unsafe_set c_buf (crow0 + col) acc0;
-                  Array.unsafe_set c_buf (crow1 + col) acc1
-                  else
-                    let acc0 = scalar_r0 0
-                        (Array.unsafe_get c_buf (crow0 + col)) in
-                    let acc1 = scalar_r1 0
-                        (Array.unsafe_get c_buf (crow1 + col))
-                      in
-                      Array.unsafe_set c_buf (crow0 + col) acc0;
-                      Array.unsafe_set c_buf (crow1 + col) acc1;
+                  let #(acc0, acc1) = scalar 0
+                      (Array.unsafe_get c_buf (crow0 + col))
+                      (Array.unsafe_get c_buf (crow1 + col))
+                    in
+                    Array.unsafe_set c_buf (crow0 + col) acc0;
+                    Array.unsafe_set c_buf (crow1 + col) acc1;
                     j := !j + 1
                     done;
                 i := !i + 2
@@ -155,12 +238,10 @@ let matmul_float64_fast a_buf b_buf c_buf va vb vout start_idx end_idx =
                     else
                       let kk = pc + p in
                       let a = Array.unsafe_get a_buf (arow + kk) in
-                      let b = Array.unsafe_get b_buf (b0 + kk * b_rs + col) in
+                      let b = Array.unsafe_get bp (p * nc' + j) in
                       scalar (p + 1) (Float_u.fma a b acc)
                   in
-                  let acc =
-                    if pc = 0 then scalar 0 #0.0
-                    else scalar 0 (Array.unsafe_get c_buf (crow + col))
+                  let acc = scalar 0 (Array.unsafe_get c_buf (crow + col))
                   in
                   Array.unsafe_set c_buf (crow + col) acc
                 done
