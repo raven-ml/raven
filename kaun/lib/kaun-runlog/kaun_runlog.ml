@@ -6,6 +6,8 @@
 module Event = Event
 module Run = Run
 
+let base_dir = Env.base_dir
+
 let discover ?base_dir () =
   let dir = Option.value base_dir ~default:(Env.base_dir ()) in
   if not (Sys.file_exists dir) then []
