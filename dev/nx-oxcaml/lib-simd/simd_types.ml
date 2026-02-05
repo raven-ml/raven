@@ -1,10 +1,9 @@
 (*---------------------------------------------------------------------------
-  Copyright (c) 2026 The Raven authors. All rights reserved.
-  Distributed under the ISC license, see terms at the end of the file.
+  Copyright (c) 2026 The Raven authors. All rights reserved. Distributed under
+  the ISC license, see terms at the end of the file.
 
-  Based on ocaml_simd (https://github.com/janestreet/ocaml_simd)
-  Copyright (c) 2025-2026 Jane Street Group, LLC
-  Released under the MIT license.
+  Based on ocaml_simd (https://github.com/janestreet/ocaml_simd) Copyright (c)
+  2025-2026 Jane Street Group, LLC Released under the MIT license.
   ---------------------------------------------------------------------------*)
 
 module Blend2 : sig
@@ -35,14 +34,8 @@ end = struct
   type t = int
 
   let make a b c d e f g h =
-    a
-    lor (b lsl 1)
-    lor (c lsl 2)
-    lor (d lsl 3)
-    lor (e lsl 4)
-    lor (f lsl 5)
-    lor (g lsl 6)
-    lor (h lsl 7)
+    a lor (b lsl 1) lor (c lsl 2) lor (d lsl 3) lor (e lsl 4) lor (f lsl 5)
+    lor (g lsl 6) lor (h lsl 7)
 end
 
 module Shuffle2 : sig
