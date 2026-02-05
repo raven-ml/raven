@@ -5,6 +5,13 @@
 
 open Import
 
+(* ---------------------------- Helpers ------------------------------------ *)
+
+let[@inline] min_int a b = if a < b then a else b
+let[@inline] round_up x m = ((x + m - 1) / m) * m
+
+(* ------------------------------------------------------------------------- *)
+
 let matmul_float64_fast a_buf b_buf c_buf va vb vout start_idx end_idx =
   let mc = 128 in
   let nc = 128 in
