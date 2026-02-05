@@ -716,7 +716,7 @@ let matmul_float32_fast a_buf b_buf c_buf va vb vout start_idx end_idx =
                         Float32x4.set1 (Array.unsafe_get a_buf (row0 + kk))
                       in
                       let a1v =
-                        Float32x4.set1 (Array.unsafe_get a_buf (row0 + kk))
+                        Float32x4.set1 (Array.unsafe_get a_buf (row1 + kk))
                       in
                       let bv =
                         Float32x4.Array.unsafe_get bp
