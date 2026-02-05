@@ -127,7 +127,8 @@ let subscriptions _model =
           | _ -> None);
     ]
 
-let run ?(base_dir = "./runs") ?experiment:_ ?tags:_ ?runs () =
+let run ?base_dir ?experiment:_ ?tags:_ ?runs () =
+  let base_dir = Option.value base_dir ~default:(Kaun_runlog.base_dir ()) in
   match runs with
   | Some [ run_id ] -> (
       let run_dir = Filename.concat base_dir run_id in

@@ -30,15 +30,23 @@ let events_path dir = Filename.concat dir "events.jsonl"
 
 let ensure_dir dir =
   let sep = Filename.dir_sep.[0] in
+  let parts = String.split_on_char sep dir in
+  (* Handle absolute paths: if dir starts with /, first part is empty *)
+  let start, parts =
+    match parts with
+    | "" :: rest -> (Filename.dir_sep, rest)
+    | parts -> ("", parts)
+  in
   let rec loop acc parts =
     match parts with
     | [] -> ()
+    | "" :: rest -> loop acc rest (* skip empty parts *)
     | part :: rest ->
         let next = if acc = "" then part else acc ^ Filename.dir_sep ^ part in
-        if next <> "" && not (Sys.file_exists next) then Unix.mkdir next 0o755;
+        if not (Sys.file_exists next) then Unix.mkdir next 0o755;
         loop next rest
   in
-  loop "" (String.split_on_char sep dir)
+  loop start parts
 
 (* ───── ID Generation ───── *)
 
