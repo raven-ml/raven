@@ -10,6 +10,26 @@ open Import
 let[@inline] min_int a b = if a < b then a else b
 let[@inline] round_up x m = ((x + m - 1) / m) * m
 
+(* ---------------------------- B Packing ---------------------------------- *)
+
+let pack_b_f64 (b : float array) ~b_off ~ldb ~pc ~jc ~kc ~nc (bp : float array) =
+  for p = 0 to kc - 1 do
+    let src = b_off + (pc + p) * ldb + jc in
+    let dst = p * nc in
+    for j = 0 to nc - 1 do
+      Array.unsafe_set bp (dst + j) (Array.unsafe_get b (src + j))
+    done
+  done
+
+let pack_b_f32 (b : float32 array) ~b_off ~ldb ~pc ~jc ~kc ~nc (bp : float32 array) =
+  for p = 0 to kc - 1 do
+    let src = b_off + (pc + p) * ldb + jc in
+    let dst = p * nc in
+    for j = 0 to nc - 1 do
+      Array.unsafe_set bp (dst + j) (Array.unsafe_get b (src + j))
+    done
+  done
+
 (* ------------------------------------------------------------------------- *)
 
 let matmul_float64_fast a_buf b_buf c_buf va vb vout start_idx end_idx =
@@ -37,14 +57,7 @@ let matmul_float64_fast a_buf b_buf c_buf va vb vout start_idx end_idx =
 
           let kc' = min kc k in
           let bp = Array.make_float64 (kc' * nc') in
-          for p = 0 to kc' - 1 do
-            let kk = pc + p in
-            let b_row = b0 + kk * b_rs + jc in
-            let bp_row = p * nc' in
-            for j = 0 to nc' - 1 do
-              Array.unsafe_set bp (bp_row + j) (Array.unsafe_get b_buf (b_row + j))
-            done
-          done;
+          pack_b_f64 b_buf ~b_off:b0 ~ldb:b_rs ~pc ~jc ~kc:kc' ~nc:nc' bp;
 
           let rec ic_loop ic =
             if ic >= end_idx then ()
@@ -143,14 +156,7 @@ let matmul_float64_fast a_buf b_buf c_buf va vb vout start_idx end_idx =
         else
           let kc' = min kc (k - pc) in
           let bp = Array.make_float64 (kc' * nc') in
-          for p = 0 to kc' - 1 do
-            let kk = pc + p in
-            let b_row = b0 + kk * b_rs + jc in
-            let bp_row = p * nc' in
-            for j = 0 to nc' - 1 do
-              Array.unsafe_set bp (bp_row + j) (Array.unsafe_get b_buf (b_row + j))
-            done
-          done;
+          pack_b_f64 b_buf ~b_off:b0 ~ldb:b_rs ~pc ~jc ~kc:kc' ~nc:nc' bp;
 
           let rec ic_loop ic =
             if ic >= end_idx then ()
@@ -505,14 +511,7 @@ let matmul_float32_fast a_buf b_buf c_buf va vb vout start_idx end_idx =
 
           let kc' = min kc k in
           let bp = Array.make_float32 (kc' * nc') in
-          for p = 0 to kc' - 1 do
-            let kk = pc + p in
-            let b_row = b0 + kk * b_rs + jc in
-            let bp_row = p * nc' in
-            for j = 0 to nc' - 1 do
-              Array.unsafe_set bp (bp_row + j) (Array.unsafe_get b_buf (b_row + j))
-            done
-          done;
+          pack_b_f32 b_buf ~b_off:b0 ~ldb:b_rs ~pc ~jc ~kc:kc' ~nc:nc' bp;
 
           let rec ic_loop ic =
             if ic >= end_idx then ()
@@ -639,14 +638,7 @@ let matmul_float32_fast a_buf b_buf c_buf va vb vout start_idx end_idx =
         else
           let kc' = min kc (k - pc) in
           let bp = Array.make_float32 (kc' * nc') in
-          for p = 0 to kc' - 1 do
-            let kk = pc + p in
-            let b_row = b0 + kk * b_rs + jc in
-            let bp_row = p * nc' in
-            for j = 0 to nc' - 1 do
-              Array.unsafe_set bp (bp_row + j) (Array.unsafe_get b_buf (b_row + j))
-            done
-          done;
+          pack_b_f32 b_buf ~b_off:b0 ~ldb:b_rs ~pc ~jc ~kc:kc' ~nc:nc' bp;
 
           let rec ic_loop ic =
             if ic >= end_idx then ()
