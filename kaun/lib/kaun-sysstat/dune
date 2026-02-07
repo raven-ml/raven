@@ -1,0 +1,19 @@
+(library
+ (name kaun_sysstat)
+ (public_name kaun.sysstat)
+ (modules sysstat)
+ (wrapped false)
+ (libraries unix str)
+ (foreign_stubs
+  (language c)
+  (flags
+   (:standard
+    (:include c_flags.sexp)))
+  (names sysstat_stubs))
+ (c_library_flags
+  (:include c_library_flags.sexp)))
+
+(rule
+ (targets c_flags.sexp c_library_flags.sexp)
+ (action
+  (run %{exe:config/discover.exe})))
