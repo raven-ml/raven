@@ -1,11 +1,12 @@
-// ---------------------------------------------------------------------------
-//   Copyright (c) 2026 The Raven authors. All rights reserved.
-//   Distributed under the ISC license, see terms at the end of the file.
+/*---------------------------------------------------------------------------
+   Copyright (c) 2026 The Raven authors. All rights reserved.
+   SPDX-License-Identifier: ISC
 
-//   Based on ocaml_simd (https://github.com/janestreet/ocaml_simd)
-//   Copyright (c) 2025-2026 Jane Street Group, LLC
-//   Released under the MIT license.
-//   --------------------------------------------------------------------------
+   Based on ocaml_simd (https://github.com/janestreet/ocaml_simd)
+   Copyright (c) 2025-2026 Jane Street Group, LLC
+   Released under the MIT license.
+  ---------------------------------------------------------------------------*/
+
 #include <assert.h>
 
 void ocaml_simd_avx_unreachable() { assert(!"SIMD is not supported in bytecode mode."); }
