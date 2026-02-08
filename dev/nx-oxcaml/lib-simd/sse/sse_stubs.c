@@ -1,3 +1,11 @@
+/*---------------------------------------------------------------------------
+   Copyright (c) 2026 The Raven authors. All rights reserved.
+   SPDX-License-Identifier: ISC
+
+   Based on ocaml_simd (https://github.com/janestreet/ocaml_simd)
+   Copyright (c) 2025-2026 Jane Street Group, LLC
+   Released under the MIT license.
+  ---------------------------------------------------------------------------*/
 
 #include <assert.h>
 

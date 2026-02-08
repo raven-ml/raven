@@ -1,4 +1,5 @@
 ; Copy architecture-specific internal modules and stubs
+
 (rule
  (enabled_if
   (= %{architecture} arm64))
@@ -44,6 +45,14 @@
   float64x2_internal.ml
   stubs.c)
  (deps
+  avx/int8x16_internal.ml
+  avx/int16x8_internal.ml
+  avx/int32x4_internal.ml
+  avx/int64x2_internal.ml
+  avx/float16x8_internal.ml
+  avx/float32x4_internal.ml
+  avx/float64x2_internal.ml
+  avx/avx_stubs.c
   sse/int8x16_internal.ml
   sse/int16x8_internal.ml
   sse/int32x4_internal.ml
@@ -54,14 +63,14 @@
   sse/sse_stubs.c)
  (action
   (progn
-   (copy sse/int8x16_internal.ml int8x16_internal.ml)
-   (copy sse/int16x8_internal.ml int16x8_internal.ml)
-   (copy sse/int32x4_internal.ml int32x4_internal.ml)
-   (copy sse/int64x2_internal.ml int64x2_internal.ml)
-   (copy sse/float16x8_internal.ml float16x8_internal.ml)
-   (copy sse/float32x4_internal.ml float32x4_internal.ml)
-   (copy sse/float64x2_internal.ml float64x2_internal.ml)
-   (copy sse/sse_stubs.c stubs.c))))
+   (copy avx/int8x16_internal.ml int8x16_internal.ml)
+   (copy avx/int16x8_internal.ml int16x8_internal.ml)
+   (copy avx/int32x4_internal.ml int32x4_internal.ml)
+   (copy avx/int64x2_internal.ml int64x2_internal.ml)
+   (copy avx/float16x8_internal.ml float16x8_internal.ml)
+   (copy avx/float32x4_internal.ml float32x4_internal.ml)
+   (copy avx/float64x2_internal.ml float64x2_internal.ml)
+   (copy avx/avx_stubs.c stubs.c))))
 
 (library
  (name simd)
