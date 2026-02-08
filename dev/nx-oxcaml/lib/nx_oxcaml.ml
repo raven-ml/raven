@@ -78,7 +78,7 @@ let of_float64_multidim context (arr : float# array) (shape : int array) :
     { dtype = Dtype.Float64; buffer = Float64 arr; view; context }
     (Symbolic_shape.of_ints shape)
 
-let of_float32_multidim context (arr : float32 #array) (shape : int array) :
+let of_float32_multidim context (arr : float32# array) (shape : int array) :
     (float, Dtype.float32_elt) t =
   let size = Array.length arr in
   let sym_shape = Symbolic_shape.of_ints [| size |] in
@@ -88,7 +88,7 @@ let of_float32_multidim context (arr : float32 #array) (shape : int array) :
     { dtype = Dtype.Float32; buffer = Float32 arr; view; context }
     (Symbolic_shape.of_ints shape)
 
-let of_float64 context (arr : float #array) : (float, Dtype.float64_elt) t =
+let of_float64 context (arr : float# array) : (float, Dtype.float64_elt) t =
   let size = Array.length arr in
   let sym_shape = Symbolic_shape.of_ints [| size |] in
   let view = View.create sym_shape in
@@ -1031,7 +1031,7 @@ let op_matmul (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit
         && Array.length (shape vb) = 2
       then
         Parallel.parallel_for out.context.pool 0 (m - 1) (fun s e ->
-            Op_matmul.matmul_float64_fast a b c va vb vout s e)
+            Op_matmul.Gemm_f64.matmul a b c va vb vout s e)
       else
         Parallel.parallel_for out.context.pool 0 (total_units - 1) (fun s e ->
             Op_matmul.matmul_float64_slow a b c va vb vout s e)
@@ -1044,7 +1044,7 @@ let op_matmul (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit
         && Array.length (shape vb) = 2
       then
         Parallel.parallel_for out.context.pool 0 (m - 1) (fun s e ->
-            Op_matmul.matmul_float32_fast a b c va vb vout s e)
+            Op_matmul.Gemm_f32.matmul a b c va vb vout s e)
       else
         Parallel.parallel_for out.context.pool 0 (total_units - 1) (fun s e ->
             Op_matmul.matmul_float32_slow a b c va vb vout s e)
