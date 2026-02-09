@@ -14,9 +14,11 @@ module Charts = Matrix_charts
 
 type t = {
   cpu : Sysstat.Cpu.stats;
+  cpu_per_core : Sysstat.Cpu.stats array;
   memory : Sysstat.Mem.t;
   process : Sysstat.Proc.Self.stats;
   cpu_prev : Sysstat.Cpu.t;
+  cpu_per_core_prev : Sysstat.Cpu.t array;
   proc_prev : Sysstat.Proc.Self.t;
   num_cores : int;
   sparkline_cpu : Charts.Sparkline.t;
@@ -48,12 +50,19 @@ let create () : t =
   in
   (* Initial CPU sample *)
   let cpu_prev = Sysstat.Cpu.sample () in
-  let cpu_per_core = Sysstat.Cpu.sample_per_core () in
-  let num_cores = Array.length cpu_per_core in
+  let cpu_per_core_prev = Sysstat.Cpu.sample_per_core () in
+  let num_cores = Array.length cpu_per_core_prev in
   Unix.sleepf 0.05;
   let cpu_next = Sysstat.Cpu.sample () in
+  let cpu_per_core_next = Sysstat.Cpu.sample_per_core () in
   let cpu = Sysstat.Cpu.compute ~prev:cpu_prev ~next:cpu_next in
+  let cpu_per_core =
+    Array.map2
+      (fun p n -> Sysstat.Cpu.compute ~prev:p ~next:n)
+      cpu_per_core_prev cpu_per_core_next
+  in
   let cpu_prev = cpu_next in
+  let cpu_per_core_prev = cpu_per_core_next in
   (* Memory *)
   let memory = Sysstat.Mem.sample () in
   (* Process self *)
@@ -65,7 +74,7 @@ let create () : t =
   let total_cpu = cpu.user +. cpu.system in
   Charts.Sparkline.push sparkline_cpu total_cpu;
   Charts.Sparkline.push sparkline_mem (mem_used_percent memory);
-  { cpu; memory; process; cpu_prev; proc_prev; num_cores; sparkline_cpu; sparkline_mem; sample_acc = 0.0 }
+  { cpu; cpu_per_core; memory; process; cpu_prev; cpu_per_core_prev; proc_prev; num_cores; sparkline_cpu; sparkline_mem; sample_acc = 0.0 }
 
 (* ───── Update ───── *)
 
@@ -75,7 +84,13 @@ let update (t : t) ~(dt : float) : t =
   if sample_acc < 0.2 then { t with sample_acc }
   else
     let cpu_next = Sysstat.Cpu.sample () in
+    let cpu_per_core_next = Sysstat.Cpu.sample_per_core () in
     let cpu = Sysstat.Cpu.compute ~prev:t.cpu_prev ~next:cpu_next in
+    let cpu_per_core =
+      Array.map2
+        (fun p n -> Sysstat.Cpu.compute ~prev:p ~next:n)
+        t.cpu_per_core_prev cpu_per_core_next
+    in
     let memory = Sysstat.Mem.sample () in
     let proc_next = Sysstat.Proc.Self.sample () in
     let process =
@@ -88,9 +103,11 @@ let update (t : t) ~(dt : float) : t =
     Charts.Sparkline.push t.sparkline_mem (mem_used_percent memory);
     {
       cpu;
+      cpu_per_core;
       memory;
       process;
       cpu_prev = cpu_next;
+      cpu_per_core_prev = cpu_per_core_next;
       proc_prev = proc_next;
       num_cores = t.num_cores;
       sparkline_cpu = t.sparkline_cpu;
@@ -211,6 +228,57 @@ let view_process (proc : Sysstat.Proc.Self.stats) =
         ];
     ]
 
+let view_per_core_cpu (cpu_per_core : Sysstat.Cpu.stats array) =
+  let num_cores = Array.length cpu_per_core in
+  if num_cores = 0 then box ~size:{ width = px 0; height = px 0 } []
+  else
+    let cores = Array.to_list (Array.mapi (fun i s -> (i, s)) cpu_per_core) in
+    let rec chunk_pairs = function
+      | [] -> []
+      | [ x ] -> [ [ x ] ]
+      | x :: y :: rest -> [ x; y ] :: chunk_pairs rest
+    in
+    let rows = chunk_pairs cores in
+    box ~flex_direction:Column ~gap:(gap 0)
+      ~size:{ width = pct 100; height = auto }
+      [
+        text ~style:(Ansi.Style.make ~bold:true ()) "Cores";
+        box ~flex_direction:Column ~gap:(gap 0)
+          ~size:{ width = pct 100; height = auto }
+          (List.mapi
+             (fun row_idx row ->
+               box
+                 ~key:(Printf.sprintf "core-row-%d" row_idx)
+                 ~flex_direction:Row ~gap:(gap 1)
+                 ~size:{ width = pct 100; height = auto }
+                 (List.map
+                    (fun (i, (stats : Sysstat.Cpu.stats)) ->
+                      let total = stats.user +. stats.system in
+                      let color =
+                        if total > 80. then Ansi.Color.red
+                        else if total > 50. then Ansi.Color.yellow
+                        else Ansi.Color.green
+                      in
+                      box
+                        ~key:(Printf.sprintf "core-%d" i)
+                        ~flex_direction:Row ~gap:(gap 0) ~align_items:Center
+                        ~size:{ width = pct 50; height = auto }
+                        [
+                          text ~style:muted (Printf.sprintf "%d:" i);
+                          canvas
+                            ~draw:(fun grid ~width ~height ->
+                              draw_progress_bar grid ~width ~height ~value:total
+                                ~max_value:100. ~fill_color:color)
+                            ~size:{ width = pct 70; height = px 1 }
+                            ();
+                          text
+                            ~style:(Ansi.Style.make ~fg:color ())
+                            (Printf.sprintf "%2.0f" total);
+                        ])
+                    row))
+             rows);
+      ]
+
 let view_memory_detail (mem : Sysstat.Mem.t) =
   box ~flex_direction:Column ~gap:(gap 1)
     ~size:{ width = pct 100; height = auto }
@@ -246,6 +314,7 @@ let view (t : t) =
       view_cpu_bar t.cpu;
       view_mem_bar t.memory;
       view_sparklines ~sparkline_cpu:t.sparkline_cpu ~sparkline_mem:t.sparkline_mem;
+      view_per_core_cpu t.cpu_per_core;
       view_memory_detail t.memory;
       view_process t.process;
     ]
