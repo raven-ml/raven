@@ -16,11 +16,11 @@
 
 (library
  (name nx_oxcaml)
+  (foreign_stubs
+  (language c)
+  (names ba_stubs simd_stubs))
  (public_name nx-oxcaml)
  (implements nx_backend)
  (modules
-  (:standard \ simd_neon simd_sse))
- (foreign_stubs
-  (language c)
-  (names simd_stubs))
- (libraries stdlib_stable stdlib_upstream_compatible))
+ (:standard \ simd_neon simd_sse))
+ (libraries nx.core nx-buffer stdlib_stable stdlib_upstream_compatible))

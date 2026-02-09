@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Import
+open Nx_buffer
 
 type context = { pool : Parallel.pool }
 
@@ -976,10 +977,32 @@ let op_reduce_min (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
 let op_associative_scan ~axis:_ ~op:_ _ =
   Error.invalid ~op:"op_associative_scan" ~what:"not implemented" ()
 
-let op_const_scalar _ _ _ =
+  
+  let op_const_scalar  _ _ =
   Error.invalid ~op:"op_const_scalar" ~what:"not implemented" ()
 
-let from_host _ _ = Error.invalid ~op:"from_host" ~what:"not implemented" ()
+  
+let from_host (type a b) ctx (array : (a, b, c_layout) Bigarray.Array1.t) : (a, b) t =
+  let dtype = Dtype.of_buffer_kind (Array1.kind array) in
+  let size = Array1.dim array in
+  (* Create a view for the 1D array *)
+  let shape = Symbolic_shape.of_ints [| size |] in
+  let view = View.create shape in
+  match dtype with
+  | Dtype.Float64 ->
+      let unboxed_array = (Array.ba_to_unboxed_float_array array) in
+      { context = ctx; dtype; buffer = Float64 unboxed_array; view }
+  | Dtype.Float32 ->
+    let unboxed_array = (Array.ba_to_unboxed_float32_array array) in
+    { context = ctx; dtype; buffer = Float32 unboxed_array; view }
+  | Dtype.Int64 ->
+    let unboxed_array = (Array.ba_to_unboxed_int64_array array) in
+    { context = ctx; dtype; buffer = Int64 unboxed_array; view }
+  | Dtype.Int32 ->
+    let unboxed_array = (Array.ba_to_unboxed_int32_array array) in
+    { context = ctx; dtype; buffer = Int32 unboxed_array; view }
+  | _ -> Error.invalid ~op:"from_host" ~what:"unsupported dtype" ()
+
 let op_expand x shape = { x with view = View.expand x.view shape }
 let op_reshape x shape = { x with view = View.reshape x.view shape }
 let op_permute _ _ = Error.invalid ~op:"op_permute" ~what:"not implemented" ()
