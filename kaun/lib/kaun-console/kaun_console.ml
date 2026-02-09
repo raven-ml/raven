@@ -37,6 +37,12 @@ let divider () =
     [ text " " ]
 
 let view m =
+  (* Convert Metric_store.best_value to Imp_info.best_metric *)
+  let best_metrics =
+    Metric_store.best_metrics m.store
+    |> List.map (fun (tag, (bv : Metric_store.best_value)) ->
+           (tag, ({ step = bv.step; value = bv.value } : Imp_info.best_metric)))
+  in
   box ~flex_direction:Column
     ~size:{ width = pct 100; height = pct 100 }
     [
@@ -48,7 +54,7 @@ let view m =
           (* Left column: imp info *)
           scroll_box ~scroll_y:true ~scroll_x:false
             ~size:{ width = pct 33; height = pct 100 }
-            [ Imp_info.view () ];
+            [ Imp_info.view ~best_metrics ];
           divider ();
           (* Middle column: metrics *)
           scroll_box ~scroll_y:false ~scroll_x:false
