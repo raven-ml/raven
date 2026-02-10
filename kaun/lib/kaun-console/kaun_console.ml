@@ -14,10 +14,13 @@ module Footer = Kaun_console_components.Footer
 module Metrics = Kaun_console_components.Metrics
 module Imp_info = Kaun_console_components.Imp_info
 module Sys_panel = Kaun_console_components.Sys_panel
+module Splash = Kaun_console_components.Splash
 
 (* ───── Model ───── *)
 
 type model = {
+  loading : bool;
+  loading_time : float;
   run_id : string;
   store : Metric_store.t;
   stream : Run.event_stream;
@@ -36,7 +39,7 @@ let divider () =
     ~background:(Ansi.Color.grayscale ~level:8)
     [ text " " ]
 
-let view m =
+let view_main m =
   (* Convert Metric_store.best_value to Imp_info.best_metric *)
   let best_metrics =
     Metric_store.best_metrics m.store
@@ -77,6 +80,8 @@ let view m =
       Footer.view ();
     ]
 
+let view m = if m.loading then Splash.view () else view_main m
+
 (* ───── TEA Core ───── *)
 
 let get_initial_terminal_height () : int =
@@ -100,16 +105,40 @@ let init ~run =
   let initial_height = get_initial_terminal_height () in
   (* Initialize system panel *)
   let sys_panel = Sys_panel.create () in
-  ( { run_id; store; stream; screen_height = initial_height; current_batch = 0; sys_panel },
+  ( {
+      loading = true;
+      loading_time = 0.0;
+      run_id;
+      store;
+      stream;
+      screen_height = initial_height;
+      current_batch = 0;
+      sys_panel;
+    },
     Cmd.none )
+
+let splash_duration = 1.5
 
 let update msg m =
   match msg with
   | Tick dt ->
-      let new_events = Run.read_events m.stream in
-      Metric_store.update m.store new_events;
-      let sys_panel = Sys_panel.update m.sys_panel ~dt in
-      ({ m with store = m.store; sys_panel }, Cmd.none)
+      (* Handle splash screen transition *)
+      let new_loading_time =
+        if m.loading then m.loading_time +. dt else m.loading_time
+      in
+      let should_finish_loading = new_loading_time >= splash_duration in
+      let m =
+        if should_finish_loading then
+          { m with loading = false; loading_time = 0.0 }
+        else { m with loading_time = new_loading_time }
+      in
+      (* Don't update metrics while showing splash screen *)
+      if m.loading then (m, Cmd.none)
+      else
+        let new_events = Run.read_events m.stream in
+        Metric_store.update m.store new_events;
+        let sys_panel = Sys_panel.update m.sys_panel ~dt in
+        ({ m with store = m.store; sys_panel }, Cmd.none)
   | Resize (_width, height) ->
       (* Recalculate current batch to ensure it's still valid after resize *)
       let latest = Metric_store.latest_metrics m.store in
