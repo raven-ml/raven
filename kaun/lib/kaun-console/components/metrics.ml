@@ -24,19 +24,32 @@ let grid_style =
 (* ───── Constants ───── *)
 
 let graph_height = 14
+let min_graph_width = 25
 let header_height = 3
 let footer_height = 1
 let metrics_padding = 2
+let metrics_width_ratio = 0.66
 
 (* ───── Helpers ───── *)
 
-(** Calculate how many graphs fit in available height *)
-let calculate_graphs_per_batch (screen_height : int) : int =
+(** Calculate how many columns fit in available width *)
+let calculate_columns (screen_width : int) : int =
+  let metrics_width = int_of_float (float_of_int screen_width *. metrics_width_ratio) in
+  if metrics_width < min_graph_width * 2 then 1 else 2
+
+(** Calculate how many rows of graphs fit in available height *)
+let calculate_rows_per_batch (screen_height : int) : int =
   let available_height =
     screen_height - header_height - footer_height - (metrics_padding * 2)
   in
   if available_height < graph_height then 1
   else max 1 (available_height / graph_height)
+
+(** Calculate how many graphs fit in available space *)
+let calculate_graphs_per_batch ~width ~height : int =
+  let columns = calculate_columns width in
+  let rows = calculate_rows_per_batch height in
+  rows * columns
 
 (* ───── Chart Drawing ───── *)
 
@@ -73,10 +86,11 @@ let draw_metric_chart _tag history grid ~width ~height =
     in
     ignore (Charts.draw chart grid ~width ~height)
 
-let view_metric_chart ~history_for_tag tag =
+let view_metric_chart ~history_for_tag ~columns tag =
   let history = history_for_tag tag in
+  let width_pct = if columns = 1 then 100 else 49 in
   box ~border:true ~title:tag ~padding:(padding 0)
-    ~size:{ width = pct 100; height = px 14 }
+    ~size:{ width = pct width_pct; height = px 14 }
     [
       canvas
         ~draw:(fun grid ~width ~height ->
@@ -91,9 +105,21 @@ let view_metric_chart ~history_for_tag tag =
 type 'a view_params = {
   latest_metrics : (string * 'a) list;
   history_for_tag : string -> (int * float) list;
+  screen_width : int;
   screen_height : int;
   current_batch : int;
 }
+
+(** Chunk a list into groups of n *)
+let rec chunk_by n lst =
+  if lst = [] then []
+  else
+    let rec take k acc = function
+      | [] -> (List.rev acc, [])
+      | x :: xs -> if k = 0 then (List.rev acc, x :: xs) else take (k - 1) (x :: acc) xs
+    in
+    let group, rest = take n [] lst in
+    group :: chunk_by n rest
 
 let view (params : _ view_params) =
   let latest = params.latest_metrics in
@@ -101,8 +127,12 @@ let view (params : _ view_params) =
     box ~padding:(padding 1)
       [ text ~style:hint_style "  Waiting for metrics..." ]
   else
+    let columns = calculate_columns params.screen_width in
     let total_metrics = List.length latest in
-    let graphs_per_batch = calculate_graphs_per_batch params.screen_height in
+    let graphs_per_batch =
+      calculate_graphs_per_batch ~width:params.screen_width
+        ~height:params.screen_height
+    in
     let total_batches =
       if total_metrics = 0 then 1
       else (total_metrics + graphs_per_batch - 1) / graphs_per_batch
@@ -113,8 +143,9 @@ let view (params : _ view_params) =
     let visible_metrics =
       List.mapi (fun i (tag, metric) -> (i, tag, metric)) latest
       |> List.filter (fun (i, _, _) -> i >= start_idx && i < end_idx)
-      |> List.map (fun (_, tag, metric) -> (tag, metric))
+      |> List.map (fun (_, tag, _metric) -> tag)
     in
+    let rows = chunk_by columns visible_metrics in
     box ~flex_direction:Column ~padding:(padding 1) ~gap:(gap 1)
       [
         (if total_batches > 1 then
@@ -130,8 +161,15 @@ let view (params : _ view_params) =
            box ~flex_direction:Row
              [ text ~style:(Ansi.Style.make ~bold:true ()) "Metrics:" ]);
         box ~flex_direction:Column ~gap:(gap 1)
-          (List.map
-             (fun (tag, _metric) ->
-               view_metric_chart ~history_for_tag:params.history_for_tag tag)
-             visible_metrics);
+          (List.mapi
+             (fun row_idx row ->
+               box ~key:(Printf.sprintf "row-%d" row_idx) ~flex_direction:Row
+                 ~gap:(gap 1)
+                 ~size:{ width = pct 100; height = auto }
+                 (List.map
+                    (fun tag ->
+                      view_metric_chart ~history_for_tag:params.history_for_tag
+                        ~columns tag)
+                    row))
+             rows);
       ]

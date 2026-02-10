@@ -24,6 +24,7 @@ type model = {
   run_id : string;
   store : Metric_store.t;
   stream : Run.event_stream;
+  screen_width : int;
   screen_height : int;
   current_batch : int;
   sys_panel : Sys_panel.t;
@@ -54,28 +55,23 @@ let view_main m =
       box ~flex_direction:Row ~flex_grow:1.0
         ~size:{ width = pct 100; height = pct 100 }
         [
-          (* Left column: empty for now *)
-          (* scroll_box ~scroll_y:true ~scroll_x:false
-               ~size:{ width = pct 33; height = pct 100 }
-               [ Imp_info.view ~best_metrics ]; *)
-          box ~size:{ width = pct 33; height = pct 100 } [];
-          divider ();
-          (* Middle column: metrics *)
+          (* Left column: metrics (2/3 width) *)
           scroll_box ~scroll_y:false ~scroll_x:false
-            ~size:{ width = pct 34; height = pct 100 }
+            ~size:{ width = pct 66; height = pct 100 }
             [
               Metrics.view
                 {
                   latest_metrics = Metric_store.latest_metrics m.store;
                   history_for_tag = Metric_store.history_for_tag m.store;
+                  screen_width = m.screen_width;
                   screen_height = m.screen_height;
                   current_batch = m.current_batch;
                 };
             ];
           divider ();
-          (* Right column: sys panel *)
+          (* Right column: sys panel (1/3 width) *)
           scroll_box ~scroll_y:true ~scroll_x:false
-            ~size:{ width = pct 33; height = pct 100 }
+            ~size:{ width = pct 34; height = pct 100 }
             [ Sys_panel.view m.sys_panel ];
         ];
       Footer.view ();
@@ -85,15 +81,15 @@ let view m = if m.loading then Splash.view () else view_main m
 
 (* ───── TEA Core ───── *)
 
-let get_initial_terminal_height () : int =
+let get_initial_terminal_size () : int * int =
   try
     let ic = Unix.open_process_in "stty size 2>/dev/null" in
     let line = input_line ic in
     ignore (Unix.close_process_in ic);
     match String.split_on_char ' ' line with
-    | rows :: _ -> int_of_string rows
-    | _ -> 24
-  with _ -> 24
+    | [ rows; cols ] -> (int_of_string cols, int_of_string rows)
+    | _ -> (80, 24)
+  with _ -> (80, 24)
 
 let init ~run =
   let run_id = Run.run_id run in
@@ -102,8 +98,8 @@ let init ~run =
   (* Load initial events *)
   let initial_events = Run.read_events stream in
   Metric_store.update store initial_events;
-  (* Get actual terminal height at startup *)
-  let initial_height = get_initial_terminal_height () in
+  (* Get actual terminal size at startup *)
+  let initial_width, initial_height = get_initial_terminal_size () in
   (* Initialize system panel *)
   let sys_panel = Sys_panel.create () in
   ( {
@@ -112,6 +108,7 @@ let init ~run =
       run_id;
       store;
       stream;
+      screen_width = initial_width;
       screen_height = initial_height;
       current_batch = 0;
       sys_panel;
@@ -140,22 +137,25 @@ let update msg m =
         Metric_store.update m.store new_events;
         let sys_panel = Sys_panel.update m.sys_panel ~dt in
         ({ m with store = m.store; sys_panel }, Cmd.none)
-  | Resize (_width, height) ->
+  | Resize (width, height) ->
       (* Recalculate current batch to ensure it's still valid after resize *)
       let latest = Metric_store.latest_metrics m.store in
       let total_metrics = List.length latest in
-      let graphs_per_batch = Metrics.calculate_graphs_per_batch height in
+      let graphs_per_batch = Metrics.calculate_graphs_per_batch ~width ~height in
       let total_batches =
         if total_metrics = 0 then 1
         else (total_metrics + graphs_per_batch - 1) / graphs_per_batch
       in
       let max_batch = max 0 (total_batches - 1) in
       let current_batch = min m.current_batch max_batch in
-      ({ m with screen_height = height; current_batch }, Cmd.none)
+      ({ m with screen_width = width; screen_height = height; current_batch }, Cmd.none)
   | Next_batch ->
       let latest = Metric_store.latest_metrics m.store in
       let total_metrics = List.length latest in
-      let graphs_per_batch = Metrics.calculate_graphs_per_batch m.screen_height in
+      let graphs_per_batch =
+        Metrics.calculate_graphs_per_batch ~width:m.screen_width
+          ~height:m.screen_height
+      in
       let total_batches =
         if total_metrics = 0 then 1
         else (total_metrics + graphs_per_batch - 1) / graphs_per_batch
