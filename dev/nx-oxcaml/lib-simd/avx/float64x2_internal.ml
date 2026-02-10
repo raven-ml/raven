@@ -12,88 +12,87 @@ type t = float64x2#
 (* ───── Arithmetic ───── *)
 
 external add : t -> t -> t @@ portable
-  = "caml_vec128_unreachable" "caml_neon_float64x2_add"
+  = "caml_sse2_unreachable" "caml_sse2_float64x2_add"
   [@@noalloc] [@@unboxed] [@@builtin]
 
 external sub : t -> t -> t @@ portable
-  = "caml_vec128_unreachable" "caml_neon_float64x2_sub"
+  = "caml_sse2_unreachable" "caml_sse2_float64x2_sub"
   [@@noalloc] [@@unboxed] [@@builtin]
 
 external mul : t -> t -> t @@ portable
-  = "caml_vec128_unreachable" "caml_neon_float64x2_mul"
+  = "caml_sse2_unreachable" "caml_sse2_float64x2_mul"
   [@@noalloc] [@@unboxed] [@@builtin]
 
 external div : t -> t -> t @@ portable
-  = "caml_vec128_unreachable" "caml_neon_float64x2_div"
+  = "caml_sse2_unreachable" "caml_sse2_float64x2_div"
   [@@noalloc] [@@unboxed] [@@builtin]
 
 external sqrt : t -> t @@ portable
-  = "caml_vec128_unreachable" "caml_neon_float64x2_sqrt"
+  = "caml_sse2_unreachable" "caml_sse2_float64x2_sqrt"
   [@@noalloc] [@@unboxed] [@@builtin]
 
 external hadd : t -> t -> t @@ portable
-  = "caml_vec128_unreachable" "caml_neon_float64x2_hadd"
+  = "caml_sse2_unreachable" "caml_sse3_float64x2_hadd"
   [@@noalloc] [@@unboxed] [@@builtin]
-
-(* hsub, addsub, dp: Not available on ARM64 NEON.
-   These are SSE3/SSE4.1 specific instructions. *)
 
 (* ───── Min/Max ───── *)
 
 external min : t -> t -> t @@ portable
-  = "caml_vec128_unreachable" "caml_neon_float64x2_min"
+  = "caml_sse2_unreachable" "caml_sse2_float64x2_min"
   [@@noalloc] [@@unboxed] [@@builtin]
 
 external max : t -> t -> t @@ portable
-  = "caml_vec128_unreachable" "caml_neon_float64x2_max"
+  = "caml_sse2_unreachable" "caml_sse2_float64x2_max"
   [@@noalloc] [@@unboxed] [@@builtin]
 
 (* ───── Comparison ───── *)
 
 external cmeq : (t[@unboxed]) -> (t[@unboxed]) -> (int64x2#[@unboxed]) @@ portable
-  = "caml_vec128_unreachable" "caml_neon_float64x2_cmeq"
+  = "caml_sse2_unreachable" "caml_sse2_float64x2_cmpeq"
   [@@noalloc] [@@builtin]
 
 external cmge : (t[@unboxed]) -> (t[@unboxed]) -> (int64x2#[@unboxed]) @@ portable
-  = "caml_vec128_unreachable" "caml_neon_float64x2_cmge"
+  = "caml_sse2_unreachable" "caml_sse2_float64x2_cmpge"
   [@@noalloc] [@@builtin]
 
 external cmgt : (t[@unboxed]) -> (t[@unboxed]) -> (int64x2#[@unboxed]) @@ portable
-  = "caml_vec128_unreachable" "caml_neon_float64x2_cmgt"
+  = "caml_sse2_unreachable" "caml_sse2_float64x2_cmpgt"
   [@@noalloc] [@@builtin]
 
 external cmle : (t[@unboxed]) -> (t[@unboxed]) -> (int64x2#[@unboxed]) @@ portable
-  = "caml_vec128_unreachable" "caml_neon_float64x2_cmle"
+  = "caml_sse2_unreachable" "caml_sse2_float64x2_cmple"
   [@@noalloc] [@@builtin]
 
 external cmlt : (t[@unboxed]) -> (t[@unboxed]) -> (int64x2#[@unboxed]) @@ portable
-  = "caml_vec128_unreachable" "caml_neon_float64x2_cmlt"
+  = "caml_sse2_unreachable" "caml_sse2_float64x2_cmplt"
   [@@noalloc] [@@builtin]
 
-  external mul_add : (t[@unboxed]) -> (t[@unboxed]) -> (t[@unboxed]) -> (t[@unboxed]) @@ portable
-  = "caml_vec128_unreachable" "caml_neon_float64x2_fma"
+(* ───── FMA ───── *)
+
+external mul_add : (t[@unboxed]) -> (t[@unboxed]) -> (t[@unboxed]) -> (t[@unboxed]) @@ portable
+  = "caml_sse2_unreachable" "caml_fma_float64x2_fmadd"
   [@@noalloc]
 
 (* ───── Rounding ───── *)
 
 external round_near : (t[@unboxed]) -> (t[@unboxed]) @@ portable
-  = "caml_vec128_unreachable" "caml_neon_float64x2_round_near"
+  = "caml_sse2_unreachable" "caml_sse41_float64x2_round_near"
   [@@noalloc] [@@builtin]
 
 external round_current : (t[@unboxed]) -> (t[@unboxed]) @@ portable
-  = "caml_vec128_unreachable" "caml_neon_float64x2_round_current"
+  = "caml_sse2_unreachable" "caml_sse41_float64x2_round_current"
   [@@noalloc] [@@builtin]
 
 (* ───── Conversions ───── *)
 
 external cvt_int64x2 : t -> int64x2# @@ portable
-  = "caml_vec128_unreachable" "caml_neon_cvt_float64x2_to_int64x2"
+  = "caml_sse2_unreachable" "caml_avx512_cvt_float64x2_to_int64x2"
   [@@noalloc] [@@unboxed] [@@builtin]
 
 external cvtt_int64x2 : t -> int64x2# @@ portable
-  = "caml_vec128_unreachable" "caml_neon_cvtt_float64x2_to_int64x2"
+  = "caml_sse2_unreachable" "caml_avx512_cvtt_float64x2_to_int64x2"
   [@@noalloc] [@@unboxed] [@@builtin]
 
 external cvt_float32x4 : t -> float32x4# @@ portable
-  = "caml_vec128_unreachable" "caml_neon_cvt_float64x2_to_float32x2"
+  = "caml_sse2_unreachable" "caml_sse2_cvt_float64x2_to_float32x2"
   [@@noalloc] [@@unboxed] [@@builtin]
