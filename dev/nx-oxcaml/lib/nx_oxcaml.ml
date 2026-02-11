@@ -976,7 +976,7 @@ let op_reduce_min (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
 
 let op_associative_scan ~axis:_ ~op:_ _ =
   Error.invalid ~op:"op_associative_scan" ~what:"not implemented" ()
-
+  
   
   let op_const_scalar  _ _ =
   Error.invalid ~op:"op_const_scalar" ~what:"not implemented" ()
@@ -1005,10 +1005,156 @@ let from_host (type a b) ctx (array : (a, b, c_layout) Bigarray.Array1.t) : (a, 
 
 let op_expand x shape = { x with view = View.expand x.view shape }
 let op_reshape x shape = { x with view = View.reshape x.view shape }
-let op_permute _ _ = Error.invalid ~op:"op_permute" ~what:"not implemented" ()
+let op_permute x axes = { x with view = View.permute x.view axes }
 let op_shrink _ _ = Error.invalid ~op:"op_shrink" ~what:"not implemented" ()
 let op_flip _ _ = Error.invalid ~op:"op_flip" ~what:"not implemented" ()
-let op_pad _ _ _ = Error.invalid ~op:"op_pad" ~what:"not implemented" ()
+let op_pad (type a b) (x : (a, b) t) (padding : (int * int) array)
+    (fill_value : a) : (a, b) t =
+  let in_view = x.view in
+  let in_shape = shape in_view in
+  let ndim = Array.length in_shape in
+  if Array.length padding <> ndim then
+    Error.invalid ~op:"op_pad" ~what:"padding rank mismatch" ();
+  let out_shape =
+    Array.init ndim (fun i ->
+        let before, after = padding.(i) in
+        if before < 0 || after < 0 then
+          Error.invalid ~op:"op_pad" ~what:"padding values must be non-negative"
+            ();
+        in_shape.(i) + before + after)
+  in
+  let out_view = View.create (Symbolic_shape.of_ints out_shape) in
+  let in_numel = numel in_view in
+  let out_numel = numel out_view in
+  let in_offset = View.offset in_view in
+  let out_offset = View.offset out_view in
+  let in_strides = View.strides in_view in
+  let out_strides = View.strides out_view in
+  let md_index = Array.make ndim 0 in
+  match x with
+  | { dtype = Dtype.Float64; buffer = Float64 in_arr; context; _ } ->
+      let fill_value = Float_u.of_float fill_value in
+      let out_arr = Array.make_float64 out_numel in
+      for i = 0 to out_numel - 1 do
+        Array.unsafe_set out_arr i fill_value
+      done;
+      for k = 0 to in_numel - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let v = Array.unsafe_get in_arr src_lin in
+        for d = 0 to ndim - 1 do
+          let before, _ = padding.(d) in
+          md_index.(d) <- md_index.(d) + before
+        done;
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set out_arr dst_lin v
+      done;
+      { dtype = Dtype.Float64; buffer = Float64 out_arr; view = out_view; context }
+  | { dtype = Dtype.Float32; buffer = Float32 in_arr; context; _ } ->
+      let fill_value = Float32_u.of_float (Float_u.of_float fill_value) in
+      let out_arr = Array.make_float32 out_numel in
+      for i = 0 to out_numel - 1 do
+        Array.unsafe_set out_arr i fill_value
+      done;
+      for k = 0 to in_numel - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let v = Array.unsafe_get in_arr src_lin in
+        for d = 0 to ndim - 1 do
+          let before, _ = padding.(d) in
+          md_index.(d) <- md_index.(d) + before
+        done;
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set out_arr dst_lin v
+      done;
+      { dtype = Dtype.Float32; buffer = Float32 out_arr; view = out_view; context }
+  | { dtype = Dtype.Int8; buffer = Int8 in_arr; context; _ } ->
+      let fill_value = Int8_u.of_int fill_value in
+      let out_arr = Array.make_int8 out_numel in
+      for i = 0 to out_numel - 1 do
+        Array.unsafe_set out_arr i fill_value
+      done;
+      for k = 0 to in_numel - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let v = Array.unsafe_get in_arr src_lin in
+        for d = 0 to ndim - 1 do
+          let before, _ = padding.(d) in
+          md_index.(d) <- md_index.(d) + before
+        done;
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set out_arr dst_lin v
+      done;
+      { dtype = Dtype.Int8; buffer = Int8 out_arr; view = out_view; context }
+  | { dtype = Dtype.Int16; buffer = Int16 in_arr; context; _ } ->
+      let fill_value = Int16_u.of_int fill_value in
+      let out_arr = Array.make_int16 out_numel in
+      for i = 0 to out_numel - 1 do
+        Array.unsafe_set out_arr i fill_value
+      done;
+      for k = 0 to in_numel - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let v = Array.unsafe_get in_arr src_lin in
+        for d = 0 to ndim - 1 do
+          let before, _ = padding.(d) in
+          md_index.(d) <- md_index.(d) + before
+        done;
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set out_arr dst_lin v
+      done;
+      { dtype = Dtype.Int16; buffer = Int16 out_arr; view = out_view; context }
+  | { dtype = Dtype.Int32; buffer = Int32 in_arr; context; _ } ->
+      let fill_value = Int32_u.of_int32 fill_value in
+      let out_arr = Array.make_int32 out_numel in
+      for i = 0 to out_numel - 1 do
+        Array.unsafe_set out_arr i fill_value
+      done;
+      for k = 0 to in_numel - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let v = Array.unsafe_get in_arr src_lin in
+        for d = 0 to ndim - 1 do
+          let before, _ = padding.(d) in
+          md_index.(d) <- md_index.(d) + before
+        done;
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set out_arr dst_lin v
+      done;
+      { dtype = Dtype.Int32; buffer = Int32 out_arr; view = out_view; context }
+  | { dtype = Dtype.Int64; buffer = Int64 in_arr; context; _ } ->
+      let fill_value = Int64_u.of_int64 fill_value in
+      let out_arr = Array.make_int64 out_numel in
+      for i = 0 to out_numel - 1 do
+        Array.unsafe_set out_arr i fill_value
+      done;
+      for k = 0 to in_numel - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let v = Array.unsafe_get in_arr src_lin in
+        for d = 0 to ndim - 1 do
+          let before, _ = padding.(d) in
+          md_index.(d) <- md_index.(d) + before
+        done;
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set out_arr dst_lin v
+      done;
+      { dtype = Dtype.Int64; buffer = Int64 out_arr; view = out_view; context }
+  | { dtype = Dtype.Bool; buffer = Bool in_arr; context; _ } ->
+      let out_arr = Array.make out_numel fill_value in
+      for k = 0 to in_numel - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let v = Array.unsafe_get in_arr src_lin in
+        for d = 0 to ndim - 1 do
+          let before, _ = padding.(d) in
+          md_index.(d) <- md_index.(d) + before
+        done;
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set out_arr dst_lin v
+      done;
+      { dtype = Dtype.Bool; buffer = Bool out_arr; view = out_view; context }
+  | _ -> .
 let op_cat _ _ = Error.invalid ~op:"op_cat" ~what:"not implemented" ()
 let op_cast _ _ = Error.invalid ~op:"op_cast" ~what:"not implemented" ()
 
@@ -1030,9 +1176,361 @@ let op_scatter ?mode:_ ?unique_indices:_ _ _ _ _ =
 let op_unfold ?out:_ _ ~kernel_size:_ ~stride:_ ~dilation:_ ~padding:_ =
   Error.invalid ~op:"op_unfold" ~what:"not implemented" ()
 
-let op_fold ?out:_ _ ~output_size:_ ~kernel_size:_ ~stride:_ ~dilation:_
-    ~padding:_ =
-  Error.invalid ~op:"op_fold" ~what:"not implemented" ()
+let op_fold :
+    type a b.
+    ?out:(a, b) t ->
+    (a, b) t ->
+    output_size:int array ->
+    kernel_size:int array ->
+    stride:int array ->
+    dilation:int array ->
+    padding:(int * int) array ->
+    (a, b) t =
+ fun ?out (x : (a, b) t) ~output_size ~kernel_size ~stride ~dilation ~padding ->
+  let in_view = x.view in
+  let in_shape = shape in_view in
+  if Array.length in_shape <> 3 then
+    Error.invalid ~op:"op_fold" ~what:"input rank"
+      ~reason:"expected input shape [N, C * prod(kernel_size), L]" ();
+
+  let spatial_ndim = Array.length output_size in
+  if spatial_ndim = 0 then
+    Error.invalid ~op:"op_fold" ~what:"output_size"
+      ~reason:"must contain at least one spatial dimension" ();
+  if
+    not
+      (Array.length kernel_size = spatial_ndim
+      && Array.length stride = spatial_ndim
+      && Array.length dilation = spatial_ndim
+      && Array.length padding = spatial_ndim)
+  then
+    Error.invalid ~op:"op_fold" ~what:"parameter lengths"
+      ~reason:"output_size/kernel_size/stride/dilation/padding must match" ();
+
+  let n = in_shape.(0) in
+  let c_times_k = in_shape.(1) in
+  let num_blocks = in_shape.(2) in
+
+  let kernel_elems = ref 1 in
+  for i = 0 to spatial_ndim - 1 do
+    if output_size.(i) <= 0 then
+      Error.invalid ~op:"op_fold" ~what:"output_size"
+        ~reason:"all output dimensions must be positive" ();
+    if kernel_size.(i) <= 0 then
+      Error.invalid ~op:"op_fold" ~what:"kernel_size"
+        ~reason:"all kernel dimensions must be positive" ();
+    if stride.(i) <= 0 then
+      Error.invalid ~op:"op_fold" ~what:"stride"
+        ~reason:"all stride dimensions must be positive" ();
+    if dilation.(i) <= 0 then
+      Error.invalid ~op:"op_fold" ~what:"dilation"
+        ~reason:"all dilation dimensions must be positive" ();
+    let pad_before, pad_after = padding.(i) in
+    if pad_before < 0 || pad_after < 0 then
+      Error.invalid ~op:"op_fold" ~what:"padding"
+        ~reason:"padding must be non-negative" ();
+    kernel_elems := !kernel_elems * kernel_size.(i)
+  done;
+
+  if c_times_k mod !kernel_elems <> 0 then
+    Error.invalid ~op:"op_fold" ~what:"input shape"
+      ~reason:"C * prod(kernel_size) dimension mismatch" ();
+  let channels = c_times_k / !kernel_elems in
+
+  let blocks_shape = Array.make spatial_ndim 0 in
+  for i = 0 to spatial_ndim - 1 do
+    let pad_before, pad_after = padding.(i) in
+    let eff_kernel = (dilation.(i) * (kernel_size.(i) - 1)) + 1 in
+    let numer = output_size.(i) + pad_before + pad_after - eff_kernel in
+    if numer < 0 then
+      Error.invalid ~op:"op_fold" ~what:"output_size/padding/kernel_size"
+        ~reason:"effective kernel does not fit output spatial dimension" ();
+    blocks_shape.(i) <- (numer / stride.(i)) + 1
+  done;
+  let expected_blocks = Shape.numel blocks_shape in
+  if expected_blocks <> num_blocks then
+    Error.invalid ~op:"op_fold" ~what:"input shape"
+      ~reason:"L dimension does not match computed number of sliding blocks" ();
+
+  let out_shape = Array.append [| n; channels |] output_size in
+  let out_numel = Shape.numel out_shape in
+  let out_t : (a, b) t =
+    match out with
+    | Some out_t ->
+        if shape out_t.view <> out_shape then
+          Error.invalid ~op:"op_fold" ~what:"out shape mismatch" ();
+        out_t
+    | None ->
+        let out_t : (a, b) t = op_buffer x.context x.dtype out_numel in
+        { out_t with view = View.reshape out_t.view (Symbolic_shape.of_ints out_shape) }
+  in
+
+  let in_offset = View.offset in_view in
+  let in_strides = View.strides in_view in
+  let out_view = out_t.view in
+  let out_offset = View.offset out_view in
+  let out_strides = View.strides out_view in
+  let block_coords = Array.make spatial_ndim 0 in
+  let kernel_coords = Array.make spatial_ndim 0 in
+  let out_spatial = Array.make spatial_ndim 0 in
+
+  match (x, out_t) with
+  | { dtype = Dtype.Float64; buffer = Float64 in_arr; _ }, { buffer = Float64 out_arr; _ } ->
+      let zero = Float_u.of_float 0.0 in
+      for i = 0 to out_numel - 1 do
+        Array.unsafe_set out_arr i zero
+      done;
+      for n_idx = 0 to n - 1 do
+        for b_idx = 0 to num_blocks - 1 do
+          Shape.unravel_index_into b_idx blocks_shape block_coords;
+          for c_idx = 0 to channels - 1 do
+            for k_idx = 0 to !kernel_elems - 1 do
+              Shape.unravel_index_into k_idx kernel_size kernel_coords;
+              let valid = ref true in
+              for d = 0 to spatial_ndim - 1 do
+                let pad_before, _ = padding.(d) in
+                let pos =
+                  (block_coords.(d) * stride.(d))
+                  - pad_before
+                  + (kernel_coords.(d) * dilation.(d))
+                in
+                out_spatial.(d) <- pos;
+                if pos < 0 || pos >= output_size.(d) then valid := false
+              done;
+              if !valid then (
+                let src_ch = (c_idx * !kernel_elems) + k_idx in
+                let src_lin =
+                  in_offset
+                  + (n_idx * in_strides.(0))
+                  + (src_ch * in_strides.(1))
+                  + (b_idx * in_strides.(2))
+                in
+                let dst_lin = ref (out_offset + (n_idx * out_strides.(0)) + (c_idx * out_strides.(1))) in
+                for d = 0 to spatial_ndim - 1 do
+                  dst_lin := !dst_lin + (out_spatial.(d) * out_strides.(d + 2))
+                done;
+                let prev = Array.unsafe_get out_arr !dst_lin in
+                let v = Array.unsafe_get in_arr src_lin in
+                Array.unsafe_set out_arr !dst_lin (Float_u.add prev v))
+            done
+          done
+        done
+      done;
+      out_t
+  | { dtype = Dtype.Float32; buffer = Float32 in_arr; _ }, { buffer = Float32 out_arr; _ } ->
+      let zero = Float32_u.of_int 0 in
+      for i = 0 to out_numel - 1 do
+        Array.unsafe_set out_arr i zero
+      done;
+      for n_idx = 0 to n - 1 do
+        for b_idx = 0 to num_blocks - 1 do
+          Shape.unravel_index_into b_idx blocks_shape block_coords;
+          for c_idx = 0 to channels - 1 do
+            for k_idx = 0 to !kernel_elems - 1 do
+              Shape.unravel_index_into k_idx kernel_size kernel_coords;
+              let valid = ref true in
+              for d = 0 to spatial_ndim - 1 do
+                let pad_before, _ = padding.(d) in
+                let pos =
+                  (block_coords.(d) * stride.(d))
+                  - pad_before
+                  + (kernel_coords.(d) * dilation.(d))
+                in
+                out_spatial.(d) <- pos;
+                if pos < 0 || pos >= output_size.(d) then valid := false
+              done;
+              if !valid then (
+                let src_ch = (c_idx * !kernel_elems) + k_idx in
+                let src_lin =
+                  in_offset
+                  + (n_idx * in_strides.(0))
+                  + (src_ch * in_strides.(1))
+                  + (b_idx * in_strides.(2))
+                in
+                let dst_lin = ref (out_offset + (n_idx * out_strides.(0)) + (c_idx * out_strides.(1))) in
+                for d = 0 to spatial_ndim - 1 do
+                  dst_lin := !dst_lin + (out_spatial.(d) * out_strides.(d + 2))
+                done;
+                let prev = Array.unsafe_get out_arr !dst_lin in
+                let v = Array.unsafe_get in_arr src_lin in
+                Array.unsafe_set out_arr !dst_lin (Float32_u.add prev v))
+            done
+          done
+        done
+      done;
+      out_t
+  | { dtype = Dtype.Int8; buffer = Int8 in_arr; _ }, { buffer = Int8 out_arr; _ } ->
+      let zero = Int8_u.of_int 0 in
+      for i = 0 to out_numel - 1 do
+        Array.unsafe_set out_arr i zero
+      done;
+      for n_idx = 0 to n - 1 do
+        for b_idx = 0 to num_blocks - 1 do
+          Shape.unravel_index_into b_idx blocks_shape block_coords;
+          for c_idx = 0 to channels - 1 do
+            for k_idx = 0 to !kernel_elems - 1 do
+              Shape.unravel_index_into k_idx kernel_size kernel_coords;
+              let valid = ref true in
+              for d = 0 to spatial_ndim - 1 do
+                let pad_before, _ = padding.(d) in
+                let pos =
+                  (block_coords.(d) * stride.(d))
+                  - pad_before
+                  + (kernel_coords.(d) * dilation.(d))
+                in
+                out_spatial.(d) <- pos;
+                if pos < 0 || pos >= output_size.(d) then valid := false
+              done;
+              if !valid then (
+                let src_ch = (c_idx * !kernel_elems) + k_idx in
+                let src_lin =
+                  in_offset
+                  + (n_idx * in_strides.(0))
+                  + (src_ch * in_strides.(1))
+                  + (b_idx * in_strides.(2))
+                in
+                let dst_lin = ref (out_offset + (n_idx * out_strides.(0)) + (c_idx * out_strides.(1))) in
+                for d = 0 to spatial_ndim - 1 do
+                  dst_lin := !dst_lin + (out_spatial.(d) * out_strides.(d + 2))
+                done;
+                let prev = Array.unsafe_get out_arr !dst_lin in
+                let v = Array.unsafe_get in_arr src_lin in
+                Array.unsafe_set out_arr !dst_lin (Int8_u.add prev v))
+            done
+          done
+        done
+      done;
+      out_t
+  | { dtype = Dtype.Int16; buffer = Int16 in_arr; _ }, { buffer = Int16 out_arr; _ } ->
+      let zero = Int16_u.of_int 0 in
+      for i = 0 to out_numel - 1 do
+        Array.unsafe_set out_arr i zero
+      done;
+      for n_idx = 0 to n - 1 do
+        for b_idx = 0 to num_blocks - 1 do
+          Shape.unravel_index_into b_idx blocks_shape block_coords;
+          for c_idx = 0 to channels - 1 do
+            for k_idx = 0 to !kernel_elems - 1 do
+              Shape.unravel_index_into k_idx kernel_size kernel_coords;
+              let valid = ref true in
+              for d = 0 to spatial_ndim - 1 do
+                let pad_before, _ = padding.(d) in
+                let pos =
+                  (block_coords.(d) * stride.(d))
+                  - pad_before
+                  + (kernel_coords.(d) * dilation.(d))
+                in
+                out_spatial.(d) <- pos;
+                if pos < 0 || pos >= output_size.(d) then valid := false
+              done;
+              if !valid then (
+                let src_ch = (c_idx * !kernel_elems) + k_idx in
+                let src_lin =
+                  in_offset
+                  + (n_idx * in_strides.(0))
+                  + (src_ch * in_strides.(1))
+                  + (b_idx * in_strides.(2))
+                in
+                let dst_lin = ref (out_offset + (n_idx * out_strides.(0)) + (c_idx * out_strides.(1))) in
+                for d = 0 to spatial_ndim - 1 do
+                  dst_lin := !dst_lin + (out_spatial.(d) * out_strides.(d + 2))
+                done;
+                let prev = Array.unsafe_get out_arr !dst_lin in
+                let v = Array.unsafe_get in_arr src_lin in
+                Array.unsafe_set out_arr !dst_lin (Int16_u.add prev v))
+            done
+          done
+        done
+      done;
+      out_t
+  | { dtype = Dtype.Int32; buffer = Int32 in_arr; _ }, { buffer = Int32 out_arr; _ } ->
+      let zero = Int32_u.of_int32 0l in
+      for i = 0 to out_numel - 1 do
+        Array.unsafe_set out_arr i zero
+      done;
+      for n_idx = 0 to n - 1 do
+        for b_idx = 0 to num_blocks - 1 do
+          Shape.unravel_index_into b_idx blocks_shape block_coords;
+          for c_idx = 0 to channels - 1 do
+            for k_idx = 0 to !kernel_elems - 1 do
+              Shape.unravel_index_into k_idx kernel_size kernel_coords;
+              let valid = ref true in
+              for d = 0 to spatial_ndim - 1 do
+                let pad_before, _ = padding.(d) in
+                let pos =
+                  (block_coords.(d) * stride.(d))
+                  - pad_before
+                  + (kernel_coords.(d) * dilation.(d))
+                in
+                out_spatial.(d) <- pos;
+                if pos < 0 || pos >= output_size.(d) then valid := false
+              done;
+              if !valid then (
+                let src_ch = (c_idx * !kernel_elems) + k_idx in
+                let src_lin =
+                  in_offset
+                  + (n_idx * in_strides.(0))
+                  + (src_ch * in_strides.(1))
+                  + (b_idx * in_strides.(2))
+                in
+                let dst_lin = ref (out_offset + (n_idx * out_strides.(0)) + (c_idx * out_strides.(1))) in
+                for d = 0 to spatial_ndim - 1 do
+                  dst_lin := !dst_lin + (out_spatial.(d) * out_strides.(d + 2))
+                done;
+                let prev = Array.unsafe_get out_arr !dst_lin in
+                let v = Array.unsafe_get in_arr src_lin in
+                Array.unsafe_set out_arr !dst_lin (Int32_u.add prev v))
+            done
+          done
+        done
+      done;
+      out_t
+  | { dtype = Dtype.Int64; buffer = Int64 in_arr; _ }, { buffer = Int64 out_arr; _ } ->
+      let zero = Int64_u.of_int64 0L in
+      for i = 0 to out_numel - 1 do
+        Array.unsafe_set out_arr i zero
+      done;
+      for n_idx = 0 to n - 1 do
+        for b_idx = 0 to num_blocks - 1 do
+          Shape.unravel_index_into b_idx blocks_shape block_coords;
+          for c_idx = 0 to channels - 1 do
+            for k_idx = 0 to !kernel_elems - 1 do
+              Shape.unravel_index_into k_idx kernel_size kernel_coords;
+              let valid = ref true in
+              for d = 0 to spatial_ndim - 1 do
+                let pad_before, _ = padding.(d) in
+                let pos =
+                  (block_coords.(d) * stride.(d))
+                  - pad_before
+                  + (kernel_coords.(d) * dilation.(d))
+                in
+                out_spatial.(d) <- pos;
+                if pos < 0 || pos >= output_size.(d) then valid := false
+              done;
+              if !valid then (
+                let src_ch = (c_idx * !kernel_elems) + k_idx in
+                let src_lin =
+                  in_offset
+                  + (n_idx * in_strides.(0))
+                  + (src_ch * in_strides.(1))
+                  + (b_idx * in_strides.(2))
+                in
+                let dst_lin = ref (out_offset + (n_idx * out_strides.(0)) + (c_idx * out_strides.(1))) in
+                for d = 0 to spatial_ndim - 1 do
+                  dst_lin := !dst_lin + (out_spatial.(d) * out_strides.(d + 2))
+                done;
+                let prev = Array.unsafe_get out_arr !dst_lin in
+                let v = Array.unsafe_get in_arr src_lin in
+                Array.unsafe_set out_arr !dst_lin (Int64_u.add prev v))
+            done
+          done
+        done
+      done;
+      out_t
+  | { dtype = Dtype.Bool; _ }, _ ->
+      Error.invalid ~op:"op_fold" ~what:"unsupported dtype"
+        ~reason:"bool fold is undefined because overlaps are summed" ()
+  | _ -> .
 
 let op_matmul (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit
     =

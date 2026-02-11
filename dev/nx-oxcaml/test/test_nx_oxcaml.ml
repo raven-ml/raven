@@ -1184,7 +1184,7 @@ let test_matmul_dot_product () =
   check_float32 "rect[1,2]" ~eps:1e-9 #203.s (get32 d 6);
   check_float32 "rect[1,3]" ~eps:1e-9 #218.s (get32 d 7)
   
-  let test_matmul_batched_f32 () =
+let test_matmul_batched_f32 () =
   let ctx = Nx_oxcaml.create_context () in
   let a =
     Nx_oxcaml.of_float32_multidim ctx
@@ -1217,6 +1217,112 @@ let test_matmul_dot_product () =
   check_float32 "bat1[0,1]" ~eps:1e-9 #2.s (get32 d 5);
   check_float32 "bat1[1,0]" ~eps:1e-9 #2.s (get32 d 6);
   check_float32 "bat1[1,1]" ~eps:1e-9 #2.s (get32 d 7)
+
+let test_pad_int32_1d () =
+  let ctx = Nx_oxcaml.create_context () in
+  let x = Nx_oxcaml.of_int32 ctx [| #10l; #20l; #30l |] in
+  let y = Nx_oxcaml.op_pad x [| (2, 1) |] (-7l) in
+  check "pad_int32_1d: dtype" (Nx_oxcaml.dtype y = Dtype.Int32);
+  check "pad_int32_1d: size" (numel (Nx_oxcaml.view y) = 6);
+  let d = Nx_oxcaml.data_array y in
+  check_int32 "pad_int32_1d[0]" (-#7l) (geti32 d 0);
+  check_int32 "pad_int32_1d[1]" (-#7l) (geti32 d 1);
+  check_int32 "pad_int32_1d[2]" #10l (geti32 d 2);
+  check_int32 "pad_int32_1d[3]" #20l (geti32 d 3);
+  check_int32 "pad_int32_1d[4]" #30l (geti32 d 4);
+  check_int32 "pad_int32_1d[5]" (-#7l) (geti32 d 5)
+
+let test_pad_float64_2d () =
+  let ctx = Nx_oxcaml.create_context () in
+  let x =
+    Nx_oxcaml.of_float64_multidim ctx [| #1.0; #2.0; #3.0; #4.0 |] [| 2; 2 |]
+  in
+  let y = Nx_oxcaml.op_pad x [| (1, 2); (2, 1) |] (-1.0) in
+  let shape_y =
+    match Symbolic_shape.eval (View.shape (Nx_oxcaml.view y)) with
+    | Some s -> s
+    | None -> failwith "shape not evaluable"
+  in
+  check "pad_float64_2d: shape0" (shape_y.(0) = 5);
+  check "pad_float64_2d: shape1" (shape_y.(1) = 5);
+  let d = Nx_oxcaml.data_array y in
+  check_float64 "pad_float64_2d[0,0]" ~eps:1e-9 (-#1.0) (get64 d 0);
+  check_float64 "pad_float64_2d[1,2]" ~eps:1e-9 #1.0 (get64 d 7);
+  check_float64 "pad_float64_2d[1,3]" ~eps:1e-9 #2.0 (get64 d 8);
+  check_float64 "pad_float64_2d[2,2]" ~eps:1e-9 #3.0 (get64 d 12);
+  check_float64 "pad_float64_2d[2,3]" ~eps:1e-9 #4.0 (get64 d 13);
+  check_float64 "pad_float64_2d[4,4]" ~eps:1e-9 (-#1.0) (get64 d 24)
+
+let test_pad_float64_permuted_view () =
+  let ctx = Nx_oxcaml.create_context () in
+  let base =
+    Nx_oxcaml.of_float64_multidim ctx
+      [| #1.0; #2.0; #3.0; #4.0; #5.0; #6.0 |]
+      [| 2; 3 |]
+  in
+  let x = Nx_oxcaml.op_permute base [| 1; 0 |] in
+  let y = Nx_oxcaml.op_pad x [| (1, 0); (0, 1) |] 0.0 in
+  let shape_y =
+    match Symbolic_shape.eval (View.shape (Nx_oxcaml.view y)) with
+    | Some s -> s
+    | None -> failwith "shape not evaluable"
+  in
+  check "pad_float64_perm: shape0" (shape_y.(0) = 4);
+  check "pad_float64_perm: shape1" (shape_y.(1) = 3);
+  let d = Nx_oxcaml.data_array y in
+  check_float64 "pad_float64_perm[0,0]" ~eps:1e-9 #0.0 (get64 d 0);
+  check_float64 "pad_float64_perm[1,0]" ~eps:1e-9 #1.0 (get64 d 3);
+  check_float64 "pad_float64_perm[1,1]" ~eps:1e-9 #4.0 (get64 d 4);
+  check_float64 "pad_float64_perm[2,0]" ~eps:1e-9 #2.0 (get64 d 6);
+  check_float64 "pad_float64_perm[2,1]" ~eps:1e-9 #5.0 (get64 d 7);
+  check_float64 "pad_float64_perm[3,0]" ~eps:1e-9 #3.0 (get64 d 9);
+  check_float64 "pad_float64_perm[3,1]" ~eps:1e-9 #6.0 (get64 d 10);
+  check_float64 "pad_float64_perm[3,2]" ~eps:1e-9 #0.0 (get64 d 11)
+
+let test_fold_int32_1d_overlap () =
+  let ctx = Nx_oxcaml.create_context () in
+  (* Shape [N=1, C*K=2, L=2] where C=1, K=2 *)
+  let x_flat = Nx_oxcaml.of_int32 ctx [| #1l; #3l; #2l; #4l |] in
+  let x = Nx_oxcaml.op_reshape x_flat (Symbolic_shape.of_ints [| 1; 2; 2 |]) in
+  let y =
+    Nx_oxcaml.op_fold x
+      ~output_size:[| 3 |]
+      ~kernel_size:[| 2 |]
+      ~stride:[| 1 |]
+      ~dilation:[| 1 |]
+      ~padding:[| (0, 0) |]
+  in
+  let shape_y =
+    match Symbolic_shape.eval (View.shape (Nx_oxcaml.view y)) with
+    | Some s -> s
+    | None -> failwith "shape not evaluable"
+  in
+  check "fold_int32_1d_overlap: shape0" (shape_y.(0) = 1);
+  check "fold_int32_1d_overlap: shape1" (shape_y.(1) = 1);
+  check "fold_int32_1d_overlap: shape2" (shape_y.(2) = 3);
+  let d = Nx_oxcaml.data_array y in
+  check_int32 "fold_int32_1d_overlap[0]" #1l (geti32 d 0);
+  check_int32 "fold_int32_1d_overlap[1]" #5l (geti32 d 1);
+  check_int32 "fold_int32_1d_overlap[2]" #4l (geti32 d 2)
+
+let test_fold_int32_1d_padding_stride () =
+  let ctx = Nx_oxcaml.create_context () in
+  (* Shape [N=1, C*K=3, L=2] where C=1, K=3 *)
+  let x_flat = Nx_oxcaml.of_int32 ctx [| #10l; #20l; #30l; #40l; #50l; #60l |] in
+  let x = Nx_oxcaml.op_reshape x_flat (Symbolic_shape.of_ints [| 1; 3; 2 |]) in
+  let y =
+    Nx_oxcaml.op_fold x
+      ~output_size:[| 4 |]
+      ~kernel_size:[| 3 |]
+      ~stride:[| 2 |]
+      ~dilation:[| 1 |]
+      ~padding:[| (1, 1) |]
+  in
+  let d = Nx_oxcaml.data_array y in
+  check_int32 "fold_int32_1d_padding_stride[0]" #30l (geti32 d 0);
+  check_int32 "fold_int32_1d_padding_stride[1]" #70l (geti32 d 1);
+  check_int32 "fold_int32_1d_padding_stride[2]" #40l (geti32 d 2);
+  check_int32 "fold_int32_1d_padding_stride[3]" #60l (geti32 d 3)
   
 let () =
   print_endline "Running Nx_oxcaml backend tests...";
@@ -1309,5 +1415,10 @@ let () =
   test_matmul_dot_product ();
   test_matmul_rectangular_f32 ();
   test_matmul_batched_f32 ();
+  test_pad_int32_1d ();
+  test_pad_float64_2d ();
+  test_pad_float64_permuted_view ();
+  test_fold_int32_1d_overlap ();
+  test_fold_int32_1d_padding_stride ();
   Printf.printf "\nResults: %d passed, %d failed\n" !passed !failed;
   if !failed > 0 then exit 1
