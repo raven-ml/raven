@@ -1323,6 +1323,60 @@ let test_fold_int32_1d_padding_stride () =
   check_int32 "fold_int32_1d_padding_stride[1]" #70l (geti32 d 1);
   check_int32 "fold_int32_1d_padding_stride[2]" #40l (geti32 d 2);
   check_int32 "fold_int32_1d_padding_stride[3]" #60l (geti32 d 3)
+
+let test_unfold_int32_1d_basic () =
+  let ctx = Nx_oxcaml.create_context () in
+  let x_flat = Nx_oxcaml.of_int32 ctx [| #1l; #2l; #3l; #4l |] in
+  let x = Nx_oxcaml.op_reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let y =
+    Nx_oxcaml.op_unfold x
+      ~kernel_size:[| 2 |]
+      ~stride:[| 1 |]
+      ~dilation:[| 1 |]
+      ~padding:[| (0, 0) |]
+  in
+  let shape_y =
+    match Symbolic_shape.eval (View.shape (Nx_oxcaml.view y)) with
+    | Some s -> s
+    | None -> failwith "shape not evaluable"
+  in
+  check "unfold_int32_1d_basic: shape0" (shape_y.(0) = 1);
+  check "unfold_int32_1d_basic: shape1" (shape_y.(1) = 2);
+  check "unfold_int32_1d_basic: shape2" (shape_y.(2) = 3);
+  let d = Nx_oxcaml.data_array y in
+  check_int32 "unfold_int32_1d_basic[0]" #1l (geti32 d 0);
+  check_int32 "unfold_int32_1d_basic[1]" #2l (geti32 d 1);
+  check_int32 "unfold_int32_1d_basic[2]" #3l (geti32 d 2);
+  check_int32 "unfold_int32_1d_basic[3]" #2l (geti32 d 3);
+  check_int32 "unfold_int32_1d_basic[4]" #3l (geti32 d 4);
+  check_int32 "unfold_int32_1d_basic[5]" #4l (geti32 d 5)
+
+let test_unfold_int32_1d_padding_stride () =
+  let ctx = Nx_oxcaml.create_context () in
+  let x_flat = Nx_oxcaml.of_int32 ctx [| #1l; #2l; #3l; #4l |] in
+  let x = Nx_oxcaml.op_reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let y =
+    Nx_oxcaml.op_unfold x
+      ~kernel_size:[| 3 |]
+      ~stride:[| 2 |]
+      ~dilation:[| 1 |]
+      ~padding:[| (1, 1) |]
+  in
+  let shape_y =
+    match Symbolic_shape.eval (View.shape (Nx_oxcaml.view y)) with
+    | Some s -> s
+    | None -> failwith "shape not evaluable"
+  in
+  check "unfold_int32_1d_padding_stride: shape0" (shape_y.(0) = 1);
+  check "unfold_int32_1d_padding_stride: shape1" (shape_y.(1) = 3);
+  check "unfold_int32_1d_padding_stride: shape2" (shape_y.(2) = 2);
+  let d = Nx_oxcaml.data_array y in
+  check_int32 "unfold_int32_1d_padding_stride[0]" #0l (geti32 d 0);
+  check_int32 "unfold_int32_1d_padding_stride[1]" #2l (geti32 d 1);
+  check_int32 "unfold_int32_1d_padding_stride[2]" #1l (geti32 d 2);
+  check_int32 "unfold_int32_1d_padding_stride[3]" #3l (geti32 d 3);
+  check_int32 "unfold_int32_1d_padding_stride[4]" #2l (geti32 d 4);
+  check_int32 "unfold_int32_1d_padding_stride[5]" #4l (geti32 d 5)
   
 let () =
   print_endline "Running Nx_oxcaml backend tests...";
@@ -1418,6 +1472,8 @@ let () =
   test_pad_int32_1d ();
   test_pad_float64_2d ();
   test_pad_float64_permuted_view ();
+  test_unfold_int32_1d_basic ();
+  test_unfold_int32_1d_padding_stride ();
   test_fold_int32_1d_overlap ();
   test_fold_int32_1d_padding_stride ();
   Printf.printf "\nResults: %d passed, %d failed\n" !passed !failed;

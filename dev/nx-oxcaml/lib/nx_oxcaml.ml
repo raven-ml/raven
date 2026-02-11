@@ -1173,8 +1173,379 @@ let op_gather _ _ _ = Error.invalid ~op:"op_gather" ~what:"not implemented" ()
 let op_scatter ?mode:_ ?unique_indices:_ _ _ _ _ =
   Error.invalid ~op:"op_scatter" ~what:"not implemented" ()
 
-let op_unfold ?out:_ _ ~kernel_size:_ ~stride:_ ~dilation:_ ~padding:_ =
-  Error.invalid ~op:"op_unfold" ~what:"not implemented" ()
+let op_unfold :
+    type a b.
+    ?out:(a, b) t ->
+    (a, b) t ->
+    kernel_size:int array ->
+    stride:int array ->
+    dilation:int array ->
+    padding:(int * int) array ->
+    (a, b) t =
+ fun ?out (x : (a, b) t) ~kernel_size ~stride ~dilation ~padding ->
+  let in_view = x.view in
+  let in_shape = shape in_view in
+  if Array.length in_shape < 3 then
+    Error.invalid ~op:"op_unfold" ~what:"input rank"
+      ~reason:"expected input shape [N, C, ...spatial_dims]" ();
+
+  let spatial_ndim = Array.length in_shape - 2 in
+  if
+    not
+      (Array.length kernel_size = spatial_ndim
+      && Array.length stride = spatial_ndim
+      && Array.length dilation = spatial_ndim
+      && Array.length padding = spatial_ndim)
+  then
+    Error.invalid ~op:"op_unfold" ~what:"parameter lengths"
+      ~reason:"kernel_size/stride/dilation/padding must match spatial rank" ();
+
+  let n = in_shape.(0) in
+  let channels = in_shape.(1) in
+  let input_spatial = Array.sub in_shape 2 spatial_ndim in
+
+  let kernel_elems = ref 1 in
+  for i = 0 to spatial_ndim - 1 do
+    if kernel_size.(i) <= 0 then
+      Error.invalid ~op:"op_unfold" ~what:"kernel_size"
+        ~reason:"all kernel dimensions must be positive" ();
+    if stride.(i) <= 0 then
+      Error.invalid ~op:"op_unfold" ~what:"stride"
+        ~reason:"all stride dimensions must be positive" ();
+    if dilation.(i) <= 0 then
+      Error.invalid ~op:"op_unfold" ~what:"dilation"
+        ~reason:"all dilation dimensions must be positive" ();
+    let pad_before, pad_after = padding.(i) in
+    if pad_before < 0 || pad_after < 0 then
+      Error.invalid ~op:"op_unfold" ~what:"padding"
+        ~reason:"padding must be non-negative" ();
+    kernel_elems := !kernel_elems * kernel_size.(i)
+  done;
+
+  let out_spatial = Array.make spatial_ndim 0 in
+  for i = 0 to spatial_ndim - 1 do
+    let pad_before, pad_after = padding.(i) in
+    let padded = input_spatial.(i) + pad_before + pad_after in
+    let kernel_extent = (dilation.(i) * (kernel_size.(i) - 1)) + 1 in
+    let diff = padded - kernel_extent in
+    if diff < 0 then
+      Error.invalid ~op:"op_unfold"
+        ~what:"kernel size larger than padded input" ();
+    out_spatial.(i) <- (diff / stride.(i)) + 1
+  done;
+
+  let num_blocks = Shape.numel out_spatial in
+  let out_shape = [| n; channels * !kernel_elems; num_blocks |] in
+  let out_numel = Shape.numel out_shape in
+  let out_t : (a, b) t =
+    match out with
+    | Some out_t ->
+        if shape out_t.view <> out_shape then
+          Error.invalid ~op:"op_unfold" ~what:"out shape mismatch" ();
+        out_t
+    | None ->
+        let out_t : (a, b) t = op_buffer x.context x.dtype out_numel in
+        { out_t with view = View.reshape out_t.view (Symbolic_shape.of_ints out_shape) }
+  in
+
+  let in_offset = View.offset in_view in
+  let in_strides = View.strides in_view in
+  let out_view = out_t.view in
+  let out_offset = View.offset out_view in
+  let out_strides = View.strides out_view in
+  let block_coords = Array.make spatial_ndim 0 in
+  let kernel_coords = Array.make spatial_ndim 0 in
+  let in_spatial = Array.make spatial_ndim 0 in
+
+  match (x, out_t) with
+  | { dtype = Dtype.Float64; buffer = Float64 in_arr; _ }, { buffer = Float64 out_arr; _ } ->
+      let zero = Float_u.of_float 0.0 in
+      for n_idx = 0 to n - 1 do
+        for b_idx = 0 to num_blocks - 1 do
+          Shape.unravel_index_into b_idx out_spatial block_coords;
+          for c_idx = 0 to channels - 1 do
+            for k_idx = 0 to !kernel_elems - 1 do
+              Shape.unravel_index_into k_idx kernel_size kernel_coords;
+              let valid = ref true in
+              for d = 0 to spatial_ndim - 1 do
+                let pad_before, _ = padding.(d) in
+                let pos =
+                  (block_coords.(d) * stride.(d))
+                  - pad_before
+                  + (kernel_coords.(d) * dilation.(d))
+                in
+                in_spatial.(d) <- pos;
+                if pos < 0 || pos >= input_spatial.(d) then valid := false
+              done;
+              let v =
+                if !valid then
+                  let src_lin = ref (in_offset + (n_idx * in_strides.(0)) + (c_idx * in_strides.(1))) in
+                  for d = 0 to spatial_ndim - 1 do
+                    src_lin := !src_lin + (in_spatial.(d) * in_strides.(d + 2))
+                  done;
+                  Array.unsafe_get in_arr !src_lin
+                else zero
+              in
+              let dst_ch = (c_idx * !kernel_elems) + k_idx in
+              let dst_lin =
+                out_offset
+                + (n_idx * out_strides.(0))
+                + (dst_ch * out_strides.(1))
+                + (b_idx * out_strides.(2))
+              in
+              Array.unsafe_set out_arr dst_lin v
+            done
+          done
+        done
+      done;
+      out_t
+  | { dtype = Dtype.Float32; buffer = Float32 in_arr; _ }, { buffer = Float32 out_arr; _ } ->
+      let zero = Float32_u.of_int 0 in
+      for n_idx = 0 to n - 1 do
+        for b_idx = 0 to num_blocks - 1 do
+          Shape.unravel_index_into b_idx out_spatial block_coords;
+          for c_idx = 0 to channels - 1 do
+            for k_idx = 0 to !kernel_elems - 1 do
+              Shape.unravel_index_into k_idx kernel_size kernel_coords;
+              let valid = ref true in
+              for d = 0 to spatial_ndim - 1 do
+                let pad_before, _ = padding.(d) in
+                let pos =
+                  (block_coords.(d) * stride.(d))
+                  - pad_before
+                  + (kernel_coords.(d) * dilation.(d))
+                in
+                in_spatial.(d) <- pos;
+                if pos < 0 || pos >= input_spatial.(d) then valid := false
+              done;
+              let v =
+                if !valid then
+                  let src_lin = ref (in_offset + (n_idx * in_strides.(0)) + (c_idx * in_strides.(1))) in
+                  for d = 0 to spatial_ndim - 1 do
+                    src_lin := !src_lin + (in_spatial.(d) * in_strides.(d + 2))
+                  done;
+                  Array.unsafe_get in_arr !src_lin
+                else zero
+              in
+              let dst_ch = (c_idx * !kernel_elems) + k_idx in
+              let dst_lin =
+                out_offset
+                + (n_idx * out_strides.(0))
+                + (dst_ch * out_strides.(1))
+                + (b_idx * out_strides.(2))
+              in
+              Array.unsafe_set out_arr dst_lin v
+            done
+          done
+        done
+      done;
+      out_t
+  | { dtype = Dtype.Int8; buffer = Int8 in_arr; _ }, { buffer = Int8 out_arr; _ } ->
+      let zero = Int8_u.of_int 0 in
+      for n_idx = 0 to n - 1 do
+        for b_idx = 0 to num_blocks - 1 do
+          Shape.unravel_index_into b_idx out_spatial block_coords;
+          for c_idx = 0 to channels - 1 do
+            for k_idx = 0 to !kernel_elems - 1 do
+              Shape.unravel_index_into k_idx kernel_size kernel_coords;
+              let valid = ref true in
+              for d = 0 to spatial_ndim - 1 do
+                let pad_before, _ = padding.(d) in
+                let pos =
+                  (block_coords.(d) * stride.(d))
+                  - pad_before
+                  + (kernel_coords.(d) * dilation.(d))
+                in
+                in_spatial.(d) <- pos;
+                if pos < 0 || pos >= input_spatial.(d) then valid := false
+              done;
+              let v =
+                if !valid then
+                  let src_lin = ref (in_offset + (n_idx * in_strides.(0)) + (c_idx * in_strides.(1))) in
+                  for d = 0 to spatial_ndim - 1 do
+                    src_lin := !src_lin + (in_spatial.(d) * in_strides.(d + 2))
+                  done;
+                  Array.unsafe_get in_arr !src_lin
+                else zero
+              in
+              let dst_ch = (c_idx * !kernel_elems) + k_idx in
+              let dst_lin =
+                out_offset
+                + (n_idx * out_strides.(0))
+                + (dst_ch * out_strides.(1))
+                + (b_idx * out_strides.(2))
+              in
+              Array.unsafe_set out_arr dst_lin v
+            done
+          done
+        done
+      done;
+      out_t
+  | { dtype = Dtype.Int16; buffer = Int16 in_arr; _ }, { buffer = Int16 out_arr; _ } ->
+      let zero = Int16_u.of_int 0 in
+      for n_idx = 0 to n - 1 do
+        for b_idx = 0 to num_blocks - 1 do
+          Shape.unravel_index_into b_idx out_spatial block_coords;
+          for c_idx = 0 to channels - 1 do
+            for k_idx = 0 to !kernel_elems - 1 do
+              Shape.unravel_index_into k_idx kernel_size kernel_coords;
+              let valid = ref true in
+              for d = 0 to spatial_ndim - 1 do
+                let pad_before, _ = padding.(d) in
+                let pos =
+                  (block_coords.(d) * stride.(d))
+                  - pad_before
+                  + (kernel_coords.(d) * dilation.(d))
+                in
+                in_spatial.(d) <- pos;
+                if pos < 0 || pos >= input_spatial.(d) then valid := false
+              done;
+              let v =
+                if !valid then
+                  let src_lin = ref (in_offset + (n_idx * in_strides.(0)) + (c_idx * in_strides.(1))) in
+                  for d = 0 to spatial_ndim - 1 do
+                    src_lin := !src_lin + (in_spatial.(d) * in_strides.(d + 2))
+                  done;
+                  Array.unsafe_get in_arr !src_lin
+                else zero
+              in
+              let dst_ch = (c_idx * !kernel_elems) + k_idx in
+              let dst_lin =
+                out_offset
+                + (n_idx * out_strides.(0))
+                + (dst_ch * out_strides.(1))
+                + (b_idx * out_strides.(2))
+              in
+              Array.unsafe_set out_arr dst_lin v
+            done
+          done
+        done
+      done;
+      out_t
+  | { dtype = Dtype.Int32; buffer = Int32 in_arr; _ }, { buffer = Int32 out_arr; _ } ->
+      let zero = Int32_u.of_int32 0l in
+      for n_idx = 0 to n - 1 do
+        for b_idx = 0 to num_blocks - 1 do
+          Shape.unravel_index_into b_idx out_spatial block_coords;
+          for c_idx = 0 to channels - 1 do
+            for k_idx = 0 to !kernel_elems - 1 do
+              Shape.unravel_index_into k_idx kernel_size kernel_coords;
+              let valid = ref true in
+              for d = 0 to spatial_ndim - 1 do
+                let pad_before, _ = padding.(d) in
+                let pos =
+                  (block_coords.(d) * stride.(d))
+                  - pad_before
+                  + (kernel_coords.(d) * dilation.(d))
+                in
+                in_spatial.(d) <- pos;
+                if pos < 0 || pos >= input_spatial.(d) then valid := false
+              done;
+              let v =
+                if !valid then
+                  let src_lin = ref (in_offset + (n_idx * in_strides.(0)) + (c_idx * in_strides.(1))) in
+                  for d = 0 to spatial_ndim - 1 do
+                    src_lin := !src_lin + (in_spatial.(d) * in_strides.(d + 2))
+                  done;
+                  Array.unsafe_get in_arr !src_lin
+                else zero
+              in
+              let dst_ch = (c_idx * !kernel_elems) + k_idx in
+              let dst_lin =
+                out_offset
+                + (n_idx * out_strides.(0))
+                + (dst_ch * out_strides.(1))
+                + (b_idx * out_strides.(2))
+              in
+              Array.unsafe_set out_arr dst_lin v
+            done
+          done
+        done
+      done;
+      out_t
+  | { dtype = Dtype.Int64; buffer = Int64 in_arr; _ }, { buffer = Int64 out_arr; _ } ->
+      let zero = Int64_u.of_int64 0L in
+      for n_idx = 0 to n - 1 do
+        for b_idx = 0 to num_blocks - 1 do
+          Shape.unravel_index_into b_idx out_spatial block_coords;
+          for c_idx = 0 to channels - 1 do
+            for k_idx = 0 to !kernel_elems - 1 do
+              Shape.unravel_index_into k_idx kernel_size kernel_coords;
+              let valid = ref true in
+              for d = 0 to spatial_ndim - 1 do
+                let pad_before, _ = padding.(d) in
+                let pos =
+                  (block_coords.(d) * stride.(d))
+                  - pad_before
+                  + (kernel_coords.(d) * dilation.(d))
+                in
+                in_spatial.(d) <- pos;
+                if pos < 0 || pos >= input_spatial.(d) then valid := false
+              done;
+              let v =
+                if !valid then
+                  let src_lin = ref (in_offset + (n_idx * in_strides.(0)) + (c_idx * in_strides.(1))) in
+                  for d = 0 to spatial_ndim - 1 do
+                    src_lin := !src_lin + (in_spatial.(d) * in_strides.(d + 2))
+                  done;
+                  Array.unsafe_get in_arr !src_lin
+                else zero
+              in
+              let dst_ch = (c_idx * !kernel_elems) + k_idx in
+              let dst_lin =
+                out_offset
+                + (n_idx * out_strides.(0))
+                + (dst_ch * out_strides.(1))
+                + (b_idx * out_strides.(2))
+              in
+              Array.unsafe_set out_arr dst_lin v
+            done
+          done
+        done
+      done;
+      out_t
+  | { dtype = Dtype.Bool; buffer = Bool in_arr; _ }, { buffer = Bool out_arr; _ } ->
+      let zero = false in
+      for n_idx = 0 to n - 1 do
+        for b_idx = 0 to num_blocks - 1 do
+          Shape.unravel_index_into b_idx out_spatial block_coords;
+          for c_idx = 0 to channels - 1 do
+            for k_idx = 0 to !kernel_elems - 1 do
+              Shape.unravel_index_into k_idx kernel_size kernel_coords;
+              let valid = ref true in
+              for d = 0 to spatial_ndim - 1 do
+                let pad_before, _ = padding.(d) in
+                let pos =
+                  (block_coords.(d) * stride.(d))
+                  - pad_before
+                  + (kernel_coords.(d) * dilation.(d))
+                in
+                in_spatial.(d) <- pos;
+                if pos < 0 || pos >= input_spatial.(d) then valid := false
+              done;
+              let v =
+                if !valid then
+                  let src_lin = ref (in_offset + (n_idx * in_strides.(0)) + (c_idx * in_strides.(1))) in
+                  for d = 0 to spatial_ndim - 1 do
+                    src_lin := !src_lin + (in_spatial.(d) * in_strides.(d + 2))
+                  done;
+                  Array.unsafe_get in_arr !src_lin
+                else zero
+              in
+              let dst_ch = (c_idx * !kernel_elems) + k_idx in
+              let dst_lin =
+                out_offset
+                + (n_idx * out_strides.(0))
+                + (dst_ch * out_strides.(1))
+                + (b_idx * out_strides.(2))
+              in
+              Array.unsafe_set out_arr dst_lin v
+            done
+          done
+        done
+      done;
+      out_t
+  | _ -> .
 
 let op_fold :
     type a b.
