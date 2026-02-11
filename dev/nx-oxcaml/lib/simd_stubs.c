@@ -14,11 +14,30 @@
 /* Prefetch (no-op in bytecode; native compiler inlines the instruction) */
 void caml_prefetch_ignore() { }
 
-/* Shared */
-BUILTIN(caml_vec128_unreachable)
+/* Shared builtins (architecture-independent symbol names) */
 BUILTIN(caml_vec128_cast)
+BUILTIN(caml_int64x2_const1)
+BUILTIN(caml_int64x2_low_of_int64)
+BUILTIN(caml_int64x2_low_to_int64)
+BUILTIN(caml_simd_vec128_low_64_to_high_64)
+BUILTIN(caml_simd_vec128_high_64_to_low_64)
+BUILTIN(caml_int32x4_const1)
+BUILTIN(caml_int32x4_low_of_int32)
+BUILTIN(caml_int32x4_low_to_int32)
+BUILTIN(caml_simd_vec128_interleave_low_32)
+BUILTIN(caml_simd_vec128_interleave_low_64)
+BUILTIN(caml_float64x2_const1)
+BUILTIN(caml_float64x2_low_of_float)
+BUILTIN(caml_float64x2_low_to_float)
+BUILTIN(caml_float32x4_const1)
+BUILTIN(caml_float32x4_low_of_float32)
+BUILTIN(caml_float32x4_low_to_float32)
 
-/* Int64x2 */
+#if defined(__aarch64__) || defined(_M_ARM64)
+
+BUILTIN(caml_vec128_unreachable)
+
+/* Int64x2 - NEON */
 BUILTIN(caml_neon_int64x2_add)
 BUILTIN(caml_neon_int64x2_sub)
 BUILTIN(caml_neon_int64x2_neg)
@@ -27,14 +46,9 @@ BUILTIN(caml_neon_int64x2_bitwise_or)
 BUILTIN(caml_neon_int64x2_bitwise_xor)
 BUILTIN(caml_neon_int64x2_bitwise_not)
 BUILTIN(caml_neon_int64x2_cmpgt)
-BUILTIN(caml_int64x2_const1)
-BUILTIN(caml_int64x2_low_of_int64)
-BUILTIN(caml_int64x2_low_to_int64)
 BUILTIN(caml_neon_int64x2_dup)
-BUILTIN(caml_simd_vec128_low_64_to_high_64)
-BUILTIN(caml_simd_vec128_high_64_to_low_64)
 
-/* Int32x4 */
+/* Int32x4 - NEON */
 BUILTIN(caml_neon_int32x4_add)
 BUILTIN(caml_neon_int32x4_sub)
 BUILTIN(caml_neon_int32x4_neg)
@@ -45,15 +59,10 @@ BUILTIN(caml_neon_int32x4_bitwise_and)
 BUILTIN(caml_neon_int32x4_bitwise_or)
 BUILTIN(caml_neon_int32x4_bitwise_xor)
 BUILTIN(caml_neon_int32x4_bitwise_not)
-BUILTIN(caml_int32x4_const1)
-BUILTIN(caml_int32x4_low_of_int32)
-BUILTIN(caml_int32x4_low_to_int32)
 BUILTIN(caml_neon_int32x4_dup)
-BUILTIN(caml_simd_vec128_interleave_low_32)
-BUILTIN(caml_simd_vec128_interleave_low_64)
 BUILTIN(caml_neon_int32x4_dup_lane)
 
-/* Float64x2 */
+/* Float64x2 - NEON */
 BUILTIN(caml_neon_float64x2_add)
 BUILTIN(caml_neon_float64x2_sub)
 BUILTIN(caml_neon_float64x2_mul)
@@ -62,11 +71,8 @@ BUILTIN(caml_neon_float64x2_sqrt)
 BUILTIN(caml_neon_float64x2_hadd)
 BUILTIN(caml_neon_float64x2_min)
 BUILTIN(caml_neon_float64x2_max)
-BUILTIN(caml_float64x2_const1)
-BUILTIN(caml_float64x2_low_of_float)
-BUILTIN(caml_float64x2_low_to_float)
 
-/* Float32x4 */
+/* Float32x4 - NEON */
 BUILTIN(caml_neon_float32x4_add)
 BUILTIN(caml_neon_float32x4_sub)
 BUILTIN(caml_neon_float32x4_mul)
@@ -75,9 +81,6 @@ BUILTIN(caml_neon_float32x4_sqrt)
 BUILTIN(caml_neon_float32x4_hadd)
 BUILTIN(caml_neon_float32x4_min)
 BUILTIN(caml_neon_float32x4_max)
-BUILTIN(caml_float32x4_const1)
-BUILTIN(caml_float32x4_low_of_float32)
-BUILTIN(caml_float32x4_low_to_float32)
 
 /* The ARM64 OxCaml backend does not support Cprefetch (operation_supported
    returns false), so [@@builtin] is not inlined. Provide a real C stub that
@@ -89,3 +92,54 @@ void caml_prefetch_read_high_val_offset_untagged(value v, intnat offset) {
     __builtin_prefetch((char *)v + offset, 0, 3);
 }
 
+#elif defined(__x86_64__) || defined(_M_X64)
+
+BUILTIN(caml_sse2_unreachable)
+BUILTIN(caml_prefetch_read_high_val_offset_untagged)
+
+/* Int64x2 - SSE */
+BUILTIN(caml_sse2_int64x2_add)
+BUILTIN(caml_sse2_int64x2_sub)
+BUILTIN(caml_sse2_int64x2_neg)
+BUILTIN(caml_sse2_vec128_and)
+BUILTIN(caml_sse2_vec128_or)
+BUILTIN(caml_sse2_vec128_xor)
+BUILTIN(caml_sse2_vec128_not)
+BUILTIN(caml_sse42_int64x2_cmpgt)
+BUILTIN(caml_sse2_int64x2_dup)
+
+/* Int32x4 - SSE */
+BUILTIN(caml_sse2_int32x4_add)
+BUILTIN(caml_sse2_int32x4_sub)
+BUILTIN(caml_sse2_int32x4_neg)
+BUILTIN(caml_ssse3_int32x4_abs)
+BUILTIN(caml_sse41_int32x4_min)
+BUILTIN(caml_sse41_int32x4_max)
+BUILTIN(caml_sse2_int32x4_shuffle_0000)
+BUILTIN(caml_sse2_int32x4_dup_lane)
+
+/* Float64x2 - SSE/FMA */
+BUILTIN(caml_sse2_float64x2_add)
+BUILTIN(caml_sse2_float64x2_sub)
+BUILTIN(caml_sse2_float64x2_mul)
+BUILTIN(caml_sse2_float64x2_div)
+BUILTIN(caml_sse2_float64x2_sqrt)
+BUILTIN(caml_fma_float64x2_fmadd)
+BUILTIN(caml_sse3_float64x2_hadd)
+BUILTIN(caml_sse2_float64x2_min)
+BUILTIN(caml_sse2_float64x2_max)
+
+/* Float32x4 - SSE/FMA */
+BUILTIN(caml_sse_float32x4_add)
+BUILTIN(caml_sse_float32x4_sub)
+BUILTIN(caml_sse_float32x4_mul)
+BUILTIN(caml_sse_float32x4_div)
+BUILTIN(caml_sse_float32x4_sqrt)
+BUILTIN(caml_fma_float32x4_fmadd)
+BUILTIN(caml_sse3_float32x4_hadd)
+BUILTIN(caml_sse_float32x4_min)
+BUILTIN(caml_sse_float32x4_max)
+
+#else
+#error "Unsupported architecture: expected arm64 or x86_64"
+#endif

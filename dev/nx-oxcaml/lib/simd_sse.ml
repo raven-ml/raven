@@ -50,9 +50,9 @@ module Int64x2 = struct
     = "caml_sse2_unreachable" "caml_sse2_vec128_not"
     [@@noalloc] [@@unboxed] [@@builtin]
 
-  let[@inline] ( land ) x y = bitwise_and x y
-  let[@inline] ( lor ) x y = bitwise_or x y
-  let[@inline] ( lxor ) x y = bitwise_xor x y
+  let[@inline always] ( land ) x y = bitwise_and x y
+  let[@inline always] ( lor ) x y = bitwise_or x y
+  let[@inline always] ( lxor ) x y = bitwise_xor x y
 
   (* ───── Comparison ───── *)
 
@@ -62,7 +62,7 @@ module Int64x2 = struct
 
   (* ───── Blend ───── *)
 
-  let[@inline] blendv a b mask =
+  let[@inline always] blendv a b mask =
     bitwise_or (bitwise_and b mask) (bitwise_and a (bitwise_not mask))
 
   (* ───── Constants ───── *)
@@ -71,9 +71,9 @@ module Int64x2 = struct
     = "caml_sse2_unreachable" "caml_int64x2_const1"
     [@@noalloc] [@@builtin]
 
-  let[@inline] zero () = const1 #0L
-  let[@inline] one () = const1 #1L
-  let[@inline] all_ones () = const1 #0xffffffffffffffffL
+  let[@inline always] zero () = const1 #0L
+  let[@inline always] one () = const1 #1L
+  let[@inline always] all_ones () = const1 #0xffffffffffffffffL
 
   (* ───── Lanes ───── *)
 
@@ -93,8 +93,8 @@ module Int64x2 = struct
     = "caml_sse2_unreachable" "caml_simd_vec128_low_64_to_high_64"
     [@@noalloc] [@@unboxed] [@@builtin]
 
-  let[@inline] set1 a = dup (low_of a)
-  let[@inline] set a b = low_64_to_high_64 (low_of a) (low_of b)
+  let[@inline always] set1 a = dup (low_of a)
+  let[@inline always] set a b = low_64_to_high_64 (low_of a) (low_of b)
 
   (* ───── Casts ───── *)
 
@@ -162,9 +162,9 @@ module Int32x4 = struct
     = "caml_sse2_unreachable" "caml_sse2_vec128_not"
     [@@noalloc] [@@unboxed] [@@builtin]
 
-  let[@inline] ( land ) x y = bitwise_and x y
-  let[@inline] ( lor ) x y = bitwise_or x y
-  let[@inline] ( lxor ) x y = bitwise_xor x y
+  let[@inline always] ( land ) x y = bitwise_and x y
+  let[@inline always] ( lor ) x y = bitwise_or x y
+  let[@inline always] ( lxor ) x y = bitwise_xor x y
 
   (* ───── Constants ───── *)
 
@@ -172,8 +172,8 @@ module Int32x4 = struct
     = "caml_sse2_unreachable" "caml_int32x4_const1"
     [@@noalloc] [@@builtin]
 
-  let[@inline] zero () = const1 #0l
-  let[@inline] one () = const1 #1l
+  let[@inline always] zero () = const1 #0l
+  let[@inline always] one () = const1 #1l
 
   (* ───── Lanes ───── *)
 
@@ -201,9 +201,9 @@ module Int32x4 = struct
     = "caml_sse2_unreachable" "caml_sse2_int32x4_dup_lane"
     [@@noalloc] [@@builtin]
 
-  let[@inline] set1 a = dup (low_of a)
+  let[@inline always] set1 a = dup (low_of a)
 
-  let[@inline] set a b c d =
+  let[@inline always] set a b c d =
     let a = low_of a in
     let b = low_of b in
     let c = low_of c in
@@ -262,7 +262,7 @@ module Float64x2 = struct
     = "caml_sse2_unreachable" "caml_sse3_float64x2_hadd"
     [@@noalloc] [@@unboxed] [@@builtin]
 
-  let[@inline] horizontal_add x y = hadd x y
+  let[@inline always] horizontal_add x y = hadd x y
 
   (* ───── Min/Max ───── *)
 
@@ -280,8 +280,8 @@ module Float64x2 = struct
     = "caml_sse2_unreachable" "caml_float64x2_const1"
     [@@noalloc] [@@builtin]
 
-  let[@inline] zero () = const1 #0.
-  let[@inline] one () = const1 #1.
+  let[@inline always] zero () = const1 #0.
+  let[@inline always] one () = const1 #1.
 
   (* ───── Bitwise (for neg/abs) ───── *)
 
@@ -289,11 +289,11 @@ module Float64x2 = struct
     = "caml_sse2_unreachable" "caml_vec128_cast"
     [@@noalloc] [@@builtin]
 
-  let[@inline] neg x =
+  let[@inline always] neg x =
     Int64x2.(bitwise_xor (const1 #0x8000000000000000L) (of_float64x2 x))
     |> of_int64x2
 
-  let[@inline] abs x =
+  let[@inline always] abs x =
     Int64x2.(bitwise_and (const1 #0x7fffffffffffffffL) (of_float64x2 x))
     |> of_int64x2
 
@@ -315,13 +315,13 @@ module Float64x2 = struct
     = "caml_sse2_unreachable" "caml_simd_vec128_high_64_to_low_64"
     [@@noalloc] [@@unboxed] [@@builtin]
 
-  let[@inline] set1 a =
+  let[@inline always] set1 a =
     let a = low_of a in
     Int64x2.dup (Int64x2.of_float64x2 a) |> of_int64x2
 
-  let[@inline] set a b = low_64_to_high_64 (low_of a) (low_of b)
-  let[@inline] extract0 x = low_to x
-  let[@inline] splat x = #(low_to x, low_to (high_64_to_low_64 x x))
+  let[@inline always] set a b = low_64_to_high_64 (low_of a) (low_of b)
+  let[@inline always] extract0 x = low_to x
+  let[@inline always] splat x = #(low_to x, low_to (high_64_to_low_64 x x))
 
   (* ───── Array ───── *)
 
@@ -367,7 +367,7 @@ module Float32x4 = struct
     = "caml_sse2_unreachable" "caml_sse3_float32x4_hadd"
     [@@noalloc] [@@unboxed] [@@builtin]
 
-  let[@inline] horizontal_add x y = hadd x y
+  let[@inline always] horizontal_add x y = hadd x y
 
   (* ───── Min/Max ───── *)
 
@@ -385,8 +385,8 @@ module Float32x4 = struct
     = "caml_sse2_unreachable" "caml_float32x4_const1"
     [@@noalloc] [@@builtin]
 
-  let[@inline] zero () = const1 #0.0s
-  let[@inline] one () = const1 #1.0s
+  let[@inline always] zero () = const1 #0.0s
+  let[@inline always] one () = const1 #1.0s
 
   (* ───── Bitwise (for neg/abs) ───── *)
 
@@ -394,10 +394,10 @@ module Float32x4 = struct
     = "caml_sse2_unreachable" "caml_vec128_cast"
     [@@noalloc] [@@builtin]
 
-  let[@inline] neg x =
+  let[@inline always] neg x =
     Int32x4.(bitwise_xor (const1 #0x80000000l) (of_float32x4 x)) |> of_int32x4
 
-  let[@inline] abs x =
+  let[@inline always] abs x =
     Int32x4.(bitwise_and (const1 #0x7fffffffl) (of_float32x4 x)) |> of_int32x4
 
   (* ───── Lanes ───── *)
@@ -410,11 +410,11 @@ module Float32x4 = struct
     = "caml_sse2_unreachable" "caml_float32x4_low_to_float32"
     [@@noalloc] [@@builtin]
 
-  let[@inline] set1 a =
+  let[@inline always] set1 a =
     let a = low_of a in
     Int32x4.dup (Int32x4.of_float32x4 a) |> of_int32x4
 
-  let[@inline] set a b c d =
+  let[@inline always] set a b c d =
     let a = Int32x4.of_float32x4 (low_of a) in
     let b = Int32x4.of_float32x4 (low_of b) in
     let c = Int32x4.of_float32x4 (low_of c) in
@@ -423,9 +423,9 @@ module Float32x4 = struct
     let dc = Int32x4.interleave_low_32 c d in
     Int32x4.interleave_low_64 ba dc |> of_int32x4
 
-  let[@inline] extract0 x = low_to x
+  let[@inline always] extract0 x = low_to x
 
-  let[@inline] splat x =
+  let[@inline always] splat x =
     let as_i = Int32x4.of_float32x4 x in
     let lane1 = Int32x4.dup_lane 1 as_i |> of_int32x4 |> low_to in
     let lane2 = Int32x4.dup_lane 2 as_i |> of_int32x4 |> low_to in
