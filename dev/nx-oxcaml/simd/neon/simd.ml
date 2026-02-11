@@ -254,9 +254,7 @@ module Float64x2 = struct
     = "caml_vec128_unreachable" "caml_neon_float64x2_sqrt"
     [@@noalloc] [@@unboxed] [@@builtin]
 
-  external mul_add : (t[@unboxed]) -> (t[@unboxed]) -> (t[@unboxed]) -> (t[@unboxed]) @@ portable
-    = "caml_vec128_unreachable" "caml_neon_float64x2_fma"
-    [@@noalloc]
+  let[@inline] mul_add a b c = add (mul a b) c
 
   external hadd : t -> t -> t @@ portable
     = "caml_vec128_unreachable" "caml_neon_float64x2_hadd"
@@ -359,9 +357,7 @@ module Float32x4 = struct
     = "caml_vec128_unreachable" "caml_neon_float32x4_sqrt"
     [@@noalloc] [@@unboxed] [@@builtin]
 
-  external mul_add : (t[@unboxed]) -> (t[@unboxed]) -> (t[@unboxed]) -> (t[@unboxed]) @@ portable
-    = "caml_vec128_unreachable" "caml_neon_float32x4_fma"
-    [@@noalloc]
+  let[@inline] mul_add a b c = add (mul a b) c
 
   external hadd : t -> t -> t @@ portable
     = "caml_vec128_unreachable" "caml_neon_float32x4_hadd"

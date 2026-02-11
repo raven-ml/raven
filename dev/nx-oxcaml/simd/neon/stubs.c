@@ -89,20 +89,3 @@ void caml_prefetch_read_high_val_offset_untagged(value v, intnat offset) {
     __builtin_prefetch((char *)v + offset, 0, 3);
 }
 
-/* FMA — NEON has hardware FMA (vfmaq_f32/f64), but the OxCaml compiler
-   doesn't expose them as [@@builtin] intrinsics. The OCaml externals use
-   [@unboxed] parameters, so the native compiler passes raw NEON registers.
-   These stubs accept the unboxed types directly. */
-
-#ifdef __ARM_NEON
-#include <arm_neon.h>
-
-float32x4_t caml_neon_float32x4_fma(float32x4_t a, float32x4_t b, float32x4_t c) {
-    return vfmaq_f32(a, b, c);
-}
-
-float64x2_t caml_neon_float64x2_fma(float64x2_t a, float64x2_t b, float64x2_t c) {
-    return vfmaq_f64(a, b, c);
-}
-
-#endif
