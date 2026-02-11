@@ -46,6 +46,7 @@ let ops_f32 ~size =
   in
   [
     bin_pair "Add" (fun ~out a b -> Nx.add ~out a b) (fun ~out a b -> Nx_ox.add ~out a b);
+    bin_pair "Matmul" (fun ~out a b -> Nx.matmul ~out a b) (fun ~out a b -> Nx_ox.matmul ~out a b);
     (* bin_pair "Sub" (fun ~out a b -> Nx.sub ~out a b) (fun ~out a b -> Nx_ox.sub ~out a b); *)
     (* bin_pair "Mul" (fun ~out a b -> Nx.mul ~out a b) (fun ~out a b -> Nx_ox.mul ~out a b); *)
     (* bin_pair "Div" (fun ~out a b -> Nx.div ~out a b) (fun ~out a b -> Nx_ox.div ~out a b); *)
@@ -101,6 +102,7 @@ let ops_f64 ~size =
   in
   [
     bin_pair "Add" (fun ~out a b -> Nx.add ~out a b) (fun ~out a b -> Nx_ox.add ~out a b);
+    bin_pair "Matmul" (fun ~out a b -> Nx.matmul ~out a b) (fun ~out a b -> Nx_ox.matmul ~out a b);
     (* bin_pair "Sub" (fun ~out a b -> Nx.sub ~out a b) (fun ~out a b -> Nx_ox.sub ~out a b); *)
     (* bin_pair "Mul" (fun ~out a b -> Nx.mul ~out a b) (fun ~out a b -> Nx_ox.mul ~out a b); *)
     (* bin_pair "Div" (fun ~out a b -> Nx.div ~out a b) (fun ~out a b -> Nx_ox.div ~out a b); *)
