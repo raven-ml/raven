@@ -1006,8 +1006,8 @@ let from_host (type a b) ctx (array : (a, b, c_layout) Bigarray.Array1.t) : (a, 
 let op_expand x shape = { x with view = View.expand x.view shape }
 let op_reshape x shape = { x with view = View.reshape x.view shape }
 let op_permute x axes = { x with view = View.permute x.view axes }
-let op_shrink _ _ = Error.invalid ~op:"op_shrink" ~what:"not implemented" ()
-let op_flip _ _ = Error.invalid ~op:"op_flip" ~what:"not implemented" ()
+let op_shrink x bounds = { x with view = View.shrink x.view bounds }
+let op_flip x axes = { x with view = View.flip x.view axes }
 let op_pad (type a b) (x : (a, b) t) (padding : (int * int) array)
     (fill_value : a) : (a, b) t =
   let in_view = x.view in
@@ -1155,8 +1155,668 @@ let op_pad (type a b) (x : (a, b) t) (padding : (int * int) array)
       done;
       { dtype = Dtype.Bool; buffer = Bool out_arr; view = out_view; context }
   | _ -> .
-let op_cat _ _ = Error.invalid ~op:"op_cat" ~what:"not implemented" ()
-let op_cast _ _ = Error.invalid ~op:"op_cast" ~what:"not implemented" ()
+let op_cat (type a b) (xs : (a, b) t list) (axis : int) : (a, b) t =
+  match xs with
+  | [] -> Error.invalid ~op:"op_cat" ~what:"empty input list" ()
+  | x0 :: _ ->
+      let rank = Array.length (shape x0.view) in
+      let axis = if axis < 0 then rank + axis else axis in
+      if axis < 0 || axis >= rank then
+        Error.axis_out_of_bounds ~op:"op_cat" ~axis ~ndim:rank ();
+
+      let out_shape = Array.copy (shape x0.view) in
+      out_shape.(axis) <- 0;
+      List.iter
+        (fun x ->
+          let s = shape x.view in
+          if Array.length s <> rank then
+            Error.invalid ~op:"op_cat" ~what:"rank mismatch" ();
+          for i = 0 to rank - 1 do
+            if i <> axis && s.(i) <> (shape x0.view).(i) then
+              Error.invalid ~op:"op_cat" ~what:"shape mismatch" ()
+          done;
+          out_shape.(axis) <- out_shape.(axis) + s.(axis))
+        xs;
+
+      let out_numel = Shape.numel out_shape in
+      let out =
+        let t = op_buffer x0.context x0.dtype out_numel in
+        { t with view = View.reshape t.view (Symbolic_shape.of_ints out_shape) }
+      in
+
+      let out_offset = View.offset out.view in
+      let out_strides = View.strides out.view in
+      let md_index = Array.make rank 0 in
+      let dst_index = Array.make rank 0 in
+      let axis_base = ref 0 in
+
+      (match (x0, out) with
+      | { buffer = Float64 _; _ }, { buffer = Float64 out_arr; _ } ->
+          List.iter
+            (fun x ->
+              let src_shape = shape x.view in
+              let src_numel = numel x.view in
+              let src_offset = View.offset x.view in
+              let src_strides = View.strides x.view in
+              let src_arr =
+                match x.buffer with
+                | Float64 a -> a
+                | _ -> .
+              in
+              for k = 0 to src_numel - 1 do
+                Shape.unravel_index_into k src_shape md_index;
+                Array.blit md_index 0 dst_index 0 rank;
+                dst_index.(axis) <- dst_index.(axis) + !axis_base;
+                let src_lin = src_offset + Shape.ravel_index md_index src_strides in
+                let dst_lin = out_offset + Shape.ravel_index dst_index out_strides in
+                Array.unsafe_set out_arr dst_lin (Array.unsafe_get src_arr src_lin)
+              done;
+              axis_base := !axis_base + src_shape.(axis))
+            xs
+      | { buffer = Float32 _; _ }, { buffer = Float32 out_arr; _ } ->
+          List.iter
+            (fun x ->
+              let src_shape = shape x.view in
+              let src_numel = numel x.view in
+              let src_offset = View.offset x.view in
+              let src_strides = View.strides x.view in
+              let src_arr =
+                match x.buffer with
+                | Float32 a -> a
+                | _ -> .
+              in
+              for k = 0 to src_numel - 1 do
+                Shape.unravel_index_into k src_shape md_index;
+                Array.blit md_index 0 dst_index 0 rank;
+                dst_index.(axis) <- dst_index.(axis) + !axis_base;
+                let src_lin = src_offset + Shape.ravel_index md_index src_strides in
+                let dst_lin = out_offset + Shape.ravel_index dst_index out_strides in
+                Array.unsafe_set out_arr dst_lin (Array.unsafe_get src_arr src_lin)
+              done;
+              axis_base := !axis_base + src_shape.(axis))
+            xs
+      | { buffer = Int8 _; _ }, { buffer = Int8 out_arr; _ } ->
+          List.iter
+            (fun x ->
+              let src_shape = shape x.view in
+              let src_numel = numel x.view in
+              let src_offset = View.offset x.view in
+              let src_strides = View.strides x.view in
+              let src_arr =
+                match x.buffer with
+                | Int8 a -> a
+                | _ -> .
+              in
+              for k = 0 to src_numel - 1 do
+                Shape.unravel_index_into k src_shape md_index;
+                Array.blit md_index 0 dst_index 0 rank;
+                dst_index.(axis) <- dst_index.(axis) + !axis_base;
+                let src_lin = src_offset + Shape.ravel_index md_index src_strides in
+                let dst_lin = out_offset + Shape.ravel_index dst_index out_strides in
+                Array.unsafe_set out_arr dst_lin (Array.unsafe_get src_arr src_lin)
+              done;
+              axis_base := !axis_base + src_shape.(axis))
+            xs
+      | { buffer = Int16 _; _ }, { buffer = Int16 out_arr; _ } ->
+          List.iter
+            (fun x ->
+              let src_shape = shape x.view in
+              let src_numel = numel x.view in
+              let src_offset = View.offset x.view in
+              let src_strides = View.strides x.view in
+              let src_arr =
+                match x.buffer with
+                | Int16 a -> a
+                | _ -> .
+              in
+              for k = 0 to src_numel - 1 do
+                Shape.unravel_index_into k src_shape md_index;
+                Array.blit md_index 0 dst_index 0 rank;
+                dst_index.(axis) <- dst_index.(axis) + !axis_base;
+                let src_lin = src_offset + Shape.ravel_index md_index src_strides in
+                let dst_lin = out_offset + Shape.ravel_index dst_index out_strides in
+                Array.unsafe_set out_arr dst_lin (Array.unsafe_get src_arr src_lin)
+              done;
+              axis_base := !axis_base + src_shape.(axis))
+            xs
+      | { buffer = Int32 _; _ }, { buffer = Int32 out_arr; _ } ->
+          List.iter
+            (fun x ->
+              let src_shape = shape x.view in
+              let src_numel = numel x.view in
+              let src_offset = View.offset x.view in
+              let src_strides = View.strides x.view in
+              let src_arr =
+                match x.buffer with
+                | Int32 a -> a
+                | _ -> .
+              in
+              for k = 0 to src_numel - 1 do
+                Shape.unravel_index_into k src_shape md_index;
+                Array.blit md_index 0 dst_index 0 rank;
+                dst_index.(axis) <- dst_index.(axis) + !axis_base;
+                let src_lin = src_offset + Shape.ravel_index md_index src_strides in
+                let dst_lin = out_offset + Shape.ravel_index dst_index out_strides in
+                Array.unsafe_set out_arr dst_lin (Array.unsafe_get src_arr src_lin)
+              done;
+              axis_base := !axis_base + src_shape.(axis))
+            xs
+      | { buffer = Int64 _; _ }, { buffer = Int64 out_arr; _ } ->
+          List.iter
+            (fun x ->
+              let src_shape = shape x.view in
+              let src_numel = numel x.view in
+              let src_offset = View.offset x.view in
+              let src_strides = View.strides x.view in
+              let src_arr =
+                match x.buffer with
+                | Int64 a -> a
+                | _ -> .
+              in
+              for k = 0 to src_numel - 1 do
+                Shape.unravel_index_into k src_shape md_index;
+                Array.blit md_index 0 dst_index 0 rank;
+                dst_index.(axis) <- dst_index.(axis) + !axis_base;
+                let src_lin = src_offset + Shape.ravel_index md_index src_strides in
+                let dst_lin = out_offset + Shape.ravel_index dst_index out_strides in
+                Array.unsafe_set out_arr dst_lin (Array.unsafe_get src_arr src_lin)
+              done;
+              axis_base := !axis_base + src_shape.(axis))
+            xs
+      | { buffer = Bool _; _ }, { buffer = Bool out_arr; _ } ->
+          List.iter
+            (fun x ->
+              let src_shape = shape x.view in
+              let src_numel = numel x.view in
+              let src_offset = View.offset x.view in
+              let src_strides = View.strides x.view in
+              let src_arr =
+                match x.buffer with
+                | Bool a -> a
+                | _ -> .
+              in
+              for k = 0 to src_numel - 1 do
+                Shape.unravel_index_into k src_shape md_index;
+                Array.blit md_index 0 dst_index 0 rank;
+                dst_index.(axis) <- dst_index.(axis) + !axis_base;
+                let src_lin = src_offset + Shape.ravel_index md_index src_strides in
+                let dst_lin = out_offset + Shape.ravel_index dst_index out_strides in
+                Array.unsafe_set out_arr dst_lin (Array.unsafe_get src_arr src_lin)
+              done;
+              axis_base := !axis_base + src_shape.(axis))
+            xs
+      | _ -> .);
+      out
+
+let op_cast (type a b c d) (x : (a, b) t) (target_dtype : (c, d) Dtype.t) :
+    (c, d) t =
+  let in_view = x.view in
+  let in_shape = shape in_view in
+  let n = numel in_view in
+  let out =
+    let t = op_buffer x.context target_dtype n in
+    { t with view = View.reshape t.view (Symbolic_shape.of_ints in_shape) }
+  in
+  let in_offset = View.offset in_view in
+  let in_strides = View.strides in_view in
+  let out_offset = View.offset out.view in
+  let out_strides = View.strides out.view in
+  let rank = Array.length in_shape in
+  let md_index = Array.make rank 0 in
+  match (x.buffer, out.buffer) with
+  | Float64 src, Float64 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
+      done;
+      out
+  | Float64 src, Float32 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Float32_u.of_float (Array.unsafe_get src src_lin))
+      done;
+      out
+  | Float64 src, Int8 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Int8_u.of_int (Float_u.to_int (Array.unsafe_get src src_lin)))
+      done;
+      out
+  | Float64 src, Int16 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Int16_u.of_int (Float_u.to_int (Array.unsafe_get src src_lin)))
+      done;
+      out
+  | Float64 src, Int32 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Int32_u.of_int32
+             (Int32.of_int (Float_u.to_int (Array.unsafe_get src src_lin))))
+      done;
+      out
+  | Float64 src, Int64 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Int64_u.of_int64
+             (Int64.of_int (Float_u.to_int (Array.unsafe_get src src_lin))))
+      done;
+      out
+  | Float64 src, Bool dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Float_u.to_float (Array.unsafe_get src src_lin) <> 0.0)
+      done;
+      out
+  | Float32 src, Float64 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin (Float32_u.to_float (Array.unsafe_get src src_lin))
+      done;
+      out
+  | Float32 src, Float32 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
+      done;
+      out
+  | Float32 src, Int8 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Int8_u.of_int (Float32_u.to_int (Array.unsafe_get src src_lin)))
+      done;
+      out
+  | Float32 src, Int16 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Int16_u.of_int (Float32_u.to_int (Array.unsafe_get src src_lin)))
+      done;
+      out
+  | Float32 src, Int32 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Int32_u.of_int32
+             (Int32.of_int (Float32_u.to_int (Array.unsafe_get src src_lin))))
+      done;
+      out
+  | Float32 src, Int64 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Int64_u.of_int64
+             (Int64.of_int (Float32_u.to_int (Array.unsafe_get src src_lin))))
+      done;
+      out
+  | Float32 src, Bool dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Float_u.to_float (Float32_u.to_float (Array.unsafe_get src src_lin))
+         <> 0.0)
+      done;
+      out
+  | Int8 src, Float64 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Float_u.of_int (Int8_u.to_int (Array.unsafe_get src src_lin)))
+      done;
+      out
+  | Int8 src, Float32 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Float32_u.of_int (Int8_u.to_int (Array.unsafe_get src src_lin)))
+      done;
+      out
+  | Int8 src, Int8 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
+      done;
+      out
+  | Int8 src, Int16 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Int16_u.of_int (Int8_u.to_int (Array.unsafe_get src src_lin)))
+      done;
+      out
+  | Int8 src, Int32 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Int32_u.of_int32
+             (Int32.of_int (Int8_u.to_int (Array.unsafe_get src src_lin))))
+      done;
+      out
+  | Int8 src, Int64 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Int64_u.of_int64
+             (Int64.of_int (Int8_u.to_int (Array.unsafe_get src src_lin))))
+      done;
+      out
+  | Int8 src, Bool dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Int8_u.to_int (Array.unsafe_get src src_lin) <> 0)
+      done;
+      out
+  | Int16 src, Float64 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Float_u.of_int (Int16_u.to_int (Array.unsafe_get src src_lin)))
+      done;
+      out
+  | Int16 src, Float32 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Float32_u.of_int (Int16_u.to_int (Array.unsafe_get src src_lin)))
+      done;
+      out
+  | Int16 src, Int8 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Int8_u.of_int (Int16_u.to_int (Array.unsafe_get src src_lin)))
+      done;
+      out
+  | Int16 src, Int16 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
+      done;
+      out
+  | Int16 src, Int32 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Int32_u.of_int32
+             (Int32.of_int (Int16_u.to_int (Array.unsafe_get src src_lin))))
+      done;
+      out
+  | Int16 src, Int64 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Int64_u.of_int64
+             (Int64.of_int (Int16_u.to_int (Array.unsafe_get src src_lin))))
+      done;
+      out
+  | Int16 src, Bool dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Int16_u.to_int (Array.unsafe_get src src_lin) <> 0)
+      done;
+      out
+  | Int32 src, Float64 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Float_u.of_int (Int32.to_int (Int32_u.to_int32 (Array.unsafe_get src src_lin))))
+      done;
+      out
+  | Int32 src, Float32 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Float32_u.of_int
+             (Int32.to_int (Int32_u.to_int32 (Array.unsafe_get src src_lin))))
+      done;
+      out
+  | Int32 src, Int8 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Int8_u.of_int
+             (Int32.to_int (Int32_u.to_int32 (Array.unsafe_get src src_lin))))
+      done;
+      out
+  | Int32 src, Int16 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Int16_u.of_int
+             (Int32.to_int (Int32_u.to_int32 (Array.unsafe_get src src_lin))))
+      done;
+      out
+  | Int32 src, Int32 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
+      done;
+      out
+  | Int32 src, Int64 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Int64_u.of_int64
+             (Int64.of_int32 (Int32_u.to_int32 (Array.unsafe_get src src_lin))))
+      done;
+      out
+  | Int32 src, Bool dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Int32_u.to_int32 (Array.unsafe_get src src_lin) <> 0l)
+      done;
+      out
+  | Int64 src, Float64 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Float_u.of_int
+             (Int64.to_int (Int64_u.to_int64 (Array.unsafe_get src src_lin))))
+      done;
+      out
+  | Int64 src, Float32 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Float32_u.of_int
+             (Int64.to_int (Int64_u.to_int64 (Array.unsafe_get src src_lin))))
+      done;
+      out
+  | Int64 src, Int8 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Int8_u.of_int
+             (Int64.to_int (Int64_u.to_int64 (Array.unsafe_get src src_lin))))
+      done;
+      out
+  | Int64 src, Int16 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Int16_u.of_int
+             (Int64.to_int (Int64_u.to_int64 (Array.unsafe_get src src_lin))))
+      done;
+      out
+  | Int64 src, Int32 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Int32_u.of_int32
+             (Int32.of_int
+                (Int64.to_int (Int64_u.to_int64 (Array.unsafe_get src src_lin)))))
+      done;
+      out
+  | Int64 src, Int64 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
+      done;
+      out
+  | Int64 src, Bool dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (Int64_u.to_int64 (Array.unsafe_get src src_lin) <> 0L)
+      done;
+      out
+  | Bool src, Float64 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (if Array.unsafe_get src src_lin then Float_u.of_int 1 else Float_u.of_int 0)
+      done;
+      out
+  | Bool src, Float32 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (if Array.unsafe_get src src_lin then Float32_u.of_int 1 else Float32_u.of_int 0)
+      done;
+      out
+  | Bool src, Int8 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (if Array.unsafe_get src src_lin then Int8_u.of_int 1 else Int8_u.of_int 0)
+      done;
+      out
+  | Bool src, Int16 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (if Array.unsafe_get src src_lin then Int16_u.of_int 1 else Int16_u.of_int 0)
+      done;
+      out
+  | Bool src, Int32 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (if Array.unsafe_get src src_lin then Int32_u.of_int32 1l else Int32_u.of_int32 0l)
+      done;
+      out
+  | Bool src, Int64 dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin
+          (if Array.unsafe_get src src_lin then Int64_u.of_int64 1L else Int64_u.of_int64 0L)
+      done;
+      out
+  | Bool src, Bool dst ->
+      for k = 0 to n - 1 do
+        Shape.unravel_index_into k in_shape md_index;
+        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
+        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
+        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
+      done;
+      out
+  | _ -> .
 
 let op_contiguous _ =
   Error.invalid ~op:"op_contiguous" ~what:"not implemented" ()
