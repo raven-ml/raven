@@ -28,7 +28,6 @@ type model = {
   screen_height : int;
   current_batch : int;
   sys_panel : Sys_panel.t;
-  hover : (string * int * int) option; (* tag, px, py *)
 }
 
 type msg =
@@ -37,8 +36,6 @@ type msg =
   | Resize of int * int
   | Next_batch
   | Prev_batch
-  | Chart_hover of string * int * int
-  | Chart_hover_leave
 
 (* ───── View ───── *)
 
@@ -71,9 +68,6 @@ let view_main m =
               screen_width = m.screen_width;
               screen_height = m.screen_height;
               current_batch = m.current_batch;
-              hover = m.hover;
-              on_hover = (fun tag px py -> Chart_hover (tag, px, py));
-              on_hover_leave = Chart_hover_leave;
             };
           divider ();
           (* Right column: sys panel (1/3 width) *)
@@ -119,7 +113,6 @@ let init ~run =
       screen_height = initial_height;
       current_batch = 0;
       sys_panel;
-      hover = None;
     },
     Cmd.none )
 
@@ -172,9 +165,6 @@ let update msg m =
       ({ m with current_batch = min (m.current_batch + 1) max_batch }, Cmd.none)
   | Prev_batch ->
       ({ m with current_batch = max 0 (m.current_batch - 1) }, Cmd.none)
-  | Chart_hover (tag, px, py) ->
-      ({ m with hover = Some (tag, px, py) }, Cmd.none)
-  | Chart_hover_leave -> ({ m with hover = None }, Cmd.none)
   | Quit ->
       Run.close_events m.stream;
       (m, Cmd.quit)

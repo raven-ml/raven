@@ -7,7 +7,6 @@
 
 open Mosaic
 module Charts = Matrix_charts
-module Event = Mosaic_ui.Event
 
 (* ───── Styles ───── *)
 
@@ -109,40 +108,24 @@ let draw_metric_chart ~hover history grid ~width ~height =
               | _ -> ())
           | None -> ()
 
-let view_metric_chart ~history_for_tag ~columns ~hover ~on_hover ~on_hover_leave
-    tag =
+let view_metric_chart ~history_for_tag ~columns tag =
   let history = history_for_tag tag in
   let width_pct = if columns = 1 then 100 else 49 in
-  (* Check if this chart is being hovered *)
-  let is_hovered =
-    match hover with
-    | Some (htag, _, _) when htag = tag -> true
-    | _ -> false
+  (* Show current (latest) value in title at all times. *)
+  let rec last_value = function
+    | [] -> None
+    | [ (_, v) ] -> Some v
+    | _ :: rest -> last_value rest
   in
-  (* Show current (latest) value in title when hovering *)
   let title =
-    if is_hovered then
-      (* History is oldest-first, so get the last element for latest value *)
-      let rec last_value = function
-        | [] -> None
-        | [ (_, v) ] -> Some v
-        | _ :: rest -> last_value rest
-      in
-      match last_value history with
-      | Some value -> Printf.sprintf "%s [%.4f]" tag value
-      | None -> tag
-    else tag
+    match last_value history with
+    | Some value -> Printf.sprintf "%s [%.4f]" tag value
+    | None -> tag
   in
   box ~key:tag ~border:true ~title ~padding:(padding 0)
     ~size:{ width = pct width_pct; height = px 14 }
     [
       canvas
-        ~on_mouse:(fun ev ->
-          let px, py = (Event.Mouse.x ev, Event.Mouse.y ev) in
-          match Event.Mouse.kind ev with
-          | Move | Drag -> Some (on_hover tag px py)
-          | Out -> Some on_hover_leave
-          | _ -> None)
         ~draw:(fun grid ~width ~height ->
           draw_metric_chart ~hover:None history grid ~width ~height)
         ~size:{ width = pct 100; height = pct 100 }
@@ -151,16 +134,13 @@ let view_metric_chart ~history_for_tag ~columns ~hover ~on_hover ~on_hover_leave
 
 (* ───── View ───── *)
 
-(* We use 'a for metric value and 'msg for message type *)
-type ('a, 'msg) view_params = {
+(* We use 'a since we don't need the metric value - only the tag for lookup *)
+type 'a view_params = {
   latest_metrics : (string * 'a) list;
   history_for_tag : string -> (int * float) list;
   screen_width : int;
   screen_height : int;
   current_batch : int;
-  hover : (string * int * int) option;
-  on_hover : string -> int -> int -> 'msg;
-  on_hover_leave : 'msg;
 }
 
 (** Chunk a list into groups of n *)
@@ -174,7 +154,7 @@ let rec chunk_by n lst =
     let group, rest = take n [] lst in
     group :: chunk_by n rest
 
-let view (params : (_, _) view_params) =
+let view (params : _ view_params) =
   let latest = params.latest_metrics in
   if latest = [] then
     box ~padding:(padding 1) ~size:{ width = pct 66; height = pct 100 }
@@ -223,8 +203,7 @@ let view (params : (_, _) view_params) =
                  (List.map
                     (fun tag ->
                       view_metric_chart ~history_for_tag:params.history_for_tag
-                        ~columns ~hover:params.hover ~on_hover:params.on_hover
-                        ~on_hover_leave:params.on_hover_leave tag)
+                        ~columns tag)
                     row))
              rows);
       ]
