@@ -1450,6 +1450,149 @@ let test_cast_bool_to_float32 () =
   check_float32 "cast_bool_f32[0]" ~eps:1e-6 #1.0s (get32 d 0);
   check_float32 "cast_bool_f32[1]" ~eps:1e-6 #0.0s (get32 d 1);
   check_float32 "cast_bool_f32[2]" ~eps:1e-6 #1.0s (get32 d 2)
+
+let test_contiguous_from_permute () =
+  let ctx = Nx_oxcaml.create_context () in
+  let base =
+    Nx_ox.create ctx
+      Dtype.Int32
+      [| 2; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l |]
+  in
+  let x = Nx_oxcaml.op_permute base [| 1; 0 |] in
+  let y = Nx_oxcaml.op_contiguous x in
+  check "contiguous_from_permute: is_contiguous"
+    (View.is_c_contiguous (Nx_oxcaml.view y));
+  let d = Nx_oxcaml.data_array y in
+  check_int32 "contiguous_from_permute[0]" #1l (geti32 d 0);
+  check_int32 "contiguous_from_permute[1]" #4l (geti32 d 1);
+  check_int32 "contiguous_from_permute[2]" #2l (geti32 d 2);
+  check_int32 "contiguous_from_permute[3]" #5l (geti32 d 3);
+  check_int32 "contiguous_from_permute[4]" #3l (geti32 d 4);
+  check_int32 "contiguous_from_permute[5]" #6l (geti32 d 5)
+
+let test_copy_independent_buffer () =
+  let ctx = Nx_oxcaml.create_context () in
+  let x = Nx_oxcaml.of_int32 ctx [| #1l; #2l; #3l |] in
+  let y = Nx_oxcaml.op_copy x in
+  let x_data = Nx_oxcaml.data_array x in
+  let y_data = Nx_oxcaml.data_array y in
+  (match (x_data, y_data) with
+  | Nx_oxcaml.Int32 xa, Nx_oxcaml.Int32 ya ->
+      check "copy_independent_buffer: no_alias" (xa != ya)
+  | _ -> .);
+  let src = Nx_oxcaml.of_int32 ctx [| #9l; #9l; #9l |] in
+  Nx_oxcaml.op_assign x src;
+  let d = Nx_oxcaml.data_array y in
+  check_int32 "copy_independent_buffer[0]" #1l (geti32 d 0);
+  check_int32 "copy_independent_buffer[1]" #2l (geti32 d 1);
+  check_int32 "copy_independent_buffer[2]" #3l (geti32 d 2)
+
+let test_assign_strided_dst () =
+  let ctx = Nx_oxcaml.create_context () in
+  let dst_base =
+    Nx_ox.create ctx Dtype.Int32 
+      [| 2; 3 |] [| 0l; 0l; 0l; 0l; 0l; 0l |]
+  in
+  let dst = Nx_oxcaml.op_permute dst_base [| 1; 0 |] in
+  let src =
+    Nx_ox.create ctx Dtype.Int32
+    [| 3; 2 |]
+      [| 1l; 2l; 3l; 4l; 5l; 6l |]
+  in
+  Nx_oxcaml.op_assign dst src;
+  let d = Nx_oxcaml.data_array dst_base in
+  check_int32 "assign_strided_dst[0]" #1l (geti32 d 0);
+  check_int32 "assign_strided_dst[1]" #3l (geti32 d 1);
+  check_int32 "assign_strided_dst[2]" #5l (geti32 d 2);
+  check_int32 "assign_strided_dst[3]" #2l (geti32 d 3);
+  check_int32 "assign_strided_dst[4]" #4l (geti32 d 4);
+  check_int32 "assign_strided_dst[5]" #6l (geti32 d 5)
+
+let test_as_strided_transpose_view () =
+  let ctx = Nx_oxcaml.create_context () in
+  let x =
+    Nx_ox.create ctx Dtype.Int32
+    [| 3; 2 |]
+      [| 1l; 2l; 3l; 4l; 5l; 6l |]
+  in
+  let y =
+    Nx_oxcaml.op_as_strided x (Symbolic_shape.of_ints [| 3; 2 |]) [| 1; 3 |] 0
+  in
+  let y_c = Nx_oxcaml.op_copy y in
+  let d = Nx_oxcaml.data_array y_c in
+  check_int32 "as_strided_transpose_view[0]" #1l (geti32 d 0);
+  check_int32 "as_strided_transpose_view[1]" #4l (geti32 d 1);
+  check_int32 "as_strided_transpose_view[2]" #2l (geti32 d 2);
+  check_int32 "as_strided_transpose_view[3]" #5l (geti32 d 3);
+  check_int32 "as_strided_transpose_view[4]" #3l (geti32 d 4);
+  check_int32 "as_strided_transpose_view[5]" #6l (geti32 d 5)
+
+let test_gather_int32_axis1 () =
+  let ctx = Nx_oxcaml.create_context () in
+  let data =
+    Nx_ox.create ctx  Dtype.Int32
+    [| 2; 4 |]
+      [| 10l; 11l; 12l; 13l; 20l; 21l; 22l; 23l |]
+  in
+  let indices =
+    Nx_ox.create ctx Dtype.Int32 [| 2; 3 |] [| 3l; 1l; 0l; 0l; 2l; 2l |] 
+  in
+  let y = Nx_oxcaml.op_gather data indices 1 in
+  let d = Nx_oxcaml.data_array y in
+  check_int32 "gather_int32_axis1[0]" #13l (geti32 d 0);
+  check_int32 "gather_int32_axis1[1]" #11l (geti32 d 1);
+  check_int32 "gather_int32_axis1[2]" #10l (geti32 d 2);
+  check_int32 "gather_int32_axis1[3]" #20l (geti32 d 3);
+  check_int32 "gather_int32_axis1[4]" #22l (geti32 d 4);
+  check_int32 "gather_int32_axis1[5]" #22l (geti32 d 5)
+
+let test_scatter_int32_set_axis1 () =
+  let ctx = Nx_oxcaml.create_context () in
+  let template =
+    Nx_ox.create ctx Dtype.Int32
+    [| 2; 4 |]
+      [| 0l; 0l; 0l; 0l; 0l; 0l; 0l; 0l |]
+  in
+  let indices =
+    Nx_ox.create ctx Dtype.Int32 [| 2; 3 |] [| 3l; 1l; 0l; 0l; 2l; 2l |]
+  in
+  let updates =
+    Nx_ox.create ctx Dtype.Int32 [| 2; 3 |] [| 9l; 8l; 7l; 6l; 5l; 4l |]
+  in
+  let y = Nx_oxcaml.op_scatter template indices updates 1 in
+  let d = Nx_oxcaml.data_array y in
+  check_int32 "scatter_int32_set_axis1[0]" #7l (geti32 d 0);
+  check_int32 "scatter_int32_set_axis1[1]" #8l (geti32 d 1);
+  check_int32 "scatter_int32_set_axis1[2]" #0l (geti32 d 2);
+  check_int32 "scatter_int32_set_axis1[3]" #9l (geti32 d 3);
+  check_int32 "scatter_int32_set_axis1[4]" #6l (geti32 d 4);
+  check_int32 "scatter_int32_set_axis1[5]" #0l (geti32 d 5);
+  check_int32 "scatter_int32_set_axis1[6]" #4l (geti32 d 6);
+  check_int32 "scatter_int32_set_axis1[7]" #0l (geti32 d 7)
+
+let test_scatter_int32_add_axis1 () =
+  let ctx = Nx_oxcaml.create_context () in
+  let template =
+    Nx_ox.create ctx Dtype.Int32
+    [| 2; 4 |]
+      [| 100l; 100l; 100l; 100l; 100l; 100l; 100l; 100l |]
+  in
+  let indices =
+    Nx_ox.create ctx Dtype.Int32 [| 2; 3 |] [| 3l; 1l; 0l; 0l; 2l; 2l |]
+  in
+  let updates =
+    Nx_ox.create ctx Dtype.Int32 [| 2; 3 |] [| 9l; 8l; 7l; 6l; 5l; 4l |]
+  in
+  let y = Nx_oxcaml.op_scatter ~mode:`Add template indices updates 1 in
+  let d = Nx_oxcaml.data_array y in
+  check_int32 "scatter_int32_add_axis1[0]" #7l (geti32 d 0);
+  check_int32 "scatter_int32_add_axis1[1]" #8l (geti32 d 1);
+  check_int32 "scatter_int32_add_axis1[2]" #0l (geti32 d 2);
+  check_int32 "scatter_int32_add_axis1[3]" #9l (geti32 d 3);
+  check_int32 "scatter_int32_add_axis1[4]" #6l (geti32 d 4);
+  check_int32 "scatter_int32_add_axis1[5]" #0l (geti32 d 5);
+  check_int32 "scatter_int32_add_axis1[6]" #9l (geti32 d 6);
+  check_int32 "scatter_int32_add_axis1[7]" #0l (geti32 d 7)
   
 let () =
   print_endline "Running Nx_oxcaml backend tests...";
@@ -1554,5 +1697,12 @@ let () =
   test_cat_int32_axis1 ();
   test_cast_float64_to_int32 ();
   test_cast_bool_to_float32 ();
+  test_contiguous_from_permute ();
+  test_copy_independent_buffer ();
+  test_assign_strided_dst ();
+  test_as_strided_transpose_view ();
+  test_gather_int32_axis1 ();
+  test_scatter_int32_set_axis1 ();
+  test_scatter_int32_add_axis1 ();
   Printf.printf "\nResults: %d passed, %d failed\n" !passed !failed;
   if !failed > 0 then exit 1
