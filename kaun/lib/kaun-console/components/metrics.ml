@@ -7,6 +7,7 @@
 
 open Mosaic
 module Charts = Matrix_charts
+module Event = Mosaic_ui.Event
 
 (* ───── Styles ───── *)
 
@@ -53,7 +54,7 @@ let calculate_graphs_per_batch ~width ~height : int =
 
 (* ───── Chart Drawing ───── *)
 
-let draw_metric_chart _tag history grid ~width ~height =
+let draw_metric_chart ~hover history grid ~width ~height =
   if history = [] then (* No data yet - show placeholder *)
     ()
   else
@@ -80,34 +81,86 @@ let draw_metric_chart _tag history grid ~width ~height =
            |> Charts.Gridlines.with_style grid_style
            |> Charts.Gridlines.with_x true
            |> Charts.Gridlines.with_y true)
-      |> Charts.line ~resolution:`Braille2x4
+      |> Charts.line ~id:"metric" ~resolution:`Braille2x4
            ~style:(Ansi.Style.make ~fg:Ansi.Color.cyan ())
            ~x:fst ~y:snd data
     in
-    ignore (Charts.draw chart grid ~width ~height)
+    let layout = Charts.draw chart grid ~width ~height in
+    (* Draw tooltip if hovering *)
+    match hover with
+    | None -> ()
+    | Some (px, py) ->
+        if Charts.Layout.is_inside_plot layout ~px ~py then
+          match
+            Charts.Layout.hit_test layout ~px ~py ~radius:4 ~policy:`Nearest_x
+          with
+          | Some hit -> (
+              match hit.payload with
+              | Charts.Hit.XY { x; y } ->
+                  let lines =
+                    [
+                      Printf.sprintf "Step: %d" (int_of_float x);
+                      Printf.sprintf "Value: %.4f" y;
+                    ]
+                  in
+                  Charts.Overlay.crosshair layout grid ~x ~y;
+                  Charts.Overlay.marker layout grid ~x ~y;
+                  Charts.Overlay.tooltip layout grid ~x ~y lines
+              | _ -> ())
+          | None -> ()
 
-let view_metric_chart ~history_for_tag ~columns tag =
+let view_metric_chart ~history_for_tag ~columns ~hover ~on_hover ~on_hover_leave
+    tag =
   let history = history_for_tag tag in
   let width_pct = if columns = 1 then 100 else 49 in
-  box ~border:true ~title:tag ~padding:(padding 0)
+  (* Check if this chart is being hovered *)
+  let is_hovered =
+    match hover with
+    | Some (htag, _, _) when htag = tag -> true
+    | _ -> false
+  in
+  (* Show current (latest) value in title when hovering *)
+  let title =
+    if is_hovered then
+      (* History is oldest-first, so get the last element for latest value *)
+      let rec last_value = function
+        | [] -> None
+        | [ (_, v) ] -> Some v
+        | _ :: rest -> last_value rest
+      in
+      match last_value history with
+      | Some value -> Printf.sprintf "%s [%.4f]" tag value
+      | None -> tag
+    else tag
+  in
+  box ~key:tag ~border:true ~title ~padding:(padding 0)
     ~size:{ width = pct width_pct; height = px 14 }
     [
       canvas
+        ~on_mouse:(fun ev ->
+          let px, py = (Event.Mouse.x ev, Event.Mouse.y ev) in
+          match Event.Mouse.kind ev with
+          | Move | Drag -> Some (on_hover tag px py)
+          | Out -> Some on_hover_leave
+          | _ -> None)
         ~draw:(fun grid ~width ~height ->
-          draw_metric_chart tag history grid ~width ~height)
+          draw_metric_chart ~hover:None history grid ~width ~height)
         ~size:{ width = pct 100; height = pct 100 }
         ();
     ]
 
 (* ───── View ───── *)
 
-(* We use 'a since we don't need the metric value - only the tag for lookup *)
-type 'a view_params = {
+(* We use 'a for metric value and 'msg for message type *)
+type ('a, 'msg) view_params = {
   latest_metrics : (string * 'a) list;
   history_for_tag : string -> (int * float) list;
   screen_width : int;
   screen_height : int;
   current_batch : int;
+  hover : (string * int * int) option;
+  on_hover : string -> int -> int -> 'msg;
+  on_hover_leave : 'msg;
 }
 
 (** Chunk a list into groups of n *)
@@ -121,10 +174,10 @@ let rec chunk_by n lst =
     let group, rest = take n [] lst in
     group :: chunk_by n rest
 
-let view (params : _ view_params) =
+let view (params : (_, _) view_params) =
   let latest = params.latest_metrics in
   if latest = [] then
-    box ~padding:(padding 1)
+    box ~padding:(padding 1) ~size:{ width = pct 66; height = pct 100 }
       [ text ~style:hint_style "  Waiting for metrics..." ]
   else
     let columns = calculate_columns params.screen_width in
@@ -147,6 +200,7 @@ let view (params : _ view_params) =
     in
     let rows = chunk_by columns visible_metrics in
     box ~flex_direction:Column ~padding:(padding 1) ~gap:(gap 1)
+      ~size:{ width = pct 66; height = pct 100 }
       [
         (if total_batches > 1 then
            box ~flex_direction:Row ~justify_content:Space_between
@@ -169,7 +223,8 @@ let view (params : _ view_params) =
                  (List.map
                     (fun tag ->
                       view_metric_chart ~history_for_tag:params.history_for_tag
-                        ~columns tag)
+                        ~columns ~hover:params.hover ~on_hover:params.on_hover
+                        ~on_hover_leave:params.on_hover_leave tag)
                     row))
              rows);
       ]
