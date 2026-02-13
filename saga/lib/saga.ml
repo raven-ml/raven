@@ -311,8 +311,8 @@ let encoding_to_processor (e : Encoding.t) : Processors.encoding =
 let processor_to_encoding (pe : Processors.encoding) : Encoding.t =
   let seq = Hashtbl.create 1 in
   Encoding.create ~ids:pe.ids ~type_ids:pe.type_ids ~tokens:pe.tokens
-    ~words:(Array.make (Array.length pe.ids) None)
-    ~offsets:pe.offsets ~special_tokens_mask:pe.special_tokens_mask
+    ~words:[||] ~offsets:pe.offsets
+    ~special_tokens_mask:pe.special_tokens_mask
     ~attention_mask:pe.attention_mask ~overflowing:[] ~sequence_ranges:seq
 
 module Tokenizer = struct

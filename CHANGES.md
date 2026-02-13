@@ -58,6 +58,7 @@ All notable changes to this project will be documented in this file.
 - Compact BPE symbols in-place after merges, avoiding an intermediate array allocation. (@tmattio)
 - Replace list cons + reverse with forward `List.init` in BPE `word_to_tokens`. (@tmattio)
 - Use pre-allocated arrays with `Array.blit` instead of `Array.append` in encoding merge and padding, halving per-field allocations. (@tmattio)
+- Avoid allocating an unused `words` array in post-processor encoding conversion. (@tmattio)
 - Remove dependency on `str` library. (@tmattio)
 - Generate unicode data offline, removing runtime dependency on `uucp`. (@tmattio)
 - Add proper UAX #29 grapheme cluster segmentation via `Grapheme` module (vendored from uuseg). (@tmattio)
