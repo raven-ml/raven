@@ -55,7 +55,7 @@ let is_cjk u =
 let normalize form text =
   try
     let b = Buffer.create (String.length text) in
-    let add u = Uutf.Buffer.add_utf_8 b u in
+    let add u = Buffer.add_utf_8_uchar b u in
 
     (* Apply normalization based on form *)
     let normalize_char =
@@ -79,20 +79,17 @@ let normalize form text =
             add u
     in
 
-    (* Process each character *)
-    let decoder = Uutf.decoder (`String text) in
-    let rec loop () =
-      match Uutf.decode decoder with
-      | `Uchar u ->
-          normalize_char u;
-          loop ()
-      | `End -> ()
-      | `Malformed _ ->
-          (* Skip malformed sequences *)
-          loop ()
-      | `Await -> assert false
+    let len = String.length text in
+    let rec loop i =
+      if i >= len then ()
+      else
+        let d = String.get_utf_8_uchar text i in
+        let n = Uchar.utf_decode_length d in
+        (if Uchar.utf_decode_is_valid d then
+           normalize_char (Uchar.utf_decode_uchar d));
+        loop (i + n)
     in
-    loop ();
+    loop 0;
     Buffer.contents b
   with e ->
     Nx_core.Error.invalid ~op:"normalize" ~what:"unicode in text"
@@ -101,21 +98,21 @@ let normalize form text =
 let case_fold text =
   try
     let b = Buffer.create (String.length text) in
-    let decoder = Uutf.decoder (`String text) in
-    let rec loop () =
-      match Uutf.decode decoder with
-      | `Uchar u ->
-          (* Use Uucp for proper case folding *)
-          let folded =
-            match Uucp.Case.Fold.fold u with `Self -> [ u ] | `Uchars us -> us
-          in
-          List.iter (Uutf.Buffer.add_utf_8 b) folded;
-          loop ()
-      | `End -> ()
-      | `Malformed _ -> loop ()
-      | `Await -> assert false
+    let len = String.length text in
+    let rec loop i =
+      if i >= len then ()
+      else
+        let d = String.get_utf_8_uchar text i in
+        let n = Uchar.utf_decode_length d in
+        (if Uchar.utf_decode_is_valid d then
+           let u = Uchar.utf_decode_uchar d in
+           let folded =
+             match Uucp.Case.Fold.fold u with `Self -> [ u ] | `Uchars us -> us
+           in
+           List.iter (Buffer.add_utf_8_uchar b) folded);
+        loop (i + n)
     in
-    loop ();
+    loop 0;
     Buffer.contents b
   with e ->
     Nx_core.Error.invalid ~op:"case_fold" ~what:"unicode in text"
@@ -124,23 +121,23 @@ let case_fold text =
 let strip_accents text =
   try
     let b = Buffer.create (String.length text) in
-    let decoder = Uutf.decoder (`String text) in
-    let rec loop () =
-      match Uutf.decode decoder with
-      | `Uchar u ->
-          (* Check if it's a combining diacritical mark *)
-          if
-            not
-              (Uucp.Gc.general_category u = `Mn
-              || Uucp.Gc.general_category u = `Mc
-              || Uucp.Gc.general_category u = `Me)
-          then Uutf.Buffer.add_utf_8 b u;
-          loop ()
-      | `End -> ()
-      | `Malformed _ -> loop ()
-      | `Await -> assert false
+    let len = String.length text in
+    let rec loop i =
+      if i >= len then ()
+      else
+        let d = String.get_utf_8_uchar text i in
+        let n = Uchar.utf_decode_length d in
+        (if Uchar.utf_decode_is_valid d then
+           let u = Uchar.utf_decode_uchar d in
+           if
+             not
+               (Uucp.Gc.general_category u = `Mn
+               || Uucp.Gc.general_category u = `Mc
+               || Uucp.Gc.general_category u = `Me)
+           then Buffer.add_utf_8_uchar b u);
+        loop (i + n)
     in
-    loop ();
+    loop 0;
     Buffer.contents b
   with e ->
     Nx_core.Error.invalid ~op:"strip_accents" ~what:"unicode in text"
@@ -149,31 +146,29 @@ let strip_accents text =
 let clean_text ?(remove_control = true) ?(normalize_whitespace = true) text =
   try
     let b = Buffer.create (String.length text) in
-    let decoder = Uutf.decoder (`String text) in
     let last_was_space = ref false in
-
-    let rec loop () =
-      match Uutf.decode decoder with
-      | `Uchar u ->
-          let cat = categorize_char u in
-          (match cat with
-          | Control when remove_control -> () (* Skip control characters *)
-          | Whitespace when normalize_whitespace ->
-              if not !last_was_space then (
-                Uutf.Buffer.add_utf_8 b (Uchar.of_int 0x20);
-                (* Regular space *)
-                last_was_space := true)
-          | _ ->
-              Uutf.Buffer.add_utf_8 b u;
-              last_was_space := false);
-          loop ()
-      | `End -> ()
-      | `Malformed _ -> loop ()
-      | `Await -> assert false
+    let len = String.length text in
+    let rec loop i =
+      if i >= len then ()
+      else
+        let d = String.get_utf_8_uchar text i in
+        let n = Uchar.utf_decode_length d in
+        (if Uchar.utf_decode_is_valid d then
+           let u = Uchar.utf_decode_uchar d in
+           let cat = categorize_char u in
+           match cat with
+           | Control when remove_control -> ()
+           | Whitespace when normalize_whitespace ->
+               if not !last_was_space then (
+                 Buffer.add_utf_8_uchar b (Uchar.of_int 0x20);
+                 last_was_space := true)
+           | _ ->
+               Buffer.add_utf_8_uchar b u;
+               last_was_space := false);
+        loop (i + n)
     in
-    loop ();
+    loop 0;
 
-    (* Trim result *)
     let result = Buffer.contents b in
     if normalize_whitespace then String.trim result else result
   with e ->
@@ -184,7 +179,6 @@ let split_words text =
   try
     let words = ref [] in
     let current_word = Buffer.create 16 in
-    let decoder = Uutf.decoder (`String text) in
 
     let flush_word () =
       let word = Buffer.contents current_word in
@@ -192,83 +186,73 @@ let split_words text =
       Buffer.clear current_word
     in
 
-    let rec loop () =
-      match Uutf.decode decoder with
-      | `Uchar u ->
-          if is_cjk u then (
-            (* For CJK, flush current word and treat each character as a word *)
-            flush_word ();
-            Uutf.Buffer.add_utf_8 current_word u;
-            flush_word ())
-          else if is_word_char u then Uutf.Buffer.add_utf_8 current_word u
-          else flush_word ();
-          loop ()
-      | `End ->
-          flush_word ();
-          List.rev !words
-      | `Malformed _ -> loop ()
-      | `Await -> assert false
+    let len = String.length text in
+    let rec loop i =
+      if i >= len then (
+        flush_word ();
+        List.rev !words)
+      else
+        let d = String.get_utf_8_uchar text i in
+        let n = Uchar.utf_decode_length d in
+        (if Uchar.utf_decode_is_valid d then
+           let u = Uchar.utf_decode_uchar d in
+           if is_cjk u then (
+             flush_word ();
+             Buffer.add_utf_8_uchar current_word u;
+             flush_word ())
+           else if is_word_char u then Buffer.add_utf_8_uchar current_word u
+           else flush_word ());
+        loop (i + n)
     in
-    loop ()
+    loop 0
   with e ->
     Nx_core.Error.invalid ~op:"split_words" ~what:"unicode in text"
       ~reason:(Printexc.to_string e) ()
 
 let grapheme_count text =
   try
-    let decoder = Uutf.decoder (`String text) in
     let count = ref 0 in
-    let in_grapheme = ref false in
-
-    let rec loop () =
-      match Uutf.decode decoder with
-      | `Uchar u ->
-          (* Simple approximation - proper implementation needs grapheme
-             segmentation *)
-          let is_combining =
-            match Uucp.Gc.general_category u with
-            | `Mn | `Mc | `Me -> true
-            | _ -> false
-          in
-          if not is_combining then (
-            incr count;
-            in_grapheme := true);
-          loop ()
-      | `End -> !count
-      | `Malformed _ -> loop ()
-      | `Await -> assert false
+    let len = String.length text in
+    let rec loop i =
+      if i >= len then !count
+      else
+        let d = String.get_utf_8_uchar text i in
+        let n = Uchar.utf_decode_length d in
+        (if Uchar.utf_decode_is_valid d then
+           let u = Uchar.utf_decode_uchar d in
+           (* Simple approximation - proper implementation needs grapheme
+              segmentation *)
+           let is_combining =
+             match Uucp.Gc.general_category u with
+             | `Mn | `Mc | `Me -> true
+             | _ -> false
+           in
+           if not is_combining then incr count);
+        loop (i + n)
     in
-    loop ()
+    loop 0
   with e ->
     Nx_core.Error.invalid ~op:"grapheme_count" ~what:"unicode in text"
       ~reason:(Printexc.to_string e) ()
 
-let is_valid_utf8 text =
-  let decoder = Uutf.decoder ~encoding:`UTF_8 (`String text) in
-  let rec loop () =
-    match Uutf.decode decoder with
-    | `Uchar _ -> loop ()
-    | `End -> true
-    | `Malformed _ -> false
-    | `Await -> assert false
-  in
-  loop ()
+let is_valid_utf8 text = String.is_valid_utf_8 text
 
 let remove_emoji text =
   try
     let b = Buffer.create (String.length text) in
-    let decoder = Uutf.decoder (`String text) in
-    let rec loop () =
-      match Uutf.decode decoder with
-      | `Uchar u ->
-          let cat = categorize_char u in
-          if cat <> Symbol then Uutf.Buffer.add_utf_8 b u;
-          loop ()
-      | `End -> ()
-      | `Malformed _ -> loop ()
-      | `Await -> assert false
+    let len = String.length text in
+    let rec loop i =
+      if i >= len then ()
+      else
+        let d = String.get_utf_8_uchar text i in
+        let n = Uchar.utf_decode_length d in
+        (if Uchar.utf_decode_is_valid d then
+           let u = Uchar.utf_decode_uchar d in
+           let cat = categorize_char u in
+           if cat <> Symbol then Buffer.add_utf_8_uchar b u);
+        loop (i + n)
     in
-    loop ();
+    loop 0;
     Buffer.contents b
   with e ->
     Nx_core.Error.invalid ~op:"remove_emoji" ~what:"unicode in text"

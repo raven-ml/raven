@@ -207,12 +207,10 @@ let apply_merges model dropout word =
   word.size <- !j
 
 let merge_word model text =
-  let len = String.length text in
-  let word = create_word len in
-  let decoder = Uutf.decoder (`String text) in
-  let i = ref 0 in
+  let text_len = String.length text in
+  let word = create_word text_len in
+  let pos = ref 0 in
   let pending_unk = ref None in
-  (* Reuse a single buffer for all UTF-8 encoding *)
   let char_buf = Buffer.create 4 in
   let flush_unk () =
     match !pending_unk with
@@ -222,17 +220,22 @@ let merge_word model text =
     | None -> ()
   in
   let rec process_chars () =
-    match Uutf.decode decoder with
-    | `Uchar u ->
-        let start = !i in
-        (* Reuse buffer - just reset it instead of creating new *)
+    if !pos >= text_len then flush_unk ()
+    else
+      let d = String.get_utf_8_uchar text !pos in
+      let byte_len = Uchar.utf_decode_length d in
+      if not (Uchar.utf_decode_is_valid d) then (
+        pos := !pos + byte_len;
+        process_chars ())
+      else
+        let u = Uchar.utf_decode_uchar d in
+        let start = !pos in
         Buffer.clear char_buf;
-        Uutf.Buffer.add_utf_8 char_buf u;
+        Buffer.add_utf_8_uchar char_buf u;
         let char_str = Buffer.contents char_buf in
-        let byte_len = String.length char_str in
-        i := !i + byte_len;
+        pos := !pos + byte_len;
         let is_first = start = 0 in
-        let is_last = !i >= len in
+        let is_last = !pos >= text_len in
         (* Build token_str with minimal allocations *)
         let token_str =
           match
@@ -295,9 +298,6 @@ let merge_word model text =
               | None -> unk_handling ()
             else unk_handling ());
         process_chars ()
-    | `End -> flush_unk ()
-    | `Malformed _ -> process_chars ()
-    | `Await -> assert false
   in
   process_chars ();
   apply_merges model model.dropout word;
@@ -577,20 +577,24 @@ let train ~min_frequency ~vocab_size ~show_progress ~special_tokens
   let alphabet = Hashtbl.create 10000 in
   Hashtbl.iter
     (fun word count ->
-      let decoder = Uutf.decoder (`String word) in
-      let rec loop () =
-        match Uutf.decode decoder with
-        | `Uchar u ->
-            let buf = Buffer.create 4 in
-            Uutf.Buffer.add_utf_8 buf u;
-            let char_str = Buffer.contents buf in
-            Hashtbl.replace alphabet char_str
-              (count + try Hashtbl.find alphabet char_str with Not_found -> 0);
-            loop ()
-        | `End -> ()
-        | _ -> loop ()
+      let len = String.length word in
+      let buf = Buffer.create 4 in
+      let rec loop i =
+        if i >= len then ()
+        else
+          let d = String.get_utf_8_uchar word i in
+          let n = Uchar.utf_decode_length d in
+          (if Uchar.utf_decode_is_valid d then (
+             let u = Uchar.utf_decode_uchar d in
+             Buffer.clear buf;
+             Buffer.add_utf_8_uchar buf u;
+             let char_str = Buffer.contents buf in
+             Hashtbl.replace alphabet char_str
+               (count
+               + (try Hashtbl.find alphabet char_str with Not_found -> 0))));
+          loop (i + n)
       in
-      loop ())
+      loop 0)
     word_counts;
 
   List.iter
@@ -620,19 +624,22 @@ let train ~min_frequency ~vocab_size ~show_progress ~special_tokens
   let words_copy = ref (Hashtbl.create (Hashtbl.length word_counts)) in
   Hashtbl.iter
     (fun word count ->
-      let decoder = Uutf.decoder (`String word) in
+      let len = String.length word in
       let chars = ref [] in
-      let rec loop () =
-        match Uutf.decode decoder with
-        | `Uchar u ->
-            let buf = Buffer.create 4 in
-            Uutf.Buffer.add_utf_8 buf u;
-            chars := Buffer.contents buf :: !chars;
-            loop ()
-        | `End -> ()
-        | _ -> loop ()
+      let buf = Buffer.create 4 in
+      let rec loop i =
+        if i >= len then ()
+        else
+          let d = String.get_utf_8_uchar word i in
+          let n = Uchar.utf_decode_length d in
+          (if Uchar.utf_decode_is_valid d then (
+             let u = Uchar.utf_decode_uchar d in
+             Buffer.clear buf;
+             Buffer.add_utf_8_uchar buf u;
+             chars := Buffer.contents buf :: !chars));
+          loop (i + n)
       in
-      loop ();
+      loop 0;
       let separated = String.concat " " (List.rev !chars) in
       Hashtbl.add !words_copy separated count)
     word_counts;

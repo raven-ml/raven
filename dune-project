@@ -109,7 +109,6 @@
   (nx
    (= :version))
   re
-  uutf
   uucp
   (yojson
    (>= 2.0.0))

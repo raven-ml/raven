@@ -88,20 +88,16 @@ let tokenize model sequence =
   if Hashtbl.length model.vocab = 0 then []
   else
     let char_count =
-      let decoder = Uutf.decoder (`String sequence) in
+      let len = String.length sequence in
       let count = ref 0 in
-      let rec loop () =
-        match Uutf.decode decoder with
-        | `Uchar _ ->
-            incr count;
-            loop ()
-        | `End -> !count
-        | `Malformed _ ->
-            incr count;
-            loop ()
-        | `Await -> assert false
+      let rec loop i =
+        if i >= len then !count
+        else
+          let d = String.get_utf_8_uchar sequence i in
+          incr count;
+          loop (i + Uchar.utf_decode_length d)
       in
-      loop ()
+      loop 0
     in
     if char_count > model.max_input_chars_per_word then
       let id = Hashtbl.find model.vocab model.unk_token in

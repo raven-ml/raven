@@ -16,7 +16,6 @@ depends: [
   "dune" {>= "3.19"}
   "nx" {= version}
   "re"
-  "uutf"
   "uucp"
   "yojson" {>= "2.0.0"}
   "windtrap" {with-test}

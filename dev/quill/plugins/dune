@@ -47,7 +47,6 @@
   %{lib:saga:saga.cmi}
   %{lib:saga:saga.cma}
   %{lib:re:re.cma}
-  %{lib:uutf:uutf.cma}
   %{lib:uucp:uucp.cma}
   ; logs
   %{lib:logs:logs.cma}
@@ -96,7 +95,6 @@
    (copy %{lib:saga:saga.cmi} saga.cmi)
    (copy %{lib:saga:saga.cma} saga.cma)
    (copy %{lib:re:re.cma} re.cma)
-   (copy %{lib:uutf:uutf.cma} uutf.cma)
    (copy %{lib:uucp:uucp.cma} uucp.cma)
    (copy %{lib:logs:logs.cma} logs.cma)
    (copy %{lib:logs:logs.cmi} logs.cmi))))

@@ -142,7 +142,6 @@ let load_plugins () =
           "csv.cma";
           "nx_datasets.cma";
           "re.cma";
-          "uutf.cma";
           "uucp.cma";
           "saga.cma";
           "cairo.cma";
