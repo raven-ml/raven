@@ -216,6 +216,13 @@ module Gemm_f64 = struct
   let gemm ~pool a_buf b_buf c_buf ~m ~n ~k ~a_off ~b_off ~c_off ~ldc () =
     let lda = k and ldb = n in
     let mc = mc_blk and nc = nc_blk and kc = kc_blk in
+    let bp = Array.make_float64 (round_up nc nr * kc) in
+    let n_domains = pool.Parallel.num_workers + 1 in
+    let aps =
+      Array.init n_domains (fun _ ->
+          Array.make_float64 (round_up mc mr * kc))
+    in
+    let ap_idx = Atomic.make 0 in
     let rec jc_loop jc =
       if jc >= n then ()
       else
@@ -225,12 +232,10 @@ module Gemm_f64 = struct
           else
             let kc' = min_int kc (k - pc) in
             let first = pc = 0 in
-            let bp = Array.make_float64 (round_up nc' nr * kc') in
             pack_b b_buf ~b_off ~ldb ~pc ~jc ~kc:kc' ~nc:nc' bp;
+            Atomic.set ap_idx 0;
             Parallel.parallel_for pool 0 (m - 1) (fun start_row end_row ->
-                let ap =
-                  Array.make_float64 (round_up mc mr * kc')
-                in
+                let ap = aps.(Atomic.fetch_and_add ap_idx 1) in
                 let rec ic_loop ic =
                   if ic >= end_row then ()
                   else
@@ -680,6 +685,13 @@ module Gemm_f32 = struct
   let gemm ~pool a_buf b_buf c_buf ~m ~n ~k ~a_off ~b_off ~c_off ~ldc () =
     let lda = k and ldb = n in
     let mc = mc_blk and nc = nc_blk and kc = kc_blk in
+    let bp = Array.make_float32 (round_up nc nr * kc) in
+    let n_domains = pool.Parallel.num_workers + 1 in
+    let aps =
+      Array.init n_domains (fun _ ->
+          Array.make_float32 (round_up mc mr * kc))
+    in
+    let ap_idx = Atomic.make 0 in
     let rec jc_loop jc =
       if jc >= n then ()
       else
@@ -689,12 +701,10 @@ module Gemm_f32 = struct
           else
             let kc' = min_int kc (k - pc) in
             let first = pc = 0 in
-            let bp = Array.make_float32 (round_up nc' nr * kc') in
             pack_b b_buf ~b_off ~ldb ~pc ~jc ~kc:kc' ~nc:nc' bp;
+            Atomic.set ap_idx 0;
             Parallel.parallel_for pool 0 (m - 1) (fun start_row end_row ->
-                let ap =
-                  Array.make_float32 (round_up mc mr * kc')
-                in
+                let ap = aps.(Atomic.fetch_and_add ap_idx 1) in
                 let rec ic_loop ic =
                   if ic >= end_row then ()
                   else
