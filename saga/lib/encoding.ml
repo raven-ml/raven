@@ -267,6 +267,15 @@ let truncate t ~max_length ~stride ~(direction : truncation_direction) =
 
         new_encoding)
 
+(* ───── Array helpers ───── *)
+
+let array_concat_blit a b default =
+  let la = Array.length a and lb = Array.length b in
+  let dst = Array.make (la + lb) default in
+  Array.blit a 0 dst 0 la;
+  Array.blit b 0 dst la lb;
+  dst
+
 (* ───── Merge ───── *)
 
 let rec merge encodings ~growing_offsets =
@@ -324,14 +333,15 @@ and merge_with t1 t2 ~growing_offsets =
   in
 
   {
-    ids = Array.append t1.ids t2.ids;
-    type_ids = Array.append t1.type_ids t2.type_ids;
-    tokens = Array.append t1.tokens t2.tokens;
-    words = Array.append t1.words t2.words;
-    offsets = Array.append t1.offsets merged_offsets;
+    ids = array_concat_blit t1.ids t2.ids 0;
+    type_ids = array_concat_blit t1.type_ids t2.type_ids 0;
+    tokens = array_concat_blit t1.tokens t2.tokens "";
+    words = array_concat_blit t1.words t2.words None;
+    offsets = array_concat_blit t1.offsets merged_offsets (0, 0);
     special_tokens_mask =
-      Array.append t1.special_tokens_mask t2.special_tokens_mask;
-    attention_mask = Array.append t1.attention_mask t2.attention_mask;
+      array_concat_blit t1.special_tokens_mask t2.special_tokens_mask 0;
+    attention_mask =
+      array_concat_blit t1.attention_mask t2.attention_mask 0;
     overflowing = List.rev !new_overflowing;
     sequence_ranges = new_ranges;
   }
