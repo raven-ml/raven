@@ -70,7 +70,6 @@
   (conf-pkg-config :build)
   ; camlzip
   (conf-zlib :build)
-  stdlib-shims
   ; tests
   (windtrap :with-test)
   (mdx :with-test))

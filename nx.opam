@@ -17,7 +17,6 @@ depends: [
   "dune-configurator" {build}
   "conf-pkg-config" {build}
   "conf-zlib" {build}
-  "stdlib-shims"
   "windtrap" {with-test}
   "mdx" {with-test}
   "odoc" {with-doc}
