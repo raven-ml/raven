@@ -339,14 +339,54 @@ a.color-pink {
   line-height: 1.4;
 }
 
-/* Syntax highlighting */
-.comment { color: var(--syntax-comment); }
-.keyword { color: var(--syntax-keyword); }     /* amber - control flow */
-.string { color: var(--syntax-string); }      /* emerald - literals */
-.number { color: var(--syntax-number); }      /* blue - values */
-.function { color: var(--syntax-function); }    /* purple - functions */
-.operator { color: var(--syntax-operator); }    /* light gray - operators */
-.type { color: var(--syntax-type); }        /* sky blue - types */
+/* Syntax highlighting — hilite (build-time, TextMate classes) */
+
+/* Comments */
+span[class^='ocaml-comment'],
+span[class^='bash-comment'],
+span[class^='bash-punctuation-definition-comment'],
+span[class^='dune-comment'] {
+  color: var(--syntax-comment);
+  font-style: italic;
+}
+
+/* Keywords */
+span[class='ocaml-keyword'],
+span[class='ocaml-keyword-other'],
+span[class^='ocaml-keyword-operator'],
+span[class^='ocaml-keyword-other-attribute'],
+span[class^='ocaml-storage'],
+span[class^='bash-keyword'],
+span[class^='dune-keyword'] {
+  color: var(--syntax-keyword);
+}
+
+/* Strings and characters */
+span[class^='ocaml-string'],
+span[class*='ocaml-constant-character'] {
+  color: var(--syntax-string);
+}
+
+/* Numbers */
+span[class*='ocaml-constant-numeric'],
+span[class^='dune-constant'] {
+  color: var(--syntax-number);
+}
+
+/* Functions and bindings */
+span[class^='ocaml-entity'],
+span[class^='ocaml-variable'],
+span[class^='bash-support'] {
+  color: var(--syntax-function);
+}
+
+/* Types, modules, constructors */
+span[class*='ocaml-constant-language-capital'],
+span[class*='ocaml-constant-language-polymorphic'],
+span[class*='ocaml-constant-language-boolean'],
+span[class^='ocaml-support'] {
+  color: var(--syntax-type);
+}
 
 /* Responsive */
 @media (max-width: 1023px) {

@@ -323,6 +323,7 @@ let apply_template ~template ~title ~breadcrumbs ~content ~lib =
 let render_markdown content =
   content
   |> Cmarkit.Doc.of_string ~heading_auto_ids:true ~strict:false
+  |> Hilite_markdown.transform ~skip_unknown_languages:true
   |> Cmarkit_html.of_doc ~safe:false
 
 let process_markdown path content =
@@ -343,12 +344,69 @@ let process_markdown path content =
   let template = read_file (select_template path) in
   apply_template ~template ~title ~breadcrumbs ~content:html ~lib
 
+let highlight_html_code_blocks html =
+  let buf = Buffer.create (String.length html) in
+  let len = String.length html in
+  let i = ref 0 in
+  let pre_open = {|<pre class="language-|} in
+  let pre_open_len = String.length pre_open in
+  let code_close = "</code></pre>" in
+  let code_close_len = String.length code_close in
+  while !i < len do
+    match find_sub ~start:!i html pre_open with
+    | None ->
+        Buffer.add_string buf (String.sub html !i (len - !i));
+        i := len
+    | Some pre_start ->
+        Buffer.add_string buf (String.sub html !i (pre_start - !i));
+        let lang_start = pre_start + pre_open_len in
+        (match String.index_from_opt html lang_start '"' with
+        | None ->
+            Buffer.add_char buf html.[!i];
+            i := !i + 1
+        | Some lang_end ->
+            let lang = String.sub html lang_start (lang_end - lang_start) in
+            let code_tag = {|<code class="language-|} ^ lang ^ {|">|} in
+            (match find_sub ~start:lang_end html code_tag with
+            | None ->
+                Buffer.add_char buf html.[!i];
+                i := !i + 1
+            | Some code_tag_start ->
+                let content_start = code_tag_start + String.length code_tag in
+                (match find_sub ~start:content_start html code_close with
+                | None ->
+                    Buffer.add_char buf html.[!i];
+                    i := !i + 1
+                | Some content_end ->
+                    let raw =
+                      String.sub html content_start
+                        (content_end - content_start)
+                    in
+                    let code =
+                      raw
+                      |> replace "&amp;" "&"
+                      |> replace "&lt;" "<"
+                      |> replace "&gt;" ">"
+                    in
+                    (match Hilite.src_code_to_html ~lang code with
+                    | Ok highlighted ->
+                        Buffer.add_string buf highlighted;
+                        i := content_end + code_close_len
+                    | Error _ ->
+                        Buffer.add_string buf
+                          (String.sub html pre_start
+                             (content_end + code_close_len - pre_start));
+                        i := content_end + code_close_len))))
+  done;
+  Buffer.contents buf
+
 let process_file ~path full_path =
   let ext = Filename.extension path in
   let out, content =
     match ext with
     | ".md" -> (dest_path path, process_markdown path (read_file full_path))
-    | ".html" | ".htm" -> (dest_path path, read_file full_path)
+    | ".html" | ".htm" ->
+        (dest_path path, highlight_html_code_blocks (read_file full_path))
     | _ -> (Filename.concat build_dir path, read_file full_path)
   in
   ensure_dir (Filename.dirname out);
@@ -389,8 +447,13 @@ let process_example ~lib example_dir =
           if multi then Printf.sprintf "<h3>%s</h3>\n" (escape_html f)
           else ""
         in
-        Printf.sprintf "%s<pre><code class=\"language-ocaml\">%s</code></pre>"
-          header (escape_html code))
+        let highlighted =
+          match Hilite.src_code_to_html ~lang:"ocaml" code with
+          | Ok html -> html
+          | Error _ ->
+              Printf.sprintf "<pre><code>%s</code></pre>" (escape_html code)
+        in
+        header ^ highlighted)
     |> String.concat "\n"
   in
   let html = prose_html ^ "\n" ^ code_html in

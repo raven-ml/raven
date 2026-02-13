@@ -49,45 +49,45 @@
     <div class="code-compare">
       <div>
         <h4>PyTorch</h4>
-        <pre><span class="keyword">import</span> <span class="type">torch</span>
-<span class="keyword">import</span> <span class="type">torch.nn</span> <span class="keyword">as</span> <span class="type">nn</span>
+        <pre class="language-python"><code class="language-python">import torch
+import torch.nn as nn
 
-<span class="keyword">class</span> <span class="type">MLP</span>(<span class="type">nn.Module</span>):
-    <span class="keyword">def</span> <span class="function">__init__</span>(<span class="keyword">self</span>):
-        <span class="function">super</span>().<span class="function">__init__</span>()
-        <span class="keyword">self</span>.fc1 <span class="operator">=</span> <span class="type">nn</span>.<span class="function">Linear</span>(<span class="number">784</span>, <span class="number">128</span>)
-        <span class="keyword">self</span>.fc2 <span class="operator">=</span> <span class="type">nn</span>.<span class="function">Linear</span>(<span class="number">128</span>, <span class="number">10</span>)
+class MLP(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.fc1 = nn.Linear(784, 128)
+        self.fc2 = nn.Linear(128, 10)
         
-    <span class="keyword">def</span> <span class="function">forward</span>(<span class="keyword">self</span>, <span class="keyword">x</span>):
-        <span class="keyword">x</span> <span class="operator">=</span> <span class="type">torch</span>.<span class="function">relu</span>(<span class="keyword">self</span>.fc1(<span class="keyword">x</span>))
-        <span class="keyword">return</span> <span class="keyword">self</span>.fc2(<span class="keyword">x</span>)
+    def forward(self, x):
+        x = torch.relu(self.fc1(x))
+        return self.fc2(x)
 
-<span class="keyword">model</span> <span class="operator">=</span> <span class="function">MLP</span>()
-<span class="keyword">optimizer</span> <span class="operator">=</span> <span class="type">torch.optim</span>.<span class="function">Adam</span>(<span class="keyword">model</span>.<span class="function">parameters</span>())</pre>
+model = MLP()
+optimizer = torch.optim.Adam(model.parameters())</code></pre>
       </div>
       <div>
         <h4>KAUN</h4>
-        <pre><span class="keyword">open</span> <span class="type">Kaun</span>
+        <pre class="language-ocaml"><code class="language-ocaml">open Kaun
 
-<span class="comment">(* Model is a record *)</span>
-<span class="keyword">type</span> <span class="type">model</span> <span class="operator">=</span> {
-  fc1: <span class="type">Linear</span>.t;
-  fc2: <span class="type">Linear</span>.t;
+(* Model is a record *)
+type model = {
+  fc1: Linear.t;
+  fc2: Linear.t;
 }
 
-<span class="comment">(* Forward is a function *)</span>
-<span class="keyword">let</span> <span class="keyword">forward</span> <span class="keyword">model</span> <span class="keyword">x</span> <span class="operator">=</span>
-  <span class="keyword">x</span>
-  <span class="operator">|></span> <span class="type">Linear</span>.<span class="function">forward</span> <span class="keyword">model</span>.fc1
-  <span class="operator">|></span> <span class="type">Activation</span>.<span class="function">relu</span>
-  <span class="operator">|></span> <span class="type">Linear</span>.<span class="function">forward</span> <span class="keyword">model</span>.fc2
+(* Forward is a function *)
+let forward model x =
+  x
+  |> Linear.forward model.fc1
+  |> Activation.relu
+  |> Linear.forward model.fc2
 
-<span class="comment">(* Initialize *)</span>
-<span class="keyword">let</span> <span class="keyword">rng</span> <span class="operator">=</span> <span class="type">Rng</span>.<span class="function">make</span> <span class="number">42</span> <span class="keyword">in</span>
-<span class="keyword">let</span> <span class="keyword">model</span> <span class="operator">=</span> {
-  fc1 <span class="operator">=</span> <span class="type">Linear</span>.<span class="function">create</span> <span class="keyword">rng</span> <span class="operator">~</span><span class="keyword">input_dim</span><span class="operator">:</span><span class="number">784</span> <span class="operator">~</span><span class="keyword">output_dim</span><span class="operator">:</span><span class="number">128</span>;
-  fc2 <span class="operator">=</span> <span class="type">Linear</span>.<span class="function">create</span> <span class="keyword">rng</span> <span class="operator">~</span><span class="keyword">input_dim</span><span class="operator">:</span><span class="number">128</span> <span class="operator">~</span><span class="keyword">output_dim</span><span class="operator">:</span><span class="number">10</span>;
-}</pre>
+(* Initialize *)
+let rng = Rng.make 42 in
+let model = {
+  fc1 = Linear.create rng ~input_dim:784 ~output_dim:128;
+  fc2 = Linear.create rng ~input_dim:128 ~output_dim:10;
+}</code></pre>
       </div>
     </div>
 
@@ -95,19 +95,19 @@
 
     <h2>training loop</h2>
 
-    <pre><span class="comment">(* Loss function *)</span>
-<span class="keyword">let</span> <span class="keyword">loss_fn</span> <span class="keyword">model</span> <span class="keyword">x</span> <span class="keyword">y</span> <span class="operator">=</span>
-  <span class="keyword">let</span> <span class="keyword">logits</span> <span class="operator">=</span> <span class="keyword">forward</span> <span class="keyword">model</span> <span class="keyword">x</span> <span class="keyword">in</span>
-  <span class="type">Loss</span>.<span class="function">sigmoid_binary_cross_entropy</span> <span class="operator">~</span><span class="keyword">targets</span><span class="operator">:</span><span class="keyword">y</span> <span class="keyword">logits</span>
+    <pre class="language-ocaml"><code class="language-ocaml">(* Loss function *)
+let loss_fn model x y =
+  let logits = forward model x in
+  Loss.sigmoid_binary_cross_entropy ~targets:y logits
 
-<span class="comment">(* Get gradients using Rune *)</span>
-<span class="keyword">let</span> <span class="keyword">loss</span>, <span class="keyword">grads</span> <span class="operator">=</span> <span class="function">value_and_grad</span> <span class="keyword">loss_fn</span> <span class="keyword">model</span> <span class="keyword">x</span> <span class="keyword">y</span>
+(* Get gradients using Rune *)
+let loss, grads = value_and_grad loss_fn model x y
 
-<span class="comment">(* Update with optimizer *)</span>
-<span class="keyword">let</span> <span class="keyword">optimizer</span> <span class="operator">=</span> <span class="type">Optimizer</span>.<span class="function">adam</span> <span class="operator">~</span><span class="keyword">lr</span><span class="operator">:</span><span class="number">0.001</span> () <span class="keyword">in</span>
-<span class="keyword">let</span> <span class="keyword">model'</span>, <span class="keyword">opt_state'</span> <span class="operator">=</span> <span class="type">Optimizer</span>.<span class="function">update</span> <span class="keyword">optimizer</span> <span class="keyword">opt_state</span> <span class="keyword">model</span> <span class="keyword">grads</span>
+(* Update with optimizer *)
+let optimizer = Optimizer.adam ~lr:0.001 () in
+let model', opt_state' = Optimizer.update optimizer opt_state model grads
 
-<span class="comment">(* Pure functional - old model unchanged *)</span></pre>
+(* Pure functional - old model unchanged *)</code></pre>
 
     <hr>
 
@@ -154,20 +154,17 @@
 
     <p>When it's ready:</p>
 
-    <pre>
-<span class="comment"># Install</span>
-<span class="function">opam</span> install kaun
+    <pre class="language-bash"><code class="language-bash">opam install kaun</code></pre>
 
-<span class="comment"># Try it</span>
-<span class="keyword">open</span> <span class="type">Kaun</span>
+    <pre class="language-ocaml"><code class="language-ocaml">open Kaun
 
-<span class="comment">(* XOR problem *)</span>
-<span class="keyword">let</span> <span class="keyword">x</span> <span class="operator">=</span> <span class="type">Tensor</span>.<span class="function">of_float_list</span> [<span class="operator">|</span><span class="number">4</span>; <span class="number">2</span><span class="operator">|</span>] [<span class="number">0.</span>; <span class="number">0.</span>; <span class="number">0.</span>; <span class="number">1.</span>; <span class="number">1.</span>; <span class="number">0.</span>; <span class="number">1.</span>; <span class="number">1.</span>]
-<span class="keyword">let</span> <span class="keyword">y</span> <span class="operator">=</span> <span class="type">Tensor</span>.<span class="function">of_float_list</span> [<span class="operator">|</span><span class="number">4</span>; <span class="number">1</span><span class="operator">|</span>] [<span class="number">0.</span>; <span class="number">1.</span>; <span class="number">1.</span>; <span class="number">0.</span>]
+(* XOR problem *)
+let x = Tensor.of_float_list [|4; 2|] [0.; 0.; 0.; 1.; 1.; 0.; 1.; 1.]
+let y = Tensor.of_float_list [|4; 1|] [0.; 1.; 1.; 0.]
 
-<span class="comment">(* Train a model *)</span>
-<span class="keyword">let</span> <span class="keyword">model</span> <span class="operator">=</span> <span class="function">train_xor</span> <span class="keyword">x</span> <span class="keyword">y</span> <span class="operator">~</span><span class="keyword">epochs</span><span class="operator">:</span><span class="number">1000</span>
-    </pre>
+(* Train a model *)
+let model = train_xor x y ~epochs:1000</code></pre>
   </main>
+
 </body>
 </html>

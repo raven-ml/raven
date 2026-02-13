@@ -49,44 +49,44 @@
     <div class="code-compare">
       <div>
         <h4>PANDAS</h4>
-        <pre><span class="comment"># Create dataframe</span>
-<span class="keyword">df</span> <span class="operator">=</span> <span class="function">pd.DataFrame</span>({
-  <span class="string">'name'</span>: [<span class="string">'Alice'</span>, <span class="string">'Bob'</span>],
-  <span class="string">'age'</span>: [<span class="number">25</span>, <span class="number">30</span>],
-  <span class="string">'height'</span>: [<span class="number">1.70</span>, <span class="number">1.80</span>]
+        <pre class="language-python"><code class="language-python"># Create dataframe
+df = pd.DataFrame({
+  'name': ['Alice', 'Bob'],
+  'age': [25, 30],
+  'height': [1.70, 1.80]
 })
 
-<span class="comment"># Add BMI column</span>
-<span class="keyword">df</span>[<span class="string">'bmi'</span>] <span class="operator">=</span> (
-  <span class="keyword">df</span>[<span class="string">'weight'</span>] <span class="operator">/</span> 
-  <span class="keyword">df</span>[<span class="string">'height'</span>]<span class="operator">**</span><span class="number">2</span>
+# Add BMI column
+df['bmi'] = (
+  df['weight'] / 
+  df['height']**2
 )
 
-<span class="comment"># Row-wise sum</span>
-<span class="keyword">df</span>[<span class="string">'total'</span>] <span class="operator">=</span> <span class="keyword">df</span>[[<span class="string">'a'</span>, <span class="string">'b'</span>, <span class="string">'c'</span>]].<span class="function">sum</span>(<span class="keyword">axis</span><span class="operator">=</span><span class="number">1</span>)
+# Row-wise sum
+df['total'] = df[['a', 'b', 'c']].sum(axis=1)
 
-<span class="comment"># Can fail at runtime</span>
-<span class="keyword">df</span>[<span class="string">'bad'</span>] <span class="operator">=</span> <span class="keyword">df</span>[<span class="string">'age'</span>] <span class="operator">+</span> <span class="keyword">df</span>[<span class="string">'name'</span>]  <span class="comment"># TypeError!</span></pre>
+# Can fail at runtime
+df['bad'] = df['age'] + df['name']  # TypeError!</code></pre>
       </div>
       <div>
         <h4>TALON</h4>
-        <pre><span class="comment">(* Create dataframe *)</span>
-<span class="keyword">let</span> <span class="keyword">df</span> <span class="operator">=</span> <span class="function">create</span> [
-  (<span class="string">"name"</span>, <span class="type">Col</span>.<span class="function">string_list</span> [<span class="string">"Alice"</span>; <span class="string">"Bob"</span>]);
-  (<span class="string">"age"</span>, <span class="type">Col</span>.<span class="function">int32_list</span> [<span class="number">25l</span>; <span class="number">30l</span>]);
-  (<span class="string">"height"</span>, <span class="type">Col</span>.<span class="function">float64_list</span> [<span class="number">1.70</span>; <span class="number">1.80</span>])
+        <pre class="language-ocaml"><code class="language-ocaml">(* Create dataframe *)
+let df = create [
+  ("name", Col.string_list ["Alice"; "Bob"]);
+  ("age", Col.int32_list [25l; 30l]);
+  ("height", Col.float64_list [1.70; 1.80])
 ]
 
-<span class="comment">(* Add BMI column *)</span>
-<span class="keyword">let</span> <span class="keyword">df</span> <span class="operator">=</span> <span class="function">with_column</span> <span class="keyword">df</span> <span class="string">"bmi"</span> <span class="type">Nx</span>.<span class="type">float64</span>
-  <span class="type">Row</span>.(<span class="function">map2</span> (<span class="function">number</span> <span class="string">"weight"</span>) (<span class="function">number</span> <span class="string">"height"</span>) 
-    <span class="operator">~</span><span class="keyword">f</span><span class="operator">:</span>(<span class="keyword">fun</span> <span class="keyword">w</span> <span class="keyword">h</span> <span class="operator">-></span> <span class="keyword">w</span> <span class="operator">/.</span> (<span class="keyword">h</span> <span class="operator">**</span> <span class="number">2.</span>)))
+(* Add BMI column *)
+let df = with_column df "bmi" Nx.float64
+  Row.(map2 (number "weight") (number "height") 
+    ~f:(fun w h -> w /. (h ** 2.)))
 
-<span class="comment">(* Row-wise sum *)</span>
-<span class="keyword">let</span> <span class="keyword">total</span> <span class="operator">=</span> <span class="type">Row.Agg</span>.<span class="function">sum</span> <span class="keyword">df</span> <span class="operator">~</span><span class="keyword">names</span><span class="operator">:</span>[<span class="string">"a"</span>; <span class="string">"b"</span>; <span class="string">"c"</span>]
+(* Row-wise sum *)
+let total = Row.Agg.sum df ~names:["a"; "b"; "c"]
 
-<span class="comment">(* This won't compile - type error! *)</span>
-<span class="comment">(* let bad = Row.(map2 (int32 "age") (string "name") ~f:(+)) *)</span></pre>
+(* This won't compile - type error! *)
+(* let bad = Row.(map2 (int32 "age") (string "name") ~f:(+)) *)</code></pre>
       </div>
     </div>
 
@@ -110,22 +110,22 @@
 
     <h2>ergonomic apis</h2>
 
-    <pre><span class="comment">(* Column selectors *)</span>
-<span class="keyword">let</span> <span class="keyword">numeric_cols</span> <span class="operator">=</span> <span class="type">Cols</span>.<span class="function">numeric</span> <span class="keyword">df</span>
-<span class="keyword">let</span> <span class="keyword">price_cols</span> <span class="operator">=</span> <span class="type">Cols</span>.<span class="function">with_prefix</span> <span class="keyword">df</span> <span class="string">"price_"</span>
+    <pre class="language-ocaml"><code class="language-ocaml">(* Column selectors *)
+let numeric_cols = Cols.numeric df
+let price_cols = Cols.with_prefix df "price_"
 
-<span class="comment">(* Batch column operations *)</span>
-<span class="keyword">let</span> <span class="keyword">df</span> <span class="operator">=</span> <span class="function">with_columns</span> <span class="keyword">df</span> [
-  (<span class="string">"total"</span>, <span class="type">Row.Agg</span>.<span class="function">sum</span> <span class="keyword">df</span> <span class="operator">~</span><span class="keyword">names</span><span class="operator">:</span><span class="keyword">numeric_cols</span>);
-  (<span class="string">"avg"</span>, <span class="type">Row.Agg</span>.<span class="function">mean</span> <span class="keyword">df</span> <span class="operator">~</span><span class="keyword">names</span><span class="operator">:</span><span class="keyword">price_cols</span>)
+(* Batch column operations *)
+let df = with_columns df [
+  ("total", Row.Agg.sum df ~names:numeric_cols);
+  ("avg", Row.Agg.mean df ~names:price_cols)
 ]
 
-<span class="comment">(* Functional row operations *)</span>
-<span class="keyword">let</span> <span class="keyword">df</span> <span class="operator">=</span> <span class="function">with_columns_map</span> <span class="keyword">df</span>
-  <span class="type">Row</span>.([
-    (<span class="string">"sum"</span>, <span class="type">Nx</span>.<span class="type">float64</span>, <span class="function">map2</span> (<span class="function">number</span> <span class="string">"a"</span>) (<span class="function">number</span> <span class="string">"b"</span>) <span class="operator">~</span><span class="keyword">f</span><span class="operator">:</span>( <span class="operator">+.</span> ));
-    (<span class="string">"diff"</span>, <span class="type">Nx</span>.<span class="type">float64</span>, <span class="function">map2</span> (<span class="function">number</span> <span class="string">"a"</span>) (<span class="function">number</span> <span class="string">"b"</span>) <span class="operator">~</span><span class="keyword">f</span><span class="operator">:</span>( <span class="operator">-.</span> ))
-  ])</pre>
+(* Functional row operations *)
+let df = with_columns_map df
+  Row.([
+    ("sum", Nx.float64, map2 (number "a") (number "b") ~f:( +. ));
+    ("diff", Nx.float64, map2 (number "a") (number "b") ~f:( -. ))
+  ])</code></pre>
 
     <hr>
 
@@ -135,20 +135,17 @@
 
     <p>When it's ready:</p>
 
-    <pre>
-<span class="comment"># Install</span>
-<span class="function">opam</span> install talon
+    <pre class="language-bash"><code class="language-bash">opam install talon</code></pre>
 
-<span class="comment"># Try it</span>
-<span class="keyword">open</span> <span class="type">Talon</span>
+    <pre class="language-ocaml"><code class="language-ocaml">open Talon
 
-<span class="keyword">let</span> () <span class="operator">=</span> 
-  <span class="keyword">let</span> <span class="keyword">df</span> <span class="operator">=</span> <span class="function">create</span> [
-    (<span class="string">"x"</span>, <span class="type">Col</span>.<span class="function">float64_list</span> [<span class="number">1.</span>; <span class="number">2.</span>; <span class="number">3.</span>]);
-    (<span class="string">"y"</span>, <span class="type">Col</span>.<span class="function">float64_list</span> [<span class="number">4.</span>; <span class="number">5.</span>; <span class="number">6.</span>])
-  ] <span class="keyword">in</span>
-  <span class="function">print</span> <span class="keyword">df</span>
-    </pre>
+let () =
+  let df = create [
+    ("x", Col.float64_list [1.; 2.; 3.]);
+    ("y", Col.float64_list [4.; 5.; 6.])
+  ] in
+  print df</code></pre>
   </main>
+
 </body>
 </html>

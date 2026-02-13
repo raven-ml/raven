@@ -7,4 +7,4 @@
 (package
  (name raven-www)
  (allow_empty)
- (depends cmarkit))
+ (depends cmarkit hilite))

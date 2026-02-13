@@ -49,47 +49,47 @@
     <div class="code-compare">
       <div>
         <h4>Jupyter</h4>
-        <pre><span class="comment"># Cell 1</span>
-<span class="keyword">import</span> <span class="type">numpy</span> <span class="keyword">as</span> <span class="type">np</span>
-<span class="keyword">import</span> <span class="type">matplotlib.pyplot</span> <span class="keyword">as</span> <span class="type">plt</span>
+        <pre class="language-python"><code class="language-python"># Cell 1
+import numpy as np
+import matplotlib.pyplot as plt
 
-<span class="comment"># Cell 2</span>
-<span class="keyword">data</span> <span class="operator">=</span> <span class="function">np.random.randn</span>(<span class="number">1000</span>)
-<span class="function">plt.hist</span>(<span class="keyword">data</span>, <span class="keyword">bins</span><span class="operator">=</span><span class="number">30</span>)
-<span class="function">plt.show</span>()
+# Cell 2
+data = np.random.randn(1000)
+plt.hist(data, bins=30)
+plt.show()
 
-<span class="comment"># Cell 3</span>
-<span class="function">print</span>(<span class="string">f"Mean: {data.mean():.2f}"</span>)
-<span class="function">print</span>(<span class="string">f"Std: {data.std():.2f}"</span>)</pre>
+# Cell 3
+print(f"Mean: {data.mean():.2f}")
+print(f"Std: {data.std():.2f}")</code></pre>
       </div>
       <div>
         <h4>QUILL</h4>
-        <pre><span class="comment"># Data Analysis</span>
+        <pre class="language-markup"><code class="language-markup"># Data Analysis
 
 Let's generate some random data:
 
 ```ocaml
-<span class="keyword">open</span> <span class="type">Nx</span>
-<span class="keyword">open</span> <span class="type">Hugin</span>
+open Nx
+open Hugin
 
-<span class="keyword">let</span> <span class="keyword">data</span> <span class="operator">=</span> <span class="function">randn</span> <span class="type">float32</span> [<span class="operator">|</span><span class="number">1000</span><span class="operator">|</span>]
+let data = randn float32 [|1000|]
 ```
 
 Now plot it:
 
 ```ocaml
-<span class="keyword">let</span> <span class="keyword">fig</span> <span class="operator">=</span> <span class="function">figure</span> ()
-<span class="keyword">let</span> <span class="keyword">ax</span> <span class="operator">=</span> <span class="function">subplot</span> <span class="keyword">fig</span>
-<span class="keyword">let</span> _ <span class="operator">=</span> <span class="type">Plotting</span>.<span class="function">hist</span> <span class="operator">~</span><span class="keyword">values</span><span class="operator">:</span><span class="keyword">data</span> <span class="operator">~</span><span class="keyword">bins</span><span class="operator">:</span><span class="number">30</span> <span class="keyword">ax</span>
-<span class="function">show</span> <span class="keyword">fig</span>
+let fig = figure ()
+let ax = subplot fig
+let _ = Plotting.hist ~values:data ~bins:30 ax
+show fig
 ```
 
 Statistics:
 
 ```ocaml
-<span class="type">Printf</span>.<span class="function">printf</span> <span class="string">"Mean: %.2f\n"</span> (<span class="function">mean</span> <span class="keyword">data</span>);
-<span class="type">Printf</span>.<span class="function">printf</span> <span class="string">"Std: %.2f\n"</span> (<span class="function">std</span> <span class="keyword">data</span>)
-```</pre>
+Printf.printf "Mean: %.2f\n" (mean data);
+Printf.printf "Std: %.2f\n" (std data)
+```</code></pre>
       </div>
     </div>
 
@@ -99,43 +99,40 @@ Statistics:
 
     <p>Write your notebook as a markdown file:</p>
 
-    <pre class="notebook-example">
-<span class="comment"># My Analysis</span>
+    <pre class="language-markup"><code class="language-markup"># My Analysis
 
 Some introductory text about what we're doing.
 
-<span class="comment">## Load the data</span>
+## Load the data
 
 ```ocaml
-<span class="keyword">open</span> <span class="type">Nx</span>
+open Nx
 
-<span class="keyword">let</span> <span class="keyword">data</span> <span class="operator">=</span> <span class="type">Nx_io</span>.<span class="function">load_npy</span> <span class="string">"data.npy"</span>
-<span class="keyword">let</span> () <span class="operator">=</span> <span class="type">Printf</span>.<span class="function">printf</span> <span class="string">"Loaded %d samples\n"</span> (<span class="function">shape</span> <span class="keyword">data</span>).(<span class="number">0</span>)
+let data = Nx_io.load_npy "data.npy"
+let () = Printf.printf "Loaded %d samples\n" (shape data).(0)
 ```
 
 The data contains measurements from our experiment...
 
-<span class="comment">## Visualize</span>
+## Visualize
 
 ```ocaml
-<span class="keyword">open</span> <span class="type">Hugin</span>
+open Hugin
 
-<span class="keyword">let</span> <span class="keyword">fig</span> <span class="operator">=</span> <span class="function">figure</span> ()
-<span class="keyword">let</span> <span class="keyword">ax</span> <span class="operator">=</span> <span class="function">subplot</span> <span class="keyword">fig</span>
-<span class="keyword">let</span> _ <span class="operator">=</span> <span class="type">Plotting</span>.<span class="function">plot</span> <span class="operator">~</span><span class="keyword">y</span><span class="operator">:</span><span class="keyword">data</span> <span class="keyword">ax</span>
-<span class="function">show</span> <span class="keyword">fig</span>
+let fig = figure ()
+let ax = subplot fig
+let _ = Plotting.plot ~y:data ax
+show fig
 ```
-    </pre>
+    </code></pre>
 
     <p>Then run it:</p>
 
-    <pre>
-<span class="comment"># Start the web interface</span>
-<span class="function">quill</span> serve
+    <pre class="language-bash"><code class="language-bash"># Start the web interface
+quill serve
 
-<span class="comment"># Or execute directly</span>
-<span class="function">quill</span> exec notebook.md
-    </pre>
+# Or execute directly
+quill exec notebook.md</code></pre>
 
     <hr>
 
@@ -182,12 +179,10 @@ The data contains measurements from our experiment...
 
     <p>When it's ready:</p>
 
-    <pre>
-<span class="comment"># Install</span>
-<span class="function">opam</span> install quill
+    <pre class="language-bash"><code class="language-bash">opam install quill
 
-<span class="comment"># Create a notebook</span>
-<span class="function">cat</span> <span class="operator">></span> example.md <span class="operator"><<</span><span class="string">'EOF'
+# Create a notebook
+cat > example.md <<'EOF'
 # My First Notebook
 
 Let's do some math:
@@ -196,11 +191,11 @@ Let's do some math:
 let x = 2 + 2
 let () = Printf.printf "2 + 2 = %d\n" x
 ```
-EOF</span>
+EOF
 
-<span class="comment"># Run it</span>
-<span class="function">quill</span> exec example.md
-    </pre>
+# Run it
+quill exec example.md</code></pre>
   </main>
+
 </body>
 </html>

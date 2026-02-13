@@ -49,30 +49,30 @@
     <div class="code-compare">
       <div>
         <h4>OpenCV</h4>
-        <pre><span class="keyword">import</span> <span class="type">cv2</span>
-<span class="keyword">import</span> <span class="type">numpy</span> <span class="keyword">as</span> <span class="type">np</span>
+        <pre class="language-python"><code class="language-python">import cv2
+import numpy as np
 
-<span class="comment"># Load and process</span>
-<span class="keyword">img</span> <span class="operator">=</span> <span class="type">cv2</span>.<span class="function">imread</span>(<span class="string">'photo.jpg'</span>)
-<span class="keyword">gray</span> <span class="operator">=</span> <span class="type">cv2</span>.<span class="function">cvtColor</span>(<span class="keyword">img</span>, <span class="type">cv2</span>.<span class="keyword">COLOR_BGR2GRAY</span>)
-<span class="keyword">blurred</span> <span class="operator">=</span> <span class="type">cv2</span>.<span class="function">GaussianBlur</span>(<span class="keyword">gray</span>, (<span class="number">5</span>, <span class="number">5</span>), <span class="number">1.0</span>)
-<span class="keyword">edges</span> <span class="operator">=</span> <span class="type">cv2</span>.<span class="function">Canny</span>(<span class="keyword">blurred</span>, <span class="number">100</span>, <span class="number">200</span>)
+# Load and process
+img = cv2.imread('photo.jpg')
+gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+blurred = cv2.GaussianBlur(gray, (5, 5), 1.0)
+edges = cv2.Canny(blurred, 100, 200)
 
-<span class="comment"># Not differentiable!</span></pre>
+# Not differentiable!</code></pre>
       </div>
       <div>
         <h4>SOWILO</h4>
-        <pre><span class="keyword">open</span> <span class="type">Sowilo</span>
+        <pre class="language-ocaml"><code class="language-ocaml">open Sowilo
 
-<span class="comment">(* Load and process *)</span>
-<span class="keyword">let</span> <span class="keyword">img</span> <span class="operator">=</span> <span class="type">Nx_io</span>.<span class="function">load_image</span> <span class="string">"photo.jpg"</span> <span class="operator">|></span> <span class="type">Rune</span>.<span class="function">of_bigarray</span>
-<span class="keyword">let</span> <span class="keyword">processed</span> <span class="operator">=</span> 
-  <span class="keyword">img</span>
-  <span class="operator">|></span> <span class="function">to_grayscale</span>
-  <span class="operator">|></span> <span class="function">gaussian_blur</span> <span class="operator">~</span><span class="keyword">ksize</span><span class="operator">:</span><span class="number">5</span> <span class="operator">~</span><span class="keyword">sigma</span><span class="operator">:</span><span class="number">1.0</span>
-  <span class="operator">|></span> <span class="function">canny</span> <span class="operator">~</span><span class="keyword">low</span><span class="operator">:</span><span class="number">100.</span> <span class="operator">~</span><span class="keyword">high</span><span class="operator">:</span><span class="number">200.</span>
+(* Load and process *)
+let img = Nx_io.load_image "photo.jpg" |> Rune.of_bigarray
+let processed = 
+  img
+  |> to_grayscale
+  |> gaussian_blur ~ksize:5 ~sigma:1.0
+  |> canny ~low:100. ~high:200.
 
-<span class="comment">(* Fully differentiable! *)</span></pre>
+(* Fully differentiable! *)</code></pre>
       </div>
     </div>
 
@@ -80,22 +80,22 @@
 
     <h2>image processing operations</h2>
 
-    <pre><span class="comment">(* Filters *)</span>
-<span class="function">gaussian_blur</span> <span class="keyword">img</span> <span class="operator">~</span><span class="keyword">ksize</span><span class="operator">:</span><span class="number">5</span> <span class="operator">~</span><span class="keyword">sigma</span><span class="operator">:</span><span class="number">1.0</span>
-<span class="function">median_blur</span> <span class="keyword">img</span> <span class="operator">~</span><span class="keyword">ksize</span><span class="operator">:</span><span class="number">3</span>
-<span class="function">box_filter</span> <span class="keyword">img</span> <span class="operator">~</span><span class="keyword">ksize</span><span class="operator">:</span><span class="number">3</span>
+    <pre class="language-ocaml"><code class="language-ocaml">(* Filters *)
+gaussian_blur img ~ksize:5 ~sigma:1.0
+median_blur img ~ksize:3
+box_filter img ~ksize:3
 
-<span class="comment">(* Edge detection *)</span>
-<span class="keyword">let</span> <span class="keyword">grad_x</span>, <span class="keyword">grad_y</span> <span class="operator">=</span> <span class="function">sobel</span> <span class="keyword">img</span> <span class="operator">~</span><span class="keyword">dx</span><span class="operator">:</span><span class="number">1</span> <span class="operator">~</span><span class="keyword">dy</span><span class="operator">:</span><span class="number">0</span> <span class="operator">~</span><span class="keyword">ksize</span><span class="operator">:</span><span class="number">3</span>
-<span class="keyword">let</span> <span class="keyword">edges</span> <span class="operator">=</span> <span class="function">canny</span> <span class="keyword">img</span> <span class="operator">~</span><span class="keyword">low</span><span class="operator">:</span><span class="number">50.</span> <span class="operator">~</span><span class="keyword">high</span><span class="operator">:</span><span class="number">150.</span>
+(* Edge detection *)
+let grad_x, grad_y = sobel img ~dx:1 ~dy:0 ~ksize:3
+let edges = canny img ~low:50. ~high:150.
 
-<span class="comment">(* Morphology *)</span>
-<span class="keyword">let</span> <span class="keyword">kernel</span> <span class="operator">=</span> <span class="function">get_structuring_element</span> <span class="type">Rect</span> <span class="operator">~</span><span class="keyword">ksize</span><span class="operator">:</span><span class="number">3</span>
-<span class="keyword">let</span> <span class="keyword">eroded</span> <span class="operator">=</span> <span class="function">erode</span> <span class="keyword">img</span> <span class="keyword">kernel</span>
-<span class="keyword">let</span> <span class="keyword">dilated</span> <span class="operator">=</span> <span class="function">dilate</span> <span class="keyword">img</span> <span class="keyword">kernel</span>
+(* Morphology *)
+let kernel = get_structuring_element Rect ~ksize:3
+let eroded = erode img kernel
+let dilated = dilate img kernel
 
-<span class="comment">(* Thresholding *)</span>
-<span class="function">threshold</span> <span class="keyword">img</span> <span class="operator">~</span><span class="keyword">thresh</span><span class="operator">:</span><span class="number">128.</span> <span class="operator">~</span><span class="keyword">maxval</span><span class="operator">:</span><span class="number">255.</span> <span class="operator">~</span><span class="keyword">typ</span><span class="operator">:</span><span class="type">Binary</span></pre>
+(* Thresholding *)
+threshold img ~thresh:128. ~maxval:255. ~typ:Binary</code></pre>
 
     <hr>
 
@@ -103,20 +103,20 @@
 
     <p>Train neural networks with classical CV operations in the forward pass:</p>
 
-    <pre><span class="comment">(* Augmentation pipeline *)</span>
-<span class="keyword">let</span> <span class="keyword">augment</span> <span class="keyword">img</span> <span class="operator">=</span>
-  <span class="keyword">img</span>
-  <span class="operator">|></span> <span class="function">random_crop</span> <span class="operator">~</span><span class="keyword">size</span><span class="operator">:</span>(<span class="number">224</span>, <span class="number">224</span>)
-  <span class="operator">|></span> <span class="function">random_flip</span> <span class="operator">~</span><span class="keyword">p</span><span class="operator">:</span><span class="number">0.5</span>
-  <span class="operator">|></span> <span class="function">adjust_brightness</span> <span class="operator">~</span><span class="keyword">factor</span><span class="operator">:</span>(<span class="function">random</span> <span class="number">0.8</span> <span class="number">1.2</span>)
-  <span class="operator">|></span> <span class="function">gaussian_blur</span> <span class="operator">~</span><span class="keyword">ksize</span><span class="operator">:</span><span class="number">3</span> <span class="operator">~</span><span class="keyword">sigma</span><span class="operator">:</span>(<span class="function">random</span> <span class="number">0.</span> <span class="number">1.</span>)
+    <pre class="language-ocaml"><code class="language-ocaml">(* Augmentation pipeline *)
+let augment img =
+  img
+  |> random_crop ~size:(224, 224)
+  |> random_flip ~p:0.5
+  |> adjust_brightness ~factor:(random 0.8 1.2)
+  |> gaussian_blur ~ksize:3 ~sigma:(random 0. 1.)
 
-<span class="comment">(* Use in training - gradients flow through! *)</span>
-<span class="keyword">let</span> <span class="keyword">loss</span> <span class="keyword">model</span> <span class="keyword">img</span> <span class="keyword">label</span> <span class="operator">=</span>
-  <span class="keyword">let</span> <span class="keyword">augmented</span> <span class="operator">=</span> <span class="function">augment</span> <span class="keyword">img</span> <span class="keyword">in</span>
-  <span class="keyword">let</span> <span class="keyword">features</span> <span class="operator">=</span> <span class="function">extract_features</span> <span class="keyword">augmented</span> <span class="keyword">in</span>
-  <span class="keyword">let</span> <span class="keyword">pred</span> <span class="operator">=</span> <span class="type">Model</span>.<span class="function">forward</span> <span class="keyword">model</span> <span class="keyword">features</span> <span class="keyword">in</span>
-  <span class="function">cross_entropy</span> <span class="keyword">pred</span> <span class="keyword">label</span></pre>
+(* Use in training - gradients flow through! *)
+let loss model img label =
+  let augmented = augment img in
+  let features = extract_features augmented in
+  let pred = Model.forward model features in
+  cross_entropy pred label</code></pre>
 
     <hr>
 
@@ -164,25 +164,22 @@
 
     <p>When it's ready:</p>
 
-    <pre>
-<span class="comment"># Install</span>
-<span class="function">opam</span> install sowilo
+    <pre class="language-bash"><code class="language-bash">opam install sowilo</code></pre>
 
-<span class="comment"># Try it</span>
-<span class="keyword">open</span> <span class="type">Sowilo</span>
+    <pre class="language-ocaml"><code class="language-ocaml">open Sowilo
 
-<span class="comment">(* Edge detection example *)</span>
-<span class="keyword">let</span> () <span class="operator">=</span>
-  <span class="keyword">let</span> <span class="keyword">img</span> <span class="operator">=</span> <span class="type">Nx_io</span>.<span class="function">load_image</span> <span class="string">"input.jpg"</span> <span class="keyword">in</span>
-  <span class="keyword">let</span> <span class="keyword">edges</span> <span class="operator">=</span> 
-    <span class="type">Rune</span>.<span class="function">of_bigarray</span> (<span class="type">Nx</span>.<span class="function">to_bigarray</span> <span class="keyword">img</span>)
-    <span class="operator">|></span> <span class="function">to_grayscale</span>
-    <span class="operator">|></span> <span class="function">canny</span> <span class="operator">~</span><span class="keyword">low</span><span class="operator">:</span><span class="number">50.</span> <span class="operator">~</span><span class="keyword">high</span><span class="operator">:</span><span class="number">150.</span>
-    <span class="operator">|></span> <span class="type">Rune</span>.<span class="function">to_bigarray</span>
-    <span class="operator">|></span> <span class="type">Nx</span>.<span class="function">of_bigarray</span>
-  <span class="keyword">in</span>
-  <span class="type">Nx_io</span>.<span class="function">save_image</span> <span class="keyword">edges</span> <span class="string">"edges.png"</span>
-    </pre>
+(* Edge detection example *)
+let () =
+  let img = Nx_io.load_image "input.jpg" in
+  let edges =
+    Rune.of_bigarray (Nx.to_bigarray img)
+    |> to_grayscale
+    |> canny ~low:50. ~high:150.
+    |> Rune.to_bigarray
+    |> Nx.of_bigarray
+  in
+  Nx_io.save_image edges "edges.png"</code></pre>
   </main>
+
 </body>
 </html>

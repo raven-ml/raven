@@ -50,29 +50,29 @@
     <div class="code-compare">
       <div>
         <h4>JAX</h4>
-        <pre><span class="keyword">import</span> <span class="type">jax</span>
-<span class="keyword">import</span> <span class="type">jax.numpy</span> <span class="keyword">as</span> <span class="type">jnp</span>
-<span class="keyword">from</span> <span class="type">jax</span> <span class="keyword">import</span> <span class="function">grad</span>, <span class="function">jit</span>
+        <pre class="language-python"><code class="language-python">import jax
+import jax.numpy as jnp
+from jax import grad, jit
 
-<span class="comment"># Define function</span>
-<span class="keyword">def</span> <span class="function">f</span>(<span class="keyword">x</span>):
-    <span class="keyword">return</span> <span class="function">jnp.sum</span>(<span class="keyword">x</span> ** <span class="number">2</span>)
+# Define function
+def f(x):
+    return jnp.sum(x ** 2)
 
-<span class="comment"># Transform it</span>
-<span class="keyword">grad_f</span> <span class="operator">=</span> <span class="function">grad</span>(<span class="keyword">f</span>)
-<span class="keyword">fast_grad_f</span> <span class="operator">=</span> <span class="function">jit</span>(<span class="keyword">grad_f</span>)</pre>
+# Transform it
+grad_f = grad(f)
+fast_grad_f = jit(grad_f)</code></pre>
       </div>
       <div>
         <h4>RUNE</h4>
-        <pre><span class="keyword">open</span> <span class="type">Rune</span>
+        <pre class="language-ocaml"><code class="language-ocaml">open Rune
 
-<span class="comment">(* Define function *)</span>
-<span class="keyword">let</span> <span class="keyword">f</span> <span class="keyword">x</span> <span class="operator">=</span> 
-  <span class="function">sum</span> (<span class="function">mul</span> <span class="keyword">x</span> <span class="keyword">x</span>)
+(* Define function *)
+let f x = 
+  sum (mul x x)
 
-<span class="comment">(* Transform it *)</span>
-<span class="keyword">let</span> <span class="keyword">grad_f</span> <span class="operator">=</span> <span class="function">grad</span> <span class="keyword">f</span>
-<span class="keyword">let</span> <span class="keyword">fast_grad_f</span> <span class="operator">=</span> <span class="function">jit</span> <span class="keyword">grad_f</span></pre>
+(* Transform it *)
+let grad_f = grad f
+let fast_grad_f = jit grad_f</code></pre>
       </div>
     </div>
 
@@ -82,57 +82,57 @@
 
     <p>Rune uses OCaml's effect system to implement autodiff. Write normal functions, get derivatives for free:</p>
 
-    <pre><span class="comment">(* Any function works *)</span>
-<span class="keyword">let</span> <span class="keyword">my_function</span> <span class="keyword">x</span> <span class="operator">=</span>
-  <span class="keyword">let</span> <span class="keyword">y</span> <span class="operator">=</span> <span class="function">sin</span> <span class="keyword">x</span> <span class="keyword">in</span>
-  <span class="keyword">let</span> <span class="keyword">z</span> <span class="operator">=</span> <span class="function">mul</span> <span class="keyword">x</span> <span class="keyword">y</span> <span class="keyword">in</span>
-  <span class="function">sum</span> <span class="keyword">z</span>
+    <pre class="language-ocaml"><code class="language-ocaml">(* Any function works *)
+let my_function x =
+  let y = sin x in
+  let z = mul x y in
+  sum z
 
-<span class="comment">(* Get gradient function *)</span>
-<span class="keyword">let</span> <span class="keyword">df_dx</span> <span class="operator">=</span> <span class="function">grad</span> <span class="keyword">my_function</span>
+(* Get gradient function *)
+let df_dx = grad my_function
 
-<span class="comment">(* Compute value and gradient together *)</span>
-<span class="keyword">let</span> <span class="keyword">value</span>, <span class="keyword">gradient</span> <span class="operator">=</span> <span class="function">value_and_grad</span> <span class="keyword">my_function</span> <span class="keyword">x</span></pre>
+(* Compute value and gradient together *)
+let value, gradient = value_and_grad my_function x</code></pre>
 
     <hr>
 
     <h2>device placement</h2>
 
-    <pre><span class="comment">(* CPU computation *)</span>
-<span class="keyword">let</span> <span class="keyword">x</span> <span class="operator">=</span> <span class="function">rand</span> <span class="keyword">cpu</span> <span class="type">Float32</span> [<span class="operator">|</span><span class="number">100</span><span class="operator">|</span>]
+    <pre class="language-ocaml"><code class="language-ocaml">(* CPU computation *)
+let x = rand cpu Float32 [|100|]
 
-<span class="comment">(* Metal GPU (macOS) *)</span>
-<span class="keyword">let</span> <span class="keyword">gpu</span> <span class="operator">=</span> <span class="function">metal</span> () <span class="keyword">in</span>
-<span class="keyword">let</span> <span class="keyword">y</span> <span class="operator">=</span> <span class="function">rand</span> <span class="keyword">gpu</span> <span class="type">Float32</span> [<span class="operator">|</span><span class="number">100</span><span class="operator">|</span>]
+(* Metal GPU (macOS) *)
+let gpu = metal () in
+let y = rand gpu Float32 [|100|]
 
-<span class="comment">(* Operations run on tensor's device *)</span>
-<span class="keyword">let</span> <span class="keyword">z</span> <span class="operator">=</span> <span class="function">add</span> <span class="keyword">y</span> <span class="keyword">y</span>  <span class="comment">(* runs on GPU *)</span></pre>
+(* Operations run on tensor's device *)
+let z = add y y  (* runs on GPU *)</code></pre>
 
     <hr>
 
     <h2>neural network example</h2>
 
-    <pre><span class="comment">(* Simple two-layer network *)</span>
-<span class="keyword">let</span> <span class="keyword">mlp</span> <span class="keyword">w1</span> <span class="keyword">b1</span> <span class="keyword">w2</span> <span class="keyword">b2</span> <span class="keyword">x</span> <span class="operator">=</span>
-  <span class="keyword">let</span> <span class="keyword">h</span> <span class="operator">=</span> <span class="function">add</span> (<span class="function">matmul</span> <span class="keyword">x</span> <span class="keyword">w1</span>) <span class="keyword">b1</span> <span class="keyword">in</span>
-  <span class="keyword">let</span> <span class="keyword">h</span> <span class="operator">=</span> <span class="function">maximum</span> <span class="keyword">h</span> (<span class="function">zeros_like</span> <span class="keyword">h</span>) <span class="keyword">in</span>  <span class="comment">(* ReLU *)</span>
-  <span class="function">add</span> (<span class="function">matmul</span> <span class="keyword">h</span> <span class="keyword">w2</span>) <span class="keyword">b2</span>
+    <pre class="language-ocaml"><code class="language-ocaml">(* Simple two-layer network *)
+let mlp w1 b1 w2 b2 x =
+  let h = add (matmul x w1) b1 in
+  let h = maximum h (zeros_like h) in  (* ReLU *)
+  add (matmul h w2) b2
 
-<span class="comment">(* Loss function *)</span>
-<span class="keyword">let</span> <span class="keyword">loss</span> <span class="keyword">params</span> <span class="keyword">x</span> <span class="keyword">y</span> <span class="operator">=</span>
-  <span class="keyword">let</span> [<span class="keyword">w1</span>; <span class="keyword">b1</span>; <span class="keyword">w2</span>; <span class="keyword">b2</span>] <span class="operator">=</span> <span class="keyword">params</span> <span class="keyword">in</span>
-  <span class="keyword">let</span> <span class="keyword">pred</span> <span class="operator">=</span> <span class="function">mlp</span> <span class="keyword">w1</span> <span class="keyword">b1</span> <span class="keyword">w2</span> <span class="keyword">b2</span> <span class="keyword">x</span> <span class="keyword">in</span>
-  <span class="function">mean</span> (<span class="function">mul</span> (<span class="function">sub</span> <span class="keyword">pred</span> <span class="keyword">y</span>) (<span class="function">sub</span> <span class="keyword">pred</span> <span class="keyword">y</span>))
+(* Loss function *)
+let loss params x y =
+  let [w1; b1; w2; b2] = params in
+  let pred = mlp w1 b1 w2 b2 x in
+  mean (mul (sub pred y) (sub pred y))
 
-<span class="comment">(* Get gradients for all parameters *)</span>
-<span class="keyword">let</span> <span class="keyword">grad_loss</span> <span class="operator">=</span> <span class="function">grads</span> <span class="keyword">loss</span>
+(* Get gradients for all parameters *)
+let grad_loss = grads loss
 
-<span class="comment">(* Training step *)</span>
-<span class="keyword">let</span> <span class="keyword">update</span> <span class="keyword">params</span> <span class="keyword">x</span> <span class="keyword">y</span> <span class="keyword">lr</span> <span class="operator">=</span>
-  <span class="keyword">let</span> <span class="keyword">grads</span> <span class="operator">=</span> <span class="keyword">grad_loss</span> <span class="keyword">params</span> <span class="keyword">x</span> <span class="keyword">y</span> <span class="keyword">in</span>
-  <span class="type">List</span>.<span class="function">map2</span> 
-    (<span class="keyword">fun</span> <span class="keyword">p</span> <span class="keyword">g</span> <span class="operator">-></span> <span class="function">sub</span> <span class="keyword">p</span> (<span class="function">mul</span> (<span class="function">scalar</span> <span class="keyword">cpu</span> <span class="type">Float32</span> <span class="keyword">lr</span>) <span class="keyword">g</span>))
-    <span class="keyword">params</span> <span class="keyword">grads</span></pre>
+(* Training step *)
+let update params x y lr =
+  let grads = grad_loss params x y in
+  List.map2 
+    (fun p g -> sub p (mul (scalar cpu Float32 lr) g))
+    params grads</code></pre>
 
     <hr>
 
@@ -172,26 +172,23 @@
 
     <p>When it's ready:</p>
 
-    <pre>
-<span class="comment"># Install</span>
-<span class="function">opam</span> install rune
+    <pre class="language-bash"><code class="language-bash">opam install rune</code></pre>
 
-<span class="comment"># Try it</span>
-<span class="keyword">open</span> <span class="type">Rune</span>
+    <pre class="language-ocaml"><code class="language-ocaml">open Rune
 
-<span class="keyword">let</span> () <span class="operator">=</span> 
-  <span class="comment">(* Define a function *)</span>
-  <span class="keyword">let</span> <span class="keyword">f</span> <span class="keyword">x</span> <span class="operator">=</span> <span class="function">sum</span> (<span class="function">mul</span> <span class="keyword">x</span> <span class="keyword">x</span>) <span class="keyword">in</span>
-  
-  <span class="comment">(* Get its gradient *)</span>
-  <span class="keyword">let</span> <span class="keyword">grad_f</span> <span class="operator">=</span> <span class="function">grad</span> <span class="keyword">f</span> <span class="keyword">in</span>
-  
-  <span class="comment">(* Test it *)</span>
-  <span class="keyword">let</span> <span class="keyword">x</span> <span class="operator">=</span> <span class="function">scalar</span> <span class="keyword">cpu</span> <span class="type">Float32</span> <span class="number">3.0</span> <span class="keyword">in</span>
-  <span class="keyword">let</span> <span class="keyword">g</span> <span class="operator">=</span> <span class="keyword">grad_f</span> <span class="keyword">x</span> <span class="keyword">in</span>
-  <span class="type">Printf</span>.<span class="function">printf</span> <span class="string">"f(3) = %.1f\n"</span> (<span class="function">unsafe_get</span> (<span class="keyword">f</span> <span class="keyword">x</span>) [<span class="operator">||</span>]);
-  <span class="type">Printf</span>.<span class="function">printf</span> <span class="string">"f'(3) = %.1f\n"</span> (<span class="function">unsafe_get</span> <span class="keyword">g</span> [<span class="operator">||</span>])
-    </pre>
+let () =
+  (* Define a function *)
+  let f x = sum (mul x x) in
+
+  (* Get its gradient *)
+  let grad_f = grad f in
+
+  (* Test it *)
+  let x = scalar cpu Float32 3.0 in
+  let g = grad_f x in
+  Printf.printf "f(3) = %.1f\n" (unsafe_get (f x) [||]);
+  Printf.printf "f'(3) = %.1f\n" (unsafe_get g [||])</code></pre>
   </main>
+
 </body>
 </html>
