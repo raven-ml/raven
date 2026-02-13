@@ -625,7 +625,8 @@ let test_grad_cholesky () =
   (* Test gradient - cholesky returns L where A = L @ L^T *)
   let f_chol a = T.sum (T.cholesky ~upper:false a) in
   match T.check_gradient ~rtol:1e-2 ~atol:1e-3 f_chol a with
-  | `Pass result -> equal ~msg:"cholesky gradient passed" bool true result.passed
+  | `Pass result ->
+      equal ~msg:"cholesky gradient passed" bool true result.passed
   | `Fail result ->
       Printf.printf "cholesky gradient failed: max_rel_error = %.2e\n"
         result.max_rel_error;

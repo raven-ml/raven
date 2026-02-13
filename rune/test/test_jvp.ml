@@ -538,8 +538,7 @@ let check_complex_close ~eps msg expected actual =
     err_val
     > eps *. eps *. Float.of_int (Array.fold_left ( * ) 1 (T.shape expected))
   then
-    failf "%s: complex tensors differ, total squared error = %.6e" msg
-      err_val
+    failf "%s: complex tensors differ, total squared error = %.6e" msg err_val
 
 let test_jvp_fft () =
   (* FFT is linear, so JVP should be FFT of tangent *)

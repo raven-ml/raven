@@ -69,7 +69,9 @@ let test_count () =
   in
 
   equal ~msg:"count tensors" int 4 (Ptree.count_tensors tree);
-  equal ~msg:"count parameters" int (6 + 20 + 6 + 7) (Ptree.count_parameters tree)
+  equal ~msg:"count parameters" int
+    (6 + 20 + 6 + 7)
+    (Ptree.count_parameters tree)
 
 let test_flat_list () =
   let tree =

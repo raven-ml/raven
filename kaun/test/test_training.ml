@@ -19,8 +19,7 @@ let expect_invalid_argument ~expected f =
   | Some (Invalid_argument msg) ->
       equal ~msg:"invalid argument message" string expected msg
   | Some exn ->
-      failf "Expected Invalid_argument but caught %s"
-        (Printexc.to_string exn)
+      failf "Expected Invalid_argument but caught %s" (Printexc.to_string exn)
   | None -> fail "Expected Invalid_argument to be raised"
 
 let test_fit_empty_dataset_raises () =
@@ -115,8 +114,7 @@ let test_metric_history_handles_dynamic_metrics () =
   in
   let open Training.History in
   let metric_a_values = find_metric_values "metric_a" history.train_metrics in
-  equal ~msg:"metric_a tracked both epochs" int 2
-    (List.length metric_a_values);
+  equal ~msg:"metric_a tracked both epochs" int 2 (List.length metric_a_values);
   let metric_b_values = find_metric_values "metric_b" history.train_metrics in
   equal ~msg:"metric_b tracked from second epoch" int 1
     (List.length metric_b_values)

@@ -10,8 +10,7 @@ let test_discrete_basic () =
   let space = Space.Discrete.create 5 in
   let rng = Rune.Rng.key 42 in
   let sample, _ = Space.sample ~rng space in
-  equal ~msg:"discrete sample in range" bool true
-    (Space.contains space sample);
+  equal ~msg:"discrete sample in range" bool true (Space.contains space sample);
   let shape = Space.shape space in
   equal ~msg:"discrete shape" (option (array int)) None shape
 
@@ -19,8 +18,7 @@ let test_discrete_with_start () =
   let space = Space.Discrete.create ~start:10 5 in
   let rng = Rune.Rng.key 99 in
   let sample, _ = Space.sample ~rng space in
-  equal ~msg:"discrete sample valid" bool true
-    (Space.contains space sample);
+  equal ~msg:"discrete sample valid" bool true (Space.contains space sample);
   let value =
     let arr : Int32.t array = Rune.to_array (Rune.reshape [| 1 |] sample) in
     Int32.to_int arr.(0)
@@ -43,8 +41,7 @@ let test_box_multidim () =
   let sample, _ = Space.sample ~rng space in
   equal ~msg:"box multidim valid" bool true (Space.contains space sample);
   let shape = Space.shape space in
-  equal ~msg:"box multidim shape" (option (array int))
-    (Some [| 3 |]) shape;
+  equal ~msg:"box multidim shape" (option (array int)) (Some [| 3 |]) shape;
   let arr : float array = Rune.to_array (Rune.reshape [| 3 |] sample) in
   equal ~msg:"box bounds respected" bool true
     (arr.(0) >= -1.0
@@ -58,11 +55,9 @@ let test_multi_binary () =
   let space = Space.Multi_binary.create 4 in
   let rng = Rune.Rng.key 789 in
   let sample, _ = Space.sample ~rng space in
-  equal ~msg:"multi_binary sample valid" bool true
-    (Space.contains space sample);
+  equal ~msg:"multi_binary sample valid" bool true (Space.contains space sample);
   let shape = Space.shape space in
-  equal ~msg:"multi_binary shape" (option (array int))
-    (Some [| 4 |]) shape;
+  equal ~msg:"multi_binary shape" (option (array int)) (Some [| 4 |]) shape;
   let arr : Int32.t array = Rune.to_array (Rune.reshape [| 4 |] sample) in
   Array.iter
     (fun v -> equal ~msg:"binary value" bool true (v = 0l || v = 1l))
@@ -75,8 +70,7 @@ let test_multi_discrete () =
   equal ~msg:"multi_discrete sample valid" bool true
     (Space.contains space sample);
   let shape = Space.shape space in
-  equal ~msg:"multi_discrete shape" (option (array int))
-    (Some [| 3 |]) shape
+  equal ~msg:"multi_discrete shape" (option (array int)) (Some [| 3 |]) shape
 
 let test_tuple_space () =
   let space1 = Space.Discrete.create 3 in
@@ -86,8 +80,7 @@ let test_tuple_space () =
   in
   let rng = Rune.Rng.key 654 in
   let sample, _ = Space.sample ~rng tuple_space in
-  equal ~msg:"tuple sample valid" bool true
-    (Space.contains tuple_space sample);
+  equal ~msg:"tuple sample valid" bool true (Space.contains tuple_space sample);
   equal ~msg:"tuple has 2 elements" int 2 (List.length sample)
 
 let test_dict_space () =
@@ -99,8 +92,7 @@ let test_dict_space () =
   in
   let rng = Rune.Rng.key 987 in
   let sample, _ = Space.sample ~rng dict_space in
-  equal ~msg:"dict sample valid" bool true
-    (Space.contains dict_space sample);
+  equal ~msg:"dict sample valid" bool true (Space.contains dict_space sample);
   equal ~msg:"dict has 2 keys" int 2 (List.length sample);
   let keys = List.map fst sample in
   equal ~msg:"dict has action key" bool true (List.mem "action" keys);
@@ -113,8 +105,7 @@ let test_sequence_space () =
   in
   let rng = Rune.Rng.key 111 in
   let sample, _ = Space.sample ~rng seq_space in
-  equal ~msg:"sequence sample valid" bool true
-    (Space.contains seq_space sample);
+  equal ~msg:"sequence sample valid" bool true (Space.contains seq_space sample);
   let len = List.length sample in
   equal ~msg:"sequence length in range" bool true (len >= 2 && len <= 5)
 
@@ -134,7 +125,8 @@ let test_sequence_space_unbounded () =
   let packed = Space.pack seq_space extended in
   match Space.unpack seq_space packed with
   | Ok unpacked ->
-      equal ~msg:"unbounded unpack preserves length" int 4 (List.length unpacked)
+      equal ~msg:"unbounded unpack preserves length" int 4
+        (List.length unpacked)
   | Error msg -> fail ("unbounded sequence unpack failed: " ^ msg)
 
 let test_text_space () =
@@ -142,18 +134,15 @@ let test_text_space () =
   let rng = Rune.Rng.key 222 in
   let sample, _ = Space.sample ~rng space in
   equal ~msg:"text sample valid" bool true (Space.contains space sample);
-  equal ~msg:"text length respects max" bool true
-    (String.length sample <= 10)
+  equal ~msg:"text length respects max" bool true (String.length sample <= 10)
 
 let test_text_custom_charset () =
   let space = Space.Text.create ~charset:"ABC" ~max_length:5 () in
   let rng = Rune.Rng.key 333 in
   let sample, _ = Space.sample ~rng space in
-  equal ~msg:"text custom charset valid" bool true
-    (Space.contains space sample);
+  equal ~msg:"text custom charset valid" bool true (Space.contains space sample);
   String.iter
-    (fun c ->
-      equal ~msg:"char in charset" bool true (String.contains "ABC" c))
+    (fun c -> equal ~msg:"char in charset" bool true (String.contains "ABC" c))
     sample
 
 let test_pack_unpack () =
@@ -199,8 +188,7 @@ let () =
           test "tuple space" test_tuple_space;
           test "dict space" test_dict_space;
           test "sequence space" test_sequence_space;
-          test "sequence space unbounded"
-            test_sequence_space_unbounded;
+          test "sequence space unbounded" test_sequence_space_unbounded;
         ];
       group "Text"
         [

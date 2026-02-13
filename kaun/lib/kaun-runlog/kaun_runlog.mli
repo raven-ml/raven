@@ -42,7 +42,7 @@ module Run = Run
 
 val base_dir : unit -> string
 (** [base_dir ()] returns the default base directory for training runs.
-    
+
     Checks [RAVEN_RUNS_DIR] environment variable first, otherwise falls back to
     [XDG_CACHE_HOME/raven/runs] (or [~/.cache/raven/runs] if [XDG_CACHE_HOME] is
     not set). *)

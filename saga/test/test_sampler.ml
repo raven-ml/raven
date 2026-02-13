@@ -22,8 +22,7 @@ let int_list_testable =
     ~pp:(fun fmt lst ->
       Format.fprintf fmt "[%s]"
         (String.concat "; " (List.map string_of_int lst)))
-    ~equal:( = )
-    ()
+    ~equal:( = ) ()
 
 (* Mock model for testing *)
 let mock_model tokens =

@@ -389,7 +389,8 @@ let test_dilation_kernel_shape () =
     !total
   in
   equal ~msg:"rect kernel produces 3x3 block" int 9 (count_white dilated_rect);
-  equal ~msg:"cross kernel preserves cross shape" int 5 (count_white dilated_cross)
+  equal ~msg:"cross kernel preserves cross shape" int 5
+    (count_white dilated_cross)
 
 (* ───── Edge Detection Tests ───── *)
 
@@ -502,8 +503,7 @@ let () =
           test "gaussian_blur" test_gaussian_blur;
           test "box_filter" test_box_filter;
           test "median_blur" test_median_blur;
-          test "median_blur_median"
-            test_median_blur_preserves_median;
+          test "median_blur_median" test_median_blur_preserves_median;
         ];
       group "thresholding" [ test "threshold" test_threshold ];
       group "morphology"
@@ -514,9 +514,6 @@ let () =
           test "dilation_kernel_shape" test_dilation_kernel_shape;
         ];
       group "edge_detection"
-        [
-          test "sobel" test_sobel;
-          slow "canny" test_canny;
-        ];
+        [ test "sobel" test_sobel; slow "canny" test_canny ];
       group "integration" [ test "pipeline" test_pipeline ];
     ]

@@ -33,10 +33,8 @@ let test_compute_gae_bootstrap () =
   in
   let expected_adv = 1.0 +. (0.99 *. 0.25) -. 0.5 in
   let expected_return = expected_adv +. 0.5 in
-  equal ~msg:"bootstrapped advantage" (float 1e-6)
-    expected_adv advantages.(0);
-  equal ~msg:"bootstrapped return" (float 1e-6)
-    expected_return returns.(0)
+  equal ~msg:"bootstrapped advantage" (float 1e-6) expected_adv advantages.(0);
+  equal ~msg:"bootstrapped return" (float 1e-6) expected_return returns.(0)
 
 let test_compute_returns () =
   let rewards = [| 1.0; 1.0; 1.0 |] in
@@ -46,10 +44,8 @@ let test_compute_returns () =
   equal ~msg:"returns length" int 3 (Array.length returns);
 
   (* First return should be largest (sum of all future rewards) *)
-  equal ~msg:"returns[0] >= returns[1]" bool true
-    (returns.(0) >= returns.(1));
-  equal ~msg:"returns[1] >= returns[2]" bool true
-    (returns.(1) >= returns.(2))
+  equal ~msg:"returns[0] >= returns[1]" bool true (returns.(0) >= returns.(1));
+  equal ~msg:"returns[1] >= returns[2]" bool true (returns.(1) >= returns.(2))
 
 let test_normalize () =
   let arr = [| 1.0; 2.0; 3.0; 4.0; 5.0 |] in
@@ -226,7 +222,8 @@ let test_evaluate_updates_observation () =
   in
   ignore (Training.evaluate env ~policy ~n_episodes:1 ~max_steps:10 ());
   let observed = List.rev !seen in
-  equal ~msg:"policy saw evolving observations" (list (float 1e-6))
+  equal ~msg:"policy saw evolving observations"
+    (list (float 1e-6))
     [ 0.0; 1.0; 2.0 ] observed
 
 let () =
@@ -235,8 +232,7 @@ let () =
       group "Advantage Estimation"
         [
           test "compute GAE" test_compute_gae;
-          test "compute GAE with bootstrap"
-            test_compute_gae_bootstrap;
+          test "compute GAE with bootstrap" test_compute_gae_bootstrap;
           test "compute returns" test_compute_returns;
         ];
       group "Loss Functions"
@@ -256,7 +252,6 @@ let () =
       group "Evaluation"
         [
           test "evaluate policy" test_evaluate;
-          test "evaluate updates observation"
-            test_evaluate_updates_observation;
+          test "evaluate updates observation" test_evaluate_updates_observation;
         ];
     ]

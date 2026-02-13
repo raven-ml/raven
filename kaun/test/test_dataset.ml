@@ -82,8 +82,8 @@ let test_from_text_file_utf8 () =
   with_temp_file content (fun path ->
       let ds = from_text_file ~encoding:`UTF8 path in
       let lines = collect_dataset ds in
-      equal ~msg:"utf8 emoji preserved" (list string)
-        [ "hello 😊"; "second" ] lines)
+      equal ~msg:"utf8 emoji preserved" (list string) [ "hello 😊"; "second" ]
+        lines)
 
 (* Test for Latin1 *)
 let test_from_text_file_latin1 () =
@@ -120,8 +120,7 @@ let test_from_text_file_reset_mid_stream () =
   with_temp_file content (fun path ->
       let dataset = from_text_file path in
       let first_chunk = collect_n 1 dataset in
-      equal ~msg:"consumed first element" (list string)
-        [ "alpha" ] first_chunk;
+      equal ~msg:"consumed first element" (list string) [ "alpha" ] first_chunk;
       reset dataset;
       let refreshed = collect_n 2 dataset in
       equal ~msg:"after reset first two elements" (list string)
@@ -192,7 +191,8 @@ let test_from_csv_with_labels () =
   with_temp_csv content (fun path ->
       let dataset = from_csv_with_labels ~label_column:1 path in
       let collected = collect_dataset dataset in
-      equal ~msg:"text and labels with header" (list (pair string string))
+      equal ~msg:"text and labels with header"
+        (list (pair string string))
         [ ("hello", "spam"); ("world", "ham") ]
         collected)
 
@@ -203,7 +203,8 @@ let test_from_csv_with_labels_no_header () =
         from_csv_with_labels ~label_column:1 ~has_header:false path
       in
       let collected = collect_dataset dataset in
-      equal ~msg:"text and labels without header" (list (pair string string))
+      equal ~msg:"text and labels without header"
+        (list (pair string string))
         [ ("foo", "bar"); ("baz", "qux") ]
         collected)
 
@@ -212,7 +213,8 @@ let test_from_csv_with_labels_custom_columns () =
   with_temp_csv content (fun path ->
       let dataset = from_csv_with_labels ~text_column:2 ~label_column:1 path in
       let collected = collect_dataset dataset in
-      equal ~msg:"custom columns" (list (pair string string))
+      equal ~msg:"custom columns"
+        (list (pair string string))
         [ ("great", "pos"); ("bad", "neg") ]
         collected)
 
@@ -224,7 +226,8 @@ let test_from_csv_with_labels_custom_separator () =
           path
       in
       let collected = collect_dataset dataset in
-      equal ~msg:"text and labels with custom sep" (list (pair string string))
+      equal ~msg:"text and labels with custom sep"
+        (list (pair string string))
         [ ("t1", "l1"); ("t2", "l2") ]
         collected)
 
@@ -233,7 +236,8 @@ let test_from_csv_with_labels_malformed_rows () =
   with_temp_csv content (fun path ->
       let dataset = from_csv_with_labels ~label_column:1 path in
       let collected = collect_dataset dataset in
-      equal ~msg:"skip malformed rows" (list (pair string string))
+      equal ~msg:"skip malformed rows"
+        (list (pair string string))
         [ ("hello", "positive"); ("world", "negative") ]
         collected)
 
@@ -260,7 +264,8 @@ let test_zip () =
   (* One extra element *)
   let dataset = zip ds1 ds2 in
   let collected = collect_dataset dataset in
-  equal ~msg:"zipped pairs" (list (pair string int))
+  equal ~msg:"zipped pairs"
+    (list (pair string int))
     [ ("a", 1); ("b", 2); ("c", 3) ]
     collected
 
@@ -283,7 +288,8 @@ let test_interleave () =
 let test_enumerate () =
   let dataset = from_list [ "a"; "b"; "c" ] |> enumerate in
   let collected = collect_dataset dataset in
-  equal ~msg:"enumerated" (list (pair int string))
+  equal ~msg:"enumerated"
+    (list (pair int string))
     [ (0, "a"); (1, "b"); (2, "c") ]
     collected
 
@@ -320,8 +326,7 @@ let test_tokenize_with_special_tokens () =
   match collected with
   | [ tokens ] ->
       equal ~msg:"has BOS token" bool true (tokens.(0) = 0);
-      equal ~msg:"has EOS token" bool true
-        (tokens.(Array.length tokens - 1) = 1)
+      equal ~msg:"has EOS token" bool true (tokens.(Array.length tokens - 1) = 1)
   | _ -> fail "Expected one tokenized sample"
 
 let test_tokenize_truncation () =
@@ -331,8 +336,7 @@ let test_tokenize_truncation () =
   in
   let collected = collect_dataset dataset in
   match collected with
-  | [ tokens ] ->
-      equal ~msg:"truncated length" int 3 (Array.length tokens)
+  | [ tokens ] -> equal ~msg:"truncated length" int 3 (Array.length tokens)
   | _ -> fail "Expected one tokenized sample"
 
 let test_tokenize_padding () =
@@ -536,8 +540,7 @@ let test_parallel_interleave () =
   equal ~msg:"correct number of elements" int 6 (List.length collected);
   (* Check all expected values are present *)
   let sorted = List.sort compare collected in
-  equal ~msg:"all values present" (list int)
-    [ 1; 2; 3; 10; 20; 30 ] sorted
+  equal ~msg:"all values present" (list int) [ 1; 2; 3; 10; 20; 30 ] sorted
 
 (* ───── Test Iteration Functions ───── *)
 
@@ -604,8 +607,7 @@ let test_text_classification_pipeline () =
   match collected with
   | [ batch ] ->
       (* Check that we got a tensor *)
-      equal ~msg:"got tensor" bool true
-        (Rune.shape batch |> Array.length > 0)
+      equal ~msg:"got tensor" bool true (Rune.shape batch |> Array.length > 0)
   | _ -> fail "Expected one batch"
 
 let test_language_model_pipeline () =
@@ -662,15 +664,13 @@ let () =
           test "from_text_file" test_from_text_file;
           test "from_text_file_utf8" test_from_text_file_utf8;
           test "from_text_file_latin1" test_from_text_file_latin1;
-          test "from_text_file_large_lines"
-            test_from_text_file_large_lines;
+          test "from_text_file_large_lines" test_from_text_file_large_lines;
           test "from_text_file_reset" test_from_text_file_reset;
           test "from_text_file_reset_mid_stream"
             test_from_text_file_reset_mid_stream;
           test "from_text_files" test_from_text_files;
           test "from_jsonl" test_from_jsonl;
-          test "from_jsonl_custom_field"
-            test_from_jsonl_custom_field;
+          test "from_jsonl_custom_field" test_from_jsonl_custom_field;
           test "from_csv" test_from_csv;
           test "from_csv_custom_column" test_from_csv_custom_column;
           test "from_csv_no_header" test_from_csv_no_header;
@@ -699,8 +699,7 @@ let () =
         [
           test "normalize" test_normalize;
           test "tokenize_whitespace" test_tokenize_whitespace;
-          test "tokenize_with_special_tokens"
-            test_tokenize_with_special_tokens;
+          test "tokenize_with_special_tokens" test_tokenize_with_special_tokens;
           test "tokenize_truncation" test_tokenize_truncation;
           test "tokenize_padding" test_tokenize_padding;
         ];
@@ -725,10 +724,8 @@ let () =
         [
           test "shuffle" test_shuffle;
           test "shuffle_deterministic" test_shuffle_deterministic;
-          test "sample_without_replacement"
-            test_sample_without_replacement;
-          test "sample_with_replacement"
-            test_sample_with_replacement;
+          test "sample_without_replacement" test_sample_without_replacement;
+          test "sample_with_replacement" test_sample_with_replacement;
           test "weighted_sample" test_weighted_sample;
         ];
       group "caching_prefetching"
@@ -758,10 +755,8 @@ let () =
         ];
       group "pipelines"
         [
-          test "text_classification_pipeline"
-            test_text_classification_pipeline;
-          test "language_model_pipeline"
-            test_language_model_pipeline;
+          test "text_classification_pipeline" test_text_classification_pipeline;
+          test "language_model_pipeline" test_language_model_pipeline;
         ];
       group "edge_cases"
         [

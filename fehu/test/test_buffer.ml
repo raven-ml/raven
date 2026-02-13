@@ -212,7 +212,8 @@ let test_rollout_compute_advantages_truncated () =
   Buffer.Rollout.compute_advantages buffer ~last_value:10.0 ~last_done:false
     ~gamma:0.99 ~gae_lambda:1.0;
   let _, advantages, returns = Buffer.Rollout.get buffer in
-  equal ~msg:"advantage treats truncation as terminal" (float 1e-6) 0.5 advantages.(0);
+  equal ~msg:"advantage treats truncation as terminal" (float 1e-6) 0.5
+    advantages.(0);
   equal ~msg:"return respects truncation" (float 1e-6) 1.0 returns.(0)
 
 let test_rollout_clear () =

@@ -43,15 +43,13 @@ let test_tokenize_words_simple () =
 
 let test_tokenize_words_punctuation () =
   let tokens = tokenize_text "don't stop, it's fun!" in
-  equal ~msg:"words with punctuation"
-    (list string)
+  equal ~msg:"words with punctuation" (list string)
     [ "don"; "'"; "t"; "stop"; ","; "it"; "'"; "s"; "fun"; "!" ]
     tokens
 
 let test_tokenize_words_numbers () =
   let tokens = tokenize_text "I have 42 apples and 3.14 pies" in
-  equal ~msg:"words with numbers"
-    (list string)
+  equal ~msg:"words with numbers" (list string)
     [ "I"; "have"; "42"; "apples"; "and"; "3"; "."; "14"; "pies" ]
     tokens
 
@@ -65,8 +63,7 @@ let test_tokenize_words_whitespace_only () =
 
 let test_tokenize_words_special_chars () =
   let tokens = tokenize_text "hello@world.com #ml $100 C++" in
-  equal ~msg:"special characters"
-    (list string)
+  equal ~msg:"special characters" (list string)
     [ "hello"; "@"; "world"; "."; "com"; "#"; "ml"; "$"; "100"; "C"; "++" ]
     tokens
 
@@ -95,7 +92,9 @@ let test_tokenize_chars_empty () =
 let test_tokenize_regex_words () =
   (* Use the helper that sets up vocabulary properly *)
   let tokens = tokenize_text "hello-world test_123" in
-  equal ~msg:"regex words" (list string) [ "hello"; "-"; "world"; "test_123" ] tokens
+  equal ~msg:"regex words" (list string)
+    [ "hello"; "-"; "world"; "test_123" ]
+    tokens
 
 let test_tokenize_regex_custom () =
   (* Test with punctuation pre-tokenizer *)
@@ -129,13 +128,13 @@ let test_unigram_roundtrip () =
   let tokenizer = Tokenizer.unigram ~vocab () in
   List.iteri
     (fun expected_id token ->
-      equal ~msg:(Printf.sprintf "token_to_id '%s'" token)
-        (option int)
-        (Some expected_id)
+      equal
+        ~msg:(Printf.sprintf "token_to_id '%s'" token)
+        (option int) (Some expected_id)
         (Tokenizer.token_to_id tokenizer token);
-      equal ~msg:(Printf.sprintf "id_to_token %d" expected_id)
-        (option string)
-        (Some token)
+      equal
+        ~msg:(Printf.sprintf "id_to_token %d" expected_id)
+        (option string) (Some token)
         (Tokenizer.id_to_token tokenizer expected_id))
     tokens
 
@@ -229,7 +228,8 @@ let test_pad_token_reassignment_updates_id () =
   in
   let ids = Encoding.get_ids encoding |> Array.to_list in
   let pad_ids = List.tl ids in
-  equal ~msg:"pad id matches reassigned token" (list int) [ pad_id; pad_id ] pad_ids
+  equal ~msg:"pad id matches reassigned token" (list int) [ pad_id; pad_id ]
+    pad_ids
 
 (* ───── Edge Cases ───── *)
 
@@ -242,15 +242,13 @@ let test_tokenize_long_text () =
 
 let test_tokenize_repeated_punctuation () =
   let tokens = tokenize_text "wow!!! really???" in
-  equal ~msg:"repeated punctuation"
-    (list string)
+  equal ~msg:"repeated punctuation" (list string)
     [ "wow"; "!!!"; "really"; "???" ]
     tokens
 
 let test_tokenize_mixed_whitespace () =
   let tokens = tokenize_text "hello\tworld\nthere\r\nfriend" in
-  equal ~msg:"mixed whitespace"
-    (list string)
+  equal ~msg:"mixed whitespace" (list string)
     [ "hello"; "world"; "there"; "friend" ]
     tokens
 
@@ -260,14 +258,11 @@ let tokenization_tests =
   [
     (* Words tokenization *)
     test "tokenize words simple" test_tokenize_words_simple;
-    test "tokenize words punctuation"
-      test_tokenize_words_punctuation;
+    test "tokenize words punctuation" test_tokenize_words_punctuation;
     test "tokenize words numbers" test_tokenize_words_numbers;
     test "tokenize words empty" test_tokenize_words_empty;
-    test "tokenize words whitespace only"
-      test_tokenize_words_whitespace_only;
-    test "tokenize words special chars"
-      test_tokenize_words_special_chars;
+    test "tokenize words whitespace only" test_tokenize_words_whitespace_only;
+    test "tokenize words special chars" test_tokenize_words_special_chars;
     (* Character tokenization *)
     test "tokenize chars ASCII" test_tokenize_chars_ascii;
     test "tokenize chars unicode" test_tokenize_chars_unicode;
@@ -278,15 +273,12 @@ let tokenization_tests =
     test "tokenize regex no match" test_tokenize_regex_no_match;
     (* Edge cases *)
     test "tokenize long text" test_tokenize_long_text;
-    test "tokenize repeated punctuation"
-      test_tokenize_repeated_punctuation;
+    test "tokenize repeated punctuation" test_tokenize_repeated_punctuation;
     test "tokenize mixed whitespace" test_tokenize_mixed_whitespace;
     (* Unigram model tests *)
     test "unigram roundtrip" test_unigram_roundtrip;
-    test "unigram token_to_id out-of-vocab"
-      test_unigram_token_to_id_oov;
-    test "unigram id_to_token out-of-bounds"
-      test_unigram_id_to_token_oob;
+    test "unigram token_to_id out-of-vocab" test_unigram_token_to_id_oov;
+    test "unigram id_to_token out-of-bounds" test_unigram_id_to_token_oob;
     test "unigram empty vocab" test_unigram_empty_vocab;
     test "unigram special tokens" test_unigram_special_tokens;
     test "unigram encode sequence" test_unigram_encode_sequence;
@@ -294,5 +286,4 @@ let tokenization_tests =
       test_pad_token_reassignment_updates_id;
   ]
 
-let () =
-  run "saga tokenization" [ group "tokenization" tokenization_tests ]
+let () = run "saga tokenization" [ group "tokenization" tokenization_tests ]

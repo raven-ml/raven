@@ -297,7 +297,8 @@ let test_explained_variance () =
   Metrics.update ev_bad ~predictions:predictions_bad ~targets:targets_const ();
   let result = Metrics.compute ev_bad in
   let expected = 0.0 in
-  equal ~msg:"explained variance constant imperfect" (float_eps 1e-5) expected result
+  equal ~msg:"explained variance constant imperfect" (float_eps 1e-5) expected
+    result
 
 let test_cross_entropy () =
   let dtype = Rune.float32 in
@@ -652,11 +653,9 @@ let () =
           test "precision_recall" test_precision_recall;
           test "f1_score" test_f1_score;
           test "auc_roc" test_auc_roc;
-          test "auc_roc_multiple_updates"
-            test_auc_roc_multiple_updates;
+          test "auc_roc_multiple_updates" test_auc_roc_multiple_updates;
           test "auc_pr" test_auc_pr;
-          test "auc_pr_multiple_updates"
-            test_auc_pr_multiple_updates;
+          test "auc_pr_multiple_updates" test_auc_pr_multiple_updates;
           test "confusion_matrix" test_confusion_matrix;
         ];
       group "ranking"
@@ -672,11 +671,7 @@ let () =
           test "meteor" test_meteor_metric;
         ];
       group "vision"
-        [
-          test "ssim" test_ssim;
-          test "iou" test_iou;
-          test "dice" test_dice;
-        ];
+        [ test "ssim" test_ssim; test "iou" test_iou; test "dice" test_dice ];
       group "regression"
         [
           test "mse_rmse" test_mse_rmse;

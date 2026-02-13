@@ -175,6 +175,5 @@ let () =
           test "JIT of grad" test_jit_of_grad;
           test "JIT-grad composition" test_jit_grad_composition;
         ];
-      group "complex operations"
-        [ test "reduction ops" test_jit_reduction_ops ];
+      group "complex operations" [ test "reduction ops" test_jit_reduction_ops ];
     ]

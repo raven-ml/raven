@@ -50,9 +50,9 @@ let check_gradient_match ~eps name expected_grad computed_grad =
       max_rel_diff := Float.max !max_rel_diff rel_diff)
     expected_arr;
 
-  Windtrap.equal ~msg:(Printf.sprintf "%s max absolute difference" name)
-    (float eps)
-    0. !max_diff;
+  Windtrap.equal
+    ~msg:(Printf.sprintf "%s max absolute difference" name)
+    (float eps) 0. !max_diff;
 
   if !max_diff > eps then
     Printf.printf "  FAIL: %s - max diff: %.6e, max rel diff: %.6e\n" name

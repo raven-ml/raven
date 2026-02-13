@@ -28,8 +28,7 @@ let test_from_string_no_header () =
   check_int "cols" 3 (num_columns df);
 
   let names = column_names df in
-  equal ~msg:"default names" (list string)
-    [ "col0"; "col1"; "col2" ] names
+  equal ~msg:"default names" (list string) [ "col0"; "col1"; "col2" ] names
 
 let test_from_string_custom_sep () =
   let csv = "name;age\nAlice;25\nBob;30" in

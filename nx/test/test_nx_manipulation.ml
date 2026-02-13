@@ -347,7 +347,8 @@ let test_broadcast_arrays_views () =
   let broadcasted = Nx.broadcast_arrays [ t1; t2 ] in
   let b1 = List.nth broadcasted 0 in
   Nx.set_item [ 0; 0 ] 99.0 t1;
-  equal ~msg:"broadcast array view modified" (float 1e-6) 99.0 (Nx.item [ 0; 0 ] b1)
+  equal ~msg:"broadcast array view modified" (float 1e-6) 99.0
+    (Nx.item [ 0; 0 ] b1)
 
 let test_broadcast_arrays_invalid () =
   let t1 = Nx.create Nx.float32 [| 2 |] [| 1.0; 2.0 |] in

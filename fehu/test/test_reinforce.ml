@@ -102,8 +102,7 @@ let test_step_completes_episode () =
   let metrics = Reinforce.metrics state in
   equal ~msg:"episode length" int 3 metrics.episode_length;
   equal ~msg:"episodes counted" int 1 metrics.total_episodes;
-  equal ~msg:"episode return positive" bool true
-    (metrics.episode_return > 0.0)
+  equal ~msg:"episode return positive" bool true (metrics.episode_return > 0.0)
 
 let test_train_runs () =
   let env = make_env () in
@@ -117,8 +116,7 @@ let test_train_runs () =
   | params, state ->
       ignore params;
       let metrics = Reinforce.metrics state in
-      equal ~msg:"train advanced steps" bool true
-        (metrics.total_steps >= 15)
+      equal ~msg:"train advanced steps" bool true (metrics.total_steps >= 15)
   | exception Fehu.Errors.Error err ->
       failf "train raised env error: %s" (Fehu.Errors.to_string err)
 
@@ -142,8 +140,8 @@ let test_save_and_load () =
       let metrics = Reinforce.metrics state' in
       equal ~msg:"loaded preserves total steps" int saved_metrics.total_steps
         metrics.total_steps;
-      equal ~msg:"loaded preserves total episodes" int saved_metrics.total_episodes
-        metrics.total_episodes
+      equal ~msg:"loaded preserves total episodes" int
+        saved_metrics.total_episodes metrics.total_episodes
   | Error msg -> failf "load failed: %s" msg
 
 let test_train_with_baseline () =
@@ -160,8 +158,7 @@ let test_train_with_baseline () =
   in
   ignore params;
   let metrics = Reinforce.metrics state in
-  equal ~msg:"baseline train episodes" bool true
-    (metrics.total_episodes > 0)
+  equal ~msg:"baseline train episodes" bool true (metrics.total_episodes > 0)
 
 let () =
   run "REINFORCE"

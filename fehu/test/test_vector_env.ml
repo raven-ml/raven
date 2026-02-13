@@ -58,8 +58,7 @@ let test_vec_env_incompatible_action_space () =
   | exception Errors.Error (Errors.Invalid_metadata msg) ->
       equal ~msg:"error mentions action space" bool true
         (string_contains ~needle:"action" msg)
-  | _ ->
-      fail "expected Invalid_metadata due to mismatched action space"
+  | _ -> fail "expected Invalid_metadata due to mismatched action space"
 
 let test_vec_env_reset () =
   let rng1 = Rune.Rng.key 42 in
@@ -90,11 +89,9 @@ let test_vec_env_step () =
     |]
   in
   let result = Vector_env.step vec_env actions in
-  equal ~msg:"observations length" int 2
-    (Array.length result.observations);
+  equal ~msg:"observations length" int 2 (Array.length result.observations);
   equal ~msg:"rewards length" int 2 (Array.length result.rewards);
-  equal ~msg:"terminations length" int 2
-    (Array.length result.terminations);
+  equal ~msg:"terminations length" int 2 (Array.length result.terminations);
   equal ~msg:"truncations length" int 2 (Array.length result.truncations);
   equal ~msg:"infos length" int 2 (Array.length result.infos)
 
@@ -189,8 +186,7 @@ let () =
         ];
       group "Autoreset"
         [
-          test "autoreset next_step"
-            test_vec_env_autoreset_next_step;
+          test "autoreset next_step" test_vec_env_autoreset_next_step;
           test "autoreset disabled" test_vec_env_autoreset_disabled;
         ];
       group "Properties"

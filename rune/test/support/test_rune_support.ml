@@ -46,7 +46,5 @@ let check_shape msg expected_shape tensor =
   equal ~msg (array int) expected_shape (Rune.shape tensor)
 
 (* Common failure checks *)
-let check_invalid_arg msg pattern f =
-  raises ~msg (Invalid_argument pattern) f
-
+let check_invalid_arg msg pattern f = raises ~msg (Invalid_argument pattern) f
 let check_failure msg pattern f = raises ~msg (Failure pattern) f

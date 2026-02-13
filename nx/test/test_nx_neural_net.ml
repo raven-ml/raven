@@ -546,18 +546,15 @@ let convolution_tests =
     test "convolve2d multi-channel" test_convolve2d_multi_channel;
     test "convolve2d winograd eligible" test_convolve2d_winograd_eligible;
     test "convolve2d groups winograd" test_convolve2d_groups_winograd;
-    test "convolve2d non-contiguous input"
-      test_convolve2d_non_contiguous_input;
+    test "convolve2d non-contiguous input" test_convolve2d_non_contiguous_input;
     test "convolve2d pool reshape edge case"
       test_convolve2d_pool_reshape_edge_case;
-    test "convolve2d groups reshape issue"
-      test_convolve2d_groups_reshape_issue;
+    test "convolve2d groups reshape issue" test_convolve2d_groups_reshape_issue;
     test "convolve2d dilated non-contiguous"
       test_convolve2d_dilated_non_contiguous;
     test "convolve invalid shapes" test_convolve_invalid_shapes;
     test "convolve empty input" test_convolve_empty_input;
-    test "convolve single element kernel"
-      test_convolve_single_element_kernel;
+    test "convolve single element kernel" test_convolve_single_element_kernel;
     test "correlate2d basic" test_correlate2d_basic;
     test "correlate2d winograd sanity case"
       test_correlate2d_winograd_sanity_case;

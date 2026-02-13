@@ -663,8 +663,7 @@ let concat_tests =
 let row_module_tests =
   [ test "accessors" test_row_accessors; test "map" test_row_map ]
 
-let sort_group_tests =
-  [ test "sort" test_sort; test "group_by" test_group_by ]
+let sort_group_tests = [ test "sort" test_sort; test "group_by" test_group_by ]
 
 let agg_tests =
   [

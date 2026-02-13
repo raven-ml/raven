@@ -108,7 +108,8 @@ let test_fft_size () =
   let ifft_padded = Nx.ifft fft_padded ~n in
   (* Note: fft(x, n=16) -> ifft(X, n=8) does NOT give back the original signal.
      This is expected behavior that matches NumPy. *)
-  equal ~msg:"fft pad reconstruct shape" (array int) shape (Nx.shape ifft_padded);
+  equal ~msg:"fft pad reconstruct shape" (array int) shape
+    (Nx.shape ifft_padded);
   (* Check the actual values match NumPy's output *)
   let expected_padded_complex =
     [|
@@ -193,8 +194,7 @@ let test_rfft_irfft () =
   in
   let input_even = Nx.create Nx.float64 shape_even signal_even in
   let rfft_even = Nx.rfft input_even in
-  equal ~msg:"rfft even shape"
-    (array int)
+  equal ~msg:"rfft even shape" (array int)
     [| (n_even / 2) + 1 |]
     (Nx.shape rfft_even);
   let irfft_even = Nx.irfft rfft_even ~n:n_even in
@@ -206,8 +206,7 @@ let test_rfft_irfft () =
   let signal_odd = Array.init n_odd (fun i -> Float.of_int i) in
   let input_odd = Nx.create Nx.float64 shape_odd signal_odd in
   let rfft_odd = Nx.rfft input_odd in
-  equal ~msg:"rfft odd shape"
-    (array int)
+  equal ~msg:"rfft odd shape" (array int)
     [| (n_odd / 2) + 1 |]
     (Nx.shape rfft_odd);
   let irfft_odd = Nx.irfft rfft_odd ~n:n_odd in
@@ -219,10 +218,7 @@ let test_rfft_irfft () =
   let signal_2d = Array.init (m * n) Float.of_int in
   let input_2d = Nx.create Nx.float64 shape_2d signal_2d in
   let rfft_2d = Nx.rfft2 input_2d in
-  equal ~msg:"rfft2 shape"
-    (array int)
-    [| m; (n / 2) + 1 |]
-    (Nx.shape rfft_2d);
+  equal ~msg:"rfft2 shape" (array int) [| m; (n / 2) + 1 |] (Nx.shape rfft_2d);
   let irfft_2d = Nx.irfft2 rfft_2d ~s:[ m; n ] in
   check_t "rfft2 reconstruct" shape_2d signal_2d irfft_2d;
 
@@ -232,7 +228,8 @@ let test_rfft_irfft () =
   let signal_nd = Array.init size_nd (fun i -> Float.of_int i) in
   let input_nd = Nx.create Nx.float64 shape_nd signal_nd in
   let rfft_nd = Nx.rfftn input_nd ~axes:[ 2 ] in
-  equal ~msg:"rfftn last axis shape" (array int) [| 2; 3; 5 |] (Nx.shape rfft_nd);
+  equal ~msg:"rfftn last axis shape" (array int) [| 2; 3; 5 |]
+    (Nx.shape rfft_nd);
   let irfft_nd = Nx.irfftn rfft_nd ~axes:[ 2 ] ~s:[ 8 ] in
   check_t "rfftn last axis reconstruct" shape_nd signal_nd irfft_nd
 
@@ -265,14 +262,14 @@ let test_rfft_size () =
   (* Pad last axis *)
   let pad_size = 16 in
   let rfft_padded = Nx.rfft input ~n:pad_size in
-  equal ~msg:"rfft padded"
-    (array int)
+  equal ~msg:"rfft padded" (array int)
     [| (pad_size / 2) + 1 |]
     (Nx.shape rfft_padded);
   let irfft_padded = Nx.irfft rfft_padded ~n in
   (* Note: rfft(x, n=16) -> irfft(X, n=8) does NOT give back the original
      signal. This is expected behavior that matches NumPy. *)
-  equal ~msg:"rfft pad reconstruct shape" (array int) shape (Nx.shape irfft_padded);
+  equal ~msg:"rfft pad reconstruct shape" (array int) shape
+    (Nx.shape irfft_padded);
   (* Check the actual values match NumPy's output *)
   let expected_padded =
     [|
@@ -292,8 +289,7 @@ let test_rfft_size () =
   (* Truncate *)
   let trunc_size = 4 in
   let rfft_trunc = Nx.rfft input ~n:trunc_size in
-  equal ~msg:"rfft trunc"
-    (array int)
+  equal ~msg:"rfft trunc" (array int)
     [| (trunc_size / 2) + 1 |]
     (Nx.shape rfft_trunc)
 
@@ -341,10 +337,7 @@ let test_hfft_ihfft () =
   in
   let input = Nx.create Nx.float64 shape signal in
   let ihfft_out = Nx.ihfft input ~n in
-  equal ~msg:"ihfft shape"
-    (array int)
-    [| (n / 2) + 1 |]
-    (Nx.shape ihfft_out);
+  equal ~msg:"ihfft shape" (array int) [| (n / 2) + 1 |] (Nx.shape ihfft_out);
   let hfft_out = Nx.hfft ihfft_out ~n in
   check_t "hfft/ihfft" shape signal hfft_out
 

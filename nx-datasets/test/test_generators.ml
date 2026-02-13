@@ -78,8 +78,7 @@ let () =
         [
           test "make_blobs" test_make_blobs;
           test "make_classification" test_make_classification;
-          test "make_gaussian_quantiles"
-            test_make_gaussian_quantiles;
+          test "make_gaussian_quantiles" test_make_gaussian_quantiles;
           test "make_circles" test_make_circles;
           test "make_moons" test_make_moons;
         ];

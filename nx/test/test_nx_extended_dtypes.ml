@@ -177,7 +177,8 @@ let test_dtype_properties () =
     (Nx_core.Dtype.is_float Nx_core.Dtype.float8_e4m3);
   equal ~msg:"float8_e5m2 is_float" bool true
     (Nx_core.Dtype.is_float Nx_core.Dtype.float8_e5m2);
-  equal ~msg:"bool is_float" bool false (Nx_core.Dtype.is_float Nx_core.Dtype.bool);
+  equal ~msg:"bool is_float" bool false
+    (Nx_core.Dtype.is_float Nx_core.Dtype.bool);
 
   (* Test is_complex *)
   equal ~msg:"complex64 is_complex" bool true
@@ -190,15 +191,21 @@ let test_dtype_properties () =
   (* Test is_int *)
   equal ~msg:"int4 is_int" bool true (Nx_core.Dtype.is_int Nx_core.Dtype.int4);
   equal ~msg:"uint4 is_int" bool true (Nx_core.Dtype.is_int Nx_core.Dtype.uint4);
-  equal ~msg:"uint32 is_int" bool true (Nx_core.Dtype.is_int Nx_core.Dtype.uint32);
-  equal ~msg:"uint64 is_int" bool true (Nx_core.Dtype.is_int Nx_core.Dtype.uint64);
+  equal ~msg:"uint32 is_int" bool true
+    (Nx_core.Dtype.is_int Nx_core.Dtype.uint32);
+  equal ~msg:"uint64 is_int" bool true
+    (Nx_core.Dtype.is_int Nx_core.Dtype.uint64);
   equal ~msg:"bool is_int" bool false (Nx_core.Dtype.is_int Nx_core.Dtype.bool);
 
   (* Test is_uint *)
-  equal ~msg:"uint4 is_uint" bool true (Nx_core.Dtype.is_uint Nx_core.Dtype.uint4);
-  equal ~msg:"uint32 is_uint" bool true (Nx_core.Dtype.is_uint Nx_core.Dtype.uint32);
-  equal ~msg:"uint64 is_uint" bool true (Nx_core.Dtype.is_uint Nx_core.Dtype.uint64);
-  equal ~msg:"int4 is_uint" bool false (Nx_core.Dtype.is_uint Nx_core.Dtype.int4);
+  equal ~msg:"uint4 is_uint" bool true
+    (Nx_core.Dtype.is_uint Nx_core.Dtype.uint4);
+  equal ~msg:"uint32 is_uint" bool true
+    (Nx_core.Dtype.is_uint Nx_core.Dtype.uint32);
+  equal ~msg:"uint64 is_uint" bool true
+    (Nx_core.Dtype.is_uint Nx_core.Dtype.uint64);
+  equal ~msg:"int4 is_uint" bool false
+    (Nx_core.Dtype.is_uint Nx_core.Dtype.int4);
 
   (* Test itemsize *)
   equal ~msg:"bfloat16 itemsize" int 2
@@ -210,8 +217,10 @@ let test_dtype_properties () =
     (Nx_core.Dtype.itemsize Nx_core.Dtype.float8_e4m3);
   equal ~msg:"float8_e5m2 itemsize" int 1
     (Nx_core.Dtype.itemsize Nx_core.Dtype.float8_e5m2);
-  equal ~msg:"uint32 itemsize" int 4 (Nx_core.Dtype.itemsize Nx_core.Dtype.uint32);
-  equal ~msg:"uint64 itemsize" int 8 (Nx_core.Dtype.itemsize Nx_core.Dtype.uint64);
+  equal ~msg:"uint32 itemsize" int 4
+    (Nx_core.Dtype.itemsize Nx_core.Dtype.uint32);
+  equal ~msg:"uint64 itemsize" int 8
+    (Nx_core.Dtype.itemsize Nx_core.Dtype.uint64);
   equal ~msg:"complex64 itemsize" int 8
     (Nx_core.Dtype.itemsize Nx_core.Dtype.complex64);
   equal ~msg:"complex128 itemsize" int 16
@@ -241,9 +250,12 @@ let test_dtype_properties () =
 
 let test_dtype_min_max_values () =
   (* Test min_value *)
-  equal ~msg:"int4 min_value" int (-8) (Nx_core.Dtype.min_value Nx_core.Dtype.int4);
-  equal ~msg:"uint4 min_value" int 0 (Nx_core.Dtype.min_value Nx_core.Dtype.uint4);
-  equal ~msg:"bool min_value" bool false (Nx_core.Dtype.min_value Nx_core.Dtype.bool);
+  equal ~msg:"int4 min_value" int (-8)
+    (Nx_core.Dtype.min_value Nx_core.Dtype.int4);
+  equal ~msg:"uint4 min_value" int 0
+    (Nx_core.Dtype.min_value Nx_core.Dtype.uint4);
+  equal ~msg:"bool min_value" bool false
+    (Nx_core.Dtype.min_value Nx_core.Dtype.bool);
   equal ~msg:"uint32 min_value" int32 0l
     (Nx_core.Dtype.min_value Nx_core.Dtype.uint32);
   equal ~msg:"uint64 min_value" int64 0L
@@ -251,8 +263,10 @@ let test_dtype_min_max_values () =
 
   (* Test max_value *)
   equal ~msg:"int4 max_value" int 7 (Nx_core.Dtype.max_value Nx_core.Dtype.int4);
-  equal ~msg:"uint4 max_value" int 15 (Nx_core.Dtype.max_value Nx_core.Dtype.uint4);
-  equal ~msg:"bool max_value" bool true (Nx_core.Dtype.max_value Nx_core.Dtype.bool);
+  equal ~msg:"uint4 max_value" int 15
+    (Nx_core.Dtype.max_value Nx_core.Dtype.uint4);
+  equal ~msg:"bool max_value" bool true
+    (Nx_core.Dtype.max_value Nx_core.Dtype.bool);
   equal ~msg:"uint32 max_value" int32 (Int32.lognot 0l)
     (Nx_core.Dtype.max_value Nx_core.Dtype.uint32);
   equal ~msg:"uint64 max_value" int64 (Int64.lognot 0L)

@@ -42,9 +42,9 @@ let test_optimizer_reduces_loss optimizer_fn name () =
   let final_loss = quadratic_loss params |> fun x -> Rune.item [] x in
 
   (* Check that loss decreased *)
-  equal ~msg:(Printf.sprintf "%s reduces loss" name)
-    bool
-    true
+  equal
+    ~msg:(Printf.sprintf "%s reduces loss" name)
+    bool true
     (final_loss < initial_loss *. 0.1);
 
   (* Loss should reduce by at least 90% *)
@@ -58,7 +58,8 @@ let test_optimizer_reduces_loss optimizer_fn name () =
         Rune.item [] norm
     | _ -> failwith "Expected tensor"
   in
-  equal ~msg:(Printf.sprintf "%s converges to optimum" name)
+  equal
+    ~msg:(Printf.sprintf "%s converges to optimum" name)
     (float 0.2) (* More lenient for convergence *)
     0.0 x_norm
 
@@ -115,8 +116,7 @@ let test_xor_convergence () =
   done;
 
   (* Check that loss decreased significantly *)
-  equal ~msg:"XOR loss decreases" bool true
-    (!final_loss < !initial_loss *. 0.8);
+  equal ~msg:"XOR loss decreases" bool true (!final_loss < !initial_loss *. 0.8);
 
   (* More lenient - 20% reduction *)
 
@@ -131,9 +131,10 @@ let test_xor_convergence () =
     let exp = expected.(i) in
     let error = abs_float (pred -. exp) in
     equal
-      ~msg:(Printf.sprintf "XOR prediction %d (pred=%.3f, expected=%.1f)" i pred exp)
-      bool
-      true (error < 0.3)
+      ~msg:
+        (Printf.sprintf "XOR prediction %d (pred=%.3f, expected=%.1f)" i pred
+           exp)
+      bool true (error < 0.3)
     (* Allow some error margin *)
   done
 
@@ -358,16 +359,13 @@ let () =
                  Optimizer.adagrad ~lr:(Optimizer.Schedule.constant 1.0) ())
                "Adagrad");
         ];
-      group "Complex problems"
-        [ slow "XOR convergence" test_xor_convergence ];
+      group "Complex problems" [ slow "XOR convergence" test_xor_convergence ];
       group "Optimizer behavior"
         [
           test "Different optimizers produce different updates"
             test_optimizer_differences;
-          test "Optimizer state persistence"
-            test_optimizer_state_persistence;
-          test "Learning rate scheduling"
-            test_learning_rate_schedule;
+          test "Optimizer state persistence" test_optimizer_state_persistence;
+          test "Learning rate scheduling" test_learning_rate_schedule;
           test "Global norm clipping handles zero gradients"
             test_clip_by_global_norm_zero_gradients;
           test "Global norm clipping handles empty parameter tree"

@@ -1042,7 +1042,8 @@ let display_formatting_tests =
         let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
         let str = Nx.data_to_string a in
         equal ~msg:"data_to_string not empty" bool true (String.length str > 0);
-        equal ~msg:"data_to_string contains data" bool true (String.contains str '1'));
+        equal ~msg:"data_to_string contains data" bool true
+          (String.contains str '1'));
     test "print_data" (fun () ->
         let a = Nx.ones Nx.float32 [| 2; 2 |] in
         Nx.print_data a);

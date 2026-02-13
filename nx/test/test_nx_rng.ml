@@ -163,10 +163,10 @@ let test_truncated_normal () =
   Array.iter
     (fun v ->
       equal
-        ~msg:(Printf.sprintf "truncated_normal values in [%.1f, %.1f]: %.3f" lower
-           upper v)
-        bool
-        true
+        ~msg:
+          (Printf.sprintf "truncated_normal values in [%.1f, %.1f]: %.3f" lower
+             upper v)
+        bool true
         (v >= lower && v <= upper))
     values
 
@@ -192,10 +192,11 @@ let test_truncated_normal_distribution () =
   in
 
   equal
-    ~msg:(Printf.sprintf "truncated normal rarely clips to bounds (%d / %d clipped)"
-       boundary_hits total)
-    bool
-    true
+    ~msg:
+      (Printf.sprintf
+         "truncated normal rarely clips to bounds (%d / %d clipped)"
+         boundary_hits total)
+    bool true
     (boundary_hits < total / 1000);
 
   let mean = Array.fold_left ( +. ) 0. values /. float_of_int total in
@@ -296,7 +297,8 @@ let test_categorical_axis_handling () =
   (* Check that axis=1 and axis=-1 give identical results *)
   let is_equal = Nx.all (Nx.equal samples_axis_1 samples_axis_neg_1) in
   let is_equal_val = Nx.to_array is_equal in
-  equal ~msg:"categorical axis=-1 behaves like axis=1" bool true is_equal_val.(0);
+  equal ~msg:"categorical axis=-1 behaves like axis=1" bool true
+    is_equal_val.(0);
 
   (* Sanity check: ensure sampled indices are in valid range *)
   let vals_axis_0 = Nx.to_array samples_axis_0 in
@@ -349,8 +351,8 @@ let test_categorical_shape_prefix_axis () =
   let samples = Rng.categorical ~key ~shape:prefix_shape ~axis:(-2) logits in
 
   let expected_shape = [| 5; 6; 2; 4 |] in
-  equal ~msg:"categorical shape prefix keeps axis semantics"
-    (array int) expected_shape (Nx.shape samples);
+  equal ~msg:"categorical shape prefix keeps axis semantics" (array int)
+    expected_shape (Nx.shape samples);
 
   let values = Nx.to_array samples |> Array.map Int32.to_int in
   Array.iter
@@ -393,8 +395,9 @@ let test_categorical_distribution () =
       let prop = float_of_int counts.(i) /. float_of_int n_samples in
       let se = Stdlib.sqrt (p *. (1. -. p) /. float_of_int n_samples) in
       let tol = Stdlib.max (4. *. se) 0.01 in
-      equal ~msg:(Printf.sprintf "categorical bucket %d ~ p" i) (float tol)
-        p prop)
+      equal
+        ~msg:(Printf.sprintf "categorical bucket %d ~ p" i)
+        (float tol) p prop)
     probs
 
 let () =
@@ -412,18 +415,15 @@ let () =
           test "randn" test_randn;
           test "randint" test_randint;
           test "bernoulli" test_bernoulli;
-          test "shuffle_preserves_shape"
-            test_shuffle_preserves_shape;
+          test "shuffle_preserves_shape" test_shuffle_preserves_shape;
           test "truncated_normal" test_truncated_normal;
           test "truncated_normal_distribution"
             test_truncated_normal_distribution;
           test "categorical" test_categorical;
           test "categorical_2d" test_categorical_2d;
-          test "categorical_axis_handling"
-            test_categorical_axis_handling;
+          test "categorical_axis_handling" test_categorical_axis_handling;
           test "categorical_shape_prefix_axis"
             test_categorical_shape_prefix_axis;
-          test "categorical_distribution"
-            test_categorical_distribution;
+          test "categorical_distribution" test_categorical_distribution;
         ];
     ]

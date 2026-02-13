@@ -24,8 +24,7 @@ let numpy_savetxt_float64_fixture =
 
 let expect_safetensors_ok context = function
   | Ok v -> v
-  | Error err ->
-      failf "%s: %s" context (Safetensors.string_of_error err)
+  | Error err -> failf "%s: %s" context (Safetensors.string_of_error err)
 
 let array_approx_equal ?(eps = 1e-6) a b =
   try
@@ -406,8 +405,7 @@ let test_dtype_conversions () =
 
   (* Test failing conversion (wrong dtype) *)
   let should_fail () = ignore (Nx_io.as_int32 loaded) in
-  raises ~msg:"wrong dtype conversion" (Failure "Unsupported dtype")
-    should_fail;
+  raises ~msg:"wrong dtype conversion" (Failure "Unsupported dtype") should_fail;
 
   (* Clean up *)
   Sys.remove path
@@ -436,7 +434,8 @@ let test_large_arrays () =
   let loaded = Nx_io.load_npy path in
   let loaded_f32 = Nx_io.as_float32 loaded in
 
-  equal ~msg:"large array shape" (array int) [| 100; 100 |] (Nx.shape loaded_f32);
+  equal ~msg:"large array shape" (array int) [| 100; 100 |]
+    (Nx.shape loaded_f32);
 
   (* Verify all values are 1 - sum and check *)
   let sum = Nx.sum loaded_f32 ~axes:[ 0; 1 ] ~keepdims:false in
@@ -457,7 +456,8 @@ let test_high_dimensional_arrays () =
   let loaded = Nx_io.load_npy path in
   let loaded_f32 = Nx_io.as_float32 loaded in
 
-  equal ~msg:"5D array shape" (array int) [| 2; 3; 4; 5; 1 |] (Nx.shape loaded_f32);
+  equal ~msg:"5D array shape" (array int) [| 2; 3; 4; 5; 1 |]
+    (Nx.shape loaded_f32);
   check_array_approx "5D array values" high_dim loaded_f32;
 
   (* Clean up *)
@@ -500,9 +500,7 @@ module Raw_safetensor = struct
           |> List.find_opt (fun (name, _) -> String.equal name tensor_name)
         with
         | Some (_, view) -> String.sub view.data view.offset view.length
-        | None ->
-            failf "Tensor '%s' not found in safetensors file"
-              tensor_name)
+        | None -> failf "Tensor '%s' not found in safetensors file" tensor_name)
 
   let remove path = if Sys.file_exists path then Sys.remove path
 
@@ -611,22 +609,17 @@ let () =
       group "txt" txt_tests;
       group "npz"
         [
-          test "Save/load multiple arrays"
-            test_npz_save_load_multiple;
+          test "Save/load multiple arrays" test_npz_save_load_multiple;
           test "Load specific member" test_npz_load_member;
         ];
       group "safetensors"
         [
           test "Save/load tensors" test_safetensors_save_load;
           test "Different dtypes" test_safetensors_different_dtypes;
-          test "Float16 round-trip"
-            test_safetensors_float16_roundtrip;
-          test "Float16 bit exact"
-            test_safetensors_float16_bit_exact;
-          test "Bfloat16 round-trip"
-            test_safetensors_bfloat16_roundtrip;
-          test "Bfloat16 bit exact"
-            test_safetensors_bfloat16_bit_exact;
+          test "Float16 round-trip" test_safetensors_float16_roundtrip;
+          test "Float16 bit exact" test_safetensors_float16_bit_exact;
+          test "Bfloat16 round-trip" test_safetensors_bfloat16_roundtrip;
+          test "Bfloat16 bit exact" test_safetensors_bfloat16_bit_exact;
         ];
       group "dtype_conversions"
         [ test "Basic conversions" test_dtype_conversions ];
@@ -634,8 +627,7 @@ let () =
         [
           test "Empty arrays" test_empty_arrays;
           test "Large arrays" test_large_arrays;
-          test "High dimensional arrays"
-            test_high_dimensional_arrays;
+          test "High dimensional arrays" test_high_dimensional_arrays;
         ];
       group "safe_module"
         [ test "Error handling" test_safe_module_error_handling ];

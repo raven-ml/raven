@@ -60,9 +60,13 @@ let test_nan_propagation ~op ~op_name () =
   let a = Nx.create Nx.float32 [| 3 |] [| Float.nan; 1.0; 2.0 |] in
   let b = Nx.create Nx.float32 [| 3 |] [| 5.0; Float.nan; 3.0 |] in
   let result = op a b in
-  equal ~msg:(Printf.sprintf "%s nan[0]" op_name) bool true
+  equal
+    ~msg:(Printf.sprintf "%s nan[0]" op_name)
+    bool true
     (Float.is_nan (Nx.item [ 0 ] result));
-  equal ~msg:(Printf.sprintf "%s nan[1]" op_name) bool true
+  equal
+    ~msg:(Printf.sprintf "%s nan[1]" op_name)
+    bool true
     (Float.is_nan (Nx.item [ 1 ] result))
 
 let test_inplace ~iop ~op_name ~dtype ~shape ~a_data ~b_data ~expected () =
@@ -106,15 +110,13 @@ module Add_tests = struct
         (test_binary_op ~op ~op_name ~dtype:Nx.float32 ~shape:[| 2; 2 |]
            ~a_data:[| 1.; 2.; 3.; 4. |] ~b_data:[| 5.; 6.; 7.; 8. |]
            ~expected:[| 6.; 8.; 10.; 12. |]);
-      test "5d + 5d"
-        (fun () ->
+      test "5d + 5d" (fun () ->
           let shape = [| 2; 3; 4; 5; 6 |] in
           let size = Array.fold_left ( * ) 1 shape in
           test_binary_op ~op ~op_name ~dtype:Nx.float32 ~shape
             ~a_data:(Array.make size 1.0) ~b_data:(Array.make size 2.0)
             ~expected:(Array.make size 3.0) ());
-      test "scalar broadcast"
-        (fun () ->
+      test "scalar broadcast" (fun () ->
           let a = Nx.scalar Nx.float32 5.0 in
           let b = Nx.create Nx.float32 [| 3; 4 |] (Array.make 12 1.0) in
           let result = Nx.add a b in
@@ -127,19 +129,18 @@ module Add_tests = struct
         (test_broadcast_error ~op ~op_name ~dtype:Nx.float32 ~a_shape:[| 3 |]
            ~b_shape:[| 4 |]);
       test "nan propagation" (test_nan_propagation ~op ~op_name);
-      test "inf arithmetic"
-        (fun () ->
+      test "inf arithmetic" (fun () ->
           let a =
             Nx.create Nx.float32 [| 2 |]
               [| Float.infinity; Float.neg_infinity |]
           in
           let b = Nx.create Nx.float32 [| 2 |] [| 5.0; 10.0 |] in
           let result = Nx.add a b in
-          equal ~msg:"inf + 5" (float 1e-6) Float.infinity (Nx.item [ 0 ] result);
+          equal ~msg:"inf + 5" (float 1e-6) Float.infinity
+            (Nx.item [ 0 ] result);
           equal ~msg:"-inf + 10" (float 1e-6) Float.neg_infinity
             (Nx.item [ 1 ] result));
-      test "inf + inf"
-        (fun () ->
+      test "inf + inf" (fun () ->
           let a =
             Nx.create Nx.float32 [| 2 |] [| Float.infinity; Float.infinity |]
           in
@@ -148,8 +149,10 @@ module Add_tests = struct
               [| Float.infinity; Float.neg_infinity |]
           in
           let result = Nx.add a b in
-          equal ~msg:"inf + inf" (float 1e-6) Float.infinity (Nx.item [ 0 ] result);
-          equal ~msg:"inf + -inf" bool true (Float.is_nan (Nx.item [ 1 ] result)));
+          equal ~msg:"inf + inf" (float 1e-6) Float.infinity
+            (Nx.item [ 0 ] result);
+          equal ~msg:"inf + -inf" bool true
+            (Float.is_nan (Nx.item [ 1 ] result)));
       test "iadd"
         (test_inplace ~iop:Nx.iadd ~op_name ~dtype:Nx.float32 ~shape:[| 2; 2 |]
            ~a_data:[| 1.; 2.; 3.; 4. |] ~b_data:[| 5.; 6.; 7.; 8. |]
@@ -170,8 +173,7 @@ module Sub_tests = struct
         (test_binary_op ~op ~op_name ~dtype:Nx.float32 ~shape:[| 2; 2 |]
            ~a_data:[| 5.; 6.; 7.; 8. |] ~b_data:[| 1.; 2.; 3.; 4. |]
            ~expected:[| 4.; 4.; 4.; 4. |]);
-      test "inf - inf"
-        (fun () ->
+      test "inf - inf" (fun () ->
           let a =
             Nx.create Nx.float32 [| 2 |] [| Float.infinity; Float.infinity |]
           in
@@ -181,7 +183,8 @@ module Sub_tests = struct
           in
           let result = Nx.sub a b in
           equal ~msg:"inf - inf" bool true (Float.is_nan (Nx.item [ 0 ] result));
-          equal ~msg:"inf - -inf" (float 1e-6) Float.infinity (Nx.item [ 1 ] result));
+          equal ~msg:"inf - -inf" (float 1e-6) Float.infinity
+            (Nx.item [ 1 ] result));
       test "isub"
         (test_inplace ~iop:Nx.isub ~op_name ~dtype:Nx.float32 ~shape:[| 2; 2 |]
            ~a_data:[| 10.; 11.; 12.; 13. |] ~b_data:[| 1.; 2.; 3.; 4. |]
@@ -226,13 +229,13 @@ module Div_tests = struct
         (test_binary_op ~op ~op_name ~dtype:Nx.int32 ~shape:[| 2; 2 |]
            ~a_data:[| 10l; 21l; 30l; 40l |] ~b_data:[| 3l; 5l; 4l; 4l |]
            ~expected:[| 3l; 4l; 7l; 10l |]);
-      test "div by zero float"
-        (fun () ->
+      test "div by zero float" (fun () ->
           let a = Nx.create Nx.float32 [| 3 |] [| 1.0; -1.0; 0.0 |] in
           let b = Nx.create Nx.float32 [| 3 |] [| 0.0; 0.0; 0.0 |] in
           let result = Nx.div a b in
           equal ~msg:"1/0" (float 1e-6) Float.infinity (Nx.item [ 0 ] result);
-          equal ~msg:"-1/0" (float 1e-6) Float.neg_infinity (Nx.item [ 1 ] result);
+          equal ~msg:"-1/0" (float 1e-6) Float.neg_infinity
+            (Nx.item [ 1 ] result);
           equal ~msg:"0/0" bool true (Float.is_nan (Nx.item [ 2 ] result)));
       test "idiv"
         (test_inplace ~iop:Nx.idiv ~op_name ~dtype:Nx.float32 ~shape:[| 3 |]
@@ -254,33 +257,28 @@ module Pow_tests = struct
         (test_binary_op_float ~eps:1e-5 ~op ~op_name ~dtype:Nx.float32
            ~shape:[| 3 |] ~a_data:[| 2.; 3.; 4. |] ~b_data:[| 3.; 2.; 0.5 |]
            ~expected:[| 8.; 9.; 2. |]);
-      test "zero^zero"
-        (fun () ->
+      test "zero^zero" (fun () ->
           let a = Nx.create Nx.float32 [| 1 |] [| 0.0 |] in
           let b = Nx.create Nx.float32 [| 1 |] [| 0.0 |] in
           let result = Nx.pow a b in
           equal ~msg:"0^0" (float 1e-6) 1.0 (Nx.item [ 0 ] result));
-      test "negative base fractional exp"
-        (fun () ->
+      test "negative base fractional exp" (fun () ->
           let a = Nx.create Nx.float32 [| 1 |] [| -2.0 |] in
           let b = Nx.create Nx.float32 [| 1 |] [| 0.5 |] in
           let result = Nx.pow a b in
           equal ~msg:"(-2)^0.5" bool true (Float.is_nan (Nx.item [ 0 ] result)));
-      test "pow overflow"
-        (fun () ->
+      test "pow overflow" (fun () ->
           let a = Nx.create Nx.float32 [| 1 |] [| 10.0 |] in
           let b = Nx.create Nx.float32 [| 1 |] [| 100.0 |] in
           let result = Nx.pow a b in
           equal ~msg:"10^100" (float 1e-6) Float.infinity (Nx.item [ 0 ] result));
-      test "ipow"
-        (fun () ->
+      test "ipow" (fun () ->
           let a = Nx.create Nx.float32 [| 3 |] [| 2.; 3.; 4. |] in
           let b = Nx.create Nx.float32 [| 3 |] [| 2.; 1.; 0.5 |] in
           let result = Nx.ipow a b in
           check_t ~eps:1e-5 "ipow result" [| 3 |] [| 4.; 3.; 2. |] a;
           equal ~msg:"ipow returns a" bool true (result == a));
-      test "pow_s"
-        (fun () ->
+      test "pow_s" (fun () ->
           let a = Nx.create Nx.float32 [| 3 |] [| 2.; 3.; 4. |] in
           let result = Nx.pow_s a 2.0 in
           check_t ~eps:1e-5 "pow_s" [| 3 |] [| 4.; 9.; 16. |] result);
@@ -316,13 +314,12 @@ module Math_tests = struct
         (test_unary_op_float ~eps:1e-5 ~op:Nx.exp ~op_name:"exp"
            ~dtype:Nx.float32 ~shape:[| 3 |] ~input:[| 0.; 1.; 2. |]
            ~expected:[| 1.; 2.71828; 7.38906 |]);
-      test "exp overflow"
-        (fun () ->
+      test "exp overflow" (fun () ->
           let t = Nx.create Nx.float32 [| 1 |] [| 1000.0 |] in
           let result = Nx.exp t in
-          equal ~msg:"exp(1000)" (float 1e-6) Float.infinity (Nx.item [ 0 ] result));
-      test "exp underflow"
-        (fun () ->
+          equal ~msg:"exp(1000)" (float 1e-6) Float.infinity
+            (Nx.item [ 0 ] result));
+      test "exp underflow" (fun () ->
           let t = Nx.create Nx.float32 [| 1 |] [| -1000.0 |] in
           let result = Nx.exp t in
           equal ~msg:"exp(-1000)" (float 1e-6) 0.0 (Nx.item [ 0 ] result));
@@ -334,16 +331,15 @@ module Math_tests = struct
         (test_unary_op_float ~eps:1e-5 ~op:Nx.log ~op_name:"log"
            ~dtype:Nx.float32 ~shape:[| 3 |] ~input:[| 1.; 2.71828; 7.38905 |]
            ~expected:[| 0.; 1.; 2. |]);
-      test "log negative"
-        (fun () ->
+      test "log negative" (fun () ->
           let t = Nx.create Nx.float32 [| 1 |] [| -1.0 |] in
           let result = Nx.log t in
           equal ~msg:"log(-1)" bool true (Float.is_nan (Nx.item [ 0 ] result)));
-      test "log zero"
-        (fun () ->
+      test "log zero" (fun () ->
           let t = Nx.create Nx.float32 [| 1 |] [| 0.0 |] in
           let result = Nx.log t in
-          equal ~msg:"log(0)" (float 1e-6) Float.neg_infinity (Nx.item [ 0 ] result));
+          equal ~msg:"log(0)" (float 1e-6) Float.neg_infinity
+            (Nx.item [ 0 ] result));
     ]
 
   let test_sqrt =
@@ -351,8 +347,7 @@ module Math_tests = struct
       test "sqrt basic"
         (test_unary_op ~op:Nx.sqrt ~op_name:"sqrt" ~dtype:Nx.float32
            ~shape:[| 3 |] ~input:[| 4.; 9.; 16. |] ~expected:[| 2.; 3.; 4. |]);
-      test "sqrt negative"
-        (fun () ->
+      test "sqrt negative" (fun () ->
           let t = Nx.create Nx.float32 [| 1 |] [| -1.0 |] in
           let result = Nx.sqrt t in
           equal ~msg:"sqrt(-1)" bool true (Float.is_nan (Nx.item [ 0 ] result)));
@@ -376,8 +371,8 @@ module Math_tests = struct
            ~shape:[| 4 |] ~input:[| -5.0; 0.0; 3.2; -0.0 |]
            ~expected:[| -1.0; 0.0; 1.0; 0.0 |]);
       test "sign int32"
-        (test_unary_op ~op:Nx.sign ~op_name:"sign" ~dtype:Nx.int32 ~shape:[| 3 |]
-           ~input:[| -5l; 0l; 3l |] ~expected:[| -1l; 0l; 1l |]);
+        (test_unary_op ~op:Nx.sign ~op_name:"sign" ~dtype:Nx.int32
+           ~shape:[| 3 |] ~input:[| -5l; 0l; 3l |] ~expected:[| -1l; 0l; 1l |]);
     ]
 
   let tests =
@@ -420,8 +415,7 @@ module Trig_tests = struct
         (test_unary_op_float ~eps:1e-5 ~op:Nx.asin ~op_name:"asin"
            ~dtype:Nx.float32 ~shape:[| 3 |] ~input:[| 0.; 0.5; 1. |]
            ~expected:[| 0.; pi /. 6.; pi /. 2. |]);
-      test "asin out of domain"
-        (fun () ->
+      test "asin out of domain" (fun () ->
           let t = Nx.create Nx.float32 [| 1 |] [| 2.0 |] in
           let result = Nx.asin t in
           equal ~msg:"asin(2)" bool true (Float.is_nan (Nx.item [ 0 ] result)));
@@ -473,8 +467,7 @@ module Comparison_tests = struct
         (test_comparison ~op:Nx.less_equal ~op_name:"less_equal"
            ~input1:[| 1.; 3.; 4. |] ~input2:[| 2.; 3.; 3. |]
            ~expected:[| true; true; false |]);
-      test "nan comparisons"
-        (fun () ->
+      test "nan comparisons" (fun () ->
           let t1 =
             Nx.create Nx.float32 [| 3 |] [| Float.nan; 1.; Float.nan |]
           in
@@ -501,62 +494,54 @@ module Reduction_tests = struct
       test "sum all"
         (test_reduction_all ~op:Nx.sum ~op_name:"sum" ~dtype:Nx.float32
            ~shape:[| 2; 2 |] ~input:[| 1.; 2.; 3.; 4. |] ~expected:10.);
-      test "sum axis=0"
-        (fun () ->
+      test "sum axis=0" (fun () ->
           let t =
             Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
           in
           let result = Nx.sum ~axes:[ 0 ] t in
           check_t "sum axis=0" [| 3 |] [| 5.; 7.; 9. |] result);
-      test "sum axis=1 keepdims"
-        (fun () ->
+      test "sum axis=1 keepdims" (fun () ->
           let t =
             Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
           in
           let result = Nx.sum ~axes:[ 1 ] ~keepdims:true t in
           check_t "sum axis=1 keepdims" [| 2; 1 |] [| 6.; 15. |] result);
-      test "prod all"
-        (fun () ->
+      test "prod all" (fun () ->
           let t = Nx.create Nx.int32 [| 4 |] [| 1l; 2l; 3l; 4l |] in
           let result = Nx.prod t in
           check_t "prod all" [||] [| 24l |] result);
-      test "mean all"
-        (fun () ->
+      test "mean all" (fun () ->
           let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
           let result = Nx.mean t in
           check_t "mean all" [||] [| 2.5 |] result);
-      test "max all"
-        (fun () ->
+      test "max all" (fun () ->
           let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
           let result = Nx.max t in
           check_t "max all" [||] [| 4. |] result);
-      test "min all"
-        (fun () ->
+      test "min all" (fun () ->
           let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
           let result = Nx.min t in
           check_t "min all" [||] [| 1. |] result);
-      test "var 1d"
-        (fun () ->
+      test "var 1d" (fun () ->
           let t = Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
           let result = Nx.var t in
           check_t "var 1d" [||] [| 2. |] result);
-      test "std 1d"
-        (fun () ->
+      test "std 1d" (fun () ->
           let t = Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
           let result = Nx.std t in
           check_t ~eps:1e-5 "std 1d" [||] [| 1.41421 |] result);
-      test "empty array mean"
-        (fun () ->
+      test "empty array mean" (fun () ->
           let _t = Nx.create Nx.float32 [| 0 |] [||] in
           (* Skip for now - mean of empty array behavior needs investigation *)
           ());
-      test "min/max with nan"
-        (fun () ->
+      test "min/max with nan" (fun () ->
           let t = Nx.create Nx.float32 [| 3 |] [| 1.; Float.nan; 3. |] in
           let min_result = Nx.min t in
           let max_result = Nx.max t in
-          equal ~msg:"min with nan" bool true (Float.is_nan (Nx.item [] min_result));
-          equal ~msg:"max with nan" bool true (Float.is_nan (Nx.item [] max_result)));
+          equal ~msg:"min with nan" bool true
+            (Float.is_nan (Nx.item [] min_result));
+          equal ~msg:"max with nan" bool true
+            (Float.is_nan (Nx.item [] max_result)));
     ]
 end
 
@@ -599,15 +584,17 @@ module Rounding_tests = struct
     [
       test "round"
         (test_unary_op ~op:Nx.round ~op_name:"round" ~dtype:Nx.float32
-           ~shape:[| 3 |] ~input:[| 1.6; 2.4; -1.7 |] ~expected:[| 2.; 2.; -2. |]);
+           ~shape:[| 3 |] ~input:[| 1.6; 2.4; -1.7 |]
+           ~expected:[| 2.; 2.; -2. |]);
       test "floor"
         (test_unary_op ~op:Nx.floor ~op_name:"floor" ~dtype:Nx.float32
-           ~shape:[| 3 |] ~input:[| 1.6; 2.4; -1.7 |] ~expected:[| 1.; 2.; -2. |]);
+           ~shape:[| 3 |] ~input:[| 1.6; 2.4; -1.7 |]
+           ~expected:[| 1.; 2.; -2. |]);
       test "ceil"
         (test_unary_op ~op:Nx.ceil ~op_name:"ceil" ~dtype:Nx.float32
-           ~shape:[| 3 |] ~input:[| 1.6; 2.4; -1.7 |] ~expected:[| 2.; 3.; -1. |]);
-      test "clip"
-        (fun () ->
+           ~shape:[| 3 |] ~input:[| 1.6; 2.4; -1.7 |]
+           ~expected:[| 2.; 3.; -1. |]);
+      test "clip" (fun () ->
           let t = Nx.create Nx.float32 [| 5 |] [| -1.; 2.; 5.; 8.; 10. |] in
           let result = Nx.clip ~min:0. ~max:7. t in
           check_t "clip" [| 5 |] [| 0.; 2.; 5.; 7.; 7. |] result);
@@ -619,14 +606,12 @@ end
 module Cumulative_tests = struct
   let tests =
     [
-      test "cumsum default axis"
-        (fun () ->
+      test "cumsum default axis" (fun () ->
           let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
           let result = Nx.cumsum t in
           check_t ~eps:1e-6 "cumsum flatten" [| 2; 2 |] [| 1.; 3.; 6.; 10. |]
             result);
-      test "cumsum axis=1"
-        (fun () ->
+      test "cumsum axis=1" (fun () ->
           let t =
             Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
           in
@@ -634,21 +619,20 @@ module Cumulative_tests = struct
           check_t ~eps:1e-6 "cumsum axis=1" [| 2; 3 |]
             [| 1.; 3.; 6.; 4.; 9.; 15. |]
             result);
-      test "cumprod axis=-1"
-        (fun () ->
+      test "cumprod axis=-1" (fun () ->
           let t = Nx.create Nx.int32 [| 2; 3 |] [| 1l; 2l; 3l; 2l; 2l; 2l |] in
           let result = Nx.cumprod ~axis:(-1) t in
           check_t "cumprod axis=-1" [| 2; 3 |]
             [| 1l; 2l; 6l; 2l; 4l; 8l |]
             result);
-      test "cummax nan propagation"
-        (fun () ->
+      test "cummax nan propagation" (fun () ->
           let t = Nx.create Nx.float32 [| 4 |] [| 1.; Float.nan; 2.; 3. |] in
           let result = Nx.cummax t in
-          equal ~msg:"cummax nan[1]" bool true (Float.is_nan (Nx.item [ 1 ] result));
-          equal ~msg:"cummax nan[2]" bool true (Float.is_nan (Nx.item [ 2 ] result)));
-      test "cummin axis option"
-        (fun () ->
+          equal ~msg:"cummax nan[1]" bool true
+            (Float.is_nan (Nx.item [ 1 ] result));
+          equal ~msg:"cummax nan[2]" bool true
+            (Float.is_nan (Nx.item [ 2 ] result)));
+      test "cummin axis option" (fun () ->
           let t =
             Nx.create Nx.int32 [| 2; 4 |] [| 4l; 2l; 3l; 1l; 5l; 6l; 2l; 7l |]
           in
@@ -665,17 +649,17 @@ module Bitwise_tests = struct
   let tests =
     [
       test "bitwise_and"
-        (test_binary_op ~op:Nx.bitwise_and ~op_name:"bitwise_and" ~dtype:Nx.int32
-           ~shape:[| 3 |] ~a_data:[| 5l; 3l; 7l |] ~b_data:[| 3l; 5l; 6l |]
-           ~expected:[| 1l; 1l; 6l |]);
+        (test_binary_op ~op:Nx.bitwise_and ~op_name:"bitwise_and"
+           ~dtype:Nx.int32 ~shape:[| 3 |] ~a_data:[| 5l; 3l; 7l |]
+           ~b_data:[| 3l; 5l; 6l |] ~expected:[| 1l; 1l; 6l |]);
       test "bitwise_or"
         (test_binary_op ~op:Nx.bitwise_or ~op_name:"bitwise_or" ~dtype:Nx.int32
            ~shape:[| 3 |] ~a_data:[| 5l; 3l; 7l |] ~b_data:[| 3l; 5l; 6l |]
            ~expected:[| 7l; 7l; 7l |]);
       test "bitwise_xor"
-        (test_binary_op ~op:Nx.bitwise_xor ~op_name:"bitwise_xor" ~dtype:Nx.int32
-           ~shape:[| 3 |] ~a_data:[| 5l; 3l; 7l |] ~b_data:[| 3l; 5l; 6l |]
-           ~expected:[| 6l; 6l; 1l |]);
+        (test_binary_op ~op:Nx.bitwise_xor ~op_name:"bitwise_xor"
+           ~dtype:Nx.int32 ~shape:[| 3 |] ~a_data:[| 5l; 3l; 7l |]
+           ~b_data:[| 3l; 5l; 6l |] ~expected:[| 6l; 6l; 1l |]);
       test "invert"
         (test_unary_op ~op:Nx.invert ~op_name:"invert" ~dtype:Nx.int32
            ~shape:[| 3 |] ~input:[| 5l; 0l; 7l |] ~expected:[| -6l; -1l; -8l |]);
@@ -815,8 +799,7 @@ end
 module Broadcasting_tests = struct
   let tests =
     [
-      test "broadcast 1d to 2d"
-        (fun () ->
+      test "broadcast 1d to 2d" (fun () ->
           let t2d =
             Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
           in
@@ -825,8 +808,7 @@ module Broadcasting_tests = struct
           check_t "broadcast 1d to 2d" [| 2; 3 |]
             [| 11.; 22.; 33.; 14.; 25.; 36. |]
             result);
-      test "broadcast 2x1 to 2x3"
-        (fun () ->
+      test "broadcast 2x1 to 2x3" (fun () ->
           let t21 = Nx.create Nx.float32 [| 2; 1 |] [| 1.; 2. |] in
           let t23 =
             Nx.create Nx.float32 [| 2; 3 |] [| 10.; 11.; 12.; 20.; 21.; 22. |]
@@ -835,8 +817,7 @@ module Broadcasting_tests = struct
           check_t "broadcast 2x1 to 2x3" [| 2; 3 |]
             [| 11.; 12.; 13.; 22.; 23.; 24. |]
             result);
-      test "broadcast (4,1) * (3,)"
-        (fun () ->
+      test "broadcast (4,1) * (3,)" (fun () ->
           let t41 =
             Nx.reshape [| 4; 1 |]
               (Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |])

@@ -22,7 +22,8 @@ let test_byte_level_basic () =
     check_strings
       (Printf.sprintf "ByteLevel pieces for %S" text)
       result expected_pieces;
-    equal ~msg:(Printf.sprintf "ByteLevel offsets for %S" text)
+    equal
+      ~msg:(Printf.sprintf "ByteLevel offsets for %S" text)
       (list (pair int int))
       expected_offsets offsets
   in
@@ -88,9 +89,9 @@ let test_byte_level_special_chars () =
     let result = tokenizer text in
     let pieces = List.map fst result in
     (* Just verify it doesn't crash and produces something *)
-    equal ~msg:(Printf.sprintf "ByteLevel handles %s" desc)
-      bool
-      true
+    equal
+      ~msg:(Printf.sprintf "ByteLevel handles %s" desc)
+      bool true
       (List.length pieces > 0)
   in
 
@@ -138,16 +139,16 @@ let test_byte_level_unicode () =
     let result = tokenizer text in
     let pieces = List.map fst result in
     (* Byte-level encoding should handle any Unicode by encoding bytes *)
-    equal ~msg:(Printf.sprintf "ByteLevel handles %s" desc)
-      bool
-      true
+    equal
+      ~msg:(Printf.sprintf "ByteLevel handles %s" desc)
+      bool true
       (List.length pieces > 0);
     (* Check that we can reconstruct something (even if not identical due to
        encoding) *)
     let concatenated = String.concat "" pieces in
-    equal ~msg:(Printf.sprintf "ByteLevel produces non-empty output for %s" desc)
-      bool
-      true
+    equal
+      ~msg:(Printf.sprintf "ByteLevel produces non-empty output for %s" desc)
+      bool true
       (String.length concatenated > 0)
   in
 
@@ -429,9 +430,9 @@ let test_unicode_scripts () =
     let tokenizer = Pre.unicode_scripts () in
     let result = tokenizer text in
     (* Just verify it runs without crashing and produces something reasonable *)
-    equal ~msg:(Printf.sprintf "UnicodeScripts %s" desc)
-      bool
-      true
+    equal
+      ~msg:(Printf.sprintf "UnicodeScripts %s" desc)
+      bool true
       (List.length result >= 0)
   in
 
@@ -461,24 +462,19 @@ let () =
         [
           test "ByteLevel basic" test_byte_level_basic;
           test "ByteLevel prefix space" test_byte_level_prefix_space;
-          test "ByteLevel special chars"
-            test_byte_level_special_chars;
+          test "ByteLevel special chars" test_byte_level_special_chars;
           test "ByteLevel unicode" test_byte_level_unicode;
           test "ByteLevel edge cases" test_byte_level_edge_cases;
         ];
       group "bert" [ test "BERT tokenization" test_bert_pretokenizer ];
       group "whitespace"
         [
-          test "Whitespace tokenization"
-            test_whitespace_pretokenizer;
+          test "Whitespace tokenization" test_whitespace_pretokenizer;
           test "WhitespaceSplit" test_whitespace_split;
         ];
       group "punctuation"
-        [
-          test "Punctuation behaviors" test_punctuation_pretokenizer;
-        ];
-      group "digits"
-        [ test "Digits tokenization" test_digits_pretokenizer ];
+        [ test "Punctuation behaviors" test_punctuation_pretokenizer ];
+      group "digits" [ test "Digits tokenization" test_digits_pretokenizer ];
       group "split"
         [
           test "Split with patterns" test_split_pretokenizer;
@@ -486,9 +482,7 @@ let () =
         ];
       group "sequence"
         [ test "Sequence of tokenizers" test_sequence_pretokenizer ];
-      group "fixed_length"
-        [ test "FixedLength chunks" test_fixed_length ];
-      group "unicode_scripts"
-        [ test "UnicodeScripts" test_unicode_scripts ];
+      group "fixed_length" [ test "FixedLength chunks" test_fixed_length ];
+      group "unicode_scripts" [ test "UnicodeScripts" test_unicode_scripts ];
       group "metaspace" [ test "Metaspace basic" test_metaspace_basic ];
     ]

@@ -296,7 +296,8 @@ let from_text_file ?(encoding = `UTF8) ?(chunk_size = 65536) path =
   in
 
   (* In UTF-8, '\n' (0x0A) is always a single byte and never appears inside
-     multi-byte sequences, so simple byte scanning is safe for line splitting. *)
+     multi-byte sequences, so simple byte scanning is safe for line
+     splitting. *)
   let process_chunk chunk =
     let len = String.length chunk in
     let start = ref 0 in
@@ -312,7 +313,7 @@ let from_text_file ?(encoding = `UTF8) ?(chunk_size = 65536) path =
   in
 
   let rec fill_queue () =
-    if Queue.is_empty lines_queue && not !closed then
+    if Queue.is_empty lines_queue && not !closed then (
       if !offset >= !file_size then (
         if Buffer.length buf > 0 then push_line ();
         close_handle ();
@@ -330,7 +331,7 @@ let from_text_file ?(encoding = `UTF8) ?(chunk_size = 65536) path =
         else
           let chunk = preprocess_chunk raw_chunk in
           process_chunk chunk;
-          if Queue.is_empty lines_queue then fill_queue ()
+          if Queue.is_empty lines_queue then fill_queue ())
   in
 
   let rec next_line () =

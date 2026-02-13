@@ -20,7 +20,8 @@ let () =
     [
       ( "--base-dir",
         Arg.Set_string base_dir,
-        Printf.sprintf "DIR Directory containing training runs (default: %s)" default_base_dir );
+        Printf.sprintf "DIR Directory containing training runs (default: %s)"
+          default_base_dir );
       ( "--runs",
         Arg.String (fun s -> runs := s :: !runs),
         "ID Specific run ID to monitor" );

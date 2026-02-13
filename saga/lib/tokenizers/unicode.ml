@@ -85,8 +85,8 @@ let normalize form text =
       else
         let d = String.get_utf_8_uchar text i in
         let n = Uchar.utf_decode_length d in
-        (if Uchar.utf_decode_is_valid d then
-           normalize_char (Uchar.utf_decode_uchar d));
+        if Uchar.utf_decode_is_valid d then
+          normalize_char (Uchar.utf_decode_uchar d);
         loop (i + n)
     in
     loop 0;
@@ -107,7 +107,9 @@ let case_fold text =
         (if Uchar.utf_decode_is_valid d then
            let u = Uchar.utf_decode_uchar d in
            let folded =
-             match Uucp.Case.Fold.fold u with `Self -> [ u ] | `Uchars us -> us
+             match Uucp.Case.Fold.fold u with
+             | `Self -> [ u ]
+             | `Uchars us -> us
            in
            List.iter (Buffer.add_utf_8_uchar b) folded);
         loop (i + n)

@@ -68,15 +68,14 @@ let test_vocab_save_load () =
   | Ok reloaded ->
       let original_vocab = Tokenizer.vocab tokenizer in
       let loaded_vocab = Tokenizer.vocab reloaded in
-      equal ~msg:"vocab size matches"
-        int
+      equal ~msg:"vocab size matches" int
         (List.length original_vocab)
         (List.length loaded_vocab);
       List.iter
         (fun (token, _) ->
-          equal ~msg:(Printf.sprintf "token %s preserved" token)
-            bool
-            true
+          equal
+            ~msg:(Printf.sprintf "token %s preserved" token)
+            bool true
             (Option.is_some (Tokenizer.token_to_id reloaded token)))
         original_vocab
 

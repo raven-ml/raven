@@ -38,8 +38,7 @@ let test_bert_base_uncased () =
   with_hf_tokenizer "bert-base-uncased" (fun tok ->
       let encoding = Tokenizer.encode tok "Hello world!" in
       let tokens = Encoding.get_tokens encoding |> Array.to_list in
-      equal ~msg:"token sequence"
-        (list string)
+      equal ~msg:"token sequence" (list string)
         [ "[CLS]"; "hello"; "world"; "!"; "[SEP]" ]
         tokens;
       let type_ids = Encoding.get_type_ids encoding |> Array.to_list in
@@ -61,8 +60,7 @@ let test_roberta_base () =
   with_hf_tokenizer "roberta-base" (fun tok ->
       let encoding = Tokenizer.encode tok "A quick test" in
       let tokens = Encoding.get_tokens encoding |> Array.to_list in
-      equal ~msg:"tokens"
-        (list string)
+      equal ~msg:"tokens" (list string)
         [ "<s>"; "A"; "Ġquick"; "Ġtest"; "</s>" ]
         tokens;
       let attention = Encoding.get_attention_mask encoding |> Array.to_list in

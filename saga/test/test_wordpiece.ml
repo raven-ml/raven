@@ -122,8 +122,7 @@ let test_wordpiece_save_load () =
     Tokenizer.encode loaded_tokenizer "hello" |> Encoding.get_tokens
   in
 
-  equal ~msg:"same number of tokens"
-    int
+  equal ~msg:"same number of tokens" int
     (Array.length original_tokens)
     (Array.length loaded_tokens);
 

@@ -34,8 +34,7 @@ let test_roundtrip_wordpiece () =
       equal ~msg:"Same encoding" (array int) ids1 ids2;
       Sys.remove tokenizer_file;
       Unix.rmdir save_path
-  | Error e ->
-      failf "Failed to reload tokenizer: %s" (Printexc.to_string e)
+  | Error e -> failf "Failed to reload tokenizer: %s" (Printexc.to_string e)
 
 let test_roundtrip_bpe () =
   let tok =
@@ -55,8 +54,7 @@ let test_roundtrip_bpe () =
       equal ~msg:"Same vocab" (list (pair string int)) vocab1 vocab2;
       Sys.remove tokenizer_file;
       Unix.rmdir save_path
-  | Error e ->
-      failf "Failed to reload tokenizer: %s" (Printexc.to_string e)
+  | Error e -> failf "Failed to reload tokenizer: %s" (Printexc.to_string e)
 
 let test_roundtrip_wordlevel () =
   let tok =
@@ -75,8 +73,7 @@ let test_roundtrip_wordlevel () =
       equal ~msg:"Same vocab" (list (pair string int)) vocab1 vocab2;
       Sys.remove tokenizer_file;
       Unix.rmdir save_path
-  | Error e ->
-      failf "Failed to reload tokenizer: %s" (Printexc.to_string e)
+  | Error e -> failf "Failed to reload tokenizer: %s" (Printexc.to_string e)
 
 let () =
   run "Tokenizer I/O"

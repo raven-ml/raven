@@ -460,7 +460,8 @@ let test_slogdet_singular () =
   let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 2.; 4. |] in
   let sign, logdet = Nx.slogdet a in
   check_t "slogdet singular sign" [||] [| 0. |] sign;
-  equal ~msg:"slogdet singular logdet" (float 1e-5) neg_infinity (Nx.item [] logdet)
+  equal ~msg:"slogdet singular logdet" (float 1e-5) neg_infinity
+    (Nx.item [] logdet)
 
 let test_matrix_rank () =
   let a = Nx.create Nx.float32 [| 3; 3 |] (Array.init 9 float_of_int) in

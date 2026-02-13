@@ -125,7 +125,6 @@ let () =
       group "load_safetensors"
         [
           test "loads sharded safetensors" test_load_sharded;
-          test "falls back to single file"
-            test_load_single_file_fallback;
+          test "falls back to single file" test_load_single_file_fallback;
         ];
     ]

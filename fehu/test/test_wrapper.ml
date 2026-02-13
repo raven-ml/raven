@@ -160,8 +160,8 @@ let test_with_metadata () =
         metadata |> Metadata.with_description (Some "Modified"))
   in
   let metadata = Env.metadata wrapped in
-  equal ~msg:"metadata modified" (option string)
-    (Some "Modified") metadata.description
+  equal ~msg:"metadata modified" (option string) (Some "Modified")
+    metadata.description
 
 let test_chained_wrappers () =
   let rng = Rune.Rng.key 42 in
@@ -196,6 +196,5 @@ let () =
           test "clip action" test_clip_action;
           test "clip observation" test_clip_observation;
         ];
-      group "Composition"
-        [ test "chained wrappers" test_chained_wrappers ];
+      group "Composition" [ test "chained wrappers" test_chained_wrappers ];
     ]

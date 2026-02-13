@@ -425,16 +425,19 @@ let test_is_c_contiguous_basic () =
 let test_is_c_contiguous_after_transpose () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let transposed = Nx.transpose t in
-  equal ~msg:"transposed not contiguous" bool false (Nx.is_c_contiguous transposed)
+  equal ~msg:"transposed not contiguous" bool false
+    (Nx.is_c_contiguous transposed)
 
 let test_is_c_contiguous_after_slice () =
   let t = Nx.create Nx.float32 [| 10 |] (Array.init 10 float_of_int) in
   (* step=2 creates a strided view, not contiguous *)
   let sliced = Nx.slice [ Nx.Rs (0, 10, 2) ] t in
-  equal ~msg:"slice step=2 is not contiguous" bool false (Nx.is_c_contiguous sliced);
+  equal ~msg:"slice step=2 is not contiguous" bool false
+    (Nx.is_c_contiguous sliced);
   (* step=1 slice is contiguous *)
   let sliced_step1 = Nx.slice [ Nx.Rs (0, 5, 1) ] t in
-  equal ~msg:"slice step=1 is contiguous" bool true (Nx.is_c_contiguous sliced_step1)
+  equal ~msg:"slice step=1 is contiguous" bool true
+    (Nx.is_c_contiguous sliced_step1)
 
 let test_is_c_contiguous_after_double_transpose () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
@@ -447,14 +450,16 @@ let test_offset_after_multiple_slices () =
   let t = Nx.create Nx.float32 [| 5; 5 |] (Array.init 25 float_of_int) in
   let slice1 = Nx.slice [ Nx.R (1, 3); Nx.R (0, 5) ] t in
   let slice2 = Nx.slice [ Nx.R (0, 1); Nx.R (0, 5) ] slice1 in
-  equal ~msg:"accumulated offset value" (float 1e-6) 5.0 (Nx.item [ 0; 0 ] slice2)
+  equal ~msg:"accumulated offset value" (float 1e-6) 5.0
+    (Nx.item [ 0; 0 ] slice2)
 
 (* ───── Utility Operation Tests ───── *)
 
 let test_to_bigarray () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let ba = Nx.to_bigarray t in
-  equal ~msg:"initial [0,0]" (float 1e-6) 1.0 (Bigarray.Genarray.get ba [| 0; 0 |]);
+  equal ~msg:"initial [0,0]" (float 1e-6) 1.0
+    (Bigarray.Genarray.get ba [| 0; 0 |]);
   Nx.set_item [ 0; 0 ] 55.0 t;
   equal ~msg:"after set [0,0]" (float 1e-6) 55.0
     (Bigarray.Genarray.get ba [| 0; 0 |])
@@ -467,9 +472,9 @@ let test_to_bigarray_partial_slice () =
   let expected = [| 0.0; 1.0; 2.0; 3.0 |] in
   Array.iteri
     (fun i value ->
-      equal ~msg:(Printf.sprintf "slice[%d]" i)
-        (float 1e-6)
-        value
+      equal
+        ~msg:(Printf.sprintf "slice[%d]" i)
+        (float 1e-6) value
         (Bigarray.Genarray.get ba [| i |]))
     expected
 
@@ -498,7 +503,8 @@ let test_ifill_nan () =
 let test_ifill_inf () =
   let t = Nx.empty Nx.float32 [| 2; 2 |] in
   ignore (Nx.ifill Float.infinity t);
-  equal ~msg:"ifill with infinity" (float 1e-6) Float.infinity (Nx.item [ 0; 0 ] t);
+  equal ~msg:"ifill with infinity" (float 1e-6) Float.infinity
+    (Nx.item [ 0; 0 ] t);
   ignore (Nx.ifill Float.neg_infinity t);
   equal ~msg:"ifill with neg_infinity" (float 1e-6) Float.neg_infinity
     (Nx.item [ 0; 0 ] t)
@@ -507,7 +513,8 @@ let test_fill_returns_copy () =
   let t = Nx.zeros Nx.float32 [| 2; 2 |] in
   let filled = Nx.fill 7.0 t in
   equal ~msg:"fill copy result" (float 1e-6) 7.0 (Nx.item [ 0; 0 ] filled);
-  equal ~msg:"fill copy leaves source intact" (float 1e-6) 0.0 (Nx.item [ 0; 0 ] t)
+  equal ~msg:"fill copy leaves source intact" (float 1e-6) 0.0
+    (Nx.item [ 0; 0 ] t)
 
 let test_blit_self () =
   let t = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
@@ -658,8 +665,7 @@ let memory_and_views =
     test "strides after transpose" test_strides_after_transpose;
     test "strides after slice" test_strides_after_slice;
     test "is contiguous basic" test_is_c_contiguous_basic;
-    test "is contiguous after transpose"
-      test_is_c_contiguous_after_transpose;
+    test "is contiguous after transpose" test_is_c_contiguous_after_transpose;
     test "is contiguous after slice" test_is_c_contiguous_after_slice;
     test "is contiguous after double transpose"
       test_is_c_contiguous_after_double_transpose;

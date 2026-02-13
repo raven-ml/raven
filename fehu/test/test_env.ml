@@ -54,7 +54,8 @@ let test_env_step () =
   let shape = Rune.shape transition.Env.observation in
   equal ~msg:"step obs shape" (array int) [| 1 |] shape;
   equal ~msg:"step reward" (float 0.01) 1.0 transition.Env.reward;
-  equal ~msg:"step not terminated initially" bool false transition.Env.terminated
+  equal ~msg:"step not terminated initially" bool false
+    transition.Env.terminated
 
 let test_env_episode_termination () =
   let rng = Rune.Rng.key 42 in
@@ -82,8 +83,8 @@ let test_env_metadata () =
   in
   Env.set_metadata env updated;
   let new_metadata = Env.metadata env in
-  equal ~msg:"metadata updated" (option string)
-    (Some "Test") new_metadata.description
+  equal ~msg:"metadata updated" (option string) (Some "Test")
+    new_metadata.description
 
 let test_env_rng () =
   let rng = Rune.Rng.key 42 in
@@ -105,8 +106,7 @@ let test_env_spaces () =
   let act_space = Env.action_space env in
   let obs_shape = Space.shape obs_space in
   let act_shape = Space.shape act_space in
-  equal ~msg:"obs space shape" (option (array int))
-    (Some [| 1 |]) obs_shape;
+  equal ~msg:"obs space shape" (option (array int)) (Some [| 1 |]) obs_shape;
   equal ~msg:"act space shape" (option (array int)) None act_shape
 
 let test_env_close () =
@@ -150,8 +150,7 @@ let () =
     [
       group "Creation"
         [
-          test "create env" test_env_creation;
-          test "env spaces" test_env_spaces;
+          test "create env" test_env_creation; test "env spaces" test_env_spaces;
         ];
       group "Lifecycle"
         [

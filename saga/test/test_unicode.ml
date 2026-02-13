@@ -69,8 +69,7 @@ let test_is_cjk () =
 
 let test_split_words_basic () =
   let words = Unicode.split_words "Hello, world! How are you?" in
-  equal ~msg:"basic split"
-    (list string)
+  equal ~msg:"basic split" (list string)
     [ "Hello"; "world"; "How"; "are"; "you" ]
     words
 
@@ -117,7 +116,8 @@ let test_remove_emoji () =
   let text = "Hello 👋 World 🌍!" in
   let cleaned = Unicode.remove_emoji text in
   (* Check that emoji were removed by checking length *)
-  equal ~msg:"removed emoji" bool true (String.length cleaned < String.length text);
+  equal ~msg:"removed emoji" bool true
+    (String.length cleaned < String.length text);
   equal ~msg:"kept letters" bool true (String.contains cleaned 'H')
 
 (* Integration with Tokenizer *)
@@ -141,7 +141,8 @@ let test_tokenize_with_normalization () =
     Tokenizer.encode tokenizer text |> Encoding.get_tokens |> Array.to_list
   in
   (* Whitespace pre-tokenizer splits punctuation, so we get three tokens *)
-  equal ~msg:"normalized tokenization" (list string) [ "hello"; "world"; "!" ] tokens
+  equal ~msg:"normalized tokenization" (list string) [ "hello"; "world"; "!" ]
+    tokens
 
 let test_tokenize_unicode_words () =
   (* Test that Unicode-aware tokenization works *)
@@ -196,8 +197,7 @@ let unicode_tests =
     (* Emoji removal *)
     test "remove emoji" test_remove_emoji;
     (* Integration *)
-    test "tokenize with normalization"
-      test_tokenize_with_normalization;
+    test "tokenize with normalization" test_tokenize_with_normalization;
     test "tokenize unicode words" test_tokenize_unicode_words;
     (* Error handling *)
     test "malformed unicode" test_malformed_unicode;

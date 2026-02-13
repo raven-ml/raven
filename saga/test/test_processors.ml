@@ -59,14 +59,14 @@ let test_template_multi_special () =
   match result with
   | [ encoding ] ->
       equal ~msg:"ids" (array int) [| 100; 101; 10 |] encoding.ids;
-      equal ~msg:"tokens"
-        (array string)
+      equal ~msg:"tokens" (array string)
         [| "<m1>"; "<m2>"; "hello" |]
         encoding.tokens;
       equal ~msg:"type ids" (array int) [| 2; 2; 0 |] encoding.type_ids;
       equal ~msg:"special mask" (array int) [| 1; 1; 0 |]
         encoding.special_tokens_mask;
-      equal ~msg:"attention mask" (array int) [| 1; 1; 1 |] encoding.attention_mask;
+      equal ~msg:"attention mask" (array int) [| 1; 1; 1 |]
+        encoding.attention_mask;
       equal ~msg:"added tokens single" int 2
         (Processors.added_tokens processor ~is_pair:false)
   | _ -> failwith "expected exactly one encoding"
@@ -87,12 +87,14 @@ let test_template_pair_type_ids () =
   in
   (match combined with
   | [ encoding ] ->
-      equal ~msg:"pair ids" (array int) [| 101; 10; 11; 102; 20; 102 |] encoding.ids;
-      equal ~msg:"pair tokens"
-        (array string)
+      equal ~msg:"pair ids" (array int)
+        [| 101; 10; 11; 102; 20; 102 |]
+        encoding.ids;
+      equal ~msg:"pair tokens" (array string)
         [| "[CLS]"; "hello"; "world"; "[SEP]"; "pair"; "[SEP]" |]
         encoding.tokens;
-      equal ~msg:"pair type ids" (array int) [| 0; 0; 0; 0; 3; 3 |] encoding.type_ids;
+      equal ~msg:"pair type ids" (array int) [| 0; 0; 0; 0; 3; 3 |]
+        encoding.type_ids;
       equal ~msg:"pair special mask" (array int) [| 1; 0; 0; 1; 0; 1 |]
         encoding.special_tokens_mask;
       equal ~msg:"added tokens pair" int 3
@@ -112,8 +114,7 @@ let () =
     [
       group "template"
         [
-          test "multi-id special expansion"
-            test_template_multi_special;
+          test "multi-id special expansion" test_template_multi_special;
           test "pair template semantics" test_template_pair_type_ids;
         ];
     ]

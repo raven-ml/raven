@@ -19,6 +19,4 @@ let test_lower () =
       (* we expect: 1 Buffer (output), 2 Loads, 1 ALU, 1 Store = 5 instrs *)
       equal ~msg:"instr count" int 5 (List.length ll.instructions)
 
-let () =
-  run "Lowerer"
-    [ group "basic" [ test "simple add" test_lower ] ]
+let () = run "Lowerer" [ group "basic" [ test "simple add" test_lower ] ]

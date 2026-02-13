@@ -584,14 +584,13 @@ let train ~min_frequency ~vocab_size ~show_progress ~special_tokens
         else
           let d = String.get_utf_8_uchar word i in
           let n = Uchar.utf_decode_length d in
-          (if Uchar.utf_decode_is_valid d then (
-             let u = Uchar.utf_decode_uchar d in
-             Buffer.clear buf;
-             Buffer.add_utf_8_uchar buf u;
-             let char_str = Buffer.contents buf in
-             Hashtbl.replace alphabet char_str
-               (count
-               + (try Hashtbl.find alphabet char_str with Not_found -> 0))));
+          if Uchar.utf_decode_is_valid d then (
+            let u = Uchar.utf_decode_uchar d in
+            Buffer.clear buf;
+            Buffer.add_utf_8_uchar buf u;
+            let char_str = Buffer.contents buf in
+            Hashtbl.replace alphabet char_str
+              (count + try Hashtbl.find alphabet char_str with Not_found -> 0));
           loop (i + n)
       in
       loop 0)
@@ -632,11 +631,11 @@ let train ~min_frequency ~vocab_size ~show_progress ~special_tokens
         else
           let d = String.get_utf_8_uchar word i in
           let n = Uchar.utf_decode_length d in
-          (if Uchar.utf_decode_is_valid d then (
-             let u = Uchar.utf_decode_uchar d in
-             Buffer.clear buf;
-             Buffer.add_utf_8_uchar buf u;
-             chars := Buffer.contents buf :: !chars));
+          if Uchar.utf_decode_is_valid d then (
+            let u = Uchar.utf_decode_uchar d in
+            Buffer.clear buf;
+            Buffer.add_utf_8_uchar buf u;
+            chars := Buffer.contents buf :: !chars);
           loop (i + n)
       in
       loop 0;

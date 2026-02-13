@@ -130,22 +130,17 @@ let test_genarray_get_set () =
   let arr_bool = Genarray.create Nx_buffer.bool c_layout [| 3; 3 |] in
   Genarray.set arr_bool [| 0; 0 |] true;
   Genarray.set arr_bool [| 2; 1 |] false;
-  equal ~msg:"Genarray bool get" bool true
-    (Genarray.get arr_bool [| 0; 0 |]);
-  equal ~msg:"Genarray bool get" bool false
-    (Genarray.get arr_bool [| 2; 1 |]);
+  equal ~msg:"Genarray bool get" bool true (Genarray.get arr_bool [| 0; 0 |]);
+  equal ~msg:"Genarray bool get" bool false (Genarray.get arr_bool [| 2; 1 |]);
 
   (* Test int4_signed *)
   let arr_int4 = Genarray.create int4_signed c_layout [| 4 |] in
   Genarray.set arr_int4 [| 0 |] (-8);
   Genarray.set arr_int4 [| 1 |] 7;
   Genarray.set arr_int4 [| 2 |] 0;
-  equal ~msg:"Genarray int4_signed get" int (-8)
-    (Genarray.get arr_int4 [| 0 |]);
-  equal ~msg:"Genarray int4_signed get" int 7
-    (Genarray.get arr_int4 [| 1 |]);
-  equal ~msg:"Genarray int4_signed get" int 0
-    (Genarray.get arr_int4 [| 2 |]);
+  equal ~msg:"Genarray int4_signed get" int (-8) (Genarray.get arr_int4 [| 0 |]);
+  equal ~msg:"Genarray int4_signed get" int 7 (Genarray.get arr_int4 [| 1 |]);
+  equal ~msg:"Genarray int4_signed get" int 0 (Genarray.get arr_int4 [| 2 |]);
 
   (* Test float8_e4m3 *)
   let arr_fp8 = Genarray.create float8_e4m3 c_layout [| 2; 2 |] in
