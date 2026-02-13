@@ -35,7 +35,6 @@
   ; rune
   %{lib:rune:rune.cma}
   %{lib:rune:rune.cmi}
-  %{lib:rune.jit:rune_jit.cma}
   %{lib:rune.top:rune_top.cmi}
   %{lib:rune.top:rune_top.cma}
   ; kaun
@@ -85,7 +84,6 @@
    (copy %{lib:hugin.usdl:usdl.cma} usdl.cma)
    (copy %{lib:rune:rune.cma} rune.cma)
    (copy %{lib:rune:rune.cmi} rune.cmi)
-   (copy %{lib:rune.jit:rune_jit.cma} rune_jit.cma)
    (copy %{lib:rune.top:rune_top.cmi} rune_top.cmi)
    (copy %{lib:rune.top:rune_top.cma} rune_top.cma)
    (copy %{lib:kaun:kaun.cmi} kaun.cmi)
@@ -98,30 +96,6 @@
    (copy %{lib:uucp:uucp.cma} uucp.cma)
    (copy %{lib:logs:logs.cma} logs.cma)
    (copy %{lib:logs:logs.cmi} logs.cmi))))
-
-(rule
- (targets
-  bigarray_compat.cma
-  ctypes.cma
-  integers.cma
-  ctypes_foreign.cma
-  rune_jit_metal.cma)
- (mode promote)
- (enabled_if
-  (= %{system} "macosx"))
- (deps
-  %{lib:bigarray-compat:bigarray_compat.cma}
-  %{lib:ctypes:ctypes.cma}
-  %{lib:ctypes-foreign:ctypes_foreign.cma}
-  %{lib:integers:integers.cma}
-  %{lib:rune.jit.metal:rune_jit_metal.cma})
- (action
-  (progn
-   (copy %{lib:bigarray-compat:bigarray_compat.cma} bigarray_compat.cma)
-   (copy %{lib:ctypes:ctypes.cma} ctypes.cma)
-   (copy %{lib:ctypes-foreign:ctypes_foreign.cma} ctypes_foreign.cma)
-   (copy %{lib:integers:integers.cma} integers.cma)
-   (copy %{lib:rune.jit.metal:rune_jit_metal.cma} rune_jit_metal.cma))))
 
 (install
  (section

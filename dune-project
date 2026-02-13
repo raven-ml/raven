@@ -19,8 +19,6 @@
 
 (using dune_site 0.1)
 
-(using ctypes 0.3)
-
 (using mdx 0.4)
 
 (version 1.0.0~alpha2)
@@ -137,29 +135,19 @@
 
 (package
  (name rune)
- (synopsis "Automatic differentiation and JIT compilation for OCaml")
+ (synopsis "Automatic differentiation for OCaml")
  (description
-  "Rune provides automatic differentiation capabilities and experimental JIT compilation for the Raven ecosystem. It enables gradient-based optimization and supports functional transformations like grad, value_and_grad, and vmap, making it the foundation for deep learning in OCaml.")
+  "Rune provides automatic differentiation capabilities for the Raven ecosystem. It enables gradient-based optimization and supports functional transformations like grad, value_and_grad, and vmap, making it the foundation for deep learning in OCaml.")
  (depends
   (ocaml
    (>= 5.2.0))
   dune
   (dune-configurator :build)
-  (conf-llvm-static
-   (>= 19))
   (nx
    (= :version))
-  (ctypes
-   (>= 0.21.0))
-  (ctypes-foreign
-   (>= 0.21.0))
-  ; rune.metal - only on macOS
-  (integers
-   (= :os macos))
   (windtrap :with-test))
  (tags
   (automatic-differentiation
-   jit-compilation
    machine-learning
    deep-learning
    optimization)))

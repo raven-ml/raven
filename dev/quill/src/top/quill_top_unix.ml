@@ -150,9 +150,6 @@ let load_plugins () =
           "logs.cma";
           "hugin.cma";
           "hugin_top.cma";
-          "rune_jit.cma";
-          "rune_jit_metal.cma";
-          "rune_metal.cma";
           "rune.cma";
           "rune_top.cma";
           "sowilo.cma";

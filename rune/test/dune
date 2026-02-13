@@ -10,10 +10,3 @@
  (modules test_vmap)
  (libraries rune nx_core windtrap test_rune_support))
 
-(test
- (name test_jit_metal)
- (package rune)
- (modules test_jit_metal)
- (build_if
-  (= %{system} "macosx"))
- (libraries rune windtrap test_rune_support))

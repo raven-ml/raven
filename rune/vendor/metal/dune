@@ -1,7 +1,0 @@
-(library
- (name metal)
- (public_name rune.metal.bindings)
- (enabled_if
- (= %{system} "macosx"))
- (library_flags :standard -cclib "-framework CoreGraphics" -cclib "-framework Metal")
- (libraries integers ctypes ctypes-foreign objc))
