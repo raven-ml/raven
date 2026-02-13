@@ -35,6 +35,16 @@ let tokenize model text =
         | Some unk_id -> [ (unk_id, model.unk_token, (0, String.length text)) ]
         | None -> [] (* Token not found and no UNK token - return empty *))
 
+let tokenize_ids model text =
+  if String.length text = 0 then [||]
+  else
+    match Hashtbl.find_opt model.vocab text with
+    | Some id -> [| id |]
+    | None -> (
+        match Hashtbl.find_opt model.vocab model.unk_token with
+        | Some unk_id -> [| unk_id |]
+        | None -> [||])
+
 let token_to_id model token = Hashtbl.find_opt model.vocab token
 let id_to_token model id = Hashtbl.find_opt model.vocab_r id
 

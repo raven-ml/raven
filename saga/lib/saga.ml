@@ -154,6 +154,20 @@ let tokenize_algorithm algorithm text =
   | Alg_unigram model -> Unigram.tokenize model text
   | Alg_chars model -> Chars.tokenize model text
 
+let tokenize_algorithm_ids algorithm text =
+  match algorithm with
+  | Alg_bpe model -> Bpe.tokenize_ids model text
+  | Alg_wordpiece model -> Wordpiece.tokenize_ids model text
+  | Alg_wordlevel model -> Word_level.tokenize_ids model text
+  | Alg_unigram model ->
+      Unigram.tokenize model text
+      |> List.map (fun (id, _, _) -> id)
+      |> Array.of_list
+  | Alg_chars model ->
+      Chars.tokenize model text
+      |> List.map (fun (id, _, _) -> id)
+      |> Array.of_list
+
 type pad_runtime = { token : string; id : int; type_id : int }
 
 let empty_special_config =
@@ -1094,10 +1108,44 @@ module Tokenizer = struct
         encode_sequences t sequences ~add_special_tokens ~padding ~truncation
 
   let encode_ids t ?pair ?add_special_tokens ?padding ?truncation text =
-    let encoding =
-      encode t ?pair ?add_special_tokens ?padding ?truncation text
+    let use_fast_path =
+      Option.is_none pair
+      && (add_special_tokens = None || add_special_tokens = Some false)
+      && Option.is_none padding
+      && Option.is_none truncation
+      && Option.is_none t.post_processor
     in
-    Array.copy (Encoding.get_ids encoding)
+    if use_fast_path then
+      let normalized =
+        match t.normalizer with
+        | Some normalizer -> Normalizers.normalize_str normalizer text
+        | None -> text
+      in
+      let pre_tokens =
+        match t.pre_tokenizer with
+        | Some pre -> pre normalized
+        | None -> [ (normalized, (0, String.length normalized)) ]
+      in
+      let id_arrays =
+        List.map
+          (fun (fragment, _) -> tokenize_algorithm_ids t.algorithm fragment)
+          pre_tokens
+      in
+      let total_len =
+        List.fold_left (fun acc a -> acc + Array.length a) 0 id_arrays
+      in
+      let result = Array.make total_len 0 in
+      let pos = ref 0 in
+      List.iter
+        (fun a ->
+          let len = Array.length a in
+          Array.blit a 0 result !pos len;
+          pos := !pos + len)
+        id_arrays;
+      result
+    else
+      Encoding.get_ids
+        (encode t ?pair ?add_special_tokens ?padding ?truncation text)
 
   let decode t ?(skip_special_tokens = false) ids =
     let tokens =

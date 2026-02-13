@@ -159,6 +159,77 @@ let tokenize model sequence =
       in
       tokenize_greedy 0 []
 
+let tokenize_ids model sequence =
+  if Hashtbl.length model.vocab = 0 then [||]
+  else
+    let char_count =
+      let len = String.length sequence in
+      let count = ref 0 in
+      let rec loop i =
+        if i >= len then !count
+        else
+          let d = String.get_utf_8_uchar sequence i in
+          incr count;
+          loop (i + Uchar.utf_decode_length d)
+      in
+      loop 0
+    in
+    if char_count > model.max_input_chars_per_word then
+      let id = Hashtbl.find model.vocab model.unk_token in
+      [| id |]
+    else
+      let seq_len = String.length sequence in
+      let prefix = model.continuing_subword_prefix in
+      let prefix_len = String.length prefix in
+      let ids = ref [] in
+      let n = ref 0 in
+      let rec greedy start =
+        if start >= seq_len then ()
+        else
+          let remainder = seq_len - start in
+          let full_candidate =
+            if start > 0 then prefix ^ String.sub sequence start remainder
+            else String.sub sequence start remainder
+          in
+          let candidate_len = String.length full_candidate in
+          let rec find cand_end =
+            let token_end =
+              if start > 0 then cand_end - prefix_len else cand_end
+            in
+            if token_end <= 0 then None
+            else
+              let token_str = String.sub full_candidate 0 cand_end in
+              match Hashtbl.find_opt model.vocab token_str with
+              | Some id -> Some (id, start + token_end)
+              | None ->
+                  let new_end =
+                    let rec boundary pos =
+                      if pos <= (if start > 0 then prefix_len else 0) then 0
+                      else if
+                        Char.code full_candidate.[pos - 1] land 0xC0 <> 0x80
+                      then pos - 1
+                      else boundary (pos - 1)
+                    in
+                    boundary cand_end
+                  in
+                  if new_end <= (if start > 0 then prefix_len else 0) then None
+                  else find new_end
+          in
+          match find candidate_len with
+          | Some (id, next_start) ->
+              ids := id :: !ids;
+              incr n;
+              greedy next_start
+          | None ->
+              let unk_id = Hashtbl.find model.vocab model.unk_token in
+              ids := [ unk_id ];
+              n := 1
+      in
+      greedy 0;
+      let result = Array.make !n 0 in
+      List.iteri (fun i id -> result.(!n - 1 - i) <- id) !ids;
+      result
+
 let token_to_id model token = Hashtbl.find_opt model.vocab token
 let id_to_token model id = Hashtbl.find_opt model.vocab_r id
 let get_vocab model = Hashtbl.fold (fun k v acc -> (k, v) :: acc) model.vocab []

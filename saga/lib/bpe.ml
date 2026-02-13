@@ -316,6 +316,9 @@ let word_to_tokens model word =
       offset := end_;
       { id; value; offsets = (start, end_) })
 
+let word_to_ids word =
+  Array.init word.size (fun i -> word.symbols.(i).c)
+
 let tokenize model text =
   if String.length text = 0 then []
   else
@@ -339,6 +342,27 @@ let tokenize model text =
           | _ ->
               let word = merge_word model text in
               word_to_tokens model word)
+
+let tokenize_ids model text =
+  if String.length text = 0 then [||]
+  else
+    match Hashtbl.find_opt model.vocab text with
+    | Some id -> [| id |]
+    | None ->
+        let get_word text =
+          if model.ignore_merges then merge_word model text
+          else
+            match model.cache with
+            | Some cache when String.length text < 1000 -> (
+                match Hashtbl.find_opt cache text with
+                | Some word -> word
+                | None ->
+                    let word = merge_word model text in
+                    Hashtbl.add cache text word;
+                    word)
+            | _ -> merge_word model text
+        in
+        word_to_ids (get_word text)
 
 let token_to_id model token = Hashtbl.find_opt model.vocab token
 let id_to_token model id = Hashtbl.find_opt model.vocab_r id
