@@ -23,8 +23,6 @@
   %{lib:sowilo:sowilo.cmi}
   %{lib:sowilo:sowilo.cma}
   ; hugin
-  %{lib:base64:base64.cmi}
-  %{lib:base64:base64.cma}
   %{lib:hugin:hugin.cmi}
   %{lib:hugin:hugin.cma}
   %{lib:hugin.top:hugin_top.cmi}
@@ -72,8 +70,6 @@
    (copy %{lib:csv:csv.cma} csv.cma)
    (copy %{lib:sowilo:sowilo.cmi} sowilo.cmi)
    (copy %{lib:sowilo:sowilo.cma} sowilo.cma)
-   (copy %{lib:base64:base64.cmi} base64.cmi)
-   (copy %{lib:base64:base64.cma} base64.cma)
    (copy %{lib:hugin:hugin.cmi} hugin.cmi)
    (copy %{lib:hugin:hugin.cma} hugin.cma)
    (copy %{lib:hugin.top:hugin_top.cmi} hugin_top.cmi)

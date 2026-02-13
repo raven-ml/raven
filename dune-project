@@ -223,9 +223,6 @@
   cairo2
   (nx
    (= :version))
-  ; for hugin.top
-  (base64
-   (>= 3.1.0))
   (windtrap :with-test))
  (tags
   (visualization plotting charts data-science graphics)))

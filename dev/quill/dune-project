@@ -74,8 +74,6 @@
   cmarkit
   vdom
   brr
-  (base64
-   (>= 3.1.0))
   nx
   nx-datasets
   saga

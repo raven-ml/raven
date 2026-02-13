@@ -145,7 +145,6 @@ let load_plugins () =
           "saga.cma";
           "cairo.cma";
           "usdl.cma";
-          "base64.cma";
           "logs.cma";
           "hugin.cma";
           "hugin_top.cma";
