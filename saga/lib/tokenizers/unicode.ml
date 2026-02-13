@@ -207,32 +207,6 @@ let split_words text =
     Nx_core.Error.invalid ~op:"split_words" ~what:"unicode in text"
       ~reason:(Printexc.to_string e) ()
 
-let grapheme_count text =
-  try
-    let count = ref 0 in
-    let len = String.length text in
-    let rec loop i =
-      if i >= len then !count
-      else
-        let d = String.get_utf_8_uchar text i in
-        let n = Uchar.utf_decode_length d in
-        (if Uchar.utf_decode_is_valid d then
-           let u = Uchar.utf_decode_uchar d in
-           (* Simple approximation - proper implementation needs grapheme
-              segmentation *)
-           let is_combining =
-             match Unicode_data.general_category (Uchar.to_int u) with
-             | `Mn | `Mc | `Me -> true
-             | _ -> false
-           in
-           if not is_combining then incr count);
-        loop (i + n)
-    in
-    loop 0
-  with e ->
-    Nx_core.Error.invalid ~op:"grapheme_count" ~what:"unicode in text"
-      ~reason:(Printexc.to_string e) ()
-
 let is_valid_utf8 text = String.is_valid_utf_8 text
 
 let remove_emoji text =

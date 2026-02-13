@@ -46,6 +46,7 @@ All notable changes to this project will be documented in this file.
 
 - Remove dependency on `str` library. (@tmattio)
 - Generate unicode data offline, removing runtime dependency on `uucp`. (@tmattio)
+- Add proper UAX #29 grapheme cluster segmentation via `Grapheme` module (vendored from uuseg). (@tmattio)
 - Remove `uutf` dependency in favour of OCaml `Stdlib` unicode support. (@tmattio)
 
 ### Quill

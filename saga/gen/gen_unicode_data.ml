@@ -59,6 +59,17 @@ let emit_block ppf prefix default names idx blks =
          \  else %s_variants.(%s_bv.(%s_bi.(cp lsr 8) * 256 + (cp land 0xFF)))@\n@\n"
     prefix max_cp default prefix prefix prefix
 
+let emit_int_block ppf prefix default idx blks =
+  let n = Array.length blks in
+  let flat = Array.make (n * block_sz) 0 in
+  Array.iteri (fun i b -> Array.iteri (fun j v -> flat.(i * block_sz + j) <- v) b) blks;
+  emit_array ppf (prefix ^ "_bi") idx;
+  emit_array ppf (prefix ^ "_bv") flat;
+  pf ppf "let %s cp =@\n\
+         \  if cp < 0 || cp > 0x%X then %d@\n\
+         \  else %s_bv.(%s_bi.(cp lsr 8) * 256 + (cp land 0xFF))@\n@\n"
+    prefix max_cp default prefix prefix
+
 let emit_bool ppf name rs =
   let n = List.length rs in
   let lo = Array.make n 0 and hi = Array.make n 0 in
@@ -154,6 +165,13 @@ let () =
   let alpha = ranges Uucp.Alpha.is_alphabetic in
   let numeric = ranges (fun u -> Uucp.Num.numeric_type u <> `None) in
 
+  let gcb_default = 16 in (* XX — most prevalent value *)
+  let gcb_data = Array.init (max_cp + 1) (fun cp ->
+    if Uchar.is_valid cp then
+      Uucp.Break.Low.grapheme_cluster (Uchar.of_int cp)
+    else gcb_default) in
+  let gcb_bi, gcb_bv = block_table gcb_default gcb_data in
+
   let folds = ref [] in
   for cp = 0 to max_cp do
     if Uchar.is_valid cp then match Uucp.Case.Fold.fold (Uchar.of_int cp) with
@@ -176,7 +194,8 @@ let () =
     pf ppf "val is_white_space : int -> bool@\n";
     pf ppf "val is_alphabetic : int -> bool@\n";
     pf ppf "val is_numeric : int -> bool@\n";
-    pf ppf "val case_fold : int -> int list@\n");
+    pf ppf "val case_fold : int -> int list@\n";
+    pf ppf "val grapheme_cluster : int -> int@\n");
 
   with_file (file ^ ".ml") (fun ppf ->
     pp_header ppf; pp_types ppf;
@@ -185,4 +204,5 @@ let () =
     emit_bool ppf "is_alphabetic" alpha;
     emit_bool ppf "is_numeric" numeric;
     emit_case_fold ppf folds;
-    emit_block ppf "script" "Zyyy" sc_names sc_bi sc_bv)
+    emit_block ppf "script" "Zyyy" sc_names sc_bi sc_bv;
+    emit_int_block ppf "grapheme_cluster" gcb_default gcb_bi gcb_bv)

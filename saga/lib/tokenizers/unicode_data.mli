@@ -40,3 +40,4 @@ val is_white_space : int -> bool
 val is_alphabetic : int -> bool
 val is_numeric : int -> bool
 val case_fold : int -> int list
+val grapheme_cluster : int -> int

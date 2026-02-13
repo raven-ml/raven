@@ -91,16 +91,6 @@ let test_split_words_cjk () =
   (* CJK characters should be split individually *)
   equal ~msg:"found some words" bool true (List.length words > 0)
 
-(* Grapheme Count Tests *)
-
-let test_grapheme_count_ascii () =
-  let count = Unicode.grapheme_count "Hello!" in
-  equal ~msg:"ASCII count" int 6 count
-
-let test_grapheme_count_emoji () =
-  let count = Unicode.grapheme_count "Hi 👋" in
-  equal ~msg:"with emoji" int 4 count (* H + i + space + wave *)
-
 (* UTF-8 Validation Tests *)
 
 let test_is_valid_utf8 () =
@@ -189,9 +179,6 @@ let unicode_tests =
     test "split words numbers" test_split_words_numbers;
     test "split words unicode" test_split_words_unicode;
     test "split words CJK" test_split_words_cjk;
-    (* Grapheme counting *)
-    test "grapheme count ASCII" test_grapheme_count_ascii;
-    test "grapheme count emoji" test_grapheme_count_emoji;
     (* UTF-8 validation *)
     test "is valid UTF-8" test_is_valid_utf8;
     (* Emoji removal *)
