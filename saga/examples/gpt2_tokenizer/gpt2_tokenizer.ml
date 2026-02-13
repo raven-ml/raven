@@ -12,20 +12,15 @@ open Saga
 (* Download GPT-2 vocabulary files from HuggingFace *)
 let download_gpt2_files () =
   let cache_dir = "/tmp/gpt2_tokenizer" in
-  if not (Sys.file_exists cache_dir) then Unix.mkdir cache_dir 0o755;
-
   let vocab_file = Filename.concat cache_dir "vocab.json" in
   let merges_file = Filename.concat cache_dir "merges.txt" in
-
   let download url target =
     if not (Sys.file_exists target) then (
       Printf.printf "Downloading %s...\n" (Filename.basename target);
-      ignore (Sys.command (Printf.sprintf "curl -sL -o %s '%s'" target url)))
+      Nx_io.Http.download ~url ~dest:target ())
   in
-
   download "https://huggingface.co/gpt2/raw/main/vocab.json" vocab_file;
   download "https://huggingface.co/gpt2/raw/main/merges.txt" merges_file;
-
   (vocab_file, merges_file)
 
 let () =

@@ -10,6 +10,7 @@
     result types for error handling and labeled arguments for clarity. *)
 
 module Cache_dir = Cache_dir
+module Http = Http
 
 (** {1 Types} *)
 

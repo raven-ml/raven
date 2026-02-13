@@ -313,20 +313,13 @@ let boston_housing ?(normalize = true) ?(train_split = 0.8) () =
 (* ───── Dataset Utilities ───── *)
 
 let download_and_extract ~url ~cache_dir ?(extract = true) () =
-  (* Ensure directory exists *)
-  if not (Sys.file_exists cache_dir) then
-    Sys.command (Printf.sprintf "mkdir -p %s" cache_dir) |> ignore;
-
   let filename = Filename.basename url in
   let filepath = Filename.concat cache_dir filename in
 
-  (* Download if not exists *)
   if not (Sys.file_exists filepath) then (
     Log.info (fun m -> m "Downloading %s to %s..." url filepath);
-    let cmd = Printf.sprintf "curl -L -o %s %s" filepath url in
-    match Sys.command cmd with
-    | 0 -> Log.info (fun m -> m "Download complete")
-    | _ -> failwith (Printf.sprintf "Failed to download %s" url));
+    Nx_io.Http.download ~url ~dest:filepath ();
+    Log.info (fun m -> m "Download complete"));
 
   (* Extract if needed *)
   if

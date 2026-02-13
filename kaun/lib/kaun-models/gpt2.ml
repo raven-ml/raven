@@ -86,51 +86,25 @@ module Tokenizer = struct
   }
 
   let download_vocab_and_merges model_id =
-    (* Download vocab and merges files from HuggingFace if not present *)
     let model_cache =
       Nx_io.Cache_dir.get_path_in_cache ~scope:[ "models"; "gpt2" ] model_id
     in
     let vocab_file = Filename.concat model_cache "vocab.json" in
     let merges_file = Filename.concat model_cache "merges.txt" in
-
-    (* Create cache directories if they don't exist *)
-    if not (Sys.file_exists model_cache) then
-      Sys.command (Printf.sprintf "mkdir -p %s" model_cache) |> ignore;
-
-    (* Download vocab.json if it doesn't exist *)
     if not (Sys.file_exists vocab_file) then (
       Printf.printf "Downloading vocab.json for %s...\n%!" model_id;
       let url =
         Printf.sprintf "https://huggingface.co/%s/resolve/main/vocab.json"
           model_id
       in
-      let cmd =
-        Printf.sprintf
-          "curl -L -o %s %s 2>/dev/null || wget -O %s %s 2>/dev/null" vocab_file
-          url vocab_file url
-      in
-      let exit_code = Sys.command cmd in
-      if exit_code <> 0 then
-        failwith
-          (Printf.sprintf "Failed to download vocab.json for %s" model_id));
-
-    (* Download merges.txt if it doesn't exist *)
+      Nx_io.Http.download ~url ~dest:vocab_file ());
     if not (Sys.file_exists merges_file) then (
       Printf.printf "Downloading merges.txt for %s...\n%!" model_id;
       let url =
         Printf.sprintf "https://huggingface.co/%s/resolve/main/merges.txt"
           model_id
       in
-      let cmd =
-        Printf.sprintf
-          "curl -L -o %s %s 2>/dev/null || wget -O %s %s 2>/dev/null"
-          merges_file url merges_file url
-      in
-      let exit_code = Sys.command cmd in
-      if exit_code <> 0 then
-        failwith
-          (Printf.sprintf "Failed to download merges.txt for %s" model_id));
-
+      Nx_io.Http.download ~url ~dest:merges_file ());
     (vocab_file, merges_file)
 
   let create ?vocab_file ?merges_file ?model_id () =

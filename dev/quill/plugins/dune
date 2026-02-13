@@ -18,7 +18,6 @@
   %{lib:nx-datasets:nx_datasets.cmi}
   %{lib:nx-datasets:nx_datasets.cma}
   %{lib:unix:unix.cma}
-  %{lib:curl:curl.cma}
   %{lib:csv:csv.cma}
   ; sowilo
   %{lib:sowilo:sowilo.cmi}
@@ -70,7 +69,6 @@
    (copy %{lib:nx-datasets:nx_datasets.cma} nx_datasets.cma)
    (copy %{lib:unix:unix.cma} unix.cma)
    (copy %{lib:nx.zip:zip.cma} zip.cma)
-   (copy %{lib:curl:curl.cma} curl.cma)
    (copy %{lib:csv:csv.cma} csv.cma)
    (copy %{lib:sowilo:sowilo.cmi} sowilo.cmi)
    (copy %{lib:sowilo:sowilo.cma} sowilo.cma)

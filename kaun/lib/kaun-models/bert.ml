@@ -87,32 +87,17 @@ module Tokenizer = struct
   }
 
   let download_vocab_file model_id =
-    (* Download vocab file from HuggingFace if not present *)
     let vocab_cache =
       Nx_io.Cache_dir.get_path_in_cache ~scope:[ "models"; "bert" ] "vocab"
     in
     let vocab_file = Filename.concat vocab_cache (model_id ^ "-vocab.txt") in
-
-    (* Create cache directory if it doesn't exist *)
-    if not (Sys.file_exists vocab_cache) then
-      Sys.command (Printf.sprintf "mkdir -p %s" vocab_cache) |> ignore;
-
-    (* Download if file doesn't exist *)
     if not (Sys.file_exists vocab_file) then (
       Printf.printf "Downloading vocab file for %s...\n%!" model_id;
       let url =
         Printf.sprintf "https://huggingface.co/%s/resolve/main/vocab.txt"
           model_id
       in
-      let cmd =
-        Printf.sprintf
-          "curl -L -o %s %s 2>/dev/null || wget -O %s %s 2>/dev/null" vocab_file
-          url vocab_file url
-      in
-      let exit_code = Sys.command cmd in
-      if exit_code <> 0 then
-        failwith
-          (Printf.sprintf "Failed to download vocab file for %s" model_id));
+      Nx_io.Http.download ~url ~dest:vocab_file ());
     vocab_file
 
   let load_vocab vocab_file =

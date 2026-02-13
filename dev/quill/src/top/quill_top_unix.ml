@@ -138,7 +138,6 @@ let load_plugins () =
           "stb_image.cma";
           "stb_image_write.cma";
           "nx_io.cma";
-          "curl.cma";
           "csv.cma";
           "nx_datasets.cma";
           "re.cma";

@@ -6,6 +6,7 @@
 open Nx_buffer
 open Error
 module Cache_dir = Cache_dir
+module Http = Http
 
 (* ───── Type Definitions ───── *)
 

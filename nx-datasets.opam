@@ -20,7 +20,6 @@ bug-reports: "https://github.com/raven-ml/raven/issues"
 depends: [
   "ocaml" {>= "5.2.0"}
   "dune" {>= "3.19"}
-  "ocurl"
   "csv"
   "logs"
   "nx" {= version}

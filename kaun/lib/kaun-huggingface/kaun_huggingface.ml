@@ -82,14 +82,6 @@ end
 
 (* ───── Utilities ───── *)
 
-let ensure_dir dir =
-  let rec mkdir_p path =
-    if not (Sys.file_exists path) then (
-      mkdir_p (Filename.dirname path);
-      try Unix.mkdir path 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ())
-  in
-  mkdir_p dir
-
 let hub_url ~model_id ~filename ~revision =
   let revision_str =
     match revision with
@@ -114,24 +106,16 @@ let cache_path config ~model_id ~filename ~revision =
 (* ───── Core Loading Functions ───── *)
 
 let download_with_progress ~url ~dest ~show_progress =
-  ensure_dir (Filename.dirname dest);
-
-  (* Use curl with progress bar if requested *)
-  let progress_flag = if show_progress then "" else "-s" in
-  let cmd = Printf.sprintf "curl -L %s -o %s '%s'" progress_flag dest url in
-
   if show_progress then Printf.printf "Downloading from %s...\n%!" url;
-
-  let start_time = Unix.gettimeofday () in
-
-  match Unix.system cmd with
-  | Unix.WEXITED 0 ->
-      let elapsed = Unix.gettimeofday () -. start_time in
-      let stats = Unix.stat dest in
-      let bytes = stats.Unix.st_size in
-      let rate = float_of_int bytes /. elapsed in
-      { downloaded_bytes = bytes; total_bytes = Some bytes; rate }
-  | _ -> failwith (Printf.sprintf "Failed to download %s" url)
+  let start = Unix.gettimeofday () in
+  Nx_io.Http.download ~show_progress ~url ~dest ();
+  let elapsed = Unix.gettimeofday () -. start in
+  let bytes = (Unix.stat dest).Unix.st_size in
+  {
+    downloaded_bytes = bytes;
+    total_bytes = Some bytes;
+    rate = (if elapsed > 0.0 then float_of_int bytes /. elapsed else 0.0);
+  }
 
 let download_file ?(config = Config.default) ?(revision = Latest) ~model_id
     ~filename () =
@@ -233,8 +217,10 @@ let load_safetensors ?(config = Config.default) ?(revision = Latest) ~model_id
 
   let json_of_file path =
     let ic = open_in path in
-    let s = really_input_string ic (in_channel_length ic) in
-    close_in ic;
+    let s =
+      Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
+          really_input_string ic (in_channel_length ic))
+    in
     match Jsont_bytesrw.decode_string Jsont.json s with
     | Ok v -> v
     | Error e -> failwith e
@@ -385,8 +371,10 @@ let load_config ?(config = Config.default) ?(revision = Latest) ~model_id () =
   in
 
   let ic = open_in local_path in
-  let s = really_input_string ic (in_channel_length ic) in
-  close_in ic;
+  let s =
+    Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
+        really_input_string ic (in_channel_length ic))
+  in
   let json =
     match Jsont_bytesrw.decode_string Jsont.json s with
     | Ok v -> v
@@ -435,21 +423,9 @@ let clear_cache ?(config = Config.default) ?model_id () =
 
 let get_model_info model_id =
   let url = Printf.sprintf "https://huggingface.co/api/models/%s" model_id in
-  let cmd = Printf.sprintf "curl -s '%s'" url in
-
-  let ic = Unix.open_process_in cmd in
-  let rec read_all acc =
-    try
-      let line = input_line ic in
-      read_all (acc ^ line ^ "\n")
-    with End_of_file -> acc
-  in
-  let output = read_all "" in
-  let status = Unix.close_process_in ic in
-
-  match status with
-  | Unix.WEXITED 0 -> (
-      match Jsont_bytesrw.decode_string Jsont.json output with
-      | Ok json -> Ok json
-      | Error _ -> Error "Failed to parse JSON response")
-  | _ -> Error "Failed to fetch model info"
+  try
+    let body = Nx_io.Http.get url in
+    match Jsont_bytesrw.decode_string Jsont.json body with
+    | Ok json -> Ok json
+    | Error _ -> Error "Failed to parse JSON response"
+  with Failure msg -> Error msg

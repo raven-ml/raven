@@ -5,8 +5,6 @@ let src = Logs.Src.create "nx.datasets" ~doc:"Nx datasets module"
 
 module Log = (val Logs.src_log src : Logs.LOG)
 
-let () = Curl.global_init Curl.CURLINIT_GLOBALALL
-
 let mkdir_p path perm =
   if path = "" || path = "." || path = Filename.dir_sep then ()
   else
@@ -58,46 +56,11 @@ let mkdir_p dir =
   try mkdir_p dir 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ()
 
 let download_file url dest_path =
-  let dest_dir = Filename.dirname dest_path in
-  mkdir_p dest_dir;
   Log.info (fun m ->
       m "Attempting to download %s to %s" (Filename.basename url) dest_path);
-  let h = new Curl.handle in
-  h#set_url url;
-  (* Follow redirects *)
-  h#set_followlocation true;
-  (* Set a reasonable timeout *)
-  h#set_timeout 300;
-  (* 5 minutes *)
-  (* Provide a user agent *)
-  h#set_useragent "raven/1.0.0";
-
-  let oc = open_out_bin dest_path in
-  let result =
-    try
-      h#set_writefunction (fun s ->
-          output_string oc s;
-          String.length s);
-      h#perform;
-      let code = h#get_responsecode in
-      if code >= 200 && code < 300 then Ok ()
-      else Error (Printf.sprintf "HTTP Error: %d" code)
-    with
-    | Curl.CurlException (_code, _, msg) ->
-        Error (Printf.sprintf "Curl error: %s" msg)
-    | exn ->
-        Error (Printf.sprintf "Download exception: %s" (Printexc.to_string exn))
-  in
-  close_out oc;
-  h#cleanup;
-  match result with
-  | Ok () ->
-      Log.info (fun m ->
-          m "Downloaded %s successfully" (Filename.basename dest_path))
-  | Error msg ->
-      (* Clean up potentially incomplete file *)
-      (try Sys.remove dest_path with Sys_error _ -> ());
-      failwith (Printf.sprintf "Failed to download %s: %s" url msg)
+  Nx_io.Http.download ~url ~dest:dest_path ();
+  Log.info (fun m ->
+      m "Downloaded %s successfully" (Filename.basename dest_path))
 
 let ensure_file url dest_path =
   if not (Sys.file_exists dest_path) then download_file url dest_path
