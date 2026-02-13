@@ -1,0 +1,4 @@
+(mdx
+ (files *.md)
+ (package talon)
+ (libraries talon nx))

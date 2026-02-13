@@ -3,6 +3,8 @@ let docs_dir = "docs"
 let build_dir = "build"
 let templates_dir = "templates"
 
+let lib_doc_dir lib_name = Filename.concat (Filename.concat ".." lib_name) "doc"
+
 type library = {
   name : string;
   display : string;
@@ -116,6 +118,16 @@ let strip_tags s =
     s;
   Buffer.contents buf
 
+let strip_order_prefix s =
+  let len = String.length s in
+  if
+    len >= 3
+    && s.[0] >= '0' && s.[0] <= '9'
+    && s.[1] >= '0' && s.[1] <= '9'
+    && s.[2] = '-'
+  then String.sub s 3 (len - 3)
+  else s
+
 let title_case s =
   s |> String.split_on_char '-'
   |> List.map (fun w ->
@@ -204,7 +216,7 @@ let make_breadcrumbs segments title =
 (* -- Library navigation -- *)
 
 let generate_lib_nav lib_name =
-  let dir = Filename.concat docs_dir lib_name in
+  let dir = lib_doc_dir lib_name in
   if not (Sys.file_exists dir && Sys.is_directory dir) then ""
   else
     let files = Sys.readdir dir |> Array.to_list |> List.sort String.compare in
@@ -213,12 +225,13 @@ let generate_lib_nav lib_name =
       |> List.filter_map (fun f ->
           if Filename.extension f = ".md" then
             let stem = Filename.chop_extension f in
+            let slug = strip_order_prefix stem in
             let title =
-              if stem = "index" then "Overview" else title_case stem
+              if slug = "index" then "Overview" else title_case slug
             in
             let url =
-              if stem = "index" then Printf.sprintf "/docs/%s/" lib_name
-              else Printf.sprintf "/docs/%s/%s/" lib_name stem
+              if slug = "index" then Printf.sprintf "/docs/%s/" lib_name
+              else Printf.sprintf "/docs/%s/%s/" lib_name slug
             in
             Some (stem, title, url)
           else None)
@@ -304,4 +317,30 @@ let process_file ~path full_path =
 let () =
   walk site_dir
   |> List.iter (fun p -> process_file ~path:(strip_prefix ~prefix:site_dir p) p);
-  walk docs_dir |> List.iter (fun p -> process_file ~path:p p)
+  walk docs_dir |> List.iter (fun p -> process_file ~path:p p);
+  libraries
+  |> List.iter (fun lib ->
+       let dir = lib_doc_dir lib.name in
+       if Sys.file_exists dir && Sys.is_directory dir then
+         walk dir
+         |> List.iter (fun full_path ->
+              let ext = Filename.extension full_path in
+              let base = Filename.basename full_path in
+              if base = "dune" || ext = ".mld" then ()
+              else
+                let rel = strip_prefix ~prefix:dir full_path in
+                let rel_base = Filename.basename rel in
+                let rel_dir = Filename.dirname rel in
+                let clean_base =
+                  if Filename.extension rel_base = ".md" then
+                    strip_order_prefix (Filename.chop_extension rel_base) ^ ".md"
+                  else rel_base
+                in
+                let clean_rel =
+                  if rel_dir = "." then clean_base
+                  else Filename.concat rel_dir clean_base
+                in
+                let path =
+                  Filename.concat (Filename.concat "docs" lib.name) clean_rel
+                in
+                process_file ~path full_path))

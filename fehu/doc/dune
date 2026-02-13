@@ -1,0 +1,4 @@
+(mdx
+ (files *.md)
+ (package fehu)
+ (libraries fehu kaun rune nx))

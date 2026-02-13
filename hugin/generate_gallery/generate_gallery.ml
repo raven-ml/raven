@@ -7,7 +7,7 @@ let ensure_dir dir =
     Sys.command (Printf.sprintf "mkdir -p %s" dir) |> ignore
 
 (* Gallery output directory *)
-let output_dir = "www/site/docs/hugin/gallery_images"
+let output_dir = "hugin/doc/gallery_images"
 let () = ensure_dir output_dir
 
 (* Example 1: Line Plot *)

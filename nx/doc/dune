@@ -1,3 +1,4 @@
-(documentation
+(mdx
+ (files *.md)
  (package nx)
- (mld_files index get-started io))
+ (libraries nx))
