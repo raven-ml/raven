@@ -32,7 +32,7 @@
 
 /* Base styles */
 body {
-  font-family: 'Lucida Console', 'Courier New', monospace;
+  font-family: 'Lucida Console', 'DejaVu Sans Mono', monospace;
   font-size: 16px;
   color: var(--color-text);
   background-color: var(--color-bg);
