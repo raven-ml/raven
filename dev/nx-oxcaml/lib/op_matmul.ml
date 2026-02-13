@@ -41,16 +41,20 @@ open Import
      but is not a [@@builtin] external, so it hits the same cross-module
      inlining issue (see SIMD wrappers comment below). Needs upstream OxCaml.
 
-   - Edge tiles use scalar fallback. NEON has masked stores that would let
-     the microkernel handle partial MR/NR tiles at near-full SIMD throughput
-     instead of falling back to element-at-a-time loops.
+   - Edge tiles run the full SIMD kernel into a padded temp buffer, then
+     copy back valid elements. This avoids the scalar fallback (~40% faster
+     for f32 at 500–1000). Further gains possible with NEON masked stores.
 
-   - Kernel size may not be optimal. ARM64 NEON has 32 128-bit registers.
-     We should experiment with larger MR×NR (e.g. 8×4, 8×6 for f64;
-     8×8, 12×8 for f32) to increase arithmetic intensity per memory access.
+   - Kernel size is constrained by the recursive kloop approach. Although
+     ARM64 NEON has 32 registers, the OCaml calling convention passes at most
+     8 SIMD values in registers (v0-v7). A MR=8,NR=4 kernel (16 accumulators)
+     regressed ~38% due to stack spills on every recursive call. The current
+     MR=4,NR=4 (f64) and MR=6,NR=8 (f32) with 8/12 accumulators are near the
+     sweet spot. A loop-based microkernel could bypass this limit.
 
-   - Cache blocking parameters (KC, MC, NC) need systematic tuning for Apple
-     Silicon's cache hierarchy (192KB L1d, 4MB L2 per P-core cluster).
+   - Cache blocking parameters (KC, MC, NC): increasing them for Apple
+     Silicon's large caches gave marginal improvement at 1000×1000 but
+     regressed smaller sizes. Current values are reasonable.
 
    - Pack B is redundantly done per domain. Restructuring to pack once per
      (jc, pc) block regressed due to effect-handler overhead in
@@ -205,24 +209,7 @@ module Gemm_f64 = struct
       (Float64x2.Array.unsafe_get c_buf ~idx:r3)
       (Float64x2.Array.unsafe_get c_buf ~idx:(r3 + 2))
 
-  let edge_scalar ap ~ap_off bp ~bp_off c_buf ~c_off ~ldc ~mr_eff ~nr_eff
-      ~kc ~first =
-    for i = 0 to mr_eff - 1 do
-      for j = 0 to nr_eff - 1 do
-        let c_idx = c_off + i * ldc + j in
-        let init = if first then #0. else Array.unsafe_get c_buf c_idx in
-        let rec loop p acc =
-          if p = kc then acc
-          else
-            let a = Array.unsafe_get ap (ap_off + p * 4 + i) in
-            let b = Array.unsafe_get bp (bp_off + p * 4 + j) in
-            loop (p + 1) (Float_u.fma a b acc)
-        in
-        Array.unsafe_set c_buf c_idx (loop 0 init)
-      done
-    done
-
-  let macro_kernel ap bp c_buf ~c_off ~ldc ~mc ~nc ~kc ~first =
+  let macro_kernel ap bp c_buf ~c_off ~ldc ~mc ~nc ~kc ~first tmp =
     let ir = ref 0 in
     while !ir < mc do
       let mr_eff = min_int mr (mc - !ir) in
@@ -240,9 +227,29 @@ module Gemm_f64 = struct
             kernel_accum ap ~ap_off bp ~bp_off c_buf
               ~c_off:c_tile ~ldc ~kc
         end
-        else
-          edge_scalar ap ~ap_off bp ~bp_off c_buf
-            ~c_off:c_tile ~ldc ~mr_eff ~nr_eff ~kc ~first;
+        else begin
+          (* Edge tile: run full SIMD kernel into tmp buffer, copy valid part *)
+          if first then
+            kernel_zero ap ~ap_off bp ~bp_off tmp
+              ~c_off:0 ~ldc:nr ~kc
+          else begin
+            (* Load current C values into tmp before accumulating *)
+            for i = 0 to mr_eff - 1 do
+              for j = 0 to nr_eff - 1 do
+                Array.unsafe_set tmp (i * nr + j)
+                  (Array.unsafe_get c_buf (c_tile + i * ldc + j))
+              done
+            done;
+            kernel_accum ap ~ap_off bp ~bp_off tmp
+              ~c_off:0 ~ldc:nr ~kc
+          end;
+          for i = 0 to mr_eff - 1 do
+            for j = 0 to nr_eff - 1 do
+              Array.unsafe_set c_buf (c_tile + i * ldc + j)
+                (Array.unsafe_get tmp (i * nr + j))
+            done
+          done
+        end;
         jr := !jr + nr
       done;
       ir := !ir + mr
@@ -258,6 +265,7 @@ module Gemm_f64 = struct
         Parallel.parallel_for pool 0 (m - 1) (fun start_row end_row ->
             let bp = Array.make_float64 (round_up nc' nr * kc) in
             let ap = Array.make_float64 (round_up mc mr * kc) in
+            let tmp = Array.make_float64 (mr * nr) in
             let rec pc_loop pc =
               if pc >= k then ()
               else
@@ -271,7 +279,7 @@ module Gemm_f64 = struct
                     pack_a a_buf ~a_off ~lda ~ic ~pc ~mc:mc' ~kc:kc' ap;
                     macro_kernel ap bp c_buf
                       ~c_off:(c_off + ic * ldc + jc)
-                      ~ldc ~mc:mc' ~nc:nc' ~kc:kc' ~first;
+                      ~ldc ~mc:mc' ~nc:nc' ~kc:kc' ~first tmp;
                     ic_loop (ic + mc')
                 in
                 ic_loop start_row;
@@ -627,24 +635,7 @@ module Gemm_f32 = struct
       (Float32x4.Array.unsafe_get c_buf ~idx:r5)
       (Float32x4.Array.unsafe_get c_buf ~idx:(r5 + 4))
 
-  let edge_scalar ap ~ap_off bp ~bp_off c_buf ~c_off ~ldc ~mr_eff ~nr_eff
-      ~kc ~first =
-    for i = 0 to mr_eff - 1 do
-      for j = 0 to nr_eff - 1 do
-        let c_idx = c_off + i * ldc + j in
-        let init = if first then #0.0s else Array.unsafe_get c_buf c_idx in
-        let rec loop p acc =
-          if p = kc then acc
-          else
-            let a = Array.unsafe_get ap (ap_off + p * 6 + i) in
-            let b = Array.unsafe_get bp (bp_off + p * 8 + j) in
-            loop (p + 1) (Float32_u.fma a b acc)
-        in
-        Array.unsafe_set c_buf c_idx (loop 0 init)
-      done
-    done
-
-  let macro_kernel ap bp c_buf ~c_off ~ldc ~mc ~nc ~kc ~first =
+  let macro_kernel ap bp c_buf ~c_off ~ldc ~mc ~nc ~kc ~first tmp =
     let ir = ref 0 in
     while !ir < mc do
       let mr_eff = min_int mr (mc - !ir) in
@@ -662,9 +653,27 @@ module Gemm_f32 = struct
             kernel_accum ap ~ap_off bp ~bp_off c_buf
               ~c_off:c_tile ~ldc ~kc
         end
-        else
-          edge_scalar ap ~ap_off bp ~bp_off c_buf
-            ~c_off:c_tile ~ldc ~mr_eff ~nr_eff ~kc ~first;
+        else begin
+          if first then
+            kernel_zero ap ~ap_off bp ~bp_off tmp
+              ~c_off:0 ~ldc:nr ~kc
+          else begin
+            for i = 0 to mr_eff - 1 do
+              for j = 0 to nr_eff - 1 do
+                Array.unsafe_set tmp (i * nr + j)
+                  (Array.unsafe_get c_buf (c_tile + i * ldc + j))
+              done
+            done;
+            kernel_accum ap ~ap_off bp ~bp_off tmp
+              ~c_off:0 ~ldc:nr ~kc
+          end;
+          for i = 0 to mr_eff - 1 do
+            for j = 0 to nr_eff - 1 do
+              Array.unsafe_set c_buf (c_tile + i * ldc + j)
+                (Array.unsafe_get tmp (i * nr + j))
+            done
+          done
+        end;
         jr := !jr + nr
       done;
       ir := !ir + mr
@@ -680,6 +689,7 @@ module Gemm_f32 = struct
         Parallel.parallel_for pool 0 (m - 1) (fun start_row end_row ->
             let bp = Array.make_float32 (round_up nc' nr * kc) in
             let ap = Array.make_float32 (round_up mc mr * kc) in
+            let tmp = Array.make_float32 (mr * nr) in
             let rec pc_loop pc =
               if pc >= k then ()
               else
@@ -693,7 +703,7 @@ module Gemm_f32 = struct
                     pack_a a_buf ~a_off ~lda ~ic ~pc ~mc:mc' ~kc:kc' ap;
                     macro_kernel ap bp c_buf
                       ~c_off:(c_off + ic * ldc + jc)
-                      ~ldc ~mc:mc' ~nc:nc' ~kc:kc' ~first;
+                      ~ldc ~mc:mc' ~nc:nc' ~kc:kc' ~first tmp;
                     ic_loop (ic + mc')
                 in
                 ic_loop start_row;
