@@ -72,7 +72,7 @@ val create_run :
   ?base_dir:string ->
   ?experiment:string ->
   ?tags:string list ->
-  ?config:(string * Yojson.Safe.t) list ->
+  ?config:(string * Jsont.json) list ->
   unit ->
   Run.t
 (** [create_run ?base_dir ?experiment ?tags ?config ()] creates a new run

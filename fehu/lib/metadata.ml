@@ -3,7 +3,15 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Yojson.Safe.Util
+let json_obj pairs =
+  Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
+
+let json_mem name = function
+  | Jsont.Object (mems, _) -> (
+      match Jsont.Json.find_mem name mems with
+      | Some (_, v) -> v
+      | None -> Jsont.Null ((), Jsont.Meta.none))
+  | _ -> Jsont.Null ((), Jsont.Meta.none)
 
 type t = {
   render_modes : string list;
@@ -13,7 +21,7 @@ type t = {
   version : string option;
   supported_vector_modes : string list;
   tags : string list;
-  extra : Yojson.Safe.t option;
+  extra : Jsont.json option;
 }
 
 let default =
@@ -49,9 +57,9 @@ let add_tag tag metadata =
 
 let set_tags tags metadata = { metadata with tags }
 
-let to_yojson metadata =
+let to_json metadata =
   let list_field key values =
-    (key, `List (List.map (fun v -> `String v) values))
+    (key, Jsont.Json.list (List.map (fun v -> Jsont.Json.string v) values))
   in
   let base_fields =
     [
@@ -61,52 +69,54 @@ let to_yojson metadata =
       list_field "tags" metadata.tags;
     ]
   in
-  let add_opt key to_json opt acc =
-    match opt with None -> acc | Some value -> (key, to_json value) :: acc
+  let add_opt key to_json_val opt acc =
+    match opt with None -> acc | Some value -> (key, to_json_val value) :: acc
   in
   let fields =
     base_fields
-    |> add_opt "description" (fun s -> `String s) metadata.description
+    |> add_opt "description" (fun s -> Jsont.Json.string s) metadata.description
     |> add_opt "extra" (fun json -> json) metadata.extra
-    |> add_opt "render_fps" (fun fps -> `Int fps) metadata.render_fps
-    |> add_opt "version" (fun v -> `String v) metadata.version
+    |> add_opt "render_fps" (fun fps -> Jsont.Json.int fps) metadata.render_fps
+    |> add_opt "version" (fun v -> Jsont.Json.string v) metadata.version
   in
   let sorted = List.sort (fun (a, _) (b, _) -> String.compare a b) fields in
-  `Assoc sorted
+  json_obj sorted
 
 let string_list_member key json =
-  match member key json with
-  | `Null -> []
-  | `List values -> List.map to_string values
+  match json_mem key json with
+  | Jsont.Null _ -> []
+  | Jsont.Array (values, _) ->
+      List.map
+        (function
+          | Jsont.String (s, _) -> s
+          | _ ->
+              raise
+                (Failure
+                   (Printf.sprintf "metadata.%s must be a list of strings" key)))
+        values
   | _ ->
       raise
         (Failure (Printf.sprintf "metadata.%s must be a list of strings" key))
 
 let optional_string key json =
-  match member key json with
-  | `Null -> None
-  | `String s -> Some s
+  match json_mem key json with
+  | Jsont.Null _ -> None
+  | Jsont.String (s, _) -> Some s
   | _ ->
       raise
         (Failure (Printf.sprintf "metadata.%s must be a string or null" key))
 
 let optional_int key json =
-  match member key json with
-  | `Null -> None
-  | `Int i -> Some i
-  | `Intlit lit ->
-      raise
-        (Failure
-           (Printf.sprintf
-              "metadata.%s must be an int or null (string literal %S received)"
-              key lit))
+  match json_mem key json with
+  | Jsont.Null _ -> None
+  | Jsont.Number (f, _) -> Some (int_of_float f)
   | _ ->
       raise (Failure (Printf.sprintf "metadata.%s must be an int or null" key))
 
 let extra_member json =
-  match member "extra" json with `Null -> None | value -> Some value
+  match json_mem "extra" json with Jsont.Null _ -> None | value -> Some value
 
-let of_yojson json =
+let of_json json =
   try
     let render_modes = string_list_member "render_modes" json in
     let supported_vector_modes =

@@ -17,7 +17,8 @@ depends: [
   "nx" {= version}
   "re"
   "uucp"
-  "yojson" {>= "2.0.0"}
+  "jsont"
+  "bytesrw"
   "windtrap" {with-test}
   "odoc" {with-doc}
 ]

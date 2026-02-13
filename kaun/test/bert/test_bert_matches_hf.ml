@@ -25,7 +25,7 @@ let check_close_list label ~epsilon expected actual =
         failf "%s[%d]: expected %.6f got %.6f (diff %.6f)" label i e a diff)
     (List.combine expected actual)
 
-let test () =
+let test_forward () =
   let bert = Bert.from_pretrained ~dtype:Float32 () in
   let tokenizer = Bert.Tokenizer.create ~model_id:"bert-base-uncased" () in
   let inputs = Bert.Tokenizer.encode tokenizer "Hello world" in
@@ -61,4 +61,4 @@ let test () =
 
 let () =
   Printexc.record_backtrace true;
-  run "BERT matches HuggingFace" [ group "bert" [ test "forward" test ] ]
+  run "BERT matches HuggingFace" [ group "bert" [ test "forward" test_forward ] ]

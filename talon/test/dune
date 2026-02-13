@@ -1,4 +1,4 @@
 (tests
  (names test_talon test_talon_csv test_talon_json)
  (package talon)
- (libraries talon talon_csv talon_json windtrap nx yojson))
+ (libraries talon talon_csv talon_json windtrap nx jsont jsont.bytesrw))

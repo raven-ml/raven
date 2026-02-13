@@ -19,37 +19,47 @@ let make_encoding ~ids ~tokens ~type_id =
     sequence_ranges = [];
   }
 
+let json_obj pairs =
+  Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
+
 let test_template_multi_special () =
   let processor =
     Processors.of_json
-      (`Assoc
+      (json_obj
          [
-           ("type", `String "TemplateProcessing");
+           ("type", Jsont.Json.string "TemplateProcessing");
            ( "single",
-             `List
+             Jsont.Json.list
                [
-                 `Assoc
+                 json_obj
                    [
                      ( "SpecialToken",
-                       `Assoc [ ("id", `String "<multi>"); ("type_id", `Int 2) ]
-                     );
+                       json_obj
+                         [
+                           ("id", Jsont.Json.string "<multi>");
+                           ("type_id", Jsont.Json.int 2);
+                         ] );
                    ];
-                 `Assoc
+                 json_obj
                    [
                      ( "Sequence",
-                       `Assoc [ ("id", `String "A"); ("type_id", `Int 0) ] );
+                       json_obj
+                         [
+                           ("id", Jsont.Json.string "A");
+                           ("type_id", Jsont.Json.int 0);
+                         ] );
                    ];
                ] );
-           ("pair", `Null);
+           ("pair", Jsont.Json.null ());
            ( "special_tokens",
-             `Assoc
+             json_obj
                [
                  ( "<multi>",
-                   `Assoc
+                   json_obj
                      [
-                       ("id", `String "<multi>");
-                       ("ids", `List [ `Int 100; `Int 101 ]);
-                       ("tokens", `List [ `String "<m1>"; `String "<m2>" ]);
+                       ("id", Jsont.Json.string "<multi>");
+                       ("ids", Jsont.Json.list [ Jsont.Json.int 100; Jsont.Json.int 101 ]);
+                       ("tokens", Jsont.Json.list [ Jsont.Json.string "<m1>"; Jsont.Json.string "<m2>" ]);
                      ] );
                ] );
          ])

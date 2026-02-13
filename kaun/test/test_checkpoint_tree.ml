@@ -5,7 +5,14 @@
 
 open Windtrap
 module CT = Kaun.Checkpoint.Snapshot
-module Json = Yojson.Basic
+
+let json_obj pairs =
+  Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
+
+let json_to_string j =
+  match Jsont_bytesrw.encode_string ~format:Jsont.Minify Jsont.json j with
+  | Ok s -> s
+  | Error e -> failwith e
 
 let mk_tensor = Rune.create Rune.float32 [| 2; 2 |] [| 0.; 1.; 2.; 3. |]
 
@@ -35,17 +42,22 @@ let test_constructors () =
 
 let test_json_roundtrip () =
   let scalar =
-    CT.json (`Assoc [ ("dataset", `String "CartPole"); ("epochs", `Int 10) ])
+    CT.json
+      (json_obj
+         [
+           ("dataset", Jsont.Json.string "CartPole");
+           ("epochs", Jsont.Json.int 10);
+         ])
   in
   match CT.get_scalar scalar with
   | None -> fail "expected scalar"
   | Some s -> (
       (* Roundtrip through the typed JSON representation *)
-      let recovered = s |> CT.scalar_to_yojson |> CT.scalar_of_yojson in
+      let recovered = s |> CT.scalar_to_json |> CT.scalar_of_json in
       match (s, recovered) with
       | CT.Json orig, CT.Json payload ->
-          equal ~msg:"json preserved" string (Json.to_string orig)
-            (Json.to_string payload)
+          equal ~msg:"json preserved" string (json_to_string orig)
+            (json_to_string payload)
       | _ -> fail "expected json scalar")
 
 let tests =

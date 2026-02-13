@@ -420,42 +420,53 @@ let create (cfg : config) : t =
     ignore_merges = cfg.ignore_merges;
   }
 
+let json_of_string s =
+  match Jsont_bytesrw.decode_string Jsont.json s with
+  | Ok v -> v
+  | Error e -> failwith e
+
+let json_to_string j =
+  match Jsont_bytesrw.encode_string ~format:Jsont.Minify Jsont.json j with
+  | Ok s -> s
+  | Error e -> failwith e
+
 let read_files ~vocab_file ~merges_file =
   let vocab_json =
     let ic = open_in vocab_file in
-    let content = really_input_string ic (in_channel_length ic) in
-    close_in ic;
-    Yojson.Basic.from_string content
+    let content =
+      Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
+          really_input_string ic (in_channel_length ic))
+    in
+    json_of_string content
   in
   let vocab = Hashtbl.create 1024 in
   (match vocab_json with
-  | `Assoc items ->
+  | Jsont.Object (mems, _) ->
       List.iter
-        (fun (k, v) ->
+        (fun ((k, _), v) ->
           match v with
-          | `Int id -> Hashtbl.add vocab k id
-          | `Float f -> Hashtbl.add vocab k (int_of_float f)
+          | Jsont.Number (f, _) -> Hashtbl.add vocab k (int_of_float f)
           | _ -> failwith "Invalid vocab format")
-        items
+        mems
   | _ -> failwith "Invalid vocab.json format");
   let merges =
     let ic = open_in merges_file in
-    let merges = ref [] in
-    (try
-       while true do
-         let line = input_line ic in
-         (* Skip empty lines and comment lines that start with #version *)
-         if
-           String.length line > 0
-           && not (String.starts_with ~prefix:"#version" line)
-         then
-           match String.split_on_char ' ' line with
-           | [ a; b ] -> merges := (a, b) :: !merges
-           | _ -> failwith (Printf.sprintf "Invalid merge line: %s" line)
-       done
-     with End_of_file -> ());
-    close_in ic;
-    List.rev !merges
+    Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
+        let merges = ref [] in
+        (try
+           while true do
+             let line = input_line ic in
+             (* Skip empty lines and comment lines that start with #version *)
+             if
+               String.length line > 0
+               && not (String.starts_with ~prefix:"#version" line)
+             then
+               match String.split_on_char ' ' line with
+               | [ a; b ] -> merges := (a, b) :: !merges
+               | _ -> failwith (Printf.sprintf "Invalid merge line: %s" line)
+           done
+         with End_of_file -> ());
+        List.rev !merges)
   in
   (vocab, merges)
 
@@ -502,32 +513,34 @@ let save model ~path ?name () =
     | None -> Filename.concat path "merges.txt"
   in
   let vocab_items =
-    Hashtbl.fold
-      (fun k v acc -> (k, (`Int v : Yojson.Basic.t)) :: acc)
-      model.vocab []
-    |> List.sort (fun (_, a) (_, b) ->
-        match (a, b) with `Int x, `Int y -> compare x y | _ -> 0)
+    Hashtbl.fold (fun k v acc -> (k, v) :: acc) model.vocab []
+    |> List.sort (fun (_, a) (_, b) -> compare a b)
   in
-  let vocab_json = `Assoc vocab_items in
+  let vocab_json =
+    Jsont.Json.object'
+      (List.map
+         (fun (k, v) -> (Jsont.Json.name k, Jsont.Json.int v))
+         vocab_items)
+  in
   let oc = open_out vocab_file in
-  output_string oc (Yojson.Basic.to_string vocab_json);
-  close_out oc;
+  Fun.protect ~finally:(fun () -> close_out oc) (fun () ->
+      output_string oc (json_to_string vocab_json));
   let oc = open_out merges_file in
-  output_string oc "#version: 0.2\n";
-  let merges_list =
-    IntPairMap.fold
-      (fun (a_id, b_id) (rank, _) acc ->
-        match
-          ( Hashtbl.find_opt model.vocab_r a_id,
-            Hashtbl.find_opt model.vocab_r b_id )
-        with
-        | Some a, Some b -> (rank, a, b) :: acc
-        | _ -> acc)
-      model.merges []
-    |> List.sort (fun (r1, _, _) (r2, _, _) -> compare r1 r2)
-  in
-  List.iter (fun (_, a, b) -> Printf.fprintf oc "%s %s\n" a b) merges_list;
-  close_out oc
+  Fun.protect ~finally:(fun () -> close_out oc) (fun () ->
+      output_string oc "#version: 0.2\n";
+      let merges_list =
+        IntPairMap.fold
+          (fun (a_id, b_id) (rank, _) acc ->
+            match
+              ( Hashtbl.find_opt model.vocab_r a_id,
+                Hashtbl.find_opt model.vocab_r b_id )
+            with
+            | Some a, Some b -> (rank, a, b) :: acc
+            | _ -> acc)
+          model.merges []
+        |> List.sort (fun (r1, _, _) (r2, _, _) -> compare r1 r2)
+      in
+      List.iter (fun (_, a, b) -> Printf.fprintf oc "%s %s\n" a b) merges_list)
 
 let train ~min_frequency ~vocab_size ~show_progress ~special_tokens
     ~limit_alphabet ~initial_alphabet ~continuing_subword_prefix

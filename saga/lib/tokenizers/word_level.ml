@@ -54,23 +54,33 @@ let add_tokens model tokens =
     tokens;
   !count
 
+let json_obj pairs =
+  Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
+
+let json_to_string j =
+  match Jsont_bytesrw.encode_string ~format:Jsont.Minify Jsont.json j with
+  | Ok s -> s
+  | Error e -> failwith e
+
 let save model ~folder () =
   let vocab_items =
     get_vocab model
     |> List.sort (fun (_, id1) (_, id2) -> compare id1 id2)
     |> List.map (fun (token, id) ->
-        `Assoc [ ("token", `String token); ("id", `Int id) ])
+        json_obj [ ("token", Jsont.Json.string token); ("id", Jsont.Json.int id) ])
   in
   let json =
-    `Assoc
+    json_obj
       [
-        ("type", `String "WordLevel");
-        ("unk_token", `String model.unk_token);
-        ("vocab", `List vocab_items);
+        ("type", Jsont.Json.string "WordLevel");
+        ("unk_token", Jsont.Json.string model.unk_token);
+        ("vocab", Jsont.Json.list vocab_items);
       ]
   in
   let path = Filename.concat folder "wordlevel.json" in
-  Yojson.Basic.to_file path json;
+  let oc = open_out path in
+  output_string oc (json_to_string json);
+  close_out oc;
   [ "wordlevel.json" ]
 
 let train ~vocab_size ~min_frequency ~show_progress ~special_tokens texts

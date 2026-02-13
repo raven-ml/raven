@@ -878,10 +878,10 @@ module Tokenizer : sig
   val from_file : string -> (t, exn) result
   (** [from_file path] loads a tokenizer from HuggingFace JSON format. *)
 
-  val from_json : Yojson.Basic.t -> (t, exn) result
+  val from_json : Jsont.json -> (t, exn) result
   (** [from_json json] deserializes a tokenizer from HuggingFace JSON format. *)
 
-  val to_json : t -> Yojson.Basic.t
+  val to_json : t -> Jsont.json
   (** [to_json tokenizer] serializes tokenizer to HuggingFace JSON format. *)
 
   val save_pretrained : t -> path:string -> unit

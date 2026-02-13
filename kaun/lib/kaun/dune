@@ -11,6 +11,7 @@
   nx_buffer
   nx.core
   nx.io
-  yojson
+  jsont
+  jsont.bytesrw
   domainslib
   kaun.runlog))

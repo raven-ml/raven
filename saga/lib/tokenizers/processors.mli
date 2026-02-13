@@ -134,10 +134,10 @@ val added_tokens : t -> is_pair:bool -> int
 
 (** {1 Serialization} *)
 
-val to_json : t -> Yojson.Basic.t
+val to_json : t -> Jsont.json
 (** [to_json processor] serializes processor to HuggingFace JSON format. *)
 
-val of_json : Yojson.Basic.t -> t
+val of_json : Jsont.json -> t
 (** [of_json json] deserializes processor from HuggingFace JSON format.
 
-    @raise Yojson.Json_error if JSON is malformed. *)
+    @raise Failure if JSON is malformed. *)

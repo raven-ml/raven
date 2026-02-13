@@ -1,6 +1,19 @@
 let read_sidebar_json path =
-  if Sys.file_exists path then Yojson.Safe.from_file path
+  if Sys.file_exists path then
+    let ic = open_in path in
+    let content =
+      Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
+          In_channel.input_all ic)
+    in
+    match Jsont_bytesrw.decode_string Jsont.json content with
+    | Ok v -> v
+    | Error e -> failwith e
   else failwith (Printf.sprintf "sidebar.json not found at %s" path)
+
+let find_field name mems =
+  match Jsont.Json.find_mem name mems with
+  | Some (_, v) -> v
+  | None -> raise Not_found
 
 type entry = {
   name : string;
@@ -11,42 +24,44 @@ type entry = {
 
 let rec process_entry json =
   match json with
-  | `Assoc fields -> (
+  | Jsont.Object (mems, _) -> (
       let node =
-        try List.assoc "node" fields
+        try find_field "node" mems
         with Not_found -> failwith "No node field in entry"
       in
       let children =
-        try match List.assoc "children" fields with `List l -> l | _ -> []
+        try
+          match find_field "children" mems with
+          | Jsont.Array (l, _) -> l
+          | _ -> []
         with Not_found -> []
       in
       match node with
-      | `Assoc node_fields ->
+      | Jsont.Object (node_fields, _) ->
           let url =
             try
-              match List.assoc "url" node_fields with
-              | `String s -> Some s
-              | `Null -> None
+              match find_field "url" node_fields with
+              | Jsont.String (s, _) -> Some s
+              | Jsont.Null _ -> None
               | _ -> None
             with Not_found -> None
           in
           let content =
             try
-              match List.assoc "content" node_fields with
-              | `String s -> s
+              match find_field "content" node_fields with
+              | Jsont.String (s, _) -> s
               | _ -> ""
             with Not_found -> ""
           in
           let kind =
             try
-              match List.assoc "kind" node_fields with
-              | `String s -> Some s
-              | `Null -> None
+              match find_field "kind" node_fields with
+              | Jsont.String (s, _) -> Some s
+              | Jsont.Null _ -> None
               | _ -> None
             with Not_found -> None
           in
           let children_entries = List.filter_map process_entry children in
-          (* Create entry with processed children *)
           Some { name = content; url; kind; children = children_entries }
       | _ -> None)
   | _ -> None
@@ -55,15 +70,12 @@ let rec collect_modules entry =
   match entry.kind with
   | Some "module" | Some "module-type" -> [ entry ]
   | _ ->
-      (* For library groups or other containers, collect modules from
-         children *)
       List.concat_map collect_modules entry.children
 
 let process_sidebar json =
   match json with
-  | `List entries ->
+  | Jsont.Array (entries, _) ->
       let all_entries = List.filter_map process_entry entries in
-      (* Collect all modules from the tree *)
       List.concat_map collect_modules all_entries
   | _ -> failwith "Expected array at top level of sidebar.json"
 

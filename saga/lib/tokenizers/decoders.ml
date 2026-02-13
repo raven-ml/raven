@@ -239,142 +239,156 @@ let fuse () = Fuse
 
 (* ───── Serialization ───── *)
 
+let json_obj pairs =
+  Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
+
 let rec to_json = function
   | BPE { suffix } ->
-      `Assoc [ ("type", `String "BPEDecoder"); ("suffix", `String suffix) ]
-  | Byte_level -> `Assoc [ ("type", `String "Byte_level") ]
-  | Byte_fallback -> `Assoc [ ("type", `String "Byte_fallback") ]
-  | Word_piece { prefix; cleanup } ->
-      `Assoc
+      json_obj
         [
-          ("type", `String "Word_piece");
-          ("prefix", `String prefix);
-          ("cleanup", `Bool cleanup);
+          ("type", Jsont.Json.string "BPEDecoder");
+          ("suffix", Jsont.Json.string suffix);
+        ]
+  | Byte_level -> json_obj [ ("type", Jsont.Json.string "Byte_level") ]
+  | Byte_fallback -> json_obj [ ("type", Jsont.Json.string "Byte_fallback") ]
+  | Word_piece { prefix; cleanup } ->
+      json_obj
+        [
+          ("type", Jsont.Json.string "Word_piece");
+          ("prefix", Jsont.Json.string prefix);
+          ("cleanup", Jsont.Json.bool cleanup);
         ]
   | Metaspace { replacement; add_prefix_space } ->
-      `Assoc
+      json_obj
         [
-          ("type", `String "Metaspace");
-          ("replacement", `String (String.make 1 replacement));
-          ("add_prefix_space", `Bool add_prefix_space);
+          ("type", Jsont.Json.string "Metaspace");
+          ("replacement", Jsont.Json.string (String.make 1 replacement));
+          ("add_prefix_space", Jsont.Json.bool add_prefix_space);
         ]
   | CTC { pad_token; word_delimiter_token; cleanup } ->
-      `Assoc
+      json_obj
         [
-          ("type", `String "CTC");
-          ("pad_token", `String pad_token);
-          ("word_delimiter_token", `String word_delimiter_token);
-          ("cleanup", `Bool cleanup);
+          ("type", Jsont.Json.string "CTC");
+          ("pad_token", Jsont.Json.string pad_token);
+          ("word_delimiter_token", Jsont.Json.string word_delimiter_token);
+          ("cleanup", Jsont.Json.bool cleanup);
         ]
   | Replace { pattern; replacement } ->
-      `Assoc
+      json_obj
         [
-          ("type", `String "Replace");
-          ("pattern", `String pattern);
-          ("content", `String replacement);
+          ("type", Jsont.Json.string "Replace");
+          ("pattern", Jsont.Json.string pattern);
+          ("content", Jsont.Json.string replacement);
         ]
   | Strip { left; right; content } ->
-      `Assoc
+      json_obj
         [
-          ("type", `String "Strip");
-          ("strip_left", `Bool left);
-          ("strip_right", `Bool right);
-          ("content", `String (String.make 1 content));
+          ("type", Jsont.Json.string "Strip");
+          ("strip_left", Jsont.Json.bool left);
+          ("strip_right", Jsont.Json.bool right);
+          ("content", Jsont.Json.string (String.make 1 content));
         ]
-  | Fuse -> `Assoc [ ("type", `String "Fuse") ]
+  | Fuse -> json_obj [ ("type", Jsont.Json.string "Fuse") ]
   | Sequence decoders ->
-      `Assoc
+      json_obj
         [
-          ("type", `String "Sequence");
-          ("decoders", `List (List.map to_json decoders));
+          ("type", Jsont.Json.string "Sequence");
+          ("decoders", Jsont.Json.list (List.map to_json decoders));
         ]
 
-let rec of_json = function
-  | `Assoc fields -> (
-      match List.assoc_opt "type" fields with
-      | Some (`String "BPEDecoder") ->
+let rec of_json json =
+  let find fields name =
+    match Jsont.Json.find_mem name fields with
+    | Some (_, v) -> Some v
+    | None -> None
+  in
+  match json with
+  | Jsont.Object (fields, _) -> (
+      match find fields "type" with
+      | Some (Jsont.String ("BPEDecoder", _)) ->
           let suffix =
-            match List.assoc_opt "suffix" fields with
-            | Some (`String s) -> s
+            match find fields "suffix" with
+            | Some (Jsont.String (s, _)) -> s
             | _ -> ""
           in
           BPE { suffix }
-      | Some (`String ("Byte_level" | "ByteLevel")) -> Byte_level
-      | Some (`String ("Byte_fallback" | "ByteFallback")) -> Byte_fallback
-      | Some (`String ("Word_piece" | "WordPiece")) ->
+      | Some (Jsont.String (("Byte_level" | "ByteLevel"), _)) -> Byte_level
+      | Some (Jsont.String (("Byte_fallback" | "ByteFallback"), _)) ->
+          Byte_fallback
+      | Some (Jsont.String (("Word_piece" | "WordPiece"), _)) ->
           let prefix =
-            match List.assoc_opt "prefix" fields with
-            | Some (`String s) -> s
+            match find fields "prefix" with
+            | Some (Jsont.String (s, _)) -> s
             | _ -> "##"
           in
           let cleanup =
-            match List.assoc_opt "cleanup" fields with
-            | Some (`Bool b) -> b
+            match find fields "cleanup" with
+            | Some (Jsont.Bool (b, _)) -> b
             | _ -> true
           in
           Word_piece { prefix; cleanup }
-      | Some (`String "Metaspace") ->
+      | Some (Jsont.String ("Metaspace", _)) ->
           let replacement =
-            match List.assoc_opt "replacement" fields with
-            | Some (`String s) when String.length s > 0 -> s.[0]
+            match find fields "replacement" with
+            | Some (Jsont.String (s, _)) when String.length s > 0 -> s.[0]
             | _ -> '_'
           in
           let add_prefix_space =
-            match List.assoc_opt "add_prefix_space" fields with
-            | Some (`Bool b) -> b
+            match find fields "add_prefix_space" with
+            | Some (Jsont.Bool (b, _)) -> b
             | _ -> true
           in
           Metaspace { replacement; add_prefix_space }
-      | Some (`String "CTC") ->
+      | Some (Jsont.String ("CTC", _)) ->
           let pad_token =
-            match List.assoc_opt "pad_token" fields with
-            | Some (`String s) -> s
+            match find fields "pad_token" with
+            | Some (Jsont.String (s, _)) -> s
             | _ -> "<pad>"
           in
           let word_delimiter_token =
-            match List.assoc_opt "word_delimiter_token" fields with
-            | Some (`String s) -> s
+            match find fields "word_delimiter_token" with
+            | Some (Jsont.String (s, _)) -> s
             | _ -> "|"
           in
           let cleanup =
-            match List.assoc_opt "cleanup" fields with
-            | Some (`Bool b) -> b
+            match find fields "cleanup" with
+            | Some (Jsont.Bool (b, _)) -> b
             | _ -> true
           in
           CTC { pad_token; word_delimiter_token; cleanup }
-      | Some (`String "Replace") ->
+      | Some (Jsont.String ("Replace", _)) ->
           let pattern =
-            match List.assoc_opt "pattern" fields with
-            | Some (`String s) -> s
+            match find fields "pattern" with
+            | Some (Jsont.String (s, _)) -> s
             | _ -> failwith "Missing pattern in Replace decoder"
           in
           let replacement =
-            match List.assoc_opt "content" fields with
-            | Some (`String s) -> s
+            match find fields "content" with
+            | Some (Jsont.String (s, _)) -> s
             | _ -> ""
           in
           Replace { pattern; replacement }
-      | Some (`String "Strip") ->
+      | Some (Jsont.String ("Strip", _)) ->
           let left =
-            match List.assoc_opt "strip_left" fields with
-            | Some (`Bool b) -> b
+            match find fields "strip_left" with
+            | Some (Jsont.Bool (b, _)) -> b
             | _ -> false
           in
           let right =
-            match List.assoc_opt "strip_right" fields with
-            | Some (`Bool b) -> b
+            match find fields "strip_right" with
+            | Some (Jsont.Bool (b, _)) -> b
             | _ -> false
           in
           let content =
-            match List.assoc_opt "content" fields with
-            | Some (`String s) when String.length s > 0 -> s.[0]
+            match find fields "content" with
+            | Some (Jsont.String (s, _)) when String.length s > 0 -> s.[0]
             | _ -> ' '
           in
           Strip { left; right; content }
-      | Some (`String "Fuse") -> Fuse
-      | Some (`String "Sequence") -> (
-          match List.assoc_opt "decoders" fields with
-          | Some (`List decs) -> Sequence (List.map of_json decs)
+      | Some (Jsont.String ("Fuse", _)) -> Fuse
+      | Some (Jsont.String ("Sequence", _)) -> (
+          match find fields "decoders" with
+          | Some (Jsont.Array (decs, _)) -> Sequence (List.map of_json decs)
           | _ -> failwith "Invalid Sequence decoder")
       | _ -> failwith "Unknown decoder type")
   | _ -> failwith "Invalid decoder JSON"

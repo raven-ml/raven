@@ -69,7 +69,7 @@ module Registry = struct
     architecture : string;
     config_file : string;
     weight_files : string list;
-    load_config : Yojson.Safe.t -> 'params;
+    load_config : Jsont.json -> 'params;
     build_params : dtype:(float, 'a) dtype -> 'params -> Kaun.params;
   }
 
@@ -231,20 +231,37 @@ let load_safetensors ?(config = Config.default) ?(revision = Latest) ~model_id
     | Downloaded (_, progress) -> progress :: acc
   in
 
+  let json_of_file path =
+    let ic = open_in path in
+    let s = really_input_string ic (in_channel_length ic) in
+    close_in ic;
+    match Jsont_bytesrw.decode_string Jsont.json s with
+    | Ok v -> v
+    | Error e -> failwith e
+  in
+
+  let json_mem name = function
+    | Jsont.Object (mems, _) -> (
+        match Jsont.Json.find_mem name mems with
+        | Some (_, v) -> v
+        | None -> Jsont.Null ((), Jsont.Meta.none))
+    | _ -> Jsont.Null ((), Jsont.Meta.none)
+  in
+
   let attempt_index filename =
     try
       let result = download_file ~config ~revision ~model_id ~filename () in
       let index_path = local_path_of_result result in
       let progress_acc = progress_of_result [] result in
 
-      let json = Yojson.Safe.from_file index_path in
+      let json = json_of_file index_path in
       let weight_map =
-        match Yojson.Safe.Util.member "weight_map" json with
-        | `Assoc entries ->
+        match json_mem "weight_map" json with
+        | Jsont.Object (entries, _) ->
             List.map
-              (fun (tensor_name, shard_json) ->
+              (fun ((tensor_name, _), shard_json) ->
                 match shard_json with
-                | `String shard -> (tensor_name, shard)
+                | Jsont.String (shard, _) -> (tensor_name, shard)
                 | _ -> failwith "Invalid shard entry in weight_map")
               entries
         | _ -> failwith "Missing weight_map in index file"
@@ -320,7 +337,6 @@ let load_safetensors ?(config = Config.default) ?(revision = Latest) ~model_id
            || String.starts_with ~prefix:"File not in cache (offline mode)" msg
       ->
         None
-    | Yojson.Json_error _ -> None
     | Sys_error _ -> None
   in
 
@@ -368,7 +384,14 @@ let load_config ?(config = Config.default) ?(revision = Latest) ~model_id () =
     match result with Cached path -> path | Downloaded (path, _) -> path
   in
 
-  let json = Yojson.Safe.from_file local_path in
+  let ic = open_in local_path in
+  let s = really_input_string ic (in_channel_length ic) in
+  close_in ic;
+  let json =
+    match Jsont_bytesrw.decode_string Jsont.json s with
+    | Ok v -> v
+    | Error e -> failwith e
+  in
 
   match result with
   | Cached _ -> Cached json
@@ -426,6 +449,7 @@ let get_model_info model_id =
 
   match status with
   | Unix.WEXITED 0 -> (
-      try Ok (Yojson.Safe.from_string output)
-      with _ -> Error "Failed to parse JSON response")
+      match Jsont_bytesrw.decode_string Jsont.json output with
+      | Ok json -> Ok json
+      | Error _ -> Error "Failed to parse JSON response")
   | _ -> Error "Failed to fetch model info"

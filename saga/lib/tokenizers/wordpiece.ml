@@ -48,18 +48,18 @@ let default () = create_internal (Hashtbl.create 0) "[UNK]" "##" 100
 let read_file ~vocab_file =
   let vocab = Hashtbl.create 10000 in
   let ic = open_in vocab_file in
-  let index = ref 0 in
-  (try
-     while true do
-       let line = input_line ic in
-       let token = String.trim line in
-       if token <> "" then (
-         Hashtbl.add vocab token !index;
-         incr index)
-     done
-   with End_of_file -> ());
-  close_in ic;
-  vocab
+  Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
+      let index = ref 0 in
+      (try
+         while true do
+           let line = input_line ic in
+           let token = String.trim line in
+           if token <> "" then (
+             Hashtbl.add vocab token !index;
+             incr index)
+         done
+       with End_of_file -> ());
+      vocab)
 
 let read_bytes bytes =
   let vocab = Hashtbl.create 10000 in
@@ -163,12 +163,12 @@ let save model ~path ?name () =
     |> List.map (fun (_, k) -> k)
   in
   let oc = open_out vocab_file in
-  List.iter
-    (fun token ->
-      output_string oc token;
-      output_char oc '\n')
-    vocab_list;
-  close_out oc;
+  Fun.protect ~finally:(fun () -> close_out oc) (fun () ->
+      List.iter
+        (fun token ->
+          output_string oc token;
+          output_char oc '\n')
+        vocab_list);
   vocab_file
 
 let from_bpe bpe =
@@ -184,61 +184,80 @@ let from_bpe bpe =
   in
   create_internal vocab unk_token continuing_subword_prefix 100
 
+(* ───── JSON helpers ───── *)
+
+let json_of_string s =
+  match Jsont_bytesrw.decode_string Jsont.json s with
+  | Ok v -> v
+  | Error e -> failwith e
+
+let json_obj pairs =
+  Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
+
 (* ───── Serialization ───── *)
 
-let to_yojson model =
+let to_json model =
   let vocab_list =
     Hashtbl.fold (fun k v acc -> (v, k) :: acc) model.vocab []
     |> List.sort compare
-    |> List.map (fun (_, k) -> (k, `Int (Hashtbl.find model.vocab k)))
+    |> List.map (fun (_, k) ->
+        (Jsont.Json.name k, Jsont.Json.int (Hashtbl.find model.vocab k)))
   in
-  `Assoc
+  json_obj
     [
-      ("type", `String "WordPiece");
-      ("unk_token", `String model.unk_token);
-      ("continuing_subword_prefix", `String model.continuing_subword_prefix);
-      ("max_input_chars_per_word", `Int model.max_input_chars_per_word);
-      ("vocab", `Assoc vocab_list);
+      ("type", Jsont.Json.string "WordPiece");
+      ("unk_token", Jsont.Json.string model.unk_token);
+      ( "continuing_subword_prefix",
+        Jsont.Json.string model.continuing_subword_prefix );
+      ("max_input_chars_per_word", Jsont.Json.int model.max_input_chars_per_word);
+      ("vocab", Jsont.Json.object' vocab_list);
     ]
 
-let of_yojson json =
+let json_mem name = function
+  | Jsont.Object (mems, _) -> (
+      match Jsont.Json.find_mem name mems with
+      | Some (_, v) -> v
+      | None -> Jsont.Null ((), Jsont.Meta.none))
+  | _ -> Jsont.Null ((), Jsont.Meta.none)
+
+let of_json json =
   match json with
-  | `Assoc fields ->
+  | Jsont.Object (fields, _) ->
       let get_field name =
-        List.assoc_opt name fields |> function
-        | Some v -> v
+        match Jsont.Json.find_mem name fields with
+        | Some (_, v) -> v
         | None -> raise (Error ("Missing field: " ^ name))
       in
       let () =
         match get_field "type" with
-        | `String "WordPiece" -> ()
+        | Jsont.String ("WordPiece", _) -> ()
         | _ -> raise (Error "Invalid type")
         | exception _ -> ()
       in
       let unk_token =
         match get_field "unk_token" with
-        | `String s -> s
+        | Jsont.String (s, _) -> s
         | _ -> raise (Error "Invalid unk_token")
       in
       let continuing_subword_prefix =
         match get_field "continuing_subword_prefix" with
-        | `String s -> s
+        | Jsont.String (s, _) -> s
         | _ -> raise (Error "Invalid continuing_subword_prefix")
       in
       let max_input_chars_per_word =
         match get_field "max_input_chars_per_word" with
-        | `Int i -> i
+        | Jsont.Number (f, _) -> int_of_float f
         | _ -> raise (Error "Invalid max_input_chars_per_word")
       in
-      let vocab_json = get_field "vocab" in
+      let vocab_json = json_mem "vocab" json in
       let vocab =
         match vocab_json with
-        | `Assoc pairs ->
+        | Jsont.Object (pairs, _) ->
             let h = Hashtbl.create (List.length pairs) in
             List.iter
-              (fun (k, v) ->
+              (fun ((k, _), v) ->
                 match v with
-                | `Int id -> Hashtbl.add h k id
+                | Jsont.Number (f, _) -> Hashtbl.add h k (int_of_float f)
                 | _ -> raise (Error "Invalid vocab entry"))
               pairs;
             h
@@ -250,7 +269,7 @@ let of_yojson json =
 
 let from_bytes bytes =
   let str = Bytes.to_string bytes in
-  of_yojson (Yojson.Basic.from_string str)
+  of_json (json_of_string str)
 
 (* ───── Trainer ───── *)
 

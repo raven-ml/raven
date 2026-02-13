@@ -19,7 +19,7 @@ type t =
 
 (** {1 Serialization} *)
 
-val of_json : Yojson.Safe.t -> (t, string) result
+val of_json : Jsont.json -> (t, string) result
 (** [of_json json] parses a JSON object into an event.
 
     Expects a ["type"] field to determine the event variant. For ["scalar"],
@@ -28,7 +28,7 @@ val of_json : Yojson.Safe.t -> (t, string) result
     Returns [Error msg] if the JSON structure is invalid or the type is unknown.
 *)
 
-val to_json : t -> Yojson.Safe.t
+val to_json : t -> Jsont.json
 (** [to_json event] serializes an event to a JSON object.
 
     The output includes a ["type"] field indicating the event variant. *)

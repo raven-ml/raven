@@ -294,8 +294,8 @@ val normalize_str : t -> string -> string
 
 (** {1 Serialization} *)
 
-val to_json : t -> Yojson.Basic.t
+val to_json : t -> Jsont.json
 (** [to_json t] converts normalizer to JSON representation. *)
 
-val of_json : Yojson.Basic.t -> t
+val of_json : Jsont.json -> t
 (** [of_json json] creates normalizer from JSON representation. *)

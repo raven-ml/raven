@@ -12,7 +12,7 @@ type scalar =
   | Int of int
   | Float of float
   | String of string
-  | Json of Yojson.Basic.t
+  | Json of Jsont.json
 
 type t =
   | Tensor of tensor
@@ -138,39 +138,52 @@ let rec flatten_scalars ?(prefix = "") = function
           flatten_scalars ~prefix:path value)
       |> List.concat
 
-let scalar_to_yojson = function
-  | Bool b -> `Assoc [ ("type", `String "bool"); ("value", `Bool b) ]
-  | Int i -> `Assoc [ ("type", `String "int"); ("value", `Int i) ]
-  | Float f -> `Assoc [ ("type", `String "float"); ("value", `Float f) ]
-  | String s -> `Assoc [ ("type", `String "string"); ("value", `String s) ]
-  | Json json -> `Assoc [ ("type", `String "json"); ("value", json) ]
+let json_obj pairs =
+  Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
 
-let scalar_of_yojson = function
-  | `Assoc fields -> (
-      match List.assoc_opt "type" fields with
-      | Some (`String "bool") -> (
-          match List.assoc_opt "value" fields with
-          | Some (`Bool b) -> Bool b
-          | _ -> failwith "Snapshot.scalar_of_yojson: invalid bool payload")
-      | Some (`String "int") -> (
-          match List.assoc_opt "value" fields with
-          | Some (`Int i) -> Int i
-          | _ -> failwith "Snapshot.scalar_of_yojson: invalid int payload")
-      | Some (`String "float") -> (
-          match List.assoc_opt "value" fields with
-          | Some (`Float f) -> Float f
-          | Some (`Int i) -> Float (float_of_int i)
-          | _ -> failwith "Snapshot.scalar_of_yojson: invalid float payload")
-      | Some (`String "string") -> (
-          match List.assoc_opt "value" fields with
-          | Some (`String s) -> String s
-          | _ -> failwith "Snapshot.scalar_of_yojson: invalid string payload")
-      | Some (`String "json") -> (
-          match List.assoc_opt "value" fields with
-          | Some json -> Json json
-          | None -> failwith "Snapshot.scalar_of_yojson: missing json value")
-      | _ -> failwith "Snapshot.scalar_of_yojson: missing type field")
-  | _ -> failwith "Snapshot.scalar_of_yojson: expected object"
+let scalar_to_json = function
+  | Bool b ->
+      json_obj
+        [ ("type", Jsont.Json.string "bool"); ("value", Jsont.Json.bool b) ]
+  | Int i ->
+      json_obj
+        [ ("type", Jsont.Json.string "int"); ("value", Jsont.Json.int i) ]
+  | Float f ->
+      json_obj
+        [ ("type", Jsont.Json.string "float"); ("value", Jsont.Json.number f) ]
+  | String s ->
+      json_obj
+        [
+          ("type", Jsont.Json.string "string"); ("value", Jsont.Json.string s);
+        ]
+  | Json json ->
+      json_obj [ ("type", Jsont.Json.string "json"); ("value", json) ]
+
+let scalar_of_json = function
+  | Jsont.Object (mems, _) -> (
+      match Jsont.Json.find_mem "type" mems with
+      | Some (_, Jsont.String ("bool", _)) -> (
+          match Jsont.Json.find_mem "value" mems with
+          | Some (_, Jsont.Bool (b, _)) -> Bool b
+          | _ -> failwith "Snapshot.scalar_of_json: invalid bool payload")
+      | Some (_, Jsont.String ("int", _)) -> (
+          match Jsont.Json.find_mem "value" mems with
+          | Some (_, Jsont.Number (f, _)) -> Int (int_of_float f)
+          | _ -> failwith "Snapshot.scalar_of_json: invalid int payload")
+      | Some (_, Jsont.String ("float", _)) -> (
+          match Jsont.Json.find_mem "value" mems with
+          | Some (_, Jsont.Number (f, _)) -> Float f
+          | _ -> failwith "Snapshot.scalar_of_json: invalid float payload")
+      | Some (_, Jsont.String ("string", _)) -> (
+          match Jsont.Json.find_mem "value" mems with
+          | Some (_, Jsont.String (s, _)) -> String s
+          | _ -> failwith "Snapshot.scalar_of_json: invalid string payload")
+      | Some (_, Jsont.String ("json", _)) -> (
+          match Jsont.Json.find_mem "value" mems with
+          | Some (_, json) -> Json json
+          | None -> failwith "Snapshot.scalar_of_json: missing json value")
+      | _ -> failwith "Snapshot.scalar_of_json: missing type field")
+  | _ -> failwith "Snapshot.scalar_of_json: expected object"
 
 let rec ptree = function
   | Ptree.Tensor (Ptree.P tensor) -> Tensor (Pack tensor)

@@ -107,8 +107,8 @@
    (= :version))
   re
   uucp
-  (yojson
-   (>= 2.0.0))
+  jsont
+  bytesrw
   (windtrap :with-test))
  (tags
   (text-processing nlp natural-language-processing tokenization)))
@@ -125,8 +125,8 @@
   (nx
    (= :version))
   re
-  (yojson
-   (>= 2.0.0))
+  jsont
+  bytesrw
   csv
   (windtrap :with-test))
  (tags
@@ -162,8 +162,8 @@
   dune
   logs
   mosaic
-  (yojson
-   (>= 2.0.0))
+  jsont
+  bytesrw
   (domainslib
    (>= 0.5.0))
   (saga
@@ -204,8 +204,8 @@
    (= :version))
   (kaun
    (= :version))
-  (yojson
-   (>= 2.0.0))
+  jsont
+  bytesrw
   (windtrap :with-test))
  (tags
   (reinforcement-learning machine-learning ai environments agents)))

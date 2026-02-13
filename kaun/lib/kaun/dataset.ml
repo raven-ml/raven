@@ -413,26 +413,25 @@ let from_jsonl ?field path =
     match text_ds.next () with
     | None -> None
     | Some line -> (
-        try
-          let json = Yojson.Safe.from_string line in
-          match json with
-          | `Assoc fields -> (
-              match List.assoc_opt field_name fields with
-              | Some (`String s) -> Some s
-              | _ ->
-                  raise
-                    (Dataset_error
-                       ("Field '" ^ field_name ^ "' is not a string in JSONL: "
-                      ^ line)))
-          | _ ->
-              raise
-                (Dataset_error ("Invalid JSONL format, expected object: " ^ line))
-        with
-        | Dataset_error _ as e -> raise e
-        | Yojson.Json_error msg ->
+        match Jsont_bytesrw.decode_string Jsont.json line with
+        | Error msg ->
             raise
               (Dataset_error
-                 ("Failed to parse JSONL: " ^ msg ^ " in line: " ^ line)))
+                 ("Failed to parse JSONL: " ^ msg ^ " in line: " ^ line))
+        | Ok json -> (
+            match json with
+            | Jsont.Object (mems, _) -> (
+                match Jsont.Json.find_mem field_name mems with
+                | Some (_, Jsont.String (s, _)) -> Some s
+                | _ ->
+                    raise
+                      (Dataset_error
+                         ("Field '" ^ field_name
+                        ^ "' is not a string in JSONL: " ^ line)))
+            | _ ->
+                raise
+                  (Dataset_error
+                     ("Invalid JSONL format, expected object: " ^ line))))
   in
 
   {

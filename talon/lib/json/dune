@@ -1,4 +1,4 @@
 (library
  (name talon_json)
  (public_name talon.json)
- (libraries nx talon yojson))
+ (libraries nx talon jsont jsont.bytesrw))

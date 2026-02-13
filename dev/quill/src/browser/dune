@@ -2,7 +2,7 @@
  (name quill_browser)
  (public_name quill.browser)
  (modules :standard \ main)
- (libraries vdom.base vdom yojson cmarkit brr quill_api quill_editor))
+ (libraries vdom.base vdom jsont jsont.bytesrw cmarkit brr quill_api quill_editor))
 
 (executable
  (name main)

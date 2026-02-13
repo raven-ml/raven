@@ -275,19 +275,30 @@ let rec normalize_impl normalizer ns =
   | Sequence normalizers ->
       List.fold_left (fun ns n -> normalize_impl n ns) ns normalizers
 
-and of_json = function
-  | `Assoc fields -> (
-      match List.assoc_opt "type" fields with
-      | Some (`String ("Bert" | "BertNormalizer")) ->
+and of_json json =
+  let json_mem name = function
+    | Jsont.Object (mems, _) -> (
+        match Jsont.Json.find_mem name mems with
+        | Some (_, v) -> v
+        | None -> Jsont.Null ((), Jsont.Meta.none))
+    | _ -> Jsont.Null ((), Jsont.Meta.none)
+  in
+  match json with
+  | Jsont.Object (fields, _) -> (
+      let find name =
+        match Jsont.Json.find_mem name fields with
+        | Some (_, v) -> Some v
+        | None -> None
+      in
+      match find "type" with
+      | Some (Jsont.String (("Bert" | "BertNormalizer"), _)) ->
           let get_bool name default =
-            match List.assoc_opt name fields with
-            | Some (`Bool b) -> b
-            | _ -> default
+            match find name with Some (Jsont.Bool (b, _)) -> b | _ -> default
           in
           let strip_accents =
-            match List.assoc_opt "strip_accents" fields with
-            | Some (`Bool b) -> Some b
-            | Some `Null | None -> None
+            match find "strip_accents" with
+            | Some (Jsont.Bool (b, _)) -> Some b
+            | Some (Jsont.Null _) | None -> None
             | _ -> None
           in
           Bert
@@ -297,56 +308,57 @@ and of_json = function
               strip_accents;
               lowercase = get_bool "lowercase" true;
             }
-      | Some (`String "Strip") ->
+      | Some (Jsont.String ("Strip", _)) ->
           let get_bool name default =
-            match List.assoc_opt name fields with
-            | Some (`Bool b) -> b
-            | _ -> default
+            match find name with Some (Jsont.Bool (b, _)) -> b | _ -> default
           in
           Strip
             {
               left = get_bool "strip_left" false;
               right = get_bool "strip_right" true;
             }
-      | Some (`String "StripAccents") -> StripAccents
-      | Some (`String "NFC") -> NFC
-      | Some (`String "NFD") -> NFD
-      | Some (`String "NFKC") -> NFKC
-      | Some (`String "NFKD") -> NFKD
-      | Some (`String "Lowercase") -> Lowercase
-      | Some (`String "Replace") ->
+      | Some (Jsont.String ("StripAccents", _)) -> StripAccents
+      | Some (Jsont.String ("NFC", _)) -> NFC
+      | Some (Jsont.String ("NFD", _)) -> NFD
+      | Some (Jsont.String ("NFKC", _)) -> NFKC
+      | Some (Jsont.String ("NFKD", _)) -> NFKD
+      | Some (Jsont.String ("Lowercase", _)) -> Lowercase
+      | Some (Jsont.String ("Replace", _)) ->
           let pattern =
-            match List.assoc_opt "pattern" fields with
-            | Some (`Assoc [ ("String", `String p) ]) -> p
+            match json_mem "pattern" json with
+            | Jsont.Object (pattern_fields, _) -> (
+                match Jsont.Json.find_mem "String" pattern_fields with
+                | Some (_, Jsont.String (p, _)) -> p
+                | _ -> failwith "Invalid Replace normalizer pattern")
             | _ -> failwith "Invalid Replace normalizer pattern"
           in
           let replacement =
-            match List.assoc_opt "content" fields with
-            | Some (`String r) -> r
+            match json_mem "content" json with
+            | Jsont.String (r, _) -> r
             | _ -> failwith "Invalid Replace normalizer content"
           in
           Replace { pattern; replacement }
-      | Some (`String "Prepend") -> (
-          match List.assoc_opt "prepend" fields with
-          | Some (`String p) -> Prepend { prepend = p }
+      | Some (Jsont.String ("Prepend", _)) -> (
+          match find "prepend" with
+          | Some (Jsont.String (p, _)) -> Prepend { prepend = p }
           | _ -> failwith "Invalid Prepend normalizer")
-      | Some (`String "ByteLevel") ->
+      | Some (Jsont.String ("ByteLevel", _)) ->
           let add_prefix_space =
-            match List.assoc_opt "add_prefix_space" fields with
-            | Some (`Bool b) -> b
+            match find "add_prefix_space" with
+            | Some (Jsont.Bool (b, _)) -> b
             | _ -> false
           in
           let use_regex =
-            match List.assoc_opt "use_regex" fields with
-            | Some (`Bool b) -> b
+            match find "use_regex" with
+            | Some (Jsont.Bool (b, _)) -> b
             | _ -> false
           in
           ByteLevel { add_prefix_space; use_regex }
-      | Some (`String "Sequence") -> (
-          match List.assoc_opt "normalizers" fields with
-          | Some (`List l) -> Sequence (List.map of_json l)
+      | Some (Jsont.String ("Sequence", _)) -> (
+          match find "normalizers" with
+          | Some (Jsont.Array (l, _)) -> Sequence (List.map of_json l)
           | _ -> failwith "Invalid Sequence normalizer")
-      | Some (`String other) ->
+      | Some (Jsont.String (other, _)) ->
           failwith (Printf.sprintf "Unknown normalizer type: %s" other)
       | _ -> failwith "Invalid normalizer JSON")
   | _ -> failwith "Invalid normalizer JSON"
@@ -390,49 +402,59 @@ let normalize_str t str =
 
 (* ───── Serialization ───── *)
 
+let json_obj pairs =
+  Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
+
 let rec to_json = function
   | Bert { clean_text; handle_chinese_chars; strip_accents; lowercase } ->
-      `Assoc
+      json_obj
         [
-          ("type", `String "Bert");
-          ("clean_text", `Bool clean_text);
-          ("handle_chinese_chars", `Bool handle_chinese_chars);
+          ("type", Jsont.Json.string "Bert");
+          ("clean_text", Jsont.Json.bool clean_text);
+          ("handle_chinese_chars", Jsont.Json.bool handle_chinese_chars);
           ( "strip_accents",
-            match strip_accents with None -> `Null | Some b -> `Bool b );
-          ("lowercase", `Bool lowercase);
+            match strip_accents with
+            | None -> Jsont.Json.null ()
+            | Some b -> Jsont.Json.bool b );
+          ("lowercase", Jsont.Json.bool lowercase);
         ]
   | Strip { left; right } ->
-      `Assoc
+      json_obj
         [
-          ("type", `String "Strip");
-          ("strip_left", `Bool left);
-          ("strip_right", `Bool right);
+          ("type", Jsont.Json.string "Strip");
+          ("strip_left", Jsont.Json.bool left);
+          ("strip_right", Jsont.Json.bool right);
         ]
-  | StripAccents -> `Assoc [ ("type", `String "StripAccents") ]
-  | NFC -> `Assoc [ ("type", `String "NFC") ]
-  | NFD -> `Assoc [ ("type", `String "NFD") ]
-  | NFKC -> `Assoc [ ("type", `String "NFKC") ]
-  | NFKD -> `Assoc [ ("type", `String "NFKD") ]
-  | Lowercase -> `Assoc [ ("type", `String "Lowercase") ]
+  | StripAccents -> json_obj [ ("type", Jsont.Json.string "StripAccents") ]
+  | NFC -> json_obj [ ("type", Jsont.Json.string "NFC") ]
+  | NFD -> json_obj [ ("type", Jsont.Json.string "NFD") ]
+  | NFKC -> json_obj [ ("type", Jsont.Json.string "NFKC") ]
+  | NFKD -> json_obj [ ("type", Jsont.Json.string "NFKD") ]
+  | Lowercase -> json_obj [ ("type", Jsont.Json.string "Lowercase") ]
   | Replace { pattern; replacement } ->
-      `Assoc
+      json_obj
         [
-          ("type", `String "Replace");
-          ("pattern", `Assoc [ ("String", `String pattern) ]);
-          ("content", `String replacement);
+          ("type", Jsont.Json.string "Replace");
+          ( "pattern",
+            json_obj [ ("String", Jsont.Json.string pattern) ] );
+          ("content", Jsont.Json.string replacement);
         ]
   | Prepend { prepend } ->
-      `Assoc [ ("type", `String "Prepend"); ("prepend", `String prepend) ]
-  | ByteLevel { add_prefix_space; use_regex } ->
-      `Assoc
+      json_obj
         [
-          ("type", `String "ByteLevel");
-          ("add_prefix_space", `Bool add_prefix_space);
-          ("use_regex", `Bool use_regex);
+          ("type", Jsont.Json.string "Prepend");
+          ("prepend", Jsont.Json.string prepend);
+        ]
+  | ByteLevel { add_prefix_space; use_regex } ->
+      json_obj
+        [
+          ("type", Jsont.Json.string "ByteLevel");
+          ("add_prefix_space", Jsont.Json.bool add_prefix_space);
+          ("use_regex", Jsont.Json.bool use_regex);
         ]
   | Sequence normalizers ->
-      `Assoc
+      json_obj
         [
-          ("type", `String "Sequence");
-          ("normalizers", `List (List.map to_json normalizers));
+          ("type", Jsont.Json.string "Sequence");
+          ("normalizers", Jsont.Json.list (List.map to_json normalizers));
         ]

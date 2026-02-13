@@ -65,157 +65,174 @@ let float_array_token = "__float_array__"
 let int_array_token = "__int_array__"
 let bool_array_token = "__bool_array__"
 
+let json_obj pairs =
+  Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
+
 let encode_special_float = function
-  | f when classify_float f = FP_nan -> `String "NaN"
-  | f when classify_float f = FP_infinite && f > 0. -> `String "Infinity"
-  | f when classify_float f = FP_infinite && f < 0. -> `String "-Infinity"
+  | f when classify_float f = FP_nan -> Jsont.Json.string "NaN"
+  | f when classify_float f = FP_infinite && f > 0. -> Jsont.Json.string "Infinity"
+  | f when classify_float f = FP_infinite && f < 0. -> Jsont.Json.string "-Infinity"
   | _ -> assert false
 
-let float_to_yojson f =
+let float_to_json f =
   match classify_float f with
-  | FP_normal | FP_subnormal | FP_zero -> `Float f
-  | _ -> `Assoc [ (float_token, encode_special_float f) ]
+  | FP_normal | FP_subnormal | FP_zero -> Jsont.Json.number f
+  | _ -> json_obj [ (float_token, encode_special_float f) ]
 
-let rec value_to_yojson = function
-  | Null -> `Null
-  | Bool b -> `Bool b
-  | Int i -> `Int i
-  | Float f -> float_to_yojson f
+let rec value_to_json = function
+  | Null -> Jsont.Json.null ()
+  | Bool b -> Jsont.Json.bool b
+  | Int i -> Jsont.Json.int i
+  | Float f -> float_to_json f
   | Int_array arr ->
-      `Assoc
+      json_obj
         [
           ( int_array_token,
-            `List (Array.to_list arr |> List.map (fun i -> `Int i)) );
+            Jsont.Json.list
+              (Array.to_list arr |> List.map (fun i -> Jsont.Json.int i)) );
         ]
   | Float_array arr ->
-      `Assoc
+      json_obj
         [
           ( float_array_token,
-            `List
+            Jsont.Json.list
               (Array.to_list arr
               |> List.map (fun f ->
                   match classify_float f with
-                  | FP_normal | FP_subnormal | FP_zero -> `Float f
+                  | FP_normal | FP_subnormal | FP_zero -> Jsont.Json.number f
                   | _ -> encode_special_float f)) );
         ]
   | Bool_array arr ->
-      `Assoc
+      json_obj
         [
           ( bool_array_token,
-            `List (Array.to_list arr |> List.map (fun b -> `Bool b)) );
+            Jsont.Json.list
+              (Array.to_list arr |> List.map (fun b -> Jsont.Json.bool b)) );
         ]
-  | String s -> `String s
-  | List values -> `List (List.map value_to_yojson values)
+  | String s -> Jsont.Json.string s
+  | List values -> Jsont.Json.list (List.map value_to_json values)
   | Dict fields ->
       let sorted = List.sort (fun (a, _) (b, _) -> String.compare a b) fields in
-      `Assoc (List.map (fun (k, v) -> (k, value_to_yojson v)) sorted)
+      json_obj (List.map (fun (k, v) -> (k, value_to_json v)) sorted)
 
-let to_yojson info =
+let to_json info =
   let fields = to_list info in
   let sorted = List.sort (fun (a, _) (b, _) -> String.compare a b) fields in
-  `Assoc (List.map (fun (k, v) -> (k, value_to_yojson v)) sorted)
+  json_obj (List.map (fun (k, v) -> (k, value_to_json v)) sorted)
 
-let rec value_of_yojson = function
-  | `Null -> Ok Null
-  | `Bool b -> Ok (Bool b)
-  | `Int i -> Ok (Int i)
-  | `Float f -> Ok (Float f)
-  | `Assoc [ (token, payload) ] when String.equal token float_token -> (
-      match payload with
-      | `String "NaN" -> Ok (Float Float.nan)
-      | `String "Infinity" -> Ok (Float Float.infinity)
-      | `String "-Infinity" -> Ok (Float Float.neg_infinity)
-      | json ->
-          Error
-            (Format.asprintf
-               "Info.value_of_yojson: invalid special float representation %a"
-               Yojson.Safe.pp json))
-  | `Assoc [ (token, `List elems) ] when String.equal token float_array_token ->
-      let rec loop acc = function
-        | [] -> Ok (Float_array (Array.of_list (List.rev acc)))
-        | `Float f :: rest -> loop (f :: acc) rest
-        | `Int i :: rest -> loop (float_of_int i :: acc) rest
-        | `Intlit lit :: rest -> (
-            match parse_float_opt lit with
-            | Some f -> loop (f :: acc) rest
-            | None ->
+let json_assoc = function
+  | Jsont.Object (mems, _) -> List.map (fun ((n, _), v) -> (n, v)) mems
+  | _ -> []
+
+let pp_json json = Format.asprintf "%a" Jsont.Json.pp json
+
+let rec value_of_json = function
+  | Jsont.Null _ -> Ok Null
+  | Jsont.Bool (b, _) -> Ok (Bool b)
+  | Jsont.Number (f, _) ->
+      if Float.is_integer f && Float.abs f < 4503599627370496.0 then
+        Ok (Int (int_of_float f))
+      else Ok (Float f)
+  | Jsont.Object (mems, _) as json -> (
+      let fields = List.map (fun ((n, _), v) -> (n, v)) mems in
+      match fields with
+      | [ (token, payload) ] when String.equal token float_token -> (
+          match payload with
+          | Jsont.String ("NaN", _) -> Ok (Float Float.nan)
+          | Jsont.String ("Infinity", _) -> Ok (Float Float.infinity)
+          | Jsont.String ("-Infinity", _) -> Ok (Float Float.neg_infinity)
+          | j ->
+              Error
+                (Format.asprintf
+                   "Info.value_of_json: invalid special float representation %s"
+                   (pp_json j)))
+      | [ (token, Jsont.Array (elems, _)) ]
+        when String.equal token float_array_token ->
+          let rec loop acc = function
+            | [] -> Ok (Float_array (Array.of_list (List.rev acc)))
+            | Jsont.Number (f, _) :: rest -> loop (f :: acc) rest
+            | Jsont.String ("NaN", _) :: rest -> loop (Float.nan :: acc) rest
+            | Jsont.String ("Infinity", _) :: rest ->
+                loop (Float.infinity :: acc) rest
+            | Jsont.String ("-Infinity", _) :: rest ->
+                loop (Float.neg_infinity :: acc) rest
+            | Jsont.String (lit, _) :: rest -> (
+                match parse_float_opt lit with
+                | Some f -> loop (f :: acc) rest
+                | None ->
+                    Error
+                      (Format.asprintf
+                         "Info.value_of_json: invalid float literal %s" lit))
+            | j :: _ ->
                 Error
                   (Format.asprintf
-                     "Info.value_of_yojson: invalid float literal %s" lit))
-        | `String "NaN" :: rest -> loop (Float.nan :: acc) rest
-        | `String "Infinity" :: rest -> loop (Float.infinity :: acc) rest
-        | `String "-Infinity" :: rest -> loop (Float.neg_infinity :: acc) rest
-        | json :: _ ->
-            Error
-              (Format.asprintf
-                 "Info.value_of_yojson: invalid float array element %a"
-                 Yojson.Safe.pp json)
-      in
-      loop [] elems
-  | `Assoc [ (token, `List elems) ] when String.equal token int_array_token ->
-      let rec loop acc = function
-        | [] -> Ok (Int_array (Array.of_list (List.rev acc)))
-        | `Int i :: rest -> loop (i :: acc) rest
-        | `Intlit lit :: rest -> (
-            match parse_int_opt lit with
-            | Some i -> loop (i :: acc) rest
-            | None ->
+                     "Info.value_of_json: invalid float array element %s"
+                     (pp_json j))
+          in
+          loop [] elems
+      | [ (token, Jsont.Array (elems, _)) ]
+        when String.equal token int_array_token ->
+          let rec loop acc = function
+            | [] -> Ok (Int_array (Array.of_list (List.rev acc)))
+            | Jsont.Number (f, _) :: rest -> loop (int_of_float f :: acc) rest
+            | Jsont.String (lit, _) :: rest -> (
+                match parse_int_opt lit with
+                | Some i -> loop (i :: acc) rest
+                | None ->
+                    Error
+                      (Format.asprintf
+                         "Info.value_of_json: invalid int literal %s" lit))
+            | j :: _ ->
                 Error
                   (Format.asprintf
-                     "Info.value_of_yojson: invalid int literal %s" lit))
-        | json :: _ ->
-            Error
-              (Format.asprintf
-                 "Info.value_of_yojson: invalid int array element %a"
-                 Yojson.Safe.pp json)
-      in
-      loop [] elems
-  | `Assoc [ (token, `List elems) ] when String.equal token bool_array_token ->
-      let rec loop acc = function
-        | [] -> Ok (Bool_array (Array.of_list (List.rev acc)))
-        | `Bool b :: rest -> loop (b :: acc) rest
-        | json :: _ ->
-            Error
-              (Format.asprintf
-                 "Info.value_of_yojson: invalid bool array element %a"
-                 Yojson.Safe.pp json)
-      in
-      loop [] elems
-  | `String s -> Ok (String s)
-  | `List values ->
+                     "Info.value_of_json: invalid int array element %s"
+                     (pp_json j))
+          in
+          loop [] elems
+      | [ (token, Jsont.Array (elems, _)) ]
+        when String.equal token bool_array_token ->
+          let rec loop acc = function
+            | [] -> Ok (Bool_array (Array.of_list (List.rev acc)))
+            | Jsont.Bool (b, _) :: rest -> loop (b :: acc) rest
+            | j :: _ ->
+                Error
+                  (Format.asprintf
+                     "Info.value_of_json: invalid bool array element %s"
+                     (pp_json j))
+          in
+          loop [] elems
+      | _ ->
+          let rec loop acc = function
+            | [] -> Ok (Dict (List.rev acc))
+            | (k, v) :: xs -> (
+                match value_of_json v with
+                | Ok vv -> loop ((k, vv) :: acc) xs
+                | Error _ as err -> err)
+          in
+          loop [] (json_assoc json))
+  | Jsont.String (s, _) -> Ok (String s)
+  | Jsont.Array (values, _) ->
       let rec loop acc = function
         | [] -> Ok (List (List.rev acc))
         | x :: xs -> (
-            match value_of_yojson x with
+            match value_of_json x with
             | Ok v -> loop (v :: acc) xs
             | Error _ as err -> err)
       in
       loop [] values
-  | `Assoc fields ->
-      let rec loop acc = function
-        | [] -> Ok (Dict (List.rev acc))
-        | (k, v) :: xs -> (
-            match value_of_yojson v with
-            | Ok vv -> loop ((k, vv) :: acc) xs
-            | Error _ as err -> err)
-      in
-      loop [] fields
-  | json ->
-      Error
-        (Format.asprintf "Info.value_of_yojson: unsupported JSON value %a"
-           Yojson.Safe.pp json)
 
-let of_yojson = function
-  | `Assoc fields ->
+let of_json = function
+  | Jsont.Object _ as json -> (
+      let fields = json_assoc json in
       let rec loop acc = function
         | [] -> Ok (of_list (List.rev acc))
         | (k, v) :: xs -> (
-            match value_of_yojson v with
+            match value_of_json v with
             | Ok vv -> loop ((k, vv) :: acc) xs
             | Error _ as err -> err)
       in
-      loop [] fields
+      loop [] fields)
   | json ->
       Error
-        (Format.asprintf "Info.of_yojson: expected an object, received %a"
-           Yojson.Safe.pp json)
+        (Format.asprintf "Info.of_json: expected an object, received %s"
+           (pp_json json))

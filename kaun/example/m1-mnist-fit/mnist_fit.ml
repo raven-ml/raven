@@ -20,9 +20,9 @@ let () =
     Log.create ~experiment:"mnist"
       ~config:
         [
-          ("epochs", `Int epochs);
-          ("batch_size", `Int batch_size);
-          ("learning_rate", `Float learning_rate);
+          ("epochs", Jsont.Json.int epochs);
+          ("batch_size", Jsont.Json.int batch_size);
+          ("learning_rate", Jsont.Json.number learning_rate);
         ]
       ()
   in

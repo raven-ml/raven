@@ -121,31 +121,32 @@ module Handler = struct
     let* body = Dream.body req in
     let toplevel_id = get_toplevel_id req in
     Dream.log "Executing code for toplevel ID: %s" toplevel_id;
-    try
-      let json = Yojson.Safe.from_string body in
-      let request = Quill_api.code_execution_request_of_yojson json in
-      match request with
-      | Error err ->
-          Dream.log "Failed to parse JSON: %s" err;
-          Dream.respond ~status:`Bad_Request "Invalid JSON format"
-      | Ok request ->
-          let code = request.Quill_api.code in
-          let result = Top.eval ~id:toplevel_id code in
-          let response =
-            Quill_api.
-              {
-                output = String.trim result.output;
-                error = Option.map String.trim result.error;
-                status = result.status;
-              }
-          in
-          let response_json =
-            Quill_api.code_execution_result_to_yojson response
-          in
-          Dream.json (Yojson.Safe.to_string response_json)
-    with Yojson.Json_error msg ->
-      Dream.log "Failed to parse JSON: %s" msg;
-      Dream.respond ~status:`Bad_Request "Invalid JSON format"
+    match
+      Jsont_bytesrw.decode_string Quill_api.code_execution_request_jsont body
+    with
+    | Error err ->
+        Dream.log "Failed to parse JSON: %s" err;
+        Dream.respond ~status:`Bad_Request "Invalid JSON format"
+    | Ok request ->
+        let code = request.Quill_api.code in
+        let result = Top.eval ~id:toplevel_id code in
+        let response =
+          Quill_api.
+            {
+              output = String.trim result.output;
+              error = Option.map String.trim result.error;
+              status = result.status;
+            }
+        in
+        let json_str =
+          match
+            Jsont_bytesrw.encode_string
+              Quill_api.code_execution_result_jsont response
+          with
+          | Ok s -> s
+          | Error err -> failwith err
+        in
+        Dream.json json_str
 end
 
 let create_router file_or_dir_path =

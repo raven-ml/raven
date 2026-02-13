@@ -18,7 +18,8 @@ depends: [
   "dune" {>= "3.19"}
   "rune" {= version}
   "kaun" {= version}
-  "yojson" {>= "2.0.0"}
+  "jsont"
+  "bytesrw"
   "windtrap" {with-test}
   "odoc" {with-doc}
 ]

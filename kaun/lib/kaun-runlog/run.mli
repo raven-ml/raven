@@ -31,7 +31,7 @@ val experiment_name : t -> string option
 val tags : t -> string list
 (** [tags t] returns the metadata tags associated with this run. *)
 
-val config : t -> (string * Yojson.Safe.t) list
+val config : t -> (string * Jsont.json) list
 (** [config t] returns the hyperparameters/configuration for this run. *)
 
 val dir : t -> string
@@ -43,7 +43,7 @@ val create :
   ?base_dir:string ->
   ?experiment:string ->
   ?tags:string list ->
-  ?config:(string * Yojson.Safe.t) list ->
+  ?config:(string * Jsont.json) list ->
   unit ->
   t
 (** [create ?base_dir ?experiment ?tags ?config ()] creates a new run directory

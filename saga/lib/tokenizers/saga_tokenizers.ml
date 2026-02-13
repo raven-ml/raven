@@ -444,75 +444,93 @@ module Tokenizer = struct
     | other ->
         Error (Printf.sprintf "Unknown metaspace prepend_scheme '%s'" other)
 
-  let char_to_field name c = (name, `String (String.make 1 c))
+  let json_obj pairs =
+    Jsont.Json.object'
+      (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
+
+  let char_to_field name c =
+    (name, Jsont.Json.string (String.make 1 c))
 
   let char_of_field name = function
-    | `String s when String.length s = 1 -> Ok s.[0]
+    | Jsont.String (s, _) when String.length s = 1 -> Ok s.[0]
     | _ ->
         Error
           (Printf.sprintf "Expected single-character string for field '%s'" name)
 
   let rec pre_tokenizer_config_to_json = function
     | PreTok_byte_level { add_prefix_space; use_regex; trim_offsets } ->
-        `Assoc
+        json_obj
           [
-            ("type", `String "ByteLevel");
-            ("add_prefix_space", `Bool add_prefix_space);
-            ("use_regex", `Bool use_regex);
-            ("trim_offsets", `Bool trim_offsets);
+            ("type", Jsont.Json.string "ByteLevel");
+            ("add_prefix_space", Jsont.Json.bool add_prefix_space);
+            ("use_regex", Jsont.Json.bool use_regex);
+            ("trim_offsets", Jsont.Json.bool trim_offsets);
           ]
-    | PreTok_bert -> `Assoc [ ("type", `String "BertPreTokenizer") ]
-    | PreTok_whitespace -> `Assoc [ ("type", `String "Whitespace") ]
-    | PreTok_whitespace_split -> `Assoc [ ("type", `String "WhitespaceSplit") ]
+    | PreTok_bert -> json_obj [ ("type", Jsont.Json.string "BertPreTokenizer") ]
+    | PreTok_whitespace ->
+        json_obj [ ("type", Jsont.Json.string "Whitespace") ]
+    | PreTok_whitespace_split ->
+        json_obj [ ("type", Jsont.Json.string "WhitespaceSplit") ]
     | PreTok_punctuation { behavior } ->
-        `Assoc
+        json_obj
           [
-            ("type", `String "Punctuation");
-            ("behavior", `String (behavior_to_string behavior));
+            ("type", Jsont.Json.string "Punctuation");
+            ("behavior", Jsont.Json.string (behavior_to_string behavior));
           ]
     | PreTok_split { pattern; behavior; invert } ->
-        `Assoc
+        json_obj
           [
-            ("type", `String "Split");
-            ("pattern", `String pattern);
-            ("behavior", `String (behavior_to_string behavior));
-            ("invert", `Bool invert);
+            ("type", Jsont.Json.string "Split");
+            ("pattern", Jsont.Json.string pattern);
+            ("behavior", Jsont.Json.string (behavior_to_string behavior));
+            ("invert", Jsont.Json.bool invert);
           ]
     | PreTok_char_delimiter delimiter ->
-        `Assoc
+        json_obj
           [
-            ("type", `String "CharDelimiterSplit");
+            ("type", Jsont.Json.string "CharDelimiterSplit");
             char_to_field "delimiter" delimiter;
           ]
     | PreTok_digits { individual } ->
-        `Assoc
+        json_obj
           [
-            ("type", `String "Digits"); ("individual_digits", `Bool individual);
+            ("type", Jsont.Json.string "Digits");
+            ("individual_digits", Jsont.Json.bool individual);
           ]
     | PreTok_metaspace { replacement; prepend_scheme; split } ->
-        `Assoc
+        json_obj
           [
-            ("type", `String "Metaspace");
-            ("replacement", `String (String.make 1 replacement));
-            ("prepend_scheme", `String (scheme_to_string prepend_scheme));
-            ("split", `Bool split);
+            ("type", Jsont.Json.string "Metaspace");
+            ("replacement", Jsont.Json.string (String.make 1 replacement));
+            ("prepend_scheme", Jsont.Json.string (scheme_to_string prepend_scheme));
+            ("split", Jsont.Json.bool split);
           ]
     | PreTok_sequence configs ->
-        `Assoc
+        json_obj
           [
-            ("type", `String "Sequence");
+            ("type", Jsont.Json.string "Sequence");
             ( "pretokenizers",
-              `List (List.map pre_tokenizer_config_to_json configs) );
+              Jsont.Json.list (List.map pre_tokenizer_config_to_json configs) );
           ]
     | PreTok_fixed_length { length } ->
-        `Assoc [ ("type", `String "FixedLength"); ("length", `Int length) ]
-    | PreTok_unicode_scripts -> `Assoc [ ("type", `String "UnicodeScripts") ]
+        json_obj
+          [
+            ("type", Jsont.Json.string "FixedLength");
+            ("length", Jsont.Json.int length);
+          ]
+    | PreTok_unicode_scripts ->
+        json_obj [ ("type", Jsont.Json.string "UnicodeScripts") ]
+
+  let find_field name fields =
+    match Jsont.Json.find_mem name fields with
+    | Some (_, v) -> Some v
+    | None -> None
 
   let bool_field name default fields =
-    match List.assoc_opt name fields with
-    | Some (`Bool b) -> b
-    | Some (`Int i) -> i <> 0
-    | Some (`String s) -> (
+    match find_field name fields with
+    | Some (Jsont.Bool (b, _)) -> b
+    | Some (Jsont.Number (f, _)) -> int_of_float f <> 0
+    | Some (Jsont.String (s, _)) -> (
         match String.lowercase_ascii s with
         | "true" | "1" -> true
         | "false" | "0" -> false
@@ -520,37 +538,36 @@ module Tokenizer = struct
     | _ -> default
 
   let int_field name default fields =
-    match List.assoc_opt name fields with
-    | Some (`Int i) -> i
-    | Some (`Float f) -> int_of_float f
-    | Some (`String s) -> (
+    match find_field name fields with
+    | Some (Jsont.Number (f, _)) -> int_of_float f
+    | Some (Jsont.String (s, _)) -> (
         match int_of_string_opt s with Some v -> v | None -> default)
     | _ -> default
 
   let rec pre_tokenizer_config_of_json json =
     match json with
-    | `Assoc fields -> (
-        match List.assoc_opt "type" fields with
-        | Some (`String "ByteLevel") ->
+    | Jsont.Object (fields, _) -> (
+        match find_field "type" fields with
+        | Some (Jsont.String ("ByteLevel", _)) ->
             let add_prefix_space = bool_field "add_prefix_space" true fields in
             let use_regex = bool_field "use_regex" true fields in
             let trim_offsets = bool_field "trim_offsets" true fields in
             Ok (PreTok_byte_level { add_prefix_space; use_regex; trim_offsets })
-        | Some (`String "BertPreTokenizer") -> Ok PreTok_bert
-        | Some (`String "Whitespace") -> Ok PreTok_whitespace
-        | Some (`String "WhitespaceSplit") -> Ok PreTok_whitespace_split
-        | Some (`String "Punctuation") -> (
-            match List.assoc_opt "behavior" fields with
-            | Some (`String s) -> (
+        | Some (Jsont.String ("BertPreTokenizer", _)) -> Ok PreTok_bert
+        | Some (Jsont.String ("Whitespace", _)) -> Ok PreTok_whitespace
+        | Some (Jsont.String ("WhitespaceSplit", _)) -> Ok PreTok_whitespace_split
+        | Some (Jsont.String ("Punctuation", _)) -> (
+            match find_field "behavior" fields with
+            | Some (Jsont.String (s, _)) -> (
                 match behavior_of_string s with
                 | Ok behavior -> Ok (PreTok_punctuation { behavior })
                 | Error msg -> Error msg)
             | _ -> Error "Punctuation pre-tokenizer missing 'behavior'")
-        | Some (`String "Split") -> (
+        | Some (Jsont.String ("Split", _)) -> (
             match
-              (List.assoc_opt "pattern" fields, List.assoc_opt "behavior" fields)
+              (find_field "pattern" fields, find_field "behavior" fields)
             with
-            | Some (`String pattern), Some (`String behavior_str) -> (
+            | Some (Jsont.String (pattern, _)), Some (Jsont.String (behavior_str, _)) -> (
                 match behavior_of_string behavior_str with
                 | Ok behavior ->
                     let invert = bool_field "invert" false fields in
@@ -558,22 +575,22 @@ module Tokenizer = struct
                 | Error msg -> Error msg)
             | _ -> Error "Split pre-tokenizer requires 'pattern' and 'behavior'"
             )
-        | Some (`String "CharDelimiterSplit") -> (
-            match List.assoc_opt "delimiter" fields with
+        | Some (Jsont.String ("CharDelimiterSplit", _)) -> (
+            match find_field "delimiter" fields with
             | Some json_char -> (
                 match char_of_field "delimiter" json_char with
                 | Ok delimiter -> Ok (PreTok_char_delimiter delimiter)
                 | Error msg -> Error msg)
             | None -> Error "CharDelimiterSplit requires 'delimiter'")
-        | Some (`String "Digits") ->
+        | Some (Jsont.String ("Digits", _)) ->
             let individual = bool_field "individual_digits" false fields in
             Ok (PreTok_digits { individual })
-        | Some (`String "Metaspace") -> (
+        | Some (Jsont.String ("Metaspace", _)) -> (
             match
-              ( List.assoc_opt "replacement" fields,
-                List.assoc_opt "prepend_scheme" fields )
+              ( find_field "replacement" fields,
+                find_field "prepend_scheme" fields )
             with
-            | Some (`String repl), Some (`String scheme)
+            | Some (Jsont.String (repl, _)), Some (Jsont.String (scheme, _))
               when String.length repl = 1 -> (
                 match scheme_of_string scheme with
                 | Ok prepend_scheme ->
@@ -586,9 +603,9 @@ module Tokenizer = struct
                 Error
                   "Metaspace requires 'replacement' (single char) and \
                    'prepend_scheme'")
-        | Some (`String "Sequence") -> (
-            match List.assoc_opt "pretokenizers" fields with
-            | Some (`List elements) ->
+        | Some (Jsont.String ("Sequence", _)) -> (
+            match find_field "pretokenizers" fields with
+            | Some (Jsont.Array (elements, _)) ->
                 let rec build acc = function
                   | [] -> Ok (List.rev acc)
                   | item :: rest -> (
@@ -599,13 +616,13 @@ module Tokenizer = struct
                 build [] elements
                 |> Result.map (fun cfgs -> PreTok_sequence cfgs)
             | _ -> Error "Sequence pre-tokenizer requires 'pretokenizers' list")
-        | Some (`String "FixedLength") ->
+        | Some (Jsont.String ("FixedLength", _)) ->
             let length = int_field "length" 0 fields in
             if length <= 0 then
               Error "FixedLength pre-tokenizer requires positive length"
             else Ok (PreTok_fixed_length { length })
-        | Some (`String "UnicodeScripts") -> Ok PreTok_unicode_scripts
-        | Some (`String other) ->
+        | Some (Jsont.String ("UnicodeScripts", _)) -> Ok PreTok_unicode_scripts
+        | Some (Jsont.String (other, _)) ->
             Error (Printf.sprintf "Unsupported pre-tokenizer type '%s'" other)
         | _ -> Error "Pre-tokenizer JSON missing 'type'")
     | _ -> Error "Expected JSON object for pre-tokenizer"
@@ -1360,14 +1377,26 @@ module Tokenizer = struct
           |> List.sort (fun (_, id1) (_, id2) -> Int.compare id1 id2)
         in
         let vocab_json =
-          `Assoc (List.map (fun (token, id) -> (token, `Int id)) vocab)
+          json_obj
+            (List.map (fun (token, id) -> (token, Jsont.Json.int id)) vocab)
         in
-        Yojson.Basic.to_file vocab_path vocab_json;
+        let json_str =
+          match
+            Jsont_bytesrw.encode_string ~format:Jsont.Minify Jsont.json
+              vocab_json
+          with
+          | Ok s -> s
+          | Error e ->
+              failwith ("export_tiktoken: failed to encode vocab: " ^ e)
+        in
+        let oc = open_out vocab_path in
+        Fun.protect ~finally:(fun () -> close_out oc) (fun () ->
+            output_string oc json_str);
         let oc = open_out merges_path in
-        output_string oc "#version: 0.2\n";
-        Bpe.get_merges bpe
-        |> List.iter (fun (a, b) -> Printf.fprintf oc "%s %s\n" a b);
-        close_out oc
+        Fun.protect ~finally:(fun () -> close_out oc) (fun () ->
+            output_string oc "#version: 0.2\n";
+            Bpe.get_merges bpe
+            |> List.iter (fun (a, b) -> Printf.fprintf oc "%s %s\n" a b))
     | _ ->
         invalid_arg
           "Tokenizer.export_tiktoken: export is only supported for BPE models"
@@ -1377,84 +1406,99 @@ module Tokenizer = struct
 
   (* JSON serialization helpers *)
   module Json_helpers = struct
-    open Yojson.Basic.Util
+    let json_mem name = function
+      | Jsont.Object (mems, _) -> (
+          match Jsont.Json.find_mem name mems with
+          | Some (_, v) -> v
+          | None -> Jsont.Null ((), Jsont.Meta.none))
+      | _ -> Jsont.Null ((), Jsont.Meta.none)
 
-    let option_to_json f = function None -> `Null | Some v -> f v
+    let option_to_json f = function
+      | None -> Jsont.Json.null ()
+      | Some v -> f v
 
-    let string_or_null = function
-      | `Null -> None
-      | json -> Some (to_string json)
+    let string_or_null json =
+      match json with
+      | Jsont.Null _ -> None
+      | Jsont.String (s, _) -> Some s
+      | _ -> None
 
     let has_field name json =
-      match member name json with `Null -> false | _ -> true
+      match json_mem name json with Jsont.Null _ -> false | _ -> true
 
     let special_of_json json : special =
+      let mem name = json_mem name json in
+      let to_bool_opt = function
+        | Jsont.Bool (b, _) -> Some b
+        | _ -> None
+      in
+      let to_str = function
+        | Jsont.String (s, _) -> s
+        | _ -> failwith "expected string"
+      in
       {
-        token = json |> member "token" |> to_string;
+        token = mem "content" |> to_str;
         single_word =
-          json |> member "single_word" |> to_bool_option
-          |> Option.value ~default:false;
-        lstrip =
-          json |> member "lstrip" |> to_bool_option
-          |> Option.value ~default:false;
-        rstrip =
-          json |> member "rstrip" |> to_bool_option
-          |> Option.value ~default:false;
+          mem "single_word" |> to_bool_opt |> Option.value ~default:false;
+        lstrip = mem "lstrip" |> to_bool_opt |> Option.value ~default:false;
+        rstrip = mem "rstrip" |> to_bool_opt |> Option.value ~default:false;
         normalized =
-          json |> member "normalized" |> to_bool_option
-          |> Option.value ~default:false;
+          mem "normalized" |> to_bool_opt |> Option.value ~default:false;
       }
 
-    let added_token_to_json ~id (s : special) : Yojson.Basic.t =
-      `Assoc
+    let added_token_to_json ~id (s : special) : Jsont.json =
+      json_obj
         [
-          ("id", `Int id);
-          ("content", `String s.token);
-          ("single_word", `Bool s.single_word);
-          ("lstrip", `Bool s.lstrip);
-          ("rstrip", `Bool s.rstrip);
-          ("normalized", `Bool s.normalized);
-          ("special", `Bool true);
+          ("id", Jsont.Json.int id);
+          ("content", Jsont.Json.string s.token);
+          ("single_word", Jsont.Json.bool s.single_word);
+          ("lstrip", Jsont.Json.bool s.lstrip);
+          ("rstrip", Jsont.Json.bool s.rstrip);
+          ("normalized", Jsont.Json.bool s.normalized);
+          ("special", Jsont.Json.bool true);
         ]
 
     let normalizer_to_json = function
-      | None -> `Null
+      | None -> Jsont.Json.null ()
       | Some norm -> Normalizers.to_json norm
 
     let normalizer_of_json = function
-      | `Null -> Ok None
+      | Jsont.Null _ -> Ok None
       | json -> Ok (Some (Normalizers.of_json json))
 
     let pre_tokenizer_to_json pre config =
       match config with
       | Some cfg -> pre_tokenizer_config_to_json cfg
-      | None -> ( match pre with None -> `Null | Some _ -> `Null)
+      | None -> (
+          match pre with
+          | None -> Jsont.Json.null ()
+          | Some _ -> Jsont.Json.null ())
 
     let pre_tokenizer_of_json = function
-      | `Null -> Ok (None, None)
+      | Jsont.Null _ -> Ok (None, None)
       | json -> (
           match pre_tokenizer_config_of_json json with
           | Ok cfg -> Ok (Some (build_pre_tokenizer cfg), Some cfg)
           | Error msg -> Error (Failure msg))
 
     let post_processor_to_json = function
-      | None -> `Null
+      | None -> Jsont.Json.null ()
       | Some post -> Processors.to_json post
 
     let post_processor_of_json = function
-      | `Null -> Ok None
+      | Jsont.Null _ -> Ok None
       | json -> Ok (Some (Processors.of_json json))
 
     let decoder_to_json = function
-      | None -> `Null
+      | None -> Jsont.Json.null ()
       | Some dec -> Decoders.to_json dec
 
     let decoder_of_json = function
-      | `Null -> Ok None
+      | Jsont.Null _ -> Ok None
       | json -> Ok (Some (Decoders.of_json json))
   end
 
-  let to_json (t : t) : Yojson.Basic.t =
+  let to_json (t : t) : Jsont.json =
     let open Json_helpers in
     (* Collect all added tokens with their IDs *)
     let vocab_list = vocab_algorithm t.algorithm in
@@ -1464,93 +1508,101 @@ module Tokenizer = struct
           List.find_opt (fun (token, _) -> token = spec.token) vocab_list
           |> Option.map (fun (_, id) -> added_token_to_json ~id spec))
     in
+    let vocab_to_json vocab =
+      json_obj (List.map (fun (token, id) -> (token, Jsont.Json.int id)) vocab)
+    in
     (* Serialize model based on algorithm type *)
     let model_json =
       match t.algorithm with
       | Alg_bpe bpe ->
           let vocab = Bpe.get_vocab bpe in
-          let vocab_json =
-            `Assoc (List.map (fun (token, id) -> (token, `Int id)) vocab)
-          in
+          let vocab_json = vocab_to_json vocab in
           let merges_json =
-            `List
+            Jsont.Json.list
               (Bpe.get_merges bpe
-              |> List.map (fun (a, b) -> `List [ `String a; `String b ]))
+              |> List.map (fun (a, b) ->
+                     Jsont.Json.list
+                       [ Jsont.Json.string a; Jsont.Json.string b ]))
           in
-          `Assoc
+          json_obj
             [
-              ("type", `String "BPE");
-              ("dropout", option_to_json (fun f -> `Float f) None);
+              ("type", Jsont.Json.string "BPE");
+              ("dropout", option_to_json (fun f -> Jsont.Json.number f) None);
               ( "unk_token",
-                option_to_json (fun s -> `String s) (Bpe.get_unk_token bpe) );
+                option_to_json
+                  (fun s -> Jsont.Json.string s)
+                  (Bpe.get_unk_token bpe) );
               ( "continuing_subword_prefix",
                 option_to_json
-                  (fun s -> `String s)
+                  (fun s -> Jsont.Json.string s)
                   (Bpe.get_continuing_subword_prefix bpe) );
               ( "end_of_word_suffix",
                 option_to_json
-                  (fun s -> `String s)
+                  (fun s -> Jsont.Json.string s)
                   (Bpe.get_end_of_word_suffix bpe) );
-              ("fuse_unk", `Bool false);
-              ("byte_fallback", `Bool false);
-              ("ignore_merges", `Bool false);
+              ("fuse_unk", Jsont.Json.bool false);
+              ("byte_fallback", Jsont.Json.bool false);
+              ("ignore_merges", Jsont.Json.bool false);
               ("vocab", vocab_json);
               ("merges", merges_json);
             ]
       | Alg_wordpiece wp ->
           let vocab = Wordpiece.get_vocab wp in
-          let vocab_json =
-            `Assoc (List.map (fun (token, id) -> (token, `Int id)) vocab)
-          in
+          let vocab_json = vocab_to_json vocab in
           let unk_token = Wordpiece.get_unk_token wp in
           let continuing_subword_prefix =
             Wordpiece.get_continuing_subword_prefix wp
           in
-          `Assoc
+          json_obj
             [
-              ("type", `String "WordPiece");
-              ("unk_token", `String unk_token);
-              ("continuing_subword_prefix", `String continuing_subword_prefix);
-              ("max_input_chars_per_word", `Int 100);
+              ("type", Jsont.Json.string "WordPiece");
+              ("unk_token", Jsont.Json.string unk_token);
+              ( "continuing_subword_prefix",
+                Jsont.Json.string continuing_subword_prefix );
+              ("max_input_chars_per_word", Jsont.Json.int 100);
               ("vocab", vocab_json);
             ]
       | Alg_wordlevel wl ->
           let vocab = Word_level.get_vocab wl in
-          let vocab_json =
-            `Assoc (List.map (fun (token, id) -> (token, `Int id)) vocab)
-          in
-          `Assoc
+          let vocab_json = vocab_to_json vocab in
+          json_obj
             [
-              ("type", `String "WordLevel");
-              ("unk_token", `String "[UNK]");
+              ("type", Jsont.Json.string "WordLevel");
+              ("unk_token", Jsont.Json.string "[UNK]");
               ("vocab", vocab_json);
             ]
       | Alg_unigram ug ->
           let vocab = Unigram.get_vocab ug in
           let vocab_json =
-            `List
+            Jsont.Json.list
               (List.map
-                 (fun (token, score) -> `List [ `String token; `Float score ])
+                 (fun (token, score) ->
+                   Jsont.Json.list
+                     [ Jsont.Json.string token; Jsont.Json.number score ])
                  vocab)
           in
-          `Assoc
+          json_obj
             [
-              ("type", `String "Unigram");
-              ("unk_id", `Null);
+              ("type", Jsont.Json.string "Unigram");
+              ("unk_id", Jsont.Json.null ());
               ("vocab", vocab_json);
             ]
       | Alg_chars _chars ->
-          `Assoc [ ("type", `String "Chars"); ("vocab", `Assoc []) ]
+          json_obj
+            [
+              ("type", Jsont.Json.string "Chars");
+              ("vocab", json_obj []);
+            ]
     in
     let pre_json =
       Json_helpers.pre_tokenizer_to_json t.pre_tokenizer t.pre_tokenizer_config
     in
-    `Assoc
+    json_obj
       [
-        ("version", `String "1.0");
-        ("truncation", `Null);
-        ("padding", `Null);
-        ("added_tokens", `List added_tokens);
+        ("version", Jsont.Json.string "1.0");
+        ("truncation", Jsont.Json.null ());
+        ("padding", Jsont.Json.null ());
+        ("added_tokens", Jsont.Json.list added_tokens);
         ("normalizer", normalizer_to_json t.normalizer);
         ("pre_tokenizer", pre_json);
         ("post_processor", post_processor_to_json t.post_processor);
@@ -1558,36 +1610,58 @@ module Tokenizer = struct
         ("model", model_json);
       ]
 
-  let from_json (json : Yojson.Basic.t) : (t, exn) result =
-    let open Yojson.Basic.Util in
+  let from_json (json : Jsont.json) : (t, exn) result =
     let open Json_helpers in
+    let mem name j = json_mem name j in
+    let to_assoc = function
+      | Jsont.Object (mems, _) ->
+          List.map
+            (fun ((k, _), v) ->
+              match v with
+              | Jsont.Number (f, _) -> (k, int_of_float f)
+              | _ -> failwith ("Expected number for vocab entry: " ^ k))
+            mems
+      | _ -> failwith "Expected object for vocab"
+    in
+    let to_list = function
+      | Jsont.Array (l, _) -> l
+      | _ -> failwith "Expected array"
+    in
+    let to_string_v = function
+      | Jsont.String (s, _) -> s
+      | _ -> failwith "Expected string"
+    in
+    let to_float_v = function
+      | Jsont.Number (f, _) -> f
+      | _ -> failwith "Expected number"
+    in
     try
       (* Parse normalizer *)
       let normalizer_result =
-        normalizer_of_json (json |> member "normalizer")
+        normalizer_of_json (mem "normalizer" json)
       in
       let normalizer =
         match normalizer_result with Ok n -> n | Error e -> raise e
       in
       (* Parse pre-tokenizer *)
-      let pre_result = pre_tokenizer_of_json (json |> member "pre_tokenizer") in
+      let pre_result = pre_tokenizer_of_json (mem "pre_tokenizer" json) in
       let pre, pre_config =
         match pre_result with Ok (p, cfg) -> (p, cfg) | Error e -> raise e
       in
       (* Parse post-processor *)
       let post_result =
-        post_processor_of_json (json |> member "post_processor")
+        post_processor_of_json (mem "post_processor" json)
       in
       let post = match post_result with Ok p -> p | Error e -> raise e in
       (* Parse decoder *)
-      let decoder_result = decoder_of_json (json |> member "decoder") in
+      let decoder_result = decoder_of_json (mem "decoder" json) in
       let decoder =
         match decoder_result with Ok d -> d | Error e -> raise e
       in
       (* Parse model *)
-      let model_json = json |> member "model" in
+      let model_json = mem "model" json in
       let model_type =
-        match string_or_null (model_json |> member "type") with
+        match string_or_null (mem "type" model_json) with
         | Some s -> s
         | None ->
             if has_field "merges" model_json then "BPE"
@@ -1604,31 +1678,26 @@ module Tokenizer = struct
       let algorithm =
         match model_type with
         | "BPE" ->
-            let vocab_json = model_json |> member "vocab" |> to_assoc in
-            let vocab_list =
-              List.map (fun (token, id) -> (token, to_int id)) vocab_json
-            in
+            let vocab_list = to_assoc (mem "vocab" model_json) in
             let merges_json =
-              model_json |> member "merges" |> to_list
+              to_list (mem "merges" model_json)
               |> List.map (function
-                | `List [ a; b ] -> (to_string a, to_string b)
-                | `String s -> (
+                | Jsont.Array ([ a; b ], _) ->
+                    (to_string_v a, to_string_v b)
+                | Jsont.String (s, _) -> (
                     match String.split_on_char ' ' s with
                     | [ a; b ] -> (a, b)
                     | _ -> failwith "Invalid merge string format")
-                | json ->
-                    failwith
-                      (Printf.sprintf "Invalid merge entry: %s"
-                         (Yojson.Basic.to_string json)))
+                | _ -> failwith "Invalid merge entry")
             in
             let unk_token =
-              model_json |> member "unk_token" |> string_or_null
+              string_or_null (mem "unk_token" model_json)
             in
             let continuing_subword_prefix =
-              model_json |> member "continuing_subword_prefix" |> string_or_null
+              string_or_null (mem "continuing_subword_prefix" model_json)
             in
             let end_of_word_suffix =
-              model_json |> member "end_of_word_suffix" |> string_or_null
+              string_or_null (mem "end_of_word_suffix" model_json)
             in
             let vocab_ht = Hashtbl.create (List.length vocab_list) in
             List.iter
@@ -1651,22 +1720,19 @@ module Tokenizer = struct
             in
             Alg_bpe bpe
         | "WordPiece" ->
-            let vocab_json = model_json |> member "vocab" |> to_assoc in
-            let vocab_list =
-              List.map (fun (token, id) -> (token, to_int id)) vocab_json
-            in
+            let vocab_list = to_assoc (mem "vocab" model_json) in
             let unk_token =
-              model_json |> member "unk_token" |> string_or_null
+              string_or_null (mem "unk_token" model_json)
               |> Option.value ~default:"[UNK]"
             in
             let continuing_subword_prefix =
-              model_json
-              |> member "continuing_subword_prefix"
-              |> string_or_null |> Option.value ~default:"##"
+              string_or_null (mem "continuing_subword_prefix" model_json)
+              |> Option.value ~default:"##"
             in
             let max_input_chars_per_word =
-              try model_json |> member "max_input_chars_per_word" |> to_int
-              with _ -> 100
+              match mem "max_input_chars_per_word" model_json with
+              | Jsont.Number (f, _) -> int_of_float f
+              | _ -> 100
             in
             let vocab_ht = Hashtbl.create (List.length vocab_list) in
             List.iter
@@ -1683,23 +1749,21 @@ module Tokenizer = struct
             in
             Alg_wordpiece wp
         | "WordLevel" ->
-            let vocab_json = model_json |> member "vocab" |> to_assoc in
-            let vocab_list =
-              List.map (fun (token, id) -> (token, to_int id)) vocab_json
-            in
+            let vocab_list = to_assoc (mem "vocab" model_json) in
             let unk_token =
-              model_json |> member "unk_token" |> string_or_null
+              string_or_null (mem "unk_token" model_json)
               |> Option.value ~default:"[UNK]"
             in
             let wl = Word_level.create ~vocab:vocab_list ~unk_token () in
             Alg_wordlevel wl
         | "Unigram" ->
-            let vocab_json = model_json |> member "vocab" |> to_list in
+            let vocab_json = to_list (mem "vocab" model_json) in
             let vocab_list =
               List.map
                 (fun arr ->
                   match to_list arr with
-                  | [ token; score ] -> (to_string token, to_float score)
+                  | [ token; score ] ->
+                      (to_string_v token, to_float_v score)
                   | _ -> failwith "Invalid unigram vocab format")
                 vocab_json
             in
@@ -1712,8 +1776,9 @@ module Tokenizer = struct
       in
       (* Parse added tokens *)
       let added_tokens =
-        try json |> member "added_tokens" |> to_list |> List.map special_of_json
-        with _ -> []
+        match mem "added_tokens" json with
+        | Jsont.Array (l, _) -> List.map special_of_json l
+        | _ -> []
       in
       (* Create tokenizer *)
       let tok =
@@ -1726,14 +1791,19 @@ module Tokenizer = struct
       in
       Ok tok
     with
-    | Yojson.Json_error msg -> Error (Failure ("JSON parse error: " ^ msg))
-    | Type_error (msg, _) -> Error (Failure ("JSON type error: " ^ msg))
+    | Failure msg -> Error (Failure msg)
     | e -> Error e
 
   let from_file (path : string) : (t, exn) result =
     try
-      let json = Yojson.Basic.from_file path in
-      from_json json
+      let ic = open_in path in
+      let s =
+        Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
+            really_input_string ic (in_channel_length ic))
+      in
+      match Jsont_bytesrw.decode_string Jsont.json s with
+      | Ok json -> from_json json
+      | Error e -> Error (Failure e)
     with
     | Sys_error msg -> Error (Failure ("File error: " ^ msg))
     | e -> Error e
@@ -1744,5 +1814,12 @@ module Tokenizer = struct
     (* Save tokenizer.json *)
     let json = to_json t in
     let tokenizer_path = Filename.concat path "tokenizer.json" in
-    Yojson.Basic.to_file tokenizer_path json
+    let json_str =
+      match Jsont_bytesrw.encode_string ~format:Jsont.Minify Jsont.json json with
+      | Ok s -> s
+      | Error e -> failwith ("save_pretrained: failed to encode JSON: " ^ e)
+    in
+    let oc = open_out tokenizer_path in
+    Fun.protect ~finally:(fun () -> close_out oc) (fun () ->
+        output_string oc json_str)
 end

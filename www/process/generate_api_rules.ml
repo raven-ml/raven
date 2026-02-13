@@ -1,6 +1,19 @@
 let read_sidebar_json path =
-  if Sys.file_exists path then Yojson.Safe.from_file path
+  if Sys.file_exists path then
+    let ic = open_in path in
+    let content =
+      Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
+          In_channel.input_all ic)
+    in
+    match Jsont_bytesrw.decode_string Jsont.json content with
+    | Ok v -> v
+    | Error e -> failwith e
   else failwith (Printf.sprintf "sidebar.json not found at %s" path)
+
+let find_field name mems =
+  match Jsont.Json.find_mem name mems with
+  | Some (_, v) -> v
+  | None -> raise Not_found
 
 type module_info = {
   name : string; [@warning "-69"]
@@ -10,35 +23,38 @@ type module_info = {
 
 let rec extract_modules ?(path = []) json =
   match json with
-  | `Assoc fields -> (
+  | Jsont.Object (mems, _) -> (
       let node =
-        try List.assoc "node" fields
+        try find_field "node" mems
         with Not_found -> failwith "No node field in entry"
       in
       let children =
-        try match List.assoc "children" fields with `List l -> l | _ -> []
+        try
+          match find_field "children" mems with
+          | Jsont.Array (l, _) -> l
+          | _ -> []
         with Not_found -> []
       in
       match node with
-      | `Assoc node_fields -> (
+      | Jsont.Object (node_fields, _) -> (
           let url =
             try
-              match List.assoc "url" node_fields with
-              | `String s -> Some s
+              match find_field "url" node_fields with
+              | Jsont.String (s, _) -> Some s
               | _ -> None
             with Not_found -> None
           in
           let content =
             try
-              match List.assoc "content" node_fields with
-              | `String s -> s
+              match find_field "content" node_fields with
+              | Jsont.String (s, _) -> s
               | _ -> ""
             with Not_found -> ""
           in
           let kind =
             try
-              match List.assoc "kind" node_fields with
-              | `String s -> Some s
+              match find_field "kind" node_fields with
+              | Jsont.String (s, _) -> Some s
               | _ -> None
             with Not_found -> None
           in
@@ -55,7 +71,8 @@ let rec extract_modules ?(path = []) json =
 
 let process_sidebar json =
   match json with
-  | `List entries -> List.concat_map (extract_modules ~path:[]) entries
+  | Jsont.Array (entries, _) ->
+      List.concat_map (extract_modules ~path:[]) entries
   | _ -> failwith "Expected array at top level of sidebar.json"
 
 let generate_dune_rule library module_info =

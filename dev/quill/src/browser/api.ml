@@ -49,8 +49,13 @@ let execute_code (code : string) : Quill_api.code_execution_result response =
       [ (Jstr.v "Content-Type", Jstr.v "application/json") ]
   in
   let body =
-    Quill_api.code_execution_request_to_yojson { code }
-    |> Yojson.Safe.to_string |> Jstr.v |> Fetch.Body.of_jstr
+    (match
+       Jsont_bytesrw.encode_string Quill_api.code_execution_request_jsont
+         { code }
+     with
+    | Ok s -> s
+    | Error e -> failwith e)
+    |> Jstr.v |> Fetch.Body.of_jstr
   in
 
   let method' = Jstr.v "POST" in
@@ -66,9 +71,10 @@ let execute_code (code : string) : Quill_api.code_execution_result response =
   else
     let* json_jv = fetch_response_json response in
     let json_str = Jstr.to_string (Json.encode json_jv) in
-    let json = Yojson.Safe.from_string json_str in
-    let result = Quill_api.code_execution_result_of_yojson json in
-    match result with
+    match
+      Jsont_bytesrw.decode_string Quill_api.code_execution_result_jsont
+        json_str
+    with
     | Error err -> Fut.error (Json_parse_error err)
     | Ok response -> Fut.ok response
 

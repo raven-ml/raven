@@ -38,11 +38,23 @@ let save_shard path tensors =
   Nx_io.save_safetensor path
     (List.map (fun (name, tensor) -> (name, Nx_io.P tensor)) tensors)
 
+let json_obj pairs =
+  Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
+
 let write_index path mapping =
   let weight_map =
-    `Assoc (List.map (fun (name, shard) -> (name, `String shard)) mapping)
+    json_obj
+      (List.map (fun (name, shard) -> (name, Jsont.Json.string shard)) mapping)
   in
-  Yojson.Safe.to_file path (`Assoc [ ("weight_map", weight_map) ])
+  let json = json_obj [ ("weight_map", weight_map) ] in
+  let json_str =
+    match Jsont_bytesrw.encode_string ~format:Jsont.Minify Jsont.json json with
+    | Ok s -> s
+    | Error e -> failwith e
+  in
+  let oc = open_out path in
+  output_string oc json_str;
+  close_out oc
 
 let to_params mapping =
   let fields = Ptree.Dict.fields_exn ~ctx:"hf params" mapping in

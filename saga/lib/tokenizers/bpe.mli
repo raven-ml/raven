@@ -153,7 +153,7 @@ val from_files : vocab_file:string -> merges_file:string -> t
     capacity 10000).
 
     @raise Sys_error if files cannot be read.
-    @raise Yojson.Json_error if vocab JSON is malformed. *)
+    @raise Failure if vocab JSON is malformed. *)
 
 val default : unit -> t
 (** [default ()] creates an empty BPE model with default configuration.
@@ -275,7 +275,7 @@ val read_files : vocab_file:string -> merges_file:string -> vocab * merges
     {!from_files} for that.
 
     @raise Sys_error if files cannot be read.
-    @raise Yojson.Json_error if vocab JSON is malformed. *)
+    @raise Failure if vocab JSON is malformed. *)
 
 (** {1 Training} *)
 

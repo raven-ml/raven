@@ -120,10 +120,10 @@ val decode : t -> string list -> string
 
 (** {1 Serialization} *)
 
-val to_json : t -> Yojson.Basic.t
+val to_json : t -> Jsont.json
 (** [to_json decoder] serializes decoder to HuggingFace JSON format. *)
 
-val of_json : Yojson.Basic.t -> t
+val of_json : Jsont.json -> t
 (** [of_json json] deserializes decoder from HuggingFace JSON format.
 
-    @raise Yojson.Json_error if JSON is malformed. *)
+    @raise Failure if JSON is malformed. *)

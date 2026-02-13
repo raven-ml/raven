@@ -10,6 +10,15 @@ let check_int msg = equal ~msg int
 let check_string msg = equal ~msg string
 let check_bool msg = equal ~msg bool
 
+let json_of_string s =
+  match Jsont_bytesrw.decode_string Jsont.json s with
+  | Ok v -> v
+  | Error e -> failwith e
+
+let json_assoc = function
+  | Jsont.Object (mems, _) -> List.map (fun ((n, _), v) -> (n, v)) mems
+  | _ -> []
+
 (* Test JSON records orientation *)
 let test_to_string_records () =
   let df =
@@ -24,16 +33,17 @@ let test_to_string_records () =
   let json = Talon_json.to_string ~orient:`Records df in
 
   (* Parse back to verify structure *)
-  let parsed = Yojson.Basic.from_string json in
+  let parsed = json_of_string json in
   match parsed with
-  | `List records -> (
+  | Jsont.Array (records, _) -> (
       check_int "record count" 2 (List.length records);
       (* Check first record has expected fields *)
       match List.hd records with
-      | `Assoc fields ->
-          check_bool "has name" true (List.mem_assoc "name" fields);
-          check_bool "has age" true (List.mem_assoc "age" fields);
-          check_bool "has active" true (List.mem_assoc "active" fields)
+      | Jsont.Object (mems, _) ->
+          let fields = List.map (fun ((n, _), _) -> n) mems in
+          check_bool "has name" true (List.mem "name" fields);
+          check_bool "has age" true (List.mem "age" fields);
+          check_bool "has active" true (List.mem "active" fields)
       | _ -> fail "Expected object in records")
   | _ -> fail "Expected array for records orientation"
 
@@ -48,14 +58,16 @@ let test_to_string_columns () =
 
   let json = Talon_json.to_string ~orient:`Columns df in
 
-  let parsed = Yojson.Basic.from_string json in
+  let parsed = json_of_string json in
   match parsed with
-  | `Assoc fields -> (
-      check_bool "has x column" true (List.mem_assoc "x" fields);
-      check_bool "has y column" true (List.mem_assoc "y" fields);
+  | Jsont.Object (mems, _) -> (
+      let fields = List.map (fun ((n, _), _) -> n) mems in
+      check_bool "has x column" true (List.mem "x" fields);
+      check_bool "has y column" true (List.mem "y" fields);
       (* Check column is array *)
-      match List.assoc "x" fields with
-      | `List vals -> check_int "x length" 3 (List.length vals)
+      let assoc = json_assoc parsed in
+      match List.assoc "x" assoc with
+      | Jsont.Array (vals, _) -> check_int "x length" 3 (List.length vals)
       | _ -> fail "Column should be array")
   | _ -> fail "Expected object for columns orientation"
 
@@ -113,10 +125,13 @@ let test_with_nulls () =
 let test_int_null_masks_are_serialized () =
   let df = create [ ("ints", Col.int32_opt [| Some 1l; None |]) ] in
   let json = Talon_json.to_string ~orient:`Records df in
-  match Yojson.Basic.from_string json with
-  | `List [ `Assoc first; `Assoc second ] -> (
-      match (List.assoc "ints" first, List.assoc "ints" second) with
-      | `Int 1, `Null -> ()
+  match json_of_string json with
+  | Jsont.Array ([ first; second ], _) -> (
+      let first_fields = json_assoc first in
+      let second_fields = json_assoc second in
+      match (List.assoc "ints" first_fields, List.assoc "ints" second_fields)
+      with
+      | Jsont.Number (f, _), Jsont.Null _ when int_of_float f = 1 -> ()
       | _ -> fail "expected null for masked integer value")
   | _ -> fail "unexpected JSON structure for int mask test"
 
@@ -164,14 +179,15 @@ let test_single_row () =
   let df = create [ ("x", Col.int32_list [ 42l ]) ] in
 
   let json = Talon_json.to_string ~orient:`Records df in
-  let parsed = Yojson.Basic.from_string json in
+  let parsed = json_of_string json in
 
   match parsed with
-  | `List [ record ] -> (
+  | Jsont.Array ([ record ], _) -> (
       match record with
-      | `Assoc fields -> (
+      | Jsont.Object (mems, _) -> (
+          let fields = List.map (fun ((n, _), v) -> (n, v)) mems in
           match List.assoc "x" fields with
-          | `Int i -> check_int "single value" 42 i
+          | Jsont.Number (f, _) -> check_int "single value" 42 (int_of_float f)
           | _ -> fail "Expected int")
       | _ -> fail "Expected object")
   | _ -> fail "Expected single record"

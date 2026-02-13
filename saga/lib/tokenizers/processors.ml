@@ -365,76 +365,107 @@ let sequence_id_to_label = function Sequence_a -> "A" | Sequence_b -> "B"
 let sequence_id_to_index = function Sequence_a -> 0 | Sequence_b -> 1
 
 let parse_template_piece_from_json ~special_lookup json =
+  let find_in_fields name fields =
+    match Jsont.Json.find_mem name fields with
+    | Some (_, v) -> Some v
+    | None -> None
+  in
   match json with
-  | `Assoc [ ("Sequence", `Assoc fields) ] ->
-      let id =
-        match List.assoc_opt "id" fields with
-        | Some (`String s) -> (
-            match String.lowercase_ascii s with
-            | "a" -> Sequence_a
-            | "b" -> Sequence_b
+  | Jsont.Object (outer_fields, _) -> (
+      match find_in_fields "Sequence" outer_fields with
+      | Some (Jsont.Object (fields, _)) ->
+          let id =
+            match find_in_fields "id" fields with
+            | Some (Jsont.String (s, _)) -> (
+                match String.lowercase_ascii s with
+                | "a" -> Sequence_a
+                | "b" -> Sequence_b
+                | _ ->
+                    invalid_arg
+                      "Processors.template: invalid sequence identifier")
+            | Some (Jsont.Number (v, _)) -> (
+                match int_of_float v with
+                | 0 -> Sequence_a
+                | 1 -> Sequence_b
+                | _ ->
+                    invalid_arg
+                      "Processors.template: sequence id must be 0 or 1")
+            | None -> Sequence_a
             | _ ->
-                invalid_arg "Processors.template: invalid sequence identifier")
-        | Some (`Int v) -> (
-            match v with
-            | 0 -> Sequence_a
-            | 1 -> Sequence_b
-            | _ -> invalid_arg "Processors.template: sequence id must be 0 or 1"
-            )
-        | None -> Sequence_a
-        | _ -> invalid_arg "Processors.template: invalid sequence identifier"
-      in
-      let type_id =
-        match List.assoc_opt "type_id" fields with
-        | Some (`Int v) -> v
-        | None -> 0
-        | _ -> invalid_arg "Processors.template: invalid type id for Sequence"
-      in
-      Piece_sequence { id; type_id }
-  | `Assoc [ ("SpecialToken", `Assoc fields) ] ->
-      let token_key =
-        match List.assoc_opt "id" fields with
-        | Some (`String s) -> s
-        | _ ->
-            invalid_arg "Processors.template: SpecialToken missing identifier"
-      in
-      let () =
-        if not (Hashtbl.mem special_lookup token_key) then
-          invalid_arg
-            (Printf.sprintf "Processors.template: unknown special token '%s'"
-               token_key)
-      in
-      let type_id =
-        match List.assoc_opt "type_id" fields with
-        | Some (`Int v) -> v
-        | None -> 0
-        | _ ->
-            invalid_arg "Processors.template: invalid type id for SpecialToken"
-      in
-      Piece_special { key = token_key; type_id }
+                invalid_arg "Processors.template: invalid sequence identifier"
+          in
+          let type_id =
+            match find_in_fields "type_id" fields with
+            | Some (Jsont.Number (v, _)) -> int_of_float v
+            | None -> 0
+            | _ ->
+                invalid_arg
+                  "Processors.template: invalid type id for Sequence"
+          in
+          Piece_sequence { id; type_id }
+      | _ -> (
+          match find_in_fields "SpecialToken" outer_fields with
+          | Some (Jsont.Object (fields, _)) ->
+              let token_key =
+                match find_in_fields "id" fields with
+                | Some (Jsont.String (s, _)) -> s
+                | _ ->
+                    invalid_arg
+                      "Processors.template: SpecialToken missing identifier"
+              in
+              let () =
+                if not (Hashtbl.mem special_lookup token_key) then
+                  invalid_arg
+                    (Printf.sprintf
+                       "Processors.template: unknown special token '%s'"
+                       token_key)
+              in
+              let type_id =
+                match find_in_fields "type_id" fields with
+                | Some (Jsont.Number (v, _)) -> int_of_float v
+                | None -> 0
+                | _ ->
+                    invalid_arg
+                      "Processors.template: invalid type id for SpecialToken"
+              in
+              Piece_special { key = token_key; type_id }
+          | _ ->
+              invalid_arg
+                "Processors.template: unsupported template piece format"))
   | _ -> invalid_arg "Processors.template: unsupported template piece format"
 
 let parse_template_definition ~special_lookup = function
-  | `String s -> parse_template_string ~special_lookup s
-  | `List l -> List.map (parse_template_piece_from_json ~special_lookup) l
-  | `Null -> []
+  | Jsont.String (s, _) -> parse_template_string ~special_lookup s
+  | Jsont.Array (l, _) ->
+      List.map (parse_template_piece_from_json ~special_lookup) l
+  | Jsont.Null _ -> []
   | _ -> invalid_arg "Processors.template: invalid template definition"
 
+let json_obj pairs =
+  Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
+
 let template_to_json pieces =
-  `List
+  Jsont.Json.list
     (List.map
        (function
          | Piece_sequence { id; type_id } ->
              let fields =
-               [
-                 ("id", `String (sequence_id_to_label id));
-                 ("type_id", `Int type_id);
-               ]
+               json_obj
+                 [
+                   ("id", Jsont.Json.string (sequence_id_to_label id));
+                   ("type_id", Jsont.Json.int type_id);
+                 ]
              in
-             `Assoc [ ("Sequence", `Assoc fields) ]
+             json_obj [ ("Sequence", fields) ]
          | Piece_special { key; type_id } ->
-             let fields = [ ("id", `String key); ("type_id", `Int type_id) ] in
-             `Assoc [ ("SpecialToken", `Assoc fields) ])
+             let fields =
+               json_obj
+                 [
+                   ("id", Jsont.Json.string key);
+                   ("type_id", Jsont.Json.int type_id);
+                 ]
+             in
+             json_obj [ ("SpecialToken", fields) ])
        pieces)
 
 let build_encoding_from_pieces pieces source_encodings special_lookup =
@@ -643,11 +674,15 @@ let sequence processors = Sequence processors
 
 let rec to_json = function
   | Bert { sep = sep_str, sep_id; cls = cls_str, cls_id } ->
-      `Assoc
+      json_obj
         [
-          ("type", `String "BertProcessing");
-          ("sep", `List [ `String sep_str; `Int sep_id ]);
-          ("cls", `List [ `String cls_str; `Int cls_id ]);
+          ("type", Jsont.Json.string "BertProcessing");
+          ( "sep",
+            Jsont.Json.list [ Jsont.Json.string sep_str; Jsont.Json.int sep_id ]
+          );
+          ( "cls",
+            Jsont.Json.list [ Jsont.Json.string cls_str; Jsont.Json.int cls_id ]
+          );
         ]
   | Roberta
       {
@@ -657,139 +692,145 @@ let rec to_json = function
         trim_offsets;
         add_prefix_space;
       } ->
-      `Assoc
+      json_obj
         [
-          ("type", `String "RobertaProcessing");
-          ("sep", `List [ `String sep_str; `Int sep_id ]);
-          ("cls", `List [ `String cls_str; `Int cls_id ]);
-          ("pad", `List [ `String pad_str; `Int pad_id ]);
-          ("trim_offsets", `Bool trim_offsets);
-          ("add_prefix_space", `Bool add_prefix_space);
+          ("type", Jsont.Json.string "RobertaProcessing");
+          ( "sep",
+            Jsont.Json.list [ Jsont.Json.string sep_str; Jsont.Json.int sep_id ]
+          );
+          ( "cls",
+            Jsont.Json.list [ Jsont.Json.string cls_str; Jsont.Json.int cls_id ]
+          );
+          ( "pad",
+            Jsont.Json.list [ Jsont.Json.string pad_str; Jsont.Json.int pad_id ]
+          );
+          ("trim_offsets", Jsont.Json.bool trim_offsets);
+          ("add_prefix_space", Jsont.Json.bool add_prefix_space);
         ]
   | ByteLevel { trim_offsets } ->
-      `Assoc
-        [ ("type", `String "ByteLevel"); ("trim_offsets", `Bool trim_offsets) ]
-  | Template { single; pair; special_tokens } ->
-      `Assoc
+      json_obj
         [
-          ("type", `String "TemplateProcessing");
+          ("type", Jsont.Json.string "ByteLevel");
+          ("trim_offsets", Jsont.Json.bool trim_offsets);
+        ]
+  | Template { single; pair; special_tokens } ->
+      json_obj
+        [
+          ("type", Jsont.Json.string "TemplateProcessing");
           ("single", template_to_json single);
           ( "pair",
-            match pair with None -> `Null | Some p -> template_to_json p );
+            match pair with
+            | None -> Jsont.Json.null ()
+            | Some p -> template_to_json p );
           ( "special_tokens",
-            `Assoc
+            Jsont.Json.object'
               (List.map
                  (fun tok ->
-                   ( tok.key,
-                     `Assoc
+                   ( Jsont.Json.name tok.key,
+                     json_obj
                        [
-                         ("id", `String tok.key);
+                         ("id", Jsont.Json.string tok.key);
                          ( "ids",
-                           `List (List.map (fun id -> `Int id) tok.value_ids) );
+                           Jsont.Json.list
+                             (List.map Jsont.Json.int tok.value_ids) );
                          ( "tokens",
-                           `List
-                             (List.map (fun s -> `String s) tok.value_tokens) );
+                           Jsont.Json.list
+                             (List.map Jsont.Json.string tok.value_tokens) );
                        ] ))
                  special_tokens) );
         ]
   | Sequence processors ->
-      `Assoc
+      json_obj
         [
-          ("type", `String "Sequence");
-          ("processors", `List (List.map to_json processors));
+          ("type", Jsont.Json.string "Sequence");
+          ("processors", Jsont.Json.list (List.map to_json processors));
         ]
 
-let rec of_json = function
-  | `Assoc fields -> (
-      match List.assoc_opt "type" fields with
-      | Some (`String "BertProcessing") ->
-          let sep =
-            match List.assoc_opt "sep" fields with
-            | Some (`List [ `String s; `Int i ]) -> (s, i)
-            | _ -> ("[SEP]", 102)
-          in
-          let cls =
-            match List.assoc_opt "cls" fields with
-            | Some (`List [ `String s; `Int i ]) -> (s, i)
-            | _ -> ("[CLS]", 101)
-          in
+let rec of_json json =
+  let find fields name =
+    match Jsont.Json.find_mem name fields with
+    | Some (_, v) -> Some v
+    | None -> None
+  in
+  let parse_str_int_pair fields name default_str default_int =
+    match find fields name with
+    | Some (Jsont.Array ([ Jsont.String (s, _); Jsont.Number (f, _) ], _)) ->
+        (s, int_of_float f)
+    | _ -> (default_str, default_int)
+  in
+  match json with
+  | Jsont.Object (fields, _) -> (
+      match find fields "type" with
+      | Some (Jsont.String ("BertProcessing", _)) ->
+          let sep = parse_str_int_pair fields "sep" "[SEP]" 102 in
+          let cls = parse_str_int_pair fields "cls" "[CLS]" 101 in
           Bert { sep; cls }
-      | Some (`String "RobertaProcessing") ->
-          let sep =
-            match List.assoc_opt "sep" fields with
-            | Some (`List [ `String s; `Int i ]) -> (s, i)
-            | _ -> ("</s>", 2)
-          in
-          let cls =
-            match List.assoc_opt "cls" fields with
-            | Some (`List [ `String s; `Int i ]) -> (s, i)
-            | _ -> ("<s>", 0)
-          in
-          let pad =
-            match List.assoc_opt "pad" fields with
-            | Some (`List [ `String s; `Int i ]) -> (s, i)
-            | _ -> ("<pad>", 1)
-          in
+      | Some (Jsont.String ("RobertaProcessing", _)) ->
+          let sep = parse_str_int_pair fields "sep" "</s>" 2 in
+          let cls = parse_str_int_pair fields "cls" "<s>" 0 in
+          let pad = parse_str_int_pair fields "pad" "<pad>" 1 in
           let trim_offsets =
-            match List.assoc_opt "trim_offsets" fields with
-            | Some (`Bool b) -> b
+            match find fields "trim_offsets" with
+            | Some (Jsont.Bool (b, _)) -> b
             | _ -> true
           in
           let add_prefix_space =
-            match List.assoc_opt "add_prefix_space" fields with
-            | Some (`Bool b) -> b
+            match find fields "add_prefix_space" with
+            | Some (Jsont.Bool (b, _)) -> b
             | _ -> true
           in
           Roberta { sep; cls; pad; trim_offsets; add_prefix_space }
-      | Some (`String "ByteLevel") ->
+      | Some (Jsont.String ("ByteLevel", _)) ->
           let trim_offsets =
-            match List.assoc_opt "trim_offsets" fields with
-            | Some (`Bool b) -> b
+            match find fields "trim_offsets" with
+            | Some (Jsont.Bool (b, _)) -> b
             | _ -> true
           in
           ByteLevel { trim_offsets }
-      | Some (`String "TemplateProcessing") ->
+      | Some (Jsont.String ("TemplateProcessing", _)) ->
           let special_tokens =
-            match List.assoc_opt "special_tokens" fields with
-            | Some (`Assoc tokens) ->
+            match find fields "special_tokens" with
+            | Some (Jsont.Object (tokens, _)) ->
                 List.map
-                  (fun (alias, value) ->
+                  (fun ((alias, _), value) ->
                     match value with
-                    | `Assoc token_fields ->
+                    | Jsont.Object (token_fields, _) ->
                         let key =
-                          match List.assoc_opt "id" token_fields with
-                          | Some (`String s) -> s
+                          match find token_fields "id" with
+                          | Some (Jsont.String (s, _)) -> s
                           | _ -> alias
                         in
                         let value_ids =
-                          match List.assoc_opt "ids" token_fields with
-                          | Some (`List lst) ->
+                          match find token_fields "ids" with
+                          | Some (Jsont.Array (lst, _)) ->
                               List.map
                                 (function
-                                  | `Int v -> v
-                                  | json ->
+                                  | Jsont.Number (f, _) -> int_of_float f
+                                  | v ->
                                       invalid_arg
                                         (Printf.sprintf
                                            "Processors.template: invalid id \
                                             value %s for special token"
-                                           (Yojson.Basic.to_string json)))
+                                           (Format.asprintf "%a" Jsont.pp_json
+                                              v)))
                                 lst
                           | _ ->
                               invalid_arg
                                 "Processors.template: special token missing ids"
                         in
                         let value_tokens =
-                          match List.assoc_opt "tokens" token_fields with
-                          | Some (`List lst) ->
+                          match find token_fields "tokens" with
+                          | Some (Jsont.Array (lst, _)) ->
                               List.map
                                 (function
-                                  | `String s -> s
-                                  | json ->
+                                  | Jsont.String (s, _) -> s
+                                  | v ->
                                       invalid_arg
                                         (Printf.sprintf
                                            "Processors.template: invalid token \
                                             value %s for special token"
-                                           (Yojson.Basic.to_string json)))
+                                           (Format.asprintf "%a" Jsont.pp_json
+                                              v)))
                                 lst
                           | _ -> [ key ]
                         in
@@ -805,30 +846,31 @@ let rec of_json = function
                         invalid_arg
                           "Processors.template: invalid special token entry")
                   tokens
-            | Some json ->
+            | Some v ->
                 invalid_arg
                   (Printf.sprintf
                      "Processors.template: invalid special_tokens definition %s"
-                     (Yojson.Basic.to_string json))
+                     (Format.asprintf "%a" Jsont.pp_json v))
             | None -> []
           in
           let lookup = build_special_lookup special_tokens in
           let single =
-            match List.assoc_opt "single" fields with
-            | Some json -> parse_template_definition ~special_lookup:lookup json
+            match find fields "single" with
+            | Some json ->
+                parse_template_definition ~special_lookup:lookup json
             | None -> parse_template_string ~special_lookup:lookup "$A"
           in
           let pair =
-            match List.assoc_opt "pair" fields with
-            | Some `Null -> None
+            match find fields "pair" with
+            | Some (Jsont.Null _) -> None
             | Some json ->
                 Some (parse_template_definition ~special_lookup:lookup json)
             | None -> None
           in
           Template { single; pair; special_tokens }
-      | Some (`String "Sequence") -> (
-          match List.assoc_opt "processors" fields with
-          | Some (`List procs) -> Sequence (List.map of_json procs)
+      | Some (Jsont.String ("Sequence", _)) -> (
+          match find fields "processors" with
+          | Some (Jsont.Array (procs, _)) -> Sequence (List.map of_json procs)
           | _ -> failwith "Invalid Sequence processor")
       | _ -> failwith "Unknown processor type")
   | _ -> failwith "Invalid processor JSON"

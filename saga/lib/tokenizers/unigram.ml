@@ -57,18 +57,36 @@ let tokenize model text =
   in
   consume 0 []
 
+let json_obj pairs =
+  Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
+
+let json_to_string j =
+  match Jsont_bytesrw.encode_string ~format:Jsont.Minify Jsont.json j with
+  | Ok s -> s
+  | Error e -> failwith e
+
 let save model ~folder () =
   let json_vocab =
     Array.to_list model.vocab
     |> List.mapi (fun id (token, prob) ->
-        `Assoc
-          [ ("id", `Int id); ("token", `String token); ("prob", `Float prob) ])
+        json_obj
+          [
+            ("id", Jsont.Json.int id);
+            ("token", Jsont.Json.string token);
+            ("prob", Jsont.Json.number prob);
+          ])
   in
   let json =
-    `Assoc [ ("type", `String "Unigram"); ("vocab", `List json_vocab) ]
+    json_obj
+      [
+        ("type", Jsont.Json.string "Unigram");
+        ("vocab", Jsont.Json.list json_vocab);
+      ]
   in
   let path = Filename.concat folder "unigram.json" in
-  Yojson.Basic.to_file path json;
+  let oc = open_out path in
+  output_string oc (json_to_string json);
+  close_out oc;
   [ "unigram.json" ]
 
 let train ~vocab_size ~show_progress ~special_tokens ~shrinking_factor

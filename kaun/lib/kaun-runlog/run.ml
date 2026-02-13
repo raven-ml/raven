@@ -3,6 +3,41 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* ───── JSON Helpers ───── *)
+
+let json_obj pairs =
+  Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
+
+let json_mem name = function
+  | Jsont.Object (mems, _) -> (
+      match Jsont.Json.find_mem name mems with
+      | Some (_, v) -> v
+      | None -> Jsont.Null ((), Jsont.Meta.none))
+  | _ -> Jsont.Null ((), Jsont.Meta.none)
+
+let json_of_string s =
+  match Jsont_bytesrw.decode_string Jsont.json s with
+  | Ok v -> v
+  | Error e -> failwith e
+
+let json_to_string j =
+  match Jsont_bytesrw.encode_string ~format:Jsont.Minify Jsont.json j with
+  | Ok s -> s
+  | Error e -> failwith e
+
+let json_to_string_pretty j =
+  match Jsont_bytesrw.encode_string ~format:Jsont.Indent Jsont.json j with
+  | Ok s -> s
+  | Error e -> failwith e
+
+let json_of_file path =
+  let ic = open_in path in
+  let s =
+    Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
+        really_input_string ic (in_channel_length ic))
+  in
+  json_of_string s
+
 (* ───── Run Type ───── *)
 
 type t = {
@@ -10,7 +45,7 @@ type t = {
   created_at : float;
   experiment_name : string option;
   tags : string list;
-  config : (string * Yojson.Safe.t) list;
+  config : (string * Jsont.json) list;
   dir : string;
 }
 
@@ -67,55 +102,73 @@ let generate_id ?experiment () =
 
 (* ───── Manifest I/O ───── *)
 
-module Util = Yojson.Safe.Util
-
 let load dir =
   let path = manifest_path dir in
   if not (Sys.file_exists path) then None
   else
     try
-      let json = Yojson.Safe.from_file path in
-      let run_id = Util.member "run_id" json |> Util.to_string in
+      let json = json_of_file path in
+      let run_id =
+        match json_mem "run_id" json with
+        | Jsont.String (s, _) -> s
+        | _ -> failwith "expected string for run_id"
+      in
       let created_at =
-        Util.member "created_at" json
-        |> Util.to_number_option |> Option.value ~default:0.0
+        match json_mem "created_at" json with
+        | Jsont.Number (f, _) -> f
+        | _ -> 0.0
       in
       let experiment_name =
-        Util.member "experiment" json |> Util.to_string_option
+        match json_mem "experiment" json with
+        | Jsont.String (s, _) -> Some s
+        | _ -> None
       in
       let tags =
-        Util.member "tags" json |> Util.to_list
-        |> List.filter_map Util.to_string_option
+        match json_mem "tags" json with
+        | Jsont.Array (l, _) ->
+            List.filter_map
+              (function Jsont.String (s, _) -> Some s | _ -> None)
+              l
+        | _ -> []
       in
       let config =
-        match Util.member "config" json with `Assoc pairs -> pairs | _ -> []
+        match json_mem "config" json with
+        | Jsont.Object (mems, _) ->
+            List.map (fun ((k, _), v) -> (k, v)) mems
+        | _ -> []
       in
       Some { run_id; created_at; experiment_name; tags; config; dir }
     with _ -> None
 
 let write_manifest t =
   let experiment_field =
-    Option.map (fun e -> ("experiment", `String e)) t.experiment_name
+    Option.map (fun e -> ("experiment", Jsont.Json.string e)) t.experiment_name
     |> Option.to_list
   in
   let config_field =
-    match t.config with [] -> [] | pairs -> [ ("config", `Assoc pairs) ]
+    match t.config with
+    | [] -> []
+    | pairs ->
+        [
+          ( "config",
+            json_obj pairs );
+        ]
   in
   let json =
-    `Assoc
+    json_obj
       ([
-         ("schema_version", `Int 1);
-         ("run_id", `String t.run_id);
-         ("created_at", `Float t.created_at);
-         ("tags", `List (List.map (fun s -> `String s) t.tags));
+         ("schema_version", Jsont.Json.int 1);
+         ("run_id", Jsont.Json.string t.run_id);
+         ("created_at", Jsont.Json.number t.created_at);
+         ("tags", Jsont.Json.list (List.map Jsont.Json.string t.tags));
        ]
       @ experiment_field @ config_field)
   in
   let path = manifest_path t.dir in
   let oc = open_out path in
-  output_string oc (Yojson.Safe.pretty_to_string json);
-  output_char oc '\n';
-  close_out oc
+  Fun.protect ~finally:(fun () -> close_out oc) (fun () ->
+      output_string oc (json_to_string_pretty json);
+      output_char oc '\n')
 
 let create ?base_dir ?experiment ?(tags = []) ?(config = []) () =
   let base = Option.value base_dir ~default:(Env.base_dir ()) in
@@ -140,9 +193,9 @@ let create ?base_dir ?experiment ?(tags = []) ?(config = []) () =
 let append_event t event =
   let path = events_path t.dir in
   let oc = open_out_gen [ Open_append; Open_creat ] 0o644 path in
-  output_string oc (Yojson.Safe.to_string (Event.to_json event));
-  output_char oc '\n';
-  close_out oc
+  Fun.protect ~finally:(fun () -> close_out oc) (fun () ->
+      output_string oc (json_to_string (Event.to_json event));
+      output_char oc '\n')
 
 (* ───── Event Reading (batch) ───── *)
 
@@ -154,7 +207,7 @@ let events t =
     let rec read_lines acc =
       match input_line ic with
       | line -> (
-          match Yojson.Safe.from_string line |> Event.of_json with
+          match json_of_string line |> Event.of_json with
           | Ok ev -> read_lines (ev :: acc)
           | Error _ -> read_lines acc)
       | exception End_of_file ->
@@ -250,7 +303,7 @@ let parse_jsonl_chunk chunk =
       let acc =
         if line = "" || is_blank line then acc
         else
-          match Yojson.Safe.from_string line |> Event.of_json with
+          match json_of_string line |> Event.of_json with
           | Ok ev -> ev :: acc
           | Error _ -> acc
       in

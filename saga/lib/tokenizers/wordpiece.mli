@@ -201,13 +201,13 @@ val read_bytes : bytes -> vocab
 
     Same format as [read_file]. *)
 
-val to_yojson : t -> Yojson.Basic.t
-(** [to_yojson model] serializes model to HuggingFace JSON format. *)
+val to_json : t -> Jsont.json
+(** [to_json model] serializes model to HuggingFace JSON format. *)
 
-val of_yojson : Yojson.Basic.t -> t
-(** [of_yojson json] deserializes model from HuggingFace JSON format.
+val of_json : Jsont.json -> t
+(** [of_json json] deserializes model from HuggingFace JSON format.
 
-    @raise Yojson.Json_error if JSON malformed. *)
+    @raise Failure if JSON malformed. *)
 
 val from_bytes : bytes -> t
 (** [from_bytes bytes] deserializes model from bytes.
