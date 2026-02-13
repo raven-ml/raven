@@ -9,6 +9,8 @@ All notable changes to this project will be documented in this file.
 
 ### Nx
 
+- Merge `nx-datasets` package into a `nx.datasets` sublibrary. (@tmattio)
+- Replace `ocurl` C dependency with `curl` CLI for HTTP requests across the ecosystem (`nx.datasets`, `kaun.huggingface`, `kaun.models`, `kaun.datasets`). (@tmattio)
 - Add missing bool→low-precision cast support (f16/bf16/fp8) in the C backend. (@tmattio)
 - Add UInt32/UInt64 dtypes, rename complex dtypes to Complex64/Complex128, and drop Complex16/QInt8/QUInt8/Int/NativeInt as tensor element dtypes. (@tmattio)
 - Move the `Rng` module from Rune into Nx. All random number generation functions (`rand`, `randn`, `randint`, etc.) now require an explicit `~key:Rng.key` parameter for reproducibility and stateless RNG. Use `Rng.key seed` to create a key and `Rng.split` to derive independent subkeys. (@tmattio)
@@ -23,7 +25,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Remove JIT compilation support from Rune. The `Rune.Jit` module and LLVM/Metal backends have been removed and will be re-introduced later as a standalone package. (@tmattio)
 - Rewrite `Autodiff` module to fix critical JVP correctness issues, enable higher-order derivatives (nested gradients), and introduce `vjp` as a first-class primitive. (@tmattio)
+- Fix pointer-based hashing in autodiff, correcting nested JVP handler behavior. (@tmattio)
 - Add autodiff support for `as_strided`, enabling gradients through slicing and indexing operations (@tmattio)
 - Add autodiff support for `cummax` and `cummin` cumulative operations (@tmattio)
 - Add autodiff support for FFT operations (@tmattio)
@@ -31,9 +35,18 @@ All notable changes to this project will be documented in this file.
 
 ### Kaun
 
-- Implemented kaun-console CLI & consolidated logging and reader modules into kaun-runlog. (#167, @Arsalaan-Alam)
-- Implemented event_reader module for incremental JSONL reading. (#166, @Arsalaan-Alam)
+- Implemented kaun-console CLI & consolidated logging and reader modules into kaun-runlog. (#167, #166, #170, @Arsalaan-Alam)
 - Reinitialize dataset each epoch to avoid iterator exhaustion (#147, @Shocker444, @tmattio)
+
+### Hugin
+
+- Fix potential bad memory access in rendering. (@tmattio)
+
+### Saga
+
+- Remove dependency on `str` library. (@tmattio)
+- Generate unicode data offline, removing runtime dependency on `uucp`. (@tmattio)
+- Remove `uutf` dependency in favour of OCaml `Stdlib` unicode support. (@tmattio)
 
 ### Quill
 
