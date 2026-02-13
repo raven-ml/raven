@@ -1,3 +1,0 @@
-(executables
- (names optimizer_schedule)
- (libraries rune kaun))

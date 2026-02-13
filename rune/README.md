@@ -36,7 +36,7 @@ print grad_x
 
 ## Examples
 
-See the `example/` directory for:
+See the `examples/` directory for:
 - `01-mlp`: training a simple MLP with `value_and_grads`
 - `xx-higher-derivative`: computing higher-order derivatives
 

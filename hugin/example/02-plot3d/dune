@@ -1,3 +1,0 @@
-(executable
- (name plot3d)
- (libraries hugin nx))

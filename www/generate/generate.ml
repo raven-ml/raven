@@ -5,6 +5,9 @@ let templates_dir = "templates"
 
 let lib_doc_dir lib_name = Filename.concat (Filename.concat ".." lib_name) "doc"
 
+let lib_examples_dir lib_name =
+  Filename.concat (Filename.concat ".." lib_name) "examples"
+
 type library = {
   name : string;
   display : string;
@@ -250,6 +253,42 @@ let generate_lib_nav lib_name =
         Printf.sprintf {|          <li><a href="%s">%s</a></li>|} url title)
     |> String.concat "\n"
 
+let generate_lib_examples_nav lib_name =
+  let dir = lib_examples_dir lib_name in
+  if not (Sys.file_exists dir && Sys.is_directory dir) then ""
+  else
+    let entries =
+      Sys.readdir dir |> Array.to_list
+      |> List.filter (fun entry ->
+          Sys.is_directory (Filename.concat dir entry))
+      |> List.sort String.compare
+      |> List.map (fun entry ->
+          let slug = strip_order_prefix entry in
+          let title = title_case slug in
+          let url =
+            Printf.sprintf "/docs/%s/examples/%s/" lib_name slug
+          in
+          (title, url))
+    in
+    match entries with
+    | [] -> ""
+    | _ ->
+        let items =
+          entries
+          |> List.map (fun (title, url) ->
+              Printf.sprintf {|          <li><a href="%s">%s</a></li>|} url
+                title)
+          |> String.concat "\n"
+        in
+        Printf.sprintf
+          {|      <div class="nav-section">
+        <div class="nav-title">Examples</div>
+        <ul class="nav-links">
+%s
+        </ul>
+      </div>|}
+          items
+
 (* -- Template -- *)
 
 let select_template path =
@@ -277,6 +316,7 @@ let apply_template ~template ~title ~breadcrumbs ~content ~lib =
       |> replace "{{lib_color}}" lib.color
       |> replace "{{lib_description}}" lib.description
       |> replace "{{lib_nav}}" (generate_lib_nav lib.name)
+      |> replace "{{lib_examples_nav}}" (generate_lib_examples_nav lib.name)
 
 (* -- Processing -- *)
 
@@ -314,6 +354,60 @@ let process_file ~path full_path =
   ensure_dir (Filename.dirname out);
   write_file out content
 
+let escape_html s =
+  let buf = Buffer.create (String.length s) in
+  String.iter
+    (fun c ->
+      match c with
+      | '&' -> Buffer.add_string buf "&amp;"
+      | '<' -> Buffer.add_string buf "&lt;"
+      | '>' -> Buffer.add_string buf "&gt;"
+      | _ -> Buffer.add_char buf c)
+    s;
+  Buffer.contents buf
+
+let process_example ~lib example_dir =
+  let entry = Filename.basename example_dir in
+  let slug = strip_order_prefix entry in
+  let path = Printf.sprintf "docs/%s/examples/%s.md" lib.name slug in
+  let readme_path = Filename.concat example_dir "README.md" in
+  let prose_html =
+    if Sys.file_exists readme_path then render_markdown (read_file readme_path)
+    else Printf.sprintf "<h1>%s</h1>" (escape_html (title_case slug))
+  in
+  let ml_files =
+    Sys.readdir example_dir |> Array.to_list
+    |> List.filter (fun f -> Filename.extension f = ".ml")
+    |> List.sort String.compare
+  in
+  let multi = List.length ml_files > 1 in
+  let code_html =
+    ml_files
+    |> List.map (fun f ->
+        let code = read_file (Filename.concat example_dir f) in
+        let header =
+          if multi then Printf.sprintf "<h3>%s</h3>\n" (escape_html f)
+          else ""
+        in
+        Printf.sprintf "%s<pre><code class=\"language-ocaml\">%s</code></pre>"
+          header (escape_html code))
+    |> String.concat "\n"
+  in
+  let html = prose_html ^ "\n" ^ code_html in
+  let h1 = extract_h1 html in
+  let title = match h1 with Some t -> t ^ " - raven" | None -> "raven" in
+  let page_title =
+    match h1 with Some t -> t | None -> title_case slug
+  in
+  let breadcrumbs = make_breadcrumbs (url_segments path) page_title in
+  let template = read_file (select_template path) in
+  let content =
+    apply_template ~template ~title ~breadcrumbs ~content:html ~lib:(Some lib)
+  in
+  let out = dest_path path in
+  ensure_dir (Filename.dirname out);
+  write_file out content
+
 let () =
   walk site_dir
   |> List.iter (fun p -> process_file ~path:(strip_prefix ~prefix:site_dir p) p);
@@ -343,4 +437,12 @@ let () =
                 let path =
                   Filename.concat (Filename.concat "docs" lib.name) clean_rel
                 in
-                process_file ~path full_path))
+                process_file ~path full_path));
+  libraries
+  |> List.iter (fun lib ->
+       let dir = lib_examples_dir lib.name in
+       if Sys.file_exists dir && Sys.is_directory dir then
+         Sys.readdir dir |> Array.to_list |> List.sort String.compare
+         |> List.iter (fun entry ->
+              let full = Filename.concat dir entry in
+              if Sys.is_directory full then process_example ~lib full))

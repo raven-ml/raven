@@ -22,6 +22,7 @@ dune pkg lock && dune build sowilo
 
 Here's a working example that loads an image and detects edges:
 
+<!-- $MDX skip -->
 ```ocaml
 open Sowilo
 
@@ -62,6 +63,7 @@ let () =
 
 ## Common Operations
 
+<!-- $MDX skip -->
 ```ocaml
 (* Color space conversions *)
 let gray = to_grayscale color_img
@@ -98,6 +100,7 @@ let edges = canny img ~low:100. ~high:200.
 
 Sowilo works with nx for image I/O:
 
+<!-- $MDX skip -->
 ```ocaml
 (* Load images *)
 let img = Nx_io.load_image "input.jpg"
@@ -114,6 +117,7 @@ Hugin.show fig
 
 Process multiple images at once:
 
+<!-- $MDX skip -->
 ```ocaml
 (* Stack images into batch: [N; H; W; C] *)
 let batch = Rune.Tensor.stack images ~axis:0
@@ -129,6 +133,7 @@ let processed_images = Rune.Tensor.unstack processed_batch ~axis:0
 
 Sowilo operations can be part of neural networks:
 
+<!-- $MDX skip -->
 ```ocaml
 (* Preprocessing for neural network *)
 let preprocess img =
@@ -144,7 +149,7 @@ let augmented = Model.forward model (preprocess input)
 
 ## Next Steps
 
-Check out the examples in `sowilo/example/` for complete image processing pipelines including:
+Check out the examples in `sowilo/examples/` for complete image processing pipelines including:
 - Edge detection workflows
 - Image filtering and denoising  
 - Morphological operations

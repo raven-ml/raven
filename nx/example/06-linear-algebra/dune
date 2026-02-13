@@ -1,3 +1,0 @@
-(executable
- (name linear_algebra)
- (libraries nx))

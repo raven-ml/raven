@@ -1,3 +1,0 @@
-(executable
- (name statistics)
- (libraries nx))
