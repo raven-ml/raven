@@ -105,33 +105,47 @@ let tokenize model sequence =
       let id = Hashtbl.find model.vocab model.unk_token in
       [ { id; value = model.unk_token; offsets = (0, String.length sequence) } ]
     else
+      let seq_len = String.length sequence in
+      let prefix = model.continuing_subword_prefix in
+      let prefix_len = String.length prefix in
       let rec tokenize_greedy start acc =
-        if start >= String.length sequence then List.rev acc
+        if start >= seq_len then List.rev acc
         else
-          let rec find_longest_match end_pos =
-            if end_pos <= start then None
+          (* Build the full candidate string once: prefix ^ sequence[start..] *)
+          let remainder = seq_len - start in
+          let full_candidate =
+            if start > 0 then prefix ^ String.sub sequence start remainder
+            else String.sub sequence start remainder
+          in
+          let candidate_len = String.length full_candidate in
+          let rec find_longest_match cand_end =
+            let token_end_in_seq =
+              if start > 0 then cand_end - prefix_len else cand_end
+            in
+            if token_end_in_seq <= 0 then None
             else
-              let substr = String.sub sequence start (end_pos - start) in
-              let token_str =
-                if start > 0 then model.continuing_subword_prefix ^ substr
-                else substr
-              in
+              let token_str = String.sub full_candidate 0 cand_end in
               match Hashtbl.find_opt model.vocab token_str with
               | Some id ->
+                  let end_pos = start + token_end_in_seq in
                   Some { id; value = token_str; offsets = (start, end_pos) }
               | None ->
-                  let new_end =
-                    let rec find_char_start pos =
-                      if pos <= start then start
-                      else if Char.code sequence.[pos - 1] land 0xC0 <> 0x80
+                  (* Step back one UTF-8 character *)
+                  let new_cand_end =
+                    let rec find_char_boundary pos =
+                      if pos <= (if start > 0 then prefix_len else 0) then 0
+                      else if
+                        Char.code full_candidate.[pos - 1] land 0xC0 <> 0x80
                       then pos - 1
-                      else find_char_start (pos - 1)
+                      else find_char_boundary (pos - 1)
                     in
-                    find_char_start end_pos
+                    find_char_boundary cand_end
                   in
-                  if new_end <= start then None else find_longest_match new_end
+                  if new_cand_end <= (if start > 0 then prefix_len else 0) then
+                    None
+                  else find_longest_match new_cand_end
           in
-          match find_longest_match (String.length sequence) with
+          match find_longest_match candidate_len with
           | Some token -> tokenize_greedy (snd token.offsets) (token :: acc)
           | None ->
               let id = Hashtbl.find model.vocab model.unk_token in
@@ -139,7 +153,7 @@ let tokenize model sequence =
                 {
                   id;
                   value = model.unk_token;
-                  offsets = (0, String.length sequence);
+                  offsets = (0, seq_len);
                 };
               ]
       in
