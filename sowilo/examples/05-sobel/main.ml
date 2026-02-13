@@ -42,14 +42,16 @@ let () =
   let ax2 = Hugin.subplot ~nrows:1 ~ncols:3 ~index:2 fig in
   ignore
     (ax2
-    |> Hugin.Plotting.imshow ~data:(Rune.to_nx (visualize_sobel sobel_x))
+    |> Hugin.Plotting.imshow
+         ~data:(Rune.to_nx (visualize_sobel sobel_x))
          ~cmap:Hugin.Artist.Colormap.gray
     |> Hugin.Axes.set_title "Sobel X"
     |> Hugin.Axes.set_xticks [] |> Hugin.Axes.set_yticks []);
   let ax3 = Hugin.subplot ~nrows:1 ~ncols:3 ~index:3 fig in
   ignore
     (ax3
-    |> Hugin.Plotting.imshow ~data:(Rune.to_nx (visualize_sobel sobel_y))
+    |> Hugin.Plotting.imshow
+         ~data:(Rune.to_nx (visualize_sobel sobel_y))
          ~cmap:Hugin.Artist.Colormap.gray
     |> Hugin.Axes.set_title "Sobel Y"
     |> Hugin.Axes.set_xticks [] |> Hugin.Axes.set_yticks []);

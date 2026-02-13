@@ -151,8 +151,8 @@ val tokenize : t -> string -> token list
     Words exceeding max_input_chars_per_word are treated as single unk_token. *)
 
 val tokenize_ids : t -> string -> int array
-(** [tokenize_ids model text] returns only token IDs, skipping string and
-    offset metadata. Faster than [tokenize] when only IDs are needed. *)
+(** [tokenize_ids model text] returns only token IDs, skipping string and offset
+    metadata. Faster than [tokenize] when only IDs are needed. *)
 
 val token_to_id : t -> string -> int option
 (** [token_to_id model token] looks up token ID in vocabulary.

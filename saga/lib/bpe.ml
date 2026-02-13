@@ -316,8 +316,7 @@ let word_to_tokens model word =
       offset := end_;
       { id; value; offsets = (start, end_) })
 
-let word_to_ids word =
-  Array.init word.size (fun i -> word.symbols.(i).c)
+let word_to_ids word = Array.init word.size (fun i -> word.symbols.(i).c)
 
 let tokenize model text =
   if String.length text = 0 then []

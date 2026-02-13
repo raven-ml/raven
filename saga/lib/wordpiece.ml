@@ -133,7 +133,7 @@ let tokenize model sequence =
                   (* Step back one UTF-8 character *)
                   let new_cand_end =
                     let rec find_char_boundary pos =
-                      if pos <= (if start > 0 then prefix_len else 0) then 0
+                      if pos <= if start > 0 then prefix_len else 0 then 0
                       else if
                         Char.code full_candidate.[pos - 1] land 0xC0 <> 0x80
                       then pos - 1
@@ -141,7 +141,7 @@ let tokenize model sequence =
                     in
                     find_char_boundary cand_end
                   in
-                  if new_cand_end <= (if start > 0 then prefix_len else 0) then
+                  if new_cand_end <= if start > 0 then prefix_len else 0 then
                     None
                   else find_longest_match new_cand_end
           in
@@ -149,13 +149,7 @@ let tokenize model sequence =
           | Some token -> tokenize_greedy (snd token.offsets) (token :: acc)
           | None ->
               let id = Hashtbl.find model.vocab model.unk_token in
-              [
-                {
-                  id;
-                  value = model.unk_token;
-                  offsets = (0, seq_len);
-                };
-              ]
+              [ { id; value = model.unk_token; offsets = (0, seq_len) } ]
       in
       tokenize_greedy 0 []
 
@@ -204,7 +198,7 @@ let tokenize_ids model sequence =
               | None ->
                   let new_end =
                     let rec boundary pos =
-                      if pos <= (if start > 0 then prefix_len else 0) then 0
+                      if pos <= if start > 0 then prefix_len else 0 then 0
                       else if
                         Char.code full_candidate.[pos - 1] land 0xC0 <> 0x80
                       then pos - 1
@@ -212,7 +206,7 @@ let tokenize_ids model sequence =
                     in
                     boundary cand_end
                   in
-                  if new_end <= (if start > 0 then prefix_len else 0) then None
+                  if new_end <= if start > 0 then prefix_len else 0 then None
                   else find new_end
           in
           match find candidate_len with

@@ -58,8 +58,31 @@ let ascii_props =
   done;
   List.iter
     (fun i -> t.(i) <- t.(i) lor 8)
-    [ 33; 34; 35; 37; 38; 39; 40; 41; 42; 44; 45; 46; 47;
-      58; 59; 63; 64; 91; 92; 93; 95; 123; 125 ];
+    [
+      33;
+      34;
+      35;
+      37;
+      38;
+      39;
+      40;
+      41;
+      42;
+      44;
+      45;
+      46;
+      47;
+      58;
+      59;
+      63;
+      64;
+      91;
+      92;
+      93;
+      95;
+      123;
+      125;
+    ];
   t
 
 let[@inline] is_whitespace code =
@@ -188,8 +211,7 @@ let split_gpt2_pattern text =
            if letter_start < len then
              let b = Char.code (String.unsafe_get text letter_start) in
              let is_alpha, clen =
-               if b < 128 then
-                 (Array.unsafe_get ascii_props b land 2 <> 0, 1)
+               if b < 128 then (Array.unsafe_get ascii_props b land 2 <> 0, 1)
                else
                  let code, cl = utf8_next text letter_start in
                  (is_alphabetic code, cl)
@@ -200,9 +222,9 @@ let split_gpt2_pattern text =
                while !j < len && !continue do
                  let b = Char.code (String.unsafe_get text !j) in
                  if b < 128 then
-                   (if Array.unsafe_get ascii_props b land 2 <> 0 then
-                      j := !j + 1
-                    else continue := false)
+                   if Array.unsafe_get ascii_props b land 2 <> 0 then
+                     j := !j + 1
+                   else continue := false
                  else
                    let code, cl = utf8_next text !j in
                    if is_alphabetic code then j := !j + cl
@@ -223,8 +245,7 @@ let split_gpt2_pattern text =
            if digit_start < len then
              let b = Char.code (String.unsafe_get text digit_start) in
              let is_num, clen =
-               if b < 128 then
-                 (Array.unsafe_get ascii_props b land 4 <> 0, 1)
+               if b < 128 then (Array.unsafe_get ascii_props b land 4 <> 0, 1)
                else
                  let code, cl = utf8_next text digit_start in
                  (is_numeric code, cl)
@@ -235,13 +256,12 @@ let split_gpt2_pattern text =
                while !j < len && !continue do
                  let b = Char.code (String.unsafe_get text !j) in
                  if b < 128 then
-                   (if Array.unsafe_get ascii_props b land 4 <> 0 then
-                      j := !j + 1
-                    else continue := false)
+                   if Array.unsafe_get ascii_props b land 4 <> 0 then
+                     j := !j + 1
+                   else continue := false
                  else
                    let code, cl = utf8_next text !j in
-                   if is_numeric code then j := !j + cl
-                   else continue := false
+                   if is_numeric code then j := !j + cl else continue := false
                done;
                tokens := String.sub text start (!j - start) :: !tokens;
                pos := !j;
@@ -258,8 +278,7 @@ let split_gpt2_pattern text =
            if other_start < len then
              let b = Char.code (String.unsafe_get text other_start) in
              let is_other, clen =
-               if b < 128 then
-                 (Array.unsafe_get ascii_props b land 7 = 0, 1)
+               if b < 128 then (Array.unsafe_get ascii_props b land 7 = 0, 1)
                else
                  let code, cl = utf8_next text other_start in
                  ( (not (is_whitespace code))
@@ -273,9 +292,8 @@ let split_gpt2_pattern text =
                while !j < len && !continue do
                  let b = Char.code (String.unsafe_get text !j) in
                  if b < 128 then
-                   (if Array.unsafe_get ascii_props b land 7 = 0 then
-                      j := !j + 1
-                    else continue := false)
+                   if Array.unsafe_get ascii_props b land 7 = 0 then j := !j + 1
+                   else continue := false
                  else
                    let code, cl = utf8_next text !j in
                    if
@@ -297,9 +315,7 @@ let split_gpt2_pattern text =
                let code, _ = utf8_next text !pos in
                is_whitespace code
            in
-           let clen =
-             if b0 < 128 then 1 else snd (utf8_next text !pos)
-           in
+           let clen = if b0 < 128 then 1 else snd (utf8_next text !pos) in
            if is_ws then (
              let j = ref (!pos + clen) in
              let continue = ref true in
@@ -334,8 +350,7 @@ let split_gpt2_pattern text =
                          let nc, _ = utf8_next text next_pos in
                          is_alphabetic nc || is_numeric nc
                      in
-                     if next_alpha_or_num && code = 0x20 then
-                       continue := false
+                     if next_alpha_or_num && code = 0x20 then continue := false
                      else j := !j + cl
                    else j := !j + cl
                  else continue := false
@@ -346,9 +361,7 @@ let split_gpt2_pattern text =
         (* If nothing matched, add single char *)
         if not !matched then (
           let b = Char.code (String.unsafe_get text !pos) in
-          let clen =
-            if b < 128 then 1 else snd (utf8_next text !pos)
-          in
+          let clen = if b < 128 then 1 else snd (utf8_next text !pos) in
           tokens := String.sub text !pos clen :: !tokens;
           pos := !pos + clen);
         match_at_pos ())
@@ -612,8 +625,7 @@ let punctuation ?(behavior = `Isolated) () text =
   in
   while !i < len do
     let b = Char.code (String.unsafe_get text !i) in
-    if b < 128 then
-      handle_char (Array.unsafe_get ascii_props b land 8 <> 0) 1
+    if b < 128 then handle_char (Array.unsafe_get ascii_props b land 8 <> 0) 1
     else
       let code, l = utf8_next text !i in
       handle_char (is_punctuation code) l
@@ -712,8 +724,7 @@ let digits ?(individual_digits = false) () text =
   in
   while !i < len do
     let b = Char.code (String.unsafe_get text !i) in
-    if b < 128 then
-      handle_char (Array.unsafe_get ascii_props b land 4 <> 0) 1
+    if b < 128 then handle_char (Array.unsafe_get ascii_props b land 4 <> 0) 1
     else
       let code, l = utf8_next text !i in
       handle_char (is_numeric code) l
@@ -844,9 +855,7 @@ let unicode_scripts () text =
     if b < 128 then (
       let p = Array.unsafe_get ascii_props b in
       let script : script =
-        if p land 1 <> 0 then `Any
-        else if p land 2 <> 0 then `Latn
-        else `Zyyy
+        if p land 1 <> 0 then `Any else if p land 2 <> 0 then `Latn else `Zyyy
       in
       if
         script <> `Any && !last_script <> Some `Any

@@ -8,9 +8,7 @@ let image_path = "sowilo/examples/lena.png"
 let () =
   let img = Rune.of_nx (Nx_io.load_image image_path) in
   let gray = Sowilo.to_grayscale img in
-  let thresh =
-    Sowilo.threshold ~thresh:128 ~maxval:255 ~type_:Binary gray
-  in
+  let thresh = Sowilo.threshold ~thresh:128 ~maxval:255 ~type_:Binary gray in
   let kernel = Sowilo.get_structuring_element ~shape:Rect ~ksize:(5, 5) in
   let eroded = Sowilo.erode ~kernel thresh in
   let dilated = Sowilo.dilate ~kernel thresh in

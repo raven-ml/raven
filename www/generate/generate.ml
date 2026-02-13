@@ -2,7 +2,6 @@ let site_dir = "site"
 let docs_dir = "docs"
 let build_dir = "build"
 let templates_dir = "templates"
-
 let lib_doc_dir lib_name = Filename.concat (Filename.concat ".." lib_name) "doc"
 
 let lib_examples_dir lib_name =
@@ -125,8 +124,10 @@ let strip_order_prefix s =
   let len = String.length s in
   if
     len >= 3
-    && s.[0] >= '0' && s.[0] <= '9'
-    && s.[1] >= '0' && s.[1] <= '9'
+    && s.[0] >= '0'
+    && s.[0] <= '9'
+    && s.[1] >= '0'
+    && s.[1] <= '9'
     && s.[2] = '-'
   then String.sub s 3 (len - 3)
   else s
@@ -259,15 +260,12 @@ let generate_lib_examples_nav lib_name =
   else
     let entries =
       Sys.readdir dir |> Array.to_list
-      |> List.filter (fun entry ->
-          Sys.is_directory (Filename.concat dir entry))
+      |> List.filter (fun entry -> Sys.is_directory (Filename.concat dir entry))
       |> List.sort String.compare
       |> List.map (fun entry ->
           let slug = strip_order_prefix entry in
           let title = title_case slug in
-          let url =
-            Printf.sprintf "/docs/%s/examples/%s/" lib_name slug
-          in
+          let url = Printf.sprintf "/docs/%s/examples/%s/" lib_name slug in
           (title, url))
     in
     match entries with
@@ -357,38 +355,35 @@ let highlight_html_code_blocks html =
     | None ->
         Buffer.add_string buf (String.sub html !i (len - !i));
         i := len
-    | Some pre_start ->
+    | Some pre_start -> (
         Buffer.add_string buf (String.sub html !i (pre_start - !i));
         let lang_start = pre_start + pre_open_len in
-        (match String.index_from_opt html lang_start '"' with
+        match String.index_from_opt html lang_start '"' with
         | None ->
             Buffer.add_char buf html.[!i];
             i := !i + 1
-        | Some lang_end ->
+        | Some lang_end -> (
             let lang = String.sub html lang_start (lang_end - lang_start) in
             let code_tag = {|<code class="language-|} ^ lang ^ {|">|} in
-            (match find_sub ~start:lang_end html code_tag with
+            match find_sub ~start:lang_end html code_tag with
             | None ->
                 Buffer.add_char buf html.[!i];
                 i := !i + 1
-            | Some code_tag_start ->
+            | Some code_tag_start -> (
                 let content_start = code_tag_start + String.length code_tag in
-                (match find_sub ~start:content_start html code_close with
+                match find_sub ~start:content_start html code_close with
                 | None ->
                     Buffer.add_char buf html.[!i];
                     i := !i + 1
-                | Some content_end ->
+                | Some content_end -> (
                     let raw =
-                      String.sub html content_start
-                        (content_end - content_start)
+                      String.sub html content_start (content_end - content_start)
                     in
                     let code =
-                      raw
-                      |> replace "&amp;" "&"
-                      |> replace "&lt;" "<"
+                      raw |> replace "&amp;" "&" |> replace "&lt;" "<"
                       |> replace "&gt;" ">"
                     in
-                    (match Hilite.src_code_to_html ~lang code with
+                    match Hilite.src_code_to_html ~lang code with
                     | Ok highlighted ->
                         Buffer.add_string buf highlighted;
                         i := content_end + code_close_len
@@ -444,8 +439,7 @@ let process_example ~lib example_dir =
     |> List.map (fun f ->
         let code = read_file (Filename.concat example_dir f) in
         let header =
-          if multi then Printf.sprintf "<h3>%s</h3>\n" (escape_html f)
-          else ""
+          if multi then Printf.sprintf "<h3>%s</h3>\n" (escape_html f) else ""
         in
         let highlighted =
           match Hilite.src_code_to_html ~lang:"ocaml" code with
@@ -459,9 +453,7 @@ let process_example ~lib example_dir =
   let html = prose_html ^ "\n" ^ code_html in
   let h1 = extract_h1 html in
   let title = match h1 with Some t -> t ^ " - raven" | None -> "raven" in
-  let page_title =
-    match h1 with Some t -> t | None -> title_case slug
-  in
+  let page_title = match h1 with Some t -> t | None -> title_case slug in
   let breadcrumbs = make_breadcrumbs (url_segments path) page_title in
   let template = read_file (select_template path) in
   let content =
@@ -477,35 +469,35 @@ let () =
   walk docs_dir |> List.iter (fun p -> process_file ~path:p p);
   libraries
   |> List.iter (fun lib ->
-       let dir = lib_doc_dir lib.name in
-       if Sys.file_exists dir && Sys.is_directory dir then
-         walk dir
-         |> List.iter (fun full_path ->
-              let ext = Filename.extension full_path in
-              let base = Filename.basename full_path in
-              if base = "dune" || ext = ".mld" then ()
-              else
-                let rel = strip_prefix ~prefix:dir full_path in
-                let rel_base = Filename.basename rel in
-                let rel_dir = Filename.dirname rel in
-                let clean_base =
-                  if Filename.extension rel_base = ".md" then
-                    strip_order_prefix (Filename.chop_extension rel_base) ^ ".md"
-                  else rel_base
-                in
-                let clean_rel =
-                  if rel_dir = "." then clean_base
-                  else Filename.concat rel_dir clean_base
-                in
-                let path =
-                  Filename.concat (Filename.concat "docs" lib.name) clean_rel
-                in
-                process_file ~path full_path));
+      let dir = lib_doc_dir lib.name in
+      if Sys.file_exists dir && Sys.is_directory dir then
+        walk dir
+        |> List.iter (fun full_path ->
+            let ext = Filename.extension full_path in
+            let base = Filename.basename full_path in
+            if base = "dune" || ext = ".mld" then ()
+            else
+              let rel = strip_prefix ~prefix:dir full_path in
+              let rel_base = Filename.basename rel in
+              let rel_dir = Filename.dirname rel in
+              let clean_base =
+                if Filename.extension rel_base = ".md" then
+                  strip_order_prefix (Filename.chop_extension rel_base) ^ ".md"
+                else rel_base
+              in
+              let clean_rel =
+                if rel_dir = "." then clean_base
+                else Filename.concat rel_dir clean_base
+              in
+              let path =
+                Filename.concat (Filename.concat "docs" lib.name) clean_rel
+              in
+              process_file ~path full_path));
   libraries
   |> List.iter (fun lib ->
-       let dir = lib_examples_dir lib.name in
-       if Sys.file_exists dir && Sys.is_directory dir then
-         Sys.readdir dir |> Array.to_list |> List.sort String.compare
-         |> List.iter (fun entry ->
-              let full = Filename.concat dir entry in
-              if Sys.is_directory full then process_example ~lib full))
+      let dir = lib_examples_dir lib.name in
+      if Sys.file_exists dir && Sys.is_directory dir then
+        Sys.readdir dir |> Array.to_list |> List.sort String.compare
+        |> List.iter (fun entry ->
+            let full = Filename.concat dir entry in
+            if Sys.is_directory full then process_example ~lib full))

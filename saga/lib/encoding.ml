@@ -340,8 +340,7 @@ and merge_with t1 t2 ~growing_offsets =
     offsets = array_concat_blit t1.offsets merged_offsets (0, 0);
     special_tokens_mask =
       array_concat_blit t1.special_tokens_mask t2.special_tokens_mask 0;
-    attention_mask =
-      array_concat_blit t1.attention_mask t2.attention_mask 0;
+    attention_mask = array_concat_blit t1.attention_mask t2.attention_mask 0;
     overflowing = List.rev !new_overflowing;
     sequence_ranges = new_ranges;
   }

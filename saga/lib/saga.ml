@@ -324,8 +324,7 @@ let encoding_to_processor (e : Encoding.t) : Processors.encoding =
 let processor_to_encoding (pe : Processors.encoding) : Encoding.t =
   let seq = Hashtbl.create 1 in
   Encoding.create ~ids:pe.ids ~type_ids:pe.type_ids ~tokens:pe.tokens
-    ~words:[||] ~offsets:pe.offsets
-    ~special_tokens_mask:pe.special_tokens_mask
+    ~words:[||] ~offsets:pe.offsets ~special_tokens_mask:pe.special_tokens_mask
     ~attention_mask:pe.attention_mask ~overflowing:[] ~sequence_ranges:seq
 
 module Tokenizer = struct
@@ -1110,11 +1109,10 @@ module Tokenizer = struct
     let use_fast_path =
       Option.is_none pair
       && (add_special_tokens = None || add_special_tokens = Some false)
-      && Option.is_none padding
-      && Option.is_none truncation
+      && Option.is_none padding && Option.is_none truncation
       && Option.is_none t.post_processor
     in
-    if use_fast_path then
+    if use_fast_path then (
       let normalized =
         match t.normalizer with
         | Some normalizer -> Normalizers.normalize_str normalizer text
@@ -1141,7 +1139,7 @@ module Tokenizer = struct
           Array.blit a 0 result !pos len;
           pos := !pos + len)
         id_arrays;
-      result
+      result)
     else
       Encoding.get_ids
         (encode t ?pair ?add_special_tokens ?padding ?truncation text)
