@@ -6,6 +6,7 @@
 module Dtype = Nx_core.Dtype
 module View = Nx_core.View
 module Shape = Nx_core.Shape
+module Array1 = Nx_buffer.Array1
 module Symbolic_shape = Nx_core.Symbolic_shape
 module Error = Nx_core.Error
 module Parallel = Parallel
@@ -19,7 +20,6 @@ module Float32x4 = Simd.Float32x4
 module Float64x2 = Simd.Float64x2
 module Int32x4 = Simd.Int32x4
 module Int64x2 = Simd.Int64x2
-
 module Array = struct
   include Stdlib.Array
 
@@ -55,6 +55,26 @@ module Array = struct
   external make_int8 : int -> int8# array = "caml_make_untagged_int8_vect"
   external make_int16 : int -> int16# array
     = "caml_make_untagged_int16_vect"
+
+  external ba_to_unboxed_float_array
+  : (float, Bigarray.float64_elt, Bigarray.c_layout) Bigarray.Array1.t
+  -> float# array
+  = "caml_ba_to_unboxed_float64_array"
+
+  external ba_to_unboxed_float32_array
+  : (float, Bigarray.float32_elt, Bigarray.c_layout) Bigarray.Array1.t
+  -> float32# array
+  = "caml_ba_to_unboxed_float32_array"
+
+  external ba_to_unboxed_int64_array
+  : (int64, Bigarray.int64_elt, Bigarray.c_layout) Bigarray.Array1.t
+  -> int64# array
+  = "caml_ba_to_unboxed_int64_array"
+
+  external ba_to_unboxed_int32_array
+  : (int32, Bigarray.int32_elt, Bigarray.c_layout) Bigarray.Array1.t
+  -> int32# array
+  = "caml_ba_to_unboxed_int32_array"
 end
 
 let shape (v : View.t) : int array =
