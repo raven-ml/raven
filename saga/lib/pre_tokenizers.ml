@@ -38,17 +38,48 @@ let add_utf8 buffer code =
     Buffer.add_char buffer (Char.chr (0x80 lor ((code lsr 6) land 63)));
     Buffer.add_char buffer (Char.chr (0x80 lor (code land 63))))
 
-(* Property functions from Unicode data *)
+(* ASCII property table: packed flags for O(1) classification of ASCII chars.
+   bit 0: whitespace, bit 1: alphabetic, bit 2: numeric, bit 3: punctuation *)
 
-let is_alphabetic code = Unicode_data.is_alphabetic code
-let is_numeric code = Unicode_data.is_numeric code
+let ascii_props =
+  let t = Array.make 128 0 in
+  for i = 9 to 13 do
+    t.(i) <- t.(i) lor 1
+  done;
+  t.(32) <- t.(32) lor 1;
+  for i = 65 to 90 do
+    t.(i) <- t.(i) lor 2
+  done;
+  for i = 97 to 122 do
+    t.(i) <- t.(i) lor 2
+  done;
+  for i = 48 to 57 do
+    t.(i) <- t.(i) lor 4
+  done;
+  List.iter
+    (fun i -> t.(i) <- t.(i) lor 8)
+    [ 33; 34; 35; 37; 38; 39; 40; 41; 42; 44; 45; 46; 47;
+      58; 59; 63; 64; 91; 92; 93; 95; 123; 125 ];
+  t
 
-let is_punctuation code =
-  match Unicode_data.general_category code with
-  | `Pc | `Pd | `Pe | `Pf | `Pi | `Po | `Ps -> true
-  | _ -> false
+let[@inline] is_whitespace code =
+  if code < 128 then Array.unsafe_get ascii_props code land 1 <> 0
+  else Unicode_data.is_white_space code
 
-let is_whitespace code = Unicode_data.is_white_space code
+let[@inline] is_alphabetic code =
+  if code < 128 then Array.unsafe_get ascii_props code land 2 <> 0
+  else Unicode_data.is_alphabetic code
+
+let[@inline] is_numeric code =
+  if code < 128 then Array.unsafe_get ascii_props code land 4 <> 0
+  else Unicode_data.is_numeric code
+
+let[@inline] is_punctuation code =
+  if code < 128 then Array.unsafe_get ascii_props code land 8 <> 0
+  else
+    match Unicode_data.general_category code with
+    | `Pc | `Pd | `Pe | `Pf | `Pi | `Po | `Ps -> true
+    | _ -> false
 
 (* Pre-computed byte ↔ unicode mappings for byte-level encode/decode *)
 let byte_to_unicode, unicode_to_byte =
