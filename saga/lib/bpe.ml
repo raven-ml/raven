@@ -15,19 +15,78 @@ module StringMap = Map.Make (String)
 type vocab = (string, int) Hashtbl.t
 type vocab_r = (int, string) Hashtbl.t
 type merges = (string * string) list
-type merge_map = (int, int * int) Hashtbl.t
+(* Open-addressing hash table for merge lookups.
+   Returns int directly (no option allocation). -1 = not found. *)
+module MergeMap = struct
+  type t = {
+    keys : int array;
+    values : int array;
+    mask : int;
+  }
+
+  let[@inline] hash key =
+    let h = key * 0x517CC1B727220A95 in
+    h lxor (h lsr 29)
+
+  let create entries =
+    let n = List.length entries in
+    let cap = ref 16 in
+    while !cap < n * 2 do
+      cap := !cap * 2
+    done;
+    let mask = !cap - 1 in
+    let keys = Array.make !cap (-1) in
+    let values = Array.make !cap 0 in
+    List.iter
+      (fun (key, value) ->
+        let h = ref (hash key land mask) in
+        while Array.unsafe_get keys !h >= 0 do
+          h := (!h + 1) land mask
+        done;
+        Array.unsafe_set keys !h key;
+        Array.unsafe_set values !h value)
+      entries;
+    { keys; values; mask }
+
+  let[@inline] find t key =
+    let mask = t.mask in
+    let keys = t.keys in
+    let h = ref (hash key land mask) in
+    let k = ref (Array.unsafe_get keys !h) in
+    while !k <> key && !k >= 0 do
+      h := (!h + 1) land mask;
+      k := Array.unsafe_get keys !h
+    done;
+    if !k = key then Array.unsafe_get t.values !h else -1
+
+  let fold f t acc =
+    let keys = t.keys in
+    let values = t.values in
+    let len = Array.length keys in
+    let acc = ref acc in
+    for i = 0 to len - 1 do
+      let k = Array.unsafe_get keys i in
+      if k >= 0 then acc := f k (Array.unsafe_get values i) !acc
+    done;
+    !acc
+
+end
+
+type merge_map = MergeMap.t
 
 let[@inline] merge_key a b = (a lsl 21) lor b
-let[@inline] merge_find tbl a b = Hashtbl.find_opt tbl (merge_key a b)
+let[@inline] pack_merge rank new_id = (rank lsl 21) lor new_id
+let[@inline] merge_rank v = v lsr 21
+let[@inline] merge_new_id v = v land 0x1FFFFF
 
-type symbol = {
-  mutable c : int;
-  mutable prev : int;
-  mutable next : int;
-  mutable len : int;
+type word = {
+  sym_c : int array;
+  sym_prev : int array;
+  sym_next : int array;
+  sym_len : int array;
+  mutable size : int;
 }
 
-type word = { symbols : symbol array; mutable size : int }
 type token = { id : int; value : string; offsets : int * int }
 type cache_entry = word
 
@@ -56,179 +115,392 @@ type t = {
   fuse_unk : bool;
   byte_fallback : bool;
   ignore_merges : bool;
+  ascii_to_id : int array;
+  byte_fallback_ids : int array;
+  char_to_id : (int, int) Hashtbl.t;
+  unk_id : int;
 }
 
 let create_word capacity =
+  let cap = max 16 capacity in
   {
-    symbols = Array.make capacity { c = -1; prev = -1; next = -1; len = 0 };
+    sym_c = Array.make cap 0;
+    sym_prev = Array.make cap 0;
+    sym_next = Array.make cap 0;
+    sym_len = Array.make cap 0;
     size = 0;
   }
 
-let add_symbol word c byte_len =
-  if word.size >= Array.length word.symbols then
-    failwith "Word capacity exceeded";
-  let prev = if word.size > 0 then word.size - 1 else -1 in
-  let symbol = { c; prev; next = -1; len = byte_len } in
-  if prev >= 0 then word.symbols.(prev).next <- word.size;
-  word.symbols.(word.size) <- symbol;
-  word.size <- word.size + 1
+let[@inline] add_symbol word c byte_len =
+  let s = word.size in
+  let prev = if s > 0 then s - 1 else -1 in
+  Array.unsafe_set word.sym_c s c;
+  Array.unsafe_set word.sym_prev s prev;
+  Array.unsafe_set word.sym_next s (-1);
+  Array.unsafe_set word.sym_len s byte_len;
+  if prev >= 0 then Array.unsafe_set word.sym_next prev s;
+  word.size <- s + 1
 
-module PQueue = struct
-  (* Use a binary heap for O(log n) push/pop instead of O(n log n) sort *)
-  type 'a t = {
-    mutable arr : 'a array;
+(* Specialized min-heap for BPE merges using parallel arrays (no tuple allocation).
+   Ordered by (rank, position) — lower rank first, then lower position. *)
+module MergeQueue = struct
+  type t = {
+    mutable ranks : int array;
+    mutable positions : int array;
+    mutable new_ids : int array;
     mutable size : int;
-    cmp : 'a -> 'a -> int;
+    mutable pop_rank : int;
+    mutable pop_pos : int;
+    mutable pop_new_id : int;
   }
 
-  let create_with_capacity cmp cap dummy =
-    { arr = Array.make (max 16 cap) dummy; size = 0; cmp }
+  let create cap =
+    let cap = max 16 cap in
+    {
+      ranks = Array.make cap 0;
+      positions = Array.make cap 0;
+      new_ids = Array.make cap 0;
+      size = 0;
+      pop_rank = 0;
+      pop_pos = 0;
+      pop_new_id = 0;
+    }
 
-  let parent i = (i - 1) / 2
-  let left i = (2 * i) + 1
-  let right i = (2 * i) + 2
+  let[@inline] cmp_lt_rv t i rank pos =
+    let ri = Array.unsafe_get t.ranks i in
+    ri < rank || (ri = rank && Array.unsafe_get t.positions i < pos)
 
-  let swap t i j =
-    let temp = t.arr.(i) in
-    t.arr.(i) <- t.arr.(j);
-    t.arr.(j) <- temp
+  let[@inline] cmp_lt t i j =
+    let ri = Array.unsafe_get t.ranks i in
+    let rj = Array.unsafe_get t.ranks j in
+    ri < rj || (ri = rj && Array.unsafe_get t.positions i < Array.unsafe_get t.positions j)
 
-  let rec sift_up t i =
-    if i > 0 then
-      let p = parent i in
-      if t.cmp t.arr.(i) t.arr.(p) < 0 then (
-        swap t i p;
-        sift_up t p)
+  let sift_up t idx =
+    let i = ref idx in
+    let rank = Array.unsafe_get t.ranks idx in
+    let pos = Array.unsafe_get t.positions idx in
+    let nid = Array.unsafe_get t.new_ids idx in
+    while !i > 0 && (let p = (!i - 1) asr 1 in
+                      let rp = Array.unsafe_get t.ranks p in
+                      rank < rp || (rank = rp && pos < Array.unsafe_get t.positions p))
+    do
+      let p = (!i - 1) asr 1 in
+      Array.unsafe_set t.ranks !i (Array.unsafe_get t.ranks p);
+      Array.unsafe_set t.positions !i (Array.unsafe_get t.positions p);
+      Array.unsafe_set t.new_ids !i (Array.unsafe_get t.new_ids p);
+      i := p
+    done;
+    Array.unsafe_set t.ranks !i rank;
+    Array.unsafe_set t.positions !i pos;
+    Array.unsafe_set t.new_ids !i nid
 
-  let rec sift_down t i =
-    let l = left i in
-    let r = right i in
-    let smallest = ref i in
-    if l < t.size && t.cmp t.arr.(l) t.arr.(!smallest) < 0 then smallest := l;
-    if r < t.size && t.cmp t.arr.(r) t.arr.(!smallest) < 0 then smallest := r;
-    if !smallest <> i then (
-      swap t i !smallest;
-      sift_down t !smallest)
+  let sift_down t idx =
+    let i = ref idx in
+    let rank = Array.unsafe_get t.ranks idx in
+    let pos = Array.unsafe_get t.positions idx in
+    let nid = Array.unsafe_get t.new_ids idx in
+    let continue_ = ref true in
+    while !continue_ do
+      let l = (2 * !i) + 1 in
+      if l >= t.size then
+        continue_ := false
+      else begin
+        let r = l + 1 in
+        let smallest = if r < t.size && cmp_lt t r l then r else l in
+        if cmp_lt_rv t smallest rank pos then (
+          Array.unsafe_set t.ranks !i (Array.unsafe_get t.ranks smallest);
+          Array.unsafe_set t.positions !i (Array.unsafe_get t.positions smallest);
+          Array.unsafe_set t.new_ids !i (Array.unsafe_get t.new_ids smallest);
+          i := smallest)
+        else
+          continue_ := false
+      end
+    done;
+    Array.unsafe_set t.ranks !i rank;
+    Array.unsafe_set t.positions !i pos;
+    Array.unsafe_set t.new_ids !i nid
 
-  let push t x =
-    if t.size = Array.length t.arr then
-      t.arr <- Array.append t.arr (Array.make (max 16 t.size) x);
-    t.arr.(t.size) <- x;
-    sift_up t t.size;
-    t.size <- t.size + 1
+  let push t rank pos new_id =
+    let s = t.size in
+    if s = Array.length t.ranks then begin
+      let new_cap = max 16 (s * 2) in
+      let grow a =
+        let b = Array.make new_cap 0 in
+        Array.blit a 0 b 0 s;
+        b
+      in
+      t.ranks <- grow t.ranks;
+      t.positions <- grow t.positions;
+      t.new_ids <- grow t.new_ids
+    end;
+    Array.unsafe_set t.ranks s rank;
+    Array.unsafe_set t.positions s pos;
+    Array.unsafe_set t.new_ids s new_id;
+    t.size <- s + 1;
+    sift_up t s
 
   let pop t =
-    if t.size = 0 then None
-    else
-      let result = t.arr.(0) in
+    if t.size = 0 then false
+    else begin
+      t.pop_rank <- Array.unsafe_get t.ranks 0;
+      t.pop_pos <- Array.unsafe_get t.positions 0;
+      t.pop_new_id <- Array.unsafe_get t.new_ids 0;
       t.size <- t.size - 1;
-      if t.size > 0 then (
-        t.arr.(0) <- t.arr.(t.size);
-        sift_down t 0);
-      Some result
+      if t.size > 0 then begin
+        Array.unsafe_set t.ranks 0 (Array.unsafe_get t.ranks t.size);
+        Array.unsafe_set t.positions 0 (Array.unsafe_get t.positions t.size);
+        Array.unsafe_set t.new_ids 0 (Array.unsafe_get t.new_ids t.size);
+        sift_down t 0
+      end;
+      true
+    end
 end
 
 let apply_merges model dropout word =
   let p = match dropout with Some p -> p | None -> 0.0 in
   let use_dropout = p > 0.0 in
-  let cmp (r1, p1, _) (r2, p2, _) =
-    let c = r1 - r2 in
-    if c = 0 then p1 - p2 else c
-  in
-  let queue = PQueue.create_with_capacity cmp word.size (0, 0, 0) in
+  let queue = MergeQueue.create word.size in
+  let merges = model.merges in
+  let sym_c = word.sym_c in
+  let sym_prev = word.sym_prev in
+  let sym_next = word.sym_next in
+  let sym_len = word.sym_len in
   for i = 0 to word.size - 2 do
-    if word.symbols.(i).len > 0 && word.symbols.(i + 1).len > 0 then
-      match merge_find model.merges word.symbols.(i).c word.symbols.(i + 1).c with
-      | Some (rank, new_id) -> PQueue.push queue (rank, i, new_id)
-      | None -> ()
+    if Array.unsafe_get sym_len i > 0 && Array.unsafe_get sym_len (i + 1) > 0
+    then begin
+      let key =
+        merge_key (Array.unsafe_get sym_c i) (Array.unsafe_get sym_c (i + 1))
+      in
+      let packed = MergeMap.find merges key in
+      if packed >= 0 then
+        MergeQueue.push queue (merge_rank packed) i (merge_new_id packed)
+    end
   done;
-  let skips = ref [] in
-  let rec process_queue () =
-    match PQueue.pop queue with
-    | None -> ()
-    | Some top -> (
-        let rank, pos, new_id = top in
-        if word.symbols.(pos).len = 0 then process_queue ()
-        else
-          let next_pos = word.symbols.(pos).next in
-          if next_pos = -1 then process_queue ()
-          else
-            match
-              merge_find model.merges word.symbols.(pos).c
-                word.symbols.(next_pos).c
-            with
-            | Some (r, nid) when r = rank && nid = new_id ->
-                if use_dropout && Random.float 1.0 < p then
-                  skips := top :: !skips
-                else (
-                  List.iter (PQueue.push queue) !skips;
-                  skips := [];
-                  word.symbols.(pos).c <- new_id;
-                  word.symbols.(pos).len <-
-                    word.symbols.(pos).len + word.symbols.(next_pos).len;
-                  word.symbols.(pos).next <- word.symbols.(next_pos).next;
-                  word.symbols.(next_pos).len <- 0;
-                  if word.symbols.(pos).next >= 0 then
-                    word.symbols.(word.symbols.(pos).next).prev <- pos;
-                  (if word.symbols.(pos).prev >= 0 then
-                     let prev = word.symbols.(pos).prev in
-                     match
-                       merge_find model.merges word.symbols.(prev).c
-                         word.symbols.(pos).c
-                     with
-                     | Some (r, nid) -> PQueue.push queue (r, prev, nid)
-                     | None -> ());
-                  let next = word.symbols.(pos).next in
-                  if next >= 0 then
-                    match
-                      merge_find model.merges word.symbols.(pos).c
-                        word.symbols.(next).c
-                    with
-                    | Some (r, nid) -> PQueue.push queue (r, pos, nid)
-                    | None -> ());
-                process_queue ()
-            | _ -> process_queue ())
+  let skip_ranks = ref [||] in
+  let skip_positions = ref [||] in
+  let skip_new_ids = ref [||] in
+  let skip_size = ref 0 in
+  let skip_cap = ref 0 in
+  let add_skip rank pos new_id =
+    if !skip_size = !skip_cap then begin
+      let new_cap = max 8 (!skip_cap * 2) in
+      let grow old =
+        let a = Array.make new_cap 0 in
+        if !skip_size > 0 then Array.blit old 0 a 0 !skip_size;
+        a
+      in
+      skip_ranks := grow !skip_ranks;
+      skip_positions := grow !skip_positions;
+      skip_new_ids := grow !skip_new_ids;
+      skip_cap := new_cap
+    end;
+    let s = !skip_size in
+    Array.unsafe_set !skip_ranks s rank;
+    Array.unsafe_set !skip_positions s pos;
+    Array.unsafe_set !skip_new_ids s new_id;
+    skip_size := s + 1
   in
-  process_queue ();
+  let flush_skips () =
+    for i = 0 to !skip_size - 1 do
+      MergeQueue.push queue
+        (Array.unsafe_get !skip_ranks i)
+        (Array.unsafe_get !skip_positions i)
+        (Array.unsafe_get !skip_new_ids i)
+    done;
+    skip_size := 0
+  in
+  while MergeQueue.pop queue do
+    let rank = queue.pop_rank in
+    let pos = queue.pop_pos in
+    let new_id = queue.pop_new_id in
+    if Array.unsafe_get sym_len pos > 0 then begin
+      let next_pos = Array.unsafe_get sym_next pos in
+      if next_pos >= 0 then begin
+        let key =
+          merge_key (Array.unsafe_get sym_c pos)
+            (Array.unsafe_get sym_c next_pos)
+        in
+        let packed = MergeMap.find merges key in
+        if packed >= 0 && merge_new_id packed = new_id then begin
+          if use_dropout && Random.float 1.0 < p then
+            add_skip rank pos new_id
+          else begin
+            flush_skips ();
+            Array.unsafe_set sym_c pos new_id;
+            Array.unsafe_set sym_len pos
+              (Array.unsafe_get sym_len pos
+              + Array.unsafe_get sym_len next_pos);
+            Array.unsafe_set sym_next pos
+              (Array.unsafe_get sym_next next_pos);
+            Array.unsafe_set sym_len next_pos 0;
+            let new_next = Array.unsafe_get sym_next pos in
+            if new_next >= 0 then
+              Array.unsafe_set sym_prev new_next pos;
+            let prev = Array.unsafe_get sym_prev pos in
+            if prev >= 0 then begin
+              let k =
+                merge_key (Array.unsafe_get sym_c prev)
+                  (Array.unsafe_get sym_c pos)
+              in
+              let v = MergeMap.find merges k in
+              if v >= 0 then
+                MergeQueue.push queue (merge_rank v) prev (merge_new_id v)
+            end;
+            let next = Array.unsafe_get sym_next pos in
+            if next >= 0 then begin
+              let k =
+                merge_key (Array.unsafe_get sym_c pos)
+                  (Array.unsafe_get sym_c next)
+              in
+              let v = MergeMap.find merges k in
+              if v >= 0 then
+                MergeQueue.push queue (merge_rank v) pos (merge_new_id v)
+            end
+          end
+        end
+      end
+    end
+  done;
   let j = ref 0 in
   for k = 0 to word.size - 1 do
-    if word.symbols.(k).len > 0 then (
-      if !j <> k then word.symbols.(!j) <- word.symbols.(k);
-      incr j)
+    if Array.unsafe_get sym_len k > 0 then begin
+      if !j <> k then begin
+        Array.unsafe_set sym_c !j (Array.unsafe_get sym_c k);
+        Array.unsafe_set sym_prev !j (Array.unsafe_get sym_prev k);
+        Array.unsafe_set sym_next !j (Array.unsafe_get sym_next k);
+        Array.unsafe_set sym_len !j (Array.unsafe_get sym_len k)
+      end;
+      incr j
+    end
   done;
   word.size <- !j
+
+let[@inline] utf8_byte_len b =
+  if b land 0x80 = 0 then 1
+  else if b land 0xE0 = 0xC0 then 2
+  else if b land 0xF0 = 0xE0 then 3
+  else 4
+
+let[@inline] pack_char_key text pos byte_len =
+  let b0 = Char.code (String.unsafe_get text pos) in
+  match byte_len with
+  | 1 -> b0
+  | 2 -> (b0 lsl 8) lor Char.code (String.unsafe_get text (pos + 1))
+  | 3 ->
+      (b0 lsl 16)
+      lor (Char.code (String.unsafe_get text (pos + 1)) lsl 8)
+      lor Char.code (String.unsafe_get text (pos + 2))
+  | _ ->
+      (b0 lsl 24)
+      lor (Char.code (String.unsafe_get text (pos + 1)) lsl 16)
+      lor (Char.code (String.unsafe_get text (pos + 2)) lsl 8)
+      lor Char.code (String.unsafe_get text (pos + 3))
 
 let merge_word model text =
   let text_len = String.length text in
   let word = create_word text_len in
   let pos = ref 0 in
-  let pending_unk = ref None in
-  let char_buf = Buffer.create 4 in
-  let flush_unk () =
-    match !pending_unk with
-    | Some (unk_id, unk_len) ->
-        add_symbol word unk_id unk_len;
-        pending_unk := None
-    | None -> ()
-  in
-  let rec process_chars () =
-    if !pos >= text_len then flush_unk ()
-    else
-      let d = String.get_utf_8_uchar text !pos in
-      let byte_len = Uchar.utf_decode_length d in
-      if not (Uchar.utf_decode_is_valid d) then (
-        pos := !pos + byte_len;
-        process_chars ())
-      else
-        let u = Uchar.utf_decode_uchar d in
+  let no_prefix = model.continuing_subword_prefix = None in
+  let no_suffix = model.end_of_word_suffix = None in
+  if no_prefix && no_suffix then begin
+    (* Fast path: no prefix/suffix — avoids all per-character string allocation
+       for ASCII via pre-computed lookup tables *)
+    let pending_unk_id = ref (-1) in
+    let pending_unk_len = ref 0 in
+    let flush_unk () =
+      if !pending_unk_id >= 0 then begin
+        add_symbol word !pending_unk_id !pending_unk_len;
+        pending_unk_id := -1;
+        pending_unk_len := 0
+      end
+    in
+    let handle_unk byte_len =
+      if model.unk_id >= 0 then begin
+        if model.fuse_unk then begin
+          if !pending_unk_id >= 0 then
+            pending_unk_len := !pending_unk_len + byte_len
+          else begin
+            pending_unk_id := model.unk_id;
+            pending_unk_len := byte_len
+          end
+        end else begin
+          flush_unk ();
+          add_symbol word model.unk_id byte_len
+        end
+      end
+    in
+    while !pos < text_len do
+      let b = Char.code (String.unsafe_get text !pos) in
+      if b < 128 then begin
+        (* ASCII: direct array lookup, zero allocation *)
+        let id = Array.unsafe_get model.ascii_to_id b in
+        if id >= 0 then begin
+          flush_unk ();
+          add_symbol word id 1
+        end else if model.byte_fallback then begin
+          let fbid = Array.unsafe_get model.byte_fallback_ids b in
+          if fbid >= 0 then begin
+            flush_unk ();
+            add_symbol word fbid 1
+          end else
+            handle_unk 1
+        end else
+          handle_unk 1;
+        incr pos
+      end else begin
+        (* Multi-byte UTF-8: packed-int key lookup, zero allocation *)
+        let byte_len = utf8_byte_len b in
+        let key = pack_char_key text !pos byte_len in
+        (match Hashtbl.find_opt model.char_to_id key with
+        | Some id ->
+            flush_unk ();
+            add_symbol word id byte_len
+        | None ->
+            if model.byte_fallback then begin
+              let all_found = ref true in
+              for i = 0 to byte_len - 1 do
+                if
+                  Array.unsafe_get model.byte_fallback_ids
+                    (Char.code (String.unsafe_get text (!pos + i)))
+                  < 0
+                then all_found := false
+              done;
+              if !all_found then begin
+                flush_unk ();
+                for i = 0 to byte_len - 1 do
+                  add_symbol word
+                    (Array.unsafe_get model.byte_fallback_ids
+                       (Char.code (String.unsafe_get text (!pos + i))))
+                    1
+                done
+              end else handle_unk byte_len
+            end else handle_unk byte_len);
+        pos := !pos + byte_len
+      end
+    done;
+    flush_unk ()
+  end else begin
+    (* Slow path: models with continuing_subword_prefix or end_of_word_suffix *)
+    let pending_unk = ref None in
+    let flush_unk () =
+      match !pending_unk with
+      | Some (uid, ulen) ->
+          add_symbol word uid ulen;
+          pending_unk := None
+      | None -> ()
+    in
+    while !pos < text_len do
+      let b = Char.code (String.unsafe_get text !pos) in
+      let byte_len = utf8_byte_len b in
+      if b land 0xC0 = 0x80 then
+        (* continuation byte of invalid sequence *)
+        pos := !pos + 1
+      else begin
         let start = !pos in
-        Buffer.clear char_buf;
-        Buffer.add_utf_8_uchar char_buf u;
-        let char_str = Buffer.contents char_buf in
+        let char_str = String.sub text start byte_len in
         pos := !pos + byte_len;
         let is_first = start = 0 in
         let is_last = !pos >= text_len in
-        (* Build token_str with minimal allocations *)
         let token_str =
           match
             ( is_first,
@@ -239,7 +511,8 @@ let merge_word model text =
           | true, true, _, _ -> char_str
           | true, false, _, Some suffix -> char_str ^ suffix
           | true, false, _, None -> char_str
-          | false, true, Some prefix, Some suffix -> prefix ^ char_str ^ suffix
+          | false, true, Some prefix, Some suffix ->
+              prefix ^ char_str ^ suffix
           | false, true, Some prefix, None -> prefix ^ char_str
           | false, true, None, Some suffix -> char_str ^ suffix
           | false, true, None, None -> char_str
@@ -247,70 +520,67 @@ let merge_word model text =
           | false, false, None, _ -> char_str
         in
         let unk_handling () =
-          match model.unk_token with
-          | Some unk -> (
-              match Hashtbl.find_opt model.vocab unk with
-              | Some unk_id ->
-                  if model.fuse_unk then
-                    pending_unk :=
-                      Some
-                        (match !pending_unk with
-                        | Some (id, len) -> (id, len + byte_len)
-                        | None -> (unk_id, byte_len))
-                  else (
-                    flush_unk ();
-                    add_symbol word unk_id byte_len)
-              | None ->
-                  failwith
-                    (Printf.sprintf "Unknown token '%s' not in vocabulary" unk))
-          | None -> ()
+          if model.unk_id >= 0 then begin
+            if model.fuse_unk then
+              pending_unk :=
+                Some
+                  (match !pending_unk with
+                  | Some (id, len) -> (id, len + byte_len)
+                  | None -> (model.unk_id, byte_len))
+            else begin
+              flush_unk ();
+              add_symbol word model.unk_id byte_len
+            end
+          end
         in
         (match Hashtbl.find_opt model.vocab token_str with
         | Some id ->
             flush_unk ();
             add_symbol word id byte_len
         | None ->
-            if model.byte_fallback then
-              let byte_ids_opt =
-                let rec loop acc idx =
-                  if idx = byte_len then Some (List.rev acc)
-                  else
-                    let byte = char_str.[idx] in
-                    let hex = Printf.sprintf "<0x%02X>" (Char.code byte) in
-                    match Hashtbl.find_opt model.vocab hex with
-                    | Some id -> loop (id :: acc) (idx + 1)
-                    | None -> None
-                in
-                loop [] 0
-              in
-              match byte_ids_opt with
-              | Some ids ->
-                  flush_unk ();
-                  List.iter (fun id -> add_symbol word id 1) ids
-              | None -> unk_handling ()
-            else unk_handling ());
-        process_chars ()
-  in
-  process_chars ();
+            if model.byte_fallback then begin
+              let all_found = ref true in
+              for i = 0 to byte_len - 1 do
+                if
+                  Array.unsafe_get model.byte_fallback_ids
+                    (Char.code (String.unsafe_get char_str i))
+                  < 0
+                then all_found := false
+              done;
+              if !all_found then begin
+                flush_unk ();
+                for i = 0 to byte_len - 1 do
+                  add_symbol word
+                    (Array.unsafe_get model.byte_fallback_ids
+                       (Char.code (String.unsafe_get char_str i)))
+                    1
+                done
+              end else unk_handling ()
+            end else unk_handling ())
+      end
+    done;
+    (match !pending_unk with
+    | Some (uid, ulen) -> add_symbol word uid ulen
+    | None -> ())
+  end;
   apply_merges model model.dropout word;
   word
 
 let word_to_tokens model word =
   let offset = ref 0 in
   List.init word.size (fun i ->
-      let sym = word.symbols.(i) in
-      let id = sym.c in
+      let id = Array.unsafe_get word.sym_c i in
       let value =
         match Hashtbl.find_opt model.vocab_r id with
         | Some v -> v
         | None -> "<unk>"
       in
       let start = !offset in
-      let end_ = start + sym.len in
+      let end_ = start + Array.unsafe_get word.sym_len i in
       offset := end_;
       { id; value; offsets = (start, end_) })
 
-let word_to_ids word = Array.init word.size (fun i -> word.symbols.(i).c)
+let word_to_ids word = Array.init word.size (fun i -> Array.unsafe_get word.sym_c i)
 
 let tokenize model text =
   if String.length text = 0 then []
@@ -366,10 +636,11 @@ let get_continuing_subword_prefix model = model.continuing_subword_prefix
 let get_end_of_word_suffix model = model.end_of_word_suffix
 
 let get_merges model =
-  Hashtbl.fold
-    (fun key (rank, _) acc ->
+  MergeMap.fold
+    (fun key packed acc ->
       let a_id = key lsr 21 in
       let b_id = key land 0x1FFFFF in
+      let rank = merge_rank packed in
       match
         ( Hashtbl.find_opt model.vocab_r a_id,
           Hashtbl.find_opt model.vocab_r b_id )
@@ -400,7 +671,7 @@ let convert_merges_to_merge_map vocab merges continuing_subword_prefix =
             else a ^ b
           in
           match Hashtbl.find_opt vocab new_token with
-          | Some new_id -> Some ((a_id, b_id), (rank, new_id))
+          | Some new_id -> Some ((a_id, b_id), pack_merge rank new_id)
           | None ->
               failwith
                 (Printf.sprintf "Merge token '%s' not in vocabulary" new_token))
@@ -408,11 +679,8 @@ let convert_merges_to_merge_map vocab merges continuing_subword_prefix =
     merges
   |> List.filter_map (fun x -> x)
   |> fun entries ->
-  let tbl = Hashtbl.create (List.length entries) in
-  List.iter
-    (fun ((a_id, b_id), v) -> Hashtbl.replace tbl (merge_key a_id b_id) v)
-    entries;
-  tbl
+  MergeMap.create
+    (List.map (fun ((a_id, b_id), packed) -> (merge_key a_id b_id, packed)) entries)
 
 let create (cfg : config) : t =
   let vocab_r = Hashtbl.create (Hashtbl.length cfg.vocab) in
@@ -424,6 +692,52 @@ let create (cfg : config) : t =
   let merges =
     convert_merges_to_merge_map cfg.vocab cfg.merges
       cfg.continuing_subword_prefix
+  in
+  let ascii_to_id = Array.make 128 (-1) in
+  for i = 0 to 127 do
+    let s = String.make 1 (Char.chr i) in
+    match Hashtbl.find_opt cfg.vocab s with
+    | Some id -> ascii_to_id.(i) <- id
+    | None -> ()
+  done;
+  let byte_fallback_ids = Array.make 256 (-1) in
+  for i = 0 to 255 do
+    let hex = Printf.sprintf "<0x%02X>" i in
+    match Hashtbl.find_opt cfg.vocab hex with
+    | Some id -> byte_fallback_ids.(i) <- id
+    | None -> ()
+  done;
+  (* Build packed-int char lookup table for zero-allocation multi-byte lookup *)
+  let char_to_id = Hashtbl.create 256 in
+  Hashtbl.iter
+    (fun key id ->
+      let len = String.length key in
+      if len >= 1 && len <= 4 then begin
+        let b0 = Char.code (String.unsafe_get key 0) in
+        let expected_len = utf8_byte_len b0 in
+        if expected_len = len then
+          let packed =
+            match len with
+            | 1 -> b0
+            | 2 -> (b0 lsl 8) lor Char.code (String.unsafe_get key 1)
+            | 3 ->
+                (b0 lsl 16)
+                lor (Char.code (String.unsafe_get key 1) lsl 8)
+                lor Char.code (String.unsafe_get key 2)
+            | _ ->
+                (b0 lsl 24)
+                lor (Char.code (String.unsafe_get key 1) lsl 16)
+                lor (Char.code (String.unsafe_get key 2) lsl 8)
+                lor Char.code (String.unsafe_get key 3)
+          in
+          Hashtbl.replace char_to_id packed id
+      end)
+    cfg.vocab;
+  let unk_id =
+    match cfg.unk_token with
+    | Some unk -> (
+        match Hashtbl.find_opt cfg.vocab unk with Some id -> id | None -> -1)
+    | None -> -1
   in
   {
     vocab = cfg.vocab;
@@ -437,6 +751,10 @@ let create (cfg : config) : t =
     fuse_unk = cfg.fuse_unk;
     byte_fallback = cfg.byte_fallback;
     ignore_merges = cfg.ignore_merges;
+    ascii_to_id;
+    byte_fallback_ids;
+    char_to_id;
+    unk_id;
   }
 
 let json_of_string s =
@@ -554,10 +872,11 @@ let save model ~path ?name () =
     (fun () ->
       output_string oc "#version: 0.2\n";
       let merges_list =
-        Hashtbl.fold
-          (fun key (rank, _) acc ->
+        MergeMap.fold
+          (fun key packed acc ->
             let a_id = key lsr 21 in
             let b_id = key land 0x1FFFFF in
+            let rank = merge_rank packed in
             match
               ( Hashtbl.find_opt model.vocab_r a_id,
                 Hashtbl.find_opt model.vocab_r b_id )
