@@ -10,27 +10,15 @@ let list_drop n l =
   in
   if n <= 0 then l else aux 0 l
 
-module IntPair = struct
-  type t = int * int
-
-  let compare = compare
-end
-
-module IntPairMap = Map.Make (IntPair)
-module IntPairSet = Set.Make (IntPair)
-
-module IntSet = Set.Make (struct
-  type t = int
-
-  let compare = compare
-end)
-
 module StringMap = Map.Make (String)
 
 type vocab = (string, int) Hashtbl.t
 type vocab_r = (int, string) Hashtbl.t
 type merges = (string * string) list
-type merge_map = (int * int) IntPairMap.t
+type merge_map = (int, int * int) Hashtbl.t
+
+let[@inline] merge_key a b = (a lsl 21) lor b
+let[@inline] merge_find tbl a b = Hashtbl.find_opt tbl (merge_key a b)
 
 type symbol = {
   mutable c : int;
@@ -93,7 +81,9 @@ module PQueue = struct
     cmp : 'a -> 'a -> int;
   }
 
-  let create cmp = { arr = [||]; size = 0; cmp }
+  let create_with_capacity cmp cap dummy =
+    { arr = Array.make (max 16 cap) dummy; size = 0; cmp }
+
   let parent i = (i - 1) / 2
   let left i = (2 * i) + 1
   let right i = (2 * i) + 2
@@ -145,11 +135,10 @@ let apply_merges model dropout word =
     let c = r1 - r2 in
     if c = 0 then p1 - p2 else c
   in
-  let queue = PQueue.create cmp in
+  let queue = PQueue.create_with_capacity cmp word.size (0, 0, 0) in
   for i = 0 to word.size - 2 do
     if word.symbols.(i).len > 0 && word.symbols.(i + 1).len > 0 then
-      let pair = (word.symbols.(i).c, word.symbols.(i + 1).c) in
-      match IntPairMap.find_opt pair model.merges with
+      match merge_find model.merges word.symbols.(i).c word.symbols.(i + 1).c with
       | Some (rank, new_id) -> PQueue.push queue (rank, i, new_id)
       | None -> ()
   done;
@@ -164,9 +153,10 @@ let apply_merges model dropout word =
           let next_pos = word.symbols.(pos).next in
           if next_pos = -1 then process_queue ()
           else
-            let next_pos = next_pos in
-            let cur_pair = (word.symbols.(pos).c, word.symbols.(next_pos).c) in
-            match IntPairMap.find_opt cur_pair model.merges with
+            match
+              merge_find model.merges word.symbols.(pos).c
+                word.symbols.(next_pos).c
+            with
             | Some (r, nid) when r = rank && nid = new_id ->
                 if use_dropout && Random.float 1.0 < p then
                   skips := top :: !skips
@@ -182,17 +172,21 @@ let apply_merges model dropout word =
                     word.symbols.(word.symbols.(pos).next).prev <- pos;
                   (if word.symbols.(pos).prev >= 0 then
                      let prev = word.symbols.(pos).prev in
-                     let pair = (word.symbols.(prev).c, word.symbols.(pos).c) in
-                     match IntPairMap.find_opt pair model.merges with
+                     match
+                       merge_find model.merges word.symbols.(prev).c
+                         word.symbols.(pos).c
+                     with
                      | Some (r, nid) -> PQueue.push queue (r, prev, nid)
                      | None -> ());
                   let next = word.symbols.(pos).next in
                   if next >= 0 then
-                    let pair = (word.symbols.(pos).c, word.symbols.(next).c) in
-                    match IntPairMap.find_opt pair model.merges with
+                    match
+                      merge_find model.merges word.symbols.(pos).c
+                        word.symbols.(next).c
+                    with
                     | Some (r, nid) -> PQueue.push queue (r, pos, nid)
                     | None -> ());
-                process_queue () (* Continue processing the queue *)
+                process_queue ()
             | _ -> process_queue ())
   in
   process_queue ();
@@ -372,8 +366,10 @@ let get_continuing_subword_prefix model = model.continuing_subword_prefix
 let get_end_of_word_suffix model = model.end_of_word_suffix
 
 let get_merges model =
-  IntPairMap.fold
-    (fun (a_id, b_id) (rank, _) acc ->
+  Hashtbl.fold
+    (fun key (rank, _) acc ->
+      let a_id = key lsr 21 in
+      let b_id = key land 0x1FFFFF in
       match
         ( Hashtbl.find_opt model.vocab_r a_id,
           Hashtbl.find_opt model.vocab_r b_id )
@@ -411,7 +407,12 @@ let convert_merges_to_merge_map vocab merges continuing_subword_prefix =
       | _ -> failwith (Printf.sprintf "Merge tokens not in vocabulary"))
     merges
   |> List.filter_map (fun x -> x)
-  |> List.fold_left (fun acc (k, v) -> IntPairMap.add k v acc) IntPairMap.empty
+  |> fun entries ->
+  let tbl = Hashtbl.create (List.length entries) in
+  List.iter
+    (fun ((a_id, b_id), v) -> Hashtbl.replace tbl (merge_key a_id b_id) v)
+    entries;
+  tbl
 
 let create (cfg : config) : t =
   let vocab_r = Hashtbl.create (Hashtbl.length cfg.vocab) in
@@ -553,8 +554,10 @@ let save model ~path ?name () =
     (fun () ->
       output_string oc "#version: 0.2\n";
       let merges_list =
-        IntPairMap.fold
-          (fun (a_id, b_id) (rank, _) acc ->
+        Hashtbl.fold
+          (fun key (rank, _) acc ->
+            let a_id = key lsr 21 in
+            let b_id = key land 0x1FFFFF in
             match
               ( Hashtbl.find_opt model.vocab_r a_id,
                 Hashtbl.find_opt model.vocab_r b_id )

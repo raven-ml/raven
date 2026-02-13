@@ -25,13 +25,13 @@ saga/bench/download_data.sh
 ### Saga (OCaml)
 
 ```bash
-dune exec saga/bench/bench_tokenizers.exe
+dune exec saga/bench/bench_saga.exe
 ```
 
 ### tokenizers (Python/Rust FFI)
 
 ```bash
-uv run saga/bench/bench_tokenizers.py
+uv run --with tokenizers saga/bench/bench_tokenizers.py
 ```
 
 ## Results Saga
@@ -40,18 +40,18 @@ uv run saga/bench/bench_tokenizers.py
 ┌───────────────────────────────┬──────────┬──────────┬──────────┬─────────┬────────────┐
 │ Name                          │ Wall/Run │  CPU/Run │  mWd/Run │ Speedup │ vs Fastest │
 ├───────────────────────────────┼──────────┼──────────┼──────────┼─────────┼────────────┤
-│ GPT-2/Encode/single_short     │  90.60μs │  90.53μs │  15.54kw │   1.00x │       100% │
-│ BERT-base/Encode/single_short │ 648.37μs │ 648.35μs │ 119.16kw │   0.14x │       716% │
-│ GPT-2/Decode/long             │   1.66ms │   1.66ms │ 497.96kw │   0.05x │      1829% │
-│ LLaMA/Decode/long             │   1.82ms │   1.82ms │ 310.77kw │   0.05x │      2005% │
-│ LLaMA/Encode/single_short     │   1.95ms │   1.95ms │  88.37kw │   0.05x │      2152% │
-│ BERT-base/Decode/long         │   2.25ms │   2.24ms │ 458.64kw │   0.04x │      2479% │
-│ GPT-2/Encode/batch_32         │   2.37ms │   2.36ms │ 497.06kw │   0.04x │      2611% │
-│ GPT-2/Encode/single_long      │   6.17ms │   6.17ms │ 760.38kw │   0.01x │      6811% │
-│ BERT-base/Encode/batch_32     │  19.01ms │  18.99ms │   3.81Mw │   0.00x │     20981% │
-│ BERT-base/Encode/single_long  │  40.35ms │  40.30ms │   5.79Mw │   0.00x │     44536% │
-│ LLaMA/Encode/batch_32         │  64.22ms │  64.19ms │   2.83Mw │   0.00x │     70883% │
-│ LLaMA/Encode/single_long      │ 111.44ms │ 111.35ms │   4.16Mw │   0.00x │    122994% │
+│ GPT-2/Encode/single_short     │  70.75μs │  70.54μs │  15.54kw │   1.00x │       100% │
+│ BERT-base/Encode/single_short │ 621.44μs │ 621.41μs │ 119.16kw │   0.11x │       878% │
+│ LLaMA/Encode/single_short     │ 989.59μs │ 989.53μs │  73.29kw │   0.07x │      1399% │
+│ GPT-2/Decode/long             │   1.75ms │   1.75ms │ 497.96kw │   0.04x │      2475% │
+│ LLaMA/Decode/long             │   1.93ms │   1.93ms │ 310.77kw │   0.04x │      2734% │
+│ BERT-base/Decode/long         │   2.23ms │   2.23ms │ 458.64kw │   0.03x │      3146% │
+│ GPT-2/Encode/batch_32         │   2.37ms │   2.37ms │ 497.06kw │   0.03x │      3351% │
+│ GPT-2/Encode/single_long      │   5.71ms │   5.71ms │ 760.38kw │   0.01x │      8068% │
+│ BERT-base/Encode/batch_32     │  20.60ms │  20.59ms │   3.81Mw │   0.00x │     29120% │
+│ LLaMA/Encode/batch_32         │  32.44ms │  32.36ms │   2.35Mw │   0.00x │     45853% │
+│ BERT-base/Encode/single_long  │  40.92ms │  40.91ms │   5.79Mw │   0.00x │     57843% │
+│ LLaMA/Encode/single_long      │  78.33ms │  78.23ms │   3.50Mw │   0.00x │    110712% │
 └───────────────────────────────┴──────────┴──────────┴──────────┴─────────┴────────────┘
 ```
 
@@ -78,23 +78,23 @@ uv run saga/bench/bench_tokenizers.py
 
 ## Comparison
 
-| Benchmark                            | Saga     | HF tokenizers | Ratio           |
-| ------------------------------------ | -------- | ------------- | --------------- |
-| **GPT-2** (BPE, 50K vocab)           |          |               |                 |
-| Encode/short (1KB)                   | 90.60μs  | 250.09μs      | **2.8x faster** |
-| Encode/long (64KB)                   | 6.17ms   | 13.27ms       | **2.1x faster** |
-| Decode/long                          | 1.66ms   | 1.58ms        | ~par            |
-| **BERT-base** (WordPiece, 30K vocab) |          |               |                 |
-| Encode/short (1KB)                   | 648.37μs | 325.43μs      | 2.0x slower     |
-| Encode/long (64KB)                   | 40.35ms  | 16.64ms       | 2.4x slower     |
-| Decode/long                          | 2.25ms   | 7.76ms        | **3.4x faster** |
-| **LLaMA** (BPE, 32K vocab)           |          |               |                 |
-| Encode/short (1KB)                   | 1.95ms   | 246.99μs      | 7.9x slower     |
-| Encode/long (64KB)                   | 111.44ms | 16.23ms       | 6.9x slower     |
-| Decode/long                          | 1.82ms   | 5.03ms        | **2.8x faster** |
+| Benchmark                            | Saga      | HF tokenizers | Ratio           |
+| ------------------------------------ | --------- | ------------- | --------------- |
+| **GPT-2** (BPE, 50K vocab)           |           |               |                 |
+| Encode/short (1KB)                   | 70.75μs   | 250.09μs      | **3.5x faster** |
+| Encode/long (64KB)                   | 5.71ms    | 13.27ms       | **2.3x faster** |
+| Decode/long                          | 1.75ms    | 1.58ms        | ~par            |
+| **BERT-base** (WordPiece, 30K vocab) |           |               |                 |
+| Encode/short (1KB)                   | 621.44μs  | 325.43μs      | 1.9x slower     |
+| Encode/long (64KB)                   | 40.92ms   | 16.64ms       | 2.5x slower     |
+| Decode/long                          | 2.23ms    | 7.76ms        | **3.5x faster** |
+| **LLaMA** (BPE, 32K vocab)           |           |               |                 |
+| Encode/short (1KB)                   | 989.59μs  | 246.99μs      | 4.0x slower     |
+| Encode/long (64KB)                   | 78.33ms   | 16.23ms       | 4.8x slower     |
+| Decode/long                          | 1.93ms    | 5.03ms        | **2.6x faster** |
 
 Notes:
 - HF tokenizers batch benchmarks use multi-threading (CPU/Run >> Wall/Run), so
   batch wall-clock times are not directly comparable.
 - LLaMA has no pre-tokenizer, so the entire text goes through BPE as a single
-  sequence. This is a known weak spot in our BPE implementation for long inputs.
+  sequence.
