@@ -74,8 +74,6 @@
   (ocaml
    (>= 5.2.0))
   dune
-  (nx
-   (= :version))
   re
   jsont
   bytesrw

@@ -92,8 +92,7 @@ let normalize form text =
     loop 0;
     Buffer.contents b
   with e ->
-    Nx_core.Error.invalid ~op:"normalize" ~what:"unicode in text"
-      ~reason:(Printexc.to_string e) ()
+    invalid_arg ("normalize: " ^ Printexc.to_string e)
 
 let case_fold text =
   try
@@ -113,8 +112,7 @@ let case_fold text =
     loop 0;
     Buffer.contents b
   with e ->
-    Nx_core.Error.invalid ~op:"case_fold" ~what:"unicode in text"
-      ~reason:(Printexc.to_string e) ()
+    invalid_arg ("case_fold: " ^ Printexc.to_string e)
 
 let strip_accents text =
   try
@@ -138,8 +136,7 @@ let strip_accents text =
     loop 0;
     Buffer.contents b
   with e ->
-    Nx_core.Error.invalid ~op:"strip_accents" ~what:"unicode in text"
-      ~reason:(Printexc.to_string e) ()
+    invalid_arg ("strip_accents: " ^ Printexc.to_string e)
 
 let clean_text ?(remove_control = true) ?(normalize_whitespace = true) text =
   try
@@ -170,8 +167,7 @@ let clean_text ?(remove_control = true) ?(normalize_whitespace = true) text =
     let result = Buffer.contents b in
     if normalize_whitespace then String.trim result else result
   with e ->
-    Nx_core.Error.invalid ~op:"clean_text" ~what:"unicode in text"
-      ~reason:(Printexc.to_string e) ()
+    invalid_arg ("clean_text: " ^ Printexc.to_string e)
 
 let split_words text =
   try
@@ -204,8 +200,7 @@ let split_words text =
     in
     loop 0
   with e ->
-    Nx_core.Error.invalid ~op:"split_words" ~what:"unicode in text"
-      ~reason:(Printexc.to_string e) ()
+    invalid_arg ("split_words: " ^ Printexc.to_string e)
 
 let is_valid_utf8 text = String.is_valid_utf_8 text
 
@@ -227,5 +222,4 @@ let remove_emoji text =
     loop 0;
     Buffer.contents b
   with e ->
-    Nx_core.Error.invalid ~op:"remove_emoji" ~what:"unicode in text"
-      ~reason:(Printexc.to_string e) ()
+    invalid_arg ("remove_emoji: " ^ Printexc.to_string e)

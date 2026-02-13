@@ -1,4 +1,4 @@
 (library
  (name saga)
  (public_name saga)
- (libraries nx nx_core re jsont jsont.bytesrw))
+ (libraries re jsont jsont.bytesrw))
