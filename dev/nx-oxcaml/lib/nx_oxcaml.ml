@@ -1025,26 +1025,28 @@ let op_matmul (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit
   | Float64 c, Float64 a, Float64 b ->
       if
         View.is_c_contiguous va && View.is_c_contiguous vb
-        && View.offset va = 0
-        && View.offset vb = 0
         && Array.length (shape va) = 2
         && Array.length (shape vb) = 2
       then
-        Parallel.parallel_for out.context.pool 0 (m - 1) (fun s e ->
-            Op_matmul.Gemm_f64.matmul a b c va vb vout s e)
+        let n = (shape vout).(nd_out - 1) in
+        let k = (shape va).(Array.length (shape va) - 1) in
+        Op_matmul.Gemm_f64.gemm ~pool:out.context.pool a b c ~m ~n ~k
+          ~a_off:(View.offset va) ~b_off:(View.offset vb)
+          ~c_off:(View.offset vout) ~ldc:n ()
       else
         Parallel.parallel_for out.context.pool 0 (total_units - 1) (fun s e ->
             Op_matmul.matmul_float64_slow a b c va vb vout s e)
   | Float32 c, Float32 a, Float32 b ->
       if
         View.is_c_contiguous va && View.is_c_contiguous vb
-        && View.offset va = 0
-        && View.offset vb = 0
         && Array.length (shape va) = 2
         && Array.length (shape vb) = 2
       then
-        Parallel.parallel_for out.context.pool 0 (m - 1) (fun s e ->
-            Op_matmul.Gemm_f32.matmul a b c va vb vout s e)
+        let n = (shape vout).(nd_out - 1) in
+        let k = (shape va).(Array.length (shape va) - 1) in
+        Op_matmul.Gemm_f32.gemm ~pool:out.context.pool a b c ~m ~n ~k
+          ~a_off:(View.offset va) ~b_off:(View.offset vb)
+          ~c_off:(View.offset vout) ~ldc:n ()
       else
         Parallel.parallel_for out.context.pool 0 (total_units - 1) (fun s e ->
             Op_matmul.matmul_float32_slow a b c va vb vout s e)

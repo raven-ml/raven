@@ -183,17 +183,39 @@ module Gemm_f64 = struct
       done
     done
 
-  let matmul a_buf b_buf c_buf va vb vout start_idx end_idx =
-    let rank = Array.length (shape vout) in
-    let n = (shape vout).(rank - 1) in
-    let k = (shape va).(rank - 1) in
-    let lda = k and ldb = n and ldc = n in
-    let a_off = View.offset va
-    and b_off = View.offset vb
-    and c_off = View.offset vout in
+  let macro_kernel ap bp c_buf ~c_off ~ldc ~mc ~nc ~kc ~first =
+    let rec ir_loop ir =
+      if ir >= mc then ()
+      else
+        let mr_eff = min_int mr (mc - ir) in
+        let ap_off = (ir / mr) * mr * kc in
+        let rec jr_loop jr =
+          if jr >= nc then ()
+          else
+            let nr_eff = min_int nr (nc - jr) in
+            let bp_off = (jr / nr) * nr * kc in
+            let c_tile = c_off + (ir * ldc) + jr in
+            if mr_eff = mr && nr_eff = nr then begin
+              if first then
+                kernel_zero ap ~ap_off bp ~bp_off c_buf
+                  ~c_off:c_tile ~ldc ~kc
+              else
+                kernel_accum ap ~ap_off bp ~bp_off c_buf
+                  ~c_off:c_tile ~ldc ~kc
+            end
+            else
+              edge_scalar ap ~ap_off bp ~bp_off c_buf
+                ~c_off:c_tile ~ldc ~mr_eff ~nr_eff ~kc ~first;
+            jr_loop (jr + nr)
+        in
+        jr_loop 0;
+        ir_loop (ir + mr)
+    in
+    ir_loop 0
+
+  let gemm ~pool a_buf b_buf c_buf ~m ~n ~k ~a_off ~b_off ~c_off ~ldc () =
+    let lda = k and ldb = n in
     let mc = mc_blk and nc = nc_blk and kc = kc_blk in
-    let ap = Array.make_float64 (round_up mc mr * kc) in
-    let bp = Array.make_float64 (round_up nc nr * kc) in
     let rec jc_loop jc =
       if jc >= n then ()
       else
@@ -203,46 +225,23 @@ module Gemm_f64 = struct
           else
             let kc' = min_int kc (k - pc) in
             let first = pc = 0 in
+            let bp = Array.make_float64 (round_up nc' nr * kc') in
             pack_b b_buf ~b_off ~ldb ~pc ~jc ~kc:kc' ~nc:nc' bp;
-            let rec ic_loop ic =
-              if ic >= end_idx then ()
-              else
-                let mc' = min_int mc (end_idx - ic) in
-                pack_a a_buf ~a_off ~lda ~ic ~pc ~mc:mc' ~kc:kc' ap;
-                let rec ir_loop ir =
-                  if ir >= mc' then ()
-                  else
-                    let mr_eff = min_int mr (mc' - ir) in
-                    let ap_off = (ir / mr) * mr * kc' in
-                    let rec jr_loop jr =
-                      if jr >= nc' then ()
-                      else
-                        let nr_eff = min_int nr (nc' - jr) in
-                        let bp_off = (jr / nr) * nr * kc' in
-                        let c_tile =
-                          c_off + ((ic + ir) * ldc) + jc + jr
-                        in
-                        if mr_eff = mr && nr_eff = nr then begin
-                          if first then
-                            kernel_zero ap ~ap_off bp ~bp_off c_buf
-                              ~c_off:c_tile ~ldc ~kc:kc'
-                          else
-                            kernel_accum ap ~ap_off bp ~bp_off c_buf
-                              ~c_off:c_tile ~ldc ~kc:kc'
-                        end
-                        else
-                          edge_scalar ap ~ap_off bp ~bp_off c_buf
-                            ~c_off:c_tile ~ldc ~mr_eff ~nr_eff ~kc:kc'
-                            ~first;
-                        jr_loop (jr + nr)
-                    in
-                    jr_loop 0;
-                    ir_loop (ir + mr)
+            Parallel.parallel_for pool 0 (m - 1) (fun start_row end_row ->
+                let ap =
+                  Array.make_float64 (round_up mc mr * kc')
                 in
-                ir_loop 0;
-                ic_loop (ic + mc')
-            in
-            ic_loop start_idx;
+                let rec ic_loop ic =
+                  if ic >= end_row then ()
+                  else
+                    let mc' = min_int mc (end_row - ic) in
+                    pack_a a_buf ~a_off ~lda ~ic ~pc ~mc:mc' ~kc:kc' ap;
+                    macro_kernel ap bp c_buf
+                      ~c_off:(c_off + ic * ldc + jc)
+                      ~ldc ~mc:mc' ~nc:nc' ~kc:kc' ~first;
+                    ic_loop (ic + mc')
+                in
+                ic_loop start_row);
             pc_loop (pc + kc')
         in
         pc_loop 0;
@@ -648,17 +647,39 @@ module Gemm_f32 = struct
       done
     done
 
-  let matmul a_buf b_buf c_buf va vb vout start_idx end_idx =
-    let rank = Array.length (shape vout) in
-    let n = (shape vout).(rank - 1) in
-    let k = (shape va).(rank - 1) in
-    let lda = k and ldb = n and ldc = n in
-    let a_off = View.offset va
-    and b_off = View.offset vb
-    and c_off = View.offset vout in
+  let macro_kernel ap bp c_buf ~c_off ~ldc ~mc ~nc ~kc ~first =
+    let rec ir_loop ir =
+      if ir >= mc then ()
+      else
+        let mr_eff = min_int mr (mc - ir) in
+        let ap_off = (ir / mr) * mr * kc in
+        let rec jr_loop jr =
+          if jr >= nc then ()
+          else
+            let nr_eff = min_int nr (nc - jr) in
+            let bp_off = (jr / nr) * nr * kc in
+            let c_tile = c_off + (ir * ldc) + jr in
+            if mr_eff = mr && nr_eff = nr then begin
+              if first then
+                kernel_zero ap ~ap_off bp ~bp_off c_buf
+                  ~c_off:c_tile ~ldc ~kc
+              else
+                kernel_accum ap ~ap_off bp ~bp_off c_buf
+                  ~c_off:c_tile ~ldc ~kc
+            end
+            else
+              edge_scalar ap ~ap_off bp ~bp_off c_buf
+                ~c_off:c_tile ~ldc ~mr_eff ~nr_eff ~kc ~first;
+            jr_loop (jr + nr)
+        in
+        jr_loop 0;
+        ir_loop (ir + mr)
+    in
+    ir_loop 0
+
+  let gemm ~pool a_buf b_buf c_buf ~m ~n ~k ~a_off ~b_off ~c_off ~ldc () =
+    let lda = k and ldb = n in
     let mc = mc_blk and nc = nc_blk and kc = kc_blk in
-    let ap = Array.make_float32 (round_up mc mr * kc) in
-    let bp = Array.make_float32 (round_up nc nr * kc) in
     let rec jc_loop jc =
       if jc >= n then ()
       else
@@ -668,46 +689,23 @@ module Gemm_f32 = struct
           else
             let kc' = min_int kc (k - pc) in
             let first = pc = 0 in
+            let bp = Array.make_float32 (round_up nc' nr * kc') in
             pack_b b_buf ~b_off ~ldb ~pc ~jc ~kc:kc' ~nc:nc' bp;
-            let rec ic_loop ic =
-              if ic >= end_idx then ()
-              else
-                let mc' = min_int mc (end_idx - ic) in
-                pack_a a_buf ~a_off ~lda ~ic ~pc ~mc:mc' ~kc:kc' ap;
-                let rec ir_loop ir =
-                  if ir >= mc' then ()
-                  else
-                    let mr_eff = min_int mr (mc' - ir) in
-                    let ap_off = (ir / mr) * mr * kc' in
-                    let rec jr_loop jr =
-                      if jr >= nc' then ()
-                      else
-                        let nr_eff = min_int nr (nc' - jr) in
-                        let bp_off = (jr / nr) * nr * kc' in
-                        let c_tile =
-                          c_off + ((ic + ir) * ldc) + jc + jr
-                        in
-                        if mr_eff = mr && nr_eff = nr then begin
-                          if first then
-                            kernel_zero ap ~ap_off bp ~bp_off c_buf
-                              ~c_off:c_tile ~ldc ~kc:kc'
-                          else
-                            kernel_accum ap ~ap_off bp ~bp_off c_buf
-                              ~c_off:c_tile ~ldc ~kc:kc'
-                        end
-                        else
-                          edge_scalar ap ~ap_off bp ~bp_off c_buf
-                            ~c_off:c_tile ~ldc ~mr_eff ~nr_eff ~kc:kc'
-                            ~first;
-                        jr_loop (jr + nr)
-                    in
-                    jr_loop 0;
-                    ir_loop (ir + mr)
+            Parallel.parallel_for pool 0 (m - 1) (fun start_row end_row ->
+                let ap =
+                  Array.make_float32 (round_up mc mr * kc')
                 in
-                ir_loop 0;
-                ic_loop (ic + mc')
-            in
-            ic_loop start_idx;
+                let rec ic_loop ic =
+                  if ic >= end_row then ()
+                  else
+                    let mc' = min_int mc (end_row - ic) in
+                    pack_a a_buf ~a_off ~lda ~ic ~pc ~mc:mc' ~kc:kc' ap;
+                    macro_kernel ap bp c_buf
+                      ~c_off:(c_off + ic * ldc + jc)
+                      ~ldc ~mc:mc' ~nc:nc' ~kc:kc' ~first;
+                    ic_loop (ic + mc')
+                in
+                ic_loop start_row);
             pc_loop (pc + kc')
         in
         pc_loop 0;
