@@ -25,3 +25,9 @@
  (package nx)
  (modules test_nx_io)
  (libraries nx nx_io safetensors windtrap))
+
+(test
+ (name test_nx_datasets)
+ (package nx)
+ (modules test_nx_datasets)
+ (libraries nx nx.datasets windtrap))
