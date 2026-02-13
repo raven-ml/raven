@@ -58,14 +58,6 @@
     - GPT-2: No special tokens by default, uses BOS/EOS if configured
     - RoBERTa: Uses <s> and </s> tokens similar to BERT but different format *)
 
-module Grapheme : sig
-  type ret = [ `Await | `Boundary | `End | `Uchar of Uchar.t ]
-  type t
-
-  val create : unit -> t
-  val add : t -> [ `Await | `End | `Uchar of Uchar.t ] -> ret
-end
-
 module Unicode = Unicode
 (** Unicode utilities for normalization. *)
 

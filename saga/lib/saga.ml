@@ -3,7 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module Grapheme = Grapheme
 module Unicode = Unicode
 module Normalizers = Normalizers
 module Pre_tokenizers = Pre_tokenizers
