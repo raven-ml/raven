@@ -205,12 +205,17 @@ let () =
         | None -> openblas_default
       in
 
-      let openblas_cflags =
-        List.filter (fun flag -> flag <> "-fopenmp") openblas_conf.cflags
+      let filter_openmp_flags flags =
+        let rec loop acc = function
+          | [] -> List.rev acc
+          | "-Xpreprocessor" :: "-fopenmp" :: rest -> loop acc rest
+          | "-fopenmp" :: rest -> loop acc rest
+          | flag :: rest -> loop (flag :: acc) rest
+        in
+        loop [] flags
       in
-      let openblas_libs =
-        List.filter (fun flag -> flag <> "-fopenmp") openblas_conf.libs
-      in
+      let openblas_cflags = filter_openmp_flags openblas_conf.cflags in
+      let openblas_libs = filter_openmp_flags openblas_conf.libs in
       let c_flags = opt_flags @ openblas_cflags in
       let libs =
         (if system = "macosx" then [ "-framework"; "Accelerate" ] else [])

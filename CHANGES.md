@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 
 ### Nx
 
+- Fix OpenMP flag filtering in `discover.ml`: strip `-Xpreprocessor -fopenmp` as a pair on macOS to prevent dangling `-Xpreprocessor` from consuming subsequent flags and causing linker failures. (@Alizter)
 - Merge `nx-datasets` package into a `nx.datasets` sublibrary. (@tmattio)
 - Replace `ocurl` C dependency with `curl` CLI for HTTP requests across the ecosystem (`nx.datasets`, `kaun.huggingface`, `kaun.models`, `kaun.datasets`). (@tmattio)
 - Add missing bool→low-precision cast support (f16/bf16/fp8) in the C backend. (@tmattio)
