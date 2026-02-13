@@ -15,8 +15,6 @@
 
 (bug_reports "https://github.com/raven-ml/raven/issues")
 
-(using directory-targets 0.1)
-
 (using dune_site 0.1)
 
 (using mdx 0.4)
@@ -26,11 +24,6 @@
 (implicit_transitive_deps false)
 
 (generate_opam_files true)
-
-; (pin
-;  (url git+https://github.com/PataphysicalSociety/soupault#5.0.0)
-;  (package
-;   (name soupault)))
 
 (pin
  (url git+https://github.com/tmattio/mosaic)
@@ -51,11 +44,6 @@
  (url git+https://github.com/invariant-hq/windtrap)
  (package
   (name windtrap)))
-
-; (package
-;  (name dev)
-;  (allow_empty)
-;  (depends odoc odoc-driver soupault lambdasoup landmarks landmarks-ppx))
 
 (package
  (name nx)

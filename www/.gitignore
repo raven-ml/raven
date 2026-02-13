@@ -1,12 +1,3 @@
-# Soupault-generated site
-.soupault-cache/
+# Generated site
 build/
 odoc/
-
-# Odoc files
-site/odoc.css 
-site/highlight.pack.js 
-site/katex.min.css 
-site/katex.min.js 
-site/odoc_search.js 
-site/sherlodoc.js 
