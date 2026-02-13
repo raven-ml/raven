@@ -6,12 +6,14 @@ This guide shows you how to use sowilo for image processing and computer vision.
 
 Sowilo isn't released yet. When it is, you'll install it with:
 
+<!-- $MDX skip -->
 ```bash
 opam install sowilo
 ```
 
 For now, build from source:
 
+<!-- $MDX skip -->
 ```bash
 git clone https://github.com/raven-ml/raven
 cd raven

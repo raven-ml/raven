@@ -36,8 +36,12 @@ Let's visualize some sample images from the training set using Hugin:
 ```ocaml
 (* Get samples from our already loaded dataset *)
 (* We'll create a small batch dataset and take the first batch *)
-let small_batch_dataset = Kaun.Dataset.batch_xy 10 train_data_raw
-let[@warning "-8"] [images_batch, labels_batch] = Kaun.Dataset.take 1 small_batch_dataset
+let small_batch_dataset = Kaun.Dataset.batch 10 train_data_raw
+
+let images_batch, labels_batch =
+  match Kaun.Dataset.to_list small_batch_dataset with
+  | (images_batch, labels_batch) :: _ -> images_batch, labels_batch
+  | _ -> failwith "Expected at least one batch"
 
 (* Convert to Nx for visualization *)
 let images_nx = images_batch |> Rune.contiguous |> Rune.to_nx
@@ -47,7 +51,7 @@ let get_label i =
   labels_batch
   |> Rune.slice [R (i, i+1)] 
   |> Rune.contiguous
-  |> Rune.item []
+  |> Rune.item [0]
   |> int_of_float
 
 let fig = Hugin.Figure.create ~width:1000 ~height:400 ()

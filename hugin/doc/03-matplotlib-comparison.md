@@ -31,6 +31,7 @@ Key characteristics of Hugin vs Matplotlib:
 ### Image Display with imshow
 
 **Hugin:**
+<!-- $MDX skip -->
 ```ocaml
 open Hugin
 
@@ -76,23 +77,21 @@ open Hugin
 open Nx
 
 let x = linspace float32 0. (2. *. Float.pi) 100
-let y1 = map Float.sin x
-let y2 = map Float.cos x
+let y1 = sin x
+let y2 = cos x
 
 let () =
   let fig = figure ~width:800 ~height:600 () in
-  let _ =
-    subplot fig
+  ignore
+    (subplot fig
     |> Plotting.plot ~x ~y:y1 ~color:Artist.Color.blue ~label:"sin(x)"
-    |> Plotting.plot ~x ~y:y2 ~color:Artist.Color.red ~linestyle:Dashed
+    |> Plotting.plot ~x ~y:y2 ~color:Artist.Color.red ~linestyle:Artist.Dashed
          ~label:"cos(x)"
     |> Axes.set_title "Trigonometric Functions"
     |> Axes.set_xlabel "Angle (radians)"
     |> Axes.set_ylabel "Value"
     |> Axes.set_ylim ~min:(-1.2) ~max:1.2
-    |> Axes.grid true
-  in
-  show fig
+    |> Axes.grid true)
 ```
 
 **Matplotlib:**
@@ -124,21 +123,17 @@ plt.show()
 
 **Hugin:**
 ```ocaml
-open Nx
-
 let create_helix_data () =
-  let t = Nx.linspace float32 0. (4. *. Float.pi) 100 in
-  let x = Nx.map (fun t -> Float.cos t) t in
-  let y = Nx.map (fun t -> Float.sin t) t in
-  let z = Nx.map (fun t -> t /. (4. *. Float.pi)) t in
+  let t = linspace float32 0. (4. *. Float.pi) 100 in
+  let x = cos t in
+  let y = sin t in
+  let z = div t (scalar float32 (4. *. Float.pi)) in
   (x, y, z)
 
 let () =
   let x, y, z = create_helix_data () in
-  let fig =
-    Hugin.plot3d ~title:"3D Helix" ~xlabel:"x" ~ylabel:"y" ~zlabel:"z" x y z
-  in
-  Hugin.show fig
+  ignore
+    (Hugin.plot3d ~title:"3D Helix" ~xlabel:"x" ~ylabel:"y" ~zlabel:"z" x y z)
 ```
 
 **Matplotlib:**
@@ -177,6 +172,7 @@ plt.show()
 ## 5. Creating Multiple Subplots
 
 **Hugin:**
+<!-- $MDX skip -->
 ```ocaml
 let fig = Figure.create ~width:1600 ~height:1200 () in
 let ax1 = Figure.add_subplot ~nrows ~ncols ~index:1 fig in
@@ -191,6 +187,7 @@ ax1 = fig.add_subplot(nrows, ncols, 1)
 ## 6. Example: Creating and Displaying a Figure
 
 **Hugin:**
+<!-- $MDX skip -->
 ```ocaml
 let fig = figure ~width:800 ~height:600 () in
 let _ = subplot fig |> (* plotting commands *) in
@@ -207,6 +204,7 @@ plt.show()
 ## 7. Example: Customizing Plot Appearance
 
 **Hugin:**
+<!-- $MDX skip -->
 ```ocaml
 subplot fig
 |> Plotting.plot ~x ~y ~color:Artist.Color.blue ~linestyle:Dashed

@@ -6,12 +6,14 @@ This guide shows you how to use automatic differentiation and JIT compilation wi
 
 Rune isn't released yet. When it is, you'll install it with:
 
+<!-- $MDX skip -->
 ```bash
 opam install rune
 ```
 
 For now, build from source:
 
+<!-- $MDX skip -->
 ```bash
 git clone https://github.com/raven-ml/raven
 cd raven
@@ -34,12 +36,12 @@ let f' = grad f
 
 (* Evaluate at a point *)
 let () =
-  let x = scalar cpu Float32 2.0 in
+  let x = scalar float32 2.0 in
   let y = f x in
   let dy_dx = f' x in
-  
-  Printf.printf "f(2) = %.4f\n" (unsafe_get y [||]);
-  Printf.printf "f'(2) = %.4f\n" (unsafe_get dy_dx [||])
+
+  Printf.printf "f(2) = %.4f\n" (item [] y);
+  Printf.printf "f'(2) = %.4f\n" (item [] dy_dx)
 ```
 
 ## Key Concepts
@@ -48,6 +50,7 @@ let () =
 
 **Device contexts.** Tensors are created with a device context:
 
+<!-- $MDX skip -->
 ```ocaml
 (* CPU tensors *)
 let x = rand cpu Float32 [|100|] ~from:(-1.) ~to_:1.
@@ -59,6 +62,7 @@ let y = rand gpu_device Float32 [|100|] ~from:(-1.) ~to_:1.
 
 **Composable transformations.** Just like JAX, you can compose transformations:
 
+<!-- $MDX skip -->
 ```ocaml
 (* Second derivative *)
 let f'' = grad (grad f)
@@ -71,6 +75,7 @@ let fast_grad = jit (grad f)
 
 For machine learning, you typically need gradients of a loss function:
 
+<!-- $MDX skip -->
 ```ocaml
 (* Simple linear model *)
 let linear_model w b x =
@@ -97,6 +102,7 @@ let train_step params x_batch y_batch learning_rate =
 
 JIT compilation makes functions faster by tracing and optimizing them:
 
+<!-- $MDX skip -->
 ```ocaml
 (* Original function *)
 let matmul_relu a b =
@@ -116,12 +122,13 @@ JIT compilation is shape-specialized. Different input shapes trigger recompilati
 
 Here's a simple two-layer network:
 
+<!-- $MDX skip -->
 ```ocaml
 let mlp w1 b1 w2 b2 x =
   (* First layer *)
   let h = add (matmul x w1) b1 in
   let h = maximum h (zeros_like h) in  (* ReLU *)
-  
+
   (* Second layer *)
   add (matmul h w2) b2
 
@@ -153,21 +160,32 @@ let train_step params x y lr =
 
 **Higher-order derivatives:**
 ```ocaml
-let f x = add (mul x (mul x x)) (mul x x) in
-let f' = grad f in
-let f'' = grad f' in
-let f''' = grad f'' in
+open Rune
 
-let x = scalar cpu Float32 2.0 in
-Printf.printf "f'''(2) = %.4f\n" (unsafe_get (f''' x) [||])  (* Should be 6.0 *)
+let () =
+  let f x = add (mul x (mul x x)) (mul x x) in
+  let f' = grad f in
+  let f'' = grad f' in
+  let f''' = grad f'' in
+  let x = scalar float32 2.0 in
+  Printf.printf "f'''(2) = %.4f\n" (item [] (f''' x))
 ```
 
 **Multiple inputs with grads:**
 ```ocaml
-let f [x; y] = add (mul x x) (mul y y) in
-let df = grads f in
-let [dx; dy] = df [scalar cpu Float32 3.0; scalar cpu Float32 4.0] in
-(* dx = 6.0, dy = 8.0 *)
+open Rune
+
+let () =
+  let f inputs =
+    match inputs with
+    | [x; y] -> add (mul x x) (mul y y)
+    | _ -> failwith "expected 2 inputs"
+  in
+  let df = grads f in
+  match df [scalar float32 3.0; scalar float32 4.0] with
+  | [dx; dy] ->
+    Printf.printf "dx = %.1f, dy = %.1f\n" (item [] dx) (item [] dy)
+  | _ -> failwith "expected 2 gradients"
 ```
 
 ## Design Notes

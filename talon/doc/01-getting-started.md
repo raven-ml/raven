@@ -4,12 +4,14 @@
 
 Talon is part of the Raven ecosystem and will be available through OPAM:
 
+<!-- $MDX skip -->
 ```bash
 opam install talon
 ```
 
 For now, you can build from source:
 
+<!-- $MDX skip -->
 ```bash
 git clone https://github.com/raven-ml/raven.git
 cd raven
@@ -52,7 +54,7 @@ let df = with_column df "bmi" Nx.float64
     ~f:(fun w h -> w /. (h ** 2.)))
 
 (* Add a categorical column based on BMI *)
-let categories = 
+let categories =
   match to_float64_array df "bmi" with
   | Some arr ->
     Array.map (fun bmi ->
@@ -61,8 +63,8 @@ let categories =
       else if bmi < 30.0 then "overweight"
       else "obese") arr
   | None -> [||]
-in
-let df = add_column df "category" 
+
+let df = add_column df "category"
   (Col.string_list (Array.to_list categories))
 ```
 
@@ -128,20 +130,29 @@ let row_totals = Row.Agg.sum df ~names:numeric_cols
 Use applicative functors for elegant row transformations:
 
 ```ocaml
+let df = create [
+  ("a", Col.float64_list [1.0; 2.0; 3.0]);
+  ("b", Col.float64_list [4.0; 5.0; 6.0]);
+  ("c", Col.float64_list [7.0; 8.0; 9.0]);
+  ("x", Col.float64_list [10.0; 20.0; 30.0]);
+  ("y", Col.float64_list [0.5; 0.5; 0.5]);
+  ("z", Col.float64_list [1.0; 2.0; 3.0])
+]
+
 (* Map over multiple columns at once *)
 let df = with_columns_map df
   Row.([
-    ("sum", Nx.float64, 
+    ("sum", Nx.float64,
       map3 (number "a") (number "b") (number "c") ~f:(fun a b c -> a +. b +. c));
-    ("product", Nx.float64, 
+    ("product", Nx.float64,
       map3 (number "a") (number "b") (number "c") ~f:(fun a b c -> a *. b *. c));
-    ("mean", Nx.float64, 
+    ("mean", Nx.float64,
       map3 (number "a") (number "b") (number "c") ~f:(fun a b c -> (a +. b +. c) /. 3.0))
   ])
 
 (* Use applicative operations *)
 let df = with_column df "result" Nx.float64
-  Row.(map3 (number "x") (number "y") (number "z") 
+  Row.(map3 (number "x") (number "y") (number "z")
     ~f:(fun a b c -> a *. b +. c))
 ```
 
@@ -183,9 +194,10 @@ let pivoted = pivot sales ~index:"date" ~columns:"product" ~values:"amount" ()
 
 Use `Talon_csv` to control types and null handling on I/O:
 
+<!-- $MDX skip -->
 ```ocaml
 let df = Talon_csv.read ~dtype_spec:["id", `Int64; "score", `Float64] "data.csv"
-let () = Talon_csv.write df "clean.csv"
+let () = Talon_csv.write "clean.csv" df
 ```
 
 ## Next Steps

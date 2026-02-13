@@ -54,6 +54,6 @@ Common uses: trajectory visualization, 3D data relationships, parametric curves.
 
 For additional plot types and advanced features, explore:
 
-- **Contour plots**: 2D scalar field visualization ([example](https://github.com/raven-ml/raven/tree/main/hugin/example/09-contour))
-- **Image display**: Showing matrices as images ([example](https://github.com/raven-ml/raven/tree/main/hugin/example/02-imshow))
-- **Legends**: Advanced legend positioning and styling ([example](https://github.com/raven-ml/raven/tree/main/hugin/example/10-legend))
+- **Contour plots**: 2D scalar field visualization ([example](https://github.com/raven-ml/raven/tree/main/hugin/examples/09-contour))
+- **Image display**: Showing matrices as images ([example](https://github.com/raven-ml/raven/tree/main/hugin/examples/02-imshow))
+- **Legends**: Advanced legend positioning and styling ([example](https://github.com/raven-ml/raven/tree/main/hugin/examples/10-legend))

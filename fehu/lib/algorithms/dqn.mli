@@ -35,8 +35,8 @@ type state
 
 val init :
   env:
-    ( (float, Bigarray.float32_elt) Rune.t,
-      (int32, Bigarray.int32_elt) Rune.t,
+    ( (float, Rune.float32_elt) Rune.t,
+      (int32, Rune.int32_elt) Rune.t,
       'render )
     Fehu.Env.t ->
   q_network:Kaun.module_ ->
@@ -46,8 +46,8 @@ val init :
 
 val step :
   env:
-    ( (float, Bigarray.float32_elt) Rune.t,
-      (int32, Bigarray.int32_elt) Rune.t,
+    ( (float, Rune.float32_elt) Rune.t,
+      (int32, Rune.int32_elt) Rune.t,
       'render )
     Fehu.Env.t ->
   params:params ->
@@ -59,8 +59,8 @@ val metrics : state -> metrics
 
 val train :
   env:
-    ( (float, Bigarray.float32_elt) Rune.t,
-      (int32, Bigarray.int32_elt) Rune.t,
+    ( (float, Rune.float32_elt) Rune.t,
+      (int32, Rune.int32_elt) Rune.t,
       'render )
     Fehu.Env.t ->
   q_network:Kaun.module_ ->
@@ -76,8 +76,8 @@ val save : path:string -> params:params -> state:state -> unit
 val load :
   path:string ->
   env:
-    ( (float, Bigarray.float32_elt) Rune.t,
-      (int32, Bigarray.int32_elt) Rune.t,
+    ( (float, Rune.float32_elt) Rune.t,
+      (int32, Rune.int32_elt) Rune.t,
       'render )
     Fehu.Env.t ->
   q_network:Kaun.module_ ->

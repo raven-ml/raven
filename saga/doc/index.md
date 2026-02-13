@@ -8,22 +8,24 @@ Saga provides state-of-the-art text processing capabilities for machine learning
 
 ## Key Features
 
-- **Modern Tokenizers**: BPE, WordPiece, word-level, and character-level tokenization
-- **Unicode-aware**: Proper handling of multilingual text, emoji, and special characters
+- **Modern Tokenizers**: BPE, WordPiece, Unigram, word-level, and character-level tokenization
+- **HuggingFace Compatible**: Load and save tokenizers in HuggingFace JSON format
 - **Efficient Vocabulary Management**: Fast token-to-index mapping with frequency-based filtering
-- **Tensor Integration**: Direct encoding to Nx tensors for ML pipelines
+- **Configurable Pipeline**: Normalizers, pre-tokenizers, post-processors, and decoders
 - **Batch Processing**: Efficient batch encoding with padding and truncation
 
 ## Installation
 
 Saga is part of the Raven ecosystem. Install it with:
 
+<!-- $MDX skip -->
 ```bash
 opam install saga
 ```
 
 Or build from source:
 
+<!-- $MDX skip -->
 ```bash
 dune build saga/
 ```
@@ -33,35 +35,48 @@ dune build saga/
 ```ocaml
 open Saga
 
-(* Simple tokenization *)
-let tokens = tokenize "Hello world! 你好世界"
-(* ["Hello"; "world"; "!"; "你好世界"] *)
+let () =
+  (* Train a word-level tokenizer from a corpus *)
+  let corpus = ["Hello world"; "How are you"; "Hello again"; "world peace"] in
+  let tokenizer =
+    Tokenizer.train_wordlevel ~vocab_size:20 ~show_progress:false
+      (`Seq (List.to_seq corpus))
+  in
+  Printf.printf "Vocabulary size: %d\n" (Tokenizer.vocab_size tokenizer);
 
-(* Build vocabulary and encode *)
-let vocab = vocab ~max_size:10000 tokens in
-let encoded = encode ~vocab "Hello world"
-(* [4; 5] *)
+  (* Encode text to token IDs *)
+  let ids = Tokenizer.encode_ids tokenizer "Hello world" in
+  Printf.printf "Encoded: ";
+  Array.iter (fun id -> Printf.printf "%d " id) ids;
+  print_newline ();
 
-(* Batch encode for neural networks *)
-let texts = ["Hello world"; "How are you?"] in
-let tensor = encode_batch ~vocab ~max_len:128 texts
-(* Returns Nx tensor shape [2; 128] *)
+  (* Decode back to text *)
+  let text = Tokenizer.decode tokenizer ids in
+  Printf.printf "Decoded: %s\n" text
+```
 
-(* Use advanced tokenizers *)
-let bpe = Bpe.from_files ~vocab:"vocab.json" ~merges:"merges.txt" in
-let tokens = Bpe.tokenize bpe "Hello world"
+Load a pretrained tokenizer from files:
+
+<!-- $MDX skip -->
+```ocaml
+(* Load pretrained BPE tokenizer (e.g. GPT-2 format) *)
+let tokenizer =
+  Tokenizer.from_model_file ~vocab:"vocab.json" ~merges:"merges.txt" ()
+
+let encoding = Tokenizer.encode tokenizer "Hello world"
+let ids = Encoding.get_ids encoding
 ```
 
 ## Architecture
 
-Saga is designed with modularity in mind:
+Saga follows the HuggingFace Tokenizers design with composable pipeline stages:
 
-- **Core API**: Simple functions for common use cases
-- **Tokenizer Module**: Composable tokenizer pipelines
-- **Unicode Module**: Low-level Unicode processing utilities
-- **BPE Module**: Byte Pair Encoding implementation
-- **WordPiece Module**: WordPiece tokenization (BERT-style)
-- **Vocab Module**: Vocabulary management and persistence
+- **Tokenizer Module**: Main API for encoding, decoding, and training
+- **Normalizers**: Text normalization (lowercase, NFD/NFC, accent stripping)
+- **Pre_tokenizers**: Text splitting before vocabulary-based encoding
+- **Processors**: Post-processing (adding special tokens like [CLS]/[SEP])
+- **Decoders**: Converting token IDs back to text
+- **Encoding**: Rich output with token IDs, offsets, attention masks
 
 ## When to Use Saga
 

@@ -40,16 +40,19 @@ All Raven libraries are pre-loaded and ready to use:
 ### Multiple Execution Modes
 
 **CLI Mode**: Execute notebooks from the command line
+<!-- $MDX skip -->
 ```bash
 quill eval notebook.md
 ```
 
 **Server Mode**: Interactive web interface for editing and execution
+<!-- $MDX skip -->
 ```bash
 quill serve notebook.md
 ```
 
 **Watch Mode**: Auto-execute on file changes
+<!-- $MDX skip -->
 ```bash
 quill eval --watch notebook.md
 ```
@@ -78,6 +81,7 @@ Quill takes a different approach. Your notebook is a markdown document first, wi
 3. Share it: Commit to git, share on GitHub, publish anywhere
 
 For interactive development:
+<!-- $MDX skip -->
 ```bash
 quill serve my_notebook.md
 ```

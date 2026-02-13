@@ -21,6 +21,7 @@ Create a file `notebook.md` with markdown content and OCaml code blocks:
 
 Three ways to execute:
 
+<!-- $MDX skip -->
 ```bash
 quill eval notebook.md           # Print results to terminal
 quill eval --inplace notebook.md # Save outputs in the file
@@ -54,6 +55,7 @@ Your notebook remains a valid markdown file that renders beautifully on GitHub, 
 
 For quick execution and automation:
 
+<!-- $MDX skip -->
 ```bash
 quill eval notebook.md
 ```
@@ -62,6 +64,7 @@ quill eval notebook.md
 
 To save outputs directly in your notebook:
 
+<!-- $MDX skip -->
 ```bash
 quill eval --inplace notebook.md
 ```
@@ -70,6 +73,7 @@ quill eval --inplace notebook.md
 
 For interactive development:
 
+<!-- $MDX skip -->
 ```bash
 quill eval --watch --inplace notebook.md
 ```
@@ -78,6 +82,7 @@ quill eval --watch --inplace notebook.md
 
 For a full notebook experience:
 
+<!-- $MDX skip -->
 ```bash
 quill serve notebook.md
 # Open http://localhost:8080

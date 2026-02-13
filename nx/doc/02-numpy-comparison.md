@@ -36,19 +36,19 @@ Apart from the above, Nx is designed to be as close to NumPy as possible. The br
 **Nx:**
 ```ocaml
 (* Creating a zeros array *)
-let zeros = Nx.zeros Bigarray.float64 [|3; 3|]
+let zeros = Nx.zeros Nx.float64 [|3; 3|]
 
 (* Creating a ones array *)
-let ones = Nx.ones Bigarray.float64 [|3; 3|]
+let ones = Nx.ones Nx.float64 [|3; 3|]
 
 (* Creating an array with a specific value *)
-let full = Nx.full Bigarray.float64 [|3; 3|] 5.0
+let full = Nx.full Nx.float64 [|3; 3|] 5.0
 
 (* Creating a range *)
-let range = Nx.arange Bigarray.int32 0 10 1
+let range = Nx.arange Nx.int32 0 10 1
 
 (* Creating an identity matrix *)
-let identity = Nx.identity Bigarray.float64 3
+let identity = Nx.identity Nx.float64 3
 ```
 
 **NumPy:**
@@ -75,10 +75,10 @@ identity = np.identity(3)
 ```ocaml
 (* Creating from existing data *)
 let data = [|1.0; 2.0; 3.0; 4.0|]
-let arr = Nx.create Bigarray.float64 [|2; 2|] data
+let arr = Nx.create Nx.float64 [|2; 2|] data
 
 (* Creating using a function *)
-let init_arr = Nx.init Bigarray.float64 [|3; 3|] (fun idx -> 
+let init_arr = Nx.init Nx.float64 [|3; 3|] (fun idx ->
   float_of_int (idx.(0) + idx.(1)))
 ```
 
@@ -97,15 +97,13 @@ init_arr = np.fromfunction(lambda i, j: i + j, (3, 3))
 ### Basic Operations
 
 **Nx:**
+<!-- $MDX skip -->
 ```ocaml
 (* Element-wise addition *)
 let result = Nx.add arr1 arr2
 
-(* In-place addition *)
-let _ = Nx.add_inplace arr1 arr2
-
 (* Scalar multiplication *)
-let scaled = Nx.mul_scalar arr 2.0
+let scaled = Nx.mul_s arr 2.0
 
 (* Matrix multiplication *)
 let matmul_result = Nx.matmul arr1 arr2
@@ -129,6 +127,7 @@ matmul_result = arr1 @ arr2  # or np.matmul(arr1, arr2)
 ### Array Manipulation
 
 **Nx:**
+<!-- $MDX skip -->
 ```ocaml
 (* Reshape array *)
 let reshaped = Nx.reshape [|1; 6|] arr
@@ -161,15 +160,16 @@ concat = np.concatenate([arr1, arr2], axis=0)
 ## 4. Element Access and Slicing
 
 **Nx:**
+<!-- $MDX skip -->
 ```ocaml
 (* Get a single element *)
-let element = Nx.item [|0; 1|] arr
+let element = Nx.item [0; 1] arr
 
 (* Set a single element *)
-let _ = Nx.set_item [|0; 1|] 5.0 arr
+let () = Nx.set_item [0; 1] 5.0 arr
 
 (* Get a slice/subarray *)
-let slice = Nx.get [|0|] arr
+let row = Nx.get [0] arr
 ```
 
 **NumPy:**
@@ -187,6 +187,7 @@ slice = arr[0]
 ## 5. Statistical Functions
 
 **Nx:**
+<!-- $MDX skip -->
 ```ocaml
 (* Sum of all elements *)
 let total = Nx.sum arr
@@ -221,6 +222,7 @@ axis_sum = np.sum(arr, axis=0)
 ## 6. Linear Algebra
 
 **Nx:**
+<!-- $MDX skip -->
 ```ocaml
 (* Matrix inverse *)
 let inv_a = Nx.inv a
@@ -253,6 +255,7 @@ eigenvalues, eigenvectors = np.linalg.eig(a)
 ## 7. Broadcasting
 
 **Nx:**
+<!-- $MDX skip -->
 ```ocaml
 (* Broadcast a smaller array to match dimensions *)
 let broadcasted = Nx.broadcast_to [|3; 3|] smaller_arr
@@ -273,9 +276,10 @@ result = matrix + vector
 ## 8. Conditional Operations
 
 **Nx:**
+<!-- $MDX skip -->
 ```ocaml
 (* Create a boolean mask *)
-let mask = Nx.greater arr (Nx.scalar Bigarray.float64 0.5)
+let mask = Nx.greater arr (Nx.scalar Nx.float64 0.5)
 
 (* Apply condition with where *)
 let result = Nx.where mask arr1 arr2
@@ -298,17 +302,17 @@ result = np.where(mask, arr1, arr2)
 let key = Nx.Rng.key 0
 
 (* Generate uniform random numbers *)
-let random = Nx.rand Bigarray.float64 ~key [|3; 3|]
+let random = Nx.rand Nx.float64 ~key [|3; 3|]
 
 (* Generate normal distributed random numbers *)
-let normal = Nx.randn Bigarray.float64 ~key:(Nx.Rng.fold_in key 1) [|3; 3|]
+let normal = Nx.randn Nx.float64 ~key:(Nx.Rng.fold_in key 1) [|3; 3|]
 
 (* Splitting for multiple draws *)
 let key1, key2 =
   match Nx.Rng.split ~n:2 key with [| a; b |] -> (a, b) | _ -> assert false
-in
-let random' = Nx.rand Bigarray.float64 ~key:key1 [|3; 3|]
-let normal' = Nx.randn Bigarray.float64 ~key:key2 [|3; 3|]
+
+let random' = Nx.rand Nx.float64 ~key:key1 [|3; 3|]
+let normal' = Nx.randn Nx.float64 ~key:key2 [|3; 3|]
 ```
 
 **NumPy:**
@@ -326,17 +330,17 @@ normal = np.random.randn(3, 3)
 ```ocaml
 (* Generate sample data *)
 let base_key = Nx.Rng.key 0
-let data_key, noise_key =
+let _data_key, noise_key =
   match Nx.Rng.split ~n:2 base_key with [| k1; k2 |] -> (k1, k2) | _ -> assert false
-in
-let x = Nx.linspace Bigarray.float64 0.0 10.0 100
+
+let x = Nx.linspace Nx.float64 0.0 10.0 100
 let y =
   Nx.(
-    add (mul_scalar x 2.0)
-      (randn Bigarray.float64 ~key:noise_key [|100|]))
+    add (mul_s x 2.0)
+      (randn Nx.float64 ~key:noise_key [|100|]))
 
 (* Reshape x for design matrix *)
-let x_design = Nx.(concatenate ~axis:1 [ones Bigarray.float64 [|100; 1|]; 
+let x_design = Nx.(concatenate ~axis:1 [ones Nx.float64 [|100; 1|];
                                            reshape [|100; 1|] x])
 
 (* Compute coefficients using normal equation *)

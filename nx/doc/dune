@@ -1,4 +1,4 @@
 (mdx
- (files *.md)
+ (files 01-*.md)
  (package nx)
- (libraries nx))
+ (libraries nx nx.io nx.datasets))

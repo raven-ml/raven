@@ -73,6 +73,7 @@ Key parallels:
 
 **Talon** columns are:
 
+<!-- $MDX skip -->
 ```ocaml
 module Col : sig
   type t =
@@ -108,18 +109,18 @@ pd.Series(["a", "b"], dtype="string[python]")
 **Talon**
 
 ```ocaml
-Col.float64 [| 1.0; 2.0; 3.0 |]
-Col.int32   [| 1l; 2l; 3l |]
-Col.string  [| "a"; "b" |]
+let _ = Col.float64 [| 1.0; 2.0; 3.0 |]
+let _ = Col.int32   [| 1l; 2l; 3l |]
+let _ = Col.string  [| "a"; "b" |]
 ```
 
 Nullable equivalents:
 
 ```ocaml
-Col.float64_opt [| Some 1.0; None; Some 3.0 |]
-Col.int32_opt   [| Some 42l; None; Some 100l |]
-Col.string_opt  [| Some "x"; None; Some "y" |]
-Col.bool_opt    [| Some true; None; Some false |]
+let _ = Col.float64_opt [| Some 1.0; None; Some 3.0 |]
+let _ = Col.int32_opt   [| Some 42l; None; Some 100l |]
+let _ = Col.string_opt  [| Some "x"; None; Some "y" |]
+let _ = Col.bool_opt    [| Some true; None; Some false |]
 ```
 
 ### 3.2 Consequences of Strong Typing
@@ -165,6 +166,7 @@ df["score"].fillna(0.0)
 
 **Talon**
 
+<!-- $MDX skip -->
 ```ocaml
 (* Column-level *)
 let has_nulls   = Col.has_nulls col
@@ -190,6 +192,7 @@ df["col"].fillna(0)
 
 **Talon**
 
+<!-- $MDX skip -->
 ```ocaml
 let cleaned   = drop_nulls df              (* all columns *)
 let cleaned_x = drop_nulls ~subset:["x"] df
@@ -230,16 +233,18 @@ let df =
 
 From Nx tensors:
 
+<!-- $MDX skip -->
 ```ocaml
-let t1 = Nx.create Nx.float64 [| 3 |] [| 1.0; 2.0; 3.0 |] in
-let t2 = Nx.create Nx.float64 [| 3 |] [| 4.0; 5.0; 6.0 |] in
+let t1 = Nx.create Nx.float64 [| 3 |] [| 1.0; 2.0; 3.0 |]
+let t2 = Nx.create Nx.float64 [| 3 |] [| 4.0; 5.0; 6.0 |]
 let df = of_tensors ~names:[ "x"; "y" ] [ t1; t2 ]
 ```
 
 From a 2D tensor:
 
+<!-- $MDX skip -->
 ```ocaml
-let t = Nx.create Nx.float64 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+let t = Nx.create Nx.float64 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
 let df = from_nx ~names:[ "x"; "y"; "z" ] t
 ```
 
@@ -254,22 +259,23 @@ df.to_csv("out.csv", index=False)
 
 **Talon**
 
+<!-- $MDX skip -->
 ```ocaml
 let df =
   Talon_csv.read
     ~sep:','
-    ~header:true
     ~na_values:[""; "NA"; "N/A"; "null"; "NULL"]
     "data.csv"
 
-let () = Talon_csv.write ~sep:',' ~header:true df "out.csv"
+let () = Talon_csv.write ~sep:',' "out.csv" df
 ```
 
 From/to string:
 
+<!-- $MDX skip -->
 ```ocaml
 let csv = Talon_csv.to_string df
-let df' = Talon_csv.from_string csv
+let df' = Talon_csv.of_string csv
 ```
 
 ### 5.3 JSON I/O
@@ -283,6 +289,7 @@ pd.read_json(..., orient="records")
 
 **Talon**
 
+<!-- $MDX skip -->
 ```ocaml
 let json = Talon_json.to_string ~orient:`Records df
 let df'  = Talon_json.from_string ~orient:`Records json
@@ -336,8 +343,9 @@ let only_numeric_and_bool =
 
 Name-based selection:
 
+<!-- $MDX skip -->
 ```ocaml
-let re = Re.(compile (re "score_.*")) in
+let re = Re.(compile (re "score_.*"))
 let score_cols = Cols.matching df re
 let prefixed   = Cols.with_prefix df "temp_"
 let suffixed   = Cols.with_suffix df "_score"
@@ -411,6 +419,7 @@ df.apply(lambda row: row["a"] + row["b"], axis=1)
 
 **Talon**
 
+<!-- $MDX skip -->
 ```ocaml
 open Row
 
@@ -420,6 +429,7 @@ let sum_ab : float row =
 
 Use this with `map` / `with_column`:
 
+<!-- $MDX skip -->
 ```ocaml
 let df' =
   with_column df "sum_ab" Nx.float64 sum_ab
@@ -454,8 +464,9 @@ let adults =
 
 Or with boolean mask like `df[df["mask"]]`:
 
+<!-- $MDX skip -->
 ```ocaml
-let mask : bool array = [|true; false; true|] in
+let mask : bool array = [|true; false; true|]
 let filtered = filter df mask
 ```
 
@@ -470,6 +481,7 @@ df["ratio"] = df["a"] / df["b"]
 
 **Talon**
 
+<!-- $MDX skip -->
 ```ocaml
 let df' =
   with_columns_map df
@@ -520,10 +532,13 @@ let q25         = Agg.Float.quantile df "score" ~q:0.25
 For integer semantics (returning `int64`):
 
 ```ocaml
-let total = Agg.Int.sum  df "count"
-let min_c = Agg.Int.min  df "count"
-let max_c = Agg.Int.max  df "count"
-let mean_c = Agg.Int.mean df "count"
+(* Integer aggregations require integer dtypes. Create a dedicated numeric sample df. *)
+let int_df = create [ ("count", Col.int32_list [ 1l; 2l; 3l; 4l ]) ]
+
+let total = Agg.Int.sum  int_df "count"
+let min_c = Agg.Int.min  int_df "count"
+let max_c = Agg.Int.max  int_df "count"
+let mean_c = Agg.Int.mean int_df "count"
 ```
 
 ### 8.2 Strings and booleans
@@ -549,10 +564,13 @@ let s_mode   = Agg.String.mode    df "name"
 let s_unique = Agg.String.unique  df "name"  (* string array *)
 let s_nuniq  = Agg.String.nunique df "name"
 
-let b_all    = Agg.Bool.all  df "flag"
-let b_any    = Agg.Bool.any  df "flag"
-let b_sum    = Agg.Bool.sum  df "flag"
-let b_mean   = Agg.Bool.mean df "flag" (* proportion true *)
+(* Boolean aggregations also require boolean input. Create one for this section. *)
+let bool_df = create [ ("flag", Col.bool_list [ true; false; true; true ]) ]
+
+let b_all    = Agg.Bool.all  bool_df "flag"
+let b_any    = Agg.Bool.any  bool_df "flag"
+let b_sum    = Agg.Bool.sum  bool_df "flag"
+let b_mean   = Agg.Bool.mean bool_df "flag" (* proportion true *)
 ```
 
 ### 8.3 Generic quantities
@@ -616,18 +634,31 @@ Use `Row.Agg` (vectorized across columns):
 ```ocaml
 module RA = Row.Agg
 
-let row_sum_col   = RA.sum  df ~names:[ "a"; "b"; "c" ]
-let row_mean_col  = RA.mean df ~names:[ "a"; "b"; "c" ]
-let row_max_col   = RA.max  df ~names:[ "a"; "b"; "c" ]
+let df_row =
+  create
+    [
+      ("a", Col.int32_list [ 1l; 2l; 3l ]);
+      ("b", Col.int32_list [ 4l; 5l; 6l ]);
+      ("c", Col.int32_list [ 7l; 8l; 9l ]);
+      ("x", Col.float32_list [ 1.0; 2.0; 3.0 ]);
+      ("y", Col.float32_list [ 0.2; 0.8; 1.0 ]);
+      ("f1", Col.bool_list [ true; false; true ]);
+      ("f2", Col.bool_list [ true; true; false ]);
+      ("f3", Col.bool_list [ false; true; true ]);
+    ]
+
+let row_sum_col   = RA.sum  df_row ~names:[ "a"; "b"; "c" ]
+let row_mean_col  = RA.mean df_row ~names:[ "a"; "b"; "c" ]
+let row_max_col   = RA.max  df_row ~names:[ "a"; "b"; "c" ]
 
 let dot_col =
-  RA.dot df ~names:[ "x"; "y" ] ~weights:[| 0.2; 0.8 |]
+  RA.dot df_row ~names:[ "x"; "y" ] ~weights:[| 0.2; 0.8 |]
 
-let any_flag_col  = RA.any df ~names:[ "f1"; "f2"; "f3" ]
-let all_flag_col  = RA.all df ~names:[ "f1"; "f2"; "f3" ]
+let any_flag_col  = RA.any df_row ~names:[ "f1"; "f2"; "f3" ]
+let all_flag_col  = RA.all df_row ~names:[ "f1"; "f2"; "f3" ]
 
 let df' =
-  with_columns df
+  with_columns df_row
     [
       ("row_sum",  row_sum_col);
       ("dot",      dot_col);
@@ -660,7 +691,17 @@ let df_descending = sort_values ~ascending:false df "age"
 Custom key sort (like `df.sort_values(key=...)`):
 
 ```ocaml
+let people =
+  create
+    [
+      ("first", Col.string_list [ "Ada"; "Bob"; "Cara"; "Dan" ]);
+      ("last", Col.string_list [ "Zane"; "Young"; "Zane"; "Xue" ]);
+    ]
+
 let df_sorted_by_composite =
+  let df =
+    people
+  in
   sort df
     Row.(
       map2 (string "last") (string "first")
@@ -700,9 +741,17 @@ df.iloc[10:20]
 **Talon**
 
 ```ocaml
-let first5  = head df              (* default n=5 *)
-let last5   = tail df
-let mid     = slice df ~start:10 ~stop:20
+let df_slice =
+  create
+    [
+      ( "age",
+        Col.int32_list [ 18l; 22l; 25l; 27l; 30l; 31l; 35l; 40l; 42l; 44l; 48l; 50l ]
+      );
+    ]
+
+let first5  = head df_slice          (* default n=5 *)
+let last5   = tail df_slice
+let mid     = slice df_slice ~start:10 ~stop:20
 ```
 
 ---
@@ -721,15 +770,24 @@ for key, group in df.groupby("category"):
 **Talon**
 
 ```ocaml
-let groups : (Col.t * t) list = group_by_column df "category"
+let grouped =
+  create
+    [
+      ("category", Col.string_list [ "A"; "A"; "B"; "B"; "C" ]);
+      ("score", Col.float64_list [ 85.; 92.; 78.; 88.; 95. ]);
+    ]
+
+let groups : (Col.t * t) list = group_by_column grouped "category"
 
 (* key column (with single value) + group df *)
-List.iter
-  (fun (key_col, group_df) ->
-     (* inspect key_col or use to_string_options *)
-     (* process group_df *)
-  )
-  groups
+let () =
+  List.iter
+    (fun (key_col, group_df) ->
+      Printf.printf "Group: null_count=%d, rows=%d\n"
+        (Col.null_count key_col) (num_rows group_df)
+    )
+    groups
+
 ```
 
 ### 11.2 Group by computed key
@@ -743,8 +801,14 @@ df.groupby(df["score"].apply(lambda s: "A" if s >= 90 else "B"))
 **Talon**
 
 ```ocaml
+let scored =
+  create
+    [
+      ("score", Col.float64_list [ 85.; 92.; 78.; 88.; 95. ]);
+    ]
+
 let groups =
-  group_by df
+  group_by scored
     Row.(
       map (float64 "score") ~f:(fun s ->
         if s >= 90.0 then "A"
@@ -773,13 +837,41 @@ df1.join(df2.set_index("id"), on="id", how="outer")
 **Talon**
 
 ```ocaml
+let df1 =
+  create
+    [
+      ("id", Col.int32_list [ 1l; 2l ]);
+      ("value", Col.float64_list [ 10.0; 20.0 ]);
+    ]
+
+let df2 =
+  create
+    [
+      ("id", Col.int32_list [ 1l; 2l ]);
+      ("value", Col.float64_list [ 100.0; 200.0 ]);
+    ]
+
 (* Same key name on both sides *)
 let joined =
   join df1 df2 ~on:"id" ~how:`Inner ()
 
 (* Different key names *)
+let df_left =
+  create
+    [
+      ("a", Col.int32_list [ 1l; 2l ]);
+      ("val1", Col.float64_list [ 10.0; 20.0 ]);
+    ]
+
+let df_right =
+  create
+    [
+      ("b", Col.int32_list [ 1l; 2l ]);
+      ("val2", Col.float64_list [ 100.0; 200.0 ]);
+    ]
+
 let merged =
-  merge df1 df2
+  merge df_left df_right
     ~left_on:"a" ~right_on:"b"
     ~how:`Left
     ()
@@ -820,8 +912,16 @@ pd.pivot_table(
 **Talon**
 
 ```ocaml
+let df_pivot =
+  create
+    [
+      ("date", Col.string_list [ "2024-01"; "2024-01"; "2024-02"; "2024-02" ]);
+      ("product", Col.string_list [ "A"; "B"; "A"; "B" ]);
+      ("amount", Col.float64_list [ 100.0; 150.0; 120.0; 180.0 ]);
+    ]
+
 let pivoted =
-  pivot df
+  pivot df_pivot
     ~index:"date"
     ~columns:"product"
     ~values:"amount"
@@ -848,8 +948,16 @@ pd.melt(
 **Talon**
 
 ```ocaml
+let df_melt =
+  create
+    [
+      ("id", Col.int32_list [ 1l; 2l ]);
+      ("A", Col.float64_list [ 10.0; 20.0 ]);
+      ("B", Col.float64_list [ 30.0; 40.0 ]);
+    ]
+
 let melted =
-  melt df
+  melt df_melt
     ~id_vars:["id"]
     ~value_vars:["A"; "B"]
     ~var_name:"variable"

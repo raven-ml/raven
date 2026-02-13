@@ -42,9 +42,8 @@ let df_scores = create [
 let total = Row.Agg.sum df_scores ~names:["score1"; "score2"; "score3"]
 
 (* Filter and sort *)
-let df = df
-  |> filter_by Row.(bool "pass")
-  |> sort_values ~ascending:false "score"
+let df = filter_by df Row.(bool "pass")
+let df = sort_values ~ascending:false df "score"
 ```
 
 ## learn more

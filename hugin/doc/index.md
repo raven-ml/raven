@@ -24,6 +24,7 @@ What's missing: animations, interactive backends, advanced plot types (contour, 
 
 Hugin needs Cairo and SDL2 for rendering:
 
+<!-- $MDX skip -->
 ```bash
 # macOS
 brew install cairo sdl2

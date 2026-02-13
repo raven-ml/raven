@@ -6,12 +6,14 @@ This guide shows you how to create environments and train reinforcement learning
 
 Fehu isn't released yet. When it is, you'll install it with:
 
+<!-- $MDX skip -->
 ```bash
 opam install fehu
 ```
 
 For now, build from source:
 
+<!-- $MDX skip -->
 ```bash
 git clone https://github.com/raven-ml/raven
 cd raven
@@ -25,103 +27,79 @@ Here's how to create and interact with an environment:
 ```ocaml
 open Fehu
 
-(* Create environment with RNG *)
-let rng = Rune.Rng.key 42 in
-let env = Fehu_envs.Cartpole.make ~rng ()
+let () =
+  let rng = Rune.Rng.key 42 in
+  let env = Fehu_envs.Cartpole.make ~rng () in
 
-(* Reset environment *)
-let obs, _info = Env.reset env ()
+  (* Reset environment *)
+  let obs, _ = Env.reset env () in
+  let shape = Rune.shape obs in
+  Printf.printf "Observation: %d dimensions\n" shape.(0);
 
-(* Run one episode *)
-let rec run_episode rng total_reward =
-  (* Sample random action *)
-  let action, rng = Space.sample ~rng (Env.action_space env) in
-
-  (* Take step *)
-  let transition = Env.step env action in
-  let new_total = total_reward +. transition.reward in
-
-  if transition.terminated || transition.truncated then
-    Printf.printf "Episode finished. Total reward: %.0f\n" new_total
-  else
-    run_episode rng new_total
-in
-
-run_episode rng 0.0
+  (* Run a few random steps *)
+  let rec loop rng step reward =
+    if step >= 10 then
+      Printf.printf "Total reward after %d steps: %.0f\n" step reward
+    else
+      let action, rng = Space.sample ~rng (Env.action_space env) in
+      let t = Env.step env action in
+      if t.terminated || t.truncated then
+        Printf.printf "Episode ended at step %d, reward: %.0f\n"
+          (step + 1) (reward +. t.reward)
+      else
+        loop rng (step + 1) (reward +. t.reward)
+  in
+  loop rng 0 0.0
 ```
 
 ## Training with REINFORCE
 
-Here's a complete example training CartPole with the REINFORCE algorithm:
+Here's how to set up and train CartPole with the REINFORCE algorithm:
 
 ```ocaml
-open Fehu
 open Kaun
 
-(* Create policy network *)
+(* Define policy network: 4 obs dims -> 128 hidden -> 2 actions *)
 let policy_net = Layer.sequential [
   Layer.linear ~in_features:4 ~out_features:128 ();
   Layer.relu ();
   Layer.linear ~in_features:128 ~out_features:2 ();
 ]
 
-(* Create environment and agent *)
-let rng = Rune.Rng.key 42 in
-let env = Fehu_envs.Cartpole.make ~rng () in
+let () =
+  let rng = Rune.Rng.key 42 in
+  let env = Fehu_envs.Cartpole.make ~rng () in
 
-let config = {
-  Fehu_algorithms.Reinforce.default_config with
-  learning_rate = 0.001;
-  gamma = 0.99;
-  reward_scale = 0.01;
-  entropy_coef = 0.01;
-  max_episode_steps = 500;
-}
+  let config = {
+    Fehu_algorithms.Reinforce.default_config with
+    learning_rate = 0.001;
+    gamma = 0.99;
+    max_episode_steps = 500;
+  } in
 
-(* Train for 100,000 timesteps *)
-let params, state = Fehu_algorithms.Reinforce.train
-  ~env ~policy_network:policy_net ~rng ~config
-  ~total_timesteps:100_000
-  ~callback:(fun metrics ->
-    if metrics.total_episodes > 0 && metrics.total_episodes mod 10 = 0 then
-      Printf.printf "Episode %d: Return = %.2f, Length = %d\n"
-        metrics.total_episodes metrics.episode_return metrics.episode_length;
-    `Continue)
-  ()
-
-let greedy_action params obs =
-  let obs_batched =
-    match Rune.shape obs with
-    | [| features |] -> Rune.reshape [| 1; features |] obs
-    | [| 1; _ |] -> obs
-    | _ -> obs
+  (* Train for a few episodes *)
+  let params, state = Fehu_algorithms.Reinforce.train
+    ~env ~policy_network:policy_net ~rng ~config
+    ~total_timesteps:500
+    ~callback:(fun m ->
+      Printf.printf "Episode %d: return=%.0f, length=%d\n"
+        m.total_episodes m.episode_return m.episode_length;
+      `Continue)
+    ()
   in
-  let logits = Kaun.apply policy_net params ~training:false obs_batched in
-  let action_idx =
-    Rune.argmax logits ~axis:(-1) ~keepdims:false |> Rune.cast Rune.int32
-  in
-  let scalar =
-    Rune.reshape [||] action_idx |> Rune.to_array |> fun arr -> arr.(0)
-  in
-  Rune.scalar Rune.int32 scalar
 
-(* Evaluate trained agent *)
-let eval_stats = Training.evaluate env
-  ~policy:(fun obs -> greedy_action params obs)
-  ~n_episodes:10 ()
-
-Printf.printf "Average reward: %.2f\n" eval_stats.mean_reward
+  let m = Fehu_algorithms.Reinforce.metrics state in
+  Printf.printf "Trained for %d episodes (%d steps)\n"
+    m.total_episodes m.total_steps;
+  Printf.printf "Network: %d parameters\n" (Ptree.count_parameters params)
 ```
 
 ## Training with DQN
 
-Here's how to train with Deep Q-Networks:
+Here's how to set up and train with Deep Q-Networks:
 
 ```ocaml
-open Fehu
-open Kaun
-
-(* Create Q-network *)
+(* Define Q-network *)
 let q_network = Layer.sequential [
   Layer.linear ~in_features:4 ~out_features:64 ();
   Layer.relu ();
@@ -130,21 +108,33 @@ let q_network = Layer.sequential [
   Layer.linear ~in_features:64 ~out_features:2 ();
 ]
 
-(* Create environment *)
-let rng = Rune.Rng.key 42 in
-let env = Fehu_envs.Cartpole.make ~rng ()
+let () =
+  let rng = Rune.Rng.key 42 in
+  let env = Fehu_envs.Cartpole.make ~rng () in
 
-(* Initialize Q-network and experience replay *)
-let params = Kaun.init q_network ~rngs:rng ~dtype:Rune.float32 in
-let replay_buffer = Buffer.Replay.create ~capacity:10_000 in
+  let config = {
+    Fehu_algorithms.Dqn.default_config with
+    learning_rate = 0.001;
+    gamma = 0.99;
+    buffer_capacity = 1_000;
+    batch_size = 32;
+  } in
 
-(* Training loop (simplified - see examples for full implementation) *)
-for episode = 1 to 500 do
-  let obs, _info = Env.reset env () in
-  (* ... epsilon-greedy action selection ... *)
-  (* ... store transitions in replay_buffer ... *)
-  (* ... sample batch and update Q-network ... *)
-done
+  (* Train for a few steps *)
+  let params, state = Fehu_algorithms.Dqn.train
+    ~env ~q_network ~rng ~config
+    ~total_timesteps:100
+    ~callback:(fun m ->
+      (match m.episode_return with
+       | Some r -> Printf.printf "Episode %d: return=%.0f\n" m.total_episodes r
+       | None -> ());
+      `Continue)
+    ()
+  in
+
+  let m = Fehu_algorithms.Dqn.metrics state in
+  Printf.printf "Q-network: %d parameters\n" (Ptree.count_parameters params);
+  Printf.printf "After %d steps, epsilon=%.2f\n" m.total_steps m.epsilon
 ```
 
 ## Next Steps

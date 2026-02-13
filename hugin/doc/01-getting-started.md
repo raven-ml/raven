@@ -6,22 +6,25 @@ This guide shows you how to create plots with hugin.
 
 First, install the system dependencies:
 
+<!-- $MDX skip -->
 ```bash
 # macOS
 brew install cairo sdl2
 
-# Ubuntu/Debian  
+# Ubuntu/Debian
 apt install libcairo2-dev libsdl2-dev
 ```
 
 Then install hugin:
 
+<!-- $MDX skip -->
 ```bash
 opam install hugin
 ```
 
 For now, build from source:
 
+<!-- $MDX skip -->
 ```bash
 git clone https://github.com/raven-ml/raven
 cd raven
@@ -32,6 +35,7 @@ dune pkg lock && dune build hugin
 
 Here's a working example that creates a simple line plot:
 
+<!-- $MDX skip -->
 ```ocaml
 open Hugin
 open Nx
@@ -60,6 +64,7 @@ let () =
 
 **Pipeline style.** Hugin embraces OCaml's `|>` operator. You build plots by piping axes through transformations:
 
+<!-- $MDX skip -->
 ```ocaml
 subplot fig
 |> Plotting.plot ~x ~y
@@ -73,6 +78,7 @@ subplot fig
 - `Artist` - colors and styles
 
 **Colors are records.** Instead of strings, use predefined colors:
+<!-- $MDX skip -->
 ```ocaml
 Artist.Color.red
 Artist.Color.blue
@@ -81,9 +87,10 @@ Artist.Color.(rgba 0.5 0.5 0.5 1.0)  (* custom RGBA *)
 
 ## Common Plots
 
+<!-- $MDX skip -->
 ```ocaml
 (* Line plot with style *)
-Plotting.plot ~x ~y 
+Plotting.plot ~x ~y
   ~color:Artist.Color.red 
   ~linestyle:Artist.Dashed 
   ~linewidth:2.0
@@ -116,6 +123,7 @@ savefig fig "plot.png"
 
 ## Display Images
 
+<!-- $MDX skip -->
 ```ocaml
 (* Load and display an image *)
 let img = Nx_io.load_image "photo.jpg" in
@@ -127,4 +135,4 @@ show fig
 
 Check out the [Matplotlib Comparison](/docs/hugin/matplotlib-comparison/) to see how hugin's functional approach differs from Matplotlib's object-oriented style.
 
-The examples in `hugin/example/` show more complex plots including 3D visualization.
+The examples in `hugin/examples/` show more complex plots including 3D visualization.

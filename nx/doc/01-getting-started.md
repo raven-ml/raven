@@ -6,12 +6,14 @@ This guide shows you how to use nx for numerical computing in OCaml.
 
 Nx isn't released yet. When it is, you'll install it with:
 
+<!-- $MDX skip -->
 ```bash
 opam install nx
 ```
 
 For now, build from source:
 
+<!-- $MDX skip -->
 ```bash
 git clone https://github.com/raven-ml/raven
 cd raven
@@ -27,7 +29,7 @@ open Nx
 
 (* Create arrays *)
 let a = ones float32 [|3; 3|]
-let b = rand float32 [|3; 3|]
+let b = rand float32 ~key:(Rng.key 0) [|3; 3|]
 
 (* Matrix multiplication *)
 let c = matmul a b
@@ -36,7 +38,7 @@ let c = matmul a b
 let d = add c (scalar float32 2.0)
 
 (* Print the result *)
-print_tensor d
+let () = print_data d
 ```
 
 ## Key Concepts
@@ -47,41 +49,44 @@ print_tensor d
 
 **Slicing uses functions.** Instead of NumPy's `arr[0:2, :]`, nx uses:
 ```ocaml
-let slice = get_slice [R (0, 2); A] arr
+open Nx
+let arr = ones float32 [|4; 4|]
+let sub = slice [R (0, 2); A] arr
 ```
 
 **Broadcasting works like NumPy.** Arrays with compatible shapes can be used together:
 ```ocaml
-let matrix = rand float32 [|3; 4|]
-let row = rand float32 [|1; 4|]
-let result = add matrix row  (* broadcasts row to each matrix row *)
+let matrix = rand float32 ~key:(Rng.key 1) [|3; 4|]
+let row = rand float32 ~key:(Rng.key 2) [|1; 4|]
+let result = add matrix row
 ```
 
 ## Common Operations
 
 ```ocaml
+open Nx
+
 (* Creation *)
 let x = zeros float32 [|2; 3|]
 let y = ones int32 [|5|]
 let z = full float64 [|3; 3|] 3.14
-let seq = arange 0 10
+let seq = arange int32 0 10 1
 let points = linspace float32 0. 1. 100
 
 (* Manipulation *)
 let reshaped = reshape [|6|] x
-let transposed = transpose matrix
-let concatenated = concatenate ~axis:0 [x; y]
+let transposed = transpose z
+let concatenated = concatenate ~axis:0 [x; x]
 
 (* Math *)
+let arr = rand float32 ~key:(Rng.key 0) [|3; 3|]
 let sum_all = sum arr
-let mean_axis0 = mean ~axes:[|0|] arr
+let mean_axis0 = mean ~axes:[0] arr
 let maximum = max arr
-let product = mul a b  (* element-wise *)
-let dot_product = matmul a b  (* matrix multiply *)
-
-(* I/O *)
-save_npy "data.npy" arr
-let loaded = load_npy float32 "data.npy"
+let a = ones float32 [|3; 3|]
+let b = rand float32 ~key:(Rng.key 1) [|3; 3|]
+let product = mul a b
+let dot_product = matmul a b
 ```
 
 ## Next Steps

@@ -6,12 +6,14 @@ This guide shows you how to build and train neural networks with kaun.
 
 Kaun isn't released yet. When it is, you'll install it with:
 
+<!-- $MDX skip -->
 ```bash
 opam install kaun
 ```
 
 For now, build from source:
 
+<!-- $MDX skip -->
 ```bash
 git clone https://github.com/raven-ml/raven
 cd raven
@@ -22,6 +24,7 @@ dune pkg lock && dune build kaun
 
 Here's a simple example that trains a two-layer network on XOR:
 
+<!-- $MDX skip -->
 ```ocaml
 open Kaun
 
@@ -96,6 +99,7 @@ let train () =
 
 ## Available Components
 
+<!-- $MDX skip -->
 ```ocaml
 (* Layers *)
 Linear.create rng ~input_dim:784 ~output_dim:128 ~use_bias:true
@@ -122,6 +126,8 @@ Loss.sigmoid_binary_cross_entropy ~targets pred
 ## Design Patterns
 
 **Module-based models:**
+
+<!-- $MDX skip -->
 ```ocaml
 module MyModel = struct
   type t = { 
@@ -136,6 +142,8 @@ end
 ```
 
 **Lens-based parameter access:**
+
+<!-- $MDX skip -->
 ```ocaml
 (* Convert model to parameters *)
 let params = to_ptree model
@@ -150,6 +158,6 @@ let new_model = of_ptree new_params
 ## Next Steps
 
 - [MNIST Tutorial](/docs/kaun/mnist-tutorial/) - Train a real CNN on image data
-- Check out the examples in `kaun/example/` for more complete training loops
+- Check out the examples in `kaun/examples/` for more complete training loops
 
 Kaun is under active development. More layers, losses, and utilities are coming.

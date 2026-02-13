@@ -48,10 +48,11 @@ Real datasets are automatically downloaded on first use and cached in your platf
 Classic handwritten digits dataset:
 
 ```ocaml
-let (x_train, y_train), (x_test, y_test) = Nx_datasets.load_mnist () in
-Printf.printf "Train: %s, Test: %s\n" 
-  (Nx.shape_to_string x_train) 
-  (Nx.shape_to_string x_test)
+let (x_train, _y_train), (x_test, _y_test) = Nx_datasets.load_mnist ()
+let () =
+  Printf.printf "Train: %s, Test: %s\n"
+    (Nx.shape_to_string (Nx.shape x_train))
+    (Nx.shape_to_string (Nx.shape x_test))
 (* Train: [60000, 28, 28, 1], Test: [10000, 28, 28, 1] *)
 ```
 
@@ -62,7 +63,7 @@ Images are uint8 arrays with values 0-255. Labels are single digits 0-9.
 Clothing classification with the same format as MNIST:
 
 ```ocaml
-let (x_train, y_train), (x_test, y_test) = Nx_datasets.load_fashion_mnist ()
+let (_x_train, _y_train), (_x_test, _y_test) = Nx_datasets.load_fashion_mnist ()
 (* 10 classes: T-shirt, Trouser, Pullover, Dress, Coat, Sandal, Shirt, Sneaker, Bag, Ankle boot *)
 ```
 
@@ -71,7 +72,7 @@ let (x_train, y_train), (x_test, y_test) = Nx_datasets.load_fashion_mnist ()
 Color images in 10 categories:
 
 ```ocaml
-let (x_train, y_train), (x_test, y_test) = Nx_datasets.load_cifar10 () in
+let (_x_train, _y_train), (_x_test, _y_test) = Nx_datasets.load_cifar10 ()
 (* x_train shape: [50000, 32, 32, 3] *)
 (* Classes: airplane, automobile, bird, cat, deer, dog, frog, horse, ship, truck *)
 ```
@@ -83,7 +84,7 @@ let (x_train, y_train), (x_test, y_test) = Nx_datasets.load_cifar10 () in
 Classic flower classification:
 
 ```ocaml
-let x, y = Nx_datasets.load_iris () in
+let _x, _y = Nx_datasets.load_iris ()
 (* x shape: [150, 4] - sepal length/width, petal length/width *)
 (* y shape: [150, 1] - 0=setosa, 1=versicolor, 2=virginica *)
 ```
@@ -93,7 +94,7 @@ let x, y = Nx_datasets.load_iris () in
 Binary classification for cancer diagnosis:
 
 ```ocaml
-let x, y = Nx_datasets.load_breast_cancer () in
+let _x, _y = Nx_datasets.load_breast_cancer ()
 (* x shape: [569, 30] - 30 features per sample *)
 (* y shape: [569, 1] - 0=malignant, 1=benign *)
 ```
@@ -102,18 +103,18 @@ let x, y = Nx_datasets.load_breast_cancer () in
 
 ```ocaml
 (* Diabetes regression *)
-let x, y = Nx_datasets.load_diabetes () in
+let _x, _y = Nx_datasets.load_diabetes ()
 (* x: [442, 10], y: [442, 1] - diabetes progression *)
 
 (* California housing prices *)
-let x, y = Nx_datasets.load_california_housing () in
+let _x, _y = Nx_datasets.load_california_housing ()
 (* x: [20640, 8], y: [20640, 1] - median house values *)
 ```
 
 ### Time Series
 
 ```ocaml
-let passengers = Nx_datasets.load_airline_passengers () in
+let _passengers = Nx_datasets.load_airline_passengers ()
 (* Monthly airline passenger counts 1949-1960 *)
 (* shape: [144] *)
 ```
@@ -127,20 +128,20 @@ let passengers = Nx_datasets.load_airline_passengers () in
 Generate isotropic Gaussian blobs for clustering:
 
 ```ocaml
-let x, y = Nx_datasets.make_blobs 
-  ~n_samples:300 
+let _x, _y = Nx_datasets.make_blobs
+  ~n_samples:300
   ~centers:(`N 3)
-  ~cluster_std:0.5 
-  () in
+  ~cluster_std:0.5
+  ()
 (* 3 well-separated clusters *)
 ```
 
 Specify exact cluster centers:
 
 ```ocaml
-let centers = Nx.of_array Nx.float32 ~shape:[|3; 2|] 
-  [|-10.; -10.; 0.; 0.; 10.; 10.|] in
-let x, y = Nx_datasets.make_blobs ~centers:(`Array centers) ()
+let centers = Nx.create Nx.float32 [|3; 2|]
+  [|-10.; -10.; 0.; 0.; 10.; 10.|]
+let _x, _y = Nx_datasets.make_blobs ~centers:(`Array centers) ()
 ```
 
 #### Two Moons
@@ -148,10 +149,10 @@ let x, y = Nx_datasets.make_blobs ~centers:(`Array centers) ()
 Binary classification with interleaving half circles:
 
 ```ocaml
-let x, y = Nx_datasets.make_moons 
-  ~n_samples:200 
-  ~noise:0.1 
-  () in
+let _x, _y = Nx_datasets.make_moons
+  ~n_samples:200
+  ~noise:0.1
+  ()
 (* Ideal for testing non-linear classifiers *)
 ```
 
@@ -160,9 +161,9 @@ let x, y = Nx_datasets.make_moons
 Nested circles for non-linear separation:
 
 ```ocaml
-let x, y = Nx_datasets.make_circles 
-  ~n_samples:200 
-  ~noise:0.05 
+let _x, _y = Nx_datasets.make_circles
+  ~n_samples:200
+  ~noise:0.05
   ~factor:0.5  (* Inner circle radius ratio *)
   ()
 ```
@@ -172,7 +173,7 @@ let x, y = Nx_datasets.make_circles
 Control informative/redundant features:
 
 ```ocaml
-let x, y = Nx_datasets.make_classification
+let _x, _y = Nx_datasets.make_classification
   ~n_samples:1000
   ~n_features:20
   ~n_informative:15  (* Useful features *)
@@ -189,7 +190,7 @@ let x, y = Nx_datasets.make_classification
 Generate data with controllable properties:
 
 ```ocaml
-let x, y, coef_opt = Nx_datasets.make_regression
+let _x, _y, _coef_opt = Nx_datasets.make_regression
   ~n_samples:100
   ~n_features:5
   ~n_informative:3  (* Only 3 features affect output *)
@@ -204,7 +205,7 @@ Standard non-linear regression problems:
 
 ```ocaml
 (* Friedman #1: y = 10*sin(π*x1*x2) + 20*(x3-0.5)² + 10*x4 + 5*x5 + noise *)
-let x, y = Nx_datasets.make_friedman1 ~n_samples:100 ()
+let _x, _y = Nx_datasets.make_friedman1 ~n_samples:100 ()
 ```
 
 ### Manifold Data
@@ -214,7 +215,7 @@ let x, y = Nx_datasets.make_friedman1 ~n_samples:100 ()
 3D manifold for dimensionality reduction:
 
 ```ocaml
-let x, color = Nx_datasets.make_swiss_roll ~n_samples:1000 () in
+let _x, _color = Nx_datasets.make_swiss_roll ~n_samples:1000 ()
 (* x shape: [1000, 3], color: [1000] - position along roll *)
 ```
 
@@ -223,5 +224,5 @@ let x, color = Nx_datasets.make_swiss_roll ~n_samples:1000 () in
 Another 3D manifold:
 
 ```ocaml
-let x, color = Nx_datasets.make_s_curve ~n_samples:1000 ()
+let _x, _color = Nx_datasets.make_s_curve ~n_samples:1000 ()
 ```

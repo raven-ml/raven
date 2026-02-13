@@ -6,12 +6,14 @@ This guide shows you how to use Saga for text processing and tokenization in OCa
 
 Saga isn't released yet. When it is, you'll install it with:
 
+<!-- $MDX skip -->
 ```bash
 opam install saga
 ```
 
 For now, build from source:
 
+<!-- $MDX skip -->
 ```bash
 git clone https://github.com/raven-ml/raven
 cd raven
@@ -20,134 +22,182 @@ dune pkg lock && dune build saga
 
 ## First Steps
 
-Here's a simple example that actually works with Saga:
+Train a word-level tokenizer and use it to encode and decode text:
 
 ```ocaml
 open Saga
 
-(* Tokenize text *)
-let tokens = tokenize "Hello world! How are you?"
-(* ["Hello"; "world"; "!"; "How"; "are"; "you"; "?"] *)
+let () =
+  (* Train a word-level tokenizer from a corpus *)
+  let corpus =
+    [ "Hello world"; "How are you"; "Hello again"; "The world is big" ]
+  in
+  let tokenizer =
+    Tokenizer.train_wordlevel ~vocab_size:50 ~show_progress:false
+      (`Seq (List.to_seq corpus))
+  in
 
-(* Build vocabulary from corpus *)
-let corpus = ["Hello world"; "Hello there"; "world peace"] in
-let vocab = vocab (List.concat_map tokenize corpus)
+  (* Inspect the vocabulary *)
+  Printf.printf "Vocabulary size: %d\n" (Tokenizer.vocab_size tokenizer);
 
-(* Encode text to indices *)
-let encoded = encode ~vocab "Hello world"
-(* [4; 5] *)
+  (* Encode text to token IDs *)
+  let ids = Tokenizer.encode_ids tokenizer "Hello world" in
+  Printf.printf "Token IDs: ";
+  Array.iter (fun id -> Printf.printf "%d " id) ids;
+  print_newline ();
 
-(* Batch encode for neural networks *)
-let texts = ["Hello world"; "How are you?"] in
-let tensor = encode_batch ~vocab ~max_len:10 texts
-(* Returns Nx int32 tensor of shape [2; 10] *)
+  (* Get full encoding with metadata *)
+  let encoding = Tokenizer.encode tokenizer "Hello world" in
+  let tokens = Encoding.get_tokens encoding in
+  Printf.printf "Tokens: ";
+  Array.iter (fun t -> Printf.printf "%S " t) tokens;
+  print_newline ();
+
+  (* Decode back to text *)
+  let text = Tokenizer.decode tokenizer ids in
+  Printf.printf "Decoded: %s\n" text
 ```
 
 ## Key Concepts
 
-**Tokenization methods.** Choose between word-level (default), character-level, or regex-based tokenization:
+**Tokenizer types.** Saga supports multiple tokenization algorithms:
+
 ```ocaml
-let words = tokenize "Hello world"                    (* Word-level *)
-let chars = tokenize ~method_:`Chars "Hi!"           (* Character-level *)
-let custom = tokenize ~method_:(`Regex "\\w+") text  (* Regex-based *)
+open Saga
+
+let () =
+  (* Word-level: maps whole words to IDs *)
+  let wl =
+    Tokenizer.word_level
+      ~pre:(Pre_tokenizers.whitespace ())
+      ~vocab:[ ("hello", 0); ("world", 1) ]
+      ~unk_token:"[UNK]" ()
+  in
+  let ids = Tokenizer.encode_ids wl "hello world" in
+  Printf.printf "Word-level IDs: ";
+  Array.iter (fun id -> Printf.printf "%d " id) ids;
+  print_newline ();
+
+  (* Character-level: each character is a token *)
+  let cl = Tokenizer.chars () in
+  let encoding = Tokenizer.encode cl "Hi!" in
+  Printf.printf "Char tokens: ";
+  Array.iter (fun t -> Printf.printf "%S " t) (Encoding.get_tokens encoding);
+  print_newline ()
 ```
 
-**Vocabularies are essential.** Build them from your corpus or load pretrained ones:
+**Rich encoding output.** The `Encoding` module provides token IDs, offsets, attention masks, and more:
+
 ```ocaml
-let vocab = vocab ~max_size:10000 ~min_freq:2 tokens
+open Saga
+
+let () =
+  let tokenizer =
+    Tokenizer.word_level
+      ~pre:(Pre_tokenizers.whitespace ())
+      ~vocab:[ ("hello", 0); ("world", 1); ("[UNK]", 2) ]
+      ~unk_token:"[UNK]" ()
+  in
+  let encoding = Tokenizer.encode tokenizer "hello world" in
+  Printf.printf "IDs: ";
+  Array.iter (fun id -> Printf.printf "%d " id) (Encoding.get_ids encoding);
+  print_newline ();
+  Printf.printf "Tokens: ";
+  Array.iter (fun t -> Printf.printf "%S " t) (Encoding.get_tokens encoding);
+  print_newline ();
+  Printf.printf "Attention mask: ";
+  Array.iter (fun m -> Printf.printf "%d " m)
+    (Encoding.get_attention_mask encoding);
+  print_newline ()
 ```
 
-**Special tokens are automatic.** Every vocabulary includes `<pad>`, `<unk>`, `<bos>`, and `<eos>` at indices 0-3.
+**Training tokenizers.** Train BPE or WordPiece tokenizers from your corpus:
 
-**Batch processing returns tensors.** Use `encode_batch` to get Nx tensors ready for ML models:
 ```ocaml
-let tensor = encode_batch ~vocab ~pad:true ~max_len:128 texts
+open Saga
+
+let () =
+  let texts =
+    [
+      "The quick brown fox jumps over the lazy dog";
+      "The dog barked at the fox";
+      "Quick brown foxes are rare";
+    ]
+  in
+  (* Train BPE tokenizer *)
+  let bpe =
+    Tokenizer.train_bpe ~vocab_size:100 ~show_progress:false
+      (`Seq (List.to_seq texts))
+  in
+  let ids = Tokenizer.encode_ids bpe "The quick fox" in
+  Printf.printf "BPE vocabulary size: %d\n" (Tokenizer.vocab_size bpe);
+  Printf.printf "BPE token count: %d\n" (Array.length ids)
 ```
 
-## Common Operations
+**Configurable pipeline.** Customize normalization, pre-tokenization, and post-processing:
 
 ```ocaml
-(* Tokenization *)
-let tokens = tokenize "Hello world! 你好世界"
-let tokens = tokenize ~method_:`Chars "Hello"
-let tokens = tokenize ~method_:(`Regex "\\w+|[^\\w\\s]+") text
+open Saga
 
-(* Normalization *)
-let clean = normalize ~lowercase:true ~strip_accents:true text
-let clean = normalize ~collapse_whitespace:true "  hello   world  "
-
-(* Vocabulary *)
-let vocab = vocab tokens
-let vocab = vocab ~max_size:30000 ~min_freq:2 tokens
-vocab_save vocab "vocab.txt"
-let vocab = vocab_load "vocab.txt"
-
-(* Encoding *)
-let indices = encode ~vocab text
-let tensor = encode_batch ~vocab texts
-let tensor = encode_batch ~vocab ~pad:true ~max_len:512 texts
-
-(* Decoding *)
-let text = decode vocab indices
-let texts = decode_batch vocab tensor
-
-(* Advanced tokenizers *)
-let bpe = Bpe.from_files ~vocab:"vocab.json" ~merges:"merges.txt" in
-let tokens = Bpe.tokenize bpe text
-
-let wp = Wordpiece.from_files ~vocab:"vocab.txt" in
-let tokens = Wordpiece.tokenize wp text
+(* Build a BERT-style tokenizer *)
+let tokenizer =
+  Tokenizer.wordpiece
+    ~normalizer:
+      (Normalizers.sequence
+         [ Normalizers.nfd (); Normalizers.lowercase (); Normalizers.strip_accents () ])
+    ~pre:(Pre_tokenizers.whitespace ())
+    ~post:
+      (Processors.bert ~sep:("[SEP]", 102) ~cls:("[CLS]", 101) ())
+    ~decoder:(Decoders.wordpiece ())
+    ~vocab:[ ("[CLS]", 101); ("[SEP]", 102); ("[UNK]", 100) ]
+    ~unk_token:"[UNK]" ()
 ```
 
-## Subword Tokenization
+## Loading Pretrained Tokenizers
 
-Saga supports modern subword tokenizers used by transformer models:
+Load HuggingFace-format tokenizers:
 
+<!-- $MDX skip -->
 ```ocaml
-(* BPE (used by GPT models) *)
-let bpe = Bpe.from_files ~vocab:"vocab.json" ~merges:"merges.txt" in
-let tokens = Bpe.tokenize bpe "unrecognizable"
-(* ["un", "##rec", "##ogn", "##iz", "##able"] *)
+open Saga
 
-(* WordPiece (used by BERT) *)
-let wp = Wordpiece.from_files ~vocab:"vocab.txt" in
-let tokens = Wordpiece.tokenize wp "unrecognizable"
-(* ["un", "##recogniz", "##able"] *)
+(* From tokenizer.json (HuggingFace format) *)
+let tokenizer =
+  match Tokenizer.from_file "tokenizer.json" with
+  | Ok t -> t
+  | Error e -> raise e
 
-(* Configure subword tokenizers *)
-let config = {
-  Bpe.default_config with
-  cache_capacity = 50000;
-  continuing_subword_prefix = Some "##";
-  dropout = Some 0.1;  (* For training *)
-} in
-let bpe = Bpe.create config
+(* From vocab + merges files *)
+let tokenizer =
+  Tokenizer.from_model_file ~vocab:"vocab.json" ~merges:"merges.txt" ()
+
+(* Save a trained tokenizer *)
+let () = Tokenizer.save_pretrained tokenizer ~path:"./my_tokenizer"
 ```
 
-## Unicode Support
+## Batch Encoding
 
-Handle multilingual text properly:
+Encode multiple texts at once with padding and truncation:
 
+<!-- $MDX skip -->
 ```ocaml
-open Saga.Unicode
+open Saga
 
-(* Clean text *)
-let clean = clean_text ~remove_control:true text
-let no_emoji = remove_emoji "Hello 👋 World 🌍!"
+let tokenizer = (* ... trained or loaded tokenizer ... *)
 
-(* Check character types *)
-let is_chinese = is_cjk (Uchar.of_int 0x4E00)
-let is_letter = categorize_char (Uchar.of_char 'A') = Letter
-
-(* Split words with Unicode awareness *)
-let words = split_words "Hello世界"
-(* ["Hello"; "世"; "界"] - CJK chars split individually *)
+(* Batch encode with padding *)
+let texts = [ "Hello world"; "How are you doing today" ] in
+let encodings =
+  Tokenizer.encode_batch tokenizer texts
+    ~padding:
+      { length = `Batch_longest;
+        direction = `Right;
+        pad_id = Some 0;
+        pad_type_id = Some 0;
+        pad_token = Some "[PAD]" }
+    ~truncation:{ max_length = 512; direction = `Right }
 ```
 
 ## Next Steps
 
-Check out the [Tokenizers Guide](/docs/saga/tokenizers/) for detailed information about BPE and WordPiece.
-
-For Unicode processing, see the [Unicode Guide](/docs/saga/unicode/).
-
-When Saga is released, full API documentation will be available. For now, the source code in `saga/src/saga.mli` is your best reference.
+Check out the source code in `saga/lib/saga.mli` for the full API reference.
