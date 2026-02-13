@@ -125,3 +125,25 @@ val mkdir_p : string -> unit
 
     {2 Raises}
     - [Unix.Unix_error] if creation fails for other reasons. *)
+
+val load_csv :
+  ?separator:char ->
+  ?has_header:bool ->
+  string ->
+  string list * string list list
+(** [load_csv ?separator ?has_header path] reads a CSV file and returns its
+    contents.
+
+    Handles RFC 4180 quoting (double-quoted fields, embedded quotes as [""]]).
+    Strips carriage returns for CRLF line endings.
+
+    {2 Parameters}
+    - separator: field delimiter character (default: [',']).
+    - has_header: if [true], the first row is returned separately as the header
+      (default: [false]).
+    - path: the file path to read.
+
+    {2 Returns}
+    - [(header, rows)] where [header] is the first row if [has_header] is
+      [true], or [[]] otherwise. [rows] is the remaining data rows, each as a
+      list of field strings. *)

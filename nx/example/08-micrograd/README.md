@@ -22,7 +22,7 @@ dune exec ./demo.exe
 ```
 
 This will:
-- Generate a moon dataset using nx-datasets
+- Generate a moon dataset using nx.datasets
 - Create a 2-layer neural network (2 → 16 → 16 → 1)
 - Train the network using SVM loss with gradient descent
 - Generate a visualization of the dataset using hugin
@@ -53,5 +53,5 @@ The implementation follows the original micrograd design:
 ## Dependencies
 
 - `nx`: Tensor operations
-- `nx-datasets`: Dataset generation (make_moons)
+- `nx.datasets`: Dataset generation (make_moons)
 - `hugin`: (Optional) Plotting library

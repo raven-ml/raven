@@ -31,9 +31,9 @@ Alongside these core layers, Raven includes **supporting tools** for the develop
                            │
      ┌─────────────────────▼────────────────────────┐
      │          Foundation Libraries                │
-     │  ┌────┐  ┌─────────────┐  ┌─────────┐        │
-     │  │ Nx │  │ Nx_datasets │  │  Saga   │        │
-     │  └────┘  └─────────────┘  └─────────┘        │
+     │    ┌──────────┐        ┌──────────┐          │
+     │    │    Nx    │        │   Saga   │          │
+     │    └──────────┘        └──────────┘          │
      └──────────────────────────────────────────────┘
 
             Supporting Tools & Visualization

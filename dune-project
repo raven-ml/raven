@@ -70,28 +70,12 @@
   (conf-pkg-config :build)
   ; camlzip
   (conf-zlib :build)
+  logs
   ; tests
   (windtrap :with-test)
   (mdx :with-test))
  (tags
   (numerical-computation tensor-library machine-learning)))
-
-(package
- (name nx-datasets)
- (synopsis "Common datasets for machine learning")
- (description
-  "A collection of common datasets for machine learning tasks, including image classification, regression, and more. This package provides easy access to popular datasets in a format compatible with Nx.")
- (depends
-  (ocaml
-   (>= 5.2.0))
-  dune
-  csv
-  logs
-  (nx
-   (= :version))
-  (windtrap :with-test))
- (tags
-  (datasets machine-learning data-science image-classification regression)))
 
 (package
  (name saga)
@@ -169,7 +153,7 @@
    (= :version))
   (rune
    (= :version))
-  (nx-datasets
+  (nx
    (= :version))
   (windtrap :with-test))
  (tags
@@ -235,8 +219,6 @@
   "Raven is a comprehensive machine learning ecosystem for OCaml. This meta package installs all Raven components including Nx (tensors), Hugin (plotting), Rune (autodiff), Kaun (neural networks), and Sowilo (computer vision).")
  (depends
   (nx
-   (= :version))
-  (nx-datasets
    (= :version))
   (saga
    (= :version))

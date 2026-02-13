@@ -47,13 +47,6 @@ jobs:
           opam exec -- dune build @nx/runtest
           echo "::endgroup::"
 
-      - name: Build and test nx-datasets
-        run: |
-          echo "::group::nx-datasets"
-          opam exec -- dune build nx-datasets
-          opam exec -- dune build @nx-datasets/runtest
-          echo "::endgroup::"
-
       - name: Build and test saga
         run: |
           echo "::group::saga"

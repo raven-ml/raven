@@ -37,20 +37,9 @@ let load () =
   ensure_dataset ();
   Log.info (fun m -> m "Loading California Housing dataset...");
 
-  let header, all_data_rows =
-    try
-      let rows = Csv.Rows.load ~has_header:true ~separator:',' data_path in
-      let chan_header =
-        Csv.of_channel ~has_header:true ~separator:',' (open_in data_path)
-      in
-      let h = Csv.Rows.header chan_header in
-      Csv.close_in chan_header;
-      (h, rows)
+  let header, data_rows_str =
+    try load_csv ~has_header:true ~separator:',' data_path
     with
-    | Csv.Failure (r, c, msg) ->
-        failwith
-          (Printf.sprintf "CSV Parsing Error in %s at row %d, col %d: %s"
-             data_path r c msg)
     | Sys_error msg ->
         failwith (Printf.sprintf "Cannot open file %s: %s" data_path msg)
     | ex ->
@@ -58,8 +47,6 @@ let load () =
           (Printf.sprintf "Error loading CSV %s: %s" data_path
              (Printexc.to_string ex))
   in
-
-  let data_rows_str = List.map Csv.Row.to_list all_data_rows in
   let num_samples = List.length data_rows_str in
   if num_samples = 0 then failwith "No data loaded from housing.csv";
 

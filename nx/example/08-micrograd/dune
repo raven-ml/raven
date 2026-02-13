@@ -6,4 +6,4 @@
 (executable
  (name demo)
  (modules demo)
- (libraries nx nx-datasets hugin micrograd))
+ (libraries nx nx.datasets hugin micrograd))

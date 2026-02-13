@@ -14,11 +14,10 @@
   %{lib:nx.io.npy:npy.cma}
   %{lib:nx.io.stb_image:stb_image.cma}
   %{lib:nx.io.stb_image_write:stb_image_write.cma}
-  ; nx-datasets
-  %{lib:nx-datasets:nx_datasets.cmi}
-  %{lib:nx-datasets:nx_datasets.cma}
+  ; nx.datasets
+  %{lib:nx.datasets:nx_datasets.cmi}
+  %{lib:nx.datasets:nx_datasets.cma}
   %{lib:unix:unix.cma}
-  %{lib:csv:csv.cma}
   ; sowilo
   %{lib:sowilo:sowilo.cmi}
   %{lib:sowilo:sowilo.cma}
@@ -63,11 +62,10 @@
    (copy
     %{lib:nx.io.stb_image_write:stb_image_write.cma}
     stb_image_write.cma)
-   (copy %{lib:nx-datasets:nx_datasets.cmi} nx_datasets.cmi)
-   (copy %{lib:nx-datasets:nx_datasets.cma} nx_datasets.cma)
+   (copy %{lib:nx.datasets:nx_datasets.cmi} nx_datasets.cmi)
+   (copy %{lib:nx.datasets:nx_datasets.cma} nx_datasets.cma)
    (copy %{lib:unix:unix.cma} unix.cma)
    (copy %{lib:nx.zip:zip.cma} zip.cma)
-   (copy %{lib:csv:csv.cma} csv.cma)
    (copy %{lib:sowilo:sowilo.cmi} sowilo.cmi)
    (copy %{lib:sowilo:sowilo.cma} sowilo.cma)
    (copy %{lib:hugin:hugin.cmi} hugin.cmi)

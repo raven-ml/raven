@@ -135,3 +135,61 @@ let parse_int_cell ~context s =
   try int_of_string s
   with Failure _ | Invalid_argument _ ->
     failwith (Printf.sprintf "Failed to parse int '%s' (%s)" s (context ()))
+
+let load_csv ?(separator = ',') ?(has_header = false) path =
+  let ic = open_in path in
+  let content =
+    Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
+        really_input_string ic (in_channel_length ic))
+  in
+  let lines = String.split_on_char '\n' content in
+  let lines =
+    List.map
+      (fun line ->
+        if line <> "" && line.[String.length line - 1] = '\r' then
+          String.sub line 0 (String.length line - 1)
+        else line)
+      lines
+  in
+  let lines = List.filter (fun l -> l <> "") lines in
+  let parse_line line =
+    let len = String.length line in
+    let fields = ref [] in
+    let buf = Buffer.create 64 in
+    let i = ref 0 in
+    while !i < len do
+      if line.[!i] = '"' then (
+        incr i;
+        let in_quotes = ref true in
+        while !i < len && !in_quotes do
+          if line.[!i] = '"' then
+            if !i + 1 < len && line.[!i + 1] = '"' then (
+              Buffer.add_char buf '"';
+              i := !i + 2)
+            else (
+              in_quotes := false;
+              incr i)
+          else (
+            Buffer.add_char buf line.[!i];
+            incr i)
+        done;
+        if !i < len && line.[!i] = separator then incr i;
+        fields := Buffer.contents buf :: !fields;
+        Buffer.clear buf)
+      else if line.[!i] = separator then (
+        fields := Buffer.contents buf :: !fields;
+        Buffer.clear buf;
+        incr i)
+      else (
+        Buffer.add_char buf line.[!i];
+        incr i)
+    done;
+    fields := Buffer.contents buf :: !fields;
+    List.rev !fields
+  in
+  let rows = List.map parse_line lines in
+  if has_header then
+    match rows with
+    | [] -> ([], [])
+    | header :: data -> (header, data)
+  else ([], rows)

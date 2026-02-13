@@ -23,11 +23,6 @@
 (pin
  (url ../../)
  (package
-  (name nx-datasets)))
-
-(pin
- (url ../../)
- (package
   (name saga)))
 
 (pin
@@ -75,7 +70,6 @@
   vdom
   brr
   nx
-  nx-datasets
   saga
   rune
   kaun

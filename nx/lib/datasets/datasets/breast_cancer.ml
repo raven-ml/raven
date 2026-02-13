@@ -35,15 +35,9 @@ let load () =
 
   let data_rows =
     try
-      (* Csv.load directly loads file into string list list. No header
-         handling. *)
-      Csv.load ~separator:',' data_path
+      let _header, rows = load_csv ~separator:',' data_path in
+      rows
     with
-    | Csv.Failure (r, c, msg) ->
-        (* Csv.load can still fail on bad format *)
-        failwith
-          (Printf.sprintf "CSV Parsing Error in %s at row %d, col %d: %s"
-             data_path r c msg)
     | Sys_error msg ->
         failwith (Printf.sprintf "Cannot open file %s: %s" data_path msg)
     | ex ->

@@ -18,18 +18,9 @@ let load () =
   ensure_dataset ();
   Log.info (fun m -> m "Loading Diabetes (sklearn version) dataset...");
 
-  let header, data_rows_iter =
-    try
-      let chan =
-        Csv.of_channel ~has_header:true ~separator:'\t' (open_in data_path)
-      in
-      let h = Csv.Rows.header chan in
-      (h, chan)
+  let header, data_rows =
+    try load_csv ~has_header:true ~separator:'\t' data_path
     with
-    | Csv.Failure (r, c, msg) ->
-        failwith
-          (Printf.sprintf "CSV Parsing Error in %s at row %d, col %d: %s"
-             data_path r c msg)
     | Sys_error msg ->
         failwith (Printf.sprintf "Cannot open file %s: %s" data_path msg)
     | ex ->
@@ -46,65 +37,43 @@ let load () =
     match List.find_index (( = ) name) header with
     | Some idx -> idx
     | None ->
-        Csv.close_in data_rows_iter;
         failwith
           ("Required column '" ^ name ^ "' not found in header: "
          ^ String.concat ", " header)
   in
   let feature_indices = List.init num_features (fun i -> i) in
-  (* Assuming first 10 *)
   let target_index = get_col_index target_col_name in
 
-  (* Use Fold to process rows *)
   let collected_features = ref [] in
   let collected_labels = ref [] in
-  let row_counter = ref 0 in
-  (try
-     Csv.Rows.iter
-       ~f:(fun row ->
-         incr row_counter;
-         let row_num = !row_counter in
-         let row_list = Csv.Row.to_list row in
-         if List.length row_list <> expected_cols then
-           failwith
-             (Printf.sprintf "Row %d has %d columns, expected %d" row_num
-                (List.length row_list) expected_cols);
+  List.iteri
+    (fun i row_list ->
+      let row_num = i + 1 in
+      if List.length row_list <> expected_cols then
+        failwith
+          (Printf.sprintf "Row %d has %d columns, expected %d" row_num
+             (List.length row_list) expected_cols);
 
-         (* Extract features *)
-         let current_features =
-           List.map
-             (fun feature_idx ->
-               let feature_str = List.nth row_list feature_idx in
-               let col_name = List.nth header feature_idx in
-               let context () =
-                 Printf.sprintf "row %d, col %s" row_num col_name
-               in
-               parse_float_cell ~context feature_str)
-             feature_indices
-         in
-         collected_features := current_features :: !collected_features;
+      let current_features =
+        List.map
+          (fun feature_idx ->
+            let feature_str = List.nth row_list feature_idx in
+            let col_name = List.nth header feature_idx in
+            let context () =
+              Printf.sprintf "row %d, col %s" row_num col_name
+            in
+            parse_float_cell ~context feature_str)
+          feature_indices
+      in
+      collected_features := current_features :: !collected_features;
 
-         (* Extract label *)
-         let label_str = List.nth row_list target_index in
-         let context () =
-           Printf.sprintf "row %d, col %s" row_num target_col_name
-         in
-         let label_float = parse_float_cell ~context label_str in
-         collected_labels := label_float :: !collected_labels)
-       data_rows_iter
-   with
-  | Csv.Failure (r, c, msg) ->
-      Csv.close_in data_rows_iter;
-      failwith
-        (Printf.sprintf
-           "CSV Parsing Error during iteration at approx row %d, field %d: %s" r
-           c msg)
-  | ex ->
-      Csv.close_in data_rows_iter;
-      failwith
-        (Printf.sprintf "Error iterating CSV %s: %s" data_path
-           (Printexc.to_string ex)));
-  Csv.close_in data_rows_iter;
+      let label_str = List.nth row_list target_index in
+      let context () =
+        Printf.sprintf "row %d, col %s" row_num target_col_name
+      in
+      let label_float = parse_float_cell ~context label_str in
+      collected_labels := label_float :: !collected_labels)
+    data_rows;
 
   let features_rev = !collected_features in
   let labels_rev = !collected_labels in

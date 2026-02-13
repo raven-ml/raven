@@ -1,0 +1,9 @@
+(test
+ (name test_generators)
+ (package nx)
+ (libraries nx nx.datasets windtrap))
+
+(test
+ (name test_dataset_utils)
+ (package nx)
+ (libraries nx nx.datasets windtrap))

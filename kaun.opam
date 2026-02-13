@@ -21,7 +21,7 @@ depends: [
   "domainslib" {>= "0.5.0"}
   "saga" {= version}
   "rune" {= version}
-  "nx-datasets" {= version}
+  "nx" {= version}
   "windtrap" {with-test}
   "odoc" {with-doc}
 ]

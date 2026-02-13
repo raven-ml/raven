@@ -16,7 +16,7 @@ type ('elt, 'kind) tensor_dataset = ('elt, 'kind) Rune.t Kaun.Dataset.t
 
 let mnist ?(train = true) ?(flatten = false) ?(normalize = true)
     ?(data_format = `NCHW) ?cache_dir:_ () =
-  (* Load from nx-datasets *)
+  (* Load from nx.datasets *)
   let (x_train, y_train), (x_test, y_test) = Nx_datasets.load_mnist () in
 
   (* Select training or test data *)
@@ -66,7 +66,7 @@ let mnist ?(train = true) ?(flatten = false) ?(normalize = true)
 
 let cifar10 ?(train = true) ?(normalize = true) ?(data_format = `NCHW)
     ?(augmentation = false) ?cache_dir:_ () =
-  (* Load from nx-datasets *)
+  (* Load from nx.datasets *)
   let (x_train, y_train), (x_test, y_test) = Nx_datasets.load_cifar10 () in
 
   (* Select training or test data *)
@@ -121,7 +121,7 @@ let cifar10 ?(train = true) ?(normalize = true) ?(data_format = `NCHW)
 
 let fashion_mnist ?(train = true) ?(flatten = false) ?(normalize = true)
     ?(data_format = `NCHW) ?cache_dir:_ () =
-  (* Load from nx-datasets *)
+  (* Load from nx.datasets *)
   let (x_train, y_train), (x_test, y_test) =
     Nx_datasets.load_fashion_mnist ()
   in
@@ -173,7 +173,7 @@ let fashion_mnist ?(train = true) ?(flatten = false) ?(normalize = true)
 (* ───── Text Datasets ───── *)
 
 let imdb ?(train = true) ?tokenizer ?(max_length = 512) ?cache_dir:_ () =
-  (* TODO: Load actual IMDB data when available in nx-datasets *)
+  (* TODO: Load actual IMDB data when available in nx.datasets *)
   (* For now, create a placeholder with synthetic data *)
   let num_samples = if train then 25000 else 25000 in
   let texts =
@@ -213,7 +213,7 @@ let wikitext ?(dataset_name = `Wikitext2) ?tokenizer ?(sequence_length = 1024)
     ?cache_dir:_ () =
   let _ = dataset_name in
   (* Mark as intentionally unused *)
-  (* TODO: Load actual WikiText data when available in nx-datasets *)
+  (* TODO: Load actual WikiText data when available in nx.datasets *)
   (* For now, create a placeholder with synthetic text *)
   let text =
     String.concat " "
@@ -253,7 +253,7 @@ let iris ?(normalize = true) ?(train_split = 0.8) ?shuffle_seed () =
   let _ = train_split in
   (* Mark as intentionally unused - will use train_test_split *)
 
-  (* Load from nx-datasets *)
+  (* Load from nx.datasets *)
   let x, y = Nx_datasets.load_iris () in
 
   (* Convert to float32 *)
@@ -288,7 +288,7 @@ let boston_housing ?(normalize = true) ?(train_split = 0.8) () =
   (* Mark as intentionally unused - will use train_test_split *)
 
   (* Use California housing as a replacement since Boston housing is not in
-     nx-datasets *)
+     nx.datasets *)
   let x, y = Nx_datasets.load_california_housing () in
 
   (* Convert to float32 *)
