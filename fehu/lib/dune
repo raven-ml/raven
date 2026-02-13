@@ -1,4 +1,4 @@
 (library
  (name fehu)
  (public_name fehu)
- (libraries jsont jsont.bytesrw unix logs rune))
+ (libraries jsont jsont.bytesrw unix rune))
