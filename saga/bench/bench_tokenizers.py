@@ -42,9 +42,9 @@ def make_suite(label: str, tokenizer: Tokenizer) -> Any:
 
 def build_benchmarks() -> List[Any]:
     return [
-        make_suite("BPE", load_tokenizer("byte_bpe.json")),
-        make_suite("WordPiece", load_tokenizer("wordpiece.json")),
-        make_suite("WordLevel", load_tokenizer("wordlevel.json")),
+        make_suite("GPT-2", load_tokenizer("gpt2.json")),
+        make_suite("BERT-base", load_tokenizer("bert_base.json")),
+        make_suite("LLaMA", load_tokenizer("llama.json")),
     ]
 
 

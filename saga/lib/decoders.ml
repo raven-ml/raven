@@ -362,6 +362,10 @@ let rec of_json json =
           let pattern =
             match find fields "pattern" with
             | Some (Jsont.String (s, _)) -> s
+            | Some (Jsont.Object (pattern_fields, _)) -> (
+                match Jsont.Json.find_mem "String" pattern_fields with
+                | Some (_, Jsont.String (p, _)) -> p
+                | _ -> failwith "Missing pattern in Replace decoder")
             | _ -> failwith "Missing pattern in Replace decoder"
           in
           let replacement =

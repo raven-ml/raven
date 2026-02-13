@@ -62,15 +62,15 @@ let make_suite ~label ~tokenizer =
 
 let all_benchmarks =
   let open Fixtures in
-  let bpe =
-    make_suite ~label:"BPE" ~tokenizer:(load_tokenizer "byte_bpe.json")
+  let gpt2 =
+    make_suite ~label:"GPT-2" ~tokenizer:(load_tokenizer "gpt2.json")
   in
-  let wordpiece =
-    make_suite ~label:"WordPiece" ~tokenizer:(load_tokenizer "wordpiece.json")
+  let bert =
+    make_suite ~label:"BERT-base" ~tokenizer:(load_tokenizer "bert_base.json")
   in
-  let wordlevel =
-    make_suite ~label:"WordLevel" ~tokenizer:(load_tokenizer "wordlevel.json")
+  let llama =
+    make_suite ~label:"LLaMA" ~tokenizer:(load_tokenizer "llama.json")
   in
-  [ bpe; wordpiece; wordlevel ]
+  [ gpt2; bert; llama ]
 
 let () = Ubench.run_cli all_benchmarks
