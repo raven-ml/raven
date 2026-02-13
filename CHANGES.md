@@ -55,6 +55,7 @@ All notable changes to this project will be documented in this file.
 - Simplify saga to a tokenization-only library. Remove the sampler, n-gram models, and I/O utilities. The sampler is rewritten with nx tensors and moved to `dev/mimir` as the seed of an experimental inference engine. (@tmattio)
 - Merge `saga.tokenizers` sub-library into `saga`. (@tmattio)
 - Use `Buffer.add_substring` instead of char-by-char loop in whitespace pre-tokenizer. (@tmattio)
+- Compact BPE symbols in-place after merges, avoiding an intermediate array allocation. (@tmattio)
 - Remove dependency on `str` library. (@tmattio)
 - Generate unicode data offline, removing runtime dependency on `uucp`. (@tmattio)
 - Add proper UAX #29 grapheme cluster segmentation via `Grapheme` module (vendored from uuseg). (@tmattio)

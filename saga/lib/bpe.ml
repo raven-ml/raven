@@ -39,7 +39,7 @@ type symbol = {
   mutable len : int;
 }
 
-type word = { mutable symbols : symbol array; mutable size : int }
+type word = { symbols : symbol array; mutable size : int }
 type token = { id : int; value : string; offsets : int * int }
 type cache_entry = word
 
@@ -196,14 +196,12 @@ let apply_merges model dropout word =
             | _ -> process_queue ())
   in
   process_queue ();
-  let new_symbols = Array.make word.size word.symbols.(0) in
   let j = ref 0 in
   for k = 0 to word.size - 1 do
     if word.symbols.(k).len > 0 then (
-      new_symbols.(!j) <- word.symbols.(k);
+      if !j <> k then word.symbols.(!j) <- word.symbols.(k);
       incr j)
   done;
-  word.symbols <- Array.sub new_symbols 0 !j;
   word.size <- !j
 
 let merge_word model text =
