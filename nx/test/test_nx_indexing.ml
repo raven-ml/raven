@@ -5,7 +5,7 @@
 
 (* Comprehensive indexing and slicing tests for Nx *)
 
-open Alcotest
+open Windtrap
 open Test_nx_support
 
 (* ───── Basic Slicing Tests (slice function) ───── *)
@@ -109,7 +109,7 @@ let test_set_slice_at () =
   let t = Nx.zeros Nx.float32 [| 3; 4 |] in
   let value = Nx.ones Nx.float32 [| 4 |] in
   Nx.set_slice [ Nx.I 1 ] t value;
-  check (float 1e-6) "set_slice at [1,2]" 1.0 (Nx.item [ 1; 2 ] t)
+  equal ~msg:"set_slice at [1,2]" (float 1e-6) 1.0 (Nx.item [ 1; 2 ] t)
 
 let test_set_slice_rng () =
   let t = Nx.zeros Nx.float32 [| 5 |] in
@@ -128,17 +128,17 @@ let test_set_slice_idx () =
 let test_item () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let value = Nx.item [ 1; 2 ] t in
-  check (float 1e-6) "item [1,2]" 6.0 value
+  equal ~msg:"item [1,2]" (float 1e-6) 6.0 value
 
 let test_item_negative_indices () =
   let t = Nx.create Nx.float32 [| 3; 3 |] (Array.init 9 float_of_int) in
   let value = Nx.item [ -1; -1 ] t in
-  check (float 1e-6) "item negative indices" 8.0 value
+  equal ~msg:"item negative indices" (float 1e-6) 8.0 value
 
 let test_set_item () =
   let t = Nx.zeros Nx.float32 [| 2; 3 |] in
   Nx.set_item [ 1; 2 ] 99.0 t;
-  check (float 1e-6) "set_item" 99.0 (Nx.item [ 1; 2 ] t)
+  equal ~msg:"set_item" (float 1e-6) 99.0 (Nx.item [ 1; 2 ] t)
 
 (* ───── Take Tests ───── *)
 
@@ -296,7 +296,7 @@ let test_extract_from_comparison () =
 let test_nonzero_1d () =
   let t = Nx.create Nx.float32 [| 5 |] [| 0.; 1.; 0.; 3.; 0. |] in
   let indices = Nx.nonzero t in
-  (check int) "nonzero 1d length" 1 (Array.length indices);
+  equal ~msg:"nonzero 1d length" int 1 (Array.length indices);
   let expected = [| 1.; 3. |] in
   check_t "nonzero 1d indices" [| 2 |] expected
     (Nx.astype Nx.float32 indices.(0))
@@ -306,7 +306,7 @@ let test_nonzero_2d () =
     Nx.create Nx.float32 [| 3; 3 |] [| 0.; 1.; 0.; 2.; 0.; 3.; 0.; 0.; 4. |]
   in
   let indices = Nx.nonzero t in
-  (check int) "nonzero 2d length" 2 (Array.length indices);
+  equal ~msg:"nonzero 2d length" int 2 (Array.length indices);
   (* Row indices *)
   let expected_rows = [| 0.; 1.; 1.; 2. |] in
   check_t "nonzero 2d rows" [| 4 |] expected_rows
@@ -319,7 +319,7 @@ let test_nonzero_2d () =
 let test_nonzero_empty () =
   let t = Nx.zeros Nx.float32 [| 3; 3 |] in
   let indices = Nx.nonzero t in
-  (check int) "nonzero empty length" 2 (Array.length indices);
+  equal ~msg:"nonzero empty length" int 2 (Array.length indices);
   Array.iter (fun idx -> check_shape "nonzero empty shape" [| 0 |] idx) indices
 
 (* ───── Argwhere Tests ───── *)
@@ -349,7 +349,7 @@ let test_argwhere_1d () =
 
 let test_item_wrong_indices () =
   let t = Nx.create Nx.float32 [| 2; 3 |] (Array.init 6 float_of_int) in
-  check_raises "item wrong number of indices"
+  raises ~msg:"item wrong number of indices"
     (Invalid_argument "item: need 2 indices for 2-d tensor, got 1") (fun () ->
       ignore (Nx.item [ 1 ] t))
 
@@ -358,7 +358,7 @@ let test_set_slice_broadcast () =
   let value = Nx.ones Nx.float32 [| 1 |] in
   Nx.set_slice [ Nx.R (1, 2) ] t value;
   (* Value should be broadcast to shape [1, 4] *)
-  check (float 1e-6) "set_slice broadcast" 1.0 (Nx.item [ 1; 2 ] t)
+  equal ~msg:"set_slice broadcast" (float 1e-6) 1.0 (Nx.item [ 1; 2 ] t)
 
 let test_index_chained () =
   let t = Nx.create Nx.float32 [| 4; 5; 6 |] (Array.init 120 float_of_int) in
@@ -377,14 +377,14 @@ let test_take_empty_indices () =
 let test_compress_condition_mismatch () =
   let t = Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
   let condition = Nx.create Nx.bool [| 3 |] [| true; false; true |] in
-  check_raises "compress condition mismatch"
+  raises ~msg:"compress condition mismatch"
     (Invalid_argument "compress: length 3 doesn't match axis 0 size 5")
     (fun () -> ignore (Nx.compress ~axis:0 ~condition t))
 
 let test_extract_shape_mismatch () =
   let t = Nx.create Nx.float32 [| 2; 3 |] (Array.init 6 float_of_int) in
   let condition = Nx.create Nx.bool [| 2; 2 |] [| true; false; true; false |] in
-  check_raises "extract shape mismatch"
+  raises ~msg:"extract shape mismatch"
     (Invalid_argument "extract: shape mismatch") (fun () ->
       ignore (Nx.extract ~condition t))
 
@@ -392,97 +392,97 @@ let test_extract_shape_mismatch () =
 
 let slice_tests =
   [
-    ("slice basic", `Quick, test_slice_basic);
-    ("slice with step", `Quick, test_slice_with_step);
-    ("slice negative indices", `Quick, test_slice_negative_indices);
-    ("slice 2d", `Quick, test_slice_2d);
-    ("slice empty", `Quick, test_slice_empty);
+    test "slice basic" test_slice_basic;
+    test "slice with step" test_slice_with_step;
+    test "slice negative indices" test_slice_negative_indices;
+    test "slice 2d" test_slice_2d;
+    test "slice empty" test_slice_empty;
   ]
 
 let index_tests =
   [
-    ("index all", `Quick, test_index_all);
-    ("index at", `Quick, test_index_at);
-    ("index at negative", `Quick, test_index_at_negative);
-    ("index rng", `Quick, test_index_rng);
-    ("index rngs", `Quick, test_index_rngs);
-    ("index idx", `Quick, test_index_idx);
-    ("index idx repeated", `Quick, test_index_idx_repeated);
-    ("index idx reorder", `Quick, test_index_idx_reorder);
-    ("index mixed", `Quick, test_index_mixed);
-    ("set_slice at", `Quick, test_set_slice_at);
-    ("set_slice rng", `Quick, test_set_slice_rng);
-    ("set_slice idx", `Quick, test_set_slice_idx);
+    test "index all" test_index_all;
+    test "index at" test_index_at;
+    test "index at negative" test_index_at_negative;
+    test "index rng" test_index_rng;
+    test "index rngs" test_index_rngs;
+    test "index idx" test_index_idx;
+    test "index idx repeated" test_index_idx_repeated;
+    test "index idx reorder" test_index_idx_reorder;
+    test "index mixed" test_index_mixed;
+    test "set_slice at" test_set_slice_at;
+    test "set_slice rng" test_set_slice_rng;
+    test "set_slice idx" test_set_slice_idx;
   ]
 
 let item_tests =
   [
-    ("item", `Quick, test_item);
-    ("item negative indices", `Quick, test_item_negative_indices);
-    ("set_item", `Quick, test_set_item);
-    ("item wrong indices", `Quick, test_item_wrong_indices);
+    test "item" test_item;
+    test "item negative indices" test_item_negative_indices;
+    test "set_item" test_set_item;
+    test "item wrong indices" test_item_wrong_indices;
   ]
 
 let take_tests =
   [
-    ("take basic", `Quick, test_take_basic);
-    ("take with axis", `Quick, test_take_with_axis);
-    ("take mode wrap", `Quick, test_take_mode_wrap);
-    ("take mode clip", `Quick, test_take_mode_clip);
-    ("take negative indices", `Quick, test_take_negative_indices);
-    ("take_along_axis 1d", `Quick, test_take_along_axis_1d);
-    ("take_along_axis 2d", `Quick, test_take_along_axis_2d);
-    ("take empty indices", `Quick, test_take_empty_indices);
+    test "take basic" test_take_basic;
+    test "take with axis" test_take_with_axis;
+    test "take mode wrap" test_take_mode_wrap;
+    test "take mode clip" test_take_mode_clip;
+    test "take negative indices" test_take_negative_indices;
+    test "take_along_axis 1d" test_take_along_axis_1d;
+    test "take_along_axis 2d" test_take_along_axis_2d;
+    test "take empty indices" test_take_empty_indices;
   ]
 
 let put_tests =
   [
-    ("put basic", `Quick, test_put_basic);
-    ("put with axis", `Quick, test_put_with_axis);
-    ("put mode wrap", `Quick, test_put_mode_wrap);
-    ("put mode clip", `Quick, test_put_mode_clip);
-    ("index_put basic", `Quick, test_index_put_basic);
-    ("index_put mode wrap", `Quick, test_index_put_mode_wrap);
-    ("put_along_axis", `Quick, test_put_along_axis);
+    test "put basic" test_put_basic;
+    test "put with axis" test_put_with_axis;
+    test "put mode wrap" test_put_mode_wrap;
+    test "put mode clip" test_put_mode_clip;
+    test "index_put basic" test_index_put_basic;
+    test "index_put mode wrap" test_index_put_mode_wrap;
+    test "put_along_axis" test_put_along_axis;
   ]
 
 let compress_extract_tests =
   [
-    ("compress no axis", `Quick, test_compress_no_axis);
-    ("compress with axis", `Quick, test_compress_with_axis);
-    ("compress empty result", `Quick, test_compress_empty_result);
-    ("extract basic", `Quick, test_extract_basic);
-    ("extract from comparison", `Quick, test_extract_from_comparison);
-    ("compress condition mismatch", `Quick, test_compress_condition_mismatch);
-    ("extract shape mismatch", `Quick, test_extract_shape_mismatch);
+    test "compress no axis" test_compress_no_axis;
+    test "compress with axis" test_compress_with_axis;
+    test "compress empty result" test_compress_empty_result;
+    test "extract basic" test_extract_basic;
+    test "extract from comparison" test_extract_from_comparison;
+    test "compress condition mismatch" test_compress_condition_mismatch;
+    test "extract shape mismatch" test_extract_shape_mismatch;
   ]
 
 let nonzero_argwhere_tests =
   [
-    ("nonzero 1d", `Quick, test_nonzero_1d);
-    ("nonzero 2d", `Quick, test_nonzero_2d);
-    ("nonzero empty", `Quick, test_nonzero_empty);
-    ("argwhere basic", `Quick, test_argwhere_basic);
-    ("argwhere empty", `Quick, test_argwhere_empty);
-    ("argwhere 1d", `Quick, test_argwhere_1d);
+    test "nonzero 1d" test_nonzero_1d;
+    test "nonzero 2d" test_nonzero_2d;
+    test "nonzero empty" test_nonzero_empty;
+    test "argwhere basic" test_argwhere_basic;
+    test "argwhere empty" test_argwhere_empty;
+    test "argwhere 1d" test_argwhere_1d;
   ]
 
 let edge_case_tests =
   [
-    ("set_slice broadcast", `Quick, test_set_slice_broadcast);
-    ("index chained", `Quick, test_index_chained);
+    test "set_slice broadcast" test_set_slice_broadcast;
+    test "index chained" test_index_chained;
   ]
 
 let suite =
   [
-    ("Indexing :: slice", slice_tests);
-    ("Indexing :: index", index_tests);
-    ("Indexing :: item", item_tests);
-    ("Indexing :: take", take_tests);
-    ("Indexing :: put", put_tests);
-    ("Indexing :: compress/extract", compress_extract_tests);
-    ("Indexing :: nonzero/argwhere", nonzero_argwhere_tests);
-    ("Indexing :: edge cases", edge_case_tests);
+    group "slice" slice_tests;
+    group "index" index_tests;
+    group "item" item_tests;
+    group "take" take_tests;
+    group "put" put_tests;
+    group "compress/extract" compress_extract_tests;
+    group "nonzero/argwhere" nonzero_argwhere_tests;
+    group "edge cases" edge_case_tests;
   ]
 
-let () = Alcotest.run "Nx Indexing" suite
+let () = run "Nx Indexing" suite

@@ -4,9 +4,10 @@
   ---------------------------------------------------------------------------*)
 
 open Talon
+open Windtrap
 
-let check_int = Alcotest.(check int)
-let check_bool = Alcotest.(check bool)
+let check_int msg = equal ~msg int
+let check_bool msg = equal ~msg bool
 
 (* Test reading CSV from string *)
 let test_from_string_basic () =
@@ -17,7 +18,7 @@ let test_from_string_basic () =
   check_int "cols" 3 (num_columns df);
 
   let names = column_names df in
-  Alcotest.(check (list string)) "column names" [ "name"; "age"; "score" ] names
+  equal ~msg:"column names" (list string) [ "name"; "age"; "score" ] names
 
 let test_from_string_no_header () =
   let csv = "Alice,25,85.5\nBob,30,92.0" in
@@ -27,8 +28,8 @@ let test_from_string_no_header () =
   check_int "cols" 3 (num_columns df);
 
   let names = column_names df in
-  Alcotest.(check (list string))
-    "default names" [ "col0"; "col1"; "col2" ] names
+  equal ~msg:"default names" (list string)
+    [ "col0"; "col1"; "col2" ] names
 
 let test_from_string_custom_sep () =
   let csv = "name;age\nAlice;25\nBob;30" in
@@ -57,7 +58,7 @@ let test_from_string_dtype_spec () =
   (* Check that boolean column was parsed correctly *)
   match to_bool_array df "flag" with
   | Some arr -> check_bool "bool values" true (arr = [| true; false; true |])
-  | None -> Alcotest.fail "flag column should be bool"
+  | None -> fail "flag column should be bool"
 
 let test_from_string_empty () =
   let csv = "col1,col2,col3" in
@@ -130,7 +131,7 @@ let test_round_trip () =
 
   let names1 = column_names df1 in
   let names2 = column_names df2 in
-  Alcotest.(check (list string)) "same names" names1 names2
+  equal ~msg:"same names" (list string) names1 names2
 
 let test_auto_detect_dtypes () =
   (* Test that type detection works correctly *)
@@ -146,7 +147,7 @@ let test_auto_detect_dtypes () =
   (* Check int column *)
   match to_int32_array df "int_col" with
   | Some arr -> check_bool "int values" true (arr = [| 42l; 100l |])
-  | None -> Alcotest.fail "int_col should be int32"
+  | None -> fail "int_col should be int32"
 
 let test_mixed_nulls () =
   let csv = "a,b,c\n1,2.5,foo\n,NA,\n3,4.5,bar" in
@@ -178,36 +179,36 @@ let test_big_int_detection () =
   | Some arr ->
       check_int "array length" 1 (Array.length arr);
       check_bool "correct value" true (arr.(0) = 9223372036854775806L)
-  | None -> Alcotest.fail "to_int64_array should return Some for Int64 column"
+  | None -> fail "to_int64_array should return Some for Int64 column"
 
 (* Test suites *)
 let reading_tests =
   [
-    ("basic", `Quick, test_from_string_basic);
-    ("no_header", `Quick, test_from_string_no_header);
-    ("custom_sep", `Quick, test_from_string_custom_sep);
-    ("with_nulls", `Quick, test_from_string_with_nulls);
-    ("dtype_spec", `Quick, test_from_string_dtype_spec);
-    ("empty", `Quick, test_from_string_empty);
-    ("auto_detect", `Quick, test_auto_detect_dtypes);
-    ("mixed_nulls", `Quick, test_mixed_nulls);
-    ("big_int_detection", `Quick, test_big_int_detection);
+    test "basic" test_from_string_basic;
+    test "no_header" test_from_string_no_header;
+    test "custom_sep" test_from_string_custom_sep;
+    test "with_nulls" test_from_string_with_nulls;
+    test "dtype_spec" test_from_string_dtype_spec;
+    test "empty" test_from_string_empty;
+    test "auto_detect" test_auto_detect_dtypes;
+    test "mixed_nulls" test_mixed_nulls;
+    test "big_int_detection" test_big_int_detection;
   ]
 
 let writing_tests =
   [
-    ("basic", `Quick, test_to_string_basic);
-    ("no_header", `Quick, test_to_string_no_header);
-    ("custom_sep", `Quick, test_to_string_custom_sep);
-    ("with_nulls", `Quick, test_to_string_with_nulls);
+    test "basic" test_to_string_basic;
+    test "no_header" test_to_string_no_header;
+    test "custom_sep" test_to_string_custom_sep;
+    test "with_nulls" test_to_string_with_nulls;
   ]
 
-let integration_tests = [ ("round_trip", `Quick, test_round_trip) ]
+let integration_tests = [ test "round_trip" test_round_trip ]
 
 let () =
-  Alcotest.run "Talon CSV"
+  run "Talon CSV"
     [
-      ("Reading", reading_tests);
-      ("Writing", writing_tests);
-      ("Integration", integration_tests);
+      group "Reading" reading_tests;
+      group "Writing" writing_tests;
+      group "Integration" integration_tests;
     ]

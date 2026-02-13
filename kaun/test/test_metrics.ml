@@ -3,10 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Alcotest
+open Windtrap
 open Kaun
 
-let float_eps eps = Alcotest.float eps
+let float_eps eps = float eps
 
 let test_accuracy () =
   let dtype = Rune.float32 in
@@ -20,7 +20,7 @@ let test_accuracy () =
   let result = Metrics.compute acc in
   let expected = 1.0 in
   (* All correct with 0.5 threshold *)
-  check (float_eps 1e-5) "binary accuracy" expected result;
+  equal ~msg:"binary accuracy" (float_eps 1e-5) expected result;
 
   (* Multi-class classification test *)
   let predictions =
@@ -36,7 +36,7 @@ let test_accuracy () =
   let result = Metrics.compute acc in
   let expected = 1.0 in
   (* All correct *)
-  check (float_eps 1e-5) "multi-class accuracy" expected result
+  equal ~msg:"multi-class accuracy" (float_eps 1e-5) expected result
 
 let test_accuracy_topk () =
   let dtype = Rune.float32 in
@@ -52,7 +52,7 @@ let test_accuracy_topk () =
   Metrics.update acc ~predictions ~targets ();
   let result = Metrics.compute acc in
   let expected = 2. /. 3. in
-  check (float_eps 1e-5) "top-k accuracy" expected result
+  equal ~msg:"top-k accuracy" (float_eps 1e-5) expected result
 
 let test_precision_recall () =
   let dtype = Rune.float32 in
@@ -66,14 +66,14 @@ let test_precision_recall () =
   let result = Metrics.compute prec in
   (* Precision = TP/(TP+FP) = 2/(2+1) = 0.667 *)
   let expected = 2. /. 3. in
-  check (float_eps 1e-5) "precision" expected result;
+  equal ~msg:"precision" (float_eps 1e-5) expected result;
 
   let rec_metric = Metrics.recall () in
   Metrics.update rec_metric ~predictions ~targets ();
   let result = Metrics.compute rec_metric in
   (* Recall = TP/(TP+FN) = 2/(2+0) = 1.0 *)
   let expected = 1.0 in
-  check (float_eps 1e-5) "recall" expected result
+  equal ~msg:"recall" (float_eps 1e-5) expected result
 
 let test_f1_score () =
   let dtype = Rune.float32 in
@@ -88,7 +88,7 @@ let test_f1_score () =
   (* precision = 2/3, recall = 1.0 *)
   (* F1 = 2 * (2/3 * 1) / (2/3 + 1) = 2 * (2/3) / (5/3) = 4/5 = 0.8 *)
   let expected = 0.8 in
-  check (float_eps 1e-5) "f1 score" expected result
+  equal ~msg:"f1 score" (float_eps 1e-5) expected result
 
 let test_auc_roc () =
   let dtype = Rune.float32 in
@@ -101,7 +101,7 @@ let test_auc_roc () =
   let result = Metrics.compute auc in
   (* For perfectly separable predictions, AUC should be 1.0 *)
   let expected = 1.0 in
-  check (float_eps 1e-5) "auc roc" expected result
+  equal ~msg:"auc roc" (float_eps 1e-5) expected result
 
 let test_auc_roc_multiple_updates () =
   let dtype = Rune.float32 in
@@ -123,7 +123,7 @@ let test_auc_roc_multiple_updates () =
   Metrics.update auc_chunked ~predictions:predictions_2 ~targets:targets_2 ();
   let chunked_result = Metrics.compute auc_chunked in
 
-  check (float_eps 1e-5) "auc roc incremental" full_result chunked_result
+  equal ~msg:"auc roc incremental" (float_eps 1e-5) full_result chunked_result
 
 let test_auc_pr () =
   let dtype = Rune.float32 in
@@ -136,7 +136,7 @@ let test_auc_pr () =
   let result = Metrics.compute auc in
   (* For perfectly separable predictions, AUC should be 1.0 *)
   let expected = 1.0 in
-  check (float_eps 1e-5) "auc pr" expected result
+  equal ~msg:"auc pr" (float_eps 1e-5) expected result
 
 let test_auc_pr_multiple_updates () =
   let dtype = Rune.float32 in
@@ -158,7 +158,7 @@ let test_auc_pr_multiple_updates () =
   Metrics.update auc_chunked ~predictions:predictions_2 ~targets:targets_2 ();
   let chunked_result = Metrics.compute auc_chunked in
 
-  check (float_eps 1e-5) "auc pr incremental" full_result chunked_result
+  equal ~msg:"auc pr incremental" (float_eps 1e-5) full_result chunked_result
 
 let test_confusion_matrix () =
   let dtype = Rune.float32 in
@@ -191,14 +191,14 @@ let test_mse_rmse () =
   Metrics.update mse ~predictions ~targets ();
   let result = Metrics.compute mse in
   let expected = 0.25 in
-  check (float_eps 1e-5) "mse" expected result;
+  equal ~msg:"mse" (float_eps 1e-5) expected result;
 
   (* RMSE = sqrt(MSE) = sqrt(0.25) = 0.5 *)
   let rmse = Metrics.rmse () in
   Metrics.update rmse ~predictions ~targets ();
   let result = Metrics.compute rmse in
   let expected = 0.5 in
-  check (float_eps 1e-5) "rmse" expected result
+  equal ~msg:"rmse" (float_eps 1e-5) expected result
 
 let test_mae () =
   let dtype = Rune.float32 in
@@ -211,7 +211,7 @@ let test_mae () =
   Metrics.update mae ~predictions ~targets ();
   let result = Metrics.compute mae in
   let expected = 0.5 in
-  check (float_eps 1e-5) "mae" expected result
+  equal ~msg:"mae" (float_eps 1e-5) expected result
 
 let test_mape () =
   let dtype = Rune.float32 in
@@ -224,7 +224,7 @@ let test_mape () =
   Metrics.update mape ~predictions ~targets ();
   let result = Metrics.compute mape in
   let expected = 7.5 in
-  check (float_eps 1e-5) "mape" expected result
+  equal ~msg:"mape" (float_eps 1e-5) expected result
 
 let test_r2_score () =
   let dtype = Rune.float32 in
@@ -235,14 +235,14 @@ let test_r2_score () =
   let r2_1 = Metrics.r2_score () in
   Metrics.update r2_1 ~predictions:predictions1 ~targets:targets1 ();
   let res1 = Metrics.compute r2_1 in
-  check (float_eps 1e-5) "r2 perfect" 1.0 res1;
+  equal ~msg:"r2 perfect" (float_eps 1e-5) 1.0 res1;
 
   (* Test with some error *)
   let predictions2 = Rune.create dtype [| 4 |] [| 1.5; 2.5; 3.5; 4.5 |] in
   let r2_2 = Metrics.r2_score () in
   Metrics.update r2_2 ~predictions:predictions2 ~targets:targets1 ();
   let res2 = Metrics.compute r2_2 in
-  check bool "r2 with error" true (res2 > 0.8 && res2 < 1.0);
+  equal ~msg:"r2 with error" bool true (res2 > 0.8 && res2 < 1.0);
 
   (* Constant targets - perfect prediction *)
   let targets_const = Rune.create dtype [| 4 |] [| 5.0; 5.0; 5.0; 5.0 |] in
@@ -251,14 +251,14 @@ let test_r2_score () =
   Metrics.update r2_const ~predictions:predictions_const ~targets:targets_const
     ();
   let res3 = Metrics.compute r2_const in
-  check (float_eps 1e-5) "r2 constant perfect" 1.0 res3;
+  equal ~msg:"r2 constant perfect" (float_eps 1e-5) 1.0 res3;
 
   (* Constant targets - imperfect prediction should fallback to 0.0 *)
   let predictions_bad = Rune.create dtype [| 4 |] [| 4.0; 6.0; 5.0; 7.0 |] in
   let r2_bad = Metrics.r2_score () in
   Metrics.update r2_bad ~predictions:predictions_bad ~targets:targets_const ();
   let res4 = Metrics.compute r2_bad in
-  check (float_eps 1e-5) "r2 constant imperfect" 0.0 res4;
+  equal ~msg:"r2 constant imperfect" (float_eps 1e-5) 0.0 res4;
 
   (* Adjusted R² with known closed-form expectation *)
   let predictions_adj =
@@ -269,7 +269,7 @@ let test_r2_score () =
   Metrics.update r2_adjusted ~predictions:predictions_adj ~targets:targets_adj
     ();
   let res5 = Metrics.compute r2_adjusted in
-  check (float_eps 1e-5) "r2 adjusted" 0.9946666667 res5
+  equal ~msg:"r2 adjusted" (float_eps 1e-5) 0.9946666667 res5
 
 let test_explained_variance () =
   let dtype = Rune.float32 in
@@ -281,7 +281,7 @@ let test_explained_variance () =
   Metrics.update ev ~predictions ~targets ();
   let result = Metrics.compute ev in
   let expected = 0.75 in
-  check (float_eps 1e-5) "explained variance" expected result;
+  equal ~msg:"explained variance" (float_eps 1e-5) expected result;
 
   let targets_const = Rune.create dtype [| 3 |] [| 2.0; 2.0; 2.0 |] in
   let predictions_const = Rune.create dtype [| 3 |] [| 2.0; 2.0; 2.0 |] in
@@ -290,14 +290,14 @@ let test_explained_variance () =
     ();
   let result = Metrics.compute ev_const in
   let expected = 1.0 in
-  check (float_eps 1e-5) "explained variance constant" expected result;
+  equal ~msg:"explained variance constant" (float_eps 1e-5) expected result;
 
   let predictions_bad = Rune.create dtype [| 3 |] [| 1.0; 3.0; 2.0 |] in
   let ev_bad = Metrics.explained_variance () in
   Metrics.update ev_bad ~predictions:predictions_bad ~targets:targets_const ();
   let result = Metrics.compute ev_bad in
   let expected = 0.0 in
-  check (float_eps 1e-5) "explained variance constant imperfect" expected result
+  equal ~msg:"explained variance constant imperfect" (float_eps 1e-5) expected result
 
 let test_cross_entropy () =
   let dtype = Rune.float32 in
@@ -313,7 +313,7 @@ let test_cross_entropy () =
   Metrics.update ce ~predictions ~targets ();
   let result = Metrics.compute ce in
   (* Result should be positive *)
-  check bool "cross entropy positive" true (result > 0.0)
+  equal ~msg:"cross entropy positive" bool true (result > 0.0)
 
 let test_binary_cross_entropy () =
   let dtype = Rune.float32 in
@@ -326,7 +326,7 @@ let test_binary_cross_entropy () =
   Metrics.update bce ~predictions ~targets ();
   let result = Metrics.compute bce in
   (* Perfect predictions should give very low loss *)
-  check bool "binary cross entropy perfect" true (result < 0.01)
+  equal ~msg:"binary cross entropy perfect" bool true (result < 0.01)
 
 let test_ndcg () =
   let dtype = Rune.float32 in
@@ -340,7 +340,7 @@ let test_ndcg () =
   Metrics.update ndcg ~predictions ~targets ();
   let result = Metrics.compute ndcg in
   let expected = (0.6806060568 +. 1.0) /. 2.0 in
-  check (float_eps 1e-5) "ndcg" expected result
+  equal ~msg:"ndcg" (float_eps 1e-5) expected result
 
 let test_map_metric () =
   let dtype = Rune.float32 in
@@ -356,7 +356,7 @@ let test_map_metric () =
   Metrics.update map ~predictions ~targets ();
   let result = Metrics.compute map in
   let expected = 11. /. 12. in
-  check (float_eps 1e-5) "map" expected result
+  equal ~msg:"map" (float_eps 1e-5) expected result
 
 let test_mrr_metric () =
   let dtype = Rune.float32 in
@@ -370,7 +370,7 @@ let test_mrr_metric () =
   Metrics.update mrr ~predictions ~targets ();
   let result = Metrics.compute mrr in
   let expected = 5. /. 12. in
-  check (float_eps 1e-5) "mrr" expected result
+  equal ~msg:"mrr" (float_eps 1e-5) expected result
 
 let test_bleu () =
   let dtype = Rune.float32 in
@@ -382,7 +382,7 @@ let test_bleu () =
   Metrics.update bleu ~predictions ~targets ();
   let result = Metrics.compute bleu in
   let expected = 1.0 in
-  check (float_eps 1e-5) "bleu" expected result
+  equal ~msg:"bleu" (float_eps 1e-5) expected result
 
 let test_rouge () =
   let dtype = Rune.float32 in
@@ -394,7 +394,7 @@ let test_rouge () =
   Metrics.update rouge ~predictions ~targets ();
   let result = Metrics.compute rouge in
   let expected = 2. /. 3. in
-  check (float_eps 1e-5) "rouge1" expected result
+  equal ~msg:"rouge1" (float_eps 1e-5) expected result
 
 let test_meteor_metric () =
   let dtype = Rune.float32 in
@@ -406,7 +406,7 @@ let test_meteor_metric () =
   Metrics.update meteor ~predictions ~targets ();
   let result = Metrics.compute meteor in
   let expected = 0.75498576 in
-  check (float_eps 1e-5) "meteor" expected result
+  equal ~msg:"meteor" (float_eps 1e-5) expected result
 
 let test_ssim () =
   let dtype = Rune.float32 in
@@ -418,7 +418,7 @@ let test_ssim () =
   Metrics.update metric ~predictions ~targets ();
   let result = Metrics.compute metric in
   let expected = 1.0 in
-  check (float_eps 1e-5) "ssim" expected result
+  equal ~msg:"ssim" (float_eps 1e-5) expected result
 
 let test_iou () =
   let dtype = Rune.float32 in
@@ -430,7 +430,7 @@ let test_iou () =
   Metrics.update metric ~predictions ~targets ();
   let result = Metrics.compute metric in
   let expected = ((2. /. 3.) +. 0.5) /. 2.0 in
-  check (float_eps 1e-5) "iou" expected result
+  equal ~msg:"iou" (float_eps 1e-5) expected result
 
 let test_dice () =
   let dtype = Rune.float32 in
@@ -442,7 +442,7 @@ let test_dice () =
   Metrics.update metric ~predictions ~targets ();
   let result = Metrics.compute metric in
   let expected = (0.8 +. (2. /. 3.)) /. 2.0 in
-  check (float_eps 1e-5) "dice" expected result
+  equal ~msg:"dice" (float_eps 1e-5) expected result
 
 let test_kl_divergence () =
   let dtype = Rune.float32 in
@@ -460,13 +460,13 @@ let test_kl_divergence () =
     (kl1 +. kl2) /. 2.0
   in
   let expected = expected_value in
-  check (float_eps 1e-5) "kl divergence" expected result;
+  equal ~msg:"kl divergence" (float_eps 1e-5) expected result;
 
   let kl_zero = Metrics.kl_divergence () in
   Metrics.update kl_zero ~predictions:targets ~targets ();
   let result = Metrics.compute kl_zero in
   let expected = 0.0 in
-  check (float_eps 1e-5) "kl divergence zero" expected result
+  equal ~msg:"kl divergence zero" (float_eps 1e-5) expected result
 
 let test_metric_collection () =
   let dtype = Rune.float32 in
@@ -488,22 +488,22 @@ let test_metric_collection () =
   let results = Metrics.Collection.compute collection in
 
   (* Check we got all metrics *)
-  check int "collection size" 4 (List.length results);
+  equal ~msg:"collection size" int 4 (List.length results);
 
   (* Check metric names *)
   let names = List.map fst results in
-  check (list string) "metric names"
+  equal ~msg:"metric names" (list string)
     [ "accuracy"; "precision"; "recall"; "f1" ]
     names;
 
   (* Test add/remove *)
   Metrics.Collection.add collection "mae" (Metrics.mae ());
   let results = Metrics.Collection.compute collection in
-  check int "collection size after add" 5 (List.length results);
+  equal ~msg:"collection size after add" int 5 (List.length results);
 
   Metrics.Collection.remove collection "mae";
   let results = Metrics.Collection.compute collection in
-  check int "collection size after remove" 4 (List.length results)
+  equal ~msg:"collection size after remove" int 4 (List.length results)
 
 let test_weighted_metrics () =
   let dtype = Rune.float32 in
@@ -519,7 +519,7 @@ let test_weighted_metrics () =
   (* Weighted MSE = sum(weights * (pred - target)^2) / sum(weights) *)
   (* = (1*0.25 + 2*0.25 + 2*0.25 + 1*0.25) / 6 = 1.5/6 = 0.25 *)
   let expected = 0.25 in
-  check (float_eps 1e-5) "weighted mse" expected result
+  equal ~msg:"weighted mse" (float_eps 1e-5) expected result
 
 let test_metric_reset () =
   let dtype = Rune.float32 in
@@ -539,7 +539,7 @@ let test_metric_reset () =
   let result = Metrics.compute acc in
   let expected = 1.0 in
   (* All 4 correct *)
-  check (float_eps 1e-5) "accumulated accuracy" expected result;
+  equal ~msg:"accumulated accuracy" (float_eps 1e-5) expected result;
 
   (* Reset and compute again *)
   Metrics.reset acc;
@@ -547,7 +547,7 @@ let test_metric_reset () =
   let result = Metrics.compute acc in
   let expected = 1.0 in
   (* Only last 2 *)
-  check (float_eps 1e-5) "accuracy after reset" expected result
+  equal ~msg:"accuracy after reset" (float_eps 1e-5) expected result
 
 let test_custom_metric () =
   let dtype = Rune.float32 in
@@ -590,30 +590,30 @@ let test_custom_metric () =
   let result = Metrics.compute custom_mape in
   (* MAPE = mean(|110-100|/100, |210-200|/200, |310-300|/300) * 100 *)
   (* = mean(0.1, 0.05, 0.033) * 100 ≈ 6.1% *)
-  check bool "custom MAPE in range" true (result > 5.5 && result < 6.5)
+  equal ~msg:"custom MAPE in range" bool true (result > 5.5 && result < 6.5)
 
 let test_metric_utilities () =
   let acc = Metrics.accuracy () in
 
   (* Test name *)
   let name = Metrics.name acc in
-  check string "metric name" "accuracy" name;
+  equal ~msg:"metric name" string "accuracy" name;
 
   (* Test is_better *)
   let is_better =
     Metrics.is_better acc ~higher_better:true ~old_val:0.8 ~new_val:0.9
   in
-  check bool "is_better higher" true is_better;
+  equal ~msg:"is_better higher" bool true is_better;
 
   let is_better =
     Metrics.is_better acc ~higher_better:true ~old_val:0.9 ~new_val:0.8
   in
-  check bool "is_better lower" false is_better;
+  equal ~msg:"is_better lower" bool false is_better;
 
   (* Test format *)
   let value = 0.8567 in
   let formatted = Metrics.format acc value in
-  check bool "formatted contains value" true
+  equal ~msg:"formatted contains value" bool true
     (String.contains formatted '8' || String.contains formatted '0')
 
 let test_clone_metric () =
@@ -635,73 +635,72 @@ let test_clone_metric () =
   (* Original should still have its state *)
   let result1 = Metrics.compute acc1 in
   let expected = 1.0 in
-  check (float_eps 1e-5) "original after clone" expected result1;
+  equal ~msg:"original after clone" (float_eps 1e-5) expected result1;
 
   (* Clone should be reset *)
   Metrics.update acc2 ~predictions ~targets ();
   let result2 = Metrics.compute acc2 in
-  check (float_eps 1e-5) "clone after reset" expected result2
+  equal ~msg:"clone after reset" (float_eps 1e-5) expected result2
 
 let () =
-  let open Alcotest in
   run "Metrics"
     [
-      ( "classification",
+      group "classification"
         [
-          test_case "accuracy" `Quick test_accuracy;
-          test_case "accuracy_topk" `Quick test_accuracy_topk;
-          test_case "precision_recall" `Quick test_precision_recall;
-          test_case "f1_score" `Quick test_f1_score;
-          test_case "auc_roc" `Quick test_auc_roc;
-          test_case "auc_roc_multiple_updates" `Quick
+          test "accuracy" test_accuracy;
+          test "accuracy_topk" test_accuracy_topk;
+          test "precision_recall" test_precision_recall;
+          test "f1_score" test_f1_score;
+          test "auc_roc" test_auc_roc;
+          test "auc_roc_multiple_updates"
             test_auc_roc_multiple_updates;
-          test_case "auc_pr" `Quick test_auc_pr;
-          test_case "auc_pr_multiple_updates" `Quick
+          test "auc_pr" test_auc_pr;
+          test "auc_pr_multiple_updates"
             test_auc_pr_multiple_updates;
-          test_case "confusion_matrix" `Quick test_confusion_matrix;
-        ] );
-      ( "ranking",
+          test "confusion_matrix" test_confusion_matrix;
+        ];
+      group "ranking"
         [
-          test_case "ndcg" `Quick test_ndcg;
-          test_case "map" `Quick test_map_metric;
-          test_case "mrr" `Quick test_mrr_metric;
-        ] );
-      ( "nlp",
+          test "ndcg" test_ndcg;
+          test "map" test_map_metric;
+          test "mrr" test_mrr_metric;
+        ];
+      group "nlp"
         [
-          test_case "bleu" `Quick test_bleu;
-          test_case "rouge" `Quick test_rouge;
-          test_case "meteor" `Quick test_meteor_metric;
-        ] );
-      ( "vision",
+          test "bleu" test_bleu;
+          test "rouge" test_rouge;
+          test "meteor" test_meteor_metric;
+        ];
+      group "vision"
         [
-          test_case "ssim" `Quick test_ssim;
-          test_case "iou" `Quick test_iou;
-          test_case "dice" `Quick test_dice;
-        ] );
-      ( "regression",
+          test "ssim" test_ssim;
+          test "iou" test_iou;
+          test "dice" test_dice;
+        ];
+      group "regression"
         [
-          test_case "mse_rmse" `Quick test_mse_rmse;
-          test_case "mae" `Quick test_mae;
-          test_case "mape" `Quick test_mape;
-          test_case "r2_score" `Quick test_r2_score;
-          test_case "explained_variance" `Quick test_explained_variance;
-        ] );
-      ( "probabilistic",
+          test "mse_rmse" test_mse_rmse;
+          test "mae" test_mae;
+          test "mape" test_mape;
+          test "r2_score" test_r2_score;
+          test "explained_variance" test_explained_variance;
+        ];
+      group "probabilistic"
         [
-          test_case "cross_entropy" `Quick test_cross_entropy;
-          test_case "binary_cross_entropy" `Quick test_binary_cross_entropy;
-          test_case "kl_divergence" `Quick test_kl_divergence;
-        ] );
-      ( "collections",
+          test "cross_entropy" test_cross_entropy;
+          test "binary_cross_entropy" test_binary_cross_entropy;
+          test "kl_divergence" test_kl_divergence;
+        ];
+      group "collections"
         [
-          test_case "metric_collection" `Quick test_metric_collection;
-          test_case "weighted_metrics" `Quick test_weighted_metrics;
-        ] );
-      ( "utilities",
+          test "metric_collection" test_metric_collection;
+          test "weighted_metrics" test_weighted_metrics;
+        ];
+      group "utilities"
         [
-          test_case "metric_reset" `Quick test_metric_reset;
-          test_case "custom_metric" `Quick test_custom_metric;
-          test_case "metric_utilities" `Quick test_metric_utilities;
-          test_case "clone_metric" `Quick test_clone_metric;
-        ] );
+          test "metric_reset" test_metric_reset;
+          test "custom_metric" test_custom_metric;
+          test "metric_utilities" test_metric_utilities;
+          test "clone_metric" test_clone_metric;
+        ];
     ]

@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Alcotest
+open Windtrap
 open Test_rune_support
 module T = Rune
 
@@ -538,7 +538,7 @@ let check_complex_close ~eps msg expected actual =
     err_val
     > eps *. eps *. Float.of_int (Array.fold_left ( * ) 1 (T.shape expected))
   then
-    Alcotest.failf "%s: complex tensors differ, total squared error = %.6e" msg
+    failf "%s: complex tensors differ, total squared error = %.6e" msg
       err_val
 
 let test_jvp_fft () =
@@ -623,79 +623,79 @@ let test_jvp_fft_roundtrip () =
 let () =
   run "Rune JVP Comprehensive Tests"
     [
-      ( "binary operations",
+      group "binary operations"
         [
-          test_case "add" `Quick test_jvp_add;
-          test_case "mul" `Quick test_jvp_mul;
-          test_case "sub" `Quick test_jvp_sub;
-          test_case "div" `Quick test_jvp_div;
-          test_case "pow" `Quick test_jvp_pow;
-          test_case "max" `Quick test_jvp_max;
-        ] );
-      ( "unary operations",
+          test "add" test_jvp_add;
+          test "mul" test_jvp_mul;
+          test "sub" test_jvp_sub;
+          test "div" test_jvp_div;
+          test "pow" test_jvp_pow;
+          test "max" test_jvp_max;
+        ];
+      group "unary operations"
         [
-          test_case "exp" `Quick test_jvp_exp;
-          test_case "log" `Quick test_jvp_log;
-          test_case "sin/cos" `Quick test_jvp_sin_cos;
-          test_case "sqrt" `Quick test_jvp_sqrt;
-          test_case "neg" `Quick test_jvp_neg;
-          test_case "relu" `Quick test_jvp_relu;
-          test_case "tanh" `Quick test_jvp_tanh;
-          test_case "abs" `Quick test_jvp_abs;
-          test_case "cumsum" `Quick test_jvp_cumsum;
-          test_case "cumprod" `Quick test_jvp_cumprod;
-          test_case "sigmoid" `Quick test_jvp_sigmoid;
-          test_case "square" `Quick test_jvp_square;
-          test_case "recip" `Quick test_jvp_recip;
-          test_case "rsqrt" `Quick test_jvp_rsqrt;
-          test_case "tan" `Quick test_jvp_tan;
-          test_case "sinh/cosh" `Quick test_jvp_sinh_cosh;
-        ] );
-      ( "reduction operations",
+          test "exp" test_jvp_exp;
+          test "log" test_jvp_log;
+          test "sin/cos" test_jvp_sin_cos;
+          test "sqrt" test_jvp_sqrt;
+          test "neg" test_jvp_neg;
+          test "relu" test_jvp_relu;
+          test "tanh" test_jvp_tanh;
+          test "abs" test_jvp_abs;
+          test "cumsum" test_jvp_cumsum;
+          test "cumprod" test_jvp_cumprod;
+          test "sigmoid" test_jvp_sigmoid;
+          test "square" test_jvp_square;
+          test "recip" test_jvp_recip;
+          test "rsqrt" test_jvp_rsqrt;
+          test "tan" test_jvp_tan;
+          test "sinh/cosh" test_jvp_sinh_cosh;
+        ];
+      group "reduction operations"
         [
-          test_case "sum" `Quick test_jvp_sum;
-          test_case "mean" `Quick test_jvp_mean;
-          test_case "max" `Quick test_jvp_max_reduction;
-          test_case "sum with axis" `Quick test_jvp_sum_with_axis;
-          test_case "prod" `Quick test_jvp_prod;
-        ] );
-      ( "broadcasting",
+          test "sum" test_jvp_sum;
+          test "mean" test_jvp_mean;
+          test "max" test_jvp_max_reduction;
+          test "sum with axis" test_jvp_sum_with_axis;
+          test "prod" test_jvp_prod;
+        ];
+      group "broadcasting"
         [
-          test_case "broadcast add" `Quick test_jvp_broadcast_add;
-          test_case "scalar broadcast" `Quick test_jvp_scalar_broadcast;
-        ] );
-      ( "shape operations",
+          test "broadcast add" test_jvp_broadcast_add;
+          test "scalar broadcast" test_jvp_scalar_broadcast;
+        ];
+      group "shape operations"
         [
-          test_case "reshape" `Quick test_jvp_reshape;
-          test_case "transpose" `Quick test_jvp_transpose;
-          test_case "squeeze" `Quick test_jvp_squeeze;
-          test_case "expand_dims" `Quick test_jvp_expand_dims;
-          test_case "concatenate" `Quick test_jvp_concatenate;
-        ] );
-      ( "complex compositions",
+          test "reshape" test_jvp_reshape;
+          test "transpose" test_jvp_transpose;
+          test "squeeze" test_jvp_squeeze;
+          test "expand_dims" test_jvp_expand_dims;
+          test "concatenate" test_jvp_concatenate;
+        ];
+      group "complex compositions"
         [
-          test_case "softmax" `Quick test_jvp_softmax;
-          test_case "layer norm" `Quick test_jvp_layer_norm;
-          test_case "nested" `Quick test_jvp_nested;
-          test_case "higher order" `Quick test_jvp_higher_order;
-        ] );
-      ( "edge cases",
+          test "softmax" test_jvp_softmax;
+          test "layer norm" test_jvp_layer_norm;
+          test "nested" test_jvp_nested;
+          test "higher order" test_jvp_higher_order;
+        ];
+      group "edge cases"
         [
-          test_case "zero tangent" `Quick test_jvp_zero_tangent;
-          test_case "constant function" `Quick test_jvp_constant_function;
-          test_case "identity" `Quick test_jvp_identity;
-        ] );
-      ( "fft operations",
+          test "zero tangent" test_jvp_zero_tangent;
+          test "constant function" test_jvp_constant_function;
+          test "identity" test_jvp_identity;
+        ];
+      group "fft operations"
         [
-          test_case "fft" `Quick test_jvp_fft;
-          test_case "ifft" `Quick test_jvp_ifft;
-          test_case "fft roundtrip" `Quick test_jvp_fft_roundtrip;
-        ] );
-      ( "indexing operations",
+          test "fft" test_jvp_fft;
+          test "ifft" test_jvp_ifft;
+          test "fft roundtrip" test_jvp_fft_roundtrip;
+        ];
+      group "indexing operations"
         [
-          test_case "slice" `Quick test_jvp_slice;
-          test_case "gather" `Quick test_jvp_gather;
-          test_case "get" `Quick test_jvp_get;
-          test_case "take_along_axis" `Quick test_jvp_take_along_axis;
-        ] );
+          test "slice" test_jvp_slice;
+          test "gather" test_jvp_gather;
+          test "get" test_jvp_get;
+          test "take_along_axis" test_jvp_take_along_axis;
+        ];
     ]

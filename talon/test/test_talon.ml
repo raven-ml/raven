@@ -4,14 +4,15 @@
   ---------------------------------------------------------------------------*)
 
 open Talon
+open Windtrap
 
-let check_int = Alcotest.(check int)
-let check_float = Alcotest.(check (float 1e-6))
-let check_bool = Alcotest.(check bool)
-let check_string = Alcotest.(check string)
-let check_option_float = Alcotest.(check (option (float 1e-6)))
-let check_option_string = Alcotest.(check (option string))
-let check_option_bool_array = Alcotest.(check (option (array bool)))
+let check_int msg = equal ~msg int
+let check_float msg = equal ~msg (float 1e-6)
+let check_bool msg = equal ~msg bool
+let check_string msg = equal ~msg string
+let check_option_float msg = equal ~msg (option (float 1e-6))
+let check_option_string msg = equal ~msg (option string)
+let check_option_bool_array msg = equal ~msg (option (array bool))
 
 let mask_of_column df name =
   match get_column_exn df name with Col.P (_, _, mask) -> mask | _ -> None
@@ -60,7 +61,7 @@ let test_drop_nulls_preserves_data_with_mask () =
       check_int "length after drop" 1 (Array.length arr);
       check_bool "sentinel retained" true (arr.(0) = Int32.min_int);
       check_option_bool_array "mask cleared" None (Col.null_mask dropped)
-  | _ -> Alcotest.fail "expected int32 column"
+  | _ -> fail "expected int32 column"
 
 let test_fill_nulls_respects_mask () =
   let col = Col.int32_opt [| Some 42l; None |] in
@@ -69,7 +70,7 @@ let test_fill_nulls_respects_mask () =
       let arr : int32 array = Nx.to_array tensor in
       check_bool "first value untouched" true (arr.(0) = 42l);
       check_bool "null filled" true (arr.(1) = 0l)
-  | _ -> Alcotest.fail "expected int32 column"
+  | _ -> fail "expected int32 column"
 
 (* ───── Test Dataframe Creation ───── *)
 
@@ -89,7 +90,7 @@ let test_df_creation () =
   check_bool "not empty" false (is_empty df);
 
   let names = column_names df in
-  Alcotest.(check (list string)) "column names" [ "a"; "b"; "c" ] names
+  equal ~msg:"column names" (list string) [ "a"; "b"; "c" ] names
 
 let test_df_empty () =
   let df = empty in
@@ -115,7 +116,7 @@ let test_column_access () =
 
   match get_column df "x" with
   | Some _col -> check_int "df has 3 rows" 3 (num_rows df)
-  | None -> Alcotest.fail "column x should exist"
+  | None -> fail "column x should exist"
 
 let test_column_add_drop () =
   let df = create [ ("a", Col.int32_list [ 1l; 2l ]) ] in
@@ -146,10 +147,10 @@ let test_select () =
   in
 
   let df2 = select df [ "c"; "a" ] in
-  Alcotest.(check (list string)) "selected cols" [ "c"; "a" ] (column_names df2);
+  equal ~msg:"selected cols" (list string) [ "c"; "a" ] (column_names df2);
 
   let df3 = select_loose df [ "a"; "missing"; "c" ] in
-  Alcotest.(check (list string)) "loose select" [ "a"; "c" ] (column_names df3)
+  equal ~msg:"loose select" (list string) [ "a"; "c" ] (column_names df3)
 
 (* ───── Test Row Operations ───── *)
 
@@ -216,7 +217,7 @@ let test_pct_change_has_no_mask () =
   let df = create [ ("x", Col.float32_opt [| Some 1.0; Some 2.0; None |]) ] in
   match Agg.pct_change df "x" () with
   | Col.P (_, _, mask) -> check_option_bool_array "pct_change mask" None mask
-  | _ -> Alcotest.fail "expected numeric column"
+  | _ -> fail "expected numeric column"
 
 let test_filter_by () =
   let df =
@@ -296,7 +297,7 @@ let test_row_map () =
 
   match to_int32_array df2 "doubled" with
   | Some arr -> check_bool "mapped values" true (arr = [| 2l; 4l; 6l |])
-  | None -> Alcotest.fail "doubled column should exist"
+  | None -> fail "doubled column should exist"
 
 (* ───── Test Sorting ───── *)
 
@@ -312,7 +313,7 @@ let test_sort () =
   let sorted = sort_values df "x" in
   match to_int32_array sorted "x" with
   | Some arr -> check_bool "sorted" true (arr = [| 1l; 2l; 3l |])
-  | None -> Alcotest.fail "column should exist"
+  | None -> fail "column should exist"
 
 let test_group_by () =
   let df =
@@ -397,19 +398,19 @@ let test_to_arrays () =
 
   (match to_float32_array df "f32" with
   | Some arr -> check_bool "float32 array" true (arr = [| 1.0; 2.0 |])
-  | None -> Alcotest.fail "should get float32 array");
+  | None -> fail "should get float32 array");
 
   (match to_int32_array df "i32" with
   | Some arr -> check_bool "int32 array" true (arr = [| 1l; 2l |])
-  | None -> Alcotest.fail "should get int32 array");
+  | None -> fail "should get int32 array");
 
   (match to_string_array df "str" with
   | Some arr -> check_bool "string array" true (arr = [| "a"; "b" |])
-  | None -> Alcotest.fail "should get string array");
+  | None -> fail "should get string array");
 
   match to_bool_array df "bool" with
   | Some arr -> check_bool "bool array" true (arr = [| true; false |])
-  | None -> Alcotest.fail "should get bool array"
+  | None -> fail "should get bool array"
 
 let test_to_nx () =
   let df =
@@ -464,28 +465,28 @@ let test_cast_column () =
   (* Check that we can extract as float array after casting *)
   match to_float32_array df2 "x" with
   | Some arr -> check_bool "cast to float32" true (Array.length arr = 3)
-  | None -> Alcotest.fail "should be able to extract as float32 after cast"
+  | None -> fail "should be able to extract as float32 after cast"
 
 (* ───── Test Suites ───── *)
 
 let col_tests =
   [
-    ("creation", `Quick, test_col_creation);
-    ("nulls", `Quick, test_col_nulls);
-    ("null mask", `Quick, test_col_null_mask);
-    ("drop_nulls mask", `Quick, test_drop_nulls_preserves_data_with_mask);
-    ("fill_nulls mask", `Quick, test_fill_nulls_respects_mask);
+    test "creation" test_col_creation;
+    test "nulls" test_col_nulls;
+    test "null mask" test_col_null_mask;
+    test "drop_nulls mask" test_drop_nulls_preserves_data_with_mask;
+    test "fill_nulls mask" test_fill_nulls_respects_mask;
   ]
 
 let creation_tests =
-  [ ("basic", `Quick, test_df_creation); ("empty", `Quick, test_df_empty) ]
+  [ test "basic" test_df_creation; test "empty" test_df_empty ]
 
 let column_tests =
   [
-    ("access", `Quick, test_column_access);
-    ("add_drop", `Quick, test_column_add_drop);
-    ("rename", `Quick, test_rename_column);
-    ("select", `Quick, test_select);
+    test "access" test_column_access;
+    test "add_drop" test_column_add_drop;
+    test "rename" test_rename_column;
+    test "select" test_select;
   ]
 
 (* Test option-based accessors *)
@@ -535,14 +536,14 @@ let test_to_options () =
       check_option_float "float opt 0" (Some 1.0) arr.(0);
       check_option_float "float opt 1 (null)" None arr.(1);
       check_option_float "float opt 2" (Some 3.0) arr.(2)
-  | None -> Alcotest.fail "Expected Some array");
+  | None -> fail "Expected Some array");
   (* Test to_int32_options *)
   match to_int32_options df "int_col" with
   | Some arr ->
-      Alcotest.(check (option int32)) "int opt 0" (Some 10l) arr.(0);
-      Alcotest.(check (option int32)) "int opt 1 (null)" None arr.(1);
-      Alcotest.(check (option int32)) "int opt 2" (Some 30l) arr.(2)
-  | None -> Alcotest.fail "Expected Some array"
+      equal ~msg:"int opt 0" (option int32) (Some 10l) arr.(0);
+      equal ~msg:"int opt 1 (null)" (option int32) None arr.(1);
+      equal ~msg:"int opt 2" (option int32) (Some 30l) arr.(2)
+  | None -> fail "Expected Some array"
 
 let test_drop_nulls_helper () =
   let df =
@@ -567,7 +568,7 @@ let test_fill_missing_helper () =
       check_float "filled 0" 1.0 arr.(0);
       check_float "filled 1 (was null)" 0.0 arr.(1);
       check_float "filled 2" 3.0 arr.(2)
-  | None -> Alcotest.fail "Expected float array"
+  | None -> fail "Expected float array"
 
 let test_fillna_replaces_nulls () =
   let df =
@@ -585,7 +586,7 @@ let test_fillna_replaces_nulls () =
       check_float "filled a[1]" 0.0 arr.(1);
       check_float "filled a[2]" 3.0 arr.(2);
       check_option_bool_array "mask cleared for a" None mask_opt
-  | _ -> Alcotest.fail "Expected float32 column");
+  | _ -> fail "Expected float32 column");
   let filled_b = Agg.fillna df "b" ~value:(Col.int32_list [ 0l; 99l; 0l ]) in
   match filled_b with
   | Col.P (Nx.Int32, tensor, mask_opt) ->
@@ -594,7 +595,7 @@ let test_fillna_replaces_nulls () =
       check_int "filled b[1]" 99 (Int32.to_int arr.(1));
       check_int "filled b[2]" 30 (Int32.to_int arr.(2));
       check_option_bool_array "mask cleared for b" None mask_opt
-  | _ -> Alcotest.fail "Expected int32 column"
+  | _ -> fail "Expected int32 column"
 
 let test_null_count_helper () =
   let df =
@@ -623,70 +624,70 @@ let test_mask_aware_aggregations () =
   (* Min/max should skip nulls *)
   (match Agg.Float.min df "values" with
   | Some v -> check_float "masked min" 1.0 v
-  | None -> Alcotest.fail "Expected Some min");
+  | None -> fail "Expected Some min");
   match Agg.Float.max df "values" with
   | Some v -> check_float "masked max" 5.0 v
-  | None -> Alcotest.fail "Expected Some max"
+  | None -> fail "Expected Some max"
 
 let option_tests =
   [
-    ("row_opt_accessors", `Quick, test_row_opt_accessors);
-    ("to_options", `Quick, test_to_options);
-    ("drop_nulls", `Quick, test_drop_nulls_helper);
-    ("fill_missing", `Quick, test_fill_missing_helper);
-    ("fillna", `Quick, test_fillna_replaces_nulls);
-    ("null_count", `Quick, test_null_count_helper);
-    ("mask_aware_agg", `Quick, test_mask_aware_aggregations);
+    test "row_opt_accessors" test_row_opt_accessors;
+    test "to_options" test_to_options;
+    test "drop_nulls" test_drop_nulls_helper;
+    test "fill_missing" test_fill_missing_helper;
+    test "fillna" test_fillna_replaces_nulls;
+    test "null_count" test_null_count_helper;
+    test "mask_aware_agg" test_mask_aware_aggregations;
   ]
 
 let mask_tests =
   [
-    ("projection", `Quick, test_mask_projection_ops);
-    ("concat", `Quick, test_concat_mask_combines);
-    ("cast", `Quick, test_cast_preserves_mask);
-    ("pct_change", `Quick, test_pct_change_has_no_mask);
+    test "projection" test_mask_projection_ops;
+    test "concat" test_concat_mask_combines;
+    test "cast" test_cast_preserves_mask;
+    test "pct_change" test_pct_change_has_no_mask;
   ]
 
 let row_tests =
   [
-    ("head_tail", `Quick, test_head_tail);
-    ("slice", `Quick, test_slice);
-    ("filter", `Quick, test_filter);
-    ("filter_by", `Quick, test_filter_by);
-    ("drop_duplicates", `Quick, test_drop_duplicates);
+    test "head_tail" test_head_tail;
+    test "slice" test_slice;
+    test "filter" test_filter;
+    test "filter_by" test_filter_by;
+    test "drop_duplicates" test_drop_duplicates;
   ]
 
 let concat_tests =
-  [ ("rows", `Quick, test_concat_rows); ("columns", `Quick, test_concat_cols) ]
+  [ test "rows" test_concat_rows; test "columns" test_concat_cols ]
 
 let row_module_tests =
-  [ ("accessors", `Quick, test_row_accessors); ("map", `Quick, test_row_map) ]
+  [ test "accessors" test_row_accessors; test "map" test_row_map ]
 
 let sort_group_tests =
-  [ ("sort", `Quick, test_sort); ("group_by", `Quick, test_group_by) ]
+  [ test "sort" test_sort; test "group_by" test_group_by ]
 
 let agg_tests =
   [
-    ("float", `Quick, test_agg_float);
-    ("int", `Quick, test_agg_int);
-    ("string", `Quick, test_agg_string);
-    ("bool", `Quick, test_agg_bool);
-    ("cumulative", `Quick, test_agg_cumulative);
-    ("nulls", `Quick, test_agg_nulls);
+    test "float" test_agg_float;
+    test "int" test_agg_int;
+    test "string" test_agg_string;
+    test "bool" test_agg_bool;
+    test "cumulative" test_agg_cumulative;
+    test "nulls" test_agg_nulls;
   ]
 
 let conversion_tests =
   [
-    ("to_arrays", `Quick, test_to_arrays);
-    ("to_nx", `Quick, test_to_nx);
-    ("from_nx", `Quick, test_from_nx);
-    ("cast_column", `Quick, test_cast_column);
+    test "to_arrays" test_to_arrays;
+    test "to_nx" test_to_nx;
+    test "from_nx" test_from_nx;
+    test "cast_column" test_cast_column;
   ]
 
 let edge_tests =
   [
-    ("empty_operations", `Quick, test_empty_operations);
-    ("single_row", `Quick, test_single_row);
+    test "empty_operations" test_empty_operations;
+    test "single_row" test_single_row;
   ]
 
 (* ───── Test Wide Operations with mapHomo ───── *)
@@ -721,7 +722,7 @@ let test_map_list_product () =
       (* Row 2: 3*2*1*1*2*3 = 36 *)
       (* Row 3: 4*3*2*1*2*1 = 48 *)
       check_bool "Product of 6 columns" true (arr = [| 12l; 36l; 48l |])
-  | None -> Alcotest.fail "allMul column should exist"
+  | None -> fail "allMul column should exist"
 
 let test_sequence_sum () =
   (* Create a dataframe with float columns *)
@@ -748,7 +749,7 @@ let test_sequence_sum () =
       check_float "Row 1 sum" 6.0 arr.(0);
       check_float "Row 2 sum" 9.0 arr.(1);
       check_float "Row 3 sum" 12.0 arr.(2)
-  | None -> Alcotest.fail "total column should exist"
+  | None -> fail "total column should exist"
 
 let test_weighted_sum () =
   (* Test weighted sum example *)
@@ -780,7 +781,7 @@ let test_weighted_sum () =
       check_float "First weighted sum" 3.2 scores.(0);
       check_float "Second weighted sum" 4.2 scores.(1);
       check_float "Third weighted sum" 5.2 scores.(2)
-  | None -> Alcotest.fail "score column should exist"
+  | None -> fail "score column should exist"
 
 let test_numeric_column_names () =
   let df =
@@ -802,8 +803,7 @@ let test_numeric_column_names () =
   let sorted_numeric = List.sort String.compare numeric_cols in
   let sorted_expected = List.sort String.compare expected in
 
-  Alcotest.(check (list string))
-    "Numeric column names" sorted_expected sorted_numeric
+  equal ~msg:"Numeric column names" (list string) sorted_expected sorted_numeric
 
 let test_row_helpers () =
   let df =
@@ -839,7 +839,7 @@ let test_row_helpers () =
   | Some arr ->
       check_float "First doubled" 10.0 arr.(0);
       check_float "Second doubled" 12.0 arr.(1)
-  | None -> Alcotest.fail "sum column should exist"
+  | None -> fail "sum column should exist"
 
 let test_sequence_all_equivalence () =
   (* Test that sequence and all are equivalent *)
@@ -872,16 +872,16 @@ let test_sequence_all_equivalence () =
   | Some seq_arr, Some all_arr ->
       check_bool "sequence and all produce same results" true
         (seq_arr = all_arr && seq_arr = [| 111l; 222l |])
-  | _ -> Alcotest.fail "columns should exist"
+  | _ -> fail "columns should exist"
 
 let wide_tests =
   [
-    ("map_list product", `Quick, test_map_list_product);
-    ("sequence sum", `Quick, test_sequence_sum);
-    ("weighted sum", `Quick, test_weighted_sum);
-    ("numeric_column_names", `Quick, test_numeric_column_names);
-    ("row helpers", `Quick, test_row_helpers);
-    ("sequence/all equivalence", `Quick, test_sequence_all_equivalence);
+    test "map_list product" test_map_list_product;
+    test "sequence sum" test_sequence_sum;
+    test "weighted sum" test_weighted_sum;
+    test "numeric_column_names" test_numeric_column_names;
+    test "row helpers" test_row_helpers;
+    test "sequence/all equivalence" test_sequence_all_equivalence;
   ]
 
 (* ───── Test Ergonomic APIs ───── *)
@@ -922,20 +922,19 @@ let test_column_selectors () =
 
   (* Test columns_with_prefix *)
   let feat_cols = Cols.with_prefix df "feat_" in
-  Alcotest.(check (list string))
-    "feat_ prefix" [ "feat_1"; "feat_2" ]
+  equal ~msg:"feat_ prefix" (list string) [ "feat_1"; "feat_2" ]
     (List.sort String.compare feat_cols);
 
   (* Test columns_with_suffix *)
   let score_cols = Cols.with_suffix df "_a" in
-  Alcotest.(check (list string)) "suffix _a" [ "score_a" ] score_cols;
+  equal ~msg:"suffix _a" (list string) [ "score_a" ] score_cols;
 
   (* Test select_dtypes *)
   let numeric = Cols.select_dtypes df [ `Numeric ] in
   check_int "numeric columns" 5 (List.length numeric);
 
   let strings = Cols.select_dtypes df [ `String ] in
-  Alcotest.(check (list string)) "string columns" [ "name" ] strings
+  equal ~msg:"string columns" (list string) [ "name" ] strings
 
 let test_rowagg_sum () =
   let df =
@@ -959,7 +958,7 @@ let test_rowagg_sum () =
       (* 2 + 4 + 6 *)
       check_float "Row 2 sum" 12.0 arr.(2)
       (* None + 5 + 7, missing skipped *)
-  | None -> Alcotest.fail "row_sum should exist"
+  | None -> fail "row_sum should exist"
 
 let rowagg_skipna_fixture () =
   create
@@ -974,7 +973,7 @@ let unpack_float64_column col label =
   | Col.P (Nx.Float64, tensor, _) ->
       let arr : float array = Nx.to_array tensor in
       arr
-  | _ -> Alcotest.fail ("expected float64 column for " ^ label)
+  | _ -> fail ("expected float64 column for " ^ label)
 
 let test_rowagg_sum_skipna_false () =
   let df = rowagg_skipna_fixture () in
@@ -1062,7 +1061,7 @@ let test_rowagg_bool_reducers () =
   | Col.B all_arr, Col.B any_arr ->
       let expect_bool msg expected = function
         | Some value -> check_bool msg expected value
-        | None -> Alcotest.fail (msg ^ " should be Some")
+        | None -> fail (msg ^ " should be Some")
       in
       expect_bool "Row.Agg.all row0" true all_arr.(0);
       expect_bool "Row.Agg.all row1" false all_arr.(1);
@@ -1070,7 +1069,7 @@ let test_rowagg_bool_reducers () =
       expect_bool "Row.Agg.any row0" true any_arr.(0);
       expect_bool "Row.Agg.any row1" true any_arr.(1);
       expect_bool "Row.Agg.any row2" false any_arr.(2)
-  | _ -> Alcotest.fail "expected boolean option columns"
+  | _ -> fail "expected boolean option columns"
 
 let test_row_number () =
   let df =
@@ -1090,7 +1089,7 @@ let test_row_number () =
       check_float "Int32 as float" 1.0 arr.(0);
       check_float "Int32 as float" 2.0 arr.(1);
       check_float "Int32 as float" 3.0 arr.(2)
-  | None -> Alcotest.fail "i32_as_float should exist"
+  | None -> fail "i32_as_float should exist"
 
 let test_row_fold_list () =
   let df =
@@ -1113,7 +1112,7 @@ let test_row_fold_list () =
       check_float "Row 0 sum" 111.0 arr.(0);
       check_float "Row 1 sum" 222.0 arr.(1);
       check_float "Row 2 sum" 333.0 arr.(2)
-  | None -> Alcotest.fail "sum should exist"
+  | None -> fail "sum should exist"
 
 let test_with_columns_map () =
   let df =
@@ -1150,7 +1149,7 @@ let test_with_columns_map () =
       check_float "Sum row 0" 5.0 sum.(0);
       check_float "Diff row 0" (-3.0) diff.(0);
       check_float "Prod row 0" 4.0 prod.(0)
-  | _ -> Alcotest.fail "computed columns should exist"
+  | _ -> fail "computed columns should exist"
 
 let test_columns_except () =
   let df =
@@ -1165,8 +1164,7 @@ let test_columns_except () =
   in
 
   let kept = Cols.except df [ "drop1"; "drop2" ] in
-  Alcotest.(check (list string))
-    "columns except"
+  equal ~msg:"columns except" (list string)
     [ "keep1"; "keep2"; "keep3" ]
     (List.sort String.compare kept)
 
@@ -1192,7 +1190,7 @@ let test_rowagg_dot () =
       (* 0.2*2 + 0.3*5 + 0.5*8 = 0.4 + 1.5 + 4.0 = 5.9 *)
       check_float "Row 2 weighted" 6.9 arr.(2)
       (* 0.2*3 + 0.3*6 + 0.5*9 = 0.6 + 1.8 + 4.5 = 6.9 *)
-  | None -> Alcotest.fail "score should exist"
+  | None -> fail "score should exist"
 
 let test_join_inner () =
   let df1 =
@@ -1240,7 +1238,7 @@ let test_join_left () =
       check_string "first key" "a" arr.(0);
       check_string "second key" "b" arr.(1);
       check_string "third key" "c" arr.(2)
-  | None -> Alcotest.fail "key column should exist"
+  | None -> fail "key column should exist"
 
 let test_merge () =
   let df1 =
@@ -1286,9 +1284,9 @@ let test_join_preserves_null_masks () =
     (mask_of_column joined "right_val");
   match to_int32_options joined "right_val" with
   | Some arr ->
-      Alcotest.(check (option int32)) "right row 0" (Some 100l) arr.(0);
-      Alcotest.(check (option int32)) "right row 1" None arr.(1)
-  | None -> Alcotest.fail "right_val column should exist"
+      equal ~msg:"right row 0" (option int32) (Some 100l) arr.(0);
+      equal ~msg:"right row 1" (option int32) None arr.(1)
+  | None -> fail "right_val column should exist"
 
 let test_pivot () =
   let df =
@@ -1314,7 +1312,7 @@ let test_pivot () =
       check_float "Jan B sales" 150.0 b_vals.(0);
       check_float "Feb A sales" 120.0 a_vals.(1);
       check_float "Feb B sales" 180.0 b_vals.(1)
-  | _ -> Alcotest.fail "pivot columns should exist"
+  | _ -> fail "pivot columns should exist"
 
 let test_pivot_numeric_index () =
   let df =
@@ -1333,14 +1331,14 @@ let test_pivot_numeric_index () =
   | Col.S arr ->
       check_option_string "first id" (Some "1") arr.(0);
       check_option_string "second id" (Some "2") arr.(1)
-  | _ -> Alcotest.fail "expected string index column");
+  | _ -> fail "expected string index column");
   match (to_float64_array pivoted "A", to_float64_array pivoted "B") with
   | Some a_vals, Some b_vals ->
       check_float "id=1 A sum" 1.0 a_vals.(0);
       check_float "id=2 A sum" 3.0 a_vals.(1);
       check_float "id=1 B sum" 2.0 b_vals.(0);
       check_float "id=2 B sum" 4.0 b_vals.(1)
-  | _ -> Alcotest.fail "pivot numeric columns should exist"
+  | _ -> fail "pivot numeric columns should exist"
 
 let test_melt () =
   let df =
@@ -1369,7 +1367,7 @@ let test_melt () =
       check_string "fourth var" "A" vars.(3);
       check_string "fifth var" "B" vars.(4);
       check_string "sixth var" "C" vars.(5)
-  | None -> Alcotest.fail "variable column should exist"
+  | None -> fail "variable column should exist"
 
 let test_join_with_suffixes () =
   let df1 =
@@ -1401,53 +1399,53 @@ let test_join_with_suffixes () =
       check_float "right value 1" 100.0 right.(0);
       check_float "left value 2" 20.0 left.(1);
       check_float "right value 2" 200.0 right.(1)
-  | _ -> Alcotest.fail "value columns should exist"
+  | _ -> fail "value columns should exist"
 
 let join_reshape_tests =
   [
-    ("join inner", `Quick, test_join_inner);
-    ("join left", `Quick, test_join_left);
-    ("merge", `Quick, test_merge);
-    ("join preserves masks", `Quick, test_join_preserves_null_masks);
-    ("pivot", `Quick, test_pivot);
-    ("pivot numeric index", `Quick, test_pivot_numeric_index);
-    ("melt", `Quick, test_melt);
-    ("join with suffixes", `Quick, test_join_with_suffixes);
+    test "join inner" test_join_inner;
+    test "join left" test_join_left;
+    test "merge" test_merge;
+    test "join preserves masks" test_join_preserves_null_masks;
+    test "pivot" test_pivot;
+    test "pivot numeric index" test_pivot_numeric_index;
+    test "melt" test_melt;
+    test "join with suffixes" test_join_with_suffixes;
   ]
 
 let ergonomic_tests =
   [
-    ("with_columns", `Quick, test_with_columns);
-    ("with_columns_map", `Quick, test_with_columns_map);
-    ("column_selectors", `Quick, test_column_selectors);
-    ("columns_except", `Quick, test_columns_except);
-    ("Row.number", `Quick, test_row_number);
-    ("Row.fold_list", `Quick, test_row_fold_list);
-    ("Row.Agg.sum", `Quick, test_rowagg_sum);
-    ("rowagg_sum_skipna_false", `Quick, test_rowagg_sum_skipna_false);
-    ("rowagg_mean_skipna_false", `Quick, test_rowagg_mean_skipna_false);
-    ("rowagg_min_skipna_false", `Quick, test_rowagg_min_skipna_false);
-    ("rowagg_max_skipna_false", `Quick, test_rowagg_max_skipna_false);
-    ("rowagg_bool_reducers", `Quick, test_rowagg_bool_reducers);
-    ("Row.Agg.dot", `Quick, test_rowagg_dot);
+    test "with_columns" test_with_columns;
+    test "with_columns_map" test_with_columns_map;
+    test "column_selectors" test_column_selectors;
+    test "columns_except" test_columns_except;
+    test "Row.number" test_row_number;
+    test "Row.fold_list" test_row_fold_list;
+    test "Row.Agg.sum" test_rowagg_sum;
+    test "rowagg_sum_skipna_false" test_rowagg_sum_skipna_false;
+    test "rowagg_mean_skipna_false" test_rowagg_mean_skipna_false;
+    test "rowagg_min_skipna_false" test_rowagg_min_skipna_false;
+    test "rowagg_max_skipna_false" test_rowagg_max_skipna_false;
+    test "rowagg_bool_reducers" test_rowagg_bool_reducers;
+    test "Row.Agg.dot" test_rowagg_dot;
   ]
 
 let () =
-  Alcotest.run "Talon"
+  run "Talon"
     [
-      ("Col", col_tests);
-      ("Creation", creation_tests);
-      ("Columns", column_tests);
-      ("Null masks", mask_tests);
-      ("Option accessors", option_tests);
-      ("Rows", row_tests);
-      ("Concatenation", concat_tests);
-      ("Row module", row_module_tests);
-      ("Sort & Group", sort_group_tests);
-      ("Aggregations", agg_tests);
-      ("Conversions", conversion_tests);
-      ("Edge cases", edge_tests);
-      ("Wide operations", wide_tests);
-      ("Ergonomic APIs", ergonomic_tests);
-      ("Join & Reshape", join_reshape_tests);
+      group "Col" col_tests;
+      group "Creation" creation_tests;
+      group "Columns" column_tests;
+      group "Null masks" mask_tests;
+      group "Option accessors" option_tests;
+      group "Rows" row_tests;
+      group "Concatenation" concat_tests;
+      group "Row module" row_module_tests;
+      group "Sort & Group" sort_group_tests;
+      group "Aggregations" agg_tests;
+      group "Conversions" conversion_tests;
+      group "Edge cases" edge_tests;
+      group "Wide operations" wide_tests;
+      group "Ergonomic APIs" ergonomic_tests;
+      group "Join & Reshape" join_reshape_tests;
     ]

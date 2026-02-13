@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Alcotest
+open Windtrap
 open Test_rune_support
 module T = Rune
 
@@ -158,23 +158,23 @@ let test_jit_reduction_ops () =
 let () =
   run "Rune JIT Tests"
     [
-      ( "basic compilation",
+      group "basic compilation"
         [
-          test_case "simple operation" `Quick test_jit_simple;
-          test_case "multiple operations" `Quick test_jit_multiple_ops;
-          test_case "with constant" `Quick test_jit_with_constant;
-        ] );
-      ( "shape handling",
+          test "simple operation" test_jit_simple;
+          test "multiple operations" test_jit_multiple_ops;
+          test "with constant" test_jit_with_constant;
+        ];
+      group "shape handling"
         [
-          test_case "fixed shape" `Quick test_jit_fixed_shape;
-          test_case "different shapes" `Quick test_jit_different_shapes;
-          test_case "batch dimensions" `Quick test_jit_batch_dimensions;
-        ] );
-      ( "autodiff integration",
+          test "fixed shape" test_jit_fixed_shape;
+          test "different shapes" test_jit_different_shapes;
+          test "batch dimensions" test_jit_batch_dimensions;
+        ];
+      group "autodiff integration"
         [
-          test_case "JIT of grad" `Quick test_jit_of_grad;
-          test_case "JIT-grad composition" `Quick test_jit_grad_composition;
-        ] );
-      ( "complex operations",
-        [ test_case "reduction ops" `Quick test_jit_reduction_ops ] );
+          test "JIT of grad" test_jit_of_grad;
+          test "JIT-grad composition" test_jit_grad_composition;
+        ];
+      group "complex operations"
+        [ test "reduction ops" test_jit_reduction_ops ];
     ]

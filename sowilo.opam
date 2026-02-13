@@ -17,7 +17,7 @@ depends: [
   "ocaml" {>= "5.2.0"}
   "dune" {>= "3.19"}
   "rune" {= version}
-  "alcotest" {with-test}
+  "windtrap" {with-test}
   "odoc" {with-doc}
 ]
 build: [

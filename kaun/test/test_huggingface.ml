@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module A = Alcotest
+open Windtrap
 module HF = Kaun_huggingface
 module Ptree = Kaun.Ptree
 
@@ -53,11 +53,11 @@ let unwrap_params = function
   | HF.Downloaded (params, _) -> params
 
 let assert_tensor_equal name expected actual =
-  let equal =
+  let equal_val =
     Rune.all (Rune.equal expected actual) |> Rune.to_array |> fun arr ->
     Array.get arr 0
   in
-  A.check A.bool name true equal
+  equal ~msg:name bool true equal_val
 
 let make_config ~cache_dir =
   let open HF.Config in
@@ -120,12 +120,12 @@ let test_load_single_file_fallback () =
         (get ~name:"layer.bias"))
 
 let () =
-  A.run "Kaun.Huggingface"
+  run "Kaun.Huggingface"
     [
-      ( "load_safetensors",
+      group "load_safetensors"
         [
-          A.test_case "loads sharded safetensors" `Quick test_load_sharded;
-          A.test_case "falls back to single file" `Quick
+          test "loads sharded safetensors" test_load_sharded;
+          test "falls back to single file"
             test_load_single_file_fallback;
-        ] );
+        ];
     ]

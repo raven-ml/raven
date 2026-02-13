@@ -5,6 +5,7 @@
 
 open Rune
 open Kaun_models.GPT2
+open Windtrap
 
 let expected_logits =
   [|
@@ -29,8 +30,8 @@ let run_comparison () =
   let outputs = forward model inputs () in
   let hidden = outputs.last_hidden_state in
   let dims = Rune.shape hidden in
-  Alcotest.(check int) "batch" 1 dims.(0);
-  Alcotest.(check int) "hidden-size" 768 dims.(2);
+  equal ~msg:"batch" int 1 dims.(0);
+  equal ~msg:"hidden-size" int 768 dims.(2);
   let first_position = Rune.slice [ I 0; I 0; A ] hidden in
   let first_values =
     Array.init (Array.length expected_logits) (fun i ->
@@ -41,14 +42,11 @@ let run_comparison () =
       let actual = first_values.(idx) in
       let diff = Float.abs (actual -. expected) in
       if diff > tolerance then
-        Alcotest.failf "logit[%d]: expected %.6f got %.6f (diff %.6g)" idx
-          expected actual diff)
+        failf "logit[%d]: expected %.6f got %.6f (diff %.6g)" idx expected
+          actual diff)
     expected_logits
 
 let () =
   Printexc.record_backtrace true;
-  Alcotest.run "GPT-2 parity"
-    [
-      ( "gpt2",
-        [ Alcotest.test_case "compare-with-python" `Quick run_comparison ] );
-    ]
+  run "GPT-2 parity"
+    [ group "gpt2" [ test "compare-with-python" run_comparison ] ]

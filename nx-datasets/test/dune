@@ -1,9 +1,9 @@
 (test
  (name test_generators)
  (package nx-datasets)
- (libraries nx nx-datasets alcotest))
+ (libraries nx nx-datasets windtrap))
 
 (test
  (name test_dataset_utils)
  (package nx-datasets)
- (libraries nx nx-datasets alcotest))
+ (libraries nx nx-datasets windtrap))

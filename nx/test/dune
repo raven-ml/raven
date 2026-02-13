@@ -1,7 +1,7 @@
 (library
  (name test_nx_support)
  (modules test_nx_support)
- (libraries nx_core nx alcotest))
+ (libraries nx_core nx windtrap))
 
 (tests
  (names
@@ -18,10 +18,10 @@
   test_nx_rng)
  (package nx)
  (modules :standard \ test_nx_support)
- (libraries nx_buffer nx nx_core alcotest test_nx_support))
+ (libraries nx_buffer nx nx_core windtrap test_nx_support))
 
 (test
  (name test_nx_io)
  (package nx)
  (modules test_nx_io)
- (libraries nx nx_io safetensors alcotest))
+ (libraries nx nx_io safetensors windtrap))

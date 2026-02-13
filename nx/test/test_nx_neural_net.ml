@@ -5,7 +5,7 @@
 
 (* Linear algebra tests for Nx *)
 
-open Alcotest
+open Windtrap
 open Test_nx_support
 
 (* ───── Convolution Tests ───── *)
@@ -168,7 +168,7 @@ let test_convolve2d_winograd_eligible () =
   (* Verify the computation is correct *)
   (* Each 3x3 window sums to 9 times the sum of its elements *)
   let expected_00 = 0. +. 1. +. 2. +. 8. +. 9. +. 10. +. 16. +. 17. +. 18. in
-  check (float 1e-5) "convolve2d Winograd [0,0,0,0]" expected_00
+  equal ~msg:"convolve2d Winograd [0,0,0,0]" (float 1e-5) expected_00
     (Nx.item [ 0; 0; 0; 0 ] result)
 
 let test_convolve2d_groups_winograd () =
@@ -252,7 +252,7 @@ let test_convolve2d_pool_reshape_edge_case () =
 
   (* Verify first output value: sum of top-left 2x2 window *)
   let expected_00 = 0. +. 1. +. 6. +. 7. in
-  check (float 1e-5) "convolve2d pool edge case [0,0,0,0]" expected_00
+  equal ~msg:"convolve2d pool edge case [0,0,0,0]" (float 1e-5) expected_00
     (Nx.item [ 0; 0; 0; 0 ] result)
 
 let test_convolve2d_groups_reshape_issue () =
@@ -424,9 +424,9 @@ let test_pool_batch () =
   let output, _ = Nx.max_pool2d ~kernel_size:(2, 2) ~stride:(2, 2) input in
   check_shape "pool batch shape" [| 2; 1; 2; 2 |] output;
   (* Check first batch *)
-  check (float 1e-6) "batch 0 [0,0]" 5. (Nx.item [ 0; 0; 0; 0 ] output);
+  equal ~msg:"batch 0 [0,0]" (float 1e-6) 5. (Nx.item [ 0; 0; 0; 0 ] output);
   (* Check second batch *)
-  check (float 1e-6) "batch 1 [0,0]" 21. (Nx.item [ 1; 0; 0; 0 ] output)
+  equal ~msg:"batch 1 [0,0]" (float 1e-6) 21. (Nx.item [ 1; 0; 0; 0 ] output)
 
 let test_pool_multichannel () =
   (* Test pooling with multiple channels *)
@@ -532,79 +532,73 @@ let test_sparse_sigmoid_piecewise () =
 
 let convolution_tests =
   [
-    ("convolve1d basic", `Quick, test_convolve1d_basic);
-    ("convolve1d padding modes", `Quick, test_convolve1d_padding_modes);
-    ("convolve1d stride", `Quick, test_convolve1d_stride);
-    ("convolve1d dilation", `Quick, test_convolve1d_dilation);
-    ("convolve1d groups", `Quick, test_convolve1d_groups);
-    ("convolve1d bias", `Quick, test_convolve1d_bias);
-    ("correlate1d basic", `Quick, test_correlate1d_basic);
-    ("convolve2d basic", `Quick, test_convolve2d_basic);
-    ("convolve2d padding modes", `Quick, test_convolve2d_padding_modes);
-    ("convolve2d stride", `Quick, test_convolve2d_stride);
-    ("convolve2d dilation", `Quick, test_convolve2d_dilation);
-    ("convolve2d multi-channel", `Quick, test_convolve2d_multi_channel);
-    ("convolve2d winograd eligible", `Quick, test_convolve2d_winograd_eligible);
-    ("convolve2d groups winograd", `Quick, test_convolve2d_groups_winograd);
-    ( "convolve2d non-contiguous input",
-      `Quick,
-      test_convolve2d_non_contiguous_input );
-    ( "convolve2d pool reshape edge case",
-      `Quick,
-      test_convolve2d_pool_reshape_edge_case );
-    ( "convolve2d groups reshape issue",
-      `Quick,
-      test_convolve2d_groups_reshape_issue );
-    ( "convolve2d dilated non-contiguous",
-      `Quick,
-      test_convolve2d_dilated_non_contiguous );
-    ("convolve invalid shapes", `Quick, test_convolve_invalid_shapes);
-    ("convolve empty input", `Quick, test_convolve_empty_input);
-    ( "convolve single element kernel",
-      `Quick,
-      test_convolve_single_element_kernel );
-    ("correlate2d basic", `Quick, test_correlate2d_basic);
-    ( "correlate2d winograd sanity case",
-      `Quick,
-      test_correlate2d_winograd_sanity_case );
+    test "convolve1d basic" test_convolve1d_basic;
+    test "convolve1d padding modes" test_convolve1d_padding_modes;
+    test "convolve1d stride" test_convolve1d_stride;
+    test "convolve1d dilation" test_convolve1d_dilation;
+    test "convolve1d groups" test_convolve1d_groups;
+    test "convolve1d bias" test_convolve1d_bias;
+    test "correlate1d basic" test_correlate1d_basic;
+    test "convolve2d basic" test_convolve2d_basic;
+    test "convolve2d padding modes" test_convolve2d_padding_modes;
+    test "convolve2d stride" test_convolve2d_stride;
+    test "convolve2d dilation" test_convolve2d_dilation;
+    test "convolve2d multi-channel" test_convolve2d_multi_channel;
+    test "convolve2d winograd eligible" test_convolve2d_winograd_eligible;
+    test "convolve2d groups winograd" test_convolve2d_groups_winograd;
+    test "convolve2d non-contiguous input"
+      test_convolve2d_non_contiguous_input;
+    test "convolve2d pool reshape edge case"
+      test_convolve2d_pool_reshape_edge_case;
+    test "convolve2d groups reshape issue"
+      test_convolve2d_groups_reshape_issue;
+    test "convolve2d dilated non-contiguous"
+      test_convolve2d_dilated_non_contiguous;
+    test "convolve invalid shapes" test_convolve_invalid_shapes;
+    test "convolve empty input" test_convolve_empty_input;
+    test "convolve single element kernel"
+      test_convolve_single_element_kernel;
+    test "correlate2d basic" test_correlate2d_basic;
+    test "correlate2d winograd sanity case"
+      test_correlate2d_winograd_sanity_case;
   ]
 
 let pooling_tests =
   [
-    ("max_pool1d basic", `Quick, test_max_pool1d_basic);
-    ("max_pool1d stride", `Quick, test_max_pool1d_stride);
-    ("max_pool2d basic", `Quick, test_max_pool2d_basic);
-    ("max_pool2d stride", `Quick, test_max_pool2d_stride);
-    ("max_pool2d padding", `Quick, test_max_pool2d_padding);
-    ("min_pool1d basic", `Quick, test_min_pool1d_basic);
-    ("min_pool1d stride", `Quick, test_min_pool1d_stride);
-    ("min_pool2d basic", `Quick, test_min_pool2d_basic);
-    ("min_pool2d stride", `Quick, test_min_pool2d_stride);
-    ("min_pool2d padding", `Quick, test_min_pool2d_padding);
-    ("min_pool2d uint8", `Quick, test_min_pool2d_uint8);
-    ("avg_pool1d basic", `Quick, test_avg_pool1d_basic);
-    ("avg_pool2d basic", `Quick, test_avg_pool2d_basic);
-    ("pool batch", `Quick, test_pool_batch);
-    ("pool multichannel", `Quick, test_pool_multichannel);
-    ("pool edge cases", `Quick, test_pool_edge_cases);
+    test "max_pool1d basic" test_max_pool1d_basic;
+    test "max_pool1d stride" test_max_pool1d_stride;
+    test "max_pool2d basic" test_max_pool2d_basic;
+    test "max_pool2d stride" test_max_pool2d_stride;
+    test "max_pool2d padding" test_max_pool2d_padding;
+    test "min_pool1d basic" test_min_pool1d_basic;
+    test "min_pool1d stride" test_min_pool1d_stride;
+    test "min_pool2d basic" test_min_pool2d_basic;
+    test "min_pool2d stride" test_min_pool2d_stride;
+    test "min_pool2d padding" test_min_pool2d_padding;
+    test "min_pool2d uint8" test_min_pool2d_uint8;
+    test "avg_pool1d basic" test_avg_pool1d_basic;
+    test "avg_pool2d basic" test_avg_pool2d_basic;
+    test "pool batch" test_pool_batch;
+    test "pool multichannel" test_pool_multichannel;
+    test "pool edge cases" test_pool_edge_cases;
   ]
 
 let activation_tests =
   [
-    ("swish alias", `Quick, test_swish_alias);
-    ("hard_swish alias", `Quick, test_hard_swish_alias);
-    ("celu behavior", `Quick, test_celu_behavior);
-    ("squareplus behavior", `Quick, test_squareplus_behavior);
-    ("glu basic", `Quick, test_glu_basic);
-    ("sparse_plus piecewise", `Quick, test_sparse_plus_piecewise);
-    ("sparse_sigmoid piecewise", `Quick, test_sparse_sigmoid_piecewise);
+    test "swish alias" test_swish_alias;
+    test "hard_swish alias" test_hard_swish_alias;
+    test "celu behavior" test_celu_behavior;
+    test "squareplus behavior" test_squareplus_behavior;
+    test "glu basic" test_glu_basic;
+    test "sparse_plus piecewise" test_sparse_plus_piecewise;
+    test "sparse_sigmoid piecewise" test_sparse_sigmoid_piecewise;
   ]
 
 let suite =
   [
-    ("Neural Net :: Convolution", convolution_tests);
-    ("Neural Net :: Pooling", pooling_tests);
-    ("Neural Net :: Activations", activation_tests);
+    group "Convolution" convolution_tests;
+    group "Pooling" pooling_tests;
+    group "Activations" activation_tests;
   ]
 
-let () = Alcotest.run "Nx Neural Net" suite
+let () = run "Nx Neural Net" suite

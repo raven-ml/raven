@@ -14,4 +14,4 @@
   test_pretokenizers
   test_io)
  (package saga)
- (libraries saga saga.tokenizers nx alcotest unix))
+ (libraries saga saga.tokenizers nx windtrap unix))

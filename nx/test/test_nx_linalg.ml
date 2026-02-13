@@ -5,7 +5,7 @@
 
 (* Linear algebra tests for Nx *)
 
-open Alcotest
+open Windtrap
 open Test_nx_support
 
 (* ───── Matrix Multiply Tests ───── *)
@@ -16,8 +16,8 @@ let test_matmul_2d_2d () =
   let result = Nx.matmul a b in
   check_shape "matmul 2d x 2d shape" [| 3; 5 |] result;
   (* Check a few values *)
-  check (float 1e-6) "matmul[0,0]" 70.0 (Nx.item [ 0; 0 ] result);
-  check (float 1e-6) "matmul[2,4]" 462.0 (Nx.item [ 2; 4 ] result)
+  equal ~msg:"matmul[0,0]" (float 1e-6) 70.0 (Nx.item [ 0; 0 ] result);
+  equal ~msg:"matmul[2,4]" (float 1e-6) 462.0 (Nx.item [ 2; 4 ] result)
 
 let test_matmul_1d_1d () =
   let a = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
@@ -43,8 +43,8 @@ let test_matmul_batch () =
   let result = Nx.matmul a b in
   check_shape "matmul batch shape" [| 2; 3; 2 |] result;
   (* Check first batch *)
-  check (float 1e-6) "batch[0,0,0]" 28.0 (Nx.item [ 0; 0; 0 ] result);
-  check (float 1e-6) "batch[0,0,1]" 34.0 (Nx.item [ 0; 0; 1 ] result)
+  equal ~msg:"batch[0,0,0]" (float 1e-6) 28.0 (Nx.item [ 0; 0; 0 ] result);
+  equal ~msg:"batch[0,0,1]" (float 1e-6) 34.0 (Nx.item [ 0; 0; 1 ] result)
 
 let test_matmul_broadcast_batch () =
   let a = Nx.create Nx.float32 [| 1; 3; 4 |] (Array.init 12 float_of_int) in
@@ -124,33 +124,33 @@ let test_matmul_2d_3d_broadcast () =
    *)
 
   (* Check batch 0 *)
-  check (float 1e-6) "batch 0 [0,0]" 22. (Nx.item [ 0; 0; 0 ] result);
-  check (float 1e-6) "batch 0 [0,1]" 28. (Nx.item [ 0; 0; 1 ] result);
-  check (float 1e-6) "batch 0 [1,0]" 49. (Nx.item [ 0; 1; 0 ] result);
-  check (float 1e-6) "batch 0 [1,1]" 64. (Nx.item [ 0; 1; 1 ] result);
+  equal ~msg:"batch 0 [0,0]" (float 1e-6) 22. (Nx.item [ 0; 0; 0 ] result);
+  equal ~msg:"batch 0 [0,1]" (float 1e-6) 28. (Nx.item [ 0; 0; 1 ] result);
+  equal ~msg:"batch 0 [1,0]" (float 1e-6) 49. (Nx.item [ 0; 1; 0 ] result);
+  equal ~msg:"batch 0 [1,1]" (float 1e-6) 64. (Nx.item [ 0; 1; 1 ] result);
 
   (* Check batch 1 *)
-  check (float 1e-6) "batch 1 [0,0]" 58. (Nx.item [ 1; 0; 0 ] result);
-  check (float 1e-6) "batch 1 [0,1]" 64. (Nx.item [ 1; 0; 1 ] result);
-  check (float 1e-6) "batch 1 [1,0]" 139. (Nx.item [ 1; 1; 0 ] result);
-  check (float 1e-6) "batch 1 [1,1]" 154. (Nx.item [ 1; 1; 1 ] result);
+  equal ~msg:"batch 1 [0,0]" (float 1e-6) 58. (Nx.item [ 1; 0; 0 ] result);
+  equal ~msg:"batch 1 [0,1]" (float 1e-6) 64. (Nx.item [ 1; 0; 1 ] result);
+  equal ~msg:"batch 1 [1,0]" (float 1e-6) 139. (Nx.item [ 1; 1; 0 ] result);
+  equal ~msg:"batch 1 [1,1]" (float 1e-6) 154. (Nx.item [ 1; 1; 1 ] result);
 
   (* Check batch 2 *)
-  check (float 1e-6) "batch 2 [0,0]" 4. (Nx.item [ 2; 0; 0 ] result);
-  check (float 1e-6) "batch 2 [0,1]" 2. (Nx.item [ 2; 0; 1 ] result);
-  check (float 1e-6) "batch 2 [1,0]" 10. (Nx.item [ 2; 1; 0 ] result);
-  check (float 1e-6) "batch 2 [1,1]" 5. (Nx.item [ 2; 1; 1 ] result);
+  equal ~msg:"batch 2 [0,0]" (float 1e-6) 4. (Nx.item [ 2; 0; 0 ] result);
+  equal ~msg:"batch 2 [0,1]" (float 1e-6) 2. (Nx.item [ 2; 0; 1 ] result);
+  equal ~msg:"batch 2 [1,0]" (float 1e-6) 10. (Nx.item [ 2; 1; 0 ] result);
+  equal ~msg:"batch 2 [1,1]" (float 1e-6) 5. (Nx.item [ 2; 1; 1 ] result);
 
   (* Check batch 3 *)
-  check (float 1e-6) "batch 3 [0,0]" 2. (Nx.item [ 3; 0; 0 ] result);
-  check (float 1e-6) "batch 3 [0,1]" 4. (Nx.item [ 3; 0; 1 ] result);
-  check (float 1e-6) "batch 3 [1,0]" 5. (Nx.item [ 3; 1; 0 ] result);
-  check (float 1e-6) "batch 3 [1,1]" 10. (Nx.item [ 3; 1; 1 ] result)
+  equal ~msg:"batch 3 [0,0]" (float 1e-6) 2. (Nx.item [ 3; 0; 0 ] result);
+  equal ~msg:"batch 3 [0,1]" (float 1e-6) 4. (Nx.item [ 3; 0; 1 ] result);
+  equal ~msg:"batch 3 [1,0]" (float 1e-6) 5. (Nx.item [ 3; 1; 0 ] result);
+  equal ~msg:"batch 3 [1,1]" (float 1e-6) 10. (Nx.item [ 3; 1; 1 ] result)
 
 let test_matmul_shape_error () =
   let a = Nx.create Nx.float32 [| 3; 4 |] (Array.init 12 float_of_int) in
   let b = Nx.create Nx.float32 [| 5; 6 |] (Array.init 30 float_of_int) in
-  check_raises "matmul shape error"
+  raises ~msg:"matmul shape error"
     (Invalid_argument
        "dot: cannot contract [3,4] (last axis: 4) to [5,6] (axis 0: 5) (size \
         4\226\137\1605)") (fun () -> ignore (Nx.matmul a b))
@@ -203,7 +203,7 @@ let test_dot_scalar_result () =
   let b = Nx.create Nx.float32 [| 3 |] [| 4.; 5.; 6. |] in
   let result = Nx.dot a b in
   check_shape "dot scalar shape" [||] result;
-  check (float 1e-6) "dot scalar value" 32.0 (Nx.item [] result)
+  equal ~msg:"dot scalar value" (float 1e-6) 32.0 (Nx.item [] result)
 
 (* ───── Solve Inverse Tests ───── *)
 
@@ -422,7 +422,7 @@ let test_diagonal_edge () =
   let a_empty = Nx.create Nx.float32 [| 0; 0 |] [||] in
   let d_empty = Nx.diagonal a_empty in
   check_shape "diagonal empty" [| 0 |] d_empty;
-  check_raises "diagonal invalid axes"
+  raises ~msg:"diagonal invalid axes"
     (Invalid_argument "diagonal: invalid axes (axes must be different)")
     (fun () -> ignore (Nx.diagonal ~axis1:0 ~axis2:0 a_empty))
 
@@ -454,28 +454,28 @@ let test_slogdet () =
   let a = Nx.create Nx.float32 [| 2; 2 |] [| 3.; 8.; 4.; 6. |] in
   let sign, logdet = Nx.slogdet a in
   check_t "slogdet sign" [||] [| -1. |] sign;
-  check (float 1e-5) "slogdet logdet" (log 14.) (Nx.item [] logdet)
+  equal ~msg:"slogdet logdet" (float 1e-5) (log 14.) (Nx.item [] logdet)
 
 let test_slogdet_singular () =
   let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 2.; 4. |] in
   let sign, logdet = Nx.slogdet a in
   check_t "slogdet singular sign" [||] [| 0. |] sign;
-  check (float 1e-5) "slogdet singular logdet" neg_infinity (Nx.item [] logdet)
+  equal ~msg:"slogdet singular logdet" (float 1e-5) neg_infinity (Nx.item [] logdet)
 
 let test_matrix_rank () =
   let a = Nx.create Nx.float32 [| 3; 3 |] (Array.init 9 float_of_int) in
   let r = Nx.matrix_rank a in
-  check int "matrix rank full" 2 r;
+  equal ~msg:"matrix rank full" int 2 r;
   let a_low =
     Nx.create Nx.float32 [| 3; 3 |] [| 1.; 2.; 3.; 2.; 4.; 6.; 3.; 6.; 9. |]
   in
   let r_low = Nx.matrix_rank a_low in
-  check int "matrix_rank low" 1 r_low
+  equal ~msg:"matrix_rank low" int 1 r_low
 
 let test_matrix_rank_tol () =
   let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 0.; 0.; 1e-10 |] in
   let r = Nx.matrix_rank ~tol:1e-8 a in
-  check int "matrix_rank with tol" 1 r
+  equal ~msg:"matrix_rank with tol" int 1 r
 
 let test_matrix_rank_hermitian () =
   (* Create a symmetric matrix with known rank *)
@@ -483,13 +483,13 @@ let test_matrix_rank_hermitian () =
     Nx.create Nx.float32 [| 3; 3 |] [| 2.; 1.; 0.; 1.; 2.; 0.; 0.; 0.; 0. |]
   in
   let r = Nx.matrix_rank ~hermitian:true a in
-  check int "matrix_rank hermitian" 2 r;
+  equal ~msg:"matrix_rank hermitian" int 2 r;
   (* Test that hermitian flag is actually used by checking it works on a non-square matrix *)
   (* This will fail if hermitian flag is ignored because eigh requires square matrices *)
   let non_square =
     Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
   in
-  check_raises "matrix_rank hermitian non-square"
+  raises ~msg:"matrix_rank hermitian non-square"
     (Failure "eig: input must be square matrix") (fun () ->
       ignore (Nx.matrix_rank ~hermitian:true non_square))
 
@@ -497,10 +497,10 @@ let test_matrix_rank_hermitian_negative () =
   (* Test negative-definite matrix *)
   let a = Nx.create Nx.float32 [| 2; 2 |] [| -2.; 0.; 0.; -1. |] in
   let r = Nx.matrix_rank ~hermitian:true a in
-  check int "matrix_rank hermitian negative" 2 r;
+  equal ~msg:"matrix_rank hermitian negative" int 2 r;
   (* Compare with non-hermitian version *)
   let r_svd = Nx.matrix_rank a in
-  check int "matrix_rank hermitian negative vs svd" r_svd r
+  equal ~msg:"matrix_rank hermitian negative vs svd" int r_svd r
 
 let test_matrix_rank_hermitian_complex () =
   (* Complex Hermitian matrix with full rank *)
@@ -514,9 +514,9 @@ let test_matrix_rank_hermitian_complex () =
       |]
   in
   let r = Nx.matrix_rank ~hermitian:true a in
-  check int "matrix_rank hermitian complex" 2 r;
+  equal ~msg:"matrix_rank hermitian complex" int 2 r;
   let r_svd = Nx.matrix_rank a in
-  check int "matrix_rank hermitian complex vs svd" r_svd r
+  equal ~msg:"matrix_rank hermitian complex vs svd" int r_svd r
 
 let test_pinv_hermitian () =
   (* Create a symmetric matrix *)
@@ -530,7 +530,7 @@ let test_pinv_hermitian () =
   let non_square =
     Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
   in
-  check_raises "pinv hermitian non-square"
+  raises ~msg:"pinv hermitian non-square"
     (Failure "eig: input must be square matrix") (fun () ->
       ignore (Nx.pinv ~hermitian:true non_square))
 
@@ -591,8 +591,8 @@ let test_vdot_complex () =
      70-8i *)
   let expected = Complex.{ re = 70.; im = -8. } in
   let actual = Nx.item [] result in
-  check (float 1e-6) "vdot complex real part" expected.re actual.re;
-  check (float 1e-6) "vdot complex imag part" expected.im actual.im
+  equal ~msg:"vdot complex real part" (float 1e-6) expected.re actual.re;
+  equal ~msg:"vdot complex imag part" (float 1e-6) expected.im actual.im
 
 let test_conjugate () =
   (* Test complex conjugate *)
@@ -605,10 +605,10 @@ let test_conjugate () =
     [| Complex.{ re = 1.; im = -2. }; Complex.{ re = 3.; im = -4. } |]
   in
   let actual = Nx.to_array conj_x in
-  check (float 1e-6) "conjugate[0] real" expected.(0).re actual.(0).re;
-  check (float 1e-6) "conjugate[0] imag" expected.(0).im actual.(0).im;
-  check (float 1e-6) "conjugate[1] real" expected.(1).re actual.(1).re;
-  check (float 1e-6) "conjugate[1] imag" expected.(1).im actual.(1).im;
+  equal ~msg:"conjugate[0] real" (float 1e-6) expected.(0).re actual.(0).re;
+  equal ~msg:"conjugate[0] imag" (float 1e-6) expected.(0).im actual.(0).im;
+  equal ~msg:"conjugate[1] real" (float 1e-6) expected.(1).re actual.(1).re;
+  equal ~msg:"conjugate[1] imag" (float 1e-6) expected.(1).im actual.(1).im;
   (* Test that real tensors are unchanged *)
   let real_x = Nx.create Nx.float32 [| 2 |] [| 1.; 2. |] in
   let conj_real = Nx.conjugate real_x in
@@ -617,7 +617,7 @@ let test_conjugate () =
 let test_vdot_mismatch () =
   let a = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
   let b = Nx.create Nx.float32 [| 4 |] [| 4.; 5.; 6.; 7. |] in
-  check_raises "vdot mismatch"
+  raises ~msg:"vdot mismatch"
     (Invalid_argument "vdot: different number of elements") (fun () ->
       ignore (Nx.vdot a b))
 
@@ -641,7 +641,7 @@ let test_inner () =
 let test_inner_mismatch () =
   let a = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
   let b = Nx.create Nx.float32 [| 4 |] [| 4.; 5.; 6.; 7. |] in
-  check_raises "inner mismatch"
+  raises ~msg:"inner mismatch"
     (Invalid_argument "inner: last dimensions differ") (fun () ->
       ignore (Nx.inner a b))
 
@@ -665,41 +665,41 @@ let test_tensordot () =
 let test_tensordot_mismatch () =
   let a = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let b = Nx.create Nx.float32 [| 4; 2 |] (Array.init 8 float_of_int) in
-  check_raises "tensordot mismatch"
+  raises ~msg:"tensordot mismatch"
     (Invalid_argument "tensordot: axes have different sizes") (fun () ->
       ignore (Nx.tensordot ~axes:([ 1 ], [ 0 ]) a b))
 
 let test_einsum_error () =
   let a = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let b = Nx.create Nx.float32 [| 3; 2 |] [| 7.; 8.; 9.; 10.; 11.; 12. |] in
-  check_raises "einsum no input operands"
+  raises ~msg:"einsum no input operands"
     (Invalid_argument "einsum: no input operands") (fun () ->
       ignore (Nx.einsum "" [||]));
-  check_raises "einsum bad format"
+  raises ~msg:"einsum bad format"
     (Invalid_argument "einsum: invalid format, expected inputs->output")
     (fun () -> ignore (Nx.einsum "IJ,JK-IK" [| a; b |]));
-  check_raises "einsum wrong inputs"
+  raises ~msg:"einsum wrong inputs"
     (Invalid_argument "einsum: number of inputs must equal number of operands")
     (fun () -> ignore (Nx.einsum "ij->ij" [| a; b |]));
-  check_raises "einsum rectangular diagonal"
+  raises ~msg:"einsum rectangular diagonal"
     (Invalid_argument
        "einsum: index var 'i' must have consistent dimensions (2 vs 3)")
     (fun () -> ignore (Nx.einsum "ii->i" [| a |]));
-  check_raises "einsum mismatched rank"
+  raises ~msg:"einsum mismatched rank"
     (Invalid_argument "einsum: operand rank too small for subscripts")
     (fun () -> ignore (Nx.einsum "ijl,jk->ik" [| a; b |]));
-  check_raises "einsum contracted vars mismatch"
+  raises ~msg:"einsum contracted vars mismatch"
     (Invalid_argument "einsum: output index 'k' not found in inputs") (fun () ->
       ignore (Nx.einsum "ij,jl->ki" [| a; b |]));
-  check_raises "einsum dimension mismatch"
+  raises ~msg:"einsum dimension mismatch"
     (Invalid_argument
        "einsum: index var 'j' must have consistent dimensions (3 vs 2)")
     (fun () -> ignore (Nx.einsum "ij,kj->ik" [| a; b |]));
 
-  check_raises "einsum output ell without input"
+  raises ~msg:"einsum output ell without input"
     (Invalid_argument "einsum: output ellipsis requires ellipsis in inputs")
     (fun () -> ignore (Nx.einsum "ij->..." [| a |]));
-  check_raises "einsum multi ellipsis"
+  raises ~msg:"einsum multi ellipsis"
     (Invalid_argument "einsum: multiple ellipsis in operand") (fun () ->
       ignore (Nx.einsum "i...j...->ij" [| a |]))
 
@@ -1251,7 +1251,7 @@ let test_multi_dot () =
   check_nx "multi_dot" manual res
 
 let test_multi_dot_empty () =
-  check_raises "multi_dot empty" (Invalid_argument "multi_dot: empty array")
+  raises ~msg:"multi_dot empty" (Invalid_argument "multi_dot: empty array")
     (fun () -> ignore (Nx.multi_dot [||]))
 
 let test_matrix_power () =
@@ -1268,7 +1268,7 @@ let test_matrix_power () =
 
 let test_matrix_power_singular () =
   let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 2.; 4. |] in
-  check_raises "matrix_power singular negative"
+  raises ~msg:"matrix_power singular negative"
     (Invalid_argument "matrix_power: singular for negative exponent") (fun () ->
       ignore (Nx.matrix_power a (-1)))
 
@@ -1287,7 +1287,7 @@ let test_cross () =
 let test_cross_invalid () =
   let a = Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
   let b = Nx.create Nx.float32 [| 4 |] [| 5.; 6.; 7.; 8. |] in
-  check_raises "cross invalid dim" (Invalid_argument "cross: axis dim not 3")
+  raises ~msg:"cross invalid dim" (Invalid_argument "cross: axis dim not 3")
     (fun () -> ignore (Nx.cross a b))
 
 (* ───── Advanced Decomposition Tests ───── *)
@@ -1300,7 +1300,7 @@ let test_cholesky_upper () =
 
 let test_cholesky_non_posdef () =
   let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-  check_raises "cholesky non posdef"
+  raises ~msg:"cholesky non posdef"
     (Invalid_argument "cholesky: not positive-definite") (fun () ->
       ignore (Nx.cholesky a))
 
@@ -1373,11 +1373,11 @@ let test_eigvalsh () =
 let test_norm_ord () =
   let m = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 3.; 2.; 4. |] in
   let n_nuc = Nx.norm ~ord:`Nuc m in
-  check (float 1e-3) "norm nuclear" 5.83095 (Nx.item [] n_nuc);
+  equal ~msg:"norm nuclear" (float 1e-3) 5.83095 (Nx.item [] n_nuc);
   let n_two = Nx.norm ~ord:`Two m in
-  check (float 1e-3) "norm two" 5.46499 (Nx.item [] n_two);
+  equal ~msg:"norm two" (float 1e-3) 5.46499 (Nx.item [] n_two);
   let n_neg_two = Nx.norm ~ord:`NegTwo m in
-  check (float 1e-3) "norm neg two" 0.36597 (Nx.item [] n_neg_two)
+  equal ~msg:"norm neg two" (float 1e-3) 0.36597 (Nx.item [] n_neg_two)
 
 let test_norm_keepdims () =
   let v = Nx.create Nx.float32 [| 3 |] [| 3.; 4.; 0. |] in
@@ -1399,7 +1399,7 @@ let test_lstsq () =
   let b = Nx.create Nx.float32 [| 3 |] [| 3.; 6.; 9. |] in
   let x, _res, rank, _s = Nx.lstsq a b in
   check_shape "lstsq x" [| 2 |] x;
-  check int "lstsq rank" 2 rank;
+  equal ~msg:"lstsq rank" int 2 rank;
   let approx_b = Nx.matmul a x in
   check_nx ~epsilon:1e-5 "lstsq approx" b approx_b
 
@@ -1407,7 +1407,7 @@ let test_lstsq_rcond () =
   let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 0.; 0.; 1e-10 |] in
   let b = Nx.create Nx.float32 [| 2 |] [| 1.; 0. |] in
   let _, _, rank, _ = Nx.lstsq ~rcond:1e-8 a b in
-  check int "lstsq rcond rank" 1 rank
+  equal ~msg:"lstsq rcond rank" int 1 rank
 
 let test_lstsq_underdetermined () =
   let a = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 0.; 2.; 3.; 2.; 4. |] in
@@ -1415,7 +1415,7 @@ let test_lstsq_underdetermined () =
 
   let x, _res, rank, _s = Nx.lstsq ~rcond:1e-8 a b in
   check_shape "lstsq x underdetermined" [| 3 |] x;
-  check int "lstsq rank underdetermined" 2 rank;
+  equal ~msg:"lstsq rank underdetermined" int 2 rank;
   let approx_b_underdetermined = Nx.matmul a x in
   check_nx "lstsq approx underdetermined" b approx_b_underdetermined
 
@@ -1487,196 +1487,193 @@ let test_tensorinv_ind () =
 
 let matmul_tests =
   [
-    ("matmul 2d x 2d", `Quick, test_matmul_2d_2d);
-    ("matmul 1d x 1d", `Quick, test_matmul_1d_1d);
-    ("matmul 1d x 2d", `Quick, test_matmul_1d_2d);
-    ("matmul 2d x 1d", `Quick, test_matmul_2d_1d);
-    ("matmul batch", `Quick, test_matmul_batch);
-    ("matmul broadcast batch", `Quick, test_matmul_broadcast_batch);
-    ("matmul 2d @ 3d broadcast", `Quick, test_matmul_2d_3d_broadcast);
-    ("matmul shape error", `Quick, test_matmul_shape_error);
-    ("matmul empty", `Quick, test_matmul_empty);
-    ("matmul transpose optimization", `Quick, test_matmul_transpose_optimization);
+    test "matmul 2d x 2d" test_matmul_2d_2d;
+    test "matmul 1d x 1d" test_matmul_1d_1d;
+    test "matmul 1d x 2d" test_matmul_1d_2d;
+    test "matmul 2d x 1d" test_matmul_2d_1d;
+    test "matmul batch" test_matmul_batch;
+    test "matmul broadcast batch" test_matmul_broadcast_batch;
+    test "matmul 2d @ 3d broadcast" test_matmul_2d_3d_broadcast;
+    test "matmul shape error" test_matmul_shape_error;
+    test "matmul empty" test_matmul_empty;
+    test "matmul transpose optimization" test_matmul_transpose_optimization;
   ]
 
 let dot_tests =
   [
-    ("dot 1d x 1d", `Quick, test_dot_1d_1d);
-    ("dot 2d x 1d", `Quick, test_dot_2d_1d);
-    ("dot 2d x 2d", `Quick, test_dot_2d_2d);
-    ("dot higher-d", `Quick, test_dot_higher_d);
-    ("dot scalar result", `Quick, test_dot_scalar_result);
+    test "dot 1d x 1d" test_dot_1d_1d;
+    test "dot 2d x 1d" test_dot_2d_1d;
+    test "dot 2d x 2d" test_dot_2d_2d;
+    test "dot higher-d" test_dot_higher_d;
+    test "dot scalar result" test_dot_scalar_result;
   ]
 
 let solve_inverse_tests =
   [
-    ("solve identity", `Quick, test_solve_identity);
-    ("solve simple", `Quick, test_solve_simple);
-    ("solve batch", `Quick, test_solve_batch);
-    ("solve singular", `Quick, test_solve_singular);
-    ("solve non-square", `Quick, test_solve_non_square);
-    ("inv identity", `Quick, test_inv_identity);
-    ("inv inverse", `Quick, test_inv_inverse);
-    ("inv singular", `Quick, test_inv_singular);
+    test "solve identity" test_solve_identity;
+    test "solve simple" test_solve_simple;
+    test "solve batch" test_solve_batch;
+    test "solve singular" test_solve_singular;
+    test "solve non-square" test_solve_non_square;
+    test "inv identity" test_inv_identity;
+    test "inv inverse" test_inv_inverse;
+    test "inv singular" test_inv_singular;
   ]
 
 let decomposition_tests =
   [
-    ("qr shape", `Quick, test_qr_shape);
-    ("qr property", `Quick, test_qr_property);
-    ("qr orthogonal", `Quick, test_qr_orthogonal);
-    ("svd shape", `Quick, test_svd_shape);
-    ("svd property", `Quick, test_svd_property);
-    ("cholesky posdef", `Quick, test_cholesky_posdef);
-    ("cholesky property", `Quick, test_cholesky_property);
-    ("eig shape", `Quick, test_eig_shape);
-    ("eig property", `Quick, test_eig_property);
+    test "qr shape" test_qr_shape;
+    test "qr property" test_qr_property;
+    test "qr orthogonal" test_qr_orthogonal;
+    test "svd shape" test_svd_shape;
+    test "svd property" test_svd_property;
+    test "cholesky posdef" test_cholesky_posdef;
+    test "cholesky property" test_cholesky_property;
+    test "eig shape" test_eig_shape;
+    test "eig property" test_eig_property;
   ]
 
 let norm_tests =
   [
-    ("norm vector L1", `Quick, test_norm_vector_1);
-    ("norm vector L2", `Quick, test_norm_vector_2);
-    ("norm vector Linf", `Quick, test_norm_vector_inf);
-    ("norm matrix Frobenius", `Quick, test_norm_matrix_fro);
-    ("norm matrix L1", `Quick, test_norm_matrix_1);
-    ("norm axis", `Quick, test_norm_axis);
-    ("norm empty", `Quick, test_norm_empty);
+    test "norm vector L1" test_norm_vector_1;
+    test "norm vector L2" test_norm_vector_2;
+    test "norm vector Linf" test_norm_vector_inf;
+    test "norm matrix Frobenius" test_norm_matrix_fro;
+    test "norm matrix L1" test_norm_matrix_1;
+    test "norm axis" test_norm_axis;
+    test "norm empty" test_norm_empty;
   ]
 
 let utility_tests =
   [
-    ("det 2x2", `Quick, test_det_2x2);
-    ("det singular", `Quick, test_det_singular);
-    ("trace", `Quick, test_trace);
-    ("diag extract", `Quick, test_diag_extract);
+    test "det 2x2" test_det_2x2;
+    test "det singular" test_det_singular;
+    test "trace" test_trace;
+    test "diag extract" test_diag_extract;
   ]
 
 let advanced_utility_tests =
   [
-    ("diagonal", `Quick, test_diagonal);
-    ("diagonal edge", `Quick, test_diagonal_edge);
-    ("matrix transpose", `Quick, test_matrix_transpose);
-    ("trace offset", `Quick, test_trace_offset);
-    ("det batch", `Quick, test_det_batch);
-    ("slogdet", `Quick, test_slogdet);
-    ("slogdet singular", `Quick, test_slogdet_singular);
-    ("matrix rank", `Quick, test_matrix_rank);
-    ("matrix rank tol", `Quick, test_matrix_rank_tol);
-    ("matrix rank hermitian", `Quick, test_matrix_rank_hermitian);
-    ( "matrix rank hermitian negative",
-      `Quick,
-      test_matrix_rank_hermitian_negative );
-    ("matrix rank hermitian complex", `Quick, test_matrix_rank_hermitian_complex);
-    ("pinv hermitian", `Quick, test_pinv_hermitian);
-    ("pinv hermitian negative", `Quick, test_pinv_hermitian_negative);
-    ("pinv hermitian complex", `Quick, test_pinv_hermitian_complex);
+    test "diagonal" test_diagonal;
+    test "diagonal edge" test_diagonal_edge;
+    test "matrix transpose" test_matrix_transpose;
+    test "trace offset" test_trace_offset;
+    test "det batch" test_det_batch;
+    test "slogdet" test_slogdet;
+    test "slogdet singular" test_slogdet_singular;
+    test "matrix rank" test_matrix_rank;
+    test "matrix rank tol" test_matrix_rank_tol;
+    test "matrix rank hermitian" test_matrix_rank_hermitian;
+    test "matrix rank hermitian negative" test_matrix_rank_hermitian_negative;
+    test "matrix rank hermitian complex" test_matrix_rank_hermitian_complex;
+    test "pinv hermitian" test_pinv_hermitian;
+    test "pinv hermitian negative" test_pinv_hermitian_negative;
+    test "pinv hermitian complex" test_pinv_hermitian_complex;
   ]
 
 let product_tests =
   [
-    ("vdot", `Quick, test_vdot);
-    ("vdot complex", `Quick, test_vdot_complex);
-    ("conjugate", `Quick, test_conjugate);
-    ("vdot mismatch", `Quick, test_vdot_mismatch);
-    ("vecdot", `Quick, test_vecdot);
-    ("inner", `Quick, test_inner);
-    ("inner mismatch", `Quick, test_inner_mismatch);
-    ("outer", `Quick, test_outer);
-    ("tensordot", `Quick, test_tensordot);
-    ("tensordot mismatch", `Quick, test_tensordot_mismatch);
-    ("kron", `Quick, test_kron);
-    ("multi dot", `Quick, test_multi_dot);
-    ("multi dot empty", `Quick, test_multi_dot_empty);
-    ("matrix power", `Quick, test_matrix_power);
-    ("matrix power singular", `Quick, test_matrix_power_singular);
-    ("cross", `Quick, test_cross);
-    ("cross invalid", `Quick, test_cross_invalid);
+    test "vdot" test_vdot;
+    test "vdot complex" test_vdot_complex;
+    test "conjugate" test_conjugate;
+    test "vdot mismatch" test_vdot_mismatch;
+    test "vecdot" test_vecdot;
+    test "inner" test_inner;
+    test "inner mismatch" test_inner_mismatch;
+    test "outer" test_outer;
+    test "tensordot" test_tensordot;
+    test "tensordot mismatch" test_tensordot_mismatch;
+    test "kron" test_kron;
+    test "multi dot" test_multi_dot;
+    test "multi dot empty" test_multi_dot_empty;
+    test "matrix power" test_matrix_power;
+    test "matrix power singular" test_matrix_power_singular;
+    test "cross" test_cross;
+    test "cross invalid" test_cross_invalid;
   ]
 
 (* Dedicated suite for einsum; avoids duplication in product_tests *)
 let einsum_tests =
   [
-    ("einsum error cases", `Quick, test_einsum_error);
-    ("einsum weighted broadcast", `Quick, einsum_weighted_broadcast);
-    ("einsum complex fro inner", `Quick, einsum_complex_fro_inner);
-    ("einsum int dot scalar", `Quick, einsum_int_dot_scalar);
-    ("einsum axis order regression", `Quick, test_einsum_regression_axis_order);
-    ("dot scalar i,i->", `Quick, einsum_dot_scalar);
-    ("matmul ij,jk->ik", `Quick, einsum_matmul);
-    ("transpose ij->ji", `Quick, einsum_transpose);
-    ("outer i,j->ij", `Quick, einsum_outer);
-    ("total sum ij->", `Quick, einsum_total_sum);
-    ("diag extract ii->i", `Quick, einsum_diag_extract);
-    ("batched diag ...ii->...i", `Quick, einsum_batched_diag);
-    ("batched matmul ...ij,...jk->...ik", `Quick, einsum_batched_matmul);
-    ("free order1 i,jk->jki", `Quick, einsum_free_order1);
-    ("free order2 ij,klj->kli", `Quick, einsum_free_order2);
-    ("mix reorder abc,bd->dac", `Quick, einsum_mix_reorder);
-    ("chain ab,bc,cd->ad", `Quick, einsum_chain);
-    ("diag sum ii", `Quick, einsum_diag_sum);
-    ("hadamard vec i,i->i", `Quick, einsum_hadamard_vec);
-    ("fro inner ij,ij->", `Quick, einsum_fro_inner);
-    ("contract last ijk,k->ij", `Quick, einsum_contract_last);
-    ("matvec ab,b->a", `Quick, einsum_matvec);
-    ("contract 3d vec abc,c->ab", `Quick, einsum_contract_3d_vec);
-    ("broadcast last dot ...i,...i->...", `Quick, einsum_broadcast_last_dot);
-    ("move first axis i...->...i", `Quick, einsum_move_first_axis_to_last);
-    ("rowwise dot ij,j->i", `Quick, einsum_rowwise_dot);
+    test "einsum error cases" test_einsum_error;
+    test "einsum weighted broadcast" einsum_weighted_broadcast;
+    test "einsum complex fro inner" einsum_complex_fro_inner;
+    test "einsum int dot scalar" einsum_int_dot_scalar;
+    test "einsum axis order regression" test_einsum_regression_axis_order;
+    test "dot scalar i,i->" einsum_dot_scalar;
+    test "matmul ij,jk->ik" einsum_matmul;
+    test "transpose ij->ji" einsum_transpose;
+    test "outer i,j->ij" einsum_outer;
+    test "total sum ij->" einsum_total_sum;
+    test "diag extract ii->i" einsum_diag_extract;
+    test "batched diag ...ii->...i" einsum_batched_diag;
+    test "batched matmul ...ij,...jk->...ik" einsum_batched_matmul;
+    test "free order1 i,jk->jki" einsum_free_order1;
+    test "free order2 ij,klj->kli" einsum_free_order2;
+    test "mix reorder abc,bd->dac" einsum_mix_reorder;
+    test "chain ab,bc,cd->ad" einsum_chain;
+    test "diag sum ii" einsum_diag_sum;
+    test "hadamard vec i,i->i" einsum_hadamard_vec;
+    test "fro inner ij,ij->" einsum_fro_inner;
+    test "contract last ijk,k->ij" einsum_contract_last;
+    test "matvec ab,b->a" einsum_matvec;
+    test "contract 3d vec abc,c->ab" einsum_contract_3d_vec;
+    test "broadcast last dot ...i,...i->..." einsum_broadcast_last_dot;
+    test "move first axis i...->...i" einsum_move_first_axis_to_last;
+    test "rowwise dot ij,j->i" einsum_rowwise_dot;
   ]
 
 let advanced_decomposition_tests =
   [
-    ("cholesky upper", `Quick, test_cholesky_upper);
-    ("cholesky non posdef", `Quick, test_cholesky_non_posdef);
-    ("qr mode", `Quick, test_qr_mode);
-    ("svd full matrices", `Quick, test_svd_full_matrices);
-    ("svdvals", `Quick, test_svdvals);
+    test "cholesky upper" test_cholesky_upper;
+    test "cholesky non posdef" test_cholesky_non_posdef;
+    test "qr mode" test_qr_mode;
+    test "svd full matrices" test_svd_full_matrices;
+    test "svdvals" test_svdvals;
   ]
 
 let eigen_tests =
   [
-    ("eigh", `Quick, test_eigh);
-    ("eigh uplo", `Quick, test_eigh_uplo);
-    ("eigvals", `Quick, test_eigvals);
-    ("eigvalsh", `Quick, test_eigvalsh);
+    test "eigh" test_eigh;
+    test "eigh uplo" test_eigh_uplo;
+    test "eigvals" test_eigvals;
+    test "eigvalsh" test_eigvalsh;
   ]
 
 let advanced_norm_tests =
   [
-    ("norm ord", `Quick, test_norm_ord);
-    ("norm keepdims", `Quick, test_norm_keepdims);
-    ("cond", `Quick, test_cond);
+    test "norm ord" test_norm_ord;
+    test "norm keepdims" test_norm_keepdims;
+    test "cond" test_cond;
   ]
 
 let advanced_solve_tests =
   [
-    ("lstsq", `Quick, test_lstsq);
-    ("lstsq rcond", `Quick, test_lstsq_rcond);
-    ("lstsq underdetermined", `Quick, test_lstsq_underdetermined);
-    ("pinv", `Quick, test_pinv);
-    ("pinv singular", `Quick, test_pinv_singular);
-    ("tensorsolve", `Quick, test_tensorsolve);
-    ("tensorsolve axes", `Quick, test_tensorsolve_axes);
-    ("tensorinv", `Quick, test_tensorinv);
-    ("tensorinv ind", `Quick, test_tensorinv_ind);
+    test "lstsq" test_lstsq;
+    test "lstsq rcond" test_lstsq_rcond;
+    test "lstsq underdetermined" test_lstsq_underdetermined;
+    test "pinv" test_pinv;
+    test "pinv singular" test_pinv_singular;
+    test "tensorsolve" test_tensorsolve;
+    test "tensorsolve axes" test_tensorsolve_axes;
+    test "tensorinv" test_tensorinv;
+    test "tensorinv ind" test_tensorinv_ind;
   ]
 
-let suite =
-  [
-    ("Linalg :: Matrix Multiply", matmul_tests);
-    ("Linalg :: Dot Product", dot_tests);
-    ("Linalg :: Solve/Inverse", solve_inverse_tests);
-    ("Linalg :: Decompositions", decomposition_tests);
-    ("Linalg :: Norms", norm_tests);
-    ("Linalg :: Utilities", utility_tests);
-    ("Linalg :: Advanced Utilities", advanced_utility_tests);
-    ("Linalg :: Product Ops", product_tests);
-    ("Linalg :: Einsum", einsum_tests);
-    ("Linalg :: Advanced Decompositions", advanced_decomposition_tests);
-    ("Linalg :: Eigen", eigen_tests);
-    ("Linalg :: Advanced Norms", advanced_norm_tests);
-    ("Linalg :: Advanced Solve", advanced_solve_tests);
-  ]
-
-let () = Alcotest.run "Nx Linalg" suite
+let () =
+  run "Nx Linalg"
+    [
+      group "Matrix Multiply" matmul_tests;
+      group "Dot Product" dot_tests;
+      group "Solve/Inverse" solve_inverse_tests;
+      group "Decompositions" decomposition_tests;
+      group "Norms" norm_tests;
+      group "Utilities" utility_tests;
+      group "Advanced Utilities" advanced_utility_tests;
+      group "Product Ops" product_tests;
+      group "Einsum" einsum_tests;
+      group "Advanced Decompositions" advanced_decomposition_tests;
+      group "Eigen" eigen_tests;
+      group "Advanced Norms" advanced_norm_tests;
+      group "Advanced Solve" advanced_solve_tests;
+    ]

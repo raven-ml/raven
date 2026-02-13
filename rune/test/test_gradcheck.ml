@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Alcotest
+open Windtrap
 open Test_rune_support
 module T = Rune
 
@@ -58,8 +58,8 @@ let test_check_gradient_pass () =
 
   match T.check_gradient ~verbose:false f x with
   | `Pass result ->
-      check bool "gradient check passed" true result.passed;
-      check bool "no failed indices" true (result.failed_indices = [])
+      equal ~msg:"gradient check passed" bool true result.passed;
+      equal ~msg:"no failed indices" bool true (result.failed_indices = [])
   | `Fail _ -> fail "Expected gradient check to pass"
 
 let test_check_gradient_fail () =
@@ -84,7 +84,7 @@ let test_check_gradient_tolerances () =
 
   match T.check_gradient ~rtol:1e-4 ~atol:1e-5 f x with
   | `Pass result ->
-      check bool "gradient check with tight tolerances" true result.passed
+      equal ~msg:"gradient check with tight tolerances" bool true result.passed
   | `Fail result ->
       Printf.printf "Max abs error: %.2e, Max rel error: %.2e\n"
         result.max_abs_error result.max_rel_error;
@@ -101,8 +101,8 @@ let test_check_gradient_complex () =
 
   match T.check_gradient ~verbose:false f x with
   | `Pass result ->
-      check bool "complex function gradient check" true result.passed;
-      check bool "low relative error" true (result.max_rel_error < 1e-3)
+      equal ~msg:"complex function gradient check" bool true result.passed;
+      equal ~msg:"low relative error" bool true (result.max_rel_error < 1e-3)
   | `Fail result ->
       Printf.printf "Failed: max_rel_error = %.2e\n" result.max_rel_error;
       fail "Complex gradient check failed"
@@ -116,9 +116,9 @@ let test_check_gradients_multiple () =
 
   match T.check_gradients ~verbose:false f [ x1; x2 ] with
   | `Pass results ->
-      check int "number of results" 2 (List.length results);
+      equal ~msg:"number of results" int 2 (List.length results);
       List.iter
-        (fun r -> check bool "each gradient passed" true r.T.passed)
+        (fun r -> equal ~msg:"each gradient passed" bool true r.T.passed)
         results
   | `Fail _ -> fail "Expected multiple gradients check to pass"
 
@@ -133,7 +133,7 @@ let test_check_gradient_matrix () =
   (* Matrix operations need looser tolerance due to float32 precision *)
   match T.check_gradient ~verbose:false ~rtol:1e-2 ~atol:1e-2 f x with
   | `Pass result ->
-      check bool "matrix operation gradient check" true result.passed
+      equal ~msg:"matrix operation gradient check" bool true result.passed
   | `Fail result ->
       Printf.printf "Matrix gradient check failed: max_rel_error = %.2e\n"
         result.max_rel_error;
@@ -157,28 +157,28 @@ let test_finite_diff_jacobian () =
 
   let jacobian = T.finite_diff_jacobian f x in
   let expected_shape = [| 2; 2 |] in
-  check (array int) "jacobian shape" expected_shape (T.shape jacobian)
+  equal ~msg:"jacobian shape" (array int) expected_shape (T.shape jacobian)
 
 (* ───── Test Suite ───── *)
 
 let () =
   run "Gradient Checking"
     [
-      ( "finite_diff",
+      group "finite_diff"
         [
-          test_case "simple quadratic" `Quick test_finite_diff_simple;
-          test_case "polynomial" `Quick test_finite_diff_polynomial;
-          test_case "vector gradient" `Quick test_finite_diff_vector;
-          test_case "different methods" `Quick test_finite_diff_methods;
-          test_case "jacobian" `Quick test_finite_diff_jacobian;
-        ] );
-      ( "check_gradient",
+          test "simple quadratic" test_finite_diff_simple;
+          test "polynomial" test_finite_diff_polynomial;
+          test "vector gradient" test_finite_diff_vector;
+          test "different methods" test_finite_diff_methods;
+          test "jacobian" test_finite_diff_jacobian;
+        ];
+      group "check_gradient"
         [
-          test_case "passing check" `Quick test_check_gradient_pass;
-          test_case "verify correctness" `Quick test_check_gradient_fail;
-          test_case "tolerance settings" `Quick test_check_gradient_tolerances;
-          test_case "complex function" `Quick test_check_gradient_complex;
-          test_case "multiple inputs" `Quick test_check_gradients_multiple;
-          test_case "matrix operations" `Quick test_check_gradient_matrix;
-        ] );
+          test "passing check" test_check_gradient_pass;
+          test "verify correctness" test_check_gradient_fail;
+          test "tolerance settings" test_check_gradient_tolerances;
+          test "complex function" test_check_gradient_complex;
+          test "multiple inputs" test_check_gradients_multiple;
+          test "matrix operations" test_check_gradient_matrix;
+        ];
     ]

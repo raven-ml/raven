@@ -5,7 +5,7 @@
 
 (* Comprehensive tests for Sowilo image processing library *)
 
-open Alcotest
+open Windtrap
 open Sowilo
 
 (* Helper functions *)
@@ -59,11 +59,11 @@ let check_tensor msg expected actual =
     done
 
 let check_shape msg expected_shape tensor =
-  check (array int) msg expected_shape (Rune.shape tensor)
+  equal ~msg (array int) expected_shape (Rune.shape tensor)
 
 let check_pixel msg expected tensor indices =
   let actual = Rune.item indices tensor in
-  check int msg expected actual
+  equal ~msg int expected actual
 
 (* ───── Basic Image Manipulation Tests ───── *)
 
@@ -104,7 +104,7 @@ let test_crop () =
   check_pixel "crop content" (Rune.item [ 2; 3 ] img) cropped [ 0; 0 ];
 
   (* Test invalid crop *)
-  check_raises "crop out of bounds"
+  raises ~msg:"crop out of bounds"
     (Invalid_argument
        "Invalid crop parameters: y=8, x=8, h=5, w=5 for image [10x10]")
     (fun () -> ignore (crop ~y:8 ~x:8 ~height:5 ~width:5 img))
@@ -230,7 +230,7 @@ let test_float_conversions () =
 
   (* Check normalized to [0, 1] *)
   let float_val = Rune.item [ 0; 0 ] float_img in
-  check (float 0.001) "to_float normalization" 1.0 float_val;
+  equal ~msg:"to_float normalization" (float 0.001) 1.0 float_val;
 
   (* Convert back *)
   let uint8_back = to_uint8 float_img in
@@ -272,7 +272,7 @@ let test_box_filter () =
   in
   let filtered = box_filter ~ksize:(3, 3) img in
 
-  (* Center pixel should be average of 9 pixels = 255/9 ≈ 28 *)
+  (* Center pixel should be average of 9 pixels = 255/9 ~ 28 *)
   let center = Rune.item [ 1; 1 ] filtered in
   let expected = 255 / 9 in
   if abs (center - expected) > 1 then
@@ -346,7 +346,7 @@ let test_erosion () =
       if Rune.item [ i; j ] eroded = 255 then incr white_count
     done
   done;
-  check int "erosion reduces white area" 4 !white_count;
+  equal ~msg:"erosion reduces white area" int 4 !white_count;
 
   (* Check center is preserved *)
   check_pixel "erosion center preserved" 255 eroded [ 4; 4 ]
@@ -364,7 +364,7 @@ let test_dilation () =
       if Rune.item [ i; j ] dilated = 255 then incr white_count
     done
   done;
-  check int "dilation expands white area" 36 !white_count
+  equal ~msg:"dilation expands white area" int 36 !white_count
 
 let test_dilation_kernel_shape () =
   let data = Array.make (5 * 5) 0 in
@@ -388,8 +388,8 @@ let test_dilation_kernel_shape () =
     done;
     !total
   in
-  check int "rect kernel produces 3x3 block" 9 (count_white dilated_rect);
-  check int "cross kernel preserves cross shape" 5 (count_white dilated_cross)
+  equal ~msg:"rect kernel produces 3x3 block" int 9 (count_white dilated_rect);
+  equal ~msg:"cross kernel preserves cross shape" int 5 (count_white dilated_cross)
 
 (* ───── Edge Detection Tests ───── *)
 
@@ -476,48 +476,47 @@ let test_pipeline () =
 (* ───── Test Suite ───── *)
 
 let () =
-  let open Alcotest in
   run "Sowilo"
     [
-      ( "image_manipulation",
+      group "image_manipulation"
         [
-          test_case "flip_vertical" `Quick test_flip_vertical;
-          test_case "flip_horizontal" `Quick test_flip_horizontal;
-          test_case "crop" `Quick test_crop;
-          test_case "flip_batch" `Quick test_flip_batch;
-          test_case "crop_batch" `Quick test_crop_batch;
-          test_case "resize_nearest" `Quick test_resize_nearest;
-          test_case "resize_linear" `Quick test_resize_linear;
-          test_case "resize_batch" `Quick test_resize_batch;
-          test_case "resize_color_linear" `Quick test_resize_color_linear;
-        ] );
-      ( "color_conversion",
+          test "flip_vertical" test_flip_vertical;
+          test "flip_horizontal" test_flip_horizontal;
+          test "crop" test_crop;
+          test "flip_batch" test_flip_batch;
+          test "crop_batch" test_crop_batch;
+          test "resize_nearest" test_resize_nearest;
+          test "resize_linear" test_resize_linear;
+          test "resize_batch" test_resize_batch;
+          test "resize_color_linear" test_resize_color_linear;
+        ];
+      group "color_conversion"
         [
-          test_case "to_grayscale" `Quick test_to_grayscale;
-          test_case "rgb_bgr_conversion" `Quick test_rgb_bgr_conversion;
-        ] );
-      ( "type_conversion",
-        [ test_case "float_conversions" `Quick test_float_conversions ] );
-      ( "filtering",
+          test "to_grayscale" test_to_grayscale;
+          test "rgb_bgr_conversion" test_rgb_bgr_conversion;
+        ];
+      group "type_conversion"
+        [ test "float_conversions" test_float_conversions ];
+      group "filtering"
         [
-          test_case "gaussian_blur" `Quick test_gaussian_blur;
-          test_case "box_filter" `Quick test_box_filter;
-          test_case "median_blur" `Quick test_median_blur;
-          test_case "median_blur_median" `Quick
+          test "gaussian_blur" test_gaussian_blur;
+          test "box_filter" test_box_filter;
+          test "median_blur" test_median_blur;
+          test "median_blur_median"
             test_median_blur_preserves_median;
-        ] );
-      ("thresholding", [ test_case "threshold" `Quick test_threshold ]);
-      ( "morphology",
+        ];
+      group "thresholding" [ test "threshold" test_threshold ];
+      group "morphology"
         [
-          test_case "structuring_elements" `Quick test_structuring_elements;
-          test_case "erosion" `Quick test_erosion;
-          test_case "dilation" `Quick test_dilation;
-          test_case "dilation_kernel_shape" `Quick test_dilation_kernel_shape;
-        ] );
-      ( "edge_detection",
+          test "structuring_elements" test_structuring_elements;
+          test "erosion" test_erosion;
+          test "dilation" test_dilation;
+          test "dilation_kernel_shape" test_dilation_kernel_shape;
+        ];
+      group "edge_detection"
         [
-          test_case "sobel" `Quick test_sobel;
-          test_case "canny" `Slow test_canny;
-        ] );
-      ("integration", [ test_case "pipeline" `Quick test_pipeline ]);
+          test "sobel" test_sobel;
+          slow "canny" test_canny;
+        ];
+      group "integration" [ test "pipeline" test_pipeline ];
     ]

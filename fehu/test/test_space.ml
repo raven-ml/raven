@@ -4,37 +4,36 @@
   ---------------------------------------------------------------------------*)
 
 open Fehu
+open Windtrap
 
 let test_discrete_basic () =
   let space = Space.Discrete.create 5 in
   let rng = Rune.Rng.key 42 in
   let sample, _ = Space.sample ~rng space in
-  Alcotest.(check bool)
-    "discrete sample in range" true
+  equal ~msg:"discrete sample in range" bool true
     (Space.contains space sample);
   let shape = Space.shape space in
-  Alcotest.(check (option (array int))) "discrete shape" None shape
+  equal ~msg:"discrete shape" (option (array int)) None shape
 
 let test_discrete_with_start () =
   let space = Space.Discrete.create ~start:10 5 in
   let rng = Rune.Rng.key 99 in
   let sample, _ = Space.sample ~rng space in
-  Alcotest.(check bool)
-    "discrete sample valid" true
+  equal ~msg:"discrete sample valid" bool true
     (Space.contains space sample);
   let value =
     let arr : Int32.t array = Rune.to_array (Rune.reshape [| 1 |] sample) in
     Int32.to_int arr.(0)
   in
-  Alcotest.(check bool) "discrete start offset" true (value >= 10 && value < 15)
+  equal ~msg:"discrete start offset" bool true (value >= 10 && value < 15)
 
 let test_box_1d () =
   let space = Space.Box.create ~low:[| -1.0 |] ~high:[| 1.0 |] in
   let rng = Rune.Rng.key 123 in
   let sample, _ = Space.sample ~rng space in
-  Alcotest.(check bool) "box 1d sample valid" true (Space.contains space sample);
+  equal ~msg:"box 1d sample valid" bool true (Space.contains space sample);
   let shape = Space.shape space in
-  Alcotest.(check (option (array int))) "box 1d shape" (Some [| 1 |]) shape
+  equal ~msg:"box 1d shape" (option (array int)) (Some [| 1 |]) shape
 
 let test_box_multidim () =
   let space =
@@ -42,13 +41,12 @@ let test_box_multidim () =
   in
   let rng = Rune.Rng.key 456 in
   let sample, _ = Space.sample ~rng space in
-  Alcotest.(check bool) "box multidim valid" true (Space.contains space sample);
+  equal ~msg:"box multidim valid" bool true (Space.contains space sample);
   let shape = Space.shape space in
-  Alcotest.(check (option (array int)))
-    "box multidim shape" (Some [| 3 |]) shape;
+  equal ~msg:"box multidim shape" (option (array int))
+    (Some [| 3 |]) shape;
   let arr : float array = Rune.to_array (Rune.reshape [| 3 |] sample) in
-  Alcotest.(check bool)
-    "box bounds respected" true
+  equal ~msg:"box bounds respected" bool true
     (arr.(0) >= -1.0
     && arr.(0) <= 1.0
     && arr.(1) >= -2.0
@@ -60,27 +58,25 @@ let test_multi_binary () =
   let space = Space.Multi_binary.create 4 in
   let rng = Rune.Rng.key 789 in
   let sample, _ = Space.sample ~rng space in
-  Alcotest.(check bool)
-    "multi_binary sample valid" true
+  equal ~msg:"multi_binary sample valid" bool true
     (Space.contains space sample);
   let shape = Space.shape space in
-  Alcotest.(check (option (array int)))
-    "multi_binary shape" (Some [| 4 |]) shape;
+  equal ~msg:"multi_binary shape" (option (array int))
+    (Some [| 4 |]) shape;
   let arr : Int32.t array = Rune.to_array (Rune.reshape [| 4 |] sample) in
   Array.iter
-    (fun v -> Alcotest.(check bool) "binary value" true (v = 0l || v = 1l))
+    (fun v -> equal ~msg:"binary value" bool true (v = 0l || v = 1l))
     arr
 
 let test_multi_discrete () =
   let space = Space.Multi_discrete.create [| 3; 4; 5 |] in
   let rng = Rune.Rng.key 321 in
   let sample, _ = Space.sample ~rng space in
-  Alcotest.(check bool)
-    "multi_discrete sample valid" true
+  equal ~msg:"multi_discrete sample valid" bool true
     (Space.contains space sample);
   let shape = Space.shape space in
-  Alcotest.(check (option (array int)))
-    "multi_discrete shape" (Some [| 3 |]) shape
+  equal ~msg:"multi_discrete shape" (option (array int))
+    (Some [| 3 |]) shape
 
 let test_tuple_space () =
   let space1 = Space.Discrete.create 3 in
@@ -90,10 +86,9 @@ let test_tuple_space () =
   in
   let rng = Rune.Rng.key 654 in
   let sample, _ = Space.sample ~rng tuple_space in
-  Alcotest.(check bool)
-    "tuple sample valid" true
+  equal ~msg:"tuple sample valid" bool true
     (Space.contains tuple_space sample);
-  Alcotest.(check int) "tuple has 2 elements" 2 (List.length sample)
+  equal ~msg:"tuple has 2 elements" int 2 (List.length sample)
 
 let test_dict_space () =
   let disc_space = Space.Discrete.create 5 in
@@ -104,13 +99,12 @@ let test_dict_space () =
   in
   let rng = Rune.Rng.key 987 in
   let sample, _ = Space.sample ~rng dict_space in
-  Alcotest.(check bool)
-    "dict sample valid" true
+  equal ~msg:"dict sample valid" bool true
     (Space.contains dict_space sample);
-  Alcotest.(check int) "dict has 2 keys" 2 (List.length sample);
+  equal ~msg:"dict has 2 keys" int 2 (List.length sample);
   let keys = List.map fst sample in
-  Alcotest.(check bool) "dict has action key" true (List.mem "action" keys);
-  Alcotest.(check bool) "dict has value key" true (List.mem "value" keys)
+  equal ~msg:"dict has action key" bool true (List.mem "action" keys);
+  equal ~msg:"dict has value key" bool true (List.mem "value" keys)
 
 let test_sequence_space () =
   let elem_space = Space.Discrete.create 3 in
@@ -119,53 +113,47 @@ let test_sequence_space () =
   in
   let rng = Rune.Rng.key 111 in
   let sample, _ = Space.sample ~rng seq_space in
-  Alcotest.(check bool)
-    "sequence sample valid" true
+  equal ~msg:"sequence sample valid" bool true
     (Space.contains seq_space sample);
   let len = List.length sample in
-  Alcotest.(check bool) "sequence length in range" true (len >= 2 && len <= 5)
+  equal ~msg:"sequence length in range" bool true (len >= 2 && len <= 5)
 
 let test_sequence_space_unbounded () =
   let elem_space = Space.Discrete.create 4 in
   let seq_space = Space.Sequence.create ~min_length:1 elem_space in
   let rng = Rune.Rng.key 512 in
   let sample, _ = Space.sample ~rng seq_space in
-  Alcotest.(check int)
-    "default sample length is min_length" 1 (List.length sample);
+  equal ~msg:"default sample length is min_length" int 1 (List.length sample);
   let extended =
     List.init 4 (fun i ->
         let rng = Rune.Rng.key (800 + i) in
         fst (Space.sample ~rng elem_space))
   in
-  Alcotest.(check bool)
-    "contains extended sequence" true
+  equal ~msg:"contains extended sequence" bool true
     (Space.contains seq_space extended);
   let packed = Space.pack seq_space extended in
   match Space.unpack seq_space packed with
   | Ok unpacked ->
-      Alcotest.(check int)
-        "unbounded unpack preserves length" 4 (List.length unpacked)
-  | Error msg -> Alcotest.fail ("unbounded sequence unpack failed: " ^ msg)
+      equal ~msg:"unbounded unpack preserves length" int 4 (List.length unpacked)
+  | Error msg -> fail ("unbounded sequence unpack failed: " ^ msg)
 
 let test_text_space () =
   let space = Space.Text.create ~max_length:10 () in
   let rng = Rune.Rng.key 222 in
   let sample, _ = Space.sample ~rng space in
-  Alcotest.(check bool) "text sample valid" true (Space.contains space sample);
-  Alcotest.(check bool)
-    "text length respects max" true
+  equal ~msg:"text sample valid" bool true (Space.contains space sample);
+  equal ~msg:"text length respects max" bool true
     (String.length sample <= 10)
 
 let test_text_custom_charset () =
   let space = Space.Text.create ~charset:"ABC" ~max_length:5 () in
   let rng = Rune.Rng.key 333 in
   let sample, _ = Space.sample ~rng space in
-  Alcotest.(check bool)
-    "text custom charset valid" true
+  equal ~msg:"text custom charset valid" bool true
     (Space.contains space sample);
   String.iter
     (fun c ->
-      Alcotest.(check bool) "char in charset" true (String.contains "ABC" c))
+      equal ~msg:"char in charset" bool true (String.contains "ABC" c))
     sample
 
 let test_pack_unpack () =
@@ -185,41 +173,39 @@ let test_pack_unpack () =
         in
         arr.(0)
       in
-      Alcotest.(check int32)
-        "pack/unpack preserves value" sample_val unpacked_val
-  | Error msg -> Alcotest.fail ("Unpack failed: " ^ msg)
+      equal ~msg:"pack/unpack preserves value" int32 sample_val unpacked_val
+  | Error msg -> fail ("Unpack failed: " ^ msg)
 
 let () =
-  let open Alcotest in
   run "Space"
     [
-      ( "Discrete",
+      group "Discrete"
         [
-          test_case "basic discrete space" `Quick test_discrete_basic;
-          test_case "discrete with start offset" `Quick test_discrete_with_start;
-        ] );
-      ( "Box",
+          test "basic discrete space" test_discrete_basic;
+          test "discrete with start offset" test_discrete_with_start;
+        ];
+      group "Box"
         [
-          test_case "1D box space" `Quick test_box_1d;
-          test_case "multidimensional box" `Quick test_box_multidim;
-        ] );
-      ( "Multi",
+          test "1D box space" test_box_1d;
+          test "multidimensional box" test_box_multidim;
+        ];
+      group "Multi"
         [
-          test_case "multi-binary space" `Quick test_multi_binary;
-          test_case "multi-discrete space" `Quick test_multi_discrete;
-        ] );
-      ( "Composite",
+          test "multi-binary space" test_multi_binary;
+          test "multi-discrete space" test_multi_discrete;
+        ];
+      group "Composite"
         [
-          test_case "tuple space" `Quick test_tuple_space;
-          test_case "dict space" `Quick test_dict_space;
-          test_case "sequence space" `Quick test_sequence_space;
-          test_case "sequence space unbounded" `Quick
+          test "tuple space" test_tuple_space;
+          test "dict space" test_dict_space;
+          test "sequence space" test_sequence_space;
+          test "sequence space unbounded"
             test_sequence_space_unbounded;
-        ] );
-      ( "Text",
+        ];
+      group "Text"
         [
-          test_case "text space" `Quick test_text_space;
-          test_case "text with custom charset" `Quick test_text_custom_charset;
-        ] );
-      ("Serialization", [ test_case "pack/unpack" `Quick test_pack_unpack ]);
+          test "text space" test_text_space;
+          test "text with custom charset" test_text_custom_charset;
+        ];
+      group "Serialization" [ test "pack/unpack" test_pack_unpack ];
     ]

@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Alcotest
+open Windtrap
 open Rune_jit
 open Support
 
@@ -31,7 +31,7 @@ let test_sanity () =
   let _a, _b, _c, g = simple_add_graph () in
   let _ir = make_llvm_ir g in
   (* Basic sanity check that we can create IR *)
-  check bool "can create IR" true true
+  equal ~msg:"can create IR" bool true true
 
 (* ───── End-to-end Execution ───── *)
 
@@ -53,7 +53,7 @@ let bigarray_float32 ?(eps = 1e-3) () =
     in
     loop 0
   in
-  testable pp eq
+  Testable.make ~pp ~equal:eq ()
 
 let get_ba_from_buf (type a b) (Backend_intf.Any_Device_Buffer buf)
     ~(dtype : a Ir.Dtype.t) ~(kind : (a, b) Nx_buffer.kind) ~len label =
@@ -127,7 +127,7 @@ let test_e2e_add () =
     Nx_buffer.Array1.of_array Nx_buffer.float32 Nx_buffer.c_layout
       [| 1.1; 2.2; 3.3; 4.4 |]
   in
-  check (bigarray_float32 ()) "result" expected ba_res
+  equal ~msg:"result" (bigarray_float32 ()) expected ba_res
 
 let test_e2e_where () =
   (* build graph *)
@@ -214,7 +214,7 @@ let test_e2e_where () =
       [| 1.0; 20.0; 3.0; 40.0 |]
     (* where cond is true, take x, else y *)
   in
-  check (bigarray_float32 ()) "result" expected ba_res
+  equal ~msg:"result" (bigarray_float32 ()) expected ba_res
 
 let test_e2e_mulacc () =
   (* build graph *)
@@ -283,18 +283,18 @@ let test_e2e_mulacc () =
       [| 21.0; 32.0; 43.0; 54.0 |]
     (* a * b + c *)
   in
-  check (bigarray_float32 ()) "result" expected ba_res
+  equal ~msg:"result" (bigarray_float32 ()) expected ba_res
 
 (* ───── Test Suite ───── *)
 
 let () =
-  Alcotest.run "LLVM backend"
+  run "LLVM backend"
     [
-      ("sanity", [ test_case "basic IR creation" `Quick test_sanity ]);
-      ( "end-to-end",
+      group "sanity" [ test "basic IR creation" test_sanity ];
+      group "end-to-end"
         [
-          test_case "add f32" `Quick test_e2e_add;
-          test_case "where f32" `Quick test_e2e_where;
-          test_case "mulacc f32" `Quick test_e2e_mulacc;
-        ] );
+          test "add f32" test_e2e_add;
+          test "where f32" test_e2e_where;
+          test "mulacc f32" test_e2e_mulacc;
+        ];
     ]

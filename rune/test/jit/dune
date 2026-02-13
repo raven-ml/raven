@@ -2,7 +2,7 @@
  (name test_rune_jit_support)
  (modules support)
  (wrapped false)
- (libraries rune_jit alcotest))
+ (libraries rune_jit windtrap))
 
 (test
  (name test_metal)
@@ -12,10 +12,10 @@
   (source_tree golden))
  (build_if
   (= %{system} "macosx"))
- (libraries alcotest nx_buffer rune_jit rune_jit_metal test_rune_jit_support))
+ (libraries windtrap nx_buffer rune_jit rune_jit_metal test_rune_jit_support))
 
 (test
  (name test_llvm)
  (package rune)
  (modules test_llvm)
- (libraries alcotest nx_buffer rune_jit rune_jit_llvm test_rune_jit_support))
+ (libraries windtrap nx_buffer rune_jit rune_jit_llvm test_rune_jit_support))

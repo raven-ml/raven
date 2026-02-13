@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Fehu
+open Windtrap
 module Dqn = Fehu_algorithms.Dqn
 
 let make_env () =
@@ -41,8 +42,8 @@ let test_init () =
   let params, state = Dqn.init ~env ~q_network:q_net ~rng ~config in
   ignore params;
   let metrics = Dqn.metrics state in
-  Alcotest.(check int) "initial steps" 0 metrics.total_steps;
-  Alcotest.(check int) "initial episodes" 0 metrics.total_episodes
+  equal ~msg:"initial steps" int 0 metrics.total_steps;
+  equal ~msg:"initial episodes" int 0 metrics.total_episodes
 
 let test_step_progresses () =
   let env = make_env () in
@@ -53,7 +54,7 @@ let test_step_progresses () =
   let params', state' = Dqn.step ~env ~params ~state in
   ignore params';
   let metrics = Dqn.metrics state' in
-  Alcotest.(check bool) "one step taken" true (metrics.total_steps = 1)
+  equal ~msg:"one step taken" bool true (metrics.total_steps = 1)
 
 let test_train_runs () =
   let env = make_env () in
@@ -62,11 +63,11 @@ let test_train_runs () =
   let config = { Dqn.default_config with warmup_steps = 0 } in
   match Dqn.train ~env ~q_network:q_net ~rng ~config ~total_timesteps:20 () with
   | exception Fehu.Errors.Error err ->
-      Alcotest.failf "train failed: %s" (Fehu.Errors.to_string err)
+      failf "train failed: %s" (Fehu.Errors.to_string err)
   | params, state ->
       ignore params;
       let metrics = Dqn.metrics state in
-      Alcotest.(check bool) "trained steps" true (metrics.total_steps >= 20)
+      equal ~msg:"trained steps" bool true (metrics.total_steps >= 20)
 
 let test_save_and_load () =
   let env = make_env () in
@@ -82,18 +83,17 @@ let test_save_and_load () =
   match Dqn.load ~path ~env:env2 ~q_network:q_net ~config with
   | Ok (_params', state') ->
       let metrics = Dqn.metrics state' in
-      Alcotest.(check int) "loaded steps" 0 metrics.total_steps
-  | Error msg -> Alcotest.failf "failed to load dqn snapshot: %s" msg
+      equal ~msg:"loaded steps" int 0 metrics.total_steps
+  | Error msg -> failf "failed to load dqn snapshot: %s" msg
 
 let () =
-  let open Alcotest in
   run "DQN"
     [
-      ( "Core",
+      group "Core"
         [
-          test_case "init" `Quick test_init;
-          test_case "step" `Quick test_step_progresses;
-          test_case "train" `Quick test_train_runs;
-          test_case "save/load" `Quick test_save_and_load;
-        ] );
+          test "init" test_init;
+          test "step" test_step_progresses;
+          test "train" test_train_runs;
+          test "save/load" test_save_and_load;
+        ];
     ]

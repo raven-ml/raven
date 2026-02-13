@@ -3,6 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Windtrap
 open Test_nx_support
 
 let pi = 4.0 *. atan 1.0
@@ -103,13 +104,11 @@ let test_fft_size () =
   (* Pad to larger size *)
   let pad_size = 16 in
   let fft_padded = Nx.fft input ~n:pad_size in
-  Alcotest.(check (array int))
-    "fft padded shape" [| pad_size |] (Nx.shape fft_padded);
+  equal ~msg:"fft padded shape" (array int) [| pad_size |] (Nx.shape fft_padded);
   let ifft_padded = Nx.ifft fft_padded ~n in
   (* Note: fft(x, n=16) -> ifft(X, n=8) does NOT give back the original signal.
      This is expected behavior that matches NumPy. *)
-  Alcotest.(check (array int))
-    "fft pad reconstruct shape" shape (Nx.shape ifft_padded);
+  equal ~msg:"fft pad reconstruct shape" (array int) shape (Nx.shape ifft_padded);
   (* Check the actual values match NumPy's output *)
   let expected_padded_complex =
     [|
@@ -129,8 +128,7 @@ let test_fft_size () =
   (* Truncate to smaller size *)
   let trunc_size = 4 in
   let fft_trunc = Nx.fft input ~n:trunc_size in
-  Alcotest.(check (array int))
-    "fft trunc shape" [| trunc_size |] (Nx.shape fft_trunc)
+  equal ~msg:"fft trunc shape" (array int) [| trunc_size |] (Nx.shape fft_trunc)
 
 let test_fft_norm () =
   let n = 4 in
@@ -164,7 +162,7 @@ let test_fft_edge_cases () =
   (* Empty tensor *)
   let empty = Nx.empty Nx.complex128 [| 0 |] in
   let fft_empty = Nx.fft empty in
-  Alcotest.(check (array int)) "fft empty" [| 0 |] (Nx.shape fft_empty);
+  equal ~msg:"fft empty" (array int) [| 0 |] (Nx.shape fft_empty);
 
   (* Size 1 *)
   let shape = [| 1 |] in
@@ -195,8 +193,8 @@ let test_rfft_irfft () =
   in
   let input_even = Nx.create Nx.float64 shape_even signal_even in
   let rfft_even = Nx.rfft input_even in
-  Alcotest.(check (array int))
-    "rfft even shape"
+  equal ~msg:"rfft even shape"
+    (array int)
     [| (n_even / 2) + 1 |]
     (Nx.shape rfft_even);
   let irfft_even = Nx.irfft rfft_even ~n:n_even in
@@ -208,8 +206,8 @@ let test_rfft_irfft () =
   let signal_odd = Array.init n_odd (fun i -> Float.of_int i) in
   let input_odd = Nx.create Nx.float64 shape_odd signal_odd in
   let rfft_odd = Nx.rfft input_odd in
-  Alcotest.(check (array int))
-    "rfft odd shape"
+  equal ~msg:"rfft odd shape"
+    (array int)
     [| (n_odd / 2) + 1 |]
     (Nx.shape rfft_odd);
   let irfft_odd = Nx.irfft rfft_odd ~n:n_odd in
@@ -221,8 +219,8 @@ let test_rfft_irfft () =
   let signal_2d = Array.init (m * n) Float.of_int in
   let input_2d = Nx.create Nx.float64 shape_2d signal_2d in
   let rfft_2d = Nx.rfft2 input_2d in
-  Alcotest.(check (array int))
-    "rfft2 shape"
+  equal ~msg:"rfft2 shape"
+    (array int)
     [| m; (n / 2) + 1 |]
     (Nx.shape rfft_2d);
   let irfft_2d = Nx.irfft2 rfft_2d ~s:[ m; n ] in
@@ -234,8 +232,7 @@ let test_rfft_irfft () =
   let signal_nd = Array.init size_nd (fun i -> Float.of_int i) in
   let input_nd = Nx.create Nx.float64 shape_nd signal_nd in
   let rfft_nd = Nx.rfftn input_nd ~axes:[ 2 ] in
-  Alcotest.(check (array int))
-    "rfftn last axis shape" [| 2; 3; 5 |] (Nx.shape rfft_nd);
+  equal ~msg:"rfftn last axis shape" (array int) [| 2; 3; 5 |] (Nx.shape rfft_nd);
   let irfft_nd = Nx.irfftn rfft_nd ~axes:[ 2 ] ~s:[ 8 ] in
   check_t "rfftn last axis reconstruct" shape_nd signal_nd irfft_nd
 
@@ -247,16 +244,15 @@ let test_rfft_axes () =
 
   (* Specific axis *)
   let rfft_axis1 = Nx.rfftn input ~axes:[ 1 ] in
-  Alcotest.(check (array int)) "rfft axis 1" [| 4; 4; 8 |] (Nx.shape rfft_axis1);
+  equal ~msg:"rfft axis 1" (array int) [| 4; 4; 8 |] (Nx.shape rfft_axis1);
 
   (* Multiple axes, last is halved *)
   let rfft_axes_01 = Nx.rfftn input ~axes:[ 0; 1 ] in
-  Alcotest.(check (array int))
-    "rfft axes [0;1]" [| 4; 4; 8 |] (Nx.shape rfft_axes_01);
+  equal ~msg:"rfft axes [0;1]" (array int) [| 4; 4; 8 |] (Nx.shape rfft_axes_01);
 
   (* Negative axis *)
   let rfft_neg1 = Nx.rfftn input ~axes:[ -1 ] in
-  Alcotest.(check (array int)) "rfft axis -1" [| 4; 6; 5 |] (Nx.shape rfft_neg1)
+  equal ~msg:"rfft axis -1" (array int) [| 4; 6; 5 |] (Nx.shape rfft_neg1)
 
 let test_rfft_size () =
   let n = 8 in
@@ -269,15 +265,14 @@ let test_rfft_size () =
   (* Pad last axis *)
   let pad_size = 16 in
   let rfft_padded = Nx.rfft input ~n:pad_size in
-  Alcotest.(check (array int))
-    "rfft padded"
+  equal ~msg:"rfft padded"
+    (array int)
     [| (pad_size / 2) + 1 |]
     (Nx.shape rfft_padded);
   let irfft_padded = Nx.irfft rfft_padded ~n in
   (* Note: rfft(x, n=16) -> irfft(X, n=8) does NOT give back the original
      signal. This is expected behavior that matches NumPy. *)
-  Alcotest.(check (array int))
-    "rfft pad reconstruct shape" shape (Nx.shape irfft_padded);
+  equal ~msg:"rfft pad reconstruct shape" (array int) shape (Nx.shape irfft_padded);
   (* Check the actual values match NumPy's output *)
   let expected_padded =
     [|
@@ -297,8 +292,8 @@ let test_rfft_size () =
   (* Truncate *)
   let trunc_size = 4 in
   let rfft_trunc = Nx.rfft input ~n:trunc_size in
-  Alcotest.(check (array int))
-    "rfft trunc"
+  equal ~msg:"rfft trunc"
+    (array int)
     [| (trunc_size / 2) + 1 |]
     (Nx.shape rfft_trunc)
 
@@ -333,8 +328,7 @@ let test_rfft_edge_cases () =
   let signal_data = [| 5.0 |] in
   let single = Nx.create Nx.float64 shape signal_data in
   let rfft_single = Nx.rfft single in
-  Alcotest.(check (array int))
-    "rfft size 1 shape" [| 1 |] (Nx.shape rfft_single);
+  equal ~msg:"rfft size 1 shape" (array int) [| 1 |] (Nx.shape rfft_single);
   let irfft_single = Nx.irfft rfft_single ~n:1 in
   check_t "rfft size 1 reconstruct" shape signal_data irfft_single
 
@@ -347,8 +341,8 @@ let test_hfft_ihfft () =
   in
   let input = Nx.create Nx.float64 shape signal in
   let ihfft_out = Nx.ihfft input ~n in
-  Alcotest.(check (array int))
-    "ihfft shape"
+  equal ~msg:"ihfft shape"
+    (array int)
     [| (n / 2) + 1 |]
     (Nx.shape ihfft_out);
   let hfft_out = Nx.hfft ihfft_out ~n in
@@ -403,29 +397,29 @@ let test_fftshift () =
 
 let suite =
   [
-    ( "FFT :: fft/ifft",
+    group "fft/ifft"
       [
-        Alcotest.test_case "basic" `Quick test_fft_ifft;
-        Alcotest.test_case "axes" `Quick test_fft_axes;
-        Alcotest.test_case "size" `Quick test_fft_size;
-        Alcotest.test_case "norm" `Quick test_fft_norm;
-        Alcotest.test_case "edge_cases" `Quick test_fft_edge_cases;
-      ] );
-    ( "FFT :: rfft/irfft",
+        test "basic" test_fft_ifft;
+        test "axes" test_fft_axes;
+        test "size" test_fft_size;
+        test "norm" test_fft_norm;
+        test "edge_cases" test_fft_edge_cases;
+      ];
+    group "rfft/irfft"
       [
-        Alcotest.test_case "basic" `Quick test_rfft_irfft;
-        Alcotest.test_case "axes" `Quick test_rfft_axes;
-        Alcotest.test_case "size" `Quick test_rfft_size;
-        Alcotest.test_case "norm" `Quick test_rfft_norm;
-        Alcotest.test_case "edge_cases" `Quick test_rfft_edge_cases;
-      ] );
-    ("FFT :: hfft/ihfft", [ Alcotest.test_case "basic" `Quick test_hfft_ihfft ]);
-    ( "FFT :: helpers",
+        test "basic" test_rfft_irfft;
+        test "axes" test_rfft_axes;
+        test "size" test_rfft_size;
+        test "norm" test_rfft_norm;
+        test "edge_cases" test_rfft_edge_cases;
+      ];
+    group "hfft/ihfft" [ test "basic" test_hfft_ihfft ];
+    group "helpers"
       [
-        Alcotest.test_case "fftfreq" `Quick test_fftfreq;
-        Alcotest.test_case "rfftfreq" `Quick test_rfftfreq;
-        Alcotest.test_case "shifts" `Quick test_fftshift;
-      ] );
+        test "fftfreq" test_fftfreq;
+        test "rfftfreq" test_rfftfreq;
+        test "shifts" test_fftshift;
+      ];
   ]
 
-let () = Alcotest.run "Nx FFT" suite
+let () = run "Nx FFT" suite

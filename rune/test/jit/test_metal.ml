@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Alcotest
+open Windtrap
 open Rune_jit
 open Support
 
@@ -30,7 +30,7 @@ let pp_trunc ?(max = 400) fmt s =
   if len <= max then Format.pp_print_string fmt s
   else Format.fprintf fmt "%s...<%d more chars>" (String.sub s 0 max) (len - max)
 
-let string_t = Alcotest.of_pp pp_trunc
+let string_t = Testable.make ~pp:pp_trunc ~equal:String.equal ()
 
 let read_file path =
   let ic = open_in_bin path in
@@ -64,7 +64,7 @@ let golden_cases =
 let test_golden { name; graph; golden } () =
   let got = make_metal_source graph in
   let exp = read_file golden in
-  check string_t (name ^ " golden") exp got
+  equal ~msg:(name ^ " golden") string_t exp got
 
 (* ───── Sanity Test ───── *)
 
@@ -85,7 +85,7 @@ let count_occ sub s =
 let test_sanity () =
   let _a, _b, _c, g = simple_add_graph () in
   let src = make_metal_source g in
-  check int "three buffer params" 3 (count_occ "device float* v" src)
+  equal ~msg:"three buffer params" int 3 (count_occ "device float* v" src)
 
 (* ───── End-to-end Execution ───── *)
 
@@ -107,7 +107,7 @@ let bigarray_float32 ?(eps = 1e-3) () =
     in
     loop 0
   in
-  testable pp eq
+  Testable.make ~pp ~equal:eq ()
 
 let get_ba_from_buf (type a b) (Backend_intf.Any_Device_Buffer buf)
     ~(dtype : a Ir.Dtype.t) ~(kind : (a, b) Nx_buffer.kind) ~len label =
@@ -181,16 +181,15 @@ let test_e2e_add () =
     Nx_buffer.Array1.of_array Nx_buffer.float32 Nx_buffer.c_layout
       [| 1.1; 2.2; 3.3; 4.4 |]
   in
-  check (bigarray_float32 ()) "result" expected ba_res
+  equal ~msg:"result" (bigarray_float32 ()) expected ba_res
 
 (* ───── Test Suite ───── *)
 
 let () =
-  Alcotest.run "Metal backend"
+  run "Metal backend"
     [
-      ("sanity", [ test_case "param count" `Quick test_sanity ]);
-      ( "golden",
-        List.map (fun c -> test_case c.name `Quick (test_golden c)) golden_cases
-      );
-      ("end-to-end", [ test_case "add f32" `Quick test_e2e_add ]);
+      group "sanity" [ test "param count" test_sanity ];
+      group "golden"
+        (List.map (fun c -> test c.name (test_golden c)) golden_cases);
+      group "end-to-end" [ test "add f32" test_e2e_add ];
     ]

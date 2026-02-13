@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Saga_tokenizers
-open Alcotest
+open Windtrap
 
 let candidate_roots () =
   match Sys.getenv_opt "DUNE_SOURCEROOT" with
@@ -38,38 +38,40 @@ let test_bert_base_uncased () =
   with_hf_tokenizer "bert-base-uncased" (fun tok ->
       let encoding = Tokenizer.encode tok "Hello world!" in
       let tokens = Encoding.get_tokens encoding |> Array.to_list in
-      check (list string) "token sequence"
+      equal ~msg:"token sequence"
+        (list string)
         [ "[CLS]"; "hello"; "world"; "!"; "[SEP]" ]
         tokens;
       let type_ids = Encoding.get_type_ids encoding |> Array.to_list in
-      check (list int) "type ids" [ 0; 0; 0; 0; 0 ] type_ids;
-      check bool "has [MASK]" true
+      equal ~msg:"type ids" (list int) [ 0; 0; 0; 0; 0 ] type_ids;
+      equal ~msg:"has [MASK]" bool true
         (Option.is_some (Tokenizer.token_to_id tok "[MASK]")))
 
 let test_gpt2_small () =
   with_hf_tokenizer "gpt2" (fun tok ->
       let encoding = Tokenizer.encode tok "Hello world" in
       let ids = Encoding.get_ids encoding |> Array.to_list in
-      check (list int) "ids" [ 15496; 995 ] ids;
+      equal ~msg:"ids" (list int) [ 15496; 995 ] ids;
       let roundtrip =
         Tokenizer.decode tok (Array.of_list ids) ~skip_special_tokens:true
       in
-      check string "decode" "Hello world" roundtrip)
+      equal ~msg:"decode" string "Hello world" roundtrip)
 
 let test_roberta_base () =
   with_hf_tokenizer "roberta-base" (fun tok ->
       let encoding = Tokenizer.encode tok "A quick test" in
       let tokens = Encoding.get_tokens encoding |> Array.to_list in
-      check (list string) "tokens"
+      equal ~msg:"tokens"
+        (list string)
         [ "<s>"; "A"; "Ġquick"; "Ġtest"; "</s>" ]
         tokens;
       let attention = Encoding.get_attention_mask encoding |> Array.to_list in
-      check (list int) "attention mask" [ 1; 1; 1; 1; 1 ] attention)
+      equal ~msg:"attention mask" (list int) [ 1; 1; 1; 1; 1 ] attention)
 
 let () =
   run "HF tokenizers"
     [
-      ("bert-base-uncased", [ test_case "encode" `Quick test_bert_base_uncased ]);
-      ("gpt2", [ test_case "encode" `Quick test_gpt2_small ]);
-      ("roberta-base", [ test_case "encode" `Quick test_roberta_base ]);
+      group "bert-base-uncased" [ test "encode" test_bert_base_uncased ];
+      group "gpt2" [ test "encode" test_gpt2_small ];
+      group "roberta-base" [ test "encode" test_roberta_base ];
     ]

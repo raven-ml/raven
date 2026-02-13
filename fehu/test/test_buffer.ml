@@ -4,11 +4,12 @@
   ---------------------------------------------------------------------------*)
 
 open Fehu
+open Windtrap
 
 let test_replay_create () =
   let buffer = Buffer.Replay.create ~capacity:10 in
-  Alcotest.(check int) "initial size is 0" 0 (Buffer.Replay.size buffer);
-  Alcotest.(check bool) "buffer not full" false (Buffer.Replay.is_full buffer)
+  equal ~msg:"initial size is 0" int 0 (Buffer.Replay.size buffer);
+  equal ~msg:"buffer not full" bool false (Buffer.Replay.is_full buffer)
 
 let test_replay_add_and_sample () =
   let buffer = Buffer.Replay.create ~capacity:5 in
@@ -35,21 +36,21 @@ let test_replay_add_and_sample () =
     Buffer.Replay.add buffer transition
   done;
 
-  Alcotest.(check int) "size after adding 3" 3 (Buffer.Replay.size buffer);
+  equal ~msg:"size after adding 3" int 3 (Buffer.Replay.size buffer);
 
   (* Sample *)
   let keys = Rune.Rng.split rng ~n:2 in
   let samples = Buffer.Replay.sample buffer ~rng:keys.(0) ~batch_size:2 in
-  Alcotest.(check int) "sampled batch size" 2 (Array.length samples);
+  equal ~msg:"sampled batch size" int 2 (Array.length samples);
   let observations, actions, rewards, next_obs, terminateds, truncateds =
     Buffer.Replay.sample_arrays buffer ~rng:keys.(1) ~batch_size:2
   in
-  Alcotest.(check int) "soa observations" 2 (Array.length observations);
-  Alcotest.(check int) "soa actions" 2 (Array.length actions);
-  Alcotest.(check int) "soa rewards" 2 (Array.length rewards);
-  Alcotest.(check int) "soa next observations" 2 (Array.length next_obs);
-  Alcotest.(check int) "soa terminateds" 2 (Array.length terminateds);
-  Alcotest.(check int) "soa truncateds" 2 (Array.length truncateds)
+  equal ~msg:"soa observations" int 2 (Array.length observations);
+  equal ~msg:"soa actions" int 2 (Array.length actions);
+  equal ~msg:"soa rewards" int 2 (Array.length rewards);
+  equal ~msg:"soa next observations" int 2 (Array.length next_obs);
+  equal ~msg:"soa terminateds" int 2 (Array.length terminateds);
+  equal ~msg:"soa truncateds" int 2 (Array.length truncateds)
 
 let test_replay_add_many () =
   let buffer = Buffer.Replay.create ~capacity:5 in
@@ -69,7 +70,7 @@ let test_replay_add_many () =
   in
   let batch = Array.init 3 mk_transition in
   Buffer.Replay.add_many buffer batch;
-  Alcotest.(check int) "size after add_many" 3 (Buffer.Replay.size buffer)
+  equal ~msg:"size after add_many" int 3 (Buffer.Replay.size buffer)
 
 let test_replay_circular () =
   let buffer = Buffer.Replay.create ~capacity:3 in
@@ -95,8 +96,8 @@ let test_replay_circular () =
     Buffer.Replay.add buffer transition
   done;
 
-  Alcotest.(check int) "size capped at capacity" 3 (Buffer.Replay.size buffer);
-  Alcotest.(check bool) "buffer is full" true (Buffer.Replay.is_full buffer)
+  equal ~msg:"size capped at capacity" int 3 (Buffer.Replay.size buffer);
+  equal ~msg:"buffer is full" bool true (Buffer.Replay.is_full buffer)
 
 let test_replay_clear () =
   let buffer = Buffer.Replay.create ~capacity:5 in
@@ -116,14 +117,14 @@ let test_replay_clear () =
   in
   Buffer.Replay.add buffer transition;
 
-  Alcotest.(check int) "size before clear" 1 (Buffer.Replay.size buffer);
+  equal ~msg:"size before clear" int 1 (Buffer.Replay.size buffer);
   Buffer.Replay.clear buffer;
-  Alcotest.(check int) "size after clear" 0 (Buffer.Replay.size buffer)
+  equal ~msg:"size after clear" int 0 (Buffer.Replay.size buffer)
 
 let test_rollout_create () =
   let buffer = Buffer.Rollout.create ~capacity:10 in
-  Alcotest.(check int) "initial size is 0" 0 (Buffer.Rollout.size buffer);
-  Alcotest.(check bool) "buffer not full" false (Buffer.Rollout.is_full buffer)
+  equal ~msg:"initial size is 0" int 0 (Buffer.Rollout.size buffer);
+  equal ~msg:"buffer not full" bool false (Buffer.Rollout.is_full buffer)
 
 let test_rollout_add_and_get () =
   let buffer = Buffer.Rollout.create ~capacity:5 in
@@ -147,13 +148,13 @@ let test_rollout_add_and_get () =
     Buffer.Rollout.add buffer step
   done;
 
-  Alcotest.(check int) "size after adding 3" 3 (Buffer.Rollout.size buffer);
+  equal ~msg:"size after adding 3" int 3 (Buffer.Rollout.size buffer);
 
   let steps, advantages, returns = Buffer.Rollout.get buffer in
-  Alcotest.(check int) "got 3 steps" 3 (Array.length steps);
-  Alcotest.(check int) "got 3 advantages" 3 (Array.length advantages);
-  Alcotest.(check int) "got 3 returns" 3 (Array.length returns);
-  Alcotest.(check int) "size after get" 0 (Buffer.Rollout.size buffer)
+  equal ~msg:"got 3 steps" int 3 (Array.length steps);
+  equal ~msg:"got 3 advantages" int 3 (Array.length advantages);
+  equal ~msg:"got 3 returns" int 3 (Array.length returns);
+  equal ~msg:"size after get" int 0 (Buffer.Rollout.size buffer)
 
 let test_rollout_compute_advantages () =
   let buffer = Buffer.Rollout.create ~capacity:5 in
@@ -182,13 +183,13 @@ let test_rollout_compute_advantages () =
     ~gamma:0.99 ~gae_lambda:0.95;
 
   let _, advantages, returns = Buffer.Rollout.get buffer in
-  Alcotest.(check int) "advantages computed" 3 (Array.length advantages);
-  Alcotest.(check int) "returns computed" 3 (Array.length returns);
+  equal ~msg:"advantages computed" int 3 (Array.length advantages);
+  equal ~msg:"returns computed" int 3 (Array.length returns);
 
   (* All advantages should be positive since rewards are 1.0 and values are
      0.0 *)
   Array.iter
-    (fun adv -> Alcotest.(check bool) "advantage > 0" true (adv > 0.0))
+    (fun adv -> equal ~msg:"advantage > 0" bool true (adv > 0.0))
     advantages
 
 let test_rollout_compute_advantages_truncated () =
@@ -211,9 +212,8 @@ let test_rollout_compute_advantages_truncated () =
   Buffer.Rollout.compute_advantages buffer ~last_value:10.0 ~last_done:false
     ~gamma:0.99 ~gae_lambda:1.0;
   let _, advantages, returns = Buffer.Rollout.get buffer in
-  Alcotest.(check (float 1e-6))
-    "advantage treats truncation as terminal" 0.5 advantages.(0);
-  Alcotest.(check (float 1e-6)) "return respects truncation" 1.0 returns.(0)
+  equal ~msg:"advantage treats truncation as terminal" (float 1e-6) 0.5 advantages.(0);
+  equal ~msg:"return respects truncation" (float 1e-6) 1.0 returns.(0)
 
 let test_rollout_clear () =
   let buffer = Buffer.Rollout.create ~capacity:5 in
@@ -234,29 +234,28 @@ let test_rollout_clear () =
   in
   Buffer.Rollout.add buffer step;
 
-  Alcotest.(check int) "size before clear" 1 (Buffer.Rollout.size buffer);
+  equal ~msg:"size before clear" int 1 (Buffer.Rollout.size buffer);
   Buffer.Rollout.clear buffer;
-  Alcotest.(check int) "size after clear" 0 (Buffer.Rollout.size buffer)
+  equal ~msg:"size after clear" int 0 (Buffer.Rollout.size buffer)
 
 let () =
-  let open Alcotest in
   run "Buffer"
     [
-      ( "Replay",
+      group "Replay"
         [
-          test_case "create replay buffer" `Quick test_replay_create;
-          test_case "add and sample" `Quick test_replay_add_and_sample;
-          test_case "add_many" `Quick test_replay_add_many;
-          test_case "circular buffer behavior" `Quick test_replay_circular;
-          test_case "clear buffer" `Quick test_replay_clear;
-        ] );
-      ( "Rollout",
+          test "create replay buffer" test_replay_create;
+          test "add and sample" test_replay_add_and_sample;
+          test "add_many" test_replay_add_many;
+          test "circular buffer behavior" test_replay_circular;
+          test "clear buffer" test_replay_clear;
+        ];
+      group "Rollout"
         [
-          test_case "create rollout buffer" `Quick test_rollout_create;
-          test_case "add and get" `Quick test_rollout_add_and_get;
-          test_case "compute advantages" `Quick test_rollout_compute_advantages;
-          test_case "compute advantages with truncation" `Quick
+          test "create rollout buffer" test_rollout_create;
+          test "add and get" test_rollout_add_and_get;
+          test "compute advantages" test_rollout_compute_advantages;
+          test "compute advantages with truncation"
             test_rollout_compute_advantages_truncated;
-          test_case "clear buffer" `Quick test_rollout_clear;
-        ] );
+          test "clear buffer" test_rollout_clear;
+        ];
     ]

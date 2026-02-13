@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Fehu
+open Windtrap
 
 let string_contains ~needle haystack =
   let h_len = String.length haystack in
@@ -43,7 +44,7 @@ let test_vec_env_creation () =
   let env2 = make_simple_env ~rng:rng2 ~id:"Env2" () in
   let env3 = make_simple_env ~rng:rng3 ~id:"Env3" () in
   let vec_env = Vector_env.create_sync ~envs:[ env1; env2; env3 ] () in
-  Alcotest.(check int) "num envs" 3 (Vector_env.num_envs vec_env)
+  equal ~msg:"num envs" int 3 (Vector_env.num_envs vec_env)
 
 let test_vec_env_incompatible_action_space () =
   let rng1 = Rune.Rng.key 101 in
@@ -55,11 +56,10 @@ let test_vec_env_incompatible_action_space () =
   in
   match Vector_env.create_sync ~envs:[ env1; env2 ] () with
   | exception Errors.Error (Errors.Invalid_metadata msg) ->
-      Alcotest.(check bool)
-        "error mentions action space" true
+      equal ~msg:"error mentions action space" bool true
         (string_contains ~needle:"action" msg)
   | _ ->
-      Alcotest.fail "expected Invalid_metadata due to mismatched action space"
+      fail "expected Invalid_metadata due to mismatched action space"
 
 let test_vec_env_reset () =
   let rng1 = Rune.Rng.key 42 in
@@ -68,12 +68,12 @@ let test_vec_env_reset () =
   let env2 = make_simple_env ~rng:rng2 ~id:"Env2" () in
   let vec_env = Vector_env.create_sync ~envs:[ env1; env2 ] () in
   let obs_arr, info_arr = Vector_env.reset vec_env () in
-  Alcotest.(check int) "observations array length" 2 (Array.length obs_arr);
-  Alcotest.(check int) "infos array length" 2 (Array.length info_arr);
+  equal ~msg:"observations array length" int 2 (Array.length obs_arr);
+  equal ~msg:"infos array length" int 2 (Array.length info_arr);
   Array.iter
     (fun obs ->
       let shape = Rune.shape obs in
-      Alcotest.(check (array int)) "obs shape" [| 1 |] shape)
+      equal ~msg:"obs shape" (array int) [| 1 |] shape)
     obs_arr
 
 let test_vec_env_step () =
@@ -90,15 +90,13 @@ let test_vec_env_step () =
     |]
   in
   let result = Vector_env.step vec_env actions in
-  Alcotest.(check int)
-    "observations length" 2
+  equal ~msg:"observations length" int 2
     (Array.length result.observations);
-  Alcotest.(check int) "rewards length" 2 (Array.length result.rewards);
-  Alcotest.(check int)
-    "terminations length" 2
+  equal ~msg:"rewards length" int 2 (Array.length result.rewards);
+  equal ~msg:"terminations length" int 2
     (Array.length result.terminations);
-  Alcotest.(check int) "truncations length" 2 (Array.length result.truncations);
-  Alcotest.(check int) "infos length" 2 (Array.length result.infos)
+  equal ~msg:"truncations length" int 2 (Array.length result.truncations);
+  equal ~msg:"infos length" int 2 (Array.length result.infos)
 
 let test_vec_env_autoreset_next_step () =
   let rng1 = Rune.Rng.key 42 in
@@ -117,7 +115,7 @@ let test_vec_env_autoreset_next_step () =
     |]
   in
   let rec step_until_termination count =
-    if count > 20 then Alcotest.fail "no termination"
+    if count > 20 then fail "no termination"
     else
       let result = Vector_env.step vec_env actions in
       if result.terminations.(0) || result.terminations.(1) then result
@@ -125,8 +123,7 @@ let test_vec_env_autoreset_next_step () =
   in
   let _result = step_until_termination 0 in
   let next_result = Vector_env.step vec_env actions in
-  Alcotest.(check bool)
-    "env reset after termination" false
+  equal ~msg:"env reset after termination" bool false
     next_result.terminations.(0)
 
 let test_vec_env_autoreset_disabled () =
@@ -138,15 +135,15 @@ let test_vec_env_autoreset_disabled () =
   let _, _ = Vector_env.reset vec_env () in
   let actions = [| Rune.create Rune.int32 [| 1 |] [| 1l |] |] in
   let rec step_until_termination count =
-    if count > 20 then Alcotest.fail "no termination"
+    if count > 20 then fail "no termination"
     else
       let result = Vector_env.step vec_env actions in
       if result.terminations.(0) then result
       else step_until_termination (count + 1)
   in
   let result = step_until_termination 0 in
-  Alcotest.(check bool) "env terminated" true result.terminations.(0);
-  Alcotest.(check pass) "disabled autoreset mode works" () ()
+  equal ~msg:"env terminated" bool true result.terminations.(0);
+  equal ~msg:"disabled autoreset mode works" pass () ()
 
 let test_vec_env_spaces () =
   let rng1 = Rune.Rng.key 42 in
@@ -156,7 +153,7 @@ let test_vec_env_spaces () =
   let vec_env = Vector_env.create_sync ~envs:[ env1; env2 ] () in
   let _obs_space = Vector_env.observation_space vec_env in
   let _act_space = Vector_env.action_space vec_env in
-  Alcotest.(check pass) "spaces accessible" () ()
+  equal ~msg:"spaces accessible" pass () ()
 
 let test_vec_env_metadata () =
   let rng1 = Rune.Rng.key 42 in
@@ -165,7 +162,7 @@ let test_vec_env_metadata () =
   let env2 = make_simple_env ~rng:rng2 ~id:"Env2" () in
   let vec_env = Vector_env.create_sync ~envs:[ env1; env2 ] () in
   let _metadata = Vector_env.metadata vec_env in
-  Alcotest.(check pass) "metadata accessible" () ()
+  equal ~msg:"metadata accessible" pass () ()
 
 let test_vec_env_close () =
   let rng1 = Rune.Rng.key 42 in
@@ -174,33 +171,32 @@ let test_vec_env_close () =
   let env2 = make_simple_env ~rng:rng2 ~id:"Env2" () in
   let vec_env = Vector_env.create_sync ~envs:[ env1; env2 ] () in
   Vector_env.close vec_env;
-  Alcotest.(check pass) "vec env closed" () ()
+  equal ~msg:"vec env closed" pass () ()
 
 let () =
-  let open Alcotest in
   run "Vector_env"
     [
-      ( "Creation",
+      group "Creation"
         [
-          test_case "create vectorized env" `Quick test_vec_env_creation;
-          test_case "reject incompatible action spaces" `Quick
+          test "create vectorized env" test_vec_env_creation;
+          test "reject incompatible action spaces"
             test_vec_env_incompatible_action_space;
-        ] );
-      ( "Lifecycle",
+        ];
+      group "Lifecycle"
         [
-          test_case "reset vec env" `Quick test_vec_env_reset;
-          test_case "step vec env" `Quick test_vec_env_step;
-        ] );
-      ( "Autoreset",
+          test "reset vec env" test_vec_env_reset;
+          test "step vec env" test_vec_env_step;
+        ];
+      group "Autoreset"
         [
-          test_case "autoreset next_step" `Quick
+          test "autoreset next_step"
             test_vec_env_autoreset_next_step;
-          test_case "autoreset disabled" `Quick test_vec_env_autoreset_disabled;
-        ] );
-      ( "Properties",
+          test "autoreset disabled" test_vec_env_autoreset_disabled;
+        ];
+      group "Properties"
         [
-          test_case "spaces" `Quick test_vec_env_spaces;
-          test_case "metadata" `Quick test_vec_env_metadata;
-          test_case "close" `Quick test_vec_env_close;
-        ] );
+          test "spaces" test_vec_env_spaces;
+          test "metadata" test_vec_env_metadata;
+          test "close" test_vec_env_close;
+        ];
     ]

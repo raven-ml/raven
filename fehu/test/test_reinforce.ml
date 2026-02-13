@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Fehu
+open Windtrap
 module Reinforce = Fehu_algorithms.Reinforce
 
 let make_env () =
@@ -51,15 +52,15 @@ let test_init () =
   in
   ignore params;
   let metrics = Reinforce.metrics state in
-  Alcotest.(check int) "initial total steps" 0 metrics.total_steps;
-  Alcotest.(check int) "initial episodes" 0 metrics.total_episodes
+  equal ~msg:"initial total steps" int 0 metrics.total_steps;
+  equal ~msg:"initial episodes" int 0 metrics.total_episodes
 
 let test_init_requires_baseline () =
   let env = make_env () in
   let rng = Rune.Rng.key 11 in
   let policy_net = make_policy_network ~obs_dim:2 ~n_actions:2 in
   let config = { Reinforce.default_config with use_baseline = true } in
-  Alcotest.check_raises "baseline required when flag is set"
+  raises ~msg:"baseline required when flag is set"
     (Invalid_argument
        "Reinforce.init: baseline_network required when use_baseline = true")
     (fun () ->
@@ -79,7 +80,7 @@ let test_init_with_baseline () =
   in
   ignore params;
   let metrics = Reinforce.metrics state in
-  Alcotest.(check int) "baseline init total steps" 0 metrics.total_steps
+  equal ~msg:"baseline init total steps" int 0 metrics.total_steps
 
 let finish_episode env params state =
   let rec loop params state =
@@ -99,10 +100,9 @@ let test_step_completes_episode () =
   in
   let _params, state = finish_episode env params state in
   let metrics = Reinforce.metrics state in
-  Alcotest.(check int) "episode length" 3 metrics.episode_length;
-  Alcotest.(check int) "episodes counted" 1 metrics.total_episodes;
-  Alcotest.(check bool)
-    "episode return positive" true
+  equal ~msg:"episode length" int 3 metrics.episode_length;
+  equal ~msg:"episodes counted" int 1 metrics.total_episodes;
+  equal ~msg:"episode return positive" bool true
     (metrics.episode_return > 0.0)
 
 let test_train_runs () =
@@ -117,11 +117,10 @@ let test_train_runs () =
   | params, state ->
       ignore params;
       let metrics = Reinforce.metrics state in
-      Alcotest.(check bool)
-        "train advanced steps" true
+      equal ~msg:"train advanced steps" bool true
         (metrics.total_steps >= 15)
   | exception Fehu.Errors.Error err ->
-      Alcotest.failf "train raised env error: %s" (Fehu.Errors.to_string err)
+      failf "train raised env error: %s" (Fehu.Errors.to_string err)
 
 let test_save_and_load () =
   let env = make_env () in
@@ -141,13 +140,11 @@ let test_save_and_load () =
   with
   | Ok (_params', state') ->
       let metrics = Reinforce.metrics state' in
-      Alcotest.(check int)
-        "loaded preserves total steps" saved_metrics.total_steps
+      equal ~msg:"loaded preserves total steps" int saved_metrics.total_steps
         metrics.total_steps;
-      Alcotest.(check int)
-        "loaded preserves total episodes" saved_metrics.total_episodes
+      equal ~msg:"loaded preserves total episodes" int saved_metrics.total_episodes
         metrics.total_episodes
-  | Error msg -> Alcotest.failf "load failed: %s" msg
+  | Error msg -> failf "load failed: %s" msg
 
 let test_train_with_baseline () =
   let env = make_env () in
@@ -163,22 +160,20 @@ let test_train_with_baseline () =
   in
   ignore params;
   let metrics = Reinforce.metrics state in
-  Alcotest.(check bool)
-    "baseline train episodes" true
+  equal ~msg:"baseline train episodes" bool true
     (metrics.total_episodes > 0)
 
 let () =
-  let open Alcotest in
   run "REINFORCE"
     [
-      ( "Core",
+      group "Core"
         [
-          test_case "init" `Quick test_init;
-          test_case "init requires baseline" `Quick test_init_requires_baseline;
-          test_case "init with baseline" `Quick test_init_with_baseline;
-          test_case "step completes episode" `Quick test_step_completes_episode;
-          test_case "train" `Quick test_train_runs;
-          test_case "save/load" `Quick test_save_and_load;
-          test_case "train with baseline" `Quick test_train_with_baseline;
-        ] );
+          test "init" test_init;
+          test "init requires baseline" test_init_requires_baseline;
+          test "init with baseline" test_init_with_baseline;
+          test "step completes episode" test_step_completes_episode;
+          test "train" test_train_runs;
+          test "save/load" test_save_and_load;
+          test "train with baseline" test_train_with_baseline;
+        ];
     ]

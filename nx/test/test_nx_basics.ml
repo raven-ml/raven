@@ -5,7 +5,7 @@
 
 (* Core functionality tests for Nx - creation, indexing, properties *)
 
-open Alcotest
+open Windtrap
 open Test_nx_support
 
 (* ───── Creation Edge Case Tests ───── *)
@@ -54,7 +54,7 @@ let test_create_max_rank () =
   (* = 8 total elements *)
   let data = Array.init data_size float_of_int in
   let t = Nx.create Nx.float32 shape data in
-  check int "ndim of 32D array" 32 (Nx.ndim t);
+  equal ~msg:"ndim of 32D array" int 32 (Nx.ndim t);
   check_shape "32D shape" shape t
 
 let test_create_wrong_data_size () =
@@ -100,7 +100,7 @@ let test_ones_like_int32 () =
 let test_zeros_max_size () =
   let t = Nx.zeros Nx.float32 [| 256; 256; 16 |] in
   check_shape "large zeros shape" [| 256; 256; 16 |] t;
-  check (float 1e-6) "zeros[0,0,0]" 0.0 (Nx.item [ 0; 0; 0 ] t)
+  equal ~msg:"zeros[0,0,0]" (float 1e-6) 0.0 (Nx.item [ 0; 0; 0 ] t)
 
 (* ───── Eye Identity Tests ───── *)
 
@@ -226,84 +226,84 @@ let test_shape_2x3 () =
 
 let test_strides_2x3_float32 () =
   let t = Nx.create Nx.float32 [| 2; 3 |] (Array.init 6 float_of_int) in
-  check (array int) "strides" [| 12; 4 |] (Nx.strides t)
+  equal ~msg:"strides" (array int) [| 12; 4 |] (Nx.strides t)
 
 let test_stride_dim0_2x3_float32 () =
   let t = Nx.create Nx.float32 [| 2; 3 |] (Array.init 6 float_of_int) in
-  check int "stride dim 0" 12 (Nx.stride 0 t)
+  equal ~msg:"stride dim 0" int 12 (Nx.stride 0 t)
 
 let test_stride_dim1_2x3_float32 () =
   let t = Nx.create Nx.float32 [| 2; 3 |] (Array.init 6 float_of_int) in
-  check int "stride dim 1" 4 (Nx.stride 1 t)
+  equal ~msg:"stride dim 1" int 4 (Nx.stride 1 t)
 
 let test_strides_2x3_int64 () =
   let t = Nx.create Nx.int64 [| 2; 3 |] (Array.init 6 Int64.of_int) in
-  check (array int) "strides int64" [| 24; 8 |] (Nx.strides t)
+  equal ~msg:"strides int64" (array int) [| 24; 8 |] (Nx.strides t)
 
 let test_itemsize_float32 () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
-  check int "itemsize float32" 4 (Nx.itemsize t)
+  equal ~msg:"itemsize float32" int 4 (Nx.itemsize t)
 
 let test_itemsize_int64 () =
   let t = Nx.create Nx.int64 [| 2; 2 |] [| 1L; 2L; 3L; 4L |] in
-  check int "itemsize int64" 8 (Nx.itemsize t)
+  equal ~msg:"itemsize int64" int 8 (Nx.itemsize t)
 
 let test_ndim_scalar () =
   let t = Nx.scalar Nx.float32 1.0 in
-  check int "ndim scalar" 0 (Nx.ndim t)
+  equal ~msg:"ndim scalar" int 0 (Nx.ndim t)
 
 let test_ndim_2x2 () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
-  check int "ndim 2x2" 2 (Nx.ndim t)
+  equal ~msg:"ndim 2x2" int 2 (Nx.ndim t)
 
 let test_dim_0_2x3 () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
-  check int "dim 0" 2 (Nx.dim 0 t)
+  equal ~msg:"dim 0" int 2 (Nx.dim 0 t)
 
 let test_dims_2x3 () =
   let t = Nx.create Nx.float32 [| 2; 3 |] (Array.init 6 float_of_int) in
-  check (array int) "dims" [| 2; 3 |] (Nx.dims t)
+  equal ~msg:"dims" (array int) [| 2; 3 |] (Nx.dims t)
 
 let test_nbytes_float32 () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
-  check int "nbytes float32" 16 (Nx.nbytes t)
+  equal ~msg:"nbytes float32" int 16 (Nx.nbytes t)
 
 let test_nbytes_int64 () =
   let t = Nx.create Nx.int64 [| 2; 3 |] (Array.init 6 Int64.of_int) in
-  check int "nbytes int64" 48 (Nx.nbytes t)
+  equal ~msg:"nbytes int64" int 48 (Nx.nbytes t)
 
 let test_nbytes_empty () =
   let t = Nx.create Nx.float32 [| 0 |] [||] in
-  check int "nbytes empty" 0 (Nx.nbytes t)
+  equal ~msg:"nbytes empty" int 0 (Nx.nbytes t)
 
 let test_size_2x3 () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
-  check int "size 2x3" 6 (Nx.size t)
+  equal ~msg:"size 2x3" int 6 (Nx.size t)
 
 let test_size_scalar () =
   let t = Nx.scalar Nx.float32 10.0 in
-  check int "size scalar" 1 (Nx.size t)
+  equal ~msg:"size scalar" int 1 (Nx.size t)
 
 let test_offset_basic () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
-  check int "offset basic" 0 (Nx.offset t)
+  equal ~msg:"offset basic" int 0 (Nx.offset t)
 
 let test_offset_slice () =
   let t = Nx.create Nx.float32 [| 3; 3 |] (Array.init 9 float_of_int) in
   let s = Nx.slice [ Nx.R (1, -1); Nx.R (1, -1) ] t in
-  check int "offset slice" 4 (Nx.offset s)
+  equal ~msg:"offset slice" int 4 (Nx.offset s)
 
 (* ───── Element Access And Indexing Tests ───── *)
 
 let test_get_item_2x2 () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
-  check (float 1e-6) "get [0,1]" 2.0 (Nx.item [ 0; 1 ] t);
-  check (float 1e-6) "get [1,0]" 3.0 (Nx.item [ 1; 0 ] t)
+  equal ~msg:"get [0,1]" (float 1e-6) 2.0 (Nx.item [ 0; 1 ] t);
+  equal ~msg:"get [1,0]" (float 1e-6) 3.0 (Nx.item [ 1; 0 ] t)
 
 let test_set_item_2x2 () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   Nx.set_item [ 1; 0 ] 5.0 t;
-  check (float 1e-6) "set [1,0]" 5.0 (Nx.item [ 1; 0 ] t)
+  equal ~msg:"set [1,0]" (float 1e-6) 5.0 (Nx.item [ 1; 0 ] t)
 
 let test_get_item_out_of_bounds () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
@@ -322,16 +322,16 @@ let test_set_item_out_of_bounds () =
 let test_set_item_type_safety () =
   let t = Nx.create Nx.int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |] in
   Nx.set_item [ 0; 0 ] 5l t;
-  check int32 "set int32" 5l (Nx.item [ 0; 0 ] t)
+  equal ~msg:"set int32" int32 5l (Nx.item [ 0; 0 ] t)
 
 let test_get_scalar_from_0d () =
   let t = Nx.scalar Nx.float32 42.0 in
-  check (float 1e-6) "get scalar" 42.0 (Nx.item [] t)
+  equal ~msg:"get scalar" (float 1e-6) 42.0 (Nx.item [] t)
 
 let test_set_scalar_in_0d () =
   let t = Nx.scalar Nx.float32 42.0 in
   Nx.set_item [] 99.0 t;
-  check (float 1e-6) "set scalar" 99.0 (Nx.item [] t)
+  equal ~msg:"set scalar" (float 1e-6) 99.0 (Nx.item [] t)
 
 let test_get_view_row () =
   let t = Nx.create Nx.int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |] in
@@ -370,7 +370,7 @@ let test_slice_view () =
   let t = Nx.create Nx.float32 [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
   let s = Nx.slice [ Nx.R (1, 2); Nx.R (0, 2) ] t in
   Nx.set_item [ 1; 0 ] 99.0 t;
-  check (float 1e-6) "slice view modified" 99.0 (Nx.item [ 0; 0 ] s)
+  equal ~msg:"slice view modified" (float 1e-6) 99.0 (Nx.item [ 0; 0 ] s)
 
 let test_slice_negative_indices () =
   let t = Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
@@ -400,14 +400,14 @@ let test_data_buffer_view () =
   let t = Nx.create Nx.float32 [| 3 |] [| 1.0; 2.0; 3.0 |] in
   let d = Nx.data t in
   Nx_buffer.Array1.set d 0 99.0;
-  check (float 1e-6) "data buffer view" 99.0 (Nx.item [ 0 ] t)
+  equal ~msg:"data buffer view" (float 1e-6) 99.0 (Nx.item [ 0 ] t)
 
 let test_strides_after_transpose () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let original_strides = Nx.strides t in
   let transposed = Nx.transpose t in
   let new_strides = Nx.strides transposed in
-  check (array int) "transposed strides"
+  equal ~msg:"transposed strides" (array int)
     [| original_strides.(1); original_strides.(0) |]
     new_strides
 
@@ -416,59 +416,59 @@ let test_strides_after_slice () =
   let sliced = Nx.slice [ Nx.Rs (0, 10, 2) ] t in
   let strides = Nx.strides sliced in
   (* step=2 on float32 (4 bytes): stride = 4 * 2 = 8 bytes *)
-  check int "slice stride" 8 strides.(0)
+  equal ~msg:"slice stride" int 8 strides.(0)
 
 let test_is_c_contiguous_basic () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  check bool "fresh array is contiguous" true (Nx.is_c_contiguous t)
+  equal ~msg:"fresh array is contiguous" bool true (Nx.is_c_contiguous t)
 
 let test_is_c_contiguous_after_transpose () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let transposed = Nx.transpose t in
-  check bool "transposed not contiguous" false (Nx.is_c_contiguous transposed)
+  equal ~msg:"transposed not contiguous" bool false (Nx.is_c_contiguous transposed)
 
 let test_is_c_contiguous_after_slice () =
   let t = Nx.create Nx.float32 [| 10 |] (Array.init 10 float_of_int) in
   (* step=2 creates a strided view, not contiguous *)
   let sliced = Nx.slice [ Nx.Rs (0, 10, 2) ] t in
-  check bool "slice step=2 is not contiguous" false (Nx.is_c_contiguous sliced);
+  equal ~msg:"slice step=2 is not contiguous" bool false (Nx.is_c_contiguous sliced);
   (* step=1 slice is contiguous *)
   let sliced_step1 = Nx.slice [ Nx.Rs (0, 5, 1) ] t in
-  check bool "slice step=1 is contiguous" true (Nx.is_c_contiguous sliced_step1)
+  equal ~msg:"slice step=1 is contiguous" bool true (Nx.is_c_contiguous sliced_step1)
 
 let test_is_c_contiguous_after_double_transpose () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let transposed = Nx.transpose t in
   let restored = Nx.transpose transposed in
-  check bool "transpose twice restores contiguous layout" true
+  equal ~msg:"transpose twice restores contiguous layout" bool true
     (Nx.is_c_contiguous restored)
 
 let test_offset_after_multiple_slices () =
   let t = Nx.create Nx.float32 [| 5; 5 |] (Array.init 25 float_of_int) in
   let slice1 = Nx.slice [ Nx.R (1, 3); Nx.R (0, 5) ] t in
   let slice2 = Nx.slice [ Nx.R (0, 1); Nx.R (0, 5) ] slice1 in
-  check (float 1e-6) "accumulated offset value" 5.0 (Nx.item [ 0; 0 ] slice2)
+  equal ~msg:"accumulated offset value" (float 1e-6) 5.0 (Nx.item [ 0; 0 ] slice2)
 
 (* ───── Utility Operation Tests ───── *)
 
 let test_to_bigarray () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let ba = Nx.to_bigarray t in
-  check (float 1e-6) "initial [0,0]" 1.0 (Bigarray.Genarray.get ba [| 0; 0 |]);
+  equal ~msg:"initial [0,0]" (float 1e-6) 1.0 (Bigarray.Genarray.get ba [| 0; 0 |]);
   Nx.set_item [ 0; 0 ] 55.0 t;
-  check (float 1e-6) "after set [0,0]" 55.0
+  equal ~msg:"after set [0,0]" (float 1e-6) 55.0
     (Bigarray.Genarray.get ba [| 0; 0 |])
 
 let test_to_bigarray_partial_slice () =
   let base = Nx.arange Nx.float32 0 5 1 |> Nx.reshape [| 5; 1 |] in
   let slice = Nx.slice [ Nx.R (0, 4); Nx.I 0 ] base in
   let ba = Nx.to_bigarray slice in
-  check (array int) "slice dims" [| 4 |] (Bigarray.Genarray.dims ba);
+  equal ~msg:"slice dims" (array int) [| 4 |] (Bigarray.Genarray.dims ba);
   let expected = [| 0.0; 1.0; 2.0; 3.0 |] in
   Array.iteri
     (fun i value ->
-      check (float 1e-6)
-        (Printf.sprintf "slice[%d]" i)
+      equal ~msg:(Printf.sprintf "slice[%d]" i)
+        (float 1e-6)
         value
         (Bigarray.Genarray.get ba [| i |]))
     expected
@@ -477,15 +477,15 @@ let test_copy () =
   let original = Nx.create Nx.float32 [| 3 |] [| 1.0; 2.0; 3.0 |] in
   let copy_arr = Nx.copy original in
   Nx.set_item [ 0 ] 10.0 original;
-  check (float 1e-6) "original [0]" 10.0 (Nx.item [ 0 ] original);
-  check (float 1e-6) "copy [0]" 1.0 (Nx.item [ 0 ] copy_arr)
+  equal ~msg:"original [0]" (float 1e-6) 10.0 (Nx.item [ 0 ] original);
+  equal ~msg:"copy [0]" (float 1e-6) 1.0 (Nx.item [ 0 ] copy_arr)
 
 let test_blit_incompatible () =
   let src = Nx.create Nx.float32 [| 2 |] [| 1.0; 2.0 |] in
   let dst = Nx.zeros Nx.float32 [| 3 |] in
-  check_raises "incompatible shapes"
+  raises ~msg:"incompatible shapes"
     (Invalid_argument
-       "blit: cannot reshape [3] to [2] (dim 0: 3≠2)\n\
+       "blit: cannot reshape [3] to [2] (dim 0: 3\226\137\1602)\n\
         hint: source and destination must have identical shapes") (fun () ->
       Nx.blit src dst)
 
@@ -493,21 +493,21 @@ let test_ifill_nan () =
   let t = Nx.empty Nx.float32 [| 2; 2 |] in
   ignore (Nx.ifill Float.nan t);
   let v = Nx.item [ 0; 0 ] t in
-  check bool "ifill with NaN" true (Float.is_nan v)
+  equal ~msg:"ifill with NaN" bool true (Float.is_nan v)
 
 let test_ifill_inf () =
   let t = Nx.empty Nx.float32 [| 2; 2 |] in
   ignore (Nx.ifill Float.infinity t);
-  check (float 1e-6) "ifill with infinity" Float.infinity (Nx.item [ 0; 0 ] t);
+  equal ~msg:"ifill with infinity" (float 1e-6) Float.infinity (Nx.item [ 0; 0 ] t);
   ignore (Nx.ifill Float.neg_infinity t);
-  check (float 1e-6) "ifill with neg_infinity" Float.neg_infinity
+  equal ~msg:"ifill with neg_infinity" (float 1e-6) Float.neg_infinity
     (Nx.item [ 0; 0 ] t)
 
 let test_fill_returns_copy () =
   let t = Nx.zeros Nx.float32 [| 2; 2 |] in
   let filled = Nx.fill 7.0 t in
-  check (float 1e-6) "fill copy result" 7.0 (Nx.item [ 0; 0 ] filled);
-  check (float 1e-6) "fill copy leaves source intact" 0.0 (Nx.item [ 0; 0 ] t)
+  equal ~msg:"fill copy result" (float 1e-6) 7.0 (Nx.item [ 0; 0 ] filled);
+  equal ~msg:"fill copy leaves source intact" (float 1e-6) 0.0 (Nx.item [ 0; 0 ] t)
 
 let test_blit_self () =
   let t = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
@@ -529,7 +529,7 @@ let test_blit_self () =
 let test_to_array () =
   let t = Nx.create Nx.int32 [| 3 |] [| 1l; 2l; 3l |] in
   let a = Nx.to_array t in
-  check (array int32) "to_array" [| 1l; 2l; 3l |] a
+  equal ~msg:"to_array" (array int32) [| 1l; 2l; 3l |] a
 
 let test_astype_float32_to_int32 () =
   let t = Nx.create Nx.float32 [| 3 |] [| 1.1; 2.9; -3.3 |] in
@@ -555,154 +555,151 @@ let test_astype_int64_to_float32 () =
 
 let creation_edge_cases =
   [
-    ("create 1D int32", `Quick, test_create_1d_int32);
-    ("create empty float32", `Quick, test_create_empty_float32);
-    ("create 2x2x2 float32", `Quick, test_create_2x2x2_float32);
-    ("scalar float32", `Quick, test_scalar_float32);
-    ("scalar int64", `Quick, test_scalar_int64);
-    ("create int16", `Quick, test_create_int16);
-    ("create empty shapes", `Quick, test_create_empty_shapes);
-    ("create max rank", `Quick, test_create_max_rank);
-    ("create wrong data size", `Quick, test_create_wrong_data_size);
-    ("create negative shape", `Quick, test_create_negative_shape);
+    test "create 1D int32" test_create_1d_int32;
+    test "create empty float32" test_create_empty_float32;
+    test "create 2x2x2 float32" test_create_2x2x2_float32;
+    test "scalar float32" test_scalar_float32;
+    test "scalar int64" test_scalar_int64;
+    test "create int16" test_create_int16;
+    test "create empty shapes" test_create_empty_shapes;
+    test "create max rank" test_create_max_rank;
+    test "create wrong data size" test_create_wrong_data_size;
+    test "create negative shape" test_create_negative_shape;
   ]
 
 let special_creation =
   [
-    ("empty float32", `Quick, test_empty_float32);
-    ("full float32", `Quick, test_full_float32);
-    ("full_like int32", `Quick, test_full_like_int32);
-    ("empty_like float32", `Quick, test_empty_like_float32);
-    ("zeros_like float32", `Quick, test_zeros_like_float32);
-    ("ones_like int32", `Quick, test_ones_like_int32);
-    ("zeros max size", `Quick, test_zeros_max_size);
+    test "empty float32" test_empty_float32;
+    test "full float32" test_full_float32;
+    test "full_like int32" test_full_like_int32;
+    test "empty_like float32" test_empty_like_float32;
+    test "zeros_like float32" test_zeros_like_float32;
+    test "ones_like int32" test_ones_like_int32;
+    test "zeros max size" test_zeros_max_size;
   ]
 
 let eye_identity_tests =
   [
-    ("identity 1x1 int32", `Quick, test_identity_1x1_int32);
-    ("eye 3x4 float32", `Quick, test_eye_3x4_float32);
-    ("eye 4x3 k=1 float32", `Quick, test_eye_4x3_k1_float32);
-    ("eye 3x3 k=-1 int32", `Quick, test_eye_3x3_km1_int32);
-    ("eye 0x0", `Quick, test_eye_0x0);
-    ("eye k out of range", `Quick, test_eye_k_out_of_range);
-    ("diag extract", `Quick, test_diag_extract);
-    ("diag construct", `Quick, test_diag_construct);
+    test "identity 1x1 int32" test_identity_1x1_int32;
+    test "eye 3x4 float32" test_eye_3x4_float32;
+    test "eye 4x3 k=1 float32" test_eye_4x3_k1_float32;
+    test "eye 3x3 k=-1 int32" test_eye_3x3_km1_int32;
+    test "eye 0x0" test_eye_0x0;
+    test "eye k out of range" test_eye_k_out_of_range;
+    test "diag extract" test_diag_extract;
+    test "diag construct" test_diag_construct;
   ]
 
 let range_generation =
   [
-    ("arange empty", `Quick, test_arange_empty);
-    ("arange negative step", `Quick, test_arange_negative_step);
-    ("arange wrong direction", `Quick, test_arange_wrong_direction);
-    ("linspace no endpoint float32", `Quick, test_linspace_no_endpoint_float32);
-    ("linspace single point", `Quick, test_linspace_single_point);
-    ("linspace zero points", `Quick, test_linspace_zero_points);
-    ("logspace base 10 float32", `Quick, test_logspace_base10_float32);
-    ( "logspace base 2 no endpoint float32",
-      `Quick,
-      test_logspace_base2_no_endpoint_float32 );
-    ("geomspace no endpoint float32", `Quick, test_geomspace_no_endpoint_float32);
+    test "arange empty" test_arange_empty;
+    test "arange negative step" test_arange_negative_step;
+    test "arange wrong direction" test_arange_wrong_direction;
+    test "linspace no endpoint float32" test_linspace_no_endpoint_float32;
+    test "linspace single point" test_linspace_single_point;
+    test "linspace zero points" test_linspace_zero_points;
+    test "logspace base 10 float32" test_logspace_base10_float32;
+    test "logspace base 2 no endpoint float32"
+      test_logspace_base2_no_endpoint_float32;
+    test "geomspace no endpoint float32" test_geomspace_no_endpoint_float32;
   ]
 
 let property_access =
   [
-    ("shape 2x3", `Quick, test_shape_2x3);
-    ("strides 2x3 float32", `Quick, test_strides_2x3_float32);
-    ("stride dim 0 2x3 float32", `Quick, test_stride_dim0_2x3_float32);
-    ("stride dim 1 2x3 float32", `Quick, test_stride_dim1_2x3_float32);
-    ("strides 2x3 int64", `Quick, test_strides_2x3_int64);
-    ("itemsize float32", `Quick, test_itemsize_float32);
-    ("itemsize int64", `Quick, test_itemsize_int64);
-    ("ndim scalar", `Quick, test_ndim_scalar);
-    ("ndim 2x2", `Quick, test_ndim_2x2);
-    ("dim 0 2x3", `Quick, test_dim_0_2x3);
-    ("dims 2x3", `Quick, test_dims_2x3);
-    ("nbytes float32", `Quick, test_nbytes_float32);
-    ("nbytes int64", `Quick, test_nbytes_int64);
-    ("nbytes empty", `Quick, test_nbytes_empty);
-    ("size 2x3", `Quick, test_size_2x3);
-    ("size scalar", `Quick, test_size_scalar);
-    ("offset basic", `Quick, test_offset_basic);
-    ("offset slice", `Quick, test_offset_slice);
+    test "shape 2x3" test_shape_2x3;
+    test "strides 2x3 float32" test_strides_2x3_float32;
+    test "stride dim 0 2x3 float32" test_stride_dim0_2x3_float32;
+    test "stride dim 1 2x3 float32" test_stride_dim1_2x3_float32;
+    test "strides 2x3 int64" test_strides_2x3_int64;
+    test "itemsize float32" test_itemsize_float32;
+    test "itemsize int64" test_itemsize_int64;
+    test "ndim scalar" test_ndim_scalar;
+    test "ndim 2x2" test_ndim_2x2;
+    test "dim 0 2x3" test_dim_0_2x3;
+    test "dims 2x3" test_dims_2x3;
+    test "nbytes float32" test_nbytes_float32;
+    test "nbytes int64" test_nbytes_int64;
+    test "nbytes empty" test_nbytes_empty;
+    test "size 2x3" test_size_2x3;
+    test "size scalar" test_size_scalar;
+    test "offset basic" test_offset_basic;
+    test "offset slice" test_offset_slice;
   ]
 
 let element_access_indexing =
   [
-    ("get item 2x2", `Quick, test_get_item_2x2);
-    ("set item 2x2", `Quick, test_set_item_2x2);
-    ("get item out of bounds", `Quick, test_get_item_out_of_bounds);
-    ("set item out of bounds", `Quick, test_set_item_out_of_bounds);
-    ("set item type safety", `Quick, test_set_item_type_safety);
-    ("get scalar from 0d", `Quick, test_get_scalar_from_0d);
-    ("set scalar in 0d", `Quick, test_set_scalar_in_0d);
-    ("get view row", `Quick, test_get_view_row);
-    ("get scalar", `Quick, test_get_scalar);
-    ("set view row", `Quick, test_set_view_row);
-    ("set scalar", `Quick, test_set_scalar);
+    test "get item 2x2" test_get_item_2x2;
+    test "set item 2x2" test_set_item_2x2;
+    test "get item out of bounds" test_get_item_out_of_bounds;
+    test "set item out of bounds" test_set_item_out_of_bounds;
+    test "set item type safety" test_set_item_type_safety;
+    test "get scalar from 0d" test_get_scalar_from_0d;
+    test "set scalar in 0d" test_set_scalar_in_0d;
+    test "get view row" test_get_view_row;
+    test "get scalar" test_get_scalar;
+    test "set view row" test_set_view_row;
+    test "set scalar" test_set_scalar;
   ]
 
 let slicing =
   [
-    ("slice 3x4", `Quick, test_slice_3x4);
-    ("slice with steps", `Quick, test_slice_with_steps);
-    ("slice view", `Quick, test_slice_view);
-    ("slice negative indices", `Quick, test_slice_negative_indices);
-    ("slice empty range", `Quick, test_slice_empty_range);
-    ("slice step zero", `Quick, test_slice_step_zero);
-    ("slice negative step", `Quick, test_slice_negative_step);
+    test "slice 3x4" test_slice_3x4;
+    test "slice with steps" test_slice_with_steps;
+    test "slice view" test_slice_view;
+    test "slice negative indices" test_slice_negative_indices;
+    test "slice empty range" test_slice_empty_range;
+    test "slice step zero" test_slice_step_zero;
+    test "slice negative step" test_slice_negative_step;
   ]
 
 let memory_and_views =
   [
-    ("data buffer view", `Quick, test_data_buffer_view);
-    ("strides after transpose", `Quick, test_strides_after_transpose);
-    ("strides after slice", `Quick, test_strides_after_slice);
-    ("is contiguous basic", `Quick, test_is_c_contiguous_basic);
-    ( "is contiguous after transpose",
-      `Quick,
-      test_is_c_contiguous_after_transpose );
-    ("is contiguous after slice", `Quick, test_is_c_contiguous_after_slice);
-    ( "is contiguous after double transpose",
-      `Quick,
-      test_is_c_contiguous_after_double_transpose );
-    ("offset after multiple slices", `Quick, test_offset_after_multiple_slices);
+    test "data buffer view" test_data_buffer_view;
+    test "strides after transpose" test_strides_after_transpose;
+    test "strides after slice" test_strides_after_slice;
+    test "is contiguous basic" test_is_c_contiguous_basic;
+    test "is contiguous after transpose"
+      test_is_c_contiguous_after_transpose;
+    test "is contiguous after slice" test_is_c_contiguous_after_slice;
+    test "is contiguous after double transpose"
+      test_is_c_contiguous_after_double_transpose;
+    test "offset after multiple slices" test_offset_after_multiple_slices;
   ]
 
 let utility_operations =
   [
-    ("to bigarray", `Quick, test_to_bigarray);
-    ("to bigarray partial slice", `Quick, test_to_bigarray_partial_slice);
-    ("copy", `Quick, test_copy);
-    ("blit incompatible", `Quick, test_blit_incompatible);
-    ("ifill nan", `Quick, test_ifill_nan);
-    ("ifill inf", `Quick, test_ifill_inf);
-    ("fill returns copy", `Quick, test_fill_returns_copy);
-    ("blit self", `Quick, test_blit_self);
+    test "to bigarray" test_to_bigarray;
+    test "to bigarray partial slice" test_to_bigarray_partial_slice;
+    test "copy" test_copy;
+    test "blit incompatible" test_blit_incompatible;
+    test "ifill nan" test_ifill_nan;
+    test "ifill inf" test_ifill_inf;
+    test "fill returns copy" test_fill_returns_copy;
+    test "blit self" test_blit_self;
     (* ("blit overlapping views", `Quick, test_blit_overlapping_views ); *)
   ]
 
 let type_conversion =
   [
-    ("to array", `Quick, test_to_array);
-    ("astype float32 to int32", `Quick, test_astype_float32_to_int32);
-    ("astype int32 to float32", `Quick, test_astype_int32_to_float32);
-    ("astype float32 to int16", `Quick, test_astype_float32_to_int16);
-    ("astype int64 to float32", `Quick, test_astype_int64_to_float32);
+    test "to array" test_to_array;
+    test "astype float32 to int32" test_astype_float32_to_int32;
+    test "astype int32 to float32" test_astype_int32_to_float32;
+    test "astype float32 to int16" test_astype_float32_to_int16;
+    test "astype int64 to float32" test_astype_int64_to_float32;
   ]
 
 let suite =
   [
-    ("Basic :: Creation Edge Cases", creation_edge_cases);
-    ("Basic :: Special Creation Functions", special_creation);
-    ("Basic :: Eye and Identity", eye_identity_tests);
-    ("Basic :: Range Generation", range_generation);
-    ("Basic :: Property Access", property_access);
-    ("Basic :: Element Access and Indexing", element_access_indexing);
-    ("Basic :: Slicing", slicing);
-    ("Basic :: Memory and Views", memory_and_views);
-    ("Basic :: Utility Operations", utility_operations);
-    ("Basic :: Type Conversion", type_conversion);
+    group "Creation Edge Cases" creation_edge_cases;
+    group "Special Creation Functions" special_creation;
+    group "Eye and Identity" eye_identity_tests;
+    group "Range Generation" range_generation;
+    group "Property Access" property_access;
+    group "Element Access and Indexing" element_access_indexing;
+    group "Slicing" slicing;
+    group "Memory and Views" memory_and_views;
+    group "Utility Operations" utility_operations;
+    group "Type Conversion" type_conversion;
   ]
 
-let () = Alcotest.run "Nx Basics" suite
+let () = run "Nx Basics" suite

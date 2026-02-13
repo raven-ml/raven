@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Alcotest
+open Windtrap
 module CT = Kaun.Checkpoint.Snapshot
 module Json = Yojson.Basic
 
@@ -21,15 +21,15 @@ let test_constructors () =
         );
       ]
   in
-  check bool "is record" true (Option.is_some (CT.get_record tree));
-  check bool "has tensor" true (CT.is_tensor (CT.tensor mk_tensor));
-  check bool "has scalar" true (CT.is_scalar (CT.int 1));
+  equal ~msg:"is record" bool true (Option.is_some (CT.get_record tree));
+  equal ~msg:"has tensor" bool true (CT.is_tensor (CT.tensor mk_tensor));
+  equal ~msg:"has scalar" bool true (CT.is_scalar (CT.int 1));
   let tensors = CT.flatten_tensors tree in
   let tensor_paths = List.map fst tensors in
-  check (list string) "tensor paths" [ "params" ] tensor_paths;
+  equal ~msg:"tensor paths" (list string) [ "params" ] tensor_paths;
   let scalars = CT.flatten_scalars tree in
   let scalar_paths = List.map fst scalars |> List.sort String.compare in
-  check (list string) "scalar paths"
+  equal ~msg:"scalar paths" (list string)
     [ "flags[0]"; "flags[1]"; "nested.lr"; "nested.note"; "step" ]
     scalar_paths
 
@@ -44,14 +44,14 @@ let test_json_roundtrip () =
       let recovered = s |> CT.scalar_to_yojson |> CT.scalar_of_yojson in
       match (s, recovered) with
       | CT.Json orig, CT.Json payload ->
-          check string "json preserved" (Json.to_string orig)
+          equal ~msg:"json preserved" string (Json.to_string orig)
             (Json.to_string payload)
       | _ -> fail "expected json scalar")
 
-let suite =
+let tests =
   [
-    test_case "constructors and flatten" `Quick test_constructors;
-    test_case "json roundtrip" `Quick test_json_roundtrip;
+    test "constructors and flatten" test_constructors;
+    test "json roundtrip" test_json_roundtrip;
   ]
 
-let () = run "Snapshot" [ ("Structure", suite) ]
+let () = run "Snapshot" [ group "Structure" tests ]

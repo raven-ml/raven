@@ -21,7 +21,7 @@ depends: [
   "saga" {= version}
   "rune" {= version}
   "nx-datasets" {= version}
-  "alcotest" {with-test}
+  "windtrap" {with-test}
   "odoc" {with-doc}
 ]
 build: [

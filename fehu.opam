@@ -19,7 +19,7 @@ depends: [
   "rune" {= version}
   "kaun" {= version}
   "yojson" {>= "2.0.0"}
-  "alcotest" {with-test}
+  "windtrap" {with-test}
   "odoc" {with-doc}
 ]
 build: [

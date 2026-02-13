@@ -1,9 +1,9 @@
-open Alcotest
+open Windtrap
 open Nx_datasets
 
 let check_shape name expected_shape tensor =
   let actual_shape = Nx.shape tensor in
-  check (array int) name expected_shape actual_shape
+  equal ~msg:name (array int) expected_shape actual_shape
 
 let test_make_blobs () =
   let x, y = make_blobs ~n_samples:100 ~n_features:2 ~centers:(`N 3) () in
@@ -74,29 +74,29 @@ let test_make_biclusters () =
 let () =
   run "Generators"
     [
-      ( "Classification",
+      group "Classification"
         [
-          test_case "make_blobs" `Quick test_make_blobs;
-          test_case "make_classification" `Quick test_make_classification;
-          test_case "make_gaussian_quantiles" `Quick
+          test "make_blobs" test_make_blobs;
+          test "make_classification" test_make_classification;
+          test "make_gaussian_quantiles"
             test_make_gaussian_quantiles;
-          test_case "make_circles" `Quick test_make_circles;
-          test_case "make_moons" `Quick test_make_moons;
-        ] );
-      ( "Regression",
+          test "make_circles" test_make_circles;
+          test "make_moons" test_make_moons;
+        ];
+      group "Regression"
         [
-          test_case "make_regression" `Quick test_make_regression;
-          test_case "make_friedman1" `Quick test_make_friedman1;
-        ] );
-      ( "Manifold",
+          test "make_regression" test_make_regression;
+          test "make_friedman1" test_make_friedman1;
+        ];
+      group "Manifold"
         [
-          test_case "make_s_curve" `Quick test_make_s_curve;
-          test_case "make_swiss_roll" `Quick test_make_swiss_roll;
-        ] );
-      ( "Matrix",
+          test "make_s_curve" test_make_s_curve;
+          test "make_swiss_roll" test_make_swiss_roll;
+        ];
+      group "Matrix"
         [
-          test_case "make_low_rank_matrix" `Quick test_make_low_rank_matrix;
-          test_case "make_spd_matrix" `Quick test_make_spd_matrix;
-          test_case "make_biclusters" `Quick test_make_biclusters;
-        ] );
+          test "make_low_rank_matrix" test_make_low_rank_matrix;
+          test "make_spd_matrix" test_make_spd_matrix;
+          test "make_biclusters" test_make_biclusters;
+        ];
     ]

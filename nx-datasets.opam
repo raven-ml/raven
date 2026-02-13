@@ -24,7 +24,7 @@ depends: [
   "csv"
   "logs"
   "nx" {= version}
-  "alcotest" {with-test}
+  "windtrap" {with-test}
   "odoc" {with-doc}
 ]
 build: [

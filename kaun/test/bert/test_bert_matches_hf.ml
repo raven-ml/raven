@@ -5,6 +5,7 @@
 
 module Bert = Kaun_models.Bert
 open Rune
+open Windtrap
 
 let expected_token_ids = [ 101; 7592; 2088; 102 ]
 let expected_cls = [ -0.168883; 0.136064; -0.139399; -0.054359; -0.295266 ]
@@ -21,8 +22,7 @@ let check_close_list label ~epsilon expected actual =
     (fun i (e, a) ->
       let diff = Float.abs (a -. e) in
       if diff > epsilon then
-        Alcotest.failf "%s[%d]: expected %.6f got %.6f (diff %.6f)" label i e a
-          diff)
+        failf "%s[%d]: expected %.6f got %.6f (diff %.6f)" label i e a diff)
     (List.combine expected actual)
 
 let test () =
@@ -34,12 +34,12 @@ let test () =
     let flat = Rune.reshape [| -1 |] inputs.input_ids in
     List.init (Rune.numel flat) (fun i -> Rune.item [ i ] flat |> Int32.to_int)
   in
-  Alcotest.(check (list int)) "token ids" expected_token_ids token_ids;
+  equal ~msg:"token ids" (list int) expected_token_ids token_ids;
 
   let outputs = Bert.forward bert inputs () in
   let last_hidden_state = outputs.Bert.last_hidden_state in
   let shape = Array.to_list (Rune.shape last_hidden_state) in
-  Alcotest.(check (list int)) "hidden-state shape" [ 1; 4; 768 ] shape;
+  equal ~msg:"hidden-state shape" (list int) [ 1; 4; 768 ] shape;
 
   let cls_token = Rune.slice [ I 0; I 0 ] last_hidden_state in
   let cls_values =
@@ -49,7 +49,7 @@ let test () =
   check_close_list "cls" ~epsilon:1e-2 expected_cls cls_values;
 
   (match outputs.Bert.pooler_output with
-  | None -> Alcotest.fail "expected pooler output"
+  | None -> fail "expected pooler output"
   | Some pooler ->
       let values =
         list_prefix ~n:(List.length expected_pooler) (fun i ->
@@ -61,5 +61,4 @@ let test () =
 
 let () =
   Printexc.record_backtrace true;
-  Alcotest.run "BERT matches HuggingFace"
-    [ ("bert", [ Alcotest.test_case "forward" `Quick test ]) ]
+  run "BERT matches HuggingFace" [ group "bert" [ test "forward" test ] ]

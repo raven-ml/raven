@@ -49,6 +49,11 @@
  (package
   (name mosaic)))
 
+(pin
+ (url git+https://github.com/invariant-hq/windtrap)
+ (package
+  (name windtrap)))
+
 ; (package
 ;  (name dev)
 ;  (allow_empty)
@@ -69,7 +74,7 @@
   (conf-zlib :build)
   stdlib-shims
   ; tests
-  (alcotest :with-test)
+  (windtrap :with-test)
   (mdx :with-test))
  (tags
   (numerical-computation tensor-library machine-learning)))
@@ -88,7 +93,7 @@
   logs
   (nx
    (= :version))
-  (alcotest :with-test))
+  (windtrap :with-test))
  (tags
   (datasets machine-learning data-science image-classification regression)))
 
@@ -108,7 +113,7 @@
   uucp
   (yojson
    (>= 2.0.0))
-  (alcotest :with-test))
+  (windtrap :with-test))
  (tags
   (text-processing nlp natural-language-processing tokenization)))
 
@@ -127,7 +132,7 @@
   (yojson
    (>= 2.0.0))
   csv
-  (alcotest :with-test))
+  (windtrap :with-test))
  (tags
   (dataframe data-manipulation data-science tabular-data)))
 
@@ -152,7 +157,7 @@
   ; rune.metal - only on macOS
   (integers
    (= :os macos))
-  (alcotest :with-test))
+  (windtrap :with-test))
  (tags
   (automatic-differentiation
    jit-compilation
@@ -181,7 +186,7 @@
    (= :version))
   (nx-datasets
    (= :version))
-  (alcotest :with-test))
+  (windtrap :with-test))
  (tags
   (neural-networks machine-learning deep-learning)))
 
@@ -196,7 +201,7 @@
   dune
   (rune
    (= :version))
-  (alcotest :with-test))
+  (windtrap :with-test))
  (tags
   (computer-vision image-processing feature-detection machine-learning)))
 
@@ -215,7 +220,7 @@
    (= :version))
   (yojson
    (>= 2.0.0))
-  (alcotest :with-test))
+  (windtrap :with-test))
  (tags
   (reinforcement-learning machine-learning ai environments agents)))
 
@@ -236,7 +241,7 @@
   ; for hugin.top
   (base64
    (>= 3.1.0))
-  (alcotest :with-test))
+  (windtrap :with-test))
  (tags
   (visualization plotting charts data-science graphics)))
 

@@ -1,4 +1,4 @@
-open Alcotest
+open Windtrap
 
 let build_expected base dataset =
   let path = List.fold_left Filename.concat base [ "datasets"; dataset ] in
@@ -25,7 +25,7 @@ let test_cache_dir_resolution () =
     Nx_datasets.get_cache_dir ~getenv:(getenv_of_list env_with_custom) "iris"
   in
   let expected1 = build_expected custom_cache_dir "iris" in
-  check string "RAVEN_CACHE_ROOT takes priority" expected1 path1;
+  equal ~msg:"RAVEN_CACHE_ROOT takes priority" string expected1 path1;
 
   (* XDG_CACHE_HOME is used when RAVEN_CACHE_ROOT is unset or empty *)
   let env_with_xdg =
@@ -37,7 +37,7 @@ let test_cache_dir_resolution () =
   let expected2 =
     build_expected (Filename.concat xdg_cache_dir "raven") "mnist"
   in
-  check string "XDG_CACHE_HOME used when RAVEN_CACHE_ROOT unset" expected2 path2;
+  equal ~msg:"XDG_CACHE_HOME used when RAVEN_CACHE_ROOT unset" string expected2 path2;
 
   (* HOME fallback when neither cache env var is provided *)
   let env_with_home_only =
@@ -52,14 +52,14 @@ let test_cache_dir_resolution () =
     Filename.concat (Filename.concat home_dir ".cache") "raven"
   in
   let expected3 = build_expected home_cache "cifar10" in
-  check string "Falls back to HOME/.cache when no env vars set" expected3 path3
+  equal ~msg:"Falls back to HOME/.cache when no env vars set" string expected3 path3
 
 let () =
   run "Dataset Utils"
     [
-      ( "Cache Directory Resolution",
+      group "Cache Directory Resolution"
         [
-          test_case "Environment variable precedence" `Quick
+          test "Environment variable precedence"
             test_cache_dir_resolution;
-        ] );
+        ];
     ]

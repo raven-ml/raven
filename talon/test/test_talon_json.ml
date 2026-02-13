@@ -4,10 +4,11 @@
   ---------------------------------------------------------------------------*)
 
 open Talon
+open Windtrap
 
-let check_int = Alcotest.(check int)
-let check_string = Alcotest.(check string)
-let check_bool = Alcotest.(check bool)
+let check_int msg = equal ~msg int
+let check_string msg = equal ~msg string
+let check_bool msg = equal ~msg bool
 
 (* Test JSON records orientation *)
 let test_to_string_records () =
@@ -33,8 +34,8 @@ let test_to_string_records () =
           check_bool "has name" true (List.mem_assoc "name" fields);
           check_bool "has age" true (List.mem_assoc "age" fields);
           check_bool "has active" true (List.mem_assoc "active" fields)
-      | _ -> Alcotest.fail "Expected object in records")
-  | _ -> Alcotest.fail "Expected array for records orientation"
+      | _ -> fail "Expected object in records")
+  | _ -> fail "Expected array for records orientation"
 
 let test_to_string_columns () =
   let df =
@@ -55,8 +56,8 @@ let test_to_string_columns () =
       (* Check column is array *)
       match List.assoc "x" fields with
       | `List vals -> check_int "x length" 3 (List.length vals)
-      | _ -> Alcotest.fail "Column should be array")
-  | _ -> Alcotest.fail "Expected object for columns orientation"
+      | _ -> fail "Column should be array")
+  | _ -> fail "Expected object for columns orientation"
 
 let test_from_string_records () =
   let json =
@@ -93,7 +94,7 @@ let test_from_string_columns () =
   (* Check string column *)
   match to_string_array df "z" with
   | Some arr -> check_bool "string values" true (arr = [| "a"; "b"; "c" |])
-  | None -> Alcotest.fail "z should be string column"
+  | None -> fail "z should be string column"
 
 let test_with_nulls () =
   let df =
@@ -116,8 +117,8 @@ let test_int_null_masks_are_serialized () =
   | `List [ `Assoc first; `Assoc second ] -> (
       match (List.assoc "ints" first, List.assoc "ints" second) with
       | `Int 1, `Null -> ()
-      | _ -> Alcotest.fail "expected null for masked integer value")
-  | _ -> Alcotest.fail "unexpected JSON structure for int mask test"
+      | _ -> fail "expected null for masked integer value")
+  | _ -> fail "unexpected JSON structure for int mask test"
 
 let test_round_trip_records () =
   let df1 =
@@ -171,9 +172,9 @@ let test_single_row () =
       | `Assoc fields -> (
           match List.assoc "x" fields with
           | `Int i -> check_int "single value" 42 i
-          | _ -> Alcotest.fail "Expected int")
-      | _ -> Alcotest.fail "Expected object")
-  | _ -> Alcotest.fail "Expected single record"
+          | _ -> fail "Expected int")
+      | _ -> fail "Expected object")
+  | _ -> fail "Expected single record"
 
 let test_complex_types () =
   let df =
@@ -216,7 +217,7 @@ let test_bool_parsing () =
 
   match to_bool_array df "flag" with
   | Some arr -> check_bool "bool values" true (arr = [| true; false; true |])
-  | None -> Alcotest.fail "flag should be bool column"
+  | None -> fail "flag should be bool column"
 
 let test_mixed_types () =
   (* Test that mixed types default to string *)
@@ -231,7 +232,7 @@ let test_mixed_types () =
       check_int "mixed length" 4 (Array.length arr);
       check_string "int as string" "1" arr.(0);
       check_string "string" "two" arr.(1)
-  | None -> Alcotest.fail "mixed should be string column"
+  | None -> fail "mixed should be string column"
 
 let test_force_all_null_to_float64 () =
   let json = {| [{"a": null}, {"a": null}] |} in
@@ -253,42 +254,42 @@ let test_force_string_id_to_int64 () =
 
 let dtype_spec_tests =
   [
-    ("Force all-null to Float64", `Quick, test_force_all_null_to_float64);
-    ("Force string ID to Int64", `Quick, test_force_string_id_to_int64);
+    test "Force all-null to Float64" test_force_all_null_to_float64;
+    test "Force string ID to Int64" test_force_string_id_to_int64;
   ]
 
 (* Test suites *)
 let serialization_tests =
   [
-    ("to_string_records", `Quick, test_to_string_records);
-    ("to_string_columns", `Quick, test_to_string_columns);
-    ("with_nulls", `Quick, test_with_nulls);
-    ("int null masks", `Quick, test_int_null_masks_are_serialized);
-    ("empty_dataframe", `Quick, test_empty_dataframe);
-    ("single_row", `Quick, test_single_row);
-    ("complex_types", `Quick, test_complex_types);
-    ("large_ints", `Quick, test_large_ints);
+    test "to_string_records" test_to_string_records;
+    test "to_string_columns" test_to_string_columns;
+    test "with_nulls" test_with_nulls;
+    test "int null masks" test_int_null_masks_are_serialized;
+    test "empty_dataframe" test_empty_dataframe;
+    test "single_row" test_single_row;
+    test "complex_types" test_complex_types;
+    test "large_ints" test_large_ints;
   ]
 
 let deserialization_tests =
   [
-    ("from_string_records", `Quick, test_from_string_records);
-    ("from_string_columns", `Quick, test_from_string_columns);
-    ("bool_parsing", `Quick, test_bool_parsing);
-    ("mixed_types", `Quick, test_mixed_types);
+    test "from_string_records" test_from_string_records;
+    test "from_string_columns" test_from_string_columns;
+    test "bool_parsing" test_bool_parsing;
+    test "mixed_types" test_mixed_types;
   ]
 
 let integration_tests =
   [
-    ("round_trip_records", `Quick, test_round_trip_records);
-    ("round_trip_columns", `Quick, test_round_trip_columns);
+    test "round_trip_records" test_round_trip_records;
+    test "round_trip_columns" test_round_trip_columns;
   ]
 
 let () =
-  Alcotest.run "Talon JSON"
+  run "Talon JSON"
     [
-      ("Dtype Spec", dtype_spec_tests);
-      ("Serialization", serialization_tests);
-      ("Deserialization", deserialization_tests);
-      ("Integration", integration_tests);
+      group "Dtype Spec" dtype_spec_tests;
+      group "Serialization" serialization_tests;
+      group "Deserialization" deserialization_tests;
+      group "Integration" integration_tests;
     ]
