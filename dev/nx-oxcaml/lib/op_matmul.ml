@@ -11,12 +11,19 @@ let[@inline] min_int a b = if a < b then a else b
 let[@inline] round_up x m = ((x + m - 1) / m) * m
 
 (* Local wrappers that call [@@builtin] externals directly.
-   Dune compiles library modules with -opaque, which prevents flambda2 from
-   exporting function bodies across compilation units. [@@builtin] externals
-   are recognized regardless, but let-bound wrappers (mul_add, set1) in Simd
-   cannot be inlined. Defining them here keeps them in the same compilation
-   unit as the kernels. *)
+   Wrappers defined in other modules (e.g. mul_add, set1 in Simd) are not
+   inlined into this compilation unit — even when both modules are in the
+   same library. One hypothesis is dune's -opaque flag preventing flambda2
+   from exporting function bodies, but moving Simd into the same library
+   did not help, so the root cause may lie elsewhere (flambda2 inlining
+   heuristics, or how [@@builtin] externals bypass the optimizer while
+   regular wrappers do not). Defining them here works around the issue.
 
+   TODO: mul_add uses separate mul+add instead of a true FMA instruction.
+   OxCaml has NEON FMA via simd_neon, but the emulated fma is not a
+   [@@builtin] external and suffers from the same inlining issue described
+   above. Upstreaming NEON fmla/fmls as [@@builtin] in OxCaml would let
+   us replace these with single-instruction FMA. *)
 let[@inline always] f64_mul_add a b c =
   Float64x2.add (Float64x2.mul a b) c
 
