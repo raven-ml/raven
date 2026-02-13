@@ -1570,29 +1570,38 @@ let test_scatter_int32_set_axis1 () =
   check_int32 "scatter_int32_set_axis1[6]" #4l (geti32 d 6);
   check_int32 "scatter_int32_set_axis1[7]" #0l (geti32 d 7)
 
-let test_scatter_int32_add_axis1 () =
-  let ctx = Nx_oxcaml.create_context () in
-  let template =
-    Nx_ox.create ctx Dtype.Int32
-    [| 2; 4 |]
-      [| 100l; 100l; 100l; 100l; 100l; 100l; 100l; 100l |]
-  in
-  let indices =
-    Nx_ox.create ctx Dtype.Int32 [| 2; 3 |] [| 3l; 1l; 0l; 0l; 2l; 2l |]
-  in
-  let updates =
-    Nx_ox.create ctx Dtype.Int32 [| 2; 3 |] [| 9l; 8l; 7l; 6l; 5l; 4l |]
-  in
-  let y = Nx_oxcaml.op_scatter ~mode:`Add template indices updates 1 in
-  let d = Nx_oxcaml.data_array y in
-  check_int32 "scatter_int32_add_axis1[0]" #7l (geti32 d 0);
-  check_int32 "scatter_int32_add_axis1[1]" #8l (geti32 d 1);
-  check_int32 "scatter_int32_add_axis1[2]" #0l (geti32 d 2);
-  check_int32 "scatter_int32_add_axis1[3]" #9l (geti32 d 3);
-  check_int32 "scatter_int32_add_axis1[4]" #6l (geti32 d 4);
-  check_int32 "scatter_int32_add_axis1[5]" #0l (geti32 d 5);
-  check_int32 "scatter_int32_add_axis1[6]" #9l (geti32 d 6);
-  check_int32 "scatter_int32_add_axis1[7]" #0l (geti32 d 7)
+  let test_scatter_int32_add_axis1 () =
+    let ctx = Nx_oxcaml.create_context () in
+    let template =
+      Nx_ox.create ctx Dtype.Int32
+        [| 2; 4 |]
+        [| 100l; 100l; 100l; 100l;
+           100l; 100l; 100l; 100l |]
+    in
+    let indices =
+      Nx_ox.create ctx Dtype.Int32
+        [| 2; 3 |]
+        [| 3l; 1l; 0l;
+           0l; 2l; 2l |]
+    in
+    let updates =
+      Nx_ox.create ctx Dtype.Int32
+        [| 2; 3 |]
+        [| 9l; 8l; 7l;
+           6l; 5l; 4l |]
+    in
+    let y = Nx_oxcaml.op_scatter ~mode:`Add template indices updates 1 in
+    let d = Nx_oxcaml.data_array y in
+  
+    check_int32 "scatter_int32_add_axis1[0]" #107l (geti32 d 0);
+    check_int32 "scatter_int32_add_axis1[1]" #108l (geti32 d 1);
+    check_int32 "scatter_int32_add_axis1[2]" #100l (geti32 d 2);
+    check_int32 "scatter_int32_add_axis1[3]" #109l (geti32 d 3);
+    check_int32 "scatter_int32_add_axis1[4]" #106l (geti32 d 4);
+    check_int32 "scatter_int32_add_axis1[5]" #100l (geti32 d 5);
+    check_int32 "scatter_int32_add_axis1[6]" #109l (geti32 d 6);
+    check_int32 "scatter_int32_add_axis1[7]" #100l (geti32 d 7)
+  
   
 let () =
   print_endline "Running Nx_oxcaml backend tests...";
