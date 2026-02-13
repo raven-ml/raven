@@ -1030,7 +1030,6 @@ let op_pad (type a b) (x : (a, b) t) (padding : (int * int) array)
   let out_offset = View.offset out_view in
   let in_strides = View.strides in_view in
   let out_strides = View.strides out_view in
-  let md_index = Array.make ndim 0 in
   match x with
   | { dtype = Dtype.Float64; buffer = Float64 in_arr; context; _ } ->
       let fill_value = Float_u.of_float fill_value in
@@ -1038,17 +1037,8 @@ let op_pad (type a b) (x : (a, b) t) (padding : (int * int) array)
       for i = 0 to out_numel - 1 do
         Array.unsafe_set out_arr i fill_value
       done;
-      for k = 0 to in_numel - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let v = Array.unsafe_get in_arr src_lin in
-        for d = 0 to ndim - 1 do
-          let before, _ = padding.(d) in
-          md_index.(d) <- md_index.(d) + before
-        done;
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set out_arr dst_lin v
-      done;
+      Op_pad.pad_float64 in_arr out_arr in_shape padding in_offset out_offset
+        in_strides out_strides in_numel;
       { dtype = Dtype.Float64; buffer = Float64 out_arr; view = out_view; context }
   | { dtype = Dtype.Float32; buffer = Float32 in_arr; context; _ } ->
       let fill_value = Float32_u.of_float (Float_u.of_float fill_value) in
@@ -1056,17 +1046,8 @@ let op_pad (type a b) (x : (a, b) t) (padding : (int * int) array)
       for i = 0 to out_numel - 1 do
         Array.unsafe_set out_arr i fill_value
       done;
-      for k = 0 to in_numel - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let v = Array.unsafe_get in_arr src_lin in
-        for d = 0 to ndim - 1 do
-          let before, _ = padding.(d) in
-          md_index.(d) <- md_index.(d) + before
-        done;
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set out_arr dst_lin v
-      done;
+      Op_pad.pad_float32 in_arr out_arr in_shape padding in_offset out_offset
+        in_strides out_strides in_numel;
       { dtype = Dtype.Float32; buffer = Float32 out_arr; view = out_view; context }
   | { dtype = Dtype.Int8; buffer = Int8 in_arr; context; _ } ->
       let fill_value = Int8_u.of_int fill_value in
@@ -1074,17 +1055,8 @@ let op_pad (type a b) (x : (a, b) t) (padding : (int * int) array)
       for i = 0 to out_numel - 1 do
         Array.unsafe_set out_arr i fill_value
       done;
-      for k = 0 to in_numel - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let v = Array.unsafe_get in_arr src_lin in
-        for d = 0 to ndim - 1 do
-          let before, _ = padding.(d) in
-          md_index.(d) <- md_index.(d) + before
-        done;
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set out_arr dst_lin v
-      done;
+      Op_pad.pad_int8 in_arr out_arr in_shape padding in_offset out_offset
+        in_strides out_strides in_numel;
       { dtype = Dtype.Int8; buffer = Int8 out_arr; view = out_view; context }
   | { dtype = Dtype.Int16; buffer = Int16 in_arr; context; _ } ->
       let fill_value = Int16_u.of_int fill_value in
@@ -1092,17 +1064,8 @@ let op_pad (type a b) (x : (a, b) t) (padding : (int * int) array)
       for i = 0 to out_numel - 1 do
         Array.unsafe_set out_arr i fill_value
       done;
-      for k = 0 to in_numel - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let v = Array.unsafe_get in_arr src_lin in
-        for d = 0 to ndim - 1 do
-          let before, _ = padding.(d) in
-          md_index.(d) <- md_index.(d) + before
-        done;
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set out_arr dst_lin v
-      done;
+      Op_pad.pad_int16 in_arr out_arr in_shape padding in_offset out_offset
+        in_strides out_strides in_numel;
       { dtype = Dtype.Int16; buffer = Int16 out_arr; view = out_view; context }
   | { dtype = Dtype.Int32; buffer = Int32 in_arr; context; _ } ->
       let fill_value = Int32_u.of_int32 fill_value in
@@ -1110,17 +1073,8 @@ let op_pad (type a b) (x : (a, b) t) (padding : (int * int) array)
       for i = 0 to out_numel - 1 do
         Array.unsafe_set out_arr i fill_value
       done;
-      for k = 0 to in_numel - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let v = Array.unsafe_get in_arr src_lin in
-        for d = 0 to ndim - 1 do
-          let before, _ = padding.(d) in
-          md_index.(d) <- md_index.(d) + before
-        done;
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set out_arr dst_lin v
-      done;
+      Op_pad.pad_int32 in_arr out_arr in_shape padding in_offset out_offset
+        in_strides out_strides in_numel;
       { dtype = Dtype.Int32; buffer = Int32 out_arr; view = out_view; context }
   | { dtype = Dtype.Int64; buffer = Int64 in_arr; context; _ } ->
       let fill_value = Int64_u.of_int64 fill_value in
@@ -1128,31 +1082,13 @@ let op_pad (type a b) (x : (a, b) t) (padding : (int * int) array)
       for i = 0 to out_numel - 1 do
         Array.unsafe_set out_arr i fill_value
       done;
-      for k = 0 to in_numel - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let v = Array.unsafe_get in_arr src_lin in
-        for d = 0 to ndim - 1 do
-          let before, _ = padding.(d) in
-          md_index.(d) <- md_index.(d) + before
-        done;
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set out_arr dst_lin v
-      done;
+      Op_pad.pad_int64 in_arr out_arr in_shape padding in_offset out_offset
+        in_strides out_strides in_numel;
       { dtype = Dtype.Int64; buffer = Int64 out_arr; view = out_view; context }
   | { dtype = Dtype.Bool; buffer = Bool in_arr; context; _ } ->
       let out_arr = Array.make out_numel fill_value in
-      for k = 0 to in_numel - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let v = Array.unsafe_get in_arr src_lin in
-        for d = 0 to ndim - 1 do
-          let before, _ = padding.(d) in
-          md_index.(d) <- md_index.(d) + before
-        done;
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set out_arr dst_lin v
-      done;
+      Op_pad.pad_bool in_arr out_arr in_shape padding in_offset out_offset
+        in_strides out_strides in_numel;
       { dtype = Dtype.Bool; buffer = Bool out_arr; view = out_view; context }
   | _ -> .
 let op_cat (type a b) (xs : (a, b) t list) (axis : int) : (a, b) t =
@@ -1186,165 +1122,55 @@ let op_cat (type a b) (xs : (a, b) t list) (axis : int) : (a, b) t =
 
       let out_offset = View.offset out.view in
       let out_strides = View.strides out.view in
-      let md_index = Array.make rank 0 in
-      let dst_index = Array.make rank 0 in
-      let axis_base = ref 0 in
 
       (match (x0, out) with
       | { buffer = Float64 _; _ }, { buffer = Float64 out_arr; _ } ->
-          List.iter
-            (fun x ->
-              let src_shape = shape x.view in
-              let src_numel = numel x.view in
-              let src_offset = View.offset x.view in
-              let src_strides = View.strides x.view in
-              let src_arr =
-                match x.buffer with
-                | Float64 a -> a
-                | _ -> .
-              in
-              for k = 0 to src_numel - 1 do
-                Shape.unravel_index_into k src_shape md_index;
-                Array.blit md_index 0 dst_index 0 rank;
-                dst_index.(axis) <- dst_index.(axis) + !axis_base;
-                let src_lin = src_offset + Shape.ravel_index md_index src_strides in
-                let dst_lin = out_offset + Shape.ravel_index dst_index out_strides in
-                Array.unsafe_set out_arr dst_lin (Array.unsafe_get src_arr src_lin)
-              done;
-              axis_base := !axis_base + src_shape.(axis))
-            xs
+          let srcs =
+            List.map
+              (fun x ->
+                match x.buffer with Float64 a -> (a, x.view) | _ -> .)
+              xs
+          in
+          Op_cat.cat_float64 srcs out_arr rank axis out_offset out_strides
       | { buffer = Float32 _; _ }, { buffer = Float32 out_arr; _ } ->
-          List.iter
-            (fun x ->
-              let src_shape = shape x.view in
-              let src_numel = numel x.view in
-              let src_offset = View.offset x.view in
-              let src_strides = View.strides x.view in
-              let src_arr =
-                match x.buffer with
-                | Float32 a -> a
-                | _ -> .
-              in
-              for k = 0 to src_numel - 1 do
-                Shape.unravel_index_into k src_shape md_index;
-                Array.blit md_index 0 dst_index 0 rank;
-                dst_index.(axis) <- dst_index.(axis) + !axis_base;
-                let src_lin = src_offset + Shape.ravel_index md_index src_strides in
-                let dst_lin = out_offset + Shape.ravel_index dst_index out_strides in
-                Array.unsafe_set out_arr dst_lin (Array.unsafe_get src_arr src_lin)
-              done;
-              axis_base := !axis_base + src_shape.(axis))
-            xs
+          let srcs =
+            List.map
+              (fun x ->
+                match x.buffer with Float32 a -> (a, x.view) | _ -> .)
+              xs
+          in
+          Op_cat.cat_float32 srcs out_arr rank axis out_offset out_strides
       | { buffer = Int8 _; _ }, { buffer = Int8 out_arr; _ } ->
-          List.iter
-            (fun x ->
-              let src_shape = shape x.view in
-              let src_numel = numel x.view in
-              let src_offset = View.offset x.view in
-              let src_strides = View.strides x.view in
-              let src_arr =
-                match x.buffer with
-                | Int8 a -> a
-                | _ -> .
-              in
-              for k = 0 to src_numel - 1 do
-                Shape.unravel_index_into k src_shape md_index;
-                Array.blit md_index 0 dst_index 0 rank;
-                dst_index.(axis) <- dst_index.(axis) + !axis_base;
-                let src_lin = src_offset + Shape.ravel_index md_index src_strides in
-                let dst_lin = out_offset + Shape.ravel_index dst_index out_strides in
-                Array.unsafe_set out_arr dst_lin (Array.unsafe_get src_arr src_lin)
-              done;
-              axis_base := !axis_base + src_shape.(axis))
-            xs
+          let srcs =
+            List.map (fun x -> match x.buffer with Int8 a -> (a, x.view) | _ -> .) xs
+          in
+          Op_cat.cat_int8 srcs out_arr rank axis out_offset out_strides
       | { buffer = Int16 _; _ }, { buffer = Int16 out_arr; _ } ->
-          List.iter
-            (fun x ->
-              let src_shape = shape x.view in
-              let src_numel = numel x.view in
-              let src_offset = View.offset x.view in
-              let src_strides = View.strides x.view in
-              let src_arr =
-                match x.buffer with
-                | Int16 a -> a
-                | _ -> .
-              in
-              for k = 0 to src_numel - 1 do
-                Shape.unravel_index_into k src_shape md_index;
-                Array.blit md_index 0 dst_index 0 rank;
-                dst_index.(axis) <- dst_index.(axis) + !axis_base;
-                let src_lin = src_offset + Shape.ravel_index md_index src_strides in
-                let dst_lin = out_offset + Shape.ravel_index dst_index out_strides in
-                Array.unsafe_set out_arr dst_lin (Array.unsafe_get src_arr src_lin)
-              done;
-              axis_base := !axis_base + src_shape.(axis))
-            xs
+          let srcs =
+            List.map
+              (fun x -> match x.buffer with Int16 a -> (a, x.view) | _ -> .)
+              xs
+          in
+          Op_cat.cat_int16 srcs out_arr rank axis out_offset out_strides
       | { buffer = Int32 _; _ }, { buffer = Int32 out_arr; _ } ->
-          List.iter
-            (fun x ->
-              let src_shape = shape x.view in
-              let src_numel = numel x.view in
-              let src_offset = View.offset x.view in
-              let src_strides = View.strides x.view in
-              let src_arr =
-                match x.buffer with
-                | Int32 a -> a
-                | _ -> .
-              in
-              for k = 0 to src_numel - 1 do
-                Shape.unravel_index_into k src_shape md_index;
-                Array.blit md_index 0 dst_index 0 rank;
-                dst_index.(axis) <- dst_index.(axis) + !axis_base;
-                let src_lin = src_offset + Shape.ravel_index md_index src_strides in
-                let dst_lin = out_offset + Shape.ravel_index dst_index out_strides in
-                Array.unsafe_set out_arr dst_lin (Array.unsafe_get src_arr src_lin)
-              done;
-              axis_base := !axis_base + src_shape.(axis))
-            xs
+          let srcs =
+            List.map
+              (fun x -> match x.buffer with Int32 a -> (a, x.view) | _ -> .)
+              xs
+          in
+          Op_cat.cat_int32 srcs out_arr rank axis out_offset out_strides
       | { buffer = Int64 _; _ }, { buffer = Int64 out_arr; _ } ->
-          List.iter
-            (fun x ->
-              let src_shape = shape x.view in
-              let src_numel = numel x.view in
-              let src_offset = View.offset x.view in
-              let src_strides = View.strides x.view in
-              let src_arr =
-                match x.buffer with
-                | Int64 a -> a
-                | _ -> .
-              in
-              for k = 0 to src_numel - 1 do
-                Shape.unravel_index_into k src_shape md_index;
-                Array.blit md_index 0 dst_index 0 rank;
-                dst_index.(axis) <- dst_index.(axis) + !axis_base;
-                let src_lin = src_offset + Shape.ravel_index md_index src_strides in
-                let dst_lin = out_offset + Shape.ravel_index dst_index out_strides in
-                Array.unsafe_set out_arr dst_lin (Array.unsafe_get src_arr src_lin)
-              done;
-              axis_base := !axis_base + src_shape.(axis))
-            xs
+          let srcs =
+            List.map
+              (fun x -> match x.buffer with Int64 a -> (a, x.view) | _ -> .)
+              xs
+          in
+          Op_cat.cat_int64 srcs out_arr rank axis out_offset out_strides
       | { buffer = Bool _; _ }, { buffer = Bool out_arr; _ } ->
-          List.iter
-            (fun x ->
-              let src_shape = shape x.view in
-              let src_numel = numel x.view in
-              let src_offset = View.offset x.view in
-              let src_strides = View.strides x.view in
-              let src_arr =
-                match x.buffer with
-                | Bool a -> a
-                | _ -> .
-              in
-              for k = 0 to src_numel - 1 do
-                Shape.unravel_index_into k src_shape md_index;
-                Array.blit md_index 0 dst_index 0 rank;
-                dst_index.(axis) <- dst_index.(axis) + !axis_base;
-                let src_lin = src_offset + Shape.ravel_index md_index src_strides in
-                let dst_lin = out_offset + Shape.ravel_index dst_index out_strides in
-                Array.unsafe_set out_arr dst_lin (Array.unsafe_get src_arr src_lin)
-              done;
-              axis_base := !axis_base + src_shape.(axis))
-            xs
+          let srcs =
+            List.map (fun x -> match x.buffer with Bool a -> (a, x.view) | _ -> .) xs
+          in
+          Op_cat.cat_bool srcs out_arr rank axis out_offset out_strides
       | _ -> .);
       out
 
@@ -1361,460 +1187,202 @@ let op_cast (type a b c d) (x : (a, b) t) (target_dtype : (c, d) Dtype.t) :
   let in_strides = View.strides in_view in
   let out_offset = View.offset out.view in
   let out_strides = View.strides out.view in
-  let rank = Array.length in_shape in
-  let md_index = Array.make rank 0 in
   match (x.buffer, out.buffer) with
   | Float64 src, Float64 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
-      done;
+      Op_cast.cast_float64_float64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Float64 src, Float32 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Float32_u.of_float (Array.unsafe_get src src_lin))
-      done;
+      Op_cast.cast_float64_float32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Float64 src, Int8 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Int8_u.of_int (Float_u.to_int (Array.unsafe_get src src_lin)))
-      done;
+      Op_cast.cast_float64_int8 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Float64 src, Int16 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Int16_u.of_int (Float_u.to_int (Array.unsafe_get src src_lin)))
-      done;
+      Op_cast.cast_float64_int16 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Float64 src, Int32 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Int32_u.of_int32
-             (Int32.of_int (Float_u.to_int (Array.unsafe_get src src_lin))))
-      done;
+      Op_cast.cast_float64_int32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Float64 src, Int64 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Int64_u.of_int64
-             (Int64.of_int (Float_u.to_int (Array.unsafe_get src src_lin))))
-      done;
+      Op_cast.cast_float64_int64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Float64 src, Bool dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Float_u.to_float (Array.unsafe_get src src_lin) <> 0.0)
-      done;
+      Op_cast.cast_float64_bool src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Float32 src, Float64 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin (Float32_u.to_float (Array.unsafe_get src src_lin))
-      done;
+      Op_cast.cast_float32_float64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Float32 src, Float32 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
-      done;
+      Op_cast.cast_float32_float32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Float32 src, Int8 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Int8_u.of_int (Float32_u.to_int (Array.unsafe_get src src_lin)))
-      done;
+      Op_cast.cast_float32_int8 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Float32 src, Int16 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Int16_u.of_int (Float32_u.to_int (Array.unsafe_get src src_lin)))
-      done;
+      Op_cast.cast_float32_int16 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Float32 src, Int32 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Int32_u.of_int32
-             (Int32.of_int (Float32_u.to_int (Array.unsafe_get src src_lin))))
-      done;
+      Op_cast.cast_float32_int32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Float32 src, Int64 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Int64_u.of_int64
-             (Int64.of_int (Float32_u.to_int (Array.unsafe_get src src_lin))))
-      done;
+      Op_cast.cast_float32_int64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Float32 src, Bool dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Float_u.to_float (Float32_u.to_float (Array.unsafe_get src src_lin))
-         <> 0.0)
-      done;
+      Op_cast.cast_float32_bool src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int8 src, Float64 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Float_u.of_int (Int8_u.to_int (Array.unsafe_get src src_lin)))
-      done;
+      Op_cast.cast_int8_float64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int8 src, Float32 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Float32_u.of_int (Int8_u.to_int (Array.unsafe_get src src_lin)))
-      done;
+      Op_cast.cast_int8_float32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int8 src, Int8 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
-      done;
+      Op_cast.cast_int8_int8 src dst n in_shape in_offset in_strides out_offset
+        out_strides;
       out
   | Int8 src, Int16 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Int16_u.of_int (Int8_u.to_int (Array.unsafe_get src src_lin)))
-      done;
+      Op_cast.cast_int8_int16 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int8 src, Int32 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Int32_u.of_int32
-             (Int32.of_int (Int8_u.to_int (Array.unsafe_get src src_lin))))
-      done;
+      Op_cast.cast_int8_int32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int8 src, Int64 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Int64_u.of_int64
-             (Int64.of_int (Int8_u.to_int (Array.unsafe_get src src_lin))))
-      done;
+      Op_cast.cast_int8_int64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int8 src, Bool dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Int8_u.to_int (Array.unsafe_get src src_lin) <> 0)
-      done;
+      Op_cast.cast_int8_bool src dst n in_shape in_offset in_strides out_offset
+        out_strides;
       out
   | Int16 src, Float64 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Float_u.of_int (Int16_u.to_int (Array.unsafe_get src src_lin)))
-      done;
+      Op_cast.cast_int16_float64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int16 src, Float32 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Float32_u.of_int (Int16_u.to_int (Array.unsafe_get src src_lin)))
-      done;
+      Op_cast.cast_int16_float32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int16 src, Int8 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Int8_u.of_int (Int16_u.to_int (Array.unsafe_get src src_lin)))
-      done;
+      Op_cast.cast_int16_int8 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int16 src, Int16 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
-      done;
+      Op_cast.cast_int16_int16 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int16 src, Int32 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Int32_u.of_int32
-             (Int32.of_int (Int16_u.to_int (Array.unsafe_get src src_lin))))
-      done;
+      Op_cast.cast_int16_int32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int16 src, Int64 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Int64_u.of_int64
-             (Int64.of_int (Int16_u.to_int (Array.unsafe_get src src_lin))))
-      done;
+      Op_cast.cast_int16_int64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int16 src, Bool dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Int16_u.to_int (Array.unsafe_get src src_lin) <> 0)
-      done;
+      Op_cast.cast_int16_bool src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int32 src, Float64 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Float_u.of_int (Int32.to_int (Int32_u.to_int32 (Array.unsafe_get src src_lin))))
-      done;
+      Op_cast.cast_int32_float64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int32 src, Float32 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Float32_u.of_int
-             (Int32.to_int (Int32_u.to_int32 (Array.unsafe_get src src_lin))))
-      done;
+      Op_cast.cast_int32_float32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int32 src, Int8 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Int8_u.of_int
-             (Int32.to_int (Int32_u.to_int32 (Array.unsafe_get src src_lin))))
-      done;
+      Op_cast.cast_int32_int8 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int32 src, Int16 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Int16_u.of_int
-             (Int32.to_int (Int32_u.to_int32 (Array.unsafe_get src src_lin))))
-      done;
+      Op_cast.cast_int32_int16 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int32 src, Int32 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
-      done;
+      Op_cast.cast_int32_int32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int32 src, Int64 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Int64_u.of_int64
-             (Int64.of_int32 (Int32_u.to_int32 (Array.unsafe_get src src_lin))))
-      done;
+      Op_cast.cast_int32_int64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int32 src, Bool dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Int32_u.to_int32 (Array.unsafe_get src src_lin) <> 0l)
-      done;
+      Op_cast.cast_int32_bool src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int64 src, Float64 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Float_u.of_int
-             (Int64.to_int (Int64_u.to_int64 (Array.unsafe_get src src_lin))))
-      done;
+      Op_cast.cast_int64_float64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int64 src, Float32 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Float32_u.of_int
-             (Int64.to_int (Int64_u.to_int64 (Array.unsafe_get src src_lin))))
-      done;
+      Op_cast.cast_int64_float32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int64 src, Int8 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Int8_u.of_int
-             (Int64.to_int (Int64_u.to_int64 (Array.unsafe_get src src_lin))))
-      done;
+      Op_cast.cast_int64_int8 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int64 src, Int16 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Int16_u.of_int
-             (Int64.to_int (Int64_u.to_int64 (Array.unsafe_get src src_lin))))
-      done;
+      Op_cast.cast_int64_int16 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int64 src, Int32 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Int32_u.of_int32
-             (Int32.of_int
-                (Int64.to_int (Int64_u.to_int64 (Array.unsafe_get src src_lin)))))
-      done;
+      Op_cast.cast_int64_int32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int64 src, Int64 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
-      done;
+      Op_cast.cast_int64_int64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int64 src, Bool dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (Int64_u.to_int64 (Array.unsafe_get src src_lin) <> 0L)
-      done;
+      Op_cast.cast_int64_bool src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Bool src, Float64 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (if Array.unsafe_get src src_lin then Float_u.of_int 1 else Float_u.of_int 0)
-      done;
+      Op_cast.cast_bool_float64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Bool src, Float32 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (if Array.unsafe_get src src_lin then Float32_u.of_int 1 else Float32_u.of_int 0)
-      done;
+      Op_cast.cast_bool_float32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Bool src, Int8 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (if Array.unsafe_get src src_lin then Int8_u.of_int 1 else Int8_u.of_int 0)
-      done;
+      Op_cast.cast_bool_int8 src dst n in_shape in_offset in_strides out_offset
+        out_strides;
       out
   | Bool src, Int16 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (if Array.unsafe_get src src_lin then Int16_u.of_int 1 else Int16_u.of_int 0)
-      done;
+      Op_cast.cast_bool_int16 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Bool src, Int32 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (if Array.unsafe_get src src_lin then Int32_u.of_int32 1l else Int32_u.of_int32 0l)
-      done;
+      Op_cast.cast_bool_int32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Bool src, Int64 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin
-          (if Array.unsafe_get src src_lin then Int64_u.of_int64 1L else Int64_u.of_int64 0L)
-      done;
+      Op_cast.cast_bool_int64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Bool src, Bool dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
-      done;
+      Op_cast.cast_bool_bool src dst n in_shape in_offset in_strides out_offset
+        out_strides;
       out
   | _ -> .
 
@@ -1830,64 +1398,34 @@ let materialize_contiguous (type a b) (x : (a, b) t) : (a, b) t =
   let in_strides = View.strides in_view in
   let out_offset = View.offset out.view in
   let out_strides = View.strides out.view in
-  let rank = Array.length in_shape in
-  let md_index = Array.make rank 0 in
   match (x.buffer, out.buffer) with
   | Float64 src, Float64 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
-      done;
+      Op_contiguous.materialize_float64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Float32 src, Float32 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
-      done;
+      Op_contiguous.materialize_float32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int8 src, Int8 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
-      done;
+      Op_contiguous.materialize_int8 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int16 src, Int16 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
-      done;
+      Op_contiguous.materialize_int16 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int32 src, Int32 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
-      done;
+      Op_contiguous.materialize_int32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Int64 src, Int64 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
-      done;
+      Op_contiguous.materialize_int64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | Bool src, Bool dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k in_shape md_index;
-        let src_lin = in_offset + Shape.ravel_index md_index in_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
-      done;
+      Op_contiguous.materialize_bool src dst n in_shape in_offset in_strides
+        out_offset out_strides;
       out
   | _ -> .
 
@@ -1903,62 +1441,32 @@ let op_assign (type a b) (dst : (a, b) t) (src : (a, b) t) : unit =
   if dst_shape <> src_shape then
     Error.invalid ~op:"op_assign" ~what:"shape mismatch" ();
   let n = numel dst.view in
-  let rank = Array.length dst_shape in
-  let md_index = Array.make rank 0 in
-  let src_offset = View.offset src.view in
-  let src_strides = View.strides src.view in
   let dst_offset = View.offset dst.view in
   let dst_strides = View.strides dst.view in
+  let src_offset = View.offset src.view in
+  let src_strides = View.strides src.view in
   match (dst.buffer, src.buffer) with
   | Float64 dst_arr, Float64 src_arr ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k dst_shape md_index;
-        let src_lin = src_offset + Shape.ravel_index md_index src_strides in
-        let dst_lin = dst_offset + Shape.ravel_index md_index dst_strides in
-        Array.unsafe_set dst_arr dst_lin (Array.unsafe_get src_arr src_lin)
-      done
+      Op_assign.assign_float64 dst_arr src_arr n dst_shape dst_offset dst_strides
+        src_offset src_strides
   | Float32 dst_arr, Float32 src_arr ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k dst_shape md_index;
-        let src_lin = src_offset + Shape.ravel_index md_index src_strides in
-        let dst_lin = dst_offset + Shape.ravel_index md_index dst_strides in
-        Array.unsafe_set dst_arr dst_lin (Array.unsafe_get src_arr src_lin)
-      done
+      Op_assign.assign_float32 dst_arr src_arr n dst_shape dst_offset dst_strides
+        src_offset src_strides
   | Int8 dst_arr, Int8 src_arr ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k dst_shape md_index;
-        let src_lin = src_offset + Shape.ravel_index md_index src_strides in
-        let dst_lin = dst_offset + Shape.ravel_index md_index dst_strides in
-        Array.unsafe_set dst_arr dst_lin (Array.unsafe_get src_arr src_lin)
-      done
+      Op_assign.assign_int8 dst_arr src_arr n dst_shape dst_offset dst_strides
+        src_offset src_strides
   | Int16 dst_arr, Int16 src_arr ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k dst_shape md_index;
-        let src_lin = src_offset + Shape.ravel_index md_index src_strides in
-        let dst_lin = dst_offset + Shape.ravel_index md_index dst_strides in
-        Array.unsafe_set dst_arr dst_lin (Array.unsafe_get src_arr src_lin)
-      done
+      Op_assign.assign_int16 dst_arr src_arr n dst_shape dst_offset dst_strides
+        src_offset src_strides
   | Int32 dst_arr, Int32 src_arr ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k dst_shape md_index;
-        let src_lin = src_offset + Shape.ravel_index md_index src_strides in
-        let dst_lin = dst_offset + Shape.ravel_index md_index dst_strides in
-        Array.unsafe_set dst_arr dst_lin (Array.unsafe_get src_arr src_lin)
-      done
+      Op_assign.assign_int32 dst_arr src_arr n dst_shape dst_offset dst_strides
+        src_offset src_strides
   | Int64 dst_arr, Int64 src_arr ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k dst_shape md_index;
-        let src_lin = src_offset + Shape.ravel_index md_index src_strides in
-        let dst_lin = dst_offset + Shape.ravel_index md_index dst_strides in
-        Array.unsafe_set dst_arr dst_lin (Array.unsafe_get src_arr src_lin)
-      done
+      Op_assign.assign_int64 dst_arr src_arr n dst_shape dst_offset dst_strides
+        src_offset src_strides
   | Bool dst_arr, Bool src_arr ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k dst_shape md_index;
-        let src_lin = src_offset + Shape.ravel_index md_index src_strides in
-        let dst_lin = dst_offset + Shape.ravel_index md_index dst_strides in
-        Array.unsafe_set dst_arr dst_lin (Array.unsafe_get src_arr src_lin)
-      done
+      Op_assign.assign_bool dst_arr src_arr n dst_shape dst_offset dst_strides
+        src_offset src_strides
   | _ -> .
 
 let op_as_strided (type a b) (x : (a, b) t) shape_sym strides offset : (a, b) t
@@ -2022,111 +1530,35 @@ let op_gather (type a b) (data : (a, b) t)
   let idx_strides = View.strides indices.view in
   let out_offset = View.offset out.view in
   let out_strides = View.strides out.view in
-  let md_index = Array.make rank 0 in
-  let src_index = Array.make rank 0 in
-  let idx_arr =
-    match indices.buffer with
-    | Int32 a -> a
-    | _ -> .
-  in
+  let idx_arr = match indices.buffer with Int32 a -> a | _ -> . in
   match (data.buffer, out.buffer) with
   | Float64 src, Float64 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k ishape md_index;
-        let idx_lin = idx_offset + Shape.ravel_index md_index idx_strides in
-        let idx = Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr idx_lin)) in
-        if idx < 0 || idx >= dshape.(axis) then
-          Error.invalid ~op:"op_gather" ~what:"index out of bounds" ();
-        Array.blit md_index 0 src_index 0 rank;
-        src_index.(axis) <- idx;
-        let src_lin = data_offset + Shape.ravel_index src_index data_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
-      done;
+      Op_gather.gather_float64 src dst n ishape dshape axis idx_arr data_offset
+        data_strides idx_offset idx_strides out_offset out_strides;
       out
   | Float32 src, Float32 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k ishape md_index;
-        let idx_lin = idx_offset + Shape.ravel_index md_index idx_strides in
-        let idx = Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr idx_lin)) in
-        if idx < 0 || idx >= dshape.(axis) then
-          Error.invalid ~op:"op_gather" ~what:"index out of bounds" ();
-        Array.blit md_index 0 src_index 0 rank;
-        src_index.(axis) <- idx;
-        let src_lin = data_offset + Shape.ravel_index src_index data_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
-      done;
+      Op_gather.gather_float32 src dst n ishape dshape axis idx_arr data_offset
+        data_strides idx_offset idx_strides out_offset out_strides;
       out
   | Int8 src, Int8 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k ishape md_index;
-        let idx_lin = idx_offset + Shape.ravel_index md_index idx_strides in
-        let idx = Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr idx_lin)) in
-        if idx < 0 || idx >= dshape.(axis) then
-          Error.invalid ~op:"op_gather" ~what:"index out of bounds" ();
-        Array.blit md_index 0 src_index 0 rank;
-        src_index.(axis) <- idx;
-        let src_lin = data_offset + Shape.ravel_index src_index data_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
-      done;
+      Op_gather.gather_int8 src dst n ishape dshape axis idx_arr data_offset
+        data_strides idx_offset idx_strides out_offset out_strides;
       out
   | Int16 src, Int16 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k ishape md_index;
-        let idx_lin = idx_offset + Shape.ravel_index md_index idx_strides in
-        let idx = Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr idx_lin)) in
-        if idx < 0 || idx >= dshape.(axis) then
-          Error.invalid ~op:"op_gather" ~what:"index out of bounds" ();
-        Array.blit md_index 0 src_index 0 rank;
-        src_index.(axis) <- idx;
-        let src_lin = data_offset + Shape.ravel_index src_index data_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
-      done;
+      Op_gather.gather_int16 src dst n ishape dshape axis idx_arr data_offset
+        data_strides idx_offset idx_strides out_offset out_strides;
       out
   | Int32 src, Int32 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k ishape md_index;
-        let idx_lin = idx_offset + Shape.ravel_index md_index idx_strides in
-        let idx = Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr idx_lin)) in
-        if idx < 0 || idx >= dshape.(axis) then
-          Error.invalid ~op:"op_gather" ~what:"index out of bounds" ();
-        Array.blit md_index 0 src_index 0 rank;
-        src_index.(axis) <- idx;
-        let src_lin = data_offset + Shape.ravel_index src_index data_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
-      done;
+      Op_gather.gather_int32 src dst n ishape dshape axis idx_arr data_offset
+        data_strides idx_offset idx_strides out_offset out_strides;
       out
   | Int64 src, Int64 dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k ishape md_index;
-        let idx_lin = idx_offset + Shape.ravel_index md_index idx_strides in
-        let idx = Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr idx_lin)) in
-        if idx < 0 || idx >= dshape.(axis) then
-          Error.invalid ~op:"op_gather" ~what:"index out of bounds" ();
-        Array.blit md_index 0 src_index 0 rank;
-        src_index.(axis) <- idx;
-        let src_lin = data_offset + Shape.ravel_index src_index data_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
-      done;
+      Op_gather.gather_int64 src dst n ishape dshape axis idx_arr data_offset
+        data_strides idx_offset idx_strides out_offset out_strides;
       out
   | Bool src, Bool dst ->
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k ishape md_index;
-        let idx_lin = idx_offset + Shape.ravel_index md_index idx_strides in
-        let idx = Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr idx_lin)) in
-        if idx < 0 || idx >= dshape.(axis) then
-          Error.invalid ~op:"op_gather" ~what:"index out of bounds" ();
-        Array.blit md_index 0 src_index 0 rank;
-        src_index.(axis) <- idx;
-        let src_lin = data_offset + Shape.ravel_index src_index data_strides in
-        let dst_lin = out_offset + Shape.ravel_index md_index out_strides in
-        Array.unsafe_set dst dst_lin (Array.unsafe_get src src_lin)
-      done;
+      Op_gather.gather_bool src dst n ishape dshape axis idx_arr data_offset
+        data_strides idx_offset idx_strides out_offset out_strides;
       out
   | _ -> .
 
@@ -2159,180 +1591,37 @@ let op_scatter ?(mode = `Set) ?unique_indices:_ (type a b)
   let upd_strides = View.strides updates.view in
   let out_offset = View.offset out.view in
   let out_strides = View.strides out.view in
-  let md_index = Array.make rank 0 in
-  let dst_index = Array.make rank 0 in
-  let idx_arr =
-    match indices.buffer with
-    | Int32 a -> a
-    | _ -> .
-  in
-  match (out.buffer, updates.buffer) with
-  | Float64 out_arr, Float64 upd_arr ->
-      if mode = `Add then (
-        let z = Float_u.of_float 0.0 in
-        for i = 0 to Shape.numel tshape - 1 do
-          Array.unsafe_set out_arr i z
-        done);
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k ishape md_index;
-        let idx_lin = idx_offset + Shape.ravel_index md_index idx_strides in
-        let idx = Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr idx_lin)) in
-        if idx < 0 || idx >= tshape.(axis) then
-          Error.invalid ~op:"op_scatter" ~what:"index out of bounds" ();
-        Array.blit md_index 0 dst_index 0 rank;
-        dst_index.(axis) <- idx;
-        let upd_lin = upd_offset + Shape.ravel_index md_index upd_strides in
-        let out_lin = out_offset + Shape.ravel_index dst_index out_strides in
-        let v = Array.unsafe_get upd_arr upd_lin in
-        match mode with
-        | `Set -> Array.unsafe_set out_arr out_lin v
-        | `Add ->
-            Array.unsafe_set out_arr out_lin
-              (Float_u.add (Array.unsafe_get out_arr out_lin) v)
-      done;
+  let idx_arr = match indices.buffer with Int32 a -> a | _ -> . in
+  match (updates.buffer, out.buffer) with
+  | Float64 src_arr, Float64 out_arr ->
+      Op_scatter.scatter_float64 mode src_arr out_arr n ishape tshape axis
+        idx_arr upd_offset upd_strides idx_offset idx_strides out_offset
+        out_strides;
       out
-  | Float32 out_arr, Float32 upd_arr ->
-      if mode = `Add then (
-        let z = Float32_u.of_int 0 in
-        for i = 0 to Shape.numel tshape - 1 do
-          Array.unsafe_set out_arr i z
-        done);
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k ishape md_index;
-        let idx_lin = idx_offset + Shape.ravel_index md_index idx_strides in
-        let idx = Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr idx_lin)) in
-        if idx < 0 || idx >= tshape.(axis) then
-          Error.invalid ~op:"op_scatter" ~what:"index out of bounds" ();
-        Array.blit md_index 0 dst_index 0 rank;
-        dst_index.(axis) <- idx;
-        let upd_lin = upd_offset + Shape.ravel_index md_index upd_strides in
-        let out_lin = out_offset + Shape.ravel_index dst_index out_strides in
-        let v = Array.unsafe_get upd_arr upd_lin in
-        match mode with
-        | `Set -> Array.unsafe_set out_arr out_lin v
-        | `Add ->
-            Array.unsafe_set out_arr out_lin
-              (Float32_u.add (Array.unsafe_get out_arr out_lin) v)
-      done;
+  | Float32 src_arr, Float32 out_arr ->
+      Op_scatter.scatter_float32 mode src_arr out_arr n ishape tshape axis
+        idx_arr upd_offset upd_strides idx_offset idx_strides out_offset
+        out_strides;
       out
-  | Int8 out_arr, Int8 upd_arr ->
-      if mode = `Add then (
-        let z = Int8_u.of_int 0 in
-        for i = 0 to Shape.numel tshape - 1 do
-          Array.unsafe_set out_arr i z
-        done);
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k ishape md_index;
-        let idx_lin = idx_offset + Shape.ravel_index md_index idx_strides in
-        let idx = Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr idx_lin)) in
-        if idx < 0 || idx >= tshape.(axis) then
-          Error.invalid ~op:"op_scatter" ~what:"index out of bounds" ();
-        Array.blit md_index 0 dst_index 0 rank;
-        dst_index.(axis) <- idx;
-        let upd_lin = upd_offset + Shape.ravel_index md_index upd_strides in
-        let out_lin = out_offset + Shape.ravel_index dst_index out_strides in
-        let v = Array.unsafe_get upd_arr upd_lin in
-        match mode with
-        | `Set -> Array.unsafe_set out_arr out_lin v
-        | `Add ->
-            Array.unsafe_set out_arr out_lin
-              (Int8_u.add (Array.unsafe_get out_arr out_lin) v)
-      done;
+  | Int8 src_arr, Int8 out_arr ->
+      Op_scatter.scatter_int8 mode src_arr out_arr n ishape tshape axis idx_arr
+        upd_offset upd_strides idx_offset idx_strides out_offset out_strides;
       out
-  | Int16 out_arr, Int16 upd_arr ->
-      if mode = `Add then (
-        let z = Int16_u.of_int 0 in
-        for i = 0 to Shape.numel tshape - 1 do
-          Array.unsafe_set out_arr i z
-        done);
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k ishape md_index;
-        let idx_lin = idx_offset + Shape.ravel_index md_index idx_strides in
-        let idx = Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr idx_lin)) in
-        if idx < 0 || idx >= tshape.(axis) then
-          Error.invalid ~op:"op_scatter" ~what:"index out of bounds" ();
-        Array.blit md_index 0 dst_index 0 rank;
-        dst_index.(axis) <- idx;
-        let upd_lin = upd_offset + Shape.ravel_index md_index upd_strides in
-        let out_lin = out_offset + Shape.ravel_index dst_index out_strides in
-        let v = Array.unsafe_get upd_arr upd_lin in
-        match mode with
-        | `Set -> Array.unsafe_set out_arr out_lin v
-        | `Add ->
-            Array.unsafe_set out_arr out_lin
-              (Int16_u.add (Array.unsafe_get out_arr out_lin) v)
-      done;
+  | Int16 src_arr, Int16 out_arr ->
+      Op_scatter.scatter_int16 mode src_arr out_arr n ishape tshape axis idx_arr
+        upd_offset upd_strides idx_offset idx_strides out_offset out_strides;
       out
-  | Int32 out_arr, Int32 upd_arr ->
-      if mode = `Add then (
-        let z = Int32_u.of_int32 0l in
-        for i = 0 to Shape.numel tshape - 1 do
-          Array.unsafe_set out_arr i z
-        done);
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k ishape md_index;
-        let idx_lin = idx_offset + Shape.ravel_index md_index idx_strides in
-        let idx = Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr idx_lin)) in
-        if idx < 0 || idx >= tshape.(axis) then
-          Error.invalid ~op:"op_scatter" ~what:"index out of bounds" ();
-        Array.blit md_index 0 dst_index 0 rank;
-        dst_index.(axis) <- idx;
-        let upd_lin = upd_offset + Shape.ravel_index md_index upd_strides in
-        let out_lin = out_offset + Shape.ravel_index dst_index out_strides in
-        let v = Array.unsafe_get upd_arr upd_lin in
-        match mode with
-        | `Set -> Array.unsafe_set out_arr out_lin v
-        | `Add ->
-            Array.unsafe_set out_arr out_lin
-              (Int32_u.add (Array.unsafe_get out_arr out_lin) v)
-      done;
+  | Int32 src_arr, Int32 out_arr ->
+      Op_scatter.scatter_int32 mode src_arr out_arr n ishape tshape axis idx_arr
+        upd_offset upd_strides idx_offset idx_strides out_offset out_strides;
       out
-  | Int64 out_arr, Int64 upd_arr ->
-      if mode = `Add then (
-        let z = Int64_u.of_int64 0L in
-        for i = 0 to Shape.numel tshape - 1 do
-          Array.unsafe_set out_arr i z
-        done);
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k ishape md_index;
-        let idx_lin = idx_offset + Shape.ravel_index md_index idx_strides in
-        let idx = Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr idx_lin)) in
-        if idx < 0 || idx >= tshape.(axis) then
-          Error.invalid ~op:"op_scatter" ~what:"index out of bounds" ();
-        Array.blit md_index 0 dst_index 0 rank;
-        dst_index.(axis) <- idx;
-        let upd_lin = upd_offset + Shape.ravel_index md_index upd_strides in
-        let out_lin = out_offset + Shape.ravel_index dst_index out_strides in
-        let v = Array.unsafe_get upd_arr upd_lin in
-        match mode with
-        | `Set -> Array.unsafe_set out_arr out_lin v
-        | `Add ->
-            Array.unsafe_set out_arr out_lin
-              (Int64_u.add (Array.unsafe_get out_arr out_lin) v)
-      done;
+  | Int64 src_arr, Int64 out_arr ->
+      Op_scatter.scatter_int64 mode src_arr out_arr n ishape tshape axis idx_arr
+        upd_offset upd_strides idx_offset idx_strides out_offset out_strides;
       out
-  | Bool out_arr, Bool upd_arr ->
-      if mode = `Add then
-        for i = 0 to Shape.numel tshape - 1 do
-          Array.unsafe_set out_arr i false
-        done;
-      for k = 0 to n - 1 do
-        Shape.unravel_index_into k ishape md_index;
-        let idx_lin = idx_offset + Shape.ravel_index md_index idx_strides in
-        let idx = Int32.to_int (Int32_u.to_int32 (Array.unsafe_get idx_arr idx_lin)) in
-        if idx < 0 || idx >= tshape.(axis) then
-          Error.invalid ~op:"op_scatter" ~what:"index out of bounds" ();
-        Array.blit md_index 0 dst_index 0 rank;
-        dst_index.(axis) <- idx;
-        let upd_lin = upd_offset + Shape.ravel_index md_index upd_strides in
-        let out_lin = out_offset + Shape.ravel_index dst_index out_strides in
-        let v = Array.unsafe_get upd_arr upd_lin in
-        match mode with
-        | `Set -> Array.unsafe_set out_arr out_lin v
-        | `Add ->
-            Array.unsafe_set out_arr out_lin
-              (Array.unsafe_get out_arr out_lin || v)
-      done;
+  | Bool src_arr, Bool out_arr ->
+      Op_scatter.scatter_bool mode src_arr out_arr n ishape tshape axis idx_arr
+        upd_offset upd_strides idx_offset idx_strides out_offset out_strides;
       out
   | _ -> .
 
