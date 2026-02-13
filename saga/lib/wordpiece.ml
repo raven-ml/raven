@@ -86,66 +86,50 @@ let from_file_with_config ~vocab_file ~unk_token ~continuing_subword_prefix
     max_input_chars_per_word
 
 let tokenize model sequence =
-  (* Handle empty vocabulary case *)
   if Hashtbl.length model.vocab = 0 then []
   else
-    let char_count =
-      let len = String.length sequence in
-      let count = ref 0 in
-      let rec loop i =
-        if i >= len then !count
-        else
-          let d = String.get_utf_8_uchar sequence i in
-          incr count;
-          loop (i + Uchar.utf_decode_length d)
-      in
-      loop 0
-    in
-    if char_count > model.max_input_chars_per_word then
+    let seq_len = String.length sequence in
+    let char_count = ref 0 in
+    for i = 0 to seq_len - 1 do
+      if Char.code (String.unsafe_get sequence i) land 0xC0 <> 0x80 then
+        incr char_count
+    done;
+    if !char_count > model.max_input_chars_per_word then
       let id = Hashtbl.find model.vocab model.unk_token in
-      [ { id; value = model.unk_token; offsets = (0, String.length sequence) } ]
+      [ { id; value = model.unk_token; offsets = (0, seq_len) } ]
     else
-      let seq_len = String.length sequence in
       let prefix = model.continuing_subword_prefix in
       let prefix_len = String.length prefix in
+      let buf = Bytes.create (prefix_len + seq_len) in
+      Bytes.blit_string prefix 0 buf 0 prefix_len;
       let rec tokenize_greedy start acc =
         if start >= seq_len then List.rev acc
         else
-          (* Build the full candidate string once: prefix ^ sequence[start..] *)
-          let remainder = seq_len - start in
-          let full_candidate =
-            if start > 0 then prefix ^ String.sub sequence start remainder
-            else String.sub sequence start remainder
-          in
-          let candidate_len = String.length full_candidate in
-          let rec find_longest_match cand_end =
-            let token_end_in_seq =
-              if start > 0 then cand_end - prefix_len else cand_end
-            in
-            if token_end_in_seq <= 0 then None
+          let rec find_longest_match end_byte =
+            if end_byte <= start then None
             else
-              let token_str = String.sub full_candidate 0 cand_end in
-              match Hashtbl.find_opt model.vocab token_str with
-              | Some id ->
-                  let end_pos = start + token_end_in_seq in
-                  Some { id; value = token_str; offsets = (start, end_pos) }
+              let key =
+                if start = 0 then String.sub sequence 0 end_byte
+                else
+                  let sub_len = end_byte - start in
+                  Bytes.blit_string sequence start buf prefix_len sub_len;
+                  Bytes.sub_string buf 0 (prefix_len + sub_len)
+              in
+              match Hashtbl.find_opt model.vocab key with
+              | Some id -> Some { id; value = key; offsets = (start, end_byte) }
               | None ->
-                  (* Step back one UTF-8 character *)
-                  let new_cand_end =
-                    let rec find_char_boundary pos =
-                      if pos <= if start > 0 then prefix_len else 0 then 0
-                      else if
-                        Char.code full_candidate.[pos - 1] land 0xC0 <> 0x80
-                      then pos - 1
-                      else find_char_boundary (pos - 1)
-                    in
-                    find_char_boundary cand_end
-                  in
-                  if new_cand_end <= if start > 0 then prefix_len else 0 then
-                    None
-                  else find_longest_match new_cand_end
+                  let new_end = ref (end_byte - 1) in
+                  while
+                    !new_end > start
+                    && Char.code (String.unsafe_get sequence !new_end) land 0xC0
+                       = 0x80
+                  do
+                    decr new_end
+                  done;
+                  if !new_end <= start then None
+                  else find_longest_match !new_end
           in
-          match find_longest_match candidate_len with
+          match find_longest_match seq_len with
           | Some token -> tokenize_greedy (snd token.offsets) (token :: acc)
           | None ->
               let id = Hashtbl.find model.vocab model.unk_token in
@@ -156,60 +140,49 @@ let tokenize model sequence =
 let tokenize_ids model sequence =
   if Hashtbl.length model.vocab = 0 then [||]
   else
-    let char_count =
-      let len = String.length sequence in
-      let count = ref 0 in
-      let rec loop i =
-        if i >= len then !count
-        else
-          let d = String.get_utf_8_uchar sequence i in
-          incr count;
-          loop (i + Uchar.utf_decode_length d)
-      in
-      loop 0
-    in
-    if char_count > model.max_input_chars_per_word then
+    let seq_len = String.length sequence in
+    let char_count = ref 0 in
+    for i = 0 to seq_len - 1 do
+      if Char.code (String.unsafe_get sequence i) land 0xC0 <> 0x80 then
+        incr char_count
+    done;
+    if !char_count > model.max_input_chars_per_word then
       let id = Hashtbl.find model.vocab model.unk_token in
       [| id |]
     else
-      let seq_len = String.length sequence in
       let prefix = model.continuing_subword_prefix in
       let prefix_len = String.length prefix in
+      let buf = Bytes.create (prefix_len + seq_len) in
+      Bytes.blit_string prefix 0 buf 0 prefix_len;
       let ids = ref [] in
       let n = ref 0 in
       let rec greedy start =
         if start >= seq_len then ()
         else
-          let remainder = seq_len - start in
-          let full_candidate =
-            if start > 0 then prefix ^ String.sub sequence start remainder
-            else String.sub sequence start remainder
-          in
-          let candidate_len = String.length full_candidate in
-          let rec find cand_end =
-            let token_end =
-              if start > 0 then cand_end - prefix_len else cand_end
-            in
-            if token_end <= 0 then None
+          let rec find end_byte =
+            if end_byte <= start then None
             else
-              let token_str = String.sub full_candidate 0 cand_end in
-              match Hashtbl.find_opt model.vocab token_str with
-              | Some id -> Some (id, start + token_end)
+              let key =
+                if start = 0 then String.sub sequence 0 end_byte
+                else
+                  let sub_len = end_byte - start in
+                  Bytes.blit_string sequence start buf prefix_len sub_len;
+                  Bytes.sub_string buf 0 (prefix_len + sub_len)
+              in
+              match Hashtbl.find_opt model.vocab key with
+              | Some id -> Some (id, end_byte)
               | None ->
-                  let new_end =
-                    let rec boundary pos =
-                      if pos <= if start > 0 then prefix_len else 0 then 0
-                      else if
-                        Char.code full_candidate.[pos - 1] land 0xC0 <> 0x80
-                      then pos - 1
-                      else boundary (pos - 1)
-                    in
-                    boundary cand_end
-                  in
-                  if new_end <= if start > 0 then prefix_len else 0 then None
-                  else find new_end
+                  let new_end = ref (end_byte - 1) in
+                  while
+                    !new_end > start
+                    && Char.code (String.unsafe_get sequence !new_end) land 0xC0
+                       = 0x80
+                  do
+                    decr new_end
+                  done;
+                  if !new_end <= start then None else find !new_end
           in
-          match find candidate_len with
+          match find seq_len with
           | Some (id, next_start) ->
               ids := id :: !ids;
               incr n;
