@@ -30,22 +30,36 @@ open Import
    Threading: the ic-loop is parallelized via Parallel.parallel_for. Each
    domain gets its own ap/bp scratch buffers allocated inside the closure.
 
-   Known limitations
-   ~~~~~~~~~~~~~~~~~
+   Known limitations and next optimizations
+   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+   A pure-C BLIS implementation can match BLAS (see Salykov, "Advanced Matrix
+   Multiplication Optimization on Modern Multi-Core Processors"). The ~8–31×
+   gap vs. the C backend is closeable. In priority order:
 
    - No FMA: mul_add compiles to fmul + fadd. NEON fmla exists in simd_neon
      but is not a [@@builtin] external, so it hits the same cross-module
      inlining issue (see SIMD wrappers comment below). Needs upstream OxCaml.
 
-   - 128-bit SIMD only: ARM64 NEON is limited to 128-bit vectors.
-     AVX2/AVX-512 on x86 would be a large win.
+   - Edge tiles use scalar fallback. NEON has masked stores that would let
+     the microkernel handle partial MR/NR tiles at near-full SIMD throughput
+     instead of falling back to element-at-a-time loops.
+
+   - Kernel size may not be optimal. ARM64 NEON has 32 128-bit registers.
+     We should experiment with larger MR×NR (e.g. 8×4, 8×6 for f64;
+     8×8, 12×8 for f32) to increase arithmetic intensity per memory access.
+
+   - Cache blocking parameters (KC, MC, NC) need systematic tuning for Apple
+     Silicon's cache hierarchy (192KB L1d, 4MB L2 per P-core cluster).
 
    - Pack B is redundantly done per domain. Restructuring to pack once per
-     (jc, pc) block regressed performance — the extra parallel_execute calls
-     and effect-handler overhead outweigh the redundant packing.
+     (jc, pc) block regressed due to effect-handler overhead in
+     Parallel.run — fixing the parallel primitives would unlock this.
 
-   Remaining gap vs. C backend (~8–31× on Apple Silicon) is dominated by
-   Apple Accelerate's AMX coprocessor, plus the above.
+   - Parallelization strategy: we parallelize the ic-loop (3rd loop). BLIS
+     literature suggests parallelizing the jr/ir loops (1st/2nd) around the
+     microkernel can be more efficient, as it avoids redundant packing and
+     gives finer-grained work distribution.
    --------------------------------------------------------------------------- *)
 
 (* ---------------------------- Helpers ------------------------------------ *)
