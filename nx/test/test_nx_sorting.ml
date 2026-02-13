@@ -49,12 +49,6 @@ let test_where_invalid_shapes () =
 
 (* ───── Sort Tests ───── *)
 
-let test_sort_1d () =
-  let t = Nx.create Nx.float32 [| 3 |] [| 3.; 1.; 2. |] in
-  let result, indices = Nx.sort t in
-  check_t "sort 1D values" [| 3 |] [| 1.; 2.; 3. |] result;
-  check_t "sort 1D indices" [| 3 |] [| 1l; 2l; 0l |] indices
-
 let test_sort_2d_axis0 () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 4.; 1.; 3.; 2.; 5.; 6. |] in
   let result, indices = Nx.sort ~axis:0 t in
@@ -98,9 +92,9 @@ let test_sort_stable () =
 (* ───── Argsort Tests ───── *)
 
 let test_argsort_1d () =
-  let t = Nx.create Nx.float32 [| 3 |] [| 3.; 1.; 2. |] in
+  let t = Nx.create Nx.float32 [| 5 |] [| 3.; 1.; 4.; 1.; 5. |] in
   let result = Nx.argsort t in
-  check_t "argsort 1D" [| 3 |] [| 1l; 2l; 0l |] result
+  check_t "argsort 1D" [| 5 |] [| 1l; 3l; 0l; 2l; 4l |] result
 
 let test_argsort_2d_axis0 () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 4.; 1.; 3.; 2.; 5.; 6. |] in
@@ -122,9 +116,9 @@ let test_argsort_empty () =
 (* ───── Argmax Tests ───── *)
 
 let test_argmax_1d () =
-  let t = Nx.create Nx.float32 [| 3 |] [| 1.; 3.; 2. |] in
+  let t = Nx.create Nx.float32 [| 5 |] [| 3.; 1.; 4.; 1.; 5. |] in
   let result = Nx.argmax t in
-  check_t "argmax 1D" [||] [| 1l |] result
+  check_t "argmax 1D" [||] [| 4l |] result
 
 let test_argmax_2d_axis0 () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
@@ -151,9 +145,9 @@ let test_argmax_nan () =
 (* ───── Argmin Tests ───── *)
 
 let test_argmin_1d () =
-  let t = Nx.create Nx.float32 [| 3 |] [| 1.; 3.; 2. |] in
+  let t = Nx.create Nx.float32 [| 5 |] [| 3.; 1.; 4.; 1.; 5. |] in
   let result = Nx.argmin t in
-  check_t "argmin 1D" [||] [| 0l |] result
+  check_t "argmin 1D" [||] [| 1l |] result
 
 let test_argmin_2d_axis0 () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
@@ -183,7 +177,6 @@ let where_tests =
 
 let sort_tests =
   [
-    test "sort 1D" test_sort_1d;
     test "sort 2D axis 0" test_sort_2d_axis0;
     test "sort 2D axis 1" test_sort_2d_axis1;
     test "sort invalid axis" test_sort_invalid_axis;

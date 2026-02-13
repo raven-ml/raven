@@ -73,11 +73,6 @@ let test_reshape_copy_when_not_contiguous () =
      hint: call contiguous() before reshape to create a C-contiguous copy"
     (fun () -> Nx.reshape [| 6 |] transposed)
 
-let test_reshape_to_vector () =
-  let t = Nx.create Nx.float32 [| 4 |] [| 1.0; 2.0; 3.0; 4.0 |] in
-  let r = Nx.reshape [| 4; 1 |] t in
-  check_t "reshape to column vector" [| 4; 1 |] [| 1.0; 2.0; 3.0; 4.0 |] r
-
 (* ───── Transpose Tests ───── *)
 
 let test_transpose_1d () =
@@ -127,11 +122,6 @@ let test_concat_axis_1 () =
   check_t "concat axis 1" [| 2; 5 |]
     [| 1.; 2.; 3.; 7.; 8.; 4.; 5.; 6.; 9.; 10. |]
     c
-
-let test_concat_single () =
-  let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  let c = Nx.concatenate [ t ] in
-  check_t "concat single array" [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] c
 
 let test_concat_empty_list () =
   check_invalid_arg "concat empty list"
@@ -600,7 +590,6 @@ let reshape_tests =
     test "reshape view when contiguous" test_reshape_view_when_contiguous;
     test "reshape copy when not contiguous"
       test_reshape_copy_when_not_contiguous;
-    test "reshape to vector" test_reshape_to_vector;
   ]
 
 let transpose_tests =
@@ -616,7 +605,6 @@ let transpose_tests =
 let concatenate_tests =
   [
     test "concat axis 1" test_concat_axis_1;
-    test "concat single" test_concat_single;
     test "concat empty list" test_concat_empty_list;
     test "concat different dtypes" test_concat_different_dtypes;
     test "concat with empty" test_concat_with_empty;

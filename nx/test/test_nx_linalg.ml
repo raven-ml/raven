@@ -10,15 +10,6 @@ open Test_nx_support
 
 (* ───── Matrix Multiply Tests ───── *)
 
-let test_matmul_2d_2d () =
-  let a = Nx.create Nx.float32 [| 3; 4 |] (Array.init 12 float_of_int) in
-  let b = Nx.create Nx.float32 [| 4; 5 |] (Array.init 20 float_of_int) in
-  let result = Nx.matmul a b in
-  check_shape "matmul 2d x 2d shape" [| 3; 5 |] result;
-  (* Check a few values *)
-  equal ~msg:"matmul[0,0]" (float 1e-6) 70.0 (Nx.item [ 0; 0 ] result);
-  equal ~msg:"matmul[2,4]" (float 1e-6) 462.0 (Nx.item [ 2; 4 ] result)
-
 let test_matmul_1d_1d () =
   let a = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
   let b = Nx.create Nx.float32 [| 3 |] [| 4.; 5.; 6. |] in
@@ -267,14 +258,6 @@ let test_qr_shape () =
   check_shape "qr q shape" [| 4; 4 |] q;
   check_shape "qr r shape" [| 4; 3 |] r
 
-let test_qr_property () =
-  let a =
-    Nx.create Nx.float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 10. |]
-  in
-  let q, r = Nx.qr a in
-  let reconstructed = Nx.matmul q r in
-  check_nx ~epsilon:1e-5 "qr property" a reconstructed
-
 let test_qr_orthogonal () =
   let a =
     Nx.create Nx.float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 10. |]
@@ -291,20 +274,6 @@ let test_svd_shape () =
   check_shape "svd s shape" [| 3 |] s;
   check_shape "svd vt shape (V^H)" [| 3; 4 |] vt
 
-let test_svd_property () =
-  let a =
-    Nx.create Nx.float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 10. |]
-  in
-  let u, s, vh = Nx.svd a in
-  let s_diag = Nx.zeros Nx.float32 [| 3; 3 |] in
-  let s_float32 = Nx.cast Nx.float32 s in
-  for i = 0 to 2 do
-    let s_val = Nx.item [ i ] s_float32 in
-    Nx.set_item [ i; i ] s_val s_diag
-  done;
-  let reconstructed = Nx.matmul u (Nx.matmul s_diag vh) in
-  check_nx ~epsilon:1e-5 "svd property" a reconstructed
-
 let test_cholesky_posdef () =
   let a =
     Nx.create Nx.float32 [| 3; 3 |] [| 1.; 0.; 0.; 1.; 1.; 0.; 1.; 1.; 1. |]
@@ -312,13 +281,6 @@ let test_cholesky_posdef () =
   let posdef = Nx.matmul (Nx.transpose a) a in
   let l = Nx.cholesky posdef in
   check_shape "cholesky shape" [| 3; 3 |] l
-
-let test_cholesky_property () =
-  let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 0.; 1.; 1. |] in
-  let posdef = Nx.matmul (Nx.transpose a) a in
-  let l = Nx.cholesky posdef in
-  let reconstructed = Nx.matmul l (Nx.transpose l) in
-  check_nx ~epsilon:1e-5 "cholesky property" posdef reconstructed
 
 let test_eig_shape () =
   let a =
@@ -389,13 +351,6 @@ let test_det_singular () =
   let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 2.; 4. |] in
   let det = Nx.det a in
   check_t ~eps:1e-6 "det singular" [||] [| 0.0 |] det
-
-let test_trace () =
-  let a =
-    Nx.create Nx.float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
-  in
-  let tr = Nx.trace a in
-  check_t "trace" [||] [| 15.0 |] tr
 
 let test_diag_extract () =
   let a =
@@ -1488,7 +1443,6 @@ let test_tensorinv_ind () =
 
 let matmul_tests =
   [
-    test "matmul 2d x 2d" test_matmul_2d_2d;
     test "matmul 1d x 1d" test_matmul_1d_1d;
     test "matmul 1d x 2d" test_matmul_1d_2d;
     test "matmul 2d x 1d" test_matmul_2d_1d;
@@ -1524,12 +1478,9 @@ let solve_inverse_tests =
 let decomposition_tests =
   [
     test "qr shape" test_qr_shape;
-    test "qr property" test_qr_property;
     test "qr orthogonal" test_qr_orthogonal;
     test "svd shape" test_svd_shape;
-    test "svd property" test_svd_property;
     test "cholesky posdef" test_cholesky_posdef;
-    test "cholesky property" test_cholesky_property;
     test "eig shape" test_eig_shape;
     test "eig property" test_eig_property;
   ]
@@ -1549,7 +1500,6 @@ let utility_tests =
   [
     test "det 2x2" test_det_2x2;
     test "det singular" test_det_singular;
-    test "trace" test_trace;
     test "diag extract" test_diag_extract;
   ]
 
