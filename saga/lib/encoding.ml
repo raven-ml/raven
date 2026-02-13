@@ -348,53 +348,56 @@ and merge_with t1 t2 ~growing_offsets =
 
 (* ───── Pad ───── *)
 
+let pad_array_left src pad_len fill =
+  let src_len = Array.length src in
+  let dst = Array.make (pad_len + src_len) fill in
+  Array.blit src 0 dst pad_len src_len;
+  dst
+
+let pad_array_right src pad_len fill =
+  let src_len = Array.length src in
+  let dst = Array.make (src_len + pad_len) fill in
+  Array.blit src 0 dst 0 src_len;
+  dst
+
 let rec pad t ~target_length ~pad_id ~pad_type_id ~pad_token ~direction =
-  (* First pad all overflowing encodings *)
   let padded_overflowing =
     List.map
       (fun e -> pad e ~target_length ~pad_id ~pad_type_id ~pad_token ~direction)
       t.overflowing
   in
-
   let current_len = length t in
   if current_len >= target_length then
     { t with overflowing = padded_overflowing }
   else
-    let pad_length = target_length - current_len in
-
+    let n = target_length - current_len in
     match direction with
     | Left ->
-        (* Update sequence ranges *)
         let new_ranges = Hashtbl.create (Hashtbl.length t.sequence_ranges) in
         Hashtbl.iter
           (fun seq_id (start, stop) ->
-            Hashtbl.add new_ranges seq_id (start + pad_length, stop + pad_length))
+            Hashtbl.add new_ranges seq_id (start + n, stop + n))
           t.sequence_ranges;
-
         {
-          ids = Array.append (Array.make pad_length pad_id) t.ids;
-          type_ids = Array.append (Array.make pad_length pad_type_id) t.type_ids;
-          tokens = Array.append (Array.make pad_length pad_token) t.tokens;
-          words = Array.append (Array.make pad_length None) t.words;
-          offsets = Array.append (Array.make pad_length (0, 0)) t.offsets;
-          special_tokens_mask =
-            Array.append (Array.make pad_length 1) t.special_tokens_mask;
-          attention_mask =
-            Array.append (Array.make pad_length 0) t.attention_mask;
+          ids = pad_array_left t.ids n pad_id;
+          type_ids = pad_array_left t.type_ids n pad_type_id;
+          tokens = pad_array_left t.tokens n pad_token;
+          words = pad_array_left t.words n None;
+          offsets = pad_array_left t.offsets n (0, 0);
+          special_tokens_mask = pad_array_left t.special_tokens_mask n 1;
+          attention_mask = pad_array_left t.attention_mask n 0;
           overflowing = padded_overflowing;
           sequence_ranges = new_ranges;
         }
     | Right ->
         {
-          ids = Array.append t.ids (Array.make pad_length pad_id);
-          type_ids = Array.append t.type_ids (Array.make pad_length pad_type_id);
-          tokens = Array.append t.tokens (Array.make pad_length pad_token);
-          words = Array.append t.words (Array.make pad_length None);
-          offsets = Array.append t.offsets (Array.make pad_length (0, 0));
-          special_tokens_mask =
-            Array.append t.special_tokens_mask (Array.make pad_length 1);
-          attention_mask =
-            Array.append t.attention_mask (Array.make pad_length 0);
+          ids = pad_array_right t.ids n pad_id;
+          type_ids = pad_array_right t.type_ids n pad_type_id;
+          tokens = pad_array_right t.tokens n pad_token;
+          words = pad_array_right t.words n None;
+          offsets = pad_array_right t.offsets n (0, 0);
+          special_tokens_mask = pad_array_right t.special_tokens_mask n 1;
+          attention_mask = pad_array_right t.attention_mask n 0;
           overflowing = padded_overflowing;
           sequence_ranges = t.sequence_ranges;
         }
