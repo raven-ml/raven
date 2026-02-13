@@ -1,4 +1,4 @@
-(data_only_dirs data scripts)
+(data_only_dirs data)
 
 (executable
  (name bench_tokenizers)
