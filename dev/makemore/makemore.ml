@@ -1,7 +1,9 @@
 open Rune
 open Kaun
 
-let load_names path = Saga.read_lines path |> List.map String.lowercase_ascii
+let load_names path =
+  In_channel.with_open_text path In_channel.input_lines
+  |> List.map String.lowercase_ascii
 
 let build_vocab (names : string list) =
   let tbl = Hashtbl.create 64 in
@@ -473,17 +475,37 @@ let train_bow ~vocab_size ~block_size ~n_embd ~n_embd2 ~epochs ~lr ~weight_decay
   Printf.printf "[makemore] Training complete.\n%!";
   fun x -> apply model state.params ~training:false x
 
+let sample_token ~temperature logits =
+  let logits = Array.map (fun x -> x /. temperature) logits in
+  let max_l = Array.fold_left Stdlib.max Float.neg_infinity logits in
+  let exp_l = Array.map (fun x -> Stdlib.exp (x -. max_l)) logits in
+  let sum = Array.fold_left ( +. ) 0.0 exp_l in
+  let probs = Array.map (fun x -> x /. sum) exp_l in
+  let r = Random.float 1.0 in
+  let cumsum = ref 0.0 in
+  let result = ref 0 in
+  (try
+     for i = 0 to Array.length probs - 1 do
+       cumsum := !cumsum +. probs.(i);
+       if !cumsum > r then begin
+         result := i;
+         raise_notrace Exit
+       end
+     done
+   with Exit -> ());
+  !result
+
 let generate ~model_fn ~eos_id ~encode ~decode ~max_new =
-  let tokenizer (s : string) = encode s in
-  let decoder ids = decode ids in
-  let config =
-    Saga.Sampler.(
-      default |> with_do_sample true |> with_temperature 0.9
-      |> with_max_new_tokens max_new)
-  in
-  let stop_on_eos = Saga.Sampler.eos_token_criteria ~eos_token_ids:[ eos_id ] in
-  Saga.Sampler.generate_text ~model:model_fn ~tokenizer ~decoder ~prompt:"."
-    ~generation_config:config ~stopping_criteria:[ stop_on_eos ] ()
+  let tokens = ref (encode ".") in
+  (try
+     for _ = 1 to max_new do
+       let logits = model_fn !tokens in
+       let next = sample_token ~temperature:0.9 logits in
+       tokens := !tokens @ [ next ];
+       if next = eos_id then raise_notrace Exit
+     done
+   with Exit -> ());
+  decode !tokens
 
 let main () =
   let model_choice = ref "bigram" in

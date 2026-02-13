@@ -6,7 +6,7 @@
 (* Tokenization tests for saga *)
 
 open Windtrap
-open Saga_tokenizers
+open Saga
 
 (* Helper function to tokenize text *)
 let tokenize_text text =

@@ -40,7 +40,7 @@ val create :
      ~attention_mask ~overflowing ~sequence_ranges] constructs encoding.
 
     For internal use by tokenizers. Most users should obtain encodings via
-    {!Saga_tokenizers.Tokenizer.encode}. *)
+    {!Saga.Tokenizer.encode}. *)
 
 val with_capacity : int -> t
 (** [with_capacity capacity] creates empty encoding with preallocated capacity.

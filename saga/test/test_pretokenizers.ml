@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-module Pre = Saga_tokenizers.Pre_tokenizers
+module Pre = Saga.Pre_tokenizers
 
 let check_tokenization name input expected =
   equal ~msg:name (list (pair string (pair int int))) expected input

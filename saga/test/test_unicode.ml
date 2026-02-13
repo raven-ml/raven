@@ -6,7 +6,7 @@
 (* Unicode processing tests for saga *)
 
 open Windtrap
-open Saga_tokenizers
+open Saga
 
 (* Basic Unicode Normalization Tests *)
 

@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-open Saga_tokenizers
+open Saga
 
 let make_word_tokenizer ?(specials = []) () =
   Tokenizer.word_level ~pre:(Pre_tokenizers.whitespace ()) ~specials ()

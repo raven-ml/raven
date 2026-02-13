@@ -1,4 +1,0 @@
-(library
- (name saga_tokenizers)
- (public_name saga.tokenizers)
- (libraries nx nx_core re jsont jsont.bytesrw))

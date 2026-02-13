@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-open Saga_tokenizers
+open Saga
 
 let test_bpe_basic () =
   (* Create a simple vocabulary and merges *)

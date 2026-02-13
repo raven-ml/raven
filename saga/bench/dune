@@ -2,4 +2,4 @@
 
 (executable
  (name bench_tokenizers)
- (libraries saga.tokenizers ubench unix))
+ (libraries saga ubench unix))

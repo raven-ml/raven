@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-open Saga_tokenizers
+open Saga
 
 let test_vocab_create_empty () =
   let tokenizer = Tokenizer.word_level () in

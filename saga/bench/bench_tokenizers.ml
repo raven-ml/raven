@@ -5,7 +5,7 @@
 
 (* Benchmark suite for Saga tokenizers using realistic fixtures. *)
 
-open Saga_tokenizers
+open Saga
 
 module Fixtures = struct
   let data_dir = Filename.concat (Sys.getcwd ()) "saga/bench/data"

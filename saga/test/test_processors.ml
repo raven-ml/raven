@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-open Saga_tokenizers
+open Saga
 
 let make_encoding ~ids ~tokens ~type_id =
   let len = Array.length ids in

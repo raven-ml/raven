@@ -1,6 +1,6 @@
 # Saga Benchmarks
 
-This directory contains micro-benchmarks for the `saga.tokenizers` library.
+This directory contains micro-benchmarks for the `saga` library.
 The suite mirrors HuggingFace's `tokenizers` so we can compare wall-clock
 throughput for realistic workloads and catch regressions.
 

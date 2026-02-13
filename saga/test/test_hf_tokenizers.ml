@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Saga_tokenizers
+open Saga
 open Windtrap
 
 let candidate_roots () =

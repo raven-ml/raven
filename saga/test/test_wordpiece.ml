@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-open Saga_tokenizers
+open Saga
 
 let test_wordpiece_basic () =
   (* Create a simple vocabulary *)
