@@ -10,7 +10,24 @@ open Import
 let[@inline] min_int a b = if a < b then a else b
 let[@inline] round_up x m = ((x + m - 1) / m) * m
 
-(* ========================= Float64 GEMM Module =========================== *)
+(* Local wrappers that call [@@builtin] externals directly.
+   Dune compiles library modules with -opaque, which prevents flambda2 from
+   exporting function bodies across compilation units. [@@builtin] externals
+   are recognized regardless, but let-bound wrappers (mul_add, set1) in Simd
+   cannot be inlined. Defining them here keeps them in the same compilation
+   unit as the kernels. *)
+
+let[@inline always] f64_mul_add a b c =
+  Float64x2.add (Float64x2.mul a b) c
+
+let[@inline always] f64_set1 a =
+  Float64x2.of_int64x2 (Int64x2.dup (Int64x2.of_float64x2 (Float64x2.low_of a)))
+
+let[@inline always] f32_mul_add a b c =
+  Float32x4.add (Float32x4.mul a b) c
+
+let[@inline always] f32_set1 a =
+  Float32x4.of_int32x4 (Int32x4.dup (Int32x4.of_float32x4 (Float32x4.low_of a)))
 
 module Gemm_f64 = struct
   let mr = 4
@@ -76,7 +93,7 @@ module Gemm_f64 = struct
     end
 
   let kernel_zero ap ~ap_off bp ~bp_off c_buf ~c_off ~ldc ~kc =
-    let z = Float64x2.set1 #0. in
+    let z = f64_set1 #0. in
     let rec kloop p c00 c01 c10 c11 c20 c21 c30 c31 =
       if p = kc then begin
         Float64x2.Array.unsafe_set c_buf ~idx:c_off c00;
@@ -94,17 +111,17 @@ module Gemm_f64 = struct
       else
         let ab = ap_off + p * 4 in
         let bb = bp_off + p * 4 in
-        let a0 = Float64x2.set1 (Array.unsafe_get ap ab) in
-        let a1 = Float64x2.set1 (Array.unsafe_get ap (ab + 1)) in
-        let a2 = Float64x2.set1 (Array.unsafe_get ap (ab + 2)) in
-        let a3 = Float64x2.set1 (Array.unsafe_get ap (ab + 3)) in
+        let a0 = f64_set1 (Array.unsafe_get ap ab) in
+        let a1 = f64_set1 (Array.unsafe_get ap (ab + 1)) in
+        let a2 = f64_set1 (Array.unsafe_get ap (ab + 2)) in
+        let a3 = f64_set1 (Array.unsafe_get ap (ab + 3)) in
         let b0 = Float64x2.Array.unsafe_get bp ~idx:bb in
         let b1 = Float64x2.Array.unsafe_get bp ~idx:(bb + 2) in
         kloop (p + 1)
-          (Float64x2.mul_add a0 b0 c00) (Float64x2.mul_add a0 b1 c01)
-          (Float64x2.mul_add a1 b0 c10) (Float64x2.mul_add a1 b1 c11)
-          (Float64x2.mul_add a2 b0 c20) (Float64x2.mul_add a2 b1 c21)
-          (Float64x2.mul_add a3 b0 c30) (Float64x2.mul_add a3 b1 c31)
+          (f64_mul_add a0 b0 c00) (f64_mul_add a0 b1 c01)
+          (f64_mul_add a1 b0 c10) (f64_mul_add a1 b1 c11)
+          (f64_mul_add a2 b0 c20) (f64_mul_add a2 b1 c21)
+          (f64_mul_add a3 b0 c30) (f64_mul_add a3 b1 c31)
     in
     kloop 0 z z z z z z z z
 
@@ -134,17 +151,17 @@ module Gemm_f64 = struct
       else
         let ab = ap_off + p * 4 in
         let bb = bp_off + p * 4 in
-        let a0 = Float64x2.set1 (Array.unsafe_get ap ab) in
-        let a1 = Float64x2.set1 (Array.unsafe_get ap (ab + 1)) in
-        let a2 = Float64x2.set1 (Array.unsafe_get ap (ab + 2)) in
-        let a3 = Float64x2.set1 (Array.unsafe_get ap (ab + 3)) in
+        let a0 = f64_set1 (Array.unsafe_get ap ab) in
+        let a1 = f64_set1 (Array.unsafe_get ap (ab + 1)) in
+        let a2 = f64_set1 (Array.unsafe_get ap (ab + 2)) in
+        let a3 = f64_set1 (Array.unsafe_get ap (ab + 3)) in
         let b0 = Float64x2.Array.unsafe_get bp ~idx:bb in
         let b1 = Float64x2.Array.unsafe_get bp ~idx:(bb + 2) in
         kloop (p + 1)
-          (Float64x2.mul_add a0 b0 c00) (Float64x2.mul_add a0 b1 c01)
-          (Float64x2.mul_add a1 b0 c10) (Float64x2.mul_add a1 b1 c11)
-          (Float64x2.mul_add a2 b0 c20) (Float64x2.mul_add a2 b1 c21)
-          (Float64x2.mul_add a3 b0 c30) (Float64x2.mul_add a3 b1 c31)
+          (f64_mul_add a0 b0 c00) (f64_mul_add a0 b1 c01)
+          (f64_mul_add a1 b0 c10) (f64_mul_add a1 b1 c11)
+          (f64_mul_add a2 b0 c20) (f64_mul_add a2 b1 c21)
+          (f64_mul_add a3 b0 c30) (f64_mul_add a3 b1 c31)
     in
     kloop 0 c00_init c01_init c10_init c11_init
       c20_init c21_init c30_init c31_init
@@ -304,18 +321,18 @@ let matmul_float64_slow a_buf b_buf c_buf va vb vout start_idx end_idx =
                 Array.unsafe_get a_buf
                   (View.offset va + Shape.ravel_index a_idx0 a_str)
               in
-              let a0v = Float64x2.set1 av0 in
+              let a0v = f64_set1 av0 in
               let av1 =
                 Array.unsafe_get a_buf
                   (View.offset va + Shape.ravel_index a_idx1 a_str)
               in
-              let a1v = Float64x2.set1 av1 in
+              let a1v = f64_set1 av1 in
               kloop (l + 1) 
               (Float64x2.add (Float64x2.mul a0v bv) acc0)
               (Float64x2.add (Float64x2.mul a1v bv) acc1)
             end
           in
-          let #(acc0, acc1) = kloop 0 (Float64x2.set1 #0.0) (Float64x2.set1 #0.0) in
+          let #(acc0, acc1) = kloop 0 (f64_set1 #0.0) (f64_set1 #0.0) in
           let out_off0 =
             View.offset vout + Shape.ravel_index out_idx0 out_str
           in
@@ -401,11 +418,11 @@ let matmul_float64_slow a_buf b_buf c_buf va vb vout start_idx end_idx =
                 Float64x2.Array.unsafe_get b_buf
                   ~idx:(View.offset vb + Shape.ravel_index b_idx b_str)
               in
-              let a0v = Float64x2.set1 av0 in
+              let a0v = f64_set1 av0 in
               kloop (l + 1) (Float64x2.add (Float64x2.mul a0v bv) acc0)
             end
           in
-          let acc0 = kloop 0 (Float64x2.set1 #0.0) in
+          let acc0 = kloop 0 (f64_set1 #0.0) in
           let out_off0 =
             View.offset vout + Shape.ravel_index out_idx0 out_str
           in
@@ -449,8 +466,6 @@ let matmul_float64_slow a_buf b_buf c_buf va vb vout start_idx end_idx =
     end;
 
   done
-
-(* ========================= Float32 GEMM Module =========================== *)
 
 module Gemm_f32 = struct
   let mr = 6
@@ -516,7 +531,7 @@ module Gemm_f32 = struct
     end
 
   let kernel_zero ap ~ap_off bp ~bp_off c_buf ~c_off ~ldc ~kc =
-    let z = Float32x4.set1 #0.0s in
+    let z = f32_set1 #0.0s in
     let rec kloop p
         c00 c01 c10 c11 c20 c21 c30 c31 c40 c41 c50 c51 =
       if p = kc then begin
@@ -541,21 +556,21 @@ module Gemm_f32 = struct
       else
         let ab = ap_off + p * 6 in
         let bb = bp_off + p * 8 in
-        let a0 = Float32x4.set1 (Array.unsafe_get ap ab) in
-        let a1 = Float32x4.set1 (Array.unsafe_get ap (ab + 1)) in
-        let a2 = Float32x4.set1 (Array.unsafe_get ap (ab + 2)) in
-        let a3 = Float32x4.set1 (Array.unsafe_get ap (ab + 3)) in
-        let a4 = Float32x4.set1 (Array.unsafe_get ap (ab + 4)) in
-        let a5 = Float32x4.set1 (Array.unsafe_get ap (ab + 5)) in
+        let a0 = f32_set1 (Array.unsafe_get ap ab) in
+        let a1 = f32_set1 (Array.unsafe_get ap (ab + 1)) in
+        let a2 = f32_set1 (Array.unsafe_get ap (ab + 2)) in
+        let a3 = f32_set1 (Array.unsafe_get ap (ab + 3)) in
+        let a4 = f32_set1 (Array.unsafe_get ap (ab + 4)) in
+        let a5 = f32_set1 (Array.unsafe_get ap (ab + 5)) in
         let b0 = Float32x4.Array.unsafe_get bp ~idx:bb in
         let b1 = Float32x4.Array.unsafe_get bp ~idx:(bb + 4) in
         kloop (p + 1)
-          (Float32x4.mul_add a0 b0 c00) (Float32x4.mul_add a0 b1 c01)
-          (Float32x4.mul_add a1 b0 c10) (Float32x4.mul_add a1 b1 c11)
-          (Float32x4.mul_add a2 b0 c20) (Float32x4.mul_add a2 b1 c21)
-          (Float32x4.mul_add a3 b0 c30) (Float32x4.mul_add a3 b1 c31)
-          (Float32x4.mul_add a4 b0 c40) (Float32x4.mul_add a4 b1 c41)
-          (Float32x4.mul_add a5 b0 c50) (Float32x4.mul_add a5 b1 c51)
+          (f32_mul_add a0 b0 c00) (f32_mul_add a0 b1 c01)
+          (f32_mul_add a1 b0 c10) (f32_mul_add a1 b1 c11)
+          (f32_mul_add a2 b0 c20) (f32_mul_add a2 b1 c21)
+          (f32_mul_add a3 b0 c30) (f32_mul_add a3 b1 c31)
+          (f32_mul_add a4 b0 c40) (f32_mul_add a4 b1 c41)
+          (f32_mul_add a5 b0 c50) (f32_mul_add a5 b1 c51)
     in
     kloop 0 z z z z z z z z z z z z
 
@@ -596,21 +611,21 @@ module Gemm_f32 = struct
       else
         let ab = ap_off + p * 6 in
         let bb = bp_off + p * 8 in
-        let a0 = Float32x4.set1 (Array.unsafe_get ap ab) in
-        let a1 = Float32x4.set1 (Array.unsafe_get ap (ab + 1)) in
-        let a2 = Float32x4.set1 (Array.unsafe_get ap (ab + 2)) in
-        let a3 = Float32x4.set1 (Array.unsafe_get ap (ab + 3)) in
-        let a4 = Float32x4.set1 (Array.unsafe_get ap (ab + 4)) in
-        let a5 = Float32x4.set1 (Array.unsafe_get ap (ab + 5)) in
+        let a0 = f32_set1 (Array.unsafe_get ap ab) in
+        let a1 = f32_set1 (Array.unsafe_get ap (ab + 1)) in
+        let a2 = f32_set1 (Array.unsafe_get ap (ab + 2)) in
+        let a3 = f32_set1 (Array.unsafe_get ap (ab + 3)) in
+        let a4 = f32_set1 (Array.unsafe_get ap (ab + 4)) in
+        let a5 = f32_set1 (Array.unsafe_get ap (ab + 5)) in
         let b0 = Float32x4.Array.unsafe_get bp ~idx:bb in
         let b1 = Float32x4.Array.unsafe_get bp ~idx:(bb + 4) in
         kloop (p + 1)
-          (Float32x4.mul_add a0 b0 c00) (Float32x4.mul_add a0 b1 c01)
-          (Float32x4.mul_add a1 b0 c10) (Float32x4.mul_add a1 b1 c11)
-          (Float32x4.mul_add a2 b0 c20) (Float32x4.mul_add a2 b1 c21)
-          (Float32x4.mul_add a3 b0 c30) (Float32x4.mul_add a3 b1 c31)
-          (Float32x4.mul_add a4 b0 c40) (Float32x4.mul_add a4 b1 c41)
-          (Float32x4.mul_add a5 b0 c50) (Float32x4.mul_add a5 b1 c51)
+          (f32_mul_add a0 b0 c00) (f32_mul_add a0 b1 c01)
+          (f32_mul_add a1 b0 c10) (f32_mul_add a1 b1 c11)
+          (f32_mul_add a2 b0 c20) (f32_mul_add a2 b1 c21)
+          (f32_mul_add a3 b0 c30) (f32_mul_add a3 b1 c31)
+          (f32_mul_add a4 b0 c40) (f32_mul_add a4 b1 c41)
+          (f32_mul_add a5 b0 c50) (f32_mul_add a5 b1 c51)
     in
     kloop 0 c00_init c01_init c10_init c11_init
       c20_init c21_init c30_init c31_init
@@ -776,15 +791,15 @@ let matmul_float32_slow a_buf b_buf c_buf va vb vout start_idx end_idx =
                 Float32x4.Array.unsafe_get b_buf
                   ~idx:(View.offset vb + Shape.ravel_index b_idx b_str)
               in
-              let a0v = Float32x4.set1 av0 in
-              let a1v = Float32x4.set1 av1 in
+              let a0v = f32_set1 av0 in
+              let a1v = f32_set1 av1 in
               kloop (l + 1) 
               (Float32x4.add (Float32x4.mul a0v bv) acc0)
               (Float32x4.add (Float32x4.mul a1v bv) acc1)
             end
           
           in
-          let #(acc0, acc1) = kloop 0 (Float32x4.set1 #0.0s) (Float32x4.set1 #0.0s) in
+          let #(acc0, acc1) = kloop 0 (f32_set1 #0.0s) (f32_set1 #0.0s) in
           let out_off0 =
             View.offset vout + Shape.ravel_index out_idx0 out_str
           in
@@ -867,11 +882,11 @@ let matmul_float32_slow a_buf b_buf c_buf va vb vout start_idx end_idx =
                 Float32x4.Array.unsafe_get b_buf
                   ~idx:(View.offset vb + Shape.ravel_index b_idx b_str)
               in
-              let a0v = Float32x4.set1 av0 in
+              let a0v = f32_set1 av0 in
               kloop_r0 (l + 1) (Float32x4.add (Float32x4.mul a0v bv) acc0)
             end
           in
-          let acc0 = kloop_r0 0 (Float32x4.set1 #0.0s) in
+          let acc0 = kloop_r0 0 (f32_set1 #0.0s) in
           let out_off0 =
             View.offset vout + Shape.ravel_index out_idx0 out_str
           in
@@ -898,11 +913,11 @@ let matmul_float32_slow a_buf b_buf c_buf va vb vout start_idx end_idx =
                 Float32x4.Array.unsafe_get b_buf
                   ~idx:(View.offset vb + Shape.ravel_index b_idx b_str)
               in
-              let a0v = Float32x4.set1 av0 in
+              let a0v = f32_set1 av0 in
               kloop (l + 1) (Float32x4.add (Float32x4.mul a0v bv) acc0)
             end
           in
-          let acc0 = kloop 0 (Float32x4.set1 #0.0s) in
+          let acc0 = kloop 0 (f32_set1 #0.0s) in
           let out_off0 =
             View.offset vout + Shape.ravel_index out_idx0 out_str
           in
