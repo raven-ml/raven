@@ -395,9 +395,92 @@ let normalize t str =
   in
   normalize_impl t initial
 
-let normalize_str t str =
-  let ns = normalize t str in
-  ns.normalized
+(* String-only fast path: skips alignment tracking for normalize_str *)
+
+let do_clean_text_str s =
+  let len = String.length s in
+  let buf = Buffer.create len in
+  for i = 0 to len - 1 do
+    let c = String.unsafe_get s i in
+    let code = Char.code c in
+    if not (code = 0 || code = 0xfffd || is_control c) then
+      if is_whitespace c then Buffer.add_char buf ' '
+      else Buffer.add_char buf c
+  done;
+  Buffer.contents buf
+
+let do_handle_chinese_chars_str s =
+  let len = String.length s in
+  let buf = Buffer.create len in
+  for i = 0 to len - 1 do
+    let c = String.unsafe_get s i in
+    if is_chinese_char c then (
+      Buffer.add_char buf ' ';
+      Buffer.add_char buf c;
+      Buffer.add_char buf ' ')
+    else Buffer.add_char buf c
+  done;
+  Buffer.contents buf
+
+let do_strip_accents_str s =
+  let nfd = Unicode.normalize Unicode.NFD s in
+  let len = String.length nfd in
+  let buf = Buffer.create len in
+  for i = 0 to len - 1 do
+    let c = String.unsafe_get nfd i in
+    if not (is_combining_mark c) then Buffer.add_char buf c
+  done;
+  Buffer.contents buf
+
+let strip_whitespace_str s ~left ~right =
+  let len = String.length s in
+  let start =
+    if left then
+      let rec f i =
+        if i >= len then len else if is_whitespace s.[i] then f (i + 1) else i
+      in
+      f 0
+    else 0
+  in
+  let stop =
+    if right then
+      let rec f i =
+        if i < 0 then 0 else if is_whitespace s.[i] then f (i - 1) else i + 1
+      in
+      f (len - 1)
+    else len
+  in
+  if start = 0 && stop = len then s else String.sub s start (stop - start)
+
+let rec normalize_str_fast normalizer str =
+  match normalizer with
+  | Bert { clean_text; handle_chinese_chars; strip_accents; lowercase } ->
+      let s = if clean_text then do_clean_text_str str else str in
+      let s =
+        if handle_chinese_chars then do_handle_chinese_chars_str s else s
+      in
+      let strip = match strip_accents with Some v -> v | None -> lowercase in
+      let s = if strip then do_strip_accents_str s else s in
+      if lowercase then String.lowercase_ascii s else s
+  | Strip { left; right } -> strip_whitespace_str str ~left ~right
+  | StripAccents -> do_strip_accents_str str
+  | NFC -> Unicode.normalize Unicode.NFC str
+  | NFD -> Unicode.normalize Unicode.NFD str
+  | NFKC -> Unicode.normalize Unicode.NFKC str
+  | NFKD -> Unicode.normalize Unicode.NFKD str
+  | Lowercase -> String.lowercase_ascii str
+  | Replace { pattern; replacement } ->
+      let regex = Re.compile (Re.Pcre.re pattern) in
+      Re.replace_string regex ~by:replacement str
+  | Prepend { prepend } ->
+      if String.length str = 0 then str else prepend ^ str
+  | ByteLevel _ ->
+      let ns = normalize normalizer str in
+      ns.normalized
+  | Sequence normalizers ->
+      List.fold_left (fun s n -> normalize_str_fast n s) str normalizers
+
+let normalize_str t str = normalize_str_fast t str
 
 (* ───── Serialization ───── *)
 

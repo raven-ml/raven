@@ -16,9 +16,156 @@ type config = {
   max_input_chars_per_word : int;
 }
 
+(* ───── Compact trie for zero-allocation longest-prefix matching ───── *)
+
+type trie = {
+  trie_ids : int array;
+  child_starts : int array;
+  edge_bytes : bytes;
+  edge_targets : int array;
+}
+
+let build_trie vocab =
+  if Hashtbl.length vocab = 0 then
+    {
+      trie_ids = [||];
+      child_starts = [| 0 |];
+      edge_bytes = Bytes.empty;
+      edge_targets = [||];
+    }
+  else
+    let cap = ref 256 in
+    let ids = ref (Array.make !cap (-1)) in
+    let ch = ref (Array.init !cap (fun _ -> Hashtbl.create 0)) in
+    let n = ref 1 in
+    (!ch).(0) <- Hashtbl.create 64;
+    let grow () =
+      let new_cap = !cap * 2 in
+      let new_ids = Array.make new_cap (-1) in
+      Array.blit !ids 0 new_ids 0 !n;
+      ids := new_ids;
+      let new_ch =
+        Array.init new_cap (fun i ->
+            if i < !n then (!ch).(i) else Hashtbl.create 0)
+      in
+      ch := new_ch;
+      cap := new_cap
+    in
+    Hashtbl.iter
+      (fun key id ->
+        let cur = ref 0 in
+        for i = 0 to String.length key - 1 do
+          let byte = Char.code (String.unsafe_get key i) in
+          let child =
+            match Hashtbl.find_opt (!ch).(!cur) byte with
+            | Some c -> c
+            | None ->
+                if !n >= !cap then grow ();
+                let c = !n in
+                incr n;
+                (!ch).(c) <- Hashtbl.create 4;
+                Hashtbl.add (!ch).(!cur) byte c;
+                c
+          in
+          cur := child
+        done;
+        (!ids).(!cur) <- id)
+      vocab;
+    let node_count = !n in
+    let trie_ids = Array.init node_count (fun i -> (!ids).(i)) in
+    let child_starts = Array.make (node_count + 1) 0 in
+    let total = ref 0 in
+    for i = 0 to node_count - 1 do
+      child_starts.(i) <- !total;
+      total := !total + Hashtbl.length (!ch).(i)
+    done;
+    child_starts.(node_count) <- !total;
+    let edge_bytes = Bytes.create !total in
+    let edge_targets = Array.make !total 0 in
+    let pos = ref 0 in
+    for i = 0 to node_count - 1 do
+      Hashtbl.iter
+        (fun byte child ->
+          Bytes.unsafe_set edge_bytes !pos (Char.unsafe_chr byte);
+          edge_targets.(!pos) <- child;
+          incr pos)
+        (!ch).(i)
+    done;
+    (* Sort each node's children by byte value for binary search *)
+    for i = 0 to node_count - 1 do
+      let start = child_starts.(i) in
+      let stop = child_starts.(i + 1) in
+      for j = start + 1 to stop - 1 do
+        let kb = Bytes.unsafe_get edge_bytes j in
+        let kt = edge_targets.(j) in
+        let k = ref (j - 1) in
+        while !k >= start && Bytes.unsafe_get edge_bytes !k > kb do
+          Bytes.unsafe_set edge_bytes (!k + 1) (Bytes.unsafe_get edge_bytes !k);
+          edge_targets.(!k + 1) <- edge_targets.(!k);
+          decr k
+        done;
+        Bytes.unsafe_set edge_bytes (!k + 1) kb;
+        edge_targets.(!k + 1) <- kt
+      done
+    done;
+    { trie_ids; child_starts; edge_bytes; edge_targets }
+
+let[@inline] trie_step trie node byte =
+  let lo = ref (Array.unsafe_get trie.child_starts node) in
+  let hi = ref (Array.unsafe_get trie.child_starts (node + 1) - 1) in
+  let result = ref (-1) in
+  while !lo <= !hi do
+    let mid = !lo + ((!hi - !lo) asr 1) in
+    let mid_byte = Char.code (Bytes.unsafe_get trie.edge_bytes mid) in
+    if mid_byte = byte then (
+      result := Array.unsafe_get trie.edge_targets mid;
+      lo := !hi + 1)
+    else if mid_byte < byte then lo := mid + 1
+    else hi := mid - 1
+  done;
+  !result
+
+let trie_longest_match trie sequence ~start ~prefix ~prefix_len =
+  if Array.length trie.trie_ids = 0 then None
+  else
+    let seq_len = String.length sequence in
+    let last_id = ref (-1) in
+    let last_end = ref start in
+    let current = ref 0 in
+    let stopped = ref false in
+    let i = ref 0 in
+    while !i < prefix_len && not !stopped do
+      let child =
+        trie_step trie !current (Char.code (String.unsafe_get prefix !i))
+      in
+      if child < 0 then stopped := true
+      else (
+        current := child;
+        incr i)
+    done;
+    if not !stopped then (
+      let j = ref start in
+      while !j < seq_len && not !stopped do
+        let child =
+          trie_step trie !current (Char.code (String.unsafe_get sequence !j))
+        in
+        if child < 0 then stopped := true
+        else (
+          current := child;
+          incr j;
+          let tid = Array.unsafe_get trie.trie_ids child in
+          if tid >= 0 then (
+            last_id := tid;
+            last_end := !j))
+      done);
+    if !last_id >= 0 then Some (!last_id, !last_end) else None
+
+(* ───── Model type ───── *)
+
 type t = {
   vocab : vocab;
   vocab_r : vocab_r;
+  trie : trie;
   unk_token : string;
   continuing_subword_prefix : string;
   max_input_chars_per_word : int;
@@ -28,12 +175,13 @@ let create_internal vocab unk_token continuing_subword_prefix
     max_input_chars_per_word =
   let vocab_r = Hashtbl.create (Hashtbl.length vocab) in
   Hashtbl.iter (fun k v -> Hashtbl.add vocab_r v k) vocab;
-  (* Only raise error if vocabulary is non-empty but missing UNK token *)
   if Hashtbl.length vocab > 0 && not (Hashtbl.mem vocab unk_token) then
     raise (Error "WordPiece error: Missing [UNK] token from the vocabulary");
+  let trie = build_trie vocab in
   {
     vocab;
     vocab_r;
+    trie;
     unk_token;
     continuing_subword_prefix;
     max_input_chars_per_word;
@@ -100,42 +248,23 @@ let tokenize model sequence =
     else
       let prefix = model.continuing_subword_prefix in
       let prefix_len = String.length prefix in
-      let buf = Bytes.create (prefix_len + seq_len) in
-      Bytes.blit_string prefix 0 buf 0 prefix_len;
-      let rec tokenize_greedy start acc =
+      let rec greedy start acc =
         if start >= seq_len then List.rev acc
         else
-          let rec find_longest_match end_byte =
-            if end_byte <= start then None
-            else
-              let key =
-                if start = 0 then String.sub sequence 0 end_byte
-                else
-                  let sub_len = end_byte - start in
-                  Bytes.blit_string sequence start buf prefix_len sub_len;
-                  Bytes.sub_string buf 0 (prefix_len + sub_len)
-              in
-              match Hashtbl.find_opt model.vocab key with
-              | Some id -> Some { id; value = key; offsets = (start, end_byte) }
-              | None ->
-                  let new_end = ref (end_byte - 1) in
-                  while
-                    !new_end > start
-                    && Char.code (String.unsafe_get sequence !new_end) land 0xC0
-                       = 0x80
-                  do
-                    decr new_end
-                  done;
-                  if !new_end <= start then None
-                  else find_longest_match !new_end
-          in
-          match find_longest_match seq_len with
-          | Some token -> tokenize_greedy (snd token.offsets) (token :: acc)
+          let p = if start > 0 then prefix else "" in
+          let pl = if start > 0 then prefix_len else 0 in
+          match
+            trie_longest_match model.trie sequence ~start ~prefix:p
+              ~prefix_len:pl
+          with
+          | Some (id, end_byte) ->
+              let value = Hashtbl.find model.vocab_r id in
+              greedy end_byte ({ id; value; offsets = (start, end_byte) } :: acc)
           | None ->
               let id = Hashtbl.find model.vocab model.unk_token in
               [ { id; value = model.unk_token; offsets = (0, seq_len) } ]
       in
-      tokenize_greedy 0 []
+      greedy 0 []
 
 let tokenize_ids model sequence =
   if Hashtbl.length model.vocab = 0 then [||]
@@ -152,41 +281,21 @@ let tokenize_ids model sequence =
     else
       let prefix = model.continuing_subword_prefix in
       let prefix_len = String.length prefix in
-      let buf = Bytes.create (prefix_len + seq_len) in
-      Bytes.blit_string prefix 0 buf 0 prefix_len;
       let ids = ref [] in
       let n = ref 0 in
       let rec greedy start =
         if start >= seq_len then ()
         else
-          let rec find end_byte =
-            if end_byte <= start then None
-            else
-              let key =
-                if start = 0 then String.sub sequence 0 end_byte
-                else
-                  let sub_len = end_byte - start in
-                  Bytes.blit_string sequence start buf prefix_len sub_len;
-                  Bytes.sub_string buf 0 (prefix_len + sub_len)
-              in
-              match Hashtbl.find_opt model.vocab key with
-              | Some id -> Some (id, end_byte)
-              | None ->
-                  let new_end = ref (end_byte - 1) in
-                  while
-                    !new_end > start
-                    && Char.code (String.unsafe_get sequence !new_end) land 0xC0
-                       = 0x80
-                  do
-                    decr new_end
-                  done;
-                  if !new_end <= start then None else find !new_end
-          in
-          match find seq_len with
-          | Some (id, next_start) ->
+          let p = if start > 0 then prefix else "" in
+          let pl = if start > 0 then prefix_len else 0 in
+          match
+            trie_longest_match model.trie sequence ~start ~prefix:p
+              ~prefix_len:pl
+          with
+          | Some (id, end_byte) ->
               ids := id :: !ids;
               incr n;
-              greedy next_start
+              greedy end_byte
           | None ->
               let unk_id = Hashtbl.find model.vocab model.unk_token in
               ids := [ unk_id ];
