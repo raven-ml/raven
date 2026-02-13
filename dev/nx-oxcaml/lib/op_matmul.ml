@@ -327,9 +327,9 @@ let matmul_float64_slow a_buf b_buf c_buf va vb vout start_idx end_idx =
                   (View.offset va + Shape.ravel_index a_idx1 a_str)
               in
               let a1v = f64_set1 av1 in
-              kloop (l + 1) 
-              (Float64x2.add (Float64x2.mul a0v bv) acc0)
-              (Float64x2.add (Float64x2.mul a1v bv) acc1)
+              kloop (l + 1)
+              (f64_mul_add a0v bv acc0)
+              (f64_mul_add a1v bv acc1)
             end
           in
           let #(acc0, acc1) = kloop 0 (f64_set1 #0.0) (f64_set1 #0.0) in
@@ -419,7 +419,7 @@ let matmul_float64_slow a_buf b_buf c_buf va vb vout start_idx end_idx =
                   ~idx:(View.offset vb + Shape.ravel_index b_idx b_str)
               in
               let a0v = f64_set1 av0 in
-              kloop (l + 1) (Float64x2.add (Float64x2.mul a0v bv) acc0)
+              kloop (l + 1) (f64_mul_add a0v bv acc0)
             end
           in
           let acc0 = kloop 0 (f64_set1 #0.0) in
@@ -793,11 +793,11 @@ let matmul_float32_slow a_buf b_buf c_buf va vb vout start_idx end_idx =
               in
               let a0v = f32_set1 av0 in
               let a1v = f32_set1 av1 in
-              kloop (l + 1) 
-              (Float32x4.add (Float32x4.mul a0v bv) acc0)
-              (Float32x4.add (Float32x4.mul a1v bv) acc1)
+              kloop (l + 1)
+              (f32_mul_add a0v bv acc0)
+              (f32_mul_add a1v bv acc1)
             end
-          
+
           in
           let #(acc0, acc1) = kloop 0 (f32_set1 #0.0s) (f32_set1 #0.0s) in
           let out_off0 =
@@ -883,7 +883,7 @@ let matmul_float32_slow a_buf b_buf c_buf va vb vout start_idx end_idx =
                   ~idx:(View.offset vb + Shape.ravel_index b_idx b_str)
               in
               let a0v = f32_set1 av0 in
-              kloop_r0 (l + 1) (Float32x4.add (Float32x4.mul a0v bv) acc0)
+              kloop_r0 (l + 1) (f32_mul_add a0v bv acc0)
             end
           in
           let acc0 = kloop_r0 0 (f32_set1 #0.0s) in
@@ -914,7 +914,7 @@ let matmul_float32_slow a_buf b_buf c_buf va vb vout start_idx end_idx =
                   ~idx:(View.offset vb + Shape.ravel_index b_idx b_str)
               in
               let a0v = f32_set1 av0 in
-              kloop (l + 1) (Float32x4.add (Float32x4.mul a0v bv) acc0)
+              kloop (l + 1) (f32_mul_add a0v bv acc0)
             end
           in
           let acc0 = kloop 0 (f32_set1 #0.0s) in
