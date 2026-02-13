@@ -35,8 +35,8 @@ let context t = t.context
    buffer. *)
 let to_host _ =
   failwith
-    "Nx_oxcaml.to_host is not supported. Bigarrays cannot point to OCaml heap \
-     memory. Use Nx_oxcaml.data_array instead."
+    "Nx_backend.to_host is not supported. Bigarrays cannot point to OCaml heap \
+     memory. Use Nx_backend.data_array instead."
 
 let data_array t = t.buffer
 

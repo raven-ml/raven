@@ -5,7 +5,7 @@
 
 [@@@warning "-26"]
 
-module Nx_ox = Nx_core.Make_frontend (Nx_oxcaml)
+module Nx_ox = Nx_core.Make_frontend (Nx_backend)
 
 let sizes = [ 500; 1000 ]
 
@@ -18,7 +18,7 @@ let ops_f32 ~size =
   let b = Nx.rand Nx.Float32 ~key:(Nx.Rng.key ((size * 3) + 1)) shape in
   let out_c = Nx.empty Nx.float32 shape in
   let out_c_scalar = Nx.empty Nx.float32 [||] in
-  let ctx = Nx_oxcaml.create_context () in
+  let ctx = Nx_backend.create_context () in
   let a_fe = Nx_ox.empty ctx Nx_ox.float32 shape in
   let b_fe = Nx_ox.empty ctx Nx_ox.float32 shape in
   let out_fe = Nx_ox.empty ctx Nx_ox.float32 shape in
@@ -74,7 +74,7 @@ let ops_f64 ~size =
   let b = Nx.rand Nx.Float64 ~key:(Nx.Rng.key ((size * 3) + 1)) shape in
   let out_c = Nx.empty Nx.float64 shape in
   let out_c_scalar = Nx.empty Nx.float64 [||] in
-  let ctx = Nx_oxcaml.create_context () in
+  let ctx = Nx_backend.create_context () in
   let a_fe = Nx_ox.empty ctx Nx_ox.float64 shape in
   let b_fe = Nx_ox.empty ctx Nx_ox.float64 shape in
   let out_fe = Nx_ox.empty ctx Nx_ox.float64 shape in

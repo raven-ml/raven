@@ -2,7 +2,7 @@
  (name rune)
  (public_name rune)
  (libraries
-  nx_c
+  nx_backend
   nx_core
   nx
   nx_buffer))

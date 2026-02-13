@@ -6,6 +6,7 @@
   %{lib:nx.top:nx_top.cmi}
   %{lib:nx.top:nx_top.cma}
   %{lib:nx.core:nx_core.cma}
+  %{lib:nx.backend:nx_backend.cma}
   %{lib:nx.c:nx_c.cma}
   ; nx-io
   %{lib:nx.io:nx_io.cmi}
@@ -54,6 +55,7 @@
    (copy %{lib:nx.top:nx_top.cmi} nx_top.cmi)
    (copy %{lib:nx.top:nx_top.cma} nx_top.cma)
    (copy %{lib:nx.core:nx_core.cma} nx_core.cma)
+   (copy %{lib:nx.backend:nx_backend.cma} nx_backend.cma)
    (copy %{lib:nx.c:nx_c.cma} nx_c.cma)
    (copy %{lib:nx.io:nx_io.cmi} nx_io.cmi)
    (copy %{lib:nx.io:nx_io.cma} nx_io.cma)

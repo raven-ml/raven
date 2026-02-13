@@ -19,12 +19,12 @@ module Symbolic_id = struct
   let pp fmt v = Format.fprintf fmt "sym%d" v
 end
 
-type context = Native_context : Nx_c.context -> context
+type context = Native_context : Nx_backend.context -> context
 type device_type = Ocaml | C | Metal
 
 (* Backend interface requires type ('a, 'b) t *)
 type ('a, 'b) t =
-  | Native_tensor : ('a, 'b) Nx_c.t -> ('a, 'b) t
+  | Native_tensor : ('a, 'b) Nx_backend.t -> ('a, 'b) t
   | Symbolic_tensor : {
       id : Symbolic_id.t;
       dtype : ('a, 'b) Dtype.t;
@@ -336,11 +336,11 @@ type _ Effect.t +=
       -> ('a, 'b) t Effect.t
 
 (* Native_context creation *)
-let create_context () : context = Native_context (Nx_c.create_context ())
+let create_context () : context = Native_context (Nx_backend.create_context ())
 
 (* Extract context from tensor *)
 let context : type a b. (a, b) t -> context = function
-  | Native_tensor cpu_t -> Native_context (Nx_c.context cpu_t)
+  | Native_tensor cpu_t -> Native_context (Nx_backend.context cpu_t)
   | Symbolic_tensor _ -> failwith "Symbolic tensors do not have a context"
 
 (* Device transfer operations *)
@@ -356,18 +356,18 @@ let view (type a b) (x : (a, b) t) : View.t =
   try Effect.perform (E_view x)
   with Effect.Unhandled _ -> (
     match x with
-    | Native_tensor t -> Nx_c.view t
+    | Native_tensor t -> Nx_backend.view t
     | Symbolic_tensor { shape; _ } -> View.create shape)
 
 let dtype : type a b. (a, b) t -> (a, b) Dtype.t = function
-  | Native_tensor t -> Nx_c.dtype t
+  | Native_tensor t -> Nx_backend.dtype t
   | Symbolic_tensor { dtype; _ } -> dtype
 
 let is_symbolic = function Symbolic_tensor _ -> true | _ -> false
 
 let to_host : type a b.
     (a, b) t -> (a, b, Nx_buffer.c_layout) Nx_buffer.Array1.t = function
-  | Native_tensor t -> Nx_c.to_host t
+  | Native_tensor t -> Nx_backend.to_host t
   | Symbolic_tensor { id; _ } ->
       failwith (Printf.sprintf "Cannot extract data from symbolic tensor %d" id)
 
@@ -383,15 +383,15 @@ let ensure_same_device a b =
 
 (* Helper to get concrete shape from a native tensor *)
 let get_shape t =
-  match Symbolic_shape.eval (View.shape (Nx_c.view t)) with
+  match Symbolic_shape.eval (View.shape (Nx_backend.view t)) with
   | Some arr -> arr
   | None -> failwith "Cannot evaluate symbolic shape"
 
 (* Helper to allocate output buffer with given shape *)
 let alloc_buffer ctx dtype shape =
   let size = Array.fold_left ( * ) 1 shape in
-  let out = Nx_c.op_buffer ctx dtype size in
-  Nx_c.op_reshape out (Symbolic_shape.of_ints shape)
+  let out = Nx_backend.op_buffer ctx dtype size in
+  Nx_backend.op_reshape out (Symbolic_shape.of_ints shape)
 
 (* Binary ops take ~out and return unit *)
 let binary_op ~out eff cpu_op a b =
@@ -481,78 +481,78 @@ let ternary_op eff cpu_op cond if_true if_false =
 
 (* ───── Binary Operations ───── *)
 let op_add ~out a b =
-  binary_op ~out (fun () -> E_add { out; a; b }) Nx_c.op_add a b
+  binary_op ~out (fun () -> E_add { out; a; b }) Nx_backend.op_add a b
 
 let op_sub ~out a b =
-  binary_op ~out (fun () -> E_sub { out; a; b }) Nx_c.op_sub a b
+  binary_op ~out (fun () -> E_sub { out; a; b }) Nx_backend.op_sub a b
 
 let op_mul ~out a b =
-  binary_op ~out (fun () -> E_mul { out; a; b }) Nx_c.op_mul a b
+  binary_op ~out (fun () -> E_mul { out; a; b }) Nx_backend.op_mul a b
 
 let op_idiv ~out a b =
-  binary_op ~out (fun () -> E_idiv { out; a; b }) Nx_c.op_idiv a b
+  binary_op ~out (fun () -> E_idiv { out; a; b }) Nx_backend.op_idiv a b
 
 let op_fdiv ~out a b =
-  binary_op ~out (fun () -> E_fdiv { out; a; b }) Nx_c.op_fdiv a b
+  binary_op ~out (fun () -> E_fdiv { out; a; b }) Nx_backend.op_fdiv a b
 
 let op_max ~out a b =
-  binary_op ~out (fun () -> E_max { out; a; b }) Nx_c.op_max a b
+  binary_op ~out (fun () -> E_max { out; a; b }) Nx_backend.op_max a b
 
 let op_min ~out a b =
-  binary_op ~out (fun () -> E_min { out; a; b }) Nx_c.op_min a b
+  binary_op ~out (fun () -> E_min { out; a; b }) Nx_backend.op_min a b
 
 let op_mod ~out a b =
-  binary_op ~out (fun () -> E_mod { out; a; b }) Nx_c.op_mod a b
+  binary_op ~out (fun () -> E_mod { out; a; b }) Nx_backend.op_mod a b
 
 let op_pow ~out a b =
-  binary_op ~out (fun () -> E_pow { out; a; b }) Nx_c.op_pow a b
+  binary_op ~out (fun () -> E_pow { out; a; b }) Nx_backend.op_pow a b
 
 let op_xor ~out a b =
-  binary_op ~out (fun () -> E_xor { out; a; b }) Nx_c.op_xor a b
+  binary_op ~out (fun () -> E_xor { out; a; b }) Nx_backend.op_xor a b
 
 let op_or ~out a b =
-  binary_op ~out (fun () -> E_or { out; a; b }) Nx_c.op_or a b
+  binary_op ~out (fun () -> E_or { out; a; b }) Nx_backend.op_or a b
 
 let op_and ~out a b =
-  binary_op ~out (fun () -> E_and { out; a; b }) Nx_c.op_and a b
+  binary_op ~out (fun () -> E_and { out; a; b }) Nx_backend.op_and a b
 
 (* ───── Comparison Operations ───── *)
 let op_cmpeq ~out a b =
-  comparison_op ~out (fun () -> E_cmpeq { out; a; b }) Nx_c.op_cmpeq a b
+  comparison_op ~out (fun () -> E_cmpeq { out; a; b }) Nx_backend.op_cmpeq a b
 
 let op_cmpne ~out a b =
-  comparison_op ~out (fun () -> E_cmpne { out; a; b }) Nx_c.op_cmpne a b
+  comparison_op ~out (fun () -> E_cmpne { out; a; b }) Nx_backend.op_cmpne a b
 
 let op_cmplt ~out a b =
-  comparison_op ~out (fun () -> E_cmplt { out; a; b }) Nx_c.op_cmplt a b
+  comparison_op ~out (fun () -> E_cmplt { out; a; b }) Nx_backend.op_cmplt a b
 
 let op_cmple ~out a b =
-  comparison_op ~out (fun () -> E_cmple { out; a; b }) Nx_c.op_cmple a b
+  comparison_op ~out (fun () -> E_cmple { out; a; b }) Nx_backend.op_cmple a b
 
 (* ───── Unary Operations ───── *)
 let op_neg ~out t_in =
-  unary_op ~out (fun () -> E_neg { out; t_in }) Nx_c.op_neg t_in
+  unary_op ~out (fun () -> E_neg { out; t_in }) Nx_backend.op_neg t_in
 
 let op_sin ~out t_in =
-  unary_op ~out (fun () -> E_sin { out; t_in }) Nx_c.op_sin t_in
+  unary_op ~out (fun () -> E_sin { out; t_in }) Nx_backend.op_sin t_in
 
 let op_sqrt ~out t_in =
-  unary_op ~out (fun () -> E_sqrt { out; t_in }) Nx_c.op_sqrt t_in
+  unary_op ~out (fun () -> E_sqrt { out; t_in }) Nx_backend.op_sqrt t_in
 
 let op_recip ~out t_in =
-  unary_op ~out (fun () -> E_recip { out; t_in }) Nx_c.op_recip t_in
+  unary_op ~out (fun () -> E_recip { out; t_in }) Nx_backend.op_recip t_in
 
 let op_log ~out t_in =
-  unary_op ~out (fun () -> E_log { out; t_in }) Nx_c.op_log t_in
+  unary_op ~out (fun () -> E_log { out; t_in }) Nx_backend.op_log t_in
 
 let op_exp ~out t_in =
-  unary_op ~out (fun () -> E_exp { out; t_in }) Nx_c.op_exp t_in
+  unary_op ~out (fun () -> E_exp { out; t_in }) Nx_backend.op_exp t_in
 
 let op_cos ~out t_in =
-  unary_op ~out (fun () -> E_cos { out; t_in }) Nx_c.op_cos t_in
+  unary_op ~out (fun () -> E_cos { out; t_in }) Nx_backend.op_cos t_in
 
 let op_abs ~out t_in =
-  unary_op ~out (fun () -> E_abs { out; t_in }) Nx_c.op_abs t_in
+  unary_op ~out (fun () -> E_abs { out; t_in }) Nx_backend.op_abs t_in
 
 (* Collective primitive: parallel sum across mapped axis, to be handled by
    vmap. *)
@@ -564,28 +564,28 @@ let op_psum t_in =
 let op_reduce_sum ~out ~axes ~keepdims t_in =
   reduce_op ~out
     (fun () -> E_reduce_sum { out; t_in; axes; keepdims })
-    Nx_c.op_reduce_sum ~axes ~keepdims t_in
+    Nx_backend.op_reduce_sum ~axes ~keepdims t_in
 
 let op_reduce_max ~out ~axes ~keepdims t_in =
   reduce_op ~out
     (fun () -> E_reduce_max { out; t_in; axes; keepdims })
-    Nx_c.op_reduce_max ~axes ~keepdims t_in
+    Nx_backend.op_reduce_max ~axes ~keepdims t_in
 
 let op_reduce_min ~out ~axes ~keepdims t_in =
   reduce_op ~out
     (fun () -> E_reduce_min { out; t_in; axes; keepdims })
-    Nx_c.op_reduce_min ~axes ~keepdims t_in
+    Nx_backend.op_reduce_min ~axes ~keepdims t_in
 
 let op_reduce_prod ~out ~axes ~keepdims t_in =
   reduce_op ~out
     (fun () -> E_reduce_prod { out; t_in; axes; keepdims })
-    Nx_c.op_reduce_prod ~axes ~keepdims t_in
+    Nx_backend.op_reduce_prod ~axes ~keepdims t_in
 
 let op_associative_scan ~axis ~op t_in =
   try Effect.perform (E_associative_scan { t_in; axis; op })
   with Effect.Unhandled _ -> (
     match to_device (context t_in) t_in with
-    | Native_tensor t -> Native_tensor (Nx_c.op_associative_scan ~axis ~op t)
+    | Native_tensor t -> Native_tensor (Nx_backend.op_associative_scan ~axis ~op t)
     | Symbolic_tensor _ ->
         failwith "Cannot perform associative_scan on symbolic tensor")
 
@@ -593,30 +593,30 @@ let op_associative_scan ~axis ~op t_in =
 let op_reshape t_in new_shape =
   shape_op1
     (fun () -> E_reshape { t_in; new_shape })
-    Nx_c.op_reshape new_shape t_in
+    Nx_backend.op_reshape new_shape t_in
 
 let op_expand t_in new_target_shape =
   shape_op1
     (fun () -> E_expand { t_in; new_target_shape })
-    Nx_c.op_expand new_target_shape t_in
+    Nx_backend.op_expand new_target_shape t_in
 
 let op_permute t_in axes =
-  axes_op1 (fun () -> E_permute { t_in; axes }) Nx_c.op_permute t_in axes
+  axes_op1 (fun () -> E_permute { t_in; axes }) Nx_backend.op_permute t_in axes
 
 let op_shrink t_in limits =
-  limits_op1 (fun () -> E_shrink { t_in; limits }) Nx_c.op_shrink t_in limits
+  limits_op1 (fun () -> E_shrink { t_in; limits }) Nx_backend.op_shrink t_in limits
 
 let op_flip t_in dims_to_flip =
   bool_array_op1
     (fun () -> E_flip { t_in; dims_to_flip })
-    Nx_c.op_flip t_in dims_to_flip
+    Nx_backend.op_flip t_in dims_to_flip
 
 (* Pad operation (needs special handling for fill_value) *)
 let op_pad t_in padding_config fill_value =
   try Effect.perform (E_pad { t_in; padding_config; fill_value })
   with Effect.Unhandled _ -> (
     match t_in with
-    | Native_tensor t -> Native_tensor (Nx_c.op_pad t padding_config fill_value)
+    | Native_tensor t -> Native_tensor (Nx_backend.op_pad t padding_config fill_value)
     | Symbolic_tensor _ -> failwith "Cannot pad symbolic tensor")
 
 (* ───── Creation Operations ───── *)
@@ -625,26 +625,26 @@ let op_buffer ctx dtype size_in_elements =
   with Effect.Unhandled _ -> (
     match ctx with
     | Native_context ctx ->
-        Native_tensor (Nx_c.op_buffer ctx dtype size_in_elements))
+        Native_tensor (Nx_backend.op_buffer ctx dtype size_in_elements))
 
 let op_const_scalar ctx value dtype =
   try Effect.perform (E_const_scalar { context = ctx; value; dtype })
   with Effect.Unhandled _ -> (
     match ctx with
-    | Native_context ctx -> Native_tensor (Nx_c.op_const_scalar ctx value dtype))
+    | Native_context ctx -> Native_tensor (Nx_backend.op_const_scalar ctx value dtype))
 
 let from_host ctx array =
   try Effect.perform (E_from_host { context = ctx; array })
   with Effect.Unhandled _ -> (
     match ctx with
-    | Native_context ctx -> Native_tensor (Nx_c.from_host ctx array))
+    | Native_context ctx -> Native_tensor (Nx_backend.from_host ctx array))
 
 (* Copy operations - these return a new tensor, not using ~out *)
 let op_contiguous t_in =
   try Effect.perform (E_contiguous { t_in })
   with Effect.Unhandled _ -> (
     match t_in with
-    | Native_tensor t -> Native_tensor (Nx_c.op_contiguous t)
+    | Native_tensor t -> Native_tensor (Nx_backend.op_contiguous t)
     | Symbolic_tensor _ ->
         failwith "Cannot perform contiguous on symbolic tensor")
 
@@ -652,7 +652,7 @@ let op_copy t_in =
   try Effect.perform (E_copy { t_in })
   with Effect.Unhandled _ -> (
     match t_in with
-    | Native_tensor t -> Native_tensor (Nx_c.op_copy t)
+    | Native_tensor t -> Native_tensor (Nx_backend.op_copy t)
     | Symbolic_tensor _ -> failwith "Cannot perform copy on symbolic tensor")
 
 (* Where operation - uses ~out *)
@@ -666,7 +666,7 @@ let op_where ~out condition if_true if_false =
     match (cond', if_true', if_false', out) with
     | Native_tensor t1, Native_tensor t2, Native_tensor t3, Native_tensor out_t
       ->
-        Nx_c.op_where ~out:out_t t1 t2 t3
+        Nx_backend.op_where ~out:out_t t1 t2 t3
     | _ -> assert false)
 
 (* Cat operation (special handling for lists) *)
@@ -685,14 +685,14 @@ let op_cat t_list axis =
               (function Native_tensor t -> t | _ -> assert false)
               converted
           in
-          Native_tensor (Nx_c.op_cat cpu_list axis))
+          Native_tensor (Nx_backend.op_cat cpu_list axis))
 
 let op_cast : type a b c d. (a, b) t -> (c, d) Dtype.t -> (c, d) t =
  fun t_in target_dtype ->
   try Effect.perform (E_cast { t_in; target_dtype })
   with Effect.Unhandled _ -> (
     match t_in with
-    | Native_tensor t -> Native_tensor (Nx_c.op_cast t target_dtype)
+    | Native_tensor t -> Native_tensor (Nx_backend.op_cast t target_dtype)
     | Symbolic_tensor _ -> failwith "Cannot cast symbolic tensor")
 
 let op_assign dst src =
@@ -700,7 +700,7 @@ let op_assign dst src =
   with Effect.Unhandled _ -> (
     let dst', src' = ensure_same_device dst src in
     match (dst', src') with
-    | Native_tensor d, Native_tensor s -> Nx_c.op_assign d s
+    | Native_tensor d, Native_tensor s -> Nx_backend.op_assign d s
     | _ -> assert false)
 
 let op_gather data indices axis =
@@ -709,7 +709,7 @@ let op_gather data indices axis =
     let data', indices' = ensure_same_device data indices in
     match (data', indices') with
     | Native_tensor d, Native_tensor i ->
-        Native_tensor (Nx_c.op_gather d i axis)
+        Native_tensor (Nx_backend.op_gather d i axis)
     | _ -> assert false)
 
 let op_scatter ?(mode = `Set) ?(unique_indices = false) data_template indices
@@ -723,7 +723,7 @@ let op_scatter ?(mode = `Set) ?(unique_indices = false) data_template indices
     let upd = to_device ctx updates in
     match (tmpl, idx, upd) with
     | Native_tensor t, Native_tensor i, Native_tensor u ->
-        Native_tensor (Nx_c.op_scatter ~mode ~unique_indices t i u axis)
+        Native_tensor (Nx_backend.op_scatter ~mode ~unique_indices t i u axis)
     | _ -> assert false)
 
 (* Threefry operation - returns a new tensor, not using ~out *)
@@ -733,7 +733,7 @@ let op_threefry key ctr =
     let key', ctr' = ensure_same_device key ctr in
     match (key', ctr') with
     | Native_tensor t1, Native_tensor t2 ->
-        Native_tensor (Nx_c.op_threefry t1 t2)
+        Native_tensor (Nx_backend.op_threefry t1 t2)
     | _ -> assert false)
 
 let op_unfold ?out t_in ~kernel_size ~stride ~dilation ~padding =
@@ -742,9 +742,9 @@ let op_unfold ?out t_in ~kernel_size ~stride ~dilation ~padding =
     match (t_in, out) with
     | Native_tensor t, Some (Native_tensor o) ->
         Native_tensor
-          (Nx_c.op_unfold ~out:o t ~kernel_size ~stride ~dilation ~padding)
+          (Nx_backend.op_unfold ~out:o t ~kernel_size ~stride ~dilation ~padding)
     | Native_tensor t, None ->
-        Native_tensor (Nx_c.op_unfold t ~kernel_size ~stride ~dilation ~padding)
+        Native_tensor (Nx_backend.op_unfold t ~kernel_size ~stride ~dilation ~padding)
     | Symbolic_tensor _, _ | _, Some (Symbolic_tensor _) ->
         failwith "todo: op_unfold for symbolic tensors")
 
@@ -756,11 +756,11 @@ let op_fold ?out t_in ~output_size ~kernel_size ~stride ~dilation ~padding =
     match (t_in, out) with
     | Native_tensor t, Some (Native_tensor o) ->
         Native_tensor
-          (Nx_c.op_fold ~out:o t ~output_size ~kernel_size ~stride ~dilation
+          (Nx_backend.op_fold ~out:o t ~output_size ~kernel_size ~stride ~dilation
              ~padding)
     | Native_tensor t, None ->
         Native_tensor
-          (Nx_c.op_fold t ~output_size ~kernel_size ~stride ~dilation ~padding)
+          (Nx_backend.op_fold t ~output_size ~kernel_size ~stride ~dilation ~padding)
     | Symbolic_tensor _, _ | _, Some (Symbolic_tensor _) ->
         failwith "todo: op_fold for symbolic tensors")
 
@@ -770,7 +770,7 @@ let op_matmul ~out a b =
     let a', b' = ensure_same_device a b in
     match (a', b', out) with
     | Native_tensor a_t, Native_tensor b_t, Native_tensor out_t ->
-        Nx_c.op_matmul ~out:out_t a_t b_t
+        Nx_backend.op_matmul ~out:out_t a_t b_t
     | Symbolic_tensor _, _, _
     | _, Symbolic_tensor _, _
     | _, _, Symbolic_tensor _ ->
@@ -783,8 +783,8 @@ let op_fft ?out t ~axes =
   with Effect.Unhandled _ -> (
     match (t, out) with
     | Native_tensor t, Some (Native_tensor o) ->
-        Native_tensor (Nx_c.op_fft ~out:o t ~axes)
-    | Native_tensor t, None -> Native_tensor (Nx_c.op_fft t ~axes)
+        Native_tensor (Nx_backend.op_fft ~out:o t ~axes)
+    | Native_tensor t, None -> Native_tensor (Nx_backend.op_fft t ~axes)
     | Symbolic_tensor _, _ | _, Some (Symbolic_tensor _) ->
         failwith "todo: op_fft for symbolic tensors")
 
@@ -793,8 +793,8 @@ let op_ifft ?out t ~axes =
   with Effect.Unhandled _ -> (
     match (t, out) with
     | Native_tensor t, Some (Native_tensor o) ->
-        Native_tensor (Nx_c.op_ifft ~out:o t ~axes)
-    | Native_tensor t, None -> Native_tensor (Nx_c.op_ifft t ~axes)
+        Native_tensor (Nx_backend.op_ifft ~out:o t ~axes)
+    | Native_tensor t, None -> Native_tensor (Nx_backend.op_ifft t ~axes)
     | Symbolic_tensor _, _ | _, Some (Symbolic_tensor _) ->
         failwith "todo: op_ifft for symbolic tensors")
 
@@ -802,10 +802,10 @@ let op_rfft (type a c) ?out (t : (float, a) t) ~(dtype : (Complex.t, c) Dtype.t)
     ~axes : (Complex.t, c) t =
   match (t, out) with
   | Native_tensor t, Some (Native_tensor o) ->
-      let result = Nx_c.op_rfft ~out:o t ~dtype ~axes in
+      let result = Nx_backend.op_rfft ~out:o t ~dtype ~axes in
       (Native_tensor result : (Complex.t, c) t)
   | Native_tensor t, None ->
-      let result = Nx_c.op_rfft t ~dtype ~axes in
+      let result = Nx_backend.op_rfft t ~dtype ~axes in
       (Native_tensor result : (Complex.t, c) t)
   | Symbolic_tensor _, _ | _, Some (Symbolic_tensor _) ->
       failwith "todo: op_rfft for symbolic tensors"
@@ -814,10 +814,10 @@ let op_irfft (type a c) ?out (t : (Complex.t, a) t)
     ~(dtype : (float, c) Dtype.t) ~axes ~s : (float, c) t =
   match (t, out) with
   | Native_tensor t, Some (Native_tensor o) ->
-      let result = Nx_c.op_irfft ~out:o t ~dtype ~axes ~s in
+      let result = Nx_backend.op_irfft ~out:o t ~dtype ~axes ~s in
       (Native_tensor result : (float, c) t)
   | Native_tensor t, None ->
-      let result = Nx_c.op_irfft t ~dtype ~axes ~s in
+      let result = Nx_backend.op_irfft t ~dtype ~axes ~s in
       (Native_tensor result : (float, c) t)
   | Symbolic_tensor _, _ | _, Some (Symbolic_tensor _) ->
       failwith "todo: op_irfft for symbolic tensors"
@@ -828,7 +828,7 @@ let op_cholesky ~upper t_in =
   try Effect.perform (E_cholesky { t_in; upper })
   with Effect.Unhandled _ -> (
     match t_in with
-    | Native_tensor t -> Native_tensor (Nx_c.op_cholesky ~upper t)
+    | Native_tensor t -> Native_tensor (Nx_backend.op_cholesky ~upper t)
     | Symbolic_tensor _ -> failwith "Cannot perform cholesky on symbolic tensor")
 
 let op_qr ~reduced t_in =
@@ -836,7 +836,7 @@ let op_qr ~reduced t_in =
   with Effect.Unhandled _ -> (
     match t_in with
     | Native_tensor t ->
-        let q, r = Nx_c.op_qr ~reduced t in
+        let q, r = Nx_backend.op_qr ~reduced t in
         (Native_tensor q, Native_tensor r)
     | Symbolic_tensor _ -> failwith "Cannot perform qr on symbolic tensor")
 
@@ -845,7 +845,7 @@ let op_svd ~full_matrices t_in =
   with Effect.Unhandled _ -> (
     match t_in with
     | Native_tensor t ->
-        let u, s, vt = Nx_c.op_svd ~full_matrices t in
+        let u, s, vt = Nx_backend.op_svd ~full_matrices t in
         (Native_tensor u, Native_tensor s, Native_tensor vt)
     | Symbolic_tensor _ -> failwith "Cannot perform svd on symbolic tensor")
 
@@ -854,7 +854,7 @@ let op_eig ~vectors t_in =
   with Effect.Unhandled _ -> (
     match t_in with
     | Native_tensor t ->
-        let vals, vecs_opt = Nx_c.op_eig ~vectors t in
+        let vals, vecs_opt = Nx_backend.op_eig ~vectors t in
         (Native_tensor vals, Option.map (fun v -> Native_tensor v) vecs_opt)
     | Symbolic_tensor _ -> failwith "Cannot perform eig on symbolic tensor")
 
@@ -863,7 +863,7 @@ let op_eigh ~vectors t_in =
   with Effect.Unhandled _ -> (
     match t_in with
     | Native_tensor t ->
-        let vals, vecs_opt = Nx_c.op_eigh ~vectors t in
+        let vals, vecs_opt = Nx_backend.op_eigh ~vectors t in
         (Native_tensor vals, Option.map (fun v -> Native_tensor v) vecs_opt)
     | Symbolic_tensor _ -> failwith "Cannot perform eigh on symbolic tensor")
 
@@ -874,7 +874,7 @@ let op_triangular_solve ~upper ~transpose ~unit_diag a b =
     match (a', b') with
     | Native_tensor a_t, Native_tensor b_t ->
         Native_tensor
-          (Nx_c.op_triangular_solve ~upper ~transpose ~unit_diag a_t b_t)
+          (Nx_backend.op_triangular_solve ~upper ~transpose ~unit_diag a_t b_t)
     | _ -> assert false)
 
 let op_as_strided t_in new_shape new_strides_in_elements offset_in_elements =
@@ -900,7 +900,7 @@ let op_as_strided t_in new_shape new_strides_in_elements offset_in_elements =
     match t_in with
     | Native_tensor t ->
         Native_tensor
-          (Nx_c.op_as_strided t new_shape new_strides_in_elements
+          (Nx_backend.op_as_strided t new_shape new_strides_in_elements
              offset_in_elements)
     | Symbolic_tensor _ ->
         failwith "op_as_strided: cannot operate on symbolic tensor")

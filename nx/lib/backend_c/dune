@@ -1,6 +1,7 @@
 (library
  (name nx_c)
  (public_name nx.c)
+ (implements nx_backend)
  (libraries nx_buffer nx_core nx.pocketfft)
  (foreign_stubs
   (language c)

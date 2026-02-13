@@ -2,7 +2,7 @@
  (name nx)
  (public_name nx)
  (modules :standard \ prelude)
- (libraries nx_core nx_c nx_buffer))
+ (libraries nx_core nx_backend nx_buffer))
 
 (mdx
  (package nx)
