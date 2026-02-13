@@ -3,14 +3,13 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-let install_printer (ident : string) =
-  let lexbuf = Lexing.from_string ident in
-  try
-    let longident = Parse.longident lexbuf in
-    Topdirs.dir_install_printer Format.err_formatter longident
-  with ex ->
-    Format.fprintf Format.err_formatter "Failed to install printer %s: %s@."
-      ident (Printexc.to_string ex)
+let install_printer name =
+  let phrase =
+    Printf.sprintf "#install_printer %s;;" name
+    |> Lexing.from_string
+    |> !Toploop.parse_toplevel_phrase
+  in
+  Toploop.execute_phrase false Format.err_formatter phrase |> ignore
 
 let base64_encode_string input =
   let alphabet =
