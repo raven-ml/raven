@@ -1,43 +1,17 @@
 # Raven Website
 
-This directory contains the static website for the Raven ecosystem, hosted at [raven-ml.dev](https://raven-ml.dev).
+Static site for [raven-ml.dev](https://raven-ml.dev). Built with a small OCaml script (`generate/generate.ml`) that converts Markdown to HTML using cmarkit.
 
-## Overview
-
-The website is built using [Soupault](https://www.soupault.app/), a static site generator that processes HTML templates and Markdown content to generate the final site.
-
-## Directory Structure
-
-```
-www/
-├── README.md              # This file
-├── soupault.toml          # Soupault configuration
-├── site/                  # Source content
-│   ├── index.html         # Landing page
-│   ├── docs/              # Documentation pages
-│   │   ├── index.html     # Documentation index
-│   │   ├── nx/            # Nx documentation
-│   │   ├── hugin/         # Hugin documentation
-│   │   ├── rune/          # Rune documentation
-│   │   ├── quill/         # Quill documentation
-│   │   ├── kaun/          # Kaun documentation
-│   │   └── sowilo/        # Sowilo documentation
-│   └── *.html             # Project landing pages
-├── templates/             # HTML templates
-│   ├── layout_docs*.html  # Documentation templates
-├── plugins/               # Custom Soupault plugins
-└── build/                 # Generated site output
-```
-
-## Building the Website
+## Build and serve
 
 ```bash
-# Build the website
-dune -w build build/
+dune build www/build
+python3 -m http.server -d _build/default/www/build
 ```
 
-The generated website will be in the `build/` directory. Serve it with
+## Structure
 
-```bash
-python3 -m http.server 8000
-```
+- `site/` — source content (Markdown docs, HTML landing pages, static assets)
+- `templates/` — HTML templates (`main.html`, `layout_docs.html`, `layout_docs_lib.html`)
+- `generate/` — site generator
+- `process/` — odoc API docs integration (WIP, not part of the build)

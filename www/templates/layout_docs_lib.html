@@ -20,7 +20,7 @@
       <span class="breadcrumb-separator">/</span>
       <a href="/docs/" class="breadcrumb-link">docs</a>
       <span class="breadcrumb-separator">/</span>
-      <span class="breadcrumb-text color-pink">talon</span>
+      <span class="breadcrumb-text {{lib_color}}">{{lib_display}}</span>
     </nav>
   </header>
 
@@ -29,25 +29,22 @@
     <nav class="sidebar">
       <!-- Library Info -->
       <div class="library-info">
-        <h3 class="color-pink">talon</h3>
-        <p>Fast and elegant dataframes with type-safe operations</p>
-        <a href="/talon/" class="color-pink">← Back to Library</a>
+        <h3 class="{{lib_color}}">{{lib_display}}</h3>
+        <p>{{lib_description}}</p>
+        <a href="/{{lib_name}}/" class="{{lib_color}}">← Back to Library</a>
       </div>
 
       <!-- Navigation -->
       <div class="nav-section">
         <div class="nav-title">Documentation</div>
         <ul class="nav-links">
-          <li><a href="/docs/talon/">Overview</a></li>
-          <li><a href="/docs/talon/getting-started/">Getting Started</a></li>
-          <li><a href="/docs/talon/pandas-comparison/">Comparison With Pandas</a></li>
+{{lib_nav}}
         </ul>
       </div>
 
       <div class="nav-section">
         <div class="nav-title">API Reference</div>
-        <ul class="nav-links" id="talon-api-nav">
-          <!-- API navigation will be inserted here -->
+        <ul class="nav-links" id="{{lib_name}}-api-nav">
         </ul>
       </div>
     </nav>

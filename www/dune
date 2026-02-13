@@ -5,6 +5,7 @@
  (deps
   (source_tree templates)
   (source_tree site)
+  (source_tree docs)
   generate/generate.exe)
  (action
   (run generate/generate.exe)))
