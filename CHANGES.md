@@ -62,6 +62,7 @@ All notable changes to this project will be documented in this file.
 - Reduce WordPiece substring allocations from O(n²) to O(n) per word by building the prefixed candidate string once per position. (@tmattio)
 - Add `encode_ids` fast path that bypasses `Encoding.t` construction entirely when only token IDs are needed. (@tmattio)
 - Add ASCII property table for O(1) character classification in pre-tokenizers, replacing O(log n) binary search for `is_alphabetic` (600 ranges), `is_numeric` (230 ranges), and `is_whitespace` (10 ranges). Yields 12-27% speedup on encode benchmarks with ~30% allocation reduction. (@tmattio)
+- Add inline ASCII fast paths in all pre-tokenizer loops, skipping UTF-8 decoding and using `Buffer.add_char` instead of `String.sub` for single-byte characters. Combined with the property table, yields 20-30% total speedup and 36-55% allocation reduction vs baseline. (@tmattio)
 - Remove dependency on `str` library. (@tmattio)
 - Generate unicode data offline, removing runtime dependency on `uucp`. (@tmattio)
 - Add proper UAX #29 grapheme cluster segmentation via `Grapheme` module (vendored from uuseg). (@tmattio)

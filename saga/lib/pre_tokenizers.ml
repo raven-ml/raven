@@ -179,19 +179,34 @@ let split_gpt2_pattern text =
         (* 2. Optional space + letters *)
         (if not !matched then
            let start = !pos in
+           let b0 = Char.code (String.unsafe_get text !pos) in
            let has_space =
-             !pos < len && is_whitespace (Char.code text.[!pos])
+             if b0 < 128 then Array.unsafe_get ascii_props b0 land 1 <> 0
+             else is_whitespace b0
            in
            let letter_start = if has_space then !pos + 1 else !pos in
            if letter_start < len then
-             let code, clen = utf8_next text letter_start in
-             if is_alphabetic code then (
+             let b = Char.code (String.unsafe_get text letter_start) in
+             let is_alpha, clen =
+               if b < 128 then
+                 (Array.unsafe_get ascii_props b land 2 <> 0, 1)
+               else
+                 let code, cl = utf8_next text letter_start in
+                 (is_alphabetic code, cl)
+             in
+             if is_alpha then (
                let j = ref (letter_start + clen) in
                let continue = ref true in
                while !j < len && !continue do
-                 let code, clen = utf8_next text !j in
-                 if is_alphabetic code then j := !j + clen
-                 else continue := false
+                 let b = Char.code (String.unsafe_get text !j) in
+                 if b < 128 then
+                   (if Array.unsafe_get ascii_props b land 2 <> 0 then
+                      j := !j + 1
+                    else continue := false)
+                 else
+                   let code, cl = utf8_next text !j in
+                   if is_alphabetic code then j := !j + cl
+                   else continue := false
                done;
                tokens := String.sub text start (!j - start) :: !tokens;
                pos := !j;
@@ -199,18 +214,34 @@ let split_gpt2_pattern text =
         (* 3. Optional space + digits *)
         (if not !matched then
            let start = !pos in
+           let b0 = Char.code (String.unsafe_get text !pos) in
            let has_space =
-             !pos < len && is_whitespace (Char.code text.[!pos])
+             if b0 < 128 then Array.unsafe_get ascii_props b0 land 1 <> 0
+             else is_whitespace b0
            in
            let digit_start = if has_space then !pos + 1 else !pos in
            if digit_start < len then
-             let code, clen = utf8_next text digit_start in
-             if is_numeric code then (
+             let b = Char.code (String.unsafe_get text digit_start) in
+             let is_num, clen =
+               if b < 128 then
+                 (Array.unsafe_get ascii_props b land 4 <> 0, 1)
+               else
+                 let code, cl = utf8_next text digit_start in
+                 (is_numeric code, cl)
+             in
+             if is_num then (
                let j = ref (digit_start + clen) in
                let continue = ref true in
                while !j < len && !continue do
-                 let code, clen = utf8_next text !j in
-                 if is_numeric code then j := !j + clen else continue := false
+                 let b = Char.code (String.unsafe_get text !j) in
+                 if b < 128 then
+                   (if Array.unsafe_get ascii_props b land 4 <> 0 then
+                      j := !j + 1
+                    else continue := false)
+                 else
+                   let code, cl = utf8_next text !j in
+                   if is_numeric code then j := !j + cl
+                   else continue := false
                done;
                tokens := String.sub text start (!j - start) :: !tokens;
                pos := !j;
@@ -218,72 +249,108 @@ let split_gpt2_pattern text =
         (* 4. Optional space + other non-whitespace *)
         (if not !matched then
            let start = !pos in
+           let b0 = Char.code (String.unsafe_get text !pos) in
            let has_space =
-             !pos < len && is_whitespace (Char.code text.[!pos])
+             if b0 < 128 then Array.unsafe_get ascii_props b0 land 1 <> 0
+             else is_whitespace b0
            in
            let other_start = if has_space then !pos + 1 else !pos in
            if other_start < len then
-             let code, clen = utf8_next text other_start in
-             if
-               (not (is_whitespace code))
-               && (not (is_alphabetic code))
-               && not (is_numeric code)
-             then (
+             let b = Char.code (String.unsafe_get text other_start) in
+             let is_other, clen =
+               if b < 128 then
+                 (Array.unsafe_get ascii_props b land 7 = 0, 1)
+               else
+                 let code, cl = utf8_next text other_start in
+                 ( (not (is_whitespace code))
+                   && (not (is_alphabetic code))
+                   && not (is_numeric code),
+                   cl )
+             in
+             if is_other then (
                let j = ref (other_start + clen) in
                let continue = ref true in
                while !j < len && !continue do
-                 let code, clen = utf8_next text !j in
-                 if
-                   (not (is_whitespace code))
-                   && (not (is_alphabetic code))
-                   && not (is_numeric code)
-                 then j := !j + clen
-                 else continue := false
+                 let b = Char.code (String.unsafe_get text !j) in
+                 if b < 128 then
+                   (if Array.unsafe_get ascii_props b land 7 = 0 then
+                      j := !j + 1
+                    else continue := false)
+                 else
+                   let code, cl = utf8_next text !j in
+                   if
+                     (not (is_whitespace code))
+                     && (not (is_alphabetic code))
+                     && not (is_numeric code)
+                   then j := !j + cl
+                   else continue := false
                done;
                tokens := String.sub text start (!j - start) :: !tokens;
                pos := !j;
                matched := true));
         (* 5 & 6. Whitespace *)
         (if (not !matched) && !pos < len then
-           let code, clen = utf8_next text !pos in
-           if is_whitespace code then (
-             (* Try to match as much whitespace as possible, but stop if the
-                next character could start a better match *)
+           let b0 = Char.code (String.unsafe_get text !pos) in
+           let is_ws =
+             if b0 < 128 then Array.unsafe_get ascii_props b0 land 1 <> 0
+             else
+               let code, _ = utf8_next text !pos in
+               is_whitespace code
+           in
+           let clen =
+             if b0 < 128 then 1 else snd (utf8_next text !pos)
+           in
+           if is_ws then (
              let j = ref (!pos + clen) in
              let continue = ref true in
              while !j < len && !continue do
-               let code, clen = utf8_next text !j in
-               if is_whitespace code then
-                 (* Check if continuing would prevent a better match *)
-                 let next_pos = !j + clen in
-                 if next_pos < len then
-                   let next_code, _ = utf8_next text next_pos in
-                   (* If next char is a letter/digit, and we have a space at j,
-                      we should stop here to allow " ?\p{L}+" or " ?\p{N}+" to
-                      match *)
-                   if
-                     (is_alphabetic next_code || is_numeric next_code)
-                     && code = Char.code ' '
-                   then
-                     (* Don't consume this space - let it be part of the next
-                        match *)
-                     continue := false
-                   else j := !j + clen
-                 else
-                   (* At end, consume all whitespace *)
-                   j := !j + clen
+               let b = Char.code (String.unsafe_get text !j) in
+               if b < 128 then
+                 if Array.unsafe_get ascii_props b land 1 <> 0 then
+                   let next_pos = !j + 1 in
+                   if next_pos < len then
+                     let nb = Char.code (String.unsafe_get text next_pos) in
+                     let next_alpha_or_num =
+                       if nb < 128 then
+                         Array.unsafe_get ascii_props nb land 6 <> 0
+                       else
+                         let nc, _ = utf8_next text next_pos in
+                         is_alphabetic nc || is_numeric nc
+                     in
+                     if next_alpha_or_num && b = 0x20 then continue := false
+                     else j := !j + 1
+                   else j := !j + 1
+                 else continue := false
                else
-                 (* Stop at non-whitespace *)
-                 continue := false
+                 let code, cl = utf8_next text !j in
+                 if is_whitespace code then
+                   let next_pos = !j + cl in
+                   if next_pos < len then
+                     let nb = Char.code (String.unsafe_get text next_pos) in
+                     let next_alpha_or_num =
+                       if nb < 128 then
+                         Array.unsafe_get ascii_props nb land 6 <> 0
+                       else
+                         let nc, _ = utf8_next text next_pos in
+                         is_alphabetic nc || is_numeric nc
+                     in
+                     if next_alpha_or_num && code = 0x20 then
+                       continue := false
+                     else j := !j + cl
+                   else j := !j + cl
+                 else continue := false
              done;
              tokens := String.sub text !pos (!j - !pos) :: !tokens;
              pos := !j;
              matched := true));
         (* If nothing matched, add single char *)
         if not !matched then (
-          let _, len = utf8_next text !pos in
-          tokens := String.sub text !pos len :: !tokens;
-          pos := !pos + len);
+          let b = Char.code (String.unsafe_get text !pos) in
+          let clen =
+            if b < 128 then 1 else snd (utf8_next text !pos)
+          in
+          tokens := String.sub text !pos clen :: !tokens;
+          pos := !pos + clen);
         match_at_pos ())
     in
     match_at_pos ();
@@ -306,14 +373,24 @@ let whitespace_split () text =
       Buffer.clear current)
   in
   while !i < len do
-    let code, l = utf8_next text !i in
-    if is_whitespace code then (
-      flush_current ();
-      i := !i + l)
-    else (
-      if Buffer.length current = 0 then current_start := !i;
-      Buffer.add_string current (String.sub text !i l);
-      i := !i + l)
+    let b = Char.code (String.unsafe_get text !i) in
+    if b < 128 then
+      if Array.unsafe_get ascii_props b land 1 <> 0 then (
+        flush_current ();
+        i := !i + 1)
+      else (
+        if Buffer.length current = 0 then current_start := !i;
+        Buffer.add_char current (Char.unsafe_chr b);
+        i := !i + 1)
+    else
+      let code, l = utf8_next text !i in
+      if is_whitespace code then (
+        flush_current ();
+        i := !i + l)
+      else (
+        if Buffer.length current = 0 then current_start := !i;
+        Buffer.add_substring current text !i l;
+        i := !i + l)
   done;
   flush_current ();
   List.rev !pieces
@@ -335,29 +412,49 @@ let whitespace () text =
   let in_word = ref false in
   let in_punct = ref false in
   while !i < len do
-    let code, l = utf8_next text !i in
-    if is_alphabetic code || is_numeric code || code = 95 (* _ *) then (
-      (* Word character *)
-      if !in_punct then flush_current ();
-      if Buffer.length current = 0 then current_start := !i;
-      Buffer.add_substring current text !i l;
-      in_word := true;
-      in_punct := false;
-      i := !i + l)
-    else if is_whitespace code then (
-      (* Whitespace - flush and skip *)
-      flush_current ();
-      in_word := false;
-      in_punct := false;
-      i := !i + l)
-    else (
-      (* Punctuation/other character *)
-      if !in_word then flush_current ();
-      if Buffer.length current = 0 then current_start := !i;
-      Buffer.add_substring current text !i l;
-      in_word := false;
-      in_punct := true;
-      i := !i + l)
+    let b = Char.code (String.unsafe_get text !i) in
+    if b < 128 then
+      let p = Array.unsafe_get ascii_props b in
+      if p land 6 <> 0 || b = 95 then (
+        if !in_punct then flush_current ();
+        if Buffer.length current = 0 then current_start := !i;
+        Buffer.add_char current (Char.unsafe_chr b);
+        in_word := true;
+        in_punct := false;
+        i := !i + 1)
+      else if p land 1 <> 0 then (
+        flush_current ();
+        in_word := false;
+        in_punct := false;
+        i := !i + 1)
+      else (
+        if !in_word then flush_current ();
+        if Buffer.length current = 0 then current_start := !i;
+        Buffer.add_char current (Char.unsafe_chr b);
+        in_word := false;
+        in_punct := true;
+        i := !i + 1)
+    else
+      let code, l = utf8_next text !i in
+      if is_alphabetic code || is_numeric code then (
+        if !in_punct then flush_current ();
+        if Buffer.length current = 0 then current_start := !i;
+        Buffer.add_substring current text !i l;
+        in_word := true;
+        in_punct := false;
+        i := !i + l)
+      else if is_whitespace code then (
+        flush_current ();
+        in_word := false;
+        in_punct := false;
+        i := !i + l)
+      else (
+        if !in_word then flush_current ();
+        if Buffer.length current = 0 then current_start := !i;
+        Buffer.add_substring current text !i l;
+        in_word := false;
+        in_punct := true;
+        i := !i + l)
   done;
   flush_current ();
   List.rev !pieces
@@ -427,18 +524,33 @@ let bert () text =
       Buffer.clear current)
   in
   while !i < len do
-    let code, l = utf8_next text !i in
-    if is_whitespace code then (
-      flush_current ();
-      i := !i + l)
-    else if is_punctuation code then (
-      flush_current ();
-      pieces := (String.sub text !i l, (!i, !i + l)) :: !pieces;
-      i := !i + l)
-    else (
-      if Buffer.length current = 0 then current_start := !i;
-      Buffer.add_string current (String.sub text !i l);
-      i := !i + l)
+    let b = Char.code (String.unsafe_get text !i) in
+    if b < 128 then
+      let p = Array.unsafe_get ascii_props b in
+      if p land 1 <> 0 then (
+        flush_current ();
+        i := !i + 1)
+      else if p land 8 <> 0 then (
+        flush_current ();
+        pieces := (String.sub text !i 1, (!i, !i + 1)) :: !pieces;
+        i := !i + 1)
+      else (
+        if Buffer.length current = 0 then current_start := !i;
+        Buffer.add_char current (Char.unsafe_chr b);
+        i := !i + 1)
+    else
+      let code, l = utf8_next text !i in
+      if is_whitespace code then (
+        flush_current ();
+        i := !i + l)
+      else if is_punctuation code then (
+        flush_current ();
+        pieces := (String.sub text !i l, (!i, !i + l)) :: !pieces;
+        i := !i + l)
+      else (
+        if Buffer.length current = 0 then current_start := !i;
+        Buffer.add_substring current text !i l;
+        i := !i + l)
   done;
   flush_current ();
   List.rev !pieces
@@ -456,6 +568,7 @@ let punctuation ?(behavior = `Isolated) () text =
   let current_start = ref 0 in
   let i = ref 0 in
   let len = String.length text in
+  let last_was_punc = ref false in
   let flush_current () =
     if Buffer.length current > 0 then (
       pieces :=
@@ -464,10 +577,7 @@ let punctuation ?(behavior = `Isolated) () text =
         :: !pieces;
       Buffer.clear current)
   in
-  let last_was_punc = ref false in
-  while !i < len do
-    let code, l = utf8_next text !i in
-    let is_p = is_punctuation code in
+  let handle_char is_p l =
     if is_p then (
       (match behavior with
       | `Isolated ->
@@ -478,27 +588,35 @@ let punctuation ?(behavior = `Isolated) () text =
           flush_current ();
           last_was_punc := true
       | `Merged_with_previous ->
-          Buffer.add_string current (String.sub text !i l);
+          Buffer.add_substring current text !i l;
           last_was_punc := true
       | `Merged_with_next ->
           flush_current ();
-          Buffer.add_string current (String.sub text !i l);
+          Buffer.add_substring current text !i l;
           last_was_punc := true
       | `Contiguous ->
           if Buffer.length current > 0 && !last_was_punc then
-            Buffer.add_string current (String.sub text !i l)
+            Buffer.add_substring current text !i l
           else (
             flush_current ();
-            Buffer.add_string current (String.sub text !i l));
+            Buffer.add_substring current text !i l);
           last_was_punc := true);
       i := !i + l)
     else (
       if behavior = `Contiguous && Buffer.length current > 0 && !last_was_punc
       then flush_current ();
       if Buffer.length current = 0 then current_start := !i;
-      Buffer.add_string current (String.sub text !i l);
+      Buffer.add_substring current text !i l;
       i := !i + l;
       last_was_punc := false)
+  in
+  while !i < len do
+    let b = Char.code (String.unsafe_get text !i) in
+    if b < 128 then
+      handle_char (Array.unsafe_get ascii_props b land 8 <> 0) 1
+    else
+      let code, l = utf8_next text !i in
+      handle_char (is_punctuation code) l
   done;
   flush_current ();
   List.rev !pieces
@@ -576,24 +694,29 @@ let digits ?(individual_digits = false) () text =
         :: !pieces;
       Buffer.clear current)
   in
-  while !i < len do
-    let code, l = utf8_next text !i in
-    let is_d = is_numeric code in
+  let handle_char is_d l =
     if individual_digits && is_d then (
       flush_current ();
-      let d_str = String.sub text !i l in
-      pieces := (d_str, (!i, !i + l)) :: !pieces;
+      pieces := (String.sub text !i l, (!i, !i + l)) :: !pieces;
       i := !i + l)
     else if is_d <> !in_digits then (
       flush_current ();
       in_digits := is_d;
       if Buffer.length current = 0 then current_start := !i;
-      Buffer.add_string current (String.sub text !i l);
+      Buffer.add_substring current text !i l;
       i := !i + l)
     else (
       if Buffer.length current = 0 then current_start := !i;
-      Buffer.add_string current (String.sub text !i l);
+      Buffer.add_substring current text !i l;
       i := !i + l)
+  in
+  while !i < len do
+    let b = Char.code (String.unsafe_get text !i) in
+    if b < 128 then
+      handle_char (Array.unsafe_get ascii_props b land 4 <> 0) 1
+    else
+      let code, l = utf8_next text !i in
+      handle_char (is_numeric code) l
   done;
   flush_current ();
   List.rev !pieces
@@ -717,15 +840,33 @@ let unicode_scripts () text =
       Buffer.clear current)
   in
   while !i < len do
-    let code, l = utf8_next text !i in
-    let script = fixed_script code in
-    if
-      script <> `Any && !last_script <> Some `Any && !last_script <> Some script
-    then flush_current ();
-    if Buffer.length current = 0 then current_start := !i;
-    Buffer.add_string current (String.sub text !i l);
-    i := !i + l;
-    if script <> `Any then last_script := Some script
+    let b = Char.code (String.unsafe_get text !i) in
+    if b < 128 then (
+      let p = Array.unsafe_get ascii_props b in
+      let script : script =
+        if p land 1 <> 0 then `Any
+        else if p land 2 <> 0 then `Latn
+        else `Zyyy
+      in
+      if
+        script <> `Any && !last_script <> Some `Any
+        && !last_script <> Some script
+      then flush_current ();
+      if Buffer.length current = 0 then current_start := !i;
+      Buffer.add_char current (Char.unsafe_chr b);
+      i := !i + 1;
+      if script <> `Any then last_script := Some script)
+    else
+      let code, l = utf8_next text !i in
+      let script = fixed_script code in
+      if
+        script <> `Any && !last_script <> Some `Any
+        && !last_script <> Some script
+      then flush_current ();
+      if Buffer.length current = 0 then current_start := !i;
+      Buffer.add_substring current text !i l;
+      i := !i + l;
+      if script <> `Any then last_script := Some script
   done;
   flush_current ();
   List.rev !pieces
