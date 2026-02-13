@@ -5,6 +5,49 @@
 
 open Import
 
+(* ---------------------------------------------------------------------------
+   BLIS-style GEMM implementation
+   ---------------------------------------------------------------------------
+
+   We use a BLIS-style blocked GEMM with three levels of tiling (jc, pc, ic)
+   and explicit packing of A and B panels into contiguous buffers (pack_a,
+   pack_b) so that the microkernel streams over cache-friendly memory.
+
+   Microkernel design (ARM64 NEON, 128-bit vectors):
+   - f64: MR=4, NR=4 → 8 Float64x2 accumulators (4×2 tile = 4×4 scalars)
+   - f32: MR=6, NR=8 → 12 Float32x4 accumulators (6×2 tile = 6×8 scalars)
+
+   Blocking parameters (tuned for Apple Silicon L1/L2):
+   - f64: KC=128, MC=384, NC=256
+   - f32: KC=256, MC=240, NC=640
+
+   The microkernel is a recursive kloop (f64_kloop / f32_kloop) defined at
+   module level, with all SIMD accumulators passed as function arguments so
+   they stay in registers across the entire k-iteration. kloop must be at
+   module level — not nested inside kernel_zero/kernel_accum — to avoid
+   per-call closure allocations.
+
+   Threading: the ic-loop is parallelized via Parallel.parallel_for. Each
+   domain gets its own ap/bp scratch buffers allocated inside the closure.
+
+   Known limitations
+   ~~~~~~~~~~~~~~~~~
+
+   - No FMA: mul_add compiles to fmul + fadd. NEON fmla exists in simd_neon
+     but is not a [@@builtin] external, so it hits the same cross-module
+     inlining issue (see SIMD wrappers comment below). Needs upstream OxCaml.
+
+   - 128-bit SIMD only: ARM64 NEON is limited to 128-bit vectors.
+     AVX2/AVX-512 on x86 would be a large win.
+
+   - Pack B is redundantly done per domain. Restructuring to pack once per
+     (jc, pc) block regressed performance — the extra parallel_execute calls
+     and effect-handler overhead outweigh the redundant packing.
+
+   Remaining gap vs. C backend (~8–31× on Apple Silicon) is dominated by
+   Apple Accelerate's AMX coprocessor, plus the above.
+   --------------------------------------------------------------------------- *)
+
 (* ---------------------------- Helpers ------------------------------------ *)
 
 let[@inline] min_int a b = if a < b then a else b
