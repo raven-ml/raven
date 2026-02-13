@@ -674,13 +674,8 @@ let json_to_int_option = function
   | Jsont.Number (f, _) -> Some (int_of_float f)
   | _ -> None
 
-let json_to_float_option = function
-  | Jsont.Number (f, _) -> Some f
-  | _ -> None
-
-let json_to_string_option = function
-  | Jsont.String (s, _) -> Some s
-  | _ -> None
+let json_to_float_option = function Jsont.Number (f, _) -> Some f | _ -> None
+let json_to_string_option = function Jsont.String (s, _) -> Some s | _ -> None
 
 let parse_bert_config json =
   {

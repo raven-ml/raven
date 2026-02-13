@@ -3,7 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-let curl_available = lazy (Unix.system "command -v curl >/dev/null 2>&1" = Unix.WEXITED 0)
+let curl_available =
+  lazy (Unix.system "command -v curl >/dev/null 2>&1" = Unix.WEXITED 0)
 
 let check_curl () =
   if not (Lazy.force curl_available) then
@@ -13,13 +14,12 @@ let rec mkdir_p path =
   if path = "" || path = "." || path = Filename.dir_sep then ()
   else if not (Sys.file_exists path) then (
     mkdir_p (Filename.dirname path);
-    try Unix.mkdir path 0o755
-    with Unix.Unix_error (Unix.EEXIST, _, _) -> ())
+    try Unix.mkdir path 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ())
 
 let header_flags headers =
   headers
   |> List.map (fun (k, v) ->
-         Printf.sprintf "-H %s" (Filename.quote (k ^ ": " ^ v)))
+      Printf.sprintf "-H %s" (Filename.quote (k ^ ": " ^ v)))
   |> String.concat " "
 
 let download ?(show_progress = false) ?(headers = []) ~url ~dest () =
@@ -40,9 +40,7 @@ let download ?(show_progress = false) ?(headers = []) ~url ~dest () =
 let get ?(headers = []) url =
   check_curl ();
   let hdr = header_flags headers in
-  let cmd =
-    Printf.sprintf "curl -s -L --fail %s %s" hdr (Filename.quote url)
-  in
+  let cmd = Printf.sprintf "curl -s -L --fail %s %s" hdr (Filename.quote url) in
   let ic = Unix.open_process_in cmd in
   let buf = Buffer.create 4096 in
   (try

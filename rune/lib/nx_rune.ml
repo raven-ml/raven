@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Nx_core
+
 module Symbolic_id = struct
   type t = int
 
@@ -585,7 +586,8 @@ let op_associative_scan ~axis ~op t_in =
   try Effect.perform (E_associative_scan { t_in; axis; op })
   with Effect.Unhandled _ -> (
     match to_device (context t_in) t_in with
-    | Native_tensor t -> Native_tensor (Nx_backend.op_associative_scan ~axis ~op t)
+    | Native_tensor t ->
+        Native_tensor (Nx_backend.op_associative_scan ~axis ~op t)
     | Symbolic_tensor _ ->
         failwith "Cannot perform associative_scan on symbolic tensor")
 
@@ -604,7 +606,9 @@ let op_permute t_in axes =
   axes_op1 (fun () -> E_permute { t_in; axes }) Nx_backend.op_permute t_in axes
 
 let op_shrink t_in limits =
-  limits_op1 (fun () -> E_shrink { t_in; limits }) Nx_backend.op_shrink t_in limits
+  limits_op1
+    (fun () -> E_shrink { t_in; limits })
+    Nx_backend.op_shrink t_in limits
 
 let op_flip t_in dims_to_flip =
   bool_array_op1
@@ -616,7 +620,8 @@ let op_pad t_in padding_config fill_value =
   try Effect.perform (E_pad { t_in; padding_config; fill_value })
   with Effect.Unhandled _ -> (
     match t_in with
-    | Native_tensor t -> Native_tensor (Nx_backend.op_pad t padding_config fill_value)
+    | Native_tensor t ->
+        Native_tensor (Nx_backend.op_pad t padding_config fill_value)
     | Symbolic_tensor _ -> failwith "Cannot pad symbolic tensor")
 
 (* ───── Creation Operations ───── *)
@@ -631,7 +636,8 @@ let op_const_scalar ctx value dtype =
   try Effect.perform (E_const_scalar { context = ctx; value; dtype })
   with Effect.Unhandled _ -> (
     match ctx with
-    | Native_context ctx -> Native_tensor (Nx_backend.op_const_scalar ctx value dtype))
+    | Native_context ctx ->
+        Native_tensor (Nx_backend.op_const_scalar ctx value dtype))
 
 let from_host ctx array =
   try Effect.perform (E_from_host { context = ctx; array })
@@ -744,7 +750,8 @@ let op_unfold ?out t_in ~kernel_size ~stride ~dilation ~padding =
         Native_tensor
           (Nx_backend.op_unfold ~out:o t ~kernel_size ~stride ~dilation ~padding)
     | Native_tensor t, None ->
-        Native_tensor (Nx_backend.op_unfold t ~kernel_size ~stride ~dilation ~padding)
+        Native_tensor
+          (Nx_backend.op_unfold t ~kernel_size ~stride ~dilation ~padding)
     | Symbolic_tensor _, _ | _, Some (Symbolic_tensor _) ->
         failwith "todo: op_unfold for symbolic tensors")
 
@@ -756,11 +763,12 @@ let op_fold ?out t_in ~output_size ~kernel_size ~stride ~dilation ~padding =
     match (t_in, out) with
     | Native_tensor t, Some (Native_tensor o) ->
         Native_tensor
-          (Nx_backend.op_fold ~out:o t ~output_size ~kernel_size ~stride ~dilation
-             ~padding)
+          (Nx_backend.op_fold ~out:o t ~output_size ~kernel_size ~stride
+             ~dilation ~padding)
     | Native_tensor t, None ->
         Native_tensor
-          (Nx_backend.op_fold t ~output_size ~kernel_size ~stride ~dilation ~padding)
+          (Nx_backend.op_fold t ~output_size ~kernel_size ~stride ~dilation
+             ~padding)
     | Symbolic_tensor _, _ | _, Some (Symbolic_tensor _) ->
         failwith "todo: op_fold for symbolic tensors")
 

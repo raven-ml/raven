@@ -8087,4 +8087,3 @@ let grapheme_cluster_bv =
 let grapheme_cluster cp =
   if cp < 0 || cp > 0x10FFFF then 16
   else grapheme_cluster_bv.(grapheme_cluster_bi.(cp lsr 8) * 256 + (cp land 0xFF))
-

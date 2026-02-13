@@ -38,9 +38,9 @@ let is_whitespace c =
 let is_control c =
   match c with
   | '\t' | '\n' | '\r' -> false
-  | c ->
+  | c -> (
       let u = Uchar.of_char c in
-      (match Unicode_data.general_category (Uchar.to_int u) with
+      match Unicode_data.general_category (Uchar.to_int u) with
       | `Cc | `Cf | `Cn | `Co -> true
       | _ -> false)
 
@@ -434,8 +434,7 @@ let rec to_json = function
       json_obj
         [
           ("type", Jsont.Json.string "Replace");
-          ( "pattern",
-            json_obj [ ("String", Jsont.Json.string pattern) ] );
+          ("pattern", json_obj [ ("String", Jsont.Json.string pattern) ]);
           ("content", Jsont.Json.string replacement);
         ]
   | Prepend { prepend } ->

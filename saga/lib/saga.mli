@@ -61,6 +61,7 @@
 module Grapheme : sig
   type ret = [ `Await | `Boundary | `End | `Uchar of Uchar.t ]
   type t
+
   val create : unit -> t
   val add : t -> [ `Await | `End | `Uchar of Uchar.t ] -> ret
 end

@@ -446,11 +446,9 @@ module Tokenizer = struct
         Error (Printf.sprintf "Unknown metaspace prepend_scheme '%s'" other)
 
   let json_obj pairs =
-    Jsont.Json.object'
-      (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
+    Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
 
-  let char_to_field name c =
-    (name, Jsont.Json.string (String.make 1 c))
+  let char_to_field name c = (name, Jsont.Json.string (String.make 1 c))
 
   let char_of_field name = function
     | Jsont.String (s, _) when String.length s = 1 -> Ok s.[0]
@@ -468,8 +466,7 @@ module Tokenizer = struct
             ("trim_offsets", Jsont.Json.bool trim_offsets);
           ]
     | PreTok_bert -> json_obj [ ("type", Jsont.Json.string "BertPreTokenizer") ]
-    | PreTok_whitespace ->
-        json_obj [ ("type", Jsont.Json.string "Whitespace") ]
+    | PreTok_whitespace -> json_obj [ ("type", Jsont.Json.string "Whitespace") ]
     | PreTok_whitespace_split ->
         json_obj [ ("type", Jsont.Json.string "WhitespaceSplit") ]
     | PreTok_punctuation { behavior } ->
@@ -503,7 +500,8 @@ module Tokenizer = struct
           [
             ("type", Jsont.Json.string "Metaspace");
             ("replacement", Jsont.Json.string (String.make 1 replacement));
-            ("prepend_scheme", Jsont.Json.string (scheme_to_string prepend_scheme));
+            ( "prepend_scheme",
+              Jsont.Json.string (scheme_to_string prepend_scheme) );
             ("split", Jsont.Json.bool split);
           ]
     | PreTok_sequence configs ->
@@ -556,7 +554,8 @@ module Tokenizer = struct
             Ok (PreTok_byte_level { add_prefix_space; use_regex; trim_offsets })
         | Some (Jsont.String ("BertPreTokenizer", _)) -> Ok PreTok_bert
         | Some (Jsont.String ("Whitespace", _)) -> Ok PreTok_whitespace
-        | Some (Jsont.String ("WhitespaceSplit", _)) -> Ok PreTok_whitespace_split
+        | Some (Jsont.String ("WhitespaceSplit", _)) ->
+            Ok PreTok_whitespace_split
         | Some (Jsont.String ("Punctuation", _)) -> (
             match find_field "behavior" fields with
             | Some (Jsont.String (s, _)) -> (
@@ -568,7 +567,8 @@ module Tokenizer = struct
             match
               (find_field "pattern" fields, find_field "behavior" fields)
             with
-            | Some (Jsont.String (pattern, _)), Some (Jsont.String (behavior_str, _)) -> (
+            | ( Some (Jsont.String (pattern, _)),
+                Some (Jsont.String (behavior_str, _)) ) -> (
                 match behavior_of_string behavior_str with
                 | Ok behavior ->
                     let invert = bool_field "invert" false fields in
@@ -1387,14 +1387,16 @@ module Tokenizer = struct
               vocab_json
           with
           | Ok s -> s
-          | Error e ->
-              failwith ("export_tiktoken: failed to encode vocab: " ^ e)
+          | Error e -> failwith ("export_tiktoken: failed to encode vocab: " ^ e)
         in
         let oc = open_out vocab_path in
-        Fun.protect ~finally:(fun () -> close_out oc) (fun () ->
-            output_string oc json_str);
+        Fun.protect
+          ~finally:(fun () -> close_out oc)
+          (fun () -> output_string oc json_str);
         let oc = open_out merges_path in
-        Fun.protect ~finally:(fun () -> close_out oc) (fun () ->
+        Fun.protect
+          ~finally:(fun () -> close_out oc)
+          (fun () ->
             output_string oc "#version: 0.2\n";
             Bpe.get_merges bpe
             |> List.iter (fun (a, b) -> Printf.fprintf oc "%s %s\n" a b))
@@ -1414,9 +1416,7 @@ module Tokenizer = struct
           | None -> Jsont.Null ((), Jsont.Meta.none))
       | _ -> Jsont.Null ((), Jsont.Meta.none)
 
-    let option_to_json f = function
-      | None -> Jsont.Json.null ()
-      | Some v -> f v
+    let option_to_json f = function None -> Jsont.Json.null () | Some v -> f v
 
     let string_or_null json =
       match json with
@@ -1429,10 +1429,7 @@ module Tokenizer = struct
 
     let special_of_json json : special =
       let mem name = json_mem name json in
-      let to_bool_opt = function
-        | Jsont.Bool (b, _) -> Some b
-        | _ -> None
-      in
+      let to_bool_opt = function Jsont.Bool (b, _) -> Some b | _ -> None in
       let to_str = function
         | Jsont.String (s, _) -> s
         | _ -> failwith "expected string"
@@ -1522,8 +1519,8 @@ module Tokenizer = struct
             Jsont.Json.list
               (Bpe.get_merges bpe
               |> List.map (fun (a, b) ->
-                     Jsont.Json.list
-                       [ Jsont.Json.string a; Jsont.Json.string b ]))
+                  Jsont.Json.list [ Jsont.Json.string a; Jsont.Json.string b ])
+              )
           in
           json_obj
             [
@@ -1590,10 +1587,7 @@ module Tokenizer = struct
             ]
       | Alg_chars _chars ->
           json_obj
-            [
-              ("type", Jsont.Json.string "Chars");
-              ("vocab", json_obj []);
-            ]
+            [ ("type", Jsont.Json.string "Chars"); ("vocab", json_obj []) ]
     in
     let pre_json =
       Json_helpers.pre_tokenizer_to_json t.pre_tokenizer t.pre_tokenizer_config
@@ -1638,9 +1632,7 @@ module Tokenizer = struct
     in
     try
       (* Parse normalizer *)
-      let normalizer_result =
-        normalizer_of_json (mem "normalizer" json)
-      in
+      let normalizer_result = normalizer_of_json (mem "normalizer" json) in
       let normalizer =
         match normalizer_result with Ok n -> n | Error e -> raise e
       in
@@ -1650,9 +1642,7 @@ module Tokenizer = struct
         match pre_result with Ok (p, cfg) -> (p, cfg) | Error e -> raise e
       in
       (* Parse post-processor *)
-      let post_result =
-        post_processor_of_json (mem "post_processor" json)
-      in
+      let post_result = post_processor_of_json (mem "post_processor" json) in
       let post = match post_result with Ok p -> p | Error e -> raise e in
       (* Parse decoder *)
       let decoder_result = decoder_of_json (mem "decoder" json) in
@@ -1683,17 +1673,14 @@ module Tokenizer = struct
             let merges_json =
               to_list (mem "merges" model_json)
               |> List.map (function
-                | Jsont.Array ([ a; b ], _) ->
-                    (to_string_v a, to_string_v b)
+                | Jsont.Array ([ a; b ], _) -> (to_string_v a, to_string_v b)
                 | Jsont.String (s, _) -> (
                     match String.split_on_char ' ' s with
                     | [ a; b ] -> (a, b)
                     | _ -> failwith "Invalid merge string format")
                 | _ -> failwith "Invalid merge entry")
             in
-            let unk_token =
-              string_or_null (mem "unk_token" model_json)
-            in
+            let unk_token = string_or_null (mem "unk_token" model_json) in
             let continuing_subword_prefix =
               string_or_null (mem "continuing_subword_prefix" model_json)
             in
@@ -1763,8 +1750,7 @@ module Tokenizer = struct
               List.map
                 (fun arr ->
                   match to_list arr with
-                  | [ token; score ] ->
-                      (to_string_v token, to_float_v score)
+                  | [ token; score ] -> (to_string_v token, to_float_v score)
                   | _ -> failwith "Invalid unigram vocab format")
                 vocab_json
             in
@@ -1799,8 +1785,9 @@ module Tokenizer = struct
     try
       let ic = open_in path in
       let s =
-        Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
-            really_input_string ic (in_channel_length ic))
+        Fun.protect
+          ~finally:(fun () -> close_in ic)
+          (fun () -> really_input_string ic (in_channel_length ic))
       in
       match Jsont_bytesrw.decode_string Jsont.json s with
       | Ok json -> from_json json
@@ -1816,11 +1803,14 @@ module Tokenizer = struct
     let json = to_json t in
     let tokenizer_path = Filename.concat path "tokenizer.json" in
     let json_str =
-      match Jsont_bytesrw.encode_string ~format:Jsont.Minify Jsont.json json with
+      match
+        Jsont_bytesrw.encode_string ~format:Jsont.Minify Jsont.json json
+      with
       | Ok s -> s
       | Error e -> failwith ("save_pretrained: failed to encode JSON: " ^ e)
     in
     let oc = open_out tokenizer_path in
-    Fun.protect ~finally:(fun () -> close_out oc) (fun () ->
-        output_string oc json_str)
+    Fun.protect
+      ~finally:(fun () -> close_out oc)
+      (fun () -> output_string oc json_str)
 end

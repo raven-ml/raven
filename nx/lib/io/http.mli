@@ -18,8 +18,8 @@ val download :
 (** [download ~url ~dest ()] downloads the resource at [url] to the local file
     [dest]. Creates parent directories as needed. Follows redirects.
 
-    @param show_progress if [true], curl displays a progress bar on stderr
-      (default: [false]).
+    @param show_progress
+      if [true], curl displays a progress bar on stderr (default: [false]).
     @param headers optional HTTP headers to include in the request.
     @raise Failure if the download fails or curl is not available. *)
 

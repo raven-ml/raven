@@ -155,9 +155,7 @@ let top_p_warper ~p =
         if p >= 1.0 then logits
         else
           let probs = Nx.softmax logits in
-          let sorted_probs, sorted_indices =
-            Nx.sort ~descending:true probs
-          in
+          let sorted_probs, sorted_indices = Nx.sort ~descending:true probs in
           let cumulative = Nx.cumsum sorted_probs in
           (* Find where cumulative exceeds p, keeping at least 1 token *)
           let cutoff_mask = Nx.greater_s cumulative p in
@@ -168,16 +166,16 @@ let top_p_warper ~p =
           for i = 1 to n - 1 do
             new_mask_arr.(i) <- shifted_arr.(i - 1)
           done;
-          let shifted_mask =
-            Nx.create Nx.bool [| n |] new_mask_arr
-          in
+          let shifted_mask = Nx.create Nx.bool [| n |] new_mask_arr in
           (* Map mask back to original token order *)
           let result = Nx.copy logits in
           let sorted_idx_arr = Nx.to_array sorted_indices in
           let shifted_mask_arr = Nx.to_array shifted_mask in
           for i = 0 to n - 1 do
             if shifted_mask_arr.(i) then
-              Nx.set_item [ Int32.to_int sorted_idx_arr.(i) ] neg_infinity result
+              Nx.set_item
+                [ Int32.to_int sorted_idx_arr.(i) ]
+                neg_infinity result
           done;
           result);
   }
@@ -279,7 +277,7 @@ let bad_words ~bad_words_ids =
         List.iter
           (fun bad_sequence ->
             let seq_len = List.length bad_sequence in
-            if seq_len > 0 && len >= seq_len - 1 then
+            if seq_len > 0 && len >= seq_len - 1 then (
               let prefix_len = seq_len - 1 in
               let matches = ref true in
               let prefix = List.rev (List.tl (List.rev bad_sequence)) in
@@ -292,7 +290,7 @@ let bad_words ~bad_words_ids =
                 let bad_token = List.nth bad_sequence (seq_len - 1) in
                 if bad_token < vocab_size then
                   Nx.set_item [ bad_token ] neg_infinity result
-              end)
+              end))
           bad_words_ids;
         result);
   }
@@ -340,8 +338,7 @@ let eos_token_criteria ~eos_token_ids =
     should_stop =
       (fun ~prompt_length:_ ~start_time:_ tokens ->
         let len = Array.length tokens in
-        if len = 0 then false
-        else List.mem tokens.(len - 1) eos_token_ids);
+        if len = 0 then false else List.mem tokens.(len - 1) eos_token_ids);
   }
 
 let max_time_criteria ~max_time =
@@ -358,7 +355,8 @@ let stop_strings_criteria ~stop_strings ~decoder =
     should_stop =
       (fun ~prompt_length:_ ~start_time:_ tokens ->
         let text = decoder tokens in
-        List.exists (fun stop_str -> String_util.contains_substring text stop_str)
+        List.exists
+          (fun stop_str -> String_util.contains_substring text stop_str)
           stop_strings);
   }
 
@@ -400,8 +398,7 @@ let sample_from_logits logits =
    with Exit -> ());
   !result
 
-let argmax logits =
-  Int32.to_int (Nx.item [ 0 ] (Nx.argmax logits))
+let argmax logits = Int32.to_int (Nx.item [ 0 ] (Nx.argmax logits))
 
 let generate ~model ?(input_ids = [||]) ?(generation_config = default)
     ?(logits_processor = []) ?(stopping_criteria = []) () =
@@ -442,7 +439,8 @@ let generate ~model ?(input_ids = [||]) ?(generation_config = default)
     in
     let ps =
       if generation_config.min_length > 0 then
-        min_length ~min_length:generation_config.min_length ~eos_token_ids:eos_ids
+        min_length ~min_length:generation_config.min_length
+          ~eos_token_ids:eos_ids
         :: ps
       else ps
     in
@@ -463,8 +461,7 @@ let generate ~model ?(input_ids = [||]) ?(generation_config = default)
     in
     let cs =
       match generation_config.max_new_tokens with
-      | Some max_new ->
-          max_new_tokens_criteria ~max_new_tokens:max_new :: cs
+      | Some max_new -> max_new_tokens_criteria ~max_new_tokens:max_new :: cs
       | None -> cs
     in
     let eos_ids =
@@ -485,7 +482,8 @@ let generate ~model ?(input_ids = [||]) ?(generation_config = default)
     let current_tokens = !tokens_ref in
     if
       Array.length current_tokens > prompt_length
-      && check_stopping ~criteria ~prompt_length ~start_time ~tokens:current_tokens
+      && check_stopping ~criteria ~prompt_length ~start_time
+           ~tokens:current_tokens
     then current_tokens
     else begin
       let raw_logits = model current_tokens in

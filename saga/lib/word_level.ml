@@ -67,7 +67,8 @@ let save model ~folder () =
     get_vocab model
     |> List.sort (fun (_, id1) (_, id2) -> compare id1 id2)
     |> List.map (fun (token, id) ->
-        json_obj [ ("token", Jsont.Json.string token); ("id", Jsont.Json.int id) ])
+        json_obj
+          [ ("token", Jsont.Json.string token); ("id", Jsont.Json.int id) ])
   in
   let json =
     json_obj

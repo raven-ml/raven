@@ -12,30 +12,60 @@ type library = {
 
 let libraries =
   [
-    { name = "nx"; display = "nx"; color = "color-blue";
-      description = "N-dimensional arrays with linear algebra operations" };
-    { name = "rune"; display = "rune"; color = "color-orange";
-      description = "Automatic differentiation and JIT compilation" };
-    { name = "kaun";
+    {
+      name = "nx";
+      display = "nx";
+      color = "color-blue";
+      description = "N-dimensional arrays with linear algebra operations";
+    };
+    {
+      name = "rune";
+      display = "rune";
+      color = "color-orange";
+      description = "Automatic differentiation and JIT compilation";
+    };
+    {
+      name = "kaun";
       display = {|kaun <span class="rune-symbol">ᚲ</span>|};
       color = "color-red";
-      description = "High-level neural network library" };
-    { name = "hugin"; display = "hugin"; color = "color-purple";
-      description = "Publication-quality 2D and 3D plotting library" };
-    { name = "saga"; display = "saga"; color = "color-teal";
-      description = "Modern text tokenization and processing for NLP" };
-    { name = "talon"; display = "talon"; color = "color-pink";
-      description = "Fast and elegant dataframes with type-safe operations" };
-    { name = "quill"; display = "quill"; color = "color-green";
-      description = "Interactive notebook environment" };
-    { name = "fehu";
+      description = "High-level neural network library";
+    };
+    {
+      name = "hugin";
+      display = "hugin";
+      color = "color-purple";
+      description = "Publication-quality 2D and 3D plotting library";
+    };
+    {
+      name = "saga";
+      display = "saga";
+      color = "color-teal";
+      description = "Modern text tokenization and processing for NLP";
+    };
+    {
+      name = "talon";
+      display = "talon";
+      color = "color-pink";
+      description = "Fast and elegant dataframes with type-safe operations";
+    };
+    {
+      name = "quill";
+      display = "quill";
+      color = "color-green";
+      description = "Interactive notebook environment";
+    };
+    {
+      name = "fehu";
       display = {|fehu <span class="rune-symbol">ᚠ</span>|};
       color = "color-teal";
-      description = "Reinforcement learning for OCaml" };
-    { name = "sowilo";
+      description = "Reinforcement learning for OCaml";
+    };
+    {
+      name = "sowilo";
       display = {|sowilo <span class="rune-symbol">ᛋ</span>|};
       color = "color-indigo";
-      description = "Differentiable computer vision library" };
+      description = "Differentiable computer vision library";
+    };
   ]
 
 let find_library name = List.find_opt (fun lib -> lib.name = name) libraries
@@ -87,13 +117,12 @@ let strip_tags s =
   Buffer.contents buf
 
 let title_case s =
-  s
-  |> String.split_on_char '-'
+  s |> String.split_on_char '-'
   |> List.map (fun w ->
-       if w = "" then w
-       else
-         String.make 1 (Char.uppercase_ascii w.[0])
-         ^ String.sub w 1 (String.length w - 1))
+      if w = "" then w
+      else
+        String.make 1 (Char.uppercase_ascii w.[0])
+        ^ String.sub w 1 (String.length w - 1))
   |> String.concat " "
 
 (* -- File system -- *)
@@ -112,8 +141,8 @@ let rec ensure_dir path =
 let rec walk dir =
   Sys.readdir dir |> Array.to_list
   |> List.concat_map (fun entry ->
-       let path = Filename.concat dir entry in
-       if Sys.is_directory path then walk path else [ path ])
+      let path = Filename.concat dir entry in
+      if Sys.is_directory path then walk path else [ path ])
 
 (* -- HTML utilities -- *)
 
@@ -121,12 +150,12 @@ let extract_h1 html =
   match find_sub html "<h1" with
   | None -> None
   | Some i -> (
-    match String.index_from_opt html i '>' with
-    | None -> None
-    | Some j -> (
-      match find_sub ~start:(j + 1) html "</h1>" with
+      match String.index_from_opt html i '>' with
       | None -> None
-      | Some k -> Some (strip_tags (String.sub html (j + 1) (k - j - 1)))))
+      | Some j -> (
+          match find_sub ~start:(j + 1) html "</h1>" with
+          | None -> None
+          | Some k -> Some (strip_tags (String.sub html (j + 1) (k - j - 1)))))
 
 (* -- Paths and URLs -- *)
 
@@ -153,24 +182,24 @@ let make_breadcrumbs segments title =
   match segments with
   | [] | [ _ ] -> ""
   | _ ->
-    let ancestors = List.rev (List.tl (List.rev segments)) in
-    let links =
-      let rec go acc url_path = function
-        | [] -> List.rev acc
-        | seg :: rest ->
-          let url_path = url_path ^ "/" ^ seg in
-          let link =
-            Printf.sprintf {|<a href="%s/" class="breadcrumb-link">%s</a>|}
-              url_path (title_case seg)
-          in
-          go (link :: acc) url_path rest
+      let ancestors = List.rev (List.tl (List.rev segments)) in
+      let links =
+        let rec go acc url_path = function
+          | [] -> List.rev acc
+          | seg :: rest ->
+              let url_path = url_path ^ "/" ^ seg in
+              let link =
+                Printf.sprintf {|<a href="%s/" class="breadcrumb-link">%s</a>|}
+                  url_path (title_case seg)
+              in
+              go (link :: acc) url_path rest
+        in
+        go [] "" ancestors
       in
-      go [] "" ancestors
-    in
-    Printf.sprintf
-      {|<div id="breadcrumbs" class="breadcrumbs">%s%s<span class="breadcrumb-current">%s</span></div>|}
-      (String.concat breadcrumb_sep links)
-      breadcrumb_sep title
+      Printf.sprintf
+        {|<div id="breadcrumbs" class="breadcrumbs">%s%s<span class="breadcrumb-current">%s</span></div>|}
+        (String.concat breadcrumb_sep links)
+        breadcrumb_sep title
 
 (* -- Library navigation -- *)
 
@@ -182,17 +211,17 @@ let generate_lib_nav lib_name =
     let entries =
       files
       |> List.filter_map (fun f ->
-           if Filename.extension f = ".md" then
-             let stem = Filename.chop_extension f in
-             let title =
-               if stem = "index" then "Overview" else title_case stem
-             in
-             let url =
-               if stem = "index" then Printf.sprintf "/docs/%s/" lib_name
-               else Printf.sprintf "/docs/%s/%s/" lib_name stem
-             in
-             Some (stem, title, url)
-           else None)
+          if Filename.extension f = ".md" then
+            let stem = Filename.chop_extension f in
+            let title =
+              if stem = "index" then "Overview" else title_case stem
+            in
+            let url =
+              if stem = "index" then Printf.sprintf "/docs/%s/" lib_name
+              else Printf.sprintf "/docs/%s/%s/" lib_name stem
+            in
+            Some (stem, title, url)
+          else None)
     in
     let entries =
       List.sort
@@ -205,7 +234,7 @@ let generate_lib_nav lib_name =
     in
     entries
     |> List.map (fun (_, title, url) ->
-         Printf.sprintf {|          <li><a href="%s">%s</a></li>|} url title)
+        Printf.sprintf {|          <li><a href="%s">%s</a></li>|} url title)
     |> String.concat "\n"
 
 (* -- Template -- *)
@@ -214,8 +243,7 @@ let select_template path =
   let parts = String.split_on_char '/' path in
   let name =
     match parts with
-    | "docs" :: lib :: _ when find_library lib <> None ->
-      "layout_docs_lib.html"
+    | "docs" :: lib :: _ when find_library lib <> None -> "layout_docs_lib.html"
     | "docs" :: _ -> "layout_docs.html"
     | _ -> "main.html"
   in
@@ -223,20 +251,19 @@ let select_template path =
 
 let apply_template ~template ~title ~breadcrumbs ~content ~lib =
   let t =
-    template
-    |> replace "{{title}}" title
+    template |> replace "{{title}}" title
     |> replace "{{breadcrumbs}}" breadcrumbs
     |> replace "{{content}}" content
   in
   match lib with
   | None -> t
   | Some lib ->
-    t
-    |> replace "{{lib_name}}" lib.name
-    |> replace "{{lib_display}}" lib.display
-    |> replace "{{lib_color}}" lib.color
-    |> replace "{{lib_description}}" lib.description
-    |> replace "{{lib_nav}}" (generate_lib_nav lib.name)
+      t
+      |> replace "{{lib_name}}" lib.name
+      |> replace "{{lib_display}}" lib.display
+      |> replace "{{lib_color}}" lib.color
+      |> replace "{{lib_description}}" lib.description
+      |> replace "{{lib_nav}}" (generate_lib_nav lib.name)
 
 (* -- Processing -- *)
 

@@ -33,8 +33,9 @@ let json_to_string_pretty j =
 let json_of_file path =
   let ic = open_in path in
   let s =
-    Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
-        really_input_string ic (in_channel_length ic))
+    Fun.protect
+      ~finally:(fun () -> close_in ic)
+      (fun () -> really_input_string ic (in_channel_length ic))
   in
   json_of_string s
 
@@ -133,8 +134,7 @@ let load dir =
       in
       let config =
         match json_mem "config" json with
-        | Jsont.Object (mems, _) ->
-            List.map (fun ((k, _), v) -> (k, v)) mems
+        | Jsont.Object (mems, _) -> List.map (fun ((k, _), v) -> (k, v)) mems
         | _ -> []
       in
       Some { run_id; created_at; experiment_name; tags; config; dir }
@@ -146,13 +146,7 @@ let write_manifest t =
     |> Option.to_list
   in
   let config_field =
-    match t.config with
-    | [] -> []
-    | pairs ->
-        [
-          ( "config",
-            json_obj pairs );
-        ]
+    match t.config with [] -> [] | pairs -> [ ("config", json_obj pairs) ]
   in
   let json =
     json_obj
@@ -166,7 +160,9 @@ let write_manifest t =
   in
   let path = manifest_path t.dir in
   let oc = open_out path in
-  Fun.protect ~finally:(fun () -> close_out oc) (fun () ->
+  Fun.protect
+    ~finally:(fun () -> close_out oc)
+    (fun () ->
       output_string oc (json_to_string_pretty json);
       output_char oc '\n')
 
@@ -193,7 +189,9 @@ let create ?base_dir ?experiment ?(tags = []) ?(config = []) () =
 let append_event t event =
   let path = events_path t.dir in
   let oc = open_out_gen [ Open_append; Open_creat ] 0o644 path in
-  Fun.protect ~finally:(fun () -> close_out oc) (fun () ->
+  Fun.protect
+    ~finally:(fun () -> close_out oc)
+    (fun () ->
       output_string oc (json_to_string (Event.to_json event));
       output_char oc '\n')
 

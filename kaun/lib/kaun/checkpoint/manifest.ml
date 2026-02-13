@@ -38,8 +38,9 @@ let json_to_string j =
 let json_of_file path =
   let ic = open_in path in
   let s =
-    Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
-        really_input_string ic (in_channel_length ic))
+    Fun.protect
+      ~finally:(fun () -> close_in ic)
+      (fun () -> really_input_string ic (in_channel_length ic))
   in
   match Jsont_bytesrw.decode_string Jsont.json s with
   | Ok v -> v
@@ -66,9 +67,9 @@ let artifact_entry_of_json json =
           Jsont.Json.find_mem "label" mems,
           Jsont.Json.find_mem "slug" mems )
       with
-      | Some (_, Jsont.String (kind_str, _)),
-        Some (_, Jsont.String (label, _)),
-        Some (_, Jsont.String (slug, _)) ->
+      | ( Some (_, Jsont.String (kind_str, _)),
+          Some (_, Jsont.String (label, _)),
+          Some (_, Jsont.String (slug, _)) ) ->
           let kind =
             match Artifact.kind_of_string kind_str with
             | Some kind -> kind

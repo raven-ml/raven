@@ -19,8 +19,7 @@ let load () =
   Log.info (fun m -> m "Loading Diabetes (sklearn version) dataset...");
 
   let header, data_rows =
-    try load_csv ~has_header:true ~separator:'\t' data_path
-    with
+    try load_csv ~has_header:true ~separator:'\t' data_path with
     | Sys_error msg ->
         failwith (Printf.sprintf "Cannot open file %s: %s" data_path msg)
     | ex ->
@@ -59,9 +58,7 @@ let load () =
           (fun feature_idx ->
             let feature_str = List.nth row_list feature_idx in
             let col_name = List.nth header feature_idx in
-            let context () =
-              Printf.sprintf "row %d, col %s" row_num col_name
-            in
+            let context () = Printf.sprintf "row %d, col %s" row_num col_name in
             parse_float_cell ~context feature_str)
           feature_indices
       in

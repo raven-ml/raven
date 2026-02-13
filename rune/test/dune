@@ -9,4 +9,3 @@
  (package rune)
  (modules test_vmap)
  (libraries rune nx_core windtrap test_rune_support))
-

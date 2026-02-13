@@ -89,4 +89,3 @@ let write_row_to_channel oc separator fields =
   let buf = Buffer.create 256 in
   write_row buf separator fields;
   output_string oc (Buffer.contents buf)
-

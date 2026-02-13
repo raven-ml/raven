@@ -132,7 +132,9 @@ let decode_wordpiece ~prefix ~cleanup tokens =
   in
   if cleanup then
     (* Clean up tokenization artifacts *)
-    decoded |> Re.replace_string (Re.compile (Re.rep1 (Re.char ' '))) ~by:" " |> String.trim
+    decoded
+    |> Re.replace_string (Re.compile (Re.rep1 (Re.char ' '))) ~by:" "
+    |> String.trim
   else decoded
 
 let decode_metaspace ~replacement ~add_prefix_space:_ tokens =

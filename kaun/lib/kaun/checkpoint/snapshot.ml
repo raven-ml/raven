@@ -153,9 +153,7 @@ let scalar_to_json = function
         [ ("type", Jsont.Json.string "float"); ("value", Jsont.Json.number f) ]
   | String s ->
       json_obj
-        [
-          ("type", Jsont.Json.string "string"); ("value", Jsont.Json.string s);
-        ]
+        [ ("type", Jsont.Json.string "string"); ("value", Jsont.Json.string s) ]
   | Json json ->
       json_obj [ ("type", Jsont.Json.string "json"); ("value", json) ]
 

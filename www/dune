@@ -1,7 +1,8 @@
 (dirs :standard \ process)
 
 (rule
- (targets (dir build))
+ (targets
+  (dir build))
  (deps
   (source_tree templates)
   (source_tree site)

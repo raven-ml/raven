@@ -18,8 +18,9 @@ let json_to_string j =
 let json_of_file path =
   let ic = open_in path in
   let s =
-    Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
-        really_input_string ic (in_channel_length ic))
+    Fun.protect
+      ~finally:(fun () -> close_in ic)
+      (fun () -> really_input_string ic (in_channel_length ic))
   in
   match Jsont_bytesrw.decode_string Jsont.json s with
   | Ok v -> v
@@ -39,8 +40,8 @@ let tensors_meta_to_json metas =
              ("path", Jsont.Json.string encoded_path);
              ("dtype", Jsont.Json.string dtype);
              ( "shape",
-               Jsont.Json.list
-                 (Array.to_list shape |> List.map Jsont.Json.int) );
+               Jsont.Json.list (Array.to_list shape |> List.map Jsont.Json.int)
+             );
            ])
        metas)
 
@@ -54,9 +55,9 @@ let tensors_meta_of_json json =
                 Jsont.Json.find_mem "dtype" mems,
                 Jsont.Json.find_mem "shape" mems )
             with
-            | Some (_, Jsont.String (path, _)),
-              Some (_, Jsont.String (dtype, _)),
-              Some (_, Jsont.Array (shape, _)) ->
+            | ( Some (_, Jsont.String (path, _)),
+                Some (_, Jsont.String (dtype, _)),
+                Some (_, Jsont.Array (shape, _)) ) ->
                 let shape =
                   List.fold_left
                     (fun acc -> function
@@ -70,8 +71,7 @@ let tensors_meta_of_json json =
                 in
                 { encoded_path = path; dtype; shape }
             | _ ->
-                failwith "Snapshot_store.tensors_meta_of_json: missing fields"
-            )
+                failwith "Snapshot_store.tensors_meta_of_json: missing fields")
         | _ -> failwith "Snapshot_store.tensors_meta_of_json: expected object"
       in
       List.map decode_entry entries
@@ -241,9 +241,7 @@ let load ~base_path =
   try
     let structure_json = json_of_file structure_path in
     let scalars_json = json_of_file scalars_path in
-    let tensor_meta =
-      json_of_file meta_path |> tensors_meta_of_json
-    in
+    let tensor_meta = json_of_file meta_path |> tensors_meta_of_json in
     let archive = Nx_io.load_safetensor tensors_path in
     let meta_table = Hashtbl.create (List.length tensor_meta) in
     List.iter

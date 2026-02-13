@@ -38,8 +38,7 @@ let load () =
   Log.info (fun m -> m "Loading California Housing dataset...");
 
   let header, data_rows_str =
-    try load_csv ~has_header:true ~separator:',' data_path
-    with
+    try load_csv ~has_header:true ~separator:',' data_path with
     | Sys_error msg ->
         failwith (Printf.sprintf "Cannot open file %s: %s" data_path msg)
     | ex ->

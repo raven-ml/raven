@@ -19,8 +19,8 @@ let detect_dtype na_values values =
       List.for_all
         (fun v ->
           match String.lowercase_ascii v with
-          | "true" | "t" | "yes" | "y" | "1" | "false" | "f" | "no" | "n"
-          | "0" ->
+          | "true" | "t" | "yes" | "y" | "1" | "false" | "f" | "no" | "n" | "0"
+            ->
               true
           | _ -> false)
         non_null_values
@@ -135,8 +135,7 @@ let columns_of_rows na_values dtype_spec column_names data_rows =
         | `String ->
             let arr =
               List.map
-                (fun v ->
-                  if is_null_value na_values v then None else Some v)
+                (fun v -> if is_null_value na_values v then None else Some v)
                 values
               |> Array.of_list
             in
@@ -149,11 +148,11 @@ let columns_of_rows na_values dtype_spec column_names data_rows =
    array once so that repeated row access is O(1) per cell. *)
 let col_to_string_fn na_repr col =
   match col with
-  | Talon.Col.P (dtype, tensor, mask) ->
+  | Talon.Col.P (dtype, tensor, mask) -> (
       let is_null =
         match mask with Some m -> fun i -> m.(i) | None -> fun _ -> false
       in
-      (match dtype with
+      match dtype with
       | Nx.Float32 ->
           let arr : float array = Nx.to_array tensor in
           fun i ->
@@ -243,10 +242,10 @@ let col_to_string_fn na_repr col =
       | Nx.UInt4 ->
           let arr : int array = Nx.to_array tensor in
           fun i -> if is_null i then na_repr else string_of_int arr.(i))
-  | Talon.Col.S arr ->
-      fun i -> (match arr.(i) with Some s -> s | None -> na_repr)
-  | Talon.Col.B arr ->
-      fun i -> (match arr.(i) with Some b -> string_of_bool b | None -> na_repr)
+  | Talon.Col.S arr -> (
+      fun i -> match arr.(i) with Some s -> s | None -> na_repr)
+  | Talon.Col.B arr -> (
+      fun i -> match arr.(i) with Some b -> string_of_bool b | None -> na_repr)
 
 let col_string_fns na_repr df =
   List.map
@@ -263,7 +262,8 @@ let df_of_rows ?names ?(na_values = default_na_values) ?dtype_spec rows =
           in
           Talon.create columns
       | _ ->
-          columns_of_rows na_values dtype_spec column_names rows |> Talon.create)
+          columns_of_rows na_values dtype_spec column_names rows |> Talon.create
+      )
   | None -> (
       match rows with
       | [] -> Talon.empty

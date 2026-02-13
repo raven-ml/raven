@@ -24,8 +24,7 @@ let load () =
   Log.info (fun m -> m "Loading Airline Passengers dataset...");
 
   let header, data_rows =
-    try load_csv ~has_header:true ~separator:',' data_path
-    with
+    try load_csv ~has_header:true ~separator:',' data_path with
     | Sys_error msg ->
         failwith (Printf.sprintf "Cannot open file %s: %s" data_path msg)
     | ex ->
@@ -66,8 +65,8 @@ let load () =
         else (
           Log.warn (fun m ->
               m
-                "Row %d is shorter than expected (%d < %d), skipping \
-                 passenger value. Missing column: %s"
+                "Row %d is shorter than expected (%d < %d), skipping passenger \
+                 value. Missing column: %s"
                 (List.length acc + 1)
                 (List.length row_list) (passenger_col_index + 1)
                 passenger_col_name);

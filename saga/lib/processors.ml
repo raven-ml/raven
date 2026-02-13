@@ -399,8 +399,7 @@ let parse_template_piece_from_json ~special_lookup json =
             | Some (Jsont.Number (v, _)) -> int_of_float v
             | None -> 0
             | _ ->
-                invalid_arg
-                  "Processors.template: invalid type id for Sequence"
+                invalid_arg "Processors.template: invalid type id for Sequence"
           in
           Piece_sequence { id; type_id }
       | _ -> (
@@ -811,8 +810,7 @@ let rec of_json json =
                                         (Printf.sprintf
                                            "Processors.template: invalid id \
                                             value %s for special token"
-                                           (Format.asprintf "%a" Jsont.pp_json
-                                              v)))
+                                           (Format.asprintf "%a" Jsont.pp_json v)))
                                 lst
                           | _ ->
                               invalid_arg
@@ -829,8 +827,7 @@ let rec of_json json =
                                         (Printf.sprintf
                                            "Processors.template: invalid token \
                                             value %s for special token"
-                                           (Format.asprintf "%a" Jsont.pp_json
-                                              v)))
+                                           (Format.asprintf "%a" Jsont.pp_json v)))
                                 lst
                           | _ -> [ key ]
                         in
@@ -856,8 +853,7 @@ let rec of_json json =
           let lookup = build_special_lookup special_tokens in
           let single =
             match find fields "single" with
-            | Some json ->
-                parse_template_definition ~special_lookup:lookup json
+            | Some json -> parse_template_definition ~special_lookup:lookup json
             | None -> parse_template_string ~special_lookup:lookup "$A"
           in
           let pair =

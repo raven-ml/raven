@@ -48,7 +48,9 @@ let default () = create_internal (Hashtbl.create 0) "[UNK]" "##" 100
 let read_file ~vocab_file =
   let vocab = Hashtbl.create 10000 in
   let ic = open_in vocab_file in
-  Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
+  Fun.protect
+    ~finally:(fun () -> close_in ic)
+    (fun () ->
       let index = ref 0 in
       (try
          while true do
@@ -163,7 +165,9 @@ let save model ~path ?name () =
     |> List.map (fun (_, k) -> k)
   in
   let oc = open_out vocab_file in
-  Fun.protect ~finally:(fun () -> close_out oc) (fun () ->
+  Fun.protect
+    ~finally:(fun () -> close_out oc)
+    (fun () ->
       List.iter
         (fun token ->
           output_string oc token;

@@ -85,9 +85,7 @@ val top_k_warper : k:int -> logits_processor
 val top_p_warper : p:float -> logits_processor
 val repetition_penalty : penalty:float -> logits_processor
 val no_repeat_ngram : ngram_size:int -> logits_processor
-
-val min_length :
-  min_length:int -> eos_token_ids:int list -> logits_processor
+val min_length : min_length:int -> eos_token_ids:int list -> logits_processor
 
 val min_new_tokens :
   min_new_tokens:int -> eos_token_ids:int list -> logits_processor

@@ -70,8 +70,10 @@ let json_obj pairs =
 
 let encode_special_float = function
   | f when classify_float f = FP_nan -> Jsont.Json.string "NaN"
-  | f when classify_float f = FP_infinite && f > 0. -> Jsont.Json.string "Infinity"
-  | f when classify_float f = FP_infinite && f < 0. -> Jsont.Json.string "-Infinity"
+  | f when classify_float f = FP_infinite && f > 0. ->
+      Jsont.Json.string "Infinity"
+  | f when classify_float f = FP_infinite && f < 0. ->
+      Jsont.Json.string "-Infinity"
   | _ -> assert false
 
 let float_to_json f =
@@ -222,7 +224,7 @@ let rec value_of_json = function
       loop [] values
 
 let of_json = function
-  | Jsont.Object _ as json -> (
+  | Jsont.Object _ as json ->
       let fields = json_assoc json in
       let rec loop acc = function
         | [] -> Ok (of_list (List.rev acc))
@@ -231,7 +233,7 @@ let of_json = function
             | Ok vv -> loop ((k, vv) :: acc) xs
             | Error _ as err -> err)
       in
-      loop [] fields)
+      loop [] fields
   | json ->
       Error
         (Format.asprintf "Info.of_json: expected an object, received %s"

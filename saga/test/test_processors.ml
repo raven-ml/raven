@@ -58,8 +58,14 @@ let test_template_multi_special () =
                    json_obj
                      [
                        ("id", Jsont.Json.string "<multi>");
-                       ("ids", Jsont.Json.list [ Jsont.Json.int 100; Jsont.Json.int 101 ]);
-                       ("tokens", Jsont.Json.list [ Jsont.Json.string "<m1>"; Jsont.Json.string "<m2>" ]);
+                       ( "ids",
+                         Jsont.Json.list
+                           [ Jsont.Json.int 100; Jsont.Json.int 101 ] );
+                       ( "tokens",
+                         Jsont.Json.list
+                           [
+                             Jsont.Json.string "<m1>"; Jsont.Json.string "<m2>";
+                           ] );
                      ] );
                ] );
          ])

@@ -434,8 +434,9 @@ let read_files ~vocab_file ~merges_file =
   let vocab_json =
     let ic = open_in vocab_file in
     let content =
-      Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
-          really_input_string ic (in_channel_length ic))
+      Fun.protect
+        ~finally:(fun () -> close_in ic)
+        (fun () -> really_input_string ic (in_channel_length ic))
     in
     json_of_string content
   in
@@ -451,7 +452,9 @@ let read_files ~vocab_file ~merges_file =
   | _ -> failwith "Invalid vocab.json format");
   let merges =
     let ic = open_in merges_file in
-    Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
+    Fun.protect
+      ~finally:(fun () -> close_in ic)
+      (fun () ->
         let merges = ref [] in
         (try
            while true do
@@ -523,10 +526,13 @@ let save model ~path ?name () =
          vocab_items)
   in
   let oc = open_out vocab_file in
-  Fun.protect ~finally:(fun () -> close_out oc) (fun () ->
-      output_string oc (json_to_string vocab_json));
+  Fun.protect
+    ~finally:(fun () -> close_out oc)
+    (fun () -> output_string oc (json_to_string vocab_json));
   let oc = open_out merges_file in
-  Fun.protect ~finally:(fun () -> close_out oc) (fun () ->
+  Fun.protect
+    ~finally:(fun () -> close_out oc)
+    (fun () ->
       output_string oc "#version: 0.2\n";
       let merges_list =
         IntPairMap.fold

@@ -218,8 +218,9 @@ let load_safetensors ?(config = Config.default) ?(revision = Latest) ~model_id
   let json_of_file path =
     let ic = open_in path in
     let s =
-      Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
-          really_input_string ic (in_channel_length ic))
+      Fun.protect
+        ~finally:(fun () -> close_in ic)
+        (fun () -> really_input_string ic (in_channel_length ic))
     in
     match Jsont_bytesrw.decode_string Jsont.json s with
     | Ok v -> v
@@ -372,8 +373,9 @@ let load_config ?(config = Config.default) ?(revision = Latest) ~model_id () =
 
   let ic = open_in local_path in
   let s =
-    Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
-        really_input_string ic (in_channel_length ic))
+    Fun.protect
+      ~finally:(fun () -> close_in ic)
+      (fun () -> really_input_string ic (in_channel_length ic))
   in
   let json =
     match Jsont_bytesrw.decode_string Jsont.json s with

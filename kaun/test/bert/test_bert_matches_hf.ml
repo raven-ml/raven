@@ -61,4 +61,5 @@ let test_forward () =
 
 let () =
   Printexc.record_backtrace true;
-  run "BERT matches HuggingFace" [ group "bert" [ test "forward" test_forward ] ]
+  run "BERT matches HuggingFace"
+    [ group "bert" [ test "forward" test_forward ] ]

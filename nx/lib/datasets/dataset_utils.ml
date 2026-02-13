@@ -139,8 +139,9 @@ let parse_int_cell ~context s =
 let load_csv ?(separator = ',') ?(has_header = false) path =
   let ic = open_in path in
   let content =
-    Fun.protect ~finally:(fun () -> close_in ic) (fun () ->
-        really_input_string ic (in_channel_length ic))
+    Fun.protect
+      ~finally:(fun () -> close_in ic)
+      (fun () -> really_input_string ic (in_channel_length ic))
   in
   let lines = String.split_on_char '\n' content in
   let lines =
@@ -189,7 +190,5 @@ let load_csv ?(separator = ',') ?(has_header = false) path =
   in
   let rows = List.map parse_line lines in
   if has_header then
-    match rows with
-    | [] -> ([], [])
-    | header :: data -> (header, data)
+    match rows with [] -> ([], []) | header :: data -> (header, data)
   else ([], rows)

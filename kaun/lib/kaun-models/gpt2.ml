@@ -594,17 +594,9 @@ let json_to_int_option = function
   | Jsont.Number (f, _) -> Some (int_of_float f)
   | _ -> None
 
-let json_to_float_option = function
-  | Jsont.Number (f, _) -> Some f
-  | _ -> None
-
-let json_to_string_option = function
-  | Jsont.String (s, _) -> Some s
-  | _ -> None
-
-let json_to_bool_option = function
-  | Jsont.Bool (b, _) -> Some b
-  | _ -> None
+let json_to_float_option = function Jsont.Number (f, _) -> Some f | _ -> None
+let json_to_string_option = function Jsont.String (s, _) -> Some s | _ -> None
+let json_to_bool_option = function Jsont.Bool (b, _) -> Some b | _ -> None
 
 let parse_gpt2_config json =
   {
@@ -615,7 +607,9 @@ let parse_gpt2_config json =
     n_head = json |> json_mem "n_head" |> json_to_int;
     n_inner = json |> json_mem "n_inner" |> json_to_int_option;
     activation_function =
-      (match json |> json_mem "activation_function" |> json_to_string_option with
+      (match
+         json |> json_mem "activation_function" |> json_to_string_option
+       with
       | Some "gelu_new" -> `gelu_new
       | Some "gelu" -> `gelu
       | Some "relu" -> `relu
@@ -635,8 +629,9 @@ let parse_gpt2_config json =
       |> json_mem "layer_norm_epsilon"
       |> json_to_float_option |> Option.value ~default:1e-5;
     initializer_range =
-      json |> json_mem "initializer_range" |> json_to_float_option
-      |> Option.value ~default:0.02;
+      json
+      |> json_mem "initializer_range"
+      |> json_to_float_option |> Option.value ~default:0.02;
     scale_attn_weights =
       json
       |> json_mem "scale_attn_weights"
