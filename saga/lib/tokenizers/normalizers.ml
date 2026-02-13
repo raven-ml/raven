@@ -178,8 +178,8 @@ let strip_whitespace ns ~left ~right =
   { normalized; original = ns.original; alignments }
 
 let apply_replace ns ~pattern ~replacement =
-  let regex = Str.regexp pattern in
-  let normalized = Str.global_replace regex replacement ns.normalized in
+  let regex = Re.compile (Re.Pcre.re pattern) in
+  let normalized = Re.replace_string regex ~by:replacement ns.normalized in
   (* Simple alignment - can be improved *)
   let len = String.length normalized in
   let alignments =

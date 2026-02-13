@@ -102,7 +102,7 @@ let train ~vocab_size ~show_progress ~special_tokens ~shrinking_factor
   let counts = Hashtbl.create 10000 in
   List.iter
     (fun line ->
-      let words = Str.split (Str.regexp "[ \t\n\r]+") line in
+      let words = Re.split (Re.compile (Re.rep1 (Re.set " \t\n\r"))) line in
       List.iter
         (fun word ->
           if word <> "" then

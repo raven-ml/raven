@@ -23,7 +23,7 @@ let decode_bpe ~suffix tokens =
     (fun i token ->
       let replacement = if i = n then "" else " " in
       if suffix <> "" then
-        Str.global_replace (Str.regexp_string suffix) replacement token
+        Re.replace_string (Re.compile (Re.str suffix)) ~by:replacement token
       else token)
     tokens
 
@@ -132,7 +132,7 @@ let decode_wordpiece ~prefix ~cleanup tokens =
   in
   if cleanup then
     (* Clean up tokenization artifacts *)
-    decoded |> Str.global_replace (Str.regexp " +") " " |> String.trim
+    decoded |> Re.replace_string (Re.compile (Re.rep1 (Re.char ' '))) ~by:" " |> String.trim
   else decoded
 
 let decode_metaspace ~replacement ~add_prefix_space:_ tokens =
@@ -155,9 +155,9 @@ let decode_ctc ~pad_token ~word_delimiter_token ~cleanup tokens =
       else
         let replaced =
           if cleanup then
-            Str.global_replace
-              (Str.regexp_string word_delimiter_token)
-              " " token
+            Re.replace_string
+              (Re.compile (Re.str word_delimiter_token))
+              ~by:" " token
           else token
         in
         if replaced = "" then None else Some replaced)
@@ -165,7 +165,7 @@ let decode_ctc ~pad_token ~word_delimiter_token ~cleanup tokens =
 
 let decode_replace ~pattern ~replacement tokens =
   let text = String.concat "" tokens in
-  Str.global_replace (Str.regexp pattern) replacement text
+  Re.replace_string (Re.compile (Re.Pcre.re pattern)) ~by:replacement text
 
 let decode_strip ~left ~right ~content tokens =
   let text = String.concat "" tokens in

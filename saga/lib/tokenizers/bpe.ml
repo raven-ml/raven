@@ -690,9 +690,9 @@ let train ~min_frequency ~vocab_size ~show_progress ~special_tokens
             Hashtbl.iter
               (fun word count ->
                 let merged =
-                  Str.global_replace
-                    (Str.regexp_string (a ^ " " ^ b))
-                    new_token word
+                  Re.replace_string
+                    (Re.compile (Re.str (a ^ " " ^ b)))
+                    ~by:new_token word
                 in
                 Hashtbl.add new_words merged count)
               !words_copy;
