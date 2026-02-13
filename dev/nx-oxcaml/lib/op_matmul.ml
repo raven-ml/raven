@@ -92,79 +92,54 @@ module Gemm_f64 = struct
       done
     end
 
+  let rec f64_kloop ap ap_off bp bp_off c_buf c_off ldc kc p
+      c00 c01 c10 c11 c20 c21 c30 c31 =
+    if p = kc then begin
+      Float64x2.Array.unsafe_set c_buf ~idx:c_off c00;
+      Float64x2.Array.unsafe_set c_buf ~idx:(c_off + 2) c01;
+      let r1 = c_off + ldc in
+      Float64x2.Array.unsafe_set c_buf ~idx:r1 c10;
+      Float64x2.Array.unsafe_set c_buf ~idx:(r1 + 2) c11;
+      let r2 = c_off + 2 * ldc in
+      Float64x2.Array.unsafe_set c_buf ~idx:r2 c20;
+      Float64x2.Array.unsafe_set c_buf ~idx:(r2 + 2) c21;
+      let r3 = c_off + 3 * ldc in
+      Float64x2.Array.unsafe_set c_buf ~idx:r3 c30;
+      Float64x2.Array.unsafe_set c_buf ~idx:(r3 + 2) c31
+    end
+    else
+      let ab = ap_off + p * 4 in
+      let bb = bp_off + p * 4 in
+      let a0 = f64_set1 (Array.unsafe_get ap ab) in
+      let a1 = f64_set1 (Array.unsafe_get ap (ab + 1)) in
+      let a2 = f64_set1 (Array.unsafe_get ap (ab + 2)) in
+      let a3 = f64_set1 (Array.unsafe_get ap (ab + 3)) in
+      let b0 = Float64x2.Array.unsafe_get bp ~idx:bb in
+      let b1 = Float64x2.Array.unsafe_get bp ~idx:(bb + 2) in
+      f64_kloop ap ap_off bp bp_off c_buf c_off ldc kc (p + 1)
+        (f64_mul_add a0 b0 c00) (f64_mul_add a0 b1 c01)
+        (f64_mul_add a1 b0 c10) (f64_mul_add a1 b1 c11)
+        (f64_mul_add a2 b0 c20) (f64_mul_add a2 b1 c21)
+        (f64_mul_add a3 b0 c30) (f64_mul_add a3 b1 c31)
+
   let kernel_zero ap ~ap_off bp ~bp_off c_buf ~c_off ~ldc ~kc =
     let z = f64_set1 #0. in
-    let rec kloop p c00 c01 c10 c11 c20 c21 c30 c31 =
-      if p = kc then begin
-        Float64x2.Array.unsafe_set c_buf ~idx:c_off c00;
-        Float64x2.Array.unsafe_set c_buf ~idx:(c_off + 2) c01;
-        let r1 = c_off + ldc in
-        Float64x2.Array.unsafe_set c_buf ~idx:r1 c10;
-        Float64x2.Array.unsafe_set c_buf ~idx:(r1 + 2) c11;
-        let r2 = c_off + 2 * ldc in
-        Float64x2.Array.unsafe_set c_buf ~idx:r2 c20;
-        Float64x2.Array.unsafe_set c_buf ~idx:(r2 + 2) c21;
-        let r3 = c_off + 3 * ldc in
-        Float64x2.Array.unsafe_set c_buf ~idx:r3 c30;
-        Float64x2.Array.unsafe_set c_buf ~idx:(r3 + 2) c31
-      end
-      else
-        let ab = ap_off + p * 4 in
-        let bb = bp_off + p * 4 in
-        let a0 = f64_set1 (Array.unsafe_get ap ab) in
-        let a1 = f64_set1 (Array.unsafe_get ap (ab + 1)) in
-        let a2 = f64_set1 (Array.unsafe_get ap (ab + 2)) in
-        let a3 = f64_set1 (Array.unsafe_get ap (ab + 3)) in
-        let b0 = Float64x2.Array.unsafe_get bp ~idx:bb in
-        let b1 = Float64x2.Array.unsafe_get bp ~idx:(bb + 2) in
-        kloop (p + 1)
-          (f64_mul_add a0 b0 c00) (f64_mul_add a0 b1 c01)
-          (f64_mul_add a1 b0 c10) (f64_mul_add a1 b1 c11)
-          (f64_mul_add a2 b0 c20) (f64_mul_add a2 b1 c21)
-          (f64_mul_add a3 b0 c30) (f64_mul_add a3 b1 c31)
-    in
-    kloop 0 z z z z z z z z
+    f64_kloop ap ap_off bp bp_off c_buf c_off ldc kc 0
+      z z z z z z z z
 
   let kernel_accum ap ~ap_off bp ~bp_off c_buf ~c_off ~ldc ~kc =
     let r1 = c_off + ldc in
     let r2 = c_off + 2 * ldc in
     let r3 = c_off + 3 * ldc in
-    let c00_init = Float64x2.Array.unsafe_get c_buf ~idx:c_off in
-    let c01_init = Float64x2.Array.unsafe_get c_buf ~idx:(c_off + 2) in
-    let c10_init = Float64x2.Array.unsafe_get c_buf ~idx:r1 in
-    let c11_init = Float64x2.Array.unsafe_get c_buf ~idx:(r1 + 2) in
-    let c20_init = Float64x2.Array.unsafe_get c_buf ~idx:r2 in
-    let c21_init = Float64x2.Array.unsafe_get c_buf ~idx:(r2 + 2) in
-    let c30_init = Float64x2.Array.unsafe_get c_buf ~idx:r3 in
-    let c31_init = Float64x2.Array.unsafe_get c_buf ~idx:(r3 + 2) in
-    let rec kloop p c00 c01 c10 c11 c20 c21 c30 c31 =
-      if p = kc then begin
-        Float64x2.Array.unsafe_set c_buf ~idx:c_off c00;
-        Float64x2.Array.unsafe_set c_buf ~idx:(c_off + 2) c01;
-        Float64x2.Array.unsafe_set c_buf ~idx:r1 c10;
-        Float64x2.Array.unsafe_set c_buf ~idx:(r1 + 2) c11;
-        Float64x2.Array.unsafe_set c_buf ~idx:r2 c20;
-        Float64x2.Array.unsafe_set c_buf ~idx:(r2 + 2) c21;
-        Float64x2.Array.unsafe_set c_buf ~idx:r3 c30;
-        Float64x2.Array.unsafe_set c_buf ~idx:(r3 + 2) c31
-      end
-      else
-        let ab = ap_off + p * 4 in
-        let bb = bp_off + p * 4 in
-        let a0 = f64_set1 (Array.unsafe_get ap ab) in
-        let a1 = f64_set1 (Array.unsafe_get ap (ab + 1)) in
-        let a2 = f64_set1 (Array.unsafe_get ap (ab + 2)) in
-        let a3 = f64_set1 (Array.unsafe_get ap (ab + 3)) in
-        let b0 = Float64x2.Array.unsafe_get bp ~idx:bb in
-        let b1 = Float64x2.Array.unsafe_get bp ~idx:(bb + 2) in
-        kloop (p + 1)
-          (f64_mul_add a0 b0 c00) (f64_mul_add a0 b1 c01)
-          (f64_mul_add a1 b0 c10) (f64_mul_add a1 b1 c11)
-          (f64_mul_add a2 b0 c20) (f64_mul_add a2 b1 c21)
-          (f64_mul_add a3 b0 c30) (f64_mul_add a3 b1 c31)
-    in
-    kloop 0 c00_init c01_init c10_init c11_init
-      c20_init c21_init c30_init c31_init
+    f64_kloop ap ap_off bp bp_off c_buf c_off ldc kc 0
+      (Float64x2.Array.unsafe_get c_buf ~idx:c_off)
+      (Float64x2.Array.unsafe_get c_buf ~idx:(c_off + 2))
+      (Float64x2.Array.unsafe_get c_buf ~idx:r1)
+      (Float64x2.Array.unsafe_get c_buf ~idx:(r1 + 2))
+      (Float64x2.Array.unsafe_get c_buf ~idx:r2)
+      (Float64x2.Array.unsafe_get c_buf ~idx:(r2 + 2))
+      (Float64x2.Array.unsafe_get c_buf ~idx:r3)
+      (Float64x2.Array.unsafe_get c_buf ~idx:(r3 + 2))
 
   let edge_scalar ap ~ap_off bp ~bp_off c_buf ~c_off ~ldc ~mr_eff ~nr_eff
       ~kc ~first =
@@ -523,49 +498,50 @@ module Gemm_f32 = struct
       done
     end
 
+  let rec f32_kloop ap ap_off bp bp_off c_buf c_off ldc kc p
+      c00 c01 c10 c11 c20 c21 c30 c31 c40 c41 c50 c51 =
+    if p = kc then begin
+      Float32x4.Array.unsafe_set c_buf ~idx:c_off c00;
+      Float32x4.Array.unsafe_set c_buf ~idx:(c_off + 4) c01;
+      let r1 = c_off + ldc in
+      Float32x4.Array.unsafe_set c_buf ~idx:r1 c10;
+      Float32x4.Array.unsafe_set c_buf ~idx:(r1 + 4) c11;
+      let r2 = c_off + 2 * ldc in
+      Float32x4.Array.unsafe_set c_buf ~idx:r2 c20;
+      Float32x4.Array.unsafe_set c_buf ~idx:(r2 + 4) c21;
+      let r3 = c_off + 3 * ldc in
+      Float32x4.Array.unsafe_set c_buf ~idx:r3 c30;
+      Float32x4.Array.unsafe_set c_buf ~idx:(r3 + 4) c31;
+      let r4 = c_off + 4 * ldc in
+      Float32x4.Array.unsafe_set c_buf ~idx:r4 c40;
+      Float32x4.Array.unsafe_set c_buf ~idx:(r4 + 4) c41;
+      let r5 = c_off + 5 * ldc in
+      Float32x4.Array.unsafe_set c_buf ~idx:r5 c50;
+      Float32x4.Array.unsafe_set c_buf ~idx:(r5 + 4) c51
+    end
+    else
+      let ab = ap_off + p * 6 in
+      let bb = bp_off + p * 8 in
+      let a0 = f32_set1 (Array.unsafe_get ap ab) in
+      let a1 = f32_set1 (Array.unsafe_get ap (ab + 1)) in
+      let a2 = f32_set1 (Array.unsafe_get ap (ab + 2)) in
+      let a3 = f32_set1 (Array.unsafe_get ap (ab + 3)) in
+      let a4 = f32_set1 (Array.unsafe_get ap (ab + 4)) in
+      let a5 = f32_set1 (Array.unsafe_get ap (ab + 5)) in
+      let b0 = Float32x4.Array.unsafe_get bp ~idx:bb in
+      let b1 = Float32x4.Array.unsafe_get bp ~idx:(bb + 4) in
+      f32_kloop ap ap_off bp bp_off c_buf c_off ldc kc (p + 1)
+        (f32_mul_add a0 b0 c00) (f32_mul_add a0 b1 c01)
+        (f32_mul_add a1 b0 c10) (f32_mul_add a1 b1 c11)
+        (f32_mul_add a2 b0 c20) (f32_mul_add a2 b1 c21)
+        (f32_mul_add a3 b0 c30) (f32_mul_add a3 b1 c31)
+        (f32_mul_add a4 b0 c40) (f32_mul_add a4 b1 c41)
+        (f32_mul_add a5 b0 c50) (f32_mul_add a5 b1 c51)
+
   let kernel_zero ap ~ap_off bp ~bp_off c_buf ~c_off ~ldc ~kc =
     let z = f32_set1 #0.0s in
-    let rec kloop p
-        c00 c01 c10 c11 c20 c21 c30 c31 c40 c41 c50 c51 =
-      if p = kc then begin
-        Float32x4.Array.unsafe_set c_buf ~idx:c_off c00;
-        Float32x4.Array.unsafe_set c_buf ~idx:(c_off + 4) c01;
-        let r1 = c_off + ldc in
-        Float32x4.Array.unsafe_set c_buf ~idx:r1 c10;
-        Float32x4.Array.unsafe_set c_buf ~idx:(r1 + 4) c11;
-        let r2 = c_off + 2 * ldc in
-        Float32x4.Array.unsafe_set c_buf ~idx:r2 c20;
-        Float32x4.Array.unsafe_set c_buf ~idx:(r2 + 4) c21;
-        let r3 = c_off + 3 * ldc in
-        Float32x4.Array.unsafe_set c_buf ~idx:r3 c30;
-        Float32x4.Array.unsafe_set c_buf ~idx:(r3 + 4) c31;
-        let r4 = c_off + 4 * ldc in
-        Float32x4.Array.unsafe_set c_buf ~idx:r4 c40;
-        Float32x4.Array.unsafe_set c_buf ~idx:(r4 + 4) c41;
-        let r5 = c_off + 5 * ldc in
-        Float32x4.Array.unsafe_set c_buf ~idx:r5 c50;
-        Float32x4.Array.unsafe_set c_buf ~idx:(r5 + 4) c51
-      end
-      else
-        let ab = ap_off + p * 6 in
-        let bb = bp_off + p * 8 in
-        let a0 = f32_set1 (Array.unsafe_get ap ab) in
-        let a1 = f32_set1 (Array.unsafe_get ap (ab + 1)) in
-        let a2 = f32_set1 (Array.unsafe_get ap (ab + 2)) in
-        let a3 = f32_set1 (Array.unsafe_get ap (ab + 3)) in
-        let a4 = f32_set1 (Array.unsafe_get ap (ab + 4)) in
-        let a5 = f32_set1 (Array.unsafe_get ap (ab + 5)) in
-        let b0 = Float32x4.Array.unsafe_get bp ~idx:bb in
-        let b1 = Float32x4.Array.unsafe_get bp ~idx:(bb + 4) in
-        kloop (p + 1)
-          (f32_mul_add a0 b0 c00) (f32_mul_add a0 b1 c01)
-          (f32_mul_add a1 b0 c10) (f32_mul_add a1 b1 c11)
-          (f32_mul_add a2 b0 c20) (f32_mul_add a2 b1 c21)
-          (f32_mul_add a3 b0 c30) (f32_mul_add a3 b1 c31)
-          (f32_mul_add a4 b0 c40) (f32_mul_add a4 b1 c41)
-          (f32_mul_add a5 b0 c50) (f32_mul_add a5 b1 c51)
-    in
-    kloop 0 z z z z z z z z z z z z
+    f32_kloop ap ap_off bp bp_off c_buf c_off ldc kc 0
+      z z z z z z z z z z z z
 
   let kernel_accum ap ~ap_off bp ~bp_off c_buf ~c_off ~ldc ~kc =
     let r1 = c_off + ldc in
@@ -573,56 +549,19 @@ module Gemm_f32 = struct
     let r3 = c_off + 3 * ldc in
     let r4 = c_off + 4 * ldc in
     let r5 = c_off + 5 * ldc in
-    let c00_init = Float32x4.Array.unsafe_get c_buf ~idx:c_off in
-    let c01_init = Float32x4.Array.unsafe_get c_buf ~idx:(c_off + 4) in
-    let c10_init = Float32x4.Array.unsafe_get c_buf ~idx:r1 in
-    let c11_init = Float32x4.Array.unsafe_get c_buf ~idx:(r1 + 4) in
-    let c20_init = Float32x4.Array.unsafe_get c_buf ~idx:r2 in
-    let c21_init = Float32x4.Array.unsafe_get c_buf ~idx:(r2 + 4) in
-    let c30_init = Float32x4.Array.unsafe_get c_buf ~idx:r3 in
-    let c31_init = Float32x4.Array.unsafe_get c_buf ~idx:(r3 + 4) in
-    let c40_init = Float32x4.Array.unsafe_get c_buf ~idx:r4 in
-    let c41_init = Float32x4.Array.unsafe_get c_buf ~idx:(r4 + 4) in
-    let c50_init = Float32x4.Array.unsafe_get c_buf ~idx:r5 in
-    let c51_init = Float32x4.Array.unsafe_get c_buf ~idx:(r5 + 4) in
-    let rec kloop p
-        c00 c01 c10 c11 c20 c21 c30 c31 c40 c41 c50 c51 =
-      if p = kc then begin
-        Float32x4.Array.unsafe_set c_buf ~idx:c_off c00;
-        Float32x4.Array.unsafe_set c_buf ~idx:(c_off + 4) c01;
-        Float32x4.Array.unsafe_set c_buf ~idx:r1 c10;
-        Float32x4.Array.unsafe_set c_buf ~idx:(r1 + 4) c11;
-        Float32x4.Array.unsafe_set c_buf ~idx:r2 c20;
-        Float32x4.Array.unsafe_set c_buf ~idx:(r2 + 4) c21;
-        Float32x4.Array.unsafe_set c_buf ~idx:r3 c30;
-        Float32x4.Array.unsafe_set c_buf ~idx:(r3 + 4) c31;
-        Float32x4.Array.unsafe_set c_buf ~idx:r4 c40;
-        Float32x4.Array.unsafe_set c_buf ~idx:(r4 + 4) c41;
-        Float32x4.Array.unsafe_set c_buf ~idx:r5 c50;
-        Float32x4.Array.unsafe_set c_buf ~idx:(r5 + 4) c51
-      end
-      else
-        let ab = ap_off + p * 6 in
-        let bb = bp_off + p * 8 in
-        let a0 = f32_set1 (Array.unsafe_get ap ab) in
-        let a1 = f32_set1 (Array.unsafe_get ap (ab + 1)) in
-        let a2 = f32_set1 (Array.unsafe_get ap (ab + 2)) in
-        let a3 = f32_set1 (Array.unsafe_get ap (ab + 3)) in
-        let a4 = f32_set1 (Array.unsafe_get ap (ab + 4)) in
-        let a5 = f32_set1 (Array.unsafe_get ap (ab + 5)) in
-        let b0 = Float32x4.Array.unsafe_get bp ~idx:bb in
-        let b1 = Float32x4.Array.unsafe_get bp ~idx:(bb + 4) in
-        kloop (p + 1)
-          (f32_mul_add a0 b0 c00) (f32_mul_add a0 b1 c01)
-          (f32_mul_add a1 b0 c10) (f32_mul_add a1 b1 c11)
-          (f32_mul_add a2 b0 c20) (f32_mul_add a2 b1 c21)
-          (f32_mul_add a3 b0 c30) (f32_mul_add a3 b1 c31)
-          (f32_mul_add a4 b0 c40) (f32_mul_add a4 b1 c41)
-          (f32_mul_add a5 b0 c50) (f32_mul_add a5 b1 c51)
-    in
-    kloop 0 c00_init c01_init c10_init c11_init
-      c20_init c21_init c30_init c31_init
-      c40_init c41_init c50_init c51_init
+    f32_kloop ap ap_off bp bp_off c_buf c_off ldc kc 0
+      (Float32x4.Array.unsafe_get c_buf ~idx:c_off)
+      (Float32x4.Array.unsafe_get c_buf ~idx:(c_off + 4))
+      (Float32x4.Array.unsafe_get c_buf ~idx:r1)
+      (Float32x4.Array.unsafe_get c_buf ~idx:(r1 + 4))
+      (Float32x4.Array.unsafe_get c_buf ~idx:r2)
+      (Float32x4.Array.unsafe_get c_buf ~idx:(r2 + 4))
+      (Float32x4.Array.unsafe_get c_buf ~idx:r3)
+      (Float32x4.Array.unsafe_get c_buf ~idx:(r3 + 4))
+      (Float32x4.Array.unsafe_get c_buf ~idx:r4)
+      (Float32x4.Array.unsafe_get c_buf ~idx:(r4 + 4))
+      (Float32x4.Array.unsafe_get c_buf ~idx:r5)
+      (Float32x4.Array.unsafe_get c_buf ~idx:(r5 + 4))
 
   let edge_scalar ap ~ap_off bp ~bp_off c_buf ~c_off ~ldc ~mr_eff ~nr_eff
       ~kc ~first =
