@@ -131,6 +131,40 @@ let of_bool context (arr : bool array) : (bool, Dtype.bool_elt) t =
   let view = View.create sym_shape in
   { dtype = Dtype.Bool; buffer = Bool arr; view; context }
 
+let op_const_scalar (type a b) context (value : a) (dtype : (a, b) Dtype.t) :
+    (a, b) t =
+  let sym_shape = Symbolic_shape.of_ints [||] in
+  let view = View.create sym_shape in
+  match dtype with
+  | Dtype.Float64 ->
+      let buffer = Array.make_float64 1 in
+      Array.unsafe_set buffer 0 (Float_u.of_float value);
+      { dtype; buffer = Float64 buffer; view; context }
+  | Dtype.Float32 ->
+      let buffer = Array.make_float32 1 in
+      Array.unsafe_set buffer 0 (Float32_u.of_float (Float_u.of_float value));
+      { dtype; buffer = Float32 buffer; view; context }
+  | Dtype.Int8 ->
+      let buffer = Array.make_int8 1 in
+      Array.unsafe_set buffer 0 (Int8_u.of_int value);
+      { dtype; buffer = Int8 buffer; view; context }
+  | Dtype.Int16 ->
+      let buffer = Array.make_int16 1 in
+      Array.unsafe_set buffer 0 (Int16_u.of_int value);
+      { dtype; buffer = Int16 buffer; view; context }
+  | Dtype.Int32 ->
+      let buffer = Array.make_int32 1 in
+      Array.unsafe_set buffer 0 (Int32_u.of_int32 value);
+      { dtype; buffer = Int32 buffer; view; context }
+  | Dtype.Int64 ->
+      let buffer = Array.make_int64 1 in
+      Array.unsafe_set buffer 0 (Int64_u.of_int64 value);
+      { dtype; buffer = Int64 buffer; view; context }
+  | Dtype.Bool ->
+      let buffer = Array.make 1 value in
+      { dtype; buffer = Bool buffer; view; context }
+  | _ -> Error.invalid ~op:"op_const_scalar" ~what:"unsupported dtype" ()
+
 let op_add (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
@@ -978,8 +1012,7 @@ let op_associative_scan ~axis:_ ~op:_ _ =
   Error.invalid ~op:"op_associative_scan" ~what:"not implemented" ()
   
   
-  let op_const_scalar  _ _ =
-  Error.invalid ~op:"op_const_scalar" ~what:"not implemented" ()
+
 
   
 let from_host (type a b) ctx (array : (a, b, c_layout) Bigarray.Array1.t) : (a, b) t =

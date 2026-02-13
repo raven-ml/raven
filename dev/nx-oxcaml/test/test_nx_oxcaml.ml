@@ -78,6 +78,49 @@ let test_buffer_int64 () =
   check "buffer_int64: dtype" (Nx_oxcaml.dtype t = Dtype.Int64);
   check "buffer_int64: size" (numel (Nx_oxcaml.view t) = 2)
 
+let test_const_scalar () =
+  let ctx = Nx_oxcaml.create_context () in
+  let rank t =
+    Array.length
+      (match Symbolic_shape.eval (View.shape (Nx_oxcaml.view t)) with
+      | Some s -> s
+      | None -> failwith "!")
+  in
+  let t = Nx_oxcaml.op_const_scalar ctx 123.45 Dtype.Float64 in
+  check "const_scalar_f64: dtype" (Nx_oxcaml.dtype t = Dtype.Float64);
+  check "const_scalar_f64: rank" (rank t = 0);
+  check_float64 "const_scalar_f64: value" ~eps:1e-9 #123.45
+    (get64 (Nx_oxcaml.data_array t) 0);
+  let t = Nx_oxcaml.op_const_scalar ctx 12.5 Dtype.Float32 in
+  check "const_scalar_f32: dtype" (Nx_oxcaml.dtype t = Dtype.Float32);
+  check "const_scalar_f32: rank" (rank t = 0);
+  check_float32 "const_scalar_f32: value" ~eps:1e-6 #12.5s
+    (get32 (Nx_oxcaml.data_array t) 0);
+  let t = Nx_oxcaml.op_const_scalar ctx 123 Dtype.Int8 in
+  check "const_scalar_i8: dtype" (Nx_oxcaml.dtype t = Dtype.Int8);
+  check "const_scalar_i8: rank" (rank t = 0);
+  check_int8 "const_scalar_i8: value" (Int8_u.of_int 123)
+    (geti8 (Nx_oxcaml.data_array t) 0);
+  let t = Nx_oxcaml.op_const_scalar ctx 1234 Dtype.Int16 in
+  check "const_scalar_i16: dtype" (Nx_oxcaml.dtype t = Dtype.Int16);
+  check "const_scalar_i16: rank" (rank t = 0);
+  check_int16 "const_scalar_i16: value" (Int16_u.of_int 1234)
+    (geti16 (Nx_oxcaml.data_array t) 0);
+  let t = Nx_oxcaml.op_const_scalar ctx 12345l Dtype.Int32 in
+  check "const_scalar_i32: dtype" (Nx_oxcaml.dtype t = Dtype.Int32);
+  check "const_scalar_i32: rank" (rank t = 0);
+  check_int32 "const_scalar_i32: value" #12345l
+    (geti32 (Nx_oxcaml.data_array t) 0);
+  let t = Nx_oxcaml.op_const_scalar ctx 1234567890L Dtype.Int64 in
+  check "const_scalar_i64: dtype" (Nx_oxcaml.dtype t = Dtype.Int64);
+  check "const_scalar_i64: rank" (rank t = 0);
+  check_int64 "const_scalar_i64: value" #1234567890L
+    (geti64 (Nx_oxcaml.data_array t) 0);
+  let t = Nx_oxcaml.op_const_scalar ctx true Dtype.Bool in
+  check "const_scalar_bool: dtype" (Nx_oxcaml.dtype t = Dtype.Bool);
+  check "const_scalar_bool: rank" (rank t = 0);
+  check_bool "const_scalar_bool: value" true (getbool (Nx_oxcaml.data_array t) 0)
+
 let test_add_float64 () =
   let ctx = Nx_oxcaml.create_context () in
   let a = Nx_oxcaml.of_float64 ctx [| #1.0; #2.0; #3.0 |] in
@@ -1609,6 +1652,7 @@ let () =
   test_buffer_float32 ();
   test_buffer_int32 ();
   test_buffer_int64 ();
+  test_const_scalar ();
   test_add_float64 ();
   test_add_float32 ();
   test_add_int32 ();
