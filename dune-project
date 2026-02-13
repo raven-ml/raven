@@ -89,7 +89,6 @@
   (nx
    (= :version))
   re
-  uucp
   jsont
   bytesrw
   (windtrap :with-test))

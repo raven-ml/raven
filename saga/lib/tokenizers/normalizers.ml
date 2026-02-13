@@ -33,17 +33,16 @@ type t =
 let is_whitespace c =
   match c with
   | '\t' | '\n' | '\r' -> true
-  | c -> Uucp.White.is_white_space (Uchar.of_char c)
+  | c -> Unicode_data.is_white_space (Char.code c)
 
 let is_control c =
   match c with
   | '\t' | '\n' | '\r' -> false
   | c ->
       let u = Uchar.of_char c in
-      Uucp.Gc.general_category u = `Cc
-      || Uucp.Gc.general_category u = `Cf
-      || Uucp.Gc.general_category u = `Cn
-      || Uucp.Gc.general_category u = `Co
+      (match Unicode_data.general_category (Uchar.to_int u) with
+      | `Cc | `Cf | `Cn | `Co -> true
+      | _ -> false)
 
 let is_chinese_char c =
   let code = Char.code c in
@@ -58,7 +57,7 @@ let is_chinese_char c =
 
 let is_combining_mark c =
   let u = Uchar.of_char c in
-  Uucp.Gc.general_category u = `Mn
+  Unicode_data.general_category (Uchar.to_int u) = `Mn
 
 (* ───── Transform Operations ───── *)
 

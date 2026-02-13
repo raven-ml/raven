@@ -19,7 +19,7 @@ type char_category =
   | Other
 
 let categorize_char u =
-  match Uucp.Gc.general_category u with
+  match Unicode_data.general_category (Uchar.to_int u) with
   | `Lu | `Ll | `Lt | `Lm | `Lo -> Letter
   | `Nd | `Nl | `No -> Number
   | `Pc | `Pd | `Ps | `Pe | `Pi | `Pf | `Po -> Punctuation
@@ -106,12 +106,8 @@ let case_fold text =
         let n = Uchar.utf_decode_length d in
         (if Uchar.utf_decode_is_valid d then
            let u = Uchar.utf_decode_uchar d in
-           let folded =
-             match Uucp.Case.Fold.fold u with
-             | `Self -> [ u ]
-             | `Uchars us -> us
-           in
-           List.iter (Buffer.add_utf_8_uchar b) folded);
+           let folded = Unicode_data.case_fold (Uchar.to_int u) in
+           List.iter (fun cp -> Buffer.add_utf_8_uchar b (Uchar.of_int cp)) folded);
         loop (i + n)
     in
     loop 0;
@@ -133,9 +129,9 @@ let strip_accents text =
            let u = Uchar.utf_decode_uchar d in
            if
              not
-               (Uucp.Gc.general_category u = `Mn
-               || Uucp.Gc.general_category u = `Mc
-               || Uucp.Gc.general_category u = `Me)
+               (match Unicode_data.general_category (Uchar.to_int u) with
+               | `Mn | `Mc | `Me -> true
+               | _ -> false)
            then Buffer.add_utf_8_uchar b u);
         loop (i + n)
     in
@@ -225,7 +221,7 @@ let grapheme_count text =
            (* Simple approximation - proper implementation needs grapheme
               segmentation *)
            let is_combining =
-             match Uucp.Gc.general_category u with
+             match Unicode_data.general_category (Uchar.to_int u) with
              | `Mn | `Mc | `Me -> true
              | _ -> false
            in

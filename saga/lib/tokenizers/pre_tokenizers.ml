@@ -40,15 +40,15 @@ let add_utf8 buffer code =
 
 (* Property functions from Unicode data *)
 
-let is_alphabetic code = Uucp.Alpha.is_alphabetic (Uchar.of_int code)
-let is_numeric code = Uucp.Num.numeric_type (Uchar.of_int code) <> `None
+let is_alphabetic code = Unicode_data.is_alphabetic code
+let is_numeric code = Unicode_data.is_numeric code
 
 let is_punctuation code =
-  match Uucp.Gc.general_category (Uchar.of_int code) with
+  match Unicode_data.general_category code with
   | `Pc | `Pd | `Pe | `Pf | `Pi | `Po | `Ps -> true
   | _ -> false
 
-let is_whitespace code = Uucp.White.is_white_space (Uchar.of_int code)
+let is_whitespace code = Unicode_data.is_white_space code
 
 (* Pre-computed byte ↔ unicode mappings for byte-level encode/decode *)
 let byte_to_unicode, unicode_to_byte =
@@ -664,9 +664,9 @@ let fixed_length ~length text =
       done;
       List.rev !pieces
 
-type script = [ `Any | Uucp.Script.t ]
+type script = [ `Any | Unicode_data.script ]
 
-let get_script code = Uucp.Script.script (Uchar.of_int code)
+let get_script code = Unicode_data.script code
 
 let fixed_script code : script =
   if code = 0x30FC then (`Hani :> script)
