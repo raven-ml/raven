@@ -184,58 +184,47 @@ module Gemm_f64 = struct
     done
 
   let macro_kernel ap bp c_buf ~c_off ~ldc ~mc ~nc ~kc ~first =
-    let rec ir_loop ir =
-      if ir >= mc then ()
-      else
-        let mr_eff = min_int mr (mc - ir) in
-        let ap_off = (ir / mr) * mr * kc in
-        let rec jr_loop jr =
-          if jr >= nc then ()
+    let ir = ref 0 in
+    while !ir < mc do
+      let mr_eff = min_int mr (mc - !ir) in
+      let ap_off = (!ir / mr) * mr * kc in
+      let jr = ref 0 in
+      while !jr < nc do
+        let nr_eff = min_int nr (nc - !jr) in
+        let bp_off = (!jr / nr) * nr * kc in
+        let c_tile = c_off + (!ir * ldc) + !jr in
+        if mr_eff = mr && nr_eff = nr then begin
+          if first then
+            kernel_zero ap ~ap_off bp ~bp_off c_buf
+              ~c_off:c_tile ~ldc ~kc
           else
-            let nr_eff = min_int nr (nc - jr) in
-            let bp_off = (jr / nr) * nr * kc in
-            let c_tile = c_off + (ir * ldc) + jr in
-            if mr_eff = mr && nr_eff = nr then begin
-              if first then
-                kernel_zero ap ~ap_off bp ~bp_off c_buf
-                  ~c_off:c_tile ~ldc ~kc
-              else
-                kernel_accum ap ~ap_off bp ~bp_off c_buf
-                  ~c_off:c_tile ~ldc ~kc
-            end
-            else
-              edge_scalar ap ~ap_off bp ~bp_off c_buf
-                ~c_off:c_tile ~ldc ~mr_eff ~nr_eff ~kc ~first;
-            jr_loop (jr + nr)
-        in
-        jr_loop 0;
-        ir_loop (ir + mr)
-    in
-    ir_loop 0
+            kernel_accum ap ~ap_off bp ~bp_off c_buf
+              ~c_off:c_tile ~ldc ~kc
+        end
+        else
+          edge_scalar ap ~ap_off bp ~bp_off c_buf
+            ~c_off:c_tile ~ldc ~mr_eff ~nr_eff ~kc ~first;
+        jr := !jr + nr
+      done;
+      ir := !ir + mr
+    done
 
   let gemm ~pool a_buf b_buf c_buf ~m ~n ~k ~a_off ~b_off ~c_off ~ldc () =
     let lda = k and ldb = n in
     let mc = mc_blk and nc = nc_blk and kc = kc_blk in
-    let bp = Array.make_float64 (round_up nc nr * kc) in
-    let n_domains = pool.Parallel.num_workers + 1 in
-    let aps =
-      Array.init n_domains (fun _ ->
-          Array.make_float64 (round_up mc mr * kc))
-    in
-    let ap_idx = Atomic.make 0 in
     let rec jc_loop jc =
       if jc >= n then ()
       else
         let nc' = min_int nc (n - jc) in
-        let rec pc_loop pc =
-          if pc >= k then ()
-          else
-            let kc' = min_int kc (k - pc) in
-            let first = pc = 0 in
-            pack_b b_buf ~b_off ~ldb ~pc ~jc ~kc:kc' ~nc:nc' bp;
-            Atomic.set ap_idx 0;
-            Parallel.parallel_for pool 0 (m - 1) (fun start_row end_row ->
-                let ap = aps.(Atomic.fetch_and_add ap_idx 1) in
+        Parallel.parallel_for pool 0 (m - 1) (fun start_row end_row ->
+            let bp = Array.make_float64 (round_up nc' nr * kc) in
+            let ap = Array.make_float64 (round_up mc mr * kc) in
+            let rec pc_loop pc =
+              if pc >= k then ()
+              else
+                let kc' = min_int kc (k - pc) in
+                let first = pc = 0 in
+                pack_b b_buf ~b_off ~ldb ~pc ~jc ~kc:kc' ~nc:nc' bp;
                 let rec ic_loop ic =
                   if ic >= end_row then ()
                   else
@@ -246,10 +235,10 @@ module Gemm_f64 = struct
                       ~ldc ~mc:mc' ~nc:nc' ~kc:kc' ~first;
                     ic_loop (ic + mc')
                 in
-                ic_loop start_row);
-            pc_loop (pc + kc')
-        in
-        pc_loop 0;
+                ic_loop start_row;
+                pc_loop (pc + kc')
+            in
+            pc_loop 0);
         jc_loop (jc + nc')
     in
     jc_loop 0
@@ -653,58 +642,47 @@ module Gemm_f32 = struct
     done
 
   let macro_kernel ap bp c_buf ~c_off ~ldc ~mc ~nc ~kc ~first =
-    let rec ir_loop ir =
-      if ir >= mc then ()
-      else
-        let mr_eff = min_int mr (mc - ir) in
-        let ap_off = (ir / mr) * mr * kc in
-        let rec jr_loop jr =
-          if jr >= nc then ()
+    let ir = ref 0 in
+    while !ir < mc do
+      let mr_eff = min_int mr (mc - !ir) in
+      let ap_off = (!ir / mr) * mr * kc in
+      let jr = ref 0 in
+      while !jr < nc do
+        let nr_eff = min_int nr (nc - !jr) in
+        let bp_off = (!jr / nr) * nr * kc in
+        let c_tile = c_off + (!ir * ldc) + !jr in
+        if mr_eff = mr && nr_eff = nr then begin
+          if first then
+            kernel_zero ap ~ap_off bp ~bp_off c_buf
+              ~c_off:c_tile ~ldc ~kc
           else
-            let nr_eff = min_int nr (nc - jr) in
-            let bp_off = (jr / nr) * nr * kc in
-            let c_tile = c_off + (ir * ldc) + jr in
-            if mr_eff = mr && nr_eff = nr then begin
-              if first then
-                kernel_zero ap ~ap_off bp ~bp_off c_buf
-                  ~c_off:c_tile ~ldc ~kc
-              else
-                kernel_accum ap ~ap_off bp ~bp_off c_buf
-                  ~c_off:c_tile ~ldc ~kc
-            end
-            else
-              edge_scalar ap ~ap_off bp ~bp_off c_buf
-                ~c_off:c_tile ~ldc ~mr_eff ~nr_eff ~kc ~first;
-            jr_loop (jr + nr)
-        in
-        jr_loop 0;
-        ir_loop (ir + mr)
-    in
-    ir_loop 0
+            kernel_accum ap ~ap_off bp ~bp_off c_buf
+              ~c_off:c_tile ~ldc ~kc
+        end
+        else
+          edge_scalar ap ~ap_off bp ~bp_off c_buf
+            ~c_off:c_tile ~ldc ~mr_eff ~nr_eff ~kc ~first;
+        jr := !jr + nr
+      done;
+      ir := !ir + mr
+    done
 
   let gemm ~pool a_buf b_buf c_buf ~m ~n ~k ~a_off ~b_off ~c_off ~ldc () =
     let lda = k and ldb = n in
     let mc = mc_blk and nc = nc_blk and kc = kc_blk in
-    let bp = Array.make_float32 (round_up nc nr * kc) in
-    let n_domains = pool.Parallel.num_workers + 1 in
-    let aps =
-      Array.init n_domains (fun _ ->
-          Array.make_float32 (round_up mc mr * kc))
-    in
-    let ap_idx = Atomic.make 0 in
     let rec jc_loop jc =
       if jc >= n then ()
       else
         let nc' = min_int nc (n - jc) in
-        let rec pc_loop pc =
-          if pc >= k then ()
-          else
-            let kc' = min_int kc (k - pc) in
-            let first = pc = 0 in
-            pack_b b_buf ~b_off ~ldb ~pc ~jc ~kc:kc' ~nc:nc' bp;
-            Atomic.set ap_idx 0;
-            Parallel.parallel_for pool 0 (m - 1) (fun start_row end_row ->
-                let ap = aps.(Atomic.fetch_and_add ap_idx 1) in
+        Parallel.parallel_for pool 0 (m - 1) (fun start_row end_row ->
+            let bp = Array.make_float32 (round_up nc' nr * kc) in
+            let ap = Array.make_float32 (round_up mc mr * kc) in
+            let rec pc_loop pc =
+              if pc >= k then ()
+              else
+                let kc' = min_int kc (k - pc) in
+                let first = pc = 0 in
+                pack_b b_buf ~b_off ~ldb ~pc ~jc ~kc:kc' ~nc:nc' bp;
                 let rec ic_loop ic =
                   if ic >= end_row then ()
                   else
@@ -715,10 +693,10 @@ module Gemm_f32 = struct
                       ~ldc ~mc:mc' ~nc:nc' ~kc:kc' ~first;
                     ic_loop (ic + mc')
                 in
-                ic_loop start_row);
-            pc_loop (pc + kc')
-        in
-        pc_loop 0;
+                ic_loop start_row;
+                pc_loop (pc + kc')
+            in
+            pc_loop 0);
         jc_loop (jc + nc')
     in
     jc_loop 0
