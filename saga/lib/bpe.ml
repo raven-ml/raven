@@ -302,22 +302,19 @@ let merge_word model text =
   word
 
 let word_to_tokens model word =
-  let tokens = ref [] in
   let offset = ref 0 in
-  for i = 0 to word.size - 1 do
-    if word.symbols.(i).len > 0 then (
-      let id = word.symbols.(i).c in
+  List.init word.size (fun i ->
+      let sym = word.symbols.(i) in
+      let id = sym.c in
       let value =
         match Hashtbl.find_opt model.vocab_r id with
         | Some v -> v
         | None -> "<unk>"
       in
       let start = !offset in
-      let end_ = !offset + word.symbols.(i).len in
-      tokens := { id; value; offsets = (start, end_) } :: !tokens;
-      offset := end_)
-  done;
-  List.rev !tokens
+      let end_ = start + sym.len in
+      offset := end_;
+      { id; value; offsets = (start, end_) })
 
 let tokenize model text =
   if String.length text = 0 then []
