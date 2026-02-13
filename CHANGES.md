@@ -42,6 +42,11 @@ All notable changes to this project will be documented in this file.
 
 - Fix potential bad memory access in rendering. (@tmattio)
 
+### Talon
+
+- Remove `jsont`, `bytesrw`, and `csv` dependencies from Talon. CSV support is now built-in via the `talon.csv` sub-library with a minimal RFC 4180 parser. (@tmattio)
+- Remove `talon.json` sub-library. (@tmattio)
+
 ### Saga
 
 - Remove dependency on `str` library. (@tmattio)

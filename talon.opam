@@ -16,9 +16,6 @@ depends: [
   "dune" {>= "3.19"}
   "nx" {= version}
   "re"
-  "jsont"
-  "bytesrw"
-  "csv"
   "windtrap" {with-test}
   "odoc" {with-doc}
 ]

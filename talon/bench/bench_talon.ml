@@ -11,8 +11,7 @@ module Fixtures = struct
   let data_dir = Filename.concat (Sys.getcwd ()) "talon/bench/data"
 
   let load_csv name dtype_spec =
-    let path = Filename.concat data_dir name in
-    Talon_csv.read ~dtype_spec path
+    Talon_csv.read ~dtype_spec (Filename.concat data_dir name)
 
   let transactions =
     lazy

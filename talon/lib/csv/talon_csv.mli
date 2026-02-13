@@ -3,48 +3,64 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** CSV I/O operations for Talon dataframes *)
+(** CSV codec for Talon dataframes.
+
+    {[
+      (* From string *)
+      let df = Talon_csv.of_string csv_text
+
+      (* From file (streaming) *)
+      let df = Talon_csv.read "data.csv"
+
+      (* To file (streaming) *)
+      Talon_csv.write "out.csv" df
+    ]} *)
+
+type dtype_spec =
+  (string * [ `Float32 | `Float64 | `Int32 | `Int64 | `Bool | `String ]) list
+(** Column type specifications. Columns not listed are auto-detected. *)
+
+val of_string :
+  ?sep:char ->
+  ?names:string list ->
+  ?na_values:string list ->
+  ?dtype_spec:dtype_spec ->
+  string ->
+  Talon.t
+(** [of_string s] parses CSV text into a dataframe.
+    The first row is used as column names unless [names] is provided,
+    in which case all rows are treated as data.
+
+    @param sep delimiter character (default [','])
+    @param names explicit column names; when given, all rows are data
+    @param na_values strings treated as null (default
+    [\[""; "NA"; "N/A"; "null"; "NULL"; "nan"; "NaN"\]])
+    @param dtype_spec explicit column types; unspecified columns are
+    auto-detected *)
+
+val to_string : ?sep:char -> ?na_repr:string -> Talon.t -> string
+(** [to_string df] serializes a dataframe to CSV text.
+    The first row of the output is the column names.
+
+    @param sep delimiter character (default [','])
+    @param na_repr string for null values (default [""]) *)
 
 val read :
   ?sep:char ->
-  ?header:bool ->
+  ?names:string list ->
   ?na_values:string list ->
-  ?dtype_spec:
-    (string * [ `Float32 | `Float64 | `Int32 | `Int64 | `Bool | `String ]) list ->
+  ?dtype_spec:dtype_spec ->
   string ->
   Talon.t
-(** [read ?sep ?header ?na_values ?dtype_spec file] reads CSV file.
-    - sep: delimiter (default ',')
-    - header: first row contains column names (default true)
-    - na_values: strings to interpret as null (default
-      ["", "NA", "N/A", "null", "NULL"])
-    - dtype_spec: column types (auto-detected if not provided)
+(** [read path] reads a CSV file into a dataframe, streaming line by line.
 
-    Null handling:
-    - Empty strings and na_values become None for strings, NaN for floats
-    - Invalid numeric values become NaN/None
-    - Auto-detection treats columns with nulls as nullable *)
+    @param sep delimiter character (default [','])
+    @param names explicit column names; when given, all rows are data
+    @param na_values strings treated as null
+    @param dtype_spec explicit column types *)
 
-val write :
-  ?sep:char -> ?header:bool -> ?na_repr:string -> Talon.t -> string -> unit
-(** [write ?sep ?header ?na_repr df file] writes to CSV.
-    - sep: delimiter (default ',')
-    - header: write column names as first row (default true)
-    - na_repr: string representation of nulls (default "")
+val write : ?sep:char -> ?na_repr:string -> string -> Talon.t -> unit
+(** [write path df] writes a dataframe to a CSV file, streaming row by row.
 
-    Null values are written as na_repr (empty string by default). *)
-
-val to_string :
-  ?sep:char -> ?header:bool -> ?na_repr:string -> Talon.t -> string
-(** [to_string ?sep ?header ?na_repr df] converts dataframe to CSV string. *)
-
-val from_string :
-  ?sep:char ->
-  ?header:bool ->
-  ?na_values:string list ->
-  ?dtype_spec:
-    (string * [ `Float32 | `Float64 | `Int32 | `Int64 | `Bool | `String ]) list ->
-  string ->
-  Talon.t
-(** [from_string ?sep ?header ?na_values ?dtype_spec csv_string] parses CSV
-    string. *)
+    @param sep delimiter character (default [','])
+    @param na_repr string for null values (default [""]) *)

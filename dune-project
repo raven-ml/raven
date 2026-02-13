@@ -107,9 +107,6 @@
   (nx
    (= :version))
   re
-  jsont
-  bytesrw
-  csv
   (windtrap :with-test))
  (tags
   (dataframe data-manipulation data-science tabular-data)))
