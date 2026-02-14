@@ -38,7 +38,7 @@ let build_trie vocab =
     let ids = ref (Array.make !cap (-1)) in
     let ch = ref (Array.init !cap (fun _ -> Hashtbl.create 0)) in
     let n = ref 1 in
-    (!ch).(0) <- Hashtbl.create 64;
+    !ch.(0) <- Hashtbl.create 64;
     let grow () =
       let new_cap = !cap * 2 in
       let new_ids = Array.make new_cap (-1) in
@@ -46,7 +46,7 @@ let build_trie vocab =
       ids := new_ids;
       let new_ch =
         Array.init new_cap (fun i ->
-            if i < !n then (!ch).(i) else Hashtbl.create 0)
+            if i < !n then !ch.(i) else Hashtbl.create 0)
       in
       ch := new_ch;
       cap := new_cap
@@ -57,27 +57,27 @@ let build_trie vocab =
         for i = 0 to String.length key - 1 do
           let byte = Char.code (String.unsafe_get key i) in
           let child =
-            match Hashtbl.find_opt (!ch).(!cur) byte with
+            match Hashtbl.find_opt !ch.(!cur) byte with
             | Some c -> c
             | None ->
                 if !n >= !cap then grow ();
                 let c = !n in
                 incr n;
-                (!ch).(c) <- Hashtbl.create 4;
-                Hashtbl.add (!ch).(!cur) byte c;
+                !ch.(c) <- Hashtbl.create 4;
+                Hashtbl.add !ch.(!cur) byte c;
                 c
           in
           cur := child
         done;
-        (!ids).(!cur) <- id)
+        !ids.(!cur) <- id)
       vocab;
     let node_count = !n in
-    let trie_ids = Array.init node_count (fun i -> (!ids).(i)) in
+    let trie_ids = Array.init node_count (fun i -> !ids.(i)) in
     let child_starts = Array.make (node_count + 1) 0 in
     let total = ref 0 in
     for i = 0 to node_count - 1 do
       child_starts.(i) <- !total;
-      total := !total + Hashtbl.length (!ch).(i)
+      total := !total + Hashtbl.length !ch.(i)
     done;
     child_starts.(node_count) <- !total;
     let edge_bytes = Bytes.create !total in
@@ -89,7 +89,7 @@ let build_trie vocab =
           Bytes.unsafe_set edge_bytes !pos (Char.unsafe_chr byte);
           edge_targets.(!pos) <- child;
           incr pos)
-        (!ch).(i)
+        !ch.(i)
     done;
     (* Sort each node's children by byte value for binary search *)
     for i = 0 to node_count - 1 do
@@ -143,21 +143,21 @@ let trie_longest_match trie sequence ~start ~prefix ~prefix_len =
         current := child;
         incr i)
     done;
-    if not !stopped then (
-      let j = ref start in
-      while !j < seq_len && not !stopped do
-        let child =
-          trie_step trie !current (Char.code (String.unsafe_get sequence !j))
-        in
-        if child < 0 then stopped := true
-        else (
-          current := child;
-          incr j;
-          let tid = Array.unsafe_get trie.trie_ids child in
-          if tid >= 0 then (
-            last_id := tid;
-            last_end := !j))
-      done);
+    (if not !stopped then
+       let j = ref start in
+       while !j < seq_len && not !stopped do
+         let child =
+           trie_step trie !current (Char.code (String.unsafe_get sequence !j))
+         in
+         if child < 0 then stopped := true
+         else (
+           current := child;
+           incr j;
+           let tid = Array.unsafe_get trie.trie_ids child in
+           if tid >= 0 then (
+             last_id := tid;
+             last_end := !j))
+       done);
     if !last_id >= 0 then Some (!last_id, !last_end) else None
 
 (* ───── Model type ───── *)

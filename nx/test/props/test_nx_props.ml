@@ -46,8 +46,7 @@ let arithmetic_props =
     prop "mul zero (i32)" i32_any (fun a ->
         exact_equal (Nx.mul a (Nx.zeros_like a)) (Nx.zeros_like a));
     prop "distributive (i32)" i32_triple (fun (a, b, c) ->
-        exact_equal (Nx.mul a (Nx.add b c))
-          (Nx.add (Nx.mul a b) (Nx.mul a c)));
+        exact_equal (Nx.mul a (Nx.add b c)) (Nx.add (Nx.mul a b) (Nx.mul a c)));
     (* Division / Modulo *)
     prop "div inverse of mul (f32)" f32_pair (fun (a, b) ->
         assume (all_nonzero_f32 b);
@@ -118,8 +117,7 @@ let comparison_props =
     prop "less irreflexive (f32)" f32_any (fun a ->
         all_true (Nx.logical_not (Nx.less a a)));
     prop "less/greater complement (f32)" f32_pair (fun (a, b) ->
-        all_true
-          (Nx.array_equal (Nx.less a b) (Nx.greater b a)));
+        all_true (Nx.array_equal (Nx.less a b) (Nx.greater b a)));
     prop "less_equal from less|equal (f32)" f32_pair (fun (a, b) ->
         assume (no_nan a && no_nan b);
         all_true
@@ -128,8 +126,7 @@ let comparison_props =
     prop "not_equal complement of equal (f32)" f32_pair (fun (a, b) ->
         assume (no_nan a && no_nan b);
         all_true
-          (Nx.array_equal (Nx.not_equal a b)
-             (Nx.logical_not (Nx.equal a b))));
+          (Nx.array_equal (Nx.not_equal a b) (Nx.logical_not (Nx.equal a b))));
   ]
 
 (* ── Logical & Bitwise Properties ── *)
@@ -230,9 +227,7 @@ let math_function_props =
   let f32_positive = mk_f32_constrained gen_float_positive in
   let f32_unit = mk_f32_constrained gen_float_unit in
   let f32_trig = mk_f32_constrained gen_float_trig in
-  let f32_recip =
-    mk_f32_constrained (Gen.float_range 0.1 10.)
-  in
+  let f32_recip = mk_f32_constrained (Gen.float_range 0.1 10.) in
   [
     prop "exp/log inverse (f32)" f32_small (fun x ->
         assume (all_finite x);
@@ -279,7 +274,7 @@ let reduction_props =
         let m = Nx.item [] (Nx.mean t) in
         let s = Nx.item [] (Nx.sum t) in
         let n = Float.of_int (Nx.numel t) in
-        Float.abs (m -. s /. n) < 1e-4);
+        Float.abs (m -. (s /. n)) < 1e-4);
     prop "max >= all elements (f32)" f32_any (fun t ->
         assume (no_nan t && Nx.numel t > 0);
         let mx = Nx.max t in
@@ -347,7 +342,9 @@ let linalg_props =
     prop "svd reconstruction (f64)" square_f64 (fun a ->
         let u, s, vh = Nx.svd a in
         let n = (Nx.shape a).(0) in
-        let s_diag = Nx.mul (Nx.identity Nx.float64 n) (Nx.reshape [| 1; n |] s) in
+        let s_diag =
+          Nx.mul (Nx.identity Nx.float64 n) (Nx.reshape [| 1; n |] s)
+        in
         let reconstructed = Nx.matmul (Nx.matmul u s_diag) vh in
         allclose ~atol:1e-6 ~rtol:1e-6 reconstructed a);
     prop "cholesky reconstruction (f64 posdef)" posdef_f64 (fun a ->
@@ -414,8 +411,7 @@ let indexing_props =
         let n = Nx.numel t in
         let indices = Nx.arange Nx.int32 0 n 1 in
         approx_equal (Nx.take indices t) t);
-    prop "take indices valid (f32 1d)"
-      f32_1d_with_take_indices
+    prop "take indices valid (f32 1d)" f32_1d_with_take_indices
       (fun (t, indices) ->
         let taken = Nx.take indices t in
         let n_idx = Nx.numel indices in
@@ -493,8 +489,7 @@ let broadcasting_props =
         let v = 3.0 in
         let s = Nx.scalar Nx.float32 v in
         let b = Nx.broadcast_to (Nx.shape t) s in
-        Nx.shape b = Nx.shape t
-        && all_true (Nx.equal b (Nx.full_like t v)));
+        Nx.shape b = Nx.shape t && all_true (Nx.equal b (Nx.full_like t v)));
     prop "add with broadcast = add after broadcast (f32)" f32_broadcastable_pair
       (fun (a, b) ->
         let result = Nx.add a b in
@@ -526,8 +521,7 @@ let einsum_props =
     in
     Testable.make
       ~pp:(pp_pair pp_tensor pp_tensor)
-      ~equal:(fun (a1, b1) (a2, b2) ->
-        approx_equal a1 a2 && approx_equal b1 b2)
+      ~equal:(fun (a1, b1) (a2, b2) -> approx_equal a1 a2 && approx_equal b1 b2)
       ~gen ()
   in
   let mk_f32_1d_pair =
@@ -539,8 +533,7 @@ let einsum_props =
     in
     Testable.make
       ~pp:(pp_pair pp_tensor pp_tensor)
-      ~equal:(fun (a1, b1) (a2, b2) ->
-        approx_equal a1 a2 && approx_equal b1 b2)
+      ~equal:(fun (a1, b1) (a2, b2) -> approx_equal a1 a2 && approx_equal b1 b2)
       ~gen ()
   in
   let mk_f32_outer_pair =
@@ -553,8 +546,7 @@ let einsum_props =
     in
     Testable.make
       ~pp:(pp_pair pp_tensor pp_tensor)
-      ~equal:(fun (a1, b1) (a2, b2) ->
-        approx_equal a1 a2 && approx_equal b1 b2)
+      ~equal:(fun (a1, b1) (a2, b2) -> approx_equal a1 a2 && approx_equal b1 b2)
       ~gen ()
   in
   [
@@ -587,7 +579,9 @@ let einsum_props =
     prop "einsum i,j->ij = outer" mk_f32_outer_pair (fun (a, b) ->
         let via_einsum = Nx.einsum "i,j->ij" [| a; b |] in
         let via_outer =
-          Nx.mul (Nx.reshape [| Nx.numel a; 1 |] a) (Nx.reshape [| 1; Nx.numel b |] b)
+          Nx.mul
+            (Nx.reshape [| Nx.numel a; 1 |] a)
+            (Nx.reshape [| 1; Nx.numel b |] b)
         in
         allclose ~atol:1e-4 ~rtol:1e-4 via_einsum via_outer);
     (* einsum total sum = Nx.sum *)
@@ -598,12 +592,12 @@ let einsum_props =
     (* einsum row sum = sum axis 1 *)
     prop "einsum ij->i = sum axis 1" f32_2d (fun a ->
         let via_einsum = Nx.einsum "ij->i" [| a |] in
-        let via_sum = Nx.sum ~axes:[1] a in
+        let via_sum = Nx.sum ~axes:[ 1 ] a in
         allclose ~atol:1e-4 ~rtol:1e-4 via_einsum via_sum);
     (* einsum col sum = sum axis 0 *)
     prop "einsum ij->j = sum axis 0" f32_2d (fun a ->
         let via_einsum = Nx.einsum "ij->j" [| a |] in
-        let via_sum = Nx.sum ~axes:[0] a in
+        let via_sum = Nx.sum ~axes:[ 0 ] a in
         allclose ~atol:1e-4 ~rtol:1e-4 via_einsum via_sum);
     (* einsum hadamard = elementwise mul *)
     prop "einsum i,i->i = mul" mk_f32_1d_pair (fun (a, b) ->
@@ -644,7 +638,8 @@ let einsum_props =
       (fun (a, b) ->
         let via_einsum = Nx.einsum "ij,j->i" [| a; b |] in
         let via_matmul =
-          Nx.reshape [| (Nx.shape a).(0) |]
+          Nx.reshape
+            [| (Nx.shape a).(0) |]
             (Nx.matmul a (Nx.reshape [| Nx.numel b; 1 |] b))
         in
         allclose ~atol:1e-4 ~rtol:1e-4 via_einsum via_matmul);
@@ -658,15 +653,16 @@ let stress_config =
 let stress_props =
   [
     (* Transpose then slice, verify data integrity *)
-    prop ~config:stress_config "transpose+slice preserves data (f32)" f32_2d_plus
-      (fun t ->
+    prop ~config:stress_config "transpose+slice preserves data (f32)"
+      f32_2d_plus (fun t ->
         let tr = Nx.transpose t in
         let spec = List.init (Nx.ndim tr) (fun _ -> Nx.A) in
         let sliced = Nx.slice spec tr in
         approx_equal (Nx.contiguous sliced) (Nx.contiguous tr));
     (* Transpose+slice then flatten vs direct flatten of transpose *)
-    prop ~config:stress_config "transpose+contiguous = contiguous+transpose data (f32)"
-      f32_2d_plus (fun t ->
+    prop ~config:stress_config
+      "transpose+contiguous = contiguous+transpose data (f32)" f32_2d_plus
+      (fun t ->
         let a = Nx.to_array (Nx.contiguous (Nx.transpose t)) in
         let b = Nx.to_array (Nx.transpose t |> Nx.contiguous) in
         a = b);
@@ -693,8 +689,8 @@ let stress_props =
       (fun t ->
         assume (Nx.ndim t >= 2);
         approx_equal (Nx.transpose (Nx.transpose t)) t);
-    (* Contiguous on strided views: transpose then contiguous should equal
-       copy of transpose *)
+    (* Contiguous on strided views: transpose then contiguous should equal copy
+       of transpose *)
     prop ~config:stress_config "contiguous of strided view (f32)" f32_2d_plus
       (fun t ->
         let tr = Nx.transpose t in
@@ -729,8 +725,7 @@ let stress_props =
         let dim0 = (Nx.shape t).(0) in
         let sliced = Nx.slice [ Nx.Rs (0, dim0, 2) ] t in
         let expected_len = (dim0 + 1) / 2 in
-        (Nx.shape sliced).(0) = expected_len
-        && Nx.ndim sliced = Nx.ndim t);
+        (Nx.shape sliced).(0) = expected_len && Nx.ndim sliced = Nx.ndim t);
     (* Copy of a strided view preserves data *)
     prop ~config:stress_config "copy strided view (f32)" f32_2d_plus (fun t ->
         let tr = Nx.transpose t in
@@ -741,8 +736,7 @@ let stress_props =
       (fun t ->
         let tr = Nx.contiguous (Nx.transpose t) in
         let flat = Nx.reshape [| Nx.numel t |] tr in
-        Nx.numel flat = Nx.numel t
-        && Nx.to_array flat = Nx.to_array tr);
+        Nx.numel flat = Nx.numel t && Nx.to_array flat = Nx.to_array tr);
   ]
 
 (* ── Suite ── *)

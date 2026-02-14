@@ -51,12 +51,20 @@ let gen_tensor_with_values (type a b) (dtype : (a, b) Nx.dtype)
   Nx.create dtype shape (Array.of_list data)
 
 let gen_f32 shape = gen_tensor_with_values Nx.float32 gen_float_safe shape
-let gen_f32_positive shape = gen_tensor_with_values Nx.float32 gen_float_positive shape
+
+let gen_f32_positive shape =
+  gen_tensor_with_values Nx.float32 gen_float_positive shape
+
 let gen_f32_unit shape = gen_tensor_with_values Nx.float32 gen_float_unit shape
 let gen_f32_trig shape = gen_tensor_with_values Nx.float32 gen_float_trig shape
-let gen_f32_small shape = gen_tensor_with_values Nx.float32 gen_float_small shape
+
+let gen_f32_small shape =
+  gen_tensor_with_values Nx.float32 gen_float_small shape
+
 let gen_i32 shape = gen_tensor_with_values Nx.int32 gen_int32_safe shape
-let gen_i32_nonzero shape = gen_tensor_with_values Nx.int32 gen_int32_nonzero shape
+
+let gen_i32_nonzero shape =
+  gen_tensor_with_values Nx.int32 gen_int32_nonzero shape
 
 (* Tensor with random shape *)
 let gen_f32_any =
@@ -160,8 +168,7 @@ let mk_testable_f32_tol ~epsilon gen =
     ~equal:(fun a b -> approx_equal ~epsilon a b)
     ~gen ()
 
-let mk_testable_i32 gen =
-  Testable.make ~pp:pp_tensor ~equal:exact_equal ~gen ()
+let mk_testable_i32 gen = Testable.make ~pp:pp_tensor ~equal:exact_equal ~gen ()
 
 let mk_testable_f64 gen =
   Testable.make ~pp:pp_tensor
@@ -174,8 +181,7 @@ let i32_any = mk_testable_i32 gen_i32_any
 let f32_2d = mk_testable_f32 gen_f32_2d
 
 (* Pair testables *)
-let pp_pair pp1 pp2 fmt (a, b) =
-  Format.fprintf fmt "(%a, %a)" pp1 a pp2 b
+let pp_pair pp1 pp2 fmt (a, b) = Format.fprintf fmt "(%a, %a)" pp1 a pp2 b
 
 let pp_triple pp1 pp2 pp3 fmt (a, b, c) =
   Format.fprintf fmt "(%a, %a, %a)" pp1 a pp2 b pp3 c
@@ -183,8 +189,7 @@ let pp_triple pp1 pp2 pp3 fmt (a, b, c) =
 let f32_pair =
   Testable.make
     ~pp:(pp_pair pp_tensor pp_tensor)
-    ~equal:(fun (a1, b1) (a2, b2) ->
-      approx_equal a1 a2 && approx_equal b1 b2)
+    ~equal:(fun (a1, b1) (a2, b2) -> approx_equal a1 a2 && approx_equal b1 b2)
     ~gen:gen_f32_pair ()
 
 let i32_pair =
@@ -208,7 +213,6 @@ let i32_triple =
 
 let f32_1d = mk_testable_f32 gen_f32_1d
 let i32_1d = mk_testable_i32 gen_i32_1d
-
 let square_f64 = mk_testable_f64 (gen_square_f64 ~max_n:4)
 let posdef_f64 = mk_testable_f64 (gen_posdef_f64 ~max_n:4)
 
@@ -253,9 +257,9 @@ let gen_f32_with_mask =
 
 (* ── Broadcasting Generators ── *)
 
-(* Generate a broadcastable shape pair.
-   Strategy: generate a "result" shape, then for each dim, choose whether
-   it comes from a (b gets 1), from b (a gets 1), or both (same value). *)
+(* Generate a broadcastable shape pair. Strategy: generate a "result" shape,
+   then for each dim, choose whether it comes from a (b gets 1), from b (a gets
+   1), or both (same value). *)
 let gen_broadcastable_shapes =
   let open Gen in
   let* ndim = int_range 1 3 in

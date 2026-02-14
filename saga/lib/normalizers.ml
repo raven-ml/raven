@@ -404,8 +404,7 @@ let do_clean_text_str s =
     let c = String.unsafe_get s i in
     let code = Char.code c in
     if not (code = 0 || code = 0xfffd || is_control c) then
-      if is_whitespace c then Buffer.add_char buf ' '
-      else Buffer.add_char buf c
+      if is_whitespace c then Buffer.add_char buf ' ' else Buffer.add_char buf c
   done;
   Buffer.contents buf
 
@@ -472,8 +471,7 @@ let rec normalize_str_fast normalizer str =
   | Replace { pattern; replacement } ->
       let regex = Re.compile (Re.Pcre.re pattern) in
       Re.replace_string regex ~by:replacement str
-  | Prepend { prepend } ->
-      if String.length str = 0 then str else prepend ^ str
+  | Prepend { prepend } -> if String.length str = 0 then str else prepend ^ str
   | ByteLevel _ ->
       let ns = normalize normalizer str in
       ns.normalized

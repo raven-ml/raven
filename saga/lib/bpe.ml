@@ -15,14 +15,11 @@ module StringMap = Map.Make (String)
 type vocab = (string, int) Hashtbl.t
 type vocab_r = (int, string) Hashtbl.t
 type merges = (string * string) list
-(* Open-addressing hash table for merge lookups.
-   Returns int directly (no option allocation). -1 = not found. *)
+
+(* Open-addressing hash table for merge lookups. Returns int directly (no option
+   allocation). -1 = not found. *)
 module MergeMap = struct
-  type t = {
-    keys : int array;
-    values : int array;
-    mask : int;
-  }
+  type t = { keys : int array; values : int array; mask : int }
 
   let[@inline] hash key =
     let h = key * 0x517CC1B727220A95 in
@@ -69,7 +66,6 @@ module MergeMap = struct
       if k >= 0 then acc := f k (Array.unsafe_get values i) !acc
     done;
     !acc
-
 end
 
 type merge_map = MergeMap.t
@@ -180,8 +176,7 @@ module MergeQueue = struct
         Array.unsafe_set new_ids !i (Array.unsafe_get new_ids p);
         i := p;
         cont := !i > 0)
-      else
-        cont := false
+      else cont := false
     done;
     Array.unsafe_set keys !i key;
     Array.unsafe_set new_ids !i nid
@@ -196,20 +191,19 @@ module MergeQueue = struct
     let continue_ = ref true in
     while !continue_ do
       let l = (2 * !i) + 1 in
-      if l >= size then
-        continue_ := false
+      if l >= size then continue_ := false
       else begin
         let r = l + 1 in
         let smallest =
-          if r < size && Array.unsafe_get keys r < Array.unsafe_get keys l
-          then r else l
+          if r < size && Array.unsafe_get keys r < Array.unsafe_get keys l then
+            r
+          else l
         in
         if Array.unsafe_get keys smallest < key then (
           Array.unsafe_set keys !i (Array.unsafe_get keys smallest);
           Array.unsafe_set new_ids !i (Array.unsafe_get new_ids smallest);
           i := smallest)
-        else
-          continue_ := false
+        else continue_ := false
       end
     done;
     Array.unsafe_set keys !i key;
@@ -276,7 +270,8 @@ let apply_merges model dropout word =
       let next_pos = Array.unsafe_get sym_next pos in
       if next_pos >= 0 then begin
         let key =
-          merge_key (Array.unsafe_get sym_c pos)
+          merge_key
+            (Array.unsafe_get sym_c pos)
             (Array.unsafe_get sym_c next_pos)
         in
         let packed = MergeMap.find merges key in
@@ -297,7 +292,8 @@ let apply_merges model dropout word =
             Array.unsafe_set !skip_keys s pkey;
             Array.unsafe_set !skip_new_ids s new_id;
             skip_size := s + 1
-          end else begin
+          end
+          else begin
             for i = 0 to !skip_size - 1 do
               MergeQueue.push queue
                 (Array.unsafe_get !skip_keys i lsr 21)
@@ -307,18 +303,16 @@ let apply_merges model dropout word =
             skip_size := 0;
             Array.unsafe_set sym_c pos new_id;
             Array.unsafe_set sym_len pos
-              (Array.unsafe_get sym_len pos
-              + Array.unsafe_get sym_len next_pos);
-            Array.unsafe_set sym_next pos
-              (Array.unsafe_get sym_next next_pos);
+              (Array.unsafe_get sym_len pos + Array.unsafe_get sym_len next_pos);
+            Array.unsafe_set sym_next pos (Array.unsafe_get sym_next next_pos);
             Array.unsafe_set sym_len next_pos 0;
             let new_next = Array.unsafe_get sym_next pos in
-            if new_next >= 0 then
-              Array.unsafe_set sym_prev new_next pos;
+            if new_next >= 0 then Array.unsafe_set sym_prev new_next pos;
             let prev = Array.unsafe_get sym_prev pos in
             if prev >= 0 then begin
               let k =
-                merge_key (Array.unsafe_get sym_c prev)
+                merge_key
+                  (Array.unsafe_get sym_c prev)
                   (Array.unsafe_get sym_c pos)
               in
               let v = MergeMap.find merges k in
@@ -328,7 +322,8 @@ let apply_merges model dropout word =
             let next = Array.unsafe_get sym_next pos in
             if next >= 0 then begin
               let k =
-                merge_key (Array.unsafe_get sym_c pos)
+                merge_key
+                  (Array.unsafe_get sym_c pos)
                   (Array.unsafe_get sym_c next)
               in
               let v = MergeMap.find merges k in
@@ -402,7 +397,8 @@ let merge_word model text =
             pending_unk_id := model.unk_id;
             pending_unk_len := byte_len
           end
-        end else begin
+        end
+        else begin
           flush_unk ();
           add_symbol word model.unk_id byte_len
         end
@@ -416,17 +412,19 @@ let merge_word model text =
         if id >= 0 then begin
           flush_unk ();
           add_symbol word id 1
-        end else if model.byte_fallback then begin
+        end
+        else if model.byte_fallback then begin
           let fbid = Array.unsafe_get model.byte_fallback_ids b in
           if fbid >= 0 then begin
             flush_unk ();
             add_symbol word fbid 1
-          end else
-            handle_unk 1
-        end else
-          handle_unk 1;
+          end
+          else handle_unk 1
+        end
+        else handle_unk 1;
         incr pos
-      end else begin
+      end
+      else begin
         (* Multi-byte UTF-8: packed-int key lookup, zero allocation *)
         let byte_len = utf8_byte_len b in
         let key = pack_char_key text !pos byte_len in
@@ -452,13 +450,16 @@ let merge_word model text =
                        (Char.code (String.unsafe_get text (!pos + i))))
                     1
                 done
-              end else handle_unk byte_len
-            end else handle_unk byte_len);
+              end
+              else handle_unk byte_len
+            end
+            else handle_unk byte_len);
         pos := !pos + byte_len
       end
     done;
     flush_unk ()
-  end else begin
+  end
+  else begin
     (* Slow path: models with continuing_subword_prefix or end_of_word_suffix *)
     let pending_unk = ref None in
     let flush_unk () =
@@ -490,8 +491,7 @@ let merge_word model text =
           | true, true, _, _ -> char_str
           | true, false, _, Some suffix -> char_str ^ suffix
           | true, false, _, None -> char_str
-          | false, true, Some prefix, Some suffix ->
-              prefix ^ char_str ^ suffix
+          | false, true, Some prefix, Some suffix -> prefix ^ char_str ^ suffix
           | false, true, Some prefix, None -> prefix ^ char_str
           | false, true, None, Some suffix -> char_str ^ suffix
           | false, true, None, None -> char_str
@@ -512,7 +512,7 @@ let merge_word model text =
             end
           end
         in
-        (match Hashtbl.find_opt model.vocab token_str with
+        match Hashtbl.find_opt model.vocab token_str with
         | Some id ->
             flush_unk ();
             add_symbol word id byte_len
@@ -534,13 +534,15 @@ let merge_word model text =
                        (Char.code (String.unsafe_get char_str i)))
                     1
                 done
-              end else unk_handling ()
-            end else unk_handling ())
+              end
+              else unk_handling ()
+            end
+            else unk_handling ()
       end
     done;
-    (match !pending_unk with
+    match !pending_unk with
     | Some (uid, ulen) -> add_symbol word uid ulen
-    | None -> ())
+    | None -> ()
   end;
   apply_merges model model.dropout word;
   word
@@ -559,7 +561,8 @@ let word_to_tokens model word =
       offset := end_;
       { id; value; offsets = (start, end_) })
 
-let word_to_ids word = Array.init word.size (fun i -> Array.unsafe_get word.sym_c i)
+let word_to_ids word =
+  Array.init word.size (fun i -> Array.unsafe_get word.sym_c i)
 
 let tokenize model text =
   if String.length text = 0 then []
@@ -659,7 +662,9 @@ let convert_merges_to_merge_map vocab merges continuing_subword_prefix =
   |> List.filter_map (fun x -> x)
   |> fun entries ->
   MergeMap.create
-    (List.map (fun ((a_id, b_id), packed) -> (merge_key a_id b_id, packed)) entries)
+    (List.map
+       (fun ((a_id, b_id), packed) -> (merge_key a_id b_id, packed))
+       entries)
 
 let create (cfg : config) : t =
   let vocab_r = Hashtbl.create (Hashtbl.length cfg.vocab) in

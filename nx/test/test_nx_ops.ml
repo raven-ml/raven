@@ -5,10 +5,10 @@
 
 (* Edge case and special-value tests for Nx operations.
 
-   Algebraic properties (commutativity, identity, inverse, etc.) are covered
-   by property-based tests in nx/test/props/test_nx_props.ml. This file
-   retains tests for NaN/Inf behavior, error conditions, and specific
-   numerical accuracy checks. *)
+   Algebraic properties (commutativity, identity, inverse, etc.) are covered by
+   property-based tests in nx/test/props/test_nx_props.ml. This file retains
+   tests for NaN/Inf behavior, error conditions, and specific numerical accuracy
+   checks. *)
 
 open Windtrap
 open Test_nx_support
@@ -55,13 +55,11 @@ let add_edge_cases =
     test "nan propagation" (test_nan_propagation ~op:Nx.add ~op_name:"add");
     test "inf arithmetic" (fun () ->
         let a =
-          Nx.create Nx.float32 [| 2 |]
-            [| Float.infinity; Float.neg_infinity |]
+          Nx.create Nx.float32 [| 2 |] [| Float.infinity; Float.neg_infinity |]
         in
         let b = Nx.create Nx.float32 [| 2 |] [| 5.0; 10.0 |] in
         let result = Nx.add a b in
-        equal ~msg:"inf + 5" (float 1e-6) Float.infinity
-          (Nx.item [ 0 ] result);
+        equal ~msg:"inf + 5" (float 1e-6) Float.infinity (Nx.item [ 0 ] result);
         equal ~msg:"-inf + 10" (float 1e-6) Float.neg_infinity
           (Nx.item [ 1 ] result));
     test "inf + inf" (fun () ->
@@ -69,14 +67,12 @@ let add_edge_cases =
           Nx.create Nx.float32 [| 2 |] [| Float.infinity; Float.infinity |]
         in
         let b =
-          Nx.create Nx.float32 [| 2 |]
-            [| Float.infinity; Float.neg_infinity |]
+          Nx.create Nx.float32 [| 2 |] [| Float.infinity; Float.neg_infinity |]
         in
         let result = Nx.add a b in
         equal ~msg:"inf + inf" (float 1e-6) Float.infinity
           (Nx.item [ 0 ] result);
-        equal ~msg:"inf + -inf" bool true
-          (Float.is_nan (Nx.item [ 1 ] result)));
+        equal ~msg:"inf + -inf" bool true (Float.is_nan (Nx.item [ 1 ] result)));
   ]
 
 (* ───── Sub Edge Cases ───── *)
@@ -88,8 +84,7 @@ let sub_edge_cases =
           Nx.create Nx.float32 [| 2 |] [| Float.infinity; Float.infinity |]
         in
         let b =
-          Nx.create Nx.float32 [| 2 |]
-            [| Float.infinity; Float.neg_infinity |]
+          Nx.create Nx.float32 [| 2 |] [| Float.infinity; Float.neg_infinity |]
         in
         let result = Nx.sub a b in
         equal ~msg:"inf - inf" bool true (Float.is_nan (Nx.item [ 0 ] result));
@@ -106,8 +101,7 @@ let div_edge_cases =
         let b = Nx.create Nx.float32 [| 3 |] [| 0.0; 0.0; 0.0 |] in
         let result = Nx.div a b in
         equal ~msg:"1/0" (float 1e-6) Float.infinity (Nx.item [ 0 ] result);
-        equal ~msg:"-1/0" (float 1e-6) Float.neg_infinity
-          (Nx.item [ 1 ] result);
+        equal ~msg:"-1/0" (float 1e-6) Float.neg_infinity (Nx.item [ 1 ] result);
         equal ~msg:"0/0" bool true (Float.is_nan (Nx.item [ 2 ] result)));
   ]
 
@@ -175,12 +169,8 @@ let math_edge_cases =
 let comparison_edge_cases =
   [
     test "nan comparisons" (fun () ->
-        let t1 =
-          Nx.create Nx.float32 [| 3 |] [| Float.nan; 1.; Float.nan |]
-        in
-        let t2 =
-          Nx.create Nx.float32 [| 3 |] [| Float.nan; Float.nan; 1. |]
-        in
+        let t1 = Nx.create Nx.float32 [| 3 |] [| Float.nan; 1.; Float.nan |] in
+        let t2 = Nx.create Nx.float32 [| 3 |] [| Float.nan; Float.nan; 1. |] in
         let eq_result = Nx.equal t1 t2 in
         let ne_result = Nx.not_equal t1 t2 in
         check_t "nan equal" [| 3 |] [| false; false; false |] eq_result;
@@ -192,9 +182,7 @@ let comparison_edge_cases =
 let reduction_edge_cases =
   [
     test "sum axis=1 keepdims" (fun () ->
-        let t =
-          Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-        in
+        let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
         let result = Nx.sum ~axes:[ 1 ] ~keepdims:true t in
         check_t "sum axis=1 keepdims" [| 2; 1 |] [| 6.; 15. |] result);
     test "empty array mean" (fun () ->
@@ -231,9 +219,7 @@ let cumulative_tests =
         check_t ~eps:1e-6 "cumsum flatten" [| 2; 2 |] [| 1.; 3.; 6.; 10. |]
           result);
     test "cumsum axis=1" (fun () ->
-        let t =
-          Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-        in
+        let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
         let result = Nx.cumsum ~axis:1 t in
         check_t ~eps:1e-6 "cumsum axis=1" [| 2; 3 |]
           [| 1.; 3.; 6.; 4.; 9.; 15. |]
@@ -241,9 +227,7 @@ let cumulative_tests =
     test "cumprod axis=-1" (fun () ->
         let t = Nx.create Nx.int32 [| 2; 3 |] [| 1l; 2l; 3l; 2l; 2l; 2l |] in
         let result = Nx.cumprod ~axis:(-1) t in
-        check_t "cumprod axis=-1" [| 2; 3 |]
-          [| 1l; 2l; 6l; 2l; 4l; 8l |]
-          result);
+        check_t "cumprod axis=-1" [| 2; 3 |] [| 1l; 2l; 6l; 2l; 4l; 8l |] result);
     test "cummax nan propagation" (fun () ->
         let t = Nx.create Nx.float32 [| 4 |] [| 1.; Float.nan; 2.; 3. |] in
         let result = Nx.cummax t in
