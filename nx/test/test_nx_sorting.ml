@@ -165,6 +165,41 @@ let test_argmin_ties () =
   (* Should return first occurrence *)
   check_t "argmin ties" [||] [| 1l |] result
 
+(* ───── Sort Regression Tests ───── *)
+
+let test_sort_large_1d () =
+  (* Regression: bitonic sort breaks for n >= 129.
+     The sort produces duplicate values instead of a correct permutation. *)
+  let n = 150 in
+  let t = Nx.arange Nx.float32 0 n 1 in
+  (* Reverse so it's not already sorted *)
+  let t = Nx.flip ~axes:[ 0 ] t in
+  let sorted_vals, sorted_indices = Nx.sort t in
+  (* Check sorted values are 0, 1, 2, ..., n-1 *)
+  let expected_vals = Nx.arange Nx.float32 0 n 1 in
+  check_nx "sort large 1D values" expected_vals sorted_vals;
+  (* Check indices map back to original positions *)
+  let expected_indices = Nx.arange Nx.int32 (n - 1) (-1) (-1) in
+  check_nx "sort large 1D indices" expected_indices sorted_indices
+
+let test_sort_power_of_two () =
+  (* n=256 is a power of two (no padding needed) but still breaks *)
+  let n = 256 in
+  let t = Nx.arange Nx.float32 0 n 1 in
+  let t = Nx.flip ~axes:[ 0 ] t in
+  let sorted_vals, _ = Nx.sort t in
+  let expected_vals = Nx.arange Nx.float32 0 n 1 in
+  check_nx "sort power-of-two values" expected_vals sorted_vals
+
+let test_sort_128_boundary () =
+  (* n=128 works, n=129 does not *)
+  let t128 = Nx.flip ~axes:[ 0 ] (Nx.arange Nx.float32 0 128 1) in
+  let sorted128, _ = Nx.sort t128 in
+  check_nx "sort n=128 values" (Nx.arange Nx.float32 0 128 1) sorted128;
+  let t129 = Nx.flip ~axes:[ 0 ] (Nx.arange Nx.float32 0 129 1) in
+  let sorted129, _ = Nx.sort t129 in
+  check_nx "sort n=129 values" (Nx.arange Nx.float32 0 129 1) sorted129
+
 (* Test Suite Organization *)
 
 let where_tests =
@@ -182,6 +217,13 @@ let sort_tests =
     test "sort invalid axis" test_sort_invalid_axis;
     test "sort NaN handling" test_sort_nan_handling;
     test "sort stable" test_sort_stable;
+  ]
+
+let sort_regression_tests =
+  [
+    test "sort large 1D (n=150)" test_sort_large_1d;
+    test "sort power of two (n=256)" test_sort_power_of_two;
+    test "sort 128 boundary" test_sort_128_boundary;
   ]
 
 let argsort_tests =
@@ -213,6 +255,7 @@ let suite =
   [
     group "Where" where_tests;
     group "Sort" sort_tests;
+    group "Sort Regression" sort_regression_tests;
     group "Argsort" argsort_tests;
     group "Argmax" argmax_tests;
     group "Argmin" argmin_tests;
