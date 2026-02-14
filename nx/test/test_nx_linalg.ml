@@ -1186,6 +1186,53 @@ let einsum_rowwise_dot () =
   let expected = Nx.create Nx.float32 [| 3 |] [| 30.; 70.; 110. |] in
   check_nx "einsum_rowwise_dot ij,j->i" expected got
 
+let einsum_independent_sum () =
+  (* "ab,cd->" with no shared axes: should pre-reduce to scalar * scalar *)
+  let a0 =
+    Nx.create Nx.float32 [| 3; 4 |]
+      [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9.; 10.; 11.; 12. |]
+  in
+  let a1 =
+    Nx.create Nx.float32 [| 2; 5 |]
+      [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9.; 10. |]
+  in
+  let got = Nx.einsum "ab,cd->" [| a0; a1 |] in
+  (* sum(A) = 78, sum(B) = 55, result = 78 * 55 = 4290 *)
+  let expected = Nx.create Nx.float32 [||] [| 4290. |] in
+  check_nx "einsum_independent_sum ab,cd->" expected got
+
+let einsum_partial_prereduction () =
+  (* "ij,kj->": pre-reduce i from op0, k from op1, then dot over j *)
+  let a0 =
+    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
+  in
+  let a1 =
+    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
+  in
+  let got = Nx.einsum "ij,kj->" [| a0; a1 |] in
+  (* sum_i(A) = [5,7,9], sum_k(B) = [5,7,9], dot = 25+49+81 = 155 *)
+  let expected = Nx.create Nx.float32 [||] [| 155. |] in
+  check_nx "einsum_partial_prereduction ij,kj->" expected got
+
+let einsum_no_shared_with_output () =
+  (* "ab,cd->ac": pre-reduce b,d but keep a,c *)
+  let a0 =
+    Nx.create Nx.float32 [| 3; 4 |]
+      [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9.; 10.; 11.; 12. |]
+  in
+  let a1 =
+    Nx.create Nx.float32 [| 2; 5 |]
+      [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9.; 10. |]
+  in
+  let got = Nx.einsum "ab,cd->ac" [| a0; a1 |] in
+  (* sum_b(A) = [10, 26, 42], sum_d(B) = [15, 40] *)
+  (* outer = [[150, 400], [390, 1040], [630, 1680]] *)
+  let expected =
+    Nx.create Nx.float32 [| 3; 2 |]
+      [| 150.; 400.; 390.; 1040.; 630.; 1680. |]
+  in
+  check_nx "einsum_no_shared_with_output ab,cd->ac" expected got
+
 let test_kron () =
   let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
   let b = Nx.create Nx.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
@@ -1572,6 +1619,9 @@ let einsum_tests =
     test "broadcast last dot ...i,...i->..." einsum_broadcast_last_dot;
     test "move first axis i...->...i" einsum_move_first_axis_to_last;
     test "rowwise dot ij,j->i" einsum_rowwise_dot;
+    test "independent sum ab,cd->" einsum_independent_sum;
+    test "partial prereduction ij,kj->" einsum_partial_prereduction;
+    test "no shared with output ab,cd->ac" einsum_no_shared_with_output;
   ]
 
 let advanced_decomposition_tests =

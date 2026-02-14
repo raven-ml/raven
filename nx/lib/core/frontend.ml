@@ -5301,6 +5301,48 @@ module Make (B : Backend_intf.S) = struct
                      "einsum: output index '%c' not found in inputs" c))
             target_chars;
 
+          (* Pre-reduce axes that appear in exactly one operand and are
+             absent from the output. This avoids materialising huge
+             intermediates for patterns like "ab,cd->" where independent
+             sums can be done first. *)
+          let () =
+            let char_count = Hashtbl.create 16 in
+            Array.iter
+              (fun info ->
+                List.iter
+                  (fun c ->
+                    let n =
+                      match Hashtbl.find_opt char_count c with
+                      | None -> 0
+                      | Some n -> n
+                    in
+                    Hashtbl.replace char_count c (n + 1))
+                  info.axis_labels)
+              ops_info;
+            Array.iteri
+              (fun i info ->
+                let axes_to_reduce = ref [] in
+                let new_labels = ref [] in
+                List.iteri
+                  (fun axis_idx c ->
+                    if Hashtbl.find char_count c = 1
+                       && not (List.mem c target_chars)
+                    then axes_to_reduce := axis_idx :: !axes_to_reduce
+                    else new_labels := c :: !new_labels)
+                  info.axis_labels;
+                match !axes_to_reduce with
+                | [] -> ()
+                | axes ->
+                    let axes = List.rev axes in
+                    ops_tensors.(i) <- sum ~axes ops_tensors.(i);
+                    ops_info.(i) <-
+                      { info with
+                        shape = shape ops_tensors.(i)
+                      ; axis_labels = List.rev !new_labels
+                      })
+              ops_info
+          in
+
           let plan = optimize_path (Array.to_list ops_info) target_chars in
 
           let rec execute = function
