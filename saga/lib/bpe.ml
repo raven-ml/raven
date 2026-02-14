@@ -31,7 +31,7 @@ module MergeMap = struct
   let create entries =
     let n = List.length entries in
     let cap = ref 16 in
-    while !cap < n * 2 do
+    while !cap < n * 4 do
       cap := !cap * 2
     done;
     let mask = !cap - 1 in
@@ -143,98 +143,91 @@ let[@inline] add_symbol word c byte_len =
 
 (* Specialized min-heap for BPE merges using parallel arrays (no tuple allocation).
    Ordered by (rank, position) — lower rank first, then lower position. *)
+(* Min-heap with packed comparison key: (rank lsl 21) lor pos.
+   Single int comparison for sift operations, 2 arrays instead of 3. *)
 module MergeQueue = struct
   type t = {
-    mutable ranks : int array;
-    mutable positions : int array;
+    mutable keys : int array;
     mutable new_ids : int array;
     mutable size : int;
-    mutable pop_rank : int;
-    mutable pop_pos : int;
+    mutable pop_key : int;
     mutable pop_new_id : int;
   }
 
   let create cap =
     let cap = max 16 cap in
     {
-      ranks = Array.make cap 0;
-      positions = Array.make cap 0;
+      keys = Array.make cap 0;
       new_ids = Array.make cap 0;
       size = 0;
-      pop_rank = 0;
-      pop_pos = 0;
+      pop_key = 0;
       pop_new_id = 0;
     }
 
-  let[@inline] cmp_lt_rv t i rank pos =
-    let ri = Array.unsafe_get t.ranks i in
-    ri < rank || (ri = rank && Array.unsafe_get t.positions i < pos)
-
-  let[@inline] cmp_lt t i j =
-    let ri = Array.unsafe_get t.ranks i in
-    let rj = Array.unsafe_get t.ranks j in
-    ri < rj || (ri = rj && Array.unsafe_get t.positions i < Array.unsafe_get t.positions j)
+  let[@inline] pack_key rank pos = (rank lsl 21) lor pos
 
   let sift_up t idx =
+    let keys = t.keys in
+    let new_ids = t.new_ids in
+    let key = Array.unsafe_get keys idx in
+    let nid = Array.unsafe_get new_ids idx in
     let i = ref idx in
-    let rank = Array.unsafe_get t.ranks idx in
-    let pos = Array.unsafe_get t.positions idx in
-    let nid = Array.unsafe_get t.new_ids idx in
-    while !i > 0 && (let p = (!i - 1) asr 1 in
-                      let rp = Array.unsafe_get t.ranks p in
-                      rank < rp || (rank = rp && pos < Array.unsafe_get t.positions p))
-    do
+    let cont = ref (!i > 0) in
+    while !cont do
       let p = (!i - 1) asr 1 in
-      Array.unsafe_set t.ranks !i (Array.unsafe_get t.ranks p);
-      Array.unsafe_set t.positions !i (Array.unsafe_get t.positions p);
-      Array.unsafe_set t.new_ids !i (Array.unsafe_get t.new_ids p);
-      i := p
+      if key < Array.unsafe_get keys p then (
+        Array.unsafe_set keys !i (Array.unsafe_get keys p);
+        Array.unsafe_set new_ids !i (Array.unsafe_get new_ids p);
+        i := p;
+        cont := !i > 0)
+      else
+        cont := false
     done;
-    Array.unsafe_set t.ranks !i rank;
-    Array.unsafe_set t.positions !i pos;
-    Array.unsafe_set t.new_ids !i nid
+    Array.unsafe_set keys !i key;
+    Array.unsafe_set new_ids !i nid
 
   let sift_down t idx =
+    let keys = t.keys in
+    let new_ids = t.new_ids in
+    let size = t.size in
+    let key = Array.unsafe_get keys idx in
+    let nid = Array.unsafe_get new_ids idx in
     let i = ref idx in
-    let rank = Array.unsafe_get t.ranks idx in
-    let pos = Array.unsafe_get t.positions idx in
-    let nid = Array.unsafe_get t.new_ids idx in
     let continue_ = ref true in
     while !continue_ do
       let l = (2 * !i) + 1 in
-      if l >= t.size then
+      if l >= size then
         continue_ := false
       else begin
         let r = l + 1 in
-        let smallest = if r < t.size && cmp_lt t r l then r else l in
-        if cmp_lt_rv t smallest rank pos then (
-          Array.unsafe_set t.ranks !i (Array.unsafe_get t.ranks smallest);
-          Array.unsafe_set t.positions !i (Array.unsafe_get t.positions smallest);
-          Array.unsafe_set t.new_ids !i (Array.unsafe_get t.new_ids smallest);
+        let smallest =
+          if r < size && Array.unsafe_get keys r < Array.unsafe_get keys l
+          then r else l
+        in
+        if Array.unsafe_get keys smallest < key then (
+          Array.unsafe_set keys !i (Array.unsafe_get keys smallest);
+          Array.unsafe_set new_ids !i (Array.unsafe_get new_ids smallest);
           i := smallest)
         else
           continue_ := false
       end
     done;
-    Array.unsafe_set t.ranks !i rank;
-    Array.unsafe_set t.positions !i pos;
-    Array.unsafe_set t.new_ids !i nid
+    Array.unsafe_set keys !i key;
+    Array.unsafe_set new_ids !i nid
 
   let push t rank pos new_id =
     let s = t.size in
-    if s = Array.length t.ranks then begin
+    if s = Array.length t.keys then begin
       let new_cap = max 16 (s * 2) in
       let grow a =
         let b = Array.make new_cap 0 in
         Array.blit a 0 b 0 s;
         b
       in
-      t.ranks <- grow t.ranks;
-      t.positions <- grow t.positions;
+      t.keys <- grow t.keys;
       t.new_ids <- grow t.new_ids
     end;
-    Array.unsafe_set t.ranks s rank;
-    Array.unsafe_set t.positions s pos;
+    Array.unsafe_set t.keys s (pack_key rank pos);
     Array.unsafe_set t.new_ids s new_id;
     t.size <- s + 1;
     sift_up t s
@@ -242,13 +235,11 @@ module MergeQueue = struct
   let pop t =
     if t.size = 0 then false
     else begin
-      t.pop_rank <- Array.unsafe_get t.ranks 0;
-      t.pop_pos <- Array.unsafe_get t.positions 0;
+      t.pop_key <- Array.unsafe_get t.keys 0;
       t.pop_new_id <- Array.unsafe_get t.new_ids 0;
       t.size <- t.size - 1;
       if t.size > 0 then begin
-        Array.unsafe_set t.ranks 0 (Array.unsafe_get t.ranks t.size);
-        Array.unsafe_set t.positions 0 (Array.unsafe_get t.positions t.size);
+        Array.unsafe_set t.keys 0 (Array.unsafe_get t.keys t.size);
         Array.unsafe_set t.new_ids 0 (Array.unsafe_get t.new_ids t.size);
         sift_down t 0
       end;
@@ -266,52 +257,20 @@ let apply_merges model dropout word =
   let sym_next = word.sym_next in
   let sym_len = word.sym_len in
   for i = 0 to word.size - 2 do
-    if Array.unsafe_get sym_len i > 0 && Array.unsafe_get sym_len (i + 1) > 0
-    then begin
-      let key =
-        merge_key (Array.unsafe_get sym_c i) (Array.unsafe_get sym_c (i + 1))
-      in
-      let packed = MergeMap.find merges key in
-      if packed >= 0 then
-        MergeQueue.push queue (merge_rank packed) i (merge_new_id packed)
-    end
+    let key =
+      merge_key (Array.unsafe_get sym_c i) (Array.unsafe_get sym_c (i + 1))
+    in
+    let packed = MergeMap.find merges key in
+    if packed >= 0 then
+      MergeQueue.push queue (merge_rank packed) i (merge_new_id packed)
   done;
-  let skip_ranks = ref [||] in
-  let skip_positions = ref [||] in
+  let skip_keys = ref [||] in
   let skip_new_ids = ref [||] in
   let skip_size = ref 0 in
   let skip_cap = ref 0 in
-  let add_skip rank pos new_id =
-    if !skip_size = !skip_cap then begin
-      let new_cap = max 8 (!skip_cap * 2) in
-      let grow old =
-        let a = Array.make new_cap 0 in
-        if !skip_size > 0 then Array.blit old 0 a 0 !skip_size;
-        a
-      in
-      skip_ranks := grow !skip_ranks;
-      skip_positions := grow !skip_positions;
-      skip_new_ids := grow !skip_new_ids;
-      skip_cap := new_cap
-    end;
-    let s = !skip_size in
-    Array.unsafe_set !skip_ranks s rank;
-    Array.unsafe_set !skip_positions s pos;
-    Array.unsafe_set !skip_new_ids s new_id;
-    skip_size := s + 1
-  in
-  let flush_skips () =
-    for i = 0 to !skip_size - 1 do
-      MergeQueue.push queue
-        (Array.unsafe_get !skip_ranks i)
-        (Array.unsafe_get !skip_positions i)
-        (Array.unsafe_get !skip_new_ids i)
-    done;
-    skip_size := 0
-  in
   while MergeQueue.pop queue do
-    let rank = queue.pop_rank in
-    let pos = queue.pop_pos in
+    let pkey = queue.pop_key in
+    let pos = pkey land 0x1FFFFF in
     let new_id = queue.pop_new_id in
     if Array.unsafe_get sym_len pos > 0 then begin
       let next_pos = Array.unsafe_get sym_next pos in
@@ -322,10 +281,30 @@ let apply_merges model dropout word =
         in
         let packed = MergeMap.find merges key in
         if packed >= 0 && merge_new_id packed = new_id then begin
-          if use_dropout && Random.float 1.0 < p then
-            add_skip rank pos new_id
-          else begin
-            flush_skips ();
+          if use_dropout && Random.float 1.0 < p then begin
+            if !skip_size = !skip_cap then begin
+              let new_cap = max 8 (!skip_cap * 2) in
+              let grow old =
+                let a = Array.make new_cap 0 in
+                if !skip_size > 0 then Array.blit old 0 a 0 !skip_size;
+                a
+              in
+              skip_keys := grow !skip_keys;
+              skip_new_ids := grow !skip_new_ids;
+              skip_cap := new_cap
+            end;
+            let s = !skip_size in
+            Array.unsafe_set !skip_keys s pkey;
+            Array.unsafe_set !skip_new_ids s new_id;
+            skip_size := s + 1
+          end else begin
+            for i = 0 to !skip_size - 1 do
+              MergeQueue.push queue
+                (Array.unsafe_get !skip_keys i lsr 21)
+                (Array.unsafe_get !skip_keys i land 0x1FFFFF)
+                (Array.unsafe_get !skip_new_ids i)
+            done;
+            skip_size := 0;
             Array.unsafe_set sym_c pos new_id;
             Array.unsafe_set sym_len pos
               (Array.unsafe_get sym_len pos
