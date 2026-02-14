@@ -68,7 +68,7 @@ module Safe = struct
         let data_gen = Nx.to_buffer img in
         let data =
           match Genarray.kind data_gen with
-          | Int8_unsigned -> array1_of_genarray data_gen
+          | Int8_unsigned -> reshape_1 data_gen (h * w * c)
         in
         let extension = Filename.extension path |> String.lowercase_ascii in
         match extension with
