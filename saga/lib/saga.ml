@@ -1073,9 +1073,41 @@ module Tokenizer = struct
                   pad_to_length encoding target)
                 encodings)
 
+  let encode_sequences_parallel t sequences ~add_special_tokens ~truncation =
+    let arr = Array.of_list sequences in
+    let n = Array.length arr in
+    let results = Array.make n (encode_single t ~add_special_tokens ~truncation arr.(0)) in
+    let num_domains = min n (Domain.recommended_domain_count ()) in
+    if num_domains <= 1 then
+      for i = 1 to n - 1 do
+        results.(i) <- encode_single t ~add_special_tokens ~truncation arr.(i)
+      done
+    else begin
+      let chunk_size = n / num_domains in
+      let remainder = n mod num_domains in
+      let domains = Array.init (num_domains - 1) (fun d ->
+        let start = (d + 1) * chunk_size + min (d + 1) remainder in
+        let len = chunk_size + (if d + 1 < remainder then 1 else 0) in
+        Domain.spawn (fun () ->
+          for i = start to start + len - 1 do
+            results.(i) <- encode_single t ~add_special_tokens ~truncation arr.(i)
+          done))
+      in
+      let main_len = chunk_size + (if 0 < remainder then 1 else 0) in
+      for i = 1 to main_len - 1 do
+        results.(i) <- encode_single t ~add_special_tokens ~truncation arr.(i)
+      done;
+      Array.iter Domain.join domains
+    end;
+    Array.to_list results
+
   let encode_sequences t sequences ~add_special_tokens ~padding ~truncation =
+    let n = List.length sequences in
     let raw =
-      List.map (encode_single t ~add_special_tokens ~truncation) sequences
+      if n >= 4 then
+        encode_sequences_parallel t sequences ~add_special_tokens ~truncation
+      else
+        List.map (encode_single t ~add_special_tokens ~truncation) sequences
     in
     apply_padding t raw padding
 
