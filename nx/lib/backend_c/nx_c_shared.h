@@ -397,4 +397,27 @@ static inline void cleanup_ndarray(ndarray_t *arr) {
   if (arr->strides) free(arr->strides);
 }
 
+// Extract ndarray using caller-provided stack buffers (no malloc)
+static inline ndarray_t extract_ndarray_stack(value v_ffi_tensor,
+                                              int *shape_buf,
+                                              int *strides_buf) {
+  value v_data = Field(v_ffi_tensor, FFI_TENSOR_DATA);
+  value v_shape = Field(v_ffi_tensor, FFI_TENSOR_SHAPE);
+  value v_strides = Field(v_ffi_tensor, FFI_TENSOR_STRIDES);
+  int offset = Int_val(Field(v_ffi_tensor, FFI_TENSOR_OFFSET));
+
+  struct caml_ba_array *ba = Caml_ba_array_val(v_data);
+  void *data = ba->data;
+
+  int ndim = Wosize_val(v_shape);
+
+  for (int i = 0; i < ndim; i++) {
+    shape_buf[i] = Int_val(Field(v_shape, i));
+    strides_buf[i] = Int_val(Field(v_strides, i));
+  }
+
+  ndarray_t arr = {data, ndim, shape_buf, strides_buf, offset};
+  return arr;
+}
+
 #endif  // NX_C_SHARED_H

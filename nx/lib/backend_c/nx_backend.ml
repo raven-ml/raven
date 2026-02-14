@@ -836,8 +836,8 @@ let op_fold ?out x ~output_size ~kernel_size ~stride ~dilation ~padding =
   out
 
 let op_matmul ~out x y =
-  let x' = ensure_materializable x in
-  let y' = ensure_materializable y in
+  let x' = if is_contiguous x then x else ensure_materializable x in
+  let y' = if is_contiguous y then y else ensure_materializable y in
   let x_ffi = to_ffi_tensor x' in
   let y_ffi = to_ffi_tensor y' in
   let out_ffi = to_ffi_tensor out in

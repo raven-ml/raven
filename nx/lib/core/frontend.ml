@@ -4316,16 +4316,24 @@ module Make (B : Backend_intf.S) = struct
       match out with
       | Some o -> o
       | None ->
-          let out_shape = matmul_output_shape a b in
-          let out_shape_concrete =
-            match Symbolic_shape.eval out_shape with
-            | Some s -> s
-            | None ->
-                Error.failed ~op:"matmul"
-                  ~what:"cannot compute output shape with symbolic dimensions"
-                  ()
-          in
-          empty (B.context a) (B.dtype a) out_shape_concrete
+          let ndim_a = ndim a in
+          let ndim_b = ndim b in
+          if ndim_a = 2 && ndim_b = 2 then
+            (* Fast path for 2D×2D: skip Symbolic_shape/broadcast_shapes *)
+            let m = dim 0 a in
+            let n = dim 1 b in
+            empty (B.context a) (B.dtype a) [| m; n |]
+          else
+            let out_shape = matmul_output_shape a b in
+            let out_shape_concrete =
+              match Symbolic_shape.eval out_shape with
+              | Some s -> s
+              | None ->
+                  Error.failed ~op:"matmul"
+                    ~what:"cannot compute output shape with symbolic dimensions"
+                    ()
+            in
+            empty (B.context a) (B.dtype a) out_shape_concrete
     in
     B.op_matmul ~out a b;
     out
