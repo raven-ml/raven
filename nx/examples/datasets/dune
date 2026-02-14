@@ -1,3 +1,0 @@
-(executables
- (names airline breast_cancer california cifar10 diabetes iris mnist)
- (libraries nx_datasets logs logs.fmt hugin nx))

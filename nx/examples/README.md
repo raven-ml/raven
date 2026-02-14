@@ -1,47 +1,35 @@
 # Nx Examples
 
-A curated set of standalone OCaml programs demonstrating how to use the `Nx` library for everything from creating basic arrays to advanced linear algebra.
+Ten standalone examples that teach Nx from the ground up. Each builds on the
+previous one, progressing from array creation to a complete data pipeline.
 
-Each numbered folder is a self-contained example:
+## Examples
 
-1. **01-hello-world**
-   Creating arrays: `zeros`, `ones`, `full`, ranges, identity, custom data, and `init` with a function.
+| #   | Example                                                      | What You'll Learn                                                    |
+| --- | ------------------------------------------------------------ | -------------------------------------------------------------------- |
+| 01  | [Creating Arrays](01-creating-arrays/)                       | `zeros`, `ones`, `arange`, `linspace`, `init`, `meshgrid`, dtypes    |
+| 02  | [Infix and Arithmetic](02-infix-and-arithmetic/)             | `Nx.Infix` operators (`+`, `*$`, `/`), `abs`, `sqrt`, `exp`, `clamp` |
+| 03  | [Indexing and Slicing](03-indexing-and-slicing/)             | `I`, `R`, `Rs`, `A`, `.${[...]}`, `compress`, `where`, `take`        |
+| 04  | [Reshaping and Broadcasting](04-reshaping-and-broadcasting/) | `reshape`, `flatten`, `transpose`, `vstack`, broadcasting rules      |
+| 05  | [Reductions and Statistics](05-reductions-and-statistics/)   | `mean`, `std`, `argmax`, `cumsum`, `all`, `any`, axis parameter      |
+| 06  | [Random Numbers](06-random-numbers/)                         | `Rng.key`, `Rng.split`, `Rng.uniform`, `Rng.normal`, Monte Carlo     |
+| 07  | [Linear Algebra](07-linear-algebra/)                         | `@@`, `/@`, `inv`, `det`, `lstsq`, `eigh`, `svd`                     |
+| 08  | [Signal Processing](08-signal-processing/)                   | `rfft`, `irfft`, `rfftfreq`, frequency filtering                     |
+| 09  | [Image Processing](09-image-processing/)                     | `correlate2d`, `max_pool2d`, Sobel edges, `Nx_io.save_image`         |
+| 10  | [Data Pipeline](10-data-pipeline/)                           | `Nx_datasets`, `standardize`, train/test split, nearest-centroid     |
 
-2. **02-basic-operations**
-   Arithmetic (`add`, `sub`, …), indexing, in-place ops, scalar math, transforms (`transpose`, `reshape`, `flatten`), comparisons and clipping.
+## Running
 
-3. **03-broadcasting**
-   Automatic and explicit broadcasting: matrix–scalar, matrix–vector, outer sums, `broadcast_to`, and `broadcast_arrays`.
-
-4. **04-statistics**
-   Reductions and statistical functions: `sum`, `mean`, `min`/`max`, `prod`, `var`, `std`, `argmax`/`argmin`, sorting, unique, masks (`isnan`, `isinf`), and custom `fold`.
-
-5. **05-array-manipulation**
-   Reshaping, slicing (`get`, multi-axis), permuting axes, stacking (`vstack`, `hstack`, `dstack`, `concatenate`), splitting, expanding/squeezing dimensions, tiling/repeating, padding, flipping/rolling.
-
-6. **06-linear-algebra**
-   Matrix ops (`matmul`, `inv`, `solve`), eigendecomposition (`eig`, `eigh`), SVD, and a simple linear regression example.
-
-7. **07-io**
-   File I/O operations: reading/writing NPY files, NPZ archives, and image files (PNG/JPEG).
-
-## Building & Running
-
-From the root of the Raven repository:
+From the repository root:
 
 ```bash
-dune exec nx/examples/01-hello-world/main.exe
-dune exec nx/examples/02-basic-operations/main.exe
-dune exec nx/examples/03-broadcasting/main.exe
-dune exec nx/examples/04-statistics/main.exe
-dune exec nx/examples/05-array-manipulation/main.exe
-dune exec nx/examples/06-linear-algebra/main.exe
-dune exec nx/examples/07-io/main.exe
+dune exec nx/examples/01-creating-arrays/main.exe
+dune exec nx/examples/02-infix-and-arithmetic/main.exe
+# ... and so on through 10
 ```
 
-Or cd into a folder:
+## Dependencies
 
-```bash
-cd nx/examples/01-hello-world
-dune exec main.exe
-```
+- Examples 01-08 use only `nx`
+- Example 09 adds `nx.io` (image I/O)
+- Example 10 adds `nx.datasets` (bundled datasets)

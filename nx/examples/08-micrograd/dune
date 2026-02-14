@@ -1,9 +1,0 @@
-(library
- (name micrograd)
- (modules engine nn)
- (libraries nx))
-
-(executable
- (name demo)
- (modules demo)
- (libraries nx nx.datasets hugin micrograd))
