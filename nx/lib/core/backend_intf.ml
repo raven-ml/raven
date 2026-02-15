@@ -3,35 +3,48 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Backend interface that every Nx backend must implement.
+(** Backend interface for Nx tensor operations.
 
     This module type defines the contract between Nx's frontend and its
     pluggable backends. Backends may execute operations eagerly (C backend),
     raise effects for JIT compilation (Rune), build computation graphs, or
     implement other execution strategies.
 
-    The frontend handles broadcasting, shape validation, and dtype promotion
-    before invoking backend operations, ensuring backends receive well-formed
-    inputs.
-
     {1 Design Philosophy}
 
-    Inspired by tinygrad's minimalism, but operating at an abstraction level
-    closer to XLA for reasonable eager CPU performance. Rune's JIT pipeline
-    deconstructs these operations into lower primitives, so this interface sits
-    at a higher level than JIT operations.
+    Operations exist at the level of C standard library functions: every
+    operation that maps to a C stdlib call is a backend primitive, avoiding the
+    overhead of composing multiple operations in eager mode. Rune's JIT pipeline
+    can decompose these into lower primitives when building computation graphs.
 
-    Binary and unary operations write to caller-provided output buffers for
-    memory reuse. Movement operations manipulate view metadata without copying
-    data when possible. *)
+    {1 Frontend/Backend Contract}
+
+    The frontend is responsible for:
+    - Broadcasting inputs to matching shapes before calling binary operations.
+    - Promoting dtypes to compatible types before calling operations.
+    - Validating parameters (axes in range, shapes compatible, etc.).
+    - Allocating output tensors with the correct shape and dtype.
+
+    The backend can assume all inputs are well-formed. It is responsible for:
+    - Executing the operation correctly for all supported dtypes.
+    - Handling strided (non-contiguous) inputs via the view metadata.
+    - Returning tensors with correct view metadata.
+
+    {1 Conventions}
+
+    - Binary, unary, reduction, and other compute operations write results to a
+      caller-provided [~out] buffer for memory reuse. The frontend controls all
+      allocation.
+    - Movement operations manipulate view metadata (shape, strides, offset)
+      without copying data when possible.
+    - Operations that must allocate by nature ([copy], [contiguous], [pad],
+      [scatter]) return new tensor handles. *)
 module type S = sig
   (** {1 Types} *)
 
   type ('a, 'b) t
-  (** Opaque tensor handle.
-
-      ['a] is the OCaml element type (e.g., [float], [int32]). ['b] is a phantom
-      type that tags the dtype for type safety. *)
+  (** ['a] is the OCaml element type (e.g., [float], [int32]). ['b] is a
+      phantom type that tags the dtype for type safety. *)
 
   type context
   (** Backend execution context.
@@ -42,356 +55,466 @@ module type S = sig
   (** {1 Tensor Properties} *)
 
   val view : ('a, 'b) t -> View.t
-  (** [view t] returns the view metadata for [t].
-
-      The view describes the logical shape, strides, and offset into the
-      underlying buffer. *)
+  (** [view t] returns the strided view metadata describing [t]'s logical
+      layout (shape, strides, offset) over its underlying buffer. *)
 
   val dtype : ('a, 'b) t -> ('a, 'b) Dtype.t
   (** [dtype t] returns the element type of [t]. *)
 
   val context : ('a, 'b) t -> context
-  (** [context t] returns the execution context of [t]. *)
+  (** [context t] returns the execution context that owns [t]. *)
 
   val to_host : ('a, 'b) t -> ('a, 'b, Nx_buffer.c_layout) Nx_buffer.Array1.t
-  (** [to_host t] returns the raw buffer of [t] as host memory.
+  (** [to_host t] returns [t]'s data as a flat, C-contiguous host buffer.
 
-      The buffer is a flat, contiguous C-layout Nx_buffer. Use {!view} to
-      interpret the logical structure.
+      Use {!view} to interpret the logical structure. CPU backends may return a
+      direct reference (zero-copy); GPU backends copy from device to host. *)
 
-      Copy semantics are backend-dependent: CPU backends return a direct
-      reference (no copy), while GPU backends copy from device to host. *)
+  (** {1 Tensor Creation} *)
 
-  (** {1 Buffer Allocation} *)
+  val buffer : context -> ('a, 'b) Dtype.t -> int array -> ('a, 'b) t
+  (** [buffer ctx dtype shape] allocates an uninitialized tensor.
 
-  val op_buffer : context -> ('a, 'b) Dtype.t -> int -> ('a, 'b) t
-  (** [op_buffer context dtype size_in_elements] allocates an uninitialized
-      buffer.
+      Contents are undefined. Used internally by the frontend to pre-allocate
+      [~out] buffers before calling operations.
 
-      Returns a tensor with [size_in_elements] elements of [dtype]. The buffer
-      contents are undefined. *)
+      {b Backend must:} return a tensor with the given shape and dtype whose
+      view is C-contiguous. *)
 
-  val op_const_scalar : context -> 'a -> ('a, 'b) Dtype.t -> ('a, 'b) t
-  (** [op_const_scalar context value dtype] creates a scalar tensor.
+  val full : context -> ('a, 'b) Dtype.t -> int array -> 'a -> ('a, 'b) t
+  (** [full ctx dtype shape value] creates a tensor where every element is
+      [value].
 
-      Returns a tensor containing the single value [value] with type [dtype]. *)
+      For scalars, [shape] is [\[||\]]. Subsumes zeros, ones, and constant fill.
+
+      {b Backend must:} return a C-contiguous tensor of the given shape and
+      dtype with all elements set to [value]. *)
 
   val from_host :
     context -> ('a, 'b, Nx_buffer.c_layout) Nx_buffer.Array1.t -> ('a, 'b) t
-  (** [from_host context buffer] creates a tensor from a host memory buffer.
+  (** [from_host ctx buf] creates a tensor from a flat, C-contiguous host
+      buffer.
 
-      The input [buffer] must be C-contiguous.
+      CPU backends may share the buffer directly (zero-copy). GPU backends copy
+      from host to device.
 
-      Copy semantics are backend-dependent: CPU backends may share the buffer
-      directly (no copy), while GPU backends copy from host to device. *)
+      {b Frontend guarantees:} [buf] is C-contiguous. *)
 
   (** {1 Element-wise Binary Operations}
 
-      All binary operations write results to a caller-provided [out] buffer. The
-      frontend ensures inputs are broadcast to the same shape and cast to
-      compatible dtypes before invocation.
+      {b Frontend guarantees:} [out], [a], and [b] have identical shapes (after
+      broadcasting) and compatible dtypes (after promotion). [out] is
+      C-contiguous and pre-allocated with the correct shape.
 
-      {2 Arithmetic Operations} *)
+      {b Backend must:} write exactly [numel] elements to [out], respecting the
+      strides of [a] and [b] (which may be non-contiguous or broadcast).
 
-  val op_add : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_add ~out a b] computes [a + b] element-wise, writing to [out]. *)
+      {2 Arithmetic} *)
 
-  val op_sub : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_sub ~out a b] computes [a - b] element-wise, writing to [out]. *)
+  val add : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  (** [add ~out a b] computes [out.{i} <- a.{i} + b.{i}]. *)
 
-  val op_mul : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_mul ~out a b] computes [a * b] element-wise, writing to [out]. *)
+  val sub : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  (** [sub ~out a b] computes [out.{i} <- a.{i} - b.{i}]. *)
 
-  val op_idiv : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_idiv ~out a b] computes integer division [a / b] with truncation
-      toward zero, writing to [out]. *)
+  val mul : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  (** [mul ~out a b] computes [out.{i} <- a.{i} * b.{i}]. *)
 
-  val op_fdiv : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_fdiv ~out a b] computes floating-point division [a / b], writing to
-      [out]. *)
+  val div : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  (** [div ~out a b] computes [out.{i} <- a.{i} / b.{i}].
 
-  val op_mod : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_mod ~out a b] computes modulus [a mod b], writing to [out].
+      Integer dtypes use truncation toward zero (C division). Floating-point
+      dtypes use IEEE 754 division. *)
 
-      For integers, uses C's [%] operator (truncated division). For floats, uses
-      [fmod]. In both cases, the sign of the result follows the sign of the
-      dividend [a]. *)
+  val mod_ : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  (** [mod_ ~out a b] computes the remainder of [a / b].
 
-  val op_pow : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_pow ~out base exp] computes [base ^ exp] element-wise, writing to
-      [out]. *)
+      Integers use C's [%] operator (truncated division). Floats use [fmod].
+      The sign of the result follows the dividend [a]. *)
 
-  (** {2 Comparison Operations} *)
+  val pow : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  (** [pow ~out base exponent] computes [out.{i} <- base.{i} ^ exponent.{i}]. *)
 
-  val op_cmpeq :
+  val atan2 : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  (** [atan2 ~out y x] computes [out.{i} <- atan2(y.{i}, x.{i})].
+
+      Returns the angle in radians in [(-π, π\]], handling all quadrants. *)
+
+  (** {2 Comparison}
+
+      Comparison operations produce boolean tensors.
+
+      {b Frontend guarantees:} [out] is a [(bool, bool_elt)] tensor with the
+      same shape as [a] and [b]. *)
+
+  val cmpeq :
     out:(bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_cmpeq ~out a b] computes [a = b] element-wise, writing bool result to
-      [out]. *)
+  (** [cmpeq ~out a b] computes [out.{i} <- (a.{i} = b.{i})]. *)
 
-  val op_cmpne :
+  val cmpne :
     out:(bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_cmpne ~out a b] computes [a <> b] element-wise, writing bool result to
-      [out]. *)
+  (** [cmpne ~out a b] computes [out.{i} <- (a.{i} <> b.{i})]. *)
 
-  val op_cmplt :
+  val cmplt :
     out:(bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_cmplt ~out a b] computes [a < b] element-wise, writing bool result to
-      [out]. *)
+  (** [cmplt ~out a b] computes [out.{i} <- (a.{i} < b.{i})]. *)
 
-  val op_cmple :
+  val cmple :
     out:(bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_cmple ~out a b] computes [a <= b] element-wise, writing bool result to
-      [out]. *)
+  (** [cmple ~out a b] computes [out.{i} <- (a.{i} <= b.{i})]. *)
 
-  (** {2 Min/Max Operations} *)
+  (** {2 Min/Max} *)
 
-  val op_max : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_max ~out a b] computes element-wise maximum, writing to [out]. *)
+  val max : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  (** [max ~out a b] computes [out.{i} <- max(a.{i}, b.{i})]. *)
 
-  val op_min : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_min ~out a b] computes element-wise minimum, writing to [out]. *)
+  val min : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  (** [min ~out a b] computes [out.{i} <- min(a.{i}, b.{i})]. *)
 
-  (** {2 Bitwise Operations} *)
+  (** {2 Bitwise}
 
-  val op_xor : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_xor ~out a b] computes bitwise XOR, writing to [out]. *)
+      Operate on the binary representation of integer and boolean dtypes. For
+      booleans, these are equivalent to logical AND/OR/XOR. *)
 
-  val op_or : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_or ~out a b] computes bitwise OR, writing to [out]. *)
+  val xor : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  (** [xor ~out a b] computes bitwise XOR. *)
 
-  val op_and : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_and ~out a b] computes bitwise AND, writing to [out]. *)
+  val or_ : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  (** [or_ ~out a b] computes bitwise OR. *)
+
+  val and_ : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  (** [and_ ~out a b] computes bitwise AND. *)
 
   (** {1 Element-wise Unary Operations}
 
-      All unary operations write results to a caller-provided [out] buffer.
+      {b Frontend guarantees:} [out] and [x] have the same shape and dtype.
+      [out] is C-contiguous.
 
-      {2 Arithmetic Operations} *)
+      {b Backend must:} write exactly [numel] elements to [out], respecting
+      the strides of [x].
 
-  val op_neg : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_neg ~out x] computes negation [-x] element-wise, writing to [out].
+      {2 Arithmetic} *)
 
-      For boolean inputs, computes logical NOT. *)
+  val neg : out:('a, 'b) t -> ('a, 'b) t -> unit
+  (** [neg ~out x] computes [out.{i} <- -x.{i}]. *)
 
-  val op_recip : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_recip ~out x] computes reciprocal [1 / x] element-wise, writing to
-      [out]. *)
+  val recip : out:('a, 'b) t -> ('a, 'b) t -> unit
+  (** [recip ~out x] computes [out.{i} <- 1 / x.{i}]. *)
 
-  val op_abs : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_abs ~out x] computes absolute value element-wise, writing to [out]. *)
+  val abs : out:('a, 'b) t -> ('a, 'b) t -> unit
+  (** [abs ~out x] computes [out.{i} <- |x.{i}|]. *)
 
-  val op_sqrt : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_sqrt ~out x] computes square root element-wise, writing to [out]. *)
+  val sqrt : out:('a, 'b) t -> ('a, 'b) t -> unit
+  (** [sqrt ~out x] computes [out.{i} <- √x.{i}]. *)
 
-  (** {2 Exponential and Logarithm Operations} *)
+  val sign : out:('a, 'b) t -> ('a, 'b) t -> unit
+  (** [sign ~out x] computes the sign function: [-1] for negative, [0] for
+      zero, [1] for positive. Returns NaN for floating-point NaN inputs. *)
 
-  val op_exp : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_exp ~out x] computes natural exponential [e ^ x] element-wise, writing
-      to [out]. *)
+  (** {2 Exponential and Logarithm} *)
 
-  val op_log : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_log ~out x] computes natural logarithm [ln(x)] element-wise, writing
-      to [out]. *)
+  val exp : out:('a, 'b) t -> ('a, 'b) t -> unit
+  (** [exp ~out x] computes [out.{i} <- eˣ⁽ⁱ⁾]. *)
 
-  (** {2 Trigonometric Operations} *)
+  val log : out:('a, 'b) t -> ('a, 'b) t -> unit
+  (** [log ~out x] computes [out.{i} <- ln(x.{i})]. *)
 
-  val op_sin : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_sin ~out x] computes sine element-wise, writing to [out].
+  (** {2 Trigonometric}
 
-      Input is in radians. *)
+      All inputs are in radians. *)
 
-  val op_cos : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_cos ~out x] computes cosine element-wise, writing to [out].
+  val sin : out:('a, 'b) t -> ('a, 'b) t -> unit
+  (** [sin ~out x] computes [out.{i} <- sin(x.{i})]. *)
 
-      Input is in radians. *)
+  val cos : out:('a, 'b) t -> ('a, 'b) t -> unit
+  (** [cos ~out x] computes [out.{i} <- cos(x.{i})]. *)
+
+  val tan : out:('a, 'b) t -> ('a, 'b) t -> unit
+  (** [tan ~out x] computes [out.{i} <- tan(x.{i})]. *)
+
+  val asin : out:('a, 'b) t -> ('a, 'b) t -> unit
+  (** [asin ~out x] computes [out.{i} <- arcsin(x.{i})].
+
+      Returns values in [[-π/2, π/2]]. *)
+
+  val acos : out:('a, 'b) t -> ('a, 'b) t -> unit
+  (** [acos ~out x] computes [out.{i} <- arccos(x.{i})].
+
+      Returns values in [[0, π]]. *)
+
+  val atan : out:('a, 'b) t -> ('a, 'b) t -> unit
+  (** [atan ~out x] computes [out.{i} <- arctan(x.{i})].
+
+      Returns values in [[-π/2, π/2]]. *)
+
+  (** {2 Hyperbolic} *)
+
+  val sinh : out:('a, 'b) t -> ('a, 'b) t -> unit
+  (** [sinh ~out x] computes [out.{i} <- sinh(x.{i})]. *)
+
+  val cosh : out:('a, 'b) t -> ('a, 'b) t -> unit
+  (** [cosh ~out x] computes [out.{i} <- cosh(x.{i})]. *)
+
+  val tanh : out:('a, 'b) t -> ('a, 'b) t -> unit
+  (** [tanh ~out x] computes [out.{i} <- tanh(x.{i})]. *)
+
+  (** {2 Rounding}
+
+      For integer dtypes, all rounding operations are the identity. *)
+
+  val trunc : out:('a, 'b) t -> ('a, 'b) t -> unit
+  (** [trunc ~out x] rounds toward zero. *)
+
+  val ceil : out:('a, 'b) t -> ('a, 'b) t -> unit
+  (** [ceil ~out x] rounds toward positive infinity. *)
+
+  val floor : out:('a, 'b) t -> ('a, 'b) t -> unit
+  (** [floor ~out x] rounds toward negative infinity. *)
+
+  val round : out:('a, 'b) t -> ('a, 'b) t -> unit
+  (** [round ~out x] rounds to nearest integer, half away from zero (C's
+      [round]). *)
+
+  (** {2 Special Functions} *)
+
+  val erf : out:('a, 'b) t -> ('a, 'b) t -> unit
+  (** [erf ~out x] computes the error function
+      [erf(x) = 2/√π ∫₀ˣ e^(-t²) dt]. *)
 
   (** {1 Ternary Operations} *)
 
-  val op_where :
+  val where :
     out:('a, 'b) t ->
     (bool, Dtype.bool_elt) t ->
     ('a, 'b) t ->
     ('a, 'b) t ->
     unit
-  (** [op_where ~out cond if_true if_false] selects elements conditionally,
-      writing to [out].
+  (** [where ~out cond if_true if_false] selects elements: [if_true.{i}] where
+      [cond.{i}] is true, [if_false.{i}] otherwise.
 
-      For each element position, selects from [if_true] where [cond] is true,
-      otherwise from [if_false]. All inputs must have the same shape. *)
+      {b Frontend guarantees:} all four tensors have identical shapes. [cond]
+      is boolean. [out], [if_true], [if_false] share the same dtype. *)
 
   (** {1 Reduction Operations}
 
-      Reduction operations aggregate values along specified axes. When
-      [keepdims] is true, reduced axes have size 1 in the output; when false,
-      they are removed entirely. *)
+      Reductions aggregate values along one or more axes.
 
-  val op_reduce_sum :
+      {b Frontend guarantees:} [axes] contains valid, non-negative,
+      deduplicated axis indices. [out] is pre-allocated with the correct shape:
+      reduced axes are either removed or kept as size-1 dimensions depending on
+      [keepdims]. *)
+
+  val reduce_sum :
     out:('a, 'b) t -> axes:int array -> keepdims:bool -> ('a, 'b) t -> unit
-  (** [op_reduce_sum ~out ~axes ~keepdims x] sums elements over [axes], writing
-      to [out]. *)
+  (** [reduce_sum ~out ~axes ~keepdims x] sums elements along [axes]. *)
 
-  val op_reduce_prod :
+  val reduce_prod :
     out:('a, 'b) t -> axes:int array -> keepdims:bool -> ('a, 'b) t -> unit
-  (** [op_reduce_prod ~out ~axes ~keepdims x] multiplies elements over [axes],
-      writing to [out]. *)
+  (** [reduce_prod ~out ~axes ~keepdims x] multiplies elements along [axes]. *)
 
-  val op_reduce_max :
+  val reduce_max :
     out:('a, 'b) t -> axes:int array -> keepdims:bool -> ('a, 'b) t -> unit
-  (** [op_reduce_max ~out ~axes ~keepdims x] finds maximum elements over [axes],
-      writing to [out]. *)
+  (** [reduce_max ~out ~axes ~keepdims x] finds maximum along [axes]. *)
 
-  val op_reduce_min :
+  val reduce_min :
     out:('a, 'b) t -> axes:int array -> keepdims:bool -> ('a, 'b) t -> unit
-  (** [op_reduce_min ~out ~axes ~keepdims x] finds minimum elements over [axes],
-      writing to [out]. *)
+  (** [reduce_min ~out ~axes ~keepdims x] finds minimum along [axes]. *)
 
-  val op_associative_scan :
-    axis:int -> op:[ `Sum | `Prod | `Max | `Min ] -> ('a, 'b) t -> ('a, 'b) t
-  (** [op_associative_scan ~axis ~op x] computes an inclusive scan along [axis]
-      using [op].
+  val argmax :
+    out:(int32, Dtype.int32_elt) t ->
+    axis:int ->
+    keepdims:bool ->
+    ('a, 'b) t ->
+    unit
+  (** [argmax ~out ~axis ~keepdims x] writes int32 indices of maximum values
+      along [axis] to [out]. For ties, returns the first occurrence.
 
-      Returns a new tensor with the same shape as [x]. For [op = `Sum], computes
-      cumulative sum; for [op = `Prod], cumulative product; for [op = `Max] and
-      [`Min], running maximum and minimum. *)
+      {b Frontend guarantees:} [axis] is valid and non-negative. [out] has the
+      correct reduced shape with int32 dtype. *)
+
+  val argmin :
+    out:(int32, Dtype.int32_elt) t ->
+    axis:int ->
+    keepdims:bool ->
+    ('a, 'b) t ->
+    unit
+  (** [argmin ~out ~axis ~keepdims x] writes int32 indices of minimum values
+      along [axis] to [out]. For ties, returns the first occurrence.
+
+      {b Frontend guarantees:} [axis] is valid and non-negative. [out] has the
+      correct reduced shape with int32 dtype. *)
+
+  val associative_scan :
+    out:('a, 'b) t ->
+    axis:int ->
+    op:[ `Sum | `Prod | `Max | `Min ] ->
+    ('a, 'b) t ->
+    unit
+  (** [associative_scan ~out ~axis ~op x] computes an inclusive prefix scan
+      along [axis]. [`Sum] for cumulative sum, [`Prod] for cumulative product,
+      [`Max]/[`Min] for running max/min.
+
+      {b Frontend guarantees:} [axis] is valid and non-negative. [out] has the
+      same shape as [x]. *)
+
+  (** {1 Sort Operations}
+
+      {b Frontend guarantees:} [axis] is valid and non-negative. [out] is
+      pre-allocated with the correct shape and dtype. *)
+
+  val sort : out:('a, 'b) t -> axis:int -> descending:bool -> ('a, 'b) t -> unit
+  (** [sort ~out ~axis ~descending x] sorts elements along [axis]. NaN values
+      are placed at the end regardless of sort direction.
+
+      {b Frontend guarantees:} [out] has the same shape and dtype as [x]. *)
+
+  val argsort :
+    out:(int32, Dtype.int32_elt) t ->
+    axis:int ->
+    descending:bool ->
+    ('a, 'b) t ->
+    unit
+  (** [argsort ~out ~axis ~descending x] writes int32 indices that would sort
+      elements along [axis] to [out].
+
+      {b Frontend guarantees:} [out] has the same shape as [x] with int32
+      dtype. *)
 
   (** {1 Movement Operations}
 
-      Movement operations manipulate tensor view metadata (shape, strides,
-      offset) without copying data when possible. They return new tensor handles
-      with updated views over the same or new buffers. *)
+      Movement operations manipulate view metadata (shape, strides, offset)
+      without copying data when possible. They return new tensor handles
+      sharing the underlying buffer.
 
-  val op_expand : ('a, 'b) t -> Symbolic_shape.t -> ('a, 'b) t
-  (** [op_expand t shape] broadcasts dimensions of size 1 to [shape].
+      {b Frontend guarantees:} all parameters are validated (axes in range,
+      shapes compatible, bounds within limits).
 
-      Returns a new view with expanded dimensions. The underlying buffer is
-      shared. Dimensions of size 1 in [t] are repeated to match [shape]; other
-      dimensions must already match. *)
+      {b Backend must:} return a tensor with the correct view metadata. May
+      share the underlying buffer (zero-copy) or allocate if necessary. *)
 
-  val op_reshape : ('a, 'b) t -> Symbolic_shape.t -> ('a, 'b) t
-  (** [op_reshape t shape] changes the logical shape to [shape].
+  val expand : ('a, 'b) t -> Symbolic_shape.t -> ('a, 'b) t
+  (** [expand t shape] broadcasts dimensions of size 1 to match [shape] by
+      setting their stride to 0. Non-singleton dimensions must already match.
+      Zero-copy. *)
 
-      Returns a new view with the specified shape. The total number of elements
-      must remain constant. May require copying if [t] is not contiguous. *)
+  val reshape : ('a, 'b) t -> Symbolic_shape.t -> ('a, 'b) t
+  (** [reshape t shape] changes the logical shape, preserving element count.
 
-  val op_permute : ('a, 'b) t -> int array -> ('a, 'b) t
-  (** [op_permute t axes] reorders dimensions according to [axes].
+      Zero-copy when [t] is C-contiguous or the reshape is compatible with the
+      current strides. May copy if [t] is non-contiguous. *)
 
-      Returns a new view with permuted dimensions. [axes] must be a permutation
-      of [0, 1, ..., ndim-1]. The underlying buffer is shared. *)
+  val permute : ('a, 'b) t -> int array -> ('a, 'b) t
+  (** [permute t axes] reorders dimensions according to [axes], which must be
+      a permutation of [\[0, ..., ndim-1\]]. Zero-copy. *)
 
-  val op_shrink : ('a, 'b) t -> (int * int) array -> ('a, 'b) t
-  (** [op_shrink t ranges] extracts a slice using [ranges].
+  val shrink : ('a, 'b) t -> (int * int) array -> ('a, 'b) t
+  (** [shrink t ranges] extracts a contiguous slice. [ranges.(i)] is
+      [(start, stop)] with exclusive [stop]. Zero-copy (adjusts offset and
+      shape). *)
 
-      Returns a new view restricted to the specified ranges. [ranges.(i)] is
-      [(start, stop)] for dimension [i], where [stop] is exclusive. The
-      underlying buffer is shared. *)
+  val flip : ('a, 'b) t -> bool array -> ('a, 'b) t
+  (** [flip t axes] reverses dimensions where [axes.(i) = true] by negating
+      strides. Zero-copy. *)
 
-  val op_flip : ('a, 'b) t -> bool array -> ('a, 'b) t
-  (** [op_flip t axes] reverses dimensions where [axes] is [true].
+  val pad : ('a, 'b) t -> (int * int) array -> 'a -> ('a, 'b) t
+  (** [pad t padding fill_value] extends [t] with [fill_value]. [padding.(i)]
+      is [(before, after)] for dimension [i].
 
-      Returns a new view with flipped dimensions. [axes.(i) = true] reverses
-      dimension [i]. The underlying buffer is shared. *)
+      {b Backend must:} allocate a new buffer and copy data. *)
 
-  val op_pad : ('a, 'b) t -> (int * int) array -> 'a -> ('a, 'b) t
-  (** [op_pad t padding fill_value] pads [t] with [fill_value].
+  val cat : out:('a, 'b) t -> ('a, 'b) t list -> axis:int -> unit
+  (** [cat ~out tensors ~axis] concatenates [tensors] along [axis] into [out].
 
-      Returns a new tensor with padding applied. [padding.(i)] is
-      [(before, after)] for dimension [i], specifying the number of elements to
-      add. Requires allocating a new buffer. *)
+      {b Frontend guarantees:} all tensors have the same shape except along
+      [axis]. [axis] is valid. The list is non-empty. [out] is pre-allocated
+      with the correct concatenated shape. *)
 
-  val op_cat : ('a, 'b) t list -> int -> ('a, 'b) t
-  (** [op_cat tensors axis] concatenates [tensors] along [axis].
+  (** {1 Type Conversion and Memory} *)
 
-      Returns a new tensor containing all tensors joined along [axis]. All
-      tensors must have the same shape except along [axis]. Requires allocating
-      a new buffer. *)
+  val cast : out:('c, 'd) t -> ('a, 'b) t -> unit
+  (** [cast ~out x] converts elements of [x] to the dtype of [out].
 
-  (** {1 Type Conversion and Memory Operations} *)
+      Float-to-int truncates toward zero. Int-to-float may lose precision for
+      large values.
 
-  val op_cast : ('a, 'b) t -> ('c, 'd) Dtype.t -> ('c, 'd) t
-  (** [op_cast t target_dtype] converts elements of [t] to [target_dtype].
+      {b Frontend guarantees:} [out] is pre-allocated with the correct shape
+      and target dtype. *)
 
-      Returns a new tensor with converted elements. The conversion follows
-      standard casting rules (e.g., float to int truncates toward zero). *)
+  val contiguous : ('a, 'b) t -> ('a, 'b) t
+  (** [contiguous t] returns a C-contiguous version of [t].
 
-  val op_contiguous : ('a, 'b) t -> ('a, 'b) t
-  (** [op_contiguous t] returns a C-contiguous version of [t].
+      May return [t] unchanged if already C-contiguous. Otherwise allocates and
+      copies.
 
-      If [t] is already C-contiguous, may return [t] unchanged. Otherwise,
-      allocates a new buffer and copies data. *)
+      {b Backend must:} return a C-contiguous tensor with the same data. *)
 
-  val op_copy : ('a, 'b) t -> ('a, 'b) t
-  (** [op_copy t] duplicates [t].
+  val copy : ('a, 'b) t -> ('a, 'b) t
+  (** [copy t] creates an independent copy with its own buffer.
 
-      Returns a new tensor with its own buffer containing a copy of [t]'s data.
-  *)
+      {b Backend must:} always allocate a new buffer, even if [t] is already
+      contiguous. *)
 
-  val op_assign : ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_assign dst src] copies elements from [src] into [dst].
+  val assign : ('a, 'b) t -> ('a, 'b) t -> unit
+  (** [assign dst src] copies elements from [src] into [dst] in-place.
 
-      Shapes must match. Mutates [dst] in place. *)
+      {b Frontend guarantees:} [dst] and [src] have matching shapes and dtypes.
 
-  val op_as_strided :
-    ('a, 'b) t -> Symbolic_shape.t -> int array -> int -> ('a, 'b) t
-  (** [op_as_strided t shape strides offset] creates a view with custom
-      [strides] and [offset].
-
-      Returns a new view over [t]'s buffer with the specified shape, strides (in
-      elements), and offset (in elements). Backends supporting arbitrary strided
-      views implement this as zero-copy. Other backends may copy data if
-      necessary.
-
-      @raise Invalid_argument if the view would access out-of-bounds memory. *)
+      {b Backend must:} write [src]'s data into [dst]'s buffer, respecting
+      both tensors' strides. *)
 
   (** {1 Random Number Generation} *)
 
-  val op_threefry :
+  val threefry :
+    out:(int32, Dtype.int32_elt) t ->
     (int32, Dtype.int32_elt) t ->
     (int32, Dtype.int32_elt) t ->
-    (int32, Dtype.int32_elt) t
-  (** [op_threefry key counter] applies the Threefry-2x32 random number
-      generator.
+    unit
+  (** [threefry ~out key counter] applies the Threefry-2x32 hash function.
 
-      Takes a [key] and [counter] tensor, both int32, and returns pseudo-random
-      int32 values with the same shape as [counter]. Used as the foundation for
-      Nx's random number generation. *)
+      {b Frontend guarantees:} [key] and [counter] are int32 tensors with
+      compatible shapes. [out] is pre-allocated with the same shape as
+      [counter]. *)
 
-  (** {1 Indexed Access Operations}
+  (** {1 Indexed Access Operations} *)
 
-      These operations provide lazy, graph-based element access that avoids
-      premature realization and CPU-device transfers. They are primarily used
-      internally by Nx's slice and put_slice implementations. *)
+  val gather :
+    out:('a, 'b) t ->
+    ('a, 'b) t ->
+    (int32, Dtype.int32_elt) t ->
+    axis:int ->
+    unit
+  (** [gather ~out data indices ~axis] selects elements from [data] along
+      [axis] using [indices] and writes them to [out].
 
-  val op_gather : ('a, 'b) t -> (int32, Dtype.int32_elt) t -> int -> ('a, 'b) t
-  (** [op_gather data indices axis] gathers elements from [data] along [axis]
-      using [indices].
+      {b Frontend guarantees:} [rank data = rank indices]. [axis] is valid.
+      Index values are in range for [data]'s size along [axis]. [out] has the
+      same shape as [indices] and the same dtype as [data]. *)
 
-      Returns a new tensor with shape matching [indices]. The ranks of [data]
-      and [indices] must be equal. Each index value in [indices] selects an
-      element along [axis] from [data]. *)
-
-  val op_scatter :
+  val scatter :
     ?mode:[ `Set | `Add ] ->
     ?unique_indices:bool ->
     ('a, 'b) t ->
-    (int32, Dtype.int32_elt) t ->
-    ('a, 'b) t ->
-    int ->
+    indices:(int32, Dtype.int32_elt) t ->
+    updates:('a, 'b) t ->
+    axis:int ->
     ('a, 'b) t
-  (** [op_scatter ?mode ?unique_indices data_template indices updates axis]
-      scatters [updates] into a tensor shaped like [data_template] along [axis]
-      using [indices].
+  (** [scatter ?mode ?unique_indices template ~indices ~updates ~axis] places
+      [updates] into a tensor shaped like [template] along [axis].
 
-      Returns a new tensor with the same shape as [data_template]. The shapes of
-      [indices] and [updates] must match. Each index value in [indices]
-      specifies where to place the corresponding element from [updates] along
-      [axis].
+      [`Set] (default) uses the last update for duplicate indices. [`Add]
+      accumulates. [unique_indices = true] hints that indices are unique.
 
-      The [mode] parameter controls duplicate index handling: [`Set] (default)
-      uses the last update; [`Add] accumulates updates. Setting [unique_indices]
-      to [true] hints that indices are unique, enabling optimizations. *)
+      {b Frontend guarantees:} [rank indices = rank updates]. [axis] is valid.
+      [template] has the desired output shape.
 
-  val op_unfold :
+      {b Backend must:} allocate and return the result tensor, initialized from
+      [template]'s data. *)
+
+  (** {1 Window Operations}
+
+      Used to implement convolution as [unfold + matmul + fold]. *)
+
+  val unfold :
     ?out:('a, 'b) t ->
     ('a, 'b) t ->
     kernel_size:int array ->
@@ -399,17 +522,20 @@ module type S = sig
     dilation:int array ->
     padding:(int * int) array ->
     ('a, 'b) t
-  (** [op_unfold ?out t ~kernel_size ~stride ~dilation ~padding] extracts
-      sliding local blocks (im2col operation).
+  (** [unfold ?out t ~kernel_size ~stride ~dilation ~padding] extracts sliding
+      local blocks (im2col).
 
-      For input shape [(N, C, ...spatial_dims)], returns shape
-      [(N, C * prod(kernel_size), L)] where [L] is the number of blocks. Works
-      for any number of spatial dimensions. Used to implement convolution via
-      matrix multiplication.
+      Input shape [(N, C, ...spatial)] produces [(N, C * prod(kernel_size), L)]
+      where [L] is the number of windows. Works for any number of spatial
+      dimensions.
 
-      @param out Optional pre-allocated output tensor. *)
+      {b Frontend guarantees:} all array parameters have length equal to the
+      number of spatial dimensions. Values are positive.
 
-  val op_fold :
+      {b Backend must:} write results to [out] if provided, otherwise
+      allocate. *)
+
+  val fold :
     ?out:('a, 'b) t ->
     ('a, 'b) t ->
     output_size:int array ->
@@ -418,170 +544,132 @@ module type S = sig
     dilation:int array ->
     padding:(int * int) array ->
     ('a, 'b) t
-  (** [op_fold ?out t ~output_size ~kernel_size ~stride ~dilation ~padding]
-      combines sliding local blocks into a tensor (col2im operation).
+  (** [fold ?out t ~output_size ~kernel_size ~stride ~dilation ~padding]
+      combines sliding local blocks (col2im). Inverse of {!unfold}. Overlapping
+      values are summed.
 
-      For input shape [(N, C * prod(kernel_size), L)], returns shape
-      [(N, C, ...output_size)]. Inverse of {!op_unfold}. Overlapping values are
-      summed. Works for any number of spatial dimensions.
+      Input shape [(N, C * prod(kernel_size), L)] produces
+      [(N, C, ...output_size)].
 
-      @param out Optional pre-allocated output tensor. *)
+      {b Frontend guarantees:} parameters are consistent with a valid unfold
+      configuration.
+
+      {b Backend must:} write results to [out] if provided, otherwise
+      allocate. *)
 
   (** {1 Matrix Operations} *)
 
-  val op_matmul : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [op_matmul ~out a b] computes matrix multiplication [a * b], writing to
-      [out].
+  val matmul : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  (** [matmul ~out a b] computes matrix multiplication [a × b].
 
-      For 2D tensors, computes standard matrix multiplication. For higher
-      dimensions, performs batched matrix multiplication on the last two
-      dimensions, using strides to handle broadcasting without copying data.
+      For 2D inputs: standard matrix multiply. For higher dimensions: batched
+      multiply on the last two dimensions, with broadcasting via strides.
 
-      The caller must:
-      - Compute the correct output shape.
-      - Allocate [out] with matching shape and dtype.
-      - Ensure [out] is contiguous.
+      {b Frontend guarantees:} [a]'s last dim equals [b]'s second-to-last dim.
+      [out] is C-contiguous with the correct output shape.
 
-      Precondition: The last dimension of [a] must equal the second-to-last
-      dimension of [b]. *)
+      {b Backend must:} write the result to [out]. May use BLAS for
+      performance. [a] and [b] may be non-contiguous. *)
 
-  (** {1 Fourier Transforms} *)
+  (** {1 Fourier Transforms}
 
-  val op_fft :
+      {b Frontend guarantees:} [axes] contains valid, non-negative axis
+      indices. Input tensors have compatible complex or real dtypes. *)
+
+  val fft :
     ?out:(Complex.t, 'b) t ->
     (Complex.t, 'b) t ->
     axes:int array ->
     (Complex.t, 'b) t
-  (** [op_fft ?out t ~axes] computes the discrete Fourier transform (DFT) along
-      [axes].
+  (** [fft ?out t ~axes] computes the forward DFT along [axes]. *)
 
-      Returns a complex tensor with the same shape as [t]. The transform is
-      applied independently along each axis in [axes].
-
-      @param out Optional pre-allocated output tensor. *)
-
-  val op_ifft :
+  val ifft :
     ?out:(Complex.t, 'b) t ->
     (Complex.t, 'b) t ->
     axes:int array ->
     (Complex.t, 'b) t
-  (** [op_ifft ?out t ~axes] computes the inverse discrete Fourier transform
-      (IDFT) along [axes].
+  (** [ifft ?out t ~axes] computes the inverse DFT along [axes]. *)
 
-      Returns a complex tensor with the same shape as [t]. The inverse transform
-      is applied independently along each axis in [axes].
-
-      @param out Optional pre-allocated output tensor. *)
-
-  val op_rfft :
+  val rfft :
     ?out:(Complex.t, 'b) t ->
     (float, 'a) t ->
     dtype:(Complex.t, 'b) Dtype.t ->
     axes:int array ->
     (Complex.t, 'b) t
-  (** [op_rfft ?out t ~dtype ~axes] computes the real-valued discrete Fourier
-      transform (RDFT) along [axes].
+  (** [rfft ?out t ~dtype ~axes] computes the real-input DFT along [axes].
 
-      Takes a real input and returns a complex output with [dtype]. Exploits
-      conjugate symmetry to compute only the non-redundant half of the spectrum
-      along the last transformed axis.
+      Exploits conjugate symmetry to return only the non-redundant half of the
+      spectrum along the last transformed axis. *)
 
-      @param out Optional pre-allocated output tensor. *)
-
-  val op_irfft :
+  val irfft :
     ?out:(float, 'b) t ->
+    ?s:int array ->
     (Complex.t, 'a) t ->
     dtype:(float, 'b) Dtype.t ->
     axes:int array ->
-    s:int array option ->
     (float, 'b) t
-  (** [op_irfft ?out t ~dtype ~axes ~s] computes the inverse real-valued
-      discrete Fourier transform (IRDFT) along [axes].
+  (** [irfft ?out ?s t ~dtype ~axes] computes the inverse real-input DFT along
+      [axes].
 
-      Takes a complex input (assumed conjugate-symmetric) and returns a real
-      output with [dtype]. The parameter [s] specifies output sizes along
-      transformed axes; if [None], sizes are inferred from [t].
+      Takes conjugate-symmetric complex input, returns real output. [s]
+      specifies output sizes along the transformed axes; [None] infers sizes
+      from the input. *)
 
-      @param out Optional pre-allocated output tensor. *)
+  (** {1 Linear Algebra}
 
-  (** {1 Linear Algebra Operations}
+      All linalg operations support batching: the last two dimensions are the
+      matrix dimensions, earlier dimensions are batch dimensions.
 
-      Linear algebra operations support batching: the last two dimensions
-      contain the matrices, and earlier dimensions are treated as batch
-      dimensions. *)
+      {b Frontend guarantees:} input matrices have compatible shapes (square
+      where required, matching dimensions for solves).
 
-  val op_cholesky : upper:bool -> ('a, 'b) t -> ('a, 'b) t
-  (** [op_cholesky ~upper t] computes the Cholesky decomposition of [t].
+      {b Backend must:} allocate and return result tensors. Typically delegates
+      to LAPACK. *)
 
-      For a positive-definite matrix [A], returns triangular factor [L] or [U]
-      such that [A = L * L^T] (when [upper = false]) or [A = U^T * U] (when
-      [upper = true]).
+  val cholesky : upper:bool -> ('a, 'b) t -> ('a, 'b) t
+  (** [cholesky ~upper t] computes the Cholesky factorization of a
+      positive-definite matrix. Returns [L] (lower) or [U] (upper) such that
+      [A = L·Lᵀ] or [A = Uᵀ·U].
 
-      Precondition: [t] must contain square, positive-definite matrices.
+      @raise Failure if not positive-definite. *)
 
-      @raise Failure if [t] is not positive-definite. *)
+  val qr : reduced:bool -> ('a, 'b) t -> ('a, 'b) t * ('a, 'b) t
+  (** [qr ~reduced t] returns [(Q, R)] where [Q] is orthogonal and [R] is
+      upper triangular. [reduced = true] returns economy-size factorization. *)
 
-  val op_qr : reduced:bool -> ('a, 'b) t -> ('a, 'b) t * ('a, 'b) t
-  (** [op_qr ~reduced t] computes the QR decomposition of [t].
-
-      For an [m × n] matrix [A], returns [(Q, R)] where [A = Q * R], [Q] is
-      orthogonal, and [R] is upper triangular. When [reduced = true], returns
-      economy-size QR; when [reduced = false], returns full QR. *)
-
-  val op_svd :
+  val svd :
     full_matrices:bool ->
     ('a, 'b) t ->
     ('a, 'b) t * (float, Dtype.float64_elt) t * ('a, 'b) t
-  (** [op_svd ~full_matrices t] computes the singular value decomposition of
-      [t].
+  (** [svd ~full_matrices t] returns [(U, S, Vᴴ)]. [S] is a 1D float64
+      vector of singular values in descending order. [full_matrices = false]
+      returns thin SVD. *)
 
-      For an [m × n] matrix [A], returns [(U, S, V^H)] where [A = U * S * V^H].
-      [S] is a 1D vector of singular values in descending order, always float64.
-      When [full_matrices = false], returns thin SVD; when
-      [full_matrices = true], returns full SVD. *)
-
-  val op_eig :
+  val eig :
     vectors:bool ->
     ('a, 'b) t ->
     (Complex.t, Dtype.complex64_elt) t
     * (Complex.t, Dtype.complex64_elt) t option
-  (** [op_eig ~vectors t] computes eigenvalues and optionally eigenvectors of
-      [t].
+  (** [eig ~vectors t] computes eigenvalues (and optionally eigenvectors) of
+      a square matrix. Returns complex64 results. *)
 
-      Returns [(eigenvalues, optional eigenvectors)] as complex64. When
-      [vectors = true], computes eigenvectors; when [vectors = false], returns
-      [None] for eigenvectors.
-
-      Precondition: [t] must contain square matrices. *)
-
-  val op_eigh :
+  val eigh :
     vectors:bool ->
     ('a, 'b) t ->
     (float, Dtype.float64_elt) t * ('a, 'b) t option
-  (** [op_eigh ~vectors t] computes eigenvalues and optionally eigenvectors of
-      symmetric/Hermitian [t].
+  (** [eigh ~vectors t] computes eigenvalues (and optionally eigenvectors) of
+      a symmetric/Hermitian matrix. Eigenvalues are float64. *)
 
-      Returns [(eigenvalues, optional eigenvectors)]. Eigenvalues are float64;
-      eigenvectors match the input dtype. When [vectors = true], computes
-      eigenvectors; when [vectors = false], returns [None] for eigenvectors.
-
-      Precondition: [t] must contain symmetric (for real) or Hermitian (for
-      complex) matrices. *)
-
-  val op_triangular_solve :
+  val triangular_solve :
     upper:bool ->
     transpose:bool ->
     unit_diag:bool ->
     ('a, 'b) t ->
     ('a, 'b) t ->
     ('a, 'b) t
-  (** [op_triangular_solve ~upper ~transpose ~unit_diag a b] solves the
-      triangular system [A * x = b] or [A^T * x = b].
+  (** [triangular_solve ~upper ~transpose ~unit_diag a b] solves [A·x = b] or
+      [Aᵀ·x = b] where [A] is triangular.
 
-      Returns solution [x]. When [upper = true], [A] is upper triangular;
-      otherwise lower. When [transpose = true], solves [A^T * x = b]; otherwise
-      [A * x = b]. When [unit_diag = true], assumes the diagonal of [A] is all
-      ones and does not access it.
-
-      Precondition: [a] must contain triangular matrices compatible with [b]. *)
+      [upper]: [A] is upper triangular. [transpose]: solve [Aᵀ·x = b].
+      [unit_diag]: assume diagonal is all ones. *)
 end
