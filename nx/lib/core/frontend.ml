@@ -931,9 +931,7 @@ module Make (B : Backend_intf.S) = struct
     exp ?out (mul x ln2_b)
 
   let tan ?out x = unaryop ~op_name:"tan" ?out B.tan x
-
   let square ?out x = mul ?out x x
-
   let sign ?out x = unaryop ~op_name:"sign" ?out B.sign x
 
   (* Activations & related *)
@@ -951,7 +949,6 @@ module Make (B : Backend_intf.S) = struct
     recip ?out (add one_x exp_term)
 
   let rsqrt ?out x = recip ?out (sqrt x)
-
   let asin ?out x = unaryop ~op_name:"asin" ?out B.asin x
   let acos ?out x = unaryop ~op_name:"acos" ?out B.acos x
   let atan ?out x = unaryop ~op_name:"atan" ?out B.atan x
@@ -1001,9 +998,7 @@ module Make (B : Backend_intf.S) = struct
       | None -> result
     else
       let pos_inf_const = B.full (B.context x) dt [||] Float.infinity in
-      let neg_inf_const =
-        B.full (B.context x) dt [||] Float.neg_infinity
-      in
+      let neg_inf_const = B.full (B.context x) dt [||] Float.neg_infinity in
       let is_pos_inf = cmpeq x (broadcast_to (shape x) pos_inf_const) in
       let is_neg_inf = cmpeq x (broadcast_to (shape x) neg_inf_const) in
       logical_or ?out is_pos_inf is_neg_inf
@@ -2796,7 +2791,9 @@ module Make (B : Backend_intf.S) = struct
               apply_ops current' (axis + 1) squeeze_axes rest
           | View { start; step; dim_len; _ } ->
               if step = 1 then
-                let current' = slice_along_axis axis start (start + dim_len) current in
+                let current' =
+                  slice_along_axis axis start (start + dim_len) current
+                in
                 apply_ops current' (axis + 1) squeeze_axes rest
               else if step = -1 then
                 let current' =
@@ -2811,7 +2808,9 @@ module Make (B : Backend_intf.S) = struct
                 in
                 apply_ops current' (axis + 1) squeeze_axes rest
               else
-                let indices = Array.init dim_len (fun i -> start + (i * step)) in
+                let indices =
+                  Array.init dim_len (fun i -> start + (i * step))
+                in
                 let current' = gather_along_axis axis indices current in
                 apply_ops current' (axis + 1) squeeze_axes rest)
     in
@@ -2838,9 +2837,7 @@ module Make (B : Backend_intf.S) = struct
     let is_simple_view =
       List.for_all
         (function
-          | L _ | M _ -> false
-          | Rs (_, _, step) -> Int.abs step = 1
-          | _ -> true)
+          | L _ | M _ -> false | Rs (_, _, step) -> Int.abs step = 1 | _ -> true)
         full_specs
     in
 
@@ -3485,8 +3482,7 @@ module Make (B : Backend_intf.S) = struct
 
   let sort (type a b) ?(descending = false) ?(axis = -1) (x : (a, b) t) =
     let@ _ = span ~op:"sort" () in
-    if ndim x = 0 then
-      (x, scalar (B.context x) Dtype.int32 0l)
+    if ndim x = 0 then (x, scalar (B.context x) Dtype.int32 0l)
     else
       let r = ndim x in
       let axis = if axis < 0 then axis + r else axis in
@@ -4640,8 +4636,7 @@ module Make (B : Backend_intf.S) = struct
                    dim_b))
       in
       let a_free_dims =
-        Array.init n_a_free (fun i ->
-            sa.(perm_a_arr.(n_batch + i)))
+        Array.init n_a_free (fun i -> sa.(perm_a_arr.(n_batch + i)))
       in
       let contract_dims =
         Array.init n_contract (fun i ->
@@ -4673,8 +4668,7 @@ module Make (B : Backend_intf.S) = struct
                   let src_dim = src_shape.(perm_arr.(i)) in
                   src_dim)
           in
-          if !needs_broadcast then broadcast_to target_shape tensor
-          else tensor
+          if !needs_broadcast then broadcast_to target_shape tensor else tensor
       in
 
       let a_t_broadcast = broadcast_batch a_t perm_a_arr sa in
@@ -4866,10 +4860,10 @@ module Make (B : Backend_intf.S) = struct
                      "einsum: output index '%c' not found in inputs" c))
             target_chars;
 
-          (* Pre-reduce axes that appear in exactly one operand and are
-             absent from the output. This avoids materialising huge
-             intermediates for patterns like "ab,cd->" where independent
-             sums can be done first. *)
+          (* Pre-reduce axes that appear in exactly one operand and are absent
+             from the output. This avoids materialising huge intermediates for
+             patterns like "ab,cd->" where independent sums can be done
+             first. *)
           let () =
             let char_count = Hashtbl.create 16 in
             Array.iter
@@ -4890,8 +4884,9 @@ module Make (B : Backend_intf.S) = struct
                 let new_labels = ref [] in
                 List.iteri
                   (fun axis_idx c ->
-                    if Hashtbl.find char_count c = 1
-                       && not (List.mem c target_chars)
+                    if
+                      Hashtbl.find char_count c = 1
+                      && not (List.mem c target_chars)
                     then axes_to_reduce := axis_idx :: !axes_to_reduce
                     else new_labels := c :: !new_labels)
                   info.axis_labels;
@@ -4901,9 +4896,10 @@ module Make (B : Backend_intf.S) = struct
                     let axes = List.rev axes in
                     ops_tensors.(i) <- sum ~axes ops_tensors.(i);
                     ops_info.(i) <-
-                      { info with
-                        shape = shape ops_tensors.(i)
-                      ; axis_labels = List.rev !new_labels
+                      {
+                        info with
+                        shape = shape ops_tensors.(i);
+                        axis_labels = List.rev !new_labels;
                       })
               ops_info
           in
@@ -4942,16 +4938,12 @@ module Make (B : Backend_intf.S) = struct
           if n_ops = 1 then
             (* Single operand: reduce + permute, no contraction needed *)
             finalize ops_tensors.(0) ops_info.(0).axis_labels
-          else if n_ops = 2 then (
+          else if n_ops = 2 then
             (* Two operands: contract directly, skip optimizer *)
             let info_a = ops_info.(0) in
             let info_b = ops_info.(1) in
-            let str_a =
-              info_a.axis_labels |> List.to_seq |> String.of_seq
-            in
-            let str_b =
-              info_b.axis_labels |> List.to_seq |> String.of_seq
-            in
+            let str_a = info_a.axis_labels |> List.to_seq |> String.of_seq in
+            let str_b = info_b.axis_labels |> List.to_seq |> String.of_seq in
             (* Compute result labels: chars not contracted or in target *)
             let common =
               List.filter
@@ -4964,43 +4956,33 @@ module Make (B : Backend_intf.S) = struct
                   (info_a.axis_labels @ info_b.axis_labels)
               in
               List.filter
-                (fun c ->
-                  (not (List.mem c common)) || List.mem c target_chars)
+                (fun c -> (not (List.mem c common)) || List.mem c target_chars)
                 all
             in
-            let str_out =
-              result_labels |> List.to_seq |> String.of_seq
-            in
+            let str_out = result_labels |> List.to_seq |> String.of_seq in
             let result =
-              contract_pair ops_tensors.(0) str_a ops_tensors.(1) str_b
-                str_out
+              contract_pair ops_tensors.(0) str_a ops_tensors.(1) str_b str_out
             in
-            finalize result result_labels)
+            finalize result result_labels
           else
             (* 3+ operands: use greedy path optimizer *)
-            let plan =
-              optimize_path (Array.to_list ops_info) target_chars
-            in
+            let plan = optimize_path (Array.to_list ops_info) target_chars in
             let rec execute = function
               | Leaf idx ->
                   ( ops_tensors.(idx),
-                    ops_info.(idx).axis_labels |> List.to_seq
-                    |> String.of_seq )
+                    ops_info.(idx).axis_labels |> List.to_seq |> String.of_seq
+                  )
               | Node (left, right, info) ->
                   let res_a, str_a = execute left in
                   let res_b, str_b = execute right in
                   let str_out =
                     info.axis_labels |> List.to_seq |> String.of_seq
                   in
-                  let res =
-                    contract_pair res_a str_a res_b str_b str_out
-                  in
+                  let res = contract_pair res_a str_a res_b str_b str_out in
                   (res, str_out)
             in
             let result, result_str = execute plan in
-            let current_chars =
-              String.to_seq result_str |> List.of_seq
-            in
+            let current_chars = String.to_seq result_str |> List.of_seq in
             finalize result current_chars
   end
 
@@ -6050,8 +6032,7 @@ module Make (B : Backend_intf.S) = struct
     (* Use Complex64 as default - matches NumPy behavior *)
     if norm_scale <> 1.0 then
       let result =
-        B.rfft x_padded ~dtype:Dtype.Complex128
-          ~axes:(Array.of_list axes_list)
+        B.rfft x_padded ~dtype:Dtype.Complex128 ~axes:(Array.of_list axes_list)
       in
       let scale_value = Complex.{ re = norm_scale; im = 0.0 } in
       let scale_tensor =
@@ -6129,7 +6110,8 @@ module Make (B : Backend_intf.S) = struct
 
     if norm_scale <> 1.0 then
       let result =
-        B.irfft ?s:s_param x ~dtype:Dtype.Float64 ~axes:(Array.of_list axes_list)
+        B.irfft ?s:s_param x ~dtype:Dtype.Float64
+          ~axes:(Array.of_list axes_list)
       in
       let scale_tensor =
         scalar (B.context result) (B.dtype result) norm_scale
@@ -7405,8 +7387,7 @@ module Make (B : Backend_intf.S) = struct
       Array.sub full_pad_config (x_ndim - num_spatial_dims) num_spatial_dims
     in
     let x_unfolded =
-      B.unfold x ~kernel_size ~stride:s_s ~dilation:d_s
-        ~padding:padding_pairs
+      B.unfold x ~kernel_size ~stride:s_s ~dilation:d_s ~padding:padding_pairs
     in
     (* x_unfolded shape: [batch..., channels * kernel_elements, num_blocks] *)
 
@@ -7528,8 +7509,7 @@ module Make (B : Backend_intf.S) = struct
         Array.sub full_pad_config (x_ndim - num_spatial_dims) num_spatial_dims
       in
       let x_unfolded =
-        B.unfold x ~kernel_size ~stride:s_s ~dilation:d_s
-          ~padding:padding_pairs
+        B.unfold x ~kernel_size ~stride:s_s ~dilation:d_s ~padding:padding_pairs
       in
       (* x_unfolded shape: [batch..., channels * kernel_elements, num_blocks] *)
 
@@ -7699,8 +7679,7 @@ module Make (B : Backend_intf.S) = struct
         Array.sub full_pad_config (x_ndim - num_spatial_dims) num_spatial_dims
       in
       let x_unfolded =
-        B.unfold x ~kernel_size ~stride:s_s ~dilation:d_s
-          ~padding:padding_pairs
+        B.unfold x ~kernel_size ~stride:s_s ~dilation:d_s ~padding:padding_pairs
       in
       (* x_unfolded shape: [batch..., channels * kernel_elements, num_blocks] *)
 

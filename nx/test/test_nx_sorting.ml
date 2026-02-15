@@ -166,8 +166,8 @@ let test_argmin_ties () =
 (* ───── Sort Regression Tests ───── *)
 
 let test_sort_large_1d () =
-  (* Regression: bitonic sort breaks for n >= 129.
-     The sort produces duplicate values instead of a correct permutation. *)
+  (* Regression: bitonic sort breaks for n >= 129. The sort produces duplicate
+     values instead of a correct permutation. *)
   let n = 150 in
   let t = Nx.arange Nx.float32 0 n 1 in
   (* Reverse so it's not already sorted *)

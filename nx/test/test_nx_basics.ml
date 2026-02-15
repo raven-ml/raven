@@ -432,8 +432,7 @@ let test_is_c_contiguous_after_slice () =
   let t = Nx.create Nx.float32 [| 10 |] (Array.init 10 float_of_int) in
   (* step!=1 slices are materialized via gather *)
   let sliced = Nx.slice [ Nx.Rs (0, 10, 2) ] t in
-  equal ~msg:"slice step=2 is contiguous" bool true
-    (Nx.is_c_contiguous sliced);
+  equal ~msg:"slice step=2 is contiguous" bool true (Nx.is_c_contiguous sliced);
   (* step=1 slice is contiguous *)
   let sliced_step1 = Nx.slice [ Nx.Rs (0, 5, 1) ] t in
   equal ~msg:"slice step=1 is contiguous" bool true

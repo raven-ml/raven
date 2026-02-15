@@ -43,8 +43,8 @@ module type S = sig
   (** {1 Types} *)
 
   type ('a, 'b) t
-  (** ['a] is the OCaml element type (e.g., [float], [int32]). ['b] is a
-      phantom type that tags the dtype for type safety. *)
+  (** ['a] is the OCaml element type (e.g., [float], [int32]). ['b] is a phantom
+      type that tags the dtype for type safety. *)
 
   type context
   (** Backend execution context.
@@ -55,8 +55,8 @@ module type S = sig
   (** {1 Tensor Properties} *)
 
   val view : ('a, 'b) t -> View.t
-  (** [view t] returns the strided view metadata describing [t]'s logical
-      layout (shape, strides, offset) over its underlying buffer. *)
+  (** [view t] returns the strided view metadata describing [t]'s logical layout
+      (shape, strides, offset) over its underlying buffer. *)
 
   val dtype : ('a, 'b) t -> ('a, 'b) Dtype.t
   (** [dtype t] returns the element type of [t]. *)
@@ -85,7 +85,7 @@ module type S = sig
   (** [full ctx dtype shape value] creates a tensor where every element is
       [value].
 
-      For scalars, [shape] is [\[||\]]. Subsumes zeros, ones, and constant fill.
+      For scalars, [shape] is [[||]]. Subsumes zeros, ones, and constant fill.
 
       {b Backend must:} return a C-contiguous tensor of the given shape and
       dtype with all elements set to [value]. *)
@@ -129,8 +129,8 @@ module type S = sig
   val mod_ : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
   (** [mod_ ~out a b] computes the remainder of [a / b].
 
-      Integers use C's [%] operator (truncated division). Floats use [fmod].
-      The sign of the result follows the dividend [a]. *)
+      Integers use C's [%] operator (truncated division). Floats use [fmod]. The
+      sign of the result follows the dividend [a]. *)
 
   val pow : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
   (** [pow ~out base exponent] computes [out.{i} <- base.{i} ^ exponent.{i}]. *)
@@ -147,20 +147,16 @@ module type S = sig
       {b Frontend guarantees:} [out] is a [(bool, bool_elt)] tensor with the
       same shape as [a] and [b]. *)
 
-  val cmpeq :
-    out:(bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  val cmpeq : out:(bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
   (** [cmpeq ~out a b] computes [out.{i} <- (a.{i} = b.{i})]. *)
 
-  val cmpne :
-    out:(bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  val cmpne : out:(bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
   (** [cmpne ~out a b] computes [out.{i} <- (a.{i} <> b.{i})]. *)
 
-  val cmplt :
-    out:(bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  val cmplt : out:(bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
   (** [cmplt ~out a b] computes [out.{i} <- (a.{i} < b.{i})]. *)
 
-  val cmple :
-    out:(bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
+  val cmple : out:(bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
   (** [cmple ~out a b] computes [out.{i} <- (a.{i} <= b.{i})]. *)
 
   (** {2 Min/Max} *)
@@ -190,8 +186,8 @@ module type S = sig
       {b Frontend guarantees:} [out] and [x] have the same shape and dtype.
       [out] is C-contiguous.
 
-      {b Backend must:} write exactly [numel] elements to [out], respecting
-      the strides of [x].
+      {b Backend must:} write exactly [numel] elements to [out], respecting the
+      strides of [x].
 
       {2 Arithmetic} *)
 
@@ -208,8 +204,8 @@ module type S = sig
   (** [sqrt ~out x] computes [out.{i} <- √x.{i}]. *)
 
   val sign : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [sign ~out x] computes the sign function: [-1] for negative, [0] for
-      zero, [1] for positive. Returns NaN for floating-point NaN inputs. *)
+  (** [sign ~out x] computes the sign function: [-1] for negative, [0] for zero,
+      [1] for positive. Returns NaN for floating-point NaN inputs. *)
 
   (** {2 Exponential and Logarithm} *)
 
@@ -278,8 +274,8 @@ module type S = sig
   (** {2 Special Functions} *)
 
   val erf : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [erf ~out x] computes the error function
-      [erf(x) = 2/√π ∫₀ˣ e^(-t²) dt]. *)
+  (** [erf ~out x] computes the error function [erf(x) = 2/√π ∫₀ˣ e^(-t²) dt].
+  *)
 
   (** {1 Ternary Operations} *)
 
@@ -292,17 +288,17 @@ module type S = sig
   (** [where ~out cond if_true if_false] selects elements: [if_true.{i}] where
       [cond.{i}] is true, [if_false.{i}] otherwise.
 
-      {b Frontend guarantees:} all four tensors have identical shapes. [cond]
-      is boolean. [out], [if_true], [if_false] share the same dtype. *)
+      {b Frontend guarantees:} all four tensors have identical shapes. [cond] is
+      boolean. [out], [if_true], [if_false] share the same dtype. *)
 
   (** {1 Reduction Operations}
 
       Reductions aggregate values along one or more axes.
 
-      {b Frontend guarantees:} [axes] contains valid, non-negative,
-      deduplicated axis indices. [out] is pre-allocated with the correct shape:
-      reduced axes are either removed or kept as size-1 dimensions depending on
-      [keepdims]. *)
+      {b Frontend guarantees:} [axes] contains valid, non-negative, deduplicated
+      axis indices. [out] is pre-allocated with the correct shape: reduced axes
+      are either removed or kept as size-1 dimensions depending on [keepdims].
+  *)
 
   val reduce_sum :
     out:('a, 'b) t -> axes:int array -> keepdims:bool -> ('a, 'b) t -> unit
@@ -377,14 +373,14 @@ module type S = sig
   (** [argsort ~out ~axis ~descending x] writes int32 indices that would sort
       elements along [axis] to [out].
 
-      {b Frontend guarantees:} [out] has the same shape as [x] with int32
-      dtype. *)
+      {b Frontend guarantees:} [out] has the same shape as [x] with int32 dtype.
+  *)
 
   (** {1 Movement Operations}
 
       Movement operations manipulate view metadata (shape, strides, offset)
-      without copying data when possible. They return new tensor handles
-      sharing the underlying buffer.
+      without copying data when possible. They return new tensor handles sharing
+      the underlying buffer.
 
       {b Frontend guarantees:} all parameters are validated (axes in range,
       shapes compatible, bounds within limits).
@@ -404,8 +400,8 @@ module type S = sig
       current strides. May copy if [t] is non-contiguous. *)
 
   val permute : ('a, 'b) t -> int array -> ('a, 'b) t
-  (** [permute t axes] reorders dimensions according to [axes], which must be
-      a permutation of [\[0, ..., ndim-1\]]. Zero-copy. *)
+  (** [permute t axes] reorders dimensions according to [axes], which must be a
+      permutation of [[0, ..., ndim-1]]. Zero-copy. *)
 
   val shrink : ('a, 'b) t -> (int * int) array -> ('a, 'b) t
   (** [shrink t ranges] extracts a contiguous slice. [ranges.(i)] is
@@ -417,8 +413,8 @@ module type S = sig
       strides. Zero-copy. *)
 
   val pad : ('a, 'b) t -> (int * int) array -> 'a -> ('a, 'b) t
-  (** [pad t padding fill_value] extends [t] with [fill_value]. [padding.(i)]
-      is [(before, after)] for dimension [i].
+  (** [pad t padding fill_value] extends [t] with [fill_value]. [padding.(i)] is
+      [(before, after)] for dimension [i].
 
       {b Backend must:} allocate a new buffer and copy data. *)
 
@@ -437,8 +433,8 @@ module type S = sig
       Float-to-int truncates toward zero. Int-to-float may lose precision for
       large values.
 
-      {b Frontend guarantees:} [out] is pre-allocated with the correct shape
-      and target dtype. *)
+      {b Frontend guarantees:} [out] is pre-allocated with the correct shape and
+      target dtype. *)
 
   val contiguous : ('a, 'b) t -> ('a, 'b) t
   (** [contiguous t] returns a C-contiguous version of [t].
@@ -459,8 +455,8 @@ module type S = sig
 
       {b Frontend guarantees:} [dst] and [src] have matching shapes and dtypes.
 
-      {b Backend must:} write [src]'s data into [dst]'s buffer, respecting
-      both tensors' strides. *)
+      {b Backend must:} write [src]'s data into [dst]'s buffer, respecting both
+      tensors' strides. *)
 
   (** {1 Random Number Generation} *)
 
@@ -483,8 +479,8 @@ module type S = sig
     (int32, Dtype.int32_elt) t ->
     axis:int ->
     unit
-  (** [gather ~out data indices ~axis] selects elements from [data] along
-      [axis] using [indices] and writes them to [out].
+  (** [gather ~out data indices ~axis] selects elements from [data] along [axis]
+      using [indices] and writes them to [out].
 
       {b Frontend guarantees:} [rank data = rank indices]. [axis] is valid.
       Index values are in range for [data]'s size along [axis]. [out] has the
@@ -532,8 +528,8 @@ module type S = sig
       {b Frontend guarantees:} all array parameters have length equal to the
       number of spatial dimensions. Values are positive.
 
-      {b Backend must:} write results to [out] if provided, otherwise
-      allocate. *)
+      {b Backend must:} write results to [out] if provided, otherwise allocate.
+  *)
 
   val fold :
     ?out:('a, 'b) t ->
@@ -554,8 +550,8 @@ module type S = sig
       {b Frontend guarantees:} parameters are consistent with a valid unfold
       configuration.
 
-      {b Backend must:} write results to [out] if provided, otherwise
-      allocate. *)
+      {b Backend must:} write results to [out] if provided, otherwise allocate.
+  *)
 
   (** {1 Matrix Operations} *)
 
@@ -568,13 +564,13 @@ module type S = sig
       {b Frontend guarantees:} [a]'s last dim equals [b]'s second-to-last dim.
       [out] is C-contiguous with the correct output shape.
 
-      {b Backend must:} write the result to [out]. May use BLAS for
-      performance. [a] and [b] may be non-contiguous. *)
+      {b Backend must:} write the result to [out]. May use BLAS for performance.
+      [a] and [b] may be non-contiguous. *)
 
   (** {1 Fourier Transforms}
 
-      {b Frontend guarantees:} [axes] contains valid, non-negative axis
-      indices. Input tensors have compatible complex or real dtypes. *)
+      {b Frontend guarantees:} [axes] contains valid, non-negative axis indices.
+      Input tensors have compatible complex or real dtypes. *)
 
   val fft :
     ?out:(Complex.t, 'b) t ->
@@ -634,31 +630,31 @@ module type S = sig
       @raise Failure if not positive-definite. *)
 
   val qr : reduced:bool -> ('a, 'b) t -> ('a, 'b) t * ('a, 'b) t
-  (** [qr ~reduced t] returns [(Q, R)] where [Q] is orthogonal and [R] is
-      upper triangular. [reduced = true] returns economy-size factorization. *)
+  (** [qr ~reduced t] returns [(Q, R)] where [Q] is orthogonal and [R] is upper
+      triangular. [reduced = true] returns economy-size factorization. *)
 
   val svd :
     full_matrices:bool ->
     ('a, 'b) t ->
     ('a, 'b) t * (float, Dtype.float64_elt) t * ('a, 'b) t
-  (** [svd ~full_matrices t] returns [(U, S, Vᴴ)]. [S] is a 1D float64
-      vector of singular values in descending order. [full_matrices = false]
-      returns thin SVD. *)
+  (** [svd ~full_matrices t] returns [(U, S, Vᴴ)]. [S] is a 1D float64 vector of
+      singular values in descending order. [full_matrices = false] returns thin
+      SVD. *)
 
   val eig :
     vectors:bool ->
     ('a, 'b) t ->
     (Complex.t, Dtype.complex64_elt) t
     * (Complex.t, Dtype.complex64_elt) t option
-  (** [eig ~vectors t] computes eigenvalues (and optionally eigenvectors) of
-      a square matrix. Returns complex64 results. *)
+  (** [eig ~vectors t] computes eigenvalues (and optionally eigenvectors) of a
+      square matrix. Returns complex64 results. *)
 
   val eigh :
     vectors:bool ->
     ('a, 'b) t ->
     (float, Dtype.float64_elt) t * ('a, 'b) t option
-  (** [eigh ~vectors t] computes eigenvalues (and optionally eigenvectors) of
-      a symmetric/Hermitian matrix. Eigenvalues are float64. *)
+  (** [eigh ~vectors t] computes eigenvalues (and optionally eigenvectors) of a
+      symmetric/Hermitian matrix. Eigenvalues are float64. *)
 
   val triangular_solve :
     upper:bool ->

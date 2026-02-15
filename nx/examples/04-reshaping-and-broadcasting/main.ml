@@ -30,20 +30,30 @@ let () =
   let data =
     create float64 [| 4; 3 |]
       [|
-        10.0; 200.0; 3000.0;
-        20.0; 400.0; 1000.0;
-        30.0; 100.0; 2000.0;
-        40.0; 300.0; 4000.0;
+        10.0;
+        200.0;
+        3000.0;
+        20.0;
+        400.0;
+        1000.0;
+        30.0;
+        100.0;
+        2000.0;
+        40.0;
+        300.0;
+        4000.0;
       |]
   in
   Printf.printf "Raw data (4 samples × 3 features):\n%s\n" (data_to_string data);
 
-  (* Mean along axis 0 with keepdims — shape [1; 3] broadcasts against [4; 3]. *)
+  (* Mean along axis 0 with keepdims — shape [1; 3] broadcasts against [4;
+     3]. *)
   let col_means = mean ~axes:[ 0 ] ~keepdims:true data in
   Printf.printf "Column means: %s\n" (data_to_string col_means);
 
   let centered = data - col_means in
-  Printf.printf "Centered (zero-mean columns):\n%s\n\n" (data_to_string centered);
+  Printf.printf "Centered (zero-mean columns):\n%s\n\n"
+    (data_to_string centered);
 
   (* --- Outer product via broadcasting --- *)
   let x = create float64 [| 4 |] [| 1.0; 2.0; 3.0; 4.0 |] in
@@ -59,9 +69,11 @@ let () =
   let v = arange float64 0 4 1 in
   let row = expand_dims [ 0 ] v in
   let col = expand_dims [ 1 ] v in
-  Printf.printf "Vector:     shape %s → %s\n" (shape_to_string (shape v))
+  Printf.printf "Vector:     shape %s → %s\n"
+    (shape_to_string (shape v))
     (data_to_string v);
-  Printf.printf "Row vector: shape %s → %s\n" (shape_to_string (shape row))
+  Printf.printf "Row vector: shape %s → %s\n"
+    (shape_to_string (shape row))
     (data_to_string row);
   Printf.printf "Col vector: shape %s\n%s\n"
     (shape_to_string (shape col))

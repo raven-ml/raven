@@ -1,8 +1,8 @@
 (** Build arrays from scratch — constants, ranges, grids, and custom data.
 
     This example walks through the most common ways to create arrays. By the end
-    you'll know how to pick a dtype, fill arrays with constants, generate ranges,
-    and build grids and triangular matrices. *)
+    you'll know how to pick a dtype, fill arrays with constants, generate
+    ranges, and build grids and triangular matrices. *)
 
 open Nx
 

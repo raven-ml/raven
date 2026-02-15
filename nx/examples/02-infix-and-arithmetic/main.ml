@@ -9,10 +9,8 @@ open Nx.Infix
 
 let () =
   (* --- Temperature conversion: C → F --- *)
-  let celsius =
-    create float64 [| 5 |] [| 0.0; 20.0; 37.0; 100.0; -40.0 |]
-  in
-  let fahrenheit = celsius *$ 1.8 +$ 32.0 in
+  let celsius = create float64 [| 5 |] [| 0.0; 20.0; 37.0; 100.0; -40.0 |] in
+  let fahrenheit = (celsius *$ 1.8) +$ 32.0 in
   Printf.printf "Celsius:    %s\n" (data_to_string celsius);
   Printf.printf "Fahrenheit: %s\n\n" (data_to_string fahrenheit);
 

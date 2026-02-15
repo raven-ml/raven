@@ -598,8 +598,7 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                       (* Allocate output tensor *)
                       let dt = dtype t_in in
                       let result = T.empty dt out_shape in
-                      reduce_sum ~out:result ~axes:[| p |] ~keepdims:false
-                        t_in;
+                      reduce_sum ~out:result ~axes:[| p |] ~keepdims:false t_in;
                       (* Update bdim mappings: current level removed; others
                          after p shift left *)
                       PhysicalTbl.set_bdim env.shared result ~level:env.level
@@ -1367,7 +1366,8 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                      any *)
                   let p =
                     match (bc, bt, bf) with
-                    | Some pc, Some pt, Some pf -> Stdlib.min pc (Stdlib.min pt pf)
+                    | Some pc, Some pt, Some pf ->
+                        Stdlib.min pc (Stdlib.min pt pf)
                     | Some pc, Some pt, None -> Stdlib.min pc pt
                     | Some pc, None, Some pf -> Stdlib.min pc pf
                     | None, Some pt, Some pf -> Stdlib.min pt pf
@@ -1399,7 +1399,10 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                   let c_prefix_len = prefix_len_by_batch_sizes condition' in
                   let t_prefix_len = prefix_len_by_batch_sizes if_true' in
                   let f_prefix_len = prefix_len_by_batch_sizes if_false' in
-                  let nbd = Stdlib.max c_prefix_len (Stdlib.max t_prefix_len f_prefix_len) in
+                  let nbd =
+                    Stdlib.max c_prefix_len
+                      (Stdlib.max t_prefix_len f_prefix_len)
+                  in
                   let c_log =
                     Array.sub sc c_prefix_len (Array.length sc - c_prefix_len)
                   in
@@ -1411,7 +1414,8 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                   in
                   dprintf "E_where: nbd=%d c_prefix=%d t_prefix=%d f_prefix=%d"
                     nbd c_prefix_len t_prefix_len f_prefix_len;
-                  (* Align ranks by left-padding with 1s to Stdlib.max logical rank *)
+                  (* Align ranks by left-padding with 1s to Stdlib.max logical
+                     rank *)
                   let max_len =
                     Stdlib.max (Array.length c_log)
                       (Stdlib.max (Array.length t_log) (Array.length f_log))
@@ -1451,7 +1455,9 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
               Some
                 (fun k ->
                   let result =
-                    let out = buffer (context t_in) target_dtype (T.shape t_in) in
+                    let out =
+                      buffer (context t_in) target_dtype (T.shape t_in)
+                    in
                     cast ~out t_in;
                     out
                   in
@@ -1526,8 +1532,8 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                         else updates
                       in
                       let result =
-                        scatter data_template ~indices:indices' ~updates:updates'
-                          ~axis:adjusted_axis
+                        scatter data_template ~indices:indices'
+                          ~updates:updates' ~axis:adjusted_axis
                       in
                       set_bdim result (Some p);
                       continue k result)

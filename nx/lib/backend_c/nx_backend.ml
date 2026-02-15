@@ -1013,8 +1013,8 @@ let rfft (type a b c d) ?out (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes :
 
   out
 
-let irfft (type a b c d) ?out ?s (x : (a, b) t) ~(dtype : (c, d) Dtype.t)
-    ~axes : (c, d) t =
+let irfft (type a b c d) ?out ?s (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes
+    : (c, d) t =
   let x' = materialize x in
 
   (* Calculate output shape for irfft *)

@@ -429,8 +429,7 @@ let get_shape t =
   | None -> failwith "Cannot evaluate symbolic shape"
 
 (* Helper to allocate output buffer with given shape *)
-let alloc_buffer ctx dtype shape =
-  Nx_backend.buffer ctx dtype shape
+let alloc_buffer ctx dtype shape = Nx_backend.buffer ctx dtype shape
 
 (* Binary ops take ~out and return unit *)
 let binary_op ~out eff cpu_op a b =
@@ -733,9 +732,7 @@ let permute t_in axes =
   axes_op1 (fun () -> E_permute { t_in; axes }) Nx_backend.permute t_in axes
 
 let shrink t_in limits =
-  limits_op1
-    (fun () -> E_shrink { t_in; limits })
-    Nx_backend.shrink t_in limits
+  limits_op1 (fun () -> E_shrink { t_in; limits }) Nx_backend.shrink t_in limits
 
 let flip t_in dims_to_flip =
   bool_array_op1
@@ -906,8 +903,8 @@ let fold ?out t_in ~output_size ~kernel_size ~stride ~dilation ~padding =
     match (t_in, out) with
     | Native_tensor t, Some (Native_tensor o) ->
         Native_tensor
-          (Nx_backend.fold ~out:o t ~output_size ~kernel_size ~stride
-             ~dilation ~padding)
+          (Nx_backend.fold ~out:o t ~output_size ~kernel_size ~stride ~dilation
+             ~padding)
     | Native_tensor t, None ->
         Native_tensor
           (Nx_backend.fold t ~output_size ~kernel_size ~stride ~dilation

@@ -567,8 +567,7 @@ let debug_handler () =
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
                 let result =
-                  fold t_in ~output_size ~kernel_size ~stride ~dilation
-                    ~padding
+                  fold t_in ~output_size ~kernel_size ~stride ~dilation ~padding
                 in
                 log_operation !context_stack "fold" [ Tensor_ref t_in ]
                   (Tensor_ref result);

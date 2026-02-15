@@ -74,8 +74,7 @@ let deriv_asin (type a b) (x : (a, b) t) : (a, b) t =
   let one = T.ones_like x in
   T.recip (T.sqrt (T.sub one (T.mul x x)))
 
-let deriv_acos (type a b) (x : (a, b) t) : (a, b) t =
-  T.neg (deriv_asin x)
+let deriv_acos (type a b) (x : (a, b) t) : (a, b) t = T.neg (deriv_asin x)
 
 let deriv_atan (type a b) (x : (a, b) t) : (a, b) t =
   let one = T.ones_like x in
@@ -236,7 +235,9 @@ let make_jvp_handler dual_map =
               atan2 ~out a b;
               let da = get_dual a in
               let db = get_dual b in
-              let denom = T.add (T.mul da.primal da.primal) (T.mul db.primal db.primal) in
+              let denom =
+                T.add (T.mul da.primal da.primal) (T.mul db.primal db.primal)
+              in
               let tan =
                 T.add
                   (T.mul da.tangent (T.div db.primal denom))
@@ -358,7 +359,9 @@ let make_jvp_handler dual_map =
             (fun k ->
               sinh ~out t_in;
               let d = get_dual t_in in
-              let tanv = T.mul d.tangent (Obj.magic (T.cosh (Obj.magic d.primal))) in
+              let tanv =
+                T.mul d.tangent (Obj.magic (T.cosh (Obj.magic d.primal)))
+              in
               register out { primal = out; tangent = tanv };
               continue k ())
       | E_cosh { out; t_in } ->
@@ -366,7 +369,9 @@ let make_jvp_handler dual_map =
             (fun k ->
               cosh ~out t_in;
               let d = get_dual t_in in
-              let tanv = T.mul d.tangent (Obj.magic (T.sinh (Obj.magic d.primal))) in
+              let tanv =
+                T.mul d.tangent (Obj.magic (T.sinh (Obj.magic d.primal)))
+              in
               register out { primal = out; tangent = tanv };
               continue k ())
       | E_tanh { out; t_in } ->
@@ -785,7 +790,9 @@ let make_jvp_handler dual_map =
           Some
             (fun k ->
               let res =
-                let out = buffer (context data) (dtype data) (T.shape indices) in
+                let out =
+                  buffer (context data) (dtype data) (T.shape indices)
+                in
                 gather ~out data indices ~axis;
                 out
               in
@@ -1837,7 +1844,9 @@ let make_vjp_handler tape seed_output =
           Some
             (fun k ->
               let res =
-                let out = buffer (context data) (dtype data) (T.shape indices) in
+                let out =
+                  buffer (context data) (dtype data) (T.shape indices)
+                in
                 gather ~out data indices ~axis;
                 out
               in
@@ -1883,9 +1892,7 @@ let make_vjp_handler tape seed_output =
       | E_unfold { t_in; kernel_size; stride; dilation; padding } ->
           Some
             (fun k ->
-              let res =
-                unfold t_in ~kernel_size ~stride ~dilation ~padding
-              in
+              let res = unfold t_in ~kernel_size ~stride ~dilation ~padding in
               let fwd = continue k res in
               let twg_in = get_or_init t_in in
               let twg_res = get_or_init res in
@@ -1907,8 +1914,7 @@ let make_vjp_handler tape seed_output =
           Some
             (fun k ->
               let res =
-                fold t_in ~output_size ~kernel_size ~stride ~dilation
-                  ~padding
+                fold t_in ~output_size ~kernel_size ~stride ~dilation ~padding
               in
               let fwd = continue k res in
               let twg_in = get_or_init t_in in
@@ -1956,15 +1962,15 @@ let make_vjp_handler tape seed_output =
 
               (* Solve L^T Z = P => Z = L^{-T} P *)
               let z =
-                triangular_solve ~upper:false ~transpose:true
-                  ~unit_diag:false l_lower p
+                triangular_solve ~upper:false ~transpose:true ~unit_diag:false
+                  l_lower p
               in
 
               (* Compute S = Z @ L^{-1} Solve L^T Y = Z^T => Y^T = L^{-T} Z =
                  S *)
               let y =
-                triangular_solve ~upper:false ~transpose:true
-                  ~unit_diag:false l_lower (T.transpose z)
+                triangular_solve ~upper:false ~transpose:true ~unit_diag:false
+                  l_lower (T.transpose z)
               in
               let s = T.transpose y in
 
@@ -2084,8 +2090,8 @@ let make_vjp_handler tape seed_output =
               (* 5. barA = rhs @ R^{-T} Implement via triangular_solve: solve R
                  @ barA^T = rhs^T -> barA^T = R^{-1} rhs^T *)
               let da_t =
-                triangular_solve ~upper:true ~transpose:false
-                  ~unit_diag:false r (T.transpose rhs)
+                triangular_solve ~upper:true ~transpose:false ~unit_diag:false r
+                  (T.transpose rhs)
               in
               let da = T.transpose da_t in
 
