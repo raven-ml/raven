@@ -103,6 +103,10 @@ let view_detail m tag =
         [
           Chart_view.view ~tag
             ~history_for_tag:(Metric_store.history_for_tag m.store)
+            ~best:
+              (Option.map
+                 (fun (b : Metric_store.best_value) -> b.value)
+                 (Metric_store.best_for_tag m.store tag))
             ~size:{ width = pct 80; height = pct 80 };
         ];
     ]

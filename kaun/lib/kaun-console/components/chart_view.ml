@@ -55,19 +55,32 @@ let latest_value history =
   in
   last history
 
-let view ~tag ~history_for_tag ~size =
+let view ~tag ~history_for_tag ~best ~size =
   let history = history_for_tag tag in
   let title =
     match latest_value history with
     | None -> tag
     | Some v -> Printf.sprintf "%s [%.4f]" tag v
   in
-  box ~border:true ~title ~padding:(padding 1) ~size
+    box ~flex_direction:Column ~gap:(gap 1) ~align_items:Center ~size
     [
-      canvas
-        ~draw:(fun grid ~width ~height ->
-          draw_metric_chart history grid ~width ~height)
+      box ~border:true ~title ~padding:(padding 1)
         ~size:{ width = pct 100; height = pct 100 }
-        ();
+        ~flex_grow:1.0
+        [
+          canvas
+            ~draw:(fun grid ~width ~height ->
+              draw_metric_chart history grid ~width ~height)
+            ~size:{ width = pct 100; height = pct 100 }
+            ();
+        ];
+      (match best with
+      | None -> box [] ~size:{ width = px 0; height = px 0 }
+      | Some value ->
+          box
+            ~justify_content:Center
+            ~align_items:Center
+            ~size:{ width = pct 100; height = auto }
+            [ text (Printf.sprintf "Best: %.4f" value) ]);
     ]
 
