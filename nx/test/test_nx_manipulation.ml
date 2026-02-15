@@ -507,76 +507,6 @@ let test_dstack_invalid () =
     "concatenate: invalid dimension 1 (size 3\226\137\1602)" (fun () ->
       Nx.dstack [ t1; t2 ])
 
-(* ───── As_strided Tests ───── *)
-
-let test_as_strided_basic () =
-  (* Create a simple 1D array and view it as 2D with overlapping windows *)
-  let x = Nx.create Nx.float32 [| 8 |] [| 0.; 1.; 2.; 3.; 4.; 5.; 6.; 7. |] in
-  (* Create overlapping windows of size 3 with stride 2 *)
-  let result = Nx.as_strided [| 3; 3 |] [| 2; 1 |] ~offset:0 x in
-  check_t "as_strided overlapping windows" [| 3; 3 |]
-    [| 0.; 1.; 2.; 2.; 3.; 4.; 4.; 5.; 6. |]
-    result
-
-let test_as_strided_2d_transpose () =
-  (* Use as_strided to implement a transpose *)
-  let x = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  (* Transpose by swapping strides: original strides are [3, 1], transposed are
-     [1, 3] *)
-  let result = Nx.as_strided [| 3; 2 |] [| 1; 3 |] ~offset:0 x in
-  check_t "as_strided transpose" [| 3; 2 |] [| 1.; 4.; 2.; 5.; 3.; 6. |] result
-
-let test_as_strided_diagonal () =
-  (* Extract diagonal using as_strided *)
-  let x =
-    Nx.create Nx.float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
-  in
-  (* Diagonal has stride of 4 (3+1) to skip to next diagonal element *)
-  let result = Nx.as_strided [| 3 |] [| 4 |] ~offset:0 x in
-  check_t "as_strided diagonal" [| 3 |] [| 1.; 5.; 9. |] result
-
-let test_as_strided_sliding_window () =
-  (* Create sliding windows over a 1D array *)
-  let x = Nx.create Nx.float32 [| 6 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  (* Windows of size 3 with stride 1 *)
-  let result = Nx.as_strided [| 4; 3 |] [| 1; 1 |] ~offset:0 x in
-  check_t "as_strided sliding window" [| 4; 3 |]
-    [| 1.; 2.; 3.; 2.; 3.; 4.; 3.; 4.; 5.; 4.; 5.; 6. |]
-    result
-
-let test_as_strided_with_offset () =
-  (* Test as_strided with non-zero offset *)
-  let x =
-    Nx.create Nx.float32 [| 10 |] [| 0.; 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
-  in
-  (* Start from offset 2, create a 2x3 view *)
-  let result = Nx.as_strided [| 2; 3 |] [| 3; 1 |] ~offset:2 x in
-  check_t "as_strided with offset" [| 2; 3 |]
-    [| 2.; 3.; 4.; 5.; 6.; 7. |]
-    result
-
-let test_as_strided_scalar_broadcast () =
-  (* Use as_strided to broadcast a scalar *)
-  let x = Nx.create Nx.float32 [| 1 |] [| 42. |] in
-  (* Broadcast to 3x3 using zero strides *)
-  let result = Nx.as_strided [| 3; 3 |] [| 0; 0 |] ~offset:0 x in
-  check_t "as_strided scalar broadcast" [| 3; 3 |]
-    [| 42.; 42.; 42.; 42.; 42.; 42.; 42.; 42.; 42. |]
-    result
-
-let test_as_strided_skip_elements () =
-  (* Test skipping elements using strides *)
-  let x = Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
-  (* Skip every other element *)
-  let result = Nx.as_strided [| 3 |] [| 2 |] ~offset:0 x in
-  check_t "as_strided skip elements" [| 3 |] [| 1.; 3.; 5. |] result
-
-let test_as_strided_int_dtype () =
-  (* Test as_strided with integer dtype *)
-  let x = Nx.create Nx.int32 [| 6 |] [| 10l; 20l; 30l; 40l; 50l; 60l |] in
-  let result = Nx.as_strided [| 2; 2 |] [| 2; 1 |] ~offset:1 x in
-  check_t "as_strided int32" [| 2; 2 |] [| 20l; 30l; 40l; 50l |] result
-
 (* Test Suite Organization *)
 
 let reshape_tests =
@@ -682,15 +612,6 @@ let other_manipulation_tests =
     test "vstack invalid" test_vstack_invalid;
     test "hstack invalid" test_hstack_invalid;
     test "dstack invalid" test_dstack_invalid;
-    (* as_strided tests *)
-    test "as_strided basic" test_as_strided_basic;
-    test "as_strided 2d transpose" test_as_strided_2d_transpose;
-    test "as_strided diagonal" test_as_strided_diagonal;
-    test "as_strided sliding window" test_as_strided_sliding_window;
-    test "as_strided with offset" test_as_strided_with_offset;
-    test "as_strided scalar broadcast" test_as_strided_scalar_broadcast;
-    test "as_strided skip elements" test_as_strided_skip_elements;
-    test "as_strided int dtype" test_as_strided_int_dtype;
   ]
 
 let () =

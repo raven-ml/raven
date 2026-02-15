@@ -108,10 +108,8 @@ let test_argsort_2d_axis1 () =
 
 let test_argsort_empty () =
   let t = Nx.create Nx.float32 [| 0 |] [||] in
-  check_invalid_arg "argsort empty"
-    "arange: invalid range [0, 0) (empty with step=1)\n\
-     hint: ensure start < stop for positive step, or start > stop for negative \
-     step" (fun () -> ignore (Nx.argsort t))
+  let result = Nx.argsort t in
+  check_t "argsort empty" [| 0 |] [||] result
 
 (* ───── Argmax Tests ───── *)
 
