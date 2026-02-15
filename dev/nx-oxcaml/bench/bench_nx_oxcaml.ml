@@ -5,7 +5,7 @@
 
 [@@@warning "-26"]
 
-module Nx_ox = Nx_core.Make_frontend (Nx_oxcaml)
+module Nx_ox = Nx_core.Make_frontend (Nx_backend)
 
 let sizes = [ 500; 1000 ]
 
@@ -18,7 +18,7 @@ let ops_f32 ~size =
   let b = Nx.rand Nx.Float32 ~key:(Nx.Rng.key ((size * 3) + 1)) shape in
   let out_c = Nx.empty Nx.float32 shape in
   let out_c_scalar = Nx.empty Nx.float32 [||] in
-  let ctx = Nx_oxcaml.create_context () in
+  let ctx = Nx_backend.create_context () in
   let a_fe = Nx_ox.empty ctx Nx_ox.float32 shape in
   let b_fe = Nx_ox.empty ctx Nx_ox.float32 shape in
   let out_fe = Nx_ox.empty ctx Nx_ox.float32 shape in
@@ -46,6 +46,7 @@ let ops_f32 ~size =
   in
   [
     bin_pair "Add" (fun ~out a b -> Nx.add ~out a b) (fun ~out a b -> Nx_ox.add ~out a b);
+    bin_pair "Matmul" (fun ~out a b -> Nx.matmul ~out a b) (fun ~out a b -> Nx_ox.matmul ~out a b);
     (* bin_pair "Sub" (fun ~out a b -> Nx.sub ~out a b) (fun ~out a b -> Nx_ox.sub ~out a b); *)
     (* bin_pair "Mul" (fun ~out a b -> Nx.mul ~out a b) (fun ~out a b -> Nx_ox.mul ~out a b); *)
     (* bin_pair "Div" (fun ~out a b -> Nx.div ~out a b) (fun ~out a b -> Nx_ox.div ~out a b); *)
@@ -73,7 +74,7 @@ let ops_f64 ~size =
   let b = Nx.rand Nx.Float64 ~key:(Nx.Rng.key ((size * 3) + 1)) shape in
   let out_c = Nx.empty Nx.float64 shape in
   let out_c_scalar = Nx.empty Nx.float64 [||] in
-  let ctx = Nx_oxcaml.create_context () in
+  let ctx = Nx_backend.create_context () in
   let a_fe = Nx_ox.empty ctx Nx_ox.float64 shape in
   let b_fe = Nx_ox.empty ctx Nx_ox.float64 shape in
   let out_fe = Nx_ox.empty ctx Nx_ox.float64 shape in
@@ -101,6 +102,7 @@ let ops_f64 ~size =
   in
   [
     bin_pair "Add" (fun ~out a b -> Nx.add ~out a b) (fun ~out a b -> Nx_ox.add ~out a b);
+    bin_pair "Matmul" (fun ~out a b -> Nx.matmul ~out a b) (fun ~out a b -> Nx_ox.matmul ~out a b);
     (* bin_pair "Sub" (fun ~out a b -> Nx.sub ~out a b) (fun ~out a b -> Nx_ox.sub ~out a b); *)
     (* bin_pair "Mul" (fun ~out a b -> Nx.mul ~out a b) (fun ~out a b -> Nx_ox.mul ~out a b); *)
     (* bin_pair "Div" (fun ~out a b -> Nx.div ~out a b) (fun ~out a b -> Nx_ox.div ~out a b); *)

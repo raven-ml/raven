@@ -19,6 +19,7 @@
   kaun.huggingface
   kaun.models
   nx_buffer
-  yojson
+  jsont
+  jsont.bytesrw
   unix
-  alcotest))
+  windtrap))

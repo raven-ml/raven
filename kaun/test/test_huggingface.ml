@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module A = Alcotest
+open Windtrap
 module HF = Kaun_huggingface
 module Ptree = Kaun.Ptree
 
@@ -38,11 +38,23 @@ let save_shard path tensors =
   Nx_io.save_safetensor path
     (List.map (fun (name, tensor) -> (name, Nx_io.P tensor)) tensors)
 
+let json_obj pairs =
+  Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
+
 let write_index path mapping =
   let weight_map =
-    `Assoc (List.map (fun (name, shard) -> (name, `String shard)) mapping)
+    json_obj
+      (List.map (fun (name, shard) -> (name, Jsont.Json.string shard)) mapping)
   in
-  Yojson.Safe.to_file path (`Assoc [ ("weight_map", weight_map) ])
+  let json = json_obj [ ("weight_map", weight_map) ] in
+  let json_str =
+    match Jsont_bytesrw.encode_string ~format:Jsont.Minify Jsont.json json with
+    | Ok s -> s
+    | Error e -> failwith e
+  in
+  let oc = open_out path in
+  output_string oc json_str;
+  close_out oc
 
 let to_params mapping =
   let fields = Ptree.Dict.fields_exn ~ctx:"hf params" mapping in
@@ -53,11 +65,11 @@ let unwrap_params = function
   | HF.Downloaded (params, _) -> params
 
 let assert_tensor_equal name expected actual =
-  let equal =
+  let equal_val =
     Rune.all (Rune.equal expected actual) |> Rune.to_array |> fun arr ->
     Array.get arr 0
   in
-  A.check A.bool name true equal
+  equal ~msg:name bool true equal_val
 
 let make_config ~cache_dir =
   let open HF.Config in
@@ -120,12 +132,11 @@ let test_load_single_file_fallback () =
         (get ~name:"layer.bias"))
 
 let () =
-  A.run "Kaun.Huggingface"
+  run "Kaun.Huggingface"
     [
-      ( "load_safetensors",
+      group "load_safetensors"
         [
-          A.test_case "loads sharded safetensors" `Quick test_load_sharded;
-          A.test_case "falls back to single file" `Quick
-            test_load_single_file_fallback;
-        ] );
+          test "loads sharded safetensors" test_load_sharded;
+          test "falls back to single file" test_load_single_file_fallback;
+        ];
     ]

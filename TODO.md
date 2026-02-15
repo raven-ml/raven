@@ -1,5 +1,11 @@
 # todo
 
+## design notes
+
+- unhappy with how bloated the kaun api is. make a design pass.
+- see if we can make simplification to the nx architecture.
+- bring back quill as an infra for a livebook-like product, not the actual product.
+
 ## alpha
 
 - fix einsum issue

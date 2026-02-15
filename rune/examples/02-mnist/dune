@@ -1,0 +1,3 @@
+(executable
+ (name main)
+ (libraries rune nx nx.datasets))

@@ -4,7 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (* Configuration *)
-let sizes = [ 50; 100; 200 ]
+let sizes = [ 50; 100; 200; 512 ]
 let backend_name = "Nx"
 
 let benchmark_name op_name size dtype_label =
@@ -20,6 +20,8 @@ let einsum_specs =
     (* Critical contraction-reduction patterns (known to be slow) *)
     { name = "ContractReduce1"; subscripts = "ij,kj->" };
     { name = "ContractReduce2"; subscripts = "ij,jk->" };
+    (* Independent contraction: no shared axes, sum everything *)
+    { name = "IndependentSum"; subscripts = "ab,cd->" };
   ]
 
 let make_key spec size offset =
@@ -52,6 +54,12 @@ let setup_f32 spec size =
         Nx.rand Nx.Float32 ~key:(make_key spec size 6) shape;
         Nx.rand Nx.Float32 ~key:(make_key spec size 7) shape;
       ]
+  | "IndependentSum" ->
+      let shape = [| size; size |] in
+      [
+        Nx.rand Nx.Float32 ~key:(make_key spec size 16) shape;
+        Nx.rand Nx.Float32 ~key:(make_key spec size 17) shape;
+      ]
   | _ -> failwith ("Unknown einsum operation: " ^ spec.name)
 
 let setup_f64 spec size =
@@ -80,6 +88,12 @@ let setup_f64 spec size =
       [
         Nx.rand Nx.Float64 ~key:(make_key spec size 14) shape;
         Nx.rand Nx.Float64 ~key:(make_key spec size 15) shape;
+      ]
+  | "IndependentSum" ->
+      let shape = [| size; size |] in
+      [
+        Nx.rand Nx.Float64 ~key:(make_key spec size 18) shape;
+        Nx.rand Nx.Float64 ~key:(make_key spec size 19) shape;
       ]
   | _ -> failwith ("Unknown einsum operation: " ^ spec.name)
 

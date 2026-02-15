@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Alcotest
+open Windtrap
 open Test_rune_support
 module T = Rune
 
@@ -467,7 +467,7 @@ let test_grad_cumprod () =
   let grad_vals = T.to_array grad_zero in
   Array.iter
     (fun v ->
-      Alcotest.(check bool) "cumprod zero gradient is finite" true (is_finite v))
+      equal ~msg:"cumprod zero gradient is finite" bool true (is_finite v))
     grad_vals
 
 let test_grad_cummax () =
@@ -482,8 +482,7 @@ let test_grad_cummax () =
   let x_dec = T.create T.float32 [| 4 |] [| 4.; 3.; 2.; 1. |] in
   let grad_dec = T.grad (fun x -> T.sum (T.cummax ~axis:0 x)) x_dec in
   (* cummax([4,3,2,1]) = [4,4,4,4], x[0] is the source for all 4 outputs
-     But gradient of sum is 1 for each output, so x[0] gets 1 per output = 1
-     Actually: each output position has grad 1, and all come from x[0],
+     But gradient of sum is 1 for each output, and all come from x[0],
      so x[0] gets 4*1 = 4? No - the mask approach gives 1 where new max. *)
   (* With our implementation: only position 0 has res > shifted_res, so grad = [1,0,0,0] *)
   let expected_dec = T.create T.float32 [| 4 |] [| 1.; 0.; 0.; 0. |] in
@@ -594,7 +593,7 @@ let test_grad_solve () =
   (* Test gradient w.r.t b *)
   let f_b b = T.sum (T.solve a b) in
   match T.check_gradient ~rtol:1e-2 ~atol:1e-3 f_b b with
-  | `Pass result -> check bool "solve grad wrt b passed" true result.passed
+  | `Pass result -> equal ~msg:"solve grad wrt b passed" bool true result.passed
   | `Fail result ->
       Printf.printf "solve grad wrt b failed: max_rel_error = %.2e\n"
         result.max_rel_error;
@@ -610,7 +609,7 @@ let test_grad_solve_wrt_a () =
   (* Test gradient w.r.t a *)
   let f_a a = T.sum (T.solve a b) in
   match T.check_gradient ~rtol:1e-2 ~atol:1e-3 f_a a with
-  | `Pass result -> check bool "solve grad wrt a passed" true result.passed
+  | `Pass result -> equal ~msg:"solve grad wrt a passed" bool true result.passed
   | `Fail result ->
       Printf.printf "solve grad wrt a failed: max_rel_error = %.2e\n"
         result.max_rel_error;
@@ -626,7 +625,8 @@ let test_grad_cholesky () =
   (* Test gradient - cholesky returns L where A = L @ L^T *)
   let f_chol a = T.sum (T.cholesky ~upper:false a) in
   match T.check_gradient ~rtol:1e-2 ~atol:1e-3 f_chol a with
-  | `Pass result -> check bool "cholesky gradient passed" true result.passed
+  | `Pass result ->
+      equal ~msg:"cholesky gradient passed" bool true result.passed
   | `Fail result ->
       Printf.printf "cholesky gradient failed: max_rel_error = %.2e\n"
         result.max_rel_error;
@@ -955,7 +955,7 @@ let test_grad_nan_propagation () =
   (* x / (x - x) = x / 0 *)
   let grad_val = scalar_value grad in
   let is_nan = Float.is_nan grad_val || Float.is_infinite grad_val in
-  Alcotest.(check bool) "NaN/Inf gradient" true is_nan
+  equal ~msg:"NaN/Inf gradient" bool true is_nan
 
 let test_grad_large_values () =
   (* Test gradient with large values *)
@@ -1003,7 +1003,7 @@ let check_complex_grad ~eps msg expected actual =
   let err_val = (T.item [] err : Complex.t).re in
   let size = Float.of_int (Array.fold_left ( * ) 1 (T.shape expected)) in
   if err_val > eps *. eps *. size then
-    Alcotest.failf "%s: complex grad error = %.2e" msg err_val
+    failf "%s: complex grad error = %.2e" msg err_val
 
 let test_grad_fft () =
   (* FFT gradient: For f(x) = sum(FFT(x)), grad = n * IFFT(ones) Since FFT is
@@ -1087,138 +1087,138 @@ let test_grad_fft2 () =
   let expected_grad = T.ifft2 expected in
   check_complex_grad ~eps:1e-5 "fft2 gradient" expected_grad grad
 
-let suite =
+let tests =
   [
-    ( "binary operations",
+    group "binary operations"
       [
-        test_case "add" `Quick test_grad_add;
-        test_case "mul" `Quick test_grad_mul;
-        test_case "sub" `Quick test_grad_sub;
-        test_case "div" `Quick test_grad_div;
-        test_case "pow" `Quick test_grad_pow;
-        test_case "minimum" `Quick test_grad_minimum;
-        test_case "maximum" `Quick test_grad_maximum;
-      ] );
-    ( "unary operations",
+        test "add" test_grad_add;
+        test "mul" test_grad_mul;
+        test "sub" test_grad_sub;
+        test "div" test_grad_div;
+        test "pow" test_grad_pow;
+        test "minimum" test_grad_minimum;
+        test "maximum" test_grad_maximum;
+      ];
+    group "unary operations"
       [
-        test_case "exp" `Quick test_grad_exp;
-        test_case "log" `Quick test_grad_log;
-        test_case "sin" `Quick test_grad_sin;
-        test_case "cos" `Quick test_grad_cos;
-        test_case "sqrt" `Quick test_grad_sqrt;
-        test_case "neg" `Quick test_grad_neg;
-        test_case "relu" `Quick test_grad_relu;
-        test_case "tanh" `Quick test_grad_tanh;
-        test_case "abs" `Quick test_grad_abs;
-        test_case "sigmoid" `Quick test_grad_sigmoid;
-        test_case "softmax" `Quick test_grad_softmax;
-        test_case "square" `Quick test_grad_square;
-        test_case "recip" `Quick test_grad_recip;
-        test_case "rsqrt" `Quick test_grad_rsqrt;
-        test_case "sign" `Quick test_grad_sign;
-        test_case "tan" `Quick test_grad_tan;
-        test_case "sinh" `Quick test_grad_sinh;
-        test_case "cosh" `Quick test_grad_cosh;
-      ] );
-    ( "reduction operations",
+        test "exp" test_grad_exp;
+        test "log" test_grad_log;
+        test "sin" test_grad_sin;
+        test "cos" test_grad_cos;
+        test "sqrt" test_grad_sqrt;
+        test "neg" test_grad_neg;
+        test "relu" test_grad_relu;
+        test "tanh" test_grad_tanh;
+        test "abs" test_grad_abs;
+        test "sigmoid" test_grad_sigmoid;
+        test "softmax" test_grad_softmax;
+        test "square" test_grad_square;
+        test "recip" test_grad_recip;
+        test "rsqrt" test_grad_rsqrt;
+        test "sign" test_grad_sign;
+        test "tan" test_grad_tan;
+        test "sinh" test_grad_sinh;
+        test "cosh" test_grad_cosh;
+      ];
+    group "reduction operations"
       [
-        test_case "sum" `Quick test_grad_sum;
-        test_case "mean" `Quick test_grad_mean;
-        test_case "max" `Quick test_grad_max;
-        test_case "sum with axis" `Quick test_grad_sum_with_axis;
-        test_case "min" `Quick test_grad_min;
-        test_case "prod" `Quick test_grad_prod;
-      ] );
-    ( "broadcasting",
+        test "sum" test_grad_sum;
+        test "mean" test_grad_mean;
+        test "max" test_grad_max;
+        test "sum with axis" test_grad_sum_with_axis;
+        test "min" test_grad_min;
+        test "prod" test_grad_prod;
+      ];
+    group "broadcasting"
       [
-        test_case "broadcast add" `Quick test_grad_broadcast_add;
-        test_case "broadcast mul" `Quick test_grad_broadcast_mul;
-        test_case "scalar broadcast" `Quick test_grad_scalar_broadcast;
-        test_case "expand" `Quick test_grad_expand;
-        test_case "where" `Quick test_grad_where;
-      ] );
-    ( "shape manipulation",
+        test "broadcast add" test_grad_broadcast_add;
+        test "broadcast mul" test_grad_broadcast_mul;
+        test "scalar broadcast" test_grad_scalar_broadcast;
+        test "expand" test_grad_expand;
+        test "where" test_grad_where;
+      ];
+    group "shape manipulation"
       [
-        test_case "reshape" `Quick test_grad_reshape;
-        test_case "transpose" `Quick test_grad_transpose;
-        test_case "squeeze" `Quick test_grad_squeeze;
-        test_case "unsqueeze" `Quick test_grad_unsqueeze;
-        test_case "flatten" `Quick test_grad_flatten;
-        test_case "flip" `Quick test_grad_flip;
-        test_case "pad" `Quick test_grad_pad;
-        test_case "tile" `Quick test_grad_tile;
-        test_case "concatenate" `Quick test_grad_concatenate;
-        test_case "stack" `Quick test_grad_stack;
-      ] );
-    ( "indexing operations",
+        test "reshape" test_grad_reshape;
+        test "transpose" test_grad_transpose;
+        test "squeeze" test_grad_squeeze;
+        test "unsqueeze" test_grad_unsqueeze;
+        test "flatten" test_grad_flatten;
+        test "flip" test_grad_flip;
+        test "pad" test_grad_pad;
+        test "tile" test_grad_tile;
+        test "concatenate" test_grad_concatenate;
+        test "stack" test_grad_stack;
+      ];
+    group "indexing operations"
       [
-        test_case "get" `Quick test_grad_get;
-        test_case "slice" `Quick test_grad_slice;
-        test_case "take" `Quick test_grad_take;
-        test_case "take_along_axis" `Quick test_grad_take_along_axis;
-      ] );
-    ( "linear algebra",
+        test "get" test_grad_get;
+        test "slice" test_grad_slice;
+        test "take" test_grad_take;
+        test "take_along_axis" test_grad_take_along_axis;
+      ];
+    group "linear algebra"
       [
-        test_case "dot" `Quick test_grad_dot;
-        test_case "trace" `Quick test_grad_trace;
-        test_case "norm" `Quick test_grad_norm;
-        test_case "solve wrt b" `Quick test_grad_solve;
-        test_case "solve wrt a" `Quick test_grad_solve_wrt_a;
-        test_case "cholesky" `Quick test_grad_cholesky;
-      ] );
-    ( "fft operations",
+        test "dot" test_grad_dot;
+        test "trace" test_grad_trace;
+        test "norm" test_grad_norm;
+        test "solve wrt b" test_grad_solve;
+        test "solve wrt a" test_grad_solve_wrt_a;
+        test "cholesky" test_grad_cholesky;
+      ];
+    group "fft operations"
       [
-        test_case "fft" `Quick test_grad_fft;
-        test_case "ifft" `Quick test_grad_ifft;
-        test_case "fft roundtrip" `Quick test_grad_fft_roundtrip;
-        test_case "fft2" `Quick test_grad_fft2;
-      ] );
-    ( "neural network operations",
+        test "fft" test_grad_fft;
+        test "ifft" test_grad_ifft;
+        test "fft roundtrip" test_grad_fft_roundtrip;
+        test "fft2" test_grad_fft2;
+      ];
+    group "neural network operations"
       [
-        test_case "matmul" `Quick test_grad_matmul;
-        test_case "pooling" `Quick test_grad_pooling;
-        test_case "conv2d" `Quick test_grad_conv2d;
-        test_case "avg_pool2d overlapping" `Quick test_grad_avg_pool_overlapping;
-        test_case "leaky_relu" `Quick test_grad_leaky_relu;
-        test_case "elu" `Quick test_grad_elu;
-        test_case "selu" `Quick test_grad_selu;
-      ] );
-    ( "cumulative",
+        test "matmul" test_grad_matmul;
+        test "pooling" test_grad_pooling;
+        test "conv2d" test_grad_conv2d;
+        test "avg_pool2d overlapping" test_grad_avg_pool_overlapping;
+        test "leaky_relu" test_grad_leaky_relu;
+        test "elu" test_grad_elu;
+        test "selu" test_grad_selu;
+      ];
+    group "cumulative"
       [
-        test_case "cumsum" `Quick test_grad_cumsum;
-        test_case "cumprod" `Quick test_grad_cumprod;
-        test_case "cummax" `Quick test_grad_cummax;
-        test_case "cummin" `Quick test_grad_cummin;
-      ] );
-    ( "compound operations",
+        test "cumsum" test_grad_cumsum;
+        test "cumprod" test_grad_cumprod;
+        test "cummax" test_grad_cummax;
+        test "cummin" test_grad_cummin;
+      ];
+    group "compound operations"
       [
-        test_case "linear layer" `Quick test_grad_linear_layer;
-        test_case "cross entropy" `Quick test_grad_cross_entropy;
-        test_case "binary cross entropy" `Quick test_grad_binary_cross_entropy;
-      ] );
-    ( "composition and higher-order",
+        test "linear layer" test_grad_linear_layer;
+        test "cross entropy" test_grad_cross_entropy;
+        test "binary cross entropy" test_grad_binary_cross_entropy;
+      ];
+    group "composition and higher-order"
       [
-        test_case "multi-variable" `Quick test_grad_multi_variable;
-        test_case "chain rule" `Quick test_grad_chain_rule;
-        test_case "shared subexpression" `Quick test_grad_shared_subexpression;
-        test_case "second order" `Quick test_grad_second_order;
-      ] );
-    ( "api functions",
+        test "multi-variable" test_grad_multi_variable;
+        test "chain rule" test_grad_chain_rule;
+        test "shared subexpression" test_grad_shared_subexpression;
+        test "second order" test_grad_second_order;
+      ];
+    group "api functions"
       [
-        test_case "value_and_grad" `Quick test_grad_value_and_grad;
-        test_case "value_and_grads" `Quick test_grad_value_and_grads;
-        test_case "no_grad" `Quick test_no_grad_context;
-        test_case "detach constant" `Quick test_detach_constant;
-        test_case "detach partial gradient" `Quick test_detach_partial_grad;
-      ] );
-    ( "special cases",
+        test "value_and_grad" test_grad_value_and_grad;
+        test "value_and_grads" test_grad_value_and_grads;
+        test "no_grad" test_no_grad_context;
+        test "detach constant" test_detach_constant;
+        test "detach partial gradient" test_detach_partial_grad;
+      ];
+    group "special cases"
       [
-        test_case "gradient at zero" `Quick test_grad_zero;
-        test_case "NaN propagation" `Quick test_grad_nan_propagation;
-        test_case "large values" `Quick test_grad_large_values;
-        test_case "small values" `Quick test_grad_small_values;
-      ] );
+        test "gradient at zero" test_grad_zero;
+        test "NaN propagation" test_grad_nan_propagation;
+        test "large values" test_grad_large_values;
+        test "small values" test_grad_small_values;
+      ];
   ]
 
 (* Test suite *)
-let () = run "Rune VJP Tests" suite
+let () = run "Rune VJP Tests" tests

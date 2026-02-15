@@ -3,6 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Windtrap
 open Rune
 
 let with_float_tensor node ~f =
@@ -49,9 +50,9 @@ let check_gradient_match ~eps name expected_grad computed_grad =
       max_rel_diff := Float.max !max_rel_diff rel_diff)
     expected_arr;
 
-  Alcotest.(check (float eps))
-    (Printf.sprintf "%s max absolute difference" name)
-    0. !max_diff;
+  Windtrap.equal
+    ~msg:(Printf.sprintf "%s max absolute difference" name)
+    (float eps) 0. !max_diff;
 
   if !max_diff > eps then
     Printf.printf "  FAIL: %s - max diff: %.6e, max rel diff: %.6e\n" name
@@ -923,22 +924,22 @@ let test_batchnorm_gradient () =
 (* Test suite *)
 let gradient_tests =
   [
-    ("matmul gradient", `Quick, test_matmul_gradient);
-    ("add broadcast gradient", `Quick, test_add_broadcast_gradient);
-    ("relu gradient", `Quick, test_relu_gradient);
-    ("gelu gradient", `Quick, test_gelu_gradient);
-    ("linear gradient", `Quick, test_linear_gradient);
-    ("mlp gradient", `Quick, test_mlp_gradient);
-    ("reduction gradients", `Quick, test_reduction_gradients);
-    ("activation gradients", `Quick, test_activation_gradients);
-    ("softmax gradient", `Quick, test_softmax_gradient);
-    ("transpose/reshape gradients", `Quick, test_transpose_reshape_gradients);
-    ("elementwise gradients", `Quick, test_elementwise_gradients);
-    ("concat gradient", `Quick, test_concat_gradient);
-    ("attention gradient", `Quick, test_attention_gradient);
-    ("loss functions", `Quick, test_loss_functions);
-    ("cross-entropy gradient", `Quick, test_cross_entropy_gradient);
-    ("batchnorm gradient", `Quick, test_batchnorm_gradient);
+    test "matmul gradient" test_matmul_gradient;
+    test "add broadcast gradient" test_add_broadcast_gradient;
+    test "relu gradient" test_relu_gradient;
+    test "gelu gradient" test_gelu_gradient;
+    test "linear gradient" test_linear_gradient;
+    test "mlp gradient" test_mlp_gradient;
+    test "reduction gradients" test_reduction_gradients;
+    test "activation gradients" test_activation_gradients;
+    test "softmax gradient" test_softmax_gradient;
+    test "transpose/reshape gradients" test_transpose_reshape_gradients;
+    test "elementwise gradients" test_elementwise_gradients;
+    test "concat gradient" test_concat_gradient;
+    test "attention gradient" test_attention_gradient;
+    test "loss functions" test_loss_functions;
+    test "cross-entropy gradient" test_cross_entropy_gradient;
+    test "batchnorm gradient" test_batchnorm_gradient;
   ]
 
-let () = Alcotest.run "Gradient vs JAX" [ ("basic gradients", gradient_tests) ]
+let () = run "Gradient vs JAX" [ group "basic gradients" gradient_tests ]

@@ -5055,17 +5055,37 @@ module Make (B : Backend_intf.S) = struct
         get_axes chars_b (batch_chars @ contract_chars @ b_free_chars)
       in
 
-      let a_t = contiguous (transpose ~axes:perm_a op_a) in
-      let b_t = contiguous (transpose ~axes:perm_b op_b) in
+      let is_identity_perm perm n =
+        let rec check i = function
+          | [] -> i = n
+          | x :: xs -> x = i && check (i + 1) xs
+        in
+        check 0 perm
+      in
+      let a_t =
+        if is_identity_perm perm_a (String.length str_a) then op_a
+        else contiguous (transpose ~axes:perm_a op_a)
+      in
+      let b_t =
+        if is_identity_perm perm_b (String.length str_b) then op_b
+        else contiguous (transpose ~axes:perm_b op_b)
+      in
 
       (* Flatten Dimensions for Matmul *)
       let prod dims = Array.fold_left ( * ) 1 dims in
 
+      let perm_a_arr = Array.of_list perm_a in
+      let perm_b_arr = Array.of_list perm_b in
+      let n_batch = List.length batch_chars in
+      let n_a_free = List.length a_free_chars in
+      let n_contract = List.length contract_chars in
+      let n_b_free = List.length b_free_chars in
+
       (* Broadcast batch dimensions *)
       let batch_dims =
-        Array.init (List.length batch_chars) (fun i ->
-            let dim_a = sa.(List.nth perm_a i) in
-            let dim_b = sb.(List.nth perm_b i) in
+        Array.init n_batch (fun i ->
+            let dim_a = sa.(perm_a_arr.(i)) in
+            let dim_b = sb.(perm_b_arr.(i)) in
             if dim_a = dim_b then dim_a
             else if dim_a = 1 then dim_b
             else if dim_b = 1 then dim_a
@@ -5076,18 +5096,16 @@ module Make (B : Backend_intf.S) = struct
                    dim_b))
       in
       let a_free_dims =
-        Array.init (List.length a_free_chars) (fun i ->
-            sa.(List.nth perm_a (List.length batch_chars + i)))
+        Array.init n_a_free (fun i ->
+            sa.(perm_a_arr.(n_batch + i)))
       in
       let contract_dims =
-        Array.init (List.length contract_chars) (fun i ->
-            sa.(List.nth perm_a
-                  (List.length batch_chars + List.length a_free_chars + i)))
+        Array.init n_contract (fun i ->
+            sa.(perm_a_arr.(n_batch + n_a_free + i)))
       in
       let b_free_dims =
-        Array.init (List.length b_free_chars) (fun i ->
-            sb.(List.nth perm_b
-                  (List.length batch_chars + List.length contract_chars + i)))
+        Array.init n_b_free (fun i ->
+            sb.(perm_b_arr.(n_batch + n_contract + i)))
       in
 
       let b_size = prod batch_dims in
@@ -5096,24 +5114,27 @@ module Make (B : Backend_intf.S) = struct
       let n = prod b_free_dims in
 
       (* Broadcast tensors to match batch dims if needed *)
-      let broadcast_batch tensor perm src_shape =
-        let needs_broadcast = ref false in
-        let target_shape =
-          Array.init (ndim tensor) (fun i ->
-              if i < List.length batch_chars then (
-                let src_dim = src_shape.(List.nth perm i) in
-                let target_dim = batch_dims.(i) in
-                if src_dim <> target_dim then needs_broadcast := true;
-                target_dim)
-              else
-                let src_dim = src_shape.(List.nth perm i) in
-                src_dim)
-        in
-        if !needs_broadcast then broadcast_to target_shape tensor else tensor
+      let broadcast_batch tensor perm_arr src_shape =
+        if n_batch = 0 then tensor
+        else
+          let needs_broadcast = ref false in
+          let target_shape =
+            Array.init (ndim tensor) (fun i ->
+                if i < n_batch then (
+                  let src_dim = src_shape.(perm_arr.(i)) in
+                  let target_dim = batch_dims.(i) in
+                  if src_dim <> target_dim then needs_broadcast := true;
+                  target_dim)
+                else
+                  let src_dim = src_shape.(perm_arr.(i)) in
+                  src_dim)
+          in
+          if !needs_broadcast then broadcast_to target_shape tensor
+          else tensor
       in
 
-      let a_t_broadcast = broadcast_batch a_t perm_a sa in
-      let b_t_broadcast = broadcast_batch b_t perm_b sb in
+      let a_t_broadcast = broadcast_batch a_t perm_a_arr sa in
+      let b_t_broadcast = broadcast_batch b_t perm_b_arr sb in
 
       (* Reshape to 3D for batched matmul: [batch, rows, cols] *)
       let a_mat = reshape [| b_size; m; k |] a_t_broadcast in
@@ -5139,7 +5160,7 @@ module Make (B : Backend_intf.S) = struct
 
       (* Fast paths for common operations *)
       match (subscripts, n_ops) with
-      | "i,i->", 2 -> dot operands.(0) operands.(1)
+      | "i,i->", 2 -> sum (mul operands.(0) operands.(1))
       | "ij,jk->ik", 2 -> matmul operands.(0) operands.(1)
       | "ij->ji", 1 -> transpose operands.(0)
       | _ ->
@@ -5301,55 +5322,142 @@ module Make (B : Backend_intf.S) = struct
                      "einsum: output index '%c' not found in inputs" c))
             target_chars;
 
-          let plan = optimize_path (Array.to_list ops_info) target_chars in
-
-          let rec execute = function
-            | Leaf idx ->
-                ( ops_tensors.(idx),
-                  ops_info.(idx).axis_labels |> List.to_seq |> String.of_seq )
-            | Node (left, right, info) ->
-                let res_a, str_a = execute left in
-                let res_b, str_b = execute right in
-                let str_out =
-                  info.axis_labels |> List.to_seq |> String.of_seq
-                in
-                let res = contract_pair res_a str_a res_b str_b str_out in
-                (res, str_out)
+          (* Pre-reduce axes that appear in exactly one operand and are
+             absent from the output. This avoids materialising huge
+             intermediates for patterns like "ab,cd->" where independent
+             sums can be done first. *)
+          let () =
+            let char_count = Hashtbl.create 16 in
+            Array.iter
+              (fun info ->
+                List.iter
+                  (fun c ->
+                    let n =
+                      match Hashtbl.find_opt char_count c with
+                      | None -> 0
+                      | Some n -> n
+                    in
+                    Hashtbl.replace char_count c (n + 1))
+                  info.axis_labels)
+              ops_info;
+            Array.iteri
+              (fun i info ->
+                let axes_to_reduce = ref [] in
+                let new_labels = ref [] in
+                List.iteri
+                  (fun axis_idx c ->
+                    if Hashtbl.find char_count c = 1
+                       && not (List.mem c target_chars)
+                    then axes_to_reduce := axis_idx :: !axes_to_reduce
+                    else new_labels := c :: !new_labels)
+                  info.axis_labels;
+                match !axes_to_reduce with
+                | [] -> ()
+                | axes ->
+                    let axes = List.rev axes in
+                    ops_tensors.(i) <- sum ~axes ops_tensors.(i);
+                    ops_info.(i) <-
+                      { info with
+                        shape = shape ops_tensors.(i)
+                      ; axis_labels = List.rev !new_labels
+                      })
+              ops_info
           in
 
-          let result, result_str = execute plan in
-          let current_chars = String.to_seq result_str |> List.of_seq in
-
-          (* Sum over any axes not present in the target output *)
-          let axes_to_reduce =
-            List.mapi
-              (fun i c ->
-                if not (List.mem c target_chars) then Some i else None)
-              current_chars
-            |> List.filter_map Fun.id
-          in
-          let result_reduced =
-            if axes_to_reduce = [] then result
-            else sum ~axes:axes_to_reduce result
-          in
-
-          (* Transpose to match target axis order if needed *)
-          let final_chars =
-            List.filter (fun c -> List.mem c target_chars) current_chars
-          in
-          if final_chars = target_chars then result_reduced
-          else
-            let perm =
-              List.map
-                (fun c ->
-                  let rec find i = function
-                    | [] -> 0
-                    | x :: xs -> if x = c then i else find (i + 1) xs
-                  in
-                  find 0 final_chars)
-                target_chars
+          (* Reduce remaining axes and transpose to match target order *)
+          let finalize result current_chars =
+            let axes_to_reduce =
+              List.mapi
+                (fun i c ->
+                  if not (List.mem c target_chars) then Some i else None)
+                current_chars
+              |> List.filter_map Fun.id
             in
-            transpose ~axes:perm result_reduced
+            let result =
+              if axes_to_reduce = [] then result
+              else sum ~axes:axes_to_reduce result
+            in
+            let final_chars =
+              List.filter (fun c -> List.mem c target_chars) current_chars
+            in
+            if final_chars = target_chars then result
+            else
+              let perm =
+                List.map
+                  (fun c ->
+                    let rec find i = function
+                      | [] -> 0
+                      | x :: xs -> if x = c then i else find (i + 1) xs
+                    in
+                    find 0 final_chars)
+                  target_chars
+              in
+              transpose ~axes:perm result
+          in
+
+          if n_ops = 1 then
+            (* Single operand: reduce + permute, no contraction needed *)
+            finalize ops_tensors.(0) ops_info.(0).axis_labels
+          else if n_ops = 2 then (
+            (* Two operands: contract directly, skip optimizer *)
+            let info_a = ops_info.(0) in
+            let info_b = ops_info.(1) in
+            let str_a =
+              info_a.axis_labels |> List.to_seq |> String.of_seq
+            in
+            let str_b =
+              info_b.axis_labels |> List.to_seq |> String.of_seq
+            in
+            (* Compute result labels: chars not contracted or in target *)
+            let common =
+              List.filter
+                (fun c -> List.mem c info_b.axis_labels)
+                info_a.axis_labels
+            in
+            let result_labels =
+              let all =
+                List.sort_uniq Char.compare
+                  (info_a.axis_labels @ info_b.axis_labels)
+              in
+              List.filter
+                (fun c ->
+                  (not (List.mem c common)) || List.mem c target_chars)
+                all
+            in
+            let str_out =
+              result_labels |> List.to_seq |> String.of_seq
+            in
+            let result =
+              contract_pair ops_tensors.(0) str_a ops_tensors.(1) str_b
+                str_out
+            in
+            finalize result result_labels)
+          else
+            (* 3+ operands: use greedy path optimizer *)
+            let plan =
+              optimize_path (Array.to_list ops_info) target_chars
+            in
+            let rec execute = function
+              | Leaf idx ->
+                  ( ops_tensors.(idx),
+                    ops_info.(idx).axis_labels |> List.to_seq
+                    |> String.of_seq )
+              | Node (left, right, info) ->
+                  let res_a, str_a = execute left in
+                  let res_b, str_b = execute right in
+                  let str_out =
+                    info.axis_labels |> List.to_seq |> String.of_seq
+                  in
+                  let res =
+                    contract_pair res_a str_a res_b str_b str_out
+                  in
+                  (res, str_out)
+            in
+            let result, result_str = execute plan in
+            let current_chars =
+              String.to_seq result_str |> List.of_seq
+            in
+            finalize result current_chars
   end
 
   let einsum subscripts operands =

@@ -3,7 +3,8 @@
  (name quill_server)
  (libraries
   unix
-  yojson
+  jsont
+  jsont.bytesrw
   cmdliner
   dream
   lwt

@@ -375,9 +375,7 @@ val vmaps :
       - : float array = [| 11.; 22.; 33.; 44.; 55.; 66. |]
     ]} *)
 
-(** {2 Debugging}
-
-    Functions for debugging, JIT compilation, and gradient computation. *)
+(** {2 Debugging} *)
 
 val debug : ('a -> 'b) -> 'a -> 'b
 (** [debug f x] applies [f] to [x] and prints debug information.
@@ -401,34 +399,3 @@ val debug_pop_context : unit -> unit
 
     Use this to mark the end of a specific computation section. The context will
     be removed from the debug stack. *)
-
-(** {2 Just-In-Time Compilation}
-
-    Functions for JIT compilation of tensor operations. *)
-
-type jit_device = [ `metal | `llvm ]
-(** [jit_device] represents devices supported in JIT compilation.
-
-    - [`llvm]: CPU device using LLVM for JIT-compiled operations.
-    - [`metal]: GPU device using Metal for JIT-compiled operations on Apple
-      devices. *)
-
-val is_jit_device_available : jit_device -> bool
-(** [is_jit_device_available dev] checks if the specified device is available.
-
-    Returns true if the device can be used for tensor operations. *)
-
-val jit :
-  ?device:jit_device -> (('a, 'b) t -> ('c, 'd) t) -> ('a, 'b) t -> ('c, 'd) t
-(** [jit f t] compiles the function [f] for efficient execution on [t].
-
-    Returns a compiled version of [f] that can be called with tensors of the
-    same shape and type as [t]. This can significantly speed up repeated calls.
-
-    {@ocaml[
-      # let x = create float32 [| 2 |] [| 3. |] in
-        let f t = sum (mul_s t 2.) in
-        let compiled_f = jit f x in
-        compiled_f x |> item []
-      - : float = 6.
-    ]} *)

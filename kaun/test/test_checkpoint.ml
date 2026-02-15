@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module A = Alcotest
+open Windtrap
 module Ptree = Kaun.Ptree
 
 let test_save_and_load () =
@@ -22,13 +22,13 @@ let test_save_and_load () =
   let module C = Kaun.Checkpoint in
   (match C.save_params_file ~path ~params with
   | Ok () -> ()
-  | Error err -> A.failf "save_params_file failed: %s" (C.error_to_string err));
+  | Error err -> failf "save_params_file failed: %s" (C.error_to_string err));
 
   (* Load checkpoint from file *)
   let loaded_params =
     match C.load_params_file ~path with
     | Ok params -> params
-    | Error err -> A.failf "failed to read params: %s" (C.error_to_string err)
+    | Error err -> failf "failed to read params: %s" (C.error_to_string err)
   in
 
   let loaded_fields =
@@ -37,9 +37,9 @@ let test_save_and_load () =
   let loaded_w = Ptree.Dict.get_tensor_exn loaded_fields ~name:"weight" dtype in
   let loaded_b = Ptree.Dict.get_tensor_exn loaded_fields ~name:"bias" dtype in
   let weight_equal = Rune.all (Rune.equal w loaded_w) |> Rune.to_array in
-  A.check A.bool "weights match" true weight_equal.(0);
+  equal ~msg:"weights match" bool true weight_equal.(0);
   let bias_equal = Rune.all (Rune.equal b loaded_b) |> Rune.to_array in
-  A.check A.bool "bias matches" true bias_equal.(0)
+  equal ~msg:"bias matches" bool true bias_equal.(0)
 
 let test_checkpoint_manager () =
   let dtype = Rune.float32 in
@@ -68,28 +68,28 @@ let test_checkpoint_manager () =
     match C.write repository ~step:(i * 10) ~artifacts with
     | Ok _ -> ()
     | Error err ->
-        A.failf "write failed for step %d: %s" (i * 10) (C.error_to_string err)
+        failf "write failed for step %d: %s" (i * 10) (C.error_to_string err)
   done;
 
   (* Check that we have at least one checkpoint *)
   let steps = C.steps repository in
-  A.check A.bool "has checkpoints" true (List.length steps >= 1);
+  equal ~msg:"has checkpoints" bool true (List.length steps >= 1);
   (* Retention should keep only the latest two checkpoints *)
-  A.check (A.list A.int) "retained steps" [ 40; 50 ] steps;
+  equal ~msg:"retained steps" (list int) [ 40; 50 ] steps;
 
   (* Check latest step *)
   let latest = C.latest_step repository in
-  A.check (A.option A.int) "latest step" (Some 50) latest;
+  equal ~msg:"latest step" (option int) (Some 50) latest;
 
   (* Restore latest *)
   let restored_params, restored_step =
     match C.read_latest repository with
-    | Error err -> A.failf "read_latest failed: %s" (C.error_to_string err)
+    | Error err -> failf "read_latest failed: %s" (C.error_to_string err)
     | Ok (manifest, artifacts) ->
         let step =
           match manifest.step with
           | Some value -> value
-          | None -> A.fail "manifest missing step"
+          | None -> fail "manifest missing step"
         in
         let params =
           match
@@ -98,16 +98,16 @@ let test_checkpoint_manager () =
                 if C.artifact_kind artifact = C.Params then
                   match C.Snapshot.to_ptree (C.artifact_snapshot artifact) with
                   | Ok ptree -> Some ptree
-                  | Error msg -> A.failf "to_ptree failed: %s" msg
+                  | Error msg -> failf "to_ptree failed: %s" msg
                 else None)
               artifacts
           with
           | Some params -> params
-          | None -> A.fail "missing params artifact"
+          | None -> fail "missing params artifact"
         in
         (params, step)
   in
-  A.check A.int "restored step" 50 restored_step;
+  equal ~msg:"restored step" int 50 restored_step;
 
   (* Check restored value *)
   let restored_fields =
@@ -117,7 +117,7 @@ let test_checkpoint_manager () =
     Ptree.Dict.get_tensor_exn restored_fields ~name:"weight" dtype
   in
   let value = Rune.item [ 0; 0 ] restored_w in
-  A.check (A.float 0.01) "restored value" 5.0 value
+  equal ~msg:"restored value" (float 0.01) 5.0 value
 
 let test_sequential_roundtrip () =
   let dtype = Rune.float32 in
@@ -140,11 +140,11 @@ let test_sequential_roundtrip () =
   let module C = Kaun.Checkpoint in
   (match C.save_params_file ~path ~params with
   | Ok () -> ()
-  | Error err -> A.failf "save_params_file failed: %s" (C.error_to_string err));
+  | Error err -> failf "save_params_file failed: %s" (C.error_to_string err));
   let loaded_params =
     match C.load_params_file ~path with
     | Ok params -> params
-    | Error err -> A.failf "failed to read params: %s" (C.error_to_string err)
+    | Error err -> failf "failed to read params: %s" (C.error_to_string err)
   in
   let flattened = Kaun.Ptree.flatten_with_paths loaded_params in
   let expect_path key =
@@ -153,7 +153,7 @@ let test_sequential_roundtrip () =
         (List.exists
            (fun (path, _) -> String.equal (Kaun.Ptree.Path.to_string path) key)
            flattened)
-    then A.failf "missing checkpoint tensor: %s" key
+    then failf "missing checkpoint tensor: %s" key
   in
   List.iter expect_path [ "[0].weight"; "[0].bias"; "[2].weight"; "[2].bias" ];
   let output_after = network.apply loaded_params ~training:false input in
@@ -162,16 +162,16 @@ let test_sequential_roundtrip () =
   let same =
     Array.for_all2 (fun a b -> Float.abs (a -. b) < 1e-6) before after
   in
-  A.check A.bool "sequential roundtrip produces identical output" true same;
+  equal ~msg:"sequential roundtrip produces identical output" bool true same;
   try Sys.remove path with Sys_error _ -> ()
 
 let () =
-  A.run "Kaun.Checkpoint"
+  run "Kaun.Checkpoint"
     [
-      ( "basic",
+      group "basic"
         [
-          A.test_case "save_and_load" `Quick test_save_and_load;
-          A.test_case "checkpoint_manager" `Quick test_checkpoint_manager;
-          A.test_case "sequential_roundtrip" `Quick test_sequential_roundtrip;
-        ] );
+          test "save_and_load" test_save_and_load;
+          test "checkpoint_manager" test_checkpoint_manager;
+          test "sequential_roundtrip" test_sequential_roundtrip;
+        ];
     ]

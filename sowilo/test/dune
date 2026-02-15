@@ -1,4 +1,4 @@
 (test
  (name test_sowilo)
  (package sowilo)
- (libraries sowilo rune alcotest))
+ (libraries sowilo rune windtrap))

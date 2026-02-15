@@ -61,7 +61,7 @@ let manifest_path repo ~step =
   Filename.concat (checkpoint_dir repo step) "manifest.json"
 
 let write_manifest path manifest =
-  wrap_io (fun () -> Yojson.Basic.to_file path (Manifest.to_yojson manifest))
+  wrap_io (fun () -> Manifest.json_to_file path (Manifest.to_json manifest))
 
 let load_manifest repo ~step =
   let path = manifest_path repo ~step in
@@ -69,13 +69,13 @@ let load_manifest repo ~step =
     not_found (Printf.sprintf "Manifest not found for step %d" step)
   else
     try
-      let json = Yojson.Basic.from_file path in
-      match Manifest.of_yojson json with
+      let json = Manifest.json_of_file path in
+      match Manifest.of_json json with
       | Ok manifest -> Ok manifest
       | Error msg -> Error (Json msg)
     with
     | Sys_error msg -> Error (Io msg)
-    | Yojson.Json_error msg -> Error (Json msg)
+    | Failure msg -> Error (Json msg)
 
 let artifact_base_dir base slug = Filename.concat base slug
 

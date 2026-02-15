@@ -1,5 +1,5 @@
-(data_only_dirs data scripts)
+(data_only_dirs data)
 
 (executable
- (name bench_tokenizers)
- (libraries saga.tokenizers ubench unix))
+ (name bench_saga)
+ (libraries saga ubench unix))

@@ -197,27 +197,27 @@
 
     <p>Here's what scientific computing looks like with type safety:</p>
 
-    <pre><span class="comment">(* Load and plot some data *)</span>
-<span class="keyword">open</span> <span class="type">Nx</span>
-<span class="keyword">open</span> <span class="type">Hugin</span>
+    <pre class="language-ocaml"><code class="language-ocaml">(* Load and plot some data *)
+open Nx
+open Hugin
 
-<span class="keyword">let</span> <span class="keyword">x</span> <span class="operator">=</span> <span class="function">linspace</span> <span class="type">float32</span> <span class="number">0.</span> (<span class="number">2.</span> <span class="operator">*.</span> <span class="type">Float</span>.<span class="keyword">pi</span>) <span class="number">100</span>
-<span class="keyword">let</span> <span class="keyword">y</span> <span class="operator">=</span> <span class="type">Nx</span>.<span class="function">map</span> <span class="type">Float</span>.<span class="function">sin</span> <span class="keyword">x</span>
-<span class="keyword">let</span> <span class="keyword">noise</span> <span class="operator">=</span> <span class="function">randn</span> <span class="type">float32</span> (<span class="function">shape</span> <span class="keyword">x</span>) <span class="operator">|></span> <span class="function">mul_scalar</span> <span class="number">0.1</span>
-<span class="keyword">let</span> <span class="keyword">y_noisy</span> <span class="operator">=</span> <span class="function">add</span> <span class="keyword">y</span> <span class="keyword">noise</span>
+let x = linspace float32 0. (2. *. Float.pi) 100
+let y = Nx.map Float.sin x
+let noise = randn float32 (shape x) |> mul_scalar 0.1
+let y_noisy = add y noise
 
-<span class="keyword">let</span> <span class="keyword">fig</span> <span class="operator">=</span> <span class="function">figure</span> ()
-<span class="keyword">let</span> <span class="keyword">ax</span> <span class="operator">=</span> <span class="function">subplot</span> <span class="keyword">fig</span>
-<span class="keyword">let</span> _ <span class="operator">=</span> 
-  <span class="keyword">ax</span>
-  <span class="operator">|></span> <span class="type">Plotting</span>.<span class="function">scatter</span> <span class="operator">~</span><span class="keyword">x</span> <span class="operator">~</span><span class="keyword">y</span><span class="operator">:</span><span class="keyword">y_noisy</span> <span class="operator">~</span><span class="keyword">alpha</span><span class="operator">:</span><span class="number">0.5</span> <span class="operator">~</span><span class="keyword">label</span><span class="operator">:</span><span class="string">"data"</span>
-  <span class="operator">|></span> <span class="type">Plotting</span>.<span class="function">plot</span> <span class="operator">~</span><span class="keyword">x</span> <span class="operator">~</span><span class="keyword">y</span> <span class="operator">~</span><span class="keyword">color</span><span class="operator">:</span><span class="type">Artist.Color</span>.<span class="keyword">red</span> <span class="operator">~</span><span class="keyword">label</span><span class="operator">:</span><span class="string">"true"</span>
-  <span class="operator">|></span> <span class="type">Axes</span>.<span class="function">legend</span>
-<span class="keyword">in</span>
-<span class="function">show</span> <span class="keyword">fig</span>
+let fig = figure ()
+let ax = subplot fig
+let _ = 
+  ax
+  |> Plotting.scatter ~x ~y:y_noisy ~alpha:0.5 ~label:"data"
+  |> Plotting.plot ~x ~y ~color:Artist.Color.red ~label:"true"
+  |> Axes.legend
+in
+show fig
 
-<span class="comment">(* Type error at compile time, not runtime: *)</span>
-<span class="comment">(* let z = add x (ones float64 [|50|])  -- Won't compile! *)</span></pre>
+(* Type error at compile time, not runtime: *)
+(* let z = add x (ones float64 [|50|])  -- Won't compile! *)</code></pre>
 
     <p>The compiler catches shape and dtype mismatches before they crash your pipeline.</p>
 
@@ -250,6 +250,7 @@
 
     <p><a href="/docs/support-raven" class="cta-inline">Support Raven →</a></p>
   </main>
+
 </body>
 
 </html>

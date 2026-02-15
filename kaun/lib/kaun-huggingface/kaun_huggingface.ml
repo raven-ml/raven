@@ -69,7 +69,7 @@ module Registry = struct
     architecture : string;
     config_file : string;
     weight_files : string list;
-    load_config : Yojson.Safe.t -> 'params;
+    load_config : Jsont.json -> 'params;
     build_params : dtype:(float, 'a) dtype -> 'params -> Kaun.params;
   }
 
@@ -81,14 +81,6 @@ module Registry = struct
 end
 
 (* ───── Utilities ───── *)
-
-let ensure_dir dir =
-  let rec mkdir_p path =
-    if not (Sys.file_exists path) then (
-      mkdir_p (Filename.dirname path);
-      try Unix.mkdir path 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ())
-  in
-  mkdir_p dir
 
 let hub_url ~model_id ~filename ~revision =
   let revision_str =
@@ -114,24 +106,16 @@ let cache_path config ~model_id ~filename ~revision =
 (* ───── Core Loading Functions ───── *)
 
 let download_with_progress ~url ~dest ~show_progress =
-  ensure_dir (Filename.dirname dest);
-
-  (* Use curl with progress bar if requested *)
-  let progress_flag = if show_progress then "" else "-s" in
-  let cmd = Printf.sprintf "curl -L %s -o %s '%s'" progress_flag dest url in
-
   if show_progress then Printf.printf "Downloading from %s...\n%!" url;
-
-  let start_time = Unix.gettimeofday () in
-
-  match Unix.system cmd with
-  | Unix.WEXITED 0 ->
-      let elapsed = Unix.gettimeofday () -. start_time in
-      let stats = Unix.stat dest in
-      let bytes = stats.Unix.st_size in
-      let rate = float_of_int bytes /. elapsed in
-      { downloaded_bytes = bytes; total_bytes = Some bytes; rate }
-  | _ -> failwith (Printf.sprintf "Failed to download %s" url)
+  let start = Unix.gettimeofday () in
+  Nx_io.Http.download ~show_progress ~url ~dest ();
+  let elapsed = Unix.gettimeofday () -. start in
+  let bytes = (Unix.stat dest).Unix.st_size in
+  {
+    downloaded_bytes = bytes;
+    total_bytes = Some bytes;
+    rate = (if elapsed > 0.0 then float_of_int bytes /. elapsed else 0.0);
+  }
 
 let download_file ?(config = Config.default) ?(revision = Latest) ~model_id
     ~filename () =
@@ -231,20 +215,40 @@ let load_safetensors ?(config = Config.default) ?(revision = Latest) ~model_id
     | Downloaded (_, progress) -> progress :: acc
   in
 
+  let json_of_file path =
+    let ic = open_in path in
+    let s =
+      Fun.protect
+        ~finally:(fun () -> close_in ic)
+        (fun () -> really_input_string ic (in_channel_length ic))
+    in
+    match Jsont_bytesrw.decode_string Jsont.json s with
+    | Ok v -> v
+    | Error e -> failwith e
+  in
+
+  let json_mem name = function
+    | Jsont.Object (mems, _) -> (
+        match Jsont.Json.find_mem name mems with
+        | Some (_, v) -> v
+        | None -> Jsont.Null ((), Jsont.Meta.none))
+    | _ -> Jsont.Null ((), Jsont.Meta.none)
+  in
+
   let attempt_index filename =
     try
       let result = download_file ~config ~revision ~model_id ~filename () in
       let index_path = local_path_of_result result in
       let progress_acc = progress_of_result [] result in
 
-      let json = Yojson.Safe.from_file index_path in
+      let json = json_of_file index_path in
       let weight_map =
-        match Yojson.Safe.Util.member "weight_map" json with
-        | `Assoc entries ->
+        match json_mem "weight_map" json with
+        | Jsont.Object (entries, _) ->
             List.map
-              (fun (tensor_name, shard_json) ->
+              (fun ((tensor_name, _), shard_json) ->
                 match shard_json with
-                | `String shard -> (tensor_name, shard)
+                | Jsont.String (shard, _) -> (tensor_name, shard)
                 | _ -> failwith "Invalid shard entry in weight_map")
               entries
         | _ -> failwith "Missing weight_map in index file"
@@ -320,7 +324,6 @@ let load_safetensors ?(config = Config.default) ?(revision = Latest) ~model_id
            || String.starts_with ~prefix:"File not in cache (offline mode)" msg
       ->
         None
-    | Yojson.Json_error _ -> None
     | Sys_error _ -> None
   in
 
@@ -368,7 +371,17 @@ let load_config ?(config = Config.default) ?(revision = Latest) ~model_id () =
     match result with Cached path -> path | Downloaded (path, _) -> path
   in
 
-  let json = Yojson.Safe.from_file local_path in
+  let ic = open_in local_path in
+  let s =
+    Fun.protect
+      ~finally:(fun () -> close_in ic)
+      (fun () -> really_input_string ic (in_channel_length ic))
+  in
+  let json =
+    match Jsont_bytesrw.decode_string Jsont.json s with
+    | Ok v -> v
+    | Error e -> failwith e
+  in
 
   match result with
   | Cached _ -> Cached json
@@ -412,20 +425,9 @@ let clear_cache ?(config = Config.default) ?model_id () =
 
 let get_model_info model_id =
   let url = Printf.sprintf "https://huggingface.co/api/models/%s" model_id in
-  let cmd = Printf.sprintf "curl -s '%s'" url in
-
-  let ic = Unix.open_process_in cmd in
-  let rec read_all acc =
-    try
-      let line = input_line ic in
-      read_all (acc ^ line ^ "\n")
-    with End_of_file -> acc
-  in
-  let output = read_all "" in
-  let status = Unix.close_process_in ic in
-
-  match status with
-  | Unix.WEXITED 0 -> (
-      try Ok (Yojson.Safe.from_string output)
-      with _ -> Error "Failed to parse JSON response")
-  | _ -> Error "Failed to fetch model info"
+  try
+    let body = Nx_io.Http.get url in
+    match Jsont_bytesrw.decode_string Jsont.json body with
+    | Ok json -> Ok json
+    | Error _ -> Error "Failed to parse JSON response"
+  with Failure msg -> Error msg

@@ -3,7 +3,15 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module Util = Yojson.Safe.Util
+let json_obj pairs =
+  Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
+
+let json_mem name = function
+  | Jsont.Object (mems, _) -> (
+      match Jsont.Json.find_mem name mems with
+      | Some (_, v) -> v
+      | None -> Jsont.Null ((), Jsont.Meta.none))
+  | _ -> Jsont.Null ((), Jsont.Meta.none)
 
 type t =
   | Scalar of {
@@ -14,32 +22,50 @@ type t =
       wall_time : float;
     }
 
-let of_json (json : Yojson.Safe.t) : (t, string) result =
+let of_json (json : Jsont.json) : (t, string) result =
   try
-    match Util.member "type" json |> Util.to_string with
-    | "scalar" ->
-        let step = Util.member "step" json |> Util.to_int in
-        let tag = Util.member "tag" json |> Util.to_string in
-        let value = Util.member "value" json |> Util.to_number in
-        let epoch = Util.member "epoch" json |> Util.to_int_option in
+    match json_mem "type" json with
+    | Jsont.String ("scalar", _) ->
+        let step =
+          match json_mem "step" json with
+          | Jsont.Number (f, _) -> int_of_float f
+          | _ -> failwith "expected int for step"
+        in
+        let tag =
+          match json_mem "tag" json with
+          | Jsont.String (s, _) -> s
+          | _ -> failwith "expected string for tag"
+        in
+        let value =
+          match json_mem "value" json with
+          | Jsont.Number (f, _) -> f
+          | _ -> failwith "expected number for value"
+        in
+        let epoch =
+          match json_mem "epoch" json with
+          | Jsont.Number (f, _) -> Some (int_of_float f)
+          | _ -> None
+        in
         let wall_time =
-          Util.member "wall_time" json
-          |> Util.to_number_option |> Option.value ~default:0.0
+          match json_mem "wall_time" json with
+          | Jsont.Number (f, _) -> f
+          | _ -> 0.0
         in
         Ok (Scalar { step; epoch; tag; value; wall_time })
-    | other -> Error ("unknown event type: " ^ other)
-  with Util.Type_error (msg, _) -> Error msg
+    | Jsont.String (other, _) -> Error ("unknown event type: " ^ other)
+    | _ -> Error "missing or invalid type field"
+  with Failure msg -> Error msg
 
-let to_json (Scalar { step; epoch; tag; value; wall_time }) : Yojson.Safe.t =
+let to_json (Scalar { step; epoch; tag; value; wall_time }) : Jsont.json =
   let epoch_field =
-    Option.map (fun e -> ("epoch", `Int e)) epoch |> Option.to_list
+    Option.map (fun e -> ("epoch", Jsont.Json.int e)) epoch |> Option.to_list
   in
-  `Assoc
+  json_obj
     ([
-       ("type", `String "scalar");
-       ("step", `Int step);
-       ("wall_time", `Float wall_time);
-       ("tag", `String tag);
-       ("value", `Float value);
+       ("type", Jsont.Json.string "scalar");
+       ("step", Jsont.Json.int step);
+       ("wall_time", Jsont.Json.number wall_time);
+       ("tag", Jsont.Json.string tag);
+       ("value", Jsont.Json.number value);
      ]
     @ epoch_field)

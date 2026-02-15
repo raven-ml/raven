@@ -1,3 +1,0 @@
-(executable
- (name hello_world)
- (libraries nx))

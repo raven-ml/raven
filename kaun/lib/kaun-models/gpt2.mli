@@ -205,7 +205,7 @@ val parameter_stats : Kaun.params -> string
 
 (** {1 GPT-2 Configuration Parsing} *)
 
-val parse_gpt2_config : Yojson.Safe.t -> config
+val parse_gpt2_config : Jsont.json -> config
 (** Parse GPT-2 configuration from HuggingFace JSON format *)
 
 (** {1 Common Model Configurations} *)

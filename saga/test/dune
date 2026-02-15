@@ -8,10 +8,8 @@
   test_unicode
   test_bpe
   test_wordpiece
-  test_ngram
   test_hf_tokenizers
   test_processors
-  test_pretokenizers
-  test_io)
+  test_pretokenizers)
  (package saga)
- (libraries saga saga.tokenizers nx alcotest unix))
+ (libraries saga nx windtrap unix jsont))

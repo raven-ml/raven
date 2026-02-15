@@ -49,53 +49,53 @@
     <div class="code-compare">
       <div>
         <h4>PYTHON</h4>
-        <pre><span class="keyword">from</span> <span class="type">transformers</span> <span class="keyword">import</span> <span class="type">AutoTokenizer</span>
+        <pre class="language-python"><code class="language-python">from transformers import AutoTokenizer
 
-<span class="comment"># Load tokenizer</span>
-<span class="keyword">tokenizer</span> <span class="operator">=</span> <span class="type">AutoTokenizer</span>.<span class="function">from_pretrained</span>(
-    <span class="string">"bert-base"</span>
+# Load tokenizer
+tokenizer = AutoTokenizer.from_pretrained(
+    "bert-base"
 )
 
-<span class="comment"># Tokenize</span>
-<span class="keyword">tokens</span> <span class="operator">=</span> <span class="keyword">tokenizer</span>.<span class="function">tokenize</span>(<span class="string">"Hello world"</span>)
+# Tokenize
+tokens = tokenizer.tokenize("Hello world")
 
-<span class="comment"># Encode to IDs</span>
-<span class="keyword">input_ids</span> <span class="operator">=</span> <span class="keyword">tokenizer</span>.<span class="function">encode</span>(
-    <span class="string">"Hello world"</span>,
-    <span class="keyword">max_length</span><span class="operator">=</span><span class="number">128</span>,
-    <span class="keyword">padding</span><span class="operator">=</span><span class="string">"max_length"</span>
+# Encode to IDs
+input_ids = tokenizer.encode(
+    "Hello world",
+    max_length=128,
+    padding="max_length"
 )
 
-<span class="comment"># Batch encode</span>
-<span class="keyword">batch</span> <span class="operator">=</span> <span class="keyword">tokenizer</span>(
-    [<span class="string">"Hello"</span>, <span class="string">"World"</span>],
-    <span class="keyword">padding</span><span class="operator">=</span><span class="keyword">True</span>,
-    <span class="keyword">return_tensors</span><span class="operator">=</span><span class="string">"pt"</span>
-)</pre>
+# Batch encode
+batch = tokenizer(
+    ["Hello", "World"],
+    padding=True,
+    return_tensors="pt"
+)</code></pre>
       </div>
       <div>
         <h4>SAGA</h4>
-        <pre><span class="keyword">open</span> <span class="type">Saga</span>
+        <pre class="language-ocaml"><code class="language-ocaml">open Saga
 
-<span class="comment">(* Load tokenizer *)</span>
-<span class="keyword">let</span> <span class="keyword">tokenizer</span> <span class="operator">=</span> 
-  <span class="type">Wordpiece</span>.<span class="function">from_files</span> 
-    <span class="operator">~</span><span class="keyword">vocab</span><span class="operator">:</span><span class="string">"vocab.txt"</span>
+(* Load tokenizer *)
+let tokenizer = 
+  Wordpiece.from_files 
+    ~vocab:"vocab.txt"
 
-<span class="comment">(* Tokenize *)</span>
-<span class="keyword">let</span> <span class="keyword">tokens</span> <span class="operator">=</span> <span class="type">Wordpiece</span>.<span class="function">tokenize</span> <span class="keyword">tokenizer</span> <span class="string">"Hello world"</span>
+(* Tokenize *)
+let tokens = Wordpiece.tokenize tokenizer "Hello world"
 
-<span class="comment">(* Encode to IDs *)</span>
-<span class="keyword">let</span> <span class="keyword">input_ids</span> <span class="operator">=</span> 
-  <span class="function">encode</span> <span class="operator">~</span><span class="keyword">vocab</span> 
-    <span class="operator">~</span><span class="keyword">max_len</span><span class="operator">:</span><span class="number">128</span> 
-    <span class="string">"Hello world"</span>
+(* Encode to IDs *)
+let input_ids = 
+  encode ~vocab 
+    ~max_len:128 
+    "Hello world"
 
-<span class="comment">(* Batch encode - returns Nx tensor *)</span>
-<span class="keyword">let</span> <span class="keyword">batch</span> <span class="operator">=</span> 
-  <span class="function">encode_batch</span> <span class="operator">~</span><span class="keyword">vocab</span>
-    <span class="operator">~</span><span class="keyword">pad</span><span class="operator">:</span><span class="keyword">true</span>
-    [<span class="string">"Hello"</span>; <span class="string">"World"</span>]</pre>
+(* Batch encode - returns Nx tensor *)
+let batch = 
+  encode_batch ~vocab
+    ~pad:true
+    ["Hello"; "World"]</code></pre>
       </div>
     </div>
 
@@ -103,25 +103,25 @@
 
     <h2>tokenization that works</h2>
 
-    <pre><span class="comment">(* Simple tokenization *)</span>
-<span class="keyword">let</span> <span class="keyword">tokens</span> <span class="operator">=</span> <span class="function">tokenize</span> <span class="string">"Hello world! 你好世界"</span>
-<span class="comment">(* ["Hello"; "world"; "!"; "你好世界"] *)</span>
+    <pre class="language-ocaml"><code class="language-ocaml">(* Simple tokenization *)
+let tokens = tokenize "Hello world! 你好世界"
+(* ["Hello"; "world"; "!"; "你好世界"] *)
 
-<span class="comment">(* Build vocabulary from corpus *)</span>
-<span class="keyword">let</span> <span class="keyword">vocab</span> <span class="operator">=</span> 
-  <span class="function">vocab</span> <span class="operator">~</span><span class="keyword">max_size</span><span class="operator">:</span><span class="number">30000</span> <span class="operator">~</span><span class="keyword">min_freq</span><span class="operator">:</span><span class="number">2</span>
-    (<span class="type">List</span>.<span class="function">concat_map</span> <span class="function">tokenize</span> <span class="keyword">corpus</span>)
+(* Build vocabulary from corpus *)
+let vocab = 
+  vocab ~max_size:30000 ~min_freq:2
+    (List.concat_map tokenize corpus)
 
-<span class="comment">(* BPE tokenization *)</span>
-<span class="keyword">let</span> <span class="keyword">bpe</span> <span class="operator">=</span> <span class="type">Bpe</span>.<span class="function">from_files</span> <span class="operator">~</span><span class="keyword">vocab</span><span class="operator">:</span><span class="string">"vocab.json"</span> <span class="operator">~</span><span class="keyword">merges</span><span class="operator">:</span><span class="string">"merges.txt"</span> <span class="keyword">in</span>
-<span class="keyword">let</span> <span class="keyword">tokens</span> <span class="operator">=</span> <span class="type">Bpe</span>.<span class="function">tokenize</span> <span class="keyword">bpe</span> <span class="string">"unrecognizable"</span>
-<span class="comment">(* ["un", "##rec", "##ogn", "##iz", "##able"] *)</span>
+(* BPE tokenization *)
+let bpe = Bpe.from_files ~vocab:"vocab.json" ~merges:"merges.txt" in
+let tokens = Bpe.tokenize bpe "unrecognizable"
+(* ["un", "##rec", "##ogn", "##iz", "##able"] *)
 
-<span class="comment">(* Unicode normalization *)</span>
-<span class="keyword">let</span> <span class="keyword">clean</span> <span class="operator">=</span> 
-  <span class="function">normalize</span> <span class="operator">~</span><span class="keyword">lowercase</span><span class="operator">:</span><span class="keyword">true</span> <span class="operator">~</span><span class="keyword">strip_accents</span><span class="operator">:</span><span class="keyword">true</span> 
-    <span class="string">"Café RÉSUMÉ"</span>
-<span class="comment">(* "cafe resume" *)</span></pre>
+(* Unicode normalization *)
+let clean = 
+  normalize ~lowercase:true ~strip_accents:true 
+    "Café RÉSUMÉ"
+(* "cafe resume" *)</code></pre>
 
     <hr>
 
@@ -192,20 +192,17 @@
 
     <p>Saga is part of the Raven ecosystem. When it's released:</p>
 
-    <pre>
-<span class="comment"># Install</span>
-<span class="function">opam</span> install saga
+    <pre class="language-bash"><code class="language-bash">opam install saga</code></pre>
 
-<span class="comment"># Try it</span>
-<span class="keyword">open</span> <span class="type">Saga</span>
+    <pre class="language-ocaml"><code class="language-ocaml">open Saga
 
-<span class="keyword">let</span> () <span class="operator">=</span>
-  <span class="keyword">let</span> <span class="keyword">text</span> <span class="operator">=</span> <span class="string">"Hello world! How are you?"</span> <span class="keyword">in</span>
-  <span class="keyword">let</span> <span class="keyword">tokens</span> <span class="operator">=</span> <span class="function">tokenize</span> <span class="keyword">text</span> <span class="keyword">in</span>
-  <span class="type">List</span>.<span class="function">iter</span> <span class="function">print_endline</span> <span class="keyword">tokens</span>
-    </pre>
+let () =
+  let text = "Hello world! How are you?" in
+  let tokens = tokenize text in
+  List.iter print_endline tokens</code></pre>
 
     <p>For now, check out the <a href="/docs/saga/">documentation</a> to learn more.</p>
   </main>
+
 </body>
 </html>

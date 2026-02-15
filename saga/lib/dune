@@ -1,4 +1,4 @@
 (library
  (name saga)
  (public_name saga)
- (libraries saga.tokenizers nx nx_core re uutf uucp yojson str unix))
+ (libraries re jsont jsont.bytesrw))

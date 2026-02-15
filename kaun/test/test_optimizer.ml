@@ -3,6 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Windtrap
 open Kaun
 
 let eps = 1e-3
@@ -41,9 +42,9 @@ let test_optimizer_reduces_loss optimizer_fn name () =
   let final_loss = quadratic_loss params |> fun x -> Rune.item [] x in
 
   (* Check that loss decreased *)
-  Alcotest.(check bool)
-    (Printf.sprintf "%s reduces loss" name)
-    true
+  equal
+    ~msg:(Printf.sprintf "%s reduces loss" name)
+    bool true
     (final_loss < initial_loss *. 0.1);
 
   (* Loss should reduce by at least 90% *)
@@ -57,8 +58,9 @@ let test_optimizer_reduces_loss optimizer_fn name () =
         Rune.item [] norm
     | _ -> failwith "Expected tensor"
   in
-  Alcotest.(check (float 0.2)) (* More lenient for convergence *)
-    (Printf.sprintf "%s converges to optimum" name)
+  equal
+    ~msg:(Printf.sprintf "%s converges to optimum" name)
+    (float 0.2) (* More lenient for convergence *)
     0.0 x_norm
 
 (* Test XOR problem convergence *)
@@ -114,9 +116,7 @@ let test_xor_convergence () =
   done;
 
   (* Check that loss decreased significantly *)
-  Alcotest.(check bool)
-    "XOR loss decreases" true
-    (!final_loss < !initial_loss *. 0.8);
+  equal ~msg:"XOR loss decreases" bool true (!final_loss < !initial_loss *. 0.8);
 
   (* More lenient - 20% reduction *)
 
@@ -130,9 +130,11 @@ let test_xor_convergence () =
     let pred = Bigarray.Genarray.get pred_array [| i; 0 |] in
     let exp = expected.(i) in
     let error = abs_float (pred -. exp) in
-    Alcotest.(check bool)
-      (Printf.sprintf "XOR prediction %d (pred=%.3f, expected=%.1f)" i pred exp)
-      true (error < 0.3)
+    equal
+      ~msg:
+        (Printf.sprintf "XOR prediction %d (pred=%.3f, expected=%.1f)" i pred
+           exp)
+      bool true (error < 0.3)
     (* Allow some error margin *)
   done
 
@@ -173,8 +175,7 @@ let test_optimizer_differences () =
     +. abs_float (sgd_params.(1) -. adam_params.(1))
   in
 
-  Alcotest.(check bool)
-    "SGD and Adam produce different updates" true (diff > 0.01)
+  equal ~msg:"SGD and Adam produce different updates" bool true (diff > 0.01)
 
 (* Test optimizer state persistence *)
 let test_optimizer_state_persistence () =
@@ -212,8 +213,7 @@ let test_optimizer_state_persistence () =
 
   (* For Adam with momentum, later updates should be different from first due to
      accumulated momentum *)
-  Alcotest.(check bool)
-    "Adam maintains state across updates" true
+  equal ~msg:"Adam maintains state across updates" bool true
     (abs_float (!fifth_update_norm -. !first_update_norm) > 0.0001)
 
 (* Test learning rate scheduling *)
@@ -259,8 +259,7 @@ let test_learning_rate_schedule () =
   done;
 
   (* Late updates should be smaller due to reduced learning rate *)
-  Alcotest.(check bool)
-    "Learning rate schedule reduces update magnitude" true
+  equal ~msg:"Learning rate schedule reduces update magnitude" bool true
     (!late_update_norm < !early_update_norm *. 0.5)
 
 let test_clip_by_global_norm_zero_gradients () =
@@ -279,14 +278,12 @@ let test_clip_by_global_norm_zero_gradients () =
               let t = Rune.cast Rune.float32 t in
               for i = 0 to 1 do
                 let value = Rune.item [ i ] t in
-                Alcotest.(check bool)
-                  "value is not NaN" false (Float.is_nan value);
-                Alcotest.(check bool)
-                  "value remains zero" true
+                equal ~msg:"value is not NaN" bool false (Float.is_nan value);
+                equal ~msg:"value remains zero" bool true
                   (abs_float value < 1e-9)
               done);
         }
-  | _ -> Alcotest.fail "Expected tensor updates"
+  | _ -> fail "Expected tensor updates"
 
 let test_clip_by_global_norm_empty_tree () =
   let params = Ptree.list [] in
@@ -296,7 +293,7 @@ let test_clip_by_global_norm_empty_tree () =
   let updates, _ = Optimizer.step transform state params grads in
   match updates with
   | Ptree.List [] -> ()
-  | _ -> Alcotest.fail "Expected empty list updates"
+  | _ -> fail "Expected empty list updates"
 
 (* Test gradient clipping *)
 let test_gradient_clipping () =
@@ -327,56 +324,52 @@ let test_gradient_clipping () =
       let update1 = Rune.item [ 1 ] u in
       (* Updates should be clipped: -0.1 * clip(100, 1) = -0.1 and -0.1 *
          clip(-50, 1) = 0.1 *)
-      Alcotest.(check (float eps)) "First update clipped" (-0.1) update0;
-      Alcotest.(check (float eps)) "Second update clipped" 0.1 update1
+      equal ~msg:"First update clipped" (float eps) (-0.1) update0;
+      equal ~msg:"Second update clipped" (float eps) 0.1 update1
   | _ -> failwith "Expected tensor"
 
 let () =
-  let open Alcotest in
   run "Optimizer tests"
     [
-      ( "Basic optimization",
+      group "Basic optimization"
         [
-          test_case "SGD reduces loss" `Quick
+          test "SGD reduces loss"
             (test_optimizer_reduces_loss
                (fun () ->
                  Optimizer.sgd ~lr:(Optimizer.Schedule.constant 0.1) ())
                "SGD");
-          test_case "Adam reduces loss" `Quick
+          test "Adam reduces loss"
             (test_optimizer_reduces_loss
                (fun () ->
                  Optimizer.adam ~lr:(Optimizer.Schedule.constant 0.1) ())
                "Adam");
-          test_case "AdamW reduces loss" `Quick
+          test "AdamW reduces loss"
             (test_optimizer_reduces_loss
                (fun () ->
                  Optimizer.adamw ~lr:(Optimizer.Schedule.constant 0.1) ())
                "AdamW");
-          test_case "RMSprop reduces loss" `Quick
+          test "RMSprop reduces loss"
             (test_optimizer_reduces_loss
                (fun () ->
                  Optimizer.rmsprop ~lr:(Optimizer.Schedule.constant 0.1) ())
                "RMSprop");
-          test_case "Adagrad reduces loss" `Quick
+          test "Adagrad reduces loss"
             (test_optimizer_reduces_loss
                (fun () ->
                  Optimizer.adagrad ~lr:(Optimizer.Schedule.constant 1.0) ())
                "Adagrad");
-        ] );
-      ( "Complex problems",
-        [ test_case "XOR convergence" `Slow test_xor_convergence ] );
-      ( "Optimizer behavior",
+        ];
+      group "Complex problems" [ slow "XOR convergence" test_xor_convergence ];
+      group "Optimizer behavior"
         [
-          test_case "Different optimizers produce different updates" `Quick
+          test "Different optimizers produce different updates"
             test_optimizer_differences;
-          test_case "Optimizer state persistence" `Quick
-            test_optimizer_state_persistence;
-          test_case "Learning rate scheduling" `Quick
-            test_learning_rate_schedule;
-          test_case "Global norm clipping handles zero gradients" `Quick
+          test "Optimizer state persistence" test_optimizer_state_persistence;
+          test "Learning rate scheduling" test_learning_rate_schedule;
+          test "Global norm clipping handles zero gradients"
             test_clip_by_global_norm_zero_gradients;
-          test_case "Global norm clipping handles empty parameter tree" `Quick
+          test "Global norm clipping handles empty parameter tree"
             test_clip_by_global_norm_empty_tree;
-          test_case "Gradient clipping" `Quick test_gradient_clipping;
-        ] );
+          test "Gradient clipping" test_gradient_clipping;
+        ];
     ]

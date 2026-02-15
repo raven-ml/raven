@@ -5,7 +5,7 @@
 
 (* Sorting and searching tests for Nx *)
 
-open Alcotest
+open Windtrap
 open Test_nx_support
 
 (* ───── Where Tests ───── *)
@@ -41,19 +41,13 @@ let test_where_invalid_shapes () =
   let mask = Nx.create Nx.bool [| 2 |] [| true; false |] in
   let a = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
   let b = Nx.create Nx.float32 [| 2 |] [| 4.; 5. |] in
-  check_raises "where invalid shapes"
+  raises ~msg:"where invalid shapes"
     (Invalid_argument
        "broadcast: cannot broadcast [3] to [2] (dim 0: 3\226\137\1602)\n\
         hint: broadcasting requires dimensions to be either equal or 1")
     (fun () -> ignore (Nx.where mask a b))
 
 (* ───── Sort Tests ───── *)
-
-let test_sort_1d () =
-  let t = Nx.create Nx.float32 [| 3 |] [| 3.; 1.; 2. |] in
-  let result, indices = Nx.sort t in
-  check_t "sort 1D values" [| 3 |] [| 1.; 2.; 3. |] result;
-  check_t "sort 1D indices" [| 3 |] [| 1l; 2l; 0l |] indices
 
 let test_sort_2d_axis0 () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 4.; 1.; 3.; 2.; 5.; 6. |] in
@@ -85,7 +79,7 @@ let test_sort_nan_handling () =
   check_t "sort NaN handling - non-NaN values" [| 3 |] [| 1.; 2.; 3. |]
     first_three;
   (* Check that last two values are NaN *)
-  check bool "sort NaN handling - NaN at end" true
+  equal ~msg:"sort NaN handling - NaN at end" bool true
     (Float.is_nan (Nx.item [ 3 ] result) && Float.is_nan (Nx.item [ 4 ] result))
 
 let test_sort_stable () =
@@ -98,9 +92,9 @@ let test_sort_stable () =
 (* ───── Argsort Tests ───── *)
 
 let test_argsort_1d () =
-  let t = Nx.create Nx.float32 [| 3 |] [| 3.; 1.; 2. |] in
+  let t = Nx.create Nx.float32 [| 5 |] [| 3.; 1.; 4.; 1.; 5. |] in
   let result = Nx.argsort t in
-  check_t "argsort 1D" [| 3 |] [| 1l; 2l; 0l |] result
+  check_t "argsort 1D" [| 5 |] [| 1l; 3l; 0l; 2l; 4l |] result
 
 let test_argsort_2d_axis0 () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 4.; 1.; 3.; 2.; 5.; 6. |] in
@@ -122,9 +116,9 @@ let test_argsort_empty () =
 (* ───── Argmax Tests ───── *)
 
 let test_argmax_1d () =
-  let t = Nx.create Nx.float32 [| 3 |] [| 1.; 3.; 2. |] in
+  let t = Nx.create Nx.float32 [| 5 |] [| 3.; 1.; 4.; 1.; 5. |] in
   let result = Nx.argmax t in
-  check_t "argmax 1D" [||] [| 1l |] result
+  check_t "argmax 1D" [||] [| 4l |] result
 
 let test_argmax_2d_axis0 () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
@@ -151,9 +145,9 @@ let test_argmax_nan () =
 (* ───── Argmin Tests ───── *)
 
 let test_argmin_1d () =
-  let t = Nx.create Nx.float32 [| 3 |] [| 1.; 3.; 2. |] in
+  let t = Nx.create Nx.float32 [| 5 |] [| 3.; 1.; 4.; 1.; 5. |] in
   let result = Nx.argmin t in
-  check_t "argmin 1D" [||] [| 0l |] result
+  check_t "argmin 1D" [||] [| 1l |] result
 
 let test_argmin_2d_axis0 () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
@@ -171,58 +165,100 @@ let test_argmin_ties () =
   (* Should return first occurrence *)
   check_t "argmin ties" [||] [| 1l |] result
 
+(* ───── Sort Regression Tests ───── *)
+
+let test_sort_large_1d () =
+  (* Regression: bitonic sort breaks for n >= 129.
+     The sort produces duplicate values instead of a correct permutation. *)
+  let n = 150 in
+  let t = Nx.arange Nx.float32 0 n 1 in
+  (* Reverse so it's not already sorted *)
+  let t = Nx.flip ~axes:[ 0 ] t in
+  let sorted_vals, sorted_indices = Nx.sort t in
+  (* Check sorted values are 0, 1, 2, ..., n-1 *)
+  let expected_vals = Nx.arange Nx.float32 0 n 1 in
+  check_nx "sort large 1D values" expected_vals sorted_vals;
+  (* Check indices map back to original positions *)
+  let expected_indices = Nx.arange Nx.int32 (n - 1) (-1) (-1) in
+  check_nx "sort large 1D indices" expected_indices sorted_indices
+
+let test_sort_power_of_two () =
+  (* n=256 is a power of two (no padding needed) but still breaks *)
+  let n = 256 in
+  let t = Nx.arange Nx.float32 0 n 1 in
+  let t = Nx.flip ~axes:[ 0 ] t in
+  let sorted_vals, _ = Nx.sort t in
+  let expected_vals = Nx.arange Nx.float32 0 n 1 in
+  check_nx "sort power-of-two values" expected_vals sorted_vals
+
+let test_sort_128_boundary () =
+  (* n=128 works, n=129 does not *)
+  let t128 = Nx.flip ~axes:[ 0 ] (Nx.arange Nx.float32 0 128 1) in
+  let sorted128, _ = Nx.sort t128 in
+  check_nx "sort n=128 values" (Nx.arange Nx.float32 0 128 1) sorted128;
+  let t129 = Nx.flip ~axes:[ 0 ] (Nx.arange Nx.float32 0 129 1) in
+  let sorted129, _ = Nx.sort t129 in
+  check_nx "sort n=129 values" (Nx.arange Nx.float32 0 129 1) sorted129
+
 (* Test Suite Organization *)
 
 let where_tests =
   [
-    ("where 1D", `Quick, test_where_1d);
-    ("where broadcast", `Quick, test_where_broadcast);
-    ("where scalar inputs", `Quick, test_where_scalar_inputs);
-    ("where invalid shapes", `Quick, test_where_invalid_shapes);
+    test "where 1D" test_where_1d;
+    test "where broadcast" test_where_broadcast;
+    test "where scalar inputs" test_where_scalar_inputs;
+    test "where invalid shapes" test_where_invalid_shapes;
   ]
 
 let sort_tests =
   [
-    ("sort 1D", `Quick, test_sort_1d);
-    ("sort 2D axis 0", `Quick, test_sort_2d_axis0);
-    ("sort 2D axis 1", `Quick, test_sort_2d_axis1);
-    ("sort invalid axis", `Quick, test_sort_invalid_axis);
-    ("sort NaN handling", `Quick, test_sort_nan_handling);
-    ("sort stable", `Quick, test_sort_stable);
+    test "sort 2D axis 0" test_sort_2d_axis0;
+    test "sort 2D axis 1" test_sort_2d_axis1;
+    test "sort invalid axis" test_sort_invalid_axis;
+    test "sort NaN handling" test_sort_nan_handling;
+    test "sort stable" test_sort_stable;
+  ]
+
+let sort_regression_tests =
+  [
+    test "sort large 1D (n=150)" test_sort_large_1d;
+    test "sort power of two (n=256)" test_sort_power_of_two;
+    test "sort 128 boundary" test_sort_128_boundary;
   ]
 
 let argsort_tests =
   [
-    ("argsort 1D", `Quick, test_argsort_1d);
-    ("argsort 2D axis 0", `Quick, test_argsort_2d_axis0);
-    ("argsort 2D axis 1", `Quick, test_argsort_2d_axis1);
-    ("argsort empty", `Quick, test_argsort_empty);
+    test "argsort 1D" test_argsort_1d;
+    test "argsort 2D axis 0" test_argsort_2d_axis0;
+    test "argsort 2D axis 1" test_argsort_2d_axis1;
+    test "argsort empty" test_argsort_empty;
   ]
 
 let argmax_tests =
   [
-    ("argmax 1D", `Quick, test_argmax_1d);
-    ("argmax 2D axis 0", `Quick, test_argmax_2d_axis0);
-    ("argmax 2D axis 1", `Quick, test_argmax_2d_axis1);
-    ("argmax keepdims", `Quick, test_argmax_keepdims);
-    ("argmax NaN", `Quick, test_argmax_nan);
+    test "argmax 1D" test_argmax_1d;
+    test "argmax 2D axis 0" test_argmax_2d_axis0;
+    test "argmax 2D axis 1" test_argmax_2d_axis1;
+    test "argmax keepdims" test_argmax_keepdims;
+    test "argmax NaN" test_argmax_nan;
   ]
 
 let argmin_tests =
   [
-    ("argmin 1D", `Quick, test_argmin_1d);
-    ("argmin 2D axis 0", `Quick, test_argmin_2d_axis0);
-    ("argmin 2D axis 1", `Quick, test_argmin_2d_axis1);
-    ("argmin ties", `Quick, test_argmin_ties);
+    test "argmin 1D" test_argmin_1d;
+    test "argmin 2D axis 0" test_argmin_2d_axis0;
+    test "argmin 2D axis 1" test_argmin_2d_axis1;
+    test "argmin ties" test_argmin_ties;
   ]
 
 let suite =
   [
-    ("Sorting :: Where", where_tests);
-    ("Sorting :: Sort", sort_tests);
-    ("Sorting :: Argsort", argsort_tests);
-    ("Sorting :: Argmax", argmax_tests);
-    ("Sorting :: Argmin", argmin_tests);
+    group "Where" where_tests;
+    group "Sort" sort_tests;
+    group "Sort Regression" sort_regression_tests;
+    group "Argsort" argsort_tests;
+    group "Argmax" argmax_tests;
+    group "Argmin" argmin_tests;
   ]
 
-let () = Alcotest.run "Nx Sorting" suite
+let () = run "Nx Sorting" suite

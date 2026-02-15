@@ -18,8 +18,9 @@ depends: [
   "dune" {>= "3.19"}
   "rune" {= version}
   "kaun" {= version}
-  "yojson" {>= "2.0.0"}
-  "alcotest" {with-test}
+  "jsont"
+  "bytesrw"
+  "windtrap" {with-test}
   "odoc" {with-doc}
 ]
 build: [

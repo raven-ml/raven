@@ -1,7 +1,3 @@
-# GPT-2 Tokenizer Example
+# GPT-2 Tokenizer
 
-This example demonstrates how to use Saga's BPE tokenizer with a ByteLevel pre-tokenizer to replicate GPT-2's tokenization behavior.
-
-```bash
-dune exec saga/examples/gpt2_tokenizer/gpt2_tokenizer.exe
-```
+Demonstrates GPT-2's byte-level BPE tokenizer using Saga. Downloads vocabulary files from HuggingFace, encodes text into token IDs, decodes them back, and shows how individual words are split into subword tokens.

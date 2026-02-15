@@ -87,32 +87,17 @@ module Tokenizer = struct
   }
 
   let download_vocab_file model_id =
-    (* Download vocab file from HuggingFace if not present *)
     let vocab_cache =
       Nx_io.Cache_dir.get_path_in_cache ~scope:[ "models"; "bert" ] "vocab"
     in
     let vocab_file = Filename.concat vocab_cache (model_id ^ "-vocab.txt") in
-
-    (* Create cache directory if it doesn't exist *)
-    if not (Sys.file_exists vocab_cache) then
-      Sys.command (Printf.sprintf "mkdir -p %s" vocab_cache) |> ignore;
-
-    (* Download if file doesn't exist *)
     if not (Sys.file_exists vocab_file) then (
       Printf.printf "Downloading vocab file for %s...\n%!" model_id;
       let url =
         Printf.sprintf "https://huggingface.co/%s/resolve/main/vocab.txt"
           model_id
       in
-      let cmd =
-        Printf.sprintf
-          "curl -L -o %s %s 2>/dev/null || wget -O %s %s 2>/dev/null" vocab_file
-          url vocab_file url
-      in
-      let exit_code = Sys.command cmd in
-      if exit_code <> 0 then
-        failwith
-          (Printf.sprintf "Failed to download vocab file for %s" model_id));
+      Nx_io.Http.download ~url ~dest:vocab_file ());
     vocab_file
 
   let load_vocab vocab_file =
@@ -672,6 +657,61 @@ let create ?(config = default_config) ?(add_pooling_layer = true) () =
   let open Kaun.Layer in
   sequential (create_bert_layers ~config ~add_pooling_layer)
 
+(* ───── JSON Utilities ───── *)
+
+let json_mem name = function
+  | Jsont.Object (mems, _) -> (
+      match Jsont.Json.find_mem name mems with
+      | Some (_, v) -> v
+      | None -> Jsont.Null ((), Jsont.Meta.none))
+  | _ -> Jsont.Null ((), Jsont.Meta.none)
+
+let json_to_int = function
+  | Jsont.Number (f, _) -> int_of_float f
+  | _ -> failwith "expected int"
+
+let json_to_int_option = function
+  | Jsont.Number (f, _) -> Some (int_of_float f)
+  | _ -> None
+
+let json_to_float_option = function Jsont.Number (f, _) -> Some f | _ -> None
+let json_to_string_option = function Jsont.String (s, _) -> Some s | _ -> None
+
+let parse_bert_config json =
+  {
+    vocab_size = json |> json_mem "vocab_size" |> json_to_int;
+    hidden_size = json |> json_mem "hidden_size" |> json_to_int;
+    num_hidden_layers = json |> json_mem "num_hidden_layers" |> json_to_int;
+    num_attention_heads = json |> json_mem "num_attention_heads" |> json_to_int;
+    intermediate_size = json |> json_mem "intermediate_size" |> json_to_int;
+    hidden_act =
+      (match json |> json_mem "hidden_act" |> json_to_string_option with
+      | Some "gelu" | Some "gelu_new" -> `gelu
+      | Some "relu" -> `relu
+      | Some "swish" | Some "silu" -> `swish
+      | _ -> `gelu);
+    hidden_dropout_prob =
+      json
+      |> json_mem "hidden_dropout_prob"
+      |> json_to_float_option |> Option.value ~default:0.1;
+    attention_probs_dropout_prob =
+      json
+      |> json_mem "attention_probs_dropout_prob"
+      |> json_to_float_option |> Option.value ~default:0.1;
+    max_position_embeddings =
+      json |> json_mem "max_position_embeddings" |> json_to_int;
+    type_vocab_size =
+      json |> json_mem "type_vocab_size" |> json_to_int_option
+      |> Option.value ~default:2;
+    layer_norm_eps =
+      json |> json_mem "layer_norm_eps" |> json_to_float_option
+      |> Option.value ~default:1e-12;
+    pad_token_id = 0;
+    position_embedding_type = `absolute;
+    use_cache = true;
+    classifier_dropout = None;
+  }
+
 let from_pretrained ?(model_id = "bert-base-uncased") ?revision ?cache_config
     ~dtype () =
   (* Load config and weights from HuggingFace, but handle BERT-specific
@@ -690,43 +730,7 @@ let from_pretrained ?(model_id = "bert-base-uncased") ?revision ?cache_config
   in
 
   (* Parse BERT-specific config *)
-  let bert_config =
-    let open Yojson.Safe.Util in
-    {
-      vocab_size = config_json |> member "vocab_size" |> to_int;
-      hidden_size = config_json |> member "hidden_size" |> to_int;
-      num_hidden_layers = config_json |> member "num_hidden_layers" |> to_int;
-      num_attention_heads =
-        config_json |> member "num_attention_heads" |> to_int;
-      intermediate_size = config_json |> member "intermediate_size" |> to_int;
-      hidden_act =
-        (match config_json |> member "hidden_act" |> to_string_option with
-        | Some "gelu" | Some "gelu_new" -> `gelu
-        | Some "relu" -> `relu
-        | Some "swish" | Some "silu" -> `swish
-        | _ -> `gelu);
-      hidden_dropout_prob =
-        config_json
-        |> member "hidden_dropout_prob"
-        |> to_float_option |> Option.value ~default:0.1;
-      attention_probs_dropout_prob =
-        config_json
-        |> member "attention_probs_dropout_prob"
-        |> to_float_option |> Option.value ~default:0.1;
-      max_position_embeddings =
-        config_json |> member "max_position_embeddings" |> to_int;
-      type_vocab_size =
-        config_json |> member "type_vocab_size" |> to_int_option
-        |> Option.value ~default:2;
-      layer_norm_eps =
-        config_json |> member "layer_norm_eps" |> to_float_option
-        |> Option.value ~default:1e-12;
-      pad_token_id = 0;
-      position_embedding_type = `absolute;
-      use_cache = true;
-      classifier_dropout = None;
-    }
-  in
+  let bert_config = parse_bert_config config_json in
 
   (* Load weights using HuggingFace infrastructure *)
   let hf_params =
@@ -1347,44 +1351,6 @@ module For_token_classification = struct
     in
     (logits, loss)
 end
-
-(* BERT-specific configurations *)
-
-let parse_bert_config json =
-  (* Parse BERT-specific configuration from HuggingFace JSON *)
-  let open Yojson.Safe.Util in
-  {
-    vocab_size = json |> member "vocab_size" |> to_int;
-    hidden_size = json |> member "hidden_size" |> to_int;
-    num_hidden_layers = json |> member "num_hidden_layers" |> to_int;
-    num_attention_heads = json |> member "num_attention_heads" |> to_int;
-    intermediate_size = json |> member "intermediate_size" |> to_int;
-    hidden_act =
-      (match json |> member "hidden_act" |> to_string_option with
-      | Some "gelu" | Some "gelu_new" -> `gelu
-      | Some "relu" -> `relu
-      | Some "swish" | Some "silu" -> `swish
-      | _ -> `gelu);
-    hidden_dropout_prob =
-      json
-      |> member "hidden_dropout_prob"
-      |> to_float_option |> Option.value ~default:0.1;
-    attention_probs_dropout_prob =
-      json
-      |> member "attention_probs_dropout_prob"
-      |> to_float_option |> Option.value ~default:0.1;
-    max_position_embeddings = json |> member "max_position_embeddings" |> to_int;
-    type_vocab_size =
-      json |> member "type_vocab_size" |> to_int_option
-      |> Option.value ~default:2;
-    layer_norm_eps =
-      json |> member "layer_norm_eps" |> to_float_option
-      |> Option.value ~default:1e-12;
-    pad_token_id = 0;
-    position_embedding_type = `absolute;
-    use_cache = true;
-    classifier_dropout = None;
-  }
 
 (* ───── Utilities ───── *)
 

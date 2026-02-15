@@ -9,6 +9,11 @@ All notable changes to this project will be documented in this file.
 
 ### Nx
 
+- Make Nx backends pluggable via Dune virtual libraries. The new `nx.backend` virtual library defines the backend interface, with the C backend (`nx.c`) as the default implementation. Alternative backends (e.g., `nx-oxcaml`) can be swapped in at link time. The `Nx_c` module is renamed to `Nx_backend`. (@tmattio)
+- Fix `.top` libraries failing to load in utop with "Reference to undefined compilation unit `Parse`". (@tmattio)
+- Fix OpenMP flag filtering in `discover.ml`: strip `-Xpreprocessor -fopenmp` as a pair on macOS to prevent dangling `-Xpreprocessor` from consuming subsequent flags and causing linker failures. (@Alizter)
+- Merge `nx-datasets` package into a `nx.datasets` sublibrary. (@tmattio)
+- Replace `ocurl` C dependency with `curl` CLI for HTTP requests across the ecosystem (`nx.datasets`, `kaun.huggingface`, `kaun.models`, `kaun.datasets`). (@tmattio)
 - Add missing bool→low-precision cast support (f16/bf16/fp8) in the C backend. (@tmattio)
 - Add UInt32/UInt64 dtypes, rename complex dtypes to Complex64/Complex128, and drop Complex16/QInt8/QUInt8/Int/NativeInt as tensor element dtypes. (@tmattio)
 - Move the `Rng` module from Rune into Nx. All random number generation functions (`rand`, `randn`, `randint`, etc.) now require an explicit `~key:Rng.key` parameter for reproducibility and stateless RNG. Use `Rng.key seed` to create a key and `Rng.split` to derive independent subkeys. (@tmattio)
@@ -23,7 +28,9 @@ All notable changes to this project will be documented in this file.
 
 ### Rune
 
+- Remove JIT compilation support from Rune. The `Rune.Jit` module and LLVM/Metal backends have been removed and will be re-introduced later as a standalone package. (@tmattio)
 - Rewrite `Autodiff` module to fix critical JVP correctness issues, enable higher-order derivatives (nested gradients), and introduce `vjp` as a first-class primitive. (@tmattio)
+- Fix pointer-based hashing in autodiff, correcting nested JVP handler behavior. (@tmattio)
 - Add autodiff support for `as_strided`, enabling gradients through slicing and indexing operations (@tmattio)
 - Add autodiff support for `cummax` and `cummin` cumulative operations (@tmattio)
 - Add autodiff support for FFT operations (@tmattio)
@@ -31,9 +38,35 @@ All notable changes to this project will be documented in this file.
 
 ### Kaun
 
-- Implemented kaun-console CLI & consolidated logging and reader modules into kaun-runlog. (#167, @Arsalaan-Alam)
-- Implemented event_reader module for incremental JSONL reading. (#166, @Arsalaan-Alam)
+- Implemented kaun-console CLI & consolidated logging and reader modules into kaun-runlog. (#167, #166, #170, @Arsalaan-Alam)
 - Reinitialize dataset each epoch to avoid iterator exhaustion (#147, @Shocker444, @tmattio)
+
+### Hugin
+
+- Fix potential bad memory access in rendering. (@tmattio)
+
+### Talon
+
+- Remove `jsont`, `bytesrw`, and `csv` dependencies from Talon. CSV support is now built-in via the `talon.csv` sub-library with a minimal RFC 4180 parser. (@tmattio)
+- Remove `talon.json` sub-library. (@tmattio)
+
+### Saga
+
+- Simplify saga to a tokenization-only library. Remove the sampler, n-gram models, and I/O utilities. The sampler is rewritten with nx tensors and moved to `dev/mimir` as the seed of an experimental inference engine. (@tmattio)
+- Merge `saga.tokenizers` sub-library into `saga`. (@tmattio)
+- Use `Buffer.add_substring` instead of char-by-char loop in whitespace pre-tokenizer. (@tmattio)
+- Compact BPE symbols in-place after merges, avoiding an intermediate array allocation. (@tmattio)
+- Replace list cons + reverse with forward `List.init` in BPE `word_to_tokens`. (@tmattio)
+- Use pre-allocated arrays with `Array.blit` instead of `Array.append` in encoding merge and padding, halving per-field allocations. (@tmattio)
+- Avoid allocating an unused `words` array in post-processor encoding conversion. (@tmattio)
+- Reduce WordPiece substring allocations from O(n²) to O(n) per word by building the prefixed candidate string once per position. (@tmattio)
+- Add `encode_ids` fast path that bypasses `Encoding.t` construction entirely when only token IDs are needed. (@tmattio)
+- Add ASCII property table for O(1) character classification in pre-tokenizers, replacing O(log n) binary search for `is_alphabetic` (600 ranges), `is_numeric` (230 ranges), and `is_whitespace` (10 ranges). Yields 12-27% speedup on encode benchmarks with ~30% allocation reduction. (@tmattio)
+- Add inline ASCII fast paths in all pre-tokenizer loops, skipping UTF-8 decoding and using `Buffer.add_char` instead of `String.sub` for single-byte characters. Combined with the property table, yields 20-30% total speedup and 36-55% allocation reduction vs baseline. (@tmattio)
+- Remove dependency on `str` library. (@tmattio)
+- Generate unicode data offline, removing runtime dependency on `uucp`. (@tmattio)
+- Remove unused `Grapheme` module. Grapheme cluster segmentation is not needed for tokenization. (@tmattio)
+- Remove `uutf` dependency in favour of OCaml `Stdlib` unicode support. (@tmattio)
 
 ### Quill
 

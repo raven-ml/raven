@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Alcotest
+open Windtrap
 
 (* Helper functions *)
 let temp_file prefix suffix = Filename.temp_file prefix suffix
@@ -24,8 +24,7 @@ let numpy_savetxt_float64_fixture =
 
 let expect_safetensors_ok context = function
   | Ok v -> v
-  | Error err ->
-      Alcotest.failf "%s: %s" context (Safetensors.string_of_error err)
+  | Error err -> failf "%s: %s" context (Safetensors.string_of_error err)
 
 let array_approx_equal ?(eps = 1e-6) a b =
   try
@@ -41,7 +40,7 @@ let array_approx_equal ?(eps = 1e-6) a b =
 
 let check_array_approx msg ?(eps = 1e-6) expected actual =
   if not (array_approx_equal ~eps expected actual) then
-    Alcotest.fail (Printf.sprintf "%s: arrays not approximately equal" msg)
+    fail (Printf.sprintf "%s: arrays not approximately equal" msg)
 
 (* Test NPY format *)
 let test_npy_save_load_float32 () =
@@ -56,7 +55,7 @@ let test_npy_save_load_float32 () =
   let loaded_f32 = Nx_io.as_float32 loaded in
 
   (* Check shape and values *)
-  check (array int) "loaded shape" [| 3; 4 |] (Nx.shape loaded_f32);
+  equal ~msg:"loaded shape" (array int) [| 3; 4 |] (Nx.shape loaded_f32);
   check_array_approx "loaded values" test_data loaded_f32;
 
   (* Clean up *)
@@ -74,14 +73,14 @@ let test_npy_save_load_int64 () =
   let loaded_i64 = Nx_io.as_int64 loaded in
 
   (* Check shape *)
-  check (array int) "loaded shape" [| 2; 5 |] (Nx.shape loaded_i64);
+  equal ~msg:"loaded shape" (array int) [| 2; 5 |] (Nx.shape loaded_i64);
 
   (* Check values *)
   for i = 0 to 1 do
     for j = 0 to 4 do
       let expected = (i * 10) + (j * 2) in
       let actual = Nx.item [ i; j ] loaded_i64 |> Int64.to_int in
-      check int (Printf.sprintf "value at [%d, %d]" i j) expected actual
+      equal ~msg:(Printf.sprintf "value at [%d, %d]" i j) int expected actual
     done
   done;
 
@@ -97,7 +96,7 @@ let test_npy_overwrite_protection () =
 
   (* Try to save with overwrite=false - should fail *)
   let result = Nx_io.Safe.save_npy ~overwrite:false path test_data in
-  check bool "overwrite protection" true (Result.is_error result);
+  equal ~msg:"overwrite protection" bool true (Result.is_error result);
 
   (* Save with overwrite=true - should succeed *)
   Nx_io.save_npy ~overwrite:true path test_data;
@@ -124,19 +123,19 @@ let test_npz_save_load_multiple () =
   let archive = Nx_io.load_npz path in
 
   (* Check we got all arrays *)
-  check int "number of arrays" 3 (Hashtbl.length archive);
-  check bool "has weights" true (Hashtbl.mem archive "weights");
-  check bool "has bias" true (Hashtbl.mem archive "bias");
-  check bool "has scale" true (Hashtbl.mem archive "scale");
+  equal ~msg:"number of arrays" int 3 (Hashtbl.length archive);
+  equal ~msg:"has weights" bool true (Hashtbl.mem archive "weights");
+  equal ~msg:"has bias" bool true (Hashtbl.mem archive "bias");
+  equal ~msg:"has scale" bool true (Hashtbl.mem archive "scale");
 
   (* Check shapes *)
   let loaded_weights = Hashtbl.find archive "weights" |> Nx_io.as_float32 in
   let loaded_bias = Hashtbl.find archive "bias" |> Nx_io.as_float32 in
   let loaded_scale = Hashtbl.find archive "scale" |> Nx_io.as_float64 in
 
-  check (array int) "weights shape" [| 5; 3 |] (Nx.shape loaded_weights);
-  check (array int) "bias shape" [| 3 |] (Nx.shape loaded_bias);
-  check (array int) "scale shape" [| 3 |] (Nx.shape loaded_scale);
+  equal ~msg:"weights shape" (array int) [| 5; 3 |] (Nx.shape loaded_weights);
+  equal ~msg:"bias shape" (array int) [| 3 |] (Nx.shape loaded_bias);
+  equal ~msg:"scale shape" (array int) [| 3 |] (Nx.shape loaded_scale);
 
   (* Clean up *)
   Sys.remove path
@@ -160,13 +159,13 @@ let test_npz_load_member () =
   let loaded2 = Nx_io.load_npz_member ~name:"array2" path |> Nx_io.as_int32 in
   let loaded3 = Nx_io.load_npz_member ~name:"array3" path |> Nx_io.as_float64 in
 
-  check (array int) "array1 shape" [| 10 |] (Nx.shape loaded1);
-  check (array int) "array2 shape" [| 10 |] (Nx.shape loaded2);
-  check (array int) "array3 shape" [| 2; 3 |] (Nx.shape loaded3);
+  equal ~msg:"array1 shape" (array int) [| 10 |] (Nx.shape loaded1);
+  equal ~msg:"array2 shape" (array int) [| 10 |] (Nx.shape loaded2);
+  equal ~msg:"array3 shape" (array int) [| 2; 3 |] (Nx.shape loaded3);
 
   (* Test loading non-existent member *)
   let result = Nx_io.Safe.load_npz_member ~name:"nonexistent" path in
-  check bool "missing member error" true (Result.is_error result);
+  equal ~msg:"missing member error" bool true (Result.is_error result);
 
   (* Clean up *)
   Sys.remove path
@@ -181,7 +180,7 @@ let test_txt_save_load_float32 () =
     (fun () ->
       Nx_io.save_txt ~out:path data;
       let loaded = Nx_io.load_txt Nx.float32 path in
-      check (array int) "shape" [| 2; 3 |] (Nx.shape loaded);
+      equal ~msg:"shape" (array int) [| 2; 3 |] (Nx.shape loaded);
       check_array_approx "values" data loaded)
 
 let test_txt_save_load_int64 () =
@@ -192,12 +191,12 @@ let test_txt_save_load_int64 () =
     (fun () ->
       Nx_io.save_txt ~out:path data;
       let loaded = Nx_io.load_txt Nx.int64 path in
-      check (array int) "shape" [| 3; 2 |] (Nx.shape loaded);
+      equal ~msg:"shape" (array int) [| 3; 2 |] (Nx.shape loaded);
       for i = 0 to 2 do
         for j = 0 to 1 do
           let expected = Nx.item [ i; j ] data |> Int64.to_int in
           let actual = Nx.item [ i; j ] loaded |> Int64.to_int in
-          check int (Printf.sprintf "[%d,%d]" i j) expected actual
+          equal ~msg:(Printf.sprintf "[%d,%d]" i j) int expected actual
         done
       done)
 
@@ -211,10 +210,10 @@ let test_txt_float_precision () =
       Nx_io.save_txt ~out:path data;
       let expected = Printf.sprintf "%.18e" value in
       let content = read_file path |> String.trim in
-      check string "formatted value" expected content;
+      equal ~msg:"formatted value" string expected content;
       let loaded = Nx_io.load_txt Nx.float64 path in
       let loaded_value = Nx.item [ 0 ] loaded in
-      check (float 1e-15) "round-trip" value loaded_value)
+      equal ~msg:"round-trip" (float 1e-15) value loaded_value)
 
 let test_txt_bool_roundtrip () =
   let data =
@@ -226,10 +225,10 @@ let test_txt_bool_roundtrip () =
     (fun () ->
       Nx_io.save_txt ~out:path data;
       let loaded = Nx_io.load_txt Nx.bool path in
-      check (array int) "shape" [| 2; 3 |] (Nx.shape loaded);
+      equal ~msg:"shape" (array int) [| 2; 3 |] (Nx.shape loaded);
       let expected = Nx.to_array data in
       let actual = Nx.to_array loaded in
-      check (array bool) "values" expected actual;
+      equal ~msg:"values" (array bool) expected actual;
       let lines =
         read_file path |> String.split_on_char '\n'
         |> List.filter_map (fun line ->
@@ -238,9 +237,9 @@ let test_txt_bool_roundtrip () =
       in
       match lines with
       | [ first; second ] ->
-          check string "row 1" "1 0 1" first;
-          check string "row 2" "0 1 0" second
-      | _ -> Alcotest.fail "Unexpected boolean txt contents")
+          equal ~msg:"row 1" string "1 0 1" first;
+          equal ~msg:"row 2" string "0 1 0" second
+      | _ -> fail "Unexpected boolean txt contents")
 
 let test_txt_skiprows_max_rows () =
   let data = Nx.reshape [| 3; 2 |] (Nx.arange Nx.float32 0 6 1) in
@@ -250,10 +249,10 @@ let test_txt_skiprows_max_rows () =
     (fun () ->
       Nx_io.save_txt ~header:"generated by nx" ~out:path data;
       let loaded = Nx_io.load_txt Nx.float32 path in
-      check (array int) "shape" [| 3; 2 |] (Nx.shape loaded);
+      equal ~msg:"shape" (array int) [| 3; 2 |] (Nx.shape loaded);
       check_array_approx "full load" data loaded;
       let subset = Nx_io.load_txt ~skiprows:2 ~max_rows:1 Nx.float32 path in
-      check (array int) "subset shape" [| 2 |] (Nx.shape subset);
+      equal ~msg:"subset shape" (array int) [| 2 |] (Nx.shape subset);
       let expected = Nx.create Nx.float32 [| 2 |] [| 2.0; 3.0 |] in
       check_array_approx "subset values" expected subset)
 
@@ -267,7 +266,7 @@ let test_txt_load_numpy_fixture () =
         ~finally:(fun () -> close_out oc)
         (fun () -> output_string oc numpy_savetxt_float64_fixture);
       let loaded = Nx_io.load_txt ~sep:"," ~comments:"##" Nx.float64 path in
-      check (array int) "shape" [| 2; 3 |] (Nx.shape loaded);
+      equal ~msg:"shape" (array int) [| 2; 3 |] (Nx.shape loaded);
       let expected =
         Nx.create Nx.float64 [| 2; 3 |]
           [|
@@ -295,18 +294,18 @@ let test_txt_save_numpy_compat () =
       Nx_io.save_txt ~sep:"," ~newline:"\r\n" ~comments:"##"
         ~header:"alpha beta gamma" ~footer:"generated by numpy" ~out:path data;
       let contents = read_file path in
-      check string "numpy compatible output" numpy_savetxt_float64_fixture
+      equal ~msg:"numpy compatible output" string numpy_savetxt_float64_fixture
         contents)
 
 let txt_tests =
   [
-    test_case "Save/load txt float32" `Quick test_txt_save_load_float32;
-    test_case "Save/load txt int64" `Quick test_txt_save_load_int64;
-    test_case "Float precision formatting" `Quick test_txt_float_precision;
-    test_case "Bool round-trip" `Quick test_txt_bool_roundtrip;
-    test_case "Skip rows and max_rows" `Quick test_txt_skiprows_max_rows;
-    test_case "Save numpy-compatible file" `Quick test_txt_save_numpy_compat;
-    test_case "Load numpy-generated file" `Quick test_txt_load_numpy_fixture;
+    test "Save/load txt float32" test_txt_save_load_float32;
+    test "Save/load txt int64" test_txt_save_load_int64;
+    test "Float precision formatting" test_txt_float_precision;
+    test "Bool round-trip" test_txt_bool_roundtrip;
+    test "Skip rows and max_rows" test_txt_skiprows_max_rows;
+    test "Save numpy-compatible file" test_txt_save_numpy_compat;
+    test "Load numpy-generated file" test_txt_load_numpy_fixture;
   ]
 
 let test_safetensors_save_load () =
@@ -327,10 +326,10 @@ let test_safetensors_save_load () =
   let archive = Nx_io.load_safetensor path in
 
   (* Check we got all tensors *)
-  check int "number of tensors" 3 (Hashtbl.length archive);
-  check bool "has weights" true (Hashtbl.mem archive "model.weights");
-  check bool "has bias" true (Hashtbl.mem archive "model.bias");
-  check bool "has embeddings" true (Hashtbl.mem archive "embeddings");
+  equal ~msg:"number of tensors" int 3 (Hashtbl.length archive);
+  equal ~msg:"has weights" bool true (Hashtbl.mem archive "model.weights");
+  equal ~msg:"has bias" bool true (Hashtbl.mem archive "model.bias");
+  equal ~msg:"has embeddings" bool true (Hashtbl.mem archive "embeddings");
 
   (* Check shapes *)
   let loaded_weights =
@@ -341,9 +340,9 @@ let test_safetensors_save_load () =
     Hashtbl.find archive "embeddings" |> Nx_io.as_float32
   in
 
-  check (array int) "weights shape" [| 10; 5 |] (Nx.shape loaded_weights);
-  check (array int) "bias shape" [| 5 |] (Nx.shape loaded_bias);
-  check (array int) "embeddings shape" [| 100; 64 |]
+  equal ~msg:"weights shape" (array int) [| 10; 5 |] (Nx.shape loaded_weights);
+  equal ~msg:"bias shape" (array int) [| 5 |] (Nx.shape loaded_bias);
+  equal ~msg:"embeddings shape" (array int) [| 100; 64 |]
     (Nx.shape loaded_embeddings);
 
   (* Check values are preserved *)
@@ -384,7 +383,7 @@ let test_safetensors_different_dtypes () =
   for i = 0 to 9 do
     let expected = 20 + i in
     let actual = Nx.item [ i ] loaded_i32 |> Int32.to_int in
-    check int (Printf.sprintf "int32 value at [%d]" i) expected actual
+    equal ~msg:(Printf.sprintf "int32 value at [%d]" i) int expected actual
   done;
 
   (* Clean up *)
@@ -406,8 +405,7 @@ let test_dtype_conversions () =
 
   (* Test failing conversion (wrong dtype) *)
   let should_fail () = ignore (Nx_io.as_int32 loaded) in
-  check_raises "wrong dtype conversion" (Failure "Unsupported dtype")
-    should_fail;
+  raises ~msg:"wrong dtype conversion" (Failure "Unsupported dtype") should_fail;
 
   (* Clean up *)
   Sys.remove path
@@ -422,7 +420,7 @@ let test_empty_arrays () =
   let loaded = Nx_io.load_npy path in
   let loaded_f32 = Nx_io.as_float32 loaded in
 
-  check (array int) "empty array shape" [| 0 |] (Nx.shape loaded_f32);
+  equal ~msg:"empty array shape" (array int) [| 0 |] (Nx.shape loaded_f32);
 
   (* Clean up *)
   Sys.remove path
@@ -436,12 +434,13 @@ let test_large_arrays () =
   let loaded = Nx_io.load_npy path in
   let loaded_f32 = Nx_io.as_float32 loaded in
 
-  check (array int) "large array shape" [| 100; 100 |] (Nx.shape loaded_f32);
+  equal ~msg:"large array shape" (array int) [| 100; 100 |]
+    (Nx.shape loaded_f32);
 
   (* Verify all values are 1 - sum and check *)
   let sum = Nx.sum loaded_f32 ~axes:[ 0; 1 ] ~keepdims:false in
   let sum_val = Nx.item [] sum in
-  check (float 1e-3) "large array sum" 10000.0 sum_val;
+  equal ~msg:"large array sum" (float 1e-3) 10000.0 sum_val;
 
   (* Clean up *)
   Sys.remove path
@@ -457,7 +456,8 @@ let test_high_dimensional_arrays () =
   let loaded = Nx_io.load_npy path in
   let loaded_f32 = Nx_io.as_float32 loaded in
 
-  check (array int) "5D array shape" [| 2; 3; 4; 5; 1 |] (Nx.shape loaded_f32);
+  equal ~msg:"5D array shape" (array int) [| 2; 3; 4; 5; 1 |]
+    (Nx.shape loaded_f32);
   check_array_approx "5D array values" high_dim loaded_f32;
 
   (* Clean up *)
@@ -500,9 +500,7 @@ module Raw_safetensor = struct
           |> List.find_opt (fun (name, _) -> String.equal name tensor_name)
         with
         | Some (_, view) -> String.sub view.data view.offset view.length
-        | None ->
-            Alcotest.failf "Tensor '%s' not found in safetensors file"
-              tensor_name)
+        | None -> failf "Tensor '%s' not found in safetensors file" tensor_name)
 
   let remove path = if Sys.file_exists path then Sys.remove path
 
@@ -521,7 +519,7 @@ module Raw_safetensor = struct
         Nx_io.save_safetensor path_out [ (tensor_name, tensor) ];
         let payload_in = payload path_in in
         let payload_out = payload path_out in
-        check string payload_msg payload_in payload_out)
+        equal ~msg:payload_msg string payload_in payload_out)
 end
 
 (* Test SafeTensors with float16 and bfloat16 round-trip *)
@@ -537,7 +535,7 @@ let test_safetensors_float16_roundtrip () =
   let loaded = Hashtbl.find archive "test_f16" |> Nx_io.as_float16 in
 
   (* Check shape and values *)
-  check (array int) "float16 shape" [| 2; 3 |] (Nx.shape loaded);
+  equal ~msg:"float16 shape" (array int) [| 2; 3 |] (Nx.shape loaded);
   check_array_approx "float16 values" ~eps:1e-3 test_data loaded;
 
   (* Clean up *)
@@ -548,8 +546,8 @@ let test_safetensors_float16_bit_exact () =
     ~values:[ 0x0000; 0x0001; 0x3C00; 0x7C00; 0x7E01 ]
     ~payload_msg:"float16 payload round-trip" ~check_values:(fun packed ->
       let values = packed |> Nx_io.as_float16 |> Nx.to_array in
-      check bool "subnormal preserved" true (values.(1) <> 0.0);
-      check bool "nan preserved" true (Float.is_nan values.(4)))
+      equal ~msg:"subnormal preserved" bool true (values.(1) <> 0.0);
+      equal ~msg:"nan preserved" bool true (Float.is_nan values.(4)))
 
 let test_safetensors_bfloat16_roundtrip () =
   let test_data = Nx.full Nx.bfloat16 [| 2; 3 |] 1.5 in
@@ -563,7 +561,7 @@ let test_safetensors_bfloat16_roundtrip () =
   let loaded = Hashtbl.find archive "test_bf16" |> Nx_io.as_bfloat16 in
 
   (* Check shape and values *)
-  check (array int) "bfloat16 shape" [| 2; 3 |] (Nx.shape loaded);
+  equal ~msg:"bfloat16 shape" (array int) [| 2; 3 |] (Nx.shape loaded);
   check_array_approx "bfloat16 values" ~eps:1e-3 test_data loaded;
 
   (* Clean up *)
@@ -574,70 +572,63 @@ let test_safetensors_bfloat16_bit_exact () =
     ~values:[ 0x0000; 0x0001; 0x3F80; 0x7F80; 0x7FC1 ]
     ~payload_msg:"bfloat16 payload round-trip" ~check_values:(fun packed ->
       let values = packed |> Nx_io.as_bfloat16 |> Nx.to_array in
-      check bool "bf16 subnormal preserved" true (values.(1) <> 0.0);
-      check bool "bf16 nan preserved" true (Float.is_nan values.(4)))
+      equal ~msg:"bf16 subnormal preserved" bool true (values.(1) <> 0.0);
+      equal ~msg:"bf16 nan preserved" bool true (Float.is_nan values.(4)))
 
 (* Test Safe module *)
 let test_safe_module_error_handling () =
   (* Test file not found *)
   let result = Nx_io.Safe.load_npy "/nonexistent/file.npy" in
-  check bool "file not found error" true (Result.is_error result);
+  equal ~msg:"file not found error" bool true (Result.is_error result);
 
   (* Test invalid path for save *)
   let data = Nx.ones Nx.float32 [| 2; 2 |] in
   let result = Nx_io.Safe.save_npy "/invalid/path/file.npy" data in
-  check bool "invalid save path error" true (Result.is_error result);
+  equal ~msg:"invalid save path error" bool true (Result.is_error result);
 
   (* Test successful operation *)
   let path = temp_file "test_safe_" ".npy" in
   let result = Nx_io.Safe.save_npy path data in
-  check bool "successful save" true (Result.is_ok result);
+  equal ~msg:"successful save" bool true (Result.is_ok result);
 
   let result = Nx_io.Safe.load_npy path in
-  check bool "successful load" true (Result.is_ok result);
+  equal ~msg:"successful load" bool true (Result.is_ok result);
 
   (* Clean up *)
   Sys.remove path
 
 let () =
-  let open Alcotest in
   run "Nx_io comprehensive tests"
     [
-      ( "npy",
+      group "npy"
         [
-          test_case "Save/load float32" `Quick test_npy_save_load_float32;
-          test_case "Save/load int64" `Quick test_npy_save_load_int64;
-          test_case "Overwrite protection" `Quick test_npy_overwrite_protection;
-        ] );
-      ("txt", txt_tests);
-      ( "npz",
+          test "Save/load float32" test_npy_save_load_float32;
+          test "Save/load int64" test_npy_save_load_int64;
+          test "Overwrite protection" test_npy_overwrite_protection;
+        ];
+      group "txt" txt_tests;
+      group "npz"
         [
-          test_case "Save/load multiple arrays" `Quick
-            test_npz_save_load_multiple;
-          test_case "Load specific member" `Quick test_npz_load_member;
-        ] );
-      ( "safetensors",
+          test "Save/load multiple arrays" test_npz_save_load_multiple;
+          test "Load specific member" test_npz_load_member;
+        ];
+      group "safetensors"
         [
-          test_case "Save/load tensors" `Quick test_safetensors_save_load;
-          test_case "Different dtypes" `Quick test_safetensors_different_dtypes;
-          test_case "Float16 round-trip" `Quick
-            test_safetensors_float16_roundtrip;
-          test_case "Float16 bit exact" `Quick
-            test_safetensors_float16_bit_exact;
-          test_case "Bfloat16 round-trip" `Quick
-            test_safetensors_bfloat16_roundtrip;
-          test_case "Bfloat16 bit exact" `Quick
-            test_safetensors_bfloat16_bit_exact;
-        ] );
-      ( "dtype_conversions",
-        [ test_case "Basic conversions" `Quick test_dtype_conversions ] );
-      ( "edge_cases",
+          test "Save/load tensors" test_safetensors_save_load;
+          test "Different dtypes" test_safetensors_different_dtypes;
+          test "Float16 round-trip" test_safetensors_float16_roundtrip;
+          test "Float16 bit exact" test_safetensors_float16_bit_exact;
+          test "Bfloat16 round-trip" test_safetensors_bfloat16_roundtrip;
+          test "Bfloat16 bit exact" test_safetensors_bfloat16_bit_exact;
+        ];
+      group "dtype_conversions"
+        [ test "Basic conversions" test_dtype_conversions ];
+      group "edge_cases"
         [
-          test_case "Empty arrays" `Quick test_empty_arrays;
-          test_case "Large arrays" `Quick test_large_arrays;
-          test_case "High dimensional arrays" `Quick
-            test_high_dimensional_arrays;
-        ] );
-      ( "safe_module",
-        [ test_case "Error handling" `Quick test_safe_module_error_handling ] );
+          test "Empty arrays" test_empty_arrays;
+          test "Large arrays" test_large_arrays;
+          test "High dimensional arrays" test_high_dimensional_arrays;
+        ];
+      group "safe_module"
+        [ test "Error handling" test_safe_module_error_handling ];
     ]

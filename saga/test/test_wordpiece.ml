@@ -3,7 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Saga_tokenizers
+open Windtrap
+open Saga
 
 let test_wordpiece_basic () =
   (* Create a simple vocabulary *)
@@ -27,14 +28,14 @@ let test_wordpiece_basic () =
   (* Test tokenizing a known word *)
   let encoding = Tokenizer.encode tokenizer "hello" in
   let tokens = Encoding.get_tokens encoding in
-  Alcotest.(check int) "single token for 'hello'" 1 (Array.length tokens);
-  Alcotest.(check string) "token value" "hello" tokens.(0);
+  equal ~msg:"single token for 'hello'" int 1 (Array.length tokens);
+  equal ~msg:"token value" string "hello" tokens.(0);
 
   Printf.printf "Tokenized 'hello': ";
   Array.iter (Printf.printf "%s ") tokens;
   Printf.printf "\n";
 
-  Alcotest.(check int) "vocabulary size" 7 (Tokenizer.vocab_size tokenizer)
+  equal ~msg:"vocabulary size" int 7 (Tokenizer.vocab_size tokenizer)
 
 let test_wordpiece_subwords () =
   (* Create vocabulary with subword pieces *)
@@ -59,9 +60,9 @@ let test_wordpiece_subwords () =
   Array.iter (Printf.printf "%s ") tokens;
   Printf.printf "\n";
 
-  Alcotest.(check int) "should split into subwords" 2 (Array.length tokens);
-  Alcotest.(check string) "first token" "play" tokens.(0);
-  Alcotest.(check string) "second token" "##ing" tokens.(1)
+  equal ~msg:"should split into subwords" int 2 (Array.length tokens);
+  equal ~msg:"first token" string "play" tokens.(0);
+  equal ~msg:"second token" string "##ing" tokens.(1)
 
 let test_wordpiece_unknown () =
   (* Create minimal vocabulary *)
@@ -72,9 +73,8 @@ let test_wordpiece_unknown () =
   (* Test unknown word *)
   let encoding = Tokenizer.encode tokenizer "goodbye" in
   let tokens = Encoding.get_tokens encoding in
-  Alcotest.(check int)
-    "unknown word becomes single token" 1 (Array.length tokens);
-  Alcotest.(check string) "unknown token" "[UNK]" tokens.(0)
+  equal ~msg:"unknown word becomes single token" int 1 (Array.length tokens);
+  equal ~msg:"unknown token" string "[UNK]" tokens.(0)
 
 let test_wordpiece_max_chars () =
   (* Create vocabulary *)
@@ -88,8 +88,8 @@ let test_wordpiece_max_chars () =
   let long_word = String.make 10 'a' in
   let encoding = Tokenizer.encode tokenizer long_word in
   let tokens = Encoding.get_tokens encoding in
-  Alcotest.(check int) "long word becomes unknown" 1 (Array.length tokens);
-  Alcotest.(check string) "unknown token" "[UNK]" tokens.(0)
+  equal ~msg:"long word becomes unknown" int 1 (Array.length tokens);
+  equal ~msg:"unknown token" string "[UNK]" tokens.(0)
 
 let test_wordpiece_save_load () =
   (* Create vocabulary *)
@@ -122,8 +122,7 @@ let test_wordpiece_save_load () =
     Tokenizer.encode loaded_tokenizer "hello" |> Encoding.get_tokens
   in
 
-  Alcotest.(check int)
-    "same number of tokens"
+  equal ~msg:"same number of tokens" int
     (Array.length original_tokens)
     (Array.length loaded_tokens);
 
@@ -155,7 +154,7 @@ let test_tokenizer_integration () =
   List.iter (Printf.printf "%s ") tokens;
   Printf.printf "\n";
 
-  Alcotest.(check bool) "tokenizer produces output" true (List.length tokens > 0)
+  equal ~msg:"tokenizer produces output" bool true (List.length tokens > 0)
 
 let test_wordpiece_greedy_matching () =
   (* Test the greedy longest-match-first algorithm *)
@@ -175,22 +174,20 @@ let test_wordpiece_greedy_matching () =
   (* Should match "unable" as a single token, not "un" + "##able" *)
   let encoding = Tokenizer.encode tokenizer "unable" in
   let tokens = Encoding.get_tokens encoding in
-  Alcotest.(check int)
-    "greedy match finds longest token" 1 (Array.length tokens);
-  Alcotest.(check string) "matched full word" "unable" tokens.(0)
+  equal ~msg:"greedy match finds longest token" int 1 (Array.length tokens);
+  equal ~msg:"matched full word" string "unable" tokens.(0)
 
 let () =
-  let open Alcotest in
   run "WordPiece tests"
     [
-      ( "basic",
+      group "basic"
         [
-          test_case "basic tokenization" `Quick test_wordpiece_basic;
-          test_case "subword tokenization" `Quick test_wordpiece_subwords;
-          test_case "unknown tokens" `Quick test_wordpiece_unknown;
-          test_case "max input chars" `Quick test_wordpiece_max_chars;
-          test_case "save and load" `Quick test_wordpiece_save_load;
-          test_case "tokenizer integration" `Quick test_tokenizer_integration;
-          test_case "greedy matching" `Quick test_wordpiece_greedy_matching;
-        ] );
+          test "basic tokenization" test_wordpiece_basic;
+          test "subword tokenization" test_wordpiece_subwords;
+          test "unknown tokens" test_wordpiece_unknown;
+          test "max input chars" test_wordpiece_max_chars;
+          test "save and load" test_wordpiece_save_load;
+          test "tokenizer integration" test_tokenizer_integration;
+          test "greedy matching" test_wordpiece_greedy_matching;
+        ];
     ]

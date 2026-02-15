@@ -3,14 +3,14 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Alcotest
-module Pre = Saga_tokenizers.Pre_tokenizers
+open Windtrap
+module Pre = Saga.Pre_tokenizers
 
 let check_tokenization name input expected =
-  check (list (pair string (pair int int))) name expected input
+  equal ~msg:name (list (pair string (pair int int))) expected input
 
 let check_strings name input expected =
-  check (list string) name expected (List.map fst input)
+  equal ~msg:name (list string) expected (List.map fst input)
 
 let test_byte_level_basic () =
   let tokenizer = Pre.byte_level ~add_prefix_space:false ~use_regex:true () in
@@ -22,9 +22,9 @@ let test_byte_level_basic () =
     check_strings
       (Printf.sprintf "ByteLevel pieces for %S" text)
       result expected_pieces;
-    check
+    equal
+      ~msg:(Printf.sprintf "ByteLevel offsets for %S" text)
       (list (pair int int))
-      (Printf.sprintf "ByteLevel offsets for %S" text)
       expected_offsets offsets
   in
 
@@ -89,9 +89,9 @@ let test_byte_level_special_chars () =
     let result = tokenizer text in
     let pieces = List.map fst result in
     (* Just verify it doesn't crash and produces something *)
-    check bool
-      (Printf.sprintf "ByteLevel handles %s" desc)
-      true
+    equal
+      ~msg:(Printf.sprintf "ByteLevel handles %s" desc)
+      bool true
       (List.length pieces > 0)
   in
 
@@ -139,16 +139,16 @@ let test_byte_level_unicode () =
     let result = tokenizer text in
     let pieces = List.map fst result in
     (* Byte-level encoding should handle any Unicode by encoding bytes *)
-    check bool
-      (Printf.sprintf "ByteLevel handles %s" desc)
-      true
+    equal
+      ~msg:(Printf.sprintf "ByteLevel handles %s" desc)
+      bool true
       (List.length pieces > 0);
     (* Check that we can reconstruct something (even if not identical due to
        encoding) *)
     let concatenated = String.concat "" pieces in
-    check bool
-      (Printf.sprintf "ByteLevel produces non-empty output for %s" desc)
-      true
+    equal
+      ~msg:(Printf.sprintf "ByteLevel produces non-empty output for %s" desc)
+      bool true
       (String.length concatenated > 0)
   in
 
@@ -174,7 +174,7 @@ let test_byte_level_edge_cases () =
 
   (* Empty string *)
   let result = tokenizer "" in
-  check (list string) "Empty string" [] (List.map fst result);
+  equal ~msg:"Empty string" (list string) [] (List.map fst result);
 
   (* Single character *)
   let result = tokenizer "a" in
@@ -191,11 +191,11 @@ let test_byte_level_edge_cases () =
   (* Very long word *)
   let long_word = String.make 100 'a' in
   let result = tokenizer long_word in
-  check int "Long word produces single token" 1 (List.length result);
+  equal ~msg:"Long word produces single token" int 1 (List.length result);
 
   (* Mixed whitespace *)
   let result = tokenizer "hello\tworld\nfoo\rbar" in
-  check bool "Handles tabs and newlines" true (List.length result > 0)
+  equal ~msg:"Handles tabs and newlines" bool true (List.length result > 0)
 
 let test_bert_pretokenizer () =
   let test_case text expected =
@@ -221,7 +221,7 @@ let test_bert_pretokenizer () =
   (* Unicode *)
   test_case "café" [ ("café", (0, 5)) ];
 
-  (* Note: é is 2 bytes in UTF-8 *)
+  (* Note: e is 2 bytes in UTF-8 *)
 
   (* Empty and whitespace *)
   test_case "" [];
@@ -423,16 +423,16 @@ let test_fixed_length () =
 
   (* With UTF-8 - counts characters not bytes *)
   test_case 2 "café" [ ("ca", (0, 2)); ("fé", (2, 5)) ]
-(* é is 2 bytes *)
+(* e is 2 bytes *)
 
 let test_unicode_scripts () =
   let test_case text desc =
     let tokenizer = Pre.unicode_scripts () in
     let result = tokenizer text in
     (* Just verify it runs without crashing and produces something reasonable *)
-    check bool
-      (Printf.sprintf "UnicodeScripts %s" desc)
-      true
+    equal
+      ~msg:(Printf.sprintf "UnicodeScripts %s" desc)
+      bool true
       (List.length result >= 0)
   in
 
@@ -456,42 +456,33 @@ let test_metaspace_basic () =
   test_case "" []
 
 let () =
-  let open Alcotest in
   run "Pre-tokenizers Test Suite"
     [
-      ( "byte_level",
+      group "byte_level"
         [
-          test_case "ByteLevel basic" `Quick test_byte_level_basic;
-          test_case "ByteLevel prefix space" `Quick test_byte_level_prefix_space;
-          test_case "ByteLevel special chars" `Quick
-            test_byte_level_special_chars;
-          test_case "ByteLevel unicode" `Quick test_byte_level_unicode;
-          test_case "ByteLevel edge cases" `Quick test_byte_level_edge_cases;
-        ] );
-      ("bert", [ test_case "BERT tokenization" `Quick test_bert_pretokenizer ]);
-      ( "whitespace",
+          test "ByteLevel basic" test_byte_level_basic;
+          test "ByteLevel prefix space" test_byte_level_prefix_space;
+          test "ByteLevel special chars" test_byte_level_special_chars;
+          test "ByteLevel unicode" test_byte_level_unicode;
+          test "ByteLevel edge cases" test_byte_level_edge_cases;
+        ];
+      group "bert" [ test "BERT tokenization" test_bert_pretokenizer ];
+      group "whitespace"
         [
-          test_case "Whitespace tokenization" `Quick
-            test_whitespace_pretokenizer;
-          test_case "WhitespaceSplit" `Quick test_whitespace_split;
-        ] );
-      ( "punctuation",
+          test "Whitespace tokenization" test_whitespace_pretokenizer;
+          test "WhitespaceSplit" test_whitespace_split;
+        ];
+      group "punctuation"
+        [ test "Punctuation behaviors" test_punctuation_pretokenizer ];
+      group "digits" [ test "Digits tokenization" test_digits_pretokenizer ];
+      group "split"
         [
-          test_case "Punctuation behaviors" `Quick test_punctuation_pretokenizer;
-        ] );
-      ( "digits",
-        [ test_case "Digits tokenization" `Quick test_digits_pretokenizer ] );
-      ( "split",
-        [
-          test_case "Split with patterns" `Quick test_split_pretokenizer;
-          test_case "CharDelimiterSplit" `Quick test_char_delimiter_split;
-        ] );
-      ( "sequence",
-        [ test_case "Sequence of tokenizers" `Quick test_sequence_pretokenizer ]
-      );
-      ( "fixed_length",
-        [ test_case "FixedLength chunks" `Quick test_fixed_length ] );
-      ( "unicode_scripts",
-        [ test_case "UnicodeScripts" `Quick test_unicode_scripts ] );
-      ("metaspace", [ test_case "Metaspace basic" `Quick test_metaspace_basic ]);
+          test "Split with patterns" test_split_pretokenizer;
+          test "CharDelimiterSplit" test_char_delimiter_split;
+        ];
+      group "sequence"
+        [ test "Sequence of tokenizers" test_sequence_pretokenizer ];
+      group "fixed_length" [ test "FixedLength chunks" test_fixed_length ];
+      group "unicode_scripts" [ test "UnicodeScripts" test_unicode_scripts ];
+      group "metaspace" [ test "Metaspace basic" test_metaspace_basic ];
     ]

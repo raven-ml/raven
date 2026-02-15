@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Alcotest
-open Saga_tokenizers
+open Windtrap
+open Saga
 
 let make_encoding ~ids ~tokens ~type_id =
   let len = Array.length ids in
@@ -19,37 +19,53 @@ let make_encoding ~ids ~tokens ~type_id =
     sequence_ranges = [];
   }
 
+let json_obj pairs =
+  Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
+
 let test_template_multi_special () =
   let processor =
     Processors.of_json
-      (`Assoc
+      (json_obj
          [
-           ("type", `String "TemplateProcessing");
+           ("type", Jsont.Json.string "TemplateProcessing");
            ( "single",
-             `List
+             Jsont.Json.list
                [
-                 `Assoc
+                 json_obj
                    [
                      ( "SpecialToken",
-                       `Assoc [ ("id", `String "<multi>"); ("type_id", `Int 2) ]
-                     );
+                       json_obj
+                         [
+                           ("id", Jsont.Json.string "<multi>");
+                           ("type_id", Jsont.Json.int 2);
+                         ] );
                    ];
-                 `Assoc
+                 json_obj
                    [
                      ( "Sequence",
-                       `Assoc [ ("id", `String "A"); ("type_id", `Int 0) ] );
+                       json_obj
+                         [
+                           ("id", Jsont.Json.string "A");
+                           ("type_id", Jsont.Json.int 0);
+                         ] );
                    ];
                ] );
-           ("pair", `Null);
+           ("pair", Jsont.Json.null ());
            ( "special_tokens",
-             `Assoc
+             json_obj
                [
                  ( "<multi>",
-                   `Assoc
+                   json_obj
                      [
-                       ("id", `String "<multi>");
-                       ("ids", `List [ `Int 100; `Int 101 ]);
-                       ("tokens", `List [ `String "<m1>"; `String "<m2>" ]);
+                       ("id", Jsont.Json.string "<multi>");
+                       ( "ids",
+                         Jsont.Json.list
+                           [ Jsont.Json.int 100; Jsont.Json.int 101 ] );
+                       ( "tokens",
+                         Jsont.Json.list
+                           [
+                             Jsont.Json.string "<m1>"; Jsont.Json.string "<m2>";
+                           ] );
                      ] );
                ] );
          ])
@@ -58,15 +74,16 @@ let test_template_multi_special () =
   let result = Processors.process processor [ base ] ~add_special_tokens:true in
   match result with
   | [ encoding ] ->
-      check (array int) "ids" [| 100; 101; 10 |] encoding.ids;
-      check (array string) "tokens"
+      equal ~msg:"ids" (array int) [| 100; 101; 10 |] encoding.ids;
+      equal ~msg:"tokens" (array string)
         [| "<m1>"; "<m2>"; "hello" |]
         encoding.tokens;
-      check (array int) "type ids" [| 2; 2; 0 |] encoding.type_ids;
-      check (array int) "special mask" [| 1; 1; 0 |]
+      equal ~msg:"type ids" (array int) [| 2; 2; 0 |] encoding.type_ids;
+      equal ~msg:"special mask" (array int) [| 1; 1; 0 |]
         encoding.special_tokens_mask;
-      check (array int) "attention mask" [| 1; 1; 1 |] encoding.attention_mask;
-      check int "added tokens single" 2
+      equal ~msg:"attention mask" (array int) [| 1; 1; 1 |]
+        encoding.attention_mask;
+      equal ~msg:"added tokens single" int 2
         (Processors.added_tokens processor ~is_pair:false)
   | _ -> failwith "expected exactly one encoding"
 
@@ -86,14 +103,17 @@ let test_template_pair_type_ids () =
   in
   (match combined with
   | [ encoding ] ->
-      check (array int) "pair ids" [| 101; 10; 11; 102; 20; 102 |] encoding.ids;
-      check (array string) "pair tokens"
+      equal ~msg:"pair ids" (array int)
+        [| 101; 10; 11; 102; 20; 102 |]
+        encoding.ids;
+      equal ~msg:"pair tokens" (array string)
         [| "[CLS]"; "hello"; "world"; "[SEP]"; "pair"; "[SEP]" |]
         encoding.tokens;
-      check (array int) "pair type ids" [| 0; 0; 0; 0; 3; 3 |] encoding.type_ids;
-      check (array int) "pair special mask" [| 1; 0; 0; 1; 0; 1 |]
+      equal ~msg:"pair type ids" (array int) [| 0; 0; 0; 0; 3; 3 |]
+        encoding.type_ids;
+      equal ~msg:"pair special mask" (array int) [| 1; 0; 0; 1; 0; 1 |]
         encoding.special_tokens_mask;
-      check int "added tokens pair" 3
+      equal ~msg:"added tokens pair" int 3
         (Processors.added_tokens processor ~is_pair:true)
   | _ -> failwith "expected a single merged encoding");
   let no_special =
@@ -101,17 +121,16 @@ let test_template_pair_type_ids () =
   in
   match no_special with
   | [ first; second ] ->
-      check (array int) "no-special ids first" seq_a.ids first.ids;
-      check (array int) "no-special ids second" seq_b.ids second.ids
+      equal ~msg:"no-special ids first" (array int) seq_a.ids first.ids;
+      equal ~msg:"no-special ids second" (array int) seq_b.ids second.ids
   | _ -> failwith "expected original encodings without specials"
 
 let () =
   run "Processors"
     [
-      ( "template",
+      group "template"
         [
-          test_case "multi-id special expansion" `Quick
-            test_template_multi_special;
-          test_case "pair template semantics" `Quick test_template_pair_type_ids;
-        ] );
+          test "multi-id special expansion" test_template_multi_special;
+          test "pair template semantics" test_template_pair_type_ids;
+        ];
     ]

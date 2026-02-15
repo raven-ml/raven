@@ -1,0 +1,10 @@
+(lang dune 3.19)
+
+(using directory-targets 0.1)
+
+(name raven-www)
+
+(package
+ (name raven-www)
+ (allow_empty)
+ (depends cmarkit hilite))

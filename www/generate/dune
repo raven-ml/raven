@@ -1,0 +1,3 @@
+(executable
+ (name generate)
+ (libraries cmarkit hilite hilite.markdown unix))

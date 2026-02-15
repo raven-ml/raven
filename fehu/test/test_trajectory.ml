@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Fehu
+open Windtrap
 
 let test_create () =
   let observations =
@@ -29,7 +30,7 @@ let test_create () =
       ()
   in
 
-  Alcotest.(check int) "length" 3 (Trajectory.length trajectory)
+  equal ~msg:"length" int 3 (Trajectory.length trajectory)
 
 let test_create_with_log_probs_values () =
   let observations =
@@ -55,7 +56,7 @@ let test_create_with_log_probs_values () =
       ~log_probs ~values ()
   in
 
-  Alcotest.(check int) "length" 2 (Trajectory.length trajectory)
+  equal ~msg:"length" int 2 (Trajectory.length trajectory)
 
 let test_concat () =
   let make_trajectory n =
@@ -80,7 +81,7 @@ let test_concat () =
 
   let concatenated = Trajectory.concat [ t1; t2; t3 ] in
 
-  Alcotest.(check int) "concatenated length" 9 (Trajectory.length concatenated)
+  equal ~msg:"concatenated length" int 9 (Trajectory.length concatenated)
 
 let test_collect () =
   (* Create a simple environment *)
@@ -116,7 +117,7 @@ let test_collect () =
 
   let trajectory = Trajectory.collect env ~policy ~n_steps:10 in
 
-  Alcotest.(check int) "collected 10 steps" 10 (Trajectory.length trajectory)
+  equal ~msg:"collected 10 steps" int 10 (Trajectory.length trajectory)
 
 let test_collect_episodes () =
   let rng = Rune.Rng.key 42 in
@@ -149,12 +150,12 @@ let test_collect_episodes () =
 
   let episodes = Trajectory.collect_episodes env ~policy ~n_episodes:3 () in
 
-  Alcotest.(check int) "collected 3 episodes" 3 (List.length episodes);
+  equal ~msg:"collected 3 episodes" int 3 (List.length episodes);
 
   (* Each episode should have 3 steps *)
   List.iter
     (fun episode ->
-      Alcotest.(check int) "episode length" 3 (Trajectory.length episode))
+      equal ~msg:"episode length" int 3 (Trajectory.length episode))
     episodes
 
 let test_collect_episodes_with_max_steps () =
@@ -183,32 +184,30 @@ let test_collect_episodes_with_max_steps () =
     Trajectory.collect_episodes env ~policy ~n_episodes:2 ~max_steps:5 ()
   in
 
-  Alcotest.(check int) "collected 2 episodes" 2 (List.length episodes);
+  equal ~msg:"collected 2 episodes" int 2 (List.length episodes);
 
   (* Each episode should be truncated at 5 steps *)
   List.iter
     (fun episode ->
-      Alcotest.(check int)
-        "episode truncated at max_steps" 5
+      equal ~msg:"episode truncated at max_steps" int 5
         (Trajectory.length episode))
     episodes
 
 let () =
-  let open Alcotest in
   run "Trajectory"
     [
-      ( "Creation",
+      group "Creation"
         [
-          test_case "create trajectory" `Quick test_create;
-          test_case "create with log_probs and values" `Quick
+          test "create trajectory" test_create;
+          test "create with log_probs and values"
             test_create_with_log_probs_values;
-          test_case "concatenate trajectories" `Quick test_concat;
-        ] );
-      ( "Collection",
+          test "concatenate trajectories" test_concat;
+        ];
+      group "Collection"
         [
-          test_case "collect steps" `Quick test_collect;
-          test_case "collect episodes" `Quick test_collect_episodes;
-          test_case "collect episodes with max_steps" `Quick
+          test "collect steps" test_collect;
+          test "collect episodes" test_collect_episodes;
+          test "collect episodes with max_steps"
             test_collect_episodes_with_max_steps;
-        ] );
+        ];
     ]

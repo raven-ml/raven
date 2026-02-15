@@ -2,5 +2,5 @@
  (name test_bert_matches_hf)
  (package kaun)
  (enabled_if false)
- (libraries rune nx nx.core nx.io kaun kaun.models kaun.huggingface alcotest)
+ (libraries rune nx nx.core nx.io kaun kaun.models kaun.huggingface windtrap)
  (deps reference_hf_output.py))

@@ -1,6 +1,26 @@
 (include_subdirs unqualified)
 
+; Copy architecture-specific SIMD module
+
+(rule
+ (enabled_if
+  (= %{architecture} arm64))
+ (targets simd.ml)
+ (action (copy simd_neon.ml simd.ml)))
+
+(rule
+ (enabled_if
+  (= %{architecture} amd64))
+ (targets simd.ml)
+ (action (copy simd_sse.ml simd.ml)))
+
 (library
  (name nx_oxcaml)
  (public_name nx-oxcaml)
- (libraries nx.core nx-oxcaml.simd stdlib_stable stdlib_upstream_compatible))
+ (implements nx_backend)
+ (modules
+  (:standard \ simd_neon simd_sse))
+ (foreign_stubs
+  (language c)
+  (names simd_stubs))
+ (libraries stdlib_stable stdlib_upstream_compatible))

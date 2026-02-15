@@ -1,0 +1,4 @@
+(mdx
+ (files *.md)
+ (package kaun)
+ (libraries kaun kaun_datasets rune nx hugin))

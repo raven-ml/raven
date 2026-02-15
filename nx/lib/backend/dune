@@ -1,0 +1,6 @@
+(library
+ (name nx_backend)
+ (public_name nx.backend)
+ (virtual_modules nx_backend)
+ (default_implementation nx_c)
+ (libraries nx_core nx_buffer))

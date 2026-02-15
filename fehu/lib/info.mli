@@ -125,10 +125,10 @@ val list : value list -> value
 val dict : (string * value) list -> value
 (** [dict entries] constructs a nested dictionary value. *)
 
-val to_yojson : t -> Yojson.Safe.t
-(** [to_yojson info] serializes [info] to JSON. *)
+val to_json : t -> Jsont.json
+(** [to_json info] serializes [info] to JSON. *)
 
-val of_yojson : Yojson.Safe.t -> (t, string) result
-(** [of_yojson json] deserializes [info] from JSON.
+val of_json : Jsont.json -> (t, string) result
+(** [of_json json] deserializes [info] from JSON.
 
     Returns [Error msg] if the JSON structure is invalid. *)

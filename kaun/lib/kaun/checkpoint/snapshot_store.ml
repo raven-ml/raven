@@ -7,48 +7,75 @@ open Util
 
 type tensor_meta = { encoded_path : string; dtype : string; shape : int array }
 
-let tensors_meta_to_yojson metas =
-  `List
+let json_obj pairs =
+  Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
+
+let json_to_string j =
+  match Jsont_bytesrw.encode_string ~format:Jsont.Minify Jsont.json j with
+  | Ok s -> s
+  | Error e -> failwith e
+
+let json_of_file path =
+  let ic = open_in path in
+  let s =
+    Fun.protect
+      ~finally:(fun () -> close_in ic)
+      (fun () -> really_input_string ic (in_channel_length ic))
+  in
+  match Jsont_bytesrw.decode_string Jsont.json s with
+  | Ok v -> v
+  | Error e -> failwith e
+
+let json_to_file path j =
+  let s = json_to_string j in
+  let oc = open_out path in
+  Fun.protect ~finally:(fun () -> close_out oc) (fun () -> output_string oc s)
+
+let tensors_meta_to_json metas =
+  Jsont.Json.list
     (List.map
        (fun { encoded_path; dtype; shape } ->
-         `Assoc
+         json_obj
            [
-             ("path", `String encoded_path);
-             ("dtype", `String dtype);
-             ("shape", `List (Array.to_list shape |> List.map (fun d -> `Int d)));
+             ("path", Jsont.Json.string encoded_path);
+             ("dtype", Jsont.Json.string dtype);
+             ( "shape",
+               Jsont.Json.list (Array.to_list shape |> List.map Jsont.Json.int)
+             );
            ])
        metas)
 
-let tensors_meta_of_yojson json =
+let tensors_meta_of_json json =
   match json with
-  | `List entries ->
+  | Jsont.Array (entries, _) ->
       let decode_entry = function
-        | `Assoc fields -> (
+        | Jsont.Object (mems, _) -> (
             match
-              ( List.assoc_opt "path" fields,
-                List.assoc_opt "dtype" fields,
-                List.assoc_opt "shape" fields )
+              ( Jsont.Json.find_mem "path" mems,
+                Jsont.Json.find_mem "dtype" mems,
+                Jsont.Json.find_mem "shape" mems )
             with
-            | Some (`String path), Some (`String dtype), Some (`List shape) ->
+            | ( Some (_, Jsont.String (path, _)),
+                Some (_, Jsont.String (dtype, _)),
+                Some (_, Jsont.Array (shape, _)) ) ->
                 let shape =
                   List.fold_left
                     (fun acc -> function
-                      | `Int dim -> dim :: acc
+                      | Jsont.Number (f, _) -> int_of_float f :: acc
                       | _ ->
                           failwith
-                            "Snapshot_store.tensors_meta_of_yojson: invalid \
+                            "Snapshot_store.tensors_meta_of_json: invalid \
                              shape value")
                     [] shape
                   |> List.rev |> Array.of_list
                 in
                 { encoded_path = path; dtype; shape }
             | _ ->
-                failwith "Snapshot_store.tensors_meta_of_yojson: missing fields"
-            )
-        | _ -> failwith "Snapshot_store.tensors_meta_of_yojson: expected object"
+                failwith "Snapshot_store.tensors_meta_of_json: missing fields")
+        | _ -> failwith "Snapshot_store.tensors_meta_of_json: expected object"
       in
       List.map decode_entry entries
-  | _ -> failwith "Snapshot_store.tensors_meta_of_yojson: expected list"
+  | _ -> failwith "Snapshot_store.tensors_meta_of_json: expected list"
 
 let dtype_to_string dtype = Nx.dtype_to_string dtype
 
@@ -75,14 +102,14 @@ let encode_tree =
         let name = if prefix = "" then "root" else prefix in
         let encoded = encode_path name in
         tensors := (encoded, Snapshot.Pack tensor) :: !tensors;
-        `Assoc [ ("__tensor__", `String encoded) ]
+        json_obj [ ("__tensor__", Jsont.Json.string encoded) ]
     | Snapshot.Scalar scalar ->
         let name = if prefix = "" then "root" else prefix in
         let encoded = encode_path name in
         scalars := (encoded, scalar) :: !scalars;
-        `Assoc [ ("__scalar__", `String encoded) ]
+        json_obj [ ("__scalar__", Jsont.Json.string encoded) ]
     | Snapshot.List items ->
-        `List
+        Jsont.Json.list
           (List.mapi
              (fun idx item ->
                let child =
@@ -92,7 +119,7 @@ let encode_tree =
                aux child tensors scalars item)
              items)
     | Snapshot.Record record ->
-        `Assoc
+        json_obj
           (Snapshot.Record.bindings record
           |> List.map (fun (key, value) ->
               let child = if prefix = "" then key else prefix ^ "." ^ key in
@@ -107,11 +134,15 @@ let encode_tree =
 let decode_tree tensor_lookup scalar_lookup =
   let rec aux prefix json =
     match json with
-    | `Assoc fields -> (
-        let tensor_marker = List.assoc_opt "__tensor__" fields in
-        let scalar_marker = List.assoc_opt "__scalar__" fields in
+    | Jsont.Object (mems, _) -> (
+        let tensor_marker =
+          Option.map snd (Jsont.Json.find_mem "__tensor__" mems)
+        in
+        let scalar_marker =
+          Option.map snd (Jsont.Json.find_mem "__scalar__" mems)
+        in
         match (tensor_marker, scalar_marker) with
-        | Some (`String encoded), _ -> (
+        | Some (Jsont.String (encoded, _)), _ -> (
             match tensor_lookup encoded with
             | Some pack -> Snapshot.Tensor pack
             | None ->
@@ -120,7 +151,7 @@ let decode_tree tensor_lookup scalar_lookup =
                      "Snapshot_store.decode_tree: missing tensor %s" encoded))
         | Some _, _ ->
             failwith "Snapshot_store.decode_tree: invalid tensor marker"
-        | _, Some (`String encoded) -> (
+        | _, Some (Jsont.String (encoded, _)) -> (
             match scalar_lookup encoded with
             | Some scalar -> Snapshot.Scalar scalar
             | None ->
@@ -137,15 +168,15 @@ let decode_tree tensor_lookup scalar_lookup =
             | None ->
                 let record =
                   List.map
-                    (fun (key, value) ->
+                    (fun ((key, _), value) ->
                       let child =
                         if prefix = "" then key else prefix ^ "." ^ key
                       in
                       (key, aux child value))
-                    fields
+                    mems
                 in
                 Snapshot.record record))
-    | `List items ->
+    | Jsont.Array (items, _) ->
         Snapshot.list
           (List.mapi
              (fun idx item ->
@@ -160,7 +191,7 @@ let decode_tree tensor_lookup scalar_lookup =
         let encoded = encode_path name in
         match scalar_lookup encoded with
         | Some scalar -> Snapshot.Scalar scalar
-        | None -> Snapshot.Scalar (Snapshot.scalar_of_yojson json_scalar))
+        | None -> Snapshot.Scalar (Snapshot.scalar_of_json json_scalar))
   in
   aux ""
 
@@ -190,15 +221,15 @@ let save ~base_path snapshot =
   let tensors_path = base_path ^ ".tensors.safetensors" in
   let meta_path = base_path ^ ".tensors.json" in
 
-  Yojson.Basic.to_file structure_path structure_json;
+  json_to_file structure_path structure_json;
   let scalars_json =
-    `Assoc
+    json_obj
       (List.map
-         (fun (encoded, scalar) -> (encoded, Snapshot.scalar_to_yojson scalar))
+         (fun (encoded, scalar) -> (encoded, Snapshot.scalar_to_json scalar))
          scalars)
   in
-  Yojson.Basic.to_file scalars_path scalars_json;
-  Yojson.Basic.to_file meta_path (tensors_meta_to_yojson metas);
+  json_to_file scalars_path scalars_json;
+  json_to_file meta_path (tensors_meta_to_json metas);
   Nx_io.save_safetensor ~overwrite:true tensors_path named_tensors
 
 let load ~base_path =
@@ -208,11 +239,9 @@ let load ~base_path =
   let tensors_path = base_path ^ ".tensors.safetensors" in
   let meta_path = base_path ^ ".tensors.json" in
   try
-    let structure_json = Yojson.Basic.from_file structure_path in
-    let scalars_json = Yojson.Basic.from_file scalars_path in
-    let tensor_meta =
-      Yojson.Basic.from_file meta_path |> tensors_meta_of_yojson
-    in
+    let structure_json = json_of_file structure_path in
+    let scalars_json = json_of_file scalars_path in
+    let tensor_meta = json_of_file meta_path |> tensors_meta_of_json in
     let archive = Nx_io.load_safetensor tensors_path in
     let meta_table = Hashtbl.create (List.length tensor_meta) in
     List.iter
@@ -232,9 +261,9 @@ let load ~base_path =
     in
     let scalar_lookup encoded =
       match scalars_json with
-      | `Assoc entries -> (
-          match List.assoc_opt encoded entries with
-          | Some json -> Some (Snapshot.scalar_of_yojson json)
+      | Jsont.Object (mems, _) -> (
+          match Jsont.Json.find_mem encoded mems with
+          | Some (_, json) -> Some (Snapshot.scalar_of_json json)
           | None -> None)
       | _ -> None
     in

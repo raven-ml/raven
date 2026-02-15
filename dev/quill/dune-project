@@ -23,11 +23,6 @@
 (pin
  (url ../../)
  (package
-  (name nx-datasets)))
-
-(pin
- (url ../../)
- (package
   (name saga)))
 
 (pin
@@ -69,19 +64,17 @@
   js_of_ocaml-toplevel
   (dream
    (>= 1.0.0~alpha8))
-  ppx_deriving_yojson
+  jsont
+  bytesrw
   cmarkit
   vdom
   brr
-  (base64
-   (>= 3.1.0))
   nx
-  nx-datasets
   saga
   rune
   kaun
   sowilo
   hugin
-  (alcotest :with-test))
+  (windtrap :with-test))
  (tags
   (notebook interactive-computing data-science literate-programming)))

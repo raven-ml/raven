@@ -2,11 +2,11 @@
  (name kaun_console)
  (public_name kaun.console)
  (modules metric_store kaun_console)
- (libraries kaun kaun.runlog kaun_console_components yojson unix mosaic mosaic.ui))
+ (libraries kaun kaun.runlog kaun_console_components yojson unix mosaic mosaic.ui jsont jsont.bytesrw))
 
 (executable
  (name cli)
  (public_name kaun-console)
  (package kaun)
  (modules cli)
- (libraries kaun.console kaun.runlog yojson unix))
+ (libraries kaun.console kaun.runlog jsont jsont.bytesrw unix))

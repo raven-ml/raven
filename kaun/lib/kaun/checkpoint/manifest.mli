@@ -24,5 +24,7 @@ val create :
   unit ->
   t
 
-val to_yojson : t -> Yojson.Basic.t
-val of_yojson : Yojson.Basic.t -> (t, string) result
+val to_json : t -> Jsont.json
+val of_json : Jsont.json -> (t, string) result
+val json_of_file : string -> Jsont.json
+val json_to_file : string -> Jsont.json -> unit

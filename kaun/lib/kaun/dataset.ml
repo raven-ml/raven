@@ -241,12 +241,11 @@ let from_tensors (x, y) =
 
 (* ───── Text Data Sources ───── *)
 let from_text_file ?(encoding = `UTF8) ?(chunk_size = 65536) path =
-  let decoder_encoding, preprocess_chunk =
+  let preprocess_chunk =
     match encoding with
-    | `UTF8 -> (Some `UTF_8, Fun.id)
-    | `ASCII -> (Some `UTF_8, Fun.id)
+    | `UTF8 | `ASCII -> Fun.id
     | `LATIN1 ->
-        let convert chunk =
+        fun chunk ->
           let len = String.length chunk in
           let buf = Buffer.create len in
           for i = 0 to len - 1 do
@@ -257,17 +256,13 @@ let from_text_file ?(encoding = `UTF8) ?(chunk_size = 65536) path =
               Buffer.add_char buf (Char.unsafe_chr (0x80 lor (code land 0x3F))))
           done;
           Buffer.contents buf
-        in
-        (Some `UTF_8, convert)
   in
-  let make_decoder () = Uutf.decoder ?encoding:decoder_encoding `Manual in
   let handle_ref = ref None in
   let file_size = ref 0 in
   let offset = ref 0 in
   let closed = ref false in
   let buf = Buffer.create 512 in
   let lines_queue = Queue.create () in
-  let decoder = ref (make_decoder ()) in
 
   let open_handle () =
     let handle = create_mmap path in
@@ -289,7 +284,7 @@ let from_text_file ?(encoding = `UTF8) ?(chunk_size = 65536) path =
   in
   ignore (open_handle ());
 
-  let push_line_from_buf () =
+  let push_line () =
     let line = Buffer.contents buf in
     Buffer.clear buf;
     let line =
@@ -300,38 +295,43 @@ let from_text_file ?(encoding = `UTF8) ?(chunk_size = 65536) path =
     Queue.add line lines_queue
   in
 
+  (* In UTF-8, '\n' (0x0A) is always a single byte and never appears inside
+     multi-byte sequences, so simple byte scanning is safe for line
+     splitting. *)
+  let process_chunk chunk =
+    let len = String.length chunk in
+    let start = ref 0 in
+    for i = 0 to len - 1 do
+      if Char.equal chunk.[i] '\n' then (
+        if i > !start then
+          Buffer.add_string buf (String.sub chunk !start (i - !start));
+        push_line ();
+        start := i + 1)
+    done;
+    if !start < len then
+      Buffer.add_string buf (String.sub chunk !start (len - !start))
+  in
+
   let rec fill_queue () =
-    if Queue.is_empty lines_queue && not !closed then
-      match Uutf.decode !decoder with
-      | `Uchar u ->
-          if Uchar.to_int u = 0x000A then push_line_from_buf ()
-          else Uutf.Buffer.add_utf_8 buf u;
-          if Queue.is_empty lines_queue then fill_queue ()
-      | `Malformed _ ->
-          Uutf.Buffer.add_utf_8 buf Uutf.u_rep;
-          fill_queue ()
-      | `Await ->
-          if !offset >= !file_size then (
-            Uutf.Manual.src !decoder (Bytes.create 0) 0 0;
-            fill_queue ())
-          else
-            let handle = ensure_handle () in
-            let raw_chunk =
-              read_mmap_chunk handle ~offset:!offset ~length:chunk_size
-            in
-            offset := !offset + String.length raw_chunk;
-            let chunk = preprocess_chunk raw_chunk in
-            if chunk = "" then (
-              Uutf.Manual.src !decoder (Bytes.create 0) 0 0;
-              fill_queue ())
-            else
-              let bytes = Bytes.unsafe_of_string chunk in
-              Uutf.Manual.src !decoder bytes 0 (Bytes.length bytes);
-              fill_queue ()
-      | `End ->
-          if Buffer.length buf > 0 then push_line_from_buf ();
+    if Queue.is_empty lines_queue && not !closed then (
+      if !offset >= !file_size then (
+        if Buffer.length buf > 0 then push_line ();
+        close_handle ();
+        closed := true)
+      else
+        let handle = ensure_handle () in
+        let raw_chunk =
+          read_mmap_chunk handle ~offset:!offset ~length:chunk_size
+        in
+        offset := !offset + String.length raw_chunk;
+        if String.length raw_chunk = 0 then (
+          if Buffer.length buf > 0 then push_line ();
           close_handle ();
-          closed := true
+          closed := true)
+        else
+          let chunk = preprocess_chunk raw_chunk in
+          process_chunk chunk;
+          if Queue.is_empty lines_queue then fill_queue ())
   in
 
   let rec next_line () =
@@ -350,7 +350,6 @@ let from_text_file ?(encoding = `UTF8) ?(chunk_size = 65536) path =
       Queue.clear lines_queue;
       offset := 0;
       closed := false;
-      decoder := make_decoder ();
       close_handle ();
       ignore (open_handle ())
     in
@@ -414,26 +413,25 @@ let from_jsonl ?field path =
     match text_ds.next () with
     | None -> None
     | Some line -> (
-        try
-          let json = Yojson.Safe.from_string line in
-          match json with
-          | `Assoc fields -> (
-              match List.assoc_opt field_name fields with
-              | Some (`String s) -> Some s
-              | _ ->
-                  raise
-                    (Dataset_error
-                       ("Field '" ^ field_name ^ "' is not a string in JSONL: "
-                      ^ line)))
-          | _ ->
-              raise
-                (Dataset_error ("Invalid JSONL format, expected object: " ^ line))
-        with
-        | Dataset_error _ as e -> raise e
-        | Yojson.Json_error msg ->
+        match Jsont_bytesrw.decode_string Jsont.json line with
+        | Error msg ->
             raise
               (Dataset_error
-                 ("Failed to parse JSONL: " ^ msg ^ " in line: " ^ line)))
+                 ("Failed to parse JSONL: " ^ msg ^ " in line: " ^ line))
+        | Ok json -> (
+            match json with
+            | Jsont.Object (mems, _) -> (
+                match Jsont.Json.find_mem field_name mems with
+                | Some (_, Jsont.String (s, _)) -> Some s
+                | _ ->
+                    raise
+                      (Dataset_error
+                         ("Field '" ^ field_name
+                        ^ "' is not a string in JSONL: " ^ line)))
+            | _ ->
+                raise
+                  (Dataset_error
+                     ("Invalid JSONL format, expected object: " ^ line))))
   in
 
   {

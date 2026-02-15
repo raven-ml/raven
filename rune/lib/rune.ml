@@ -54,20 +54,6 @@ let enable_debug () = Nx_core.Instrumentation.set_hook (Some debug_hook)
 let disable_debug () = Nx_core.Instrumentation.set_hook None
 let with_debug f = Nx_core.Instrumentation.with_hook (Some debug_hook) f
 
-(* ───── JIT ───── *)
-
-type jit_device = [ `metal | `llvm ]
-
-let is_jit_device_available = function
-  | `llvm -> true
-  | `metal -> (
-      try
-        let _ = Rune_jit_metal_or_missing.Device_info.get_default () in
-        true
-      with _ -> false)
-
-let jit = Jit.jit
-
 (* ───── Autodiff ───── *)
 
 let vjp = Autodiff.vjp

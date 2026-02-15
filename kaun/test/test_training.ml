@@ -3,6 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Windtrap
 open Kaun
 
 let dtype = Rune.float32
@@ -16,11 +17,10 @@ let expect_invalid_argument ~expected f =
     with exn -> Some exn
   with
   | Some (Invalid_argument msg) ->
-      Alcotest.(check string) "invalid argument message" expected msg
+      equal ~msg:"invalid argument message" string expected msg
   | Some exn ->
-      Alcotest.failf "Expected Invalid_argument but caught %s"
-        (Printexc.to_string exn)
-  | None -> Alcotest.fail "Expected Invalid_argument to be raised"
+      failf "Expected Invalid_argument but caught %s" (Printexc.to_string exn)
+  | None -> fail "Expected Invalid_argument to be raised"
 
 let test_fit_empty_dataset_raises () =
   let model = Layer.relu () in
@@ -80,7 +80,7 @@ let make_counter_metric name =
 let find_metric_values name metrics =
   match List.assoc_opt name metrics with
   | Some values -> values
-  | None -> Alcotest.failf "Metric %s not found in history" name
+  | None -> failf "Metric %s not found in history" name
 
 let test_metric_history_handles_dynamic_metrics () =
   let rngs = Rune.Rng.key 42 in
@@ -114,28 +114,24 @@ let test_metric_history_handles_dynamic_metrics () =
   in
   let open Training.History in
   let metric_a_values = find_metric_values "metric_a" history.train_metrics in
-  Alcotest.(check int)
-    "metric_a tracked both epochs" 2
-    (List.length metric_a_values);
+  equal ~msg:"metric_a tracked both epochs" int 2 (List.length metric_a_values);
   let metric_b_values = find_metric_values "metric_b" history.train_metrics in
-  Alcotest.(check int)
-    "metric_b tracked from second epoch" 1
+  equal ~msg:"metric_b tracked from second epoch" int 1
     (List.length metric_b_values)
 
 let () =
-  let open Alcotest in
   run "Training tests"
     [
-      ( "Error handling",
+      group "Error handling"
         [
-          test_case "fit raises on empty training dataset" `Quick
+          test "fit raises on empty training dataset"
             test_fit_empty_dataset_raises;
-          test_case "evaluate raises on empty validation dataset" `Quick
+          test "evaluate raises on empty validation dataset"
             test_evaluate_empty_dataset_raises;
-        ] );
-      ( "Metric history",
+        ];
+      group "Metric history"
         [
-          test_case "history tolerates dynamic metric set" `Quick
+          test "history tolerates dynamic metric set"
             test_metric_history_handles_dynamic_metrics;
-        ] );
+        ];
     ]

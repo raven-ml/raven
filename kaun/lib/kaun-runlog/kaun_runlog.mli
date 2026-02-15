@@ -42,7 +42,7 @@ module Run = Run
 
 val base_dir : unit -> string
 (** [base_dir ()] returns the default base directory for training runs.
-    
+
     Checks [RAVEN_RUNS_DIR] environment variable first, otherwise falls back to
     [XDG_CACHE_HOME/raven/runs] (or [~/.cache/raven/runs] if [XDG_CACHE_HOME] is
     not set). *)
@@ -72,7 +72,7 @@ val create_run :
   ?base_dir:string ->
   ?experiment:string ->
   ?tags:string list ->
-  ?config:(string * Yojson.Safe.t) list ->
+  ?config:(string * Jsont.json) list ->
   unit ->
   Run.t
 (** [create_run ?base_dir ?experiment ?tags ?config ()] creates a new run

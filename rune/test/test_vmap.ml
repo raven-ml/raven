@@ -3,6 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Windtrap
 open Test_rune_support
 module T = Rune
 
@@ -376,35 +377,30 @@ let test_vmap_grad_composition_two_args () =
   check_rune ~eps:1e-5 "vmap(grad(g), argnums=0)" expected_grads grads
 
 let () =
-  let open Alcotest in
   run "Vmap tests"
     [
-      ( "basic",
+      group "basic"
         [
-          test_case "simple" `Quick test_vmap_simple;
-          test_case "matmul" `Quick test_vmap_matmul;
-          test_case "axis" `Quick test_vmap_axis;
-          test_case "no_out_axis" `Quick test_vmap_no_out_axis;
-          test_case "broadcast" `Quick test_vmap_broadcast;
-          test_case "nested" `Quick test_nested_vmap;
-          test_case "reduction" `Quick test_vmap_reduction;
-          test_case "where" `Quick test_vmap_where;
-          test_case "transpose" `Quick test_vmap_transpose;
-          test_case "elementwise" `Quick test_vmap_elementwise;
-        ] );
-      ( "composition",
+          test "simple" test_vmap_simple;
+          test "matmul" test_vmap_matmul;
+          test "axis" test_vmap_axis;
+          test "no_out_axis" test_vmap_no_out_axis;
+          test "broadcast" test_vmap_broadcast;
+          test "nested" test_nested_vmap;
+          test "reduction" test_vmap_reduction;
+          test "where" test_vmap_where;
+          test "transpose" test_vmap_transpose;
+          test "elementwise" test_vmap_elementwise;
+        ];
+      group "composition"
         [
-          test_case "jvp_vmap" `Quick test_jvp_vmap_composition;
-          test_case "vmap_jvp" `Quick test_vmap_jvp_composition;
-          test_case "grad_vmap" `Quick test_grad_vmap_composition;
-          test_case "vmap_grad" `Quick test_vmap_grad_composition;
-          test_case "jvp_vmap_two_args" `Quick
-            test_jvp_vmap_composition_two_args;
-          test_case "vmap_jvp_two_args" `Quick
-            test_vmap_jvp_composition_two_args;
-          test_case "grad_vmap_two_args" `Quick
-            test_grad_vmap_composition_two_args;
-          test_case "vmap_grad_two_args" `Quick
-            test_vmap_grad_composition_two_args;
-        ] );
+          test "jvp_vmap" test_jvp_vmap_composition;
+          test "vmap_jvp" test_vmap_jvp_composition;
+          test "grad_vmap" test_grad_vmap_composition;
+          test "vmap_grad" test_vmap_grad_composition;
+          test "jvp_vmap_two_args" test_jvp_vmap_composition_two_args;
+          test "vmap_jvp_two_args" test_vmap_jvp_composition_two_args;
+          test "grad_vmap_two_args" test_grad_vmap_composition_two_args;
+          test "vmap_grad_two_args" test_vmap_grad_composition_two_args;
+        ];
     ]

@@ -1,0 +1,3 @@
+(library
+ (name mimir)
+ (libraries nx unix))

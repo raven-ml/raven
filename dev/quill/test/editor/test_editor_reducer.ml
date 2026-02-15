@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Quill_editor
+open Windtrap
 module MD = Quill_editor.Document
 
 let effect_pp fmt = function
@@ -42,7 +43,8 @@ let effect_equal a b =
       a.level = b.level && String.equal a.message b.message
   | _ -> false
 
-let effect_testable = Alcotest.testable effect_pp effect_equal
+let effect_testable =
+  Testable.make ~pp:effect_pp ~equal:effect_equal ()
 
 let doc_of_markdown md =
   MD.reset_ids ();
@@ -51,27 +53,27 @@ let doc_of_markdown md =
 let first_block doc =
   match doc with
   | blk :: _ -> blk
-  | [] -> Alcotest.fail "expected at least one block"
+  | [] -> fail "expected at least one block"
 
 let second_block doc =
   match doc with
   | _ :: blk :: _ -> blk
-  | _ -> Alcotest.fail "expected at least two blocks"
+  | _ -> fail "expected at least two blocks"
 
 let third_block doc =
   match doc with
   | _ :: _ :: blk :: _ -> blk
-  | _ -> Alcotest.fail "expected at least three blocks"
+  | _ -> fail "expected at least three blocks"
 
 let paragraph_inline block =
   match block.MD.content with
   | MD.Paragraph inline -> inline
-  | _ -> Alcotest.fail "expected paragraph block"
+  | _ -> fail "expected paragraph block"
 
 let code_block block =
   match block.MD.content with
   | MD.Codeblock data -> data
-  | _ -> Alcotest.fail "expected code block"
+  | _ -> fail "expected code block"
 
 let caret block_id = { State.block_id; inline_id = None; offset = 0 }
 
@@ -83,14 +85,14 @@ let test_focus_inline_command () =
   let state', effects =
     Reducer.apply_command state (Command.Focus_inline inline.MD.id)
   in
-  Alcotest.(check int) "no effects" 0 (List.length effects);
+  equal ~msg:"no effects" int 0 (List.length effects);
   let updated_block = first_block state'.State.document in
   let updated_inline = paragraph_inline updated_block in
-  Alcotest.(check bool) "block focused" true updated_block.MD.focused;
-  Alcotest.(check bool) "inline focused" true updated_inline.MD.focused;
+  equal ~msg:"block focused" bool true updated_block.MD.focused;
+  equal ~msg:"inline focused" bool true updated_inline.MD.focused;
   match state'.State.selection with
-  | State.Caret c -> Alcotest.(check int) "caret block" block.MD.id c.block_id
-  | _ -> Alcotest.fail "expected caret selection"
+  | State.Caret c -> equal ~msg:"caret block" int block.MD.id c.block_id
+  | _ -> fail "expected caret selection"
 
 let test_request_code_execution_command () =
   let doc = doc_of_markdown "```ocaml\nprint_endline \"hi\"\n```" in
@@ -102,11 +104,10 @@ let test_request_code_execution_command () =
     Reducer.apply_command state
       (Command.Request_code_execution { block_id; code })
   in
-  Alcotest.(check bool)
-    "block running" true
+  equal ~msg:"block running" bool true
     (State.is_block_running state' block_id);
-  Alcotest.(check (list effect_testable))
-    "effect"
+  equal ~msg:"effect"
+    (list effect_testable)
     [ Effect.Execute_code { block_id; code } ]
     effects
 
@@ -120,15 +121,15 @@ let test_undo_redo () =
   in
   (match (first_block state'.State.document).MD.content with
   | MD.Codeblock _ -> ()
-  | _ -> Alcotest.fail "expected codeblock after replace");
+  | _ -> fail "expected codeblock after replace");
   let state'', _ = Reducer.apply_command state' Command.Undo in
   (match (first_block state''.State.document).MD.content with
   | MD.Paragraph _ -> ()
-  | _ -> Alcotest.fail "expected paragraph after undo");
+  | _ -> fail "expected paragraph after undo");
   let state''', _ = Reducer.apply_command state'' Command.Redo in
   match (first_block state'''.State.document).MD.content with
   | MD.Codeblock _ -> ()
-  | _ -> Alcotest.fail "expected codeblock after redo"
+  | _ -> fail "expected codeblock after redo"
 
 let test_request_copy_selection () =
   let doc = doc_of_markdown "First\n\nSecond" in
@@ -144,15 +145,15 @@ let test_request_copy_selection () =
     |> Document.to_markdown
   in
   let _, effects = Reducer.apply_command state Command.Request_copy_selection in
-  Alcotest.(check (list effect_testable))
-    "copy effect"
+  equal ~msg:"copy effect"
+    (list effect_testable)
     [ Effect.Copy_to_clipboard { text = expected } ]
     effects
 
 let code_of_first_block state =
   match (first_block state.State.document).MD.content with
   | MD.Codeblock { code; _ } -> code
-  | _ -> Alcotest.fail "expected codeblock in first position"
+  | _ -> fail "expected codeblock in first position"
 
 let test_history_capacity () =
   let doc = doc_of_markdown "Paragraph" in
@@ -171,14 +172,14 @@ let test_history_capacity () =
     Reducer.apply_command state
       (Command.Update_codeblock { block_id; code = "bar" })
   in
-  Alcotest.(check string) "latest code" "bar" (code_of_first_block state);
+  equal ~msg:"latest code" string "bar" (code_of_first_block state);
   let state, _ = Reducer.apply_command state Command.Undo in
-  Alcotest.(check string) "undo back to foo" "foo" (code_of_first_block state);
+  equal ~msg:"undo back to foo" string "foo" (code_of_first_block state);
   let state, _ = Reducer.apply_command state Command.Undo in
-  Alcotest.(check string) "undo back to empty" "" (code_of_first_block state);
+  equal ~msg:"undo back to empty" string "" (code_of_first_block state);
   let state_final, _ = Reducer.apply_command state Command.Undo in
-  Alcotest.(check bool) "history exhausted" false (State.has_undo state_final);
-  Alcotest.(check string) "remains empty" "" (code_of_first_block state_final)
+  equal ~msg:"history exhausted" bool false (State.has_undo state_final);
+  equal ~msg:"remains empty" string "" (code_of_first_block state_final)
 
 let test_selection_restored_after_undo () =
   let doc = doc_of_markdown "Paragraph" in
@@ -194,8 +195,8 @@ let test_selection_restored_after_undo () =
   in
   let state, _ = Reducer.apply_command state Command.Undo in
   match state.State.selection with
-  | State.Caret c -> Alcotest.(check int) "caret restored" block_id c.block_id
-  | _ -> Alcotest.fail "expected caret selection after undo"
+  | State.Caret c -> equal ~msg:"caret restored" int block_id c.block_id
+  | _ -> fail "expected caret selection after undo"
 
 let test_selection_blocks_reverse () =
   let doc = doc_of_markdown "One\n\nTwo\n\nThree" in
@@ -210,24 +211,20 @@ let test_selection_blocks_reverse () =
     State.set_selection state selection
   in
   let ids = State.selection_blocks state in
-  Alcotest.(check (list int))
-    "selection spans ascending blocks"
+  equal ~msg:"selection spans ascending blocks"
+    (list int)
     [ b1.MD.id; b2.MD.id; b3.MD.id ]
     ids
 
 let tests =
   [
-    Alcotest.test_case "focus_inline command" `Quick test_focus_inline_command;
-    Alcotest.test_case "request_code_execution" `Quick
-      test_request_code_execution_command;
-    Alcotest.test_case "undo/redo" `Quick test_undo_redo;
-    Alcotest.test_case "request_copy_selection" `Quick
-      test_request_copy_selection;
-    Alcotest.test_case "history capacity" `Quick test_history_capacity;
-    Alcotest.test_case "selection restored after undo" `Quick
-      test_selection_restored_after_undo;
-    Alcotest.test_case "selection blocks reverse order" `Quick
-      test_selection_blocks_reverse;
+    test "focus_inline command" test_focus_inline_command;
+    test "request_code_execution" test_request_code_execution_command;
+    test "undo/redo" test_undo_redo;
+    test "request_copy_selection" test_request_copy_selection;
+    test "history capacity" test_history_capacity;
+    test "selection restored after undo" test_selection_restored_after_undo;
+    test "selection blocks reverse order" test_selection_blocks_reverse;
   ]
 
-let () = Alcotest.run "quill.editor.reducer" [ ("reducer", tests) ]
+let () = run "quill.editor.reducer" [ group "reducer" tests ]

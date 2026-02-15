@@ -15,11 +15,7 @@
 
 (bug_reports "https://github.com/raven-ml/raven/issues")
 
-(using directory-targets 0.1)
-
 (using dune_site 0.1)
-
-(using ctypes 0.3)
 
 (using mdx 0.4)
 
@@ -28,11 +24,6 @@
 (implicit_transitive_deps false)
 
 (generate_opam_files true)
-
-; (pin
-;  (url git+https://github.com/PataphysicalSociety/soupault#5.0.0)
-;  (package
-;   (name soupault)))
 
 (pin
  (url git+https://github.com/tmattio/mosaic)
@@ -49,10 +40,10 @@
  (package
   (name mosaic)))
 
-; (package
-;  (name dev)
-;  (allow_empty)
-;  (depends odoc odoc-driver soupault lambdasoup landmarks landmarks-ppx))
+(pin
+ (url git+https://github.com/invariant-hq/windtrap)
+ (package
+  (name windtrap)))
 
 (package
  (name nx)
@@ -67,30 +58,12 @@
   (conf-pkg-config :build)
   ; camlzip
   (conf-zlib :build)
-  stdlib-shims
+  logs
   ; tests
-  (alcotest :with-test)
+  (windtrap :with-test)
   (mdx :with-test))
  (tags
   (numerical-computation tensor-library machine-learning)))
-
-(package
- (name nx-datasets)
- (synopsis "Common datasets for machine learning")
- (description
-  "A collection of common datasets for machine learning tasks, including image classification, regression, and more. This package provides easy access to popular datasets in a format compatible with Nx.")
- (depends
-  (ocaml
-   (>= 5.2.0))
-  dune
-  ocurl
-  csv
-  logs
-  (nx
-   (= :version))
-  (alcotest :with-test))
- (tags
-  (datasets machine-learning data-science image-classification regression)))
 
 (package
  (name saga)
@@ -101,14 +74,10 @@
   (ocaml
    (>= 5.2.0))
   dune
-  (nx
-   (= :version))
   re
-  uutf
-  uucp
-  (yojson
-   (>= 2.0.0))
-  (alcotest :with-test))
+  jsont
+  bytesrw
+  (windtrap :with-test))
  (tags
   (text-processing nlp natural-language-processing tokenization)))
 
@@ -124,38 +93,25 @@
   (nx
    (= :version))
   re
-  (yojson
-   (>= 2.0.0))
-  csv
-  (alcotest :with-test))
+  (windtrap :with-test))
  (tags
   (dataframe data-manipulation data-science tabular-data)))
 
 (package
  (name rune)
- (synopsis "Automatic differentiation and JIT compilation for OCaml")
+ (synopsis "Automatic differentiation for OCaml")
  (description
-  "Rune provides automatic differentiation capabilities and experimental JIT compilation for the Raven ecosystem. It enables gradient-based optimization and supports functional transformations like grad, value_and_grad, and vmap, making it the foundation for deep learning in OCaml.")
+  "Rune provides automatic differentiation capabilities for the Raven ecosystem. It enables gradient-based optimization and supports functional transformations like grad, value_and_grad, and vmap, making it the foundation for deep learning in OCaml.")
  (depends
   (ocaml
    (>= 5.2.0))
   dune
   (dune-configurator :build)
-  (conf-llvm-static
-   (>= 19))
   (nx
    (= :version))
-  (ctypes
-   (>= 0.21.0))
-  (ctypes-foreign
-   (>= 0.21.0))
-  ; rune.metal - only on macOS
-  (integers
-   (= :os macos))
-  (alcotest :with-test))
+  (windtrap :with-test))
  (tags
   (automatic-differentiation
-   jit-compilation
    machine-learning
    deep-learning
    optimization)))
@@ -171,17 +127,17 @@
   dune
   logs
   mosaic
-  (yojson
-   (>= 2.0.0))
+  jsont
+  bytesrw
   (domainslib
    (>= 0.5.0))
   (saga
    (= :version))
   (rune
    (= :version))
-  (nx-datasets
+  (nx
    (= :version))
-  (alcotest :with-test))
+  (windtrap :with-test))
  (tags
   (neural-networks machine-learning deep-learning)))
 
@@ -196,7 +152,7 @@
   dune
   (rune
    (= :version))
-  (alcotest :with-test))
+  (windtrap :with-test))
  (tags
   (computer-vision image-processing feature-detection machine-learning)))
 
@@ -213,9 +169,9 @@
    (= :version))
   (kaun
    (= :version))
-  (yojson
-   (>= 2.0.0))
-  (alcotest :with-test))
+  jsont
+  bytesrw
+  (windtrap :with-test))
  (tags
   (reinforcement-learning machine-learning ai environments agents)))
 
@@ -233,10 +189,7 @@
   cairo2
   (nx
    (= :version))
-  ; for hugin.top
-  (base64
-   (>= 3.1.0))
-  (alcotest :with-test))
+  (windtrap :with-test))
  (tags
   (visualization plotting charts data-science graphics)))
 
@@ -248,8 +201,6 @@
   "Raven is a comprehensive machine learning ecosystem for OCaml. This meta package installs all Raven components including Nx (tensors), Hugin (plotting), Rune (autodiff), Kaun (neural networks), and Sowilo (computer vision).")
  (depends
   (nx
-   (= :version))
-  (nx-datasets
    (= :version))
   (saga
    (= :version))

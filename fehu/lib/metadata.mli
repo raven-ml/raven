@@ -38,7 +38,7 @@ type t = {
   version : string option;  (** Version string (e.g., "1.0.0") *)
   supported_vector_modes : string list;  (** Supported vectorization modes *)
   tags : string list;  (** Classification tags (e.g., "control", "atari") *)
-  extra : Yojson.Safe.t option;  (** Additional custom metadata as JSON *)
+  extra : Jsont.json option;  (** Additional custom metadata as JSON *)
 }
 (** Environment metadata record. *)
 
@@ -66,7 +66,7 @@ val with_version : string option -> t -> t
 val with_render_modes : string list -> t -> t
 val with_supported_vector_modes : string list -> t -> t
 val with_authors : string list -> t -> t
-val with_extra : Yojson.Safe.t option -> t -> t
+val with_extra : Jsont.json option -> t -> t
 val add_supported_vector_mode : string -> t -> t
 
 val add_author : string -> t -> t
@@ -78,10 +78,10 @@ val add_tag : string -> t -> t
 val set_tags : string list -> t -> t
 (** [set_tags tags metadata] replaces all tags with [tags]. *)
 
-val to_yojson : t -> Yojson.Safe.t
-(** [to_yojson metadata] serializes [metadata] to JSON. *)
+val to_json : t -> Jsont.json
+(** [to_json metadata] serializes [metadata] to JSON. *)
 
-val of_yojson : Yojson.Safe.t -> (t, string) result
-(** [of_yojson json] deserializes [metadata] from JSON.
+val of_json : Jsont.json -> (t, string) result
+(** [of_json json] deserializes [metadata] from JSON.
 
     Returns [Error msg] if the JSON structure is invalid. *)

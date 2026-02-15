@@ -1,3 +1,0 @@
-(executables
- (names dataset_stream)
- (libraries rune kaun))

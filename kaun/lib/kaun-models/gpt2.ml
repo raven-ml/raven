@@ -86,51 +86,25 @@ module Tokenizer = struct
   }
 
   let download_vocab_and_merges model_id =
-    (* Download vocab and merges files from HuggingFace if not present *)
     let model_cache =
       Nx_io.Cache_dir.get_path_in_cache ~scope:[ "models"; "gpt2" ] model_id
     in
     let vocab_file = Filename.concat model_cache "vocab.json" in
     let merges_file = Filename.concat model_cache "merges.txt" in
-
-    (* Create cache directories if they don't exist *)
-    if not (Sys.file_exists model_cache) then
-      Sys.command (Printf.sprintf "mkdir -p %s" model_cache) |> ignore;
-
-    (* Download vocab.json if it doesn't exist *)
     if not (Sys.file_exists vocab_file) then (
       Printf.printf "Downloading vocab.json for %s...\n%!" model_id;
       let url =
         Printf.sprintf "https://huggingface.co/%s/resolve/main/vocab.json"
           model_id
       in
-      let cmd =
-        Printf.sprintf
-          "curl -L -o %s %s 2>/dev/null || wget -O %s %s 2>/dev/null" vocab_file
-          url vocab_file url
-      in
-      let exit_code = Sys.command cmd in
-      if exit_code <> 0 then
-        failwith
-          (Printf.sprintf "Failed to download vocab.json for %s" model_id));
-
-    (* Download merges.txt if it doesn't exist *)
+      Nx_io.Http.download ~url ~dest:vocab_file ());
     if not (Sys.file_exists merges_file) then (
       Printf.printf "Downloading merges.txt for %s...\n%!" model_id;
       let url =
         Printf.sprintf "https://huggingface.co/%s/resolve/main/merges.txt"
           model_id
       in
-      let cmd =
-        Printf.sprintf
-          "curl -L -o %s %s 2>/dev/null || wget -O %s %s 2>/dev/null"
-          merges_file url merges_file url
-      in
-      let exit_code = Sys.command cmd in
-      if exit_code <> 0 then
-        failwith
-          (Printf.sprintf "Failed to download merges.txt for %s" model_id));
-
+      Nx_io.Http.download ~url ~dest:merges_file ());
     (vocab_file, merges_file)
 
   let create ?vocab_file ?merges_file ?model_id () =
@@ -603,6 +577,83 @@ let create ?(config = default_config) () =
         layer_norm x ~gamma ~beta ~epsilon:config.layer_norm_epsilon);
   }
 
+(* ───── JSON Utilities ───── *)
+
+let json_mem name = function
+  | Jsont.Object (mems, _) -> (
+      match Jsont.Json.find_mem name mems with
+      | Some (_, v) -> v
+      | None -> Jsont.Null ((), Jsont.Meta.none))
+  | _ -> Jsont.Null ((), Jsont.Meta.none)
+
+let json_to_int = function
+  | Jsont.Number (f, _) -> int_of_float f
+  | _ -> failwith "expected int"
+
+let json_to_int_option = function
+  | Jsont.Number (f, _) -> Some (int_of_float f)
+  | _ -> None
+
+let json_to_float_option = function Jsont.Number (f, _) -> Some f | _ -> None
+let json_to_string_option = function Jsont.String (s, _) -> Some s | _ -> None
+let json_to_bool_option = function Jsont.Bool (b, _) -> Some b | _ -> None
+
+let parse_gpt2_config json =
+  {
+    vocab_size = json |> json_mem "vocab_size" |> json_to_int;
+    n_positions = json |> json_mem "n_positions" |> json_to_int;
+    n_embd = json |> json_mem "n_embd" |> json_to_int;
+    n_layer = json |> json_mem "n_layer" |> json_to_int;
+    n_head = json |> json_mem "n_head" |> json_to_int;
+    n_inner = json |> json_mem "n_inner" |> json_to_int_option;
+    activation_function =
+      (match
+         json |> json_mem "activation_function" |> json_to_string_option
+       with
+      | Some "gelu_new" -> `gelu_new
+      | Some "gelu" -> `gelu
+      | Some "relu" -> `relu
+      | Some "swish" | Some "silu" -> `swish
+      | _ -> `gelu_new);
+    resid_pdrop =
+      json |> json_mem "resid_pdrop" |> json_to_float_option
+      |> Option.value ~default:0.1;
+    embd_pdrop =
+      json |> json_mem "embd_pdrop" |> json_to_float_option
+      |> Option.value ~default:0.1;
+    attn_pdrop =
+      json |> json_mem "attn_pdrop" |> json_to_float_option
+      |> Option.value ~default:0.1;
+    layer_norm_epsilon =
+      json
+      |> json_mem "layer_norm_epsilon"
+      |> json_to_float_option |> Option.value ~default:1e-5;
+    initializer_range =
+      json
+      |> json_mem "initializer_range"
+      |> json_to_float_option |> Option.value ~default:0.02;
+    scale_attn_weights =
+      json
+      |> json_mem "scale_attn_weights"
+      |> json_to_bool_option |> Option.value ~default:true;
+    use_cache =
+      json |> json_mem "use_cache" |> json_to_bool_option
+      |> Option.value ~default:true;
+    scale_attn_by_inverse_layer_idx =
+      json
+      |> json_mem "scale_attn_by_inverse_layer_idx"
+      |> json_to_bool_option
+      |> Option.value ~default:false;
+    reorder_and_upcast_attn =
+      json
+      |> json_mem "reorder_and_upcast_attn"
+      |> json_to_bool_option
+      |> Option.value ~default:false;
+    bos_token_id = json |> json_mem "bos_token_id" |> json_to_int_option;
+    eos_token_id = json |> json_mem "eos_token_id" |> json_to_int_option;
+    pad_token_id = json |> json_mem "pad_token_id" |> json_to_int_option;
+  }
+
 let from_pretrained ?(model_id = "gpt2") ?revision ?cache_config ~dtype () =
   (* Load config and weights from HuggingFace *)
   let cache_config =
@@ -619,62 +670,7 @@ let from_pretrained ?(model_id = "gpt2") ?revision ?cache_config ~dtype () =
   in
 
   (* Parse GPT-2 specific config *)
-  let gpt2_config =
-    let open Yojson.Safe.Util in
-    {
-      vocab_size = config_json |> member "vocab_size" |> to_int;
-      n_positions = config_json |> member "n_positions" |> to_int;
-      n_embd = config_json |> member "n_embd" |> to_int;
-      n_layer = config_json |> member "n_layer" |> to_int;
-      n_head = config_json |> member "n_head" |> to_int;
-      n_inner = config_json |> member "n_inner" |> to_int_option;
-      activation_function =
-        (match
-           config_json |> member "activation_function" |> to_string_option
-         with
-        | Some "gelu_new" -> `gelu_new
-        | Some "gelu" -> `gelu
-        | Some "relu" -> `relu
-        | Some "swish" | Some "silu" -> `swish
-        | _ -> `gelu_new);
-      resid_pdrop =
-        config_json |> member "resid_pdrop" |> to_float_option
-        |> Option.value ~default:0.1;
-      embd_pdrop =
-        config_json |> member "embd_pdrop" |> to_float_option
-        |> Option.value ~default:0.1;
-      attn_pdrop =
-        config_json |> member "attn_pdrop" |> to_float_option
-        |> Option.value ~default:0.1;
-      layer_norm_epsilon =
-        config_json
-        |> member "layer_norm_epsilon"
-        |> to_float_option |> Option.value ~default:1e-5;
-      initializer_range =
-        config_json |> member "initializer_range" |> to_float_option
-        |> Option.value ~default:0.02;
-      scale_attn_weights =
-        config_json
-        |> member "scale_attn_weights"
-        |> to_bool_option |> Option.value ~default:true;
-      use_cache =
-        config_json |> member "use_cache" |> to_bool_option
-        |> Option.value ~default:true;
-      scale_attn_by_inverse_layer_idx =
-        config_json
-        |> member "scale_attn_by_inverse_layer_idx"
-        |> to_bool_option
-        |> Option.value ~default:false;
-      reorder_and_upcast_attn =
-        config_json
-        |> member "reorder_and_upcast_attn"
-        |> to_bool_option
-        |> Option.value ~default:false;
-      bos_token_id = config_json |> member "bos_token_id" |> to_int_option;
-      eos_token_id = config_json |> member "eos_token_id" |> to_int_option;
-      pad_token_id = config_json |> member "pad_token_id" |> to_int_option;
-    }
-  in
+  let gpt2_config = parse_gpt2_config config_json in
 
   (* Load weights using HuggingFace infrastructure *)
   let hf_params =
@@ -954,62 +950,6 @@ module For_causal_lm = struct
 
     (logits, loss)
 end
-
-(* ───── Utilities ───── *)
-
-let parse_gpt2_config json =
-  (* Parse GPT-2 specific configuration from HuggingFace JSON *)
-  let open Yojson.Safe.Util in
-  {
-    vocab_size = json |> member "vocab_size" |> to_int;
-    n_positions = json |> member "n_positions" |> to_int;
-    n_embd = json |> member "n_embd" |> to_int;
-    n_layer = json |> member "n_layer" |> to_int;
-    n_head = json |> member "n_head" |> to_int;
-    n_inner = json |> member "n_inner" |> to_int_option;
-    activation_function =
-      (match json |> member "activation_function" |> to_string_option with
-      | Some "gelu_new" -> `gelu_new
-      | Some "gelu" -> `gelu
-      | Some "relu" -> `relu
-      | Some "swish" | Some "silu" -> `swish
-      | _ -> `gelu_new);
-    resid_pdrop =
-      json |> member "resid_pdrop" |> to_float_option
-      |> Option.value ~default:0.1;
-    embd_pdrop =
-      json |> member "embd_pdrop" |> to_float_option
-      |> Option.value ~default:0.1;
-    attn_pdrop =
-      json |> member "attn_pdrop" |> to_float_option
-      |> Option.value ~default:0.1;
-    layer_norm_epsilon =
-      json
-      |> member "layer_norm_epsilon"
-      |> to_float_option |> Option.value ~default:1e-5;
-    initializer_range =
-      json |> member "initializer_range" |> to_float_option
-      |> Option.value ~default:0.02;
-    scale_attn_weights =
-      json
-      |> member "scale_attn_weights"
-      |> to_bool_option |> Option.value ~default:true;
-    use_cache =
-      json |> member "use_cache" |> to_bool_option |> Option.value ~default:true;
-    scale_attn_by_inverse_layer_idx =
-      json
-      |> member "scale_attn_by_inverse_layer_idx"
-      |> to_bool_option
-      |> Option.value ~default:false;
-    reorder_and_upcast_attn =
-      json
-      |> member "reorder_and_upcast_attn"
-      |> to_bool_option
-      |> Option.value ~default:false;
-    bos_token_id = json |> member "bos_token_id" |> to_int_option;
-    eos_token_id = json |> member "eos_token_id" |> to_int_option;
-    pad_token_id = json |> member "pad_token_id" |> to_int_option;
-  }
 
 let num_parameters params =
   let tensors = Ptree.flatten_with_paths params in

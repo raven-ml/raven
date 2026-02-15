@@ -27,93 +27,123 @@ let create ?step ?(tags : string list = [])
     artifacts;
   }
 
-let artifact_entry_to_yojson { kind; label; slug } =
-  `Assoc
+let json_obj pairs =
+  Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
+
+let json_to_string j =
+  match Jsont_bytesrw.encode_string ~format:Jsont.Minify Jsont.json j with
+  | Ok s -> s
+  | Error e -> failwith e
+
+let json_of_file path =
+  let ic = open_in path in
+  let s =
+    Fun.protect
+      ~finally:(fun () -> close_in ic)
+      (fun () -> really_input_string ic (in_channel_length ic))
+  in
+  match Jsont_bytesrw.decode_string Jsont.json s with
+  | Ok v -> v
+  | Error e -> failwith e
+
+let json_to_file path j =
+  let s = json_to_string j in
+  let oc = open_out path in
+  Fun.protect ~finally:(fun () -> close_out oc) (fun () -> output_string oc s)
+
+let artifact_entry_to_json { kind; label; slug } =
+  json_obj
     [
-      ("kind", `String (Artifact.kind_to_string kind));
-      ("label", `String label);
-      ("slug", `String slug);
+      ("kind", Jsont.Json.string (Artifact.kind_to_string kind));
+      ("label", Jsont.Json.string label);
+      ("slug", Jsont.Json.string slug);
     ]
 
-let artifact_entry_of_yojson = function
-  | `Assoc fields -> (
+let artifact_entry_of_json json =
+  match json with
+  | Jsont.Object (mems, _) -> (
       match
-        ( List.assoc_opt "kind" fields,
-          List.assoc_opt "label" fields,
-          List.assoc_opt "slug" fields )
+        ( Jsont.Json.find_mem "kind" mems,
+          Jsont.Json.find_mem "label" mems,
+          Jsont.Json.find_mem "slug" mems )
       with
-      | Some (`String kind_str), Some (`String label), Some (`String slug) ->
+      | ( Some (_, Jsont.String (kind_str, _)),
+          Some (_, Jsont.String (label, _)),
+          Some (_, Jsont.String (slug, _)) ) ->
           let kind =
             match Artifact.kind_of_string kind_str with
             | Some kind -> kind
             | None -> Artifact.Unknown kind_str
           in
           { kind; label; slug }
-      | _ -> failwith "Manifest.artifact_entry_of_yojson: missing fields")
-  | _ -> failwith "Manifest.artifact_entry_of_yojson: expected object"
+      | _ -> failwith "Manifest.artifact_entry_of_json: missing fields")
+  | _ -> failwith "Manifest.artifact_entry_of_json: expected object"
 
-let to_yojson { version; step; created_at; tags; metadata; artifacts } =
-  `Assoc
+let to_json { version; step; created_at; tags; metadata; artifacts } =
+  json_obj
     [
-      ("version", `Int version);
-      ("created_at", `Float created_at);
-      ("tags", `List (List.map (fun tag -> `String tag) tags));
-      ("metadata", `Assoc (List.map (fun (k, v) -> (k, `String v)) metadata));
-      ("artifacts", `List (List.map artifact_entry_to_yojson artifacts));
-      ("step", match step with Some s -> `Int s | None -> `Null);
+      ("version", Jsont.Json.int version);
+      ("created_at", Jsont.Json.number created_at);
+      ("tags", Jsont.Json.list (List.map Jsont.Json.string tags));
+      ( "metadata",
+        json_obj (List.map (fun (k, v) -> (k, Jsont.Json.string v)) metadata) );
+      ("artifacts", Jsont.Json.list (List.map artifact_entry_to_json artifacts));
+      ( "step",
+        match step with
+        | Some s -> Jsont.Json.int s
+        | None -> Jsont.Json.null () );
     ]
 
-let of_yojson json =
+let of_json json =
   try
     match json with
-    | `Assoc fields ->
+    | Jsont.Object (mems, _) ->
         let version =
-          match List.assoc_opt "version" fields with
-          | Some (`Int v) -> v
-          | _ -> failwith "Manifest.of_yojson: missing version"
+          match Jsont.Json.find_mem "version" mems with
+          | Some (_, Jsont.Number (f, _)) -> int_of_float f
+          | _ -> failwith "Manifest.of_json: missing version"
         in
         let created_at =
-          match List.assoc_opt "created_at" fields with
-          | Some (`Float ts) -> ts
-          | Some (`Int ts) -> float_of_int ts
-          | _ -> failwith "Manifest.of_yojson: missing created_at"
+          match Jsont.Json.find_mem "created_at" mems with
+          | Some (_, Jsont.Number (f, _)) -> f
+          | _ -> failwith "Manifest.of_json: missing created_at"
         in
         let tags =
-          match List.assoc_opt "tags" fields with
-          | Some (`List tags) ->
+          match Jsont.Json.find_mem "tags" mems with
+          | Some (_, Jsont.Array (tags, _)) ->
               List.map
                 (function
-                  | `String tag -> tag
-                  | _ -> failwith "Manifest.of_yojson: invalid tag")
+                  | Jsont.String (tag, _) -> tag
+                  | _ -> failwith "Manifest.of_json: invalid tag")
                 tags
           | _ -> []
         in
         let metadata =
-          match List.assoc_opt "metadata" fields with
-          | Some (`Assoc kvs) ->
+          match Jsont.Json.find_mem "metadata" mems with
+          | Some (_, Jsont.Object (kvs, _)) ->
               List.map
-                (fun (k, v) ->
+                (fun ((k, _), v) ->
                   match v with
-                  | `String value -> (k, value)
+                  | Jsont.String (value, _) -> (k, value)
                   | _ ->
                       failwith
-                        "Manifest.of_yojson: metadata values must be strings")
+                        "Manifest.of_json: metadata values must be strings")
                 kvs
           | _ -> []
         in
         let artifacts =
-          match List.assoc_opt "artifacts" fields with
-          | Some (`List artifacts) ->
-              List.map artifact_entry_of_yojson artifacts
-          | Some _ -> failwith "Manifest.of_yojson: artifacts must be a list"
+          match Jsont.Json.find_mem "artifacts" mems with
+          | Some (_, Jsont.Array (artifacts, _)) ->
+              List.map artifact_entry_of_json artifacts
+          | Some _ -> failwith "Manifest.of_json: artifacts must be a list"
           | None -> []
         in
         let step =
-          match List.assoc_opt "step" fields with
-          | Some (`Int s) -> Some s
-          | Some `Null | None -> None
-          | _ -> failwith "Manifest.of_yojson: invalid step"
+          match Jsont.Json.find_mem "step" mems with
+          | Some (_, Jsont.Number (f, _)) -> Some (int_of_float f)
+          | Some (_, Jsont.Null _) | None -> None
+          | _ -> failwith "Manifest.of_json: invalid step"
         in
         Ok { version; step; created_at; tags; metadata; artifacts }
-    | _ -> Error "Manifest.of_yojson: expected object"
+    | _ -> Error "Manifest.of_json: expected object"
   with Failure msg -> Error msg

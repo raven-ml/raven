@@ -64,7 +64,7 @@ module Registry : sig
     weight_files : string list;
         (** Weight filenames to try (e.g.,
             ["model.safetensors", "pytorch_model.bin"]) *)
-    load_config : Yojson.Safe.t -> 'params;
+    load_config : Jsont.json -> 'params;
         (** Parse config JSON into model parameters *)
     build_params : dtype:(float, 'a) Rune.dtype -> 'params -> Kaun.params;
         (** Build parameter tree from config *)
@@ -106,7 +106,7 @@ val load_config :
   ?revision:revision ->
   model_id:model_id ->
   unit ->
-  Yojson.Safe.t download_result
+  Jsont.json download_result
 (** [load_config ~model_id ()] downloads and parses the model's config.json *)
 
 (** {1 High-level Model Loading} *)
@@ -139,5 +139,5 @@ val list_cached_models : ?config:Config.t -> unit -> model_id list
 val clear_cache : ?config:Config.t -> ?model_id:model_id -> unit -> unit
 (** Clear the cache for a specific model or all models *)
 
-val get_model_info : model_id -> (Yojson.Safe.t, string) result
+val get_model_info : model_id -> (Jsont.json, string) result
 (** Fetch model card/info from HuggingFace API *)

@@ -49,42 +49,42 @@
     <div class="code-compare">
       <div>
         <h4>MATPLOTLIB</h4>
-        <pre><span class="keyword">import</span> <span class="type">matplotlib.pyplot</span> <span class="keyword">as</span> <span class="type">plt</span>
-<span class="keyword">import</span> <span class="type">numpy</span> <span class="keyword">as</span> <span class="type">np</span>
+        <pre class="language-python"><code class="language-python">import matplotlib.pyplot as plt
+import numpy as np
 
-<span class="comment"># Create data</span>
-<span class="keyword">x</span> <span class="operator">=</span> <span class="function">np.linspace</span>(<span class="number">0</span>, <span class="number">10</span>, <span class="number">100</span>)
-<span class="keyword">y</span> <span class="operator">=</span> <span class="function">np.sin</span>(<span class="keyword">x</span>)
+# Create data
+x = np.linspace(0, 10, 100)
+y = np.sin(x)
 
-<span class="comment"># Plot</span>
-<span class="function">plt.figure</span>(<span class="keyword">figsize</span><span class="operator">=</span>(<span class="number">8</span>, <span class="number">6</span>))
-<span class="function">plt.plot</span>(<span class="keyword">x</span>, <span class="keyword">y</span>, <span class="keyword">color</span><span class="operator">=</span><span class="string">'blue'</span>)
-<span class="function">plt.xlabel</span>(<span class="string">'x'</span>)
-<span class="function">plt.ylabel</span>(<span class="string">'sin(x)'</span>)
-<span class="function">plt.grid</span>(<span class="keyword">True</span>)
-<span class="function">plt.show</span>()</pre>
+# Plot
+plt.figure(figsize=(8, 6))
+plt.plot(x, y, color='blue')
+plt.xlabel('x')
+plt.ylabel('sin(x)')
+plt.grid(True)
+plt.show()</code></pre>
       </div>
       <div>
         <h4>HUGIN</h4>
-        <pre><span class="keyword">open</span> <span class="type">Hugin</span>
-<span class="keyword">open</span> <span class="type">Nx</span>
+        <pre class="language-ocaml"><code class="language-ocaml">open Hugin
+open Nx
 
-<span class="comment">(* Create data *)</span>
-<span class="keyword">let</span> <span class="keyword">x</span> <span class="operator">=</span> <span class="function">linspace</span> <span class="type">float32</span> <span class="number">0.</span> <span class="number">10.</span> <span class="number">100</span>
-<span class="keyword">let</span> <span class="keyword">y</span> <span class="operator">=</span> <span class="function">Nx.map</span> <span class="type">Float.sin</span> <span class="keyword">x</span>
+(* Create data *)
+let x = linspace float32 0. 10. 100
+let y = Nx.map Float.sin x
 
-<span class="comment">(* Plot *)</span>
-<span class="keyword">let</span> () <span class="operator">=</span>
-  <span class="keyword">let</span> <span class="keyword">fig</span> <span class="operator">=</span> <span class="function">figure</span> <span class="operator">~</span><span class="keyword">width</span><span class="operator">:</span><span class="number">800</span> <span class="operator">~</span><span class="keyword">height</span><span class="operator">:</span><span class="number">600</span> () <span class="keyword">in</span>
-  <span class="keyword">let</span> <span class="keyword">ax</span> <span class="operator">=</span> <span class="function">subplot</span> <span class="keyword">fig</span> <span class="keyword">in</span>
-  <span class="keyword">let</span> _ <span class="operator">=</span>
-    <span class="keyword">ax</span>
-    <span class="operator">|></span> <span class="type">Plotting</span>.<span class="function">plot</span> <span class="operator">~</span><span class="keyword">x</span> <span class="operator">~</span><span class="keyword">y</span> <span class="operator">~</span><span class="keyword">color</span><span class="operator">:</span><span class="type">Artist.Color</span>.<span class="keyword">blue</span>
-    <span class="operator">|></span> <span class="type">Axes</span>.<span class="function">set_xlabel</span> <span class="string">"x"</span>
-    <span class="operator">|></span> <span class="type">Axes</span>.<span class="function">set_ylabel</span> <span class="string">"sin(x)"</span>
-    <span class="operator">|></span> <span class="type">Axes</span>.<span class="function">grid</span> <span class="keyword">true</span>
-  <span class="keyword">in</span>
-  <span class="function">show</span> <span class="keyword">fig</span></pre>
+(* Plot *)
+let () =
+  let fig = figure ~width:800 ~height:600 () in
+  let ax = subplot fig in
+  let _ =
+    ax
+    |> Plotting.plot ~x ~y ~color:Artist.Color.blue
+    |> Axes.set_xlabel "x"
+    |> Axes.set_ylabel "sin(x)"
+    |> Axes.grid true
+  in
+  show fig</code></pre>
       </div>
     </div>
 
@@ -94,12 +94,12 @@
 
     <p>Hugin embraces OCaml's pipeline operator. Build plots by transforming axes:</p>
 
-    <pre><span class="keyword">let</span> <span class="keyword">plot_data</span> <span class="keyword">ax</span> <span class="operator">=</span>
-  <span class="keyword">ax</span>
-  <span class="operator">|></span> <span class="type">Plotting</span>.<span class="function">plot</span> <span class="operator">~</span><span class="keyword">x</span> <span class="operator">~</span><span class="keyword">y1</span> <span class="operator">~</span><span class="keyword">label</span><span class="operator">:</span><span class="string">"sin"</span> <span class="operator">~</span><span class="keyword">color</span><span class="operator">:</span><span class="type">Artist.Color</span>.<span class="keyword">red</span>
-  <span class="operator">|></span> <span class="type">Plotting</span>.<span class="function">plot</span> <span class="operator">~</span><span class="keyword">x</span> <span class="operator">~</span><span class="keyword">y2</span> <span class="operator">~</span><span class="keyword">label</span><span class="operator">:</span><span class="string">"cos"</span> <span class="operator">~</span><span class="keyword">color</span><span class="operator">:</span><span class="type">Artist.Color</span>.<span class="keyword">blue</span>
-  <span class="operator">|></span> <span class="type">Axes</span>.<span class="function">set_title</span> <span class="string">"Trigonometric Functions"</span>
-  <span class="operator">|></span> <span class="type">Axes</span>.<span class="function">set_xlim</span> <span class="operator">~</span><span class="keyword">min</span><span class="operator">:</span><span class="number">0.</span> <span class="operator">~</span><span class="keyword">max</span><span class="operator">:</span><span class="number">10.</span></pre>
+    <pre class="language-ocaml"><code class="language-ocaml">let plot_data ax =
+  ax
+  |> Plotting.plot ~x ~y1 ~label:"sin" ~color:Artist.Color.red
+  |> Plotting.plot ~x ~y2 ~label:"cos" ~color:Artist.Color.blue
+  |> Axes.set_title "Trigonometric Functions"
+  |> Axes.set_xlim ~min:0. ~max:10.</code></pre>
 
     <hr>
 
@@ -108,29 +108,29 @@
     <div class="feature-grid">
       <div>
         <h3 class="color-purple">2D plotting</h3>
-        <pre><span class="comment">(* Lines and scatter *)</span>
-<span class="type">Plotting</span>.<span class="function">plot</span> <span class="operator">~</span><span class="keyword">x</span> <span class="operator">~</span><span class="keyword">y</span>
-<span class="type">Plotting</span>.<span class="function">scatter</span> <span class="operator">~</span><span class="keyword">x</span> <span class="operator">~</span><span class="keyword">y</span>
+        <pre class="language-ocaml"><code class="language-ocaml">(* Lines and scatter *)
+Plotting.plot ~x ~y
+Plotting.scatter ~x ~y
 
-<span class="comment">(* Bar charts *)</span>
-<span class="type">Plotting</span>.<span class="function">bar</span> <span class="operator">~</span><span class="keyword">x</span> <span class="operator">~</span><span class="keyword">heights</span>
+(* Bar charts *)
+Plotting.bar ~x ~heights
 
-<span class="comment">(* Histograms *)</span>
-<span class="type">Plotting</span>.<span class="function">hist</span> <span class="operator">~</span><span class="keyword">values</span> <span class="operator">~</span><span class="keyword">bins</span><span class="operator">:</span><span class="number">30</span></pre>
+(* Histograms *)
+Plotting.hist ~values ~bins:30</code></pre>
       </div>
       <div>
         <h3 class="color-purple">styling</h3>
-        <pre><span class="comment">(* Colors *)</span>
-<span class="type">Artist.Color</span>.<span class="keyword">red</span>
-<span class="type">Artist.Color</span>.<span class="function">rgba</span> <span class="number">0.5</span> <span class="number">0.5</span> <span class="number">0.5</span> <span class="number">1.0</span>
+        <pre class="language-ocaml"><code class="language-ocaml">(* Colors *)
+Artist.Color.red
+Artist.Color.rgba 0.5 0.5 0.5 1.0
 
-<span class="comment">(* Line styles *)</span>
-<span class="type">Artist</span>.<span class="type">Solid</span>
-<span class="type">Artist</span>.<span class="type">Dashed</span>
+(* Line styles *)
+Artist.Solid
+Artist.Dashed
 
-<span class="comment">(* Markers *)</span>
-<span class="type">Artist</span>.<span class="type">Circle</span>
-<span class="type">Artist</span>.<span class="type">Square</span></pre>
+(* Markers *)
+Artist.Circle
+Artist.Square</code></pre>
       </div>
     </div>
 
@@ -138,10 +138,10 @@
 
     <h2>display images</h2>
 
-    <pre><span class="comment">(* Load and display *)</span>
-<span class="keyword">let</span> <span class="keyword">img</span> <span class="operator">=</span> <span class="type">Nx_io</span>.<span class="function">load_image</span> <span class="string">"photo.jpg"</span> <span class="keyword">in</span>
-<span class="keyword">let</span> <span class="keyword">fig</span> <span class="operator">=</span> <span class="function">imshow</span> <span class="operator">~</span><span class="keyword">title</span><span class="operator">:</span><span class="string">"My Image"</span> <span class="keyword">img</span> <span class="keyword">in</span>
-<span class="function">show</span> <span class="keyword">fig</span></pre>
+    <pre class="language-ocaml"><code class="language-ocaml">(* Load and display *)
+let img = Nx_io.load_image "photo.jpg" in
+let fig = imshow ~title:"My Image" img in
+show fig</code></pre>
 
     <hr>
 
@@ -149,36 +149,32 @@
 
     <p>Hugin needs Cairo and SDL2. Install them first:</p>
 
-    <pre>
-<span class="comment"># macOS</span>
-<span class="function">brew</span> install cairo sdl2
+    <pre class="language-bash"><code class="language-bash"># macOS
+brew install cairo sdl2
 
-<span class="comment"># Ubuntu</span>  
-<span class="function">apt</span> install libcairo2-dev libsdl2-dev
-    </pre>
+# Ubuntu  
+apt install libcairo2-dev libsdl2-dev
+    </code></pre>
 
     <p>Hugin isn't released yet. For now, check out the <a href="/docs/hugin/">documentation</a> to learn more.</p>
 
     <p>When it's ready:</p>
 
-    <pre>
-<span class="comment"># Install</span>
-<span class="function">opam</span> install hugin
+    <pre class="language-bash"><code class="language-bash">opam install hugin</code></pre>
 
-<span class="comment"># Try it</span>
-<span class="keyword">open</span> <span class="type">Hugin</span>
-<span class="keyword">open</span> <span class="type">Nx</span>
+    <pre class="language-ocaml"><code class="language-ocaml">open Hugin
+open Nx
 
-<span class="keyword">let</span> () <span class="operator">=</span> 
-  <span class="keyword">let</span> <span class="keyword">x</span> <span class="operator">=</span> <span class="function">linspace</span> <span class="type">float32</span> <span class="number">0.</span> (<span class="number">2.</span> <span class="operator">*.</span> <span class="type">Float</span>.<span class="keyword">pi</span>) <span class="number">100</span> <span class="keyword">in</span>
-  <span class="keyword">let</span> <span class="keyword">y</span> <span class="operator">=</span> <span class="type">Nx</span>.<span class="function">map</span> <span class="type">Float</span>.<span class="function">sin</span> <span class="keyword">x</span> <span class="keyword">in</span>
-  <span class="keyword">let</span> <span class="keyword">fig</span> <span class="operator">=</span> <span class="function">figure</span> () <span class="keyword">in</span>
-  <span class="keyword">let</span> _ <span class="operator">=</span> 
-    <span class="function">subplot</span> <span class="keyword">fig</span>
-    <span class="operator">|></span> <span class="type">Plotting</span>.<span class="function">plot</span> <span class="operator">~</span><span class="keyword">x</span> <span class="operator">~</span><span class="keyword">y</span>
-  <span class="keyword">in</span>
-  <span class="function">savefig</span> <span class="keyword">fig</span> <span class="string">"plot.png"</span>
-    </pre>
+let () =
+  let x = linspace float32 0. (2. *. Float.pi) 100 in
+  let y = Nx.map Float.sin x in
+  let fig = figure () in
+  let _ =
+    subplot fig
+    |> Plotting.plot ~x ~y
+  in
+  savefig fig "plot.png"</code></pre>
   </main>
+
 </body>
 </html>

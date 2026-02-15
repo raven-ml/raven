@@ -6,6 +6,7 @@
   %{lib:nx.top:nx_top.cmi}
   %{lib:nx.top:nx_top.cma}
   %{lib:nx.core:nx_core.cma}
+  %{lib:nx.backend:nx_backend.cma}
   %{lib:nx.c:nx_c.cma}
   ; nx-io
   %{lib:nx.io:nx_io.cmi}
@@ -14,18 +15,14 @@
   %{lib:nx.io.npy:npy.cma}
   %{lib:nx.io.stb_image:stb_image.cma}
   %{lib:nx.io.stb_image_write:stb_image_write.cma}
-  ; nx-datasets
-  %{lib:nx-datasets:nx_datasets.cmi}
-  %{lib:nx-datasets:nx_datasets.cma}
+  ; nx.datasets
+  %{lib:nx.datasets:nx_datasets.cmi}
+  %{lib:nx.datasets:nx_datasets.cma}
   %{lib:unix:unix.cma}
-  %{lib:curl:curl.cma}
-  %{lib:csv:csv.cma}
   ; sowilo
   %{lib:sowilo:sowilo.cmi}
   %{lib:sowilo:sowilo.cma}
   ; hugin
-  %{lib:base64:base64.cmi}
-  %{lib:base64:base64.cma}
   %{lib:hugin:hugin.cmi}
   %{lib:hugin:hugin.cma}
   %{lib:hugin.top:hugin_top.cmi}
@@ -35,7 +32,6 @@
   ; rune
   %{lib:rune:rune.cma}
   %{lib:rune:rune.cmi}
-  %{lib:rune.jit:rune_jit.cma}
   %{lib:rune.top:rune_top.cmi}
   %{lib:rune.top:rune_top.cma}
   ; kaun
@@ -47,7 +43,6 @@
   %{lib:saga:saga.cmi}
   %{lib:saga:saga.cma}
   %{lib:re:re.cma}
-  %{lib:uutf:uutf.cma}
   %{lib:uucp:uucp.cma}
   ; logs
   %{lib:logs:logs.cma}
@@ -60,6 +55,7 @@
    (copy %{lib:nx.top:nx_top.cmi} nx_top.cmi)
    (copy %{lib:nx.top:nx_top.cma} nx_top.cma)
    (copy %{lib:nx.core:nx_core.cma} nx_core.cma)
+   (copy %{lib:nx.backend:nx_backend.cma} nx_backend.cma)
    (copy %{lib:nx.c:nx_c.cma} nx_c.cma)
    (copy %{lib:nx.io:nx_io.cmi} nx_io.cmi)
    (copy %{lib:nx.io:nx_io.cma} nx_io.cma)
@@ -68,16 +64,12 @@
    (copy
     %{lib:nx.io.stb_image_write:stb_image_write.cma}
     stb_image_write.cma)
-   (copy %{lib:nx-datasets:nx_datasets.cmi} nx_datasets.cmi)
-   (copy %{lib:nx-datasets:nx_datasets.cma} nx_datasets.cma)
+   (copy %{lib:nx.datasets:nx_datasets.cmi} nx_datasets.cmi)
+   (copy %{lib:nx.datasets:nx_datasets.cma} nx_datasets.cma)
    (copy %{lib:unix:unix.cma} unix.cma)
    (copy %{lib:nx.zip:zip.cma} zip.cma)
-   (copy %{lib:curl:curl.cma} curl.cma)
-   (copy %{lib:csv:csv.cma} csv.cma)
    (copy %{lib:sowilo:sowilo.cmi} sowilo.cmi)
    (copy %{lib:sowilo:sowilo.cma} sowilo.cma)
-   (copy %{lib:base64:base64.cmi} base64.cmi)
-   (copy %{lib:base64:base64.cma} base64.cma)
    (copy %{lib:hugin:hugin.cmi} hugin.cmi)
    (copy %{lib:hugin:hugin.cma} hugin.cma)
    (copy %{lib:hugin.top:hugin_top.cmi} hugin_top.cmi)
@@ -86,7 +78,6 @@
    (copy %{lib:hugin.usdl:usdl.cma} usdl.cma)
    (copy %{lib:rune:rune.cma} rune.cma)
    (copy %{lib:rune:rune.cmi} rune.cmi)
-   (copy %{lib:rune.jit:rune_jit.cma} rune_jit.cma)
    (copy %{lib:rune.top:rune_top.cmi} rune_top.cmi)
    (copy %{lib:rune.top:rune_top.cma} rune_top.cma)
    (copy %{lib:kaun:kaun.cmi} kaun.cmi)
@@ -96,34 +87,9 @@
    (copy %{lib:saga:saga.cmi} saga.cmi)
    (copy %{lib:saga:saga.cma} saga.cma)
    (copy %{lib:re:re.cma} re.cma)
-   (copy %{lib:uutf:uutf.cma} uutf.cma)
    (copy %{lib:uucp:uucp.cma} uucp.cma)
    (copy %{lib:logs:logs.cma} logs.cma)
    (copy %{lib:logs:logs.cmi} logs.cmi))))
-
-(rule
- (targets
-  bigarray_compat.cma
-  ctypes.cma
-  integers.cma
-  ctypes_foreign.cma
-  rune_jit_metal.cma)
- (mode promote)
- (enabled_if
-  (= %{system} "macosx"))
- (deps
-  %{lib:bigarray-compat:bigarray_compat.cma}
-  %{lib:ctypes:ctypes.cma}
-  %{lib:ctypes-foreign:ctypes_foreign.cma}
-  %{lib:integers:integers.cma}
-  %{lib:rune.jit.metal:rune_jit_metal.cma})
- (action
-  (progn
-   (copy %{lib:bigarray-compat:bigarray_compat.cma} bigarray_compat.cma)
-   (copy %{lib:ctypes:ctypes.cma} ctypes.cma)
-   (copy %{lib:ctypes-foreign:ctypes_foreign.cma} ctypes_foreign.cma)
-   (copy %{lib:integers:integers.cma} integers.cma)
-   (copy %{lib:rune.jit.metal:rune_jit_metal.cma} rune_jit_metal.cma))))
 
 (install
  (section

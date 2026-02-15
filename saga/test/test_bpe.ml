@@ -3,7 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Saga_tokenizers
+open Windtrap
+open Saga
 
 let test_bpe_basic () =
   (* Create a simple vocabulary and merges *)
@@ -40,7 +41,7 @@ let test_bpe_basic () =
   List.iter (Printf.printf "%s ") tokens;
   Printf.printf "\n";
 
-  Alcotest.(check int) "vocabulary size" 8 (Tokenizer.vocab_size tokenizer)
+  equal ~msg:"vocabulary size" int 8 (Tokenizer.vocab_size tokenizer)
 
 let test_bpe_builder () =
   let vocab = [ ("a", 0); ("b", 1); ("ab", 2) ] in
@@ -50,7 +51,7 @@ let test_bpe_builder () =
 
   let encoding = Tokenizer.encode tokenizer "ab" in
   let tokens = Encoding.get_tokens encoding in
-  Alcotest.(check int) "single token for 'ab'" 1 (Array.length tokens)
+  equal ~msg:"single token for 'ab'" int 1 (Array.length tokens)
 
 let test_bpe_save_load () =
   let vocab = [ ("t", 0); ("e", 1); ("s", 2); ("test", 3) ] in
@@ -78,8 +79,7 @@ let test_bpe_save_load () =
     Tokenizer.encode loaded_tokenizer "test" |> Encoding.get_tokens
   in
 
-  Alcotest.(check int)
-    "same number of tokens"
+  equal ~msg:"same number of tokens" int
     (Array.length original_tokens)
     (Array.length loaded_tokens);
 
@@ -106,17 +106,16 @@ let test_tokenizer_integration () =
   List.iter (Printf.printf "%s ") tokens;
   Printf.printf "\n";
 
-  Alcotest.(check bool) "tokenizer produces output" true (List.length tokens > 0)
+  equal ~msg:"tokenizer produces output" bool true (List.length tokens > 0)
 
 let () =
-  let open Alcotest in
   run "BPE tests"
     [
-      ( "basic",
+      group "basic"
         [
-          test_case "basic tokenization" `Quick test_bpe_basic;
-          test_case "builder pattern" `Quick test_bpe_builder;
-          test_case "save and load" `Quick test_bpe_save_load;
-          test_case "tokenizer integration" `Quick test_tokenizer_integration;
-        ] );
+          test "basic tokenization" test_bpe_basic;
+          test "builder pattern" test_bpe_builder;
+          test "save and load" test_bpe_save_load;
+          test "tokenizer integration" test_tokenizer_integration;
+        ];
     ]

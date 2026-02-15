@@ -17,7 +17,7 @@ type scalar =
   | Int of int
   | Float of float
   | String of string
-  | Json of Yojson.Basic.t
+  | Json of Jsont.json
 
 (** Heterogeneous snapshot tree. *)
 type t =
@@ -33,7 +33,7 @@ val bool : bool -> t
 val int : int -> t
 val float : float -> t
 val string : string -> t
-val json : Yojson.Basic.t -> t
+val json : Jsont.json -> t
 val list : t list -> t
 val scalar : scalar -> t
 val record : (string * t) list -> t
@@ -70,8 +70,8 @@ val flatten_scalars : ?prefix:string -> t -> (string * scalar) list
 
 (** {2 Conversion Helpers} *)
 
-val scalar_to_yojson : scalar -> Yojson.Basic.t
-val scalar_of_yojson : Yojson.Basic.t -> scalar
+val scalar_to_json : scalar -> Jsont.json
+val scalar_of_json : Jsont.json -> scalar
 
 (** {2 Interoperability} *)
 

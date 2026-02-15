@@ -3,18 +3,18 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Alcotest
-open Saga_tokenizers
+open Windtrap
+open Saga
 
 let test_vocab_create_empty () =
   let tokenizer = Tokenizer.word_level () in
   let vocab = Tokenizer.vocab tokenizer in
-  check int "empty vocab size" 0 (List.length vocab)
+  equal ~msg:"empty vocab size" int 0 (List.length vocab)
 
 let test_vocab_with_tokenizer () =
   let tokenizer = Tokenizer.word_level () in
   let vocab = Tokenizer.vocab tokenizer in
-  check int "initial vocab size" 0 (List.length vocab)
+  equal ~msg:"initial vocab size" int 0 (List.length vocab)
 
 let test_vocab_add_tokens () =
   let tokenizer =
@@ -24,7 +24,7 @@ let test_vocab_add_tokens () =
       [ "hello"; "world" ]
   in
   let vocab_size = Tokenizer.vocab_size tokenizer in
-  check bool "vocab size increased" true (vocab_size >= 2)
+  equal ~msg:"vocab size increased" bool true (vocab_size >= 2)
 
 let test_vocab_encode_decode () =
   let tokenizer =
@@ -33,16 +33,16 @@ let test_vocab_encode_decode () =
       [ "hello"; "world" ]
   in
   let ids = Tokenizer.encode tokenizer "hello world" |> Encoding.get_ids in
-  check bool "encoded ids" true (Array.length ids > 0);
+  equal ~msg:"encoded ids" bool true (Array.length ids > 0);
   let decoded = Tokenizer.decode tokenizer ids in
-  check string "decoded text" "hello world" decoded
+  equal ~msg:"decoded text" string "hello world" decoded
 
 let test_vocab_batch_encode () =
   let tokenizer =
     Tokenizer.add_tokens (Tokenizer.word_level ()) [ "hello"; "world" ]
   in
   let encodings = Tokenizer.encode_batch tokenizer [ "hello"; "world" ] in
-  check int "batch size" 2 (List.length encodings)
+  equal ~msg:"batch size" int 2 (List.length encodings)
 
 let test_vocab_special_tokens () =
   let tokenizer =
@@ -55,7 +55,7 @@ let test_vocab_special_tokens () =
     Tokenizer.encode ~add_special_tokens:true tokenizer "test"
     |> Encoding.get_tokens
   in
-  check bool "tokens emitted" true (Array.length tokens > 0)
+  equal ~msg:"tokens emitted" bool true (Array.length tokens > 0)
 
 let test_vocab_save_load () =
   let tokenizer =
@@ -68,26 +68,26 @@ let test_vocab_save_load () =
   | Ok reloaded ->
       let original_vocab = Tokenizer.vocab tokenizer in
       let loaded_vocab = Tokenizer.vocab reloaded in
-      check int "vocab size matches"
+      equal ~msg:"vocab size matches" int
         (List.length original_vocab)
         (List.length loaded_vocab);
       List.iter
         (fun (token, _) ->
-          check bool
-            (Printf.sprintf "token %s preserved" token)
-            true
+          equal
+            ~msg:(Printf.sprintf "token %s preserved" token)
+            bool true
             (Option.is_some (Tokenizer.token_to_id reloaded token)))
         original_vocab
 
 let suite =
   [
-    test_case "create empty" `Quick test_vocab_create_empty;
-    test_case "with tokenizer" `Quick test_vocab_with_tokenizer;
-    test_case "add tokens" `Quick test_vocab_add_tokens;
-    test_case "encode decode" `Quick test_vocab_encode_decode;
-    test_case "batch encode" `Quick test_vocab_batch_encode;
-    test_case "special tokens" `Quick test_vocab_special_tokens;
-    test_case "save load" `Quick test_vocab_save_load;
+    test "create empty" test_vocab_create_empty;
+    test "with tokenizer" test_vocab_with_tokenizer;
+    test "add tokens" test_vocab_add_tokens;
+    test "encode decode" test_vocab_encode_decode;
+    test "batch encode" test_vocab_batch_encode;
+    test "special tokens" test_vocab_special_tokens;
+    test "save load" test_vocab_save_load;
   ]
 
-let () = run "Vocabulary tests" [ ("vocab", suite) ]
+let () = run "Vocabulary tests" [ group "vocab" suite ]

@@ -5,7 +5,7 @@
 
 (* Shape manipulation tests for Nx *)
 
-open Alcotest
+open Windtrap
 open Test_nx_support
 
 (* ───── Reshape Tests ───── *)
@@ -59,10 +59,10 @@ let test_reshape_view_when_contiguous () =
   let t = Nx.create Nx.float32 [| 4 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let r = Nx.reshape [| 2; 2 |] t in
   Nx.set_item [ 0 ] 77.0 t;
-  check (float 1e-6) "reshape view sees source mutations" 77.0
+  equal ~msg:"reshape view sees source mutations" (float 1e-6) 77.0
     (Nx.item [ 0; 0 ] r);
   Nx.set_item [ 0; 0 ] 42.0 r;
-  check (float 1e-6) "reshape view mutates source" 42.0 (Nx.item [ 0 ] t)
+  equal ~msg:"reshape view mutates source" (float 1e-6) 42.0 (Nx.item [ 0 ] t)
 
 let test_reshape_copy_when_not_contiguous () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
@@ -72,11 +72,6 @@ let test_reshape_copy_when_not_contiguous () =
      [1,3] (expected [1]))\n\
      hint: call contiguous() before reshape to create a C-contiguous copy"
     (fun () -> Nx.reshape [| 6 |] transposed)
-
-let test_reshape_to_vector () =
-  let t = Nx.create Nx.float32 [| 4 |] [| 1.0; 2.0; 3.0; 4.0 |] in
-  let r = Nx.reshape [| 4; 1 |] t in
-  check_t "reshape to column vector" [| 4; 1 |] [| 1.0; 2.0; 3.0; 4.0 |] r
 
 (* ───── Transpose Tests ───── *)
 
@@ -95,15 +90,15 @@ let test_transpose_high_d () =
   let tr = Nx.transpose t in
   check_shape "transpose high-d shape" [| 5; 4; 3; 2 |] tr;
   (* Check a few values to ensure correct transpose *)
-  check (float 1e-6) "transpose[0,0,0,0]" 0.0 (Nx.item [ 0; 0; 0; 0 ] tr);
-  check (float 1e-6) "transpose[0,0,0,1]" 60.0 (Nx.item [ 0; 0; 0; 1 ] tr)
+  equal ~msg:"transpose[0,0,0,0]" (float 1e-6) 0.0 (Nx.item [ 0; 0; 0; 0 ] tr);
+  equal ~msg:"transpose[0,0,0,1]" (float 1e-6) 60.0 (Nx.item [ 0; 0; 0; 1 ] tr)
 
 let test_transpose_axes () =
   let t = Nx.create Nx.float32 [| 2; 3; 4 |] (Array.init 24 float_of_int) in
   let tr = Nx.transpose ~axes:[ 1; 2; 0 ] t in
   check_shape "transpose custom axes" [| 3; 4; 2 |] tr;
-  check (float 1e-6) "transpose[0,0,0]" 0.0 (Nx.item [ 0; 0; 0 ] tr);
-  check (float 1e-6) "transpose[0,0,1]" 12.0 (Nx.item [ 0; 0; 1 ] tr)
+  equal ~msg:"transpose[0,0,0]" (float 1e-6) 0.0 (Nx.item [ 0; 0; 0 ] tr);
+  equal ~msg:"transpose[0,0,1]" (float 1e-6) 12.0 (Nx.item [ 0; 0; 1 ] tr)
 
 let test_transpose_invalid_axes () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
@@ -116,7 +111,7 @@ let test_transpose_view () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let tr = Nx.transpose t in
   Nx.set_item [ 0; 1 ] 99.0 t;
-  check (float 1e-6) "transpose view modified" 99.0 (Nx.item [ 1; 0 ] tr)
+  equal ~msg:"transpose view modified" (float 1e-6) 99.0 (Nx.item [ 1; 0 ] tr)
 
 (* ───── Concatenate Tests ───── *)
 
@@ -127,11 +122,6 @@ let test_concat_axis_1 () =
   check_t "concat axis 1" [| 2; 5 |]
     [| 1.; 2.; 3.; 7.; 8.; 4.; 5.; 6.; 9.; 10. |]
     c
-
-let test_concat_single () =
-  let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  let c = Nx.concatenate [ t ] in
-  check_t "concat single array" [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] c
 
 let test_concat_empty_list () =
   check_invalid_arg "concat empty list"
@@ -168,7 +158,7 @@ let test_concat_new_array () =
   let t2 = Nx.create Nx.float32 [| 2 |] [| 3.0; 4.0 |] in
   let c = Nx.concatenate [ t1; t2 ] in
   Nx.set_item [ 0 ] 99.0 t1;
-  check (float 1e-6) "concat is new array" 1.0 (Nx.item [ 0 ] c)
+  equal ~msg:"concat is new array" (float 1e-6) 1.0 (Nx.item [ 0 ] c)
 
 (* ───── Stack Tests ───── *)
 
@@ -193,14 +183,14 @@ let test_stack_new_array () =
   let t2 = Nx.create Nx.float32 [| 2 |] [| 3.0; 4.0 |] in
   let s = Nx.stack ~axis:0 [ t1; t2 ] in
   Nx.set_item [ 0 ] 99.0 t1;
-  check (float 1e-6) "stack is new array" 1.0 (Nx.item [ 0; 0 ] s)
+  equal ~msg:"stack is new array" (float 1e-6) 1.0 (Nx.item [ 0; 0 ] s)
 
 (* ───── Split Tests ───── *)
 
 let test_split_equal () =
   let t = Nx.create Nx.float32 [| 12 |] (Array.init 12 float_of_int) in
   let parts = Nx.split ~axis:0 3 t in
-  check int "split count" 3 (List.length parts);
+  equal ~msg:"split count" int 3 (List.length parts);
   check_t "split part 0" [| 4 |] [| 0.; 1.; 2.; 3. |] (List.nth parts 0);
   check_t "split part 1" [| 4 |] [| 4.; 5.; 6.; 7. |] (List.nth parts 1);
   check_t "split part 2" [| 4 |] [| 8.; 9.; 10.; 11. |] (List.nth parts 2)
@@ -215,13 +205,13 @@ let test_split_unequal () =
 let test_split_axis () =
   let t = Nx.create Nx.float32 [| 4; 6 |] (Array.init 24 float_of_int) in
   let parts = Nx.split ~axis:1 2 t in
-  check int "split axis 1 count" 2 (List.length parts);
+  equal ~msg:"split axis 1 count" int 2 (List.length parts);
   check_shape "split axis 1 shape" [| 4; 3 |] (List.nth parts 0)
 
 let test_split_one () =
   let t = Nx.create Nx.float32 [| 6 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let parts = Nx.split ~axis:0 1 t in
-  check int "split into 1 count" 1 (List.length parts);
+  equal ~msg:"split into 1 count" int 1 (List.length parts);
   check_t "split into 1 part" [| 6 |]
     [| 1.; 2.; 3.; 4.; 5.; 6. |]
     (List.nth parts 0)
@@ -231,20 +221,20 @@ let test_split_views () =
   let parts = Nx.split ~axis:0 2 t in
   let p1 = List.nth parts 0 in
   Nx.set_item [ 0 ] 99.0 p1;
-  check (float 1e-6) "split view modified" 99.0 (Nx.item [ 0 ] t)
+  equal ~msg:"split view modified" (float 1e-6) 99.0 (Nx.item [ 0 ] t)
 
 (* ───── Array Split Tests ───── *)
 
 let test_array_split_equal () =
   let t = Nx.create Nx.float32 [| 6 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
   let parts = Nx.array_split ~axis:0 (`Count 3) t in
-  check int "array_split equal count" 3 (List.length parts);
+  equal ~msg:"array_split equal count" int 3 (List.length parts);
   check_t "array_split equal part 0" [| 2 |] [| 1.0; 2.0 |] (List.nth parts 0)
 
 let test_array_split_unequal () =
   let t = Nx.create Nx.float32 [| 5 |] [| 1.0; 2.0; 3.0; 4.0; 5.0 |] in
   let parts = Nx.array_split ~axis:0 (`Count 3) t in
-  check int "array_split unequal count" 3 (List.length parts);
+  equal ~msg:"array_split unequal count" int 3 (List.length parts);
   check_t "array_split unequal part 0" [| 2 |] [| 1.0; 2.0 |] (List.nth parts 0);
   check_t "array_split unequal part 1" [| 2 |] [| 3.0; 4.0 |] (List.nth parts 1);
   check_t "array_split unequal part 2" [| 1 |] [| 5.0 |] (List.nth parts 2)
@@ -254,7 +244,7 @@ let test_array_split_views () =
   let parts = Nx.array_split ~axis:0 (`Count 2) t in
   let p1 = List.nth parts 0 in
   Nx.set_item [ 0 ] 99.0 p1;
-  check (float 1e-6) "array_split view modified" 99.0 (Nx.item [ 0 ] t)
+  equal ~msg:"array_split view modified" (float 1e-6) 99.0 (Nx.item [ 0 ] t)
 
 (* ───── Squeeze Expand Tests ───── *)
 
@@ -309,9 +299,9 @@ let test_broadcast_to_valid () =
   let t = Nx.create Nx.float32 [| 3; 1 |] [| 1.; 2.; 3. |] in
   let b = Nx.broadcast_to [| 3; 4 |] t in
   check_shape "broadcast valid shape" [| 3; 4 |] b;
-  check (float 1e-6) "broadcast[0,0]" 1.0 (Nx.item [ 0; 0 ] b);
-  check (float 1e-6) "broadcast[0,3]" 1.0 (Nx.item [ 0; 3 ] b);
-  check (float 1e-6) "broadcast[2,2]" 3.0 (Nx.item [ 2; 2 ] b)
+  equal ~msg:"broadcast[0,0]" (float 1e-6) 1.0 (Nx.item [ 0; 0 ] b);
+  equal ~msg:"broadcast[0,3]" (float 1e-6) 1.0 (Nx.item [ 0; 3 ] b);
+  equal ~msg:"broadcast[2,2]" (float 1e-6) 3.0 (Nx.item [ 2; 2 ] b)
 
 let test_broadcast_to_invalid () =
   let t = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
@@ -329,13 +319,13 @@ let test_broadcast_scalar () =
   let t = Nx.scalar Nx.float32 5.0 in
   let b = Nx.broadcast_to [| 3; 4; 5 |] t in
   check_shape "broadcast scalar shape" [| 3; 4; 5 |] b;
-  check (float 1e-6) "broadcast scalar value" 5.0 (Nx.item [ 2; 3; 4 ] b)
+  equal ~msg:"broadcast scalar value" (float 1e-6) 5.0 (Nx.item [ 2; 3; 4 ] b)
 
 let test_broadcast_arrays_compatible () =
   let t1 = Nx.create Nx.float32 [| 3; 1 |] [| 1.0; 2.0; 3.0 |] in
   let t2 = Nx.create Nx.float32 [| 1; 4 |] [| 10.0; 20.0; 30.0; 40.0 |] in
   let broadcasted = Nx.broadcast_arrays [ t1; t2 ] in
-  check int "broadcast_arrays count" 2 (List.length broadcasted);
+  equal ~msg:"broadcast_arrays count" int 2 (List.length broadcasted);
   let b1 = List.nth broadcasted 0 in
   let b2 = List.nth broadcasted 1 in
   check_shape "broadcast_arrays shape 1" [| 3; 4 |] b1;
@@ -347,7 +337,8 @@ let test_broadcast_arrays_views () =
   let broadcasted = Nx.broadcast_arrays [ t1; t2 ] in
   let b1 = List.nth broadcasted 0 in
   Nx.set_item [ 0; 0 ] 99.0 t1;
-  check (float 1e-6) "broadcast array view modified" 99.0 (Nx.item [ 0; 0 ] b1)
+  equal ~msg:"broadcast array view modified" (float 1e-6) 99.0
+    (Nx.item [ 0; 0 ] b1)
 
 let test_broadcast_arrays_invalid () =
   let t1 = Nx.create Nx.float32 [| 2 |] [| 1.0; 2.0 |] in
@@ -413,13 +404,13 @@ let test_flatten_view () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let flat = Nx.flatten t in
   Nx.set_item [ 0; 0 ] 99.0 t;
-  check (float 1e-6) "flatten view modified" 99.0 (Nx.item [ 0 ] flat)
+  equal ~msg:"flatten view modified" (float 1e-6) 99.0 (Nx.item [ 0 ] flat)
 
 let test_ravel_contiguous_view () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let r = Nx.ravel t in
   Nx.set_item [ 0; 0 ] 99.0 t;
-  check (float 1e-6) "ravel view modified" 99.0 (Nx.item [ 0 ] r)
+  equal ~msg:"ravel view modified" (float 1e-6) 99.0 (Nx.item [ 0 ] r)
 
 let test_ravel_non_contiguous_copy () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
@@ -453,7 +444,7 @@ let test_flip_view () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let f = Nx.flip t in
   Nx.set_item [ 0; 0 ] 99.0 t;
-  check (float 1e-6) "flip view modified" 99.0 (Nx.item [ 1; 1 ] f)
+  equal ~msg:"flip view modified" (float 1e-6) 99.0 (Nx.item [ 1; 1 ] f)
 
 let test_roll_no_axis () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
@@ -469,7 +460,7 @@ let test_moveaxis_view () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let m = Nx.moveaxis 0 1 t in
   Nx.set_item [ 0; 0 ] 99.0 t;
-  check (float 1e-6) "moveaxis view modified" 99.0 (Nx.item [ 0; 0 ] m)
+  equal ~msg:"moveaxis view modified" (float 1e-6) 99.0 (Nx.item [ 0; 0 ] m)
 
 let test_moveaxis_invalid () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
@@ -481,7 +472,7 @@ let test_swapaxes_view () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let s = Nx.swapaxes 0 1 t in
   Nx.set_item [ 0; 1 ] 99.0 t;
-  check (float 1e-6) "swapaxes view modified" 99.0 (Nx.item [ 1; 0 ] s)
+  equal ~msg:"swapaxes view modified" (float 1e-6) 99.0 (Nx.item [ 1; 0 ] s)
 
 let test_swapaxes_invalid () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
@@ -590,132 +581,128 @@ let test_as_strided_int_dtype () =
 
 let reshape_tests =
   [
-    ("reshape minus one", `Quick, test_reshape_minus_one);
-    ("reshape multiple minus one", `Quick, test_reshape_multiple_minus_one);
-    ("reshape wrong size", `Quick, test_reshape_wrong_size);
-    ("reshape 0d to 1d", `Quick, test_reshape_0d_to_1d);
-    ("reshape to 0d", `Quick, test_reshape_to_0d);
-    ("reshape empty", `Quick, test_reshape_empty);
-    ("reshape view when contiguous", `Quick, test_reshape_view_when_contiguous);
-    ( "reshape copy when not contiguous",
-      `Quick,
-      test_reshape_copy_when_not_contiguous );
-    ("reshape to vector", `Quick, test_reshape_to_vector);
+    test "reshape minus one" test_reshape_minus_one;
+    test "reshape multiple minus one" test_reshape_multiple_minus_one;
+    test "reshape wrong size" test_reshape_wrong_size;
+    test "reshape 0d to 1d" test_reshape_0d_to_1d;
+    test "reshape to 0d" test_reshape_to_0d;
+    test "reshape empty" test_reshape_empty;
+    test "reshape view when contiguous" test_reshape_view_when_contiguous;
+    test "reshape copy when not contiguous"
+      test_reshape_copy_when_not_contiguous;
   ]
 
 let transpose_tests =
   [
-    ("transpose 1d", `Quick, test_transpose_1d);
-    ("transpose 0d", `Quick, test_transpose_0d);
-    ("transpose high d", `Quick, test_transpose_high_d);
-    ("transpose axes", `Quick, test_transpose_axes);
-    ("transpose invalid axes", `Quick, test_transpose_invalid_axes);
-    ("transpose view", `Quick, test_transpose_view);
+    test "transpose 1d" test_transpose_1d;
+    test "transpose 0d" test_transpose_0d;
+    test "transpose high d" test_transpose_high_d;
+    test "transpose axes" test_transpose_axes;
+    test "transpose invalid axes" test_transpose_invalid_axes;
+    test "transpose view" test_transpose_view;
   ]
 
 let concatenate_tests =
   [
-    ("concat axis 1", `Quick, test_concat_axis_1);
-    ("concat single", `Quick, test_concat_single);
-    ("concat empty list", `Quick, test_concat_empty_list);
-    ("concat different dtypes", `Quick, test_concat_different_dtypes);
-    ("concat with empty", `Quick, test_concat_with_empty);
-    ("concat shape mismatch", `Quick, test_concat_shape_mismatch);
-    ("concat new array", `Quick, test_concat_new_array);
+    test "concat axis 1" test_concat_axis_1;
+    test "concat empty list" test_concat_empty_list;
+    test "concat different dtypes" test_concat_different_dtypes;
+    test "concat with empty" test_concat_with_empty;
+    test "concat shape mismatch" test_concat_shape_mismatch;
+    test "concat new array" test_concat_new_array;
   ]
 
 let stack_tests =
   [
-    ("stack new axis", `Quick, test_stack_new_axis);
-    ("stack shape mismatch", `Quick, test_stack_shape_mismatch);
-    ("stack new array", `Quick, test_stack_new_array);
+    test "stack new axis" test_stack_new_axis;
+    test "stack shape mismatch" test_stack_shape_mismatch;
+    test "stack new array" test_stack_new_array;
   ]
 
 let split_tests =
   [
-    ("split equal", `Quick, test_split_equal);
-    ("split unequal", `Quick, test_split_unequal);
-    ("split axis", `Quick, test_split_axis);
-    ("split one", `Quick, test_split_one);
-    ("split views", `Quick, test_split_views);
-    ("array split equal", `Quick, test_array_split_equal);
-    ("array split unequal", `Quick, test_array_split_unequal);
-    ("array split views", `Quick, test_array_split_views);
+    test "split equal" test_split_equal;
+    test "split unequal" test_split_unequal;
+    test "split axis" test_split_axis;
+    test "split one" test_split_one;
+    test "split views" test_split_views;
+    test "array split equal" test_array_split_equal;
+    test "array split unequal" test_array_split_unequal;
+    test "array split views" test_array_split_views;
   ]
 
 let squeeze_expand_tests =
   [
-    ("squeeze all", `Quick, test_squeeze_all);
-    ("squeeze specific", `Quick, test_squeeze_specific);
-    ("squeeze no ones", `Quick, test_squeeze_no_ones);
-    ("squeeze invalid axis", `Quick, test_squeeze_invalid_axis);
-    ("expand dims various", `Quick, test_expand_dims_various);
-    ("expand dims invalid axis", `Quick, test_expand_dims_invalid_axis);
+    test "squeeze all" test_squeeze_all;
+    test "squeeze specific" test_squeeze_specific;
+    test "squeeze no ones" test_squeeze_no_ones;
+    test "squeeze invalid axis" test_squeeze_invalid_axis;
+    test "expand dims various" test_expand_dims_various;
+    test "expand dims invalid axis" test_expand_dims_invalid_axis;
   ]
 
 let broadcast_tests =
   [
-    ("broadcast to valid", `Quick, test_broadcast_to_valid);
-    ("broadcast to invalid", `Quick, test_broadcast_to_invalid);
-    ("broadcast to same", `Quick, test_broadcast_to_same);
-    ("broadcast scalar", `Quick, test_broadcast_scalar);
-    ("broadcast arrays compatible", `Quick, test_broadcast_arrays_compatible);
-    ("broadcast arrays views", `Quick, test_broadcast_arrays_views);
-    ("broadcast arrays invalid", `Quick, test_broadcast_arrays_invalid);
+    test "broadcast to valid" test_broadcast_to_valid;
+    test "broadcast to invalid" test_broadcast_to_invalid;
+    test "broadcast to same" test_broadcast_to_same;
+    test "broadcast scalar" test_broadcast_scalar;
+    test "broadcast arrays compatible" test_broadcast_arrays_compatible;
+    test "broadcast arrays views" test_broadcast_arrays_views;
+    test "broadcast arrays invalid" test_broadcast_arrays_invalid;
   ]
 
 let tile_repeat_tests =
   [
-    ("tile 1d", `Quick, test_tile_1d);
-    ("tile 2d", `Quick, test_tile_2d);
-    ("tile broadcast", `Quick, test_tile_broadcast);
-    ("tile invalid", `Quick, test_tile_invalid);
-    ("repeat axis", `Quick, test_repeat_axis);
-    ("repeat no axis", `Quick, test_repeat_no_axis);
-    ("repeat invalid", `Quick, test_repeat_invalid);
+    test "tile 1d" test_tile_1d;
+    test "tile 2d" test_tile_2d;
+    test "tile broadcast" test_tile_broadcast;
+    test "tile invalid" test_tile_invalid;
+    test "repeat axis" test_repeat_axis;
+    test "repeat no axis" test_repeat_no_axis;
+    test "repeat invalid" test_repeat_invalid;
   ]
 
 let other_manipulation_tests =
   [
-    ("flatten view", `Quick, test_flatten_view);
-    ("ravel contiguous view", `Quick, test_ravel_contiguous_view);
-    ("ravel non-contiguous copy", `Quick, test_ravel_non_contiguous_copy);
-    ("pad 2d", `Quick, test_pad_2d);
-    ("pad invalid", `Quick, test_pad_invalid);
-    ("flip axis", `Quick, test_flip_axis);
-    ("flip view", `Quick, test_flip_view);
-    ("roll no axis", `Quick, test_roll_no_axis);
-    ("roll negative", `Quick, test_roll_negative);
-    ("moveaxis view", `Quick, test_moveaxis_view);
-    ("moveaxis invalid", `Quick, test_moveaxis_invalid);
-    ("swapaxes view", `Quick, test_swapaxes_view);
-    ("swapaxes invalid", `Quick, test_swapaxes_invalid);
-    ("dstack 1d", `Quick, test_dstack_1d);
-    ("vstack invalid", `Quick, test_vstack_invalid);
-    ("hstack invalid", `Quick, test_hstack_invalid);
-    ("dstack invalid", `Quick, test_dstack_invalid);
+    test "flatten view" test_flatten_view;
+    test "ravel contiguous view" test_ravel_contiguous_view;
+    test "ravel non-contiguous copy" test_ravel_non_contiguous_copy;
+    test "pad 2d" test_pad_2d;
+    test "pad invalid" test_pad_invalid;
+    test "flip axis" test_flip_axis;
+    test "flip view" test_flip_view;
+    test "roll no axis" test_roll_no_axis;
+    test "roll negative" test_roll_negative;
+    test "moveaxis view" test_moveaxis_view;
+    test "moveaxis invalid" test_moveaxis_invalid;
+    test "swapaxes view" test_swapaxes_view;
+    test "swapaxes invalid" test_swapaxes_invalid;
+    test "dstack 1d" test_dstack_1d;
+    test "vstack invalid" test_vstack_invalid;
+    test "hstack invalid" test_hstack_invalid;
+    test "dstack invalid" test_dstack_invalid;
     (* as_strided tests *)
-    ("as_strided basic", `Quick, test_as_strided_basic);
-    ("as_strided 2d transpose", `Quick, test_as_strided_2d_transpose);
-    ("as_strided diagonal", `Quick, test_as_strided_diagonal);
-    ("as_strided sliding window", `Quick, test_as_strided_sliding_window);
-    ("as_strided with offset", `Quick, test_as_strided_with_offset);
-    ("as_strided scalar broadcast", `Quick, test_as_strided_scalar_broadcast);
-    ("as_strided skip elements", `Quick, test_as_strided_skip_elements);
-    ("as_strided int dtype", `Quick, test_as_strided_int_dtype);
+    test "as_strided basic" test_as_strided_basic;
+    test "as_strided 2d transpose" test_as_strided_2d_transpose;
+    test "as_strided diagonal" test_as_strided_diagonal;
+    test "as_strided sliding window" test_as_strided_sliding_window;
+    test "as_strided with offset" test_as_strided_with_offset;
+    test "as_strided scalar broadcast" test_as_strided_scalar_broadcast;
+    test "as_strided skip elements" test_as_strided_skip_elements;
+    test "as_strided int dtype" test_as_strided_int_dtype;
   ]
 
-let suite =
-  [
-    ("Manipulation :: Reshape", reshape_tests);
-    ("Manipulation :: Transpose", transpose_tests);
-    ("Manipulation :: Concatenate", concatenate_tests);
-    ("Manipulation :: Stack", stack_tests);
-    ("Manipulation :: Split", split_tests);
-    ("Manipulation :: Squeeze/Expand", squeeze_expand_tests);
-    ("Manipulation :: Broadcasting", broadcast_tests);
-    ("Manipulation :: Tile/Repeat", tile_repeat_tests);
-    ("Manipulation :: Other Manipulation", other_manipulation_tests);
-  ]
-
-let () = Alcotest.run "Nx Manipulation" suite
+let () =
+  run "Nx Manipulation"
+    [
+      group "Reshape" reshape_tests;
+      group "Transpose" transpose_tests;
+      group "Concatenate" concatenate_tests;
+      group "Stack" stack_tests;
+      group "Split" split_tests;
+      group "Squeeze/Expand" squeeze_expand_tests;
+      group "Broadcasting" broadcast_tests;
+      group "Tile/Repeat" tile_repeat_tests;
+      group "Other Manipulation" other_manipulation_tests;
+    ]

@@ -266,7 +266,7 @@ val parameter_stats : Kaun.params -> string
 
 (** {1 BERT Configuration Parsing} *)
 
-val parse_bert_config : Yojson.Safe.t -> config
+val parse_bert_config : Jsont.json -> config
 (** Parse BERT configuration from HuggingFace JSON format *)
 
 (** {1 Common Model Configurations} *)
