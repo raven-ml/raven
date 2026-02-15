@@ -15,6 +15,7 @@ module Metrics = Kaun_console_components.Metrics
 module Imp_info = Kaun_console_components.Imp_info
 module Sys_panel = Kaun_console_components.Sys_panel
 module Splash = Kaun_console_components.Splash
+module Chart_view = Kaun_console_components.Chart_view
 
 (* ───── Model ───── *)
 
@@ -28,7 +29,12 @@ type model = {
   screen_height : int;
   current_batch : int;
   sys_panel : Sys_panel.t;
+  mode : mode;
 }
+
+and mode =
+  | Dashboard
+  | Detail of string
 
 type msg =
   | Tick of float
@@ -36,6 +42,8 @@ type msg =
   | Resize of int * int
   | Next_batch
   | Prev_batch
+  | Open_metric of string
+  | Close_metric
 
 (* ───── View ───── *)
 
@@ -45,7 +53,7 @@ let divider () =
     ~background:(Ansi.Color.grayscale ~level:8)
     [ text " " ]
 
-let view_main m =
+let view_dashboard m =
   (* Convert Metric_store.best_value to Imp_info.best_metric *)
   (* let best_metrics =
        Metric_store.best_metrics m.store
@@ -68,6 +76,7 @@ let view_main m =
               screen_width = m.screen_width;
               screen_height = m.screen_height;
               current_batch = m.current_batch;
+              on_open = (fun tag -> Open_metric tag);
             };
           divider ();
           (* Right column: sys panel (1/3 width) *)
@@ -78,7 +87,32 @@ let view_main m =
       Footer.view ();
     ]
 
-let view m = if m.loading then Splash.view () else view_main m
+let view_detail m tag =
+  box ~flex_direction:Column
+    ~size:{ width = pct 100; height = pct 100 }
+    ~background:(Ansi.Color.of_rgb 20 20 30)
+    [
+      box ~padding:(padding 1) ~size:{ width = pct 100; height = auto }
+        [
+          text
+            ~style:(Ansi.Style.make ~bold:true ~fg:(Ansi.Color.grayscale ~level:14) ())
+            "Chart View  •  [Esc/q] back";
+        ];
+      box ~flex_grow:1.0 ~justify_content:Center ~align_items:Center
+        ~size:{ width = pct 100; height = pct 100 }
+        [
+          Chart_view.view ~tag
+            ~history_for_tag:(Metric_store.history_for_tag m.store)
+            ~size:{ width = pct 80; height = pct 80 };
+        ];
+    ]
+
+let view m =
+  if m.loading then Splash.view ()
+  else
+    match m.mode with
+    | Dashboard -> view_dashboard m
+    | Detail tag -> view_detail m tag
 
 (* ───── TEA Core ───── *)
 
@@ -113,6 +147,7 @@ let init ~run =
       screen_height = initial_height;
       current_batch = 0;
       sys_panel;
+      mode = Dashboard;
     },
     Cmd.none )
 
@@ -151,6 +186,9 @@ let update msg m =
       let current_batch = min m.current_batch max_batch in
       ({ m with screen_width = width; screen_height = height; current_batch }, Cmd.none)
   | Next_batch ->
+      (match m.mode with
+      | Detail _ -> (m, Cmd.none)
+      | Dashboard ->
       let latest = Metric_store.latest_metrics m.store in
       let total_metrics = List.length latest in
       let graphs_per_batch =
@@ -162,25 +200,34 @@ let update msg m =
         else (total_metrics + graphs_per_batch - 1) / graphs_per_batch
       in
       let max_batch = max 0 (total_batches - 1) in
-      ({ m with current_batch = min (m.current_batch + 1) max_batch }, Cmd.none)
+      ({ m with current_batch = min (m.current_batch + 1) max_batch }, Cmd.none))
   | Prev_batch ->
-      ({ m with current_batch = max 0 (m.current_batch - 1) }, Cmd.none)
+      (match m.mode with
+      | Detail _ -> (m, Cmd.none)
+      | Dashboard -> ({ m with current_batch = max 0 (m.current_batch - 1) }, Cmd.none))
+  | Open_metric tag -> ({ m with mode = Detail tag }, Cmd.none)
+  | Close_metric -> ({ m with mode = Dashboard }, Cmd.none)
   | Quit ->
       Run.close_events m.stream;
       (m, Cmd.quit)
 
-let subscriptions _model =
+let subscriptions m =
   Sub.batch
     [
       Sub.on_tick (fun ~dt -> Tick dt);
       Sub.on_resize (fun ~width ~height -> Resize (width, height));
       Sub.on_key (fun ev ->
           match (Mosaic_ui.Event.Key.data ev).key with
-          | Char c when Uchar.equal c (Uchar.of_char 'q') -> Some Quit
-          | Char c when Uchar.equal c (Uchar.of_char 'Q') -> Some Quit
-          | Escape -> Some Quit
-          | Left -> Some Prev_batch
-          | Right -> Some Next_batch
+          | Char c when Uchar.equal c (Uchar.of_char 'q') -> (
+              match m.mode with Dashboard -> Some Quit | Detail _ -> Some Close_metric)
+          | Char c when Uchar.equal c (Uchar.of_char 'Q') -> (
+              match m.mode with Dashboard -> Some Quit | Detail _ -> Some Close_metric)
+          | Escape -> (
+              match m.mode with Dashboard -> Some Quit | Detail _ -> Some Close_metric)
+          | Left -> (
+              match m.mode with Dashboard -> Some Prev_batch | Detail _ -> None)
+          | Right -> (
+              match m.mode with Dashboard -> Some Next_batch | Detail _ -> None)
           | _ -> None);
     ]
 
