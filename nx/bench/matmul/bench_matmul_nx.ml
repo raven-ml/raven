@@ -15,9 +15,9 @@ let cases =
     { name = "SquareLarge"; m = 512; k = 512; n = 512; seed = 29 };
   ]
 
-let benchmark_name case dtype_label =
-  Printf.sprintf "MatMul %s %dx%d @ %dx%d %s (%s)" case.name case.m case.k
-    case.k case.n dtype_label backend_name
+let benchmark_name case dtype_label suffix =
+  Printf.sprintf "MatMul %s %dx%d @ %dx%d %s%s (%s)" case.name case.m case.k
+    case.k case.n dtype_label suffix backend_name
 
 let setup_operands (type a b) (dtype : (a, b) Nx.dtype) case =
   let lhs = Nx.rand dtype ~key:(Nx.Rng.key case.seed) [| case.m; case.k |] in
@@ -26,11 +26,15 @@ let setup_operands (type a b) (dtype : (a, b) Nx.dtype) case =
   in
   (lhs, rhs)
 
-let add_case benches case dtype dtype_label =
+let add_case (type a b) benches case (dtype : (a, b) Nx.dtype) dtype_label =
   let lhs, rhs = setup_operands dtype case in
-  let name = benchmark_name case dtype_label in
+  let name = benchmark_name case dtype_label "" in
   let fn () = ignore (Nx.matmul lhs rhs) in
-  benches := Ubench.bench name fn :: !benches
+  benches := Ubench.bench name fn :: !benches;
+  let out = Nx.empty dtype [| case.m; case.n |] in
+  let name_reuse = benchmark_name case dtype_label " reuse" in
+  let fn_reuse () = ignore (Nx.matmul ~out lhs rhs) in
+  benches := Ubench.bench name_reuse fn_reuse :: !benches
 
 let build_benchmarks () =
   let benches = ref [] in

@@ -8,15 +8,43 @@ open Nx
 open Nx.Infix
 
 let () =
-  (* Daily temperatures (°C) for 4 cities over 7 days.
-     Rows = cities, columns = days. *)
+  (* Daily temperatures (°C) for 4 cities over 7 days. Rows = cities, columns =
+     days. *)
   let temps =
     create float64 [| 4; 7 |]
       [|
-        22.0; 24.0; 19.0; 25.0; 23.0; 21.0; 26.0;  (* Paris *)
-        30.0; 32.0; 35.0; 31.0; 29.0; 33.0; 34.0;  (* Cairo *)
-        -5.0; -8.0; -3.0; -10.0; -2.0; -7.0; -4.0; (* Helsinki *)
-        15.0; 14.0; 16.0; 13.0; 17.0; 15.0; 14.0;  (* London *)
+        22.0;
+        24.0;
+        19.0;
+        25.0;
+        23.0;
+        21.0;
+        26.0;
+        (* Paris *)
+        30.0;
+        32.0;
+        35.0;
+        31.0;
+        29.0;
+        33.0;
+        34.0;
+        (* Cairo *)
+        -5.0;
+        -8.0;
+        -3.0;
+        -10.0;
+        -2.0;
+        -7.0;
+        -4.0;
+        (* Helsinki *)
+        15.0;
+        14.0;
+        16.0;
+        13.0;
+        17.0;
+        15.0;
+        14.0;
+        (* London *)
       |]
   in
   let cities = [| "Paris"; "Cairo"; "Helsinki"; "London" |] in
@@ -37,8 +65,7 @@ let () =
   let hottest_day = argmax ~axis:1 temps in
   Printf.printf "Hottest day per city:\n";
   for i = 0 to 3 do
-    Printf.printf "  %-10s  day %ld\n" cities.(i)
-      (item [ i ] hottest_day)
+    Printf.printf "  %-10s  day %ld\n" cities.(i) (item [ i ] hottest_day)
   done;
   print_newline ();
 

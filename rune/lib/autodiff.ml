@@ -49,6 +49,7 @@ let unwrap_dual (type a b) (_ : (a, b) Dtype.t) (Any_dual d) : (a, b) dual =
 
 (* Derivative helpers for transcendental functions. *)
 let ln2 = 0.693147180559945309417
+let two_over_sqrt_pi = 1.12837916709551257390
 
 let float_scalar_like (type a b) (x : (a, b) t) (v : float) : (a, b) t =
   Obj.magic (T.full (dtype x) [||] (Obj.magic v : a))
@@ -64,6 +65,24 @@ let deriv_sqrt (type a b) (sqrt_x : (a, b) t) : (a, b) t =
 let deriv_recip (type a b) (x : (a, b) t) : (a, b) t =
   (* d/dx (1/x) = -1/x^2 *)
   T.neg (T.recip (T.mul x x))
+
+let deriv_tan (type a b) (x : (a, b) t) : (a, b) t =
+  let cos_x = Obj.magic (T.cos (Obj.magic x)) in
+  T.recip (T.mul cos_x cos_x)
+
+let deriv_asin (type a b) (x : (a, b) t) : (a, b) t =
+  let one = T.ones_like x in
+  T.recip (T.sqrt (T.sub one (T.mul x x)))
+
+let deriv_acos (type a b) (x : (a, b) t) : (a, b) t = T.neg (deriv_asin x)
+
+let deriv_atan (type a b) (x : (a, b) t) : (a, b) t =
+  let one = T.ones_like x in
+  T.recip (T.add one (T.mul x x))
+
+let deriv_erf (type a b) (x : (a, b) t) : (a, b) t =
+  let coeff = float_scalar_like x two_over_sqrt_pi in
+  T.mul coeff (T.exp (T.neg (T.mul x x)))
 
 let deriv_pow_wrt_base (type a b) (base : (a, b) t) (exp : (a, b) t) : (a, b) t
     =
@@ -108,21 +127,25 @@ let make_jvp_handler dual_map =
       | E_buffer { context = ctx; dtype = dt; size_in_elements } ->
           Some
             (fun k ->
-              let res = op_buffer ctx dt size_in_elements in
+              let res = buffer ctx dt [| size_in_elements |] in
               (* Don't register buffer here - the actual operation that fills it
                  will register with the correct tangent *)
               continue k res)
       | E_threefry { key; ctr } ->
           Some
             (fun k ->
-              let res = op_threefry key ctr in
+              let res =
+                let out = buffer (context ctr) (dtype ctr) (T.shape ctr) in
+                threefry ~out key ctr;
+                out
+              in
               register res { primal = res; tangent = T.zeros_like res };
               continue k res)
       (* Binary Arithmetic *)
       | E_add { out; a; b } ->
           Some
             (fun k ->
-              op_add ~out a b;
+              add ~out a b;
               let da = get_dual a in
               let db = get_dual b in
               let tan = T.add da.tangent db.tangent in
@@ -131,7 +154,7 @@ let make_jvp_handler dual_map =
       | E_sub { out; a; b } ->
           Some
             (fun k ->
-              op_sub ~out a b;
+              sub ~out a b;
               let da = get_dual a in
               let db = get_dual b in
               let tan = T.sub da.tangent db.tangent in
@@ -140,7 +163,7 @@ let make_jvp_handler dual_map =
       | E_mul { out; a; b } ->
           Some
             (fun k ->
-              op_mul ~out a b;
+              mul ~out a b;
               let da = get_dual a in
               let db = get_dual b in
               (* d(a*b) = da*b + a*db *)
@@ -152,7 +175,7 @@ let make_jvp_handler dual_map =
       | E_fdiv { out; a; b } ->
           Some
             (fun k ->
-              op_fdiv ~out a b;
+              fdiv_internal ~out a b;
               let da = get_dual a in
               let db = get_dual b in
               (* d(a/b) = da/b - a*db/b^2 *)
@@ -166,7 +189,7 @@ let make_jvp_handler dual_map =
       | E_pow { out; a; b } ->
           Some
             (fun k ->
-              op_pow ~out a b;
+              pow ~out a b;
               let da = get_dual a in
               let db = get_dual b in
               let term1 =
@@ -179,7 +202,7 @@ let make_jvp_handler dual_map =
       | E_max { out; a; b } ->
           Some
             (fun k ->
-              op_max ~out a b;
+              max ~out a b;
               let da = get_dual a in
               let db = get_dual b in
               (* Use cmpgt for mask_a: tangent flows from a only when a > b This
@@ -195,7 +218,7 @@ let make_jvp_handler dual_map =
       | E_min { out; a; b } ->
           Some
             (fun k ->
-              op_min ~out a b;
+              min ~out a b;
               let da = get_dual a in
               let db = get_dual b in
               (* Use cmplt for mask_a: tangent flows from a only when a < b *)
@@ -206,11 +229,27 @@ let make_jvp_handler dual_map =
               in
               register out { primal = out; tangent = tan };
               continue k ())
+      | E_atan2 { out; a; b } ->
+          Some
+            (fun k ->
+              atan2 ~out a b;
+              let da = get_dual a in
+              let db = get_dual b in
+              let denom =
+                T.add (T.mul da.primal da.primal) (T.mul db.primal db.primal)
+              in
+              let tan =
+                T.add
+                  (T.mul da.tangent (T.div db.primal denom))
+                  (T.mul db.tangent (T.neg (T.div da.primal denom)))
+              in
+              register out { primal = out; tangent = tan };
+              continue k ())
       (* Unary Arithmetic *)
       | E_neg { out; t_in } ->
           Some
             (fun k ->
-              op_neg ~out t_in;
+              neg ~out t_in;
               let d = get_dual t_in in
               let tan = T.neg d.tangent in
               register out { primal = out; tangent = tan };
@@ -218,7 +257,7 @@ let make_jvp_handler dual_map =
       | E_sin { out; t_in } ->
           Some
             (fun k ->
-              op_sin ~out t_in;
+              sin ~out t_in;
               let d = get_dual t_in in
               let tan = T.mul d.tangent (deriv_sin d.primal) in
               register out { primal = out; tangent = tan };
@@ -226,7 +265,7 @@ let make_jvp_handler dual_map =
       | E_cos { out; t_in } ->
           Some
             (fun k ->
-              op_cos ~out t_in;
+              cos ~out t_in;
               let d = get_dual t_in in
               (* d/dx cos(x) = -sin(x) *)
               let tan =
@@ -237,7 +276,7 @@ let make_jvp_handler dual_map =
       | E_log { out; t_in } ->
           Some
             (fun k ->
-              op_log ~out t_in;
+              log ~out t_in;
               let d = get_dual t_in in
               (* d/dx log(x) = 1/x *)
               let tan = T.mul d.tangent (T.recip d.primal) in
@@ -246,7 +285,7 @@ let make_jvp_handler dual_map =
       | E_exp { out; t_in } ->
           Some
             (fun k ->
-              op_exp ~out t_in;
+              exp ~out t_in;
               let d = get_dual t_in in
               (* d/dx exp(x) = exp(x) *)
               let tan = T.mul d.tangent out in
@@ -255,7 +294,7 @@ let make_jvp_handler dual_map =
       | E_sqrt { out; t_in } ->
           Some
             (fun k ->
-              op_sqrt ~out t_in;
+              sqrt ~out t_in;
               let d = get_dual t_in in
               let tan = T.mul d.tangent (deriv_sqrt out) in
               register out { primal = out; tangent = tan };
@@ -263,7 +302,7 @@ let make_jvp_handler dual_map =
       | E_recip { out; t_in } ->
           Some
             (fun k ->
-              op_recip ~out t_in;
+              recip ~out t_in;
               let d = get_dual t_in in
               let tan = T.mul d.tangent (deriv_recip d.primal) in
               register out { primal = out; tangent = tan };
@@ -271,76 +310,205 @@ let make_jvp_handler dual_map =
       | E_abs { out; t_in } ->
           Some
             (fun k ->
-              op_abs ~out t_in;
+              abs ~out t_in;
               let d = get_dual t_in in
               (* d/dx |x| = sign(x) *)
               let tan = T.mul d.tangent (T.sign d.primal) in
               register out { primal = out; tangent = tan };
               continue k ())
+      | E_sign { out; t_in } ->
+          Some
+            (fun k ->
+              sign ~out t_in;
+              register out { primal = out; tangent = T.zeros_like out };
+              continue k ())
+      | E_tan { out; t_in } ->
+          Some
+            (fun k ->
+              tan ~out t_in;
+              let d = get_dual t_in in
+              let tanv = T.mul d.tangent (deriv_tan d.primal) in
+              register out { primal = out; tangent = tanv };
+              continue k ())
+      | E_asin { out; t_in } ->
+          Some
+            (fun k ->
+              asin ~out t_in;
+              let d = get_dual t_in in
+              let tanv = T.mul d.tangent (deriv_asin d.primal) in
+              register out { primal = out; tangent = tanv };
+              continue k ())
+      | E_acos { out; t_in } ->
+          Some
+            (fun k ->
+              acos ~out t_in;
+              let d = get_dual t_in in
+              let tanv = T.mul d.tangent (deriv_acos d.primal) in
+              register out { primal = out; tangent = tanv };
+              continue k ())
+      | E_atan { out; t_in } ->
+          Some
+            (fun k ->
+              atan ~out t_in;
+              let d = get_dual t_in in
+              let tanv = T.mul d.tangent (deriv_atan d.primal) in
+              register out { primal = out; tangent = tanv };
+              continue k ())
+      | E_sinh { out; t_in } ->
+          Some
+            (fun k ->
+              sinh ~out t_in;
+              let d = get_dual t_in in
+              let tanv =
+                T.mul d.tangent (Obj.magic (T.cosh (Obj.magic d.primal)))
+              in
+              register out { primal = out; tangent = tanv };
+              continue k ())
+      | E_cosh { out; t_in } ->
+          Some
+            (fun k ->
+              cosh ~out t_in;
+              let d = get_dual t_in in
+              let tanv =
+                T.mul d.tangent (Obj.magic (T.sinh (Obj.magic d.primal)))
+              in
+              register out { primal = out; tangent = tanv };
+              continue k ())
+      | E_tanh { out; t_in } ->
+          Some
+            (fun k ->
+              tanh ~out t_in;
+              let d = get_dual t_in in
+              let one = T.ones_like out in
+              let tanv = T.mul d.tangent (T.sub one (T.mul out out)) in
+              register out { primal = out; tangent = tanv };
+              continue k ())
+      | E_trunc { out; t_in } ->
+          Some
+            (fun k ->
+              trunc ~out t_in;
+              register out { primal = out; tangent = T.zeros_like out };
+              continue k ())
+      | E_ceil { out; t_in } ->
+          Some
+            (fun k ->
+              ceil ~out t_in;
+              register out { primal = out; tangent = T.zeros_like out };
+              continue k ())
+      | E_floor { out; t_in } ->
+          Some
+            (fun k ->
+              floor ~out t_in;
+              register out { primal = out; tangent = T.zeros_like out };
+              continue k ())
+      | E_round { out; t_in } ->
+          Some
+            (fun k ->
+              round ~out t_in;
+              register out { primal = out; tangent = T.zeros_like out };
+              continue k ())
+      | E_erf { out; t_in } ->
+          Some
+            (fun k ->
+              erf ~out t_in;
+              let d = get_dual t_in in
+              let tanv = T.mul d.tangent (deriv_erf d.primal) in
+              register out { primal = out; tangent = tanv };
+              continue k ())
       (* Shape Operations *)
       | E_reshape { t_in; new_shape } ->
           Some
             (fun k ->
-              let res = op_reshape t_in new_shape in
+              let res = reshape t_in new_shape in
               let d = get_dual t_in in
-              let tan = op_reshape d.tangent new_shape in
+              let tan = reshape d.tangent new_shape in
               register res { primal = res; tangent = tan };
               continue k res)
       | E_permute { t_in; axes } ->
           Some
             (fun k ->
-              let res = op_permute t_in axes in
+              let res = permute t_in axes in
               let d = get_dual t_in in
-              let tan = op_permute d.tangent axes in
+              let tan = permute d.tangent axes in
               register res { primal = res; tangent = tan };
               continue k res)
       | E_expand { t_in; new_target_shape } ->
           Some
             (fun k ->
-              let res = op_expand t_in new_target_shape in
+              let res = expand t_in new_target_shape in
               let d = get_dual t_in in
-              let tan = op_expand d.tangent new_target_shape in
+              let tan = expand d.tangent new_target_shape in
               register res { primal = res; tangent = tan };
               continue k res)
       | E_shrink { t_in; limits } ->
           Some
             (fun k ->
-              let res = op_shrink t_in limits in
+              let res = shrink t_in limits in
               let d = get_dual t_in in
-              let tan = op_shrink d.tangent limits in
+              let tan = shrink d.tangent limits in
               register res { primal = res; tangent = tan };
               continue k res)
       | E_flip { t_in; dims_to_flip } ->
           Some
             (fun k ->
-              let res = op_flip t_in dims_to_flip in
+              let res = flip t_in dims_to_flip in
               let d = get_dual t_in in
-              let tan = op_flip d.tangent dims_to_flip in
+              let tan = flip d.tangent dims_to_flip in
               register res { primal = res; tangent = tan };
               continue k res)
       | E_pad { t_in; padding_config; fill_value } ->
           Some
             (fun k ->
-              let res = op_pad t_in padding_config fill_value in
+              let res = pad t_in padding_config fill_value in
               let d = get_dual t_in in
               let tan =
-                op_pad d.tangent padding_config (Dtype.zero (dtype t_in))
+                pad d.tangent padding_config (Dtype.zero (dtype t_in))
               in
               register res { primal = res; tangent = tan };
               continue k res)
       | E_cat { t_list; axis } ->
           Some
             (fun k ->
-              let res = op_cat t_list axis in
+              let res =
+                match t_list with
+                | [] -> failwith "cat: empty tensor list"
+                | first :: _ ->
+                    let first_shape = T.shape first in
+                    let rank = Array.length first_shape in
+                    let axis = if axis < 0 then axis + rank else axis in
+                    let out_shape = Array.copy first_shape in
+                    out_shape.(axis) <-
+                      List.fold_left
+                        (fun acc t -> acc + (T.shape t).(axis))
+                        0 t_list;
+                    let out = buffer (context first) (dtype first) out_shape in
+                    cat ~out t_list ~axis;
+                    out
+              in
               let tangents = List.map (fun t -> (get_dual t).tangent) t_list in
-              let tan = op_cat tangents axis in
+              let tan =
+                match tangents with
+                | [] -> failwith "cat: empty tensor list"
+                | first :: _ ->
+                    let first_shape = T.shape first in
+                    let rank = Array.length first_shape in
+                    let axis = if axis < 0 then axis + rank else axis in
+                    let out_shape = Array.copy first_shape in
+                    out_shape.(axis) <-
+                      List.fold_left
+                        (fun acc t -> acc + (T.shape t).(axis))
+                        0 tangents;
+                    let out = buffer (context first) (dtype first) out_shape in
+                    cat ~out tangents ~axis;
+                    out
+              in
               register res { primal = res; tangent = tan };
               continue k res)
       (* Reductions *)
       | E_reduce_sum { out; t_in; axes; keepdims } ->
           Some
             (fun k ->
-              op_reduce_sum ~out ~axes ~keepdims t_in;
+              reduce_sum ~out ~axes ~keepdims t_in;
               let d = get_dual t_in in
               let tan = T.sum d.tangent ~axes:(Array.to_list axes) ~keepdims in
               register out { primal = out; tangent = tan };
@@ -348,7 +516,7 @@ let make_jvp_handler dual_map =
       | E_reduce_max { out; t_in; axes; keepdims } ->
           Some
             (fun k ->
-              op_reduce_max ~out ~axes ~keepdims t_in;
+              reduce_max ~out ~axes ~keepdims t_in;
               let d = get_dual t_in in
               let shape_in = T.shape t_in in
               (* Broadcast result back to input shape to create mask *)
@@ -370,7 +538,7 @@ let make_jvp_handler dual_map =
       | E_reduce_min { out; t_in; axes; keepdims } ->
           Some
             (fun k ->
-              op_reduce_min ~out ~axes ~keepdims t_in;
+              reduce_min ~out ~axes ~keepdims t_in;
               let d = get_dual t_in in
               let shape_in = T.shape t_in in
               (* Broadcast result back to input shape to create mask *)
@@ -389,11 +557,31 @@ let make_jvp_handler dual_map =
               in
               register out { primal = out; tangent = tan };
               continue k ())
+      | E_argmax { out; t_in; axis; keepdims } ->
+          Some
+            (fun k ->
+              argmax ~out ~axis ~keepdims t_in;
+              continue k ())
+      | E_argmin { out; t_in; axis; keepdims } ->
+          Some
+            (fun k ->
+              argmin ~out ~axis ~keepdims t_in;
+              continue k ())
+      | E_sort { out; t_in; axis; descending } ->
+          Some
+            (fun k ->
+              sort ~out ~axis ~descending t_in;
+              continue k ())
+      | E_argsort { out; t_in; axis; descending } ->
+          Some
+            (fun k ->
+              argsort ~out ~axis ~descending t_in;
+              continue k ())
       (* Matrix Operations *)
       | E_matmul { out; a; b } ->
           Some
             (fun k ->
-              op_matmul ~out a b;
+              matmul ~out a b;
               let da = get_dual a in
               let db = get_dual b in
               (* d(A@B) = dA@B + A@dB *)
@@ -408,7 +596,7 @@ let make_jvp_handler dual_map =
       | E_where { out; condition; if_true; if_false } ->
           Some
             (fun k ->
-              op_where ~out condition if_true if_false;
+              where ~out condition if_true if_false;
               let dt = get_dual if_true in
               let df = get_dual if_false in
               let tan = T.where condition dt.tangent df.tangent in
@@ -418,68 +606,85 @@ let make_jvp_handler dual_map =
       | E_cmplt { out; a; b } ->
           Some
             (fun k ->
-              op_cmplt ~out a b;
+              cmplt ~out a b;
               continue k ())
       | E_cmpne { out; a; b } ->
           Some
             (fun k ->
-              op_cmpne ~out a b;
+              cmpne ~out a b;
               continue k ())
       | E_cmpeq { out; a; b } ->
           Some
             (fun k ->
-              op_cmpeq ~out a b;
+              cmpeq ~out a b;
               continue k ())
       | E_cmple { out; a; b } ->
           Some
             (fun k ->
-              op_cmple ~out a b;
+              cmple ~out a b;
               continue k ())
       | E_xor { out; a; b } ->
           Some
             (fun k ->
-              op_xor ~out a b;
+              xor ~out a b;
               continue k ())
       | E_or { out; a; b } ->
           Some
             (fun k ->
-              op_or ~out a b;
+              or_ ~out a b;
               continue k ())
       | E_and { out; a; b } ->
           Some
             (fun k ->
-              op_and ~out a b;
+              and_ ~out a b;
               continue k ())
       (* Other *)
       | E_copy { t_in } ->
           Some
             (fun k ->
-              let res = op_copy t_in in
+              let res = copy t_in in
               let d = get_dual t_in in
-              let tan = op_copy d.tangent in
+              let tan = copy d.tangent in
               register res { primal = res; tangent = tan };
               continue k res)
       | E_contiguous { t_in } ->
           Some
             (fun k ->
-              let res = op_contiguous t_in in
+              let res = contiguous t_in in
               let d = get_dual t_in in
-              let tan = op_contiguous d.tangent in
+              let tan = contiguous d.tangent in
               register res { primal = res; tangent = tan };
               continue k res)
+      | E_assign { dst; src } ->
+          Some
+            (fun k ->
+              assign dst src;
+              let d_src = get_dual src in
+              register dst { primal = dst; tangent = d_src.tangent };
+              continue k ())
       | E_cast { t_in; target_dtype } ->
           Some
             (fun k ->
-              let res = op_cast t_in target_dtype in
+              let res =
+                let out = buffer (context t_in) target_dtype (T.shape t_in) in
+                cast ~out t_in;
+                out
+              in
               let d = get_dual t_in in
-              let tan = op_cast d.tangent target_dtype in
+              let tan =
+                let out =
+                  buffer (context d.tangent) target_dtype (T.shape d.tangent)
+                in
+                cast ~out d.tangent;
+                out
+              in
               register res { primal = res; tangent = tan };
               continue k res)
       (* Reduce Prod *)
       | E_reduce_prod { out; t_in; axes; keepdims } ->
           Some
             (fun k ->
-              op_reduce_prod ~out ~axes ~keepdims t_in;
+              reduce_prod ~out ~axes ~keepdims t_in;
               let d = get_dual t_in in
               (* d(prod(x)) = prod(x) * sum(dx/x) over reduction axes *)
               let shape_in = T.shape t_in in
@@ -500,20 +705,33 @@ let make_jvp_handler dual_map =
       | E_associative_scan { t_in; axis; op } ->
           Some
             (fun k ->
-              let res = op_associative_scan ~axis ~op t_in in
+              let res =
+                let out = buffer (context t_in) (dtype t_in) (T.shape t_in) in
+                associative_scan ~out ~axis ~op t_in;
+                out
+              in
               let d = get_dual t_in in
               let tan =
                 match op with
                 | `Sum ->
                     (* cumsum is linear: d(cumsum(x)) = cumsum(dx) *)
-                    op_associative_scan ~axis ~op:`Sum d.tangent
+                    let out =
+                      buffer (context d.tangent) (dtype d.tangent)
+                        (T.shape d.tangent)
+                    in
+                    associative_scan ~out ~axis ~op:`Sum d.tangent;
+                    out
                 | `Prod ->
                     (* cumprod tangent: d(cumprod(x))_i = sum_{j<=i}
                        cumprod(x)_i / x_j * dx_j = cumprod(x)_i * cumsum(dx /
                        x)_i *)
                     let ratio = T.div d.tangent d.primal in
                     let cumsum_ratio =
-                      op_associative_scan ~axis ~op:`Sum ratio
+                      let out =
+                        buffer (context ratio) (dtype ratio) (T.shape ratio)
+                      in
+                      associative_scan ~out ~axis ~op:`Sum ratio;
+                      out
                     in
                     T.mul res cumsum_ratio
                 | `Max ->
@@ -567,53 +785,47 @@ let make_jvp_handler dual_map =
               in
               register res { primal = res; tangent = tan };
               continue k res)
-      (* As Strided (for slicing/indexing) *)
-      | E_as_strided { t_in; new_shape; new_strides; offset } ->
-          Some
-            (fun k ->
-              let res =
-                op_as_strided t_in
-                  (Nx_core.Symbolic_shape.of_ints new_shape)
-                  new_strides offset
-              in
-              let d = get_dual t_in in
-              (* Apply same striding to tangent *)
-              let tan =
-                op_as_strided d.tangent
-                  (Nx_core.Symbolic_shape.of_ints new_shape)
-                  new_strides offset
-              in
-              register res { primal = res; tangent = tan };
-              continue k res)
       (* Gather *)
       | E_gather { data; indices; axis } ->
           Some
             (fun k ->
-              let res = op_gather data indices axis in
+              let res =
+                let out =
+                  buffer (context data) (dtype data) (T.shape indices)
+                in
+                gather ~out data indices ~axis;
+                out
+              in
               let d = get_dual data in
               (* Gather from tangent using same indices *)
-              let tan = op_gather d.tangent indices axis in
+              let tan =
+                let out =
+                  buffer (context d.tangent) (dtype d.tangent) (T.shape indices)
+                in
+                gather ~out d.tangent indices ~axis;
+                out
+              in
               register res { primal = res; tangent = tan };
               continue k res)
       (* Scatter *)
       | E_scatter { data_template; indices; updates; axis } ->
           Some
             (fun k ->
-              let res = op_scatter data_template indices updates axis in
+              let res = scatter data_template ~indices ~updates ~axis in
               let d_template = get_dual data_template in
               let d_updates = get_dual updates in
               (* Scatter tangent: mask template tangent and add scattered update
                  tangent *)
               let mask =
-                op_scatter
+                scatter
                   (T.ones_like data_template)
-                  indices (T.zeros_like updates) axis
+                  ~indices ~updates:(T.zeros_like updates) ~axis
               in
               let tan_template = T.mul d_template.tangent mask in
               let tan_updates =
-                op_scatter
+                scatter
                   (T.zeros_like data_template)
-                  indices d_updates.tangent axis
+                  ~indices ~updates:d_updates.tangent ~axis
               in
               let tan = T.add tan_template tan_updates in
               register res { primal = res; tangent = tan };
@@ -622,19 +834,19 @@ let make_jvp_handler dual_map =
       | E_fft { t; axes } ->
           Some
             (fun k ->
-              let res = op_fft t ~axes in
+              let res = fft t ~axes in
               let d = get_dual t in
               (* d(FFT(x)) = FFT(dx) *)
-              let tan = op_fft d.tangent ~axes in
+              let tan = fft d.tangent ~axes in
               register res { primal = res; tangent = tan };
               continue k res)
       | E_ifft { t; axes } ->
           Some
             (fun k ->
-              let res = op_ifft t ~axes in
+              let res = ifft t ~axes in
               let d = get_dual t in
               (* d(IFFT(x)) = IFFT(dx) *)
-              let tan = op_ifft d.tangent ~axes in
+              let tan = ifft d.tangent ~axes in
               register res { primal = res; tangent = tan };
               continue k res)
       | _ -> None
@@ -725,14 +937,18 @@ let make_vjp_handler tape seed_output =
       | E_buffer { context = ctx; dtype = dt; size_in_elements } ->
           Some
             (fun k ->
-              let res = op_buffer ctx dt size_in_elements in
+              let res = buffer ctx dt [| size_in_elements |] in
               let fwd = continue k res in
               let _ = get_or_init res in
               fwd)
       | E_threefry { key; ctr } ->
           Some
             (fun k ->
-              let res = op_threefry key ctr in
+              let res =
+                let out = buffer (context ctr) (dtype ctr) (T.shape ctr) in
+                threefry ~out key ctr;
+                out
+              in
               let fwd = continue k res in
               let _ = get_or_init res in
               fwd)
@@ -740,7 +956,7 @@ let make_vjp_handler tape seed_output =
       | E_add { out; a; b } ->
           Some
             (fun k ->
-              op_add ~out a b;
+              add ~out a b;
               let fwd = continue k () in
               let twg_a = get_or_init a in
               let twg_b = get_or_init b in
@@ -752,7 +968,7 @@ let make_vjp_handler tape seed_output =
       | E_sub { out; a; b } ->
           Some
             (fun k ->
-              op_sub ~out a b;
+              sub ~out a b;
               let fwd = continue k () in
               let twg_a = get_or_init a in
               let twg_b = get_or_init b in
@@ -765,7 +981,7 @@ let make_vjp_handler tape seed_output =
       | E_mul { out; a; b } ->
           Some
             (fun k ->
-              op_mul ~out a b;
+              mul ~out a b;
               let fwd = continue k () in
               let twg_a = get_or_init a in
               let twg_b = get_or_init b in
@@ -779,7 +995,7 @@ let make_vjp_handler tape seed_output =
       | E_fdiv { out; a; b } ->
           Some
             (fun k ->
-              op_fdiv ~out a b;
+              fdiv_internal ~out a b;
               let fwd = continue k () in
               let twg_a = get_or_init a in
               let twg_b = get_or_init b in
@@ -794,7 +1010,7 @@ let make_vjp_handler tape seed_output =
       | E_pow { out; a; b } ->
           Some
             (fun k ->
-              op_pow ~out a b;
+              pow ~out a b;
               let fwd = continue k () in
               let twg_a = get_or_init a in
               let twg_b = get_or_init b in
@@ -808,7 +1024,7 @@ let make_vjp_handler tape seed_output =
       | E_max { out; a; b } ->
           Some
             (fun k ->
-              op_max ~out a b;
+              max ~out a b;
               let fwd = continue k () in
               let twg_a = get_or_init a in
               let twg_b = get_or_init b in
@@ -827,7 +1043,7 @@ let make_vjp_handler tape seed_output =
       | E_min { out; a; b } ->
           Some
             (fun k ->
-              op_min ~out a b;
+              min ~out a b;
               let fwd = continue k () in
               let twg_a = get_or_init a in
               let twg_b = get_or_init b in
@@ -841,11 +1057,26 @@ let make_vjp_handler tape seed_output =
               twg_a.grad <- T.add twg_a.grad (unbroadcast_grad ga (T.shape a));
               twg_b.grad <- T.add twg_b.grad (unbroadcast_grad gb (T.shape b));
               fwd)
+      | E_atan2 { out; a; b } ->
+          Some
+            (fun k ->
+              atan2 ~out a b;
+              let fwd = continue k () in
+              let twg_a = get_or_init a in
+              let twg_b = get_or_init b in
+              let twg_out = get_or_init out in
+              let g = twg_out.grad in
+              let denom = T.add (T.mul a a) (T.mul b b) in
+              let ga = T.mul g (T.div b denom) in
+              let gb = T.mul g (T.neg (T.div a denom)) in
+              twg_a.grad <- T.add twg_a.grad (unbroadcast_grad ga (T.shape a));
+              twg_b.grad <- T.add twg_b.grad (unbroadcast_grad gb (T.shape b));
+              fwd)
       (* Unary Arithmetic *)
       | E_neg { out; t_in } ->
           Some
             (fun k ->
-              op_neg ~out t_in;
+              neg ~out t_in;
               let fwd = continue k () in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
@@ -854,7 +1085,7 @@ let make_vjp_handler tape seed_output =
       | E_sin { out; t_in } ->
           Some
             (fun k ->
-              op_sin ~out t_in;
+              sin ~out t_in;
               let fwd = continue k () in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
@@ -864,7 +1095,7 @@ let make_vjp_handler tape seed_output =
       | E_cos { out; t_in } ->
           Some
             (fun k ->
-              op_cos ~out t_in;
+              cos ~out t_in;
               let fwd = continue k () in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
@@ -877,7 +1108,7 @@ let make_vjp_handler tape seed_output =
       | E_log { out; t_in } ->
           Some
             (fun k ->
-              op_log ~out t_in;
+              log ~out t_in;
               let fwd = continue k () in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
@@ -888,7 +1119,7 @@ let make_vjp_handler tape seed_output =
       | E_exp { out; t_in } ->
           Some
             (fun k ->
-              op_exp ~out t_in;
+              exp ~out t_in;
               let fwd = continue k () in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
@@ -899,7 +1130,7 @@ let make_vjp_handler tape seed_output =
       | E_sqrt { out; t_in } ->
           Some
             (fun k ->
-              op_sqrt ~out t_in;
+              sqrt ~out t_in;
               let fwd = continue k () in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
@@ -909,7 +1140,7 @@ let make_vjp_handler tape seed_output =
       | E_recip { out; t_in } ->
           Some
             (fun k ->
-              op_recip ~out t_in;
+              recip ~out t_in;
               let fwd = continue k () in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
@@ -919,7 +1150,7 @@ let make_vjp_handler tape seed_output =
       | E_abs { out; t_in } ->
           Some
             (fun k ->
-              op_abs ~out t_in;
+              abs ~out t_in;
               let fwd = continue k () in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
@@ -927,11 +1158,131 @@ let make_vjp_handler tape seed_output =
               let g = T.mul twg_out.grad (T.sign t_in) in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
+      | E_sign { out; t_in } ->
+          Some
+            (fun k ->
+              sign ~out t_in;
+              let fwd = continue k () in
+              let _ = get_or_init out in
+              fwd)
+      | E_tan { out; t_in } ->
+          Some
+            (fun k ->
+              tan ~out t_in;
+              let fwd = continue k () in
+              let twg_in = get_or_init t_in in
+              let twg_out = get_or_init out in
+              let g = T.mul twg_out.grad (deriv_tan t_in) in
+              twg_in.grad <- T.add twg_in.grad g;
+              fwd)
+      | E_asin { out; t_in } ->
+          Some
+            (fun k ->
+              asin ~out t_in;
+              let fwd = continue k () in
+              let twg_in = get_or_init t_in in
+              let twg_out = get_or_init out in
+              let g = T.mul twg_out.grad (deriv_asin t_in) in
+              twg_in.grad <- T.add twg_in.grad g;
+              fwd)
+      | E_acos { out; t_in } ->
+          Some
+            (fun k ->
+              acos ~out t_in;
+              let fwd = continue k () in
+              let twg_in = get_or_init t_in in
+              let twg_out = get_or_init out in
+              let g = T.mul twg_out.grad (deriv_acos t_in) in
+              twg_in.grad <- T.add twg_in.grad g;
+              fwd)
+      | E_atan { out; t_in } ->
+          Some
+            (fun k ->
+              atan ~out t_in;
+              let fwd = continue k () in
+              let twg_in = get_or_init t_in in
+              let twg_out = get_or_init out in
+              let g = T.mul twg_out.grad (deriv_atan t_in) in
+              twg_in.grad <- T.add twg_in.grad g;
+              fwd)
+      | E_sinh { out; t_in } ->
+          Some
+            (fun k ->
+              sinh ~out t_in;
+              let fwd = continue k () in
+              let twg_in = get_or_init t_in in
+              let twg_out = get_or_init out in
+              let g =
+                T.mul twg_out.grad (Obj.magic (T.cosh (Obj.magic t_in)))
+              in
+              twg_in.grad <- T.add twg_in.grad g;
+              fwd)
+      | E_cosh { out; t_in } ->
+          Some
+            (fun k ->
+              cosh ~out t_in;
+              let fwd = continue k () in
+              let twg_in = get_or_init t_in in
+              let twg_out = get_or_init out in
+              let g =
+                T.mul twg_out.grad (Obj.magic (T.sinh (Obj.magic t_in)))
+              in
+              twg_in.grad <- T.add twg_in.grad g;
+              fwd)
+      | E_tanh { out; t_in } ->
+          Some
+            (fun k ->
+              tanh ~out t_in;
+              let fwd = continue k () in
+              let twg_in = get_or_init t_in in
+              let twg_out = get_or_init out in
+              let one = T.ones_like out in
+              let g = T.mul twg_out.grad (T.sub one (T.mul out out)) in
+              twg_in.grad <- T.add twg_in.grad g;
+              fwd)
+      | E_trunc { out; t_in } ->
+          Some
+            (fun k ->
+              trunc ~out t_in;
+              let fwd = continue k () in
+              let _ = get_or_init out in
+              fwd)
+      | E_ceil { out; t_in } ->
+          Some
+            (fun k ->
+              ceil ~out t_in;
+              let fwd = continue k () in
+              let _ = get_or_init out in
+              fwd)
+      | E_floor { out; t_in } ->
+          Some
+            (fun k ->
+              floor ~out t_in;
+              let fwd = continue k () in
+              let _ = get_or_init out in
+              fwd)
+      | E_round { out; t_in } ->
+          Some
+            (fun k ->
+              round ~out t_in;
+              let fwd = continue k () in
+              let _ = get_or_init out in
+              fwd)
+      | E_erf { out; t_in } ->
+          Some
+            (fun k ->
+              erf ~out t_in;
+              let fwd = continue k () in
+              let twg_in = get_or_init t_in in
+              let twg_out = get_or_init out in
+              let g = T.mul twg_out.grad (deriv_erf t_in) in
+              twg_in.grad <- T.add twg_in.grad g;
+              fwd)
       (* Shape Operations *)
       | E_reshape { t_in; new_shape } ->
           Some
             (fun k ->
-              let res = op_reshape t_in new_shape in
+              let res = reshape t_in new_shape in
               let fwd = continue k res in
               let twg_in = get_or_init t_in in
               let twg_res = get_or_init res in
@@ -941,7 +1292,7 @@ let make_vjp_handler tape seed_output =
       | E_permute { t_in; axes } ->
           Some
             (fun k ->
-              let res = op_permute t_in axes in
+              let res = permute t_in axes in
               let fwd = continue k res in
               let twg_in = get_or_init t_in in
               let twg_res = get_or_init res in
@@ -954,7 +1305,7 @@ let make_vjp_handler tape seed_output =
       | E_expand { t_in; new_target_shape } ->
           Some
             (fun k ->
-              let res = op_expand t_in new_target_shape in
+              let res = expand t_in new_target_shape in
               let fwd = continue k res in
               let twg_in = get_or_init t_in in
               let twg_res = get_or_init res in
@@ -964,7 +1315,7 @@ let make_vjp_handler tape seed_output =
       | E_shrink { t_in; limits } ->
           Some
             (fun k ->
-              let res = op_shrink t_in limits in
+              let res = shrink t_in limits in
               let fwd = continue k res in
               let twg_in = get_or_init t_in in
               let twg_res = get_or_init res in
@@ -976,23 +1327,23 @@ let make_vjp_handler tape seed_output =
                     (start, total - start - len))
                   limits
               in
-              let g = op_pad twg_res.grad pads (Dtype.zero (dtype t_in)) in
+              let g = pad twg_res.grad pads (Dtype.zero (dtype t_in)) in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
       | E_flip { t_in; dims_to_flip } ->
           Some
             (fun k ->
-              let res = op_flip t_in dims_to_flip in
+              let res = flip t_in dims_to_flip in
               let fwd = continue k res in
               let twg_in = get_or_init t_in in
               let twg_res = get_or_init res in
-              let g = op_flip twg_res.grad dims_to_flip in
+              let g = flip twg_res.grad dims_to_flip in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
       | E_pad { t_in; padding_config; fill_value = _ } ->
           Some
             (fun k ->
-              let res = op_pad t_in padding_config (Dtype.zero (dtype t_in)) in
+              let res = pad t_in padding_config (Dtype.zero (dtype t_in)) in
               let fwd = continue k res in
               let twg_in = get_or_init t_in in
               let twg_res = get_or_init res in
@@ -1009,7 +1360,22 @@ let make_vjp_handler tape seed_output =
       | E_cat { t_list; axis } ->
           Some
             (fun k ->
-              let res = op_cat t_list axis in
+              let res =
+                match t_list with
+                | [] -> failwith "cat: empty tensor list"
+                | first :: _ ->
+                    let first_shape = T.shape first in
+                    let rank = Array.length first_shape in
+                    let axis = if axis < 0 then axis + rank else axis in
+                    let out_shape = Array.copy first_shape in
+                    out_shape.(axis) <-
+                      List.fold_left
+                        (fun acc t -> acc + (T.shape t).(axis))
+                        0 t_list;
+                    let out = buffer (context first) (dtype first) out_shape in
+                    cat ~out t_list ~axis;
+                    out
+              in
               let fwd = continue k res in
               let twg_res = get_or_init res in
               let g = twg_res.grad in
@@ -1031,7 +1397,7 @@ let make_vjp_handler tape seed_output =
       | E_reduce_sum { out; t_in; axes; keepdims } ->
           Some
             (fun k ->
-              op_reduce_sum ~out ~axes ~keepdims t_in;
+              reduce_sum ~out ~axes ~keepdims t_in;
               let fwd = continue k () in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
@@ -1050,7 +1416,7 @@ let make_vjp_handler tape seed_output =
       | E_reduce_max { out; t_in; axes; keepdims } ->
           Some
             (fun k ->
-              op_reduce_max ~out ~axes ~keepdims t_in;
+              reduce_max ~out ~axes ~keepdims t_in;
               let fwd = continue k () in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
@@ -1078,7 +1444,7 @@ let make_vjp_handler tape seed_output =
       | E_reduce_min { out; t_in; axes; keepdims } ->
           Some
             (fun k ->
-              op_reduce_min ~out ~axes ~keepdims t_in;
+              reduce_min ~out ~axes ~keepdims t_in;
               let fwd = continue k () in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
@@ -1103,11 +1469,39 @@ let make_vjp_handler tape seed_output =
               let mask = T.cast (dtype out) (T.equal t_in out_bc) in
               twg_in.grad <- T.add twg_in.grad (T.mul g_bc mask);
               fwd)
+      | E_argmax { out; t_in; axis; keepdims } ->
+          Some
+            (fun k ->
+              argmax ~out ~axis ~keepdims t_in;
+              let fwd = continue k () in
+              let _ = get_or_init out in
+              fwd)
+      | E_argmin { out; t_in; axis; keepdims } ->
+          Some
+            (fun k ->
+              argmin ~out ~axis ~keepdims t_in;
+              let fwd = continue k () in
+              let _ = get_or_init out in
+              fwd)
+      | E_sort { out; t_in; axis; descending } ->
+          Some
+            (fun k ->
+              sort ~out ~axis ~descending t_in;
+              let fwd = continue k () in
+              let _ = get_or_init out in
+              fwd)
+      | E_argsort { out; t_in; axis; descending } ->
+          Some
+            (fun k ->
+              argsort ~out ~axis ~descending t_in;
+              let fwd = continue k () in
+              let _ = get_or_init out in
+              fwd)
       (* Matrix Operations *)
       | E_matmul { out; a; b } ->
           Some
             (fun k ->
-              op_matmul ~out a b;
+              matmul ~out a b;
               let fwd = continue k () in
               let twg_a = get_or_init a in
               let twg_b = get_or_init b in
@@ -1179,7 +1573,7 @@ let make_vjp_handler tape seed_output =
       | E_where { out; condition; if_true; if_false } ->
           Some
             (fun k ->
-              op_where ~out condition if_true if_false;
+              where ~out condition if_true if_false;
               let fwd = continue k () in
               let twg_t = get_or_init if_true in
               let twg_f = get_or_init if_false in
@@ -1194,43 +1588,43 @@ let make_vjp_handler tape seed_output =
       | E_cmplt { out; a; b } ->
           Some
             (fun k ->
-              op_cmplt ~out a b;
+              cmplt ~out a b;
               continue k ())
       | E_cmpne { out; a; b } ->
           Some
             (fun k ->
-              op_cmpne ~out a b;
+              cmpne ~out a b;
               continue k ())
       | E_cmpeq { out; a; b } ->
           Some
             (fun k ->
-              op_cmpeq ~out a b;
+              cmpeq ~out a b;
               continue k ())
       | E_cmple { out; a; b } ->
           Some
             (fun k ->
-              op_cmple ~out a b;
+              cmple ~out a b;
               continue k ())
       | E_xor { out; a; b } ->
           Some
             (fun k ->
-              op_xor ~out a b;
+              xor ~out a b;
               continue k ())
       | E_or { out; a; b } ->
           Some
             (fun k ->
-              op_or ~out a b;
+              or_ ~out a b;
               continue k ())
       | E_and { out; a; b } ->
           Some
             (fun k ->
-              op_and ~out a b;
+              and_ ~out a b;
               continue k ())
       (* Other *)
       | E_copy { t_in } ->
           Some
             (fun k ->
-              let res = op_copy t_in in
+              let res = copy t_in in
               let fwd = continue k res in
               let twg_in = get_or_init t_in in
               let twg_res = get_or_init res in
@@ -1239,16 +1633,29 @@ let make_vjp_handler tape seed_output =
       | E_contiguous { t_in } ->
           Some
             (fun k ->
-              let res = op_contiguous t_in in
+              let res = contiguous t_in in
               let fwd = continue k res in
               let twg_in = get_or_init t_in in
               let twg_res = get_or_init res in
               twg_in.grad <- T.add twg_in.grad twg_res.grad;
               fwd)
+      | E_assign { dst; src } ->
+          Some
+            (fun k ->
+              assign dst src;
+              let fwd = continue k () in
+              let twg_src = get_or_init src in
+              let twg_dst = get_or_init dst in
+              twg_src.grad <- T.add twg_src.grad twg_dst.grad;
+              fwd)
       | E_cast { t_in; target_dtype } ->
           Some
             (fun k ->
-              let res = op_cast t_in target_dtype in
+              let res =
+                let out = buffer (context t_in) target_dtype (T.shape t_in) in
+                cast ~out t_in;
+                out
+              in
               let fwd = continue k res in
               let twg_in = get_or_init t_in in
               let twg_res = get_or_init res in
@@ -1259,7 +1666,7 @@ let make_vjp_handler tape seed_output =
       | E_reduce_prod { out; t_in; axes; keepdims } ->
           Some
             (fun k ->
-              op_reduce_prod ~out ~axes ~keepdims t_in;
+              reduce_prod ~out ~axes ~keepdims t_in;
               let fwd = continue k () in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
@@ -1294,7 +1701,11 @@ let make_vjp_handler tape seed_output =
       | E_associative_scan { t_in; axis; op } ->
           Some
             (fun k ->
-              let res = op_associative_scan ~axis ~op t_in in
+              let res =
+                let out = buffer (context t_in) (dtype t_in) (T.shape t_in) in
+                associative_scan ~out ~axis ~op t_in;
+                out
+              in
               let fwd = continue k res in
               let twg_in = get_or_init t_in in
               let twg_res = get_or_init res in
@@ -1428,52 +1839,17 @@ let make_vjp_handler tape seed_output =
               in
               twg_in.grad <- T.add twg_in.grad grad_contrib;
               fwd)
-      (* As Strided (for slicing/indexing) *)
-      | E_as_strided { t_in; new_shape; new_strides; offset } ->
-          Some
-            (fun k ->
-              let res =
-                op_as_strided t_in
-                  (Nx_core.Symbolic_shape.of_ints new_shape)
-                  new_strides offset
-              in
-              let fwd = continue k res in
-              let twg_in = get_or_init t_in in
-              let twg_res = get_or_init res in
-              let g = twg_res.grad in
-              let input_shape = T.shape t_in in
-              let input_numel = Array.fold_left ( * ) 1 input_shape in
-              let output_numel = Array.fold_left ( * ) 1 new_shape in
-              let ndim = Array.length new_shape in
-              let flat_indices =
-                T.init Nx_core.Dtype.Int32 [| output_numel |] (fun out_coords ->
-                    let out_flat = out_coords.(0) in
-                    let out_idx = Array.make ndim 0 in
-                    let temp = ref out_flat in
-                    for i = ndim - 1 downto 0 do
-                      if new_shape.(i) > 0 then (
-                        out_idx.(i) <- !temp mod new_shape.(i);
-                        temp := !temp / new_shape.(i))
-                    done;
-                    let in_flat = ref offset in
-                    for i = 0 to ndim - 1 do
-                      in_flat := !in_flat + (out_idx.(i) * new_strides.(i))
-                    done;
-                    Int32.of_int !in_flat)
-              in
-              let g_flat = T.reshape [| output_numel |] g in
-              let zeros_input = T.zeros (T.dtype t_in) [| input_numel |] in
-              let grad_contrib =
-                op_scatter ~mode:`Add zeros_input flat_indices g_flat 0
-              in
-              let grad_contrib_reshaped = T.reshape input_shape grad_contrib in
-              twg_in.grad <- T.add twg_in.grad grad_contrib_reshaped;
-              fwd)
       (* Gather *)
       | E_gather { data; indices; axis } ->
           Some
             (fun k ->
-              let res = op_gather data indices axis in
+              let res =
+                let out =
+                  buffer (context data) (dtype data) (T.shape indices)
+                in
+                gather ~out data indices ~axis;
+                out
+              in
               let fwd = continue k res in
               let twg_data = get_or_init data in
               let _ = get_or_init indices in
@@ -1481,7 +1857,7 @@ let make_vjp_handler tape seed_output =
               let g = twg_res.grad in
               let zeros_data = T.zeros_like data in
               let scattered_grads =
-                op_scatter ~mode:`Add zeros_data indices g axis
+                scatter ~mode:`Add zeros_data ~indices ~updates:g ~axis
               in
               twg_data.grad <- T.add twg_data.grad scattered_grads;
               fwd)
@@ -1489,7 +1865,7 @@ let make_vjp_handler tape seed_output =
       | E_scatter { data_template; indices; updates; axis } ->
           Some
             (fun k ->
-              let res = op_scatter data_template indices updates axis in
+              let res = scatter data_template ~indices ~updates ~axis in
               let fwd = continue k res in
               let twg_dt = get_or_init data_template in
               let twg_upd = get_or_init updates in
@@ -1497,13 +1873,17 @@ let make_vjp_handler tape seed_output =
               let twg_res = get_or_init res in
               let g = twg_res.grad in
               (* Gradient for updates: gather from result gradient *)
-              let grad_upd = op_gather g indices axis in
+              let grad_upd =
+                let out = buffer (context g) (dtype g) (T.shape indices) in
+                gather ~out g indices ~axis;
+                out
+              in
               twg_upd.grad <- T.add twg_upd.grad grad_upd;
               (* Gradient for data_template: masked by scatter *)
               let mask =
-                op_scatter
+                scatter
                   (T.ones_like data_template)
-                  indices (T.zeros_like updates) axis
+                  ~indices ~updates:(T.zeros_like updates) ~axis
               in
               let grad_dt = T.mul g mask in
               twg_dt.grad <- T.add twg_dt.grad grad_dt;
@@ -1512,9 +1892,7 @@ let make_vjp_handler tape seed_output =
       | E_unfold { t_in; kernel_size; stride; dilation; padding } ->
           Some
             (fun k ->
-              let res =
-                op_unfold t_in ~kernel_size ~stride ~dilation ~padding
-              in
+              let res = unfold t_in ~kernel_size ~stride ~dilation ~padding in
               let fwd = continue k res in
               let twg_in = get_or_init t_in in
               let twg_res = get_or_init res in
@@ -1527,7 +1905,7 @@ let make_vjp_handler tape seed_output =
                   num_spatial_dims
               in
               let grad_contrib =
-                op_fold g ~output_size ~kernel_size ~stride ~dilation ~padding
+                fold g ~output_size ~kernel_size ~stride ~dilation ~padding
               in
               twg_in.grad <- T.add twg_in.grad grad_contrib;
               fwd)
@@ -1536,15 +1914,14 @@ let make_vjp_handler tape seed_output =
           Some
             (fun k ->
               let res =
-                op_fold t_in ~output_size ~kernel_size ~stride ~dilation
-                  ~padding
+                fold t_in ~output_size ~kernel_size ~stride ~dilation ~padding
               in
               let fwd = continue k res in
               let twg_in = get_or_init t_in in
               let twg_res = get_or_init res in
               let g = twg_res.grad in
               let grad_contrib =
-                op_unfold g ~kernel_size ~stride ~dilation ~padding
+                unfold g ~kernel_size ~stride ~dilation ~padding
               in
               twg_in.grad <- T.add twg_in.grad grad_contrib;
               fwd)
@@ -1552,7 +1929,7 @@ let make_vjp_handler tape seed_output =
       | E_cholesky { t_in; upper } ->
           Some
             (fun k ->
-              let l = op_cholesky ~upper t_in in
+              let l = cholesky ~upper t_in in
               let fwd = continue k l in
               let twg_in = get_or_init t_in in
               let twg_l = get_or_init l in
@@ -1585,15 +1962,15 @@ let make_vjp_handler tape seed_output =
 
               (* Solve L^T Z = P => Z = L^{-T} P *)
               let z =
-                op_triangular_solve ~upper:false ~transpose:true
-                  ~unit_diag:false l_lower p
+                triangular_solve ~upper:false ~transpose:true ~unit_diag:false
+                  l_lower p
               in
 
               (* Compute S = Z @ L^{-1} Solve L^T Y = Z^T => Y^T = L^{-T} Z =
                  S *)
               let y =
-                op_triangular_solve ~upper:false ~transpose:true
-                  ~unit_diag:false l_lower (T.transpose z)
+                triangular_solve ~upper:false ~transpose:true ~unit_diag:false
+                  l_lower (T.transpose z)
               in
               let s = T.transpose y in
 
@@ -1613,7 +1990,7 @@ let make_vjp_handler tape seed_output =
       | E_triangular_solve { a; b; upper; transpose; unit_diag } ->
           Some
             (fun k ->
-              let res = op_triangular_solve ~upper ~transpose ~unit_diag a b in
+              let res = triangular_solve ~upper ~transpose ~unit_diag a b in
               let fwd = continue k res in
               let twg_a = get_or_init a in
               let twg_b = get_or_init b in
@@ -1627,10 +2004,10 @@ let make_vjp_handler tape seed_output =
               let grad_b =
                 if transpose then
                   (* op(A) = A^T => dB = A^{-1} dX *)
-                  op_triangular_solve ~upper ~transpose:false ~unit_diag a g
+                  triangular_solve ~upper ~transpose:false ~unit_diag a g
                 else
                   (* op(A) = A => dB = A^{-T} dX *)
-                  op_triangular_solve ~upper ~transpose:true ~unit_diag a g
+                  triangular_solve ~upper ~transpose:true ~unit_diag a g
               in
               twg_b.grad <- T.add twg_b.grad grad_b;
 
@@ -1670,7 +2047,7 @@ let make_vjp_handler tape seed_output =
           Some
             (fun k ->
               (* Forward pass: compute Q, R *)
-              let q, r = op_qr ~reduced t_in in
+              let q, r = qr ~reduced t_in in
               let fwd = continue k (q, r) in
 
               (* Ensure input is on the tape *)
@@ -1713,8 +2090,8 @@ let make_vjp_handler tape seed_output =
               (* 5. barA = rhs @ R^{-T} Implement via triangular_solve: solve R
                  @ barA^T = rhs^T -> barA^T = R^{-1} rhs^T *)
               let da_t =
-                op_triangular_solve ~upper:true ~transpose:false
-                  ~unit_diag:false r (T.transpose rhs)
+                triangular_solve ~upper:true ~transpose:false ~unit_diag:false r
+                  (T.transpose rhs)
               in
               let da = T.transpose da_t in
 
@@ -1726,27 +2103,27 @@ let make_vjp_handler tape seed_output =
       | E_fft { t; axes } ->
           Some
             (fun k ->
-              let res = op_fft t ~axes in
+              let res = fft t ~axes in
               let fwd = continue k res in
               let twg_in = get_or_init t in
               let twg_res = get_or_init res in
               (* VJP for FFT: The adjoint of raw DFT is raw IDFT (no scaling).
-                 op_fft/op_ifft are raw operations without normalization. *)
+                 fft/ifft are raw operations without normalization. *)
               let g = twg_res.grad in
-              let grad_contrib = op_ifft g ~axes in
+              let grad_contrib = ifft g ~axes in
               twg_in.grad <- T.add twg_in.grad grad_contrib;
               fwd)
       | E_ifft { t; axes } ->
           Some
             (fun k ->
-              let res = op_ifft t ~axes in
+              let res = ifft t ~axes in
               let fwd = continue k res in
               let twg_in = get_or_init t in
               let twg_res = get_or_init res in
               (* VJP for IFFT: The adjoint of raw IDFT is raw DFT (no scaling).
-                 op_fft/op_ifft are raw operations without normalization. *)
+                 fft/ifft are raw operations without normalization. *)
               let g = twg_res.grad in
-              let grad_contrib = op_fft g ~axes in
+              let grad_contrib = fft g ~axes in
               twg_in.grad <- T.add twg_in.grad grad_contrib;
               fwd)
       | _ -> None

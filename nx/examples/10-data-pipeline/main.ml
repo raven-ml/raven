@@ -38,7 +38,8 @@ let () =
   let x = standardize ~axes:[ 0 ] features in
   Printf.printf "After standardization:\n";
   Printf.printf "  Column means ≈ 0: %s\n" (data_to_string (mean ~axes:[ 0 ] x));
-  Printf.printf "  Column stds  ≈ 1: %s\n\n" (data_to_string (std ~axes:[ 0 ] x));
+  Printf.printf "  Column stds  ≈ 1: %s\n\n"
+    (data_to_string (std ~axes:[ 0 ] x));
 
   (* --- Train/test split (80/20) with shuffle --- *)
   let n = (shape features).(0) in
@@ -94,10 +95,7 @@ let () =
 
   (* Accuracy. *)
   let correct = equal predictions y_test in
-  let accuracy =
-    item [] (sum (cast Float64 correct)) /. Float.of_int n_test
-  in
-  Printf.printf "Nearest-centroid accuracy: %.1f%% (%d/%d)\n"
-    (accuracy *. 100.0)
+  let accuracy = item [] (sum (cast Float64 correct)) /. Float.of_int n_test in
+  Printf.printf "Nearest-centroid accuracy: %.1f%% (%d/%d)\n" (accuracy *. 100.0)
     (Float.to_int (accuracy *. Float.of_int n_test))
     n_test

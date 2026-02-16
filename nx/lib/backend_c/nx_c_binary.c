@@ -616,6 +616,46 @@ INT4_OP_IMPL(pow, 0, u4, POW_OP)
 BINARY_OP_FOR_TYPE(pow, caml_ba_bool, bool_, POW_OP)
 BUILD_DISPATCH_TABLE(pow);
 
+// =========== ATAN2 ===========
+#define ATAN2F_OP(x, y) (atan2f((x), (y)))
+#define ATAN2D_OP(x, y) (atan2((x), (y)))
+
+BINARY_OP_FOR_TYPE(atan2, float, f32, ATAN2F_OP)
+BINARY_OP_FOR_TYPE(atan2, double, f64, ATAN2D_OP)
+
+LOW_PREC_OP_KERNEL(atan2, uint16_t, f16, ATAN2F_OP, half_to_float, float_to_half)
+LOW_PREC_OP_IMPL(atan2, uint16_t, f16)
+LOW_PREC_OP_KERNEL(atan2, caml_ba_bfloat16, bf16, ATAN2F_OP, bfloat16_to_float,
+                   float_to_bfloat16)
+LOW_PREC_OP_IMPL(atan2, caml_ba_bfloat16, bf16)
+LOW_PREC_OP_KERNEL(atan2, caml_ba_fp8_e4m3, f8e4m3, ATAN2F_OP,
+                   fp8_e4m3_to_float, float_to_fp8_e4m3)
+LOW_PREC_OP_IMPL(atan2, caml_ba_fp8_e4m3, f8e4m3)
+LOW_PREC_OP_KERNEL(atan2, caml_ba_fp8_e5m2, f8e5m2, ATAN2F_OP,
+                   fp8_e5m2_to_float, float_to_fp8_e5m2)
+LOW_PREC_OP_IMPL(atan2, caml_ba_fp8_e5m2, f8e5m2)
+
+static const binary_op_table atan2_table = {.i8 = NULL,
+                                            .u8 = NULL,
+                                            .i16 = NULL,
+                                            .u16 = NULL,
+                                            .i32 = NULL,
+                                            .i64 = NULL,
+                                            .u32 = NULL,
+                                            .u64 = NULL,
+                                            .inat = NULL,
+                                            .f16 = nx_c_atan2_f16,
+                                            .f32 = nx_c_atan2_f32,
+                                            .f64 = nx_c_atan2_f64,
+                                            .c32 = NULL,
+                                            .c64 = NULL,
+                                            .bf16 = nx_c_atan2_bf16,
+                                            .bool_ = NULL,
+                                            .i4 = NULL,
+                                            .u4 = NULL,
+                                            .f8e4m3 = nx_c_atan2_f8e4m3,
+                                            .f8e5m2 = nx_c_atan2_f8e5m2};
+
 // =========== COMPARISON - LESS THAN ===========
 #define CMPLT_OP(x, y) ((x) < (y) ? 1 : 0)
 
@@ -1446,6 +1486,7 @@ DEFINE_FFI_STUB(max)
 DEFINE_FFI_STUB(min)
 DEFINE_FFI_STUB(mod)
 DEFINE_FFI_STUB(pow)
+DEFINE_FFI_STUB(atan2)
 DEFINE_CMP_FFI_STUB(cmpeq)
 DEFINE_CMP_FFI_STUB(cmpne)
 DEFINE_CMP_FFI_STUB(cmplt)

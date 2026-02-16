@@ -643,26 +643,22 @@ BUILD_DISPATCH_TABLE(matmul);
 static void dispatch_matmul_op(value v_a, value v_b, value v_c,
                                const matmul_op_table *table,
                                const char *op_name) {
-  // Extract ndarrays from FFI tensors
-  ndarray_t A = extract_ndarray(v_a);
-  ndarray_t B = extract_ndarray(v_b);
-  ndarray_t C = extract_ndarray(v_c);
+  // Extract ndarrays using stack-allocated buffers (no malloc)
+  int sa[MAX_NDIM], stra[MAX_NDIM];
+  int sb[MAX_NDIM], strb[MAX_NDIM];
+  int sc[MAX_NDIM], strc[MAX_NDIM];
+  ndarray_t A = extract_ndarray_stack(v_a, sa, stra);
+  ndarray_t B = extract_ndarray_stack(v_b, sb, strb);
+  ndarray_t C = extract_ndarray_stack(v_c, sc, strc);
 
   // Get bigarray kind from the data field
-  value v_a_data = Field(v_a, FFI_TENSOR_DATA);
-  value v_b_data = Field(v_b, FFI_TENSOR_DATA);
-  value v_c_data = Field(v_c, FFI_TENSOR_DATA);
-
-  struct caml_ba_array *ba = Caml_ba_array_val(v_a_data);
+  struct caml_ba_array *ba = Caml_ba_array_val(Field(v_a, FFI_TENSOR_DATA));
   int kind = nx_ba_get_kind(ba);
 
   // Check kinds match for b and c
-  int kind_b = nx_ba_get_kind(Caml_ba_array_val(v_b_data));
-  int kind_c = nx_ba_get_kind(Caml_ba_array_val(v_c_data));
+  int kind_b = nx_ba_get_kind(Caml_ba_array_val(Field(v_b, FFI_TENSOR_DATA)));
+  int kind_c = nx_ba_get_kind(Caml_ba_array_val(Field(v_c, FFI_TENSOR_DATA)));
   if (kind != kind_b || kind != kind_c) {
-    cleanup_ndarray(&A);
-    cleanup_ndarray(&B);
-    cleanup_ndarray(&C);
     caml_failwith("dtype mismatch");
   }
 
@@ -731,9 +727,6 @@ static void dispatch_matmul_op(value v_a, value v_b, value v_c,
       op = table->f8e5m2;
       break;
     default:
-      cleanup_ndarray(&A);
-      cleanup_ndarray(&B);
-      cleanup_ndarray(&C);
       caml_failwith("dispatch_matmul_op: unsupported dtype");
   }
 
@@ -741,19 +734,11 @@ static void dispatch_matmul_op(value v_a, value v_b, value v_c,
     char msg[256];
     snprintf(msg, sizeof(msg), "%s: operation not supported for dtype",
              op_name);
-    cleanup_ndarray(&A);
-    cleanup_ndarray(&B);
-    cleanup_ndarray(&C);
     caml_failwith(msg);
   }
 
-  // Perform the operation
+  // Perform the operation (no cleanup needed — stack-allocated)
   op(&A, &B, &C);
-
-  // Clean up if heap allocated
-  cleanup_ndarray(&A);
-  cleanup_ndarray(&B);
-  cleanup_ndarray(&C);
 }
 
 // ============================================================================
@@ -765,3 +750,4 @@ CAMLprim value caml_nx_matmul(value v_a, value v_b, value v_c) {
   dispatch_matmul_op(v_a, v_b, v_c, &matmul_table, "matmul");
   CAMLreturn(Val_unit);
 }
+

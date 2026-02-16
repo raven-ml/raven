@@ -21,8 +21,9 @@ let () =
   Printf.printf "u · v = %s\n\n" (data_to_string (u <.> v));
 
   (* --- Solving linear systems: A x = b --- *)
-  let coeff = create float64 [| 3; 3 |]
-    [| 2.0; 1.0; -1.0; -3.0; -1.0; 2.0; -2.0; 1.0; 2.0 |]
+  let coeff =
+    create float64 [| 3; 3 |]
+      [| 2.0; 1.0; -1.0; -3.0; -1.0; 2.0; -2.0; 1.0; 2.0 |]
   in
   let rhs = create float64 [| 3; 1 |] [| 8.0; -11.0; -3.0 |] in
   let x = coeff /@ rhs in
@@ -45,9 +46,7 @@ let () =
 
   (* --- Least squares: fit y = mx + c to noisy data --- *)
   let x_data = create float64 [| 6 |] [| 0.0; 1.0; 2.0; 3.0; 4.0; 5.0 |] in
-  let y_data =
-    create float64 [| 6 |] [| 1.1; 2.9; 5.2; 6.8; 9.1; 10.8 |]
-  in
+  let y_data = create float64 [| 6 |] [| 1.1; 2.9; 5.2; 6.8; 9.1; 10.8 |] in
 
   (* Build design matrix: [x, 1] for y = m*x + c *)
   let x_col = reshape [| 6; 1 |] x_data in
@@ -60,8 +59,9 @@ let () =
   Printf.printf "  c = %.4f\n\n" (item [ 1; 0 ] coeffs);
 
   (* --- Eigendecomposition of a symmetric matrix --- *)
-  let sym = create float64 [| 3; 3 |]
-    [| 2.0; -1.0; 0.0; -1.0; 2.0; -1.0; 0.0; -1.0; 2.0 |]
+  let sym =
+    create float64 [| 3; 3 |]
+      [| 2.0; -1.0; 0.0; -1.0; 2.0; -1.0; 0.0; -1.0; 2.0 |]
   in
   let eigenvalues, eigenvectors = eigh sym in
   Printf.printf "Symmetric matrix:\n%s\n" (data_to_string sym);
@@ -69,9 +69,7 @@ let () =
   Printf.printf "Eigenvectors:\n%s\n\n" (data_to_string eigenvectors);
 
   (* --- SVD: decompose and reconstruct --- *)
-  let data = create float64 [| 3; 2 |]
-    [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |]
-  in
+  let data = create float64 [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
   let u_mat, s_vec, vt = svd data in
   (* Reconstruct: U @ diag(S) @ Vt *)
   let s_diag = diag s_vec in

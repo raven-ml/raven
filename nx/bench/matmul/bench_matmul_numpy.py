@@ -46,8 +46,8 @@ def _dtype_label(dtype: np.dtype) -> str:
     return str(dtype)
 
 
-def _benchmark_name(case: MatmulCase, dtype: np.dtype) -> str:
-    return f"MatMul {case.name} {case.m}x{case.k} @ {case.k}x{case.n} {_dtype_label(dtype)} ({BACKEND_NAME})"
+def _benchmark_name(case: MatmulCase, dtype: np.dtype, suffix: str = "") -> str:
+    return f"MatMul {case.name} {case.m}x{case.k} @ {case.k}x{case.n} {_dtype_label(dtype)}{suffix} ({BACKEND_NAME})"
 
 
 def _make_operands(case: MatmulCase, dtype: np.dtype) -> Tuple[np.ndarray, np.ndarray]:
@@ -70,6 +70,13 @@ def build_benchmarks() -> List[Any]:
                 return lambda: np.matmul(a, b)
 
             benchmarks.append(ubench.bench(_benchmark_name(case, dtype), make_fn(lhs, rhs)))
+
+            out = np.empty((case.m, case.n), dtype=dtype)
+
+            def make_fn_reuse(a: np.ndarray, b: np.ndarray, o: np.ndarray) -> Callable[[], None]:
+                return lambda: np.matmul(a, b, out=o)
+
+            benchmarks.append(ubench.bench(_benchmark_name(case, dtype, " reuse"), make_fn_reuse(lhs, rhs, out)))
 
     return benchmarks
 

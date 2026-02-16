@@ -28,8 +28,8 @@ let () =
 
   (* --- Monte Carlo π estimation ---
 
-     Drop N random points in a unit square. The fraction landing inside the
-     unit circle (distance from origin < 1) approximates π/4. *)
+     Drop N random points in a unit square. The fraction landing inside the unit
+     circle (distance from origin < 1) approximates π/4. *)
   let n = 100_000 in
   let mc_keys = Rng.split ~n:2 keys.(3) in
   let xs = rand float64 ~key:mc_keys.(0) [| n |] in
@@ -44,7 +44,7 @@ let () =
   let data_keys = Rng.split ~n:2 (Rng.key 7) in
   let x = Rng.uniform ~key:data_keys.(0) Float64 [| 8 |] in
   let noise = Rng.normal ~key:data_keys.(1) Float64 [| 8 |] *$ 0.1 in
-  let y = x *$ 3.0 +$ 2.0 + noise in
+  let y = (x *$ 3.0) +$ 2.0 + noise in
   Printf.printf "x:     %s\n" (data_to_string x);
   Printf.printf "y ≈ 3x+2: %s\n\n" (data_to_string y);
 

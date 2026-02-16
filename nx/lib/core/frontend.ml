@@ -320,7 +320,7 @@ module Make (B : Backend_intf.S) = struct
             ()
     | _ -> ());
     if Symbolic_shape.equal current_shape resolved then x
-    else B.op_reshape x resolved
+    else B.reshape x resolved
 
   let reshape shape_spec x =
     let@ _ = span ~op:"reshape" () in
@@ -497,7 +497,7 @@ module Make (B : Backend_intf.S) = struct
         in
         if Symbolic_shape.equal (shape_symbolic x_aligned) target_shape then
           x_aligned
-        else B.op_expand x_aligned target_shape
+        else B.expand x_aligned target_shape
 
   (* reshape and expand [x] to [new_shape] following numpy-style rules *)
   let broadcast_to new_shape x =
@@ -557,8 +557,11 @@ module Make (B : Backend_intf.S) = struct
     | Some Equal ->
         (* Here the compiler now *knows* that [x] has type [(c,d) t], so this
            type-safe “no-op” copy type-checks. *)
-        B.op_copy x
-    | None -> B.op_cast x dt
+        B.copy x
+    | None ->
+        let out = B.buffer (B.context x) dt (shape x) in
+        B.cast ~out x;
+        out
 
   let astype dt x = cast dt x
 
@@ -566,18 +569,18 @@ module Make (B : Backend_intf.S) = struct
 
   let contiguous x =
     let@ _ = span ~op:"contiguous" () in
-    B.op_contiguous x
+    B.contiguous x
 
   let copy x =
     let@ _ = span ~op:"copy" () in
-    B.op_copy x
+    B.copy x
 
   let blit src dst =
     let@ _ = span ~op:"blit" () in
     if shape src <> shape dst then
       Error.shape_mismatch ~op:"blit" ~expected:(shape dst) ~actual:(shape src)
         ~hint:"source and destination must have identical shapes" ();
-    B.op_assign dst src
+    B.assign dst src
 
   let create ctx dtype shape arr =
     let@ _ = span ~op:"create" () in
@@ -600,7 +603,7 @@ module Make (B : Backend_intf.S) = struct
     (* Create flat tensor and reshape if needed *)
     let tensor_1d = B.from_host ctx bigarray in
     if Array.length shape = 1 && shape.(0) = n then tensor_1d
-    else B.op_reshape tensor_1d (Symbolic_shape.of_ints shape)
+    else B.reshape tensor_1d (Symbolic_shape.of_ints shape)
 
   let init ctx dtype shape f =
     let@ _ = span ~op:"init" () in
@@ -629,7 +632,7 @@ module Make (B : Backend_intf.S) = struct
 
   let scalar ctx dt value =
     let@ _ = span ~op:"scalar" () in
-    B.op_const_scalar ctx value dt
+    B.full ctx dt [||] value
 
   let scalar_like x_ref value = scalar (B.context x_ref) (B.dtype x_ref) value
 
@@ -637,48 +640,30 @@ module Make (B : Backend_intf.S) = struct
     let@ _ = span ~op:"ifill" () in
     let value_tensor = scalar_like x value in
     let value_broadcasted = broadcast_to (shape x) value_tensor in
-    B.op_assign x value_broadcasted;
+    B.assign x value_broadcasted;
     x
 
   let fill value x =
     let@ _ = span ~op:"fill" () in
-    let copied = B.op_copy x in
+    let copied = B.copy x in
     ignore (ifill value copied);
     copied
 
   let empty ctx dtype shape_arr =
     let@ _ = span ~op:"empty" () in
-    let numel = array_prod shape_arr in
-    let buf = B.op_buffer ctx dtype numel in
-    reshape shape_arr buf
+    B.buffer ctx dtype shape_arr
 
   let zeros ctx dtype shape_arr =
     let@ _ = span ~op:"zeros" () in
-    (* Don't use broadcast views - create actual zeros *)
-    let numel = array_prod shape_arr in
-    let buf = B.op_buffer ctx dtype numel in
-    let t = reshape shape_arr buf in
-    (* Explicitly clear the newly allocated buffer. *)
-    ignore (ifill (Dtype.zero dtype) t);
-    t
+    B.full ctx dtype shape_arr (Dtype.zero dtype)
 
   let ones ctx dtype shape_arr =
     let@ _ = span ~op:"ones" () in
-    (* Create actual ones, not broadcast *)
-    let numel = array_prod shape_arr in
-    let buf = B.op_buffer ctx dtype numel in
-    let t = reshape shape_arr buf in
-    ignore (ifill (Dtype.one dtype) t);
-    t
+    B.full ctx dtype shape_arr (Dtype.one dtype)
 
   let full ctx dt target_shape fill_value =
     let@ _ = span ~op:"full" () in
-    (* Create actual filled tensor, not broadcast *)
-    let numel = array_prod target_shape in
-    let buf = B.op_buffer ctx dt numel in
-    let t = reshape target_shape buf in
-    ignore (ifill fill_value t);
-    t
+    B.full ctx dt target_shape fill_value
 
   (* Generic _like helper *)
   let create_like x_ref fill_fn =
@@ -781,32 +766,32 @@ module Make (B : Backend_intf.S) = struct
     target
 
   (* Addition *)
-  let add ?out a b = binop ~op_name:"add" ?out B.op_add a b
+  let add ?out a b = binop ~op_name:"add" ?out B.add a b
   let add_s ?out t s = add ?out t (scalar_like t s)
   let radd_s ?out s t = add ?out (scalar_like t s) t
-  let iadd target value = inplace_binop B.op_add target value
+  let iadd target value = inplace_binop B.add target value
   let iadd_s t s = iadd t (scalar_like t s)
 
   (* Subtraction *)
-  let sub ?out a b = binop ~op_name:"sub" ?out B.op_sub a b
+  let sub ?out a b = binop ~op_name:"sub" ?out B.sub a b
   let sub_s ?out t s = sub ?out t (scalar_like t s)
   let rsub_s ?out s t = sub ?out (scalar_like t s) t
-  let isub target value = inplace_binop B.op_sub target value
+  let isub target value = inplace_binop B.sub target value
   let isub_s t s = isub t (scalar_like t s)
 
   (* Multiplication *)
-  let mul ?out a b = binop ~op_name:"mul" ?out B.op_mul a b
+  let mul ?out a b = binop ~op_name:"mul" ?out B.mul a b
   let mul_s ?out t s = mul ?out t (scalar_like t s)
   let rmul_s ?out s t = mul ?out (scalar_like t s) t
-  let imul target value = inplace_binop B.op_mul target value
+  let imul target value = inplace_binop B.mul target value
   let imul_s t s = imul t (scalar_like t s)
 
   (* Division: uses fdiv for float/complex, idiv for integers *)
   let div ?out a b =
     let@ _ = span ~op:"div" () in
     let dt = dtype a in
-    if Dtype.is_float dt || Dtype.is_complex dt then binop ?out B.op_fdiv a b
-    else if Dtype.is_int dt || Dtype.is_uint dt then binop ?out B.op_idiv a b
+    if Dtype.is_float dt || Dtype.is_complex dt then binop ?out B.div a b
+    else if Dtype.is_int dt || Dtype.is_uint dt then binop ?out B.div a b
     else failwith "Unsupported dtype for division"
 
   let div_s ?out t s = div ?out t (scalar_like t s)
@@ -815,9 +800,9 @@ module Make (B : Backend_intf.S) = struct
   let idiv target value =
     let dt = dtype target in
     if Dtype.is_float dt || Dtype.is_complex dt then
-      inplace_binop B.op_fdiv target value
+      inplace_binop B.div target value
     else if Dtype.is_int dt || Dtype.is_uint dt then
-      inplace_binop B.op_idiv target value
+      inplace_binop B.div target value
     else
       Error.invalid ~op:"idiv"
         ~what:("dtype " ^ Dtype.to_string dt)
@@ -826,57 +811,57 @@ module Make (B : Backend_intf.S) = struct
   let idiv_s t s = idiv t (scalar_like t s)
 
   (* Power *)
-  let pow ?out a b = binop ~op_name:"pow" ?out B.op_pow a b
+  let pow ?out a b = binop ~op_name:"pow" ?out B.pow a b
   let pow_s ?out t s = pow ?out t (scalar_like t s)
   let rpow_s ?out s t = pow ?out (scalar_like t s) t
-  let ipow target value = inplace_binop B.op_pow target value
+  let ipow target value = inplace_binop B.pow target value
   let ipow_s t s = ipow t (scalar_like t s)
 
   (* Maximum *)
-  let maximum ?out a b = binop ~op_name:"maximum" ?out B.op_max a b
+  let maximum ?out a b = binop ~op_name:"maximum" ?out B.max a b
   let maximum_s ?out t s = maximum ?out t (scalar_like t s)
   let rmaximum_s ?out s t = maximum ?out (scalar_like t s) t
-  let imaximum target value = inplace_binop B.op_max target value
+  let imaximum target value = inplace_binop B.max target value
   let imaximum_s t s = imaximum t (scalar_like t s)
 
   (* Minimum *)
-  let minimum ?out a b = binop ~op_name:"minimum" ?out B.op_min a b
+  let minimum ?out a b = binop ~op_name:"minimum" ?out B.min a b
   let minimum_s ?out t s = minimum ?out t (scalar_like t s)
   let rminimum_s ?out s t = minimum ?out (scalar_like t s) t
-  let iminimum target value = inplace_binop B.op_min target value
+  let iminimum target value = inplace_binop B.min target value
   let iminimum_s t s = iminimum t (scalar_like t s)
 
   (* Modulo *)
-  let mod_ ?out a b = binop ~op_name:"mod" ?out B.op_mod a b
+  let mod_ ?out a b = binop ~op_name:"mod" ?out B.mod_ a b
   let mod_s ?out t s = mod_ ?out t (scalar_like t s)
   let rmod_s ?out s t = mod_ ?out (scalar_like t s) t
-  let imod target value = inplace_binop B.op_mod target value
+  let imod target value = inplace_binop B.mod_ target value
   let imod_s t s = imod t (scalar_like t s)
 
   (* Bitwise operations *)
-  let bitwise_xor ?out a b = binop ~op_name:"bitwise_xor" ?out B.op_xor a b
-  let bitwise_or ?out a b = binop ~op_name:"bitwise_or" ?out B.op_or a b
-  let bitwise_and ?out a b = binop ~op_name:"bitwise_and" ?out B.op_and a b
+  let bitwise_xor ?out a b = binop ~op_name:"bitwise_xor" ?out B.xor a b
+  let bitwise_or ?out a b = binop ~op_name:"bitwise_or" ?out B.or_ a b
+  let bitwise_and ?out a b = binop ~op_name:"bitwise_and" ?out B.and_ a b
 
   (* ───── Logical Operations ───── *)
 
-  let logical_and ?out a b = binop ?out B.op_and a b
-  let logical_or ?out a b = binop ?out B.op_or a b
-  let logical_xor ?out a b = binop ?out B.op_xor a b
+  let logical_and ?out a b = binop ?out B.and_ a b
+  let logical_or ?out a b = binop ?out B.or_ a b
+  let logical_xor ?out a b = binop ?out B.xor a b
 
   let logical_not (type a b) ?out (x : (a, b) t) : (a, b) t =
     let dt = dtype x in
     let one = full (B.context x) dt (shape x) (Dtype.one dt) in
     match dt with
-    | Dtype.UInt8 | Dtype.Bool | Dtype.UInt4 -> binop ?out B.op_xor x one
+    | Dtype.UInt8 | Dtype.Bool | Dtype.UInt4 -> binop ?out B.xor x one
     | _ -> sub ?out one x
 
   (* ───── Comparison Operations ───── *)
 
-  let cmpeq ?out a b = cmpop ~op_name:"equal" ?out B.op_cmpeq a b
-  let cmpne ?out a b = cmpop ~op_name:"not_equal" ?out B.op_cmpne a b
-  let cmplt ?out a b = cmpop ~op_name:"less" ?out B.op_cmplt a b
-  let cmple ?out a b = cmpop ~op_name:"less_equal" ?out B.op_cmple a b
+  let cmpeq ?out a b = cmpop ~op_name:"equal" ?out B.cmpeq a b
+  let cmpne ?out a b = cmpop ~op_name:"not_equal" ?out B.cmpne a b
+  let cmplt ?out a b = cmpop ~op_name:"less" ?out B.cmplt a b
+  let cmple ?out a b = cmpop ~op_name:"less_equal" ?out B.cmple a b
   let cmpgt ?out a b = cmplt ?out b a
   let cmpge ?out a b = cmple ?out b a
 
@@ -909,31 +894,31 @@ module Make (B : Backend_intf.S) = struct
     op ~out x;
     out
 
-  let neg ?out x = unaryop ~op_name:"neg" ?out B.op_neg x
+  let neg ?out x = unaryop ~op_name:"neg" ?out B.neg x
 
   let bitwise_not ?out x =
     let dt = dtype x in
     let minus_one_val = Dtype.minus_one dt in
-    let minus_one_tensor = B.op_const_scalar (B.context x) minus_one_val dt in
+    let minus_one_tensor = B.full (B.context x) dt [||] minus_one_val in
     let minus_one_b = broadcast_to (shape x) minus_one_tensor in
-    binop ?out B.op_xor x minus_one_b
+    binop ?out B.xor x minus_one_b
 
   let invert ?out x = bitwise_not ?out x
 
   (* Math functions - assume float inputs as per B.op signatures *)
-  let sin ?out x = unaryop ~op_name:"sin" ?out B.op_sin x
-  let cos ?out x = unaryop ~op_name:"cos" ?out B.op_cos x
-  let sqrt ?out x = unaryop ~op_name:"sqrt" ?out B.op_sqrt x
-  let recip ?out x = unaryop ~op_name:"recip" ?out B.op_recip x
-  let log ?out x = unaryop ~op_name:"log" ?out B.op_log x
-  let exp ?out x = unaryop ~op_name:"exp" ?out B.op_exp x
-  let abs ?out x = unaryop ~op_name:"abs" ?out B.op_abs x
+  let sin ?out x = unaryop ~op_name:"sin" ?out B.sin x
+  let cos ?out x = unaryop ~op_name:"cos" ?out B.cos x
+  let sqrt ?out x = unaryop ~op_name:"sqrt" ?out B.sqrt x
+  let recip ?out x = unaryop ~op_name:"recip" ?out B.recip x
+  let log ?out x = unaryop ~op_name:"log" ?out B.log x
+  let exp ?out x = unaryop ~op_name:"exp" ?out B.exp x
+  let abs ?out x = unaryop ~op_name:"abs" ?out B.abs x
 
   (* log2(x) = log(x) / log(2) = log(x) * (1/log(2)) *)
   let log2 ?out x =
     let dt = dtype x in
     let inv_ln2_val = Dtype.of_float dt (1.0 /. Stdlib.log 2.0) in
-    let inv_ln2 = B.op_const_scalar (B.context x) inv_ln2_val dt in
+    let inv_ln2 = B.full (B.context x) dt [||] inv_ln2_val in
     let inv_ln2_b = broadcast_to (shape x) inv_ln2 in
     mul ?out (log x) inv_ln2_b
 
@@ -941,55 +926,13 @@ module Make (B : Backend_intf.S) = struct
   let exp2 ?out x =
     let dt = dtype x in
     let ln2_val = Dtype.of_float dt (Stdlib.log 2.0) in
-    let ln2 = B.op_const_scalar (B.context x) ln2_val dt in
+    let ln2 = B.full (B.context x) dt [||] ln2_val in
     let ln2_b = broadcast_to (shape x) ln2 in
     exp ?out (mul x ln2_b)
 
-  let tan ?out x =
-    let sin_x = sin x in
-    let cos_x = cos x in
-    div ?out sin_x cos_x
-
+  let tan ?out x = unaryop ~op_name:"tan" ?out B.tan x
   let square ?out x = mul ?out x x
-
-  (* Helper for where when the full where function isn't yet defined *)
-  let where_simple cond if_true if_false =
-    let out = empty (B.context if_true) (B.dtype if_true) (shape if_true) in
-    B.op_where ~out cond if_true if_false;
-    out
-
-  let where_simple_out ?out cond if_true if_false =
-    let out =
-      match out with
-      | Some o -> o
-      | None -> empty (B.context if_true) (B.dtype if_true) (shape if_true)
-    in
-    B.op_where ~out cond if_true if_false;
-    out
-
-  let sign ?out x =
-    let dt = dtype x in
-    let zero_val = Dtype.zero dt in
-    let one_val = Dtype.one dt in
-    if Dtype.is_uint dt then
-      let one_x = full_like x one_val in
-      match out with
-      | Some o ->
-          (* Use add with zero to copy into out buffer *)
-          B.op_add ~out:o one_x (zeros_like one_x);
-          o
-      | None -> one_x
-    else
-      let zero_x = full_like x zero_val in
-      let one_x = full_like x one_val in
-      let minus_one_val = Dtype.minus_one dt in
-      let minus_one_x = full_like x minus_one_val in
-
-      let is_positive = cmpgt x zero_x in
-      let is_negative = cmplt x zero_x in
-
-      let result = where_simple is_positive one_x zero_x in
-      where_simple_out ?out is_negative minus_one_x result
+  let sign ?out x = unaryop ~op_name:"sign" ?out B.sign x
 
   (* Activations & related *)
   let relu ?out x = maximum ?out x (zeros_like x)
@@ -999,95 +942,19 @@ module Make (B : Backend_intf.S) = struct
     (* 1 / (1 + exp(-x)) = 1 / (1 + (exp2(-x / log(2)))) *)
     let dt = dtype x in
     let neg_one_over_log2 =
-      B.op_const_scalar (B.context x) (-1.0 /. Stdlib.log 2.0) dt
+      B.full (B.context x) dt [||] (-1.0 /. Stdlib.log 2.0)
     in
     let one_x = ones_like x in
     let exp_term = exp2 (mul x neg_one_over_log2) in
     recip ?out (add one_x exp_term)
 
   let rsqrt ?out x = recip ?out (sqrt x)
-
-  (* More trig and hyperbolic, assuming float inputs *)
-  let poly_n_horner_coeffs_first x_tensor coeffs =
-    (* coeffs are [P_N, P_{N-1}, ..., P_0] for P_N x^N + ... + P_0 *)
-    match coeffs with
-    | [] ->
-        Error.invalid ~op:"poly_n_horner_coeffs_first" ~what:"coefficients"
-          ~reason:"list is empty" ()
-    | p_n :: ps_from_n_minus_1_to_0 ->
-        let dt = dtype x_tensor in
-        let acc = full (B.context x_tensor) dt (shape x_tensor) p_n in
-        (* Initialize with P_N *)
-        List.fold_left
-          (fun current_acc p_i_val ->
-            let p_i_tensor =
-              full (B.context x_tensor) dt (shape x_tensor) p_i_val
-            in
-            add (mul current_acc x_tensor) p_i_tensor)
-          acc ps_from_n_minus_1_to_0
-
-  let asin ?out x =
-    (* Based on tinygrad: x = math.pi / 2 - (1.0 - self.abs()).sqrt() * polyN(self.abs(), coefficients); self.sign() * x *)
-    (* Coefficients for polyN are P_N, ..., P_0 for P_N t^N + ... + P_0
-       tinygrad coeffs: [-0.0012624911, 0.0066700901, -0.0170881256, 0.0308918810, -0.0501743046, 0.0889789874, -0.2145988016, 1.5707963050] *)
-    let coeffs =
-      [
-        -0.0012624911;
-        0.0066700901;
-        -0.0170881256;
-        0.0308918810;
-        -0.0501743046;
-        0.0889789874;
-        -0.2145988016;
-        1.5707963050;
-      ]
-    in
-    let dt = dtype x in
-    let pi_half_x = full (B.context x) dt (shape x) (Stdlib.Float.pi /. 2.0) in
-    let one_x = full (B.context x) dt (shape x) 1.0 in
-    let abs_x = abs x in
-    let term_sqrt = sqrt (sub one_x abs_x) in
-    let poly_val = poly_n_horner_coeffs_first abs_x coeffs in
-    let val_before_sign = sub pi_half_x (mul term_sqrt poly_val) in
-    mul ?out (sign x) val_before_sign
-
-  let acos ?out x =
-    let dt = dtype x in
-    let pi_half_x = full (B.context x) dt (shape x) (Stdlib.Float.pi /. 2.0) in
-    sub ?out pi_half_x (asin x)
-
-  let atan ?out x =
-    (* (self / (1 + self * self).sqrt()).asin() *)
-    let dt = dtype x in
-    let one_x = full (B.context x) dt (shape x) 1.0 in
-    let x_squared = square x in
-    let denominator = sqrt (add one_x x_squared) in
-    asin ?out (div x denominator)
-
-  let sinh ?out x =
-    (* (exp(x) - exp(-x)) / 2 *)
-    let dt = dtype x in
-    let two_x = full (B.context x) dt (shape x) 2.0 in
-    let exp_x = exp x in
-    let exp_neg_x = exp (neg x) in
-    div ?out (sub exp_x exp_neg_x) two_x
-
-  let cosh ?out x =
-    (* (exp(x) + exp(-x)) / 2 *)
-    let dt = dtype x in
-    let two_x = full (B.context x) dt (shape x) 2.0 in
-    let exp_x = exp x in
-    let exp_neg_x = exp (neg x) in
-    div ?out (add exp_x exp_neg_x) two_x
-
-  let tanh ?out x =
-    (* 2.0 * sigmoid(2.0 * x) - 1.0 *)
-    let dt = dtype x in
-    let one_x = full (B.context x) dt (shape x) 1.0 in
-    let two_x = full (B.context x) dt (shape x) 2.0 in
-    let sigmoid_arg = mul two_x x in
-    let sigmoid_val = sigmoid sigmoid_arg in
-    sub ?out (mul two_x sigmoid_val) one_x
+  let asin ?out x = unaryop ~op_name:"asin" ?out B.asin x
+  let acos ?out x = unaryop ~op_name:"acos" ?out B.acos x
+  let atan ?out x = unaryop ~op_name:"atan" ?out B.atan x
+  let sinh ?out x = unaryop ~op_name:"sinh" ?out B.sinh x
+  let cosh ?out x = unaryop ~op_name:"cosh" ?out B.cosh x
+  let tanh ?out x = unaryop ~op_name:"tanh" ?out B.tanh x
 
   let asinh ?out x =
     (* log(x + sqrt(x^2 + 1)) *)
@@ -1115,41 +982,10 @@ module Make (B : Backend_intf.S) = struct
     div ?out (log (div term_plus term_minus)) two_x
 
   (* Rounding, properties *)
-  let trunc ?out x =
-    (* Cast to int (truncates), then cast back to float *)
-    let original_dt = dtype x in
-    let result = cast original_dt (cast Dtype.int32 x) in
-    match out with
-    | Some o ->
-        B.op_add ~out:o result (zeros_like result);
-        o
-    | None -> result
-
-  let ceil ?out x =
-    (* (x > trunc(x)).where(trunc(x)+1, trunc(x)) *)
-    let dt = dtype x in
-    let one_x = full (B.context x) dt (shape x) 1.0 in
-    let trunc_x = trunc x in
-    let cond = cmpgt x trunc_x in
-    where_simple_out ?out cond (add trunc_x one_x) trunc_x
-
-  let floor ?out x =
-    (* (x < trunc(x)).where(trunc(x)-1, trunc(x)) *)
-    let dt = dtype x in
-    let one_x = full (B.context x) dt (shape x) 1.0 in
-    let trunc_x = trunc x in
-    let cond = cmplt x trunc_x in
-    where_simple_out ?out cond (sub trunc_x one_x) trunc_x
-
-  (* Simplified round: round half away from zero. Python's `round` is half to
-     even. *)
-  let round ?out x =
-    (* sign(x) * floor(abs(x) + 0.5) *)
-    let dt = dtype x in
-    let half_x = full (B.context x) dt (shape x) 0.5 in
-    let abs_x = abs x in
-    let floor_term = floor (add abs_x half_x) in
-    mul ?out (sign x) floor_term
+  let trunc ?out x = unaryop ~op_name:"trunc" ?out B.trunc x
+  let ceil ?out x = unaryop ~op_name:"ceil" ?out B.ceil x
+  let floor ?out x = unaryop ~op_name:"floor" ?out B.floor x
+  let round ?out x = unaryop ~op_name:"round" ?out B.round x
 
   let isinf ?out x =
     let dt = dtype x in
@@ -1157,14 +993,12 @@ module Make (B : Backend_intf.S) = struct
       let result = zeros (B.context x) Dtype.bool (shape x) in
       match out with
       | Some o ->
-          B.op_add ~out:o result (zeros_like result);
+          B.add ~out:o result (zeros_like result);
           o
       | None -> result
     else
-      let pos_inf_const = B.op_const_scalar (B.context x) Float.infinity dt in
-      let neg_inf_const =
-        B.op_const_scalar (B.context x) Float.neg_infinity dt
-      in
+      let pos_inf_const = B.full (B.context x) dt [||] Float.infinity in
+      let neg_inf_const = B.full (B.context x) dt [||] Float.neg_infinity in
       let is_pos_inf = cmpeq x (broadcast_to (shape x) pos_inf_const) in
       let is_neg_inf = cmpeq x (broadcast_to (shape x) neg_inf_const) in
       logical_or ?out is_pos_inf is_neg_inf
@@ -1175,7 +1009,7 @@ module Make (B : Backend_intf.S) = struct
       let result = zeros (B.context x) Dtype.bool (shape x) in
       match out with
       | Some o ->
-          B.op_add ~out:o result (zeros_like result);
+          B.add ~out:o result (zeros_like result);
           o
       | None -> result
     else cmpne ?out x x
@@ -1186,7 +1020,7 @@ module Make (B : Backend_intf.S) = struct
       let result = ones (B.context x) Dtype.bool (shape x) in
       match out with
       | Some o ->
-          B.op_add ~out:o result (zeros_like result);
+          B.add ~out:o result (zeros_like result);
           o
       | None -> result
     else logical_not ?out (logical_or (isinf x) (isnan x))
@@ -1218,12 +1052,12 @@ module Make (B : Backend_intf.S) = struct
     if shift_val = 0 then
       match out with
       | Some o ->
-          B.op_add ~out:o x (zeros_like x);
+          B.add ~out:o x (zeros_like x);
           o
       | None -> x
     else
       let factor_val = power_of_two dt shift_val in
-      let factor_tensor = B.op_const_scalar (B.context x) factor_val dt in
+      let factor_tensor = B.full (B.context x) dt [||] factor_val in
       let factor_b = broadcast_to (shape x) factor_tensor in
       mul ?out x factor_b
 
@@ -1241,14 +1075,14 @@ module Make (B : Backend_intf.S) = struct
     if shift_val = 0 then
       match out with
       | Some o ->
-          B.op_add ~out:o x (zeros_like x);
+          B.add ~out:o x (zeros_like x);
           o
       | None -> x
     else
       let divisor_val = power_of_two dt shift_val in
-      let divisor_tensor = B.op_const_scalar (B.context x) divisor_val dt in
+      let divisor_tensor = B.full (B.context x) dt [||] divisor_val in
       let divisor_b = broadcast_to (shape x) divisor_tensor in
-      binop ?out B.op_idiv x divisor_b
+      binop ?out B.div x divisor_b
 
   let clamp ?out ?min ?max x =
     let x_clamped_min =
@@ -1262,7 +1096,7 @@ module Make (B : Backend_intf.S) = struct
     | None -> (
         match out with
         | Some o ->
-            B.op_add ~out:o x_clamped_min (zeros_like x_clamped_min);
+            B.add ~out:o x_clamped_min (zeros_like x_clamped_min);
             o
         | None -> x_clamped_min)
     | Some max_v ->
@@ -1294,59 +1128,13 @@ module Make (B : Backend_intf.S) = struct
       | None ->
           empty (B.context if_true_b) (B.dtype if_true_b) final_target_shape
     in
-    B.op_where ~out cond_b if_true_b if_false_b;
+    B.where ~out cond_b if_true_b if_false_b;
     out
 
   (* ───── Binary Mathematical Functions ───── *)
 
   (* Two-argument arctangent: atan2(y, x) returns angle in [-π, π] *)
-  let atan2 ?out y x =
-    let y', x' = broadcasted y x in
-    (* Use the identity: atan2(y, x) = atan(y/x) with quadrant correction *)
-    let dt = dtype y' in
-
-    (* Constants *)
-    let zero = zeros_like y' in
-    let pi = full (B.context y') dt (shape y') Float.pi in
-    let pi_half = full (B.context y') dt (shape y') (Float.pi /. 2.0) in
-    let neg_pi_half = full (B.context y') dt (shape y') (-.Float.pi /. 2.0) in
-
-    (* Conditions *)
-    let x_pos = cmpgt x' zero in
-    let x_zero = cmpeq x' zero in
-    let y_pos = cmpgt y' zero in
-    let y_zero = cmpeq y' zero in
-    let y_neg = cmplt y' zero in
-
-    (* Basic atan(y/x) for x > 0 *)
-    let ratio = div y' x' in
-    let base_angle = atan ratio in
-
-    (* Build result by composing conditions *)
-    (* Start with default case: when x > 0, use atan(y/x) *)
-    let result_1 = where x_pos base_angle zero in
-
-    (* When x < 0 and y >= 0: atan(y/x) + π *)
-    let x_neg_y_nonneg = logical_and (logical_not x_pos) (logical_not y_neg) in
-    let x_neg_y_nonneg = logical_and x_neg_y_nonneg (logical_not x_zero) in
-    let result_2 = where x_neg_y_nonneg (add base_angle pi) result_1 in
-
-    (* When x < 0 and y < 0: atan(y/x) - π *)
-    let x_neg_y_neg = logical_and (logical_not x_pos) y_neg in
-    let x_neg_y_neg = logical_and x_neg_y_neg (logical_not x_zero) in
-    let result_3 = where x_neg_y_neg (sub base_angle pi) result_2 in
-
-    (* When x = 0 and y > 0: π/2 *)
-    let x_zero_y_pos = logical_and x_zero y_pos in
-    let result_4 = where x_zero_y_pos pi_half result_3 in
-
-    (* When x = 0 and y < 0: -π/2 *)
-    let x_zero_y_neg = logical_and x_zero y_neg in
-    let result_5 = where x_zero_y_neg neg_pi_half result_4 in
-
-    (* When x = 0 and y = 0: 0 (by convention) *)
-    let both_zero = logical_and x_zero y_zero in
-    where ?out both_zero zero result_5
+  let atan2 ?out y x = binop ~op_name:"atan2" ?out B.atan2 y x
 
   (* Hypotenuse: sqrt(x² + y²) with overflow protection *)
   let hypot ?out x y =
@@ -1428,19 +1216,19 @@ module Make (B : Backend_intf.S) = struct
 
   let sum ?out ?axes ?(keepdims = false) x =
     let@ _ = span ~op:"sum" () in
-    reduce_op ?out B.op_reduce_sum ?axes ~keepdims x
+    reduce_op ?out B.reduce_sum ?axes ~keepdims x
 
   let max ?out ?axes ?(keepdims = false) x =
     let@ _ = span ~op:"max" () in
-    reduce_op ?out B.op_reduce_max ?axes ~keepdims x
+    reduce_op ?out B.reduce_max ?axes ~keepdims x
 
   let min ?out ?axes ?(keepdims = false) x =
     let@ _ = span ~op:"min" () in
-    reduce_op ?out B.op_reduce_min ?axes ~keepdims x
+    reduce_op ?out B.reduce_min ?axes ~keepdims x
 
   let prod ?out ?axes ?(keepdims = false) x =
     let@ _ = span ~op:"prod" () in
-    reduce_op ?out B.op_reduce_prod ?axes ~keepdims x
+    reduce_op ?out B.reduce_prod ?axes ~keepdims x
 
   let associative_scan ~axis op x =
     let x_shape = shape x in
@@ -1461,7 +1249,10 @@ module Make (B : Backend_intf.S) = struct
         Error.invalid ~op:"associative_scan" ~what:"axis"
           ~reason:(Printf.sprintf "axis %d out of bounds for rank %d" axis rank)
           ()
-      else B.op_associative_scan ~axis:normalized_axis ~op x
+      else
+        let out = empty (B.context x) (B.dtype x) x_shape in
+        B.associative_scan ~out ~axis:normalized_axis ~op x;
+        out
 
   let cumulative_scan ?axis op x =
     let orig_shape = shape x in
@@ -1617,11 +1408,11 @@ module Make (B : Backend_intf.S) = struct
             ~reason:"negative values not allowed"
             ~hint:"use shrink or slice to remove elements" ())
       padding_config;
-    B.op_pad x padding_config fill_value
+    B.pad x padding_config fill_value
 
   let shrink shrink_args x =
     let@ _ = span ~op:"shrink" () in
-    B.op_shrink x shrink_args
+    B.shrink x shrink_args
 
   (* collapse dimensions between [start_dim] and [end_dim] *)
   let flatten ?(start_dim = 0) ?(end_dim = -1) x =
@@ -1904,7 +1695,7 @@ module Make (B : Backend_intf.S) = struct
                (fun ax_val -> if ax_val < 0 then ax_val + r else ax_val)
                ax_list)
     in
-    let result = B.op_permute x resolved_axes in
+    let result = B.permute x resolved_axes in
     result
 
   let flip ?axes x =
@@ -1921,14 +1712,7 @@ module Make (B : Backend_intf.S) = struct
               Error.axis_out_of_bounds ~op:"flip" ~axis:ax_val ~ndim:r ();
             flip_bools.(ax) <- true)
           ax_list);
-    B.op_flip x flip_bools
-
-  let as_strided shape strides ~offset x =
-    let@ _ = span ~op:"as_strided" () in
-    (* Create a strided view of the tensor with custom shape, strides, and
-       offset *)
-    let shape_sym = Symbolic_shape.of_ints shape in
-    B.op_as_strided x shape_sym strides offset
+    B.flip x flip_bools
 
   let moveaxis src dst x =
     let@ _ = span ~op:"moveaxis" () in
@@ -1959,7 +1743,7 @@ module Make (B : Backend_intf.S) = struct
       let final_axes_list =
         insert_at norm_dst item_to_move list_without_item []
       in
-      B.op_permute x (Array.of_list final_axes_list)
+      B.permute x (Array.of_list final_axes_list)
 
   let swapaxes axis1 axis2 x =
     let@ _ = span ~op:"swapaxes" () in
@@ -1981,7 +1765,23 @@ module Make (B : Backend_intf.S) = struct
       let temp = axes.(norm_axis1) in
       axes.(norm_axis1) <- axes.(norm_axis2);
       axes.(norm_axis2) <- temp;
-      B.op_permute x axes
+      B.permute x axes
+
+  let cat_tensors ~axis tensors =
+    match tensors with
+    | [] ->
+        Error.invalid ~op:"concatenate" ~what:"tensor list" ~reason:"empty"
+          ~hint:"provide at least one tensor" ()
+    | first :: _ ->
+        let first_shape = shape first in
+        let ndim = Array.length first_shape in
+        let axis = if axis < 0 then axis + ndim else axis in
+        let out_shape = Array.copy first_shape in
+        out_shape.(axis) <-
+          List.fold_left (fun acc t -> acc + (shape t).(axis)) 0 tensors;
+        let out = empty (B.context first) (B.dtype first) out_shape in
+        B.cat ~out tensors ~axis;
+        out
 
   let roll ?axis shift x =
     let@ _ = span ~op:"roll" () in
@@ -2031,7 +1831,7 @@ module Make (B : Backend_intf.S) = struct
           in
           let part1 = shrink ranges_part1 x in
           let part2 = shrink ranges_part2 x in
-          let rolled_x = B.op_cat [ part1; part2 ] ax_idx in
+          let rolled_x = cat_tensors ~axis:ax_idx [ part1; part2 ] in
           if axis = None then reshape original_shape rolled_x else rolled_x
 
   let tile reps x =
@@ -2063,7 +1863,7 @@ module Make (B : Backend_intf.S) = struct
       reps;
 
     if Array.for_all (( = ) 1) reps then
-      B.op_copy x_promoted (* optimization: no tiling needed *)
+      B.copy x_promoted (* optimization: no tiling needed *)
     else if Array.exists (( = ) 0) reps || Array.exists (( = ) 0) promoted_shape
     then
       (* If any rep is 0, or original shape has a 0, the tiled dimension becomes
@@ -2080,7 +1880,7 @@ module Make (B : Backend_intf.S) = struct
         else
           (* Concatenate reps.(axis) copies along this axis *)
           let copies = List.init reps.(axis) (fun _ -> curr_x) in
-          let concatenated = B.op_cat copies axis in
+          let concatenated = cat_tensors ~axis copies in
           tile_axis concatenated (axis + 1)
       in
       tile_axis x_promoted 0
@@ -2114,7 +1914,7 @@ module Make (B : Backend_intf.S) = struct
       if t_ndim > 0 then new_s.(ax_idx_eff) <- 0;
       let final_shape_if_flattened = if axis = None then [| 0 |] else new_s in
       empty (B.context x) (dtype x) final_shape_if_flattened)
-    else if count = 1 then B.op_copy x
+    else if count = 1 then B.copy x
     else if t_ndim = 0 then
       let scalar_reshaped = reshape [| 1 |] x in
       let repeated = expand [| count |] scalar_reshaped in
@@ -2132,7 +1932,7 @@ module Make (B : Backend_intf.S) = struct
           Array.init t_ndim (fun dim ->
               if dim = ax_idx_eff then (i, i + 1) else (0, t_shape.(dim)))
         in
-        let slice_view = B.op_shrink x slice in
+        let slice_view = B.shrink x slice in
 
         (* Repeat this slice count times *)
         for _ = 1 to count do
@@ -2141,7 +1941,7 @@ module Make (B : Backend_intf.S) = struct
       done;
 
       (* Concatenate all slices *)
-      let result = B.op_cat !slices ax_idx_eff in
+      let result = cat_tensors ~axis:ax_idx_eff !slices in
 
       if axis = None then result else result
 
@@ -2169,7 +1969,7 @@ module Make (B : Backend_intf.S) = struct
 
               (* Flatten all arrays first *)
               let flattened = List.map flatten ts in
-              B.op_cat flattened 0
+              cat_tensors ~axis:0 flattened
           | Some a ->
               let first = List.hd ts in
               let first_ndim = ndim first in
@@ -2207,7 +2007,7 @@ module Make (B : Backend_intf.S) = struct
                     t_shape)
                 (List.tl ts);
 
-              B.op_cat ts axis
+              cat_tensors ~axis ts
         in
         axis
 
@@ -2709,7 +2509,9 @@ module Make (B : Backend_intf.S) = struct
                 (maximum indices (zeros context Int32 (shape indices)))
                 (full context Int32 (shape indices) (Int32.of_int max_idx))
         in
-        B.op_gather t_flat indices_processed 0
+        let out = empty context (dtype t_flat) (shape indices_processed) in
+        B.gather ~out t_flat indices_processed ~axis:0;
+        out
     | Some axis ->
         let axis = resolve_single_axis t axis in
         let axis_size = t_shape.(axis) in
@@ -2746,7 +2548,8 @@ module Make (B : Backend_intf.S) = struct
         broadcast_shape.(axis) <- n_indices;
         let indices_broadcast = broadcast_to broadcast_shape indices_expanded in
 
-        let result = B.op_gather t indices_broadcast axis in
+        let result = empty context (dtype t) (shape indices_broadcast) in
+        B.gather ~out:result t indices_broadcast ~axis;
         reshape out_shape result
 
   let take_along_axis ~axis indices t =
@@ -2769,7 +2572,9 @@ module Make (B : Backend_intf.S) = struct
             ())
       t_shape;
 
-    B.op_gather t indices axis
+    let out = empty (B.context t) (dtype t) idx_shape in
+    B.gather ~out t indices ~axis;
+    out
 
   (* ───── Indexing and Slicing ───── *)
 
@@ -2948,98 +2753,72 @@ module Make (B : Backend_intf.S) = struct
       add_trailing ops consumed_dims
     in
 
-    (* Ensure contiguous for stride calculations, use element strides/offset *)
-    let x_contig =
-      match View.strides_opt (B.view x) with
-      | Some _ -> x
-      | None -> contiguous x
+    let gather_along_axis axis indices t =
+      let idx_tensor =
+        init (B.context t) Dtype.int32
+          [| Array.length indices |]
+          (fun i -> Int32.of_int indices.(i.(0)))
+      in
+      take ~axis idx_tensor t
     in
-    let view = B.view x_contig in
-    let current_strides =
-      match View.strides_opt view with
-      | Some s -> s
-      | None -> assert false (* guaranteed by above *)
-    in
-    let base_offset = View.offset view in
 
-    let rec plan_view ops_rem dim_idx off acc_shape acc_strides gather_ops
-        new_axes =
-      match ops_rem with
-      | [] ->
-          ( off,
-            List.rev acc_shape,
-            List.rev acc_strides,
-            List.rev gather_ops,
-            List.rev new_axes )
+    let slice_along_axis axis start stop t =
+      let t_shape = shape t in
+      if start < stop then
+        let ranges =
+          Array.mapi
+            (fun i dim -> if i = axis then (start, stop) else (0, dim))
+            t_shape
+        in
+        B.shrink t ranges
+      else
+        let idx = empty (B.context t) Dtype.int32 [| 0 |] in
+        take ~axis idx t
+    in
+
+    let rec apply_ops current axis squeeze_axes = function
+      | [] -> (current, squeeze_axes)
       | op :: rest -> (
           match op with
           | New_axis ->
-              (* Track output position for inserting size-1 dimension *)
-              let out_idx = List.length acc_shape + List.length new_axes in
-              plan_view rest dim_idx off acc_shape acc_strides gather_ops
-                (out_idx :: new_axes)
+              let current' = unsqueeze ~axes:[ axis ] current in
+              apply_ops current' (axis + 1) squeeze_axes rest
           | Squeeze { idx } ->
-              (* Dimension removed: add to offset, remove from shape/strides *)
-              let new_off = off + (idx * current_strides.(dim_idx)) in
-              plan_view rest (dim_idx + 1) new_off acc_shape acc_strides
-                gather_ops new_axes
-          | View { start; step; dim_len; _ } ->
-              (* Dimension kept/modified: adjust offset, shape, stride *)
-              let new_off = off + (start * current_strides.(dim_idx)) in
-              let new_stride = current_strides.(dim_idx) * step in
-              plan_view rest (dim_idx + 1) new_off (dim_len :: acc_shape)
-                (new_stride :: acc_strides)
-                gather_ops new_axes
+              let current' = slice_along_axis axis idx (idx + 1) current in
+              apply_ops current' (axis + 1) (axis :: squeeze_axes) rest
           | Gather indices ->
-              (* Keep the full dimension in view, gather applied later *)
-              let out_axis = List.length acc_shape in
-              let view_len = input_shape.(dim_idx) in
-              let view_stride = current_strides.(dim_idx) in
-              plan_view rest (dim_idx + 1) off (view_len :: acc_shape)
-                (view_stride :: acc_strides)
-                ((out_axis, indices) :: gather_ops)
-                new_axes)
+              let current' = gather_along_axis axis indices current in
+              apply_ops current' (axis + 1) squeeze_axes rest
+          | View { start; step; dim_len; _ } ->
+              if step = 1 then
+                let current' =
+                  slice_along_axis axis start (start + dim_len) current
+                in
+                apply_ops current' (axis + 1) squeeze_axes rest
+              else if step = -1 then
+                let current' =
+                  if dim_len = 0 then slice_along_axis axis 0 0 current
+                  else
+                    let lo = start - dim_len + 1 in
+                    let hi = start + 1 in
+                    let sliced = slice_along_axis axis lo hi current in
+                    let flip_axes = Array.make (ndim sliced) false in
+                    flip_axes.(axis) <- true;
+                    B.flip sliced flip_axes
+                in
+                apply_ops current' (axis + 1) squeeze_axes rest
+              else
+                let indices =
+                  Array.init dim_len (fun i -> start + (i * step))
+                in
+                let current' = gather_along_axis axis indices current in
+                apply_ops current' (axis + 1) squeeze_axes rest)
     in
 
-    let final_offset, view_shape, view_strides, gather_ops, new_axes_indices =
-      plan_view ops 0 base_offset [] [] [] []
-    in
-
-    (* Apply view *)
-    let x_view =
-      B.op_as_strided x_contig
-        (Symbolic_shape.of_ints (Array.of_list view_shape))
-        (Array.of_list view_strides)
-        final_offset
-    in
-
-    (* Apply gathers sequentially (orthogonal indexing) using take *)
-    let x_gathered =
-      List.fold_left
-        (fun acc (axis, indices) ->
-          let idx_tensor =
-            init (B.context x) Dtype.int32
-              [| Array.length indices |]
-              (fun i -> Int32.of_int indices.(i.(0)))
-          in
-          take ~axis idx_tensor acc)
-        x_view gather_ops
-    in
-
-    (* Insert new axes via reshape *)
-    if new_axes_indices = [] then x_gathered
-    else
-      let sorted_axes = List.sort compare new_axes_indices in
-      let current_shape = shape x_gathered in
-      let final_rank = Array.length current_shape + List.length sorted_axes in
-      let final_shape = Array.make final_rank 1 in
-      let src_idx = ref 0 in
-      for dst_idx = 0 to final_rank - 1 do
-        if not (List.mem dst_idx sorted_axes) then (
-          final_shape.(dst_idx) <- current_shape.(!src_idx);
-          incr src_idx)
-      done;
-      reshape final_shape x_gathered
+    let result, squeeze_axes = apply_ops x 0 [] ops in
+    match List.sort_uniq compare squeeze_axes with
+    | [] -> result
+    | axes -> squeeze ~axes result
 
   (* Optimized set_slice_internal using vectorized index calculation *)
   let set_slice_internal specs x y =
@@ -3056,14 +2835,17 @@ module Make (B : Backend_intf.S) = struct
 
     (* Check if this is a simple view-compatible slice (no lists/gather) *)
     let is_simple_view =
-      List.for_all (function L _ | M _ -> false | _ -> true) full_specs
+      List.for_all
+        (function
+          | L _ | M _ -> false | Rs (_, _, step) -> Int.abs step = 1 | _ -> true)
+        full_specs
     in
 
     if is_simple_view then
       (* FAST PATH: View-based assignment *)
       let target_view = slice_internal full_specs x in
       let y_b = broadcast_to (shape target_view) y in
-      B.op_assign target_view y_b
+      B.assign target_view y_b
     else
       (* SLOW PATH: Scatter-based assignment for fancy indexing *)
       (* Calculate logical strides for x (row-major) *)
@@ -3138,11 +2920,11 @@ module Make (B : Backend_intf.S) = struct
       let y_flat = reshape [| numel y_b |] y_b in
 
       let result_flat =
-        B.op_scatter ~mode:`Set ~unique_indices:false x_flat indices_flat y_flat
-          0
+        B.scatter ~mode:`Set ~unique_indices:false x_flat ~indices:indices_flat
+          ~updates:y_flat ~axis:0
       in
       let result_reshaped = reshape x_shape result_flat in
-      B.op_assign x result_reshaped
+      B.assign x result_reshaped
 
   (* Get a single element or sub-tensor *)
   let get indices x =
@@ -3296,8 +3078,8 @@ module Make (B : Backend_intf.S) = struct
 
         (* Scatter and reshape back *)
         let result =
-          B.op_scatter ~mode:`Set ~unique_indices:false t_flat indices_flat
-            values_flat 0
+          B.scatter ~mode:`Set ~unique_indices:false t_flat
+            ~indices:indices_flat ~updates:values_flat ~axis:0
         in
         blit (reshape t_shape_orig result) t
     | Some axis ->
@@ -3319,8 +3101,8 @@ module Make (B : Backend_intf.S) = struct
 
         (* Use scatter along axis *)
         let result =
-          B.op_scatter ~mode:`Set ~unique_indices:false t indices_processed
-            values axis
+          B.scatter ~mode:`Set ~unique_indices:false t
+            ~indices:indices_processed ~updates:values ~axis
         in
         blit result t
 
@@ -3442,7 +3224,8 @@ module Make (B : Backend_intf.S) = struct
 
     (* Use scatter *)
     let result =
-      B.op_scatter ~mode:`Set ~unique_indices:false t indices values axis
+      B.scatter ~mode:`Set ~unique_indices:false t ~indices ~updates:values
+        ~axis
     in
     blit result t
 
@@ -3699,208 +3482,17 @@ module Make (B : Backend_intf.S) = struct
 
   let sort (type a b) ?(descending = false) ?(axis = -1) (x : (a, b) t) =
     let@ _ = span ~op:"sort" () in
-    let axis = resolve_single_axis x axis in
-    let ndim_x = ndim x in
-    if axis < 0 || axis >= ndim_x then
-      Error.axis_out_of_bounds ~op:"sort" ~axis ~ndim:ndim_x ();
-    let orig_len = dim axis x in
-
-    (* Handle edge case of empty or single element *)
-    if orig_len <= 1 then
-      let idx = arange (B.context x) Dtype.int32 0 orig_len 1 in
-      let idx_shape =
-        Array.init (ndim x) (fun i -> if i = axis then orig_len else 1)
-      in
-      let idx = reshape idx_shape idx in
-      (x, idx)
+    if ndim x = 0 then (x, scalar (B.context x) Dtype.int32 0l)
     else
-      (* Calculate number of stages for bitonic sort *)
-      let n_stages =
-        int_of_float (Float.ceil (Float.log2 (float_of_int orig_len)))
-      in
-      let padded_len = 1 lsl n_stages in
-
-      (* Pad to power of 2 *)
-      let fill_value =
-        if descending then Dtype.min_value (dtype x)
-        else
-          (* Use a large value for ascending sort *)
-          match dtype x with
-          | dt when Dtype.is_float dt -> Dtype.of_float dt Float.infinity
-          | Dtype.Int32 -> Int32.max_int
-          | Dtype.Int64 -> Int64.max_int
-          | dt -> Dtype.of_float dt 1e10 (* Fallback for other types *)
-      in
-
-      (* Handle NaN values by replacing them with infinity for sorting *)
-      let x_for_sort =
-        if Dtype.is_float (dtype x) then
-          (* Replace NaN with inf (for ascending) or -inf (for descending) *)
-          let is_nan = isnan x in
-          let inf_val =
-            if descending then
-              full_like x (Dtype.of_float (dtype x) Float.neg_infinity)
-            else full_like x (Dtype.of_float (dtype x) Float.infinity)
-          in
-          where is_nan inf_val x
-        else x
-      in
-
-      let pad_config =
-        Array.init (ndim x) (fun i ->
-            if i = axis then (0, padded_len - orig_len) else (0, 0))
-      in
-
-      let x_pad = pad pad_config fill_value x_for_sort in
-
-      (* Unflatten into binary tree structure *)
-      let unflatten_sizes = Array.make n_stages 2 in
-      let x_unflatten = unflatten axis unflatten_sizes x_pad in
-
-      (* Bitonic sort implementation *)
-      let x_ref = ref x_unflatten in
-      for stage = 1 to n_stages do
-        (* Handle crossover for all stages except the last *)
-        (if stage <> n_stages then
-           let crossover_dim = axis + n_stages - stage - 1 in
-
-           (* Split along crossover dimension *)
-           let boxes = split ~axis:crossover_dim 2 !x_ref in
-           let blue_box = List.nth boxes 0 in
-           let green_box = List.nth boxes 1 in
-
-           (* Flip green box dimensions *)
-           (* Tinygrad: flip_dims = tuple(-i for i in range(1, stage+1+(self.ndim-dim))) *)
-           (* This means flip the last (stage + 1 + (ndim - axis)) dimensions *)
-           let n_dims_to_flip = stage + 1 + (ndim x - axis) in
-           let flip_axes =
-             Array.init n_dims_to_flip (fun i -> ndim green_box - 1 - i)
-             |> Array.to_list
-             |> List.filter (fun i -> i >= 0 && i < ndim green_box)
-           in
-           let green_box_flipped = flip green_box ~axes:flip_axes in
-
-           (* Reconstruct by concatenating *)
-           x_ref :=
-             concatenate ~axis:crossover_dim [ blue_box; green_box_flipped ]);
-
-        (* Compare and swap substages *)
-        for substage = stage - 1 downto 0 do
-          let partner_dim = axis + n_stages - substage - 1 in
-
-          (* Split along partner dimension *)
-          let parts = split ~axis:partner_dim 2 !x_ref in
-          let x_top = List.nth parts 0 in
-          let x_bottom = List.nth parts 1 in
-
-          (* Compare and order *)
-          let x_larger = maximum x_top x_bottom in
-          let x_smaller = minimum x_top x_bottom in
-
-          (* Concatenate based on sort order *)
-          x_ref :=
-            if descending then
-              concatenate ~axis:partner_dim [ x_larger; x_smaller ]
-            else concatenate ~axis:partner_dim [ x_smaller; x_larger ]
-        done;
-
-        (* Undo crossover if needed *)
-        if stage <> n_stages then
-          let crossover_dim = axis + n_stages - stage - 1 in
-
-          (* Split to undo crossover *)
-          let boxes = split ~axis:crossover_dim 2 !x_ref in
-          let blue_box = List.nth boxes 0 in
-          let flipped_green_box = List.nth boxes 1 in
-
-          (* Unflip - use the same flip_axes as before *)
-          let n_dims_to_flip = stage + 1 + (ndim x - axis) in
-          let flip_axes =
-            Array.init n_dims_to_flip (fun i -> ndim flipped_green_box - 1 - i)
-            |> Array.to_list
-            |> List.filter (fun i -> i >= 0 && i < ndim flipped_green_box)
-          in
-          let green_box = flip ~axes:flip_axes flipped_green_box in
-
-          x_ref := concatenate ~axis:crossover_dim [ blue_box; green_box ]
-      done;
-
-      (* Flatten back to original shape *)
-      let x_sorted =
-        flatten ~start_dim:axis ~end_dim:(axis + n_stages - 1) !x_ref
-      in
-
-      (* Remove padding *)
-      let shrink_slice =
-        List.init (ndim x_sorted) (fun i ->
-            if i = axis then R (0, orig_len) else A)
-      in
-      let x_sorted = slice_internal shrink_slice x_sorted in
-
-      (* Compute indices for stable sort *)
-      (* Create index tensor *)
-      let idx = arange (B.context x) Dtype.int32 0 orig_len 1 in
-      let idx_shape =
-        Array.init (ndim x) (fun i -> if i = axis then orig_len else 1)
-      in
-      let idx = reshape idx_shape idx in
-      let idx = expand (shape x_sorted) idx in
-
-      (* Compute counts for handling duplicates *)
-      let compute_counts tensor =
-        (* Count how many elements <= current index with same value *)
-        let t_exp_new = unsqueeze tensor ~axes:[ axis + 1 ] in
-        let t_exp_orig = unsqueeze tensor ~axes:[ axis ] in
-        let idx_exp_new = unsqueeze idx ~axes:[ axis + 1 ] in
-        let idx_exp_orig = unsqueeze idx ~axes:[ axis ] in
-
-        let le_mask = less_equal idx_exp_orig idx_exp_new in
-        let eq_mask = equal t_exp_orig t_exp_new in
-        let mask = logical_and le_mask eq_mask in
-        sum mask ~axes:[ axis + 1 ] ~keepdims:false
-      in
-
-      let count_orig = compute_counts x_for_sort in
-      let count_sorted = compute_counts x_sorted in
-
-      (* Find where each original element ended up *)
-      let self_exp = unsqueeze ~axes:[ axis + 1 ] x_for_sort in
-      let sorted_exp = unsqueeze x_sorted ~axes:[ axis ] in
-      let count_orig_exp = unsqueeze count_orig ~axes:[ axis + 1 ] in
-      let count_sorted_exp = unsqueeze count_sorted ~axes:[ axis ] in
-      let idx_exp = unsqueeze idx ~axes:[ axis + 1 ] in
-
-      (* Match by value and count *)
-      let value_match = equal self_exp sorted_exp in
-      let count_match = equal count_orig_exp count_sorted_exp in
-      let matches = logical_and value_match count_match in
-
-      (* Extract indices where matches occur *)
-      let matches_int = cast Dtype.int32 matches in
-      let weighted_idx = mul matches_int idx_exp in
-      let final_idx = sum weighted_idx ~axes:[ axis ] ~keepdims:false in
-
-      (* Restore original NaN values in sorted output *)
-      let x_sorted_final =
-        if Dtype.is_float (dtype x) then
-          (* Where x_sorted is inf and original x had NaN, restore NaN *)
-          let nan_val =
-            full_like x_sorted (Dtype.of_float (dtype x) Float.nan)
-          in
-          let is_inf =
-            if descending then
-              equal x_sorted
-                (full_like x_sorted
-                   (Dtype.of_float (dtype x) Float.neg_infinity))
-            else
-              equal x_sorted
-                (full_like x_sorted (Dtype.of_float (dtype x) Float.infinity))
-          in
-          where is_inf nan_val x_sorted
-        else x_sorted
-      in
-
-      (x_sorted_final, final_idx)
+      let r = ndim x in
+      let axis = if axis < 0 then axis + r else axis in
+      if axis < 0 || axis >= r then
+        Error.axis_out_of_bounds ~op:"sort" ~axis ~ndim:r ();
+      let out_sorted = empty (B.context x) (dtype x) (shape x) in
+      let out_indices = empty (B.context x) Dtype.int32 (shape x) in
+      B.sort ~out:out_sorted ~axis ~descending x;
+      B.argsort ~out:out_indices ~axis ~descending x;
+      (out_sorted, out_indices)
 
   let argsort ?(descending = false) ?(axis = -1) x =
     let@ _ = span ~op:"argsort" () in
@@ -3909,99 +3501,38 @@ module Make (B : Backend_intf.S) = struct
 
   let argmax ?axis ?(keepdims = false) x =
     let@ _ = span ~op:"argmax" () in
-    let t_ndim = ndim x in
-    let reduction_axis =
+    let x', axis =
       match axis with
-      | None -> List.init t_ndim Fun.id (* Flatten behavior: reduce all axes *)
-      | Some ax -> [ resolve_single_axis ~ndim_opt:t_ndim x ax ]
+      | None -> (flatten x, 0)
+      | Some axis ->
+          let rank = ndim x in
+          let axis = resolve_single_axis ~ndim_opt:rank x axis in
+          if axis < 0 || axis >= rank then
+            Error.axis_out_of_bounds ~op:"argmax" ~axis ~ndim:rank ();
+          (x, axis)
     in
-    let t_for_reduce = if axis = None then flatten x else x in
-    let current_axis_idx =
-      if axis = None then 0 else List.nth reduction_axis 0
-    in
-    let axis_len = dim current_axis_idx t_for_reduce in
-
-    if axis_len = 0 then (* Edge case: empty dimension *)
-      let out_shape =
-        if keepdims then
-          shape
-            t_for_reduce (* Or shape of x if axis was None and x was scalar *)
-        else
-          Array.of_list
-            (List.filteri
-               (fun i _ -> i <> current_axis_idx)
-               (Array.to_list (shape t_for_reduce)))
-      in
-      if Array.length out_shape = 0 && numel t_for_reduce > 0 then
-        scalar (B.context x) Dtype.int32 0l (* scalar input *)
-      else empty (B.context x) Dtype.int32 out_shape
-    else
-      let max_vals = max ~axes:reduction_axis ~keepdims:true t_for_reduce in
-      let is_max_mask = equal t_for_reduce max_vals in
-
-      (* Create reversed arange: [axis_len-1, axis_len-2, ..., 0] *)
-      (* Tinygrad uses arange(N, 0, -1) which is [N-1, ..., 0] for N elements *)
-      let arange_vals =
-        arange (B.context x) Dtype.int32 (axis_len - 1) (-1) (-1)
-      in
-
-      (* Reshape arange_vals to be broadcastable for multiplication with
-         is_max_mask *)
-      let arange_shape = Array.make (ndim t_for_reduce) 1 in
-      arange_shape.(current_axis_idx) <- axis_len;
-      let arange_b = reshape arange_shape arange_vals in
-      let arange_bc = broadcast_to (shape is_max_mask) arange_b in
-
-      let masked_arange = mul (cast Dtype.int32 is_max_mask) arange_bc in
-
-      (* Get the max of these values (effectively the first index from the
-         end) *)
-      let max_indices_from_end =
-        max ~axes:reduction_axis ~keepdims:true masked_arange
-      in
-
-      (* Convert from "index from end" to "index from start" *)
-      let axis_len_tensor =
-        scalar (B.context x) Dtype.int32 (Int32.of_int (axis_len - 1))
-      in
-      let axis_len_bc =
-        broadcast_to (shape max_indices_from_end) axis_len_tensor
-      in
-      let final_indices = sub axis_len_bc max_indices_from_end in
-
-      if keepdims then final_indices
-      else
-        let final_shape =
-          if axis = None then [||] (* scalar output if all axes reduced *)
-          else
-            Array.of_list
-              (List.filteri
-                 (fun i _ -> i <> current_axis_idx)
-                 (Array.to_list (shape t_for_reduce)))
-        in
-        reshape final_shape final_indices
+    let out_shape = reduce_output_shape (shape x') [| axis |] keepdims in
+    let out = empty (B.context x) Dtype.int32 out_shape in
+    B.argmax ~out ~axis ~keepdims x';
+    out
 
   let argmin (type a b) ?axis ?(keepdims = false) (x : (a, b) t) :
       (int32, Dtype.int32_elt) t =
     let@ _ = span ~op:"argmin" () in
-    let t_dtype = dtype x in
-    let t_inverted =
-      if Dtype.is_float t_dtype then neg x
-      else if Dtype.is_int t_dtype && not (Dtype.is_uint t_dtype) then neg x
-      else if Dtype.is_uint t_dtype then
-        let max_val_specific : (a, b) t =
-          match t_dtype with
-          | Dtype.UInt8 -> scalar (B.context x) Dtype.uint8 255
-          | Dtype.UInt16 -> scalar (B.context x) Dtype.uint16 65535
-          | _ ->
-              Error.failed ~op:"argmin"
-                ~what:"unsupported uint dtype for inversion" ()
-        in
-        let max_val_b = broadcast_to (shape x) max_val_specific in
-        sub max_val_b x
-      else Error.failed ~op:"argmin" ~what:"unsupported dtype" ()
+    let x', axis =
+      match axis with
+      | None -> (flatten x, 0)
+      | Some axis ->
+          let rank = ndim x in
+          let axis = resolve_single_axis ~ndim_opt:rank x axis in
+          if axis < 0 || axis >= rank then
+            Error.axis_out_of_bounds ~op:"argmin" ~axis ~ndim:rank ();
+          (x, axis)
     in
-    argmax ?axis ~keepdims t_inverted
+    let out_shape = reduce_output_shape (shape x') [| axis |] keepdims in
+    let out = empty (B.context x) Dtype.int32 out_shape in
+    B.argmin ~out ~axis ~keepdims x';
+    out
 
   (* ───── Random Number Generation ───── *)
 
@@ -4046,7 +3577,8 @@ module Make (B : Backend_intf.S) = struct
         let counter = create ctx Dtype.int32 [| num_values; 2 |] ctr_vals in
 
         (* Generate random bits using threefry *)
-        let random_bits = B.op_threefry key counter in
+        let random_bits = empty ctx Dtype.int32 [| num_values; 2 |] in
+        B.threefry ~out:random_bits key counter;
 
         (* Flatten and take only what we need *)
         let bits_flat = flatten random_bits in
@@ -4316,18 +3848,26 @@ module Make (B : Backend_intf.S) = struct
       match out with
       | Some o -> o
       | None ->
-          let out_shape = matmul_output_shape a b in
-          let out_shape_concrete =
-            match Symbolic_shape.eval out_shape with
-            | Some s -> s
-            | None ->
-                Error.failed ~op:"matmul"
-                  ~what:"cannot compute output shape with symbolic dimensions"
-                  ()
-          in
-          empty (B.context a) (B.dtype a) out_shape_concrete
+          let ndim_a = ndim a in
+          let ndim_b = ndim b in
+          if ndim_a = 2 && ndim_b = 2 then
+            (* Fast path for 2D×2D: skip Symbolic_shape/broadcast_shapes *)
+            let m = dim 0 a in
+            let n = dim 1 b in
+            empty (B.context a) (B.dtype a) [| m; n |]
+          else
+            let out_shape = matmul_output_shape a b in
+            let out_shape_concrete =
+              match Symbolic_shape.eval out_shape with
+              | Some s -> s
+              | None ->
+                  Error.failed ~op:"matmul"
+                    ~what:"cannot compute output shape with symbolic dimensions"
+                    ()
+            in
+            empty (B.context a) (B.dtype a) out_shape_concrete
     in
-    B.op_matmul ~out a b;
+    B.matmul ~out a b;
     out
 
   let dot ?out x_tensor w_tensor =
@@ -4354,7 +3894,7 @@ module Make (B : Backend_intf.S) = struct
         let squeezed = squeeze ~axes:[ ndim result - 2 ] result in
         match out with
         | Some o ->
-            B.op_add ~out:o squeezed (zeros_like squeezed);
+            B.add ~out:o squeezed (zeros_like squeezed);
             o
         | None -> squeezed)
     | _, 1 -> (
@@ -4366,7 +3906,7 @@ module Make (B : Backend_intf.S) = struct
         let squeezed = squeeze ~axes:[ ndim result - 1 ] result in
         match out with
         | Some o ->
-            B.op_add ~out:o squeezed (zeros_like squeezed);
+            B.add ~out:o squeezed (zeros_like squeezed);
             o
         | None -> squeezed)
     | _ ->
@@ -5096,8 +4636,7 @@ module Make (B : Backend_intf.S) = struct
                    dim_b))
       in
       let a_free_dims =
-        Array.init n_a_free (fun i ->
-            sa.(perm_a_arr.(n_batch + i)))
+        Array.init n_a_free (fun i -> sa.(perm_a_arr.(n_batch + i)))
       in
       let contract_dims =
         Array.init n_contract (fun i ->
@@ -5129,8 +4668,7 @@ module Make (B : Backend_intf.S) = struct
                   let src_dim = src_shape.(perm_arr.(i)) in
                   src_dim)
           in
-          if !needs_broadcast then broadcast_to target_shape tensor
-          else tensor
+          if !needs_broadcast then broadcast_to target_shape tensor else tensor
       in
 
       let a_t_broadcast = broadcast_batch a_t perm_a_arr sa in
@@ -5322,10 +4860,10 @@ module Make (B : Backend_intf.S) = struct
                      "einsum: output index '%c' not found in inputs" c))
             target_chars;
 
-          (* Pre-reduce axes that appear in exactly one operand and are
-             absent from the output. This avoids materialising huge
-             intermediates for patterns like "ab,cd->" where independent
-             sums can be done first. *)
+          (* Pre-reduce axes that appear in exactly one operand and are absent
+             from the output. This avoids materialising huge intermediates for
+             patterns like "ab,cd->" where independent sums can be done
+             first. *)
           let () =
             let char_count = Hashtbl.create 16 in
             Array.iter
@@ -5346,8 +4884,9 @@ module Make (B : Backend_intf.S) = struct
                 let new_labels = ref [] in
                 List.iteri
                   (fun axis_idx c ->
-                    if Hashtbl.find char_count c = 1
-                       && not (List.mem c target_chars)
+                    if
+                      Hashtbl.find char_count c = 1
+                      && not (List.mem c target_chars)
                     then axes_to_reduce := axis_idx :: !axes_to_reduce
                     else new_labels := c :: !new_labels)
                   info.axis_labels;
@@ -5357,9 +4896,10 @@ module Make (B : Backend_intf.S) = struct
                     let axes = List.rev axes in
                     ops_tensors.(i) <- sum ~axes ops_tensors.(i);
                     ops_info.(i) <-
-                      { info with
-                        shape = shape ops_tensors.(i)
-                      ; axis_labels = List.rev !new_labels
+                      {
+                        info with
+                        shape = shape ops_tensors.(i);
+                        axis_labels = List.rev !new_labels;
                       })
               ops_info
           in
@@ -5398,16 +4938,12 @@ module Make (B : Backend_intf.S) = struct
           if n_ops = 1 then
             (* Single operand: reduce + permute, no contraction needed *)
             finalize ops_tensors.(0) ops_info.(0).axis_labels
-          else if n_ops = 2 then (
+          else if n_ops = 2 then
             (* Two operands: contract directly, skip optimizer *)
             let info_a = ops_info.(0) in
             let info_b = ops_info.(1) in
-            let str_a =
-              info_a.axis_labels |> List.to_seq |> String.of_seq
-            in
-            let str_b =
-              info_b.axis_labels |> List.to_seq |> String.of_seq
-            in
+            let str_a = info_a.axis_labels |> List.to_seq |> String.of_seq in
+            let str_b = info_b.axis_labels |> List.to_seq |> String.of_seq in
             (* Compute result labels: chars not contracted or in target *)
             let common =
               List.filter
@@ -5420,43 +4956,33 @@ module Make (B : Backend_intf.S) = struct
                   (info_a.axis_labels @ info_b.axis_labels)
               in
               List.filter
-                (fun c ->
-                  (not (List.mem c common)) || List.mem c target_chars)
+                (fun c -> (not (List.mem c common)) || List.mem c target_chars)
                 all
             in
-            let str_out =
-              result_labels |> List.to_seq |> String.of_seq
-            in
+            let str_out = result_labels |> List.to_seq |> String.of_seq in
             let result =
-              contract_pair ops_tensors.(0) str_a ops_tensors.(1) str_b
-                str_out
+              contract_pair ops_tensors.(0) str_a ops_tensors.(1) str_b str_out
             in
-            finalize result result_labels)
+            finalize result result_labels
           else
             (* 3+ operands: use greedy path optimizer *)
-            let plan =
-              optimize_path (Array.to_list ops_info) target_chars
-            in
+            let plan = optimize_path (Array.to_list ops_info) target_chars in
             let rec execute = function
               | Leaf idx ->
                   ( ops_tensors.(idx),
-                    ops_info.(idx).axis_labels |> List.to_seq
-                    |> String.of_seq )
+                    ops_info.(idx).axis_labels |> List.to_seq |> String.of_seq
+                  )
               | Node (left, right, info) ->
                   let res_a, str_a = execute left in
                   let res_b, str_b = execute right in
                   let str_out =
                     info.axis_labels |> List.to_seq |> String.of_seq
                   in
-                  let res =
-                    contract_pair res_a str_a res_b str_b str_out
-                  in
+                  let res = contract_pair res_a str_a res_b str_b str_out in
                   (res, str_out)
             in
             let result, result_str = execute plan in
-            let current_chars =
-              String.to_seq result_str |> List.of_seq
-            in
+            let current_chars = String.to_seq result_str |> List.of_seq in
             finalize result current_chars
   end
 
@@ -5671,7 +5197,7 @@ module Make (B : Backend_intf.S) = struct
     check_square ~op:"cholesky" a;
     check_float_or_complex ~op:"cholesky" a;
     let upper = Option.value upper ~default:false in
-    B.op_cholesky ~upper a
+    B.cholesky ~upper a
 
   let qr ?mode a =
     let@ _ = span ~op:"qr" () in
@@ -5679,18 +5205,18 @@ module Make (B : Backend_intf.S) = struct
     let reduced =
       match mode with Some `Reduced -> true | None | Some `Complete -> false
     in
-    B.op_qr ~reduced a
+    B.qr ~reduced a
 
   let svd ?full_matrices a =
     let@ _ = span ~op:"svd" () in
     check_float_or_complex ~op:"svd" a;
     let full_matrices = Option.value full_matrices ~default:false in
-    B.op_svd ~full_matrices a
+    B.svd ~full_matrices a
 
   let svdvals a =
     let@ _ = span ~op:"svdvals" () in
     check_float_or_complex ~op:"svdvals" a;
-    let _, s, _ = B.op_svd ~full_matrices:false a in
+    let _, s, _ = B.svd ~full_matrices:false a in
     s
 
   (* Eigenvalues and Eigenvectors *)
@@ -5699,7 +5225,7 @@ module Make (B : Backend_intf.S) = struct
     let@ _ = span ~op:"eig" () in
     check_square ~op:"eig" a;
     check_float_or_complex ~op:"eig" a;
-    match B.op_eig ~vectors:true a with
+    match B.eig ~vectors:true a with
     | vals, Some vecs -> (vals, vecs)
     | _vals, None ->
         Error.invalid ~op:"eig" ~what:"result" ~reason:"expected eigenvectors"
@@ -5711,7 +5237,7 @@ module Make (B : Backend_intf.S) = struct
     check_real ~op:"eigh" a;
     let _ = uplo in
     (* uplo handled by backend if needed *)
-    match B.op_eigh ~vectors:true a with
+    match B.eigh ~vectors:true a with
     | vals, Some vecs -> (vals, vecs)
     | _vals, None ->
         Error.invalid ~op:"eigh" ~what:"result" ~reason:"expected eigenvectors"
@@ -5721,7 +5247,7 @@ module Make (B : Backend_intf.S) = struct
     let@ _ = span ~op:"eigvals" () in
     check_square ~op:"eigvals" a;
     check_float_or_complex ~op:"eigvals" a;
-    let vals, _ = B.op_eig ~vectors:false a in
+    let vals, _ = B.eig ~vectors:false a in
     vals
 
   let eigvalsh ?uplo a =
@@ -5730,7 +5256,7 @@ module Make (B : Backend_intf.S) = struct
     check_real ~op:"eigvalsh" a;
     let _ = uplo in
     (* uplo handled by backend if needed *)
-    let vals, _ = B.op_eigh ~vectors:false a in
+    let vals, _ = B.eigh ~vectors:false a in
     vals
 
   (* Norms and Condition Numbers *)
@@ -5833,7 +5359,7 @@ module Make (B : Backend_intf.S) = struct
       let logdet = cast Dtype.float32 logdet64 in
       (sign_float, logdet)
     else
-      let _q, r = B.op_qr ~reduced:false a in
+      let _q, r = B.qr ~reduced:false a in
       let r_diag = diagonal r in
       let signs = sign r_diag in
       let sign_det =
@@ -5879,7 +5405,7 @@ module Make (B : Backend_intf.S) = struct
       match hermitian with
       | Some true ->
           (* Use eigenvalue decomposition for hermitian matrices *)
-          let vals, _ = B.op_eigh ~vectors:false a in
+          let vals, _ = B.eigh ~vectors:false a in
           (* Use absolute values to match SVD behavior for tolerance
              computation *)
           abs vals
@@ -5954,7 +5480,7 @@ module Make (B : Backend_intf.S) = struct
     in
 
     (* Use QR decomposition *)
-    let q, r = B.op_qr ~reduced:true a in
+    let q, r = B.qr ~reduced:true a in
     let r_diag = diagonal r |> cast Dtype.float64 in
     let m = dim (-2) a in
     let eps = if Dtype.equal (dtype a) Dtype.float32 then 1e-6 else 1e-12 in
@@ -5965,7 +5491,7 @@ module Make (B : Backend_intf.S) = struct
     if zero_count > 0. then invalid_arg "solve: matrix is singular";
     let y = matmul (matrix_transpose q) b_expanded in
     let result =
-      B.op_triangular_solve ~upper:true ~transpose:false ~unit_diag:false r y
+      B.triangular_solve ~upper:true ~transpose:false ~unit_diag:false r y
     in
 
     (* Squeeze result if we expanded b *)
@@ -6059,13 +5585,13 @@ module Make (B : Backend_intf.S) = struct
     in
 
     let pinv_via_svd () =
-      let u, s, vh = B.op_svd ~full_matrices:false a in
+      let u, s, vh = B.svd ~full_matrices:false a in
       pinv_from_factors u s vh
     in
 
     match hermitian with
     | Some true -> (
-        let vals, vecs_opt = B.op_eigh ~vectors:true a in
+        let vals, vecs_opt = B.eigh ~vectors:true a in
         match vecs_opt with
         | None -> pinv_via_svd ()
         | Some vecs ->
@@ -6103,7 +5629,7 @@ module Make (B : Backend_intf.S) = struct
     in
     let x =
       if m >= n then
-        let q, r = B.op_qr ~reduced:true a in
+        let q, r = B.qr ~reduced:true a in
         let y = matmul (matrix_transpose q) b in
         let r_square =
           if ndim r = 2 then slice_internal [ R (0, n); R (0, n) ] r
@@ -6114,7 +5640,7 @@ module Make (B : Backend_intf.S) = struct
           else if ndim y = 1 then slice_internal [ R (0, n) ] y
           else slice_internal [ A; R (0, n); A ] y
         in
-        B.op_triangular_solve ~upper:true ~transpose:false ~unit_diag:false
+        B.triangular_solve ~upper:true ~transpose:false ~unit_diag:false
           r_square y_top
       else
         let a_pseudo = pinv a ~rtol:rcond_value in
@@ -6349,14 +5875,14 @@ module Make (B : Backend_intf.S) = struct
               let pad_amount = target - cur_size in
               pad_config.(ax) <- (0, pad_amount);
               x_padded :=
-                B.op_pad !x_padded pad_config (Dtype.zero (dtype !x_padded)))
+                B.pad !x_padded pad_config (Dtype.zero (dtype !x_padded)))
             else
               (* Truncate from the end for FFT - keep low frequencies *)
               let shrink_config =
                 Array.init (ndim !x_padded) (fun idx ->
                     if idx = ax then (0, target) else (0, dim idx !x_padded))
               in
-              x_padded := B.op_shrink !x_padded shrink_config)
+              x_padded := B.shrink !x_padded shrink_config)
         axes;
       !x_padded
 
@@ -6398,7 +5924,7 @@ module Make (B : Backend_intf.S) = struct
 
     (* Apply normalization if needed *)
     if norm_scale <> 1.0 then
-      let result = B.op_fft x_padded ~axes:(Array.of_list axes_list) in
+      let result = B.fft x_padded ~axes:(Array.of_list axes_list) in
       let scale_value =
         match B.dtype result with
         | Complex64 | Complex128 -> Complex.{ re = norm_scale; im = 0.0 }
@@ -6407,7 +5933,7 @@ module Make (B : Backend_intf.S) = struct
         scalar (B.context result) (B.dtype result) scale_value
       in
       mul ?out result scale_tensor
-    else B.op_fft ?out x_padded ~axes:(Array.of_list axes_list)
+    else B.fft ?out x_padded ~axes:(Array.of_list axes_list)
 
   let ifftn (type a) ?out ?axes ?s ?(norm = `Backward) (x : (Complex.t, a) t) :
       (Complex.t, a) t =
@@ -6468,7 +5994,7 @@ module Make (B : Backend_intf.S) = struct
 
     (* Apply normalization if needed *)
     if norm_scale <> 1.0 then
-      let result = B.op_ifft x_input ~axes:(Array.of_list axes_list) in
+      let result = B.ifft x_input ~axes:(Array.of_list axes_list) in
       let scale_value =
         match B.dtype result with
         | Complex64 | Complex128 -> Complex.{ re = norm_scale; im = 0.0 }
@@ -6477,7 +6003,7 @@ module Make (B : Backend_intf.S) = struct
         scalar (B.context result) (B.dtype result) scale_value
       in
       mul ?out result scale_tensor
-    else B.op_ifft ?out x_input ~axes:(Array.of_list axes_list)
+    else B.ifft ?out x_input ~axes:(Array.of_list axes_list)
 
   let rfftn ?out ?axes ?s ?(norm = `Backward) x =
     let@ _ = span ~op:"rfftn" () in
@@ -6506,8 +6032,7 @@ module Make (B : Backend_intf.S) = struct
     (* Use Complex64 as default - matches NumPy behavior *)
     if norm_scale <> 1.0 then
       let result =
-        B.op_rfft x_padded ~dtype:Dtype.Complex128
-          ~axes:(Array.of_list axes_list)
+        B.rfft x_padded ~dtype:Dtype.Complex128 ~axes:(Array.of_list axes_list)
       in
       let scale_value = Complex.{ re = norm_scale; im = 0.0 } in
       let scale_tensor =
@@ -6515,7 +6040,7 @@ module Make (B : Backend_intf.S) = struct
       in
       mul ?out result scale_tensor
     else
-      B.op_rfft ?out x_padded ~dtype:Dtype.Complex128
+      B.rfft ?out x_padded ~dtype:Dtype.Complex128
         ~axes:(Array.of_list axes_list)
 
   let irfftn ?out ?axes ?s ?(norm = `Backward) x =
@@ -6585,16 +6110,16 @@ module Make (B : Backend_intf.S) = struct
 
     if norm_scale <> 1.0 then
       let result =
-        B.op_irfft x ~dtype:Dtype.Float64 ~axes:(Array.of_list axes_list)
-          ~s:s_param
+        B.irfft ?s:s_param x ~dtype:Dtype.Float64
+          ~axes:(Array.of_list axes_list)
       in
       let scale_tensor =
         scalar (B.context result) (B.dtype result) norm_scale
       in
       mul ?out result scale_tensor
     else
-      B.op_irfft ?out x ~dtype:Dtype.Float64 ~axes:(Array.of_list axes_list)
-        ~s:s_param
+      B.irfft ?out ?s:s_param x ~dtype:Dtype.Float64
+        ~axes:(Array.of_list axes_list)
 
   (* 1D FFT operations - convenience functions *)
   let fft ?out ?(axis = -1) ?n ?(norm = `Backward) x =
@@ -6961,7 +6486,7 @@ module Make (B : Backend_intf.S) = struct
     if axes_norm = [] then
       match out with
       | Some o ->
-          B.op_add ~out:o (zeros_like x) (zeros_like x);
+          B.add ~out:o (zeros_like x) (zeros_like x);
           o
       | None -> zeros_like x
     else
@@ -7000,7 +6525,7 @@ module Make (B : Backend_intf.S) = struct
     if axes_norm = [] then
       match out with
       | Some o ->
-          B.op_add ~out:o x (zeros_like x);
+          B.add ~out:o x (zeros_like x);
           o
       | None -> x
     else
@@ -7011,7 +6536,7 @@ module Make (B : Backend_intf.S) = struct
       if keepdims then
         match out with
         | Some o ->
-            B.op_add ~out:o log_sum (zeros_like log_sum);
+            B.add ~out:o log_sum (zeros_like log_sum);
             o
         | None -> log_sum
       else
@@ -7019,7 +6544,7 @@ module Make (B : Backend_intf.S) = struct
         let result = squeeze ~axes:axes_desc log_sum in
         match out with
         | Some o ->
-            B.op_add ~out:o result (zeros_like result);
+            B.add ~out:o result (zeros_like result);
             o
         | None -> result
 
@@ -7047,7 +6572,7 @@ module Make (B : Backend_intf.S) = struct
     if axes_norm = [] then
       match out with
       | Some o ->
-          B.op_add ~out:o x (zeros_like x);
+          B.add ~out:o x (zeros_like x);
           o
       | None -> x
     else
@@ -7058,7 +6583,7 @@ module Make (B : Backend_intf.S) = struct
       if keepdims then
         match out with
         | Some o ->
-            B.op_add ~out:o log_mean (zeros_like log_mean);
+            B.add ~out:o log_mean (zeros_like log_mean);
             o
         | None -> log_mean
       else
@@ -7066,7 +6591,7 @@ module Make (B : Backend_intf.S) = struct
         let result = squeeze ~axes:axes_desc log_mean in
         match out with
         | Some o ->
-            B.op_add ~out:o result (zeros_like result);
+            B.add ~out:o result (zeros_like result);
             o
         | None -> result
 
@@ -7219,7 +6744,7 @@ module Make (B : Backend_intf.S) = struct
     | None -> (
         match out with
         | Some o ->
-            B.op_add ~out:o normalized (zeros_like normalized);
+            B.add ~out:o normalized (zeros_like normalized);
             o
         | None -> normalized)
     | Some gamma ->
@@ -7293,7 +6818,7 @@ module Make (B : Backend_intf.S) = struct
     | None -> (
         match out with
         | Some o ->
-            B.op_add ~out:o with_scale (zeros_like with_scale);
+            B.add ~out:o with_scale (zeros_like with_scale);
             o
         | None -> with_scale)
     | Some beta ->
@@ -7441,44 +6966,8 @@ module Make (B : Backend_intf.S) = struct
     let y = tanh arg in
     mul ?out half (mul x (add one y))
 
-  (* Error function (erf) using Abramowitz and Stegun approximation erf(x) ≈
-     sign(x) * (1 - exp(-x² * (a₁t + a₂t² + a₃t³ + a₄t⁴ + a₅t⁵))) where t = 1 /
-     (1 + p|x|) and p = 0.3275911 *)
-  let erf ?out x =
-    (* Constants for the approximation *)
-    let p = scalar_like x 0.3275911 in
-    let a1 = scalar_like x 0.254829592 in
-    let a2 = scalar_like x (-0.284496736) in
-    let a3 = scalar_like x 1.421413741 in
-    let a4 = scalar_like x (-1.453152027) in
-    let a5 = scalar_like x 1.061405429 in
-
-    (* Get sign and absolute value *)
-    let sign_x = sign x in
-    let abs_x = abs x in
-
-    (* t = 1 / (1 + p * |x|) *)
-    let one = scalar_like x 1.0 in
-    let t = div one (add one (mul p abs_x)) in
-
-    (* Polynomial evaluation: a₁t + a₂t² + a₃t³ + a₄t⁴ + a₅t⁵ *)
-    let t2 = mul t t in
-    let t3 = mul t2 t in
-    let t4 = mul t3 t in
-    let t5 = mul t4 t in
-
-    let poly = add (mul a1 t) (mul a2 t2) in
-    let poly = add poly (mul a3 t3) in
-    let poly = add poly (mul a4 t4) in
-    let poly = add poly (mul a5 t5) in
-
-    (* exp(-x²) *)
-    let x2 = mul x x in
-    let exp_neg_x2 = exp (neg x2) in
-
-    (* Final result: sign(x) * (1 - exp(-x²) * poly) *)
-    let result = sub one (mul exp_neg_x2 poly) in
-    mul ?out sign_x result
+  (* Error function. *)
+  let erf ?out x = unaryop ~op_name:"erf" ?out B.erf x
 
   (* Exact GELU using error function: GELU(x) = 0.5 * x * (1 + erf(x /
      sqrt(2))) *)
@@ -7503,10 +6992,10 @@ module Make (B : Backend_intf.S) = struct
     mul ?out x y
 
   let im2col ?out ~kernel_size ~stride ~dilation ~padding x =
-    B.op_unfold ?out x ~kernel_size ~stride ~dilation ~padding
+    B.unfold ?out x ~kernel_size ~stride ~dilation ~padding
 
   let col2im ?out ~output_size ~kernel_size ~stride ~dilation ~padding x =
-    B.op_fold ?out x ~output_size ~kernel_size ~stride ~dilation ~padding
+    B.fold ?out x ~output_size ~kernel_size ~stride ~dilation ~padding
 
   let calculate_padding_for_mode input_spatial_shape ~k_s ~s_s ~d_s
       ~(mode : [< `Full | `Valid | `Same ])
@@ -7618,7 +7107,7 @@ module Make (B : Backend_intf.S) = struct
 
       (* Use unfold (im2col) for convolution *)
       let x_col =
-        B.op_unfold x ~kernel_size:kernel_spatial_shape_arr ~stride:stride_s_arr
+        B.unfold x ~kernel_size:kernel_spatial_shape_arr ~stride:stride_s_arr
           ~dilation:dilation_s_arr ~padding:padding_config_pairs_arr
       in
       (* x_col shape: [bs, cin_total * kernel_elements, num_blocks] *)
@@ -7676,7 +7165,7 @@ module Make (B : Backend_intf.S) = struct
           (* w: [cout, cin, *kernel] *)
 
           (* Reshape weights to [cout, cin * kernel_elements] *)
-          let w_cont = B.op_contiguous w in
+          let w_cont = B.contiguous w in
           let w_reshaped =
             reshape [| cout; cin_total * kernel_elements |] w_cont
           in
@@ -7697,7 +7186,7 @@ module Make (B : Backend_intf.S) = struct
 
           (* Reshape weights to [groups, rcout, cin_per_group *
              kernel_elements] *)
-          let w_cont = B.op_contiguous w in
+          let w_cont = B.contiguous w in
           let w_grouped =
             reshape [| groups; rcout; cin_per_group * kernel_elements |] w_cont
           in
@@ -7796,7 +7285,7 @@ module Make (B : Backend_intf.S) = struct
       flip_axes_bools.(2 + i) <- true
     done;
 
-    let w_flipped = B.op_flip w flip_axes_bools in
+    let w_flipped = B.flip w flip_axes_bools in
     (* Call correlate_nd_general directly with Convolution op_type *)
     let groups = Option.value groups ~default:1 in
     let padding_mode = Option.value padding_mode ~default:`Valid in
@@ -7898,8 +7387,7 @@ module Make (B : Backend_intf.S) = struct
       Array.sub full_pad_config (x_ndim - num_spatial_dims) num_spatial_dims
     in
     let x_unfolded =
-      B.op_unfold x ~kernel_size ~stride:s_s ~dilation:d_s
-        ~padding:padding_pairs
+      B.unfold x ~kernel_size ~stride:s_s ~dilation:d_s ~padding:padding_pairs
     in
     (* x_unfolded shape: [batch..., channels * kernel_elements, num_blocks] *)
 
@@ -7962,7 +7450,7 @@ module Make (B : Backend_intf.S) = struct
       (* Need to count valid elements - use same unfold approach on ones *)
       let ones = ones_like x in
       let ones_unfolded =
-        B.op_unfold ones ~kernel_size ~stride:s_s ~dilation:d_s
+        B.unfold ones ~kernel_size ~stride:s_s ~dilation:d_s
           ~padding:padding_pairs
       in
       let ones_reshaped =
@@ -8021,8 +7509,7 @@ module Make (B : Backend_intf.S) = struct
         Array.sub full_pad_config (x_ndim - num_spatial_dims) num_spatial_dims
       in
       let x_unfolded =
-        B.op_unfold x ~kernel_size ~stride:s_s ~dilation:d_s
-          ~padding:padding_pairs
+        B.unfold x ~kernel_size ~stride:s_s ~dilation:d_s ~padding:padding_pairs
       in
       (* x_unfolded shape: [batch..., channels * kernel_elements, num_blocks] *)
 
@@ -8192,8 +7679,7 @@ module Make (B : Backend_intf.S) = struct
         Array.sub full_pad_config (x_ndim - num_spatial_dims) num_spatial_dims
       in
       let x_unfolded =
-        B.op_unfold x ~kernel_size ~stride:s_s ~dilation:d_s
-          ~padding:padding_pairs
+        B.unfold x ~kernel_size ~stride:s_s ~dilation:d_s ~padding:padding_pairs
       in
       (* x_unfolded shape: [batch..., channels * kernel_elements, num_blocks] *)
 
@@ -8241,7 +7727,7 @@ module Make (B : Backend_intf.S) = struct
       let min_pooled = ref None in
       for k = 0 to kernel_elements - 1 do
         let slice =
-          B.op_shrink x_reshaped
+          B.shrink x_reshaped
             [| (0, batch_size); (0, channels); (k, k + 1); (0, num_blocks) |]
         in
         let slice_squeezed =

@@ -12,14 +12,30 @@ let () =
   let grades =
     create float64 [| 5; 4 |]
       [|
-        88.0; 72.0; 95.0; 83.0;
-        45.0; 90.0; 67.0; 78.0;
-        92.0; 85.0; 91.0; 70.0;
-        76.0; 63.0; 80.0; 95.0;
-        60.0; 78.0; 55.0; 82.0;
+        88.0;
+        72.0;
+        95.0;
+        83.0;
+        45.0;
+        90.0;
+        67.0;
+        78.0;
+        92.0;
+        85.0;
+        91.0;
+        70.0;
+        76.0;
+        63.0;
+        80.0;
+        95.0;
+        60.0;
+        78.0;
+        55.0;
+        82.0;
       |]
   in
-  Printf.printf "Grade book (students × subjects):\n%s\n\n" (data_to_string grades);
+  Printf.printf "Grade book (students × subjects):\n%s\n\n"
+    (data_to_string grades);
 
   (* Single element: student 0's Science score (row 0, col 1). *)
   let score = item [ 0; 1 ] grades in
@@ -39,7 +55,8 @@ let () =
 
   (* Strided: every other student, every other subject. *)
   let strided = grades.${[ Rs (0, 5, 2); Rs (0, 4, 2) ]} in
-  Printf.printf "Every other student & subject:\n%s\n\n" (data_to_string strided);
+  Printf.printf "Every other student & subject:\n%s\n\n"
+    (data_to_string strided);
 
   (* Boolean mask: which students scored above 85 in Math? *)
   let math_scores = grades.${[ A; I 0 ]} in
@@ -50,7 +67,9 @@ let () =
   Printf.printf "Students with Math > 85:\n%s\n\n" (data_to_string top_students);
 
   (* where: replace failing grades (<60) with 60. *)
-  let passing = where (less_s grades 60.0) (full float64 [| 5; 4 |] 60.0) grades in
+  let passing =
+    where (less_s grades 60.0) (full float64 [| 5; 4 |] 60.0) grades
+  in
   Printf.printf "After floor at 60:\n%s\n\n" (data_to_string passing);
 
   (* take: select specific students by index. *)

@@ -1203,12 +1203,8 @@ let einsum_independent_sum () =
 
 let einsum_partial_prereduction () =
   (* "ij,kj->": pre-reduce i from op0, k from op1, then dot over j *)
-  let a0 =
-    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-  in
-  let a1 =
-    Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-  in
+  let a0 = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let a1 = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let got = Nx.einsum "ij,kj->" [| a0; a1 |] in
   (* sum_i(A) = [5,7,9], sum_k(B) = [5,7,9], dot = 25+49+81 = 155 *)
   let expected = Nx.create Nx.float32 [||] [| 155. |] in
@@ -1228,8 +1224,7 @@ let einsum_no_shared_with_output () =
   (* sum_b(A) = [10, 26, 42], sum_d(B) = [15, 40] *)
   (* outer = [[150, 400], [390, 1040], [630, 1680]] *)
   let expected =
-    Nx.create Nx.float32 [| 3; 2 |]
-      [| 150.; 400.; 390.; 1040.; 630.; 1680. |]
+    Nx.create Nx.float32 [| 3; 2 |] [| 150.; 400.; 390.; 1040.; 630.; 1680. |]
   in
   check_nx "einsum_no_shared_with_output ab,cd->ac" expected got
 

@@ -415,8 +415,8 @@ let test_strides_after_slice () =
   let t = Nx.create Nx.float32 [| 10 |] (Array.init 10 float_of_int) in
   let sliced = Nx.slice [ Nx.Rs (0, 10, 2) ] t in
   let strides = Nx.strides sliced in
-  (* step=2 on float32 (4 bytes): stride = 4 * 2 = 8 bytes *)
-  equal ~msg:"slice stride" int 8 strides.(0)
+  (* step!=1 slices are materialized via gather and are contiguous *)
+  equal ~msg:"slice stride" int 4 strides.(0)
 
 let test_is_c_contiguous_basic () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
@@ -430,10 +430,9 @@ let test_is_c_contiguous_after_transpose () =
 
 let test_is_c_contiguous_after_slice () =
   let t = Nx.create Nx.float32 [| 10 |] (Array.init 10 float_of_int) in
-  (* step=2 creates a strided view, not contiguous *)
+  (* step!=1 slices are materialized via gather *)
   let sliced = Nx.slice [ Nx.Rs (0, 10, 2) ] t in
-  equal ~msg:"slice step=2 is not contiguous" bool false
-    (Nx.is_c_contiguous sliced);
+  equal ~msg:"slice step=2 is contiguous" bool true (Nx.is_c_contiguous sliced);
   (* step=1 slice is contiguous *)
   let sliced_step1 = Nx.slice [ Nx.Rs (0, 5, 1) ] t in
   equal ~msg:"slice step=1 is contiguous" bool true

@@ -108,10 +108,8 @@ let test_argsort_2d_axis1 () =
 
 let test_argsort_empty () =
   let t = Nx.create Nx.float32 [| 0 |] [||] in
-  check_invalid_arg "argsort empty"
-    "arange: invalid range [0, 0) (empty with step=1)\n\
-     hint: ensure start < stop for positive step, or start > stop for negative \
-     step" (fun () -> ignore (Nx.argsort t))
+  let result = Nx.argsort t in
+  check_t "argsort empty" [| 0 |] [||] result
 
 (* ───── Argmax Tests ───── *)
 
@@ -168,8 +166,8 @@ let test_argmin_ties () =
 (* ───── Sort Regression Tests ───── *)
 
 let test_sort_large_1d () =
-  (* Regression: bitonic sort breaks for n >= 129.
-     The sort produces duplicate values instead of a correct permutation. *)
+  (* Regression: bitonic sort breaks for n >= 129. The sort produces duplicate
+     values instead of a correct permutation. *)
   let n = 150 in
   let t = Nx.arange Nx.float32 0 n 1 in
   (* Reverse so it's not already sorted *)

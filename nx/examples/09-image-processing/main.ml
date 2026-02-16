@@ -32,13 +32,22 @@ let () =
   let blur_kernel =
     create Float32 [| 1; 1; 3; 3 |]
       [|
-        1.0 /. 16.0; 2.0 /. 16.0; 1.0 /. 16.0;
-        2.0 /. 16.0; 4.0 /. 16.0; 2.0 /. 16.0;
-        1.0 /. 16.0; 2.0 /. 16.0; 1.0 /. 16.0;
+        1.0 /. 16.0;
+        2.0 /. 16.0;
+        1.0 /. 16.0;
+        2.0 /. 16.0;
+        4.0 /. 16.0;
+        2.0 /. 16.0;
+        1.0 /. 16.0;
+        2.0 /. 16.0;
+        1.0 /. 16.0;
       |]
   in
   let blurred = correlate2d ~padding_mode:`Same img_f blur_kernel in
-  let blurred_img = reshape [| h; w |] blurred |> clamp ~min:0.0 ~max:255.0 |> cast UInt8 |> contiguous in
+  let blurred_img =
+    reshape [| h; w |] blurred
+    |> clamp ~min:0.0 ~max:255.0 |> cast UInt8 |> contiguous
+  in
   Nx_io.save_image "blurred.png" blurred_img;
   Printf.printf "Saved: blurred.png\n";
 
@@ -56,14 +65,20 @@ let () =
   let gy = correlate2d ~padding_mode:`Same img_f sobel_y in
   let edges = sqrt (add (mul gx gx) (mul gy gy)) in
   let edge_h = (shape edges).(2) and edge_w = (shape edges).(3) in
-  let edges_img = reshape [| edge_h; edge_w |] edges |> clamp ~min:0.0 ~max:255.0 |> cast UInt8 |> contiguous in
+  let edges_img =
+    reshape [| edge_h; edge_w |] edges
+    |> clamp ~min:0.0 ~max:255.0 |> cast UInt8 |> contiguous
+  in
   Nx_io.save_image "edges.png" edges_img;
   Printf.printf "Saved: edges.png\n";
 
   (* --- Max pooling: 2× downsample --- *)
   let pooled, _indices = max_pool2d ~kernel_size:(2, 2) ~stride:(2, 2) img_f in
   let pool_h = (shape pooled).(2) and pool_w = (shape pooled).(3) in
-  let pooled_img = reshape [| pool_h; pool_w |] pooled |> clamp ~min:0.0 ~max:255.0 |> cast UInt8 |> contiguous in
+  let pooled_img =
+    reshape [| pool_h; pool_w |] pooled
+    |> clamp ~min:0.0 ~max:255.0 |> cast UInt8 |> contiguous
+  in
   Nx_io.save_image "pooled.png" pooled_img;
   Printf.printf "Saved: pooled.png (%dx%d → %dx%d)\n" h w pool_h pool_w;
 

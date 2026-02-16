@@ -561,6 +561,344 @@ INT4_UNARY_IMPL(abs, 0, u4, INT_ABS_OP)
 UNARY_OP_FOR_TYPE(abs, caml_ba_bool, bool_, INT_ABS_OP)
 BUILD_DISPATCH_TABLE(abs);
 
+// Sign
+#define SIGNED_SIGN_OP(x) (((x) > 0) ? 1 : (((x) < 0) ? -1 : 0))
+#define UNSIGNED_SIGN_OP(x) (((x) == 0) ? 0 : 1)
+#define FLOAT_SIGN_OP(x) (isnan(x) ? (x) : (((x) > 0) ? 1.0f : (((x) < 0) ? -1.0f : 0.0f)))
+#define DOUBLE_SIGN_OP(x) (isnan(x) ? (x) : (((x) > 0) ? 1.0 : (((x) < 0) ? -1.0 : 0.0)))
+
+UNARY_OP_FOR_TYPE(sign, int8_t, i8, SIGNED_SIGN_OP)
+UNARY_OP_FOR_TYPE(sign, uint8_t, u8, UNSIGNED_SIGN_OP)
+UNARY_OP_FOR_TYPE(sign, int16_t, i16, SIGNED_SIGN_OP)
+UNARY_OP_FOR_TYPE(sign, uint16_t, u16, UNSIGNED_SIGN_OP)
+UNARY_OP_FOR_TYPE(sign, int32_t, i32, SIGNED_SIGN_OP)
+UNARY_OP_FOR_TYPE(sign, int64_t, i64, SIGNED_SIGN_OP)
+UNARY_OP_FOR_TYPE(sign, uint32_t, u32, UNSIGNED_SIGN_OP)
+UNARY_OP_FOR_TYPE(sign, uint64_t, u64, UNSIGNED_SIGN_OP)
+UNARY_OP_FOR_TYPE(sign, intnat, inat, SIGNED_SIGN_OP)
+UNARY_OP_FOR_TYPE(sign, float, f32, FLOAT_SIGN_OP)
+UNARY_OP_FOR_TYPE(sign, double, f64, DOUBLE_SIGN_OP)
+
+LOW_PREC_OP_KERNEL(sign, uint16_t, f16, FLOAT_SIGN_OP, half_to_float, float_to_half)
+LOW_PREC_OP_IMPL(sign, uint16_t, f16)
+LOW_PREC_OP_KERNEL(sign, caml_ba_bfloat16, bf16, FLOAT_SIGN_OP,
+                   bfloat16_to_float, float_to_bfloat16)
+LOW_PREC_OP_IMPL(sign, caml_ba_bfloat16, bf16)
+LOW_PREC_OP_KERNEL(sign, caml_ba_fp8_e4m3, f8e4m3, FLOAT_SIGN_OP,
+                   fp8_e4m3_to_float, float_to_fp8_e4m3)
+LOW_PREC_OP_IMPL(sign, caml_ba_fp8_e4m3, f8e4m3)
+LOW_PREC_OP_KERNEL(sign, caml_ba_fp8_e5m2, f8e5m2, FLOAT_SIGN_OP,
+                   fp8_e5m2_to_float, float_to_fp8_e5m2)
+LOW_PREC_OP_IMPL(sign, caml_ba_fp8_e5m2, f8e5m2)
+
+INT4_UNARY_IMPL(sign, 1, i4, SIGNED_SIGN_OP)
+INT4_UNARY_IMPL(sign, 0, u4, UNSIGNED_SIGN_OP)
+UNARY_OP_FOR_TYPE(sign, caml_ba_bool, bool_, UNSIGNED_SIGN_OP)
+
+static const unary_op_table sign_table = {.i8 = nx_c_sign_i8,
+                                          .u8 = nx_c_sign_u8,
+                                          .i16 = nx_c_sign_i16,
+                                          .u16 = nx_c_sign_u16,
+                                          .i32 = nx_c_sign_i32,
+                                          .i64 = nx_c_sign_i64,
+                                          .u32 = nx_c_sign_u32,
+                                          .u64 = nx_c_sign_u64,
+                                          .inat = nx_c_sign_inat,
+                                          .f16 = nx_c_sign_f16,
+                                          .f32 = nx_c_sign_f32,
+                                          .f64 = nx_c_sign_f64,
+                                          .c32 = NULL,
+                                          .c64 = NULL,
+                                          .bf16 = nx_c_sign_bf16,
+                                          .bool_ = nx_c_sign_bool_,
+                                          .i4 = nx_c_sign_i4,
+                                          .u4 = nx_c_sign_u4,
+                                          .f8e4m3 = nx_c_sign_f8e4m3,
+                                          .f8e5m2 = nx_c_sign_f8e5m2};
+
+// Tan
+#define TAN_FLOAT_OP(x) (tanf(x))
+#define TAN_DOUBLE_OP(x) (tan(x))
+GENERATE_UNARY_FLOAT_OP(tan, TAN_FLOAT_OP, TAN_DOUBLE_OP)
+
+LOW_PREC_OP_KERNEL(tan, uint16_t, f16, TAN_FLOAT_OP, half_to_float, float_to_half)
+LOW_PREC_OP_IMPL(tan, uint16_t, f16)
+LOW_PREC_OP_KERNEL(tan, caml_ba_bfloat16, bf16, TAN_FLOAT_OP,
+                   bfloat16_to_float, float_to_bfloat16)
+LOW_PREC_OP_IMPL(tan, caml_ba_bfloat16, bf16)
+LOW_PREC_OP_KERNEL(tan, caml_ba_fp8_e4m3, f8e4m3, TAN_FLOAT_OP,
+                   fp8_e4m3_to_float, float_to_fp8_e4m3)
+LOW_PREC_OP_IMPL(tan, caml_ba_fp8_e4m3, f8e4m3)
+LOW_PREC_OP_KERNEL(tan, caml_ba_fp8_e5m2, f8e5m2, TAN_FLOAT_OP,
+                   fp8_e5m2_to_float, float_to_fp8_e5m2)
+LOW_PREC_OP_IMPL(tan, caml_ba_fp8_e5m2, f8e5m2)
+
+static const unary_op_table tan_table = {.f16 = nx_c_tan_f16,
+                                         .f32 = nx_c_tan_f32,
+                                         .f64 = nx_c_tan_f64,
+                                         .bf16 = nx_c_tan_bf16,
+                                         .f8e4m3 = nx_c_tan_f8e4m3,
+                                         .f8e5m2 = nx_c_tan_f8e5m2};
+
+// Asin
+#define ASIN_FLOAT_OP(x) (asinf(x))
+#define ASIN_DOUBLE_OP(x) (asin(x))
+GENERATE_UNARY_FLOAT_OP(asin, ASIN_FLOAT_OP, ASIN_DOUBLE_OP)
+
+LOW_PREC_OP_KERNEL(asin, uint16_t, f16, ASIN_FLOAT_OP, half_to_float, float_to_half)
+LOW_PREC_OP_IMPL(asin, uint16_t, f16)
+LOW_PREC_OP_KERNEL(asin, caml_ba_bfloat16, bf16, ASIN_FLOAT_OP,
+                   bfloat16_to_float, float_to_bfloat16)
+LOW_PREC_OP_IMPL(asin, caml_ba_bfloat16, bf16)
+LOW_PREC_OP_KERNEL(asin, caml_ba_fp8_e4m3, f8e4m3, ASIN_FLOAT_OP,
+                   fp8_e4m3_to_float, float_to_fp8_e4m3)
+LOW_PREC_OP_IMPL(asin, caml_ba_fp8_e4m3, f8e4m3)
+LOW_PREC_OP_KERNEL(asin, caml_ba_fp8_e5m2, f8e5m2, ASIN_FLOAT_OP,
+                   fp8_e5m2_to_float, float_to_fp8_e5m2)
+LOW_PREC_OP_IMPL(asin, caml_ba_fp8_e5m2, f8e5m2)
+
+static const unary_op_table asin_table = {.f16 = nx_c_asin_f16,
+                                          .f32 = nx_c_asin_f32,
+                                          .f64 = nx_c_asin_f64,
+                                          .bf16 = nx_c_asin_bf16,
+                                          .f8e4m3 = nx_c_asin_f8e4m3,
+                                          .f8e5m2 = nx_c_asin_f8e5m2};
+
+// Acos
+#define ACOS_FLOAT_OP(x) (acosf(x))
+#define ACOS_DOUBLE_OP(x) (acos(x))
+GENERATE_UNARY_FLOAT_OP(acos, ACOS_FLOAT_OP, ACOS_DOUBLE_OP)
+
+LOW_PREC_OP_KERNEL(acos, uint16_t, f16, ACOS_FLOAT_OP, half_to_float, float_to_half)
+LOW_PREC_OP_IMPL(acos, uint16_t, f16)
+LOW_PREC_OP_KERNEL(acos, caml_ba_bfloat16, bf16, ACOS_FLOAT_OP,
+                   bfloat16_to_float, float_to_bfloat16)
+LOW_PREC_OP_IMPL(acos, caml_ba_bfloat16, bf16)
+LOW_PREC_OP_KERNEL(acos, caml_ba_fp8_e4m3, f8e4m3, ACOS_FLOAT_OP,
+                   fp8_e4m3_to_float, float_to_fp8_e4m3)
+LOW_PREC_OP_IMPL(acos, caml_ba_fp8_e4m3, f8e4m3)
+LOW_PREC_OP_KERNEL(acos, caml_ba_fp8_e5m2, f8e5m2, ACOS_FLOAT_OP,
+                   fp8_e5m2_to_float, float_to_fp8_e5m2)
+LOW_PREC_OP_IMPL(acos, caml_ba_fp8_e5m2, f8e5m2)
+
+static const unary_op_table acos_table = {.f16 = nx_c_acos_f16,
+                                          .f32 = nx_c_acos_f32,
+                                          .f64 = nx_c_acos_f64,
+                                          .bf16 = nx_c_acos_bf16,
+                                          .f8e4m3 = nx_c_acos_f8e4m3,
+                                          .f8e5m2 = nx_c_acos_f8e5m2};
+
+// Atan
+#define ATAN_FLOAT_OP(x) (atanf(x))
+#define ATAN_DOUBLE_OP(x) (atan(x))
+GENERATE_UNARY_FLOAT_OP(atan, ATAN_FLOAT_OP, ATAN_DOUBLE_OP)
+
+LOW_PREC_OP_KERNEL(atan, uint16_t, f16, ATAN_FLOAT_OP, half_to_float, float_to_half)
+LOW_PREC_OP_IMPL(atan, uint16_t, f16)
+LOW_PREC_OP_KERNEL(atan, caml_ba_bfloat16, bf16, ATAN_FLOAT_OP,
+                   bfloat16_to_float, float_to_bfloat16)
+LOW_PREC_OP_IMPL(atan, caml_ba_bfloat16, bf16)
+LOW_PREC_OP_KERNEL(atan, caml_ba_fp8_e4m3, f8e4m3, ATAN_FLOAT_OP,
+                   fp8_e4m3_to_float, float_to_fp8_e4m3)
+LOW_PREC_OP_IMPL(atan, caml_ba_fp8_e4m3, f8e4m3)
+LOW_PREC_OP_KERNEL(atan, caml_ba_fp8_e5m2, f8e5m2, ATAN_FLOAT_OP,
+                   fp8_e5m2_to_float, float_to_fp8_e5m2)
+LOW_PREC_OP_IMPL(atan, caml_ba_fp8_e5m2, f8e5m2)
+
+static const unary_op_table atan_table = {.f16 = nx_c_atan_f16,
+                                          .f32 = nx_c_atan_f32,
+                                          .f64 = nx_c_atan_f64,
+                                          .bf16 = nx_c_atan_bf16,
+                                          .f8e4m3 = nx_c_atan_f8e4m3,
+                                          .f8e5m2 = nx_c_atan_f8e5m2};
+
+// Sinh
+#define SINH_FLOAT_OP(x) (sinhf(x))
+#define SINH_DOUBLE_OP(x) (sinh(x))
+GENERATE_UNARY_FLOAT_OP(sinh, SINH_FLOAT_OP, SINH_DOUBLE_OP)
+
+LOW_PREC_OP_KERNEL(sinh, uint16_t, f16, SINH_FLOAT_OP, half_to_float, float_to_half)
+LOW_PREC_OP_IMPL(sinh, uint16_t, f16)
+LOW_PREC_OP_KERNEL(sinh, caml_ba_bfloat16, bf16, SINH_FLOAT_OP,
+                   bfloat16_to_float, float_to_bfloat16)
+LOW_PREC_OP_IMPL(sinh, caml_ba_bfloat16, bf16)
+LOW_PREC_OP_KERNEL(sinh, caml_ba_fp8_e4m3, f8e4m3, SINH_FLOAT_OP,
+                   fp8_e4m3_to_float, float_to_fp8_e4m3)
+LOW_PREC_OP_IMPL(sinh, caml_ba_fp8_e4m3, f8e4m3)
+LOW_PREC_OP_KERNEL(sinh, caml_ba_fp8_e5m2, f8e5m2, SINH_FLOAT_OP,
+                   fp8_e5m2_to_float, float_to_fp8_e5m2)
+LOW_PREC_OP_IMPL(sinh, caml_ba_fp8_e5m2, f8e5m2)
+
+static const unary_op_table sinh_table = {.f16 = nx_c_sinh_f16,
+                                          .f32 = nx_c_sinh_f32,
+                                          .f64 = nx_c_sinh_f64,
+                                          .bf16 = nx_c_sinh_bf16,
+                                          .f8e4m3 = nx_c_sinh_f8e4m3,
+                                          .f8e5m2 = nx_c_sinh_f8e5m2};
+
+// Cosh
+#define COSH_FLOAT_OP(x) (coshf(x))
+#define COSH_DOUBLE_OP(x) (cosh(x))
+GENERATE_UNARY_FLOAT_OP(cosh, COSH_FLOAT_OP, COSH_DOUBLE_OP)
+
+LOW_PREC_OP_KERNEL(cosh, uint16_t, f16, COSH_FLOAT_OP, half_to_float, float_to_half)
+LOW_PREC_OP_IMPL(cosh, uint16_t, f16)
+LOW_PREC_OP_KERNEL(cosh, caml_ba_bfloat16, bf16, COSH_FLOAT_OP,
+                   bfloat16_to_float, float_to_bfloat16)
+LOW_PREC_OP_IMPL(cosh, caml_ba_bfloat16, bf16)
+LOW_PREC_OP_KERNEL(cosh, caml_ba_fp8_e4m3, f8e4m3, COSH_FLOAT_OP,
+                   fp8_e4m3_to_float, float_to_fp8_e4m3)
+LOW_PREC_OP_IMPL(cosh, caml_ba_fp8_e4m3, f8e4m3)
+LOW_PREC_OP_KERNEL(cosh, caml_ba_fp8_e5m2, f8e5m2, COSH_FLOAT_OP,
+                   fp8_e5m2_to_float, float_to_fp8_e5m2)
+LOW_PREC_OP_IMPL(cosh, caml_ba_fp8_e5m2, f8e5m2)
+
+static const unary_op_table cosh_table = {.f16 = nx_c_cosh_f16,
+                                          .f32 = nx_c_cosh_f32,
+                                          .f64 = nx_c_cosh_f64,
+                                          .bf16 = nx_c_cosh_bf16,
+                                          .f8e4m3 = nx_c_cosh_f8e4m3,
+                                          .f8e5m2 = nx_c_cosh_f8e5m2};
+
+// Tanh
+#define TANH_FLOAT_OP(x) (tanhf(x))
+#define TANH_DOUBLE_OP(x) (tanh(x))
+GENERATE_UNARY_FLOAT_OP(tanh, TANH_FLOAT_OP, TANH_DOUBLE_OP)
+
+LOW_PREC_OP_KERNEL(tanh, uint16_t, f16, TANH_FLOAT_OP, half_to_float, float_to_half)
+LOW_PREC_OP_IMPL(tanh, uint16_t, f16)
+LOW_PREC_OP_KERNEL(tanh, caml_ba_bfloat16, bf16, TANH_FLOAT_OP,
+                   bfloat16_to_float, float_to_bfloat16)
+LOW_PREC_OP_IMPL(tanh, caml_ba_bfloat16, bf16)
+LOW_PREC_OP_KERNEL(tanh, caml_ba_fp8_e4m3, f8e4m3, TANH_FLOAT_OP,
+                   fp8_e4m3_to_float, float_to_fp8_e4m3)
+LOW_PREC_OP_IMPL(tanh, caml_ba_fp8_e4m3, f8e4m3)
+LOW_PREC_OP_KERNEL(tanh, caml_ba_fp8_e5m2, f8e5m2, TANH_FLOAT_OP,
+                   fp8_e5m2_to_float, float_to_fp8_e5m2)
+LOW_PREC_OP_IMPL(tanh, caml_ba_fp8_e5m2, f8e5m2)
+
+static const unary_op_table tanh_table = {.f16 = nx_c_tanh_f16,
+                                          .f32 = nx_c_tanh_f32,
+                                          .f64 = nx_c_tanh_f64,
+                                          .bf16 = nx_c_tanh_bf16,
+                                          .f8e4m3 = nx_c_tanh_f8e4m3,
+                                          .f8e5m2 = nx_c_tanh_f8e5m2};
+
+// Rounding ops: float apply op, non-float are identity
+#define IDENTITY_OP(x) (x)
+#define TRUNC_FLOAT_OP(x) (truncf(x))
+#define TRUNC_DOUBLE_OP(x) (trunc(x))
+#define CEIL_FLOAT_OP(x) (ceilf(x))
+#define CEIL_DOUBLE_OP(x) (ceil(x))
+#define FLOOR_FLOAT_OP(x) (floorf(x))
+#define FLOOR_DOUBLE_OP(x) (floor(x))
+#define ROUND_FLOAT_OP(x) (roundf(x))
+#define ROUND_DOUBLE_OP(x) (round(x))
+
+#define GENERATE_UNARY_IDENTITY_NONFLOAT(name) \
+  UNARY_OP_FOR_TYPE(name, int8_t, i8, IDENTITY_OP) \
+  UNARY_OP_FOR_TYPE(name, uint8_t, u8, IDENTITY_OP) \
+  UNARY_OP_FOR_TYPE(name, int16_t, i16, IDENTITY_OP) \
+  UNARY_OP_FOR_TYPE(name, uint16_t, u16, IDENTITY_OP) \
+  UNARY_OP_FOR_TYPE(name, int32_t, i32, IDENTITY_OP) \
+  UNARY_OP_FOR_TYPE(name, int64_t, i64, IDENTITY_OP) \
+  UNARY_OP_FOR_TYPE(name, uint32_t, u32, IDENTITY_OP) \
+  UNARY_OP_FOR_TYPE(name, uint64_t, u64, IDENTITY_OP) \
+  UNARY_OP_FOR_TYPE(name, intnat, inat, IDENTITY_OP) \
+  UNARY_OP_FOR_TYPE(name, complex32, c32, IDENTITY_OP) \
+  UNARY_OP_FOR_TYPE(name, complex64, c64, IDENTITY_OP) \
+  UNARY_OP_FOR_TYPE(name, caml_ba_bool, bool_, IDENTITY_OP) \
+  INT4_UNARY_IMPL(name, 1, i4, IDENTITY_OP) \
+  INT4_UNARY_IMPL(name, 0, u4, IDENTITY_OP)
+
+GENERATE_UNARY_IDENTITY_NONFLOAT(trunc)
+UNARY_OP_FOR_TYPE(trunc, float, f32, TRUNC_FLOAT_OP)
+UNARY_OP_FOR_TYPE(trunc, double, f64, TRUNC_DOUBLE_OP)
+LOW_PREC_OP_KERNEL(trunc, uint16_t, f16, TRUNC_FLOAT_OP, half_to_float, float_to_half)
+LOW_PREC_OP_IMPL(trunc, uint16_t, f16)
+LOW_PREC_OP_KERNEL(trunc, caml_ba_bfloat16, bf16, TRUNC_FLOAT_OP,
+                   bfloat16_to_float, float_to_bfloat16)
+LOW_PREC_OP_IMPL(trunc, caml_ba_bfloat16, bf16)
+LOW_PREC_OP_KERNEL(trunc, caml_ba_fp8_e4m3, f8e4m3, TRUNC_FLOAT_OP,
+                   fp8_e4m3_to_float, float_to_fp8_e4m3)
+LOW_PREC_OP_IMPL(trunc, caml_ba_fp8_e4m3, f8e4m3)
+LOW_PREC_OP_KERNEL(trunc, caml_ba_fp8_e5m2, f8e5m2, TRUNC_FLOAT_OP,
+                   fp8_e5m2_to_float, float_to_fp8_e5m2)
+LOW_PREC_OP_IMPL(trunc, caml_ba_fp8_e5m2, f8e5m2)
+BUILD_DISPATCH_TABLE(trunc);
+
+GENERATE_UNARY_IDENTITY_NONFLOAT(ceil)
+UNARY_OP_FOR_TYPE(ceil, float, f32, CEIL_FLOAT_OP)
+UNARY_OP_FOR_TYPE(ceil, double, f64, CEIL_DOUBLE_OP)
+LOW_PREC_OP_KERNEL(ceil, uint16_t, f16, CEIL_FLOAT_OP, half_to_float, float_to_half)
+LOW_PREC_OP_IMPL(ceil, uint16_t, f16)
+LOW_PREC_OP_KERNEL(ceil, caml_ba_bfloat16, bf16, CEIL_FLOAT_OP,
+                   bfloat16_to_float, float_to_bfloat16)
+LOW_PREC_OP_IMPL(ceil, caml_ba_bfloat16, bf16)
+LOW_PREC_OP_KERNEL(ceil, caml_ba_fp8_e4m3, f8e4m3, CEIL_FLOAT_OP,
+                   fp8_e4m3_to_float, float_to_fp8_e4m3)
+LOW_PREC_OP_IMPL(ceil, caml_ba_fp8_e4m3, f8e4m3)
+LOW_PREC_OP_KERNEL(ceil, caml_ba_fp8_e5m2, f8e5m2, CEIL_FLOAT_OP,
+                   fp8_e5m2_to_float, float_to_fp8_e5m2)
+LOW_PREC_OP_IMPL(ceil, caml_ba_fp8_e5m2, f8e5m2)
+BUILD_DISPATCH_TABLE(ceil);
+
+GENERATE_UNARY_IDENTITY_NONFLOAT(floor)
+UNARY_OP_FOR_TYPE(floor, float, f32, FLOOR_FLOAT_OP)
+UNARY_OP_FOR_TYPE(floor, double, f64, FLOOR_DOUBLE_OP)
+LOW_PREC_OP_KERNEL(floor, uint16_t, f16, FLOOR_FLOAT_OP, half_to_float, float_to_half)
+LOW_PREC_OP_IMPL(floor, uint16_t, f16)
+LOW_PREC_OP_KERNEL(floor, caml_ba_bfloat16, bf16, FLOOR_FLOAT_OP,
+                   bfloat16_to_float, float_to_bfloat16)
+LOW_PREC_OP_IMPL(floor, caml_ba_bfloat16, bf16)
+LOW_PREC_OP_KERNEL(floor, caml_ba_fp8_e4m3, f8e4m3, FLOOR_FLOAT_OP,
+                   fp8_e4m3_to_float, float_to_fp8_e4m3)
+LOW_PREC_OP_IMPL(floor, caml_ba_fp8_e4m3, f8e4m3)
+LOW_PREC_OP_KERNEL(floor, caml_ba_fp8_e5m2, f8e5m2, FLOOR_FLOAT_OP,
+                   fp8_e5m2_to_float, float_to_fp8_e5m2)
+LOW_PREC_OP_IMPL(floor, caml_ba_fp8_e5m2, f8e5m2)
+BUILD_DISPATCH_TABLE(floor);
+
+GENERATE_UNARY_IDENTITY_NONFLOAT(round)
+UNARY_OP_FOR_TYPE(round, float, f32, ROUND_FLOAT_OP)
+UNARY_OP_FOR_TYPE(round, double, f64, ROUND_DOUBLE_OP)
+LOW_PREC_OP_KERNEL(round, uint16_t, f16, ROUND_FLOAT_OP, half_to_float, float_to_half)
+LOW_PREC_OP_IMPL(round, uint16_t, f16)
+LOW_PREC_OP_KERNEL(round, caml_ba_bfloat16, bf16, ROUND_FLOAT_OP,
+                   bfloat16_to_float, float_to_bfloat16)
+LOW_PREC_OP_IMPL(round, caml_ba_bfloat16, bf16)
+LOW_PREC_OP_KERNEL(round, caml_ba_fp8_e4m3, f8e4m3, ROUND_FLOAT_OP,
+                   fp8_e4m3_to_float, float_to_fp8_e4m3)
+LOW_PREC_OP_IMPL(round, caml_ba_fp8_e4m3, f8e4m3)
+LOW_PREC_OP_KERNEL(round, caml_ba_fp8_e5m2, f8e5m2, ROUND_FLOAT_OP,
+                   fp8_e5m2_to_float, float_to_fp8_e5m2)
+LOW_PREC_OP_IMPL(round, caml_ba_fp8_e5m2, f8e5m2)
+BUILD_DISPATCH_TABLE(round);
+
+// Erf
+#define ERF_FLOAT_OP(x) (erff(x))
+#define ERF_DOUBLE_OP(x) (erf(x))
+GENERATE_UNARY_FLOAT_OP(erf, ERF_FLOAT_OP, ERF_DOUBLE_OP)
+
+LOW_PREC_OP_KERNEL(erf, uint16_t, f16, ERF_FLOAT_OP, half_to_float, float_to_half)
+LOW_PREC_OP_IMPL(erf, uint16_t, f16)
+LOW_PREC_OP_KERNEL(erf, caml_ba_bfloat16, bf16, ERF_FLOAT_OP,
+                   bfloat16_to_float, float_to_bfloat16)
+LOW_PREC_OP_IMPL(erf, caml_ba_bfloat16, bf16)
+LOW_PREC_OP_KERNEL(erf, caml_ba_fp8_e4m3, f8e4m3, ERF_FLOAT_OP,
+                   fp8_e4m3_to_float, float_to_fp8_e4m3)
+LOW_PREC_OP_IMPL(erf, caml_ba_fp8_e4m3, f8e4m3)
+LOW_PREC_OP_KERNEL(erf, caml_ba_fp8_e5m2, f8e5m2, ERF_FLOAT_OP,
+                   fp8_e5m2_to_float, float_to_fp8_e5m2)
+LOW_PREC_OP_IMPL(erf, caml_ba_fp8_e5m2, f8e5m2)
+
+static const unary_op_table erf_table = {.f16 = nx_c_erf_f16,
+                                         .f32 = nx_c_erf_f32,
+                                         .f64 = nx_c_erf_f64,
+                                         .bf16 = nx_c_erf_bf16,
+                                         .f8e4m3 = nx_c_erf_f8e4m3,
+                                         .f8e5m2 = nx_c_erf_f8e5m2};
+
 // Shared dispatch infrastructure
 
 // Generic dispatch function for unary operations
@@ -708,3 +1046,16 @@ DEFINE_FFI_STUB(cos)
 DEFINE_FFI_STUB(sqrt)
 DEFINE_FFI_STUB(abs)
 DEFINE_FFI_STUB(recip)
+DEFINE_FFI_STUB(sign)
+DEFINE_FFI_STUB(tan)
+DEFINE_FFI_STUB(asin)
+DEFINE_FFI_STUB(acos)
+DEFINE_FFI_STUB(atan)
+DEFINE_FFI_STUB(sinh)
+DEFINE_FFI_STUB(cosh)
+DEFINE_FFI_STUB(tanh)
+DEFINE_FFI_STUB(trunc)
+DEFINE_FFI_STUB(ceil)
+DEFINE_FFI_STUB(floor)
+DEFINE_FFI_STUB(round)
+DEFINE_FFI_STUB(erf)
