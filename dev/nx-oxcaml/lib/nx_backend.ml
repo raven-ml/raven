@@ -977,11 +977,6 @@ let op_reduce_min (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
 let op_associative_scan ~axis:_ ~op:_ _ =
   Error.invalid ~op:"op_associative_scan" ~what:"not implemented" ()
 
-  
-  let op_const_scalar  _ _ =
-  Error.invalid ~op:"op_const_scalar" ~what:"not implemented" ()
-
-  
 let from_host (type a b) ctx (array : (a, b, c_layout) Bigarray.Array1.t) : (a, b) t =
   let dtype = Dtype.of_buffer_kind (Array1.kind array) in
   let size = Array1.dim array in
