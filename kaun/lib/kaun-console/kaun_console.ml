@@ -45,6 +45,29 @@ type msg =
   | Open_metric of string
   | Close_metric
 
+(* ───── Helpers ───── *)
+
+(** Tags of metrics visible on the current batch (same order as dashboard charts). *)
+let visible_chart_tags (m : model) : string list =
+  let latest = Metric_store.latest_metrics m.store in
+  let tags = List.map fst latest in
+  let total_metrics = List.length tags in
+  if total_metrics = 0 then []
+  else
+    let graphs_per_batch =
+      Metrics.calculate_graphs_per_batch ~width:m.screen_width
+        ~height:m.screen_height
+    in
+    let total_batches =
+      (total_metrics + graphs_per_batch - 1) / graphs_per_batch
+    in
+    let current_batch = min m.current_batch (max 0 (total_batches - 1)) in
+    let start_idx = current_batch * graphs_per_batch in
+    let end_idx = min (start_idx + graphs_per_batch) total_metrics in
+    List.mapi (fun i tag -> (i, tag)) tags
+    |> List.filter (fun (i, _) -> i >= start_idx && i < end_idx)
+    |> List.map snd
+
 (* ───── View ───── *)
 
 let divider () =
@@ -76,7 +99,6 @@ let view_dashboard m =
               screen_width = m.screen_width;
               screen_height = m.screen_height;
               current_batch = m.current_batch;
-              on_open = (fun tag -> Open_metric tag);
             };
           divider ();
           (* Right column: sys panel (1/3 width) *)
@@ -221,7 +243,8 @@ let subscriptions m =
       Sub.on_tick (fun ~dt -> Tick dt);
       Sub.on_resize (fun ~width ~height -> Resize (width, height));
       Sub.on_key (fun ev ->
-          match (Mosaic_ui.Event.Key.data ev).key with
+          let key_data = Mosaic_ui.Event.Key.data ev in
+          match key_data.key with
           | Char c when Uchar.equal c (Uchar.of_char 'q') -> (
               match m.mode with Dashboard -> Some Quit | Detail _ -> Some Close_metric)
           | Char c when Uchar.equal c (Uchar.of_char 'Q') -> (
@@ -232,6 +255,19 @@ let subscriptions m =
               match m.mode with Dashboard -> Some Prev_batch | Detail _ -> None)
           | Right -> (
               match m.mode with Dashboard -> Some Next_batch | Detail _ -> None)
+          | Char c when m.mode = Dashboard ->
+              let code = Uchar.to_int c in
+              let idx =
+                if code >= 0x31 && code <= 0x39 then code - 0x31
+                else if code >= 1 && code <= 9 then code - 1
+                else -1
+              in
+              if idx >= 0 then
+                let visible = visible_chart_tags m in
+                if idx < List.length visible then
+                  Some (Open_metric (List.nth visible idx))
+                else None
+              else None
           | _ -> None);
     ]
 

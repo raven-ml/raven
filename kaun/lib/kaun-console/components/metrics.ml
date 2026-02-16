@@ -7,7 +7,6 @@
 
 open Mosaic
 module Charts = Matrix_charts
-module Event = Mosaic_ui.Event
 
 (* ───── Styles ───── *)
 
@@ -109,7 +108,7 @@ let draw_metric_chart ~hover history grid ~width ~height =
               | _ -> ())
           | None -> ()
 
-let view_metric_chart ~history_for_tag ~columns ~on_open tag =
+let view_metric_chart ~history_for_tag ~columns tag =
   let history = history_for_tag tag in
   let width_pct = if columns = 1 then 100 else 49 in
   (* Show current (latest) value in title at all times. *)
@@ -127,10 +126,6 @@ let view_metric_chart ~history_for_tag ~columns ~on_open tag =
     ~size:{ width = pct width_pct; height = px 14 }
     [
       canvas
-        ~on_mouse:(fun ev ->
-          match Event.Mouse.kind ev with
-          | Down -> Some (on_open tag)
-          | _ -> None)
         ~draw:(fun grid ~width ~height ->
           draw_metric_chart ~hover:None history grid ~width ~height)
         ~size:{ width = pct 100; height = pct 100 }
@@ -140,13 +135,12 @@ let view_metric_chart ~history_for_tag ~columns ~on_open tag =
 (* ───── View ───── *)
 
 (* We use 'a for metric value and 'msg for message type. *)
-type ('a, 'msg) view_params = {
+type ('a, _) view_params = {
   latest_metrics : (string * 'a) list;
   history_for_tag : string -> (int * float) list;
   screen_width : int;
   screen_height : int;
   current_batch : int;
-  on_open : string -> 'msg;
 }
 
 (** Chunk a list into groups of n *)
@@ -209,7 +203,7 @@ let view (params : (_, _) view_params) =
                  (List.map
                     (fun tag ->
                       view_metric_chart ~history_for_tag:params.history_for_tag
-                       ~columns ~on_open:params.on_open tag)
+                        ~columns tag)
                     row))
              rows);
       ]
