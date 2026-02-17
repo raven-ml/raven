@@ -30,13 +30,13 @@ let dtype t = t.dtype
 let context t = t.context
 
 (* [to_host] returns a Bigarray, but Bigarrays cannot point to OCaml heap
-    memory. Unboxed arrays are GC-managed, so we cannot create a Bigarray view of
-    them without risking memory safety. Use [data_array] to access the raw
-    buffer. *)
+  memory. Unboxed arrays are GC-managed, so we cannot create a Bigarray view of
+  them without risking memory safety. Use [data_array] to access the raw
+  buffer. *)
 let to_host _ =
   failwith
-    "Nx_oxcaml.to_host is not supported. Bigarrays cannot point to OCaml heap \
-      memory. Use Nx_oxcaml.data_array instead."
+    "Nx_backend.to_host is not supported. Bigarrays cannot point to OCaml heap \
+    memory. Use Nx_backend.data_array instead."
 
 let data_array t = t.buffer
 
@@ -974,11 +974,11 @@ let op_reduce_min (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
   | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
 
 let op_associative_scan ~axis:_ ~op:_ _ =
-    Error.invalid ~op:"op_associative_scan" ~what:"not implemented" ()
-    
+  Error.invalid ~op:"op_associative_scan" ~what:"not implemented" ()
+
 let op_const_scalar _ _ _ =
-    Error.invalid ~op:"op_const_scalar" ~what:"not implemented" ()
-  
+  Error.invalid ~op:"op_const_scalar" ~what:"not implemented" ()
+
 let from_host _ _ = Error.invalid ~op:"from_host" ~what:"not implemented" ()
 let op_expand x shape = { x with view = View.expand x.view shape }
 let op_reshape x shape = { x with view = View.reshape x.view shape }
@@ -1261,7 +1261,7 @@ let op_cholesky ~upper:_ _ =
 let op_qr ~reduced:_ _ = Error.invalid ~op:"op_qr" ~what:"not implemented" ()
 
 let op_svd ~full_matrices:_ _ =
-Error.invalid ~op:"op_svd" ~what:"not implemented" ()
+  Error.invalid ~op:"op_svd" ~what:"not implemented" ()
 
 let op_eig ~vectors:_ _ = Error.invalid ~op:"op_eig" ~what:"not implemented" ()
 
