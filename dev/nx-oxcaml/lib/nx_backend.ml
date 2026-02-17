@@ -30,13 +30,13 @@ let dtype t = t.dtype
 let context t = t.context
 
 (* [to_host] returns a Bigarray, but Bigarrays cannot point to OCaml heap
-  memory. Unboxed arrays are GC-managed, so we cannot create a Bigarray view of
-  them without risking memory safety. Use [data_array] to access the raw
-  buffer. *)
+   memory. Unboxed arrays are GC-managed, so we cannot create a Bigarray view of
+   them without risking memory safety. Use [data_array] to access the raw
+   buffer. *)
 let to_host _ =
   failwith
     "Nx_backend.to_host is not supported. Bigarrays cannot point to OCaml heap \
-    memory. Use Nx_backend.data_array instead."
+     memory. Use Nx_backend.data_array instead."
 
 let data_array t = t.buffer
 
@@ -1154,26 +1154,26 @@ let op_cat (type a b) (xs : (a, b) t list) (axis : int) : (a, b) t =
 let op_cast _ _ = Error.invalid ~op:"op_cast" ~what:"not implemented" ()
 
 let op_contiguous _ =
-Error.invalid ~op:"op_contiguous" ~what:"not implemented" ()
+  Error.invalid ~op:"op_contiguous" ~what:"not implemented" ()
 
 let op_copy _ = Error.invalid ~op:"op_copy" ~what:"not implemented" ()
 let op_assign _ _ = Error.invalid ~op:"op_assign" ~what:"not implemented" ()
 
 let op_as_strided _ _ _ _ =
-Error.invalid ~op:"op_as_strided" ~what:"not implemented" ()
+  Error.invalid ~op:"op_as_strided" ~what:"not implemented" ()
 
 let op_threefry _ _ = Error.invalid ~op:"op_threefry" ~what:"not implemented" ()
 let op_gather _ _ _ = Error.invalid ~op:"op_gather" ~what:"not implemented" ()
 
 let op_scatter ?mode:_ ?unique_indices:_ _ _ _ _ =
-Error.invalid ~op:"op_scatter" ~what:"not implemented" ()
+  Error.invalid ~op:"op_scatter" ~what:"not implemented" ()
 
 let op_unfold ?out:_ _ ~kernel_size:_ ~stride:_ ~dilation:_ ~padding:_ =
-Error.invalid ~op:"op_unfold" ~what:"not implemented" ()
+  Error.invalid ~op:"op_unfold" ~what:"not implemented" ()
 
 let op_fold ?out:_ _ ~output_size:_ ~kernel_size:_ ~stride:_ ~dilation:_
-  ~padding:_ =
-Error.invalid ~op:"op_fold" ~what:"not implemented" ()
+    ~padding:_ =
+  Error.invalid ~op:"op_fold" ~what:"not implemented" ()
 
 let op_matmul (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit
     =
