@@ -1,5 +1,0 @@
-(library
- (name kaun_console_components)
- (public_name kaun.console.components)
- (modules header footer metrics imp_info sys_panel splash chart_view)
- (libraries kaun.sysstat unix mosaic mosaic.ui matrix.charts matrix.grid))

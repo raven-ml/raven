@@ -8,15 +8,6 @@
 open Mosaic
 open Kaun_runlog
 
-(* Import components *)
-module Header = Kaun_console_components.Header
-module Footer = Kaun_console_components.Footer
-module Metrics = Kaun_console_components.Metrics
-module Imp_info = Kaun_console_components.Imp_info
-module Sys_panel = Kaun_console_components.Sys_panel
-module Splash = Kaun_console_components.Splash
-module Chart_view = Kaun_console_components.Chart_view
-
 (* ───── Model ───── *)
 
 type model = {
