@@ -16,9 +16,7 @@ type model = {
   run_id : string;
   store : Metric_store.t;
   stream : Run.event_stream;
-  screen_width : int;
-  screen_height : int;
-  current_batch : int;
+  metrics_state : Metrics.state;
   sys_panel : Sys_panel.t;
   mode : mode;
 }
@@ -30,34 +28,17 @@ and mode =
 type msg =
   | Tick of float
   | Quit
-  | Resize of int * int
-  | Next_batch
-  | Prev_batch
+  | Metrics_msg of Metrics.msg
   | Open_metric of string
   | Close_metric
 
 (* ───── Helpers ───── *)
 
-(** Tags of metrics visible on the current batch (same order as dashboard charts). *)
 let visible_chart_tags (m : model) : string list =
   let latest = Metric_store.latest_metrics m.store in
-  let tags = List.map fst latest in
-  let total_metrics = List.length tags in
-  if total_metrics = 0 then []
-  else
-    let graphs_per_batch =
-      Metrics.calculate_graphs_per_batch ~width:m.screen_width
-        ~height:m.screen_height
-    in
-    let total_batches =
-      (total_metrics + graphs_per_batch - 1) / graphs_per_batch
-    in
-    let current_batch = min m.current_batch (max 0 (total_batches - 1)) in
-    let start_idx = current_batch * graphs_per_batch in
-    let end_idx = min (start_idx + graphs_per_batch) total_metrics in
-    List.mapi (fun i tag -> (i, tag)) tags
-    |> List.filter (fun (i, _) -> i >= start_idx && i < end_idx)
-    |> List.map snd
+  let all_tags = List.map fst latest in
+  let total_metrics = List.length all_tags in
+  Metrics.visible_chart_tags m.metrics_state ~total_metrics ~all_tags
 
 (* ───── View ───── *)
 
@@ -87,9 +68,9 @@ let view_dashboard m =
             {
               latest_metrics = Metric_store.latest_metrics m.store;
               history_for_tag = Metric_store.history_for_tag m.store;
-              screen_width = m.screen_width;
-              screen_height = m.screen_height;
-              current_batch = m.current_batch;
+              screen_width = m.metrics_state.screen_width;
+              screen_height = m.metrics_state.screen_height;
+              current_batch = m.metrics_state.current_batch;
             };
           divider ();
           (* Right column: sys panel (1/3 width) *)
@@ -152,6 +133,12 @@ let init ~run =
   Metric_store.update store initial_events;
   (* Get actual terminal size at startup *)
   let initial_width, initial_height = get_initial_terminal_size () in
+  let metrics_state =
+    { (Metrics.initial_state ()) with
+      screen_width = initial_width;
+      screen_height = initial_height;
+    }
+  in
   (* Initialize system panel *)
   let sys_panel = Sys_panel.create () in
   ( {
@@ -160,9 +147,7 @@ let init ~run =
       run_id;
       store;
       stream;
-      screen_width = initial_width;
-      screen_height = initial_height;
-      current_batch = 0;
+      metrics_state;
       sys_panel;
       mode = Dashboard;
     },
@@ -190,38 +175,14 @@ let update msg m =
         Metric_store.update m.store new_events;
         let sys_panel = Sys_panel.update m.sys_panel ~dt in
         ({ m with store = m.store; sys_panel }, Cmd.none)
-  | Resize (width, height) ->
-      (* Recalculate current batch to ensure it's still valid after resize *)
-      let latest = Metric_store.latest_metrics m.store in
-      let total_metrics = List.length latest in
-      let graphs_per_batch = Metrics.calculate_graphs_per_batch ~width ~height in
-      let total_batches =
-        if total_metrics = 0 then 1
-        else (total_metrics + graphs_per_batch - 1) / graphs_per_batch
+  | Metrics_msg metrics_msg ->
+      let total_metrics =
+        List.length (Metric_store.latest_metrics m.store)
       in
-      let max_batch = max 0 (total_batches - 1) in
-      let current_batch = min m.current_batch max_batch in
-      ({ m with screen_width = width; screen_height = height; current_batch }, Cmd.none)
-  | Next_batch ->
-      (match m.mode with
-      | Detail _ -> (m, Cmd.none)
-      | Dashboard ->
-      let latest = Metric_store.latest_metrics m.store in
-      let total_metrics = List.length latest in
-      let graphs_per_batch =
-        Metrics.calculate_graphs_per_batch ~width:m.screen_width
-          ~height:m.screen_height
+      let metrics_state' =
+        Metrics.update metrics_msg m.metrics_state ~total_metrics
       in
-      let total_batches =
-        if total_metrics = 0 then 1
-        else (total_metrics + graphs_per_batch - 1) / graphs_per_batch
-      in
-      let max_batch = max 0 (total_batches - 1) in
-      ({ m with current_batch = min (m.current_batch + 1) max_batch }, Cmd.none))
-  | Prev_batch ->
-      (match m.mode with
-      | Detail _ -> (m, Cmd.none)
-      | Dashboard -> ({ m with current_batch = max 0 (m.current_batch - 1) }, Cmd.none))
+      ({ m with metrics_state = metrics_state' }, Cmd.none)
   | Open_metric tag -> ({ m with mode = Detail tag }, Cmd.none)
   | Close_metric -> ({ m with mode = Dashboard }, Cmd.none)
   | Quit ->
@@ -232,7 +193,8 @@ let subscriptions m =
   Sub.batch
     [
       Sub.on_tick (fun ~dt -> Tick dt);
-      Sub.on_resize (fun ~width ~height -> Resize (width, height));
+      Sub.on_resize (fun ~width ~height ->
+          Metrics_msg (Metrics.Resize (width, height)));
       Sub.on_key (fun ev ->
           let key_data = Mosaic_ui.Event.Key.data ev in
           match key_data.key with
@@ -243,9 +205,9 @@ let subscriptions m =
           | Escape -> (
               match m.mode with Dashboard -> Some Quit | Detail _ -> Some Close_metric)
           | Left -> (
-              match m.mode with Dashboard -> Some Prev_batch | Detail _ -> None)
+              match m.mode with Dashboard -> Some (Metrics_msg Metrics.Prev_batch) | Detail _ -> None)
           | Right -> (
-              match m.mode with Dashboard -> Some Next_batch | Detail _ -> None)
+              match m.mode with Dashboard -> Some (Metrics_msg Metrics.Next_batch) | Detail _ -> None)
           | Char c when m.mode = Dashboard ->
               let code = Uchar.to_int c in
               let idx =

@@ -51,6 +51,63 @@ let calculate_graphs_per_batch ~width ~height : int =
   let rows = calculate_rows_per_batch height in
   rows * columns
 
+(* ───── Component state and update ───── *)
+
+type state = {
+  screen_width : int;
+  screen_height : int;
+  current_batch : int;
+}
+
+type msg =
+  | Resize of int * int
+  | Next_batch
+  | Prev_batch
+
+let initial_state () =
+  { screen_width = 80; screen_height = 24; current_batch = 0 }
+
+let update (msg : msg) (s : state) ~total_metrics : state =
+  match msg with
+  | Resize (width, height) ->
+      let graphs_per_batch = calculate_graphs_per_batch ~width ~height in
+      let total_batches =
+        if total_metrics = 0 then 1
+        else (total_metrics + graphs_per_batch - 1) / graphs_per_batch
+      in
+      let max_batch = max 0 (total_batches - 1) in
+      let current_batch = min s.current_batch max_batch in
+      { screen_width = width; screen_height = height; current_batch }
+  | Next_batch ->
+      let graphs_per_batch =
+        calculate_graphs_per_batch ~width:s.screen_width ~height:s.screen_height
+      in
+      let total_batches =
+        if total_metrics = 0 then 1
+        else (total_metrics + graphs_per_batch - 1) / graphs_per_batch
+      in
+      let max_batch = max 0 (total_batches - 1) in
+      { s with current_batch = min (s.current_batch + 1) max_batch }
+  | Prev_batch ->
+      { s with current_batch = max 0 (s.current_batch - 1) }
+
+(** Tags of metrics visible on the current batch (same order as dashboard charts). *)
+let visible_chart_tags (s : state) ~total_metrics ~all_tags : string list =
+  if total_metrics = 0 then []
+  else
+    let graphs_per_batch =
+      calculate_graphs_per_batch ~width:s.screen_width ~height:s.screen_height
+    in
+    let total_batches =
+      (total_metrics + graphs_per_batch - 1) / graphs_per_batch
+    in
+    let current_batch = min s.current_batch (max 0 (total_batches - 1)) in
+    let start_idx = current_batch * graphs_per_batch in
+    let end_idx = min (start_idx + graphs_per_batch) total_metrics in
+    List.mapi (fun i tag -> (i, tag)) all_tags
+    |> List.filter (fun (i, _) -> i >= start_idx && i < end_idx)
+    |> List.map snd
+
 (* ───── Chart Drawing ───── *)
 
 let draw_metric_chart ~hover history grid ~width ~height =
