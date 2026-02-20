@@ -209,11 +209,12 @@ let subscriptions m =
           | Right -> (
               match m.mode with Dashboard -> Some (Metrics_msg Metrics.Next_batch) | Detail _ -> None)
           | Char c when m.mode = Dashboard ->
-              let code = Uchar.to_int c in
+              let one = Uchar.of_char '1' and nine = Uchar.of_char '9' in
               let idx =
-                if code >= 0x31 && code <= 0x39 then code - 0x31
-                else if code >= 1 && code <= 9 then code - 1
-                else -1
+                if Uchar.compare c one >= 0 && Uchar.compare c nine <= 0 then
+                  Uchar.to_int c - Uchar.to_int one
+                else
+                  -1
               in
               if idx >= 0 then
                 let visible = visible_chart_tags m in
