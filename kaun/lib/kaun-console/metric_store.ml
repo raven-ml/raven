@@ -9,28 +9,23 @@ type metric = { step : int; epoch : int option; value : float }
 type history_point = { step : int; value : float }
 type best_value = { step : int; value : float }
 
+type tag_data = {
+  latest : metric;
+  history : history_point list;
+  best_min : best_value option;
+  best_max : best_value option;
+}
+
 type t = {
-  table : (string, metric) Hashtbl.t;
-  history : (string, history_point list) Hashtbl.t;
-  best_min : (string, best_value) Hashtbl.t;
-  best_max : (string, best_value) Hashtbl.t;
+  by_tag : (string, tag_data) Hashtbl.t;
   mutable max_epoch : int option;
 }
 
 let create ?(initial_size = 32) () =
-  {
-    table = Hashtbl.create initial_size;
-    history = Hashtbl.create initial_size;
-    best_min = Hashtbl.create initial_size;
-    best_max = Hashtbl.create initial_size;
-    max_epoch = None;
-  }
+  { by_tag = Hashtbl.create initial_size; max_epoch = None }
 
 let clear s =
-  Hashtbl.clear s.table;
-  Hashtbl.clear s.history;
-  Hashtbl.clear s.best_min;
-  Hashtbl.clear s.best_max;
+  Hashtbl.clear s.by_tag;
   s.max_epoch <- None
 
 let update_epoch s (epoch : int option) =
@@ -54,48 +49,48 @@ let should_replace ~(prev : metric) ~(next : metric) =
     | Some _, None -> false
     | Some a, Some b -> b > a
 
-let update_best_values store ~tag ~step ~value =
+let update_best (best : best_value option) ~step ~value ~compare =
   let new_best = { step; value } in
-  (* Update minimum *)
-  (match Hashtbl.find_opt store.best_min tag with
-  | None -> Hashtbl.replace store.best_min tag new_best
-  | Some prev ->
-      if value < prev.value then Hashtbl.replace store.best_min tag new_best);
-  (* Update maximum *)
-  match Hashtbl.find_opt store.best_max tag with
-  | None -> Hashtbl.replace store.best_max tag new_best
-  | Some prev ->
-      if value > prev.value then Hashtbl.replace store.best_max tag new_best
+  match best with
+  | None -> Some new_best
+  | Some prev -> if compare value prev.value then Some new_best else Some prev
 
 let update store (events : Kaun_runlog.Event.t list) =
   List.iter
     (fun (Event.Scalar s) ->
       update_epoch store s.epoch;
       let next = { step = s.step; epoch = s.epoch; value = s.value } in
-      (* Update latest value *)
-      (match Hashtbl.find_opt store.table s.tag with
-      | None -> Hashtbl.replace store.table s.tag next
-      | Some prev ->
-          if should_replace ~prev ~next then
-            Hashtbl.replace store.table s.tag next);
-      (* Update best values *)
-      update_best_values store ~tag:s.tag ~step:s.step ~value:s.value;
-      (* Append to history *)
       let hp : history_point = { step = s.step; value = s.value } in
-      match Hashtbl.find_opt store.history s.tag with
-      | None -> Hashtbl.replace store.history s.tag [ hp ]
-      | Some hist -> Hashtbl.replace store.history s.tag (hist @ [ hp ]))
+      let data =
+        match Hashtbl.find_opt store.by_tag s.tag with
+        | None ->
+            {
+              latest = next;
+              history = [ hp ];
+              best_min = Some { step = s.step; value = s.value };
+              best_max = Some { step = s.step; value = s.value };
+            }
+        | Some d ->
+            let latest = if should_replace ~prev:d.latest ~next then next else d.latest in
+            let best_min = update_best d.best_min ~step:s.step ~value:s.value ~compare:(<) in
+            let best_max = update_best d.best_max ~step:s.step ~value:s.value ~compare:(>) in
+            { latest; history = d.history @ [ hp ]; best_min; best_max }
+      in
+      Hashtbl.replace store.by_tag s.tag data)
     events
 
 let latest_epoch store = store.max_epoch
 
 let latest_metrics store =
-  Hashtbl.fold (fun tag metric acc -> (tag, metric) :: acc) store.table []
+  Hashtbl.fold
+    (fun tag d acc -> (tag, d.latest) :: acc)
+    store.by_tag []
   |> List.sort (fun (a, _) (b, _) -> String.compare a b)
 
 let history_for_tag store tag =
-  Hashtbl.find_opt store.history tag
-  |> Option.value ~default:([] : history_point list)
+  (match Hashtbl.find_opt store.by_tag tag with
+  | None -> []
+  | Some d -> d.history)
   |> List.map (fun (p : history_point) -> (p.step, p.value))
 
 (* Check if needle is a substring of haystack *)
@@ -117,14 +112,15 @@ let prefers_lower tag =
   contains_substring tag_lower "loss" || contains_substring tag_lower "error"
 
 let best_for_tag store tag =
-  if prefers_lower tag then Hashtbl.find_opt store.best_min tag
-  else Hashtbl.find_opt store.best_max tag
+  match Hashtbl.find_opt store.by_tag tag with
+  | None -> None
+  | Some d -> if prefers_lower tag then d.best_min else d.best_max
 
 let best_metrics store =
   Hashtbl.fold
-    (fun tag _ acc ->
-      match best_for_tag store tag with
+    (fun tag d acc ->
+      match if prefers_lower tag then d.best_min else d.best_max with
       | None -> acc
       | Some best -> (tag, best) :: acc)
-    store.table []
+    store.by_tag []
   |> List.sort (fun (a, _) (b, _) -> String.compare a b)
