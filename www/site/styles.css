@@ -546,6 +546,18 @@ span[class^='ocaml-support'] {
   color: var(--color-talon);
 }
 
+.brot-hero {
+  border-color: var(--color-brot);
+}
+
+.brot-hero h1 {
+  color: var(--color-brot);
+}
+
+.brot-nav a:hover {
+  color: var(--color-brot);
+}
+
 /* Custom tooltips for project links */
 .landing .links a[data-tooltip] {
   position: relative;

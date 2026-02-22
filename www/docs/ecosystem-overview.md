@@ -61,22 +61,23 @@ Alongside these core layers, Raven includes **supporting tools** for the develop
 - Efficient memory views and slicing
 - Interop with NumPy through .npy/.npz files
 
-### Brot: Text Processing
+### Brot: Tokenization
 
-**What it is**: Modern text tokenization and processing library, our Tokenizers/spaCy equivalent.
+**What it is**: Fast, HuggingFace-compatible tokenization library, our HuggingFace Tokenizers equivalent.
 
 **When to use it**:
-- Text tokenization for NLP models
-- Building custom vocabularies
-- Batch encoding text for neural networks
-- Unicode text normalization and cleaning
+- Tokenizing text for language models (BERT, GPT-2, T5, LLaMA)
+- Training custom tokenizers on your own data
+- Batch encoding with padding and truncation for model input
+- Loading and saving HuggingFace tokenizer.json files
 
 **Key features**:
-- Multiple tokenizers (BPE, WordPiece, word/character-level)
-- Unicode-aware text processing
-- Efficient vocabulary management
-- Direct integration with Nx for tensor encoding
-- Batch processing with padding/truncation
+- Five algorithms: BPE, WordPiece, Unigram, word-level, character-level
+- Composable 5-stage pipeline (normalizer, pre-tokenizer, model, post-processor, decoder)
+- Rich encoding metadata (byte offsets, attention masks, type IDs, word IDs)
+- HuggingFace tokenizer.json import/export
+- Training from scratch for all algorithms
+- 1.3-6x faster than HuggingFace's Rust tokenizers
 
 ### Rune: The Differentiable Core
 

@@ -13,13 +13,13 @@ We're prioritizing developer experience and competitive performance to give deve
 Raven is built from modular projects that form a cohesive ecosystem:
 
 **Core Libraries:**
-| **Raven Project**   | **Python Equivalent** | **Description**                                     |
-| ------------------- | --------------------- | --------------------------------------------------- |
-| [**Nx**](nx/)       | NumPy                 | N-dimensional arrays with pluggable backends        |
-| [**Brot**](brot/)   | Tokenizers/spaCy      | Text processing and tokenization for NLP            |
-| [**Talon**](talon/) | Pandas/Polars         | DataFrames with heterogeneous columns and rich API  |
-| [**Hugin**](hugin/) | Matplotlib            | Publication-quality data visualization and plotting |
-| [**Quill**](quill/) | Jupyter               | A love letter to scientific writing                 |
+| **Raven Project**   | **Python Equivalent**  | **Description**                                               |
+| ------------------- | ---------------------- | ------------------------------------------------------------- |
+| [**Nx**](nx/)       | NumPy                  | N-dimensional arrays with pluggable backends                  |
+| [**Brot**](brot/)   | HuggingFace Tokenizers | Fast, HuggingFace-compatible tokenization for language models |
+| [**Talon**](talon/) | Pandas/Polars          | DataFrames with heterogeneous columns and rich API            |
+| [**Hugin**](hugin/) | Matplotlib             | Publication-quality data visualization and plotting           |
+| [**Quill**](quill/) | Jupyter                | A love letter to scientific writing                           |
 
 **Rune Ecosystem:**
 | **Raven Project**       | **Python Equivalent**       | **Description**                                        |

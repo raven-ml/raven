@@ -44,7 +44,7 @@ let libraries =
       name = "brot";
       display = "brot";
       color = "color-teal";
-      description = "Modern text tokenization and processing for NLP";
+      description = "Fast, HuggingFace-compatible tokenization for language models";
     };
     {
       name = "talon";

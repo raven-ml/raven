@@ -16,7 +16,7 @@
 
     <div class="brot-hero hero">
       <h1>brot</h1>
-      <p class="tagline">Hugging Face quality. OCaml efficiency. Production-ready tokenization.</p>
+      <p class="tagline">HuggingFace compatible. OCaml fast. Production-ready tokenization.</p>
     </div>
 
     <hr>
@@ -25,20 +25,20 @@
 
     <div class="feature-grid">
       <div>
-        <h3 class="color-teal">modern tokenizers</h3>
-        <p>BPE and WordPiece out of the box. Compatible with pretrained models from Hugging Face.</p>
+        <h3 class="color-teal">huggingface compatible</h3>
+        <p>Load any tokenizer.json. Same models, same results. Your BERT, GPT-2, and T5 tokenizers work out of the box.</p>
       </div>
       <div>
-        <h3 class="color-teal">unicode done right</h3>
-        <p>Proper handling of multilingual text, emoji, and special characters. No surprises.</p>
+        <h3 class="color-teal">composable pipeline</h3>
+        <p>Five stages, each optional: normalizer, pre-tokenizer, model, post-processor, decoder. Mix and match for any architecture.</p>
       </div>
       <div>
-        <h3 class="color-teal">direct tensor encoding</h3>
-        <p>Encode straight to Nx tensors. Batch processing with padding and truncation built in.</p>
+        <h3 class="color-teal">five algorithms</h3>
+        <p>BPE, WordPiece, Unigram, word-level, and character-level. Train any of them from scratch on your own data.</p>
       </div>
       <div>
-        <h3 class="color-teal">type-safe vocabularies</h3>
-        <p>Vocabularies that can't go out of sync. Special tokens that always exist.</p>
+        <h3 class="color-teal">faster than rust</h3>
+        <p>1.3-6x faster than HuggingFace's Rust tokenizers library. Pure OCaml, no FFI, no bindings.</p>
       </div>
     </div>
 
@@ -48,96 +48,105 @@
 
     <div class="code-compare">
       <div>
-        <h4>PYTHON</h4>
-        <pre class="language-python"><code class="language-python">from transformers import AutoTokenizer
+        <h4>HUGGINGFACE TOKENIZERS</h4>
+        <pre class="language-python"><code class="language-python">from tokenizers import Tokenizer
 
-# Load tokenizer
-tokenizer = AutoTokenizer.from_pretrained(
-    "bert-base"
+# Load pretrained
+tokenizer = Tokenizer.from_file(
+    "tokenizer.json"
 )
 
-# Tokenize
-tokens = tokenizer.tokenize("Hello world")
+# Encode
+output = tokenizer.encode("Hello world!")
+ids = output.ids
 
-# Encode to IDs
-input_ids = tokenizer.encode(
-    "Hello world",
-    max_length=128,
-    padding="max_length"
-)
+# Decode
+text = tokenizer.decode(ids)
 
-# Batch encode
-batch = tokenizer(
-    ["Hello", "World"],
-    padding=True,
-    return_tensors="pt"
+# Batch with padding
+tokenizer.enable_padding(length=128)
+batch = tokenizer.encode_batch(
+    ["Hello", "World"]
 )</code></pre>
       </div>
       <div>
         <h4>BROT</h4>
         <pre class="language-ocaml"><code class="language-ocaml">open Brot
 
-(* Load tokenizer *)
-let tokenizer = 
-  Wordpiece.from_files 
-    ~vocab:"vocab.txt"
+(* Load pretrained *)
+let tokenizer =
+  from_file "tokenizer.json"
+  |> Result.get_ok
 
-(* Tokenize *)
-let tokens = Wordpiece.tokenize tokenizer "Hello world"
+(* Encode *)
+let encoding = encode tokenizer "Hello world!"
+let ids = Encoding.ids encoding
 
-(* Encode to IDs *)
-let input_ids = 
-  encode ~vocab 
-    ~max_len:128 
-    "Hello world"
+(* Decode *)
+let text = decode tokenizer ids
 
-(* Batch encode - returns Nx tensor *)
-let batch = 
-  encode_batch ~vocab
-    ~pad:true
-    ["Hello"; "World"]</code></pre>
+(* Batch with padding *)
+let batch = encode_batch tokenizer
+  ~padding:(padding (`Fixed 128))
+  ["Hello"; "World"]</code></pre>
       </div>
     </div>
 
     <hr>
 
-    <h2>tokenization that works</h2>
+    <h2>the composable pipeline</h2>
 
-    <pre class="language-ocaml"><code class="language-ocaml">(* Simple tokenization *)
-let tokens = tokenize "Hello world! 你好世界"
-(* ["Hello"; "world"; "!"; "你好世界"] *)
+    <p>Every tokenizer is a pipeline. Each stage is optional, composable, and serializable to HuggingFace JSON.</p>
 
-(* Build vocabulary from corpus *)
-let vocab = 
-  vocab ~max_size:30000 ~min_freq:2
-    (List.concat_map tokenize corpus)
+    <pre class="language-ocaml"><code class="language-ocaml">(* Build a BERT tokenizer from components *)
+let tokenizer =
+  wordpiece ~vocab ~unk_token:"[UNK]"
+    ~normalizer:(Normalizer.bert ~lowercase:true ())
+    ~pre:(Pre_tokenizer.bert ())
+    ~post:(Post_processor.bert ~cls:("[CLS]", 2) ~sep:("[SEP]", 3) ())
+    ~decoder:(Decoder.wordpiece ())
+    ~specials:(List.map special ["[PAD]"; "[UNK]"; "[CLS]"; "[SEP]"])
+    ~pad_token:"[PAD]"
+    ()
 
-(* BPE tokenization *)
-let bpe = Bpe.from_files ~vocab:"vocab.json" ~merges:"merges.txt" in
-let tokens = Bpe.tokenize bpe "unrecognizable"
-(* ["un", "##rec", "##ogn", "##iz", "##able"] *)
+(* Or a GPT-2 tokenizer *)
+let tokenizer =
+  bpe ~vocab ~merges
+    ~pre:(Pre_tokenizer.byte_level ())
+    ~post:(Post_processor.byte_level ())
+    ~decoder:(Decoder.byte_level ())
+    ()</code></pre>
 
-(* Unicode normalization *)
-let clean = 
-  normalize ~lowercase:true ~strip_accents:true 
-    "Café RÉSUMÉ"
-(* "cafe resume" *)</code></pre>
+    <hr>
+
+    <h2>rich encoding metadata</h2>
+
+    <p>Every encoding carries alignment metadata. Map tokens back to source text, mask padding, and distinguish sentence pairs.</p>
+
+    <pre class="language-ocaml"><code class="language-ocaml">let enc = encode tokenizer "Hello world!" in
+Encoding.ids enc              (* token IDs *)
+Encoding.tokens enc           (* token strings *)
+Encoding.offsets enc          (* byte spans in source *)
+Encoding.attention_mask enc   (* 1=real, 0=padding *)
+Encoding.type_ids enc         (* 0/1 for sentence pairs *)
+Encoding.special_tokens_mask enc  (* 1=special, 0=content *)
+Encoding.word_ids enc         (* source word index *)</code></pre>
 
     <hr>
 
     <h2>the good parts</h2>
 
-    <p><b>Pretrained compatibility</b><br>
-    Load vocabularies from Hugging Face models. Your BERT tokenizer works out of the box.</p>
+    <p><b>HuggingFace round-trip</b><br>
+    Load tokenizer.json, save tokenizer.json. The same format Python uses. Share tokenizers between OCaml and Python without conversion.</p>
 
-    <p><b>Batch processing that scales</b><br>
-    Encode thousands of texts efficiently. Automatic padding and truncation. Direct tensor output.</p>
+    <p><b>Train from scratch</b><br>
+    BPE, WordPiece, Unigram, and word-level training built in. Point at your corpus, get a tokenizer. No Python required.</p>
 
-    <p><b>Unicode that doesn't break</b><br>
-    Proper grapheme clustering. CJK text handled correctly. Emoji that don't corrupt your tokens.</p>
+    <p><b>Batch processing</b><br>
+    Padding, truncation, sentence pairs, and overflow handling. Everything you need to feed a transformer, in a single call.</p>
 
-    <p><b>Type safety throughout</b><br>
-    Vocabularies that can't get out of sync. Special tokens that are always defined. No string keys to typo.</p>
+    <p><b>Encode with context</b><br>
+    Every token carries its byte offset, word index, type ID, and special-token flag. Map model outputs back to source text without guesswork.</p>
 
     <hr>
 
@@ -145,43 +154,43 @@ let clean =
 
     <div class="feature-grid">
       <div>
-        <h3 class="color-teal">tokenizers</h3>
+        <h3 class="color-teal">algorithms</h3>
         <ul>
+          <li>✓ BPE (GPT-2, RoBERTa)</li>
+          <li>✓ WordPiece (BERT, DistilBERT)</li>
+          <li>✓ Unigram (T5, AlBERT, mBART)</li>
           <li>✓ Word-level</li>
           <li>✓ Character-level</li>
-          <li>✓ BPE</li>
-          <li>✓ WordPiece</li>
-          <li>○ SentencePiece</li>
         </ul>
       </div>
       <div>
-        <h3 class="color-teal">preprocessing</h3>
+        <h3 class="color-teal">pipeline stages</h3>
         <ul>
-          <li>✓ Unicode normalization</li>
-          <li>✓ Accent stripping</li>
-          <li>✓ Case folding</li>
-          <li>✓ Whitespace cleanup</li>
-          <li>✓ Control char removal</li>
+          <li>✓ Normalizers (BERT, NFC/NFD/NFKC/NFKD, byte-level)</li>
+          <li>✓ Pre-tokenizers (BERT, byte-level, metaspace, whitespace)</li>
+          <li>✓ Post-processors (BERT, RoBERTa, template, byte-level)</li>
+          <li>✓ Decoders (BPE, WordPiece, byte-level, metaspace, CTC)</li>
         </ul>
       </div>
       <div>
         <h3 class="color-teal">features</h3>
         <ul>
-          <li>✓ Vocabulary management</li>
-          <li>✓ Special tokens</li>
-          <li>✓ Batch encoding</li>
-          <li>✓ Padding/truncation</li>
-          <li>○ Training tokenizers</li>
+          <li>✓ Training (BPE, WordPiece, Unigram, word-level)</li>
+          <li>✓ Batch encoding with padding/truncation</li>
+          <li>✓ Sentence pair encoding</li>
+          <li>✓ Overflow handling (sliding window)</li>
+          <li>✓ HuggingFace JSON import/export</li>
         </ul>
       </div>
       <div>
-        <h3 class="color-teal">integration</h3>
+        <h3 class="color-teal">encoding metadata</h3>
         <ul>
-          <li>✓ Nx tensor output</li>
-          <li>✓ File I/O</li>
-          <li>✓ Token caching</li>
-          <li>○ Rust backend</li>
-          <li>○ Model zoo</li>
+          <li>✓ Token IDs and strings</li>
+          <li>✓ Byte offsets into source text</li>
+          <li>✓ Attention masks</li>
+          <li>✓ Type IDs (sentence pairs)</li>
+          <li>✓ Special token masks</li>
+          <li>✓ Word IDs</li>
         </ul>
       </div>
     </div>
@@ -197,9 +206,12 @@ let clean =
     <pre class="language-ocaml"><code class="language-ocaml">open Brot
 
 let () =
-  let text = "Hello world! How are you?" in
-  let tokens = tokenize text in
-  List.iter print_endline tokens</code></pre>
+  let tokenizer = from_file "tokenizer.json" |> Result.get_ok in
+  let encoding = encode tokenizer "Hello world!" in
+  let ids = Encoding.ids encoding in
+  Printf.printf "Tokens: %d\n" (Array.length ids);
+  let text = decode tokenizer ids in
+  print_endline text</code></pre>
 
     <p>For now, check out the <a href="/docs/brot/">documentation</a> to learn more.</p>
   </main>
