@@ -1,1 +1,1 @@
-(dirs :standard \ nx-oxcaml quill)
+(dirs :standard \ quill)
