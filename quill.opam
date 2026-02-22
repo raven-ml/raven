@@ -3,7 +3,7 @@ opam-version: "2.0"
 version: "1.0.0~alpha2"
 synopsis: "Interactive notebooks for OCaml"
 description:
-  "Quill is a foundational library for building notebook applications. It provides a markdown-first document model, abstract kernel interface for code execution, and session management. Multiple frontends (web, TUI, desktop) can be built on the core."
+  "Quill turns markdown files into interactive OCaml notebooks. It provides a terminal UI for cell navigation and execution, batch evaluation with watch mode, and in-place output serialization. All Raven packages are pre-loaded."
 maintainer: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 authors: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 license: "ISC"
@@ -17,6 +17,7 @@ depends: [
   "cmarkit"
   "cmdliner"
   "windtrap" {with-test}
+  "mdx" {with-test}
   "odoc" {with-doc}
 ]
 build: [

@@ -111,10 +111,7 @@
    (= :version))
   (windtrap :with-test))
  (tags
-  (automatic-differentiation
-   machine-learning
-   deep-learning
-   optimization)))
+  (automatic-differentiation machine-learning deep-learning optimization)))
 
 (package
  (name kaun)
@@ -194,6 +191,22 @@
   (visualization plotting charts data-science graphics)))
 
 (package
+ (name quill)
+ (synopsis "Interactive notebooks for OCaml")
+ (description
+  "Quill turns markdown files into interactive OCaml notebooks. It provides a terminal UI for cell navigation and execution, batch evaluation with watch mode, and in-place output serialization. All Raven packages are pre-loaded.")
+ (depends
+  (ocaml
+   (>= 5.2.0))
+  dune
+  cmarkit
+  cmdliner
+  (windtrap :with-test)
+  (mdx :with-test))
+ (tags
+  (notebooks interactive-computing literate-programming)))
+
+(package
  (name raven)
  (allow_empty)
  (synopsis "Meta package for the Raven ML ecosystem")
@@ -216,22 +229,7 @@
    (= :version))
   (hugin
    (= :version))
-  ; for raven book
-  (mdx :with-test))
+  (quill
+   (= :version)))
  (tags
   (machine-learning data-science numerical-computation)))
-
-(package
- (name quill)
- (synopsis "Interactive notebooks for OCaml")
- (description
-  "Quill is a foundational library for building notebook applications. It provides a markdown-first document model, abstract kernel interface for code execution, and session management. Multiple frontends (web, TUI, desktop) can be built on the core.")
- (depends
-  (ocaml
-   (>= 5.2.0))
-  dune
-  cmarkit
-  cmdliner
-  (windtrap :with-test))
- (tags
-  (notebooks interactive-computing literate-programming)))
