@@ -4,6 +4,9 @@ _opam/
 # Build output directory
 _build/
 
+# Catch-all for _*/ directories
+_*/
+
 # Dune lock files
 dune.lock/
 
