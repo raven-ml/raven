@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>quill - Markdown notebooks for OCaml | raven</title>
+  <title>quill - Plain markdown notebooks for OCaml | raven</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -16,7 +16,7 @@
 
     <div class="quill-hero hero">
       <h1>quill</h1>
-      <p class="tagline">Notebooks as markdown. No JSON mess. Beautiful output.</p>
+      <p class="tagline">Plain markdown notebooks. Run them in your terminal.</p>
     </div>
 
     <hr>
@@ -25,20 +25,20 @@
 
     <div class="feature-grid">
       <div>
-        <h3 class="color-green">markdown notebooks</h3>
-        <p>Your notebooks are markdown files with OCaml code blocks. Git-friendly. No JSON. No merge conflicts.</p>
+        <h3 class="color-green">plain markdown</h3>
+        <p>Your notebooks are <code>.md</code> files. Write in any editor, diff with git, read on GitHub. No JSON, no binary formats, no lock-in.</p>
       </div>
       <div>
-        <h3 class="color-green">beautiful output</h3>
-        <p>Plots render inline. Arrays display as tables. Everything from Raven just works.</p>
+        <h3 class="color-green">terminal native</h3>
+        <p>A full-screen TUI for navigating cells, executing code, and viewing results. No browser required. Works over SSH.</p>
       </div>
       <div>
-        <h3 class="color-green">integrated with raven</h3>
-        <p>First-class support for nx arrays, hugin plots, and rune models. Everything displays beautifully.</p>
+        <h3 class="color-green">watch mode</h3>
+        <p>Edit in your favorite editor while <code>quill eval --watch --inplace</code> re-executes and updates outputs automatically.</p>
       </div>
       <div>
-        <h3 class="color-green">web editor</h3>
-        <p>Browser-based interface with syntax highlighting and live output. Or use your favorite editor.</p>
+        <h3 class="color-green">raven integrated</h3>
+        <p>Nx, Rune, Kaun, Hugin, Sowilo, Talon, Brot, and Fehu are pre-loaded. Start computing immediately.</p>
       </div>
     </div>
 
@@ -48,116 +48,123 @@
 
     <div class="code-compare">
       <div>
-        <h4>Jupyter</h4>
-        <pre class="language-python"><code class="language-python"># Cell 1
-import numpy as np
-import matplotlib.pyplot as plt
-
-# Cell 2
-data = np.random.randn(1000)
-plt.hist(data, bins=30)
-plt.show()
-
-# Cell 3
-print(f"Mean: {data.mean():.2f}")
-print(f"Std: {data.std():.2f}")</code></pre>
+        <h4>JUPYTER (.ipynb)</h4>
+        <pre class="language-json"><code class="language-json">{
+  "cells": [
+    {
+      "cell_type": "markdown",
+      "source": ["# Analysis\n",
+                  "Let's compute:"]
+    },
+    {
+      "cell_type": "code",
+      "source": ["x = 2 + 2\n",
+                  "print(f'{x}')"],
+      "metadata": {},
+      "execution_count": 1,
+      "outputs": [{
+        "output_type": "stream",
+        "name": "stdout",
+        "text": ["4\n"]
+      }]
+    }
+  ],
+  "metadata": { "kernelspec": { ... } }
+}</code></pre>
       </div>
       <div>
-        <h4>QUILL</h4>
-        <pre class="language-markup"><code class="language-markup"># Data Analysis
+        <h4>QUILL (.md)</h4>
+        <pre class="language-markup"><code class="language-markup"># Analysis
 
-Let's generate some random data:
-
-```ocaml
-open Nx
-open Hugin
-
-let data = randn float32 [|1000|]
-```
-
-Now plot it:
+Let's compute:
 
 ```ocaml
-let fig = figure ()
-let ax = subplot fig
-let _ = Plotting.hist ~values:data ~bins:30 ax
-show fig
-```
-
-Statistics:
-
-```ocaml
-Printf.printf "Mean: %.2f\n" (mean data);
-Printf.printf "Std: %.2f\n" (std data)
+let x = 2 + 2
+let () = Printf.printf "%d\n" x
 ```</code></pre>
       </div>
     </div>
 
+    <p>One is a JSON blob. The other is a document you can read.</p>
+
     <hr>
 
-    <h2>how it works</h2>
+    <h2>the workflow</h2>
 
-    <p>Write your notebook as a markdown file:</p>
+    <p>Write a markdown file with OCaml code blocks:</p>
 
     <pre class="language-markup"><code class="language-markup"># My Analysis
 
-Some introductory text about what we're doing.
-
-## Load the data
+Some introductory text.
 
 ```ocaml
 open Nx
 
-let data = Nx_io.load_npy "data.npy"
-let () = Printf.printf "Loaded %d samples\n" (shape data).(0)
+let data = linspace float32 0. 10. 100
+let () = Printf.printf "Shape: %s\n" (shape_to_string data)
 ```
 
-The data contains measurements from our experiment...
-
-## Visualize
+Now compute statistics:
 
 ```ocaml
-open Hugin
+let m = mean data
+let () = Printf.printf "Mean: %s\n" (to_string m)
+```</code></pre>
 
-let fig = figure ()
-let ax = subplot fig
-let _ = Plotting.plot ~y:data ax
-show fig
-```
-    </code></pre>
+    <p>Three ways to run it:</p>
 
-    <p>Then run it:</p>
+    <pre class="language-bash"><code class="language-bash"># Interactive TUI — navigate cells, execute, view results
+quill notebook.md
 
-    <pre class="language-bash"><code class="language-bash"># Start the web interface
-quill serve
+# Batch — execute all cells, print to stdout
+quill eval notebook.md
 
-# Or execute directly
-quill exec notebook.md</code></pre>
+# Live editing — edit in vim, outputs update on every save
+quill eval --watch --inplace notebook.md</code></pre>
 
     <hr>
 
     <h2>what's implemented</h2>
 
-    <p>Quill is under active development. Here's what works today:</p>
-
     <div class="feature-grid">
       <div>
-        <h3 class="color-green">working now</h3>
-        <ul style="list-style: none; padding: 0;">
-          <li>✓ Markdown parsing with OCaml blocks</li>
-          <li>✓ Web-based editor with syntax highlighting</li>
-          <li>✓ Text and plot output</li>
-          <li>✓ Array visualization</li>
+        <h3 class="color-green">notebook format</h3>
+        <ul>
+          <li>CommonMark parsing</li>
+          <li>Outputs as HTML comments</li>
+          <li>Stable cell identifiers</li>
+          <li>Output stripping with <code>quill fmt</code></li>
+          <li>Roundtrip-safe serialization</li>
         </ul>
       </div>
       <div>
-        <h3 class="color-green">coming soon</h3>
-        <ul style="list-style: none; padding: 0;">
-          <li>⏳ Interactive widgets</li>
-          <li>⏳ Export to HTML/PDF</li>
-          <li>⏳ LSP integration in editor</li>
-          <li>⏳ Cell-by-cell execution</li>
-          <li>⏳ Rich media output (images, tables)</li>
+        <h3 class="color-green">terminal UI</h3>
+        <ul>
+          <li>Cell navigation (j/k, arrows)</li>
+          <li>Execute cell (Enter) or all (Ctrl-A)</li>
+          <li>Insert, delete, move, toggle cells</li>
+          <li>Syntax highlighting</li>
+          <li>Auto-reload on external edits</li>
+        </ul>
+      </div>
+      <div>
+        <h3 class="color-green">execution</h3>
+        <ul>
+          <li>In-process OCaml toplevel</li>
+          <li>Persistent state across cells</li>
+          <li>Stdout/stderr/error capture</li>
+          <li>Rich display output (MIME)</li>
+          <li>Interrupt with Ctrl-C</li>
+        </ul>
+      </div>
+      <div>
+        <h3 class="color-green">CLI</h3>
+        <ul>
+          <li><code>quill eval</code> batch execution</li>
+          <li><code>--inplace</code> write outputs back</li>
+          <li><code>--watch</code> re-execute on change</li>
+          <li><code>quill fmt</code> strip outputs</li>
+          <li>All Raven packages pre-loaded</li>
         </ul>
       </div>
     </div>
@@ -166,10 +173,9 @@ quill exec notebook.md</code></pre>
 
     <h2>design philosophy</h2>
 
-    <p><b>Notebooks are documents.</b> A notebook is a markdown file. You can edit it in any text editor, version it with git, and read it on GitHub.</p>
+    <p><b>Notebooks are documents.</b> A notebook is a markdown file. You can edit it in any text editor, version it with git, and read it on GitHub. The file format should never get in your way.</p>
 
-    <p><b>Code is code.</b> OCaml code blocks are real OCaml. Your editor understands them. Refactoring tools work.</p>
-
+    <p><b>The terminal is enough.</b> You don't need a browser to run a notebook. The TUI gives you cell navigation, execution, and output display in any terminal. SSH into a server and run your notebooks there.</p>
 
     <hr>
 
@@ -182,19 +188,19 @@ quill exec notebook.md</code></pre>
     <pre class="language-bash"><code class="language-bash">opam install quill
 
 # Create a notebook
-cat > example.md <<'EOF'
-# My First Notebook
-
-Let's do some math:
+cat > hello.md <<'EOF'
+# Hello
 
 ```ocaml
-let x = 2 + 2
-let () = Printf.printf "2 + 2 = %d\n" x
+let () = Printf.printf "Hello from Quill!\n"
 ```
 EOF
 
-# Run it
-quill exec example.md</code></pre>
+# Open in the TUI
+quill hello.md
+
+# Or evaluate from the command line
+quill eval hello.md</code></pre>
   </main>
 
 </body>

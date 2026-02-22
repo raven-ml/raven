@@ -1,95 +1,164 @@
-# Getting Started with Quill
+# Getting Started
 
-Create your first interactive notebook in minutes.
+This guide covers creating a notebook, executing it in different modes,
+and viewing results.
 
-## What is Quill?
-
-Quill turns markdown files into interactive OCaml notebooks. Write your analysis as a document, mark code blocks as OCaml, and Quill executes them in sequence.
-
-## Quick Start
-
-### 1. Create a Notebook
-
-Create a file `notebook.md` with markdown content and OCaml code blocks:
-
-- Start with a title and introduction
-- Add OCaml code blocks using triple backticks
-- Write explanations between code blocks
-- Structure with markdown headings
-
-### 2. Run Your Notebook
-
-Three ways to execute:
+## Installation
 
 <!-- $MDX skip -->
 ```bash
-quill eval notebook.md           # Print results to terminal
-quill eval --inplace notebook.md # Save outputs in the file
-quill serve notebook.md          # Interactive web interface
+opam install quill
 ```
 
-### 3. View Results
+Or build from source:
 
-After execution, outputs appear as HTML comments below each code block. These preserve your markdown's readability while storing results.
+<!-- $MDX skip -->
+```bash
+git clone https://github.com/raven-ml/raven
+cd raven && dune build quill
+```
 
-## Key Concepts
+## Creating a Notebook
 
-### Persistent State
+Any `.md` file with fenced OCaml code blocks is a Quill notebook. Create
+a file `notebook.md`:
 
-Variables and functions defined in one code block are available in all subsequent blocks. This lets you build up your analysis step by step.
+    # Statistics
 
-### Rich Output
+    We'll compute some basic statistics.
 
-- **Nx and Rune Tensors**: Display as formatted matrices
-- **Hugin Figures**: Render as inline images
-- **Errors**: Show with full context
-- **Values**: Print with their types
+    ```ocaml
+    open Nx
 
-### Markdown First
+    let data = of_list float32 [| 1.0; 2.0; 3.0; 4.0; 5.0 |] [| 5 |]
+    let () = Printf.printf "Data: %s\n" (to_string data)
+    ```
 
-Your notebook remains a valid markdown file that renders beautifully on GitHub, in editors, or anywhere else markdown is supported.
+    Now the mean:
 
-## Execution Modes
+    ```ocaml
+    let m = mean data
+    let () = Printf.printf "Mean: %s\n" (to_string m)
+    ```
 
-### Command Line
+Code blocks share state: variables defined in one block are available in
+all subsequent blocks.
 
-For quick execution and automation:
+## Running with `quill eval`
+
+Batch-execute all code blocks:
 
 <!-- $MDX skip -->
 ```bash
 quill eval notebook.md
 ```
 
-### In-Place Updates
+This prints the complete notebook with outputs to stdout. The original
+file is not modified. Useful for quick checks and CI.
 
-To save outputs directly in your notebook:
+### Saving outputs in-place
 
 <!-- $MDX skip -->
 ```bash
 quill eval --inplace notebook.md
 ```
 
-### Watch Mode
+Executes all code blocks and writes outputs back into the file as HTML
+comments. The file now contains `<!-- quill:output -->` sections below
+each code block. The notebook remains valid, readable markdown.
 
-For interactive development:
+### Watch mode
 
 <!-- $MDX skip -->
 ```bash
 quill eval --watch --inplace notebook.md
 ```
 
-### Web Interface
+Monitors the file for changes (polling every second). On each save,
+re-executes all cells and writes outputs back. This enables a live
+editing workflow: edit in your favorite editor in one terminal, see
+results update in the file.
 
-For a full notebook experience:
+## Running with the TUI
+
+The default command opens the terminal UI:
 
 <!-- $MDX skip -->
 ```bash
-quill serve notebook.md
-# Open http://localhost:8080
+quill notebook.md
 ```
+
+The TUI displays a full-screen interface with:
+
+- **Header**: filename, cell count, running indicator
+- **Cells**: code cells in numbered bordered boxes with syntax
+  highlighting, text cells as rendered markdown
+- **Footer**: keybinding hints and error messages
+
+### Keybindings
+
+| Key | Action |
+| --- | --- |
+| j / k | Navigate cells |
+| J / K | Move cell up / down |
+| Up / Down | Navigate cells |
+| Enter | Execute focused cell |
+| Ctrl-A | Execute all cells |
+| a | Insert code cell below |
+| t | Insert text cell below |
+| d | Delete focused cell |
+| m | Toggle cell kind (code / text) |
+| c | Clear focused cell outputs |
+| Ctrl-L | Clear all outputs |
+| s / Ctrl-S | Save |
+| Ctrl-C | Interrupt execution |
+| q | Quit |
+
+The TUI watches the file for external changes. If you edit the notebook
+in another editor, the TUI reloads automatically.
+
+Quitting with unsaved changes requires pressing `q` twice, or `s` to
+save first.
+
+## Stripping Outputs
+
+Remove all outputs from a notebook:
+
+<!-- $MDX skip -->
+```bash
+quill fmt notebook.md            # print clean markdown to stdout
+quill fmt --inplace notebook.md  # strip outputs from the file
+```
+
+Useful before committing to git for clean diffs, or to get a fresh start
+before re-execution.
+
+## Persistent State
+
+Code cells execute sequentially in a shared OCaml toplevel. Variables
+and functions defined in one cell are available in all subsequent cells:
+
+    ```ocaml
+    let greet name = Printf.printf "Hello, %s!\n" name
+    ```
+
+    ```ocaml
+    let () = greet "world"
+    (* prints: Hello, world! *)
+    ```
+
+This mirrors the behavior of the OCaml toplevel (`ocaml` REPL).
+
+## Raven Packages
+
+All Raven packages are pre-loaded automatically. Your first code cell
+can immediately use `open Nx`, `open Rune`, `open Hugin`, etc. without
+any setup. Pretty-printers for Nx and Rune tensors are installed
+automatically.
 
 ## Next Steps
 
-- Explore the [example notebooks](https://github.com/raven-ml/raven/tree/main/quill/example)
-- Learn about [advanced features](advanced.md) (coming soon)
-- Join the community and share your notebooks
+- [Notebook Format](02-notebook-format/) — how markdown maps to cells,
+  how outputs are serialized
+- [Execution Modes](03-execution-modes/) — TUI details, live editing
+  workflow, batch evaluation

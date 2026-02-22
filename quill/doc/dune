@@ -1,0 +1,4 @@
+(mdx
+ (files *.md)
+ (package quill)
+ (libraries quill quill.markdown))
