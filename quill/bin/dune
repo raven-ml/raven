@@ -1,0 +1,7 @@
+(executable
+ (name main)
+ (modes byte)
+ (public_name quill)
+ (package quill)
+ (link_flags -linkall)
+ (libraries quill quill.markdown quill.raven quill.tui cmdliner unix))

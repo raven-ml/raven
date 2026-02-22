@@ -1,0 +1,19 @@
+(library
+ (name quill_raven)
+ (public_name quill.raven)
+ (libraries
+  quill
+  quill.top
+  nx
+  rune
+  kaun
+  kaun.models
+  kaun.datasets
+  hugin
+  sowilo
+  talon
+  brot
+  fehu
+  findlib
+  compiler-libs.toplevel)
+ (modes byte))

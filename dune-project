@@ -15,8 +15,6 @@
 
 (bug_reports "https://github.com/raven-ml/raven/issues")
 
-(using dune_site 0.1)
-
 (using mdx 0.4)
 
 (version 1.0.0~alpha2)
@@ -222,3 +220,18 @@
   (mdx :with-test))
  (tags
   (machine-learning data-science numerical-computation)))
+
+(package
+ (name quill)
+ (synopsis "Interactive notebooks for OCaml")
+ (description
+  "Quill is a foundational library for building notebook applications. It provides a markdown-first document model, abstract kernel interface for code execution, and session management. Multiple frontends (web, TUI, desktop) can be built on the core.")
+ (depends
+  (ocaml
+   (>= 5.2.0))
+  dune
+  cmarkit
+  cmdliner
+  (windtrap :with-test))
+ (tags
+  (notebooks interactive-computing literate-programming)))

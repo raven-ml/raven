@@ -1,4 +1,0 @@
-(library
- (name quill_api)
- (public_name quill.api)
- (libraries jsont jsont.bytesrw))

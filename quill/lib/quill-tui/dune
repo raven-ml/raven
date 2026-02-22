@@ -1,0 +1,12 @@
+(library
+ (name quill_tui)
+ (public_name quill.tui)
+ (libraries
+  quill
+  quill.markdown
+  mosaic
+  mosaic.ui
+  mosaic.unix
+  toffee
+  matrix.grid
+  unix))

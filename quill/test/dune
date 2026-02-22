@@ -1,0 +1,4 @@
+(tests
+ (names test_cell test_doc test_session test_markdown)
+ (package quill)
+ (libraries quill quill.markdown windtrap))
