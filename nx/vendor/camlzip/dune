@@ -4,7 +4,6 @@
  (synopsis "OCaml ZIP interface")
  (wrapped false)
  (modules gzip zip zlib)
- (libraries stdlib-shims)
  (foreign_stubs
   (language c)
   (names zlibstubs)
