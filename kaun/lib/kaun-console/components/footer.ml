@@ -16,5 +16,5 @@ let hint_style = Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:14) ()
 let view () =
   box ~padding:(padding 1)
     [ text ~style:hint_style
-        "1–9 open chart • ← → change batch • Esc back • Ctrl-C quit"
+        "1–9 Chart View • ← → Change Batch • Esc back • Ctrl-C quit"
     ]
