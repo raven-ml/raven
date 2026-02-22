@@ -17,11 +17,10 @@ type t
 val create : ?vocab:(string * int) list -> ?unk_token:string -> unit -> t
 (** [create ?vocab ?unk_token ()] is a word-level model.
 
-    {ul
-    {- [vocab] is the initial vocabulary as [(token, id)] pairs.
-       Defaults to [[]].}
-    {- [unk_token] is the token emitted for unknown words.
-       Defaults to {["[UNK]"]}.}} *)
+    - [vocab] is the initial vocabulary as [(token, id)] pairs. Defaults to
+      [[]].
+    - [unk_token] is the token emitted for unknown words. Defaults to ["[UNK]"].
+*)
 
 (** {1:tokenization Tokenization} *)
 

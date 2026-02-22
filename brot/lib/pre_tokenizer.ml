@@ -509,8 +509,7 @@ let pre_tokenize_byte_level ~add_prefix_space ~use_regex ~trim_offsets:_ text =
           if prefix_added then if start = 0 then 0 else start - 1 else start
         in
         let o_end =
-          min orig_len
-            (if prefix_added then start + plen - 1 else start + plen)
+          min orig_len (if prefix_added then start + plen - 1 else start + plen)
         in
         (byte_level_encode_range text ~start ~len:plen, (max 0 o_start, o_end)))
       spans

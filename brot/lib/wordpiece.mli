@@ -31,14 +31,13 @@ val create :
   t
 (** [create ~vocab ()] is a WordPiece model backed by [vocab].
 
-    {ul
-    {- [unk_token] is the token emitted for words that cannot be
-       decomposed. Defaults to {["[UNK]"]}.}
-    {- [continuing_subword_prefix] is prepended to non-initial
-       subwords. Defaults to {["##"]}.}
-    {- [max_input_chars_per_word] is the UTF-8 character count above
-       which a word is replaced by [unk_token] without attempting
-       decomposition. Defaults to [100].}}
+    - [unk_token] is the token emitted for words that cannot be decomposed.
+      Defaults to ["[UNK]"].
+    - [continuing_subword_prefix] is prepended to non-initial subwords. Defaults
+      to ["##"].
+    - [max_input_chars_per_word] is the UTF-8 character count above which a word
+      is replaced by [unk_token] without attempting decomposition. Defaults to
+      [100].
 
     Raises [Invalid_argument] if [unk_token] is not in [vocab]. *)
 
