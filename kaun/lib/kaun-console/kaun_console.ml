@@ -11,8 +11,6 @@ open Kaun_runlog
 (* ───── Model ───── *)
 
 type model = {
-  loading : bool;
-  loading_time : float;
   run_id : string;
   store : Metric_store.t;
   stream : Run.event_stream;
@@ -106,11 +104,9 @@ let view_detail m tag =
     ]
 
 let view m =
-  if m.loading then Splash.view ()
-  else
-    match m.mode with
-    | Dashboard -> view_dashboard m
-    | Detail tag -> view_detail m tag
+  match m.mode with
+  | Dashboard -> view_dashboard m
+  | Detail tag -> view_detail m tag
 
 (* ───── TEA Core ───── *)
 
@@ -142,8 +138,6 @@ let init ~run =
   (* Initialize system panel *)
   let sys_panel = Sys_panel.create () in
   ( {
-      loading = true;
-      loading_time = 0.0;
       run_id;
       store;
       stream;
@@ -153,28 +147,13 @@ let init ~run =
     },
     Cmd.none )
 
-let splash_duration = 1.5
-
 let update msg m =
   match msg with
   | Tick dt ->
-      (* Handle splash screen transition *)
-      let new_loading_time =
-        if m.loading then m.loading_time +. dt else m.loading_time
-      in
-      let should_finish_loading = new_loading_time >= splash_duration in
-      let m =
-        if should_finish_loading then
-          { m with loading = false; loading_time = 0.0 }
-        else { m with loading_time = new_loading_time }
-      in
-      (* Don't update metrics while showing splash screen *)
-      if m.loading then (m, Cmd.none)
-      else
-        let new_events = Run.read_events m.stream in
-        Metric_store.update m.store new_events;
-        let sys_panel = Sys_panel.update m.sys_panel ~dt in
-        ({ m with store = m.store; sys_panel }, Cmd.none)
+      let new_events = Run.read_events m.stream in
+      Metric_store.update m.store new_events;
+      let sys_panel = Sys_panel.update m.sys_panel ~dt in
+      ({ m with store = m.store; sys_panel }, Cmd.none)
   | Metrics_msg metrics_msg ->
       let total_metrics =
         List.length (Metric_store.latest_metrics m.store)
