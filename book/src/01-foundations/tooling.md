@@ -10,7 +10,7 @@ Create an isolated opam switch for the book’s code:
 ```bash skip
 opam switch create raven-book ocaml-base-compiler.5.1.0
 eval $(opam env --switch=raven-book)
-opam install dune mdx nx rune talon saga sowilo fehu quill
+opam install dune mdx nx rune talon brot sowilo fehu quill
 ```
 
 `mdx` executes code blocks and promotes outputs. You will run it as part of the build to guarantee that every snippet stays correct.

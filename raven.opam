@@ -14,7 +14,7 @@ bug-reports: "https://github.com/raven-ml/raven/issues"
 depends: [
   "dune" {>= "3.19"}
   "nx" {= version}
-  "saga" {= version}
+  "brot" {= version}
   "talon" {= version}
   "rune" {= version}
   "kaun" {= version}

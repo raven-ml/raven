@@ -12,7 +12,7 @@
   
   /* Library colors */
   --color-nx: #4dabf7;        /* deep blue */
-  --color-saga: #14b8a6;      /* teal */
+  --color-brot: #14b8a6;      /* teal */
   --color-hugin: #b197fc;     /* purple */
   --color-quill: #10b981;     /* emerald */
   --color-rune: #f59e0b;      /* amber */
@@ -128,7 +128,7 @@ hr {
 
 /* Library colors */
 .color-blue { color: var(--color-nx); }    /* nx - deep blue */
-.color-teal { color: var(--color-saga); }    /* saga - teal */
+.color-teal { color: var(--color-brot); }    /* brot - teal */
 .color-purple { color: var(--color-hugin); }  /* hugin - purple */
 .color-green { color: var(--color-quill); }   /* quill - emerald */
 .color-orange { color: var(--color-rune); }  /* rune - amber */

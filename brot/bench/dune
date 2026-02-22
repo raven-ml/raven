@@ -1,0 +1,5 @@
+(data_only_dirs data)
+
+(executable
+ (name bench_brot)
+ (libraries brot ubench unix))

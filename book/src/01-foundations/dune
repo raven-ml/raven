@@ -1,4 +1,4 @@
 (mdx
  (files *.md)
  (package raven)
- (libraries nx saga talon rune kaun))
+ (libraries nx brot talon rune kaun))

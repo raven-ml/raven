@@ -6,7 +6,7 @@ Raven is a collection of libraries designed to work together seamlessly. Underst
 
 The Raven ecosystem is organized around three core layers:
 
-- **Foundation Libraries (Nx, Saga)**: The foundation providing n-dimensional arrays and text processing. These reusable cores serve both Raven and the broader OCaml community, with Nx offering NumPy-like functionality with pluggable backends and Saga providing modern text tokenization.
+- **Foundation Libraries (Nx, Brot)**: The foundation providing n-dimensional arrays and text processing. These reusable cores serve both Raven and the broader OCaml community, with Nx offering NumPy-like functionality with pluggable backends and Brot providing modern text tokenization.
 - **Rune for Differentiable Computing**: The middle layer enabling automatic differentiation and GPU acceleration. Built on Nx, it transforms regular computations into differentiable ones, providing the mathematical machinery for gradient-based optimization.
 - **Domain Frameworks (Kaun, Sowilo)**: The top layer delivering specialized tools for specific domains. These frameworks leverage Rune's differentiable computing to provide high-level APIs for deep learning and computer vision tasks.
 
@@ -32,7 +32,7 @@ Alongside these core layers, Raven includes **supporting tools** for the develop
      ┌─────────────────────▼────────────────────────┐
      │          Foundation Libraries                │
      │    ┌──────────┐        ┌──────────┐          │
-     │    │    Nx    │        │   Saga   │          │
+     │    │    Nx    │        │   Brot   │          │
      │    └──────────┘        └──────────┘          │
      └──────────────────────────────────────────────┘
 
@@ -61,7 +61,7 @@ Alongside these core layers, Raven includes **supporting tools** for the develop
 - Efficient memory views and slicing
 - Interop with NumPy through .npy/.npz files
 
-### Saga: Text Processing
+### Brot: Text Processing
 
 **What it is**: Modern text tokenization and processing library, our Tokenizers/spaCy equivalent.
 
@@ -248,16 +248,16 @@ let output = vision_model preprocessed
 ### NLP Workflow
 
 ```ocaml
-(* Tokenize text with Saga *)
+(* Tokenize text with Brot *)
 let texts = ["Hello world"; "This is a test"] in
 
 (* Build vocabulary from corpus *)
-let vocab = Saga.vocab ~max_size:10000 (
-  List.concat_map Saga.tokenize corpus
+let vocab = Brot.vocab ~max_size:10000 (
+  List.concat_map Brot.tokenize corpus
 ) in
 
 (* Encode text to tensors *)
-let input_ids = Saga.encode_batch ~vocab ~max_len:128 texts in
+let input_ids = Brot.encode_batch ~vocab ~max_len:128 texts in
 
 (* Convert to Rune for model processing *)
 let device = Rune.Cpu.device in
@@ -268,13 +268,13 @@ let output = language_model input_tensor in
 
 (* Decode predictions back to text *)
 let predicted_ids = (* get predictions from output *) in
-let predicted_text = Saga.decode vocab predicted_ids
+let predicted_text = Brot.decode vocab predicted_ids
 ```
 
 ## Getting Started
 
 1. **For numerical computing**: Start with [Nx](nx/getting-started.md)
-2. **For text processing**: Use [Saga](saga/getting-started.md)
+2. **For text processing**: Use [Brot](brot/getting-started.md)
 3. **For plotting**: Use [Hugin](hugin/getting-started.md)
 4. **For machine learning**: Move to [Rune](rune/getting-started.md) and [Kaun](kaun/getting-started.md)
 5. **For interactive work**: Use [Quill](quill/getting-started.md)

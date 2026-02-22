@@ -20,7 +20,7 @@ dune exec kaun/examples/m3-gpt2/generate.exe -- "Once upon a time"
 
 - `gpt2.ml` shows how to call `Kaun_models.Gpt2.from_pretrained`, inspect the
   parameter tree, and print logits for a fixed prompt.
-- `generate.ml` tokenizes input text with `Saga` utilities, runs greedy or
+- `generate.ml` tokenizes input text with `Brot` utilities, runs greedy or
   stochastic sampling under Kaun, and prints the continuation.
 
 ### Sample generation

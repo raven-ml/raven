@@ -41,8 +41,8 @@ let libraries =
       description = "Publication-quality 2D and 3D plotting library";
     };
     {
-      name = "saga";
-      display = "saga";
+      name = "brot";
+      display = "brot";
       color = "color-teal";
       description = "Modern text tokenization and processing for NLP";
     };

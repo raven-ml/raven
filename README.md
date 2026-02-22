@@ -16,7 +16,7 @@ Raven is built from modular projects that form a cohesive ecosystem:
 | **Raven Project**   | **Python Equivalent** | **Description**                                     |
 | ------------------- | --------------------- | --------------------------------------------------- |
 | [**Nx**](nx/)       | NumPy                 | N-dimensional arrays with pluggable backends        |
-| [**Saga**](saga/)   | Tokenizers/spaCy      | Text processing and tokenization for NLP            |
+| [**Brot**](brot/)   | Tokenizers/spaCy      | Text processing and tokenization for NLP            |
 | [**Talon**](talon/) | Pandas/Polars         | DataFrames with heterogeneous columns and rich API  |
 | [**Hugin**](hugin/) | Matplotlib            | Publication-quality data visualization and plotting |
 | [**Quill**](quill/) | Jupyter               | A love letter to scientific writing                 |

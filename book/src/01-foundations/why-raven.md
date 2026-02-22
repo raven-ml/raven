@@ -17,7 +17,7 @@ Raven brings the same capabilities to OCaml while keeping the benefits we rely o
 | `Rune`          | JAX                          | Reverse-mode AD, gradient-based optimizers          |
 | `Kaun`          | PyTorch/Flax                 | Neural network layers, training utilities           |
 | `Talon`         | pandas/Polars                | Feature engineering, dataset wrangling              |
-| `Saga`          | Hugging Face tokenizers      | Text normalization, subword vocabularies            |
+| `Brot`          | Hugging Face tokenizers      | Text normalization, subword vocabularies            |
 | `Sowilo`        | OpenCV                       | Image preprocessing, differentiable vision ops      |
 | `Fehu`          | Gymnasium + Stable-Baselines | Reinforcement learning environments and algorithms  |
 | `Quill`         | Jupyter                      | Markdown-first notebooks for publishing experiments |
@@ -35,7 +35,7 @@ Moreover, OCaml 5’s multicore runtime plus effect handlers open the door for a
 - **Nx** is production-ready on CPU, with pluggable backends in development.
 - **Rune** offers reverse-mode AD and `value_and_grad` utilities. JIT and `vmap` are on the roadmap; we note the gaps when they matter.
 - **Kaun** is stabilising around MNIST-scale workflows—perfect for demonstrating modern training techniques before scaling.
-- **Talon**, **Saga**, and **Sowilo** cover practical data wrangling for tabular, text, and image modalities.
+- **Talon**, **Brot**, and **Sowilo** cover practical data wrangling for tabular, text, and image modalities.
 - **Fehu** delivers policy gradient and DQN baselines for reinforcement learning chapters.
 
 We acknowledge the ecosystem is evolving. Wherever features are experimental or upcoming, we provide alternative paths and tips for contributing.

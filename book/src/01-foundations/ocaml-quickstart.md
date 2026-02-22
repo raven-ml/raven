@@ -32,8 +32,8 @@ The pipeline operator `|>` makes dataflow readable—perfect for preprocessing c
 let process_text tokenizer text =
   text
   |> String.lowercase_ascii
-  |> Saga.Tokenizer.encode tokenizer
-  |> Saga.Encoding.get_ids
+  |> Brot.encode tokenizer
+  |> Brot.Encoding.ids
 ```
 
 ## Modules and Functors

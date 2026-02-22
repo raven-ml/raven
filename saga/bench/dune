@@ -1,5 +1,0 @@
-(data_only_dirs data)
-
-(executable
- (name bench_saga)
- (libraries saga ubench unix))

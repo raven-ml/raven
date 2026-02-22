@@ -4,7 +4,7 @@ Raven is currently in alpha. We've focused on the core infrastructure to train l
 
 ## Alpha Releases ✅ 
 
-**alpha1** has been released with three new libraries (Talon, Saga, Fehu) and major enhancements to Nx, Rune, and Kaun. This represents the complete scope for alpha.
+**alpha1** has been released with three new libraries (Talon, Brot, Fehu) and major enhancements to Nx, Rune, and Kaun. This represents the complete scope for alpha.
 
 **Future alpha releases** will focus exclusively on bug fixes and stability improvements. No new features are planned for the alpha cycle.
 
@@ -12,7 +12,7 @@ Key achievements:
 - Complete Nx numerical computing capabilities (linear algebra, FFT, extended dtypes)
 - Expanded Kaun with high-level training APIs inspired by PyTorch and Flax
 - Successfully trained GPT2 using the full Raven stack on CPU
-- Added DataFrame processing (Talon), NLP (Saga), and reinforcement learning (Fehu)
+- Added DataFrame processing (Talon), NLP (Brot), and reinforcement learning (Fehu)
 
 ## Beta: JIT Compilation & Performance (Current Stage)
 

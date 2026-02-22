@@ -38,7 +38,7 @@ raven is inspired by unix's philosophy of doing one thing well, and tinygrad's p
 
 - **fehu**: reinforcement learning environment and algorithms built on rune and kaun - equivalent to gym and stable baselines.
 - **talon**: dataframe library for data manipulation and analysis - equivalent to pandas and polars.
-- **saga**: tokenization and text processing - equivalent to huggingface tokenizers and parts of huggingface transformers.
+- **brot**: tokenization and text processing - equivalent to huggingface tokenizers and parts of huggingface transformers.
 - **hugin**: visualization library for plotting and rendering - equivalent to matplotlib and plotly.
 - **quill**: interactive notebook environment for ocaml - equivalent to jupyter notebooks.
 - **sowilo**: image processing and computer vision built on rune - equivalent to opencv with differentiable operations.

@@ -66,10 +66,10 @@
   (numerical-computation tensor-library machine-learning)))
 
 (package
- (name saga)
- (synopsis "Text processing and NLP extensions for Nx")
+ (name brot)
+ (synopsis "Fast tokenization library for OCaml")
  (description
-  "Text processing library that extends Nx with natural language processing capabilities. Provides tokenization, encoding, and text manipulation functionality compatible with the Nx tensor library.")
+  "Brot tokenizes text for language models. It provides configurable pipelines with normalization, pre-tokenization, vocabulary-based encoding (BPE, WordPiece, Unigram), post-processing, and decoding. Compatible with HuggingFace tokenizer formats.")
  (depends
   (ocaml
    (>= 5.2.0))
@@ -77,9 +77,11 @@
   re
   jsont
   bytesrw
+  uunf
+  uucp
   (windtrap :with-test))
  (tags
-  (text-processing nlp natural-language-processing tokenization)))
+  (tokenization bpe wordpiece subword-tokenization language-models)))
 
 (package
  (name talon)
@@ -131,7 +133,7 @@
   bytesrw
   (domainslib
    (>= 0.5.0))
-  (saga
+  (brot
    (= :version))
   (rune
    (= :version))
@@ -202,7 +204,7 @@
  (depends
   (nx
    (= :version))
-  (saga
+  (brot
    (= :version))
   (talon
    (= :version))

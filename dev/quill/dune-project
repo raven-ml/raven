@@ -23,7 +23,7 @@
 (pin
  (url ../../)
  (package
-  (name saga)))
+  (name brot)))
 
 (pin
  (url ../../)
@@ -70,7 +70,7 @@
   vdom
   brr
   nx
-  saga
+  brot
   rune
   kaun
   sowilo

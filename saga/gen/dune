@@ -1,4 +1,0 @@
-;; Add dependency on uucp to the project to regenerate the unicode data files.
-; (executable
-;  (name gen_unicode_data)
-;  (libraries uucp))

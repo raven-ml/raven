@@ -1,4 +1,0 @@
-(library
- (name saga)
- (public_name saga)
- (libraries re jsont jsont.bytesrw))

@@ -1,0 +1,15 @@
+(data_only_dirs fixtures scripts)
+
+(tests
+ (names
+  test_tokenization
+  test_vocab
+  test_encoding
+  test_unicode
+  test_bpe
+  test_wordpiece
+  test_hf_tokenizers
+  test_processors
+  test_pretokenizers)
+ (package brot)
+ (libraries brot nx windtrap unix jsont))

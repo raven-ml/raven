@@ -1,0 +1,10 @@
+[package]
+name = "bench_tokenizers_rust"
+edition = "2021"
+
+[[bin]]
+name = "bench_tokenizers_rust"
+path = "main.rs"
+
+[dependencies]
+tokenizers = "0.22"

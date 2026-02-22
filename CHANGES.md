@@ -50,10 +50,10 @@ All notable changes to this project will be documented in this file.
 - Remove `jsont`, `bytesrw`, and `csv` dependencies from Talon. CSV support is now built-in via the `talon.csv` sub-library with a minimal RFC 4180 parser. (@tmattio)
 - Remove `talon.json` sub-library. (@tmattio)
 
-### Saga
+### Brot
 
-- Simplify saga to a tokenization-only library. Remove the sampler, n-gram models, and I/O utilities. The sampler is rewritten with nx tensors and moved to `dev/mimir` as the seed of an experimental inference engine. (@tmattio)
-- Merge `saga.tokenizers` sub-library into `saga`. (@tmattio)
+- Simplify brot to a tokenization-only library. Remove the sampler, n-gram models, and I/O utilities. The sampler is rewritten with nx tensors and moved to `dev/mimir` as the seed of an experimental inference engine. (@tmattio)
+- Merge `brot.tokenizers` sub-library into `brot`. (@tmattio)
 - Use `Buffer.add_substring` instead of char-by-char loop in whitespace pre-tokenizer. (@tmattio)
 - Compact BPE symbols in-place after merges, avoiding an intermediate array allocation. (@tmattio)
 - Replace list cons + reverse with forward `List.init` in BPE `word_to_tokens`. (@tmattio)
@@ -91,7 +91,7 @@ We've also made numerous performance improvements across the board:
 - Nx conv2d: **4–5×** faster on common shapes; up to **115×** on heavy f64 batched cases (e.g., B16 C64→128 16×16 K3 f64 1.61 s → 13.96 ms).
 - Rune autodiff: **1.2–3.7×** faster on core grads (e.g., MatMulGrad Medium 34.04 ms → 11.91 ms, **2.86×**; Large 190.19 ms → 50.97 ms, **3.73×**).
 - Talon dataframes: big wins in joins and group-bys (Join 805.35 ms → 26.10 ms, **31×**; Group-by 170.80 ms → 19.03 ms, **9×**; Filter 9.93 ms → 3.39 ms, **3×**).
-- Saga tokenizers: realistic workloads **4–17%** faster (e.g., WordPiece encode single 136.05 µs → 115.92 µs, **1.17×**; BPE batch_32 24.52 ms → 22.27 ms, **1.10×**)
+- Brot tokenizers: realistic workloads **4–17%** faster (e.g., WordPiece encode single 136.05 µs → 115.92 µs, **1.17×**; BPE batch_32 24.52 ms → 22.27 ms, **1.10×**)
 
 We're closing 8 user-reported issues or feature requests and are totalling 30 community contributions from 8 unique contributors.
 

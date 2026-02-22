@@ -39,9 +39,9 @@
   %{lib:kaun:kaun.cma}
   %{lib:kaun.datasets:kaun_datasets.cmi}
   %{lib:kaun.datasets:kaun_datasets.cma}
-  ; saga
-  %{lib:saga:saga.cmi}
-  %{lib:saga:saga.cma}
+  ; brot
+  %{lib:brot:brot.cmi}
+  %{lib:brot:brot.cma}
   %{lib:re:re.cma}
   %{lib:uucp:uucp.cma}
   ; logs
@@ -84,8 +84,8 @@
    (copy %{lib:kaun:kaun.cma} kaun.cma)
    (copy %{lib:kaun.datasets:kaun_datasets.cmi} kaun_datasets.cmi)
    (copy %{lib:kaun.datasets:kaun_datasets.cma} kaun_datasets.cma)
-   (copy %{lib:saga:saga.cmi} saga.cmi)
-   (copy %{lib:saga:saga.cma} saga.cma)
+   (copy %{lib:brot:brot.cmi} brot.cmi)
+   (copy %{lib:brot:brot.cma} brot.cma)
    (copy %{lib:re:re.cma} re.cma)
    (copy %{lib:uucp:uucp.cma} uucp.cma)
    (copy %{lib:logs:logs.cma} logs.cma)

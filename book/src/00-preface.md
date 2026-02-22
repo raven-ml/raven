@@ -1,7 +1,7 @@
 # Preface
 
 This book is a tour of modern machine learning through the lens of the Raven ecosystem.  
-Raven is a monorepo of OCaml libraries—Nx for tensors, Rune for automatic differentiation, Kaun for neural networks, Talon for data, Saga for text, Sowilo for vision, Fehu for reinforcement learning, and Quill for notebooks.  
+Raven is a monorepo of OCaml libraries—Nx for tensors, Rune for automatic differentiation, Kaun for neural networks, Talon for data, Brot for text, Sowilo for vision, Fehu for reinforcement learning, and Quill for notebooks.  
 Together they aim to make OCaml a first-class language for research and production systems.
 
 We assume you already write software professionally and have passing familiarity with machine learning.  

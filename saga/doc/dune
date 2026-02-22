@@ -1,4 +1,0 @@
-(mdx
- (files *.md)
- (package saga)
- (libraries saga nx))

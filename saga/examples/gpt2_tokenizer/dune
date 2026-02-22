@@ -1,3 +1,0 @@
-(executable
- (name main)
- (libraries saga nx nx.io unix))

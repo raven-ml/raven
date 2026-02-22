@@ -142,7 +142,7 @@ let load_plugins () =
           "nx_datasets.cma";
           "re.cma";
           "uucp.cma";
-          "saga.cma";
+          "brot.cma";
           "cairo.cma";
           "usdl.cma";
           "logs.cma";

@@ -19,7 +19,7 @@ depends: [
   "jsont"
   "bytesrw"
   "domainslib" {>= "0.5.0"}
-  "saga" {= version}
+  "brot" {= version}
   "rune" {= version}
   "nx" {= version}
   "windtrap" {with-test}

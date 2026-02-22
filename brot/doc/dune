@@ -1,0 +1,4 @@
+(mdx
+ (files *.md)
+ (package brot)
+ (libraries brot nx))

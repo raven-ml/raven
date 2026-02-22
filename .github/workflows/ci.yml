@@ -47,11 +47,11 @@ jobs:
           opam exec -- dune build @nx/runtest
           echo "::endgroup::"
 
-      - name: Build and test saga
+      - name: Build and test brot
         run: |
-          echo "::group::saga"
-          opam exec -- dune build saga
-          opam exec -- dune build @saga/runtest
+          echo "::group::brot"
+          opam exec -- dune build brot
+          opam exec -- dune build @brot/runtest
           echo "::endgroup::"
 
       - name: Build and test talon

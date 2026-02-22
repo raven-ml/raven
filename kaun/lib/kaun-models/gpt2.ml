@@ -77,8 +77,7 @@ type inputs = {
 (* GPT-2 specific tokenizer with BPE *)
 module Tokenizer = struct
   type t = {
-    tokenizer : Saga.Tokenizer.t;
-        (* Store the actual tokenizer for encoding/decoding *)
+    tokenizer : Brot.t; (* Store the actual tokenizer for encoding/decoding *)
     vocab_size : int;
     bos_token_id : int;
     eos_token_id : int;
@@ -122,11 +121,11 @@ module Tokenizer = struct
     (* Create GPT-2 tokenizer with ByteLevel pre-tokenizer Use use_regex:true to
        enable GPT-2 pattern splitting *)
     let tokenizer =
-      Saga.Tokenizer.from_model_file ~vocab:vocab_file ~merges:merges_file
+      Brot.from_model_file ~vocab:vocab_file ~merges:merges_file
         ~pre:
-          (Saga.Pre_tokenizers.byte_level ~add_prefix_space:false
-             ~use_regex:true ())
-        ~decoder:(Saga.Decoders.byte_level ())
+          (Brot.Pre_tokenizer.byte_level ~add_prefix_space:false ~use_regex:true
+             ())
+        ~decoder:(Brot.Decoder.byte_level ())
         ()
     in
     {
@@ -143,8 +142,8 @@ module Tokenizer = struct
 
   let encode_to_array t text =
     (* Use the tokenizer's encode method *)
-    let encoding = Saga.Tokenizer.encode t.tokenizer text in
-    Saga.Encoding.get_ids encoding
+    let encoding = Brot.encode t.tokenizer text in
+    Brot.Encoding.ids encoding
 
   let encode t text =
     let token_ids = encode_to_array t text in
@@ -216,7 +215,7 @@ module Tokenizer = struct
 
   let decode t token_ids =
     (* Decode token IDs back to text using tokenizer *)
-    Saga.Tokenizer.decode t.tokenizer token_ids
+    Brot.decode t.tokenizer token_ids
 
   (* Get special token IDs *)
   let get_bos_token_id t = t.bos_token_id
