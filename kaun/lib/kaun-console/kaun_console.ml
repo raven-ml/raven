@@ -12,6 +12,7 @@ open Kaun_runlog
 
 type model = {
   run_id : string;
+  run_dir : string;
   store : Metric_store.t;
   stream : Run.event_stream;
   metrics_state : Metrics.state;
@@ -57,7 +58,7 @@ let view_dashboard m =
     ~size:{ width = pct 100; height = pct 100 }
     [
       Header.view ~run_id:m.run_id
-        ~latest_epoch:(Metric_store.latest_epoch m.store);
+        ~latest_epoch:(Metric_store.latest_epoch m.store) ~run_dir:m.run_dir;
       box ~flex_direction:Row ~flex_grow:1.0
         ~size:{ width = pct 100; height = pct 100 }
         [
@@ -122,6 +123,7 @@ let get_initial_terminal_size () : int * int =
 
 let init ~run =
   let run_id = Run.run_id run in
+  let run_dir = Run.dir run in
   let stream = Run.open_events run in
   let store = Metric_store.create () in
   (* Load initial events *)
@@ -139,6 +141,7 @@ let init ~run =
   let sys_panel = Sys_panel.create () in
   ( {
       run_id;
+      run_dir;
       store;
       stream;
       metrics_state;
