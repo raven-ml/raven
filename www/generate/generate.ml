@@ -44,7 +44,8 @@ let libraries =
       name = "brot";
       display = "brot";
       color = "color-teal";
-      description = "Fast, HuggingFace-compatible tokenization for language models";
+      description =
+        "Fast, HuggingFace-compatible tokenization for language models";
     };
     {
       name = "talon";
