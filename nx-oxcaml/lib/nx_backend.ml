@@ -126,68 +126,6 @@ let full (type a b) context (dtype : (a, b) Dtype.t) (shape_arr : int array)
   | _ -> Error.invalid ~op:"full" ~what:"unsupported dtype" ());
   t
 
-let of_float64_multidim context (arr : float# array) (shape : int array) :
-    (float, Dtype.float64_elt) t =
-  let size = Array.length arr in
-  let sym_shape = Symbolic_shape.of_ints [| size |] in
-  let view = View.create sym_shape in
-  let op_reshape x shape = { x with view = View.reshape x.view shape } in
-  op_reshape
-    { dtype = Dtype.Float64; buffer = Float64 arr; view; context }
-    (Symbolic_shape.of_ints shape)
-
-let of_float32_multidim context (arr : float32# array) (shape : int array) :
-    (float, Dtype.float32_elt) t =
-  let size = Array.length arr in
-  let sym_shape = Symbolic_shape.of_ints [| size |] in
-  let view = View.create sym_shape in
-  let op_reshape x shape = { x with view = View.reshape x.view shape } in
-  op_reshape
-    { dtype = Dtype.Float32; buffer = Float32 arr; view; context }
-    (Symbolic_shape.of_ints shape)
-
-let of_float64 context (arr : float# array) : (float, Dtype.float64_elt) t =
-  let size = Array.length arr in
-  let sym_shape = Symbolic_shape.of_ints [| size |] in
-  let view = View.create sym_shape in
-  { dtype = Dtype.Float64; buffer = Float64 arr; view; context }
-
-let of_float32 context (arr : float32# array) : (float, Dtype.float32_elt) t =
-  let size = Array.length arr in
-  let sym_shape = Symbolic_shape.of_ints [| size |] in
-  let view = View.create sym_shape in
-  { dtype = Dtype.Float32; buffer = Float32 arr; view; context }
-
-let of_int8 context (arr : int8# array) : (int, Dtype.int8_elt) t =
-  let size = Array.length arr in
-  let sym_shape = Symbolic_shape.of_ints [| size |] in
-  let view = View.create sym_shape in
-  { dtype = Dtype.Int8; buffer = Int8 arr; view; context }
-
-let of_int16 context (arr : int16# array) : (int, Dtype.int16_elt) t =
-  let size = Array.length arr in
-  let sym_shape = Symbolic_shape.of_ints [| size |] in
-  let view = View.create sym_shape in
-  { dtype = Dtype.Int16; buffer = Int16 arr; view; context }
-
-let of_int32 context (arr : int32# array) : (int32, Dtype.int32_elt) t =
-  let size = Array.length arr in
-  let sym_shape = Symbolic_shape.of_ints [| size |] in
-  let view = View.create sym_shape in
-  { dtype = Dtype.Int32; buffer = Int32 arr; view; context }
-
-let of_int64 context (arr : int64# array) : (int64, Dtype.int64_elt) t =
-  let size = Array.length arr in
-  let sym_shape = Symbolic_shape.of_ints [| size |] in
-  let view = View.create sym_shape in
-  { dtype = Dtype.Int64; buffer = Int64 arr; view; context }
-
-let of_bool context (arr : bool array) : (bool, Dtype.bool_elt) t =
-  let size = Array.length arr in
-  let sym_shape = Symbolic_shape.of_ints [| size |] in
-  let view = View.create sym_shape in
-  { dtype = Dtype.Bool; buffer = Bool arr; view; context }
-
 let add (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
