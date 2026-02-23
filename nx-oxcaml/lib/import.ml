@@ -76,6 +76,16 @@ module Array = struct
   -> int32# array
   = "caml_ba_to_unboxed_int32_array"
 
+  external ba_to_unboxed_int8_array
+  : (int, Bigarray.int8_signed_elt, Bigarray.c_layout) Bigarray.Array1.t
+  -> int8# array
+  = "caml_ba_to_unboxed_int8_array"
+
+  external ba_to_unboxed_int16_array
+  : (int, Bigarray.int16_signed_elt, Bigarray.c_layout) Bigarray.Array1.t
+  -> int16# array
+  = "caml_ba_to_unboxed_int16_array"
+
   external unboxed_float64_to_ba
   : float# array -> int
   -> (float, Bigarray.float64_elt, Bigarray.c_layout) Bigarray.Array1.t
@@ -95,6 +105,16 @@ module Array = struct
   : int32# array -> int
   -> (int32, Bigarray.int32_elt, Bigarray.c_layout) Bigarray.Array1.t
   = "caml_unboxed_int32_array_to_ba"
+
+  external unboxed_int8_to_ba
+  : int8# array -> int
+  -> (int, Bigarray.int8_signed_elt, Bigarray.c_layout) Bigarray.Array1.t
+  = "caml_unboxed_int8_array_to_ba"
+
+  external unboxed_int16_to_ba
+  : int16# array -> int
+  -> (int, Bigarray.int16_signed_elt, Bigarray.c_layout) Bigarray.Array1.t
+  = "caml_unboxed_int16_array_to_ba"
 end
 
 let shape (v : View.t) : int array =

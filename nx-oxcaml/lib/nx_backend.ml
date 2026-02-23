@@ -46,6 +46,19 @@ let to_host (type a b) (t : (a, b) t) :
   | Dtype.Int32 ->
     let (Int32 arr) = t.buffer in
     Array.unboxed_int32_to_ba arr n
+  | Dtype.Int8 ->
+    let (Int8 arr) = t.buffer in
+    Array.unboxed_int8_to_ba arr n
+  | Dtype.Int16 ->
+    let (Int16 arr) = t.buffer in
+    Array.unboxed_int16_to_ba arr n
+  | Dtype.Bool ->
+    let (Bool arr) = t.buffer in
+    let ba = Array1.create Nx_buffer.Bool Nx_buffer.c_layout n in
+    for i = 0 to n - 1 do
+      Array1.unsafe_set ba i arr.(i)
+    done;
+    ba
   | _ -> Error.invalid ~op:"to_host" ~what:"unsupported dtype" ()
 
 let buffer (type a b) context (dtype : (a, b) Dtype.t) (shape_arr : int array) :
@@ -1451,6 +1464,18 @@ let from_host (type a b) ctx (array : (a, b, c_layout) Bigarray.Array1.t) :
   | Dtype.Int32 ->
     let unboxed_array = Array.ba_to_unboxed_int32_array array in
     { context = ctx; dtype; buffer = Int32 unboxed_array; view }
+  | Dtype.Int8 ->
+    let unboxed_array = Array.ba_to_unboxed_int8_array array in
+    { context = ctx; dtype; buffer = Int8 unboxed_array; view }
+  | Dtype.Int16 ->
+    let unboxed_array = Array.ba_to_unboxed_int16_array array in
+    { context = ctx; dtype; buffer = Int16 unboxed_array; view }
+  | Dtype.Bool ->
+    let unboxed_array = Array.make size false in
+    for i = 0 to size - 1 do
+      unboxed_array.(i) <- Array1.unsafe_get array i
+    done;
+    { context = ctx; dtype; buffer = Bool unboxed_array; view }
   | _ -> Error.invalid ~op:"from_host" ~what:"unsupported dtype" ()
 let expand x shape = { x with view = View.expand x.view shape }
 let reshape x shape = { x with view = View.reshape x.view shape }
@@ -1604,11 +1629,240 @@ let cat (type a b) ~(out : (a, b) t) (xs : (a, b) t list) ~(axis : int) : unit =
     | _ -> .)
 let cast ~out:_ _ = Error.invalid ~op:"cast" ~what:"not implemented" ()
 
-let contiguous _ =
-  Error.invalid ~op:"contiguous" ~what:"not implemented" ()
+let contiguous (type a b) (t : (a, b) t) : (a, b) t =
+  let v = t.view in
+  if View.is_c_contiguous v && View.offset v = 0 then t
+  else
+    let shape_arr = shape v in
+    let ndim = Stdlib.Array.length shape_arr in
+    let n = numel v in
+    let src_strides = View.strides v in
+    let src_offset = View.offset v in
+    let out = buffer t.context t.dtype shape_arr in
+    (* Copy element by element using strided access *)
+    let indices = Stdlib.Array.make ndim 0 in
+    (match t.dtype with
+     | Dtype.Float64 ->
+       let (Float64 src) = t.buffer in
+       let (Float64 dst) = out.buffer in
+       for i = 0 to n - 1 do
+         let flat = ref src_offset in
+         for d = 0 to ndim - 1 do
+           flat := !flat + indices.(d) * src_strides.(d)
+         done;
+         Array.unsafe_set dst i (Array.unsafe_get src !flat);
+         (* Increment multi-dimensional index *)
+         let d = ref (ndim - 1) in
+         while !d >= 0 do
+           indices.(!d) <- indices.(!d) + 1;
+           if indices.(!d) < shape_arr.(!d) then d := -1
+           else (indices.(!d) <- 0; d := !d - 1)
+         done;
+         ignore i
+       done
+     | Dtype.Float32 ->
+       let (Float32 src) = t.buffer in
+       let (Float32 dst) = out.buffer in
+       for i = 0 to n - 1 do
+         let flat = ref src_offset in
+         for d = 0 to ndim - 1 do
+           flat := !flat + indices.(d) * src_strides.(d)
+         done;
+         Array.unsafe_set dst i (Array.unsafe_get src !flat);
+         let d = ref (ndim - 1) in
+         while !d >= 0 do
+           indices.(!d) <- indices.(!d) + 1;
+           if indices.(!d) < shape_arr.(!d) then d := -1
+           else (indices.(!d) <- 0; d := !d - 1)
+         done;
+         ignore i
+       done
+     | Dtype.Int32 ->
+       let (Int32 src) = t.buffer in
+       let (Int32 dst) = out.buffer in
+       for i = 0 to n - 1 do
+         let flat = ref src_offset in
+         for d = 0 to ndim - 1 do
+           flat := !flat + indices.(d) * src_strides.(d)
+         done;
+         Array.unsafe_set dst i (Array.unsafe_get src !flat);
+         let d = ref (ndim - 1) in
+         while !d >= 0 do
+           indices.(!d) <- indices.(!d) + 1;
+           if indices.(!d) < shape_arr.(!d) then d := -1
+           else (indices.(!d) <- 0; d := !d - 1)
+         done;
+         ignore i
+       done
+     | Dtype.Int64 ->
+       let (Int64 src) = t.buffer in
+       let (Int64 dst) = out.buffer in
+       for i = 0 to n - 1 do
+         let flat = ref src_offset in
+         for d = 0 to ndim - 1 do
+           flat := !flat + indices.(d) * src_strides.(d)
+         done;
+         Array.unsafe_set dst i (Array.unsafe_get src !flat);
+         let d = ref (ndim - 1) in
+         while !d >= 0 do
+           indices.(!d) <- indices.(!d) + 1;
+           if indices.(!d) < shape_arr.(!d) then d := -1
+           else (indices.(!d) <- 0; d := !d - 1)
+         done;
+         ignore i
+       done
+     | Dtype.Int8 ->
+       let (Int8 src) = t.buffer in
+       let (Int8 dst) = out.buffer in
+       for i = 0 to n - 1 do
+         let flat = ref src_offset in
+         for d = 0 to ndim - 1 do
+           flat := !flat + indices.(d) * src_strides.(d)
+         done;
+         Array.unsafe_set dst i (Array.unsafe_get src !flat);
+         let d = ref (ndim - 1) in
+         while !d >= 0 do
+           indices.(!d) <- indices.(!d) + 1;
+           if indices.(!d) < shape_arr.(!d) then d := -1
+           else (indices.(!d) <- 0; d := !d - 1)
+         done;
+         ignore i
+       done
+     | Dtype.Int16 ->
+       let (Int16 src) = t.buffer in
+       let (Int16 dst) = out.buffer in
+       for i = 0 to n - 1 do
+         let flat = ref src_offset in
+         for d = 0 to ndim - 1 do
+           flat := !flat + indices.(d) * src_strides.(d)
+         done;
+         Array.unsafe_set dst i (Array.unsafe_get src !flat);
+         let d = ref (ndim - 1) in
+         while !d >= 0 do
+           indices.(!d) <- indices.(!d) + 1;
+           if indices.(!d) < shape_arr.(!d) then d := -1
+           else (indices.(!d) <- 0; d := !d - 1)
+         done;
+         ignore i
+       done
+     | Dtype.Bool ->
+       let (Bool src) = t.buffer in
+       let (Bool dst) = out.buffer in
+       for i = 0 to n - 1 do
+         let flat = ref src_offset in
+         for d = 0 to ndim - 1 do
+           flat := !flat + indices.(d) * src_strides.(d)
+         done;
+         dst.(i) <- src.(!flat);
+         let d = ref (ndim - 1) in
+         while !d >= 0 do
+           indices.(!d) <- indices.(!d) + 1;
+           if indices.(!d) < shape_arr.(!d) then d := -1
+           else (indices.(!d) <- 0; d := !d - 1)
+         done;
+         ignore i
+       done
+     | _ -> Error.invalid ~op:"contiguous" ~what:"unsupported dtype" ());
+    out
 
-let copy _ = Error.invalid ~op:"copy" ~what:"not implemented" ()
-let assign _ _ = Error.invalid ~op:"assign" ~what:"not implemented" ()
+let copy (type a b) (t : (a, b) t) : (a, b) t =
+  let c = contiguous t in
+  let shape_arr = shape c.view in
+  let n = numel c.view in
+  let out = buffer t.context t.dtype shape_arr in
+  (match t.dtype with
+   | Dtype.Float64 ->
+     let (Float64 src) = c.buffer in
+     let (Float64 dst) = out.buffer in
+     for i = 0 to n - 1 do
+       Array.unsafe_set dst i (Array.unsafe_get src i)
+     done
+   | Dtype.Float32 ->
+     let (Float32 src) = c.buffer in
+     let (Float32 dst) = out.buffer in
+     for i = 0 to n - 1 do
+       Array.unsafe_set dst i (Array.unsafe_get src i)
+     done
+   | Dtype.Int32 ->
+     let (Int32 src) = c.buffer in
+     let (Int32 dst) = out.buffer in
+     for i = 0 to n - 1 do
+       Array.unsafe_set dst i (Array.unsafe_get src i)
+     done
+   | Dtype.Int64 ->
+     let (Int64 src) = c.buffer in
+     let (Int64 dst) = out.buffer in
+     for i = 0 to n - 1 do
+       Array.unsafe_set dst i (Array.unsafe_get src i)
+     done
+   | Dtype.Int8 ->
+     let (Int8 src) = c.buffer in
+     let (Int8 dst) = out.buffer in
+     for i = 0 to n - 1 do
+       Array.unsafe_set dst i (Array.unsafe_get src i)
+     done
+   | Dtype.Int16 ->
+     let (Int16 src) = c.buffer in
+     let (Int16 dst) = out.buffer in
+     for i = 0 to n - 1 do
+       Array.unsafe_set dst i (Array.unsafe_get src i)
+     done
+   | Dtype.Bool ->
+     let (Bool src) = c.buffer in
+     let (Bool dst) = out.buffer in
+     for i = 0 to n - 1 do
+       dst.(i) <- src.(i)
+     done
+   | _ -> Error.invalid ~op:"copy" ~what:"unsupported dtype" ());
+  out
+
+let assign (type a b) (dst : (a, b) t) (src : (a, b) t) : unit =
+  let src_c = contiguous src in
+  let n = numel dst.view in
+  (match dst.dtype with
+   | Dtype.Float64 ->
+     let (Float64 s) = src_c.buffer in
+     let (Float64 d) = dst.buffer in
+     for i = 0 to n - 1 do
+       Array.unsafe_set d i (Array.unsafe_get s i)
+     done
+   | Dtype.Float32 ->
+     let (Float32 s) = src_c.buffer in
+     let (Float32 d) = dst.buffer in
+     for i = 0 to n - 1 do
+       Array.unsafe_set d i (Array.unsafe_get s i)
+     done
+   | Dtype.Int32 ->
+     let (Int32 s) = src_c.buffer in
+     let (Int32 d) = dst.buffer in
+     for i = 0 to n - 1 do
+       Array.unsafe_set d i (Array.unsafe_get s i)
+     done
+   | Dtype.Int64 ->
+     let (Int64 s) = src_c.buffer in
+     let (Int64 d) = dst.buffer in
+     for i = 0 to n - 1 do
+       Array.unsafe_set d i (Array.unsafe_get s i)
+     done
+   | Dtype.Int8 ->
+     let (Int8 s) = src_c.buffer in
+     let (Int8 d) = dst.buffer in
+     for i = 0 to n - 1 do
+       Array.unsafe_set d i (Array.unsafe_get s i)
+     done
+   | Dtype.Int16 ->
+     let (Int16 s) = src_c.buffer in
+     let (Int16 d) = dst.buffer in
+     for i = 0 to n - 1 do
+       Array.unsafe_set d i (Array.unsafe_get s i)
+     done
+   | Dtype.Bool ->
+     let (Bool s) = src_c.buffer in
+     let (Bool d) = dst.buffer in
+     for i = 0 to n - 1 do
+       d.(i) <- s.(i)
+     done
+   | _ -> Error.invalid ~op:"assign" ~what:"unsupported dtype" ())
 
 let threefry ~out:_ _ _ = Error.invalid ~op:"threefry" ~what:"not implemented" ()
 let gather ~out:_ _ _ ~axis:_ = Error.invalid ~op:"gather" ~what:"not implemented" ()
