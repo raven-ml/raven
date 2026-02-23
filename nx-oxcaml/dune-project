@@ -16,9 +16,20 @@
 (license ISC)
 
 (pin
- (url ../../)
+ (url ../)
  (package
   (name nx)))
+
+(pin
+ (url git+https://github.com/nirnayroy/ocamlfind)
+ (package
+  (name ocamlfind)))
+
+(pin
+ (url "git+https://github.com/Sudha247/ocamlbuild#oxcaml+dune")
+ (package
+   (name ocamlbuild)
+   (version 0.15.0+ox)))
 
 (package
  (name nx-oxcaml)

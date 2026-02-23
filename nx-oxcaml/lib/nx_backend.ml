@@ -40,9 +40,10 @@ let to_host _ =
 
 let data_array t = t.buffer
 
-let op_buffer (type a b) context (dtype : (a, b) Dtype.t) (size : int) :
+let buffer (type a b) context (dtype : (a, b) Dtype.t) (shape_arr : int array) :
     (a, b) t =
-  let sym_shape = Symbolic_shape.of_ints [| size |] in
+  let size = Stdlib.Array.fold_left ( * ) 1 shape_arr in
+  let sym_shape = Symbolic_shape.of_ints shape_arr in
   let view = View.create sym_shape in
   match dtype with
   | Dtype.Float64 ->
@@ -66,7 +67,56 @@ let op_buffer (type a b) context (dtype : (a, b) Dtype.t) (size : int) :
   | Dtype.Bool ->
       let buffer = Array.make size false in
       { dtype; buffer = Bool buffer; view; context }
-  | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
+  | _ -> Error.invalid ~op:"buffer" ~what:"unsupported dtype" ()
+
+let full (type a b) context (dtype : (a, b) Dtype.t) (shape_arr : int array)
+    (value : a) : (a, b) t =
+  let t = buffer context dtype shape_arr in
+  let size = Stdlib.Array.fold_left ( * ) 1 shape_arr in
+  (match (dtype : (a, b) Dtype.t) with
+  | Dtype.Float64 ->
+      let Float64 arr = t.buffer in
+      let v = Float_u.of_float value in
+      for i = 0 to size - 1 do
+        Array.unsafe_set arr i v
+      done
+  | Dtype.Float32 ->
+      let Float32 arr = t.buffer in
+      let v = Float32_u.of_float (Float_u.of_float value) in
+      for i = 0 to size - 1 do
+        Array.unsafe_set arr i v
+      done
+  | Dtype.Int8 ->
+      let Int8 arr = t.buffer in
+      let v = Int8_u.of_int value in
+      for i = 0 to size - 1 do
+        Array.unsafe_set arr i v
+      done
+  | Dtype.Int16 ->
+      let Int16 arr = t.buffer in
+      let v = Int16_u.of_int value in
+      for i = 0 to size - 1 do
+        Array.unsafe_set arr i v
+      done
+  | Dtype.Int32 ->
+      let Int32 arr = t.buffer in
+      let v = Int32_u.of_int32 value in
+      for i = 0 to size - 1 do
+        Array.unsafe_set arr i v
+      done
+  | Dtype.Int64 ->
+      let Int64 arr = t.buffer in
+      let v = Int64_u.of_int64 value in
+      for i = 0 to size - 1 do
+        Array.unsafe_set arr i v
+      done
+  | Dtype.Bool ->
+      let Bool arr = t.buffer in
+      for i = 0 to size - 1 do
+        Stdlib.Array.unsafe_set arr i value
+      done
+  | _ -> Error.invalid ~op:"full" ~what:"unsupported dtype" ());
+  t
 
 let of_float64_multidim context (arr : float# array) (shape : int array) :
     (float, Dtype.float64_elt) t =
@@ -130,7 +180,7 @@ let of_bool context (arr : bool array) : (bool, Dtype.bool_elt) t =
   let view = View.create sym_shape in
   { dtype = Dtype.Bool; buffer = Bool arr; view; context }
 
-let op_add (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let add (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
   let va = a.view in
@@ -161,9 +211,9 @@ let op_add (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_add.add_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
       else Op_add.add_int64 a_arr b_arr out_arr va vb vout 0 vol
-  | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
+  | _ -> Error.invalid ~op:"buffer" ~what:"unsupported dtype" ()
 
-let op_sub (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let sub (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
   let va = a.view in
@@ -194,9 +244,9 @@ let op_sub (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_sub.sub_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
       else Op_sub.sub_int64 a_arr b_arr out_arr va vb vout 0 vol
-  | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
+  | _ -> Error.invalid ~op:"buffer" ~what:"unsupported dtype" ()
 
-let op_mul (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let mul (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
   let va = a.view in
@@ -227,9 +277,9 @@ let op_mul (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_mul.mul_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
       else Op_mul.mul_int64 a_arr b_arr out_arr va vb vout 0 vol
-  | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
+  | _ -> Error.invalid ~op:"buffer" ~what:"unsupported dtype" ()
 
-let op_idiv (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let idiv (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
   let va = a.view in
@@ -262,9 +312,9 @@ let op_idiv (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_idiv.idiv_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
       else Op_idiv.idiv_int64 a_arr b_arr out_arr va vb vout 0 vol
-  | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
+  | _ -> Error.invalid ~op:"buffer" ~what:"unsupported dtype" ()
 
-let op_fdiv (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let fdiv (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
   let va = a.view in
@@ -297,9 +347,14 @@ let op_fdiv (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_fdiv.fdiv_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
       else Op_fdiv.fdiv_int64 a_arr b_arr out_arr va vb vout 0 vol
-  | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
+  | _ -> Error.invalid ~op:"fdiv" ~what:"unsupported dtype" ()
 
-let op_mod (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let div ~out x y =
+  let dt = dtype out in
+  if Dtype.is_int dt || Dtype.is_uint dt then idiv ~out x y
+  else fdiv ~out x y
+
+let mod_ (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
   let va = a.view in
@@ -330,9 +385,9 @@ let op_mod (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_mod.mod_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
       else Op_mod.mod_int64 a_arr b_arr out_arr va vb vout 0 vol
-  | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
+  | _ -> Error.invalid ~op:"buffer" ~what:"unsupported dtype" ()
 
-let op_pow (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let pow (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
   let va = a.view in
@@ -352,9 +407,9 @@ let op_pow (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
             Op_pow.pow_float32 a_arr b_arr out_arr va vb vout start_idx end_idx)
       else Op_pow.pow_float32 a_arr b_arr out_arr va vb vout 0 vol
   | _ ->
-      Error.invalid ~op:"op_cmpow" ~what:"not implemented for unboxed ints" ()
+      Error.invalid ~op:"pow" ~what:"not implemented for unboxed ints" ()
 
-let op_cmpeq (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t)
+let cmpeq (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t)
     (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
@@ -390,9 +445,9 @@ let op_cmpeq (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t)
             Op_cmpeq.cmpeq_int64 a_arr b_arr out_arr va vb vout start_idx
               end_idx)
       else Op_cmpeq.cmpeq_int64 a_arr b_arr out_arr va vb vout 0 vol
-  | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
+  | _ -> Error.invalid ~op:"buffer" ~what:"unsupported dtype" ()
 
-let op_cmpne (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t)
+let cmpne (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t)
     (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
@@ -428,9 +483,9 @@ let op_cmpne (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t)
             Op_cmpne.cmpne_int64 a_arr b_arr out_arr va vb vout start_idx
               end_idx)
       else Op_cmpne.cmpne_int64 a_arr b_arr out_arr va vb vout 0 vol
-  | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
+  | _ -> Error.invalid ~op:"buffer" ~what:"unsupported dtype" ()
 
-let op_cmplt (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t)
+let cmplt (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t)
     (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
@@ -466,9 +521,9 @@ let op_cmplt (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t)
             Op_cmplt.cmplt_int64 a_arr b_arr out_arr va vb vout start_idx
               end_idx)
       else Op_cmplt.cmplt_int64 a_arr b_arr out_arr va vb vout 0 vol
-  | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
+  | _ -> Error.invalid ~op:"buffer" ~what:"unsupported dtype" ()
 
-let op_cmple (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t)
+let cmple (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t)
     (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
@@ -504,9 +559,9 @@ let op_cmple (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t)
             Op_cmple.cmple_int64 a_arr b_arr out_arr va vb vout start_idx
               end_idx)
       else Op_cmple.cmple_int64 a_arr b_arr out_arr va vb vout 0 vol
-  | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
+  | _ -> Error.invalid ~op:"buffer" ~what:"unsupported dtype" ()
 
-let op_max (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let max (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
   let va = a.view in
@@ -537,9 +592,9 @@ let op_max (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_max.max_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
       else Op_max.max_int64 a_arr b_arr out_arr va vb vout 0 vol
-  | _ -> Error.invalid ~op:"op_max" ~what:"unsupported dtype" ()
+  | _ -> Error.invalid ~op:"max" ~what:"unsupported dtype" ()
 
-let op_min (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let min (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
   let va = a.view in
@@ -570,9 +625,9 @@ let op_min (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_min.min_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
       else Op_min.min_int64 a_arr b_arr out_arr va vb vout 0 vol
-  | _ -> Error.invalid ~op:"op_min" ~what:"unsupported dtype" ()
+  | _ -> Error.invalid ~op:"min" ~what:"unsupported dtype" ()
 
-let op_xor (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let xor (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
   let va = a.view in
@@ -591,9 +646,9 @@ let op_xor (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_xor.xor_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
       else Op_xor.xor_int64 a_arr b_arr out_arr va vb vout 0 vol
-  | _ -> Error.invalid ~op:"op_or" ~what:"not implemented for unboxed ints" ()
+  | _ -> Error.invalid ~op:"or_" ~what:"not implemented for unboxed ints" ()
 
-let op_or (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let or_ (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
   let va = a.view in
@@ -612,9 +667,9 @@ let op_or (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_or.or_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
       else Op_or.or_int64 a_arr b_arr out_arr va vb vout 0 vol
-  | _ -> Error.invalid ~op:"op_or" ~what:"not implemented for unboxed ints" ()
+  | _ -> Error.invalid ~op:"or_" ~what:"not implemented for unboxed ints" ()
 
-let op_and (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let and_ (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
   let va = a.view in
@@ -633,9 +688,9 @@ let op_and (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_and.and_int64 a_arr b_arr out_arr va vb vout start_idx end_idx)
       else Op_and.and_int64 a_arr b_arr out_arr va vb vout 0 vol
-  | _ -> Error.invalid ~op:"op_and" ~what:"not implemented for unboxed ints" ()
+  | _ -> Error.invalid ~op:"and_" ~what:"not implemented for unboxed ints" ()
 
-let op_neg (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let neg (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
   let va = a.view in
@@ -665,9 +720,9 @@ let op_neg (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_neg.neg_int64 a_arr out_arr va vout start_idx end_idx)
       else Op_neg.neg_int64 a_arr out_arr va vout 0 vol
-  | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
+  | _ -> Error.invalid ~op:"buffer" ~what:"unsupported dtype" ()
 
-let op_recip (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let recip (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
   let va = a.view in
@@ -697,9 +752,9 @@ let op_recip (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_recip.recip_int64 a_arr out_arr va vout start_idx end_idx)
       else Op_recip.recip_int64 a_arr out_arr va vout 0 vol
-  | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
+  | _ -> Error.invalid ~op:"buffer" ~what:"unsupported dtype" ()
 
-let op_abs (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let abs (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
   let va = a.view in
@@ -729,9 +784,9 @@ let op_abs (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_abs.abs_int64 a_arr out_arr va vout start_idx end_idx)
       else Op_abs.abs_int64 a_arr out_arr va vout 0 vol
-  | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
+  | _ -> Error.invalid ~op:"buffer" ~what:"unsupported dtype" ()
 
-let op_sqrt (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let sqrt (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
   let va = a.view in
@@ -750,9 +805,9 @@ let op_sqrt (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
             Op_sqrt.sqrt_float32 a_arr out_arr va vout start_idx end_idx)
       else Op_sqrt.sqrt_float32 a_arr out_arr va vout 0 vol
   | _ ->
-      Error.invalid ~op:"op_sqrt " ~what:"not implemented for unboxed ints" ()
+      Error.invalid ~op:"sqrt" ~what:"not implemented for unboxed ints" ()
 
-let op_exp (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let exp (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
   let va = a.view in
@@ -770,9 +825,9 @@ let op_exp (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_exp.exp_float32 a_arr out_arr va vout start_idx end_idx)
       else Op_exp.exp_float32 a_arr out_arr va vout 0 vol
-  | _ -> Error.invalid ~op:"op_exp " ~what:"not implemented for unboxed ints" ()
+  | _ -> Error.invalid ~op:"exp" ~what:"not implemented for unboxed ints" ()
 
-let op_log (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let log (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
   let va = a.view in
@@ -790,9 +845,9 @@ let op_log (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_log.log_float32 a_arr out_arr va vout start_idx end_idx)
       else Op_log.log_float32 a_arr out_arr va vout 0 vol
-  | _ -> Error.invalid ~op:"op_log " ~what:"not implemented for unboxed ints" ()
+  | _ -> Error.invalid ~op:"log" ~what:"not implemented for unboxed ints" ()
 
-let op_sin (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let sin (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
   let va = a.view in
@@ -810,9 +865,9 @@ let op_sin (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_sin.sin_float32 a_arr out_arr va vout start_idx end_idx)
       else Op_sin.sin_float32 a_arr out_arr va vout 0 vol
-  | _ -> Error.invalid ~op:"op_sin " ~what:"not implemented for unboxed ints" ()
+  | _ -> Error.invalid ~op:"sin" ~what:"not implemented for unboxed ints" ()
 
-let op_cos (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let cos (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
   let va = a.view in
@@ -830,9 +885,24 @@ let op_cos (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_cos.cos_float32 a_arr out_arr va vout start_idx end_idx)
       else Op_cos.cos_float32 a_arr out_arr va vout 0 vol
-  | _ -> Error.invalid ~op:"op_cos " ~what:"not implemented for unboxed ints" ()
+  | _ -> Error.invalid ~op:"cos" ~what:"not implemented for unboxed ints" ()
 
-let op_where (type a b) ~(out : (a, b) t) (cond : (bool, Nx_buffer.bool_elt) t)
+let sign ~out:_ _ = Error.invalid ~op:"sign" ~what:"not implemented" ()
+let tan ~out:_ _ = Error.invalid ~op:"tan" ~what:"not implemented" ()
+let asin ~out:_ _ = Error.invalid ~op:"asin" ~what:"not implemented" ()
+let acos ~out:_ _ = Error.invalid ~op:"acos" ~what:"not implemented" ()
+let atan ~out:_ _ = Error.invalid ~op:"atan" ~what:"not implemented" ()
+let atan2 ~out:_ _ _ = Error.invalid ~op:"atan2" ~what:"not implemented" ()
+let sinh ~out:_ _ = Error.invalid ~op:"sinh" ~what:"not implemented" ()
+let cosh ~out:_ _ = Error.invalid ~op:"cosh" ~what:"not implemented" ()
+let tanh ~out:_ _ = Error.invalid ~op:"tanh" ~what:"not implemented" ()
+let trunc ~out:_ _ = Error.invalid ~op:"trunc" ~what:"not implemented" ()
+let ceil ~out:_ _ = Error.invalid ~op:"ceil" ~what:"not implemented" ()
+let floor ~out:_ _ = Error.invalid ~op:"floor" ~what:"not implemented" ()
+let round ~out:_ _ = Error.invalid ~op:"round" ~what:"not implemented" ()
+let erf ~out:_ _ = Error.invalid ~op:"erf" ~what:"not implemented" ()
+
+let where (type a b) ~(out : (a, b) t) (cond : (bool, Nx_buffer.bool_elt) t)
     (if_true : (a, b) t) (if_false : (a, b) t) : unit =
   let parallel_threshold = 62500 in
   let vout = out.view in
@@ -895,9 +965,9 @@ let op_where (type a b) ~(out : (a, b) t) (cond : (bool, Nx_buffer.bool_elt) t)
       else
         Op_where.where_int16 cond_arr true_arr false_arr out_arr vcond vtrue
           vfalse vout 0 vol
-  | _ -> Error.invalid ~op:"op_where " ~what:"not implemented for this dtype" ()
+  | _ -> Error.invalid ~op:"where" ~what:"not implemented for this dtype" ()
 
-let op_reduce_sum (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
+let reduce_sum (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
     unit =
   let vout = out.view in
   let va = a.view in
@@ -914,9 +984,9 @@ let op_reduce_sum (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
   | Int64 out_arr, Int64 a_arr ->
       Reduce_ops.reduce_sum_int64 out.context.pool ~out_arr ~a_arr ~va ~vout
         ~axes ~keepdims
-  | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
+  | _ -> Error.invalid ~op:"buffer" ~what:"unsupported dtype" ()
 
-let op_reduce_prod (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
+let reduce_prod (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
     unit =
   let vout = out.view in
   let va = a.view in
@@ -933,9 +1003,9 @@ let op_reduce_prod (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
   | Int64 out_arr, Int64 a_arr ->
       Reduce_ops.reduce_prod_int64 out.context.pool ~out_arr ~a_arr ~va ~vout
         ~axes ~keepdims
-  | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
+  | _ -> Error.invalid ~op:"buffer" ~what:"unsupported dtype" ()
 
-let op_reduce_max (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
+let reduce_max (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
     unit =
   let vout = out.view in
   let va = a.view in
@@ -952,9 +1022,9 @@ let op_reduce_max (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
   | Int64 out_arr, Int64 a_arr ->
       Reduce_ops.reduce_max_int64 out.context.pool ~out_arr ~a_arr ~va ~vout
         ~axes ~keepdims
-  | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
+  | _ -> Error.invalid ~op:"buffer" ~what:"unsupported dtype" ()
 
-let op_reduce_min (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
+let reduce_min (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
     unit =
   let vout = out.view in
   let va = a.view in
@@ -971,52 +1041,58 @@ let op_reduce_min (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
   | Int64 out_arr, Int64 a_arr ->
       Reduce_ops.reduce_min_int64 out.context.pool ~out_arr ~a_arr ~va ~vout
         ~axes ~keepdims
-  | _ -> Error.invalid ~op:"op_buffer" ~what:"unsupported dtype" ()
+  | _ -> Error.invalid ~op:"buffer" ~what:"unsupported dtype" ()
 
-let op_associative_scan ~axis:_ ~op:_ _ =
-  Error.invalid ~op:"op_associative_scan" ~what:"not implemented" ()
+let associative_scan ~out:_ ~axis:_ ~op:_ _ =
+  Error.invalid ~op:"associative_scan" ~what:"not implemented" ()
 
-let op_const_scalar _ _ _ =
-  Error.invalid ~op:"op_const_scalar" ~what:"not implemented" ()
+let argmax ~out:_ ~axis:_ ~keepdims:_ _ =
+  Error.invalid ~op:"argmax" ~what:"not implemented" ()
+
+let argmin ~out:_ ~axis:_ ~keepdims:_ _ =
+  Error.invalid ~op:"argmin" ~what:"not implemented" ()
+
+let sort ~out:_ ~axis:_ ~descending:_ _ =
+  Error.invalid ~op:"sort" ~what:"not implemented" ()
+
+let argsort ~out:_ ~axis:_ ~descending:_ _ =
+  Error.invalid ~op:"argsort" ~what:"not implemented" ()
 
 let from_host _ _ = Error.invalid ~op:"from_host" ~what:"not implemented" ()
-let op_expand x shape = { x with view = View.expand x.view shape }
-let op_reshape x shape = { x with view = View.reshape x.view shape }
-let op_permute _ _ = Error.invalid ~op:"op_permute" ~what:"not implemented" ()
-let op_shrink _ _ = Error.invalid ~op:"op_shrink" ~what:"not implemented" ()
-let op_flip _ _ = Error.invalid ~op:"op_flip" ~what:"not implemented" ()
-let op_pad _ _ _ = Error.invalid ~op:"op_pad" ~what:"not implemented" ()
-let op_cat _ _ = Error.invalid ~op:"op_cat" ~what:"not implemented" ()
-let op_cast _ _ = Error.invalid ~op:"op_cast" ~what:"not implemented" ()
+let expand x shape = { x with view = View.expand x.view shape }
+let reshape x shape = { x with view = View.reshape x.view shape }
+let permute _ _ = Error.invalid ~op:"permute" ~what:"not implemented" ()
+let shrink _ _ = Error.invalid ~op:"shrink" ~what:"not implemented" ()
+let flip _ _ = Error.invalid ~op:"flip" ~what:"not implemented" ()
+let pad _ _ _ = Error.invalid ~op:"pad" ~what:"not implemented" ()
+let cat ~out:_ _ ~axis:_ = Error.invalid ~op:"cat" ~what:"not implemented" ()
+let cast ~out:_ _ = Error.invalid ~op:"cast" ~what:"not implemented" ()
 
-let op_contiguous _ =
-  Error.invalid ~op:"op_contiguous" ~what:"not implemented" ()
+let contiguous _ =
+  Error.invalid ~op:"contiguous" ~what:"not implemented" ()
 
-let op_copy _ = Error.invalid ~op:"op_copy" ~what:"not implemented" ()
-let op_assign _ _ = Error.invalid ~op:"op_assign" ~what:"not implemented" ()
+let copy _ = Error.invalid ~op:"copy" ~what:"not implemented" ()
+let assign _ _ = Error.invalid ~op:"assign" ~what:"not implemented" ()
 
-let op_as_strided _ _ _ _ =
-  Error.invalid ~op:"op_as_strided" ~what:"not implemented" ()
+let threefry ~out:_ _ _ = Error.invalid ~op:"threefry" ~what:"not implemented" ()
+let gather ~out:_ _ _ ~axis:_ = Error.invalid ~op:"gather" ~what:"not implemented" ()
 
-let op_threefry _ _ = Error.invalid ~op:"op_threefry" ~what:"not implemented" ()
-let op_gather _ _ _ = Error.invalid ~op:"op_gather" ~what:"not implemented" ()
+let scatter ?mode:_ ?unique_indices:_ _ ~indices:_ ~updates:_ ~axis:_ =
+  Error.invalid ~op:"scatter" ~what:"not implemented" ()
 
-let op_scatter ?mode:_ ?unique_indices:_ _ _ _ _ =
-  Error.invalid ~op:"op_scatter" ~what:"not implemented" ()
+let unfold ?out:_ _ ~kernel_size:_ ~stride:_ ~dilation:_ ~padding:_ =
+  Error.invalid ~op:"unfold" ~what:"not implemented" ()
 
-let op_unfold ?out:_ _ ~kernel_size:_ ~stride:_ ~dilation:_ ~padding:_ =
-  Error.invalid ~op:"op_unfold" ~what:"not implemented" ()
-
-let op_fold ?out:_ _ ~output_size:_ ~kernel_size:_ ~stride:_ ~dilation:_
+let fold ?out:_ _ ~output_size:_ ~kernel_size:_ ~stride:_ ~dilation:_
     ~padding:_ =
-  Error.invalid ~op:"op_fold" ~what:"not implemented" ()
+  Error.invalid ~op:"fold" ~what:"not implemented" ()
 
-let op_matmul (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit
+let matmul (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit
     =
   let va = a.view and vb = b.view and vout = out.view in
   let m = (shape vout).(0) in
   let nd_out = Array.length (shape vout) in
-  let batch_shape = Array.sub (shape vout) 0 (max 0 (nd_out - 2)) in
+  let batch_shape = Array.sub (shape vout) 0 (Stdlib.max 0 (nd_out - 2)) in
   let batch_sz =
     if Array.length batch_shape = 0 then 1 else Shape.numel batch_shape
   in
@@ -1077,32 +1153,32 @@ let op_matmul (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit
         Parallel.parallel_for out.context.pool 0 (total_units - 1) (fun s e ->
             Op_matmul.matmul_int32_slow a b c va vb vout s e)
   | _ ->
-      Error.invalid ~op:"op_matmul" ~what:"not implemented for small unboxed ints" ()
+      Error.invalid ~op:"matmul" ~what:"not implemented for small unboxed ints" ()
 
-let op_fft ?out:_ _ ~axes:_ =
-  Error.invalid ~op:"op_fft" ~what:"not implemented" ()
+let fft ?out:_ _ ~axes:_ =
+  Error.invalid ~op:"fft" ~what:"not implemented" ()
 
-let op_ifft ?out:_ _ ~axes:_ =
-  Error.invalid ~op:"op_ifft" ~what:"not implemented" ()
+let ifft ?out:_ _ ~axes:_ =
+  Error.invalid ~op:"ifft" ~what:"not implemented" ()
 
-let op_rfft ?out:_ _ ~dtype:_ ~axes:_ =
-  Error.invalid ~op:"op_rfft" ~what:"not implemented" ()
+let rfft ?out:_ _ ~dtype:_ ~axes:_ =
+  Error.invalid ~op:"rfft" ~what:"not implemented" ()
 
-let op_irfft ?out:_ _ ~dtype:_ ~axes:_ ~s:_ =
-  Error.invalid ~op:"op_irfft" ~what:"not implemented" ()
+let irfft ?out:_ ?s:_ _ ~dtype:_ ~axes:_ =
+  Error.invalid ~op:"irfft" ~what:"not implemented" ()
 
-let op_cholesky ~upper:_ _ =
-  Error.invalid ~op:"op_cholesky" ~what:"not implemented" ()
+let cholesky ~upper:_ _ =
+  Error.invalid ~op:"cholesky" ~what:"not implemented" ()
 
-let op_qr ~reduced:_ _ = Error.invalid ~op:"op_qr" ~what:"not implemented" ()
+let qr ~reduced:_ _ = Error.invalid ~op:"qr" ~what:"not implemented" ()
 
-let op_svd ~full_matrices:_ _ =
-  Error.invalid ~op:"op_svd" ~what:"not implemented" ()
+let svd ~full_matrices:_ _ =
+  Error.invalid ~op:"svd" ~what:"not implemented" ()
 
-let op_eig ~vectors:_ _ = Error.invalid ~op:"op_eig" ~what:"not implemented" ()
+let eig ~vectors:_ _ = Error.invalid ~op:"eig" ~what:"not implemented" ()
 
-let op_eigh ~vectors:_ _ =
-  Error.invalid ~op:"op_eigh" ~what:"not implemented" ()
+let eigh ~vectors:_ _ =
+  Error.invalid ~op:"eigh" ~what:"not implemented" ()
 
-let op_triangular_solve ~upper:_ ~transpose:_ ~unit_diag:_ _ _ =
-  Error.invalid ~op:"op_triangular_solve" ~what:"not implemented" ()
+let triangular_solve ~upper:_ ~transpose:_ ~unit_diag:_ _ _ =
+  Error.invalid ~op:"triangular_solve" ~what:"not implemented" ()

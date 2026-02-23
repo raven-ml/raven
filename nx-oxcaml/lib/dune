@@ -17,7 +17,7 @@
 (library
  (name nx_oxcaml)
  (public_name nx-oxcaml)
- (implements nx_backend)
+ (implements nx.backend)
  (modules
   (:standard \ simd_neon simd_sse))
  (foreign_stubs
