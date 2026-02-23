@@ -1,8 +1,10 @@
+(include_subdirs unqualified)
+
 (library
  (name kaun_console)
  (public_name kaun.console)
- (modules metric_store kaun_console)
- (libraries kaun kaun.runlog jsont jsont.bytesrw unix mosaic mosaic.ui))
+ (modules :standard \ cli)
+ (libraries kaun kaun.runlog yojson unix mosaic mosaic.ui jsont jsont.bytesrw kaun.sysstat matrix.charts matrix.grid))
 
 (executable
  (name cli)
