@@ -1026,11 +1026,154 @@ let from_host (type a b) ctx (array : (a, b, c_layout) Bigarray.Array1.t) :
   | _ -> Error.invalid ~op:"from_host" ~what:"unsupported dtype" ()
 let expand x shape = { x with view = View.expand x.view shape }
 let reshape x shape = { x with view = View.reshape x.view shape }
-let permute _ _ = Error.invalid ~op:"permute" ~what:"not implemented" ()
-let shrink _ _ = Error.invalid ~op:"shrink" ~what:"not implemented" ()
-let flip _ _ = Error.invalid ~op:"flip" ~what:"not implemented" ()
-let pad _ _ _ = Error.invalid ~op:"pad" ~what:"not implemented" ()
-let cat ~out:_ _ ~axis:_ = Error.invalid ~op:"cat" ~what:"not implemented" ()
+let permute x axes = { x with view = View.permute x.view axes }
+let shrink x bounds = { x with view = View.shrink x.view bounds }
+let flip x axes = { x with view = View.flip x.view axes }
+
+let pad (type a b) (x : (a, b) t) (padding : (int * int) array)
+    (fill_value : a) : (a, b) t =
+  let in_view = x.view in
+  let in_shape = shape in_view in
+  let ndim = Array.length in_shape in
+  if Array.length padding <> ndim then
+    Error.invalid ~op:"pad" ~what:"padding rank mismatch" ();
+  let out_shape =
+    Array.init ndim (fun i ->
+        let before, after = padding.(i) in
+        if before < 0 || after < 0 then
+          Error.invalid ~op:"pad" ~what:"padding values must be non-negative" ();
+        in_shape.(i) + before + after)
+  in
+  let out_view = View.create (Symbolic_shape.of_ints out_shape) in
+  let in_numel = numel in_view in
+  let out_numel = numel out_view in
+  let in_offset = View.offset in_view in
+  let out_offset = View.offset out_view in
+  let in_strides = View.strides in_view in
+  let out_strides = View.strides out_view in
+  match x with
+  | { dtype = Dtype.Float64; buffer = Float64 in_arr; context; _ } ->
+    let fill_value = Float_u.of_float fill_value in
+    let out_arr = Array.make_float64 out_numel in
+    for i = 0 to out_numel - 1 do
+      Array.unsafe_set out_arr i fill_value
+    done;
+    Op_pad.pad_float64 in_arr out_arr in_shape padding in_offset out_offset
+      in_strides out_strides in_numel;
+    { dtype = Dtype.Float64; buffer = Float64 out_arr; view = out_view; context }
+  | { dtype = Dtype.Float32; buffer = Float32 in_arr; context; _ } ->
+    let fill_value = Float32_u.of_float (Float_u.of_float fill_value) in
+    let out_arr = Array.make_float32 out_numel in
+    for i = 0 to out_numel - 1 do
+      Array.unsafe_set out_arr i fill_value
+    done;
+    Op_pad.pad_float32 in_arr out_arr in_shape padding in_offset out_offset
+      in_strides out_strides in_numel;
+    { dtype = Dtype.Float32; buffer = Float32 out_arr; view = out_view; context }
+  | { dtype = Dtype.Int8; buffer = Int8 in_arr; context; _ } ->
+    let fill_value = Int8_u.of_int fill_value in
+    let out_arr = Array.make_int8 out_numel in
+    for i = 0 to out_numel - 1 do
+      Array.unsafe_set out_arr i fill_value
+    done;
+    Op_pad.pad_int8 in_arr out_arr in_shape padding in_offset out_offset
+      in_strides out_strides in_numel;
+    { dtype = Dtype.Int8; buffer = Int8 out_arr; view = out_view; context }
+  | { dtype = Dtype.Int16; buffer = Int16 in_arr; context; _ } ->
+    let fill_value = Int16_u.of_int fill_value in
+    let out_arr = Array.make_int16 out_numel in
+    for i = 0 to out_numel - 1 do
+      Array.unsafe_set out_arr i fill_value
+    done;
+    Op_pad.pad_int16 in_arr out_arr in_shape padding in_offset out_offset
+      in_strides out_strides in_numel;
+    { dtype = Dtype.Int16; buffer = Int16 out_arr; view = out_view; context }
+  | { dtype = Dtype.Int32; buffer = Int32 in_arr; context; _ } ->
+    let fill_value = Int32_u.of_int32 fill_value in
+    let out_arr = Array.make_int32 out_numel in
+    for i = 0 to out_numel - 1 do
+      Array.unsafe_set out_arr i fill_value
+    done;
+    Op_pad.pad_int32 in_arr out_arr in_shape padding in_offset out_offset
+      in_strides out_strides in_numel;
+    { dtype = Dtype.Int32; buffer = Int32 out_arr; view = out_view; context }
+  | { dtype = Dtype.Int64; buffer = Int64 in_arr; context; _ } ->
+    let fill_value = Int64_u.of_int64 fill_value in
+    let out_arr = Array.make_int64 out_numel in
+    for i = 0 to out_numel - 1 do
+      Array.unsafe_set out_arr i fill_value
+    done;
+    Op_pad.pad_int64 in_arr out_arr in_shape padding in_offset out_offset
+      in_strides out_strides in_numel;
+    { dtype = Dtype.Int64; buffer = Int64 out_arr; view = out_view; context }
+  | { dtype = Dtype.Bool; buffer = Bool in_arr; context; _ } ->
+    let out_arr = Array.make out_numel fill_value in
+    Op_pad.pad_bool in_arr out_arr in_shape padding in_offset out_offset
+      in_strides out_strides in_numel;
+    { dtype = Dtype.Bool; buffer = Bool out_arr; view = out_view; context }
+  | _ -> .
+
+let cat (type a b) ~(out : (a, b) t) (xs : (a, b) t list) ~(axis : int) : unit =
+  match xs with
+  | [] -> Error.invalid ~op:"cat" ~what:"empty input list" ()
+  | x0 :: _ ->
+    let rank = Array.length (shape x0.view) in
+    let axis = if axis < 0 then rank + axis else axis in
+    if axis < 0 || axis >= rank then
+      Error.axis_out_of_bounds ~op:"cat" ~axis ~ndim:rank ();
+    let out_offset = View.offset out.view in
+    let out_strides = View.strides out.view in
+    (match (x0, out) with
+    | { buffer = Float64 _; _ }, { buffer = Float64 out_arr; _ } ->
+      let srcs =
+        List.map
+          (fun x -> match x.buffer with Float64 a -> (a, x.view) | _ -> .)
+          xs
+      in
+      Op_cat.cat_float64 srcs out_arr rank axis out_offset out_strides
+    | { buffer = Float32 _; _ }, { buffer = Float32 out_arr; _ } ->
+      let srcs =
+        List.map
+          (fun x -> match x.buffer with Float32 a -> (a, x.view) | _ -> .)
+          xs
+      in
+      Op_cat.cat_float32 srcs out_arr rank axis out_offset out_strides
+    | { buffer = Int8 _; _ }, { buffer = Int8 out_arr; _ } ->
+      let srcs =
+        List.map
+          (fun x -> match x.buffer with Int8 a -> (a, x.view) | _ -> .)
+          xs
+      in
+      Op_cat.cat_int8 srcs out_arr rank axis out_offset out_strides
+    | { buffer = Int16 _; _ }, { buffer = Int16 out_arr; _ } ->
+      let srcs =
+        List.map
+          (fun x -> match x.buffer with Int16 a -> (a, x.view) | _ -> .)
+          xs
+      in
+      Op_cat.cat_int16 srcs out_arr rank axis out_offset out_strides
+    | { buffer = Int32 _; _ }, { buffer = Int32 out_arr; _ } ->
+      let srcs =
+        List.map
+          (fun x -> match x.buffer with Int32 a -> (a, x.view) | _ -> .)
+          xs
+      in
+      Op_cat.cat_int32 srcs out_arr rank axis out_offset out_strides
+    | { buffer = Int64 _; _ }, { buffer = Int64 out_arr; _ } ->
+      let srcs =
+        List.map
+          (fun x -> match x.buffer with Int64 a -> (a, x.view) | _ -> .)
+          xs
+      in
+      Op_cat.cat_int64 srcs out_arr rank axis out_offset out_strides
+    | { buffer = Bool _; _ }, { buffer = Bool out_arr; _ } ->
+      let srcs =
+        List.map
+          (fun x -> match x.buffer with Bool a -> (a, x.view) | _ -> .)
+          xs
+      in
+      Op_cat.cat_bool srcs out_arr rank axis out_offset out_strides
+    | _ -> .)
 let cast ~out:_ _ = Error.invalid ~op:"cast" ~what:"not implemented" ()
 
 let contiguous _ =
