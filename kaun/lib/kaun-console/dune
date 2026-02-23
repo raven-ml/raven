@@ -3,12 +3,4 @@
 (library
  (name kaun_console)
  (public_name kaun.console)
- (modules :standard \ cli)
- (libraries kaun kaun.runlog yojson unix mosaic mosaic.ui jsont jsont.bytesrw kaun.sysstat matrix.charts matrix.grid))
-
-(executable
- (name cli)
- (public_name kaun-console)
- (package kaun)
- (modules cli)
- (libraries kaun.console kaun.runlog jsont jsont.bytesrw unix))
+ (libraries kaun kaun.runlog unix mosaic mosaic.ui jsont jsont.bytesrw kaun.sysstat matrix.charts matrix.grid))

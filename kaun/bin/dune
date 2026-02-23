@@ -1,0 +1,5 @@
+(executable
+ (name main)
+ (public_name kaun)
+ (package kaun)
+ (libraries kaun.console kaun.runlog cmdliner jsont jsont.bytesrw unix))

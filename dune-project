@@ -127,6 +127,7 @@
   (ocaml
    (>= 5.2.0))
   dune
+  cmdliner
   logs
   mosaic
   jsont
