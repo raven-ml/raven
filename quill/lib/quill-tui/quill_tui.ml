@@ -8,12 +8,15 @@ open Quill
 
 (* ───── Model ───── *)
 
+type mode = Normal | Editing
+
 type model = {
   session : Session.t;
   kernel : Kernel.t;
   event_queue : Kernel.event Queue.t;
   path : string;
   focus : int;
+  mode : mode;
   dirty : bool;
   last_error : string option;
   last_mtime : float;
@@ -39,6 +42,10 @@ type msg =
   | Quit
   | Tick of float
   | Dismiss_error
+  | Enter_edit
+  | Exit_edit
+  | Edit_source of string
+  | Submit_edit of string
 
 (* ───── Palette ───── *)
 
@@ -57,6 +64,8 @@ let error_bg = Ansi.Color.of_rgb 50 30 30
 let cell_bg_focused = Ansi.Color.of_rgb 30 30 38
 let reload_interval = 1.0
 let template = "# Untitled\n\n```ocaml\n\n```\n"
+let scroll_box_id = "notebook-scroll"
+let textarea_id = "cell-editor"
 let lp n = Toffee.Style.Length_percentage.length (Float.of_int n)
 
 let padding_lrtb ~l ~r ~t ~b =
@@ -117,6 +126,7 @@ let init ~create_kernel ~path () =
       event_queue;
       path;
       focus = 0;
+      mode = Normal;
       dirty = false;
       last_error = None;
       last_mtime;
@@ -164,12 +174,63 @@ let execute_all_cells m =
 
 (* ───── Update ───── *)
 
-let update msg m =
-  let m =
-    match msg with
-    | Quit | Tick _ | Dismiss_error -> m
-    | _ -> { m with confirm_quit = false }
-  in
+let update_save m =
+  let session = Session.checkpoint m.session in
+  let m = { m with session } in
+  let doc = Session.doc m.session in
+  let content = Quill_markdown.to_string_with_outputs doc in
+  write_file m.path content;
+  let last_mtime = get_mtime m.path in
+  ({ m with dirty = false; last_error = None; last_mtime }, Cmd.none)
+
+let update_quit m =
+  if m.dirty && not m.confirm_quit then
+    ( {
+        m with
+        confirm_quit = true;
+        last_error = Some "Unsaved changes. Press q again to quit, s to save.";
+      },
+      Cmd.none )
+  else (
+    m.kernel.shutdown ();
+    (m, Cmd.quit))
+
+let update_editing msg m =
+  match msg with
+  | Exit_edit ->
+      let session = Session.checkpoint m.session in
+      ({ m with mode = Normal; session }, Cmd.focus scroll_box_id)
+  | Edit_source source -> (
+      match focused_cell m with
+      | Some cell ->
+          let cell_id = Cell.id cell in
+          let session = Session.update_source cell_id source m.session in
+          ({ m with session; dirty = true }, Cmd.none)
+      | None -> (m, Cmd.none))
+  | Submit_edit _ -> (
+      match focused_cell m with
+      | Some (Cell.Code { id; source; _ }) ->
+          let session = Session.checkpoint m.session in
+          let m = { m with session; mode = Normal } in
+          let m = execute_cell m id source in
+          (m, Cmd.focus scroll_box_id)
+      | _ ->
+          let session = Session.checkpoint m.session in
+          ({ m with mode = Normal; session }, Cmd.focus scroll_box_id))
+  | Save -> update_save m
+  | Quit ->
+      let session = Session.checkpoint m.session in
+      update_quit { m with session; mode = Normal }
+  | Interrupt ->
+      m.kernel.interrupt ();
+      (m, Cmd.none)
+  | Tick dt ->
+      let session = drain_events m.event_queue m.session in
+      ({ m with session; reload_acc = m.reload_acc +. dt }, Cmd.none)
+  | Dismiss_error -> ({ m with last_error = None }, Cmd.none)
+  | _ -> (m, Cmd.none)
+
+let update_normal msg m =
   match msg with
   | Focus_next ->
       let n = cell_count m in
@@ -242,26 +303,8 @@ let update msg m =
   | Clear_all ->
       let session = Session.clear_all_outputs m.session in
       ({ m with session; dirty = true }, Cmd.none)
-  | Save ->
-      let session = Session.checkpoint m.session in
-      let m = { m with session } in
-      let doc = Session.doc m.session in
-      let content = Quill_markdown.to_string_with_outputs doc in
-      write_file m.path content;
-      let last_mtime = get_mtime m.path in
-      ({ m with dirty = false; last_error = None; last_mtime }, Cmd.none)
-  | Quit ->
-      if m.dirty && not m.confirm_quit then
-        ( {
-            m with
-            confirm_quit = true;
-            last_error =
-              Some "Unsaved changes. Press q again to quit, s to save.";
-          },
-          Cmd.none )
-      else (
-        m.kernel.shutdown ();
-        (m, Cmd.quit))
+  | Save -> update_save m
+  | Quit -> update_quit m
   | Tick dt ->
       let reload_acc = m.reload_acc +. dt in
       if reload_acc >= reload_interval then
@@ -269,6 +312,21 @@ let update msg m =
         (m, Cmd.none)
       else ({ m with reload_acc }, Cmd.none)
   | Dismiss_error -> ({ m with last_error = None }, Cmd.none)
+  | Enter_edit -> (
+      match focused_cell m with
+      | Some (Cell.Code _) -> ({ m with mode = Editing }, Cmd.focus textarea_id)
+      | _ -> (m, Cmd.none))
+  | _ -> (m, Cmd.none)
+
+let update msg m =
+  let m =
+    match msg with
+    | Quit | Tick _ | Dismiss_error -> m
+    | _ -> { m with confirm_quit = false }
+  in
+  match m.mode with
+  | Editing -> update_editing msg m
+  | Normal -> update_normal msg m
 
 (* ───── View Components ───── *)
 
@@ -301,7 +359,7 @@ let view_header m =
     if rc > 0 then
       box ~flex_direction:Row ~gap:(gap 1) ~align_items:Center
         [
-          spinner ~preset:Dots ~color:accent ();
+          spinner ~frame_set:Spinner.dots ~color:accent ();
           text
             ~style:(Ansi.Style.make ~fg:accent ())
             (Printf.sprintf "%d running" rc);
@@ -314,7 +372,7 @@ let view_header m =
   let right =
     if m.dirty then
       text ~style:(Ansi.Style.make ~fg:accent ~bold:true ()) "\xe2\x97\x8f"
-    else null
+    else empty
   in
   box ~background:chrome_bg ~flex_direction:Row ~justify_content:Space_between
     ~align_items:Center
@@ -324,7 +382,7 @@ let view_header m =
 
 let view_error_bar msg =
   box ~background:error_bg ~border:true ~border_sides:[ `Left ]
-    ~border_style:Grid.Border.heavy ~border_color:error_fg
+    ~border_style:Border.heavy ~border_color:error_fg
     ~size:{ width = pct 100; height = auto }
     ~padding:(padding_lrtb ~l:1 ~r:1 ~t:0 ~b:0)
     [ text ~style:(Ansi.Style.make ~fg:error_fg ()) msg ]
@@ -354,21 +412,44 @@ let view_output output =
           ~style:(Ansi.Style.make ~fg:output_dim_fg ~italic:true ())
           (Printf.sprintf "[%s \xc2\xb7 %d bytes]" mime (String.length data))
 
-let view_code_cell ~index ~is_focused ~status source outputs =
+let view_code_cell ~index ~is_focused ~is_editing ~status source outputs =
   let border_color = if is_focused then border_focused else border_unfocused in
   let num = index + 1 in
-  let status_indicator =
-    match status with
-    | Session.Running -> " \xe2\x80\xa6"
-    | Session.Queued -> " \xe2\x97\x8b"
-    | Session.Idle -> if outputs <> [] then " \xe2\x9c\x93" else ""
+  let title =
+    if is_editing then Printf.sprintf " %d \xe2\x9c\x8e " num
+    else
+      let status_indicator =
+        match status with
+        | Session.Running -> " \xe2\x80\xa6"
+        | Session.Queued -> " \xe2\x97\x8b"
+        | Session.Idle -> if outputs <> [] then " \xe2\x9c\x93" else ""
+      in
+      Printf.sprintf " %d%s " num status_indicator
   in
-  let title = Printf.sprintf " %d%s " num status_indicator in
   let source_view =
-    box
-      ~padding:(padding_lrtb ~l:1 ~r:1 ~t:1 ~b:0)
-      ~size:{ width = pct 100; height = auto }
-      [ code ~filetype:"ocaml" source ]
+    if is_editing then
+      box
+        ~padding:(padding_lrtb ~l:1 ~r:1 ~t:0 ~b:0)
+        ~size:{ width = pct 100; height = auto }
+        [
+          textarea ~id:textarea_id ~value:source ~text_color:output_fg
+            ~background_color:cell_bg_focused ~focused_text_color:output_fg
+            ~focused_background_color:cell_bg_focused ~cursor_style:`Line
+            ~cursor_color:accent
+            ~size:{ width = pct 100; height = auto }
+            ~on_input:(fun s -> Some (Edit_source s))
+            ~on_submit:(fun s -> Some (Submit_edit s))
+            ();
+        ]
+    else
+      let highlights =
+        Tree_sitter_ocaml.highlight_ocaml source
+        |> Syntax_theme.apply Syntax_theme.default ~content:source
+      in
+      box
+        ~padding:(padding_lrtb ~l:1 ~r:1 ~t:1 ~b:0)
+        ~size:{ width = pct 100; height = auto }
+        [ code ~highlights source ]
   in
   let status_row =
     match status with
@@ -377,24 +458,24 @@ let view_code_cell ~index ~is_focused ~status source outputs =
           ~padding:(padding_lrtb ~l:1 ~r:1 ~t:0 ~b:0)
           ~size:{ width = pct 100; height = auto }
           [
-            spinner ~preset:Dots ~color:accent ();
+            spinner ~frame_set:Spinner.dots ~color:accent ();
             text
               ~style:(Ansi.Style.make ~fg:accent_dim ~italic:true ())
               "evaluating";
           ]
-    | _ -> null
+    | _ -> empty
   in
   let output_section =
-    if outputs = [] then null
+    if outputs = [] then empty
     else
       box ~flex_direction:Column ~border:true ~border_sides:[ `Top ]
-        ~border_style:Grid.Border.single ~border_color:border_unfocused
+        ~border_style:Border.single ~border_color:border_unfocused
         ~size:{ width = pct 100; height = auto }
         ~padding:(padding 1)
         (List.map view_output outputs)
   in
   box ~flex_direction:Column ~border:true ~border_color
-    ~border_style:Grid.Border.rounded ~title ~title_alignment:`Left
+    ~border_style:Border.rounded ~title ~title_alignment:`Left
     ?background:(if is_focused then Some cell_bg_focused else None)
     ~size:{ width = pct 100; height = auto }
     [ source_view; status_row; output_section ]
@@ -406,12 +487,13 @@ let view_text_cell ~is_focused source =
     ~padding:(padding_lrtb ~l:2 ~r:2 ~t:0 ~b:0)
     [ markdown source ]
 
-let view_cell ~index ~focus m cell =
+let view_cell ~index ~focus ~mode m cell =
   let is_focused = index = focus in
   match cell with
   | Cell.Code { id; source; outputs; _ } ->
       let status = Session.cell_status id m.session in
-      view_code_cell ~index ~is_focused ~status source outputs
+      let is_editing = is_focused && mode = Editing in
+      view_code_cell ~index ~is_focused ~is_editing ~status source outputs
   | Cell.Text { source; _ } -> view_text_cell ~is_focused source
 
 let view_cells m =
@@ -436,7 +518,9 @@ let view_cells m =
         ];
     ]
   else
-    List.mapi (fun index cell -> view_cell ~index ~focus:m.focus m cell) cells
+    List.mapi
+      (fun index cell -> view_cell ~index ~focus:m.focus ~mode:m.mode m cell)
+      cells
 
 let view_footer m =
   let key_style = Ansi.Style.make ~fg:label_fg ~bold:true () in
@@ -449,47 +533,64 @@ let view_footer m =
       ]
   in
   let keys_row =
-    if has_running m then
-      box ~flex_direction:Row
-        ~size:{ width = pct 100; height = auto }
-        ~flex_wrap:Wrap
-        [
-          key "Ctrl-C" "interrupt";
-          sep;
-          key "j/k" "navigate";
-          sep;
-          key "Enter" "run";
-          sep;
-          key "s" "save";
-          sep;
-          key "q" "quit";
-        ]
-    else
-      box ~flex_direction:Row
-        ~size:{ width = pct 100; height = auto }
-        ~flex_wrap:Wrap
-        [
-          key "j/k" "navigate";
-          sep;
-          key "J/K" "move";
-          sep;
-          key "Enter" "run";
-          sep;
-          key "Ctrl-A" "run all";
-          sep;
-          key "a" "code";
-          sep;
-          key "t" "text";
-          sep;
-          key "d" "delete";
-          sep;
-          key "s" "save";
-          sep;
-          key "q" "quit";
-        ]
+    match m.mode with
+    | Editing ->
+        box ~flex_direction:Row
+          ~size:{ width = pct 100; height = auto }
+          ~flex_wrap:Wrap
+          [
+            key "Esc" "exit edit";
+            sep;
+            key "Ctrl-Enter" "run";
+            sep;
+            key "Ctrl-S" "save";
+            sep;
+            key "Ctrl-C" "interrupt";
+          ]
+    | Normal ->
+        if has_running m then
+          box ~flex_direction:Row
+            ~size:{ width = pct 100; height = auto }
+            ~flex_wrap:Wrap
+            [
+              key "Ctrl-C" "interrupt";
+              sep;
+              key "j/k" "navigate";
+              sep;
+              key "Enter" "run";
+              sep;
+              key "s" "save";
+              sep;
+              key "q" "quit";
+            ]
+        else
+          box ~flex_direction:Row
+            ~size:{ width = pct 100; height = auto }
+            ~flex_wrap:Wrap
+            [
+              key "j/k" "navigate";
+              sep;
+              key "J/K" "move";
+              sep;
+              key "e" "edit";
+              sep;
+              key "Enter" "run";
+              sep;
+              key "Ctrl-A" "run all";
+              sep;
+              key "a" "code";
+              sep;
+              key "t" "text";
+              sep;
+              key "d" "delete";
+              sep;
+              key "s" "save";
+              sep;
+              key "q" "quit";
+            ]
   in
   let error_row =
-    match m.last_error with Some e -> view_error_bar e | None -> null
+    match m.last_error with Some e -> view_error_bar e | None -> empty
   in
   box ~flex_direction:Column ~background:chrome_bg
     ~size:{ width = pct 100; height = auto }
@@ -501,7 +602,8 @@ let view m =
     ~size:{ width = pct 100; height = pct 100 }
     [
       view_header m;
-      scroll_box ~scroll_y:true ~scroll_x:false ~flex_grow:1. ~autofocus:true
+      scroll_box ~id:scroll_box_id ~scroll_y:true ~scroll_x:false ~flex_grow:1.
+        ~autofocus:true
         ~size:{ width = pct 100; height = auto }
         ~flex_direction:Column ~gap:(gap 1)
         ~padding:(padding_lrtb ~l:1 ~r:1 ~t:1 ~b:1)
@@ -511,42 +613,65 @@ let view m =
 
 (* ───── Subscriptions ───── *)
 
-let subscriptions _model =
+let subscriptions model =
   Sub.batch
     [
       Sub.on_tick (fun ~dt -> Tick dt);
+      (* Use on_key_all for all bindings because the scroll_box consumes
+         j/k/Up/Down via its scroll bar before on_key sees them. *)
       Sub.on_key_all (fun ev ->
-          let data = Mosaic_ui.Event.Key.data ev in
-          if data.modifier.ctrl then
-            match data.key with
-            | Char c when char_eq 'a' c -> Some Execute_all
-            | Char c when char_eq 's' c -> Some Save
-            | Char c when char_eq 'c' c -> Some Interrupt
-            | Char c when char_eq 'l' c -> Some Clear_all
-            | _ -> None
-          else None);
+          let data = Event.Key.data ev in
+          match model.mode with
+          | Editing ->
+              if data.modifier.ctrl then
+                match data.key with
+                | Char c when char_eq 'a' c -> Some Execute_all
+                | Char c when char_eq 's' c -> Some Save
+                | Char c when char_eq 'c' c -> Some Interrupt
+                | Char c when char_eq 'l' c -> Some Clear_all
+                | _ -> None
+              else None
+          | Normal -> (
+              if data.modifier.ctrl then
+                match data.key with
+                | Char c when char_eq 'a' c -> Some Execute_all
+                | Char c when char_eq 's' c -> Some Save
+                | Char c when char_eq 'c' c -> Some Interrupt
+                | Char c when char_eq 'l' c -> Some Clear_all
+                | _ -> None
+              else
+                match data.key with
+                | Char c when char_eq 'j' c -> Some Focus_next
+                | Char c when char_eq 'k' c -> Some Focus_prev
+                | Char c when char_eq 'J' c -> Some Move_down
+                | Char c when char_eq 'K' c -> Some Move_up
+                | Char c when char_eq 'e' c -> Some Enter_edit
+                | Char c when char_eq 'i' c -> Some Enter_edit
+                | Char c when char_eq 'a' c -> Some Insert_code_below
+                | Char c when char_eq 't' c -> Some Insert_text_below
+                | Char c when char_eq 'd' c -> Some Delete_focused
+                | Char c when char_eq 'm' c -> Some Toggle_cell_kind
+                | Char c when char_eq 'c' c -> Some Clear_focused
+                | Char c when char_eq 's' c -> Some Save
+                | Char c when char_eq 'q' c -> Some Quit
+                | Down -> Some Focus_next
+                | Up -> Some Focus_prev
+                | Enter -> Some Execute_focused
+                | Escape -> Some Dismiss_error
+                | _ -> None));
+      (* Escape in editing mode: textarea does not consume it, so on_key
+         works. *)
       Sub.on_key (fun ev ->
-          match (Mosaic_ui.Event.Key.data ev).key with
-          | Char c when char_eq 'j' c -> Some Focus_next
-          | Char c when char_eq 'k' c -> Some Focus_prev
-          | Char c when char_eq 'J' c -> Some Move_down
-          | Char c when char_eq 'K' c -> Some Move_up
-          | Char c when char_eq 'a' c -> Some Insert_code_below
-          | Char c when char_eq 't' c -> Some Insert_text_below
-          | Char c when char_eq 'd' c -> Some Delete_focused
-          | Char c when char_eq 'm' c -> Some Toggle_cell_kind
-          | Char c when char_eq 'c' c -> Some Clear_focused
-          | Char c when char_eq 's' c -> Some Save
-          | Char c when char_eq 'q' c -> Some Quit
-          | Down -> Some Focus_next
-          | Up -> Some Focus_prev
-          | Enter -> Some Execute_focused
-          | Escape -> Some Dismiss_error
-          | _ -> None);
+          match model.mode with
+          | Editing -> (
+              match (Event.Key.data ev).key with
+              | Escape -> Some Exit_edit
+              | _ -> None)
+          | Normal -> None);
     ]
 
 (* ───── Run ───── *)
 
 let run ~create_kernel path =
   let init () = init ~create_kernel ~path () in
-  Mosaic_unix.run ~exit_on_ctrl_c:false { init; update; view; subscriptions }
+  run { init; update; view; subscriptions }

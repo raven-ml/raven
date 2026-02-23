@@ -6,7 +6,7 @@
   quill.markdown
   mosaic
   mosaic.ui
-  mosaic.unix
   toffee
   matrix.grid
+  tree-sitter.ocaml
   unix))

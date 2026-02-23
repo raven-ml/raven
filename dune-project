@@ -39,6 +39,11 @@
   (name mosaic)))
 
 (pin
+ (url git+https://github.com/tmattio/mosaic)
+ (package
+  (name tree-sitter)))
+
+(pin
  (url git+https://github.com/invariant-hq/windtrap)
  (package
   (name windtrap)))
