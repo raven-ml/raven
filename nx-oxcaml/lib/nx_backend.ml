@@ -30,16 +30,23 @@ let view t = t.view
 let dtype t = t.dtype
 let context t = t.context
 
-(* [to_host] returns a Bigarray, but Bigarrays cannot point to OCaml heap
-   memory. Unboxed arrays are GC-managed, so we cannot create a Bigarray view of
-   them without risking memory safety. Use [data_array] to access the raw
-   buffer. *)
-let to_host _ =
-  failwith
-    "Nx_backend.to_host is not supported. Bigarrays cannot point to OCaml heap \
-     memory. Use Nx_backend.data_array instead."
-
-let data_array t = t.buffer
+let to_host (type a b) (t : (a, b) t) :
+    (a, b, Nx_buffer.c_layout) Nx_buffer.Array1.t =
+  let n = numel t.view in
+  match t.dtype with
+  | Dtype.Float64 ->
+    let (Float64 arr) = t.buffer in
+    Array.unboxed_float64_to_ba arr n
+  | Dtype.Float32 ->
+    let (Float32 arr) = t.buffer in
+    Array.unboxed_float32_to_ba arr n
+  | Dtype.Int64 ->
+    let (Int64 arr) = t.buffer in
+    Array.unboxed_int64_to_ba arr n
+  | Dtype.Int32 ->
+    let (Int32 arr) = t.buffer in
+    Array.unboxed_int32_to_ba arr n
+  | _ -> Error.invalid ~op:"to_host" ~what:"unsupported dtype" ()
 
 let buffer (type a b) context (dtype : (a, b) Dtype.t) (shape_arr : int array) :
     (a, b) t =
