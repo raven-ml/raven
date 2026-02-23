@@ -69,10 +69,10 @@ let view ~tag ~history_for_tag ~best ~size =
         ~flex_grow:1.0
         [
           canvas
-            ~draw:(fun grid ~width ~height ->
-              draw_metric_chart history grid ~width ~height)
             ~size:{ width = pct 100; height = pct 100 }
-            ();
+            (fun c ~delta:_ ->
+              draw_metric_chart history (Canvas.grid c)
+                ~width:(Canvas.width c) ~height:(Canvas.height c));
         ];
       (match best with
       | None -> box [] ~size:{ width = px 0; height = px 0 }

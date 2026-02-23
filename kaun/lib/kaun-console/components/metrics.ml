@@ -183,10 +183,10 @@ let view_metric_chart ~history_for_tag ~columns tag =
     ~size:{ width = pct width_pct; height = px 14 }
     [
       canvas
-        ~draw:(fun grid ~width ~height ->
-          draw_metric_chart ~hover:None history grid ~width ~height)
         ~size:{ width = pct 100; height = pct 100 }
-        ();
+        (fun c ~delta:_ ->
+          draw_metric_chart ~hover:None history (Canvas.grid c)
+            ~width:(Canvas.width c) ~height:(Canvas.height c));
     ]
 
 (* ───── View ───── *)

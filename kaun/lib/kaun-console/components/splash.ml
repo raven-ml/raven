@@ -18,8 +18,7 @@ let view () =
             ~style:
               (Ansi.Style.make ~bold:true ~fg:(Ansi.Color.of_rgb 100 200 255) ())
             "Kaun Console";
-          spinner ~preset:Spinner.Dots
-            ~color:(Ansi.Color.grayscale ~level:14)
-            ~autoplay:true ();
+          spinner ~frame_set:Spinner.dots
+            ~color:(Ansi.Color.grayscale ~level:14) ();
         ];
     ]

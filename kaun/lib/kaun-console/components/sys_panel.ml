@@ -123,16 +123,18 @@ let bold_blue = Ansi.Style.make ~bold:true ~fg:Ansi.Color.blue ()
 let bold_green = Ansi.Style.make ~bold:true ~fg:Ansi.Color.green ()
 let bold_yellow = Ansi.Style.make ~bold:true ~fg:Ansi.Color.yellow ()
 
-let draw_progress_bar grid ~width ~height ~value ~max_value ~fill_color =
+let draw_progress_bar c ~value ~max_value ~fill_color =
+  let width = Canvas.width c in
+  let height = Canvas.height c in
   if width > 0 && height > 0 then (
     (* Background *)
-    Grid.fill_rect grid ~x:0 ~y:0 ~width ~height
+    Canvas.fill_rect c ~x:0 ~y:0 ~width ~height
       ~color:(Ansi.Color.grayscale ~level:3);
     (* Filled portion *)
     let filled = int_of_float (value /. max_value *. float_of_int width) in
     let filled = max 0 (min width filled) in
     if filled > 0 then
-      Grid.fill_rect grid ~x:0 ~y:0 ~width:filled ~height ~color:fill_color)
+      Canvas.fill_rect c ~x:0 ~y:0 ~width:filled ~height ~color:fill_color)
 
 let view_cpu_bar (cpu : Sysstat.Cpu.stats) =
   let total = cpu.user +. cpu.system in
@@ -151,11 +153,9 @@ let view_cpu_bar (cpu : Sysstat.Cpu.stats) =
             (Printf.sprintf "%.0f%%" total);
         ];
       canvas
-        ~draw:(fun grid ~width ~height ->
-          draw_progress_bar grid ~width ~height ~value:total ~max_value:100.
-            ~fill_color:color)
         ~size:{ width = pct 100; height = px 1 }
-        ();
+        (fun c ~delta:_ ->
+          draw_progress_bar c ~value:total ~max_value:100. ~fill_color:color);
     ]
 
 let view_mem_bar (mem : Sysstat.Mem.t) =
@@ -175,11 +175,9 @@ let view_mem_bar (mem : Sysstat.Mem.t) =
             (Printf.sprintf "%.0f%%" mem_pct);
         ];
       canvas
-        ~draw:(fun grid ~width ~height ->
-          draw_progress_bar grid ~width ~height ~value:mem_pct ~max_value:100.
-            ~fill_color:color)
         ~size:{ width = pct 100; height = px 1 }
-        ();
+        (fun c ~delta:_ ->
+          draw_progress_bar c ~value:mem_pct ~max_value:100. ~fill_color:color);
     ]
 
 let view_sparklines ~sparkline_cpu ~sparkline_mem =
@@ -192,10 +190,10 @@ let view_sparklines ~sparkline_cpu ~sparkline_mem =
         [
           text ~style:muted "CPU";
           canvas
-            ~draw:(fun grid ~width ~height ->
-              Charts.Sparkline.draw sparkline_cpu ~kind:`Braille grid ~width ~height)
             ~size:{ width = pct 100; height = px 3 }
-            ();
+            (fun c ~delta:_ ->
+              Charts.Sparkline.draw sparkline_cpu ~kind:`Braille
+                (Canvas.grid c) ~width:(Canvas.width c) ~height:(Canvas.height c));
         ];
       (* Memory sparkline *)
       box ~flex_direction:Column ~gap:(gap 0)
@@ -203,10 +201,10 @@ let view_sparklines ~sparkline_cpu ~sparkline_mem =
         [
           text ~style:muted "MEM";
           canvas
-            ~draw:(fun grid ~width ~height ->
-              Charts.Sparkline.draw sparkline_mem ~kind:`Braille grid ~width ~height)
             ~size:{ width = pct 100; height = px 3 }
-            ();
+            (fun c ~delta:_ ->
+              Charts.Sparkline.draw sparkline_mem ~kind:`Braille
+                (Canvas.grid c) ~width:(Canvas.width c) ~height:(Canvas.height c));
         ];
     ]
 
@@ -266,11 +264,10 @@ let view_per_core_cpu (cpu_per_core : Sysstat.Cpu.stats array) =
                         [
                           text ~style:muted (Printf.sprintf "%d:" i);
                           canvas
-                            ~draw:(fun grid ~width ~height ->
-                              draw_progress_bar grid ~width ~height ~value:total
-                                ~max_value:100. ~fill_color:color)
                             ~size:{ width = pct 70; height = px 1 }
-                            ();
+                            (fun c ~delta:_ ->
+                              draw_progress_bar c ~value:total
+                                ~max_value:100. ~fill_color:color);
                           text
                             ~style:(Ansi.Style.make ~fg:color ())
                             (Printf.sprintf "%2.0f" total);
