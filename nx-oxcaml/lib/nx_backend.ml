@@ -917,7 +917,6 @@ let sign (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_sign.sign_bool a_arr out_arr va vout start_idx end_idx)
       else Op_sign.sign_bool a_arr out_arr va vout 0 vol
-  | _ -> Error.invalid ~op:"sign" ~what:"unsupported dtype" ()
 
 let tan (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
   let parallel_threshold = 62500 in
@@ -1109,7 +1108,6 @@ let trunc (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_trunc.trunc_bool a_arr out_arr va vout start_idx end_idx)
       else Op_trunc.trunc_bool a_arr out_arr va vout 0 vol
-  | _ -> Error.invalid ~op:"trunc" ~what:"unsupported dtype" ()
 
 let ceil (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
   let parallel_threshold = 62500 in
@@ -1159,7 +1157,6 @@ let ceil (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_ceil.ceil_bool a_arr out_arr va vout start_idx end_idx)
       else Op_ceil.ceil_bool a_arr out_arr va vout 0 vol
-  | _ -> Error.invalid ~op:"ceil" ~what:"unsupported dtype" ()
 
 let floor (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
   let parallel_threshold = 62500 in
@@ -1209,7 +1206,6 @@ let floor (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_floor.floor_bool a_arr out_arr va vout start_idx end_idx)
       else Op_floor.floor_bool a_arr out_arr va vout 0 vol
-  | _ -> Error.invalid ~op:"floor" ~what:"unsupported dtype" ()
 
 let round (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
   let parallel_threshold = 62500 in
@@ -1259,7 +1255,6 @@ let round (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_round.round_bool a_arr out_arr va vout start_idx end_idx)
       else Op_round.round_bool a_arr out_arr va vout 0 vol
-  | _ -> Error.invalid ~op:"round" ~what:"unsupported dtype" ()
 
 let erf (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
   let parallel_threshold = 62500 in

@@ -93,7 +93,7 @@ let floor_float32 a_arr out_arr va vout start_idx end_idx =
       Array.unsafe_set out_arr (out_offset + k) (Float32_u.floor a_val)
     done
 
-let floor_int8 a_arr out_arr va vout start_idx end_idx =
+let floor_int8 (a_arr : int8# array) (out_arr : int8# array) va vout start_idx end_idx =
   let out_base = View.offset vout + start_idx in
   let a_base = View.offset va + start_idx in
   if View.is_c_contiguous vout && View.is_c_contiguous va then (
@@ -131,7 +131,7 @@ let floor_int8 a_arr out_arr va vout start_idx end_idx =
       Array.unsafe_set out_arr (out_offset + k) (Array.unsafe_get a_arr (a_offset + a_lin))
     done
 
-let floor_int16 a_arr out_arr va vout start_idx end_idx =
+let floor_int16 (a_arr : int16# array) (out_arr : int16# array) va vout start_idx end_idx =
   let out_base = View.offset vout + start_idx in
   let a_base = View.offset va + start_idx in
   if View.is_c_contiguous vout && View.is_c_contiguous va then (
@@ -169,7 +169,7 @@ let floor_int16 a_arr out_arr va vout start_idx end_idx =
       Array.unsafe_set out_arr (out_offset + k) (Array.unsafe_get a_arr (a_offset + a_lin))
     done
 
-let floor_int32 a_arr out_arr va vout start_idx end_idx =
+let floor_int32 (a_arr : int32# array) (out_arr : int32# array) va vout start_idx end_idx =
   let out_base = View.offset vout + start_idx in
   let a_base = View.offset va + start_idx in
   if View.is_c_contiguous vout && View.is_c_contiguous va then (
@@ -207,7 +207,7 @@ let floor_int32 a_arr out_arr va vout start_idx end_idx =
       Array.unsafe_set out_arr (out_offset + k) (Array.unsafe_get a_arr (a_offset + a_lin))
     done
 
-let floor_int64 a_arr out_arr va vout start_idx end_idx =
+let floor_int64 (a_arr : int64# array) (out_arr : int64# array) va vout start_idx end_idx =
   let out_base = View.offset vout + start_idx in
   let a_base = View.offset va + start_idx in
   if View.is_c_contiguous vout && View.is_c_contiguous va then (
@@ -245,7 +245,7 @@ let floor_int64 a_arr out_arr va vout start_idx end_idx =
       Array.unsafe_set out_arr (out_offset + k) (Array.unsafe_get a_arr (a_offset + a_lin))
     done
 
-let floor_bool a_arr out_arr va vout start_idx end_idx =
+let floor_bool (a_arr : bool array) (out_arr : bool array) va vout start_idx end_idx =
   let out_base = View.offset vout + start_idx in
   let a_base = View.offset va + start_idx in
   if View.is_c_contiguous vout && View.is_c_contiguous va then (
