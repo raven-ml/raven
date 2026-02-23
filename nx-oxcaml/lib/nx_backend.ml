@@ -4,6 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 open Import
+open Nx_buffer
 
 type context = { pool : Parallel.pool }
 
@@ -1058,7 +1059,26 @@ let sort ~out:_ ~axis:_ ~descending:_ _ =
 let argsort ~out:_ ~axis:_ ~descending:_ _ =
   Error.invalid ~op:"argsort" ~what:"not implemented" ()
 
-let from_host _ _ = Error.invalid ~op:"from_host" ~what:"not implemented" ()
+let from_host (type a b) ctx (array : (a, b, c_layout) Bigarray.Array1.t) :
+    (a, b) t =
+  let dtype = Dtype.of_buffer_kind (Array1.kind array) in
+  let size = Array1.dim array in
+  let shape = Symbolic_shape.of_ints [| size |] in
+  let view = View.create shape in
+  match dtype with
+  | Dtype.Float64 ->
+    let unboxed_array = Array.ba_to_unboxed_float_array array in
+    { context = ctx; dtype; buffer = Float64 unboxed_array; view }
+  | Dtype.Float32 ->
+    let unboxed_array = Array.ba_to_unboxed_float32_array array in
+    { context = ctx; dtype; buffer = Float32 unboxed_array; view }
+  | Dtype.Int64 ->
+    let unboxed_array = Array.ba_to_unboxed_int64_array array in
+    { context = ctx; dtype; buffer = Int64 unboxed_array; view }
+  | Dtype.Int32 ->
+    let unboxed_array = Array.ba_to_unboxed_int32_array array in
+    { context = ctx; dtype; buffer = Int32 unboxed_array; view }
+  | _ -> Error.invalid ~op:"from_host" ~what:"unsupported dtype" ()
 let expand x shape = { x with view = View.expand x.view shape }
 let reshape x shape = { x with view = View.reshape x.view shape }
 let permute _ _ = Error.invalid ~op:"permute" ~what:"not implemented" ()

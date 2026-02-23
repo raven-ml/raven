@@ -22,5 +22,5 @@
   (:standard \ simd_neon simd_sse))
  (foreign_stubs
   (language c)
-  (names simd_stubs))
- (libraries stdlib_stable stdlib_upstream_compatible))
+  (names nx_oxcaml_stubs simd_stubs))
+ (libraries nx.core nx.buffer stdlib_stable stdlib_upstream_compatible))
