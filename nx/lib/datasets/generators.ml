@@ -45,15 +45,6 @@ module Rng = struct
     done;
     Nx.reshape shape (Nx.of_buffer (genarray_of_array1 data))
 
-  let randint state ?(low = 0) high shape =
-    let total = Array.fold_left ( * ) 1 shape in
-    let range = high - low in
-    let data = Array1.create Int32 C_layout total in
-    for i = 0 to total - 1 do
-      data.{i} <- Int32.of_int (low + Random.State.int state range)
-    done;
-    Nx.reshape shape (Nx.of_buffer (genarray_of_array1 data))
-
   let shuffle state arr =
     let n = Array.length arr in
     for i = n - 1 downto 1 do

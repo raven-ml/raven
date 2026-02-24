@@ -3,10 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** HTTP client for downloading files via the [curl] CLI.
-
-    All functions require the [curl] binary to be available on PATH. If curl is
-    not found, functions raise [Failure] with a descriptive message. *)
+(** HTTP helpers implemented with the [curl] command-line tool. *)
 
 val download :
   ?show_progress:bool ->
@@ -15,18 +12,16 @@ val download :
   dest:string ->
   unit ->
   unit
-(** [download ~url ~dest ()] downloads the resource at [url] to the local file
-    [dest]. Creates parent directories as needed. Follows redirects.
+(** [download ?show_progress ?headers ~url ~dest ()] downloads [url] to [dest],
+    creating parent directories when needed.
 
-    @param show_progress
-      if [true], curl displays a progress bar on stderr (default: [false]).
-    @param headers optional HTTP headers to include in the request.
-    @raise Failure if the download fails or curl is not available. *)
+    Redirects are followed.
+
+    Raises [Failure] if [curl] is unavailable or the transfer fails. *)
 
 val get : ?headers:(string * string) list -> string -> string
-(** [get url] fetches [url] and returns the response body as a string.
+(** [get ?headers url] fetches [url] and returns the response body.
 
-    Follows redirects. Fails loudly on non-zero exit codes.
+    Redirects are followed.
 
-    @param headers optional HTTP headers to include in the request.
-    @raise Failure if the request fails or curl is not available. *)
+    Raises [Failure] if [curl] is unavailable or the request fails. *)

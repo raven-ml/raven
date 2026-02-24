@@ -1,47 +1,27 @@
-(** Utilities for downloading and managing datasets. *)
+(** Utilities shared by dataset loaders. *)
+
+(** {1:cache Cache paths} *)
 
 val get_cache_dir : ?getenv:(string -> string option) -> string -> string
-(** [get_cache_dir ?getenv dataset_name] returns the cache directory path for
-    the given dataset.
+(** [get_cache_dir ?getenv dataset_name] is the cache directory for
+    [dataset_name] under the [datasets] scope.
 
-    This is a convenience wrapper around {!Nx_core.Cache_dir.get_path_in_cache}
-    with [~scope:["datasets"]]. See {!Nx_core.Cache_dir.get_path_in_cache} for
-    details on cache directory resolution and environment variable priority.
+    [getenv] defaults to [Sys.getenv_opt]. *)
 
-    {2 Parameters}
-    - dataset_name: the name of the dataset.
-
-    {2 Returns}
-    - the cache directory path, including trailing slash.
-
-    @param getenv
-      optional environment lookup function (defaults to [Sys.getenv_opt]) to
-      facilitate testing. *)
+(** {1:download Download and extraction} *)
 
 val download_file : string -> string -> unit
-(** Download a file from a URL to a destination path.
+(** [download_file url dest_path] downloads [url] to [dest_path].
 
-    Creates parent directories as needed, downloads the file from [url], and
-    saves it to [dest_path].
+    Parent directories are created if needed.
 
-    {2 Parameters}
-    - url: the source URL of the file.
-    - dest_path: local path to save the downloaded file.
-
-    {2 Raises}
-    - [Failure] on download or write error. *)
+    Raises [Failure] on download errors. *)
 
 val ensure_file : string -> string -> unit
-(** Ensure a file exists at the given path, downloading if necessary.
+(** [ensure_file url dest_path] ensures [dest_path] exists, downloading from
+    [url] if missing.
 
-    Checks if [dest_path] exists. If not, downloads the file from [url].
-
-    {2 Parameters}
-    - url: the source URL of the file.
-    - dest_path: local path to ensure the file exists.
-
-    {2 Raises}
-    - [Failure] on download or write error. *)
+    Raises [Failure] on download errors. *)
 
 val ensure_extracted_archive :
   url:string ->
@@ -49,101 +29,52 @@ val ensure_extracted_archive :
   extract_dir:string ->
   check_file:string ->
   unit
-(** Ensure an archive is downloaded, extracted, and a file exists.
+(** [ensure_extracted_archive ~url ~archive_path ~extract_dir ~check_file]
+    ensures [check_file] exists under [extract_dir], downloading and extracting
+    [archive_path] when needed.
 
-    Checks if [check_file] (relative to [extract_dir]) exists. If not, downloads
-    the archive from [url] to [archive_path], extracts it into [extract_dir],
-    and verifies [check_file] is present. Currently supports only .tar.gz
-    archives.
+    Only [.tar.gz] archives are supported.
 
-    {2 Parameters}
-    - url: the source URL of the archive.
-    - archive_path: local path for the downloaded archive.
-    - extract_dir: directory to extract the archive into.
-    - check_file: relative path under [extract_dir] to verify extraction.
-
-    {2 Raises}
-    - [Failure] on download, extraction, or missing [check_file]. *)
+    Raises [Failure] on download, extraction, or validation errors. *)
 
 val ensure_decompressed_gz : gz_path:string -> target_path:string -> bool
-(** Ensure a gzip-compressed file is decompressed to a target path.
+(** [ensure_decompressed_gz ~gz_path ~target_path] ensures [target_path] exists
+    by decompressing [gz_path] when needed.
 
-    If [target_path] exists, does nothing and returns [true]. Otherwise, if
-    [gz_path] exists, decompresses it to [target_path].
+    Returns [true] if [target_path] exists after the call, [false] if [gz_path]
+    does not exist.
 
-    {2 Parameters}
-    - gz_path: the path to the .gz file to decompress.
-    - target_path: the destination path for the decompressed file.
+    Raises [Failure] on decompression errors. *)
 
-    {2 Returns}
-    - [true] if [target_path] exists after the operation.
-    - [false] if [gz_path] does not exist.
-
-    {2 Raises}
-    - [Failure] on gzip decompression error. *)
+(** {1:parsing Parsing helpers} *)
 
 val parse_float_cell : context:(unit -> string) -> string -> float
-(** Parse a CSV cell as a float.
+(** [parse_float_cell ~context s] parses [s] as a float.
 
-    Attempts to convert [value] to a float. On failure, raises [Failure] with a
-    descriptive message including [context ()].
-
-    {2 Parameters}
-    - context: a function returning context information for error messages.
-    - value: the string to parse as a float.
-
-    {2 Returns}
-    - the parsed float.
-
-    {2 Raises}
-    - [Failure] if [value] cannot be parsed as a float. *)
+    Raises [Failure] with contextual information if parsing fails. *)
 
 val parse_int_cell : context:(unit -> string) -> string -> int
-(** Parse a CSV cell as an integer.
+(** [parse_int_cell ~context s] parses [s] as an integer.
 
-    Attempts to convert [value] to an int. On failure, raises [Failure] with a
-    descriptive message including [context ()].
+    Raises [Failure] with contextual information if parsing fails. *)
 
-    {2 Parameters}
-    - context: a function returning context information for error messages.
-    - value: the string to parse as an int.
-
-    {2 Returns}
-    - the parsed integer.
-
-    {2 Raises}
-    - [Failure] if [value] cannot be parsed as an int. *)
+(** {1:filesystem Filesystem helpers} *)
 
 val mkdir_p : string -> unit
-(** Recursively create a directory and its parents.
+(** [mkdir_p path] creates [path] and missing parent directories.
 
-    Creates the directory at [path], along with any missing parent directories.
-    If [path] already exists as a directory, does nothing.
+    If [path] already exists as a directory, the call is a no-op. *)
 
-    {2 Parameters}
-    - path: the directory path to create.
-
-    {2 Raises}
-    - [Unix.Unix_error] if creation fails for other reasons. *)
+(** {1:csv CSV loading} *)
 
 val load_csv :
   ?separator:char ->
   ?has_header:bool ->
   string ->
   string list * string list list
-(** [load_csv ?separator ?has_header path] reads a CSV file and returns its
-    contents.
+(** [load_csv ?separator ?has_header path] reads a CSV file.
 
-    Handles RFC 4180 quoting (double-quoted fields, embedded quotes as [""]]).
-    Strips carriage returns for CRLF line endings.
+    [separator] defaults to [','] and [has_header] defaults to [false].
 
-    {2 Parameters}
-    - separator: field delimiter character (default: [',']).
-    - has_header: if [true], the first row is returned separately as the header
-      (default: [false]).
-    - path: the file path to read.
-
-    {2 Returns}
-    - [(header, rows)] where [header] is the first row if [has_header] is
-      [true], or [[]] otherwise. [rows] is the remaining data rows, each as a
-      list of field strings. *)
+    Returns [(header, rows)], where [header] is [[]] when [has_header] is
+    [false]. *)

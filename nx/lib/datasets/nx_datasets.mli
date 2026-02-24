@@ -1,113 +1,88 @@
-(** Dataset loading and generation utilities for Nx.
+(*---------------------------------------------------------------------------
+  Copyright (c) 2026 The Raven authors. All rights reserved.
+  SPDX-License-Identifier: ISC
+  ---------------------------------------------------------------------------*)
 
-    This module provides functions to load common machine learning datasets and
-    generate synthetic datasets for testing and experimentation. Real datasets
-    are downloaded and cached in the platform-specific cache directory. *)
+(** Dataset loaders and synthetic dataset generators for [Nx].
 
-(** {2 Cache Management}
+    Real datasets are downloaded on demand and cached locally. *)
 
-    Helpers for inspecting dataset cache locations. *)
+(** {1:cache Cache paths} *)
 
 val get_cache_dir : ?getenv:(string -> string option) -> string -> string
-(** Resolve the cache directory for the given dataset name.
+(** [get_cache_dir ?getenv dataset_name] is the cache directory used for
+    [dataset_name].
 
-    The lookup order is: 1. [RAVEN_CACHE_ROOT] 2. [XDG_CACHE_HOME] 3.
-    [$HOME/.cache]
+    [getenv] defaults to [Sys.getenv_opt]. *)
 
-    The returned path uses platform-specific separators, ends with a trailing
-    separator, and is rooted at either [RAVEN_CACHE_ROOT] or
-    "[XDG_CACHE_HOME or HOME]/raven", with datasets stored under a [datasets]
-    subdirectory.
+(** {1:real Real datasets} *)
 
-    @param getenv optional environment getter (defaults to [Sys.getenv_opt]).
-    @param dataset_name name of the dataset.
-    @return cache directory path with trailing separator. *)
-
-(** {2 Loading Real Datasets}
-
-    Functions to load classic machine learning datasets as Nx tensors. *)
-
-(** {3 Image Datasets} *)
+(** {2:image Image datasets} *)
 
 val load_mnist : unit -> (Nx.uint8_t * Nx.uint8_t) * (Nx.uint8_t * Nx.uint8_t)
-(** [load_mnist ()] loads MNIST handwritten digits dataset.
+(** [load_mnist ()] is the MNIST dataset as
+    [((x_train, y_train), (x_test, y_test))].
 
-    Returns training and test sets with images as uint8 tensors of shape
-    [|samples; 28; 28; 1|] and labels as uint8 tensors of shape [|samples; 1|].
-    Training set has 60,000 samples, test set has 10,000 samples.
+    Shapes are:
+    - [x_train]: [|60000; 28; 28; 1|]
+    - [y_train]: [|60000; 1|]
+    - [x_test]: [|10000; 28; 28; 1|]
+    - [y_test]: [|10000; 1|]
 
-    @raise Failure if download or parsing fails
-
-    Loading MNIST and checking shapes:
-    {[
-      let (x_train, y_train), (x_test, y_test) = Nx_datasets.load_mnist () in
-      Nx.shape x_train = [| 60000; 28; 28; 1 |]
-      && Nx.shape y_train = [| 60000; 1 |]
-      && Nx.shape x_test = [| 10000; 28; 28; 1 |]
-      && Nx.shape y_test = [| 10000; 1 |]
-    ]} *)
+    Raises [Failure] on download or parsing errors. *)
 
 val load_fashion_mnist :
   unit -> (Nx.uint8_t * Nx.uint8_t) * (Nx.uint8_t * Nx.uint8_t)
-(** [load_fashion_mnist ()] loads Fashion-MNIST clothing dataset.
+(** [load_fashion_mnist ()] is Fashion-MNIST in the same layout as
+    {!val-load_mnist}.
 
-    Returns same format as MNIST: images as uint8 tensors of shape
-    [|samples; 28; 28; 1|] and labels as uint8 tensors of shape [|samples; 1|].
-
-    @raise Failure if download or parsing fails *)
+    Raises [Failure] on download or parsing errors. *)
 
 val load_cifar10 : unit -> (Nx.uint8_t * Nx.uint8_t) * (Nx.uint8_t * Nx.uint8_t)
-(** [load_cifar10 ()] loads CIFAR-10 color image dataset.
+(** [load_cifar10 ()] is CIFAR-10 as [((x_train, y_train), (x_test, y_test))].
 
-    Returns training and test sets with images as uint8 tensors of shape
-    [|samples; 32; 32; 3|] and labels as uint8 tensors of shape [|samples; 1|].
-    Training set has 50,000 samples, test set has 10,000 samples.
+    Shapes are:
+    - [x_train]: [|50000; 32; 32; 3|]
+    - [y_train]: [|50000; 1|]
+    - [x_test]: [|10000; 32; 32; 3|]
+    - [y_test]: [|10000; 1|]
 
-    @raise Failure if download or parsing fails *)
+    Raises [Failure] on download or parsing errors. *)
 
-(** {3 Tabular Datasets} *)
+(** {2:tabular Tabular datasets} *)
 
 val load_iris : unit -> Nx.float64_t * Nx.int32_t
-(** [load_iris ()] loads Iris flower classification dataset.
+(** [load_iris ()] is [(features, labels)] for the Iris classification dataset.
 
-    Returns features as float64 tensor of shape [|150; 4|] and labels as int32
-    tensor of shape [|150; 1|]. Features are sepal length/width and petal
-    length/width. Labels are 0 (setosa), 1 (versicolor), 2 (virginica). *)
+    [features] has shape [|150; 4|]. [labels] has shape [|150; 1|]. *)
 
 val load_breast_cancer : unit -> Nx.float64_t * (int32, Nx.int32_elt) Nx.t
-(** [load_breast_cancer ()] loads Breast Cancer Wisconsin dataset.
+(** [load_breast_cancer ()] is [(features, labels)] for the Breast Cancer
+    Wisconsin dataset.
 
-    Returns features as float64 tensor of shape [|569; 30|] and labels as int32
-    tensor of shape [|569; 1|]. Labels are 1 (malignant) or 0 (benign). *)
+    [features] has shape [|569; 30|]. [labels] has shape [|569; 1|]. *)
 
 val load_diabetes : unit -> Nx.float64_t * Nx.float64_t
-(** [load_diabetes ()] loads diabetes regression dataset.
+(** [load_diabetes ()] is [(features, targets)] for the diabetes regression
+    dataset.
 
-    Returns features as float64 tensor of shape [|442; 10|] and targets as
-    float64 tensor of shape [|442; 1|]. Target is quantitative measure of
-    disease progression one year after baseline. *)
+    [features] has shape [|442; 10|]. [targets] has shape [|442; 1|]. *)
 
 val load_california_housing : unit -> Nx.float64_t * Nx.float64_t
-(** [load_california_housing ()] loads California housing prices dataset.
+(** [load_california_housing ()] is [(features, targets)] for the California
+    housing regression dataset.
 
-    Returns features as float64 tensor of shape [|20640; 8|] and targets as
-    float64 tensor of shape [|20640; 1|]. Target is median house value in
-    hundreds of thousands of dollars. *)
+    [features] has shape [|20640; 8|]. [targets] has shape [|20640; 1|]. *)
 
-(** {3 Time Series Datasets} *)
+(** {2:timeseries Time-series dataset} *)
 
 val load_airline_passengers : unit -> Nx.int32_t
-(** [load_airline_passengers ()] loads monthly airline passenger counts.
+(** [load_airline_passengers ()] is a 1D tensor of monthly passenger counts with
+    shape [|144|]. *)
 
-    Returns int32 tensor of shape [|144|] containing monthly passenger totals
-    from 1949 to 1960. *)
+(** {1:generated Synthetic datasets} *)
 
-(** {2 Generating Synthetic Datasets}
-
-    Functions to generate synthetic datasets with controlled properties for
-    algorithm development and testing. *)
-
-(** {3 Classification Dataset Generators} *)
+(** {2:classification Classification generators} *)
 
 val make_blobs :
   ?n_samples:int ->
@@ -122,22 +97,18 @@ val make_blobs :
 (** [make_blobs ?n_samples ?n_features ?centers ?cluster_std ?center_box
      ?shuffle ?random_state ()] generates isotropic Gaussian blobs.
 
-    Creates clusters of points with each cluster drawn from a normal
-    distribution. Returns features and integer labels.
+    Options are:
+    - [n_samples] is the number of samples. Defaults to [100].
+    - [n_features] is the number of features per sample. Defaults to [2].
+    - [centers] is either [`N k] random centers or an explicit array of centers
+      with shape [|k; n_features|]. Defaults to [`N 3].
+    - [cluster_std] is the cluster standard deviation. Defaults to [1.0].
+    - [center_box] is the random center range. Defaults to [(-10., 10.)].
+    - [shuffle] controls sample shuffling. Defaults to [true].
+    - [random_state] seeds randomness. Defaults to an unseeded state.
 
-    @param n_samples total number of points (default: 100)
-    @param n_features number of features per sample (default: 2)
-    @param centers number of centers or fixed center locations (default: 3)
-    @param cluster_std standard deviation of clusters (default: 1.0)
-    @param center_box bounding box for random centers (default: (-10.0, 10.0))
-    @param shuffle whether to shuffle samples (default: true)
-    @param random_state seed for reproducibility (default: random)
-
-    Generating 3 well-separated 2D clusters:
-    {[
-      let x, y = Nx_datasets.make_blobs ~centers:(`N 3) ~cluster_std:0.5 () in
-      Nx.shape x = [| 100; 2 |] && Nx.shape y = [| 100 |]
-    ]} *)
+    Returns [(x, y)] with [x] shape [|n_samples; n_features|] and [y] shape
+    [|n_samples|]. *)
 
 val make_classification :
   ?n_samples:int ->
@@ -157,38 +128,36 @@ val make_classification :
   ?random_state:int ->
   unit ->
   Nx.float32_t * Nx.int32_t
-(** [make_classification ?n_samples ?n_features ?n_informative ...] generates
-    random n-class classification problem.
+(** [make_classification ?n_samples ?n_features ?n_informative ?n_redundant
+     ?n_repeated ?n_classes ?n_clusters_per_class ?weights ?flip_y ?class_sep
+     ?hypercube ?shift ?scale ?shuffle ?random_state ()] generates an
+    [n_classes]-class classification problem.
 
-    Creates a dataset with controllable characteristics including informative,
-    redundant, and useless features. Useful for testing feature selection.
+    Options are:
+    - [n_samples] is the number of samples. Defaults to [100].
+    - [n_features] is the feature count. Defaults to [20].
+    - [n_informative] is the informative feature count. Defaults to [2].
+    - [n_redundant] is the linear combination feature count. Defaults to [2].
+    - [n_repeated] is the duplicated feature count. Defaults to [0].
+    - [n_classes] is the class count. Defaults to [2].
+    - [n_clusters_per_class] is the cluster count per class. Defaults to [2].
+    - [weights] are class proportions. Defaults to uniform proportions.
+    - [flip_y] is the fraction of randomly relabeled samples. Defaults to
+      [0.01].
+    - [class_sep] scales centroid separation. Defaults to [1.0].
+    - [hypercube] chooses deterministic hypercube centroids. Defaults to [true].
+    - [shift] is an additive feature shift. Defaults to [0.0].
+    - [scale] is a multiplicative feature scale. Defaults to [1.0].
+    - [shuffle] controls sample shuffling. Defaults to [true].
+    - [random_state] seeds randomness. Defaults to an unseeded state.
 
-    @param n_samples number of samples (default: 100)
-    @param n_features total number of features (default: 20)
-    @param n_informative number of informative features (default: 2)
-    @param n_redundant number of redundant features (default: 2)
-    @param n_repeated number of duplicated features (default: 0)
-    @param n_classes number of classes (default: 2)
-    @param n_clusters_per_class number of clusters per class (default: 2)
-    @param weights class proportions (default: balanced)
-    @param flip_y fraction of labels randomly exchanged (default: 0.01)
-    @param class_sep factor multiplying hypercube size (default: 1.0)
-    @param hypercube place clusters on hypercube vertices (default: true)
-    @param shift shift features by specified value (default: 0.0)
-    @param scale multiply features by specified value (default: 1.0)
-    @param shuffle whether to shuffle samples and features (default: true)
-    @param random_state seed for reproducibility (default: random)
+    Returns [(x, y)] with [x] shape [|n_samples; n_features|] and [y] shape
+    [|n_samples|].
 
-    @raise Failure if n_informative + n_redundant + n_repeated > n_features
+    Raises [Failure] if [n_informative + n_redundant + n_repeated > n_features].
 
-    Creating a binary classification dataset:
-    {[
-      let x, y =
-        Nx_datasets.make_classification ~n_features:10 ~n_informative:3
-          ~n_redundant:1 ()
-      in
-      Nx.shape x = [| 100; 10 |] && Nx.shape y = [| 100 |]
-    ]} *)
+    Raises [Invalid_argument] if [weights] has fewer than [n_classes] elements.
+*)
 
 val make_gaussian_quantiles :
   ?mean:float array ->
@@ -200,31 +169,33 @@ val make_gaussian_quantiles :
   ?random_state:int ->
   unit ->
   Nx.float32_t * Nx.int32_t
-(** [make_gaussian_quantiles ?mean ?cov ?n_samples ...] generates isotropic
-    Gaussian divided by quantiles.
+(** [make_gaussian_quantiles ?mean ?cov ?n_samples ?n_features ?n_classes
+     ?shuffle ?random_state ()] samples from a Gaussian and assigns class labels
+    by radial quantiles.
 
-    Divides a single Gaussian cluster into near-equal-size classes separated by
-    concentric hyperspheres. Useful for testing algorithms that assume Gaussian
-    distributions.
+    Options are:
+    - [mean] is the Gaussian mean, with length [n_features]. Defaults to the
+      origin.
+    - [cov] is the isotropic covariance scalar. Defaults to [1.0].
+    - [n_samples] is the number of samples. Defaults to [100].
+    - [n_features] is the feature count. Defaults to [2].
+    - [n_classes] is the class count. Defaults to [3].
+    - [shuffle] controls sample shuffling. Defaults to [true].
+    - [random_state] seeds randomness. Defaults to an unseeded state.
 
-    @param mean center of the distribution (default: origin)
-    @param cov scalar covariance for isotropic distribution (default: 1.0)
-    @param n_samples number of samples (default: 100)
-    @param n_features number of features (default: 2)
-    @param n_classes number of classes (default: 3)
-    @param shuffle whether to shuffle samples (default: true)
-    @param random_state seed for reproducibility (default: random) *)
+    Returns [(x, y)] with [x] shape [|n_samples; n_features|] and [y] shape
+    [|n_samples|]. *)
 
 val make_hastie_10_2 :
   ?n_samples:int -> ?random_state:int -> unit -> Nx.float32_t * Nx.int32_t
-(** [make_hastie_10_2 ?n_samples ?random_state ()] generates Hastie et al. 2009
-    binary problem.
+(** [make_hastie_10_2 ?n_samples ?random_state ()] generates the Hastie 10.2
+    binary classification benchmark.
 
-    Generates 10-dimensional dataset where y = 1 if sum(x_i^2) > 9.34 else 0.
-    Standard benchmark for binary classification.
+    [n_samples] defaults to [12000]. [random_state] defaults to an unseeded
+    state.
 
-    @param n_samples number of samples (default: 12000)
-    @param random_state seed for reproducibility (default: random) *)
+    Returns [(x, y)] with [x] shape [|n_samples; 10|] and [y] shape
+    [|n_samples|]. *)
 
 val make_circles :
   ?n_samples:int ->
@@ -234,26 +205,22 @@ val make_circles :
   ?factor:float ->
   unit ->
   Nx.float32_t * Nx.int32_t
-(** [make_circles ?n_samples ?shuffle ?noise ?random_state ?factor ()] generates
-    concentric circles.
+(** [make_circles ?n_samples ?shuffle ?noise ?random_state ?factor ()]
+    generates a two-class concentric circles dataset.
 
-    Creates a large circle containing a smaller circle in 2D. Tests algorithms'
-    ability to learn non-linear boundaries.
+    Options are:
+    {ul
+    {- [n_samples] is the number of samples. Defaults to [100].}
+    {- [shuffle] controls sample shuffling. Defaults to [true].}
+    {- [noise] is Gaussian feature noise standard deviation.
+       Defaults to [0.0].}
+    {- [random_state] seeds randomness. Defaults to an unseeded state.}
+    {- [factor] is the inner circle scale in ]0;1[. Defaults to [0.8].}}
 
-    @param n_samples total number of points (default: 100)
-    @param shuffle whether to shuffle samples (default: true)
-    @param noise standard deviation of Gaussian noise (default: 0.0)
-    @param random_state seed for reproducibility (default: random)
-    @param factor scale factor between circles, 0 < factor < 1 (default: 0.8)
+    Returns [(x, y)] with [x] shape [|n_samples; 2|] and [y]
+    shape [|n_samples|].
 
-    @raise Failure if factor not in (0, 1)
-
-    Creating noisy concentric circles:
-    {[
-      let x, y = Nx_datasets.make_circles ~noise:0.1 ~factor:0.5 () in
-      Nx.shape x = [| 100; 2 |]
-      && Array.for_all (fun v -> v = 0 || v = 1) (Nx.to_array y)
-    ]} *)
+    Raises [Failure] if [factor <= 0.] or [factor >= 1.]. *)
 
 val make_moons :
   ?n_samples:int ->
@@ -262,18 +229,16 @@ val make_moons :
   ?random_state:int ->
   unit ->
   Nx.float32_t * Nx.int32_t
-(** [make_moons ?n_samples ?shuffle ?noise ?random_state ()] generates two
-    interleaving half circles.
+(** [make_moons ?n_samples ?shuffle ?noise ?random_state ()] generates a
+    two-class interleaving half-moons dataset.
 
-    Creates two half-moon shapes. Tests algorithms' ability to handle non-convex
-    clusters.
+    [n_samples] defaults to [100]. [shuffle] defaults to [true]. [noise]
+    defaults to [0.0]. [random_state] defaults to an unseeded state.
 
-    @param n_samples total number of points (default: 100)
-    @param shuffle whether to shuffle samples (default: true)
-    @param noise standard deviation of Gaussian noise (default: 0.0)
-    @param random_state seed for reproducibility (default: random) *)
+    Returns [(x, y)] with [x] shape [|n_samples; 2|] and [y] shape
+    [|n_samples|]. *)
 
-(** {3 Multilabel Classification} *)
+(** {2:multilabel Multilabel classification} *)
 
 val make_multilabel_classification :
   ?n_samples:int ->
@@ -288,31 +253,33 @@ val make_multilabel_classification :
   ?random_state:int ->
   unit ->
   Nx.float32_t * [ `Float of Nx.float32_t | `Int of Nx.int32_t ]
-(** [make_multilabel_classification ?n_samples ?n_features ...] generates random
-    multilabel problem.
+(** [make_multilabel_classification ?n_samples ?n_features ?n_classes ?n_labels
+     ?length ?allow_unlabeled ?sparse ?return_indicator ?return_distributions
+     ?random_state ()] generates a multilabel classification dataset.
 
-    Creates samples with multiple labels per instance. Models bag-of-words with
-    multiple topics per document.
+    Options are:
+    - [n_samples] is the number of samples. Defaults to [100].
+    - [n_features] is the feature count. Defaults to [20].
+    - [n_classes] is the class count. Defaults to [5].
+    - [n_labels] is the target average labels per sample. Defaults to [2].
+    - [length] controls average feature occurrences per sample. Defaults to
+      [50].
+    - [allow_unlabeled] allows samples with no labels. Defaults to [true].
+    - [sparse] requests sparse output. Defaults to [false].
+    - [return_indicator] selects indicator output. Defaults to [false].
+    - [return_distributions] is currently ignored. Defaults to [false].
+    - [random_state] seeds randomness. Defaults to an unseeded state.
 
-    @param n_samples number of samples (default: 100)
-    @param n_features number of features (default: 20)
-    @param n_classes number of classes (default: 5)
-    @param n_labels average labels per instance (default: 2)
-    @param length sum of features per sample (default: 50)
-    @param allow_unlabeled allow samples with no labels (default: true)
-    @param sparse return sparse matrix (default: false, not implemented)
-    @param return_indicator return binary indicators (default: false)
-    @param return_distributions ignored (default: false)
-    @param random_state seed for reproducibility (default: random)
+    Returns [(x, y)] where [x] has shape [|n_samples; n_features|].
 
-    @raise Failure if sparse=true (not implemented)
+    If [return_indicator = true], [y = `Float indicators] with shape
+    [|n_samples; n_classes|].
 
-    Returns (X, Y) where Y type depends on return_indicator:
-    - false: `Int with shape [n_samples; n_labels] containing label indices
-    - true: `Float with shape [n_samples; n_classes] containing binary
-      indicators *)
+    Otherwise [y = `Int labels] with shape [|n_samples; n_labels|].
 
-(** {3 Regression Dataset Generators} *)
+    Raises [Failure] if [sparse = true] (not implemented). *)
+
+(** {2:regression Regression generators} *)
 
 val make_regression :
   ?n_samples:int ->
@@ -328,34 +295,32 @@ val make_regression :
   ?random_state:int ->
   unit ->
   Nx.float32_t * Nx.float32_t * Nx.float32_t option
-(** [make_regression ?n_samples ?n_features ...] generates random regression
-    problem.
+(** [make_regression ?n_samples ?n_features ?n_informative ?n_targets ?bias
+     ?effective_rank ?tail_strength ?noise ?shuffle ?coef ?random_state ()]
+    generates a linear regression dataset.
 
-    Creates linear combination of random features with optional noise and
-    low-rank structure.
+    Options are:
+    - [n_samples] is the number of samples. Defaults to [100].
+    - [n_features] is the feature count. Defaults to [100].
+    - [n_informative] is the informative feature count. Defaults to [10]. Values
+      larger than [n_features] are clamped to [n_features].
+    - [n_targets] is the target count. Defaults to [1].
+    - [bias] is the additive target bias. Defaults to [0.0].
+    - [effective_rank] is [Some r] to generate low-rank features, or [None] for
+      full-rank Gaussian features. Defaults to [None].
+    - [tail_strength] is currently ignored. Defaults to [0.5].
+    - [noise] is Gaussian target noise standard deviation. Defaults to [0.0].
+    - [shuffle] controls sample shuffling. Defaults to [true].
+    - [coef] requests returning the generating coefficients. Defaults to
+      [false].
+    - [random_state] seeds randomness. Defaults to an unseeded state.
 
-    @param n_samples number of samples (default: 100)
-    @param n_features number of features (default: 100)
-    @param n_informative number of informative features (default: 10)
-    @param n_targets number of regression targets (default: 1)
-    @param bias bias term in linear model (default: 0.0)
-    @param effective_rank approximate rank of input matrix (default: None)
-    @param tail_strength ignored (default: 0.5)
-    @param noise standard deviation of Gaussian noise (default: 0.0)
-    @param shuffle whether to shuffle samples (default: true)
-    @param coef whether to return coefficients (default: false)
-    @param random_state seed for reproducibility (default: random)
+    Returns [(x, y, coef_opt)] where [x] has shape [|n_samples; n_features|].
 
-    Creating multi-output regression:
-    {[
-      let x, y, coef =
-        Nx_datasets.make_regression ~n_features:20 ~n_informative:5 ~n_targets:2
-          ~coef:true ()
-      in
-      Nx.shape x = [| 100; 20 |]
-      && Nx.shape y = [| 100; 2 |]
-      && match coef with Some c -> Nx.shape c = [| 20; 2 |] | None -> false
-    ]} *)
+    [y] has shape [|n_samples|] if [n_targets = 1], otherwise
+    [|n_samples; n_targets|].
+
+    [coef_opt] is [Some coef] iff [coef = true]. *)
 
 val make_sparse_uncorrelated :
   ?n_samples:int ->
@@ -364,13 +329,15 @@ val make_sparse_uncorrelated :
   unit ->
   Nx.float32_t * Nx.float32_t
 (** [make_sparse_uncorrelated ?n_samples ?n_features ?random_state ()] generates
-    sparse uncorrelated design.
+    a regression dataset with sparse informative features.
 
-    Only first 4 features affect target: y = x0 + 2*x1 - 2*x2 - 1.5*x3
+    [n_samples] defaults to [100]. [n_features] defaults to [10]. [random_state]
+    defaults to an unseeded state.
 
-    @param n_samples number of samples (default: 100)
-    @param n_features number of features, must be >= 4 (default: 10)
-    @param random_state seed for reproducibility (default: random) *)
+    Returns [(x, y)] with [x] shape [|n_samples; n_features|] and [y] shape
+    [|n_samples|].
+
+    If [n_features < 4], [y] is identically zero. *)
 
 val make_friedman1 :
   ?n_samples:int ->
@@ -380,17 +347,15 @@ val make_friedman1 :
   unit ->
   Nx.float32_t * Nx.float32_t
 (** [make_friedman1 ?n_samples ?n_features ?noise ?random_state ()] generates
-    Friedman #1 problem.
+    the Friedman #1 regression benchmark.
 
-    Features uniformly distributed on [0, 1]. Output: y = 10 * sin(pi * x0 * x1)
-    \+ 20 * (x2 - 0.5)^2 + 10 * x3 + 5 * x4 + noise
+    [n_samples] defaults to [100]. [n_features] defaults to [10]. [noise]
+    defaults to [0.0]. [random_state] defaults to an unseeded state.
 
-    @param n_samples number of samples (default: 100)
-    @param n_features number of features, must be >= 5 (default: 10)
-    @param noise standard deviation of Gaussian noise (default: 0.0)
-    @param random_state seed for reproducibility (default: random)
+    Returns [(x, y)] with [x] shape [|n_samples; n_features|] and [y] shape
+    [|n_samples|].
 
-    @raise Failure if n_features < 5 *)
+    Raises [Failure] if [n_features < 5]. *)
 
 val make_friedman2 :
   ?n_samples:int ->
@@ -398,15 +363,14 @@ val make_friedman2 :
   ?random_state:int ->
   unit ->
   Nx.float32_t * Nx.float32_t
-(** [make_friedman2 ?n_samples ?noise ?random_state ()] generates Friedman #2
-    problem.
+(** [make_friedman2 ?n_samples ?noise ?random_state ()] generates the Friedman
+    #2 regression benchmark.
 
-    Four features with ranges: x0 in [0,100], x1 in [40,560], x2 in [0,1], x3 in
-    [1,11]. Output: y = sqrt(x0^2 + (x1 * x2 - 1/(x1 * x3))^2) + noise
+    [n_samples] defaults to [100]. [noise] defaults to [0.0]. [random_state]
+    defaults to an unseeded state.
 
-    @param n_samples number of samples (default: 100)
-    @param noise standard deviation of Gaussian noise (default: 0.0)
-    @param random_state seed for reproducibility (default: random) *)
+    Returns [(x, y)] with [x] shape [|n_samples; 4|] and [y] shape
+    [|n_samples|]. *)
 
 val make_friedman3 :
   ?n_samples:int ->
@@ -414,17 +378,16 @@ val make_friedman3 :
   ?random_state:int ->
   unit ->
   Nx.float32_t * Nx.float32_t
-(** [make_friedman3 ?n_samples ?noise ?random_state ()] generates Friedman #3
-    problem.
+(** [make_friedman3 ?n_samples ?noise ?random_state ()] generates the Friedman
+    #3 regression benchmark.
 
-    Four features with same ranges as Friedman #2. Output: y = arctan((x1 * x2 -
-    1/(x1 * x3)) / x0) + noise
+    [n_samples] defaults to [100]. [noise] defaults to [0.0]. [random_state]
+    defaults to an unseeded state.
 
-    @param n_samples number of samples (default: 100)
-    @param noise standard deviation of Gaussian noise (default: 0.0)
-    @param random_state seed for reproducibility (default: random) *)
+    Returns [(x, y)] with [x] shape [|n_samples; 4|] and [y] shape
+    [|n_samples|]. *)
 
-(** {3 Manifold Learning Generators} *)
+(** {2:manifold Manifold generators} *)
 
 val make_s_curve :
   ?n_samples:int ->
@@ -432,16 +395,14 @@ val make_s_curve :
   ?random_state:int ->
   unit ->
   Nx.float32_t * Nx.float32_t
-(** [make_s_curve ?n_samples ?noise ?random_state ()] generates S-curve dataset.
+(** [make_s_curve ?n_samples ?noise ?random_state ()] generates an S-curve
+    manifold.
 
-    Creates 3D S-shaped manifold. Returns points and their position along curve.
+    [n_samples] defaults to [100]. [noise] defaults to [0.0]. [random_state]
+    defaults to an unseeded state.
 
-    @param n_samples number of samples (default: 100)
-    @param noise standard deviation of Gaussian noise (default: 0.0)
-    @param random_state seed for reproducibility (default: random)
-
-    Returns (X, t) where X has shape [n_samples; 3] and t has shape [n_samples]
-*)
+    Returns [(x, t)] where [x] has shape [|n_samples; 3|] and [t] has shape
+    [|n_samples|]. *)
 
 val make_swiss_roll :
   ?n_samples:int ->
@@ -450,21 +411,17 @@ val make_swiss_roll :
   ?hole:bool ->
   unit ->
   Nx.float32_t * Nx.float32_t
-(** [make_swiss_roll ?n_samples ?noise ?random_state ?hole ()] generates swiss
-    roll dataset.
+(** [make_swiss_roll ?n_samples ?noise ?random_state ?hole ()] generates a
+    Swiss-roll manifold.
 
-    Creates 3D swiss roll manifold. Returns points and their position along
-    roll.
+    [n_samples] defaults to [100]. [noise] defaults to [0.0]. [random_state]
+    defaults to an unseeded state. [hole] defaults to [false].
 
-    @param n_samples number of samples (default: 100)
-    @param noise standard deviation of Gaussian noise (default: 0.0)
-    @param random_state seed for reproducibility (default: random)
-    @param hole create hole in swiss roll (default: false)
+    Returns [(x, t)] where [x] has shape [|n; 3|] and [t] has shape [|n|].
 
-    Returns (X, t) where X has shape [n_samples; 3] and t has shape [n_samples]
-*)
+    If [hole = true], [n] can be smaller than [n_samples]. *)
 
-(** {3 Matrix Decomposition Generators} *)
+(** {2:matrix Matrix generators} *)
 
 val make_low_rank_matrix :
   ?n_samples:int ->
@@ -474,16 +431,14 @@ val make_low_rank_matrix :
   ?random_state:int ->
   unit ->
   Nx.float32_t
-(** [make_low_rank_matrix ?n_samples ?n_features ?effective_rank ...] generates
-    mostly low-rank matrix.
+(** [make_low_rank_matrix ?n_samples ?n_features ?effective_rank ?tail_strength
+     ?random_state ()] generates a mostly low-rank matrix with shape
+    [|n_samples; n_features|].
 
-    Creates matrix with bell-shaped singular value profile.
-
-    @param n_samples number of samples (default: 100)
-    @param n_features number of features (default: 100)
-    @param effective_rank approximate number of singular vectors (default: 10)
-    @param tail_strength decay of noisy tail (default: 0.5)
-    @param random_state seed for reproducibility (default: random) *)
+    [n_samples] defaults to [100]. [n_features] defaults to [100].
+    [effective_rank] defaults to [10]. [tail_strength] controls additive
+    Gaussian noise amplitude. Defaults to [0.5]. [random_state] defaults to an
+    unseeded state. *)
 
 val make_sparse_coded_signal :
   n_samples:int ->
@@ -494,29 +449,29 @@ val make_sparse_coded_signal :
   unit ->
   Nx.float32_t * Nx.float32_t * Nx.float32_t
 (** [make_sparse_coded_signal ~n_samples ~n_components ~n_features
-     ~n_nonzero_coefs ?random_state ()] generates sparse signal.
+     ~n_nonzero_coefs ?random_state ()] generates [(y, d, x)] such that
+    [y = d @ x].
 
-    Creates signal Y = D * X where D is dictionary and X is sparse code.
+    Arguments are:
+    - [n_samples] is the number of generated signals.
+    - [n_components] is the dictionary atom count.
+    - [n_features] is the signal dimension.
+    - [n_nonzero_coefs] is the non-zero coefficient count per signal. It must
+      satisfy [n_nonzero_coefs <= n_components].
+    - [random_state] seeds randomness. Defaults to an unseeded state.
 
-    @param n_samples number of samples
-    @param n_components number of dictionary atoms
-    @param n_features number of features per sample
-    @param n_nonzero_coefs number of active components per sample
-    @param random_state seed for reproducibility (default: random)
+    Shapes are:
+    - [y]: [|n_features; n_samples|]
+    - [d]: [|n_features; n_components|]
+    - [x]: [|n_components; n_samples|]
 
-    Returns (Y, D, X) where:
-    - Y has shape [n_features; n_samples] (encoded signal)
-    - D has shape [n_features; n_components] (dictionary)
-    - X has shape [n_components; n_samples] (sparse codes) *)
+    Raises [Invalid_argument] if [n_nonzero_coefs > n_components]. *)
 
 val make_spd_matrix : ?n_dim:int -> ?random_state:int -> unit -> Nx.float32_t
-(** [make_spd_matrix ?n_dim ?random_state ()] generates symmetric
-    positive-definite matrix.
+(** [make_spd_matrix ?n_dim ?random_state ()] generates a symmetric
+    positive-definite matrix with shape [|n_dim; n_dim|].
 
-    Creates random SPD matrix using A^T * A + epsilon * I.
-
-    @param n_dim matrix dimension (default: 30)
-    @param random_state seed for reproducibility (default: random) *)
+    [n_dim] defaults to [30]. [random_state] defaults to an unseeded state. *)
 
 val make_sparse_spd_matrix :
   ?n_dim:int ->
@@ -527,21 +482,16 @@ val make_sparse_spd_matrix :
   ?random_state:int ->
   unit ->
   Nx.float32_t
-(** [make_sparse_spd_matrix ?n_dim ?alpha ...] generates sparse symmetric
-    positive-definite matrix.
+(** [make_sparse_spd_matrix ?n_dim ?alpha ?norm_diag ?smallest_coef
+     ?largest_coef ?random_state ()] generates a sparse symmetric
+    positive-definite matrix with shape [|n_dim; n_dim|].
 
-    Creates sparse SPD matrix with controllable sparsity.
+    [n_dim] defaults to [30]. [alpha] is the probability of keeping a zero entry
+    and defaults to [0.95]. [norm_diag] is currently ignored and defaults to
+    [false]. [smallest_coef] defaults to [0.1]. [largest_coef] defaults to
+    [0.9]. [random_state] defaults to an unseeded state. *)
 
-    @param n_dim matrix dimension (default: 30)
-    @param alpha probability of zero coefficient (default: 0.95)
-    @param norm_diag ignored, normalization not implemented (default: false)
-    @param smallest_coef
-      smallest absolute value of non-zero coefficients (default: 0.1)
-    @param largest_coef
-      largest absolute value of non-zero coefficients (default: 0.9)
-    @param random_state seed for reproducibility (default: random) *)
-
-(** {3 Biclustering Generators} *)
+(** {2:bicluster Biclustering generators} *)
 
 val make_biclusters :
   ?shape:int * int ->
@@ -553,20 +503,20 @@ val make_biclusters :
   ?random_state:int ->
   unit ->
   Nx.float32_t * Nx.int32_t * Nx.int32_t
-(** [make_biclusters ?shape ?n_clusters ...] generates constant block diagonal
-    structure.
+(** [make_biclusters ?shape ?n_clusters ?noise ?minval ?maxval ?shuffle
+     ?random_state ()] generates a block-diagonal bicluster matrix.
 
-    Creates matrix with block diagonal biclusters.
+    [shape] defaults to [(100, 100)]. [n_clusters] defaults to [5]. [noise]
+    defaults to [0.0]. [minval] defaults to [10]. [maxval] defaults to [100].
+    [shuffle] defaults to [true]. [random_state] defaults to an unseeded state.
 
-    @param shape matrix dimensions (default: (100, 100))
-    @param n_clusters number of biclusters (default: 5)
-    @param noise standard deviation of Gaussian noise (default: 0.0)
-    @param minval minimum value in blocks (default: 10)
-    @param maxval maximum value in blocks (default: 100)
-    @param shuffle whether to shuffle rows and columns (default: true)
-    @param random_state seed for reproducibility (default: random)
+    Returns [(x, row_labels, col_labels)] where [x] has shape
+    [|fst shape; snd shape|], [row_labels] has shape [|fst shape|], and
+    [col_labels] has shape [|snd shape|].
 
-    Returns (X, row_labels, col_labels) indicating bicluster membership *)
+    Raises [Division_by_zero] if [n_clusters = 0].
+
+    Raises [Invalid_argument] if [maxval <= minval]. *)
 
 val make_checkerboard :
   ?shape:int * int ->
@@ -578,16 +528,17 @@ val make_checkerboard :
   ?random_state:int ->
   unit ->
   Nx.float32_t * Nx.int32_t * Nx.int32_t
-(** [make_checkerboard ?shape ?n_clusters ...] generates checkerboard structure.
+(** [make_checkerboard ?shape ?n_clusters ?noise ?minval ?maxval ?shuffle
+     ?random_state ()] generates a checkerboard bicluster matrix.
 
-    Creates matrix with checkerboard pattern of high/low values.
+    [shape] defaults to [(100, 100)]. [n_clusters] defaults to [(8, 8)] for row
+    and column clusters. [noise] defaults to [0.0]. [minval] defaults to [10].
+    [maxval] defaults to [100]. [shuffle] defaults to [true]. [random_state]
+    defaults to an unseeded state.
 
-    @param shape matrix dimensions (default: (100, 100))
-    @param n_clusters clusters per dimension (default: (8, 8))
-    @param noise standard deviation of Gaussian noise (default: 0.0)
-    @param minval value for low squares (default: 10)
-    @param maxval value for high squares (default: 100)
-    @param shuffle whether to shuffle rows and columns (default: true)
-    @param random_state seed for reproducibility (default: random)
+    Returns [(x, row_labels, col_labels)] where [x] has shape
+    [|fst shape; snd shape|], [row_labels] has shape [|fst shape|], and
+    [col_labels] has shape [|snd shape|].
 
-    Returns (X, row_labels, col_labels) indicating cluster membership *)
+    Raises [Division_by_zero] if [fst n_clusters = 0] or [snd n_clusters = 0].
+*)
