@@ -1156,6 +1156,82 @@ let test_cat_int32_axis1 () =
   check_int32 "cat_int32_axis1[6]" 7l d.(6);
   check_int32 "cat_int32_axis1[7]" 8l d.(7)
 
+let test_gather_int32_axis1 () =
+  let ctx = Nx_backend.create_context () in
+  let data =
+    Nx_ox.create ctx  Dtype.Int32
+    [| 2; 4 |]
+      [| 10l; 11l; 12l; 13l; 20l; 21l; 22l; 23l |]
+  in
+  let indices =
+    Nx_ox.create ctx Dtype.Int32 [| 2; 3 |] [| 3l; 1l; 0l; 0l; 2l; 2l |] 
+  in
+  let out = Nx_ox.empty ctx Dtype.Int32 [| 2; 3 |] in
+  Nx_backend.gather ~out:out data indices ~axis:1;
+  let d = Nx_ox.to_array out in
+  check_int32 "gather_int32_axis1[0]" 13l d.(0);
+  check_int32 "gather_int32_axis1[1]" 11l d.(1);
+  check_int32 "gather_int32_axis1[2]" 10l d.(2);
+  check_int32 "gather_int32_axis1[3]" 20l d.(3);
+  check_int32 "gather_int32_axis1[4]" 22l d.(4);
+  check_int32 "gather_int32_axis1[5]" 22l d.(5)
+
+let test_scatter_int32_set_axis1 () =
+  let ctx = Nx_backend.create_context () in
+  let template =
+    Nx_ox.create ctx Dtype.Int32
+    [| 2; 4 |]
+      [| 0l; 0l; 0l; 0l; 0l; 0l; 0l; 0l |]
+  in
+  let indices =
+    Nx_ox.create ctx Dtype.Int32 [| 2; 3 |] [| 3l; 1l; 0l; 0l; 2l; 2l |]
+  in
+  let updates =
+    Nx_ox.create ctx Dtype.Int32 [| 2; 3 |] [| 9l; 8l; 7l; 6l; 5l; 4l |]
+  in
+  let y = Nx_backend.scatter template ~indices ~updates ~axis:1 in
+  let d = Nx_ox.to_array y in
+  check_int32 "scatter_int32_set_axis1[0]" 7l d.(0);
+  check_int32 "scatter_int32_set_axis1[1]" 8l d.(1);
+  check_int32 "scatter_int32_set_axis1[2]" 0l d.(2);
+  check_int32 "scatter_int32_set_axis1[3]" 9l d.(3);
+  check_int32 "scatter_int32_set_axis1[4]" 6l d.(4);
+  check_int32 "scatter_int32_set_axis1[5]" 0l d.(5);
+  check_int32 "scatter_int32_set_axis1[6]" 4l d.(6);
+  check_int32 "scatter_int32_set_axis1[7]" 0l d.(7)
+
+let test_scatter_int32_add_axis1 () =
+  let ctx = Nx_backend.create_context () in
+  let template =
+    Nx_ox.create ctx Dtype.Int32
+      [| 2; 4 |]
+      [| 100l; 100l; 100l; 100l;
+          100l; 100l; 100l; 100l |]
+  in
+  let indices =
+    Nx_ox.create ctx Dtype.Int32
+      [| 2; 3 |]
+      [| 3l; 1l; 0l;
+          0l; 2l; 2l |]
+  in
+  let updates =
+    Nx_ox.create ctx Dtype.Int32
+      [| 2; 3 |]
+      [| 9l; 8l; 7l;
+          6l; 5l; 4l |]
+  in
+  let y = Nx_backend.scatter ~mode:`Add template ~indices ~updates ~axis:1 in
+  let d = Nx_ox.to_array y in
+
+  check_int32 "scatter_int32_add_axis1[0]" 107l d.(0);
+  check_int32 "scatter_int32_add_axis1[1]" 108l d.(1);
+  check_int32 "scatter_int32_add_axis1[2]" 100l d.(2);
+  check_int32 "scatter_int32_add_axis1[3]" 109l d.(3);
+  check_int32 "scatter_int32_add_axis1[4]" 106l d.(4);
+  check_int32 "scatter_int32_add_axis1[5]" 100l d.(5);
+  check_int32 "scatter_int32_add_axis1[6]" 109l d.(6);
+  check_int32 "scatter_int32_add_axis1[7]" 100l d.(7)
+
 let () =
   print_endline "Running Nx_backend backend tests...";
   test_buffer_float64 ();
@@ -1251,5 +1327,8 @@ let () =
   test_shrink_int32_view ();
   test_flip_int32_view ();
   test_cat_int32_axis1 ();
+  test_gather_int32_axis1 ();
+  test_scatter_int32_set_axis1 ();
+  test_scatter_int32_add_axis1 ();
   Printf.printf "\nResults: %d passed, %d failed\n" !passed !failed;
   if !failed > 0 then exit 1

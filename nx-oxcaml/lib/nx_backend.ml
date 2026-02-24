@@ -1144,10 +1144,110 @@ let assign (type a b) (dst : (a, b) t) (src : (a, b) t) : unit =
   | _ -> Error.invalid ~op:"assign" ~what:"unsupported dtype" ()
 
 let threefry ~out:_ _ _ = Error.invalid ~op:"threefry" ~what:"not implemented" ()
-let gather ~out:_ _ _ ~axis:_ = Error.invalid ~op:"gather" ~what:"not implemented" ()
 
-let scatter ?mode:_ ?unique_indices:_ _ ~indices:_ ~updates:_ ~axis:_ =
-  Error.invalid ~op:"scatter" ~what:"not implemented" ()
+let gather (type a b) ~(out : (a, b) t) (data : (a, b) t)
+    (indices : (int32, Dtype.int32_elt) t) ~(axis : int) =
+  let dshape = shape data.view in
+  let ishape = shape indices.view in
+  if Array.length dshape <> Array.length ishape then
+    Error.invalid ~op:"op_gather" ~what:"rank mismatch" ();
+  let rank = Array.length dshape in
+  let axis = if axis < 0 then rank + axis else axis in
+  if axis < 0 || axis >= rank then
+    Error.axis_out_of_bounds ~op:"op_gather" ~axis ~ndim:rank ();
+  let n = numel indices.view in
+  let data_offset = View.offset data.view in
+  let data_strides = View.strides data.view in
+  let idx_offset = View.offset indices.view in
+  let idx_strides = View.strides indices.view in
+  let out_offset = View.offset out.view in
+  let out_strides = View.strides out.view in
+  let idx_arr = match indices.buffer with Int32 a -> a | _ -> . in
+  match (data.buffer, out.buffer) with
+  | Float64 src, Float64 dst ->
+      Op_gather.gather_float64 src dst n ishape dshape axis idx_arr data_offset
+        data_strides idx_offset idx_strides out_offset out_strides
+  | Float32 src, Float32 dst ->
+      Op_gather.gather_float32 src dst n ishape dshape axis idx_arr data_offset
+        data_strides idx_offset idx_strides out_offset out_strides
+  | Int8 src, Int8 dst ->
+      Op_gather.gather_int8 src dst n ishape dshape axis idx_arr data_offset
+        data_strides idx_offset idx_strides out_offset out_strides
+  | Int16 src, Int16 dst ->
+      Op_gather.gather_int16 src dst n ishape dshape axis idx_arr data_offset
+        data_strides idx_offset idx_strides out_offset out_strides
+  | Int32 src, Int32 dst ->
+      Op_gather.gather_int32 src dst n ishape dshape axis idx_arr data_offset
+        data_strides idx_offset idx_strides out_offset out_strides
+  | Int64 src, Int64 dst ->
+      Op_gather.gather_int64 src dst n ishape dshape axis idx_arr data_offset
+        data_strides idx_offset idx_strides out_offset out_strides
+  | Bool src, Bool dst ->
+      Op_gather.gather_bool src dst n ishape dshape axis idx_arr data_offset
+        data_strides idx_offset idx_strides out_offset out_strides
+  | _ -> .
+
+let scatter ?(mode = `Set) ?unique_indices:_ (type a b)
+  (data_template : (a, b) t)
+  ~(indices : (int32, Dtype.int32_elt) t)
+  ~(updates : (a, b) t)
+  ~(axis : int) : (a, b) t =
+  let tshape = shape data_template.view in
+  let ishape = shape indices.view in
+  let ushape = shape updates.view in
+  if Array.length tshape <> Array.length ishape then
+    Error.invalid ~op:"op_scatter" ~what:"rank mismatch" ();
+  if ishape <> ushape then
+    Error.invalid ~op:"op_scatter" ~what:"indices/updates shape mismatch" ();
+  let rank = Array.length tshape in
+  let axis = if axis < 0 then rank + axis else axis in
+  if axis < 0 || axis >= rank then
+    Error.axis_out_of_bounds ~op:"op_scatter" ~axis ~ndim:rank ();
+
+  (* Always start from a copy of the template *)
+  let out = copy data_template in
+
+  let n = numel indices.view in
+  let idx_offset = View.offset indices.view in
+  let idx_strides = View.strides indices.view in
+  let upd_offset = View.offset updates.view in
+  let upd_strides = View.strides updates.view in
+  let out_offset = View.offset out.view in
+  let out_strides = View.strides out.view in
+  let idx_arr = match indices.buffer with Int32 a -> a | _ -> . in
+
+  match (updates.buffer, out.buffer) with
+  | Float64 src_arr, Float64 out_arr ->
+      Op_scatter.scatter_float64 mode src_arr out_arr n ishape tshape axis
+        idx_arr upd_offset upd_strides idx_offset idx_strides out_offset
+        out_strides;
+      out
+  | Float32 src_arr, Float32 out_arr ->
+      Op_scatter.scatter_float32 mode src_arr out_arr n ishape tshape axis
+        idx_arr upd_offset upd_strides idx_offset idx_strides out_offset
+        out_strides;
+      out
+  | Int8 src_arr, Int8 out_arr ->
+      Op_scatter.scatter_int8 mode src_arr out_arr n ishape tshape axis idx_arr
+        upd_offset upd_strides idx_offset idx_strides out_offset out_strides;
+      out
+  | Int16 src_arr, Int16 out_arr ->
+      Op_scatter.scatter_int16 mode src_arr out_arr n ishape tshape axis idx_arr
+        upd_offset upd_strides idx_offset idx_strides out_offset out_strides;
+      out
+  | Int32 src_arr, Int32 out_arr ->
+      Op_scatter.scatter_int32 mode src_arr out_arr n ishape tshape axis idx_arr
+        upd_offset upd_strides idx_offset idx_strides out_offset out_strides;
+      out
+  | Int64 src_arr, Int64 out_arr ->
+      Op_scatter.scatter_int64 mode src_arr out_arr n ishape tshape axis idx_arr
+        upd_offset upd_strides idx_offset idx_strides out_offset out_strides;
+      out
+  | Bool src_arr, Bool out_arr ->
+      Op_scatter.scatter_bool mode src_arr out_arr n ishape tshape axis idx_arr
+        upd_offset upd_strides idx_offset idx_strides out_offset out_strides;
+      out
+  | _ -> .
 
 let unfold _ ~kernel_size:_ ~stride:_ ~dilation:_ ~padding:_ =
   Error.invalid ~op:"unfold" ~what:"not implemented" ()
