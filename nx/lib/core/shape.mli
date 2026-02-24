@@ -3,79 +3,97 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Shape operations for multi-dimensional arrays.
+(** Concrete tensor shapes.
 
-    This module provides fundamental operations on array shapes including index
-    conversions, broadcasting, and stride calculations. *)
+    A shape is an array of non-negative dimension sizes in row-major order. *)
 
 type t = int array
-(** Shape representation as array of dimension sizes. *)
+(** The type for concrete shapes. *)
 
-(** {2 Basic Operations} *)
+(** {1:basic Basic operations} *)
 
 val numel : t -> int
-(** [numel shape] computes total number of elements. *)
+(** [numel shape] is the product of dimensions in [shape].
+
+    [numel [||]] is [1]. *)
 
 val equal : t -> t -> bool
-(** [equal s1 s2] tests shape equality. *)
+(** [equal s0 s1] is [true] iff [s0] and [s1] are structurally equal. *)
 
-(** {2 Strides} *)
+(** {1:strides Strides} *)
 
 val c_contiguous_strides : t -> int array
-(** [c_contiguous_strides shape] computes row-major strides.
+(** [c_contiguous_strides shape] is the row-major stride vector of [shape].
 
-    Handles zero-size dimensions correctly. *)
+    For any zero-size dimension, strides to its left are propagated with zero
+    according to the implementation's canonical rule. *)
 
-(** {2 Index Conversions} *)
+(** {1:indexing Index conversion} *)
 
 val ravel_index : int array -> int array -> int
-(** [ravel_index indices strides] computes linear offset.
+(** [ravel_index indices strides] is the linear offset
+    [sum_i (indices.(i) * strides.(i))].
 
-    @raise Invalid_argument if array lengths differ *)
+    Raises [Invalid_argument] if the array lengths differ.
+
+    {b Note.} This function does not perform bounds checks on [indices]. *)
 
 val unravel_index : int -> t -> int array
-(** [unravel_index offset shape] converts to multi-dimensional indices.
+(** [unravel_index k shape] is the multi-index of [k] in a C-contiguous layout
+    of [shape].
 
-    Assumes C-contiguous layout.
+    For [shape = [||]], [k] must be [0].
 
-    @raise Invalid_argument if offset out of bounds *)
+    For zero-size shapes, only [k = 0] is accepted and the result is an array of
+    zeros with the same rank as [shape].
+
+    Raises [Invalid_argument] if [k] is out of bounds for [shape]. *)
 
 val unravel_index_into : int -> t -> int array -> unit
-(** [unravel_index_into offset shape result] writes indices into result array.
+(** [unravel_index_into k shape dst] is like {!unravel_index} but writes indices
+    into [dst].
 
-    In-place version to avoid allocations in loops.
+    [dst] must have length [Array.length shape].
 
-    @raise Invalid_argument if offset out of bounds *)
+    Raises [Invalid_argument] if [k] is out of bounds for [shape].
 
-(** {2 Shape Manipulation} *)
+    {b Warning.} If [dst] has the wrong length, array access may raise
+    [Invalid_argument] via OCaml's bounds checks. *)
+
+(** {1:transform Shape transformations} *)
 
 val resolve_neg_one : t -> int array -> t
-(** [resolve_neg_one current_shape new_spec] infers dimension marked with -1.
+(** [resolve_neg_one current_shape new_spec] resolves a single [-1] entry in
+    [new_spec] using [numel current_shape].
 
-    @raise Invalid_argument if multiple -1 or size mismatch *)
+    Raises [Invalid_argument] if:
+    - [new_spec] contains more than one [-1].
+    - The inferred size is not integral with the specified dimensions.
+    - The specification is incompatible with zero-size inference rules. *)
 
 val broadcast : t -> t -> t
-(** [broadcast shape_a shape_b] computes broadcast result shape.
+(** [broadcast a b] is the broadcasted shape of [a] and [b] using NumPy rules
+    (right alignment; dimensions are compatible iff equal or one is [1]).
 
-    Follows NumPy rules: dimensions match if equal or one is 1.
-
-    @raise Invalid_argument if shapes incompatible *)
+    Raises [Invalid_argument] if the shapes are not broadcast-compatible. *)
 
 val broadcast_index : int array -> t -> int array
-(** [broadcast_index target_indices source_shape] maps indices for broadcasting.
+(** [broadcast_index target_idx source_shape] maps a target index to the
+    corresponding index in [source_shape] under broadcasting.
 
-    Returns indices in source shape corresponding to target position. *)
+    Dimensions of [source_shape] equal to [1] map to index [0]. *)
 
 val broadcast_index_into : int array -> t -> int array -> unit
-(** [broadcast_index_into target_indices source_shape result] writes broadcast
-    indices into result array.
+(** [broadcast_index_into target_idx source_shape dst] is like
+    {!broadcast_index} but writes into [dst].
 
-    In-place version to avoid allocations in loops. *)
+    [dst] must have length [Array.length source_shape]. *)
 
-(** {2 Pretty Printing} *)
+(** {1:format Formatting} *)
 
 val pp : Format.formatter -> t -> unit
-(** [pp fmt shape] prints shape in [2x3x4] format. *)
+(** [pp] formats shapes with the same syntax as [to_string]. *)
 
 val to_string : t -> string
-(** [to_string shape] converts to string "[2x3x4]". *)
+(** [to_string shape] formats [shape] as a bracketed comma-separated list, for
+    example [[2,3,4]]. *)

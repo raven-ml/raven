@@ -3,51 +3,17 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Strided views of tensor data.
+(** Strided tensor views.
 
-    Views describe how to interpret a linear buffer as a multi-dimensional array
-    through shape, strides, and offset. They enable zero-copy operations like
-    transpose, slice, and reshape by manipulating metadata instead of copying
-    data.
-
-    {1 Key Concepts}
-
-    {2 Strides and Layout}
-
-    Strides determine memory layout. C-contiguous (row-major) layout stores the
-    last dimension contiguously in memory. For shape [[|2; 3; 4|]], C-contiguous
-    strides are [[|12; 4; 1|]].
-
-    Zero strides enable broadcasting: a dimension with stride 0 repeats the same
-    memory location. For example, expanding a scalar to shape [[|3; 3|]] uses
-    strides [[|0; 0|]].
-
-    Negative strides reverse iteration order without copying data. Flipping a
-    dimension inverts its stride and adjusts the offset.
-
-    {2 Symbolic Shapes}
-
-    Views support symbolic dimensions for shape-polymorphic operations. When a
-    view contains symbolic dimensions, some operations like {!shrink}, {!flip},
-    and {!pad} require concrete values and will fail until dimensions are bound.
-    Operations like {!expand}, and {!reshape} (for C-contiguous views) work with
-    symbolic shapes.
-
-    {2 Masks}
-
-    Masks restrict valid regions per dimension using [(start, end)] pairs with
-    half-open intervals \[start, end) (NumPy convention). Padding operations
-    create masks to mark extended regions as invalid. A masked view cannot
-    produce standard strides until the mask is removed (typically by
-    materializing the tensor). *)
+    A view describes how a linear buffer is interpreted as an n-dimensional
+    tensor through shape, strides, offset, and an optional validity mask. View
+    operations are metadata transformations: they do not copy element storage.
+*)
 
 type t
-(** A view encapsulating tensor layout information.
+(** The type for tensor views. *)
 
-    Views are immutable. Operations return new views without modifying the
-    original. *)
-
-(** {2 Creation} *)
+(** {1:constructors Construction} *)
 
 val create :
   ?offset:int ->
@@ -55,279 +21,147 @@ val create :
   ?mask:(int * int) array ->
   Symbolic_shape.t ->
   t
-(** [create ?offset ?strides ?mask shape] constructs a view.
+(** [create ?offset ?strides ?mask shape] is a view over [shape].
 
-    Creates a view describing how to interpret a buffer as a multi-dimensional
-    array. The view contains metadata only; no buffer allocation occurs.
+    Defaults:
+    - [offset] defaults to [0].
+    - [strides] defaults to C-contiguous strides when [shape] is concrete.
+    - For symbolic shapes with default strides, placeholder unit strides are
+      used.
+    - [mask] defaults to [None] (all indices valid).
 
-    @param offset Starting position in the buffer. Defaults to [0].
+    Mask bounds are half-open intervals [(start, end)] per dimension.
 
-    @param strides
-      Step size per dimension for computing linear indices. Defaults to
-      C-contiguous strides (row-major layout). For symbolic shapes without
-      explicit strides, unit placeholder strides are used (all strides set to 1)
-      since true C-contiguous strides cannot be computed without concrete
-      dimension values.
+    If [shape] has a zero-size dimension, the resulting view has [offset = 0]
+    and no mask.
 
-    @param mask
-      Valid ranges per dimension as [(start, end)] pairs with exclusive ends
-      (NumPy half-open interval convention: \[start, end)). A dimension of size
-      [n] with mask [(0, n)] is fully valid. Defaults to [None] (all elements
-      valid). Masks with full coverage are automatically removed.
+    {b Warning.} If explicit [strides] or [mask] lengths do not match
+    [Symbolic_shape.rank shape], downstream array checks may raise
+    [Invalid_argument]. *)
 
-    @param shape
-      Dimension sizes, which may contain symbolic dimensions for
-      shape-polymorphic operations.
-
-    If any dimension is zero-size, the offset is forced to [0] and masks are
-    removed. For zero-size tensors, the view represents an empty array with the
-    specified shape.
-
-    The view is marked C-contiguous if offset is [0], mask is [None], and
-    strides match the expected C-contiguous pattern for the given shape. *)
-
-(** {2 Properties} *)
+(** {1:accessors Accessors} *)
 
 val shape : t -> Symbolic_shape.t
-(** [shape view] returns the dimension sizes.
-
-    The shape may contain symbolic dimensions. Use {!Symbolic_shape.eval} to
-    obtain concrete values when all dimensions are bound. *)
+(** [shape v] is [v]'s shape expression. *)
 
 val strides : t -> int array
-(** [strides view] returns the element strides per dimension.
-
-    Strides are always present, even for views with symbolic shapes or masks.
-    For masked views, strides describe the underlying layout but access must
-    respect mask bounds.
-
-    To check if a view can be represented as a standard strided layout without
-    masks, use {!can_get_strides} or {!strides_opt}. *)
+(** [strides v] is [v]'s stride vector. *)
 
 val offset : t -> int
-(** [offset view] returns the starting position in the buffer.
-
-    The offset is added to all computed linear indices. Zero-size tensors always
-    have offset [0]. *)
+(** [offset v] is [v]'s linear base offset. *)
 
 val ndim : t -> int
-(** [ndim view] returns the number of dimensions.
-
-    Equivalent to [Symbolic_shape.rank (shape view)]. Scalars have [ndim = 0].
-*)
+(** [ndim v] is [Symbolic_shape.rank (shape v)]. *)
 
 val numel : t -> Symbolic_shape.dim
-(** [numel view] returns the total number of elements as a symbolic dimension.
+(** [numel v] is the symbolic product of dimensions in [shape v].
 
-    Returns a {!Symbolic_shape.dim} (not [int option]), making the result
-    compositional with other symbolic operations. The result is symbolic if any
-    dimension is symbolic. Scalars return [static 1]. *)
+    [numel] is symbolic when needed; it does not require full binding. *)
 
 val offset_dim : t -> Symbolic_shape.dim
-(** [offset_dim view] returns the offset as a symbolic dimension.
-
-    Converts the integer offset to a {!Symbolic_shape.dim} for use in symbolic
-    expressions. *)
+(** [offset_dim v] is [offset v] lifted to a symbolic dimension. *)
 
 val dim : int -> t -> Symbolic_shape.dim
-(** [dim axis view] returns the size of dimension [axis].
+(** [dim axis v] is dimension [axis] of [v].
 
-    Negative indices are not supported; use non-negative axis values.
-
-    @raise Invalid_argument if [axis < 0] or [axis >= ndim view]. *)
+    Raises [Invalid_argument] if [axis] is outside [[0; ndim v - 1]]. *)
 
 val stride : int -> t -> int
-(** [stride axis view] returns the stride of dimension [axis].
+(** [stride axis v] is stride [axis] of [v].
 
-    Negative indices are not supported.
-
-    @raise Invalid_argument if [axis < 0] or [axis >= ndim view]. *)
+    Raises [Invalid_argument] if [axis] is outside [[0; ndim v - 1]]. *)
 
 val mask : t -> (int * int) array option
-(** [mask view] returns the valid bounds per dimension if the view is masked.
+(** [mask v] is [v]'s optional validity mask.
 
-    Returns [Some bounds] where each [(start, end)] pair specifies valid indices
-    in the half-open interval \[start, end) (exclusive end). Returns [None] if
-    the view is unmasked (all elements are valid). *)
+    A mask entry [(b, e)] means [b <= index < e] on the corresponding axis. *)
 
 val is_c_contiguous : t -> bool
-(** [is_c_contiguous view] tests for C-contiguous (row-major) layout.
-
-    Returns [true] if the view has zero offset, no mask, and strides matching
-    the C-contiguous pattern for its shape. C-contiguous views enable efficient
-    bulk memory operations. *)
+(** [is_c_contiguous v] is [true] iff [v] is recognized as C-contiguous. *)
 
 val strides_opt : t -> int array option
-(** [strides_opt view] returns element strides when the view can be represented
-    as a standard strided layout.
-
-    Returns [None] when the view has a mask that restricts regions, requiring
-    materialization before producing standard strides. Calls {!simplify}
-    internally, so users don't need to simplify the view first. *)
+(** [strides_opt v] is [Some s] if [v] can be represented as a standard strided
+    view without partial masking, and [None] otherwise. *)
 
 val can_get_strides : t -> bool
-(** [can_get_strides view] is [true] when {!strides_opt} would return [Some _].
-
-    Use this function to check if a view has a mask that prevents standard
-    stride representation. *)
+(** [can_get_strides v] is [true] iff [strides_opt v] is [Some _]. *)
 
 val is_materializable : t -> bool
-(** [is_materializable view] indicates whether the view can be materialized
-    without resolving symbolic dimensions.
+(** [is_materializable v] is [true] iff [shape v] is static and
+    [can_get_strides v] is [true]. *)
 
-    Returns [true] if the shape is fully static and the view can produce
-    standard strides. Returns [false] for views with symbolic dimensions or
-    partial masks. *)
-
-(** {2 Index Operations} *)
+(** {1:indexing Indexing} *)
 
 val linear_index : t -> int array -> int
-(** [linear_index view indices] computes the linear buffer position for
-    multi-dimensional indices.
+(** [linear_index v idx] is [offset v + sum_i (idx.(i) * strides v.(i))].
 
-    Computes [offset + sum(indices[i] * strides[i])] to map from logical
-    coordinates to a buffer offset. This is the fundamental operation for
-    element access in strided arrays.
+    Raises [Invalid_argument] if [Array.length idx <> ndim v].
 
-    The result includes the view's offset. For a view with shape [|2; 3|],
-    strides [|3; 1|], and offset [5], accessing [[1; 2]] yields
-    [5 + 1*3 + 2*1 = 10].
-
-    Time complexity: O(ndim).
-
-    @raise Invalid_argument if [Array.length indices <> ndim view].
-    @raise Failure
-      if the shape is symbolic and computation requires concrete values. *)
+    {b Note.} This function does not validate index bounds or masks. *)
 
 val is_valid : t -> int array -> bool
-(** [is_valid view indices] checks whether indices fall within mask bounds.
+(** [is_valid v idx] is [true] iff [idx] is valid with respect to [mask v].
 
-    Returns [true] if the view has no mask, or if all indices satisfy
-    [start <= idx < end] for their respective dimension bounds. Returns [false]
-    if indices are out of bounds or the indices array length mismatches the
-    view's rank.
+    If [mask v = None], the result is [true] for any [idx].
 
-    Use this function to validate indices before accessing masked views. *)
+    If [mask v = Some m], [idx] must have the same rank and satisfy each masked
+    interval bound. *)
 
-(** {2 Transformations} *)
+(** {1:transform Transformations} *)
 
 val reshape : t -> Symbolic_shape.t -> t
-(** [reshape view new_shape] changes the logical shape without copying data.
+(** [reshape v new_shape] returns a view over the same storage with [new_shape]
+    when stride-compatible.
 
-    Attempts to reinterpret the view's data with a new shape while preserving
-    element order. Succeeds when the reshape can be expressed through stride
-    manipulation alone.
+    Supported cases include:
+    - C-contiguous reshape.
+    - Reshape by adding/removing singleton dimensions.
+    - Certain merge/split patterns on compatible strided layouts.
+    - All-zero-stride broadcast layouts.
+    - Symbolic reshapes only when [v] is C-contiguous.
 
-    Handles the following cases:
-    - C-contiguous views: Always succeeds if total elements match
-    - Size-1 dimension changes: Adding or removing singleton dimensions
-    - Dimension merging: Combining contiguous dimensions (e.g., [|2; 3; 4|] to
-      [|6; 4|])
-    - Dimension splitting: Dividing dimensions (e.g., [|6|] to [|2; 3|])
-    - All-zero strides: Broadcast views can reshape freely
-    - Symbolic shapes: C-contiguous symbolic views reshape to other symbolic
-      shapes (non-C-contiguous symbolic views always fail)
-
-    Returns the same view if shapes are already equal.
-
-    @raise Invalid_argument
-      if total elements differ, unless either the original or new shape is
-      zero-size.
-    @raise Failure if the view has a mask (masks complicate reshape semantics).
-    @raise Failure
-      if strides are incompatible with the new shape. Non-contiguous views (like
-      transposed tensors) cannot reshape without data reordering. The error
-      message indicates expected versus actual strides and suggests calling
-      [contiguous()] first. Non-C-contiguous symbolic views always fail because
-      stride compatibility cannot be determined without concrete dimensions.
-    @raise Failure for symbolic shapes that are not C-contiguous. *)
+    Raises [Invalid_argument] if reshape cannot be represented, including size
+    mismatches (except zero-size special cases), masked views, symbolic
+    non-contiguous views, or incompatible stride patterns. *)
 
 val expand : t -> Symbolic_shape.t -> t
-(** [expand view new_shape] broadcasts singleton dimensions to larger sizes.
+(** [expand v new_shape] broadcasts singleton dimensions to [new_shape] by
+    setting corresponding strides to [0].
 
-    Expands dimensions of size 1 to size [n] by setting their stride to 0,
-    causing the same memory location to be read for all positions along that
-    dimension. This is the mechanism underlying NumPy-style broadcasting.
+    Scalars ([ndim v = 0]) may expand to any rank.
 
-    Scalar views (rank 0) can expand to any shape with all strides set to 0.
-    Zero-size tensors create a new zero-size view with the new shape.
-
-    For symbolic shapes without concrete values, preserves existing strides and
-    metadata.
-
-    @raise Invalid_argument
-      if [rank new_shape <> ndim view] for non-scalar views.
-    @raise Invalid_argument
-      if attempting to expand a non-singleton dimension (size [> 1]). Only
-      dimensions of size 1 can be broadcast to larger sizes. *)
+    Raises [Invalid_argument] if ranks are incompatible for non-scalars, or if a
+    non-singleton dimension would need expansion. *)
 
 val permute : t -> int array -> t
-(** [permute view axes] reorders dimensions by permuting shape and strides.
+(** [permute v axes] reorders dimensions according to [axes].
 
-    Creates a new view with dimensions arranged according to [axes], where
-    [axes[i]] specifies which original dimension becomes the new dimension [i].
-    For example, [permute view [|1; 0|]] transposes a 2D view.
-
-    The permutation is validated to ensure it's a valid permutation: all values
-    must be unique and in range \[0, ndim).
-
-    Time complexity: O(ndim).
-
-    @raise Invalid_argument if [Array.length axes <> ndim view].
-    @raise Invalid_argument if [axes] contains duplicate values.
-    @raise Invalid_argument
-      if any axis is out of bounds ([< 0] or [>= ndim view]). *)
+    Raises [Invalid_argument] if [axes] is not a valid permutation of
+    [[0; ndim v - 1]]. *)
 
 val shrink : t -> (int * int) array -> t
-(** [shrink view bounds] restricts the view to a sub-region by slicing.
+(** [shrink v bounds] restricts [v] to per-axis half-open intervals
+    [(start, end)].
 
-    Each [(start, end)] pair specifies the range to keep for a dimension, with
-    exclusive end (NumPy convention). Adjusts offset to point to the first
-    element of the sub-region and updates shape to reflect the new sizes.
+    Bounds must satisfy [0 <= start < end <= size] for each concrete size.
 
-    For a dimension with size [n], valid bounds are [0 <= start < end <= n].
-    Bounds covering the entire dimension [(0, n)] for all dimensions return the
-    view unchanged.
-
-    Requires a fully concrete shape.
-
-    @raise Invalid_argument if [Array.length bounds <> ndim view].
-    @raise Failure if the shape contains symbolic dimensions.
-    @raise Invalid_argument if any bound violates [0 <= start < end <= size]. *)
+    Raises [Invalid_argument] if bounds are malformed, rank mismatches, or
+    [shape v] is not fully concrete. *)
 
 val pad : t -> (int * int) array -> t
-(** [pad view padding] virtually extends dimensions by adding padding regions.
+(** [pad v padding] adds virtual padding [(before, after)] per axis.
 
-    Each [(before, after)] pair specifies how many elements to add before and
-    after the existing data along a dimension. The extended regions are marked
-    invalid using a mask. Reading from padded regions produces unspecified
-    values; use operations like [where] to handle padding explicitly.
+    The resulting view keeps data in place and records valid original regions
+    via a mask.
 
-    Padding is virtual: no data copying occurs. The shape increases by
-    [before + after] per dimension, the offset decreases by the sum of
-    [before_i * stride_i] across all dimensions to account for the virtual
-    prefix, and a mask records valid bounds.
-
-    Padding with all zeros returns the view unchanged.
-
-    Requires a fully concrete shape.
-
-    @raise Invalid_argument if [Array.length padding <> ndim view].
-    @raise Invalid_argument if any padding value is negative.
-    @raise Failure if the shape contains symbolic dimensions. *)
+    Raises [Invalid_argument] if:
+    - [padding] rank mismatches [ndim v].
+    - A padding component is negative.
+    - [shape v] is not fully concrete. *)
 
 val flip : t -> bool array -> t
-(** [flip view axes_to_flip] reverses specified dimensions using negative
-    strides.
+(** [flip v axes_to_flip] reverses selected axes by negating strides and
+    shifting offset.
 
-    For each dimension [i] where [axes_to_flip[i] = true], negates the stride
-    and adjusts the offset to point to the last element along that dimension.
-    This achieves reversal without copying data.
-
-    If the view has a mask, the mask bounds are also flipped to reflect the
-    reversed order.
-
-    Requires a fully concrete shape.
-
-    @raise Invalid_argument if [Array.length axes_to_flip <> ndim view].
-    @raise Failure if the shape contains symbolic dimensions. *)
+    Raises [Invalid_argument] if [axes_to_flip] rank mismatches [ndim v] or if
+    [shape v] is not fully concrete. *)
