@@ -1,14 +1,14 @@
 # todo
 
-## design notes
+## alpha3
 
+- quill integration with merlin for completion (and others?)
 - unhappy with how bloated the kaun api is. make a design pass.
-- see if we can make simplification to the nx architecture.
-- bring back quill as an infra for a livebook-like product, not the actual product.
+- bring in talon changes
+- consider rename talon to talf
 
-## alpha
+## alphaX
 
-- fix einsum issue
 - close rune grad performances gap (within <2x of pytorch)
 - close nx performance gaps (within <2x of numpy)
 
@@ -28,19 +28,7 @@ hugin
 - fix contour
 
 quill
-- editor bugs:
-  - minor:rendering an image opens a window?
-  - minor: select end of paragraph and delete removes the line break
-  - major: cannot create a new paragraph from a an empty paragraph
-  - major: delete the whole document preserves hidden elements
-  - major: typing ``` creates a new code block with the rest of the document
-- save changes to file
-- restore removing signature from code blocks (make it optional)
-- syntax highlighting for ocaml
-- make execution output streamable
-- make it work on serverless
-- run button
-- run all
+- support images (upstream)
 
 docs/website
 - generate docs with odoc3 + dream-style html rewriting to integrate in www/
@@ -49,7 +37,6 @@ docs/website
 
 ## notes
 
-- use upstream metal library when insulated from camlkit
 - (?) not sure we need non-polymorphic functions for perf of where, we should benchmark
 - we can make jit composable by re raising all the effects (but what does it mean to write grad(jit(f)))?? What are the semantics in jax?
 - (?) think of using effects for prngs, does it simplify ux?
