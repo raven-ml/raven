@@ -37,6 +37,7 @@ type model = {
   viewport_width : int;
   viewport_height : int;
   edit_cursor : int;
+  edit_cursor_override : int option;
   edit_selection : (int * int) option;
   completion_popup_open : bool;
   completion : completion option;
@@ -435,6 +436,7 @@ let apply_completion m c choice =
         session;
         dirty = true;
         edit_cursor = cursor;
+        edit_cursor_override = Some cursor;
         edit_selection = None;
         completion_popup_open = false;
         completion = None;
@@ -535,6 +537,7 @@ let init ~create_kernel ~path () =
       viewport_width = 120;
       viewport_height = 32;
       edit_cursor = 0;
+      edit_cursor_override = None;
       edit_selection = None;
       completion_popup_open = false;
       completion = None;
@@ -559,6 +562,7 @@ let check_reload m =
       dirty = false;
       completion_popup_open = false;
       completion = None;
+      edit_cursor_override = None;
       edit_selection = None;
     }
   else m
@@ -638,6 +642,7 @@ let update_editing msg m =
           m with
           mode = Normal;
           session;
+          edit_cursor_override = None;
           completion_popup_open = false;
           completion = None;
           edit_selection = None;
@@ -661,6 +666,7 @@ let update_editing msg m =
         {
           m with
           edit_cursor = cursor;
+          edit_cursor_override = None;
           edit_selection = selection;
           completion_popup_open =
             (match selection with
@@ -720,6 +726,7 @@ let update_editing msg m =
               mode = Normal;
               completion_popup_open = false;
               completion = None;
+              edit_cursor_override = None;
               edit_selection = None;
             }
           in
@@ -733,6 +740,7 @@ let update_editing msg m =
               session;
               completion_popup_open = false;
               completion = None;
+              edit_cursor_override = None;
               edit_selection = None;
             },
             Cmd.focus scroll_box_id ))
@@ -746,6 +754,7 @@ let update_editing msg m =
           mode = Normal;
           completion_popup_open = false;
           completion = None;
+          edit_cursor_override = None;
           edit_selection = None;
         }
   | Interrupt ->
@@ -852,6 +861,7 @@ let update_normal msg m =
               m with
               mode = Editing;
               edit_cursor;
+              edit_cursor_override = Some edit_cursor;
               edit_selection = None;
               completion_popup_open = false;
               completion = None;
@@ -1018,13 +1028,13 @@ let view_code_cell m ~index ~is_focused ~is_editing ~status source outputs =
         [
           line_number
             ~line_colors:(active_line_colors source m.edit_cursor)
-            (textarea ~id:textarea_id ~value:source ~cursor:m.edit_cursor
-               ?selection:(Some m.edit_selection) ~highlights ?ghost_text
+            (textarea ~id:textarea_id ~value:source
+               ?cursor:m.edit_cursor_override ~highlights ?ghost_text
                ~ghost_text_color:(Ansi.Color.grayscale ~level:10)
                ~text_color:output_fg ~background_color:cell_bg_focused
                ~focused_text_color:output_fg
                ~focused_background_color:cell_bg_focused ~cursor_style:`Line
-               ~cursor_color:accent
+               ~cursor_color:accent ~wrap:`None
                ~size:{ width = pct 100; height = auto }
                ~on_key:(fun ev -> editor_on_key m ev)
                ~on_input:(fun s -> Some (Edit_source s))
