@@ -136,6 +136,92 @@ let execute_code ppf_out ppf_err code =
       Format.pp_print_flush ppf_err ());
   !success
 
+(* ───── Completion ───── *)
+
+let clamp lo hi x = if x < lo then lo else if x > hi then hi else x
+
+let starts_with ~prefix s =
+  let lp = String.length prefix and ls = String.length s in
+  lp <= ls && String.sub s 0 lp = prefix
+
+let is_ident_char = function
+  | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' | '\'' -> true
+  | _ -> false
+
+let is_path_char c = is_ident_char c || Char.equal c '.'
+
+let unique_sorted strings =
+  let sorted = List.sort String.compare strings in
+  let rec dedup acc = function
+    | a :: (b :: _ as tl) when String.equal a b -> dedup acc tl
+    | x :: tl -> dedup (x :: acc) tl
+    | [] -> List.rev acc
+  in
+  dedup [] sorted
+
+let parse_completion_context code pos =
+  let len = String.length code in
+  let pos = clamp 0 len pos in
+  let i = ref (pos - 1) in
+  while !i >= 0 && is_path_char code.[!i] do
+    decr i
+  done;
+  let start = !i + 1 in
+  let token = if pos > start then String.sub code start (pos - start) else "" in
+  let token =
+    if String.starts_with ~prefix:"." token then
+      String.sub token 1 (String.length token - 1)
+    else token
+  in
+  if token = "" then (None, "")
+  else
+    let trailing_dot = String.ends_with ~suffix:"." token in
+    let parts = String.split_on_char '.' token |> List.filter (( <> ) "") in
+    if trailing_dot then (Longident.unflatten parts, "")
+    else
+      match List.rev parts with
+      | [] -> (None, "")
+      | prefix :: rev_qual ->
+          let qualifier = Longident.unflatten (List.rev rev_qual) in
+          (qualifier, prefix)
+
+let collect_env_names env qualifier =
+  let add name acc = if String.length name = 0 then acc else name :: acc in
+  let names =
+    Env.fold_values (fun name _ _ acc -> add name acc) qualifier env []
+  in
+  let names =
+    Env.fold_types (fun name _ _ acc -> add name acc) qualifier env names
+  in
+  let names =
+    Env.fold_modules (fun name _ _ acc -> add name acc) qualifier env names
+  in
+  let names =
+    Env.fold_modtypes (fun name _ _ acc -> add name acc) qualifier env names
+  in
+  let names =
+    Env.fold_classes (fun name _ _ acc -> add name acc) qualifier env names
+  in
+  let names =
+    Env.fold_cltypes (fun name _ _ acc -> add name acc) qualifier env names
+  in
+  let names =
+    Env.fold_constructors
+      (fun (c : Data_types.constructor_description) acc -> add c.cstr_name acc)
+      qualifier env names
+  in
+  Env.fold_labels
+    (fun (l : Data_types.label_description) acc -> add l.lbl_name acc)
+    qualifier env names
+
+let complete_names ~code ~pos =
+  let qualifier, prefix = parse_completion_context code pos in
+  let env = !Toploop.toplevel_env in
+  collect_env_names env qualifier
+  |> List.filter (fun name ->
+      String.length prefix = 0 || starts_with ~prefix name)
+  |> unique_sorted
+
 (* ───── Kernel interface ───── *)
 
 let status_ref = ref Quill.Kernel.Idle
@@ -164,7 +250,10 @@ let create ~on_event =
     (* Send SIGINT to the current thread - this will cause Sys.Break *)
     try Unix.kill (Unix.getpid ()) Sys.sigint with _ -> ()
   in
-  let complete ~code:_ ~pos:_ = [] in
+  let complete ~code ~pos =
+    initialize_if_needed ();
+    try complete_names ~code ~pos with _ -> []
+  in
   let status () = !status_ref in
   let shutdown () =
     status_ref := Quill.Kernel.Shutting_down;

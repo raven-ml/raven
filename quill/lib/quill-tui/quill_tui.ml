@@ -9,13 +9,15 @@ open Quill
 (* ───── Model ───── *)
 
 type mode = Normal | Editing
-
 type footer_msg_kind = Info | Warning | Error | Confirm
+type footer_msg = { kind : footer_msg_kind; text : string; created_at : float }
 
-type footer_msg = {
-  kind : footer_msg_kind;
-  text : string;
-  created_at : float;
+type completion = {
+  prefix : string;
+  cursor_byte : int;
+  replace_start_byte : int;
+  items : string list;
+  selected : int;
 }
 
 type model = {
@@ -34,6 +36,10 @@ type model = {
   clock : float;
   viewport_width : int;
   viewport_height : int;
+  edit_cursor : int;
+  edit_selection : (int * int) option;
+  completion_popup_open : bool;
+  completion : completion option;
 }
 
 type msg =
@@ -60,6 +66,12 @@ type msg =
   | Exit_edit
   | Edit_source of string
   | Submit_edit of string
+  | Edit_cursor_changed of int * (int * int) option
+  | Trigger_completion
+  | Next_completion
+  | Prev_completion
+  | Accept_completion
+  | Dismiss_completion
 
 (* ───── Palette ───── *)
 
@@ -132,6 +144,182 @@ let clear_confirm_message m =
   | Some { kind = Confirm; _ } -> clear_footer_message m
   | _ -> m
 
+let clamp lo hi x = if x < lo then lo else if x > hi then hi else x
+
+let lowercase_codepoint i =
+  if i >= Char.code 'A' && i <= Char.code 'Z' then i + 32 else i
+
+let starts_with ~prefix s =
+  let lp = String.length prefix and ls = String.length s in
+  lp <= ls && String.sub s 0 lp = prefix
+
+let is_ident_start = function
+  | 'a' .. 'z' | 'A' .. 'Z' | '_' -> true
+  | _ -> false
+
+let is_ident_char = function
+  | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '_' | '\'' -> true
+  | _ -> false
+
+let unique_sorted strings =
+  let sorted = List.sort String.compare strings in
+  let rec dedup acc = function
+    | a :: (b :: _ as tl) when String.equal a b -> dedup acc tl
+    | x :: tl -> dedup (x :: acc) tl
+    | [] -> List.rev acc
+  in
+  dedup [] sorted
+
+let collect_identifiers s =
+  let tbl = Hashtbl.create 64 in
+  let n = String.length s in
+  let i = ref 0 in
+  while !i < n do
+    if is_ident_start s.[!i] then begin
+      let j = ref (!i + 1) in
+      while !j < n && is_ident_char s.[!j] do
+        incr j
+      done;
+      let token = String.sub s !i (!j - !i) in
+      if String.length token >= 2 then Hashtbl.replace tbl token ();
+      i := !j
+    end
+    else incr i
+  done;
+  Hashtbl.fold (fun key () acc -> key :: acc) tbl []
+
+let ocaml_keywords =
+  [
+    "and";
+    "as";
+    "begin";
+    "class";
+    "done";
+    "else";
+    "end";
+    "exception";
+    "external";
+    "false";
+    "for";
+    "fun";
+    "function";
+    "if";
+    "in";
+    "include";
+    "let";
+    "match";
+    "module";
+    "mutable";
+    "of";
+    "open";
+    "rec";
+    "sig";
+    "struct";
+    "then";
+    "true";
+    "try";
+    "type";
+    "val";
+    "when";
+    "with";
+  ]
+
+let take_first n xs =
+  let rec loop acc n xs =
+    if n <= 0 then List.rev acc
+    else
+      match xs with [] -> List.rev acc | x :: tl -> loop (x :: acc) (n - 1) tl
+  in
+  loop [] n xs
+
+let utf8_codepoint_offsets s =
+  let len = String.length s in
+  let rec prev_start i =
+    if i <= 0 then 0
+    else if Char.code s.[i] land 0xC0 = 0x80 then prev_start (i - 1)
+    else i
+  in
+  let rec loop acc i =
+    if i <= 0 then Array.of_list (0 :: acc)
+    else
+      let j = prev_start (i - 1) in
+      loop (i :: acc) j
+  in
+  loop [] len
+
+let grapheme_byte_offsets s = utf8_codepoint_offsets s
+
+let grapheme_count s =
+  let offsets = grapheme_byte_offsets s in
+  Array.length offsets - 1
+
+let cursor_byte_of code cursor =
+  let offsets = grapheme_byte_offsets code in
+  let max_cursor = Array.length offsets - 1 in
+  let cursor = clamp 0 max_cursor cursor in
+  (cursor, offsets.(cursor))
+
+let cursor_of_byte code byte =
+  let offsets = grapheme_byte_offsets code in
+  let byte = clamp 0 (String.length code) byte in
+  let rec loop i =
+    if i >= Array.length offsets then Array.length offsets - 1
+    else if offsets.(i) >= byte then i
+    else loop (i + 1)
+  in
+  loop 0
+
+let find_prefix_at_cursor code ~cursor ~selection =
+  match selection with
+  | Some _ -> None
+  | None ->
+      let cursor, cursor_byte = cursor_byte_of code cursor in
+      let len = String.length code in
+      let at_ident_end =
+        cursor_byte = len || not (is_ident_char code.[cursor_byte])
+      in
+      if not at_ident_end then None
+      else
+        let i = ref (cursor_byte - 1) in
+        while
+          !i >= 0 && (is_ident_char code.[!i] || Char.equal code.[!i] '.')
+        do
+          decr i
+        done;
+        let start = !i + 1 in
+        let token =
+          if cursor_byte > start then String.sub code start (cursor_byte - start)
+          else ""
+        in
+        let replace_start_byte, prefix =
+          match String.rindex_opt token '.' with
+          | Some dot ->
+              ( start + dot + 1,
+                String.sub token (dot + 1) (String.length token - dot - 1) )
+          | None -> (start, token)
+        in
+        Some (cursor, cursor_byte, replace_start_byte, prefix)
+
+let selected_completion_item c =
+  match c.items with
+  | [] -> None
+  | items ->
+      let len = List.length items in
+      Some (List.nth items (c.selected mod len))
+
+let index_of item items =
+  let rec loop i = function
+    | [] -> None
+    | x :: _ when String.equal x item -> Some i
+    | _ :: tl -> loop (i + 1) tl
+  in
+  loop 0 items
+
+let cycle_completion c delta =
+  let len = List.length c.items in
+  if len = 0 then c
+  else { c with selected = (c.selected + delta + len) mod len }
+
 let footer_message_timeout kind =
   match kind with
   | Info -> Some 3.
@@ -148,14 +336,172 @@ let expire_footer_message m =
   | None -> m
 
 let is_navigation_msg msg =
-  match msg with Focus_next | Focus_prev | Move_up | Move_down -> true | _ -> false
+  match msg with
+  | Focus_next | Focus_prev | Move_up | Move_down -> true
+  | _ -> false
 
 let should_clear_error_msg msg =
   if is_navigation_msg msg then false
   else
     match msg with
-    | Tick _ | Dismiss_message | Toggle_help -> false
+    | Tick _ | Dismiss_message | Toggle_help | Edit_cursor_changed _ -> false
     | _ -> true
+
+let current_code_cell m =
+  match focused_cell m with
+  | Some (Cell.Code { id; source; _ }) -> Some (id, source)
+  | _ -> None
+
+let build_completion ?(force = false) m code ~cursor ~selection =
+  match find_prefix_at_cursor code ~cursor ~selection with
+  | None -> None
+  | Some (_, cursor_byte, replace_start_byte, prefix) -> (
+      if (not force) && String.length prefix = 0 then None
+      else
+        let kernel_items =
+          try m.kernel.complete ~code ~pos:cursor_byte with _ -> []
+        in
+        let items =
+          unique_sorted
+            (kernel_items @ collect_identifiers code @ ocaml_keywords)
+          |> List.filter (fun item ->
+              (String.length prefix = 0 || starts_with ~prefix item)
+              && not (String.equal item prefix))
+          |> take_first 200
+        in
+        match items with
+        | [] -> None
+        | _ ->
+            Some
+              { prefix; cursor_byte; replace_start_byte; items; selected = 0 })
+
+let preserve_selection prev next =
+  match (prev, next) with
+  | Some prev, Some next -> (
+      match selected_completion_item prev with
+      | Some item -> (
+          match index_of item next.items with
+          | Some idx -> Some { next with selected = idx }
+          | None -> Some next)
+      | None -> Some next)
+  | _, x -> x
+
+let recompute_completion m =
+  match current_code_cell m with
+  | None -> { m with completion = None; completion_popup_open = false }
+  | Some (_, source) ->
+      let force = m.completion_popup_open in
+      let next =
+        build_completion ~force m source ~cursor:m.edit_cursor
+          ~selection:m.edit_selection
+      in
+      { m with completion = preserve_selection m.completion next }
+
+let ghost_text m =
+  match m.completion with
+  | None -> None
+  | Some c when String.length c.prefix = 0 -> None
+  | Some c -> (
+      match selected_completion_item c with
+      | None -> None
+      | Some item when starts_with ~prefix:c.prefix item ->
+          let suffix =
+            String.sub item (String.length c.prefix)
+              (String.length item - String.length c.prefix)
+          in
+          if String.length suffix = 0 then None else Some suffix
+      | Some _ -> None)
+
+let replace_range_at_byte s ~start_byte ~end_byte text =
+  let len = String.length s in
+  let start_byte = clamp 0 len start_byte in
+  let end_byte = clamp start_byte len end_byte in
+  String.sub s 0 start_byte ^ text ^ String.sub s end_byte (len - end_byte)
+
+let apply_completion m c choice =
+  match current_code_cell m with
+  | None -> m
+  | Some (cell_id, source) ->
+      let code =
+        replace_range_at_byte source ~start_byte:c.replace_start_byte
+          ~end_byte:c.cursor_byte choice
+      in
+      let cursor =
+        cursor_of_byte code (c.replace_start_byte + String.length choice)
+      in
+      let session = Session.update_source cell_id code m.session in
+      {
+        m with
+        session;
+        dirty = true;
+        edit_cursor = cursor;
+        edit_selection = None;
+        completion_popup_open = false;
+        completion = None;
+      }
+      |> recompute_completion
+
+let cursor_line code cursor =
+  let _, cursor_byte = cursor_byte_of code cursor in
+  let line = ref 0 in
+  for i = 0 to cursor_byte - 1 do
+    if code.[i] = '\n' then incr line
+  done;
+  !line
+
+let active_line_colors code cursor =
+  let line = cursor_line code cursor in
+  [
+    ( line,
+      {
+        Line_number.gutter = Ansi.Color.of_rgb 48 48 68;
+        content = Some (Ansi.Color.of_rgb 32 32 48);
+      } );
+  ]
+
+let highlight_source source =
+  try
+    Tree_sitter_ocaml.highlight_ocaml source
+    |> Syntax_theme.apply Syntax_theme.default ~content:source
+  with _ -> []
+
+let editor_on_key m ev =
+  let data = Event.Key.data ev in
+  if data.event_type = Release then None
+  else
+    let md = data.modifier in
+    match data.key with
+    | Escape when m.completion_popup_open ->
+        Event.Key.prevent_default ev;
+        Some Dismiss_completion
+    | Enter
+      when m.completion_popup_open
+           && not (md.ctrl || md.alt || md.super || md.shift) ->
+        Event.Key.prevent_default ev;
+        Some Accept_completion
+    | Tab when m.completion_popup_open && md.shift ->
+        Event.Key.prevent_default ev;
+        Some Prev_completion
+    | Tab when m.completion_popup_open ->
+        Event.Key.prevent_default ev;
+        Some Accept_completion
+    | Tab when Option.is_none m.edit_selection ->
+        Event.Key.prevent_default ev;
+        Some Trigger_completion
+    | Char c
+      when m.completion_popup_open && md.ctrl
+           && lowercase_codepoint (Uchar.to_int c) = Char.code 'n' ->
+        Event.Key.prevent_default ev;
+        Some Next_completion
+    | Char c
+      when m.completion_popup_open && md.ctrl
+           && lowercase_codepoint (Uchar.to_int c) = Char.code 'p' ->
+        Event.Key.prevent_default ev;
+        Some Prev_completion
+    | Char c when md.ctrl && Uchar.to_int c = Char.code ' ' ->
+        Event.Key.prevent_default ev;
+        Some Trigger_completion
+    | _ -> None
 
 (* ───── Init ───── *)
 
@@ -188,6 +534,10 @@ let init ~create_kernel ~path () =
       clock = 0.;
       viewport_width = 120;
       viewport_height = 32;
+      edit_cursor = 0;
+      edit_selection = None;
+      completion_popup_open = false;
+      completion = None;
     },
     Cmd.set_title (Printf.sprintf "Quill - %s" (Filename.basename path)) )
 
@@ -201,7 +551,16 @@ let check_reload m =
     let session = Session.reload doc m.session in
     let n = Doc.length (Session.doc session) in
     let focus = if n > 0 then min m.focus (n - 1) else 0 in
-    { m with session; focus; last_mtime = mtime; dirty = false }
+    {
+      m with
+      session;
+      focus;
+      last_mtime = mtime;
+      dirty = false;
+      completion_popup_open = false;
+      completion = None;
+      edit_selection = None;
+    }
   else m
 
 (* ───── Execute helpers ───── *)
@@ -239,7 +598,10 @@ let update_toggle_help m =
   let show_help = not m.show_help in
   let cmd =
     if show_help then Cmd.focus help_scroll_id
-    else match m.mode with Editing -> Cmd.focus textarea_id | Normal -> Cmd.focus scroll_box_id
+    else
+      match m.mode with
+      | Editing -> Cmd.focus textarea_id
+      | Normal -> Cmd.focus scroll_box_id
   in
   ({ m with show_help }, cmd)
 
@@ -250,12 +612,14 @@ let update_save m =
   let content = Quill_markdown.to_string_with_outputs doc in
   write_file m.path content;
   let last_mtime = get_mtime m.path in
-  (with_footer_message { m with dirty = false; last_mtime } Info "Saved", Cmd.none)
+  ( with_footer_message { m with dirty = false; last_mtime } Info "Saved",
+    Cmd.none )
 
 let update_quit m =
   if m.dirty && not m.confirm_quit then
-    ( with_footer_message { m with confirm_quit = true } Confirm
-        "Unsaved changes. Press q again to quit, s to save.",
+    ( with_footer_message
+        { m with confirm_quit = true }
+        Confirm "Unsaved changes. Press q again to quit, s to save.",
       Cmd.none )
   else (
     m.kernel.shutdown ();
@@ -270,28 +634,120 @@ let update_editing msg m =
       ({ m with viewport_width = width; viewport_height = height }, Cmd.none)
   | Exit_edit ->
       let session = Session.checkpoint m.session in
-      ({ m with mode = Normal; session }, Cmd.focus scroll_box_id)
+      ( {
+          m with
+          mode = Normal;
+          session;
+          completion_popup_open = false;
+          completion = None;
+          edit_selection = None;
+        },
+        Cmd.focus scroll_box_id )
   | Edit_source source -> (
       match focused_cell m with
       | Some cell ->
           let cell_id = Cell.id cell in
           let session = Session.update_source cell_id source m.session in
-          ({ m with session; dirty = true }, Cmd.none)
+          let m = { m with session; dirty = true } in
+          let m =
+            if Option.is_some m.edit_selection then
+              { m with completion_popup_open = false }
+            else m
+          in
+          (recompute_completion m, Cmd.none)
       | None -> (m, Cmd.none))
+  | Edit_cursor_changed (cursor, selection) ->
+      let m =
+        {
+          m with
+          edit_cursor = cursor;
+          edit_selection = selection;
+          completion_popup_open =
+            (match selection with
+            | Some _ -> false
+            | None -> m.completion_popup_open);
+        }
+      in
+      (recompute_completion m, Cmd.none)
+  | Trigger_completion ->
+      if Option.is_some m.edit_selection then
+        ( with_footer_message m Warning
+            "Dismiss selection before triggering completion.",
+          Cmd.none )
+      else
+        let m = recompute_completion { m with completion_popup_open = true } in
+        (m, Cmd.none)
+  | Next_completion -> (
+      match m.completion with
+      | None -> (m, Cmd.none)
+      | Some c ->
+          ( {
+              m with
+              completion = Some (cycle_completion c 1);
+              completion_popup_open = true;
+            },
+            Cmd.none ))
+  | Prev_completion -> (
+      match m.completion with
+      | None -> (m, Cmd.none)
+      | Some c ->
+          ( {
+              m with
+              completion = Some (cycle_completion c (-1));
+              completion_popup_open = true;
+            },
+            Cmd.none ))
+  | Accept_completion -> (
+      match m.completion with
+      | None -> (m, Cmd.none)
+      | Some c -> (
+          match selected_completion_item c with
+          | None ->
+              ( { m with completion_popup_open = false } |> recompute_completion,
+                Cmd.none )
+          | Some choice -> (apply_completion m c choice, Cmd.none)))
+  | Dismiss_completion ->
+      ( { m with completion_popup_open = false } |> recompute_completion,
+        Cmd.none )
   | Submit_edit _ -> (
       match focused_cell m with
       | Some (Cell.Code { id; source; _ }) ->
           let session = Session.checkpoint m.session in
-          let m = { m with session; mode = Normal } in
+          let m =
+            {
+              m with
+              session;
+              mode = Normal;
+              completion_popup_open = false;
+              completion = None;
+              edit_selection = None;
+            }
+          in
           let m = execute_cell m id source in
           (m, Cmd.focus scroll_box_id)
       | _ ->
           let session = Session.checkpoint m.session in
-          ({ m with mode = Normal; session }, Cmd.focus scroll_box_id))
+          ( {
+              m with
+              mode = Normal;
+              session;
+              completion_popup_open = false;
+              completion = None;
+              edit_selection = None;
+            },
+            Cmd.focus scroll_box_id ))
   | Save -> update_save m
   | Quit ->
       let session = Session.checkpoint m.session in
-      update_quit { m with session; mode = Normal }
+      update_quit
+        {
+          m with
+          session;
+          mode = Normal;
+          completion_popup_open = false;
+          completion = None;
+          edit_selection = None;
+        }
   | Interrupt ->
       m.kernel.interrupt ();
       (m, Cmd.none)
@@ -389,7 +845,19 @@ let update_normal msg m =
       else ({ m with reload_acc }, Cmd.none)
   | Enter_edit -> (
       match focused_cell m with
-      | Some (Cell.Code _) -> ({ m with mode = Editing }, Cmd.focus textarea_id)
+      | Some (Cell.Code { source; _ }) ->
+          let edit_cursor = grapheme_count source in
+          let m =
+            {
+              m with
+              mode = Editing;
+              edit_cursor;
+              edit_selection = None;
+              completion_popup_open = false;
+              completion = None;
+            }
+          in
+          (recompute_completion m, Cmd.focus textarea_id)
       | _ -> (m, Cmd.none))
   | _ -> (m, Cmd.none)
 
@@ -494,7 +962,39 @@ let view_output output =
           ~style:(Ansi.Style.make ~fg:output_dim_fg ~italic:true ())
           (Printf.sprintf "[%s \xc2\xb7 %d bytes]" mime (String.length data))
 
-let view_code_cell ~index ~is_focused ~is_editing ~status source outputs =
+let completion_panel ~is_editing m =
+  if not (is_editing && m.mode = Editing && m.completion_popup_open) then empty
+  else
+    match m.completion with
+    | None ->
+        box ~border:true ~border_color:border_unfocused ~padding:(padding 1)
+          [
+            text
+              ~style:(Ansi.Style.make ~fg:hint_fg ())
+              "No suggestions at cursor.";
+          ]
+    | Some c ->
+        box ~border:true ~border_color:border_unfocused ~padding:(padding 1)
+          ~flex_direction:Column ~gap:(gap 0)
+          [
+            text
+              ~style:(Ansi.Style.make ~bold:true ~fg:accent ())
+              (Printf.sprintf "Completions (%d)" (List.length c.items));
+            box ~flex_direction:Column ~gap:(gap 0)
+              (take_first 8 c.items
+              |> List.mapi (fun i item ->
+                  let selected = i = c.selected in
+                  let prefix = if selected then "> " else "  " in
+                  text
+                    ~style:
+                      (if selected then
+                         Ansi.Style.make ~fg:Ansi.Color.black
+                           ~bg:Ansi.Color.yellow ~bold:true ()
+                       else Ansi.Style.make ~fg:Ansi.Color.white ())
+                    (prefix ^ item)));
+          ]
+
+let view_code_cell m ~index ~is_focused ~is_editing ~status source outputs =
   let border_color = if is_focused then border_focused else border_unfocused in
   let num = index + 1 in
   let title =
@@ -510,24 +1010,31 @@ let view_code_cell ~index ~is_focused ~is_editing ~status source outputs =
   in
   let source_view =
     if is_editing then
+      let highlights = highlight_source source in
+      let ghost_text = ghost_text m in
       box
         ~padding:(padding_lrtb ~l:1 ~r:1 ~t:0 ~b:0)
         ~size:{ width = pct 100; height = auto }
         [
-          textarea ~id:textarea_id ~value:source ~text_color:output_fg
-            ~background_color:cell_bg_focused ~focused_text_color:output_fg
-            ~focused_background_color:cell_bg_focused ~cursor_style:`Line
-            ~cursor_color:accent
-            ~size:{ width = pct 100; height = auto }
-            ~on_input:(fun s -> Some (Edit_source s))
-            ~on_submit:(fun s -> Some (Submit_edit s))
-            ();
+          line_number
+            ~line_colors:(active_line_colors source m.edit_cursor)
+            (textarea ~id:textarea_id ~value:source ~cursor:m.edit_cursor
+               ?selection:(Some m.edit_selection) ~highlights ?ghost_text
+               ~ghost_text_color:(Ansi.Color.grayscale ~level:10)
+               ~text_color:output_fg ~background_color:cell_bg_focused
+               ~focused_text_color:output_fg
+               ~focused_background_color:cell_bg_focused ~cursor_style:`Line
+               ~cursor_color:accent
+               ~size:{ width = pct 100; height = auto }
+               ~on_key:(fun ev -> editor_on_key m ev)
+               ~on_input:(fun s -> Some (Edit_source s))
+               ~on_submit:(fun s -> Some (Submit_edit s))
+               ~on_cursor:(fun ~cursor ~selection ->
+                 Some (Edit_cursor_changed (cursor, selection)))
+               ());
         ]
     else
-      let highlights =
-        Tree_sitter_ocaml.highlight_ocaml source
-        |> Syntax_theme.apply Syntax_theme.default ~content:source
-      in
+      let highlights = highlight_source source in
       box
         ~padding:(padding_lrtb ~l:1 ~r:1 ~t:1 ~b:0)
         ~size:{ width = pct 100; height = auto }
@@ -560,7 +1067,7 @@ let view_code_cell ~index ~is_focused ~is_editing ~status source outputs =
     ~border_style:Border.rounded ~title ~title_alignment:`Left
     ?background:(if is_focused then Some cell_bg_focused else None)
     ~size:{ width = pct 100; height = auto }
-    [ source_view; status_row; output_section ]
+    [ source_view; completion_panel ~is_editing m; status_row; output_section ]
 
 let view_text_cell ~is_focused source =
   box
@@ -575,7 +1082,7 @@ let view_cell ~index ~focus ~mode m cell =
   | Cell.Code { id; source; outputs; _ } ->
       let status = Session.cell_status id m.session in
       let is_editing = is_focused && mode = Editing in
-      view_code_cell ~index ~is_focused ~is_editing ~status source outputs
+      view_code_cell m ~index ~is_focused ~is_editing ~status source outputs
   | Cell.Text { source; _ } -> view_text_cell ~is_focused source
 
 let view_cells m =
@@ -605,11 +1112,7 @@ let view_cells m =
       cells
 
 type footer_width_tier = Wide | Medium | Compact | Tiny
-
-type footer_action = {
-  key : string;
-  label : string;
-}
+type footer_action = { key : string; label : string }
 
 let footer_width_tier m =
   if m.viewport_width >= 120 then Wide
@@ -619,10 +1122,7 @@ let footer_width_tier m =
 
 let rec take n xs =
   if n <= 0 then []
-  else
-    match xs with
-    | [] -> []
-    | x :: tl -> x :: take (n - 1) tl
+  else match xs with [] -> [] | x :: tl -> x :: take (n - 1) tl
 
 let focused_kind_label m =
   match focused_cell m with
@@ -650,12 +1150,13 @@ let footer_actions m =
     | Editing ->
         [
           { key = "Esc"; label = "Exit" };
+          { key = "Tab"; label = "Complete" };
           { key = "Ctrl-Enter"; label = "Run" };
           { key = "Ctrl-S"; label = "Save" };
           { key = "Ctrl-C"; label = "Interrupt" };
           { key = "?"; label = "Help" };
         ]
-    | Normal ->
+    | Normal -> (
         if has_running m then
           [
             { key = "Ctrl-C"; label = "Interrupt" };
@@ -689,7 +1190,7 @@ let footer_actions m =
                 { key = "t"; label = "+Text" };
                 { key = "s"; label = "Save" };
                 { key = "?"; label = "Help" };
-              ]
+              ])
 
 let footer_action_limit tier =
   match tier with Wide -> 4 | Medium -> 3 | Compact -> 2 | Tiny -> 1
@@ -780,7 +1281,8 @@ let view_footer m =
   in
   let message_node =
     match footer_message_view tier m with
-    | Some (fg, msg) -> text ~style:(Ansi.Style.make ~fg ~bold:true ()) (" | " ^ msg)
+    | Some (fg, msg) ->
+        text ~style:(Ansi.Style.make ~fg ~bold:true ()) (" | " ^ msg)
     | None -> empty
   in
   let left =
@@ -809,7 +1311,8 @@ let view_footer_help_overlay m =
       box ~flex_direction:Row ~gap:(gap 1) ~align_items:Center
         ~size:{ width = pct 100; height = auto }
         [
-          text ~style:(Ansi.Style.make ~fg:label_fg ~bold:true ())
+          text
+            ~style:(Ansi.Style.make ~fg:label_fg ~bold:true ())
             (Printf.sprintf "[%s]" key);
           text ~style:(Ansi.Style.make ~fg:hint_fg ()) desc;
         ]
@@ -820,8 +1323,9 @@ let view_footer_help_overlay m =
       ~justify_content:Center ~align_items:Center
       ~size:{ width = pct 100; height = pct 100 }
       [
-        box ~border:true ~border_style:Border.rounded ~border_color:border_focused
-          ~background:chrome_bg ~flex_direction:Column ~gap:(gap 1)
+        box ~border:true ~border_style:Border.rounded
+          ~border_color:border_focused ~background:chrome_bg
+          ~flex_direction:Column ~gap:(gap 1)
           ~size:{ width = panel_width; height = panel_height }
           ~padding:(padding_lrtb ~l:1 ~r:1 ~t:0 ~b:1)
           [
@@ -829,14 +1333,16 @@ let view_footer_help_overlay m =
               ~align_items:Center
               ~size:{ width = pct 100; height = auto }
               [
-                text ~style:(Ansi.Style.make ~fg:Ansi.Color.white ~bold:true ())
+                text
+                  ~style:(Ansi.Style.make ~fg:Ansi.Color.white ~bold:true ())
                   "Keybindings";
                 text ~style:(Ansi.Style.make ~fg:hint_fg ()) "Esc or ? to close";
               ];
             scroll_box ~id:help_scroll_id ~scroll_y:true ~scroll_x:false
-              ~flex_grow:1. ~size:{ width = pct 100; height = auto }
-              ~padding:(padding_lrtb ~l:1 ~r:1 ~t:0 ~b:0) ~flex_direction:Column
-              ~gap:(gap 1)
+              ~flex_grow:1.
+              ~size:{ width = pct 100; height = auto }
+              ~padding:(padding_lrtb ~l:1 ~r:1 ~t:0 ~b:0)
+              ~flex_direction:Column ~gap:(gap 1)
               [
                 box ~flex_direction:Column ~gap:(gap 1)
                   [
@@ -872,6 +1378,9 @@ let view_footer_help_overlay m =
                   [
                     section_title "Editing mode";
                     item "Esc" "Exit editor";
+                    item "Tab / Shift-Tab" "Complete / previous suggestion";
+                    item "Ctrl-Space" "Open completion suggestions";
+                    item "Ctrl-N / Ctrl-P" "Next / previous suggestion";
                     item "Ctrl-Enter" "Submit and run code cell";
                     item "Ctrl-S" "Save notebook";
                   ];
@@ -959,7 +1468,7 @@ let subscriptions model =
           match model.mode with
           | Editing when not model.show_help -> (
               match (Event.Key.data ev).key with
-              | Escape -> Some Exit_edit
+              | Escape when not model.completion_popup_open -> Some Exit_edit
               | _ -> None)
           | Editing | Normal -> None);
     ]

@@ -60,10 +60,17 @@ let setup_raven_toplevel () =
 let create ~on_event =
   let base = Quill_top.create ~on_event in
   let first_run = ref true in
-  let execute ~cell_id ~code =
+  let ensure_setup () =
     if !first_run then (
       setup_raven_toplevel ();
-      first_run := false);
+      first_run := false)
+  in
+  let execute ~cell_id ~code =
+    ensure_setup ();
     base.execute ~cell_id ~code
   in
-  { base with Quill.Kernel.execute }
+  let complete ~code ~pos =
+    ensure_setup ();
+    base.complete ~code ~pos
+  in
+  { base with Quill.Kernel.execute; complete }
