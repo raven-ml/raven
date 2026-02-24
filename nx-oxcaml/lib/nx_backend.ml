@@ -1163,28 +1163,71 @@ let gather (type a b) ~(out : (a, b) t) (data : (a, b) t)
   let out_offset = View.offset out.view in
   let out_strides = View.strides out.view in
   let idx_arr = match indices.buffer with Int32 a -> a | _ -> . in
+  let parallel_threshold = 62500 in
   match (data.buffer, out.buffer) with
   | Float64 src, Float64 dst ->
-      Op_gather.gather_float64 src dst n ishape dshape axis idx_arr data_offset
-        data_strides idx_offset idx_strides out_offset out_strides
+      if n > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (n - 1) (fun start_idx end_idx ->
+            Op_gather.gather_float64 src dst ishape dshape axis idx_arr
+              data_offset data_strides idx_offset idx_strides out_offset
+              out_strides start_idx end_idx)
+      else
+        Op_gather.gather_float64 src dst ishape dshape axis idx_arr data_offset
+          data_strides idx_offset idx_strides out_offset out_strides 0 n
   | Float32 src, Float32 dst ->
-      Op_gather.gather_float32 src dst n ishape dshape axis idx_arr data_offset
-        data_strides idx_offset idx_strides out_offset out_strides
+      if n > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (n - 1) (fun start_idx end_idx ->
+            Op_gather.gather_float32 src dst ishape dshape axis idx_arr
+              data_offset data_strides idx_offset idx_strides out_offset
+              out_strides start_idx end_idx)
+      else
+        Op_gather.gather_float32 src dst ishape dshape axis idx_arr data_offset
+          data_strides idx_offset idx_strides out_offset out_strides 0 n
   | Int8 src, Int8 dst ->
-      Op_gather.gather_int8 src dst n ishape dshape axis idx_arr data_offset
-        data_strides idx_offset idx_strides out_offset out_strides
+      if n > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (n - 1) (fun start_idx end_idx ->
+            Op_gather.gather_int8 src dst ishape dshape axis idx_arr data_offset
+              data_strides idx_offset idx_strides out_offset out_strides
+              start_idx end_idx)
+      else
+        Op_gather.gather_int8 src dst ishape dshape axis idx_arr data_offset
+          data_strides idx_offset idx_strides out_offset out_strides 0 n
   | Int16 src, Int16 dst ->
-      Op_gather.gather_int16 src dst n ishape dshape axis idx_arr data_offset
-        data_strides idx_offset idx_strides out_offset out_strides
+      if n > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (n - 1) (fun start_idx end_idx ->
+            Op_gather.gather_int16 src dst ishape dshape axis idx_arr
+              data_offset data_strides idx_offset idx_strides out_offset
+              out_strides start_idx end_idx)
+      else
+        Op_gather.gather_int16 src dst ishape dshape axis idx_arr data_offset
+          data_strides idx_offset idx_strides out_offset out_strides 0 n
   | Int32 src, Int32 dst ->
-      Op_gather.gather_int32 src dst n ishape dshape axis idx_arr data_offset
-        data_strides idx_offset idx_strides out_offset out_strides
+      if n > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (n - 1) (fun start_idx end_idx ->
+            Op_gather.gather_int32 src dst ishape dshape axis idx_arr
+              data_offset data_strides idx_offset idx_strides out_offset
+              out_strides start_idx end_idx)
+      else
+        Op_gather.gather_int32 src dst ishape dshape axis idx_arr data_offset
+          data_strides idx_offset idx_strides out_offset out_strides 0 n
   | Int64 src, Int64 dst ->
-      Op_gather.gather_int64 src dst n ishape dshape axis idx_arr data_offset
-        data_strides idx_offset idx_strides out_offset out_strides
+      if n > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (n - 1) (fun start_idx end_idx ->
+            Op_gather.gather_int64 src dst ishape dshape axis idx_arr
+              data_offset data_strides idx_offset idx_strides out_offset
+              out_strides start_idx end_idx)
+      else
+        Op_gather.gather_int64 src dst ishape dshape axis idx_arr data_offset
+          data_strides idx_offset idx_strides out_offset out_strides 0 n
   | Bool src, Bool dst ->
-      Op_gather.gather_bool src dst n ishape dshape axis idx_arr data_offset
-        data_strides idx_offset idx_strides out_offset out_strides
+      if n > parallel_threshold then
+        Parallel.parallel_for out.context.pool 0 (n - 1) (fun start_idx end_idx ->
+            Op_gather.gather_bool src dst ishape dshape axis idx_arr data_offset
+              data_strides idx_offset idx_strides out_offset out_strides
+              start_idx end_idx)
+      else
+        Op_gather.gather_bool src dst ishape dshape axis idx_arr data_offset
+          data_strides idx_offset idx_strides out_offset out_strides 0 n
   | _ -> .
 
 let scatter ?(mode = `Set) ?unique_indices:_ (type a b)
@@ -1218,34 +1261,39 @@ let scatter ?(mode = `Set) ?unique_indices:_ (type a b)
 
   match (updates.buffer, out.buffer) with
   | Float64 src_arr, Float64 out_arr ->
-      Op_scatter.scatter_float64 mode src_arr out_arr n ishape tshape axis
-        idx_arr upd_offset upd_strides idx_offset idx_strides out_offset
-        out_strides;
+      Op_scatter.scatter_float64 mode src_arr out_arr ishape tshape axis idx_arr
+        upd_offset upd_strides idx_offset idx_strides out_offset out_strides 0
+        n;
       out
   | Float32 src_arr, Float32 out_arr ->
-      Op_scatter.scatter_float32 mode src_arr out_arr n ishape tshape axis
-        idx_arr upd_offset upd_strides idx_offset idx_strides out_offset
-        out_strides;
+      Op_scatter.scatter_float32 mode src_arr out_arr ishape tshape axis idx_arr
+        upd_offset upd_strides idx_offset idx_strides out_offset out_strides 0
+        n;
       out
   | Int8 src_arr, Int8 out_arr ->
-      Op_scatter.scatter_int8 mode src_arr out_arr n ishape tshape axis idx_arr
-        upd_offset upd_strides idx_offset idx_strides out_offset out_strides;
+      Op_scatter.scatter_int8 mode src_arr out_arr ishape tshape axis idx_arr
+        upd_offset upd_strides idx_offset idx_strides out_offset out_strides 0
+        n;
       out
   | Int16 src_arr, Int16 out_arr ->
-      Op_scatter.scatter_int16 mode src_arr out_arr n ishape tshape axis idx_arr
-        upd_offset upd_strides idx_offset idx_strides out_offset out_strides;
+      Op_scatter.scatter_int16 mode src_arr out_arr ishape tshape axis idx_arr
+        upd_offset upd_strides idx_offset idx_strides out_offset out_strides 0
+        n;
       out
   | Int32 src_arr, Int32 out_arr ->
-      Op_scatter.scatter_int32 mode src_arr out_arr n ishape tshape axis idx_arr
-        upd_offset upd_strides idx_offset idx_strides out_offset out_strides;
+      Op_scatter.scatter_int32 mode src_arr out_arr ishape tshape axis idx_arr
+        upd_offset upd_strides idx_offset idx_strides out_offset out_strides 0
+        n;
       out
   | Int64 src_arr, Int64 out_arr ->
-      Op_scatter.scatter_int64 mode src_arr out_arr n ishape tshape axis idx_arr
-        upd_offset upd_strides idx_offset idx_strides out_offset out_strides;
+      Op_scatter.scatter_int64 mode src_arr out_arr ishape tshape axis idx_arr
+        upd_offset upd_strides idx_offset idx_strides out_offset out_strides 0
+        n;
       out
   | Bool src_arr, Bool out_arr ->
-      Op_scatter.scatter_bool mode src_arr out_arr n ishape tshape axis idx_arr
-        upd_offset upd_strides idx_offset idx_strides out_offset out_strides;
+      Op_scatter.scatter_bool mode src_arr out_arr ishape tshape axis idx_arr
+        upd_offset upd_strides idx_offset idx_strides out_offset out_strides 0
+        n;
       out
   | _ -> .
 

@@ -1176,6 +1176,22 @@ let test_gather_int32_axis1 () =
   check_int32 "gather_int32_axis1[4]" 22l d.(4);
   check_int32 "gather_int32_axis1[5]" 22l d.(5)
 
+let test_gather_float32_axis0_contiguous () =
+  let ctx = Nx_backend.create_context () in
+  let data = Nx_ox.create ctx Dtype.Float32 [| 8 |] [| 0.5; 1.5; 2.5; 3.5; 4.5; 5.5; 6.5; 7.5 |] in
+  let indices = Nx_ox.create ctx Dtype.Int32 [| 8 |] [| 7l; 0l; 6l; 1l; 5l; 2l; 4l; 3l |] in
+  let out = Nx_ox.empty ctx Dtype.Float32 [| 8 |] in
+  Nx_backend.gather ~out data indices ~axis:0;
+  let d = Nx_ox.to_array out in
+  check_float "gather_float32_axis0_contiguous[0]" ~eps:1e-6 7.5 d.(0);
+  check_float "gather_float32_axis0_contiguous[1]" ~eps:1e-6 0.5 d.(1);
+  check_float "gather_float32_axis0_contiguous[2]" ~eps:1e-6 6.5 d.(2);
+  check_float "gather_float32_axis0_contiguous[3]" ~eps:1e-6 1.5 d.(3);
+  check_float "gather_float32_axis0_contiguous[4]" ~eps:1e-6 5.5 d.(4);
+  check_float "gather_float32_axis0_contiguous[5]" ~eps:1e-6 2.5 d.(5);
+  check_float "gather_float32_axis0_contiguous[6]" ~eps:1e-6 4.5 d.(6);
+  check_float "gather_float32_axis0_contiguous[7]" ~eps:1e-6 3.5 d.(7)
+
 let test_scatter_int32_set_axis1 () =
   let ctx = Nx_backend.create_context () in
   let template =
@@ -1328,6 +1344,7 @@ let () =
   test_flip_int32_view ();
   test_cat_int32_axis1 ();
   test_gather_int32_axis1 ();
+  test_gather_float32_axis0_contiguous ();
   test_scatter_int32_set_axis1 ();
   test_scatter_int32_add_axis1 ();
   Printf.printf "\nResults: %d passed, %d failed\n" !passed !failed;
