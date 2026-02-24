@@ -14,14 +14,14 @@ let discover_run ~base_dir ~experiment ~tags =
   let filtered =
     all_runs
     |> List.filter (fun run ->
-           match experiment with
-           | None -> true
-           | Some exp -> Run.experiment_name run = Some exp)
+        match experiment with
+        | None -> true
+        | Some exp -> Run.experiment_name run = Some exp)
     |> List.filter (fun run ->
-           match tags with
-           | [] -> true
-           | required_tags ->
-               List.for_all (fun t -> List.mem t (Run.tags run)) required_tags)
+        match tags with
+        | [] -> true
+        | required_tags ->
+            List.for_all (fun t -> List.mem t (Run.tags run)) required_tags)
   in
   match filtered with
   | run :: _ ->
@@ -39,8 +39,7 @@ let discover_run ~base_dir ~experiment ~tags =
       | Some exp -> Printf.eprintf "  (filtered by experiment: %s)\n" exp
       | None -> ());
       if tags <> [] then
-        Printf.eprintf "  (filtered by tags: %s)\n"
-          (String.concat ", " tags);
+        Printf.eprintf "  (filtered by tags: %s)\n" (String.concat ", " tags);
       None
 
 let console_cmd base_dir run_id experiment tags =
@@ -75,14 +74,14 @@ let runs_list_cmd base_dir experiment tags =
   let runs =
     runs
     |> List.filter (fun run ->
-           match experiment with
-           | None -> true
-           | Some exp -> Run.experiment_name run = Some exp)
+        match experiment with
+        | None -> true
+        | Some exp -> Run.experiment_name run = Some exp)
     |> List.filter (fun run ->
-           match tags with
-           | [] -> true
-           | required_tags ->
-               List.for_all (fun t -> List.mem t (Run.tags run)) required_tags)
+        match tags with
+        | [] -> true
+        | required_tags ->
+            List.for_all (fun t -> List.mem t (Run.tags run)) required_tags)
   in
   match runs with
   | [] -> Printf.printf "No runs found.\n"
@@ -130,21 +129,18 @@ let base_dir_arg =
   Arg.(
     value
     & opt (some string) None
-    & info [ "base-dir" ] ~docv:"DIR"
-        ~doc:"Directory containing training runs.")
+    & info [ "base-dir" ] ~docv:"DIR" ~doc:"Directory containing training runs.")
 
 let experiment_arg =
   Arg.(
     value
     & opt (some string) None
-    & info [ "experiment" ] ~docv:"NAME"
-        ~doc:"Filter runs by experiment name.")
+    & info [ "experiment" ] ~docv:"NAME" ~doc:"Filter runs by experiment name.")
 
 let tags_arg =
   Arg.(
     value & opt_all string []
-    & info [ "tag" ] ~docv:"TAG"
-        ~doc:"Filter runs by tag (can be repeated).")
+    & info [ "tag" ] ~docv:"TAG" ~doc:"Filter runs by tag (can be repeated).")
 
 (* Console *)
 
@@ -155,13 +151,12 @@ let console_run_arg =
     & info [ "run" ] ~docv:"ID" ~doc:"Specific run ID to monitor.")
 
 let console_term =
-  Term.(const console_cmd $ base_dir_arg $ console_run_arg $ experiment_arg
-        $ tags_arg)
+  Term.(
+    const console_cmd $ base_dir_arg $ console_run_arg $ experiment_arg
+    $ tags_arg)
 
 let console_cmd_v =
-  Cmd.v
-    (Cmd.info "console" ~doc:"Launch the training dashboard.")
-    console_term
+  Cmd.v (Cmd.info "console" ~doc:"Launch the training dashboard.") console_term
 
 (* Runs list *)
 

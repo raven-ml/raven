@@ -3,4 +3,14 @@
 (library
  (name kaun_console)
  (public_name kaun.console)
- (libraries kaun kaun.runlog unix mosaic mosaic.ui jsont jsont.bytesrw kaun.sysstat matrix.charts matrix.grid))
+ (libraries
+  kaun
+  kaun.runlog
+  unix
+  mosaic
+  mosaic.ui
+  jsont
+  jsont.bytesrw
+  kaun.sysstat
+  matrix.charts
+  matrix.grid))

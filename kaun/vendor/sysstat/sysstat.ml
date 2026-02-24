@@ -448,7 +448,8 @@ module Mem = struct
                  cache_used)
           in
           let swap_used = i64_max0 (Int64.sub swap_total_b swap_free_b) in
-          (* MemAvailable is available on Linux 3.14+; fallback to free + buffers + cached *)
+          (* MemAvailable is available on Linux 3.14+; fallback to free +
+             buffers + cached *)
           let available =
             match !mem_available with
             | Some v -> v
@@ -651,8 +652,8 @@ module Disk_io = struct
     || String.starts_with ~prefix:"zram" name
 
   let partition_base (name : string) : string option =
-    (* If name ends with digits, it's *possibly* a partition.
-       We return the candidate base device name. *)
+    (* If name ends with digits, it's *possibly* a partition. We return the
+       candidate base device name. *)
     let len = String.length name in
     let rec find_first_non_digit i =
       if i < 0 then None
@@ -1081,8 +1082,8 @@ module Proc = struct
           let procs = ref [] in
           let add pid fields =
             (* Fields are tokens starting at /proc/[pid]/stat field 3 (state).
-               Index 0 = state, 1 = ppid, ... 11 = utime, 12 = stime, 15 = priority, 16 = nice,
-               17 = num_threads, 20 = vsize, 21 = rss *)
+               Index 0 = state, 1 = ppid, ... 11 = utime, 12 = stime, 15 =
+               priority, 16 = nice, 17 = num_threads, 20 = vsize, 21 = rss *)
             let state_char =
               match List.nth_opt fields 0 with
               | Some s when String.length s > 0 -> s.[0]

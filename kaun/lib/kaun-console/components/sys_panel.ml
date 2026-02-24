@@ -74,7 +74,19 @@ let create () : t =
   let total_cpu = cpu.user +. cpu.system in
   Charts.Sparkline.push sparkline_cpu total_cpu;
   Charts.Sparkline.push sparkline_mem (mem_used_percent memory);
-  { cpu; cpu_per_core; memory; process; cpu_prev; cpu_per_core_prev; proc_prev; num_cores; sparkline_cpu; sparkline_mem; sample_acc = 0.0 }
+  {
+    cpu;
+    cpu_per_core;
+    memory;
+    process;
+    cpu_prev;
+    cpu_per_core_prev;
+    proc_prev;
+    num_cores;
+    sparkline_cpu;
+    sparkline_mem;
+    sample_acc = 0.0;
+  }
 
 (* ───── Update ───── *)
 
@@ -149,7 +161,8 @@ let view_cpu_bar (cpu : Sysstat.Cpu.stats) =
       box ~flex_direction:Row ~justify_content:Space_between ~align_items:Center
         [
           text ~style:muted "CPU";
-          text ~style:(Ansi.Style.make ~bold:true ~fg:color ())
+          text
+            ~style:(Ansi.Style.make ~bold:true ~fg:color ())
             (Printf.sprintf "%.0f%%" total);
         ];
       canvas
@@ -171,7 +184,8 @@ let view_mem_bar (mem : Sysstat.Mem.t) =
       box ~flex_direction:Row ~justify_content:Space_between ~align_items:Center
         [
           text ~style:muted "MEM";
-          text ~style:(Ansi.Style.make ~bold:true ~fg:color ())
+          text
+            ~style:(Ansi.Style.make ~bold:true ~fg:color ())
             (Printf.sprintf "%.0f%%" mem_pct);
         ];
       canvas
@@ -192,8 +206,8 @@ let view_sparklines ~sparkline_cpu ~sparkline_mem =
           canvas
             ~size:{ width = pct 100; height = px 3 }
             (fun c ~delta:_ ->
-              Charts.Sparkline.draw sparkline_cpu ~kind:`Braille
-                (Canvas.grid c) ~width:(Canvas.width c) ~height:(Canvas.height c));
+              Charts.Sparkline.draw sparkline_cpu ~kind:`Braille (Canvas.grid c)
+                ~width:(Canvas.width c) ~height:(Canvas.height c));
         ];
       (* Memory sparkline *)
       box ~flex_direction:Column ~gap:(gap 0)
@@ -203,8 +217,8 @@ let view_sparklines ~sparkline_cpu ~sparkline_mem =
           canvas
             ~size:{ width = pct 100; height = px 3 }
             (fun c ~delta:_ ->
-              Charts.Sparkline.draw sparkline_mem ~kind:`Braille
-                (Canvas.grid c) ~width:(Canvas.width c) ~height:(Canvas.height c));
+              Charts.Sparkline.draw sparkline_mem ~kind:`Braille (Canvas.grid c)
+                ~width:(Canvas.width c) ~height:(Canvas.height c));
         ];
     ]
 
@@ -266,8 +280,8 @@ let view_per_core_cpu (cpu_per_core : Sysstat.Cpu.stats array) =
                           canvas
                             ~size:{ width = pct 70; height = px 1 }
                             (fun c ~delta:_ ->
-                              draw_progress_bar c ~value:total
-                                ~max_value:100. ~fill_color:color);
+                              draw_progress_bar c ~value:total ~max_value:100.
+                                ~fill_color:color);
                           text
                             ~style:(Ansi.Style.make ~fg:color ())
                             (Printf.sprintf "%2.0f" total);
@@ -294,7 +308,8 @@ let view_memory_detail (mem : Sysstat.Mem.t) =
             (Printf.sprintf "%.1f GB" (bytes_to_gb mem.total));
         ];
       (if mem.swap_used > 0L then
-         box ~flex_direction:Row ~justify_content:Space_between ~align_items:Center
+         box ~flex_direction:Row ~justify_content:Space_between
+           ~align_items:Center
            [
              text ~style:muted "Swap:";
              text ~style:bold_yellow
@@ -310,7 +325,8 @@ let view (t : t) =
       text ~style:(Ansi.Style.make ~bold:true ()) "System";
       view_cpu_bar t.cpu;
       view_mem_bar t.memory;
-      view_sparklines ~sparkline_cpu:t.sparkline_cpu ~sparkline_mem:t.sparkline_mem;
+      view_sparklines ~sparkline_cpu:t.sparkline_cpu
+        ~sparkline_mem:t.sparkline_mem;
       view_per_core_cpu t.cpu_per_core;
       view_memory_detail t.memory;
       view_process t.process;

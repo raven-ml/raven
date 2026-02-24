@@ -14,7 +14,8 @@ let axis_style =
 let y_axis_style =
   Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:12) ~dim:true ()
 
-let grid_style = Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:6) ~dim:true ()
+let grid_style =
+  Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:6) ~dim:true ()
 
 let draw_metric_chart history grid ~width ~height =
   if history = [] then ()
@@ -28,12 +29,10 @@ let draw_metric_chart history grid ~width ~height =
       |> Charts.with_frame (Charts.manual_frame ~margins:(1, 1, 1, 4) ())
       |> Charts.with_axes
            ~x:
-             (Charts.Axis.default
-             |> Charts.Axis.with_ticks 6
+             (Charts.Axis.default |> Charts.Axis.with_ticks 6
              |> Charts.Axis.with_style axis_style)
            ~y:
-             (Charts.Axis.default
-             |> Charts.Axis.with_ticks 4
+             (Charts.Axis.default |> Charts.Axis.with_ticks 4
              |> Charts.Axis.with_style y_axis_style
              |> Charts.Axis.with_format (fun _ v -> Printf.sprintf "%.4g" v))
       |> Charts.with_grid
@@ -62,7 +61,7 @@ let view ~tag ~history_for_tag ~best ~size =
     | None -> tag
     | Some v -> Printf.sprintf "%s [%.4f]" tag v
   in
-    box ~flex_direction:Column ~gap:(gap 1) ~align_items:Center ~size
+  box ~flex_direction:Column ~gap:(gap 1) ~align_items:Center ~size
     [
       box ~border:true ~title ~padding:(padding 1)
         ~size:{ width = pct 100; height = pct 100 }
@@ -71,16 +70,13 @@ let view ~tag ~history_for_tag ~best ~size =
           canvas
             ~size:{ width = pct 100; height = pct 100 }
             (fun c ~delta:_ ->
-              draw_metric_chart history (Canvas.grid c)
-                ~width:(Canvas.width c) ~height:(Canvas.height c));
+              draw_metric_chart history (Canvas.grid c) ~width:(Canvas.width c)
+                ~height:(Canvas.height c));
         ];
       (match best with
       | None -> box [] ~size:{ width = px 0; height = px 0 }
       | Some value ->
-          box
-            ~justify_content:Center
-            ~align_items:Center
+          box ~justify_content:Center ~align_items:Center
             ~size:{ width = pct 100; height = auto }
             [ text (Printf.sprintf "Best: %.4f" value) ]);
     ]
-

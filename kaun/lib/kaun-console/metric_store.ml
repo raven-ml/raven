@@ -33,10 +33,7 @@ let update_epoch s (epoch : int option) =
   | None -> ()
   | Some e ->
       s.max_epoch <-
-        Some
-          (match s.max_epoch with
-          | None -> e
-          | Some prev -> max prev e)
+        Some (match s.max_epoch with None -> e | Some prev -> max prev e)
 
 let should_replace ~(prev : metric) ~(next : metric) =
   (* Prefer higher step. If equal step, prefer higher epoch when present. *)
@@ -71,9 +68,15 @@ let update store (events : Kaun_runlog.Event.t list) =
               best_max = Some { step = s.step; value = s.value };
             }
         | Some d ->
-            let latest = if should_replace ~prev:d.latest ~next then next else d.latest in
-            let best_min = update_best d.best_min ~step:s.step ~value:s.value ~compare:(<) in
-            let best_max = update_best d.best_max ~step:s.step ~value:s.value ~compare:(>) in
+            let latest =
+              if should_replace ~prev:d.latest ~next then next else d.latest
+            in
+            let best_min =
+              update_best d.best_min ~step:s.step ~value:s.value ~compare:( < )
+            in
+            let best_max =
+              update_best d.best_max ~step:s.step ~value:s.value ~compare:( > )
+            in
             { latest; history = d.history @ [ hp ]; best_min; best_max }
       in
       Hashtbl.replace store.by_tag s.tag data)
@@ -82,15 +85,13 @@ let update store (events : Kaun_runlog.Event.t list) =
 let latest_epoch store = store.max_epoch
 
 let latest_metrics store =
-  Hashtbl.fold
-    (fun tag d acc -> (tag, d.latest) :: acc)
-    store.by_tag []
+  Hashtbl.fold (fun tag d acc -> (tag, d.latest) :: acc) store.by_tag []
   |> List.sort (fun (a, _) (b, _) -> String.compare a b)
 
 let history_for_tag store tag =
   (match Hashtbl.find_opt store.by_tag tag with
-  | None -> []
-  | Some d -> d.history)
+    | None -> []
+    | Some d -> d.history)
   |> List.map (fun (p : history_point) -> (p.step, p.value))
 
 (* Check if needle is a substring of haystack *)

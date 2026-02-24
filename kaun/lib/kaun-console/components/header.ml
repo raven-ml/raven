@@ -10,12 +10,11 @@ open Mosaic
 (* ───── Run status ───── *)
 
 type run_status =
-  | Live    (** events.jsonl modified recently *)
-  | Stopped (** no writes for a while; terminated *)
-  | Done    (** total_epochs reached in run.json *)
+  | Live  (** events.jsonl modified recently *)
+  | Stopped  (** no writes for a while; terminated *)
+  | Done  (** total_epochs reached in run.json *)
 
 let stopped_threshold_sec = 5.0
-
 let events_path run_dir = Filename.concat run_dir "events.jsonl"
 
 let read_total_epochs run_dir : int option =
@@ -45,18 +44,19 @@ let read_total_epochs run_dir : int option =
     with _ -> None
 
 (** Use events.jsonl mtime to change status after 5s of inactivity. *)
-let compute_status ~run_dir ~latest_epoch:(latest_epoch : int option) : run_status
-    =
+let compute_status ~run_dir ~(latest_epoch : int option) : run_status =
   let now = Unix.gettimeofday () in
   let mtime =
     try (Unix.stat (events_path run_dir)).Unix.st_mtime with _ -> 0.0
   in
   match (read_total_epochs run_dir, latest_epoch) with
   | Some total, Some e when e >= total -> Done
-  | _ ->
-      if now -. mtime > stopped_threshold_sec then Stopped else Live
+  | _ -> if now -. mtime > stopped_threshold_sec then Stopped else Live
 
-let status_label = function Live -> "LIVE" | Stopped -> "Stopped" | Done -> "Done"
+let status_label = function
+  | Live -> "LIVE"
+  | Stopped -> "Stopped"
+  | Done -> "Done"
 
 let badge_color = function
   | Live -> Ansi.Color.green

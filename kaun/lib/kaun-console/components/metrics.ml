@@ -34,7 +34,9 @@ let metrics_width_ratio = 0.66
 
 (** Calculate how many columns fit in available width *)
 let calculate_columns (screen_width : int) : int =
-  let metrics_width = int_of_float (float_of_int screen_width *. metrics_width_ratio) in
+  let metrics_width =
+    int_of_float (float_of_int screen_width *. metrics_width_ratio)
+  in
   if metrics_width < min_graph_width * 2 then 1 else 2
 
 (** Calculate how many rows of graphs fit in available height *)
@@ -53,16 +55,8 @@ let calculate_graphs_per_batch ~width ~height : int =
 
 (* ───── Component state and update ───── *)
 
-type state = {
-  screen_width : int;
-  screen_height : int;
-  current_batch : int;
-}
-
-type msg =
-  | Resize of int * int
-  | Next_batch
-  | Prev_batch
+type state = { screen_width : int; screen_height : int; current_batch : int }
+type msg = Resize of int * int | Next_batch | Prev_batch
 
 let initial_state () =
   { screen_width = 80; screen_height = 24; current_batch = 0 }
@@ -88,10 +82,10 @@ let update (msg : msg) (s : state) ~total_metrics : state =
       in
       let max_batch = max 0 (total_batches - 1) in
       { s with current_batch = min (s.current_batch + 1) max_batch }
-  | Prev_batch ->
-      { s with current_batch = max 0 (s.current_batch - 1) }
+  | Prev_batch -> { s with current_batch = max 0 (s.current_batch - 1) }
 
-(** Tags of metrics visible on the current batch (same order as dashboard charts). *)
+(** Tags of metrics visible on the current batch (same order as dashboard
+    charts). *)
 let visible_chart_tags (s : state) ~total_metrics ~all_tags : string list =
   if total_metrics = 0 then []
   else
@@ -124,12 +118,10 @@ let draw_metric_chart ~hover history grid ~width ~height =
       |> Charts.with_frame (Charts.manual_frame ~margins:(1, 0, 0, 2) ())
       |> Charts.with_axes
            ~x:
-             (Charts.Axis.default
-             |> Charts.Axis.with_ticks 4
+             (Charts.Axis.default |> Charts.Axis.with_ticks 4
              |> Charts.Axis.with_style axis_style)
            ~y:
-             (Charts.Axis.default
-             |> Charts.Axis.with_ticks 2
+             (Charts.Axis.default |> Charts.Axis.with_ticks 2
              |> Charts.Axis.with_style y_axis_style
              |> Charts.Axis.with_format (fun _ v -> Printf.sprintf "%.1f" v))
       |> Charts.with_grid
@@ -145,7 +137,7 @@ let draw_metric_chart ~hover history grid ~width ~height =
     (* Draw tooltip if hovering *)
     match hover with
     | None -> ()
-    | Some (px, py) ->
+    | Some (px, py) -> (
         if Charts.Layout.is_inside_plot layout ~px ~py then
           match
             Charts.Layout.hit_test layout ~px ~py ~radius:4 ~policy:`Nearest_x
@@ -163,7 +155,7 @@ let draw_metric_chart ~hover history grid ~width ~height =
                   Charts.Overlay.marker layout grid ~x ~y;
                   Charts.Overlay.tooltip layout grid ~x ~y lines
               | _ -> ())
-          | None -> ()
+          | None -> ())
 
 let view_metric_chart ~history_for_tag ~columns tag =
   let history = history_for_tag tag in
@@ -206,7 +198,8 @@ let rec chunk_by n lst =
   else
     let rec take k acc = function
       | [] -> (List.rev acc, [])
-      | x :: xs -> if k = 0 then (List.rev acc, x :: xs) else take (k - 1) (x :: acc) xs
+      | x :: xs ->
+          if k = 0 then (List.rev acc, x :: xs) else take (k - 1) (x :: acc) xs
     in
     let group, rest = take n [] lst in
     group :: chunk_by n rest
@@ -214,7 +207,8 @@ let rec chunk_by n lst =
 let view (params : (_, _) view_params) =
   let latest = params.latest_metrics in
   if latest = [] then
-    box ~padding:(padding 1) ~size:{ width = pct 66; height = pct 100 }
+    box ~padding:(padding 1)
+      ~size:{ width = pct 66; height = pct 100 }
       [ text ~style:hint_style "  Waiting for metrics..." ]
   else
     let columns = calculate_columns params.screen_width in
@@ -254,8 +248,9 @@ let view (params : (_, _) view_params) =
         box ~flex_direction:Column ~gap:(gap 1)
           (List.mapi
              (fun row_idx row ->
-               box ~key:(Printf.sprintf "row-%d" row_idx) ~flex_direction:Row
-                 ~gap:(gap 1)
+               box
+                 ~key:(Printf.sprintf "row-%d" row_idx)
+                 ~flex_direction:Row ~gap:(gap 1)
                  ~size:{ width = pct 100; height = auto }
                  (List.map
                     (fun tag ->

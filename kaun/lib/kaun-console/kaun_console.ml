@@ -20,9 +20,7 @@ type model = {
   mode : mode;
 }
 
-and mode =
-  | Dashboard
-  | Detail of string
+and mode = Dashboard | Detail of string
 
 type msg =
   | Tick of float
@@ -52,11 +50,13 @@ let view_dashboard m =
     ~size:{ width = pct 100; height = pct 100 }
     [
       Header.view ~run_id:m.run_id
-        ~latest_epoch:(Metric_store.latest_epoch m.store) ~run_dir:m.run_dir;
+        ~latest_epoch:(Metric_store.latest_epoch m.store)
+        ~run_dir:m.run_dir;
       box ~flex_direction:Row ~flex_grow:1.0
         ~size:{ width = pct 100; height = pct 100 }
         [
-          (* Left column: metrics (2/3 width) - no scroll_box to allow mouse events *)
+          (* Left column: metrics (2/3 width) - no scroll_box to allow mouse
+             events *)
           Metrics.view
             {
               latest_metrics = Metric_store.latest_metrics m.store;
@@ -79,10 +79,14 @@ let view_detail m tag =
     ~size:{ width = pct 100; height = pct 100 }
     ~background:(Ansi.Color.of_rgb 20 20 30)
     [
-      box ~padding:(padding 1) ~size:{ width = pct 100; height = auto }
+      box ~padding:(padding 1)
+        ~size:{ width = pct 100; height = auto }
         [
           text
-            ~style:(Ansi.Style.make ~bold:true ~fg:(Ansi.Color.grayscale ~level:14) ())
+            ~style:
+              (Ansi.Style.make ~bold:true
+                 ~fg:(Ansi.Color.grayscale ~level:14)
+                 ())
             "Chart View  •  [Esc/q] back";
         ];
       box ~flex_grow:1.0 ~justify_content:Center ~align_items:Center
@@ -113,6 +117,7 @@ let init ~run =
   (* Load initial events *)
   let initial_events = Run.read_events stream in
   Metric_store.update store initial_events;
+  (* Get actual terminal size at startup *)
   let metrics_state = Metrics.initial_state () in
   (* Initialize system panel *)
   let sys_panel = Sys_panel.create () in
@@ -135,9 +140,7 @@ let update msg m =
       let sys_panel = Sys_panel.update m.sys_panel ~dt in
       ({ m with store = m.store; sys_panel }, Cmd.none)
   | Metrics_msg metrics_msg ->
-      let total_metrics =
-        List.length (Metric_store.latest_metrics m.store)
-      in
+      let total_metrics = List.length (Metric_store.latest_metrics m.store) in
       let metrics_state' =
         Metrics.update metrics_msg m.metrics_state ~total_metrics
       in
@@ -158,22 +161,31 @@ let subscriptions m =
           let key_data = Mosaic_ui.Event.Key.data ev in
           match key_data.key with
           | Char c when Uchar.equal c (Uchar.of_char 'q') -> (
-              match m.mode with Dashboard -> Some Quit | Detail _ -> Some Close_metric)
+              match m.mode with
+              | Dashboard -> Some Quit
+              | Detail _ -> Some Close_metric)
           | Char c when Uchar.equal c (Uchar.of_char 'Q') -> (
-              match m.mode with Dashboard -> Some Quit | Detail _ -> Some Close_metric)
+              match m.mode with
+              | Dashboard -> Some Quit
+              | Detail _ -> Some Close_metric)
           | Escape -> (
-              match m.mode with Dashboard -> Some Quit | Detail _ -> Some Close_metric)
+              match m.mode with
+              | Dashboard -> Some Quit
+              | Detail _ -> Some Close_metric)
           | Left -> (
-              match m.mode with Dashboard -> Some (Metrics_msg Metrics.Prev_batch) | Detail _ -> None)
+              match m.mode with
+              | Dashboard -> Some (Metrics_msg Metrics.Prev_batch)
+              | Detail _ -> None)
           | Right -> (
-              match m.mode with Dashboard -> Some (Metrics_msg Metrics.Next_batch) | Detail _ -> None)
+              match m.mode with
+              | Dashboard -> Some (Metrics_msg Metrics.Next_batch)
+              | Detail _ -> None)
           | Char c when m.mode = Dashboard ->
               let one = Uchar.of_char '1' and nine = Uchar.of_char '9' in
               let idx =
                 if Uchar.compare c one >= 0 && Uchar.compare c nine <= 0 then
                   Uchar.to_int c - Uchar.to_int one
-                else
-                  -1
+                else -1
               in
               if idx >= 0 then
                 let visible = visible_chart_tags m in
