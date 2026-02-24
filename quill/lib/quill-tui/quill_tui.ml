@@ -10,6 +10,14 @@ open Quill
 
 type mode = Normal | Editing
 
+type footer_msg_kind = Info | Warning | Error | Confirm
+
+type footer_msg = {
+  kind : footer_msg_kind;
+  text : string;
+  created_at : float;
+}
+
 type model = {
   session : Session.t;
   kernel : Kernel.t;
@@ -18,10 +26,14 @@ type model = {
   focus : int;
   mode : mode;
   dirty : bool;
-  last_error : string option;
+  footer_msg : footer_msg option;
   last_mtime : float;
   reload_acc : float;
   confirm_quit : bool;
+  show_help : bool;
+  clock : float;
+  viewport_width : int;
+  viewport_height : int;
 }
 
 type msg =
@@ -41,7 +53,9 @@ type msg =
   | Save
   | Quit
   | Tick of float
-  | Dismiss_error
+  | Dismiss_message
+  | Toggle_help
+  | Resize of int * int
   | Enter_edit
   | Exit_edit
   | Edit_source of string
@@ -61,11 +75,14 @@ let output_dim_fg = Ansi.Color.of_rgb 120 125 135
 let warning_fg = Ansi.Color.of_rgb 210 180 100
 let error_fg = Ansi.Color.of_rgb 210 100 100
 let error_bg = Ansi.Color.of_rgb 50 30 30
+let info_fg = Ansi.Color.of_rgb 150 160 175
+let overlay_bg = Ansi.Color.of_rgb 12 12 16
 let cell_bg_focused = Ansi.Color.of_rgb 30 30 38
 let reload_interval = 1.0
 let template = "# Untitled\n\n```ocaml\n\n```\n"
 let scroll_box_id = "notebook-scroll"
 let textarea_id = "cell-editor"
+let help_scroll_id = "footer-help-scroll"
 let lp n = Toffee.Style.Length_percentage.length (Float.of_int n)
 
 let padding_lrtb ~l ~r ~t ~b =
@@ -105,6 +122,41 @@ let focused_cell m = Doc.nth m.focus (Session.doc m.session)
 let cell_count m = Doc.length (Session.doc m.session)
 let char_eq c u = Uchar.equal u (Uchar.of_char c)
 
+let with_footer_message m kind text =
+  { m with footer_msg = Some { kind; text; created_at = m.clock } }
+
+let clear_footer_message m = { m with footer_msg = None }
+
+let clear_confirm_message m =
+  match m.footer_msg with
+  | Some { kind = Confirm; _ } -> clear_footer_message m
+  | _ -> m
+
+let footer_message_timeout kind =
+  match kind with
+  | Info -> Some 3.
+  | Warning -> Some 5.
+  | Error | Confirm -> None
+
+let expire_footer_message m =
+  match m.footer_msg with
+  | Some ({ kind; created_at; _ } as footer_msg) -> (
+      match footer_message_timeout kind with
+      | Some timeout when m.clock -. created_at >= timeout ->
+          { m with footer_msg = None }
+      | _ -> { m with footer_msg = Some footer_msg })
+  | None -> m
+
+let is_navigation_msg msg =
+  match msg with Focus_next | Focus_prev | Move_up | Move_down -> true | _ -> false
+
+let should_clear_error_msg msg =
+  if is_navigation_msg msg then false
+  else
+    match msg with
+    | Tick _ | Dismiss_message | Toggle_help -> false
+    | _ -> true
+
 (* ───── Init ───── *)
 
 let init ~create_kernel ~path () =
@@ -128,10 +180,14 @@ let init ~create_kernel ~path () =
       focus = 0;
       mode = Normal;
       dirty = false;
-      last_error = None;
+      footer_msg = None;
       last_mtime;
       reload_acc = 0.;
       confirm_quit = false;
+      show_help = false;
+      clock = 0.;
+      viewport_width = 120;
+      viewport_height = 32;
     },
     Cmd.set_title (Printf.sprintf "Quill - %s" (Filename.basename path)) )
 
@@ -156,7 +212,7 @@ let execute_cell m id source =
   let session = Session.mark_running id session in
   m.kernel.execute ~cell_id:id ~code:source;
   let session = drain_events m.event_queue session in
-  { m with session; dirty = true; last_error = None }
+  clear_footer_message { m with session; dirty = true }
 
 let execute_all_cells m =
   let session = Session.clear_all_outputs m.session in
@@ -170,9 +226,22 @@ let execute_all_cells m =
           session := drain_events m.event_queue !session
       | Cell.Text _ -> ())
     (Doc.cells (Session.doc !session));
-  { m with session = !session; dirty = true; last_error = None }
+  clear_footer_message { m with session = !session; dirty = true }
 
 (* ───── Update ───── *)
+
+let tick_model m dt =
+  let session = drain_events m.event_queue m.session in
+  let m = { m with session; clock = m.clock +. dt } in
+  expire_footer_message m
+
+let update_toggle_help m =
+  let show_help = not m.show_help in
+  let cmd =
+    if show_help then Cmd.focus help_scroll_id
+    else match m.mode with Editing -> Cmd.focus textarea_id | Normal -> Cmd.focus scroll_box_id
+  in
+  ({ m with show_help }, cmd)
 
 let update_save m =
   let session = Session.checkpoint m.session in
@@ -181,15 +250,12 @@ let update_save m =
   let content = Quill_markdown.to_string_with_outputs doc in
   write_file m.path content;
   let last_mtime = get_mtime m.path in
-  ({ m with dirty = false; last_error = None; last_mtime }, Cmd.none)
+  (with_footer_message { m with dirty = false; last_mtime } Info "Saved", Cmd.none)
 
 let update_quit m =
   if m.dirty && not m.confirm_quit then
-    ( {
-        m with
-        confirm_quit = true;
-        last_error = Some "Unsaved changes. Press q again to quit, s to save.";
-      },
+    ( with_footer_message { m with confirm_quit = true } Confirm
+        "Unsaved changes. Press q again to quit, s to save.",
       Cmd.none )
   else (
     m.kernel.shutdown ();
@@ -197,6 +263,11 @@ let update_quit m =
 
 let update_editing msg m =
   match msg with
+  | Toggle_help -> update_toggle_help m
+  | Dismiss_message ->
+      ({ m with confirm_quit = false; footer_msg = None }, Cmd.none)
+  | Resize (width, height) ->
+      ({ m with viewport_width = width; viewport_height = height }, Cmd.none)
   | Exit_edit ->
       let session = Session.checkpoint m.session in
       ({ m with mode = Normal; session }, Cmd.focus scroll_box_id)
@@ -225,13 +296,17 @@ let update_editing msg m =
       m.kernel.interrupt ();
       (m, Cmd.none)
   | Tick dt ->
-      let session = drain_events m.event_queue m.session in
-      ({ m with session; reload_acc = m.reload_acc +. dt }, Cmd.none)
-  | Dismiss_error -> ({ m with last_error = None }, Cmd.none)
+      let m = tick_model m dt in
+      ({ m with reload_acc = m.reload_acc +. dt }, Cmd.none)
   | _ -> (m, Cmd.none)
 
 let update_normal msg m =
   match msg with
+  | Toggle_help -> update_toggle_help m
+  | Dismiss_message ->
+      ({ m with confirm_quit = false; footer_msg = None }, Cmd.none)
+  | Resize (width, height) ->
+      ({ m with viewport_width = width; viewport_height = height }, Cmd.none)
   | Focus_next ->
       let n = cell_count m in
       let focus = if n > 0 then min (m.focus + 1) (n - 1) else 0 in
@@ -242,8 +317,8 @@ let update_normal msg m =
       | Some (Cell.Code { id; source; _ }) ->
           (execute_cell m id source, Cmd.none)
       | Some (Cell.Text _) ->
-          ({ m with last_error = Some "Cannot execute a text cell" }, Cmd.none)
-      | None -> ({ m with last_error = Some "No cell to execute" }, Cmd.none))
+          (with_footer_message m Error "Cannot execute a text cell", Cmd.none)
+      | None -> (with_footer_message m Warning "No cell to execute", Cmd.none))
   | Execute_all -> (execute_all_cells m, Cmd.none)
   | Interrupt ->
       m.kernel.interrupt ();
@@ -306,12 +381,12 @@ let update_normal msg m =
   | Save -> update_save m
   | Quit -> update_quit m
   | Tick dt ->
+      let m = tick_model m dt in
       let reload_acc = m.reload_acc +. dt in
       if reload_acc >= reload_interval then
         let m = check_reload { m with reload_acc = 0. } in
         (m, Cmd.none)
       else ({ m with reload_acc }, Cmd.none)
-  | Dismiss_error -> ({ m with last_error = None }, Cmd.none)
   | Enter_edit -> (
       match focused_cell m with
       | Some (Cell.Code _) -> ({ m with mode = Editing }, Cmd.focus textarea_id)
@@ -320,9 +395,16 @@ let update_normal msg m =
 
 let update msg m =
   let m =
+    if should_clear_error_msg msg then
+      match m.footer_msg with
+      | Some { kind = Error; _ } -> clear_footer_message m
+      | _ -> m
+    else m
+  in
+  let m =
     match msg with
-    | Quit | Tick _ | Dismiss_error -> m
-    | _ -> { m with confirm_quit = false }
+    | Quit | Tick _ | Toggle_help | Resize _ -> m
+    | _ -> clear_confirm_message { m with confirm_quit = false }
   in
   match m.mode with
   | Editing -> update_editing msg m
@@ -522,80 +604,280 @@ let view_cells m =
       (fun index cell -> view_cell ~index ~focus:m.focus ~mode:m.mode m cell)
       cells
 
-let view_footer m =
-  let key_style = Ansi.Style.make ~fg:label_fg ~bold:true () in
-  let desc_style = Ansi.Style.make ~fg:hint_fg () in
-  let sep = text ~style:desc_style " \xc2\xb7 " in
-  let key k d =
-    fragment
-      [
-        text ~style:key_style k; text ~style:desc_style (Printf.sprintf " %s" d);
-      ]
-  in
-  let keys_row =
+type footer_width_tier = Wide | Medium | Compact | Tiny
+
+type footer_action = {
+  key : string;
+  label : string;
+}
+
+let footer_width_tier m =
+  if m.viewport_width >= 120 then Wide
+  else if m.viewport_width >= 80 then Medium
+  else if m.viewport_width >= 60 then Compact
+  else Tiny
+
+let rec take n xs =
+  if n <= 0 then []
+  else
+    match xs with
+    | [] -> []
+    | x :: tl -> x :: take (n - 1) tl
+
+let focused_kind_label m =
+  match focused_cell m with
+  | Some (Cell.Code _) -> "code"
+  | Some (Cell.Text _) -> "text"
+  | None -> "none"
+
+let footer_mode_label m =
+  match m.mode with Normal -> "NORMAL" | Editing -> "EDIT"
+
+let footer_kernel_label m =
+  let rc = running_count m in
+  if rc > 0 then Printf.sprintf "running %d" rc else "idle"
+
+let footer_actions m =
+  if m.confirm_quit then
+    [
+      { key = "q"; label = "Confirm Quit" };
+      { key = "s"; label = "Save" };
+      { key = "Esc"; label = "Cancel" };
+      { key = "?"; label = "Help" };
+    ]
+  else
     match m.mode with
     | Editing ->
-        box ~flex_direction:Row
-          ~size:{ width = pct 100; height = auto }
-          ~flex_wrap:Wrap
-          [
-            key "Esc" "exit edit";
-            sep;
-            key "Ctrl-Enter" "run";
-            sep;
-            key "Ctrl-S" "save";
-            sep;
-            key "Ctrl-C" "interrupt";
-          ]
+        [
+          { key = "Esc"; label = "Exit" };
+          { key = "Ctrl-Enter"; label = "Run" };
+          { key = "Ctrl-S"; label = "Save" };
+          { key = "Ctrl-C"; label = "Interrupt" };
+          { key = "?"; label = "Help" };
+        ]
     | Normal ->
         if has_running m then
-          box ~flex_direction:Row
-            ~size:{ width = pct 100; height = auto }
-            ~flex_wrap:Wrap
-            [
-              key "Ctrl-C" "interrupt";
-              sep;
-              key "j/k" "navigate";
-              sep;
-              key "Enter" "run";
-              sep;
-              key "s" "save";
-              sep;
-              key "q" "quit";
-            ]
+          [
+            { key = "Ctrl-C"; label = "Interrupt" };
+            { key = "j/k"; label = "Navigate" };
+            { key = "s"; label = "Save" };
+            { key = "q"; label = "Quit" };
+            { key = "?"; label = "Help" };
+          ]
         else
-          box ~flex_direction:Row
-            ~size:{ width = pct 100; height = auto }
-            ~flex_wrap:Wrap
-            [
-              key "j/k" "navigate";
-              sep;
-              key "J/K" "move";
-              sep;
-              key "e" "edit";
-              sep;
-              key "Enter" "run";
-              sep;
-              key "Ctrl-A" "run all";
-              sep;
-              key "a" "code";
-              sep;
-              key "t" "text";
-              sep;
-              key "d" "delete";
-              sep;
-              key "s" "save";
-              sep;
-              key "q" "quit";
-            ]
+          match focused_cell m with
+          | Some (Cell.Code _) ->
+              [
+                { key = "Enter"; label = "Run" };
+                { key = "e"; label = "Edit" };
+                { key = "a"; label = "+Code" };
+                { key = "t"; label = "+Text" };
+                { key = "s"; label = "Save" };
+                { key = "?"; label = "Help" };
+              ]
+          | Some (Cell.Text _) ->
+              [
+                { key = "m"; label = "To Code" };
+                { key = "a"; label = "+Code" };
+                { key = "t"; label = "+Text" };
+                { key = "s"; label = "Save" };
+                { key = "?"; label = "Help" };
+              ]
+          | None ->
+              [
+                { key = "a"; label = "+Code" };
+                { key = "t"; label = "+Text" };
+                { key = "s"; label = "Save" };
+                { key = "?"; label = "Help" };
+              ]
+
+let footer_action_limit tier =
+  match tier with Wide -> 4 | Medium -> 3 | Compact -> 2 | Tiny -> 1
+
+let footer_action_label tier label =
+  match (tier, label) with
+  | Medium, "Interrupt" -> "Stop"
+  | Medium, "Navigate" -> "Nav"
+  | Medium, "Confirm Quit" -> "Confirm"
+  | Medium, "To Code" -> "ToCode"
+  | Compact, "Save" -> "Save"
+  | Compact, "Interrupt" -> "Stop"
+  | Compact, "Navigate" -> "Nav"
+  | Compact, "Confirm Quit" -> "Confirm"
+  | Compact, "To Code" -> "Code"
+  | Compact, "+Code" -> "+C"
+  | Compact, "+Text" -> "+T"
+  | Compact, "Help" -> "?"
+  | _ -> label
+
+let truncate_text max_len s =
+  if String.length s <= max_len then s
+  else String.sub s 0 (max 0 (max_len - 1)) ^ "…"
+
+let footer_message_view tier m =
+  match m.footer_msg with
+  | None -> None
+  | Some { kind; text = msg; _ } ->
+      let fg, prefix =
+        match kind with
+        | Info -> (info_fg, "INFO")
+        | Warning -> (warning_fg, "WARN")
+        | Error -> (error_fg, "ERROR")
+        | Confirm -> (warning_fg, "CONFIRM")
+      in
+      let max_len =
+        match tier with Wide -> 32 | Medium -> 22 | Compact -> 14 | Tiny -> 8
+      in
+      Some (fg, Printf.sprintf "%s:%s" prefix (truncate_text max_len msg))
+
+let footer_status_text tier m =
+  let total = cell_count m in
+  let focus =
+    if total = 0 then "cell 0/0"
+    else Printf.sprintf "cell %d/%d" (m.focus + 1) total
   in
-  let error_row =
-    match m.last_error with Some e -> view_error_bar e | None -> empty
+  let kernel = footer_kernel_label m in
+  let dirty = if m.dirty then "modified" else "saved" in
+  match tier with
+  | Wide ->
+      Printf.sprintf "%s %s %s %s" focus (focused_kind_label m) dirty kernel
+  | Medium -> Printf.sprintf "%s %s %s" focus (focused_kind_label m) kernel
+  | Compact -> Printf.sprintf "%s %s" focus kernel
+  | Tiny -> ""
+
+let view_footer_actions tier m =
+  let key_style = Ansi.Style.make ~fg:label_fg ~bold:true () in
+  let desc_style = Ansi.Style.make ~fg:hint_fg () in
+  let actions =
+    if tier = Tiny then [ { key = "?"; label = "Help" } ]
+    else take (footer_action_limit tier) (footer_actions m)
   in
-  box ~flex_direction:Column ~background:chrome_bg
+  let view_action action =
+    let label = footer_action_label tier action.label in
+    box ~flex_direction:Row ~gap:(gap 0) ~align_items:Center
+      ~size:{ width = auto; height = auto }
+      [
+        text ~style:key_style (Printf.sprintf "[%s]" action.key);
+        text ~style:desc_style (Printf.sprintf " %s" label);
+      ]
+  in
+  box ~flex_direction:Row ~gap:(gap 1) ~align_items:Center
+    ~size:{ width = auto; height = auto }
+    (List.map view_action actions)
+
+let view_footer m =
+  let tier = footer_width_tier m in
+  let mode_style =
+    Ansi.Style.make
+      ~fg:(match m.mode with Editing -> accent | Normal -> label_fg)
+      ~bold:true ()
+  in
+  let desc_style = Ansi.Style.make ~fg:hint_fg () in
+  let status_text = footer_status_text tier m in
+  let status_node =
+    if status_text = "" then empty
+    else text ~style:desc_style (Printf.sprintf " %s" status_text)
+  in
+  let message_node =
+    match footer_message_view tier m with
+    | Some (fg, msg) -> text ~style:(Ansi.Style.make ~fg ~bold:true ()) (" | " ^ msg)
+    | None -> empty
+  in
+  let left =
+    box ~flex_direction:Row ~gap:(gap 0) ~align_items:Center
+      ~size:{ width = auto; height = auto }
+      [
+        text ~style:mode_style (Printf.sprintf "[%s]" (footer_mode_label m));
+        status_node;
+        message_node;
+      ]
+  in
+  let right = view_footer_actions tier m in
+  box ~background:chrome_bg ~flex_direction:Row ~justify_content:Space_between
+    ~align_items:Center
     ~size:{ width = pct 100; height = auto }
     ~padding:(padding_lrtb ~l:2 ~r:2 ~t:0 ~b:0)
-    [ error_row; keys_row ]
+    [ left; right ]
+
+let view_footer_help_overlay m =
+  if not m.show_help then empty
+  else
+    let section_title title =
+      text ~style:(Ansi.Style.make ~fg:accent ~bold:true ()) title
+    in
+    let item key desc =
+      box ~flex_direction:Row ~gap:(gap 1) ~align_items:Center
+        ~size:{ width = pct 100; height = auto }
+        [
+          text ~style:(Ansi.Style.make ~fg:label_fg ~bold:true ())
+            (Printf.sprintf "[%s]" key);
+          text ~style:(Ansi.Style.make ~fg:hint_fg ()) desc;
+        ]
+    in
+    let panel_width = if m.viewport_width < 80 then pct 96 else pct 82 in
+    let panel_height = if m.viewport_height < 24 then pct 86 else pct 72 in
+    box ~position:Absolute ~inset:(inset 0) ~z_index:20 ~background:overlay_bg
+      ~justify_content:Center ~align_items:Center
+      ~size:{ width = pct 100; height = pct 100 }
+      [
+        box ~border:true ~border_style:Border.rounded ~border_color:border_focused
+          ~background:chrome_bg ~flex_direction:Column ~gap:(gap 1)
+          ~size:{ width = panel_width; height = panel_height }
+          ~padding:(padding_lrtb ~l:1 ~r:1 ~t:0 ~b:1)
+          [
+            box ~flex_direction:Row ~justify_content:Space_between
+              ~align_items:Center
+              ~size:{ width = pct 100; height = auto }
+              [
+                text ~style:(Ansi.Style.make ~fg:Ansi.Color.white ~bold:true ())
+                  "Keybindings";
+                text ~style:(Ansi.Style.make ~fg:hint_fg ()) "Esc or ? to close";
+              ];
+            scroll_box ~id:help_scroll_id ~scroll_y:true ~scroll_x:false
+              ~flex_grow:1. ~size:{ width = pct 100; height = auto }
+              ~padding:(padding_lrtb ~l:1 ~r:1 ~t:0 ~b:0) ~flex_direction:Column
+              ~gap:(gap 1)
+              [
+                box ~flex_direction:Column ~gap:(gap 1)
+                  [
+                    section_title "Navigation";
+                    item "j / k" "Focus next / previous cell";
+                    item "Up / Down" "Focus next / previous cell";
+                    item "J / K" "Move cell down / up";
+                  ];
+                box ~flex_direction:Column ~gap:(gap 1)
+                  [
+                    section_title "Execution";
+                    item "Enter" "Run focused code cell";
+                    item "Ctrl-A" "Run all code cells";
+                    item "Ctrl-C" "Interrupt execution";
+                  ];
+                box ~flex_direction:Column ~gap:(gap 1)
+                  [
+                    section_title "Cell management";
+                    item "a / t" "Insert code / text cell";
+                    item "d" "Delete focused cell";
+                    item "m" "Toggle focused cell kind";
+                    item "c / Ctrl-L" "Clear focused / all outputs";
+                  ];
+                box ~flex_direction:Column ~gap:(gap 1)
+                  [
+                    section_title "File and session";
+                    item "s / Ctrl-S" "Save notebook";
+                    item "q" "Quit (double press if modified)";
+                    item "Esc" "Dismiss footer message";
+                    item "?" "Toggle this help panel";
+                  ];
+                box ~flex_direction:Column ~gap:(gap 1)
+                  [
+                    section_title "Editing mode";
+                    item "Esc" "Exit editor";
+                    item "Ctrl-Enter" "Submit and run code cell";
+                    item "Ctrl-S" "Save notebook";
+                  ];
+              ];
+          ];
+      ]
 
 let view m =
   box ~flex_direction:Column
@@ -609,6 +891,7 @@ let view m =
         ~padding:(padding_lrtb ~l:1 ~r:1 ~t:1 ~b:1)
         (view_cells m);
       view_footer m;
+      view_footer_help_overlay m;
     ]
 
 (* ───── Subscriptions ───── *)
@@ -617,57 +900,68 @@ let subscriptions model =
   Sub.batch
     [
       Sub.on_tick (fun ~dt -> Tick dt);
+      Sub.on_resize (fun ~width ~height -> Resize (width, height));
       (* Use on_key_all for all bindings because the scroll_box consumes
          j/k/Up/Down via its scroll bar before on_key sees them. *)
       Sub.on_key_all (fun ev ->
           let data = Event.Key.data ev in
-          match model.mode with
-          | Editing ->
-              if data.modifier.ctrl then
-                match data.key with
-                | Char c when char_eq 'a' c -> Some Execute_all
-                | Char c when char_eq 's' c -> Some Save
-                | Char c when char_eq 'c' c -> Some Interrupt
-                | Char c when char_eq 'l' c -> Some Clear_all
-                | _ -> None
-              else None
-          | Normal -> (
-              if data.modifier.ctrl then
-                match data.key with
-                | Char c when char_eq 'a' c -> Some Execute_all
-                | Char c when char_eq 's' c -> Some Save
-                | Char c when char_eq 'c' c -> Some Interrupt
-                | Char c when char_eq 'l' c -> Some Clear_all
-                | _ -> None
-              else
-                match data.key with
-                | Char c when char_eq 'j' c -> Some Focus_next
-                | Char c when char_eq 'k' c -> Some Focus_prev
-                | Char c when char_eq 'J' c -> Some Move_down
-                | Char c when char_eq 'K' c -> Some Move_up
-                | Char c when char_eq 'e' c -> Some Enter_edit
-                | Char c when char_eq 'i' c -> Some Enter_edit
-                | Char c when char_eq 'a' c -> Some Insert_code_below
-                | Char c when char_eq 't' c -> Some Insert_text_below
-                | Char c when char_eq 'd' c -> Some Delete_focused
-                | Char c when char_eq 'm' c -> Some Toggle_cell_kind
-                | Char c when char_eq 'c' c -> Some Clear_focused
-                | Char c when char_eq 's' c -> Some Save
-                | Char c when char_eq 'q' c -> Some Quit
-                | Down -> Some Focus_next
-                | Up -> Some Focus_prev
-                | Enter -> Some Execute_focused
-                | Escape -> Some Dismiss_error
-                | _ -> None));
+          if model.show_help then
+            match data.key with
+            | Escape -> Some Toggle_help
+            | Char c when char_eq '?' c -> Some Toggle_help
+            | _ -> None
+          else
+            match model.mode with
+            | Editing -> (
+                if data.modifier.ctrl then
+                  match data.key with
+                  | Char c when char_eq 'a' c -> Some Execute_all
+                  | Char c when char_eq 's' c -> Some Save
+                  | Char c when char_eq 'c' c -> Some Interrupt
+                  | Char c when char_eq 'l' c -> Some Clear_all
+                  | _ -> None
+                else
+                  match data.key with
+                  | Char c when char_eq '?' c -> Some Toggle_help
+                  | _ -> None)
+            | Normal -> (
+                if data.modifier.ctrl then
+                  match data.key with
+                  | Char c when char_eq 'a' c -> Some Execute_all
+                  | Char c when char_eq 's' c -> Some Save
+                  | Char c when char_eq 'c' c -> Some Interrupt
+                  | Char c when char_eq 'l' c -> Some Clear_all
+                  | _ -> None
+                else
+                  match data.key with
+                  | Char c when char_eq 'j' c -> Some Focus_next
+                  | Char c when char_eq 'k' c -> Some Focus_prev
+                  | Char c when char_eq 'J' c -> Some Move_down
+                  | Char c when char_eq 'K' c -> Some Move_up
+                  | Char c when char_eq 'e' c -> Some Enter_edit
+                  | Char c when char_eq 'i' c -> Some Enter_edit
+                  | Char c when char_eq 'a' c -> Some Insert_code_below
+                  | Char c when char_eq 't' c -> Some Insert_text_below
+                  | Char c when char_eq 'd' c -> Some Delete_focused
+                  | Char c when char_eq 'm' c -> Some Toggle_cell_kind
+                  | Char c when char_eq 'c' c -> Some Clear_focused
+                  | Char c when char_eq 's' c -> Some Save
+                  | Char c when char_eq 'q' c -> Some Quit
+                  | Char c when char_eq '?' c -> Some Toggle_help
+                  | Down -> Some Focus_next
+                  | Up -> Some Focus_prev
+                  | Enter -> Some Execute_focused
+                  | Escape -> Some Dismiss_message
+                  | _ -> None));
       (* Escape in editing mode: textarea does not consume it, so on_key
          works. *)
       Sub.on_key (fun ev ->
           match model.mode with
-          | Editing -> (
+          | Editing when not model.show_help -> (
               match (Event.Key.data ev).key with
               | Escape -> Some Exit_edit
               | _ -> None)
-          | Normal -> None);
+          | Editing | Normal -> None);
     ]
 
 (* ───── Run ───── *)

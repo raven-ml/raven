@@ -46,8 +46,8 @@ executable.
 | t | Insert a text cell below the focused cell |
 | d | Delete the focused cell |
 | m | Toggle the focused cell between code and text |
-| J | Move the focused cell up |
-| K | Move the focused cell down |
+| J | Move the focused cell down |
+| K | Move the focused cell up |
 | c | Clear the focused cell's outputs |
 | Ctrl-L | Clear all outputs |
 

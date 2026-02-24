@@ -100,7 +100,7 @@ The TUI displays a full-screen interface with:
 | Key | Action |
 | --- | --- |
 | j / k | Navigate cells |
-| J / K | Move cell up / down |
+| J / K | Move cell down / up |
 | Up / Down | Navigate cells |
 | Enter | Execute focused cell |
 | Ctrl-A | Execute all cells |
