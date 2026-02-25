@@ -48,12 +48,6 @@ let divider () =
     [ text " " ]
 
 let view_dashboard m =
-  (* Convert Metric_store.best_value to Imp_info.best_metric *)
-  (* let best_metrics =
-       Metric_store.best_metrics m.store
-       |> List.map (fun (tag, (bv : Metric_store.best_value)) ->
-              (tag, ({ step = bv.step; value = bv.value } : Imp_info.best_metric)))
-     in *)
   box ~flex_direction:Column
     ~size:{ width = pct 100; height = pct 100 }
     [
@@ -111,16 +105,6 @@ let view m =
 
 (* ───── TEA Core ───── *)
 
-let get_initial_terminal_size () : int * int =
-  try
-    let ic = Unix.open_process_in "stty size 2>/dev/null" in
-    let line = input_line ic in
-    ignore (Unix.close_process_in ic);
-    match String.split_on_char ' ' line with
-    | [ rows; cols ] -> (int_of_string cols, int_of_string rows)
-    | _ -> (80, 24)
-  with _ -> (80, 24)
-
 let init ~run =
   let run_id = Run.run_id run in
   let run_dir = Run.dir run in
@@ -129,14 +113,7 @@ let init ~run =
   (* Load initial events *)
   let initial_events = Run.read_events stream in
   Metric_store.update store initial_events;
-  (* Get actual terminal size at startup *)
-  let initial_width, initial_height = get_initial_terminal_size () in
-  let metrics_state =
-    { (Metrics.initial_state ()) with
-      screen_width = initial_width;
-      screen_height = initial_height;
-    }
-  in
+  let metrics_state = Metrics.initial_state () in
   (* Initialize system panel *)
   let sys_panel = Sys_panel.create () in
   ( {
