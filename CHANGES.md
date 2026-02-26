@@ -7,70 +7,143 @@ All notable changes to this project will be documented in this file.
 
 ## [1.0.0~alpha3] - Unreleased
 
+This release reshapes raven's foundations. Every package received API
+improvements, several were rewritten, and two new packages — nx-oxcaml and
+kaun-board — were built as part of our Outreachy internships.
+
+### Highlights
+
+- **nx-oxcaml** (new, Outreachy) — Pure-OCaml tensor backend using OxCaml's
+  unboxed types and SIMD intrinsics. Performance approaches the C backend —
+  in pure OCaml.
+- **kaun-board** (new, Outreachy) — TUI dashboard for monitoring training
+  runs in the terminal. Live metrics, loss curves, and system stats.
+- **quill** — Reborn as a terminal application. Markdown notebooks with live
+  editing, syntax highlighting, and code completion — no browser needed.
+- **brot** — The tokenization library formerly known as saga. Complete rewrite
+  with a cleaner API. [1.3-6x faster than HuggingFace Tokenizers](packages/brot/bench/)
+  on most benchmarks.
+- **kaun** — Simplified API: new `Fn` and `Activation` modules, CIFAR-10
+  dataset, CLI binary.
+- **nx** — Redesigned backend interface, new buffer abstraction, scipy-style
+  signal processing, RNG moved to Nx with effect-based scoping. Einsum
+  **8-20x** faster, matmul dispatch at BLAS parity with NumPy.
+
+### Breaking changes
+
+- **nx**: Redesigned backend interface with new `Nx_buffer` type. Removed
+  `nx.datasets` library. Moved NN functions to Kaun (use `Kaun.Fn`). Renamed
+  `im2col`/`col2im` to `extract_patches`/`combine_patches`. RNG uses
+  effect-based implicit scoping instead of explicit key threading.
+- **rune**: Removed JIT/LLVM backend. This will come back in a future
+  release with a proper ML compiler.
+- **kaun**: Rewritten core modules, datasets, and HuggingFace integration.
+  Removed `kaun-models`. Extracted console into `kaun-board`.
+- **brot**: Renamed from saga. Rewritten API focused on tokenization.
+
 ### Nx
 
-- Make Nx backends pluggable via Dune virtual libraries. The new `nx.backend` virtual library defines the backend interface, with the C backend (`nx.c`) as the default implementation. Alternative backends (e.g., `nx-oxcaml`) can be swapped in at link time. The `Nx_c` module is renamed to `Nx_backend`. (@tmattio)
-- Fix `.top` libraries failing to load in utop with "Reference to undefined compilation unit `Parse`". (@tmattio)
+- Redesign backend interface with more granular operations (e.g. dedicated unary and binary kernels). This improves performance by letting backends optimize individual ops directly, and prepares for the JIT pipeline which will decompose composite operations at the compiler level instead of the frontend.
+- Rewrite `Nx_buffer` module with new interface. The backend now returns `Nx_buffer.t` instead of raw bigarrays.
+- Add new C kernels for unary, binary, and sort operations, and route new backend ops to C kernels.
+- Add scipy-style `correlate`, `convolve`, and sliding window filters.
+- Generalize `unfold`/`fold` to arbitrary leading dimensions.
+- Remove neural-network functions from Nx (softmax, log_softmax, relu, gelu, silu, sigmoid, tanh). These now live in `Kaun.Fn`.
+- Rename `im2col`/`col2im` to `extract_patches`/`combine_patches`.
+- Remove `nx.datasets` module. Datasets are now in `kaun.datasets`.
+- Simplify `Nx_io` interface. Inline vendor libraries (safetensors, and npy) directly into nx_io.
+- Move the `Rng` module from Rune into Nx with effect-based implicit scoping. Random number generation uses `Nx.Rng.run` to scope RNG state instead of explicit key threading.
+- Reduce matmul dispatch overhead to reach BLAS parity with NumPy.
+- Fix Threefry2x32 to match the Random123 standard.
+- Fix `save_image` crash on multi-dimensional genarray.
+- Pre-reduce independent axes in einsum to avoid OOM on large contractions.
+- Make Nx backends pluggable via Dune virtual libraries. The new `nx.backend` virtual library defines the backend interface, with the C backend (`nx.c`) as the default implementation. Alternative backends (e.g., `nx-oxcaml`) can be swapped in at link time. The `Nx_c` module is renamed to `Nx_backend`.
+- Fix `.top` libraries failing to load in utop with "Reference to undefined compilation unit `Parse`".
 - Fix OpenMP flag filtering in `discover.ml`: strip `-Xpreprocessor -fopenmp` as a pair on macOS to prevent dangling `-Xpreprocessor` from consuming subsequent flags and causing linker failures. (@Alizter)
-- Merge `nx-datasets` package into a `nx.datasets` sublibrary. (@tmattio)
-- Replace `ocurl` C dependency with `curl` CLI for HTTP requests across the ecosystem (`nx.datasets`, `kaun.huggingface`, `kaun.models`, `kaun.datasets`). (@tmattio)
-- Add missing bool→low-precision cast support (f16/bf16/fp8) in the C backend. (@tmattio)
-- Add UInt32/UInt64 dtypes, rename complex dtypes to Complex64/Complex128, and drop Complex16/QInt8/QUInt8/Int/NativeInt as tensor element dtypes. (@tmattio)
-- Move the `Rng` module from Rune into Nx. All random number generation functions (`rand`, `randn`, `randint`, etc.) now require an explicit `~key:Rng.key` parameter for reproducibility and stateless RNG. Use `Rng.key seed` to create a key and `Rng.split` to derive independent subkeys. (@tmattio)
-- Add instrumentation support with `Nx_core.Instrumentation` module for tracing and profiling Nx operations. All frontend functions now emit spans via configurable hooks. (@tmattio)
-- Add optional `?out` parameter to every relevant Nx function to allow users to provide pre-allocated output buffers. (@tmattio)
-- Fix critical correctness issue in fancy slicing (`L`) where permutations were ignored if the number of indices matched the dimension size (e.g., `slice [L [1; 0]] x` returned `x` unmodified). (@tmattio)
-- Rewrite `slice` implementation to use `as_strided` for contiguous operations, reducing overhead to **O(1)** for view-based slices and separating gather operations for better performance. (@tmattio)
-- Optimize `set_slice` by replacing scalar-loop index calculations with vectorized coordinate arithmetic, significantly improving performance for fancy index assignments. (@tmattio)
-- Improve `einsum` performance **8–20×** with greedy contraction path optimizer (e.g., MatMul 100×100 f32 207.83 µs → 10.76 µs, **19×**; BatchMatMul 200×200 f32 8.78 ms → 435.39 µs, **20×**) (@tmattio)
-- Rewrite `diagonal` using flatten + gather approach instead of O(N²) eye matrix masking, reducing memory from O(N²) to O(N) (@tmattio)
-- Add `?out` parameter to `matmul` allowing users to provide a pre-allocated output buffer, reducing allocation overhead by ~1μs per call for small matrices and enabling buffer reuse in tight loops (@tmattio)
+- Add missing bool→low-precision cast support (f16/bf16/fp8) in the C backend.
+- Add UInt32/UInt64 dtypes, rename complex dtypes to Complex64/Complex128, and drop Complex16/QInt8/QUInt8/Int/NativeInt as tensor element dtypes.
+- Add instrumentation support with `Nx_core.Instrumentation` module for tracing and profiling Nx operations. All frontend functions now emit spans via configurable hooks.
+- Add optional `?out` parameter to every relevant Nx function to allow users to provide pre-allocated output buffers.
+- Fix critical correctness issue in fancy slicing (`L`) where permutations were ignored if the number of indices matched the dimension size (e.g., `slice [L [1; 0]] x` returned `x` unmodified).
+- Rewrite `slice` implementation to use `as_strided` for contiguous operations, reducing overhead to **O(1)** for view-based slices and separating gather operations for better performance.
+- Optimize `set_slice` by replacing scalar-loop index calculations with vectorized coordinate arithmetic, significantly improving performance for fancy index assignments.
+- Improve `einsum` performance **8–20×** with greedy contraction path optimizer (e.g., MatMul 100×100 f32 207.83 µs → 10.76 µs, **19×**; BatchMatMul 200×200 f32 8.78 ms → 435.39 µs, **20×**)
+- Rewrite `diagonal` using flatten + gather approach instead of O(N²) eye matrix masking, reducing memory from O(N²) to O(N)
+
+### nx-oxcaml (new)
+
+New pure-OCaml tensor backend that can be swapped in at link time via Dune virtual libraries. Uses OxCaml's unboxed types for zero-cost tensor element access, SIMD intrinsics for vectorized kernels, and parallel matmul. Performance approaches the native C backend — in pure OCaml. Supports the full Nx operation set: elementwise, reductions, matmul, gather/scatter, sort/argsort, argmax/argmin, unfold/fold, pad, cat, associative scan, and threefry RNG. (@nirnayroy, @tmattio)
 
 ### Rune
 
-- Remove JIT compilation support from Rune. The `Rune.Jit` module and LLVM/Metal backends have been removed and will be re-introduced later as a standalone package. (@tmattio)
-- Rewrite `Autodiff` module to fix critical JVP correctness issues, enable higher-order derivatives (nested gradients), and introduce `vjp` as a first-class primitive. (@tmattio)
-- Fix pointer-based hashing in autodiff, correcting nested JVP handler behavior. (@tmattio)
-- Add autodiff support for `as_strided`, enabling gradients through slicing and indexing operations (@tmattio)
-- Add autodiff support for `cummax` and `cummin` cumulative operations (@tmattio)
-- Add autodiff support for FFT operations (@tmattio)
-- Add autodiff support for some linear algebra operations: QR decomposition (`qr`), Cholesky decomposition (`cholesky`), and triangular solve (`triangular_solve`). (@tmattio)
+- Remove JIT compilation support from Rune. The `Rune.Jit` module and LLVM/Metal backends have been removed and will be re-introduced later as a standalone package.
+- Update to new `Nx_buffer.t` type.
+- Propagate new backend operations through effects and autodiff.
+- Rewrite `Autodiff` module to fix critical JVP correctness issues, enable higher-order derivatives (nested gradients), and introduce `vjp` as a first-class primitive.
+- Fix pointer-based hashing in autodiff, correcting nested JVP handler behavior.
+- Add autodiff support for `as_strided`, enabling gradients through slicing and indexing operations
+- Add autodiff support for `cummax` and `cummin` cumulative operations
+- Add autodiff support for FFT operations
+- Add autodiff support for some linear algebra operations: QR decomposition (`qr`), Cholesky decomposition (`cholesky`), and triangular solve (`triangular_solve`).
 
 ### Kaun
 
-- Implemented kaun-console CLI & consolidated logging and reader modules into kaun-runlog. (#167, #166, #170, @Arsalaan-Alam)
+- Simplify and redesign the core API for better discoverability and composability. Layers, optimizers, and training utilities now follow consistent patterns and compose more naturally.
+- Add `Fn` module with `conv1d`, `conv2d`, `max_pool`, `avg_pool` — neural network operations that were previously in Nx now live here with a cleaner, more focused API.
+- Redesign datasets and HuggingFace integration with simpler, more composable APIs.
+- Remove `kaun-models` library. Pre-built models now live in examples.
 - Reinitialize dataset each epoch to avoid iterator exhaustion (#147, @Shocker444, @tmattio)
 
-### Hugin
+### kaun-board (new)
 
-- Fix potential bad memory access in rendering. (@tmattio)
-
-### Talon
-
-- Remove `jsont`, `bytesrw`, and `csv` dependencies from Talon. CSV support is now built-in via the `talon.csv` sub-library with a minimal RFC 4180 parser. (@tmattio)
-- Remove `talon.json` sub-library. (@tmattio)
+TUI dashboard for monitoring training runs in the terminal. Displays live metrics, loss curves, and system stats. Extracted from kaun's console module into a standalone package. (#166, #167, #170, @Arsalaan-Alam)
 
 ### Brot
 
-- Simplify brot to a tokenization-only library. Remove the sampler, n-gram models, and I/O utilities. The sampler is rewritten with nx tensors and moved to `dev/mimir` as the seed of an experimental inference engine. (@tmattio)
-- Merge `brot.tokenizers` sub-library into `brot`. (@tmattio)
-- Use `Buffer.add_substring` instead of char-by-char loop in whitespace pre-tokenizer. (@tmattio)
-- Compact BPE symbols in-place after merges, avoiding an intermediate array allocation. (@tmattio)
-- Replace list cons + reverse with forward `List.init` in BPE `word_to_tokens`. (@tmattio)
-- Use pre-allocated arrays with `Array.blit` instead of `Array.append` in encoding merge and padding, halving per-field allocations. (@tmattio)
-- Avoid allocating an unused `words` array in post-processor encoding conversion. (@tmattio)
-- Reduce WordPiece substring allocations from O(n²) to O(n) per word by building the prefixed candidate string once per position. (@tmattio)
-- Add `encode_ids` fast path that bypasses `Encoding.t` construction entirely when only token IDs are needed. (@tmattio)
-- Add ASCII property table for O(1) character classification in pre-tokenizers, replacing O(log n) binary search for `is_alphabetic` (600 ranges), `is_numeric` (230 ranges), and `is_whitespace` (10 ranges). Yields 12-27% speedup on encode benchmarks with ~30% allocation reduction. (@tmattio)
-- Add inline ASCII fast paths in all pre-tokenizer loops, skipping UTF-8 decoding and using `Buffer.add_char` instead of `String.sub` for single-byte characters. Combined with the property table, yields 20-30% total speedup and 36-55% allocation reduction vs baseline. (@tmattio)
-- Remove dependency on `str` library. (@tmattio)
-- Generate unicode data offline, removing runtime dependency on `uucp`. (@tmattio)
-- Remove unused `Grapheme` module. Grapheme cluster segmentation is not needed for tokenization. (@tmattio)
-- Remove `uutf` dependency in favour of OCaml `Stdlib` unicode support. (@tmattio)
+- Rename the library from saga to brot.
+- Simplify brot to a tokenization-only library. Remove the sampler, n-gram models, and I/O utilities. The sampler is rewritten with nx tensors and moved to `dev/mimir` as the seed of an experimental inference engine.
+- Merge `brot.tokenizers` sub-library into `brot`.
+- Remove dependency on Nx.
+- Use `Buffer.add_substring` instead of char-by-char loop in whitespace pre-tokenizer.
+- Compact BPE symbols in-place after merges, avoiding an intermediate array allocation.
+- Replace list cons + reverse with forward `List.init` in BPE `word_to_tokens`.
+- Use pre-allocated arrays with `Array.blit` instead of `Array.append` in encoding merge and padding, halving per-field allocations.
+- Avoid allocating an unused `words` array in post-processor encoding conversion.
+- Reduce WordPiece substring allocations from O(n²) to O(n) per word by building the prefixed candidate string once per position.
+- Add `encode_ids` fast path that bypasses `Encoding.t` construction entirely when only token IDs are needed.
+- Add ASCII property table for O(1) character classification in pre-tokenizers, replacing O(log n) binary search for `is_alphabetic` (600 ranges), `is_numeric` (230 ranges), and `is_whitespace` (10 ranges). Yields 12-27% speedup on encode benchmarks with ~30% allocation reduction.
+- Add inline ASCII fast paths in all pre-tokenizer loops, skipping UTF-8 decoding and using `Buffer.add_char` instead of `String.sub` for single-byte characters. Combined with the property table, yields 20-30% total speedup and 36-55% allocation reduction vs baseline.
+- Parallelize batch encoding with OCaml 5 domains.
+- Optimize BPE merge loop with open-addressing hash, flat arrays, and shift-based heap.
+- Add trie-based WordPiece lookup and normalizer fast path.
+- Remove dependency on `str` library.
+- Generate unicode data offline, removing runtime dependency on `uucp`.
+- Remove unused `Grapheme` module. Grapheme cluster segmentation is not needed for tokenization.
+- Remove `uutf` dependency in favour of OCaml `Stdlib` unicode support.
+
+### Fehu
+
+- Simplify and redesign the core API. Environments and training utilities now follow consistent functional patterns that are easier to use and compose.
+- Remove `fehu.algorithms` — fehu now only depends on rune, and users bring their own algorithms. Examples provided for well-known RL algorithms like DQN and REINFORCE.
+
+### Sowilo
+
+- Cleaner public API — internal implementation split into focused submodules while the public surface stays small.
+- Faster grayscale conversion, edge detection, and gaussian blur.
 
 ### Quill
 
-- Add support for 32 bit systems by replacing ocaml-crunch with a `quill-crunch` chunked asset bundler in release builds to keep generated modules under 32-bit string limits. (@tmattio)
+Rewritten as a terminal application — no browser needed. Markdown notebooks with live editing, syntax highlighting, code completion, and a compact single-line footer. Runs entirely in the terminal.
+
+### Hugin
+
+- Fix potential bad memory access in rendering.
+- Fix single-channel HWC image handling in `float32_to_cairo_surface`.
+
+### Talon
+
+- Remove `jsont`, `bytesrw`, and `csv` dependencies from Talon. CSV support is now built-in via the `talon.csv` sub-library with a minimal RFC 4180 parser.
+- Remove `talon.json` sub-library.
 
 ## [1.0.0~alpha2] - 2025-11-03
 
@@ -97,138 +170,138 @@ We're closing 8 user-reported issues or feature requests and are totalling 30 co
 
 ### Nx
 
-- Fix einsum output axis ordering for free axes (e.g., `i,jk->jki`, `ij,klj->kli`) by correcting final transpose permutation and intermediate left-axis reordering. (@tmattio)
+- Fix einsum output axis ordering for free axes (e.g., `i,jk->jki`, `ij,klj->kli`) by correcting final transpose permutation and intermediate left-axis reordering.
 - Add `Nx_io.Cache_dir` module with consolidated cache directory utilities respecting `RAVEN_CACHE_ROOT`, `XDG_CACHE_HOME`, and `HOME` fallback, replacing project-specific cache logic across the whole raven ecosystem (#134, @Arsalaan-Alam)
 - Add `Nx_io.save_txt` / `Nx_io.load_txt` with NumPy-compatible formatting, comments, and dtype support (#120, @six-shot)
-- Optimize `multi_dot` for matrix chains, reducing intermediate allocations and improving performance (@tmattio)
-- Add public `index_put` function for indexed updates (@tmattio)
-- Clarify `reshape` documentation to match its view-only semantics (@tmattio)
-- Provide `nx.top`, `rune.top`, and `hugin.top` libraries that auto-install pretty printers in the OCaml toplevel and update Quill to load them (@tmattio)
-- Add `ifill` for explicit in-place fills and make `fill` return a copied tensor (@tmattio)
-- Speed up contiguous elementwise ops via vectorized loops (@tmattio)
-- Fast-path contiguous single-axis reductions to avoid iterator fallback (@tmattio)
-- Speed up float reductions with contiguous multi-axis fast paths (@tmattio)
-- Fast-path padding-free `unfold` to lower conv2d overhead (@tmattio)
-- Move neural-network operations (softmax, log_softmax, relu, gelu, silu, sigmoid, tanh) from Kaun to Nx (@tmattio)
+- Optimize `multi_dot` for matrix chains, reducing intermediate allocations and improving performance
+- Add public `index_put` function for indexed updates
+- Clarify `reshape` documentation to match its view-only semantics
+- Provide `nx.top`, `rune.top`, and `hugin.top` libraries that auto-install pretty printers in the OCaml toplevel and update Quill to load them
+- Add `ifill` for explicit in-place fills and make `fill` return a copied tensor
+- Speed up contiguous elementwise ops via vectorized loops
+- Fast-path contiguous single-axis reductions to avoid iterator fallback
+- Speed up float reductions with contiguous multi-axis fast paths
+- Fast-path padding-free `unfold` to lower conv2d overhead
+- Move neural-network operations (softmax, log_softmax, relu, gelu, silu, sigmoid, tanh) from Kaun to Nx
 - Add public `conjugate` function for complex number conjugation (#125, @Arsalaan-Alam)
 - Fix complex vdot to conjugate first tensor before multiplication, ensuring correct mathematical behavior (#123, @Arsalaan-Alam)
 - Update comparison and conditional operations to use boolean tensors (#115, @nirnayroy)
 - Add support for rcond parameter and underdetermined systems to `lstsq` (#102, @Shocker444)
 - Fix `matrix_rank`/`pinv` Hermitian fast paths to use eigen-decomposition and match NumPy for complex inputs (#96, @six-shot, @tmattio)
-- Optimize matmul BLAS dispatch for strided tensors, improving matrix multiplication performance (@tmattio)
+- Optimize matmul BLAS dispatch for strided tensors, improving matrix multiplication performance
 - Fix slow builds reported since alpha1 (#88, @tmattio)
-- Fix macOS ARM crash when loading extended bigarray kinds (@tmattio)
+- Fix macOS ARM crash when loading extended bigarray kinds
 - Add float16 and bfloat16 support to safetensors I/O, including precise conversions that preserve denormals/NaNs (#84, @six-shot, @tmattio)
-- Refined `View` internals for leaner contiguity checks and stride handling, cutting redundant materialization on hot paths (@tmattio)
-- Merge `Lazy_view` into the core `View` API so movement ops operate on a single composed view (@tmattio)
-- Documented the reworked `View` interface (@tmattio)
-- Documented the `Symbolic_shape` interface (@tmattio)
+- Refined `View` internals for leaner contiguity checks and stride handling, cutting redundant materialization on hot paths
+- Merge `Lazy_view` into the core `View` API so movement ops operate on a single composed view
+- Documented the reworked `View` interface
+- Documented the `Symbolic_shape` interface
 - Added Accelerate framework flag when compiling on macOS, fixing issues in some environments (#129, @nirnayroy)
 
 ### Hugin
 
 - Fix random `SIGBUS`/bus errors on macOS when closing `Hugin.show` windows by
-  destroying SDL windows with the correct pointer in the finalizer. (@tmattio)
-- Let `Hugin.show` windows close cleanly via the window button or `Esc`/`q`, avoiding frozen macOS REPL sessions (@tmattio)
+  destroying SDL windows with the correct pointer in the finalizer.
+- Let `Hugin.show` windows close cleanly via the window button or `Esc`/`q`, avoiding frozen macOS REPL sessions
 
 ### Rune
 
-- Add `Rune.no_grad` and `Rune.detach` to mirror JAX stop-gradient semantics (@tmattio)
-- Improve gradient performance slightly by replace the reverse-mode tape's linear PhysicalTbl with an identity hash table (@tmattio)
+- Add `Rune.no_grad` and `Rune.detach` to mirror JAX stop-gradient semantics
+- Improve gradient performance slightly by replace the reverse-mode tape's linear PhysicalTbl with an identity hash table
 - Fix `Rune.Rng.shuffle` flattening outputs for multi-dimensional tensors; the
-  shuffle now gathers along axis 0 and keeps shapes intact (@tmattio)
+  shuffle now gathers along axis 0 and keeps shapes intact
 - Replace `Rune.Rng.truncated_normal` clipping with rejection sampling so
-  samples stay inside the requested interval without boundary spikes (@tmattio)
+  samples stay inside the requested interval without boundary spikes
 - Add support for categorical sampling with `Rune.Rng.categorical` (#89, @nirnayroy)
 - Allow plain `llvm-config` in discovery, fixing build in some platforms (#71, @stepbrobd)
 
 ### Kaun
 
 - Added Similarity and Polysemy analysis to the BERT example (#137, @nirnayroy)
-- Support attention masks via the new `Kaun.Attention` module (@tmattio)
-- Support loading sharded Hugging Face safetensors (@tmattio)
-- Fix BERT and GPT‑2 model loading (@tmattio)
-- API simplification: removed type parameters from public types; `Ptree` now supports mixed‑dtype trees via packed tensors with typed getters. (@tmattio)
-- Checkpointing overhaul: versioned `Train_state` with schema tagging, explicit `Checkpoint.{Snapshot,Artifact,Manifest,Repository}` (retention, tags, metadata), and simple save/load helpers for snapshots and params. (@tmattio)
-- Overhaul dataset combinators: derive tensor specs from Rune dtype, fix sampling/window bugs, validate weighted sampling, and respect `drop_remainder` (@tmattio)
-- Make dataset `prefetch` truly asynchronous with background domains and allow reusing an external Domainslib pool via `parallel_map ~pool` (@tmattio)
-- Use `Dataset.iter` for epoch batches to reduce overhead (@tmattio)
+- Support attention masks via the new `Kaun.Attention` module
+- Support loading sharded Hugging Face safetensors
+- Fix BERT and GPT‑2 model loading
+- API simplification: removed type parameters from public types; `Ptree` now supports mixed‑dtype trees via packed tensors with typed getters.
+- Checkpointing overhaul: versioned `Train_state` with schema tagging, explicit `Checkpoint.{Snapshot,Artifact,Manifest,Repository}` (retention, tags, metadata), and simple save/load helpers for snapshots and params.
+- Overhaul dataset combinators: derive tensor specs from Rune dtype, fix sampling/window bugs, validate weighted sampling, and respect `drop_remainder`
+- Make dataset `prefetch` truly asynchronous with background domains and allow reusing an external Domainslib pool via `parallel_map ~pool`
+- Use `Dataset.iter` for epoch batches to reduce overhead
 - Update BERT and GPT-2 tokenizer cache to use `Nx.Cache` for consistent cache directory resolution (#134, @Arsalaan-Alam)
 - Honor text dataset encodings via incremental Uutf decoding (#122, @Satarupa22-SD).
-- Preserve empty sequential modules when unflattening so indices stay aligned for checkpoint round-tripping (@tmattio)
-- Prevent `Training.fit`/`evaluate` from consuming entire datasets eagerly and fail fast when a dataset yields no batches, avoiding hangs and division-by-zero crashes (@tmattio)
-- Allow metric history to tolerate metrics that appear or disappear between epochs so dynamic metric sets no longer raise during training (@tmattio)
-- Make `Optimizer.clip_by_global_norm` robust to zero gradients and empty parameter trees to avoid NaNs during training (@tmattio)
+- Preserve empty sequential modules when unflattening so indices stay aligned for checkpoint round-tripping
+- Prevent `Training.fit`/`evaluate` from consuming entire datasets eagerly and fail fast when a dataset yields no batches, avoiding hangs and division-by-zero crashes
+- Allow metric history to tolerate metrics that appear or disappear between epochs so dynamic metric sets no longer raise during training
+- Make `Optimizer.clip_by_global_norm` robust to zero gradients and empty parameter trees to avoid NaNs during training
 - Split CSV loader into `from_csv` and `from_csv_with_labels` to retain labels when requested (#114, @Satarupa22-SD)
 - Implement AUC-ROC and AUC-PR in Kaun metrics and simplify their signatures (#124, #131, @Shocker444)
-- Add mean absolute percentage error, explained variance, R² (with optional adjustment), KL-divergence, and top-k accuracy to Kaun metrics (@tmattio)
-- Add NDCG, MAP, and MRR ranking metrics to Kaun metrics (@tmattio)
-- Add BLEU, ROUGE, and METEOR metrics to Kaun for pre-tokenized sequences, removing tokenizer dependencies (@tmattio)
-- Add SSIM, IoU, and Dice metrics for vision workloads in Kaun (@tmattio)
+- Add mean absolute percentage error, explained variance, R² (with optional adjustment), KL-divergence, and top-k accuracy to Kaun metrics
+- Add NDCG, MAP, and MRR ranking metrics to Kaun metrics
+- Add BLEU, ROUGE, and METEOR metrics to Kaun for pre-tokenized sequences, removing tokenizer dependencies
+- Add SSIM, IoU, and Dice metrics for vision workloads in Kaun
 
 ### Talon
 
-- Remove automatic sentinel-based null detection for numeric columns; explicit masks (via [_opt] constructors) now define missing data semantics (@tmattio)
-- Replace join nested loops with hashed join indices, cutting lookup from O(n·m) to near O(n) (@tmattio)
-- Reuse a shared Nx-based column reindexer so filter/sample paths avoid repeated array copies (@tmattio)
-- Fix `fillna` to honor column null masks and replacements, restoring expected nullable semantics (@tmattio)
-- Preserve null masks when reindexing during joins so sentinel values remain valid data (@tmattio)
-- Handle numeric index columns in `pivot`, preventing distinct keys from collapsing into a single bucket (@tmattio)
-- Respect null masks when serializing numeric columns to JSON, emitting JSON `null` instead of sentinel values (@tmattio)
+- Remove automatic sentinel-based null detection for numeric columns; explicit masks (via [_opt] constructors) now define missing data semantics
+- Replace join nested loops with hashed join indices, cutting lookup from O(n·m) to near O(n)
+- Reuse a shared Nx-based column reindexer so filter/sample paths avoid repeated array copies
+- Fix `fillna` to honor column null masks and replacements, restoring expected nullable semantics
+- Preserve null masks when reindexing during joins so sentinel values remain valid data
+- Handle numeric index columns in `pivot`, preventing distinct keys from collapsing into a single bucket
+- Respect null masks when serializing numeric columns to JSON, emitting JSON `null` instead of sentinel values
 - Detect big integers as int64 in Talon CSV loader (#121, @Arsalaan-Alam)
 - Allow forcing column types in Talon JSON loader (#104, @nirnayroy)
 - Add documentation to compare Talon and Pandas (#154, Satarupa22-SD)
 
 ### Saga
 
-- Remove legacy `Normalizers.nmt` and `Normalizers.precompiled` constructors (and their JSON serializers) so the public surface only advertises supported normalizers (@tmattio)
-- Tighten template processor JSON parsing: require integer type ids, drop the legacy special-token list format, and ensure multi-id special tokens round-trip with the new record fields (@tmattio)
-- Make tokenizer JSON loading tolerant of HuggingFace quirks (missing `model.type`, string-encoded merges), restoring compatibility with upstream `tokenizer.json` files (@tmattio)
-- Cache byte-level encode/decode lookup tables to avoid rebuilding them during tokenization, trimming avoidable allocations (@tmattio)
-- Skip BPE dropout sampling when dropout is disabled, removing redundant RNG work on common hot paths (@tmattio)
-- Fix Unigram tokenization so longest matches are emitted without aborting the sequence when a vocab hit occurs (@tmattio)
-- Recompute pad token ids when the pad special string changes, preventing padding with stale ids (@tmattio)
+- Remove legacy `Normalizers.nmt` and `Normalizers.precompiled` constructors (and their JSON serializers) so the public surface only advertises supported normalizers
+- Tighten template processor JSON parsing: require integer type ids, drop the legacy special-token list format, and ensure multi-id special tokens round-trip with the new record fields
+- Make tokenizer JSON loading tolerant of HuggingFace quirks (missing `model.type`, string-encoded merges), restoring compatibility with upstream `tokenizer.json` files
+- Cache byte-level encode/decode lookup tables to avoid rebuilding them during tokenization, trimming avoidable allocations
+- Skip BPE dropout sampling when dropout is disabled, removing redundant RNG work on common hot paths
+- Fix Unigram tokenization so longest matches are emitted without aborting the sequence when a vocab hit occurs
+- Recompute pad token ids when the pad special string changes, preventing padding with stale ids
 - Fix Unigram `token_to_id`/`id_to_token` vocabulary lookups (#117, @RidwanAdebosin)
-- Optimize `Pre_tokenizers.whitespace` to reduce allocations and improve tokenization performance (@tmattio)
-- Simplify tokenizers interface (@tmattio)
+- Optimize `Pre_tokenizers.whitespace` to reduce allocations and improve tokenization performance
+- Simplify tokenizers interface
 
 ### Sowilo
 
-- Add `resize` (nearest & bilinear) that works for 2D, batched, and NHWC tensors (@tmattio)
-- Update grayscale conversion and RGB/BGR channel swaps to run entirely on Rune ops, keeping batched inputs compatible with JIT backends (@tmattio)
-- Make `median_blur` compute the true median so salt-and-pepper noise is removed as expected (@tmattio)
-- Fix `erode`/`dilate` so custom structuring elements (e.g. cross vs. square) and batched tensors produce the correct morphology result (@tmattio)
+- Add `resize` (nearest & bilinear) that works for 2D, batched, and NHWC tensors
+- Update grayscale conversion and RGB/BGR channel swaps to run entirely on Rune ops, keeping batched inputs compatible with JIT backends
+- Make `median_blur` compute the true median so salt-and-pepper noise is removed as expected
+- Fix `erode`/`dilate` so custom structuring elements (e.g. cross vs. square) and batched tensors produce the correct morphology result
 
 ### Fehu
 
 - Added snapshot-based save/load for DQN and REINFORCE agents (#127, @RidwanAdebosin, @tmattio)
-- Added typed `Render` payloads with enforced `render_mode` selection in `Env.create`, auto human-mode rendering, and vectorized `Env.render` accessors so environments consistently expose frames for downstream tooling (@tmattio)
-- Introduced the `Fehu_visualize` library with ffmpeg/gif/W&B sinks, overlay combinators, rollout/evaluation recorders, and video wrappers for single and vectorized environments, providing a cohesive visualization stack for Fehu (@tmattio)
-- Added a `Fehu.Policy` helper module (random/deterministic/greedy) and sink `with_*` guards so visualization sinks handle directory creation and cleanup automatically (@tmattio)
-- Added `Buffer.Replay.sample_tensors` to streamline batched training loops and exploration handling (@tmattio)
-- Reworked `Fehu_algorithms.Dqn` around `init`/`step`/`train` primitives with functional state, warmup control, and snapshotting helpers (@tmattio)
-- Rebuilt `Fehu_algorithms.Reinforce` on the same `init`/`step`/`train` interface with optional baselines, tensor-based rollouts, snapshot save/load, and updated tests/examples/docs using the new workflow (@tmattio)
-- Upgraded the GridWorld environment to return ANSI and RGB-array frames using the new render types, and updated the DQN example to optionally record pre- and post-training rollouts via `FEHU_DQN_RECORD_DIR` using `Fehu_visualize` sinks (@tmattio)
-- Reworked space sampling to return `(value, next_rng)` and split keys internally, fixing correlated draws in Box/Multi-discrete/Tuple/Dict/Sequence/Text samplers while adding `Space.boundary_values` for deterministic compatibility checks (@tmattio)
-- Extended vectorized environments to reuse space boundary probes and now store structured `final_observation` payloads in `Info`, improving downstream consumption (@tmattio)
-- Added `Buffer.Replay.add_many` and `Buffer.Replay.sample_arrays`, preserved backing storage on `clear`, and exposed struct-of-arrays batches for vectorised learners (@tmattio)
-- Tightened `Env.create` diagnostics with contextual error messages and an optional `~validate_transition` hook for custom invariants (@tmattio)
-- Enriched `Wrapper` utilities with `map_info`, Box `clip_action`/`clip_observation`, and time-limit info reporting elapsed steps (@tmattio)
-- Upgraded `Info` values to carry int/float/bool arrays with stable JSON round-tripping (handling NaN/∞) and sorted metadata serialization for deterministic diffs (@tmattio)
-- Improved training helpers: Welford-based normalization with optional unbiased variance, documented `done = terminated || truncated`, and returned `nan` when explained variance is undefined (@tmattio)
-- Treat time-limit truncations as terminals when computing rollout advantages and expose the `truncated` flag in buffer steps (@tmattio)
-- Require callers of `Training.compute_gae` to pass final bootstrapping values and ensure `Training.evaluate` feeds the current observation to policies (@tmattio)
-- Allow `Space.Sequence.create` to omit `max_length`, keeping sequences unbounded above while preserving validation and sampling semantics (@tmattio)
-- Validate vectorized environments by round-tripping sample actions/observations across every instance, preventing incompatible spaces from slipping through (@tmattio)
+- Added typed `Render` payloads with enforced `render_mode` selection in `Env.create`, auto human-mode rendering, and vectorized `Env.render` accessors so environments consistently expose frames for downstream tooling
+- Introduced the `Fehu_visualize` library with ffmpeg/gif/W&B sinks, overlay combinators, rollout/evaluation recorders, and video wrappers for single and vectorized environments, providing a cohesive visualization stack for Fehu
+- Added a `Fehu.Policy` helper module (random/deterministic/greedy) and sink `with_*` guards so visualization sinks handle directory creation and cleanup automatically
+- Added `Buffer.Replay.sample_tensors` to streamline batched training loops and exploration handling
+- Reworked `Fehu_algorithms.Dqn` around `init`/`step`/`train` primitives with functional state, warmup control, and snapshotting helpers
+- Rebuilt `Fehu_algorithms.Reinforce` on the same `init`/`step`/`train` interface with optional baselines, tensor-based rollouts, snapshot save/load, and updated tests/examples/docs using the new workflow
+- Upgraded the GridWorld environment to return ANSI and RGB-array frames using the new render types, and updated the DQN example to optionally record pre- and post-training rollouts via `FEHU_DQN_RECORD_DIR` using `Fehu_visualize` sinks
+- Reworked space sampling to return `(value, next_rng)` and split keys internally, fixing correlated draws in Box/Multi-discrete/Tuple/Dict/Sequence/Text samplers while adding `Space.boundary_values` for deterministic compatibility checks
+- Extended vectorized environments to reuse space boundary probes and now store structured `final_observation` payloads in `Info`, improving downstream consumption
+- Added `Buffer.Replay.add_many` and `Buffer.Replay.sample_arrays`, preserved backing storage on `clear`, and exposed struct-of-arrays batches for vectorised learners
+- Tightened `Env.create` diagnostics with contextual error messages and an optional `~validate_transition` hook for custom invariants
+- Enriched `Wrapper` utilities with `map_info`, Box `clip_action`/`clip_observation`, and time-limit info reporting elapsed steps
+- Upgraded `Info` values to carry int/float/bool arrays with stable JSON round-tripping (handling NaN/∞) and sorted metadata serialization for deterministic diffs
+- Improved training helpers: Welford-based normalization with optional unbiased variance, documented `done = terminated || truncated`, and returned `nan` when explained variance is undefined
+- Treat time-limit truncations as terminals when computing rollout advantages and expose the `truncated` flag in buffer steps
+- Require callers of `Training.compute_gae` to pass final bootstrapping values and ensure `Training.evaluate` feeds the current observation to policies
+- Allow `Space.Sequence.create` to omit `max_length`, keeping sequences unbounded above while preserving validation and sampling semantics
+- Validate vectorized environments by round-tripping sample actions/observations across every instance, preventing incompatible spaces from slipping through
 - Finish clipped value loss support in Fehu.Training (#119, @nirnayroy)
 
 ### Nx-datasets
 
 - Migrate to `Nx.Cache` for cache directory resolution, enabling consistent behavior. (#133, @Arsalaan-Alam)
 - Fix cache directory resolution to respect `RAVEN_CACHE_ROOT` (or fall back to `XDG_CACHE_HOME`/`HOME`), allowing custom cache locations. (#128, @Arsalaan-Alam)
-- Switch CIFAR-10 loader to the binary archive so parsing succeeds again (@tmattio)
-- Add a CIFAR-10 example (@tmattio)
-- Standardize dataset examples on `Logs` (@tmattio)
+- Switch CIFAR-10 loader to the binary archive so parsing succeeds again
+- Add a CIFAR-10 example
+- Standardize dataset examples on `Logs`
 - Use `Logs` for dataset loader logging (#95, @Satarupa22-SD)
 
 ## [1.0.0~alpha1] - 2025-10-02
