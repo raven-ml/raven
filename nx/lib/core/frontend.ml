@@ -6500,6 +6500,118 @@ module Make (B : Backend_intf.S) = struct
   let col2im ~output_size ~kernel_size ~stride ~dilation ~padding x =
     B.fold x ~output_size ~kernel_size ~stride ~dilation ~padding
 
+  (* --- scipy-style correlate / convolve --- *)
+
+  let correlate_padding ~mode input_spatial k_shape =
+    let k = Array.length k_shape in
+    match mode with
+    | `Valid -> Array.make k (0, 0)
+    | `Full ->
+        Array.init k (fun i ->
+            let p = k_shape.(i) - 1 in
+            (p, p))
+    | `Same ->
+        Array.init k (fun i ->
+            let total = k_shape.(i) - 1 in
+            let _ = input_spatial.(i) in
+            (total / 2, total - (total / 2)))
+
+  let correlate ?(padding = `Valid) x kernel =
+    let k_rank = ndim kernel in
+    let x_rank = ndim x in
+    if x_rank < k_rank then
+      Error.invalid ~op:"correlate" ~what:"input"
+        ~reason:(Printf.sprintf "rank %d < kernel rank %d" x_rank k_rank)
+        ();
+    let k_shape = shape kernel in
+    let input_spatial = Array.sub (shape x) (x_rank - k_rank) k_rank in
+    let pad_pairs = correlate_padding ~mode:padding input_spatial k_shape in
+    let ones = Array.make k_rank 1 in
+    (* unfold: (leading..., spatial...) -> (leading..., kernel_prod, L) *)
+    let x_unf =
+      B.unfold x ~kernel_size:k_shape ~stride:ones ~dilation:ones
+        ~padding:pad_pairs
+    in
+    (* x_unf: (leading..., kernel_prod, L) *)
+    let x_unf_ndim = ndim x_unf in
+    let kernel_prod = (shape x_unf).(x_unf_ndim - 2) in
+    let l = (shape x_unf).(x_unf_ndim - 1) in
+    (* flatten kernel to (kernel_prod, 1) for broadcasting *)
+    let k_flat = reshape [| kernel_prod; 1 |] kernel in
+    (* multiply and reduce over kernel_prod axis *)
+    let prod = mul x_unf k_flat in
+    let result = sum prod ~axes:[ x_unf_ndim - 2 ] in
+    (* reshape L back to spatial output dims *)
+    let leading_shape = Array.sub (shape x) 0 (x_rank - k_rank) in
+    let out_spatial =
+      Array.init k_rank (fun i ->
+          let padded =
+            input_spatial.(i) + fst pad_pairs.(i) + snd pad_pairs.(i)
+          in
+          padded - k_shape.(i) + 1)
+    in
+    let _ = l in
+    reshape (Array.concat [ leading_shape; out_spatial ]) result
+
+  let convolve ?(padding = `Valid) x kernel =
+    let k_rank = ndim kernel in
+    let all_axes = List.init k_rank Fun.id in
+    let flipped = flip ~axes:all_axes kernel in
+    correlate ~padding x flipped
+
+  (* --- sliding window filters --- *)
+
+  let maximum_filter ~kernel_size ?stride x =
+    let k_rank = Array.length kernel_size in
+    let stride = match stride with Some s -> s | None -> kernel_size in
+    let ones = Array.make k_rank 1 in
+    let zeros = Array.make k_rank (0, 0) in
+    let x_unf = B.unfold x ~kernel_size ~stride ~dilation:ones ~padding:zeros in
+    let x_unf_ndim = ndim x_unf in
+    let reduced = max x_unf ~axes:[ x_unf_ndim - 2 ] ~keepdims:false in
+    let x_rank = ndim x in
+    let leading_shape = Array.sub (shape x) 0 (x_rank - k_rank) in
+    let input_spatial = Array.sub (shape x) (x_rank - k_rank) k_rank in
+    let out_spatial =
+      Array.init k_rank (fun i ->
+          ((input_spatial.(i) - kernel_size.(i)) / stride.(i)) + 1)
+    in
+    reshape (Array.concat [ leading_shape; out_spatial ]) reduced
+
+  let minimum_filter ~kernel_size ?stride x =
+    let k_rank = Array.length kernel_size in
+    let stride = match stride with Some s -> s | None -> kernel_size in
+    let ones = Array.make k_rank 1 in
+    let zeros = Array.make k_rank (0, 0) in
+    let x_unf = B.unfold x ~kernel_size ~stride ~dilation:ones ~padding:zeros in
+    let x_unf_ndim = ndim x_unf in
+    let reduced = min x_unf ~axes:[ x_unf_ndim - 2 ] ~keepdims:false in
+    let x_rank = ndim x in
+    let leading_shape = Array.sub (shape x) 0 (x_rank - k_rank) in
+    let input_spatial = Array.sub (shape x) (x_rank - k_rank) k_rank in
+    let out_spatial =
+      Array.init k_rank (fun i ->
+          ((input_spatial.(i) - kernel_size.(i)) / stride.(i)) + 1)
+    in
+    reshape (Array.concat [ leading_shape; out_spatial ]) reduced
+
+  let uniform_filter ~kernel_size ?stride x =
+    let k_rank = Array.length kernel_size in
+    let stride = match stride with Some s -> s | None -> kernel_size in
+    let ones = Array.make k_rank 1 in
+    let zeros = Array.make k_rank (0, 0) in
+    let x_unf = B.unfold x ~kernel_size ~stride ~dilation:ones ~padding:zeros in
+    let x_unf_ndim = ndim x_unf in
+    let reduced = mean x_unf ~axes:[ x_unf_ndim - 2 ] in
+    let x_rank = ndim x in
+    let leading_shape = Array.sub (shape x) 0 (x_rank - k_rank) in
+    let input_spatial = Array.sub (shape x) (x_rank - k_rank) k_rank in
+    let out_spatial =
+      Array.init k_rank (fun i ->
+          ((input_spatial.(i) - kernel_size.(i)) / stride.(i)) + 1)
+    in
+    reshape (Array.concat [ leading_shape; out_spatial ]) reduced
+
   let calculate_padding_for_mode input_spatial_shape ~k_s ~s_s ~d_s
       ~(mode : [< `Full | `Valid | `Same ])
       ~(op_type : [ `Convolution | `Correlation ]) =

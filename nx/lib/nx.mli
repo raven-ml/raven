@@ -3501,6 +3501,43 @@ val col2im :
       - : int array = [|1; 1; 4; 4|]
     ]} *)
 
+(** {2:correlate Cross-correlation and Convolution} *)
+
+val correlate :
+  ?padding:[ `Full | `Same | `Valid ] -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [correlate ?padding x kernel] computes N-dimensional cross-correlation (no
+    kernel flip).
+
+    Spatial dimensions [K = ndim kernel]. Leading dimensions of [x] beyond [K]
+    are batch dimensions. [padding] defaults to [`Valid]. *)
+
+val convolve :
+  ?padding:[ `Full | `Same | `Valid ] -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [convolve ?padding x kernel] flips the kernel along all axes then
+    correlates. Same as {!correlate} with kernel reversed. *)
+
+(** {2:filters Sliding Window Filters} *)
+
+val maximum_filter :
+  kernel_size:int array -> ?stride:int array -> ('a, 'b) t -> ('a, 'b) t
+(** [maximum_filter ~kernel_size ?stride x] sliding-window max over the last [K]
+    dimensions. [stride] defaults to [kernel_size]. *)
+
+val minimum_filter :
+  kernel_size:int array -> ?stride:int array -> ('a, 'b) t -> ('a, 'b) t
+(** [minimum_filter ~kernel_size ?stride x] sliding-window min over the last [K]
+    dimensions. [stride] defaults to [kernel_size]. *)
+
+val uniform_filter :
+  kernel_size:int array -> ?stride:int array -> (float, 'b) t -> (float, 'b) t
+(** [uniform_filter ~kernel_size ?stride x] sliding-window mean over the last
+    [K] dimensions. [stride] defaults to [kernel_size]. *)
+
+(** {2 Neural Network Convolution and Pooling}
+
+    NN-style operations with groups, stride, dilation, and bias. See
+    {!module:Kaun.Fn} for the preferred NN API. *)
+
 val correlate1d :
   ?groups:int ->
   ?stride:int ->
