@@ -6,7 +6,7 @@
  (deps
   (source_tree templates)
   (source_tree site)
-  (source_tree docs)
+  (source_tree ../doc)
   (source_tree ../packages/nx/doc)
   (source_tree ../packages/rune/doc)
   (source_tree ../packages/kaun/doc)
