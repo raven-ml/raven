@@ -831,8 +831,50 @@ let reduce_min (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
         ~axes ~keepdims
   | _ -> Error.invalid ~op:"buffer" ~what:"unsupported dtype" ()
 
-let associative_scan ~out:_ ~axis:_ ~op:_ _ =
-  Error.invalid ~op:"associative_scan" ~what:"not implemented" ()
+let associative_scan (type a b) ~(out : (a, b) t) ~(axis : int)
+    ~(op : [ `Sum | `Prod | `Max | `Min ]) (x : (a, b) t) : unit =
+  let in_shape = shape x.view in
+  let out_shape = shape out.view in
+  if in_shape <> out_shape then
+    Error.shape_mismatch ~op:"associative_scan" ~expected:in_shape
+      ~actual:out_shape ~hint:"output must have the same shape as input" ();
+  let rank = Array.length in_shape in
+  if rank = 0 then
+    Error.invalid ~op:"associative_scan" ~what:"tensor"
+      ~reason:"requires rank >= 1" ();
+  if axis < 0 || axis >= rank then
+    Error.axis_out_of_bounds ~op:"associative_scan" ~axis ~ndim:rank ();
+  let op_name =
+    match op with `Sum -> "sum" | `Prod -> "prod" | `Max -> "max" | `Min -> "min"
+  in
+  let unsupported_for_dtype dtype =
+    Error.invalid ~op:"associative_scan" ~what:"operation"
+      ~reason:
+        (Printf.sprintf "%s not supported for dtype %s" op_name
+           (Dtype.to_string dtype))
+      ()
+  in
+  match (out.buffer, x.buffer) with
+  | Float64 out_arr, Float64 in_arr ->
+      Op_associative_scan.scan_float64 out.context.pool ~out_arr ~in_arr
+        ~shape:in_shape ~axis ~in_view:x.view ~out_view:out.view ~op
+  | Float32 out_arr, Float32 in_arr ->
+      Op_associative_scan.scan_float32 out.context.pool ~out_arr ~in_arr
+        ~shape:in_shape ~axis ~in_view:x.view ~out_view:out.view ~op
+  | Int8 out_arr, Int8 in_arr ->
+      Op_associative_scan.scan_int8 out.context.pool ~out_arr ~in_arr
+        ~shape:in_shape ~axis ~in_view:x.view ~out_view:out.view ~op
+  | Int16 out_arr, Int16 in_arr ->
+      Op_associative_scan.scan_int16 out.context.pool ~out_arr ~in_arr
+        ~shape:in_shape ~axis ~in_view:x.view ~out_view:out.view ~op
+  | Int32 out_arr, Int32 in_arr ->
+      Op_associative_scan.scan_int32 out.context.pool ~out_arr ~in_arr
+        ~shape:in_shape ~axis ~in_view:x.view ~out_view:out.view ~op
+  | Int64 out_arr, Int64 in_arr ->
+      Op_associative_scan.scan_int64 out.context.pool ~out_arr ~in_arr
+        ~shape:in_shape ~axis ~in_view:x.view ~out_view:out.view ~op
+  | Bool _, Bool _ -> unsupported_for_dtype out.dtype
+  | _ -> Error.invalid ~op:"associative_scan" ~what:"unsupported dtype" ()
 
 let argmax ~out:_ ~axis:_ ~keepdims:_ _ =
   Error.invalid ~op:"argmax" ~what:"not implemented" ()
@@ -1143,7 +1185,32 @@ let assign (type a b) (dst : (a, b) t) (src : (a, b) t) : unit =
     for i = 0 to n - 1 do d.(i) <- s.(i) done
   | _ -> Error.invalid ~op:"assign" ~what:"unsupported dtype" ()
 
-let threefry ~out:_ _ _ = Error.invalid ~op:"threefry" ~what:"not implemented" ()
+let threefry ~(out : (int32, Dtype.int32_elt) t)
+    (key : (int32, Dtype.int32_elt) t) (counter : (int32, Dtype.int32_elt) t) :
+    unit =
+  let key_shape = shape key.view in
+  let ctr_shape = shape counter.view in
+  let out_shape = shape out.view in
+  if key_shape <> ctr_shape then
+    Error.shape_mismatch ~op:"threefry" ~expected:key_shape ~actual:ctr_shape
+      ~hint:"key and counter must have the same shape" ();
+  if out_shape <> ctr_shape then
+    Error.shape_mismatch ~op:"threefry" ~expected:ctr_shape ~actual:out_shape
+      ~hint:"output tensor must match counter shape" ();
+  let rank = Array.length key_shape in
+  if rank = 0 then
+    Error.invalid ~op:"threefry" ~what:"tensor"
+      ~reason:"requires rank >= 1 with last dimension size 2" ();
+  let last_dim = rank - 1 in
+  if key_shape.(last_dim) <> 2 then
+    Error.invalid ~op:"threefry" ~what:"shape"
+      ~reason:"last dimension must be 2 for Threefry2x32" ();
+  match (out.buffer, key.buffer, counter.buffer) with
+  | Int32 out_arr, Int32 key_arr, Int32 ctr_arr ->
+      Op_threefry.threefry_int32 out.context.pool ~out_arr ~key_arr ~ctr_arr
+        ~shape:key_shape ~key_view:key.view ~ctr_view:counter.view
+        ~out_view:out.view
+  | _ -> assert false
 
 let gather (type a b) ~(out : (a, b) t) (data : (a, b) t)
     (indices : (int32, Dtype.int32_elt) t) ~(axis : int) =
