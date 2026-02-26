@@ -108,3 +108,26 @@ let ensure_decompressed_gz ~gz_path ~target_path =
   else (
     Log.warn (fun m -> m "Compressed file %s not found" gz_path);
     false)
+
+let ensure_extracted_tar_gz ~tar_gz_path ~target_dir ~check_file =
+  if Sys.file_exists check_file then (
+    Log.debug (fun m -> m "Found %s" check_file);
+    true)
+  else if Sys.file_exists tar_gz_path then (
+    Log.info (fun m -> m "Extracting %s..." tar_gz_path);
+    mkdir_p target_dir;
+    let cmd =
+      Printf.sprintf "tar -xzf %s -C %s"
+        (Filename.quote tar_gz_path)
+        (Filename.quote target_dir)
+    in
+    match Unix.system cmd with
+    | Unix.WEXITED 0 ->
+        Log.info (fun m -> m "Extracted to %s" target_dir);
+        true
+    | _ ->
+        Log.warn (fun m -> m "Failed to extract %s" tar_gz_path);
+        false)
+  else (
+    Log.warn (fun m -> m "Archive %s not found" tar_gz_path);
+    false)

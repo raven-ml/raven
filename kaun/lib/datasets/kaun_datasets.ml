@@ -35,3 +35,27 @@ let mnist ?(fashion = false) ?(normalize = true) ?(data_format = `NCHW) () =
   let train = make_pipeline train_images train_labels in
   let test = make_pipeline test_images test_labels in
   (train, test)
+
+let cifar10 ?(normalize = true) ?(data_format = `NCHW) () =
+  let (train_images, train_labels), (test_images, test_labels) =
+    Cifar10.load ()
+  in
+  let make_pipeline images labels =
+    (* images: (N, 3, 32, 32) uint8 Genarray, labels: (N,) uint8 Array1 *)
+    let x_nx = Nx.of_bigarray images |> Nx.cast Nx.float32 in
+    let x_nx = if normalize then Nx.div_s x_nx 255.0 else x_nx in
+    let x = Rune.of_nx x_nx in
+    let x =
+      match data_format with
+      | `NCHW -> x
+      | `NHWC -> Rune.transpose x ~axes:[ 0; 2; 3; 1 ]
+    in
+    let y =
+      Nx.of_bigarray (Bigarray.genarray_of_array1 labels)
+      |> Nx.cast Nx.float32 |> Rune.of_nx
+    in
+    Kaun.Data.of_tensors (x, y)
+  in
+  let train = make_pipeline train_images train_labels in
+  let test = make_pipeline test_images test_labels in
+  (train, test)
