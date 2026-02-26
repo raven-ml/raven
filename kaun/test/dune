@@ -1,25 +1,15 @@
 (tests
  (names
-  test_checkpoint
-  test_checkpoint_tree
   test_ptree
-  test_dataset
-  test_metrics
-  test_optimizer
-  test_training
-  test_gradients_vs_jax
-  test_huggingface)
+  test_init
+  test_loss
+  test_layer
+  test_optim
+  test_grad
+  test_attention
+  test_data
+  test_train
+  test_metric
+  test_checkpoint)
  (package kaun)
- (libraries
-  rune
-  nx
-  nx.io
-  nx.core
-  kaun
-  kaun.huggingface
-  kaun.models
-  nx_buffer
-  jsont
-  jsont.bytesrw
-  unix
-  windtrap))
+ (libraries rune nx nx.core nx.io kaun windtrap))

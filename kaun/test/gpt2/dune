@@ -1,6 +1,0 @@
-(test
- (name test_gpt2_compare_with_python)
- (package kaun)
- (enabled_if false)
- (libraries rune nx nx.core kaun kaun.models brot windtrap)
- (deps reference_gpt2_output.py))

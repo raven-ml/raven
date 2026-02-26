@@ -4,174 +4,171 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
+module Checkpoint = Kaun.Checkpoint
 module Ptree = Kaun.Ptree
+module Optim = Kaun.Optim
 
-let test_save_and_load () =
-  let dtype = Rune.float32 in
+let with_tmpfile f =
+  let path = Filename.temp_file "ckpt" ".safetensors" in
+  Fun.protect ~finally:(fun () -> Sys.remove path) (fun () -> f path)
 
-  (* Create some test parameters *)
-  let w = Rune.ones dtype [| 3; 3 |] in
-  let b = Rune.zeros dtype [| 3 |] in
-  let params =
-    Ptree.dict [ ("weight", Ptree.tensor w); ("bias", Ptree.tensor b) ]
-  in
+let to_array t =
+  Rune.to_array (Rune.reshape [| -1 |] (Rune.cast Rune.float32 t))
 
-  (* Save checkpoint to specific file *)
-  let path = "/tmp/test_checkpoint.safetensors" in
-  (* Use the lower-level save_params_file for a single snapshot file *)
-  let module C = Kaun.Checkpoint in
-  (match C.save_params_file ~path ~params with
-  | Ok () -> ()
-  | Error err -> failf "save_params_file failed: %s" (C.error_to_string err));
+(* Checkpoint save/load *)
 
-  (* Load checkpoint from file *)
-  let loaded_params =
-    match C.load_params_file ~path with
-    | Ok params -> params
-    | Error err -> failf "failed to read params: %s" (C.error_to_string err)
-  in
+let test_roundtrip_single_tensor () =
+  with_tmpfile (fun path ->
+      let t =
+        Rune.create Rune.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
+      in
+      let tree = Ptree.tensor t in
+      Checkpoint.save path tree;
+      let loaded = Checkpoint.load path ~like:tree in
+      match loaded with
+      | Ptree.Tensor (Ptree.P lt) ->
+          let vals = to_array lt in
+          equal ~msg:"length" int 6 (Array.length vals);
+          equal ~msg:"first" (float 1e-6) 1.0 vals.(0);
+          equal ~msg:"last" (float 1e-6) 6.0 vals.(5)
+      | _ -> fail "expected Tensor")
 
-  let loaded_fields =
-    Ptree.Dict.fields_exn ~ctx:"loaded params" loaded_params
-  in
-  let loaded_w = Ptree.Dict.get_tensor_exn loaded_fields ~name:"weight" dtype in
-  let loaded_b = Ptree.Dict.get_tensor_exn loaded_fields ~name:"bias" dtype in
-  let weight_equal = Rune.all (Rune.equal w loaded_w) |> Rune.to_array in
-  equal ~msg:"weights match" bool true weight_equal.(0);
-  let bias_equal = Rune.all (Rune.equal b loaded_b) |> Rune.to_array in
-  equal ~msg:"bias matches" bool true bias_equal.(0)
+let test_roundtrip_nested_tree () =
+  with_tmpfile (fun path ->
+      let w = Rune.create Rune.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+      let b = Rune.create Rune.float32 [| 2 |] [| 0.1; 0.2 |] in
+      let tree =
+        Ptree.dict
+          [
+            ( "layer0",
+              Ptree.dict
+                [ ("weight", Ptree.tensor w); ("bias", Ptree.tensor b) ] );
+            ("layer1", Ptree.dict [ ("weight", Ptree.tensor w) ]);
+          ]
+      in
+      Checkpoint.save path tree;
+      let loaded = Checkpoint.load path ~like:tree in
+      let pairs = Ptree.flatten_with_paths loaded in
+      equal ~msg:"num leaves" int 3 (List.length pairs);
+      let names = List.map fst pairs in
+      equal ~msg:"paths" (list string)
+        [ "layer0.weight"; "layer0.bias"; "layer1.weight" ]
+        names)
 
-let test_checkpoint_manager () =
-  let dtype = Rune.float32 in
+let test_roundtrip_list_tree () =
+  with_tmpfile (fun path ->
+      let t0 = Rune.create Rune.float32 [| 3 |] [| 1.; 2.; 3. |] in
+      let t1 = Rune.create Rune.float32 [| 2 |] [| 4.; 5. |] in
+      let tree = Ptree.list [ Ptree.tensor t0; Ptree.tensor t1 ] in
+      Checkpoint.save path tree;
+      let loaded = Checkpoint.load path ~like:tree in
+      let pairs = Ptree.flatten_with_paths loaded in
+      equal ~msg:"num leaves" int 2 (List.length pairs);
+      let _, Ptree.P lt1 = List.nth pairs 1 in
+      let vals = to_array lt1 in
+      equal ~msg:"second tensor" (float 1e-6) 5.0 vals.(1))
 
-  (* Create test parameters *)
-  let create_params value =
-    let w = Rune.full dtype [| 2; 2 |] value in
-    Ptree.dict [ ("weight", Ptree.tensor w) ]
-  in
+let test_missing_key () =
+  with_tmpfile (fun path ->
+      let t = Rune.create Rune.float32 [| 2 |] [| 1.; 2. |] in
+      let small = Ptree.dict [ ("a", Ptree.tensor t) ] in
+      Checkpoint.save path small;
+      let big = Ptree.dict [ ("a", Ptree.tensor t); ("b", Ptree.tensor t) ] in
+      raises_invalid_arg "Checkpoint.load: missing key \"b\"" (fun () ->
+          ignore (Checkpoint.load path ~like:big)))
 
-  (* Create repository *)
-  let dir = "/tmp/test_checkpoint_manager" in
-  let _ = Sys.command (Printf.sprintf "rm -rf %s" dir) in
+let test_shape_mismatch () =
+  with_tmpfile (fun path ->
+      let t =
+        Rune.create Rune.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
+      in
+      let tree = Ptree.tensor t in
+      Checkpoint.save path tree;
+      let wrong =
+        Ptree.tensor
+          (Rune.create Rune.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |])
+      in
+      raises_invalid_arg
+        "Checkpoint.load: shape mismatch for \"\": expected [3; 2], got [2; 3]"
+        (fun () -> ignore (Checkpoint.load path ~like:wrong)))
 
-  let module C = Kaun.Checkpoint in
-  let retention : C.retention = { max_to_keep = Some 2; keep_every = None } in
-  let repository = C.create_repository ~directory:dir ~retention () in
+let test_dtype_casting () =
+  with_tmpfile (fun path ->
+      let t = Rune.create Rune.float32 [| 3 |] [| 1.; 2.; 3. |] in
+      Checkpoint.save path (Ptree.tensor t);
+      let template =
+        Ptree.tensor (Rune.create Rune.float64 [| 3 |] [| 0.; 0.; 0. |])
+      in
+      let loaded = Checkpoint.load path ~like:template in
+      match loaded with
+      | Ptree.Tensor (Ptree.P lt) ->
+          let vals = to_array lt in
+          equal ~msg:"casted value" (float 1e-6) 2.0 vals.(1)
+      | _ -> fail "expected Tensor")
 
-  (* Save multiple checkpoints *)
-  for i = 1 to 5 do
-    let params = create_params (float_of_int i) in
-    let snapshot = C.Snapshot.ptree params in
-    let artifacts =
-      [ C.artifact ~label:"params" ~kind:C.Params ~snapshot () ]
-    in
-    match C.write repository ~step:(i * 10) ~artifacts with
-    | Ok _ -> ()
-    | Error err ->
-        failf "write failed for step %d: %s" (i * 10) (C.error_to_string err)
-  done;
+let test_empty_tree () =
+  with_tmpfile (fun path ->
+      Checkpoint.save path Ptree.empty;
+      let loaded = Checkpoint.load path ~like:Ptree.empty in
+      match loaded with Ptree.List [] -> () | _ -> fail "expected empty list")
 
-  (* Check that we have at least one checkpoint *)
-  let steps = C.steps repository in
-  equal ~msg:"has checkpoints" bool true (List.length steps >= 1);
-  (* Retention should keep only the latest two checkpoints *)
-  equal ~msg:"retained steps" (list int) [ 40; 50 ] steps;
+(* Optim state serialization *)
 
-  (* Check latest step *)
-  let latest = C.latest_step repository in
-  equal ~msg:"latest step" (option int) (Some 50) latest;
+let test_optim_sgd_no_momentum () =
+  let params = Ptree.tensor (Rune.create Rune.float32 [| 2 |] [| 1.; 2. |]) in
+  let algo = Optim.sgd ~lr:(Optim.Schedule.constant 0.01) () in
+  let st = Optim.init algo params in
+  let count, trees = Optim.state_to_trees st in
+  equal ~msg:"count" int 0 count;
+  equal ~msg:"no trees" int 0 (List.length trees);
+  let st' = Optim.state_of_trees algo ~count trees in
+  let count', trees' = Optim.state_to_trees st' in
+  equal ~msg:"count roundtrip" int 0 count';
+  equal ~msg:"trees roundtrip" int 0 (List.length trees')
 
-  (* Restore latest *)
-  let restored_params, restored_step =
-    match C.read_latest repository with
-    | Error err -> failf "read_latest failed: %s" (C.error_to_string err)
-    | Ok (manifest, artifacts) ->
-        let step =
-          match manifest.step with
-          | Some value -> value
-          | None -> fail "manifest missing step"
-        in
-        let params =
-          match
-            List.find_map
-              (fun artifact ->
-                if C.artifact_kind artifact = C.Params then
-                  match C.Snapshot.to_ptree (C.artifact_snapshot artifact) with
-                  | Ok ptree -> Some ptree
-                  | Error msg -> failf "to_ptree failed: %s" msg
-                else None)
-              artifacts
-          with
-          | Some params -> params
-          | None -> fail "missing params artifact"
-        in
-        (params, step)
-  in
-  equal ~msg:"restored step" int 50 restored_step;
+let test_optim_sgd_momentum () =
+  let params = Ptree.tensor (Rune.create Rune.float32 [| 2 |] [| 1.; 2. |]) in
+  let algo = Optim.sgd ~lr:(Optim.Schedule.constant 0.01) ~momentum:0.9 () in
+  let st = Optim.init algo params in
+  let count, trees = Optim.state_to_trees st in
+  equal ~msg:"count" int 0 count;
+  equal ~msg:"one tree" int 1 (List.length trees)
 
-  (* Check restored value *)
-  let restored_fields =
-    Ptree.Dict.fields_exn ~ctx:"restored params" restored_params
-  in
-  let restored_w =
-    Ptree.Dict.get_tensor_exn restored_fields ~name:"weight" dtype
-  in
-  let value = Rune.item [ 0; 0 ] restored_w in
-  equal ~msg:"restored value" (float 0.01) 5.0 value
+let test_optim_adam_roundtrip () =
+  let params = Ptree.tensor (Rune.create Rune.float32 [| 2 |] [| 1.; 2. |]) in
+  let algo = Optim.adam ~lr:(Optim.Schedule.constant 0.001) () in
+  let st = Optim.init algo params in
+  let count, trees = Optim.state_to_trees st in
+  equal ~msg:"count" int 0 count;
+  equal ~msg:"two trees" int 2 (List.length trees);
+  let st' = Optim.state_of_trees algo ~count trees in
+  let count', trees' = Optim.state_to_trees st' in
+  equal ~msg:"count roundtrip" int 0 count';
+  equal ~msg:"trees roundtrip" int 2 (List.length trees')
 
-let test_sequential_roundtrip () =
-  let dtype = Rune.float32 in
-  let rng = Rune.Rng.key 42 in
-  let obs_dim = 4 in
-  let n_actions = 2 in
-  let network =
-    Kaun.Layer.sequential
-      [
-        Kaun.Layer.linear ~in_features:obs_dim ~out_features:8 ();
-        Kaun.Layer.relu ();
-        Kaun.Layer.linear ~in_features:8 ~out_features:n_actions ();
-      ]
-  in
-  let params = network.init ~rngs:rng ~dtype in
-  let input = Rune.create dtype [| obs_dim |] [| 0.5; 0.5; 0.5; 0.5 |] in
-  let output_before = network.apply params ~training:false input in
-  let tmp_dir = Filename.get_temp_dir_name () in
-  let path = Filename.temp_file ~temp_dir:tmp_dir "kaun_seq" ".safetensors" in
-  let module C = Kaun.Checkpoint in
-  (match C.save_params_file ~path ~params with
-  | Ok () -> ()
-  | Error err -> failf "save_params_file failed: %s" (C.error_to_string err));
-  let loaded_params =
-    match C.load_params_file ~path with
-    | Ok params -> params
-    | Error err -> failf "failed to read params: %s" (C.error_to_string err)
-  in
-  let flattened = Kaun.Ptree.flatten_with_paths loaded_params in
-  let expect_path key =
-    if
-      not
-        (List.exists
-           (fun (path, _) -> String.equal (Kaun.Ptree.Path.to_string path) key)
-           flattened)
-    then failf "missing checkpoint tensor: %s" key
-  in
-  List.iter expect_path [ "[0].weight"; "[0].bias"; "[2].weight"; "[2].bias" ];
-  let output_after = network.apply loaded_params ~training:false input in
-  let before = Rune.to_array output_before in
-  let after = Rune.to_array output_after in
-  let same =
-    Array.for_all2 (fun a b -> Float.abs (a -. b) < 1e-6) before after
-  in
-  equal ~msg:"sequential roundtrip produces identical output" bool true same;
-  try Sys.remove path with Sys_error _ -> ()
+let test_optim_wrong_tree_count () =
+  let algo = Optim.adam ~lr:(Optim.Schedule.constant 0.001) () in
+  raises_invalid_arg "Optim.state_of_trees: adam expects 2 trees, got 1"
+    (fun () -> ignore (Optim.state_of_trees algo ~count:0 [ Ptree.empty ]))
 
 let () =
   run "Kaun.Checkpoint"
     [
-      group "basic"
+      group "save/load"
         [
-          test "save_and_load" test_save_and_load;
-          test "checkpoint_manager" test_checkpoint_manager;
-          test "sequential_roundtrip" test_sequential_roundtrip;
+          test "roundtrip single tensor" test_roundtrip_single_tensor;
+          test "roundtrip nested tree" test_roundtrip_nested_tree;
+          test "roundtrip list tree" test_roundtrip_list_tree;
+          test "missing key" test_missing_key;
+          test "shape mismatch" test_shape_mismatch;
+          test "dtype casting" test_dtype_casting;
+          test "empty tree" test_empty_tree;
+        ];
+      group "optim serialization"
+        [
+          test "sgd no momentum" test_optim_sgd_no_momentum;
+          test "sgd momentum" test_optim_sgd_momentum;
+          test "adam roundtrip" test_optim_adam_roundtrip;
+          test "wrong tree count" test_optim_wrong_tree_count;
         ];
     ]
