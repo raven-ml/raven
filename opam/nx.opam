@@ -13,7 +13,7 @@ doc: "https://raven-ml.dev/docs/"
 bug-reports: "https://github.com/raven-ml/raven/issues"
 depends: [
   "ocaml" {>= "5.2.0"}
-  "dune" {>= "3.19"}
+  "dune" {>= "3.21"}
   "dune-configurator" {build}
   "conf-pkg-config" {build}
   "conf-zlib" {build}
