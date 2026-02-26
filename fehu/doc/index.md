@@ -1,31 +1,59 @@
-# fehu ᚠ Documentation
+# Fehu
 
-Fehu is our Gymnasium + Stable Baselines. It's the reinforcement learning framework built on top of Rune and Kaun.
+Fehu is a reinforcement learning environment toolkit for OCaml. It provides
+type-safe environments, composable wrappers, trajectory collection, replay
+buffers, GAE computation, policy evaluation, and vectorized environments.
 
-## What fehu Does
+Fehu follows the Gymnasium interface pattern: environments expose `reset` and
+`step` with typed observation and action spaces. Wrappers compose freely.
+Collection and evaluation utilities handle the plumbing between environments
+and training loops.
 
-Fehu gives you environments and algorithms for reinforcement learning. Create environments like CartPole or GridWorld, train agents with DQN or REINFORCE, and evaluate policies. If you've used Gymnasium or Stable Baselines3, you'll feel at home.
+## Features
 
-The name comes from the rune ᚠ meaning "wealth" or "reward." Fitting for a reinforcement learning library focused on maximizing returns.
+- **Type-safe environments**: observation and action spaces are encoded in the type system
+- **Rich space types**: Discrete, Box, Multi_binary, Multi_discrete, Tuple, Dict, Sequence, Text
+- **Composable wrappers**: map_observation, map_action, map_reward, clip_action, clip_observation, time_limit
+- **Trajectory collection**: rollout and episode collection in structure-of-arrays form
+- **Replay buffers**: fixed-capacity circular buffer with uniform random sampling
+- **GAE**: generalized advantage estimation with proper terminated/truncated handling
+- **Policy evaluation**: run a policy over episodes and get mean/std reward statistics
+- **Vectorized environments**: run multiple environments with batched step and auto-reset
+- **Built-in environments**: CartPole, MountainCar, GridWorld, RandomWalk
 
-## Current Status
+## Quick Start
 
-Fehu is ready for alpha release. It provides complete implementations of classic RL environments and algorithms.
+Create an environment, run a random agent, and evaluate:
 
-What's available:
-- **Environments**: CartPole-v1, MountainCar-v0, GridWorld, RandomWalk
-- **Algorithms**: REINFORCE (policy gradient), DQN (deep Q-network)
-- **Infrastructure**: Experience replay buffers, training utilities, evaluation metrics
-- **Examples**: Working examples for all algorithms and environments
+<!-- $MDX skip -->
+```ocaml
+open Fehu
 
-This is enough to train real agents and benchmark against standard implementations. More algorithms and environments will come in future releases.
+let rng = Rune.Rng.key 42
+let env = Fehu_envs.Cartpole.make ~rng ()
 
-## Design Philosophy
+(* Run one episode *)
+let obs, _info = Env.reset env ()
+let done_ = ref false
+let total_reward = ref 0.0
+while not !done_ do
+  let act, _ = Space.sample (Env.action_space env)
+    ~rng:(Env.take_rng env) in
+  let s = Env.step env act in
+  total_reward := !total_reward +. s.reward;
+  done_ := s.terminated || s.truncated
+done
 
-Fehu aims for Gymnasium's simplicity and Stable Baselines3's completeness, but with OCaml's type safety. Environments are strongly typed - the compiler catches observation/action space mismatches at compile time. Agents are immutable values - policy updates return new agents rather than mutating state.
+(* Evaluate over 10 episodes *)
+let stats = Eval.run env
+  ~policy:(fun _obs ->
+    let act, _ = Space.sample (Env.action_space env)
+      ~rng:(Env.take_rng env) in act)
+  ~n_episodes:10 ()
+```
 
-Everything is functional and composable. Experience replay is just an array of transitions. Training loops are pure functions. This makes testing, debugging, and distributed training straightforward.
+## Next Steps
 
-## Learn More
-
-- [Getting Started](/docs/fehu/getting-started/) - Train your first RL agent
+- [Getting Started](01-getting-started/) -- installation, environments, spaces, step loop
+- [Environments and Wrappers](02-environments/) -- custom environments, wrappers, rendering, vectorized environments
+- [Collection and Evaluation](03-collection-and-evaluation/) -- trajectory collection, replay buffers, GAE, evaluation

@@ -3,180 +3,182 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* Tabular Q-learning on CartPole-v1.
+
+   Discretizes the continuous 4D observation into bins, learns a Q-table with
+   epsilon-greedy exploration and temporal difference updates. Uses Eval.run for
+   periodic evaluation. *)
+
 open Fehu
 
-(* Discretize the continuous position space for Q-learning *)
-let discretize_position pos =
-  (* Map [-10, 10] to discrete states 0-20 *)
-  let discretized = int_of_float ((pos +. 10.0) /. 1.0) in
-  max 0 (min 20 discretized)
+(* Hyperparameters *)
 
-let state_of_observation obs =
-  let values = Rune.to_array obs in
-  if Array.length values <> 1 then
-    invalid_arg "RandomWalk observation must have length 1"
-  else discretize_position values.(0)
+let n_bins = 12
+let n_actions = 2
+let alpha = 0.1
+let gamma = 0.99
+let epsilon_start = 1.0
+let epsilon_end = 0.01
+let epsilon_decay = 2000.0
+let n_episodes = 10_000
+let eval_interval = 500
 
-let run_q_learning () =
-  (* Q-learning parameters *)
-  let alpha = 0.2 in
-  (* learning rate (increased for faster learning) *)
-  let gamma = 0.95 in
-  (* discount factor (reduced to value immediate rewards more) *)
-  let epsilon_start = 1.0 in
-  (* initial exploration rate *)
-  let epsilon_end = 0.01 in
-  (* final exploration rate *)
-  let epsilon_decay = 0.998 in
-  (* exploration decay rate (slower decay) *)
-  let episodes = 5_000 in
+(* Sparkline *)
 
-  (* Q-table: 21 states (discretized positions) x 2 actions *)
-  let q_table = Array.make_matrix 21 2 0.0 in
+let sparkline values =
+  let blocks =
+    [|
+      "\xe2\x96\x81";
+      "\xe2\x96\x82";
+      "\xe2\x96\x83";
+      "\xe2\x96\x84";
+      "\xe2\x96\x85";
+      "\xe2\x96\x86";
+      "\xe2\x96\x87";
+      "\xe2\x96\x88";
+    |]
+  in
+  let lo = Array.fold_left Float.min Float.infinity values in
+  let hi = Array.fold_left Float.max Float.neg_infinity values in
+  let range = hi -. lo in
+  if range < 1e-9 then
+    String.concat "" (Array.to_list (Array.map (fun _ -> blocks.(4)) values))
+  else
+    String.concat ""
+      (Array.to_list
+         (Array.map
+            (fun v ->
+              let idx = Float.to_int ((v -. lo) /. range *. 7.0) in
+              blocks.(max 0 (min 7 idx)))
+            values))
 
-  (* Create environment *)
-  let root_key = Rune.Rng.key 1 in
-  let split_keys = Rune.Rng.split root_key in
-  let env = Fehu_envs.Random_walk.make ~rng:split_keys.(0) () in
-  let agent_key = ref split_keys.(1) in
+(* Q-table *)
 
-  let take_key () =
-    let next = Rune.Rng.split !agent_key in
-    agent_key := next.(0);
-    next.(1)
+let n_states = n_bins * n_bins * n_bins * n_bins
+let q = Array.make (n_states * n_actions) 0.0
+let q_get s a = q.((s * n_actions) + a)
+let q_set s a v = q.((s * n_actions) + a) <- v
+
+(* Discretize: clip each of the 4 obs dimensions into bins. CartPole obs: [x,
+   x_dot, theta, theta_dot] We use generous clip ranges that cover typical
+   CartPole trajectories. *)
+
+let clip_ranges = [| (-2.4, 2.4); (-3.0, 3.0); (-0.21, 0.21); (-3.0, 3.0) |]
+
+let discretize obs =
+  let arr = (Rune.to_array obs : float array) in
+  let bin i =
+    let lo, hi = clip_ranges.(i) in
+    let v = Float.max lo (Float.min hi arr.(i)) in
+    let normalized = (v -. lo) /. (hi -. lo) in
+    Float.to_int (normalized *. Float.of_int (n_bins - 1))
+    |> max 0
+    |> min (n_bins - 1)
+  in
+  let b0 = bin 0 in
+  let b1 = bin 1 in
+  let b2 = bin 2 in
+  let b3 = bin 3 in
+  (b0 * n_bins * n_bins * n_bins) + (b1 * n_bins * n_bins) + (b2 * n_bins) + b3
+
+let best_action s = if q_get s 0 >= q_get s 1 then 0 else 1
+
+(* Training *)
+
+let () =
+  Printf.printf "Q-Learning on CartPole-v1\n";
+  Printf.printf "==========================\n\n";
+  Printf.printf "States: %d bins/dim (%d total), Actions: left/right\n" n_bins
+    n_states;
+  Printf.printf "alpha = %.2f, gamma = %.2f, episodes = %d\n\n" alpha gamma
+    n_episodes;
+
+  let rng = ref (Rune.Rng.key 42) in
+  let take_rng () =
+    let keys = Rune.Rng.split !rng in
+    rng := keys.(0);
+    keys.(1)
   in
 
   let sample_uniform () =
-    let tensor = Rune.rand Rune.float32 ~key:(take_key ()) [| 1 |] in
-    let values = Rune.to_array tensor in
-    values.(0)
+    let t = Rune.rand Rune.float32 ~key:(take_rng ()) [| 1 |] in
+    (Rune.to_array t : float array).(0)
   in
 
-  let sample_action () =
-    let tensor = Rune.randint Rune.int32 ~key:(take_key ()) ~high:2 [| 1 |] 0 in
-    let values : Int32.t array = Rune.to_array tensor in
-    Int32.to_int values.(0)
+  let sample_random_action () =
+    let t =
+      Rune.randint Rune.int32 ~key:(take_rng ()) ~high:n_actions [| 1 |] 0
+    in
+    Int32.to_int (Rune.to_array t : Int32.t array).(0)
   in
 
-  (* Training loop *)
-  let epsilon = ref epsilon_start in
+  let env = Fehu_envs.Cartpole.make ~rng:(Rune.Rng.key 0) () in
 
-  for episode = 1 to episodes do
-    (* Decay epsilon *)
-    epsilon := Float.max epsilon_end (!epsilon *. epsilon_decay);
+  let n_evals = n_episodes / eval_interval in
+  let reward_history = Array.make n_evals 0.0 in
+  let eval_idx = ref 0 in
 
-    (* Reset environment *)
+  Printf.printf "Training...\n\n";
+
+  for episode = 1 to n_episodes do
+    let epsilon =
+      epsilon_end
+      +. (epsilon_start -. epsilon_end)
+         *. exp (-.Float.of_int episode /. epsilon_decay)
+    in
+
     let obs, _info = Env.reset env () in
-    let state = ref (state_of_observation obs) in
+    let state = ref (discretize obs) in
     let done_ = ref false in
-    let steps = ref 0 in
 
     while not !done_ do
-      incr steps;
-
-      (* Epsilon-greedy action selection *)
-      let action_index =
-        if sample_uniform () < !epsilon then sample_action () (* explore *)
-        else if q_table.(!state).(0) > q_table.(!state).(1) then 0
-        else 1
+      let a =
+        if sample_uniform () < epsilon then sample_random_action ()
+        else best_action !state
       in
-      let action = Rune.scalar Rune.int32 (Int32.of_int action_index) in
+      let s = Env.step env (Space.Discrete.of_int a) in
+      let next_state = discretize s.observation in
+      let done_flag = s.terminated || s.truncated in
 
-      (* Take action *)
-      let transition = Env.step env action in
-      let reward = transition.reward in
-      let terminated = transition.terminated in
-      let truncated = transition.truncated in
-      let next_state = state_of_observation transition.observation in
-
-      done_ := terminated || truncated;
-
-      (* Q-learning update *)
-      let max_next_q =
-        if terminated || truncated then 0.0
-        else max q_table.(next_state).(0) q_table.(next_state).(1)
+      let bootstrap =
+        if done_flag then 0.0
+        else Float.max (q_get next_state 0) (q_get next_state 1)
       in
-      let target = reward +. (gamma *. max_next_q) in
-      q_table.(!state).(action_index) <-
-        q_table.(!state).(action_index)
-        +. (alpha *. (target -. q_table.(!state).(action_index)));
+      let target = s.reward +. (gamma *. bootstrap) in
+      let old_q = q_get !state a in
+      q_set !state a (old_q +. (alpha *. (target -. old_q)));
 
-      state := next_state
+      state := next_state;
+      done_ := done_flag
     done;
 
-    if episode mod 500 = 0 then
-      Printf.printf "Episode %d: steps=%d, epsilon=%.3f\n%!" episode !steps
-        !epsilon
-  done;
-
-  (* Evaluate learned policy *)
-  Printf.printf "\n=== Evaluation ===\n%!";
-  let eval_episodes = 10 in
-  let total_rewards = ref 0.0 in
-  let total_steps = ref 0 in
-
-  for episode = 1 to eval_episodes do
-    let obs, _info = Env.reset env () in
-    let state = ref (state_of_observation obs) in
-    let done_ = ref false in
-    let episode_reward = ref 0.0 in
-    let steps = ref 0 in
-
-    while not !done_ do
-      incr steps;
-      (* Greedy policy *)
-      let action_index =
-        if q_table.(!state).(0) > q_table.(!state).(1) then 0 else 1
+    if episode mod eval_interval = 0 then begin
+      let greedy_policy obs =
+        Space.Discrete.of_int (best_action (discretize obs))
       in
-      let transition =
-        Env.step env (Rune.scalar Rune.int32 (Int32.of_int action_index))
-      in
-      episode_reward := !episode_reward +. transition.reward;
-      done_ := transition.terminated || transition.truncated;
-
-      if not !done_ then state := state_of_observation transition.observation
-    done;
-
-    total_rewards := !total_rewards +. !episode_reward;
-    total_steps := !total_steps + !steps;
-    Printf.printf "Eval episode %d: reward = %.2f, steps = %d\n%!" episode
-      !episode_reward !steps
+      let stats = Eval.run env ~policy:greedy_policy ~n_episodes:20 () in
+      Printf.printf
+        "  episode %5d  eps = %.2f  eval: reward = %5.1f +/- %4.1f\n%!" episode
+        epsilon stats.mean_reward stats.std_reward;
+      reward_history.(!eval_idx) <- stats.mean_reward;
+      incr eval_idx
+    end
   done;
 
-  Printf.printf "Average evaluation reward: %.2f (avg steps: %.1f)\n%!"
-    (!total_rewards /. float_of_int eval_episodes)
-    (float_of_int !total_steps /. float_of_int eval_episodes);
+  Printf.printf "\n  reward: %s\n" (sparkline reward_history);
 
-  (* Print learned Q-table *)
-  Printf.printf "\nLearned Q-table:\n%!";
-  for state = 0 to 20 do
-    let pos = float_of_int state -. 10.0 in
-    let best_action =
-      if q_table.(state).(0) > q_table.(state).(1) then "←" else "→"
-    in
-    Printf.printf "Position %+.1f: Left=%.3f, Right=%.3f [%s]\n%!" pos
-      q_table.(state).(0)
-      q_table.(state).(1)
-      best_action
-  done;
+  (* Final evaluation *)
+  Printf.printf "\nFinal evaluation (100 episodes):\n";
+  let greedy_policy obs =
+    Space.Discrete.of_int (best_action (discretize obs))
+  in
+  let stats = Eval.run env ~policy:greedy_policy ~n_episodes:100 () in
+  Printf.printf "  mean reward: %5.1f +/- %.1f\n" stats.mean_reward
+    stats.std_reward;
+  Printf.printf "  mean length: %5.1f\n" stats.mean_length;
 
-  (* Verify the learned policy makes sense *)
-  Printf.printf "\n=== Policy Summary ===\n%!";
-  let correct_actions = ref 0 in
-  for state = 0 to 20 do
-    let pos = float_of_int state -. 10.0 in
-    let learned_action =
-      if q_table.(state).(0) > q_table.(state).(1) then 0 else 1
-    in
-    (* Optimal policy: go toward 0 *)
-    let optimal_action = if pos < 0.0 then 1 else 0 in
-    (* negative: go right, positive: go left *)
-    if learned_action = optimal_action then incr correct_actions
-  done;
-  Printf.printf "Learned policy matches optimal for %d/21 states (%.1f%%)\n%!"
-    !correct_actions
-    (float_of_int !correct_actions /. 21.0 *. 100.0);
+  if stats.mean_reward >= 195.0 then
+    Printf.printf "\nSolved! (mean reward >= 195)\n"
+  else Printf.printf "\nNot solved yet (mean reward < 195).\n";
 
   Env.close env
-
-let () = run_q_learning ()

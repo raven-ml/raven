@@ -1,3 +1,0 @@
-(executable
- (name main)
- (libraries fehu fehu.algorithms fehu.visualize kaun rune unix))

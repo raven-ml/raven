@@ -1,3 +1,0 @@
-(executable
- (name main)
- (libraries kaun rune fehu fehu.envs fehu.algorithms))

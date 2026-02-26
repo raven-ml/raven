@@ -3,74 +3,68 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* A random agent on CartPole-v1.
+
+   Demonstrates the Env lifecycle: create, reset, step, render, close. Then uses
+   Eval.run for batch evaluation. *)
+
 open Fehu
 
-let run_random_agent () =
-  (* Derive independent keys for the environment and the agent policy *)
-  let root_key = Rune.Rng.key 0 in
-  let keys = Rune.Rng.split root_key in
-  let env = Fehu_envs.Random_walk.make ~rng:keys.(0) () in
-  let agent_key = ref keys.(1) in
+let () =
+  Printf.printf "Random Agent on CartPole-v1\n";
+  Printf.printf "===========================\n\n";
 
-  let take_agent_key () =
-    let split = Rune.Rng.split !agent_key in
-    agent_key := split.(0);
-    split.(1)
+  let rng = Rune.Rng.key 42 in
+  let env = Fehu_envs.Cartpole.make ~render_mode:`Ansi ~rng () in
+
+  (* -- Manual episode loop ------------------------------------------------ *)
+  Printf.printf "Running 5 episodes with random actions...\n\n";
+
+  let agent_rng = ref (Rune.Rng.key 0) in
+  let take_rng () =
+    let keys = Rune.Rng.split !agent_rng in
+    agent_rng := keys.(0);
+    keys.(1)
   in
 
-  (* Reset the environment with a reproducible key *)
-  Env.set_rng env (Rune.Rng.key 42);
-  let obs, _info = Env.reset env () in
-  let obs_vals = Rune.to_array obs in
-  Printf.printf "Initial observation: [|%f|]\n%!" obs_vals.(0);
-
-  (* Run for 10 episodes *)
-  for episode = 1 to 10 do
-    Printf.printf "\n=== Episode %d ===\n%!" episode;
-
-    (* Reset for new episode *)
-    let _obs, _info = Env.reset env () in
-    let done_ = ref false in
+  for episode = 1 to 5 do
+    let obs = ref (fst (Env.reset env ())) in
     let total_reward = ref 0.0 in
-    let step_count = ref 0 in
-
+    let steps = ref 0 in
+    let done_ = ref false in
     while not !done_ do
-      incr step_count;
-
-      (* Sample random action (RandomWalk has 2 actions: 0=left, 1=right) *)
-      let action_tensor =
-        Rune.randint Rune.int32 ~key:(take_agent_key ()) ~high:2 [| 1 |] 0
+      (* Show the first step of episode 1 *)
+      (if episode = 1 && !steps = 0 then
+         match Env.render env with
+         | Some text -> Printf.printf "%s\n" text
+         | None -> ());
+      let action, rng' =
+        Space.sample (Env.action_space env) ~rng:(take_rng ())
       in
-      let action_values : Int32.t array = Rune.to_array action_tensor in
-      let action_index = Int32.to_int action_values.(0) in
-      let action = Rune.scalar Rune.int32 action_values.(0) in
-
-      (* Take step in environment *)
-      let transition = Env.step env action in
-      let obs = transition.observation in
-      let obs_vals = Rune.to_array obs in
-      let reward = transition.reward in
-      let terminated = transition.terminated in
-      let truncated = transition.truncated in
-
-      total_reward := !total_reward +. reward;
-      done_ := terminated || truncated;
-
-      Printf.printf "Step %d: Action=%d, Reward=%.2f, Done=%b, Obs=[|%f|]\n%!"
-        !step_count action_index reward !done_ obs_vals.(0);
-
-      (* Render environment if available *)
-      match Env.render env with
-      | Some render -> Printf.printf "%s\n%!" render
-      | None -> ()
+      agent_rng := rng';
+      let s = Env.step env action in
+      total_reward := !total_reward +. s.reward;
+      incr steps;
+      obs := s.observation;
+      done_ := s.terminated || s.truncated
     done;
-
-    Printf.printf
-      "Episode %d finished after %d steps with total reward %.2f\n%!" episode
-      !step_count !total_reward
+    Printf.printf "  Episode %d:  reward = %5.1f  length = %3d\n" episode
+      !total_reward !steps
   done;
 
-  (* Close environment *)
-  Env.close env
+  (* -- Batch evaluation with Eval.run ------------------------------------ *)
+  Printf.printf "\nEvaluating over 100 episodes...\n\n";
 
-let () = run_random_agent ()
+  let eval_rng = ref (Rune.Rng.key 1) in
+  let random_policy _obs =
+    let action, rng' = Space.sample (Env.action_space env) ~rng:!eval_rng in
+    eval_rng := rng';
+    action
+  in
+  let stats = Eval.run env ~policy:random_policy ~n_episodes:100 () in
+  Printf.printf "  mean reward: %6.2f +/- %.2f\n" stats.mean_reward
+    stats.std_reward;
+  Printf.printf "  mean length: %6.1f\n" stats.mean_length;
+
+  Env.close env;
+  Printf.printf "\nDone.\n"

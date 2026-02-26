@@ -1,160 +1,223 @@
-# Getting Started with fehu
+# Getting Started
 
-This guide shows you how to create environments and train reinforcement learning agents with fehu.
+This guide covers the basics: creating environments, running the step loop,
+understanding spaces, and using the built-in environments.
 
 ## Installation
-
-Fehu isn't released yet. When it is, you'll install it with:
 
 <!-- $MDX skip -->
 ```bash
 opam install fehu
 ```
 
-For now, build from source:
+Or build from source:
 
 <!-- $MDX skip -->
 ```bash
 git clone https://github.com/raven-ml/raven
-cd raven
-dune pkg lock && dune build fehu
+cd raven && dune build fehu
 ```
 
-## Your First Environment
+## Creating an Environment
 
-Here's how to create and interact with an environment:
+Environments are created via factory functions in `Fehu_envs`. Each takes
+an RNG key for reproducibility:
 
+<!-- $MDX skip -->
 ```ocaml
 open Fehu
 
-let () =
-  let rng = Rune.Rng.key 42 in
-  let env = Fehu_envs.Cartpole.make ~rng () in
-
-  (* Reset environment *)
-  let obs, _ = Env.reset env () in
-  let shape = Rune.shape obs in
-  Printf.printf "Observation: %d dimensions\n" shape.(0);
-
-  (* Run a few random steps *)
-  let rec loop rng step reward =
-    if step >= 10 then
-      Printf.printf "Total reward after %d steps: %.0f\n" step reward
-    else
-      let action, rng = Space.sample ~rng (Env.action_space env) in
-      let t = Env.step env action in
-      if t.terminated || t.truncated then
-        Printf.printf "Episode ended at step %d, reward: %.0f\n"
-          (step + 1) (reward +. t.reward)
-      else
-        loop rng (step + 1) (reward +. t.reward)
-  in
-  loop rng 0 0.0
+let rng = Rune.Rng.key 42
+let env = Fehu_envs.Cartpole.make ~rng ()
 ```
 
-## Training with REINFORCE
+The `rng` key seeds all randomness in the environment. Use the same key to get
+the same episode sequence.
 
-Here's how to set up and train CartPole with the REINFORCE algorithm:
+## The Step Loop
 
+An environment follows a strict lifecycle: `reset` must be called before the
+first `step`, and again after any terminal step (terminated or truncated).
+
+<!-- $MDX skip -->
 ```ocaml
-open Kaun
+open Fehu
 
-(* Define policy network: 4 obs dims -> 128 hidden -> 2 actions *)
-let policy_net = Layer.sequential [
-  Layer.linear ~in_features:4 ~out_features:128 ();
-  Layer.relu ();
-  Layer.linear ~in_features:128 ~out_features:2 ();
-]
+let rng = Rune.Rng.key 42
+let env = Fehu_envs.Cartpole.make ~rng ()
 
-let () =
-  let rng = Rune.Rng.key 42 in
-  let env = Fehu_envs.Cartpole.make ~rng () in
+(* Reset returns the initial observation and info *)
+let obs, _info = Env.reset env ()
 
-  let config = {
-    Fehu_algorithms.Reinforce.default_config with
-    learning_rate = 0.001;
-    gamma = 0.99;
-    max_episode_steps = 500;
-  } in
-
-  (* Train for a few episodes *)
-  let params, state = Fehu_algorithms.Reinforce.train
-    ~env ~policy_network:policy_net ~rng ~config
-    ~total_timesteps:500
-    ~callback:(fun m ->
-      Printf.printf "Episode %d: return=%.0f, length=%d\n"
-        m.total_episodes m.episode_return m.episode_length;
-      `Continue)
-    ()
-  in
-
-  let m = Fehu_algorithms.Reinforce.metrics state in
-  Printf.printf "Trained for %d episodes (%d steps)\n"
-    m.total_episodes m.total_steps;
-  Printf.printf "Network: %d parameters\n" (Ptree.count_parameters params)
+(* Step returns observation, reward, terminated, truncated, info *)
+let s = Env.step env (Space.Discrete.of_int 0) in
+Printf.printf "reward: %.1f, terminated: %b, truncated: %b\n"
+  s.reward s.terminated s.truncated
 ```
 
-## Training with DQN
+A complete episode loop:
 
-Here's how to set up and train with Deep Q-Networks:
-
+<!-- $MDX skip -->
 ```ocaml
-(* Define Q-network *)
-let q_network = Layer.sequential [
-  Layer.linear ~in_features:4 ~out_features:64 ();
-  Layer.relu ();
-  Layer.linear ~in_features:64 ~out_features:64 ();
-  Layer.relu ();
-  Layer.linear ~in_features:64 ~out_features:2 ();
-]
+open Fehu
 
-let () =
-  let rng = Rune.Rng.key 42 in
-  let env = Fehu_envs.Cartpole.make ~rng () in
+let rng = Rune.Rng.key 42
+let env = Fehu_envs.Cartpole.make ~rng ()
 
-  let config = {
-    Fehu_algorithms.Dqn.default_config with
-    learning_rate = 0.001;
-    gamma = 0.99;
-    buffer_capacity = 1_000;
-    batch_size = 32;
-  } in
+let run_episode env =
+  let _obs, _info = Env.reset env () in
+  let done_ = ref false in
+  let total_reward = ref 0.0 in
+  while not !done_ do
+    let act, _ = Space.sample (Env.action_space env)
+      ~rng:(Env.take_rng env) in
+    let s = Env.step env act in
+    total_reward := !total_reward +. s.reward;
+    done_ := s.terminated || s.truncated
+  done;
+  !total_reward
 
-  (* Train for a few steps *)
-  let params, state = Fehu_algorithms.Dqn.train
-    ~env ~q_network ~rng ~config
-    ~total_timesteps:100
-    ~callback:(fun m ->
-      (match m.episode_return with
-       | Some r -> Printf.printf "Episode %d: return=%.0f\n" m.total_episodes r
-       | None -> ());
-      `Continue)
-    ()
-  in
-
-  let m = Fehu_algorithms.Dqn.metrics state in
-  Printf.printf "Q-network: %d parameters\n" (Ptree.count_parameters params);
-  Printf.printf "After %d steps, epsilon=%.2f\n" m.total_steps m.epsilon
+let reward = run_episode env
 ```
 
-## Next Steps
+## Spaces
 
-- **[Examples](https://github.com/raven-ml/raven/tree/main/fehu/examples)** - Complete, runnable examples for all algorithms
+Spaces define the valid observations and actions for an environment. They
+provide sampling, validation, and serialization.
+
+### Discrete
+
+Integer choices. Used for environments with a finite number of actions (e.g.,
+left/right).
+
+<!-- $MDX skip -->
+```ocaml
+open Fehu
+
+let space = Space.Discrete.create 4  (* actions 0, 1, 2, 3 *)
+let n = Space.Discrete.n space       (* 4 *)
+
+(* Sample a random action *)
+let rng = Rune.Rng.key 0
+let act, rng' = Space.sample space ~rng
+
+(* Convert between int and discrete element *)
+let act = Space.Discrete.of_int 2
+let i = Space.Discrete.to_int act    (* 2 *)
+
+(* Check membership *)
+let valid = Space.contains space act  (* true *)
+```
+
+### Box
+
+Continuous vectors with per-dimension bounds. Used for continuous observations
+(e.g., position, velocity) and continuous actions.
+
+<!-- $MDX skip -->
+```ocaml
+open Fehu
+
+let space = Space.Box.create
+  ~low:[| -1.0; -2.0 |]
+  ~high:[| 1.0; 2.0 |]
+
+let low, high = Space.Box.bounds space
+let obs, _rng = Space.sample space ~rng:(Rune.Rng.key 0)
+```
+
+### Other Space Types
+
+- **Multi_binary**: binary vectors of fixed length (multi-label scenarios)
+- **Multi_discrete**: multiple discrete axes with independent cardinalities
+- **Tuple**: fixed-length heterogeneous sequences
+- **Dict**: named fields with different space types
+- **Sequence**: variable-length homogeneous sequences
+- **Text**: character strings from a fixed alphabet
+
+All spaces support `contains`, `sample`, `pack`/`unpack` (to/from the
+universal `Value.t` type), and `boundary_values`.
 
 ## Available Environments
 
-Fehu currently provides:
+### CartPole
 
-- **CartPole-v1** - Classic cart-pole balancing (matches Gymnasium)
-- **MountainCar-v0** - Drive up a hill using momentum (matches Gymnasium)
-- **GridWorld** - Simple 5x5 grid navigation with obstacles
-- **RandomWalk** - One-dimensional random walk
+Classic cart-pole balancing. Push a cart left or right to keep a pole upright.
+Reward is +1.0 per step. Terminates when the pole exceeds +/-12 degrees or the
+cart leaves +/-2.4. Truncates at 500 steps.
 
-More environments coming soon!
+- **Observation**: Box [4] -- x, x_dot, theta, theta_dot
+- **Actions**: Discrete 2 -- 0 = push left, 1 = push right
 
-## Available Algorithms
+<!-- $MDX skip -->
+```ocaml
+let env = Fehu_envs.Cartpole.make ~rng ()
+```
 
-- **REINFORCE** - Monte Carlo policy gradient with optional baseline
-- **DQN** - Deep Q-Networks with experience replay and target networks
+### MountainCar
 
-PPO and A2C coming in future releases.
+A car in a valley must build momentum to climb a hill. Reward is -1.0 per
+step. Terminates when position >= 0.5 with non-negative velocity. Truncates at
+200 steps.
+
+- **Observation**: Box [2] -- position, velocity
+- **Actions**: Discrete 3 -- 0 = push left, 1 = coast, 2 = push right
+
+<!-- $MDX skip -->
+```ocaml
+let env = Fehu_envs.Mountain_car.make ~rng ()
+```
+
+### GridWorld
+
+5x5 grid navigation with an obstacle. Agent starts at (0,0), goal at (4,4),
+obstacle at (2,2). Reward is +10.0 at goal, -1.0 otherwise. Truncates at 200
+steps.
+
+- **Observation**: Multi_discrete [5; 5] -- (row, col)
+- **Actions**: Discrete 4 -- 0 = up, 1 = down, 2 = left, 3 = right
+
+<!-- $MDX skip -->
+```ocaml
+let env = Fehu_envs.Grid_world.make ~rng ()
+```
+
+### RandomWalk
+
+One-dimensional random walk on [-10, 10]. Reward is -|position|. Terminates at
+boundaries or after 200 steps.
+
+- **Observation**: Box [1] in [-10.0, 10.0]
+- **Actions**: Discrete 2 -- 0 = left, 1 = right
+
+<!-- $MDX skip -->
+```ocaml
+let env = Fehu_envs.Random_walk.make ~rng ()
+```
+
+## Render Modes
+
+Environments can optionally render their state. Pass `~render_mode` when
+creating the environment:
+
+<!-- $MDX skip -->
+```ocaml
+let env = Fehu_envs.Cartpole.make
+  ~render_mode:`Ansi ~rng ()
+
+let _obs, _info = Env.reset env ()
+let _s = Env.step env (Space.Discrete.of_int 0)
+
+(* Render after reset or step *)
+match Env.render env with
+| Some text -> print_endline text
+| None -> ()
+```
+
+Supported render modes vary by environment: `Ansi` for text output,
+`Rgb_array` for pixel frames, `Human` for interactive display.
+
+## Next Steps
+
+- [Environments and Wrappers](../02-environments/) -- custom environments, wrappers, rendering, vectorized environments
+- [Collection and Evaluation](../03-collection-and-evaluation/) -- trajectory collection, replay buffers, GAE, evaluation
