@@ -1243,11 +1243,278 @@ let scatter ?(mode = `Set) ?(unique_indices = false) (type a b)
   | _ -> Error.invalid ~op:"scatter" ~what:"unsupported dtype" ());
   out
 
-let unfold _ ~kernel_size:_ ~stride:_ ~dilation:_ ~padding:_ =
-  Error.invalid ~op:"unfold" ~what:"not implemented" ()
+let unfold :
+  type a b.
+  (a, b) t ->
+  kernel_size:int array ->
+  stride:int array ->
+  dilation:int array ->
+  padding:(int * int) array ->
+  (a, b) t =
+  fun (x : (a, b) t) ~kernel_size ~stride ~dilation ~padding ->
+  let in_view = x.view in
+  let in_shape = shape in_view in
+  if Array.length in_shape < 3 then
+    Error.invalid ~op:"unfold" ~what:"input rank"
+      ~reason:"expected input shape [N, C, ...spatial_dims]" ();
 
-let fold _ ~output_size:_ ~kernel_size:_ ~stride:_ ~dilation:_ ~padding:_ =
-  Error.invalid ~op:"fold" ~what:"not implemented" ()
+  let spatial_ndim = Array.length in_shape - 2 in
+  if
+    not
+      (Array.length kernel_size = spatial_ndim
+      && Array.length stride = spatial_ndim
+      && Array.length dilation = spatial_ndim
+      && Array.length padding = spatial_ndim)
+  then
+    Error.invalid ~op:"unfold" ~what:"parameter lengths"
+      ~reason:"kernel_size/stride/dilation/padding must match spatial rank" ();
+
+  let n = in_shape.(0) in
+  let channels = in_shape.(1) in
+  let input_spatial = Array.sub in_shape 2 spatial_ndim in
+
+  let kernel_elems = ref 1 in
+  for i = 0 to spatial_ndim - 1 do
+    if kernel_size.(i) <= 0 then
+      Error.invalid ~op:"unfold" ~what:"kernel_size"
+        ~reason:"all kernel dimensions must be positive" ();
+    if stride.(i) <= 0 then
+      Error.invalid ~op:"unfold" ~what:"stride"
+        ~reason:"all stride dimensions must be positive" ();
+    if dilation.(i) <= 0 then
+      Error.invalid ~op:"unfold" ~what:"dilation"
+        ~reason:"all dilation dimensions must be positive" ();
+    let pad_before, pad_after = padding.(i) in
+    if pad_before < 0 || pad_after < 0 then
+      Error.invalid ~op:"unfold" ~what:"padding"
+        ~reason:"padding must be non-negative" ();
+    kernel_elems := !kernel_elems * kernel_size.(i)
+  done;
+
+  let out_spatial = Array.make spatial_ndim 0 in
+  for i = 0 to spatial_ndim - 1 do
+    let pad_before, pad_after = padding.(i) in
+    let padded = input_spatial.(i) + pad_before + pad_after in
+    let kernel_extent = (dilation.(i) * (kernel_size.(i) - 1)) + 1 in
+    let diff = padded - kernel_extent in
+    if diff < 0 then
+      Error.invalid ~op:"unfold"
+        ~what:"kernel size larger than padded input" ();
+    out_spatial.(i) <- (diff / stride.(i)) + 1
+  done;
+
+  let num_blocks = Shape.numel out_spatial in
+  let out_shape = [| n; channels * !kernel_elems; num_blocks |] in
+  let out_numel = Shape.numel out_shape in
+  let out_t : (a, b) t =
+    let out_t : (a, b) t = buffer x.context x.dtype [|out_numel|] in
+    { out_t with view = View.reshape out_t.view (Symbolic_shape.of_ints out_shape) }
+  in
+
+  let in_offset = View.offset in_view in
+  let in_strides = View.strides in_view in
+  let out_view = out_t.view in
+  let out_offset = View.offset out_view in
+  let out_strides = View.strides out_view in
+  let kernel_elems = !kernel_elems in
+  let run_batches f =
+    if n <= 0 then ()
+    else if n = 1 then f 0 1
+    else Parallel.parallel_for x.context.pool 0 (n - 1) f
+  in
+  match (x.buffer, out_t.buffer) with
+  | Float64 in_arr, Float64 out_arr ->
+      run_batches (fun n_start n_end ->
+          Op_unfold.unfold_float64 in_arr out_arr ~n_start ~n_end ~channels
+            ~input_spatial ~kernel_elems ~num_blocks ~spatial_ndim ~out_spatial
+            ~kernel_size ~stride ~dilation ~padding ~in_offset ~in_strides
+            ~out_offset ~out_strides);
+      out_t
+  | Float32 in_arr, Float32 out_arr ->
+      run_batches (fun n_start n_end ->
+          Op_unfold.unfold_float32 in_arr out_arr ~n_start ~n_end ~channels
+            ~input_spatial ~kernel_elems ~num_blocks ~spatial_ndim ~out_spatial
+            ~kernel_size ~stride ~dilation ~padding ~in_offset ~in_strides
+            ~out_offset ~out_strides);
+      out_t
+  | Int8 in_arr, Int8 out_arr ->
+      run_batches (fun n_start n_end ->
+          Op_unfold.unfold_int8 in_arr out_arr ~n_start ~n_end ~channels
+            ~input_spatial ~kernel_elems ~num_blocks ~spatial_ndim ~out_spatial
+            ~kernel_size ~stride ~dilation ~padding ~in_offset ~in_strides
+            ~out_offset ~out_strides);
+      out_t
+  | Int16 in_arr, Int16 out_arr ->
+      run_batches (fun n_start n_end ->
+          Op_unfold.unfold_int16 in_arr out_arr ~n_start ~n_end ~channels
+            ~input_spatial ~kernel_elems ~num_blocks ~spatial_ndim ~out_spatial
+            ~kernel_size ~stride ~dilation ~padding ~in_offset ~in_strides
+            ~out_offset ~out_strides);
+      out_t
+  | Int32 in_arr, Int32 out_arr ->
+      run_batches (fun n_start n_end ->
+          Op_unfold.unfold_int32 in_arr out_arr ~n_start ~n_end ~channels
+            ~input_spatial ~kernel_elems ~num_blocks ~spatial_ndim ~out_spatial
+            ~kernel_size ~stride ~dilation ~padding ~in_offset ~in_strides
+            ~out_offset ~out_strides);
+      out_t
+  | Int64 in_arr, Int64 out_arr ->
+      run_batches (fun n_start n_end ->
+          Op_unfold.unfold_int64 in_arr out_arr ~n_start ~n_end ~channels
+            ~input_spatial ~kernel_elems ~num_blocks ~spatial_ndim ~out_spatial
+            ~kernel_size ~stride ~dilation ~padding ~in_offset ~in_strides
+            ~out_offset ~out_strides);
+      out_t
+  | Bool in_arr, Bool out_arr ->
+      run_batches (fun n_start n_end ->
+          Op_unfold.unfold_bool in_arr out_arr ~n_start ~n_end ~channels
+            ~input_spatial ~kernel_elems ~num_blocks ~spatial_ndim ~out_spatial
+            ~kernel_size ~stride ~dilation ~padding ~in_offset ~in_strides
+            ~out_offset ~out_strides);
+      out_t
+  | _ -> Error.invalid ~op:"unfold" ~what:"unsupported dtype" ()
+
+let fold :
+  type a b.
+  (a, b) t ->
+  output_size:int array ->
+  kernel_size:int array ->
+  stride:int array ->
+  dilation:int array ->
+  padding:(int * int) array ->
+  (a, b) t =
+  fun (x : (a, b) t) ~output_size ~kernel_size ~stride ~dilation ~padding ->
+  let in_view = x.view in
+  let in_shape = shape in_view in
+  if Array.length in_shape <> 3 then
+    Error.invalid ~op:"fold" ~what:"input rank"
+      ~reason:"expected input shape [N, C * prod(kernel_size), L]" ();
+
+  let spatial_ndim = Array.length output_size in
+  if spatial_ndim = 0 then
+    Error.invalid ~op:"fold" ~what:"output_size"
+      ~reason:"must contain at least one spatial dimension" ();
+  if
+    not
+      (Array.length kernel_size = spatial_ndim
+      && Array.length stride = spatial_ndim
+      && Array.length dilation = spatial_ndim
+      && Array.length padding = spatial_ndim)
+  then
+    Error.invalid ~op:"fold" ~what:"parameter lengths"
+      ~reason:"output_size/kernel_size/stride/dilation/padding must match" ();
+
+  let n = in_shape.(0) in
+  let c_times_k = in_shape.(1) in
+  let num_blocks = in_shape.(2) in
+
+  let kernel_elems = ref 1 in
+  for i = 0 to spatial_ndim - 1 do
+    if output_size.(i) <= 0 then
+      Error.invalid ~op:"fold" ~what:"output_size"
+        ~reason:"all output dimensions must be positive" ();
+    if kernel_size.(i) <= 0 then
+      Error.invalid ~op:"fold" ~what:"kernel_size"
+        ~reason:"all kernel dimensions must be positive" ();
+    if stride.(i) <= 0 then
+      Error.invalid ~op:"fold" ~what:"stride"
+        ~reason:"all stride dimensions must be positive" ();
+    if dilation.(i) <= 0 then
+      Error.invalid ~op:"fold" ~what:"dilation"
+        ~reason:"all dilation dimensions must be positive" ();
+    let pad_before, pad_after = padding.(i) in
+    if pad_before < 0 || pad_after < 0 then
+      Error.invalid ~op:"fold" ~what:"padding"
+        ~reason:"padding must be non-negative" ();
+    kernel_elems := !kernel_elems * kernel_size.(i)
+  done;
+
+  if c_times_k mod !kernel_elems <> 0 then
+    Error.invalid ~op:"fold" ~what:"input shape"
+      ~reason:"C * prod(kernel_size) dimension mismatch" ();
+  let channels = c_times_k / !kernel_elems in
+
+  let blocks_shape = Array.make spatial_ndim 0 in
+  for i = 0 to spatial_ndim - 1 do
+    let pad_before, pad_after = padding.(i) in
+    let eff_kernel = (dilation.(i) * (kernel_size.(i) - 1)) + 1 in
+    let numer = output_size.(i) + pad_before + pad_after - eff_kernel in
+    if numer < 0 then
+      Error.invalid ~op:"fold" ~what:"output_size/padding/kernel_size"
+        ~reason:"effective kernel does not fit output spatial dimension" ();
+    blocks_shape.(i) <- (numer / stride.(i)) + 1
+  done;
+  let expected_blocks = Shape.numel blocks_shape in
+  if expected_blocks <> num_blocks then
+    Error.invalid ~op:"fold" ~what:"input shape"
+      ~reason:"L dimension does not match computed number of sliding blocks" ();
+
+  let out_shape = Array.append [| n; channels |] output_size in
+  let out_numel = Shape.numel out_shape in
+  let out_t : (a, b) t =
+    let out_t : (a, b) t = buffer x.context x.dtype [|out_numel|] in
+    { out_t with view = View.reshape out_t.view (Symbolic_shape.of_ints out_shape) }
+  in
+
+  let in_offset = View.offset in_view in
+  let in_strides = View.strides in_view in
+  let out_view = out_t.view in
+  let out_offset = View.offset out_view in
+  let out_strides = View.strides out_view in
+
+  let kernel_elems = !kernel_elems in
+  let run_batches f =
+    if n <= 0 then ()
+    else if n = 1 then f 0 1
+    else Parallel.parallel_for x.context.pool 0 (n - 1) f
+  in
+  match (x.buffer, out_t.buffer) with
+  | Float64 in_arr, Float64 out_arr ->
+      run_batches (fun n_start n_end ->
+          Op_fold.fold_float64 in_arr out_arr ~n_start ~n_end ~channels
+            ~num_blocks ~kernel_elems ~spatial_ndim ~blocks_shape ~kernel_size
+            ~output_size ~stride ~dilation ~padding ~in_offset ~in_strides
+            ~out_offset ~out_strides);
+      out_t
+  | Float32 in_arr, Float32 out_arr ->
+      run_batches (fun n_start n_end ->
+          Op_fold.fold_float32 in_arr out_arr ~n_start ~n_end ~channels
+            ~num_blocks ~kernel_elems ~spatial_ndim ~blocks_shape ~kernel_size
+            ~output_size ~stride ~dilation ~padding ~in_offset ~in_strides
+            ~out_offset ~out_strides);
+      out_t
+  | Int8 in_arr, Int8 out_arr ->
+      run_batches (fun n_start n_end ->
+          Op_fold.fold_int8 in_arr out_arr ~n_start ~n_end ~channels ~num_blocks
+            ~kernel_elems ~spatial_ndim ~blocks_shape ~kernel_size ~output_size
+            ~stride ~dilation ~padding ~in_offset ~in_strides ~out_offset
+            ~out_strides);
+      out_t
+  | Int16 in_arr, Int16 out_arr ->
+      run_batches (fun n_start n_end ->
+          Op_fold.fold_int16 in_arr out_arr ~n_start ~n_end ~channels ~num_blocks
+            ~kernel_elems ~spatial_ndim ~blocks_shape ~kernel_size ~output_size
+            ~stride ~dilation ~padding ~in_offset ~in_strides ~out_offset
+            ~out_strides);
+      out_t
+  | Int32 in_arr, Int32 out_arr ->
+      run_batches (fun n_start n_end ->
+          Op_fold.fold_int32 in_arr out_arr ~n_start ~n_end ~channels ~num_blocks
+            ~kernel_elems ~spatial_ndim ~blocks_shape ~kernel_size ~output_size
+            ~stride ~dilation ~padding ~in_offset ~in_strides ~out_offset
+            ~out_strides);
+      out_t
+  | Int64 in_arr, Int64 out_arr ->
+      run_batches (fun n_start n_end ->
+          Op_fold.fold_int64 in_arr out_arr ~n_start ~n_end ~channels ~num_blocks
+            ~kernel_elems ~spatial_ndim ~blocks_shape ~kernel_size ~output_size
+            ~stride ~dilation ~padding ~in_offset ~in_strides ~out_offset
+            ~out_strides);
+      out_t
+  | Bool _, _ ->
+      Error.invalid ~op:"fold" ~what:"unsupported dtype"
+        ~reason:"bool fold is undefined because overlaps are summed" ()
+  | _ -> Error.invalid ~op:"fold" ~what:"unsupported dtype" ()
 
 let matmul (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit
     =

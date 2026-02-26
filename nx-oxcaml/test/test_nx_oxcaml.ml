@@ -1425,6 +1425,301 @@ let test_scatter_preserves_template () =
   check_float "scatter_preserve[2]" ~eps:1e-12 99.0 d.(2);
   check_float "scatter_preserve[3]" ~eps:1e-12 40.0 d.(3)
 
+let test_fold_int32_1d_overlap () =
+  let ctx = Nx_backend.create_context () in
+  (* Shape [N=1, C*K=2, L=2] where C=1, K=2 *)
+  let x_flat = Nx_ox.create ctx Dtype.Int32 [|4|] [| 1l; 3l; 2l; 4l |] in
+  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 2; 2 |]) in
+  let y =
+    Nx_backend.fold x
+      ~output_size:[| 3 |]
+      ~kernel_size:[| 2 |]
+      ~stride:[| 1 |]
+      ~dilation:[| 1 |]
+      ~padding:[| (0, 0) |]
+  in
+  let shape_y =
+    match Symbolic_shape.eval (View.shape (Nx_backend.view y)) with
+    | Some s -> s
+    | None -> failwith "shape not evaluable"
+  in
+  check "fold_int32_1d_overlap: shape0" (shape_y.(0) = 1);
+  check "fold_int32_1d_overlap: shape1" (shape_y.(1) = 1);
+  check "fold_int32_1d_overlap: shape2" (shape_y.(2) = 3);
+  let d = Nx_ox.to_array y in
+  check_int32 "fold_int32_1d_overlap[0]" 1l d.(0);
+  check_int32 "fold_int32_1d_overlap[1]" 5l d.(1);
+  check_int32 "fold_int32_1d_overlap[2]" 4l d.(2)
+
+let test_fold_int32_1d_padding_stride () =
+  let ctx = Nx_backend.create_context () in
+  (* Shape [N=1, C*K=3, L=2] where C=1, K=3 *)
+  let x_flat = Nx_ox.create ctx Dtype.Int32 [|6|] [| 10l; 20l; 30l; 40l; 50l; 60l |] in
+  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 3; 2 |]) in
+  let y =
+    Nx_backend.fold x
+      ~output_size:[| 4 |]
+      ~kernel_size:[| 3 |]
+      ~stride:[| 2 |]
+      ~dilation:[| 1 |]
+      ~padding:[| (1, 1) |]
+  in
+  let d = Nx_ox.to_array y in
+  check_int32 "fold_int32_1d_padding_stride[0]" 30l d.(0);
+  check_int32 "fold_int32_1d_padding_stride[1]" 70l d.(1);
+  check_int32 "fold_int32_1d_padding_stride[2]" 40l d.(2);
+  check_int32 "fold_int32_1d_padding_stride[3]" 60l d.(3)
+
+let test_unfold_int32_1d_basic () =
+  let ctx = Nx_backend.create_context () in
+  let x_flat = Nx_ox.create ctx Dtype.Int32 [|4|] [| 1l; 2l; 3l; 4l |] in
+  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let y =
+    Nx_backend.unfold x
+      ~kernel_size:[| 2 |]
+      ~stride:[| 1 |]
+      ~dilation:[| 1 |]
+      ~padding:[| (0, 0) |]
+  in
+  let shape_y =
+    match Symbolic_shape.eval (View.shape (Nx_backend.view y)) with
+    | Some s -> s
+    | None -> failwith "shape not evaluable"
+  in
+  check "unfold_int32_1d_basic: shape0" (shape_y.(0) = 1);
+  check "unfold_int32_1d_basic: shape1" (shape_y.(1) = 2);
+  check "unfold_int32_1d_basic: shape2" (shape_y.(2) = 3);
+  let d = Nx_ox.to_array y in
+  check_int32 "unfold_int32_1d_basic[0]" 1l d.(0);
+  check_int32 "unfold_int32_1d_basic[1]" 2l d.(1);
+  check_int32 "unfold_int32_1d_basic[2]" 3l d.(2);
+  check_int32 "unfold_int32_1d_basic[3]" 2l d.(3);
+  check_int32 "unfold_int32_1d_basic[4]" 3l d.(4);
+  check_int32 "unfold_int32_1d_basic[5]" 4l d.(5)
+
+let test_unfold_int32_1d_padding_stride () =
+  let ctx = Nx_backend.create_context () in
+  let x_flat = Nx_ox.create ctx Dtype.Int32 [|4|] [| 1l; 2l; 3l; 4l |] in
+  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let y =
+    Nx_backend.unfold x
+      ~kernel_size:[| 3 |]
+      ~stride:[| 2 |]
+      ~dilation:[| 1 |]
+      ~padding:[| (1, 1) |]
+  in
+  let shape_y =
+    match Symbolic_shape.eval (View.shape (Nx_backend.view y)) with
+    | Some s -> s
+    | None -> failwith "shape not evaluable"
+  in
+  check "unfold_int32_1d_padding_stride: shape0" (shape_y.(0) = 1);
+  check "unfold_int32_1d_padding_stride: shape1" (shape_y.(1) = 3);
+  check "unfold_int32_1d_padding_stride: shape2" (shape_y.(2) = 2);
+  let d = Nx_ox.to_array y in
+  check_int32 "unfold_int32_1d_padding_stride[0]" 0l d.(0);
+  check_int32 "unfold_int32_1d_padding_stride[1]" 2l d.(1);
+  check_int32 "unfold_int32_1d_padding_stride[2]" 1l d.(2);
+  check_int32 "unfold_int32_1d_padding_stride[3]" 3l d.(3);
+  check_int32 "unfold_int32_1d_padding_stride[4]" 2l d.(4);
+  check_int32 "unfold_int32_1d_padding_stride[5]" 4l d.(5)
+
+let test_unfold_int64_1d_identity () =
+  let ctx = Nx_backend.create_context () in
+  let x_flat = Nx_ox.create ctx Dtype.Int64 [| 4 |] [| 11L; 22L; 33L; 44L |] in
+  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let y =
+    Nx_backend.unfold x
+      ~kernel_size:[| 1 |]
+      ~stride:[| 1 |]
+      ~dilation:[| 1 |]
+      ~padding:[| (0, 0) |]
+  in
+  let d = Nx_ox.to_array y in
+  check_int64 "unfold_int64_1d_identity[0]" 11L d.(0);
+  check_int64 "unfold_int64_1d_identity[1]" 22L d.(1);
+  check_int64 "unfold_int64_1d_identity[2]" 33L d.(2);
+  check_int64 "unfold_int64_1d_identity[3]" 44L d.(3)
+
+let test_unfold_float32_1d_identity () =
+  let ctx = Nx_backend.create_context () in
+  let x_flat = Nx_ox.create ctx Dtype.Float32 [| 4 |] [| 1.5; 2.5; 3.5; 4.5 |] in
+  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let y =
+    Nx_backend.unfold x
+      ~kernel_size:[| 1 |]
+      ~stride:[| 1 |]
+      ~dilation:[| 1 |]
+      ~padding:[| (0, 0) |]
+  in
+  let d = Nx_ox.to_array y in
+  check_float "unfold_float32_1d_identity[0]" ~eps:1e-6 1.5 d.(0);
+  check_float "unfold_float32_1d_identity[1]" ~eps:1e-6 2.5 d.(1);
+  check_float "unfold_float32_1d_identity[2]" ~eps:1e-6 3.5 d.(2);
+  check_float "unfold_float32_1d_identity[3]" ~eps:1e-6 4.5 d.(3)
+
+let test_unfold_float64_1d_identity () =
+  let ctx = Nx_backend.create_context () in
+  let x_flat = Nx_ox.create ctx Dtype.Float64 [| 4 |] [| 1.25; 2.25; 3.25; 4.25 |] in
+  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let y =
+    Nx_backend.unfold x
+      ~kernel_size:[| 1 |]
+      ~stride:[| 1 |]
+      ~dilation:[| 1 |]
+      ~padding:[| (0, 0) |]
+  in
+  let d = Nx_ox.to_array y in
+  check_float "unfold_float64_1d_identity[0]" ~eps:1e-9 1.25 d.(0);
+  check_float "unfold_float64_1d_identity[1]" ~eps:1e-9 2.25 d.(1);
+  check_float "unfold_float64_1d_identity[2]" ~eps:1e-9 3.25 d.(2);
+  check_float "unfold_float64_1d_identity[3]" ~eps:1e-9 4.25 d.(3)
+
+let test_unfold_int8_1d_identity () =
+  let ctx = Nx_backend.create_context () in
+  let x_flat = Nx_ox.create ctx Dtype.Int8 [| 4 |] [| 1; 2; 3; 4 |] in
+  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let y =
+    Nx_backend.unfold x
+      ~kernel_size:[| 1 |]
+      ~stride:[| 1 |]
+      ~dilation:[| 1 |]
+      ~padding:[| (0, 0) |]
+  in
+  let d = Nx_ox.to_array y in
+  check_int "unfold_int8_1d_identity[0]" 1 d.(0);
+  check_int "unfold_int8_1d_identity[1]" 2 d.(1);
+  check_int "unfold_int8_1d_identity[2]" 3 d.(2);
+  check_int "unfold_int8_1d_identity[3]" 4 d.(3)
+
+let test_unfold_int16_1d_identity () =
+  let ctx = Nx_backend.create_context () in
+  let x_flat = Nx_ox.create ctx Dtype.Int16 [| 4 |] [| 10; 20; 30; 40 |] in
+  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let y =
+    Nx_backend.unfold x
+      ~kernel_size:[| 1 |]
+      ~stride:[| 1 |]
+      ~dilation:[| 1 |]
+      ~padding:[| (0, 0) |]
+  in
+  let d = Nx_ox.to_array y in
+  check_int "unfold_int16_1d_identity[0]" 10 d.(0);
+  check_int "unfold_int16_1d_identity[1]" 20 d.(1);
+  check_int "unfold_int16_1d_identity[2]" 30 d.(2);
+  check_int "unfold_int16_1d_identity[3]" 40 d.(3)
+
+let test_unfold_bool_1d_identity () =
+  let ctx = Nx_backend.create_context () in
+  let x_flat =
+    Nx_ox.create ctx Dtype.Bool [| 4 |] [| true; false; true; false |]
+  in
+  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let y =
+    Nx_backend.unfold x
+      ~kernel_size:[| 1 |]
+      ~stride:[| 1 |]
+      ~dilation:[| 1 |]
+      ~padding:[| (0, 0) |]
+  in
+  let d = Nx_ox.to_array y in
+  check_bool "unfold_bool_1d_identity[0]" true d.(0);
+  check_bool "unfold_bool_1d_identity[1]" false d.(1);
+  check_bool "unfold_bool_1d_identity[2]" true d.(2);
+  check_bool "unfold_bool_1d_identity[3]" false d.(3)
+
+let test_fold_int64_1d_identity () =
+  let ctx = Nx_backend.create_context () in
+  let x_flat = Nx_ox.create ctx Dtype.Int64 [| 4 |] [| 9L; 8L; 7L; 6L |] in
+  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let y =
+    Nx_backend.fold x
+      ~output_size:[| 4 |]
+      ~kernel_size:[| 1 |]
+      ~stride:[| 1 |]
+      ~dilation:[| 1 |]
+      ~padding:[| (0, 0) |]
+  in
+  let d = Nx_ox.to_array y in
+  check_int64 "fold_int64_1d_identity[0]" 9L d.(0);
+  check_int64 "fold_int64_1d_identity[1]" 8L d.(1);
+  check_int64 "fold_int64_1d_identity[2]" 7L d.(2);
+  check_int64 "fold_int64_1d_identity[3]" 6L d.(3)
+
+let test_fold_float32_1d_identity () =
+  let ctx = Nx_backend.create_context () in
+  let x_flat = Nx_ox.create ctx Dtype.Float32 [| 4 |] [| 0.5; 1.5; 2.5; 3.5 |] in
+  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let y =
+    Nx_backend.fold x
+      ~output_size:[| 4 |]
+      ~kernel_size:[| 1 |]
+      ~stride:[| 1 |]
+      ~dilation:[| 1 |]
+      ~padding:[| (0, 0) |]
+  in
+  let d = Nx_ox.to_array y in
+  check_float "fold_float32_1d_identity[0]" ~eps:1e-6 0.5 d.(0);
+  check_float "fold_float32_1d_identity[1]" ~eps:1e-6 1.5 d.(1);
+  check_float "fold_float32_1d_identity[2]" ~eps:1e-6 2.5 d.(2);
+  check_float "fold_float32_1d_identity[3]" ~eps:1e-6 3.5 d.(3)
+
+let test_fold_float64_1d_identity () =
+  let ctx = Nx_backend.create_context () in
+  let x_flat =
+    Nx_ox.create ctx Dtype.Float64 [| 4 |] [| 10.25; 11.25; 12.25; 13.25 |]
+  in
+  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let y =
+    Nx_backend.fold x
+      ~output_size:[| 4 |]
+      ~kernel_size:[| 1 |]
+      ~stride:[| 1 |]
+      ~dilation:[| 1 |]
+      ~padding:[| (0, 0) |]
+  in
+  let d = Nx_ox.to_array y in
+  check_float "fold_float64_1d_identity[0]" ~eps:1e-9 10.25 d.(0);
+  check_float "fold_float64_1d_identity[1]" ~eps:1e-9 11.25 d.(1);
+  check_float "fold_float64_1d_identity[2]" ~eps:1e-9 12.25 d.(2);
+  check_float "fold_float64_1d_identity[3]" ~eps:1e-9 13.25 d.(3)
+
+let test_fold_int8_1d_identity () =
+  let ctx = Nx_backend.create_context () in
+  let x_flat = Nx_ox.create ctx Dtype.Int8 [| 4 |] [| 1; 3; 5; 7 |] in
+  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let y =
+    Nx_backend.fold x
+      ~output_size:[| 4 |]
+      ~kernel_size:[| 1 |]
+      ~stride:[| 1 |]
+      ~dilation:[| 1 |]
+      ~padding:[| (0, 0) |]
+  in
+  let d = Nx_ox.to_array y in
+  check_int "fold_int8_1d_identity[0]" 1 d.(0);
+  check_int "fold_int8_1d_identity[1]" 3 d.(1);
+  check_int "fold_int8_1d_identity[2]" 5 d.(2);
+  check_int "fold_int8_1d_identity[3]" 7 d.(3)
+
+let test_fold_int16_1d_identity () =
+  let ctx = Nx_backend.create_context () in
+  let x_flat = Nx_ox.create ctx Dtype.Int16 [| 4 |] [| 2; 4; 6; 8 |] in
+  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let y =
+    Nx_backend.fold x
+      ~output_size:[| 4 |]
+      ~kernel_size:[| 1 |]
+      ~stride:[| 1 |]
+      ~dilation:[| 1 |]
+      ~padding:[| (0, 0) |]
+  in
+  let d = Nx_ox.to_array y in
+  check_int "fold_int16_1d_identity[0]" 2 d.(0);
+  check_int "fold_int16_1d_identity[1]" 4 d.(1);
+  check_int "fold_int16_1d_identity[2]" 6 d.(2);
+  check_int "fold_int16_1d_identity[3]" 8 d.(3)
+
 let () =
   print_endline "Running Nx_backend backend tests...";
   test_buffer_float64 ();
@@ -1534,5 +1829,20 @@ let () =
   test_scatter_float64_add_duplicates ();
   test_scatter_bool_set ();
   test_scatter_preserves_template ();
+  test_unfold_int32_1d_basic ();
+  test_unfold_int32_1d_padding_stride ();
+  test_unfold_int64_1d_identity ();
+  test_unfold_float32_1d_identity ();
+  test_unfold_float64_1d_identity ();
+  test_unfold_int8_1d_identity ();
+  test_unfold_int16_1d_identity ();
+  test_unfold_bool_1d_identity ();
+  test_fold_int32_1d_overlap ();
+  test_fold_int32_1d_padding_stride ();
+  test_fold_int64_1d_identity ();
+  test_fold_float32_1d_identity ();
+  test_fold_float64_1d_identity ();
+  test_fold_int8_1d_identity ();
+  test_fold_int16_1d_identity ();
   Printf.printf "\nResults: %d passed, %d failed\n" !passed !failed;
   if !failed > 0 then exit 1
