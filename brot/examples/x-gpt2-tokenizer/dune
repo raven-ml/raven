@@ -1,3 +1,3 @@
 (executable
  (name main)
- (libraries brot nx nx.io))
+ (libraries brot nx unix))

@@ -9,7 +9,13 @@ open Brot
 let download url dest =
   if not (Sys.file_exists dest) then (
     Printf.printf "Downloading %s...\n%!" (Filename.basename dest);
-    Nx_io.Http.download ~url ~dest ())
+    let cmd =
+      Printf.sprintf "curl -L --fail -s -o %s %s" (Filename.quote dest)
+        (Filename.quote url)
+    in
+    match Unix.system cmd with
+    | Unix.WEXITED 0 -> ()
+    | _ -> failwith (Printf.sprintf "Failed to download %s" url))
 
 let () =
   (* Download GPT-2 model files *)
