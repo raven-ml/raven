@@ -1,4 +1,0 @@
-(library
- (public_name kaun.models)
- (name kaun_models)
- (libraries rune kaun kaun.huggingface nx nx.io jsont jsont.bytesrw brot))
