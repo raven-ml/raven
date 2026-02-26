@@ -1801,6 +1801,29 @@ let test_threefry_strided_view_matches_contiguous () =
       contig_data.(i) perm_data.(i)
   done
 
+let test_atan2_float64 () =
+  let ctx = Nx_backend.create_context () in
+  let y = Nx_ox.create ctx Dtype.Float64 [| 4 |] [| 1.0; -1.0; 1.0; 0.0 |] in
+  let x = Nx_ox.create ctx Dtype.Float64 [| 4 |] [| 1.0; 1.0; -1.0; 1.0 |] in
+  let out = Nx_ox.empty ctx Dtype.Float64 [| 4 |] in
+  Nx_backend.atan2 ~out y x;
+  let data = Nx_ox.to_array out in
+  check_float "atan2_float64[0]" ~eps:1e-10 (Float.atan2 1.0 1.0) data.(0);
+  check_float "atan2_float64[1]" ~eps:1e-10 (Float.atan2 (-1.0) 1.0) data.(1);
+  check_float "atan2_float64[2]" ~eps:1e-10 (Float.atan2 1.0 (-1.0)) data.(2);
+  check_float "atan2_float64[3]" ~eps:1e-10 (Float.atan2 0.0 1.0) data.(3)
+
+let test_atan2_float32 () =
+  let ctx = Nx_backend.create_context () in
+  let y = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| 1.0; 0.0; -1.0 |] in
+  let x = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| 0.0; 1.0; -1.0 |] in
+  let out = Nx_ox.empty ctx Dtype.Float32 [| 3 |] in
+  Nx_backend.atan2 ~out y x;
+  let data = Nx_ox.to_array out in
+  check_float "atan2_float32[0]" ~eps:1e-5 (Float.atan2 1.0 0.0) data.(0);
+  check_float "atan2_float32[1]" ~eps:1e-5 (Float.atan2 0.0 1.0) data.(1);
+  check_float "atan2_float32[2]" ~eps:1e-5 (Float.atan2 (-1.0) (-1.0)) data.(2)
+
 let () =
   print_endline "Running Nx_backend backend tests...";
   test_buffer_float64 ();
@@ -1930,5 +1953,7 @@ let () =
   test_associative_scan_sum_int32_permuted_view ();
   test_associative_scan_zero_axis_length ();
   test_threefry_strided_view_matches_contiguous ();
+  test_atan2_float64 ();
+  test_atan2_float32 ();
   Printf.printf "\nResults: %d passed, %d failed\n" !passed !failed;
   if !failed > 0 then exit 1

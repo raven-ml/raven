@@ -597,7 +597,19 @@ let atan (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
       par out.context.pool vol (fun s e -> Op_atan.atan_float32 a_arr out_arr va vout s e)
   | _ -> Error.invalid ~op:"atan" ~what:"not implemented for unboxed ints" ()
 
-let atan2 ~out:_ _ _ = Error.invalid ~op:"atan2" ~what:"not implemented" ()
+let atan2 (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+  let vout = out.view in
+  let va = a.view in
+  let vb = b.view in
+  let vol = numel vout in
+  match (out.buffer, a.buffer, b.buffer) with
+  | Float64 out_arr, Float64 a_arr, Float64 b_arr ->
+      par out.context.pool vol (fun s e ->
+          Op_atan2.atan2_float64 a_arr b_arr out_arr va vb vout s e)
+  | Float32 out_arr, Float32 a_arr, Float32 b_arr ->
+      par out.context.pool vol (fun s e ->
+          Op_atan2.atan2_float32 a_arr b_arr out_arr va vb vout s e)
+  | _ -> Error.invalid ~op:"atan2" ~what:"not implemented for unboxed ints" ()
 
 let sinh (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
   let vout = out.view in
