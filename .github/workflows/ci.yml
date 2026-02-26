@@ -43,62 +43,62 @@ jobs:
       - name: Build and test nx
         run: |
           echo "::group::nx"
-          opam exec -- dune build nx
-          opam exec -- dune build @nx/runtest
+          opam exec -- dune build packages/nx
+          opam exec -- dune build @packages/nx/runtest
           echo "::endgroup::"
 
       - name: Build and test brot
         run: |
           echo "::group::brot"
-          opam exec -- dune build brot
-          opam exec -- dune build @brot/runtest
+          opam exec -- dune build packages/brot
+          opam exec -- dune build @packages/brot/runtest
           echo "::endgroup::"
 
       - name: Build and test talon
         run: |
           echo "::group::talon"
-          opam exec -- dune build talon
-          opam exec -- dune build @talon/runtest
+          opam exec -- dune build packages/talon
+          opam exec -- dune build @packages/talon/runtest
           echo "::endgroup::"
 
       - name: Build and test rune
         run: |
           echo "::group::rune"
-          opam exec -- dune build rune
-          opam exec -- dune build @rune/runtest
+          opam exec -- dune build packages/rune
+          opam exec -- dune build @packages/rune/runtest
           echo "::endgroup::"
 
       - name: Build and test kaun
         run: |
           echo "::group::kaun"
-          opam exec -- dune build kaun
-          opam exec -- dune build @kaun/runtest
+          opam exec -- dune build packages/kaun
+          opam exec -- dune build @packages/kaun/runtest
           echo "::endgroup::"
 
       - name: Build and test fehu
         run: |
           echo "::group::fehu"
-          opam exec -- dune build fehu
-          opam exec -- dune build @fehu/runtest
+          opam exec -- dune build packages/fehu
+          opam exec -- dune build @packages/fehu/runtest
           echo "::endgroup::"
 
       - name: Build and test sowilo
         run: |
           echo "::group::sowilo"
-          opam exec -- dune build sowilo
-          opam exec -- dune build @sowilo/runtest
+          opam exec -- dune build packages/sowilo
+          opam exec -- dune build @packages/sowilo/runtest
           echo "::endgroup::"
 
       - name: Build and test hugin
         run: |
           echo "::group::hugin"
-          opam exec -- dune build hugin
-          opam exec -- dune build @hugin/runtest
+          opam exec -- dune build packages/hugin
+          opam exec -- dune build @packages/hugin/runtest
           echo "::endgroup::"
 
       - name: Build and test quill
         run: |
           echo "::group::quill"
-          opam exec -- dune build quill
-          opam exec -- dune build @quill/runtest
+          opam exec -- dune build packages/quill
+          opam exec -- dune build @packages/quill/runtest
           echo "::endgroup::"

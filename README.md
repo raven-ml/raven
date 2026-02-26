@@ -15,19 +15,19 @@ Raven is built from modular projects that form a cohesive ecosystem:
 **Core Libraries:**
 | **Raven Project**   | **Python Equivalent**  | **Description**                                               |
 | ------------------- | ---------------------- | ------------------------------------------------------------- |
-| [**Nx**](nx/)       | NumPy                  | N-dimensional arrays with pluggable backends                  |
-| [**Brot**](brot/)   | HuggingFace Tokenizers | Fast, HuggingFace-compatible tokenization for language models |
-| [**Talon**](talon/) | Pandas/Polars          | DataFrames with heterogeneous columns and rich API            |
-| [**Hugin**](hugin/) | Matplotlib             | Publication-quality data visualization and plotting           |
-| [**Quill**](quill/) | Jupyter                | A love letter to scientific writing                           |
+| [**Nx**](packages/nx/)       | NumPy                  | N-dimensional arrays with pluggable backends                  |
+| [**Brot**](packages/brot/)   | HuggingFace Tokenizers | Fast, HuggingFace-compatible tokenization for language models |
+| [**Talon**](packages/talon/) | Pandas/Polars          | DataFrames with heterogeneous columns and rich API            |
+| [**Hugin**](packages/hugin/) | Matplotlib             | Publication-quality data visualization and plotting           |
+| [**Quill**](packages/quill/) | Jupyter                | A love letter to scientific writing                           |
 
 **Rune Ecosystem:**
 | **Raven Project**       | **Python Equivalent**       | **Description**                                        |
 | ----------------------- | --------------------------- | ------------------------------------------------------ |
-| [**Rune**](rune/)       | JAX                         | Autodiff with multi-device support and JIT compilation |
-| [**Kaun** ᚲ](kaun/)     | PyTorch/Flax                | Deep learning framework built on Rune                  |
-| [**Fehu** ᚠ](fehu/)     | Gymnasium/Stable Baselines3 | Reinforcement learning environments and algorithms     |
-| [**Sowilo** ᛋ](sowilo/) | OpenCV                      | Computer vision framework built on Rune                |
+| [**Rune**](packages/rune/)       | JAX                         | Autodiff with multi-device support and JIT compilation |
+| [**Kaun** ᚲ](packages/kaun/)     | PyTorch/Flax                | Deep learning framework built on Rune                  |
+| [**Fehu** ᚠ](packages/fehu/)     | Gymnasium/Stable Baselines3 | Reinforcement learning environments and algorithms     |
+| [**Sowilo** ᛋ](packages/sowilo/) | OpenCV                      | Computer vision framework built on Rune                |
 
 ## Why Raven?
 

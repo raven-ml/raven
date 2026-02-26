@@ -2,10 +2,11 @@ let site_dir = "site"
 let docs_dir = "docs"
 let build_dir = "build"
 let templates_dir = "templates"
-let lib_doc_dir lib_name = Filename.concat (Filename.concat ".." lib_name) "doc"
+let lib_doc_dir lib_name =
+  Filename.concat (Filename.concat (Filename.concat ".." "packages") lib_name) "doc"
 
 let lib_examples_dir lib_name =
-  Filename.concat (Filename.concat ".." lib_name) "examples"
+  Filename.concat (Filename.concat (Filename.concat ".." "packages") lib_name) "examples"
 
 type library = {
   name : string;

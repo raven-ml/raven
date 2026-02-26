@@ -17,16 +17,16 @@ raven is inspired by unix's philosophy of doing one thing well, and tinygrad's p
 
 - **nx**: n-dimensional arrays with pluggable backend architecture - equivalent to numpy.
 
-  the backend interface is defined at `nx/lib/core/backend.mli`. NEVER add a backend operation without being asked to do so.
-  frontend apis are defined in a single file `nx/lib/frontend.ml` using the backend operations.
-  nx comes with a default c backend in `nx/lib/backend_c/`.
+  the backend interface is defined at `packages/nx/lib/core/backend.mli`. NEVER add a backend operation without being asked to do so.
+  frontend apis are defined in a single file `packages/nx/lib/frontend.ml` using the backend operations.
+  nx comes with a default c backend in `packages/nx/lib/backend_c/`.
 
 - **rune**: tensor computation with automatic differentiation and jit compilation - equivalent to jax.
 
-  rune is architected as a backend for nx in `rune/lib/nx_rune.ml`, where each backend operation raises an effect, or, if the effect is unhandled, falls back to the nx c backend.
+  rune is architected as a backend for nx in `packages/rune/lib/nx_rune.ml`, where each backend operation raises an effect, or, if the effect is unhandled, falls back to the nx c backend.
 
   this allows us to provide an nx-like api, while providing additional features such as automatic differentiation and jit compilation:
-  - for automatic differentiation in `rune/lib/autodiff.ml`, effects are caught once re-executed, alongside their gradient calculations in the effect handler, the new calls are not caught by the effect handler (unless the user nests `grad` calls), so the operations are executed as normal on the c backend.
+  - for automatic differentiation in `packages/rune/lib/autodiff.ml`, effects are caught once re-executed, alongside their gradient calculations in the effect handler, the new calls are not caught by the effect handler (unless the user nests `grad` calls), so the operations are executed as normal on the c backend.
   - for jit compilation, all effects are handled to build a computation graph, which is then jitted using `rune.jit`.
   - and similar for other features such as debug, vmap.
 
@@ -34,7 +34,7 @@ raven is inspired by unix's philosophy of doing one thing well, and tinygrad's p
 
   kaun builds on rune to provide high-level neural network abstractions such as ptree, layers, optimizer, training loops, datasets, metrics, etc.
 
-  it also provides ready-to-use models in `kaun/lib/kaun-models` and datasets in `kaun/lib/kaun-datasets`.
+  it also provides ready-to-use models in `packages/kaun/lib/kaun-models` and datasets in `packages/kaun/lib/kaun-datasets`.
 
 - **fehu**: reinforcement learning environment and algorithms built on rune and kaun - equivalent to gym and stable baselines.
 - **talon**: dataframe library for data manipulation and analysis - equivalent to pandas and polars.
@@ -45,7 +45,7 @@ raven is inspired by unix's philosophy of doing one thing well, and tinygrad's p
 
 ## project structure
 
-- packages live in packages such as `nx/`, `rune/`, `kaun/`, `sowilo/`, `talon/`, `hugin/`, `quill/`, and `fehu/`, each with `lib/` sources and `test/` suites.
+- packages live in `packages/` such as `packages/nx/`, `packages/rune/`, `packages/kaun/`, `packages/sowilo/`, `packages/talon/`, `packages/hugin/`, `packages/quill/`, and `packages/fehu/`, each with `lib/` sources and `test/` suites.
 - documentation assets live under `www/` (static site).
 
 ## guidelines

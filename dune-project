@@ -22,6 +22,7 @@
 (implicit_transitive_deps false)
 
 (generate_opam_files true)
+(opam_file_location inside_opam_directory)
 
 (pin
  (url git+https://github.com/tmattio/mosaic)

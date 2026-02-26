@@ -17,4 +17,4 @@ python3 -m http.server -d _build/default/www/build
 - `generate/` — site generator
 - `process/` — odoc API docs integration (WIP, not part of the build)
 
-Library-specific docs live in each library's `doc/` directory (e.g., `nx/doc/`, `rune/doc/`) where they're tested with mdx. The site generator pulls them in automatically.
+Library-specific docs live in each library's `doc/` directory (e.g., `packages/nx/doc/`, `packages/rune/doc/`) where they're tested with mdx. The site generator pulls them in automatically.
