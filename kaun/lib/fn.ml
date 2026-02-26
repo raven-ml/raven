@@ -292,3 +292,351 @@ let dot_product_attention (type b) ?attention_mask ?scale ?dropout_rate
         dropout ~key ~rate probs
   in
   Rune.matmul probs v
+
+(* Conv / Pool helpers *)
+
+let ceildiv a b = (a + b - 1) / b
+
+let calculate_nn_padding input_spatial ~kernel_size ~stride ~dilation
+    ~(padding : [ `Same | `Valid ]) =
+  let k = Array.length kernel_size in
+  match padding with
+  | `Valid -> Array.make k (0, 0)
+  | `Same ->
+      Array.init k (fun i ->
+          let eff_k = (dilation.(i) * (kernel_size.(i) - 1)) + 1 in
+          let out = ceildiv input_spatial.(i) stride.(i) in
+          let total =
+            Stdlib.max 0 (((out - 1) * stride.(i)) + eff_k - input_spatial.(i))
+          in
+          (total / 2, total - (total / 2)))
+
+let apply_ceil_mode input_spatial ~kernel_size ~stride ~dilation ~padding
+    ~ceil_mode =
+  if not ceil_mode then padding
+  else
+    Array.init (Array.length kernel_size) (fun i ->
+        let pb, pa = padding.(i) in
+        let padded = input_spatial.(i) + pb + pa in
+        let eff_k = (dilation.(i) * (kernel_size.(i) - 1)) + 1 in
+        let out_floor = ((padded - eff_k) / stride.(i)) + 1 in
+        let out_ceil = ceildiv (padded - eff_k) stride.(i) + 1 in
+        if out_ceil > out_floor then
+          let extra = ((out_ceil - 1) * stride.(i)) + eff_k - padded in
+          (pb, pa + extra)
+        else (pb, pa))
+
+(* Convolution *)
+
+let conv1d ?(groups = 1) ?(stride = 1) ?(dilation = 1) ?(padding = `Valid) ?bias
+    x w =
+  let x_shape = Rune.shape x in
+  let w_shape = Rune.shape w in
+  if Array.length x_shape <> 3 then
+    invalid_argf_fn "conv1d" "input must be 3D (N, C_in, L)";
+  if Array.length w_shape <> 3 then
+    invalid_argf_fn "conv1d" "weight must be 3D (C_out, C_in/groups, K)";
+  let n = x_shape.(0) in
+  let cin = x_shape.(1) in
+  let cout = w_shape.(0) in
+  let cin_per_group = w_shape.(1) in
+  if cin <> groups * cin_per_group then
+    invalid_argf_fn "conv1d" "C_in=%d does not match groups=%d * C_in/g=%d" cin
+      groups cin_per_group;
+  let kernel_size = [| w_shape.(2) |] in
+  let stride_arr = [| stride |] in
+  let dilation_arr = [| dilation |] in
+  let input_spatial = [| x_shape.(2) |] in
+  let pad_pairs =
+    calculate_nn_padding input_spatial ~kernel_size ~stride:stride_arr
+      ~dilation:dilation_arr ~padding
+  in
+  let kernel_elements = w_shape.(2) in
+  (* unfold: (N, C_in, L_in) -> (N, C_in, K, L_out) *)
+  let x_unf =
+    Rune.im2col ~kernel_size ~stride:stride_arr ~dilation:dilation_arr
+      ~padding:pad_pairs x
+  in
+  let x_unf_shape = Rune.shape x_unf in
+  let l_out = x_unf_shape.(3) in
+  (* Merge channels and kernel: (N, C_in*K, L_out) *)
+  let x_col = Rune.reshape [| n; cin * kernel_elements; l_out |] x_unf in
+  let result =
+    if groups = 1 then
+      let w_flat = Rune.reshape [| cout; cin * kernel_elements |] w in
+      Rune.matmul w_flat x_col
+    else
+      let rcout = cout / groups in
+      let x_grouped =
+        Rune.reshape
+          [| n; groups; cin_per_group * kernel_elements; l_out |]
+          x_col
+      in
+      let w_grouped =
+        Rune.reshape [| groups; rcout; cin_per_group * kernel_elements |] w
+      in
+      let x_batched =
+        Rune.reshape
+          [| n * groups; cin_per_group * kernel_elements; l_out |]
+          x_grouped
+      in
+      let w_expanded = Rune.unsqueeze ~axes:[ 0 ] w_grouped in
+      let w_expanded =
+        Rune.expand
+          [| n; groups; rcout; cin_per_group * kernel_elements |]
+          w_expanded
+      in
+      let w_expanded =
+        Rune.reshape
+          [| n * groups; rcout; cin_per_group * kernel_elements |]
+          w_expanded
+      in
+      let result = Rune.matmul w_expanded x_batched in
+      let result = Rune.reshape [| n; groups; rcout; l_out |] result in
+      Rune.reshape [| n; cout; l_out |] result
+  in
+  match bias with
+  | None -> result
+  | Some b -> Rune.add result (Rune.reshape [| 1; cout; 1 |] b)
+
+let conv2d ?(groups = 1) ?(stride = (1, 1)) ?(dilation = (1, 1))
+    ?(padding = `Valid) ?bias x w =
+  let x_shape = Rune.shape x in
+  let w_shape = Rune.shape w in
+  if Array.length x_shape <> 4 then
+    invalid_argf_fn "conv2d" "input must be 4D (N, C_in, H, W)";
+  if Array.length w_shape <> 4 then
+    invalid_argf_fn "conv2d" "weight must be 4D (C_out, C_in/groups, kH, kW)";
+  let n = x_shape.(0) in
+  let cin = x_shape.(1) in
+  let cout = w_shape.(0) in
+  let cin_per_group = w_shape.(1) in
+  if cin <> groups * cin_per_group then
+    invalid_argf_fn "conv2d" "C_in=%d does not match groups=%d * C_in/g=%d" cin
+      groups cin_per_group;
+  let sh, sw = stride in
+  let dh, dw = dilation in
+  let kernel_size = [| w_shape.(2); w_shape.(3) |] in
+  let stride_arr = [| sh; sw |] in
+  let dilation_arr = [| dh; dw |] in
+  let input_spatial = [| x_shape.(2); x_shape.(3) |] in
+  let pad_pairs =
+    calculate_nn_padding input_spatial ~kernel_size ~stride:stride_arr
+      ~dilation:dilation_arr ~padding
+  in
+  let kernel_elements = w_shape.(2) * w_shape.(3) in
+  (* unfold: (N, C_in, H, W) -> (N, C_in, kH*kW, L) *)
+  let x_unf =
+    Rune.im2col ~kernel_size ~stride:stride_arr ~dilation:dilation_arr
+      ~padding:pad_pairs x
+  in
+  let x_unf_shape = Rune.shape x_unf in
+  let l_out = x_unf_shape.(3) in
+  (* Merge channels and kernel: (N, C_in*kH*kW, L) *)
+  let x_col = Rune.reshape [| n; cin * kernel_elements; l_out |] x_unf in
+  let result =
+    if groups = 1 then
+      let w_flat = Rune.reshape [| cout; cin * kernel_elements |] w in
+      Rune.matmul w_flat x_col
+    else
+      let rcout = cout / groups in
+      let x_grouped =
+        Rune.reshape
+          [| n; groups; cin_per_group * kernel_elements; l_out |]
+          x_col
+      in
+      let w_grouped =
+        Rune.reshape [| groups; rcout; cin_per_group * kernel_elements |] w
+      in
+      let x_batched =
+        Rune.reshape
+          [| n * groups; cin_per_group * kernel_elements; l_out |]
+          x_grouped
+      in
+      let w_expanded = Rune.unsqueeze ~axes:[ 0 ] w_grouped in
+      let w_expanded =
+        Rune.expand
+          [| n; groups; rcout; cin_per_group * kernel_elements |]
+          w_expanded
+      in
+      let w_expanded =
+        Rune.reshape
+          [| n * groups; rcout; cin_per_group * kernel_elements |]
+          w_expanded
+      in
+      let result = Rune.matmul w_expanded x_batched in
+      let result = Rune.reshape [| n; groups; rcout; l_out |] result in
+      Rune.reshape [| n; cout; l_out |] result
+  in
+  (* Reshape from (N, C_out, L) to (N, C_out, H_out, W_out) *)
+  let padded_h = input_spatial.(0) + fst pad_pairs.(0) + snd pad_pairs.(0) in
+  let padded_w = input_spatial.(1) + fst pad_pairs.(1) + snd pad_pairs.(1) in
+  let eff_kh = ((kernel_size.(0) - 1) * dh) + 1 in
+  let eff_kw = ((kernel_size.(1) - 1) * dw) + 1 in
+  let h_out = ((padded_h - eff_kh) / sh) + 1 in
+  let w_out = ((padded_w - eff_kw) / sw) + 1 in
+  let result = Rune.reshape [| n; cout; h_out; w_out |] result in
+  match bias with
+  | None -> result
+  | Some b -> Rune.add result (Rune.reshape [| 1; cout; 1; 1 |] b)
+
+(* Pooling *)
+
+let max_pool1d ~kernel_size ?(stride = 1) ?(dilation = 1) ?(padding = `Valid)
+    ?(ceil_mode = false) x =
+  let x_shape = Rune.shape x in
+  if Array.length x_shape <> 3 then
+    invalid_argf_fn "max_pool1d" "input must be 3D (N, C, L)";
+  let n = x_shape.(0) in
+  let c = x_shape.(1) in
+  let kernel_size_arr = [| kernel_size |] in
+  let stride_arr = [| stride |] in
+  let dilation_arr = [| dilation |] in
+  let input_spatial = [| x_shape.(2) |] in
+  let pad_pairs =
+    calculate_nn_padding input_spatial ~kernel_size:kernel_size_arr
+      ~stride:stride_arr ~dilation:dilation_arr ~padding
+  in
+  let pad_pairs =
+    apply_ceil_mode input_spatial ~kernel_size:kernel_size_arr
+      ~stride:stride_arr ~dilation:dilation_arr ~padding:pad_pairs ~ceil_mode
+  in
+  (* unfold: (N, C, L) -> (N, C, K, L_out) *)
+  let x_unf =
+    Rune.im2col ~kernel_size:kernel_size_arr ~stride:stride_arr
+      ~dilation:dilation_arr ~padding:pad_pairs x
+  in
+  let x_unf_ndim = Rune.ndim x_unf in
+  let reduced = Rune.max x_unf ~axes:[ x_unf_ndim - 2 ] ~keepdims:false in
+  let x_unf_shape = Rune.shape x_unf in
+  let l_out = x_unf_shape.(x_unf_ndim - 1) in
+  Rune.reshape [| n; c; l_out |] reduced
+
+let max_pool2d ~kernel_size ?(stride = (1, 1)) ?(dilation = (1, 1))
+    ?(padding = `Valid) ?(ceil_mode = false) x =
+  let x_shape = Rune.shape x in
+  if Array.length x_shape <> 4 then
+    invalid_argf_fn "max_pool2d" "input must be 4D (N, C, H, W)";
+  let n = x_shape.(0) in
+  let c = x_shape.(1) in
+  let kh, kw = kernel_size in
+  let sh, sw = stride in
+  let dh, dw = dilation in
+  let kernel_size_arr = [| kh; kw |] in
+  let stride_arr = [| sh; sw |] in
+  let dilation_arr = [| dh; dw |] in
+  let input_spatial = [| x_shape.(2); x_shape.(3) |] in
+  let pad_pairs =
+    calculate_nn_padding input_spatial ~kernel_size:kernel_size_arr
+      ~stride:stride_arr ~dilation:dilation_arr ~padding
+  in
+  let pad_pairs =
+    apply_ceil_mode input_spatial ~kernel_size:kernel_size_arr
+      ~stride:stride_arr ~dilation:dilation_arr ~padding:pad_pairs ~ceil_mode
+  in
+  let x_unf =
+    Rune.im2col ~kernel_size:kernel_size_arr ~stride:stride_arr
+      ~dilation:dilation_arr ~padding:pad_pairs x
+  in
+  let x_unf_ndim = Rune.ndim x_unf in
+  let reduced = Rune.max x_unf ~axes:[ x_unf_ndim - 2 ] ~keepdims:false in
+  let x_unf_shape = Rune.shape x_unf in
+  let l_out = x_unf_shape.(x_unf_ndim - 1) in
+  let padded_h = input_spatial.(0) + fst pad_pairs.(0) + snd pad_pairs.(0) in
+  let padded_w = input_spatial.(1) + fst pad_pairs.(1) + snd pad_pairs.(1) in
+  let eff_kh = ((kh - 1) * dh) + 1 in
+  let eff_kw = ((kw - 1) * dw) + 1 in
+  let h_out = ((padded_h - eff_kh) / sh) + 1 in
+  let w_out = ((padded_w - eff_kw) / sw) + 1 in
+  let _ = l_out in
+  Rune.reshape [| n; c; h_out; w_out |] reduced
+
+let avg_pool1d ~kernel_size ?(stride = 1) ?(dilation = 1) ?(padding = `Valid)
+    ?(ceil_mode = false) ?(count_include_pad = true) x =
+  let x_shape = Rune.shape x in
+  if Array.length x_shape <> 3 then
+    invalid_argf_fn "avg_pool1d" "input must be 3D (N, C, L)";
+  let n = x_shape.(0) in
+  let c = x_shape.(1) in
+  let kernel_size_arr = [| kernel_size |] in
+  let stride_arr = [| stride |] in
+  let dilation_arr = [| dilation |] in
+  let input_spatial = [| x_shape.(2) |] in
+  let pad_pairs =
+    calculate_nn_padding input_spatial ~kernel_size:kernel_size_arr
+      ~stride:stride_arr ~dilation:dilation_arr ~padding
+  in
+  let pad_pairs =
+    apply_ceil_mode input_spatial ~kernel_size:kernel_size_arr
+      ~stride:stride_arr ~dilation:dilation_arr ~padding:pad_pairs ~ceil_mode
+  in
+  let x_unf =
+    Rune.im2col ~kernel_size:kernel_size_arr ~stride:stride_arr
+      ~dilation:dilation_arr ~padding:pad_pairs x
+  in
+  let x_unf_ndim = Rune.ndim x_unf in
+  let x_unf_shape = Rune.shape x_unf in
+  let l_out = x_unf_shape.(x_unf_ndim - 1) in
+  let summed = Rune.sum x_unf ~axes:[ x_unf_ndim - 2 ] in
+  let result = Rune.reshape [| n; c; l_out |] summed in
+  if count_include_pad then Rune.div_s result (float_of_int kernel_size)
+  else
+    let ones = Rune.ones_like x in
+    let ones_unf =
+      Rune.im2col ~kernel_size:kernel_size_arr ~stride:stride_arr
+        ~dilation:dilation_arr ~padding:pad_pairs ones
+    in
+    let count = Rune.sum ones_unf ~axes:[ Rune.ndim ones_unf - 2 ] in
+    let count = Rune.reshape [| n; c; l_out |] count in
+    Rune.div result count
+
+let avg_pool2d ~kernel_size ?(stride = (1, 1)) ?(dilation = (1, 1))
+    ?(padding = `Valid) ?(ceil_mode = false) ?(count_include_pad = true) x =
+  let x_shape = Rune.shape x in
+  if Array.length x_shape <> 4 then
+    invalid_argf_fn "avg_pool2d" "input must be 4D (N, C, H, W)";
+  let n = x_shape.(0) in
+  let c = x_shape.(1) in
+  let kh, kw = kernel_size in
+  let sh, sw = stride in
+  let dh, dw = dilation in
+  let kernel_size_arr = [| kh; kw |] in
+  let stride_arr = [| sh; sw |] in
+  let dilation_arr = [| dh; dw |] in
+  let input_spatial = [| x_shape.(2); x_shape.(3) |] in
+  let pad_pairs =
+    calculate_nn_padding input_spatial ~kernel_size:kernel_size_arr
+      ~stride:stride_arr ~dilation:dilation_arr ~padding
+  in
+  let pad_pairs =
+    apply_ceil_mode input_spatial ~kernel_size:kernel_size_arr
+      ~stride:stride_arr ~dilation:dilation_arr ~padding:pad_pairs ~ceil_mode
+  in
+  let x_unf =
+    Rune.im2col ~kernel_size:kernel_size_arr ~stride:stride_arr
+      ~dilation:dilation_arr ~padding:pad_pairs x
+  in
+  let x_unf_ndim = Rune.ndim x_unf in
+  let x_unf_shape = Rune.shape x_unf in
+  let l_out = x_unf_shape.(x_unf_ndim - 1) in
+  let summed = Rune.sum x_unf ~axes:[ x_unf_ndim - 2 ] in
+  let padded_h = input_spatial.(0) + fst pad_pairs.(0) + snd pad_pairs.(0) in
+  let padded_w = input_spatial.(1) + fst pad_pairs.(1) + snd pad_pairs.(1) in
+  let eff_kh = ((kh - 1) * dh) + 1 in
+  let eff_kw = ((kw - 1) * dw) + 1 in
+  let h_out = ((padded_h - eff_kh) / sh) + 1 in
+  let w_out = ((padded_w - eff_kw) / sw) + 1 in
+  let _ = l_out in
+  let result = Rune.reshape [| n; c; h_out; w_out |] summed in
+  if count_include_pad then
+    let kernel_numel = float_of_int (kh * kw) in
+    Rune.div_s result kernel_numel
+  else
+    let ones = Rune.ones_like x in
+    let ones_unf =
+      Rune.im2col ~kernel_size:kernel_size_arr ~stride:stride_arr
+        ~dilation:dilation_arr ~padding:pad_pairs ones
+    in
+    let count = Rune.sum ones_unf ~axes:[ Rune.ndim ones_unf - 2 ] in
+    let count = Rune.reshape [| n; c; h_out; w_out |] count in
+    Rune.div result count

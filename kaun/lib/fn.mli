@@ -118,3 +118,108 @@ val dot_product_attention :
 
     Raises [Invalid_argument] if ranks, shapes, or dtypes are incompatible, or
     if [dropout_rate] is set without [dropout_key]. *)
+
+(** {1:conv Convolution} *)
+
+val conv1d :
+  ?groups:int ->
+  ?stride:int ->
+  ?dilation:int ->
+  ?padding:[ `Same | `Valid ] ->
+  ?bias:(float, 'b) Rune.t ->
+  (float, 'b) Rune.t ->
+  (float, 'b) Rune.t ->
+  (float, 'b) Rune.t
+(** [conv1d ?groups ?stride ?dilation ?padding ?bias x w] computes 1D
+    convolution.
+
+    [x]: [(N, C_in, L)]. [w]: [(C_out, C_in/groups, K)].
+
+    [groups] defaults to [1]. [stride] and [dilation] default to [1]. [padding]
+    defaults to [`Valid].
+
+    Raises [Invalid_argument] if input/weight shapes are incompatible or channel
+    counts do not match [groups]. *)
+
+val conv2d :
+  ?groups:int ->
+  ?stride:int * int ->
+  ?dilation:int * int ->
+  ?padding:[ `Same | `Valid ] ->
+  ?bias:(float, 'b) Rune.t ->
+  (float, 'b) Rune.t ->
+  (float, 'b) Rune.t ->
+  (float, 'b) Rune.t
+(** [conv2d ?groups ?stride ?dilation ?padding ?bias x w] computes 2D
+    convolution.
+
+    [x]: [(N, C_in, H, W)]. [w]: [(C_out, C_in/groups, kH, kW)].
+
+    [groups] defaults to [1]. [stride] and [dilation] default to [(1, 1)].
+    [padding] defaults to [`Valid].
+
+    Raises [Invalid_argument] if input/weight shapes are incompatible or channel
+    counts do not match [groups]. *)
+
+(** {1:pool Pooling} *)
+
+val max_pool1d :
+  kernel_size:int ->
+  ?stride:int ->
+  ?dilation:int ->
+  ?padding:[ `Same | `Valid ] ->
+  ?ceil_mode:bool ->
+  ('a, 'b) Rune.t ->
+  ('a, 'b) Rune.t
+(** [max_pool1d ~kernel_size ?stride ?dilation ?padding ?ceil_mode x] applies 1D
+    max pooling.
+
+    [x]: [(N, C, L)]. [stride] defaults to [1]. [dilation] defaults to [1].
+    [padding] defaults to [`Valid]. [ceil_mode] defaults to [false]. *)
+
+val max_pool2d :
+  kernel_size:int * int ->
+  ?stride:int * int ->
+  ?dilation:int * int ->
+  ?padding:[ `Same | `Valid ] ->
+  ?ceil_mode:bool ->
+  ('a, 'b) Rune.t ->
+  ('a, 'b) Rune.t
+(** [max_pool2d ~kernel_size ?stride ?dilation ?padding ?ceil_mode x] applies 2D
+    max pooling.
+
+    [x]: [(N, C, H, W)]. [stride] defaults to [(1, 1)]. [dilation] defaults to
+    [(1, 1)]. [padding] defaults to [`Valid]. [ceil_mode] defaults to [false].
+*)
+
+val avg_pool1d :
+  kernel_size:int ->
+  ?stride:int ->
+  ?dilation:int ->
+  ?padding:[ `Same | `Valid ] ->
+  ?ceil_mode:bool ->
+  ?count_include_pad:bool ->
+  (float, 'b) Rune.t ->
+  (float, 'b) Rune.t
+(** [avg_pool1d ~kernel_size ?stride ?dilation ?padding ?ceil_mode
+     ?count_include_pad x] applies 1D average pooling.
+
+    [x]: [(N, C, L)]. [stride] defaults to [1]. [dilation] defaults to [1].
+    [padding] defaults to [`Valid]. [ceil_mode] defaults to [false].
+    [count_include_pad] defaults to [true]. *)
+
+val avg_pool2d :
+  kernel_size:int * int ->
+  ?stride:int * int ->
+  ?dilation:int * int ->
+  ?padding:[ `Same | `Valid ] ->
+  ?ceil_mode:bool ->
+  ?count_include_pad:bool ->
+  (float, 'b) Rune.t ->
+  (float, 'b) Rune.t
+(** [avg_pool2d ~kernel_size ?stride ?dilation ?padding ?ceil_mode
+     ?count_include_pad x] applies 2D average pooling.
+
+    [x]: [(N, C, H, W)]. [stride] defaults to [(1, 1)]. [dilation] defaults to
+    [(1, 1)]. [padding] defaults to [`Valid]. [ceil_mode] defaults to [false].
+    [count_include_pad] defaults to [true]. *)
