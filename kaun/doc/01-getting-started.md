@@ -1,163 +1,225 @@
-# Getting Started with kaun
+# Getting Started
 
-This guide shows you how to build and train neural networks with kaun.
+This guide covers installation, key concepts, and two complete examples:
+learning XOR and classifying MNIST digits.
 
 ## Installation
-
-Kaun isn't released yet. When it is, you'll install it with:
 
 <!-- $MDX skip -->
 ```bash
 opam install kaun
 ```
 
-For now, build from source:
+Or build from source:
 
 <!-- $MDX skip -->
 ```bash
 git clone https://github.com/raven-ml/raven
-cd raven
-dune pkg lock && dune build kaun
+cd raven && dune build kaun
 ```
 
-## Your First Neural Network
+## Key Concepts
 
-Here's a simple example that trains a two-layer network on XOR:
+**Layer.** A layer is a record `{ init; apply }`. `init` creates fresh
+parameters and state. `apply` runs the forward pass. Layers compose with
+`Layer.sequential` (homogeneous float pipelines) and `Layer.compose`
+(heterogeneous, e.g. embedding to dense).
+
+**Ptree.** A `Ptree.t` is a tree of tensors. Dict nodes hold named
+subtrees, list nodes hold ordered subtrees, and leaves hold tensors.
+Parameters and state are both `Ptree.t` values — plain data you can
+inspect, map, serialize, and load.
+
+**Layer.vars.** A `vars` bundles `params` (trainable), `state`
+(non-trainable, e.g. batch norm running statistics), and a `dtype`
+witness.
+
+**Train.** `Train.make` pairs a model with an optimizer. `Train.init`
+creates the initial training state. `Train.fit` trains over a `Data.t`
+pipeline. `Train.predict` runs inference.
+
+**Data.** `Data.t` is a lazy, composable iterator. Build from tensors or
+arrays, shuffle, batch, map, and feed to `Train.fit`.
+
+**Optim.** An optimizer combines a learning-rate schedule with an update
+rule. Schedules are functions `int -> float`.
+
+## Example: XOR
+
+The XOR problem is the simplest non-linear classification task. This
+example trains a small network to learn it.
 
 <!-- $MDX skip -->
 ```ocaml
 open Kaun
 
-(* Define model architecture *)
-module Model = struct
-  type t = {
-    linear1: Linear.t;
-    linear2: Linear.t;
-  }
+let () =
+  let rngs = Rune.Rng.key 42 in
+  let dtype = Rune.float32 in
 
-  let create () = 
-    let rng = Rng.make 42 in
-    {
-      linear1 = Linear.create rng ~input_dim:2 ~output_dim:8;
-      linear2 = Linear.create rng ~input_dim:8 ~output_dim:1;
-    }
+  (* XOR dataset: 4 examples, 2 features each *)
+  let x = Rune.create dtype [| 4; 2 |] [| 0.; 0.; 0.; 1.; 1.; 0.; 1.; 1. |] in
+  let y = Rune.create dtype [| 4; 1 |] [| 0.; 1.; 1.; 0. |] in
 
-  let forward model x =
-    x
-    |> Linear.forward model.linear1
-    |> Activation.relu
-    |> Linear.forward model.linear2
-    |> Activation.sigmoid
-end
-
-(* Training *)
-let train () =
-  (* XOR dataset *)
-  let x = Tensor.of_float_list [|4; 2|] [0.; 0.; 0.; 1.; 1.; 0.; 1.; 1.] in
-  let y = Tensor.of_float_list [|4; 1|] [0.; 1.; 1.; 0.] in
-  
-  (* Initialize model and optimizer *)
-  let model = Model.create () in
-  let optimizer = Optimizer.adam ~lr:0.01 () in
-  
-  (* Training loop *)
-  let rec train_step model opt_state step =
-    if step >= 1000 then model
-    else
-      (* Forward pass and loss *)
-      let loss_fn params =
-        let pred = Model.forward params x in
-        Loss.sigmoid_binary_cross_entropy ~targets:y pred
-      in
-      
-      (* Compute gradients *)
-      let loss, grads = value_and_grad loss_fn model in
-      
-      (* Update parameters *)
-      let updates, opt_state' = Optimizer.step optimizer opt_state model grads in
-      let model' = Optimizer.apply_updates model updates in
-
-      (* Print progress *)
-      if step mod 100 = 0 then
-        Printf.printf "Step %d, Loss: %.4f\n" step (Tensor.to_float loss);
-      
-      train_step model' opt_state' (step + 1)
+  (* Model: 2 -> 4 -> 1 with tanh activation *)
+  let model =
+    Layer.sequential
+      [
+        Layer.linear ~in_features:2 ~out_features:4 ();
+        Layer.tanh ();
+        Layer.linear ~in_features:4 ~out_features:1 ();
+      ]
   in
-  
-  train_step model (Optimizer.init optimizer model) 0
+
+  (* Create a trainer: model + optimizer *)
+  let trainer =
+    Train.make ~model
+      ~optimizer:(Optim.adam ~lr:(Optim.Schedule.constant 0.01) ())
+  in
+
+  (* Initialize training state (model vars + optimizer state) *)
+  let st = Train.init trainer ~rngs ~dtype in
+
+  (* Train for 1000 steps on the same data *)
+  let st =
+    Train.fit trainer st ~rngs
+      ~report:(fun ~step ~loss _st ->
+        if step mod 200 = 0 then
+          Printf.printf "step %4d  loss %.6f\n" step loss)
+      (Data.repeat 1000 (x, fun pred -> Loss.binary_cross_entropy pred y))
+  in
+
+  (* Predict *)
+  let pred = Train.predict trainer st x |> Rune.sigmoid in
+  Printf.printf "\npredictions (expected 0 1 1 0):\n";
+  for i = 0 to 3 do
+    Printf.printf "  [%.0f, %.0f] -> %.3f\n"
+      (Rune.item [ i; 0 ] x)
+      (Rune.item [ i; 1 ] x)
+      (Rune.item [ i; 0 ] pred)
+  done
 ```
 
-## Key Concepts
+Key points:
 
-**Models are records.** Unlike PyTorch's classes, kaun models are OCaml records containing layers. This makes them immutable, parameter updates create new model instances.
+- `Data.repeat 1000 (x, loss_fn)` creates a pipeline that yields the
+  same `(input, loss_fn)` pair 1000 times.
+- The loss function `fun pred -> Loss.binary_cross_entropy pred y`
+  receives the model output and computes a scalar loss.
+- `Train.predict` runs in evaluation mode (no dropout, no state
+  updates).
 
-**Functional design.** Everything is a function. Models transform inputs to outputs. Optimizers transform (model, gradients) to new models.
+## Example: MNIST
 
-**Explicit parameter trees.** Models can be converted to/from parameter trees using lenses. This enables flexible parameter manipulation and will enable serialization.
-
-**Stateful optimizers.** Optimizers like Adam maintain state (momentum, variance). The state is separate from the model and updated alongside it.
-
-## Available Components
+A convolutional network for handwritten digit classification using the
+built-in MNIST dataset loader.
 
 <!-- $MDX skip -->
 ```ocaml
-(* Layers *)
-Linear.create rng ~input_dim:784 ~output_dim:128 ~use_bias:true
+open Kaun
 
-(* Activations *)
-Activation.relu x
-Activation.sigmoid x
-Activation.tanh x
-Activation.elu ~alpha:1.0 x
-Activation.leaky_relu ~negative_slope:0.01 x
+let batch_size = 64
+let epochs = 3
+let lr = 0.001
 
-(* Initializers *)
-Initializers.constant 0.0
-Initializers.glorot_uniform
+let model =
+  Layer.sequential
+    [
+      Layer.conv2d ~in_channels:1 ~out_channels:16 ();
+      Layer.relu ();
+      Layer.max_pool2d ~kernel_size:(2, 2) ();
+      Layer.conv2d ~in_channels:16 ~out_channels:32 ();
+      Layer.relu ();
+      Layer.max_pool2d ~kernel_size:(2, 2) ();
+      Layer.flatten ();
+      Layer.linear ~in_features:(32 * 7 * 7) ~out_features:128 ();
+      Layer.relu ();
+      Layer.linear ~in_features:128 ~out_features:10 ();
+    ]
 
-(* Optimizers *)
-Optimizer.sgd ~lr:0.01 ()
-Optimizer.adam ~lr:0.001 ~beta1:0.9 ~beta2:0.999 ~eps:1e-8 ()
+(* Collect a Data.t of (image, label) pairs into full tensors *)
+let collect ds =
+  let xs = ref [] and ys = ref [] in
+  Data.iter
+    (fun (x, y) ->
+      xs := x :: !xs;
+      ys := y :: !ys)
+    ds;
+  ( Rune.stack ~axis:0 (List.rev !xs),
+    Rune.cast Rune.int32 (Rune.stack ~axis:0 (List.rev !ys)) )
 
-(* Loss functions *)
-Loss.sigmoid_binary_cross_entropy ~targets pred
+let () =
+  let rngs = Rune.Rng.key 42 in
+  let dtype = Rune.float32 in
+
+  (* Load MNIST *)
+  Printf.printf "Loading MNIST...\n%!";
+  let train_ds, test_ds = Kaun_datasets.mnist () in
+  let x_train, y_train = collect train_ds in
+  let x_test, y_test = collect test_ds in
+  let n_train = (Rune.shape x_train).(0) in
+  Printf.printf "  train: %d  test: %d\n%!" n_train (Rune.shape x_test).(0);
+
+  (* Fixed test batches *)
+  let test_batches = Data.prepare ~batch_size (x_test, y_test) in
+
+  (* Trainer *)
+  let trainer =
+    Train.make ~model
+      ~optimizer:(Optim.adam ~lr:(Optim.Schedule.constant lr) ())
+  in
+  let st = ref (Train.init trainer ~rngs ~dtype) in
+
+  for epoch = 1 to epochs do
+    let epoch_key = Rune.Rng.fold_in rngs epoch in
+
+    (* Shuffle training data each epoch *)
+    let train_data =
+      Data.prepare ~shuffle:epoch_key ~batch_size (x_train, y_train)
+      |> Data.map (fun (x, y) ->
+             (x, fun logits -> Loss.cross_entropy_sparse logits y))
+    in
+    let num_batches = n_train / batch_size in
+    let tracker = Metric.tracker () in
+
+    st :=
+      Train.fit trainer !st ~rngs:epoch_key
+        ~report:(fun ~step ~loss _st ->
+          Metric.observe tracker "loss" loss;
+          Printf.printf "\r  batch %d/%d  loss: %.4f%!" step num_batches loss)
+        train_data;
+    Printf.printf "\n%!";
+
+    (* Evaluate on test set *)
+    Data.reset test_batches;
+    let test_acc =
+      Metric.eval
+        (fun (x, y) ->
+          let logits = Train.predict trainer !st x in
+          Metric.accuracy logits y)
+        test_batches
+    in
+    Printf.printf "epoch %d  train_loss: %.4f  test_acc: %.2f%%\n%!" epoch
+      (Metric.mean tracker "loss")
+      (test_acc *. 100.)
+  done
 ```
 
-## Design Patterns
+Key points:
 
-**Module-based models:**
-
-<!-- $MDX skip -->
-```ocaml
-module MyModel = struct
-  type t = { 
-    conv1: Conv2d.t;  (* not implemented yet *)
-    fc1: Linear.t;
-    (* ... *)
-  }
-  
-  let create rng = (* ... *)
-  let forward t x = (* ... *)
-end
-```
-
-**Lens-based parameter access:**
-
-<!-- $MDX skip -->
-```ocaml
-(* Convert model to parameters *)
-let params = to_ptree model
-
-(* Update specific parameters *)
-let new_params = Ptree.map (fun t -> Tensor.mul_scalar t 0.9) params
-
-(* Convert back to model *)
-let new_model = of_ptree new_params
-```
+- `Kaun_datasets.mnist ()` returns `(train, test)` data pipelines of
+  `(image, label)` pairs. Images are float32 in [0, 1] with shape
+  `[|1; 28; 28|]` (NCHW format).
+- `Data.prepare ~shuffle:key ~batch_size (x, y)` creates a shuffled,
+  batched pipeline of tensor pairs.
+- `Data.map` attaches the loss function to each batch, producing the
+  `(input, loss_fn)` pairs that `Train.fit` expects.
+- `Metric.eval` folds a function over a data pipeline and returns the
+  mean.
+- `Metric.tracker` accumulates running means for reporting.
 
 ## Next Steps
 
-- [MNIST Tutorial](/docs/kaun/mnist-tutorial/) - Train a real CNN on image data
-- Check out the examples in `kaun/examples/` for more complete training loops
-
-Kaun is under active development. More layers, losses, and utilities are coming.
+- [Layers and Models](../02-layers-and-models/) — full layer catalog, composition patterns, custom layers
+- [Training](../03-training/) — optimizers, schedules, losses, data pipelines, custom loops
+- [Checkpoints and Pretrained Models](../04-checkpoints-and-pretrained/) — saving, loading, HuggingFace Hub

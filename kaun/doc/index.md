@@ -1,30 +1,60 @@
-# kaun ᚲ Documentation
+# Kaun
 
-Kaun is our PyTorch. It's the high-level deep learning framework built on top of Rune.
+Kaun is a neural network library for OCaml built on
+[Rune](https://github.com/raven-ml/raven/tree/main/rune). It provides
+composable layers, parameter trees, optimizers, data pipelines, and a
+high-level training loop. Pretrained weights load from the HuggingFace
+Hub via SafeTensors.
 
-## What kaun Does
+## Features
 
-Kaun gives you the building blocks for neural networks: layers, optimizers, training loops. If you've used PyTorch or Keras, you'll feel at home. Define your model, specify your loss, call train, kaun handles the rest.
+- **Composable layers**: `sequential`, `compose`, and custom `{ init; apply }` records
+- **Parameter trees**: `Ptree.t` for inspection, serialization, and transformation
+- **High-level training**: `Train.fit` with data pipelines, or `Train.step` for manual control
+- **Optimizers**: SGD, Adam, AdamW, RMSprop, Adagrad with LR schedules
+- **Losses**: cross-entropy, binary cross-entropy, MSE, MAE
+- **Metrics**: accuracy, precision, recall, F1, running tracker, dataset evaluation
+- **Layers**: linear, conv1d/2d, layer_norm, rms_norm, batch_norm, embedding, dropout, pooling, multi-head attention with GQA and RoPE
+- **Checkpointing**: SafeTensors save/load, HuggingFace Hub integration
+- **Datasets**: MNIST and Fashion-MNIST loaders
 
-The name comes from the rune ᚲ meaning "torch" or "fire." Fitting for a deep learning library.
+## Quick Start
 
-## Current Status
+Train a model on the XOR problem:
 
-Kaun is in early development. The goal for alpha is training MNIST, a simple but complete workflow that proves the concept.
+<!-- $MDX skip -->
+```ocaml
+open Kaun
 
-What's planned:
-- Essential layers (dense, conv2d, dropout)
-- Common optimizers (SGD, Adam)
-- Training utilities
-- Model serialization
+let () =
+  let rngs = Rune.Rng.key 42 in
+  let dtype = Rune.float32 in
+  let x = Rune.create dtype [| 4; 2 |] [| 0.; 0.; 0.; 1.; 1.; 0.; 1.; 1. |] in
+  let y = Rune.create dtype [| 4; 1 |] [| 0.; 1.; 1.; 0. |] in
 
-This is enough to train real models. Everything else comes after we prove it works.
+  let model = Layer.sequential [
+    Layer.linear ~in_features:2 ~out_features:4 ();
+    Layer.tanh ();
+    Layer.linear ~in_features:4 ~out_features:1 ();
+  ] in
 
-## Design Philosophy
+  let trainer = Train.make ~model
+    ~optimizer:(Optim.adam ~lr:(Optim.Schedule.constant 0.01) ())
+  in
+  let st = Train.init trainer ~rngs ~dtype in
+  let st = Train.fit trainer st ~rngs
+    (Data.repeat 1000 (x, fun pred -> Loss.binary_cross_entropy pred y))
+  in
+  let pred = Train.predict trainer st x |> Rune.sigmoid in
+  for i = 0 to 3 do
+    Printf.printf "[%.0f, %.0f] -> %.3f\n"
+      (Rune.item [ i; 0 ] x) (Rune.item [ i; 1 ] x) (Rune.item [ i; 0 ] pred)
+  done
+```
 
-Kaun aims for PyTorch's flexibility, not Keras's high-level abstractions. You get building blocks, not black boxes. This means more code to write, but you understand exactly what's happening.
+## Next Steps
 
-## Learn More
-
-- [Getting Started](/docs/kaun/getting-started/) - Build your first neural network
-- [MNIST Tutorial](/docs/kaun/mnist-tutorial/) - Train a CNN on handwritten digits
+- [Getting Started](01-getting-started/) — installation, XOR and MNIST examples, key concepts
+- [Layers and Models](02-layers-and-models/) — layer catalog, composition, custom layers
+- [Training](03-training/) — optimizers, losses, data pipelines, metrics, custom loops
+- [Checkpoints and Pretrained Models](04-checkpoints-and-pretrained/) — SafeTensors, HuggingFace Hub

@@ -1,59 +1,86 @@
 # Kaun
 
-> Status: **Exploration** 🔍
+Neural networks and training utilities for OCaml, built on [Rune](../rune/)
 
-A Flax-inspired neural network library for OCaml, built on Rune's automatic differentiation engine.
+Kaun provides composable layers, optimizers with learning-rate schedules,
+automatic differentiation over parameter trees, data pipelines, and a
+high-level training loop. It also supports loading pretrained models from
+HuggingFace.
 
-## Vision
+## Quick Start
 
-Kaun brings modern deep learning to OCaml with a flexible, type-safe API for building and training neural networks. It leverages Rune for automatic differentiation and computation graph optimization while maintaining OCaml's functional programming advantages.
-
-## Current Status
-
-Kaun is in the **Exploration** phase with core API design in development and limited functionality that's subject to significant changes.
-
-## Features (Planned)
-
-- Flax-like functional API for neural networks
-- Common layers (Dense, Conv2D, BatchNorm)
-- Standard optimizers (SGD, Adam)
-- Weight initialization strategies
-- Training utilities and model management
-
-## Getting Started
-
-**Note:** As Kaun is in the exploration phase, these instructions are preliminary and subject to change.
-
-### Example Usage (Aspirational)
+Train a small network on XOR:
 
 ```ocaml
 open Kaun
 
-(* Define a simple MLP *)
-let mlp = 
-  Sequential.make [
-    Dense.make ~units:128 ~activation:Activation.relu;
-    Dense.make ~units:64 ~activation:Activation.relu;
-    Dense.make ~units:10 ~activation:Activation.softmax;
-  ]
+let () =
+  let rngs = Rune.Rng.key 42 in
+  let dtype = Rune.float32 in
 
-(* Initialize parameters *)
-let rng, params = Random.make_key 42 |> mlp.init_params
+  let x = Rune.create dtype [| 4; 2 |] [| 0.; 0.; 0.; 1.; 1.; 0.; 1.; 1. |] in
+  let y = Rune.create dtype [| 4; 1 |] [| 0.; 1.; 1.; 0. |] in
 
-(* Create optimizer *)
-let optimizer = Optimizer.adam ~lr:0.001
-
-(* Training step *)
-let train_step params x y opt_state =
-  let loss, grads = Rune.value_and_grad loss_fn params x y in
-  let updates, opt_state = Optimizer.step optimizer opt_state params grads in
-  let params = Optimizer.apply_updates params updates in
-  (params, opt_state, loss)
+  let model =
+    Layer.sequential
+      [
+        Layer.linear ~in_features:2 ~out_features:4 ();
+        Layer.tanh ();
+        Layer.linear ~in_features:4 ~out_features:1 ();
+      ]
+  in
+  let trainer =
+    Train.make ~model
+      ~optimizer:(Optim.adam ~lr:(Optim.Schedule.constant 0.01) ())
+  in
+  let st = Train.init trainer ~rngs ~dtype in
+  let st =
+    Train.fit trainer st ~rngs
+      ~report:(fun ~step ~loss _st ->
+        if step mod 200 = 0 then Printf.printf "step %4d  loss %.6f\n" step loss)
+      (Data.repeat 1000 (x, fun pred -> Loss.binary_cross_entropy pred y))
+  in
+  let pred = Train.predict trainer st x |> Rune.sigmoid in
+  for i = 0 to 3 do
+    Printf.printf "  [%.0f, %.0f] -> %.3f\n"
+      (Rune.item [ i; 0 ] x) (Rune.item [ i; 1 ] x) (Rune.item [ i; 0 ] pred)
+  done
 ```
 
-## Relationship to Rune and Raven
+## Features
 
-Kaun builds on top of Rune to provide a higher-level API for deep learning:
+- **Layers**: linear, conv1d, conv2d, layer norm, RMS norm, batch norm, embedding, dropout, multi-head attention with RoPE, and all standard activations (relu, gelu, tanh, sigmoid, etc.)
+- **Composition**: `Layer.sequential` and `Layer.compose` for building models
+- **Optimizers**: SGD, Adam, AdamW, RMSprop, Adagrad with gradient clipping
+- **Schedules**: constant, cosine decay, warmup cosine, exponential decay, warmup linear
+- **Training**: `Train.fit` iterates over `Data.t` pipelines with early stopping and per-step reporting; `Train.step` for manual control
+- **Data pipelines**: lazy, composable iterators with shuffle, batching, and `Data.prepare` for the common (x, y) tensor pair workflow
+- **Metrics**: running trackers, dataset evaluation, accuracy, precision, recall, F1
+- **Losses**: cross-entropy, sparse cross-entropy, binary cross-entropy, MSE, MAE
+- **Parameter trees**: `Ptree.t` for heterogeneous tensor storage, mapping, and serialization
+- **Checkpointing**: save/load to SafeTensors format
+- **HuggingFace**: download pretrained weights and configs (`kaun.hf`)
+- **Datasets**: MNIST and FashionMNIST loaders (`kaun.datasets`)
 
-- **Rune** provides the automatic differentiation foundation
-- **Kaun** builds higher-level neural network abstractions
+## Libraries
+
+| Library | opam package | Description |
+|---------|-------------|-------------|
+| `kaun` | `kaun` | Core: layers, optimizers, training, data, metrics |
+| `kaun_hf` | `kaun.hf` | HuggingFace Hub integration |
+| `kaun_datasets` | `kaun.datasets` | Dataset loaders (MNIST, FashionMNIST) |
+
+## Examples
+
+- **01-xor** -- Binary classification on XOR with a 2-layer network
+- **02-mnist** -- CNN with conv2d, pooling, and multi-epoch training on MNIST
+- **03-bert** -- Fine-tune pretrained BERT for sentiment classification
+- **04-gpt2** -- Autoregressive text generation with pretrained GPT-2
+
+## Contributing
+
+See the [Raven monorepo README](../README.md) for guidelines.
+
+## License
+
+ISC License. See [LICENSE](../LICENSE) for details.
