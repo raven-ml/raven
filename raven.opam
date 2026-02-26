@@ -18,6 +18,7 @@ depends: [
   "talon" {= version}
   "rune" {= version}
   "kaun" {= version}
+  "kaun-board" {= version}
   "sowilo" {= version}
   "fehu" {= version}
   "hugin" {= version}
