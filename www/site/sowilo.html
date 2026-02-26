@@ -9,14 +9,14 @@
 <body>
   <main class="main-content">
     <nav class="sowilo-nav nav-breadcrumb">
-      <a href="/">raven</a> / sowilo <span class="color-indigo rune-symbol">ᛋ</span>
+      <a href="/">raven</a> / sowilo <span class="color-indigo rune-symbol">&#5835;</span>
       [ <a href="/docs/sowilo/">docs</a> |
       <a href="https://github.com/raven-ml/raven/tree/main/sowilo">source</a> ]
     </nav>
 
     <div class="sowilo-hero hero">
-      <h1>sowilo <span style="font-size: 48px; margin-left: -20px; opacity: 0.6;" class="color-indigo">ᛋ</span></h1>
-      <p class="tagline">OpenCV's algorithms. torchvision's autodiff. OCaml's reliability.</p>
+      <h1>sowilo <span style="font-size: 48px; margin-left: -20px; opacity: 0.6;" class="color-indigo">&#5835;</span></h1>
+      <p class="tagline">OpenCV's toolkit. Differentiable by default. Pure Rune tensors.</p>
     </div>
 
     <hr>
@@ -25,20 +25,20 @@
 
     <div class="feature-grid">
       <div>
-        <h3 class="color-indigo">differentiable vision</h3>
-        <p>Every operation supports automatic differentiation. Train neural networks with classical CV in the loop.</p>
+        <h3 class="color-indigo">differentiable by default</h3>
+        <p>Built on Rune tensor operations. Gradients flow through blurs, color transforms, and geometric ops. Train neural networks with classical CV in the loop.</p>
       </div>
       <div>
-        <h3 class="color-indigo">pure functional</h3>
-        <p>No global state, no side effects. Image processing operations that compose like functions should.</p>
+        <h3 class="color-indigo">pure tensor operations</h3>
+        <p>No special image type. Images are <code>[H; W; C]</code> tensors. Every operation composes with <code>|></code>, works with <code>Rune.grad</code>, <code>Rune.jit</code>, and <code>Rune.vmap</code>.</p>
       </div>
       <div>
-        <h3 class="color-indigo">type-safe images</h3>
-        <p>Images are just tensors with known shapes. The compiler catches dimension mismatches.</p>
+        <h3 class="color-indigo">complete toolkit</h3>
+        <p>Filters, edge detection, morphology, color adjustment, geometric transforms, and thresholding. Everything you need for image processing pipelines.</p>
       </div>
       <div>
-        <h3 class="color-indigo">jit ready</h3>
-        <p>Built on Rune's tensor operations. When JIT lands, your filters compile to GPU kernels automatically.</p>
+        <h3 class="color-indigo">batch ready</h3>
+        <p>All operations handle both single images <code>[H; W; C]</code> and batches <code>[N; H; W; C]</code>. Process entire datasets in one call.</p>
       </div>
     </div>
 
@@ -48,15 +48,23 @@
 
     <div class="code-compare">
       <div>
-        <h4>OpenCV</h4>
+        <h4>OPENCV</h4>
         <pre class="language-python"><code class="language-python">import cv2
 import numpy as np
 
-# Load and process
-img = cv2.imread('photo.jpg')
+# Load and convert
+img = cv2.imread("photo.png")
+img = img.astype(np.float32) / 255.0
 gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-blurred = cv2.GaussianBlur(gray, (5, 5), 1.0)
-edges = cv2.Canny(blurred, 100, 200)
+
+# Process
+blurred = cv2.GaussianBlur(
+    gray, (0, 0), sigmaX=1.0
+)
+edges = cv2.Canny(
+    (blurred * 255).astype(np.uint8),
+    50, 150
+)
 
 # Not differentiable!</code></pre>
       </div>
@@ -64,13 +72,19 @@ edges = cv2.Canny(blurred, 100, 200)
         <h4>SOWILO</h4>
         <pre class="language-ocaml"><code class="language-ocaml">open Sowilo
 
-(* Load and process *)
-let img = Nx_io.load_image "photo.jpg" |> Rune.of_bigarray
-let processed = 
-  img
-  |> to_grayscale
-  |> gaussian_blur ~ksize:5 ~sigma:1.0
-  |> canny ~low:100. ~high:200.
+(* Load and convert *)
+let img =
+  Nx_io.load_image "photo.png"
+  |> Rune.of_nx |> to_float
+
+let gray = to_grayscale img
+
+(* Process *)
+let blurred =
+  gaussian_blur ~sigma:1.0 gray
+
+let edges =
+  canny ~low:0.2 ~high:0.6 gray
 
 (* Fully differentiable! *)</code></pre>
       </div>
@@ -80,42 +94,63 @@ let processed =
 
     <h2>image processing operations</h2>
 
-    <pre class="language-ocaml"><code class="language-ocaml">(* Filters *)
-gaussian_blur img ~ksize:5 ~sigma:1.0
-median_blur img ~ksize:3
-box_filter img ~ksize:3
+    <pre class="language-ocaml"><code class="language-ocaml">(* Spatial filters *)
+let smooth = gaussian_blur ~sigma:1.0 img
+let averaged = box_blur ~ksize:5 img
+let denoised = median_blur ~ksize:3 img
+let sharp = unsharp_mask ~sigma:1.0 ~amount:1.5 img
+let custom = filter2d my_kernel img
 
 (* Edge detection *)
-let grad_x, grad_y = sobel img ~dx:1 ~dy:0 ~ksize:3
-let edges = canny img ~low:50. ~high:150.
+let gx, gy = sobel gray           (* horizontal and vertical gradients *)
+let gx, gy = scharr gray          (* more accurate than Sobel *)
+let lap = laplacian gray           (* sum of second derivatives *)
+let edges = canny ~low:0.2 ~high:0.6 gray
 
 (* Morphology *)
-let kernel = get_structuring_element Rect ~ksize:3
-let eroded = erode img kernel
-let dilated = dilate img kernel
+let kernel = structuring_element Rect (5, 5)
+let eroded = erode ~kernel img
+let dilated = dilate ~kernel img
+let opened = opening ~kernel img
+let grad = morphological_gradient ~kernel img
 
-(* Thresholding *)
-threshold img ~thresh:128. ~maxval:255. ~typ:Binary</code></pre>
+(* Color and adjustment *)
+let gray = to_grayscale img
+let hsv = rgb_to_hsv img
+let bright = adjust_brightness 1.2 img
+let contrasted = adjust_contrast 1.5 img
+
+(* Geometric transforms *)
+let small = resize ~height:224 ~width:224 img
+let cropped = center_crop ~height:200 ~width:200 img
+let flipped = hflip img
+let rotated = rotate90 ~k:2 img</code></pre>
 
     <hr>
 
-    <h2>differentiable augmentations</h2>
+    <h2>differentiable pipelines</h2>
 
-    <p>Train neural networks with classical CV operations in the forward pass:</p>
+    <p>Sowilo operations compose naturally and gradients flow through the entire pipeline:</p>
 
-    <pre class="language-ocaml"><code class="language-ocaml">(* Augmentation pipeline *)
+    <pre class="language-ocaml"><code class="language-ocaml">(* Preprocessing for a neural network *)
+let preprocess img =
+  img
+  |> to_float
+  |> resize ~height:224 ~width:224
+  |> normalize
+      ~mean:[0.485; 0.456; 0.406]
+      ~std:[0.229; 0.224; 0.225]
+
+(* Differentiable augmentation *)
 let augment img =
   img
-  |> random_crop ~size:(224, 224)
-  |> random_flip ~p:0.5
-  |> adjust_brightness ~factor:(random 0.8 1.2)
-  |> gaussian_blur ~ksize:3 ~sigma:(random 0. 1.)
+  |> adjust_brightness 1.1
+  |> adjust_contrast 0.9
+  |> gaussian_blur ~sigma:0.5
 
 (* Use in training - gradients flow through! *)
-let loss model img label =
-  let augmented = augment img in
-  let features = extract_features augmented in
-  let pred = Model.forward model features in
+let loss params img label =
+  let pred = model params (preprocess (augment img)) in
   cross_entropy pred label</code></pre>
 
     <hr>
@@ -124,61 +159,90 @@ let loss model img label =
 
     <div class="feature-grid">
       <div>
-        <h3 class="color-indigo">core operations</h3>
-        <ul style="list-style: none; padding: 0;">
-          <li>✓ Color space conversions</li>
-          <li>✓ Gaussian, median, box filters</li>
-          <li>✓ Sobel gradients, Canny edges</li>
-          <li>✓ Morphological operations</li>
-          <li>✓ Thresholding functions</li>
-          <li>✓ Image resizing (nearest, bilinear)</li>
+        <h3 class="color-indigo">filters</h3>
+        <ul>
+          <li>&#10003; gaussian_blur</li>
+          <li>&#10003; box_blur</li>
+          <li>&#10003; median_blur</li>
+          <li>&#10003; filter2d</li>
+          <li>&#10003; unsharp_mask</li>
         </ul>
       </div>
       <div>
-        <h3 class="color-indigo">coming soon</h3>
-        <ul style="list-style: none; padding: 0;">
-          <li>⏳ Feature detection (SIFT, ORB)</li>
-          <li>⏳ Optical flow</li>
-          <li>⏳ Semantic segmentation ops</li>
-          <li>⏳ Video processing</li>
-          <li>⏳ 3D vision primitives</li>
+        <h3 class="color-indigo">edge detection</h3>
+        <ul>
+          <li>&#10003; sobel (returns gx, gy)</li>
+          <li>&#10003; scharr</li>
+          <li>&#10003; laplacian</li>
+          <li>&#10003; canny</li>
+        </ul>
+        <h3 class="color-indigo">morphology</h3>
+        <ul>
+          <li>&#10003; erode, dilate</li>
+          <li>&#10003; opening, closing</li>
+          <li>&#10003; morphological_gradient</li>
+        </ul>
+      </div>
+      <div>
+        <h3 class="color-indigo">color</h3>
+        <ul>
+          <li>&#10003; to_grayscale</li>
+          <li>&#10003; rgb_to_hsv / hsv_to_rgb</li>
+          <li>&#10003; brightness, contrast</li>
+          <li>&#10003; saturation, hue, gamma</li>
+          <li>&#10003; invert</li>
+        </ul>
+      </div>
+      <div>
+        <h3 class="color-indigo">transforms</h3>
+        <ul>
+          <li>&#10003; resize (nearest, bilinear)</li>
+          <li>&#10003; crop, center_crop</li>
+          <li>&#10003; hflip, vflip</li>
+          <li>&#10003; rotate90</li>
+          <li>&#10003; pad</li>
+          <li>&#10003; to_float / to_uint8</li>
+          <li>&#10003; normalize, threshold</li>
         </ul>
       </div>
     </div>
 
     <hr>
 
-    <h2>design philosophy</h2>
+    <h2>the good parts</h2>
 
-    <p><b>Images are tensors.</b> No special image type - just 3D arrays with shape [H; W; C]. This means any tensor operation works on images.</p>
+    <p><b>Images are tensors.</b>
+    No special image type. An image is a <code>[H; W; C]</code> float32 tensor with values in [0, 1]. This means any Rune operation works on images, and any sowilo operation is just a tensor function.</p>
 
-    <p><b>Everything differentiates.</b> Unlike traditional CV libraries, every operation in sowilo can be differentiated. This enables new techniques like learnable image processing.</p>
+    <p><b>Gradients flow through.</b>
+    Most operations are differentiable because they are built from standard tensor operations. Use <code>Rune.grad</code> to compute gradients through blurs, color adjustments, resizing, and more. Only <code>canny</code> and <code>median_blur</code> break the gradient.</p>
 
-    <p><b>Functional composition.</b> Operations are pure functions that compose naturally. No global state, no side effects.</p>
+    <p><b>Functional composition.</b>
+    Operations are pure functions. Pipe them with <code>|></code>, compose them into pipelines, use them inside <code>Rune.grad</code> or <code>Rune.jit</code>. No global state, no side effects.</p>
 
     <hr>
 
     <h2>get started</h2>
 
-    <p>Sowilo isn't released yet. For now, check out the <a href="/docs/sowilo/">documentation</a> to learn more.</p>
-
-    <p>When it's ready:</p>
+    <p>Sowilo is part of the Raven ecosystem. When it's released:</p>
 
     <pre class="language-bash"><code class="language-bash">opam install sowilo</code></pre>
 
     <pre class="language-ocaml"><code class="language-ocaml">open Sowilo
 
-(* Edge detection example *)
 let () =
-  let img = Nx_io.load_image "input.jpg" in
-  let edges =
-    Rune.of_bigarray (Nx.to_bigarray img)
-    |> to_grayscale
-    |> canny ~low:50. ~high:150.
-    |> Rune.to_bigarray
-    |> Nx.of_bigarray
-  in
-  Nx_io.save_image edges "edges.png"</code></pre>
+  (* Load and convert to float32 [0, 1] *)
+  let img = Nx_io.load_image "photo.png" |> Rune.of_nx |> to_float in
+
+  (* Detect edges *)
+  let gray = to_grayscale img in
+  let edges = canny ~low:0.2 ~high:0.6 gray in
+
+  (* Save result *)
+  let result = Rune.to_nx (to_uint8 edges) in
+  Nx_io.save_image result "edges.png"</code></pre>
+
+    <p>For now, check out the <a href="/docs/sowilo/">documentation</a> to learn more.</p>
   </main>
 
 </body>

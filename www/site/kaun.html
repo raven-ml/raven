@@ -9,13 +9,13 @@
 <body>
   <main class="main-content">
     <nav class="kaun-nav nav-breadcrumb">
-      <a href="/">raven</a> / kaun <span class="color-red rune-symbol">ᚲ</span>
+      <a href="/">raven</a> / kaun <span class="color-red rune-symbol">&#5810;</span>
       [ <a href="/docs/kaun/">docs</a> |
       <a href="https://github.com/raven-ml/raven/tree/main/kaun">source</a> ]
     </nav>
 
     <div class="kaun-hero hero">
-      <h1>kaun <span style="font-size: 48px; margin-left: -20px; opacity: 0.6;" class="color-red">ᚲ</span></h1>
+      <h1>kaun <span style="font-size: 48px; margin-left: -20px; opacity: 0.6;" class="color-red">&#5810;</span></h1>
       <p class="tagline">PyTorch's ease. Flax's modularity. OCaml's type safety.</p>
     </div>
 
@@ -25,20 +25,20 @@
 
     <div class="feature-grid">
       <div>
-        <h3 class="color-red">functional models</h3>
-        <p>Models are immutable records. Parameters are data, not hidden state. Everything composes.</p>
+        <h3 class="color-red">composable layers</h3>
+        <p>Layers are values. Compose with <code>sequential</code> and <code>compose</code>. No classes, no inheritance, no magic.</p>
       </div>
       <div>
-        <h3 class="color-red">type-safe training</h3>
-        <p>Catch shape mismatches at compile time. Never debug another runtime dimension error.</p>
+        <h3 class="color-red">parameter trees</h3>
+        <p>All parameters live in a <code>Ptree.t</code>. Inspect, serialize, map, and transform them as plain data structures.</p>
       </div>
       <div>
-        <h3 class="color-red">built on rune</h3>
-        <p>Automatic differentiation built in. Your loss function is just a function.</p>
+        <h3 class="color-red">high-level training</h3>
+        <p><code>Train.fit</code> composes model, optimizer, data, and loss into a single call. Drop down to <code>Train.step</code> when you need control.</p>
       </div>
       <div>
-        <h3 class="color-red">pure optimizers</h3>
-        <p>Optimizers are functions, not stateful objects. Perfect for distributed training.</p>
+        <h3 class="color-red">huggingface integration</h3>
+        <p>Download pretrained weights from the HuggingFace Hub. SafeTensors checkpointing built in.</p>
       </div>
     </div>
 
@@ -48,122 +48,207 @@
 
     <div class="code-compare">
       <div>
-        <h4>PyTorch</h4>
+        <h4>PYTORCH</h4>
         <pre class="language-python"><code class="language-python">import torch
 import torch.nn as nn
 
-class MLP(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.fc1 = nn.Linear(784, 128)
-        self.fc2 = nn.Linear(128, 10)
-        
-    def forward(self, x):
-        x = torch.relu(self.fc1(x))
-        return self.fc2(x)
+# Model
+model = nn.Sequential(
+    nn.Linear(784, 128),
+    nn.ReLU(),
+    nn.Linear(128, 10),
+)
 
-model = MLP()
-optimizer = torch.optim.Adam(model.parameters())</code></pre>
+# Optimizer
+optimizer = torch.optim.Adam(
+    model.parameters(), lr=1e-3
+)
+
+# Training step
+for x, y in dataloader:
+    logits = model(x)
+    loss = F.cross_entropy(logits, y)
+    loss.backward()
+    optimizer.step()
+    optimizer.zero_grad()</code></pre>
       </div>
       <div>
         <h4>KAUN</h4>
         <pre class="language-ocaml"><code class="language-ocaml">open Kaun
 
-(* Model is a record *)
-type model = {
-  fc1: Linear.t;
-  fc2: Linear.t;
-}
+(* Model *)
+let model = Layer.sequential [
+  Layer.linear ~in_features:784
+    ~out_features:128 ();
+  Layer.relu ();
+  Layer.linear ~in_features:128
+    ~out_features:10 ();
+]
 
-(* Forward is a function *)
-let forward model x =
-  x
-  |> Linear.forward model.fc1
-  |> Activation.relu
-  |> Linear.forward model.fc2
+(* Trainer = model + optimizer *)
+let trainer = Train.make ~model
+  ~optimizer:(Optim.adam
+    ~lr:(Optim.Schedule.constant 1e-3) ())
 
-(* Initialize *)
-let rng = Rng.make 42 in
-let model = {
-  fc1 = Linear.create rng ~input_dim:784 ~output_dim:128;
-  fc2 = Linear.create rng ~input_dim:128 ~output_dim:10;
-}</code></pre>
+(* Train over data pipeline *)
+let st = Train.fit trainer st data</code></pre>
       </div>
     </div>
 
     <hr>
 
-    <h2>training loop</h2>
+    <h2>training in practice</h2>
 
-    <pre class="language-ocaml"><code class="language-ocaml">(* Loss function *)
-let loss_fn model x y =
-  let logits = forward model x in
-  Loss.sigmoid_binary_cross_entropy ~targets:y logits
+    <p>A complete training pipeline: data loading, batching, training loop with reporting, and evaluation.</p>
 
-(* Get gradients using Rune *)
-let loss, grads = value_and_grad loss_fn model x y
+    <pre class="language-ocaml"><code class="language-ocaml">open Kaun
 
-(* Update with optimizer *)
-let optimizer = Optimizer.adam ~lr:0.001 () in
-let model', opt_state' = Optimizer.update optimizer opt_state model grads
+let () =
+  let rngs = Rune.Rng.key 42 in
+  let dtype = Rune.float32 in
 
-(* Pure functional - old model unchanged *)</code></pre>
+  (* Data pipeline: shuffle, batch, attach loss *)
+  let train_data =
+    Data.prepare ~shuffle:rngs ~batch_size:64 (x_train, y_train)
+    |> Data.map (fun (x, y) ->
+           (x, fun logits -> Loss.cross_entropy_sparse logits y))
+  in
+
+  (* Model *)
+  let model = Layer.sequential [
+    Layer.conv2d ~in_channels:1 ~out_channels:16 ();
+    Layer.relu ();
+    Layer.max_pool2d ~kernel_size:(2, 2) ();
+    Layer.flatten ();
+    Layer.linear ~in_features:(16 * 14 * 14) ~out_features:10 ();
+  ] in
+
+  (* Trainer *)
+  let trainer = Train.make ~model
+    ~optimizer:(Optim.adam ~lr:(Optim.Schedule.constant 1e-3) ())
+  in
+  let st = Train.init trainer ~rngs ~dtype in
+
+  (* Fit with progress reporting *)
+  let st = Train.fit trainer st ~rngs
+    ~report:(fun ~step ~loss _st ->
+      if step mod 100 = 0 then
+        Printf.printf "step %d  loss %.4f\n" step loss)
+    train_data
+  in
+
+  (* Evaluate *)
+  let test_acc =
+    Metric.eval
+      (fun (x, y) ->
+        Metric.accuracy (Train.predict trainer st x) y)
+      test_batches
+  in
+  Printf.printf "test accuracy: %.2f%%\n" (test_acc *. 100.)</code></pre>
+
+    <hr>
+
+    <h2>the good parts</h2>
+
+    <p><b>Layers are values.</b>
+    A layer is a record with <code>init</code> and <code>apply</code>. Compose them with <code>sequential</code> for homogeneous pipelines or <code>compose</code> for heterogeneous ones (e.g. embeddings to dense layers). Custom layers are just records.</p>
+
+    <p><b>Parameters are data.</b>
+    <code>Ptree.t</code> is a tree of tensors with dict and list nodes. Map over all parameters, count them, serialize them to SafeTensors, or load them from HuggingFace. No hidden state.</p>
+
+    <p><b>Data pipelines.</b>
+    <code>Data.t</code> is a lazy, composable iterator. Build pipelines from tensors or arrays, shuffle, batch, map, and feed directly to <code>Train.fit</code>. Or consume with <code>fold</code> and <code>iter</code>.</p>
+
+    <p><b>Metrics that compose.</b>
+    <code>Metric.eval</code> folds any function over a data pipeline and returns the mean. Accuracy, precision, recall, F1 are plain functions. Track running means with <code>Metric.tracker</code>.</p>
 
     <hr>
 
     <h2>what's implemented</h2>
 
-    <p>Kaun is in early development. Here's what works today:</p>
-
     <div class="feature-grid">
       <div>
         <h3 class="color-red">layers</h3>
-        <ul style="list-style: none; padding: 0;">
-          <li>✓ Linear (dense/fully-connected)</li>
-          <li>✓ Parameter trees for composition</li>
-          <li>⏳ Conv2d, BatchNorm (coming for alpha)</li>
-          <li>⏳ Dropout, LayerNorm (coming for alpha)</li>
+        <ul>
+          <li>&#10003; Linear (dense)</li>
+          <li>&#10003; Conv1d, Conv2d</li>
+          <li>&#10003; LayerNorm, RMSNorm, BatchNorm</li>
+          <li>&#10003; Embedding (int32 inputs)</li>
+          <li>&#10003; Dropout</li>
+          <li>&#10003; MaxPool2d, AvgPool2d</li>
+          <li>&#10003; Flatten</li>
+        </ul>
+      </div>
+      <div>
+        <h3 class="color-red">activations</h3>
+        <ul>
+          <li>&#10003; ReLU, GELU, SiLU</li>
+          <li>&#10003; Tanh, Sigmoid</li>
+        </ul>
+        <h3 class="color-red">attention</h3>
+        <ul>
+          <li>&#10003; Multi-head self-attention</li>
+          <li>&#10003; Grouped query attention (GQA)</li>
+          <li>&#10003; Rotary position embeddings (RoPE)</li>
+          <li>&#10003; Causal masking</li>
         </ul>
       </div>
       <div>
         <h3 class="color-red">training</h3>
-        <ul style="list-style: none; padding: 0;">
-          <li>✓ SGD and Adam optimizers</li>
-          <li>✓ Binary cross-entropy loss</li>
-          <li>✓ Activation functions (relu, sigmoid, tanh)</li>
-          <li>⏳ More losses and metrics (coming for alpha)</li>
+        <ul>
+          <li>&#10003; SGD, Adam, AdamW, RMSprop, Adagrad</li>
+          <li>&#10003; LR schedules (cosine, warmup, exponential)</li>
+          <li>&#10003; Cross-entropy, BCE, MSE, MAE losses</li>
+          <li>&#10003; Accuracy, precision, recall, F1</li>
+          <li>&#10003; Gradient clipping</li>
+          <li>&#10003; Early stopping</li>
+        </ul>
+      </div>
+      <div>
+        <h3 class="color-red">ecosystem</h3>
+        <ul>
+          <li>&#10003; Data pipelines (shuffle, batch, map)</li>
+          <li>&#10003; SafeTensors checkpointing</li>
+          <li>&#10003; HuggingFace Hub downloads</li>
+          <li>&#10003; MNIST/Fashion-MNIST datasets</li>
+          <li>&#10003; Weight initialization (Glorot, He, LeCun)</li>
+          <li>&#10003; Context passing for transformers</li>
         </ul>
       </div>
     </div>
 
     <hr>
 
-    <h2>design principles</h2>
-
-    <p><b>Models are data.</b> No classes, no inheritance. A model is just a record containing parameters. This makes serialization, inspection, and manipulation trivial.</p>
-
-    <p><b>Training is functional.</b> Optimizers don't mutate state - they return new parameters. This enables techniques like checkpointing and distributed training without special frameworks.</p>
-
-    <p><b>Leverage Rune.</b> We don't reimplement autodiff or device management. Kaun is a thin layer of neural network abstractions over Rune's primitives.</p>
-
-    <hr>
-
     <h2>get started</h2>
 
-    <p>Kaun isn't released yet. For now, check out the <a href="/docs/kaun/">documentation</a> to learn more.</p>
-
-    <p>When it's ready:</p>
+    <p>Kaun is part of the Raven ecosystem. When it's released:</p>
 
     <pre class="language-bash"><code class="language-bash">opam install kaun</code></pre>
 
     <pre class="language-ocaml"><code class="language-ocaml">open Kaun
 
-(* XOR problem *)
-let x = Tensor.of_float_list [|4; 2|] [0.; 0.; 0.; 1.; 1.; 0.; 1.; 1.]
-let y = Tensor.of_float_list [|4; 1|] [0.; 1.; 1.; 0.]
+let () =
+  let rngs = Rune.Rng.key 42 in
+  let dtype = Rune.float32 in
+  let x = Rune.create dtype [| 4; 2 |] [| 0.; 0.; 0.; 1.; 1.; 0.; 1.; 1. |] in
+  let y = Rune.create dtype [| 4; 1 |] [| 0.; 1.; 1.; 0. |] in
+  let model = Layer.sequential [
+    Layer.linear ~in_features:2 ~out_features:4 ();
+    Layer.tanh ();
+    Layer.linear ~in_features:4 ~out_features:1 ();
+  ] in
+  let trainer = Train.make ~model
+    ~optimizer:(Optim.adam ~lr:(Optim.Schedule.constant 0.01) ())
+  in
+  let st = Train.init trainer ~rngs ~dtype in
+  let st = Train.fit trainer st ~rngs
+    (Data.repeat 1000 (x, fun pred -> Loss.binary_cross_entropy pred y))
+  in
+  let pred = Train.predict trainer st x |> Rune.sigmoid in
+  Printf.printf "XOR predictions: ";
+  for i = 0 to 3 do Printf.printf "%.2f " (Rune.item [ i; 0 ] pred) done</code></pre>
 
-(* Train a model *)
-let model = train_xor x y ~epochs:1000</code></pre>
+    <p>For now, check out the <a href="/docs/kaun/">documentation</a> to learn more.</p>
   </main>
 
 </body>

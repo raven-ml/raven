@@ -3,20 +3,20 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>fehu - Reinforcement learning for OCaml | raven</title>
+  <title>fehu - Reinforcement learning environments for OCaml | raven</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <main class="main-content">
     <nav class="fehu-nav nav-breadcrumb">
-      <a href="/">raven</a> / fehu <span class="color-teal rune-symbol">ᚠ</span>
+      <a href="/">raven</a> / fehu <span class="color-teal rune-symbol">&#5792;</span>
       [ <a href="/docs/fehu/">docs</a> |
       <a href="https://github.com/raven-ml/raven/tree/main/fehu">source</a> ]
     </nav>
 
     <div class="fehu-hero hero">
-      <h1>fehu <span style="font-size: 48px; margin-left: -20px; opacity: 0.6;" class="color-teal">ᚠ</span></h1>
-      <p class="tagline">Gymnasium's ease. Stable Baselines' algorithms. OCaml's type safety.</p>
+      <h1>fehu <span style="font-size: 48px; margin-left: -20px; opacity: 0.6;" class="color-teal">&#5792;</span></h1>
+      <p class="tagline">Gymnasium's environments. OCaml's type safety. Composable from the ground up.</p>
     </div>
 
     <hr>
@@ -26,19 +26,19 @@
     <div class="feature-grid">
       <div>
         <h3 class="color-teal">type-safe environments</h3>
-        <p>Environment APIs catch shape mismatches at compile time. Never debug observation space errors at runtime.</p>
+        <p>Observation and action spaces are encoded in the type system. Shape mismatches are caught at compile time, not after hours of training.</p>
       </div>
       <div>
-        <h3 class="color-teal">functional RL</h3>
-        <p>Agents are immutable. Experience replay is just data. Everything composes naturally.</p>
+        <h3 class="color-teal">composable wrappers</h3>
+        <p>Transform observations, actions, and rewards independently. Clip actions, add time limits, or stack custom wrappers. Each is a one-liner.</p>
       </div>
       <div>
-        <h3 class="color-teal">built on rune</h3>
-        <p>Policy gradients and Q-learning with automatic differentiation. Neural networks from Kaun.</p>
+        <h3 class="color-teal">trajectory collection</h3>
+        <p>Collect rollouts and full episodes in structure-of-arrays form. Compute GAE advantages in one call. Feed directly into your training loop.</p>
       </div>
       <div>
-        <h3 class="color-teal">standard benchmarks</h3>
-        <p>CartPole, MountainCar, and more. Compare directly with Gymnasium and Stable Baselines3.</p>
+        <h3 class="color-teal">vectorized environments</h3>
+        <p>Run multiple environments in parallel with automatic reset on episode boundaries. Batch observations and actions for efficient training.</p>
       </div>
     </div>
 
@@ -48,19 +48,21 @@
 
     <div class="code-compare">
       <div>
-        <h4>Python (Gymnasium)</h4>
+        <h4>GYMNASIUM (PYTHON)</h4>
         <pre class="language-python"><code class="language-python">import gymnasium as gym
 
 # Create environment
 env = gym.make('CartPole-v1')
-obs, info = env.reset()
+obs, info = env.reset(seed=42)
 
 # Run episode
 done = False
+total_reward = 0.0
 while not done:
     action = env.action_space.sample()
     obs, reward, term, trunc, info = \
         env.step(action)
+    total_reward += reward
     done = term or trunc</code></pre>
       </div>
       <div>
@@ -68,102 +70,148 @@ while not done:
         <pre class="language-ocaml"><code class="language-ocaml">open Fehu
 
 (* Create environment *)
-let rng = Rune.Rng.key 42 in
+let rng = Rune.Rng.key 42
 let env = Fehu_envs.Cartpole.make ~rng ()
 
 (* Run episode *)
-let obs, _info = Env.reset env () in
-let done_ = ref false in
+let obs, _info = Env.reset env ()
+let done_ = ref false
+let total_reward = ref 0.0
 while not !done_ do
-  let action = Space.sample (Env.action_space env) in
-  let t = Env.step env action in
-  done_ := t.terminated || t.truncated
+  let act, _ = Space.sample
+    (Env.action_space env)
+    ~rng:(Env.take_rng env) in
+  let s = Env.step env act in
+  total_reward := !total_reward +. s.reward;
+  done_ := s.terminated || s.truncated
 done</code></pre>
       </div>
     </div>
 
     <hr>
 
-    <h2>train an agent</h2>
+    <h2>collect and evaluate</h2>
+
+    <p>Fehu provides batteries for the RL training loop: trajectory collection, replay buffers, GAE computation, and policy evaluation.</p>
 
     <pre class="language-ocaml"><code class="language-ocaml">open Fehu
-open Kaun
 
-(* Create policy network *)
-let policy = Layer.sequential [
-  Layer.linear ~in_features:4 ~out_features:128 ();
-  Layer.relu ();
-  Layer.linear ~in_features:128 ~out_features:2 ();
-]
+(* Collect 1000 transitions using a policy *)
+let trajectory = Collect.rollout env
+  ~policy:(fun obs -> my_policy obs)
+  ~n_steps:1000
 
-(* Train with REINFORCE *)
-let agent = Fehu_algorithms.Reinforce.create
-  ~policy_network:policy
-  ~n_actions:2
-  ~rng
-  { learning_rate = 0.001; gamma = 0.99; ... }
+(* Compute advantages for PPO/A2C *)
+let advantages, returns = Gae.compute
+  ~rewards:trajectory.rewards
+  ~values:(Option.get trajectory.values)
+  ~terminated:trajectory.terminated
+  ~truncated:trajectory.truncated
+  ~next_values
+  ~gamma:0.99 ~lambda:0.95
 
-let agent = Fehu_algorithms.Reinforce.learn
-  agent ~env ~total_timesteps:100_000
-  ~callback:(fun ~iteration ~metrics ->
-    Printf.printf "Episode %d: Return = %.2f\n"
-      iteration metrics.episode_return; true)
-  ()</code></pre>
+(* Evaluate a trained policy *)
+let stats = Eval.run env
+  ~policy:(fun obs -> greedy_action obs)
+  ~n_episodes:100 ()
+
+(* stats.mean_reward, stats.std_reward, stats.mean_length *)</code></pre>
+
+    <hr>
+
+    <h2>composable wrappers</h2>
+
+    <p>Transform any aspect of an environment with one-liner wrappers. Each wrapper produces a new environment with the same interface.</p>
+
+    <pre class="language-ocaml"><code class="language-ocaml">open Fehu
+
+(* Clip continuous actions to valid bounds *)
+let env = Env.clip_action env
+
+(* Cap episodes at 200 steps *)
+let env = Env.time_limit ~max_episode_steps:200 env
+
+(* Transform observations *)
+let env = Env.map_observation
+  ~observation_space:new_space
+  ~f:(fun obs info -> normalize obs, info) env
+
+(* Transform rewards *)
+let env = Env.map_reward
+  ~f:(fun ~reward ~info -> reward *. 0.1, info) env</code></pre>
 
     <hr>
 
     <h2>what's implemented</h2>
 
-    <p>Fehu is in active development. Here's what works today:</p>
+    <p>Fehu is an RL environment toolkit. It provides the environments, spaces, and collection utilities that RL algorithms need.</p>
 
     <div class="feature-grid">
       <div>
         <h3 class="color-teal">environments</h3>
-        <ul style="list-style: none; padding: 0;">
-          <li>✓ CartPole-v1</li>
-          <li>✓ MountainCar-v0</li>
-          <li>✓ GridWorld (custom)</li>
-          <li>✓ RandomWalk (custom)</li>
+        <ul>
+          <li>CartPole-v1 (classic control)</li>
+          <li>MountainCar-v0 (sparse reward)</li>
+          <li>GridWorld (navigation)</li>
+          <li>RandomWalk (1D walk)</li>
+          <li>Custom environments via Env.create</li>
         </ul>
       </div>
       <div>
-        <h3 class="color-teal">algorithms</h3>
-        <ul style="list-style: none; padding: 0;">
-          <li>✓ REINFORCE (policy gradient)</li>
-          <li>✓ DQN (deep Q-network)</li>
-          <li>✓ Experience replay buffers</li>
-          <li>⏳ PPO, A2C (coming soon)</li>
+        <h3 class="color-teal">spaces</h3>
+        <ul>
+          <li>Discrete (integer choices)</li>
+          <li>Box (continuous vectors)</li>
+          <li>Multi_binary (binary vectors)</li>
+          <li>Multi_discrete (multiple axes)</li>
+          <li>Tuple, Dict, Sequence, Text</li>
+        </ul>
+      </div>
+      <div>
+        <h3 class="color-teal">wrappers</h3>
+        <ul>
+          <li>map_observation / map_action / map_reward</li>
+          <li>clip_action / clip_observation</li>
+          <li>time_limit (max episode steps)</li>
+          <li>Custom wrappers via Env.wrap</li>
+          <li>Render recording via on_render</li>
+        </ul>
+      </div>
+      <div>
+        <h3 class="color-teal">training utilities</h3>
+        <ul>
+          <li>Trajectory collection (rollout, episodes)</li>
+          <li>Replay buffers (circular, uniform sampling)</li>
+          <li>GAE (advantages and returns)</li>
+          <li>Policy evaluation (mean/std reward)</li>
+          <li>Vectorized environments (Vec_env)</li>
         </ul>
       </div>
     </div>
 
     <hr>
 
-    <h2>design principles</h2>
-
-    <p><b>Type-safe environments.</b> Observation and action spaces are strongly typed. The compiler catches dimension mismatches before you run your training loop.</p>
-
-    <p><b>Functional agents.</b> Agents are immutable values. Policy updates return new agents. Experience replay is just an array of transitions.</p>
-
-    <p><b>Leverage the Raven ecosystem.</b> Use Kaun for neural networks, Rune for autodiff, and Nx for tensor operations. Fehu is thin glue code over powerful primitives.</p>
-
-    <hr>
-
     <h2>get started</h2>
 
-    <p>Fehu isn't released yet. For now, check out the <a href="/docs/fehu/">documentation</a> to learn more.</p>
-
-    <p>When it's ready:</p>
+    <p>Fehu is part of the Raven ecosystem. When it's released:</p>
 
     <pre class="language-bash"><code class="language-bash">opam install fehu</code></pre>
 
     <pre class="language-ocaml"><code class="language-ocaml">open Fehu
 
-let rng = Rune.Rng.key 42 in
-let env = Fehu_envs.Cartpole.make ~rng ()
+let () =
+  let rng = Rune.Rng.key 42 in
+  let env = Fehu_envs.Cartpole.make ~rng () in
+  let _obs, _info = Env.reset env () in
+  let stats = Eval.run env
+    ~policy:(fun _obs ->
+      let act, _ = Space.sample (Env.action_space env)
+        ~rng:(Env.take_rng env) in act)
+    ~n_episodes:10 () in
+  Printf.printf "Mean reward: %.1f (std: %.1f)\n"
+    stats.mean_reward stats.std_reward</code></pre>
 
-(* Create and train your agent *)
-let agent = train_cartpole env ~episodes:500</code></pre>
+    <p>For now, check out the <a href="/docs/fehu/">documentation</a> to learn more.</p>
   </main>
 
 </body>
