@@ -1720,6 +1720,87 @@ let test_fold_int16_1d_identity () =
   check_int "fold_int16_1d_identity[2]" 6 d.(2);
   check_int "fold_int16_1d_identity[3]" 8 d.(3)
 
+let test_associative_scan_sum_int32_axis1 () =
+  let ctx = Nx_backend.create_context () in
+  let x =
+    Nx_ox.create ctx Dtype.Int32 [| 2; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l |]
+  in
+  let out = Nx_ox.empty ctx Dtype.Int32 [| 2; 3 |] in
+  Nx_backend.associative_scan ~out ~axis:1 ~op:`Sum x;
+  let d = Nx_ox.to_array out in
+  check_int32 "associative_scan_sum_int32_axis1[0]" 1l d.(0);
+  check_int32 "associative_scan_sum_int32_axis1[1]" 3l d.(1);
+  check_int32 "associative_scan_sum_int32_axis1[2]" 6l d.(2);
+  check_int32 "associative_scan_sum_int32_axis1[3]" 4l d.(3);
+  check_int32 "associative_scan_sum_int32_axis1[4]" 9l d.(4);
+  check_int32 "associative_scan_sum_int32_axis1[5]" 15l d.(5)
+
+let test_associative_scan_prod_int64_axis0 () =
+  let ctx = Nx_backend.create_context () in
+  let x =
+    Nx_ox.create ctx Dtype.Int64 [| 2; 3 |] [| 1L; 2L; 3L; 4L; 5L; 6L |]
+  in
+  let out = Nx_ox.empty ctx Dtype.Int64 [| 2; 3 |] in
+  Nx_backend.associative_scan ~out ~axis:0 ~op:`Prod x;
+  let d = Nx_ox.to_array out in
+  check_int64 "associative_scan_prod_int64_axis0[0]" 1L d.(0);
+  check_int64 "associative_scan_prod_int64_axis0[1]" 2L d.(1);
+  check_int64 "associative_scan_prod_int64_axis0[2]" 3L d.(2);
+  check_int64 "associative_scan_prod_int64_axis0[3]" 4L d.(3);
+  check_int64 "associative_scan_prod_int64_axis0[4]" 10L d.(4);
+  check_int64 "associative_scan_prod_int64_axis0[5]" 18L d.(5)
+
+let test_associative_scan_sum_int32_permuted_view () =
+  let ctx = Nx_backend.create_context () in
+  let x =
+    Nx_ox.create ctx Dtype.Int32 [| 2; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l |]
+  in
+  let x_permuted = Nx_backend.permute x [| 1; 0 |] in
+  let out = Nx_ox.empty ctx Dtype.Int32 [| 3; 2 |] in
+  Nx_backend.associative_scan ~out ~axis:1 ~op:`Sum x_permuted;
+  let d = Nx_ox.to_array out in
+  check_int32 "associative_scan_sum_int32_permuted_view[0]" 1l d.(0);
+  check_int32 "associative_scan_sum_int32_permuted_view[1]" 5l d.(1);
+  check_int32 "associative_scan_sum_int32_permuted_view[2]" 2l d.(2);
+  check_int32 "associative_scan_sum_int32_permuted_view[3]" 7l d.(3);
+  check_int32 "associative_scan_sum_int32_permuted_view[4]" 3l d.(4);
+  check_int32 "associative_scan_sum_int32_permuted_view[5]" 9l d.(5)
+
+let test_associative_scan_zero_axis_length () =
+  let ctx = Nx_backend.create_context () in
+  let x = Nx_ox.empty ctx Dtype.Float32 [| 0; 3 |] in
+  let out = Nx_ox.empty ctx Dtype.Float32 [| 0; 3 |] in
+  Nx_backend.associative_scan ~out ~axis:0 ~op:`Max x;
+  check_int "associative_scan_zero_axis_length:numel"
+    (numel (Nx_backend.view out)) 0
+
+let test_threefry_strided_view_matches_contiguous () =
+  let ctx = Nx_backend.create_context () in
+  let key_base =
+    Nx_ox.create ctx Dtype.Int32
+      [| 2; 2 |]
+      [| 1l; 2l; -1l; 0l |]
+  in
+  let ctr_base =
+    Nx_ox.create ctx Dtype.Int32
+      [| 2; 2 |]
+      [| 3l; 4l; 123l; 456l |]
+  in
+  let key_perm = Nx_backend.permute key_base [| 1; 0 |] in
+  let ctr_perm = Nx_backend.permute ctr_base [| 1; 0 |] in
+  let out_perm = Nx_ox.empty ctx Dtype.Int32 [| 2; 2 |] in
+  Nx_backend.threefry ~out:out_perm key_perm ctr_perm;
+  let key_contig = Nx_backend.contiguous key_perm in
+  let ctr_contig = Nx_backend.contiguous ctr_perm in
+  let out_contig = Nx_ox.empty ctx Dtype.Int32 [| 2; 2 |] in
+  Nx_backend.threefry ~out:out_contig key_contig ctr_contig;
+  let perm_data = Nx_ox.to_array out_perm in
+  let contig_data = Nx_ox.to_array out_contig in
+  for i = 0 to Array.length perm_data - 1 do
+    check_int32 (Printf.sprintf "threefry_strided_view_matches_contiguous[%d]" i)
+      contig_data.(i) perm_data.(i)
+  done
+
 let () =
   print_endline "Running Nx_backend backend tests...";
   test_buffer_float64 ();
@@ -1844,5 +1925,10 @@ let () =
   test_fold_float64_1d_identity ();
   test_fold_int8_1d_identity ();
   test_fold_int16_1d_identity ();
+  test_associative_scan_sum_int32_axis1 ();
+  test_associative_scan_prod_int64_axis0 ();
+  test_associative_scan_sum_int32_permuted_view ();
+  test_associative_scan_zero_axis_length ();
+  test_threefry_strided_view_matches_contiguous ();
   Printf.printf "\nResults: %d passed, %d failed\n" !passed !failed;
   if !failed > 0 then exit 1
