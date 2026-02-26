@@ -4,6 +4,7 @@
   test_init
   test_loss
   test_layer
+  test_fn
   test_optim
   test_grad
   test_attention
