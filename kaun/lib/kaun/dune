@@ -1,17 +1,4 @@
-(include_subdirs qualified)
-
 (library
  (name kaun)
  (public_name kaun)
- (libraries
-  rune
-  unix
-  str
-  nx
-  nx_buffer
-  nx.core
-  nx.io
-  jsont
-  jsont.bytesrw
-  domainslib
-  kaun.runlog))
+ (libraries rune nx nx.core nx.io))

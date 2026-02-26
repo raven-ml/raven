@@ -3,20 +3,46 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module Dtype = Nx_core.Dtype
-
 type tensor = P : ('a, 'layout) Rune.t -> tensor
 type t = Tensor of tensor | List of t list | Dict of (string * t) list
 
-let tensor t = Tensor (P t)
-let list items = List items
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
+
+let invalid_arg_ctx ?ctx msg =
+  match ctx with
+  | None -> invalid_arg msg
+  | Some ctx -> invalid_argf "%s: %s" ctx msg
+
+let expected ?ctx what = invalid_arg_ctx ?ctx ("expected " ^ what)
+
+let key_not_found ?ctx key =
+  match ctx with
+  | None -> invalid_argf "key %S not found" key
+  | Some ctx -> invalid_argf "%s: key %S not found" ctx key
+
+let tensor x = Tensor (P x)
+let list xs = List xs
+let empty = List []
+
+let validate_key key =
+  if String.length key = 0 then invalid_arg "empty key";
+  for i = 0 to String.length key - 1 do
+    let c = String.unsafe_get key i in
+    match c with
+    | '.' | '[' | ']' ->
+        invalid_argf
+          "key %S contains reserved character %C (keys must not contain '.', \
+           '[', or ']')"
+          key c
+    | _ -> ()
+  done
 
 let dict kvs =
-  let tbl = Hashtbl.create (List.length kvs) in
-  List.iter
+  let tbl = Hashtbl.create (Stdlib.List.length kvs) in
+  Stdlib.List.iter
     (fun (k, _) ->
-      if Hashtbl.mem tbl k then
-        invalid_arg ("Ptree.dict: duplicate key '" ^ k ^ "'")
+      validate_key k;
+      if Hashtbl.mem tbl k then invalid_argf "duplicate key %S" k
       else Hashtbl.add tbl k ())
     kvs;
   Dict kvs
@@ -24,462 +50,194 @@ let dict kvs =
 module Tensor = struct
   let dtype (P t) = Nx_core.Dtype.pack (Rune.dtype t)
   let shape (P t) = Rune.shape t
-  let numel (P t) = Array.fold_left ( * ) 1 (Rune.shape t)
+  let numel (P t) = Rune.numel t
 
   let to_typed (type a l) (dtype : (a, l) Rune.dtype) (P t) :
       (a, l) Rune.t option =
-    match Dtype.equal_witness (Rune.dtype t) dtype with
+    match Nx_core.Dtype.equal_witness (Rune.dtype t) dtype with
     | Some Type.Equal -> Some t
     | None -> None
 
   let to_typed_exn (type a l) (dtype : (a, l) Rune.dtype) (P t) : (a, l) Rune.t
       =
-    match Dtype.equal_witness (Rune.dtype t) dtype with
+    match Nx_core.Dtype.equal_witness (Rune.dtype t) dtype with
     | Some Type.Equal -> t
-    | None -> invalid_arg "Ptree.Tensor.to_typed_exn: dtype mismatch"
+    | None ->
+        invalid_argf "dtype mismatch: expected %s, got %s"
+          (Nx_core.Dtype.to_string dtype)
+          (Nx_core.Dtype.to_string (Rune.dtype t))
 end
-
-type 'r tensor_handler = { run : 'a 'layout. ('a, 'layout) Rune.t -> 'r }
-
-let with_tensor (P t) handler = handler.run t
-
-let cast_tensor_using_eq : type a layout b layout'.
-    ((a, layout) Dtype.t, (b, layout') Dtype.t) Type.eq ->
-    (a, layout) Rune.t ->
-    (b, layout') Rune.t =
- fun eq tensor -> match eq with Type.Equal -> tensor
-
-let as_tensor = function Tensor t -> Some t | _ -> None
-
-let as_tensor_exn ?(ctx = "") tree =
-  match as_tensor tree with
-  | Some t -> t
-  | None ->
-      failwith
-        (Printf.sprintf "Params.as_tensor_exn%s: expected tensor"
-           (if ctx = "" then "" else " (" ^ ctx ^ ")"))
-
-let rec map f tree =
-  match tree with
-  | Tensor tensor ->
-      let tensor' =
-        with_tensor tensor
-          {
-            run =
-              (fun (type a) (type layout) (t : (a, layout) Rune.t) ->
-                let f' =
-                  (Obj.magic f : (a, layout) Rune.t -> (a, layout) Rune.t)
-                in
-                let result = f' t in
-                match
-                  Dtype.equal_witness (Rune.dtype t) (Rune.dtype result)
-                with
-                | Some Type.Equal -> P result
-                | None -> invalid_arg "Ptree.map: function changed dtype");
-          }
-      in
-      Tensor tensor'
-  | List items -> List (List.map (fun item -> map f item) items)
-  | Dict bindings -> Dict (List.map (fun (k, v) -> (k, map f v)) bindings)
-
-let rec map2 f lhs rhs =
-  match (lhs, rhs) with
-  | Tensor lhs_tensor, Tensor rhs_tensor ->
-      let tensor =
-        with_tensor lhs_tensor
-          {
-            run =
-              (fun (type a) (type layout) (t1 : (a, layout) Rune.t) ->
-                with_tensor rhs_tensor
-                  {
-                    run =
-                      (fun (type a')
-                        (type layout')
-                        (t2 : (a', layout') Rune.t)
-                      ->
-                        match
-                          Dtype.equal_witness (Rune.dtype t1) (Rune.dtype t2)
-                        with
-                        | Some Type.Equal -> (
-                            let f' =
-                              (Obj.magic f
-                                : (a, layout) Rune.t ->
-                                  (a, layout) Rune.t ->
-                                  (a, layout) Rune.t)
-                            in
-                            let result = f' t1 t2 in
-                            match
-                              Dtype.equal_witness (Rune.dtype t1)
-                                (Rune.dtype result)
-                            with
-                            | Some Type.Equal -> P result
-                            | None ->
-                                invalid_arg "Ptree.map2: function changed dtype"
-                            )
-                        | None -> invalid_arg "Ptree.map2: dtype mismatch");
-                  });
-          }
-      in
-      Tensor tensor
-  | List l_items, List r_items ->
-      if List.length l_items <> List.length r_items then
-        invalid_arg "Params.map2: list length mismatch";
-      List (List.map2 (fun l r -> map2 f l r) l_items r_items)
-  | Dict l_bindings, Dict r_bindings ->
-      if List.length l_bindings <> List.length r_bindings then
-        invalid_arg "Params.map2: dict length mismatch";
-      let sorted_l =
-        List.sort (fun (k1, _) (k2, _) -> String.compare k1 k2) l_bindings
-      in
-      let sorted_r =
-        List.sort (fun (k1, _) (k2, _) -> String.compare k1 k2) r_bindings
-      in
-      let merged =
-        List.map2
-          (fun (k1, v1) (k2, v2) ->
-            if k1 <> k2 then invalid_arg "Params.map2: dict key mismatch";
-            (k1, map2 f v1 v2))
-          sorted_l sorted_r
-      in
-      Dict merged
-  | _ -> invalid_arg "Params.map2: structure mismatch"
-
-let rec map_packed f tree =
-  match tree with
-  | Tensor t -> Tensor (f t)
-  | List items -> List (List.map (fun item -> map_packed f item) items)
-  | Dict bindings ->
-      Dict (List.map (fun (k, v) -> (k, map_packed f v)) bindings)
-
-let rec iter f tree =
-  match tree with
-  | Tensor t -> f t
-  | List items -> List.iter (fun item -> iter f item) items
-  | Dict bindings -> List.iter (fun (_, v) -> iter f v) bindings
-
-let rec fold f acc tree =
-  match tree with
-  | Tensor t -> f acc t
-  | List items -> List.fold_left (fun a item -> fold f a item) acc items
-  | Dict bindings -> List.fold_left (fun a (_, v) -> fold f a v) acc bindings
-
-let flatten tree =
-  let rec collect acc = function
-    | Tensor t -> t :: acc
-    | List items -> List.fold_left collect acc items
-    | Dict bindings -> List.fold_left (fun a (_, v) -> collect a v) acc bindings
-  in
-  let leaves = List.rev (collect [] tree) in
-  let rebuild new_leaves =
-    let idx = ref 0 in
-    let rec aux = function
-      | Tensor _ ->
-          let t = List.nth new_leaves !idx in
-          incr idx;
-          Tensor t
-      | List items -> List (List.map aux items)
-      | Dict bindings -> Dict (List.map (fun (k, v) -> (k, aux v)) bindings)
-    in
-    aux tree
-  in
-  (leaves, rebuild)
-
-module Path = struct
-  type t = segment list
-  and segment = Key of string | Index of int
-
-  let root = []
-
-  let of_string path_str =
-    let len = String.length path_str in
-    let rec parse i acc =
-      if i >= len then List.rev acc
-      else
-        match path_str.[i] with
-        | '.' -> parse (i + 1) acc
-        | '[' ->
-            let j = String.index_from path_str (i + 1) ']' in
-            let idx = int_of_string (String.sub path_str (i + 1) (j - i - 1)) in
-            parse (j + 1) (Index idx :: acc)
-        | _ ->
-            let next_dot =
-              try Some (String.index_from path_str i '.')
-              with Not_found -> None
-            in
-            let next_bracket =
-              try Some (String.index_from path_str i '[')
-              with Not_found -> None
-            in
-            let next_sep =
-              match (next_dot, next_bracket) with
-              | None, None -> len
-              | Some idx, None -> idx
-              | None, Some idx -> idx
-              | Some dot_idx, Some bracket_idx -> min dot_idx bracket_idx
-            in
-            let key = String.sub path_str i (next_sep - i) in
-            parse next_sep (Key key :: acc)
-    in
-    parse 0 []
-
-  let to_string path =
-    let buffer = Buffer.create 32 in
-    let rec aux first = function
-      | [] -> ()
-      | Key k :: rest ->
-          if not first then Buffer.add_char buffer '.';
-          Buffer.add_string buffer k;
-          aux false rest
-      | Index i :: rest ->
-          Buffer.add_char buffer '[';
-          Buffer.add_string buffer (string_of_int i);
-          Buffer.add_char buffer ']';
-          aux false rest
-    in
-    aux true path;
-    Buffer.contents buffer
-
-  let key k p = p @ [ Key k ]
-  let index i p = p @ [ Index i ]
-
-  let rec get ~tree = function
-    | [] -> Some tree
-    | Key k :: rest -> (
-        match tree with
-        | Dict bindings -> (
-            match List.assoc_opt k bindings with
-            | Some v -> get ~tree:v rest
-            | None -> None)
-        | _ -> None)
-    | Index i :: rest -> (
-        match tree with
-        | List items -> (
-            match List.nth_opt items i with
-            | Some v -> get ~tree:v rest
-            | None -> None)
-        | _ -> None)
-
-  let placeholder_for = function
-    | [] -> List []
-    | Key _ :: _ -> Dict []
-    | Index _ :: _ -> List []
-
-  let rec set ~tree path ~value =
-    match path with
-    | [] -> value
-    | Key k :: rest ->
-        let bindings = match tree with Dict bs -> bs | _ -> [] in
-        let rec rebuild acc = function
-          | [] ->
-              let child =
-                if rest = [] then value
-                else set ~tree:(placeholder_for rest) rest ~value
-              in
-              List.rev acc @ [ (k, child) ]
-          | ((k', v) as binding) :: tail ->
-              if String.equal k k' then
-                let child =
-                  if rest = [] then value else set ~tree:v rest ~value
-                in
-                List.rev acc @ ((k, child) :: tail)
-              else rebuild (binding :: acc) tail
-        in
-        Dict (rebuild [] bindings)
-    | Index i :: rest ->
-        let items = match tree with List xs -> xs | _ -> [] in
-        let filler = placeholder_for rest in
-        let len = List.length items in
-        let padded =
-          if i < len then items
-          else
-            let extra = i - len + 1 in
-            items @ List.init extra (fun _ -> filler)
-        in
-        let rec update idx = function
-          | [] -> []
-          | x :: xs ->
-              if idx = 0 then
-                let child =
-                  if rest = [] then value else set ~tree:x rest ~value
-                in
-                child :: xs
-              else x :: update (idx - 1) xs
-        in
-        List (update i padded)
-
-  let update ~tree path ~f =
-    match get ~tree path with
-    | Some subtree -> set ~tree path ~value:(f subtree)
-    | None -> invalid_arg "Params.Path.update: path not found"
-end
-
-let get ~path tree = Path.get ~tree path
-
-let get_exn ~path tree =
-  match get ~path tree with
-  | Some t -> t
-  | None ->
-      invalid_arg
-        (Printf.sprintf "Params.get_exn: path '%s' not found"
-           (Path.to_string path))
-
-let set ~path ~value tree = Path.set ~tree path ~value
-let update ~path f tree = Path.update ~tree path ~f
-let mem ~path tree = Option.is_some (get tree ~path)
-
-let get_tensor ~path tree dtype =
-  match get ~path tree with
-  | Some (Tensor tensor) ->
-      with_tensor tensor
-        {
-          run =
-            (fun (type a) (type layout) (t : (a, layout) Rune.t) ->
-              match Dtype.equal_witness (Rune.dtype t) dtype with
-              | Some eq ->
-                  let coerced = cast_tensor_using_eq eq t in
-                  Some coerced
-              | None ->
-                  invalid_arg
-                    (Printf.sprintf "Params.get_tensor: dtype mismatch at '%s'"
-                       (Path.to_string path)));
-        }
-  | _ -> None
-
-let get_tensor_exn ~path tree dtype =
-  match get_tensor ~path tree dtype with
-  | Some t -> t
-  | None ->
-      invalid_arg
-        (Printf.sprintf "Params.get_tensor_exn: no tensor at '%s'"
-           (Path.to_string path))
-
-let flatten_with_paths tree =
-  let rec go acc path = function
-    | Tensor t -> (path, t) :: acc
-    | List xs ->
-        let rec loop acc i = function
-          | [] -> acc
-          | v :: vs ->
-              let acc' = go acc (Path.index i path) v in
-              loop acc' (i + 1) vs
-        in
-        loop acc 0 xs
-    | Dict kvs ->
-        List.fold_left (fun acc (k, v) -> go acc (Path.key k path) v) acc kvs
-  in
-  List.rev (go [] [] tree)
-
-let filter_tensors tree pred =
-  List.filter (fun (p, t) -> pred p t) (flatten_with_paths tree)
-
-type float_dtype = F : (float, 'l) Rune.dtype -> float_dtype
-
-let first_float_dtype tree =
-  let rec go = function
-    | Tensor (P t) ->
-        let dt = Rune.dtype t in
-        if Dtype.is_float dt then
-          match dt with
-          | Dtype.Float16 -> Some (F Dtype.Float16)
-          | Dtype.Float32 -> Some (F Dtype.Float32)
-          | Dtype.Float64 -> Some (F Dtype.Float64)
-          | Dtype.BFloat16 -> Some (F Dtype.BFloat16)
-          | Dtype.Float8_e4m3 -> Some (F Dtype.Float8_e4m3)
-          | Dtype.Float8_e5m2 -> Some (F Dtype.Float8_e5m2)
-          | _ -> None
-        else None
-    | List xs ->
-        let rec find = function
-          | [] -> None
-          | v :: vs -> ( match go v with Some _ as r -> r | None -> find vs)
-        in
-        find xs
-    | Dict kvs ->
-        let rec find = function
-          | [] -> None
-          | (_, v) :: vs -> (
-              match go v with Some _ as r -> r | None -> find vs)
-        in
-        find kvs
-  in
-  go tree
-
-let first_float_dtype_exn tree =
-  match first_float_dtype tree with
-  | Some w -> w
-  | None ->
-      invalid_arg "Ptree.first_float_dtype_exn: no floating tensors in tree"
-
-let zeros_like tree = map_packed (fun (P t) -> P (Rune.zeros_like t)) tree
-let copy tree = map_packed (fun (P t) -> P (Rune.copy t)) tree
-let count_tensors tree = fold (fun acc _ -> acc + 1) 0 tree
-let count_parameters tree = fold (fun acc t -> acc + Tensor.numel t) 0 tree
 
 module Dict = struct
   type fields = (string * t) list
 
-  let fields_exn ?(ctx = "Ptree.Dict.fields_exn") = function
-    | Dict fs -> fs
-    | _ -> failwith (ctx ^ ": expected Dict node")
+  let fields_exn ?ctx t =
+    match t with Dict kvs -> kvs | _ -> expected ?ctx "Dict"
 
-  let find name (fs : fields) = List.assoc_opt name fs
+  let find key fields = Stdlib.List.assoc_opt key fields
 
-  let find_exn ?(ctx = "Ptree.Dict.find_exn") name (fs : fields) =
-    match find name fs with
-    | Some v -> v
-    | None -> failwith (ctx ^ ": missing field '" ^ name ^ "'")
+  let find_exn ?ctx key fields =
+    match find key fields with Some v -> v | None -> key_not_found ?ctx key
 
-  let rec set key value (fs : fields) : fields =
-    match fs with
-    | [] -> [ (key, value) ]
-    | (k, _) :: rest when String.equal k key -> (key, value) :: rest
-    | binding :: rest -> binding :: set key value rest
-
-  let update f key (fs : fields) =
-    match find key fs with
-    | Some v -> set key (f v) fs
-    | None -> failwith ("Ptree.Dict.update: missing field '" ^ key ^ "'")
-
-  let mem key (fs : fields) = List.exists (fun (k, _) -> String.equal k key) fs
-
-  let get_tensor (fs : fields) ~name dtype =
-    (* Make a tiny Dict subtree and delegate to typed path getter. *)
-    get_tensor (Dict fs) ~path:(Path.key name []) dtype
-
-  let get_tensor_exn (fs : fields) ~name dtype =
-    get_tensor_exn (Dict fs) ~path:(Path.key name []) dtype
+  let get_tensor_exn fields ~name dtype =
+    match find_exn name fields with
+    | Tensor p -> Tensor.to_typed_exn dtype p
+    | _ -> invalid_argf "field %S is not a tensor" name
 end
 
 module List = struct
-  let items_exn ?(ctx = "List_.items_exn") = function
-    | List xs -> xs
-    | _ -> failwith (ctx ^ ": expected List node")
+  let items_exn ?ctx t =
+    match t with List xs -> xs | _ -> expected ?ctx "List"
 end
 
-let rec pp fmt = function
-  | Tensor (P t) ->
-      let shape_str =
-        String.concat "×"
-          (Stdlib.List.map string_of_int (Array.to_list (Rune.shape t)))
-      in
-      Format.fprintf fmt "Tensor(%s:%s)"
-        (if shape_str = "" then "scalar" else shape_str)
-        (Dtype.to_string (Rune.dtype t))
-  | List items ->
-      Format.fprintf fmt "[@[<hov>";
-      Stdlib.List.iteri
-        (fun i item ->
-          if i > 0 then Format.fprintf fmt ",@ ";
-          pp fmt item)
-        items;
-      Format.fprintf fmt "@]]"
-  | Dict bindings ->
-      Format.fprintf fmt "{@[<hov>";
-      Stdlib.List.iteri
-        (fun i (k, v) ->
-          if i > 0 then Format.fprintf fmt ",@ ";
-          Format.fprintf fmt "%s = %a" k pp v)
-        bindings;
-      Format.fprintf fmt "@]}"
+type 'r tensor_handler = { run : 'a 'layout. ('a, 'layout) Rune.t -> 'r }
 
-let to_string tree = Format.asprintf "%a" pp tree
+type map_handler = {
+  run : 'a 'layout. ('a, 'layout) Rune.t -> ('a, 'layout) Rune.t;
+}
+
+type map2_handler = {
+  run :
+    'a 'layout.
+    ('a, 'layout) Rune.t -> ('a, 'layout) Rune.t -> ('a, 'layout) Rune.t;
+}
+
+let with_tensor (P t) (handler : _ tensor_handler) = handler.run t
+
+let as_tensor_exn ?ctx t =
+  match t with Tensor p -> p | _ -> expected ?ctx "Tensor"
+
+let map (f : map_handler) t =
+  let rec go = function
+    | Tensor (P x) -> Tensor (P (f.run x))
+    | List xs -> List (Stdlib.List.map go xs)
+    | Dict kvs -> Dict (Stdlib.List.map (fun (k, v) -> (k, go v)) kvs)
+  in
+  go t
+
+let map2 (f : map2_handler) a b =
+  let rec go a b =
+    match (a, b) with
+    | Tensor (P x), Tensor (P y) -> (
+        match Nx_core.Dtype.equal_witness (Rune.dtype x) (Rune.dtype y) with
+        | Some Type.Equal -> Tensor (P (f.run x y))
+        | None -> invalid_arg "dtype mismatch")
+    | List xs, List ys ->
+        if Stdlib.List.length xs <> Stdlib.List.length ys then
+          invalid_arg "list length mismatch";
+        List (Stdlib.List.map2 go xs ys)
+    | Dict kvs1, Dict kvs2 ->
+        if Stdlib.List.length kvs1 <> Stdlib.List.length kvs2 then
+          invalid_arg "dict size mismatch";
+        Dict
+          (Stdlib.List.map
+             (fun (k, v1) ->
+               match Stdlib.List.assoc_opt k kvs2 with
+               | Some v2 -> (k, go v1 v2)
+               | None -> invalid_argf "key %S not found in second dict" k)
+             kvs1)
+    | _ -> invalid_arg "structure mismatch"
+  in
+  go a b
+
+let iter f t =
+  let rec go = function
+    | Tensor p -> f p
+    | List xs -> Stdlib.List.iter go xs
+    | Dict kvs -> Stdlib.List.iter (fun (_, v) -> go v) kvs
+  in
+  go t
+
+let fold f acc t =
+  let rec go acc = function
+    | Tensor p -> f acc p
+    | List xs -> Stdlib.List.fold_left go acc xs
+    | Dict kvs -> Stdlib.List.fold_left (fun acc (_, v) -> go acc v) acc kvs
+  in
+  go acc t
+
+let flatten t =
+  let tensors = ref [] in
+  iter (fun p -> tensors := p :: !tensors) t;
+  let tensors = Stdlib.List.rev !tensors in
+  let rebuild new_tensors =
+    let remaining = ref new_tensors in
+    let take () =
+      match !remaining with
+      | [] -> invalid_arg "not enough tensors to rebuild tree"
+      | x :: rest ->
+          remaining := rest;
+          x
+    in
+    let rec go = function
+      | Tensor _ -> Tensor (take ())
+      | List xs -> List (Stdlib.List.map go xs)
+      | Dict kvs -> Dict (Stdlib.List.map (fun (k, v) -> (k, go v)) kvs)
+    in
+    let result = go t in
+    (match !remaining with
+    | [] -> ()
+    | _ -> invalid_arg "too many tensors to rebuild tree");
+    result
+  in
+  (tensors, rebuild)
+
+let flatten_with_paths t =
+  let join prefix seg = if prefix = "" then seg else prefix ^ "." ^ seg in
+  let acc = ref [] in
+  let rec go prefix = function
+    | Tensor p -> acc := (prefix, p) :: !acc
+    | List xs ->
+        Stdlib.List.iteri (fun i v -> go (join prefix (string_of_int i)) v) xs
+    | Dict kvs -> Stdlib.List.iter (fun (k, v) -> go (join prefix k) v) kvs
+  in
+  go "" t;
+  Stdlib.List.rev !acc
+
+let zeros_like t = map { run = Rune.zeros_like } t
+let count_parameters t = fold (fun acc p -> acc + Tensor.numel p) 0 t
+
+let pp_shape shape =
+  Stdlib.String.concat "x"
+    (Stdlib.Array.to_list (Stdlib.Array.map string_of_int shape))
+
+let rec pp_with_indent indent ppf = function
+  | Tensor p ->
+      with_tensor p
+        {
+          run =
+            (fun t ->
+              Format.fprintf ppf "Tensor(%s, %s)"
+                (Nx_core.Dtype.to_string (Rune.dtype t))
+                (pp_shape (Rune.shape t)));
+        }
+  | List [] -> Format.pp_print_string ppf "List []"
+  | List xs ->
+      let next_indent = indent ^ "  " in
+      Format.pp_print_string ppf "List [";
+      Stdlib.List.iter
+        (fun v ->
+          Format.pp_print_char ppf '\n';
+          Format.pp_print_string ppf next_indent;
+          pp_with_indent next_indent ppf v)
+        xs;
+      Format.pp_print_char ppf '\n';
+      Format.pp_print_string ppf indent;
+      Format.pp_print_char ppf ']'
+  | Dict [] -> Format.pp_print_string ppf "Dict {}"
+  | Dict kvs ->
+      let next_indent = indent ^ "  " in
+      Format.pp_print_string ppf "Dict {";
+      Stdlib.List.iter
+        (fun (k, v) ->
+          Format.pp_print_char ppf '\n';
+          Format.pp_print_string ppf next_indent;
+          Format.pp_print_string ppf k;
+          Format.pp_print_string ppf ": ";
+          pp_with_indent next_indent ppf v)
+        kvs;
+      Format.pp_print_char ppf '\n';
+      Format.pp_print_string ppf indent;
+      Format.pp_print_char ppf '}'
+
+let pp ppf t = pp_with_indent "" ppf t

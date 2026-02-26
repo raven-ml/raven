@@ -3,198 +3,177 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Heterogeneous parameter tree structure. *)
+(** Heterogeneous parameter trees.
 
-(** Path submodule for advanced use *)
-module Path : sig
-  type t
-  (** Path segments. *)
-
-  val root : t
-  (** Root path. *)
-
-  val of_string : string -> t
-  (** Parse string to path. *)
-
-  val to_string : t -> string
-  (** Convert path to string. *)
-
-  val key : string -> t -> t
-  (** Add key segment. *)
-
-  val index : int -> t -> t
-  (** Add index segment. *)
-end
+    A parameter tree is a finite tree with tensor leaves and container nodes.
+    Leaves are packed tensors ({!tensor}), and containers are either ordered
+    lists ([List]) or string-keyed dicts ([Dict]). *)
 
 type tensor =
   | P : ('a, 'layout) Rune.t -> tensor
-      (** Existential wrapper for tensor tensors. *)
+      (** A packed tensor. The wrapper hides dtype and layout parameters. *)
 
 type t =
-  | Tensor of tensor
-  | List of t list
-  | Dict of (string * t) list  (** Parameter tree: tensors or containers. *)
+  | Tensor of tensor  (** A tensor leaf. *)
+  | List of t list  (** An ordered list branch. *)
+  | Dict of (string * t) list  (** A dict branch. Keys are strings. *)
 
-(** Tensor utilities *)
+(** {1:constructors Constructors} *)
+
+val tensor : ('a, 'layout) Rune.t -> t
+(** [tensor x] is [Tensor (P x)]. *)
+
+val list : t list -> t
+(** [list xs] is [List xs]. *)
+
+val dict : (string * t) list -> t
+(** [dict kvs] is [Dict kvs] with key validation.
+
+    Raises [Invalid_argument] if a key is empty, duplicated, or contains ['.'],
+    ['\['], or ['\]']. *)
+
+val empty : t
+(** [empty] is [List []]. Canonical value for "no parameters" or "no state". *)
+
+(** {1:tensor Tensor Inspection} *)
+
 module Tensor : sig
   val dtype : tensor -> Nx_core.Dtype.packed
-  (** Get the dtype of the tensor. *)
+  (** [dtype t] is [t]'s dtype. *)
 
   val shape : tensor -> int array
-  (** Get the shape of the tensor. *)
+  (** [shape t] is [t]'s shape. *)
 
   val numel : tensor -> int
-  (** Get the number of elements in the tensor. *)
+  (** [numel t] is the number of elements in [t]. *)
 
   val to_typed : ('a, 'l) Rune.dtype -> tensor -> ('a, 'l) Rune.t option
-  (** [to_typed dtype t] returns [Some x] when the packed tensor [t] has the
-      given [dtype], with [x] the typed tensor. Returns [None] if the dtype does
-      not match. *)
+  (** [to_typed dtype t] is [Some x] iff [t] has dtype [dtype], with [x] the
+      typed tensor. It is [None] on dtype mismatch. *)
 
   val to_typed_exn : ('a, 'l) Rune.dtype -> tensor -> ('a, 'l) Rune.t
-  (** [to_typed_exn dtype t] returns the typed tensor when the dtype matches, or
-      raises [Invalid_argument] on mismatch. *)
+  (** [to_typed_exn dtype t] is the typed tensor in [t].
+
+      Raises [Invalid_argument] if [t]'s dtype is not [dtype]. *)
 end
 
-module List : sig
-  val items_exn : ?ctx:string -> t -> t list
-  (** Extract list items or fail with a helpful [ctx]-prefixed message. *)
-end
+(** {1:dict Dict Access} *)
 
 module Dict : sig
   type fields = (string * t) list
+  (** The type for dict fields. *)
 
   val fields_exn : ?ctx:string -> t -> fields
-  (** Extract dict fields or fail with a helpful [ctx]-prefixed message. *)
+  (** [fields_exn ?ctx t] is [t]'s fields.
+
+      Raises [Invalid_argument] if [t] is not [Dict _]. The optional [ctx] is
+      prefixed to the error message. *)
 
   val find : string -> fields -> t option
-  val find_exn : ?ctx:string -> string -> fields -> t
-  val set : string -> t -> fields -> fields
-  val update : (t -> t) -> string -> fields -> fields
-  val mem : string -> fields -> bool
+  (** [find name fields] is [Some v] if [name] is bound in [fields], and [None]
+      otherwise. *)
 
-  val get_tensor :
-    fields -> name:string -> ('a, 'l) Nx_core.Dtype.t -> ('a, 'l) Rune.t option
+  val find_exn : ?ctx:string -> string -> fields -> t
+  (** [find_exn ?ctx name fields] is [name]'s value in [fields].
+
+      Raises [Invalid_argument] if [name] is missing. The optional [ctx] is
+      prefixed to the error message. *)
 
   val get_tensor_exn :
     fields -> name:string -> ('a, 'l) Nx_core.Dtype.t -> ('a, 'l) Rune.t
+  (** [get_tensor_exn fields ~name dtype] is the typed tensor in [fields] under
+      [name].
+
+      Raises [Invalid_argument] if [name] is missing, [name] is not a tensor, or
+      the tensor dtype differs from [dtype]. *)
 end
 
-(** Builders *)
+(** {1:list List Access} *)
 
-val tensor : ('a, 'layout) Rune.t -> t
-(** Create a tensor node from a tensor. *)
+module List : sig
+  val items_exn : ?ctx:string -> t -> t list
+  (** [items_exn ?ctx t] is [t]'s items.
 
-val list : t list -> t
-(** Create a list container. *)
+      Raises [Invalid_argument] if [t] is not [List _]. The optional [ctx] is
+      prefixed to the error message. *)
+end
 
-val dict : (string * t) list -> t
-(** Create a dict container from key-value pairs. Keys must be unique. *)
-
-(* *)
+(** {1:leaf Leaf Access} *)
 
 type 'r tensor_handler = { run : 'a 'layout. ('a, 'layout) Rune.t -> 'r }
+(** Rank-2 handler for unpacking {!tensor}. *)
 
 val with_tensor : tensor -> 'a tensor_handler -> 'a
-
-(* *)
-
-val as_tensor : t -> tensor option
-(** Extract tensor if the tree is a single leaf, else None. *)
+(** [with_tensor t h] applies [h.run] to the unpacked tensor in [t]. *)
 
 val as_tensor_exn : ?ctx:string -> t -> tensor
-(** Extract tensor or raise. Optional context for error message. *)
+(** [as_tensor_exn ?ctx t] is [t]'s packed tensor.
 
-(** Walking / zipping *)
+    Raises [Invalid_argument] if [t] is not [Tensor _]. The optional [ctx] is
+    prefixed to the error message. *)
 
-val map : (('a, 'l) Rune.t -> ('a, 'l) Rune.t) -> t -> t
-(** Typed map over tensors. Result dtype must equal input dtype. *)
+(** {1:functional Functional Operations} *)
 
-val map2 :
-  (('a, 'l) Rune.t -> ('a, 'l) Rune.t -> ('a, 'l) Rune.t) -> t -> t -> t
-(** Typed zip-with over tensors. Structures must match; dtype per-pair must
-    match. *)
+type map_handler = {
+  run : 'a 'layout. ('a, 'layout) Rune.t -> ('a, 'layout) Rune.t;
+}
+(** Rank-2 tensor mapper used by {!map}. *)
 
-val map_packed : (tensor -> tensor) -> t -> t
-(** Packed map over tensors (escape hatch if types are dynamic). *)
+val map : map_handler -> t -> t
+(** [map f t] maps [f.run] over tensor leaves and preserves tree structure. *)
+
+type map2_handler = {
+  run :
+    'a 'layout.
+    ('a, 'layout) Rune.t -> ('a, 'layout) Rune.t -> ('a, 'layout) Rune.t;
+}
+(** Rank-2 tensor zipper used by {!map2}. *)
+
+val map2 : map2_handler -> t -> t -> t
+(** [map2 f a b] zips [a] and [b] and applies [f.run] to paired tensor leaves.
+
+    Lists are matched by position. Dict nodes are matched by key using [a]'s key
+    order.
+
+    Raises [Invalid_argument] on structure mismatch, list or dict size mismatch,
+    missing keys in [b], or paired dtype mismatch. *)
 
 val iter : (tensor -> unit) -> t -> unit
-(** Iterate over tensors. *)
+(** [iter f t] applies [f] to each leaf tensor in depth-first order.
+
+    Leaves are visited left-to-right in list order and dict field order. *)
 
 val fold : ('acc -> tensor -> 'acc) -> 'acc -> t -> 'acc
-(** Fold over tensors. *)
+(** [fold f acc t] folds leaf tensors in the same traversal order as {!iter}. *)
 
-(** Flatten & rebuild *)
+(** {1:flatten Flatten and Rebuild} *)
 
 val flatten : t -> tensor list * (tensor list -> t)
-(** Flatten to tensors and a rebuilder function. *)
+(** [flatten t] is [(leaves, rebuild)] where:
+    - [leaves] are [t]'s leaf tensors in depth-first order;
+    - [rebuild new_leaves] rebuilds [t]'s structure with [new_leaves].
 
-(** Path access *)
+    [rebuild] raises [Invalid_argument] if [new_leaves] has a different length
+    than [leaves]. *)
 
-val get : path:Path.t -> t -> t option
-(** Get subtree at path. *)
+val flatten_with_paths : t -> (string * tensor) list
+(** [flatten_with_paths t] returns [(path, tensor)] pairs where paths are
+    dot-separated strings. Dict keys become path segments; list indices become
+    decimal segments (e.g. ["layers.0.weight"]).
 
-val get_exn : path:Path.t -> t -> t
-(** Get subtree or raise. *)
+    If [t] is a tensor leaf, its path is the empty string.
 
-val set : path:Path.t -> value:t -> t -> t
-(** Set subtree at path. *)
+    The path encoding is injective for trees built with {!dict}, because {!dict}
+    rejects keys containing ['.'], ['\['], or ['\]']. *)
 
-val update : path:Path.t -> (t -> t) -> t -> t
-(** Update subtree at path with function. *)
-
-val mem : path:Path.t -> t -> bool
-(** Check if path exists. *)
-
-(** Typed path access for tensors *)
-
-val get_tensor :
-  path:Path.t -> t -> ('a, 'l) Rune.dtype -> ('a, 'l) Rune.t option
-(** Get typed tensor at path, checking dtype. *)
-
-val get_tensor_exn : path:Path.t -> t -> ('a, 'l) Rune.dtype -> ('a, 'l) Rune.t
-(** Get typed tensor or raise. *)
-
-(** Flatten with paths *)
-
-val flatten_with_paths : t -> (Path.t * tensor) list
-(** Flatten to (path, tensor) pairs. *)
-
-val filter_tensors : t -> (Path.t -> tensor -> bool) -> (Path.t * tensor) list
-(** Filter tensors by predicate on path and tensor. *)
-
-(** Float dtype discovery *)
-
-type float_dtype =
-  | F : (float, 'l) Rune.dtype -> float_dtype
-      (** Witness that the dtype is a floating-point dtype. Encodes
-          [('a = float)] at the type level to avoid enumerating float
-          constructors at call sites. *)
-
-val first_float_dtype : t -> float_dtype option
-(** Find the first floating-point tensor in the tree and return a float dtype
-    witness, if any. Floating-point dtypes include float32/float64/float16,
-    bfloat16, and float8 variants. *)
-
-val first_float_dtype_exn : t -> float_dtype
-(** Like {!first_float_dtype} but raises if no floating-point tensors are
-    present. *)
-
-(** Convenience *)
+(** {1:utils Utilities} *)
 
 val zeros_like : t -> t
-(** Create tree with zeros_like tensors. *)
-
-val copy : t -> t
-(** Deep copy the tree. *)
-
-val count_tensors : t -> int
-(** Count number of tensors. *)
+(** [zeros_like t] has the same structure as [t], with each tensor replaced by
+    [Rune.zeros_like]. *)
 
 val count_parameters : t -> int
-(** Total elements across all tensors. *)
+(** [count_parameters t] is the sum of {!Tensor.numel} over all leaf tensors. *)
 
 val pp : Format.formatter -> t -> unit
-(** Printing *)
-
-val to_string : t -> string
+(** [pp] formats trees for debugging. *)

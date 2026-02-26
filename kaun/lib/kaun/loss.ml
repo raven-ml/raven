@@ -3,63 +3,119 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-let softmax_cross_entropy logits labels =
-  Rune.debug_with_context "softmax_cross_entropy" (fun () ->
-      (* Assumes labels are one-hot encoded *)
-      let max_logits = Rune.max logits ~axes:[ -1 ] ~keepdims:true in
-      let exp_logits = Rune.exp (Rune.sub logits max_logits) in
-      let sum_exp = Rune.sum exp_logits ~axes:[ -1 ] ~keepdims:true in
-      let log_softmax =
-        Rune.sub logits (Rune.add max_logits (Rune.log sum_exp))
-      in
-      let loss =
-        Rune.neg (Rune.sum (Rune.mul labels log_softmax) ~axes:[ -1 ])
-      in
-      Rune.mean loss)
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
-let softmax_cross_entropy_with_indices logits indices =
-  (* Convert indices to one-hot encoding *)
+let invalid_argf_fn fn fmt =
+  Printf.ksprintf (fun msg -> invalid_argf "Loss.%s: %s" fn msg) fmt
+
+let check_logits_shape ~fn logits =
+  let logits_shape = Rune.shape logits in
+  let logits_rank = Array.length logits_shape in
+  if logits_rank < 1 then invalid_argf_fn fn "logits must have rank >= 1";
+  let class_axis = logits_rank - 1 in
+  let num_classes = logits_shape.(class_axis) in
+  if num_classes <= 0 then
+    invalid_argf_fn fn "logits class dimension must be positive (got %d)"
+      num_classes;
+  logits_shape
+
+let check_same_shape ~fn ~rhs_name lhs rhs =
+  let lhs_rank = Array.length lhs in
+  let rhs_rank = Array.length rhs in
+  if rhs_rank <> lhs_rank then
+    invalid_argf_fn fn "%s rank mismatch (got %d, expected %d)" rhs_name
+      rhs_rank lhs_rank;
+  for i = 0 to lhs_rank - 1 do
+    if rhs.(i) <> lhs.(i) then
+      invalid_argf_fn fn "%s shape mismatch at axis %d (got %d, expected %d)"
+        rhs_name i rhs.(i) lhs.(i)
+  done
+
+let check_cross_entropy_shapes logits labels =
+  let fn = "cross_entropy" in
+  let logits_shape = check_logits_shape ~fn logits in
+  let labels_shape = Rune.shape labels in
+  check_same_shape ~fn ~rhs_name:"labels" logits_shape labels_shape
+
+let cross_entropy logits labels =
+  check_cross_entropy_shapes logits labels;
+  let max_logits = Rune.max logits ~axes:[ -1 ] ~keepdims:true in
+  let shifted = Rune.sub logits max_logits in
+  let log_sum_exp =
+    Rune.log (Rune.sum (Rune.exp shifted) ~axes:[ -1 ] ~keepdims:true)
+  in
+  let log_softmax = Rune.sub shifted log_sum_exp in
+  let per_example =
+    Rune.neg (Rune.sum (Rune.mul labels log_softmax) ~axes:[ -1 ])
+  in
+  Rune.mean per_example
+
+let check_sparse_indices_dtype indices =
+  let fn = "cross_entropy_sparse" in
+  let dtype = Rune.dtype indices in
+  if not (Nx_core.Dtype.is_int dtype) then
+    invalid_argf_fn fn "expected integer labels, got %s"
+      (Nx_core.Dtype.to_string dtype)
+
+let check_sparse_shapes logits indices =
+  let fn = "cross_entropy_sparse" in
+  let logits_shape = check_logits_shape ~fn logits in
+  let indices_shape = Rune.shape indices in
+  let logits_rank = Array.length logits_shape in
+  let indices_rank = Array.length indices_shape in
+  if indices_rank <> logits_rank - 1 then
+    invalid_argf_fn fn "labels rank mismatch (got %d, expected %d)" indices_rank
+      (logits_rank - 1);
+  for i = 0 to indices_rank - 1 do
+    if indices_shape.(i) <> logits_shape.(i) then
+      invalid_argf_fn fn
+        "labels shape mismatch at axis %d (got %d, expected %d)" i
+        indices_shape.(i) logits_shape.(i)
+  done;
+  let class_axis = logits_rank - 1 in
+  logits_shape.(class_axis)
+
+let cross_entropy_sparse logits indices =
+  check_sparse_indices_dtype indices;
+  ignore (check_sparse_shapes logits indices : int);
   let indices_int = Rune.cast Rune.int32 indices in
-  let num_classes = (Rune.shape logits).(1) in
-  let one_hot = Rune.one_hot ~num_classes indices_int in
-  let one_hot_float = Rune.cast (Rune.dtype logits) one_hot in
-  softmax_cross_entropy logits one_hot_float
+  (* Numerically stable log-softmax *)
+  let max_logits = Rune.max logits ~axes:[ -1 ] ~keepdims:true in
+  let shifted = Rune.sub logits max_logits in
+  let log_sum_exp =
+    Rune.log (Rune.sum (Rune.exp shifted) ~axes:[ -1 ] ~keepdims:true)
+  in
+  (* Gather true-class logits: [...] → [...; 1] for take_along_axis *)
+  let indices_expanded = Rune.expand_dims [ -1 ] indices_int in
+  let true_logits = Rune.take_along_axis ~axis:(-1) indices_expanded shifted in
+  (* loss = -(true_logit - log_sum_exp) *)
+  let per_example =
+    Rune.neg
+      (Rune.sub
+         (Rune.squeeze ~axes:[ -1 ] true_logits)
+         (Rune.squeeze ~axes:[ -1 ] log_sum_exp))
+  in
+  Rune.mean per_example
 
-let binary_cross_entropy predictions labels =
-  Rune.debug_with_context "binary_cross_entropy" (fun () ->
-      let dtype = Rune.dtype predictions in
-      let one = Rune.scalar dtype 1.0 in
-      let eps = Rune.scalar dtype 1e-7 in
-      (* Clip predictions to avoid log(0) *)
-      let predictions_clipped =
-        Rune.maximum eps (Rune.minimum (Rune.sub one eps) predictions)
-      in
-      let term1 = Rune.mul labels (Rune.log predictions_clipped) in
-      let term2 =
-        Rune.mul (Rune.sub one labels)
-          (Rune.log (Rune.sub one predictions_clipped))
-      in
-      let loss_per_example = Rune.neg (Rune.add term1 term2) in
-      Rune.mean loss_per_example)
-
-let sigmoid_binary_cross_entropy logits labels =
-  Rune.debug_with_context "sigmoid_binary_cross_entropy" (fun () ->
-      let dtype = Rune.dtype logits in
-      let one = Rune.scalar dtype 1.0 in
-      let log_sig = Rune.log_sigmoid logits in
-      let log_sig_neg = Rune.log_sigmoid (Rune.neg logits) in
-      let term1 = Rune.mul labels log_sig in
-      let term2 = Rune.mul (Rune.sub one labels) log_sig_neg in
-      Rune.neg (Rune.add term1 term2))
+let binary_cross_entropy logits labels =
+  let fn = "binary_cross_entropy" in
+  let logits_shape = Rune.shape logits in
+  let labels_shape = Rune.shape labels in
+  check_same_shape ~fn ~rhs_name:"labels" logits_shape labels_shape;
+  let dtype = Rune.dtype logits in
+  let one = Rune.scalar dtype 1.0 in
+  let log_p = Rune.log_sigmoid logits in
+  let log_1_minus_p = Rune.log_sigmoid (Rune.neg logits) in
+  let per_element =
+    Rune.neg
+      (Rune.add (Rune.mul labels log_p)
+         (Rune.mul (Rune.sub one labels) log_1_minus_p))
+  in
+  Rune.mean per_element
 
 let mse predictions targets =
-  Rune.debug_with_context "mse" (fun () ->
-      let diff = Rune.sub predictions targets in
-      let squared = Rune.mul diff diff in
-      Rune.mean squared)
+  let diff = Rune.sub predictions targets in
+  Rune.mean (Rune.mul diff diff)
 
 let mae predictions targets =
-  Rune.debug_with_context "mae" (fun () ->
-      let diff = Rune.sub predictions targets in
-      let abs_diff = Rune.abs diff in
-      Rune.mean abs_diff)
+  Rune.mean (Rune.abs (Rune.sub predictions targets))
