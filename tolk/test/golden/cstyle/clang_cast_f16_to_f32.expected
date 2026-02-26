@@ -1,0 +1,4 @@
+void test(__fp16* restrict data0, float* restrict data1) {
+  __fp16 val0 = (*(data0+0));
+  *(data1+0) = ((float)(val0));
+}

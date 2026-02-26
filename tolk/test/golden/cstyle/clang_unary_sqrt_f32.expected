@@ -1,0 +1,4 @@
+void test(float* restrict data0, float* restrict data1) {
+  float val0 = (*(data0+0));
+  *(data1+0) = __builtin_sqrtf(val0);
+}

@@ -1,0 +1,9 @@
+__kernel void test(__global float* data0) {
+  for (int Lidx0 = 0; Lidx0 < 10; Lidx0++) {
+    for (int Lidx1 = 0; Lidx1 < 5; Lidx1++) {
+      int alu0 = (Lidx0+Lidx1);
+      float val0 = (*(data0+alu0));
+      *(data0+alu0) = val0;
+    }
+  }
+}

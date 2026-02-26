@@ -1,0 +1,9 @@
+#include <metal_stdlib>
+using namespace metal;
+kernel void test(device float* data0, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  threadgroup __attribute__((aligned(16))) float temp0[256];
+  *(temp0+0) = 0.0f;
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  float val0 = (*(temp0+0));
+  *(data0+0) = val0;
+}

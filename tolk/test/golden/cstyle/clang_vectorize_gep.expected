@@ -1,0 +1,8 @@
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+void test(float* restrict data0, float* restrict data1) {
+  float val0 = (*(data0+0));
+  float val1 = (*(data0+1));
+  float val2 = (*(data0+2));
+  float val3 = (*(data0+3));
+  *(data1+0) = (float4){val0,val1,val2,val3}[2];
+}

@@ -1,0 +1,7 @@
+__kernel void test(__global float* data0) {
+  __attribute__ ((aligned (16))) __local float temp0[256];
+  *(temp0+0) = 0.0f;
+  barrier(CLK_LOCAL_MEM_FENCE);
+  float val0 = (*(temp0+0));
+  *(data0+0) = val0;
+}

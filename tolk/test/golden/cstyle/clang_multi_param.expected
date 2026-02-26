@@ -1,0 +1,5 @@
+void test(float* restrict data0, float* restrict data1, float* restrict data2, float* restrict data3) {
+  float val0 = (*(data0+0));
+  float val1 = (*(data1+0));
+  *(data3+0) = (val0+val1);
+}
