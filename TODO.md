@@ -2,8 +2,8 @@
 
 ## alpha3
 
-- quill integration with merlin for completion (and others?)
-- unhappy with how bloated the kaun api is. make a design pass.
+- need to review the nn functions from nx, what should move to kaun? embedding, dropout, attention, etc.
+- also review the activation functions. Maybe we don't need all of them in nx?
 - bring in talon changes
 - consider rename talon to talf
 
