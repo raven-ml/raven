@@ -1,4 +1,0 @@
-(library
- (public_name kaun.huggingface)
- (name kaun_huggingface)
- (libraries nx.io rune kaun unix jsont jsont.bytesrw))
