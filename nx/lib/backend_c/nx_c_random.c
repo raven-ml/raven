@@ -48,14 +48,13 @@ static tfry_ctr_t threefry2x32(tfry_key_t key, tfry_ctr_t ctr) {
   u32_t X0 = ctr.v[0] + ks[0];
   u32_t X1 = ctr.v[1] + ks[1];
 
-  const int rots[4] = {13, 17, 13, 8};
-  const int shifts[4] = {16, 13, 16, 13};
+  // Random123 Threefry2x32: 8 rotation constants, one rotation per round.
+  const int rots[8] = {13, 15, 26, 6, 17, 29, 16, 24};
 
   for (int r = 0; r < 20; r++) {
     X0 += X1;
-    X1 = ROTL_32(X1, rots[r % 4]);
+    X1 = ROTL_32(X1, rots[r % 8]);
     X1 ^= X0;
-    X0 = ROTL_32(X0, shifts[r % 4]);
     if ((r + 1) % 4 == 0) {
       int s = (r + 1) / 4;
       X0 += ks[s % 3];
