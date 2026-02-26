@@ -3,144 +3,122 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Input/output helpers for [Nx] tensors.
+(** Tensor I/O.
 
-    The top-level functions fail on errors by raising [Failure].
+    Load and save {!Nx} tensors in common formats: images (PNG, JPEG, BMP, TGA),
+    NumPy (.npy, .npz), SafeTensors, and delimited text.
 
-    The {!module-Safe} submodule exposes the same operations with explicit
-    [('a, error) result] values. *)
+    All functions raise [Failure] on errors. *)
 
-module Cache_dir = Cache_dir
-module Http = Http
+(** {1:packed Packed tensors} *)
 
-(** {1:types Common types} *)
+type packed =
+  | P : ('a, 'b) Nx.t -> packed
+      (** An existentially packed tensor. Use {!to_typed} to recover a typed
+          tensor. *)
 
-type packed_nx =
-  | P : ('a, 'b) Nx.t -> packed_nx  (** Existentially packed tensor value. *)
+type archive = (string, packed) Hashtbl.t
+(** Named tensors. Returned by {!load_npz} and {!load_safetensors}. *)
 
-type archive = (string, packed_nx) Hashtbl.t
-(** Mapping from entry names to packed tensors. *)
+type packed_dtype =
+  | Dtype : ('a, 'b) Nx.dtype -> packed_dtype
+      (** An existentially packed dtype. *)
 
-(** {1:conversions Packed tensor conversions} *)
+val to_typed : ('a, 'b) Nx.dtype -> packed -> ('a, 'b) Nx.t
+(** [to_typed dtype p] is the tensor in [p] with [dtype].
 
-val as_float16 : packed_nx -> Nx.float16_t
-(** [as_float16 p] converts [p] to [Nx.float16_t].
+    Raises [Failure] if the packed tensor has a different dtype. *)
 
-    Raises [Failure] if [p] has a different dtype. *)
+val packed_dtype : packed -> packed_dtype
+(** [packed_dtype p] is the dtype of [p]. *)
 
-val as_bfloat16 : packed_nx -> Nx.bfloat16_t
-(** [as_bfloat16 p] converts [p] to [Nx.bfloat16_t].
-
-    Raises [Failure] if [p] has a different dtype. *)
-
-val as_float32 : packed_nx -> Nx.float32_t
-(** [as_float32 p] converts [p] to [Nx.float32_t].
-
-    Raises [Failure] if [p] has a different dtype. *)
-
-val as_float64 : packed_nx -> Nx.float64_t
-(** [as_float64 p] converts [p] to [Nx.float64_t].
-
-    Raises [Failure] if [p] has a different dtype. *)
-
-val as_int8 : packed_nx -> Nx.int8_t
-(** [as_int8 p] converts [p] to [Nx.int8_t].
-
-    Raises [Failure] if [p] has a different dtype. *)
-
-val as_int16 : packed_nx -> Nx.int16_t
-(** [as_int16 p] converts [p] to [Nx.int16_t].
-
-    Raises [Failure] if [p] has a different dtype. *)
-
-val as_int32 : packed_nx -> Nx.int32_t
-(** [as_int32 p] converts [p] to [Nx.int32_t].
-
-    Raises [Failure] if [p] has a different dtype. *)
-
-val as_int64 : packed_nx -> Nx.int64_t
-(** [as_int64 p] converts [p] to [Nx.int64_t].
-
-    Raises [Failure] if [p] has a different dtype. *)
-
-val as_uint8 : packed_nx -> Nx.uint8_t
-(** [as_uint8 p] converts [p] to [Nx.uint8_t].
-
-    Raises [Failure] if [p] has a different dtype. *)
-
-val as_uint16 : packed_nx -> Nx.uint16_t
-(** [as_uint16 p] converts [p] to [Nx.uint16_t].
-
-    Raises [Failure] if [p] has a different dtype. *)
-
-val as_bool : packed_nx -> Nx.bool_t
-(** [as_bool p] converts [p] to [Nx.bool_t].
-
-    Raises [Failure] if [p] has a different dtype. *)
-
-val as_complex32 : packed_nx -> Nx.complex64_t
-(** [as_complex32 p] converts [p] to [Nx.complex64_t].
-
-    Raises [Failure] if [p] has a different dtype. *)
-
-val as_complex64 : packed_nx -> Nx.complex128_t
-(** [as_complex64 p] converts [p] to [Nx.complex128_t].
-
-    Raises [Failure] if [p] has a different dtype. *)
+val packed_shape : packed -> int array
+(** [packed_shape p] is the shape of [p]. *)
 
 (** {1:image Images} *)
 
 val load_image : ?grayscale:bool -> string -> (int, Nx.uint8_elt) Nx.t
-(** [load_image ?grayscale path] loads an image file as a uint8 tensor.
+(** [load_image ?grayscale path] loads an image as a uint8 tensor.
 
-    If [grayscale = true], the result shape is [|h; w|]. Otherwise, the result
-    shape is [|h; w; c|] (typically [c = 3]).
+    [grayscale] defaults to [false]. Shape is [[h; w]] when [grayscale] is
+    [true], [[h; w; c]] otherwise.
 
-    Raises [Failure] on decoding or I/O errors. *)
+    Raises [Failure] on I/O or decoding errors. *)
 
 val save_image : ?overwrite:bool -> string -> (int, Nx.uint8_elt) Nx.t -> unit
-(** [save_image ?overwrite path img] writes [img] to [path].
+(** [save_image ?overwrite path t] writes [t] to [path].
 
-    Accepted shapes are [|h; w|], [|h; w; 1|], [|h; w; 3|], and [|h; w; 4|].
+    Format is inferred from extension (.png, .jpg, .bmp, .tga). Accepted shapes
+    are [[h; w]], [[h; w; 1]], [[h; w; 3]], and [[h; w; 4]]. [overwrite]
+    defaults to [true].
 
-    [overwrite] defaults to [true].
-
-    Raises [Failure] on unsupported shape, unsupported extension, or I/O errors.
-*)
+    Raises [Failure] on unsupported shape, extension, or I/O errors. *)
 
 (** {1:numpy NumPy formats} *)
 
-val load_npy : string -> packed_nx
-(** [load_npy path] loads a single tensor from a [.npy] file.
+val load_npy : string -> packed
+(** [load_npy path] loads a tensor from a [.npy] file.
 
-    Raises [Failure] on parse or I/O errors. *)
+    Raises [Failure] on I/O or format errors. *)
 
 val save_npy : ?overwrite:bool -> string -> ('a, 'b) Nx.t -> unit
 (** [save_npy ?overwrite path t] writes [t] to a [.npy] file.
 
     [overwrite] defaults to [true].
 
-    Raises [Failure] on serialization or I/O errors. *)
+    Raises [Failure] on I/O errors. *)
 
 val load_npz : string -> archive
 (** [load_npz path] loads all tensors from an [.npz] archive.
 
-    Raises [Failure] on parse or I/O errors. *)
+    Raises [Failure] on I/O or format errors. *)
 
-val load_npz_member : name:string -> string -> packed_nx
-(** [load_npz_member ~name path] loads a single member [name] from an [.npz]
-    archive.
+val load_npz_entry : name:string -> string -> packed
+(** [load_npz_entry ~name path] loads a single entry from an [.npz] archive.
 
     Raises [Failure] if [name] is missing or the archive is invalid. *)
 
-val save_npz : ?overwrite:bool -> string -> (string * packed_nx) list -> unit
-(** [save_npz ?overwrite path items] writes named tensors to an [.npz] archive.
+val save_npz : ?overwrite:bool -> string -> (string * packed) list -> unit
+(** [save_npz ?overwrite path entries] writes named tensors to an [.npz]
+    archive.
 
     [overwrite] defaults to [true].
 
-    Raises [Failure] on serialization or I/O errors. *)
+    Raises [Failure] on I/O errors. *)
+
+(** {1:safetensors SafeTensors} *)
+
+val load_safetensors : string -> archive
+(** [load_safetensors path] loads all tensors from a SafeTensors file.
+
+    Raises [Failure] on I/O or format errors. *)
+
+val save_safetensors :
+  ?overwrite:bool -> string -> (string * packed) list -> unit
+(** [save_safetensors ?overwrite path entries] writes named tensors to a
+    SafeTensors file.
+
+    [overwrite] defaults to [true].
+
+    Raises [Failure] on I/O errors. *)
 
 (** {1:text Text format} *)
+
+val load_txt :
+  ?sep:string ->
+  ?comments:string ->
+  ?skiprows:int ->
+  ?max_rows:int ->
+  string ->
+  ('a, 'b) Nx.dtype ->
+  ('a, 'b) Nx.t
+(** [load_txt ?sep ?comments ?skiprows ?max_rows path dtype] parses delimited
+    text into a tensor.
+
+    [sep] defaults to [" "]. [comments] defaults to ["#"]. [skiprows] defaults
+    to [0]. The result is 1D or 2D depending on parsed data.
+
+    Raises [Failure] on I/O or parse errors. *)
 
 val save_txt :
   ?sep:string ->
@@ -149,165 +127,13 @@ val save_txt :
   ?header:string ->
   ?footer:string ->
   ?comments:string ->
-  out:string ->
+  string ->
   ('a, 'b) Nx.t ->
   unit
-(** [save_txt ?sep ?append ?newline ?header ?footer ?comments ~out t] serializes
-    a scalar, vector, or matrix tensor to text.
+(** [save_txt ?sep ?append ?newline ?header ?footer ?comments path t] writes a
+    scalar, vector, or matrix tensor to delimited text.
+
+    [sep] defaults to [" "]. [append] defaults to [false]. [newline] defaults to
+    ["\n"]. [comments] defaults to ["# "].
 
     Raises [Failure] on unsupported dtype/shape or I/O errors. *)
-
-val load_txt :
-  ?sep:string ->
-  ?comments:string ->
-  ?skiprows:int ->
-  ?max_rows:int ->
-  ('a, 'b) Nx.dtype ->
-  string ->
-  ('a, 'b) Nx.t
-(** [load_txt ?sep ?comments ?skiprows ?max_rows dtype path] parses text into a
-    tensor of [dtype].
-
-    The result is 1D or 2D depending on parsed data.
-
-    Raises [Failure] on parse or I/O errors. *)
-
-(** {1:safetensors SafeTensors format} *)
-
-val load_safetensor : string -> archive
-(** [load_safetensor path] loads all tensors from a SafeTensors file.
-
-    Raises [Failure] on parse or I/O errors. *)
-
-val save_safetensor :
-  ?overwrite:bool -> string -> (string * packed_nx) list -> unit
-(** [save_safetensor ?overwrite path items] writes named tensors to a
-    SafeTensors file.
-
-    [overwrite] defaults to [true].
-
-    Raises [Failure] on serialization or I/O errors. *)
-
-(** {1:safe Result-based API} *)
-
-module Safe : sig
-  type error =
-    | Io_error of string
-    | Format_error of string
-    | Unsupported_dtype
-    | Unsupported_shape
-    | Missing_entry of string
-    | Other of string  (** The type for I/O operation errors. *)
-
-  (** {2:conversions Packed tensor conversions} *)
-
-  val as_float16 : packed_nx -> (Nx.float16_t, error) result
-  (** Result-based variant of {!val-as_float16}. *)
-
-  val as_bfloat16 : packed_nx -> (Nx.bfloat16_t, error) result
-  (** Result-based variant of {!val-as_bfloat16}. *)
-
-  val as_float32 : packed_nx -> (Nx.float32_t, error) result
-  (** Result-based variant of {!val-as_float32}. *)
-
-  val as_float64 : packed_nx -> (Nx.float64_t, error) result
-  (** Result-based variant of {!val-as_float64}. *)
-
-  val as_int8 : packed_nx -> (Nx.int8_t, error) result
-  (** Result-based variant of {!val-as_int8}. *)
-
-  val as_int16 : packed_nx -> (Nx.int16_t, error) result
-  (** Result-based variant of {!val-as_int16}. *)
-
-  val as_int32 : packed_nx -> (Nx.int32_t, error) result
-  (** Result-based variant of {!val-as_int32}. *)
-
-  val as_int64 : packed_nx -> (Nx.int64_t, error) result
-  (** Result-based variant of {!val-as_int64}. *)
-
-  val as_uint8 : packed_nx -> (Nx.uint8_t, error) result
-  (** Result-based variant of {!val-as_uint8}. *)
-
-  val as_uint16 : packed_nx -> (Nx.uint16_t, error) result
-  (** Result-based variant of {!val-as_uint16}. *)
-
-  val as_bool : packed_nx -> (Nx.bool_t, error) result
-  (** Result-based variant of {!val-as_bool}. *)
-
-  val as_complex32 : packed_nx -> (Nx.complex64_t, error) result
-  (** Result-based variant of {!val-as_complex32}. *)
-
-  val as_complex64 : packed_nx -> (Nx.complex128_t, error) result
-  (** Result-based variant of {!val-as_complex64}. *)
-
-  (** {2:image Images} *)
-
-  val load_image :
-    ?grayscale:bool -> string -> ((int, Nx.uint8_elt) Nx.t, error) result
-  (** Result-based variant of {!val-load_image}. *)
-
-  val save_image :
-    ?overwrite:bool ->
-    string ->
-    (int, Nx.uint8_elt) Nx.t ->
-    (unit, error) result
-  (** Result-based variant of {!val-save_image}. *)
-
-  (** {2:numpy NumPy formats} *)
-
-  val load_npy : string -> (packed_nx, error) result
-  (** Result-based variant of {!val-load_npy}. *)
-
-  val save_npy :
-    ?overwrite:bool -> string -> ('a, 'b) Nx.t -> (unit, error) result
-  (** Result-based variant of {!val-save_npy}. *)
-
-  val load_npz : string -> (archive, error) result
-  (** Result-based variant of {!val-load_npz}. *)
-
-  val load_npz_member : name:string -> string -> (packed_nx, error) result
-  (** Result-based variant of {!val-load_npz_member}. *)
-
-  val save_npz :
-    ?overwrite:bool ->
-    string ->
-    (string * packed_nx) list ->
-    (unit, error) result
-  (** Result-based variant of {!val-save_npz}. *)
-
-  (** {2:text Text format} *)
-
-  val save_txt :
-    ?sep:string ->
-    ?append:bool ->
-    ?newline:string ->
-    ?header:string ->
-    ?footer:string ->
-    ?comments:string ->
-    out:string ->
-    ('a, 'b) Nx.t ->
-    (unit, error) result
-  (** Result-based variant of {!val-save_txt}. *)
-
-  val load_txt :
-    ?sep:string ->
-    ?comments:string ->
-    ?skiprows:int ->
-    ?max_rows:int ->
-    ('a, 'b) Nx.dtype ->
-    string ->
-    (('a, 'b) Nx.t, error) result
-  (** Result-based variant of {!val-load_txt}. *)
-
-  (** {2:safetensors SafeTensors format} *)
-
-  val load_safetensor : string -> (archive, error) result
-  (** Result-based variant of {!val-load_safetensor}. *)
-
-  val save_safetensor :
-    ?overwrite:bool ->
-    string ->
-    (string * packed_nx) list ->
-    (unit, error) result
-  (** Result-based variant of {!val-save_safetensor}. *)
-end

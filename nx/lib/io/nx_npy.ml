@@ -3,140 +3,73 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Nx_buffer
 open Error
 open Packed_nx
 
-let load_npy path =
-  try
-    match Npy.read_copy path with
-    | P genarray ->
-        let genarray = Genarray.change_layout genarray c_layout in
-        Ok (P (Nx.of_buffer genarray))
-  with
+let strf = Printf.sprintf
+
+(* Convert genarray from Npy (fortran layout) to Nx (c layout) *)
+let npy_to_nx (Npy.P ga) =
+  let ga = Nx_buffer.genarray_change_layout ga Bigarray.C_layout in
+  let shape = Nx_buffer.genarray_dims ga in
+  P (Nx.of_buffer (Nx_buffer.of_genarray ga) ~shape)
+
+(* Uniform exception-to-result conversion *)
+let wrap_exn f =
+  try f () with
+  | Npy.Read_error msg -> Error (Format_error msg)
+  | Zip.Error (name, func, msg) ->
+      Error (Io_error (strf "zip: %s in %s: %s" name func msg))
   | Unix.Unix_error (e, _, _) -> Error (Io_error (Unix.error_message e))
   | Sys_error msg -> Error (Io_error msg)
   | Failure msg -> Error (Format_error msg)
   | ex -> Error (Other (Printexc.to_string ex))
+
+let check_overwrite overwrite path =
+  if (not overwrite) && Sys.file_exists path then
+    failwith (strf "file already exists: %s" path)
+
+(* Npy *)
+
+let load_npy path = wrap_exn @@ fun () -> Ok (npy_to_nx (Npy.read_copy path))
 
 let save_npy ?(overwrite = true) path arr =
-  try
-    if (not overwrite) && Sys.file_exists path then
-      Error (Io_error (Printf.sprintf "File '%s' already exists" path))
-    else
-      let genarray = Nx.to_buffer arr in
-      Npy.write genarray path;
-      Ok ()
-  with
-  | Unix.Unix_error (e, _, _) -> Error (Io_error (Unix.error_message e))
-  | Sys_error msg -> Error (Io_error msg)
-  | Failure msg -> Error (Format_error msg)
-  | ex -> Error (Other (Printexc.to_string ex))
+  wrap_exn @@ fun () ->
+  check_overwrite overwrite path;
+  let buf = Nx.to_buffer arr in
+  let shape = Nx.shape arr in
+  Npy.write (Nx_buffer.to_genarray buf shape) path;
+  Ok ()
+
+(* Npz *)
 
 let load_npz path =
-  let zip_in = ref None in
-  try
-    let archive = Hashtbl.create 16 in
-    let zi = Npy.Npz.open_in path in
-    zip_in := Some zi;
-    let entries = Npy.Npz.entries zi in
-    List.iter
-      (fun name ->
-        match Npy.Npz.read zi name with
-        | Npy.P genarray ->
-            let genarray = Genarray.change_layout genarray c_layout in
-            Hashtbl.add archive name (P (Nx.of_buffer genarray)))
-      entries;
-    Npy.Npz.close_in zi;
-    Ok archive
-  with
-  | Zip.Error (name, func, msg) ->
-      (match !zip_in with Some zi -> Npy.Npz.close_in zi | None -> ());
-      Error (Io_error (Printf.sprintf "Zip error: %s in %s: %s" name func msg))
-  | Unix.Unix_error (e, _, _) ->
-      (match !zip_in with Some zi -> Npy.Npz.close_in zi | None -> ());
-      Error (Io_error (Unix.error_message e))
-  | Sys_error msg ->
-      (match !zip_in with Some zi -> Npy.Npz.close_in zi | None -> ());
-      Error (Io_error msg)
-  | Failure msg ->
-      (match !zip_in with Some zi -> Npy.Npz.close_in zi | None -> ());
-      Error (Format_error msg)
-  | ex ->
-      (match !zip_in with Some zi -> Npy.Npz.close_in zi | None -> ());
-      Error (Other (Printexc.to_string ex))
+  wrap_exn @@ fun () ->
+  let zi = Npy.Npz.open_in path in
+  Fun.protect ~finally:(fun () -> Npy.Npz.close_in zi) @@ fun () ->
+  let entries = Npy.Npz.entries zi in
+  let archive = Hashtbl.create (List.length entries) in
+  List.iter
+    (fun name -> Hashtbl.add archive name (npy_to_nx (Npy.Npz.read zi name)))
+    entries;
+  Ok archive
 
-let load_npz_member ~name path =
-  let zip_in = ref None in
-  try
-    let zi = Npy.Npz.open_in path in
-    zip_in := Some zi;
-    let packed_npy =
-      try Npy.Npz.read zi name
-      with Not_found ->
-        Npy.Npz.close_in zi;
-        raise (Failure (Printf.sprintf "Member '%s' not found" name))
-    in
-    let result =
-      match packed_npy with
-      | Npy.P genarray ->
-          let genarray = Genarray.change_layout genarray c_layout in
-          P (Nx.of_buffer genarray)
-    in
-    Npy.Npz.close_in zi;
-    Ok result
-  with
-  | Zip.Error (zip_name, func, msg) ->
-      (match !zip_in with Some zi -> Npy.Npz.close_in zi | None -> ());
-      Error
-        (Io_error (Printf.sprintf "Zip error: %s in %s: %s" zip_name func msg))
-  | Unix.Unix_error (e, _, _) ->
-      (match !zip_in with Some zi -> Npy.Npz.close_in zi | None -> ());
-      Error (Io_error (Unix.error_message e))
-  | Sys_error msg ->
-      (match !zip_in with Some zi -> Npy.Npz.close_in zi | None -> ());
-      Error (Io_error msg)
-  | Failure msg when String.contains msg '\'' ->
-      (match !zip_in with Some zi -> Npy.Npz.close_in zi | None -> ());
-      Error (Missing_entry name)
-  | Failure msg ->
-      (match !zip_in with Some zi -> Npy.Npz.close_in zi | None -> ());
-      Error (Format_error msg)
-  | ex ->
-      (match !zip_in with Some zi -> Npy.Npz.close_in zi | None -> ());
-      Error (Other (Printexc.to_string ex))
+let load_npz_entry ~name path =
+  wrap_exn @@ fun () ->
+  let zi = Npy.Npz.open_in path in
+  Fun.protect ~finally:(fun () -> Npy.Npz.close_in zi) @@ fun () ->
+  match Npy.Npz.read zi name with
+  | packed -> Ok (npy_to_nx packed)
+  | exception Not_found -> Error (Missing_entry name)
 
 let save_npz ?(overwrite = true) path items =
-  try
-    if (not overwrite) && Sys.file_exists path then
-      Error (Io_error (Printf.sprintf "File '%s' already exists" path))
-    else
-      let zip_out = ref None in
-      try
-        let zo = Npy.Npz.open_out path in
-        zip_out := Some zo;
-        List.iter
-          (fun (name, P nx) ->
-            let genarray = Nx.to_buffer nx in
-            Npy.Npz.write zo name genarray)
-          items;
-        Npy.Npz.close_out zo;
-        Ok ()
-      with
-      | Zip.Error (name, func, msg) ->
-          (match !zip_out with Some zo -> Npy.Npz.close_out zo | None -> ());
-          Error
-            (Io_error (Printf.sprintf "Zip error: %s in %s: %s" name func msg))
-      | Unix.Unix_error (e, _, _) ->
-          (match !zip_out with Some zo -> Npy.Npz.close_out zo | None -> ());
-          Error (Io_error (Unix.error_message e))
-      | Sys_error msg ->
-          (match !zip_out with Some zo -> Npy.Npz.close_out zo | None -> ());
-          Error (Io_error msg)
-      | Failure msg ->
-          (match !zip_out with Some zo -> Npy.Npz.close_out zo | None -> ());
-          Error (Format_error msg)
-      | ex ->
-          (match !zip_out with Some zo -> Npy.Npz.close_out zo | None -> ());
-          Error (Other (Printexc.to_string ex))
-  with ex -> Error (Other (Printexc.to_string ex))
+  wrap_exn @@ fun () ->
+  check_overwrite overwrite path;
+  let zo = Npy.Npz.open_out path in
+  Fun.protect ~finally:(fun () -> Npy.Npz.close_out zo) @@ fun () ->
+  List.iter
+    (fun (name, P nx) ->
+      let buf = Nx.to_buffer nx in
+      Npy.Npz.write zo name (Nx_buffer.to_genarray buf (Nx.shape nx)))
+    items;
+  Ok ()

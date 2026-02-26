@@ -19,9 +19,4 @@ let to_string = function
   | Missing_entry name -> Printf.sprintf "Missing entry: %s" name
   | Other msg -> msg
 
-let fail_msg fmt =
-  Printf.ksprintf
-    (fun s ->
-      let msg = Format.asprintf "Error: %s\n%!" s in
-      failwith msg)
-    fmt
+let fail_msg fmt = Printf.ksprintf failwith fmt
