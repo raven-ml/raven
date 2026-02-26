@@ -1248,6 +1248,183 @@ let test_scatter_int32_add_axis1 () =
   check_int32 "scatter_int32_add_axis1[6]" 109l d.(6);
   check_int32 "scatter_int32_add_axis1[7]" 100l d.(7)
 
+(* Gather: float64 1D contiguous — exercises the Float64x2 SIMD path *)
+let test_gather_float64_axis0_contiguous () =
+  let ctx = Nx_backend.create_context () in
+  let data =
+    Nx_ox.create ctx Dtype.Float64 [| 6 |]
+      [| 10.0; 20.0; 30.0; 40.0; 50.0; 60.0 |]
+  in
+  let indices =
+    Nx_ox.create ctx Dtype.Int32 [| 6 |] [| 5l; 3l; 1l; 0l; 4l; 2l |]
+  in
+  let out = Nx_ox.empty ctx Dtype.Float64 [| 6 |] in
+  Nx_backend.gather ~out data indices ~axis:0;
+  let d = Nx_ox.to_array out in
+  check_float "gather_f64_contiguous[0]" ~eps:1e-12 60.0 d.(0);
+  check_float "gather_f64_contiguous[1]" ~eps:1e-12 40.0 d.(1);
+  check_float "gather_f64_contiguous[2]" ~eps:1e-12 20.0 d.(2);
+  check_float "gather_f64_contiguous[3]" ~eps:1e-12 10.0 d.(3);
+  check_float "gather_f64_contiguous[4]" ~eps:1e-12 50.0 d.(4);
+  check_float "gather_f64_contiguous[5]" ~eps:1e-12 30.0 d.(5)
+
+(* Gather: axis=0 with 2D tensor — general multi-dim path *)
+let test_gather_float64_axis0_2d () =
+  let ctx = Nx_backend.create_context () in
+  (* 3x2 data, gather rows 2, 0 *)
+  let data =
+    Nx_ox.create ctx Dtype.Float64 [| 3; 2 |]
+      [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |]
+  in
+  let indices =
+    Nx_ox.create ctx Dtype.Int32 [| 2; 2 |] [| 2l; 0l; 1l; 2l |]
+  in
+  let out = Nx_ox.empty ctx Dtype.Float64 [| 2; 2 |] in
+  Nx_backend.gather ~out data indices ~axis:0;
+  let d = Nx_ox.to_array out in
+  check_float "gather_f64_axis0_2d[0]" ~eps:1e-12 5.0 d.(0);
+  check_float "gather_f64_axis0_2d[1]" ~eps:1e-12 2.0 d.(1);
+  check_float "gather_f64_axis0_2d[2]" ~eps:1e-12 3.0 d.(2);
+  check_float "gather_f64_axis0_2d[3]" ~eps:1e-12 6.0 d.(3)
+
+(* Gather: int32 1D contiguous — exercises the Int32x4 SIMD path *)
+let test_gather_int32_axis0_contiguous () =
+  let ctx = Nx_backend.create_context () in
+  let data =
+    Nx_ox.create ctx Dtype.Int32 [| 8 |]
+      [| 10l; 20l; 30l; 40l; 50l; 60l; 70l; 80l |]
+  in
+  let indices =
+    Nx_ox.create ctx Dtype.Int32 [| 8 |]
+      [| 7l; 5l; 3l; 1l; 6l; 4l; 2l; 0l |]
+  in
+  let out = Nx_ox.empty ctx Dtype.Int32 [| 8 |] in
+  Nx_backend.gather ~out data indices ~axis:0;
+  let d = Nx_ox.to_array out in
+  check_int32 "gather_i32_contiguous[0]" 80l d.(0);
+  check_int32 "gather_i32_contiguous[1]" 60l d.(1);
+  check_int32 "gather_i32_contiguous[2]" 40l d.(2);
+  check_int32 "gather_i32_contiguous[3]" 20l d.(3);
+  check_int32 "gather_i32_contiguous[4]" 70l d.(4);
+  check_int32 "gather_i32_contiguous[5]" 50l d.(5);
+  check_int32 "gather_i32_contiguous[6]" 30l d.(6);
+  check_int32 "gather_i32_contiguous[7]" 10l d.(7)
+
+(* Gather: int64 1D contiguous — exercises the Int64x2 SIMD path *)
+let test_gather_int64_axis0_contiguous () =
+  let ctx = Nx_backend.create_context () in
+  let data =
+    Nx_ox.create ctx Dtype.Int64 [| 6 |]
+      [| 100L; 200L; 300L; 400L; 500L; 600L |]
+  in
+  let indices =
+    Nx_ox.create ctx Dtype.Int32 [| 6 |] [| 4l; 2l; 0l; 5l; 3l; 1l |]
+  in
+  let out = Nx_ox.empty ctx Dtype.Int64 [| 6 |] in
+  Nx_backend.gather ~out data indices ~axis:0;
+  let d = Nx_ox.to_array out in
+  check_int64 "gather_i64_contiguous[0]" 500L d.(0);
+  check_int64 "gather_i64_contiguous[1]" 300L d.(1);
+  check_int64 "gather_i64_contiguous[2]" 100L d.(2);
+  check_int64 "gather_i64_contiguous[3]" 600L d.(3);
+  check_int64 "gather_i64_contiguous[4]" 400L d.(4);
+  check_int64 "gather_i64_contiguous[5]" 200L d.(5)
+
+(* Gather: single element *)
+let test_gather_single_element () =
+  let ctx = Nx_backend.create_context () in
+  let data = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 1.0; 2.0; 3.0 |] in
+  let indices = Nx_ox.create ctx Dtype.Int32 [| 1 |] [| 2l |] in
+  let out = Nx_ox.empty ctx Dtype.Float64 [| 1 |] in
+  Nx_backend.gather ~out data indices ~axis:0;
+  let d = Nx_ox.to_array out in
+  check_float "gather_single[0]" ~eps:1e-12 3.0 d.(0)
+
+(* Gather: negative axis *)
+let test_gather_negative_axis () =
+  let ctx = Nx_backend.create_context () in
+  let data =
+    Nx_ox.create ctx Dtype.Int32 [| 2; 4 |]
+      [| 10l; 11l; 12l; 13l; 20l; 21l; 22l; 23l |]
+  in
+  let indices =
+    Nx_ox.create ctx Dtype.Int32 [| 2; 2 |] [| 3l; 0l; 1l; 2l |]
+  in
+  let out = Nx_ox.empty ctx Dtype.Int32 [| 2; 2 |] in
+  Nx_backend.gather ~out data indices ~axis:(-1);
+  let d = Nx_ox.to_array out in
+  check_int32 "gather_neg_axis[0]" 13l d.(0);
+  check_int32 "gather_neg_axis[1]" 10l d.(1);
+  check_int32 "gather_neg_axis[2]" 21l d.(2);
+  check_int32 "gather_neg_axis[3]" 22l d.(3)
+
+(* Scatter: float64 set *)
+let test_scatter_float64_set () =
+  let ctx = Nx_backend.create_context () in
+  let template =
+    Nx_ox.create ctx Dtype.Float64 [| 5 |] [| 0.0; 0.0; 0.0; 0.0; 0.0 |]
+  in
+  let indices = Nx_ox.create ctx Dtype.Int32 [| 3 |] [| 4l; 1l; 0l |] in
+  let updates =
+    Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 9.0; 8.0; 7.0 |]
+  in
+  let y = Nx_backend.scatter template ~indices ~updates ~axis:0 in
+  let d = Nx_ox.to_array y in
+  check_float "scatter_f64_set[0]" ~eps:1e-12 7.0 d.(0);
+  check_float "scatter_f64_set[1]" ~eps:1e-12 8.0 d.(1);
+  check_float "scatter_f64_set[2]" ~eps:1e-12 0.0 d.(2);
+  check_float "scatter_f64_set[3]" ~eps:1e-12 0.0 d.(3);
+  check_float "scatter_f64_set[4]" ~eps:1e-12 9.0 d.(4)
+
+(* Scatter: duplicate indices with Add mode — accumulation *)
+let test_scatter_float64_add_duplicates () =
+  let ctx = Nx_backend.create_context () in
+  let template =
+    Nx_ox.create ctx Dtype.Float64 [| 4 |] [| 0.0; 0.0; 0.0; 0.0 |]
+  in
+  let indices =
+    Nx_ox.create ctx Dtype.Int32 [| 5 |] [| 0l; 1l; 0l; 2l; 0l |]
+  in
+  let updates =
+    Nx_ox.create ctx Dtype.Float64 [| 5 |] [| 1.0; 2.0; 3.0; 4.0; 5.0 |]
+  in
+  let y = Nx_backend.scatter ~mode:`Add template ~indices ~updates ~axis:0 in
+  let d = Nx_ox.to_array y in
+  check_float "scatter_f64_add_dup[0]" ~eps:1e-12 9.0 d.(0);
+  check_float "scatter_f64_add_dup[1]" ~eps:1e-12 2.0 d.(1);
+  check_float "scatter_f64_add_dup[2]" ~eps:1e-12 4.0 d.(2);
+  check_float "scatter_f64_add_dup[3]" ~eps:1e-12 0.0 d.(3)
+
+(* Scatter: bool dtype *)
+let test_scatter_bool_set () =
+  let ctx = Nx_backend.create_context () in
+  let template =
+    Nx_ox.create ctx Dtype.Bool [| 4 |] [| false; false; false; false |]
+  in
+  let indices = Nx_ox.create ctx Dtype.Int32 [| 2 |] [| 1l; 3l |] in
+  let updates = Nx_ox.create ctx Dtype.Bool [| 2 |] [| true; true |] in
+  let y = Nx_backend.scatter template ~indices ~updates ~axis:0 in
+  let d = Nx_ox.to_array y in
+  check_bool "scatter_bool_set[0]" false d.(0);
+  check_bool "scatter_bool_set[1]" true d.(1);
+  check_bool "scatter_bool_set[2]" false d.(2);
+  check_bool "scatter_bool_set[3]" true d.(3)
+
+(* Scatter: preserves template values for untouched indices *)
+let test_scatter_preserves_template () =
+  let ctx = Nx_backend.create_context () in
+  let template =
+    Nx_ox.create ctx Dtype.Float64 [| 4 |] [| 10.0; 20.0; 30.0; 40.0 |]
+  in
+  let indices = Nx_ox.create ctx Dtype.Int32 [| 1 |] [| 2l |] in
+  let updates = Nx_ox.create ctx Dtype.Float64 [| 1 |] [| 99.0 |] in
+  let y = Nx_backend.scatter template ~indices ~updates ~axis:0 in
+  let d = Nx_ox.to_array y in
+  check_float "scatter_preserve[0]" ~eps:1e-12 10.0 d.(0);
+  check_float "scatter_preserve[1]" ~eps:1e-12 20.0 d.(1);
+  check_float "scatter_preserve[2]" ~eps:1e-12 99.0 d.(2);
+  check_float "scatter_preserve[3]" ~eps:1e-12 40.0 d.(3)
+
 let () =
   print_endline "Running Nx_backend backend tests...";
   test_buffer_float64 ();
@@ -1345,7 +1522,17 @@ let () =
   test_cat_int32_axis1 ();
   test_gather_int32_axis1 ();
   test_gather_float32_axis0_contiguous ();
+  test_gather_float64_axis0_contiguous ();
+  test_gather_float64_axis0_2d ();
+  test_gather_int32_axis0_contiguous ();
+  test_gather_int64_axis0_contiguous ();
+  test_gather_single_element ();
+  test_gather_negative_axis ();
   test_scatter_int32_set_axis1 ();
   test_scatter_int32_add_axis1 ();
+  test_scatter_float64_set ();
+  test_scatter_float64_add_duplicates ();
+  test_scatter_bool_set ();
+  test_scatter_preserves_template ();
   Printf.printf "\nResults: %d passed, %d failed\n" !passed !failed;
   if !failed > 0 then exit 1
