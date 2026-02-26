@@ -125,7 +125,7 @@ let shuffle t =
   match t.length with
   | None -> invalid_arg "Data.shuffle: requires a pipeline with known length"
   | Some n ->
-      let perm_tensor = Rune.Rng.permutation n in
+      let perm_tensor = Rune.permutation n in
       let perm = Array.map Int32.to_int (Rune.to_array perm_tensor) in
       (* Eagerly materialize the upstream into an array *)
       let elements =

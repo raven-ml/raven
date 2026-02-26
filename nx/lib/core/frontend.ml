@@ -14,8 +14,6 @@ module Make (B : Backend_intf.S) = struct
 
   let ( let@ ) m f = m f
 
-  module Core_rng = Rng
-
   (* ───── Core Types and Context ───── *)
 
   type ('a, 'b) t = ('a, 'b) B.t
@@ -3521,253 +3519,241 @@ module Make (B : Backend_intf.S) = struct
 
   (* ───── Random Number Generation ───── *)
 
-  module Rng = struct
-    include Core_rng
+  let validate_random_float_params fname dtype shape =
+    if not (Dtype.is_float dtype) then
+      Error.invalid ~op:fname
+        ~what:(Printf.sprintf "dtype %s" (Dtype.to_string dtype))
+        ~reason:"not a float type"
+        ~hint:"rand/randn only support Float16, Float32, Float64" ();
+    if Array.exists (fun x -> x < 0) shape then
+      Error.invalid_shape ~op:fname ~shape
+        ~reason:"dimensions must be non-negative" ()
 
-    let tensor_shape = shape
+  let rand ctx dtype shape =
+    let@ _ = span ~op:"rand" () in
+    validate_random_float_params "rand" dtype shape;
+    let key = Rng.next_key () in
 
-    (* Validate parameters for random functions *)
-    let validate_random_params fname dtype shape =
-      if not (Dtype.is_float dtype) then
-        Error.invalid ~op:fname
-          ~what:(Printf.sprintf "dtype %s" (Dtype.to_string dtype))
-          ~reason:"not a float type"
-          ~hint:"uniform/normal only support Float16, Float32, Float64" ();
-      if Array.exists (fun x -> x < 0) shape then
-        Error.invalid_shape ~op:fname ~shape
-          ~reason:"dimensions must be non-negative" ()
+    (* If shape has 0, return zeros *)
+    let numel = array_prod shape in
+    if numel = 0 then zeros ctx dtype shape
+    else
+      let num_values = numel in
 
-    let uniform ctx dtype shape =
-      let@ _ = span ~op:"uniform" () in
-      validate_random_params "uniform" dtype shape;
-      let key = Core_rng.next_key () in
-
-      (* If shape has 0, return zeros *)
-      let numel = array_prod shape in
-      if numel = 0 then zeros ctx dtype shape
-      else
-        let num_values = numel in
-
-        (* Create key and counter tensors for threefry. Each vector needs 2
-           int32 values: shape [num_values, 2]. *)
-        let key_vals =
-          Array.init (num_values * 2) (fun i ->
-              Int32.of_int (Core_rng.fold_in key i))
-        in
-        let key_t = create ctx Dtype.int32 [| num_values; 2 |] key_vals in
-
-        let ctr_vals = Array.init (num_values * 2) (fun i -> Int32.of_int i) in
-        let counter = create ctx Dtype.int32 [| num_values; 2 |] ctr_vals in
-
-        (* Generate random bits using threefry *)
-        let random_bits = empty ctx Dtype.int32 [| num_values; 2 |] in
-        B.threefry ~out:random_bits key_t counter;
-
-        (* Flatten and take only what we need *)
-        let bits_flat = flatten random_bits in
-        let bits_needed =
-          if numel < size bits_flat then shrink [| (0, numel) |] bits_flat
-          else bits_flat
-        in
-
-        (* Convert to float32 - Metal doesn't support float64 on most devices *)
-        let bits_float32 = cast Dtype.float32 bits_needed in
-
-        (* Add 2^31 to shift from signed [-2^31, 2^31-1] to unsigned [0, 2^32-1]
-           range *)
-        let offset = scalar ctx Dtype.float32 2147483648.0 in
-        (* 2^31 *)
-        let shifted = add bits_float32 offset in
-
-        (* Normalize to [0, 1) by dividing by 2^32 *)
-        let normalizer = scalar ctx Dtype.float32 4294967296.0 in
-        (* 2^32 *)
-        let normalized = div shifted normalizer in
-
-        (* Cast to target dtype *)
-        let result = cast dtype normalized in
-
-        (* Reshape to final shape *)
-        reshape shape result
-
-    let normal ctx dtype shape =
-      let@ _ = span ~op:"normal" () in
-      validate_random_params "normal" dtype shape;
-
-      (* If shape has 0, return zeros *)
-      let numel = array_prod shape in
-      if numel = 0 then zeros ctx dtype shape
-      else
-        (* Box-Muller transform: z = cos(2*pi*u1) * sqrt(-2*ln(u2)) *)
-        let u1 = uniform ctx Dtype.float32 shape in
-        let u2 = uniform ctx Dtype.float32 shape in
-
-        (* Box-Muller transform: z0 = cos(2π * u1) * sqrt(-2 * ln(u2)) We use u2
-           for the log to avoid log(0) *)
-
-        (* Compute 2π * u1 *)
-        let two_pi = scalar ctx Dtype.float32 (2.0 *. Float.pi) in
-        let angle = mul u1 two_pi in
-
-        (* Compute cos(2π * u1) *)
-        let cos_part = cos angle in
-
-        (* Compute sqrt(-2 * ln(u2)) *)
-        (* First ensure u2 is not exactly 0 by using 1 - original_uniform *)
-        let one = ones_like u2 in
-        let u2_safe = sub one u2 in
-        (* Now in [0, 1) *)
-
-        (* Add small epsilon to avoid log(0) *)
-        let eps = scalar ctx Dtype.float32 1e-7 in
-        let u2_nonzero = maximum u2_safe eps in
-
-        let log_u2 = log u2_nonzero in
-        let neg_two = scalar ctx Dtype.float32 (-2.0) in
-        let sqrt_arg = mul neg_two log_u2 in
-        let sqrt_part = sqrt sqrt_arg in
-
-        (* Combine: z0 = cos_part * sqrt_part *)
-        let result_f32 = mul cos_part sqrt_part in
-
-        (* Cast to target dtype *)
-        cast dtype result_f32
-
-    let randint ctx dtype ?(high = 10) shape low =
-      if low >= high then
-        Error.invalid ~op:"randint" ~what:"range"
-          ~reason:(Printf.sprintf "low=%d ≥ high=%d" low high)
-          ();
-      if not (Dtype.is_int dtype) then
-        Error.invalid ~op:"randint" ~what:"dtype"
-          ~reason:"only integer dtypes supported" ();
-      let range = high - low in
-      let uniform_vals = uniform ctx Dtype.float32 shape in
-      let scaled =
-        mul uniform_vals (scalar ctx Dtype.float32 (float_of_int range))
+      (* Create key and counter tensors for threefry. Each vector needs 2 int32
+         values: shape [num_values, 2]. *)
+      let key_vals =
+        Array.init (num_values * 2) (fun i -> Int32.of_int (Rng.fold_in key i))
       in
-      let shifted = add scaled (scalar ctx Dtype.float32 (float_of_int low)) in
-      astype dtype shifted
+      let key_t = create ctx Dtype.int32 [| num_values; 2 |] key_vals in
 
-    let bernoulli ctx ~p shape =
-      if p < 0.0 || p > 1.0 then
-        Error.invalid ~op:"bernoulli" ~what:"p" ~reason:"must be in [0, 1]" ();
-      if Array.exists (fun x -> x < 0) shape then
-        Error.invalid_shape ~op:"bernoulli" ~shape
-          ~reason:"dimensions must be non-negative" ();
-      let u = uniform ctx Dtype.float32 shape in
-      let threshold = scalar ctx Dtype.float32 p in
-      cmplt u threshold
+      let ctr_vals = Array.init (num_values * 2) (fun i -> Int32.of_int i) in
+      let counter = create ctx Dtype.int32 [| num_values; 2 |] ctr_vals in
 
-    let permutation ctx n =
-      if n <= 0 then
-        Error.invalid ~op:"permutation" ~what:"n" ~reason:"must be positive" ();
-      let random_vals = uniform ctx Dtype.float32 [| n |] in
-      argsort random_vals ~axis:0 ~descending:false
+      (* Generate random bits using threefry *)
+      let random_bits = empty ctx Dtype.int32 [| num_values; 2 |] in
+      B.threefry ~out:random_bits key_t counter;
 
-    let shuffle ctx x =
-      let shape_x = tensor_shape x in
-      if Array.length shape_x = 0 then x
-      else
-        let n = shape_x.(0) in
-        let perm = permutation ctx n in
-        take ~axis:0 perm x
+      (* Flatten and take only what we need *)
+      let bits_flat = flatten random_bits in
+      let bits_needed =
+        if numel < size bits_flat then shrink [| (0, numel) |] bits_flat
+        else bits_flat
+      in
 
-    let categorical (type a b) ctx ?(axis = -1) ?(shape : int array = [||])
-        (logits : (a, b) t) =
-      let logits_dtype = dtype logits in
-      let logits_shape = tensor_shape logits in
-      if not (Dtype.is_float logits_dtype) then
+      (* Convert to float32 - Metal doesn't support float64 on most devices *)
+      let bits_float32 = cast Dtype.float32 bits_needed in
+
+      (* Add 2^31 to shift from signed [-2^31, 2^31-1] to unsigned [0, 2^32-1]
+         range *)
+      let offset = scalar ctx Dtype.float32 2147483648.0 in
+      (* 2^31 *)
+      let shifted = add bits_float32 offset in
+
+      (* Normalize to [0, 1) by dividing by 2^32 *)
+      let normalizer = scalar ctx Dtype.float32 4294967296.0 in
+      (* 2^32 *)
+      let normalized = div shifted normalizer in
+
+      (* Cast to target dtype *)
+      let result = cast dtype normalized in
+
+      (* Reshape to final shape *)
+      reshape shape result
+
+  let randn ctx dtype shape =
+    let@ _ = span ~op:"randn" () in
+    validate_random_float_params "randn" dtype shape;
+
+    (* If shape has 0, return zeros *)
+    let numel = array_prod shape in
+    if numel = 0 then zeros ctx dtype shape
+    else
+      (* Box-Muller transform: z = cos(2*pi*u1) * sqrt(-2*ln(u2)) *)
+      let u1 = rand ctx Dtype.float32 shape in
+      let u2 = rand ctx Dtype.float32 shape in
+
+      (* Box-Muller transform: z0 = cos(2π * u1) * sqrt(-2 * ln(u2)) We use u2
+         for the log to avoid log(0) *)
+
+      (* Compute 2π * u1 *)
+      let two_pi = scalar ctx Dtype.float32 (2.0 *. Float.pi) in
+      let angle = mul u1 two_pi in
+
+      (* Compute cos(2π * u1) *)
+      let cos_part = cos angle in
+
+      (* Compute sqrt(-2 * ln(u2)) *)
+      (* First ensure u2 is not exactly 0 by using 1 - original_uniform *)
+      let one = ones_like u2 in
+      let u2_safe = sub one u2 in
+      (* Now in [0, 1) *)
+
+      (* Add small epsilon to avoid log(0) *)
+      let eps = scalar ctx Dtype.float32 1e-7 in
+      let u2_nonzero = maximum u2_safe eps in
+
+      let log_u2 = log u2_nonzero in
+      let neg_two = scalar ctx Dtype.float32 (-2.0) in
+      let sqrt_arg = mul neg_two log_u2 in
+      let sqrt_part = sqrt sqrt_arg in
+
+      (* Combine: z0 = cos_part * sqrt_part *)
+      let result_f32 = mul cos_part sqrt_part in
+
+      (* Cast to target dtype *)
+      cast dtype result_f32
+
+  let randint ctx dtype ?(high = 10) shape low =
+    if low >= high then
+      Error.invalid ~op:"randint" ~what:"range"
+        ~reason:(Printf.sprintf "low=%d ≥ high=%d" low high)
+        ();
+    if not (Dtype.is_int dtype) then
+      Error.invalid ~op:"randint" ~what:"dtype"
+        ~reason:"only integer dtypes supported" ();
+    let range = high - low in
+    let uniform_vals = rand ctx Dtype.float32 shape in
+    let scaled =
+      mul uniform_vals (scalar ctx Dtype.float32 (float_of_int range))
+    in
+    let shifted = add scaled (scalar ctx Dtype.float32 (float_of_int low)) in
+    astype dtype shifted
+
+  let bernoulli ctx ~p shape =
+    if p < 0.0 || p > 1.0 then
+      Error.invalid ~op:"bernoulli" ~what:"p" ~reason:"must be in [0, 1]" ();
+    if Array.exists (fun x -> x < 0) shape then
+      Error.invalid_shape ~op:"bernoulli" ~shape
+        ~reason:"dimensions must be non-negative" ();
+    let u = rand ctx Dtype.float32 shape in
+    let threshold = scalar ctx Dtype.float32 p in
+    cmplt u threshold
+
+  let permutation ctx n =
+    if n <= 0 then
+      Error.invalid ~op:"permutation" ~what:"n" ~reason:"must be positive" ();
+    let random_vals = rand ctx Dtype.float32 [| n |] in
+    argsort random_vals ~axis:0 ~descending:false
+
+  let shuffle ctx x =
+    let shape_x = shape x in
+    if Array.length shape_x = 0 then x
+    else
+      let n = shape_x.(0) in
+      let perm = permutation ctx n in
+      take ~axis:0 perm x
+
+  let categorical (type a b) ctx ?(axis = -1) ?shape:(batch_shape = [||])
+      (logits : (a, b) t) =
+    let logits_dtype = dtype logits in
+    let logits_shape = shape logits in
+    if not (Dtype.is_float logits_dtype) then
+      Error.invalid ~op:"categorical" ~what:"logits"
+        ~reason:"requires floating point dtype" ();
+    let ndim = Array.length logits_shape in
+    let axis = if axis < 0 then ndim + axis else axis in
+    if axis < 0 || axis >= ndim then
+      Error.axis_out_of_bounds ~op:"categorical" ~axis ~ndim ();
+    let full_shape = Array.append batch_shape logits_shape in
+
+    let run_float float_dtype eps =
+      let u = rand ctx float_dtype full_shape in
+      let u_clamped = clip u ~min:eps ~max:(1. -. eps) in
+      let neg_one = scalar ctx float_dtype (-1.0) in
+      let log_u = log u_clamped in
+      let neg_log_u = mul log_u neg_one in
+      let log_neg_log_u = log neg_log_u in
+      let gumbel = mul log_neg_log_u neg_one |> astype logits_dtype in
+      let noisy = add logits gumbel in
+      let prefix_len = Array.length batch_shape in
+      let argmax_axis = axis + prefix_len in
+      let inds = argmax noisy ~axis:argmax_axis ~keepdims:false in
+      astype Dtype.int32 inds
+    in
+
+    match logits_dtype with
+    | Float64 -> run_float Dtype.float64 1e-12
+    | Float32 -> run_float Dtype.float32 1e-6
+    | Float16 -> run_float Dtype.float32 1e-3
+    | BFloat16 -> run_float Dtype.float32 1e-2
+    | Float8_e4m3 | Float8_e5m2 ->
         Error.invalid ~op:"categorical" ~what:"logits"
-          ~reason:"requires floating point dtype" ();
-      let ndim = Array.length logits_shape in
-      let axis = if axis < 0 then ndim + axis else axis in
-      if axis < 0 || axis >= ndim then
-        Error.axis_out_of_bounds ~op:"categorical" ~axis ~ndim ();
-      let full_shape = Array.append shape logits_shape in
+          ~reason:"float8 logits not supported" ()
+    | _ ->
+        Error.invalid ~op:"categorical" ~what:"logits"
+          ~reason:"requires floating point dtype" ()
 
-      let run_float float_dtype eps =
-        let u = uniform ctx float_dtype full_shape in
-        let u_clamped = clip u ~min:eps ~max:(1. -. eps) in
-        let neg_one = scalar ctx float_dtype (-1.0) in
-        let log_u = log u_clamped in
-        let neg_log_u = mul log_u neg_one in
-        let log_neg_log_u = log neg_log_u in
-        let gumbel = mul log_neg_log_u neg_one |> astype logits_dtype in
-        let noisy = add logits gumbel in
-        let prefix_len = Array.length shape in
-        let argmax_axis = axis + prefix_len in
-        let inds = argmax noisy ~axis:argmax_axis ~keepdims:false in
-        astype Dtype.int32 inds
-      in
+  let truncated_normal (type a b) ctx (dtype : (a, b) Dtype.t) ~lower ~upper
+      shape =
+    if lower >= upper then
+      Error.invalid ~op:"truncated_normal" ~what:"bounds"
+        ~reason:"lower must be less than upper" ();
+    let supported =
+      match dtype with
+      | Float16 | Float32 | Float64 | BFloat16 -> true
+      | _ -> false
+    in
+    if not supported then
+      Error.invalid ~op:"truncated_normal" ~what:"dtype"
+        ~reason:"must be floating point" ();
 
-      match logits_dtype with
-      | Float64 -> run_float Dtype.float64 1e-12
-      | Float32 -> run_float Dtype.float32 1e-6
-      | Float16 -> run_float Dtype.float32 1e-3
-      | BFloat16 -> run_float Dtype.float32 1e-2
-      | Float8_e4m3 | Float8_e5m2 ->
-          Error.invalid ~op:"categorical" ~what:"logits"
-            ~reason:"float8 logits not supported" ()
-      | _ ->
-          Error.invalid ~op:"categorical" ~what:"logits"
-            ~reason:"requires floating point dtype" ()
+    let scalar_lower = scalar ctx Dtype.float64 lower |> astype dtype in
+    let scalar_upper = scalar ctx Dtype.float64 upper |> astype dtype in
 
-    let truncated_normal (type a b) ctx (dtype : (a, b) Dtype.t) ~lower ~upper
-        shape =
-      if lower >= upper then
-        Error.invalid ~op:"truncated_normal" ~what:"bounds"
-          ~reason:"lower must be less than upper" ();
-      let supported =
-        match dtype with
-        | Float16 | Float32 | Float64 | BFloat16 -> true
-        | _ -> false
-      in
-      if not supported then
-        Error.invalid ~op:"truncated_normal" ~what:"dtype"
-          ~reason:"must be floating point" ();
+    let has_remaining mask =
+      let any_mask = any mask in
+      let arr = to_array any_mask in
+      match arr with [| v |] -> v | _ -> false
+    in
 
-      let scalar_lower = scalar ctx Dtype.float64 lower |> astype dtype in
-      let scalar_upper = scalar ctx Dtype.float64 upper |> astype dtype in
+    let max_attempts = 1000 in
+    let initial = randn ctx dtype shape in
+    let within_lower = greater_equal initial scalar_lower in
+    let within_upper = less_equal initial scalar_upper in
+    let accepted = logical_and within_lower within_upper in
+    let remaining = logical_not accepted in
 
-      let has_remaining mask =
-        let any_mask = any mask in
-        let arr = to_array any_mask in
-        match arr with [| v |] -> v | _ -> false
-      in
-
-      let max_attempts = 1000 in
-      let initial = normal ctx dtype shape in
-      let within_lower = greater_equal initial scalar_lower in
-      let within_upper = less_equal initial scalar_upper in
-      let accepted = logical_and within_lower within_upper in
-      let remaining = logical_not accepted in
-
-      let rec fill acc remaining attempt =
-        if not (has_remaining remaining) then acc
-        else if attempt > max_attempts then
-          Error.invalid ~op:"truncated_normal" ~what:"generation"
-            ~reason:
-              (Printf.sprintf
-                 "failed to find samples within bounds after %d tries"
-                 max_attempts)
-            ()
-        else
-          let candidates = normal ctx dtype shape in
-          let within_lower = greater_equal candidates scalar_lower in
-          let within_upper = less_equal candidates scalar_upper in
-          let within = logical_and within_lower within_upper in
-          let take_new = logical_and remaining within in
-          let acc = where take_new candidates acc in
-          let still_remaining = logical_and remaining (logical_not within) in
-          fill acc still_remaining (attempt + 1)
-      in
-      fill initial remaining 1
-  end
-
-  let rand ctx dtype shape = Rng.uniform ctx dtype shape
-  let randn ctx dtype shape = Rng.normal ctx dtype shape
-  let randint ctx dtype ?high shape low = Rng.randint ctx dtype ?high shape low
+    let rec fill acc remaining attempt =
+      if not (has_remaining remaining) then acc
+      else if attempt > max_attempts then
+        Error.invalid ~op:"truncated_normal" ~what:"generation"
+          ~reason:
+            (Printf.sprintf
+               "failed to find samples within bounds after %d tries"
+               max_attempts)
+          ()
+      else
+        let candidates = randn ctx dtype shape in
+        let within_lower = greater_equal candidates scalar_lower in
+        let within_upper = less_equal candidates scalar_upper in
+        let within = logical_and within_lower within_upper in
+        let take_new = logical_and remaining within in
+        let acc = where take_new candidates acc in
+        let still_remaining = logical_and remaining (logical_not within) in
+        fill acc still_remaining (attempt + 1)
+    in
+    fill initial remaining 1
 
   (* ───── Linear Algebra ───── *)
 

@@ -4,7 +4,6 @@
 
 - bring in talon changes
 - consider rename talon to talf
-- remove rng module from nx frontend? inline functions? Then Rng submodule in Nx and Rune (but not in the frontend functor) can just be alias to Nx_core.Rng
 
 ## alphaX
 

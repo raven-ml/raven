@@ -509,93 +509,8 @@ val one_hot : num_classes:int -> ('a, 'b) t -> (int, uint8_elt) t
 
     Functions to generate arrays with random values. *)
 
-module Rng : sig
-  (** {1:keys Keys} *)
-
-  type key
-  (** The type for RNG keys. *)
-
-  val key : int -> key
-  (** [key seed] is a normalized 31-bit non-negative key derived from [seed]. *)
-
-  val split : ?n:int -> key -> key array
-  (** [split ?n k] deterministically derives [n] subkeys from [k]. [n] defaults
-      to [2]. *)
-
-  val fold_in : key -> int -> key
-  (** [fold_in k data] mixes [data] into [k] and returns the derived key. *)
-
-  val to_int : key -> int
-  (** [to_int k] is [k] as an integer. *)
-
-  (** {1:implicit Implicit key management} *)
-
-  val next_key : unit -> key
-  (** [next_key ()] returns a fresh subkey from the current RNG scope.
-
-      Inside a {!run} or {!with_key} block, each call returns a
-      deterministically derived key. Outside any scope, falls back to a
-      domain-local auto-seeded generator (convenient but non-reproducible). *)
-
-  val run : seed:int -> (unit -> 'a) -> 'a
-  (** [run ~seed f] executes [f] in an RNG scope seeded by [seed]. Every
-      {!next_key} call within [f] returns a deterministically derived key. The
-      same [seed] and the same sequence of [next_key] calls produce the same
-      keys. Scopes nest. *)
-
-  val with_key : key -> (unit -> 'a) -> 'a
-  (** [with_key k f] executes [f] in an RNG scope initialized from [k]. Useful
-      when you have a key from a split and want to isolate a sub-computation
-      (e.g. in layer composition). *)
-
-  (** {1:sampling Sampling} *)
-
-  val uniform : ('a, 'b) dtype -> int array -> ('a, 'b) t
-  (** [uniform dtype shape] generates uniform random values in \[0, 1).
-
-      Raises [Invalid_argument] if [dtype] is not a float type. *)
-
-  val normal : ('a, 'b) dtype -> int array -> ('a, 'b) t
-  (** [normal dtype shape] generates standard normal random values (mean 0,
-      variance 1) via Box-Muller transform.
-
-      Raises [Invalid_argument] if [dtype] is not a float type. *)
-
-  val randint : ('a, 'b) dtype -> ?high:int -> int array -> int -> ('a, 'b) t
-  (** [randint dtype ?high shape low] generates integers in \[[low], [high]).
-      [high] defaults to [10].
-
-      Raises [Invalid_argument] if [dtype] is not an integer type or
-      [low >= high]. *)
-
-  val bernoulli : p:float -> int array -> bool_t
-  (** [bernoulli ~p shape] samples booleans with probability [p] of [true].
-
-      Raises [Invalid_argument] if [p] is not in \[0, 1\]. *)
-
-  val permutation : int -> int32_t
-  (** [permutation n] returns a random permutation of \[0..n-1\].
-
-      Raises [Invalid_argument] if [n <= 0]. *)
-
-  val shuffle : ('a, 'b) t -> ('a, 'b) t
-  (** [shuffle x] shuffles the first dimension of [x]. No-op on scalars. *)
-
-  val categorical : ?axis:int -> ?shape:int array -> (float, 'a) t -> int32_t
-  (** [categorical ?axis ?shape logits] samples categories using the Gumbel-max
-      trick. [shape] prepends batch dims; [axis] selects class axis (default
-      last).
-
-      Raises [Invalid_argument] if [logits] is not a float type. *)
-
-  val truncated_normal :
-    ('a, 'b) dtype -> lower:float -> upper:float -> int array -> ('a, 'b) t
-  (** [truncated_normal dtype ~lower ~upper shape] samples from a normal
-      distribution truncated to \[[lower], [upper]\].
-
-      Raises [Invalid_argument] if [dtype] is not a float type or
-      [lower >= upper]. *)
-end
+module Rng = Nx_core.Rng
+(** Splittable RNG keys and implicit key management. *)
 
 val rand : ('a, 'b) dtype -> int array -> ('a, 'b) t
 (** [rand dtype shape] generates uniform random values in \[0, 1).
@@ -614,6 +529,34 @@ val randint : ('a, 'b) dtype -> ?high:int -> int array -> int -> ('a, 'b) t
 
     Raises [Invalid_argument] if [dtype] is not an integer type or
     [low >= high]. *)
+
+val bernoulli : p:float -> int array -> bool_t
+(** [bernoulli ~p shape] samples booleans with probability [p] of [true].
+
+    Raises [Invalid_argument] if [p] is not in \[0, 1\]. *)
+
+val permutation : int -> int32_t
+(** [permutation n] returns a random permutation of \[0..n-1\].
+
+    Raises [Invalid_argument] if [n <= 0]. *)
+
+val shuffle : ('a, 'b) t -> ('a, 'b) t
+(** [shuffle x] shuffles the first dimension of [x]. No-op on scalars. *)
+
+val categorical : ?axis:int -> ?shape:int array -> (float, 'a) t -> int32_t
+(** [categorical ?axis ?shape logits] samples categories using the Gumbel-max
+    trick. [shape] prepends batch dims; [axis] selects class axis (default
+    last).
+
+    Raises [Invalid_argument] if [logits] is not a float type. *)
+
+val truncated_normal :
+  ('a, 'b) dtype -> lower:float -> upper:float -> int array -> ('a, 'b) t
+(** [truncated_normal dtype ~lower ~upper shape] samples from a normal
+    distribution truncated to \[[lower], [upper]\].
+
+    Raises [Invalid_argument] if [dtype] is not a float type or
+    [lower >= upper]. *)
 
 (** {2 Shape Manipulation}
 

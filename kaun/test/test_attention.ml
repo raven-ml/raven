@@ -47,7 +47,7 @@ let test_forward_shape () =
   Rune.Rng.run ~seed:42 @@ fun () ->
   let m = Attention.multi_head_attention ~embed_dim:64 ~num_heads:4 () in
   let vars = Layer.init m ~dtype in
-  let x = Rune.Rng.normal dtype [| 2; 8; 64 |] in
+  let x = Rune.randn dtype [| 2; 8; 64 |] in
   let y, _vars' = Layer.apply m vars ~training:false x in
   equal ~msg:"output shape" (list int) [ 2; 8; 64 ]
     (Array.to_list (Rune.shape y))
@@ -58,7 +58,7 @@ let test_forward_gqa () =
     Attention.multi_head_attention ~embed_dim:64 ~num_heads:8 ~num_kv_heads:2 ()
   in
   let vars = Layer.init m ~dtype in
-  let x = Rune.Rng.normal dtype [| 2; 8; 64 |] in
+  let x = Rune.randn dtype [| 2; 8; 64 |] in
   let y, _vars' = Layer.apply m vars ~training:false x in
   equal ~msg:"GQA output shape" (list int) [ 2; 8; 64 ]
     (Array.to_list (Rune.shape y))
@@ -74,7 +74,7 @@ let test_causal_differs () =
   in
   let vars_causal = Layer.init m_causal ~dtype in
   let vars_non_causal = Layer.init m_non_causal ~dtype in
-  let x = Rune.Rng.normal dtype [| 1; 6; 32 |] in
+  let x = Rune.randn dtype [| 1; 6; 32 |] in
   let y_causal, _ = Layer.apply m_causal vars_causal ~training:false x in
   let y_non_causal, _ =
     Layer.apply m_non_causal vars_non_causal ~training:false x
@@ -88,28 +88,28 @@ let test_causal_differs () =
 
 let test_rope_preserves_shape () =
   Rune.Rng.run ~seed:0 @@ fun () ->
-  let x = Rune.Rng.normal dtype [| 2; 4; 8; 16 |] in
+  let x = Rune.randn dtype [| 2; 4; 8; 16 |] in
   let y = Attention.rope x in
   equal ~msg:"rope output shape" (list int) [ 2; 4; 8; 16 ]
     (Array.to_list (Rune.shape y))
 
 let test_rope_changes_values () =
   Rune.Rng.run ~seed:0 @@ fun () ->
-  let x = Rune.Rng.normal dtype [| 1; 2; 4; 8 |] in
+  let x = Rune.randn dtype [| 1; 2; 4; 8 |] in
   let y = Attention.rope x in
   let diff = Rune.item [] (Rune.sum (Rune.abs (Rune.sub x y))) in
   is_true ~msg:"rope changes values" (diff > 0.0)
 
 let test_rope_seq_dim () =
   Rune.Rng.run ~seed:0 @@ fun () ->
-  let x = Rune.Rng.normal dtype [| 2; 8; 4; 16 |] in
+  let x = Rune.randn dtype [| 2; 8; 4; 16 |] in
   let y = Attention.rope ~seq_dim:1 x in
   equal ~msg:"rope seq_dim shape" (list int) [ 2; 8; 4; 16 ]
     (Array.to_list (Rune.shape y))
 
 let test_rope_odd_dim_error () =
   Rune.Rng.run ~seed:0 @@ fun () ->
-  let x = Rune.Rng.normal dtype [| 1; 2; 4; 7 |] in
+  let x = Rune.randn dtype [| 1; 2; 4; 7 |] in
   raises_match
     (fun exn -> match exn with Invalid_argument _ -> true | _ -> false)
     (fun () -> ignore (Attention.rope x))
@@ -122,7 +122,7 @@ let test_dropout_eval_identity () =
     Attention.multi_head_attention ~embed_dim:32 ~num_heads:2 ~dropout:0.5 ()
   in
   let vars = Layer.init m ~dtype in
-  let x = Rune.Rng.normal dtype [| 1; 4; 32 |] in
+  let x = Rune.randn dtype [| 1; 4; 32 |] in
   let y, _ = Layer.apply m vars ~training:false x in
   equal ~msg:"eval shape" (list int) [ 1; 4; 32 ] (Array.to_list (Rune.shape y))
 
@@ -132,7 +132,7 @@ let test_dropout_training () =
     Attention.multi_head_attention ~embed_dim:32 ~num_heads:2 ~dropout:0.5 ()
   in
   let vars = Layer.init m ~dtype in
-  let x = Rune.Rng.normal dtype [| 1; 4; 32 |] in
+  let x = Rune.randn dtype [| 1; 4; 32 |] in
   let y, _ = Layer.apply m vars ~training:true x in
   equal ~msg:"training shape" (list int) [ 1; 4; 32 ]
     (Array.to_list (Rune.shape y))
@@ -145,7 +145,7 @@ let test_forward_with_rope () =
     Attention.multi_head_attention ~embed_dim:32 ~num_heads:2 ~rope:true ()
   in
   let vars = Layer.init m ~dtype in
-  let x = Rune.Rng.normal dtype [| 1; 8; 32 |] in
+  let x = Rune.randn dtype [| 1; 8; 32 |] in
   let y, _ = Layer.apply m vars ~training:false x in
   equal ~msg:"rope forward shape" (list int) [ 1; 8; 32 ]
     (Array.to_list (Rune.shape y))

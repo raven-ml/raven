@@ -44,7 +44,7 @@ let compute_fans shape ~in_axis ~out_axis =
 (* Truncated normal with bounds at +/-2 standard deviations. *)
 
 let truncated_normal ~stddev shape dtype =
-  let z = Rune.Rng.truncated_normal dtype ~lower:(-2.0) ~upper:2.0 shape in
+  let z = Rune.truncated_normal dtype ~lower:(-2.0) ~upper:2.0 shape in
   Rune.mul z (Rune.scalar dtype stddev)
 
 (* Variance scaling — the general framework behind glorot/he/lecun. *)

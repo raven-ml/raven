@@ -82,7 +82,7 @@ let () =
 
   for epoch = 1 to epochs do
     (* Shuffle training data at the tensor level *)
-    let perm = Rune.Rng.permutation n_train in
+    let perm = Rune.permutation n_train in
     let x_shuf = Rune.take ~axis:0 perm x_train in
     let y_shuf = Rune.take ~axis:0 perm y_train in
     let train_batches = batches x_shuf y_shuf in

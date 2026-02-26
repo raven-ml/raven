@@ -8,25 +8,7 @@ include F
 
 let context = Lazy.from_fun Nx_backend.create_context
 
-module Rng = struct
-  include F.Rng
-
-  let uniform dtype shape = F.Rng.uniform (Lazy.force context) dtype shape
-  let normal dtype shape = F.Rng.normal (Lazy.force context) dtype shape
-
-  let randint dtype ?high shape low =
-    F.Rng.randint (Lazy.force context) dtype ?high shape low
-
-  let bernoulli ~p shape = F.Rng.bernoulli (Lazy.force context) ~p shape
-  let permutation n = F.Rng.permutation (Lazy.force context) n
-  let shuffle x = F.Rng.shuffle (Lazy.force context) x
-
-  let categorical ?axis ?shape logits =
-    F.Rng.categorical (Lazy.force context) ?axis ?shape logits
-
-  let truncated_normal dtype ~(lower : float) ~(upper : float) shape =
-    F.Rng.truncated_normal (Lazy.force context) dtype ~lower ~upper shape
-end
+module Rng = Nx_core.Rng
 
 (* Re-export extended type aliases *)
 type bfloat16_t = (float, Nx_buffer.bfloat16_elt) t
@@ -80,6 +62,16 @@ let randn dtype shape = F.randn (Lazy.force context) dtype shape
 
 let randint dtype ?high shape low =
   F.randint (Lazy.force context) dtype ?high shape low
+
+let bernoulli ~p shape = F.bernoulli (Lazy.force context) ~p shape
+let permutation n = F.permutation (Lazy.force context) n
+let shuffle x = F.shuffle (Lazy.force context) x
+
+let categorical ?axis ?shape logits =
+  F.categorical (Lazy.force context) ?axis ?shape logits
+
+let truncated_normal dtype ~lower ~upper shape =
+  F.truncated_normal (Lazy.force context) dtype ~lower ~upper shape
 
 (* ───── FFT ───── *)
 
