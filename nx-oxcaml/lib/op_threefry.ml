@@ -15,10 +15,6 @@ let s5 = Int32_u.of_int32 5l
 let[@inline] rotl32 x r =
   Int32_u.logor (Int32_u.shift_left x r) (Int32_u.shift_right_logical x (32 - r))
 
-let[@inline] mix x0 x1 rot k =
-  let s = Int32_u.add x0 x1 in
-  k s (Int32_u.logxor (rotl32 x1 rot) s)
-
 (* Random123 Threefry2x32: 8 rotation constants, 20 rounds, key injection
    every 4 rounds. Reference: D.E. Shaw Research, Random123 library. *)
 let[@inline] threefry2x32 ks0 ks1 ks2 c0 c1 k =
@@ -36,16 +32,17 @@ let[@inline] threefry2x32 ks0 ks1 ks2 c0 c1 k =
         | 6 -> 16
         | _ -> 24
       in
-      mix x0 x1 rot (fun x0 x1 ->
-          let r' = r + 1 in
-          if r' land 3 = 0 then
-            (match r' asr 2 with
-            | 1 -> round r' (Int32_u.add x0 ks1) (Int32_u.add x1 (Int32_u.add ks2 s1))
-            | 2 -> round r' (Int32_u.add x0 ks2) (Int32_u.add x1 (Int32_u.add ks0 s2))
-            | 3 -> round r' (Int32_u.add x0 ks0) (Int32_u.add x1 (Int32_u.add ks1 s3))
-            | 4 -> round r' (Int32_u.add x0 ks1) (Int32_u.add x1 (Int32_u.add ks2 s4))
-            | _ -> round r' (Int32_u.add x0 ks2) (Int32_u.add x1 (Int32_u.add ks0 s5)))
-          else round r' x0 x1)
+      let x0 = Int32_u.add x0 x1 in
+      let x1 = Int32_u.logxor (rotl32 x1 rot) x0 in
+      let r' = r + 1 in
+      if r' land 3 = 0 then
+        (match r' asr 2 with
+        | 1 -> round r' (Int32_u.add x0 ks1) (Int32_u.add x1 (Int32_u.add ks2 s1))
+        | 2 -> round r' (Int32_u.add x0 ks2) (Int32_u.add x1 (Int32_u.add ks0 s2))
+        | 3 -> round r' (Int32_u.add x0 ks0) (Int32_u.add x1 (Int32_u.add ks1 s3))
+        | 4 -> round r' (Int32_u.add x0 ks1) (Int32_u.add x1 (Int32_u.add ks2 s4))
+        | _ -> round r' (Int32_u.add x0 ks2) (Int32_u.add x1 (Int32_u.add ks0 s5)))
+      else round r' x0 x1
   in
   round 0 (Int32_u.add c0 ks0) (Int32_u.add c1 ks1)
 
