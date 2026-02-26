@@ -1,14 +1,4 @@
 (library
  (name nx_io)
  (public_name nx.io)
- (libraries
-  nx_buffer
-  nx
-  nx_core
-  safetensors
-  unix
-  zip
-  npy
-  stb_image
-  stb_image_write
-  xdg))
+ (libraries nx_buffer nx nx_core unix zip stb_image stb_image_write))

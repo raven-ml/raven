@@ -1,7 +1,0 @@
-(library
- (name npy)
- (public_name nx.io.npy)
- (libraries nx_buffer unix bigarray zip)
- (foreign_stubs
-  (language c)
-  (names npy_stubs)))
