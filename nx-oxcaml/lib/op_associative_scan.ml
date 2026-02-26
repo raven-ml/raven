@@ -14,25 +14,6 @@ let product_range arr start_idx end_idx =
   done;
   !p
 
-let slice_base_from_index ~shape ~strides ~axis ~inner_size ~slice_index ~offset =
-  let rank = Array.length shape in
-  let outer_index = slice_index / inner_size in
-  let inner_index = slice_index - (outer_index * inner_size) in
-  let base = ref offset in
-  let tmp_outer = ref outer_index in
-  for d = axis - 1 downto 0 do
-    let coord = !tmp_outer mod shape.(d) in
-    tmp_outer := !tmp_outer / shape.(d);
-    base := !base + (coord * strides.(d))
-  done;
-  let tmp_inner = ref inner_index in
-  for d = rank - 1 downto axis + 1 do
-    let coord = !tmp_inner mod shape.(d) in
-    tmp_inner := !tmp_inner / shape.(d);
-    base := !base + (coord * strides.(d))
-  done;
-  !base
-
 let run_scan ~pool ~shape ~axis ~in_view ~out_view ~scan_slice =
   let rank = Array.length shape in
   let axis_len = shape.(axis) in
