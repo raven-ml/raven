@@ -1,4 +1,0 @@
-(library
- (name kaun_runlog)
- (public_name kaun.runlog)
- (libraries jsont jsont.bytesrw unix))

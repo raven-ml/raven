@@ -1,0 +1,5 @@
+(executable
+ (name main)
+ (public_name kaun-board)
+ (package kaun-board)
+ (libraries kaun-board.tui cmdliner))

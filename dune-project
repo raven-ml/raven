@@ -120,29 +120,39 @@
 
 (package
  (name kaun)
- (synopsis "Flax-inspired neural network library for OCaml")
+ (synopsis "Neural network modules for OCaml")
  (description
-  "Kaun brings modern deep learning to OCaml with a flexible, type-safe API for building and training neural networks. It leverages Rune for automatic differentiation and computation graph optimization while maintaining OCaml's functional programming advantages.")
+  "Minimal, composable library for defining neural network modules, computing gradients on parameter trees, and updating them with optimizers. Built on Rune.")
  (depends
   (ocaml
    (>= 5.2.0))
   dune
-  cmdliner
-  logs
-  mosaic
-  jsont
-  bytesrw
-  (domainslib
-   (>= 0.5.0))
-  (brot
-   (= :version))
   (rune
    (= :version))
   (nx
    (= :version))
+  jsont
   (windtrap :with-test))
  (tags
   (neural-networks machine-learning deep-learning)))
+
+(package
+ (name kaun-board)
+ (synopsis "Training dashboard and logging for Raven")
+ (description
+  "Lightweight training logger and terminal dashboard for monitoring runs. The core library (kaun-board) provides a Log API for writing JSONL events and a reader for consuming them. The TUI library (kaun-board.tui) provides a Mosaic-based dashboard.")
+ (depends
+  (ocaml
+   (>= 5.2.0))
+  dune
+  jsont
+  bytesrw
+  cmdliner
+  mosaic
+  (dune-configurator :build)
+  matrix)
+ (tags
+  (training-dashboard monitoring logging machine-learning)))
 
 (package
  (name sowilo)

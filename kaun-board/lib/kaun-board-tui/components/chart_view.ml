@@ -3,8 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Chart view for kaun-console. *)
-
 open Mosaic
 module Charts = Matrix_charts
 

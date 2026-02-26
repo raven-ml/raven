@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* ───── JSON Helpers ───── *)
+(* JSON helpers *)
 
 let json_obj pairs =
   Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
@@ -39,7 +39,7 @@ let json_of_file path =
   in
   json_of_string s
 
-(* ───── Run Type ───── *)
+(* Run type *)
 
 type t = {
   run_id : string;
@@ -54,20 +54,18 @@ let run_id t = t.run_id
 let created_at t = t.created_at
 let experiment_name t = t.experiment_name
 let tags t = t.tags
-let config t = t.config
 let dir t = t.dir
 
-(* ───── Path Helpers ───── *)
+(* Path helpers *)
 
 let manifest_path dir = Filename.concat dir "run.json"
 let events_path dir = Filename.concat dir "events.jsonl"
 
-(* ───── Directory Creation ───── *)
+(* Directory creation *)
 
 let ensure_dir dir =
   let sep = Filename.dir_sep.[0] in
   let parts = String.split_on_char sep dir in
-  (* Handle absolute paths: if dir starts with /, first part is empty *)
   let start, parts =
     match parts with
     | "" :: rest -> (Filename.dir_sep, rest)
@@ -76,7 +74,7 @@ let ensure_dir dir =
   let rec loop acc parts =
     match parts with
     | [] -> ()
-    | "" :: rest -> loop acc rest (* skip empty parts *)
+    | "" :: rest -> loop acc rest
     | part :: rest ->
         let next = if acc = "" then part else acc ^ Filename.dir_sep ^ part in
         if not (Sys.file_exists next) then Unix.mkdir next 0o755;
@@ -84,7 +82,7 @@ let ensure_dir dir =
   in
   loop start parts
 
-(* ───── ID Generation ───── *)
+(* ID generation *)
 
 let random_state = lazy (Random.State.make_self_init ())
 
@@ -101,7 +99,7 @@ let generate_id ?experiment () =
   let base = date ^ "_" ^ suffix in
   Option.fold ~none:base ~some:(Printf.sprintf "%s_%s" base) experiment
 
-(* ───── Manifest I/O ───── *)
+(* Manifest I/O *)
 
 let load dir =
   let path = manifest_path dir in
@@ -184,7 +182,7 @@ let create ?base_dir ?experiment ?(tags = []) ?(config = []) () =
   write_manifest t;
   t
 
-(* ───── Event Writing ───── *)
+(* Event writing *)
 
 let append_event t event =
   let path = events_path t.dir in
@@ -195,28 +193,9 @@ let append_event t event =
       output_string oc (json_to_string (Event.to_json event));
       output_char oc '\n')
 
-(* ───── Event Reading (batch) ───── *)
+(* Incremental event reading *)
 
-let events t =
-  let path = events_path t.dir in
-  if not (Sys.file_exists path) then []
-  else
-    let ic = open_in path in
-    let rec read_lines acc =
-      match input_line ic with
-      | line -> (
-          match json_of_string line |> Event.of_json with
-          | Ok ev -> read_lines (ev :: acc)
-          | Error _ -> read_lines acc)
-      | exception End_of_file ->
-          close_in ic;
-          List.rev acc
-    in
-    read_lines []
-
-(* ───── Incremental Event Reading ───── *)
-
-type file_id = int * int (* st_dev, st_ino *)
+type file_id = int * int
 
 type event_stream = {
   path : string;
@@ -263,7 +242,7 @@ let ensure_channel stream =
        with _ -> ());
       ic
 
-(* JSONL chunk parsing - handles incomplete lines *)
+(* JSONL chunk parsing *)
 
 let is_whitespace c =
   match c with ' ' | '\t' | '\r' | '\n' -> true | _ -> false
@@ -322,27 +301,19 @@ let read_events stream =
       in
       let file_size = st.Unix.LargeFile.st_size in
       let mtime = st.Unix.LargeFile.st_mtime in
-
-      (* Detect rotation/replacement *)
       let rotated =
         match stream.file_id with
         | None -> false
         | Some (dev, ino) -> dev <> fst path_id || ino <> snd path_id
       in
-
-      (* Detect truncation *)
       let truncated = stream.position > file_size in
-
       if rotated || truncated then (
         reset_stream stream;
         stream.file_id <- Some path_id);
-
-      (* Fast-path: nothing new *)
       if stream.position >= file_size && mtime <= stream.last_mtime then []
       else
         let ic = ensure_channel stream in
         LargeFile.seek_in ic stream.position;
-
         let buf = Bytes.create 65536 in
         let b = Buffer.create 65536 in
         let rec read_loop total =
@@ -353,9 +324,7 @@ let read_events stream =
               read_loop (total + n)
         in
         let bytes_read = read_loop 0 in
-
         stream.last_mtime <- mtime;
-
         if bytes_read = 0 then []
         else (
           stream.position <- Int64.add stream.position (Int64.of_int bytes_read);

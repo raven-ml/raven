@@ -3,12 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Metrics chart component for kaun-console TUI. *)
-
 open Mosaic
 module Charts = Matrix_charts
 
-(* ───── Styles ───── *)
+(* Styles *)
 
 let hint_style = Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:14) ()
 
@@ -21,7 +19,7 @@ let y_axis_style =
 let grid_style =
   Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:6) ~dim:true ()
 
-(* ───── Constants ───── *)
+(* Constants *)
 
 let graph_height = 14
 let min_graph_width = 25
@@ -30,16 +28,14 @@ let footer_height = 1
 let metrics_padding = 2
 let metrics_width_ratio = 0.66
 
-(* ───── Helpers ───── *)
+(* Layout helpers *)
 
-(** Calculate how many columns fit in available width *)
 let calculate_columns (screen_width : int) : int =
   let metrics_width =
     int_of_float (float_of_int screen_width *. metrics_width_ratio)
   in
   if metrics_width < min_graph_width * 2 then 1 else 2
 
-(** Calculate how many rows of graphs fit in available height *)
 let calculate_rows_per_batch (screen_height : int) : int =
   let available_height =
     screen_height - header_height - footer_height - (metrics_padding * 2)
@@ -47,13 +43,12 @@ let calculate_rows_per_batch (screen_height : int) : int =
   if available_height < graph_height then 1
   else max 1 (available_height / graph_height)
 
-(** Calculate how many graphs fit in available space *)
 let calculate_graphs_per_batch ~width ~height : int =
   let columns = calculate_columns width in
   let rows = calculate_rows_per_batch height in
   rows * columns
 
-(* ───── Component state and update ───── *)
+(* Component state and update *)
 
 type state = { screen_width : int; screen_height : int; current_batch : int }
 type msg = Resize of int * int | Next_batch | Prev_batch
@@ -84,8 +79,6 @@ let update (msg : msg) (s : state) ~total_metrics : state =
       { s with current_batch = min (s.current_batch + 1) max_batch }
   | Prev_batch -> { s with current_batch = max 0 (s.current_batch - 1) }
 
-(** Tags of metrics visible on the current batch (same order as dashboard
-    charts). *)
 let visible_chart_tags (s : state) ~total_metrics ~all_tags : string list =
   if total_metrics = 0 then []
   else
@@ -102,13 +95,11 @@ let visible_chart_tags (s : state) ~total_metrics ~all_tags : string list =
     |> List.filter (fun (i, _) -> i >= start_idx && i < end_idx)
     |> List.map snd
 
-(* ───── Chart Drawing ───── *)
+(* Chart drawing *)
 
 let draw_metric_chart ~hover history grid ~width ~height =
-  if history = [] then (* No data yet - show placeholder *)
-    ()
+  if history = [] then ()
   else
-    (* Convert (step, value) list to array of (x, y) tuples *)
     let data =
       Array.of_list
         (List.map (fun (step, value) -> (float_of_int step, value)) history)
@@ -134,7 +125,6 @@ let draw_metric_chart ~hover history grid ~width ~height =
            ~x:fst ~y:snd data
     in
     let layout = Charts.draw chart grid ~width ~height in
-    (* Draw tooltip if hovering *)
     match hover with
     | None -> ()
     | Some (px, py) -> (
@@ -160,7 +150,6 @@ let draw_metric_chart ~hover history grid ~width ~height =
 let view_metric_chart ~history_for_tag ~columns tag =
   let history = history_for_tag tag in
   let width_pct = if columns = 1 then 100 else 49 in
-  (* Show current (latest) value in title at all times. *)
   let rec last_value = function
     | [] -> None
     | [ (_, v) ] -> Some v
@@ -181,9 +170,8 @@ let view_metric_chart ~history_for_tag ~columns tag =
             ~width:(Canvas.width c) ~height:(Canvas.height c));
     ]
 
-(* ───── View ───── *)
+(* View *)
 
-(* We use 'a for metric value and 'msg for message type. *)
 type ('a, _) view_params = {
   latest_metrics : (string * 'a) list;
   history_for_tag : string -> (int * float) list;
@@ -192,7 +180,6 @@ type ('a, _) view_params = {
   current_batch : int;
 }
 
-(** Chunk a list into groups of n *)
 let rec chunk_by n lst =
   if lst = [] then []
   else
@@ -239,8 +226,8 @@ let view (params : (_, _) view_params) =
              [
                text ~style:(Ansi.Style.make ~bold:true ()) "Metrics:";
                text ~style:hint_style
-                 (Printf.sprintf "Batch %d/%d (← →)" (current_batch + 1)
-                    total_batches);
+                 (Printf.sprintf "Batch %d/%d (\xe2\x86\x90 \xe2\x86\x92)"
+                    (current_batch + 1) total_batches);
              ]
          else
            box ~flex_direction:Row

@@ -3,8 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Kaun_runlog
-
 type metric = { step : int; epoch : int option; value : float }
 type history_point = { step : int; value : float }
 type best_value = { step : int; value : float }
@@ -28,15 +26,13 @@ let clear s =
   Hashtbl.clear s.by_tag;
   s.max_epoch <- None
 
-let update_epoch s (epoch : int option) =
-  match epoch with
+let update_epoch s = function
   | None -> ()
   | Some e ->
       s.max_epoch <-
         Some (match s.max_epoch with None -> e | Some prev -> max prev e)
 
 let should_replace ~(prev : metric) ~(next : metric) =
-  (* Prefer higher step. If equal step, prefer higher epoch when present. *)
   if next.step > prev.step then true
   else if next.step < prev.step then false
   else
@@ -46,13 +42,13 @@ let should_replace ~(prev : metric) ~(next : metric) =
     | Some _, None -> false
     | Some a, Some b -> b > a
 
-let update_best (best : best_value option) ~step ~value ~compare =
-  let new_best = { step; value } in
+let update_best best ~step ~value ~compare =
+  let candidate = { step; value } in
   match best with
-  | None -> Some new_best
-  | Some prev -> if compare value prev.value then Some new_best else Some prev
+  | None -> Some candidate
+  | Some prev -> if compare value prev.value then Some candidate else Some prev
 
-let update store (events : Kaun_runlog.Event.t list) =
+let update store events =
   List.iter
     (fun (Event.Scalar s) ->
       update_epoch store s.epoch;
@@ -89,12 +85,12 @@ let latest_metrics store =
   |> List.sort (fun (a, _) (b, _) -> String.compare a b)
 
 let history_for_tag store tag =
-  (match Hashtbl.find_opt store.by_tag tag with
-    | None -> []
-    | Some d -> d.history)
-  |> List.map (fun (p : history_point) -> (p.step, p.value))
+  match Hashtbl.find_opt store.by_tag tag with
+  | None -> []
+  | Some d -> List.map (fun (p : history_point) -> (p.step, p.value)) d.history
 
-(* Check if needle is a substring of haystack *)
+(* Heuristic: metrics with "loss" or "error" in the name prefer lower values *)
+
 let contains_substring haystack needle =
   let hlen = String.length haystack in
   let nlen = String.length needle in
@@ -107,7 +103,6 @@ let contains_substring haystack needle =
     in
     check 0
 
-(* Determine if a metric prefers lower values (loss-like) or higher values *)
 let prefers_lower tag =
   let tag_lower = String.lowercase_ascii tag in
   contains_substring tag_lower "loss" || contains_substring tag_lower "error"

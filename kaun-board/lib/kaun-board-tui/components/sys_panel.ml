@@ -3,14 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Compact system metrics panel for kaun-console.
-
-    Displays CPU, memory, and process stats in a narrow vertical column. *)
-
 open Mosaic
 module Charts = Matrix_charts
 
-(* ───── Model ───── *)
+(* Model *)
 
 type t = {
   cpu : Sysstat.Cpu.stats;
@@ -26,7 +22,7 @@ type t = {
   sample_acc : float;
 }
 
-(* ───── Helpers ───── *)
+(* Helpers *)
 
 let bytes_to_gb b = Int64.to_float b /. (1024. *. 1024. *. 1024.)
 let bytes_to_mb b = Int64.to_float b /. (1024. *. 1024.)
@@ -35,7 +31,7 @@ let mem_used_percent (m : Sysstat.Mem.t) =
   if m.total > 0L then Int64.to_float m.used /. Int64.to_float m.total *. 100.
   else 0.0
 
-(* ───── Init ───── *)
+(* Init *)
 
 let create () : t =
   let sparkline_cpu =
@@ -48,7 +44,6 @@ let create () : t =
       ~style:(Ansi.Style.make ~fg:Ansi.Color.blue ())
       ~auto_max:false ~max_value:100. ~capacity:15 ()
   in
-  (* Initial CPU sample *)
   let cpu_prev = Sysstat.Cpu.sample () in
   let cpu_per_core_prev = Sysstat.Cpu.sample_per_core () in
   let num_cores = Array.length cpu_per_core_prev in
@@ -63,14 +58,11 @@ let create () : t =
   in
   let cpu_prev = cpu_next in
   let cpu_per_core_prev = cpu_per_core_next in
-  (* Memory *)
   let memory = Sysstat.Mem.sample () in
-  (* Process self *)
   let proc_prev = Sysstat.Proc.Self.sample () in
   let process =
     { Sysstat.Proc.Self.cpu_percent = 0.0; rss_bytes = 0L; vsize_bytes = 0L }
   in
-  (* Push initial values to sparklines *)
   let total_cpu = cpu.user +. cpu.system in
   Charts.Sparkline.push sparkline_cpu total_cpu;
   Charts.Sparkline.push sparkline_mem (mem_used_percent memory);
@@ -88,11 +80,10 @@ let create () : t =
     sample_acc = 0.0;
   }
 
-(* ───── Update ───── *)
+(* Update *)
 
 let update (t : t) ~(dt : float) : t =
   let sample_acc = t.sample_acc +. dt in
-  (* Sample at ~5Hz *)
   if sample_acc < 0.2 then { t with sample_acc }
   else
     let cpu_next = Sysstat.Cpu.sample () in
@@ -109,7 +100,6 @@ let update (t : t) ~(dt : float) : t =
       Sysstat.Proc.Self.compute ~prev:t.proc_prev ~next:proc_next ~dt:sample_acc
         ~num_cores:(if t.num_cores > 0 then Some t.num_cores else None)
     in
-    (* Update sparklines *)
     let total_cpu = cpu.user +. cpu.system in
     Charts.Sparkline.push t.sparkline_cpu total_cpu;
     Charts.Sparkline.push t.sparkline_mem (mem_used_percent memory);
@@ -127,7 +117,7 @@ let update (t : t) ~(dt : float) : t =
       sample_acc = 0.0;
     }
 
-(* ───── View ───── *)
+(* View *)
 
 let muted = Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:14) ()
 let bold_cyan = Ansi.Style.make ~bold:true ~fg:Ansi.Color.cyan ()
@@ -139,10 +129,8 @@ let draw_progress_bar c ~value ~max_value ~fill_color =
   let width = Canvas.width c in
   let height = Canvas.height c in
   if width > 0 && height > 0 then (
-    (* Background *)
     Canvas.fill_rect c ~x:0 ~y:0 ~width ~height
       ~color:(Ansi.Color.grayscale ~level:3);
-    (* Filled portion *)
     let filled = int_of_float (value /. max_value *. float_of_int width) in
     let filled = max 0 (min width filled) in
     if filled > 0 then
@@ -198,7 +186,6 @@ let view_sparklines ~sparkline_cpu ~sparkline_mem =
   box ~flex_direction:Row ~gap:(gap 1)
     ~size:{ width = pct 100; height = auto }
     [
-      (* CPU sparkline *)
       box ~flex_direction:Column ~gap:(gap 0)
         ~size:{ width = pct 50; height = auto }
         [
@@ -209,7 +196,6 @@ let view_sparklines ~sparkline_cpu ~sparkline_mem =
               Charts.Sparkline.draw sparkline_cpu ~kind:`Braille (Canvas.grid c)
                 ~width:(Canvas.width c) ~height:(Canvas.height c));
         ];
-      (* Memory sparkline *)
       box ~flex_direction:Column ~gap:(gap 0)
         ~size:{ width = pct 50; height = auto }
         [

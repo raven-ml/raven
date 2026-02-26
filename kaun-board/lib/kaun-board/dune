@@ -1,0 +1,4 @@
+(library
+ (name kaun_board)
+ (public_name kaun-board)
+ (libraries unix jsont jsont.bytesrw))

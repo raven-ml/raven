@@ -1,16 +1,15 @@
 (include_subdirs unqualified)
 
 (library
- (name kaun_console)
- (public_name kaun.console)
+ (name kaun_board_tui)
+ (public_name kaun-board.tui)
  (libraries
-  kaun
-  kaun.runlog
+  kaun-board
   unix
   mosaic
   mosaic.ui
   jsont
   jsont.bytesrw
-  kaun.sysstat
+  kaun-board.sysstat
   matrix.charts
   matrix.grid))

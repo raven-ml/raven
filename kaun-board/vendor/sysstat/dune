@@ -1,6 +1,6 @@
 (library
- (name kaun_sysstat)
- (public_name kaun.sysstat)
+ (name kaun_board_sysstat)
+ (public_name kaun-board.sysstat)
  (modules sysstat)
  (wrapped false)
  (libraries unix str)

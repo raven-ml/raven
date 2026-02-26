@@ -3,17 +3,15 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Kaun Console - TUI for monitoring training runs. *)
-
 open Mosaic
-open Kaun_runlog
+open Kaun_board
 
-(* ───── Model ───── *)
+(* Model *)
 
 type model = {
   run_id : string;
   run_dir : string;
-  store : Metric_store.t;
+  store : Store.t;
   stream : Run.event_stream;
   metrics_state : Metrics.state;
   sys_panel : Sys_panel.t;
@@ -29,15 +27,15 @@ type msg =
   | Open_metric of string
   | Close_metric
 
-(* ───── Helpers ───── *)
+(* Helpers *)
 
 let visible_chart_tags (m : model) : string list =
-  let latest = Metric_store.latest_metrics m.store in
+  let latest = Store.latest_metrics m.store in
   let all_tags = List.map fst latest in
   let total_metrics = List.length all_tags in
   Metrics.visible_chart_tags m.metrics_state ~total_metrics ~all_tags
 
-(* ───── View ───── *)
+(* View *)
 
 let divider () =
   box
@@ -50,23 +48,20 @@ let view_dashboard m =
     ~size:{ width = pct 100; height = pct 100 }
     [
       Header.view ~run_id:m.run_id
-        ~latest_epoch:(Metric_store.latest_epoch m.store)
+        ~latest_epoch:(Store.latest_epoch m.store)
         ~run_dir:m.run_dir;
       box ~flex_direction:Row ~flex_grow:1.0
         ~size:{ width = pct 100; height = pct 100 }
         [
-          (* Left column: metrics (2/3 width) - no scroll_box to allow mouse
-             events *)
           Metrics.view
             {
-              latest_metrics = Metric_store.latest_metrics m.store;
-              history_for_tag = Metric_store.history_for_tag m.store;
+              latest_metrics = Store.latest_metrics m.store;
+              history_for_tag = Store.history_for_tag m.store;
               screen_width = m.metrics_state.screen_width;
               screen_height = m.metrics_state.screen_height;
               current_batch = m.metrics_state.current_batch;
             };
           divider ();
-          (* Right column: sys panel (1/3 width) *)
           scroll_box ~scroll_y:true ~scroll_x:false
             ~size:{ width = pct 34; height = pct 100 }
             [ Sys_panel.view m.sys_panel ];
@@ -87,17 +82,17 @@ let view_detail m tag =
               (Ansi.Style.make ~bold:true
                  ~fg:(Ansi.Color.grayscale ~level:14)
                  ())
-            "Chart View  •  [Esc/q] back";
+            "Chart View  \xe2\x80\xa2  [Esc/q] back";
         ];
       box ~flex_grow:1.0 ~justify_content:Center ~align_items:Center
         ~size:{ width = pct 100; height = pct 100 }
         [
           Chart_view.view ~tag
-            ~history_for_tag:(Metric_store.history_for_tag m.store)
+            ~history_for_tag:(Store.history_for_tag m.store)
             ~best:
               (Option.map
-                 (fun (b : Metric_store.best_value) -> b.value)
-                 (Metric_store.best_for_tag m.store tag))
+                 (fun (b : Store.best_value) -> b.value)
+                 (Store.best_for_tag m.store tag))
             ~size:{ width = pct 80; height = pct 80 };
         ];
     ]
@@ -107,19 +102,16 @@ let view m =
   | Dashboard -> view_dashboard m
   | Detail tag -> view_detail m tag
 
-(* ───── TEA Core ───── *)
+(* TEA core *)
 
 let init ~run =
   let run_id = Run.run_id run in
   let run_dir = Run.dir run in
   let stream = Run.open_events run in
-  let store = Metric_store.create () in
-  (* Load initial events *)
+  let store = Store.create () in
   let initial_events = Run.read_events stream in
-  Metric_store.update store initial_events;
-  (* Get actual terminal size at startup *)
+  Store.update store initial_events;
   let metrics_state = Metrics.initial_state () in
-  (* Initialize system panel *)
   let sys_panel = Sys_panel.create () in
   ( {
       run_id;
@@ -136,11 +128,11 @@ let update msg m =
   match msg with
   | Tick dt ->
       let new_events = Run.read_events m.stream in
-      Metric_store.update m.store new_events;
+      Store.update m.store new_events;
       let sys_panel = Sys_panel.update m.sys_panel ~dt in
-      ({ m with store = m.store; sys_panel }, Cmd.none)
+      ({ m with sys_panel }, Cmd.none)
   | Metrics_msg metrics_msg ->
-      let total_metrics = List.length (Metric_store.latest_metrics m.store) in
+      let total_metrics = List.length (Store.latest_metrics m.store) in
       let metrics_state' =
         Metrics.update metrics_msg m.metrics_state ~total_metrics
       in
@@ -196,14 +188,35 @@ let subscriptions m =
           | _ -> None);
     ]
 
-let run ?base_dir ?experiment:_ ?tags:_ ?runs () =
-  let base_dir = Option.value base_dir ~default:(Kaun_runlog.base_dir ()) in
-  match runs with
-  | Some [ run_id ] -> (
-      let run_dir = Filename.concat base_dir run_id in
-      match Run.load run_dir with
-      | Some run ->
-          let init () = init ~run in
-          Mosaic.run { init; update; view; subscriptions }
-      | None -> Printf.printf "kaun-console: run not found: %s\n%!" run_id)
-  | _ -> Printf.printf "kaun-console: please specify a single run\n%!"
+let latest_run base_dir =
+  if not (Sys.file_exists base_dir) then None
+  else
+    let entries = Sys.readdir base_dir in
+    Array.sort (fun a b -> String.compare b a) entries;
+    let rec find i =
+      if i >= Array.length entries then None
+      else
+        let dir = Filename.concat base_dir entries.(i) in
+        match Run.load dir with Some run -> Some run | None -> find (i + 1)
+    in
+    find 0
+
+let run ?base_dir ?runs () =
+  let base_dir = Option.value base_dir ~default:(Kaun_board.Env.base_dir ()) in
+  let run =
+    match runs with
+    | Some [ run_id ] -> Run.load (Filename.concat base_dir run_id)
+    | None | Some [] -> latest_run base_dir
+    | Some _ ->
+        Printf.printf "kaun-board: please specify a single run\n%!";
+        None
+  in
+  match run with
+  | Some run ->
+      let init () = init ~run in
+      Mosaic.run { init; update; view; subscriptions }
+  | None -> (
+      match runs with
+      | Some [ run_id ] ->
+          Printf.printf "kaun-board: run not found: %s\n%!" run_id
+      | _ -> Printf.printf "kaun-board: no runs found in %s\n%!" base_dir)
