@@ -13,10 +13,8 @@ let raven_packages =
     "nx.c";
     "nx.buffer";
     "nx.io";
-    "nx.datasets";
     "rune";
     "kaun";
-    "kaun.models";
     "kaun.datasets";
     "hugin";
     "sowilo";
