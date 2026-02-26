@@ -4,9 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 open Nx_core
-open Nx_buffer
 
-type ('a, 'b) buffer = ('a, 'b, c_layout) Array1.t
+type ('a, 'b) buffer = ('a, 'b) Nx_buffer.t
 type context = unit
 
 let create_context () = ()
@@ -378,7 +377,7 @@ let to_ffi_tensor t =
 let create_tensor ctx dtype shape_arr =
   let size = Array.fold_left ( * ) 1 shape_arr in
   let kind = Dtype.to_buffer_kind dtype in
-  let buffer = Array1.create kind c_layout size in
+  let buffer = Nx_buffer.create kind size in
   let shape = Symbolic_shape.of_ints shape_arr in
   let view = View.create shape in
   { context = ctx; dtype; buffer; view }
@@ -465,8 +464,8 @@ let comparison_op op_name ffi_op ~out x y =
 (* ───── Buffer Allocation ───── *)
 
 let from_host ctx array =
-  let dtype = Dtype.of_buffer_kind (Array1.kind array) in
-  let size = Array1.dim array in
+  let dtype = Dtype.of_buffer_kind (Nx_buffer.kind array) in
+  let size = Nx_buffer.length array in
   (* Create a view for the 1D array *)
   let shape = Symbolic_shape.of_ints [| size |] in
   let view = View.create shape in
@@ -569,7 +568,7 @@ let reduce_op _op_name ffi_op ~out ~axes ~keepdims x =
   let ndim = Array.length input_shape in
 
   (* Special case: if input is already a scalar (0-dimensional), just copy *)
-  if ndim = 0 then Array1.set out.buffer 0 (Array1.get x.buffer 0)
+  if ndim = 0 then Nx_buffer.set out.buffer 0 (Nx_buffer.get x.buffer 0)
   else
     (* Normalize axes *)
     let normalized_axes =
@@ -923,11 +922,15 @@ let fft (type a b) ?out (x : (a, b) t) ~axes : (a, b) t =
   | Dtype.Complex64 ->
       Pocketfft.c2c_f32 ~shape:shape_arr ~stride_in:strides_in
         ~stride_out:strides_out ~axes:axes_arr ~forward:true ~fct:1.0
-        ~data_in:x'.buffer ~data_out:out.buffer ~nthreads:1
+        ~data_in:(Nx_buffer.to_bigarray1 x'.buffer)
+        ~data_out:(Nx_buffer.to_bigarray1 out.buffer)
+        ~nthreads:1
   | Dtype.Complex128 ->
       Pocketfft.c2c_f64 ~shape:shape_arr ~stride_in:strides_in
         ~stride_out:strides_out ~axes:axes_arr ~forward:true ~fct:1.0
-        ~data_in:x'.buffer ~data_out:out.buffer ~nthreads:1
+        ~data_in:(Nx_buffer.to_bigarray1 x'.buffer)
+        ~data_out:(Nx_buffer.to_bigarray1 out.buffer)
+        ~nthreads:1
   | _ -> Error.failed ~op:"fft" ~what:"unsupported dtype" ());
 
   out
@@ -953,11 +956,15 @@ let ifft (type a b) ?out (x : (a, b) t) ~axes : (a, b) t =
   | Dtype.Complex64 ->
       Pocketfft.c2c_f32 ~shape:shape_arr ~stride_in:strides_in
         ~stride_out:strides_out ~axes:axes_arr ~forward:false ~fct:1.0
-        ~data_in:x'.buffer ~data_out:out.buffer ~nthreads:1
+        ~data_in:(Nx_buffer.to_bigarray1 x'.buffer)
+        ~data_out:(Nx_buffer.to_bigarray1 out.buffer)
+        ~nthreads:1
   | Dtype.Complex128 ->
       Pocketfft.c2c_f64 ~shape:shape_arr ~stride_in:strides_in
         ~stride_out:strides_out ~axes:axes_arr ~forward:false ~fct:1.0
-        ~data_in:x'.buffer ~data_out:out.buffer ~nthreads:1
+        ~data_in:(Nx_buffer.to_bigarray1 x'.buffer)
+        ~data_out:(Nx_buffer.to_bigarray1 out.buffer)
+        ~nthreads:1
   | _ -> Error.failed ~op:"ifft" ~what:"unsupported dtype" ());
 
   out
@@ -994,21 +1001,17 @@ let rfft (type a b c d) ?out (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes :
 
   (match ((x.dtype : (a, b) Dtype.t), (dtype : (c, d) Dtype.t)) with
   | Dtype.Float32, Dtype.Complex64 ->
-      let data_in : (float, Dtype.float32_elt, c_layout) Array1.t = x'.buffer in
-      let data_out : (Complex.t, Dtype.complex32_elt, c_layout) Array1.t =
-        out.buffer
-      in
       Pocketfft.r2c_f32 ~shape_in:in_shape ~stride_in:strides_in
         ~stride_out:strides_out ~axes:axes_normalized ~forward:true ~fct:1.0
-        ~data_in ~data_out ~nthreads:1
+        ~data_in:(Nx_buffer.to_bigarray1 x'.buffer)
+        ~data_out:(Nx_buffer.to_bigarray1 out.buffer)
+        ~nthreads:1
   | Dtype.Float64, Dtype.Complex128 ->
-      let data_in : (float, Dtype.float64_elt, c_layout) Array1.t = x'.buffer in
-      let data_out : (Complex.t, Dtype.complex64_elt, c_layout) Array1.t =
-        out.buffer
-      in
       Pocketfft.r2c_f64 ~shape_in:in_shape ~stride_in:strides_in
         ~stride_out:strides_out ~axes:axes_normalized ~forward:true ~fct:1.0
-        ~data_in ~data_out ~nthreads:1
+        ~data_in:(Nx_buffer.to_bigarray1 x'.buffer)
+        ~data_out:(Nx_buffer.to_bigarray1 out.buffer)
+        ~nthreads:1
   | _ -> Error.failed ~op:"rfft" ~what:"unsupported dtype combination" ());
 
   out
@@ -1051,25 +1054,17 @@ let irfft (type a b c d) ?out ?s (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes
 
   (match ((x.dtype : (a, b) Dtype.t), (dtype : (c, d) Dtype.t)) with
   | Dtype.Complex64, Dtype.Float32 ->
-      let data_in : (Complex.t, Dtype.complex32_elt, c_layout) Array1.t =
-        x'.buffer
-      in
-      let data_out : (float, Dtype.float32_elt, c_layout) Array1.t =
-        out.buffer
-      in
       Pocketfft.c2r_f32 ~shape_out:out_shape ~stride_in:strides_in
         ~stride_out:strides_out ~axes:axes_normalized ~forward:false ~fct:1.0
-        ~data_in ~data_out ~nthreads:1
+        ~data_in:(Nx_buffer.to_bigarray1 x'.buffer)
+        ~data_out:(Nx_buffer.to_bigarray1 out.buffer)
+        ~nthreads:1
   | Dtype.Complex128, Dtype.Float64 ->
-      let data_in : (Complex.t, Dtype.complex64_elt, c_layout) Array1.t =
-        x'.buffer
-      in
-      let data_out : (float, Dtype.float64_elt, c_layout) Array1.t =
-        out.buffer
-      in
       Pocketfft.c2r_f64 ~shape_out:out_shape ~stride_in:strides_in
         ~stride_out:strides_out ~axes:axes_normalized ~forward:false ~fct:1.0
-        ~data_in ~data_out ~nthreads:1
+        ~data_in:(Nx_buffer.to_bigarray1 x'.buffer)
+        ~data_out:(Nx_buffer.to_bigarray1 out.buffer)
+        ~nthreads:1
   | _ -> Error.failed ~op:"irfft" ~what:"unsupported dtype combination" ());
 
   out
@@ -1243,13 +1238,13 @@ let triangular_solve ~upper ~transpose ~unit_diag a b =
 let buffer ctx dtype shape_arr =
   let kind = Dtype.to_buffer_kind dtype in
   let size = Array.fold_left ( * ) 1 shape_arr in
-  let buffer = Array1.create kind c_layout size in
+  let buffer = Nx_buffer.create kind size in
   let view = View.create (Symbolic_shape.of_ints shape_arr) in
   { context = ctx; dtype; buffer; view }
 
 let full ctx dtype shape_arr value =
   let t = buffer ctx dtype shape_arr in
-  Array1.fill t.buffer value;
+  Nx_buffer.fill t.buffer value;
   t
 
 let div ~out x y =

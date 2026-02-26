@@ -4,7 +4,6 @@
   ---------------------------------------------------------------------------*)
 
 (* High-level tensor operations built on backend [B]. *)
-open Nx_buffer
 
 module Make (B : Backend_intf.S) = struct
   module B = B
@@ -593,11 +592,11 @@ module Make (B : Backend_intf.S) = struct
 
     (* Create bigarray buffer with proper dtype *)
     let kind = Dtype.to_buffer_kind dtype in
-    let bigarray = Nx_buffer.Array1.create kind c_layout n in
+    let bigarray = Nx_buffer.create kind n in
 
-    (* Copy data from OCaml array to bigarray *)
+    (* Copy data from OCaml array to buffer *)
     for i = 0 to n - 1 do
-      Nx_buffer.Array1.unsafe_set bigarray i arr.(i)
+      Nx_buffer.unsafe_set bigarray i arr.(i)
     done;
 
     (* Create flat tensor and reshape if needed *)
@@ -691,47 +690,41 @@ module Make (B : Backend_intf.S) = struct
 
   let to_buffer x =
     let@ _ = span ~op:"to_buffer" () in
-    (* Ensure we have a materialized view with matching buffer size. *)
     let ensure_contiguous_size t =
       let t = if is_c_contiguous t && offset t = 0 then t else contiguous t in
       let buffer = data t in
-      let buffer_elems = Nx_buffer.Array1.dim buffer in
+      let buffer_elems = Nx_buffer.length buffer in
       if buffer_elems = numel t then t else copy t
     in
-    let t_to_use = ensure_contiguous_size x in
-    let array1 = data t_to_use in
-    Nx_buffer.reshape (Nx_buffer.genarray_of_array1 array1) (shape t_to_use)
+    data (ensure_contiguous_size x)
 
   let to_bigarray x =
     let@ _ = span ~op:"to_bigarray" () in
-    let ba_ext = to_buffer x in
-    (* Verify dtype is supported by standard Bigarray *)
+    let buf = to_buffer x in
     let _ = Dtype.to_bigarray_kind (B.dtype x) in
-    (* Cast to standard Bigarray - safe because they have same memory layout *)
-    (Obj.magic ba_ext : ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t)
+    let ga = Nx_buffer.to_genarray buf (shape x) in
+    (Obj.magic ga : ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t)
 
-  let of_buffer ctx ba =
+  let of_buffer ctx ~shape buf =
     let@ _ = span ~op:"of_buffer" () in
-    let size = Array.fold_left ( * ) 1 (Nx_buffer.Genarray.dims ba) in
-    let arr = Nx_buffer.reshape_1 ba size in
-    let shape = Nx_buffer.Genarray.dims ba in
-    let flat_xensor = B.from_host ctx arr in
-    reshape shape flat_xensor
+    let flat_tensor = B.from_host ctx buf in
+    reshape shape flat_tensor
 
   let of_bigarray ctx ba =
     let@ _ = span ~op:"of_bigarray" () in
-    (* Cast to Nx_buffer - safe because they have same memory layout *)
-    let ba_ext : ('a, 'b, Nx_buffer.c_layout) Nx_buffer.Genarray.t =
+    let ga_ext : ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t =
       Obj.magic ba
     in
-    of_buffer ctx ba_ext
+    let shape = Bigarray.Genarray.dims ga_ext in
+    let buf = Nx_buffer.of_genarray ga_ext in
+    of_buffer ctx ~shape buf
 
   let to_array x =
     let@ _ = span ~op:"to_array" () in
     let t_contiguous = contiguous x in
     let ba = data t_contiguous in
     let n = numel t_contiguous in
-    Array.init n (fun i -> Nx_buffer.Array1.get ba i)
+    Array.init n (fun i -> Nx_buffer.get ba i)
 
   (* ───── Element-wise Binary Operations ───── *)
 
@@ -3002,11 +2995,11 @@ module Make (B : Backend_intf.S) = struct
     | Some _ ->
         (* Has valid strides - use the offset *)
         let view_offset = offset scalar_tensor in
-        Array1.get ba view_offset
+        Nx_buffer.get ba view_offset
     | None ->
         (* Non-composable views - the scalar should have been materialized by get *)
         (* If it's truly a scalar with 1 element, it should be at index 0 *)
-        if Array1.dim ba = 1 then Array1.get ba 0
+        if Nx_buffer.length ba = 1 then Nx_buffer.get ba 0
         else
           Error.failed ~op:"unsafe_get"
             ~what:"cannot read from non-composable scalar view"
@@ -7903,7 +7896,7 @@ module Make (B : Backend_intf.S) = struct
     if sz = 0 && ndim > 0 then fprintf fmt "[]"
     else if ndim = 0 then
       if sz > 0 then
-        let value = Array1.unsafe_get buffer (View.offset view) in
+        let value = Nx_buffer.unsafe_get buffer (View.offset view) in
         pp_element fmt value
       else fprintf fmt "<empty scalar>"
     else
@@ -7922,10 +7915,10 @@ module Make (B : Backend_intf.S) = struct
             let offset = View.offset view in
             Shape.ravel_index md_index strides + offset
           in
-          if linear_offset < 0 || linear_offset >= Array1.dim buffer then
-            fprintf fmt "<OOB:%d/%d>" linear_offset (Array1.dim buffer)
+          if linear_offset < 0 || linear_offset >= Nx_buffer.length buffer then
+            fprintf fmt "<OOB:%d/%d>" linear_offset (Nx_buffer.length buffer)
           else
-            let value = Array1.unsafe_get buffer linear_offset in
+            let value = Nx_buffer.unsafe_get buffer linear_offset in
             pp_element fmt value
         else
           let axis = current_ndim in
@@ -8007,9 +8000,9 @@ module Make (B : Backend_intf.S) = struct
     let data_dst = data result in
     let sz = size x in
     for i = 0 to sz - 1 do
-      let v = Array1.unsafe_get data_src i in
+      let v = Nx_buffer.unsafe_get data_src i in
       let v' = f v in
-      Array1.unsafe_set data_dst i v'
+      Nx_buffer.unsafe_set data_dst i v'
     done;
     result
 
@@ -8018,7 +8011,7 @@ module Make (B : Backend_intf.S) = struct
     let data_src = data (contiguous x) in
     let sz = size x in
     for i = 0 to sz - 1 do
-      let v = Array1.unsafe_get data_src i in
+      let v = Nx_buffer.unsafe_get data_src i in
       f v
     done
 
@@ -8028,7 +8021,7 @@ module Make (B : Backend_intf.S) = struct
     let sz = size x in
     let acc = ref init in
     for i = 0 to sz - 1 do
-      let v = Array1.unsafe_get data_src i in
+      let v = Nx_buffer.unsafe_get data_src i in
       acc := f !acc v
     done;
     !acc

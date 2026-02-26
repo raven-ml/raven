@@ -131,13 +131,11 @@ type index =
 
     Functions to inspect array dimensions, memory layout, and data access. *)
 
-val data : ('a, 'b) t -> ('a, 'b, Nx_buffer.c_layout) Nx_buffer.Array1.t
-(** [data t] returns underlying bigarray buffer.
+val data : ('a, 'b) t -> ('a, 'b) Nx_buffer.t
+(** [data t] is the underlying flat buffer.
 
-    Buffer may contain data beyond tensor bounds for strided views. Direct
-    access requires careful index computation using strides and offset.
-
-    @raise Invalid_argument if tensor not C-contiguous when safety matters *)
+    The buffer may contain data beyond tensor bounds for strided views. Direct
+    access requires careful index computation using strides and offset. *)
 
 val shape : ('a, 'b) t -> int array
 (** [shape t] returns dimensions. Empty array for scalars. *)
@@ -199,19 +197,11 @@ val to_bigarray : ('a, 'b) t -> ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t
     @raise Failure
       if tensor dtype is an extended type not supported by standard Bigarray *)
 
-val to_buffer : ('a, 'b) t -> ('a, 'b, Nx_buffer.c_layout) Nx_buffer.Genarray.t
-(** [to_buffer t] converts to extended bigarray.
+val to_buffer : ('a, 'b) t -> ('a, 'b) Nx_buffer.t
+(** [to_buffer t] is a flat, contiguous buffer of [t]'s data.
 
-    Always returns contiguous copy with same shape. Use for interop with
-    libraries expecting extended bigarrays (e.g., with bfloat16 support).
-
-    {@ocaml[
-      # let t = create float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-      val t : (float, float32_elt) t = [[1, 2, 3],
-                                        [4, 5, 6]]
-      # shape (to_buffer t |> of_buffer)
-      - : int array = [|2; 3|]
-    ]} *)
+    Returns the underlying buffer directly when [t] is already contiguous with
+    zero offset and matching size; copies otherwise. *)
 
 val to_array : ('a, 'b) t -> 'a array
 (** [to_array t] converts to OCaml array.
@@ -491,19 +481,9 @@ val of_bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t -> ('a, 'b) t
                                     [0, 0, 0]]
     ]} *)
 
-val of_buffer : ('a, 'b, Nx_buffer.c_layout) Nx_buffer.Genarray.t -> ('a, 'b) t
-(** [of_buffer ba] creates tensor from extended bigarray.
-
-    Zero-copy when bigarray is contiguous. Creates view sharing same memory.
-    Modifications to either affect both. Supports extended types like bfloat16.
-
-    {@ocaml[
-      # let ba = Nx_buffer.Genarray.create Nx_buffer.bfloat16
-                  Nx_buffer.c_layout [| 2; 3 |] in
-        let t = of_buffer ba in
-        shape t
-      - : int array = [|2; 3|]
-    ]} *)
+val of_buffer : ('a, 'b) Nx_buffer.t -> shape:int array -> ('a, 'b) t
+(** [of_buffer buf ~shape] creates a tensor from a flat buffer with the given
+    [shape]. The product of [shape] must equal the buffer length. *)
 
 (** {2 Random Number Generation}
 

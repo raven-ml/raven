@@ -64,7 +64,7 @@ module type S = sig
   val context : ('a, 'b) t -> context
   (** [context t] returns the execution context that owns [t]. *)
 
-  val to_host : ('a, 'b) t -> ('a, 'b, Nx_buffer.c_layout) Nx_buffer.Array1.t
+  val to_host : ('a, 'b) t -> ('a, 'b) Nx_buffer.t
   (** [to_host t] returns [t]'s data as a flat, C-contiguous host buffer.
 
       Use {!view} to interpret the logical structure. CPU backends may return a
@@ -90,8 +90,7 @@ module type S = sig
       {b Backend must:} return a C-contiguous tensor of the given shape and
       dtype with all elements set to [value]. *)
 
-  val from_host :
-    context -> ('a, 'b, Nx_buffer.c_layout) Nx_buffer.Array1.t -> ('a, 'b) t
+  val from_host : context -> ('a, 'b) Nx_buffer.t -> ('a, 'b) t
   (** [from_host ctx buf] creates a tensor from a flat, C-contiguous host
       buffer.
 

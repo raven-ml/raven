@@ -358,9 +358,6 @@ let of_buffer_kind : type a b. (a, b) Nx_buffer.kind -> (a, b) t = function
   | Nx_buffer.Complex32 -> Complex64
   | Nx_buffer.Complex64 -> Complex128
   | Nx_buffer.Bool -> Bool
-  | _ ->
-      Error.invalid ~op:"Dtype.of_buffer_kind" ~what:"buffer kind"
-        ~reason:"unsupported kind" ()
 
 let to_buffer_kind : type a b. (a, b) t -> (a, b) Nx_buffer.kind = function
   | Float16 -> Nx_buffer.Float16
