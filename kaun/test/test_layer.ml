@@ -159,7 +159,7 @@ let test_batch_norm_rank3_axes () =
       |]
   in
   let y, _ = Layer.apply m vars ~training:true x in
-  let expected = Rune.batch_norm ~axes:[ 0; 2 ] ~scale ~bias x in
+  let expected = Kaun.Fn.batch_norm ~axes:[ 0; 2 ] ~scale ~bias x in
   equal ~msg:"batch_norm rank3 uses [0;2] axes" bool true
     (tensor_close ~eps:1e-6 ~expected ~actual:y)
 

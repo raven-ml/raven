@@ -874,11 +874,6 @@ let neural_network_tests =
         let a = Nx.create Nx.float32 [| 3 |] [| -10.; 0.; 10. |] in
         Nx.sigmoid a
         |> check_t ~eps:1e-6 "sigmoid" [| 3 |] [| 0.0000454; 0.5; 0.9999546 |]);
-    test "hardsigmoid" (fun () ->
-        let a = Nx.create Nx.float32 [| 5 |] [| -3.; -1.; 0.; 1.; 3. |] in
-        Nx.hard_sigmoid a
-        |> check_t ~eps:1e-6 "hardsigmoid" [| 5 |]
-             [| 0.0; 0.333333; 0.5; 0.666667; 1.0 |]);
     test "one_hot" (fun () ->
         let a = Nx.create Nx.int32 [| 3 |] [| 0l; 2l; 1l |] in
         let b = Nx.one_hot a ~num_classes:3 in

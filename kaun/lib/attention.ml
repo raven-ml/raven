@@ -219,7 +219,7 @@ let multi_head_attention ~embed_dim ~num_heads ?(num_kv_heads = num_heads)
                   Some reshaped)
         in
         let attn =
-          Rune.dot_product_attention ?attention_mask ?dropout_rate ?dropout_key
+          Fn.dot_product_attention ?attention_mask ?dropout_rate ?dropout_key
             ~is_causal q k v
         in
         let merged =

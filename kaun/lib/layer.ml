@@ -248,7 +248,7 @@ let layer_norm ~dim ?(eps = 1e-5) () =
         let fields = Ptree.Dict.fields_exn ~ctx:"Layer.layer_norm" params in
         let gamma = Ptree.Dict.get_tensor_exn fields ~name:"gamma" dtype in
         let beta = Ptree.Dict.get_tensor_exn fields ~name:"beta" dtype in
-        (Rune.layer_norm ~gamma ~beta ~epsilon:eps x, state));
+        (Fn.layer_norm ~gamma ~beta ~epsilon:eps x, state));
   }
 
 let rms_norm ~dim ?(eps = 1e-6) () =
@@ -268,7 +268,7 @@ let rms_norm ~dim ?(eps = 1e-6) () =
         let x = require_same_float_dtype ~ctx:"Layer.rms_norm" dtype x in
         let fields = Ptree.Dict.fields_exn ~ctx:"Layer.rms_norm" params in
         let scale = Ptree.Dict.get_tensor_exn fields ~name:"scale" dtype in
-        (Rune.rms_norm ~gamma:scale ~epsilon:eps x, state));
+        (Fn.rms_norm ~gamma:scale ~epsilon:eps x, state));
   }
 
 let batch_norm ~num_features () =
@@ -325,7 +325,7 @@ let batch_norm ~num_features () =
           let one_minus = 1.0 -. momentum in
           let batch_mean = Rune.mean ~axes x in
           let batch_var = Rune.var ~axes x in
-          let y = Rune.batch_norm ~axes ~scale ~bias x in
+          let y = Fn.batch_norm ~axes ~scale ~bias x in
           let running_mean' =
             Rune.add
               (Rune.mul running_mean (Rune.scalar dtype momentum))
@@ -388,7 +388,7 @@ let embedding ~vocab_size ~embed_dim ?(scale = true) () =
           Ptree.Dict.get_tensor_exn fields ~name:"embedding" dtype
         in
         let indices = require_int32_indices ~ctx:"Layer.embedding" indices in
-        (Rune.embedding ~scale ~embedding indices, state));
+        (Fn.embedding ~scale ~embedding indices, state));
   }
 
 (* Regularization *)
@@ -408,7 +408,7 @@ let dropout ~rate () =
         if (not training) || rate = 0.0 then (x, state)
         else
           match rngs with
-          | Some key -> (Rune.dropout ~key ~rate x, state)
+          | Some key -> (Fn.dropout ~key ~rate x, state)
           | None -> invalid_arg "Layer.dropout: requires ~rngs during training");
   }
 
@@ -437,7 +437,7 @@ let gelu () =
       (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
         ignore (params, training, rngs, ctx);
         let x = require_same_float_dtype ~ctx:"Layer.gelu" dtype x in
-        (Rune.gelu x, state));
+        (Activation.gelu x, state));
   }
 
 let silu () =
@@ -450,7 +450,7 @@ let silu () =
       (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
         ignore (params, training, rngs, ctx);
         let x = require_same_float_dtype ~ctx:"Layer.silu" dtype x in
-        (Rune.silu x, state));
+        (Activation.silu x, state));
   }
 
 let tanh () =

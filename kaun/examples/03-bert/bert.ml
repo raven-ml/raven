@@ -138,7 +138,8 @@ let self_attention (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
   in
 
   let attn =
-    Rune.dot_product_attention ~attention_mask ?dropout_rate ?dropout_key q k v
+    Kaun.Fn.dot_product_attention ~attention_mask ?dropout_rate ?dropout_key q k
+      v
   in
 
   (* Merge heads *)
@@ -181,7 +182,7 @@ let encoder_block (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
   let attn =
     if training && cfg.hidden_dropout_prob > 0.0 then
       match drop1_key with
-      | Some key -> Rune.dropout ~key ~rate:cfg.hidden_dropout_prob attn
+      | Some key -> Kaun.Fn.dropout ~key ~rate:cfg.hidden_dropout_prob attn
       | None ->
           invalid_arg "Bert.block: requires ~rngs during training with dropout"
     else attn
@@ -191,7 +192,7 @@ let encoder_block (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
   let ln1_g = get fs ~name:"attn_ln_gamma" dtype in
   let ln1_b = get fs ~name:"attn_ln_beta" dtype in
   let x =
-    Rune.layer_norm ~gamma:ln1_g ~beta:ln1_b ~epsilon:cfg.layer_norm_eps
+    Kaun.Fn.layer_norm ~gamma:ln1_g ~beta:ln1_b ~epsilon:cfg.layer_norm_eps
       (Rune.add x attn)
   in
 
@@ -201,14 +202,14 @@ let encoder_block (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
   let ffn_down_w = get fs ~name:"ffn_down_weight" dtype in
   let ffn_down_b = get fs ~name:"ffn_down_bias" dtype in
 
-  let y = Rune.add (Rune.matmul x ffn_up_w) ffn_up_b |> Rune.gelu in
+  let y = Rune.add (Rune.matmul x ffn_up_w) ffn_up_b |> Kaun.Activation.gelu in
   let y = Rune.add (Rune.matmul y ffn_down_w) ffn_down_b in
 
   (* Hidden dropout on FFN output *)
   let y =
     if training && cfg.hidden_dropout_prob > 0.0 then
       match drop2_key with
-      | Some key -> Rune.dropout ~key ~rate:cfg.hidden_dropout_prob y
+      | Some key -> Kaun.Fn.dropout ~key ~rate:cfg.hidden_dropout_prob y
       | None ->
           invalid_arg "Bert.block: requires ~rngs during training with dropout"
     else y
@@ -217,7 +218,7 @@ let encoder_block (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
   (* Residual + LayerNorm *)
   let ln2_g = get fs ~name:"ffn_ln_gamma" dtype in
   let ln2_b = get fs ~name:"ffn_ln_beta" dtype in
-  Rune.layer_norm ~gamma:ln2_g ~beta:ln2_b ~epsilon:cfg.layer_norm_eps
+  Kaun.Fn.layer_norm ~gamma:ln2_g ~beta:ln2_b ~epsilon:cfg.layer_norm_eps
     (Rune.add x y)
 
 (* Forward: embeddings + encoder stack *)
@@ -270,19 +271,19 @@ let encode (type l in_elt) ~(cfg : config) ~params
     |> Rune.contiguous
   in
   let token_type_ids = Rune.contiguous token_type_ids in
-  let tok = Rune.embedding ~scale:false ~embedding:word_emb input_ids in
-  let pos = Rune.embedding ~scale:false ~embedding:pos_emb position_ids in
-  let typ = Rune.embedding ~scale:false ~embedding:type_emb token_type_ids in
+  let tok = Kaun.Fn.embedding ~scale:false ~embedding:word_emb input_ids in
+  let pos = Kaun.Fn.embedding ~scale:false ~embedding:pos_emb position_ids in
+  let typ = Kaun.Fn.embedding ~scale:false ~embedding:type_emb token_type_ids in
   let x = Rune.add tok (Rune.add pos typ) in
   let x =
-    Rune.layer_norm ~gamma:ln_g ~beta:ln_b ~epsilon:cfg.layer_norm_eps x
+    Kaun.Fn.layer_norm ~gamma:ln_g ~beta:ln_b ~epsilon:cfg.layer_norm_eps x
   in
 
   (* Embedding dropout *)
   let x =
     if training && cfg.hidden_dropout_prob > 0.0 then
       match key_at 0 with
-      | Some key -> Rune.dropout ~key ~rate:cfg.hidden_dropout_prob x
+      | Some key -> Kaun.Fn.dropout ~key ~rate:cfg.hidden_dropout_prob x
       | None ->
           invalid_arg "Bert.encode: requires ~rngs during training with dropout"
     else x
@@ -471,7 +472,7 @@ let for_sequence_classification (cfg : config) ~num_labels () :
             match rngs with
             | Some key ->
                 let k = (Rune.Rng.split key).(0) in
-                Rune.dropout ~key:k ~rate:cfg.hidden_dropout_prob pooled
+                Kaun.Fn.dropout ~key:k ~rate:cfg.hidden_dropout_prob pooled
             | None ->
                 invalid_arg
                   "Bert.for_sequence_classification: requires ~rngs during \
@@ -537,9 +538,10 @@ let for_masked_lm (cfg : config) () : (int32, float) Layer.t =
         let ln_b = get mlm_fs ~name:"ln_beta" dtype in
         let dec_b = get mlm_fs ~name:"decoder_bias" dtype in
 
-        let h = Rune.add (Rune.matmul hidden dw) db |> Rune.gelu in
+        let h = Rune.add (Rune.matmul hidden dw) db |> Kaun.Activation.gelu in
         let h =
-          Rune.layer_norm ~gamma:ln_g ~beta:ln_b ~epsilon:cfg.layer_norm_eps h
+          Kaun.Fn.layer_norm ~gamma:ln_g ~beta:ln_b ~epsilon:cfg.layer_norm_eps
+            h
         in
 
         (* Tied decoder: logits = h @ word_emb^T + bias *)

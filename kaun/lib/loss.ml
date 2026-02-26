@@ -104,8 +104,8 @@ let binary_cross_entropy logits labels =
   check_same_shape ~fn ~rhs_name:"labels" logits_shape labels_shape;
   let dtype = Rune.dtype logits in
   let one = Rune.scalar dtype 1.0 in
-  let log_p = Rune.log_sigmoid logits in
-  let log_1_minus_p = Rune.log_sigmoid (Rune.neg logits) in
+  let log_p = Activation.log_sigmoid logits in
+  let log_1_minus_p = Activation.log_sigmoid (Rune.neg logits) in
   let per_element =
     Rune.neg
       (Rune.add (Rune.mul labels log_p)

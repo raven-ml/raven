@@ -433,13 +433,6 @@ let test_grad_take_along_axis () =
   let expected = T.create T.float32 [| 2; 3 |] [| 1.; 0.; 0.; 0.; 1.; 0. |] in
   check_rune ~eps "take_along_axis" expected grad
 
-let test_grad_leaky_relu () =
-  (* Leaky ReLU gradient *)
-  let x = T.create T.float32 [| 4 |] [| -2.; -1.; 1.; 2. |] in
-  let grad = T.grad (fun x -> T.sum (T.leaky_relu ~negative_slope:0.01 x)) x in
-  let expected = T.create T.float32 [| 4 |] [| 0.01; 0.01; 1.; 1. |] in
-  check_rune ~eps "leaky_relu gradient" expected grad
-
 let test_grad_cumsum () =
   let x = T.create T.float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
   let grad = T.grad (fun x -> T.sum (T.cumsum ~axis:0 x)) x in
@@ -534,25 +527,6 @@ let test_grad_cummin () =
      cummin([5,4,2]) = [5,4,2], res < shifted = [T,T,T] -> [1,1,1] *)
   let expected2 = T.create T.float32 [| 3; 2 |] [| 1.; 1.; 1.; 1.; 0.; 1. |] in
   check_rune ~eps "cummin gradient 2D axis=0" expected2 grad2
-
-let test_grad_elu () =
-  (* ELU gradient *)
-  let x = T.create T.float32 [| 2 |] [| -1.; 1. |] in
-  let grad = T.grad (fun x -> T.sum (T.elu ~alpha:1.0 x)) x in
-  (* For x > 0: grad = 1, for x < 0: grad = alpha * exp(x) *)
-  let expected = T.create T.float32 [| 2 |] [| 0.3678794; 1. |] in
-  check_rune ~eps:1e-5 "elu gradient" expected grad
-
-let test_grad_selu () =
-  (* SELU gradient *)
-  let x = T.create T.float32 [| 2 |] [| -1.; 1. |] in
-  let grad = T.grad (fun x -> T.sum (T.selu x)) x in
-  (* SELU has specific scale and alpha values *)
-  let scale = 1.0507009873554804934193349852946 in
-  let alpha = 1.6732632423543772848170429916717 in
-  let neg_grad = scale *. alpha *. exp (-1.0) in
-  let expected = T.create T.float32 [| 2 |] [| neg_grad; scale |] in
-  check_rune ~eps:1e-5 "selu gradient" expected grad
 
 (* ───── Linear Algebra Operations ───── *)
 
@@ -1179,9 +1153,6 @@ let tests =
         test "pooling" test_grad_pooling;
         test "conv2d" test_grad_conv2d;
         test "avg_pool2d overlapping" test_grad_avg_pool_overlapping;
-        test "leaky_relu" test_grad_leaky_relu;
-        test "elu" test_grad_elu;
-        test "selu" test_grad_selu;
       ];
     group "cumulative"
       [

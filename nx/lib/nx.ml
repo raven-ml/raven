@@ -86,8 +86,6 @@ let randn dtype ~key shape = F.randn (Lazy.force context) dtype ~key shape
 let randint dtype ~key ?high shape low =
   F.randint (Lazy.force context) dtype ~key ?high shape low
 
-let dropout ~key ~rate x = F.dropout ~key ~rate x
-
 (* ───── FFT ───── *)
 
 let fftfreq ?d n = F.fftfreq (Lazy.force context) ?d n

@@ -94,7 +94,8 @@ let causal_self_attention (type l) ~(cfg : config)
   in
 
   let attn =
-    Rune.dot_product_attention ~is_causal:true ?dropout_rate ?dropout_key q k v
+    Kaun.Fn.dot_product_attention ~is_causal:true ?dropout_rate ?dropout_key q k
+      v
   in
 
   (* Merge heads *)
@@ -128,7 +129,7 @@ let transformer_block (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
   let ln1_g = get fs ~name:"ln1_gamma" dtype in
   let ln1_b = get fs ~name:"ln1_beta" dtype in
   let x' =
-    Rune.layer_norm ~gamma:ln1_g ~beta:ln1_b ~epsilon:cfg.layer_norm_eps x
+    Kaun.Fn.layer_norm ~gamma:ln1_g ~beta:ln1_b ~epsilon:cfg.layer_norm_eps x
   in
 
   let attn_params = find ~ctx:"Gpt2.block" "attention" fs in
@@ -141,7 +142,7 @@ let transformer_block (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
   let attn =
     if training && cfg.resid_pdrop > 0.0 then
       match drop1_key with
-      | Some key -> Rune.dropout ~key ~rate:cfg.resid_pdrop attn
+      | Some key -> Kaun.Fn.dropout ~key ~rate:cfg.resid_pdrop attn
       | None ->
           invalid_arg "Gpt2.block: requires ~rngs during training with dropout"
     else attn
@@ -152,7 +153,7 @@ let transformer_block (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
   let ln2_g = get fs ~name:"ln2_gamma" dtype in
   let ln2_b = get fs ~name:"ln2_beta" dtype in
   let x' =
-    Rune.layer_norm ~gamma:ln2_g ~beta:ln2_b ~epsilon:cfg.layer_norm_eps x
+    Kaun.Fn.layer_norm ~gamma:ln2_g ~beta:ln2_b ~epsilon:cfg.layer_norm_eps x
   in
 
   let ffn_up_w = get fs ~name:"ffn_up_weight" dtype in
@@ -160,14 +161,16 @@ let transformer_block (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
   let ffn_down_w = get fs ~name:"ffn_down_weight" dtype in
   let ffn_down_b = get fs ~name:"ffn_down_bias" dtype in
 
-  let y = Rune.add (Rune.matmul x' ffn_up_w) ffn_up_b |> Rune.gelu_approx in
+  let y =
+    Rune.add (Rune.matmul x' ffn_up_w) ffn_up_b |> Kaun.Activation.gelu_approx
+  in
   let y = Rune.add (Rune.matmul y ffn_down_w) ffn_down_b in
 
   (* Residual dropout *)
   let y =
     if training && cfg.resid_pdrop > 0.0 then
       match drop2_key with
-      | Some key -> Rune.dropout ~key ~rate:cfg.resid_pdrop y
+      | Some key -> Kaun.Fn.dropout ~key ~rate:cfg.resid_pdrop y
       | None ->
           invalid_arg "Gpt2.block: requires ~rngs during training with dropout"
     else y
@@ -211,15 +214,15 @@ let decode (type l in_elt) ~(cfg : config) ~params
     |> Rune.broadcast_to [| batch; seq |]
     |> Rune.contiguous
   in
-  let tok = Rune.embedding ~scale:false ~embedding:wte input_ids in
-  let pos = Rune.embedding ~scale:false ~embedding:wpe position_ids in
+  let tok = Kaun.Fn.embedding ~scale:false ~embedding:wte input_ids in
+  let pos = Kaun.Fn.embedding ~scale:false ~embedding:wpe position_ids in
   let x = Rune.add tok pos in
 
   (* Embedding dropout *)
   let x =
     if training && cfg.embd_pdrop > 0.0 then
       match key_at 0 with
-      | Some key -> Rune.dropout ~key ~rate:cfg.embd_pdrop x
+      | Some key -> Kaun.Fn.dropout ~key ~rate:cfg.embd_pdrop x
       | None ->
           invalid_arg "Gpt2.decode: requires ~rngs during training with dropout"
     else x
@@ -242,7 +245,7 @@ let decode (type l in_elt) ~(cfg : config) ~params
   (* Final layer norm *)
   let ln_f_g = get root ~name:"ln_f_gamma" dtype in
   let ln_f_b = get root ~name:"ln_f_beta" dtype in
-  Rune.layer_norm ~gamma:ln_f_g ~beta:ln_f_b ~epsilon:cfg.layer_norm_eps x
+  Kaun.Fn.layer_norm ~gamma:ln_f_g ~beta:ln_f_b ~epsilon:cfg.layer_norm_eps x
 
 (* Parameter initialization *)
 
