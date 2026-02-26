@@ -3,62 +3,38 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Compute both Sobel or Scharr gradients in a single pass, sharing the padding
-   and 8 shifted neighbor slices. *)
+(* Compute both gradients in a single pass via correlate2d *)
 
-let gradient_pair ~kx_weights ~ky_weights img =
+let gradient_pair ~kernel_x ~kernel_y img =
   Helpers.with_batch_pair
     (fun img ->
-      let shape = Rune.shape img in
-      let h = shape.(1) and w = shape.(2) in
-      (* Squeeze channel dim for 2D spatial computation *)
-      let img2d = Rune.reshape [| shape.(0); h; w |] img in
-      let padded = Rune.pad [| (0, 0); (1, 1); (1, 1) |] 0.0 img2d in
-      (* 8 shifted neighbors + center *)
-      let tl = Rune.slice [ Rune.A; Rune.R (0, h); Rune.R (0, w) ] padded in
-      let tc = Rune.slice [ Rune.A; Rune.R (0, h); Rune.R (1, w + 1) ] padded in
-      let tr = Rune.slice [ Rune.A; Rune.R (0, h); Rune.R (2, w + 2) ] padded in
-      let ml = Rune.slice [ Rune.A; Rune.R (1, h + 1); Rune.R (0, w) ] padded in
-      let mr =
-        Rune.slice [ Rune.A; Rune.R (1, h + 1); Rune.R (2, w + 2) ] padded
-      in
-      let bl = Rune.slice [ Rune.A; Rune.R (2, h + 2); Rune.R (0, w) ] padded in
-      let bc =
-        Rune.slice [ Rune.A; Rune.R (2, h + 2); Rune.R (1, w + 1) ] padded
-      in
-      let br =
-        Rune.slice [ Rune.A; Rune.R (2, h + 2); Rune.R (2, w + 2) ] padded
-      in
-      (* Apply kernel weights: kernel layout: [tl tc tr; ml mc mr; bl bc br] kx
-         = [-a 0 a; -b 0 b; -a 0 a] ky = [-a -b -a; 0 0 0; a b a] *)
-      let a = kx_weights.(0) and b = kx_weights.(1) in
-      let gx =
-        Rune.add
-          (Rune.add
-             (Rune.sub (Rune.mul_s tr a) (Rune.mul_s tl a))
-             (Rune.sub (Rune.mul_s mr b) (Rune.mul_s ml b)))
-          (Rune.sub (Rune.mul_s br a) (Rune.mul_s bl a))
-      in
-      let a = ky_weights.(0) and b = ky_weights.(1) in
-      let gy =
-        Rune.add
-          (Rune.add
-             (Rune.sub (Rune.mul_s bl a) (Rune.mul_s tl a))
-             (Rune.sub (Rune.mul_s bc b) (Rune.mul_s tc b)))
-          (Rune.sub (Rune.mul_s br a) (Rune.mul_s tr a))
-      in
-      let restore t = Rune.reshape [| shape.(0); h; w; 1 |] t in
-      (restore gx, restore gy))
+      let gx = Helpers.convolve_per_channel kernel_x img in
+      let gy = Helpers.convolve_per_channel kernel_y img in
+      (gx, gy))
     img
+
+let sobel_kx =
+  Rune.create Rune.float32 [| 3; 3 |]
+    [| -1.; 0.; 1.; -2.; 0.; 2.; -1.; 0.; 1. |]
+
+let sobel_ky =
+  Rune.create Rune.float32 [| 3; 3 |]
+    [| -1.; -2.; -1.; 0.; 0.; 0.; 1.; 2.; 1. |]
+
+let scharr_kx =
+  Rune.create Rune.float32 [| 3; 3 |]
+    [| -3.; 0.; 3.; -10.; 0.; 10.; -3.; 0.; 3. |]
+
+let scharr_ky =
+  Rune.create Rune.float32 [| 3; 3 |]
+    [| -3.; -10.; -3.; 0.; 0.; 0.; 3.; 10.; 3. |]
 
 let sobel ?(ksize = 3) img =
   ignore ksize;
-  (* Sobel weights: [1, 2, 1] decomposition *)
-  gradient_pair ~kx_weights:[| 1.0; 2.0 |] ~ky_weights:[| 1.0; 2.0 |] img
+  gradient_pair ~kernel_x:sobel_kx ~kernel_y:sobel_ky img
 
 let scharr img =
-  (* Scharr weights: [3, 10, 3] decomposition *)
-  gradient_pair ~kx_weights:[| 3.0; 10.0 |] ~ky_weights:[| 3.0; 10.0 |] img
+  gradient_pair ~kernel_x:scharr_kx ~kernel_y:scharr_ky img
 
 let laplacian ?(ksize = 3) img =
   ignore ksize;
@@ -76,8 +52,7 @@ let canny ~low ~high ?(sigma = 1.4) img =
       let blurred = Filter.gaussian_blur ~sigma img in
       (* 2. Gradient computation *)
       let gx, gy =
-        gradient_pair ~kx_weights:[| 1.0; 2.0 |] ~ky_weights:[| 1.0; 2.0 |]
-          blurred
+        gradient_pair ~kernel_x:sobel_kx ~kernel_y:sobel_ky blurred
       in
       let mag = Rune.sqrt (Rune.add (Rune.square gx) (Rune.square gy)) in
       let angle = Rune.atan2 gy gx in

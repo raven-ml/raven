@@ -19,12 +19,9 @@ let gaussian_blur ~sigma ?(ksize = 0) img =
   in
   if ksize <= 0 || ksize mod 2 = 0 then
     invalid_arg "gaussian_blur: ksize must be a positive odd integer";
-  let kernel_h =
-    Rune.reshape [| 1; ksize |] (generate_gaussian_kernel ksize sigma)
-  in
-  let kernel_v =
-    Rune.reshape [| ksize; 1 |] (generate_gaussian_kernel ksize sigma)
-  in
+  let kernel_1d = generate_gaussian_kernel ksize sigma in
+  let kernel_h = Rune.reshape [| 1; ksize |] kernel_1d in
+  let kernel_v = Rune.reshape [| ksize; 1 |] kernel_1d in
   Helpers.with_batch
     (fun img ->
       let temp = Helpers.convolve_per_channel kernel_h img in

@@ -7,14 +7,17 @@ let to_grayscale img =
   let shape = Rune.shape img in
   let rank = Array.length shape in
   let c_axis = rank - 1 in
-  let ones = Array.make rank 1 in
-  ones.(c_axis) <- 3;
+  (* Flatten spatial dims, matmul with [3;1] weights, reshape back *)
+  let spatial = Array.sub shape 0 (rank - 1) in
+  let n_pixels = Array.fold_left ( * ) 1 spatial in
+  let flat = Rune.reshape [| n_pixels; shape.(c_axis) |] img in
   let weights =
-    Rune.reshape ones
-      (Rune.create Rune.float32 [| 3 |] [| 0.299; 0.587; 0.114 |])
+    Rune.create Rune.float32 [| 3; 1 |] [| 0.299; 0.587; 0.114 |]
   in
-  let weighted = Rune.mul img weights in
-  Rune.sum ~axes:[ c_axis ] ~keepdims:true weighted
+  let result = Rune.matmul flat weights in
+  let out_shape = Array.copy shape in
+  out_shape.(c_axis) <- 1;
+  Rune.reshape out_shape result
 
 (* RGB to HSV conversion using piecewise hue computation *)
 
