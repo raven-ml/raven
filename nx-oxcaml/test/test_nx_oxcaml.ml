@@ -1853,6 +1853,90 @@ let test_argmin_int64 () =
   let d = Nx_ox.to_array out in
   check_int32 "argmin_int64" 2l d.(0)
 
+let test_sort_float64_ascending () =
+  let ctx = Nx_backend.create_context () in
+  let x = Nx_ox.create ctx Dtype.Float64 [| 5 |] [| 3.0; 1.0; 4.0; 1.5; 2.0 |] in
+  let out = Nx_ox.empty ctx Dtype.Float64 [| 5 |] in
+  Nx_backend.sort ~out ~axis:0 ~descending:false x;
+  let d = Nx_ox.to_array out in
+  check_float "sort_f64_asc[0]" ~eps:1e-10 1.0 d.(0);
+  check_float "sort_f64_asc[1]" ~eps:1e-10 1.5 d.(1);
+  check_float "sort_f64_asc[2]" ~eps:1e-10 2.0 d.(2);
+  check_float "sort_f64_asc[3]" ~eps:1e-10 3.0 d.(3);
+  check_float "sort_f64_asc[4]" ~eps:1e-10 4.0 d.(4)
+
+let test_sort_float64_descending () =
+  let ctx = Nx_backend.create_context () in
+  let x = Nx_ox.create ctx Dtype.Float64 [| 4 |] [| 3.0; 1.0; 4.0; 2.0 |] in
+  let out = Nx_ox.empty ctx Dtype.Float64 [| 4 |] in
+  Nx_backend.sort ~out ~axis:0 ~descending:true x;
+  let d = Nx_ox.to_array out in
+  check_float "sort_f64_desc[0]" ~eps:1e-10 4.0 d.(0);
+  check_float "sort_f64_desc[1]" ~eps:1e-10 3.0 d.(1);
+  check_float "sort_f64_desc[2]" ~eps:1e-10 2.0 d.(2);
+  check_float "sort_f64_desc[3]" ~eps:1e-10 1.0 d.(3)
+
+let test_sort_int32_1d () =
+  let ctx = Nx_backend.create_context () in
+  let x = Nx_ox.create ctx Dtype.Int32 [| 4 |] [| 3l; 1l; 4l; 2l |] in
+  let out = Nx_ox.empty ctx Dtype.Int32 [| 4 |] in
+  Nx_backend.sort ~out ~axis:0 ~descending:false x;
+  let d = Nx_ox.to_array out in
+  check_int32 "sort_i32_1d[0]" 1l d.(0);
+  check_int32 "sort_i32_1d[1]" 2l d.(1);
+  check_int32 "sort_i32_1d[2]" 3l d.(2);
+  check_int32 "sort_i32_1d[3]" 4l d.(3)
+
+let test_sort_int32_2d_axis1 () =
+  let ctx = Nx_backend.create_context () in
+  (* [[3, 1, 2], [6, 4, 5]] -> sort axis 1 -> [[1, 2, 3], [4, 5, 6]] *)
+  let x = Nx_ox.create ctx Dtype.Int32 [| 2; 3 |] [| 3l; 1l; 2l; 6l; 4l; 5l |] in
+  let out = Nx_ox.empty ctx Dtype.Int32 [| 2; 3 |] in
+  Nx_backend.sort ~out ~axis:1 ~descending:false x;
+  let d = Nx_ox.to_array out in
+  check_int32 "sort_i32_2d_axis1[0]" 1l d.(0);
+  check_int32 "sort_i32_2d_axis1[1]" 2l d.(1);
+  check_int32 "sort_i32_2d_axis1[2]" 3l d.(2);
+  check_int32 "sort_i32_2d_axis1[3]" 4l d.(3);
+  check_int32 "sort_i32_2d_axis1[4]" 5l d.(4);
+  check_int32 "sort_i32_2d_axis1[5]" 6l d.(5)
+
+let test_sort_int32_2d_axis0 () =
+  let ctx = Nx_backend.create_context () in
+  (* [[3, 1], [1, 3]] -> sort axis 0 -> [[1, 1], [3, 3]] *)
+  let x = Nx_ox.create ctx Dtype.Int32 [| 2; 2 |] [| 3l; 1l; 1l; 3l |] in
+  let out = Nx_ox.empty ctx Dtype.Int32 [| 2; 2 |] in
+  Nx_backend.sort ~out ~axis:0 ~descending:false x;
+  let d = Nx_ox.to_array out in
+  check_int32 "sort_i32_2d_axis0[0]" 1l d.(0);
+  check_int32 "sort_i32_2d_axis0[1]" 1l d.(1);
+  check_int32 "sort_i32_2d_axis0[2]" 3l d.(2);
+  check_int32 "sort_i32_2d_axis0[3]" 3l d.(3)
+
+let test_argsort_float64 () =
+  let ctx = Nx_backend.create_context () in
+  (* [3.0, 1.0, 4.0, 2.0] -> argsort asc -> [1, 3, 0, 2] *)
+  let x = Nx_ox.create ctx Dtype.Float64 [| 4 |] [| 3.0; 1.0; 4.0; 2.0 |] in
+  let out = Nx_ox.empty ctx Dtype.Int32 [| 4 |] in
+  Nx_backend.argsort ~out ~axis:0 ~descending:false x;
+  let d = Nx_ox.to_array out in
+  check_int32 "argsort_f64[0]" 1l d.(0);
+  check_int32 "argsort_f64[1]" 3l d.(1);
+  check_int32 "argsort_f64[2]" 0l d.(2);
+  check_int32 "argsort_f64[3]" 2l d.(3)
+
+let test_argsort_descending () =
+  let ctx = Nx_backend.create_context () in
+  (* [3.0, 1.0, 4.0, 2.0] -> argsort desc -> [2, 0, 3, 1] *)
+  let x = Nx_ox.create ctx Dtype.Float64 [| 4 |] [| 3.0; 1.0; 4.0; 2.0 |] in
+  let out = Nx_ox.empty ctx Dtype.Int32 [| 4 |] in
+  Nx_backend.argsort ~out ~axis:0 ~descending:true x;
+  let d = Nx_ox.to_array out in
+  check_int32 "argsort_desc[0]" 2l d.(0);
+  check_int32 "argsort_desc[1]" 0l d.(1);
+  check_int32 "argsort_desc[2]" 3l d.(2);
+  check_int32 "argsort_desc[3]" 1l d.(3)
+
 let test_atan2_float64 () =
   let ctx = Nx_backend.create_context () in
   let y = Nx_ox.create ctx Dtype.Float64 [| 4 |] [| 1.0; -1.0; 1.0; 0.0 |] in
@@ -2013,5 +2097,12 @@ let () =
   test_argmin_float64_1d ();
   test_argmax_int32 ();
   test_argmin_int64 ();
+  test_sort_int32_1d ();
+  test_sort_float64_ascending ();
+  test_sort_float64_descending ();
+  test_sort_int32_2d_axis1 ();
+  test_sort_int32_2d_axis0 ();
+  test_argsort_float64 ();
+  test_argsort_descending ();
   Printf.printf "\nResults: %d passed, %d failed\n" !passed !failed;
   if !failed > 0 then exit 1

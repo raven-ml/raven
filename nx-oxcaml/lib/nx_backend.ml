@@ -926,11 +926,38 @@ let argmin (type a b) ~(out : (int32, Dtype.int32_elt) t) ~axis ~keepdims
         ~keepdims
   | _ -> Error.invalid ~op:"argmin" ~what:"unsupported dtype" ()
 
-let sort ~out:_ ~axis:_ ~descending:_ _ =
-  Error.invalid ~op:"sort" ~what:"not implemented" ()
+let sort (type a b) ~(out : (a, b) t) ~axis ~descending (x : (a, b) t) : unit =
+  match (out.buffer, x.buffer) with
+  | Float64 out_arr, Float64 a_arr ->
+      Op_sort.sort_float64 out.context.pool ~out_arr ~a_arr ~va:x.view
+        ~vout:out.view ~axis ~descending
+  | Float32 out_arr, Float32 a_arr ->
+      Op_sort.sort_float32 out.context.pool ~out_arr ~a_arr ~va:x.view
+        ~vout:out.view ~axis ~descending
+  | Int32 out_arr, Int32 a_arr ->
+      Op_sort.sort_int32 out.context.pool ~out_arr ~a_arr ~va:x.view
+        ~vout:out.view ~axis ~descending
+  | Int64 out_arr, Int64 a_arr ->
+      Op_sort.sort_int64 out.context.pool ~out_arr ~a_arr ~va:x.view
+        ~vout:out.view ~axis ~descending
+  | _ -> Error.invalid ~op:"sort" ~what:"unsupported dtype" ()
 
-let argsort ~out:_ ~axis:_ ~descending:_ _ =
-  Error.invalid ~op:"argsort" ~what:"not implemented" ()
+let argsort (type a b) ~(out : (int32, Dtype.int32_elt) t) ~axis ~descending
+    (x : (a, b) t) : unit =
+  match (out.buffer, x.buffer) with
+  | Int32 out_arr, Float64 a_arr ->
+      Op_sort.argsort_float64 out.context.pool ~out_arr ~a_arr ~va:x.view
+        ~vout:out.view ~axis ~descending
+  | Int32 out_arr, Float32 a_arr ->
+      Op_sort.argsort_float32 out.context.pool ~out_arr ~a_arr ~va:x.view
+        ~vout:out.view ~axis ~descending
+  | Int32 out_arr, Int32 a_arr ->
+      Op_sort.argsort_int32 out.context.pool ~out_arr ~a_arr ~va:x.view
+        ~vout:out.view ~axis ~descending
+  | Int32 out_arr, Int64 a_arr ->
+      Op_sort.argsort_int64 out.context.pool ~out_arr ~a_arr ~va:x.view
+        ~vout:out.view ~axis ~descending
+  | _ -> Error.invalid ~op:"argsort" ~what:"unsupported dtype" ()
 
 let from_host (type a b) ctx (array : (a, b) Nx_buffer.t) :
     (a, b) t =
