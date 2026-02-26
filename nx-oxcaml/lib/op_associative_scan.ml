@@ -72,24 +72,18 @@ let run_scan ~pool ~shape ~axis ~in_view ~out_view ~scan_slice =
           let in_base = ref in_offset in
           let out_base = ref out_offset in
 
-          (* Advance to start_slice by incremental carry *)
-          for _ = 0 to start_slice - 1 do
-            let rec carry d =
-              if d < 0 then ()
-              else
-                let next = coords.(d) + 1 in
-                if next < dims.(d) then (
-                  coords.(d) <- next;
-                  in_base := !in_base + in_str.(d);
-                  out_base := !out_base + out_str.(d)
-                ) else (
-                  coords.(d) <- 0;
-                  in_base := !in_base - (dims.(d) - 1) * in_str.(d);
-                  out_base := !out_base - (dims.(d) - 1) * out_str.(d);
-                  carry (d - 1)
-                )
-            in
-            carry (slice_rank - 1)
+          (* Compute coordinates for start_slice directly *)
+          let rem = ref start_slice in
+          for d = 0 to slice_rank - 1 do
+            let block = ref 1 in
+            for d' = d + 1 to slice_rank - 1 do
+              block := !block * dims.(d')
+            done;
+            let c = !rem / !block in
+            rem := !rem mod !block;
+            coords.(d) <- c;
+            in_base := !in_base + (c * in_str.(d));
+            out_base := !out_base + (c * out_str.(d))
           done;
 
           for _ = start_slice to end_slice - 1 do
