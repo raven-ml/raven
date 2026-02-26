@@ -1,85 +1,90 @@
-# Raven
+<p align="center">
+  <img src="www/site/raven.svg" width="80" alt="raven">
+</p>
 
-**Modern scientific computing for OCaml.**
+<h3 align="center">modern scientific computing for OCaml</h3>
 
-Raven is a comprehensive ecosystem that brings scientific computing capabilities to OCaml, designed for teams who need both rapid prototyping and production-ready systems.
+<p align="center">
+  <a href="https://raven-ml.dev/docs/">docs</a> &middot;
+  <a href="https://raven-ml.dev/docs/installation/">install</a> &middot;
+  <a href="https://github.com/raven-ml/raven/issues">issues</a>
+</p>
 
-We're prioritizing developer experience and competitive performance to give developers a real choice beyond Python for scientific computing.
+---
 
-> **Note**: Raven is currently in **pre-alpha**. We're actively seeking user feedback to shape the project's direction. Please [open issues](https://github.com/raven-ml/raven/issues) or reach out [by email](mailto:thibaut.mattio@gmail.com)!
+Raven is an ecosystem of OCaml libraries for numerical computing, machine learning, and data science. Everything you know from Python — NumPy, JAX, PyTorch, Matplotlib, Jupyter — rebuilt with type safety.
 
-## The Ecosystem
+> Raven is **alpha**. APIs will change. [Feedback welcome.](https://github.com/raven-ml/raven/issues)
 
-Raven is built from modular projects that form a cohesive ecosystem:
+```ocaml
+(* nx — n-dimensional arrays *)
+let x = Nx.linspace float32 0. 10. 100
+let y = Nx.sin x
 
-**Core Libraries:**
-| **Raven Project**   | **Python Equivalent**  | **Description**                                               |
-| ------------------- | ---------------------- | ------------------------------------------------------------- |
-| [**Nx**](packages/nx/)       | NumPy                  | N-dimensional arrays with pluggable backends                  |
-| [**Brot**](packages/brot/)   | HuggingFace Tokenizers | Fast, HuggingFace-compatible tokenization for language models |
-| [**Talon**](packages/talon/) | Pandas/Polars          | DataFrames with heterogeneous columns and rich API            |
-| [**Hugin**](packages/hugin/) | Matplotlib             | Publication-quality data visualization and plotting           |
-| [**Quill**](packages/quill/) | Jupyter                | A love letter to scientific writing                           |
+(* rune — automatic differentiation *)
+let grad_f = Rune.grad (fun x -> Rune.sum (Rune.mul x x)) x
 
-**Rune Ecosystem:**
-| **Raven Project**       | **Python Equivalent**       | **Description**                                        |
-| ----------------------- | --------------------------- | ------------------------------------------------------ |
-| [**Rune**](packages/rune/)       | JAX                         | Autodiff with multi-device support and JIT compilation |
-| [**Kaun** ᚲ](packages/kaun/)     | PyTorch/Flax                | Deep learning framework built on Rune                  |
-| [**Fehu** ᚠ](packages/fehu/)     | Gymnasium/Stable Baselines3 | Reinforcement learning environments and algorithms     |
-| [**Sowilo** ᛋ](packages/sowilo/) | OpenCV                      | Computer vision framework built on Rune                |
+(* brot — tokenization *)
+let tokenizer = Brot.from_file "tokenizer.json" |> Result.get_ok
+let ids = Brot.encode_ids tokenizer "The meaning of life is"
 
-## Why Raven?
+(* kaun — neural networks *)
+let model = Kaun.Layer.sequential [
+  Kaun.Layer.linear ~in_features:768 ~out_features:128 ();
+  Kaun.Layer.relu ();
+  Kaun.Layer.linear ~in_features:128 ~out_features:10 ();
+]
 
-- **Ship reliable systems**: Strong typing catches bugs that would crash your ML pipeline in production
-- **Stop rewriting code**: Prototype and deploy in the same language, no more "Python for research, X for production"
-- **Match Python's performance**: JIT compilation designed to compete with NumPy and PyTorch, not just beat them by 20%
-- **Built for developers**: Notebooks that feel like writing documents, intuitive APIs, and an ecosystem designed to work seamlessly together
-- **Designed for extension**: Pluggable backends, modular architecture, and building blocks you can actually extend and customize
+(* talon — dataframes *)
+let df = Talon.create [
+  "name", Talon.Col.string_list [ "Alice"; "Bob"; "Charlie" ];
+  "score", Talon.Col.float64_list [ 85.5; 92.0; 78.5 ];
+]
 
-## Documentation
+(* hugin — plotting *)
+let () = Hugin.(figure () |> subplot |> Plotting.plot ~x ~y |> ignore; show ())
+```
 
-**[📖 Read the Introduction](https://raven-ml.dev/docs/)** - Learn about our vision, philosophy, and approach
+## Packages
 
-_More comprehensive documentation and examples are coming soon as we are heading towards the release._
+| | Package | Like | What it does |
+|-|---------|------|-------------|
+| | [**nx**](packages/nx/) | NumPy | N-dimensional arrays with pluggable backends |
+| | [**brot**](packages/brot/) | HuggingFace Tokenizers | Fast tokenization for language models |
+| | [**talon**](packages/talon/) | Pandas / Polars | DataFrames with type-safe columns |
+| | [**hugin**](packages/hugin/) | Matplotlib | Data visualization and plotting |
+| | [**quill**](packages/quill/) | Jupyter | Notebooks as markdown files |
+| | [**rune**](packages/rune/) | JAX | Autodiff and JIT compilation |
+| ᚲ | [**kaun**](packages/kaun/) | PyTorch / Flax | Neural networks and training |
+| ᚠ | [**fehu**](packages/fehu/) | Gymnasium | Reinforcement learning environments |
+| ᛋ | [**sowilo**](packages/sowilo/) | OpenCV | Computer vision on tensors |
 
-## Contributing
+## Getting started
 
-Raven is in active development and we welcome contributions from the community!
+```bash
+opam install raven
+```
 
-**Ways to Contribute:**
-- **Share feedback** - [Open issues](https://github.com/raven-ml/raven/issues) or [email us](mailto:thibaut.mattio@gmail.com) with your thoughts on APIs, performance, or developer experience
-- **Test the libraries** - Try Raven libraries with your workflows and report what works (or breaks)
-- **Improve documentation** - Help us make the docs clearer and more comprehensive
-- **Build new libraries** - Interested in creating any of the planned libraries below? Let's collaborate!
+This installs the full ecosystem. You can also install only what you need — e.g. `opam install kaun` for neural networks, or `opam install nx` for just arrays.
 
-**Future Libraries (Open for Contributions):**
-For our first release, we're focused on the foundation (Nx, Talon, Hugin, Quill) and the deep learning vertical (Rune, Kaun). These areas are planned for future development:
+Add to your `dune` file:
 
-- **Statistical computing** (R-like statistical functions)  
-- **Time series analysis** and **geospatial computing**
-- **Distributed computing** (Dask equivalent)
+```dune
+(executable
+ (name main)
+ (libraries raven))
+```
 
-Whether you're an OCaml expert or new to the language, we'd love your help building the future of scientific computing in OCaml!
+See the [installation guide](https://raven-ml.dev/docs/installation/) for system dependencies and editor setup.
 
-See our [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
+## Support
 
-## Support Raven
-
-Building a complete scientific computing ecosystem takes time and focus.
-We're raising funds to work on Raven full-time and deliver on our [roadmap](https://raven-ml.dev/docs/roadmap/).
-
-Your sponsorship helps us release a stable V1 with GPU backends, achieve NumPy/PyTorch performance parity, and build comprehensive documentation and tutorials.
+Building a scientific computing ecosystem takes sustained effort. Sponsorships help us ship JIT compilation, distributed training, better developer tooling, and production deployment through MirageOS.
 
 **[Support Raven →](https://raven-ml.dev/docs/support-raven/)**
 
-### Corporate Sponsors
-
-We're grateful for the support of our corporate sponsors:
-
-- [**Ahrefs**](https://ahrefs.com) - Building tools to help you grow your search traffic
-- [**Tarides**](https://tarides.com) - Secure-by-design infrastructure and tooling for a better digital world
+Thanks to our sponsors [Ahrefs](https://ahrefs.com) and [Tarides](https://tarides.com).
 
 ## License
 
-Raven is available under the [ISC License](LICENSE), making it free for both personal and commercial use.
+[ISC](LICENSE)
