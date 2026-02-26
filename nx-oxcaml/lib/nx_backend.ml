@@ -1144,10 +1144,104 @@ let assign (type a b) (dst : (a, b) t) (src : (a, b) t) : unit =
   | _ -> Error.invalid ~op:"assign" ~what:"unsupported dtype" ()
 
 let threefry ~out:_ _ _ = Error.invalid ~op:"threefry" ~what:"not implemented" ()
-let gather ~out:_ _ _ ~axis:_ = Error.invalid ~op:"gather" ~what:"not implemented" ()
 
-let scatter ?mode:_ ?unique_indices:_ _ ~indices:_ ~updates:_ ~axis:_ =
-  Error.invalid ~op:"scatter" ~what:"not implemented" ()
+let gather (type a b) ~(out : (a, b) t) (data : (a, b) t)
+    (indices : (int32, Dtype.int32_elt) t) ~(axis : int) =
+  let dshape = shape data.view in
+  let ishape = shape indices.view in
+  if Array.length dshape <> Array.length ishape then
+    Error.invalid ~op:"gather" ~what:"rank mismatch" ();
+  let rank = Array.length dshape in
+  let axis = if axis < 0 then rank + axis else axis in
+  if axis < 0 || axis >= rank then
+    Error.axis_out_of_bounds ~op:"gather" ~axis ~ndim:rank ();
+  let n = numel indices.view in
+  let data_offset = View.offset data.view in
+  let data_strides = View.strides data.view in
+  let idx_offset = View.offset indices.view in
+  let idx_strides = View.strides indices.view in
+  let out_offset = View.offset out.view in
+  let out_strides = View.strides out.view in
+  let idx_arr =
+    match indices.buffer with Int32 a -> a | _ -> assert false
+  in
+  let run f = par out.context.pool n (fun s e ->
+    f ishape dshape axis idx_arr data_offset data_strides idx_offset
+      idx_strides out_offset out_strides s e)
+  in
+  match (data.buffer, out.buffer) with
+  | Float64 src, Float64 dst ->
+      run (Op_gather.gather_float64 src dst)
+  | Float32 src, Float32 dst ->
+      run (Op_gather.gather_float32 src dst)
+  | Int8 src, Int8 dst ->
+      run (Op_gather.gather_int8 src dst)
+  | Int16 src, Int16 dst ->
+      run (Op_gather.gather_int16 src dst)
+  | Int32 src, Int32 dst ->
+      run (Op_gather.gather_int32 src dst)
+  | Int64 src, Int64 dst ->
+      run (Op_gather.gather_int64 src dst)
+  | Bool src, Bool dst ->
+      run (Op_gather.gather_bool src dst)
+  | _ -> Error.invalid ~op:"gather" ~what:"unsupported dtype" ()
+
+let scatter ?(mode = `Set) ?(unique_indices = false) (type a b)
+    (data_template : (a, b) t)
+    ~(indices : (int32, Dtype.int32_elt) t)
+    ~(updates : (a, b) t)
+    ~(axis : int) : (a, b) t =
+  let tshape = shape data_template.view in
+  let ishape = shape indices.view in
+  let ushape = shape updates.view in
+  if Array.length tshape <> Array.length ishape then
+    Error.invalid ~op:"scatter" ~what:"rank mismatch" ();
+  if ishape <> ushape then
+    Error.invalid ~op:"scatter" ~what:"indices/updates shape mismatch" ();
+  let rank = Array.length tshape in
+  let axis = if axis < 0 then rank + axis else axis in
+  if axis < 0 || axis >= rank then
+    Error.axis_out_of_bounds ~op:"scatter" ~axis ~ndim:rank ();
+  let out = copy data_template in
+  let n = numel indices.view in
+  let idx_offset = View.offset indices.view in
+  let idx_strides = View.strides indices.view in
+  let upd_offset = View.offset updates.view in
+  let upd_strides = View.strides updates.view in
+  let out_offset = View.offset out.view in
+  let out_strides = View.strides out.view in
+  let idx_arr =
+    match indices.buffer with Int32 a -> a | _ -> assert false
+  in
+  (* Scatter with Set mode and unique indices is safe to parallelize since
+     each output position is written at most once. Add mode or non-unique
+     indices require sequential execution to avoid write conflicts. *)
+  let run f =
+    if unique_indices && mode = `Set then
+      par out.context.pool n (fun s e ->
+        f ishape tshape axis idx_arr upd_offset upd_strides
+          idx_offset idx_strides out_offset out_strides s e)
+    else
+      f ishape tshape axis idx_arr upd_offset upd_strides
+        idx_offset idx_strides out_offset out_strides 0 n
+  in
+  (match (updates.buffer, out.buffer) with
+  | Float64 src_arr, Float64 out_arr ->
+      run (Op_scatter.scatter_float64 mode src_arr out_arr)
+  | Float32 src_arr, Float32 out_arr ->
+      run (Op_scatter.scatter_float32 mode src_arr out_arr)
+  | Int8 src_arr, Int8 out_arr ->
+      run (Op_scatter.scatter_int8 mode src_arr out_arr)
+  | Int16 src_arr, Int16 out_arr ->
+      run (Op_scatter.scatter_int16 mode src_arr out_arr)
+  | Int32 src_arr, Int32 out_arr ->
+      run (Op_scatter.scatter_int32 mode src_arr out_arr)
+  | Int64 src_arr, Int64 out_arr ->
+      run (Op_scatter.scatter_int64 mode src_arr out_arr)
+  | Bool src_arr, Bool out_arr ->
+      run (Op_scatter.scatter_bool mode src_arr out_arr)
+  | _ -> Error.invalid ~op:"scatter" ~what:"unsupported dtype" ());
+  out
 
 let unfold _ ~kernel_size:_ ~stride:_ ~dilation:_ ~padding:_ =
   Error.invalid ~op:"unfold" ~what:"not implemented" ()
