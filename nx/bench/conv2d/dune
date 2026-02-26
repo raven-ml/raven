@@ -1,1 +1,3 @@
-; Bench disabled: NN-style conv2d moved to kaun/lib/fn.ml
+(executable
+ (name bench_conv2d_nx)
+ (libraries nx ubench))

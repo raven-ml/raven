@@ -3,115 +3,57 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Configuration - common CNN layer sizes *)
-let configs =
-  [
-    (* (batch, in_channels, out_channels, input_size, kernel_size) *)
-    (1, 3, 32, 64, 3);
-    (* Small: first conv layer, single image *)
-    (8, 32, 64, 32, 3);
-    (* Medium: mid-layer, small batch *)
-    (16, 64, 128, 16, 3);
-    (* Large: deep layer, larger batch *)
-  ]
+(* Benchmarks for Nx.correlate and Nx.extract_patches *)
 
 let backend_name = "Nx"
 
-let benchmark_name op_name batch in_ch out_ch img_size kernel_size dtype_label =
-  Printf.sprintf "%s B%d C%d->%d %dx%d K%d %s (%s)" op_name batch in_ch out_ch
-    img_size img_size kernel_size dtype_label backend_name
+(* correlate: (leading..., spatial...) with kernel of rank K *)
+let correlate_configs =
+  [
+    (* (label, input_shape, kernel_shape) *)
+    ("1D 1k", [| 100 |], [| 5 |]);
+    ("1D 10k batched", [| 16; 10000 |], [| 5 |]);
+    ("2D 64x64", [| 64; 64 |], [| 3; 3 |]);
+    ("2D 256x256", [| 256; 256 |], [| 3; 3 |]);
+    ("2D batch 8x64x64", [| 8; 64; 64 |], [| 3; 3 |]);
+    ("2D batch 8x256x256", [| 8; 256; 256 |], [| 3; 3 |]);
+  ]
 
-type conv_spec = {
-  name : string;
-  batch : int;
-  in_channels : int;
-  out_channels : int;
-  img_size : int;
-  kernel_size : int;
-}
-
-let conv_specs =
-  List.map
-    (fun (batch, in_ch, out_ch, img_size, kernel_size) ->
-      {
-        name = "Conv2d";
-        batch;
-        in_channels = in_ch;
-        out_channels = out_ch;
-        img_size;
-        kernel_size;
-      })
-    configs
-
-let setup_f32 spec =
-  let input_shape =
-    [| spec.batch; spec.in_channels; spec.img_size; spec.img_size |]
-  in
-  let kernel_shape =
-    [|
-      spec.out_channels; spec.in_channels; spec.kernel_size; spec.kernel_size;
-    |]
-  in
-  let input =
-    Nx.rand Nx.Float32
-      ~key:(Nx.Rng.key (Hashtbl.hash (spec.name, 0)))
-      input_shape
-  in
-  let kernel =
-    Nx.rand Nx.Float32
-      ~key:(Nx.Rng.key (Hashtbl.hash (spec.name, 1)))
-      kernel_shape
-  in
-  (input, kernel)
-
-let setup_f64 spec =
-  let input_shape =
-    [| spec.batch; spec.in_channels; spec.img_size; spec.img_size |]
-  in
-  let kernel_shape =
-    [|
-      spec.out_channels; spec.in_channels; spec.kernel_size; spec.kernel_size;
-    |]
-  in
-  let input =
-    Nx.rand Nx.Float64
-      ~key:(Nx.Rng.key (Hashtbl.hash (spec.name, 2)))
-      input_shape
-  in
-  let kernel =
-    Nx.rand Nx.Float64
-      ~key:(Nx.Rng.key (Hashtbl.hash (spec.name, 3)))
-      kernel_shape
-  in
-  (input, kernel)
+let extract_patches_configs =
+  [
+    (* (label, input_shape, kernel_size, stride) *)
+    ("2D 64x64 k3 s1", [| 1; 1; 64; 64 |], [| 3; 3 |], [| 1; 1 |]);
+    ("2D 64x64 k3 s2", [| 1; 1; 64; 64 |], [| 3; 3 |], [| 2; 2 |]);
+    ("2D 256x256 k3 s1", [| 1; 1; 256; 256 |], [| 3; 3 |], [| 1; 1 |]);
+    ("2D 8x3x64x64 k3 s1", [| 8; 3; 64; 64 |], [| 3; 3 |], [| 1; 1 |]);
+  ]
 
 let build_benchmarks () =
   let benchmarks = ref [] in
-
-  (* Float32 benchmarks *)
+  let key = Nx.Rng.key 42 in
   List.iter
-    (fun spec ->
-      let input, kernel = setup_f32 spec in
-      let bench_name =
-        benchmark_name spec.name spec.batch spec.in_channels spec.out_channels
-          spec.img_size spec.kernel_size "f32"
-      in
-      let fn () = ignore (Nx.convolve2d input kernel) in
-      benchmarks := Ubench.bench bench_name fn :: !benchmarks)
-    conv_specs;
-
-  (* Float64 benchmarks *)
+    (fun (label, input_shape, kernel_shape) ->
+      let x = Nx.rand Nx.Float32 ~key input_shape in
+      let k = Nx.rand Nx.Float32 ~key kernel_shape in
+      let name = Printf.sprintf "correlate %s f32 (%s)" label backend_name in
+      benchmarks :=
+        Ubench.bench name (fun () -> ignore (Nx.correlate x k)) :: !benchmarks)
+    correlate_configs;
   List.iter
-    (fun spec ->
-      let input, kernel = setup_f64 spec in
-      let bench_name =
-        benchmark_name spec.name spec.batch spec.in_channels spec.out_channels
-          spec.img_size spec.kernel_size "f64"
+    (fun (label, input_shape, kernel_size, stride) ->
+      let x = Nx.rand Nx.Float32 ~key input_shape in
+      let k = Array.length kernel_size in
+      let dilation = Array.make k 1 in
+      let padding = Array.make k (0, 0) in
+      let name =
+        Printf.sprintf "extract_patches %s f32 (%s)" label backend_name
       in
-      let fn () = ignore (Nx.convolve2d input kernel) in
-      benchmarks := Ubench.bench bench_name fn :: !benchmarks)
-    conv_specs;
-
+      benchmarks :=
+        Ubench.bench name (fun () ->
+            ignore
+              (Nx.extract_patches ~kernel_size ~stride ~dilation ~padding x))
+        :: !benchmarks)
+    extract_patches_configs;
   List.rev !benchmarks
 
 let default_config () =
