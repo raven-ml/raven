@@ -1,0 +1,9 @@
+#include <metal_stdlib>
+using namespace metal;
+kernel void test(device float* data0, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  int gidx0 = gid.x; /* 32 */
+  int lidx0 = lid.x; /* 32 */
+  int alu0 = (gidx0+lidx0);
+  float val0 = (*(data0+alu0));
+  *(data0+alu0) = val0;
+}

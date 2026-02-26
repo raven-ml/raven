@@ -1,0 +1,4 @@
+__kernel void test(__global float* data0, __global float* data1) {
+  float val0 = (*(data0+0));
+  *(data1+0) = sqrt(val0);
+}

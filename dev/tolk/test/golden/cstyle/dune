@@ -1,0 +1,105 @@
+(executable
+ (name generate_actual)
+ (libraries tolk))
+
+(rule
+ (targets
+  clang_bitcast_f32_to_i32.actual
+  clang_cast_f16_to_f32.actual
+  clang_conditional.actual
+  clang_const_inf_nan.actual
+  clang_gated_load.actual
+  clang_loop.actual
+  clang_multi_param.actual
+  clang_nested_loops.actual
+  clang_simple_add_f32.actual
+  clang_simple_mul_i32.actual
+  clang_unary_sqrt_f16.actual
+  clang_unary_sqrt_f32.actual
+  clang_vectorize_gep.actual
+  clang_where_select.actual
+  metal_bitcast_f32_to_i32.actual
+  metal_cast_f16_to_f32.actual
+  metal_conditional.actual
+  metal_const_inf_nan.actual
+  metal_gated_load.actual
+  metal_loop.actual
+  metal_multi_param.actual
+  metal_nested_loops.actual
+  metal_shared_memory.actual
+  metal_simple_add_f32.actual
+  metal_simple_mul_i32.actual
+  metal_special_dims.actual
+  metal_unary_sqrt_f16.actual
+  metal_unary_sqrt_f32.actual
+  metal_vectorize_gep.actual
+  metal_where_select.actual
+  opencl_bitcast_f32_to_i32.actual
+  opencl_cast_f16_to_f32.actual
+  opencl_conditional.actual
+  opencl_const_inf_nan.actual
+  opencl_gated_load.actual
+  opencl_loop.actual
+  opencl_multi_param.actual
+  opencl_nested_loops.actual
+  opencl_shared_memory.actual
+  opencl_simple_add_f32.actual
+  opencl_simple_mul_i32.actual
+  opencl_special_dims.actual
+  opencl_unary_sqrt_f16.actual
+  opencl_unary_sqrt_f32.actual
+  opencl_vectorize_gep.actual
+  opencl_where_select.actual)
+ (action
+  (run ./generate_actual.exe .)))
+
+(rule
+ (alias runtest)
+ (action
+  (progn
+   (diff clang_bitcast_f32_to_i32.expected clang_bitcast_f32_to_i32.actual)
+   (diff clang_cast_f16_to_f32.expected clang_cast_f16_to_f32.actual)
+   (diff clang_conditional.expected clang_conditional.actual)
+   (diff clang_const_inf_nan.expected clang_const_inf_nan.actual)
+   (diff clang_gated_load.expected clang_gated_load.actual)
+   (diff clang_loop.expected clang_loop.actual)
+   (diff clang_multi_param.expected clang_multi_param.actual)
+   (diff clang_nested_loops.expected clang_nested_loops.actual)
+   (diff clang_simple_add_f32.expected clang_simple_add_f32.actual)
+   (diff clang_simple_mul_i32.expected clang_simple_mul_i32.actual)
+   (diff clang_unary_sqrt_f16.expected clang_unary_sqrt_f16.actual)
+   (diff clang_unary_sqrt_f32.expected clang_unary_sqrt_f32.actual)
+   (diff clang_vectorize_gep.expected clang_vectorize_gep.actual)
+   (diff clang_where_select.expected clang_where_select.actual)
+   (diff metal_bitcast_f32_to_i32.expected metal_bitcast_f32_to_i32.actual)
+   (diff metal_cast_f16_to_f32.expected metal_cast_f16_to_f32.actual)
+   (diff metal_conditional.expected metal_conditional.actual)
+   (diff metal_const_inf_nan.expected metal_const_inf_nan.actual)
+   (diff metal_gated_load.expected metal_gated_load.actual)
+   (diff metal_loop.expected metal_loop.actual)
+   (diff metal_multi_param.expected metal_multi_param.actual)
+   (diff metal_nested_loops.expected metal_nested_loops.actual)
+   (diff metal_shared_memory.expected metal_shared_memory.actual)
+   (diff metal_simple_add_f32.expected metal_simple_add_f32.actual)
+   (diff metal_simple_mul_i32.expected metal_simple_mul_i32.actual)
+   (diff metal_special_dims.expected metal_special_dims.actual)
+   (diff metal_unary_sqrt_f16.expected metal_unary_sqrt_f16.actual)
+   (diff metal_unary_sqrt_f32.expected metal_unary_sqrt_f32.actual)
+   (diff metal_vectorize_gep.expected metal_vectorize_gep.actual)
+   (diff metal_where_select.expected metal_where_select.actual)
+   (diff opencl_bitcast_f32_to_i32.expected opencl_bitcast_f32_to_i32.actual)
+   (diff opencl_cast_f16_to_f32.expected opencl_cast_f16_to_f32.actual)
+   (diff opencl_conditional.expected opencl_conditional.actual)
+   (diff opencl_const_inf_nan.expected opencl_const_inf_nan.actual)
+   (diff opencl_gated_load.expected opencl_gated_load.actual)
+   (diff opencl_loop.expected opencl_loop.actual)
+   (diff opencl_multi_param.expected opencl_multi_param.actual)
+   (diff opencl_nested_loops.expected opencl_nested_loops.actual)
+   (diff opencl_shared_memory.expected opencl_shared_memory.actual)
+   (diff opencl_simple_add_f32.expected opencl_simple_add_f32.actual)
+   (diff opencl_simple_mul_i32.expected opencl_simple_mul_i32.actual)
+   (diff opencl_special_dims.expected opencl_special_dims.actual)
+   (diff opencl_unary_sqrt_f16.expected opencl_unary_sqrt_f16.actual)
+   (diff opencl_unary_sqrt_f32.expected opencl_unary_sqrt_f32.actual)
+   (diff opencl_vectorize_gep.expected opencl_vectorize_gep.actual)
+   (diff opencl_where_select.expected opencl_where_select.actual))))

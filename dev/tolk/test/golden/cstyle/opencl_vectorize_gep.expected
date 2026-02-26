@@ -1,0 +1,7 @@
+__kernel void test(__global float* data0, __global float* data1) {
+  float val0 = (*(data0+0));
+  float val1 = (*(data0+1));
+  float val2 = (*(data0+2));
+  float val3 = (*(data0+3));
+  *(data1+0) = (float4)(val0,val1,val2,val3).z;
+}

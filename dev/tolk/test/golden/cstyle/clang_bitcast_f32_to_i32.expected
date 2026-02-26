@@ -1,0 +1,4 @@
+void test(float* restrict data0, int* restrict data1) {
+  float val0 = (*(data0+0));
+  *(data1+0) = __builtin_bit_cast(int, (float)(val0));
+}

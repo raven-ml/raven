@@ -1,0 +1,6 @@
+#include <metal_stdlib>
+using namespace metal;
+kernel void test(device half* data0, device half* data1, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  half val0 = (*(data0+0));
+  *(data1+0) = sqrt(val0);
+}

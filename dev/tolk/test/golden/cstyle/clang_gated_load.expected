@@ -1,0 +1,4 @@
+void test(float* restrict data0, float* restrict data1) {
+  float val0 = (1?*(data0+0):0.0f);
+  *(data1+0) = val0;
+}

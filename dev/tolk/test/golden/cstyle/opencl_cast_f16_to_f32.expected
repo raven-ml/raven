@@ -1,0 +1,5 @@
+#pragma OPENCL EXTENSION cl_khr_fp16 : enable
+__kernel void test(__global half* data0, __global float* data1) {
+  half val0 = (*(data0+0));
+  *(data1+0) = ((float)(val0));
+}

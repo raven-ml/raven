@@ -1,0 +1,4 @@
+__kernel void test(__global float* data0) {
+  *(data0+0) = ((float)(INFINITY));
+  *(data0+1) = ((float)(NAN));
+}

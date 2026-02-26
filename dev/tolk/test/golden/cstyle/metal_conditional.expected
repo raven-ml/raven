@@ -1,0 +1,7 @@
+#include <metal_stdlib>
+using namespace metal;
+kernel void test(device float* data0, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  if (1) {
+    *(data0+0) = 1.0f;
+  }
+}
