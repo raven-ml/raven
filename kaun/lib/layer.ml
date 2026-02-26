@@ -187,11 +187,10 @@ let conv1d ~in_channels ~out_channels ?(kernel_size = 3) ?(stride = 1)
               let pad_left = (kernel_size - 1) * dilation in
               Rune.pad [| (0, 0); (0, 0); (pad_left, 0) |] 0.0 x
         in
-        let padding_mode =
+        let padding =
           match padding with `Same -> `Same | `Valid | `Causal -> `Valid
         in
-        let conv = Rune.convolve1d x weight ~stride ~dilation ~padding_mode in
-        (Rune.add conv (Rune.reshape [| 1; out_channels; 1 |] bias), state));
+        (Fn.conv1d ~stride ~dilation ~padding ~bias x weight, state));
   }
 
 let conv2d ~in_channels ~out_channels ?(kernel_size = (3, 3)) () =
@@ -219,10 +218,7 @@ let conv2d ~in_channels ~out_channels ?(kernel_size = (3, 3)) () =
         let fields = Ptree.Dict.fields_exn ~ctx:"Layer.conv2d" params in
         let weight = Ptree.Dict.get_tensor_exn fields ~name:"weight" dtype in
         let bias = Ptree.Dict.get_tensor_exn fields ~name:"bias" dtype in
-        let conv =
-          Rune.convolve2d x weight ~stride:(1, 1) ~padding_mode:`Same
-        in
-        (Rune.add conv (Rune.reshape [| 1; out_channels; 1; 1 |] bias), state));
+        (Fn.conv2d ~padding:`Same ~bias x weight, state));
   }
 
 (* Normalization *)
@@ -492,8 +488,7 @@ let max_pool2d ~kernel_size ?stride () =
       (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
         ignore (params, training, rngs, ctx);
         let x = require_same_float_dtype ~ctx:"Layer.max_pool2d" dtype x in
-        let pooled, _ = Rune.max_pool2d x ~kernel_size ~stride in
-        (pooled, state));
+        (Fn.max_pool2d ~kernel_size ~stride x, state));
   }
 
 let avg_pool2d ~kernel_size ?stride () =
@@ -507,7 +502,7 @@ let avg_pool2d ~kernel_size ?stride () =
       (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
         ignore (params, training, rngs, ctx);
         let x = require_same_float_dtype ~ctx:"Layer.avg_pool2d" dtype x in
-        (Rune.avg_pool2d x ~kernel_size ~stride, state));
+        (Fn.avg_pool2d ~kernel_size ~stride x, state));
   }
 
 (* Reshape *)

@@ -24,13 +24,20 @@ let with_batch_pair f img =
   | n -> invalid_arg (err_rank n)
 
 let convolve_per_channel kernel img =
+  (* img: (N, H, W, C), kernel: (kH, kW) *)
   let shape = Rune.shape img in
+  let n = shape.(0) in
+  let h = shape.(1) in
+  let w = shape.(2) in
   let c = shape.(3) in
-  let kshape = Rune.shape kernel in
-  let kh = kshape.(0) and kw = kshape.(1) in
+  (* NCHW then merge N*C into leading: (N*C, H, W) *)
   let img_nchw = Rune.transpose ~axes:[ 0; 3; 1; 2 ] img in
-  let k4d =
-    Rune.tile [| c; 1; 1; 1 |] (Rune.reshape [| 1; 1; kh; kw |] kernel)
-  in
-  let out = Rune.correlate2d ~groups:c ~padding_mode:`Same img_nchw k4d in
-  Rune.transpose ~axes:[ 0; 2; 3; 1 ] out
+  let merged = Rune.reshape [| n * c; h; w |] img_nchw in
+  (* correlate on last 2 dims with Same padding *)
+  let result = Rune.correlate ~padding:`Same merged kernel in
+  let out_shape = Rune.shape result in
+  let oh = out_shape.(1) in
+  let ow = out_shape.(2) in
+  (* Reshape back: (N, C, H_out, W_out) -> (N, H_out, W_out, C) *)
+  let result = Rune.reshape [| n; c; oh; ow |] result in
+  Rune.transpose ~axes:[ 0; 2; 3; 1 ] result
