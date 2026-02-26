@@ -43,11 +43,6 @@
  (package
   (name tree-sitter)))
 
-(pin
- (url git+https://github.com/invariant-hq/windtrap)
- (package
-  (name windtrap)))
-
 (package
  (name nx)
  (synopsis "High-performance N-dimensional array library for OCaml")
