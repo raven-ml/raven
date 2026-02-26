@@ -1,7 +1,7 @@
 # Nx Examples
 
-Ten standalone examples that teach Nx from the ground up. Each builds on the
-previous one, progressing from array creation to a complete data pipeline.
+Nine standalone examples that teach Nx from the ground up. Each builds on the
+previous one, progressing from array creation to image processing.
 
 ## Examples
 
@@ -16,7 +16,6 @@ previous one, progressing from array creation to a complete data pipeline.
 | 07  | [Linear Algebra](07-linear-algebra/)                         | `@@`, `/@`, `inv`, `det`, `lstsq`, `eigh`, `svd`                     |
 | 08  | [Signal Processing](08-signal-processing/)                   | `rfft`, `irfft`, `rfftfreq`, frequency filtering                     |
 | 09  | [Image Processing](09-image-processing/)                     | `correlate2d`, `max_pool2d`, Sobel edges, `Nx_io.save_image`         |
-| 10  | [Data Pipeline](10-data-pipeline/)                           | `Nx_datasets`, `standardize`, train/test split, nearest-centroid     |
 
 ## Running
 
@@ -25,11 +24,10 @@ From the repository root:
 ```bash
 dune exec nx/examples/01-creating-arrays/main.exe
 dune exec nx/examples/02-infix-and-arithmetic/main.exe
-# ... and so on through 10
+# ... and so on through 09
 ```
 
 ## Dependencies
 
 - Examples 01-08 use only `nx`
 - Example 09 adds `nx.io` (image I/O)
-- Example 10 adds `nx.datasets` (bundled datasets)

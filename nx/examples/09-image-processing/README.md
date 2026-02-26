@@ -102,5 +102,5 @@ Running this example creates four PNG files in the current directory:
 
 ## Next Steps
 
-Continue to [10-data-pipeline](../10-data-pipeline/) to see a complete data
-preparation pipeline with the Iris dataset.
+You've completed the Nx examples! For machine learning workflows, see the
+[kaun examples](../../../kaun/examples/).
