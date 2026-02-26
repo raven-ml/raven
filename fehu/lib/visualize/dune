@@ -1,4 +1,0 @@
-(library
- (name fehu_visualize)
- (public_name fehu.visualize)
- (libraries fehu rune unix))

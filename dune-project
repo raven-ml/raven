@@ -171,22 +171,18 @@
 
 (package
  (name fehu)
- (synopsis "Reinforcement learning framework for OCaml")
+ (synopsis "Reinforcement learning environments and utilities for OCaml")
  (description
-  "Fehu is a reinforcement learning framework built on Raven's ecosystem, providing environments, algorithms, and training utilities")
+  "Minimal, composable library for reinforcement learning: environments, spaces, trajectory collection, advantage estimation, and replay buffers. Built on Rune.")
  (depends
   (ocaml
    (>= 5.2.0))
   dune
   (rune
    (= :version))
-  (kaun
-   (= :version))
-  jsont
-  bytesrw
   (windtrap :with-test))
  (tags
-  (reinforcement-learning machine-learning ai environments agents)))
+  (reinforcement-learning machine-learning environments)))
 
 (package
  (name hugin)
@@ -238,6 +234,8 @@
   (rune
    (= :version))
   (kaun
+   (= :version))
+  (kaun-board
    (= :version))
   (sowilo
    (= :version))

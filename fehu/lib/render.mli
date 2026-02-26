@@ -3,66 +3,66 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Typed render payloads shared across Fehu environments and utilities.
+(** Visualization primitives.
 
-    Rendered frames can carry pixel buffers, text, or vector graphics.
-    Environments should prefer returning {!Render.t} values to maximize
-    interoperability with recorders and sinks. *)
+    {!image} is the standard frame type for rgb-rendered environments.
+    {!rollout} runs a policy and feeds rendered frames to a user-provided sink.
+*)
+
+(** {1:pixel Pixel formats} *)
 
 module Pixel : sig
+  (** The type for pixel formats. *)
   type format =
-    [ `RGB8  (** 8-bit RGB pixels stored as packed bytes *)
-    | `RGBA8  (** 8-bit RGBA pixels *)
-    | `GRAY8  (** 8-bit grayscale pixels *)
-    | `RGBf  (** 32-bit float RGB pixels *)
-    | `RGBAf  (** 32-bit float RGBA pixels *) ]
-  (** Supported pixel formats for image buffers. *)
+    | Rgb  (** 3 channels. *)
+    | Rgba  (** 4 channels. *)
+    | Gray  (** 1 channel. *)
+
+  val channels : format -> int
+  (** [channels fmt] is the number of channels for [fmt]. *)
 end
 
+(** {1:image Images} *)
+
 type image = {
-  width : int;
-  height : int;
-  pixel_format : Pixel.format;
-  data_u8 :
-    (char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
-    option;
-  data_f32 :
-    (float, Bigarray.float32_elt, Bigarray.c_layout) Bigarray.Array1.t option;
+  width : int;  (** Width in pixels. *)
+  height : int;  (** Height in pixels. *)
+  pixel_format : Pixel.format;  (** Pixel layout. *)
+  data : (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t;
+      (** Raw pixel data of length [width * height * channels]. *)
 }
-(** Image payload backed by contiguous buffers.
+(** The type for rendered frames. *)
 
-    Exactly one of [data_u8] or [data_f32] should be [Some] depending on the
-    pixel format; the other must be [None]. *)
-
-type text = string
-(** Text payload for ANSI render modes. *)
-
-type svg = string
-(** Serialized SVG payload. *)
-
-type frame =
-  | Image of image
-  | Text of text
-  | Svg of svg
-  | None  (** Render frame variant. *)
-
-type t = frame
-(** Alias for render frames. *)
-
-val image_u8 :
+val image :
   width:int ->
   height:int ->
-  pixel_format:Pixel.format ->
-  data:(char, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t ->
-  unit ->
+  ?pixel_format:Pixel.format ->
+  (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t ->
   image
-(** Helper to construct an 8-bit image payload. *)
+(** [image ~width ~height data] constructs a frame. [pixel_format] defaults to
+    [Rgb].
 
-val image_f32 :
-  width:int ->
-  height:int ->
-  pixel_format:Pixel.format ->
-  data:(float, Bigarray.float32_elt, Bigarray.c_layout) Bigarray.Array1.t ->
+    Raises [Invalid_argument] if [Bigarray.Array1.dim data] does not equal
+    [width * height * channels]. *)
+
+(** {1:rollout Rollout} *)
+
+val rollout :
+  ('obs, 'act, image) Env.t ->
+  policy:('obs -> 'act) ->
+  steps:int ->
+  sink:(image -> unit) ->
   unit ->
-  image
-(** Helper to construct a float32 image payload. *)
+  unit
+(** [rollout env ~policy ~steps ~sink ()] runs [policy] in [env] for up to
+    [steps] steps. Each rendered frame is passed to [sink]. The environment is
+    reset at the start and on episode boundaries. *)
+
+(** {1:recording Recording} *)
+
+val on_render :
+  sink:(image -> unit) -> ('obs, 'act, image) Env.t -> ('obs, 'act, image) Env.t
+(** [on_render ~sink env] wraps [env] so that every rendered frame after
+    {!Env.reset} and {!Env.step} is passed to [sink]. The wrapper is
+    transparent: observations, actions, rewards, and termination signals pass
+    through unchanged. *)

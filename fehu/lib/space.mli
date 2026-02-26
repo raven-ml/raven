@@ -3,167 +3,128 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Action and observation spaces for environment interfaces.
+(** Observation and action spaces.
 
-    Spaces define the valid observations and actions for an environment. They
-    specify shapes, constraints, and provide methods to validate, sample, and
-    serialize values. Each space type corresponds to common RL scenarios:
-    discrete choices, continuous vectors, multi-dimensional arrays, and
-    composite structures.
+    Spaces define valid observations and actions for reinforcement learning
+    environments. They specify shapes, constraints, and provide methods to
+    validate, sample, and serialize values.
 
-    {1 Space Types}
+    Each space type corresponds to a common RL scenario: discrete choices,
+    continuous vectors, binary indicators, composite structures, and
+    variable-length sequences. *)
 
-    - {!Discrete}: Integer choices from a finite set
-    - {!Box}: Continuous vectors with bounded ranges
-    - {!Multi_binary}: Binary vectors for multi-label scenarios
-    - {!Multi_discrete}: Multiple discrete choices
-    - {!Tuple}: Fixed-length heterogeneous sequences
-    - {!Dict}: Named fields with different space types
-    - {!Sequence}: Variable-length homogeneous sequences
-    - {!Text}: String spaces for textual observations or actions
+(** {1:spec Structural description} *)
 
-    {1 Usage}
+(** Structural description of a space. Two spaces are compatible when their
+    specs are equal. *)
+type spec =
+  | Discrete of { start : int; n : int }
+      (** Integer choices in \[[start]; [start + n - 1]\]. *)
+  | Box of { low : float array; high : float array }
+      (** Continuous vector bounded per dimension. *)
+  | Multi_binary of { n : int }  (** Binary vector of length [n]. *)
+  | Multi_discrete of { nvec : int array }
+      (** Multiple discrete axes with per-axis cardinalities. *)
+  | Tuple of spec list  (** Fixed-length heterogeneous sequence. *)
+  | Dict of (string * spec) list  (** Named fields with different types. *)
+  | Sequence of { min_length : int; max_length : int option; base : spec }
+      (** Variable-length homogeneous sequence. *)
+  | Text of { charset : string; max_length : int }
+      (** Character strings from a fixed alphabet. *)
 
-    Create a discrete action space and sample from it:
-    {[
-      let action_space = Space.Discrete.create 4 in
-      let action, next_rng = Space.sample action_space
-    ]}
+val equal_spec : spec -> spec -> bool
+(** [equal_spec a b] is [true] iff [a] and [b] describe structurally identical
+    spaces. *)
 
-    Create a continuous observation space:
-    {[
-      let obs_space = Space.Box.create
-        ~low:[|-1.0; -1.0|]
-        ~high:[|1.0; 1.0|]
-      in
-      let is_valid = Space.contains obs_space observation
-    ]}
+(** {1:spaces Spaces} *)
 
-    Composite spaces for structured data:
-    {[
-      let space =
-        Space.Dict.create
-          [
-            ( "position",
-              Space.Pack (Box.create ~low:[| -10.0 |] ~high:[| 10.0 |]) );
-            ("velocity", Space.Pack (Box.create ~low:[| -1.0 |] ~high:[| 1.0 |]));
-          ]
-    ]} *)
-
-module Value : sig
-  type t =
-    | Int of int
-    | Float of float
-    | Bool of bool
-    | Int_array of int array
-    | Float_array of float array
-    | Bool_array of bool array
-    | List of t list
-    | Tuple of t list
-    | Dict of (string * t) list
-    | String of string
-        (** Universal value type for packing/unpacking space elements.
-
-            Provides a common representation for serialization and type-erased
-            manipulation of space values. *)
-
-  val pp : Format.formatter -> t -> unit
-  (** [pp formatter value] pretty-prints [value]. *)
-
-  val to_string : t -> string
-  (** [to_string value] converts [value] to a string representation. *)
-end
-
-type 'a t = {
-  shape : int array option;  (** Dimensionality, if applicable *)
-  contains : 'a -> bool;  (** Validates whether a value belongs to this space *)
-  sample : ?rng:Rune.Rng.key -> unit -> 'a * Rune.Rng.key;
-      (** Generates a random valid value and the next RNG key *)
-  pack : 'a -> Value.t;  (** Converts to universal value representation *)
-  unpack : Value.t -> ('a, string) result;
-      (** Parses from universal representation *)
-}
-(** Typed space representing valid values of type ['a].
-
-    Spaces encapsulate validation, sampling, and serialization logic for a type.
+type 'a t
+(** The type for spaces over values of type ['a]. A space is self-contained: all
+    bounds, constraints, and serialization logic are stored in the value itself.
 *)
 
 type packed =
   | Pack : 'a t -> packed
       (** Type-erased space for heterogeneous collections. *)
 
-val shape : 'a t -> int array option
-(** [shape space] returns the shape of [space], if defined.
+(** {1:ops Operations} *)
 
-    Shape represents dimensionality for array-like spaces. Returns [None] for
-    scalar or variable-length spaces. *)
+val spec : 'a t -> spec
+(** [spec s] is the structural description of [s]. *)
+
+val shape : 'a t -> int array option
+(** [shape s] is the dimensionality of [s], if defined. [None] for scalar or
+    variable-length spaces. *)
 
 val contains : 'a t -> 'a -> bool
-(** [contains space value] checks whether [value] is valid in [space].
+(** [contains s v] is [true] iff [v] is valid in [s]. *)
 
-    Returns [true] if [value] satisfies all constraints of [space]. *)
-
-val boundary_values : 'a t -> Value.t list
-(** [boundary_values space] returns representative edge-case values for [space].
-
-    The list includes lower/upper bounds or canonical sentinels when known.
-    Values are expressed in {!Value} form and can be used for deterministic
-    compatibility checks between spaces. Returns [] when no boundary samples are
-    registered for the space. *)
-
-val sample : ?rng:Rune.Rng.key -> 'a t -> 'a * Rune.Rng.key
-(** [sample ~rng space] generates a random valid value and next RNG key.
-
-    Returns [(value, next_key)]. The input key (or the default key when omitted)
-    must be treated as single-use; callers should continue with [next_key].
-    Internally, samplers split keys to maintain independence across draws. *)
+val sample : 'a t -> rng:Rune.Rng.key -> 'a * Rune.Rng.key
+(** [sample s ~rng] is [(v, rng')] where [v] is a uniformly sampled value from
+    [s]. The returned [rng'] must be used for subsequent draws to maintain
+    independence. *)
 
 val pack : 'a t -> 'a -> Value.t
-(** [pack space value] converts [value] to a universal representation. *)
+(** [pack s v] is [v] converted to the universal {!Value.t} representation. *)
 
 val unpack : 'a t -> Value.t -> ('a, string) result
-(** [unpack space value] parses [value] from universal representation.
-
-    Returns [Ok v] if [value] can be converted to a valid element of [space],
+(** [unpack s v] is [Ok x] if [v] can be converted to a valid element of [s], or
     [Error msg] otherwise. *)
+
+val boundary_values : 'a t -> Value.t list
+(** [boundary_values s] is a list of representative edge-case values for [s].
+    Includes lower/upper bounds or canonical sentinels when known. The empty
+    list when no boundary values apply. *)
+
+(** {1:space_types Space types} *)
 
 module Discrete : sig
   type element = (int32, Rune.int32_elt) Rune.t
-  (** Discrete action represented as a scalar tensor. *)
+  (** Discrete action represented as a scalar int32 tensor. *)
 
   val create : ?start:int -> int -> element t
-  (** [create ~start n] creates a discrete space with [n] choices.
+  (** [create ?start n] is a discrete space with [n] choices in the range
+      \[[start]; [start + n - 1]\]. [start] defaults to [0].
 
-      Valid values are integers in the range \[start, start + n). If [start] is
-      omitted, defaults to 0, producing the range \[0, n).
+      Raises [Invalid_argument] if [n <= 0]. *)
 
-      Common use: Action spaces for environments with discrete actions (e.g.,
-      move left, move right, jump).
+  val n : element t -> int
+  (** [n s] is the number of choices in [s].
 
-      @raise Invalid_argument if [n <= 0]. *)
+      Raises [Invalid_argument] if [s] is not a discrete space. *)
+
+  val start : element t -> int
+  (** [start s] is the starting value of [s].
+
+      Raises [Invalid_argument] if [s] is not a discrete space. *)
+
+  val to_int : element -> int
+  (** [to_int e] is the integer value of the discrete element [e]. *)
+
+  val of_int : int -> element
+  (** [of_int v] is a discrete element with value [v]. *)
 end
 
 module Box : sig
   type element = (float, Rune.float32_elt) Rune.t
-  (** Continuous vector represented as a float tensor. *)
+  (** Continuous vector represented as a float32 tensor. *)
 
   val create : low:float array -> high:float array -> element t
-  (** [create ~low ~high] creates a continuous space with bounded ranges.
+  (** [create ~low ~high] is a continuous space where element [i] satisfies
+      [low.(i) <= x.(i) <= high.(i)]. Both arrays must have the same positive
+      length.
 
-      Valid values are tensors where each element [i] satisfies
-      [low.(i) <= x.(i) <= high.(i)]. Arrays [low] and [high] must have the same
-      length, defining the space dimensionality.
+      When the range of a dimension is not finite (e.g. bounds set to
+      [Float.max_float]), sampling falls back to a uniform draw in \[[-1e6];
+      [1e6]\] clamped to bounds.
 
-      Common use: Observation spaces for continuous state (e.g., position,
-      velocity) or continuous action spaces (e.g., torque, steering angle).
-
-      @raise Invalid_argument
-        if [low] and [high] have different lengths or if any
-        [low.(i) > high.(i)]. *)
+      Raises [Invalid_argument] if [low] is empty, if [low] and [high] differ in
+      length, or if any [low.(i) > high.(i)]. *)
 
   val bounds : element t -> float array * float array
-  (** [bounds space] returns copies of the [low] and [high] vectors used to
-      create [space]. The returned arrays are safe to mutate. *)
+  (** [bounds s] is [(low, high)] copies of the bound vectors.
+
+      Raises [Invalid_argument] if [s] is not a box space. *)
 end
 
 module Multi_binary : sig
@@ -171,43 +132,31 @@ module Multi_binary : sig
   (** Binary vector for multi-label scenarios. *)
 
   val create : int -> element t
-  (** [create n] creates a binary vector space of length [n].
+  (** [create n] is a binary vector space of length [n]. Valid values are int32
+      tensors with [n] elements, each 0 or 1.
 
-      Valid values are tensors with [n] elements, each 0 or 1. Represents
-      independent binary choices (e.g., which objects are present in an image).
-
-      @raise Invalid_argument if [n <= 0]. *)
+      Raises [Invalid_argument] if [n <= 0]. *)
 end
 
 module Multi_discrete : sig
   type element = (int32, Rune.int32_elt) Rune.t
-  (** Multiple discrete choices, each with different cardinality. *)
+  (** Multiple discrete choices with independent cardinalities. *)
 
   val create : int array -> element t
-  (** [create nvec] creates a multi-discrete space.
+  (** [create nvec] is a multi-discrete space where element [i] is in \[[0];
+      [nvec.(i) - 1]\].
 
-      Valid values are tensors where element [i] is in \[0, nvec.(i)). Each
-      dimension represents an independent discrete choice with its own number of
-      options.
-
-      Common use: Environments with multiple independent discrete actions (e.g.,
-      [character_move, weapon_select, jump_or_not]).
-
-      @raise Invalid_argument if any [nvec.(i) <= 0]. *)
+      Raises [Invalid_argument] if [nvec] is empty or any [nvec.(i) <= 0]. *)
 end
 
 module Tuple : sig
   type element = Value.t list
-  (** Fixed-length heterogeneous sequence. *)
+  (** Fixed-length heterogeneous sequence in {!Value.t} form. *)
 
   val create : packed list -> element t
-  (** [create spaces] creates a tuple space from a list of subspaces.
-
-      Valid values are lists where element [i] belongs to [spaces.(i)]. All
-      tuples have fixed length equal to the number of subspaces.
-
-      Common use: Observations combining different data types (e.g.,
-      [image, scalar_speed]). *)
+  (** [create spaces] is a tuple space. Valid values are lists where element [i]
+      belongs to [spaces.(i)]. {!unpack} validates each element against its
+      subspace. *)
 end
 
 module Dict : sig
@@ -215,13 +164,10 @@ module Dict : sig
   (** Named fields with different space types. *)
 
   val create : (string * packed) list -> element t
-  (** [create fields] creates a dictionary space with named fields.
+  (** [create fields] is a dictionary space with named fields. Valid values are
+      association lists matching the keys and subspaces of [fields].
 
-      Valid values are association lists where each key-value pair [(k, v)] has
-      [v] belonging to the space associated with key [k] in [fields].
-
-      Common use: Structured observations with named components (e.g.,
-      [{"position": box, "inventory": multi_binary}]). *)
+      Raises [Invalid_argument] if [fields] contains duplicate keys. *)
 end
 
 module Sequence : sig
@@ -229,19 +175,13 @@ module Sequence : sig
   (** Variable-length homogeneous sequence. *)
 
   val create : ?min_length:int -> ?max_length:int -> 'a t -> 'a element t
-  (** [create ~min_length ~max_length subspace] creates a sequence space.
+  (** [create ?min_length ?max_length s] is a sequence space over [s].
+      [min_length] defaults to [0]. When [max_length] is provided, sampling
+      draws a uniform length in \[[min_length]; [max_length]\]; otherwise the
+      sampler returns sequences of length [min_length].
 
-      Valid values are lists of elements from [subspace], with length
-      constraints:
-      - If [min_length] is provided, list length must be >= [min_length]
-      - If [max_length] is provided, list length must be <= [max_length]
-        (otherwise, no upper bound is enforced)
-
-      Sampling uses the provided [max_length] range when bounded; otherwise the
-      sampler returns sequences of length [min_length] (default: 0).
-
-      Common use: Variable-length observations (e.g., lists of detected objects,
-      sequences of variable horizon length). *)
+      Raises [Invalid_argument] if [min_length < 0] or
+      [max_length < min_length]. *)
 end
 
 module Text : sig
@@ -249,12 +189,10 @@ module Text : sig
   (** String space for textual observations or actions. *)
 
   val create : ?charset:string -> ?max_length:int -> unit -> element t
-  (** [create ~charset ~max_length ()] creates a text space.
+  (** [create ?charset ?max_length ()] is a text space. [charset] defaults to
+      alphanumeric plus space. [max_length] defaults to [64]. Valid strings
+      contain only characters from [charset] and have length at most
+      [max_length].
 
-      Valid values are strings satisfying:
-      - All characters appear in [charset] (if provided)
-      - Length <= [max_length] (if provided)
-
-      Common use: Text-based environments, language model actions, or string
-      commands. *)
+      Raises [Invalid_argument] if [max_length <= 0] or [charset] is empty. *)
 end

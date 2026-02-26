@@ -3,132 +3,84 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Auxiliary information dictionaries for environment transitions.
+(** Step metadata dictionaries.
 
-    Info dictionaries attach metadata to observations and transitions, such as
-    diagnostic information, intermediate values, or episode statistics. They use
-    a schemaless key-value structure similar to JSON, allowing flexible data
-    passing without rigid type constraints.
+    Info dictionaries carry auxiliary data returned by {!Env.reset} and
+    {!Env.step}. Keys are strings and values are {!Value.t}. *)
 
-    {1 Usage}
-
-    Create and populate info dictionaries:
-    {[
-      let info =
-        Info.empty
-        |> Info.set "episode_length" (Info.int 42)
-        |> Info.set "success" (Info.bool true)
-    ]}
-
-    Retrieve values:
-    {[
-      match Info.find "episode_length" info with
-      | Some (Int n) -> Printf.printf "Episode length: %d\n" n
-      | _ -> ()
-    ]}
-
-    Merge info from different sources:
-    {[
-      let combined = Info.merge env_info wrapper_info
-    ]} *)
-
-(** Universal value type for info dictionaries.
-
-    Supports common data types with arbitrary nesting. *)
-type value =
-  | Null  (** Null/None value *)
-  | Bool of bool  (** Boolean value *)
-  | Int of int  (** Integer value *)
-  | Float of float  (** Floating-point value *)
-  | Int_array of int array  (** Array of integers *)
-  | Float_array of float array  (** Array of floats *)
-  | Bool_array of bool array  (** Array of booleans *)
-  | String of string  (** String value *)
-  | List of value list  (** List of values *)
-  | Dict of (string * value) list  (** Nested dictionary *)
+(** {1:types Types} *)
 
 type t
-(** Immutable key-value dictionary for auxiliary information. *)
+(** The type for info dictionaries. *)
+
+(** {1:constructors Constructors} *)
 
 val empty : t
-(** [empty] is the empty info dictionary with no entries. *)
+(** [empty] is the empty dictionary. *)
+
+val of_list : (string * Value.t) list -> t
+(** [of_list kvs] is a dictionary from the given key-value pairs. *)
+
+(** {1:predicates Predicates} *)
 
 val is_empty : t -> bool
-(** [is_empty info] checks whether [info] contains any entries. *)
+(** [is_empty t] is [true] iff [t] has no bindings. *)
 
-val singleton : string -> value -> t
-(** [singleton key value] creates an info dictionary with a single entry. *)
+(** {1:ops Operations} *)
 
-val set : string -> value -> t -> t
-(** [set key value info] returns a new dictionary with [key] bound to [value].
+val set : string -> Value.t -> t -> t
+(** [set k v t] is [t] with [k] bound to [v]. *)
 
-    If [key] already exists, its value is replaced. *)
+val find : string -> t -> Value.t option
+(** [find k t] is the value bound to [k] in [t], if any. *)
 
-val update : string -> (value option -> value option) -> t -> t
-(** [update key f info] updates the value at [key] using function [f].
+val find_exn : string -> t -> Value.t
+(** [find_exn k t] is the value bound to [k] in [t].
 
-    [f] receives [Some old_value] if [key] exists, [None] otherwise. If [f]
-    returns [Some new_value], [key] is bound to [new_value]; if [None], [key] is
-    removed. *)
+    Raises [Invalid_argument] if [k] is not present. *)
 
-val find : string -> t -> value option
-(** [find key info] looks up [key] in [info].
-
-    Returns [Some value] if [key] exists, [None] otherwise. *)
-
-val get_exn : string -> t -> value
-(** [get_exn key info] retrieves the value at [key].
-
-    @raise Not_found if [key] doesn't exist. Use {!find} for safe lookup. *)
+val remove : string -> t -> t
+(** [remove k t] is [t] without the binding for [k]. *)
 
 val merge : t -> t -> t
-(** [merge info1 info2] combines two dictionaries.
+(** [merge a b] is the union of [a] and [b]. When both have a binding for the
+    same key, the value from [b] wins. *)
 
-    Keys from [info2] override those in [info1] when both are present. *)
+(** {1:converting Converting} *)
 
-val to_list : t -> (string * value) list
-(** [to_list info] converts [info] to an association list. *)
+val to_list : t -> (string * Value.t) list
+(** [to_list t] is the bindings of [t] in key order. *)
 
-val of_list : (string * value) list -> t
-(** [of_list entries] creates an info dictionary from an association list. *)
+val to_value : t -> Value.t
+(** [to_value t] is [t] as a {!Value.Dict}. *)
 
-val null : value
-(** [null] constructs a null value. *)
+(** {1:fmt Formatting} *)
 
-val bool : bool -> value
-(** [bool b] constructs a boolean value. *)
+val pp : Format.formatter -> t -> unit
+(** [pp] formats an info dictionary for debugging. *)
 
-val int : int -> value
-(** [int n] constructs an integer value. *)
+(** {1:convenience Convenience value constructors} *)
 
-val float : float -> value
-(** [float x] constructs a float value.
+val null : Value.t
+(** [null] is {!Value.Null}. *)
 
-    Non-finite values ([nan], [+∞], [-∞]) round-trip via JSON using sentinel
-    strings and are restored on deserialization. *)
+val bool : bool -> Value.t
+(** [bool b] is [Value.Bool b]. *)
 
-val int_array : int array -> value
-(** [int_array arr] constructs an integer array value. *)
+val int : int -> Value.t
+(** [int i] is [Value.Int i]. *)
 
-val float_array : float array -> value
-(** [float_array arr] constructs a float array value. *)
+val float : float -> Value.t
+(** [float f] is [Value.Float f]. *)
 
-val bool_array : bool array -> value
-(** [bool_array arr] constructs a boolean array value. *)
+val string : string -> Value.t
+(** [string s] is [Value.String s]. *)
 
-val string : string -> value
-(** [string s] constructs a string value. *)
+val int_array : int array -> Value.t
+(** [int_array arr] is [Value.Int_array (Array.copy arr)]. *)
 
-val list : value list -> value
-(** [list values] constructs a list value. *)
+val float_array : float array -> Value.t
+(** [float_array arr] is [Value.Float_array (Array.copy arr)]. *)
 
-val dict : (string * value) list -> value
-(** [dict entries] constructs a nested dictionary value. *)
-
-val to_json : t -> Jsont.json
-(** [to_json info] serializes [info] to JSON. *)
-
-val of_json : Jsont.json -> (t, string) result
-(** [of_json json] deserializes [info] from JSON.
-
-    Returns [Error msg] if the JSON structure is invalid. *)
+val bool_array : bool array -> Value.t
+(** [bool_array arr] is [Value.Bool_array (Array.copy arr)]. *)

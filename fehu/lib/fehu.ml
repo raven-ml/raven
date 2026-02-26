@@ -3,15 +3,13 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module Errors = Errors
+module Value = Value
 module Info = Info
-module Metadata = Metadata
 module Space = Space
-module Render = Render
 module Env = Env
-module Wrapper = Wrapper
-module Vector_env = Vector_env
+module Vec_env = Vec_env
+module Collect = Collect
 module Buffer = Buffer
-module Training = Training
-module Trajectory = Trajectory
-module Policy = Policy
+module Gae = Gae
+module Eval = Eval
+module Render = Render
