@@ -121,11 +121,12 @@ let to_cairo_surface ?cmap (data : Nx.uint8_t) =
 let float32_to_cairo_surface ?(cmap = Artist.Colormap.gray)
     (data : Nx.float32_t) =
   let shape = Nx.shape data in
-  let h, w, channels =
+  let h, w, channels, data =
     match shape with
-    | [| h; w |] -> (h, w, 1)
-    | [| h; w; 3 |] -> (h, w, 3)
-    | [| h; w; 4 |] -> (h, w, 4)
+    | [| h; w |] -> (h, w, 1, data)
+    | [| h; w; 1 |] -> (h, w, 1, Nx.reshape [| h; w |] data)
+    | [| h; w; 3 |] -> (h, w, 3, data)
+    | [| h; w; 4 |] -> (h, w, 4, data)
     | _ ->
         failwith
           "Render_utils.float32_to_cairo_surface: Unsupported image shape"
