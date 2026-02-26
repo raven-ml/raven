@@ -1801,6 +1801,58 @@ let test_threefry_strided_view_matches_contiguous () =
       contig_data.(i) perm_data.(i)
   done
 
+let test_argmax_float64_1d () =
+  let ctx = Nx_backend.create_context () in
+  let x = Nx_ox.create ctx Dtype.Float64 [| 5 |] [| 1.0; 5.0; 3.0; 2.0; 4.0 |] in
+  let out = Nx_ox.empty ctx Dtype.Int32 [| 1 |] in
+  Nx_backend.argmax ~out ~axis:0 ~keepdims:true x;
+  let d = Nx_ox.to_array out in
+  check_int32 "argmax_float64_1d" 1l d.(0)
+
+let test_argmax_float64_2d_axis0 () =
+  let ctx = Nx_backend.create_context () in
+  (* [[1, 4], [3, 2]] -> axis 0 -> [1, 0] *)
+  let x = Nx_ox.create ctx Dtype.Float64 [| 2; 2 |] [| 1.0; 4.0; 3.0; 2.0 |] in
+  let out = Nx_ox.empty ctx Dtype.Int32 [| 2 |] in
+  Nx_backend.argmax ~out ~axis:0 ~keepdims:false x;
+  let d = Nx_ox.to_array out in
+  check_int32 "argmax_float64_2d_axis0[0]" 1l d.(0);
+  check_int32 "argmax_float64_2d_axis0[1]" 0l d.(1)
+
+let test_argmax_float64_2d_axis1 () =
+  let ctx = Nx_backend.create_context () in
+  (* [[1, 4], [3, 2]] -> axis 1 -> [1, 0] *)
+  let x = Nx_ox.create ctx Dtype.Float64 [| 2; 2 |] [| 1.0; 4.0; 3.0; 2.0 |] in
+  let out = Nx_ox.empty ctx Dtype.Int32 [| 2 |] in
+  Nx_backend.argmax ~out ~axis:1 ~keepdims:false x;
+  let d = Nx_ox.to_array out in
+  check_int32 "argmax_float64_2d_axis1[0]" 1l d.(0);
+  check_int32 "argmax_float64_2d_axis1[1]" 0l d.(1)
+
+let test_argmin_float64_1d () =
+  let ctx = Nx_backend.create_context () in
+  let x = Nx_ox.create ctx Dtype.Float64 [| 5 |] [| 3.0; 1.0; 5.0; 2.0; 4.0 |] in
+  let out = Nx_ox.empty ctx Dtype.Int32 [| 1 |] in
+  Nx_backend.argmin ~out ~axis:0 ~keepdims:true x;
+  let d = Nx_ox.to_array out in
+  check_int32 "argmin_float64_1d" 1l d.(0)
+
+let test_argmax_int32 () =
+  let ctx = Nx_backend.create_context () in
+  let x = Nx_ox.create ctx Dtype.Int32 [| 4 |] [| 10l; 30l; 20l; 5l |] in
+  let out = Nx_ox.empty ctx Dtype.Int32 [| 1 |] in
+  Nx_backend.argmax ~out ~axis:0 ~keepdims:true x;
+  let d = Nx_ox.to_array out in
+  check_int32 "argmax_int32" 1l d.(0)
+
+let test_argmin_int64 () =
+  let ctx = Nx_backend.create_context () in
+  let x = Nx_ox.create ctx Dtype.Int64 [| 4 |] [| 10L; 30L; 5L; 20L |] in
+  let out = Nx_ox.empty ctx Dtype.Int32 [| 1 |] in
+  Nx_backend.argmin ~out ~axis:0 ~keepdims:true x;
+  let d = Nx_ox.to_array out in
+  check_int32 "argmin_int64" 2l d.(0)
+
 let test_atan2_float64 () =
   let ctx = Nx_backend.create_context () in
   let y = Nx_ox.create ctx Dtype.Float64 [| 4 |] [| 1.0; -1.0; 1.0; 0.0 |] in
@@ -1955,5 +2007,11 @@ let () =
   test_threefry_strided_view_matches_contiguous ();
   test_atan2_float64 ();
   test_atan2_float32 ();
+  test_argmax_float64_1d ();
+  test_argmax_float64_2d_axis0 ();
+  test_argmax_float64_2d_axis1 ();
+  test_argmin_float64_1d ();
+  test_argmax_int32 ();
+  test_argmin_int64 ();
   Printf.printf "\nResults: %d passed, %d failed\n" !passed !failed;
   if !failed > 0 then exit 1

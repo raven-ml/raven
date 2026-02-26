@@ -888,11 +888,43 @@ let associative_scan (type a b) ~(out : (a, b) t) ~(axis : int)
   | Bool _, Bool _ -> unsupported_for_dtype out.dtype
   | _ -> Error.invalid ~op:"associative_scan" ~what:"unsupported dtype" ()
 
-let argmax ~out:_ ~axis:_ ~keepdims:_ _ =
-  Error.invalid ~op:"argmax" ~what:"not implemented" ()
+let argmax (type a b) ~(out : (int32, Dtype.int32_elt) t) ~axis ~keepdims
+    (x : (a, b) t) : unit =
+  let vout = out.view in
+  let va = x.view in
+  match (out.buffer, x.buffer) with
+  | Int32 out_arr, Float64 a_arr ->
+      Op_argmax.argmax_float64 out.context.pool ~out_arr ~a_arr ~va ~vout ~axis
+        ~keepdims
+  | Int32 out_arr, Float32 a_arr ->
+      Op_argmax.argmax_float32 out.context.pool ~out_arr ~a_arr ~va ~vout ~axis
+        ~keepdims
+  | Int32 out_arr, Int32 a_arr ->
+      Op_argmax.argmax_int32 out.context.pool ~out_arr ~a_arr ~va ~vout ~axis
+        ~keepdims
+  | Int32 out_arr, Int64 a_arr ->
+      Op_argmax.argmax_int64 out.context.pool ~out_arr ~a_arr ~va ~vout ~axis
+        ~keepdims
+  | _ -> Error.invalid ~op:"argmax" ~what:"unsupported dtype" ()
 
-let argmin ~out:_ ~axis:_ ~keepdims:_ _ =
-  Error.invalid ~op:"argmin" ~what:"not implemented" ()
+let argmin (type a b) ~(out : (int32, Dtype.int32_elt) t) ~axis ~keepdims
+    (x : (a, b) t) : unit =
+  let vout = out.view in
+  let va = x.view in
+  match (out.buffer, x.buffer) with
+  | Int32 out_arr, Float64 a_arr ->
+      Op_argmax.argmin_float64 out.context.pool ~out_arr ~a_arr ~va ~vout ~axis
+        ~keepdims
+  | Int32 out_arr, Float32 a_arr ->
+      Op_argmax.argmin_float32 out.context.pool ~out_arr ~a_arr ~va ~vout ~axis
+        ~keepdims
+  | Int32 out_arr, Int32 a_arr ->
+      Op_argmax.argmin_int32 out.context.pool ~out_arr ~a_arr ~va ~vout ~axis
+        ~keepdims
+  | Int32 out_arr, Int64 a_arr ->
+      Op_argmax.argmin_int64 out.context.pool ~out_arr ~a_arr ~va ~vout ~axis
+        ~keepdims
+  | _ -> Error.invalid ~op:"argmin" ~what:"unsupported dtype" ()
 
 let sort ~out:_ ~axis:_ ~descending:_ _ =
   Error.invalid ~op:"sort" ~what:"not implemented" ()
