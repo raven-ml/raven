@@ -35,30 +35,38 @@ let to_host (type a b) (t : (a, b) t) :
   let n = numel t.view in
   match t.dtype with
   | Dtype.Float64 ->
-    let (Float64 arr) = t.buffer in
-    Array.unboxed_float64_to_ba arr n
+    (match t.buffer with
+     | Float64 arr -> of_bigarray1 (Array.unboxed_float64_to_ba arr n)
+     | _ -> assert false)
   | Dtype.Float32 ->
-    let (Float32 arr) = t.buffer in
-    Array.unboxed_float32_to_ba arr n
+    (match t.buffer with
+     | Float32 arr -> of_bigarray1 (Array.unboxed_float32_to_ba arr n)
+     | _ -> assert false)
   | Dtype.Int64 ->
-    let (Int64 arr) = t.buffer in
-    Array.unboxed_int64_to_ba arr n
+    (match t.buffer with
+     | Int64 arr -> of_bigarray1 (Array.unboxed_int64_to_ba arr n)
+     | _ -> assert false)
   | Dtype.Int32 ->
-    let (Int32 arr) = t.buffer in
-    Array.unboxed_int32_to_ba arr n
+    (match t.buffer with
+     | Int32 arr -> of_bigarray1 (Array.unboxed_int32_to_ba arr n)
+     | _ -> assert false)
   | Dtype.Int8 ->
-    let (Int8 arr) = t.buffer in
-    Array.unboxed_int8_to_ba arr n
+    (match t.buffer with
+     | Int8 arr -> of_bigarray1 (Array.unboxed_int8_to_ba arr n)
+     | _ -> assert false)
   | Dtype.Int16 ->
-    let (Int16 arr) = t.buffer in
-    Array.unboxed_int16_to_ba arr n
+    (match t.buffer with
+     | Int16 arr -> of_bigarray1 (Array.unboxed_int16_to_ba arr n)
+     | _ -> assert false)
   | Dtype.Bool ->
-    let (Bool arr) = t.buffer in
-    let ba = Nx_buffer.create Nx_buffer.Bool n in
-    for i = 0 to n - 1 do
-      Nx_buffer.unsafe_set ba i arr.(i)
-    done;
-    ba
+    (match t.buffer with
+     | Bool arr ->
+       let ba = Nx_buffer.create Nx_buffer.Bool n in
+       for i = 0 to n - 1 do
+         Nx_buffer.unsafe_set ba i arr.(i)
+       done;
+       ba
+     | _ -> assert false)
   | _ -> Error.invalid ~op:"to_host" ~what:"unsupported dtype" ()
 
 let buffer (type a b) context (dtype : (a, b) Dtype.t) (shape_arr : int array) :
@@ -96,46 +104,60 @@ let full (type a b) context (dtype : (a, b) Dtype.t) (shape_arr : int array)
   let size = Stdlib.Array.fold_left ( * ) 1 shape_arr in
   (match (dtype : (a, b) Dtype.t) with
   | Dtype.Float64 ->
-      let Float64 arr = t.buffer in
-      let v = Float_u.of_float value in
-      for i = 0 to size - 1 do
-        Array.unsafe_set arr i v
-      done
+      (match t.buffer with
+       | Float64 arr ->
+         let v = Float_u.of_float value in
+         for i = 0 to size - 1 do
+           Array.unsafe_set arr i v
+         done
+       | _ -> assert false)
   | Dtype.Float32 ->
-      let Float32 arr = t.buffer in
-      let v = Float32_u.of_float (Float_u.of_float value) in
-      for i = 0 to size - 1 do
-        Array.unsafe_set arr i v
-      done
+      (match t.buffer with
+       | Float32 arr ->
+         let v = Float32_u.of_float (Float_u.of_float value) in
+         for i = 0 to size - 1 do
+           Array.unsafe_set arr i v
+         done
+       | _ -> assert false)
   | Dtype.Int8 ->
-      let Int8 arr = t.buffer in
-      let v = Int8_u.of_int value in
-      for i = 0 to size - 1 do
-        Array.unsafe_set arr i v
-      done
+      (match t.buffer with
+       | Int8 arr ->
+         let v = Int8_u.of_int value in
+         for i = 0 to size - 1 do
+           Array.unsafe_set arr i v
+         done
+       | _ -> assert false)
   | Dtype.Int16 ->
-      let Int16 arr = t.buffer in
-      let v = Int16_u.of_int value in
-      for i = 0 to size - 1 do
-        Array.unsafe_set arr i v
-      done
+      (match t.buffer with
+       | Int16 arr ->
+         let v = Int16_u.of_int value in
+         for i = 0 to size - 1 do
+           Array.unsafe_set arr i v
+         done
+       | _ -> assert false)
   | Dtype.Int32 ->
-      let Int32 arr = t.buffer in
-      let v = Int32_u.of_int32 value in
-      for i = 0 to size - 1 do
-        Array.unsafe_set arr i v
-      done
+      (match t.buffer with
+       | Int32 arr ->
+         let v = Int32_u.of_int32 value in
+         for i = 0 to size - 1 do
+           Array.unsafe_set arr i v
+         done
+       | _ -> assert false)
   | Dtype.Int64 ->
-      let Int64 arr = t.buffer in
-      let v = Int64_u.of_int64 value in
-      for i = 0 to size - 1 do
-        Array.unsafe_set arr i v
-      done
+      (match t.buffer with
+       | Int64 arr ->
+         let v = Int64_u.of_int64 value in
+         for i = 0 to size - 1 do
+           Array.unsafe_set arr i v
+         done
+       | _ -> assert false)
   | Dtype.Bool ->
-      let Bool arr = t.buffer in
-      for i = 0 to size - 1 do
-        Stdlib.Array.unsafe_set arr i value
-      done
+      (match t.buffer with
+       | Bool arr ->
+         for i = 0 to size - 1 do
+           Stdlib.Array.unsafe_set arr i value
+         done
+       | _ -> assert false)
   | _ -> Error.invalid ~op:"full" ~what:"unsupported dtype" ());
   t
 
@@ -930,6 +952,7 @@ let sign (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_sign.sign_bool a_arr out_arr va vout start_idx end_idx)
       else Op_sign.sign_bool a_arr out_arr va vout 0 vol
+  | _ -> assert false
 
 let tan (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
   let parallel_threshold = 62500 in
@@ -1121,6 +1144,7 @@ let trunc (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_trunc.trunc_bool a_arr out_arr va vout start_idx end_idx)
       else Op_trunc.trunc_bool a_arr out_arr va vout 0 vol
+  | _ -> assert false
 
 let ceil (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
   let parallel_threshold = 62500 in
@@ -1170,6 +1194,7 @@ let ceil (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_ceil.ceil_bool a_arr out_arr va vout start_idx end_idx)
       else Op_ceil.ceil_bool a_arr out_arr va vout 0 vol
+  | _ -> assert false
 
 let floor (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
   let parallel_threshold = 62500 in
@@ -1219,6 +1244,7 @@ let floor (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_floor.floor_bool a_arr out_arr va vout start_idx end_idx)
       else Op_floor.floor_bool a_arr out_arr va vout 0 vol
+  | _ -> assert false
 
 let round (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
   let parallel_threshold = 62500 in
@@ -1268,6 +1294,7 @@ let round (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
           (fun start_idx end_idx ->
             Op_round.round_bool a_arr out_arr va vout start_idx end_idx)
       else Op_round.round_bool a_arr out_arr va vout 0 vol
+  | _ -> assert false
 
 let erf (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
   let parallel_threshold = 62500 in
@@ -1565,7 +1592,7 @@ let pad (type a b) (x : (a, b) t) (padding : (int * int) array)
     Op_pad.pad_bool in_arr out_arr in_shape padding in_offset out_offset
       in_strides out_strides in_numel;
     { dtype = Dtype.Bool; buffer = Bool out_arr; view = out_view; context }
-  | _ -> .
+  | _ -> assert false
 
 let cat (type a b) ~(out : (a, b) t) (xs : (a, b) t list) ~(axis : int) : unit =
   match xs with
@@ -1581,53 +1608,53 @@ let cat (type a b) ~(out : (a, b) t) (xs : (a, b) t list) ~(axis : int) : unit =
     | { buffer = Float64 _; _ }, { buffer = Float64 out_arr; _ } ->
       let srcs =
         List.map
-          (fun x -> match x.buffer with Float64 a -> (a, x.view) | _ -> .)
+          (fun x -> match x.buffer with Float64 a -> (a, x.view) | _ -> assert false)
           xs
       in
       Op_cat.cat_float64 srcs out_arr rank axis out_offset out_strides
     | { buffer = Float32 _; _ }, { buffer = Float32 out_arr; _ } ->
       let srcs =
         List.map
-          (fun x -> match x.buffer with Float32 a -> (a, x.view) | _ -> .)
+          (fun x -> match x.buffer with Float32 a -> (a, x.view) | _ -> assert false)
           xs
       in
       Op_cat.cat_float32 srcs out_arr rank axis out_offset out_strides
     | { buffer = Int8 _; _ }, { buffer = Int8 out_arr; _ } ->
       let srcs =
         List.map
-          (fun x -> match x.buffer with Int8 a -> (a, x.view) | _ -> .)
+          (fun x -> match x.buffer with Int8 a -> (a, x.view) | _ -> assert false)
           xs
       in
       Op_cat.cat_int8 srcs out_arr rank axis out_offset out_strides
     | { buffer = Int16 _; _ }, { buffer = Int16 out_arr; _ } ->
       let srcs =
         List.map
-          (fun x -> match x.buffer with Int16 a -> (a, x.view) | _ -> .)
+          (fun x -> match x.buffer with Int16 a -> (a, x.view) | _ -> assert false)
           xs
       in
       Op_cat.cat_int16 srcs out_arr rank axis out_offset out_strides
     | { buffer = Int32 _; _ }, { buffer = Int32 out_arr; _ } ->
       let srcs =
         List.map
-          (fun x -> match x.buffer with Int32 a -> (a, x.view) | _ -> .)
+          (fun x -> match x.buffer with Int32 a -> (a, x.view) | _ -> assert false)
           xs
       in
       Op_cat.cat_int32 srcs out_arr rank axis out_offset out_strides
     | { buffer = Int64 _; _ }, { buffer = Int64 out_arr; _ } ->
       let srcs =
         List.map
-          (fun x -> match x.buffer with Int64 a -> (a, x.view) | _ -> .)
+          (fun x -> match x.buffer with Int64 a -> (a, x.view) | _ -> assert false)
           xs
       in
       Op_cat.cat_int64 srcs out_arr rank axis out_offset out_strides
     | { buffer = Bool _; _ }, { buffer = Bool out_arr; _ } ->
       let srcs =
         List.map
-          (fun x -> match x.buffer with Bool a -> (a, x.view) | _ -> .)
+          (fun x -> match x.buffer with Bool a -> (a, x.view) | _ -> assert false)
           xs
       in
       Op_cat.cat_bool srcs out_arr rank axis out_offset out_strides
-    | _ -> .)
+    | _ -> assert false)
 let cast ~out:_ _ = Error.invalid ~op:"cast" ~what:"not implemented" ()
 
 let contiguous (type a b) (t : (a, b) t) : (a, b) t =
@@ -1644,8 +1671,8 @@ let contiguous (type a b) (t : (a, b) t) : (a, b) t =
     let indices = Stdlib.Array.make ndim 0 in
     (match t.dtype with
      | Dtype.Float64 ->
-       let (Float64 src) = t.buffer in
-       let (Float64 dst) = out.buffer in
+       (match (t.buffer, out.buffer) with
+        | Float64 src, Float64 dst ->
        for i = 0 to n - 1 do
          let flat = ref src_offset in
          for d = 0 to ndim - 1 do
@@ -1661,9 +1688,10 @@ let contiguous (type a b) (t : (a, b) t) : (a, b) t =
          done;
          ignore i
        done
+        | _ -> assert false)
      | Dtype.Float32 ->
-       let (Float32 src) = t.buffer in
-       let (Float32 dst) = out.buffer in
+       (match (t.buffer, out.buffer) with
+        | Float32 src, Float32 dst ->
        for i = 0 to n - 1 do
          let flat = ref src_offset in
          for d = 0 to ndim - 1 do
@@ -1678,9 +1706,10 @@ let contiguous (type a b) (t : (a, b) t) : (a, b) t =
          done;
          ignore i
        done
+        | _ -> assert false)
      | Dtype.Int32 ->
-       let (Int32 src) = t.buffer in
-       let (Int32 dst) = out.buffer in
+       (match (t.buffer, out.buffer) with
+        | Int32 src, Int32 dst ->
        for i = 0 to n - 1 do
          let flat = ref src_offset in
          for d = 0 to ndim - 1 do
@@ -1695,9 +1724,10 @@ let contiguous (type a b) (t : (a, b) t) : (a, b) t =
          done;
          ignore i
        done
+        | _ -> assert false)
      | Dtype.Int64 ->
-       let (Int64 src) = t.buffer in
-       let (Int64 dst) = out.buffer in
+       (match (t.buffer, out.buffer) with
+        | Int64 src, Int64 dst ->
        for i = 0 to n - 1 do
          let flat = ref src_offset in
          for d = 0 to ndim - 1 do
@@ -1712,9 +1742,10 @@ let contiguous (type a b) (t : (a, b) t) : (a, b) t =
          done;
          ignore i
        done
+        | _ -> assert false)
      | Dtype.Int8 ->
-       let (Int8 src) = t.buffer in
-       let (Int8 dst) = out.buffer in
+       (match (t.buffer, out.buffer) with
+        | Int8 src, Int8 dst ->
        for i = 0 to n - 1 do
          let flat = ref src_offset in
          for d = 0 to ndim - 1 do
@@ -1729,9 +1760,10 @@ let contiguous (type a b) (t : (a, b) t) : (a, b) t =
          done;
          ignore i
        done
+        | _ -> assert false)
      | Dtype.Int16 ->
-       let (Int16 src) = t.buffer in
-       let (Int16 dst) = out.buffer in
+       (match (t.buffer, out.buffer) with
+        | Int16 src, Int16 dst ->
        for i = 0 to n - 1 do
          let flat = ref src_offset in
          for d = 0 to ndim - 1 do
@@ -1746,9 +1778,10 @@ let contiguous (type a b) (t : (a, b) t) : (a, b) t =
          done;
          ignore i
        done
+        | _ -> assert false)
      | Dtype.Bool ->
-       let (Bool src) = t.buffer in
-       let (Bool dst) = out.buffer in
+       (match (t.buffer, out.buffer) with
+        | Bool src, Bool dst ->
        for i = 0 to n - 1 do
          let flat = ref src_offset in
          for d = 0 to ndim - 1 do
@@ -1763,6 +1796,7 @@ let contiguous (type a b) (t : (a, b) t) : (a, b) t =
          done;
          ignore i
        done
+        | _ -> assert false)
      | _ -> Error.invalid ~op:"contiguous" ~what:"unsupported dtype" ());
     out
 
@@ -1773,47 +1807,54 @@ let copy (type a b) (t : (a, b) t) : (a, b) t =
   let out = buffer t.context t.dtype shape_arr in
   (match t.dtype with
    | Dtype.Float64 ->
-     let (Float64 src) = c.buffer in
-     let (Float64 dst) = out.buffer in
+     (match (c.buffer, out.buffer) with
+      | Float64 src, Float64 dst ->
      for i = 0 to n - 1 do
        Array.unsafe_set dst i (Array.unsafe_get src i)
      done
+      | _ -> assert false)
    | Dtype.Float32 ->
-     let (Float32 src) = c.buffer in
-     let (Float32 dst) = out.buffer in
+     (match (c.buffer, out.buffer) with
+      | Float32 src, Float32 dst ->
      for i = 0 to n - 1 do
        Array.unsafe_set dst i (Array.unsafe_get src i)
      done
+      | _ -> assert false)
    | Dtype.Int32 ->
-     let (Int32 src) = c.buffer in
-     let (Int32 dst) = out.buffer in
+     (match (c.buffer, out.buffer) with
+      | Int32 src, Int32 dst ->
      for i = 0 to n - 1 do
        Array.unsafe_set dst i (Array.unsafe_get src i)
      done
+      | _ -> assert false)
    | Dtype.Int64 ->
-     let (Int64 src) = c.buffer in
-     let (Int64 dst) = out.buffer in
+     (match (c.buffer, out.buffer) with
+      | Int64 src, Int64 dst ->
      for i = 0 to n - 1 do
        Array.unsafe_set dst i (Array.unsafe_get src i)
      done
+      | _ -> assert false)
    | Dtype.Int8 ->
-     let (Int8 src) = c.buffer in
-     let (Int8 dst) = out.buffer in
+     (match (c.buffer, out.buffer) with
+      | Int8 src, Int8 dst ->
      for i = 0 to n - 1 do
        Array.unsafe_set dst i (Array.unsafe_get src i)
      done
+      | _ -> assert false)
    | Dtype.Int16 ->
-     let (Int16 src) = c.buffer in
-     let (Int16 dst) = out.buffer in
+     (match (c.buffer, out.buffer) with
+      | Int16 src, Int16 dst ->
      for i = 0 to n - 1 do
        Array.unsafe_set dst i (Array.unsafe_get src i)
      done
+      | _ -> assert false)
    | Dtype.Bool ->
-     let (Bool src) = c.buffer in
-     let (Bool dst) = out.buffer in
+     (match (c.buffer, out.buffer) with
+      | Bool src, Bool dst ->
      for i = 0 to n - 1 do
        dst.(i) <- src.(i)
      done
+      | _ -> assert false)
    | _ -> Error.invalid ~op:"copy" ~what:"unsupported dtype" ());
   out
 
@@ -1822,47 +1863,54 @@ let assign (type a b) (dst : (a, b) t) (src : (a, b) t) : unit =
   let n = numel dst.view in
   (match dst.dtype with
    | Dtype.Float64 ->
-     let (Float64 s) = src_c.buffer in
-     let (Float64 d) = dst.buffer in
+     (match (src_c.buffer, dst.buffer) with
+      | Float64 s, Float64 d ->
      for i = 0 to n - 1 do
        Array.unsafe_set d i (Array.unsafe_get s i)
      done
+      | _ -> assert false)
    | Dtype.Float32 ->
-     let (Float32 s) = src_c.buffer in
-     let (Float32 d) = dst.buffer in
+     (match (src_c.buffer, dst.buffer) with
+      | Float32 s, Float32 d ->
      for i = 0 to n - 1 do
        Array.unsafe_set d i (Array.unsafe_get s i)
      done
+      | _ -> assert false)
    | Dtype.Int32 ->
-     let (Int32 s) = src_c.buffer in
-     let (Int32 d) = dst.buffer in
+     (match (src_c.buffer, dst.buffer) with
+      | Int32 s, Int32 d ->
      for i = 0 to n - 1 do
        Array.unsafe_set d i (Array.unsafe_get s i)
      done
+      | _ -> assert false)
    | Dtype.Int64 ->
-     let (Int64 s) = src_c.buffer in
-     let (Int64 d) = dst.buffer in
+     (match (src_c.buffer, dst.buffer) with
+      | Int64 s, Int64 d ->
      for i = 0 to n - 1 do
        Array.unsafe_set d i (Array.unsafe_get s i)
      done
+      | _ -> assert false)
    | Dtype.Int8 ->
-     let (Int8 s) = src_c.buffer in
-     let (Int8 d) = dst.buffer in
+     (match (src_c.buffer, dst.buffer) with
+      | Int8 s, Int8 d ->
      for i = 0 to n - 1 do
        Array.unsafe_set d i (Array.unsafe_get s i)
      done
+      | _ -> assert false)
    | Dtype.Int16 ->
-     let (Int16 s) = src_c.buffer in
-     let (Int16 d) = dst.buffer in
+     (match (src_c.buffer, dst.buffer) with
+      | Int16 s, Int16 d ->
      for i = 0 to n - 1 do
        Array.unsafe_set d i (Array.unsafe_get s i)
      done
+      | _ -> assert false)
    | Dtype.Bool ->
-     let (Bool s) = src_c.buffer in
-     let (Bool d) = dst.buffer in
+     (match (src_c.buffer, dst.buffer) with
+      | Bool s, Bool d ->
      for i = 0 to n - 1 do
        d.(i) <- s.(i)
      done
+      | _ -> assert false)
    | _ -> Error.invalid ~op:"assign" ~what:"unsupported dtype" ())
 
 let threefry ~out:_ _ _ = Error.invalid ~op:"threefry" ~what:"not implemented" ()
@@ -1871,11 +1919,10 @@ let gather ~out:_ _ _ ~axis:_ = Error.invalid ~op:"gather" ~what:"not implemente
 let scatter ?mode:_ ?unique_indices:_ _ ~indices:_ ~updates:_ ~axis:_ =
   Error.invalid ~op:"scatter" ~what:"not implemented" ()
 
-let unfold ?out:_ _ ~kernel_size:_ ~stride:_ ~dilation:_ ~padding:_ =
+let unfold _ ~kernel_size:_ ~stride:_ ~dilation:_ ~padding:_ =
   Error.invalid ~op:"unfold" ~what:"not implemented" ()
 
-let fold ?out:_ _ ~output_size:_ ~kernel_size:_ ~stride:_ ~dilation:_
-    ~padding:_ =
+let fold _ ~output_size:_ ~kernel_size:_ ~stride:_ ~dilation:_ ~padding:_ =
   Error.invalid ~op:"fold" ~what:"not implemented" ()
 
 let matmul (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit
