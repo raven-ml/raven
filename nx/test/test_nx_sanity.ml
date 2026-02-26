@@ -93,8 +93,8 @@ let property_access_tests =
     test "data" (fun () ->
         let t = Nx.create Nx.float32 shape_2x3 test_array in
         let data = Nx.data t in
-        equal ~msg:"data[0]" (float 1e-6) 1.0 data.{0};
-        equal ~msg:"data[0]" (float 1e-6) 6.0 data.{5});
+        equal ~msg:"data[0]" (float 1e-6) 1.0 (Nx_buffer.get data 0);
+        equal ~msg:"data[5]" (float 1e-6) 6.0 (Nx_buffer.get data 5));
     test "shape" (fun () ->
         let t = Nx.create Nx.float32 shape_2x3 test_array in
         equal ~msg:"shape" (array int) shape_2x3 (Nx.shape t));

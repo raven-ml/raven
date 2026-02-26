@@ -399,7 +399,7 @@ let test_slice_negative_step () =
 let test_data_buffer_view () =
   let t = Nx.create Nx.float32 [| 3 |] [| 1.0; 2.0; 3.0 |] in
   let d = Nx.data t in
-  Nx_buffer.Array1.set d 0 99.0;
+  Nx_buffer.set d 0 99.0;
   equal ~msg:"data buffer view" (float 1e-6) 99.0 (Nx.item [ 0 ] t)
 
 let test_strides_after_transpose () =
