@@ -2,10 +2,9 @@
 
 ## alpha3
 
-- need to review the nn functions from nx, what should move to kaun? embedding, dropout, attention, etc.
-- also review the activation functions. Maybe we don't need all of them in nx?
 - bring in talon changes
 - consider rename talon to talf
+- remove rng module from nx frontend? inline functions? Then Rng submodule in Nx and Rune (but not in the frontend functor) can just be alias to Nx_core.Rng
 
 ## alphaX
 
@@ -35,8 +34,3 @@ docs/website
 - favicon
 - more tutorials
 
-## notes
-
-- (?) not sure we need non-polymorphic functions for perf of where, we should benchmark
-- we can make jit composable by re raising all the effects (but what does it mean to write grad(jit(f)))?? What are the semantics in jax?
-- (?) think of using effects for prngs, does it simplify ux?
