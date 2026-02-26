@@ -3,449 +3,222 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Sowilo: Computer vision operations on [Rune].
+(** Differentiable computer vision on {!Rune}.
 
-    This module provides image manipulation, color conversion, datatype
-    conversion, resizing, filtering, morphological operations, thresholding, and
-    edge detection using [Rune] buffers. *)
+    Sowilo provides image processing operations expressed purely through {!Rune}
+    tensor operations. All operations are compatible with {!Rune.grad},
+    {!Rune.jit}, and {!Rune.vmap}.
 
-type uint8_t = Rune.uint8_t
-(** [uint8_t]
+    {1:conventions Image conventions}
 
-    3-D ([H; W; C]) or 4-D ([N; H; W; C]) unsigned 8-bit image tensor type. *)
+    Images are {!Rune.t} tensors with channels-last layout:
+    - Single image: [[H; W; C]] (height, width, channels).
+    - Batch: [[N; H; W; C]] (batch, height, width, channels).
+    - Grayscale: [C = 1], RGB: [C = 3], RGBA: [C = 4].
 
-type float32_t = Rune.float32_t
-(** [float32_t]
+    Operations expect float32 tensors with values in \[0, 1\]. Use {!to_float}
+    and {!to_uint8} to convert between integer and float representations. *)
 
-    3-D or 4-D single-precision float image tensor type, with values typically
-    normalized to [0.0, 1.0]. *)
+(** {1:converting Type conversion and preprocessing} *)
 
-type int16_t = Rune.int16_t
-(** [int16_t]
+val to_float : ('a, 'b) Rune.t -> Rune.float32_t
+(** [to_float img] is [img] cast to float32 and scaled to \[0, 1\] by dividing
+    by 255. *)
 
-    3-D or 4-D signed 16-bit integer tensor type, commonly used for derivative
-    filters (e.g., Sobel). *)
+val to_uint8 : Rune.float32_t -> Rune.uint8_t
+(** [to_uint8 img] is [img] scaled from \[0, 1\] to \[0, 255\] and cast to
+    uint8. Values are clipped to \[0, 1\] before scaling. *)
 
-(** {1 Basic Image Manipulations} *)
+val normalize :
+  mean:float list -> std:float list -> Rune.float32_t -> Rune.float32_t
+(** [normalize ~mean ~std img] is per-channel normalization:
+    [(img - mean) / std]. [mean] and [std] must have the same length as the
+    channel dimension.
 
-val flip_vertical : uint8_t -> uint8_t
-(** [flip_vertical img]
+    Raises [Invalid_argument] if [mean] or [std] length does not match the
+    number of channels. *)
 
-    Flip the image vertically (top to bottom).
+val threshold : float -> Rune.float32_t -> Rune.float32_t
+(** [threshold t img] is [1.0] where [img > t], [0.0] elsewhere. *)
 
-    {2 Parameters}
-    - [img]: input image tensor ([H; W; C] or [N; H; W; C]).
+(** {1:color Color space conversion and adjustment} *)
 
-    {2 Returns}
-    - tensor with rows reversed along the vertical axis.
+val to_grayscale : Rune.float32_t -> Rune.float32_t
+(** [to_grayscale img] converts RGB to single-channel grayscale using ITU-R
+    BT.601 weights: [0.299 * R + 0.587 * G + 0.114 * B]. Input must have
+    [C >= 3]. Output has [C = 1]. *)
 
-    {2 Notes}
-    - Preserves datatype and channel count.
+val rgb_to_hsv : Rune.float32_t -> Rune.float32_t
+(** [rgb_to_hsv img] converts RGB \[0, 1\] to HSV. H is in \[0, 1\] (normalized
+    from \[0, 360\]), S and V are in \[0, 1\]. *)
 
-    {2 Examples}
-    {[
-      let flipped = flip_vertical img in
-      (* flipped.{0;0;*} = img.{0;H-1;*} *)
-    ]} *)
+val hsv_to_rgb : Rune.float32_t -> Rune.float32_t
+(** [hsv_to_rgb img] converts HSV back to RGB \[0, 1\]. *)
 
-val flip_horizontal : uint8_t -> uint8_t
-(** [flip_horizontal img]
+val adjust_brightness : float -> Rune.float32_t -> Rune.float32_t
+(** [adjust_brightness factor img] scales pixel values by [factor] and clips to
+    \[0, 1\]. *)
 
-    Flip the image horizontally (left to right).
+val adjust_contrast : float -> Rune.float32_t -> Rune.float32_t
+(** [adjust_contrast factor img] adjusts contrast around the per-channel mean.
+    [0] produces solid gray, [1] is the original image. *)
 
-    {2 Parameters}
-    - [img]: input image tensor ([H; W; C] or [N; H; W; C]).
+val adjust_saturation : float -> Rune.float32_t -> Rune.float32_t
+(** [adjust_saturation factor img] adjusts color saturation via HSV. [0]
+    produces grayscale, [1] is the original image. *)
 
-    {2 Returns}
-    - tensor with columns reversed along the horizontal axis.
+val adjust_hue : float -> Rune.float32_t -> Rune.float32_t
+(** [adjust_hue delta img] rotates hue by [delta]. [delta] is in \[-0.5, 0.5\],
+    corresponding to a full rotation of the hue circle. *)
 
-    {2 Notes}
-    - Preserves datatype and channel count.
+val adjust_gamma : float -> Rune.float32_t -> Rune.float32_t
+(** [adjust_gamma gamma img] applies gamma correction: [img ** gamma]. *)
 
-    {2 Examples}
-    {[
-      let flipped = flip_horizontal img in
-      (* flipped.{0;*;0} = img.{0;*;W-1} *)
-    ]} *)
+val invert : Rune.float32_t -> Rune.float32_t
+(** [invert img] is [1.0 - img]. *)
 
-val crop : y:int -> x:int -> height:int -> width:int -> uint8_t -> uint8_t
-(** [crop ~y ~x ~height ~width img]
+(** {1:transform Geometric transforms} *)
 
-    Extract a rectangular region of interest from the image.
-
-    {2 Parameters}
-    - [y]: starting row index (0-based).
-    - [x]: starting column index (0-based).
-    - [height]: number of rows in the crop.
-    - [width]: number of columns in the crop.
-    - [img]: input image tensor of rank 3 ([H; W; C]).
-
-    {2 Returns}
-    - tensor of shape [|height; width; C|] containing the cropped region.
-
-    {2 Raises}
-    - [Invalid_argument] if the specified region exceeds image bounds.
-
-    {2 Examples}
-    {[
-      let roi = crop ~y:10 ~x:20 ~height:50 ~width:50 img in
-      (* roi has shape [50;50;C] *)
-    ]} *)
-
-(** {1 Color Space Conversion} *)
-
-val to_grayscale : uint8_t -> uint8_t
-(** [to_grayscale img]
-
-    Convert a color image to grayscale using standard luminance weights.
-
-    {2 Parameters}
-    - [img]: input uint8 tensor ([H; W; C] or [N; H; W; C]) with C>=1.
-
-    {2 Returns}
-    - grayscale tensor ([H; W; 1] or [N; H; W; 1]).
-
-    {2 Notes}
-    - If input has multiple channels, uses weights [0.299, 0.587, 0.114].
-    - If input has C=1, returns img unchanged.
-
-    {2 Examples}
-    {[
-      let gray = to_grayscale img in
-      (* gray.{0;i;j;0} = 0.299*R + 0.587*G + 0.114*B *)
-    ]} *)
-
-val rgb_to_bgr : uint8_t -> uint8_t
-(** [rgb_to_bgr img]
-
-    Swap red and blue channels in an RGB image to produce BGR.
-
-    {2 Parameters}
-    - [img]: input uint8 tensor with C=3.
-
-    {2 Returns}
-    - tensor with channels reordered to BGR.
-
-    {2 Examples}
-    {[
-      let bgr = rgb_to_bgr img in
-      (* bgr.{i;j;0} = img.{i;j;2} *)
-    ]} *)
-
-val bgr_to_rgb : uint8_t -> uint8_t
-(** [bgr_to_rgb img]
-
-    Swap blue and red channels in a BGR image to produce RGB.
-
-    {2 Parameters}
-    - [img]: input uint8 tensor with C=3.
-
-    {2 Returns}
-    - tensor with channels reordered to RGB.
-
-    {2 Examples}
-    {[
-      let rgb = bgr_to_rgb img in
-      (* rgb.{i;j;2} = img.{i;j;0} *)
-    ]} *)
-
-(** {1 Data Type Conversion} *)
-
-val to_float : uint8_t -> float32_t
-(** [to_float img]
-
-    Convert uint8 image values [0,255] to float32 [0.0,1.0].
-
-    {2 Parameters}
-    - [img]: input uint8 tensor.
-
-    {2 Returns}
-    - float32 tensor of same shape with values scaled by 1.0 /. 255.0.
-
-    {2 Examples}
-    {[
-      let f = to_float img in
-      (* f.{i;j;k} = float img.{i;j;k} /. 255.0 *)
-    ]} *)
-
-val to_uint8 : float32_t -> uint8_t
-(** [to_uint8 img]
-
-    Convert float32 image values [0.0,1.0] to uint8 [0,255], with clipping.
-
-    {2 Parameters}
-    - [img]: input float32 tensor.
-
-    {2 Returns}
-    - uint8 tensor of same shape with values scaled by 255 and clipped to
-      [0,255].
-
-    {2 Examples}
-    {[
-      let u = to_uint8 f in
-      (* u.{i;j;k} = clamp(int_of_float (f.{i;j;k} *. 255.), 0, 255) *)
-    ]} *)
-
-(** {1 Image Resizing} *)
-
-(** Interpolation methods for image resizing. *)
+(** The type for interpolation methods. *)
 type interpolation =
-  | Nearest  (** nearest-neighbor interpolation (fast, may alias). *)
-  | Linear  (** bilinear interpolation (default). *)
+  | Nearest  (** Nearest-neighbor interpolation. *)
+  | Bilinear  (** Bilinear interpolation (default). *)
 
 val resize :
-  ?interpolation:interpolation -> height:int -> width:int -> uint8_t -> uint8_t
-(** [resize ?interpolation ~height ~width img]
-
-    Resize the image to the specified dimensions.
-
-    {2 Parameters}
-    - [?interpolation]: method ([Nearest] default or [Linear]).
-    - [height]: target number of rows.
-    - [width]: target number of columns.
-    - [img]: input uint8 tensor of rank 3 ([H; W; C]) or rank 4 ([N; H; W; C]).
-
-    {2 Returns}
-    - resized uint8 tensor with shape [|...; height; width; C|].
-
-    {2 Examples}
-    {[
-      let small = resize ~height:100 ~width:200 img in
-      (* small has shape [100;200;C] *)
-    ]} *)
-
-(** {1 Image Filtering} *)
-
-val gaussian_blur :
-  ksize:int * int ->
-  sigmaX:float ->
-  ?sigmaY:float ->
+  ?interpolation:interpolation ->
+  height:int ->
+  width:int ->
   ('a, 'b) Rune.t ->
   ('a, 'b) Rune.t
-(** [gaussian_blur ~ksize ~sigmaX ?sigmaY img]
+(** [resize ~height ~width img] resizes to target dimensions. [interpolation]
+    defaults to {!Bilinear}. Casts to float32 internally for bilinear
+    interpolation.
 
-    Apply a Gaussian blur to the image.
+    Raises [Invalid_argument] if [height] or [width] is not positive. *)
 
-    {2 Parameters}
-    - [ksize]: (height, width) of the Gaussian kernel; must be positive odd
-      integers.
-    - [sigmaX]: standard deviation in the X direction.
-    - [?sigmaY]: standard deviation in the Y direction; defaults to [sigmaX].
-    - [img]: input tensor of type uint8 or float32.
+val crop :
+  y:int ->
+  x:int ->
+  height:int ->
+  width:int ->
+  ('a, 'b) Rune.t ->
+  ('a, 'b) Rune.t
+(** [crop ~y ~x ~height ~width img] extracts a rectangular region starting at
+    [(y, x)] with the given dimensions.
 
-    {2 Returns}
-    - tensor of same type and shape as [img], blurred by the Gaussian kernel.
+    Raises [Invalid_argument] if the region exceeds image bounds. *)
 
-    {2 Raises}
-    - [Invalid_argument] if any [ksize] component is even or non-positive.
+val center_crop : height:int -> width:int -> ('a, 'b) Rune.t -> ('a, 'b) Rune.t
+(** [center_crop ~height ~width img] crops a centered rectangle.
 
-    {2 Examples}
-    {[
-      let blurred = gaussian_blur ~ksize:(5,5) ~sigmaX:1.0 img in
-      ...
-    ]} *)
+    Raises [Invalid_argument] if [height] or [width] exceeds the image
+    dimensions. *)
 
-val box_filter : ksize:int * int -> ('a, 'b) Rune.t -> ('a, 'b) Rune.t
-(** [box_filter ~ksize img]
+val hflip : ('a, 'b) Rune.t -> ('a, 'b) Rune.t
+(** [hflip img] flips horizontally (left to right). *)
 
-    Apply a normalized box (average) filter to the image.
+val vflip : ('a, 'b) Rune.t -> ('a, 'b) Rune.t
+(** [vflip img] flips vertically (top to bottom). *)
 
-    {2 Parameters}
-    - [ksize]: (height, width) of the filter kernel; must be positive integers.
-    - [img]: input tensor of type uint8 or float32.
+val rotate90 : ?k:int -> ('a, 'b) Rune.t -> ('a, 'b) Rune.t
+(** [rotate90 img] rotates by [k * 90] degrees counter-clockwise. [k] defaults
+    to [1]. Negative values rotate clockwise. *)
 
-    {2 Returns}
-    - tensor of same type and shape as [img], averaged over each kernel window.
+val pad :
+  ?value:float -> int * int * int * int -> ('a, 'b) Rune.t -> ('a, 'b) Rune.t
+(** [pad (top, bottom, left, right) img] zero-pads the spatial dimensions.
+    [value] defaults to [0.0]. *)
 
-    {2 Examples}
-    {[
-      let avg = box_filter ~ksize:(3,3) img in
-      ...
-    ]} *)
+(** {1:filter Spatial filtering} *)
 
-val blur : ksize:int * int -> ('a, 'b) Rune.t -> ('a, 'b) Rune.t
-(** [blur ~ksize img]
+val gaussian_blur :
+  sigma:float -> ?ksize:int -> Rune.float32_t -> Rune.float32_t
+(** [gaussian_blur ~sigma img] applies isotropic Gaussian blur using separable
+    convolution. [ksize] defaults to [2 * ceil(3 * sigma) + 1], capturing 99.7%
+    of the distribution.
 
-    Alias for [box_filter ~ksize img], applying an average filter.
+    Raises [Invalid_argument] if [ksize] is even or not positive. *)
 
-    {2 Parameters}
-    - [ksize]: (height, width) of the filter kernel.
-    - [img]: input tensor.
+val box_blur : ksize:int -> Rune.float32_t -> Rune.float32_t
+(** [box_blur ~ksize img] applies a [ksize * ksize] averaging filter.
 
-    {2 Returns}
-    - tensor of same type and shape as [img], blurred by box filter.
+    Raises [Invalid_argument] if [ksize] is not positive. *)
 
-    {2 Examples}
-    {[
-      let b = blur ~ksize:(5,5) img in
-      ...
-    ]} *)
+val median_blur : ksize:int -> Rune.float32_t -> Rune.float32_t
+(** [median_blur ~ksize img] applies a median filter.
 
-val median_blur : ksize:int -> uint8_t -> uint8_t
-(** [median_blur ~ksize img]
+    {b Note.} Not differentiable: uses sort internally, gradient is zero almost
+    everywhere.
 
-    Apply a median filter to a grayscale uint8 image to remove noise.
+    Raises [Invalid_argument] if [ksize] is not a positive odd integer. *)
 
-    {2 Parameters}
-    - [ksize]: size of the square kernel (positive odd integer).
-    - [img]: input uint8 tensor of rank 3 or 4 with single channel.
+val filter2d : Rune.float32_t -> Rune.float32_t -> Rune.float32_t
+(** [filter2d kernel img] applies a custom 2D convolution [kernel] to [img].
+    [kernel] has shape [[kH; kW]]. Applied independently to each channel with
+    [Same] padding. *)
 
-    {2 Returns}
-    - uint8 tensor of same shape with median-filtered values.
+val unsharp_mask :
+  sigma:float -> ?amount:float -> Rune.float32_t -> Rune.float32_t
+(** [unsharp_mask ~sigma img] sharpens by subtracting a Gaussian blur:
+    [img + amount * (img - gaussian_blur ~sigma img)]. [amount] defaults to
+    [1.0]. *)
 
-    {2 Raises}
-    - [Invalid_argument] if [ksize] is not a positive odd integer.
+(** {1:morphology Morphological operations} *)
 
-    {2 Examples}
-    {[
-      let clean = median_blur ~ksize:3 gray_img in
-      ...
-    ]} *)
+(** The type for structuring element shapes. *)
+type kernel_shape =
+  | Rect  (** Full rectangle. *)
+  | Cross  (** Cross-shaped element. *)
+  | Ellipse  (** Elliptical element. *)
 
-(** {1 Morphological Operations} *)
+val structuring_element : kernel_shape -> int * int -> Rune.uint8_t
+(** [structuring_element shape (h, w)] is a structuring element of the given
+    [shape] and size. [h] and [w] must be positive odd integers.
 
-(** Shapes for structuring elements in morphological operations. *)
-type structuring_element_shape =
-  | Rect  (** full rectangle. *)
-  | Cross  (** cross-shaped element. *)
+    Raises [Invalid_argument] if [h] or [w] is not positive or not odd. *)
 
-val get_structuring_element :
-  shape:structuring_element_shape -> ksize:int * int -> uint8_t
-(** [get_structuring_element ~shape ~ksize]
+val erode : kernel:Rune.uint8_t -> ('a, 'b) Rune.t -> ('a, 'b) Rune.t
+(** [erode ~kernel img] replaces each pixel with the minimum over the
+    kernel-shaped neighborhood. *)
 
-    Create a structuring element for morphological operations.
+val dilate : kernel:Rune.uint8_t -> ('a, 'b) Rune.t -> ('a, 'b) Rune.t
+(** [dilate ~kernel img] replaces each pixel with the maximum over the
+    kernel-shaped neighborhood. *)
 
-    {2 Parameters}
-    - [shape]: element shape ([Rect] or [Cross]).
-    - [ksize]: (height, width) of the kernel; positive odd integers.
+val opening : kernel:Rune.uint8_t -> ('a, 'b) Rune.t -> ('a, 'b) Rune.t
+(** [opening ~kernel img] is [dilate ~kernel (erode ~kernel img)]. Removes small
+    bright regions. *)
 
-    {2 Returns}
-    - uint8 tensor of shape [|height; width|] with ones at active elements.
+val closing : kernel:Rune.uint8_t -> ('a, 'b) Rune.t -> ('a, 'b) Rune.t
+(** [closing ~kernel img] is [erode ~kernel (dilate ~kernel img)]. Fills small
+    dark regions. *)
 
-    {2 Raises}
-    - [Invalid_argument] if [ksize] components are invalid.
+val morphological_gradient :
+  kernel:Rune.uint8_t -> ('a, 'b) Rune.t -> ('a, 'b) Rune.t
+(** [morphological_gradient ~kernel img] is
+    [dilate ~kernel img - erode ~kernel img]. Highlights edges. *)
 
-    {2 Examples}
-    {[
-      let k = get_structuring_element ~shape:Rect ~ksize:(3,3) in
-      ...
-    ]} *)
+(** {1:edge Edge detection} *)
 
-val erode : kernel:uint8_t -> uint8_t -> uint8_t
-(** [erode ~kernel img]
+val sobel : ?ksize:int -> Rune.float32_t -> Rune.float32_t * Rune.float32_t
+(** [sobel img] computes Sobel gradients. Returns [(gx, gy)] where [gx] is the
+    horizontal gradient and [gy] is the vertical gradient. [ksize] defaults to
+    [3]. Input must have [C = 1]. *)
 
-    Perform morphological erosion on a grayscale uint8 image.
+val scharr : Rune.float32_t -> Rune.float32_t * Rune.float32_t
+(** [scharr img] computes Scharr gradients, which are more rotationally accurate
+    than Sobel. Returns [(gx, gy)]. Input must have [C = 1]. *)
 
-    {2 Parameters}
-    - [kernel]: 2D uint8 structuring element.
-    - [img]: input uint8 tensor with C=1.
-
-    {2 Returns}
-    - eroded tensor where each pixel is the minimum over the kernel window.
-
-    {2 Examples}
-    {[
-      let e = erode ~kernel img in
-      ...
-    ]} *)
-
-val dilate : kernel:uint8_t -> uint8_t -> uint8_t
-(** [dilate ~kernel img]
-
-    Perform morphological dilation on a grayscale uint8 image.
-
-    {2 Parameters}
-    - [kernel]: 2D uint8 structuring element.
-    - [img]: input uint8 tensor with C=1.
-
-    {2 Returns}
-    - dilated tensor where each pixel is the maximum over the kernel window.
-
-    {2 Examples}
-    {[
-      let d = dilate ~kernel img in
-      ...
-    ]} *)
-
-(** {1 Image Thresholding} *)
-
-(** Types of fixed-level thresholding operations. *)
-type threshold_type =
-  | Binary  (** dst = maxval if src > thresh else 0. *)
-  | BinaryInv  (** dst = 0 if src > thresh else maxval. *)
-  | Trunc  (** dst = min(src, thresh). *)
-  | ToZero  (** dst = src if src > thresh else 0. *)
-  | ToZeroInv  (** dst = 0 if src > thresh else src. *)
-
-val threshold :
-  thresh:int -> maxval:int -> type_:threshold_type -> uint8_t -> uint8_t
-(** [threshold ~thresh ~maxval ~type_ img]
-
-    Apply fixed-level thresholding to a grayscale uint8 image.
-
-    {2 Parameters}
-    - [thresh]: threshold value.
-    - [maxval]: value used for [Binary]/[BinaryInv] operations.
-    - [type_]: thresholding type ([threshold_type]).
-    - [img]: input uint8 tensor of shape [[|H;W;1|]] or [[|N;H;W;1|]].
-
-    {2 Returns}
-    - uint8 tensor after thresholding (binary or truncated values).
-
-    {2 Raises}
-    - [Invalid_argument] if [thresh] or [maxval] are out of range.
-
-    {2 Examples}
-    {[
-      let bw = threshold ~thresh:128 ~maxval:255 ~type_:Binary gray in
-      (* values >128 become 255, else 0 *)
-    ]} *)
-
-(** {1 Edge Detection} *)
-
-val sobel : dx:int -> dy:int -> ?ksize:int -> uint8_t -> int16_t
-(** [sobel ~dx ~dy ?ksize img]
-
-    Compute the Sobel derivative of a grayscale uint8 image.
-
-    {2 Parameters}
-    - [dx]: derivative order in x direction (0 or 1).
-    - [dy]: derivative order in y direction (0 or 1).
-    - [?ksize]: aperture size for Sobel operator (default 3; only 3 supported).
-    - [img]: input uint8 tensor of shape [[|H;W;1|]] or [[|N;H;W;1|]].
-
-    {2 Returns}
-    - int16 tensor of same shape, containing derivative values.
-
-    {2 Raises}
-    - [Invalid_argument] if unsupported [ksize] is provided.
-
-    {2 Examples}
-    {[
-      let gx = sobel ~dx:1 ~dy:0 img in
-      (* x-gradient of image *)
-    ]} *)
+val laplacian : ?ksize:int -> Rune.float32_t -> Rune.float32_t
+(** [laplacian img] computes the Laplacian (sum of second spatial derivatives).
+    [ksize] defaults to [3]. Input must have [C = 1]. *)
 
 val canny :
-  threshold1:float -> threshold2:float -> ?ksize:int -> uint8_t -> uint8_t
-(** [canny ~threshold1 ~threshold2 ?ksize img]
+  low:float -> high:float -> ?sigma:float -> Rune.float32_t -> Rune.float32_t
+(** [canny ~low ~high img] applies the Canny edge detector. Returns [1.0] for
+    edge pixels, [0.0] otherwise. [low] and [high] are the hysteresis
+    thresholds. [sigma] controls the initial Gaussian blur and defaults to
+    [1.4]. Input must have [C = 1].
 
-    Apply the Canny edge detector to a grayscale uint8 image.
-
-    {2 Parameters}
-    - [threshold1]: first threshold for hysteresis procedure.
-    - [threshold2]: second threshold for hysteresis procedure.
-    - [?ksize]: Sobel aperture size for gradient computation (default 3).
-    - [img]: input uint8 tensor of shape [[|H;W;1|]] or [[|N;H;W;1|]].
-
-    {2 Returns}
-    - uint8 tensor binary edge map (0 for non-edges, 255 for edges).
-
-    {2 Raises}
-    - [Invalid_argument] if threshold values are invalid or out of range.
-
-    {2 Examples}
-    {[
-      let edges = canny ~threshold1:50. ~threshold2:150. img in
-      (* binary edges *)
-    ]} *)
+    {b Note.} Not differentiable: uses non-maximum suppression and hysteresis
+    thresholding. *)

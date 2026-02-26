@@ -1,4 +1,5 @@
 (library
  (name sowilo)
  (public_name sowilo)
- (libraries nx_core rune))
+ (libraries rune nx_core)
+ (private_modules helpers color transform filter morphology edge))
