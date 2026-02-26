@@ -26,7 +26,7 @@ let render_ansi position =
   Bytes.set buffer offset 'o';
   Printf.sprintf "Position: %+.2f\n|%s|" position (Bytes.to_string buffer)
 
-let make ?render_mode ~rng () =
+let make ?render_mode () =
   let position = ref 0.0 in
   let steps = ref 0 in
   let reset _env ?options:_ () =
@@ -50,5 +50,5 @@ let make ?render_mode ~rng () =
       ~truncated ~info ()
   in
   let render () = Some (render_ansi !position) in
-  Env.create ?render_mode ~render_modes:[ "ansi" ] ~id:"RandomWalk-v0" ~rng
+  Env.create ?render_mode ~render_modes:[ "ansi" ] ~id:"RandomWalk-v0"
     ~observation_space ~action_space ~reset ~step ~render ()

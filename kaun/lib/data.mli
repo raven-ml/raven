@@ -9,7 +9,7 @@
     are built by composing constructors, transformers, and consumers.
 
     {[
-      Data.of_array examples |> Data.shuffle key
+      Data.of_array examples |> Data.shuffle
       |> Data.map_batch 32 collate
       |> Data.iter train_step
     ]} *)
@@ -63,10 +63,11 @@ val batch : ?drop_last:bool -> int -> 'a t -> 'a array t
 val map_batch : ?drop_last:bool -> int -> ('a array -> 'b) -> 'a t -> 'b t
 (** [map_batch ?drop_last n f t] is [map f (batch ?drop_last n t)]. *)
 
-val shuffle : Rune.Rng.key -> 'a t -> 'a t
-(** [shuffle key t] is a pipeline that yields the elements of [t] in a random
-    order determined by [key]. The permutation is computed once when the
-    pipeline is created.
+val shuffle : 'a t -> 'a t
+(** [shuffle t] is a pipeline that yields the elements of [t] in a random order.
+    The permutation is computed once when the pipeline is created.
+
+    Random keys are drawn from the implicit RNG scope.
 
     Raises [Invalid_argument] if [t] has unknown length. *)
 
@@ -103,7 +104,7 @@ val stack_batch : ('a, 'b) Rune.t array -> ('a, 'b) Rune.t
     Equivalent to [Rune.stack (Array.to_list tensors)]. *)
 
 val prepare :
-  ?shuffle:Rune.Rng.key ->
+  ?shuffle:bool ->
   batch_size:int ->
   ?drop_last:bool ->
   ('a, 'b) Rune.t * ('c, 'd) Rune.t ->
@@ -113,8 +114,8 @@ val prepare :
 
     Each yielded pair has shape [[batch_size; ...]] along the first dimension.
 
-    When [shuffle] is provided, elements are yielded in a random order
-    determined by the key. [drop_last] defaults to [true].
+    [shuffle] defaults to [false]. When [true], elements are yielded in a random
+    order. [drop_last] defaults to [true].
 
     Raises [Invalid_argument] if [x] and [y] have different first dimension
     sizes, or if [batch_size <= 0]. *)

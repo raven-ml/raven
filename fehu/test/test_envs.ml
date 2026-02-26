@@ -2,8 +2,6 @@ open Fehu
 open Fehu_envs
 open Windtrap
 
-let rng = Rune.Rng.key 42
-
 let read_float obs =
   let arr : float array = Rune.to_array (Rune.reshape [| 1 |] obs) in
   arr.(0)
@@ -17,7 +15,7 @@ let discrete action = Rune.create Rune.int32 [| 1 |] [| Int32.of_int action |]
 (* Random_walk *)
 
 let test_rw_creation () =
-  let env = Random_walk.make ~rng () in
+  let env = Random_walk.make () in
   match Env.id env with
   | Some id ->
       is_true ~msg:"id starts with RandomWalk"
@@ -25,24 +23,24 @@ let test_rw_creation () =
   | None -> fail "expected an id"
 
 let test_rw_reset_obs () =
-  let env = Random_walk.make ~rng () in
+  let env = Random_walk.make () in
   let obs, _info = Env.reset env () in
   equal ~msg:"reset obs is 0.0" (float 1e-6) 0.0 (read_float obs)
 
 let test_rw_step_left () =
-  let env = Random_walk.make ~rng () in
+  let env = Random_walk.make () in
   let _obs, _info = Env.reset env () in
   let s = Env.step env (discrete 0) in
   equal ~msg:"step left to -1.0" (float 1e-6) (-1.0) (read_float s.observation)
 
 let test_rw_step_right () =
-  let env = Random_walk.make ~rng () in
+  let env = Random_walk.make () in
   let _obs, _info = Env.reset env () in
   let s = Env.step env (discrete 1) in
   equal ~msg:"step right to 1.0" (float 1e-6) 1.0 (read_float s.observation)
 
 let test_rw_termination () =
-  let env = Random_walk.make ~rng () in
+  let env = Random_walk.make () in
   let _obs, _info = Env.reset env () in
   let terminated = ref false in
   for _ = 1 to 20 do
@@ -58,7 +56,7 @@ let test_rw_termination () =
   is_true ~msg:"terminated at boundary" !terminated
 
 let test_rw_ansi_render () =
-  let env = Random_walk.make ~render_mode:`Ansi ~rng () in
+  let env = Random_walk.make ~render_mode:`Ansi () in
   let _obs, _info = Env.reset env () in
   match Env.render env with
   | Some s -> is_true ~msg:"non-empty render" (String.length s > 0)
@@ -67,7 +65,7 @@ let test_rw_ansi_render () =
 (* Cartpole *)
 
 let test_cp_creation () =
-  let env = Cartpole.make ~rng () in
+  let env = Cartpole.make () in
   match Env.id env with
   | Some id ->
       is_true ~msg:"id starts with CartPole"
@@ -75,20 +73,20 @@ let test_cp_creation () =
   | None -> fail "expected an id"
 
 let test_cp_reset_shape () =
-  let env = Cartpole.make ~rng () in
+  let env = Cartpole.make () in
   let obs, _info = Env.reset env () in
   let shape = Rune.shape obs in
   equal ~msg:"obs shape [4]" (array int) [| 4 |] shape
 
 let test_cp_step_reward () =
-  let env = Cartpole.make ~rng () in
+  let env = Cartpole.make () in
   let _obs, _info = Env.reset env () in
   let s = Env.step env (discrete 1) in
   is_false ~msg:"not terminated on first step" s.terminated;
   equal ~msg:"reward 1.0" (float 1e-6) 1.0 s.reward
 
 let test_cp_termination () =
-  let env = Cartpole.make ~rng () in
+  let env = Cartpole.make () in
   let _obs, _info = Env.reset env () in
   let done_flag = ref false in
   for _ = 1 to 600 do
@@ -102,7 +100,7 @@ let test_cp_termination () =
 (* Grid_world *)
 
 let test_gw_creation () =
-  let env = Grid_world.make ~rng () in
+  let env = Grid_world.make () in
   match Env.id env with
   | Some id ->
       is_true ~msg:"id starts with GridWorld"
@@ -110,28 +108,28 @@ let test_gw_creation () =
   | None -> fail "expected an id"
 
 let test_gw_reset_obs () =
-  let env = Grid_world.make ~rng () in
+  let env = Grid_world.make () in
   let obs, _info = Env.reset env () in
   let pos = read_int32_array obs 2 in
   equal ~msg:"row = 0" int 0 pos.(0);
   equal ~msg:"col = 0" int 0 pos.(1)
 
 let test_gw_move_down () =
-  let env = Grid_world.make ~rng () in
+  let env = Grid_world.make () in
   let _obs, _info = Env.reset env () in
   let s = Env.step env (discrete 1) in
   let pos = read_int32_array s.observation 2 in
   equal ~msg:"row = 1 after down" int 1 pos.(0)
 
 let test_gw_move_right () =
-  let env = Grid_world.make ~rng () in
+  let env = Grid_world.make () in
   let _obs, _info = Env.reset env () in
   let s = Env.step env (discrete 3) in
   let pos = read_int32_array s.observation 2 in
   equal ~msg:"col = 1 after right" int 1 pos.(1)
 
 let test_gw_obstacle () =
-  let env = Grid_world.make ~rng () in
+  let env = Grid_world.make () in
   let _obs, _info = Env.reset env () in
   (* Navigate to (1, 2): down, right, right *)
   let _s = Env.step env (discrete 1) in
@@ -147,7 +145,7 @@ let test_gw_obstacle () =
   equal ~msg:"blocked col still 2" int 2 pos.(1)
 
 let test_gw_reach_goal () =
-  let env = Grid_world.make ~rng () in
+  let env = Grid_world.make () in
   let _obs, _info = Env.reset env () in
   (* Path to (4,4) avoiding obstacle at (2,2): down 4 times to row 4, then right
      4 times to col 4 *)
@@ -163,7 +161,7 @@ let test_gw_reach_goal () =
   equal ~msg:"reward 10.0" (float 1e-6) 10.0 s.reward
 
 let test_gw_ansi_render () =
-  let env = Grid_world.make ~render_mode:`Ansi ~rng () in
+  let env = Grid_world.make ~render_mode:`Ansi () in
   let _obs, _info = Env.reset env () in
   match Env.render env with
   | Some (Grid_world.Text s) ->
@@ -174,7 +172,7 @@ let test_gw_ansi_render () =
 (* Mountain_car *)
 
 let test_mc_creation () =
-  let env = Mountain_car.make ~rng () in
+  let env = Mountain_car.make () in
   match Env.id env with
   | Some id ->
       is_true ~msg:"id starts with MountainCar"
@@ -182,13 +180,13 @@ let test_mc_creation () =
   | None -> fail "expected an id"
 
 let test_mc_reset_shape () =
-  let env = Mountain_car.make ~rng () in
+  let env = Mountain_car.make () in
   let obs, _info = Env.reset env () in
   let shape = Rune.shape obs in
   equal ~msg:"obs shape [2]" (array int) [| 2 |] shape
 
 let test_mc_step_coast () =
-  let env = Mountain_car.make ~rng () in
+  let env = Mountain_car.make () in
   let _obs, _info = Env.reset env () in
   let s = Env.step env (discrete 1) in
   let shape = Rune.shape s.observation in
@@ -196,12 +194,13 @@ let test_mc_step_coast () =
   is_false ~msg:"not terminated" s.terminated
 
 let test_mc_reward () =
-  let env = Mountain_car.make ~rng () in
+  let env = Mountain_car.make () in
   let _obs, _info = Env.reset env () in
   let s = Env.step env (discrete 1) in
   equal ~msg:"reward -1.0" (float 1e-6) (-1.0) s.reward
 
 let () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   run "Fehu_envs"
     [
       group "RandomWalk"

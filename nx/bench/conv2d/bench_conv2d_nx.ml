@@ -30,18 +30,17 @@ let extract_patches_configs =
 
 let build_benchmarks () =
   let benchmarks = ref [] in
-  let key = Nx.Rng.key 42 in
   List.iter
     (fun (label, input_shape, kernel_shape) ->
-      let x = Nx.rand Nx.Float32 ~key input_shape in
-      let k = Nx.rand Nx.Float32 ~key kernel_shape in
+      let x = Nx.rand Nx.Float32 input_shape in
+      let k = Nx.rand Nx.Float32 kernel_shape in
       let name = Printf.sprintf "correlate %s f32 (%s)" label backend_name in
       benchmarks :=
         Ubench.bench name (fun () -> ignore (Nx.correlate x k)) :: !benchmarks)
     correlate_configs;
   List.iter
     (fun (label, input_shape, kernel_size, stride) ->
-      let x = Nx.rand Nx.Float32 ~key input_shape in
+      let x = Nx.rand Nx.Float32 input_shape in
       let k = Array.length kernel_size in
       let dilation = Array.make k 1 in
       let padding = Array.make k (0, 0) in

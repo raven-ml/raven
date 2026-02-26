@@ -5,22 +5,20 @@
 
 (** Weight initialization strategies.
 
-    Initializers map an RNG key, shape, and float dtype to tensors. Named
-    families (Glorot, He, LeCun) are defined in terms of {!variance_scaling}. *)
+    Initializers map a shape and float dtype to tensors. Random keys are
+    obtained implicitly via {!Rune.Rng.next_key}. Named families (Glorot, He,
+    LeCun) are defined in terms of {!variance_scaling}. *)
 
 (** {1:types Types} *)
 
 type t = {
   f :
-    'layout.
-    Rune.Rng.key ->
-    int array ->
-    (float, 'layout) Rune.dtype ->
-    (float, 'layout) Rune.t;
+    'layout. int array -> (float, 'layout) Rune.dtype -> (float, 'layout) Rune.t;
 }
 (** [t] is the type for initializers.
 
-    [i.f key shape dtype] is an initialized tensor for [shape] and [dtype]. *)
+    [i.f shape dtype] is an initialized tensor for [shape] and [dtype]. Random
+    keys are drawn from the implicit RNG scope. *)
 
 (** {1:constant Constant} *)
 

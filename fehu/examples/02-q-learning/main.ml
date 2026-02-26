@@ -93,26 +93,18 @@ let () =
   Printf.printf "alpha = %.2f, gamma = %.2f, episodes = %d\n\n" alpha gamma
     n_episodes;
 
-  let rng = ref (Rune.Rng.key 42) in
-  let take_rng () =
-    let keys = Rune.Rng.split !rng in
-    rng := keys.(0);
-    keys.(1)
-  in
-
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let sample_uniform () =
-    let t = Rune.rand Rune.float32 ~key:(take_rng ()) [| 1 |] in
+    let t = Rune.rand Rune.float32 [| 1 |] in
     (Rune.to_array t : float array).(0)
   in
 
   let sample_random_action () =
-    let t =
-      Rune.randint Rune.int32 ~key:(take_rng ()) ~high:n_actions [| 1 |] 0
-    in
+    let t = Rune.randint Rune.int32 ~high:n_actions [| 1 |] 0 in
     Int32.to_int (Rune.to_array t : Int32.t array).(0)
   in
 
-  let env = Fehu_envs.Cartpole.make ~rng:(Rune.Rng.key 0) () in
+  let env = Fehu_envs.Cartpole.make () in
 
   let n_evals = n_episodes / eval_interval in
   let reward_history = Array.make n_evals 0.0 in

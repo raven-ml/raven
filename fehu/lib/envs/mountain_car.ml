@@ -30,13 +30,12 @@ let action_space = Space.Discrete.create 3
 let make_obs position velocity =
   Rune.create Rune.float32 [| 2 |] [| position; velocity |]
 
-let make ?render_mode ~rng () =
+let make ?render_mode () =
   let position = ref 0.0 in
   let velocity = ref 0.0 in
   let steps = ref 0 in
-  let reset env ?options:_ () =
-    let key = Env.take_rng env in
-    let r = Rune.rand Rune.float32 ~key [| 1 |] in
+  let reset _env ?options:_ () =
+    let r = Rune.rand Rune.float32 [| 1 |] in
     let v = (Rune.to_array r).(0) in
     position := -0.6 +. (v *. 0.2);
     velocity := 0.0;
@@ -81,5 +80,5 @@ let make ?render_mode ~rng () =
       (Printf.sprintf "MountainCar: [%s] pos=%.3f, vel=%.3f, steps=%d"
          (Bytes.to_string track) !position !velocity !steps)
   in
-  Env.create ?render_mode ~render_modes:[ "ansi" ] ~id:"MountainCar-v0" ~rng
+  Env.create ?render_mode ~render_modes:[ "ansi" ] ~id:"MountainCar-v0"
     ~observation_space ~action_space ~reset ~step ~render ()

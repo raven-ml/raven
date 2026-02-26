@@ -91,7 +91,7 @@ let find ~ctx key fs = Ptree.Dict.find_exn ~ctx key fs
 (* Self-attention with biased projections *)
 
 let self_attention (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
-    ~training ?rngs ~attention_mask ~params (x : (float, l) Rune.t) :
+    ~training ~attention_mask ~params (x : (float, l) Rune.t) :
     (float, l) Rune.t =
   let shape = Rune.shape x in
   let batch = shape.(0) in
@@ -126,20 +126,9 @@ let self_attention (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
       Some cfg.attention_dropout_prob
     else None
   in
-  let dropout_key =
-    match dropout_rate with
-    | Some _ -> (
-        match rngs with
-        | Some key -> Some (Rune.Rng.split key).(0)
-        | None ->
-            invalid_arg
-              "Bert.attention: requires ~rngs during training with dropout")
-    | None -> None
-  in
 
   let attn =
-    Kaun.Fn.dot_product_attention ~attention_mask ?dropout_rate ?dropout_key q k
-      v
+    Kaun.Fn.dot_product_attention ~attention_mask ?dropout_rate q k v
   in
 
   (* Merge heads *)
@@ -157,34 +146,20 @@ let self_attention (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
 (* Encoder block *)
 
 let encoder_block (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
-    ~training ?rngs ?ctx ~attention_mask ~params (x : (float, l) Rune.t) :
+    ~training ~attention_mask ~params (x : (float, l) Rune.t) :
     (float, l) Rune.t =
-  ignore ctx;
   let fs = fields ~ctx:"Bert.block" params in
-
-  (* RNG splitting: [attn_drop, hidden_drop1, hidden_drop2] *)
-  let attn_key, drop1_key, drop2_key =
-    match rngs with
-    | Some key ->
-        let keys = Rune.Rng.split ~n:3 key in
-        (Some keys.(0), Some keys.(1), Some keys.(2))
-    | None -> (None, None, None)
-  in
 
   (* Self-attention *)
   let attn_params = find ~ctx:"Bert.block" "attention" fs in
   let attn =
-    self_attention ~cfg ~dtype ~training ?rngs:attn_key ~attention_mask
-      ~params:attn_params x
+    self_attention ~cfg ~dtype ~training ~attention_mask ~params:attn_params x
   in
 
   (* Hidden dropout on attention output *)
   let attn =
     if training && cfg.hidden_dropout_prob > 0.0 then
-      match drop1_key with
-      | Some key -> Kaun.Fn.dropout ~key ~rate:cfg.hidden_dropout_prob attn
-      | None ->
-          invalid_arg "Bert.block: requires ~rngs during training with dropout"
+      Kaun.Fn.dropout ~rate:cfg.hidden_dropout_prob attn
     else attn
   in
 
@@ -208,10 +183,7 @@ let encoder_block (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
   (* Hidden dropout on FFN output *)
   let y =
     if training && cfg.hidden_dropout_prob > 0.0 then
-      match drop2_key with
-      | Some key -> Kaun.Fn.dropout ~key ~rate:cfg.hidden_dropout_prob y
-      | None ->
-          invalid_arg "Bert.block: requires ~rngs during training with dropout"
+      Kaun.Fn.dropout ~rate:cfg.hidden_dropout_prob y
     else y
   in
 
@@ -224,7 +196,7 @@ let encoder_block (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
 (* Forward: embeddings + encoder stack *)
 
 let encode (type l in_elt) ~(cfg : config) ~params
-    ~(dtype : (float, l) Rune.dtype) ~training ?rngs ?ctx
+    ~(dtype : (float, l) Rune.dtype) ~training ?ctx
     (input_ids : (int32, in_elt) Rune.t) : (float, l) Rune.t =
   let input_ids = Rune.cast Rune.int32 input_ids in
   let shape = Rune.shape input_ids in
@@ -241,14 +213,6 @@ let encode (type l in_elt) ~(cfg : config) ~params
         Rune.zeros Rune.int32 [| batch; seq |])
   in
   let attention_mask = get_attention_mask_bool ctx ~batch ~seq in
-
-  (* Split rngs: [emb_drop, block0, block1, ...] *)
-  let keys =
-    match rngs with
-    | Some key -> Rune.Rng.split ~n:(1 + cfg.num_hidden_layers) key
-    | None -> [||]
-  in
-  let key_at i = if Array.length keys > i then Some keys.(i) else None in
 
   (* Params *)
   let root = fields ~ctx:"Bert.encode" params in
@@ -282,45 +246,37 @@ let encode (type l in_elt) ~(cfg : config) ~params
   (* Embedding dropout *)
   let x =
     if training && cfg.hidden_dropout_prob > 0.0 then
-      match key_at 0 with
-      | Some key -> Kaun.Fn.dropout ~key ~rate:cfg.hidden_dropout_prob x
-      | None ->
-          invalid_arg "Bert.encode: requires ~rngs during training with dropout"
+      Kaun.Fn.dropout ~rate:cfg.hidden_dropout_prob x
     else x
   in
 
   (* Encoder stack *)
   let blocks = Ptree.List.items_exn ~ctx:"Bert.encode.layers" layers_t in
-  let _, x =
+  let x =
     List.fold_left
-      (fun (i, h) block_params ->
-        let h =
-          encoder_block ~cfg ~dtype ~training
-            ?rngs:(key_at (i + 1))
-            ?ctx ~attention_mask ~params:block_params h
-        in
-        (i + 1, h))
-      (0, x) blocks
+      (fun h block_params ->
+        encoder_block ~cfg ~dtype ~training ~attention_mask ~params:block_params
+          h)
+      x blocks
   in
   x
 
 (* Parameter initialization *)
 
-let init_block_params ~dtype ~rngs ~hidden ~intermediate =
+let init_block_params ~dtype ~hidden ~intermediate =
   let w = Init.normal ~stddev:0.02 () in
-  let keys = Rune.Rng.split ~n:6 rngs in
   let zeros n = Rune.zeros dtype [| n |] in
   let ones n = Rune.ones dtype [| n |] in
   let attn_params =
     Ptree.dict
       [
-        ("q_weight", Ptree.tensor (w.f keys.(0) [| hidden; hidden |] dtype));
+        ("q_weight", Ptree.tensor (w.f [| hidden; hidden |] dtype));
         ("q_bias", Ptree.tensor (zeros hidden));
-        ("k_weight", Ptree.tensor (w.f keys.(1) [| hidden; hidden |] dtype));
+        ("k_weight", Ptree.tensor (w.f [| hidden; hidden |] dtype));
         ("k_bias", Ptree.tensor (zeros hidden));
-        ("v_weight", Ptree.tensor (w.f keys.(2) [| hidden; hidden |] dtype));
+        ("v_weight", Ptree.tensor (w.f [| hidden; hidden |] dtype));
         ("v_bias", Ptree.tensor (zeros hidden));
-        ("o_weight", Ptree.tensor (w.f keys.(3) [| hidden; hidden |] dtype));
+        ("o_weight", Ptree.tensor (w.f [| hidden; hidden |] dtype));
         ("o_bias", Ptree.tensor (zeros hidden));
       ]
   in
@@ -329,28 +285,23 @@ let init_block_params ~dtype ~rngs ~hidden ~intermediate =
       ("attention", attn_params);
       ("attn_ln_gamma", Ptree.tensor (ones hidden));
       ("attn_ln_beta", Ptree.tensor (zeros hidden));
-      ( "ffn_up_weight",
-        Ptree.tensor (w.f keys.(4) [| hidden; intermediate |] dtype) );
+      ("ffn_up_weight", Ptree.tensor (w.f [| hidden; intermediate |] dtype));
       ("ffn_up_bias", Ptree.tensor (zeros intermediate));
-      ( "ffn_down_weight",
-        Ptree.tensor (w.f keys.(5) [| intermediate; hidden |] dtype) );
+      ("ffn_down_weight", Ptree.tensor (w.f [| intermediate; hidden |] dtype));
       ("ffn_down_bias", Ptree.tensor (zeros hidden));
       ("ffn_ln_gamma", Ptree.tensor (ones hidden));
       ("ffn_ln_beta", Ptree.tensor (zeros hidden));
     ]
 
-let init_encoder_params ~cfg ~dtype ~rngs =
+let init_encoder_params ~cfg ~dtype =
   let h = cfg.hidden_size in
   let w = Init.normal ~stddev:0.02 () in
-  let keys = Rune.Rng.split ~n:(3 + cfg.num_hidden_layers) rngs in
-  let word = w.f keys.(0) [| cfg.vocab_size; h |] dtype in
-  let pos = w.f keys.(1) [| cfg.max_position_embeddings; h |] dtype in
-  let typ = w.f keys.(2) [| cfg.type_vocab_size; h |] dtype in
+  let word = w.f [| cfg.vocab_size; h |] dtype in
+  let pos = w.f [| cfg.max_position_embeddings; h |] dtype in
+  let typ = w.f [| cfg.type_vocab_size; h |] dtype in
   let blocks =
-    List.init cfg.num_hidden_layers (fun i ->
-        init_block_params ~dtype
-          ~rngs:keys.(3 + i)
-          ~hidden:h ~intermediate:cfg.intermediate_size)
+    List.init cfg.num_hidden_layers (fun _ ->
+        init_block_params ~dtype ~hidden:h ~intermediate:cfg.intermediate_size)
   in
   Ptree.dict
     [
@@ -371,14 +322,14 @@ let init_encoder_params ~cfg ~dtype ~rngs =
 let encoder (cfg : config) () : (int32, float) Layer.t =
   {
     Layer.init =
-      (fun ~rngs ~dtype ->
+      (fun ~dtype ->
         Layer.make_vars
-          ~params:(init_encoder_params ~cfg ~dtype ~rngs)
+          ~params:(init_encoder_params ~cfg ~dtype)
           ~state:Ptree.empty ~dtype);
     apply =
-      (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
+      (fun ~params ~state ~dtype ~training ?ctx x ->
         ignore state;
-        let y = encode ~cfg ~params ~dtype ~training ?rngs ?ctx x in
+        let y = encode ~cfg ~params ~dtype ~training ?ctx x in
         (y, Ptree.empty));
   }
 
@@ -386,9 +337,8 @@ let pooler (cfg : config) () : (float, float) Layer.t =
   let w_init = Init.normal ~stddev:0.02 () in
   {
     Layer.init =
-      (fun ~rngs ~dtype ->
-        let key = (Rune.Rng.split rngs).(0) in
-        let w = w_init.f key [| cfg.hidden_size; cfg.hidden_size |] dtype in
+      (fun ~dtype ->
+        let w = w_init.f [| cfg.hidden_size; cfg.hidden_size |] dtype in
         let b = Rune.zeros dtype [| cfg.hidden_size |] in
         Layer.make_vars
           ~params:
@@ -396,8 +346,8 @@ let pooler (cfg : config) () : (float, float) Layer.t =
                [ ("weight", Ptree.tensor w); ("bias", Ptree.tensor b) ])
           ~state:Ptree.empty ~dtype);
     apply =
-      (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
-        ignore (training, rngs, ctx, state);
+      (fun ~params ~state ~dtype ~training ?ctx x ->
+        ignore (training, ctx, state);
         let x = require_float_dtype ~ctx:"Bert.pooler" dtype x in
         let fs = fields ~ctx:"Bert.pooler" params in
         let w = get fs ~name:"weight" dtype in
@@ -415,13 +365,10 @@ let for_sequence_classification (cfg : config) ~num_labels () :
   let w_init = Init.normal ~stddev:0.02 () in
   {
     Layer.init =
-      (fun ~rngs ~dtype ->
-        let keys = Rune.Rng.split ~n:3 rngs in
-        let enc = init_encoder_params ~cfg ~dtype ~rngs:keys.(0) in
-        let pool_w =
-          w_init.f keys.(1) [| cfg.hidden_size; cfg.hidden_size |] dtype
-        in
-        let cls_w = w_init.f keys.(2) [| cfg.hidden_size; num_labels |] dtype in
+      (fun ~dtype ->
+        let enc = init_encoder_params ~cfg ~dtype in
+        let pool_w = w_init.f [| cfg.hidden_size; cfg.hidden_size |] dtype in
+        let cls_w = w_init.f [| cfg.hidden_size; num_labels |] dtype in
         Layer.make_vars
           ~params:
             (Ptree.dict
@@ -444,16 +391,14 @@ let for_sequence_classification (cfg : config) ~num_labels () :
                ])
           ~state:Ptree.empty ~dtype);
     apply =
-      (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
+      (fun ~params ~state ~dtype ~training ?ctx x ->
         ignore state;
         let root = fields ~ctx:"Bert.seq_cls" params in
         let enc_params = find ~ctx:"Bert.seq_cls" "encoder" root in
         let pool_params = find ~ctx:"Bert.seq_cls" "pooler" root in
         let cls_params = find ~ctx:"Bert.seq_cls" "classifier" root in
 
-        let hidden =
-          encode ~cfg ~params:enc_params ~dtype ~training ?rngs ?ctx x
-        in
+        let hidden = encode ~cfg ~params:enc_params ~dtype ~training ?ctx x in
 
         (* Pooler: CLS token -> dense -> tanh *)
         let pool_fs = fields ~ctx:"Bert.seq_cls.pooler" pool_params in
@@ -469,14 +414,7 @@ let for_sequence_classification (cfg : config) ~num_labels () :
         (* Dropout on pooled output during fine-tuning *)
         let pooled =
           if training && cfg.hidden_dropout_prob > 0.0 then
-            match rngs with
-            | Some key ->
-                let k = (Rune.Rng.split key).(0) in
-                Kaun.Fn.dropout ~key:k ~rate:cfg.hidden_dropout_prob pooled
-            | None ->
-                invalid_arg
-                  "Bert.for_sequence_classification: requires ~rngs during \
-                   training with dropout"
+            Kaun.Fn.dropout ~rate:cfg.hidden_dropout_prob pooled
           else pooled
         in
 
@@ -491,12 +429,9 @@ let for_masked_lm (cfg : config) () : (int32, float) Layer.t =
   let w_init = Init.normal ~stddev:0.02 () in
   {
     Layer.init =
-      (fun ~rngs ~dtype ->
-        let keys = Rune.Rng.split ~n:2 rngs in
-        let enc = init_encoder_params ~cfg ~dtype ~rngs:keys.(0) in
-        let dense_w =
-          w_init.f keys.(1) [| cfg.hidden_size; cfg.hidden_size |] dtype
-        in
+      (fun ~dtype ->
+        let enc = init_encoder_params ~cfg ~dtype in
+        let dense_w = w_init.f [| cfg.hidden_size; cfg.hidden_size |] dtype in
         Layer.make_vars
           ~params:
             (Ptree.dict
@@ -520,15 +455,13 @@ let for_masked_lm (cfg : config) () : (int32, float) Layer.t =
                ])
           ~state:Ptree.empty ~dtype);
     apply =
-      (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
+      (fun ~params ~state ~dtype ~training ?ctx x ->
         ignore state;
         let root = fields ~ctx:"Bert.mlm" params in
         let enc_params = find ~ctx:"Bert.mlm" "encoder" root in
         let mlm_params = find ~ctx:"Bert.mlm" "mlm" root in
 
-        let hidden =
-          encode ~cfg ~params:enc_params ~dtype ~training ?rngs ?ctx x
-        in
+        let hidden = encode ~cfg ~params:enc_params ~dtype ~training ?ctx x in
 
         (* MLM transform: dense -> GELU -> LN *)
         let mlm_fs = fields ~ctx:"Bert.mlm.head" mlm_params in

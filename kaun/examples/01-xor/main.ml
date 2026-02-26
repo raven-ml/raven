@@ -6,7 +6,7 @@
 open Kaun
 
 let () =
-  let rngs = Rune.Rng.key 42 in
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let dtype = Rune.float32 in
 
   (* XOR dataset *)
@@ -30,11 +30,11 @@ let () =
   in
 
   (* Initialize train state (vars + optimizer state) *)
-  let st = Train.init trainer ~rngs ~dtype in
+  let st = Train.init trainer ~dtype in
 
   (* Fit *)
   let st =
-    Train.fit trainer st ~rngs
+    Train.fit trainer st
       ~report:(fun ~step ~loss _st ->
         if step mod 200 = 0 then Printf.printf "step %4d  loss %.6f\n" step loss)
       (Data.repeat 1000 (x, fun pred -> Loss.binary_cross_entropy pred y))

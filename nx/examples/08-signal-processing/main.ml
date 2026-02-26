@@ -17,8 +17,7 @@ let () =
   let t = linspace float64 0.0 (Float.of_int n *. dt) n ~endpoint:false in
 
   (* Build signal: 5 Hz sine + 20 Hz sine + noise. *)
-  let key = Rng.key 42 in
-  let noise = Rng.normal ~key Float64 [| n |] *$ 0.3 in
+  let noise = Rng.normal Float64 [| n |] *$ 0.3 in
   let pi2 = 2.0 *. Float.pi in
   let signal_5hz = sin (t *$ (pi2 *. 5.0)) in
   let signal_20hz = sin (t *$ (pi2 *. 20.0)) *$ 0.5 in

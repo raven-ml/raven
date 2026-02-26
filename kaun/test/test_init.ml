@@ -75,91 +75,91 @@ let expected_variance ~scale ~mode ~fan_in ~fan_out =
 let uniform_limit variance = sqrt (3.0 *. variance)
 
 let test_constants () =
-  let key = Rune.Rng.key 0 in
+  Rune.Rng.run ~seed:0 @@ fun () ->
   let shape = [| 11; 13 |] in
-  let zeros = Init.zeros.f key shape Rune.float32 in
+  let zeros = Init.zeros.f shape Rune.float32 in
   equal ~msg:"zeros" bool true (tensor_all (fun x -> x = 0.0) zeros);
-  let ones = Init.ones.f key shape Rune.float32 in
+  let ones = Init.ones.f shape Rune.float32 in
   equal ~msg:"ones" bool true (tensor_all (fun x -> x = 1.0) ones);
-  let c = (Init.constant 3.5).f key shape Rune.float32 in
+  let c = (Init.constant 3.5).f shape Rune.float32 in
   equal ~msg:"constant" bool true (tensor_all (fun x -> x = 3.5) c)
 
 let test_uniform_range_and_mean () =
-  let key = Rune.Rng.key 1 in
+  Rune.Rng.run ~seed:1 @@ fun () ->
   let scale = 0.25 in
-  let t = (Init.uniform ~scale ()).f key [| 120_000 |] Rune.float32 in
+  let t = (Init.uniform ~scale ()).f [| 120_000 |] Rune.float32 in
   equal ~msg:"uniform range" bool true
     (tensor_all (fun x -> x >= 0.0 && x < scale) t);
   let mean, _ = tensor_stats t in
   equal ~msg:"uniform mean" (float 8e-3) (scale /. 2.0) mean
 
 let test_normal_mean_and_variance () =
-  let key = Rune.Rng.key 2 in
+  Rune.Rng.run ~seed:2 @@ fun () ->
   let stddev = 0.2 in
-  let t = (Init.normal ~stddev ()).f key [| 140_000 |] Rune.float32 in
+  let t = (Init.normal ~stddev ()).f [| 140_000 |] Rune.float32 in
   let mean, variance = tensor_stats t in
   equal ~msg:"normal mean" (float 6e-3) 0.0 mean;
   equal ~msg:"normal variance" (float 8e-3) (stddev *. stddev) variance
 
 let test_glorot_uniform_bounds () =
-  let key = Rune.Rng.key 3 in
+  Rune.Rng.run ~seed:3 @@ fun () ->
   let shape = [| 64; 32 |] in
   let fan_in, fan_out = compute_fans shape ~in_axis:(-2) ~out_axis:(-1) in
   let variance = expected_variance ~scale:1.0 ~mode:`Fan_avg ~fan_in ~fan_out in
   let limit = uniform_limit variance in
-  let t = (Init.glorot_uniform ()).f key shape Rune.float32 in
+  let t = (Init.glorot_uniform ()).f shape Rune.float32 in
   equal ~msg:"glorot_uniform bounds" bool true
     (tensor_all (fun x -> x >= -.limit && x <= limit) t)
 
 let test_glorot_normal_variance () =
-  let key = Rune.Rng.key 4 in
+  Rune.Rng.run ~seed:4 @@ fun () ->
   let shape = [| 960; 480 |] in
   let fan_in, fan_out = compute_fans shape ~in_axis:(-2) ~out_axis:(-1) in
   let expected = expected_variance ~scale:1.0 ~mode:`Fan_avg ~fan_in ~fan_out in
-  let t = (Init.glorot_normal ()).f key shape Rune.float32 in
+  let t = (Init.glorot_normal ()).f shape Rune.float32 in
   let _, variance = tensor_stats t in
   equal ~msg:"glorot_normal variance" (float 3e-4) expected variance
 
 let test_he_uniform_bounds () =
-  let key = Rune.Rng.key 5 in
+  Rune.Rng.run ~seed:5 @@ fun () ->
   let shape = [| 128; 64 |] in
   let fan_in, fan_out = compute_fans shape ~in_axis:(-2) ~out_axis:(-1) in
   let variance = expected_variance ~scale:2.0 ~mode:`Fan_in ~fan_in ~fan_out in
   let limit = uniform_limit variance in
-  let t = (Init.he_uniform ()).f key shape Rune.float32 in
+  let t = (Init.he_uniform ()).f shape Rune.float32 in
   equal ~msg:"he_uniform bounds" bool true
     (tensor_all (fun x -> x >= -.limit && x <= limit) t)
 
 let test_he_normal_variance () =
-  let key = Rune.Rng.key 6 in
+  Rune.Rng.run ~seed:6 @@ fun () ->
   let shape = [| 256; 64 |] in
   let fan_in, fan_out = compute_fans shape ~in_axis:(-2) ~out_axis:(-1) in
   let expected = expected_variance ~scale:2.0 ~mode:`Fan_in ~fan_in ~fan_out in
-  let t = (Init.he_normal ()).f key shape Rune.float32 in
+  let t = (Init.he_normal ()).f shape Rune.float32 in
   let _, variance = tensor_stats t in
   equal ~msg:"he_normal variance" (float 2e-3) expected variance
 
 let test_lecun_uniform_bounds () =
-  let key = Rune.Rng.key 7 in
+  Rune.Rng.run ~seed:7 @@ fun () ->
   let shape = [| 128; 32 |] in
   let fan_in, fan_out = compute_fans shape ~in_axis:(-2) ~out_axis:(-1) in
   let variance = expected_variance ~scale:1.0 ~mode:`Fan_in ~fan_in ~fan_out in
   let limit = uniform_limit variance in
-  let t = (Init.lecun_uniform ()).f key shape Rune.float32 in
+  let t = (Init.lecun_uniform ()).f shape Rune.float32 in
   equal ~msg:"lecun_uniform bounds" bool true
     (tensor_all (fun x -> x >= -.limit && x <= limit) t)
 
 let test_lecun_normal_variance () =
-  let key = Rune.Rng.key 8 in
+  Rune.Rng.run ~seed:8 @@ fun () ->
   let shape = [| 128; 16 |] in
   let fan_in, fan_out = compute_fans shape ~in_axis:(-2) ~out_axis:(-1) in
   let expected = expected_variance ~scale:1.0 ~mode:`Fan_in ~fan_in ~fan_out in
-  let t = (Init.lecun_normal ()).f key shape Rune.float32 in
+  let t = (Init.lecun_normal ()).f shape Rune.float32 in
   let _, variance = tensor_stats t in
   equal ~msg:"lecun_normal variance" (float 1.5e-3) expected variance
 
 let test_variance_scaling_axis_override () =
-  let key = Rune.Rng.key 9 in
+  Rune.Rng.run ~seed:9 @@ fun () ->
   let shape = [| 2; 9; 4 |] in
   let in_axis = 2 in
   let out_axis = 0 in
@@ -170,7 +170,7 @@ let test_variance_scaling_axis_override () =
     Init.variance_scaling ~scale:1.7 ~mode:`Fan_out ~distribution:`Uniform
       ~in_axis ~out_axis ()
   in
-  let t = init.f key shape Rune.float32 in
+  let t = init.f shape Rune.float32 in
   equal ~msg:"variance_scaling axis override" bool true
     (tensor_all (fun x -> x >= -.limit && x <= limit) t)
 
@@ -187,21 +187,25 @@ let test_validation_errors () =
     Init.variance_scaling ~scale:1.0 ~mode:`Fan_avg ~distribution:`Uniform
       ~in_axis:9 ()
   in
+  Rune.Rng.run ~seed:10 @@ fun () ->
   raises_invalid_arg_contains "invalid in axis" (fun () ->
-      ignore (init.f (Rune.Rng.key 10) [| 3; 4 |] Rune.float32));
+      ignore (init.f [| 3; 4 |] Rune.float32));
   let zero_fan =
     Init.variance_scaling ~scale:1.0 ~mode:`Fan_in ~distribution:`Uniform ()
   in
   raises_invalid_arg_contains "non-positive fan" (fun () ->
-      ignore (zero_fan.f (Rune.Rng.key 11) [| 0; 4 |] Rune.float32))
+      ignore (zero_fan.f [| 0; 4 |] Rune.float32))
 
-let test_deterministic_same_key () =
-  let key = Rune.Rng.key 12 in
+let test_deterministic_same_seed () =
   let init = Init.he_uniform () in
   let shape = [| 64; 64 |] in
-  let t0 = init.f key shape Rune.float32 |> flatten_f32 in
-  let t1 = init.f key shape Rune.float32 |> flatten_f32 in
-  equal ~msg:"same key deterministic" bool true (t0 = t1)
+  let t0 =
+    Rune.Rng.run ~seed:12 @@ fun () -> init.f shape Rune.float32 |> flatten_f32
+  in
+  let t1 =
+    Rune.Rng.run ~seed:12 @@ fun () -> init.f shape Rune.float32 |> flatten_f32
+  in
+  equal ~msg:"same seed deterministic" bool true (t0 = t1)
 
 let () =
   run "Kaun.Init"
@@ -211,7 +215,7 @@ let () =
         [
           test "uniform range and mean" test_uniform_range_and_mean;
           test "normal mean and variance" test_normal_mean_and_variance;
-          test "deterministic same key" test_deterministic_same_key;
+          test "deterministic same seed" test_deterministic_same_seed;
         ];
       group "variance scaling families"
         [

@@ -59,10 +59,10 @@ val shape : 'a t -> int array option
 val contains : 'a t -> 'a -> bool
 (** [contains s v] is [true] iff [v] is valid in [s]. *)
 
-val sample : 'a t -> rng:Rune.Rng.key -> 'a * Rune.Rng.key
-(** [sample s ~rng] is [(v, rng')] where [v] is a uniformly sampled value from
-    [s]. The returned [rng'] must be used for subsequent draws to maintain
-    independence. *)
+val sample : 'a t -> 'a
+(** [sample s] is a uniformly sampled value from [s].
+
+    Random keys are drawn from the implicit RNG scope. *)
 
 val pack : 'a t -> 'a -> Value.t
 (** [pack s v] is [v] converted to the universal {!Value.t} representation. *)

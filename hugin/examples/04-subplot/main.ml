@@ -60,7 +60,7 @@ let () =
 
   (* --- 3. Scatter Plot --- *)
   let ax3 = Figure.add_subplot ~nrows ~ncols ~index:3 fig in
-  let x3_rand = Nx.rand Nx.Float32 ~key:(Nx.Rng.key 0) [| 50 |] in
+  let x3_rand = Nx.rand Nx.Float32 [| 50 |] in
   let x3 = Nx.mul x3_rand (Nx.scalar Nx.Float32 10.0) in
   let y3 = Nx.map_item (fun x -> x +. Random.float 2.0 -. 1.0) x3 in
   let _ax3 =

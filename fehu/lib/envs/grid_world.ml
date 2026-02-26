@@ -83,7 +83,7 @@ let render_image row col =
   draw_cell 2 2 ~r:200 ~g:80 ~b:80;
   Render.image ~width:frame_width ~height:frame_height data
 
-let make ?render_mode ~rng () =
+let make ?render_mode () =
   let row = ref 0 in
   let col = ref 0 in
   let steps = ref 0 in
@@ -121,5 +121,4 @@ let make ?render_mode ~rng () =
     | _ -> Some (Text (render_text !row !col))
   in
   Env.create ?render_mode ~render_modes:[ "ansi"; "rgb_array" ]
-    ~id:"GridWorld-v0" ~rng ~observation_space ~action_space ~reset ~step
-    ~render ()
+    ~id:"GridWorld-v0" ~observation_space ~action_space ~reset ~step ~render ()

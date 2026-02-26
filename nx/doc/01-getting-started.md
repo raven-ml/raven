@@ -29,7 +29,7 @@ open Nx
 
 (* Create arrays *)
 let a = ones float32 [|3; 3|]
-let b = rand float32 ~key:(Rng.key 0) [|3; 3|]
+let b = rand float32 [|3; 3|]
 
 (* Matrix multiplication *)
 let c = matmul a b
@@ -56,8 +56,8 @@ let sub = slice [R (0, 2); A] arr
 
 **Broadcasting works like NumPy.** Arrays with compatible shapes can be used together:
 ```ocaml
-let matrix = rand float32 ~key:(Rng.key 1) [|3; 4|]
-let row = rand float32 ~key:(Rng.key 2) [|1; 4|]
+let matrix = rand float32 [|3; 4|]
+let row = rand float32 [|1; 4|]
 let result = add matrix row
 ```
 
@@ -79,12 +79,12 @@ let transposed = transpose z
 let concatenated = concatenate ~axis:0 [x; x]
 
 (* Math *)
-let arr = rand float32 ~key:(Rng.key 0) [|3; 3|]
+let arr = rand float32 [|3; 3|]
 let sum_all = sum arr
 let mean_axis0 = mean ~axes:[0] arr
 let maximum = max arr
 let a = ones float32 [|3; 3|]
-let b = rand float32 ~key:(Rng.key 1) [|3; 3|]
+let b = rand float32 [|3; 3|]
 let product = mul a b
 let dot_product = matmul a b
 ```

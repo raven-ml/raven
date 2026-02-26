@@ -75,10 +75,11 @@ let () =
   Printf.printf "Rollout: %d steps/update, gamma = %.2f, lr = %.4f\n\n" n_steps
     gamma lr;
 
-  let env = Fehu_envs.Cartpole.make ~rng:(Rune.Rng.key 0) () in
+  Rune.Rng.run ~seed:42 @@ fun () ->
+  let env = Fehu_envs.Cartpole.make () in
 
   (* Initialize network *)
-  let vars = Layer.init network ~rngs:(Rune.Rng.key 42) ~dtype:Rune.float32 in
+  let vars = Layer.init network ~dtype:Rune.float32 in
   let params = ref (Layer.params vars) in
   let net_state = Layer.state vars in
 
@@ -88,19 +89,10 @@ let () =
   let algo = Optim.adam ~lr:(Optim.Schedule.constant lr) () in
   let opt_state = ref (Optim.init algo !params) in
 
-  (* Policy: sample an action from the logits *)
-  let policy_rng = ref (Rune.Rng.key 1) in
-  let take_rng () =
-    let keys = Rune.Rng.split !policy_rng in
-    policy_rng := keys.(0);
-    keys.(1)
-  in
-
   let policy obs =
     let obs_batch = Rune.reshape [| 1; 4 |] obs in
     let logits = Rune.no_grad (fun () -> forward !params net_state obs_batch) in
-    let key = take_rng () in
-    let action_idx = Rune.Rng.categorical ~key logits in
+    let action_idx = Rune.Rng.categorical logits in
     let action = Rune.reshape [||] action_idx in
     let log_probs = Rune.log_softmax logits in
     let action_1 = Rune.reshape [| 1; 1 |] action_idx in

@@ -5,14 +5,14 @@
 
 let backend_name = "Nx"
 
-type matmul_case = { name : string; m : int; k : int; n : int; seed : int }
+type matmul_case = { name : string; m : int; k : int; n : int }
 
 let cases =
   [
-    { name = "SquareSmall"; m = 64; k = 64; n = 64; seed = 11 };
-    { name = "TallSkinny"; m = 256; k = 64; n = 256; seed = 17 };
-    { name = "Wide"; m = 128; k = 256; n = 64; seed = 23 };
-    { name = "SquareLarge"; m = 512; k = 512; n = 512; seed = 29 };
+    { name = "SquareSmall"; m = 64; k = 64; n = 64 };
+    { name = "TallSkinny"; m = 256; k = 64; n = 256 };
+    { name = "Wide"; m = 128; k = 256; n = 64 };
+    { name = "SquareLarge"; m = 512; k = 512; n = 512 };
   ]
 
 let benchmark_name case dtype_label suffix =
@@ -20,10 +20,8 @@ let benchmark_name case dtype_label suffix =
     case.k case.n dtype_label suffix backend_name
 
 let setup_operands (type a b) (dtype : (a, b) Nx.dtype) case =
-  let lhs = Nx.rand dtype ~key:(Nx.Rng.key case.seed) [| case.m; case.k |] in
-  let rhs =
-    Nx.rand dtype ~key:(Nx.Rng.key (case.seed + 1)) [| case.k; case.n |]
-  in
+  let lhs = Nx.rand dtype [| case.m; case.k |] in
+  let rhs = Nx.rand dtype [| case.k; case.n |] in
   (lhs, rhs)
 
 let add_case (type a b) benches case (dtype : (a, b) Nx.dtype) dtype_label =

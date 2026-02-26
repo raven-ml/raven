@@ -7,8 +7,6 @@ open Windtrap
 module Layer = Kaun.Layer
 module Ptree = Kaun.Ptree
 
-let rngs = Rune.Rng.key 42
-
 let flatten_f32 t =
   Rune.to_array (Rune.reshape [| -1 |] (Rune.cast Rune.float32 t))
 
@@ -25,16 +23,17 @@ let tensor_close ~eps ~expected ~actual =
     done;
     !ok
 
-let apply_out (type a in_elt) (m : (a, float) Layer.t) vars ~training ?rngs
+let apply_out (type a in_elt) (m : (a, float) Layer.t) vars ~training
     (x : (a, in_elt) Rune.t) =
-  let y, _ = Layer.apply m vars ~training ?rngs x in
+  let y, _ = Layer.apply m vars ~training x in
   y
 
 (* Linear *)
 
 let test_linear_shapes () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let m = Layer.linear ~in_features:4 ~out_features:3 () in
-  let vars = Layer.init m ~rngs ~dtype:Rune.float32 in
+  let vars = Layer.init m ~dtype:Rune.float32 in
   let fields = Ptree.Dict.fields_exn (Layer.params vars) in
   let w = Ptree.Dict.get_tensor_exn fields ~name:"weight" Rune.float32 in
   let b = Ptree.Dict.get_tensor_exn fields ~name:"bias" Rune.float32 in
@@ -42,13 +41,15 @@ let test_linear_shapes () =
   equal ~msg:"bias shape" (list int) [ 3 ] (Array.to_list (Rune.shape b))
 
 let test_linear_forward () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let m = Layer.linear ~in_features:2 ~out_features:3 () in
-  let vars = Layer.init m ~rngs ~dtype:Rune.float32 in
+  let vars = Layer.init m ~dtype:Rune.float32 in
   let x = Rune.ones Rune.float32 [| 1; 2 |] in
   let y = apply_out m vars ~training:false x in
   equal ~msg:"output shape" (list int) [ 1; 3 ] (Array.to_list (Rune.shape y))
 
 let test_linear_manual_params () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let m = Layer.linear ~in_features:2 ~out_features:2 () in
   let w = Rune.create Rune.float32 [| 2; 2 |] [| 1.0; 0.0; 0.0; 1.0 |] in
   let b = Rune.create Rune.float32 [| 2 |] [| 0.5; -0.5 |] in
@@ -56,7 +57,7 @@ let test_linear_manual_params () =
     Ptree.dict [ ("weight", Ptree.tensor w); ("bias", Ptree.tensor b) ]
   in
   let vars =
-    Layer.init m ~rngs ~dtype:Rune.float32 |> fun vars ->
+    Layer.init m ~dtype:Rune.float32 |> fun vars ->
     Layer.with_params vars params
   in
   let x = Rune.create Rune.float32 [| 1; 2 |] [| 3.0; 4.0 |] in
@@ -68,8 +69,9 @@ let test_linear_manual_params () =
 (* Normalization *)
 
 let test_layer_norm_shapes () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let m = Layer.layer_norm ~dim:8 () in
-  let vars = Layer.init m ~rngs ~dtype:Rune.float32 in
+  let vars = Layer.init m ~dtype:Rune.float32 in
   let fields = Ptree.Dict.fields_exn (Layer.params vars) in
   let gamma = Ptree.Dict.get_tensor_exn fields ~name:"gamma" Rune.float32 in
   let beta = Ptree.Dict.get_tensor_exn fields ~name:"beta" Rune.float32 in
@@ -81,8 +83,9 @@ let test_layer_norm_shapes () =
     (Array.for_all (fun x -> x = 0.0) (flatten_f32 beta))
 
 let test_layer_norm_forward () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let m = Layer.layer_norm ~dim:4 () in
-  let vars = Layer.init m ~rngs ~dtype:Rune.float32 in
+  let vars = Layer.init m ~dtype:Rune.float32 in
   let x =
     Rune.create Rune.float32 [| 2; 4 |]
       [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0; 7.0; 8.0 |]
@@ -91,8 +94,9 @@ let test_layer_norm_forward () =
   equal ~msg:"output shape" (list int) [ 2; 4 ] (Array.to_list (Rune.shape y))
 
 let test_rms_norm_shapes () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let m = Layer.rms_norm ~dim:6 () in
-  let vars = Layer.init m ~rngs ~dtype:Rune.float32 in
+  let vars = Layer.init m ~dtype:Rune.float32 in
   let fields = Ptree.Dict.fields_exn (Layer.params vars) in
   let scale = Ptree.Dict.get_tensor_exn fields ~name:"scale" Rune.float32 in
   equal ~msg:"scale shape" (list int) [ 6 ] (Array.to_list (Rune.shape scale));
@@ -100,8 +104,9 @@ let test_rms_norm_shapes () =
     (Array.for_all (fun x -> x = 1.0) (flatten_f32 scale))
 
 let test_batch_norm_shapes () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let m = Layer.batch_norm ~num_features:3 () in
-  let vars = Layer.init m ~rngs ~dtype:Rune.float32 in
+  let vars = Layer.init m ~dtype:Rune.float32 in
   let param_fields = Ptree.Dict.fields_exn (Layer.params vars) in
   let state_fields = Ptree.Dict.fields_exn (Layer.state vars) in
   let scale =
@@ -122,8 +127,9 @@ let test_batch_norm_shapes () =
     (Array.to_list (Rune.shape running_var))
 
 let test_batch_norm_rank3_axes () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let m = Layer.batch_norm ~num_features:3 () in
-  let vars = Layer.init m ~rngs ~dtype:Rune.float32 in
+  let vars = Layer.init m ~dtype:Rune.float32 in
   let param_fields = Ptree.Dict.fields_exn (Layer.params vars) in
   let scale =
     Ptree.Dict.get_tensor_exn param_fields ~name:"scale" Rune.float32
@@ -164,8 +170,9 @@ let test_batch_norm_rank3_axes () =
     (tensor_close ~eps:1e-6 ~expected ~actual:y)
 
 let test_batch_norm_running_stats_eval () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let m = Layer.batch_norm ~num_features:2 () in
-  let vars0 = Layer.init m ~rngs ~dtype:Rune.float32 in
+  let vars0 = Layer.init m ~dtype:Rune.float32 in
   let x_train = Rune.create Rune.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let _y_train, vars1 = Layer.apply m vars0 ~training:true x_train in
   let param_fields = Ptree.Dict.fields_exn (Layer.params vars1) in
@@ -206,13 +213,14 @@ let test_batch_norm_running_stats_eval () =
     (tensor_close ~eps:1e-6 ~expected:running_var ~actual:running_var2)
 
 let test_batch_norm_eval_affine_rank3 () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let m = Layer.batch_norm ~num_features:3 () in
   let scale = Rune.create Rune.float32 [| 3 |] [| 2.0; 3.0; 4.0 |] in
   let bias = Rune.create Rune.float32 [| 3 |] [| 10.0; 20.0; 30.0 |] in
   let running_mean = Rune.create Rune.float32 [| 3 |] [| 1.0; 2.0; 3.0 |] in
   let running_var = Rune.create Rune.float32 [| 3 |] [| 4.0; 9.0; 16.0 |] in
   let vars =
-    Layer.init m ~rngs ~dtype:Rune.float32 |> fun vars ->
+    Layer.init m ~dtype:Rune.float32 |> fun vars ->
     Layer.with_params vars
       (Ptree.dict
          [ ("scale", Ptree.tensor scale); ("bias", Ptree.tensor bias) ])
@@ -241,26 +249,29 @@ let test_batch_norm_eval_affine_rank3 () =
 (* Embedding *)
 
 let test_embedding_shapes () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let m = Layer.embedding ~vocab_size:100 ~embed_dim:16 () in
-  let vars = Layer.init m ~rngs ~dtype:Rune.float32 in
+  let vars = Layer.init m ~dtype:Rune.float32 in
   let fields = Ptree.Dict.fields_exn (Layer.params vars) in
   let emb = Ptree.Dict.get_tensor_exn fields ~name:"embedding" Rune.float32 in
   equal ~msg:"embedding shape" (list int) [ 100; 16 ]
     (Array.to_list (Rune.shape emb))
 
 let test_embedding_forward () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let m = Layer.embedding ~vocab_size:10 ~embed_dim:4 ~scale:false () in
-  let vars = Layer.init m ~rngs ~dtype:Rune.float32 in
+  let vars = Layer.init m ~dtype:Rune.float32 in
   let indices = Rune.create Rune.int32 [| 3 |] [| 0l; 5l; 2l |] in
   let y = apply_out m vars ~training:false indices in
   equal ~msg:"embedding output shape" (list int) [ 3; 4 ]
     (Array.to_list (Rune.shape y))
 
 let test_compose_embedding_linear () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let emb = Layer.embedding ~vocab_size:10 ~embed_dim:4 ~scale:false () in
   let proj = Layer.linear ~in_features:4 ~out_features:2 () in
   let m = Layer.compose emb proj in
-  let vars = Layer.init m ~rngs ~dtype:Rune.float32 in
+  let vars = Layer.init m ~dtype:Rune.float32 in
   let indices = Rune.create Rune.int32 [| 3 |] [| 0l; 5l; 2l |] in
   let y, _ = Layer.apply m vars ~training:false indices in
   equal ~msg:"compose embedding+linear output shape" (list int) [ 3; 2 ]
@@ -269,14 +280,16 @@ let test_compose_embedding_linear () =
 (* Activations *)
 
 let test_relu () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let m = Layer.relu () in
-  let vars = Layer.init m ~rngs ~dtype:Rune.float32 in
+  let vars = Layer.init m ~dtype:Rune.float32 in
   let x = Rune.create Rune.float32 [| 4 |] [| -2.0; -0.5; 0.0; 3.0 |] in
   let y = apply_out m vars ~training:false x in
   let expected = Rune.create Rune.float32 [| 4 |] [| 0.0; 0.0; 0.0; 3.0 |] in
   equal ~msg:"relu" bool true (tensor_close ~eps:1e-6 ~expected ~actual:y)
 
 let test_activation_no_params () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let activations =
     [
       Layer.relu ();
@@ -287,7 +300,7 @@ let test_activation_no_params () =
     ]
   in
   let assert_no_params (m : (float, float) Layer.t) =
-    let vars = Layer.init m ~rngs ~dtype:Rune.float32 in
+    let vars = Layer.init m ~dtype:Rune.float32 in
     match (Layer.params vars, Layer.state vars) with
     | Ptree.List [], Ptree.List [] -> ()
     | _ -> fail "expected empty params and state"
@@ -297,19 +310,22 @@ let test_activation_no_params () =
 (* Dropout *)
 
 let test_dropout_eval_identity () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let m = Layer.dropout ~rate:0.99 () in
-  let vars = Layer.init m ~rngs ~dtype:Rune.float32 in
+  let vars = Layer.init m ~dtype:Rune.float32 in
   let x = Rune.ones Rune.float32 [| 10 |] in
   let y = apply_out m vars ~training:false x in
   equal ~msg:"dropout eval = identity" bool true
     (tensor_close ~eps:1e-6 ~expected:x ~actual:y)
 
-let test_dropout_requires_rngs () =
+let test_dropout_training () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let m = Layer.dropout ~rate:0.5 () in
-  let vars = Layer.init m ~rngs ~dtype:Rune.float32 in
+  let vars = Layer.init m ~dtype:Rune.float32 in
   let x = Rune.ones Rune.float32 [| 10 |] in
-  raises_invalid_arg "Layer.dropout: requires ~rngs during training" (fun () ->
-      ignore (Layer.apply m vars ~training:true x))
+  let y = apply_out m vars ~training:true x in
+  equal ~msg:"dropout training shape" (list int) [ 10 ]
+    (Array.to_list (Rune.shape y))
 
 let test_dropout_rate_bounds () =
   raises_match
@@ -322,8 +338,9 @@ let test_dropout_rate_bounds () =
 (* Flatten *)
 
 let test_flatten_forward () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let m = Layer.flatten () in
-  let vars = Layer.init m ~rngs ~dtype:Rune.float32 in
+  let vars = Layer.init m ~dtype:Rune.float32 in
   let x = Rune.ones Rune.float32 [| 2; 3; 4 |] in
   let y = apply_out m vars ~training:false x in
   equal ~msg:"flatten shape" (list int) [ 2; 12 ] (Array.to_list (Rune.shape y))
@@ -331,6 +348,7 @@ let test_flatten_forward () =
 (* Sequential *)
 
 let test_sequential_init_structure () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let m =
     Layer.sequential
       [
@@ -339,7 +357,7 @@ let test_sequential_init_structure () =
         Layer.linear ~in_features:3 ~out_features:2 ();
       ]
   in
-  let vars = Layer.init m ~rngs ~dtype:Rune.float32 in
+  let vars = Layer.init m ~dtype:Rune.float32 in
   let param_items = Ptree.List.items_exn (Layer.params vars) in
   let state_items = Ptree.List.items_exn (Layer.state vars) in
   equal ~msg:"sequential params length" int 3 (List.length param_items);
@@ -357,6 +375,7 @@ let test_sequential_init_structure () =
     (Array.to_list (Rune.shape w2))
 
 let test_sequential_forward () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let m =
     Layer.sequential
       [
@@ -365,7 +384,7 @@ let test_sequential_forward () =
         Layer.linear ~in_features:3 ~out_features:2 ();
       ]
   in
-  let vars = Layer.init m ~rngs ~dtype:Rune.float32 in
+  let vars = Layer.init m ~dtype:Rune.float32 in
   let x = Rune.ones Rune.float32 [| 5; 4 |] in
   let y = apply_out m vars ~training:false x in
   equal ~msg:"sequential output shape" (list int) [ 5; 2 ]
@@ -374,8 +393,9 @@ let test_sequential_forward () =
 (* Convolution *)
 
 let test_conv1d_shapes () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let m = Layer.conv1d ~in_channels:3 ~out_channels:8 () in
-  let vars = Layer.init m ~rngs ~dtype:Rune.float32 in
+  let vars = Layer.init m ~dtype:Rune.float32 in
   let fields = Ptree.Dict.fields_exn (Layer.params vars) in
   let w = Ptree.Dict.get_tensor_exn fields ~name:"weight" Rune.float32 in
   let b = Ptree.Dict.get_tensor_exn fields ~name:"bias" Rune.float32 in
@@ -384,8 +404,9 @@ let test_conv1d_shapes () =
   equal ~msg:"bias shape" (list int) [ 8 ] (Array.to_list (Rune.shape b))
 
 let test_conv1d_forward () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let m = Layer.conv1d ~in_channels:2 ~out_channels:4 ~kernel_size:3 () in
-  let vars = Layer.init m ~rngs ~dtype:Rune.float32 in
+  let vars = Layer.init m ~dtype:Rune.float32 in
   let x = Rune.ones Rune.float32 [| 1; 2; 10 |] in
   let y = apply_out m vars ~training:false x in
   let shape = Rune.shape y in
@@ -394,8 +415,9 @@ let test_conv1d_forward () =
   equal ~msg:"conv1d output length" int 10 shape.(2)
 
 let test_conv2d_shapes () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let m = Layer.conv2d ~in_channels:3 ~out_channels:16 () in
-  let vars = Layer.init m ~rngs ~dtype:Rune.float32 in
+  let vars = Layer.init m ~dtype:Rune.float32 in
   let fields = Ptree.Dict.fields_exn (Layer.params vars) in
   let w = Ptree.Dict.get_tensor_exn fields ~name:"weight" Rune.float32 in
   let b = Ptree.Dict.get_tensor_exn fields ~name:"bias" Rune.float32 in
@@ -404,8 +426,9 @@ let test_conv2d_shapes () =
   equal ~msg:"bias shape" (list int) [ 16 ] (Array.to_list (Rune.shape b))
 
 let test_conv2d_forward () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let m = Layer.conv2d ~in_channels:1 ~out_channels:4 ~kernel_size:(3, 3) () in
-  let vars = Layer.init m ~rngs ~dtype:Rune.float32 in
+  let vars = Layer.init m ~dtype:Rune.float32 in
   let x = Rune.ones Rune.float32 [| 1; 1; 8; 8 |] in
   let y = apply_out m vars ~training:false x in
   equal ~msg:"conv2d output shape" (list int) [ 1; 4; 8; 8 ]
@@ -414,16 +437,18 @@ let test_conv2d_forward () =
 (* Pooling *)
 
 let test_max_pool2d () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let m = Layer.max_pool2d ~kernel_size:(2, 2) () in
-  let vars = Layer.init m ~rngs ~dtype:Rune.float32 in
+  let vars = Layer.init m ~dtype:Rune.float32 in
   let x = Rune.ones Rune.float32 [| 1; 1; 4; 4 |] in
   let y = apply_out m vars ~training:false x in
   equal ~msg:"max_pool2d shape" (list int) [ 1; 1; 2; 2 ]
     (Array.to_list (Rune.shape y))
 
 let test_avg_pool2d () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let m = Layer.avg_pool2d ~kernel_size:(2, 2) () in
-  let vars = Layer.init m ~rngs ~dtype:Rune.float32 in
+  let vars = Layer.init m ~dtype:Rune.float32 in
   let x = Rune.ones Rune.float32 [| 1; 1; 6; 6 |] in
   let y = apply_out m vars ~training:false x in
   equal ~msg:"avg_pool2d shape" (list int) [ 1; 1; 3; 3 ]
@@ -432,8 +457,9 @@ let test_avg_pool2d () =
 (* Parameter count *)
 
 let test_param_count () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let m = Layer.linear ~in_features:10 ~out_features:5 () in
-  let vars = Layer.init m ~rngs ~dtype:Rune.float32 in
+  let vars = Layer.init m ~dtype:Rune.float32 in
   equal ~msg:"linear param count" int 55
     (Ptree.count_parameters (Layer.params vars))
 
@@ -469,7 +495,7 @@ let () =
       group "regularization"
         [
           test "dropout eval identity" test_dropout_eval_identity;
-          test "dropout requires rngs" test_dropout_requires_rngs;
+          test "dropout training" test_dropout_training;
           test "dropout rate bounds" test_dropout_rate_bounds;
         ];
       group "conv"

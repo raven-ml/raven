@@ -53,8 +53,8 @@ val multi_head_attention :
     [num_kv_heads < num_heads], grouped query attention (GQA) is used.
     [num_heads] must be divisible by [num_kv_heads].
 
-    [dropout] defaults to [0.0]. When positive, requires [~rngs] during
-    training.
+    [dropout] defaults to [0.0]. When positive, dropout is applied during
+    training using keys from the implicit RNG scope.
 
     [is_causal] defaults to [false]. When [true], a causal mask prevents
     attending to future positions.

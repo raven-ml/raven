@@ -80,13 +80,14 @@ val embedding :
 
 (** {1:dropout Dropout} *)
 
-val dropout :
-  key:Rune.Rng.key -> rate:float -> (float, 'b) Rune.t -> (float, 'b) Rune.t
-(** [dropout ~key ~rate x] randomly zeroes elements of [x] with probability
-    [rate] and scales the remaining values by [1 / (1 - rate)].
+val dropout : rate:float -> (float, 'b) Rune.t -> (float, 'b) Rune.t
+(** [dropout ~rate x] randomly zeroes elements of [x] with probability [rate]
+    and scales the remaining values by [1 / (1 - rate)].
 
     [rate] must satisfy [0.0 <= rate < 1.0]. When [rate] is [0.0], [x] is
     returned unchanged.
+
+    Random keys are drawn from the implicit RNG scope.
 
     Raises [Invalid_argument] if [rate] is out of range or [x] is not floating
     point. *)
@@ -97,14 +98,13 @@ val dot_product_attention :
   ?attention_mask:(bool, Rune.bool_elt) Rune.t ->
   ?scale:float ->
   ?dropout_rate:float ->
-  ?dropout_key:Rune.Rng.key ->
   ?is_causal:bool ->
   (float, 'b) Rune.t ->
   (float, 'b) Rune.t ->
   (float, 'b) Rune.t ->
   (float, 'b) Rune.t
-(** [dot_product_attention ?attention_mask ?scale ?dropout_rate ?dropout_key
-     ?is_causal q k v] is scaled dot-product attention.
+(** [dot_product_attention ?attention_mask ?scale ?dropout_rate ?is_causal q k
+     v] is scaled dot-product attention.
 
     [q], [k], [v] must have matching rank (>= 2) and the last dimension of [q]
     and [k] must agree.
@@ -116,8 +116,10 @@ val dot_product_attention :
     [attention_mask], when provided, broadcasts to the attention score shape:
     [true] keeps scores, [false] sets them to negative infinity.
 
-    Raises [Invalid_argument] if ranks, shapes, or dtypes are incompatible, or
-    if [dropout_rate] is set without [dropout_key]. *)
+    When [dropout_rate] is set, dropout is applied to attention weights using
+    keys from the implicit RNG scope.
+
+    Raises [Invalid_argument] if ranks, shapes, or dtypes are incompatible. *)
 
 (** {1:conv Convolution} *)
 

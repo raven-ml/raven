@@ -1,8 +1,6 @@
 open Fehu
 open Windtrap
 
-let rng = Rune.Rng.key 42
-
 let make_transition obs act rew next_obs term trunc =
   Buffer.
     {
@@ -63,33 +61,27 @@ let test_sample_batch_size () =
   for i = 1 to 5 do
     Buffer.add buf (make_transition i 0 1.0 (i + 1) false false)
   done;
-  let batch, _next_rng = Buffer.sample buf ~rng ~batch_size:3 in
+  let batch = Buffer.sample buf ~batch_size:3 in
   equal ~msg:"batch length" int 3 (Array.length batch)
 
 let test_sample_empty_raises () =
   let buf = Buffer.create ~capacity:10 in
   raises_invalid_arg "Buffer.sample: buffer is empty" (fun () ->
-      Buffer.sample buf ~rng ~batch_size:1)
+      Buffer.sample buf ~batch_size:1)
 
 let test_sample_zero_batch_raises () =
   let buf = Buffer.create ~capacity:10 in
   Buffer.add buf (make_transition 1 0 1.0 2 false false);
   raises_invalid_arg "Buffer.sample: batch_size must be positive" (fun () ->
-      Buffer.sample buf ~rng ~batch_size:0)
-
-let test_sample_returns_fresh_rng () =
-  let buf = Buffer.create ~capacity:10 in
-  Buffer.add buf (make_transition 1 0 1.0 2 false false);
-  let _batch, next_rng = Buffer.sample buf ~rng ~batch_size:1 in
-  equal ~msg:"rng differs" bool false (rng = next_rng)
+      Buffer.sample buf ~batch_size:0)
 
 let test_sample_arrays_lengths () =
   let buf = Buffer.create ~capacity:10 in
   for i = 1 to 5 do
     Buffer.add buf (make_transition i 0 1.0 (i + 1) false false)
   done;
-  let (obs, acts, rews, next_obs, terms, truncs), _next_rng =
-    Buffer.sample_arrays buf ~rng ~batch_size:3
+  let obs, acts, rews, next_obs, terms, truncs =
+    Buffer.sample_arrays buf ~batch_size:3
   in
   equal ~msg:"obs length" int 3 (Array.length obs);
   equal ~msg:"acts length" int 3 (Array.length acts);
@@ -101,7 +93,7 @@ let test_sample_arrays_lengths () =
 let test_sample_arrays_empty_raises () =
   let buf = Buffer.create ~capacity:10 in
   raises_invalid_arg "Buffer.sample: buffer is empty" (fun () ->
-      Buffer.sample_arrays buf ~rng ~batch_size:1)
+      Buffer.sample_arrays buf ~batch_size:1)
 
 (* Clear *)
 
@@ -120,6 +112,7 @@ let test_add_after_clear () =
   equal ~msg:"size = 1 after re-add" int 1 (Buffer.size buf)
 
 let () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   run "Fehu.Buffer"
     [
       group "creation"
@@ -140,7 +133,6 @@ let () =
           test "batch size" test_sample_batch_size;
           test "empty raises" test_sample_empty_raises;
           test "zero batch raises" test_sample_zero_batch_raises;
-          test "returns fresh rng" test_sample_returns_fresh_rng;
           test "sample_arrays lengths" test_sample_arrays_lengths;
           test "sample_arrays empty raises" test_sample_arrays_empty_raises;
         ];

@@ -17,8 +17,8 @@ let print_shape name t =
     (String.concat "; " (Array.to_list (Array.map string_of_int shape)))
 
 let () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let dtype = Rune.float32 in
-  let rngs = Rune.Rng.key 42 in
   let num_labels = 2 in
 
   (* Load pretrained encoder + pooler from HuggingFace *)
@@ -32,7 +32,6 @@ let () =
   (* Assemble classification model: pretrained encoder + pooler, fresh
      classifier head *)
   let w_init = Init.normal ~stddev:0.02 () in
-  let cls_key = (Rune.Rng.split rngs).(0) in
   let params =
     Ptree.dict
       [
@@ -45,17 +44,15 @@ let () =
                 [
                   ( "weight",
                     Ptree.tensor
-                      (w_init.f cls_key
-                         [| cfg.hidden_size; cfg.hidden_size |]
-                         dtype) );
+                      (w_init.f [| cfg.hidden_size; cfg.hidden_size |] dtype) );
                   ("bias", Ptree.tensor (Rune.zeros dtype [| cfg.hidden_size |]));
                 ] );
         ( "classifier",
           Ptree.dict
             [
               ( "weight",
-                Ptree.tensor
-                  (w_init.f cls_key [| cfg.hidden_size; num_labels |] dtype) );
+                Ptree.tensor (w_init.f [| cfg.hidden_size; num_labels |] dtype)
+              );
               ("bias", Ptree.tensor (Rune.zeros dtype [| num_labels |]));
             ] );
       ]
@@ -150,7 +147,7 @@ let () =
   in
   let st = Train.make_state trainer vars in
   let st =
-    Train.fit trainer st ~rngs ~ctx
+    Train.fit trainer st ~ctx
       ~report:(fun ~step ~loss _st ->
         Printf.printf "  step %2d  loss %.4f\n%!" step loss)
       (Data.repeat 10

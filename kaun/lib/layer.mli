@@ -45,16 +45,13 @@ val make_vars :
     {!Layer} module. *)
 
 type ('input, 'output) t = {
-  init :
-    'layout.
-    rngs:Rune.Rng.key -> dtype:(float, 'layout) Rune.dtype -> 'layout vars;
+  init : 'layout. dtype:(float, 'layout) Rune.dtype -> 'layout vars;
   apply :
     'layout 'in_elt.
     params:Ptree.t ->
     state:Ptree.t ->
     dtype:(float, 'layout) Rune.dtype ->
     training:bool ->
-    ?rngs:Rune.Rng.key ->
     ?ctx:Context.t ->
     ('input, 'in_elt) Rune.t ->
     ('output, 'layout) Rune.t * Ptree.t;
@@ -62,7 +59,9 @@ type ('input, 'output) t = {
 (** The type for layers.
 
     [init] creates fresh [params] and [state]. [apply] computes a forward pass
-    and returns updated [state].
+    and returns updated [state]. Random operations (weight initialization,
+    dropout) use the implicit RNG scope established by {!Rune.Rng.run} or
+    {!Rune.Rng.with_key}.
 
     The input tensor's dtype witness ['in_elt] is independent of the model's
     float dtype witness ['layout]. This allows layers like {!embedding} to
@@ -74,25 +73,20 @@ type ('input, 'output) t = {
     encoder memory). Most layers ignore it; transformer layers read from it
     using well-known key names. See {!Context}. *)
 
-val init :
-  ('a, 'b) t ->
-  rngs:Rune.Rng.key ->
-  dtype:(float, 'layout) Rune.dtype ->
-  'layout vars
-(** [init m ~rngs ~dtype] is [m]'s fresh variables.
+val init : ('a, 'b) t -> dtype:(float, 'layout) Rune.dtype -> 'layout vars
+(** [init m ~dtype] is [m]'s fresh variables.
 
-    The RNG key is split internally by composite layers such as {!compose} and
-    {!sequential}. *)
+    Composite layers ({!compose}, {!sequential}) isolate sub-network RNG streams
+    via {!Rune.Rng.with_key}. *)
 
 val apply :
   ('a, 'b) t ->
   'layout vars ->
   training:bool ->
-  ?rngs:Rune.Rng.key ->
   ?ctx:Context.t ->
   ('a, 'in_elt) Rune.t ->
   ('b, 'layout) Rune.t * 'layout vars
-(** [apply m vars ~training ?rngs ?ctx x] is the forward pass of [m].
+(** [apply m vars ~training ?ctx x] is the forward pass of [m].
 
     Returns [(y, vars')] where [params vars' = params vars] and [state vars'] is
     the updated state from the forward pass.
@@ -243,12 +237,10 @@ val embedding :
 val dropout : rate:float -> unit -> (float, float) t
 (** [dropout ~rate ()] is elementwise dropout.
 
-    When [training = false], it is identity. When [training = true], [~rngs] is
-    required.
+    When [training = false], it is identity. When [training = true], dropout
+    masks are generated using keys from the implicit RNG scope.
 
-    Raises [Invalid_argument] if [rate] is outside [0.0 <= rate < 1.0]. Raises
-    [Invalid_argument] if [~rngs] is missing during training when [rate > 0.0].
-*)
+    Raises [Invalid_argument] if [rate] is outside [0.0 <= rate < 1.0]. *)
 
 (** {1:act Activation Layers} *)
 

@@ -121,11 +121,11 @@ let batch ?(drop_last = false) n t =
 
 let map_batch ?drop_last n f t = map f (batch ?drop_last n t)
 
-let shuffle key t =
+let shuffle t =
   match t.length with
   | None -> invalid_arg "Data.shuffle: requires a pipeline with known length"
   | Some n ->
-      let perm_tensor = Rune.Rng.permutation ~key n in
+      let perm_tensor = Rune.Rng.permutation n in
       let perm = Array.map Int32.to_int (Rune.to_array perm_tensor) in
       (* Eagerly materialize the upstream into an array *)
       let elements =
@@ -191,8 +191,9 @@ let length t = t.length
 (* Utilities *)
 
 let stack_batch tensors = Rune.stack (Array.to_list tensors)
+let shuffle_pipeline = shuffle
 
-let prepare ?shuffle:shuffle_key ~batch_size ?(drop_last = true) (x, y) =
+let prepare ?(shuffle = false) ~batch_size ?(drop_last = true) (x, y) =
   let nx = (Rune.shape x).(0) in
   let ny = (Rune.shape y).(0) in
   if nx <> ny then
@@ -202,9 +203,7 @@ let prepare ?shuffle:shuffle_key ~batch_size ?(drop_last = true) (x, y) =
     invalid_arg
       (Printf.sprintf "Data.prepare: expected batch_size > 0, got %d" batch_size);
   let indices = of_fn nx Fun.id in
-  let indices =
-    match shuffle_key with Some key -> shuffle key indices | None -> indices
-  in
+  let indices = if shuffle then shuffle_pipeline indices else indices in
   map_batch ~drop_last batch_size
     (fun idx_arr ->
       let n = Array.length idx_arr in

@@ -3537,33 +3537,31 @@ module Make (B : Backend_intf.S) = struct
         Error.invalid_shape ~op:fname ~shape
           ~reason:"dimensions must be non-negative" ()
 
-    let uniform ctx ~key dtype shape =
+    let uniform ctx dtype shape =
       let@ _ = span ~op:"uniform" () in
       validate_random_params "uniform" dtype shape;
+      let key = Core_rng.next_key () in
 
       (* If shape has 0, return zeros *)
       let numel = array_prod shape in
       if numel = 0 then zeros ctx dtype shape
       else
-        (* Generate random int32 values using threefry *)
-        (* Threefry2x32 requires inputs with shape [..., 2] *)
         let num_values = numel in
 
-        (* Create key and counter tensors for threefry *)
-        (* Each vector needs 2 int32 values, so we create arrays with shape
-           [num_values, 2] *)
+        (* Create key and counter tensors for threefry. Each vector needs 2
+           int32 values: shape [num_values, 2]. *)
         let key_vals =
           Array.init (num_values * 2) (fun i ->
               Int32.of_int (Core_rng.fold_in key i))
         in
-        let key = create ctx Dtype.int32 [| num_values; 2 |] key_vals in
+        let key_t = create ctx Dtype.int32 [| num_values; 2 |] key_vals in
 
         let ctr_vals = Array.init (num_values * 2) (fun i -> Int32.of_int i) in
         let counter = create ctx Dtype.int32 [| num_values; 2 |] ctr_vals in
 
         (* Generate random bits using threefry *)
         let random_bits = empty ctx Dtype.int32 [| num_values; 2 |] in
-        B.threefry ~out:random_bits key counter;
+        B.threefry ~out:random_bits key_t counter;
 
         (* Flatten and take only what we need *)
         let bits_flat = flatten random_bits in
@@ -3592,7 +3590,7 @@ module Make (B : Backend_intf.S) = struct
         (* Reshape to final shape *)
         reshape shape result
 
-    let normal ctx ~key dtype shape =
+    let normal ctx dtype shape =
       let@ _ = span ~op:"normal" () in
       validate_random_params "normal" dtype shape;
 
@@ -3600,17 +3598,9 @@ module Make (B : Backend_intf.S) = struct
       let numel = array_prod shape in
       if numel = 0 then zeros ctx dtype shape
       else
-        let base_key = key in
-        let key_pair =
-          match Core_rng.split ~n:2 base_key with
-          | [| k1; k2 |] -> (k1, k2)
-          | _ -> assert false
-        in
-        let key_u1, key_u2 = key_pair in
-        (* Box-Muller transform: generate pairs of uniform random values *)
-        (* Generate two sets of uniform random values *)
-        let u1 = uniform ctx ~key:key_u1 Dtype.float32 shape in
-        let u2 = uniform ctx ~key:key_u2 Dtype.float32 shape in
+        (* Box-Muller transform: z = cos(2*pi*u1) * sqrt(-2*ln(u2)) *)
+        let u1 = uniform ctx Dtype.float32 shape in
+        let u2 = uniform ctx Dtype.float32 shape in
 
         (* Box-Muller transform: z0 = cos(2π * u1) * sqrt(-2 * ln(u2)) We use u2
            for the log to avoid log(0) *)
@@ -3643,7 +3633,7 @@ module Make (B : Backend_intf.S) = struct
         (* Cast to target dtype *)
         cast dtype result_f32
 
-    let randint ctx dtype ~key ?(high = 10) shape low =
+    let randint ctx dtype ?(high = 10) shape low =
       if low >= high then
         Error.invalid ~op:"randint" ~what:"range"
           ~reason:(Printf.sprintf "low=%d ≥ high=%d" low high)
@@ -3652,38 +3642,38 @@ module Make (B : Backend_intf.S) = struct
         Error.invalid ~op:"randint" ~what:"dtype"
           ~reason:"only integer dtypes supported" ();
       let range = high - low in
-      let uniform_vals = uniform ctx ~key Dtype.float32 shape in
+      let uniform_vals = uniform ctx Dtype.float32 shape in
       let scaled =
         mul uniform_vals (scalar ctx Dtype.float32 (float_of_int range))
       in
       let shifted = add scaled (scalar ctx Dtype.float32 (float_of_int low)) in
       astype dtype shifted
 
-    let bernoulli ctx ~key ~p shape =
+    let bernoulli ctx ~p shape =
       if p < 0.0 || p > 1.0 then
         Error.invalid ~op:"bernoulli" ~what:"p" ~reason:"must be in [0, 1]" ();
       if Array.exists (fun x -> x < 0) shape then
         Error.invalid_shape ~op:"bernoulli" ~shape
           ~reason:"dimensions must be non-negative" ();
-      let u = uniform ctx ~key Dtype.float32 shape in
+      let u = uniform ctx Dtype.float32 shape in
       let threshold = scalar ctx Dtype.float32 p in
       cmplt u threshold
 
-    let permutation ctx ~key n =
+    let permutation ctx n =
       if n <= 0 then
         Error.invalid ~op:"permutation" ~what:"n" ~reason:"must be positive" ();
-      let random_vals = uniform ctx ~key Dtype.float32 [| n |] in
+      let random_vals = uniform ctx Dtype.float32 [| n |] in
       argsort random_vals ~axis:0 ~descending:false
 
-    let shuffle ctx ~key x =
+    let shuffle ctx x =
       let shape_x = tensor_shape x in
       if Array.length shape_x = 0 then x
       else
         let n = shape_x.(0) in
-        let perm = permutation ctx ~key n in
+        let perm = permutation ctx n in
         take ~axis:0 perm x
 
-    let categorical (type a b) ctx ~key ?(axis = -1) ?(shape : int array = [||])
+    let categorical (type a b) ctx ?(axis = -1) ?(shape : int array = [||])
         (logits : (a, b) t) =
       let logits_dtype = dtype logits in
       let logits_shape = tensor_shape logits in
@@ -3697,7 +3687,7 @@ module Make (B : Backend_intf.S) = struct
       let full_shape = Array.append shape logits_shape in
 
       let run_float float_dtype eps =
-        let u = uniform ctx ~key float_dtype full_shape in
+        let u = uniform ctx float_dtype full_shape in
         let u_clamped = clip u ~min:eps ~max:(1. -. eps) in
         let neg_one = scalar ctx float_dtype (-1.0) in
         let log_u = log u_clamped in
@@ -3723,8 +3713,8 @@ module Make (B : Backend_intf.S) = struct
           Error.invalid ~op:"categorical" ~what:"logits"
             ~reason:"requires floating point dtype" ()
 
-    let truncated_normal (type a b) ctx ~key (dtype : (a, b) Dtype.t) ~lower
-        ~upper shape =
+    let truncated_normal (type a b) ctx (dtype : (a, b) Dtype.t) ~lower ~upper
+        shape =
       if lower >= upper then
         Error.invalid ~op:"truncated_normal" ~what:"bounds"
           ~reason:"lower must be less than upper" ();
@@ -3740,12 +3730,6 @@ module Make (B : Backend_intf.S) = struct
       let scalar_lower = scalar ctx Dtype.float64 lower |> astype dtype in
       let scalar_upper = scalar ctx Dtype.float64 upper |> astype dtype in
 
-      let split2 k =
-        match Core_rng.split ~n:2 k with
-        | [| a; b |] -> (a, b)
-        | _ -> assert false
-      in
-
       let has_remaining mask =
         let any_mask = any mask in
         let arr = to_array any_mask in
@@ -3753,14 +3737,13 @@ module Make (B : Backend_intf.S) = struct
       in
 
       let max_attempts = 1000 in
-      let sample_key, next_key = split2 key in
-      let initial = normal ctx ~key:sample_key dtype shape in
+      let initial = normal ctx dtype shape in
       let within_lower = greater_equal initial scalar_lower in
       let within_upper = less_equal initial scalar_upper in
       let accepted = logical_and within_lower within_upper in
       let remaining = logical_not accepted in
 
-      let rec fill k acc remaining attempt =
+      let rec fill acc remaining attempt =
         if not (has_remaining remaining) then acc
         else if attempt > max_attempts then
           Error.invalid ~op:"truncated_normal" ~what:"generation"
@@ -3770,24 +3753,21 @@ module Make (B : Backend_intf.S) = struct
                  max_attempts)
             ()
         else
-          let resample_key, next_k = split2 k in
-          let candidates = normal ctx ~key:resample_key dtype shape in
+          let candidates = normal ctx dtype shape in
           let within_lower = greater_equal candidates scalar_lower in
           let within_upper = less_equal candidates scalar_upper in
           let within = logical_and within_lower within_upper in
           let take_new = logical_and remaining within in
           let acc = where take_new candidates acc in
           let still_remaining = logical_and remaining (logical_not within) in
-          fill next_k acc still_remaining (attempt + 1)
+          fill acc still_remaining (attempt + 1)
       in
-      fill next_key initial remaining 1
+      fill initial remaining 1
   end
 
-  let rand ctx dtype ~key shape = Rng.uniform ctx ~key dtype shape
-  let randn ctx dtype ~key shape = Rng.normal ctx ~key dtype shape
-
-  let randint ctx dtype ~key ?high shape low =
-    Rng.randint ctx dtype ~key ?high shape low
+  let rand ctx dtype shape = Rng.uniform ctx dtype shape
+  let randn ctx dtype shape = Rng.normal ctx dtype shape
+  let randint ctx dtype ?high shape low = Rng.randint ctx dtype ?high shape low
 
   (* ───── Linear Algebra ───── *)
 

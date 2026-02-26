@@ -1,7 +1,6 @@
 open Fehu
 open Windtrap
 
-let rng = Rune.Rng.key 42
 let value = testable ~pp:Value.pp ~equal:Value.equal ()
 
 (* Helpers *)
@@ -47,7 +46,7 @@ let test_discrete_contains_with_start () =
 
 let test_discrete_sample () =
   let s = Space.Discrete.create 3 in
-  let v, _ = Space.sample s ~rng in
+  let v = Space.sample s in
   is_true ~msg:"sample is valid" (Space.contains s v)
 
 let test_discrete_pack_unpack () =
@@ -105,7 +104,7 @@ let test_box_contains () =
 
 let test_box_sample () =
   let s = Space.Box.create ~low:[| 0.0 |] ~high:[| 10.0 |] in
-  let v, _ = Space.sample s ~rng in
+  let v = Space.sample s in
   is_true ~msg:"sample in bounds" (Space.contains s v)
 
 let test_box_pack_unpack () =
@@ -168,7 +167,7 @@ let test_mb_contains () =
 
 let test_mb_sample () =
   let s = Space.Multi_binary.create 3 in
-  let v, _ = Space.sample s ~rng in
+  let v = Space.sample s in
   is_true ~msg:"sample valid" (Space.contains s v)
 
 let test_mb_boundary_values () =
@@ -196,7 +195,7 @@ let test_md_contains () =
 
 let test_md_sample () =
   let s = Space.Multi_discrete.create [| 3; 4 |] in
-  let v, _ = Space.sample s ~rng in
+  let v = Space.sample s in
   is_true ~msg:"sample valid" (Space.contains s v)
 
 let test_md_shape () =
@@ -229,7 +228,7 @@ let test_tuple_sample () =
   let ds = Space.Discrete.create 3 in
   let bs = Space.Box.create ~low:[| 0.0 |] ~high:[| 1.0 |] in
   let s = Space.Tuple.create [ Pack ds; Pack bs ] in
-  let v, _ = Space.sample s ~rng in
+  let v = Space.sample s in
   is_true ~msg:"sample valid" (Space.contains s v)
 
 let test_tuple_pack_unpack () =
@@ -270,7 +269,7 @@ let test_dict_contains () =
 let test_dict_sample () =
   let ds = Space.Discrete.create 3 in
   let s = Space.Dict.create [ ("a", Pack ds) ] in
-  let v, _ = Space.sample s ~rng in
+  let v = Space.sample s in
   is_true ~msg:"sample valid" (Space.contains s v)
 
 let test_dict_error_duplicate () =
@@ -299,7 +298,7 @@ let test_text_contains_too_long () =
 
 let test_text_sample () =
   let s = Space.Text.create () in
-  let v, _ = Space.sample s ~rng in
+  let v = Space.sample s in
   is_true ~msg:"sample valid" (Space.contains s v);
   is_true ~msg:"sample non-empty" (String.length v > 0)
 
@@ -338,13 +337,13 @@ let test_seq_contains_unbounded () =
 let test_seq_sample () =
   let ds = Space.Discrete.create 3 in
   let s = Space.Sequence.create ~min_length:1 ~max_length:5 ds in
-  let v, _ = Space.sample s ~rng in
+  let v = Space.sample s in
   is_true ~msg:"sample valid" (Space.contains s v)
 
 let test_seq_sample_fixed () =
   let ds = Space.Discrete.create 3 in
   let s = Space.Sequence.create ~min_length:2 ds in
-  let v, _ = Space.sample s ~rng in
+  let v = Space.sample s in
   equal ~msg:"fixed length 2" int 2 (List.length v)
 
 let test_seq_pack_unpack () =
@@ -447,6 +446,7 @@ let test_tuple_unpack_valid () =
 (* Entry point *)
 
 let () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   run "Fehu.Space"
     [
       group "Discrete"

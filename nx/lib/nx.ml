@@ -11,26 +11,21 @@ let context = Lazy.from_fun Nx_backend.create_context
 module Rng = struct
   include F.Rng
 
-  let uniform ~key dtype shape =
-    F.Rng.uniform (Lazy.force context) ~key dtype shape
+  let uniform dtype shape = F.Rng.uniform (Lazy.force context) dtype shape
+  let normal dtype shape = F.Rng.normal (Lazy.force context) dtype shape
 
-  let normal ~key dtype shape =
-    F.Rng.normal (Lazy.force context) ~key dtype shape
+  let randint dtype ?high shape low =
+    F.Rng.randint (Lazy.force context) dtype ?high shape low
 
-  let randint dtype ~key ?high shape low =
-    F.Rng.randint (Lazy.force context) dtype ~key ?high shape low
+  let bernoulli ~p shape = F.Rng.bernoulli (Lazy.force context) ~p shape
+  let permutation n = F.Rng.permutation (Lazy.force context) n
+  let shuffle x = F.Rng.shuffle (Lazy.force context) x
 
-  let bernoulli ~key ~p shape =
-    F.Rng.bernoulli (Lazy.force context) ~key ~p shape
+  let categorical ?axis ?shape logits =
+    F.Rng.categorical (Lazy.force context) ?axis ?shape logits
 
-  let permutation ~key n = F.Rng.permutation (Lazy.force context) ~key n
-  let shuffle ~key x = F.Rng.shuffle (Lazy.force context) ~key x
-
-  let categorical ~key ?axis ?shape logits =
-    F.Rng.categorical (Lazy.force context) ~key ?axis ?shape logits
-
-  let truncated_normal ~key dtype ~(lower : float) ~(upper : float) shape =
-    F.Rng.truncated_normal (Lazy.force context) ~key dtype ~lower ~upper shape
+  let truncated_normal dtype ~(lower : float) ~(upper : float) shape =
+    F.Rng.truncated_normal (Lazy.force context) dtype ~lower ~upper shape
 end
 
 (* Re-export extended type aliases *)
@@ -80,11 +75,11 @@ let of_bigarray ba = F.of_bigarray (Lazy.force context) ba
 let of_buffer ba ~shape = F.of_buffer (Lazy.force context) ~shape ba
 let to_bigarray = F.to_bigarray
 let to_buffer = F.to_buffer
-let rand dtype ~key shape = F.rand (Lazy.force context) dtype ~key shape
-let randn dtype ~key shape = F.randn (Lazy.force context) dtype ~key shape
+let rand dtype shape = F.rand (Lazy.force context) dtype shape
+let randn dtype shape = F.randn (Lazy.force context) dtype shape
 
-let randint dtype ~key ?high shape low =
-  F.randint (Lazy.force context) dtype ~key ?high shape low
+let randint dtype ?high shape low =
+  F.randint (Lazy.force context) dtype ?high shape low
 
 (* ───── FFT ───── *)
 

@@ -30,12 +30,10 @@ let generate_line_plot () =
 
 (* Example 2: Scatter Plot *)
 let generate_scatter_plot () =
-  let key = Rng.key 42 in
   let n = 100 in
-  let x_data = rand float32 ~key [| n |] in
+  let x_data = rand float32 [| n |] in
   let x = mul_s x_data 10. in
-  let key = (Rng.split key).(0) in
-  let noise = rand float32 ~key [| n |] in
+  let noise = rand float32 [| n |] in
   let y = add x (sub_s (mul_s noise 2.) 1.) in
 
   let fig = figure ~width:800 ~height:600 () in

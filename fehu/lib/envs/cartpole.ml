@@ -39,23 +39,22 @@ let action_space = Space.Discrete.create 2
 let make_obs x x_dot theta theta_dot =
   Rune.create Rune.float32 [| 4 |] [| x; x_dot; theta; theta_dot |]
 
-let make ?render_mode ~rng () =
+let make ?render_mode () =
   let x = ref 0.0 in
   let x_dot = ref 0.0 in
   let theta = ref 0.0 in
   let theta_dot = ref 0.0 in
   let steps = ref 0 in
-  let reset env ?options:_ () =
-    let keys = Env.split_rng env ~n:4 in
-    let random_state i =
-      let r = Rune.rand Rune.float32 ~key:keys.(i) [| 1 |] in
+  let reset _env ?options:_ () =
+    let random_state () =
+      let r = Rune.rand Rune.float32 [| 1 |] in
       let v = (Rune.to_array r).(0) in
       (v -. 0.5) *. 0.1
     in
-    x := random_state 0;
-    x_dot := random_state 1;
-    theta := random_state 2;
-    theta_dot := random_state 3;
+    x := random_state ();
+    x_dot := random_state ();
+    theta := random_state ();
+    theta_dot := random_state ();
     steps := 0;
     (make_obs !x !x_dot !theta !theta_dot, Info.empty)
   in
@@ -102,5 +101,5 @@ let make ?render_mode ~rng () =
          (!theta *. 180. /. Float.pi)
          !theta_dot !steps)
   in
-  Env.create ?render_mode ~render_modes:[ "ansi" ] ~id:"CartPole-v1" ~rng
+  Env.create ?render_mode ~render_modes:[ "ansi" ] ~id:"CartPole-v1"
     ~observation_space ~action_space ~reset ~step ~render ()

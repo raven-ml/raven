@@ -5,11 +5,7 @@
 
 type t = {
   f :
-    'layout.
-    Rune.Rng.key ->
-    int array ->
-    (float, 'layout) Rune.dtype ->
-    (float, 'layout) Rune.t;
+    'layout. int array -> (float, 'layout) Rune.dtype -> (float, 'layout) Rune.t;
 }
 
 type mode = [ `Fan_in | `Fan_out | `Fan_avg ]
@@ -47,8 +43,8 @@ let compute_fans shape ~in_axis ~out_axis =
 
 (* Truncated normal with bounds at +/-2 standard deviations. *)
 
-let truncated_normal ~stddev key shape dtype =
-  let z = Rune.Rng.truncated_normal ~key dtype ~lower:(-2.0) ~upper:2.0 shape in
+let truncated_normal ~stddev shape dtype =
+  let z = Rune.Rng.truncated_normal dtype ~lower:(-2.0) ~upper:2.0 shape in
   Rune.mul z (Rune.scalar dtype stddev)
 
 (* Variance scaling — the general framework behind glorot/he/lecun. *)
@@ -58,7 +54,7 @@ let variance_scaling ~scale ~mode ~distribution ?(in_axis = -2) ?(out_axis = -1)
   check_non_negative "scale" scale;
   {
     f =
-      (fun key shape dtype ->
+      (fun shape dtype ->
         let fan_in, fan_out = compute_fans shape ~in_axis ~out_axis in
         let n =
           match mode with
@@ -71,16 +67,16 @@ let variance_scaling ~scale ~mode ~distribution ?(in_axis = -2) ?(out_axis = -1)
         let variance = scale /. n in
         match distribution with
         | `Normal ->
-            let z = Rune.randn dtype ~key shape in
+            let z = Rune.randn dtype shape in
             Rune.mul z (Rune.scalar dtype (sqrt variance))
         | `Truncated_normal ->
             (* Correct for stddev loss from truncation to [-2, 2]. *)
             truncated_normal
               ~stddev:(sqrt variance /. 0.87962566103423978)
-              key shape dtype
+              shape dtype
         | `Uniform ->
             let limit = sqrt (3.0 *. variance) in
-            let u = Rune.rand dtype ~key shape in
+            let u = Rune.rand dtype shape in
             Rune.sub
               (Rune.mul u (Rune.scalar dtype (2.0 *. limit)))
               (Rune.scalar dtype limit));
@@ -88,9 +84,7 @@ let variance_scaling ~scale ~mode ~distribution ?(in_axis = -2) ?(out_axis = -1)
 
 (* Constant *)
 
-let constant value =
-  { f = (fun _key shape dtype -> Rune.full dtype shape value) }
-
+let constant value = { f = (fun shape dtype -> Rune.full dtype shape value) }
 let zeros = constant 0.0
 let ones = constant 1.0
 
@@ -100,16 +94,16 @@ let uniform ?(scale = 0.01) () =
   check_non_negative "scale" scale;
   {
     f =
-      (fun key shape dtype ->
-        Rune.mul (Rune.rand dtype ~key shape) (Rune.scalar dtype scale));
+      (fun shape dtype ->
+        Rune.mul (Rune.rand dtype shape) (Rune.scalar dtype scale));
   }
 
 let normal ?(stddev = 0.01) () =
   check_non_negative "stddev" stddev;
   {
     f =
-      (fun key shape dtype ->
-        Rune.mul (Rune.randn dtype ~key shape) (Rune.scalar dtype stddev));
+      (fun shape dtype ->
+        Rune.mul (Rune.randn dtype shape) (Rune.scalar dtype stddev));
   }
 
 (* Glorot / Xavier *)

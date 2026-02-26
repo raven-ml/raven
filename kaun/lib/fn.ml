@@ -183,7 +183,7 @@ let embedding ?(scale = true) ~embedding indices =
 
 (* Dropout *)
 
-let dropout ~key ~rate x =
+let dropout ~rate x =
   if rate < 0.0 || rate >= 1.0 then
     invalid_argf_fn "dropout" "rate must satisfy 0.0 <= rate < 1.0";
   let tensor_dtype = Rune.dtype x in
@@ -192,7 +192,7 @@ let dropout ~key ~rate x =
   if rate = 0.0 then x
   else
     let keep_prob = 1.0 -. rate in
-    let random_vals = Rune.rand tensor_dtype ~key (Rune.shape x) in
+    let random_vals = Rune.rand tensor_dtype (Rune.shape x) in
     let threshold = Rune.scalar_like x keep_prob in
     let keep_mask = Rune.less random_vals threshold in
     let keep_mask_float = Rune.cast tensor_dtype keep_mask in
@@ -202,8 +202,8 @@ let dropout ~key ~rate x =
 (* Attention *)
 
 let dot_product_attention (type b) ?attention_mask ?scale ?dropout_rate
-    ?dropout_key ?(is_causal = false) (q : (float, b) Rune.t)
-    (k : (float, b) Rune.t) (v : (float, b) Rune.t) =
+    ?(is_causal = false) (q : (float, b) Rune.t) (k : (float, b) Rune.t)
+    (v : (float, b) Rune.t) =
   let check_float name (t : (float, b) Rune.t) =
     match Rune.dtype t with
     | Rune.Float16 -> ()
@@ -278,18 +278,7 @@ let dot_product_attention (type b) ?attention_mask ?scale ?dropout_rate
   in
   let probs = Rune.softmax ~axes:[ -1 ] scores in
   let probs =
-    match dropout_rate with
-    | None -> probs
-    | Some rate ->
-        let key =
-          match dropout_key with
-          | Some k -> k
-          | None ->
-              invalid_arg
-                "Fn.dot_product_attention: dropout_key required when \
-                 dropout_rate is set"
-        in
-        dropout ~key ~rate probs
+    match dropout_rate with None -> probs | Some rate -> dropout ~rate probs
   in
   Rune.matmul probs v
 

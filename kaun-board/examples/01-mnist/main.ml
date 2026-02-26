@@ -45,7 +45,6 @@ let collect ds =
     Rune.cast Rune.int32 (Rune.stack ~axis:0 (List.rev !ys)) )
 
 let () =
-  let rngs = Rune.Rng.key 42 in
   let dtype = Rune.float32 in
 
   (* Set up kaun-board logger *)
@@ -78,14 +77,12 @@ let () =
     Train.make ~model
       ~optimizer:(Optim.adam ~lr:(Optim.Schedule.constant lr) ())
   in
-  let st = ref (Train.init trainer ~rngs ~dtype) in
+  let st = ref (Train.init trainer ~dtype) in
   let global_step = ref 0 in
 
   for epoch = 1 to epochs do
-    let epoch_key = Rune.Rng.fold_in rngs epoch in
-
     (* Shuffle training data at the tensor level *)
-    let perm = Rune.Rng.permutation ~key:epoch_key n_train in
+    let perm = Rune.Rng.permutation n_train in
     let x_shuf = Rune.take ~axis:0 perm x_train in
     let y_shuf = Rune.take ~axis:0 perm y_train in
     let train_batches = batches x_shuf y_shuf in
@@ -99,7 +96,7 @@ let () =
         incr batch_i;
         incr global_step;
         let loss_val, st' =
-          Train.step trainer !st ~training:true ~rngs:epoch_key
+          Train.step trainer !st ~training:true
             ~loss:(fun logits -> Loss.cross_entropy_sparse logits y)
             x
         in

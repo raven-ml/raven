@@ -296,23 +296,18 @@ result = np.where(mask, arr1, arr2)
 
 ## 9. Random Number Generation
 
-**Nx (keyed, JAX-style):**
+**Nx:**
 ```ocaml
-(* Explicit key for reproducibility *)
-let key = Nx.Rng.key 0
-
 (* Generate uniform random numbers *)
-let random = Nx.rand Nx.float64 ~key [|3; 3|]
+let random = Nx.rand Nx.float64 [|3; 3|]
 
 (* Generate normal distributed random numbers *)
-let normal = Nx.randn Nx.float64 ~key:(Nx.Rng.fold_in key 1) [|3; 3|]
+let normal = Nx.randn Nx.float64 [|3; 3|]
 
-(* Splitting for multiple draws *)
-let key1, key2 =
-  match Nx.Rng.split ~n:2 key with [| a; b |] -> (a, b) | _ -> assert false
-
-let random' = Nx.rand Nx.float64 ~key:key1 [|3; 3|]
-let normal' = Nx.randn Nx.float64 ~key:key2 [|3; 3|]
+(* For reproducibility, wrap in Rng.run *)
+let reproducible =
+  Nx.Rng.run ~seed:42 (fun () ->
+    Nx.rand Nx.float64 [|3; 3|])
 ```
 
 **NumPy:**
@@ -329,15 +324,11 @@ normal = np.random.randn(3, 3)
 **Nx:**
 ```ocaml
 (* Generate sample data *)
-let base_key = Nx.Rng.key 0
-let _data_key, noise_key =
-  match Nx.Rng.split ~n:2 base_key with [| k1; k2 |] -> (k1, k2) | _ -> assert false
-
 let x = Nx.linspace Nx.float64 0.0 10.0 100
 let y =
   Nx.(
     add (mul_s x 2.0)
-      (randn Nx.float64 ~key:noise_key [|100|]))
+      (randn Nx.float64 [|100|]))
 
 (* Reshape x for design matrix *)
 let x_design = Nx.(concatenate ~axis:1 [ones Nx.float64 [|100; 1|];

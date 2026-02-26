@@ -88,22 +88,26 @@ let test_map_batch () =
   equal ~msg:"map_batch" (array int) [| 3; 7 |] (Data.to_array d)
 
 let test_shuffle_deterministic () =
-  let key = Rune.Rng.key 42 in
-  let d1 = Data.of_array [| 0; 1; 2; 3; 4; 5; 6; 7 |] |> Data.shuffle key in
-  let d2 = Data.of_array [| 0; 1; 2; 3; 4; 5; 6; 7 |] |> Data.shuffle key in
-  equal ~msg:"same key same order" (array int) (Data.to_array d1)
-    (Data.to_array d2)
-
-let test_shuffle_different_key () =
   let d1 =
-    Data.of_array [| 0; 1; 2; 3; 4; 5; 6; 7 |] |> Data.shuffle (Rune.Rng.key 1)
+    Rune.Rng.run ~seed:42 @@ fun () ->
+    Data.of_array [| 0; 1; 2; 3; 4; 5; 6; 7 |] |> Data.shuffle |> Data.to_array
   in
   let d2 =
-    Data.of_array [| 0; 1; 2; 3; 4; 5; 6; 7 |] |> Data.shuffle (Rune.Rng.key 2)
+    Rune.Rng.run ~seed:42 @@ fun () ->
+    Data.of_array [| 0; 1; 2; 3; 4; 5; 6; 7 |] |> Data.shuffle |> Data.to_array
   in
-  let a1 = Data.to_array d1 in
-  let a2 = Data.to_array d2 in
-  is_true ~msg:"different key different order" (a1 <> a2)
+  equal ~msg:"same seed same order" (array int) d1 d2
+
+let test_shuffle_different_seed () =
+  let a1 =
+    Rune.Rng.run ~seed:1 @@ fun () ->
+    Data.of_array [| 0; 1; 2; 3; 4; 5; 6; 7 |] |> Data.shuffle |> Data.to_array
+  in
+  let a2 =
+    Rune.Rng.run ~seed:2 @@ fun () ->
+    Data.of_array [| 0; 1; 2; 3; 4; 5; 6; 7 |] |> Data.shuffle |> Data.to_array
+  in
+  is_true ~msg:"different seed different order" (a1 <> a2)
 
 (* Consumers *)
 
@@ -165,7 +169,7 @@ let () =
           test "batch invalid size" test_batch_invalid_size;
           test "map_batch" test_map_batch;
           test "shuffle deterministic" test_shuffle_deterministic;
-          test "shuffle different key" test_shuffle_different_key;
+          test "shuffle different seed" test_shuffle_different_seed;
         ];
       group "consumers" [ test "fold" test_fold; test "to_seq" test_to_seq ];
       group "properties" [ test "reset" test_reset; test "length" test_length ];

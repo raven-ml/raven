@@ -1,9 +1,7 @@
 open Fehu
 open Windtrap
 
-let rng = Rune.Rng.key 42
-
-let make_test_env ?(max_steps = 100) ~rng () =
+let make_test_env ?(max_steps = 100) () =
   let obs_space = Space.Box.create ~low:[| 0.0 |] ~high:[| 10.0 |] in
   let act_space = Space.Discrete.create 2 in
   let state = ref 5.0 in
@@ -23,12 +21,10 @@ let make_test_env ?(max_steps = 100) ~rng () =
       ~observation:(Rune.create Rune.float32 [| 1 |] [| !state |])
       ~reward:1.0 ~terminated ~truncated ()
   in
-  Env.create ~id:"Test-v0" ~rng ~observation_space:obs_space
-    ~action_space:act_space ~reset ~step ()
+  Env.create ~id:"Test-v0" ~observation_space:obs_space ~action_space:act_space
+    ~reset ~step ()
 
-let make_envs n =
-  let keys = Rune.Rng.split rng ~n in
-  List.init n (fun i -> make_test_env ~rng:keys.(i) ())
+let make_envs n = List.init n (fun _ -> make_test_env ())
 
 (* Creation *)
 
@@ -51,11 +47,10 @@ let test_empty_list_raises () =
       ignore (Vec_env.create []))
 
 let test_incompatible_spaces_raises () =
-  let keys = Rune.Rng.split rng ~n:2 in
   let obs1 = Space.Box.create ~low:[| 0.0 |] ~high:[| 10.0 |] in
   let act = Space.Discrete.create 2 in
   let obs2 = Space.Box.create ~low:[| 0.0 |] ~high:[| 5.0 |] in
-  let make_env obs rng =
+  let make_env obs =
     let reset _env ?options:_ () =
       (Rune.create Rune.float32 [| 1 |] [| 0.0 |], Info.empty)
     in
@@ -64,10 +59,10 @@ let test_incompatible_spaces_raises () =
         ~observation:(Rune.create Rune.float32 [| 1 |] [| 0.0 |])
         ()
     in
-    Env.create ~rng ~observation_space:obs ~action_space:act ~reset ~step ()
+    Env.create ~observation_space:obs ~action_space:act ~reset ~step ()
   in
-  let e1 = make_env obs1 keys.(0) in
-  let e2 = make_env obs2 keys.(1) in
+  let e1 = make_env obs1 in
+  let e2 = make_env obs2 in
   raises_match ~msg:"incompatible spaces raises"
     (fun exn -> match exn with Invalid_argument _ -> true | _ -> false)
     (fun () -> ignore (Vec_env.create [ e1; e2 ]))
@@ -107,7 +102,7 @@ let test_wrong_action_count_raises () =
       ignore (Vec_env.step venv actions))
 
 let test_autoreset_final_observation () =
-  let env = make_test_env ~max_steps:3 ~rng () in
+  let env = make_test_env ~max_steps:3 () in
   let venv = Vec_env.create [ env ] in
   let _obs, _infos = Vec_env.reset venv () in
   let right = Rune.create Rune.int32 [| 1 |] [| 1l |] in
@@ -137,6 +132,7 @@ let test_close_all_envs () =
   List.iter (fun env -> is_true ~msg:"env is closed" (Env.closed env)) envs
 
 let () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   run "Fehu.Vec_env"
     [
       group "creation"

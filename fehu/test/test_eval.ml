@@ -1,9 +1,7 @@
 open Fehu
 open Windtrap
 
-let rng = Rune.Rng.key 42
-
-let make_test_env ?(max_steps = 100) ~rng () =
+let make_test_env ?(max_steps = 100) () =
   let obs_space = Space.Box.create ~low:[| 0.0 |] ~high:[| 10.0 |] in
   let act_space = Space.Discrete.create 2 in
   let state = ref 5.0 in
@@ -23,13 +21,13 @@ let make_test_env ?(max_steps = 100) ~rng () =
       ~observation:(Rune.create Rune.float32 [| 1 |] [| !state |])
       ~reward:1.0 ~terminated ~truncated ()
   in
-  Env.create ~id:"Test-v0" ~rng ~observation_space:obs_space
-    ~action_space:act_space ~reset ~step ()
+  Env.create ~id:"Test-v0" ~observation_space:obs_space ~action_space:act_space
+    ~reset ~step ()
 
 (* Run *)
 
 let test_constant_reward_stats () =
-  let env = make_test_env ~max_steps:5 ~rng () in
+  let env = make_test_env ~max_steps:5 () in
   let policy _obs = Rune.create Rune.int32 [| 1 |] [| 1l |] in
   let stats = Eval.run env ~policy ~n_episodes:3 ~max_steps:5 () in
   equal ~msg:"mean_reward" (float 1e-6) 5.0 stats.mean_reward;
@@ -38,12 +36,13 @@ let test_constant_reward_stats () =
   equal ~msg:"n_episodes" int 3 stats.n_episodes
 
 let test_n_episodes_matches () =
-  let env = make_test_env ~max_steps:5 ~rng () in
+  let env = make_test_env ~max_steps:5 () in
   let policy _obs = Rune.create Rune.int32 [| 1 |] [| 1l |] in
   let stats = Eval.run env ~policy ~n_episodes:7 ~max_steps:5 () in
   equal ~msg:"n_episodes matches" int 7 stats.n_episodes
 
 let () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   run "Fehu.Eval"
     [
       group "run"

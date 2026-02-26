@@ -1,8 +1,6 @@
 open Fehu
 open Windtrap
 
-let rng = Rune.Rng.key 42
-
 let make_data n =
   Bigarray.Array1.create Bigarray.int8_unsigned Bigarray.c_layout n
 
@@ -43,7 +41,7 @@ let test_pixel_format_default_rgb () =
 
 (* Rollout *)
 
-let make_renderable_env ~rng () =
+let make_renderable_env () =
   let obs_space = Space.Box.create ~low:[| 0.0 |] ~high:[| 10.0 |] in
   let act_space = Space.Discrete.create 2 in
   let state = ref 5.0 in
@@ -63,11 +61,11 @@ let make_renderable_env ~rng () =
     let data = make_data 3 in
     Some (Render.image ~width:1 ~height:1 data)
   in
-  Env.create ~id:"Renderable-v0" ~rng ~observation_space:obs_space
+  Env.create ~id:"Renderable-v0" ~observation_space:obs_space
     ~action_space:act_space ~reset ~step ~render ()
 
 let test_rollout_sink_called () =
-  let env = make_renderable_env ~rng () in
+  let env = make_renderable_env () in
   let count = ref 0 in
   let policy _obs = Rune.create Rune.int32 [| 1 |] [| 1l |] in
   let sink _frame = incr count in
@@ -79,7 +77,7 @@ let test_rollout_sink_called () =
 let action_right = Rune.create Rune.int32 [| 1 |] [| 1l |]
 
 let test_on_render_frame_count () =
-  let env = make_renderable_env ~rng () in
+  let env = make_renderable_env () in
   let count = ref 0 in
   let wrapped = Render.on_render ~sink:(fun _ -> incr count) env in
   let _obs, _info = Env.reset wrapped () in
@@ -90,7 +88,7 @@ let test_on_render_frame_count () =
   equal ~msg:"frame count" int 4 !count
 
 let test_on_render_passthrough () =
-  let env = make_renderable_env ~rng () in
+  let env = make_renderable_env () in
   let wrapped = Render.on_render ~sink:(fun _ -> ()) env in
   let _obs, _info = Env.reset wrapped () in
   let step = Env.step wrapped action_right in
@@ -99,12 +97,13 @@ let test_on_render_passthrough () =
   is_false ~msg:"not truncated" step.truncated
 
 let test_on_render_id () =
-  let env = make_renderable_env ~rng () in
+  let env = make_renderable_env () in
   let wrapped = Render.on_render ~sink:(fun _ -> ()) env in
   equal ~msg:"id suffix" (option string) (Some "Renderable-v0/OnRender")
     (Env.id wrapped)
 
 let () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   run "Fehu.Render"
     [
       group "image"

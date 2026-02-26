@@ -19,12 +19,6 @@ let err_text_charset = "Space.Text.create: charset must not be empty"
 let strf = Printf.sprintf
 let errorf fmt = Format.kasprintf (fun msg -> Error msg) fmt
 
-(* RNG helpers *)
-
-let split_key rng =
-  let keys = Rune.Rng.split rng in
-  (keys.(0), keys.(1))
-
 (* Spec *)
 
 type spec =
@@ -67,7 +61,7 @@ type 'a t = {
   spec : spec;
   shape : int array option;
   contains : 'a -> bool;
-  sample : rng:Rune.Rng.key -> 'a * Rune.Rng.key;
+  sample : unit -> 'a;
   pack : 'a -> Value.t;
   unpack : Value.t -> ('a, string) result;
   boundaries : Value.t list;
@@ -80,7 +74,7 @@ type packed = Pack : 'a t -> packed
 let spec s = s.spec
 let shape s = s.shape
 let contains s v = s.contains v
-let sample s ~rng = s.sample ~rng
+let sample s = s.sample ()
 let pack s v = s.pack v
 let unpack s v = s.unpack v
 let boundary_values s = s.boundaries
@@ -108,13 +102,10 @@ module Discrete = struct
       let v = Int32.to_int arr.(0) in
       v >= start && v < hi
     in
-    let sample ~rng =
-      let sample_key, next_rng = split_key rng in
-      let tensor =
-        Rune.randint Rune.int32 ~key:sample_key ~high:hi [| 1 |] start
-      in
+    let sample () =
+      let tensor = Rune.randint Rune.int32 ~high:hi [| 1 |] start in
       let arr : Int32.t array = Rune.to_array tensor in
-      (Rune.scalar Rune.int32 arr.(0), next_rng)
+      Rune.scalar Rune.int32 arr.(0)
     in
     let pack tensor =
       let arr : Int32.t array = Rune.to_array (Rune.reshape [| 1 |] tensor) in
@@ -184,9 +175,8 @@ module Box = struct
       in
       loop 0
     in
-    let sample ~rng =
-      let sample_key, next_rng = split_key rng in
-      let uniform = Rune.rand Rune.float32 ~key:sample_key [| arity |] in
+    let sample () =
+      let uniform = Rune.rand Rune.float32 [| arity |] in
       let draws = Rune.to_array uniform in
       let values =
         Array.init arity (fun i ->
@@ -197,11 +187,10 @@ module Box = struct
               let range = hi -. lo in
               if Float.is_finite range then lo +. (draws.(i) *. range)
               else
-                (* Unbounded/large range: sample from [-1e6, 1e6] and clamp *)
                 let v = -1e6 +. (draws.(i) *. 2e6) in
                 Float.max lo (Float.min hi v))
       in
-      (Rune.create Rune.float32 [| arity |] values, next_rng)
+      Rune.create Rune.float32 [| arity |] values
     in
     let pack tensor = Value.Float_array (Array.copy (Rune.to_array tensor)) in
     let unpack = function
@@ -265,11 +254,7 @@ module Multi_binary = struct
       let arr : Int32.t array = Rune.to_array tensor in
       Array.for_all (fun v -> v = Int32.zero || v = Int32.one) arr
     in
-    let sample ~rng =
-      let sample_key, next_rng = split_key rng in
-      let tensor = Rune.randint Rune.int32 ~key:sample_key ~high:2 [| n |] 0 in
-      (tensor, next_rng)
-    in
+    let sample () = Rune.randint Rune.int32 ~high:2 [| n |] 0 in
     let pack tensor =
       let arr : Int32.t array = Rune.to_array tensor in
       Value.Bool_array
@@ -336,18 +321,14 @@ module Multi_discrete = struct
       in
       loop 0
     in
-    let sample ~rng =
-      let sample_key, next_rng = split_key rng in
-      let keys = Rune.Rng.split ~n:arity sample_key in
+    let sample () =
       let data =
         Array.init arity (fun i ->
-            let tensor =
-              Rune.randint Rune.int32 ~key:keys.(i) ~high:nvec.(i) [| 1 |] 0
-            in
+            let tensor = Rune.randint Rune.int32 ~high:nvec.(i) [| 1 |] 0 in
             let arr = Rune.to_array tensor in
             arr.(0))
       in
-      (Rune.create Rune.int32 [| arity |] data, next_rng)
+      Rune.create Rune.int32 [| arity |] data
     in
     let pack tensor =
       let arr : Int32.t array = Rune.to_array tensor in
@@ -408,17 +389,15 @@ module Tuple = struct
       in
       loop 0 values
     in
-    let sample ~rng =
-      let sample_key, next_rng = split_key rng in
-      let keys = if len = 0 then [||] else Rune.Rng.split ~n:len sample_key in
+    let sample () =
       let values =
         Array.to_list
           (Array.init len (fun i ->
                let (Pack s) = spaces.(i) in
-               let v, _ = s.sample ~rng:keys.(i) in
+               let v = s.sample () in
                s.pack v))
       in
-      (values, next_rng)
+      values
     in
     let pack values = Value.List values in
     let unpack = function
@@ -481,22 +460,17 @@ module Dict = struct
       in
       loop values map
     in
-    let sample ~rng =
-      let sample_key, next_rng = split_key rng in
-      let cardinal = String_map.cardinal map in
-      if cardinal = 0 then ([], next_rng)
+    let sample () =
+      if String_map.is_empty map then []
       else
-        let keys = Rune.Rng.split ~n:cardinal sample_key in
-        let index = ref 0 in
         let acc =
           String_map.fold
             (fun key (Pack s) acc ->
-              let v, _ = s.sample ~rng:keys.(!index) in
-              incr index;
+              let v = s.sample () in
               (key, s.pack v) :: acc)
             map []
         in
-        (List.rev acc, next_rng)
+        List.rev acc
     in
     let pack values = Value.Dict values in
     let unpack = function
@@ -541,9 +515,7 @@ module Sequence = struct
       && (match max_length with None -> true | Some m -> len <= m)
       && List.for_all (fun v -> base.contains v) values
     in
-    let sample ~rng =
-      let sample_key, next_rng = split_key rng in
-      let length_key, elements_seed = split_key sample_key in
+    let sample () =
       let length =
         match max_length with
         | None -> min_length
@@ -551,22 +523,20 @@ module Sequence = struct
             if max_len = min_length then min_length
             else
               let tensor =
-                Rune.randint Rune.int32 ~key:length_key ~high:(max_len + 1)
-                  [| 1 |] min_length
+                Rune.randint Rune.int32 ~high:(max_len + 1) [| 1 |] min_length
               in
               let arr = Rune.to_array tensor in
               Int32.to_int arr.(0)
       in
-      if length = 0 then ([], next_rng)
+      if length = 0 then []
       else
-        let keys = Rune.Rng.split ~n:length elements_seed in
         let rec build i acc =
           if i = length then List.rev acc
           else
-            let v, _ = base.sample ~rng:keys.(i) in
+            let v = base.sample () in
             build (i + 1) (v :: acc)
         in
-        (build 0 [], next_rng)
+        build 0 []
     in
     let pack values = Value.List (List.map (fun v -> base.pack v) values) in
     let unpack = function
@@ -628,31 +598,22 @@ module Text = struct
       in
       loop 0
     in
-    let sample ~rng =
-      let sample_key, next_rng = split_key rng in
-      let length_key, chars_key = split_key sample_key in
+    let sample () =
       let length =
         if max_length = 1 then 1
         else
           let tensor =
-            Rune.randint Rune.int32 ~key:length_key ~high:(max_length + 1)
-              [| 1 |] 1
+            Rune.randint Rune.int32 ~high:(max_length + 1) [| 1 |] 1
           in
           let arr = Rune.to_array tensor in
           Int32.to_int arr.(0)
       in
-      let str =
-        if length = 0 then ""
-        else
-          let idxs =
-            Rune.randint Rune.int32 ~key:chars_key ~high:charset_len
-              [| length |] 0
-          in
-          let arr = Rune.to_array idxs in
-          Bytes.init length (fun i -> charset.[Int32.to_int arr.(i)])
-          |> Bytes.to_string
-      in
-      (str, next_rng)
+      if length = 0 then ""
+      else
+        let idxs = Rune.randint Rune.int32 ~high:charset_len [| length |] 0 in
+        let arr = Rune.to_array idxs in
+        Bytes.init length (fun i -> charset.[Int32.to_int arr.(i)])
+        |> Bytes.to_string
     in
     let pack value = Value.String value in
     let unpack = function

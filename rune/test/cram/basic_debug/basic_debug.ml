@@ -6,7 +6,7 @@
 open Rune
 
 let () =
-  let x = randn Float32 ~key:(Rng.key 42) [| 2; 3 |] in
+  let x = Rng.run ~seed:42 (fun () -> randn Float32 [| 2; 3 |]) in
   let y =
     debug
       (fun () ->

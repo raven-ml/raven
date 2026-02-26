@@ -6,13 +6,15 @@
  (enabled_if
   (= %{architecture} arm64))
  (targets simd.ml)
- (action (copy simd_neon.ml simd.ml)))
+ (action
+  (copy simd_neon.ml simd.ml)))
 
 (rule
  (enabled_if
   (= %{architecture} amd64))
  (targets simd.ml)
- (action (copy simd_sse.ml simd.ml)))
+ (action
+  (copy simd_sse.ml simd.ml)))
 
 (library
  (name nx_oxcaml)

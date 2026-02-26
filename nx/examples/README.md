@@ -12,7 +12,7 @@ previous one, progressing from array creation to image processing.
 | 03  | [Indexing and Slicing](03-indexing-and-slicing/)             | `I`, `R`, `Rs`, `A`, `.${[...]}`, `compress`, `where`, `take`        |
 | 04  | [Reshaping and Broadcasting](04-reshaping-and-broadcasting/) | `reshape`, `flatten`, `transpose`, `vstack`, broadcasting rules      |
 | 05  | [Reductions and Statistics](05-reductions-and-statistics/)   | `mean`, `std`, `argmax`, `cumsum`, `all`, `any`, axis parameter      |
-| 06  | [Random Numbers](06-random-numbers/)                         | `Rng.key`, `Rng.split`, `Rng.uniform`, `Rng.normal`, Monte Carlo     |
+| 06  | [Random Numbers](06-random-numbers/)                         | `Rng.run`, `Rng.uniform`, `Rng.normal`, `Rng.shuffle`, Monte Carlo   |
 | 07  | [Linear Algebra](07-linear-algebra/)                         | `@@`, `/@`, `inv`, `det`, `lstsq`, `eigh`, `svd`                     |
 | 08  | [Signal Processing](08-signal-processing/)                   | `rfft`, `irfft`, `rfftfreq`, frequency filtering                     |
 | 09  | [Image Processing](09-image-processing/)                     | `correlate2d`, `max_pool2d`, Sobel edges, `Nx_io.save_image`         |

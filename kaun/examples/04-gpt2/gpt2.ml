@@ -50,8 +50,8 @@ let find ~ctx key fs = Ptree.Dict.find_exn ~ctx key fs
 (* Causal self-attention with combined QKV *)
 
 let causal_self_attention (type l) ~(cfg : config)
-    ~(dtype : (float, l) Rune.dtype) ~training ?rngs ~params
-    (x : (float, l) Rune.t) : (float, l) Rune.t =
+    ~(dtype : (float, l) Rune.dtype) ~training ~params (x : (float, l) Rune.t) :
+    (float, l) Rune.t =
   let shape = Rune.shape x in
   let batch = shape.(0) in
   let seq = shape.(1) in
@@ -82,20 +82,9 @@ let causal_self_attention (type l) ~(cfg : config)
   let dropout_rate =
     if training && cfg.attn_pdrop > 0.0 then Some cfg.attn_pdrop else None
   in
-  let dropout_key =
-    match dropout_rate with
-    | Some _ -> (
-        match rngs with
-        | Some key -> Some (Rune.Rng.split key).(0)
-        | None ->
-            invalid_arg
-              "Gpt2.attention: requires ~rngs during training with dropout")
-    | None -> None
-  in
 
   let attn =
-    Kaun.Fn.dot_product_attention ~is_causal:true ?dropout_rate ?dropout_key q k
-      v
+    Kaun.Fn.dot_product_attention ~is_causal:true ?dropout_rate q k v
   in
 
   (* Merge heads *)
@@ -113,17 +102,8 @@ let causal_self_attention (type l) ~(cfg : config)
 (* Transformer block (pre-norm) *)
 
 let transformer_block (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
-    ~training ?rngs ~params (x : (float, l) Rune.t) : (float, l) Rune.t =
+    ~training ~params (x : (float, l) Rune.t) : (float, l) Rune.t =
   let fs = fields ~ctx:"Gpt2.block" params in
-
-  (* RNG splitting: [attn_drop, resid_drop1, resid_drop2] *)
-  let attn_key, drop1_key, drop2_key =
-    match rngs with
-    | Some key ->
-        let keys = Rune.Rng.split ~n:3 key in
-        (Some keys.(0), Some keys.(1), Some keys.(2))
-    | None -> (None, None, None)
-  in
 
   (* Pre-norm attention *)
   let ln1_g = get fs ~name:"ln1_gamma" dtype in
@@ -134,17 +114,13 @@ let transformer_block (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
 
   let attn_params = find ~ctx:"Gpt2.block" "attention" fs in
   let attn =
-    causal_self_attention ~cfg ~dtype ~training ?rngs:attn_key
-      ~params:attn_params x'
+    causal_self_attention ~cfg ~dtype ~training ~params:attn_params x'
   in
 
   (* Residual dropout *)
   let attn =
     if training && cfg.resid_pdrop > 0.0 then
-      match drop1_key with
-      | Some key -> Kaun.Fn.dropout ~key ~rate:cfg.resid_pdrop attn
-      | None ->
-          invalid_arg "Gpt2.block: requires ~rngs during training with dropout"
+      Kaun.Fn.dropout ~rate:cfg.resid_pdrop attn
     else attn
   in
   let x = Rune.add x attn in
@@ -169,10 +145,7 @@ let transformer_block (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
   (* Residual dropout *)
   let y =
     if training && cfg.resid_pdrop > 0.0 then
-      match drop2_key with
-      | Some key -> Kaun.Fn.dropout ~key ~rate:cfg.resid_pdrop y
-      | None ->
-          invalid_arg "Gpt2.block: requires ~rngs during training with dropout"
+      Kaun.Fn.dropout ~rate:cfg.resid_pdrop y
     else y
   in
   Rune.add x y
@@ -180,7 +153,7 @@ let transformer_block (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
 (* Forward: embeddings + transformer stack + final layer norm *)
 
 let decode (type l in_elt) ~(cfg : config) ~params
-    ~(dtype : (float, l) Rune.dtype) ~training ?rngs
+    ~(dtype : (float, l) Rune.dtype) ~training
     (input_ids : (int32, in_elt) Rune.t) : (float, l) Rune.t =
   let input_ids = Rune.cast Rune.int32 input_ids in
   let shape = Rune.shape input_ids in
@@ -190,14 +163,6 @@ let decode (type l in_elt) ~(cfg : config) ~params
   if seq > cfg.n_positions then
     invalid_argf "Gpt2.decode: seq_len=%d exceeds n_positions=%d" seq
       cfg.n_positions;
-
-  (* Split rngs: [emb_drop, block0, block1, ...] *)
-  let keys =
-    match rngs with
-    | Some key -> Rune.Rng.split ~n:(1 + cfg.n_layer) key
-    | None -> [||]
-  in
-  let key_at i = if Array.length keys > i then Some keys.(i) else None in
 
   (* Params *)
   let root = fields ~ctx:"Gpt2.decode" params in
@@ -221,25 +186,17 @@ let decode (type l in_elt) ~(cfg : config) ~params
   (* Embedding dropout *)
   let x =
     if training && cfg.embd_pdrop > 0.0 then
-      match key_at 0 with
-      | Some key -> Kaun.Fn.dropout ~key ~rate:cfg.embd_pdrop x
-      | None ->
-          invalid_arg "Gpt2.decode: requires ~rngs during training with dropout"
+      Kaun.Fn.dropout ~rate:cfg.embd_pdrop x
     else x
   in
 
   (* Transformer stack *)
   let blocks = Ptree.List.items_exn ~ctx:"Gpt2.decode.layers" layers_t in
-  let _, x =
+  let x =
     List.fold_left
-      (fun (i, h) block_params ->
-        let h =
-          transformer_block ~cfg ~dtype ~training
-            ?rngs:(key_at (i + 1))
-            ~params:block_params h
-        in
-        (i + 1, h))
-      (0, x) blocks
+      (fun h block_params ->
+        transformer_block ~cfg ~dtype ~training ~params:block_params h)
+      x blocks
   in
 
   (* Final layer norm *)
@@ -249,18 +206,16 @@ let decode (type l in_elt) ~(cfg : config) ~params
 
 (* Parameter initialization *)
 
-let init_block_params ~dtype ~rngs ~n_embd ~n_inner =
+let init_block_params ~dtype ~n_embd ~n_inner =
   let w = Init.normal ~stddev:0.02 () in
-  let keys = Rune.Rng.split ~n:4 rngs in
   let zeros n = Rune.zeros dtype [| n |] in
   let ones n = Rune.ones dtype [| n |] in
   let attn_params =
     Ptree.dict
       [
-        ( "qkv_weight",
-          Ptree.tensor (w.f keys.(0) [| n_embd; 3 * n_embd |] dtype) );
+        ("qkv_weight", Ptree.tensor (w.f [| n_embd; 3 * n_embd |] dtype));
         ("qkv_bias", Ptree.tensor (zeros (3 * n_embd)));
-        ("o_weight", Ptree.tensor (w.f keys.(1) [| n_embd; n_embd |] dtype));
+        ("o_weight", Ptree.tensor (w.f [| n_embd; n_embd |] dtype));
         ("o_bias", Ptree.tensor (zeros n_embd));
       ]
   in
@@ -269,26 +224,22 @@ let init_block_params ~dtype ~rngs ~n_embd ~n_inner =
       ("attention", attn_params);
       ("ln1_gamma", Ptree.tensor (ones n_embd));
       ("ln1_beta", Ptree.tensor (zeros n_embd));
-      ("ffn_up_weight", Ptree.tensor (w.f keys.(2) [| n_embd; n_inner |] dtype));
+      ("ffn_up_weight", Ptree.tensor (w.f [| n_embd; n_inner |] dtype));
       ("ffn_up_bias", Ptree.tensor (zeros n_inner));
-      ( "ffn_down_weight",
-        Ptree.tensor (w.f keys.(3) [| n_inner; n_embd |] dtype) );
+      ("ffn_down_weight", Ptree.tensor (w.f [| n_inner; n_embd |] dtype));
       ("ffn_down_bias", Ptree.tensor (zeros n_embd));
       ("ln2_gamma", Ptree.tensor (ones n_embd));
       ("ln2_beta", Ptree.tensor (zeros n_embd));
     ]
 
-let init_decoder_params ~cfg ~dtype ~rngs =
+let init_decoder_params ~cfg ~dtype =
   let h = cfg.n_embd in
   let w = Init.normal ~stddev:0.02 () in
-  let keys = Rune.Rng.split ~n:(2 + cfg.n_layer) rngs in
-  let wte = w.f keys.(0) [| cfg.vocab_size; h |] dtype in
-  let wpe = w.f keys.(1) [| cfg.n_positions; h |] dtype in
+  let wte = w.f [| cfg.vocab_size; h |] dtype in
+  let wpe = w.f [| cfg.n_positions; h |] dtype in
   let blocks =
-    List.init cfg.n_layer (fun i ->
-        init_block_params ~dtype
-          ~rngs:keys.(2 + i)
-          ~n_embd:h ~n_inner:cfg.n_inner)
+    List.init cfg.n_layer (fun _ ->
+        init_block_params ~dtype ~n_embd:h ~n_inner:cfg.n_inner)
   in
   Ptree.dict
     [
@@ -304,28 +255,28 @@ let init_decoder_params ~cfg ~dtype ~rngs =
 let decoder (cfg : config) () : (int32, float) Layer.t =
   {
     Layer.init =
-      (fun ~rngs ~dtype ->
+      (fun ~dtype ->
         Layer.make_vars
-          ~params:(init_decoder_params ~cfg ~dtype ~rngs)
+          ~params:(init_decoder_params ~cfg ~dtype)
           ~state:Ptree.empty ~dtype);
     apply =
-      (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
+      (fun ~params ~state ~dtype ~training ?ctx x ->
         ignore (state, ctx);
-        let y = decode ~cfg ~params ~dtype ~training ?rngs x in
+        let y = decode ~cfg ~params ~dtype ~training x in
         (y, Ptree.empty));
   }
 
 let for_causal_lm (cfg : config) () : (int32, float) Layer.t =
   {
     Layer.init =
-      (fun ~rngs ~dtype ->
+      (fun ~dtype ->
         Layer.make_vars
-          ~params:(init_decoder_params ~cfg ~dtype ~rngs)
+          ~params:(init_decoder_params ~cfg ~dtype)
           ~state:Ptree.empty ~dtype);
     apply =
-      (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
+      (fun ~params ~state ~dtype ~training ?ctx x ->
         ignore (state, ctx);
-        let hidden = decode ~cfg ~params ~dtype ~training ?rngs x in
+        let hidden = decode ~cfg ~params ~dtype ~training x in
         (* Tied LM head: logits = hidden @ wte^T *)
         let root = fields ~ctx:"Gpt2.lm_head" params in
         let wte = get root ~name:"wte" dtype in

@@ -14,8 +14,8 @@ let bench_name op size dtype backend =
 
 let ops_f32 ~size =
   let shape = [| size; size |] in
-  let a = Nx.rand Nx.Float32 ~key:(Nx.Rng.key (size * 3)) shape in
-  let b = Nx.rand Nx.Float32 ~key:(Nx.Rng.key ((size * 3) + 1)) shape in
+  let a = Nx.rand Nx.Float32 shape in
+  let b = Nx.rand Nx.Float32 shape in
   let out_c = Nx.empty Nx.float32 shape in
   let out_c_scalar = Nx.empty Nx.float32 [||] in
   let ctx = Nx_backend.create_context () in
@@ -70,8 +70,8 @@ let ops_f32 ~size =
 
 let ops_f64 ~size =
   let shape = [| size; size |] in
-  let a = Nx.rand Nx.Float64 ~key:(Nx.Rng.key (size * 3)) shape in
-  let b = Nx.rand Nx.Float64 ~key:(Nx.Rng.key ((size * 3) + 1)) shape in
+  let a = Nx.rand Nx.Float64 shape in
+  let b = Nx.rand Nx.Float64 shape in
   let out_c = Nx.empty Nx.float64 shape in
   let out_c_scalar = Nx.empty Nx.float64 [||] in
   let ctx = Nx_backend.create_context () in

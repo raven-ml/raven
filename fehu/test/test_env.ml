@@ -1,9 +1,7 @@
 open Fehu
 open Windtrap
 
-let rng = Rune.Rng.key 42
-
-let make_test_env ?(max_steps = 100) ~rng () =
+let make_test_env ?(max_steps = 100) () =
   let obs_space = Space.Box.create ~low:[| 0.0 |] ~high:[| 10.0 |] in
   let act_space = Space.Discrete.create 2 in
   let state = ref 5.0 in
@@ -23,8 +21,8 @@ let make_test_env ?(max_steps = 100) ~rng () =
       ~observation:(Rune.create Rune.float32 [| 1 |] [| !state |])
       ~reward:1.0 ~terminated ~truncated ()
   in
-  Env.create ~id:"Test-v0" ~rng ~observation_space:obs_space
-    ~action_space:act_space ~reset ~step ()
+  Env.create ~id:"Test-v0" ~observation_space:obs_space ~action_space:act_space
+    ~reset ~step ()
 
 let action_left = Rune.create Rune.int32 [| 1 |] [| 0l |]
 let action_right = Rune.create Rune.int32 [| 1 |] [| 1l |]
@@ -36,21 +34,21 @@ let read_obs obs =
 (* Creation *)
 
 let test_id () =
-  let env = make_test_env ~rng () in
+  let env = make_test_env () in
   equal ~msg:"id is Some Test-v0" (option string) (Some "Test-v0") (Env.id env)
 
 let test_observation_space () =
-  let env = make_test_env ~rng () in
+  let env = make_test_env () in
   let low, high = Space.Box.bounds (Env.observation_space env) in
   equal ~msg:"obs low" (array (float 0.0)) [| 0.0 |] low;
   equal ~msg:"obs high" (array (float 0.0)) [| 10.0 |] high
 
 let test_action_space () =
-  let env = make_test_env ~rng () in
+  let env = make_test_env () in
   equal ~msg:"act n" int 2 (Space.Discrete.n (Env.action_space env))
 
 let test_render_mode_default () =
-  let env = make_test_env ~rng () in
+  let env = make_test_env () in
   is_none ~msg:"render_mode default is None" (Env.render_mode env)
 
 let test_render_mode_invalid () =
@@ -58,7 +56,7 @@ let test_render_mode_invalid () =
     "Env.create: render mode 'human' not in render_modes []" (fun () ->
       let obs_space = Space.Box.create ~low:[| 0.0 |] ~high:[| 1.0 |] in
       let act_space = Space.Discrete.create 2 in
-      Env.create ~rng ~observation_space:obs_space ~action_space:act_space
+      Env.create ~observation_space:obs_space ~action_space:act_space
         ~render_mode:`Human ~render_modes:[]
         ~reset:(fun _env ?options:_ () -> assert false)
         ~step:(fun _env _ -> assert false)
@@ -67,13 +65,13 @@ let test_render_mode_invalid () =
 (* Lifecycle *)
 
 let test_reset_obs () =
-  let env = make_test_env ~rng () in
+  let env = make_test_env () in
   let obs, _info = Env.reset env () in
   equal ~msg:"reset obs shape" (array int) [| 1 |] (Rune.shape obs);
   equal ~msg:"reset obs value" (float 0.0) 5.0 (read_obs obs)
 
 let test_step_after_reset () =
-  let env = make_test_env ~rng () in
+  let env = make_test_env () in
   let _obs, _info = Env.reset env () in
   let step = Env.step env action_right in
   equal ~msg:"reward" (float 0.0) 1.0 step.reward;
@@ -81,13 +79,13 @@ let test_step_after_reset () =
   is_false ~msg:"not truncated" step.truncated
 
 let test_step_before_reset () =
-  let env = make_test_env ~rng () in
+  let env = make_test_env () in
   raises_invalid_arg ~msg:"step before reset"
     "Env: operation 'step' requires calling reset first" (fun () ->
       Env.step env action_left)
 
 let test_step_after_terminal () =
-  let env = make_test_env ~rng () in
+  let env = make_test_env () in
   let _obs, _info = Env.reset env () in
   (* Move left 5 times: 5 -> 4 -> 3 -> 2 -> 1 -> 0, terminated *)
   for _ = 1 to 4 do
@@ -100,7 +98,7 @@ let test_step_after_terminal () =
       Env.step env action_left)
 
 let test_reset_after_terminal () =
-  let env = make_test_env ~rng () in
+  let env = make_test_env () in
   let _obs, _info = Env.reset env () in
   for _ = 1 to 5 do
     ignore (Env.step env action_left)
@@ -109,12 +107,12 @@ let test_reset_after_terminal () =
   equal ~msg:"reset clears terminal" (float 0.0) 5.0 (read_obs obs)
 
 let test_close () =
-  let env = make_test_env ~rng () in
+  let env = make_test_env () in
   Env.close env;
   is_true ~msg:"closed" (Env.closed env)
 
 let test_step_on_closed () =
-  let env = make_test_env ~rng () in
+  let env = make_test_env () in
   let _obs, _info = Env.reset env () in
   Env.close env;
   raises_invalid_arg ~msg:"step on closed"
@@ -122,56 +120,23 @@ let test_step_on_closed () =
       Env.step env action_left)
 
 let test_reset_on_closed () =
-  let env = make_test_env ~rng () in
+  let env = make_test_env () in
   Env.close env;
   raises_invalid_arg ~msg:"reset on closed"
     "Env: operation 'reset' on a closed environment" (fun () ->
       Env.reset env ())
 
 let test_render_on_closed () =
-  let env = make_test_env ~rng () in
+  let env = make_test_env () in
   Env.close env;
   raises_invalid_arg ~msg:"render on closed"
     "Env: operation 'render' on a closed environment" (fun () -> Env.render env)
 
 let test_close_idempotent () =
-  let env = make_test_env ~rng () in
+  let env = make_test_env () in
   Env.close env;
   Env.close env;
   is_true ~msg:"still closed" (Env.closed env)
-
-(* RNG *)
-
-let test_take_rng () =
-  let env = make_test_env ~rng () in
-  let rng_before = Rune.Rng.to_int (Env.rng env) in
-  let key = Rune.Rng.to_int (Env.take_rng env) in
-  let rng_after = Rune.Rng.to_int (Env.rng env) in
-  not_equal ~msg:"rng updated" int rng_before rng_after;
-  not_equal ~msg:"key differs from new rng" int key rng_after
-
-let test_split_rng () =
-  let env = make_test_env ~rng () in
-  let keys = Env.split_rng env ~n:3 in
-  equal ~msg:"3 keys" int 3 (Array.length keys)
-
-let test_split_rng_nonpositive () =
-  let env = make_test_env ~rng () in
-  raises_invalid_arg ~msg:"n=0" "Env.split_rng: n must be positive" (fun () ->
-      Env.split_rng env ~n:0);
-  raises_invalid_arg ~msg:"n=-1" "Env.split_rng: n must be positive" (fun () ->
-      Env.split_rng env ~n:(-1))
-
-let test_set_rng_needs_reset () =
-  let env = make_test_env ~rng () in
-  let _obs, _info = Env.reset env () in
-  let new_key = Rune.Rng.key 99 in
-  Env.set_rng env new_key;
-  equal ~msg:"rng updated" int (Rune.Rng.to_int new_key)
-    (Rune.Rng.to_int (Env.rng env));
-  raises_invalid_arg ~msg:"needs reset after set_rng"
-    "Env: operation 'step' requires calling reset first" (fun () ->
-      Env.step env action_left)
 
 (* step_result *)
 
@@ -198,7 +163,7 @@ let test_step_result_custom () =
 (* time_limit lifecycle enforcement *)
 
 let test_time_limit_needs_reset () =
-  let env = make_test_env ~rng () in
+  let env = make_test_env () in
   let wrapped = Env.time_limit ~max_episode_steps:3 env in
   let _obs, _info = Env.reset wrapped () in
   for _ = 1 to 2 do
@@ -211,6 +176,7 @@ let test_time_limit_needs_reset () =
       Env.step wrapped action_right)
 
 let () =
+  Rune.Rng.run ~seed:42 @@ fun () ->
   run "Fehu.Env"
     [
       group "creation"
@@ -235,13 +201,6 @@ let () =
           test "close idempotent" test_close_idempotent;
           test "time_limit needs reset after truncation"
             test_time_limit_needs_reset;
-        ];
-      group "rng"
-        [
-          test "take_rng" test_take_rng;
-          test "split_rng" test_split_rng;
-          test "split_rng nonpositive" test_split_rng_nonpositive;
-          test "set_rng marks needs_reset" test_set_rng_needs_reset;
         ];
       group "step_result"
         [

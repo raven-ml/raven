@@ -43,14 +43,11 @@ val clear : ('obs, 'act) t -> unit
 
 (** {1:sampling Sampling} *)
 
-val sample :
-  ('obs, 'act) t ->
-  rng:Rune.Rng.key ->
-  batch_size:int ->
-  ('obs, 'act) transition array * Rune.Rng.key
-(** [sample buf ~rng ~batch_size] draws [batch_size] transitions uniformly at
-    random (with replacement) and returns the batch together with a fresh RNG
-    key derived from [rng].
+val sample : ('obs, 'act) t -> batch_size:int -> ('obs, 'act) transition array
+(** [sample buf ~batch_size] draws [batch_size] transitions uniformly at random
+    (with replacement).
+
+    Random keys are drawn from the implicit RNG scope.
 
     If [batch_size] exceeds {!size}, samples [min batch_size size] transitions.
 
@@ -58,11 +55,9 @@ val sample :
 
 val sample_arrays :
   ('obs, 'act) t ->
-  rng:Rune.Rng.key ->
   batch_size:int ->
-  ('obs array * 'act array * float array * 'obs array * bool array * bool array)
-  * Rune.Rng.key
-(** [sample_arrays buf ~rng ~batch_size] is like {!sample} but returns
+  'obs array * 'act array * float array * 'obs array * bool array * bool array
+(** [sample_arrays buf ~batch_size] is like {!sample} but returns
     structure-of-arrays
     [(observations, actions, rewards, next_observations, terminated, truncated)]
     for direct use in training loops. *)

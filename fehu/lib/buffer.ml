@@ -70,33 +70,29 @@ let clear buf =
 
 (* Sampling *)
 
-let sample_indices buf ~rng ~batch_size =
+let sample_indices buf ~batch_size =
   if buf.size = 0 then invalid_arg err_empty;
   if batch_size <= 0 then invalid_arg err_batch_size;
-  let keys = Rune.Rng.split rng in
   let n = min batch_size buf.size in
-  let raw = Rune.randint Rune.int32 ~key:keys.(0) ~high:buf.size [| n |] 0 in
+  let raw = Rune.randint Rune.int32 ~high:buf.size [| n |] 0 in
   let idx : Int32.t array = Rune.to_array raw in
-  (idx, n, keys.(1))
+  (idx, n)
 
-let sample buf ~rng ~batch_size =
-  let idx, n, next_rng = sample_indices buf ~rng ~batch_size in
-  let batch =
-    Array.init n (fun i ->
-        let j = Int32.to_int idx.(i) in
-        {
-          observation = buf.observations.(j);
-          action = buf.actions.(j);
-          reward = buf.rewards.(j);
-          next_observation = buf.next_observations.(j);
-          terminated = buf.terminateds.(j);
-          truncated = buf.truncateds.(j);
-        })
-  in
-  (batch, next_rng)
+let sample buf ~batch_size =
+  let idx, n = sample_indices buf ~batch_size in
+  Array.init n (fun i ->
+      let j = Int32.to_int idx.(i) in
+      {
+        observation = buf.observations.(j);
+        action = buf.actions.(j);
+        reward = buf.rewards.(j);
+        next_observation = buf.next_observations.(j);
+        terminated = buf.terminateds.(j);
+        truncated = buf.truncateds.(j);
+      })
 
-let sample_arrays buf ~rng ~batch_size =
-  let idx, n, next_rng = sample_indices buf ~rng ~batch_size in
+let sample_arrays buf ~batch_size =
+  let idx, n = sample_indices buf ~batch_size in
   let get arr i = arr.(Int32.to_int idx.(i)) in
   let observations = Array.init n (get buf.observations) in
   let actions = Array.init n (get buf.actions) in
@@ -104,8 +100,7 @@ let sample_arrays buf ~rng ~batch_size =
   let next_observations = Array.init n (get buf.next_observations) in
   let terminated = Array.init n (get buf.terminateds) in
   let truncated = Array.init n (get buf.truncateds) in
-  ( (observations, actions, rewards, next_observations, terminated, truncated),
-    next_rng )
+  (observations, actions, rewards, next_observations, terminated, truncated)
 
 (* Queries *)
 

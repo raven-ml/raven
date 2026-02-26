@@ -100,10 +100,11 @@ let () =
     "Epsilon: %.2f -> %.2f over %d steps, target update every %d steps\n\n"
     epsilon_start epsilon_end epsilon_decay_steps target_update_interval;
 
-  let env = Fehu_envs.Cartpole.make ~rng:(Rune.Rng.key 0) () in
+  Rune.Rng.run ~seed:42 @@ fun () ->
+  let env = Fehu_envs.Cartpole.make () in
 
   (* Initialize network *)
-  let vars = Layer.init q_network ~rngs:(Rune.Rng.key 42) ~dtype:Rune.float32 in
+  let vars = Layer.init q_network ~dtype:Rune.float32 in
   let params = ref (Layer.params vars) in
   let net_state = Layer.state vars in
   let target_params = ref (copy_params !params) in
@@ -117,23 +118,14 @@ let () =
   (* Replay buffer *)
   let buffer = Buffer.create ~capacity:buffer_capacity in
 
-  (* RNG for exploration *)
-  let agent_rng = ref (Rune.Rng.key 1) in
-  let take_rng () =
-    let keys = Rune.Rng.split !agent_rng in
-    agent_rng := keys.(0);
-    keys.(1)
-  in
-
   let sample_uniform () =
-    let t = Rune.rand Rune.float32 ~key:(take_rng ()) [| 1 |] in
+    let t = Rune.rand Rune.float32 [| 1 |] in
     (Rune.to_array t : float array).(0)
   in
 
   (* Epsilon-greedy action selection *)
   let select_action obs eps =
-    if sample_uniform () < eps then
-      fst (Space.sample (Env.action_space env) ~rng:(take_rng ()))
+    if sample_uniform () < eps then Space.sample (Env.action_space env)
     else begin
       let obs_batch = Rune.reshape [| 1; 4 |] obs in
       let q_values =
@@ -159,9 +151,9 @@ let () =
   in
 
   (* Training step *)
-  let train_step rng_key =
-    let (obs_arr, act_arr, rew_arr, next_obs_arr, term_arr, trunc_arr), _rng' =
-      Buffer.sample_arrays buffer ~rng:rng_key ~batch_size
+  let train_step () =
+    let obs_arr, act_arr, rew_arr, next_obs_arr, term_arr, trunc_arr =
+      Buffer.sample_arrays buffer ~batch_size
     in
     let n = Array.length obs_arr in
 
@@ -242,7 +234,7 @@ let () =
 
     (* Train *)
     if step >= learning_starts then begin
-      last_loss := train_step (take_rng ());
+      last_loss := train_step ();
 
       (* Update target network *)
       if step mod target_update_interval = 0 then

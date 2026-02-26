@@ -97,19 +97,18 @@ let multi_head_attention ~embed_dim ~num_heads ?(num_kv_heads = num_heads)
   let weight_init = Init.glorot_uniform () in
   {
     Layer.init =
-      (fun ~rngs ~dtype ->
-        let keys = Rune.Rng.split ~n:4 rngs in
+      (fun ~dtype ->
         let q_proj =
-          weight_init.f keys.(0) [| embed_dim; num_heads * head_dim |] dtype
+          weight_init.f [| embed_dim; num_heads * head_dim |] dtype
         in
         let k_proj =
-          weight_init.f keys.(1) [| embed_dim; num_kv_heads * head_dim |] dtype
+          weight_init.f [| embed_dim; num_kv_heads * head_dim |] dtype
         in
         let v_proj =
-          weight_init.f keys.(2) [| embed_dim; num_kv_heads * head_dim |] dtype
+          weight_init.f [| embed_dim; num_kv_heads * head_dim |] dtype
         in
         let out_proj =
-          weight_init.f keys.(3) [| num_heads * head_dim; embed_dim |] dtype
+          weight_init.f [| num_heads * head_dim; embed_dim |] dtype
         in
         Layer.make_vars
           ~params:
@@ -122,7 +121,7 @@ let multi_head_attention ~embed_dim ~num_heads ?(num_kv_heads = num_heads)
                ])
           ~state:(Ptree.list []) ~dtype);
     apply =
-      (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
+      (fun ~params ~state ~dtype ~training ?ctx x ->
         let x =
           require_same_float_dtype ~ctx:"Attention.multi_head_attention" dtype x
         in
@@ -171,17 +170,6 @@ let multi_head_attention ~embed_dim ~num_heads ?(num_kv_heads = num_heads)
         let dropout_rate =
           if training && dropout > 0.0 then Some dropout else None
         in
-        let dropout_key =
-          match dropout_rate with
-          | Some _ -> (
-              match rngs with
-              | Some key -> Some key
-              | None ->
-                  invalid_arg
-                    "Attention.multi_head_attention: requires ~rngs during \
-                     training with dropout")
-          | None -> None
-        in
         (* Read attention mask from context if present. Accepts [batch; seq_k]
            int32 (0/1) or bool, reshapes to [batch; 1; 1; seq_k] for
            broadcasting over heads and queries. *)
@@ -219,8 +207,8 @@ let multi_head_attention ~embed_dim ~num_heads ?(num_kv_heads = num_heads)
                   Some reshaped)
         in
         let attn =
-          Fn.dot_product_attention ?attention_mask ?dropout_rate ?dropout_key
-            ~is_causal q k v
+          Fn.dot_product_attention ?attention_mask ?dropout_rate ~is_causal q k
+            v
         in
         let merged =
           Rune.transpose attn ~axes:[ 0; 2; 1; 3 ]

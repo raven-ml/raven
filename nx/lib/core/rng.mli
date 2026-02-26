@@ -3,10 +3,12 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Stateless RNG keys and key splitting.
+(** Splittable RNG keys and implicit key management.
 
     Keys are deterministic integers that can be split to derive independent
-    subkeys. *)
+    subkeys. {!run} and {!with_key} install an effect handler that provides
+    implicit key threading via {!next_key}; outside any handler a domain-local
+    auto-seeded generator is used as a convenient fallback. *)
 
 (** {1:keys Keys} *)
 
@@ -15,10 +17,6 @@ type key = int
 
 val key : int -> key
 (** [key seed] is a normalized 31-bit non-negative key derived from [seed]. *)
-
-val hash_int : int -> int
-(** [hash_int x] is a deterministic integer hash in the 31-bit non-negative
-    range. *)
 
 val split : ?n:int -> key -> key array
 (** [split ?n k] deterministically derives [n] subkeys from [k].
@@ -31,20 +29,28 @@ val fold_in : key -> int -> key
 val to_int : key -> int
 (** [to_int k] is [k] as an integer. *)
 
-(** {1:generator Stateful generator} *)
+(** {1:implicit Implicit key management} *)
 
-module Generator : sig
-  type t
-  (** The type for mutable key generators. *)
+val next_key : unit -> key
+(** [next_key ()] returns a fresh subkey from the current RNG scope.
 
-  val create : ?key:key -> unit -> t
-  (** [create ?key ()] is a generator initialized with [key].
+    Inside a {!run} or {!with_key} block, each call returns a deterministically
+    derived key. Outside any scope, falls back to a domain-local auto-seeded
+    generator (convenient but non-reproducible).
 
-      If [key] is omitted, a random seed is drawn from [Random.bits]. *)
+    Two calls to [next_key ()] always return different keys. *)
 
-  val next : t -> key
-  (** [next g] returns a fresh subkey and advances [g]'s internal key. *)
+val run : seed:int -> (unit -> 'a) -> 'a
+(** [run ~seed f] executes [f] in an RNG scope seeded by [seed].
 
-  val current_key : t -> key
-  (** [current_key g] is [g]'s current internal key. *)
-end
+    Every {!next_key} call within [f] returns a deterministically derived key.
+    The same [seed] and the same sequence of [next_key] calls produce the same
+    keys. Scopes nest: an inner [run] replaces the outer scope for its duration.
+*)
+
+val with_key : key -> (unit -> 'a) -> 'a
+(** [with_key k f] executes [f] in an RNG scope initialized from [k].
+
+    This is the explicit-key equivalent of [run]: useful when you have an
+    existing key from a split and want to establish a scope for a
+    sub-computation (e.g. in layer composition). *)

@@ -25,8 +25,6 @@ let err_obs_step value =
 let err_action value =
   strf "Env.step: action outside action_space (value=%s)" value
 
-let err_split_rng = "Env.split_rng: n must be positive"
-
 (* Step result *)
 
 type 'obs step = {
@@ -54,11 +52,7 @@ let render_mode_to_string = function
 
 (* Shared mutable state *)
 
-type shared = {
-  mutable rng : Rune.Rng.key;
-  mutable closed : bool;
-  mutable needs_reset : bool;
-}
+type shared = { mutable closed : bool; mutable needs_reset : bool }
 
 (* Environment *)
 
@@ -84,7 +78,7 @@ let ensure_reset shared op =
 
 (* Constructor *)
 
-let create ?id ~rng ~observation_space ~action_space ?render_mode
+let create ?id ~observation_space ~action_space ?render_mode
     ?(render_modes = []) ~reset ~step ?render ?close () =
   (match render_mode with
   | None -> ()
@@ -92,7 +86,7 @@ let create ?id ~rng ~observation_space ~action_space ?render_mode
       let mode_s = render_mode_to_string mode in
       if not (List.mem mode_s render_modes) then
         invalid_arg (err_render_mode mode_s render_modes));
-  let shared = { rng; closed = false; needs_reset = true } in
+  let shared = { closed = false; needs_reset = true } in
   let render_fn = Option.value render ~default:(fun () -> None) in
   let close_fn = Option.value close ~default:(fun () -> ()) in
   let rec env =
@@ -147,25 +141,6 @@ let id env = env.id
 let observation_space env = env.observation_space
 let action_space env = env.action_space
 let render_mode env = env.render_mode
-
-(* RNG *)
-
-let rng env = env.shared.rng
-
-let set_rng env key =
-  env.shared.rng <- key;
-  env.shared.needs_reset <- true
-
-let take_rng env =
-  let keys = Rune.Rng.split env.shared.rng in
-  env.shared.rng <- keys.(0);
-  keys.(1)
-
-let split_rng env ~n =
-  if n <= 0 then invalid_arg err_split_rng;
-  let keys = Rune.Rng.split ~n:(n + 1) env.shared.rng in
-  env.shared.rng <- keys.(0);
-  Array.sub keys 1 n
 
 (* Human render helper *)
 

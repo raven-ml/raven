@@ -10,16 +10,13 @@ type 'layout vars = {
 }
 
 type ('input, 'output) t = {
-  init :
-    'layout.
-    rngs:Rune.Rng.key -> dtype:(float, 'layout) Rune.dtype -> 'layout vars;
+  init : 'layout. dtype:(float, 'layout) Rune.dtype -> 'layout vars;
   apply :
     'layout 'in_elt.
     params:Ptree.t ->
     state:Ptree.t ->
     dtype:(float, 'layout) Rune.dtype ->
     training:bool ->
-    ?rngs:Rune.Rng.key ->
     ?ctx:Context.t ->
     ('input, 'in_elt) Rune.t ->
     ('output, 'layout) Rune.t * Ptree.t;
@@ -53,23 +50,24 @@ let require_int32_indices (type in_elt) ~ctx (x : (int32, in_elt) Rune.t) :
       invalid_argf "%s: expected int32 indices, got %s" ctx
         (Dtype.to_string (Rune.dtype x))
 
-let init t ~rngs ~dtype = t.init ~rngs ~dtype
+let init t ~dtype = t.init ~dtype
 
 let apply (type a b layout in_elt) (t : (a, b) t) (vars : layout vars) ~training
-    ?rngs ?ctx (x : (a, in_elt) Rune.t) =
+    ?ctx (x : (a, in_elt) Rune.t) =
   let y, state =
     t.apply ~params:vars.params ~state:vars.state ~dtype:vars.dtype ~training
-      ?rngs ?ctx x
+      ?ctx x
   in
   (y, { vars with state })
 
 let compose left right =
   {
     init =
-      (fun ~rngs ~dtype ->
-        let keys = Rune.Rng.split rngs in
-        let left_vars = left.init ~rngs:keys.(0) ~dtype in
-        let right_vars = right.init ~rngs:keys.(1) ~dtype in
+      (fun ~dtype ->
+        let k1 = Rune.Rng.next_key () in
+        let k2 = Rune.Rng.next_key () in
+        let left_vars = Rune.Rng.with_key k1 (fun () -> left.init ~dtype) in
+        let right_vars = Rune.Rng.with_key k2 (fun () -> right.init ~dtype) in
         {
           params =
             Ptree.dict
@@ -80,7 +78,7 @@ let compose left right =
           dtype;
         });
     apply =
-      (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
+      (fun ~params ~state ~dtype ~training ?ctx x ->
         let param_fields =
           Ptree.Dict.fields_exn ~ctx:"Layer.compose.params" params
         in
@@ -99,20 +97,13 @@ let compose left right =
         let right_state =
           Ptree.Dict.find_exn ~ctx:"Layer.compose.state" "right" state_fields
         in
-        let left_rng, right_rng =
-          match rngs with
-          | Some key ->
-              let keys = Rune.Rng.split key in
-              (Some keys.(0), Some keys.(1))
-          | None -> (None, None)
-        in
         let y, left_state' =
-          left.apply ~params:left_params ~state:left_state ~dtype ~training
-            ?rngs:left_rng ?ctx x
+          left.apply ~params:left_params ~state:left_state ~dtype ~training ?ctx
+            x
         in
         let z, right_state' =
           right.apply ~params:right_params ~state:right_state ~dtype ~training
-            ?rngs:right_rng ?ctx y
+            ?ctx y
         in
         (z, Ptree.dict [ ("left", left_state'); ("right", right_state') ]));
   }
@@ -130,12 +121,9 @@ let linear ~in_features ~out_features ?weight_init ?bias_init () =
   in
   {
     init =
-      (fun ~rngs ~dtype ->
-        let keys = Rune.Rng.split rngs in
-        let weight =
-          weight_init.f keys.(0) [| in_features; out_features |] dtype
-        in
-        let bias = bias_init.f keys.(1) [| out_features |] dtype in
+      (fun ~dtype ->
+        let weight = weight_init.f [| in_features; out_features |] dtype in
+        let bias = bias_init.f [| out_features |] dtype in
         {
           params =
             Ptree.dict
@@ -144,8 +132,8 @@ let linear ~in_features ~out_features ?weight_init ?bias_init () =
           dtype;
         });
     apply =
-      (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
-        ignore (training, rngs, ctx);
+      (fun ~params ~state ~dtype ~training ?ctx x ->
+        ignore (training, ctx);
         let x = require_same_float_dtype ~ctx:"Layer.linear" dtype x in
         let fields = Ptree.Dict.fields_exn ~ctx:"Layer.linear" params in
         let weight = Ptree.Dict.get_tensor_exn fields ~name:"weight" dtype in
@@ -160,10 +148,9 @@ let conv1d ~in_channels ~out_channels ?(kernel_size = 3) ?(stride = 1)
   let weight_init = Init.glorot_uniform ~in_axis:1 ~out_axis:0 () in
   {
     init =
-      (fun ~rngs ~dtype ->
-        let key = (Rune.Rng.split rngs).(0) in
+      (fun ~dtype ->
         let weight =
-          weight_init.f key [| out_channels; in_channels; kernel_size |] dtype
+          weight_init.f [| out_channels; in_channels; kernel_size |] dtype
         in
         let bias = Rune.zeros dtype [| out_channels |] in
         {
@@ -174,8 +161,8 @@ let conv1d ~in_channels ~out_channels ?(kernel_size = 3) ?(stride = 1)
           dtype;
         });
     apply =
-      (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
-        ignore (training, rngs, ctx);
+      (fun ~params ~state ~dtype ~training ?ctx x ->
+        ignore (training, ctx);
         let x = require_same_float_dtype ~ctx:"Layer.conv1d" dtype x in
         let fields = Ptree.Dict.fields_exn ~ctx:"Layer.conv1d" params in
         let weight = Ptree.Dict.get_tensor_exn fields ~name:"weight" dtype in
@@ -198,10 +185,9 @@ let conv2d ~in_channels ~out_channels ?(kernel_size = (3, 3)) () =
   let weight_init = Init.glorot_uniform ~in_axis:1 ~out_axis:0 () in
   {
     init =
-      (fun ~rngs ~dtype ->
-        let key = (Rune.Rng.split rngs).(0) in
+      (fun ~dtype ->
         let weight =
-          weight_init.f key [| out_channels; in_channels; kh; kw |] dtype
+          weight_init.f [| out_channels; in_channels; kh; kw |] dtype
         in
         let bias = Rune.zeros dtype [| out_channels |] in
         {
@@ -212,8 +198,8 @@ let conv2d ~in_channels ~out_channels ?(kernel_size = (3, 3)) () =
           dtype;
         });
     apply =
-      (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
-        ignore (training, rngs, ctx);
+      (fun ~params ~state ~dtype ~training ?ctx x ->
+        ignore (training, ctx);
         let x = require_same_float_dtype ~ctx:"Layer.conv2d" dtype x in
         let fields = Ptree.Dict.fields_exn ~ctx:"Layer.conv2d" params in
         let weight = Ptree.Dict.get_tensor_exn fields ~name:"weight" dtype in
@@ -226,8 +212,7 @@ let conv2d ~in_channels ~out_channels ?(kernel_size = (3, 3)) () =
 let layer_norm ~dim ?(eps = 1e-5) () =
   {
     init =
-      (fun ~rngs ~dtype ->
-        ignore rngs;
+      (fun ~dtype ->
         let gamma = Rune.ones dtype [| dim |] in
         let beta = Rune.zeros dtype [| dim |] in
         {
@@ -238,8 +223,8 @@ let layer_norm ~dim ?(eps = 1e-5) () =
           dtype;
         });
     apply =
-      (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
-        ignore (training, rngs, ctx);
+      (fun ~params ~state ~dtype ~training ?ctx x ->
+        ignore (training, ctx);
         let x = require_same_float_dtype ~ctx:"Layer.layer_norm" dtype x in
         let fields = Ptree.Dict.fields_exn ~ctx:"Layer.layer_norm" params in
         let gamma = Ptree.Dict.get_tensor_exn fields ~name:"gamma" dtype in
@@ -250,8 +235,7 @@ let layer_norm ~dim ?(eps = 1e-5) () =
 let rms_norm ~dim ?(eps = 1e-6) () =
   {
     init =
-      (fun ~rngs ~dtype ->
-        ignore rngs;
+      (fun ~dtype ->
         let scale = Rune.ones dtype [| dim |] in
         {
           params = Ptree.dict [ ("scale", Ptree.tensor scale) ];
@@ -259,8 +243,8 @@ let rms_norm ~dim ?(eps = 1e-6) () =
           dtype;
         });
     apply =
-      (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
-        ignore (training, rngs, ctx);
+      (fun ~params ~state ~dtype ~training ?ctx x ->
+        ignore (training, ctx);
         let x = require_same_float_dtype ~ctx:"Layer.rms_norm" dtype x in
         let fields = Ptree.Dict.fields_exn ~ctx:"Layer.rms_norm" params in
         let scale = Ptree.Dict.get_tensor_exn fields ~name:"scale" dtype in
@@ -270,8 +254,7 @@ let rms_norm ~dim ?(eps = 1e-6) () =
 let batch_norm ~num_features () =
   {
     init =
-      (fun ~rngs ~dtype ->
-        ignore rngs;
+      (fun ~dtype ->
         let scale = Rune.ones dtype [| num_features |] in
         let bias = Rune.zeros dtype [| num_features |] in
         let running_mean = Rune.zeros dtype [| num_features |] in
@@ -289,8 +272,8 @@ let batch_norm ~num_features () =
           dtype;
         });
     apply =
-      (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
-        ignore (rngs, ctx);
+      (fun ~params ~state ~dtype ~training ?ctx x ->
+        ignore ctx;
         let x = require_same_float_dtype ~ctx:"Layer.batch_norm" dtype x in
         let params_fields =
           Ptree.Dict.fields_exn ~ctx:"Layer.batch_norm.params" params
@@ -368,17 +351,16 @@ let embedding ~vocab_size ~embed_dim ?(scale = true) () =
   let emb_init = Init.normal ~stddev:0.02 () in
   {
     init =
-      (fun ~rngs ~dtype ->
-        let key = (Rune.Rng.split rngs).(0) in
-        let embedding = emb_init.f key [| vocab_size; embed_dim |] dtype in
+      (fun ~dtype ->
+        let embedding = emb_init.f [| vocab_size; embed_dim |] dtype in
         {
           params = Ptree.dict [ ("embedding", Ptree.tensor embedding) ];
           state = Ptree.empty;
           dtype;
         });
     apply =
-      (fun ~params ~state ~dtype ~training ?rngs ?ctx indices ->
-        ignore (training, rngs, ctx);
+      (fun ~params ~state ~dtype ~training ?ctx indices ->
+        ignore (training, ctx);
         let fields = Ptree.Dict.fields_exn ~ctx:"Layer.embedding" params in
         let embedding =
           Ptree.Dict.get_tensor_exn fields ~name:"embedding" dtype
@@ -393,84 +375,63 @@ let dropout ~rate () =
   if rate < 0.0 || rate >= 1.0 then
     invalid_argf "Layer.dropout: expected 0.0 <= rate < 1.0, got %g" rate;
   {
-    init =
-      (fun ~rngs ~dtype ->
-        ignore rngs;
-        { params = Ptree.empty; state = Ptree.empty; dtype });
+    init = (fun ~dtype -> { params = Ptree.empty; state = Ptree.empty; dtype });
     apply =
-      (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
+      (fun ~params ~state ~dtype ~training ?ctx x ->
         ignore (params, ctx);
         let x = require_same_float_dtype ~ctx:"Layer.dropout" dtype x in
         if (not training) || rate = 0.0 then (x, state)
-        else
-          match rngs with
-          | Some key -> (Fn.dropout ~key ~rate x, state)
-          | None -> invalid_arg "Layer.dropout: requires ~rngs during training");
+        else (Fn.dropout ~rate x, state));
   }
 
 (* Activation layers *)
 
 let relu () =
   {
-    init =
-      (fun ~rngs ~dtype ->
-        ignore rngs;
-        { params = Ptree.empty; state = Ptree.empty; dtype });
+    init = (fun ~dtype -> { params = Ptree.empty; state = Ptree.empty; dtype });
     apply =
-      (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
-        ignore (params, training, rngs, ctx);
+      (fun ~params ~state ~dtype ~training ?ctx x ->
+        ignore (params, training, ctx);
         let x = require_same_float_dtype ~ctx:"Layer.relu" dtype x in
         (Rune.relu x, state));
   }
 
 let gelu () =
   {
-    init =
-      (fun ~rngs ~dtype ->
-        ignore rngs;
-        { params = Ptree.empty; state = Ptree.empty; dtype });
+    init = (fun ~dtype -> { params = Ptree.empty; state = Ptree.empty; dtype });
     apply =
-      (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
-        ignore (params, training, rngs, ctx);
+      (fun ~params ~state ~dtype ~training ?ctx x ->
+        ignore (params, training, ctx);
         let x = require_same_float_dtype ~ctx:"Layer.gelu" dtype x in
         (Activation.gelu x, state));
   }
 
 let silu () =
   {
-    init =
-      (fun ~rngs ~dtype ->
-        ignore rngs;
-        { params = Ptree.empty; state = Ptree.empty; dtype });
+    init = (fun ~dtype -> { params = Ptree.empty; state = Ptree.empty; dtype });
     apply =
-      (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
-        ignore (params, training, rngs, ctx);
+      (fun ~params ~state ~dtype ~training ?ctx x ->
+        ignore (params, training, ctx);
         let x = require_same_float_dtype ~ctx:"Layer.silu" dtype x in
         (Activation.silu x, state));
   }
 
 let tanh () =
   {
-    init =
-      (fun ~rngs ~dtype ->
-        ignore rngs;
-        { params = Ptree.empty; state = Ptree.empty; dtype });
+    init = (fun ~dtype -> { params = Ptree.empty; state = Ptree.empty; dtype });
     apply =
-      (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
-        ignore (params, training, rngs, ctx);
+      (fun ~params ~state ~dtype ~training ?ctx x ->
+        ignore (params, training, ctx);
         let x = require_same_float_dtype ~ctx:"Layer.tanh" dtype x in
         (Rune.tanh x, state));
   }
 
 let sigmoid () =
   {
-    init =
-      (fun ~rngs ~dtype ->
-        ignore rngs;
-        { params = Ptree.empty; state = Ptree.empty; dtype });
+    init = (fun ~dtype -> { params = Ptree.empty; state = Ptree.empty; dtype });
     apply =
-      (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
-        ignore (params, training, rngs, ctx);
+      (fun ~params ~state ~dtype ~training ?ctx x ->
+        ignore (params, training, ctx);
         let x = require_same_float_dtype ~ctx:"Layer.sigmoid" dtype x in
         (Rune.sigmoid x, state));
   }
@@ -480,13 +441,10 @@ let sigmoid () =
 let max_pool2d ~kernel_size ?stride () =
   let stride = match stride with Some value -> value | None -> kernel_size in
   {
-    init =
-      (fun ~rngs ~dtype ->
-        ignore rngs;
-        { params = Ptree.empty; state = Ptree.empty; dtype });
+    init = (fun ~dtype -> { params = Ptree.empty; state = Ptree.empty; dtype });
     apply =
-      (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
-        ignore (params, training, rngs, ctx);
+      (fun ~params ~state ~dtype ~training ?ctx x ->
+        ignore (params, training, ctx);
         let x = require_same_float_dtype ~ctx:"Layer.max_pool2d" dtype x in
         (Fn.max_pool2d ~kernel_size ~stride x, state));
   }
@@ -494,13 +452,10 @@ let max_pool2d ~kernel_size ?stride () =
 let avg_pool2d ~kernel_size ?stride () =
   let stride = match stride with Some value -> value | None -> kernel_size in
   {
-    init =
-      (fun ~rngs ~dtype ->
-        ignore rngs;
-        { params = Ptree.empty; state = Ptree.empty; dtype });
+    init = (fun ~dtype -> { params = Ptree.empty; state = Ptree.empty; dtype });
     apply =
-      (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
-        ignore (params, training, rngs, ctx);
+      (fun ~params ~state ~dtype ~training ?ctx x ->
+        ignore (params, training, ctx);
         let x = require_same_float_dtype ~ctx:"Layer.avg_pool2d" dtype x in
         (Fn.avg_pool2d ~kernel_size ~stride x, state));
   }
@@ -509,13 +464,10 @@ let avg_pool2d ~kernel_size ?stride () =
 
 let flatten () =
   {
-    init =
-      (fun ~rngs ~dtype ->
-        ignore rngs;
-        { params = Ptree.empty; state = Ptree.empty; dtype });
+    init = (fun ~dtype -> { params = Ptree.empty; state = Ptree.empty; dtype });
     apply =
-      (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
-        ignore (params, training, rngs, ctx);
+      (fun ~params ~state ~dtype ~training ?ctx x ->
+        ignore (params, training, ctx);
         let x = require_same_float_dtype ~ctx:"Layer.flatten" dtype x in
         let shape = Rune.shape x in
         if Array.length shape = 0 then
@@ -533,37 +485,31 @@ let flatten () =
 let sequential layers =
   {
     init =
-      (fun ~rngs ~dtype ->
-        let rec go acc_params acc_state key modules =
-          match modules with
-          | [] ->
-              {
-                params = Ptree.list (List.rev acc_params);
-                state = Ptree.list (List.rev acc_state);
-                dtype;
-              }
-          | module_ :: rest ->
-              let keys = Rune.Rng.split key in
-              let vars = module_.init ~rngs:keys.(0) ~dtype in
-              go
-                (vars.params :: acc_params)
-                (vars.state :: acc_state) keys.(1) rest
-        in
-        go [] [] rngs layers);
+      (fun ~dtype ->
+        let n = List.length layers in
+        let keys = Array.init n (fun _ -> Rune.Rng.next_key ()) in
+        let acc_params = ref [] in
+        let acc_state = ref [] in
+        List.iteri
+          (fun i module_ ->
+            let vars =
+              Rune.Rng.with_key keys.(i) (fun () -> module_.init ~dtype)
+            in
+            acc_params := vars.params :: !acc_params;
+            acc_state := vars.state :: !acc_state)
+          layers;
+        {
+          params = Ptree.list (List.rev !acc_params);
+          state = Ptree.list (List.rev !acc_state);
+          dtype;
+        });
     apply =
-      (fun ~params ~state ~dtype ~training ?rngs ?ctx input ->
+      (fun ~params ~state ~dtype ~training ?ctx input ->
         let params_items =
           Ptree.List.items_exn ~ctx:"Layer.sequential.params" params
         in
         let state_items =
           Ptree.List.items_exn ~ctx:"Layer.sequential.state" state
-        in
-        let split_rng rng =
-          match rng with
-          | Some key ->
-              let keys = Rune.Rng.split key in
-              (Some keys.(0), Some keys.(1))
-          | None -> (None, None)
         in
         match (layers, params_items, state_items) with
         | [], [], [] ->
@@ -572,29 +518,23 @@ let sequential layers =
             in
             (input, Ptree.list [])
         | first :: rest_layers, p :: ps, s :: ss ->
-            let layer_rng, next_rng = split_rng rngs in
             let y, first_state =
-              first.apply ~params:p ~state:s ~dtype ~training ?rngs:layer_rng
-                ?ctx input
+              first.apply ~params:p ~state:s ~dtype ~training ?ctx input
             in
-            let rec go modules param_values state_values rng x =
+            let rec go modules param_values state_values x =
               match (modules, param_values, state_values) with
               | [], [], [] -> (x, [])
               | module_ :: modules_tail, p :: ps_tail, s :: ss_tail ->
-                  let layer_rng, next_rng = split_rng rng in
                   let y, state' =
-                    module_.apply ~params:p ~state:s ~dtype ~training
-                      ?rngs:layer_rng ?ctx x
+                    module_.apply ~params:p ~state:s ~dtype ~training ?ctx x
                   in
-                  let y_final, state_tail =
-                    go modules_tail ps_tail ss_tail next_rng y
-                  in
+                  let y_final, state_tail = go modules_tail ps_tail ss_tail y in
                   (y_final, state' :: state_tail)
               | _ ->
                   invalid_arg
                     "Layer.sequential: params/state/layers length mismatch"
             in
-            let y_final, rest_states = go rest_layers ps ss next_rng y in
+            let y_final, rest_states = go rest_layers ps ss y in
             (y_final, Ptree.list (first_state :: rest_states))
         | _ ->
             invalid_arg "Layer.sequential: params/state/layers length mismatch");

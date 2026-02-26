@@ -48,7 +48,6 @@ type ('obs, 'act, 'render) t
 
 val create :
   ?id:string ->
-  rng:Rune.Rng.key ->
   observation_space:'obs Space.t ->
   action_space:'act Space.t ->
   ?render_mode:render_mode ->
@@ -59,11 +58,11 @@ val create :
   ?close:(unit -> unit) ->
   unit ->
   ('obs, 'act, 'render) t
-(** [create ~rng ~observation_space ~action_space ~reset ~step ()] makes a new
+(** [create ~observation_space ~action_space ~reset ~step ()] makes a new
     environment.
 
-    [reset] and [step] receive the environment handle as first argument so
-    implementations can use {!take_rng} and {!split_rng} for randomness.
+    [reset] and [step] receive the environment handle as first argument. Random
+    keys for stochastic behavior are drawn from the implicit RNG scope.
 
     [render_modes] lists the supported render mode strings. When [render_mode]
     is provided, it must appear in [render_modes].
@@ -103,26 +102,6 @@ val action_space : ('obs, 'act, 'render) t -> 'act Space.t
 
 val render_mode : ('obs, 'act, 'render) t -> render_mode option
 (** [render_mode env] is the render mode chosen at construction, if any. *)
-
-(** {1:rng Random state} *)
-
-val rng : ('obs, 'act, 'render) t -> Rune.Rng.key
-(** [rng env] is the current RNG key without consuming it. *)
-
-val set_rng : ('obs, 'act, 'render) t -> Rune.Rng.key -> unit
-(** [set_rng env key] replaces the environment's RNG key and marks the
-    environment as needing a reset. *)
-
-val take_rng : ('obs, 'act, 'render) t -> Rune.Rng.key
-(** [take_rng env] splits the RNG internally, returns one half and keeps the
-    other for future use. *)
-
-val split_rng : ('obs, 'act, 'render) t -> n:int -> Rune.Rng.key array
-(** [split_rng env ~n] generates [n] independent RNG keys. Splits the
-    environment's RNG into [n+1] keys: [n] returned and one kept for the
-    environment.
-
-    Raises [Invalid_argument] if [n <= 0]. *)
 
 (** {1:lifecycle Lifecycle} *)
 

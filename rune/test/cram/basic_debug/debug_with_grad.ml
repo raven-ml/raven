@@ -11,7 +11,7 @@ let f x =
   sum b
 
 let () =
-  let x = randn Float32 ~key:(Rng.key 42) [| 2; 3 |] in
+  let x = Rng.run ~seed:42 (fun () -> randn Float32 [| 2; 3 |]) in
   let y = debug (fun () -> grad f x) () in
   Printf.printf "Result shape: [%s]\n"
     (String.concat "," (Array.to_list (Array.map string_of_int (shape y))))

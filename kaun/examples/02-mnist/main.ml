@@ -36,7 +36,7 @@ let collect ds =
     Rune.cast Rune.int32 (Rune.stack ~axis:0 (List.rev !ys)) )
 
 let () =
-  let rngs = Rune.Rng.key 42 in
+  Rune.Rng.run ~seed:42 @@ fun () ->
   let dtype = Rune.float32 in
 
   (* Load MNIST into full tensors (once) *)
@@ -55,19 +55,18 @@ let () =
     Train.make ~model
       ~optimizer:(Optim.adam ~lr:(Optim.Schedule.constant lr) ())
   in
-  let st = ref (Train.init trainer ~rngs ~dtype) in
+  let st = ref (Train.init trainer ~dtype) in
 
   for epoch = 1 to epochs do
-    let epoch_key = Rune.Rng.fold_in rngs epoch in
     let train_data =
-      Data.prepare ~shuffle:epoch_key ~batch_size (x_train, y_train)
+      Data.prepare ~shuffle:true ~batch_size (x_train, y_train)
       |> Data.map (fun (x, y) ->
           (x, fun logits -> Loss.cross_entropy_sparse logits y))
     in
     let num_batches = n_train / batch_size in
     let tracker = Metric.tracker () in
     st :=
-      Train.fit trainer !st ~rngs:epoch_key
+      Train.fit trainer !st
         ~report:(fun ~step ~loss _st ->
           Metric.observe tracker "loss" loss;
           Printf.printf "\r  batch %d/%d  loss: %.4f%!" step num_batches loss)

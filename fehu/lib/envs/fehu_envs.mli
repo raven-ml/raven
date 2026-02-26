@@ -29,11 +29,8 @@ module Random_walk : sig
   type render = string
 
   val make :
-    ?render_mode:Fehu.Env.render_mode ->
-    rng:Rune.Rng.key ->
-    unit ->
-    (obs, act, render) Fehu.Env.t
-  (** [make ~rng ()] is a random walk environment seeded with [rng]. *)
+    ?render_mode:Fehu.Env.render_mode -> unit -> (obs, act, render) Fehu.Env.t
+  (** [make ()] is a random walk environment. *)
 end
 
 module Cartpole : sig
@@ -56,11 +53,8 @@ module Cartpole : sig
   type render = string
 
   val make :
-    ?render_mode:Fehu.Env.render_mode ->
-    rng:Rune.Rng.key ->
-    unit ->
-    (obs, act, render) Fehu.Env.t
-  (** [make ~rng ()] is a cart-pole environment seeded with [rng]. *)
+    ?render_mode:Fehu.Env.render_mode -> unit -> (obs, act, render) Fehu.Env.t
+  (** [make ()] is a cart-pole environment. *)
 end
 
 module Grid_world : sig
@@ -82,11 +76,8 @@ module Grid_world : sig
   type render = Text of string | Image of Fehu.Render.image
 
   val make :
-    ?render_mode:Fehu.Env.render_mode ->
-    rng:Rune.Rng.key ->
-    unit ->
-    (obs, act, render) Fehu.Env.t
-  (** [make ~rng ()] is a grid world environment seeded with [rng]. *)
+    ?render_mode:Fehu.Env.render_mode -> unit -> (obs, act, render) Fehu.Env.t
+  (** [make ()] is a grid world environment. *)
 end
 
 module Mountain_car : sig
@@ -111,9 +102,6 @@ module Mountain_car : sig
   type render = string
 
   val make :
-    ?render_mode:Fehu.Env.render_mode ->
-    rng:Rune.Rng.key ->
-    unit ->
-    (obs, act, render) Fehu.Env.t
-  (** [make ~rng ()] is a mountain car environment seeded with [rng]. *)
+    ?render_mode:Fehu.Env.render_mode -> unit -> (obs, act, render) Fehu.Env.t
+  (** [make ()] is a mountain car environment. *)
 end
