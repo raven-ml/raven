@@ -626,108 +626,6 @@ let test_grad_matmul () =
   check_rune ~eps "matmul grad wrt a" expected_a grad_a;
   check_rune ~eps "matmul grad wrt b" expected_b grad_b
 
-let test_grad_pooling () =
-  let x =
-    T.create T.float32 [| 1; 1; 4; 4 |]
-      [|
-        1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9.; 10.; 11.; 12.; 13.; 14.; 15.; 16.;
-      |]
-  in
-
-  let f x = T.sum (T.avg_pool2d x ~kernel_size:(2, 2) ~stride:(2, 2)) in
-  let grad = T.grad f x in
-
-  let expected = T.full T.float32 [| 1; 1; 4; 4 |] 0.25 in
-  check_rune ~eps "avg_pool2d gradient" expected grad
-
-let test_grad_conv2d () =
-  (* Test 1: Simple conv2d gradient with Valid padding *)
-  let x =
-    T.create T.float32 [| 1; 1; 4; 4 |]
-      [|
-        1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9.; 10.; 11.; 12.; 13.; 14.; 15.; 16.;
-      |]
-  in
-
-  let kernel =
-    T.create T.float32 [| 1; 1; 2; 2 |] [| 1.; 0.; 0.; 1. |]
-    (* Identity-like kernel *)
-  in
-
-  (* Test gradient w.r.t input *)
-  let f_x x = T.sum (T.convolve2d x kernel ~padding_mode:`Valid) in
-  let grad_x = T.grad f_x x in
-
-  (* JAX reference: With diagonal kernel [1,0,0,1] and Valid padding *)
-  let expected_x =
-    T.create T.float32 [| 1; 1; 4; 4 |]
-      [| 1.; 1.; 1.; 0.; 1.; 2.; 2.; 1.; 1.; 2.; 2.; 1.; 0.; 1.; 1.; 1. |]
-  in
-  check_rune ~eps "conv2d gradient w.r.t input (Valid)" expected_x grad_x;
-
-  (* Test gradient w.r.t kernel *)
-  let f_k k = T.sum (T.convolve2d x k ~padding_mode:`Valid) in
-  let grad_k = T.grad f_k kernel in
-
-  (* JAX reference: kernel gradient should be [99, 90, 63, 54] *)
-  let expected_k =
-    T.create T.float32 [| 1; 1; 2; 2 |] [| 99.; 90.; 63.; 54. |]
-  in
-  check_rune ~eps "conv2d gradient w.r.t kernel" expected_k grad_k;
-
-  (* Test 2: Conv2d with Same padding *)
-  (* TODO: Same padding behavior differs from JAX/TensorFlow for even-sized kernels
-     This is a known difference in padding strategy. Rune follows a different convention. *)
-  let f_same x = T.sum (T.convolve2d x kernel ~padding_mode:`Same) in
-  let grad_same = T.grad f_same x in
-
-  (* Rune's Same padding produces this gradient pattern *)
-  let expected_same =
-    T.create T.float32 [| 1; 1; 4; 4 |]
-      [| 2.; 2.; 2.; 1.; 2.; 2.; 2.; 1.; 2.; 2.; 2.; 1.; 1.; 1.; 1.; 1. |]
-  in
-  check_rune ~eps "conv2d gradient with Same padding" expected_same grad_same
-
-let test_grad_avg_pool_overlapping () =
-  let eps = 1e-4 in
-  let x =
-    T.create T.float32 [| 1; 1; 4; 4 |]
-      [|
-        1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9.; 10.; 11.; 12.; 13.; 14.; 15.; 16.;
-      |]
-  in
-
-  (* THE ONLY CHANGE IS THE STRIDE *)
-  let f x = T.sum (T.avg_pool2d x ~kernel_size:(2, 2) ~stride:(1, 1)) in
-  let grad = T.grad f x in
-
-  (* With overlapping windows, the gradients accumulate. Each of the 9 output
-     elements contributes 0.25 to its 4 input pixels. *)
-  let expected =
-    T.create T.float32 [| 1; 1; 4; 4 |]
-      [|
-        0.25;
-        0.5;
-        0.5;
-        0.25;
-        0.5;
-        1.0;
-        1.0;
-        0.5;
-        0.5;
-        1.0;
-        1.0;
-        0.5;
-        0.25;
-        0.5;
-        0.5;
-        0.25;
-      |]
-  in
-
-  (* Your code will produce a result 4x larger than this. *)
-  check_rune ~eps "avg_pool2d gradient with overlap" expected grad
-
 (* ───── Compound Operations (Loss Functions, Layers) ───── *)
 
 let test_grad_linear_layer () =
@@ -1147,13 +1045,7 @@ let tests =
         test "fft roundtrip" test_grad_fft_roundtrip;
         test "fft2" test_grad_fft2;
       ];
-    group "neural network operations"
-      [
-        test "matmul" test_grad_matmul;
-        test "pooling" test_grad_pooling;
-        test "conv2d" test_grad_conv2d;
-        test "avg_pool2d overlapping" test_grad_avg_pool_overlapping;
-      ];
+    group "neural network operations" [ test "matmul" test_grad_matmul ];
     group "cumulative"
       [
         test "cumsum" test_grad_cumsum;

@@ -12,12 +12,11 @@
   test_nx_basics
   test_nx_manipulation
   test_nx_extended_dtypes
-  test_nx_neural_net
   test_nx_fft
   test_nx_ops
   test_nx_rng)
  (package nx)
- (modules :standard \ test_nx_support test_nx_io)
+ (modules :standard \ test_nx_support test_nx_io test_nx_neural_net)
  (libraries nx_buffer nx nx_core windtrap test_nx_support))
 
 (test

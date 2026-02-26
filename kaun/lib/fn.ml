@@ -354,7 +354,7 @@ let conv1d ?(groups = 1) ?(stride = 1) ?(dilation = 1) ?(padding = `Valid) ?bias
   let kernel_elements = w_shape.(2) in
   (* unfold: (N, C_in, L_in) -> (N, C_in, K, L_out) *)
   let x_unf =
-    Rune.im2col ~kernel_size ~stride:stride_arr ~dilation:dilation_arr
+    Rune.extract_patches ~kernel_size ~stride:stride_arr ~dilation:dilation_arr
       ~padding:pad_pairs x
   in
   let x_unf_shape = Rune.shape x_unf in
@@ -427,7 +427,7 @@ let conv2d ?(groups = 1) ?(stride = (1, 1)) ?(dilation = (1, 1))
   let kernel_elements = w_shape.(2) * w_shape.(3) in
   (* unfold: (N, C_in, H, W) -> (N, C_in, kH*kW, L) *)
   let x_unf =
-    Rune.im2col ~kernel_size ~stride:stride_arr ~dilation:dilation_arr
+    Rune.extract_patches ~kernel_size ~stride:stride_arr ~dilation:dilation_arr
       ~padding:pad_pairs x
   in
   let x_unf_shape = Rune.shape x_unf in
@@ -503,7 +503,7 @@ let max_pool1d ~kernel_size ?(stride = 1) ?(dilation = 1) ?(padding = `Valid)
   in
   (* unfold: (N, C, L) -> (N, C, K, L_out) *)
   let x_unf =
-    Rune.im2col ~kernel_size:kernel_size_arr ~stride:stride_arr
+    Rune.extract_patches ~kernel_size:kernel_size_arr ~stride:stride_arr
       ~dilation:dilation_arr ~padding:pad_pairs x
   in
   let x_unf_ndim = Rune.ndim x_unf in
@@ -535,7 +535,7 @@ let max_pool2d ~kernel_size ?(stride = (1, 1)) ?(dilation = (1, 1))
       ~stride:stride_arr ~dilation:dilation_arr ~padding:pad_pairs ~ceil_mode
   in
   let x_unf =
-    Rune.im2col ~kernel_size:kernel_size_arr ~stride:stride_arr
+    Rune.extract_patches ~kernel_size:kernel_size_arr ~stride:stride_arr
       ~dilation:dilation_arr ~padding:pad_pairs x
   in
   let x_unf_ndim = Rune.ndim x_unf in
@@ -571,7 +571,7 @@ let avg_pool1d ~kernel_size ?(stride = 1) ?(dilation = 1) ?(padding = `Valid)
       ~stride:stride_arr ~dilation:dilation_arr ~padding:pad_pairs ~ceil_mode
   in
   let x_unf =
-    Rune.im2col ~kernel_size:kernel_size_arr ~stride:stride_arr
+    Rune.extract_patches ~kernel_size:kernel_size_arr ~stride:stride_arr
       ~dilation:dilation_arr ~padding:pad_pairs x
   in
   let x_unf_ndim = Rune.ndim x_unf in
@@ -583,7 +583,7 @@ let avg_pool1d ~kernel_size ?(stride = 1) ?(dilation = 1) ?(padding = `Valid)
   else
     let ones = Rune.ones_like x in
     let ones_unf =
-      Rune.im2col ~kernel_size:kernel_size_arr ~stride:stride_arr
+      Rune.extract_patches ~kernel_size:kernel_size_arr ~stride:stride_arr
         ~dilation:dilation_arr ~padding:pad_pairs ones
     in
     let count = Rune.sum ones_unf ~axes:[ Rune.ndim ones_unf - 2 ] in
@@ -613,7 +613,7 @@ let avg_pool2d ~kernel_size ?(stride = (1, 1)) ?(dilation = (1, 1))
       ~stride:stride_arr ~dilation:dilation_arr ~padding:pad_pairs ~ceil_mode
   in
   let x_unf =
-    Rune.im2col ~kernel_size:kernel_size_arr ~stride:stride_arr
+    Rune.extract_patches ~kernel_size:kernel_size_arr ~stride:stride_arr
       ~dilation:dilation_arr ~padding:pad_pairs x
   in
   let x_unf_ndim = Rune.ndim x_unf in
@@ -634,7 +634,7 @@ let avg_pool2d ~kernel_size ?(stride = (1, 1)) ?(dilation = (1, 1))
   else
     let ones = Rune.ones_like x in
     let ones_unf =
-      Rune.im2col ~kernel_size:kernel_size_arr ~stride:stride_arr
+      Rune.extract_patches ~kernel_size:kernel_size_arr ~stride:stride_arr
         ~dilation:dilation_arr ~padding:pad_pairs ones
     in
     let count = Rune.sum ones_unf ~axes:[ Rune.ndim ones_unf - 2 ] in

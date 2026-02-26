@@ -485,6 +485,26 @@ val of_buffer : ('a, 'b) Nx_buffer.t -> shape:int array -> ('a, 'b) t
 (** [of_buffer buf ~shape] creates a tensor from a flat buffer with the given
     [shape]. The product of [shape] must equal the buffer length. *)
 
+val one_hot : num_classes:int -> ('a, 'b) t -> (int, uint8_elt) t
+(** [one_hot ~num_classes indices] creates a one-hot encoded array.
+
+    Appends a new last dimension of size [num_classes]. Values must be in
+    [\[0, num_classes)]. Out-of-range indices produce zero vectors.
+
+    Raises [Invalid_argument] if [indices] is not an integer type or
+    [num_classes <= 0].
+
+    {@ocaml[
+      # let indices = create int32 [| 3 |] [| 0l; 1l; 3l |] in
+        one_hot ~num_classes:4 indices
+      - : (int, uint8_elt) t = [[1, 0, 0, 0],
+                                [0, 1, 0, 0],
+                                [0, 0, 0, 1]]
+      # let indices = create int32 [| 2; 2 |] [| 0l; 2l; 1l; 0l |] in
+        one_hot ~num_classes:3 indices |> shape
+      - : int array = [|2; 2; 3|]
+    ]} *)
+
 (** {2 Random Number Generation}
 
     Functions to generate arrays with random values. *)
@@ -3455,31 +3475,30 @@ val erf : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
       - : float = 0.8427
     ]} *)
 
-(** {2 Convolution and Pooling}
+(** {2:patches Sliding Windows} *)
 
-    Neural network convolution and pooling operations. *)
-
-val im2col :
+val extract_patches :
   kernel_size:int array ->
   stride:int array ->
   dilation:int array ->
   padding:(int * int) array ->
   ('a, 'b) t ->
   ('a, 'b) t
-(** [im2col ~kernel_size ~stride ~dilation ~padding t] extracts sliding windows
-    from the last [K] spatial dimensions, where [K = Array.length kernel_size].
+(** [extract_patches ~kernel_size ~stride ~dilation ~padding t] extracts sliding
+    windows from the last [K] spatial dimensions, where
+    [K = Array.length kernel_size].
 
     Input: [(leading..., spatial...)]. Output:
     [(leading..., prod(kernel_size), L)].
 
     {@ocaml[
       # let x = arange_f float32 0. 16. 1. |> reshape [| 1; 1; 4; 4 |] in
-        im2col ~kernel_size:[|2; 2|] ~stride:[|1; 1|]
-               ~dilation:[|1; 1|] ~padding:[|(0, 0); (0, 0)|] x |> shape
+        extract_patches ~kernel_size:[|2; 2|] ~stride:[|1; 1|]
+          ~dilation:[|1; 1|] ~padding:[|(0, 0); (0, 0)|] x |> shape
       - : int array = [|1; 1; 4; 9|]
     ]} *)
 
-val col2im :
+val combine_patches :
   output_size:int array ->
   kernel_size:int array ->
   stride:int array ->
@@ -3487,17 +3506,20 @@ val col2im :
   padding:(int * int) array ->
   ('a, 'b) t ->
   ('a, 'b) t
-(** [col2im ~output_size ~kernel_size ~stride ~dilation ~padding t] combines
-    sliding windows (inverse of {!im2col}). Overlapping values are summed.
+(** [combine_patches ~output_size ~kernel_size ~stride ~dilation ~padding t]
+    combines sliding windows (inverse of {!extract_patches}). Overlapping values
+    are summed.
 
     Input: [(leading..., prod(kernel_size), L)]. Output:
     [(leading..., output_size...)].
 
     {@ocaml[
-      # let unfolded = create float32 [| 1; 1; 4; 9 |] (Array.init 36 Float.of_int) in
-        col2im ~output_size:[|4; 4|] ~kernel_size:[|2; 2|]
-                    ~stride:[|1; 1|] ~dilation:[|1; 1|]
-                    ~padding:[|(0, 0); (0, 0)|] unfolded |> shape
+      # let unfolded =
+          create float32 [| 1; 1; 4; 9 |] (Array.init 36 Float.of_int)
+        in
+        combine_patches ~output_size:[|4; 4|] ~kernel_size:[|2; 2|]
+          ~stride:[|1; 1|] ~dilation:[|1; 1|]
+          ~padding:[|(0, 0); (0, 0)|] unfolded |> shape
       - : int array = [|1; 1; 4; 4|]
     ]} *)
 
@@ -3532,359 +3554,6 @@ val uniform_filter :
   kernel_size:int array -> ?stride:int array -> (float, 'b) t -> (float, 'b) t
 (** [uniform_filter ~kernel_size ?stride x] sliding-window mean over the last
     [K] dimensions. [stride] defaults to [kernel_size]. *)
-
-(** {2 Neural Network Convolution and Pooling}
-
-    NN-style operations with groups, stride, dilation, and bias. See
-    {!module:Kaun.Fn} for the preferred NN API. *)
-
-val correlate1d :
-  ?groups:int ->
-  ?stride:int ->
-  ?padding_mode:[ `Full | `Same | `Valid ] ->
-  ?dilation:int ->
-  ?fillvalue:float ->
-  ?bias:(float, 'a) t ->
-  (float, 'a) t ->
-  (float, 'a) t ->
-  (float, 'a) t
-(** [correlate1d ?groups ?stride ?padding_mode ?dilation ?fillvalue ?bias x w]
-    computes 1D cross-correlation (no kernel flip).
-
-    - [x]: input [batch_size; channels_in; width]
-    - [w]: weights [channels_out; channels_in/groups; kernel_width]
-    - [bias]: optional per-channel bias [channels_out]
-    - [groups]: split input/output channels into groups (default 1)
-    - [stride]: step between windows (default 1)
-    - [padding_mode]: `Valid (no pad), `Same (preserve size), `Full (all
-      overlaps)
-    - [dilation]: spacing between kernel elements (default 1)
-    - [fillvalue]: padding value (default 0.0)
-
-    Output width depends on padding:
-    - `Valid: (width - dilation*(kernel-1) - 1)/stride + 1
-    - `Same: width/stride (rounded up)
-    - `Full: (width + dilation*(kernel-1) - 1)/stride + 1
-
-    @raise Invalid_argument if channels_in not divisible by groups
-
-    {@ocaml[
-      # let x = create float32 [| 1; 1; 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
-        let w = create float32 [| 1; 1; 3 |] [| 1.; 0.; -1. |] in
-        correlate1d x w |> shape
-      - : int array = [|1; 1; 3|]
-    ]} *)
-
-val correlate2d :
-  ?groups:int ->
-  ?stride:int * int ->
-  ?padding_mode:[ `Full | `Same | `Valid ] ->
-  ?dilation:int * int ->
-  ?fillvalue:float ->
-  ?bias:(float, 'a) t ->
-  (float, 'a) t ->
-  (float, 'a) t ->
-  (float, 'a) t
-(** [correlate2d ?groups ?stride ?padding_mode ?dilation ?fillvalue ?bias x w]
-    computes 2D cross-correlation (no kernel flip).
-
-    - [x]: input [batch; channels_in; height; width]
-    - [w]: weights [channels_out; channels_in/groups; kernel_h; kernel_w]
-    - [bias]: optional per-channel bias [channels_out]
-    - [stride]: (stride_h, stride_w) step between windows (default (1,1))
-    - [dilation]: (dilation_h, dilation_w) kernel spacing (default (1,1))
-    - [padding_mode]: `Valid (no pad), `Same (preserve size), `Full (all
-      overlaps)
-
-    Uses Winograd F(4,3) for 3×3 kernels with stride 1 when beneficial. For
-    `Same` with even kernels, pads more on bottom/right (SciPy convention).
-
-    @raise Invalid_argument if channels_in not divisible by groups
-
-    {@ocaml[
-      # let image = ones float32 [| 1; 1; 5; 5 |] in
-        let sobel_x = create float32 [| 1; 1; 3; 3 |] [| 1.; 0.; -1.; 2.; 0.; -2.; 1.; 0.; -1. |] in
-        correlate2d image sobel_x |> shape
-      - : int array = [|1; 1; 3; 3|]
-    ]} *)
-
-val convolve1d :
-  ?groups:int ->
-  ?stride:int ->
-  ?padding_mode:[< `Full | `Same | `Valid > `Valid ] ->
-  ?dilation:int ->
-  ?fillvalue:'a ->
-  ?bias:('a, 'b) t ->
-  ('a, 'b) t ->
-  ('a, 'b) t ->
-  ('a, 'b) t
-(** [convolve1d ?groups ?stride ?padding_mode ?dilation ?fillvalue ?bias x w]
-    computes 1D convolution (flips kernel before correlation).
-
-    Same parameters as {!correlate1d} but flips kernel. For `Same` with even
-    kernels, pads more on left (NumPy convention).
-
-    {@ocaml[
-      # let x = create float32 [| 1; 1; 3 |] [| 1.; 2.; 3. |] in
-        let w = create float32 [| 1; 1; 2 |] [| 4.; 5. |] in
-        convolve1d x w
-      - : (float, float32_elt) t = [[[13, 22]]]
-    ]} *)
-
-val convolve2d :
-  ?groups:int ->
-  ?stride:int * int ->
-  ?padding_mode:[< `Full | `Same | `Valid > `Valid ] ->
-  ?dilation:int * int ->
-  ?fillvalue:'a ->
-  ?bias:('a, 'b) t ->
-  ('a, 'b) t ->
-  ('a, 'b) t ->
-  ('a, 'b) t
-(** [convolve2d ?groups ?stride ?padding_mode ?dilation ?fillvalue ?bias x w]
-    computes 2D convolution (flips kernel before correlation).
-
-    Same parameters as {!correlate2d} but flips kernel horizontally and
-    vertically. For `Same` with even kernels, pads more on top/left.
-
-    {@ocaml[
-      # let image = ones float32 [| 1; 1; 5; 5 |] in
-        let gaussian = create float32 [| 1; 1; 3; 3 |] [| 1.; 2.; 1.; 2.; 4.; 2.; 1.; 2.; 1. |] in
-        convolve2d image (mul_s gaussian (1. /. 16.)) |> shape
-      - : int array = [|1; 1; 3; 3|]
-    ]} *)
-
-val avg_pool1d :
-  kernel_size:int ->
-  ?stride:int ->
-  ?dilation:int ->
-  ?padding_spec:[< `Full | `Same | `Valid > `Valid ] ->
-  ?ceil_mode:bool ->
-  ?count_include_pad:bool ->
-  (float, 'a) t ->
-  (float, 'a) t
-(** [avg_pool1d ~kernel_size ?stride ?dilation ?padding_spec ?ceil_mode
-     ?count_include_pad x] applies 1D average pooling.
-
-    - [kernel_size]: pooling window size
-    - [stride]: step between windows (default: kernel_size)
-    - [dilation]: spacing between kernel elements (default 1)
-    - [padding_spec]: same as convolution padding modes
-    - [ceil_mode]: use ceiling for output size calculation (default false)
-    - [count_include_pad]: include padding in average (default true)
-
-    Input shape: [batch; channels; width] Output width: (width + 2*pad -
-    dilation*(kernel-1) - 1)/stride + 1
-
-    {@ocaml[
-      # let x = create float32 [| 1; 1; 4 |] [| 1.; 2.; 3.; 4. |] in
-        avg_pool1d ~kernel_size:2 x
-      - : (float, float32_elt) t = [[[1.5, 3.5]]]
-    ]} *)
-
-val avg_pool2d :
-  kernel_size:int * int ->
-  ?stride:int * int ->
-  ?dilation:int * int ->
-  ?padding_spec:[< `Full | `Same | `Valid > `Valid ] ->
-  ?ceil_mode:bool ->
-  ?count_include_pad:bool ->
-  (float, 'a) t ->
-  (float, 'a) t
-(** [avg_pool2d ~kernel_size ?stride ?dilation ?padding_spec ?ceil_mode
-     ?count_include_pad x] applies 2D average pooling.
-
-    - [kernel_size]: (height, width) of pooling window
-    - [stride]: (stride_h, stride_w) (default: kernel_size)
-    - [dilation]: (dilation_h, dilation_w) (default (1,1))
-    - [count_include_pad]: whether padding contributes to denominator
-
-    Input shape: [batch; channels; height; width]
-
-    {@ocaml[
-      # let x = create float32 [| 1; 1; 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-        avg_pool2d ~kernel_size:(2, 2) x
-      - : (float, float32_elt) t = [[[[2.5]]]]
-    ]} *)
-
-val max_pool1d :
-  kernel_size:int ->
-  ?stride:int ->
-  ?dilation:int ->
-  ?padding_spec:[< `Full | `Same | `Valid > `Valid ] ->
-  ?ceil_mode:bool ->
-  ?return_indices:bool ->
-  ('a, 'b) t ->
-  ('a, 'b) t * (int32, int32_elt) t option
-(** [max_pool1d ~kernel_size ?stride ?dilation ?padding_spec ?ceil_mode
-     ?return_indices x] applies 1D max pooling.
-
-    - [return_indices]: if true, also returns indices of max values for
-      unpooling
-    - Other parameters same as {!avg_pool1d}
-
-    Returns (pooled_values, Some indices) if return_indices=true, otherwise
-    (pooled_values, None). Indices are flattened positions in input.
-
-    {@ocaml[
-      # let x = create float32 [| 1; 1; 4 |] [| 1.; 3.; 2.; 4. |] in
-        let vals, idx = max_pool1d ~kernel_size:2 ~return_indices:true x in
-        vals, idx
-      - : (float, float32_elt) t * (int32, int32_elt) t option =
-      ([[[3, 4]]], Some [[[1, 1]]])
-    ]} *)
-
-val max_pool2d :
-  kernel_size:int * int ->
-  ?stride:int * int ->
-  ?dilation:int * int ->
-  ?padding_spec:[< `Full | `Same | `Valid > `Valid ] ->
-  ?ceil_mode:bool ->
-  ?return_indices:bool ->
-  ('a, 'b) t ->
-  ('a, 'b) t * (int32, int32_elt) t option
-(** [max_pool2d ~kernel_size ?stride ?dilation ?padding_spec ?ceil_mode
-     ?return_indices x] applies 2D max pooling.
-
-    Parameters same as {!max_pool1d} but for 2D. Indices encode flattened
-    position within each pooling window.
-
-    {@ocaml[
-      # let x = create float32 [| 1; 1; 4; 4 |]
-          [| 1.; 2.; 5.; 6.; 3.; 4.; 7.; 8.; 9.; 10.; 13.; 14.; 11.; 12.; 15.; 16. |] in
-        let vals, _ = max_pool2d ~kernel_size:(2, 2) ~stride:(2, 2) x in
-        vals
-      - : (float, float32_elt) t = [[[[4, 8],
-                                      [12, 16]]]]
-    ]} *)
-
-val min_pool1d :
-  kernel_size:int ->
-  ?stride:int ->
-  ?dilation:int ->
-  ?padding_spec:[< `Full | `Same | `Valid > `Valid ] ->
-  ?ceil_mode:bool ->
-  ?return_indices:bool ->
-  ('a, 'b) t ->
-  ('a, 'b) t * (int32, int32_elt) t option
-(** [min_pool1d ~kernel_size ?stride ?dilation ?padding_spec ?ceil_mode
-     ?return_indices x] applies 1D min pooling.
-
-    - [return_indices]: if true, also returns indices of min values (currently
-      returns None)
-    - Other parameters same as {!avg_pool1d}
-
-    Returns (pooled_values, None). Index tracking not yet implemented.
-
-    {@ocaml[
-      # let x = create float32 [| 1; 1; 4 |] [| 4.; 2.; 3.; 1. |] in
-        let vals, _ = min_pool1d ~kernel_size:2 x in
-        vals
-      - : (float, float32_elt) t = [[[2, 1]]]
-    ]} *)
-
-val min_pool2d :
-  kernel_size:int * int ->
-  ?stride:int * int ->
-  ?dilation:int * int ->
-  ?padding_spec:[< `Full | `Same | `Valid > `Valid ] ->
-  ?ceil_mode:bool ->
-  ?return_indices:bool ->
-  ('a, 'b) t ->
-  ('a, 'b) t * (int32, int32_elt) t option
-(** [min_pool2d ~kernel_size ?stride ?dilation ?padding_spec ?ceil_mode
-     ?return_indices x] applies 2D min pooling.
-
-    Parameters same as {!min_pool1d} but for 2D. Commonly used for morphological
-    erosion operations in image processing.
-
-    {@ocaml[
-      # let x = create float32 [| 1; 1; 4; 4 |]
-          [| 1.; 2.; 5.; 6.; 3.; 4.; 7.; 8.; 9.; 10.; 13.; 14.; 11.; 12.; 15.; 16. |] in
-        let vals, _ = min_pool2d ~kernel_size:(2, 2) ~stride:(2, 2) x in
-        vals
-      - : (float, float32_elt) t = [[[[1, 5],
-                                      [9, 13]]]]
-    ]} *)
-
-val max_unpool1d :
-  (int, uint8_elt) t ->
-  ('a, 'b) t ->
-  kernel_size:int ->
-  ?stride:int ->
-  ?dilation:int ->
-  ?padding_spec:[< `Full | `Same | `Valid > `Valid ] ->
-  ?output_size_opt:int array ->
-  unit ->
-  (int, uint8_elt) t
-(** [max_unpool1d indices values ~kernel_size ?stride ?dilation ?padding_spec
-     ?output_size_opt ()] reverses max pooling.
-
-    - [indices]: indices from max_pool1d with return_indices=true
-    - [values]: pooled values to place at indexed positions
-    - [kernel_size], [stride], [dilation], [padding_spec]: must match original
-      pool
-    - [output_size_opt]: exact output shape (inferred if not provided)
-
-    Places values at positions indicated by indices, fills rest with zeros.
-    Output size computed from input unless explicitly specified.
-
-    @raise Invalid_argument if indices out of bounds
-
-    {@ocaml[
-      # let x = create float32 [| 1; 1; 4 |] [| 1.; 3.; 2.; 4. |] in
-        let pooled, _ = max_pool1d ~kernel_size:2 x in
-        pooled
-      - : (float, float32_elt) t = [[[3, 4]]]
-    ]} *)
-
-val max_unpool2d :
-  (int, uint8_elt) t ->
-  ('a, 'b) t ->
-  kernel_size:int * int ->
-  ?stride:int * int ->
-  ?dilation:int * int ->
-  ?padding_spec:[< `Full | `Same | `Valid > `Valid ] ->
-  ?output_size_opt:int array ->
-  unit ->
-  (int, uint8_elt) t
-(** [max_unpool2d indices values ~kernel_size ?stride ?dilation ?padding_spec
-     ?output_size_opt ()] reverses 2D max pooling.
-
-    Same as {!max_unpool1d} but for 2D. Indices encode position within each
-    pooling window. Useful for architectures like segmentation networks that
-    need to "remember" where maxima came from.
-
-    @raise Invalid_argument if indices out of bounds or shape mismatch
-
-    {@ocaml[
-      # let x = create float32 [| 1; 1; 4; 4 |]
-          [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.;
-             9.; 10.; 11.; 12.; 13.; 14.; 15.; 16. |] in
-        let pooled, _ = max_pool2d ~kernel_size:(2,2) x in
-        pooled
-      - : (float, float32_elt) t = [[[[6, 8],
-                                      [14, 16]]]]
-    ]} *)
-
-val one_hot : num_classes:int -> ('a, 'b) t -> (int, uint8_elt) t
-(** [one_hot ~num_classes indices] creates one-hot encoding.
-
-    Adds new last dimension of size [num_classes]. Values must be in
-    [\[0, num_classes)]. Out-of-range indices produce zero vectors.
-
-    @raise Invalid_argument if indices not integer type or num_classes <= 0
-
-    {@ocaml[
-      # let indices = create int32 [| 3 |] [| 0l; 1l; 3l |] in
-        one_hot ~num_classes:4 indices
-      - : (int, uint8_elt) t = [[1, 0, 0, 0],
-                                [0, 1, 0, 0],
-                                [0, 0, 0, 1]]
-      # let indices = create int32 [| 2; 2 |] [| 0l; 2l; 1l; 0l |] in
-        one_hot ~num_classes:3 indices |> shape
-      - : int array = [|2; 2; 3|]
-    ]} *)
 
 (** {2 Iteration and Mapping}
 
