@@ -3460,38 +3460,26 @@ val erf : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
     Neural network convolution and pooling operations. *)
 
 val im2col :
-  ?out:('a, 'b) t ->
   kernel_size:int array ->
   stride:int array ->
   dilation:int array ->
   padding:(int * int) array ->
   ('a, 'b) t ->
   ('a, 'b) t
-(** [im2col ?out ~kernel_size ~stride ~dilation ~padding t] extracts sliding
-    local blocks from tensor.
+(** [im2col ~kernel_size ~stride ~dilation ~padding t] extracts sliding windows
+    from the last [K] spatial dimensions, where [K = Array.length kernel_size].
 
-    Extracts patches of size kernel_size from the input tensor at the specified
-    stride and dilation.
-
-    @param out Optional pre-allocated output tensor for zero-allocation usage.
-    @param kernel_size Size of sliding blocks to extract.
-    @param stride Step between consecutive blocks.
-    @param dilation Spacing between kernel elements.
-    @param padding (before, after) padding for each spatial dimension.
-
-    For a 4D input [batch; channels; height; width], produces output shape
-    [batch; channels * kh * kw; num_patches_h; num_patches_w] where kh, kw are
-    kernel dimensions and num_patches depends on stride and padding.
+    Input: [(leading..., spatial...)]. Output:
+    [(leading..., prod(kernel_size), L)].
 
     {@ocaml[
       # let x = arange_f float32 0. 16. 1. |> reshape [| 1; 1; 4; 4 |] in
         im2col ~kernel_size:[|2; 2|] ~stride:[|1; 1|]
                ~dilation:[|1; 1|] ~padding:[|(0, 0); (0, 0)|] x |> shape
-      - : int array = [|1; 4; 9|]
+      - : int array = [|1; 1; 4; 9|]
     ]} *)
 
 val col2im :
-  ?out:('a, 'b) t ->
   output_size:int array ->
   kernel_size:int array ->
   stride:int array ->
@@ -3499,24 +3487,14 @@ val col2im :
   padding:(int * int) array ->
   ('a, 'b) t ->
   ('a, 'b) t
-(** [col2im ?out ~output_size ~kernel_size ~stride ~dilation ~padding t]
-    combines sliding local blocks into tensor.
+(** [col2im ~output_size ~kernel_size ~stride ~dilation ~padding t] combines
+    sliding windows (inverse of {!im2col}). Overlapping values are summed.
 
-    This is the inverse of {!im2col}. Accumulates values from the unfolded
-    representation back into spatial dimensions. Overlapping regions are summed.
-
-    @param out Optional pre-allocated output tensor for zero-allocation usage.
-    @param output_size Target spatial dimensions [height; width].
-    @param kernel_size Size of sliding blocks.
-    @param stride Step between consecutive blocks.
-    @param dilation Spacing between kernel elements.
-    @param padding (before, after) padding for each spatial dimension.
-
-    For input shape [batch; channels * kh * kw; num_patches_h; num_patches_w],
-    produces output [batch; channels; height; width].
+    Input: [(leading..., prod(kernel_size), L)]. Output:
+    [(leading..., output_size...)].
 
     {@ocaml[
-      # let unfolded = create float32 [| 1; 4; 9 |] (Array.init 36 Float.of_int) in
+      # let unfolded = create float32 [| 1; 1; 4; 9 |] (Array.init 36 Float.of_int) in
         col2im ~output_size:[|4; 4|] ~kernel_size:[|2; 2|]
                     ~stride:[|1; 1|] ~dilation:[|1; 1|]
                     ~padding:[|(0, 0); (0, 0)|] unfolded |> shape

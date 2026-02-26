@@ -6494,11 +6494,11 @@ module Make (B : Backend_intf.S) = struct
   (* Error function. *)
   let erf ?out x = unaryop ~op_name:"erf" ?out B.erf x
 
-  let im2col ?out ~kernel_size ~stride ~dilation ~padding x =
-    B.unfold ?out x ~kernel_size ~stride ~dilation ~padding
+  let im2col ~kernel_size ~stride ~dilation ~padding x =
+    B.unfold x ~kernel_size ~stride ~dilation ~padding
 
-  let col2im ?out ~output_size ~kernel_size ~stride ~dilation ~padding x =
-    B.fold ?out x ~output_size ~kernel_size ~stride ~dilation ~padding
+  let col2im ~output_size ~kernel_size ~stride ~dilation ~padding x =
+    B.fold x ~output_size ~kernel_size ~stride ~dilation ~padding
 
   let calculate_padding_for_mode input_spatial_shape ~k_s ~s_s ~d_s
       ~(mode : [< `Full | `Valid | `Same ])
@@ -6609,15 +6609,19 @@ module Make (B : Backend_intf.S) = struct
       in
 
       (* Use unfold (im2col) for convolution *)
-      let x_col =
+      let kernel_elements = Array.fold_left ( * ) 1 kernel_spatial_shape_arr in
+      let x_unf =
         B.unfold x ~kernel_size:kernel_spatial_shape_arr ~stride:stride_s_arr
           ~dilation:dilation_s_arr ~padding:padding_config_pairs_arr
       in
-      (* x_col shape: [bs, cin_total * kernel_elements, num_blocks] *)
-
-      (* Calculate output spatial shape from the unfold result *)
-      let x_col_shape = shape x_col in
-      let num_blocks = x_col_shape.(2) in
+      (* x_unf shape: [bs, cin_total, kernel_elements, num_blocks] *)
+      let x_unf_shape = shape x_unf in
+      let num_blocks = x_unf_shape.(Array.length x_unf_shape - 1) in
+      (* Merge channels and kernel: [bs, cin_total * kernel_elements,
+         num_blocks] *)
+      let x_col =
+        reshape [| bs; cin_total * kernel_elements; num_blocks |] x_unf
+      in
 
       (* Calculate output spatial shape based on actual num_blocks *)
       let output_spatial_shape_arr =
@@ -6657,9 +6661,6 @@ module Make (B : Backend_intf.S) = struct
               in
               ((padded_spatial.(i) - effective_kernel) / stride_s_arr.(i)) + 1)
       in
-
-      (* Reshape weights for matrix multiplication *)
-      let kernel_elements = Array.fold_left ( * ) 1 kernel_spatial_shape_arr in
 
       let result =
         if groups = 1 then
@@ -6892,7 +6893,7 @@ module Make (B : Backend_intf.S) = struct
     let x_unfolded =
       B.unfold x ~kernel_size ~stride:s_s ~dilation:d_s ~padding:padding_pairs
     in
-    (* x_unfolded shape: [batch..., channels * kernel_elements, num_blocks] *)
+    (* x_unfolded shape: [*leading, kernel_elements, num_blocks] *)
 
     (* Calculate the output shape *)
     let prefix_shape = Array.sub (shape x) 0 (x_ndim - num_spatial_dims) in
@@ -6908,41 +6909,15 @@ module Make (B : Backend_intf.S) = struct
           ((padded_spatial.(i) - effective_kernel) / s_s.(i)) + 1)
     in
 
-    let channels =
-      if x_ndim - num_spatial_dims >= 1 then (
-        let ch_prod = ref 1 in
-        for i = 1 to x_ndim - num_spatial_dims - 1 do
-          ch_prod := !ch_prod * (shape x).(i)
-        done;
-        !ch_prod)
-      else 1
-    in
-
     let kernel_elements = array_prod kernel_size in
 
-    (* Reshape to separate channels and kernel elements *)
-    let num_blocks = (shape x_unfolded).(Array.length (shape x_unfolded) - 1) in
-    (* For max/avg pooling, we need to handle the unfolded tensor correctly.
-       x_unfolded has shape [batch, channels * kernel_elements, num_blocks] We
-       want to reshape to [batch, channels, kernel_elements, num_blocks] *)
-    let batch_size =
-      if Array.length prefix_shape >= 1 then prefix_shape.(0) else 1
-    in
-    let x_reshaped =
-      reshape [| batch_size; channels; kernel_elements; num_blocks |] x_unfolded
-    in
-
-    (* Compute sum over kernel elements *)
-    let sum_pooled =
-      sum x_reshaped ~axes:[ Array.length (shape x_reshaped) - 2 ]
-    in
+    (* Sum over kernel elements axis (second-to-last) *)
+    let x_unf_ndim = Array.length (shape x_unfolded) in
+    let sum_pooled = sum x_unfolded ~axes:[ x_unf_ndim - 2 ] in
 
     (* Reshape back to original layout *)
     let result_shape = Array.concat [ prefix_shape; output_spatial ] in
-    let sum_reshaped = reshape result_shape sum_pooled in
-
-    (* The reshape already produces the correct layout *)
-    let sum_corrected = sum_reshaped in
+    let sum_corrected = reshape result_shape sum_pooled in
 
     (* Compute divisor based on mode *)
     if count_include_pad && not ceil_mode then
@@ -6956,14 +6931,9 @@ module Make (B : Backend_intf.S) = struct
         B.unfold ones ~kernel_size ~stride:s_s ~dilation:d_s
           ~padding:padding_pairs
       in
-      let ones_reshaped =
-        reshape
-          (Array.concat
-             [ prefix_shape; [| channels; kernel_elements; num_blocks |] ])
-          ones_unfolded
-      in
+      (* ones_unfolded: [*leading, kernel_elements, num_blocks] *)
       let count =
-        sum ones_reshaped ~axes:[ Array.length (shape ones_reshaped) - 2 ]
+        sum ones_unfolded ~axes:[ Array.length (shape ones_unfolded) - 2 ]
       in
       let count_reshaped = reshape result_shape count in
       let count_corrected =
@@ -7014,7 +6984,7 @@ module Make (B : Backend_intf.S) = struct
       let x_unfolded =
         B.unfold x ~kernel_size ~stride:s_s ~dilation:d_s ~padding:padding_pairs
       in
-      (* x_unfolded shape: [batch..., channels * kernel_elements, num_blocks] *)
+      (* x_unfolded shape: [*leading, kernel_elements, num_blocks] *)
 
       (* Calculate the output shape *)
       let prefix_shape = Array.sub (shape x) 0 (x_ndim - num_spatial_dims) in
@@ -7030,68 +7000,37 @@ module Make (B : Backend_intf.S) = struct
             ((padded_spatial.(i) - effective_kernel) / s_s.(i)) + 1)
       in
 
-      let channels =
-        if x_ndim - num_spatial_dims >= 1 then (
-          let ch_prod = ref 1 in
-          for i = 1 to x_ndim - num_spatial_dims - 1 do
-            ch_prod := !ch_prod * (shape x).(i)
-          done;
-          !ch_prod)
-        else 1
-      in
-
       let kernel_elements = array_prod kernel_size in
 
-      (* Reshape to separate channels and kernel elements *)
-      let num_blocks =
-        (shape x_unfolded).(Array.length (shape x_unfolded) - 1)
-      in
-      (* For max/avg pooling, we need to handle the unfolded tensor correctly.
-         x_unfolded has shape [batch, channels * kernel_elements, num_blocks] We
-         want to reshape to [batch, channels, kernel_elements, num_blocks] *)
-      let batch_size =
-        if Array.length prefix_shape >= 1 then prefix_shape.(0) else 1
-      in
-      let x_reshaped =
-        reshape
-          [| batch_size; channels; kernel_elements; num_blocks |]
-          x_unfolded
-      in
-
-      (* Compute max over kernel elements *)
+      (* Compute max over kernel elements (second-to-last axis) *)
+      let x_unf_ndim = Array.length (shape x_unfolded) in
       let max_pooled =
-        max x_reshaped
-          ~axes:[ Array.length (shape x_reshaped) - 2 ]
-          ~keepdims:false
+        max x_unfolded ~axes:[ x_unf_ndim - 2 ] ~keepdims:false
       in
 
       (* Reshape back to original layout *)
       let result_shape = Array.concat [ prefix_shape; output_spatial ] in
       let max_values = reshape result_shape max_pooled in
 
-      (* The reshape already produces the correct layout *)
-      let max_values_corrected = max_values in
-
-      if not return_indices then (max_values_corrected, None)
+      if not return_indices then (max_values, None)
       else
         (* For indices, we need to track which element in the kernel was the max *)
         (* Create indices for each kernel position *)
         let kernel_indices =
           arange (B.context x) Dtype.int32 0 kernel_elements 1
         in
-        let kernel_indices_reshaped =
-          reshape [| 1; 1; kernel_elements; 1 |] kernel_indices
-        in
+        (* Broadcast kernel indices to match x_unfolded shape *)
+        let ki_shape = Array.make x_unf_ndim 1 in
+        ki_shape.(x_unf_ndim - 2) <- kernel_elements;
+        let kernel_indices_reshaped = reshape ki_shape kernel_indices in
         let kernel_indices_broadcast =
-          broadcast_to (shape x_reshaped) kernel_indices_reshaped
+          broadcast_to (shape x_unfolded) kernel_indices_reshaped
         in
 
         (* Find which kernel position has the max value *)
-        let max_expanded =
-          unsqueeze ~axes:[ Array.length (shape x_reshaped) - 2 ] max_pooled
-        in
-        let max_broadcast = broadcast_to (shape x_reshaped) max_expanded in
-        let is_max = equal x_reshaped max_broadcast in
+        let max_expanded = unsqueeze ~axes:[ x_unf_ndim - 2 ] max_pooled in
+        let max_broadcast = broadcast_to (shape x_unfolded) max_expanded in
+        let is_max = equal x_unfolded max_broadcast in
 
         (* Use where to select indices, with a large value for non-max
            positions *)
@@ -7110,15 +7049,8 @@ module Make (B : Backend_intf.S) = struct
             ~keepdims:false
         in
 
-        (* Convert kernel index to spatial index *)
-        (* For now, return the kernel indices directly - converting to spatial indices would require 
-         more complex index arithmetic based on the spatial layout *)
         let final_indices = reshape result_shape kernel_idx in
-
-        (* The reshape already produces the correct layout *)
-        let final_indices_corrected = final_indices in
-
-        (max_values_corrected, Some final_indices_corrected)
+        (max_values, Some final_indices)
 
   let avg_pool1d ~kernel_size ?stride ?dilation ?(padding_spec = `Valid)
       ?(ceil_mode = false) ?(count_include_pad = true) x =
@@ -7184,7 +7116,7 @@ module Make (B : Backend_intf.S) = struct
       let x_unfolded =
         B.unfold x ~kernel_size ~stride:s_s ~dilation:d_s ~padding:padding_pairs
       in
-      (* x_unfolded shape: [batch..., channels * kernel_elements, num_blocks] *)
+      (* x_unfolded shape: [*leading, kernel_elements, num_blocks] *)
 
       (* Calculate the output shape *)
       let prefix_shape = Array.sub (shape x) 0 (x_ndim - num_spatial_dims) in
@@ -7200,55 +7132,15 @@ module Make (B : Backend_intf.S) = struct
             ((padded_spatial.(i) - effective_kernel) / s_s.(i)) + 1)
       in
 
-      let channels =
-        if x_ndim - num_spatial_dims >= 1 then (
-          let ch_prod = ref 1 in
-          for i = 1 to x_ndim - num_spatial_dims - 1 do
-            ch_prod := !ch_prod * (shape x).(i)
-          done;
-          !ch_prod)
-        else 1
+      (* Compute min over kernel elements (second-to-last axis) *)
+      let x_unf_ndim = Array.length (shape x_unfolded) in
+      let min_pooled =
+        min x_unfolded ~axes:[ x_unf_ndim - 2 ] ~keepdims:false
       in
-
-      let kernel_elements = array_prod kernel_size in
-
-      (* Reshape to separate channels and kernel elements *)
-      let num_blocks =
-        (shape x_unfolded).(Array.length (shape x_unfolded) - 1)
-      in
-      let batch_size =
-        if Array.length prefix_shape >= 1 then prefix_shape.(0) else 1
-      in
-      let x_reshaped =
-        reshape
-          [| batch_size; channels; kernel_elements; num_blocks |]
-          x_unfolded
-      in
-
-      (* Compute min over kernel elements using reduction approach *)
-      (* Since we don't have op_reduce_min, we'll use a loop with minimum *)
-      let min_pooled = ref None in
-      for k = 0 to kernel_elements - 1 do
-        let slice =
-          B.shrink x_reshaped
-            [| (0, batch_size); (0, channels); (k, k + 1); (0, num_blocks) |]
-        in
-        let slice_squeezed =
-          reshape [| batch_size; channels; num_blocks |] slice
-        in
-        match !min_pooled with
-        | None -> min_pooled := Some slice_squeezed
-        | Some current -> min_pooled := Some (minimum current slice_squeezed)
-      done;
-
-      let min_values_3d = Option.get !min_pooled in
 
       (* Reshape back to original layout *)
       let result_shape = Array.concat [ prefix_shape; output_spatial ] in
-      let min_values = reshape result_shape min_values_3d in
-
-      (* The reshape already produces the correct layout *)
-      let min_values_corrected = min_values in
+      let min_values_corrected = reshape result_shape min_pooled in
 
       if not return_indices then (min_values_corrected, None)
       else (min_values_corrected, None)

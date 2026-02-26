@@ -507,31 +507,30 @@ module type S = sig
 
   (** {1 Window Operations}
 
-      Used to implement convolution as [unfold + matmul + fold]. *)
+      Sliding-window extraction and its inverse. Used to implement convolution
+      as [unfold + reshape + matmul] and pooling as [unfold + reduce]. *)
 
   val unfold :
-    ?out:('a, 'b) t ->
     ('a, 'b) t ->
     kernel_size:int array ->
     stride:int array ->
     dilation:int array ->
     padding:(int * int) array ->
     ('a, 'b) t
-  (** [unfold ?out t ~kernel_size ~stride ~dilation ~padding] extracts sliding
-      local blocks (im2col).
+  (** [unfold t ~kernel_size ~stride ~dilation ~padding] extracts sliding
+      windows from the last [K] spatial dimensions, where
+      [K = Array.length kernel_size].
 
-      Input shape [(N, C, ...spatial)] produces [(N, C * prod(kernel_size), L)]
-      where [L] is the number of windows. Works for any number of spatial
-      dimensions.
+      Input shape [(leading..., spatial...)] produces
+      [(leading..., prod(kernel_size), L)] where [L] is the number of windows.
+      All dimensions before the last [K] are preserved as-is.
 
-      {b Frontend guarantees:} all array parameters have length equal to the
-      number of spatial dimensions. Values are positive.
+      {b Frontend guarantees:} all array parameters have length [K]. Values are
+      positive. Input has at least [K] dimensions.
 
-      {b Backend must:} write results to [out] if provided, otherwise allocate.
-  *)
+      {b Backend must:} allocate and return the result tensor. *)
 
   val fold :
-    ?out:('a, 'b) t ->
     ('a, 'b) t ->
     output_size:int array ->
     kernel_size:int array ->
@@ -539,18 +538,16 @@ module type S = sig
     dilation:int array ->
     padding:(int * int) array ->
     ('a, 'b) t
-  (** [fold ?out t ~output_size ~kernel_size ~stride ~dilation ~padding]
-      combines sliding local blocks (col2im). Inverse of {!unfold}. Overlapping
-      values are summed.
+  (** [fold t ~output_size ~kernel_size ~stride ~dilation ~padding] combines
+      sliding windows (inverse of {!unfold}). Overlapping values are summed.
 
-      Input shape [(N, C * prod(kernel_size), L)] produces
-      [(N, C, ...output_size)].
+      Input shape [(leading..., prod(kernel_size), L)] produces
+      [(leading..., output_size...)].
 
       {b Frontend guarantees:} parameters are consistent with a valid unfold
       configuration.
 
-      {b Backend must:} write results to [out] if provided, otherwise allocate.
-  *)
+      {b Backend must:} allocate and return the result tensor. *)
 
   (** {1 Matrix Operations} *)
 

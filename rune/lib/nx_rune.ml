@@ -881,35 +881,26 @@ let threefry ~out key ctr =
         Nx_backend.threefry ~out:out_t t1 t2
     | _ -> assert false)
 
-let unfold ?out t_in ~kernel_size ~stride ~dilation ~padding =
+let unfold t_in ~kernel_size ~stride ~dilation ~padding =
   try Effect.perform (E_unfold { t_in; kernel_size; stride; dilation; padding })
   with Effect.Unhandled _ -> (
-    match (t_in, out) with
-    | Native_tensor t, Some (Native_tensor o) ->
-        Native_tensor
-          (Nx_backend.unfold ~out:o t ~kernel_size ~stride ~dilation ~padding)
-    | Native_tensor t, None ->
+    match t_in with
+    | Native_tensor t ->
         Native_tensor
           (Nx_backend.unfold t ~kernel_size ~stride ~dilation ~padding)
-    | Symbolic_tensor _, _ | _, Some (Symbolic_tensor _) ->
-        failwith "todo: op_unfold for symbolic tensors")
+    | Symbolic_tensor _ -> failwith "todo: op_unfold for symbolic tensors")
 
-let fold ?out t_in ~output_size ~kernel_size ~stride ~dilation ~padding =
+let fold t_in ~output_size ~kernel_size ~stride ~dilation ~padding =
   try
     Effect.perform
       (E_fold { t_in; output_size; kernel_size; stride; dilation; padding })
   with Effect.Unhandled _ -> (
-    match (t_in, out) with
-    | Native_tensor t, Some (Native_tensor o) ->
-        Native_tensor
-          (Nx_backend.fold ~out:o t ~output_size ~kernel_size ~stride ~dilation
-             ~padding)
-    | Native_tensor t, None ->
+    match t_in with
+    | Native_tensor t ->
         Native_tensor
           (Nx_backend.fold t ~output_size ~kernel_size ~stride ~dilation
              ~padding)
-    | Symbolic_tensor _, _ | _, Some (Symbolic_tensor _) ->
-        failwith "todo: op_fold for symbolic tensors")
+    | Symbolic_tensor _ -> failwith "todo: op_fold for symbolic tensors")
 
 let matmul ~out a b =
   try Effect.perform (E_matmul { out; a; b })

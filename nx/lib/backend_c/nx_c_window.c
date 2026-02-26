@@ -4,6 +4,13 @@
   ---------------------------------------------------------------------------*/
 
 // Window operations for nx C backend (unfold/fold)
+//
+// Generalized sliding-window extraction and its inverse.
+// The last K dimensions of the input are treated as spatial; all preceding
+// dimensions ("leading") are preserved as-is.
+//
+// unfold: (*leading, *spatial_K) -> (*leading, prod(kernel_size), L)
+// fold:   (*leading, prod(kernel_size), L) -> (*leading, *output_size)
 
 #include <caml/alloc.h>
 #include <caml/bigarray.h>
@@ -18,9 +25,9 @@
 #define MAX_SPATIAL_DIMS 32
 
 // Type operations for element-wise copy, zero, add
-typedef void (*elem_add_t)(void *, long, void *, long);
-typedef void (*elem_copy_t)(void *, long, void *, long);
-typedef void (*elem_zero_t)(void *, long);
+typedef void (*elem_add_t)(void*, long, void*, long);
+typedef void (*elem_copy_t)(void*, long, void*, long);
+typedef void (*elem_zero_t)(void*, long);
 
 // Table for type-specific operations
 typedef struct {
@@ -39,23 +46,23 @@ typedef struct {
 
 // Macros for standard types
 #define STANDARD_ADD(T, suffix)                                                \
-  static void add_elem_##suffix(void *out, long o_off, void *in, long i_off) { \
-    T *ot = (T *)out;                                                          \
-    T *it = (T *)in;                                                           \
+  static void add_elem_##suffix(void* out, long o_off, void* in, long i_off) { \
+    T* ot = (T*)out;                                                           \
+    T* it = (T*)in;                                                            \
     ot[o_off] += it[i_off];                                                    \
   }
 
 #define STANDARD_COPY(T, suffix)                                  \
-  static void copy_elem_##suffix(void *out, long o_off, void *in, \
+  static void copy_elem_##suffix(void* out, long o_off, void* in, \
                                  long i_off) {                    \
-    T *ot = (T *)out;                                             \
-    T *it = (T *)in;                                              \
+    T* ot = (T*)out;                                              \
+    T* it = (T*)in;                                               \
     ot[o_off] = it[i_off];                                        \
   }
 
 #define STANDARD_ZERO(T, suffix)                          \
-  static void zero_elem_##suffix(void *out, long o_off) { \
-    T *ot = (T *)out;                                     \
+  static void zero_elem_##suffix(void* out, long o_off) { \
+    T* ot = (T*)out;                                      \
     ot[o_off] = (T)0;                                     \
   }
 
@@ -83,9 +90,9 @@ GENERATE_STANDARD_OPS(caml_ba_bool, bool_)
 // For low-precision floats: add requires conversion, copy/zero are direct
 STANDARD_COPY(uint16_t, f16)
 STANDARD_ZERO(uint16_t, f16)
-static void add_elem_f16(void *out, long o_off, void *in, long i_off) {
-  uint16_t *ot = (uint16_t *)out;
-  uint16_t *it = (uint16_t *)in;
+static void add_elem_f16(void* out, long o_off, void* in, long i_off) {
+  uint16_t* ot = (uint16_t*)out;
+  uint16_t* it = (uint16_t*)in;
   float a = half_to_float(ot[o_off]);
   float b = half_to_float(it[i_off]);
   ot[o_off] = float_to_half(a + b);
@@ -93,9 +100,9 @@ static void add_elem_f16(void *out, long o_off, void *in, long i_off) {
 
 STANDARD_COPY(caml_ba_bfloat16, bf16)
 STANDARD_ZERO(caml_ba_bfloat16, bf16)
-static void add_elem_bf16(void *out, long o_off, void *in, long i_off) {
-  caml_ba_bfloat16 *ot = (caml_ba_bfloat16 *)out;
-  caml_ba_bfloat16 *it = (caml_ba_bfloat16 *)in;
+static void add_elem_bf16(void* out, long o_off, void* in, long i_off) {
+  caml_ba_bfloat16* ot = (caml_ba_bfloat16*)out;
+  caml_ba_bfloat16* it = (caml_ba_bfloat16*)in;
   float a = bfloat16_to_float(ot[o_off]);
   float b = bfloat16_to_float(it[i_off]);
   ot[o_off] = float_to_bfloat16(a + b);
@@ -103,9 +110,9 @@ static void add_elem_bf16(void *out, long o_off, void *in, long i_off) {
 
 STANDARD_COPY(caml_ba_fp8_e4m3, f8e4m3)
 STANDARD_ZERO(caml_ba_fp8_e4m3, f8e4m3)
-static void add_elem_f8e4m3(void *out, long o_off, void *in, long i_off) {
-  caml_ba_fp8_e4m3 *ot = (caml_ba_fp8_e4m3 *)out;
-  caml_ba_fp8_e4m3 *it = (caml_ba_fp8_e4m3 *)in;
+static void add_elem_f8e4m3(void* out, long o_off, void* in, long i_off) {
+  caml_ba_fp8_e4m3* ot = (caml_ba_fp8_e4m3*)out;
+  caml_ba_fp8_e4m3* it = (caml_ba_fp8_e4m3*)in;
   float a = fp8_e4m3_to_float(ot[o_off]);
   float b = fp8_e4m3_to_float(it[i_off]);
   ot[o_off] = float_to_fp8_e4m3(a + b);
@@ -113,17 +120,17 @@ static void add_elem_f8e4m3(void *out, long o_off, void *in, long i_off) {
 
 STANDARD_COPY(caml_ba_fp8_e5m2, f8e5m2)
 STANDARD_ZERO(caml_ba_fp8_e5m2, f8e5m2)
-static void add_elem_f8e5m2(void *out, long o_off, void *in, long i_off) {
-  caml_ba_fp8_e5m2 *ot = (caml_ba_fp8_e5m2 *)out;
-  caml_ba_fp8_e5m2 *it = (caml_ba_fp8_e5m2 *)in;
+static void add_elem_f8e5m2(void* out, long o_off, void* in, long i_off) {
+  caml_ba_fp8_e5m2* ot = (caml_ba_fp8_e5m2*)out;
+  caml_ba_fp8_e5m2* it = (caml_ba_fp8_e5m2*)in;
   float a = fp8_e5m2_to_float(ot[o_off]);
   float b = fp8_e5m2_to_float(it[i_off]);
   ot[o_off] = float_to_fp8_e5m2(a + b);
 }
 
 // For int4/uint4 (packed nibbles)
-static void zero_elem_i4(void *out, long o_off) {
-  uint8_t *ot = (uint8_t *)out;
+static void zero_elem_i4(void* out, long o_off) {
+  uint8_t* ot = (uint8_t*)out;
   long byte_off = o_off / 2;
   int nib_off = o_off % 2;
   if (nib_off) {
@@ -133,9 +140,9 @@ static void zero_elem_i4(void *out, long o_off) {
   }
 }
 
-static void copy_elem_i4(void *out, long o_off, void *in, long i_off) {
-  uint8_t *oi = (uint8_t *)in;
-  uint8_t *oo = (uint8_t *)out;
+static void copy_elem_i4(void* out, long o_off, void* in, long i_off) {
+  uint8_t* oi = (uint8_t*)in;
+  uint8_t* oo = (uint8_t*)out;
   long byte_i = i_off / 2;
   int nib_i = i_off % 2;
   long byte_o = o_off / 2;
@@ -149,9 +156,9 @@ static void copy_elem_i4(void *out, long o_off, void *in, long i_off) {
   }
 }
 
-static void add_elem_i4(void *out, long o_off, void *in, long i_off) {
-  uint8_t *od = (uint8_t *)out;
-  uint8_t *id = (uint8_t *)in;
+static void add_elem_i4(void* out, long o_off, void* in, long i_off) {
+  uint8_t* od = (uint8_t*)out;
+  uint8_t* id = (uint8_t*)in;
   long byte_o = o_off / 2;
   int nib_o = o_off % 2;
   long byte_i = i_off / 2;
@@ -168,8 +175,8 @@ static void add_elem_i4(void *out, long o_off, void *in, long i_off) {
   }
 }
 
-static void zero_elem_u4(void *out, long o_off) {
-  uint8_t *ot = (uint8_t *)out;
+static void zero_elem_u4(void* out, long o_off) {
+  uint8_t* ot = (uint8_t*)out;
   long byte_off = o_off / 2;
   int nib_off = o_off % 2;
   if (nib_off) {
@@ -179,9 +186,9 @@ static void zero_elem_u4(void *out, long o_off) {
   }
 }
 
-static void copy_elem_u4(void *out, long o_off, void *in, long i_off) {
-  uint8_t *oi = (uint8_t *)in;
-  uint8_t *oo = (uint8_t *)out;
+static void copy_elem_u4(void* out, long o_off, void* in, long i_off) {
+  uint8_t* oi = (uint8_t*)in;
+  uint8_t* oo = (uint8_t*)out;
   long byte_i = i_off / 2;
   int nib_i = i_off % 2;
   long byte_o = o_off / 2;
@@ -195,9 +202,9 @@ static void copy_elem_u4(void *out, long o_off, void *in, long i_off) {
   }
 }
 
-static void add_elem_u4(void *out, long o_off, void *in, long i_off) {
-  uint8_t *od = (uint8_t *)out;
-  uint8_t *id = (uint8_t *)in;
+static void add_elem_u4(void* out, long o_off, void* in, long i_off) {
+  uint8_t* od = (uint8_t*)out;
+  uint8_t* id = (uint8_t*)in;
   long byte_o = o_off / 2;
   int nib_o = o_off % 2;
   long byte_i = i_off / 2;
@@ -270,20 +277,37 @@ static size_t get_elem_size(int kind) {
   }
 }
 
+// Compute the flat offset into a tensor for a given leading index.
+// leading_idx is a flat index into the collapsed leading dims.
+// Returns the strided offset for that leading position.
+static long leading_offset(const ndarray_t* t, int leading_ndim,
+                           long leading_idx) {
+  long off = 0;
+  long rem = leading_idx;
+  for (int d = leading_ndim - 1; d >= 0; d--) {
+    long coord = rem % t->shape[d];
+    rem /= t->shape[d];
+    off += coord * t->strides[d];
+  }
+  return off;
+}
+
 // Implementation for unfold
-static void nx_c_unfold_impl(const ndarray_t *in, ndarray_t *out,
+// input:  (*leading, *spatial_K)
+// output: (*leading, kernel_prod, L)
+static void nx_c_unfold_impl(const ndarray_t* in, ndarray_t* out,
                              value v_kernel_size, value v_stride,
                              value v_dilation, value v_padding,
-                             const type_ops_t *ops, size_t elem_size) {
+                             int leading_ndim, const type_ops_t* ops,
+                             size_t elem_size) {
   int K = Wosize_val(v_kernel_size);
-  // Validation should be done before calling this function
 
-  long *kernel_size = (long *)calloc(K, sizeof(long));
-  long *stride = (long *)calloc(K, sizeof(long));
-  long *dilation = (long *)calloc(K, sizeof(long));
-  long *pad_before = (long *)calloc(K, sizeof(long));
-  long *pad_after = (long *)calloc(K, sizeof(long));
-  long *out_spatial = (long *)calloc(K, sizeof(long));
+  long* kernel_size = (long*)calloc(K, sizeof(long));
+  long* stride = (long*)calloc(K, sizeof(long));
+  long* dilation = (long*)calloc(K, sizeof(long));
+  long* pad_before = (long*)calloc(K, sizeof(long));
+  long* pad_after = (long*)calloc(K, sizeof(long));
+  long* out_spatial = (long*)calloc(K, sizeof(long));
 
   for (int d = 0; d < K; d++) {
     kernel_size[d] = Long_val(Field(v_kernel_size, d));
@@ -293,13 +317,15 @@ static void nx_c_unfold_impl(const ndarray_t *in, ndarray_t *out,
     pad_after[d] = Long_val(Field(v_padding, 2 * d + 1));
   }
 
-  long batch = in->shape[0];
-  long channels = in->shape[1];
+  // Compute leading_size = product of all leading dimensions
+  long leading_size = 1;
+  for (int d = 0; d < leading_ndim; d++) leading_size *= in->shape[d];
+
   long kernel_prod = 1;
   bool no_padding = true;
   for (int d = 0; d < K; d++) {
     long effective_ker = dilation[d] * (kernel_size[d] - 1) + 1;
-    long padded = in->shape[d + 2] + pad_before[d] + pad_after[d];
+    long padded = in->shape[leading_ndim + d] + pad_before[d] + pad_after[d];
     long diff = padded - effective_ker;
     out_spatial[d] = (diff / stride[d]) + 1;
     kernel_prod *= kernel_size[d];
@@ -308,31 +334,29 @@ static void nx_c_unfold_impl(const ndarray_t *in, ndarray_t *out,
   if (kernel_prod == 0) no_padding = false;
   long L = 1;
   for (int d = 0; d < K; d++) L *= out_spatial[d];
-  long window_size = channels * kernel_prod;
 
-  // Assume output shape is correct - validation done before blocking section
+  // Output shape: (*leading, kernel_prod, L)
+  // out dims: leading_ndim + 2
+  // out->strides[leading_ndim] is stride for kernel_prod axis
+  // out->strides[leading_ndim + 1] is stride for L axis
 
-  long *out_cumprod = (long *)calloc(K, sizeof(long));
-  long *kernel_cumprod = (long *)calloc(K, sizeof(long));
+  long* out_cumprod = (long*)calloc(K, sizeof(long));
   if (K > 0) {
     out_cumprod[K - 1] = 1;
-    kernel_cumprod[K - 1] = 1;
-    for (int i = K - 2; i >= 0; i--) {
+    for (int i = K - 2; i >= 0; i--)
       out_cumprod[i] = out_cumprod[i + 1] * out_spatial[i + 1];
-      kernel_cumprod[i] = kernel_cumprod[i + 1] * kernel_size[i + 1];
-    }
   }
 
-  long *kernel_offsets = NULL;
+  // Pre-compute kernel offsets for the no-padding fast path
+  long* kernel_offsets = NULL;
   if (no_padding && kernel_prod > 0) {
-    kernel_offsets = (long *)malloc(kernel_prod * sizeof(long));
+    kernel_offsets = (long*)malloc(kernel_prod * sizeof(long));
     if (kernel_offsets) {
       long coords[MAX_SPATIAL_DIMS] = {0};
       for (long kf = 0; kf < kernel_prod; ++kf) {
         long offset = 0;
-        for (int d = 0; d < K; ++d) {
-          offset += coords[d] * dilation[d] * in->strides[d + 2];
-        }
+        for (int d = 0; d < K; ++d)
+          offset += coords[d] * dilation[d] * in->strides[leading_ndim + d];
         kernel_offsets[kf] = offset;
         for (int d = K - 1; d >= 0; --d) {
           coords[d]++;
@@ -347,27 +371,22 @@ static void nx_c_unfold_impl(const ndarray_t *in, ndarray_t *out,
 
   if (no_padding) {
     long stride_steps[MAX_SPATIAL_DIMS];
-    for (int d = 0; d < K; ++d) {
-      stride_steps[d] = stride[d] * in->strides[d + 2];
-    }
+    for (int d = 0; d < K; ++d)
+      stride_steps[d] = stride[d] * in->strides[leading_ndim + d];
 
-    for (long n = 0; n < batch; ++n) {
+    for (long lead = 0; lead < leading_size; ++lead) {
+      long base_in = leading_offset(in, leading_ndim, lead);
+      long base_out = leading_offset(out, leading_ndim, lead);
       long block_coords[MAX_SPATIAL_DIMS] = {0};
       long block_offset = 0;
-      long base_in_n = n * in->strides[0];
-      long base_out_n = n * out->strides[0];
       for (long l = 0; l < L; ++l) {
-        long out_block_base = base_out_n + l * out->strides[2];
-        long in_block_base = base_in_n + block_offset;
-        for (long c = 0; c < channels; ++c) {
-          long in_channel_base = in_block_base + c * in->strides[1];
-          long out_channel_base = out_block_base + c * kernel_prod * out->strides[1];
-          for (long kf = 0; kf < kernel_prod; ++kf) {
-            long out_off = out_channel_base + kf * out->strides[1];
-            long in_off = in_channel_base + kernel_offsets[kf];
-            ops->copy(out->data, out->offset + out_off, in->data,
-                      in->offset + in_off);
-          }
+        long out_l_base = base_out + l * out->strides[leading_ndim + 1];
+        long in_block_base = base_in + block_offset;
+        for (long kf = 0; kf < kernel_prod; ++kf) {
+          long out_off = out_l_base + kf * out->strides[leading_ndim];
+          long in_off = in_block_base + kernel_offsets[kf];
+          ops->copy(out->data, out->offset + out_off, in->data,
+                    in->offset + in_off);
         }
         for (int d = K - 1; d >= 0; --d) {
           block_coords[d]++;
@@ -381,9 +400,12 @@ static void nx_c_unfold_impl(const ndarray_t *in, ndarray_t *out,
     goto cleanup;
   }
 
-#pragma omp parallel for collapse(2) if (batch * L > 1000)
-  for (long n = 0; n < batch; n++) {
+  // General path with padding
+#pragma omp parallel for collapse(2) if (leading_size * L > 1000)
+  for (long lead = 0; lead < leading_size; lead++) {
     for (long l = 0; l < L; l++) {
+      long base_in = leading_offset(in, leading_ndim, lead);
+      long base_out = leading_offset(out, leading_ndim, lead);
       long temp = l;
       long block_pos[MAX_SPATIAL_DIMS];
       for (int d = 0; d < K; d++) {
@@ -391,36 +413,30 @@ static void nx_c_unfold_impl(const ndarray_t *in, ndarray_t *out,
         temp %= out_cumprod[d];
       }
       for (long kf = 0; kf < kernel_prod; kf++) {
-        // Convert kernel index to coordinates using row-major order
-        // This matches how the kernel is reshaped in correlate_nd_general
         long k_temp = kf;
         long k_pos[MAX_SPATIAL_DIMS];
-        // Use row-major indexing (most significant dimension first)
         for (int d = K - 1; d >= 0; d--) {
           k_pos[d] = k_temp % kernel_size[d];
           k_temp /= kernel_size[d];
         }
-        for (long c = 0; c < channels; c++) {
-          long m = c * kernel_prod + kf;
-          long in_off = n * in->strides[0] + c * in->strides[1];
-          bool valid = true;
-          for (int d = 0; d < K; d++) {
-            long sp = block_pos[d] * stride[d] + k_pos[d] * dilation[d] -
-                      pad_before[d];
-            if (sp < 0 || sp >= in->shape[d + 2]) {
-              valid = false;
-              break;
-            }
-            in_off += sp * in->strides[d + 2];
+        long in_off = base_in;
+        bool valid = true;
+        for (int d = 0; d < K; d++) {
+          long sp =
+              block_pos[d] * stride[d] + k_pos[d] * dilation[d] - pad_before[d];
+          if (sp < 0 || sp >= in->shape[leading_ndim + d]) {
+            valid = false;
+            break;
           }
-          long out_off =
-              n * out->strides[0] + m * out->strides[1] + l * out->strides[2];
-          if (valid) {
-            ops->copy(out->data, out->offset + out_off, in->data,
-                      in->offset + in_off);
-          } else {
-            ops->zero(out->data, out->offset + out_off);
-          }
+          in_off += sp * in->strides[leading_ndim + d];
+        }
+        long out_off = base_out + kf * out->strides[leading_ndim] +
+                       l * out->strides[leading_ndim + 1];
+        if (valid) {
+          ops->copy(out->data, out->offset + out_off, in->data,
+                    in->offset + in_off);
+        } else {
+          ops->zero(out->data, out->offset + out_off);
         }
       }
     }
@@ -434,24 +450,25 @@ cleanup:
   free(pad_after);
   free(out_spatial);
   free(out_cumprod);
-  free(kernel_cumprod);
   if (kernel_offsets) free(kernel_offsets);
 }
 
 // Implementation for fold
-static void nx_c_fold_impl(const ndarray_t *in, ndarray_t *out,
+// input:  (*leading, kernel_prod, L)
+// output: (*leading, *output_size)
+static void nx_c_fold_impl(const ndarray_t* in, ndarray_t* out,
                            value v_output_size, value v_kernel_size,
                            value v_stride, value v_dilation, value v_padding,
-                           const type_ops_t *ops, size_t elem_size) {
+                           int leading_ndim, const type_ops_t* ops,
+                           size_t elem_size) {
   int K = Wosize_val(v_output_size);
-  // Validation should be done before calling this function
 
-  long *output_size = (long *)calloc(K, sizeof(long));
-  long *kernel_size = (long *)calloc(K, sizeof(long));
-  long *stride = (long *)calloc(K, sizeof(long));
-  long *dilation = (long *)calloc(K, sizeof(long));
-  long *pad_before = (long *)calloc(K, sizeof(long));
-  long *pad_after = (long *)calloc(K, sizeof(long));
+  long* output_size = (long*)calloc(K, sizeof(long));
+  long* kernel_size = (long*)calloc(K, sizeof(long));
+  long* stride = (long*)calloc(K, sizeof(long));
+  long* dilation = (long*)calloc(K, sizeof(long));
+  long* pad_before = (long*)calloc(K, sizeof(long));
+  long* pad_after = (long*)calloc(K, sizeof(long));
 
   for (int d = 0; d < K; d++) {
     output_size[d] = Long_val(Field(v_output_size, d));
@@ -462,15 +479,12 @@ static void nx_c_fold_impl(const ndarray_t *in, ndarray_t *out,
     pad_after[d] = Long_val(Field(v_padding, 2 * d + 1));
   }
 
-  long batch = in->shape[0];
-  long window_size = in->shape[1];
-  long L = in->shape[2];
-  long kernel_prod = 1;
-  for (int d = 0; d < K; d++) kernel_prod *= kernel_size[d];
-  // Assume window size is valid - validation done before blocking section
-  long channels = window_size / kernel_prod;
+  // Compute leading_size = product of all leading dimensions
+  long leading_size = 1;
+  for (int d = 0; d < leading_ndim; d++) leading_size *= in->shape[d];
 
-  // Assume output shape is correct - validation done before blocking section
+  long kernel_prod = in->shape[leading_ndim];
+  long L = in->shape[leading_ndim + 1];
 
   long expected_block[MAX_SPATIAL_DIMS];
   long expected_L = 1;
@@ -481,26 +495,23 @@ static void nx_c_fold_impl(const ndarray_t *in, ndarray_t *out,
     expected_block[d] = (diff / stride[d]) + 1;
     expected_L *= expected_block[d];
   }
-  // Assume L matches - validation done before blocking section
 
-  long *out_cumprod = (long *)calloc(K, sizeof(long));
-  long *kernel_cumprod = (long *)calloc(K, sizeof(long));
+  long* out_cumprod = (long*)calloc(K, sizeof(long));
   if (K > 0) {
     out_cumprod[K - 1] = 1;
-    kernel_cumprod[K - 1] = 1;
-    for (int i = K - 2; i >= 0; i--) {
+    for (int i = K - 2; i >= 0; i--)
       out_cumprod[i] = out_cumprod[i + 1] * expected_block[i + 1];
-      kernel_cumprod[i] = kernel_cumprod[i + 1] * kernel_size[i + 1];
-    }
   }
 
   // Zero the output (bytes zero works for all types)
   long total_out = total_elements_safe(out);
-  memset((char *)out->data + out->offset * elem_size, 0, total_out * elem_size);
+  memset((char*)out->data + out->offset * elem_size, 0, total_out * elem_size);
 
-#pragma omp parallel for collapse(2) if (batch * L > 1000)
-  for (long n = 0; n < batch; n++) {
+#pragma omp parallel for collapse(2) if (leading_size * L > 1000)
+  for (long lead = 0; lead < leading_size; lead++) {
     for (long l = 0; l < L; l++) {
+      long base_in = leading_offset(in, leading_ndim, lead);
+      long base_out = leading_offset(out, leading_ndim, lead);
       long temp = l;
       long block_pos[MAX_SPATIAL_DIMS];
       for (int d = 0; d < K; d++) {
@@ -508,34 +519,28 @@ static void nx_c_fold_impl(const ndarray_t *in, ndarray_t *out,
         temp %= out_cumprod[d];
       }
       for (long kf = 0; kf < kernel_prod; kf++) {
-        // Convert kernel index to coordinates using row-major order
-        // This matches how the kernel is reshaped in correlate_nd_general
         long k_temp = kf;
         long k_pos[MAX_SPATIAL_DIMS];
-        // Use row-major indexing (most significant dimension first)
         for (int d = K - 1; d >= 0; d--) {
           k_pos[d] = k_temp % kernel_size[d];
           k_temp /= kernel_size[d];
         }
-        for (long c = 0; c < channels; c++) {
-          long m = c * kernel_prod + kf;
-          long out_off = n * out->strides[0] + c * out->strides[1];
-          bool valid = true;
-          for (int d = 0; d < K; d++) {
-            long sp = block_pos[d] * stride[d] + k_pos[d] * dilation[d] -
-                      pad_before[d];
-            if (sp < 0 || sp >= out->shape[d + 2]) {
-              valid = false;
-              break;
-            }
-            out_off += sp * out->strides[d + 2];
+        long out_off = base_out;
+        bool valid = true;
+        for (int d = 0; d < K; d++) {
+          long sp =
+              block_pos[d] * stride[d] + k_pos[d] * dilation[d] - pad_before[d];
+          if (sp < 0 || sp >= out->shape[leading_ndim + d]) {
+            valid = false;
+            break;
           }
-          long in_off =
-              n * in->strides[0] + m * in->strides[1] + l * in->strides[2];
-          if (valid) {
-            ops->add(out->data, out->offset + out_off, in->data,
-                     in->offset + in_off);
-          }
+          out_off += sp * out->strides[leading_ndim + d];
+        }
+        long in_off = base_in + kf * in->strides[leading_ndim] +
+                      l * in->strides[leading_ndim + 1];
+        if (valid) {
+          ops->add(out->data, out->offset + out_off, in->data,
+                   in->offset + in_off);
         }
       }
     }
@@ -548,11 +553,10 @@ static void nx_c_fold_impl(const ndarray_t *in, ndarray_t *out,
   free(pad_before);
   free(pad_after);
   free(out_cumprod);
-  free(kernel_cumprod);
 }
 
 // Dispatch helper
-static const type_ops_t *get_type_ops(int kind) {
+static const type_ops_t* get_type_ops(int kind) {
   switch (kind) {
     case CAML_BA_SINT8:
       return &type_ops_table.i8;
@@ -612,14 +616,14 @@ CAMLprim value caml_nx_op_unfold(value v_in, value v_kernel_size,
   ndarray_t output = extract_ndarray(v_out);
 
   value v_in_data = Field(v_in, FFI_TENSOR_DATA);
-  struct caml_ba_array *ba_in = Caml_ba_array_val(v_in_data);
+  struct caml_ba_array* ba_in = Caml_ba_array_val(v_in_data);
   int kind = nx_ba_get_kind(ba_in);
 
   value v_out_data = Field(v_out, FFI_TENSOR_DATA);
   int kind_out = nx_ba_get_kind(Caml_ba_array_val(v_out_data));
   if (kind != kind_out) caml_failwith("dtype mismatch");
 
-  const type_ops_t *ops = get_type_ops(kind);
+  const type_ops_t* ops = get_type_ops(kind);
   if (!ops) caml_failwith("unsupported dtype");
 
   size_t elem_size = get_elem_size(kind);
@@ -637,42 +641,33 @@ CAMLprim value caml_nx_op_unfold(value v_in, value v_kernel_size,
     cleanup_ndarray(&output);
     caml_failwith("parameter length mismatch");
   }
-  if (input.ndim != K + 2) {
+  if (input.ndim < K) {
     cleanup_ndarray(&input);
     cleanup_ndarray(&output);
-    caml_failwith("input ndim mismatch");
+    caml_failwith("unfold: input must have at least K dimensions");
   }
 
-  // Validate output shape
-  long batch = input.shape[0];
-  long channels = input.shape[1];
-  long kernel_prod = 1;
-  for (int d = 0; d < K; d++) {
-    long kernel_d = Long_val(Field(v_kernel_size, d));
-    long stride_d = Long_val(Field(v_stride, d));
-    long dilation_d = Long_val(Field(v_dilation, d));
-    long pad_before = Long_val(Field(v_padding, 2 * d));
-    long pad_after = Long_val(Field(v_padding, 2 * d + 1));
-    
-    long effective_ker = dilation_d * (kernel_d - 1) + 1;
-    long padded = input.shape[d + 2] + pad_before + pad_after;
-    long out_spatial = (padded - effective_ker) / stride_d + 1;
-    
-    kernel_prod *= kernel_d;
-  }
-  
-  // Check expected output shape
-  long expected_window = channels * kernel_prod;
-  if (output.ndim != 3 || output.shape[0] != batch || 
-      output.shape[1] != expected_window) {
+  int leading_ndim = input.ndim - K;
+
+  // Validate output ndim: should be leading_ndim + 2 (kernel_prod, L)
+  if (output.ndim != leading_ndim + 2) {
     cleanup_ndarray(&input);
     cleanup_ndarray(&output);
-    caml_failwith("unfold: output shape mismatch");
+    caml_failwith("unfold: output ndim mismatch");
+  }
+
+  // Validate leading dims match
+  for (int d = 0; d < leading_ndim; d++) {
+    if (output.shape[d] != input.shape[d]) {
+      cleanup_ndarray(&input);
+      cleanup_ndarray(&output);
+      caml_failwith("unfold: leading dimension mismatch");
+    }
   }
 
   caml_enter_blocking_section();
   nx_c_unfold_impl(&input, &output, v_kernel_size, v_stride, v_dilation,
-                   v_padding, ops, elem_size);
+                   v_padding, leading_ndim, ops, elem_size);
   caml_leave_blocking_section();
 
   cleanup_ndarray(&input);
@@ -691,7 +686,7 @@ CAMLprim value caml_nx_op_fold(value v_in, value v_output_size,
   ndarray_t output = extract_ndarray(v_out);
 
   value v_in_data = Field(v_in, FFI_TENSOR_DATA);
-  struct caml_ba_array *ba_in = Caml_ba_array_val(v_in_data);
+  struct caml_ba_array* ba_in = Caml_ba_array_val(v_in_data);
   int kind = nx_ba_get_kind(ba_in);
 
   value v_out_data = Field(v_out, FFI_TENSOR_DATA);
@@ -702,7 +697,7 @@ CAMLprim value caml_nx_op_fold(value v_in, value v_output_size,
     caml_failwith("dtype mismatch");
   }
 
-  const type_ops_t *ops = get_type_ops(kind);
+  const type_ops_t* ops = get_type_ops(kind);
   if (!ops) {
     cleanup_ndarray(&input);
     cleanup_ndarray(&output);
@@ -724,78 +719,44 @@ CAMLprim value caml_nx_op_fold(value v_in, value v_output_size,
     cleanup_ndarray(&output);
     caml_failwith("parameter length mismatch");
   }
-  if (input.ndim != 3) {
+
+  // Input must have at least 2 dims (kernel_prod, L) plus optional leading
+  if (input.ndim < 2) {
     cleanup_ndarray(&input);
     cleanup_ndarray(&output);
-    caml_failwith("input must be 3D [batch, window_size, L]");
-  }
-  if (output.ndim != K + 2) {
-    cleanup_ndarray(&input);
-    cleanup_ndarray(&output);
-    caml_failwith("output ndim mismatch");
+    caml_failwith("fold: input must have at least 2 dimensions");
   }
 
-  // Validate dimensions match expected values
-  long batch = input.shape[0];
-  long window_size = input.shape[1];
-  long L = input.shape[2];
-  
-  // Calculate expected values
-  long kernel_prod = 1;
-  for (int d = 0; d < K; d++) {
-    kernel_prod *= Long_val(Field(v_kernel_size, d));
-  }
-  
-  if (window_size % kernel_prod != 0) {
+  int leading_ndim = input.ndim - 2;
+
+  // Output must have leading_ndim + K dims
+  if (output.ndim != leading_ndim + K) {
     cleanup_ndarray(&input);
     cleanup_ndarray(&output);
-    caml_failwith("fold: window size must be divisible by kernel product");
+    caml_failwith("fold: output ndim mismatch");
   }
-  
-  long channels = window_size / kernel_prod;
-  
-  // Validate output shape
-  if (output.shape[0] != batch || output.shape[1] != channels) {
-    cleanup_ndarray(&input);
-    cleanup_ndarray(&output);
-    caml_failwith("fold: output batch/channels mismatch");
+
+  // Validate leading dims match
+  for (int d = 0; d < leading_ndim; d++) {
+    if (output.shape[d] != input.shape[d]) {
+      cleanup_ndarray(&input);
+      cleanup_ndarray(&output);
+      caml_failwith("fold: leading dimension mismatch");
+    }
   }
-  
+
   // Validate spatial dimensions match output_size
   for (int d = 0; d < K; d++) {
-    if (output.shape[d + 2] != Long_val(Field(v_output_size, d))) {
+    if (output.shape[leading_ndim + d] != Long_val(Field(v_output_size, d))) {
       cleanup_ndarray(&input);
       cleanup_ndarray(&output);
       caml_failwith("fold: output spatial dimension mismatch");
     }
   }
-  
-  // Calculate expected L from block dimensions
-  long expected_L = 1;
-  for (int d = 0; d < K; d++) {
-    long output_d = Long_val(Field(v_output_size, d));
-    long kernel_d = Long_val(Field(v_kernel_size, d));
-    long stride_d = Long_val(Field(v_stride, d));
-    long dilation_d = Long_val(Field(v_dilation, d));
-    long pad_before = Long_val(Field(v_padding, 2 * d));
-    long pad_after = Long_val(Field(v_padding, 2 * d + 1));
-    
-    long effective_ker = dilation_d * (kernel_d - 1) + 1;
-    long padded = output_d + pad_before + pad_after;
-    long diff = padded - effective_ker;
-    long block_d = (diff / stride_d) + 1;
-    expected_L *= block_d;
-  }
-  
-  if (L != expected_L) {
-    cleanup_ndarray(&input);
-    cleanup_ndarray(&output);
-    caml_failwith("fold: input L dimension mismatch");
-  }
 
   caml_enter_blocking_section();
   nx_c_fold_impl(&input, &output, v_output_size, v_kernel_size, v_stride,
-                 v_dilation, v_padding, ops, elem_size);
+                 v_dilation, v_padding, leading_ndim, ops, elem_size);
   caml_leave_blocking_section();
 
   cleanup_ndarray(&input);
@@ -810,16 +771,16 @@ CAMLprim value caml_nx_op_fold(value v_in, value v_output_size,
 // (bytecode stub first, native stub second).
 //
 // unfold: 6 arguments
-CAMLprim value caml_nx_op_unfold_bc(value *argv, int argn) {
+CAMLprim value caml_nx_op_unfold_bc(value* argv, int argn) {
   CAMLparam0();
   (void)argn;
-  value ret = caml_nx_op_unfold(argv[0], argv[1], argv[2], argv[3], argv[4],
-                                argv[5]);
+  value ret =
+      caml_nx_op_unfold(argv[0], argv[1], argv[2], argv[3], argv[4], argv[5]);
   CAMLreturn(ret);
 }
 
 // fold: 7 arguments
-CAMLprim value caml_nx_op_fold_bc(value *argv, int argn) {
+CAMLprim value caml_nx_op_fold_bc(value* argv, int argn) {
   CAMLparam0();
   (void)argn;
   value ret = caml_nx_op_fold(argv[0], argv[1], argv[2], argv[3], argv[4],

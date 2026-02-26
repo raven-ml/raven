@@ -798,13 +798,13 @@ let scatter ?(mode = `Set) ?(unique_indices = false) data_template ~indices
 
   out
 
-let unfold ?out x ~kernel_size ~stride ~dilation ~padding =
+let unfold x ~kernel_size ~stride ~dilation ~padding =
   let x' = ensure_materializable x in
-
   let in_shape = shape x in
-  let batch_size = in_shape.(0) in
-  let in_channels = in_shape.(1) in
-  let spatial_dims = Array.sub in_shape 2 (Array.length in_shape - 2) in
+  let k = Array.length kernel_size in
+  let leading_ndim = Array.length in_shape - k in
+  let leading_shape = Array.sub in_shape 0 leading_ndim in
+  let spatial_dims = Array.sub in_shape leading_ndim k in
 
   let padding_flat =
     Array.init
@@ -815,7 +815,7 @@ let unfold ?out x ~kernel_size ~stride ~dilation ~padding =
   in
 
   let out_spatial =
-    Array.init (Array.length spatial_dims) (fun i ->
+    Array.init k (fun i ->
         let pad_before, pad_after = padding.(i) in
         let padded = spatial_dims.(i) + pad_before + pad_after in
         let kernel_extent = (dilation.(i) * (kernel_size.(i) - 1)) + 1 in
@@ -828,25 +828,21 @@ let unfold ?out x ~kernel_size ~stride ~dilation ~padding =
 
   let kernel_prod = Array.fold_left ( * ) 1 kernel_size in
   let spatial_prod = Array.fold_left ( * ) 1 out_spatial in
-  let out_shape = [| batch_size; in_channels * kernel_prod; spatial_prod |] in
-
-  let out =
-    match out with
-    | Some o -> o
-    | None -> create_tensor x.context x.dtype out_shape
+  let out_shape =
+    Array.concat [ leading_shape; [| kernel_prod; spatial_prod |] ]
   in
+
+  let out = create_tensor x.context x.dtype out_shape in
   let x_ffi = to_ffi_tensor x' in
   let out_ffi = to_ffi_tensor out in
   caml_unfold x_ffi kernel_size stride dilation padding_flat out_ffi;
   out
 
-let fold ?out x ~output_size ~kernel_size ~stride ~dilation ~padding =
+let fold x ~output_size ~kernel_size ~stride ~dilation ~padding =
   let x' = ensure_materializable x in
-
   let in_shape = shape x in
-  let batch_size = in_shape.(0) in
-  let kernel_prod = Array.fold_left ( * ) 1 kernel_size in
-  let channels = in_shape.(1) / kernel_prod in
+  let leading_ndim = Array.length in_shape - 2 in
+  let leading_shape = Array.sub in_shape 0 leading_ndim in
 
   let padding_flat =
     Array.init
@@ -868,13 +864,9 @@ let fold ?out x ~output_size ~kernel_size ~stride ~dilation ~padding =
         else (diff / stride.(i)) + 1)
   in
 
-  let out_shape = Array.concat [ [| batch_size; channels |]; output_size ] in
+  let out_shape = Array.concat [ leading_shape; output_size ] in
 
-  let out =
-    match out with
-    | Some o -> o
-    | None -> create_tensor x.context x.dtype out_shape
-  in
+  let out = create_tensor x.context x.dtype out_shape in
   let x_ffi = to_ffi_tensor x' in
   let out_ffi = to_ffi_tensor out in
   caml_fold x_ffi output_size kernel_size stride dilation padding_flat out_ffi;
