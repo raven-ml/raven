@@ -6,9 +6,9 @@
 let image_path = "sowilo/examples/lena.png"
 
 let () =
-  let img = Rune.of_nx (Nx_io.load_image image_path) in
+  let img = Sowilo.to_float (Rune.of_nx (Nx_io.load_image image_path)) in
   let gray = Sowilo.to_grayscale img in
-  let blurred = Sowilo.gaussian_blur ~ksize:(5, 5) ~sigmaX:1.5 gray in
+  let blurred = Sowilo.gaussian_blur ~sigma:1.5 ~ksize:5 gray in
   let fig = Hugin.figure ~width:1000 ~height:500 () in
   let ax1 = Hugin.subplot ~nrows:1 ~ncols:2 ~index:1 fig in
   ignore

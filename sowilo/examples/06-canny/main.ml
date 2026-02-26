@@ -6,9 +6,9 @@
 let image_path = "sowilo/examples/lena.png"
 
 let () =
-  let img = Rune.of_nx (Nx_io.load_image image_path) in
+  let img = Sowilo.to_float (Rune.of_nx (Nx_io.load_image image_path)) in
   let gray = Sowilo.to_grayscale img in
-  let edges = Sowilo.canny ~threshold1:50.0 ~threshold2:150.0 gray in
+  let edges = Sowilo.canny ~low:0.2 ~high:0.6 gray in
   let fig = Hugin.figure ~width:1000 ~height:500 () in
   let ax1 = Hugin.subplot ~nrows:1 ~ncols:2 ~index:1 fig in
   ignore
@@ -22,6 +22,6 @@ let () =
     (ax2
     |> Hugin.Plotting.imshow ~data:(Rune.to_nx edges)
          ~cmap:Hugin.Artist.Colormap.gray
-    |> Hugin.Axes.set_title "Canny Edges (50, 150)"
+    |> Hugin.Axes.set_title "Canny Edges (0.2, 0.6)"
     |> Hugin.Axes.set_xticks [] |> Hugin.Axes.set_yticks []);
   Hugin.show fig

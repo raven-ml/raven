@@ -1,160 +1,233 @@
-# Getting Started with sowilo
+# Getting Started
 
-This guide shows you how to use sowilo for image processing and computer vision.
+This guide covers loading images, understanding image conventions, building
+your first processing pipeline, and saving results.
 
 ## Installation
-
-Sowilo isn't released yet. When it is, you'll install it with:
 
 <!-- $MDX skip -->
 ```bash
 opam install sowilo
 ```
 
-For now, build from source:
+Or build from source:
 
 <!-- $MDX skip -->
 ```bash
 git clone https://github.com/raven-ml/raven
-cd raven
-dune pkg lock && dune build sowilo
+cd raven && dune build sowilo
 ```
 
-## Your First Image Processing Pipeline
+## Loading Images
 
-Here's a working example that loads an image and detects edges:
+Sowilo operates on Rune tensors. Load an image with `Nx_io`, convert it to
+a Rune tensor, then to float32:
+
+<!-- $MDX skip -->
+```ocaml
+open Sowilo
+
+let img =
+  Nx_io.load_image "photo.png"  (* Nx uint8 tensor [H; W; C] *)
+  |> Rune.of_nx                 (* Rune uint8 tensor *)
+  |> to_float                   (* Rune float32 tensor in [0, 1] *)
+```
+
+`to_float` divides by 255 and casts to float32. This is the standard input
+format for all sowilo operations.
+
+## Image Conventions
+
+**Layout.** Images use channels-last layout:
+- Single image: `[H; W; C]` (height, width, channels)
+- Batch: `[N; H; W; C]` (batch, height, width, channels)
+
+**Channel counts.** Grayscale has C = 1, RGB has C = 3, RGBA has C = 4.
+
+**Value range.** Operations expect float32 values in [0, 1]. Use `to_float`
+to convert from integer representations and `to_uint8` to convert back:
+
+<!-- $MDX skip -->
+```ocaml
+(* uint8 [0, 255] -> float32 [0, 1] *)
+let float_img = to_float uint8_img
+
+(* float32 [0, 1] -> uint8 [0, 255] (clips to [0, 1] first) *)
+let uint8_img = to_uint8 float_img
+```
+
+## Your First Pipeline
+
+Load an image, convert to grayscale, blur, and detect edges:
 
 <!-- $MDX skip -->
 ```ocaml
 open Sowilo
 
 let () =
-  (* Load image as nx array *)
-  let img = Nx_io.load_image "photo.jpg" in
-  
-  (* Convert to Rune tensor for processing *)
-  let tensor = Rune.of_bigarray (Nx.to_bigarray img) in
-  
-  (* Apply operations *)
-  let processed = 
-    tensor
-    |> to_grayscale              (* Convert to grayscale *)
-    |> gaussian_blur ~ksize:5 ~sigma:1.0  (* Smooth *)
-    |> canny ~low:50. ~high:150.         (* Detect edges *)
+  let img = Nx_io.load_image "photo.png" |> Rune.of_nx |> to_float in
+
+  let edges =
+    img
+    |> to_grayscale                  (* RGB -> single channel *)
+    |> gaussian_blur ~sigma:1.0      (* smooth noise *)
+    |> canny ~low:0.2 ~high:0.6     (* detect edges *)
   in
-  
-  (* Convert back to nx and save *)
-  let result = Nx.of_bigarray (Rune.to_bigarray processed) in
-  Nx_io.save_image result "edges.png"
+
+  (* Save: convert back to uint8, then to Nx for I/O *)
+  Nx_io.save_image (Rune.to_nx (to_uint8 edges)) "edges.png"
 ```
 
-## Key Concepts
+Operations compose naturally with `|>`. Each takes a tensor and returns a
+tensor, so you can chain as many as you need.
 
-**Tensors, not custom types.** Images are just tensors with shape `[height; width; channels]`. This means any tensor operation works on images.
+## Color Adjustments
 
-**Dimension conventions:**
-- Single image: `[H; W; C]` where C is 1 (grayscale) or 3 (RGB)
-- Batch of images: `[N; H; W; C]` for batch size N
-
-**Type safety.** Operations enforce correct tensor types:
-- Most filters work on `float32` tensors in range [0, 1]
-- Use `to_float` and `to_uint8` to convert between formats
-- Some operations (like Sobel) output `int16` for derivatives
-
-**Differentiable.** Since sowilo is built on Rune, all operations can be differentiated. Train neural networks that include classical CV operations.
-
-## Common Operations
+Adjust brightness, contrast, saturation, hue, and gamma:
 
 <!-- $MDX skip -->
 ```ocaml
-(* Color space conversions *)
-let gray = to_grayscale color_img
-let bgr = rgb_to_bgr rgb_img
+open Sowilo
 
-(* Type conversions *)
-let float_img = to_float uint8_img  (* [0,255] -> [0.0,1.0] *)
-let uint_img = to_uint8 float_img   (* [0.0,1.0] -> [0,255] *)
+let () =
+  let img = Nx_io.load_image "photo.png" |> Rune.of_nx |> to_float in
 
-(* Basic transformations *)
-let flipped = flip_vertical img
-let cropped = crop img ~x:100 ~y:50 ~width:200 ~height:150
-let resized = resize img ~height:224 ~width:224 ~interpolation:Bilinear
+  (* Each function takes a factor and an image *)
+  let bright = adjust_brightness 1.3 img in
+  let contrasted = adjust_contrast 1.5 img in
+  let saturated = adjust_saturation 1.2 img in
+  let warm = adjust_hue 0.05 img in
+  let gamma = adjust_gamma 0.8 img in
+  let negative = invert img in
 
-(* Filtering *)
-let blurred = gaussian_blur img ~ksize:5 ~sigma:1.0
-let denoised = median_blur img ~ksize:3
-let averaged = box_filter img ~ksize:3
-
-(* Morphology *)
-let kernel = get_structuring_element Rect ~ksize:3
-let eroded = erode img kernel
-let dilated = dilate img kernel
-
-(* Thresholding *)
-let binary = threshold img ~thresh:128. ~maxval:255. ~typ:Binary
-
-(* Edge detection *)
-let grad_x, grad_y = sobel img ~dx:1 ~dy:0 ~ksize:3
-let edges = canny img ~low:100. ~high:200.
+  ignore (bright, contrasted, saturated, warm, gamma, negative)
 ```
 
-## Image I/O
+## Geometric Transforms
 
-Sowilo works with nx for image I/O:
+Resize, crop, flip, rotate, and pad:
 
 <!-- $MDX skip -->
 ```ocaml
-(* Load images *)
-let img = Nx_io.load_image "input.jpg"
+open Sowilo
 
-(* Save images *) 
-Nx_io.save_image processed "output.png"
+let () =
+  let img = Nx_io.load_image "photo.png" |> Rune.of_nx |> to_float in
 
-(* Display with hugin *)
-let fig = Hugin.imshow img ~title:"Processed Image" in
-Hugin.show fig
+  let small = resize ~height:224 ~width:224 img in
+  let cropped = crop ~y:50 ~x:100 ~height:200 ~width:200 img in
+  let centered = center_crop ~height:200 ~width:200 img in
+  let flipped = hflip img in
+  let upside_down = vflip img in
+  let rotated = rotate90 img in              (* 90 degrees counter-clockwise *)
+  let rotated_cw = rotate90 ~k:(-1) img in   (* 90 degrees clockwise *)
+  let padded = pad (10, 10, 10, 10) img in   (* top, bottom, left, right *)
+
+  ignore (small, cropped, centered, flipped, upside_down, rotated, rotated_cw, padded)
 ```
 
-## Working with Batches
+`resize` defaults to bilinear interpolation. Pass `~interpolation:Nearest`
+for nearest-neighbor.
 
-Process multiple images at once:
+## Morphological Operations
+
+Build structuring elements and apply morphological operations:
 
 <!-- $MDX skip -->
 ```ocaml
-(* Stack images into batch: [N; H; W; C] *)
-let batch = Rune.Tensor.stack images ~axis:0
+open Sowilo
 
-(* Apply operations - they broadcast over batch dimension *)
-let processed_batch = gaussian_blur batch ~ksize:3 ~sigma:1.0
+let () =
+  let img = Nx_io.load_image "photo.png" |> Rune.of_nx |> to_float in
+  let gray = to_grayscale img in
+  let binary = threshold 0.5 gray in
 
-(* Split back to individual images *)
-let processed_images = Rune.Tensor.unstack processed_batch ~axis:0
+  (* Create a 5x5 rectangular structuring element *)
+  let kernel = structuring_element Rect (5, 5) in
+
+  let eroded = erode ~kernel binary in
+  let dilated = dilate ~kernel binary in
+  let opened = opening ~kernel binary in
+  let closed = closing ~kernel binary in
+  let grad = morphological_gradient ~kernel binary in
+
+  ignore (eroded, dilated, opened, closed, grad)
 ```
 
-## Integration with Deep Learning
+Three kernel shapes are available: `Rect` (full rectangle), `Cross`
+(cross-shaped), and `Ellipse` (elliptical). The size must be a pair of
+positive odd integers.
 
-Sowilo operations can be part of neural networks:
+## Edge Detection
+
+Sowilo provides four edge detection methods:
 
 <!-- $MDX skip -->
 ```ocaml
-(* Preprocessing for neural network *)
-let preprocess img =
-  img
-  |> to_float
-  |> resize ~height:224 ~width:224 ~interpolation:Bilinear
-  |> to_grayscale
-  |> gaussian_blur ~ksize:3 ~sigma:0.5
+open Sowilo
 
-(* Use in training - gradients flow through! *)
-let augmented = Model.forward model (preprocess input)
+let () =
+  let img = Nx_io.load_image "photo.png" |> Rune.of_nx |> to_float in
+  let gray = to_grayscale img in
+
+  (* Sobel: returns horizontal and vertical gradients *)
+  let gx, gy = sobel gray in
+
+  (* Scharr: more rotationally accurate than Sobel *)
+  let sx, sy = scharr gray in
+
+  (* Laplacian: sum of second derivatives *)
+  let lap = laplacian gray in
+
+  (* Canny: binary edge map with hysteresis thresholding *)
+  let edges = canny ~low:0.2 ~high:0.6 gray in
+
+  ignore (gx, gy, sx, sy, lap, edges)
+```
+
+`sobel` and `scharr` return `(gx, gy)` tuples. All edge detectors require
+grayscale input (C = 1).
+
+## Saving Results
+
+Convert back to uint8 and use `Nx_io.save_image`:
+
+<!-- $MDX skip -->
+```ocaml
+let save result path =
+  Nx_io.save_image (Rune.to_nx (to_uint8 result)) path
+```
+
+## Displaying with Hugin
+
+Use Hugin for visualization:
+
+<!-- $MDX skip -->
+```ocaml
+let () =
+  let img = Nx_io.load_image "photo.png" |> Rune.of_nx |> to_float in
+  let gray = to_grayscale img in
+  let edges = canny ~low:0.2 ~high:0.6 gray in
+
+  let fig = Hugin.figure ~width:1000 ~height:500 () in
+
+  let ax1 = Hugin.subplot ~nrows:1 ~ncols:2 ~index:1 fig in
+  ignore
+    (ax1
+    |> Hugin.Plotting.imshow ~data:(Rune.to_nx img)
+    |> Hugin.Axes.set_title "Original");
+
+  let ax2 = Hugin.subplot ~nrows:1 ~ncols:2 ~index:2 fig in
+  ignore
+    (ax2
+    |> Hugin.Plotting.imshow ~data:(Rune.to_nx edges)
+         ~cmap:Hugin.Artist.Colormap.gray
+    |> Hugin.Axes.set_title "Canny Edges");
+
+  Hugin.show fig
 ```
 
 ## Next Steps
 
-Check out the examples in `sowilo/examples/` for complete image processing pipelines including:
-- Edge detection workflows
-- Image filtering and denoising  
-- Morphological operations
-- Threshold techniques
-
-When Rune's JIT compiler lands, these operations will automatically compile to efficient GPU kernels.
+- [Operations Reference](02-operations/) -- every operation with detailed examples
+- [Pipelines and Integration](03-pipelines/) -- composing pipelines, batch processing, deep learning

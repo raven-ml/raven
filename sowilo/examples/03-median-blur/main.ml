@@ -6,7 +6,7 @@
 let image_path = "sowilo/examples/lena.png"
 
 let () =
-  let img = Rune.of_nx (Nx_io.load_image image_path) in
+  let img = Sowilo.to_float (Rune.of_nx (Nx_io.load_image image_path)) in
   let gray = Sowilo.to_grayscale img in
   let median = Sowilo.median_blur ~ksize:5 gray in
   let fig = Hugin.figure ~width:1000 ~height:500 () in
