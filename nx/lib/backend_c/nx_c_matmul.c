@@ -653,11 +653,11 @@ static void dispatch_matmul_op(value v_a, value v_b, value v_c,
 
   // Get bigarray kind from the data field
   struct caml_ba_array *ba = Caml_ba_array_val(Field(v_a, FFI_TENSOR_DATA));
-  int kind = nx_ba_get_kind(ba);
+  int kind = nx_buffer_get_kind(ba);
 
   // Check kinds match for b and c
-  int kind_b = nx_ba_get_kind(Caml_ba_array_val(Field(v_b, FFI_TENSOR_DATA)));
-  int kind_c = nx_ba_get_kind(Caml_ba_array_val(Field(v_c, FFI_TENSOR_DATA)));
+  int kind_b = nx_buffer_get_kind(Caml_ba_array_val(Field(v_b, FFI_TENSOR_DATA)));
+  int kind_c = nx_buffer_get_kind(Caml_ba_array_val(Field(v_c, FFI_TENSOR_DATA)));
   if (kind != kind_b || kind != kind_c) {
     caml_failwith("dtype mismatch");
   }

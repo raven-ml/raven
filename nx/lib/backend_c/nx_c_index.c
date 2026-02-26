@@ -534,10 +534,10 @@ static void dispatch_gather(value v_data, value v_indices, value v_out,
 
   struct caml_ba_array *ba_data = Caml_ba_array_val(v_data_data);
   struct caml_ba_array *ba_indices = Caml_ba_array_val(v_indices_data);
-  int kind = nx_ba_get_kind(ba_data);
-  if (kind != nx_ba_get_kind(Caml_ba_array_val(v_out_data)))
+  int kind = nx_buffer_get_kind(ba_data);
+  if (kind != nx_buffer_get_kind(Caml_ba_array_val(v_out_data)))
     caml_failwith("dtype mismatch");
-  if (nx_ba_get_kind(ba_indices) != CAML_BA_INT32)
+  if (nx_buffer_get_kind(ba_indices) != CAML_BA_INT32)
     caml_failwith("indices must be int32");
 
   elem_op_fn op = NULL;
@@ -689,11 +689,11 @@ static void dispatch_scatter(value v_template, value v_indices, value v_updates,
   value v_indices_data = Field(v_indices, FFI_TENSOR_DATA);
 
   struct caml_ba_array *ba_templ = Caml_ba_array_val(v_template_data);
-  int kind = nx_ba_get_kind(ba_templ);
-  if (kind != nx_ba_get_kind(Caml_ba_array_val(v_updates_data)) ||
-      kind != nx_ba_get_kind(Caml_ba_array_val(v_out_data)))
+  int kind = nx_buffer_get_kind(ba_templ);
+  if (kind != nx_buffer_get_kind(Caml_ba_array_val(v_updates_data)) ||
+      kind != nx_buffer_get_kind(Caml_ba_array_val(v_out_data)))
     caml_failwith("dtype mismatch");
-  if (nx_ba_get_kind(Caml_ba_array_val(v_indices_data)) != CAML_BA_INT32)
+  if (nx_buffer_get_kind(Caml_ba_array_val(v_indices_data)) != CAML_BA_INT32)
     caml_failwith("indices must be int32");
 
   const elem_op_table *table = Int_val(v_mode) == 0 ? &set_table : &add_table;

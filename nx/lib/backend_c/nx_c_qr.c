@@ -425,7 +425,7 @@ CAMLprim value caml_nx_op_qr(value v_in, value v_q, value v_r,
   struct caml_ba_array* ba_in = Caml_ba_array_val(Field(v_in, FFI_TENSOR_DATA));
   struct caml_ba_array* ba_q = Caml_ba_array_val(Field(v_q, FFI_TENSOR_DATA));
   struct caml_ba_array* ba_r = Caml_ba_array_val(Field(v_r, FFI_TENSOR_DATA));
-  int kind = nx_ba_get_kind(ba_in);
+  int kind = nx_buffer_get_kind(ba_in);
   if (in.ndim < 2) {
     cleanup_ndarray(&in);
     cleanup_ndarray(&q_nd);

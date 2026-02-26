@@ -1463,8 +1463,8 @@ static void dispatch_cast(value v_src, value v_dst) {
   value v_src_data = Field(v_src, FFI_TENSOR_DATA);
   value v_dst_data = Field(v_dst, FFI_TENSOR_DATA);
 
-  int src_kind = nx_ba_get_kind(Caml_ba_array_val(v_src_data));
-  int dst_kind = nx_ba_get_kind(Caml_ba_array_val(v_dst_data));
+  int src_kind = nx_buffer_get_kind(Caml_ba_array_val(v_src_data));
+  int dst_kind = nx_buffer_get_kind(Caml_ba_array_val(v_dst_data));
 
   nx_dtype src_dtype = kind_to_dtype(src_kind);
   nx_dtype dst_dtype = kind_to_dtype(dst_kind);

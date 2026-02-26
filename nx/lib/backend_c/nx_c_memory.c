@@ -184,8 +184,8 @@ CAMLprim value caml_nx_assign(value v_src, value v_dst) {
       Caml_ba_array_val(Field(v_src, FFI_TENSOR_DATA));
   struct caml_ba_array *ba_dst =
       Caml_ba_array_val(Field(v_dst, FFI_TENSOR_DATA));
-  int kind_src = nx_ba_get_kind(ba_src);
-  int kind_dst = nx_ba_get_kind(ba_dst);
+  int kind_src = nx_buffer_get_kind(ba_src);
+  int kind_dst = nx_buffer_get_kind(ba_dst);
   if (kind_src != kind_dst) {
     cleanup_ndarray(&src);
     cleanup_ndarray(&dst);
@@ -211,7 +211,7 @@ static value make_contiguous(value v_src, bool force_copy) {
   ndarray_t src = extract_ndarray(v_src);
   struct caml_ba_array *ba = Caml_ba_array_val(Field(v_src, FFI_TENSOR_DATA));
   int flags = ba->flags;
-  int kind = nx_ba_get_kind(ba);
+  int kind = nx_buffer_get_kind(ba);
   long total = total_elements_safe(&src);
   bool can_share = !force_copy && is_c_contiguous(&src) && src.offset == 0;
   if (can_share) {

@@ -528,10 +528,10 @@ CAMLprim value caml_nx_pad(value v_input, value v_pads, value v_fill,
 
   value v_input_data = Field(v_input, FFI_TENSOR_DATA);
   struct caml_ba_array *ba = Caml_ba_array_val(v_input_data);
-  int kind = nx_ba_get_kind(ba);
+  int kind = nx_buffer_get_kind(ba);
 
   value v_output_data = Field(v_output, FFI_TENSOR_DATA);
-  int kind_out = nx_ba_get_kind(Caml_ba_array_val(v_output_data));
+  int kind_out = nx_buffer_get_kind(Caml_ba_array_val(v_output_data));
   if (kind != kind_out) {
     free(pad_before);
     cleanup_ndarray(&input);
@@ -754,10 +754,10 @@ CAMLprim value caml_nx_cat(value v_inputs, value v_axis, value v_output) {
 
   value v_first_data = Field(Field(v_inputs, 0), FFI_TENSOR_DATA);
   struct caml_ba_array *ba = Caml_ba_array_val(v_first_data);
-  int kind = nx_ba_get_kind(ba);
+  int kind = nx_buffer_get_kind(ba);
 
   value v_output_data = Field(v_output, FFI_TENSOR_DATA);
-  int kind_out = nx_ba_get_kind(Caml_ba_array_val(v_output_data));
+  int kind_out = nx_buffer_get_kind(Caml_ba_array_val(v_output_data));
   if (kind != kind_out) {
     cleanup_ndarray(&output);
     caml_failwith("cat: dtype mismatch");

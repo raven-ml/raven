@@ -635,9 +635,9 @@ CAMLprim value caml_nx_argmax(value v_x, value v_out, value v_axis,
   int axis = Int_val(v_axis);
   bool keepdims = Bool_val(v_keepdims);
 
-  int kind = nx_ba_get_kind(Caml_ba_array_val(Field(v_x, FFI_TENSOR_DATA)));
+  int kind = nx_buffer_get_kind(Caml_ba_array_val(Field(v_x, FFI_TENSOR_DATA)));
   int out_kind =
-      nx_ba_get_kind(Caml_ba_array_val(Field(v_out, FFI_TENSOR_DATA)));
+      nx_buffer_get_kind(Caml_ba_array_val(Field(v_out, FFI_TENSOR_DATA)));
 
   err = validate_axis(&x, axis, "argmax");
   if (err) goto fail;
@@ -680,9 +680,9 @@ CAMLprim value caml_nx_argmin(value v_x, value v_out, value v_axis,
   int axis = Int_val(v_axis);
   bool keepdims = Bool_val(v_keepdims);
 
-  int kind = nx_ba_get_kind(Caml_ba_array_val(Field(v_x, FFI_TENSOR_DATA)));
+  int kind = nx_buffer_get_kind(Caml_ba_array_val(Field(v_x, FFI_TENSOR_DATA)));
   int out_kind =
-      nx_ba_get_kind(Caml_ba_array_val(Field(v_out, FFI_TENSOR_DATA)));
+      nx_buffer_get_kind(Caml_ba_array_val(Field(v_out, FFI_TENSOR_DATA)));
 
   err = validate_axis(&x, axis, "argmin");
   if (err) goto fail;
@@ -726,9 +726,9 @@ CAMLprim value caml_nx_sort(value v_x, value v_out, value v_axis,
   int axis = Int_val(v_axis);
   bool descending = Bool_val(v_descending);
 
-  int kind = nx_ba_get_kind(Caml_ba_array_val(Field(v_x, FFI_TENSOR_DATA)));
+  int kind = nx_buffer_get_kind(Caml_ba_array_val(Field(v_x, FFI_TENSOR_DATA)));
   int out_kind =
-      nx_ba_get_kind(Caml_ba_array_val(Field(v_out, FFI_TENSOR_DATA)));
+      nx_buffer_get_kind(Caml_ba_array_val(Field(v_out, FFI_TENSOR_DATA)));
 
   err = validate_axis(&x, axis, "sort");
   if (err) goto fail;
@@ -780,9 +780,9 @@ CAMLprim value caml_nx_argsort(value v_x, value v_out, value v_axis,
   int axis = Int_val(v_axis);
   bool descending = Bool_val(v_descending);
 
-  int kind = nx_ba_get_kind(Caml_ba_array_val(Field(v_x, FFI_TENSOR_DATA)));
+  int kind = nx_buffer_get_kind(Caml_ba_array_val(Field(v_x, FFI_TENSOR_DATA)));
   int out_kind =
-      nx_ba_get_kind(Caml_ba_array_val(Field(v_out, FFI_TENSOR_DATA)));
+      nx_buffer_get_kind(Caml_ba_array_val(Field(v_out, FFI_TENSOR_DATA)));
 
   err = validate_axis(&x, axis, "argsort");
   if (err) goto fail;

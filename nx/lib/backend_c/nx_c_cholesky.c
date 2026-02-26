@@ -273,7 +273,7 @@ CAMLprim value caml_nx_op_cholesky(value v_in, value v_out, value v_upper) {
   struct caml_ba_array* ba_in = Caml_ba_array_val(Field(v_in, FFI_TENSOR_DATA));
   struct caml_ba_array* ba_out =
       Caml_ba_array_val(Field(v_out, FFI_TENSOR_DATA));
-  int kind = nx_ba_get_kind(ba_in);
+  int kind = nx_buffer_get_kind(ba_in);
   if (in.ndim < 2) {
     cleanup_ndarray(&in);
     cleanup_ndarray(&out);

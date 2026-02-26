@@ -730,7 +730,7 @@ CAMLprim value caml_nx_op_triangular_solve(value v_a, value v_b, value v_out,
   struct caml_ba_array* ba_b = Caml_ba_array_val(Field(v_b, FFI_TENSOR_DATA));
   struct caml_ba_array* ba_out =
       Caml_ba_array_val(Field(v_out, FFI_TENSOR_DATA));
-  int kind = nx_ba_get_kind(ba_a);
+  int kind = nx_buffer_get_kind(ba_a);
   if (a.ndim < 2 || b.ndim < 2) {
     cleanup_ndarray(&a);
     cleanup_ndarray(&b);

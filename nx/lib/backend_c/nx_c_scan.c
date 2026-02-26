@@ -472,8 +472,8 @@ static void dispatch_scan_op(value v_input, value v_output, int axis,
   value v_output_data = Field(v_output, FFI_TENSOR_DATA);
   struct caml_ba_array *ba_input = Caml_ba_array_val(v_input_data);
   struct caml_ba_array *ba_output = Caml_ba_array_val(v_output_data);
-  int kind_input = nx_ba_get_kind(ba_input);
-  int kind_output = nx_ba_get_kind(ba_output);
+  int kind_input = nx_buffer_get_kind(ba_input);
+  int kind_output = nx_buffer_get_kind(ba_output);
 
   if (kind_input != kind_output) {
     cleanup_ndarray(&input);

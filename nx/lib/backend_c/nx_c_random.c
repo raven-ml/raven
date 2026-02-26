@@ -198,11 +198,11 @@ static void dispatch_binary_op(value v_x, value v_y, value v_z,
   value v_z_data = Field(v_z, FFI_TENSOR_DATA);
 
   struct caml_ba_array *ba = Caml_ba_array_val(v_x_data);
-  int kind = nx_ba_get_kind(ba);
+  int kind = nx_buffer_get_kind(ba);
 
   // Check kinds match for y and z
-  int kind_y = nx_ba_get_kind(Caml_ba_array_val(v_y_data));
-  int kind_z = nx_ba_get_kind(Caml_ba_array_val(v_z_data));
+  int kind_y = nx_buffer_get_kind(Caml_ba_array_val(v_y_data));
+  int kind_z = nx_buffer_get_kind(Caml_ba_array_val(v_z_data));
   if (kind != kind_y || kind != kind_z) {
     cleanup_ndarray(&x);
     cleanup_ndarray(&y);

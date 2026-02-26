@@ -927,10 +927,10 @@ static void dispatch_unary_op(value v_x, value v_z, const unary_op_table *table,
   value v_z_data = Field(v_z, FFI_TENSOR_DATA);
 
   struct caml_ba_array *ba = Caml_ba_array_val(v_x_data);
-  int kind = nx_ba_get_kind(ba);
+  int kind = nx_buffer_get_kind(ba);
 
   // Check kinds match for z
-  int kind_z = nx_ba_get_kind(Caml_ba_array_val(v_z_data));
+  int kind_z = nx_buffer_get_kind(Caml_ba_array_val(v_z_data));
   if (kind != kind_z) {
     cleanup_ndarray(&x);
     cleanup_ndarray(&z);

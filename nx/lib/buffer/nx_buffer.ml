@@ -123,35 +123,35 @@ type ('a, 'b) t = ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
 
 external create_bfloat16_genarray :
   'c Bigarray.layout -> int array -> ('a, 'b, 'c) Bigarray.Genarray.t
-  = "caml_nx_ba_create_bfloat16"
+  = "caml_nx_buffer_create_bfloat16"
 
 external create_bool_genarray :
   'c Bigarray.layout -> int array -> ('a, 'b, 'c) Bigarray.Genarray.t
-  = "caml_nx_ba_create_bool"
+  = "caml_nx_buffer_create_bool"
 
 external create_int4_signed_genarray :
   'c Bigarray.layout -> int array -> ('a, 'b, 'c) Bigarray.Genarray.t
-  = "caml_nx_ba_create_int4_signed"
+  = "caml_nx_buffer_create_int4_signed"
 
 external create_int4_unsigned_genarray :
   'c Bigarray.layout -> int array -> ('a, 'b, 'c) Bigarray.Genarray.t
-  = "caml_nx_ba_create_int4_unsigned"
+  = "caml_nx_buffer_create_int4_unsigned"
 
 external create_float8_e4m3_genarray :
   'c Bigarray.layout -> int array -> ('a, 'b, 'c) Bigarray.Genarray.t
-  = "caml_nx_ba_create_float8_e4m3"
+  = "caml_nx_buffer_create_float8_e4m3"
 
 external create_float8_e5m2_genarray :
   'c Bigarray.layout -> int array -> ('a, 'b, 'c) Bigarray.Genarray.t
-  = "caml_nx_ba_create_float8_e5m2"
+  = "caml_nx_buffer_create_float8_e5m2"
 
 external create_uint32_genarray :
   'c Bigarray.layout -> int array -> ('a, 'b, 'c) Bigarray.Genarray.t
-  = "caml_nx_ba_create_uint32"
+  = "caml_nx_buffer_create_uint32"
 
 external create_uint64_genarray :
   'c Bigarray.layout -> int array -> ('a, 'b, 'c) Bigarray.Genarray.t
-  = "caml_nx_ba_create_uint64"
+  = "caml_nx_buffer_create_uint64"
 
 (* Extended-kind genarray creation *)
 
@@ -175,32 +175,35 @@ let genarray_create : type a b c.
       | Some k -> Bigarray.Genarray.create k layout dims
       | None -> assert false)
 
-(* Element access externals *)
+(* Genarray externals *)
 
-external nx_ba_get_generic : ('a, 'b, 'c) Bigarray.Genarray.t -> int array -> 'a
-  = "caml_nx_ba_get_generic"
+external genarray_get : ('a, 'b, 'c) Bigarray.Genarray.t -> int array -> 'a
+  = "caml_nx_buffer_get"
 
-external nx_ba_set_generic :
+external genarray_set :
   ('a, 'b, 'c) Bigarray.Genarray.t -> int array -> 'a -> unit
-  = "caml_nx_ba_set_generic"
+  = "caml_nx_buffer_set"
 
-external nx_ba_kind : ('a, 'b, 'c) Bigarray.Genarray.t -> ('a, 'b) kind
-  = "caml_nx_ba_kind"
+external genarray_kind_ext : ('a, 'b, 'c) Bigarray.Genarray.t -> ('a, 'b) kind
+  = "caml_nx_buffer_kind"
+[@@noalloc]
 
-external nx_ba_blit :
+external genarray_blit_ext :
   ('a, 'b, 'c) Bigarray.Genarray.t -> ('a, 'b, 'c) Bigarray.Genarray.t -> unit
-  = "caml_nx_ba_blit"
+  = "caml_nx_buffer_blit"
 
-external nx_ba_fill : ('a, 'b, 'c) Bigarray.Genarray.t -> 'a -> unit
-  = "caml_nx_ba_fill"
+external genarray_fill_ext : ('a, 'b, 'c) Bigarray.Genarray.t -> 'a -> unit
+  = "caml_nx_buffer_fill"
 
 external unsafe_blit_from_bytes :
   bytes -> int -> ('a, 'b, 'c) Bigarray.Genarray.t -> int -> int -> unit
-  = "caml_nx_ba_blit_from_bytes"
+  = "caml_nx_buffer_blit_from_bytes"
+[@@noalloc]
 
 external unsafe_blit_to_bytes :
   ('a, 'b, 'c) Bigarray.Genarray.t -> int -> bytes -> int -> int -> unit
-  = "caml_nx_ba_blit_to_bytes"
+  = "caml_nx_buffer_blit_to_bytes"
+[@@noalloc]
 
 (* Buffer creation *)
 
@@ -209,40 +212,73 @@ let create kind n =
 
 (* Buffer properties *)
 
-let kind buf = nx_ba_kind (Bigarray.genarray_of_array1 buf)
+let kind buf = genarray_kind_ext (Bigarray.genarray_of_array1 buf)
 let length buf = Bigarray.Array1.dim buf
 
 (* Element access *)
 
-let get buf i = nx_ba_get_generic (Bigarray.genarray_of_array1 buf) [| i |]
-let set buf i v = nx_ba_set_generic (Bigarray.genarray_of_array1 buf) [| i |] v
-let unsafe_get = get
-let unsafe_set = set
+let get buf i = genarray_get (Bigarray.genarray_of_array1 buf) [| i |]
+let set buf i v = genarray_set (Bigarray.genarray_of_array1 buf) [| i |] v
+
+external unsafe_get : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> int -> 'a
+  = "caml_nx_buffer_unsafe_get"
+
+external unsafe_set :
+  ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> int -> 'a -> unit
+  = "caml_nx_buffer_unsafe_set"
+
+(* Byte count for a span of elements, accounting for int4 packing *)
+let elts_to_bytes : type a b. (a, b) kind -> int -> int =
+ fun k n ->
+  match k with
+  | Int4_signed -> (n + 1) / 2
+  | Int4_unsigned -> (n + 1) / 2
+  | _ -> n * kind_size_in_bytes k
 
 (* Bulk operations *)
 
-let fill buf v = nx_ba_fill (Bigarray.genarray_of_array1 buf) v
+let fill buf v = genarray_fill_ext (Bigarray.genarray_of_array1 buf) v
 
 let blit ~src ~dst =
-  nx_ba_blit (Bigarray.genarray_of_array1 src) (Bigarray.genarray_of_array1 dst)
+  genarray_blit_ext
+    (Bigarray.genarray_of_array1 src)
+    (Bigarray.genarray_of_array1 dst)
 
 let blit_from_bytes ?(src_off = 0) ?(dst_off = 0) ?len bytes buf =
-  let elem_size = kind_size_in_bytes (kind buf) in
-  let total = length buf in
-  let len = match len with Some len -> len | None -> total - dst_off in
+  let k = kind buf in
+  let buf_len = length buf in
+  let len = match len with Some l -> l | None -> buf_len - dst_off in
+  if src_off < 0 then invalid_arg "blit_from_bytes: negative src_off";
+  if dst_off < 0 then invalid_arg "blit_from_bytes: negative dst_off";
   if len < 0 then invalid_arg "blit_from_bytes: negative length";
-  unsafe_blit_from_bytes bytes (src_off * elem_size)
+  if dst_off + len > buf_len then
+    invalid_arg "blit_from_bytes: dst_off + len > buffer length";
+  let byte_len = elts_to_bytes k len in
+  let src_byte_off = src_off * kind_size_in_bytes k in
+  if src_byte_off + byte_len > Bytes.length bytes then
+    invalid_arg "blit_from_bytes: src_off + len > bytes length";
+  let dst_byte_off = elts_to_bytes k dst_off in
+  unsafe_blit_from_bytes bytes src_byte_off
     (Bigarray.genarray_of_array1 buf)
-    (dst_off * elem_size) (len * elem_size)
+    dst_byte_off byte_len
 
 let blit_to_bytes ?(src_off = 0) ?(dst_off = 0) ?len buf bytes =
-  let elem_size = kind_size_in_bytes (kind buf) in
-  let total = length buf in
-  let len = match len with Some len -> len | None -> total - src_off in
+  let k = kind buf in
+  let buf_len = length buf in
+  let len = match len with Some l -> l | None -> buf_len - src_off in
+  if src_off < 0 then invalid_arg "blit_to_bytes: negative src_off";
+  if dst_off < 0 then invalid_arg "blit_to_bytes: negative dst_off";
   if len < 0 then invalid_arg "blit_to_bytes: negative length";
+  if src_off + len > buf_len then
+    invalid_arg "blit_to_bytes: src_off + len > buffer length";
+  let byte_len = elts_to_bytes k len in
+  let dst_byte_off = dst_off * kind_size_in_bytes k in
+  if dst_byte_off + byte_len > Bytes.length bytes then
+    invalid_arg "blit_to_bytes: dst_off + len > bytes length";
+  let src_byte_off = elts_to_bytes k src_off in
   unsafe_blit_to_bytes
     (Bigarray.genarray_of_array1 buf)
-    (src_off * elem_size) bytes (dst_off * elem_size) (len * elem_size)
+    src_byte_off bytes dst_byte_off byte_len
 
 (* Bigarray conversions *)
 
@@ -259,12 +295,12 @@ let of_genarray ga =
 (* Genarray utilities *)
 
 let genarray_kind : type a b c. (a, b, c) Bigarray.Genarray.t -> (a, b) kind =
- fun ga -> nx_ba_kind ga
+ fun ga -> genarray_kind_ext ga
 
 let genarray_dims ga = Bigarray.Genarray.dims ga
 
 let genarray_blit : type a b c.
     (a, b, c) Bigarray.Genarray.t -> (a, b, c) Bigarray.Genarray.t -> unit =
- fun src dst -> nx_ba_blit src dst
+ fun src dst -> genarray_blit_ext src dst
 
 let genarray_change_layout = Bigarray.Genarray.change_layout

@@ -617,10 +617,10 @@ CAMLprim value caml_nx_op_unfold(value v_in, value v_kernel_size,
 
   value v_in_data = Field(v_in, FFI_TENSOR_DATA);
   struct caml_ba_array* ba_in = Caml_ba_array_val(v_in_data);
-  int kind = nx_ba_get_kind(ba_in);
+  int kind = nx_buffer_get_kind(ba_in);
 
   value v_out_data = Field(v_out, FFI_TENSOR_DATA);
-  int kind_out = nx_ba_get_kind(Caml_ba_array_val(v_out_data));
+  int kind_out = nx_buffer_get_kind(Caml_ba_array_val(v_out_data));
   if (kind != kind_out) caml_failwith("dtype mismatch");
 
   const type_ops_t* ops = get_type_ops(kind);
@@ -687,10 +687,10 @@ CAMLprim value caml_nx_op_fold(value v_in, value v_output_size,
 
   value v_in_data = Field(v_in, FFI_TENSOR_DATA);
   struct caml_ba_array* ba_in = Caml_ba_array_val(v_in_data);
-  int kind = nx_ba_get_kind(ba_in);
+  int kind = nx_buffer_get_kind(ba_in);
 
   value v_out_data = Field(v_out, FFI_TENSOR_DATA);
-  int kind_out = nx_ba_get_kind(Caml_ba_array_val(v_out_data));
+  int kind_out = nx_buffer_get_kind(Caml_ba_array_val(v_out_data));
   if (kind != kind_out) {
     cleanup_ndarray(&input);
     cleanup_ndarray(&output);
