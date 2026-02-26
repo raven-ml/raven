@@ -1,203 +1,240 @@
-(*---------------------------------------------------------------------------
-  Copyright (c) 2026 The Raven authors. All rights reserved.
-  SPDX-License-Identifier: ISC
-  ---------------------------------------------------------------------------*)
-
 open Fehu
 open Fehu_envs
 open Windtrap
 
-let test_random_walk_creation () =
-  let rng = Rune.Rng.key 42 in
-  let env = Random_walk.make ~rng () in
-  match Env.id env with
-  | Some id ->
-      equal ~msg:"random walk id" bool true
-        (String.starts_with ~prefix:"RandomWalk" id)
-  | None -> fail "expected env id"
+let rng = Rune.Rng.key 42
 
-let test_random_walk_reset () =
-  let rng = Rune.Rng.key 42 in
-  let env = Random_walk.make ~rng () in
-  let obs, _ = Env.reset env () in
+let read_float obs =
   let arr : float array = Rune.to_array (Rune.reshape [| 1 |] obs) in
-  equal ~msg:"random walk starts at 0" (float 0.01) 0.0 arr.(0)
+  arr.(0)
 
-let test_random_walk_step_left () =
-  let rng = Rune.Rng.key 42 in
-  let env = Random_walk.make ~rng () in
-  let _, _ = Env.reset env () in
-  let action = Rune.create Rune.int32 [| 1 |] [| 0l |] in
-  let transition = Env.step env action in
-  let arr : float array =
-    Rune.to_array (Rune.reshape [| 1 |] transition.Env.observation)
-  in
-  equal ~msg:"moved left" (float 0.01) (-1.0) arr.(0)
+let read_int32_array obs n =
+  let arr : Int32.t array = Rune.to_array (Rune.reshape [| n |] obs) in
+  Array.map Int32.to_int arr
 
-let test_random_walk_step_right () =
-  let rng = Rune.Rng.key 42 in
-  let env = Random_walk.make ~rng () in
-  let _, _ = Env.reset env () in
-  let action = Rune.create Rune.int32 [| 1 |] [| 1l |] in
-  let transition = Env.step env action in
-  let arr : float array =
-    Rune.to_array (Rune.reshape [| 1 |] transition.Env.observation)
-  in
-  equal ~msg:"moved right" (float 0.01) 1.0 arr.(0)
+let discrete action = Rune.create Rune.int32 [| 1 |] [| Int32.of_int action |]
 
-let test_random_walk_termination () =
-  let rng = Rune.Rng.key 42 in
-  let env = Random_walk.make ~rng () in
-  let _, _ = Env.reset env () in
-  let action = Rune.create Rune.int32 [| 1 |] [| 1l |] in
-  let rec step_to_boundary n =
-    if n > 20 then fail "did not terminate"
-    else
-      let transition = Env.step env action in
-      if transition.Env.terminated then transition else step_to_boundary (n + 1)
-  in
-  let final_transition = step_to_boundary 0 in
-  equal ~msg:"terminated" bool true final_transition.Env.terminated
+(* Random_walk *)
 
-let test_random_walk_truncation () =
-  let rng = Rune.Rng.key 42 in
+let test_rw_creation () =
   let env = Random_walk.make ~rng () in
-  let _, _ = Env.reset env () in
-  let action = Rune.create Rune.int32 [| 1 |] [| 0l |] in
-  let rec step_until_done n =
-    if n > 250 then fail "did not terminate or truncate in 250 steps"
-    else
-      let transition = Env.step env action in
-      if transition.Env.truncated || transition.Env.terminated then
-        (n, transition)
-      else step_until_done (n + 1)
-  in
-  let steps, final_transition = step_until_done 1 in
-  if final_transition.Env.terminated then
-    equal ~msg:"terminated before truncation" pass () ()
-  else equal ~msg:"truncated at step 200" int 200 steps
+  match Env.id env with
+  | Some id ->
+      is_true ~msg:"id starts with RandomWalk"
+        (String.length id >= 10 && String.sub id 0 10 = "RandomWalk")
+  | None -> fail "expected an id"
 
-let test_random_walk_render () =
-  let rng = Rune.Rng.key 42 in
+let test_rw_reset_obs () =
   let env = Random_walk.make ~rng () in
-  let _, _ = Env.reset env () in
+  let obs, _info = Env.reset env () in
+  equal ~msg:"reset obs is 0.0" (float 1e-6) 0.0 (read_float obs)
+
+let test_rw_step_left () =
+  let env = Random_walk.make ~rng () in
+  let _obs, _info = Env.reset env () in
+  let s = Env.step env (discrete 0) in
+  equal ~msg:"step left to -1.0" (float 1e-6) (-1.0) (read_float s.observation)
+
+let test_rw_step_right () =
+  let env = Random_walk.make ~rng () in
+  let _obs, _info = Env.reset env () in
+  let s = Env.step env (discrete 1) in
+  equal ~msg:"step right to 1.0" (float 1e-6) 1.0 (read_float s.observation)
+
+let test_rw_termination () =
+  let env = Random_walk.make ~rng () in
+  let _obs, _info = Env.reset env () in
+  let terminated = ref false in
+  for _ = 1 to 20 do
+    if not !terminated then begin
+      let s = Env.step env (discrete 1) in
+      if s.terminated then terminated := true
+      else if s.truncated then begin
+        let _obs, _info = Env.reset env () in
+        ()
+      end
+    end
+  done;
+  is_true ~msg:"terminated at boundary" !terminated
+
+let test_rw_ansi_render () =
+  let env = Random_walk.make ~render_mode:`Ansi ~rng () in
+  let _obs, _info = Env.reset env () in
   match Env.render env with
-  | Some str ->
-      equal ~msg:"render produces string" bool true (String.length str > 0)
-  | None -> fail "expected render output"
+  | Some s -> is_true ~msg:"non-empty render" (String.length s > 0)
+  | None -> fail "expected Some render"
 
-let test_grid_world_creation () =
-  let rng = Rune.Rng.key 42 in
+(* Cartpole *)
+
+let test_cp_creation () =
+  let env = Cartpole.make ~rng () in
+  match Env.id env with
+  | Some id ->
+      is_true ~msg:"id starts with CartPole"
+        (String.length id >= 8 && String.sub id 0 8 = "CartPole")
+  | None -> fail "expected an id"
+
+let test_cp_reset_shape () =
+  let env = Cartpole.make ~rng () in
+  let obs, _info = Env.reset env () in
+  let shape = Rune.shape obs in
+  equal ~msg:"obs shape [4]" (array int) [| 4 |] shape
+
+let test_cp_step_reward () =
+  let env = Cartpole.make ~rng () in
+  let _obs, _info = Env.reset env () in
+  let s = Env.step env (discrete 1) in
+  is_false ~msg:"not terminated on first step" s.terminated;
+  equal ~msg:"reward 1.0" (float 1e-6) 1.0 s.reward
+
+let test_cp_termination () =
+  let env = Cartpole.make ~rng () in
+  let _obs, _info = Env.reset env () in
+  let done_flag = ref false in
+  for _ = 1 to 600 do
+    if not !done_flag then begin
+      let s = Env.step env (discrete 0) in
+      if s.terminated || s.truncated then done_flag := true
+    end
+  done;
+  is_true ~msg:"episode ends" !done_flag
+
+(* Grid_world *)
+
+let test_gw_creation () =
   let env = Grid_world.make ~rng () in
   match Env.id env with
   | Some id ->
-      equal ~msg:"grid world id" bool true
-        (String.starts_with ~prefix:"GridWorld" id)
-  | None -> fail "expected env id"
+      is_true ~msg:"id starts with GridWorld"
+        (String.length id >= 9 && String.sub id 0 9 = "GridWorld")
+  | None -> fail "expected an id"
 
-let test_grid_world_reset () =
-  let rng = Rune.Rng.key 42 in
+let test_gw_reset_obs () =
   let env = Grid_world.make ~rng () in
-  let obs, _ = Env.reset env () in
-  let arr : Int32.t array = Rune.to_array (Rune.reshape [| 2 |] obs) in
-  equal ~msg:"starts at row 0" int32 0l arr.(0);
-  equal ~msg:"starts at col 0" int32 0l arr.(1)
+  let obs, _info = Env.reset env () in
+  let pos = read_int32_array obs 2 in
+  equal ~msg:"row = 0" int 0 pos.(0);
+  equal ~msg:"col = 0" int 0 pos.(1)
 
-let test_grid_world_move_down () =
-  let rng = Rune.Rng.key 42 in
+let test_gw_move_down () =
   let env = Grid_world.make ~rng () in
-  let _, _ = Env.reset env () in
-  let action = Rune.create Rune.int32 [| 1 |] [| 1l |] in
-  let transition = Env.step env action in
-  let arr : Int32.t array =
-    Rune.to_array (Rune.reshape [| 2 |] transition.Env.observation)
-  in
-  equal ~msg:"moved to row 1" int32 1l arr.(0);
-  equal ~msg:"stayed at col 0" int32 0l arr.(1)
+  let _obs, _info = Env.reset env () in
+  let s = Env.step env (discrete 1) in
+  let pos = read_int32_array s.observation 2 in
+  equal ~msg:"row = 1 after down" int 1 pos.(0)
 
-let test_grid_world_move_right () =
-  let rng = Rune.Rng.key 42 in
+let test_gw_move_right () =
   let env = Grid_world.make ~rng () in
-  let _, _ = Env.reset env () in
-  let action = Rune.create Rune.int32 [| 1 |] [| 3l |] in
-  let transition = Env.step env action in
-  let arr : Int32.t array =
-    Rune.to_array (Rune.reshape [| 2 |] transition.Env.observation)
-  in
-  equal ~msg:"stayed at row 0" int32 0l arr.(0);
-  equal ~msg:"moved to col 1" int32 1l arr.(1)
+  let _obs, _info = Env.reset env () in
+  let s = Env.step env (discrete 3) in
+  let pos = read_int32_array s.observation 2 in
+  equal ~msg:"col = 1 after right" int 1 pos.(1)
 
-let test_grid_world_obstacle () =
-  let rng = Rune.Rng.key 42 in
+let test_gw_obstacle () =
   let env = Grid_world.make ~rng () in
-  let _, _ = Env.reset env () in
-  let move_down = Rune.create Rune.int32 [| 1 |] [| 1l |] in
-  let move_right = Rune.create Rune.int32 [| 1 |] [| 3l |] in
-  let _ = Env.step env move_down in
-  let _ = Env.step env move_down in
-  let _ = Env.step env move_right in
-  let transition = Env.step env move_right in
-  let arr : Int32.t array =
-    Rune.to_array (Rune.reshape [| 2 |] transition.Env.observation)
-  in
-  equal ~msg:"cannot enter obstacle" int32 2l arr.(0);
-  equal ~msg:"stays before obstacle" int32 1l arr.(1)
+  let _obs, _info = Env.reset env () in
+  (* Navigate to (1, 2): down, right, right *)
+  let _s = Env.step env (discrete 1) in
+  let _s = Env.step env (discrete 3) in
+  let s = Env.step env (discrete 3) in
+  let pos = read_int32_array s.observation 2 in
+  equal ~msg:"at (1,2)" int 1 pos.(0);
+  equal ~msg:"at (1,2)" int 2 pos.(1);
+  (* Try to move down into obstacle at (2,2) *)
+  let s = Env.step env (discrete 1) in
+  let pos = read_int32_array s.observation 2 in
+  equal ~msg:"blocked row still 1" int 1 pos.(0);
+  equal ~msg:"blocked col still 2" int 2 pos.(1)
 
-let test_grid_world_goal () =
-  let rng = Rune.Rng.key 42 in
+let test_gw_reach_goal () =
   let env = Grid_world.make ~rng () in
-  let _, _ = Env.reset env () in
-  let move_down = Rune.create Rune.int32 [| 1 |] [| 1l |] in
-  let move_right = Rune.create Rune.int32 [| 1 |] [| 3l |] in
-  let reach_goal () =
-    let _ = Env.step env move_down in
-    let _ = Env.step env move_down in
-    let _ = Env.step env move_down in
-    let _ = Env.step env move_down in
-    let _ = Env.step env move_right in
-    let _ = Env.step env move_right in
-    let _ = Env.step env move_right in
-    Env.step env move_right
-  in
-  let transition = reach_goal () in
-  equal ~msg:"reached goal" bool true transition.Env.terminated;
-  equal ~msg:"goal reward" (float 0.01) 10.0 transition.Env.reward
+  let _obs, _info = Env.reset env () in
+  (* Path to (4,4) avoiding obstacle at (2,2): down 4 times to row 4, then right
+     4 times to col 4 *)
+  for _ = 1 to 4 do
+    ignore (Env.step env (discrete 1))
+  done;
+  let s_right1 = Env.step env (discrete 3) in
+  is_false ~msg:"not done yet" s_right1.terminated;
+  let _s = Env.step env (discrete 3) in
+  let _s = Env.step env (discrete 3) in
+  let s = Env.step env (discrete 3) in
+  is_true ~msg:"terminated at goal" s.terminated;
+  equal ~msg:"reward 10.0" (float 1e-6) 10.0 s.reward
 
-let test_grid_world_render () =
-  let rng = Rune.Rng.key 42 in
-  let env = Grid_world.make ~rng () in
-  let _, _ = Env.reset env () in
+let test_gw_ansi_render () =
+  let env = Grid_world.make ~render_mode:`Ansi ~rng () in
+  let _obs, _info = Env.reset env () in
   match Env.render env with
-  | Some (Render.Text text) ->
-      equal ~msg:"render produces text" bool true (String.length text > 0)
-  | Some (Render.Image image) ->
-      equal ~msg:"render produces image" bool true (image.width > 0)
-  | Some Render.None -> fail "unexpected empty render frame"
-  | Some (Render.Svg svg) ->
-      equal ~msg:"render produces svg" bool true (String.length svg > 0)
-  | None -> fail "expected render output"
+  | Some (Grid_world.Text s) ->
+      is_true ~msg:"non-empty render" (String.length s > 0)
+  | Some (Grid_world.Image _) -> fail "expected Text render"
+  | None -> fail "expected Some render"
+
+(* Mountain_car *)
+
+let test_mc_creation () =
+  let env = Mountain_car.make ~rng () in
+  match Env.id env with
+  | Some id ->
+      is_true ~msg:"id starts with MountainCar"
+        (String.length id >= 11 && String.sub id 0 11 = "MountainCar")
+  | None -> fail "expected an id"
+
+let test_mc_reset_shape () =
+  let env = Mountain_car.make ~rng () in
+  let obs, _info = Env.reset env () in
+  let shape = Rune.shape obs in
+  equal ~msg:"obs shape [2]" (array int) [| 2 |] shape
+
+let test_mc_step_coast () =
+  let env = Mountain_car.make ~rng () in
+  let _obs, _info = Env.reset env () in
+  let s = Env.step env (discrete 1) in
+  let shape = Rune.shape s.observation in
+  equal ~msg:"obs shape after step" (array int) [| 2 |] shape;
+  is_false ~msg:"not terminated" s.terminated
+
+let test_mc_reward () =
+  let env = Mountain_car.make ~rng () in
+  let _obs, _info = Env.reset env () in
+  let s = Env.step env (discrete 1) in
+  equal ~msg:"reward -1.0" (float 1e-6) (-1.0) s.reward
 
 let () =
-  run "Environments"
+  run "Fehu_envs"
     [
       group "RandomWalk"
         [
-          test "creation" test_random_walk_creation;
-          test "reset" test_random_walk_reset;
-          test "step left" test_random_walk_step_left;
-          test "step right" test_random_walk_step_right;
-          test "termination" test_random_walk_termination;
-          test "truncation" test_random_walk_truncation;
-          test "render" test_random_walk_render;
+          test "creation" test_rw_creation;
+          test "reset observation" test_rw_reset_obs;
+          test "step left" test_rw_step_left;
+          test "step right" test_rw_step_right;
+          test "termination at boundary" test_rw_termination;
+          test "ansi render" test_rw_ansi_render;
+        ];
+      group "CartPole"
+        [
+          test "creation" test_cp_creation;
+          test "reset shape" test_cp_reset_shape;
+          test "step reward" test_cp_step_reward;
+          test "termination" test_cp_termination;
         ];
       group "GridWorld"
         [
-          test "creation" test_grid_world_creation;
-          test "reset" test_grid_world_reset;
-          test "move down" test_grid_world_move_down;
-          test "move right" test_grid_world_move_right;
-          test "obstacle collision" test_grid_world_obstacle;
-          test "reach goal" test_grid_world_goal;
-          test "render" test_grid_world_render;
+          test "creation" test_gw_creation;
+          test "reset observation" test_gw_reset_obs;
+          test "move down" test_gw_move_down;
+          test "move right" test_gw_move_right;
+          test "obstacle blocks movement" test_gw_obstacle;
+          test "reach goal" test_gw_reach_goal;
+          test "ansi render" test_gw_ansi_render;
+        ];
+      group "MountainCar"
+        [
+          test "creation" test_mc_creation;
+          test "reset shape" test_mc_reset_shape;
+          test "step coast" test_mc_step_coast;
+          test "reward" test_mc_reward;
         ];
     ]
