@@ -491,7 +491,7 @@ let test_high_dimensional_arrays () =
   (* Clean up *)
   Sys.remove path
 
-let fixture_dir = "nx/test/fixtures"
+let fixture_dir = "fixtures"
 
 (* Extract raw tensor payload from a safetensors file *)
 let safetensors_payload path =

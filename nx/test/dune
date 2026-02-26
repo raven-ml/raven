@@ -17,11 +17,13 @@
   test_nx_ops
   test_nx_rng)
  (package nx)
- (modules :standard \ test_nx_support)
+ (modules :standard \ test_nx_support test_nx_io)
  (libraries nx_buffer nx nx_core windtrap test_nx_support))
 
 (test
  (name test_nx_io)
  (package nx)
  (modules test_nx_io)
- (libraries nx nx_io windtrap))
+ (libraries nx nx_io windtrap)
+ (deps
+  (glob_files fixtures/*)))
