@@ -64,6 +64,16 @@
   (numerical-computation tensor-library machine-learning)))
 
 (package
+ (name tolk)
+ (synopsis "An ML compiler inspired by tinygrad")
+ (description
+  "Tolk is a port of tinygrad in OCaml. A minimal, readable ML compiler for the Raven ecosystem.")
+ (depends
+  (ocaml
+   (>= 5.2))
+  (windtrap :with-test)))
+
+(package
  (name brot)
  (synopsis "Fast tokenization library for OCaml")
  (description
@@ -221,6 +231,8 @@
   "Raven is a comprehensive machine learning ecosystem for OCaml. This meta package installs all Raven components including Nx (tensors), Hugin (plotting), Rune (autodiff), Kaun (neural networks), and Sowilo (computer vision).")
  (depends
   (nx
+   (= :version))
+  (tolk
    (= :version))
   (brot
    (= :version))
