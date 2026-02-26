@@ -12,7 +12,7 @@ python3 -m http.server -d _build/default/www/build
 ## Structure
 
 - `site/` — HTML landing pages and static assets
-- `docs/` — general documentation (installation, roadmap, etc.)
+- `../doc/` — general documentation (installation, roadmap, etc.)
 - `templates/` — HTML templates (`main.html`, `layout_docs.html`, `layout_docs_lib.html`)
 - `generate/` — site generator
 - `process/` — odoc API docs integration (WIP, not part of the build)

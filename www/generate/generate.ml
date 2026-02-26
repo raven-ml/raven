@@ -1,5 +1,5 @@
 let site_dir = "site"
-let docs_dir = "docs"
+let docs_dir = "../doc"
 let build_dir = "build"
 let templates_dir = "templates"
 let lib_doc_dir lib_name =
