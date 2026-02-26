@@ -11,9 +11,7 @@ let to_grayscale img =
   let spatial = Array.sub shape 0 (rank - 1) in
   let n_pixels = Array.fold_left ( * ) 1 spatial in
   let flat = Rune.reshape [| n_pixels; shape.(c_axis) |] img in
-  let weights =
-    Rune.create Rune.float32 [| 3; 1 |] [| 0.299; 0.587; 0.114 |]
-  in
+  let weights = Rune.create Rune.float32 [| 3; 1 |] [| 0.299; 0.587; 0.114 |] in
   let result = Rune.matmul flat weights in
   let out_shape = Array.copy shape in
   out_shape.(c_axis) <- 1;

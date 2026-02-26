@@ -13,21 +13,18 @@ open Kaun
 (* Tokenizer *)
 
 let load_tokenizer model_id =
-  let vocab =
-    Kaun_hf.download_file ~model_id ~filename:"vocab.json" ()
-  in
-  let merges =
-    Kaun_hf.download_file ~model_id ~filename:"merges.txt" ()
-  in
+  let vocab = Kaun_hf.download_file ~model_id ~filename:"vocab.json" () in
+  let merges = Kaun_hf.download_file ~model_id ~filename:"merges.txt" () in
   Brot.from_model_file ~vocab ~merges
-    ~pre:(Brot.Pre_tokenizer.byte_level ~add_prefix_space:false ~use_regex:true ())
-    ~decoder:(Brot.Decoder.byte_level ()) ()
+    ~pre:
+      (Brot.Pre_tokenizer.byte_level ~add_prefix_space:false ~use_regex:true ())
+    ~decoder:(Brot.Decoder.byte_level ())
+    ()
 
 let encode tokenizer text =
   Array.map Int32.of_int (Brot.encode_ids tokenizer text)
 
-let decode tokenizer ids =
-  Brot.decode tokenizer (Array.map Int32.to_int ids)
+let decode tokenizer ids = Brot.decode tokenizer (Array.map Int32.to_int ids)
 
 (* Greedy decode: at each step pick the highest-probability next token. *)
 
@@ -76,17 +73,15 @@ let () =
   Printf.printf "  Prompt: \"Hello world\"\n";
   Printf.printf "  Top 5 continuations:\n";
   let hello_ids = encode tokenizer "Hello world" in
-  let hello = Rune.create Rune.int32 [| 1; Array.length hello_ids |] hello_ids in
+  let hello =
+    Rune.create Rune.int32 [| 1; Array.length hello_ids |] hello_ids
+  in
   print_top_k ~k:5 model vars hello ~pos:(Array.length hello_ids - 1);
 
   (* --- Greedy generation from several prompts --- *)
   Printf.printf "\n=== Greedy generation (30 tokens each) ===\n\n";
   let prompts =
-    [
-      "The meaning of life is";
-      "Once upon a time";
-      "The quick brown fox";
-    ]
+    [ "The meaning of life is"; "Once upon a time"; "The quick brown fox" ]
   in
   List.iter
     (fun text ->

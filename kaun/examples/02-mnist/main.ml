@@ -62,7 +62,7 @@ let () =
     let train_data =
       Data.prepare ~shuffle:epoch_key ~batch_size (x_train, y_train)
       |> Data.map (fun (x, y) ->
-             (x, fun logits -> Loss.cross_entropy_sparse logits y))
+          (x, fun logits -> Loss.cross_entropy_sparse logits y))
     in
     let num_batches = n_train / batch_size in
     let tracker = Metric.tracker () in

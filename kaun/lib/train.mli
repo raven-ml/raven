@@ -87,7 +87,9 @@ val fit :
     [report] to end training early.
 
     For fixed-data training (same input every step), use {!Data.repeat}:
-    {[Train.fit trainer st (Data.repeat 1000 (x, loss_fn))]} *)
+    {[
+      Train.fit trainer st (Data.repeat 1000 (x, loss_fn))
+    ]} *)
 
 (** {1:inference Inference} *)
 

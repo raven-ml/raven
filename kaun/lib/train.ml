@@ -41,8 +41,8 @@ let step (type i o l in_elt) (t : (i, o) t) (st : l state) ~training ?rngs ?ctx
 exception Early_stop
 
 let fit (type i o l in_elt) (t : (i, o) t) (st : l state) ?rngs ?ctx ?report
-    (data :
-      ((i, in_elt) Rune.t * ((o, l) Rune.t -> (float, l) Rune.t)) Data.t) =
+    (data : ((i, in_elt) Rune.t * ((o, l) Rune.t -> (float, l) Rune.t)) Data.t)
+    =
   let st = ref st in
   let i = ref 0 in
   (try

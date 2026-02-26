@@ -33,8 +33,7 @@ let sobel ?(ksize = 3) img =
   ignore ksize;
   gradient_pair ~kernel_x:sobel_kx ~kernel_y:sobel_ky img
 
-let scharr img =
-  gradient_pair ~kernel_x:scharr_kx ~kernel_y:scharr_ky img
+let scharr img = gradient_pair ~kernel_x:scharr_kx ~kernel_y:scharr_ky img
 
 let laplacian ?(ksize = 3) img =
   ignore ksize;
