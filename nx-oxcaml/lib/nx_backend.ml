@@ -31,7 +31,7 @@ let dtype t = t.dtype
 let context t = t.context
 
 let to_host (type a b) (t : (a, b) t) :
-    (a, b, Nx_buffer.c_layout) Nx_buffer.Array1.t =
+    (a, b) Nx_buffer.t =
   let n = numel t.view in
   match t.dtype with
   | Dtype.Float64 ->
@@ -54,9 +54,9 @@ let to_host (type a b) (t : (a, b) t) :
     Array.unboxed_int16_to_ba arr n
   | Dtype.Bool ->
     let (Bool arr) = t.buffer in
-    let ba = Array1.create Nx_buffer.Bool Nx_buffer.c_layout n in
+    let ba = Nx_buffer.create Nx_buffer.Bool n in
     for i = 0 to n - 1 do
-      Array1.unsafe_set ba i arr.(i)
+      Nx_buffer.unsafe_set ba i arr.(i)
     done;
     ba
   | _ -> Error.invalid ~op:"to_host" ~what:"unsupported dtype" ()
@@ -1445,35 +1445,36 @@ let sort ~out:_ ~axis:_ ~descending:_ _ =
 let argsort ~out:_ ~axis:_ ~descending:_ _ =
   Error.invalid ~op:"argsort" ~what:"not implemented" ()
 
-let from_host (type a b) ctx (array : (a, b, c_layout) Bigarray.Array1.t) :
+let from_host (type a b) ctx (array : (a, b) Nx_buffer.t) :
     (a, b) t =
-  let dtype = Dtype.of_buffer_kind (Array1.kind array) in
-  let size = Array1.dim array in
+  let dtype = Dtype.of_buffer_kind (Nx_buffer.kind array) in
+  let size = Nx_buffer.length array in
   let shape = Symbolic_shape.of_ints [| size |] in
   let view = View.create shape in
+  let ba = Nx_buffer.to_bigarray1 array in
   match dtype with
   | Dtype.Float64 ->
-    let unboxed_array = Array.ba_to_unboxed_float_array array in
+    let unboxed_array = Array.ba_to_unboxed_float_array ba in
     { context = ctx; dtype; buffer = Float64 unboxed_array; view }
   | Dtype.Float32 ->
-    let unboxed_array = Array.ba_to_unboxed_float32_array array in
+    let unboxed_array = Array.ba_to_unboxed_float32_array ba in
     { context = ctx; dtype; buffer = Float32 unboxed_array; view }
   | Dtype.Int64 ->
-    let unboxed_array = Array.ba_to_unboxed_int64_array array in
+    let unboxed_array = Array.ba_to_unboxed_int64_array ba in
     { context = ctx; dtype; buffer = Int64 unboxed_array; view }
   | Dtype.Int32 ->
-    let unboxed_array = Array.ba_to_unboxed_int32_array array in
+    let unboxed_array = Array.ba_to_unboxed_int32_array ba in
     { context = ctx; dtype; buffer = Int32 unboxed_array; view }
   | Dtype.Int8 ->
-    let unboxed_array = Array.ba_to_unboxed_int8_array array in
+    let unboxed_array = Array.ba_to_unboxed_int8_array ba in
     { context = ctx; dtype; buffer = Int8 unboxed_array; view }
   | Dtype.Int16 ->
-    let unboxed_array = Array.ba_to_unboxed_int16_array array in
+    let unboxed_array = Array.ba_to_unboxed_int16_array ba in
     { context = ctx; dtype; buffer = Int16 unboxed_array; view }
   | Dtype.Bool ->
     let unboxed_array = Array.make size false in
     for i = 0 to size - 1 do
-      unboxed_array.(i) <- Array1.unsafe_get array i
+      unboxed_array.(i) <- Nx_buffer.unsafe_get array i
     done;
     { context = ctx; dtype; buffer = Bool unboxed_array; view }
   | _ -> Error.invalid ~op:"from_host" ~what:"unsupported dtype" ()
