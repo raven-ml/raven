@@ -50,7 +50,7 @@ type _ Effect.t +=
       -> ('a, 'b) t Effect.t
   | E_from_host : {
       context : context;
-      array : ('a, 'b, Nx_buffer.c_layout) Nx_buffer.Array1.t;
+      array : ('a, 'b) Nx_buffer.t;
     }
       -> ('a, 'b) t Effect.t
   | E_add : {
@@ -406,8 +406,7 @@ let dtype : type a b. (a, b) t -> (a, b) Dtype.t = function
 
 let is_symbolic = function Symbolic_tensor _ -> true | _ -> false
 
-let to_host : type a b.
-    (a, b) t -> (a, b, Nx_buffer.c_layout) Nx_buffer.Array1.t = function
+let to_host : type a b. (a, b) t -> (a, b) Nx_buffer.t = function
   | Native_tensor t -> Nx_backend.to_host t
   | Symbolic_tensor { id; _ } ->
       failwith (Printf.sprintf "Cannot extract data from symbolic tensor %d" id)
