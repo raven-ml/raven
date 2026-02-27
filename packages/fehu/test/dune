@@ -13,4 +13,4 @@
   test_render
   test_envs)
  (package fehu)
- (libraries fehu fehu.envs nx rune windtrap))
+ (libraries fehu fehu.envs nx windtrap))

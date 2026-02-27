@@ -152,14 +152,14 @@
 
 (package
  (name sowilo)
- (synopsis "Computer vision extensions for Rune")
+ (synopsis "Computer vision library for OCaml")
  (description
-  "Computer vision operations and algorithms built on top of the Rune library. Provides image processing, feature extraction, and other vision-related functionality.")
+  "Computer vision operations and algorithms built on top of Nx. Provides image processing, feature extraction, and other vision-related functionality.")
  (depends
   (ocaml
    (>= 5.2.0))
   dune
-  (rune
+  (nx
    (= :version))
   (windtrap :with-test))
  (tags
@@ -169,12 +169,12 @@
  (name fehu)
  (synopsis "Reinforcement learning environments and utilities for OCaml")
  (description
-  "Minimal, composable library for reinforcement learning: environments, spaces, trajectory collection, advantage estimation, and replay buffers. Built on Rune.")
+  "Minimal, composable library for reinforcement learning: environments, spaces, trajectory collection, advantage estimation, and replay buffers. Built on Nx.")
  (depends
   (ocaml
    (>= 5.2.0))
   dune
-  (rune
+  (nx
    (= :version))
   (windtrap :with-test))
  (tags
