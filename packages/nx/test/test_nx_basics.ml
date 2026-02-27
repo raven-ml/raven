@@ -488,21 +488,6 @@ let test_blit_incompatible () =
        "blit: shape mismatch [2] vs [3], source and destination must have identical shapes")
     (fun () -> Nx.blit src dst)
 
-let test_ifill_nan () =
-  let t = Nx.empty Nx.float32 [| 2; 2 |] in
-  ignore (Nx.ifill Float.nan t);
-  let v = Nx.item [ 0; 0 ] t in
-  equal ~msg:"ifill with NaN" bool true (Float.is_nan v)
-
-let test_ifill_inf () =
-  let t = Nx.empty Nx.float32 [| 2; 2 |] in
-  ignore (Nx.ifill Float.infinity t);
-  equal ~msg:"ifill with infinity" (float 1e-6) Float.infinity
-    (Nx.item [ 0; 0 ] t);
-  ignore (Nx.ifill Float.neg_infinity t);
-  equal ~msg:"ifill with neg_infinity" (float 1e-6) Float.neg_infinity
-    (Nx.item [ 0; 0 ] t)
-
 let test_fill_returns_copy () =
   let t = Nx.zeros Nx.float32 [| 2; 2 |] in
   let filled = Nx.fill 7.0 t in
@@ -672,8 +657,6 @@ let utility_operations =
     test "to bigarray partial slice" test_to_bigarray_partial_slice;
     test "copy" test_copy;
     test "blit incompatible" test_blit_incompatible;
-    test "ifill nan" test_ifill_nan;
-    test "ifill inf" test_ifill_inf;
     test "fill returns copy" test_fill_returns_copy;
     test "blit self" test_blit_self;
     (* ("blit overlapping views", `Quick, test_blit_overlapping_views ); *)

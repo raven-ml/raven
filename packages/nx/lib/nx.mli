@@ -1090,9 +1090,6 @@ val blit : ('a, 'b) t -> ('a, 'b) t -> unit
       (* dst now contains all 1s *)
     ]} *)
 
-val ifill : 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [ifill value t] sets all elements of [t] to [value] in-place. *)
-
 val fill : 'a -> ('a, 'b) t -> ('a, 'b) t
 (** [fill value t] returns a copy of [t] filled with [value], leaving [t]
     unchanged. Handy when wanting a filled tensor without mutating the source.
@@ -1428,16 +1425,8 @@ val add : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 val add_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
 (** [add_s ?out t scalar] adds scalar to each element. *)
 
-val iadd : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [iadd target value] adds [value] to [target] in-place.
-
-    Returns modified [target]. *)
-
 val radd_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
 (** [radd_s ?out scalar t] is [add_s ?out t scalar]. *)
-
-val iadd_s : ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [iadd_s t scalar] adds scalar to [t] in-place. *)
 
 val sub : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [sub ?out t1 t2] computes element-wise difference with broadcasting.
@@ -1450,12 +1439,6 @@ val sub_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
 val rsub_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
 (** [rsub_s ?out scalar t] computes [scalar - t]. *)
 
-val isub : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [isub target value] subtracts [value] from [target] in-place. *)
-
-val isub_s : ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [isub_s t scalar] subtracts scalar from [t] in-place. *)
-
 val mul : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [mul ?out t1 t2] computes element-wise product with broadcasting.
 
@@ -1466,12 +1449,6 @@ val mul_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
 
 val rmul_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
 (** [rmul_s ?out scalar t] is [mul_s ?out t scalar]. *)
-
-val imul : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [imul target value] multiplies [target] by [value] in-place. *)
-
-val imul_s : ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [imul_s t scalar] multiplies [t] by scalar in-place. *)
 
 val div : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [div ?out t1 t2] computes element-wise division.
@@ -1502,12 +1479,6 @@ val div_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
 val rdiv_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
 (** [rdiv_s ?out scalar t] computes [scalar / t]. *)
 
-val idiv : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [idiv target value] divides [target] by [value] in-place. *)
-
-val idiv_s : ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [idiv_s t scalar] divides [t] by scalar in-place. *)
-
 val pow : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [pow ?out base exponent] computes element-wise power.
 
@@ -1519,12 +1490,6 @@ val pow_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
 val rpow_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
 (** [rpow_s ?out scalar t] computes [scalar ** t]. *)
 
-val ipow : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [ipow target exponent] raises [target] to [exponent] in-place. *)
-
-val ipow_s : ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [ipow_s t scalar] raises [t] to scalar power in-place. *)
-
 val mod_ : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [mod_ ?out t1 t2] computes element-wise modulo.
 
@@ -1535,12 +1500,6 @@ val mod_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
 
 val rmod_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
 (** [rmod_s ?out scalar t] computes [scalar mod t]. *)
-
-val imod : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [imod target divisor] computes modulo in-place. *)
-
-val imod_s : ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [imod_s t scalar] computes modulo scalar in-place. *)
 
 val neg : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [neg ?out t] negates all elements.
@@ -1945,12 +1904,6 @@ val maximum_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
 val rmaximum_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
 (** [rmaximum_s ?out scalar t] is [maximum_s ?out t scalar]. *)
 
-val imaximum : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [imaximum target value] computes maximum in-place. *)
-
-val imaximum_s : ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [imaximum_s t scalar] computes maximum with scalar in-place. *)
-
 val minimum : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [minimum ?out t1 t2] returns element-wise minimum.
 
@@ -1961,12 +1914,6 @@ val minimum_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
 
 val rminimum_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
 (** [rminimum_s ?out scalar t] is [minimum_s ?out t scalar]. *)
-
-val iminimum : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [iminimum target value] computes minimum in-place. *)
-
-val iminimum_s : ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [iminimum_s t scalar] computes minimum with scalar in-place. *)
 
 val logical_and : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [logical_and ?out t1 t2] computes element-wise AND.

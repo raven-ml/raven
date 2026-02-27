@@ -153,10 +153,6 @@ let data_manipulation_tests =
         let filled = Nx.fill 5.0 t in
         check_t "fill copy" shape_2x3 [| 5.; 5.; 5.; 5.; 5.; 5. |] filled;
         check_t "fill leaves source" shape_2x3 [| 0.; 0.; 0.; 0.; 0.; 0. |] t);
-    test "ifill" (fun () ->
-        let t = Nx.zeros Nx.float32 shape_2x3 in
-        ignore (Nx.ifill 5.0 t);
-        check_t "ifill" shape_2x3 [| 5.; 5.; 5.; 5.; 5.; 5. |] t);
   ]
 
 let element_wise_binary_tests =
@@ -172,15 +168,6 @@ let element_wise_binary_tests =
         let a = Nx.full Nx.float32 shape_2x3 3.0 in
         Nx.radd_s 5.0 a
         |> check_t "radd_s" shape_2x3 [| 8.; 8.; 8.; 8.; 8.; 8. |]);
-    test "iadd" (fun () ->
-        let a = Nx.full Nx.float32 shape_2x3 3.0 in
-        let b = Nx.full Nx.float32 shape_2x3 2.0 in
-        let _ = Nx.iadd a b in
-        check_t "iadd" shape_2x3 [| 5.; 5.; 5.; 5.; 5.; 5. |] a);
-    test "iadd_s" (fun () ->
-        let a = Nx.full Nx.float32 shape_2x3 3.0 in
-        let _ = Nx.iadd_s a 5.0 in
-        check_t "iadd_s" shape_2x3 [| 8.; 8.; 8.; 8.; 8.; 8. |] a);
     test "sub" (fun () ->
         let a = Nx.full Nx.float32 shape_2x3 5.0 in
         let b = Nx.full Nx.float32 shape_2x3 2.0 in
@@ -192,15 +179,6 @@ let element_wise_binary_tests =
         let a = Nx.full Nx.float32 shape_2x3 3.0 in
         Nx.rsub_s 10.0 a
         |> check_t "rsub_s" shape_2x3 [| 7.; 7.; 7.; 7.; 7.; 7. |]);
-    test "isub" (fun () ->
-        let a = Nx.full Nx.float32 shape_2x3 5.0 in
-        let b = Nx.full Nx.float32 shape_2x3 2.0 in
-        let _ = Nx.isub a b in
-        check_t "isub" shape_2x3 [| 3.; 3.; 3.; 3.; 3.; 3. |] a);
-    test "isub_s" (fun () ->
-        let a = Nx.full Nx.float32 shape_2x3 10.0 in
-        let _ = Nx.isub_s a 3.0 in
-        check_t "isub_s" shape_2x3 [| 7.; 7.; 7.; 7.; 7.; 7. |] a);
     test "mul" (fun () ->
         let a = Nx.full Nx.float32 shape_2x3 3.0 in
         let b = Nx.full Nx.float32 shape_2x3 2.0 in
@@ -213,15 +191,6 @@ let element_wise_binary_tests =
         let a = Nx.full Nx.float32 shape_2x3 4.0 in
         Nx.rmul_s 3.0 a
         |> check_t "rmul_s" shape_2x3 [| 12.; 12.; 12.; 12.; 12.; 12. |]);
-    test "imul" (fun () ->
-        let a = Nx.full Nx.float32 shape_2x3 3.0 in
-        let b = Nx.full Nx.float32 shape_2x3 2.0 in
-        let _ = Nx.imul a b in
-        check_t "imul" shape_2x3 [| 6.; 6.; 6.; 6.; 6.; 6. |] a);
-    test "imul_s" (fun () ->
-        let a = Nx.full Nx.float32 shape_2x3 4.0 in
-        let _ = Nx.imul_s a 3.0 in
-        check_t "imul_s" shape_2x3 [| 12.; 12.; 12.; 12.; 12.; 12. |] a);
     test "div" (fun () ->
         let a = Nx.full Nx.float32 shape_2x3 6.0 in
         let b = Nx.full Nx.float32 shape_2x3 2.0 in
@@ -233,15 +202,6 @@ let element_wise_binary_tests =
         let a = Nx.full Nx.float32 shape_2x3 2.0 in
         Nx.rdiv_s 6.0 a
         |> check_t "rdiv_s" shape_2x3 [| 3.; 3.; 3.; 3.; 3.; 3. |]);
-    test "idiv" (fun () ->
-        let a = Nx.full Nx.float32 shape_2x3 6.0 in
-        let b = Nx.full Nx.float32 shape_2x3 2.0 in
-        let _ = Nx.idiv a b in
-        check_t "idiv" shape_2x3 [| 3.; 3.; 3.; 3.; 3.; 3. |] a);
-    test "idiv_s" (fun () ->
-        let a = Nx.full Nx.float32 shape_2x3 12.0 in
-        let _ = Nx.idiv_s a 3.0 in
-        check_t "idiv_s" shape_2x3 [| 4.; 4.; 4.; 4.; 4.; 4. |] a);
     test "pow" (fun () ->
         let a = Nx.full Nx.float32 shape_2x3 2.0 in
         let b = Nx.full Nx.float32 shape_2x3 3.0 in
@@ -253,15 +213,6 @@ let element_wise_binary_tests =
         let a = Nx.full Nx.float32 shape_2x3 3.0 in
         Nx.rpow_s 2.0 a
         |> check_t "rpow_s" shape_2x3 [| 8.; 8.; 8.; 8.; 8.; 8. |]);
-    test "ipow" (fun () ->
-        let a = Nx.full Nx.float32 shape_2x3 2.0 in
-        let b = Nx.full Nx.float32 shape_2x3 3.0 in
-        let _ = Nx.ipow a b in
-        check_t "ipow" shape_2x3 [| 8.; 8.; 8.; 8.; 8.; 8. |] a);
-    test "ipow_s" (fun () ->
-        let a = Nx.full Nx.float32 shape_2x3 2.0 in
-        let _ = Nx.ipow_s a 3.0 in
-        check_t "ipow_s" shape_2x3 [| 8.; 8.; 8.; 8.; 8.; 8. |] a);
     test "mod" (fun () ->
         let a = Nx.full Nx.float32 shape_2x3 7.0 in
         let b = Nx.full Nx.float32 shape_2x3 3.0 in
@@ -273,15 +224,6 @@ let element_wise_binary_tests =
         let a = Nx.full Nx.float32 shape_2x3 3.0 in
         Nx.rmod_s 7.0 a
         |> check_t "rmod_s" shape_2x3 [| 1.; 1.; 1.; 1.; 1.; 1. |]);
-    test "imod" (fun () ->
-        let a = Nx.full Nx.float32 shape_2x3 7.0 in
-        let b = Nx.full Nx.float32 shape_2x3 3.0 in
-        let _ = Nx.imod a b in
-        check_t "imod" shape_2x3 [| 1.; 1.; 1.; 1.; 1.; 1. |] a);
-    test "imod_s" (fun () ->
-        let a = Nx.full Nx.float32 shape_2x3 7.0 in
-        let _ = Nx.imod_s a 3.0 in
-        check_t "imod_s" shape_2x3 [| 1.; 1.; 1.; 1.; 1.; 1. |] a);
     test "maximum" (fun () ->
         let a = Nx.full Nx.float32 shape_2x3 3.0 in
         let b = Nx.full Nx.float32 shape_2x3 5.0 in
@@ -295,15 +237,6 @@ let element_wise_binary_tests =
         let a = Nx.full Nx.float32 shape_2x3 3.0 in
         Nx.rmaximum_s 5.0 a
         |> check_t "rmaximum_s" shape_2x3 [| 5.; 5.; 5.; 5.; 5.; 5. |]);
-    test "imaximum" (fun () ->
-        let a = Nx.full Nx.float32 shape_2x3 3.0 in
-        let b = Nx.full Nx.float32 shape_2x3 5.0 in
-        let _ = Nx.imaximum a b in
-        check_t "imaximum" shape_2x3 [| 5.; 5.; 5.; 5.; 5.; 5. |] a);
-    test "imaximum_s" (fun () ->
-        let a = Nx.full Nx.float32 shape_2x3 3.0 in
-        let _ = Nx.imaximum_s a 5.0 in
-        check_t "imaximum_s" shape_2x3 [| 5.; 5.; 5.; 5.; 5.; 5. |] a);
     test "minimum" (fun () ->
         let a = Nx.full Nx.float32 shape_2x3 3.0 in
         let b = Nx.full Nx.float32 shape_2x3 5.0 in
@@ -317,15 +250,6 @@ let element_wise_binary_tests =
         let a = Nx.full Nx.float32 shape_2x3 5.0 in
         Nx.rminimum_s 3.0 a
         |> check_t "rminimum_s" shape_2x3 [| 3.; 3.; 3.; 3.; 3.; 3. |]);
-    test "iminimum" (fun () ->
-        let a = Nx.full Nx.float32 shape_2x3 5.0 in
-        let b = Nx.full Nx.float32 shape_2x3 3.0 in
-        let _ = Nx.iminimum a b in
-        check_t "iminimum" shape_2x3 [| 3.; 3.; 3.; 3.; 3.; 3. |] a);
-    test "iminimum_s" (fun () ->
-        let a = Nx.full Nx.float32 shape_2x3 5.0 in
-        let _ = Nx.iminimum_s a 3.0 in
-        check_t "iminimum_s" shape_2x3 [| 3.; 3.; 3.; 3.; 3.; 3. |] a);
   ]
 
 let comparison_tests =

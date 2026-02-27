@@ -123,12 +123,6 @@ let pow_edge_cases =
         let b = Nx.create Nx.float32 [| 1 |] [| 100.0 |] in
         let result = Nx.pow a b in
         equal ~msg:"10^100" (float 1e-6) Float.infinity (Nx.item [ 0 ] result));
-    test "ipow" (fun () ->
-        let a = Nx.create Nx.float32 [| 3 |] [| 2.; 3.; 4. |] in
-        let b = Nx.create Nx.float32 [| 3 |] [| 2.; 1.; 0.5 |] in
-        let result = Nx.ipow a b in
-        check_t ~eps:1e-5 "ipow result" [| 3 |] [| 4.; 3.; 2. |] a;
-        equal ~msg:"ipow returns a" bool true (result == a));
   ]
 
 (* ───── Math Function Edge Cases ───── *)

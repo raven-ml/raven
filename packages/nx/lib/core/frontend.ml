@@ -510,13 +510,9 @@ module Make (B : Backend_intf.S) = struct
   let scalar ctx dt value = B.full ctx dt [||] value
   let scalar_like x_ref value = scalar (B.context x_ref) (B.dtype x_ref) value
 
-  let ifill value x =
-    B.assign x (broadcast_to (shape x) (scalar_like x value));
-    x
-
   let fill value x =
     let copied = B.copy x in
-    ignore (ifill value copied);
+    B.assign copied (broadcast_to (shape copied) (scalar_like copied value));
     copied
 
   let empty ctx dtype shape_arr = B.buffer ctx dtype shape_arr
@@ -586,58 +582,37 @@ module Make (B : Backend_intf.S) = struct
     op ~out a' b';
     out
 
-  let inplace_binop op target value =
-    let value_broadcasted = broadcast_to (shape target) value in
-    op ~out:target target value_broadcasted;
-    target
-
   let add ?out a b = binop ~op_name:"add" ?out B.add a b
   let add_s ?out t s = add ?out t (scalar_like t s)
   let radd_s ?out s t = add ?out (scalar_like t s) t
-  let iadd target value = inplace_binop B.add target value
-  let iadd_s t s = iadd t (scalar_like t s)
 
   let sub ?out a b = binop ~op_name:"sub" ?out B.sub a b
   let sub_s ?out t s = sub ?out t (scalar_like t s)
   let rsub_s ?out s t = sub ?out (scalar_like t s) t
-  let isub target value = inplace_binop B.sub target value
-  let isub_s t s = isub t (scalar_like t s)
 
   let mul ?out a b = binop ~op_name:"mul" ?out B.mul a b
   let mul_s ?out t s = mul ?out t (scalar_like t s)
   let rmul_s ?out s t = mul ?out (scalar_like t s) t
-  let imul target value = inplace_binop B.mul target value
-  let imul_s t s = imul t (scalar_like t s)
 
   let div ?out a b = binop ~op_name:"div" ?out B.div a b
   let div_s ?out t s = div ?out t (scalar_like t s)
   let rdiv_s ?out s t = div ?out (scalar_like t s) t
-  let idiv target value = inplace_binop B.div target value
-  let idiv_s t s = idiv t (scalar_like t s)
 
   let pow ?out a b = binop ~op_name:"pow" ?out B.pow a b
   let pow_s ?out t s = pow ?out t (scalar_like t s)
   let rpow_s ?out s t = pow ?out (scalar_like t s) t
-  let ipow target value = inplace_binop B.pow target value
-  let ipow_s t s = ipow t (scalar_like t s)
 
   let maximum ?out a b = binop ~op_name:"maximum" ?out B.max a b
   let maximum_s ?out t s = maximum ?out t (scalar_like t s)
   let rmaximum_s ?out s t = maximum ?out (scalar_like t s) t
-  let imaximum target value = inplace_binop B.max target value
-  let imaximum_s t s = imaximum t (scalar_like t s)
 
   let minimum ?out a b = binop ~op_name:"minimum" ?out B.min a b
   let minimum_s ?out t s = minimum ?out t (scalar_like t s)
   let rminimum_s ?out s t = minimum ?out (scalar_like t s) t
-  let iminimum target value = inplace_binop B.min target value
-  let iminimum_s t s = iminimum t (scalar_like t s)
 
   let mod_ ?out a b = binop ~op_name:"mod" ?out B.mod_ a b
   let mod_s ?out t s = mod_ ?out t (scalar_like t s)
   let rmod_s ?out s t = mod_ ?out (scalar_like t s) t
-  let imod target value = inplace_binop B.mod_ target value
-  let imod_s t s = imod t (scalar_like t s)
 
   let bitwise_xor ?out a b = binop ~op_name:"bitwise_xor" ?out B.xor a b
   let bitwise_or ?out a b = binop ~op_name:"bitwise_or" ?out B.or_ a b
