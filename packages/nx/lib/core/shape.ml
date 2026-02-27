@@ -5,6 +5,14 @@
 
 type t = int array
 
+let err op fmt = Printf.ksprintf (fun msg -> invalid_arg (op ^ ": " ^ msg)) fmt
+
+let to_string shape =
+  let shape_str =
+    Array.map string_of_int shape |> Array.to_list |> String.concat ","
+  in
+  Printf.sprintf "[%s]" shape_str
+
 let numel shape =
   let n = Array.length shape in
   if n = 0 then 1 else Array.fold_left ( * ) 1 shape
@@ -25,11 +33,8 @@ let c_contiguous_strides shape =
 
 let ravel_index indices strides =
   if Array.length indices <> Array.length strides then
-    Error.invalid ~op:"ravel_index"
-      ~what:
-        (Printf.sprintf "rank mismatch: indices[%d] vs strides[%d]"
-           (Array.length indices) (Array.length strides))
-      ~reason:"dimensions must match" ();
+    err "ravel_index" "indices[%d] vs strides[%d], dimensions must match"
+      (Array.length indices) (Array.length strides);
   let o = ref 0 in
   Array.iteri (fun i v -> o := !o + (v * strides.(i))) indices;
   !o
@@ -38,25 +43,16 @@ let unravel_index k shape =
   let n = Array.length shape in
   if n = 0 then
     if k = 0 then [||]
-    else
-      Error.invalid ~op:"unravel_index" ~what:"k"
-        ~reason:(Printf.sprintf "%d out of bounds for scalar" k)
-        ()
+    else err "unravel_index" "k=%d out of bounds for scalar" k
   else if Array.exists (( = ) 0) shape then
     (* zero-size tensor; only k=0 is allowed *)
     if k = 0 then Array.make n 0
-    else
-      Error.invalid ~op:"unravel_index" ~what:"k"
-        ~reason:(Printf.sprintf "%d > 0 for zero-size shape" k)
-        ()
+    else err "unravel_index" "k=%d out of bounds for zero-size shape" k
   else
     let total_elements = numel shape in
     if k < 0 || k >= total_elements then
-      Error.invalid ~op:"unravel_index" ~what:"k"
-        ~reason:
-          (Printf.sprintf "%d out of bounds for shape (size %d)" k
-             total_elements)
-        ();
+      err "unravel_index" "k=%d out of bounds for shape (size %d)" k
+        total_elements;
 
     let idx = Array.make n 0 in
     let temp_k = ref k in
@@ -69,19 +65,16 @@ let unravel_index k shape =
 
     (* sanity check for the leftmost index *)
     if idx.(0) >= shape.(0) then
-      Error.invalid ~op:"unravel_index"
-        ~what:(Printf.sprintf "calculated idx.(0)=%d" idx.(0))
-        ~reason:(Printf.sprintf "out of bounds for shape.(0)=%d" shape.(0))
-        ~hint:"this indicates an issue with k or logic" ();
+      err "unravel_index" "idx.(0)=%d out of bounds for shape.(0)=%d" idx.(0)
+        shape.(0);
     idx
 
 let unravel_index_into k shape result =
   let n = Array.length shape in
   if n = 0 then (
     if k <> 0 then
-      Error.invalid ~op:"unravel_index_into" ~what:"k"
-        ~reason:(Printf.sprintf "%d out of bounds for scalar" k)
-        () (* else: k=0 for scalar, result stays empty *))
+      err "unravel_index_into" "k=%d out of bounds for scalar" k
+    (* else: k=0 for scalar, result stays empty *))
   else if Array.exists (( = ) 0) shape then
     if
       (* zero-size tensor; only k=0 is allowed *)
@@ -90,18 +83,12 @@ let unravel_index_into k shape result =
       for i = 0 to n - 1 do
         result.(i) <- 0
       done
-    else
-      Error.invalid ~op:"unravel_index_into" ~what:"k"
-        ~reason:(Printf.sprintf "%d > 0 for zero-size shape" k)
-        ()
+    else err "unravel_index_into" "k=%d out of bounds for zero-size shape" k
   else
     let total_elements = numel shape in
     if k < 0 || k >= total_elements then
-      Error.invalid ~op:"unravel_index_into" ~what:"k"
-        ~reason:
-          (Printf.sprintf "%d out of bounds for shape (size %d)" k
-             total_elements)
-        ()
+      err "unravel_index_into" "k=%d out of bounds for shape (size %d)" k
+        total_elements
     else
       let temp_k = ref k in
       for i = n - 1 downto 1 do
@@ -113,10 +100,8 @@ let unravel_index_into k shape result =
 
       (* sanity check for the leftmost index *)
       if result.(0) >= shape.(0) then
-        Error.invalid ~op:"unravel_index_into"
-          ~what:(Printf.sprintf "calculated result.(0)=%d" result.(0))
-          ~reason:(Printf.sprintf "out of bounds for shape.(0)=%d" shape.(0))
-          ()
+        err "unravel_index_into" "result.(0)=%d out of bounds for shape.(0)=%d"
+          result.(0) shape.(0)
 
 let resolve_neg_one current_shape new_shape_spec =
   let new_shape_spec_l = Array.to_list new_shape_spec in
@@ -125,9 +110,7 @@ let resolve_neg_one current_shape new_shape_spec =
     new_shape_spec_l |> List.filter (( = ) (-1)) |> List.length
   in
   if neg_one_count > 1 then
-    Error.invalid ~op:"reshape" ~what:"shape specification"
-      ~reason:"multiple -1 dimensions"
-      ~hint:"can only specify one unknown dimension" ()
+    invalid_arg "reshape: multiple -1 dimensions, can only infer one"
   else if neg_one_count = 0 then new_shape_spec
   else
     let specified_numel =
@@ -138,14 +121,11 @@ let resolve_neg_one current_shape new_shape_spec =
       if current_numel = 0 then
         Array.map (fun x -> if x = -1 then 0 else x) new_shape_spec
       else
-        Error.cannot ~op:"reshape" ~what:"infer -1"
-          ~from:"shape with 0-size dimensions" ~to_:"non-zero total size"
-          ~reason:"incompatible dimensions" ()
+        invalid_arg
+          "reshape: cannot infer -1 from shape with 0-size dimensions"
     else if current_numel mod specified_numel <> 0 then
-      Error.cannot ~op:"reshape" ~what:"reshape"
-        ~from:(Printf.sprintf "%d elements" current_numel)
-        ~to_:(Printf.sprintf "shape with %d elements" specified_numel)
-        ~reason:"size mismatch" ()
+      err "reshape" "cannot reshape %d elements into shape with %d elements"
+        current_numel specified_numel
     else
       let inferred_dim = current_numel / specified_numel in
       Array.map (fun s -> if s = -1 then inferred_dim else s) new_shape_spec
@@ -165,8 +145,8 @@ let broadcast shape_a shape_b =
     else if dim_a = 1 then out_shape.(i) <- dim_b
     else if dim_b = 1 then out_shape.(i) <- dim_a
     else
-      Error.broadcast_incompatible ~op:"broadcast" ~shape1:shape_a
-        ~shape2:shape_b ()
+      err "broadcast" "cannot broadcast %s with %s (dim %d: %d\xe2\x89\xa0%d)"
+        (to_string shape_a) (to_string shape_b) i dim_a dim_b
   done;
   out_shape
 
@@ -183,12 +163,6 @@ let broadcast_index target_multi_idx source_shape =
     else source_multi_idx.(source_idx_pos) <- target_multi_idx.(target_idx_pos)
   done;
   source_multi_idx
-
-let to_string shape =
-  let shape_str =
-    Array.map string_of_int shape |> Array.to_list |> String.concat ","
-  in
-  Printf.sprintf "[%s]" shape_str
 
 let broadcast_index_into target_multi_idx source_shape result =
   let target_ndim = Array.length target_multi_idx in

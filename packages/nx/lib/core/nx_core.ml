@@ -11,4 +11,3 @@ module Backend_intf = Backend_intf
 module Instrumentation = Instrumentation
 module Rng = Rng
 module Make_frontend = Frontend.Make
-module Error = Error

@@ -378,7 +378,7 @@ let test_diagonal_edge () =
   let d_empty = Nx.diagonal a_empty in
   check_shape "diagonal empty" [| 0 |] d_empty;
   raises ~msg:"diagonal invalid axes"
-    (Invalid_argument "diagonal: invalid axes (axes must be different)")
+    (Invalid_argument "diagonal: axes must be different")
     (fun () -> ignore (Nx.diagonal ~axis1:0 ~axis2:0 a_empty))
 
 let test_matrix_transpose () =

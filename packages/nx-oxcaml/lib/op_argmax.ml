@@ -11,7 +11,7 @@ let parallel_threshold = 62500
 
 let argmax_all_float64 (out_arr : int32# array) out_offset a_arr va in_numel =
   if in_numel = 0 then
-    Error.invalid ~op:"argmax" ~what:"input" ~reason:"empty" ();
+    invalid_arg "argmax: empty input";
   let a_offset = View.offset va in
   if View.is_c_contiguous va then (
     let best_idx = ref 0 in
@@ -43,7 +43,7 @@ let argmax_all_float64 (out_arr : int32# array) out_offset a_arr va in_numel =
 
 let argmax_all_float32 (out_arr : int32# array) out_offset a_arr va in_numel =
   if in_numel = 0 then
-    Error.invalid ~op:"argmax" ~what:"input" ~reason:"empty" ();
+    invalid_arg "argmax: empty input";
   let a_offset = View.offset va in
   if View.is_c_contiguous va then (
     let best_idx = ref 0 in
@@ -76,7 +76,7 @@ let argmax_all_float32 (out_arr : int32# array) out_offset a_arr va in_numel =
 let argmax_all_int32 (out_arr : int32# array) out_offset (a_arr : int32# array)
     va in_numel =
   if in_numel = 0 then
-    Error.invalid ~op:"argmax" ~what:"input" ~reason:"empty" ();
+    invalid_arg "argmax: empty input";
   let a_offset = View.offset va in
   if View.is_c_contiguous va then (
     let best_idx = ref 0 in
@@ -109,7 +109,7 @@ let argmax_all_int32 (out_arr : int32# array) out_offset (a_arr : int32# array)
 let argmax_all_int64 (out_arr : int32# array) out_offset (a_arr : int64# array)
     va in_numel =
   if in_numel = 0 then
-    Error.invalid ~op:"argmax" ~what:"input" ~reason:"empty" ();
+    invalid_arg "argmax: empty input";
   let a_offset = View.offset va in
   if View.is_c_contiguous va then (
     let best_idx = ref 0 in
@@ -252,7 +252,7 @@ let argmax_float64 pool ~(out_arr : int32# array) ~a_arr ~va ~vout ~axis
   let in_numel = numel va in
   let out_numel = numel vout in
   if in_numel = 0 then
-    Error.invalid ~op:"argmax" ~what:"input" ~reason:"empty" ()
+    invalid_arg "argmax: empty input"
   else if out_numel = 1 then
     argmax_all_float64 out_arr (View.offset vout) a_arr va in_numel
   else if out_numel > parallel_threshold then
@@ -265,7 +265,7 @@ let argmax_float32 pool ~(out_arr : int32# array) ~a_arr ~va ~vout ~axis
   let in_numel = numel va in
   let out_numel = numel vout in
   if in_numel = 0 then
-    Error.invalid ~op:"argmax" ~what:"input" ~reason:"empty" ()
+    invalid_arg "argmax: empty input"
   else if out_numel = 1 then
     argmax_all_float32 out_arr (View.offset vout) a_arr va in_numel
   else if out_numel > parallel_threshold then
@@ -278,7 +278,7 @@ let argmax_int32 pool ~(out_arr : int32# array) ~a_arr ~va ~vout ~axis
   let in_numel = numel va in
   let out_numel = numel vout in
   if in_numel = 0 then
-    Error.invalid ~op:"argmax" ~what:"input" ~reason:"empty" ()
+    invalid_arg "argmax: empty input"
   else if out_numel = 1 then
     argmax_all_int32 out_arr (View.offset vout) a_arr va in_numel
   else if out_numel > parallel_threshold then
@@ -291,7 +291,7 @@ let argmax_int64 pool ~(out_arr : int32# array) ~a_arr ~va ~vout ~axis
   let in_numel = numel va in
   let out_numel = numel vout in
   if in_numel = 0 then
-    Error.invalid ~op:"argmax" ~what:"input" ~reason:"empty" ()
+    invalid_arg "argmax: empty input"
   else if out_numel = 1 then
     argmax_all_int64 out_arr (View.offset vout) a_arr va in_numel
   else if out_numel > parallel_threshold then
@@ -303,7 +303,7 @@ let argmax_int64 pool ~(out_arr : int32# array) ~a_arr ~va ~vout ~axis
 
 let argmin_all_float64 (out_arr : int32# array) out_offset a_arr va in_numel =
   if in_numel = 0 then
-    Error.invalid ~op:"argmin" ~what:"input" ~reason:"empty" ();
+    invalid_arg "argmin: empty input";
   let a_offset = View.offset va in
   if View.is_c_contiguous va then (
     let best_idx = ref 0 in
@@ -335,7 +335,7 @@ let argmin_all_float64 (out_arr : int32# array) out_offset a_arr va in_numel =
 
 let argmin_all_float32 (out_arr : int32# array) out_offset a_arr va in_numel =
   if in_numel = 0 then
-    Error.invalid ~op:"argmin" ~what:"input" ~reason:"empty" ();
+    invalid_arg "argmin: empty input";
   let a_offset = View.offset va in
   if View.is_c_contiguous va then (
     let best_idx = ref 0 in
@@ -368,7 +368,7 @@ let argmin_all_float32 (out_arr : int32# array) out_offset a_arr va in_numel =
 let argmin_all_int32 (out_arr : int32# array) out_offset (a_arr : int32# array)
     va in_numel =
   if in_numel = 0 then
-    Error.invalid ~op:"argmin" ~what:"input" ~reason:"empty" ();
+    invalid_arg "argmin: empty input";
   let a_offset = View.offset va in
   if View.is_c_contiguous va then (
     let best_idx = ref 0 in
@@ -401,7 +401,7 @@ let argmin_all_int32 (out_arr : int32# array) out_offset (a_arr : int32# array)
 let argmin_all_int64 (out_arr : int32# array) out_offset (a_arr : int64# array)
     va in_numel =
   if in_numel = 0 then
-    Error.invalid ~op:"argmin" ~what:"input" ~reason:"empty" ();
+    invalid_arg "argmin: empty input";
   let a_offset = View.offset va in
   if View.is_c_contiguous va then (
     let best_idx = ref 0 in
@@ -544,7 +544,7 @@ let argmin_float64 pool ~(out_arr : int32# array) ~a_arr ~va ~vout ~axis
   let in_numel = numel va in
   let out_numel = numel vout in
   if in_numel = 0 then
-    Error.invalid ~op:"argmin" ~what:"input" ~reason:"empty" ()
+    invalid_arg "argmin: empty input"
   else if out_numel = 1 then
     argmin_all_float64 out_arr (View.offset vout) a_arr va in_numel
   else if out_numel > parallel_threshold then
@@ -557,7 +557,7 @@ let argmin_float32 pool ~(out_arr : int32# array) ~a_arr ~va ~vout ~axis
   let in_numel = numel va in
   let out_numel = numel vout in
   if in_numel = 0 then
-    Error.invalid ~op:"argmin" ~what:"input" ~reason:"empty" ()
+    invalid_arg "argmin: empty input"
   else if out_numel = 1 then
     argmin_all_float32 out_arr (View.offset vout) a_arr va in_numel
   else if out_numel > parallel_threshold then
@@ -570,7 +570,7 @@ let argmin_int32 pool ~(out_arr : int32# array) ~a_arr ~va ~vout ~axis
   let in_numel = numel va in
   let out_numel = numel vout in
   if in_numel = 0 then
-    Error.invalid ~op:"argmin" ~what:"input" ~reason:"empty" ()
+    invalid_arg "argmin: empty input"
   else if out_numel = 1 then
     argmin_all_int32 out_arr (View.offset vout) a_arr va in_numel
   else if out_numel > parallel_threshold then
@@ -583,7 +583,7 @@ let argmin_int64 pool ~(out_arr : int32# array) ~a_arr ~va ~vout ~axis
   let in_numel = numel va in
   let out_numel = numel vout in
   if in_numel = 0 then
-    Error.invalid ~op:"argmin" ~what:"input" ~reason:"empty" ()
+    invalid_arg "argmin: empty input"
   else if out_numel = 1 then
     argmin_all_int64 out_arr (View.offset vout) a_arr va in_numel
   else if out_numel > parallel_threshold then

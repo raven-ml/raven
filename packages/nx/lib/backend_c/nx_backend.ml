@@ -5,6 +5,8 @@
 
 open Nx_core
 
+let err op fmt = Printf.ksprintf (fun msg -> invalid_arg (op ^ ": " ^ msg)) fmt
+
 type ('a, 'b) buffer = ('a, 'b) Nx_buffer.t
 type context = unit
 
@@ -352,12 +354,12 @@ let shape t =
   let s = View.shape t.view in
   match Symbolic_shape.eval s with
   | Some arr -> arr
-  | None -> Error.failed ~op:"shape" ~what:"symbolic shape not evaluable" ()
+  | None -> invalid_arg "shape: symbolic shape not evaluable"
 
 let strides t =
   match View.strides_opt t.view with
   | Some s -> s
-  | None -> Error.failed ~op:"strides" ~what:"cannot get strides for view" ()
+  | None -> invalid_arg "strides: cannot get strides for view"
 
 let offset t = View.offset t.view
 let is_contiguous t = View.is_c_contiguous t.view
@@ -368,8 +370,7 @@ let can_get_strides t = View.can_get_strides t.view
 (* Convert tensor to FFI representation if possible *)
 let to_ffi_tensor t =
   if not (can_get_strides t) then
-    Error.failed ~op:"to_ffi_tensor" ~what:"tensor has non-materializable view"
-      ()
+    invalid_arg "to_ffi_tensor: tensor has non-materializable view"
   else
     { data = t.buffer; shape = shape t; strides = strides t; offset = offset t }
 
@@ -417,12 +418,8 @@ let binary_op op_name ffi_op ~out x y =
   let x_shape = shape x in
   let y_shape = shape y in
   if x_shape <> y_shape then
-    Error.invalid ~op:op_name ~what:"shape mismatch"
-      ~reason:
-        (Printf.sprintf "x: %s, y: %s"
-           (Array.to_list x_shape |> List.map string_of_int |> String.concat "x")
-           (Array.to_list y_shape |> List.map string_of_int |> String.concat "x"))
-      ()
+    err op_name "shape mismatch: x %s, y %s" (Shape.to_string x_shape)
+      (Shape.to_string y_shape)
   else
     (* Ensure inputs are materializable *)
     let x' = ensure_materializable x in
@@ -442,12 +439,8 @@ let comparison_op op_name ffi_op ~out x y =
   let x_shape = shape x in
   let y_shape = shape y in
   if x_shape <> y_shape then
-    Error.invalid ~op:op_name ~what:"shape mismatch"
-      ~reason:
-        (Printf.sprintf "x: %s, y: %s"
-           (Array.to_list x_shape |> List.map string_of_int |> String.concat "x")
-           (Array.to_list y_shape |> List.map string_of_int |> String.concat "x"))
-      ()
+    err op_name "shape mismatch: x %s, y %s" (Shape.to_string x_shape)
+      (Shape.to_string y_shape)
   else
     (* Ensure inputs are materializable *)
     let x' = ensure_materializable x in
@@ -537,16 +530,9 @@ let where ~out cond if_true if_false =
   let if_false_shape = shape if_false in
 
   if cond_shape <> if_true_shape || if_true_shape <> if_false_shape then
-    Error.invalid ~op:"where" ~what:"shape mismatch"
-      ~reason:
-        (Printf.sprintf "cond: %s, if_true: %s, if_false: %s"
-           (Array.to_list cond_shape |> List.map string_of_int
-          |> String.concat "x")
-           (Array.to_list if_true_shape
-           |> List.map string_of_int |> String.concat "x")
-           (Array.to_list if_false_shape
-           |> List.map string_of_int |> String.concat "x"))
-      ()
+    err "where" "shape mismatch: cond %s, if_true %s, if_false %s"
+      (Shape.to_string cond_shape) (Shape.to_string if_true_shape)
+      (Shape.to_string if_false_shape)
   else
     (* Ensure inputs are materializable *)
     let cond' = ensure_materializable cond in
@@ -600,15 +586,11 @@ let reduce_min ~out ~axes ~keepdims x =
 let associative_scan ~out ~axis ~op x =
   let x_shape = shape x in
   let rank = Array.length x_shape in
-  if rank = 0 then
-    Error.invalid ~op:"associative_scan" ~what:"tensor"
-      ~reason:"requires rank >= 1" ()
+  if rank = 0 then invalid_arg "associative_scan: requires rank >= 1"
   else
     let axis = if axis < 0 then axis + rank else axis in
     if axis < 0 || axis >= rank then
-      Error.invalid ~op:"associative_scan" ~what:"axis"
-        ~reason:(Printf.sprintf "axis %d out of bounds for rank %d" axis rank)
-        ()
+      err "associative_scan" "axis %d out of bounds for rank %d" axis rank
     else
       let x' = ensure_materializable x in
       let x_ffi = to_ffi_tensor x' in
@@ -655,7 +637,7 @@ let flip x axes = { x with view = View.flip x.view axes }
 
 let cat ~out tensors ~axis =
   match tensors with
-  | [] -> Error.failed ~op:"cat" ~what:"empty tensor list" ()
+  | [] -> invalid_arg "cat: empty tensor list"
   | first :: _ ->
       let tensors' = List.map ensure_materializable tensors in
 
@@ -679,8 +661,8 @@ let cat ~out tensors ~axis =
           first_shape
       in
       if shape out <> out_shape then
-        Error.shape_mismatch ~op:"cat" ~expected:out_shape ~actual:(shape out)
-          ~hint:"output tensor has incorrect shape" ();
+        err "cat" "output shape %s != expected %s" (Shape.to_string (shape out))
+          (Shape.to_string out_shape);
       let tensors_ffi = List.map to_ffi_tensor tensors' in
       let out_ffi = to_ffi_tensor out in
       caml_cat tensors_ffi norm_axis out_ffi
@@ -692,8 +674,8 @@ let cast (type a b c d) ~(out : (c, d) t) (x : (a, b) t) =
   let x' = ensure_materializable x in
 
   if shape x <> shape out then
-    Error.shape_mismatch ~op:"cast" ~expected:(shape out) ~actual:(shape x)
-      ~hint:"source and destination must have the same shape" ();
+    err "cast" "source shape %s != destination shape %s"
+      (Shape.to_string (shape x)) (Shape.to_string (shape out));
 
   (* Convert to FFI tensors *)
   let x_ffi = to_ffi_tensor x' in
@@ -737,8 +719,8 @@ let threefry ~out key counter =
   let counter' = ensure_materializable counter in
 
   if shape out <> shape counter then
-    Error.shape_mismatch ~op:"threefry" ~expected:(shape counter)
-      ~actual:(shape out) ~hint:"output tensor must match counter shape" ();
+    err "threefry" "output shape %s != counter shape %s"
+      (Shape.to_string (shape out)) (Shape.to_string (shape counter));
 
   let key_ffi = to_ffi_tensor key' in
   let counter_ffi = to_ffi_tensor counter' in
@@ -757,8 +739,8 @@ let gather ~out data indices ~axis =
   in
 
   if shape out <> shape indices then
-    Error.shape_mismatch ~op:"gather" ~expected:(shape indices)
-      ~actual:(shape out) ~hint:"output tensor must match indices shape" ();
+    err "gather" "output shape %s != indices shape %s"
+      (Shape.to_string (shape out)) (Shape.to_string (shape indices));
 
   (* Convert to FFI tensors *)
   let data_ffi = to_ffi_tensor data' in
@@ -821,8 +803,7 @@ let unfold x ~kernel_size ~stride ~dilation ~padding =
         let kernel_extent = (dilation.(i) * (kernel_size.(i) - 1)) + 1 in
         let diff = padded - kernel_extent in
         if diff < 0 then
-          Error.invalid ~op:"unfold"
-            ~what:"kernel size larger than padded input" ()
+          invalid_arg "unfold: kernel size larger than padded input"
         else (diff / stride.(i)) + 1)
   in
 
@@ -859,8 +840,7 @@ let fold x ~output_size ~kernel_size ~stride ~dilation ~padding =
         let kernel_extent = (dilation.(i) * (kernel_size.(i) - 1)) + 1 in
         let diff = padded - kernel_extent in
         if diff < 0 then
-          Error.invalid ~op:"fold" ~what:"kernel size larger than padded output"
-            ()
+          invalid_arg "fold: kernel size larger than padded output"
         else (diff / stride.(i)) + 1)
   in
 
@@ -923,7 +903,7 @@ let fft (type a b) ?out (x : (a, b) t) ~axes : (a, b) t =
         ~data_in:(Nx_buffer.to_bigarray1 x'.buffer)
         ~data_out:(Nx_buffer.to_bigarray1 out.buffer)
         ~nthreads:1
-  | _ -> Error.failed ~op:"fft" ~what:"unsupported dtype" ());
+  | _ -> invalid_arg "fft: unsupported dtype");
 
   out
 
@@ -957,7 +937,7 @@ let ifft (type a b) ?out (x : (a, b) t) ~axes : (a, b) t =
         ~data_in:(Nx_buffer.to_bigarray1 x'.buffer)
         ~data_out:(Nx_buffer.to_bigarray1 out.buffer)
         ~nthreads:1
-  | _ -> Error.failed ~op:"ifft" ~what:"unsupported dtype" ());
+  | _ -> invalid_arg "ifft: unsupported dtype");
 
   out
 
@@ -1004,7 +984,7 @@ let rfft (type a b c d) ?out (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes :
         ~data_in:(Nx_buffer.to_bigarray1 x'.buffer)
         ~data_out:(Nx_buffer.to_bigarray1 out.buffer)
         ~nthreads:1
-  | _ -> Error.failed ~op:"rfft" ~what:"unsupported dtype combination" ());
+  | _ -> invalid_arg "rfft: unsupported dtype combination");
 
   out
 
@@ -1057,7 +1037,7 @@ let irfft (type a b c d) ?out ?s (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes
         ~data_in:(Nx_buffer.to_bigarray1 x'.buffer)
         ~data_out:(Nx_buffer.to_bigarray1 out.buffer)
         ~nthreads:1
-  | _ -> Error.failed ~op:"irfft" ~what:"unsupported dtype combination" ());
+  | _ -> invalid_arg "irfft: unsupported dtype combination");
 
   out
 

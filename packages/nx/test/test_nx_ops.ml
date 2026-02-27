@@ -21,8 +21,7 @@ let test_broadcast_error ~op ~op_name ~dtype ~a_shape ~b_shape () =
   check_invalid_arg
     (Printf.sprintf "%s incompatible broadcast" op_name)
     (Printf.sprintf
-       "broadcast: cannot broadcast %s to %s (dim 0: 3\226\137\1604)\n\
-        hint: broadcasting requires dimensions to be either equal or 1"
+       "broadcast: cannot broadcast %s with %s (dim 0: 3\226\137\1604)"
        (Nx.shape_to_string a_shape)
        (Nx.shape_to_string b_shape))
     (fun () -> ignore (op a b))

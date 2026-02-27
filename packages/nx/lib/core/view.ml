@@ -5,6 +5,8 @@
 
 (* Lightweight view of tensor layout and helpers for reshaping. *)
 
+let err op fmt = Printf.ksprintf (fun msg -> invalid_arg (op ^ ": " ^ msg)) fmt
+
 type layout = C_contiguous | Strided
 
 type t = {
@@ -57,7 +59,7 @@ let strides v = v.strides
 let stride axis v =
   let ndim = Symbolic_shape.rank v.shape in
   if axis < 0 || axis >= ndim then
-    Error.axis_out_of_bounds ~op:"stride" ~axis ~ndim ();
+    err "stride" "axis %d out of bounds for %dD tensor" axis ndim;
   Array.unsafe_get v.strides axis
 
 let offset v = v.offset
@@ -67,7 +69,7 @@ let is_c_contiguous v = v.layout = C_contiguous
 let dim axis v =
   let ndim = Symbolic_shape.rank v.shape in
   if axis < 0 || axis >= ndim then
-    Error.axis_out_of_bounds ~op:"dim" ~axis ~ndim ();
+    err "dim" "axis %d out of bounds for %dD tensor" axis ndim;
   v.shape.(axis)
 
 let ndim v = Symbolic_shape.rank v.shape
@@ -158,10 +160,8 @@ let create ?(offset = 0) ?strides ?mask shape =
 let linear_index view indices =
   let ndim = Symbolic_shape.rank view.shape in
   if Array.length indices <> ndim then
-    Error.invalid ~op:"linear_index" ~what:"indices"
-      ~reason:
-        (Printf.sprintf "rank mismatch: %d vs %d" (Array.length indices) ndim)
-      ();
+    err "linear_index" "rank mismatch: indices[%d] vs ndim %d"
+      (Array.length indices) ndim;
   let physical_offset = ref view.offset in
   Array.iteri
     (fun i idx ->
@@ -190,9 +190,7 @@ let expand view new_shape =
     let strides = Array.make new_ndim 0 in
     { view with shape = new_shape; strides }
   else if new_ndim <> old_ndim then
-    Error.invalid ~op:"expand" ~what:"shape dimensions"
-      ~reason:(Printf.sprintf "rank mismatch: %d vs %d" new_ndim old_ndim)
-      ()
+    err "expand" "rank mismatch: %d vs %d" new_ndim old_ndim
   else
     match (Symbolic_shape.eval view.shape, Symbolic_shape.eval new_shape) with
     | Some old_arr, Some new_arr ->
@@ -205,10 +203,10 @@ let expand view new_shape =
                 if s = ns then view.strides.(i)
                 else if s = 1 then 0
                 else
-                  Error.cannot ~op:"expand" ~what:"expand"
-                    ~from:(Printf.sprintf "dimension %d (size %d)" i s)
-                    ~to_:(Printf.sprintf "size %d" ns)
-                    ~reason:"can only expand singleton dimensions" ())
+                  err "expand"
+                    "dimension %d (size %d) cannot expand to size %d, only \
+                     singletons expand"
+                    i s ns)
               new_arr
           in
           let mask =
@@ -221,13 +219,10 @@ let expand view new_shape =
                        if old_arr.(i) = 1 && new_arr.(i) <> 1 then
                          if b = 0 && e = 1 then (0, new_arr.(i))
                          else
-                           Error.invalid ~op:"expand"
-                             ~what:"masked singleton dimension"
-                             ~reason:
-                               (Printf.sprintf
-                                  "bounds [%d,%d] incompatible with expansion" b
-                                  e)
-                             ()
+                           err "expand"
+                             "masked singleton bounds [%d,%d] incompatible with \
+                              expansion"
+                             b e
                        else (b, e))
                      m)
           in
@@ -241,20 +236,15 @@ let expand view new_shape =
 let permute view axes =
   let n = ndim view in
   if Array.length axes <> n then
-    Error.invalid ~op:"permute" ~what:"axes array"
-      ~reason:(Printf.sprintf "length %d != ndim %d" (Array.length axes) n)
-      ();
+    err "permute" "axes length %d != ndim %d" (Array.length axes) n;
 
   (* Validate permutation *)
   let seen = Array.make n false in
   Array.iter
     (fun ax ->
       if ax < 0 || ax >= n then
-        Error.axis_out_of_bounds ~op:"permute" ~axis:ax ~ndim:n ();
-      if seen.(ax) then
-        Error.invalid ~op:"permute"
-          ~what:(Printf.sprintf "axis %d" ax)
-          ~reason:"duplicate axis" ();
+        err "permute" "axis %d out of bounds for %dD tensor" ax n;
+      if seen.(ax) then err "permute" "duplicate axis %d" ax;
       seen.(ax) <- true)
     axes;
 
@@ -278,14 +268,15 @@ let reshape view new_shape =
 
         (* Check size compatibility *)
         if old_numel <> new_numel && old_numel <> 0 && new_numel <> 0 then
-          Error.shape_mismatch ~op:"reshape" ~expected:new_arr ~actual:old_arr
-            () (* Handle zero-size tensors *)
+          err "reshape" "cannot reshape %s to %s" (Shape.to_string old_arr)
+            (Shape.to_string new_arr)
+          (* Handle zero-size tensors *)
         else if Array.exists (( = ) 0) old_arr || Array.exists (( = ) 0) new_arr
         then create ~offset:0 new_shape
           (* Check for masks - these complicate reshape *)
         else if view.mask <> None then
-          Error.failed ~op:"reshape" ~what:"cannot reshape views with masks"
-            ~hint:"call contiguous() first to create a mask-free copy" ()
+          invalid_arg
+            "reshape: cannot reshape views with masks, call contiguous() first"
           (* Fast path for C-contiguous views *)
         else if view.layout = C_contiguous then
           create ~offset:view.offset new_shape
@@ -449,31 +440,24 @@ let reshape view new_shape =
                            (Array.map string_of_int expected_strides))
                     ^ "]"
                   in
-                  Error.cannot ~op:"reshape" ~what:"reshape strided view"
-                    ~from:(Shape.to_string old_arr)
-                    ~to_:(Shape.to_string new_arr)
-                    ~reason:
-                      (Printf.sprintf "incompatible strides %s (expected %s)"
-                         stride_str expected_str)
-                    ~hint:
-                      "call contiguous() before reshape to create a \
-                       C-contiguous copy"
-                    ()))
+                  err "reshape"
+                    "cannot reshape %s to %s, incompatible strides %s \
+                     (expected %s), call contiguous() first"
+                    (Shape.to_string old_arr) (Shape.to_string new_arr)
+                    stride_str expected_str))
     | _, _ ->
         (* At least one shape is symbolic *)
         if view.layout = C_contiguous then create ~offset:view.offset new_shape
         else
-          Error.failed ~op:"reshape"
-            ~what:"cannot reshape symbolic non-contiguous view"
-            ~hint:"bind all symbolic dimensions before reshaping" ()
+          invalid_arg
+            "reshape: cannot reshape symbolic non-contiguous view, bind all \
+             symbolic dimensions first"
 
 (* helper used by [pad] and [shrink] *)
 let unsafe_resize view arg new_mask_opt =
   let ndim = Symbolic_shape.rank view.shape in
   if Array.length arg <> ndim then
-    Error.invalid ~op:"unsafe_resize" ~what:"argument array"
-      ~reason:(Printf.sprintf "length %d != ndim %d" (Array.length arg) ndim)
-      ();
+    err "unsafe_resize" "argument length %d != ndim %d" (Array.length arg) ndim;
 
   (* Don't require concrete shape here - work with what we have *)
   let strides = view.strides in
@@ -520,19 +504,15 @@ let unsafe_resize view arg new_mask_opt =
 let pad view arg =
   let ndim = Symbolic_shape.rank view.shape in
   if Array.length arg <> ndim then
-    Error.invalid ~op:"pad" ~what:"padding array"
-      ~reason:(Printf.sprintf "length %d != ndim %d" (Array.length arg) ndim)
-      ();
+    err "pad" "padding length %d != ndim %d" (Array.length arg) ndim;
   if Array.for_all (fun (b, e) -> b = 0 && e = 0) arg then view
   else if Array.exists (fun (b, e) -> b < 0 || e < 0) arg then
-    Error.invalid ~op:"pad" ~what:"padding values"
-      ~reason:"negative values not allowed"
-      ~hint:"use shrink or slice to remove elements" ()
+    invalid_arg "pad: negative padding values, use shrink or slice instead"
   else
     match eval_shape_opt view.shape with
     | None ->
-        Error.failed ~op:"pad" ~what:"cannot pad symbolic shape"
-          ~hint:"bind all symbolic dimensions before padding" ()
+        invalid_arg
+          "pad: cannot pad symbolic shape, bind all symbolic dimensions first"
     | Some shape_arr ->
         let zvarg =
           Array.mapi
@@ -553,13 +533,12 @@ let pad view arg =
 let shrink view arg =
   let ndim = Symbolic_shape.rank view.shape in
   if Array.length arg <> ndim then
-    Error.invalid ~op:"shrink" ~what:"bounds array"
-      ~reason:(Printf.sprintf "length %d != ndim %d" (Array.length arg) ndim)
-      ();
+    err "shrink" "bounds length %d != ndim %d" (Array.length arg) ndim;
   match eval_shape_opt view.shape with
   | None ->
-      Error.failed ~op:"shrink" ~what:"cannot shrink symbolic shape"
-        ~hint:"bind all symbolic dimensions before shrinking" ()
+      invalid_arg
+        "shrink: cannot shrink symbolic shape, bind all symbolic dimensions \
+         first"
   | Some shape_arr ->
       if Array.for_all2 (fun (b, e) s -> b = 0 && e = s) arg shape_arr then view
       else if
@@ -567,24 +546,19 @@ let shrink view arg =
           (fun (b, e) s -> b < 0 || e < 0 || b > s || e > s || b >= e)
           arg shape_arr
       then
-        Error.invalid ~op:"shrink" ~what:"bounds"
-          ~reason:"must be within shape and start < end" ()
+        invalid_arg "shrink: bounds must be within shape and start < end"
       else unsafe_resize view arg None
 
 let flip view flip_axes_bools =
   let ndim = Symbolic_shape.rank view.shape in
   if Array.length flip_axes_bools <> ndim then
-    Error.invalid ~op:"flip" ~what:"boolean array"
-      ~reason:
-        (Printf.sprintf "length %d != ndim %d"
-           (Array.length flip_axes_bools)
-           ndim)
-      ();
+    err "flip" "boolean array length %d != ndim %d"
+      (Array.length flip_axes_bools) ndim;
 
   match eval_shape_opt view.shape with
   | None ->
-      Error.failed ~op:"flip" ~what:"cannot flip symbolic shape"
-        ~hint:"bind all symbolic dimensions before flipping" ()
+      invalid_arg
+        "flip: cannot flip symbolic shape, bind all symbolic dimensions first"
   | Some shape_arr ->
       let strides = view.strides in
 

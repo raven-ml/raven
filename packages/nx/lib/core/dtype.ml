@@ -264,12 +264,8 @@ let min_value : type a b. (a, b) t -> a = function
   | UInt32 -> 0l
   | Int64 -> Int64.min_int
   | UInt64 -> 0L
-  | Complex64 ->
-      Error.invalid ~op:"Dtype.min_value" ~what:"complex64"
-        ~reason:"complex numbers are not ordered" ()
-  | Complex128 ->
-      Error.invalid ~op:"Dtype.min_value" ~what:"complex128"
-        ~reason:"complex numbers are not ordered" ()
+  | Complex64 -> invalid_arg "Dtype.min_value: complex numbers are not ordered"
+  | Complex128 -> invalid_arg "Dtype.min_value: complex numbers are not ordered"
   | Bool -> false
 
 let max_value : type a b. (a, b) t -> a = function
@@ -289,12 +285,8 @@ let max_value : type a b. (a, b) t -> a = function
   | UInt32 -> Int32.lognot 0l
   | Int64 -> Int64.max_int
   | UInt64 -> Int64.lognot 0L
-  | Complex64 ->
-      Error.invalid ~op:"Dtype.max_value" ~what:"complex64"
-        ~reason:"complex numbers are not ordered" ()
-  | Complex128 ->
-      Error.invalid ~op:"Dtype.max_value" ~what:"complex128"
-        ~reason:"complex numbers are not ordered" ()
+  | Complex64 -> invalid_arg "Dtype.max_value: complex numbers are not ordered"
+  | Complex128 -> invalid_arg "Dtype.max_value: complex numbers are not ordered"
   | Bool -> true
 
 (* ───── Conversion ───── *)
@@ -392,9 +384,7 @@ let of_bigarray_kind : type a b. (a, b) Bigarray.kind -> (a, b) t = function
   | Bigarray.Int64 -> Int64
   | Bigarray.Complex32 -> Complex64
   | Bigarray.Complex64 -> Complex128
-  | _ ->
-      Error.invalid ~op:"Dtype.of_bigarray_kind" ~what:"bigarray kind"
-        ~reason:"unsupported kind" ()
+  | _ -> invalid_arg "Dtype.of_bigarray_kind: unsupported bigarray kind"
 
 let to_bigarray_kind : type a b. (a, b) t -> (a, b) Bigarray.kind = function
   | Float16 -> Bigarray.Float16
@@ -410,8 +400,7 @@ let to_bigarray_kind : type a b. (a, b) t -> (a, b) Bigarray.kind = function
   | Complex128 -> Bigarray.Complex64
   | BFloat16 | Float8_e4m3 | Float8_e5m2 | Int4 | UInt4 | UInt32 | UInt64 | Bool
     ->
-      Error.invalid ~op:"Dtype.to_bigarray_kind" ~what:"dtype"
-        ~reason:"extended type not supported by standard Bigarray" ()
+      invalid_arg "Dtype.to_bigarray_kind: extended type not supported by Bigarray"
 
 (* ───── Equality ───── *)
 
@@ -592,7 +581,7 @@ let sub (type a b) (dt : (a, b) t) (x : a) (y : a) : a =
   | UInt64 -> Int64.sub x y
   | Complex64 -> Complex.sub x y
   | Complex128 -> Complex.sub x y
-  | Bool -> Error.invalid ~op:"Dtype.sub" ~what:"bool" ~reason:"undefined" ()
+  | Bool -> invalid_arg "Dtype.sub: undefined for bool"
 
 let mul (type a b) (dt : (a, b) t) (x : a) (y : a) : a =
   match dt with
@@ -659,4 +648,4 @@ let div (type a b) (dt : (a, b) t) (x : a) (y : a) : a =
   | UInt64 -> uint64_div x y
   | Complex64 -> Complex.div x y
   | Complex128 -> Complex.div x y
-  | Bool -> Error.invalid ~op:"Dtype.div" ~what:"bool" ~reason:"undefined" ()
+  | Bool -> invalid_arg "Dtype.div: undefined for bool"

@@ -31,6 +31,3 @@ module Rng = Rng
 
 module Make_frontend = Frontend.Make
 (** Frontend functor parameterized by a backend implementation. *)
-
-module Error = Error
-(** Shared error constructors. *)

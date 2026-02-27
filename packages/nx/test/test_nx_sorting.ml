@@ -43,8 +43,7 @@ let test_where_invalid_shapes () =
   let b = Nx.create Nx.float32 [| 2 |] [| 4.; 5. |] in
   raises ~msg:"where invalid shapes"
     (Invalid_argument
-       "broadcast: cannot broadcast [3] to [2] (dim 0: 3\226\137\1602)\n\
-        hint: broadcasting requires dimensions to be either equal or 1")
+       "broadcast: cannot broadcast [3] with [2] (dim 0: 3\226\137\1602)")
     (fun () -> ignore (Nx.where mask a b))
 
 (* ───── Sort Tests ───── *)
@@ -68,7 +67,7 @@ let test_sort_2d_axis1 () =
 let test_sort_invalid_axis () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
   check_invalid_arg "sort invalid axis"
-    "sort: invalid axis 2 (out of bounds for 2D array)" (fun () ->
+    "sort: axis 2 out of bounds for 2D tensor" (fun () ->
       Nx.sort ~axis:2 t)
 
 let test_sort_nan_handling () =

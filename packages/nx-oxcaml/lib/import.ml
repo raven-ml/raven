@@ -8,7 +8,6 @@ module View = Nx_core.View
 module Shape = Nx_core.Shape
 module Array1 = Bigarray.Array1
 module Symbolic_shape = Nx_core.Symbolic_shape
-module Error = Nx_core.Error
 module Parallel = Parallel
 module Float_u = Stdlib_upstream_compatible.Float_u
 module Float32_u = Stdlib_stable.Float32_u
@@ -120,9 +119,9 @@ end
 let shape (v : View.t) : int array =
   match Symbolic_shape.eval (View.shape v) with
   | Some arr -> arr
-  | None -> Error.failed ~op:"shape" ~what:"symbolic shape not evaluable" ()
+  | None -> invalid_arg "shape: symbolic shape not evaluable"
 
 let numel (v : View.t) : int =
   match Symbolic_shape.eval_dim (View.numel v) with
   | Some n -> n
-  | None -> Error.failed ~op:"numel" ~what:"symbolic numel not evaluable" ()
+  | None -> invalid_arg "numel: symbolic numel not evaluable"

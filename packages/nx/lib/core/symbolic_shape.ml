@@ -32,21 +32,14 @@ let next_id =
 
 let static n =
   if n < 0 then
-    Error.invalid ~op:"static"
-      ~what:(Printf.sprintf "dimension %d" n)
-      ~reason:"negative dimension" ();
+    invalid_arg (Printf.sprintf "static: dimension %d is negative" n);
   Const n
 
 let var name ~min ~max =
   if min < 0 then
-    Error.invalid ~op:"dynamic"
-      ~what:(Printf.sprintf "min=%d" min)
-      ~reason:"must be non-negative" ();
+    invalid_arg (Printf.sprintf "dynamic: min=%d must be non-negative" min);
   if min > max then
-    Error.invalid ~op:"dynamic"
-      ~what:(Printf.sprintf "bounds [%d, %d]" min max)
-      ~reason:(Printf.sprintf "min > max")
-      ();
+    invalid_arg (Printf.sprintf "dynamic: min=%d > max=%d" min max);
   { id = next_id (); name; min; max; value = None }
 
 let dim_of_var var = Var var
@@ -59,10 +52,9 @@ let of_list lst = of_ints (Array.of_list lst)
 
 let bind_var var value =
   if value < var.min || value > var.max then
-    Error.invalid ~op:"bind"
-      ~what:(Printf.sprintf "value %d for variable %s" value var.name)
-      ~reason:(Printf.sprintf "outside bounds [%d, %d]" var.min var.max)
-      ();
+    invalid_arg
+      (Printf.sprintf "bind: value %d for %s outside bounds [%d, %d]" value
+         var.name var.min var.max);
   var.value <- Some value
 
 let bind target value shape =
@@ -212,10 +204,9 @@ let resolve_reshape ~from_shape ~to_shape =
             match eval_dim dim with
             | Some n when n > 0 -> known_product := !known_product * n
             | Some n ->
-                Error.invalid ~op:"resolve_reshape"
-                  ~what:(Printf.sprintf "dimension %d" i)
-                  ~reason:(Printf.sprintf "invalid size %d" n)
-                  ()
+                invalid_arg
+                  (Printf.sprintf "resolve_reshape: dimension %d has invalid size %d"
+                     i n)
             | None -> () (* Keep symbolic dimension as is *))
         to_shape;
 
@@ -228,9 +219,7 @@ let resolve_reshape ~from_shape ~to_shape =
             resolved.(idx) <- static inferred_size;
             Some resolved)
           else None (* Can't evenly divide *)
-      | _ ->
-          Error.invalid ~op:"resolve_reshape" ~what:"shape"
-            ~reason:"can only infer one dimension" ())
+      | _ -> invalid_arg "resolve_reshape: can only infer one dimension")
 
 let substitute bindings shape =
   (* Substitute variable bindings into a shape *)

@@ -1888,7 +1888,7 @@ let reduce_min_float64 pool ~out_arr ~a_arr ~va ~vout ~axes ~keepdims =
           copy_float64 a_arr out_arr va vout s e)
     else copy_float64 a_arr out_arr va vout 0 out_numel
   else if in_numel = 0 then
-    Error.invalid ~op:"reduce_min" ~what:"input" ~reason:"empty" ()
+    invalid_arg "reduce_min: empty input"
   else if out_numel = 1 then
     let total = min_all_float64 a_arr va 0 in_numel in
     fill_float64 out_arr vout total
@@ -1907,7 +1907,7 @@ let reduce_min_float32 pool ~out_arr ~a_arr ~va ~vout ~axes ~keepdims =
           copy_float32 a_arr out_arr va vout s e)
     else copy_float32 a_arr out_arr va vout 0 out_numel
   else if in_numel = 0 then
-    Error.invalid ~op:"reduce_min" ~what:"input" ~reason:"empty" ()
+    invalid_arg "reduce_min: empty input"
   else if out_numel = 1 then
     let total = min_all_float32 a_arr va 0 in_numel in
     fill_float32 out_arr vout total
@@ -1926,7 +1926,7 @@ let reduce_min_int8 pool ~out_arr ~a_arr ~va ~vout ~axes ~keepdims =
           copy_int8 a_arr out_arr va vout s e)
     else copy_int8 a_arr out_arr va vout 0 out_numel
   else if in_numel = 0 then
-    Error.invalid ~op:"reduce_min" ~what:"input" ~reason:"empty" ()
+    invalid_arg "reduce_min: empty input"
   else if out_numel = 1 then
     let total = min_all_int8 a_arr va 0 in_numel in
     fill_int8 out_arr vout total
@@ -1945,7 +1945,7 @@ let reduce_min_int16 pool ~out_arr ~a_arr ~va ~vout ~axes ~keepdims =
           copy_int16 a_arr out_arr va vout s e)
     else copy_int16 a_arr out_arr va vout 0 out_numel
   else if in_numel = 0 then
-    Error.invalid ~op:"reduce_min" ~what:"input" ~reason:"empty" ()
+    invalid_arg "reduce_min: empty input"
   else if out_numel = 1 then
     let total = min_all_int16 a_arr va 0 in_numel in
     fill_int16 out_arr vout total
@@ -1964,7 +1964,7 @@ let reduce_min_int32 pool ~out_arr ~a_arr ~va ~vout ~axes ~keepdims =
           copy_int32 a_arr out_arr va vout s e)
     else copy_int32 a_arr out_arr va vout 0 out_numel
   else if in_numel = 0 then
-    Error.invalid ~op:"reduce_min" ~what:"input" ~reason:"empty" ()
+    invalid_arg "reduce_min: empty input"
   else if out_numel = 1 then
     let total = min_all_int32 a_arr va 0 in_numel in
     fill_int32 out_arr vout total
@@ -1983,7 +1983,7 @@ let reduce_min_int64 pool ~out_arr ~a_arr ~va ~vout ~axes ~keepdims =
           copy_int64 a_arr out_arr va vout s e)
     else copy_int64 a_arr out_arr va vout 0 out_numel
   else if in_numel = 0 then
-    Error.invalid ~op:"reduce_min" ~what:"input" ~reason:"empty" ()
+    invalid_arg "reduce_min: empty input"
   else if out_numel = 1 then
     let total = min_all_int64 a_arr va 0 in_numel in
     fill_int64 out_arr vout total
@@ -2002,7 +2002,7 @@ let reduce_max_float64 pool ~out_arr ~a_arr ~va ~vout ~axes ~keepdims =
           copy_float64 a_arr out_arr va vout s e)
     else copy_float64 a_arr out_arr va vout 0 out_numel
   else if in_numel = 0 then
-    Error.invalid ~op:"reduce_max" ~what:"input" ~reason:"empty" ()
+    invalid_arg "reduce_max: empty input"
   else if out_numel = 1 then
     let total = max_all_float64 a_arr va 0 in_numel in
     fill_float64 out_arr vout total
@@ -2021,7 +2021,7 @@ let reduce_max_float32 pool ~out_arr ~a_arr ~va ~vout ~axes ~keepdims =
           copy_float32 a_arr out_arr va vout s e)
     else copy_float32 a_arr out_arr va vout 0 out_numel
   else if in_numel = 0 then
-    Error.invalid ~op:"reduce_max" ~what:"input" ~reason:"empty" ()
+    invalid_arg "reduce_max: empty input"
   else if out_numel = 1 then
     let total = max_all_float32 a_arr va 0 in_numel in
     fill_float32 out_arr vout total
@@ -2040,7 +2040,7 @@ let reduce_max_int8 pool ~out_arr ~a_arr ~va ~vout ~axes ~keepdims =
           copy_int8 a_arr out_arr va vout s e)
     else copy_int8 a_arr out_arr va vout 0 out_numel
   else if in_numel = 0 then
-    Error.invalid ~op:"reduce_max" ~what:"input" ~reason:"empty" ()
+    invalid_arg "reduce_max: empty input"
   else if out_numel = 1 then
     let total = max_all_int8 a_arr va 0 in_numel in
     fill_int8 out_arr vout total
@@ -2059,7 +2059,7 @@ let reduce_max_int16 pool ~out_arr ~a_arr ~va ~vout ~axes ~keepdims =
           copy_int16 a_arr out_arr va vout s e)
     else copy_int16 a_arr out_arr va vout 0 out_numel
   else if in_numel = 0 then
-    Error.invalid ~op:"reduce_max" ~what:"input" ~reason:"empty" ()
+    invalid_arg "reduce_max: empty input"
   else if out_numel = 1 then
     let total = max_all_int16 a_arr va 0 in_numel in
     fill_int16 out_arr vout total
@@ -2078,7 +2078,7 @@ let reduce_max_int32 pool ~out_arr ~a_arr ~va ~vout ~axes ~keepdims =
           copy_int32 a_arr out_arr va vout s e)
     else copy_int32 a_arr out_arr va vout 0 out_numel
   else if in_numel = 0 then
-    Error.invalid ~op:"reduce_max" ~what:"input" ~reason:"empty" ()
+    invalid_arg "reduce_max: empty input"
   else if out_numel = 1 then
     let total = max_all_int32 a_arr va 0 in_numel in
     fill_int32 out_arr vout total
@@ -2097,7 +2097,7 @@ let reduce_max_int64 pool ~out_arr ~a_arr ~va ~vout ~axes ~keepdims =
           copy_int64 a_arr out_arr va vout s e)
     else copy_int64 a_arr out_arr va vout 0 out_numel
   else if in_numel = 0 then
-    Error.invalid ~op:"reduce_max" ~what:"input" ~reason:"empty" ()
+    invalid_arg "reduce_max: empty input"
   else if out_numel = 1 then
     let total = max_all_int64 a_arr va 0 in_numel in
     fill_int64 out_arr vout total
