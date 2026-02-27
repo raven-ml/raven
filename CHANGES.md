@@ -13,6 +13,10 @@ kaun-board — were built as part of our Outreachy internships.
 
 ### Highlights
 
+- **Unified tensor type** — `Nx.t` and `Rune.t` are now the same type.
+  Downstream packages no longer need to choose between them or convert at
+  boundaries. Rune is now a pure transformation library (grad, vjp, vmap)
+  over standard Nx tensors.
 - **nx-oxcaml** (new, Outreachy) — Pure-OCaml tensor backend using OxCaml's
   unboxed types and SIMD intrinsics. Performance approaches the C backend —
   in pure OCaml.
@@ -34,7 +38,16 @@ kaun-board — were built as part of our Outreachy internships.
 - **nx**: Redesigned backend interface with new `Nx_buffer` type. Removed
   `nx.datasets` library. Moved NN functions to Kaun (use `Kaun.Fn`). Renamed
   `im2col`/`col2im` to `extract_patches`/`combine_patches`. RNG uses
-  effect-based implicit scoping instead of explicit key threading.
+  effect-based implicit scoping instead of explicit key threading. Removed
+  in-place mutation operations (`ifill`, `iadd`, `isub`, `imul`, `idiv`,
+  `ipow`, `imod`, `imaximum`, `iminimum` and `_s` variants). Removed
+  `Symbolic_shape` module; shapes are concrete `int array` throughout.
+  Removed `Instrumentation` module.
+- **rune**: `Rune.t` no longer exists — use `Nx.t` everywhere. `Rune` no
+  longer re-exports tensor operations; use `open Nx` for tensor ops and
+  `Rune.grad`, `Rune.vjp`, etc. for autodiff. Remove any `Rune.to_nx` /
+  `Rune.of_nx` calls. Removed `enable_debug`, `disable_debug`, `with_debug`;
+  use `Rune.debug f x` instead.
 - **rune**: Removed JIT/LLVM backend. This will come back in a future
   release with a proper ML compiler.
 - **kaun**: Rewritten core modules, datasets, and HuggingFace integration.
@@ -43,6 +56,9 @@ kaun-board — were built as part of our Outreachy internships.
 
 ### Nx
 
+- Unify `Nx.t` and `Rune.t` into a single tensor type. A new `nx.effect` library (`Nx_effect`) implements the backend interface with OCaml 5 effects: each operation raises an effect that autodiff/vmap/debug handlers can intercept, falling back to the C backend when unhandled. `Nx.t` is now `Nx_effect.t` everywhere — no more type conversions between Nx and Rune.
+- Make transcendental, trigonometric, and hyperbolic operations (`exp`, `log`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `atan2`, `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`, `erf`, `sigmoid`) polymorphic over all numeric types including complex, matching the backend and effect definitions.
+- Make `isinf`, `isfinite`, `ceil`, `floor`, `round` polymorphic (non-float dtypes return all-false/all-true or no-op as appropriate).
 - Redesign backend interface with more granular operations (e.g. dedicated unary and binary kernels). This improves performance by letting backends optimize individual ops directly, and prepares for the JIT pipeline which will decompose composite operations at the compiler level instead of the frontend.
 - Rewrite `Nx_buffer` module with new interface. The backend now returns `Nx_buffer.t` instead of raw bigarrays.
 - Add new C kernels for unary, binary, and sort operations, and route new backend ops to C kernels.
@@ -62,13 +78,15 @@ kaun-board — were built as part of our Outreachy internships.
 - Fix OpenMP flag filtering in `discover.ml`: strip `-Xpreprocessor -fopenmp` as a pair on macOS to prevent dangling `-Xpreprocessor` from consuming subsequent flags and causing linker failures. (@Alizter)
 - Add missing bool→low-precision cast support (f16/bf16/fp8) in the C backend.
 - Add UInt32/UInt64 dtypes, rename complex dtypes to Complex64/Complex128, and drop Complex16/QInt8/QUInt8/Int/NativeInt as tensor element dtypes.
-- Add instrumentation support with `Nx_core.Instrumentation` module for tracing and profiling Nx operations. All frontend functions now emit spans via configurable hooks.
-- Add optional `?out` parameter to every relevant Nx function to allow users to provide pre-allocated output buffers.
+- Remove in-place mutation operations (`ifill`, `iadd`, `isub`, `imul`, `idiv`, `ipow`, `imod`, `imaximum`, `iminimum` and `_s` variants). Use functional operations instead.
+- Remove `Symbolic_shape` module; shapes are now concrete `int array` throughout.
+- Remove `Instrumentation` module. Nx no longer wraps operations in tracing spans. Debugging tensor operations is handled by Rune's effect-based debug handler.
 - Fix critical correctness issue in fancy slicing (`L`) where permutations were ignored if the number of indices matched the dimension size (e.g., `slice [L [1; 0]] x` returned `x` unmodified).
 - Rewrite `slice` implementation to use `as_strided` for contiguous operations, reducing overhead to **O(1)** for view-based slices and separating gather operations for better performance.
 - Optimize `set_slice` by replacing scalar-loop index calculations with vectorized coordinate arithmetic, significantly improving performance for fancy index assignments.
 - Improve `einsum` performance **8–20×** with greedy contraction path optimizer (e.g., MatMul 100×100 f32 207.83 µs → 10.76 µs, **19×**; BatchMatMul 200×200 f32 8.78 ms → 435.39 µs, **20×**)
 - Rewrite `diagonal` using flatten + gather approach instead of O(N²) eye matrix masking, reducing memory from O(N²) to O(N)
+- Improve error messages for shape operations (`broadcast`, `reshape`, `blit`) with per-dimension detail and element counts.
 
 ### nx-oxcaml (new)
 
@@ -76,6 +94,10 @@ New pure-OCaml tensor backend that can be swapped in at link time via Dune virtu
 
 ### Rune
 
+- Unify tensor types: `Rune.t` is now `Nx.t`. Rune no longer re-exports the Nx frontend — it is a pure transformation library exporting only `grad`, `grads`, `value_and_grad`, `vjp`, `jvp`, `vmap`, `no_grad`, `detach`, and debugging/gradcheck utilities. All tensor creation and manipulation uses `Nx` directly.
+- Remove `Tensor` module and `Nx_rune` backend. Effect definitions moved to the new `nx.effect` library shared with Nx.
+- Remove `Rune.to_nx` / `Rune.of_nx` (no longer needed — types are identical).
+- Remove `Rune.enable_debug`, `Rune.disable_debug`, `Rune.with_debug`. Use `Rune.debug f x` to run a computation with debug logging enabled.
 - Remove JIT compilation support from Rune. The `Rune.Jit` module and LLVM/Metal backends have been removed and will be re-introduced later as a standalone package.
 - Update to new `Nx_buffer.t` type.
 - Propagate new backend operations through effects and autodiff.
