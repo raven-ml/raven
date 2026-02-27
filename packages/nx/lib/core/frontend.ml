@@ -160,14 +160,10 @@ module Make (B : Backend_intf.S) = struct
     if shift_val < 0 then
       err "power_of_two" "shift_val must be >= 0, got %d" shift_val;
     match dtype with
-    | Int8 | UInt8 | Int16 | UInt16 -> (
-        let power = 1 lsl shift_val in
-        match dtype with
-        | Int8 -> power
-        | UInt8 -> power land 0xFF
-        | Int16 -> power
-        | UInt16 -> power land 0xFFFF
-        | _ -> assert false)
+    | Int8 -> 1 lsl shift_val
+    | UInt8 -> (1 lsl shift_val) land 0xFF
+    | Int16 -> 1 lsl shift_val
+    | UInt16 -> (1 lsl shift_val) land 0xFFFF
     | Int32 -> Int32.shift_left Int32.one shift_val
     | UInt32 -> Int32.shift_left Int32.one shift_val
     | Int64 -> Int64.shift_left Int64.one shift_val
@@ -208,13 +204,7 @@ module Make (B : Backend_intf.S) = struct
           axis)
         axes
     in
-    let sorted = List.sort compare normalized in
-    let rec dedup prev acc = function
-      | [] -> List.rev acc
-      | h :: t when Some h = prev -> dedup prev acc t
-      | h :: t -> dedup (Some h) (h :: acc) t
-    in
-    dedup None [] sorted
+    List.sort_uniq compare normalized
 
   (* Count elements across reduction axes. *)
   let reduction_element_count input_shape ?axes () =
@@ -458,7 +448,7 @@ module Make (B : Backend_intf.S) = struct
 
   (* ───── Element-wise Binary Operations ───── *)
 
-  let binop ?out ?(op_name = "binop") op a b =
+  let binop ?out op a b =
     let a', b' = broadcasted a b in
     let out =
       match out with
@@ -468,7 +458,7 @@ module Make (B : Backend_intf.S) = struct
     op ~out a' b';
     out
 
-  let cmpop ?out ?(op_name = "cmpop") op a b =
+  let cmpop ?out op a b =
     let a', b' = broadcasted a b in
     let out =
       match out with
@@ -478,33 +468,33 @@ module Make (B : Backend_intf.S) = struct
     op ~out a' b';
     out
 
-  let add ?out a b = binop ~op_name:"add" ?out B.add a b
+  let add ?out a b = binop?out B.add a b
   let add_s ?out t s = add ?out t (scalar_like t s)
   let radd_s ?out s t = add ?out (scalar_like t s) t
-  let sub ?out a b = binop ~op_name:"sub" ?out B.sub a b
+  let sub ?out a b = binop?out B.sub a b
   let sub_s ?out t s = sub ?out t (scalar_like t s)
   let rsub_s ?out s t = sub ?out (scalar_like t s) t
-  let mul ?out a b = binop ~op_name:"mul" ?out B.mul a b
+  let mul ?out a b = binop?out B.mul a b
   let mul_s ?out t s = mul ?out t (scalar_like t s)
   let rmul_s ?out s t = mul ?out (scalar_like t s) t
-  let div ?out a b = binop ~op_name:"div" ?out B.div a b
+  let div ?out a b = binop?out B.div a b
   let div_s ?out t s = div ?out t (scalar_like t s)
   let rdiv_s ?out s t = div ?out (scalar_like t s) t
-  let pow ?out a b = binop ~op_name:"pow" ?out B.pow a b
+  let pow ?out a b = binop?out B.pow a b
   let pow_s ?out t s = pow ?out t (scalar_like t s)
   let rpow_s ?out s t = pow ?out (scalar_like t s) t
-  let maximum ?out a b = binop ~op_name:"maximum" ?out B.max a b
+  let maximum ?out a b = binop?out B.max a b
   let maximum_s ?out t s = maximum ?out t (scalar_like t s)
   let rmaximum_s ?out s t = maximum ?out (scalar_like t s) t
-  let minimum ?out a b = binop ~op_name:"minimum" ?out B.min a b
+  let minimum ?out a b = binop?out B.min a b
   let minimum_s ?out t s = minimum ?out t (scalar_like t s)
   let rminimum_s ?out s t = minimum ?out (scalar_like t s) t
-  let mod_ ?out a b = binop ~op_name:"mod" ?out B.mod_ a b
+  let mod_ ?out a b = binop?out B.mod_ a b
   let mod_s ?out t s = mod_ ?out t (scalar_like t s)
   let rmod_s ?out s t = mod_ ?out (scalar_like t s) t
-  let bitwise_xor ?out a b = binop ~op_name:"bitwise_xor" ?out B.xor a b
-  let bitwise_or ?out a b = binop ~op_name:"bitwise_or" ?out B.or_ a b
-  let bitwise_and ?out a b = binop ~op_name:"bitwise_and" ?out B.and_ a b
+  let bitwise_xor ?out a b = binop?out B.xor a b
+  let bitwise_or ?out a b = binop?out B.or_ a b
+  let bitwise_and ?out a b = binop?out B.and_ a b
 
   (* ───── Logical and Comparison Operations ───── *)
 
@@ -519,10 +509,10 @@ module Make (B : Backend_intf.S) = struct
     | Dtype.UInt8 | Dtype.Bool | Dtype.UInt4 -> binop ?out B.xor x one
     | _ -> sub ?out one x
 
-  let cmpeq ?out a b = cmpop ~op_name:"equal" ?out B.cmpeq a b
-  let cmpne ?out a b = cmpop ~op_name:"not_equal" ?out B.cmpne a b
-  let cmplt ?out a b = cmpop ~op_name:"less" ?out B.cmplt a b
-  let cmple ?out a b = cmpop ~op_name:"less_equal" ?out B.cmple a b
+  let cmpeq ?out a b = cmpop?out B.cmpeq a b
+  let cmpne ?out a b = cmpop?out B.cmpne a b
+  let cmplt ?out a b = cmpop?out B.cmplt a b
+  let cmple ?out a b = cmpop?out B.cmple a b
   let cmpgt ?out a b = cmplt ?out b a
   let cmpge ?out a b = cmple ?out b a
   let less = cmplt
@@ -540,7 +530,7 @@ module Make (B : Backend_intf.S) = struct
 
   (* ───── Element-wise Unary Operations ───── *)
 
-  let unaryop ?out ?(op_name = "unary") op x =
+  let unaryop ?out op x =
     let out =
       match out with
       | Some o -> o
@@ -549,7 +539,7 @@ module Make (B : Backend_intf.S) = struct
     op ~out x;
     out
 
-  let neg ?out x = unaryop ~op_name:"neg" ?out B.neg x
+  let neg ?out x = unaryop?out B.neg x
 
   let bitwise_not ?out x =
     let dt = dtype x in
@@ -558,13 +548,13 @@ module Make (B : Backend_intf.S) = struct
          (B.full (B.context x) dt [||] (Dtype.minus_one dt)))
 
   let invert ?out x = bitwise_not ?out x
-  let sin ?out x = unaryop ~op_name:"sin" ?out B.sin x
-  let cos ?out x = unaryop ~op_name:"cos" ?out B.cos x
-  let sqrt ?out x = unaryop ~op_name:"sqrt" ?out B.sqrt x
-  let recip ?out x = unaryop ~op_name:"recip" ?out B.recip x
-  let log ?out x = unaryop ~op_name:"log" ?out B.log x
-  let exp ?out x = unaryop ~op_name:"exp" ?out B.exp x
-  let abs ?out x = unaryop ~op_name:"abs" ?out B.abs x
+  let sin ?out x = unaryop?out B.sin x
+  let cos ?out x = unaryop?out B.cos x
+  let sqrt ?out x = unaryop?out B.sqrt x
+  let recip ?out x = unaryop?out B.recip x
+  let log ?out x = unaryop?out B.log x
+  let exp ?out x = unaryop?out B.exp x
+  let abs ?out x = unaryop?out B.abs x
 
   let log2 ?out x =
     mul ?out (log x)
@@ -579,9 +569,9 @@ module Make (B : Backend_intf.S) = struct
             (scalar (B.context x) (dtype x)
                (Dtype.of_float (dtype x) (Stdlib.log 2.0)))))
 
-  let tan ?out x = unaryop ~op_name:"tan" ?out B.tan x
+  let tan ?out x = unaryop?out B.tan x
   let square ?out x = mul ?out x x
-  let sign ?out x = unaryop ~op_name:"sign" ?out B.sign x
+  let sign ?out x = unaryop?out B.sign x
   let relu ?out x = maximum ?out x (zeros_like x)
 
   let sigmoid ?out x =
@@ -592,12 +582,12 @@ module Make (B : Backend_intf.S) = struct
     recip ?out (add (ones_like x) (exp2 (mul x neg_one_over_log2)))
 
   let rsqrt ?out x = recip ?out (sqrt x)
-  let asin ?out x = unaryop ~op_name:"asin" ?out B.asin x
-  let acos ?out x = unaryop ~op_name:"acos" ?out B.acos x
-  let atan ?out x = unaryop ~op_name:"atan" ?out B.atan x
-  let sinh ?out x = unaryop ~op_name:"sinh" ?out B.sinh x
-  let cosh ?out x = unaryop ~op_name:"cosh" ?out B.cosh x
-  let tanh ?out x = unaryop ~op_name:"tanh" ?out B.tanh x
+  let asin ?out x = unaryop?out B.asin x
+  let acos ?out x = unaryop?out B.acos x
+  let atan ?out x = unaryop?out B.atan x
+  let sinh ?out x = unaryop?out B.sinh x
+  let cosh ?out x = unaryop?out B.cosh x
+  let tanh ?out x = unaryop?out B.tanh x
 
   let asinh ?out x =
     let one_x = full (B.context x) (dtype x) (shape x) 1.0 in
@@ -612,10 +602,10 @@ module Make (B : Backend_intf.S) = struct
     let two_x = full (B.context x) (dtype x) (shape x) 2.0 in
     div ?out (log (div (add one_x x) (sub one_x x))) two_x
 
-  let trunc ?out x = unaryop ~op_name:"trunc" ?out B.trunc x
-  let ceil ?out x = unaryop ~op_name:"ceil" ?out B.ceil x
-  let floor ?out x = unaryop ~op_name:"floor" ?out B.floor x
-  let round ?out x = unaryop ~op_name:"round" ?out B.round x
+  let trunc ?out x = unaryop?out B.trunc x
+  let ceil ?out x = unaryop?out B.ceil x
+  let floor ?out x = unaryop?out B.floor x
+  let round ?out x = unaryop?out B.round x
 
   let isinf ?out x =
     if not (Dtype.is_float (dtype x)) then
@@ -695,7 +685,7 @@ module Make (B : Backend_intf.S) = struct
 
   (* ───── Binary Mathematical Functions ───── *)
 
-  let atan2 ?out y x = binop ~op_name:"atan2" ?out B.atan2 y x
+  let atan2 ?out y x = binop?out B.atan2 y x
 
   (* sqrt(x² + y²) with overflow protection via max * sqrt(1 + (min/max)²) *)
   let hypot ?out x y =
@@ -2590,13 +2580,13 @@ module Make (B : Backend_intf.S) = struct
         in
         let perm_a = Array.append free_a axes_a in
         let perm_b = Array.append axes_b free_b in
-        let do_transpose perm len t =
+        let do_transpose perm t =
           if Array.length perm > 1 then
             contiguous (transpose ~axes:(Array.to_list perm) t)
           else t
         in
-        let at = do_transpose perm_a ndim_a a in
-        let bt = do_transpose perm_b ndim_b b in
+        let at = do_transpose perm_a a in
+        let bt = do_transpose perm_b b in
         let sat = shape at in
         let sbt = shape bt in
         let nfa = Array.length free_a in
@@ -3762,6 +3752,17 @@ module Make (B : Backend_intf.S) = struct
         let n = List.fold_left (fun acc ax -> acc * dim ax x) 1 axes_list in
         1.0 /. Stdlib.sqrt (float_of_int n)
 
+  (* Inverse: Backward↔Forward swapped, Ortho unchanged *)
+  let ifft_norm_scale norm axes_list x =
+    match norm with
+    | `Backward ->
+        let n = List.fold_left (fun acc ax -> acc * dim ax x) 1 axes_list in
+        1.0 /. float_of_int n
+    | `Forward -> 1.0
+    | `Ortho ->
+        let n = List.fold_left (fun acc ax -> acc * dim ax x) 1 axes_list in
+        1.0 /. Stdlib.sqrt (float_of_int n)
+
   let apply_fft_scale (type a) ?out scale (result : (Complex.t, a) t) :
       (Complex.t, a) t =
     if scale <> 1.0 then
@@ -3801,39 +3802,10 @@ module Make (B : Backend_intf.S) = struct
     | Some sizes when List.length sizes <> List.length axes_list ->
         invalid_arg "ifft: s parameter must have same length as axes"
     | _ -> ());
-    let xi, norm_scale =
-      match s with
-      | None ->
-          let scale =
-            match norm with
-            | `Backward ->
-                let n =
-                  List.fold_left (fun acc ax -> acc * dim ax x) 1 axes_list
-                in
-                1.0 /. float_of_int n
-            | `Forward -> 1.0
-            | `Ortho ->
-                let n =
-                  List.fold_left (fun acc ax -> acc * dim ax x) 1 axes_list
-                in
-                1.0 /. Stdlib.sqrt (float_of_int n)
-          in
-          (x, scale)
-      | Some sizes ->
-          let xp = pad_or_truncate_for_fft x axes_list s in
-          let scale =
-            match norm with
-            | `Backward ->
-                let n = List.fold_left ( * ) 1 sizes in
-                1.0 /. float_of_int n
-            | `Forward -> 1.0
-            | `Ortho ->
-                1.0 /. Stdlib.sqrt (float_of_int (List.fold_left ( * ) 1 sizes))
-          in
-          (xp, scale)
-    in
-    let r = B.ifft xi ~axes:(Array.of_list axes_list) in
-    apply_fft_scale ?out norm_scale r
+    let xp = pad_or_truncate_for_fft x axes_list s in
+    let scale = ifft_norm_scale norm axes_list xp in
+    let r = B.ifft xp ~axes:(Array.of_list axes_list) in
+    apply_fft_scale ?out scale r
 
   let rfftn ?out ?axes ?s ?(norm = `Backward) x =
     let nd = ndim x in
@@ -3841,10 +3813,7 @@ module Make (B : Backend_intf.S) = struct
     let xp = pad_or_truncate_for_fft x axes_list s in
     let scale = fft_norm_scale norm axes_list xp in
     let r = B.rfft xp ~dtype:Dtype.Complex128 ~axes:(Array.of_list axes_list) in
-    if scale <> 1.0 then
-      let sv = Complex.{ re = scale; im = 0.0 } in
-      mul ?out r (scalar (B.context r) (B.dtype r) sv)
-    else copy_to_out ?out r
+    apply_fft_scale ?out scale r
 
   let irfftn ?out ?axes ?s ?(norm = `Backward) x =
     let nd = ndim x in
@@ -3861,26 +3830,12 @@ module Make (B : Backend_intf.S) = struct
               else input_shape.(axis))
             axes_list
     in
-    let norm_sizes =
-      List.mapi
-        (fun i axis ->
-          let axis = if axis < 0 then nd + axis else axis in
-          if i = List.length axes_list - 1 then
-            match s with
-            | Some sizes -> List.nth sizes i
-            | None -> (input_shape.(axis) - 1) * 2
-          else
-            match s with
-            | Some sizes -> List.nth sizes i
-            | None -> input_shape.(axis))
-        axes_list
-    in
     let norm_scale =
+      let n = List.fold_left ( * ) 1 output_sizes in
       match norm with
-      | `Backward -> 1.0 /. float_of_int (List.fold_left ( * ) 1 norm_sizes)
+      | `Backward -> 1.0 /. float_of_int n
       | `Forward -> 1.0
-      | `Ortho ->
-          1.0 /. Stdlib.sqrt (float_of_int (List.fold_left ( * ) 1 norm_sizes))
+      | `Ortho -> 1.0 /. Stdlib.sqrt (float_of_int n)
     in
     let s_param =
       match s with None -> None | Some _ -> Some (Array.of_list output_sizes)
@@ -4123,7 +4078,7 @@ module Make (B : Backend_intf.S) = struct
     div ?out (sub x mean_tensor)
       (sqrt (add variance_tensor (scalar_like x epsilon)))
 
-  let erf ?out x = unaryop ~op_name:"erf" ?out B.erf x
+  let erf ?out x = unaryop?out B.erf x
 
   let extract_patches ~kernel_size ~stride ~dilation ~padding x =
     B.unfold x ~kernel_size ~stride ~dilation ~padding
@@ -4144,7 +4099,6 @@ module Make (B : Backend_intf.S) = struct
     | `Same ->
         Array.init k (fun i ->
             let total = k_shape.(i) - 1 in
-            let _ = input_spatial.(i) in
             (total / 2, total - (total / 2)))
 
   let correlate ?(padding = `Valid) x kernel =
@@ -4161,7 +4115,6 @@ module Make (B : Backend_intf.S) = struct
     in
     let und = ndim x_unf in
     let kp = (shape x_unf).(und - 2) in
-    let l = (shape x_unf).(und - 1) in
     let result =
       sum (mul x_unf (reshape [| kp; 1 |] kernel)) ~axes:[ und - 2 ]
     in
@@ -4170,7 +4123,6 @@ module Make (B : Backend_intf.S) = struct
       Array.init kr (fun i ->
           input_spatial.(i) + fst pad_pairs.(i) + snd pad_pairs.(i) - ks.(i) + 1)
     in
-    let _ = l in
     reshape (Array.concat [ leading; out_spatial ]) result
 
   let convolve ?(padding = `Valid) x kernel =
@@ -4273,7 +4225,7 @@ module Make (B : Backend_intf.S) = struct
             | Some s -> s
             | None ->
                 invalid_arg
-                  "pp_data: cannot print non-contiguous symbolic tensor"
+                  "pp_data: cannot print tensor with non-materializable view"
           in
           let offset = Shape.ravel_index md_index strides + View.offset view in
           if offset < 0 || offset >= Nx_buffer.length buffer then
