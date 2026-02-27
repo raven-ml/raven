@@ -24,9 +24,6 @@ let jvps = Jvp.jvps
 
 (* Gradient checking *)
 
-module Finite_diff = Finite_diff
-module Gradcheck = Gradcheck
-
 type method_ = Finite_diff.method_
 
 type gradient_check_result = Gradcheck.gradient_check_result = {
