@@ -1,4 +1,4 @@
-(lang dune 3.20)
+(lang dune 3.21)
 
 (name nx-oxcaml)
 
@@ -16,7 +16,7 @@
 (license ISC)
 
 (pin
- (url ../)
+ (url ../../)
  (package
   (name nx)))
 

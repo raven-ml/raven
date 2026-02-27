@@ -46,7 +46,6 @@
 
 (package
  (name nx)
- (dir packages/nx)
  (synopsis "High-performance N-dimensional array library for OCaml")
  (description
   "Nx is the core component of the Raven ecosystem providing efficient numerical computation with multi-device support. It offers NumPy-like functionality with the benefits of OCaml's type system.")
@@ -67,7 +66,6 @@
 
 (package
  (name brot)
- (dir packages/brot)
  (synopsis "Fast tokenization library for OCaml")
  (description
   "Brot tokenizes text for language models. It provides configurable pipelines with normalization, pre-tokenization, vocabulary-based encoding (BPE, WordPiece, Unigram), post-processing, and decoding. Compatible with HuggingFace tokenizer formats.")
@@ -86,7 +84,6 @@
 
 (package
  (name talon)
- (dir packages/talon)
  (synopsis "A dataframe library for OCaml")
  (description
   "Talon provides efficient tabular data manipulation with heterogeneous column types, inspired by pandas and polars.")
@@ -103,7 +100,6 @@
 
 (package
  (name rune)
- (dir packages/rune)
  (synopsis "Automatic differentiation for OCaml")
  (description
   "Rune provides automatic differentiation capabilities for the Raven ecosystem. It enables gradient-based optimization and supports functional transformations like grad, value_and_grad, and vmap, making it the foundation for deep learning in OCaml.")
@@ -120,7 +116,6 @@
 
 (package
  (name kaun)
- (dir packages/kaun)
  (synopsis "Neural network modules for OCaml")
  (description
   "Minimal, composable library for defining neural network modules, computing gradients on parameter trees, and updating them with optimizers. Built on Rune.")
@@ -139,7 +134,6 @@
 
 (package
  (name kaun-board)
- (dir packages/kaun-board)
  (synopsis "Training dashboard and logging for Raven")
  (description
   "Lightweight training logger and terminal dashboard for monitoring runs. The core library (kaun-board) provides a Log API for writing JSONL events and a reader for consuming them. The TUI library (kaun-board.tui) provides a Mosaic-based dashboard.")
@@ -158,7 +152,6 @@
 
 (package
  (name sowilo)
- (dir packages/sowilo)
  (synopsis "Computer vision extensions for Rune")
  (description
   "Computer vision operations and algorithms built on top of the Rune library. Provides image processing, feature extraction, and other vision-related functionality.")
@@ -174,7 +167,6 @@
 
 (package
  (name fehu)
- (dir packages/fehu)
  (synopsis "Reinforcement learning environments and utilities for OCaml")
  (description
   "Minimal, composable library for reinforcement learning: environments, spaces, trajectory collection, advantage estimation, and replay buffers. Built on Rune.")
@@ -190,7 +182,6 @@
 
 (package
  (name hugin)
- (dir packages/hugin)
  (synopsis "Visualization library for OCaml")
  (description
   "Hugin is a powerful visualization library for OCaml that produces publication-quality plots and charts. It integrates with the Raven ecosystem to provide visualization of Nx data.")
@@ -209,7 +200,6 @@
 
 (package
  (name quill)
- (dir packages/quill)
  (synopsis "Interactive notebooks for OCaml")
  (description
   "Quill turns markdown files into interactive OCaml notebooks. It provides a terminal UI for cell navigation and execution, batch evaluation with watch mode, and in-place output serialization. All Raven packages are pre-loaded.")
