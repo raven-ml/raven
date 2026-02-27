@@ -1,36 +1,36 @@
-# rune Documentation
+# rune
 
-Rune is our JAX. It brings automatic differentiation to OCaml using algebraic effects.
+Rune provides functional transformations for Nx tensors: automatic differentiation (forward and reverse mode), vectorising maps, and gradient checking. It operates on `Nx.t` values directly — no special tensor type is needed.
 
-## What rune Does
+## Features
 
-Rune lets you write numerical functions in OCaml and automatically compute their derivatives. Need gradients for optimization? Just wrap your function with `grad`. Want it to run fast? Wrap it with `jit` (coming post-v1).
+- **Reverse-mode AD** — `grad`, `value_and_grad`, `vjp` for backpropagation
+- **Forward-mode AD** — `jvp` for Jacobian-vector products
+- **Vectorising map** — `vmap` to lift per-example functions to batched operations
+- **Gradient checking** — `check_gradient` and `finite_diff` for testing
+- **Composable** — nest transformations freely (`grad (grad f)`, `vmap (grad f)`)
+- **Effect-based** — uses OCaml 5 effects to intercept Nx operations cleanly
 
-<!-- XXX: This is an internal defail. We can mention it as this is interesting to know, but choose the right tone here -->
-The magic comes from OCaml 5's effect system. While other autodiff libraries modify your code with macros or operator overloading, rune uses effects to transform functions cleanly. Write normal OCaml code, get derivatives for free.
+## Quick Start
 
-## Current Status
+```ocaml
+open Nx
+open Rune
 
-Rune implements reverse-mode automatic differentiation today. You can compute gradients of scalar functions, which is what you need for machine learning.
+(* Define a function using Nx operations *)
+let f x = add (mul x x) (sin x)
 
-What works:
-- Reverse-mode AD (backpropagation)
-- Basic tensor operations
-- Gradient computation for neural networks
-- Higher-order derivatives (with nested `grad` transformations)
+(* Compute its gradient *)
+let f' = grad f
 
-What's coming post-v1:
-- JIT compilation to LLVM/Metal/CUDA
-- Forward-mode AD
-- vmap and other JAX-style transformations
+let () =
+  let x = scalar float32 2.0 in
+  Printf.printf "f(2)  = %.4f\n" (item [] (f x));
+  Printf.printf "f'(2) = %.4f\n" (item [] (f' x))
+```
 
-## Design
+## Next Steps
 
-<!-- XXX: Review this document, lots of wrong things. We don't have a Tensor type. -->
-
-Rune introduces a separate `Tensor` type for differentiable computations. This isn't redundant with nx, it's deliberate. Tensors track computation graphs for autodiff, while nx arrays are just data. Convert between them when crossing the boundary.
-
-## Learn More
-
-- [Getting Started](/docs/rune/getting-started/) - Installation and first steps
-- [API Reference](https://ocaml.org/p/rune/latest/doc/Rune/index.html) - Complete API docs (coming soon)
+- [Getting Started](/docs/rune/getting-started/) — installation and first gradients
+- [Transformations](/docs/rune/transformations/) — complete guide to grad, jvp, vmap, and more
+- [How It Works](/docs/rune/how-it-works/) — effects-based automatic differentiation explained

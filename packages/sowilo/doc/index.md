@@ -4,12 +4,12 @@ Differentiable computer vision on Rune tensors.
 
 Sowilo provides image processing operations expressed purely through Rune
 tensor operations. Filters, edge detectors, morphological operations, color
-transforms, and geometric transforms -- all compatible with `Rune.grad`,
-`Rune.jit`, and `Rune.vmap`.
+transforms, and geometric transforms -- all compatible with `Rune.grad`
+and `Rune.vmap`.
 
 ## Image Conventions
 
-Images are `Rune.t` tensors with channels-last layout:
+Images are `Nx.t` tensors with channels-last layout:
 
 - **Single image**: `[H; W; C]` (height, width, channels)
 - **Batch**: `[N; H; W; C]` (batch, height, width, channels)

@@ -20,18 +20,19 @@
       <span class="breadcrumb-separator">/</span>
       <a href="/docs/" class="breadcrumb-link">docs</a>
       <span class="breadcrumb-separator">/</span>
-      <span class="breadcrumb-text {{lib_color}}">{{lib_display}}</span>
+      {{lib_breadcrumb}}
     </nav>
   </header>
 
   <div class="container">
+    <button class="sidebar-toggle" onclick="document.querySelector('.sidebar').classList.toggle('open')">Menu</button>
     <!-- Sidebar -->
     <nav class="sidebar">
       <!-- Library Info -->
       <div class="library-info">
         <h3 class="{{lib_color}}">{{lib_display}}</h3>
         <p>{{lib_description}}</p>
-        <a href="/{{lib_name}}/" class="{{lib_color}}">← Back to Library</a>
+        <a href="/docs/" class="{{lib_color}}">← raven</a>
       </div>
 
       <!-- Navigation -->
@@ -53,9 +54,10 @@
 
     <!-- Main Content -->
     <div class="content">
-      {{breadcrumbs}}
       <main>
+{{lib_hero}}
 {{content}}
+{{prev_next}}
       </main>
     </div>
   </div>

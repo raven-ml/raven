@@ -18,11 +18,12 @@
         raven
       </a>
       <span class="breadcrumb-separator">/</span>
-      <span class="breadcrumb-text">docs</span>
+      {{docs_breadcrumb}}
     </nav>
   </header>
 
   <div class="container">
+    <button class="sidebar-toggle" onclick="document.querySelector('.sidebar').classList.toggle('open')">Menu</button>
     <!-- Sidebar -->
     <nav class="sidebar">
       <div class="nav-section">
@@ -41,21 +42,20 @@
         <div class="nav-title">Libraries</div>
         <ul class="nav-links">
           <li><a href="/docs/nx/" class="color-blue">nx</a></li>
-          <li><a href="/docs/brot/" class="color-teal">brot</a></li>
-          <li><a href="/docs/talon/" class="color-pink">talon</a></li>
-          <li><a href="/docs/hugin/" class="color-purple">hugin</a></li>
-          <li><a href="/docs/quill/" class="color-green">quill</a></li>
-          <li><a href="/docs/rune/" class="color-orange">rune</a></li>
-          <li><a href="/docs/kaun/" class="color-red">kaun <span class="rune-symbol">ᚲ</span></a></li>
-          <li><a href="/docs/fehu/" class="color-teal">fehu <span class="rune-symbol">ᚠ</span></a></li>
-          <li><a href="/docs/sowilo/" class="color-indigo">sowilo <span class="rune-symbol">ᛋ</span></a></li>
+          <li><a href="/docs/rune/" class="color-orange"><span class="rune-symbol">ᚱ</span> rune</a></li>
+          <li><a href="/docs/kaun/" class="color-red"><span class="rune-symbol">ᚲ</span> kaun</a></li>
+          <li><a href="/docs/brot/" class="color-cyan"><span class="rune-symbol">ᚨ</span> brot</a></li>
+          <li><a href="/docs/talon/" class="color-pink"><span class="rune-symbol">ᛃ</span> talon</a></li>
+          <li><a href="/docs/hugin/" class="color-purple"><span class="rune-symbol">ᛞ</span> hugin</a></li>
+          <li><a href="/docs/quill/" class="color-green"><span class="rune-symbol">ᛈ</span> quill</a></li>
+          <li><a href="/docs/fehu/" class="color-lime"><span class="rune-symbol">ᚠ</span> fehu</a></li>
+          <li><a href="/docs/sowilo/" class="color-indigo"><span class="rune-symbol">ᛋ</span> sowilo</a></li>
         </ul>
       </div>
     </nav>
 
     <!-- Main Content -->
     <div class="content">
-      {{breadcrumbs}}
       <main>
 {{content}}
       </main>

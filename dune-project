@@ -46,9 +46,9 @@
 
 (package
  (name nx)
- (synopsis "High-performance N-dimensional array library for OCaml")
+ (synopsis "N-dimensional arrays for OCaml")
  (description
-  "Nx is the core component of the Raven ecosystem providing efficient numerical computation with multi-device support. It offers NumPy-like functionality with the benefits of OCaml's type system.")
+  "Nx provides n-dimensional arrays with NumPy-like semantics and OCaml's type safety. 19 data types, broadcasting, slicing, linear algebra, FFT, and I/O. The numerical foundation for the Raven ecosystem.")
  (depends
   (ocaml
    (>= 5.2.0))
@@ -66,9 +66,9 @@
 
 (package
  (name brot)
- (synopsis "Fast tokenization library for OCaml")
+ (synopsis "Tokenization for OCaml")
  (description
-  "Brot tokenizes text for language models. It provides configurable pipelines with normalization, pre-tokenization, vocabulary-based encoding (BPE, WordPiece, Unigram), post-processing, and decoding. Compatible with HuggingFace tokenizer formats.")
+  "Fast, HuggingFace-compatible tokenization for language models. BPE, WordPiece, Unigram, word-level, and character-level algorithms with composable pipelines and training from scratch.")
  (depends
   (ocaml
    (>= 5.2.0))
@@ -84,9 +84,9 @@
 
 (package
  (name talon)
- (synopsis "A dataframe library for OCaml")
+ (synopsis "Dataframes for OCaml")
  (description
-  "Talon provides efficient tabular data manipulation with heterogeneous column types, inspired by pandas and polars.")
+  "Fast and elegant dataframes with type-safe operations. Heterogeneous columns, applicative row operations, vectorized aggregations, and CSV I/O, built on Nx.")
  (depends
   (ocaml
    (>= 5.2.0))
@@ -100,9 +100,9 @@
 
 (package
  (name rune)
- (synopsis "Automatic differentiation for OCaml")
+ (synopsis "Functional transformations for Nx arrays")
  (description
-  "Rune provides automatic differentiation capabilities for the Raven ecosystem. It enables gradient-based optimization and supports functional transformations like grad, value_and_grad, and vmap, making it the foundation for deep learning in OCaml.")
+  "Automatic differentiation and vectorizing maps for Nx tensors. Reverse-mode AD (grad, vjp), forward-mode AD (jvp), vmap, and gradient checking, built on OCaml 5 effect handlers.")
  (depends
   (ocaml
    (>= 5.2.0))
@@ -116,9 +116,9 @@
 
 (package
  (name kaun)
- (synopsis "Neural network modules for OCaml")
+ (synopsis "Neural networks for OCaml")
  (description
-  "Minimal, composable library for defining neural network modules, computing gradients on parameter trees, and updating them with optimizers. Built on Rune.")
+  "Composable layers, parameter trees, optimizers, training loops, data pipelines, and HuggingFace Hub integration. Built on Rune.")
  (depends
   (ocaml
    (>= 5.2.0))
@@ -152,9 +152,9 @@
 
 (package
  (name sowilo)
- (synopsis "Computer vision library for OCaml")
+ (synopsis "Differentiable computer vision for OCaml")
  (description
-  "Computer vision operations and algorithms built on top of Nx. Provides image processing, feature extraction, and other vision-related functionality.")
+  "Image processing operations expressed as Nx tensor computations. Geometric transforms, spatial filters, edge detection, morphological operations, and color space conversions, all compatible with Rune.grad and Rune.vmap.")
  (depends
   (ocaml
    (>= 5.2.0))
@@ -167,9 +167,9 @@
 
 (package
  (name fehu)
- (synopsis "Reinforcement learning environments and utilities for OCaml")
+ (synopsis "Reinforcement learning for OCaml")
  (description
-  "Minimal, composable library for reinforcement learning: environments, spaces, trajectory collection, advantage estimation, and replay buffers. Built on Nx.")
+  "Type-safe RL environments, observation/action spaces, vectorized environments, trajectory collection, replay buffers, and generalized advantage estimation. Built on Nx.")
  (depends
   (ocaml
    (>= 5.2.0))
@@ -182,9 +182,9 @@
 
 (package
  (name hugin)
- (synopsis "Visualization library for OCaml")
+ (synopsis "Plotting for OCaml")
  (description
-  "Hugin is a powerful visualization library for OCaml that produces publication-quality plots and charts. It integrates with the Raven ecosystem to provide visualization of Nx data.")
+  "Publication-quality 2D and 3D plots using Cairo rendering. Line plots, scatter, bar charts, contour plots, and image display from Nx tensors.")
  (depends
   (ocaml
    (>= 5.2.0))
@@ -200,9 +200,9 @@
 
 (package
  (name quill)
- (synopsis "Interactive notebooks for OCaml")
+ (synopsis "Notebooks as markdown files")
  (description
-  "Quill turns markdown files into interactive OCaml notebooks. It provides a terminal UI for cell navigation and execution, batch evaluation with watch mode, and in-place output serialization. All Raven packages are pre-loaded.")
+  "Quill turns markdown files into interactive OCaml notebooks. Terminal UI for cell navigation and execution, batch evaluation with watch mode, and in-place output serialization. All Raven packages are pre-loaded.")
  (depends
   (ocaml
    (>= 5.2.0))
@@ -217,9 +217,9 @@
 (package
  (name raven)
  (allow_empty)
- (synopsis "Meta package for the Raven ML ecosystem")
+ (synopsis "Modern scientific computing for OCaml")
  (description
-  "Raven is a comprehensive machine learning ecosystem for OCaml. This meta package installs all Raven components including Nx (tensors), Hugin (plotting), Rune (autodiff), Kaun (neural networks), and Sowilo (computer vision).")
+  "Raven is an ecosystem of composable libraries for numerical computing in OCaml. Tensors, automatic differentiation, neural networks, dataframes, plotting, tokenization, computer vision, reinforcement learning, and interactive notebooks.")
  (depends
   (nx
    (= :version))

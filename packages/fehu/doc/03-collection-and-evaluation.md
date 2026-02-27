@@ -17,17 +17,17 @@ environment at the start and automatically on episode boundaries:
 ```ocaml
 open Fehu
 
-let rng = Rune.Rng.key 42
-let env = Fehu_envs.Cartpole.make ~rng ()
+let () = Nx.Rng.run ~seed:42 @@ fun () ->
+  let env = Fehu_envs.Cartpole.make () in
 
-(* The policy receives an observation and returns
-   (action, log_prob option, value_estimate option) *)
-let policy obs =
-  let act, _ = Space.sample (Env.action_space env)
-    ~rng:(Env.take_rng env) in
-  (act, None, None)
+  (* The policy receives an observation and returns
+     (action, log_prob option, value_estimate option) *)
+  let policy _obs =
+    let act = Space.sample (Env.action_space env) in
+    (act, None, None)
+  in
 
-let trajectory = Collect.rollout env ~policy ~n_steps:1024
+  let _trajectory = Collect.rollout env ~policy ~n_steps:1024 in ()
 ```
 
 The returned trajectory contains parallel arrays:
@@ -68,9 +68,8 @@ For a simple random policy, return `None` for both:
 
 <!-- $MDX skip -->
 ```ocaml
-let random_policy obs =
-  let act, _ = Space.sample (Env.action_space env)
-    ~rng:(Env.take_rng env) in
+let random_policy _obs =
+  let act = Space.sample (Env.action_space env) in
   (act, None, None)
 ```
 
@@ -150,12 +149,12 @@ Draw a batch of transitions uniformly at random (with replacement):
 
 <!-- $MDX skip -->
 ```ocaml
-let rng = Rune.Rng.key 0
-let batch, rng' = Buffer.sample buf ~rng ~batch_size:64
+let batch = Nx.Rng.run ~seed:0 @@ fun () ->
+  Buffer.sample buf ~batch_size:64
 
 (* batch is a transition array *)
-let obs_0 = batch.(0).observation
-let rew_0 = batch.(0).reward
+let _obs_0 = batch.(0).observation
+let _rew_0 = batch.(0).reward
 ```
 
 For structure-of-arrays form (more convenient for training):
@@ -163,8 +162,9 @@ For structure-of-arrays form (more convenient for training):
 <!-- $MDX skip -->
 ```ocaml
 let (observations, actions, rewards,
-     next_observations, terminated, truncated), rng' =
-  Buffer.sample_arrays buf ~rng ~batch_size:64
+     next_observations, terminated, truncated) =
+  Nx.Rng.run ~seed:0 @@ fun () ->
+    Buffer.sample_arrays buf ~batch_size:64
 ```
 
 ### Clearing
@@ -249,24 +249,22 @@ and reports summary statistics:
 ```ocaml
 open Fehu
 
-let rng = Rune.Rng.key 42
-let env = Fehu_envs.Cartpole.make ~rng ()
+let () = Nx.Rng.run ~seed:42 @@ fun () ->
+  let env = Fehu_envs.Cartpole.make () in
 
-(* Evaluate a random policy *)
-let stats = Eval.run env
-  ~policy:(fun _obs ->
-    let act, _ = Space.sample (Env.action_space env)
-      ~rng:(Env.take_rng env) in act)
-  ~n_episodes:100
-  ~max_steps:500
-  ()
-
-let () = Printf.printf
-  "Episodes: %d, Mean reward: %.1f +/- %.1f, Mean length: %.0f\n"
-  stats.n_episodes
-  stats.mean_reward
-  stats.std_reward
-  stats.mean_length
+  (* Evaluate a random policy *)
+  let stats = Eval.run env
+    ~policy:(fun _obs -> Space.sample (Env.action_space env))
+    ~n_episodes:100
+    ~max_steps:500
+    ()
+  in
+  Printf.printf
+    "Episodes: %d, Mean reward: %.1f +/- %.1f, Mean length: %.0f\n"
+    stats.n_episodes
+    stats.mean_reward
+    stats.std_reward
+    stats.mean_length
 ```
 
 The evaluation policy has a simpler signature than the collection policy: it

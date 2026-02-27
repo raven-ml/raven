@@ -20,18 +20,19 @@ cd raven && dune build fehu
 
 ## Creating an Environment
 
-Environments are created via factory functions in `Fehu_envs`. Each takes
-an RNG key for reproducibility:
+Environments are created via factory functions in `Fehu_envs`. Randomness is
+provided by the implicit RNG scope from `Nx.Rng.run`:
 
 <!-- $MDX skip -->
 ```ocaml
 open Fehu
 
-let rng = Rune.Rng.key 42
-let env = Fehu_envs.Cartpole.make ~rng ()
+let () = Nx.Rng.run ~seed:42 @@ fun () ->
+  let env = Fehu_envs.Cartpole.make () in
+  ignore env
 ```
 
-The `rng` key seeds all randomness in the environment. Use the same key to get
+The seed controls all randomness in the scope. Use the same seed to get
 the same episode sequence.
 
 ## The Step Loop
@@ -43,16 +44,16 @@ first `step`, and again after any terminal step (terminated or truncated).
 ```ocaml
 open Fehu
 
-let rng = Rune.Rng.key 42
-let env = Fehu_envs.Cartpole.make ~rng ()
+let () = Nx.Rng.run ~seed:42 @@ fun () ->
+  let env = Fehu_envs.Cartpole.make () in
 
-(* Reset returns the initial observation and info *)
-let obs, _info = Env.reset env ()
+  (* Reset returns the initial observation and info *)
+  let _obs, _info = Env.reset env () in
 
-(* Step returns observation, reward, terminated, truncated, info *)
-let s = Env.step env (Space.Discrete.of_int 0) in
-Printf.printf "reward: %.1f, terminated: %b, truncated: %b\n"
-  s.reward s.terminated s.truncated
+  (* Step returns observation, reward, terminated, truncated, info *)
+  let s = Env.step env (Space.Discrete.of_int 0) in
+  Printf.printf "reward: %.1f, terminated: %b, truncated: %b\n"
+    s.reward s.terminated s.truncated
 ```
 
 A complete episode loop:
@@ -61,23 +62,21 @@ A complete episode loop:
 ```ocaml
 open Fehu
 
-let rng = Rune.Rng.key 42
-let env = Fehu_envs.Cartpole.make ~rng ()
-
 let run_episode env =
   let _obs, _info = Env.reset env () in
   let done_ = ref false in
   let total_reward = ref 0.0 in
   while not !done_ do
-    let act, _ = Space.sample (Env.action_space env)
-      ~rng:(Env.take_rng env) in
+    let act = Space.sample (Env.action_space env) in
     let s = Env.step env act in
     total_reward := !total_reward +. s.reward;
     done_ := s.terminated || s.truncated
   done;
   !total_reward
 
-let reward = run_episode env
+let () = Nx.Rng.run ~seed:42 @@ fun () ->
+  let env = Fehu_envs.Cartpole.make () in
+  let _reward = run_episode env in ()
 ```
 
 ## Spaces
@@ -95,18 +94,18 @@ left/right).
 open Fehu
 
 let space = Space.Discrete.create 4  (* actions 0, 1, 2, 3 *)
-let n = Space.Discrete.n space       (* 4 *)
+let _n = Space.Discrete.n space      (* 4 *)
 
-(* Sample a random action *)
-let rng = Rune.Rng.key 0
-let act, rng' = Space.sample space ~rng
+(* Sample a random action (requires an Nx.Rng scope) *)
+let _act = Nx.Rng.run ~seed:0 @@ fun () ->
+  Space.sample space
 
 (* Convert between int and discrete element *)
 let act = Space.Discrete.of_int 2
-let i = Space.Discrete.to_int act    (* 2 *)
+let _i = Space.Discrete.to_int act   (* 2 *)
 
 (* Check membership *)
-let valid = Space.contains space act  (* true *)
+let _valid = Space.contains space act (* true *)
 ```
 
 ### Box
@@ -122,8 +121,8 @@ let space = Space.Box.create
   ~low:[| -1.0; -2.0 |]
   ~high:[| 1.0; 2.0 |]
 
-let low, high = Space.Box.bounds space
-let obs, _rng = Space.sample space ~rng:(Rune.Rng.key 0)
+let _low, _high = Space.Box.bounds space
+let _obs = Nx.Rng.run ~seed:0 @@ fun () -> Space.sample space
 ```
 
 ### Other Space Types
@@ -151,7 +150,7 @@ cart leaves +/-2.4. Truncates at 500 steps.
 
 <!-- $MDX skip -->
 ```ocaml
-let env = Fehu_envs.Cartpole.make ~rng ()
+let env = Fehu_envs.Cartpole.make ()
 ```
 
 ### MountainCar
@@ -165,7 +164,7 @@ step. Terminates when position >= 0.5 with non-negative velocity. Truncates at
 
 <!-- $MDX skip -->
 ```ocaml
-let env = Fehu_envs.Mountain_car.make ~rng ()
+let env = Fehu_envs.Mountain_car.make ()
 ```
 
 ### GridWorld
@@ -179,7 +178,7 @@ steps.
 
 <!-- $MDX skip -->
 ```ocaml
-let env = Fehu_envs.Grid_world.make ~rng ()
+let env = Fehu_envs.Grid_world.make ()
 ```
 
 ### RandomWalk
@@ -192,7 +191,7 @@ boundaries or after 200 steps.
 
 <!-- $MDX skip -->
 ```ocaml
-let env = Fehu_envs.Random_walk.make ~rng ()
+let env = Fehu_envs.Random_walk.make ()
 ```
 
 ## Render Modes
@@ -203,7 +202,7 @@ creating the environment:
 <!-- $MDX skip -->
 ```ocaml
 let env = Fehu_envs.Cartpole.make
-  ~render_mode:`Ansi ~rng ()
+  ~render_mode:`Ansi ()
 
 let _obs, _info = Env.reset env ()
 let _s = Env.step env (Space.Discrete.of_int 0)

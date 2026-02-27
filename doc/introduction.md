@@ -56,17 +56,24 @@ Raven is designed from the ground up to (1) compete with Python's scientific com
 
 Raven is a comprehensive ecosystem that spans the entire scientific computing stack. Here's what we're building:
 
-**Core Libraries**
-- **Nx**: N-dimensional arrays with pluggable backends, our NumPy equivalent
-- **Hugin**: Publication-quality data visualization and plotting, our Matplotlib equivalent  
-- **Quill**: Interactive notebooks designed for scientific writing
+**Foundation**
+- **Nx**: N-dimensional arrays with pluggable backends (NumPy equivalent)
+- **Brot**: Fast, HuggingFace-compatible tokenization (HF Tokenizers equivalent)
+- **Talon**: Type-safe DataFrames (pandas/Polars equivalent)
 
-**The Rune Ecosystem**
-- **Rune**: Automatic differentiation with multi-device support and JIT compilation (our Flax equivalent)
-- **Kaun**: Deep learning framework built on Rune (our PyTorch equivalent)
-- **Sowilo**: Computer vision framework built on Rune (our OpenCV equivalent)
+**Differentiable Computing**
+- **Rune**: Automatic differentiation using OCaml's effect system (JAX equivalent)
 
-This gives us coverage from basic numerical operations to high-level machine learning, with everything designed to work together seamlessly.
+**Domain Frameworks**
+- **Kaun**: Neural networks and training (PyTorch/Flax equivalent)
+- **Sowilo**: Differentiable computer vision (OpenCV equivalent)
+- **Fehu**: Reinforcement learning environments and algorithms (Gymnasium equivalent)
+
+**Tooling**
+- **Hugin**: Publication-quality plotting (Matplotlib equivalent)
+- **Quill**: Interactive notebooks as markdown files (Jupyter equivalent)
+
+Nine libraries spanning the full scientific computing stack, all designed to work together seamlessly.
 
 **Key Innovations**
 While we aim to feel familiar to Python users, Raven brings genuine innovations to scientific computing:
@@ -78,4 +85,4 @@ While we aim to feel familiar to Python users, Raven brings genuine innovations 
 **Quill** reimagines the notebook experience. Instead of Jupyter's cell-based approach, we're building something closer to Typora: a seamless writing experience where code and markdown flow together naturally, with plans for real-time collaboration.
 
 **Current Focus**
-We're currently focusing on machine learning workflows, with the goal of training and deploying models in OCaml with performance on par with leading Python frameworks. This means prioritizing the complete ML pipeline: from data manipulation with Nx, through model development and training with Rune and Kaun, to visualization with Hugin and interactive development with Quill.
+We're currently focused on JIT compilation and performance. The alpha milestone is complete — we've trained GPT-2 end-to-end on CPU using the full Raven stack. The next step is making it fast through LLVM-based JIT compilation targeting CPU, CUDA, and Metal. See the [roadmap](/docs/roadmap/) for details.

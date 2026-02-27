@@ -1,26 +1,30 @@
 # Documentation
 
-Welcome to Raven's documentation. We're building a comprehensive ecosystem for scientific computing in OCaml, and this is where you'll find everything you need to get started.
+Welcome to Raven's documentation. Raven is an ecosystem of OCaml libraries for numerical computing, machine learning, and data science.
 
 ## Start Here
 
-If you're new to Raven, begin with the [introduction](/docs/introduction/) to understand what we're building and why. Then check out our [roadmap](/docs/roadmap/) to see where we're headed.
+- **[Quickstart](/docs/quickstart/)** — zero to gradient in 5 minutes
+- **[Coming from Python](/docs/coming-from-python/)** — map NumPy, PyTorch, pandas concepts to Raven
+- **[Ecosystem Overview](/docs/ecosystem-overview/)** — how the libraries relate and which to use
 
 ## Libraries
 
-Each library in the Raven ecosystem serves a specific purpose:
+| | Library | Like | What it does |
+|-|---------|------|-------------|
+| | [**nx**](/docs/nx/) | NumPy | N-dimensional arrays with pluggable backends |
+| ᚱ | [**rune**](/docs/rune/) | JAX | Automatic differentiation and functional transformations |
+| ᚲ | [**kaun**](/docs/kaun/) | PyTorch / Flax | Neural networks and training |
+| ᚨ | [**brot**](/docs/brot/) | HF Tokenizers | Fast tokenization for language models |
+| ᛃ | [**talon**](/docs/talon/) | Pandas / Polars | DataFrames with type-safe columns |
+| ᛞ | [**hugin**](/docs/hugin/) | Matplotlib | Data visualization and plotting |
+| ᛈ | [**quill**](/docs/quill/) | Jupyter | Notebooks as markdown files |
+| ᚠ | [**fehu**](/docs/fehu/) | Gymnasium | Reinforcement learning environments |
+| ᛋ | [**sowilo**](/docs/sowilo/) | OpenCV | Differentiable computer vision |
 
-- **[nx](/docs/nx/)** - N-dimensional arrays with pluggable backends (our NumPy)
-- **[hugin](/docs/hugin/)** - Publication-quality plotting and visualization (our Matplotlib)
-- **[quill](/docs/quill/)** - Interactive notebooks for scientific writing (our Jupyter)
-- **[rune](/docs/rune/)** - Automatic differentiation with JIT compilation (our JAX)
-- **[kaun](/docs/kaun/)** - Deep learning framework built on Rune (our PyTorch)
-- **[sowilo](/docs/sowilo/)** - Computer vision framework built on Rune (our OpenCV)
+## Project
 
-## Status
-
-Raven is in pre-alpha. We're actively building towards our first milestone: training MNIST with visualizations in a Quill notebook. Things will break, APIs will change, but we're building in public because we believe in the vision and want your feedback.
-
-## Contributing
-
-Want to help? Check out the [source code](https://github.com/raven-ml/raven) and look for issues tagged "good first issue". We're a small team building something ambitious, your contributions can have real impact.
+- [Installation](/docs/installation/) — system dependencies, opam setup, building from source
+- [Roadmap](/docs/roadmap/) — what works today and what's coming
+- [Introduction](/docs/introduction/) — vision and philosophy
+- [Support Raven](/docs/support-raven/) — sponsorship and contributing

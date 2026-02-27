@@ -23,18 +23,18 @@ raises `Invalid_argument`.
 
 Use `Env.create` to build an environment from `reset` and `step` functions.
 Both receive the environment handle as their first argument, which provides
-access to RNG utilities.
+access to spaces and lifecycle state. Random keys are drawn from the implicit
+RNG scope (see below).
 
 <!-- $MDX skip -->
 ```ocaml
 open Fehu
 
 (* A simple counting environment: agent must choose action 1 *)
-let make_counter ~rng () =
+let make_counter () =
   let count = ref 0 in
   Env.create
     ~id:"Counter-v0"
-    ~rng
     ~observation_space:(Space.Discrete.create 100)
     ~action_space:(Space.Discrete.create 2)
     ~reset:(fun _env ?options:_ () ->
@@ -53,37 +53,25 @@ let make_counter ~rng () =
 
 ### RNG Management
 
-Environments should use `Env.take_rng` to get a fresh RNG key for each
-random operation. This splits the environment's internal key, keeping one half
-and returning the other:
+Environments draw random keys from the implicit RNG scope established by
+`Nx.Rng.run`. Any call to `Space.sample` or other random operations inside
+`reset` and `step` callbacks will use this scope automatically:
 
 <!-- $MDX skip -->
 ```ocaml
-let make_noisy_env ~rng () =
-  Env.create ~rng
+let make_noisy_env () =
+  Env.create
     ~observation_space:(Space.Box.create
       ~low:[| 0.0 |] ~high:[| 1.0 |])
     ~action_space:(Space.Discrete.create 2)
     ~reset:(fun env ?options:_ () ->
-      let rng = Env.take_rng env in
-      let obs, _rng =
-        Space.sample (Env.observation_space env) ~rng in
+      let obs = Space.sample (Env.observation_space env) in
       obs, Info.empty)
     ~step:(fun env _action ->
-      let rng = Env.take_rng env in
-      let obs, _rng =
-        Space.sample (Env.observation_space env) ~rng in
+      let obs = Space.sample (Env.observation_space env) in
       Env.step_result ~observation:obs
         ~reward:1.0 ())
     ()
-```
-
-For multiple random operations in a single step, use `Env.split_rng`:
-
-<!-- $MDX skip -->
-```ocaml
-let keys = Env.split_rng env ~n:3
-(* keys.(0), keys.(1), keys.(2) are independent *)
 ```
 
 ## Wrappers
@@ -216,7 +204,7 @@ Environments support optional rendering via render modes. Pass
 <!-- $MDX skip -->
 ```ocaml
 let env = Fehu_envs.Grid_world.make
-  ~render_mode:`Ansi ~rng ()
+  ~render_mode:`Ansi ()
 
 let _obs, _info = Env.reset env ()
 match Env.render env with
@@ -235,9 +223,7 @@ open Fehu
 (* Collect rendered frames from a policy rollout *)
 let frames = ref [] in
 Render.rollout env
-  ~policy:(fun _obs ->
-    let act, _ = Space.sample (Env.action_space env)
-      ~rng:(Env.take_rng env) in act)
+  ~policy:(fun _obs -> Space.sample (Env.action_space env))
   ~steps:100
   ~sink:(fun img -> frames := img :: !frames)
   ()
@@ -264,27 +250,24 @@ Terminated or truncated episodes are automatically reset.
 ```ocaml
 open Fehu
 
-(* Create 4 parallel environments *)
-let rng = Rune.Rng.key 42
-let keys = Rune.Rng.split rng ~n:4
-let envs = Array.to_list (Array.map
-  (fun rng -> Fehu_envs.Cartpole.make ~rng ())
-  keys)
-let vec = Vec_env.create envs
+let () = Nx.Rng.run ~seed:42 @@ fun () ->
+  (* Create 4 parallel environments *)
+  let envs = List.init 4 (fun _ -> Fehu_envs.Cartpole.make ()) in
+  let vec = Vec_env.create envs in
 
-let n = Vec_env.num_envs vec  (* 4 *)
+  let n = Vec_env.num_envs vec in  (* 4 *)
 
-(* Reset all environments *)
-let observations, _infos = Vec_env.reset vec ()
+  (* Reset all environments *)
+  let _observations, _infos = Vec_env.reset vec () in
 
-(* Step all environments with an array of actions *)
-let actions = Array.init n (fun _ -> Space.Discrete.of_int 0) in
-let s = Vec_env.step vec actions
+  (* Step all environments with an array of actions *)
+  let actions = Array.init n (fun _ -> Space.Discrete.of_int 0) in
+  let _s = Vec_env.step vec actions in
 
-(* s.observations, s.rewards, s.terminated, s.truncated *)
+  (* _s.observations, _s.rewards, _s.terminated, _s.truncated *)
 
-(* Clean up *)
-Vec_env.close vec
+  (* Clean up *)
+  Vec_env.close vec
 ```
 
 All environments must have structurally identical observation and action spaces

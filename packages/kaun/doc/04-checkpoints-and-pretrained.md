@@ -26,7 +26,7 @@ needed. Extra keys in the file are ignored.
 <!-- $MDX skip -->
 ```ocaml
 (* Initialize model to get the tree structure *)
-let vars = Layer.init model ~rngs:(Rune.Rng.key 0) ~dtype:Rune.float32 in
+let vars = Layer.init model ~dtype:Nx.Float32 in
 let params = Checkpoint.load "model.safetensors" ~like:(Layer.params vars) in
 let vars = Layer.with_params vars params
 ```
@@ -44,7 +44,7 @@ Checkpoint.save "params.safetensors" (Layer.params vars);
 Checkpoint.save "state.safetensors" (Layer.state vars)
 
 (* Load *)
-let vars = Layer.init model ~rngs:(Rune.Rng.key 0) ~dtype:Rune.float32 in
+let vars = Layer.init model ~dtype:Nx.Float32 in
 let params = Checkpoint.load "params.safetensors" ~like:(Layer.params vars) in
 let state = Checkpoint.load "state.safetensors" ~like:(Layer.state vars) in
 let vars = Layer.with_params vars params |> fun v -> Layer.with_state v state
@@ -59,7 +59,7 @@ Use `Train.make_state` to create training state from loaded weights:
 let trainer = Train.make ~model ~optimizer in
 let st = Train.make_state trainer vars in
 (* Continue training from here *)
-let st = Train.fit trainer st ~rngs data
+let st = Train.fit trainer st data
 ```
 
 ## HuggingFace Hub
@@ -131,7 +131,7 @@ let config = Kaun_hf.load_config ~model_id:"bert-base-uncased" () in
 let model = build_bert_model config in
 
 (* 2. Initialize to get tree structure *)
-let vars = Layer.init model ~rngs:(Rune.Rng.key 0) ~dtype:Rune.float32 in
+let vars = Layer.init model ~dtype:Nx.Float32 in
 
 (* 3. Load and map weights *)
 let weights = Kaun_hf.load_weights ~model_id:"bert-base-uncased" () in

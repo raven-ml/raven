@@ -49,15 +49,15 @@ let () = Hugin.(figure () |> subplot |> Plotting.plot ~x ~y |> ignore; show ())
 
 | | Package | Like | What it does |
 |-|---------|------|-------------|
-| | [**nx**](packages/nx/) | NumPy | N-dimensional arrays with pluggable backends |
-| | [**brot**](packages/brot/) | HuggingFace Tokenizers | Fast tokenization for language models |
-| | [**talon**](packages/talon/) | Pandas / Polars | DataFrames with type-safe columns |
-| | [**hugin**](packages/hugin/) | Matplotlib | Data visualization and plotting |
-| | [**quill**](packages/quill/) | Jupyter | Notebooks as markdown files |
-| | [**rune**](packages/rune/) | JAX | Autodiff and JIT compilation |
-| ᚲ | [**kaun**](packages/kaun/) | PyTorch / Flax | Neural networks and training |
+| | [**nx**](packages/nx/) | NumPy | N-dimensional arrays with linear algebra operations |
+| ᚱ | [**rune**](packages/rune/) | JAX | Automatic differentiation and functional transformations |
+| ᚲ | [**kaun**](packages/kaun/) | Flax | Neural networks and training |
+| ᚨ | [**brot**](packages/brot/) | HF Tokenizers | Fast, HuggingFace-compatible tokenization |
+| ᛃ | [**talon**](packages/talon/) | Polars | Fast and elegant dataframes with type-safe operations |
+| ᛞ | [**hugin**](packages/hugin/) | Matplotlib | Publication-quality plotting |
+| ᛈ | [**quill**](packages/quill/) | Jupyter | Notebooks as markdown files |
 | ᚠ | [**fehu**](packages/fehu/) | Gymnasium | Reinforcement learning environments |
-| ᛋ | [**sowilo**](packages/sowilo/) | OpenCV | Computer vision on tensors |
+| ᛋ | [**sowilo**](packages/sowilo/) | OpenCV | Differentiable computer vision |
 
 ## Getting started
 

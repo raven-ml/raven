@@ -29,27 +29,25 @@ Create an environment, run a random agent, and evaluate:
 ```ocaml
 open Fehu
 
-let rng = Rune.Rng.key 42
-let env = Fehu_envs.Cartpole.make ~rng ()
+let () = Nx.Rng.run ~seed:42 @@ fun () ->
+  let env = Fehu_envs.Cartpole.make () in
 
-(* Run one episode *)
-let obs, _info = Env.reset env ()
-let done_ = ref false
-let total_reward = ref 0.0
-while not !done_ do
-  let act, _ = Space.sample (Env.action_space env)
-    ~rng:(Env.take_rng env) in
-  let s = Env.step env act in
-  total_reward := !total_reward +. s.reward;
-  done_ := s.terminated || s.truncated
-done
+  (* Run one episode *)
+  let _obs, _info = Env.reset env () in
+  let done_ = ref false in
+  let total_reward = ref 0.0 in
+  while not !done_ do
+    let act = Space.sample (Env.action_space env) in
+    let s = Env.step env act in
+    total_reward := !total_reward +. s.reward;
+    done_ := s.terminated || s.truncated
+  done;
 
-(* Evaluate over 10 episodes *)
-let stats = Eval.run env
-  ~policy:(fun _obs ->
-    let act, _ = Space.sample (Env.action_space env)
-      ~rng:(Env.take_rng env) in act)
-  ~n_episodes:10 ()
+  (* Evaluate over 10 episodes *)
+  let _stats = Eval.run env
+    ~policy:(fun _obs -> Space.sample (Env.action_space env))
+    ~n_episodes:10 ()
+  in ()
 ```
 
 ## Next Steps

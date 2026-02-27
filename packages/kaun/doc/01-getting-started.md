@@ -54,12 +54,11 @@ example trains a small network to learn it.
 open Kaun
 
 let () =
-  let rngs = Rune.Rng.key 42 in
-  let dtype = Rune.float32 in
+  Nx.Rng.run ~seed:42 @@ fun () ->
 
   (* XOR dataset: 4 examples, 2 features each *)
-  let x = Rune.create dtype [| 4; 2 |] [| 0.; 0.; 0.; 1.; 1.; 0.; 1.; 1. |] in
-  let y = Rune.create dtype [| 4; 1 |] [| 0.; 1.; 1.; 0. |] in
+  let x = Nx.create Nx.Float32 [| 4; 2 |] [| 0.; 0.; 0.; 1.; 1.; 0.; 1.; 1. |] in
+  let y = Nx.create Nx.Float32 [| 4; 1 |] [| 0.; 1.; 1.; 0. |] in
 
   (* Model: 2 -> 4 -> 1 with tanh activation *)
   let model =
@@ -78,11 +77,11 @@ let () =
   in
 
   (* Initialize training state (model vars + optimizer state) *)
-  let st = Train.init trainer ~rngs ~dtype in
+  let st = Train.init trainer ~dtype:Nx.Float32 in
 
   (* Train for 1000 steps on the same data *)
   let st =
-    Train.fit trainer st ~rngs
+    Train.fit trainer st
       ~report:(fun ~step ~loss _st ->
         if step mod 200 = 0 then
           Printf.printf "step %4d  loss %.6f\n" step loss)
@@ -90,13 +89,13 @@ let () =
   in
 
   (* Predict *)
-  let pred = Train.predict trainer st x |> Rune.sigmoid in
+  let pred = Train.predict trainer st x |> Nx.sigmoid in
   Printf.printf "\npredictions (expected 0 1 1 0):\n";
   for i = 0 to 3 do
     Printf.printf "  [%.0f, %.0f] -> %.3f\n"
-      (Rune.item [ i; 0 ] x)
-      (Rune.item [ i; 1 ] x)
-      (Rune.item [ i; 0 ] pred)
+      (Nx.item [ i; 0 ] x)
+      (Nx.item [ i; 1 ] x)
+      (Nx.item [ i; 0 ] pred)
   done
 ```
 
@@ -145,20 +144,19 @@ let collect ds =
       xs := x :: !xs;
       ys := y :: !ys)
     ds;
-  ( Rune.stack ~axis:0 (List.rev !xs),
-    Rune.cast Rune.int32 (Rune.stack ~axis:0 (List.rev !ys)) )
+  ( Nx.stack ~axis:0 (List.rev !xs),
+    Nx.astype Nx.Int32 (Nx.stack ~axis:0 (List.rev !ys)) )
 
 let () =
-  let rngs = Rune.Rng.key 42 in
-  let dtype = Rune.float32 in
+  Nx.Rng.run ~seed:42 @@ fun () ->
 
   (* Load MNIST *)
   Printf.printf "Loading MNIST...\n%!";
   let train_ds, test_ds = Kaun_datasets.mnist () in
   let x_train, y_train = collect train_ds in
   let x_test, y_test = collect test_ds in
-  let n_train = (Rune.shape x_train).(0) in
-  Printf.printf "  train: %d  test: %d\n%!" n_train (Rune.shape x_test).(0);
+  let n_train = (Nx.shape x_train).(0) in
+  Printf.printf "  train: %d  test: %d\n%!" n_train (Nx.shape x_test).(0);
 
   (* Fixed test batches *)
   let test_batches = Data.prepare ~batch_size (x_test, y_test) in
@@ -168,14 +166,12 @@ let () =
     Train.make ~model
       ~optimizer:(Optim.adam ~lr:(Optim.Schedule.constant lr) ())
   in
-  let st = ref (Train.init trainer ~rngs ~dtype) in
+  let st = ref (Train.init trainer ~dtype:Nx.Float32) in
 
   for epoch = 1 to epochs do
-    let epoch_key = Rune.Rng.fold_in rngs epoch in
-
     (* Shuffle training data each epoch *)
     let train_data =
-      Data.prepare ~shuffle:epoch_key ~batch_size (x_train, y_train)
+      Data.prepare ~shuffle:true ~batch_size (x_train, y_train)
       |> Data.map (fun (x, y) ->
              (x, fun logits -> Loss.cross_entropy_sparse logits y))
     in
@@ -183,7 +179,7 @@ let () =
     let tracker = Metric.tracker () in
 
     st :=
-      Train.fit trainer !st ~rngs:epoch_key
+      Train.fit trainer !st
         ~report:(fun ~step ~loss _st ->
           Metric.observe tracker "loss" loss;
           Printf.printf "\r  batch %d/%d  loss: %.4f%!" step num_batches loss)

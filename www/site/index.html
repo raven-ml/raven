@@ -73,28 +73,24 @@
       <p class="landing-tagline">modern scientific computing for OCaml</p>
       <div class="links">
         <div class="links-group">
-          <span style="color: #333;">◂</span>
-          <a href="/nx/" class="color-blue" data-tooltip="N-dimensional arrays with pluggable backends">nx</a>
+          <a href="/docs/nx/" class="color-blue" data-tooltip="N-dimensional arrays with linear algebra operations">nx</a>
           <span class="separator">•</span>
-          <a href="/brot/" class="color-teal" data-tooltip="Fast, HuggingFace-compatible tokenization for language models">brot</a>
+          <a href="/docs/rune/" class="color-orange" data-tooltip="Automatic differentiation and functional transformations"><span class="rune-symbol" style="font-size: 20px;">ᚱ</span> rune</a>
           <span class="separator">•</span>
-          <a href="/talon/" class="color-pink" data-tooltip="Fast and elegant dataframes with type-safe operations">talon</a>
+          <a href="/docs/kaun/" class="color-red" data-tooltip="Neural networks and training"><span class="rune-symbol" style="font-size: 20px;">ᚲ</span> kaun</a>
           <span class="separator">•</span>
-          <a href="/hugin/" class="color-purple" data-tooltip="Publication-quality data visualization and plotting">hugin</a>
+          <a href="/docs/brot/" class="color-cyan" data-tooltip="Fast, HuggingFace-compatible tokenization for language models"><span class="rune-symbol" style="font-size: 20px;">ᚨ</span> brot</a>
           <span class="separator">•</span>
-          <a href="/quill/" class="color-green" data-tooltip="Notebooks as markdown files">quill</a>
-          <span style="color: #333;">▸</span>
+          <a href="/docs/talon/" class="color-pink" data-tooltip="Fast and elegant dataframes with type-safe operations"><span class="rune-symbol" style="font-size: 20px;">ᛃ</span> talon</a>
         </div>
         <div class="links-group" style="margin-top: 16px;">
-          <span style="color: #555; font-size: 26px; opacity: 0.7;">ᛉ</span>
-          <a href="/rune/" class="color-orange" data-tooltip="Autodiff with multi-device support and JIT compilation">rune</a>
-          <span style="color: #555; margin: 0 12px;">|</span>
-          <a href="/kaun/" class="color-red" data-tooltip="Deep learning framework built on Rune">kaun <span class="rune-symbol" style="font-size: 20px;">ᚲ</span></a>
+          <a href="/docs/hugin/" class="color-purple" data-tooltip="Publication-quality plotting"><span class="rune-symbol" style="font-size: 20px;">ᛞ</span> hugin</a>
           <span class="separator">•</span>
-          <a href="/fehu/" class="color-teal" data-tooltip="Reinforcement learning environments and algorithms">fehu <span class="rune-symbol" style="font-size: 20px;">ᚠ</span></a>
+          <a href="/docs/quill/" class="color-green" data-tooltip="Notebooks as markdown files"><span class="rune-symbol" style="font-size: 20px;">ᛈ</span> quill</a>
           <span class="separator">•</span>
-          <a href="/sowilo/" class="color-indigo" data-tooltip="Computer vision framework built on Rune">sowilo <span class="rune-symbol" style="font-size: 20px;">ᛋ</span></a>
-          <span style="color: #555; font-size: 26px; opacity: 0.7;">ᛉ</span>
+          <a href="/docs/fehu/" class="color-lime" data-tooltip="Reinforcement learning for OCaml"><span class="rune-symbol" style="font-size: 20px;">ᚠ</span> fehu</a>
+          <span class="separator">•</span>
+          <a href="/docs/sowilo/" class="color-indigo" data-tooltip="Differentiable computer vision"><span class="rune-symbol" style="font-size: 20px;">ᛋ</span> sowilo</a>
         </div>
       </div>
       <div class="landing-footer-nav">
@@ -110,132 +106,108 @@
 
     <h2 id="raven">raven</h2>
 
-    <p><a href="https://github.com/raven-ml/raven">Raven</a> is a comprehensive ecosystem for scientific computing in
-      OCaml.
-    </p>
+    <p><a href="https://github.com/raven-ml/raven">Raven</a> is an ecosystem of composable libraries for numerical computing in OCaml. Tensors, automatic differentiation, neural networks, dataframes, plotting, tokenization, computer vision, reinforcement learning, and interactive notebooks — each library does one thing well, and they compose cleanly together.</p>
 
-    <p>Everything you know from Python, rebuilt with type safety and functional programming:</p>
-
-    <p style="margin-top: 30px; margin-bottom: 10px;"><strong>Core Libraries:</strong></p>
-    <table style="margin: 0 0 30px 0;">
-      <tr>
-        <th style="text-align: left; padding-right: 40px;">Raven Project</th>
-        <th style="text-align: left; padding-right: 40px;">Python Equivalent</th>
-        <th style="text-align: left;">Description</th>
-      </tr>
-      <tr>
-        <td><a href="/nx/" class="color-blue">nx</a></td>
-        <td>NumPy</td>
-        <td>N-dimensional arrays with pluggable backends</td>
-      </tr>
-      <tr>
-        <td><a href="/brot/" class="color-teal">brot</a></td>
-        <td>HuggingFace Tokenizers</td>
-        <td>Fast, HuggingFace-compatible tokenization for language models</td>
-      </tr>
-      <tr>
-        <td><a href="/talon/" class="color-pink">talon</a></td>
-        <td>pandas/Polars</td>
-        <td>DataFrames with heterogeneous columns and rich API</td>
-      </tr>
-      <tr>
-        <td><a href="/hugin/" class="color-purple">hugin</a></td>
-        <td>Matplotlib</td>
-        <td>Publication-quality data visualization and plotting</td>
-      </tr>
-      <tr>
-        <td><a href="/quill/" class="color-green">quill</a></td>
-        <td>Jupyter</td>
-        <td>A love letter to scientific writing</td>
-      </tr>
-    </table>
-
-    <p style="margin-bottom: 10px;"><strong>Rune Ecosystem:</strong></p>
-    <table style="margin: 0 0 30px 0;">
-      <tr>
-        <th style="text-align: left; padding-right: 40px;">Raven Project</th>
-        <th style="text-align: left; padding-right: 40px;">Python Equivalent</th>
-        <th style="text-align: left;">Description</th>
-      </tr>
-      <tr>
-        <td><a href="/rune/" class="color-orange">rune</a></td>
-        <td>JAX</td>
-        <td>Autodiff with multi-device support and JIT compilation</td>
-      </tr>
-      <tr>
-        <td><a href="/kaun/" class="color-red">kaun <span class="rune-symbol">ᚲ</span></a></td>
-        <td>PyTorch/Flax</td>
-        <td>Deep learning framework built on Rune</td>
-      </tr>
-      <tr>
-        <td><a href="/fehu/" class="color-teal">fehu <span class="rune-symbol">ᚠ</span></a></td>
-        <td>Gymnasium/Stable Baselines3</td>
-        <td>Reinforcement learning environments and algorithms</td>
-      </tr>
-      <tr>
-        <td><a href="/sowilo/" class="color-indigo">sowilo <span class="rune-symbol">ᛋ</span></a></td>
-        <td>OpenCV</td>
-        <td>Computer vision framework built on Rune</td>
-      </tr>
-    </table>
-
-    <hr>
-
-    <h2>why raven?</h2>
-
-    <p>Python's monopoly on scientific computing forces an impossible choice: use Python for everything, or prototype in
-      Python then rewrite for production.</p>
-
-    <p>We think there's a better way. OCaml lets you prototype as quickly as Python, but the same code scales to
-      production.
-      Strong typing catches bugs before they crash your ML pipeline. JIT compilation matches NumPy/PyTorch performance.
-      Pluggable backends let you run the same code on CPU, Metal, or CUDA.</p>
+    <p>Built on OCaml 5's effect system, Raven uses function transformations — <code>grad</code>, <code>vmap</code>, <code>jit</code> — that compose freely because they are nested effect handlers. The same code that runs a training loop on your laptop can target Metal or CUDA. Types catch shape and dtype mismatches at compile time.</p>
 
     <hr>
 
     <h2>see it in action</h2>
 
-    <p>Here's what scientific computing looks like with type safety:</p>
+    <p>Tokenize text, build a classifier, and train it — three libraries working together:</p>
 
-    <pre class="language-ocaml"><code class="language-ocaml">(* Load and plot some data *)
-open Nx
-open Hugin
+    <pre class="language-ocaml"><code class="language-ocaml">open Kaun
 
-let x = linspace float32 0. (2. *. Float.pi) 100
-let y = Nx.map Float.sin x
-let noise = randn float32 (shape x) |> mul_scalar 0.1
-let y_noisy = add y noise
+(* Tokenize text with Brot *)
+let tokenizer = Brot.from_file "tokenizer.json" |> Result.get_ok
+let encode text = Brot.encode_ids tokenizer text
 
-let fig = figure ()
-let ax = subplot fig
-let _ = 
-  ax
-  |> Plotting.scatter ~x ~y:y_noisy ~alpha:0.5 ~label:"data"
-  |> Plotting.plot ~x ~y ~color:Artist.Color.red ~label:"true"
-  |> Axes.legend
-in
-show fig
+(* Build a model with Kaun *)
+let model = Layer.sequential [
+  Layer.embedding ~vocab_size:30522 ~embed_dim:128 ();
+  Layer.relu ();
+  Layer.linear ~in_features:128 ~out_features:2 ();
+]
 
-(* Type error at compile time, not runtime: *)
-(* let z = add x (ones float64 [|50|])  -- Won't compile! *)</code></pre>
-
-    <p>The compiler catches shape and dtype mismatches before they crash your pipeline.</p>
+(* Train with automatic differentiation — Rune under the hood *)
+let trainer = Train.make ~model
+  ~optimizer:(Optim.adam ~lr:(Optim.Schedule.constant 1e-3) ())
+let st = Train.init trainer ~dtype:Nx.Float32
+let st = Train.fit trainer st train_data</code></pre>
 
     <hr>
 
-    <h2>join us</h2>
+    <h2>the ecosystem</h2>
 
-    <p>Raven is pre-alpha. Things will break. APIs will change. But the foundations are solid.</p>
+    <div class="library-map">
+      <h3>foundation</h3>
+      <div class="library-map-group">
+        <div class="library-map-item">
+          <a href="/docs/nx/" class="color-blue">nx</a>
+          <span class="desc">N-dimensional arrays with pluggable backends (NumPy)</span>
+        </div>
+        <div class="library-map-item">
+          <a href="/docs/rune/" class="color-orange"><span class="rune-symbol">ᚱ</span> rune</a>
+          <span class="desc">Automatic differentiation and vectorizing maps (JAX)</span>
+        </div>
+      </div>
 
-    <p>We're building in public and need your help:</p>
+      <h3>machine learning</h3>
+      <div class="library-map-group">
+        <div class="library-map-item">
+          <a href="/docs/kaun/" class="color-red"><span class="rune-symbol">ᚲ</span> kaun</a>
+          <span class="desc">Neural networks and training (Flax / PyTorch)</span>
+        </div>
+        <div class="library-map-item">
+          <a href="/docs/brot/" class="color-cyan"><span class="rune-symbol">ᚨ</span> brot</a>
+          <span class="desc">Tokenization for language models (HuggingFace Tokenizers)</span>
+        </div>
+        <div class="library-map-item">
+          <a href="/docs/sowilo/" class="color-indigo"><span class="rune-symbol">ᛋ</span> sowilo</a>
+          <span class="desc">Differentiable computer vision (OpenCV)</span>
+        </div>
+        <div class="library-map-item">
+          <a href="/docs/fehu/" class="color-lime"><span class="rune-symbol">ᚠ</span> fehu</a>
+          <span class="desc">Reinforcement learning environments (Gymnasium)</span>
+        </div>
+      </div>
+
+      <h3>data and visualization</h3>
+      <div class="library-map-group">
+        <div class="library-map-item">
+          <a href="/docs/talon/" class="color-pink"><span class="rune-symbol">ᛃ</span> talon</a>
+          <span class="desc">Dataframes with type-safe columns (pandas / Polars)</span>
+        </div>
+        <div class="library-map-item">
+          <a href="/docs/hugin/" class="color-purple"><span class="rune-symbol">ᛞ</span> hugin</a>
+          <span class="desc">Publication-quality plotting (Matplotlib)</span>
+        </div>
+      </div>
+
+      <h3>tools</h3>
+      <div class="library-map-group">
+        <div class="library-map-item">
+          <a href="/docs/quill/" class="color-green"><span class="rune-symbol">ᛈ</span> quill</a>
+          <span class="desc">Interactive notebooks as markdown files (Jupyter)</span>
+        </div>
+        <div class="library-map-item">
+          <a href="/docs/kaun/kaun-board/" class="color-red">kaun-board</a>
+          <span class="desc">Training dashboard and metrics logger</span>
+        </div>
+      </div>
+    </div>
+
+    <hr>
+
+    <h2>get involved</h2>
+
+    <p>Raven is built in public. We need your help:</p>
 
     <ul>
-      <li><b>Try it out</b> - Install the libraries, run the examples, tell us what breaks</li>
-      <li><b>Report issues</b> - Found a bug? Missing a feature? <a href="https://github.com/raven-ml/raven/issues">Let
-          us know</a></li>
-      <li><b>Join the conversation</b> - API decisions happen in GitHub discussions</li>
-      <li><b>Contribute</b> - Check out <a href="https://github.com/raven-ml/raven/labels/good%20first%20issue">good
-          first issues</a></li>
+      <li><b>Try it out</b> — install the libraries, run the examples, tell us what breaks</li>
+      <li><b>Report issues</b> — found a bug? Missing a feature? <a href="https://github.com/raven-ml/raven/issues">Let us know</a></li>
+      <li><b>Join the conversation</b> — API decisions happen in GitHub discussions</li>
+      <li><b>Contribute</b> — check out <a href="https://github.com/raven-ml/raven/labels/good%20first%20issue">good first issues</a></li>
     </ul>
 
     <p><a href="https://github.com/raven-ml/raven" class="cta-inline">View on GitHub →</a></p>
@@ -244,9 +216,7 @@ show fig
 
     <h2>support the project</h2>
 
-    <p>Building a complete scientific computing ecosystem takes time and focus. We're raising funds to work on Raven full-time and deliver on our <a href="/docs/roadmap">roadmap</a>.</p>
-
-    <p>Your sponsorship helps us release a stable V1 with GPU backends, achieve NumPy/PyTorch performance parity, and build comprehensive documentation and tutorials.</p>
+    <p>Building a scientific computing ecosystem takes time and focus. Your sponsorship helps us deliver on our <a href="/docs/roadmap">roadmap</a> — GPU backends, performance parity, and comprehensive documentation.</p>
 
     <p><a href="/docs/support-raven" class="cta-inline">Support Raven →</a></p>
   </main>

@@ -13,17 +13,16 @@ A layer is a record with two fields:
 type ('input, 'output) Layer.t = {
   init :
     'layout.
-    rngs:Rune.Rng.key -> dtype:(float, 'layout) Rune.dtype -> 'layout vars;
+    dtype:(float, 'layout) Nx.dtype -> 'layout vars;
   apply :
     'layout 'in_elt.
     params:Ptree.t ->
     state:Ptree.t ->
-    dtype:(float, 'layout) Rune.dtype ->
+    dtype:(float, 'layout) Nx.dtype ->
     training:bool ->
-    ?rngs:Rune.Rng.key ->
     ?ctx:Context.t ->
-    ('input, 'in_elt) Rune.t ->
-    ('output, 'layout) Rune.t * Ptree.t;
+    ('input, 'in_elt) Nx.t ->
+    ('output, 'layout) Nx.t * Ptree.t;
 }
 ```
 
@@ -36,7 +35,7 @@ Use `Layer.init` and `Layer.apply` instead of accessing fields directly:
 
 <!-- $MDX skip -->
 ```ocaml
-let vars = Layer.init model ~rngs:(Rune.Rng.key 42) ~dtype:Rune.float32
+let vars = Layer.init model ~dtype:Nx.Float32
 let output, vars' = Layer.apply model vars ~training:false x
 ```
 
@@ -254,7 +253,7 @@ let residual_block ~dim () : (float, float) Layer.t =
     init = inner.init;
     apply = (fun ~params ~state ~dtype ~training ?rngs ?ctx x ->
       let y, state' = inner.apply ~params ~state ~dtype ~training ?rngs ?ctx x in
-      (Rune.add x y, state'));
+      (Nx.add x y, state'));
   }
 ```
 

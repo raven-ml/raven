@@ -62,7 +62,7 @@ let process_batch paths =
       (fun p -> Nx_io.load_image p|> to_float)
       paths
   in
-  let batch = Rune.stack ~axis:0 images in
+  let batch = Nx.stack ~axis:0 images in
 
   (* All operations broadcast over the batch dimension *)
   let processed =
@@ -160,14 +160,14 @@ let extract_features img =
 
   (* Edge features *)
   let gx, gy = sobel gray in
-  let magnitude = Rune.sqrt (Rune.add (Rune.mul gx gx) (Rune.mul gy gy)) in
+  let magnitude = Nx.sqrt (Nx.add (Nx.mul gx gx) (Nx.mul gy gy)) in
 
   (* Morphological features *)
   let kernel = structuring_element Rect (3, 3) in
   let gradient = morphological_gradient ~kernel gray in
 
   (* Stack as multi-channel feature map *)
-  Rune.concatenate ~axis:(-1) [ gray; magnitude; gradient ]
+  Nx.concatenate ~axis:(-1) [ gray; magnitude; gradient ]
 ```
 
 ## Visualization
@@ -231,6 +231,6 @@ let sepia img =
   |> to_grayscale
   |> fun gray ->
      (* Expand back to 3 channels and tint *)
-     let rgb = Rune.concatenate ~axis:(-1) [ gray; gray; gray ] in
+     let rgb = Nx.concatenate ~axis:(-1) [ gray; gray; gray ] in
      adjust_saturation 0.3 (adjust_hue 0.05 rgb)
 ```

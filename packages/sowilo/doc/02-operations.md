@@ -262,7 +262,7 @@ independently to each channel with Same padding.
 <!-- $MDX skip -->
 ```ocaml
 (* Sharpen kernel *)
-let kernel = Rune.create Rune.float32 [| 3; 3 |]
+let kernel = Nx.create Nx.Float32 [| 3; 3 |]
   [| 0.; -1.; 0.; -1.; 5.; -1.; 0.; -1.; 0. |]
 let sharpened = Sowilo.filter2d kernel img
 ```
@@ -351,7 +351,7 @@ let gx5, gy5 = Sowilo.sobel ~ksize:5 gray in
 
 (* Compute gradient magnitude *)
 let magnitude =
-  Rune.sqrt (Rune.add (Rune.mul gx gx) (Rune.mul gy gy))
+  Nx.sqrt (Nx.add (Nx.mul gx gx) (Nx.mul gy gy))
 ```
 
 ### scharr

@@ -1,283 +1,230 @@
 # The Raven Ecosystem
 
-Raven is a collection of libraries designed to work together seamlessly. Understanding their roles and relationships is key to using the ecosystem effectively.
+Raven is nine libraries that share one data type: `Nx.t`, the
+n-dimensional array. Each library does one thing, and they compose
+through tensors.
 
-## Understanding the Ecosystem
-
-The Raven ecosystem is organized around three core layers:
-
-- **Foundation Libraries (Nx, Brot)**: The foundation providing n-dimensional arrays and text processing. These reusable cores serve both Raven and the broader OCaml community, with Nx offering NumPy-like functionality with pluggable backends and Brot providing modern text tokenization.
-- **Rune for Differentiable Computing**: The middle layer enabling automatic differentiation and GPU acceleration. Built on Nx, it transforms regular computations into differentiable ones, providing the mathematical machinery for gradient-based optimization.
-- **Domain Frameworks (Kaun, Sowilo)**: The top layer delivering specialized tools for specific domains. These frameworks leverage Rune's differentiable computing to provide high-level APIs for deep learning and computer vision tasks.
-
-Alongside these core layers, Raven includes **supporting tools** for the development experience: **Hugin** for publication-quality plotting and **Quill** for interactive notebooks, making it easy to visualize results and explore ideas.
+## How the Libraries Fit Together
 
 ```
-     ┌──────────────────────────────────────────────────────┐
-     │            Domain-Specific Frameworks                │
-     │  ┌──────────┐    ┌───────────┐    ┌──────────┐       │
-     │  │   Kaun   │    │   Sowilo  │    │   Fehu   │       │
-     │  │   (DL)   │    │  (Vision) │    │   (RL)   │       │
-     │  └────┬─────┘    └────┬──────┘    └────┬─────┘       │
-     └───────┼───────────────┼─────────────────┼────────────┘
-             │               │                 │
-     ┌───────▼───────────────▼─────────────────▼──────────┐
-     │           Differentiable Computing                 │
-     │                 ┌────────────┐                     │
-     │                 │    Rune    │                     │
-     │                 │ (Autodiff) │                     │
-     │                 └─────┬──────┘                     │
-     └─────────────────────┼──────────────────────────────┘
-                           │
-     ┌─────────────────────▼────────────────────────┐
-     │          Foundation Libraries                │
-     │    ┌──────────┐        ┌──────────┐          │
-     │    │    Nx    │        │   Brot   │          │
-     │    └──────────┘        └──────────┘          │
-     └──────────────────────────────────────────────┘
-
-            Supporting Tools & Visualization
-     ┌──────────────┐         ┌─────────────┐
-     │    Hugin     │         │    Quill    │
-     │  (Plotting)  │         │ (Notebooks) │
-     └──────────────┘         └─────────────┘
+                         ┌───────────┐
+                         │   Kaun    │  neural networks
+                         │  (Flax)   │
+                         └─────┬─────┘
+                               │
+  ┌───────────┐          ┌─────┴─────┐          ┌───────────┐
+  │  Sowilo   │          │   Rune    │          │   Fehu    │
+  │ (OpenCV)  ├──────────┤  (JAX)    ├──────────┤(Gymnasium)│
+  └─────┬─────┘          └─────┬─────┘          └─────┬─────┘
+        │                      │                      │
+  ┌─────┴──────────────────────┴──────────────────────┴─────┐
+  │                          Nx                              │
+  │                       (NumPy)                            │
+  └──┬──────────────┬──────────────┬──────────────┬─────────┘
+     │              │              │              │
+ ┌───┴────┐    ┌────┴───┐    ┌────┴───┐    ┌─────┴────┐
+ │ Talon  │    │  Brot  │    │ Hugin  │    │  Quill   │
+ │(Polars)│    │(HF Tok)│    │(Mpl)   │    │(Jupyter) │
+ └────────┘    └────────┘    └────────┘    └──────────┘
 ```
 
-## Core Libraries
+**Nx** is the foundation — every library operates on `Nx.t` tensors.
 
-### Nx: The Data Foundation
+**Rune** adds functional transformations on top of Nx: `grad`, `jvp`,
+`vmap`. Your Nx code becomes differentiable without changes.
 
-**What it is**: N-dimensional arrays with pluggable backends, our NumPy equivalent.
+**Kaun** builds on Rune to provide layers, optimizers, training loops,
+and HuggingFace Hub integration.
 
-**When to use it**: 
-- Loading and manipulating numerical data
-- Data preprocessing and cleaning
-- Non-differentiable numerical computations
-- I/O operations (reading/writing NumPy files, images)
+**Sowilo**, **Fehu**, **Talon**, **Brot**, **Hugin**, and **Quill** each
+use Nx directly for their domain. Sowilo and Fehu operations are
+compatible with Rune's `grad` and `vmap` since they are plain Nx
+operations under the hood.
 
-**Key features**:
-- Broadcasting and indexing like NumPy
-- Multiple backends (CPU, Metal GPU)
-- Efficient memory views and slicing
-- Interop with NumPy through .npy/.npz files
+## Which Library Do I Need?
 
-### Brot: Tokenization
+| I want to... | Use |
+|---|---|
+| Work with numerical arrays | [Nx](/docs/nx/) |
+| Compute gradients | [Rune](/docs/rune/) |
+| Train neural networks | [Kaun](/docs/kaun/) |
+| Tokenize text for language models | [Brot](/docs/brot/) |
+| Manipulate tabular data | [Talon](/docs/talon/) |
+| Process and transform images | [Sowilo](/docs/sowilo/) |
+| Build RL environments and agents | [Fehu](/docs/fehu/) |
+| Create plots and visualizations | [Hugin](/docs/hugin/) |
+| Run code interactively in notebooks | [Quill](/docs/quill/) |
 
-**What it is**: Fast, HuggingFace-compatible tokenization library, our HuggingFace Tokenizers equivalent.
+---
 
-**When to use it**:
-- Tokenizing text for language models (BERT, GPT-2, T5, LLaMA)
-- Training custom tokenizers on your own data
-- Batch encoding with padding and truncation for model input
-- Loading and saving HuggingFace tokenizer.json files
+## Nx: N-Dimensional Arrays
 
-**Key features**:
-- Five algorithms: BPE, WordPiece, Unigram, word-level, character-level
-- Composable 5-stage pipeline (normalizer, pre-tokenizer, model, post-processor, decoder)
-- Rich encoding metadata (byte offsets, attention masks, type IDs, word IDs)
-- HuggingFace tokenizer.json import/export
-- Training from scratch for all algorithms
-- 1.3-6x faster than HuggingFace's Rust tokenizers
-
-### Rune: The Differentiable Core
-
-**What it is**: Automatic differentiation with multi-device support, our JAX equivalent.
-
-**When to use it**:
-- Building differentiable models
-- Computing gradients for optimization
-- GPU acceleration
-- JIT compilation (coming soon - see [roadmap](/docs/roadmap/))
-
-**Key features**:
-- Effect-based automatic differentiation
-- Device placement (CPU/GPU)
-- Functional transformations (grad, vmap)
-- JIT compilation for performance (coming soon)
-
-**Relationship to Nx**: Rune tensors (`Rune.t`) are distinct from Nx arrays (`Nx.t`). Convert between them:
-```ocaml
-(* Nx to Rune *)
-let rune_tensor = Rune.of_buffer device (Nx.to_buffer nx_array)
-
-(* Rune to Nx *)
-let nx_array = Nx.of_buffer (Rune.to_buffer rune_tensor)
-```
-
-## Application Frameworks
-
-### Kaun: Deep Learning
-
-**What it is**: Functional neural network framework built on Rune, our Flax equivalent.
-
-**When to use it**:
-- Building neural networks
-- Training deep learning models
-- Using pre-built layers and optimizers
-- Managing randomness with PRNGs
-
-**Key features**:
-- Standard layers (Linear, Conv2D, BatchNorm)
-- Optimizers (SGD, Adam, AdamW)
-- Loss functions
-- PRNG support for reproducible randomness
-- Dataset utilities
-
-### Sowilo: Computer Vision
-
-**What it is**: Differentiable image processing and computer vision built on Rune.
-
-**When to use it**:
-- Differentiable image preprocessing for ML
-- Building vision models with trainable augmentations
-- Classical computer vision algorithms in differentiable pipelines
-
-**Key features**:
-- Image transformations (resize, crop, flip) - all differentiable
-- Filters (Gaussian blur, edge detection)
-- Color space conversions
-- Morphological operations
-- Compatible with Rune's autodiff for end-to-end training
-
-### Fehu: Reinforcement Learning
-
-**What it is**: RL environments and algorithms built on Rune and Kaun, our Gymnasium + Stable Baselines3 equivalent.
-
-**When to use it**:
-- Training reinforcement learning agents
-- Benchmarking RL algorithms
-- Creating custom RL environments
-- Comparing against standard RL baselines
-
-**Key features**:
-- Standard environments (CartPole, MountainCar, GridWorld)
-- Algorithms (REINFORCE, DQN with experience replay)
-- Type-safe environment API (observation/action space mismatches caught at compile time)
-- Functional agents (immutable policy updates)
-- Training and evaluation utilities
-
-## Tooling Stack
-
-### Hugin: Visualization
-
-**What it is**: Publication-quality plotting library, our Matplotlib equivalent.
-
-**How it fits**: Takes Nx arrays as input to create visualizations.
-
-**Key features**:
-- 2D and 3D plotting
-- Multiple plot types (line, scatter, bar, histogram)
-- Subplots and figure composition
-- Export to PNG/PDF
-
-### Quill: Interactive Notebooks
-
-**What it is**: A writing-first notebook environment that treats notebooks as markdown documents with executable code.
-
-**How it fits**: The unified environment for combining all Raven libraries in exploratory workflows.
-
-**Key features**:
-- Markdown files as notebooks - no JSON, no cells
-- Native support for all Raven libraries pre-loaded
-- Integrated Hugin visualizations render inline
-- Version control friendly - diffs like regular markdown
-- Writing-focused: code enhances narrative, not vice versa
-
-## Typical Workflows
-
-### Data Analysis Workflow
+Nx provides the numerical foundation for the entire ecosystem.
+NumPy-like operations on n-dimensional arrays with 19 data types
+(float16 through complex128), broadcasting, slicing, linear algebra,
+FFT, and I/O.
 
 ```ocaml
-(* Load data with Nx *)
-let data = Nx_io.read_npy "data.npy" in
+open Nx
 
-(* Analyze with Nx operations *)
-let mean = Nx.mean ~axis:[|0|] data in
-let std = Nx.std ~axis:[|0|] data in
-
-(* Visualize with Hugin *)
-let fig = Hugin.figure () in
-let ax = Hugin.add_subplot fig ~nrows:1 ~ncols:1 ~index:1 in
-Hugin.hist ax (Nx.to_array data) ~bins:30;
-Hugin.show fig
+let x = linspace Float32 0. 10. 100
+let y = sin x
+let mean_y = mean y
 ```
 
-### Machine Learning Workflow
+[Nx documentation →](/docs/nx/)
+
+## Rune: Automatic Differentiation
+
+Functional transformations for Nx tensors: reverse-mode AD (grad,
+vjp), forward-mode AD (jvp), and vectorising maps (vmap). Operates on
+`Nx.t` values directly using OCaml 5 effect handlers — no special
+tensor type needed.
+
+<!-- $MDX skip -->
+```ocaml
+open Nx
+open Rune
+
+let f x = add (mul x x) (sin x)
+let f' = grad f
+let f'' = grad f'
+```
+
+[Rune documentation →](/docs/rune/)
+
+## Kaun: Neural Networks
+
+Composable layers, optimizers with learning-rate schedules, training
+loops, data pipelines, and HuggingFace Hub integration. Model
+parameters are `Ptree.t` — trees of Nx tensors you can inspect, map,
+and serialize.
+
+<!-- $MDX skip -->
+```ocaml
+open Kaun
+
+let model = Layer.sequential [
+  Layer.linear ~in_features:784 ~out_features:128 ();
+  Layer.relu ();
+  Layer.linear ~in_features:128 ~out_features:10 ();
+]
+
+let trainer = Train.make ~model
+  ~optimizer:(Optim.adam ~lr:(Optim.Schedule.constant 0.001) ())
+```
+
+[Kaun documentation →](/docs/kaun/)
+
+## Brot: Tokenization
+
+Fast, HuggingFace-compatible tokenization supporting BPE, WordPiece,
+Unigram, word-level, and character-level algorithms. Composable
+pipeline (normalizer → pre-tokenizer → model → post-processor →
+decoder) with training from scratch.
 
 ```ocaml
-(* Load dataset with Kaun_datasets *)
-let train_dataset = Kaun_datasets.mnist ~batch_size:32 () in
+open Brot
 
-(* Define model with Kaun *)
-let model = Kaun.Sequential.create [
-  Kaun.Linear.create ~in_features:784 ~out_features:128;
-  Kaun.relu;
-  Kaun.Linear.create ~in_features:128 ~out_features:10;
-] in
-
-(* Training loop *)
-let train_step model opt x y =
-  let loss, grads = Rune.grad_and_value (fun model ->
-    let logits = model x in
-    Kaun.cross_entropy_loss logits y
-  ) model in
-  let updates, opt_state = Kaun.Optimizer.step opt opt_state params grads in
-  model, loss
+let tokenizer = from_file "tokenizer.json" |> Result.get_ok
+let encoding = encode tokenizer "Hello, world!"
+let ids = Encoding.ids encoding
 ```
 
-### Computer Vision Workflow
+[Brot documentation →](/docs/brot/)
+
+## Talon: DataFrames
+
+Type-safe tabular data with heterogeneous columns, an applicative Row
+system for row-wise operations, and vectorized aggregations backed by
+Nx.
 
 ```ocaml
-(* Load image with Nx *)
-let img = Nx_io.read_image "photo.jpg" in
+open Talon
 
-(* Convert to Rune and preprocess with Sowilo *)
-let device = Rune.Cpu.device in
-let img_rune = Rune.of_bigarray device (Nx.to_bigarray img) in
+let df = create [
+  "name", Col.string_list ["Alice"; "Bob"; "Charlie"];
+  "score", Col.float64_list [85.5; 92.0; 78.5];
+]
 
-(* Apply transformations *)
-let preprocessed = 
-  img_rune
-  |> Sowilo.resize ~width:224 ~height:224
-  |> Sowilo.to_float32  (* Convert to float *)
-  |> Rune.div_scalar 255.  (* Normalize to [0,1] *)
-  
-(* Use in vision model *)
-let output = vision_model preprocessed
+let () = print df
 ```
 
-### NLP Workflow
+[Talon documentation →](/docs/talon/)
 
+## Sowilo: Computer Vision
+
+Differentiable image processing: geometric transforms (resize, crop,
+flip), spatial filters (Gaussian blur, Sobel, Canny), color space
+conversions, and morphological operations. All operations are plain Nx
+computations, so they compose with `Rune.grad` and `Rune.vmap`.
+
+<!-- $MDX skip -->
 ```ocaml
-(* Tokenize text with Brot *)
-let texts = ["Hello world"; "This is a test"] in
+open Sowilo
 
-(* Build vocabulary from corpus *)
-let vocab = Brot.vocab ~max_size:10000 (
-  List.concat_map Brot.tokenize corpus
-) in
-
-(* Encode text to tensors *)
-let input_ids = Brot.encode_batch ~vocab ~max_len:128 texts in
-
-(* Convert to Rune for model processing *)
-let device = Rune.Cpu.device in
-let input_tensor = Rune.of_bigarray device (Nx.to_bigarray input_ids) in
-
-(* Process through language model *)
-let output = language_model input_tensor in
-
-(* Decode predictions back to text *)
-let predicted_ids = (* get predictions from output *) in
-let predicted_text = Brot.decode vocab predicted_ids
+let processed =
+  img
+  |> to_float
+  |> resize ~height:224 ~width:224 ~mode:Bilinear
+  |> normalize ~mean:[|0.485; 0.456; 0.406|] ~std:[|0.229; 0.224; 0.225|]
 ```
+
+[Sowilo documentation →](/docs/sowilo/)
+
+## Fehu: Reinforcement Learning
+
+RL environments (CartPole, MountainCar, GridWorld), type-safe
+observation/action spaces, vectorized environments, trajectory
+collection, replay buffers, and generalized advantage estimation.
+
+<!-- $MDX skip -->
+```ocaml
+open Fehu
+
+let env = Fehu_envs.cartpole () in
+let obs, _info = Env.reset env in
+let obs, reward, terminated, truncated, _info =
+  Env.step env (Space.sample (Env.action_space env))
+```
+
+[Fehu documentation →](/docs/fehu/)
+
+## Hugin: Visualization
+
+Publication-quality 2D and 3D plots using Cairo rendering. Takes Nx
+tensors as input. Line plots, scatter, bar charts, contour plots,
+image display.
+
+<!-- $MDX skip -->
+```ocaml
+open Hugin
+open Nx
+
+let fig = figure () in
+let ax = subplot fig in
+let _ = Plotting.plot ax ~x ~y ~label:"sin(x)" in
+show fig
+```
+
+[Hugin documentation →](/docs/hugin/)
+
+## Quill: Interactive Notebooks
+
+Plain markdown files as notebooks. Fenced OCaml code blocks are
+executable cells with all Raven libraries pre-loaded. TUI for
+interactive exploration, batch mode for automated evaluation.
+
+<!-- $MDX skip -->
+```bash
+quill notebook.md        # interactive TUI
+quill eval notebook.md   # batch evaluation
+```
+
+[Quill documentation →](/docs/quill/)
 
 ## Getting Started
 
-1. **For numerical computing**: Start with [Nx](nx/getting-started.md)
-2. **For text processing**: Use [Brot](brot/getting-started.md)
-3. **For plotting**: Use [Hugin](hugin/getting-started.md)
-4. **For machine learning**: Move to [Rune](rune/getting-started.md) and [Kaun](kaun/getting-started.md)
-5. **For interactive work**: Use [Quill](quill/getting-started.md)
-
-Each library has its own getting-started guide with examples to help you begin.
+1. **New to Raven?** Start with the [Quickstart](/docs/quickstart/)
+2. **Coming from Python?** Read [Coming from Python](/docs/coming-from-python/)
+3. **Want a specific library?** Use the table above to find the right docs

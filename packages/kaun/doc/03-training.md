@@ -182,7 +182,7 @@ Create a trainer by pairing a model with an optimizer, then initialize:
 let trainer = Train.make ~model
   ~optimizer:(Optim.adam ~lr:(Optim.Schedule.constant 1e-3) ())
 
-let st = Train.init trainer ~rngs:(Rune.Rng.key 42) ~dtype:Rune.float32
+let st = Train.init trainer ~dtype:Nx.Float32
 ```
 
 ### Train.fit
@@ -191,7 +191,7 @@ let st = Train.init trainer ~rngs:(Rune.Rng.key 42) ~dtype:Rune.float32
 
 <!-- $MDX skip -->
 ```ocaml
-let st = Train.fit trainer st ~rngs
+let st = Train.fit trainer st
   ~report:(fun ~step ~loss _st ->
     Printf.printf "step %d  loss %.4f\n" step loss)
   data
@@ -210,7 +210,7 @@ Raise `Train.Early_stop` inside `~report` to end training early.
 
 <!-- $MDX skip -->
 ```ocaml
-let st = Train.fit trainer st ~rngs
+let st = Train.fit trainer st
   ~report:(fun ~step:_ ~loss st ->
     if loss < 0.001 then raise Train.Early_stop)
   data
@@ -231,7 +231,7 @@ For manual control over single training steps:
 
 <!-- $MDX skip -->
 ```ocaml
-let loss, st' = Train.step trainer st ~training:true ~rngs
+let loss, st' = Train.step trainer st ~training:true
   ~loss:(fun logits -> Loss.cross_entropy_sparse logits y)
   x
 ```

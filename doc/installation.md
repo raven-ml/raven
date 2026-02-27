@@ -1,71 +1,62 @@
 # Installation
 
-This guide covers installing the Raven ecosystem.
+## Prerequisites
 
-## System Dependencies
+Raven requires **OCaml 5.2** or later and **opam**.
 
-Raven requires OCaml and opam. Individual libraries may have additional dependencies:
-
-### Core Dependencies
-
-All platforms need:
-```bash
-# OCaml package manager
-opam
-```
-
-### Additional Dependencies for Hugin (Plotting)
-
-If you plan to use Hugin for visualization, you'll also need Cairo and SDL2:
-
-#### macOS
-```bash
-brew install cairo sdl2
-```
-
-#### Ubuntu/Debian
-```bash
-sudo apt update
-sudo apt install libcairo2-dev libsdl2-dev
-```
-
-### Other Platforms
-
-Raven is developed primarily on macOS and Linux. Windows support requires WSL2.
-
-## OCaml and Opam Setup
-
-Initialize opam and create a switch with the required OCaml version:
+If you don't have opam installed, follow the [official instructions](https://opam.ocaml.org/doc/Install.html). Then create a switch:
 
 ```bash
-# Initialize opam (if not already done)
-opam init
-
-# Create a new switch for Raven
 opam switch create raven 5.2.0
 eval $(opam env)
 ```
 
-## Installing Raven
+## Installing from opam
 
-### From Opam
-
-Once released, you'll be able to install Raven directly from opam:
+Install the entire ecosystem:
 
 ```bash
-# Install the entire ecosystem
 opam install raven
-
-# Or install individual libraries
-opam install nx hugin rune kaun sowilo quill
 ```
 
-### Using Raven in Your Project
+Or install individual libraries:
 
-After installation, add Raven libraries to your Dune project:
+```bash
+opam install nx          # just arrays
+opam install rune        # arrays + autodiff
+opam install kaun        # arrays + autodiff + neural networks
+opam install brot        # tokenization
+opam install talon       # dataframes
+```
+
+## Building from Source
+
+```bash
+git clone https://github.com/raven-ml/raven
+cd raven
+dune pkg lock && dune build
+```
+
+To build a specific library:
+
+```bash
+dune build packages/nx            # just nx
+dune build packages/kaun          # kaun + its dependencies
+```
+
+## System Dependencies
+
+Most Raven libraries have no system dependencies beyond OCaml. The exceptions:
+
+| Library | Requires | macOS | Ubuntu/Debian |
+|---------|----------|-------|---------------|
+| **hugin** | Cairo, SDL2 | `brew install cairo sdl2` | `apt install libcairo2-dev libsdl2-dev` |
+
+## Using Raven in Your Project
+
+Add libraries to your `dune-project`:
 
 ```dune
-; dune-project
 (lang dune 3.0)
 (package
  (name my_project)
@@ -73,49 +64,50 @@ After installation, add Raven libraries to your Dune project:
   ocaml
   dune
   nx
-  hugin
   rune))
 ```
 
-In your `dune` files:
+And your `dune` file:
 
 ```dune
-; lib/dune
-(library
- (name my_lib)
- (libraries nx hugin rune))
-
-; bin/dune  
 (executable
- (public_name my_app)
- (libraries my_lib nx))
+ (name main)
+ (libraries nx rune))
 ```
 
-## Setting up Your Editor
+## Verify Your Installation
 
-For the best development experience, we recommend using VS Code with the OCaml Platform extension.
+Create a file `main.ml`:
 
-### VS Code Setup
+```ocaml
+let () =
+  let open Nx in
+  let x = linspace Float32 0. 1. 5 in
+  print_data x
+```
 
-1. Install [Visual Studio Code](https://code.visualstudio.com/)
-2. Install the [OCaml Platform extension](https://marketplace.visualstudio.com/items?itemName=ocamllabs.ocaml-platform)
-3. The extension will automatically detect your opam switch
+Build and run:
 
-### Other Editors
+```bash
+dune exec ./main.exe
+```
 
-- **Emacs**: Use [ocaml-eglot](https://github.com/tarides/ocaml-eglot) for modern LSP support with Eglot
+You should see five evenly-spaced values printed.
+
+## Editor Setup
+
+For the best development experience, use an editor with OCaml LSP support:
+
+- **VS Code**: Install the [OCaml Platform extension](https://marketplace.visualstudio.com/items?itemName=ocamllabs.ocaml-platform)
+- **Emacs**: Use [ocaml-eglot](https://github.com/tarides/ocaml-eglot)
 - **Vim/Neovim**: Use [ocaml-lsp](https://github.com/ocaml/ocaml-lsp) with your LSP client
 
 ## Troubleshooting
 
-### Common Issues
+**Missing system libraries**: If Hugin fails to build, ensure Cairo and SDL2 development headers are installed.
 
-**Missing system libraries**: Ensure Cairo and SDL2 are installed with development headers.
+**Opam switch issues**: Run `eval $(opam env)` after creating or switching opam switches.
 
-**Opam switch issues**: Always run `eval $(opam env)` after creating or switching opam switches.
+**Build failures**: Check your OCaml version with `ocaml --version`. Raven requires 5.2.0 or later.
 
-**Build failures**: Check that you're using OCaml 5.2.0 or later with `ocaml --version` (or `dune exec -- ocaml --version` with Dune).
-
-### Getting Help
-
-- Report issues at [github.com/raven-ml/raven/issues](https://github.com/raven-ml/raven/issues)
+**Getting help**: Report issues at [github.com/raven-ml/raven/issues](https://github.com/raven-ml/raven/issues).

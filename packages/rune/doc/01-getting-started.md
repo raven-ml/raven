@@ -1,179 +1,77 @@
-# Getting Started with rune
+# Getting Started
 
-This guide shows you how to use automatic differentiation and JIT compilation with rune.
+This guide shows you how to compute gradients and use Rune's transformations.
 
 ## Installation
-
-Rune isn't released yet. When it is, you'll install it with:
 
 <!-- $MDX skip -->
 ```bash
 opam install rune
 ```
 
-For now, build from source:
+Or build from source:
 
 <!-- $MDX skip -->
 ```bash
 git clone https://github.com/raven-ml/raven
-cd raven
-dune pkg lock && dune build rune
+cd raven && dune build rune
+```
+
+Add to your `dune` file:
+
+<!-- $MDX skip -->
+```dune
+(executable
+ (name main)
+ (libraries rune))
 ```
 
 ## Your First Gradient
 
-Here's a simple example computing the gradient of a function:
+Rune operates on Nx tensors directly. Write a function using Nx operations, then use `grad` to get its derivative:
 
 ```ocaml
 open Nx
 open Rune
 
-(* Define a function *)
-let f x =
-  add (mul x x) (sin x)
-
-(* Compute its gradient *)
-let f' = grad f
-
-(* Evaluate at a point *)
 let () =
-  let x = scalar float32 2.0 in
-  let y = f x in
-  let dy_dx = f' x in
+  (* A simple function: f(x) = x² + sin(x) *)
+  let f x = add (mul x x) (sin x) in
 
-  Printf.printf "f(2) = %.4f\n" (item [] y);
-  Printf.printf "f'(2) = %.4f\n" (item [] dy_dx)
-```
-
-## Key Concepts
-
-**Everything is at the top level.** When you `open Rune`, all tensor operations are available directly, no submodules needed.
-
-**Device contexts.** Tensors are created with a device context:
-
-<!-- $MDX skip -->
-```ocaml
-(* CPU tensors *)
-let x = rand cpu Float32 [|100|] ~from:(-1.) ~to_:1.
-
-(* Metal tensors (macOS only) *)
-let gpu_device = metal () in
-let y = rand gpu_device Float32 [|100|] ~from:(-1.) ~to_:1.
-```
-
-**Composable transformations.** Just like JAX, you can compose transformations:
-
-<!-- $MDX skip -->
-```ocaml
-(* Second derivative *)
-let f'' = grad (grad f)
-
-(* JIT-compiled gradient *)
-let fast_grad = jit (grad f)
-```
-
-## Computing Gradients
-
-For machine learning, you typically need gradients of a loss function:
-
-<!-- $MDX skip -->
-```ocaml
-(* Simple linear model *)
-let linear_model w b x =
-  add (mul w x) b
-
-(* Mean squared error loss *)
-let loss_fn params x_batch y_batch =
-  let w = slice params [R (0, 1)] in
-  let b = slice params [R (1, 2)] in
-  let predictions = linear_model w b x_batch in
-  let errors = sub predictions y_batch in
-  mean (mul errors errors)
-
-(* Get gradient function *)
-let grad_fn = grad loss_fn
-
-(* Training step *)
-let train_step params x_batch y_batch learning_rate =
-  let grads = grad_fn params x_batch y_batch in
-  sub params (mul (scalar cpu Float32 learning_rate) grads)
-```
-
-## JIT Compilation
-
-JIT compilation makes functions faster by tracing and optimizing them:
-
-<!-- $MDX skip -->
-```ocaml
-(* Original function *)
-let matmul_relu a b =
-  let c = matmul a b in
-  maximum c (zeros_like c)
-
-(* JIT compiled version *)
-let fast_matmul_relu = jit matmul_relu
-
-(* First call traces and compiles, subsequent calls use cached kernel *)
-let result = fast_matmul_relu a b
-```
-
-JIT compilation is shape-specialized. Different input shapes trigger recompilation.
-
-## Neural Network Example
-
-Here's a simple two-layer network:
-
-<!-- $MDX skip -->
-```ocaml
-let mlp w1 b1 w2 b2 x =
-  (* First layer *)
-  let h = add (matmul x w1) b1 in
-  let h = maximum h (zeros_like h) in  (* ReLU *)
-
-  (* Second layer *)
-  add (matmul h w2) b2
-
-(* Initialize parameters *)
-let init_mlp input_dim hidden_dim output_dim =
-  let w1 = rand cpu Float32 [|input_dim; hidden_dim|] ~from:(-0.1) ~to_:0.1 in
-  let b1 = zeros cpu Float32 [|hidden_dim|] in
-  let w2 = rand cpu Float32 [|hidden_dim; output_dim|] ~from:(-0.1) ~to_:0.1 in
-  let b2 = zeros cpu Float32 [|output_dim|] in
-  (w1, b1, w2, b2)
-
-(* Compute loss and gradients *)
-let loss params x y =
-  let w1, b1, w2, b2 = params in
-  let pred = mlp w1 b1 w2 b2 x in
-  mean (mul (sub pred y) (sub pred y))
-
-let train_step params x y lr =
-  let grad_loss = grads loss in
-  let [gw1; gb1; gw2; gb2] = grad_loss [w1; b1; w2; b2] x y in
-  let w1' = sub w1 (mul (scalar cpu Float32 lr) gw1) in
-  let b1' = sub b1 (mul (scalar cpu Float32 lr) gb1) in
-  let w2' = sub w2 (mul (scalar cpu Float32 lr) gw2) in
-  let b2' = sub b2 (mul (scalar cpu Float32 lr) gb2) in
-  (w1', b1', w2', b2')
-```
-
-## Advanced Features
-
-**Higher-order derivatives:**
-```ocaml
-open Nx
-open Rune
-
-let () =
-  let f x = add (mul x (mul x x)) (mul x x) in
+  (* grad returns a function that computes the derivative *)
   let f' = grad f in
-  let f'' = grad f' in
-  let f''' = grad f'' in
-  let x = scalar float32 2.0 in
-  Printf.printf "f'''(2) = %.4f\n" (item [] (f''' x))
+
+  let x = scalar Float32 2.0 in
+  Printf.printf "f(2)  = %.4f\n" (item [] (f x));
+  Printf.printf "f'(2) = %.4f\n" (item [] (f' x))
+  (* f'(x) = 2x + cos(x), so f'(2) ≈ 3.5839 *)
 ```
 
-**Multiple inputs with grads:**
+Key points:
+- `grad f` takes a function `f : Nx.t -> Nx.t` and returns a new function that computes the gradient
+- The input function must return a scalar tensor
+- The gradient has the same shape as the input
+
+## Value and Gradient Together
+
+In practice, you usually want both the function value and its gradient. Use `value_and_grad` to avoid computing the forward pass twice:
+
+```ocaml
+open Nx
+open Rune
+
+let () =
+  let f x = mean (mul x x) in
+  let x = create Float32 [|3|] [|1.0; 2.0; 3.0|] in
+  let value, gradient = value_and_grad f x in
+  Printf.printf "f(x) = %.4f\n" (item [] value);
+  print_data gradient
+```
+
+## Multiple Inputs
+
+When your function takes multiple inputs, use `grads` or `value_and_grads`:
+
 ```ocaml
 open Nx
 open Rune
@@ -185,24 +83,96 @@ let () =
     | _ -> failwith "expected 2 inputs"
   in
   let df = grads f in
-  match df [scalar float32 3.0; scalar float32 4.0] with
+  match df [scalar Float32 3.0; scalar Float32 4.0] with
   | [dx; dy] ->
-    Printf.printf "dx = %.1f, dy = %.1f\n" (item [] dx) (item [] dy)
-  | _ -> failwith "expected 2 gradients"
+    Printf.printf "df/dx = %.1f\n" (item [] dx);
+    Printf.printf "df/dy = %.1f\n" (item [] dy)
+  | _ -> assert false
 ```
 
-## Design Notes
+## Higher-Order Derivatives
 
-**Why separate Tensor from nx arrays?** Tensors carry gradient information and device placement. Nx arrays are just data. This separation keeps nx simple while enabling autodiff in rune.
+Since `grad` returns a regular function, you can differentiate again:
 
-**Effect-based autodiff.** Rune uses OCaml 5's effects to implement autodiff without macros or operator overloading. This gives us clean syntax and composable transformations.
+```ocaml
+open Nx
+open Rune
+
+let () =
+  (* f(x) = x⁴ *)
+  let f x = mul x (mul x (mul x x)) in
+  let f' = grad f in        (* 4x³ *)
+  let f'' = grad f' in      (* 12x² *)
+  let f''' = grad f'' in    (* 24x *)
+  let x = scalar Float32 2.0 in
+  Printf.printf "f(2)    = %.1f\n" (item [] (f x));
+  Printf.printf "f'(2)   = %.1f\n" (item [] (f' x));
+  Printf.printf "f''(2)  = %.1f\n" (item [] (f'' x));
+  Printf.printf "f'''(2) = %.1f\n" (item [] (f''' x))
+```
+
+## Stopping Gradients
+
+Sometimes you need part of a computation to be treated as a constant:
+
+<!-- $MDX skip -->
+```ocaml
+open Rune
+
+(* no_grad: nothing inside is recorded *)
+let baseline = no_grad (fun () ->
+  (* compute a baseline value that should not be differentiated *)
+  mean predictions
+)
+
+(* detach: make a single tensor a constant *)
+let target = detach current_prediction
+```
+
+## A Simple Training Loop
+
+Here is a minimal example that trains a linear model with gradient descent:
+
+<!-- $MDX skip -->
+```ocaml
+open Nx
+open Rune
+
+let () =
+  (* Data: y = 2x + 1 *)
+  let x_data = create Float32 [|4; 1|] [|1.; 2.; 3.; 4.|] in
+  let y_data = create Float32 [|4; 1|] [|3.; 5.; 7.; 9.|] in
+
+  (* Parameters *)
+  let w = rand Float32 [|1; 1|] in
+  let b = zeros Float32 [|1|] in
+
+  let loss_fn params =
+    match params with
+    | [w; b] ->
+      let pred = add (matmul x_data w) b in
+      mean (mul (sub pred y_data) (sub pred y_data))
+    | _ -> assert false
+  in
+
+  let lr = scalar Float32 0.01 in
+  for epoch = 1 to 200 do
+    let loss, gs = value_and_grads loss_fn [w; b] in
+    match gs with
+    | [gw; gb] ->
+      ignore (sub ~out:w w (mul lr gw));
+      ignore (sub ~out:b b (mul lr gb));
+      if epoch mod 50 = 0 then
+        Printf.printf "epoch %d  loss %.6f\n" epoch (item [] loss)
+    | _ -> assert false
+  done;
+  Printf.printf "w = %.3f  b = %.3f\n" (item [0; 0] w) (item [0] b)
+```
+
+For real neural networks, use [Kaun](/docs/kaun/) which provides layers, optimizers, and training loops built on top of Rune.
 
 ## Next Steps
 
-Rune is the foundation for the entire deep learning stack. Once you understand gradients and JIT, you can:
-
-- Use Kaun for high-level neural network abstractions
-- Apply Sowilo's differentiable image processing
-- Train models interactively in Quill notebooks
-
-Check out the examples in `rune/example/` for complete neural network implementations including MNIST classification.
+- [Transformations](/docs/rune/transformations/) — complete guide to grad, jvp, vmap, and more
+- [How It Works](/docs/rune/how-it-works/) — how effects-based autodiff works under the hood
+- [Kaun Getting Started](/docs/kaun/getting-started/) — high-level neural network training
