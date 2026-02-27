@@ -3,21 +3,26 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* ───── Autodiff ───── *)
+(* Reverse-mode *)
 
-let vjp = Autodiff.vjp
-let vjps = Autodiff.vjps
-let grad = Autodiff.grad
-let grads = Autodiff.grads
-let value_and_grad = Autodiff.value_and_grad
-let value_and_grads = Autodiff.value_and_grads
-let jvp = Autodiff.jvp
-let jvp_aux = Autodiff.jvp_aux
-let jvps = Autodiff.jvps
-let no_grad = Autodiff.no_grad
-let detach = Autodiff.detach
+let grad = Vjp.grad
+let grads = Vjp.grads
+let value_and_grad = Vjp.value_and_grad
+let value_and_grad_aux = Vjp.value_and_grad_aux
+let value_and_grads = Vjp.value_and_grads
+let value_and_grads_aux = Vjp.value_and_grads_aux
+let vjp = Vjp.vjp
+let vjps = Vjp.vjps
+let no_grad = Vjp.no_grad
+let detach = Vjp.detach
 
-(* ───── Gradient Checking ───── *)
+(* Forward-mode *)
+
+let jvp = Jvp.jvp
+let jvp_aux = Jvp.jvp_aux
+let jvps = Jvp.jvps
+
+(* Gradient checking *)
 
 module Finite_diff = Finite_diff
 module Gradcheck = Gradcheck
@@ -40,7 +45,7 @@ let finite_diff_jacobian = Finite_diff.finite_diff_jacobian
 let check_gradient = Gradcheck.check_gradient
 let check_gradients = Gradcheck.check_gradients
 
-(* ───── Vmap ───── *)
+(* Vmap *)
 
 type axis_spec = Vmap.axis_spec = Map of int | NoMap
 
@@ -55,9 +60,6 @@ type 'a out_axes_spec = 'a Vmap.out_axes_spec =
 let vmap = Vmap.vmap
 let vmaps = Vmap.vmaps
 
-(* ───── Debugging ───── *)
+(* Debugging *)
 
 let debug = Debug.debug
-let debug_with_context = Debug.with_context
-let debug_push_context = Debug.push_context
-let debug_pop_context = Debug.pop_context

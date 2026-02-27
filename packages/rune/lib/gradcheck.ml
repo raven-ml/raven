@@ -23,7 +23,7 @@ let to_float_value t = T.item [] t
 let check_gradient ?(eps = Finite_diff.default_eps) ?(rtol = default_rtol)
     ?(atol = default_atol) ?(verbose = false) ?(check_indices = None)
     ?(method_ = `Central) f x =
-  let autodiff_grad = Autodiff.grad f x in
+  let autodiff_grad = Vjp.grad f x in
 
   let finite_diff_grad = Finite_diff.finite_diff ~eps ~method_ f x in
 
@@ -129,7 +129,7 @@ let check_gradient ?(eps = Finite_diff.default_eps) ?(rtol = default_rtol)
 
 let check_gradients ?(eps = Finite_diff.default_eps) ?(rtol = default_rtol)
     ?(atol = default_atol) ?(verbose = false) ?(method_ = `Central) f xs =
-  let autodiff_grads = Autodiff.grads f xs in
+  let autodiff_grads = Vjp.grads f xs in
 
   let results =
     List.mapi
