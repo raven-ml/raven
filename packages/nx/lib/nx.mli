@@ -3,34 +3,37 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** N-dimensional array operations for OCaml.
+(** N-dimensional arrays.
 
-    This module provides NumPy-style tensor operations. Tensors are immutable
-    views over mutable buffers, supporting broadcasting, slicing, and efficient
-    memory layout transformations.
+    [Nx] provides n-dimensional arrays (tensors) with NumPy-like semantics. A
+    tensor [('a, 'b) t] holds elements of OCaml type ['a] stored in a buffer
+    with element kind ['b].
 
-    {2 Type System}
+    {b Tensors, views, and contiguity.} A tensor is a {e view} over a flat
+    buffer described by a shape, strides, and an offset. Operations that only
+    rearrange metadata ({!reshape}, {!transpose}, {!val-slice}, …) return views
+    in O(1) without copying data. Use {!is_c_contiguous} to test whether
+    elements are laid out contiguously in row-major order, and {!contiguous} to
+    obtain a contiguous copy when needed.
 
-    The type [('a, 'b) t] represents a tensor where ['a] is the OCaml type of
-    elements and ['b] is the bigarray element type. For example,
-    [(float, float32_elt) t] is a tensor of 32-bit floats.
+    {b Broadcasting.} Binary operations automatically broadcast operands whose
+    shapes differ: dimensions are aligned from the right and each pair must be
+    equal or one of them must be 1.
 
-    {2 Broadcasting}
+    {b The [?out] convention.} Many operations accept an optional [?out] tensor.
+    When provided, the result is written into [out] instead of allocating a
+    fresh tensor; the shape of [out] must match the result shape. *)
 
-    Operations automatically broadcast compatible shapes: each dimension must be
-    equal or one of them must be 1. Shape [|3; 1; 5|] broadcasts with
-    [|1; 4; 5|] to [|3; 4; 5|].
-
-    {2 Memory Layout}
-
-    Tensors can be C-contiguous or strided. Operations return views when
-    possible (O(1)), otherwise copy (O(n)). Use {!is_contiguous} to check layout
-    and {!contiguous} to ensure contiguity. *)
-
-(** {2 Type Definitions} *)
+(** {1:types Types} *)
 
 type ('a, 'b) t
-(** [('a, 'b) t] is a tensor with OCaml type ['a] and bigarray type ['b]. *)
+(** The type for tensors with OCaml element type ['a] and buffer element kind
+    ['b]. *)
+
+(** {2:elt_kinds Element kinds}
+
+    Witnesses for the buffer element representation. Used as the second type
+    parameter of {!type-t}. *)
 
 type float16_elt = Nx_buffer.float16_elt
 type float32_elt = Nx_buffer.float32_elt
@@ -52,6 +55,8 @@ type complex32_elt = Nx_buffer.complex32_elt
 type complex64_elt = Nx_buffer.complex64_elt
 type bool_elt = Nx_buffer.bool_elt
 
+(** {2:dtype Data types} *)
+
 type ('a, 'b) dtype = ('a, 'b) Nx_core.Dtype.t =
   | Float16 : (float, float16_elt) dtype
   | Float32 : (float, float32_elt) dtype
@@ -72,8 +77,10 @@ type ('a, 'b) dtype = ('a, 'b) Nx_core.Dtype.t =
   | Complex64 : (Complex.t, complex32_elt) dtype
   | Complex128 : (Complex.t, complex64_elt) dtype
   | Bool : (bool, bool_elt) dtype
-      (** Data type specification. Links OCaml types to bigarray element types.
-      *)
+      (** The type for data type descriptors. A [('a, 'b) dtype] links the OCaml
+          element type ['a] to its buffer representation ['b]. *)
+
+(** {2:tensor_aliases Tensor aliases} *)
 
 type float16_t = (float, float16_elt) t
 type float32_t = (float, float32_elt) t
@@ -95,6 +102,8 @@ type complex64_t = (Complex.t, complex32_elt) t
 type complex128_t = (Complex.t, complex64_elt) t
 type bool_t = (bool, bool_elt) t
 
+(** {2:dtype_vals Data type values} *)
+
 val float16 : (float, float16_elt) dtype
 val float32 : (float, float32_elt) dtype
 val float64 : (float, float64_elt) dtype
@@ -115,87 +124,95 @@ val complex64 : (Complex.t, complex32_elt) dtype
 val complex128 : (Complex.t, complex64_elt) dtype
 val bool : (bool, bool_elt) dtype
 
-(** Index specification for tensor slicing *)
+(** {2:index Index specifications} *)
+
+(** The type for index specifications used by {!val-slice} and {!set_slice}. *)
 type index =
-  | I of int  (** Single index: [I 2] selects index 2 *)
-  | L of int list  (** List of indices: [L [0; 2; 5]] selects indices 0, 2, 5 *)
-  | R of int * int  (** Range \[start, stop): [R (1, 4)] selects 1, 2, 3 *)
+  | I of int  (** [I i] selects a single index, reducing the dimension. *)
+  | L of int list  (** [L [i0; i1; …]] gathers the listed indices. *)
+  | R of int * int
+      (** [R (start, stop)] selects the half-open range \[[start], [stop]). *)
   | Rs of int * int * int
-      (** Range with step: [Rs (0, 10, 2)] selects 0, 2, 4, 6, 8 *)
-  | A  (** All indices: [A] selects entire axis *)
+      (** [Rs (start, stop, step)] selects a strided range. *)
+  | A
+      (** [A] selects the entire axis. This is the default for axes not covered
+          by a {!val-slice} specification. *)
   | M of (bool, bool_elt) t
-      (** Boolean mask: [M mask] selects where mask is true *)
-  | N  (** New axis: [N] inserts dimension of size 1 *)
+      (** [M mask] selects positions where [mask] is [true]. *)
+  | N  (** [N] inserts a new axis of size 1 (does not consume an input axis). *)
 
-(** {2 Array Properties}
-
-    Functions to inspect array dimensions, memory layout, and data access. *)
+(** {1:properties Properties} *)
 
 val data : ('a, 'b) t -> ('a, 'b) Nx_buffer.t
-(** [data t] is the underlying flat buffer.
+(** [data t] is the underlying flat buffer of [t].
 
-    The buffer may contain data beyond tensor bounds for strided views. Direct
-    access requires careful index computation using strides and offset. *)
+    The buffer is shared: mutations through the buffer are visible through [t]
+    and vice-versa. The buffer may be larger than the tensor's logical extent
+    when [t] is a strided view. *)
 
 val shape : ('a, 'b) t -> int array
-(** [shape t] returns dimensions. Empty array for scalars. *)
+(** [shape t] is the dimensions of [t]. A scalar tensor has shape [|\||]. *)
 
 val dtype : ('a, 'b) t -> ('a, 'b) dtype
-(** [dtype t] returns data type. *)
+(** [dtype t] is the data type of [t]. *)
 
 val strides : ('a, 'b) t -> int array
-(** [strides t] returns byte strides for each dimension. *)
+(** [strides t] is the byte stride for each dimension of [t].
+
+    Raises [Invalid_argument] if [t] does not have computable strides (e.g.
+    after certain non-contiguous view operations). Use {!is_c_contiguous} or
+    call {!contiguous} first.
+
+    See also {!stride}. *)
 
 val stride : int -> ('a, 'b) t -> int
-(** [stride i t] returns byte stride for dimension [i].
+(** [stride i t] is the byte stride of dimension [i].
 
-    @raise Invalid_argument if [i] out of bounds *)
+    Raises [Invalid_argument] if [i] is out of bounds or [t] does not have
+    computable strides.
+
+    See also {!strides}. *)
 
 val dims : ('a, 'b) t -> int array
-(** [dims t] is synonym for {!shape}. *)
+(** [dims t] is {!shape}. *)
 
 val dim : int -> ('a, 'b) t -> int
-(** [dim i t] returns size of dimension [i].
+(** [dim i t] is the size of dimension [i].
 
-    @raise Invalid_argument if [i] out of bounds *)
+    Raises [Invalid_argument] if [i] is out of bounds. *)
 
 val ndim : ('a, 'b) t -> int
-(** [ndim t] returns number of dimensions. *)
+(** [ndim t] is the number of dimensions of [t]. *)
 
 val itemsize : ('a, 'b) t -> int
-(** [itemsize t] returns bytes per element. *)
+(** [itemsize t] is the number of bytes per element. *)
 
 val size : ('a, 'b) t -> int
-(** [size t] returns total number of elements. *)
+(** [size t] is the total number of elements. *)
 
 val numel : ('a, 'b) t -> int
-(** [numel t] is synonym for {!size}. *)
+(** [numel t] is {!size}. *)
 
 val nbytes : ('a, 'b) t -> int
-(** [nbytes t] returns [size t * itemsize t]. *)
+(** [nbytes t] is [size t * itemsize t]. *)
 
 val offset : ('a, 'b) t -> int
-(** [offset t] returns element offset in underlying buffer. *)
+(** [offset t] is the element offset of [t] in its underlying buffer. *)
 
 val is_c_contiguous : ('a, 'b) t -> bool
-(** [is_c_contiguous t] returns true if elements are contiguous in C order. *)
+(** [is_c_contiguous t] is [true] iff [t]'s elements are laid out contiguously
+    in row-major (C) order.
+
+    See also {!contiguous}. *)
 
 val to_bigarray : ('a, 'b) t -> ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t
-(** [to_bigarray t] converts to standard bigarray.
+(** [to_bigarray t] is a contiguous bigarray with the same shape and data as
+    [t]. Always copies.
 
-    Always returns contiguous copy with same shape. Use for interop with
-    libraries expecting standard bigarrays.
+    Raises [Invalid_argument] if [t]'s dtype is an extended type not supported
+    by [Bigarray].
 
-    {@ocaml[
-      # let t = create float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-      val t : (float, float32_elt) t = [[1, 2, 3],
-                                        [4, 5, 6]]
-      # shape (to_bigarray t |> of_bigarray)
-      - : int array = [|2; 3|]
-    ]}
-
-    @raise Failure
-      if tensor dtype is an extended type not supported by standard Bigarray *)
+    See also {!of_bigarray}. *)
 
 val to_buffer : ('a, 'b) t -> ('a, 'b) Nx_buffer.t
 (** [to_buffer t] is a flat, contiguous buffer of [t]'s data.
@@ -204,58 +221,51 @@ val to_buffer : ('a, 'b) t -> ('a, 'b) Nx_buffer.t
     zero offset and matching size; copies otherwise. *)
 
 val to_array : ('a, 'b) t -> 'a array
-(** [to_array t] converts to OCaml array.
-
-    Flattens tensor to 1-D array in row-major (C) order. Always copies.
+(** [to_array t] is a fresh OCaml array containing the elements of [t] in
+    row-major order. Always copies.
 
     {@ocaml[
-      # let t = create int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |]
-      val t : (int32, int32_elt) t = [[1, 2],
-                                      [3, 4]]
-      # to_array t
+      # let t =
+          create int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |]
+        in
+        to_array t
       - : int32 array = [|1l; 2l; 3l; 4l|]
     ]} *)
 
-(** {2 Array Creation}
-
-    Functions to create and initialize arrays. *)
+(** {1:creation Creation} *)
 
 val create : ('a, 'b) dtype -> int array -> 'a array -> ('a, 'b) t
-(** [create dtype shape data] creates tensor from array [data].
+(** [create dtype shape data] is a tensor of the given [dtype] and [shape]
+    initialised from [data] in row-major order.
 
-    Length of [data] must equal product of [shape].
-
-    @raise Invalid_argument if array size doesn't match shape
+    Raises [Invalid_argument] if [Array.length data] does not equal the product
+    of [shape].
 
     {@ocaml[
-      # create float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
+      # create float32 [| 2; 3 |]
+          [| 1.; 2.; 3.; 4.; 5.; 6. |]
       - : (float, float32_elt) t = [[1, 2, 3],
                                     [4, 5, 6]]
     ]} *)
 
 val init : ('a, 'b) dtype -> int array -> (int array -> 'a) -> ('a, 'b) t
-(** [init dtype shape f] creates tensor where element at indices [i] has value
+(** [init dtype shape f] is a tensor where the element at multi-index [i] is
     [f i].
 
-    Function [f] receives array of indices for each position. Useful for
-    creating position-dependent values.
-
     {@ocaml[
-      # init int32 [| 2; 3 |] (fun i -> Int32.of_int (i.(0) + i.(1)))
+      # init int32 [| 2; 3 |]
+          (fun i -> Int32.of_int (i.(0) + i.(1)))
       - : (int32, int32_elt) t = [[0, 1, 2],
                                   [1, 2, 3]]
-
-      # init float32 [| 3; 3 |] (fun i -> if i.(0) = i.(1) then 1. else 0.)
-      - : (float, float32_elt) t = [[1, 0, 0],
-                                    [0, 1, 0],
-                                    [0, 0, 1]]
     ]} *)
 
 val empty : ('a, 'b) dtype -> int array -> ('a, 'b) t
-(** [empty dtype shape] allocates uninitialized tensor. *)
+(** [empty dtype shape] is an uninitialized tensor.
+
+    {b Warning.} Elements contain arbitrary values until written. *)
 
 val full : ('a, 'b) dtype -> int array -> 'a -> ('a, 'b) t
-(** [full dtype shape value] creates tensor filled with [value].
+(** [full dtype shape v] is a tensor filled with [v].
 
     {@ocaml[
       # full float32 [| 2; 3 |] 3.14
@@ -264,35 +274,34 @@ val full : ('a, 'b) dtype -> int array -> 'a -> ('a, 'b) t
     ]} *)
 
 val ones : ('a, 'b) dtype -> int array -> ('a, 'b) t
-(** [ones dtype shape] creates tensor filled with ones. *)
+(** [ones dtype shape] is a tensor filled with ones. *)
 
 val zeros : ('a, 'b) dtype -> int array -> ('a, 'b) t
-(** [zeros dtype shape] creates tensor filled with zeros. *)
+(** [zeros dtype shape] is a tensor filled with zeros. *)
 
 val scalar : ('a, 'b) dtype -> 'a -> ('a, 'b) t
-(** [scalar dtype value] creates scalar tensor containing [value]. *)
+(** [scalar dtype v] is a 0-dimensional tensor containing [v]. The result has
+    shape [|\||]. *)
 
 val empty_like : ('a, 'b) t -> ('a, 'b) t
-(** [empty_like t] creates uninitialized tensor with same shape and dtype as
-    [t]. *)
+(** [empty_like t] is {!empty} with the same dtype and shape as [t]. *)
 
 val full_like : ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [full_like t value] creates tensor shaped like [t] filled with [value]. *)
+(** [full_like t v] is {!full} with the same dtype and shape as [t]. *)
 
 val ones_like : ('a, 'b) t -> ('a, 'b) t
-(** [ones_like t] creates tensor shaped like [t] filled with ones. *)
+(** [ones_like t] is {!ones} with the same dtype and shape as [t]. *)
 
 val zeros_like : ('a, 'b) t -> ('a, 'b) t
-(** [zeros_like t] creates tensor shaped like [t] filled with zeros. *)
+(** [zeros_like t] is {!zeros} with the same dtype and shape as [t]. *)
 
 val scalar_like : ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [scalar_like t value] creates scalar with same dtype as [t]. *)
+(** [scalar_like t v] is {!scalar} with the same dtype as [t]. *)
 
 val eye : ?m:int -> ?k:int -> ('a, 'b) dtype -> int -> ('a, 'b) t
-(** [eye ?m ?k dtype n] creates matrix with ones on k-th diagonal.
-
-    Default [m = n] (square), [k = 0] (main diagonal). Positive [k] shifts
-    diagonal above main, negative below.
+(** [eye ?m ?k dtype n] is an [n × m] matrix with ones on the [k]-th diagonal
+    and zeros elsewhere. [m] defaults to [n]. [k] defaults to [0] (main
+    diagonal); positive [k] selects an upper diagonal, negative [k] a lower one.
 
     {@ocaml[
       # eye int32 3
@@ -303,95 +312,80 @@ val eye : ?m:int -> ?k:int -> ('a, 'b) dtype -> int -> ('a, 'b) t
       - : (int32, int32_elt) t = [[0, 1, 0],
                                   [0, 0, 1],
                                   [0, 0, 0]]
-      # eye ~m:2 ~k:(-1) int32 3
-      - : (int32, int32_elt) t = [[0, 0, 0],
-                                  [1, 0, 0]]
-    ]} *)
+    ]}
+
+    See also {!identity}, {!diag}. *)
 
 val identity : ('a, 'b) dtype -> int -> ('a, 'b) t
-(** [identity dtype n] creates n×n identity matrix.
-
-    Equivalent to [eye dtype n]. Square matrix with ones on main diagonal, zeros
-    elsewhere.
-
-    {@ocaml[
-      # identity int32 3
-      - : (int32, int32_elt) t = [[1, 0, 0],
-                                  [0, 1, 0],
-                                  [0, 0, 1]]
-    ]} *)
+(** [identity dtype n] is [eye dtype n]. *)
 
 val diag : ?k:int -> ('a, 'b) t -> ('a, 'b) t
-(** [diag ?k v] extracts diagonal or constructs diagonal array.
+(** [diag ?k v] extracts or constructs a diagonal.
 
-    If [v] is 1D, returns 2D array with [v] on the k-th diagonal. If [v] is 2D,
-    returns 1D array containing the k-th diagonal. Use [k > 0] for diagonals
-    above the main diagonal, [k < 0] for diagonals below.
+    When [v] is 1-D, returns a 2-D tensor with [v] on the [k]-th diagonal. When
+    [v] is 2-D, returns the [k]-th diagonal as a 1-D tensor. [k] defaults to
+    [0].
 
-    @param k Diagonal offset (default 0 = main diagonal)
-    @raise Failure if [v] is 0D
+    Raises [Invalid_argument] if [v] is not 1-D or 2-D.
 
     {@ocaml[
-      # let x = arange int32 0 9 1 |> reshape [|3; 3|]
-      val x : (int32, int32_elt) t = [[0, 1, 2],
-                                      [3, 4, 5],
-                                      [6, 7, 8]]
-      # diag x
-      - : (int32, int32_elt) t = [0, 4, 8]
-      # diag ~k:1 x
-      - : (int32, int32_elt) t = [1, 5]
-      # let v = create int32 [|3|] [|1l; 2l; 3l|]
-      val v : (int32, int32_elt) t = [1, 2, 3]
-      # diag v
+      # let v = create int32 [| 3 |] [| 1l; 2l; 3l |] in
+        diag v
       - : (int32, int32_elt) t = [[1, 0, 0],
                                   [0, 2, 0],
                                   [0, 0, 3]]
-    ]} *)
+      # let x =
+          arange int32 0 9 1 |> reshape [| 3; 3 |]
+        in
+        diag x
+      - : (int32, int32_elt) t = [0, 4, 8]
+    ]}
+
+    See also {!eye}, {!diagonal}. *)
 
 val arange : ('a, 'b) dtype -> int -> int -> int -> ('a, 'b) t
-(** [arange dtype start stop step] generates values from [start] to [\[stop)].
+(** [arange dtype start stop step] is a 1-D tensor of values from [start]
+    (inclusive) to [stop] (exclusive) with stride [step].
 
-    Step must be non-zero. Result length is [(stop - start) / step] rounded
-    toward zero.
-
-    @raise Failure if [step = 0]
+    Raises [Invalid_argument] if [step = 0].
 
     {@ocaml[
       # arange int32 0 10 2
       - : (int32, int32_elt) t = [0, 2, 4, 6, 8]
       # arange int32 5 0 (-1)
       - : (int32, int32_elt) t = [5, 4, 3, 2, 1]
-    ]} *)
+    ]}
+
+    See also {!arange_f}, {!linspace}. *)
 
 val arange_f : (float, 'a) dtype -> float -> float -> float -> (float, 'a) t
-(** [arange_f dtype start stop step] generates float values from [start] to
-    [\[stop)].
+(** [arange_f dtype start stop step] is like {!arange} for floating-point
+    ranges.
 
-    Like {!arange} but for floating-point ranges. Handles fractional steps. Due
-    to floating-point precision, final value may differ slightly from expected.
-
-    @raise Failure if [step = 0.0]
+    Raises [Invalid_argument] if [step = 0.0].
 
     {@ocaml[
       # arange_f float32 0. 1. 0.2
       - : (float, float32_elt) t = [0, 0.2, 0.4, 0.6, 0.8]
-      # arange_f float32 1. 0. (-0.25)
-      - : (float, float32_elt) t = [1, 0.75, 0.5, 0.25]
-    ]} *)
+    ]}
+
+    See also {!arange}, {!linspace}. *)
 
 val linspace :
   ('a, 'b) dtype -> ?endpoint:bool -> float -> float -> int -> ('a, 'b) t
-(** [linspace dtype ?endpoint start stop count] generates [count] evenly spaced
-    values from [start] to [stop].
+(** [linspace dtype ?endpoint start stop n] is [n] values evenly spaced from
+    [start] to [stop]. [endpoint] defaults to [true] (include [stop]).
 
-    If [endpoint] is true (default), [stop] is included.
+    Raises [Invalid_argument] if [n] is negative.
 
     {@ocaml[
-      # linspace float32 ~endpoint:true 0. 10. 5
+      # linspace float32 0. 10. 5
       - : (float, float32_elt) t = [0, 2.5, 5, 7.5, 10]
       # linspace float32 ~endpoint:false 0. 10. 5
       - : (float, float32_elt) t = [0, 2, 4, 6, 8]
-    ]} *)
+    ]}
+
+    See also {!logspace}, {!geomspace}. *)
 
 val logspace :
   (float, 'a) dtype ->
@@ -401,42 +395,43 @@ val logspace :
   float ->
   int ->
   (float, 'a) t
-(** [logspace dtype ?endpoint ?base start_exp stop_exp count] generates values
-    evenly spaced on log scale.
+(** [logspace dtype ?endpoint ?base start stop n] is [n] values evenly spaced on
+    a logarithmic scale: [base{^x}] where [x] ranges from [start] to [stop].
+    [endpoint] defaults to [true]. [base] defaults to [10.0].
 
-    Returns [base ** x] where x ranges from [start_exp] to [stop_exp]. Default
-    [base = 10.0].
+    Raises [Invalid_argument] if [n] is negative.
 
     {@ocaml[
       # logspace float32 0. 2. 3
       - : (float, float32_elt) t = [1, 10, 100]
       # logspace float32 ~base:2.0 0. 3. 4
       - : (float, float32_elt) t = [1, 2, 4, 8]
-    ]} *)
+    ]}
+
+    See also {!linspace}, {!geomspace}. *)
 
 val geomspace :
   (float, 'a) dtype -> ?endpoint:bool -> float -> float -> int -> (float, 'a) t
-(** [geomspace dtype ?endpoint start stop count] generates values evenly spaced
-    on geometric (multiplicative) scale.
+(** [geomspace dtype ?endpoint start stop n] is [n] values evenly spaced on a
+    geometric (multiplicative) scale. [endpoint] defaults to [true].
 
-    @raise Invalid_argument if [start <= 0.] or [stop <= 0.]
+    Raises [Invalid_argument] if [start] or [stop] is not positive.
 
     {@ocaml[
       # geomspace float32 1. 1000. 4
       - : (float, float32_elt) t = [1, 10, 100, 1000]
-    ]} *)
+    ]}
+
+    See also {!linspace}, {!logspace}. *)
 
 val meshgrid :
   ?indexing:[ `xy | `ij ] -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t * ('a, 'b) t
-(** [meshgrid ?indexing x y] creates coordinate grids from 1D arrays.
+(** [meshgrid ?indexing x y] is a pair of 2-D coordinate grids built from 1-D
+    arrays [x] and [y]. [indexing] defaults to [`xy] (Cartesian: X varies along
+    columns, Y along rows). With [`ij] (matrix), X varies along rows, Y along
+    columns.
 
-    Returns (X, Y) where X and Y are 2D arrays representing grid coordinates.
-
-    - [`xy] (default): Cartesian indexing - X changes along columns, Y changes
-      along rows
-    - [`ij]: Matrix indexing - X changes along rows, Y changes along columns
-
-    @raise Invalid_argument if x or y are not 1D
+    Raises [Invalid_argument] if [x] or [y] is not 1-D.
 
     {@ocaml[
       # let x = linspace float32 0. 2. 3 in
@@ -444,628 +439,535 @@ val meshgrid :
         meshgrid x y
       - : (float, float32_elt) t * (float, float32_elt) t =
       ([[0, 1, 2],
-        [0, 1, 2]], [[0, 0, 0],
-                     [1, 1, 1]])
+        [0, 1, 2]],
+       [[0, 0, 0],
+        [1, 1, 1]])
     ]} *)
 
 val tril : ?k:int -> ('a, 'b) t -> ('a, 'b) t
-(** [tril ?k x] returns lower triangular part of matrix.
+(** [tril ?k x] is the lower-triangular part of [x] with elements above the
+    [k]-th diagonal set to zero. [k] defaults to [0].
 
-    Elements above the k-th diagonal are zeroed.
-    - [k = 0] (default): main diagonal
-    - [k > 0]: include k diagonals above main
-    - [k < 0]: exclude |k| diagonals below main
+    Raises [Invalid_argument] if [x] has fewer than 2 dimensions.
 
-    @raise Invalid_argument if x has less than 2 dimensions *)
+    See also {!triu}. *)
 
 val triu : ?k:int -> ('a, 'b) t -> ('a, 'b) t
-(** [triu ?k x] returns upper triangular part of matrix.
+(** [triu ?k x] is the upper-triangular part of [x] with elements below the
+    [k]-th diagonal set to zero. [k] defaults to [0].
 
-    Elements below the k-th diagonal are zeroed.
-    - [k = 0] (default): main diagonal
-    - [k > 0]: exclude k diagonals above main
-    - [k < 0]: include |k| diagonals below main
+    Raises [Invalid_argument] if [x] has fewer than 2 dimensions.
 
-    @raise Invalid_argument if x has less than 2 dimensions *)
+    See also {!tril}. *)
 
 val of_bigarray : ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t -> ('a, 'b) t
-(** [of_bigarray ba] creates tensor from standard bigarray.
+(** [of_bigarray ba] is a tensor sharing memory with [ba].
 
-    Zero-copy when bigarray is contiguous. Creates view sharing same memory.
-    Modifications to either affect both.
+    Zero-copy: mutations through either are visible to both.
 
-    {@ocaml[
-      # let t = zeros float32 [| 2; 3 |] in
-        t
-      - : (float, float32_elt) t = [[0, 0, 0],
-                                    [0, 0, 0]]
-    ]} *)
+    See also {!to_bigarray}. *)
 
 val of_buffer : ('a, 'b) Nx_buffer.t -> shape:int array -> ('a, 'b) t
-(** [of_buffer buf ~shape] creates a tensor from a flat buffer with the given
-    [shape]. The product of [shape] must equal the buffer length. *)
+(** [of_buffer buf ~shape] is a tensor viewing [buf] with the given [shape]. The
+    product of [shape] must equal the buffer length. *)
 
 val one_hot : num_classes:int -> ('a, 'b) t -> (int, uint8_elt) t
-(** [one_hot ~num_classes indices] creates a one-hot encoded array.
+(** [one_hot ~num_classes indices] is a one-hot encoded tensor.
 
-    Appends a new last dimension of size [num_classes]. Values must be in
-    [\[0, num_classes)]. Out-of-range indices produce zero vectors.
+    Appends a new trailing dimension of size [num_classes]. Values in [indices]
+    must lie in \[[0], [num_classes]). Out-of-range indices produce all-zero
+    rows.
 
-    Raises [Invalid_argument] if [indices] is not an integer type or
+    Raises [Invalid_argument] if [indices] is not an integer dtype or
     [num_classes <= 0].
 
     {@ocaml[
-      # let indices = create int32 [| 3 |] [| 0l; 1l; 3l |] in
-        one_hot ~num_classes:4 indices
+      # let idx =
+          create int32 [| 3 |] [| 0l; 1l; 3l |]
+        in
+        one_hot ~num_classes:4 idx
       - : (int, uint8_elt) t = [[1, 0, 0, 0],
                                 [0, 1, 0, 0],
                                 [0, 0, 0, 1]]
-      # let indices = create int32 [| 2; 2 |] [| 0l; 2l; 1l; 0l |] in
-        one_hot ~num_classes:3 indices |> shape
-      - : int array = [|2; 2; 3|]
     ]} *)
 
-(** {2 Random Number Generation}
+(** {1:rng Random number generation}
 
-    Functions to generate arrays with random values. *)
+    Sampling functions use the implicit RNG state managed by {!module-Rng}. Wrap
+    calls in {!Rng.run} for reproducibility:
+
+    {[
+      Rng.run ~seed:42 (fun () -> rand float32 [| 3 |])
+    ]} *)
 
 module Rng = Nx_core.Rng
-(** Splittable RNG keys and implicit key management. *)
+(** Splittable RNG keys with implicit-state management. *)
 
 val rand : ('a, 'b) dtype -> int array -> ('a, 'b) t
-(** [rand dtype shape] generates uniform random values in \[0, 1).
+(** [rand dtype shape] samples uniformly from \[[0], [1]).
 
     Raises [Invalid_argument] if [dtype] is not a float type. *)
 
 val randn : ('a, 'b) dtype -> int array -> ('a, 'b) t
-(** [randn dtype shape] generates standard normal random values (mean 0,
-    variance 1) via Box-Muller transform.
+(** [randn dtype shape] samples from the standard normal distribution (mean 0,
+    variance 1) via the Box–Muller transform.
 
     Raises [Invalid_argument] if [dtype] is not a float type. *)
 
 val randint : ('a, 'b) dtype -> ?high:int -> int array -> int -> ('a, 'b) t
-(** [randint dtype ?high shape low] generates integers in \[[low], [high]).
-    [high] defaults to [10].
+(** [randint dtype ?high shape low] samples integers uniformly from \[[low],
+    [high]). [high] defaults to [10].
 
     Raises [Invalid_argument] if [dtype] is not an integer type or
     [low >= high]. *)
 
 val bernoulli : p:float -> int array -> bool_t
-(** [bernoulli ~p shape] samples booleans with probability [p] of [true].
+(** [bernoulli ~p shape] samples booleans that are [true] with probability [p].
 
-    Raises [Invalid_argument] if [p] is not in \[0, 1\]. *)
+    Raises [Invalid_argument] if [p] is not in \[[0], [1]\]. *)
 
 val permutation : int -> int32_t
-(** [permutation n] returns a random permutation of \[0..n-1\].
+(** [permutation n] is a random permutation of \[[0], [n-1]\].
 
     Raises [Invalid_argument] if [n <= 0]. *)
 
 val shuffle : ('a, 'b) t -> ('a, 'b) t
-(** [shuffle x] shuffles the first dimension of [x]. No-op on scalars. *)
+(** [shuffle t] is a copy of [t] with the first axis randomly permuted. No-op on
+    scalars. *)
 
 val categorical : ?axis:int -> ?shape:int array -> (float, 'a) t -> int32_t
-(** [categorical ?axis ?shape logits] samples categories using the Gumbel-max
-    trick. [shape] prepends batch dims; [axis] selects class axis (default
-    last).
+(** [categorical ?axis ?shape logits] samples category indices from unnormalised
+    log-probabilities using the Gumbel-max trick. [axis] defaults to [-1] (last
+    axis). [shape] prepends extra batch dimensions.
 
-    Raises [Invalid_argument] if [logits] is not a float type. *)
+    Raises [Invalid_argument] if [logits] is not a float type or [axis] is out
+    of bounds. *)
 
 val truncated_normal :
   ('a, 'b) dtype -> lower:float -> upper:float -> int array -> ('a, 'b) t
-(** [truncated_normal dtype ~lower ~upper shape] samples from a normal
+(** [truncated_normal dtype ~lower ~upper shape] samples from a standard normal
     distribution truncated to \[[lower], [upper]\].
 
     Raises [Invalid_argument] if [dtype] is not a float type or
     [lower >= upper]. *)
 
-(** {2 Shape Manipulation}
-
-    Functions to reshape, transpose, and rearrange arrays. *)
+(** {1:shape Shape manipulation} *)
 
 val reshape : int array -> ('a, 'b) t -> ('a, 'b) t
-(** [reshape shape t] returns view with new shape.
+(** [reshape shape t] is a view of [t] with the given [shape].
 
-    At most one dimension can be -1 (inferred from total elements). Product of
-    dimensions must match total elements. Returns a zero-copy view when the new
-    layout is compatible; raises otherwise.
+    At most one dimension may be [-1]; it is inferred from the total number of
+    elements. The product of [shape] must equal {!size} [t].
 
-    @raise Invalid_argument if shape incompatible or multiple -1 dimensions
-    @raise Invalid_argument if tensor layout cannot support requested reshape
+    Raises [Invalid_argument] if [shape] is incompatible or contains more than
+    one [-1].
 
     {@ocaml[
-      # let t = create int32 [|2; 3|] [|1l; 2l; 3l; 4l; 5l; 6l|] in
-        reshape [|6|] t
-      - : (int32, int32_elt) t = [1, 2, 3, 4, 5, 6]
-      # let t = create int32 [|6|] [|1l; 2l; 3l; 4l; 5l; 6l|] in
-        reshape [|3; -1|] t
+      # create int32 [| 6 |] [| 1l; 2l; 3l; 4l; 5l; 6l |]
+        |> reshape [| 2; 3 |]
+      - : (int32, int32_elt) t = [[1, 2, 3],
+                                  [4, 5, 6]]
+      # create int32 [| 6 |] [| 1l; 2l; 3l; 4l; 5l; 6l |]
+        |> reshape [| 3; -1 |]
       - : (int32, int32_elt) t = [[1, 2],
                                   [3, 4],
                                   [5, 6]]
-    ]} *)
+    ]}
+
+    See also {!flatten}, {!unflatten}, {!ravel}. *)
 
 val broadcast_to : int array -> ('a, 'b) t -> ('a, 'b) t
-(** [broadcast_to shape t] broadcasts tensor to target shape.
+(** [broadcast_to shape t] is a view of [t] broadcast to [shape].
 
-    Shapes must be broadcast-compatible: dimensions align from right, each must
-    be equal or source must be 1. Returns view (no copy) with zero strides for
-    broadcast dimensions.
+    Dimensions are aligned from the right; each dimension of [t] must be [1] or
+    equal to the corresponding target dimension. Broadcast dimensions have zero
+    byte-stride (no copy).
 
-    @raise Invalid_argument if shapes incompatible
+    Raises [Invalid_argument] if the shapes are incompatible.
 
     {@ocaml[
-      # let t = create int32 [|1; 3|] [|1l; 2l; 3l|] in
-        broadcast_to [|3; 3|] t
+      # create int32 [| 1; 3 |] [| 1l; 2l; 3l |]
+        |> broadcast_to [| 3; 3 |]
       - : (int32, int32_elt) t = [[1, 2, 3],
                                   [1, 2, 3],
                                   [1, 2, 3]]
-      # let t = ones float32 [|3; 1|] in
-        shape (broadcast_to [|2; 3; 4|] t)
-      - : int array = [|2; 3; 4|]
-    ]} *)
+    ]}
+
+    See also {!broadcasted}, {!expand}. *)
 
 val broadcasted :
   ?reverse:bool -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t * ('a, 'b) t
-(** [broadcasted ?reverse t1 t2] broadcasts tensors to common shape.
+(** [broadcasted ?reverse t1 t2] is [(t1', t2')] where both are broadcast to
+    their common shape. When [reverse] is [true] (default [false]), returns
+    [(t2', t1')].
 
-    Returns views of both tensors broadcast to compatible shape. If [reverse] is
-    true, returns [(t2', t1')] instead of [(t1', t2')]. Useful before
-    element-wise operations.
+    Raises [Invalid_argument] if the shapes are incompatible.
 
-    @raise Invalid_argument if shapes incompatible
-
-    {@ocaml[
-      # let t1 = ones float32 [|3;1|] in
-        let t2 = ones float32 [|1;5|] in
-        let t1', t2' = broadcasted t1 t2 in
-        shape t1', shape t2'
-      - : int array * int array = ([|3; 5|], [|3; 5|])
-    ]} *)
+    See also {!broadcast_to}, {!broadcast_arrays}. *)
 
 val expand : int array -> ('a, 'b) t -> ('a, 'b) t
-(** [expand shape t] broadcasts tensor where [-1] keeps original dimension.
+(** [expand shape t] is like {!broadcast_to} but [-1] in [shape] preserves the
+    corresponding dimension of [t].
 
-    Like {!broadcast_to} but [-1] preserves existing dimension size. Adds
-    dimensions on left if needed.
+    Raises [Invalid_argument] if any dimension in [shape] is negative (other
+    than [-1]).
 
     {@ocaml[
-      # let t = ones float32 [|1; 4; 1|] in
-        shape (expand [|3; -1; 5|] t)
+      # ones float32 [| 1; 4; 1 |]
+        |> expand [| 3; -1; 5 |] |> shape
       - : int array = [|3; 4; 5|]
-      # let t = ones float32 [|5; 5|] in
-        shape (expand [|-1; -1|] t)
-      - : int array = [|5; 5|]
-    ]} *)
+    ]}
+
+    See also {!broadcast_to}. *)
 
 val flatten : ?start_dim:int -> ?end_dim:int -> ('a, 'b) t -> ('a, 'b) t
-(** [flatten ?start_dim ?end_dim t] collapses dimensions into single dimension.
+(** [flatten ?start_dim ?end_dim t] collapses dimensions [start_dim] through
+    [end_dim] (inclusive) into a single dimension. [start_dim] defaults to [0].
+    [end_dim] defaults to [-1] (last). Negative indices count from the end.
 
-    Default [start_dim = 0], [end_dim = -1] (last). Negative indices count from
-    end. Dimensions [start_dim] through [end_dim] inclusive are flattened.
-
-    @raise Invalid_argument if indices out of bounds
+    Raises [Invalid_argument] if indices are out of bounds.
 
     {@ocaml[
-      # flatten (zeros float32 [| 2; 3; 4 |]) |> shape
+      # zeros float32 [| 2; 3; 4 |] |> flatten |> shape
       - : int array = [|24|]
-      # flatten ~start_dim:1 ~end_dim:2 (zeros float32 [| 2; 3; 4; 5 |]) |> shape
+      # zeros float32 [| 2; 3; 4; 5 |]
+        |> flatten ~start_dim:1 ~end_dim:2 |> shape
       - : int array = [|2; 12; 5|]
-    ]} *)
+    ]}
+
+    See also {!unflatten}, {!ravel}. *)
 
 val unflatten : int -> int array -> ('a, 'b) t -> ('a, 'b) t
-(** [unflatten dim sizes t] expands dimension [dim] into multiple dimensions.
+(** [unflatten dim sizes t] expands dimension [dim] into multiple dimensions
+    given by [sizes]. At most one element of [sizes] may be [-1] (inferred). The
+    product of [sizes] must equal the size of dimension [dim].
 
-    Product of [sizes] must equal size of dimension [dim]. At most one dimension
-    can be -1 (inferred). Inverse of {!flatten}.
-
-    @raise Invalid_argument if product mismatch or dim out of bounds
+    Raises [Invalid_argument] if the product mismatches or [dim] is out of
+    bounds.
 
     {@ocaml[
-      # unflatten 1 [| 3; 4 |] (zeros float32 [| 2; 12; 5 |]) |> shape
+      # zeros float32 [| 2; 12; 5 |]
+        |> unflatten 1 [| 3; 4 |] |> shape
       - : int array = [|2; 3; 4; 5|]
-      # unflatten 0 [| -1; 2 |] (ones float32 [| 6; 5 |]) |> shape
-      - : int array = [|3; 2; 5|]
-    ]} *)
+    ]}
+
+    See also {!flatten}. *)
 
 val ravel : ('a, 'b) t -> ('a, 'b) t
-(** [ravel t] returns contiguous 1-D view.
+(** [ravel t] is [t] reshaped to 1-D. Returns a view when possible.
 
-    Equivalent to [flatten t] but always returns contiguous result. Use when you
-    need both flattening and contiguity.
+    Raises [Invalid_argument] if [t] cannot be flattened without copying; call
+    {!contiguous} first.
 
-    {@ocaml[
-      # let x = create int32 [| 2; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l |] in
-        ravel x
-      - : (int32, int32_elt) t = [1, 2, 3, 4, 5, 6]
-      # let t = transpose (ones float32 [| 3; 4 |]) in
-        is_c_contiguous t
-      - : bool = false
-      # let t_ravel = ravel t in
-        is_c_contiguous t_ravel
-      - : bool = true
-    ]} *)
+    See also {!flatten}, {!contiguous}. *)
 
 val squeeze : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t
-(** [squeeze ?axes t] removes dimensions of size 1.
+(** [squeeze ?axes t] removes dimensions of size 1. When [axes] is given, only
+    those axes are removed. Negative indices count from the end.
 
-    If [axes] specified, only removes those dimensions. Negative indices count
-    from end. Returns view when possible.
-
-    @raise Invalid_argument if specified axis doesn't have size 1
+    Raises [Invalid_argument] if a specified axis does not have size 1.
 
     {@ocaml[
-      # squeeze (ones float32 [| 1; 3; 1; 4 |]) |> shape
+      # ones float32 [| 1; 3; 1; 4 |]
+        |> squeeze |> shape
       - : int array = [|3; 4|]
-      # squeeze ~axes:[ 0; 2 ] (ones float32 [| 1; 3; 1; 4 |]) |> shape
-      - : int array = [|3; 4|]
-      # squeeze ~axes:[ -1 ] (ones float32 [| 3; 4; 1 |]) |> shape
-      - : int array = [|3; 4|]
-    ]} *)
+      # ones float32 [| 1; 3; 1; 4 |]
+        |> squeeze ~axes:[ 0 ] |> shape
+      - : int array = [|3; 1; 4|]
+    ]}
+
+    See also {!unsqueeze}. *)
 
 val unsqueeze : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t
-(** [unsqueeze ?axes t] inserts dimensions of size 1 at specified positions.
+(** [unsqueeze ?axes t] inserts dimensions of size 1 at the positions listed in
+    [axes]. Positions refer to the result tensor.
 
-    Axes refer to positions in result tensor. Must be in range [0, ndim].
-
-    @raise Invalid_argument
-      if [axes] not specified, out of bounds, or contains duplicates
+    Raises [Invalid_argument] if [axes] is not specified, contains duplicates,
+    or values are out of bounds.
 
     {@ocaml[
-      # unsqueeze ~axes:[ 0; 2 ] (create float32 [| 3 |] [| 1.; 2.; 3. |]) |> shape
+      # create float32 [| 3 |] [| 1.; 2.; 3. |]
+        |> unsqueeze ~axes:[ 0; 2 ] |> shape
       - : int array = [|1; 3; 1|]
-      # unsqueeze ~axes:[ 1 ] (create float32 [| 2 |] [| 5.; 6. |]) |> shape
-      - : int array = [|2; 1|]
-    ]} *)
+    ]}
+
+    See also {!squeeze}, {!expand_dims}. *)
 
 val squeeze_axis : int -> ('a, 'b) t -> ('a, 'b) t
-(** [squeeze_axis axis t] removes dimension [axis] if size is 1.
+(** [squeeze_axis i t] removes dimension [i] if its size is 1.
 
-    @raise Invalid_argument if dimension size is not 1 *)
+    Raises [Invalid_argument] if dimension [i] is not 1.
+
+    See also {!squeeze}. *)
 
 val unsqueeze_axis : int -> ('a, 'b) t -> ('a, 'b) t
-(** [unsqueeze_axis axis t] inserts dimension of size 1 at [axis]. *)
+(** [unsqueeze_axis i t] inserts a dimension of size 1 at position [i].
+
+    See also {!unsqueeze}. *)
 
 val expand_dims : int list -> ('a, 'b) t -> ('a, 'b) t
-(** [expand_dims axes t] is synonym for {!unsqueeze}. *)
+(** [expand_dims axes t] is {!unsqueeze} [~axes t]. *)
 
 val transpose : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t
-(** [transpose ?axes t] permutes dimensions.
+(** [transpose ?axes t] permutes the dimensions of [t].
 
-    Default reverses all dimensions. [axes] must be permutation of [0..ndim-1].
-    Returns view (no copy) with adjusted strides.
+    [axes] must be a permutation of [[0; …; ndim t - 1]]. When omitted, reverses
+    all dimensions. Returns a view (no copy).
 
-    @raise Invalid_argument if [axes] not valid permutation
+    Raises [Invalid_argument] if [axes] is not a valid permutation.
 
     {@ocaml[
-      # let x = create int32 [| 2; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l |] in
-        transpose x
+      # create int32 [| 2; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l |]
+        |> transpose
       - : (int32, int32_elt) t = [[1, 4],
                                   [2, 5],
                                   [3, 6]]
-      # transpose ~axes:[ 2; 0; 1 ] (zeros float32 [| 2; 3; 4 |]) |> shape
-      - : int array = [|4; 2; 3|]
-      # let id = transpose ~axes:[ 1; 0 ] in
-        id == transpose
-      - : bool = false
-    ]} *)
+    ]}
+
+    See also {!matrix_transpose}, {!moveaxis}, {!swapaxes}. *)
 
 val flip : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t
-(** [flip ?axes t] reverses order along specified dimensions.
+(** [flip ?axes t] reverses elements along the given [axes]. When omitted, flips
+    all dimensions.
 
-    Default flips all dimensions.
+    Raises [Invalid_argument] if any axis is out of bounds.
 
     {@ocaml[
-      # let x = create int32 [| 2; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l |] in
-        flip x
-      - : (int32, int32_elt) t = [[6, 5, 4],
-                                  [3, 2, 1]]
-      # let x = create int32 [| 2; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l |] in
-        flip ~axes:[ 1 ] x
+      # create int32 [| 2; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l |]
+        |> flip ~axes:[ 1 ]
       - : (int32, int32_elt) t = [[3, 2, 1],
                                   [6, 5, 4]]
     ]} *)
 
 val moveaxis : int -> int -> ('a, 'b) t -> ('a, 'b) t
-(** [moveaxis src dst t] moves dimension from [src] to [dst].
+(** [moveaxis src dst t] moves dimension [src] to position [dst].
 
-    @raise Invalid_argument if indices out of bounds *)
+    Raises [Invalid_argument] if either index is out of bounds.
+
+    See also {!transpose}, {!swapaxes}. *)
 
 val swapaxes : int -> int -> ('a, 'b) t -> ('a, 'b) t
-(** [swapaxes axis1 axis2 t] exchanges two dimensions.
+(** [swapaxes a1 a2 t] exchanges dimensions [a1] and [a2].
 
-    @raise Invalid_argument if indices out of bounds *)
+    Raises [Invalid_argument] if either index is out of bounds.
+
+    See also {!transpose}, {!moveaxis}. *)
 
 val roll : ?axis:int -> int -> ('a, 'b) t -> ('a, 'b) t
-(** [roll ?axis shift t] shifts elements along axis.
+(** [roll ?axis shift t] shifts elements along [axis] by [shift] positions,
+    wrapping around. When [axis] is omitted, operates on the flattened tensor.
+    Negative [shift] rolls backward.
 
-    Elements shifted beyond last position wrap to beginning. If [axis] not
-    specified, shifts flattened tensor. Negative shift rolls backward.
-
-    @raise Invalid_argument if axis out of bounds
+    Raises [Invalid_argument] if [axis] is out of bounds.
 
     {@ocaml[
-      # let x = create int32 [| 5 |] [| 1l; 2l; 3l; 4l; 5l |] in
-        roll 2 x
+      # create int32 [| 5 |] [| 1l; 2l; 3l; 4l; 5l |]
+        |> roll 2
       - : (int32, int32_elt) t = [4, 5, 1, 2, 3]
-      # let x = create int32 [| 2; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l |] in
-        roll ~axis:1 1 x
-      - : (int32, int32_elt) t = [[3, 1, 2],
-                                  [6, 4, 5]]
-      # let x = create int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |] in
-        roll ~axis:0 (-1) x
-      - : (int32, int32_elt) t = [[3, 4],
-                                  [1, 2]]
     ]} *)
 
 val pad : (int * int) array -> 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [pad padding value t] pads tensor with [value].
+(** [pad widths value t] pads [t] with [value]. [widths.(i)] is
+    [(before, after)] for dimension [i].
 
-    [padding] specifies (before, after) for each dimension. Length must match
-    tensor dimensions. Negative padding not allowed.
-
-    @raise Invalid_argument if padding length wrong or negative values
+    Raises [Invalid_argument] if [Array.length widths] does not match {!ndim}
+    [t] or any width is negative.
 
     {@ocaml[
-      # let x = create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-        pad [| (1, 1); (1, 1) |] 0. x |> shape
+      # create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |]
+        |> pad [| (1, 1); (1, 1) |] 0. |> shape
       - : int array = [|4; 4|]
-    ]} *)
+    ]}
+
+    See also {!shrink}. *)
 
 val shrink : (int * int) array -> ('a, 'b) t -> ('a, 'b) t
-(** [shrink ranges t] extracts slice from [start] to [stop] (exclusive) for each
-    dimension.
+(** [shrink ranges t] extracts a slice where [ranges.(i)] is [(start, stop)]
+    (exclusive) for dimension [i]. Returns a view.
 
     {@ocaml[
-      # let x = create int32 [| 3; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |] in
-        shrink [| (1, 3); (0, 2) |] x
+      # create int32 [| 3; 3 |]
+          [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |]
+        |> shrink [| (1, 3); (0, 2) |]
       - : (int32, int32_elt) t = [[4, 5],
                                   [7, 8]]
-    ]} *)
+    ]}
+
+    See also {!pad}. *)
 
 val tile : int array -> ('a, 'b) t -> ('a, 'b) t
-(** [tile reps t] constructs tensor by repeating [t].
+(** [tile reps t] is [t] repeated according to [reps]. [reps.(i)] gives the
+    repetition count along dimension [i]. If [reps] is longer than {!ndim} [t],
+    dimensions are prepended.
 
-    [reps] specifies repetitions per dimension. If longer than ndim, prepends
-    dimensions. Zero repetitions create empty tensor.
-
-    @raise Invalid_argument if [reps] contains negative values
+    Raises [Invalid_argument] if any repetition count is negative.
 
     {@ocaml[
-      # let x = create int32 [| 1; 2 |] [| 1l; 2l |] in
-        tile [| 2; 3 |] x
+      # create int32 [| 1; 2 |] [| 1l; 2l |]
+        |> tile [| 2; 3 |]
       - : (int32, int32_elt) t = [[1, 2, 1, 2, 1, 2],
                                   [1, 2, 1, 2, 1, 2]]
-      # let x = create int32 [| 2 |] [| 1l; 2l |] in
-        tile [| 2; 1; 3 |] x |> shape
-      - : int array = [|2; 1; 6|]
-    ]} *)
+    ]}
+
+    See also {!repeat}. *)
 
 val repeat : ?axis:int -> int -> ('a, 'b) t -> ('a, 'b) t
-(** [repeat ?axis count t] repeats elements [count] times.
+(** [repeat ?axis n t] repeats each element [n] times along [axis]. When [axis]
+    is omitted, operates on the flattened tensor.
 
-    If [axis] not specified, repeats flattened tensor.
+    Raises [Invalid_argument] if [n] is negative or [axis] is out of bounds.
 
     {@ocaml[
-      # let x = create int32 [| 3 |] [| 1l; 2l; 3l |] in
-        repeat 2 x
+      # create int32 [| 3 |] [| 1l; 2l; 3l |]
+        |> repeat 2
       - : (int32, int32_elt) t = [1, 1, 2, 2, 3, 3]
-      # let x = create int32 [| 1; 2 |] [| 1l; 2l |] in
-        repeat ~axis:0 3 x
-      - : (int32, int32_elt) t = [[1, 2],
-                                  [1, 2],
-                                  [1, 2]]
-    ]} *)
+    ]}
 
-(** {2 Array Combination and Splitting}
+    See also {!tile}. *)
 
-    Functions to join and split arrays. *)
+(** {1:combine Combining and splitting} *)
 
 val concatenate : ?axis:int -> ('a, 'b) t list -> ('a, 'b) t
-(** [concatenate ?axis ts] joins tensors along existing axis.
+(** [concatenate ?axis ts] joins tensors along an existing axis. All tensors
+    must have the same shape except on the concatenation axis. When [axis] is
+    omitted, every tensor is flattened first. Always copies.
 
-    All tensors must have same shape except on concatenation axis. If [axis] not
-    specified, flattens all tensors then concatenates. Returns contiguous
-    result.
-
-    @raise Invalid_argument if empty list or shape mismatch
+    Raises [Invalid_argument] if the list is empty or shapes are incompatible.
 
     {@ocaml[
-      # let x1 = create int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |] in
-        let x2 = create int32 [| 1; 2 |] [| 5l; 6l |] in
-        concatenate ~axis:0 [x1; x2]
+      # let a = create int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |] in
+        let b = create int32 [| 1; 2 |] [| 5l; 6l |] in
+        concatenate ~axis:0 [ a; b ]
       - : (int32, int32_elt) t = [[1, 2],
                                   [3, 4],
                                   [5, 6]]
-      # let x1 = create int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |] in
-        let x2 = create int32 [| 1; 2 |] [| 5l; 6l |] in
-        concatenate [x1; x2]
-      - : (int32, int32_elt) t = [1, 2, 3, 4, 5, 6]
-    ]} *)
+    ]}
+
+    See also {!stack}, {!vstack}, {!hstack}. *)
 
 val stack : ?axis:int -> ('a, 'b) t list -> ('a, 'b) t
-(** [stack ?axis ts] joins tensors along new axis.
+(** [stack ?axis ts] joins tensors along a {e new} axis. All tensors must have
+    identical shape. [axis] defaults to [0]. Negative values count from the end
+    of the result shape.
 
-    All tensors must have identical shape. Result rank is input rank + 1.
-    Default axis=0. Negative axis counts from end of result shape.
-
-    @raise Invalid_argument if empty list, shape mismatch, or axis out of bounds
+    Raises [Invalid_argument] if the list is empty, shapes differ, or [axis] is
+    out of bounds.
 
     {@ocaml[
-      # let x1 = create int32 [| 2 |] [| 1l; 2l |] in
-        let x2 = create int32 [| 2 |] [| 3l; 4l |] in
-        stack [x1; x2]
+      # let a = create int32 [| 2 |] [| 1l; 2l |] in
+        let b = create int32 [| 2 |] [| 3l; 4l |] in
+        stack [ a; b ]
       - : (int32, int32_elt) t = [[1, 2],
                                   [3, 4]]
-      # let x1 = create int32 [| 2 |] [| 1l; 2l |] in
-        let x2 = create int32 [| 2 |] [| 3l; 4l |] in
-        stack ~axis:1 [x1; x2]
+      # stack ~axis:1 [ a; b ]
       - : (int32, int32_elt) t = [[1, 3],
                                   [2, 4]]
-      # stack ~axis:(-1) [ones float32 [| 2; 3 |]; zeros float32 [| 2; 3 |]] |> shape
-      - : int array = [|2; 3; 2|]
-    ]} *)
+    ]}
+
+    See also {!concatenate}. *)
 
 val vstack : ('a, 'b) t list -> ('a, 'b) t
-(** [vstack ts] stacks tensors vertically (row-wise).
+(** [vstack ts] stacks vertically (along axis 0). 1-D tensors are treated as row
+    vectors (shape [[1; n]]).
 
-    1-D tensors are treated as row vectors (shape [1;n]). Higher-D tensors
-    concatenate along axis 0. All tensors must have same shape except possibly
-    first dimension.
-
-    @raise Invalid_argument if incompatible shapes
+    Raises [Invalid_argument] if shapes are incompatible.
 
     {@ocaml[
-      # let x1 = create int32 [| 3 |] [| 1l; 2l; 3l |] in
-        let x2 = create int32 [| 3 |] [| 4l; 5l; 6l |] in
-        vstack [x1; x2]
+      # let a = create int32 [| 3 |] [| 1l; 2l; 3l |] in
+        let b = create int32 [| 3 |] [| 4l; 5l; 6l |] in
+        vstack [ a; b ]
       - : (int32, int32_elt) t = [[1, 2, 3],
                                   [4, 5, 6]]
-      # let x1 = create int32 [| 1; 2 |] [| 1l; 2l |] in
-        let x2 = create int32 [| 2; 2 |] [| 3l; 4l; 5l; 6l |] in
-        vstack [x1; x2]
-      - : (int32, int32_elt) t = [[1, 2],
-                                  [3, 4],
-                                  [5, 6]]
-    ]} *)
+    ]}
+
+    See also {!hstack}, {!dstack}, {!concatenate}. *)
 
 val hstack : ('a, 'b) t list -> ('a, 'b) t
-(** [hstack ts] stacks tensors horizontally (column-wise).
+(** [hstack ts] stacks horizontally. 1-D tensors are concatenated directly;
+    higher-D tensors concatenate along axis 1.
 
-    1-D tensors concatenate directly. Higher-D tensors concatenate along axis 1.
-    For 1-D arrays of different lengths, use vstack to make 2-D first.
-
-    @raise Invalid_argument if incompatible shapes or <2D with different axis 0
+    Raises [Invalid_argument] if shapes are incompatible.
 
     {@ocaml[
-      # let x1 = create int32 [| 3 |] [| 1l; 2l; 3l |] in
-        let x2 = create int32 [| 3 |] [| 4l; 5l; 6l |] in
-        hstack [x1; x2]
-      - : (int32, int32_elt) t = [1, 2, 3, 4, 5, 6]
-      # let x1 = create int32 [| 2; 1 |] [| 1l; 2l |] in
-        let x2 = create int32 [| 2; 1 |] [| 3l; 4l |] in
-        hstack [x1; x2]
+      # let a = create int32 [| 2; 1 |] [| 1l; 2l |] in
+        let b = create int32 [| 2; 1 |] [| 3l; 4l |] in
+        hstack [ a; b ]
       - : (int32, int32_elt) t = [[1, 3],
                                   [2, 4]]
-      # let x1 = create int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |] in
-        let x2 = create int32 [| 2; 1 |] [| 5l; 6l |] in
-        hstack [x1; x2]
-      - : (int32, int32_elt) t = [[1, 2, 5],
-                                  [3, 4, 6]]
-    ]} *)
+    ]}
+
+    See also {!vstack}, {!dstack}, {!concatenate}. *)
 
 val dstack : ('a, 'b) t list -> ('a, 'b) t
-(** [dstack ts] stacks tensors depth-wise (along third axis).
+(** [dstack ts] stacks depth-wise (along axis 2). Tensors are reshaped to at
+    least 3-D before concatenation: 1-D [[n]] → [[1; n; 1]], 2-D [[m; n]] →
+    [[m; n; 1]].
 
-    Tensors are reshaped to at least 3-D before concatenation:
-    - 1-D shape [n] → [1;n;1]
-    - 2-D shape [m;n] → [m;n;1]
-    - 3-D+ unchanged
+    Raises [Invalid_argument] if the resulting shapes are incompatible.
 
-    @raise Invalid_argument if resulting shapes incompatible
-
-    {@ocaml[
-      # let x1 = create int32 [| 2 |] [| 1l; 2l |] in
-        let x2 = create int32 [| 2 |] [| 3l; 4l |] in
-        dstack [x1; x2]
-      - : (int32, int32_elt) t = [[[1, 3],
-                                   [2, 4]]]
-      # let x1 = create int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |] in
-        let x2 = create int32 [| 2; 2 |] [| 5l; 6l; 7l; 8l |] in
-        dstack [x1; x2]
-      - : (int32, int32_elt) t = [[[1, 5],
-                                   [2, 6]],
-                                  [[3, 7],
-                                   [4, 8]]]
-    ]} *)
+    See also {!vstack}, {!hstack}, {!concatenate}. *)
 
 val broadcast_arrays : ('a, 'b) t list -> ('a, 'b) t list
-(** [broadcast_arrays ts] broadcasts all tensors to common shape.
+(** [broadcast_arrays ts] broadcasts every tensor to their common shape. Returns
+    views (no copies).
 
-    Finds the common broadcast shape and returns list of views with that shape.
-    Broadcasting rules: dimensions align right, each must be 1 or equal.
+    Raises [Invalid_argument] if shapes are incompatible.
 
-    @raise Invalid_argument if shapes incompatible or empty list
-
-    {@ocaml[
-      # let x1 = ones float32 [| 3; 1 |] in
-        let x2 = ones float32 [| 1; 5 |] in
-        broadcast_arrays [x1; x2] |> List.map shape
-      - : int array list = [[|3; 5|]; [|3; 5|]]
-      # let x1 = scalar float32 5. in
-        let x2 = ones float32 [| 2; 3; 4 |] in
-        broadcast_arrays [x1; x2] |> List.map shape
-      - : int array list = [[|2; 3; 4|]; [|2; 3; 4|]]
-    ]} *)
+    See also {!broadcast_to}, {!broadcasted}. *)
 
 val array_split :
   axis:int ->
   [< `Count of int | `Indices of int list ] ->
   ('a, 'b) t ->
   ('a, 'b) t list
-(** [array_split ~axis sections t] splits tensor into multiple parts.
+(** [array_split ~axis spec t] splits [t] into sub-tensors.
 
-    [`Count n] divides into n parts as evenly as possible. Extra elements go to
-    first parts. [`Indices [i1;i2;...]] splits at indices creating [start:i1],
-    [i1:i2], [i2:end].
+    With [`Count n], divides as evenly as possible (first sections absorb extra
+    elements). With [`Indices [i0; i1; …]], splits at the given indices
+    producing [\[0, i0)], [\[i0, i1)], …, [\[ik, end)].
 
-    @raise Invalid_argument if axis out of bounds or invalid sections
+    Raises [Invalid_argument] if [axis] is out of bounds or [spec] is invalid.
 
     {@ocaml[
-      # let x = create int32 [| 5 |] [| 1l; 2l; 3l; 4l; 5l |] in
-        array_split ~axis:0 (`Count 3) x
+      # create int32 [| 5 |] [| 1l; 2l; 3l; 4l; 5l |]
+        |> array_split ~axis:0 (`Count 3)
       - : (int32, int32_elt) t list = [[1, 2]; [3, 4]; [5]]
-      # let x = create int32 [| 6 |] [| 1l; 2l; 3l; 4l; 5l; 6l |] in
-        array_split ~axis:0 (`Indices [ 2; 4 ]) x
-      - : (int32, int32_elt) t list = [[1, 2]; [3, 4]; [5, 6]]
-    ]} *)
+    ]}
+
+    See also {!split}. *)
 
 val split : axis:int -> int -> ('a, 'b) t -> ('a, 'b) t list
-(** [split ~axis sections t] splits into equal parts.
+(** [split ~axis n t] splits [t] into [n] equal parts along [axis].
 
-    @raise Invalid_argument if axis size not divisible by sections
+    Raises [Invalid_argument] if the axis size is not divisible by [n].
 
-    {@ocaml[
-      # let x = create int32 [| 4; 2 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l |] in
-        split ~axis:0 2 x
-      - : (int32, int32_elt) t list = [[[1, 2],
-                                        [3, 4]]; [[5, 6],
-                                                  [7, 8]]]
-    ]} *)
+    See also {!array_split}. *)
 
-(** {2 Type Conversion and Copying}
-
-    Functions to convert between types and create copies. *)
+(** {1:conversion Type conversion and copying} *)
 
 val cast : ('c, 'd) dtype -> ('a, 'b) t -> ('c, 'd) t
-(** [cast dtype t] converts elements to new dtype.
-
-    Returns copy with same values in new type.
+(** [cast dtype t] is a copy of [t] with elements converted to [dtype].
 
     {@ocaml[
-      # let x = create float32 [| 3 |] [| 1.5; 2.7; 3.1 |] in
-        cast int32 x
+      # create float32 [| 3 |] [| 1.5; 2.7; 3.1 |]
+        |> cast int32
       - : (int32, int32_elt) t = [1, 2, 3]
-    ]} *)
+    ]}
+
+    See also {!contiguous}, {!copy}. *)
 
 val astype : ('a, 'b) dtype -> ('c, 'd) t -> ('a, 'b) t
-(** [astype dtype t] is synonym for {!cast}. *)
+(** [astype dtype t] is {!cast}. *)
 
 val contiguous : ('a, 'b) t -> ('a, 'b) t
-(** [contiguous t] returns C-contiguous tensor.
+(** [contiguous t] is [t] if it is already C-contiguous, or a fresh contiguous
+    copy otherwise.
 
-    Returns [t] unchanged if already contiguous (O(1)), otherwise creates
-    contiguous copy (O(n)). Use before operations requiring direct memory
-    access.
-
-    {@ocaml[
-      # let t = transpose (ones float32 [| 3; 4 |]) in
-        is_c_contiguous (contiguous t)
-      - : bool = true
-    ]} *)
+    See also {!is_c_contiguous}, {!copy}. *)
 
 val copy : ('a, 'b) t -> ('a, 'b) t
-(** [copy t] returns deep copy.
-
-    Always allocates new memory and copies data. Result is contiguous.
+(** [copy t] is a deep copy of [t]. Always allocates new memory; the result is
+    contiguous.
 
     {@ocaml[
       # let x = create float32 [| 3 |] [| 1.; 2.; 3. |] in
@@ -1074,107 +976,101 @@ val copy : ('a, 'b) t -> ('a, 'b) t
         x, y
       - : (float, float32_elt) t * (float, float32_elt) t =
       ([1, 2, 3], [999, 2, 3])
-    ]} *)
+    ]}
+
+    See also {!contiguous}. *)
 
 val blit : ('a, 'b) t -> ('a, 'b) t -> unit
-(** [blit src dst] copies [src] into [dst].
+(** [blit src dst] copies the elements of [src] into [dst] in-place. Shapes must
+    match exactly.
 
-    Shapes must match exactly. Handles broadcasting internally. Modifies [dst]
-    in-place.
-
-    @raise Invalid_argument if shape mismatch
-
-    {@ocaml[
-      let dst = zeros float32 [| 3; 3 |] in
-      blit (ones float32 [| 3; 3 |]) dst
-      (* dst now contains all 1s *)
-    ]} *)
+    Raises [Invalid_argument] if shapes differ. *)
 
 val fill : 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [fill value t] returns a copy of [t] filled with [value], leaving [t]
-    unchanged. Handy when wanting a filled tensor without mutating the source.
-*)
+(** [fill v t] is a fresh copy of [t] with every element set to [v]. Does not
+    mutate [t]. *)
 
-(** {2 Element Access and Slicing}
-
-    Functions to access and modify array elements. *)
+(** {1:indexing Indexing and slicing} *)
 
 val get : int list -> ('a, 'b) t -> ('a, 'b) t
-(** [get indices t] returns subtensor at indices.
+(** [get indices t] is the sub-tensor at [indices], indexing from the outermost
+    dimension inward. Returns a scalar tensor when all dimensions are indexed;
+    otherwise a view of the remaining dimensions. Negative indices count from
+    the end.
 
-    Indexes from outermost dimension. Returns scalar tensor if all dimensions
-    indexed, otherwise returns view of remaining dimensions.
-
-    @raise Invalid_argument if indices out of bounds
+    Raises [Invalid_argument] if any index is out of bounds.
 
     {@ocaml[
-      # let x = create int32 [| 2; 2; 2 |] [| 0l; 1l; 2l; 3l; 4l; 5l; 6l; 7l |] in
-        get [ 1; 1; 1 ] x
-      - : (int32, int32_elt) t = 7
-      # let x = create int32 [| 2; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l |] in
+      # let x =
+          create int32 [| 2; 3 |]
+            [| 1l; 2l; 3l; 4l; 5l; 6l |]
+        in
         get [ 1 ] x
       - : (int32, int32_elt) t = [4, 5, 6]
-    ]} *)
+    ]}
+
+    See also {!item}, {!val-slice}. *)
 
 val set : int list -> ('a, 'b) t -> ('a, 'b) t -> unit
-(** [set indices t value] assigns [value] at indices.
+(** [set indices t v] writes [v] at the position given by [indices].
 
-    @raise Invalid_argument if indices out of bounds *)
+    Raises [Invalid_argument] if indices are out of bounds. *)
 
 val slice : index list -> ('a, 'b) t -> ('a, 'b) t
-(** [slice specs t] extracts subtensor using advanced indexing.
+(** [slice specs t] extracts a sub-tensor using advanced indexing.
 
-    Each element in specs corresponds to an axis from left to right:
-    - [I i]: single index (reduces dimension; negative from end)
-    - [L [i1;i2;...]]: fancy indexing with list of indices
-    - [R (start, stop)]: range \[start, stop) with step 1
-    - [Rs (start, stop, step)]: range with step
-    - [A]: full axis (default for missing specs)
-    - [M mask]: boolean mask (shape must match axis)
-    - [N]: insert new dimension of size 1
+    Each element of [specs] addresses one axis from left to right:
+    - [I i] — single index (reduces dimension; negative from end).
+    - [L [i0; i1; …]] — gather listed indices.
+    - [R (start, stop)] — half-open range \[[start], [stop]).
+    - [Rs (start, stop, step)] — strided range.
+    - [A] — full axis (default for trailing axes).
+    - [M mask] — boolean mask selecting positions where [mask] is [true].
+    - [N] — insert a new axis of size 1.
 
-    Missing specs default to [A]. Returns view when possible.
+    Returns a view when possible.
 
-    @raise Invalid_argument if specs out of bounds or incompatible
+    Raises [Invalid_argument] if specs are out of bounds, if step is zero, or if
+    a mask spec is used (not yet supported).
 
     {@ocaml[
-      # let x = create int32 [| 2; 4 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l |] in
-        slice [ I 1 ] x
-      - : (int32, int32_elt) t = [5, 6, 7, 8]
-      # let x = create int32 [| 5 |] [| 0l; 1l; 2l; 3l; 4l |] in
-        slice [ R (1, 3) ] x
-      - : (int32, int32_elt) t = [1, 2]
-      # let x = create int32 [| 3; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |] in
-        slice [ R (0, 2); L [0; 2] ] x
+      # let x =
+          create int32 [| 3; 3 |]
+            [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |]
+        in
+        slice [ R (0, 2); L [ 0; 2 ] ] x
       - : (int32, int32_elt) t = [[1, 3],
                                   [4, 6]]
-      # let x = create int32 [| 3; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |] in
-        slice [ A; N ] x  (* Add new axis at position 1 *)
-      - : (int32, int32_elt) t = [[[1, 2, 3]],
-                                  [[4, 5, 6]],
-                                  [[7, 8, 9]]]
-    ]} *)
+    ]}
+
+    See also {!get}, {!set_slice}. *)
 
 val set_slice : index list -> ('a, 'b) t -> ('a, 'b) t -> unit
-(** [set_slice specs t value] assigns [value] to indexed region.
+(** [set_slice specs t v] writes [v] into the region of [t] selected by [specs].
+    [v] is broadcast if needed.
 
-    Like {!slice} but modifies t in-place. Value is broadcast if needed.
+    Raises [Invalid_argument] if [N] (new-axis) specs are used (not supported
+    for writes).
 
-    @raise Invalid_argument if specs incompatible *)
+    See also {!val-slice}. *)
 
 val item : int list -> ('a, 'b) t -> 'a
-(** [item indices t] returns scalar value at indices.
+(** [item indices t] is the scalar value at [indices]. Indices must cover all
+    dimensions.
 
-    Must provide indices for all dimensions.
+    Raises [Invalid_argument] if the number of indices is wrong or any index is
+    out of bounds.
 
-    @raise Invalid_argument if wrong number of indices or out of bounds *)
+    See also {!get}, {!set_item}. *)
 
 val set_item : int list -> 'a -> ('a, 'b) t -> unit
-(** [set_item indices value t] sets scalar value at indices.
+(** [set_item indices v t] sets the element at [indices] to [v] in-place.
+    Indices must cover all dimensions.
 
-    Must provide indices for all dimensions. Modifies tensor in-place.
+    Raises [Invalid_argument] if the number of indices is wrong or any index is
+    out of bounds.
 
-    @raise Invalid_argument if wrong number of indices or out of bounds *)
+    See also {!item}. *)
 
 val take :
   ?axis:int ->
@@ -1182,53 +1078,49 @@ val take :
   (int32, int32_elt) t ->
   ('a, 'b) t ->
   ('a, 'b) t
-(** [take ?axis ?mode indices  t] takes elements from t using indices.
+(** [take ?axis ?mode indices t] gathers elements from [t] at [indices] along
+    [axis]. When [axis] is omitted, [t] is flattened first. [mode] controls
+    out-of-bounds indices: [`raise] (default) raises, [`wrap] uses modular
+    indexing, [`clip] clamps to bounds.
 
-    Equivalent to t[indices] in NumPy along the specified axis. If [axis] is
-    None, flattens t first. [indices] is an integer tensor of indices to take.
-    [mode] handles out-of-bounds indices: `raise (default), `wrap (modulo),
-    `clip (clamp to bounds).
-
-    Returns a new tensor with shape based on indices and t's shape.
-
-    @raise Invalid_argument if indices out of bounds and mode=`raise
+    Raises [Invalid_argument] if [mode] is [`raise] and any index is out of
+    bounds.
 
     {@ocaml[
-      # let x = create int32 [| 5 |] [| 0l; 1l; 2l; 3l; 4l |] in
-        take (create int32 [| 3 |] [| 1l; 3l; 0l |]) x
+      # let x =
+          create int32 [| 5 |]
+            [| 0l; 1l; 2l; 3l; 4l |]
+        in
+        take
+          (create int32 [| 3 |] [| 1l; 3l; 0l |])
+          x
       - : (int32, int32_elt) t = [1, 3, 0]
-      # let x = create int32 [| 3; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |] in
-        take ~axis:1 (create int32 [| 3 |] [| 0l; 2l; 1l |]) x
-      - : (int32, int32_elt) t = [[1, 3, 2],
-                                  [4, 6, 5],
-                                  [7, 9, 8]]
-      # let x = create int32 [| 5 |] [| 0l; 1l; 2l; 3l; 4l |] in
-        take ~mode:`clip (create int32 [| 2 |] [| -1l; 5l |]) x  (* Clamps to [0,4] *)
-      - : (int32, int32_elt) t = [0, 4]
-    ]} *)
+    ]}
+
+    See also {!put}, {!take_along_axis}. *)
 
 val take_along_axis :
   axis:int -> (int32, int32_elt) t -> ('a, 'b) t -> ('a, 'b) t
-(** [take_along_axis ~axis indices t] takes values along the specified axis
-    using indices.
+(** [take_along_axis ~axis indices t] gathers values from [t] along [axis] using
+    [indices]. [indices] must match [t]'s shape except along [axis]. Useful for
+    gathering from {!argmax}/{!argmin} results.
 
-    Equivalent to NumPy's take_along_axis. [indices] must have the same shape as
-    t except along the specified axis, where it matches the output size. Useful
-    for gathering from argmax/argmin results.
-
-    @raise Invalid_argument if shapes incompatible
+    Raises [Invalid_argument] if shapes are incompatible.
 
     {@ocaml[
-      # let x = create float32 [| 2; 3 |] [| 4.; 1.; 2.; 3.; 5.; 6. |] in
-        let indices = create int32 [| 2; 1 |] [| 1l; 0l |] in  (* Per row indices *)
-        take_along_axis ~axis:1 indices x
+      # let x =
+          create float32 [| 2; 3 |]
+            [| 4.; 1.; 2.; 3.; 5.; 6. |]
+        in
+        let idx =
+          create int32 [| 2; 1 |] [| 1l; 0l |]
+        in
+        take_along_axis ~axis:1 idx x
       - : (float, float32_elt) t = [[1],
                                     [3]]
-      # let x = create float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |] in
-        let indices = expand_dims [ 0 ] (argmax ~axis:0 x) in  (* Shape [1, 3] *)
-        take_along_axis ~axis:0 indices x  (* Max per column *)
-      - : (float, float32_elt) t = [[7, 8, 9]]
-    ]} *)
+    ]}
+
+    See also {!take}, {!put_along_axis}. *)
 
 val put :
   ?axis:int ->
@@ -1237,39 +1129,14 @@ val put :
   ?mode:[ `raise | `wrap | `clip ] ->
   ('a, 'b) t ->
   unit
-(** [put ?axis ~indices ~values ?mode t] sets elements in t at positions
-    specified by indices to values.
+(** [put ?axis ~indices ~values ?mode t] writes [values] into [t] at positions
+    given by [indices]. When [axis] is omitted, [t] is flattened first. [mode]
+    defaults to [`raise]. Modifies [t] in-place.
 
-    Equivalent to NumPy's put (in-place version of take for setting). If [axis]
-    is None, flattens t first. [indices] is an integer tensor of positions to
-    set. [values] must match the number of indices (broadcasted if needed).
-    [mode] handles out-of-bounds indices: `raise (default), `wrap (modulo),
-    `clip (clamp).
+    Raises [Invalid_argument] if [mode] is [`raise] and any index is out of
+    bounds.
 
-    Modifies t in-place.
-
-    @raise Invalid_argument
-      if shapes incompatible or indices out of bounds with mode=`raise
-
-    {@ocaml[
-      # let x = zeros int32 [| 5 |] in
-        put ~indices:(create int32 [| 3 |] [| 1l; 3l; 0l |])
-            ~values:(create int32 [| 3 |] [| 10l; 20l; 30l |]) x;
-        x
-      - : (int32, int32_elt) t = [30, 10, 0, 20, 0]
-      # let x = create int32 [| 3; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |] in
-        put ~axis:1 ~indices:(create int32 [| 3; 1 |] [| 0l; 2l; 1l |])
-                    ~values:(create int32 [| 3; 1 |] [| 10l; 20l; 30l |]) x;
-        x
-      - : (int32, int32_elt) t = [[10, 2, 3],
-                                  [4, 5, 20],
-                                  [7, 30, 9]]
-      # let y = zeros int32 [| 5 |] in
-        put ~mode:`clip ~indices:(create int32 [| 2 |] [| -1l; 5l |])
-            ~values:(create int32 [| 2 |] [| 99l; 99l |]) y;
-        y  (* Clamps to [0,4] *)
-      - : (int32, int32_elt) t = [99, 0, 0, 0, 99]
-    ]} *)
+    See also {!take}, {!put_along_axis}, {!index_put}. *)
 
 val index_put :
   indices:(int32, int32_elt) t array ->
@@ -1278,34 +1145,35 @@ val index_put :
   ('a, 'b) t ->
   unit
 (** [index_put ~indices ~values ?mode t] writes [values] into [t] at the
-    coordinates specified by [indices].
+    coordinates given by [indices].
 
-    [indices] is an array that contains one tensor per axis of [t]. Each tensor
-    provides integer coordinates for its axis; they are broadcast to a common
-    shape that also determines how many updates are performed. [values] is
-    broadcast to the same shape. Updates follow element-wise order and leave the
-    shape of [t] unchanged. Duplicate coordinates overwrite previous updates,
-    matching {!put}.
+    [indices] contains one index tensor per axis of [t]; they are broadcast to a
+    common shape that determines the number of updates. [values] is broadcast to
+    the same shape. Duplicate coordinates overwrite. [mode] defaults to
+    [`raise].
 
-    [mode] controls how out-of-bounds indices are handled per axis: `raise
-    (default) checks bounds, `wrap performs modular indexing, and `clip clamps
-    to the valid range.
-
-    @raise Invalid_argument
-      if the number of index tensors does not match the rank of [t], or if any
-      axis is zero-sized while a non-empty update set is requested.
+    Raises [Invalid_argument] if the number of index tensors does not match
+    {!ndim} [t].
 
     {@ocaml[
       # let t = zeros float32 [| 3; 3 |] in
-        let rows = create int32 [| 4 |] [| 0l; 2l; 1l; 2l |] in
-        let cols = create int32 [| 4 |] [| 1l; 0l; 2l; 2l |] in
+        let rows =
+          create int32 [| 3 |] [| 0l; 2l; 1l |]
+        in
+        let cols =
+          create int32 [| 3 |] [| 1l; 0l; 2l |]
+        in
         index_put ~indices:[| rows; cols |]
-          ~values:(arange_f float32 0. 4. 1.) t;
+          ~values:(create float32 [| 3 |]
+                     [| 10.; 20.; 30. |])
+          t;
         t
-      - : (float, float32_elt) t = [[0, 0, 0],
-                                    [0, 0, 2],
-                                    [1, 0, 3]]
-    ]} *)
+      - : (float, float32_elt) t = [[0, 10, 0],
+                                    [0, 0, 30],
+                                    [20, 0, 0]]
+    ]}
+
+    See also {!put}. *)
 
 val put_along_axis :
   axis:int ->
@@ -1313,160 +1181,115 @@ val put_along_axis :
   values:('a, 'b) t ->
   ('a, 'b) t ->
   unit
-(** [put_along_axis ~axis ~indices ~values t] sets values along the specified
-    axis using indices.
+(** [put_along_axis ~axis ~indices ~values t] writes [values] into [t] at
+    positions selected by [indices] along [axis]. Modifies [t] in-place.
 
-    Equivalent to NumPy's put_along_axis. [indices] must have the same shape as
-    t except along the axis (where it matches values' size along that axis).
-    [values] is broadcasted to match the selection shape. Useful for scattering
-    to argmax/argmin positions.
+    Raises [Invalid_argument] if shapes are incompatible.
 
-    Modifies t in-place.
-
-    @raise Invalid_argument if shapes incompatible
-
-    {@ocaml[
-      # let x = zeros float32 [| 2; 3 |] in
-        let indices = create int32 [| 2; 1 |] [| 1l; 0l |] in  (* Per row positions *)
-        put_along_axis ~axis:1 ~indices ~values:(create float32 [| 2; 1 |] [| 10.; 20. |]) x;
-        x
-      - : (float, float32_elt) t = [[0, 10, 0],
-                                    [20, 0, 0]]
-      # let x = create float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |] in
-        let indices = expand_dims [ 0 ] (argmax ~axis:0 x) in  (* Shape [1, 3] *)
-        put_along_axis ~axis:0 ~indices ~values:(ones float32 [| 1; 3 |]) x;
-        x  (* Set max per column to 1 *)
-      - : (float, float32_elt) t = [[1, 2, 3],
-                                    [4, 5, 6],
-                                    [1, 1, 1]]
-    ]} *)
+    See also {!take_along_axis}, {!put}. *)
 
 val compress :
   ?axis:int -> condition:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t
-(** [compress ?axis condition t] selects elements where condition is true.
+(** [compress ?axis ~condition t] selects elements where [condition] is [true]
+    along [axis]. [condition] must be 1-D. When [axis] is omitted, [t] is
+    flattened first.
 
-    Equivalent to NumPy's compress. [condition] is a 1D boolean array. If [axis]
-    is None, flattens t first. Otherwise, compresses along the specified axis
-    (condition length must match t's dim along axis).
-
-    Returns a new tensor with reduced size along the axis/flattened.
-
-    @raise Invalid_argument if condition length incompatible
+    Raises [Invalid_argument] if the condition length is incompatible.
 
     {@ocaml[
-      # let x = create int32 [| 5 |] [| 1l; 2l; 3l; 4l; 5l |] in
-        compress ~condition:(create bool [| 5 |] [| true; false; true; false; true |]) x
+      # let x =
+          create int32 [| 5 |]
+            [| 1l; 2l; 3l; 4l; 5l |]
+        in
+        compress
+          ~condition:(create bool [| 5 |]
+            [| true; false; true; false; true |])
+          x
       - : (int32, int32_elt) t = [1, 3, 5]
-      # let x = create int32 [| 3; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |] in
-        compress ~axis:0 ~condition:(create bool [| 3 |] [| false; true; true |]) x
-      - : (int32, int32_elt) t = [[4, 5, 6],
-                                  [7, 8, 9]]
-    ]} *)
+    ]}
+
+    See also {!extract}, {!nonzero}. *)
 
 val extract : condition:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t
-(** [extract condition t] flattens and selects elements where condition is true.
+(** [extract ~condition t] is the 1-D tensor of elements of [t] where
+    [condition] is [true]. Both are flattened before comparison.
 
-    Equivalent to NumPy's extract (1D compress after flatten). [condition] must
-    have the same shape and size as t (element-wise).
+    Raises [Invalid_argument] if sizes differ.
 
-    Returns a 1D tensor with selected elements.
-
-    @raise Invalid_argument if shapes incompatible
-
-    {@ocaml[
-      # let x = create int32 [| 3; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l; 7l; 8l; 9l |] in
-        extract ~condition:(greater_s x 5l) x
-      - : (int32, int32_elt) t = [6, 7, 8, 9]
-    ]} *)
+    See also {!compress}, {!nonzero}. *)
 
 val nonzero : ('a, 'b) t -> (int32, int32_elt) t array
-(** [nonzero t] returns indices of non-zero elements.
-
-    Equivalent to NumPy's nonzero. Treats non-zero as true for bool tensors.
-    Returns an array of 1D tensors, one per dimension, with coordinates of
-    non-zeros.
-
-    For example, for a 2D tensor, returns [| rows; cols |] where rows[i],
-    cols[i] is the position of the i-th non-zero.
+(** [nonzero t] is an array of 1-D index tensors, one per dimension, giving the
+    coordinates of non-zero elements.
 
     {@ocaml[
-      # let x = create int32 [| 3; 3 |] [| 0l; 1l; 0l; 2l; 0l; 3l; 0l; 0l; 4l |] in
-        let indices = nonzero x in
-        indices.(0), indices.(1)
+      # let x =
+          create int32 [| 3; 3 |]
+            [| 0l; 1l; 0l;
+               2l; 0l; 3l;
+               0l; 0l; 4l |]
+        in
+        let idx = nonzero x in
+        idx.(0), idx.(1)
       - : (int32, int32_elt) t * (int32, int32_elt) t =
       ([0, 1, 1, 2], [1, 0, 2, 2])
-    ]} *)
+    ]}
+
+    See also {!argwhere}. *)
 
 val argwhere : ('a, 'b) t -> (int32, int32_elt) t
-(** [argwhere t] returns indices of non-zero elements as a 2D tensor.
+(** [argwhere t] is a 2-D tensor of shape [[k; ndim t]] whose rows are the
+    coordinates of the [k] non-zero elements.
 
-    Equivalent to NumPy's argwhere. Each row is a coordinate [dim0; dim1; ...]
-    of a non-zero element. Shape is [num_nonzeros; ndim].
+    See also {!nonzero}. *)
 
-    {@ocaml[
-      # let x = create int32 [| 3; 3 |] [| 0l; 1l; 0l; 2l; 0l; 3l; 0l; 0l; 4l |] in
-        argwhere x
-      - : (int32, int32_elt) t = [[0, 1],
-                                  [1, 0],
-                                  [1, 2],
-                                  [2, 2]]
-    ]} *)
+(** {1:arithmetic Arithmetic}
 
-(** {2 Basic Arithmetic Operations}
-
-    Element-wise arithmetic operations and their variants. *)
+    Element-wise arithmetic with broadcasting. Each operation [op] has variants:
+    - [op_s t s] — tensor-scalar.
+    - [rop_s s t] — scalar-tensor (reversed operands). *)
 
 val add : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [add ?out t1 t2] computes element-wise sum with broadcasting.
-
-    @param out Optional pre-allocated output tensor.
-    @raise Invalid_argument if shapes incompatible *)
+(** [add ?out a b] is the element-wise sum of [a] and [b]. [out] defaults to a
+    fresh allocation. *)
 
 val add_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [add_s ?out t scalar] adds scalar to each element. *)
+(** [add_s ?out t s] adds scalar [s] to each element of [t]. [out] defaults to a
+    fresh allocation. *)
 
 val radd_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [radd_s ?out scalar t] is [add_s ?out t scalar]. *)
+(** [radd_s ?out s t] is [add_s ?out t s]. *)
 
 val sub : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [sub ?out t1 t2] computes element-wise difference with broadcasting.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [sub ?out a b] is the element-wise difference [a - b]. [out] defaults to a
+    fresh allocation. *)
 
 val sub_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [sub_s ?out t scalar] subtracts scalar from each element. *)
+(** [sub_s ?out t s] subtracts scalar [s] from each element. [out] defaults to a
+    fresh allocation. *)
 
 val rsub_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [rsub_s ?out scalar t] computes [scalar - t]. *)
+(** [rsub_s ?out s t] is [s - t] element-wise. [out] defaults to a fresh
+    allocation. *)
 
 val mul : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [mul ?out t1 t2] computes element-wise product with broadcasting.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [mul ?out a b] is the element-wise product of [a] and [b]. [out] defaults to
+    a fresh allocation. *)
 
 val mul_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [mul_s ?out t scalar] multiplies each element by scalar. *)
+(** [mul_s ?out t s] multiplies each element by scalar [s]. [out] defaults to a
+    fresh allocation. *)
 
 val rmul_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [rmul_s ?out scalar t] is [mul_s ?out t scalar]. *)
+(** [rmul_s ?out s t] is [mul_s ?out t s]. *)
 
 val div : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [div ?out t1 t2] computes element-wise division.
+(** [div ?out a b] is the element-wise quotient [a / b]. [out] defaults to a
+    fresh allocation.
 
-    @param out Optional pre-allocated output tensor.
-
-    True division for floats (result is float). Integer division for integers
-    (truncates toward zero). Complex division follows standard rules.
+    Float dtypes use true division. Integer dtypes truncate toward zero.
 
     {@ocaml[
-      # let x = create float32 [| 3 |] [| 7.; 8.; 9. |] in
-        let y = create float32 [| 3 |] [| 2.; 2.; 2. |] in
-        div x y
-      - : (float, float32_elt) t = [3.5, 4, 4.5]
-      # let x = create int32 [| 3 |] [| 7l; 8l; 9l |] in
-        let y = create int32 [| 3 |] [| 2l; 2l; 2l |] in
-        div x y
-      - : (int32, int32_elt) t = [3, 4, 4]
       # let x = create int32 [| 2 |] [| -7l; 8l |] in
         let y = create int32 [| 2 |] [| 2l; 2l |] in
         div x y
@@ -1474,516 +1297,366 @@ val div : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
     ]} *)
 
 val div_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [div_s ?out t scalar] divides each element by scalar. *)
+(** [div_s ?out t s] divides each element by scalar [s]. [out] defaults to a
+    fresh allocation. *)
 
 val rdiv_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [rdiv_s ?out scalar t] computes [scalar / t]. *)
+(** [rdiv_s ?out s t] is [s / t] element-wise. [out] defaults to a fresh
+    allocation. *)
 
 val pow : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [pow ?out base exponent] computes element-wise power.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [pow ?out base exp] is [base] raised to [exp] element-wise. [out] defaults
+    to a fresh allocation. *)
 
 val pow_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [pow_s ?out t scalar] raises each element to scalar power. *)
+(** [pow_s ?out t s] raises each element to scalar power [s]. [out] defaults to
+    a fresh allocation. *)
 
 val rpow_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [rpow_s ?out scalar t] computes [scalar ** t]. *)
+(** [rpow_s ?out s t] is [s{^t}] element-wise. [out] defaults to a fresh
+    allocation. *)
 
 val mod_ : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [mod_ ?out t1 t2] computes element-wise modulo.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [mod_ ?out a b] is the element-wise remainder of [a / b]. [out] defaults to
+    a fresh allocation. *)
 
 val mod_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [mod_s ?out t scalar] computes modulo scalar for each element. *)
+(** [mod_s ?out t s] is the remainder of each element divided by scalar [s].
+    [out] defaults to a fresh allocation. *)
 
 val rmod_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [rmod_s ?out scalar t] computes [scalar mod t]. *)
+(** [rmod_s ?out s t] is [s mod t] element-wise. [out] defaults to a fresh
+    allocation. *)
 
 val neg : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [neg ?out t] negates all elements.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [neg ?out t] is the element-wise negation of [t]. [out] defaults to a fresh
+    allocation. *)
 
 val conjugate : ('a, 'b) t -> ('a, 'b) t
-(** [conjugate x] computes the complex conjugate.
+(** [conjugate t] is the complex conjugate of [t]. For complex dtypes, negates
+    the imaginary part. For real dtypes, returns [t] unchanged. *)
 
-    For complex tensors, negates the imaginary part of each element. For real
-    tensors, returns the input unchanged.
+(** {1:math Mathematical functions} *)
 
-    {@ocaml[
-      # let x = create complex64 [| 2 |]
-          [|Complex.{re=1.; im=2.}; Complex.{re=3.; im=4.}|] in
-        conjugate x |> to_array
-      - : Complex.t array =
-      [|{Complex.re = 1.; im = -2.}; {Complex.re = 3.; im = -4.}|]
-    ]} *)
-
-(** {2 Mathematical Functions}
-
-    Unary mathematical operations and special functions. *)
+(** {2:math_basic Basic} *)
 
 val abs : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [abs ?out t] computes absolute value.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [abs ?out t] is the element-wise absolute value. [out] defaults to a fresh
+    allocation. *)
 
 val sign : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [sign ?out t] returns -1, 0, or 1 based on sign.
-
-    For unsigned types, returns 1 for all non-zero values, 0 for zero.
-
-    @param out Optional pre-allocated output tensor.
+(** [sign ?out t] is [-1], [0], or [1] according to the sign of each element.
+    For unsigned types, returns [1] for non-zero, [0] for zero. [out] defaults
+    to a fresh allocation.
 
     {@ocaml[
-      # let x = create float32 [| 3 |] [| -2.; 0.; 3.5 |] in
-        sign x
+      # create float32 [| 3 |] [| -2.; 0.; 3.5 |]
+        |> sign
       - : (float, float32_elt) t = [-1, 0, 1]
     ]} *)
 
 val square : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [square ?out t] computes element-wise square.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [square ?out t] is the element-wise square. [out] defaults to a fresh
+    allocation. *)
 
 val sqrt : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [sqrt ?out t] computes element-wise square root.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [sqrt ?out t] is the element-wise square root. [out] defaults to a fresh
+    allocation. *)
 
 val rsqrt : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [rsqrt ?out t] computes reciprocal square root.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [rsqrt ?out t] is the element-wise reciprocal square root ([1 / sqrt t]).
+    [out] defaults to a fresh allocation. *)
 
 val recip : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [recip ?out t] computes element-wise reciprocal.
+(** [recip ?out t] is the element-wise reciprocal ([1 / t]). [out] defaults to a
+    fresh allocation. *)
 
-    @param out Optional pre-allocated output tensor. *)
+(** {2:math_exp Exponential and logarithmic} *)
 
 val log : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
-(** [log ?out t] computes natural logarithm.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [log ?out t] is the element-wise natural logarithm. [out] defaults to a
+    fresh allocation. *)
 
 val log2 : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [log2 ?out t] computes base-2 logarithm.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [log2 ?out t] is the element-wise base-2 logarithm. [out] defaults to a
+    fresh allocation. *)
 
 val exp : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
-(** [exp ?out t] computes exponential.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [exp ?out t] is the element-wise exponential. [out] defaults to a fresh
+    allocation. *)
 
 val exp2 : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [exp2 ?out t] computes 2^x.
+(** [exp2 ?out t] is [2{^t}] element-wise. [out] defaults to a fresh allocation.
+*)
 
-    @param out Optional pre-allocated output tensor. *)
+(** {2:math_trig Trigonometric} *)
 
 val sin : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [sin ?out t] computes sine.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [sin ?out t] is the element-wise sine. [out] defaults to a fresh allocation.
+*)
 
 val cos : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
-(** [cos ?out t] computes cosine.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [cos ?out t] is the element-wise cosine. [out] defaults to a fresh
+    allocation. *)
 
 val tan : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
-(** [tan ?out t] computes tangent.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [tan ?out t] is the element-wise tangent. [out] defaults to a fresh
+    allocation. *)
 
 val asin : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
-(** [asin ?out t] computes arcsine.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [asin ?out t] is the element-wise arcsine. [out] defaults to a fresh
+    allocation. *)
 
 val acos : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
-(** [acos ?out t] computes arccosine.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [acos ?out t] is the element-wise arccosine. [out] defaults to a fresh
+    allocation. *)
 
 val atan : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
-(** [atan ?out t] computes arctangent.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [atan ?out t] is the element-wise arctangent. [out] defaults to a fresh
+    allocation. *)
 
 val atan2 :
   ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t -> (float, 'a) t
-(** [atan2 ?out y x] computes arctangent of y/x using signs to determine
-    quadrant.
+(** [atan2 ?out y x] is the element-wise two-argument arctangent, returning
+    angles in \[[-π], [π]\]. [out] defaults to a fresh allocation. *)
 
-    Returns angle in radians in range [-π, π]. Handles x=0 correctly.
-
-    @param out Optional pre-allocated output tensor.
-
-    {@ocaml[
-      # let y = scalar float32 1. in
-        let x = scalar float32 1. in
-        atan2 y x |> item [] |> Float.round
-      - : float = 1.
-      # let y = scalar float32 1. in
-        let x = scalar float32 0. in
-        atan2 y x |> item [] |> Float.round
-      - : float = 2.
-      # let y = scalar float32 0. in
-        let x = scalar float32 0. in
-        atan2 y x |> item []
-      - : float = 0.
-    ]} *)
+(** {2:math_hyp Hyperbolic} *)
 
 val sinh : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
-(** [sinh ?out t] computes hyperbolic sine.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [sinh ?out t] is the element-wise hyperbolic sine. [out] defaults to a fresh
+    allocation. *)
 
 val cosh : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
-(** [cosh ?out t] computes hyperbolic cosine.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [cosh ?out t] is the element-wise hyperbolic cosine. [out] defaults to a
+    fresh allocation. *)
 
 val tanh : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
-(** [tanh ?out t] computes hyperbolic tangent.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [tanh ?out t] is the element-wise hyperbolic tangent. [out] defaults to a
+    fresh allocation. *)
 
 val asinh : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
-(** [asinh ?out t] computes inverse hyperbolic sine.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [asinh ?out t] is the element-wise inverse hyperbolic sine. [out] defaults
+    to a fresh allocation. *)
 
 val acosh : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
-(** [acosh ?out t] computes inverse hyperbolic cosine.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [acosh ?out t] is the element-wise inverse hyperbolic cosine. [out] defaults
+    to a fresh allocation. *)
 
 val atanh : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
-(** [atanh ?out t] computes inverse hyperbolic tangent.
+(** [atanh ?out t] is the element-wise inverse hyperbolic tangent. [out]
+    defaults to a fresh allocation. *)
 
-    @param out Optional pre-allocated output tensor. *)
-
-val hypot : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [hypot ?out x y] computes sqrt(x² + y²) avoiding overflow.
-
-    Uses numerically stable algorithm: max * sqrt(1 + (min/max)²).
-
-    @param out Optional pre-allocated output tensor.
-
-    {@ocaml[
-      # let x = scalar float32 3. in
-        let y = scalar float32 4. in
-        hypot x y |> item []
-      - : float = 5.
-      # let x = scalar float64 1e200 in
-        let y = scalar float64 1e200 in
-        hypot x y |> item [] < Float.infinity
-      - : bool = true
-    ]} *)
+(** {2:math_round Rounding} *)
 
 val trunc : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [trunc ?out t] rounds toward zero.
-
-    Removes fractional part. Positive values round down, negative round up.
-
-    @param out Optional pre-allocated output tensor.
-
-    {@ocaml[
-      # let x = create float32 [| 3 |] [| 2.7; -2.7; 2.0 |] in
-        trunc x
-      - : (float, float32_elt) t = [2, -2, 2]
-    ]} *)
+(** [trunc ?out t] rounds each element toward zero. [out] defaults to a fresh
+    allocation. *)
 
 val ceil : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
-(** [ceil ?out t] rounds up to nearest integer.
-
-    Smallest integer not less than input.
-
-    @param out Optional pre-allocated output tensor.
-
-    {@ocaml[
-      # let x = create float32 [| 4 |] [| 2.1; 2.9; -2.1; -2.9 |] in
-        ceil x
-      - : (float, float32_elt) t = [3, 3, -2, -2]
-    ]} *)
+(** [ceil ?out t] rounds each element toward positive infinity. [out] defaults
+    to a fresh allocation. *)
 
 val floor : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
-(** [floor ?out t] rounds down to nearest integer.
-
-    Largest integer not greater than input.
-
-    @param out Optional pre-allocated output tensor.
-
-    {@ocaml[
-      # let x = create float32 [| 4 |] [| 2.1; 2.9; -2.1; -2.9 |] in
-        floor x
-      - : (float, float32_elt) t = [2, 2, -3, -3]
-    ]} *)
+(** [floor ?out t] rounds each element toward negative infinity. [out] defaults
+    to a fresh allocation. *)
 
 val round : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
-(** [round ?out t] rounds to nearest integer (half away from zero).
-
-    Ties round away from zero (not banker's rounding).
-
-    @param out Optional pre-allocated output tensor.
+(** [round ?out t] rounds each element to the nearest integer. Ties round away
+    from zero (not banker's rounding). [out] defaults to a fresh allocation.
 
     {@ocaml[
-      # let x = create float32 [| 4 |] [| 2.5; 3.5; -2.5; -3.5 |] in
-        round x
+      # create float32 [| 4 |] [| 2.5; 3.5; -2.5; -3.5 |]
+        |> round
       - : (float, float32_elt) t = [3, 4, -3, -4]
+    ]} *)
+
+(** {2:math_misc Other} *)
+
+val hypot : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [hypot ?out x y] is [sqrt(x² + y²)] computed without intermediate overflow.
+    [out] defaults to a fresh allocation.
+
+    {@ocaml[
+      # hypot (scalar float32 3.) (scalar float32 4.)
+        |> item []
+      - : float = 5.
     ]} *)
 
 val lerp :
   ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [lerp ?out start end_ weight] computes linear interpolation.
-
-    Returns start + weight * (end_ - start). Weight typically in [0, 1].
-
-    @param out Optional pre-allocated output tensor.
+(** [lerp ?out a b w] is the linear interpolation [a + w * (b - a)]. [w] is
+    typically in \[[0], [1]\]. [out] defaults to a fresh allocation.
 
     {@ocaml[
-      # let start = scalar float32 0. in
-        let end_ = scalar float32 10. in
-        let weight = scalar float32 0.3 in
-        lerp start end_ weight |> item []
-      - : float = 3.
-      # let start = create float32 [| 2 |] [| 1.; 2. |] in
-        let end_ = create float32 [| 2 |] [| 5.; 8. |] in
-        let weight = create float32 [| 2 |] [| 0.25; 0.5 |] in
-        lerp start end_ weight
-      - : (float, float32_elt) t = [2, 5]
+      # let a = create float32 [| 2 |] [| 1.; 2. |] in
+        let b = create float32 [| 2 |] [| 5.; 8. |] in
+        lerp a b (scalar float32 0.25)
+      - : (float, float32_elt) t = [2, 3.5]
     ]} *)
 
 val lerp_scalar_weight :
   ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [lerp_scalar_weight ?out start end_ weight] interpolates with scalar weight.
+(** [lerp_scalar_weight ?out a b w] is like {!lerp} with a scalar weight. [out]
+    defaults to a fresh allocation. *)
 
-    @param out Optional pre-allocated output tensor. *)
+val isinf : ?out:(bool, bool_elt) t -> (float, 'a) t -> (bool, bool_elt) t
+(** [isinf ?out t] is [true] where [t] is positive or negative infinity, [false]
+    elsewhere. [out] defaults to a fresh allocation.
 
-(** {2 Comparison and Logical Operations}
+    {@ocaml[
+      # create float32 [| 4 |]
+          [| 1.; Float.infinity;
+             Float.neg_infinity; Float.nan |]
+        |> isinf
+      - : (bool, bool_elt) t = [false, true, true, false]
+    ]}
 
-    Element-wise comparisons and logical operations. *)
+    See also {!isnan}, {!isfinite}. *)
+
+val isnan : ?out:(bool, bool_elt) t -> ('a, 'b) t -> (bool, bool_elt) t
+(** [isnan ?out t] is [true] where [t] is NaN, [false] elsewhere. Non-float
+    dtypes always return all [false]. [out] defaults to a fresh allocation.
+
+    See also {!isinf}, {!isfinite}. *)
+
+val isfinite : ?out:(bool, bool_elt) t -> (float, 'a) t -> (bool, bool_elt) t
+(** [isfinite ?out t] is [true] where [t] is neither infinite nor NaN. [out]
+    defaults to a fresh allocation.
+
+    See also {!isinf}, {!isnan}. *)
+
+(** {1:comparison Comparison and logic} *)
 
 val cmplt :
   ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [cmplt ?out t1 t2] returns [true] where [t1 < t2], [false] elsewhere.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [cmplt ?out a b] is [true] where [a < b], [false] elsewhere. [out] defaults
+    to a fresh allocation. *)
 
 val less :
   ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [less ?out t1 t2] is synonym for {!cmplt}.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [less a b] is {!cmplt}. *)
 
 val less_s : ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
-(** [less_s ?out t scalar] checks if each element is less than scalar and
-    returns booleans.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [less_s ?out t s] is [true] where [t < s]. [out] defaults to a fresh
+    allocation. *)
 
 val cmpne :
   ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [cmpne ?out t1 t2] returns [true] where [t1 ≠ t2], [false] elsewhere.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [cmpne ?out a b] is [true] where [a ≠ b], [false] elsewhere. [out] defaults
+    to a fresh allocation. *)
 
 val not_equal :
   ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [not_equal ?out t1 t2] is synonym for {!cmpne}.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [not_equal a b] is {!cmpne}. *)
 
 val not_equal_s :
   ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
-(** [not_equal_s ?out t scalar] compares each element with scalar for inequality
-    and returns booleans.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [not_equal_s ?out t s] is [true] where [t ≠ s]. [out] defaults to a fresh
+    allocation. *)
 
 val cmpeq :
   ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [cmpeq ?out t1 t2] returns [true] where [t1 = t2], [false] elsewhere.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [cmpeq ?out a b] is [true] where [a = b], [false] elsewhere. [out] defaults
+    to a fresh allocation. *)
 
 val equal :
   ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [equal ?out t1 t2] is synonym for {!cmpeq}.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [equal a b] is {!cmpeq}. *)
 
 val equal_s : ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
-(** [equal_s ?out t scalar] compares each element with scalar for equality and
-    returns booleans.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [equal_s ?out t s] is [true] where [t = s]. [out] defaults to a fresh
+    allocation. *)
 
 val cmpgt :
   ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [cmpgt ?out t1 t2] returns [true] where [t1 > t2], [false] elsewhere.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [cmpgt ?out a b] is [true] where [a > b], [false] elsewhere. [out] defaults
+    to a fresh allocation. *)
 
 val greater :
   ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [greater ?out t1 t2] is synonym for {!cmpgt}.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [greater a b] is {!cmpgt}. *)
 
 val greater_s :
   ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
-(** [greater_s ?out t scalar] checks if each element is greater than scalar and
-    returns booleans.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [greater_s ?out t s] is [true] where [t > s]. [out] defaults to a fresh
+    allocation. *)
 
 val cmple :
   ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [cmple ?out t1 t2] returns [true] where [t1 ≤ t2], [false] elsewhere.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [cmple ?out a b] is [true] where [a ≤ b], [false] elsewhere. [out] defaults
+    to a fresh allocation. *)
 
 val less_equal :
   ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [less_equal ?out t1 t2] is synonym for {!cmple}.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [less_equal a b] is {!cmple}. *)
 
 val less_equal_s :
   ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
-(** [less_equal_s ?out t scalar] checks if each element is less than or equal to
-    scalar and returns booleans.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [less_equal_s ?out t s] is [true] where [t ≤ s]. [out] defaults to a fresh
+    allocation. *)
 
 val cmpge :
   ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [cmpge ?out t1 t2] returns [true] where [t1 ≥ t2], [false] elsewhere.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [cmpge ?out a b] is [true] where [a ≥ b], [false] elsewhere. [out] defaults
+    to a fresh allocation. *)
 
 val greater_equal :
   ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [greater_equal t1 t2] is synonym for {!cmpge}. *)
+(** [greater_equal a b] is {!cmpge}. *)
 
 val greater_equal_s :
   ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
-(** [greater_equal_s ?out t scalar] checks if each element is greater than or
-    equal to scalar and returns booleans.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [greater_equal_s ?out t s] is [true] where [t ≥ s]. [out] defaults to a
+    fresh allocation. *)
 
 val array_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [array_equal t1 t2] returns scalar 1 if all elements equal, 0 otherwise.
-
-    Broadcasts inputs before comparison. Returns 0 if shapes incompatible.
+(** [array_equal a b] is a scalar [true] iff all elements of [a] and [b] are
+    equal. Returns [false] if shapes differ.
 
     {@ocaml[
-      # let x = create int32 [| 3 |] [| 1l; 2l; 3l |] in
-        let y = create int32 [| 3 |] [| 1l; 2l; 3l |] in
-        array_equal x y |> item []
+      # let a = create int32 [| 3 |] [| 1l; 2l; 3l |] in
+        let b = create int32 [| 3 |] [| 1l; 2l; 3l |] in
+        array_equal a b |> item []
       - : bool = true
-      # let x = create int32 [| 2 |] [| 1l; 2l |] in
-        let y = create int32 [| 2 |] [| 1l; 3l |] in
-        array_equal x y |> item []
-      - : bool = false
     ]} *)
 
 val maximum : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [maximum ?out t1 t2] returns element-wise maximum.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [maximum ?out a b] is the element-wise maximum of [a] and [b]. [out]
+    defaults to a fresh allocation. *)
 
 val maximum_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [maximum_s ?out t scalar] returns maximum of each element and scalar. *)
+(** [maximum_s ?out t s] is the element-wise maximum of [t] and scalar [s].
+    [out] defaults to a fresh allocation. *)
 
 val rmaximum_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [rmaximum_s ?out scalar t] is [maximum_s ?out t scalar]. *)
+(** [rmaximum_s ?out s t] is [maximum_s ?out t s]. *)
 
 val minimum : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [minimum ?out t1 t2] returns element-wise minimum.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [minimum ?out a b] is the element-wise minimum of [a] and [b]. [out]
+    defaults to a fresh allocation. *)
 
 val minimum_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [minimum_s ?out t scalar] returns minimum of each element and scalar. *)
+(** [minimum_s ?out t s] is the element-wise minimum of [t] and scalar [s].
+    [out] defaults to a fresh allocation. *)
 
 val rminimum_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [rminimum_s ?out scalar t] is [minimum_s ?out t scalar]. *)
+(** [rminimum_s ?out s t] is [minimum_s ?out t s]. *)
 
 val logical_and : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [logical_and ?out t1 t2] computes element-wise AND.
-
-    @param out Optional pre-allocated output tensor.
-
-    Non-zero values are true. *)
+(** [logical_and ?out a b] is the element-wise logical AND. Non-zero is [true].
+    [out] defaults to a fresh allocation. *)
 
 val logical_or : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [logical_or ?out t1 t2] computes element-wise OR.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [logical_or ?out a b] is the element-wise logical OR. [out] defaults to a
+    fresh allocation. *)
 
 val logical_xor : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [logical_xor ?out t1 t2] computes element-wise XOR.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [logical_xor ?out a b] is the element-wise logical XOR. [out] defaults to a
+    fresh allocation. *)
 
 val logical_not : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [logical_not ?out t] computes element-wise NOT.
-
-    Returns 1 - x. Non-zero values become 0, zero becomes 1.
-
-    @param out Optional pre-allocated output tensor.
-
-    {@ocaml[
-      # let x = create int32 [| 3 |] [| 0l; 1l; 5l |] in
-        logical_not x
-      - : (int32, int32_elt) t = [1, 0, -4]
-    ]} *)
-
-val isinf : ?out:(bool, bool_elt) t -> (float, 'a) t -> (bool, bool_elt) t
-(** [isinf ?out t] returns 1 where infinite, 0 elsewhere.
-
-    Detects both positive and negative infinity. Non-float types return all 0s.
-
-    @param out Optional pre-allocated output tensor.
-
-    {@ocaml[
-      # let x = create float32 [| 4 |] [| 1.; Float.infinity; Float.neg_infinity; Float.nan |] in
-        isinf x
-      - : (bool, bool_elt) t = [false, true, true, false]
-    ]} *)
-
-val isnan : ?out:(bool, bool_elt) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [isnan ?out t] returns 1 where NaN, 0 elsewhere.
-
-    NaN is the only value that doesn't equal itself. Non-float types return all
-    0s.
-
-    @param out Optional pre-allocated output tensor.
-
-    {@ocaml[
-      # let x = create float32 [| 3 |] [| 1.; Float.nan; Float.infinity |] in
-        isnan x
-      - : (bool, bool_elt) t = [false, true, false]
-    ]} *)
-
-val isfinite : ?out:(bool, bool_elt) t -> (float, 'a) t -> (bool, bool_elt) t
-(** [isfinite ?out t] returns 1 where finite, 0 elsewhere.
-
-    Finite means not inf, -inf, or NaN. Non-float types return all 1s.
-
-    @param out Optional pre-allocated output tensor.
-
-    {@ocaml[
-      # let x = create float32 [| 4 |] [| 1.; Float.infinity; Float.nan; -0. |] in
-        isfinite x
-      - : (bool, bool_elt) t = [true, false, false, true]
-    ]} *)
+(** [logical_not ?out t] is the element-wise logical NOT: non-zero becomes [0],
+    zero becomes [1]. [out] defaults to a fresh allocation. *)
 
 val where :
   ?out:('a, 'b) t ->
@@ -1991,250 +1664,225 @@ val where :
   ('a, 'b) t ->
   ('a, 'b) t ->
   ('a, 'b) t
-(** [where ?out cond if_true if_false] selects elements based on condition.
-
-    @param out Optional pre-allocated output tensor.
-
-    Returns [if_true] where [cond] is true, [if_false] elsewhere. All three
-    inputs broadcast to common shape.
-
-    @raise Invalid_argument if shapes incompatible for broadcasting
+(** [where ?out cond if_true if_false] selects elements from [if_true] where
+    [cond] is [true] and from [if_false] elsewhere. All three inputs broadcast
+    to a common shape. [out] defaults to a fresh allocation.
 
     {@ocaml[
-      # let cond = create bool [| 3 |] [| true; false; true |] in
-        let if_true = create int32 [| 3 |] [| 2l; 3l; 4l |] in
-        let if_false = create int32 [| 3 |] [| 5l; 6l; 7l |] in
-        where cond if_true if_false
-      - : (int32, int32_elt) t = [2, 6, 4]
-      # let x = create float32 [| 4 |] [| -1.; 2.; -3.; 4. |] in
-        where (cmpgt x (scalar float32 0.)) x (scalar float32 0.)
+      # let x =
+          create float32 [| 4 |] [| -1.; 2.; -3.; 4. |]
+        in
+        where
+          (cmpgt x (scalar float32 0.))
+          x (scalar float32 0.)
       - : (float, float32_elt) t = [0, 2, 0, 4]
     ]} *)
 
 val clamp : ?out:('a, 'b) t -> ?min:'a -> ?max:'a -> ('a, 'b) t -> ('a, 'b) t
-(** [clamp ?out ?min ?max t] limits values to range.
+(** [clamp ?out ?min ?max t] clamps elements to \[[min], [max]\]. Either bound
+    may be omitted. [out] defaults to a fresh allocation.
 
-    Elements below [min] become [min], above [max] become [max].
-
-    @param out Optional pre-allocated output tensor. *)
+    See also {!clip}. *)
 
 val clip : ?out:('a, 'b) t -> ?min:'a -> ?max:'a -> ('a, 'b) t -> ('a, 'b) t
-(** [clip ?out ?min ?max t] is synonym for {!clamp}.
+(** [clip ?out ?min ?max t] is {!clamp}. *)
 
-    @param out Optional pre-allocated output tensor. *)
-
-(** {2 Bitwise Operations}
-
-    Bitwise operations on integer arrays. *)
+(** {1:bitwise Bitwise operations} *)
 
 val bitwise_xor : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [bitwise_xor ?out t1 t2] computes element-wise XOR.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [bitwise_xor ?out a b] is the element-wise bitwise XOR. [out] defaults to a
+    fresh allocation. *)
 
 val bitwise_or : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [bitwise_or ?out t1 t2] computes element-wise OR.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [bitwise_or ?out a b] is the element-wise bitwise OR. [out] defaults to a
+    fresh allocation. *)
 
 val bitwise_and : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [bitwise_and ?out t1 t2] computes element-wise AND.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [bitwise_and ?out a b] is the element-wise bitwise AND. [out] defaults to a
+    fresh allocation. *)
 
 val bitwise_not : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [bitwise_not ?out t] computes element-wise NOT.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [bitwise_not ?out t] is the element-wise bitwise NOT. [out] defaults to a
+    fresh allocation. *)
 
 val invert : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [invert ?out t] is synonym for {!bitwise_not}.
-
-    @param out Optional pre-allocated output tensor. *)
+(** [invert ?out t] is {!bitwise_not}. *)
 
 val lshift : ?out:('a, 'b) t -> ('a, 'b) t -> int -> ('a, 'b) t
-(** [lshift ?out t shift] left-shifts elements by [shift] bits.
+(** [lshift ?out t n] left-shifts each element by [n] bits. [out] defaults to a
+    fresh allocation.
 
-    Equivalent to multiplication by 2^shift. Overflow wraps around.
-
-    @param out Optional pre-allocated output tensor.
-
-    @raise Invalid_argument if shift negative or non-integer dtype
+    Raises [Invalid_argument] if [n] is negative or the dtype is not an integer
+    type.
 
     {@ocaml[
-      # let x = create int32 [| 3 |] [| 1l; 2l; 3l |] in
-        lshift x 2
+      # create int32 [| 3 |] [| 1l; 2l; 3l |]
+        |> Fun.flip lshift 2
       - : (int32, int32_elt) t = [4, 8, 12]
-    ]} *)
+    ]}
+
+    See also {!rshift}. *)
 
 val rshift : ?out:('a, 'b) t -> ('a, 'b) t -> int -> ('a, 'b) t
-(** [rshift ?out t shift] right-shifts elements by [shift] bits.
+(** [rshift ?out t n] right-shifts each element by [n] bits. [out] defaults to a
+    fresh allocation.
 
-    Equivalent to integer division by 2^shift (rounds toward zero).
+    Raises [Invalid_argument] if [n] is negative or the dtype is not an integer
+    type.
 
-    @param out Optional pre-allocated output tensor.
+    See also {!lshift}. *)
 
-    @raise Invalid_argument if shift negative or non-integer dtype
+(** {1:infix Infix operators} *)
 
-    {@ocaml[
-      # let x = create int32 [| 3 |] [| 8l; 9l; 10l |] in
-        rshift x 2
-      - : (int32, int32_elt) t = [2, 2, 2]
-    ]} *)
-
-(** Infix operators *)
 module Infix : sig
-  (** {3 Elementwise Arithmetic} *)
+  (** {2:infix_arith Element-wise arithmetic} *)
 
   val ( + ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-  (** [t1 + t2] is a synonym for {!add}. *)
+  (** [a + b] is {!add} [a b]. *)
 
   val ( - ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-  (** [t1 - t2] is a synonym for {!sub}. *)
+  (** [a - b] is {!sub} [a b]. *)
 
   val ( * ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-  (** [t1 * t2] is a synonym for {!mul}. *)
+  (** [a * b] is {!mul} [a b]. *)
 
   val ( / ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-  (** [t1 / t2] is a synonym for {!div}. *)
+  (** [a / b] is {!div} [a b]. *)
 
   val ( ** ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-  (** [t1 ** t2] is a synonym for {!pow}. *)
+  (** [a ** b] is {!pow} [a b]. *)
 
-  (** {3 Scalar-right Arithmetic} *)
+  (** {2:infix_scalar Scalar arithmetic} *)
 
   val ( +$ ) : ('a, 'b) t -> 'a -> ('a, 'b) t
-  (** [t +$ scalar] is a synonym for {!add_s}. *)
+  (** [t +$ s] is {!add_s} [t s]. *)
 
   val ( -$ ) : ('a, 'b) t -> 'a -> ('a, 'b) t
-  (** [t -$ scalar] is a synonym for {!sub_s}. *)
+  (** [t -$ s] is {!sub_s} [t s]. *)
 
   val ( *$ ) : ('a, 'b) t -> 'a -> ('a, 'b) t
-  (** [t *$ scalar] is a synonym for {!mul_s}. *)
+  (** [t *$ s] is {!mul_s} [t s]. *)
 
   val ( /$ ) : ('a, 'b) t -> 'a -> ('a, 'b) t
-  (** [t /$ scalar] is a synonym for {!div_s}. *)
+  (** [t /$ s] is {!div_s} [t s]. *)
 
   val ( **$ ) : ('a, 'b) t -> 'a -> ('a, 'b) t
-  (** [t **$ scalar] is a synonym for {!pow_s}. *)
+  (** [t **$ s] is {!pow_s} [t s]. *)
 
-  (** {3 Comparisons} *)
+  (** {2:infix_cmp Comparisons} *)
 
   val ( < ) : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-  (** [t1 < t2] is a synonym for {!less} *)
+  (** [a < b] is {!cmplt} [a b]. *)
 
   val ( <> ) : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-  (** [t1 <> t2] is a synonym for {!not_equal}. *)
+  (** [a <> b] is {!cmpne} [a b]. *)
 
   val ( = ) : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-  (** [t1 = t1] is a synonym for {!equal}. *)
+  (** [a = b] is {!cmpeq} [a b]. *)
 
   val ( > ) : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-  (** [t1 > t2] is a synonym for {!greater}. *)
+  (** [a > b] is {!cmpgt} [a b]. *)
 
   val ( <= ) : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-  (** [t1 <= t2] is a synonym for {!less_equal}. *)
+  (** [a <= b] is {!cmple} [a b]. *)
 
   val ( >= ) : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-  (** [t1 >= t2] is a synonym for {!greater_equal}. *)
+  (** [a >= b] is {!cmpge} [a b]. *)
 
-  (** {3 Scalar Comparisons} *)
+  (** {2:infix_scalar_cmp Scalar comparisons} *)
 
   val ( =$ ) : ('a, 'b) t -> 'a -> (bool, bool_elt) t
-  (** [t =$ scalar] compares each element with scalar for equality. *)
+  (** [t =$ s] is {!equal_s} [t s]. *)
 
   val ( <>$ ) : ('a, 'b) t -> 'a -> (bool, bool_elt) t
-  (** [t <>$ scalar] compares each element with scalar for inequality. *)
+  (** [t <>$ s] is {!not_equal_s} [t s]. *)
 
   val ( <$ ) : ('a, 'b) t -> 'a -> (bool, bool_elt) t
-  (** [t <$ scalar] checks if each element is less than scalar. *)
+  (** [t <$ s] is {!less_s} [t s]. *)
 
   val ( >$ ) : ('a, 'b) t -> 'a -> (bool, bool_elt) t
-  (** [t >$ scalar] checks if each element is greater than scalar. *)
+  (** [t >$ s] is {!greater_s} [t s]. *)
 
   val ( <=$ ) : ('a, 'b) t -> 'a -> (bool, bool_elt) t
-  (** [t <=$ scalar] checks if each element is less than or equal to scalar. *)
+  (** [t <=$ s] is {!less_equal_s} [t s]. *)
 
   val ( >=$ ) : ('a, 'b) t -> 'a -> (bool, bool_elt) t
-  (** [t >=$ scalar] checks if each element is greater than or equal to scalar.
-  *)
+  (** [t >=$ s] is {!greater_equal_s} [t s]. *)
 
-  (** {3 Bitwise Operations} *)
+  (** {2:infix_bitwise Bitwise} *)
 
   val ( lxor ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-  (** [t1 lxor t2] is a synonym for {!bitwise_xor}. *)
+  (** [a lxor b] is {!bitwise_xor} [a b]. *)
 
   val ( lor ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-  (** [t1 lor t2] is a synonym for {!bitwise_or}. *)
+  (** [a lor b] is {!bitwise_or} [a b]. *)
 
   val ( land ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-  (** [t1 land t2] is a synonym for {!bitwise_and}. *)
+  (** [a land b] is {!bitwise_and} [a b]. *)
 
-  (** {3 Modulo Operations} *)
+  (** {2:infix_mod Modulo} *)
 
   val ( % ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-  (** [t1 % t2] is a synonym for {!mod_}. *)
+  (** [a % b] is {!mod_} [a b]. *)
 
   val ( mod ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-  (** [t1 mod t2] is a synonym for {!mod_}. *)
+  (** [a mod b] is {!mod_} [a b]. *)
 
   val ( %$ ) : ('a, 'b) t -> 'a -> ('a, 'b) t
-  (** [t %$ scalar] is a synonym for {!mod_s}. *)
+  (** [t %$ s] is {!mod_s} [t s]. *)
 
-  (** {3 Boolean Mask Logic} *)
+  (** {2:infix_logic Logical} *)
 
   val ( ^ ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-  (** [t1 ^ t2] is a synonym for {!logical_xor}. *)
+  (** [a ^ b] is {!logical_xor} [a b]. *)
 
   val ( && ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-  (** [t1 && t2] is a synonym for {!logical_and}. *)
+  (** [a && b] is {!logical_and} [a b]. *)
 
   val ( || ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-  (** [t1 || t2] is a synonym for {!logical_or}. *)
+  (** [a || b] is {!logical_or} [a b]. *)
 
   val ( ~- ) : ('a, 'b) t -> ('a, 'b) t
-  (** [~-t] is a synonym for {!logical_not}. *)
+  (** [~-t] is {!logical_not} [t]. *)
 
-  (** {3 Linear Algebra} *)
+  (** {2:infix_linalg Linear algebra} *)
 
   val ( @@ ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-  (** [t1 @@ t2] is a synonym for {!matmul}. *)
+  (** [a @@ b] is {!matmul} [a b]. *)
 
   val ( /@ ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-  (** [t1 /@ t2] solves the linear system t1 * x = t2 for x. *)
+  (** [a /@ b] is {!solve} [a b]. *)
 
   val ( **@ ) : ('a, 'b) t -> int -> ('a, 'b) t
-  (** [t **@ n] computes matrix power (t raised to the nth power). *)
+  (** [t **@ n] is {!matrix_power} [t n]. *)
 
   val ( <.> ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-  (** [t1 <.> t2] is a synonym for {!dot}. *)
+  (** [a <.> b] is {!dot} [a b]. *)
 
-  (** {3 Concatenation} *)
+  (** {2:infix_concat Concatenation} *)
 
   val ( @= ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-  (** [t1 @= t2] concatenates t1 and t2 vertically (along axis 0). *)
+  (** [a @= b] is {!vstack} [[a; b]]. *)
 
   val ( @|| ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-  (** [t1 @|| t2] concatenates t1 and t2 horizontally (along axis 1). *)
+  (** [a @|| b] is {!hstack} [[a; b]]. *)
 
-  (** {3 Indexing and Slicing} *)
+  (** {2:infix_index Indexing} *)
 
   val ( .%{} ) : ('a, 'b) t -> int list -> ('a, 'b) t
-  (** [t.%{indices}] is a synonym for {!get}. *)
+  (** [t.%\{i\}] is {!get} [i t]. *)
 
   val ( .%{}<- ) : ('a, 'b) t -> int list -> ('a, 'b) t -> unit
-  (** [t.%{indices} <- value] is a synonym for {!set}. *)
+  (** [t.%\{i\} <- v] is {!set} [i t v]. *)
 
   val ( .${} ) : ('a, 'b) t -> index list -> ('a, 'b) t
-  (** [t.${slice}] is a synonym for {!slice}. *)
+  (** [t.$\{s\}] is {!val-slice} [s t]. *)
 
   val ( .${}<- ) : ('a, 'b) t -> index list -> ('a, 'b) t -> unit
-  (** [t.${slice} <- value] is a synonym for {!set_slice}. *)
+  (** [t.$\{s\} <- v] is {!set_slice} [s t v]. *)
 end
 
-(** {2 Reduction Operations}
-
-    Functions that reduce array dimensions. *)
+(** {1:reduction Reductions} *)
 
 val sum :
   ?out:('a, 'b) t ->
@@ -2242,28 +1890,21 @@ val sum :
   ?keepdims:bool ->
   ('a, 'b) t ->
   ('a, 'b) t
-(** [sum ?out ?axes ?keepdims t] sums elements along specified axes.
-
-    @param out Optional pre-allocated output tensor.
-
-    Default sums all axes (returns scalar). If [keepdims] is true, retains
-    reduced dimensions with size 1. Negative axes count from end.
-
-    @raise Invalid_argument if any axis is out of bounds
+(** [sum ?out ?axes ?keepdims t] sums elements along [axes]. When [axes] is
+    omitted, reduces all axes (returns a scalar). When [keepdims] is [true],
+    reduced axes are kept with size 1. [keepdims] defaults to [false]. Negative
+    axes count from the end. [out] defaults to a fresh allocation.
 
     {@ocaml[
-      # let x = create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-        sum x |> item []
+      # create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |]
+        |> sum |> item []
       - : float = 10.
-      # let x = create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-        sum ~axes:[ 0 ] x
+      # create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |]
+        |> sum ~axes:[ 0 ]
       - : (float, float32_elt) t = [4, 6]
-      # let x = create float32 [| 1; 2 |] [| 1.; 2. |] in
-        sum ~axes:[ 1 ] ~keepdims:true x
+      # create float32 [| 1; 2 |] [| 1.; 2. |]
+        |> sum ~axes:[ 1 ] ~keepdims:true
       - : (float, float32_elt) t = [[3]]
-      # let x = create float32 [| 1; 3 |] [| 1.; 2.; 3. |] in
-        sum ~axes:[ -1 ] x
-      - : (float, float32_elt) t = [6]
     ]} *)
 
 val max :
@@ -2272,22 +1913,14 @@ val max :
   ?keepdims:bool ->
   ('a, 'b) t ->
   ('a, 'b) t
-(** [max ?out ?axes ?keepdims t] finds maximum along axes.
-
-    @param out Optional pre-allocated output tensor.
-
-    Default reduces all axes. NaN propagates (any NaN input gives NaN output).
+(** [max ?out ?axes ?keepdims t] is the maximum along [axes]. NaN propagates.
+    [keepdims] defaults to [false]. [out] defaults to a fresh allocation.
 
     {@ocaml[
-      # let x = create float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-        max x |> item []
+      # create float32 [| 2; 3 |]
+          [| 1.; 2.; 3.; 4.; 5.; 6. |]
+        |> max |> item []
       - : float = 6.
-      # let x = create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-        max ~axes:[ 0 ] x
-      - : (float, float32_elt) t = [3, 4]
-      # let x = create float32 [| 1; 2 |] [| 1.; 2. |] in
-        max ~axes:[ 1 ] ~keepdims:true x
-      - : (float, float32_elt) t = [[2]]
     ]} *)
 
 val min :
@@ -2296,20 +1929,8 @@ val min :
   ?keepdims:bool ->
   ('a, 'b) t ->
   ('a, 'b) t
-(** [min ?out ?axes ?keepdims t] finds minimum along axes.
-
-    @param out Optional pre-allocated output tensor.
-
-    Default reduces all axes. NaN propagates (any NaN input gives NaN output).
-
-    {@ocaml[
-      # let x = create float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-        min x |> item []
-      - : float = 1.
-      # let x = create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-        min ~axes:[ 0 ] x
-      - : (float, float32_elt) t = [1, 2]
-    ]} *)
+(** [min ?out ?axes ?keepdims t] is the minimum along [axes]. NaN propagates.
+    [keepdims] defaults to [false]. [out] defaults to a fresh allocation. *)
 
 val prod :
   ?out:('a, 'b) t ->
@@ -2317,36 +1938,40 @@ val prod :
   ?keepdims:bool ->
   ('a, 'b) t ->
   ('a, 'b) t
-(** [prod ?out ?axes ?keepdims t] computes product along axes.
-
-    @param out Optional pre-allocated output tensor.
-
-    Default multiplies all elements. Empty axes give 1.
+(** [prod ?out ?axes ?keepdims t] is the product along [axes]. [keepdims]
+    defaults to [false]. [out] defaults to a fresh allocation.
 
     {@ocaml[
-      # let x = create int32 [| 3 |] [| 2l; 3l; 4l |] in
-        prod x |> item []
+      # create int32 [| 3 |] [| 2l; 3l; 4l |]
+        |> prod |> item []
       - : int32 = 24l
-      # let x = create int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |] in
-        prod ~axes:[ 0 ] x
-      - : (int32, int32_elt) t = [3, 8]
     ]} *)
 
 val cumsum : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
-(** [cumsum ?axis t] computes the inclusive cumulative sum. Defaults to
-    flattening the tensor (row-major order) when [axis] is omitted. *)
+(** [cumsum ?axis t] is the inclusive cumulative sum along [axis]. When [axis]
+    is omitted, operates on the flattened tensor.
+
+    See also {!cumprod}. *)
 
 val cumprod : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
-(** [cumprod ?axis t] computes the inclusive cumulative product. Defaults to
-    flattening the tensor when [axis] is omitted. *)
+(** [cumprod ?axis t] is the inclusive cumulative product along [axis]. When
+    [axis] is omitted, operates on the flattened tensor.
+
+    See also {!cumsum}. *)
 
 val cummax : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
-(** [cummax ?axis t] computes the inclusive cumulative maximum. NaNs propagate
-    for floating-point dtypes. Defaults to flattening when [axis] is omitted. *)
+(** [cummax ?axis t] is the inclusive cumulative maximum along [axis]. NaN
+    propagates for floating-point dtypes. When [axis] is omitted, operates on
+    the flattened tensor.
+
+    See also {!cummin}. *)
 
 val cummin : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
-(** [cummin ?axis t] computes the inclusive cumulative minimum. NaNs propagate
-    for floating-point dtypes. Defaults to flattening when [axis] is omitted. *)
+(** [cummin ?axis t] is the inclusive cumulative minimum along [axis]. NaN
+    propagates for floating-point dtypes. When [axis] is omitted, operates on
+    the flattened tensor.
+
+    See also {!cummax}. *)
 
 val mean :
   ?out:('a, 'b) t ->
@@ -2354,19 +1979,14 @@ val mean :
   ?keepdims:bool ->
   ('a, 'b) t ->
   ('a, 'b) t
-(** [mean ?out ?axes ?keepdims t] computes arithmetic mean along axes.
-
-    @param out Optional pre-allocated output tensor.
-
-    Sum of elements divided by count. NaN propagates.
+(** [mean ?out ?axes ?keepdims t] is the arithmetic mean along [axes]. NaN
+    propagates. [keepdims] defaults to [false]. [out] defaults to a fresh
+    allocation.
 
     {@ocaml[
-      # let x = create float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
-        mean x |> item []
+      # create float32 [| 4 |] [| 1.; 2.; 3.; 4. |]
+        |> mean |> item []
       - : float = 2.5
-      # let x = create float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-        mean ~axes:[ 1 ] x
-      - : (float, float32_elt) t = [2, 5]
     ]} *)
 
 val var :
@@ -2376,23 +1996,23 @@ val var :
   ?ddof:int ->
   ('a, 'b) t ->
   ('a, 'b) t
-(** [var ?out ?axes ?keepdims ?ddof t] computes variance along axes.
+(** [var ?out ?axes ?keepdims ?ddof t] is the variance along [axes]. [ddof]
+    (delta degrees of freedom) defaults to [0] (population variance); use [1]
+    for sample variance. Computed as [E[(X - E[X])²] / (N - ddof)]. [keepdims]
+    defaults to [false]. [out] defaults to a fresh allocation.
 
-    [ddof] is delta degrees of freedom. Default 0 (population variance). Use 1
-    for sample variance. Variance = E[(X - E[X])²] / (N - ddof).
-
-    @param out Optional pre-allocated output tensor.
-
-    @raise Invalid_argument if ddof >= number of elements
+    Raises [Invalid_argument] if [ddof >= N].
 
     {@ocaml[
-      # let x = create float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
-        var x |> item []
+      # create float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |]
+        |> var |> item []
       - : float = 2.
-      # let x = create float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
-        var ~ddof:1 x |> item []
+      # create float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |]
+        |> var ~ddof:1 |> item []
       - : float = 2.5
-    ]} *)
+    ]}
+
+    See also {!std}. *)
 
 val std :
   ?out:('a, 'b) t ->
@@ -2401,20 +2021,11 @@ val std :
   ?ddof:int ->
   ('a, 'b) t ->
   ('a, 'b) t
-(** [std ?out ?axes ?keepdims ?ddof t] computes standard deviation.
+(** [std ?out ?axes ?keepdims ?ddof t] is the standard deviation:
+    [sqrt({!var} ~ddof t)]. [ddof] defaults to [0]. [keepdims] defaults to
+    [false]. [out] defaults to a fresh allocation.
 
-    Square root of variance: sqrt(var(t, ddof)). See {!var} for ddof meaning.
-
-    @param out Optional pre-allocated output tensor.
-
-    {@ocaml[
-      # let x = create float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
-        std x |> item [] |> Float.round
-      - : float = 1.
-      # let x = create float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
-        std ~ddof:1 x |> item [] |> Float.round
-      - : float = 2.
-    ]} *)
+    See also {!var}. *)
 
 val all :
   ?out:(bool, bool_elt) t ->
@@ -2422,23 +2033,20 @@ val all :
   ?keepdims:bool ->
   ('a, 'b) t ->
   (bool, bool_elt) t
-(** [all ?out ?axes ?keepdims t] tests if all elements are true (non-zero).
-
-    Returns [true] if all elements along axes are non-zero, [false] otherwise.
-
-    @param out Optional pre-allocated output tensor.
+(** [all ?out ?axes ?keepdims t] is [true] iff every element along [axes] is
+    non-zero. [keepdims] defaults to [false]. [out] defaults to a fresh
+    allocation.
 
     {@ocaml[
-      # let x = create int32 [| 3 |] [| 1l; 2l; 3l |] in
-        all x |> item []
+      # create int32 [| 3 |] [| 1l; 2l; 3l |]
+        |> all |> item []
       - : bool = true
-      # let x = create int32 [| 3 |] [| 1l; 0l; 3l |] in
-        all x |> item []
+      # create int32 [| 3 |] [| 1l; 0l; 3l |]
+        |> all |> item []
       - : bool = false
-      # let x = create int32 [| 2; 2 |] [| 1l; 0l; 1l; 1l |] in
-        all ~axes:[ 1 ] x
-      - : (bool, bool_elt) t = [false, true]
-    ]} *)
+    ]}
+
+    See also {!any}. *)
 
 val any :
   ?out:(bool, bool_elt) t ->
@@ -2446,431 +2054,309 @@ val any :
   ?keepdims:bool ->
   ('a, 'b) t ->
   (bool, bool_elt) t
-(** [any ?out ?axes ?keepdims t] tests if any element is true (non-zero).
+(** [any ?out ?axes ?keepdims t] is [true] iff at least one element along [axes]
+    is non-zero. [keepdims] defaults to [false]. [out] defaults to a fresh
+    allocation.
 
-    Returns [true] if any element along axes is non-zero, [false] if all are
-    zero.
-
-    @param out Optional pre-allocated output tensor.
-
-    {@ocaml[
-      # let x = create int32 [| 3 |] [| 0l; 0l; 1l |] in
-        any x |> item []
-      - : bool = true
-      # let x = create int32 [| 3 |] [| 0l; 0l; 0l |] in
-        any x |> item []
-      - : bool = false
-      # let x = create int32 [| 2; 2 |] [| 0l; 0l; 0l; 1l |] in
-        any ~axes:[ 1 ] x
-      - : (bool, bool_elt) t = [false, true]
-    ]} *)
+    See also {!all}. *)
 
 val argmax : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> (int32, int32_elt) t
-(** [argmax ?axis ?keepdims t] finds indices of maximum values.
+(** [argmax ?axis ?keepdims t] is the index of the maximum along [axis]. Returns
+    the first occurrence for ties. When [axis] is omitted, operates on the
+    flattened tensor. [keepdims] defaults to [false].
 
-    Returns index of first occurrence for ties. If [axis] not specified,
-    operates on flattened tensor and returns scalar.
+    Raises [Invalid_argument] if [axis] is out of bounds.
 
     {@ocaml[
-      # let x = create int32 [| 5 |] [| 3l; 1l; 4l; 1l; 5l |] in
-        argmax x |> item []
+      # create int32 [| 5 |] [| 3l; 1l; 4l; 1l; 5l |]
+        |> argmax |> item []
       - : int32 = 4l
-      # let x = create int32 [| 2; 3 |] [| 1l; 5l; 3l; 2l; 4l; 6l |] in
-        argmax ~axis:1 x
-      - : (int32, int32_elt) t = [1, 2]
-    ]} *)
+    ]}
+
+    See also {!argmin}. *)
 
 val argmin : ?axis:int -> ?keepdims:bool -> ('a, 'b) t -> (int32, int32_elt) t
-(** [argmin ?axis ?keepdims t] finds indices of minimum values.
+(** [argmin ?axis ?keepdims t] is the index of the minimum along [axis]. Returns
+    the first occurrence for ties. When [axis] is omitted, operates on the
+    flattened tensor. [keepdims] defaults to [false].
 
-    Returns index of first occurrence for ties. If [axis] not specified,
-    operates on flattened tensor and returns scalar.
+    Raises [Invalid_argument] if [axis] is out of bounds.
 
-    {@ocaml[
-      # let x = create int32 [| 5 |] [| 3l; 1l; 4l; 1l; 5l |] in
-        argmin x |> item []
-      - : int32 = 1l
-      # let x = create int32 [| 2; 3 |] [| 5l; 2l; 3l; 1l; 4l; 0l |] in
-        argmin ~axis:1 x
-      - : (int32, int32_elt) t = [1, 2]
-    ]} *)
+    See also {!argmax}. *)
 
-(** {2 Sorting and Searching}
-
-    Functions for sorting arrays and finding indices. *)
+(** {1:sorting Sorting and searching} *)
 
 val sort :
   ?descending:bool ->
   ?axis:int ->
   ('a, 'b) t ->
   ('a, 'b) t * (int32, int32_elt) t
-(** [sort ?descending ?axis t] sorts elements along axis.
+(** [sort ?descending ?axis t] sorts elements along [axis] and returns
+    [(sorted, indices)] where [indices] maps sorted positions back to originals.
+    [descending] defaults to [false]. [axis] defaults to [-1] (last).
 
-    Returns (sorted_values, indices) where indices map sorted positions to
-    original positions. Default sorts last axis in ascending order.
+    The sort is stable (equal elements preserve their relative order). NaN sorts
+    to the end in ascending order and to the beginning in descending order.
 
-    Algorithm: Bitonic sort (parallel-friendly, stable)
-    - Pads to power of 2 with inf/-inf for correctness
-    - O(n log² n) comparisons, O(log² n) depth
-    - Stable: preserves relative order of equal elements
-    - First occurrence wins for duplicate values
-
-    Special values:
-    - NaN: sorted to end (ascending) or beginning (descending)
-    - inf/-inf: sorted normally
-    - For integers: uses max/min values for padding
-
-    @raise Invalid_argument if axis out of bounds
+    Raises [Invalid_argument] if [axis] is out of bounds.
 
     {@ocaml[
-      # let x = create int32 [| 5 |] [| 3l; 1l; 4l; 1l; 5l |] in
-        sort x
+      # create int32 [| 5 |] [| 3l; 1l; 4l; 1l; 5l |]
+        |> sort
       - : (int32, int32_elt) t * (int32, int32_elt) t =
       ([1, 1, 3, 4, 5], [1, 3, 0, 2, 4])
-      # let x = create int32 [| 2; 2 |] [| 3l; 1l; 1l; 4l |] in
-        sort ~descending:true ~axis:0 x
-      - : (int32, int32_elt) t * (int32, int32_elt) t =
-      ([[3, 4],
-        [1, 1]], [[0, 1],
-                  [1, 0]])
-      # let x = create float32 [| 4 |] [| Float.nan; 1.; 2.; Float.nan |] in
-        let v, _ = sort x in
-        v
-      - : (float, float32_elt) t = [1, 2, nan, nan]
-    ]} *)
+    ]}
+
+    See also {!argsort}. *)
 
 val argsort :
   ?descending:bool -> ?axis:int -> ('a, 'b) t -> (int32, int32_elt) t
-(** [argsort ?descending ?axis t] returns indices that would sort tensor.
+(** [argsort ?descending ?axis t] is [snd (sort ?descending ?axis t)].
 
-    Equivalent to [snd (sort ?descending ?axis t)]. Returns indices such that
-    taking elements at these indices yields sorted array.
+    See also {!sort}. *)
 
-    For 1-D: result[i] is the index of the i-th smallest element. For N-D: sorts
-    along specified axis independently.
+(** {1:linalg Linear algebra} *)
 
-    @raise Invalid_argument if axis out of bounds
-
-    {@ocaml[
-      # let x = create int32 [| 5 |] [| 3l; 1l; 4l; 1l; 5l |] in
-        argsort x
-      - : (int32, int32_elt) t = [1, 3, 0, 2, 4]
-      # let x = create int32 [| 2; 3 |] [| 3l; 1l; 4l; 2l; 5l; 0l |] in
-        argsort ~axis:1 x
-      - : (int32, int32_elt) t = [[1, 0, 2],
-                                  [2, 0, 1]]
-    ]} *)
-
-(** {2 Linear Algebra}
-
-    Matrix operations and linear algebra functions.
-
-    Most linear algebra functions require floating-point or complex tensors.
-    Functions will raise [Invalid_argument] if given integer tensors. *)
+(** {2:linalg_products Products} *)
 
 val dot : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [dot ?out a b] computes generalized dot product.
+(** [dot ?out a b] is the generalised dot product. [out] defaults to a fresh
+    allocation.
 
-    @param out Optional pre-allocated output tensor.
-
-    Important: [dot] has different broadcasting behavior than [matmul]:
-    - [matmul] broadcasts batch dimensions
-    - [dot] does NOT broadcast; it concatenates non-contracted dimensions
-
-    For N-D × M-D arrays: [dot(a, b)[i,j,k,m] = sum(a[i,j,:] * b[k,:,m])] This
-    can result in much larger output arrays than [matmul].
-
-    Contracts last axis of [a] with:
-    - 1-D [b]: the only axis (axis 0)
-    - N-D [b]: second-to-last axis (axis -2)
+    Contracts the last axis of [a] with:
+    - the only axis of [b] when [b] is 1-D,
+    - the second-to-last axis of [b] otherwise.
 
     Dimension rules:
-    - 1-D × 1-D: inner product, returns scalar
-    - 2-D × 2-D: matrix multiplication
-    - N-D × M-D: batched contraction over all but contracted axes
+    - 1-D × 1-D → scalar (inner product).
+    - 2-D × 2-D → matrix multiplication.
+    - N-D × M-D → contraction; output axes are the non-contracted axes of [a]
+      followed by those of [b].
 
-    Supports broadcasting on batch dimensions. Result shape is concatenation of:
-    - Broadcasted batch dims
-    - Remaining dims from [a] (except last)
-    - Remaining dims from [b] (except contracted axis)
+    {b Note.} Unlike {!matmul}, [dot] does {e not} broadcast batch dimensions—it
+    concatenates them.
 
-    @raise Invalid_argument
-      if contraction axes have different sizes or inputs are 0-D
+    Raises [Invalid_argument] if contraction axes differ in size or either input
+    is 0-D.
 
     {@ocaml[
       # let a = create float32 [| 2 |] [| 1.; 2. |] in
         let b = create float32 [| 2 |] [| 3.; 4. |] in
         dot a b |> item []
       - : float = 11.
-      # let a = create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-        let b = create float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
-        dot a b
-      - : (float, float32_elt) t = [[19, 22],
-                                    [43, 50]]
-      # dot (ones float32 [| 3; 4; 5 |]) (ones float32 [| 5; 6 |]) |> shape
+      # dot (ones float32 [| 3; 4; 5 |])
+            (ones float32 [| 5; 6 |]) |> shape
       - : int array = [|3; 4; 6|]
-      # dot (ones float32 [| 2; 3; 4; 5 |]) (ones float32 [| 3; 5; 6 |]) |> shape
-      - : int array = [|2; 3; 4; 6|]
-    ]} *)
+    ]}
+
+    See also {!matmul}, {!vdot}, {!vecdot}. *)
 
 val matmul : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [matmul ?out a b] computes matrix multiplication with broadcasting.
+(** [matmul ?out a b] is the matrix product of [a] and [b] with batch
+    broadcasting. [out] defaults to a fresh allocation; ignored when either
+    input is 1-D.
 
-    Follows NumPy's \@ operator semantics:
-    - 1-D × 1-D: inner product (returns scalar tensor)
-    - 1-D × N-D: treated as [1 × k] \@ [... × k × n] → [... × n]
-    - N-D × 1-D: treated as [... × m × k] \@ [k × 1] → [... × m]
-    - N-D × M-D: batched matrix multiply on last 2 dimensions
+    Dimension rules:
+    - 1-D × 1-D → scalar (inner product).
+    - 1-D × N-D → [a] is treated as a row vector.
+    - N-D × 1-D → [b] is treated as a column vector.
+    - N-D × M-D → matrix multiply on last two axes; leading axes are broadcast.
 
-    Broadcasting rules:
-    - All dimensions except last 2 are broadcast together
-    - For 1-D inputs, dimension is temporarily added then removed
-    - Inner dimensions must match: a.shape[-1] == b.shape[-2]
-
-    Result shape:
-    - Batch dims: broadcast(a.shape[:-2], b.shape[:-2])
-    - Matrix dims: [..., a.shape[-2], b.shape[-1]]
-    - 1-D adjustments applied after
-
-    @param out
-      Optional pre-allocated output tensor. When provided, the result is written
-      to this tensor instead of allocating a new one. This can significantly
-      improve performance in tight loops by avoiding allocation overhead. Only
-      used when both inputs are >= 2D; ignored for 1-D inputs.
-
-    @raise Invalid_argument if inputs are 0-D or inner dimensions mismatch
+    Raises [Invalid_argument] if inputs are 0-D or inner dimensions mismatch.
 
     {@ocaml[
-      # let a = create float32 [| 3 |] [| 1.; 2.; 3. |] in
-        let b = create float32 [| 3 |] [| 4.; 5.; 6. |] in
-        matmul a b |> item []
-      - : float = 32.
-      # let a = create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+      # let a =
+          create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |]
+        in
         let b = create float32 [| 2 |] [| 5.; 6. |] in
         matmul a b
       - : (float, float32_elt) t = [17, 39]
-      # let a = create float32 [| 2 |] [| 1.; 2. |] in
-        let b = create float32 [| 2; 3 |] [| 3.; 4.; 5.; 6.; 7.; 8. |] in
-        matmul a b
-      - : (float, float32_elt) t = [15, 18, 21]
-      # matmul (ones float32 [| 10; 3; 4 |]) (ones float32 [| 10; 4; 5 |]) |> shape
-      - : int array = [|10; 3; 5|]
-      # matmul (ones float32 [| 1; 3; 4 |]) (ones float32 [| 5; 4; 2 |]) |> shape
+      # matmul (ones float32 [| 1; 3; 4 |])
+               (ones float32 [| 5; 4; 2 |]) |> shape
       - : int array = [|5; 3; 2|]
-    ]} *)
+    ]}
+
+    See also {!dot}, {!multi_dot}. *)
 
 val diagonal :
   ?offset:int -> ?axis1:int -> ?axis2:int -> ('a, 'b) t -> ('a, 'b) t
-(** [diagonal ?offset ?axis1 ?axis2 a] extracts diagonal from 2-D planes.
+(** [diagonal ?offset ?axis1 ?axis2 t] extracts diagonals from 2-D planes
+    defined by [axis1] and [axis2]. [offset] defaults to [0]. [axis1] and
+    [axis2] default to the last two axes.
 
-    - [offset]: diagonal offset (0=main, positive=above, negative=below)
-    - [axis1], [axis2]: axes of 2-D planes (default: last two axes)
+    Raises [Invalid_argument] if [axis1 = axis2] or either is out of bounds.
 
-    For 2-D array, returns 1-D array of diagonal elements. For N-D array,
-    returns array with diagonals from each 2-D subarray.
-
-    @raise Invalid_argument if axis1 = axis2 or axes out of bounds *)
+    See also {!diag}, {!trace}. *)
 
 val matrix_transpose : ('a, 'b) t -> ('a, 'b) t
-(** [matrix_transpose a] transposes matrix dimensions.
+(** [matrix_transpose t] swaps the last two axes: [[…; m; n]] → [[…; n; m]]. For
+    1-D tensors, returns [t] unchanged.
 
-    Swaps last two axes: [..., M, N] -> [..., N, M]. For 1-D arrays, returns
-    unchanged.
-
-    This is specifically for matrix operations, unlike general [transpose] which
-    can permute any axes. *)
+    See also {!transpose}. *)
 
 val vdot : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [vdot a b] returns dot product of two vectors.
+(** [vdot a b] is the dot product of two vectors. Both inputs are flattened; for
+    complex dtypes, [a] is conjugated first. Always returns a scalar.
 
-    For complex vectors, conjugates first vector before multiplication. Always
-    returns scalar tensor regardless of input shapes. Flattens inputs before
-    computation.
+    Raises [Invalid_argument] if the inputs have different numbers of elements.
 
-    @raise Invalid_argument if inputs have different number of elements *)
+    See also {!dot}, {!vecdot}. *)
 
 val vecdot : ?axis:int -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [vecdot ?axis x1 x2] computes vector dot product along an axis.
+(** [vecdot ?axis a b] is the dot product of [a] and [b] along [axis] with
+    broadcasting. [axis] defaults to [-1].
 
-    - [axis]: axis along which to compute dot product (default: -1)
+    Raises [Invalid_argument] if the specified axis dimensions differ.
 
-    Unlike [vdot] which always flattens, [vecdot] computes dot products along
-    specified axis with broadcasting support.
-
-    @raise Invalid_argument if specified axis dimensions differ *)
+    See also {!vdot}, {!dot}. *)
 
 val inner : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [inner a b] computes inner product over last axes.
+(** [inner a b] is the inner product over the last axes of [a] and [b].
 
-    For 1-D arrays, this is ordinary inner product. For higher dimensions, sums
-    products over last axes of a and b.
+    Raises [Invalid_argument] if the last dimensions differ.
 
-    @raise Invalid_argument if last dimensions differ *)
+    See also {!dot}, {!outer}. *)
 
 val outer : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [outer ?out a b] computes outer product of two vectors.
+(** [outer ?out a b] is the outer product. Inputs are flattened to 1-D; the
+    result has shape [[numel a; numel b]]. [out] defaults to a fresh allocation.
 
-    Given vectors a[i] and b[j], produces matrix M[i,j] = a[i] * b[j]. Input
-    tensors are flattened if not already 1-D.
-
-    @param out Optional pre-allocated output tensor.
-
-    {@ocaml[
-      # outer (create float32 [|2|] [|1.; 2.|]) (create float32 [|3|] [|3.; 4.; 5.|])
-      - : (float, float32_elt) t = [[3, 4, 5],
-                                    [6, 8, 10]]
-    ]} *)
+    See also {!inner}. *)
 
 val tensordot :
   ?axes:int list * int list -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [tensordot ?axes a b] computes tensor contraction along specified axes.
+(** [tensordot ?axes a b] contracts [a] and [b] along the specified axis pairs.
+    [axes] defaults to contracting the last axis of [a] with the first axis of
+    [b].
 
-    - [axes]: pair of axis lists to contract (default: last of a, first of b)
-
-    Generalizes matrix multiplication to arbitrary dimensions.
-
-    @raise Invalid_argument if specified axes have different sizes *)
+    Raises [Invalid_argument] if the contracted axes have different sizes. *)
 
 val einsum : string -> ('a, 'b) t array -> ('a, 'b) t
-(** [einsum subscripts operands] evaluates Einstein summation convention.
-
-    Subscripts string specifies contraction, e.g., "ij,jk->ik" for matmul.
-    Repeated indices are summed, free indices form output dimensions.
+(** [einsum subscripts operands] evaluates Einstein summation.
 
     {@ocaml[
-      # let a = create float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-        let b = create float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-        shape (einsum "ij,jk->ik" [|a; b|])  (* matrix multiplication *)
+      # let a =
+          create float32 [| 2; 3 |]
+            [| 1.; 2.; 3.; 4.; 5.; 6. |]
+        in
+        let b =
+          create float32 [| 3; 2 |]
+            [| 1.; 2.; 3.; 4.; 5.; 6. |]
+        in
+        einsum "ij,jk->ik" [| a; b |] |> shape
       - : int array = [|2; 2|]
-      # let a = create float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |] in
-        shape (einsum "ii->i" [|a|])  (* diagonal *)
-      - : int array = [|3|]
-      # let a = create float32 [| 3; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |] in
-        shape (einsum "ij->ji" [|a|])  (* transpose *)
-      - : int array = [|3; 3|]
-    ]} *)
+    ]}
+
+    See also {!matmul}, {!tensordot}. *)
 
 val kron : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [kron a b] computes Kronecker product.
-
-    Result has shape [a.shape[i] * b.shape[i] for i in range(ndim)]. Each
-    element a[i,j] is replaced by a[i,j] * b. *)
+(** [kron a b] is the Kronecker product. The result has shape
+    [[a.shape.(i) * b.shape.(i)]] for each [i]. *)
 
 val multi_dot : ('a, 'b) t array -> ('a, 'b) t
-(** [multi_dot arrays] computes chained matrix multiplication optimally.
+(** [multi_dot ts] is the chained matrix product of [ts], automatically choosing
+    the association order that minimises computation.
 
-    Automatically selects the association order that minimizes computational
-    cost. Much more efficient than repeated [matmul] for chains of 3+ matrices.
+    Raises [Invalid_argument] if the array is empty, shapes are incompatible, or
+    dtypes are not floating-point or complex.
 
-    @raise Invalid_argument if array is empty or shapes incompatible
-    @raise Invalid_argument if inputs are not float or complex *)
+    See also {!matmul}. *)
 
 val matrix_power : ('a, 'b) t -> int -> ('a, 'b) t
-(** [matrix_power a n] raises square matrix to integer power.
+(** [matrix_power t n] raises square matrix [t] to integer power [n]. [n = 0]
+    returns the identity; [n < 0] uses the inverse.
 
-    - n > 0: a \@ a \@ ... \@ a (n times)
-    - n = 0: identity matrix
-    - n < 0: inv(a) \@ inv(a) \@ ... \@ inv(a) (|n| times)
-
-    @raise Invalid_argument if matrix is not square
-    @raise Invalid_argument if input is not float or complex
-    @raise Invalid_argument if n < 0 and matrix is singular *)
+    Raises [Invalid_argument] if [t] is not square, the dtype is not
+    floating-point or complex, or [n < 0] and [t] is singular. *)
 
 val cross :
   ?out:('a, 'b) t -> ?axis:int -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [cross ?out ?axis a b] returns cross product of 3-element vectors.
+(** [cross ?out ?axis a b] is the cross product of 3-element vectors along
+    [axis]. [axis] defaults to [-1]. [out] defaults to a fresh allocation.
 
-    @param out Optional pre-allocated output tensor.
-    @param axis Axis containing vectors (default: last axis).
+    Raises [Invalid_argument] if the axis dimension is not 3. *)
 
-    @raise Invalid_argument if axis dimension is not 3 *)
-
-(** {3 Matrix Decompositions} *)
+(** {2:linalg_decomp Decompositions} *)
 
 val cholesky : ?upper:bool -> ('a, 'b) t -> ('a, 'b) t
-(** [cholesky ?upper a] computes Cholesky decomposition.
+(** [cholesky ?upper a] is the Cholesky factor of positive- definite matrix [a].
+    When [upper] is [true], returns the upper-triangular factor [U] such that
+    [a = Uᵀ U]; otherwise (default) returns the lower-triangular factor [L] such
+    that [a = L Lᵀ].
 
-    - [upper]: return upper triangular if true (default: false)
+    Raises [Invalid_argument] if [a] is not positive-definite or the dtype is
+    not floating-point or complex.
 
-    Returns L (or U) such that a = L \@ L.T (or U.T \@ U).
-
-    @raise Invalid_argument if matrix is not positive-definite
-    @raise Invalid_argument if input is not float or complex *)
+    See also {!solve}. *)
 
 val qr : ?mode:[ `Complete | `Reduced ] -> ('a, 'b) t -> ('a, 'b) t * ('a, 'b) t
-(** [qr ?mode a] computes QR decomposition.
+(** [qr ?mode a] is [(Q, R)] where [a = Q R], [Q] is orthogonal, and [R] is
+    upper-triangular. [mode] defaults to [`Reduced].
 
-    - [mode]: [`Reduced] for economy mode (default), [`Complete] for full
+    Raises [Invalid_argument] if the dtype is not floating-point or complex.
 
-    Returns (Q, R) where a = Q \@ R, Q is orthogonal, R is upper triangular.
-
-    @raise Invalid_argument if input is not float or complex *)
+    See also {!svd}. *)
 
 val svd :
   ?full_matrices:bool ->
   ('a, 'b) t ->
   ('a, 'b) t * (float, float64_elt) t * ('a, 'b) t
-(** [svd ?full_matrices a] computes singular value decomposition.
+(** [svd ?full_matrices a] is [(U, S, Vh)] where [a = U diag(S) Vh]. [S]
+    contains the singular values in descending order. [full_matrices] defaults
+    to [false] (economy decomposition).
 
-    - [full_matrices]: compute full U, V matrices (default: false)
+    Raises [Invalid_argument] if the dtype is not floating-point or complex.
 
-    Returns (U, S, Vh) where a = U \@ diag(S) \@ Vh. S is 1-D array of singular
-    values in descending order.
-
-    @raise Invalid_argument if input is not float or complex *)
+    See also {!svdvals}, {!qr}. *)
 
 val svdvals : ('a, 'b) t -> (float, float64_elt) t
-(** [svdvals a] returns singular values only.
+(** [svdvals a] is the singular values of [a] in descending order. More
+    efficient than {!svd} when only the values are needed.
 
-    More efficient than [svd] when only singular values are needed.
+    Raises [Invalid_argument] if the dtype is not floating-point or complex. *)
 
-    @raise Invalid_argument if input is not float or complex *)
-
-(** {3 Eigenvalues and Eigenvectors} *)
+(** {2:linalg_eig Eigenvalues and eigenvectors} *)
 
 val eig :
   ('a, 'b) t -> (Complex.t, complex64_elt) t * (Complex.t, complex64_elt) t
-(** [eig a] computes eigenvalues and right eigenvectors.
+(** [eig a] is [(eigenvalues, eigenvectors)] of general square matrix [a].
+    Results are complex since real matrices may have complex eigenvalues.
 
-    Returns (eigenvalues, eigenvectors) for general square matrix. For real
-    float32/float64 inputs, outputs are complex32/complex64 since real matrices
-    can have complex eigenvalues.
+    Raises [Invalid_argument] if [a] is not square or the dtype is not
+    floating-point or complex.
 
-    @raise Invalid_argument if matrix is not square
-    @raise Invalid_argument if input is not float or complex *)
+    See also {!eigh}, {!eigvals}. *)
 
 val eigh :
   ?uplo:[ `U | `L ] -> ('a, 'b) t -> (float, float64_elt) t * ('a, 'b) t
-(** [eigh ?uplo a] computes eigenvalues for symmetric/Hermitian matrix.
+(** [eigh ?uplo a] is [(eigenvalues, eigenvectors)] of symmetric / Hermitian
+    matrix [a] in ascending eigenvalue order. [uplo] defaults to [`L]. More
+    efficient than {!eig} for symmetric matrices.
 
-    - [uplo]: use upper (`U) or lower (`L) triangle (default: `L`)
+    Raises [Invalid_argument] if [a] is not square or the dtype is not
+    floating-point or complex.
 
-    Returns (eigenvalues, eigenvectors) in ascending order. For real symmetric
-    matrices, eigenvalues are guaranteed real. More efficient than [eig] for
-    symmetric matrices.
-
-    @raise Invalid_argument if matrix is not square
-    @raise Invalid_argument if input is not float or complex *)
+    See also {!eig}, {!eigvalsh}. *)
 
 val eigvals : ('a, 'b) t -> (Complex.t, complex64_elt) t
-(** [eigvals a] computes eigenvalues only.
+(** [eigvals a] is the eigenvalues of general square matrix [a]. More efficient
+    than {!eig} when eigenvectors are not needed.
 
-    For real inputs, returns complex tensor since eigenvalues may be complex.
-    More efficient than [eig] when eigenvectors not needed.
+    Raises [Invalid_argument] if [a] is not square or the dtype is not
+    floating-point or complex.
 
-    @raise Invalid_argument if matrix is not square
-    @raise Invalid_argument if input is not float or complex *)
+    See also {!eig}, {!eigvalsh}. *)
 
 val eigvalsh : ?uplo:[ `U | `L ] -> ('a, 'b) t -> (float, float64_elt) t
-(** [eigvalsh ?uplo a] computes eigenvalues for symmetric/Hermitian matrix.
+(** [eigvalsh ?uplo a] is the eigenvalues of symmetric / Hermitian matrix [a] in
+    ascending order. [uplo] defaults to [`L].
 
-    For real symmetric inputs, returns real eigenvalues. More efficient than
-    [eigvals] for symmetric matrices.
+    Raises [Invalid_argument] if [a] is not square or the dtype is not
+    floating-point or complex.
 
-    @raise Invalid_argument if matrix is not square
-    @raise Invalid_argument if input is not float or complex *)
+    See also {!eigh}, {!eigvals}. *)
 
-(** {3 Norms and Condition Numbers} *)
+(** {2:linalg_norms Norms and invariants} *)
 
 val norm :
   ?ord:
@@ -2887,149 +2373,120 @@ val norm :
   ?keepdims:bool ->
   ('a, 'b) t ->
   ('a, 'b) t
-(** [norm ?ord ?axes ?keepdims x] computes matrix or vector norm.
+(** [norm ?ord ?axes ?keepdims t] is the matrix or vector norm. [ord] defaults
+    to Frobenius for matrices, 2-norm for vectors. [keepdims] defaults to
+    [false].
 
-    - [ord]: norm type (default: Frobenius for matrices, 2-norm for vectors)
-    - [`Fro]: Frobenius norm
-    - [`Nuc]: nuclear norm (sum of singular values)
-    - [`One]: max column sum (for matrices)
-    - [`Two]: spectral norm (largest singular value)
-    - [`Inf]: max row sum (for matrices)
-    - [`NegOne]: min column sum
-    - [`NegTwo]: smallest singular value
-    - [`NegInf]: min row sum
-    - [`P p]: p-norm for vectors
-    - [axes]: axes to compute norm over. For matrix norms, must be 2-element
-      list
-    - [keepdims]: keep reduced dimensions as size 1
+    - [`Fro] — Frobenius norm.
+    - [`Nuc] — nuclear norm (sum of singular values).
+    - [`One] — max absolute column sum (matrix) or 1-norm (vector).
+    - [`Two] — largest singular value (matrix) or 2-norm (vector).
+    - [`Inf] — max absolute row sum (matrix) or ∞-norm (vector).
+    - [`P p] — p-norm (vectors only).
+    - [`NegOne], [`NegTwo], [`NegInf] — corresponding minimum norms.
 
-    @raise Invalid_argument if ord requires float/complex input *)
+    Raises [Invalid_argument] if [ord] requires a floating-point or complex
+    dtype. *)
 
 val cond :
   ?p:[ `One | `Two | `Inf | `NegOne | `NegTwo | `NegInf | `Fro ] ->
   ('a, 'b) t ->
   ('a, 'b) t
-(** [cond ?p x] computes condition number.
+(** [cond ?p a] is the condition number of [a] in the [p]-norm. [p] defaults to
+    [`Two].
 
-    - [p]: norm to use (default: 2-norm)
-    - [`One]: 1-norm (max column sum)
-    - [`Two]: 2-norm (max singular value)
-    - [`Inf]: infinity norm (max row sum)
-    - [`NegOne]: -1 norm (min column sum)
-    - [`NegTwo]: -2 norm (min singular value)
-    - [`NegInf]: -infinity norm (min row sum)
-    - [`Fro]: Frobenius norm
-
-    Returns ratio of largest to smallest norm.
-
-    @raise Invalid_argument if input is not float or complex *)
+    Raises [Invalid_argument] if the dtype is not floating-point or complex. *)
 
 val det : ('a, 'b) t -> ('a, 'b) t
-(** [det a] computes determinant of square matrix.
+(** [det a] is the determinant of square matrix [a].
 
-    @raise Invalid_argument if matrix is not square
-    @raise Invalid_argument if input is not float or complex *)
+    Raises [Invalid_argument] if [a] is not square or the dtype is not
+    floating-point or complex. *)
 
 val slogdet : ('a, 'b) t -> (float, float32_elt) t * (float, float32_elt) t
-(** [slogdet a] computes sign and log of determinant.
+(** [slogdet a] is [(sign, log_abs_det)] where
+    [det a = sign * exp(log_abs_det)]. More numerically stable than {!det} for
+    matrices with very large or small determinants.
 
-    Returns (sign, logdet) where det(a) = sign * exp(logdet). More stable than
-    [det] for matrices with very small/large determinants.
-
-    @raise Invalid_argument if matrix is not square
-    @raise Invalid_argument if input is not float or complex *)
+    Raises [Invalid_argument] if [a] is not square or the dtype is not
+    floating-point or complex. *)
 
 val matrix_rank :
   ?tol:float -> ?rtol:float -> ?hermitian:bool -> ('a, 'b) t -> int
-(** [matrix_rank ?tol ?rtol ?hermitian a] returns rank of matrix.
+(** [matrix_rank ?tol ?rtol ?hermitian a] is the rank of [a], counting singular
+    values above the tolerance. [rtol] defaults to [max(M, N) * ε * σ_max]. When
+    [hermitian] is [true] (default [false]), uses a more efficient
+    eigenvalue-based algorithm.
 
-    - [tol]: absolute tolerance for small singular values
-    - [rtol]: relative tolerance (default: max(M,N) * eps *
-      largest_singular_value)
-    - [hermitian]: if true, use more efficient algorithm for Hermitian matrices
-
-    Counts singular values greater than tolerance.
-
-    @raise Invalid_argument if input is not float or complex *)
+    Raises [Invalid_argument] if the dtype is not floating-point or complex. *)
 
 val trace : ?out:('a, 'b) t -> ?offset:int -> ('a, 'b) t -> ('a, 'b) t
-(** [trace ?out ?offset a] returns sum along diagonal.
+(** [trace ?out ?offset t] is the sum along the [offset]-th diagonal. [offset]
+    defaults to [0]. [out] defaults to a fresh allocation.
 
-    @param out Optional pre-allocated output tensor.
+    Raises [Invalid_argument] if [t] has fewer than 2 dimensions.
 
-    - [offset]: diagonal offset (default: 0, positive for upper diagonals) *)
+    See also {!diagonal}. *)
 
-(** {3 Solving Linear Systems} *)
+(** {2:linalg_solve Solving} *)
 
 val solve : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [solve a b] solves linear system a \@ x = b for x.
+(** [solve a b] is [x] such that [a @@ x = b].
 
-    Supports batched operations when a, b have compatible batch dimensions.
+    Raises [Invalid_argument] if [a] is singular or the dtype is not
+    floating-point or complex.
 
-    @raise Invalid_argument if a is singular
-    @raise Invalid_argument if input is not float or complex *)
+    See also {!lstsq}, {!inv}. *)
 
 val lstsq :
   ?rcond:float ->
   ('a, 'b) t ->
   ('a, 'b) t ->
   ('a, 'b) t * ('a, 'b) t * int * (float, float64_elt) t
-(** [lstsq ?rcond a b] computes least-squares solution to a \@ x = b.
+(** [lstsq ?rcond a b] is [(x, residuals, rank, sv)] — the least-squares
+    solution to [a @@ x ≈ b]. [rcond] defaults to machine precision.
 
-    - [rcond]: cutoff for small singular values (default: machine precision)
+    Raises [Invalid_argument] if the dtype is not floating-point or complex.
 
-    Returns (solution, residuals, rank, singular_values). Handles
-    over/under-determined systems.
-
-    @raise Invalid_argument if input is not float or complex *)
+    See also {!solve}. *)
 
 val inv : ('a, 'b) t -> ('a, 'b) t
-(** [inv a] computes inverse of square matrix.
+(** [inv a] is the inverse of square matrix [a].
 
-    @raise Invalid_argument if matrix is singular
-    @raise Invalid_argument if matrix is not square
-    @raise Invalid_argument if input is not float or complex *)
+    Raises [Invalid_argument] if [a] is singular, not square, or the dtype is
+    not floating-point or complex.
+
+    See also {!pinv}, {!solve}. *)
 
 val pinv : ?rtol:float -> ?hermitian:bool -> ('a, 'b) t -> ('a, 'b) t
-(** [pinv ?rtol ?hermitian a] computes Moore-Penrose pseudoinverse.
+(** [pinv ?rtol ?hermitian a] is the Moore–Penrose pseudoinverse of [a]. Handles
+    non-square and singular matrices. [hermitian] defaults to [false].
 
-    - [rtol]: relative tolerance for small singular values
-    - [hermitian]: if true, use more efficient algorithm for Hermitian matrices
+    Raises [Invalid_argument] if the dtype is not floating-point or complex.
 
-    Handles non-square and singular matrices.
-
-    @raise Invalid_argument if input is not float or complex *)
+    See also {!inv}. *)
 
 val tensorsolve : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [tensorsolve ?axes a b] solves tensor equation a x = b for x.
+(** [tensorsolve ?axes a b] solves the tensor equation [tensordot a x axes = b]
+    for [x].
 
-    - [axes]: axes in [a] to reorder to end (default: product of b.ndim
-      rightmost axes)
-
-    Solves for x such that tensordot(a, x, axes) = b.
-
-    @raise Invalid_argument if shapes incompatible
-    @raise Invalid_argument if input is not float or complex *)
+    Raises [Invalid_argument] if shapes are incompatible or the dtype is not
+    floating-point or complex. *)
 
 val tensorinv : ?ind:int -> ('a, 'b) t -> ('a, 'b) t
-(** [tensorinv ?ind a] computes 'inverse' of N-D array.
+(** [tensorinv ?ind a] is the tensor inverse such that
+    [tensordot a (tensorinv a) ind] is the identity. [ind] defaults to [2].
 
-    - [ind]: number of first indices involved in inverse sum (default: 2)
+    Raises [Invalid_argument] if the result is not square in the specified
+    dimensions or the dtype is not floating-point or complex. *)
 
-    Result is such that tensordot(a, a_inv, ind) = I.
-
-    @raise Invalid_argument if input is not square in specified dimensions
-    @raise Invalid_argument if input is not float or complex *)
-
-(** {2 Fourier Transform}
-
-    Fast Fourier Transform (FFT) and related signal processing functions. *)
+(** {1:fft Fourier transforms} *)
 
 type fft_norm = [ `Backward | `Forward | `Ortho ]
-(** FFT normalization mode:
-    - [`Backward]: normalize by 1/n on inverse transform (default)
-    - [`Forward]: normalize by 1/n on forward transform
-    - [`Ortho]: normalize by 1/sqrt(n) on both transforms *)
+(** FFT normalisation mode.
+    - [`Backward] — normalise by [1/n] on the inverse (default).
+    - [`Forward] — normalise by [1/n] on the forward.
+    - [`Ortho] — normalise by [1/√n] on both. *)
 
 val fft :
   ?out:(Complex.t, 'a) t ->
@@ -3038,23 +2495,11 @@ val fft :
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (Complex.t, 'a) t
-(** [fft ?out ?axis ?n ?norm x] computes discrete Fourier transform over
-    specified axis.
+(** [fft ?out ?axis ?n ?norm x] is the 1-D discrete Fourier transform along
+    [axis]. [axis] defaults to [-1]. [n] truncates or zero-pads the input.
+    [norm] defaults to [`Backward]. [out] defaults to a fresh allocation.
 
-    @param out Optional pre-allocated output tensor for zero-allocation usage.
-    @param axis Axis to transform (default: last axis).
-    @param n Length of the transformed axis of the output.
-    @param norm Normalization mode (default: [`Backward]).
-
-    Computing 1D FFT of a signal:
-    {@ocaml[
-      # let x = create complex64 [|4|]
-                  [|Complex.{re=0.; im=0.}; {re=1.; im=0.};
-                    {re=2.; im=0.}; {re=3.; im=0.}|] in
-        let result = fft ~axis:0 x in
-        shape result
-      - : int array = [|4|]
-    ]} *)
+    See also {!ifft}, {!rfft}. *)
 
 val ifft :
   ?out:(Complex.t, 'a) t ->
@@ -3063,12 +2508,10 @@ val ifft :
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (Complex.t, 'a) t
-(** [ifft ?out ?axis ?n ?norm x] computes inverse discrete Fourier transform.
+(** [ifft ?out ?axis ?n ?norm x] is the inverse of {!fft}. [out] defaults to a
+    fresh allocation.
 
-    @param out Optional pre-allocated output tensor for zero-allocation usage.
-    @param axis Axis to transform (default: last axis).
-    @param n Length of the transformed axis of the output.
-    @param norm Normalization mode (default: [`Backward]). *)
+    See also {!fft}, {!irfft}. *)
 
 val fft2 :
   ?out:(Complex.t, 'a) t ->
@@ -3077,22 +2520,12 @@ val fft2 :
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (Complex.t, 'a) t
-(** [fft2 ?out ?axes ?s ?norm x] computes 2-dimensional FFT.
+(** [fft2 ?out ?axes ?s ?norm x] is the 2-D FFT. [axes] defaults to the last
+    two. [out] defaults to a fresh allocation.
 
-    Transforms last two axes by default. Truncates or pads to shape [s] if
-    given.
+    Raises [Invalid_argument] if the input has fewer than 2 dimensions.
 
-    @param out Optional pre-allocated output tensor for zero-allocation usage.
-    @raise Invalid_argument if input has less than 2 dimensions
-
-    Computing 2D FFT of a 2x2 matrix:
-    {@ocaml[
-      # let x = create complex64 [|2; 2|]
-                  [|Complex.{re=1.; im=0.}; {re=2.; im=0.};
-                    {re=3.; im=0.}; {re=4.; im=0.}|] in
-        shape (fft2 x)
-      - : int array = [|2; 2|]
-    ]} *)
+    See also {!ifft2}, {!fft}. *)
 
 val ifft2 :
   ?out:(Complex.t, 'a) t ->
@@ -3101,10 +2534,8 @@ val ifft2 :
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (Complex.t, 'a) t
-(** [ifft2 ?out ?axes ?s ?norm x] computes 2-dimensional inverse FFT.
-
-    @param out Optional pre-allocated output tensor for zero-allocation usage.
-    @raise Invalid_argument if input has less than 2 dimensions *)
+(** [ifft2 ?out ?axes ?s ?norm x] is the inverse of {!fft2}. [out] defaults to a
+    fresh allocation. *)
 
 val fftn :
   ?out:(Complex.t, 'a) t ->
@@ -3113,11 +2544,10 @@ val fftn :
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (Complex.t, 'a) t
-(** [fftn ?out ?axes ?s ?norm x] computes N-dimensional FFT.
+(** [fftn ?out ?axes ?s ?norm x] is the N-D FFT. [axes] defaults to all. [out]
+    defaults to a fresh allocation.
 
-    @param out Optional pre-allocated output tensor for zero-allocation usage.
-
-    Transforms all axes by default. *)
+    See also {!ifftn}. *)
 
 val ifftn :
   ?out:(Complex.t, 'a) t ->
@@ -3126,10 +2556,8 @@ val ifftn :
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (Complex.t, 'a) t
-(** [ifftn ?out ?axes ?s ?norm x] computes N-dimensional inverse FFT.
-
-    @param out Optional pre-allocated output tensor for zero-allocation usage.
-*)
+(** [ifftn ?out ?axes ?s ?norm x] is the inverse of {!fftn}. [out] defaults to a
+    fresh allocation. *)
 
 val rfft :
   ?out:(Complex.t, complex64_elt) t ->
@@ -3138,23 +2566,17 @@ val rfft :
   ?norm:fft_norm ->
   (float, 'a) t ->
   (Complex.t, complex64_elt) t
-(** [rfft ?out ?axis ?n ?norm x] computes FFT of real input.
+(** [rfft ?out ?axis ?n ?norm x] is the 1-D FFT of real input. Returns only the
+    non-redundant positive frequencies; the output size along the transformed
+    axis is [n/2 + 1]. [out] defaults to a fresh allocation.
 
-    Returns only non-redundant positive frequencies. Output size along last
-    transformed axis is n/2+1 where n is input size.
-
-    @param out Optional pre-allocated output tensor for zero-allocation usage.
-    @param axis Axis to transform (default: last axis).
-    @param n Shape to truncate/pad to before transform.
-    @param norm Normalization mode (default: [`Backward]).
-
-    Computing real FFT:
     {@ocaml[
-      # let x = create float64 [|4|] [|0.; 1.; 2.; 3.|] in
-        let result = rfft ~axis:0 x in
-        shape result
+      # create float64 [| 4 |] [| 0.; 1.; 2.; 3. |]
+        |> rfft |> shape
       - : int array = [|3|]
-    ]} *)
+    ]}
+
+    See also {!irfft}, {!fft}. *)
 
 val irfft :
   ?out:(float, float64_elt) t ->
@@ -3163,14 +2585,10 @@ val irfft :
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (float, float64_elt) t
-(** [irfft ?out ?axis ?n ?norm x] computes inverse FFT returning real output.
+(** [irfft ?out ?axis ?n ?norm x] is the inverse of {!rfft}, producing real
+    output. Assumes Hermitian symmetry. [out] defaults to a fresh allocation.
 
-    Assumes Hermitian symmetry.
-
-    @param out Optional pre-allocated output tensor for zero-allocation usage.
-    @param axis Axis to transform (default: last axis).
-    @param n Output shape along transformed axes.
-    @param norm Normalization mode (default: [`Backward]). *)
+    See also {!rfft}. *)
 
 val rfft2 :
   ?out:(Complex.t, complex64_elt) t ->
@@ -3179,10 +2597,10 @@ val rfft2 :
   ?norm:fft_norm ->
   (float, 'a) t ->
   (Complex.t, complex64_elt) t
-(** [rfft2 ?out ?axes ?s ?norm x] computes 2D FFT of real input.
+(** [rfft2 ?out ?axes ?s ?norm x] is the 2-D FFT of real input. [out] defaults
+    to a fresh allocation.
 
-    @param out Optional pre-allocated output tensor for zero-allocation usage.
-    @raise Invalid_argument if input has less than 2 dimensions *)
+    See also {!irfft2}, {!rfft}. *)
 
 val irfft2 :
   ?out:(float, float64_elt) t ->
@@ -3191,12 +2609,8 @@ val irfft2 :
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (float, float64_elt) t
-(** [irfft2 ?out ?axes ?s ?norm x] computes 2D inverse FFT returning real
-    output.
-
-    @param out Optional pre-allocated output tensor for zero-allocation usage.
-    @raise Invalid_argument
-      if input has less than 2 dimensions or if [s] not specified *)
+(** [irfft2 ?out ?axes ?s ?norm x] is the inverse of {!rfft2}. [out] defaults to
+    a fresh allocation. *)
 
 val rfftn :
   ?out:(Complex.t, complex64_elt) t ->
@@ -3205,10 +2619,10 @@ val rfftn :
   ?norm:fft_norm ->
   (float, 'a) t ->
   (Complex.t, complex64_elt) t
-(** [rfftn ?out ?axes ?s ?norm x] computes N-dimensional FFT of real input.
+(** [rfftn ?out ?axes ?s ?norm x] is the N-D FFT of real input. [out] defaults
+    to a fresh allocation.
 
-    @param out Optional pre-allocated output tensor for zero-allocation usage.
-*)
+    See also {!irfftn}, {!rfft}. *)
 
 val irfftn :
   ?out:(float, float64_elt) t ->
@@ -3217,11 +2631,8 @@ val irfftn :
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (float, float64_elt) t
-(** [irfftn ?out ?axes ?s ?norm x] computes N-dimensional inverse FFT returning
-    real output.
-
-    @param out Optional pre-allocated output tensor for zero-allocation usage.
-    @raise Invalid_argument if [s] not specified for inverse real transforms *)
+(** [irfftn ?out ?axes ?s ?norm x] is the inverse of {!rfftn}. [out] defaults to
+    a fresh allocation. *)
 
 val hfft :
   ?axis:int ->
@@ -3229,9 +2640,8 @@ val hfft :
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (float, float64_elt) t
-(** [hfft x ~n ~axis] computes FFT of Hermitian signal.
-
-    Interprets input as positive frequencies of Hermitian signal. *)
+(** [hfft ?axis ?n ?norm x] is the FFT of a signal with Hermitian symmetry,
+    producing real output. *)
 
 val ihfft :
   ?axis:int ->
@@ -3239,69 +2649,60 @@ val ihfft :
   ?norm:fft_norm ->
   (float, 'a) t ->
   (Complex.t, complex64_elt) t
-(** [ihfft x ~n ~axis] computes inverse FFT for Hermitian output. *)
+(** [ihfft ?axis ?n ?norm x] is the inverse of {!hfft}. *)
 
 val fftfreq : ?d:float -> int -> (float, float64_elt) t
-(** [fftfreq ?d n] returns DFT sample frequencies.
+(** [fftfreq ?d n] is the DFT sample frequencies for window length [n] and
+    sample spacing [d] (default [1.0]).
 
-    For window length [n] and sample spacing [d], returns frequencies
-    [0, 1, ..., n/2-1, -n/2, ..., -1] / (d*n) if n is even.
-
-    Getting frequencies for 4-point FFT:
     {@ocaml[
-      # Nx.fftfreq 4
+      # fftfreq 4
       - : (float, float64_elt) t = [0, 0.25, -0.5, -0.25]
-    ]} *)
+    ]}
+
+    See also {!rfftfreq}. *)
 
 val rfftfreq : ?d:float -> int -> (float, float64_elt) t
-(** [rfftfreq ?d n] returns positive DFT frequencies.
+(** [rfftfreq ?d n] is the positive DFT sample frequencies:
+    [[0, 1, …, n/2] / (d * n)].
 
-    Returns [0, 1, ..., n/2] / (d*n). *)
+    See also {!fftfreq}. *)
 
 val fftshift : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t
-(** [fftshift x ?axes] shifts zero-frequency component to center.
+(** [fftshift ?axes t] shifts the zero-frequency component to the centre. [axes]
+    defaults to all.
 
-    Shifts all axes by default. For visualization of frequency spectra.
-
-    Centering frequency spectrum:
     {@ocaml[
-      # let freqs = fftfreq 5 in
-        fftshift freqs
-      - : (float, float64_elt) t = [-0.4, -0.2, 0, 0.2, 0.4]
-    ]} *)
+      # fftfreq 5 |> fftshift
+      - : (float, float64_elt) t =
+      [-0.4, -0.2, 0, 0.2, 0.4]
+    ]}
+
+    See also {!ifftshift}. *)
 
 val ifftshift : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t
-(** [ifftshift x ?axes] undoes fftshift. *)
+(** [ifftshift ?axes t] is the inverse of {!fftshift}. *)
 
-(** {2 Activation Functions}
-
-    Neural network activation functions. *)
+(** {1:activation Activation functions} *)
 
 val relu : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [relu ?out t] applies Rectified Linear Unit: max(0, x).
-
-    @param out Optional pre-allocated output tensor.
+(** [relu ?out t] is [max(0, t)] element-wise. [out] defaults to a fresh
+    allocation.
 
     {@ocaml[
-      # let x = create float32 [| 5 |] [| -2.; -1.; 0.; 1.; 2. |] in
-        relu x
+      # create float32 [| 5 |]
+          [| -2.; -1.; 0.; 1.; 2. |]
+        |> relu
       - : (float, float32_elt) t = [0, 0, 0, 1, 2]
     ]} *)
 
 val sigmoid : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
-(** [sigmoid ?out t] applies logistic sigmoid: 1 / (1 + exp(-x)).
-
-    Output in range (0, 1). Symmetric around x=0 where sigmoid(0) = 0.5.
-
-    @param out Optional pre-allocated output tensor.
+(** [sigmoid ?out t] is [1 / (1 + exp(-t))] element-wise. Output in [(0, 1)].
+    [out] defaults to a fresh allocation.
 
     {@ocaml[
       # sigmoid (scalar float32 0.) |> item []
       - : float = 0.5
-      # sigmoid (scalar float32 10.) |> item [] |> Float.round
-      - : float = 1.
-      # sigmoid (scalar float32 (-10.)) |> item [] |> Float.round
-      - : float = 0.
     ]} *)
 
 val softmax :
@@ -3310,22 +2711,18 @@ val softmax :
   ?scale:float ->
   (float, 'a) t ->
   (float, 'a) t
-(** [softmax ?out ?axes ?scale t] applies softmax normalization.
-
-    Default axis -1. Computes exp(scale * (x - max)) / sum(exp(scale * (x -
-    max))) for numerical stability. Output sums to 1 along specified axes.
-    [scale] defaults to 1.
-
-    @param out Optional pre-allocated output tensor.
+(** [softmax ?out ?axes ?scale t] is the softmax normalisation
+    [exp(scale * (t - max t)) / Σ exp(scale * (t - max t))]. [axes] defaults to
+    [[-1]]. [scale] defaults to [1.0]. Output sums to [1] along the specified
+    axes. [out] defaults to a fresh allocation.
 
     {@ocaml[
-      # let x = create float32 [| 3 |] [| 1.; 2.; 3. |] in
-        softmax x |> to_array |> Array.map Float.round
-      - : float array = [|0.; 0.; 1.|]
-      # let x = create float32 [| 3 |] [| 1.; 2.; 3. |] in
-        sum (softmax x) |> item []
+      # create float32 [| 3 |] [| 1.; 2.; 3. |]
+        |> softmax |> sum |> item []
       - : float = 1.
-    ]} *)
+    ]}
+
+    See also {!log_softmax}. *)
 
 val log_softmax :
   ?out:(float, 'a) t ->
@@ -3333,12 +2730,10 @@ val log_softmax :
   ?scale:float ->
   (float, 'a) t ->
   (float, 'a) t
-(** [log_softmax ?out ?axes ?scale t] returns the natural logarithm of
-    {!softmax}.
+(** [log_softmax ?out ?axes ?scale t] is the natural logarithm of {!softmax}.
+    Same defaults as {!softmax}. [out] defaults to a fresh allocation.
 
-    Uses the same semantics as {!softmax} for [axes] and [scale].
-
-    @param out Optional pre-allocated output tensor. *)
+    See also {!softmax}, {!logsumexp}. *)
 
 val logsumexp :
   ?out:(float, 'a) t ->
@@ -3346,11 +2741,11 @@ val logsumexp :
   ?keepdims:bool ->
   (float, 'a) t ->
   (float, 'a) t
-(** [logsumexp ?out ?axes ?keepdims t] computes log(sum(exp(t))) in a
-    numerically stable manner along [axes]. Defaults to reducing across all
-    axes.
+(** [logsumexp ?out ?axes ?keepdims t] is [log(Σ exp(t))] computed in a
+    numerically stable way. [axes] defaults to all. [keepdims] defaults to
+    [false]. [out] defaults to a fresh allocation.
 
-    @param out Optional pre-allocated output tensor. *)
+    See also {!logmeanexp}, {!log_softmax}. *)
 
 val logmeanexp :
   ?out:(float, 'a) t ->
@@ -3358,11 +2753,11 @@ val logmeanexp :
   ?keepdims:bool ->
   (float, 'a) t ->
   (float, 'a) t
-(** [logmeanexp ?out ?axes ?keepdims t] computes log(mean(exp(t))) in a
-    numerically stable manner along [axes]. Equivalent to {!logsumexp} minus log
-    of the number of elements.
+(** [logmeanexp ?out ?axes ?keepdims t] is [log(mean(exp(t)))]: {!logsumexp}
+    minus [log N]. [axes] defaults to all. [keepdims] defaults to [false]. [out]
+    defaults to a fresh allocation.
 
-    @param out Optional pre-allocated output tensor. *)
+    See also {!logsumexp}. *)
 
 val standardize :
   ?out:(float, 'a) t ->
@@ -3372,31 +2767,23 @@ val standardize :
   ?epsilon:float ->
   (float, 'a) t ->
   (float, 'a) t
-(** [standardize ?out ?axes ?mean ?variance ?epsilon x] normalizes [x] to zero
-    mean and unit variance.
-
-    If [mean] or [variance] are not provided they are computed along [axes]
-    (default: all axes). The result is [(x - mean) / sqrt(variance + epsilon)].
-
-    @param out Optional pre-allocated output tensor. *)
+(** [standardize ?out ?axes ?mean ?variance ?epsilon t] is
+    [(t - mean) / sqrt(variance + epsilon)]. When [mean] or [variance] are
+    omitted, they are computed along [axes] (default all). [epsilon] defaults to
+    [1e-5]. [out] defaults to a fresh allocation. *)
 
 val erf : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
-(** [erf ?out t] computes the error function.
-
-    The error function erf(x) = (2/√π) ∫₀ˣ e^(-t²) dt. Uses Abramowitz and
-    Stegun approximation for numerical stability.
-
-    @param out Optional pre-allocated output tensor.
+(** [erf ?out t] is the error function [erf(x) = (2/√π) ∫₀ˣ e^{-u²} du]. [out]
+    defaults to a fresh allocation.
 
     {@ocaml[
       # erf (scalar float32 0.) |> item []
       - : float = 0.
-      # let result = erf (scalar float32 1.) |> item [] in
-        Float.round (result *. 10000.) /. 10000.  (* Round to 4 decimals *)
-      - : float = 0.8427
     ]} *)
 
-(** {2:patches Sliding Windows} *)
+(** {1:windows Sliding windows} *)
+
+(** {2:patches Patches} *)
 
 val extract_patches :
   kernel_size:int array ->
@@ -3406,18 +2793,24 @@ val extract_patches :
   ('a, 'b) t ->
   ('a, 'b) t
 (** [extract_patches ~kernel_size ~stride ~dilation ~padding t] extracts sliding
-    windows from the last [K] spatial dimensions, where
+    windows from the last [K] spatial dimensions where
     [K = Array.length kernel_size].
 
-    Input: [(leading..., spatial...)]. Output:
-    [(leading..., prod(kernel_size), L)].
+    Input: [[leading…; spatial…]]. Output: [[leading…; prod(kernel_size); L]].
 
     {@ocaml[
-      # let x = arange_f float32 0. 16. 1. |> reshape [| 1; 1; 4; 4 |] in
-        extract_patches ~kernel_size:[|2; 2|] ~stride:[|1; 1|]
-          ~dilation:[|1; 1|] ~padding:[|(0, 0); (0, 0)|] x |> shape
+      # arange_f float32 0. 16. 1.
+        |> reshape [| 1; 1; 4; 4 |]
+        |> extract_patches
+             ~kernel_size:[| 2; 2 |]
+             ~stride:[| 1; 1 |]
+             ~dilation:[| 1; 1 |]
+             ~padding:[| (0, 0); (0, 0) |]
+        |> shape
       - : int array = [|1; 1; 4; 9|]
-    ]} *)
+    ]}
+
+    See also {!combine_patches}. *)
 
 val combine_patches :
   output_size:int array ->
@@ -3427,115 +2820,117 @@ val combine_patches :
   padding:(int * int) array ->
   ('a, 'b) t ->
   ('a, 'b) t
-(** [combine_patches ~output_size ~kernel_size ~stride ~dilation ~padding t]
-    combines sliding windows (inverse of {!extract_patches}). Overlapping values
-    are summed.
+(** [combine_patches ~output_size ~kernel_size ~stride ~dilation ~padding t] is
+    the inverse of {!extract_patches}. Overlapping values are summed.
 
-    Input: [(leading..., prod(kernel_size), L)]. Output:
-    [(leading..., output_size...)].
+    See also {!extract_patches}. *)
 
-    {@ocaml[
-      # let unfolded =
-          create float32 [| 1; 1; 4; 9 |] (Array.init 36 Float.of_int)
-        in
-        combine_patches ~output_size:[|4; 4|] ~kernel_size:[|2; 2|]
-          ~stride:[|1; 1|] ~dilation:[|1; 1|]
-          ~padding:[|(0, 0); (0, 0)|] unfolded |> shape
-      - : int array = [|1; 1; 4; 4|]
-    ]} *)
-
-(** {2:correlate Cross-correlation and Convolution} *)
+(** {2:correlate Cross-correlation and convolution} *)
 
 val correlate :
   ?padding:[ `Full | `Same | `Valid ] -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [correlate ?padding x kernel] computes N-dimensional cross-correlation (no
-    kernel flip).
-
+(** [correlate ?padding x kernel] is the N-D cross-correlation (no kernel flip).
     Spatial dimensions [K = ndim kernel]. Leading dimensions of [x] beyond [K]
-    are batch dimensions. [padding] defaults to [`Valid]. *)
+    are batch dimensions. [padding] defaults to [`Valid].
+
+    See also {!convolve}. *)
 
 val convolve :
   ?padding:[ `Full | `Same | `Valid ] -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [convolve ?padding x kernel] flips the kernel along all axes then
-    correlates. Same as {!correlate} with kernel reversed. *)
+(** [convolve ?padding x kernel] is like {!correlate} but flips the kernel along
+    all spatial axes before correlating.
 
-(** {2:filters Sliding Window Filters} *)
+    See also {!correlate}. *)
+
+(** {2:filters Filters} *)
 
 val maximum_filter :
   kernel_size:int array -> ?stride:int array -> ('a, 'b) t -> ('a, 'b) t
-(** [maximum_filter ~kernel_size ?stride x] sliding-window max over the last [K]
-    dimensions. [stride] defaults to [kernel_size]. *)
+(** [maximum_filter ~kernel_size ?stride t] is the sliding-window maximum over
+    the last [K] dimensions. [stride] defaults to [kernel_size].
+
+    See also {!minimum_filter}, {!uniform_filter}. *)
 
 val minimum_filter :
   kernel_size:int array -> ?stride:int array -> ('a, 'b) t -> ('a, 'b) t
-(** [minimum_filter ~kernel_size ?stride x] sliding-window min over the last [K]
-    dimensions. [stride] defaults to [kernel_size]. *)
+(** [minimum_filter ~kernel_size ?stride t] is the sliding-window minimum over
+    the last [K] dimensions. [stride] defaults to [kernel_size].
+
+    See also {!maximum_filter}. *)
 
 val uniform_filter :
   kernel_size:int array -> ?stride:int array -> (float, 'b) t -> (float, 'b) t
-(** [uniform_filter ~kernel_size ?stride x] sliding-window mean over the last
-    [K] dimensions. [stride] defaults to [kernel_size]. *)
+(** [uniform_filter ~kernel_size ?stride t] is the sliding-window mean over the
+    last [K] dimensions. [stride] defaults to [kernel_size].
 
-(** {2 Iteration and Mapping}
+    See also {!maximum_filter}, {!minimum_filter}. *)
 
-    Functions to iterate over and transform arrays. *)
+(** {1:iteration Iteration} *)
 
 val map_item : ('a -> 'a) -> ('a, 'b) t -> ('a, 'b) t
-(** [map_item f t] applies [f] to each element.
-
-    Operates on contiguous data directly. Type-preserving only. *)
+(** [map_item f t] applies [f] to each scalar element of [t] and returns a fresh
+    tensor of the results. *)
 
 val iter_item : ('a -> unit) -> ('a, 'b) t -> unit
-(** [iter_item f t] applies [f] to each element for side effects. *)
+(** [iter_item f t] applies [f] to each scalar element of [t] for its side
+    effects. *)
 
 val fold_item : ('a -> 'b -> 'a) -> 'a -> ('b, 'c) t -> 'a
-(** [fold_item f init t] folds [f] over elements. *)
+(** [fold_item f init t] folds [f] over the scalar elements of [t] in row-major
+    order, starting with [init]. *)
 
 val map : (('a, 'b) t -> ('a, 'b) t) -> ('a, 'b) t -> ('a, 'b) t
-(** [map f t] applies tensor function [f] to each element as scalar tensor. *)
+(** [map f t] applies tensor function [f] to each element of [t], presented as a
+    scalar tensor.
+
+    See also {!map_item}. *)
 
 val iter : (('a, 'b) t -> unit) -> ('a, 'b) t -> unit
-(** [iter f t] applies tensor function [f] to each element. *)
+(** [iter f t] applies tensor function [f] to each element of [t], presented as
+    a scalar tensor.
+
+    See also {!iter_item}. *)
 
 val fold : ('a -> ('b, 'c) t -> 'a) -> 'a -> ('b, 'c) t -> 'a
-(** [fold f init t] folds tensor function over elements. *)
+(** [fold f init t] folds tensor function [f] over the elements of [t], each
+    presented as a scalar tensor.
 
-(** {2 Printing and Display}
+    See also {!fold_item}. *)
 
-    Functions to display arrays and convert to strings. *)
+(** {1:pp Formatting} *)
 
 val pp_data : Format.formatter -> ('a, 'b) t -> unit
-(** [pp_data fmt t] pretty-prints tensor data. *)
+(** [pp_data fmt t] formats the data of [t]. *)
 
 val format_to_string : (Format.formatter -> 'a -> unit) -> 'a -> string
-(** [format_to_string pp x] converts using pretty-printer. *)
+(** [format_to_string pp x] is the string produced by [pp]. *)
 
 val print_with_formatter : (Format.formatter -> 'a -> unit) -> 'a -> unit
-(** [print_with_formatter pp x] prints using formatter. *)
+(** [print_with_formatter pp x] prints [x] to stdout using [pp]. *)
 
 val data_to_string : ('a, 'b) t -> string
-(** [data_to_string t] converts tensor data to string. *)
+(** [data_to_string t] is the data of [t] as a string. *)
 
 val print_data : ('a, 'b) t -> unit
-(** [print_data t] prints tensor data to stdout. *)
+(** [print_data t] prints the data of [t] to stdout. *)
 
 val pp_dtype : Format.formatter -> ('a, 'b) dtype -> unit
-(** [pp_dtype fmt dt] pretty-prints dtype. *)
+(** [pp_dtype fmt dt] formats [dt]. *)
 
 val dtype_to_string : ('a, 'b) dtype -> string
-(** [dtype_to_string dt] converts dtype to string. *)
+(** [dtype_to_string dt] is [dt] as a string. *)
 
 val shape_to_string : int array -> string
-(** [shape_to_string shape] formats shape as "[2x3x4]". *)
+(** [shape_to_string s] formats [s] as ["[2x3x4]"]. *)
 
 val pp_shape : Format.formatter -> int array -> unit
-(** [pp_shape fmt shape] pretty-prints shape. *)
+(** [pp_shape fmt s] formats shape [s]. *)
 
 val pp : Format.formatter -> ('a, 'b) t -> unit
-(** [pp fmt t] pretty-prints tensor info and data. *)
+(** [pp fmt t] formats [t] for debugging (dtype, shape, and data). *)
 
 val print : ('a, 'b) t -> unit
-(** [print t] prints tensor info and data to stdout. *)
+(** [print t] prints [t] to stdout. *)
 
 val to_string : ('a, 'b) t -> string
-(** [to_string t] converts tensor info and data to string. *)
+(** [to_string t] is [t] formatted as a string (dtype, shape, and data). *)
