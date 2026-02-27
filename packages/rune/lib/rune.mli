@@ -5,18 +5,6 @@
 
 include module type of Nx
 
-(** {2 Debug and Instrumentation} *)
-
-val enable_debug : unit -> unit
-(** [enable_debug ()] enables debug instrumentation for tensor operations. *)
-
-val disable_debug : unit -> unit
-(** [disable_debug ()] disables debug instrumentation. *)
-
-val with_debug : (unit -> 'a) -> 'a
-(** [with_debug f] runs [f] with debug instrumentation enabled, then restores
-    the previous state. *)
-
 (** {2 Nx Interop} *)
 
 val to_nx : ('a, 'b) t -> ('a, 'b) Nx.t

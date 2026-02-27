@@ -23,9 +23,6 @@ module View = View
 module Backend_intf = Backend_intf
 (** Backend interface used by frontend functors. *)
 
-module Instrumentation = Instrumentation
-(** Operation instrumentation hooks. *)
-
 module Rng = Rng
 (** RNG key utilities. *)
 
