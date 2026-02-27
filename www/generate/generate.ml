@@ -13,261 +13,6 @@ let lib_examples_dir lib_name =
     (Filename.concat (Filename.concat ".." "packages") lib_name)
     "examples"
 
-type library = {
-  name : string;
-  display : string;
-  color : string;
-  description : string;
-  tagline : string;
-  symbol : string;
-}
-
-let libraries =
-  [
-    {
-      name = "nx";
-      display = "nx";
-      color = "color-blue";
-      description = "N-dimensional arrays with linear algebra operations";
-      tagline = "N-dimensional arrays for OCaml";
-      symbol = "";
-    };
-    {
-      name = "rune";
-      display = {|<span class="rune-symbol">ᚱ</span> rune|};
-      color = "color-orange";
-      description = "Automatic differentiation and functional transformations";
-      tagline = "Functional transformations for Nx arrays";
-      symbol = {|ᚱ|};
-    };
-    {
-      name = "kaun";
-      display = {|<span class="rune-symbol">ᚲ</span> kaun|};
-      color = "color-red";
-      description = "Neural networks and training";
-      tagline = "Neural networks for OCaml";
-      symbol = {|ᚲ|};
-    };
-    {
-      name = "hugin";
-      display = {|<span class="rune-symbol">ᛞ</span> hugin|};
-      color = "color-purple";
-      description = "Publication-quality plotting";
-      tagline = "Plotting for OCaml";
-      symbol = {|ᛞ|};
-    };
-    {
-      name = "brot";
-      display = {|<span class="rune-symbol">ᚨ</span> brot|};
-      color = "color-cyan";
-      description =
-        "Fast, HuggingFace-compatible tokenization for language models";
-      tagline = "Tokenization for OCaml";
-      symbol = {|ᚨ|};
-    };
-    {
-      name = "talon";
-      display = {|<span class="rune-symbol">ᛃ</span> talon|};
-      color = "color-pink";
-      description = "Fast and elegant dataframes with type-safe operations";
-      tagline = "Dataframes for OCaml";
-      symbol = {|ᛃ|};
-    };
-    {
-      name = "quill";
-      display = {|<span class="rune-symbol">ᛈ</span> quill|};
-      color = "color-green";
-      description = "Notebooks as markdown files";
-      tagline = "Notebooks as markdown files";
-      symbol = {|ᛈ|};
-    };
-    {
-      name = "fehu";
-      display = {|<span class="rune-symbol">ᚠ</span> fehu|};
-      color = "color-lime";
-      description = "Reinforcement learning for OCaml";
-      tagline = "Reinforcement learning for OCaml";
-      symbol = {|ᚠ|};
-    };
-    {
-      name = "sowilo";
-      display = {|<span class="rune-symbol">ᛋ</span> sowilo|};
-      color = "color-indigo";
-      description = "Differentiable computer vision";
-      tagline = "Differentiable computer vision for OCaml";
-      symbol = {|ᛋ|};
-    };
-  ]
-
-let find_library name = List.find_opt (fun lib -> lib.name = name) libraries
-
-(* -- String utilities -- *)
-
-let replace pattern replacement s =
-  let plen = String.length pattern in
-  let slen = String.length s in
-  if plen = 0 then s
-  else
-    let buf = Buffer.create slen in
-    let i = ref 0 in
-    while !i <= slen - plen do
-      if String.sub s !i plen = pattern then (
-        Buffer.add_string buf replacement;
-        i := !i + plen)
-      else (
-        Buffer.add_char buf (String.unsafe_get s !i);
-        incr i)
-    done;
-    while !i < slen do
-      Buffer.add_char buf (String.unsafe_get s !i);
-      incr i
-    done;
-    Buffer.contents buf
-
-let find_sub ?(start = 0) s sub =
-  let slen = String.length s in
-  let sublen = String.length sub in
-  if sublen = 0 || sublen > slen then None
-  else
-    let rec loop i =
-      if i > slen - sublen then None
-      else if String.sub s i sublen = sub then Some i
-      else loop (i + 1)
-    in
-    loop start
-
-let strip_tags s =
-  let buf = Buffer.create (String.length s) in
-  let in_tag = ref false in
-  String.iter
-    (fun c ->
-      if c = '<' then in_tag := true
-      else if c = '>' then in_tag := false
-      else if not !in_tag then Buffer.add_char buf c)
-    s;
-  Buffer.contents buf
-
-let strip_order_prefix s =
-  let len = String.length s in
-  if
-    len >= 3
-    && s.[0] >= '0'
-    && s.[0] <= '9'
-    && s.[1] >= '0'
-    && s.[1] <= '9'
-    && s.[2] = '-'
-  then String.sub s 3 (len - 3)
-  else s
-
-let title_case s =
-  s |> String.split_on_char '-'
-  |> List.map (fun w ->
-      if w = "" then w
-      else
-        String.make 1 (Char.uppercase_ascii w.[0])
-        ^ String.sub w 1 (String.length w - 1))
-  |> String.concat " "
-
-(* -- File system -- *)
-
-let read_file path = In_channel.with_open_bin path In_channel.input_all
-
-let write_file path content =
-  Out_channel.with_open_bin path (fun oc -> output_string oc content)
-
-let rec ensure_dir path =
-  if path <> "" && path <> "." && path <> "/" then
-    if not (Sys.file_exists path) then (
-      ensure_dir (Filename.dirname path);
-      Unix.mkdir path 0o755)
-
-let rec walk dir =
-  Sys.readdir dir |> Array.to_list
-  |> List.concat_map (fun entry ->
-      let path = Filename.concat dir entry in
-      if Sys.is_directory path then walk path else [ path ])
-
-(* -- HTML utilities -- *)
-
-let extract_h1 html =
-  match find_sub html "<h1" with
-  | None -> None
-  | Some i -> (
-      match String.index_from_opt html i '>' with
-      | None -> None
-      | Some j -> (
-          match find_sub ~start:(j + 1) html "</h1>" with
-          | None -> None
-          | Some k -> Some (strip_tags (String.sub html (j + 1) (k - j - 1)))))
-
-let strip_h1 html =
-  match find_sub html "<h1" with
-  | None -> html
-  | Some i -> (
-      match find_sub ~start:i html "</h1>" with
-      | None -> html
-      | Some k ->
-          let after = k + 5 in
-          String.sub html 0 i ^ String.sub html after (String.length html - after))
-
-let generate_hero lib =
-  let symbol_html =
-    if lib.symbol = "" then ""
-    else
-      Printf.sprintf {|<span class="rune-symbol">%s</span> |} lib.symbol
-  in
-  Printf.sprintf
-    {|      <div class="docs-hero" style="--lib-color: var(--color-%s)">
-        <h1>%s%s</h1>
-        <p class="tagline">%s</p>
-      </div>
-|}
-    lib.name symbol_html lib.name lib.tagline
-
-(* -- Paths and URLs -- *)
-
-let strip_prefix ~prefix path =
-  let plen = String.length prefix + 1 in
-  String.sub path plen (String.length path - plen)
-
-let url_segments path =
-  let stem = Filename.chop_extension path in
-  let parts = String.split_on_char '/' stem in
-  match List.rev parts with "index" :: rest -> List.rev rest | _ -> parts
-
-let dest_path path =
-  let stem = Filename.chop_extension path in
-  if Filename.basename stem = "index" then
-    Filename.concat build_dir (stem ^ ".html")
-  else Filename.concat build_dir (Filename.concat stem "index.html")
-
-(* -- Breadcrumbs -- *)
-
-let breadcrumb_sep = {|<span class="breadcrumb-separator">/</span>|}
-
-let make_breadcrumbs segments title =
-  match segments with
-  | [] | [ _ ] -> ""
-  | _ ->
-      let ancestors = List.rev (List.tl (List.rev segments)) in
-      let links =
-        let rec go acc url_path = function
-          | [] -> List.rev acc
-          | seg :: rest ->
-              let url_path = url_path ^ "/" ^ seg in
-              let link =
-                Printf.sprintf {|<a href="%s/" class="breadcrumb-link">%s</a>|}
-                  url_path (title_case seg)
-              in
-              go (link :: acc) url_path rest
-        in
-        go [] "" ancestors
-      in
-      Printf.sprintf
-        {|<div id="breadcrumbs" class="breadcrumbs">%s%s<span class="breadcrumb-current">%s</span></div>|}
-        (String.concat breadcrumb_sep links)
-        breadcrumb_sep title
-
 (* -- Library navigation -- *)
 
 let lib_doc_entries lib_name =
@@ -280,9 +25,9 @@ let lib_doc_entries lib_name =
       |> List.filter_map (fun f ->
           if Filename.extension f = ".md" then
             let stem = Filename.chop_extension f in
-            let slug = strip_order_prefix stem in
+            let slug = Site.strip_order_prefix stem in
             let title =
-              if slug = "index" then "Overview" else title_case slug
+              if slug = "index" then "Overview" else Site.title_case slug
             in
             let url =
               if slug = "index" then Printf.sprintf "/docs/%s/" lib_name
@@ -346,8 +91,8 @@ let generate_lib_examples_nav_items ~current_url lib_name =
       |> List.filter (fun entry -> Sys.is_directory (Filename.concat dir entry))
       |> List.sort String.compare
       |> List.map (fun entry ->
-          let slug = strip_order_prefix entry in
-          let title = title_case slug in
+          let slug = Site.strip_order_prefix entry in
+          let title = Site.title_case slug in
           let url = Printf.sprintf "/docs/%s/examples/%s/" lib_name slug in
           (title, url))
     in
@@ -364,70 +109,83 @@ let generate_lib_examples_nav_items ~current_url lib_name =
 let generate_tab_nav ~current_url lib_name =
   let guides_items = generate_lib_nav ~current_url lib_name in
   let examples_items = generate_lib_examples_nav_items ~current_url lib_name in
+  let api_items = Api.nav_items ~current_url lib_name in
   let has_examples = examples_items <> "" in
+  let has_api = api_items <> "" in
   let is_examples_page =
-    match find_sub current_url "/examples/" with Some _ -> true | None -> false
+    match Site.find_sub current_url "/examples/" with
+    | Some _ -> true
+    | None -> false
+  in
+  let is_api_page =
+    match Site.find_sub current_url "/api/" with
+    | Some _ -> true
+    | None -> false
   in
   let active_tab =
-    if is_examples_page && has_examples then "examples" else "guides"
+    if is_api_page && has_api then "api"
+    else if is_examples_page && has_examples then "examples"
+    else "guides"
   in
   let checked tab = if tab = active_tab then " checked" else "" in
   let buf = Buffer.create 1024 in
   Buffer.add_string buf {|      <div class="nav-tabs">|};
-  Buffer.add_string buf "\n";
+  Buffer.add_char buf '\n';
   Printf.bprintf buf
-    {|        <input type="radio" id="tab-guides" name="nav-tab"%s>|} (checked "guides");
-  Buffer.add_string buf "\n";
+    {|        <input type="radio" id="tab-guides" name="nav-tab"%s>|}
+    (checked "guides");
+  Buffer.add_char buf '\n';
   Buffer.add_string buf {|        <label for="tab-guides">Guides</label>|};
-  Buffer.add_string buf "\n";
+  Buffer.add_char buf '\n';
   if has_examples then (
     Printf.bprintf buf
-      {|        <input type="radio" id="tab-examples" name="nav-tab"%s>|} (checked "examples");
-    Buffer.add_string buf "\n";
-    Buffer.add_string buf {|        <label for="tab-examples">Examples</label>|};
-    Buffer.add_string buf "\n");
-  Printf.bprintf buf
-    {|        <input type="radio" id="tab-api" name="nav-tab"%s>|} (checked "api");
-  Buffer.add_string buf "\n";
-  Buffer.add_string buf {|        <label for="tab-api">API</label>|};
-  Buffer.add_string buf "\n";
+      {|        <input type="radio" id="tab-examples" name="nav-tab"%s>|}
+      (checked "examples");
+    Buffer.add_char buf '\n';
+    Buffer.add_string buf
+      {|        <label for="tab-examples">Examples</label>|};
+    Buffer.add_char buf '\n');
+  if has_api then (
+    Printf.bprintf buf
+      {|        <input type="radio" id="tab-api" name="nav-tab"%s>|}
+      (checked "api");
+    Buffer.add_char buf '\n';
+    Buffer.add_string buf {|        <label for="tab-api">API</label>|};
+    Buffer.add_char buf '\n');
   Buffer.add_string buf {|        <div class="tab-panel" id="panel-guides">|};
-  Buffer.add_string buf "\n";
+  Buffer.add_char buf '\n';
   Buffer.add_string buf {|          <ul class="nav-links">|};
-  Buffer.add_string buf "\n";
+  Buffer.add_char buf '\n';
   Buffer.add_string buf guides_items;
-  Buffer.add_string buf "\n";
+  Buffer.add_char buf '\n';
   Buffer.add_string buf {|          </ul>|};
-  Buffer.add_string buf "\n";
+  Buffer.add_char buf '\n';
   Buffer.add_string buf {|        </div>|};
-  Buffer.add_string buf "\n";
+  Buffer.add_char buf '\n';
   if has_examples then (
-    Buffer.add_string buf {|        <div class="tab-panel" id="panel-examples">|};
-    Buffer.add_string buf "\n";
+    Buffer.add_string buf
+      {|        <div class="tab-panel" id="panel-examples">|};
+    Buffer.add_char buf '\n';
     Buffer.add_string buf {|          <ul class="nav-links">|};
-    Buffer.add_string buf "\n";
+    Buffer.add_char buf '\n';
     Buffer.add_string buf examples_items;
-    Buffer.add_string buf "\n";
+    Buffer.add_char buf '\n';
     Buffer.add_string buf {|          </ul>|};
-    Buffer.add_string buf "\n";
+    Buffer.add_char buf '\n';
     Buffer.add_string buf {|        </div>|};
-    Buffer.add_string buf "\n");
-  Printf.bprintf buf
-    {|        <div class="tab-panel" id="panel-api">|};
-  Buffer.add_string buf "\n";
-  Printf.bprintf buf
-    {|          <ul class="nav-links" id="%s-api-nav">|} lib_name;
-  Buffer.add_string buf "\n";
-  Buffer.add_string buf {|          </ul>|};
-  Buffer.add_string buf "\n";
-  Buffer.add_string buf {|        </div>|};
-  Buffer.add_string buf "\n";
+    Buffer.add_char buf '\n');
+  if has_api then (
+    Buffer.add_string buf {|        <div class="tab-panel" id="panel-api">|};
+    Buffer.add_char buf '\n';
+    Buffer.add_string buf {|          <ul class="nav-links">|};
+    Buffer.add_char buf '\n';
+    Buffer.add_string buf api_items;
+    Buffer.add_string buf {|          </ul>|};
+    Buffer.add_char buf '\n';
+    Buffer.add_string buf {|        </div>|};
+    Buffer.add_char buf '\n');
   Buffer.add_string buf {|      </div>|};
   Buffer.contents buf
-
-let url_of_path path =
-  let segments = url_segments path in
-  "/" ^ String.concat "/" segments ^ "/"
 
 (* -- Template -- *)
 
@@ -435,7 +193,8 @@ let select_template path =
   let parts = String.split_on_char '/' path in
   let name =
     match parts with
-    | "docs" :: lib :: _ when find_library lib <> None -> "layout_docs_lib.html"
+    | "docs" :: lib :: _ when Site.find_library lib <> None ->
+        "layout_docs_lib.html"
     | "docs" :: _ -> "layout_docs.html"
     | _ -> "main.html"
   in
@@ -443,56 +202,25 @@ let select_template path =
 
 let apply_template ~template ~title ~breadcrumbs ~content ~lib ~is_lib_index
     ~page_title ~path =
-  let current_url = url_of_path path in
-  let t =
-    template |> replace "{{title}}" title
-    |> replace "{{breadcrumbs}}" breadcrumbs
-    |> replace "{{content}}" content
+  let current_url = Site.url_of_path path in
+  let tab_nav =
+    match lib with
+    | Some lib -> generate_tab_nav ~current_url lib.Site.name
+    | None -> ""
   in
-  match lib with
-  | None ->
-      let docs_breadcrumb =
-        let segments = url_segments path in
-        match segments with
-        | [ "docs" ] | [ "docs"; "index" ] ->
-            {|<span class="breadcrumb-text">docs</span>|}
-        | "docs" :: _ ->
-            Printf.sprintf
-              {|<a href="/docs/" class="breadcrumb-link">docs</a>
-      <span class="breadcrumb-separator">/</span>
-      <span class="breadcrumb-text">%s</span>|}
-              page_title
-        | _ -> ""
-      in
-      t |> replace "{{lib_hero}}" ""
-      |> replace "{{docs_breadcrumb}}" docs_breadcrumb
-  | Some lib ->
-      let hero =
-        if is_lib_index then generate_hero lib else ""
-      in
-      let lib_breadcrumb =
-        if is_lib_index then
-          Printf.sprintf
-            {|<span class="breadcrumb-text %s">%s</span>|}
-            lib.color lib.display
-        else
-          Printf.sprintf
-            {|<a href="/docs/%s/" class="breadcrumb-text %s">%s</a>
-      <span class="breadcrumb-separator">/</span>
-      <span class="breadcrumb-text">%s</span>|}
-            lib.name lib.color lib.display page_title
-      in
-      t
-      |> replace "{{lib_name}}" lib.name
-      |> replace "{{lib_display}}" lib.display
-      |> replace "{{lib_color}}" lib.color
-      |> replace "{{lib_description}}" lib.description
-      |> replace "{{lib_tab_nav}}"
-           (generate_tab_nav ~current_url lib.name)
-      |> replace "{{lib_hero}}" hero
-      |> replace "{{lib_breadcrumb}}" lib_breadcrumb
-      |> replace "{{prev_next}}"
-           (generate_prev_next ~current_url lib.name)
+  let prev_next =
+    match lib with
+    | Some lib -> generate_prev_next ~current_url lib.Site.name
+    | None -> ""
+  in
+  Site.apply_template ~template ~title ~breadcrumbs ~content ~lib ~is_lib_index
+    ~page_title ~path ~tab_nav ~prev_next ()
+
+let dest_path path =
+  let stem = Filename.chop_extension path in
+  if Filename.basename stem = "index" then
+    Filename.concat build_dir (stem ^ ".html")
+  else Filename.concat build_dir (Filename.concat stem "index.html")
 
 (* -- Processing -- *)
 
@@ -504,32 +232,35 @@ let render_markdown content =
 
 let process_markdown path content =
   let html = render_markdown content in
-  let h1 = extract_h1 html in
+  let h1 = Site.extract_h1 html in
   let title = match h1 with Some t -> t ^ " - raven" | None -> "raven" in
   let page_title =
     match h1 with
     | Some t -> t
-    | None -> title_case (Filename.chop_extension (Filename.basename path))
+    | None ->
+        Site.title_case (Filename.chop_extension (Filename.basename path))
   in
-  let breadcrumbs = make_breadcrumbs (url_segments path) page_title in
+  let breadcrumbs =
+    Site.make_breadcrumbs (Site.url_segments path) page_title
+  in
   let lib =
     match String.split_on_char '/' path with
-    | "docs" :: lib_name :: _ -> find_library lib_name
+    | "docs" :: lib_name :: _ -> Site.find_library lib_name
     | _ -> None
   in
   let is_lib_index =
     match String.split_on_char '/' path with
     | "docs" :: lib_name :: rest
-      when find_library lib_name <> None -> (
+      when Site.find_library lib_name <> None -> (
         match rest with
         | [ "index.md" ] | [] -> true
         | _ -> false)
     | _ -> false
   in
   let html =
-    if is_lib_index then strip_h1 html else html
+    if is_lib_index then Site.strip_h1 html else html
   in
-  let template = read_file (select_template path) in
+  let template = Site.read_file (select_template path) in
   apply_template ~template ~title ~breadcrumbs ~content:html ~lib ~is_lib_index
     ~page_title ~path
 
@@ -542,7 +273,7 @@ let highlight_html_code_blocks html =
   let code_close = "</code></pre>" in
   let code_close_len = String.length code_close in
   while !i < len do
-    match find_sub ~start:!i html pre_open with
+    match Site.find_sub ~start:!i html pre_open with
     | None ->
         Buffer.add_string buf (String.sub html !i (len - !i));
         i := len
@@ -556,23 +287,26 @@ let highlight_html_code_blocks html =
         | Some lang_end -> (
             let lang = String.sub html lang_start (lang_end - lang_start) in
             let code_tag = {|<code class="language-|} ^ lang ^ {|">|} in
-            match find_sub ~start:lang_end html code_tag with
+            match Site.find_sub ~start:lang_end html code_tag with
             | None ->
                 Buffer.add_char buf html.[!i];
                 i := !i + 1
             | Some code_tag_start -> (
                 let content_start = code_tag_start + String.length code_tag in
-                match find_sub ~start:content_start html code_close with
+                match Site.find_sub ~start:content_start html code_close with
                 | None ->
                     Buffer.add_char buf html.[!i];
                     i := !i + 1
                 | Some content_end -> (
                     let raw =
-                      String.sub html content_start (content_end - content_start)
+                      String.sub html content_start
+                        (content_end - content_start)
                     in
                     let code =
-                      raw |> replace "&amp;" "&" |> replace "&lt;" "<"
-                      |> replace "&gt;" ">"
+                      raw
+                      |> Site.replace "&amp;" "&"
+                      |> Site.replace "&lt;" "<"
+                      |> Site.replace "&gt;" ">"
                     in
                     match Hilite.src_code_to_html ~lang code with
                     | Ok highlighted ->
@@ -590,13 +324,14 @@ let process_file ~path full_path =
   let ext = Filename.extension path in
   let out, content =
     match ext with
-    | ".md" -> (dest_path path, process_markdown path (read_file full_path))
+    | ".md" -> (dest_path path, process_markdown path (Site.read_file full_path))
     | ".html" | ".htm" ->
-        (dest_path path, highlight_html_code_blocks (read_file full_path))
-    | _ -> (Filename.concat build_dir path, read_file full_path)
+        (dest_path path,
+         highlight_html_code_blocks (Site.read_file full_path))
+    | _ -> (Filename.concat build_dir path, Site.read_file full_path)
   in
-  ensure_dir (Filename.dirname out);
-  write_file out content
+  Site.ensure_dir (Filename.dirname out);
+  Site.write_file out content
 
 let escape_html s =
   let buf = Buffer.create (String.length s) in
@@ -612,12 +347,13 @@ let escape_html s =
 
 let process_example ~lib example_dir =
   let entry = Filename.basename example_dir in
-  let slug = strip_order_prefix entry in
-  let path = Printf.sprintf "docs/%s/examples/%s.md" lib.name slug in
+  let slug = Site.strip_order_prefix entry in
+  let path = Printf.sprintf "docs/%s/examples/%s.md" lib.Site.name slug in
   let readme_path = Filename.concat example_dir "README.md" in
   let prose_html =
-    if Sys.file_exists readme_path then render_markdown (read_file readme_path)
-    else Printf.sprintf "<h1>%s</h1>" (escape_html (title_case slug))
+    if Sys.file_exists readme_path then
+      render_markdown (Site.read_file readme_path)
+    else Printf.sprintf "<h1>%s</h1>" (escape_html (Site.title_case slug))
   in
   let ml_files =
     Sys.readdir example_dir |> Array.to_list
@@ -628,7 +364,7 @@ let process_example ~lib example_dir =
   let code_html =
     ml_files
     |> List.map (fun f ->
-        let code = read_file (Filename.concat example_dir f) in
+        let code = Site.read_file (Filename.concat example_dir f) in
         let header =
           if multi then Printf.sprintf "<h3>%s</h3>\n" (escape_html f) else ""
         in
@@ -642,43 +378,49 @@ let process_example ~lib example_dir =
     |> String.concat "\n"
   in
   let html = prose_html ^ "\n" ^ code_html in
-  let h1 = extract_h1 html in
+  let h1 = Site.extract_h1 html in
   let title = match h1 with Some t -> t ^ " - raven" | None -> "raven" in
-  let page_title = match h1 with Some t -> t | None -> title_case slug in
-  let breadcrumbs = make_breadcrumbs (url_segments path) page_title in
-  let template = read_file (select_template path) in
+  let page_title =
+    match h1 with Some t -> t | None -> Site.title_case slug
+  in
+  let breadcrumbs =
+    Site.make_breadcrumbs (Site.url_segments path) page_title
+  in
+  let template = Site.read_file (select_template path) in
   let content =
     apply_template ~template ~title ~breadcrumbs ~content:html ~lib:(Some lib)
       ~is_lib_index:false ~page_title ~path
   in
   let out = dest_path path in
-  ensure_dir (Filename.dirname out);
-  write_file out content
+  Site.ensure_dir (Filename.dirname out);
+  Site.write_file out content
 
 let () =
-  walk site_dir
-  |> List.iter (fun p -> process_file ~path:(strip_prefix ~prefix:site_dir p) p);
-  walk docs_dir
+  Site.walk site_dir
   |> List.iter (fun p ->
-      let rel = strip_prefix ~prefix:docs_dir p in
+      process_file ~path:(Site.strip_prefix ~prefix:site_dir p) p);
+  Site.walk docs_dir
+  |> List.iter (fun p ->
+      let rel = Site.strip_prefix ~prefix:docs_dir p in
       let path = Filename.concat "docs" rel in
       process_file ~path p);
-  libraries
+  Site.libraries
   |> List.iter (fun lib ->
-      let dir = lib_doc_dir lib.name in
+      let dir = lib_doc_dir lib.Site.name in
       if Sys.file_exists dir && Sys.is_directory dir then
-        walk dir
+        Site.walk dir
         |> List.iter (fun full_path ->
             let ext = Filename.extension full_path in
             let base = Filename.basename full_path in
             if base = "dune" || ext = ".mld" then ()
             else
-              let rel = strip_prefix ~prefix:dir full_path in
+              let rel = Site.strip_prefix ~prefix:dir full_path in
               let rel_base = Filename.basename rel in
               let rel_dir = Filename.dirname rel in
               let clean_base =
                 if Filename.extension rel_base = ".md" then
-                  strip_order_prefix (Filename.chop_extension rel_base) ^ ".md"
+                  Site.strip_order_prefix
+                    (Filename.chop_extension rel_base) ^ ".md"
                 else rel_base
               in
               let clean_rel =
@@ -689,11 +431,15 @@ let () =
                 Filename.concat (Filename.concat "docs" lib.name) clean_rel
               in
               process_file ~path full_path));
-  libraries
+  Site.libraries
   |> List.iter (fun lib ->
-      let dir = lib_examples_dir lib.name in
+      let dir = lib_examples_dir lib.Site.name in
       if Sys.file_exists dir && Sys.is_directory dir then
         Sys.readdir dir |> Array.to_list |> List.sort String.compare
         |> List.iter (fun entry ->
             let full = Filename.concat dir entry in
-            if Sys.is_directory full then process_example ~lib full))
+            if Sys.is_directory full then process_example ~lib full));
+  let tab_nav lib_name =
+    fun current_url -> generate_tab_nav ~current_url lib_name
+  in
+  Api.generate ~build_dir ~templates_dir ~tab_nav

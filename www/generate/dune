@@ -1,3 +1,4 @@
 (executable
  (name generate)
+ (modules generate api site)
  (libraries cmarkit hilite hilite.markdown unix))

@@ -4,7 +4,6 @@
 
 - bring in talon changes
 - consider rename talon to talf
-- generate docs with odoc3 + dream-style html rewriting to integrate in www/
 - explore renames (sowilo, talon, etc.)
 
 ## beta (jit)

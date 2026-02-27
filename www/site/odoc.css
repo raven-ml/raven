@@ -1,0 +1,513 @@
+/* Styles for odoc API reference pages.
+   Adapted from odig (Daniel Bünzli) for the raven dark theme. */
+
+/*---------------------------------------------------------------------------
+   Right sidebar (table of contents)
+  ---------------------------------------------------------------------------*/
+
+.toc {
+  width: 220px;
+  flex-shrink: 0;
+  padding: 30px 16px;
+  border-left: 1px solid var(--color-border);
+}
+.toc-inner {
+  position: sticky;
+  top: 20px;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+}
+.toc-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--color-text-dim);
+  margin-bottom: 12px;
+}
+.toc .odoc-toc {
+  font-size: 13px;
+}
+.toc .odoc-toc ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.toc .odoc-toc > ul > li {
+  margin-bottom: 2px;
+}
+.toc .odoc-toc > ul > li > a {
+  font-weight: 500;
+  color: var(--color-text);
+}
+.toc .odoc-toc li li {
+  border-left: 1px solid var(--color-border);
+  margin-left: 4px;
+  padding-left: 10px;
+}
+.toc .odoc-toc li {
+  padding: 2px 0;
+}
+.toc .odoc-toc a {
+  color: var(--color-text-dim);
+  text-decoration: none;
+  display: block;
+  line-height: 1.4;
+}
+.toc .odoc-toc a:hover {
+  color: var(--color-text-bright);
+}
+
+@media (max-width: 1100px) {
+  .toc {
+    display: none;
+  }
+}
+
+/*---------------------------------------------------------------------------
+   Left sidebar: API navigation
+  ---------------------------------------------------------------------------*/
+
+.nav-links .nav-group {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--color-text-dim);
+  margin-top: 14px;
+  padding-top: 10px;
+  border-top: 1px solid var(--color-border);
+  list-style: none;
+}
+.nav-links .nav-group:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+.nav-links .nav-sub {
+  padding-left: 10px;
+}
+.nav-links .nav-sub a {
+  font-size: 13px;
+  color: var(--color-text-dim);
+}
+.nav-links .nav-sub a:hover {
+  color: var(--color-text);
+}
+.nav-links .nav-sub a.active {
+  color: var(--color-text-bright);
+}
+
+/*---------------------------------------------------------------------------
+   API page layout
+  ---------------------------------------------------------------------------*/
+
+.odoc-api {
+  line-height: 1.5;
+}
+
+/*---------------------------------------------------------------------------
+   Code and code highlighting
+  ---------------------------------------------------------------------------*/
+
+.odoc-api code {
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--color-text);
+  background: none;
+  border: none;
+  padding: 0;
+  overflow-wrap: anywhere;
+}
+.odoc-api code span span {
+  white-space: nowrap;
+}
+.odoc-api pre code {
+  font-size: inherit;
+}
+.odoc-api a code {
+  color: inherit;
+}
+.odoc-api .odoc-content h2 code,
+.odoc-api .odoc-content h3 code,
+.odoc-api .odoc-content h4 code {
+  font-size: inherit;
+  font-weight: inherit;
+  text-transform: none;
+}
+
+/* Syntax highlighting */
+.odoc-api .keyword {
+  color: var(--color-hugin);
+}
+.odoc-api .arrow {
+  white-space: nowrap;
+}
+.odoc-api .type-var {
+  color: var(--color-rune);
+}
+.odoc-api .label,
+.odoc-api .optlabel {
+  color: #8ec07c;
+}
+.odoc-api .constructor {
+  color: var(--color-rune);
+}
+
+/*---------------------------------------------------------------------------
+   Preamble (module header)
+  ---------------------------------------------------------------------------*/
+
+.odoc-api .odoc-preamble h1 {
+  font-size: 24px;
+  margin: 0 0 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--color-border);
+}
+.odoc-api .odoc-preamble h1 code {
+  font-size: inherit;
+  font-weight: inherit;
+}
+.odoc-api .odoc-preamble p {
+  margin: 8px 0;
+  color: var(--color-text);
+}
+.odoc-api .odoc-preamble > *:first-child {
+  margin-top: 0;
+  padding-top: 0;
+}
+.odoc-api .odoc-preamble:has(> :nth-child(2)) {
+  margin-bottom: 24px;
+}
+
+/*---------------------------------------------------------------------------
+   Pre-formatted code blocks
+  ---------------------------------------------------------------------------*/
+
+.odoc-api pre {
+  background: var(--color-bg-dark);
+  padding: 1ch 0.8ch;
+  margin-left: -0.8ch;
+  margin-right: -0.8ch;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+/*---------------------------------------------------------------------------
+   Spec blocks (val, type, module, etc.)
+  ---------------------------------------------------------------------------*/
+
+.odoc-api .odoc-spec {
+  padding-bottom: 4px;
+}
+
+/* Half-line spacing between sibling spec items */
+.odoc-api .odoc-spec + .odoc-spec {
+  margin-top: 12px;
+}
+
+.odoc-api .spec {
+  margin-top: 0;
+  position: relative;
+  padding-left: 4ch;
+  padding-top: 4px;
+  padding-bottom: 4px;
+  text-indent: -4ch;
+  font-size: calc(1em * 1.05);
+}
+
+/* Don't use hanging indent on type specs (variants/records break it) */
+.odoc-api .spec.type {
+  padding-left: 0;
+  text-indent: 0;
+}
+.odoc-api .spec.type > a.anchor {
+  padding-left: 1ch;
+  padding-right: 1ch;
+}
+
+/*---------------------------------------------------------------------------
+   Spec documentation
+  ---------------------------------------------------------------------------*/
+
+.odoc-api .spec-doc {
+  margin-top: 0;
+  padding-left: 1ch;
+  color: var(--color-text);
+}
+.odoc-api .spec-doc > *:first-child {
+  margin-top: 0;
+}
+.odoc-api .spec-doc p {
+  margin: 4px 0;
+}
+.odoc-api .spec-doc ul {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+.odoc-api .spec-doc li {
+  margin-bottom: 2px;
+}
+
+/* Inline code inside documentation text */
+.odoc-api .spec-doc code,
+.odoc-api .def-doc code {
+  font-size: calc(1em * 0.90);
+}
+
+/*---------------------------------------------------------------------------
+   Definition documentation (inside type variants/records)
+  ---------------------------------------------------------------------------*/
+
+.odoc-api .def-doc {
+  display: inline-block;
+  padding-left: 7ch;
+  color: var(--color-text-dim);
+}
+.odoc-api .def-doc p {
+  margin: 2px 0;
+  margin-left: -4ch;
+  text-indent: 0;
+}
+.odoc-api .def-doc > *:first-child {
+  margin-top: 0;
+}
+.odoc-api .spec .def-doc .comment-delim {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+.odoc-api .spec .def-doc .comment-delim + * {
+  margin-top: 0;
+}
+
+/* Variant/record layout inside spec blocks */
+.odoc-api .spec.type .variant,
+.odoc-api .spec.type .record {
+  margin-left: 2ch;
+}
+.odoc-api .spec.type li.variant,
+.odoc-api .spec.type li.record {
+  list-style: none;
+}
+.odoc-api .spec.type .variant p,
+.odoc-api .spec.type .record p {
+  margin: 4px;
+}
+.odoc-api .spec.type > ol {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+.odoc-api .spec ol {
+  margin: 0;
+  list-style-type: none;
+}
+.odoc-api .spec li {
+  margin-left: 0;
+  padding-left: 4ch;
+  text-indent: -4ch;
+}
+.odoc-api .spec li.record.field {
+  margin-left: 2ch;
+}
+.odoc-api div.def {
+  margin-top: 0;
+  text-indent: -2ex;
+  padding-left: 2ex;
+}
+
+/*---------------------------------------------------------------------------
+   Include blocks (collapsible)
+  ---------------------------------------------------------------------------*/
+
+.odoc-api .odoc-include {
+  margin-bottom: 28px;
+}
+.odoc-api .odoc-include.shadowed-include {
+  display: none;
+}
+.odoc-api .odoc-include summary {
+  cursor: pointer;
+}
+
+/*---------------------------------------------------------------------------
+   Links and anchors
+  ---------------------------------------------------------------------------*/
+
+.odoc-api a {
+  color: var(--color-nx);
+  text-decoration: none;
+}
+.odoc-api a:hover {
+  box-shadow: 0 1px 0 0 var(--color-nx);
+}
+.odoc-api .xref-unresolved {
+  box-shadow: 0 1px 0 0 var(--color-kaun);
+}
+
+.odoc-api a.anchor {
+  visibility: hidden;
+  position: absolute;
+  font-weight: normal;
+  font-style: normal;
+  margin-left: -2.5ch;
+  padding-right: 1ch;
+  padding-left: 1ch;
+  color: var(--color-nx);
+  text-align: right;
+}
+.odoc-api a.anchor:before {
+  content: "#";
+}
+.odoc-api *:hover > a.anchor {
+  visibility: visible;
+}
+.odoc-api a.anchor:hover {
+  box-shadow: none;
+  text-decoration: underline;
+}
+.odoc-api .spec > a.anchor,
+.odoc-api .spec li > a.anchor {
+  padding-right: 0.5ch;
+  padding-left: 2ch;
+}
+
+/* Target highlight when navigating to an anchor */
+.odoc-api *:target {
+  background-color: color-mix(in srgb, var(--color-bg) 70%, var(--color-nx) 30%);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-bg) 70%, var(--color-nx) 30%);
+}
+
+/*---------------------------------------------------------------------------
+   Section headings
+  ---------------------------------------------------------------------------*/
+
+.odoc-api .odoc-content h2 {
+  font-size: 18px;
+  margin: 40px 0 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border);
+}
+.odoc-api .odoc-content h3 {
+  font-size: 15px;
+  margin: 28px 0 8px;
+}
+.odoc-api .odoc-content h4 {
+  font-size: 14px;
+  margin: 20px 0 6px;
+}
+.odoc-api .odoc-content > *:first-child {
+  border-top: 1px solid var(--color-border);
+  padding-top: 12px;
+  margin-top: 16px;
+}
+
+/*---------------------------------------------------------------------------
+   Comment delimiters (accessible but hidden)
+  ---------------------------------------------------------------------------*/
+
+.odoc-api .comment-delim {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/*---------------------------------------------------------------------------
+   Lists of modules and @-tags
+  ---------------------------------------------------------------------------*/
+
+.odoc-api .modules {
+  list-style-type: none;
+  margin-left: -2ch;
+}
+.odoc-api .modules li {
+  padding-left: 2ch;
+  text-indent: -2ch;
+  margin-top: 5px;
+}
+.odoc-api .modules .synopsis {
+  padding-left: 1ch;
+}
+.odoc-api .at-tags {
+  list-style-type: none;
+  margin-left: -2ch;
+}
+.odoc-api .at-tags li {
+  padding-left: 2ch;
+  text-indent: -2ch;
+}
+.odoc-api .at-tags .at-tag {
+  text-transform: capitalize;
+}
+
+/*---------------------------------------------------------------------------
+   Alert and since markers
+  ---------------------------------------------------------------------------*/
+
+.odoc-api .alert::before,
+.odoc-api .deprecated::before {
+  content: "\26A0\FE0F " / "";
+}
+.odoc-api .since::before {
+  content: "\1F55A " / "";
+}
+
+/*---------------------------------------------------------------------------
+   Tables
+  ---------------------------------------------------------------------------*/
+
+.odoc-api .odoc-table {
+  margin: 16px 0;
+  border-collapse: collapse;
+}
+.odoc-api .odoc-table td,
+.odoc-api .odoc-table th {
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+}
+.odoc-api .odoc-table th {
+  font-weight: bold;
+}
+
+/*---------------------------------------------------------------------------
+   Source links
+  ---------------------------------------------------------------------------*/
+
+.odoc-api a.source_link {
+  float: right;
+  color: var(--color-text-dim);
+  font-size: 13px;
+}
+
+/*---------------------------------------------------------------------------
+   Basic markup
+  ---------------------------------------------------------------------------*/
+
+.odoc-api b,
+.odoc-api strong {
+  font-weight: bold;
+}
+.odoc-api em {
+  font-style: italic;
+}
+.odoc-api sup {
+  vertical-align: super;
+  font-size: 12px;
+  line-height: 0;
+}
+.odoc-api sub {
+  vertical-align: sub;
+  font-size: 12px;
+  line-height: 0;
+}
+.odoc-api ul > li {
+  margin-left: 22px;
+}
+.odoc-api ol > li {
+  margin-left: 27px;
+}
