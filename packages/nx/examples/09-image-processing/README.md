@@ -103,4 +103,4 @@ Running this example creates four PNG files in the current directory:
 ## Next Steps
 
 You've completed the Nx examples! For machine learning workflows, see the
-[kaun examples](../../../kaun/examples/).
+[kaun examples](/docs/kaun/).

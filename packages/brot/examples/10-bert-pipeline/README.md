@@ -63,5 +63,5 @@ Encoding.t          -- ids, tokens, offsets, type_ids, attention_mask
 
 ## Further Reading
 
-- [gpt2_tokenizer](../gpt2_tokenizer/) -- loading a real GPT-2 tokenizer
+- [gpt2_tokenizer](../x-gpt2-tokenizer/) -- loading a real GPT-2 tokenizer
   from HuggingFace model files

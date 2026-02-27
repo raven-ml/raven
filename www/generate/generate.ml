@@ -231,7 +231,7 @@ let render_markdown content =
   |> Cmarkit_html.of_doc ~safe:false
 
 let process_markdown path content =
-  let html = render_markdown content in
+  let html = render_markdown content |> Site.rewrite_doc_hrefs in
   let h1 = Site.extract_h1 html in
   let title = match h1 with Some t -> t ^ " - raven" | None -> "raven" in
   let page_title =
