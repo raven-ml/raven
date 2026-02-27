@@ -157,8 +157,9 @@ let test_diag_construct () =
 
 let test_arange_empty () =
   check_invalid_arg "arange empty"
-    "arange: range [0, 0), empty with step=1, ensure start < stop for positive step, or start > stop for negative step"
-    (fun () -> Nx.arange Nx.int32 0 0 1)
+    "arange: range [0, 0), empty with step=1, ensure start < stop for positive \
+     step, or start > stop for negative step" (fun () ->
+      Nx.arange Nx.int32 0 0 1)
 
 let test_arange_negative_step () =
   let t = Nx.arange Nx.int32 10 0 (-2) in
@@ -307,14 +308,14 @@ let test_set_item_2x2 () =
 let test_get_item_out_of_bounds () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   check_invalid_arg "out of bounds get"
-    "get: index [2,0] out of bounds for shape [2,2], index 0 at dim 0: 2 not in [0, 2)"
-    (fun () -> Nx.item [ 2; 0 ] t)
+    "get: index [2,0] out of bounds for shape [2,2], index 0 at dim 0: 2 not \
+     in [0, 2)" (fun () -> Nx.item [ 2; 0 ] t)
 
 let test_set_item_out_of_bounds () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   check_invalid_arg "out of bounds set"
-    "set: index 2 at dimension 1, out of bounds for shape [2,2], index 1 at dim 1: 2 not in [0, 2)"
-    (fun () -> Nx.set_item [ 0; 2 ] 5.0 t)
+    "set: index 2 at dimension 1, out of bounds for shape [2,2], index 1 at \
+     dim 1: 2 not in [0, 2)" (fun () -> Nx.set_item [ 0; 2 ] 5.0 t)
 
 let test_set_item_type_safety () =
   let t = Nx.create Nx.int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |] in
@@ -382,8 +383,8 @@ let test_slice_empty_range () =
 let test_slice_step_zero () =
   let t = Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
   check_invalid_arg "slice step zero"
-    "slice: step cannot be zero, use positive step for forward slicing or negative for reverse"
-    (fun () -> ignore (Nx.slice [ Nx.Rs (0, 5, 0) ] t))
+    "slice: step cannot be zero, use positive step for forward slicing or \
+     negative for reverse" (fun () -> ignore (Nx.slice [ Nx.Rs (0, 5, 0) ] t))
 
 let test_slice_negative_step () =
   let t = Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
@@ -485,8 +486,8 @@ let test_blit_incompatible () =
   let dst = Nx.zeros Nx.float32 [| 3 |] in
   raises ~msg:"incompatible shapes"
     (Invalid_argument
-       "blit: shape mismatch [2] vs [3], source and destination must have identical shapes")
-    (fun () -> Nx.blit src dst)
+       "blit: shape mismatch [2] vs [3], source and destination must have \
+        identical shapes") (fun () -> Nx.blit src dst)
 
 let test_fill_returns_copy () =
   let t = Nx.zeros Nx.float32 [| 2; 2 |] in

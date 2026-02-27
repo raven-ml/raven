@@ -531,7 +531,8 @@ let where ~out cond if_true if_false =
 
   if cond_shape <> if_true_shape || if_true_shape <> if_false_shape then
     err "where" "shape mismatch: cond %s, if_true %s, if_false %s"
-      (Shape.to_string cond_shape) (Shape.to_string if_true_shape)
+      (Shape.to_string cond_shape)
+      (Shape.to_string if_true_shape)
       (Shape.to_string if_false_shape)
   else
     (* Ensure inputs are materializable *)
@@ -661,7 +662,8 @@ let cat ~out tensors ~axis =
           first_shape
       in
       if shape out <> out_shape then
-        err "cat" "output shape %s != expected %s" (Shape.to_string (shape out))
+        err "cat" "output shape %s != expected %s"
+          (Shape.to_string (shape out))
           (Shape.to_string out_shape);
       let tensors_ffi = List.map to_ffi_tensor tensors' in
       let out_ffi = to_ffi_tensor out in
@@ -675,7 +677,8 @@ let cast (type a b c d) ~(out : (c, d) t) (x : (a, b) t) =
 
   if shape x <> shape out then
     err "cast" "source shape %s != destination shape %s"
-      (Shape.to_string (shape x)) (Shape.to_string (shape out));
+      (Shape.to_string (shape x))
+      (Shape.to_string (shape out));
 
   (* Convert to FFI tensors *)
   let x_ffi = to_ffi_tensor x' in
@@ -720,7 +723,8 @@ let threefry ~out key counter =
 
   if shape out <> shape counter then
     err "threefry" "output shape %s != counter shape %s"
-      (Shape.to_string (shape out)) (Shape.to_string (shape counter));
+      (Shape.to_string (shape out))
+      (Shape.to_string (shape counter));
 
   let key_ffi = to_ffi_tensor key' in
   let counter_ffi = to_ffi_tensor counter' in
@@ -740,7 +744,8 @@ let gather ~out data indices ~axis =
 
   if shape out <> shape indices then
     err "gather" "output shape %s != indices shape %s"
-      (Shape.to_string (shape out)) (Shape.to_string (shape indices));
+      (Shape.to_string (shape out))
+      (Shape.to_string (shape indices));
 
   (* Convert to FFI tensors *)
   let data_ffi = to_ffi_tensor data' in

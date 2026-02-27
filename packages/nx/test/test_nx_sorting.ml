@@ -67,8 +67,7 @@ let test_sort_2d_axis1 () =
 let test_sort_invalid_axis () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
   check_invalid_arg "sort invalid axis"
-    "sort: axis 2 out of bounds for 2D tensor" (fun () ->
-      Nx.sort ~axis:2 t)
+    "sort: axis 2 out of bounds for 2D tensor" (fun () -> Nx.sort ~axis:2 t)
 
 let test_sort_nan_handling () =
   let t = Nx.create Nx.float32 [| 5 |] [| 3.; nan; 1.; 2.; nan |] in

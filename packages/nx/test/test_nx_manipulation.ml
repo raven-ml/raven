@@ -25,8 +25,8 @@ let test_reshape_minus_one () =
 let test_reshape_multiple_minus_one () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   check_invalid_arg "multiple -1"
-    "reshape: shape specification, multiple -1 dimensions, can only specify one unknown dimension"
-    (fun () -> ignore (Nx.reshape [| -1; -1 |] t))
+    "reshape: shape specification, multiple -1 dimensions, can only specify \
+     one unknown dimension" (fun () -> ignore (Nx.reshape [| -1; -1 |] t))
 
 let test_reshape_wrong_size () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
@@ -67,8 +67,9 @@ let test_reshape_copy_when_not_contiguous () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   let transposed = Nx.transpose t in
   check_invalid_arg "reshape non-contiguous"
-    "reshape: cannot reshape [3,2] to [6], incompatible strides [1,3] (expected [1]), call contiguous() first"
-    (fun () -> Nx.reshape [| 6 |] transposed)
+    "reshape: cannot reshape [3,2] to [6], incompatible strides [1,3] \
+     (expected [1]), call contiguous() first" (fun () ->
+      Nx.reshape [| 6 |] transposed)
 
 (* ───── Transpose Tests ───── *)
 
@@ -100,8 +101,8 @@ let test_transpose_axes () =
 let test_transpose_invalid_axes () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
   check_invalid_arg "invalid axes length"
-    "transpose: axes (length 3), expected rank 2, got 3, provide exactly one axis per dimension"
-    (fun () -> Nx.transpose ~axes:[ 0; 1; 2 ] t)
+    "transpose: axes (length 3), expected rank 2, got 3, provide exactly one \
+     axis per dimension" (fun () -> Nx.transpose ~axes:[ 0; 1; 2 ] t)
 
 let test_transpose_view () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
@@ -193,8 +194,9 @@ let test_split_equal () =
 let test_split_unequal () =
   let t = Nx.create Nx.float32 [| 10 |] (Array.init 10 float_of_int) in
   check_invalid_arg "split unequal"
-    "split: cannot divide evenly axis 0 (size 10) to 3 sections, 10 % 3 = 1, use array_split for uneven division"
-    (fun () -> ignore (Nx.split ~axis:0 3 t))
+    "split: cannot divide evenly axis 0 (size 10) to 3 sections, 10 % 3 = 1, \
+     use array_split for uneven division" (fun () ->
+      ignore (Nx.split ~axis:0 3 t))
 
 let test_split_axis () =
   let t = Nx.create Nx.float32 [| 4; 6 |] (Array.init 24 float_of_int) in
@@ -300,8 +302,8 @@ let test_broadcast_to_valid () =
 let test_broadcast_to_invalid () =
   let t = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
   check_invalid_arg "broadcast invalid"
-    "broadcast_to: cannot broadcast [3] to [4] (dim 0: 3\226\137\1604)" (fun () ->
-      ignore (Nx.broadcast_to [| 4 |] t))
+    "broadcast_to: cannot broadcast [3] to [4] (dim 0: 3\226\137\1604)"
+    (fun () -> ignore (Nx.broadcast_to [| 4 |] t))
 
 let test_broadcast_to_same () =
   let t = Nx.create Nx.float32 [| 3; 4 |] (Array.init 12 float_of_int) in
@@ -337,8 +339,8 @@ let test_broadcast_arrays_invalid () =
   let t1 = Nx.create Nx.float32 [| 2 |] [| 1.0; 2.0 |] in
   let t2 = Nx.create Nx.float32 [| 3 |] [| 1.0; 2.0; 3.0 |] in
   check_invalid_arg "broadcast_arrays invalid"
-    "broadcast: cannot broadcast [2] with [3] (dim 0: 2\226\137\1603)" (fun () ->
-      Nx.broadcast_arrays [ t1; t2 ])
+    "broadcast: cannot broadcast [2] with [3] (dim 0: 2\226\137\1603)"
+    (fun () -> Nx.broadcast_arrays [ t1; t2 ])
 
 (* ───── Tile Repeat Tests ───── *)
 
@@ -367,8 +369,8 @@ let test_tile_invalid () =
   (* This test is incorrect - tile should work with more reps than tensor dims
      by promoting the tensor. Let's test a different invalid case. *)
   check_invalid_arg "tile invalid"
-    "tile: reps[0], negative (-1<0), use positive integers (or 0 for empty result)"
-    (fun () -> Nx.tile [| -1 |] t)
+    "tile: reps[0], negative (-1<0), use positive integers (or 0 for empty \
+     result)" (fun () -> Nx.tile [| -1 |] t)
 
 let test_repeat_axis () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
@@ -407,8 +409,8 @@ let test_ravel_non_contiguous_copy () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let tr = Nx.transpose t in
   check_invalid_arg "ravel non-contiguous"
-    "reshape: cannot reshape [2,2] to [4], incompatible strides [1,2] (expected [1]), call contiguous() first"
-    (fun () -> Nx.ravel tr)
+    "reshape: cannot reshape [2,2] to [4], incompatible strides [1,2] \
+     (expected [1]), call contiguous() first" (fun () -> Nx.ravel tr)
 
 let test_pad_2d () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
@@ -420,8 +422,8 @@ let test_pad_2d () =
 let test_pad_invalid () =
   let t = Nx.create Nx.float32 [| 2 |] [| 1.0; 2.0 |] in
   check_invalid_arg "pad negative"
-    "pad: padding values, negative values not allowed, use shrink or slice to remove elements"
-    (fun () -> Nx.pad [| (-1, 2) |] 0.0 t)
+    "pad: padding values, negative values not allowed, use shrink or slice to \
+     remove elements" (fun () -> Nx.pad [| (-1, 2) |] 0.0 t)
 
 let test_flip_axis () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in

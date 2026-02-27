@@ -6,7 +6,8 @@
 module Make (B : Backend_intf.S) = struct
   module B = B
 
-  let err op fmt = Printf.ksprintf (fun msg -> invalid_arg (op ^ ": " ^ msg)) fmt
+  let err op fmt =
+    Printf.ksprintf (fun msg -> invalid_arg (op ^ ": " ^ msg)) fmt
 
   (* ───── Core Types ───── *)
 
@@ -137,7 +138,10 @@ module Make (B : Backend_intf.S) = struct
           err "stride" "axis %d out of bounds for %dD tensor" i ndim
         else elem_strides.(i) * itemsize
     | None ->
-        err "stride" "stride for dimension %d, tensor does not have defined strides, call contiguous() first or check has_strides()" i
+        err "stride"
+          "stride for dimension %d, tensor does not have defined strides, call \
+           contiguous() first or check has_strides()"
+          i
 
   let dims x =
     match Symbolic_shape.eval (View.shape (B.view x)) with
@@ -163,7 +167,9 @@ module Make (B : Backend_intf.S) = struct
     match Symbolic_shape.eval_dim (View.numel (B.view x)) with
     | Some n -> n
     | None ->
-        invalid_arg "size: cannot get size of tensor with symbolic shape, bind symbolic dimensions first"
+        invalid_arg
+          "size: cannot get size of tensor with symbolic shape, bind symbolic \
+           dimensions first"
 
   let numel x = size x
   let numel_symbolic x = View.numel (B.view x)
@@ -171,8 +177,7 @@ module Make (B : Backend_intf.S) = struct
   let nbytes x =
     let itemsize = itemsize x in
     try numel x * itemsize
-    with _ ->
-      invalid_arg "nbytes: cannot compute bytes for symbolic tensor"
+    with _ -> invalid_arg "nbytes: cannot compute bytes for symbolic tensor"
 
   let offset x = View.offset (B.view x)
   let is_c_contiguous x = View.is_c_contiguous (B.view x)
@@ -202,7 +207,8 @@ module Make (B : Backend_intf.S) = struct
     | Int64 -> Int64.shift_left Int64.one shift_val
     | UInt64 -> Int64.shift_left Int64.one shift_val
     | _ ->
-        err "power_of_two" "dtype %s, not an integer type" (Dtype.to_string dtype)
+        err "power_of_two" "dtype %s, not an integer type"
+          (Dtype.to_string dtype)
 
   let ensure_no_infer ~op shape =
     Array.iter
@@ -213,7 +219,8 @@ module Make (B : Backend_intf.S) = struct
 
   let ensure_float_dtype fname x =
     if not (Dtype.is_float (dtype x)) then
-      err fname "dtype %s, expected float type (Float16, Float32, or Float64)" (Dtype.to_string (dtype x))
+      err fname "dtype %s, expected float type (Float16, Float32, or Float64)"
+        (Dtype.to_string (dtype x))
 
   let ensure_int_dtype fname x =
     if not (Dtype.is_int (dtype x)) then
@@ -281,7 +288,9 @@ module Make (B : Backend_intf.S) = struct
         with
         | Some s -> s
         | None ->
-            invalid_arg "reshape: cannot infer dimension for symbolic reshape, bind symbolic dimensions or avoid using -1"
+            invalid_arg
+              "reshape: cannot infer dimension for symbolic reshape, bind \
+               symbolic dimensions or avoid using -1"
       else new_shape
     in
     (match
@@ -311,7 +320,9 @@ module Make (B : Backend_intf.S) = struct
         shape_spec
     in
     if !infer_count > 1 then
-      invalid_arg "reshape: shape specification, multiple -1 dimensions, can only specify one unknown dimension";
+      invalid_arg
+        "reshape: shape specification, multiple -1 dimensions, can only \
+         specify one unknown dimension";
     reshape_symbolic target_shape x
 
   let broadcast_shapes shape_a shape_b =
@@ -327,7 +338,9 @@ module Make (B : Backend_intf.S) = struct
       let dim_a = if idx_a >= 0 then shape_a.(idx_a) else static_one in
       let dim_b = if idx_b >= 0 then shape_b.(idx_b) else static_one in
       let broadcast_err () =
-        err "broadcast" "cannot broadcast dimensions %s and %s, bind symbolic dimensions first"
+        err "broadcast"
+          "cannot broadcast dimensions %s and %s, bind symbolic dimensions \
+           first"
           (Symbolic_shape.to_string [| dim_a |])
           (Symbolic_shape.to_string [| dim_b |])
       in
@@ -337,16 +350,17 @@ module Make (B : Backend_intf.S) = struct
            match
              (Symbolic_shape.eval_dim dim_a, Symbolic_shape.eval_dim dim_b)
            with
-           | Some a, Some b ->
+           | Some a, Some b -> (
                if a = b then dim_a
                else if a = 1 then dim_b
                else if b = 1 then dim_a
-               else (
+               else
                  match
                    (Symbolic_shape.eval shape_a, Symbolic_shape.eval shape_b)
                  with
                  | Some sa, Some sb ->
-                     err "broadcast" "cannot broadcast %s with %s (dim %d: %d\xe2\x89\xa0%d)"
+                     err "broadcast"
+                       "cannot broadcast %s with %s (dim %d: %d\xe2\x89\xa0%d)"
                        (Shape.to_string sa) (Shape.to_string sb) i a b
                  | _ -> broadcast_err ())
            | Some 1, None -> dim_b
@@ -363,7 +377,9 @@ module Make (B : Backend_intf.S) = struct
       let rank_current = Symbolic_shape.rank current_shape in
       let rank_target = Symbolic_shape.rank target_shape in
       if rank_current > rank_target then
-        err "broadcast_to" "rank mismatch: source rank %d exceeds target rank %d, target shape must have at least as many dimensions as source"
+        err "broadcast_to"
+          "rank mismatch: source rank %d exceeds target rank %d, target shape \
+           must have at least as many dimensions as source"
           rank_current rank_target
       else
         let pad_count = rank_target - rank_current in
@@ -392,7 +408,8 @@ module Make (B : Backend_intf.S) = struct
                           | Some v -> v
                           | None -> -1)
                     in
-                    err "broadcast_to" "cannot broadcast %s to %s (dim %d: %d\xe2\x89\xa0%d)"
+                    err "broadcast_to"
+                      "cannot broadcast %s to %s (dim %d: %d\xe2\x89\xa0%d)"
                       (Shape.to_string (to_ints padded_shape))
                       (Shape.to_string (to_ints target_shape))
                       i curr_val target_val
@@ -402,7 +419,10 @@ module Make (B : Backend_intf.S) = struct
                       (Symbolic_shape.to_string [| curr_dim |])
                       (Symbolic_shape.to_string [| target_dim |]))
             | None ->
-                err "broadcast_to" "dimension %d: cannot broadcast %s to %s, bind symbolic dimensions first" i
+                err "broadcast_to"
+                  "dimension %d: cannot broadcast %s to %s, bind symbolic \
+                   dimensions first"
+                  i
                   (Symbolic_shape.to_string [| curr_dim |])
                   (Symbolic_shape.to_string [| target_dim |])
         done;
@@ -467,21 +487,22 @@ module Make (B : Backend_intf.S) = struct
 
   let astype dt x = cast dt x
   let contiguous x = B.contiguous x
-
-  let copy x =
-    B.copy x
+  let copy x = B.copy x
 
   let blit src dst =
     let ss = shape src and ds = shape dst in
     if ss <> ds then
-      err "blit" "shape mismatch %s vs %s, source and destination must have identical shapes"
+      err "blit"
+        "shape mismatch %s vs %s, source and destination must have identical \
+         shapes"
         (Shape.to_string ss) (Shape.to_string ds);
     B.assign dst src
 
   let create ctx dtype shape arr =
     let n = Array.fold_left ( * ) 1 shape in
     if Array.length arr <> n then
-      err "create" "array size, got %d elements, expected %d" (Array.length arr) n;
+      err "create" "array size, got %d elements, expected %d" (Array.length arr)
+        n;
     let kind = Dtype.to_buffer_kind dtype in
     let bigarray = Nx_buffer.create kind n in
     for i = 0 to n - 1 do
@@ -942,7 +963,9 @@ module Make (B : Backend_intf.S) = struct
     Array.iter
       (fun (before, after) ->
         if before < 0 || after < 0 then
-          invalid_arg "pad: padding values, negative values not allowed, use shrink or slice to remove elements")
+          invalid_arg
+            "pad: padding values, negative values not allowed, use shrink or \
+             slice to remove elements")
       padding_config;
     B.pad x padding_config fill_value
 
@@ -957,7 +980,8 @@ module Make (B : Backend_intf.S) = struct
     if not ((s >= 0 && s < r && e >= 0 && e < r)
             || (r = 0 && (s = 0 || start_dim = 0) && (e = -1 || end_dim = -1)))
     then
-      err "flatten" "start_dim %d or end_dim %d, out of bounds for rank %d" start_dim end_dim r;
+      err "flatten" "start_dim %d or end_dim %d, out of bounds for rank %d"
+        start_dim end_dim r;
     if s > e then
       invalid_arg "flatten: dimensions, start_dim must be <= end_dim";
     if r = 0 then reshape [| 1 |] x
@@ -977,13 +1001,17 @@ module Make (B : Backend_intf.S) = struct
       Array.fold_left (fun acc s -> if s = -1 then acc + 1 else acc) 0 sizes
     in
     if neg_one_count > 1 then
-      invalid_arg "unflatten: sizes, can only specify one unknown dimension (using -1)";
+      invalid_arg
+        "unflatten: sizes, can only specify one unknown dimension (using -1)";
     if neg_one_count = 1 then begin
       let known_product =
         Array.fold_left (fun acc s -> if s = -1 then acc else acc * s) 1 sizes
       in
       if known_product = 0 || dim_size mod known_product <> 0 then
-        err "unflatten" "cannot infer dimension from total size %d to known product %d, %d not divisible by %d, ensure total size is divisible by product of known dimensions"
+        err "unflatten"
+          "cannot infer dimension from total size %d to known product %d, %d \
+           not divisible by %d, ensure total size is divisible by product of \
+           known dimensions"
           dim_size known_product dim_size known_product;
       let inferred = dim_size / known_product in
       Array.iteri (fun i s -> if s = -1 then sizes.(i) <- inferred) sizes
@@ -1027,14 +1055,15 @@ module Make (B : Backend_intf.S) = struct
             (fun ax ->
               if ax < 0 || ax >= r then
                 err "squeeze" "axis %d out of bounds for %dD tensor" ax r;
-              if seen.(ax) then
-                err "squeeze" "axis %d, duplicate axis" ax;
+              if seen.(ax) then err "squeeze" "axis %d, duplicate axis" ax;
               seen.(ax) <- true)
             normalized;
           List.iter
             (fun ax ->
               if sh.(ax) <> 1 then
-                err "squeeze" "cannot remove dimension at axis %d (size %d), size %d≠1" ax sh.(ax) sh.(ax))
+                err "squeeze"
+                  "cannot remove dimension at axis %d (size %d), size %d≠1" ax
+                  sh.(ax) sh.(ax))
             normalized;
           let axes_set =
             List.fold_left (fun s ax -> IntSet.add ax s) IntSet.empty normalized
@@ -1062,10 +1091,11 @@ module Make (B : Backend_intf.S) = struct
       List.iter
         (fun ax ->
           if ax < 0 || ax >= output_rank then
-            err "unsqueeze" "axis %d, out of bounds for output rank %d, valid range is [%d, %d)"
+            err "unsqueeze"
+              "axis %d, out of bounds for output rank %d, valid range is [%d, \
+               %d)"
               ax output_rank (-output_rank) output_rank;
-          if seen.(ax) then
-            err "unsqueeze" "axis %d, duplicate axis" ax;
+          if seen.(ax) then err "unsqueeze" "axis %d, duplicate axis" ax;
           seen.(ax) <- true)
         normalized;
       let axes_set =
@@ -1089,11 +1119,14 @@ module Make (B : Backend_intf.S) = struct
 
   let transpose ?axes x =
     let r = ndim x in
-    let resolved = match axes with
+    let resolved =
+      match axes with
       | None -> Array.init r (fun i -> r - 1 - i)
       | Some ax_list ->
           if List.length ax_list <> r then
-            err "transpose" "axes (length %d), expected rank %d, got %d, provide exactly one axis per dimension"
+            err "transpose"
+              "axes (length %d), expected rank %d, got %d, provide exactly one \
+               axis per dimension"
               (List.length ax_list) r (List.length ax_list);
           let seen = Array.make r false in
           List.iter
@@ -1151,8 +1184,8 @@ module Make (B : Backend_intf.S) = struct
     let a1 = if axis1 < 0 then axis1 + r else axis1 in
     let a2 = if axis2 < 0 then axis2 + r else axis2 in
     if a1 < 0 || a1 >= r || a2 < 0 || a2 >= r then
-      err "swapaxes" "axes (%d, %d), out of bounds for shape %s"
-        axis1 axis2 (Shape.to_string (shape x));
+      err "swapaxes" "axes (%d, %d), out of bounds for shape %s" axis1 axis2
+        (Shape.to_string (shape x));
     if a1 = a2 then x
     else
       let axes = Array.init r Fun.id in
@@ -1163,7 +1196,9 @@ module Make (B : Backend_intf.S) = struct
   let cat_tensors ~axis tensors =
     match tensors with
     | [] ->
-        invalid_arg "concatenate: tensor list cannot be empty, provide at least one tensor"
+        invalid_arg
+          "concatenate: tensor list cannot be empty, provide at least one \
+           tensor"
     | first :: _ ->
         let first_shape = shape first in
         let ndim = Array.length first_shape in
@@ -1232,7 +1267,10 @@ module Make (B : Backend_intf.S) = struct
     Array.iteri
       (fun i r ->
         if r < 0 then
-          err "tile" "reps[%d], negative (%d<0), use positive integers (or 0 for empty result)" i r)
+          err "tile"
+            "reps[%d], negative (%d<0), use positive integers (or 0 for empty \
+             result)"
+            i r)
       reps;
     if Array.for_all (( = ) 1) reps then B.copy x_promoted
     else if Array.exists (( = ) 0) reps
@@ -1295,25 +1333,29 @@ module Make (B : Backend_intf.S) = struct
       (fun x ->
         let d = dtype x in
         if not (Dtype.equal first_dtype d) then
-          err op "expected dtype %s, got %s" (Dtype.to_string first_dtype) (Dtype.to_string d))
+          err op "expected dtype %s, got %s"
+            (Dtype.to_string first_dtype)
+            (Dtype.to_string d))
       (List.tl ts)
 
   let concatenate ?axis ts =
     match ts with
     | [] ->
-        invalid_arg "concatenate: tensor list cannot be empty, provide at least one tensor"
+        invalid_arg
+          "concatenate: tensor list cannot be empty, provide at least one \
+           tensor"
     | [ x ] -> copy x
-    | _ ->
+    | _ -> (
         check_dtypes_match ~op:"concatenate" ts;
         match axis with
-        | None ->
-            cat_tensors ~axis:0 (List.map flatten ts)
+        | None -> cat_tensors ~axis:0 (List.map flatten ts)
         | Some a ->
             let first = List.hd ts in
             let first_ndim = ndim first in
             let axis = resolve_single_axis ~ndim_opt:first_ndim first a in
             if not (List.for_all (fun x -> ndim x = first_ndim) ts) then
-              invalid_arg "concatenate: arrays must have same number of dimensions";
+              invalid_arg
+                "concatenate: arrays must have same number of dimensions";
             let first_shape = shape first in
             List.iter
               (fun x ->
@@ -1321,17 +1363,19 @@ module Make (B : Backend_intf.S) = struct
                 Array.iteri
                   (fun i d ->
                     if i <> axis && d <> first_shape.(i) then
-                      err "concatenate" "dimension %d, size %d≠%d" i d first_shape.(i))
+                      err "concatenate" "dimension %d, size %d≠%d" i d
+                        first_shape.(i))
                   s)
               (List.tl ts);
-            cat_tensors ~axis ts
+            cat_tensors ~axis ts)
 
   let stack ?axis ts =
     match ts with
     | [] -> invalid_arg "stack: tensor list cannot be empty"
     | _ ->
         let first_ndim = Array.length (shape (List.hd ts)) in
-        let axis = match axis with
+        let axis =
+          match axis with
           | None -> 0
           | Some a ->
               let a = if a < 0 then a + first_ndim + 1 else a in
@@ -1460,15 +1504,15 @@ module Make (B : Backend_intf.S) = struct
             let row = if k >= 0 then i else i - k in
             let col = if k >= 0 then i + k else i in
             v_arr.((row * cols) + col))
-    else
-      err "diag" "input, expected 1D or 2D array, got %dD" v_ndim
+    else err "diag" "input, expected 1D or 2D array, got %dD" v_ndim
 
   let arange (type a b) ctx (dtype : (a, b) Dtype.t) start stop step =
     if start >= stop && step > 0 then
-      err "arange" "range [%d, %d), empty with step=%d, ensure start < stop for positive step, or start > stop for negative step"
+      err "arange"
+        "range [%d, %d), empty with step=%d, ensure start < stop for positive \
+         step, or start > stop for negative step"
         start stop step;
-    if step = 0 then
-      invalid_arg "arange: step cannot be zero";
+    if step = 0 then invalid_arg "arange: step cannot be zero";
     let num_elements =
       if step > 0 then
         if start >= stop then 0 else (stop - start + step - 1) / step
@@ -1545,8 +1589,7 @@ module Make (B : Backend_intf.S) = struct
 
   let logspace ctx dtype ?(endpoint = true) ?(base = 10.0) start_exp stop_exp
       count =
-    if count < 0 then
-      err "logspace" "count must be >= 0, got %d" count;
+    if count < 0 then err "logspace" "count must be >= 0, got %d" count;
     if count = 0 then empty ctx dtype [| 0 |]
     else
       let exponents = linspace ctx dtype ~endpoint start_exp stop_exp count in
@@ -1561,16 +1604,18 @@ module Make (B : Backend_intf.S) = struct
 
   let geomspace ctx dtype ?(endpoint = true) start_f stop_f count =
     if start_f <= 0. || stop_f <= 0. then
-      err "geomspace" "%s, must be positive (>0), geomspace requires positive values for logarithmic spacing"
+      err "geomspace"
+        "%s, must be positive (>0), geomspace requires positive values for \
+         logarithmic spacing"
         (if start_f <= 0. then Printf.sprintf "start %g" start_f
          else Printf.sprintf "stop %g" stop_f);
-    if count < 0 then
-      err "geomspace" "count must be >= 0, got %d" count;
+    if count < 0 then err "geomspace" "count must be >= 0, got %d" count;
     if count = 0 then empty ctx dtype [| 0 |]
     else if count = 1 then full ctx dtype [| 1 |] start_f
     else
-      exp (linspace ctx dtype ~endpoint (Stdlib.log start_f) (Stdlib.log stop_f)
-             count)
+      exp
+        (linspace ctx dtype ~endpoint (Stdlib.log start_f) (Stdlib.log stop_f)
+           count)
 
   let meshgrid ?(indexing = `xy) x y =
     let x_shape = shape x in
@@ -1592,8 +1637,7 @@ module Make (B : Backend_intf.S) = struct
     let k_val = match k with Some v -> v | None -> 0 in
     let sh = shape x in
     let nd = Array.length sh in
-    if nd < 2 then
-      err op "input requires at least 2D tensor";
+    if nd < 2 then err op "input requires at least 2D tensor";
     let rows = sh.(nd - 2) in
     let cols = sh.(nd - 1) in
     let row_idx = reshape [| rows; 1 |] (arange (B.context x) int32 0 rows 1) in
@@ -1662,12 +1706,15 @@ module Make (B : Backend_intf.S) = struct
     let t_shape = shape t in
     let idx_shape = shape indices in
     if Array.length t_shape <> Array.length idx_shape then
-      err "take_along_axis" "cannot reshape %s to %s" (Shape.to_string idx_shape) (Shape.to_string t_shape);
+      err "take_along_axis" "cannot reshape %s to %s"
+        (Shape.to_string idx_shape)
+        (Shape.to_string t_shape);
     Array.iteri
       (fun i dim ->
         if i <> axis && dim <> idx_shape.(i) then
-          err "take_along_axis" "shape, dimension %d: indices has %d but tensor has %d"
-            i idx_shape.(i) dim)
+          err "take_along_axis"
+            "shape, dimension %d: indices has %d but tensor has %d" i
+            idx_shape.(i) dim)
       t_shape;
     let out = empty (B.context t) (dtype t) idx_shape in
     B.gather ~out t indices ~axis;
@@ -1699,18 +1746,20 @@ module Make (B : Backend_intf.S) = struct
         View { start = s; stop = e; step = 1; dim_len = Int.max 0 (e - s) }
     | Rs (start, stop, step) ->
         if step = 0 then
-          invalid_arg "slice: step cannot be zero, use positive step for forward slicing or negative for reverse";
+          invalid_arg
+            "slice: step cannot be zero, use positive step for forward slicing \
+             or negative for reverse";
         let s = normalize_index dim_size start in
         let e = normalize_index dim_size stop in
         let len, actual_stop =
           if step > 0 then
             let s = Int.max 0 (Int.min s dim_size) in
             let e = Int.max 0 (Int.min e dim_size) in
-            (if s >= e then 0 else ((e - 1 - s) / step) + 1), e
+            ((if s >= e then 0 else ((e - 1 - s) / step) + 1), e)
           else
             let s = Int.min (dim_size - 1) (Int.max (-1) s) in
             let e = Int.min (dim_size - 1) (Int.max (-1) e) in
-            (if s <= e then 0 else ((s - e - 1) / -step) + 1), e
+            ((if s <= e then 0 else ((s - e - 1) / -step) + 1), e)
         in
         View { start = s; stop = actual_stop; step; dim_len = len }
     | L indices ->
@@ -1731,8 +1780,7 @@ module Make (B : Backend_intf.S) = struct
           match spec with
           | N -> (New_axis :: acc, dim)
           | _ ->
-              if dim >= ndim_in then
-                invalid_arg "slice: too many indices";
+              if dim >= ndim_in then invalid_arg "slice: too many indices";
               (normalize_slice_spec input_shape.(dim) spec :: acc, dim + 1))
         ([], 0) specs
     in
@@ -1873,10 +1921,11 @@ module Make (B : Backend_intf.S) = struct
             err "get" "indices, too many for shape %s" (Shape.to_string x_shape);
           let idx' = normalize_index x_shape.(dim) idx in
           if idx' < 0 || idx' >= x_shape.(dim) then
-            err "get" "index [%s] out of bounds for shape %s, index %d at dim %d: %d not in [0, %d)"
+            err "get"
+              "index [%s] out of bounds for shape %s, index %d at dim %d: %d \
+               not in [0, %d)"
               (String.concat "," (List.map string_of_int indices))
-              (Shape.to_string x_shape)
-              dim dim idx' x_shape.(dim);
+              (Shape.to_string x_shape) dim dim idx' x_shape.(dim);
           idx')
         indices
     in
@@ -1891,7 +1940,9 @@ module Make (B : Backend_intf.S) = struct
             err "set" "indices, too many for shape %s" (Shape.to_string x_shape);
           let idx' = normalize_index x_shape.(dim) idx in
           if idx' < 0 || idx' >= x_shape.(dim) then
-            err "set" "index %d at dimension %d, out of bounds for shape %s, index %d at dim %d: %d not in [0, %d)"
+            err "set"
+              "index %d at dimension %d, out of bounds for shape %s, index %d \
+               at dim %d: %d not in [0, %d)"
               idx dim (Shape.to_string x_shape) dim dim idx' x_shape.(dim);
           idx')
         indices
@@ -1964,8 +2015,8 @@ module Make (B : Backend_intf.S) = struct
     if nd = 0 then
       invalid_arg "index_put: tensor rank, cannot index into scalar tensor";
     if Array.length indices <> nd then
-      err "index_put" "indices, expected %d index tensors, got %d"
-        nd (Array.length indices);
+      err "index_put" "indices, expected %d index tensors, got %d" nd
+        (Array.length indices);
     let indices_bc =
       Array.map (fun idx ->
           if dtype idx = Int32 then idx else astype Int32 idx)
@@ -1977,7 +2028,8 @@ module Make (B : Backend_intf.S) = struct
         (fun axis idx ->
           let n = t_shape.(axis) in
           if n = 0 && numel idx <> 0 then
-            err "index_put" "axis %d, cannot index into zero-sized dimension" axis;
+            err "index_put" "axis %d, cannot index into zero-sized dimension"
+              axis;
           if numel idx = 0 then idx
           else
             match mode with
@@ -2021,10 +2073,11 @@ module Make (B : Backend_intf.S) = struct
     let t_shape = shape t in
     let idx_shape = shape indices in
     if Array.length t_shape <> Array.length idx_shape then
-      err "put_along_axis" "cannot reshape %s to %s" (Shape.to_string idx_shape) (Shape.to_string t_shape);
+      err "put_along_axis" "cannot reshape %s to %s"
+        (Shape.to_string idx_shape)
+        (Shape.to_string t_shape);
     let values =
-      if shape values = idx_shape then values
-      else broadcast_to idx_shape values
+      if shape values = idx_shape then values else broadcast_to idx_shape values
     in
     blit
       (B.scatter ~mode:`Set ~unique_indices:false t ~indices ~updates:values
@@ -2161,8 +2214,7 @@ module Make (B : Backend_intf.S) = struct
         bounds.(n) <- axis_size;
         Array.to_list (Array.init n (fun i -> make_slice bounds.(i) bounds.(i+1)))
     | `Count n ->
-        if n <= 0 then
-          err "array_split" "sections must be >= 1, got %d" n;
+        if n <= 0 then err "array_split" "sections must be >= 1, got %d" n;
         let base = axis_size / n in
         let rem = axis_size mod n in
         let splits = Array.make n x in
@@ -2178,7 +2230,9 @@ module Make (B : Backend_intf.S) = struct
     let axis = resolve_single_axis x axis in
     let axis_size = dim axis x in
     if axis_size mod sections <> 0 then
-      err "split" "cannot divide evenly axis %d (size %d) to %d sections, %d %% %d = %d, use array_split for uneven division"
+      err "split"
+        "cannot divide evenly axis %d (size %d) to %d sections, %d %% %d = %d, \
+         use array_split for uneven division"
         axis axis_size sections axis_size sections (axis_size mod sections);
     array_split ~axis (`Count sections) x
 
@@ -2239,10 +2293,13 @@ module Make (B : Backend_intf.S) = struct
 
   let validate_random_float_params op dtype shape =
     if not (Dtype.is_float dtype) then
-      err op "dtype %s, not a float type, rand/randn only support Float16, Float32, Float64"
+      err op
+        "dtype %s, not a float type, rand/randn only support Float16, Float32, \
+         Float64"
         (Dtype.to_string dtype);
     if Array.exists (fun x -> x < 0) shape then
-      err op "invalid shape %s, dimensions must be non-negative" (Shape.to_string shape)
+      err op "invalid shape %s, dimensions must be non-negative"
+        (Shape.to_string shape)
 
   let rand ctx dtype shape =
     validate_random_float_params "rand" dtype shape;
@@ -2290,31 +2347,29 @@ module Make (B : Backend_intf.S) = struct
       cast dtype result
 
   let randint ctx dtype ?(high = 10) shape low =
-    if low >= high then
-      err "randint" "range, low=%d >= high=%d" low high;
+    if low >= high then err "randint" "range, low=%d >= high=%d" low high;
     if not (Dtype.is_int dtype) then
       invalid_arg "randint: dtype, only integer dtypes supported";
     let u = rand ctx Dtype.float32 shape in
     astype dtype
-      (add (mul u (scalar ctx Dtype.float32 (float_of_int (high - low))))
+      (add
+         (mul u (scalar ctx Dtype.float32 (float_of_int (high - low))))
          (scalar ctx Dtype.float32 (float_of_int low)))
 
   let bernoulli ctx ~p shape =
-    if p < 0.0 || p > 1.0 then
-      invalid_arg "bernoulli: p must be in [0, 1]";
+    if p < 0.0 || p > 1.0 then invalid_arg "bernoulli: p must be in [0, 1]";
     if Array.exists (fun x -> x < 0) shape then
-      err "bernoulli" "invalid shape %s, dimensions must be non-negative" (Shape.to_string shape);
+      err "bernoulli" "invalid shape %s, dimensions must be non-negative"
+        (Shape.to_string shape);
     cmplt (rand ctx Dtype.float32 shape) (scalar ctx Dtype.float32 p)
 
   let permutation ctx n =
-    if n <= 0 then
-      invalid_arg "permutation: n must be positive";
+    if n <= 0 then invalid_arg "permutation: n must be positive";
     argsort (rand ctx Dtype.float32 [| n |]) ~axis:0 ~descending:false
 
   let shuffle ctx x =
     let s = shape x in
-    if Array.length s = 0 then x
-    else take ~axis:0 (permutation ctx s.(0)) x
+    if Array.length s = 0 then x else take ~axis:0 (permutation ctx s.(0)) x
 
   let categorical (type a b) ctx ?(axis = -1) ?shape:(batch_shape = [||])
       (logits : (a, b) t) =
@@ -2345,17 +2400,15 @@ module Make (B : Backend_intf.S) = struct
     | BFloat16 -> run_float Dtype.float32 1e-2
     | Float8_e4m3 | Float8_e5m2 ->
         invalid_arg "categorical: logits, float8 logits not supported"
-    | _ ->
-        invalid_arg "categorical: logits requires floating point dtype"
+    | _ -> invalid_arg "categorical: logits requires floating point dtype"
 
   let truncated_normal (type a b) ctx (dtype : (a, b) Dtype.t) ~lower ~upper
       shape =
     if lower >= upper then
       invalid_arg "truncated_normal: bounds, lower must be less than upper";
     (match dtype with
-     | Float16 | Float32 | Float64 | BFloat16 -> ()
-     | _ ->
-         invalid_arg "truncated_normal: dtype must be floating point");
+    | Float16 | Float32 | Float64 | BFloat16 -> ()
+    | _ -> invalid_arg "truncated_normal: dtype must be floating point");
     let lo = scalar ctx Dtype.float64 lower |> astype dtype in
     let hi = scalar ctx Dtype.float64 upper |> astype dtype in
     let has_remaining mask =
@@ -2369,12 +2422,12 @@ module Make (B : Backend_intf.S) = struct
     let rec fill acc remaining attempt =
       if not (has_remaining remaining) then acc
       else if attempt > 1000 then
-        invalid_arg "truncated_normal: generation, failed to find samples within bounds after 1000 tries"
+        invalid_arg
+          "truncated_normal: generation, failed to find samples within bounds \
+           after 1000 tries"
       else
         let c = randn ctx dtype shape in
-        let within =
-          logical_and (greater_equal c lo) (less_equal c hi)
-        in
+        let within = logical_and (greater_equal c lo) (less_equal c hi) in
         let take_new = logical_and remaining within in
         fill (where take_new c acc)
           (logical_and remaining (logical_not within))
@@ -2409,7 +2462,9 @@ module Make (B : Backend_intf.S) = struct
               match Symbolic_shape.eval s with
               | Some s -> s
               | None ->
-                  invalid_arg "matmul: cannot compute output shape with symbolic dimensions"
+                  invalid_arg
+                    "matmul: cannot compute output shape with symbolic \
+                     dimensions"
             in
             empty (B.context a) (B.dtype a) s
     in
@@ -2456,8 +2511,7 @@ module Make (B : Backend_intf.S) = struct
       let a = Option.value axis2 ~default:(nd - 1) in
       if a < 0 then nd + a else a
     in
-    if ax1 = ax2 then
-      invalid_arg "diagonal: axes must be different";
+    if ax1 = ax2 then invalid_arg "diagonal: axes must be different";
     let perm =
       let others =
         List.filter (fun a -> a <> ax1 && a <> ax2) (List.init nd Fun.id)
@@ -2517,13 +2571,13 @@ module Make (B : Backend_intf.S) = struct
     | Complex128 ->
         extract (x : (Complex.t, complex64_elt) t) Dtype.float64
           (fun c -> field c)
-    | _ ->
-        err op "dtype, input must be complex64 or complex128"
+    | _ -> err op "dtype, input must be complex64 or complex128"
 
   let complex (type a b) ~(real : (a, b) t) ~(imag : (a, b) t) =
     let s = shape real in
     if s <> shape imag then
-      err "complex" "cannot reshape %s to %s" (Shape.to_string (shape imag)) (Shape.to_string s);
+      err "complex" "cannot reshape %s to %s"
+        (Shape.to_string (shape imag))
     let size = array_prod s in
     match dtype real with
     | Float32 ->
@@ -2569,7 +2623,8 @@ module Make (B : Backend_intf.S) = struct
     in
     let fa = flatten a' in
     let fb = flatten b' in
-    if numel fa <> numel fb then invalid_arg "vdot: different number of elements";
+    if numel fa <> numel fb then
+      invalid_arg "vdot: different number of elements";
     match dtype a with
     | (Complex64 | Complex128) when dtype a = dtype b ->
         sum (mul (conjugate fa) fb)
@@ -2695,8 +2750,7 @@ module Make (B : Backend_intf.S) = struct
                    || (c >= '0' && c <= '9') || c = '_' ->
                 loop (idx + 1) (Axis c :: acc) ell
             | c ->
-                invalid_arg
-                  (Printf.sprintf "einsum: invalid character '%c'" c)
+                invalid_arg (Printf.sprintf "einsum: invalid character '%c'" c)
         in
         loop 0 [] false
 
@@ -2740,8 +2794,8 @@ module Make (B : Backend_intf.S) = struct
             if s.(ax1) <> s.(ax2) then
               invalid_arg
                 (Printf.sprintf
-                   "einsum: index var '%c' must have consistent dimensions \
-                    (%d vs %d)"
+                   "einsum: index var '%c' must have consistent dimensions (%d \
+                    vs %d)"
                    c s.(ax1) s.(ax2));
             let t' = diagonal ~axis1:ax1 ~axis2:ax2 t in
             let rec remove_at i = function
@@ -2956,8 +3010,7 @@ module Make (B : Backend_intf.S) = struct
       | _ ->
           let input_tokens, output_opt = parse_equation subscripts in
           if Array.length input_tokens <> n_ops then
-            invalid_arg
-              "einsum: number of inputs must equal number of operands";
+            invalid_arg "einsum: number of inputs must equal number of operands";
           let ell_rank =
             let max_rank = ref 0 in
             for i = 0 to n_ops - 1 do
@@ -3231,8 +3284,8 @@ module Make (B : Backend_intf.S) = struct
           | _ ->
               invalid_arg
                 (Printf.sprintf
-                   "multi_dot: argument %d must be 1D (endpoints) or 2D \
-                    matrix" idx)
+                   "multi_dot: argument %d must be 1D (endpoints) or 2D matrix"
+                   idx)
         in
         for i = 0 to n - 1 do
           let rows, cols = matrix_dims i in
@@ -3287,8 +3340,7 @@ module Make (B : Backend_intf.S) = struct
       let ax = Option.value axis ~default:(-1) in
       if ax < 0 then ndim a + ax else ax
     in
-    if axis >= ndim a then
-      invalid_arg "cross: axis out of bounds";
+    if axis >= ndim a then invalid_arg "cross: axis out of bounds";
     if (shape a).(axis) <> 3 then invalid_arg "cross: axis dim not 3";
     if (shape b).(axis) <> 3 then invalid_arg "cross: axis dim not 3";
     let at i t =
@@ -3321,8 +3373,7 @@ module Make (B : Backend_intf.S) = struct
   let check_square ~op a =
     let sh = shape a in
     let n = Array.length sh in
-    if n < 2 then
-      err op "input requires at least 2D array";
+    if n < 2 then err op "input requires at least 2D array";
     if sh.(n - 1) <> sh.(n - 2) then
       invalid_arg (Printf.sprintf "%s: coefficient matrix must be square" op)
 
@@ -3361,18 +3412,16 @@ module Make (B : Backend_intf.S) = struct
     check_square ~op:"eig" a;
     check_float_or_complex ~op:"eig" a;
     match B.eig ~vectors:true a with
-    | vals, Some vecs -> vals, vecs
-    | _ ->
-        invalid_arg "eig: result, expected eigenvectors"
+    | vals, Some vecs -> (vals, vecs)
+    | _ -> invalid_arg "eig: result, expected eigenvectors"
 
   let eigh ?uplo a =
     check_square ~op:"eigh" a;
     check_real ~op:"eigh" a;
     let _ = uplo in
     match B.eigh ~vectors:true a with
-    | vals, Some vecs -> vals, vecs
-    | _ ->
-        invalid_arg "eigh: result, expected eigenvectors"
+    | vals, Some vecs -> (vals, vecs)
+    | _ -> invalid_arg "eigh: result, expected eigenvectors"
 
   let eigvals a =
     check_square ~op:"eigvals" a;
@@ -3722,10 +3771,8 @@ module Make (B : Backend_intf.S) = struct
     let sb = shape b in
     let ra = Array.length sa in
     let rb = Array.length sb in
-    if rb = 0 then
-      invalid_arg "tensorsolve: b must have at least one dimension";
-    if ra < rb then
-      invalid_arg "tensorsolve: a, rank must be >= rank of b";
+    if rb = 0 then invalid_arg "tensorsolve: b must have at least one dimension";
+    if ra < rb then invalid_arg "tensorsolve: a, rank must be >= rank of b";
     let axes_for_b =
       match axes with
       | None -> Array.init rb (fun i -> ra - rb + i)
@@ -3739,8 +3786,7 @@ module Make (B : Backend_intf.S) = struct
               let axis = if ax < 0 then ax + ra else ax in
               if axis < 0 || axis >= ra then
                 err "tensorsolve" "axis %d out of bounds for %dD tensor" ax ra;
-              if seen.(axis) then
-                err "tensorsolve" "axis %d, repeated" ax;
+              if seen.(axis) then err "tensorsolve" "axis %d, repeated" ax;
               seen.(axis) <- true;
               axis)
             (Array.of_list axes)
@@ -3766,11 +3812,14 @@ module Make (B : Backend_intf.S) = struct
     let free_shape = Array.sub ps 0 nf in
     let rhs_shape = Array.sub ps nf rb in
     if rhs_shape <> sb then
-      err "tensorsolve" "cannot reshape %s to %s" (Shape.to_string rhs_shape) (Shape.to_string sb);
+      err "tensorsolve" "cannot reshape %s to %s"
+        (Shape.to_string rhs_shape)
+        (Shape.to_string sb);
     let rows = array_prod free_shape in
     let cols = array_prod rhs_shape in
     if rows <> cols then
-      invalid_arg "tensorsolve: a, leading dimensions must match trailing dimensions";
+      invalid_arg
+        "tensorsolve: a, leading dimensions must match trailing dimensions";
     let a_mat = reshape [| rows; cols |] a_perm in
     let b_vec = reshape [| rows |] b in
     let solution =
@@ -3789,13 +3838,16 @@ module Make (B : Backend_intf.S) = struct
       invalid_arg "tensorinv: input must have at least one dimension";
     let ind = Option.value ind ~default:(rank / 2) in
     if ind <= 0 || ind >= rank then
-      invalid_arg "tensorinv: ind must split dimensions into two non-empty groups";
+      invalid_arg
+        "tensorinv: ind must split dimensions into two non-empty groups";
     let left = Array.sub sh 0 ind in
     let right = Array.sub sh ind (rank - ind) in
     let ls = array_prod left in
     let rs = array_prod right in
     if ls <> rs then
-      invalid_arg "tensorinv: input, leading and trailing dimensions must have equal product";
+      invalid_arg
+        "tensorinv: input, leading and trailing dimensions must have equal \
+         product";
     let inv_mat =
       try inv (reshape [| ls; rs |] a)
       with Invalid_argument _ -> pinv (reshape [| ls; rs |] a)
@@ -4358,7 +4410,8 @@ module Make (B : Backend_intf.S) = struct
             match View.strides_opt view with
             | Some s -> s
             | None ->
-                invalid_arg "pp_data: cannot print non-contiguous symbolic tensor"
+                invalid_arg
+                  "pp_data: cannot print non-contiguous symbolic tensor"
           in
           let offset = Shape.ravel_index md_index strides + View.offset view in
           if offset < 0 || offset >= Nx_buffer.length buffer then

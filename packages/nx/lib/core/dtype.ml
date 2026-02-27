@@ -400,7 +400,8 @@ let to_bigarray_kind : type a b. (a, b) t -> (a, b) Bigarray.kind = function
   | Complex128 -> Bigarray.Complex64
   | BFloat16 | Float8_e4m3 | Float8_e5m2 | Int4 | UInt4 | UInt32 | UInt64 | Bool
     ->
-      invalid_arg "Dtype.to_bigarray_kind: extended type not supported by Bigarray"
+      invalid_arg
+        "Dtype.to_bigarray_kind: extended type not supported by Bigarray"
 
 (* ───── Equality ───── *)
 

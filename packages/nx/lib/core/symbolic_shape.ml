@@ -205,8 +205,8 @@ let resolve_reshape ~from_shape ~to_shape =
             | Some n when n > 0 -> known_product := !known_product * n
             | Some n ->
                 invalid_arg
-                  (Printf.sprintf "resolve_reshape: dimension %d has invalid size %d"
-                     i n)
+                  (Printf.sprintf
+                     "resolve_reshape: dimension %d has invalid size %d" i n)
             | None -> () (* Keep symbolic dimension as is *))
         to_shape;
 

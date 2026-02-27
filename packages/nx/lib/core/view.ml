@@ -220,8 +220,8 @@ let expand view new_shape =
                          if b = 0 && e = 1 then (0, new_arr.(i))
                          else
                            err "expand"
-                             "masked singleton bounds [%d,%d] incompatible with \
-                              expansion"
+                             "masked singleton bounds [%d,%d] incompatible \
+                              with expansion"
                              b e
                        else (b, e))
                      m)
@@ -269,8 +269,7 @@ let reshape view new_shape =
         (* Check size compatibility *)
         if old_numel <> new_numel && old_numel <> 0 && new_numel <> 0 then
           err "reshape" "cannot reshape %s to %s" (Shape.to_string old_arr)
-            (Shape.to_string new_arr)
-          (* Handle zero-size tensors *)
+            (Shape.to_string new_arr) (* Handle zero-size tensors *)
         else if Array.exists (( = ) 0) old_arr || Array.exists (( = ) 0) new_arr
         then create ~offset:0 new_shape
           (* Check for masks - these complicate reshape *)
@@ -545,15 +544,15 @@ let shrink view arg =
         Array.exists2
           (fun (b, e) s -> b < 0 || e < 0 || b > s || e > s || b >= e)
           arg shape_arr
-      then
-        invalid_arg "shrink: bounds must be within shape and start < end"
+      then invalid_arg "shrink: bounds must be within shape and start < end"
       else unsafe_resize view arg None
 
 let flip view flip_axes_bools =
   let ndim = Symbolic_shape.rank view.shape in
   if Array.length flip_axes_bools <> ndim then
     err "flip" "boolean array length %d != ndim %d"
-      (Array.length flip_axes_bools) ndim;
+      (Array.length flip_axes_bools)
+      ndim;
 
   match eval_shape_opt view.shape with
   | None ->

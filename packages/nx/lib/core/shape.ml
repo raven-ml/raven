@@ -72,9 +72,8 @@ let unravel_index k shape =
 let unravel_index_into k shape result =
   let n = Array.length shape in
   if n = 0 then (
-    if k <> 0 then
-      err "unravel_index_into" "k=%d out of bounds for scalar" k
-    (* else: k=0 for scalar, result stays empty *))
+    if k <> 0 then err "unravel_index_into" "k=%d out of bounds for scalar" k
+      (* else: k=0 for scalar, result stays empty *))
   else if Array.exists (( = ) 0) shape then
     if
       (* zero-size tensor; only k=0 is allowed *)
@@ -121,8 +120,7 @@ let resolve_neg_one current_shape new_shape_spec =
       if current_numel = 0 then
         Array.map (fun x -> if x = -1 then 0 else x) new_shape_spec
       else
-        invalid_arg
-          "reshape: cannot infer -1 from shape with 0-size dimensions"
+        invalid_arg "reshape: cannot infer -1 from shape with 0-size dimensions"
     else if current_numel mod specified_numel <> 0 then
       err "reshape" "cannot reshape %d elements into shape with %d elements"
         current_numel specified_numel
