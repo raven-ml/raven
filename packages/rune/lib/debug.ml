@@ -305,7 +305,7 @@ let debug_handler () =
         | E_fdiv { out; a; b } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
-                fdiv_internal ~out a b;
+                div ~out a b;
                 log_operation !context_stack "div"
                   [ Tensor_ref a; Tensor_ref b ]
                   (Tensor_ref out);
@@ -460,7 +460,7 @@ let debug_handler () =
         | E_idiv { out; a; b } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
-                idiv_internal ~out a b;
+                div ~out a b;
                 log_operation !context_stack "idiv"
                   [ Tensor_ref a; Tensor_ref b ]
                   (Tensor_ref out);

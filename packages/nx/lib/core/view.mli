@@ -16,18 +16,12 @@ type t
 (** {1:constructors Construction} *)
 
 val create :
-  ?offset:int ->
-  ?strides:int array ->
-  ?mask:(int * int) array ->
-  Symbolic_shape.t ->
-  t
+  ?offset:int -> ?strides:int array -> ?mask:(int * int) array -> int array -> t
 (** [create ?offset ?strides ?mask shape] is a view over [shape].
 
     Defaults:
     - [offset] defaults to [0].
-    - [strides] defaults to C-contiguous strides when [shape] is concrete.
-    - For symbolic shapes with default strides, placeholder unit strides are
-      used.
+    - [strides] defaults to C-contiguous strides derived from [shape].
     - [mask] defaults to [None] (all indices valid).
 
     Mask bounds are half-open intervals [(start, end)] per dimension.
@@ -36,13 +30,13 @@ val create :
     and no mask.
 
     {b Warning.} If explicit [strides] or [mask] lengths do not match
-    [Symbolic_shape.rank shape], downstream array checks may raise
-    [Invalid_argument]. *)
+    [Array.length shape], downstream array checks may raise [Invalid_argument].
+*)
 
 (** {1:accessors Accessors} *)
 
-val shape : t -> Symbolic_shape.t
-(** [shape v] is [v]'s shape expression. *)
+val shape : t -> int array
+(** [shape v] is [v]'s shape. *)
 
 val strides : t -> int array
 (** [strides v] is [v]'s stride vector. *)
@@ -51,17 +45,14 @@ val offset : t -> int
 (** [offset v] is [v]'s linear base offset. *)
 
 val ndim : t -> int
-(** [ndim v] is [Symbolic_shape.rank (shape v)]. *)
+(** [ndim v] is [Array.length (shape v)]. *)
 
-val numel : t -> Symbolic_shape.dim
-(** [numel v] is the symbolic product of dimensions in [shape v].
+val numel : t -> int
+(** [numel v] is the product of dimensions in [shape v].
 
-    [numel] is symbolic when needed; it does not require full binding. *)
+    [numel] of a scalar ([ndim v = 0]) is [1]. *)
 
-val offset_dim : t -> Symbolic_shape.dim
-(** [offset_dim v] is [offset v] lifted to a symbolic dimension. *)
-
-val dim : int -> t -> Symbolic_shape.dim
+val dim : int -> t -> int
 (** [dim axis v] is dimension [axis] of [v].
 
     Raises [Invalid_argument] if [axis] is outside [[0; ndim v - 1]]. *)
@@ -87,8 +78,7 @@ val can_get_strides : t -> bool
 (** [can_get_strides v] is [true] iff [strides_opt v] is [Some _]. *)
 
 val is_materializable : t -> bool
-(** [is_materializable v] is [true] iff [shape v] is static and
-    [can_get_strides v] is [true]. *)
+(** [is_materializable v] is [true] iff [can_get_strides v] is [true]. *)
 
 (** {1:indexing Indexing} *)
 
@@ -109,7 +99,7 @@ val is_valid : t -> int array -> bool
 
 (** {1:transform Transformations} *)
 
-val reshape : t -> Symbolic_shape.t -> t
+val reshape : t -> int array -> t
 (** [reshape v new_shape] returns a view over the same storage with [new_shape]
     when stride-compatible.
 
@@ -118,13 +108,12 @@ val reshape : t -> Symbolic_shape.t -> t
     - Reshape by adding/removing singleton dimensions.
     - Certain merge/split patterns on compatible strided layouts.
     - All-zero-stride broadcast layouts.
-    - Symbolic reshapes only when [v] is C-contiguous.
 
     Raises [Invalid_argument] if reshape cannot be represented, including size
-    mismatches (except zero-size special cases), masked views, symbolic
-    non-contiguous views, or incompatible stride patterns. *)
+    mismatches (except zero-size special cases), masked views, or incompatible
+    stride patterns. *)
 
-val expand : t -> Symbolic_shape.t -> t
+val expand : t -> int array -> t
 (** [expand v new_shape] broadcasts singleton dimensions to [new_shape] by
     setting corresponding strides to [0].
 
@@ -143,10 +132,9 @@ val shrink : t -> (int * int) array -> t
 (** [shrink v bounds] restricts [v] to per-axis half-open intervals
     [(start, end)].
 
-    Bounds must satisfy [0 <= start < end <= size] for each concrete size.
+    Bounds must satisfy [0 <= start < end <= size] for each dimension.
 
-    Raises [Invalid_argument] if bounds are malformed, rank mismatches, or
-    [shape v] is not fully concrete. *)
+    Raises [Invalid_argument] if bounds are malformed or rank mismatches. *)
 
 val pad : t -> (int * int) array -> t
 (** [pad v padding] adds virtual padding [(before, after)] per axis.
@@ -156,12 +144,10 @@ val pad : t -> (int * int) array -> t
 
     Raises [Invalid_argument] if:
     - [padding] rank mismatches [ndim v].
-    - A padding component is negative.
-    - [shape v] is not fully concrete. *)
+    - A padding component is negative. *)
 
 val flip : t -> bool array -> t
 (** [flip v axes_to_flip] reverses selected axes by negating strides and
     shifting offset.
 
-    Raises [Invalid_argument] if [axes_to_flip] rank mismatches [ndim v] or if
-    [shape v] is not fully concrete. *)
+    Raises [Invalid_argument] if [axes_to_flip] rank mismatches [ndim v]. *)

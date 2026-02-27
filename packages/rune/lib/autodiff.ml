@@ -175,7 +175,7 @@ let make_jvp_handler dual_map =
       | E_fdiv { out; a; b } ->
           Some
             (fun k ->
-              fdiv_internal ~out a b;
+              div ~out a b;
               let da = get_dual a in
               let db = get_dual b in
               (* d(a/b) = da/b - a*db/b^2 *)
@@ -995,7 +995,7 @@ let make_vjp_handler tape seed_output =
       | E_fdiv { out; a; b } ->
           Some
             (fun k ->
-              fdiv_internal ~out a b;
+              div ~out a b;
               let fwd = continue k () in
               let twg_a = get_or_init a in
               let twg_b = get_or_init b in

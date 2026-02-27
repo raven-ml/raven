@@ -8,8 +8,6 @@
 module Dtype = Nx_core.Dtype
 module View = Nx_core.View
 module Nx_ox = Nx_core.Make_frontend (Nx_backend)
-module Symbolic_shape = Nx_core.Symbolic_shape
-
 let failed = ref 0
 let passed = ref 0
 
@@ -27,10 +25,7 @@ let check_int64 name exp act = check name (Int64.equal exp act)
 let check_int name exp act = check name (exp = act)
 let check_bool name exp act = check name (exp = act)
 
-let numel v =
-  match Symbolic_shape.eval_dim (View.numel v) with
-  | Some n -> n
-  | None -> failwith "symbolic numel not evaluable"
+let numel v = View.numel v
 
 let test_buffer_float64 () =
   let t = Nx_ox.empty (Nx_backend.create_context ()) Dtype.Float64 [| 5 |] in
@@ -1071,9 +1066,7 @@ let test_pad_float64_2d () =
   let x = Nx_ox.create ctx Dtype.Float64 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let y = Nx_backend.pad x [| (1, 2); (2, 1) |] (-1.0) in
   let shape_y =
-    match Symbolic_shape.eval (View.shape (Nx_backend.view y)) with
-    | Some s -> s
-    | None -> failwith "shape not evaluable"
+    View.shape (Nx_backend.view y)
   in
   check "pad_float64_2d: shape0" (shape_y.(0) = 5);
   check "pad_float64_2d: shape1" (shape_y.(1) = 5);
@@ -1094,9 +1087,7 @@ let test_pad_float64_permuted_view () =
   let x = Nx_backend.permute base [| 1; 0 |] in
   let y = Nx_backend.pad x [| (1, 0); (0, 1) |] 0.0 in
   let shape_y =
-    match Symbolic_shape.eval (View.shape (Nx_backend.view y)) with
-    | Some s -> s
-    | None -> failwith "shape not evaluable"
+    View.shape (Nx_backend.view y)
   in
   check "pad_float64_perm: shape0" (shape_y.(0) = 4);
   check "pad_float64_perm: shape1" (shape_y.(1) = 3);
@@ -1429,7 +1420,7 @@ let test_fold_int32_1d_overlap () =
   let ctx = Nx_backend.create_context () in
   (* Shape [N=1, C*K=2, L=2] where C=1, K=2 *)
   let x_flat = Nx_ox.create ctx Dtype.Int32 [|4|] [| 1l; 3l; 2l; 4l |] in
-  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 2; 2 |]) in
+  let x = Nx_backend.reshape x_flat [| 1; 2; 2 |] in
   let y =
     Nx_backend.fold x
       ~output_size:[| 3 |]
@@ -1439,9 +1430,7 @@ let test_fold_int32_1d_overlap () =
       ~padding:[| (0, 0) |]
   in
   let shape_y =
-    match Symbolic_shape.eval (View.shape (Nx_backend.view y)) with
-    | Some s -> s
-    | None -> failwith "shape not evaluable"
+    View.shape (Nx_backend.view y)
   in
   check "fold_int32_1d_overlap: shape0" (shape_y.(0) = 1);
   check "fold_int32_1d_overlap: shape1" (shape_y.(1) = 1);
@@ -1455,7 +1444,7 @@ let test_fold_int32_1d_padding_stride () =
   let ctx = Nx_backend.create_context () in
   (* Shape [N=1, C*K=3, L=2] where C=1, K=3 *)
   let x_flat = Nx_ox.create ctx Dtype.Int32 [|6|] [| 10l; 20l; 30l; 40l; 50l; 60l |] in
-  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 3; 2 |]) in
+  let x = Nx_backend.reshape x_flat [| 1; 3; 2 |] in
   let y =
     Nx_backend.fold x
       ~output_size:[| 4 |]
@@ -1473,7 +1462,7 @@ let test_fold_int32_1d_padding_stride () =
 let test_unfold_int32_1d_basic () =
   let ctx = Nx_backend.create_context () in
   let x_flat = Nx_ox.create ctx Dtype.Int32 [|4|] [| 1l; 2l; 3l; 4l |] in
-  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let x = Nx_backend.reshape x_flat [| 1; 1; 4 |] in
   let y =
     Nx_backend.unfold x
       ~kernel_size:[| 2 |]
@@ -1482,9 +1471,7 @@ let test_unfold_int32_1d_basic () =
       ~padding:[| (0, 0) |]
   in
   let shape_y =
-    match Symbolic_shape.eval (View.shape (Nx_backend.view y)) with
-    | Some s -> s
-    | None -> failwith "shape not evaluable"
+    View.shape (Nx_backend.view y)
   in
   check "unfold_int32_1d_basic: shape0" (shape_y.(0) = 1);
   check "unfold_int32_1d_basic: shape1" (shape_y.(1) = 2);
@@ -1500,7 +1487,7 @@ let test_unfold_int32_1d_basic () =
 let test_unfold_int32_1d_padding_stride () =
   let ctx = Nx_backend.create_context () in
   let x_flat = Nx_ox.create ctx Dtype.Int32 [|4|] [| 1l; 2l; 3l; 4l |] in
-  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let x = Nx_backend.reshape x_flat [| 1; 1; 4 |] in
   let y =
     Nx_backend.unfold x
       ~kernel_size:[| 3 |]
@@ -1509,9 +1496,7 @@ let test_unfold_int32_1d_padding_stride () =
       ~padding:[| (1, 1) |]
   in
   let shape_y =
-    match Symbolic_shape.eval (View.shape (Nx_backend.view y)) with
-    | Some s -> s
-    | None -> failwith "shape not evaluable"
+    View.shape (Nx_backend.view y)
   in
   check "unfold_int32_1d_padding_stride: shape0" (shape_y.(0) = 1);
   check "unfold_int32_1d_padding_stride: shape1" (shape_y.(1) = 3);
@@ -1527,7 +1512,7 @@ let test_unfold_int32_1d_padding_stride () =
 let test_unfold_int64_1d_identity () =
   let ctx = Nx_backend.create_context () in
   let x_flat = Nx_ox.create ctx Dtype.Int64 [| 4 |] [| 11L; 22L; 33L; 44L |] in
-  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let x = Nx_backend.reshape x_flat [| 1; 1; 4 |] in
   let y =
     Nx_backend.unfold x
       ~kernel_size:[| 1 |]
@@ -1544,7 +1529,7 @@ let test_unfold_int64_1d_identity () =
 let test_unfold_float32_1d_identity () =
   let ctx = Nx_backend.create_context () in
   let x_flat = Nx_ox.create ctx Dtype.Float32 [| 4 |] [| 1.5; 2.5; 3.5; 4.5 |] in
-  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let x = Nx_backend.reshape x_flat [| 1; 1; 4 |] in
   let y =
     Nx_backend.unfold x
       ~kernel_size:[| 1 |]
@@ -1561,7 +1546,7 @@ let test_unfold_float32_1d_identity () =
 let test_unfold_float64_1d_identity () =
   let ctx = Nx_backend.create_context () in
   let x_flat = Nx_ox.create ctx Dtype.Float64 [| 4 |] [| 1.25; 2.25; 3.25; 4.25 |] in
-  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let x = Nx_backend.reshape x_flat [| 1; 1; 4 |] in
   let y =
     Nx_backend.unfold x
       ~kernel_size:[| 1 |]
@@ -1578,7 +1563,7 @@ let test_unfold_float64_1d_identity () =
 let test_unfold_int8_1d_identity () =
   let ctx = Nx_backend.create_context () in
   let x_flat = Nx_ox.create ctx Dtype.Int8 [| 4 |] [| 1; 2; 3; 4 |] in
-  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let x = Nx_backend.reshape x_flat [| 1; 1; 4 |] in
   let y =
     Nx_backend.unfold x
       ~kernel_size:[| 1 |]
@@ -1595,7 +1580,7 @@ let test_unfold_int8_1d_identity () =
 let test_unfold_int16_1d_identity () =
   let ctx = Nx_backend.create_context () in
   let x_flat = Nx_ox.create ctx Dtype.Int16 [| 4 |] [| 10; 20; 30; 40 |] in
-  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let x = Nx_backend.reshape x_flat [| 1; 1; 4 |] in
   let y =
     Nx_backend.unfold x
       ~kernel_size:[| 1 |]
@@ -1614,7 +1599,7 @@ let test_unfold_bool_1d_identity () =
   let x_flat =
     Nx_ox.create ctx Dtype.Bool [| 4 |] [| true; false; true; false |]
   in
-  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let x = Nx_backend.reshape x_flat [| 1; 1; 4 |] in
   let y =
     Nx_backend.unfold x
       ~kernel_size:[| 1 |]
@@ -1631,7 +1616,7 @@ let test_unfold_bool_1d_identity () =
 let test_fold_int64_1d_identity () =
   let ctx = Nx_backend.create_context () in
   let x_flat = Nx_ox.create ctx Dtype.Int64 [| 4 |] [| 9L; 8L; 7L; 6L |] in
-  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let x = Nx_backend.reshape x_flat [| 1; 1; 4 |] in
   let y =
     Nx_backend.fold x
       ~output_size:[| 4 |]
@@ -1649,7 +1634,7 @@ let test_fold_int64_1d_identity () =
 let test_fold_float32_1d_identity () =
   let ctx = Nx_backend.create_context () in
   let x_flat = Nx_ox.create ctx Dtype.Float32 [| 4 |] [| 0.5; 1.5; 2.5; 3.5 |] in
-  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let x = Nx_backend.reshape x_flat [| 1; 1; 4 |] in
   let y =
     Nx_backend.fold x
       ~output_size:[| 4 |]
@@ -1669,7 +1654,7 @@ let test_fold_float64_1d_identity () =
   let x_flat =
     Nx_ox.create ctx Dtype.Float64 [| 4 |] [| 10.25; 11.25; 12.25; 13.25 |]
   in
-  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let x = Nx_backend.reshape x_flat [| 1; 1; 4 |] in
   let y =
     Nx_backend.fold x
       ~output_size:[| 4 |]
@@ -1687,7 +1672,7 @@ let test_fold_float64_1d_identity () =
 let test_fold_int8_1d_identity () =
   let ctx = Nx_backend.create_context () in
   let x_flat = Nx_ox.create ctx Dtype.Int8 [| 4 |] [| 1; 3; 5; 7 |] in
-  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let x = Nx_backend.reshape x_flat [| 1; 1; 4 |] in
   let y =
     Nx_backend.fold x
       ~output_size:[| 4 |]
@@ -1705,7 +1690,7 @@ let test_fold_int8_1d_identity () =
 let test_fold_int16_1d_identity () =
   let ctx = Nx_backend.create_context () in
   let x_flat = Nx_ox.create ctx Dtype.Int16 [| 4 |] [| 2; 4; 6; 8 |] in
-  let x = Nx_backend.reshape x_flat (Symbolic_shape.of_ints [| 1; 1; 4 |]) in
+  let x = Nx_backend.reshape x_flat [| 1; 1; 4 |] in
   let y =
     Nx_backend.fold x
       ~output_size:[| 4 |]

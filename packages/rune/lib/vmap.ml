@@ -246,11 +246,7 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
 
   (* Helper to get physical shape (backend view) of a tensor *)
   let phys_shape_of : type a b. (a, b) t -> int array =
-   fun t ->
-    let view = Nx_rune.view t in
-    match Symbolic_shape.eval (View.shape view) with
-    | Some arr -> arr
-    | None -> failwith "vmap: cannot evaluate physical shape"
+   fun t -> View.shape (Nx_rune.view t)
   in
 
   (* Derive present batch prefix length by matching leading physical dims
@@ -273,13 +269,11 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
 
   (* Effectful shape ops under suspension so AD can track duals *)
   let phys_reshape : type a b. (a, b) t -> int array -> (a, b) t =
-   fun t new_shape ->
-    with_suspended (fun () -> reshape t (Symbolic_shape.of_ints new_shape))
+   fun t new_shape -> with_suspended (fun () -> reshape t new_shape)
   in
 
   let phys_expand : type a b. (a, b) t -> int array -> (a, b) t =
-   fun t new_shape ->
-    with_suspended (fun () -> expand t (Symbolic_shape.of_ints new_shape))
+   fun t new_shape -> with_suspended (fun () -> expand t new_shape)
   in
 
   let phys_permute : type a b. (a, b) t -> int array -> (a, b) t =
@@ -649,7 +643,7 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                     let unbatched_view =
                       match View.strides_opt actual_view with
                       | None -> View.create unbatched_shape
-                      | Some strides -> (
+                      | Some strides ->
                           let unbatched_strides =
                             let s = ref strides in
                             List.iter
@@ -659,14 +653,9 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                               batch_dims_to_remove;
                             !s
                           in
-                          match
-                            Symbolic_shape.eval_dim
-                              (View.offset_dim actual_view)
-                          with
-                          | Some offset ->
-                              View.create unbatched_shape
-                                ~strides:unbatched_strides ~offset
-                          | None -> View.create unbatched_shape)
+                          let offset = View.offset actual_view in
+                          View.create unbatched_shape ~strides:unbatched_strides
+                            ~offset
                     in
                     continue k unbatched_view)
           (* Creation operations - create unbatched tensors *)
@@ -832,7 +821,7 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                     if ba = None && bb = None then (a, b)
                     else (align_to p a, align_to p b)
                   in
-                  fdiv_internal ~out a' b';
+                  div ~out a' b';
                   set_bdim out
                     (match (ba, bb) with None, None -> None | _ -> Some p);
                   continue k ())
@@ -852,7 +841,7 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                     if ba = None && bb = None then (a, b)
                     else (align_to p a, align_to p b)
                   in
-                  idiv_internal ~out a' b';
+                  div ~out a' b';
                   set_bdim out
                     (match (ba, bb) with None, None -> None | _ -> Some p);
                   continue k ())
@@ -1169,20 +1158,14 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                   in
                   let prod arr = Array.fold_left (fun a b -> a * b) 1 arr in
                   let prod_old = prod old_tail in
-                  let target_logical =
-                    match Symbolic_shape.eval new_shape with
-                    | Some arr -> arr
-                    | None ->
-                        failwith "vmap reshape requires concrete target shape"
-                  in
+                  let target_logical = new_shape in
                   let prod_new = prod target_logical in
                   let prefix =
                     if nbd = 0 then [||] else Array.sub s_phys 0 nbd
                   in
                   let phys_target = Array.append prefix target_logical in
                   let result =
-                    if prod_old = prod_new then
-                      reshape t_in (Symbolic_shape.of_ints phys_target)
+                    if prod_old = prod_new then reshape t_in phys_target
                     else t_in
                   in
                   set_bdim result (get_bdim t_in);
@@ -1190,12 +1173,7 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
           | E_expand { t_in; new_target_shape } ->
               Some
                 (fun k ->
-                  let new_target_arr =
-                    match Symbolic_shape.eval new_target_shape with
-                    | Some arr -> arr
-                    | None ->
-                        failwith "vmap expand requires concrete target shape"
-                  in
+                  let new_target_arr = new_target_shape in
                   (* Logical expand: canonicalize batches, then broadcast
                      current logical dims with the requested new_target_shape.
                      Keep the existing batch prefix untouched. *)
@@ -1897,7 +1875,7 @@ let vmaps ?(in_axes = []) ?(out_axes = OutSingle (Some 0)) ?axis_name ?axis_size
                   (fun i d -> if i = physical_idx then axis_size else d)
                   input_shape
               in
-              expand input (Symbolic_shape.of_ints target)
+              expand input target
             else
               failwith
                 (Printf.sprintf

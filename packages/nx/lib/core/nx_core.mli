@@ -14,9 +14,6 @@ module Dtype = Dtype
 module Shape = Shape
 (** Concrete shape operations. *)
 
-module Symbolic_shape = Symbolic_shape
-(** Symbolic shape expressions. *)
-
 module View = View
 (** Strided tensor views. *)
 

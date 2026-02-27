@@ -30,9 +30,8 @@ let test_reshape_multiple_minus_one () =
 
 let test_reshape_wrong_size () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  check_invalid_arg "wrong size"
-    "reshape: cannot reshape [2,3] to [5] (6\xe2\x86\x925 elements)" (fun () ->
-      ignore (Nx.reshape [| 5 |] t))
+  check_invalid_arg "wrong size" "reshape: cannot reshape [2,3] to [5]"
+    (fun () -> ignore (Nx.reshape [| 5 |] t))
 
 let test_reshape_0d_to_1d () =
   let t = Nx.scalar Nx.float32 42.0 in

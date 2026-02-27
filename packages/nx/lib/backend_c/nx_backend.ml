@@ -349,12 +349,7 @@ let view t = t.view
 let dtype t = t.dtype
 let to_host t = t.buffer
 let context t = t.context
-
-let shape t =
-  let s = View.shape t.view in
-  match Symbolic_shape.eval s with
-  | Some arr -> arr
-  | None -> invalid_arg "shape: symbolic shape not evaluable"
+let shape t = View.shape t.view
 
 let strides t =
   match View.strides_opt t.view with
@@ -379,8 +374,7 @@ let create_tensor ctx dtype shape_arr =
   let size = Array.fold_left ( * ) 1 shape_arr in
   let kind = Dtype.to_buffer_kind dtype in
   let buffer = Nx_buffer.create kind size in
-  let shape = Symbolic_shape.of_ints shape_arr in
-  let view = View.create shape in
+  let view = View.create shape_arr in
   { context = ctx; dtype; buffer; view }
 
 (* Materialize a tensor to contiguous layout if needed *)
@@ -460,8 +454,7 @@ let from_host ctx array =
   let dtype = Dtype.of_buffer_kind (Nx_buffer.kind array) in
   let size = Nx_buffer.length array in
   (* Create a view for the 1D array *)
-  let shape = Symbolic_shape.of_ints [| size |] in
-  let view = View.create shape in
+  let view = View.create [| size |] in
   (* Note: We're sharing the buffer directly, assuming it's contiguous *)
   { context = ctx; dtype; buffer = array; view }
 
@@ -697,8 +690,7 @@ let contiguous x =
     let x_ffi = to_ffi_tensor x' in
     let out_ffi = caml_contiguous x_ffi in
     (* Create tensor from FFI result - it's contiguous so simple view *)
-    let shape_sym = Symbolic_shape.of_ints out_ffi.shape in
-    let view = View.create shape_sym in
+    let view = View.create out_ffi.shape in
     { context = x.context; dtype = x.dtype; buffer = out_ffi.data; view }
 
 let copy x =
@@ -706,8 +698,7 @@ let copy x =
   let x_ffi = to_ffi_tensor x' in
   let out_ffi = caml_copy x_ffi in
   (* Create tensor from FFI result - it's contiguous so simple view *)
-  let shape_sym = Symbolic_shape.of_ints out_ffi.shape in
-  let view = View.create shape_sym in
+  let view = View.create out_ffi.shape in
   { context = x.context; dtype = x.dtype; buffer = out_ffi.data; view }
 
 let assign dst src =
@@ -1191,7 +1182,7 @@ let triangular_solve ~upper ~transpose ~unit_diag a b =
     if b_is_1d then
       (* Expand 1D to 2D by adding a trailing dimension *)
       let new_shape = [| b_shape.(0); 1 |] in
-      let b_reshaped = reshape b (Symbolic_shape.of_ints new_shape) in
+      let b_reshaped = reshape b new_shape in
       (b_reshaped, b_shape) (* Keep original shape for output *)
     else (b, shape b)
   in
@@ -1209,14 +1200,13 @@ let triangular_solve ~upper ~transpose ~unit_diag a b =
   caml_triangular_solve a_ffi b_ffi out_ffi upper transpose unit_diag;
 
   (* Squeeze output back to 1D if input was 1D *)
-  if b_is_1d then reshape out_expanded (Symbolic_shape.of_ints out_shape)
-  else out_expanded
+  if b_is_1d then reshape out_expanded out_shape else out_expanded
 
 let buffer ctx dtype shape_arr =
   let kind = Dtype.to_buffer_kind dtype in
   let size = Array.fold_left ( * ) 1 shape_arr in
   let buffer = Nx_buffer.create kind size in
-  let view = View.create (Symbolic_shape.of_ints shape_arr) in
+  let view = View.create shape_arr in
   { context = ctx; dtype; buffer; view }
 
 let full ctx dtype shape_arr value =

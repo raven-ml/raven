@@ -101,14 +101,7 @@ module Make (B : Backend_intf.S) = struct
   (* ───── Tensor Properties ───── *)
 
   let data x = B.to_host x
-
-  let shape x =
-    match Symbolic_shape.eval (View.shape (B.view x)) with
-    | Some arr -> arr
-    | None ->
-        invalid_arg "shape: cannot get shape with unbound symbolic dimensions"
-
-  let shape_symbolic x = View.shape (B.view x)
+  let shape x = View.shape (B.view x)
   let dtype x = B.dtype x
   let itemsize x = Dtype.itemsize (B.dtype x)
 
@@ -118,14 +111,9 @@ module Make (B : Backend_intf.S) = struct
     match View.strides_opt view with
     | Some elem_strides -> Array.map (fun s -> s * itemsize) elem_strides
     | None ->
-        let reason =
-          if not (View.is_materializable view) then
-            "view has non-materializable layout"
-          else if not (Symbolic_shape.is_static (View.shape view)) then
-            "view has symbolic shape"
-          else "view has complex striding pattern"
-        in
-        err "strides" "%s, call contiguous() to get a standard layout" reason
+        err "strides"
+          "view has non-materializable layout, call contiguous() to get a \
+           standard layout"
 
   let stride i x =
     let view = B.view x in
@@ -143,42 +131,20 @@ module Make (B : Backend_intf.S) = struct
            contiguous() first or check has_strides()"
           i
 
-  let dims x =
-    match Symbolic_shape.eval (View.shape (B.view x)) with
-    | Some arr -> arr
-    | None ->
-        invalid_arg "dims: cannot get dimensions with unbound symbolic values"
+  let dims x = View.shape (B.view x)
 
   let dim i x =
     let shape = View.shape (B.view x) in
-    let ndim = Symbolic_shape.rank shape in
+    let ndim = Array.length shape in
     let i = if i < 0 then i + ndim else i in
     if i < 0 || i >= ndim then
       err "dim" "axis %d out of bounds for %dD tensor" i ndim
-    else
-      match Symbolic_shape.eval_dim shape.(i) with
-      | Some n -> n
-      | None ->
-          invalid_arg "dim: cannot get dimension with unbound symbolic value"
+    else shape.(i)
 
   let ndim x = View.ndim (B.view x)
-
-  let size x =
-    match Symbolic_shape.eval_dim (View.numel (B.view x)) with
-    | Some n -> n
-    | None ->
-        invalid_arg
-          "size: cannot get size of tensor with symbolic shape, bind symbolic \
-           dimensions first"
-
+  let size x = View.numel (B.view x)
   let numel x = size x
-  let numel_symbolic x = View.numel (B.view x)
-
-  let nbytes x =
-    let itemsize = itemsize x in
-    try numel x * itemsize
-    with _ -> invalid_arg "nbytes: cannot compute bytes for symbolic tensor"
-
+  let nbytes x = numel x * itemsize x
   let offset x = View.offset (B.view x)
   let is_c_contiguous x = View.is_c_contiguous (B.view x)
 
@@ -209,13 +175,6 @@ module Make (B : Backend_intf.S) = struct
     | _ ->
         err "power_of_two" "dtype %s, not an integer type"
           (Dtype.to_string dtype)
-
-  let ensure_no_infer ~op shape =
-    Array.iter
-      (fun dim ->
-        if Symbolic_shape.is_infer dim then
-          err op "target shape cannot contain infer (-1) dimensions")
-      shape
 
   let ensure_float_dtype fname x =
     if not (Dtype.is_float (dtype x)) then
@@ -280,105 +239,67 @@ module Make (B : Backend_intf.S) = struct
 
   (* ───── Shape Manipulation Helpers ───── *)
 
-  let reshape_symbolic new_shape x =
-    let current_shape = shape_symbolic x in
-    let resolved =
-      if Array.exists Symbolic_shape.is_infer new_shape then
-        match
-          Symbolic_shape.resolve_reshape ~from_shape:current_shape
-            ~to_shape:new_shape
-        with
-        | Some s -> s
-        | None ->
-            invalid_arg
-              "reshape: cannot infer dimension for symbolic reshape, bind \
-               symbolic dimensions or avoid using -1"
-      else new_shape
-    in
-    (match
-       (Symbolic_shape.eval current_shape, Symbolic_shape.eval resolved)
-     with
-    | Some old_arr, Some new_arr ->
-        let old_numel = array_prod old_arr in
-        let new_numel = array_prod new_arr in
-        if old_numel <> new_numel && old_numel <> 0 && new_numel <> 0 then
-          err "reshape" "cannot reshape %s to %s (%d\xe2\x86\x92%d elements)"
-            (Shape.to_string old_arr) (Shape.to_string new_arr) old_numel
-            new_numel
-    | _ -> ());
-    if Symbolic_shape.equal current_shape resolved then x
-    else B.reshape x resolved
-
   let reshape shape_spec x =
+    let current_shape = shape x in
+    (* Resolve -1 dimensions *)
     let infer_count = ref 0 in
-    let target_shape =
-      Array.map
-        (fun dim ->
-          if dim = -1 then (
-            incr infer_count;
-            Symbolic_shape.infer)
-          else if dim < -1 then
-            err "reshape" "shape specification, dimension %d < -1" dim
-          else Symbolic_shape.static dim)
-        shape_spec
-    in
+    Array.iter (fun d -> if d = -1 then incr infer_count) shape_spec;
     if !infer_count > 1 then
       invalid_arg
         "reshape: shape specification, multiple -1 dimensions, can only \
          specify one unknown dimension";
-    reshape_symbolic target_shape x
+    let target_shape =
+      if !infer_count = 0 then shape_spec
+      else
+        let old_numel = array_prod current_shape in
+        let known_numel = ref 1 in
+        Array.iter
+          (fun d -> if d <> -1 then known_numel := !known_numel * d)
+          shape_spec;
+        if !known_numel = 0 || old_numel mod !known_numel <> 0 then
+          err "reshape" "cannot infer dimension: %d elements into shape %s"
+            old_numel
+            (Shape.to_string shape_spec);
+        let inferred = old_numel / !known_numel in
+        Array.map (fun d -> if d = -1 then inferred else d) shape_spec
+    in
+    Array.iter
+      (fun d ->
+        if d < 0 then err "reshape" "shape specification, dimension %d < -1" d)
+      target_shape;
+    if current_shape = target_shape then x else B.reshape x target_shape
 
   let broadcast_shapes shape_a shape_b =
-    let rank_a = Symbolic_shape.rank shape_a in
-    let rank_b = Symbolic_shape.rank shape_b in
+    let rank_a = Array.length shape_a in
+    let rank_b = Array.length shape_b in
     let rank_out = max rank_a rank_b in
-    let static_one = Symbolic_shape.static 1 in
-    let result = Array.make rank_out static_one in
-    let dim_eq a b = Symbolic_shape.equal [| a |] [| b |] in
+    let result = Array.make rank_out 1 in
     for i = 0 to rank_out - 1 do
       let idx_a = rank_a - rank_out + i in
       let idx_b = rank_b - rank_out + i in
-      let dim_a = if idx_a >= 0 then shape_a.(idx_a) else static_one in
-      let dim_b = if idx_b >= 0 then shape_b.(idx_b) else static_one in
-      let broadcast_err () =
-        err "broadcast"
-          "cannot broadcast dimensions %s and %s, bind symbolic dimensions \
-           first"
-          (Symbolic_shape.to_string [| dim_a |])
-          (Symbolic_shape.to_string [| dim_b |])
-      in
+      let dim_a = if idx_a >= 0 then shape_a.(idx_a) else 1 in
+      let dim_b = if idx_b >= 0 then shape_b.(idx_b) else 1 in
       result.(i) <-
-        (if dim_eq dim_a dim_b then dim_a
+        (if dim_a = dim_b then dim_a
+         else if dim_a = 1 then dim_b
+         else if dim_b = 1 then dim_a
          else
-           match
-             (Symbolic_shape.eval_dim dim_a, Symbolic_shape.eval_dim dim_b)
-           with
-           | Some a, Some b -> (
-               if a = b then dim_a
-               else if a = 1 then dim_b
-               else if b = 1 then dim_a
-               else
-                 match
-                   (Symbolic_shape.eval shape_a, Symbolic_shape.eval shape_b)
-                 with
-                 | Some sa, Some sb ->
-                     err "broadcast"
-                       "cannot broadcast %s with %s (dim %d: %d\xe2\x89\xa0%d)"
-                       (Shape.to_string sa) (Shape.to_string sb) i a b
-                 | _ -> broadcast_err ())
-           | Some 1, None -> dim_b
-           | None, Some 1 -> dim_a
-           | _ -> broadcast_err ())
+           err "broadcast"
+             "cannot broadcast %s with %s (dim %d: %d\xe2\x89\xa0%d)"
+             (Shape.to_string shape_a) (Shape.to_string shape_b) i dim_a dim_b)
     done;
     result
 
-  let broadcast_to_symbolic target_shape x =
-    ensure_no_infer ~op:"broadcast_to" target_shape;
-    let current_shape = shape_symbolic x in
-    if Symbolic_shape.equal current_shape target_shape then x
+  let broadcast_to new_shape x =
+    Array.iter
+      (fun dim ->
+        if dim < 0 then err "broadcast_to" "target shape, dimension %d < 0" dim)
+      new_shape;
+    let current_shape = shape x in
+    if current_shape = new_shape then x
     else
-      let rank_current = Symbolic_shape.rank current_shape in
-      let rank_target = Symbolic_shape.rank target_shape in
+      let rank_current = Array.length current_shape in
+      let rank_target = Array.length new_shape in
       if rank_current > rank_target then
         err "broadcast_to"
           "rank mismatch: source rank %d exceeds target rank %d, target shape \
@@ -389,81 +310,41 @@ module Make (B : Backend_intf.S) = struct
         let padded_shape =
           if pad_count <= 0 then current_shape
           else
-            let arr = Array.make rank_target (Symbolic_shape.static 1) in
+            let arr = Array.make rank_target 1 in
             Array.blit current_shape 0 arr pad_count rank_current;
             arr
         in
-        let dim_eq a b = Symbolic_shape.equal [| a |] [| b |] in
         for i = 0 to rank_target - 1 do
           let curr_dim = padded_shape.(i) in
-          let target_dim = target_shape.(i) in
-          if dim_eq curr_dim target_dim then ()
-          else
-            match Symbolic_shape.eval_dim curr_dim with
-            | Some 1 -> ()
-            | Some curr_val -> (
-                match Symbolic_shape.eval_dim target_dim with
-                | Some target_val when curr_val = target_val -> ()
-                | Some target_val ->
-                    let to_ints sh =
-                      Array.init rank_target (fun j ->
-                          match Symbolic_shape.eval_dim sh.(j) with
-                          | Some v -> v
-                          | None -> -1)
-                    in
-                    err "broadcast_to"
-                      "cannot broadcast %s to %s (dim %d: %d\xe2\x89\xa0%d)"
-                      (Shape.to_string (to_ints padded_shape))
-                      (Shape.to_string (to_ints target_shape))
-                      i curr_val target_val
-                | None ->
-                    err "broadcast_to" "dimension %d: cannot broadcast %s to %s"
-                      i
-                      (Symbolic_shape.to_string [| curr_dim |])
-                      (Symbolic_shape.to_string [| target_dim |]))
-            | None ->
-                err "broadcast_to"
-                  "dimension %d: cannot broadcast %s to %s, bind symbolic \
-                   dimensions first"
-                  i
-                  (Symbolic_shape.to_string [| curr_dim |])
-                  (Symbolic_shape.to_string [| target_dim |])
+          let target_dim = new_shape.(i) in
+          if curr_dim <> target_dim && curr_dim <> 1 then
+            err "broadcast_to"
+              "cannot broadcast %s to %s (dim %d: %d\xe2\x89\xa0%d)"
+              (Shape.to_string padded_shape)
+              (Shape.to_string new_shape)
+              i curr_dim target_dim
         done;
         let x_aligned =
-          if pad_count <= 0 then x else reshape_symbolic padded_shape x
+          if pad_count <= 0 then x else B.reshape x padded_shape
         in
-        if Symbolic_shape.equal (shape_symbolic x_aligned) target_shape then
-          x_aligned
-        else B.expand x_aligned target_shape
-
-  let broadcast_to new_shape x =
-    broadcast_to_symbolic
-      (Array.map
-         (fun dim ->
-           if dim < 0 then
-             err "broadcast_to" "target shape, dimension %d < 0" dim
-           else Symbolic_shape.static dim)
-         new_shape)
-      x
+        if shape x_aligned = new_shape then x_aligned
+        else B.expand x_aligned new_shape
 
   let broadcasted ?(reverse = false) x y =
     let a, b = if reverse then (y, x) else (x, y) in
-    let broadcast_shape =
-      broadcast_shapes (shape_symbolic a) (shape_symbolic b)
-    in
-    ( broadcast_to_symbolic broadcast_shape a,
-      broadcast_to_symbolic broadcast_shape b )
+    let broadcast_shape = broadcast_shapes (shape a) (shape b) in
+    (broadcast_to broadcast_shape a, broadcast_to broadcast_shape b)
 
   (* Like [broadcast_to] but [-1] keeps the original dimension. *)
   let expand shape_spec x =
-    let current_shape = shape_symbolic x in
-    let rank_current = Symbolic_shape.rank current_shape in
+    let current_shape = shape x in
+    let rank_current = Array.length current_shape in
     let rank_spec = Array.length shape_spec in
     let rank_new = max rank_current rank_spec in
     let current_aligned =
       if rank_current = rank_new then current_shape
       else
-        let arr = Array.make rank_new (Symbolic_shape.static 1) in
+        let arr = Array.make rank_new 1 in
         Array.blit current_shape 0 arr (rank_new - rank_current) rank_current;
         arr
     in
@@ -474,9 +355,9 @@ module Make (B : Backend_intf.S) = struct
           if spec_dim = -1 then current_aligned.(i)
           else if spec_dim < -1 then
             err "expand" "dimension %d, negative size %d" i spec_dim
-          else Symbolic_shape.static spec_dim)
+          else spec_dim)
     in
-    broadcast_to_symbolic target_shape x
+    broadcast_to target_shape x
 
   (* ───── Type Conversion and Tensor Creation ───── *)
 
@@ -513,7 +394,7 @@ module Make (B : Backend_intf.S) = struct
     done;
     let tensor_1d = B.from_host ctx bigarray in
     if Array.length shape = 1 && shape.(0) = n then tensor_1d
-    else B.reshape tensor_1d (Symbolic_shape.of_ints shape)
+    else B.reshape tensor_1d shape
 
   let init ctx dtype shape f =
     let size = Array.fold_left ( * ) 1 shape in
@@ -1874,11 +1755,11 @@ module Make (B : Backend_intf.S) = struct
             | View { start; stop; step; _ } ->
                 (false, arange ctx Dtype.int32 start stop step)
             | Gather indices ->
-                (false,
-                 init ctx Dtype.int32 [| Array.length indices |]
-                   (fun k -> Int32.of_int indices.(k.(0))))
-            | New_axis ->
-                invalid_arg "set_slice: New_axis not supported")
+                ( false,
+                  init ctx Dtype.int32
+                    [| Array.length indices |]
+                    (fun k -> Int32.of_int indices.(k.(0))) )
+            | New_axis -> invalid_arg "set_slice: New_axis not supported")
           full_specs
       in
       let target_shape =
@@ -2456,10 +2337,10 @@ module Make (B : Backend_intf.S) = struct
   (* ───── Linear Algebra ───── *)
 
   let matmul_output_shape a b =
-    let sa = shape_symbolic a in
-    let sb = shape_symbolic b in
-    let ra = Symbolic_shape.rank sa in
-    let rb = Symbolic_shape.rank sb in
+    let sa = shape a in
+    let sb = shape b in
+    let ra = Array.length sa in
+    let rb = Array.length sb in
     let batch_out =
       broadcast_shapes (Array.sub sa 0 (ra - 2)) (Array.sub sb 0 (rb - 2))
     in
@@ -2474,14 +2355,6 @@ module Make (B : Backend_intf.S) = struct
             empty (B.context a) (B.dtype a) [| dim 0 a; dim 1 b |]
           else
             let s = matmul_output_shape a b in
-            let s =
-              match Symbolic_shape.eval s with
-              | Some s -> s
-              | None ->
-                  invalid_arg
-                    "matmul: cannot compute output shape with symbolic \
-                     dimensions"
-            in
             empty (B.context a) (B.dtype a) s
     in
     B.matmul ~out a b;
@@ -4360,17 +4233,9 @@ module Make (B : Backend_intf.S) = struct
     let view = B.view x in
     let buffer = B.to_host x in
     let dtype = dtype x in
-    let shape =
-      match Symbolic_shape.eval (View.shape view) with
-      | Some arr -> arr
-      | None -> invalid_arg "pp_data: cannot print tensor with symbolic shape"
-    in
+    let shape = View.shape view in
     let ndim = Array.length shape in
-    let sz =
-      match Symbolic_shape.eval_dim (View.numel view) with
-      | Some n -> n
-      | None -> invalid_arg "pp_data: cannot print tensor with symbolic size"
-    in
+    let sz = View.numel view in
     let pp_element fmt (elt : a) =
       match dtype with
       | Float16 -> fprintf fmt "%g" elt
@@ -4459,7 +4324,7 @@ module Make (B : Backend_intf.S) = struct
     let view = B.view x in
     fprintf fmt "@[<v 0>";
     fprintf fmt "Nx Info:@,";
-    fprintf fmt "  Shape: %s@," (Symbolic_shape.to_string (View.shape view));
+    fprintf fmt "  Shape: %s@," (Shape.to_string (View.shape view));
     fprintf fmt "  Dtype: %a@," pp_dtype (dtype x);
     fprintf fmt "  Strides: %s@,"
       (match View.strides_opt view with
@@ -4467,12 +4332,9 @@ module Make (B : Backend_intf.S) = struct
           "["
           ^ String.concat "; " (Array.to_list (Array.map string_of_int s))
           ^ "]"
-      | None -> "<symbolic>");
+      | None -> "<non-materializable>");
     fprintf fmt "  Offset: %d@," (View.offset view);
-    fprintf fmt "  Size: %s@,"
-      (match Symbolic_shape.eval_dim (View.numel view) with
-      | Some n -> string_of_int n
-      | None -> "<symbolic>");
+    fprintf fmt "  Size: %d@," (View.numel view);
     fprintf fmt "  Data: %a@," pp_data x
 
   let print x = print_with_formatter pp x

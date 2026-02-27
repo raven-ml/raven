@@ -82,8 +82,7 @@ let to_host (type a b) (t : (a, b) t) :
 let buffer (type a b) context (dtype : (a, b) Dtype.t) (shape_arr : int array) :
     (a, b) t =
   let size = Stdlib.Array.fold_left ( * ) 1 shape_arr in
-  let sym_shape = Symbolic_shape.of_ints shape_arr in
-  let view = View.create sym_shape in
+  let view = View.create shape_arr in
   match dtype with
   | Dtype.Float64 ->
       let buffer = Array.make_float64 size in
@@ -961,8 +960,7 @@ let from_host (type a b) ctx (array : (a, b) Nx_buffer.t) :
     (a, b) t =
   let dtype = Dtype.of_buffer_kind (Nx_buffer.kind array) in
   let size = Nx_buffer.length array in
-  let shape = Symbolic_shape.of_ints [| size |] in
-  let view = View.create shape in
+  let view = View.create [| size |] in
   let ba = Nx_buffer.to_bigarray1 array in
   match dtype with
   | Dtype.Float64 ->
@@ -1011,7 +1009,7 @@ let pad (type a b) (x : (a, b) t) (padding : (int * int) array)
           invalid_arg "pad: padding values must be non-negative";
         in_shape.(i) + before + after)
   in
-  let out_view = View.create (Symbolic_shape.of_ints out_shape) in
+  let out_view = View.create out_shape in
   let in_numel = numel in_view in
   let out_numel = numel out_view in
   let in_offset = View.offset in_view in
@@ -1435,7 +1433,7 @@ let unfold :
   let out_numel = Shape.numel out_shape in
   let out_t : (a, b) t =
     let out_t : (a, b) t = buffer x.context x.dtype [|out_numel|] in
-    { out_t with view = View.reshape out_t.view (Symbolic_shape.of_ints out_shape) }
+    { out_t with view = View.reshape out_t.view out_shape }
   in
 
   let in_offset = View.offset in_view in
@@ -1569,7 +1567,7 @@ let fold :
   let out_numel = Shape.numel out_shape in
   let out_t : (a, b) t =
     let out_t : (a, b) t = buffer x.context x.dtype [|out_numel|] in
-    { out_t with view = View.reshape out_t.view (Symbolic_shape.of_ints out_shape) }
+    { out_t with view = View.reshape out_t.view out_shape }
   in
 
   let in_offset = View.offset in_view in

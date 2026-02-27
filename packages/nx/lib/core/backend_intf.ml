@@ -387,12 +387,12 @@ module type S = sig
       {b Backend must:} return a tensor with the correct view metadata. May
       share the underlying buffer (zero-copy) or allocate if necessary. *)
 
-  val expand : ('a, 'b) t -> Symbolic_shape.t -> ('a, 'b) t
+  val expand : ('a, 'b) t -> int array -> ('a, 'b) t
   (** [expand t shape] broadcasts dimensions of size 1 to match [shape] by
       setting their stride to 0. Non-singleton dimensions must already match.
       Zero-copy. *)
 
-  val reshape : ('a, 'b) t -> Symbolic_shape.t -> ('a, 'b) t
+  val reshape : ('a, 'b) t -> int array -> ('a, 'b) t
   (** [reshape t shape] changes the logical shape, preserving element count.
 
       Zero-copy when [t] is C-contiguous or the reshape is compatible with the
