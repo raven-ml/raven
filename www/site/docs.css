@@ -107,6 +107,40 @@ body {
 .nav-links a.color-indigo { color: var(--color-sowilo) !important; } /* sowilo */
 .nav-links a.color-lime { color: var(--color-fehu) !important; }    /* fehu */
 
+/* Tab navigation */
+.nav-tabs {
+  margin-bottom: 30px;
+}
+.nav-tabs input[type="radio"] {
+  display: none;
+}
+.nav-tabs label {
+  display: inline-block;
+  padding: 6px 12px;
+  font-size: 13px;
+  color: var(--color-text-dim);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.nav-tabs label:hover {
+  color: var(--color-text);
+}
+.nav-tabs input[type="radio"]:checked + label {
+  color: var(--color-text-bright);
+  border-bottom-color: var(--color-text-bright);
+}
+.tab-panel {
+  display: none;
+  margin-top: 12px;
+}
+#tab-guides:checked ~ #panel-guides,
+#tab-examples:checked ~ #panel-examples,
+#tab-api:checked ~ #panel-api {
+  display: block;
+}
+
 /* Library info section */
 .library-info {
   margin-bottom: 30px;

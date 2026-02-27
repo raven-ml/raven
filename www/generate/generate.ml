@@ -337,7 +337,7 @@ let generate_prev_next ~current_url lib_name =
     if prev = "" && next = "" then ""
     else Printf.sprintf {|<nav class="prev-next">%s%s</nav>|} prev next
 
-let generate_lib_examples_nav ~current_url lib_name =
+let generate_lib_examples_nav_items ~current_url lib_name =
   let dir = lib_examples_dir lib_name in
   if not (Sys.file_exists dir && Sys.is_directory dir) then ""
   else
@@ -354,22 +354,76 @@ let generate_lib_examples_nav ~current_url lib_name =
     match entries with
     | [] -> ""
     | _ ->
-        let items =
-          entries
-          |> List.map (fun (title, url) ->
-              let active = if url = current_url then {| class="active"|} else "" in
-              Printf.sprintf {|          <li><a href="%s"%s>%s</a></li>|} url
-                active title)
-          |> String.concat "\n"
-        in
-        Printf.sprintf
-          {|      <div class="nav-section">
-        <div class="nav-title">Examples</div>
-        <ul class="nav-links">
-%s
-        </ul>
-      </div>|}
-          items
+        entries
+        |> List.map (fun (title, url) ->
+            let active = if url = current_url then {| class="active"|} else "" in
+            Printf.sprintf {|          <li><a href="%s"%s>%s</a></li>|} url
+              active title)
+        |> String.concat "\n"
+
+let generate_tab_nav ~current_url lib_name =
+  let guides_items = generate_lib_nav ~current_url lib_name in
+  let examples_items = generate_lib_examples_nav_items ~current_url lib_name in
+  let has_examples = examples_items <> "" in
+  let is_examples_page =
+    match find_sub current_url "/examples/" with Some _ -> true | None -> false
+  in
+  let active_tab =
+    if is_examples_page && has_examples then "examples" else "guides"
+  in
+  let checked tab = if tab = active_tab then " checked" else "" in
+  let buf = Buffer.create 1024 in
+  Buffer.add_string buf {|      <div class="nav-tabs">|};
+  Buffer.add_string buf "\n";
+  Printf.bprintf buf
+    {|        <input type="radio" id="tab-guides" name="nav-tab"%s>|} (checked "guides");
+  Buffer.add_string buf "\n";
+  Buffer.add_string buf {|        <label for="tab-guides">Guides</label>|};
+  Buffer.add_string buf "\n";
+  if has_examples then (
+    Printf.bprintf buf
+      {|        <input type="radio" id="tab-examples" name="nav-tab"%s>|} (checked "examples");
+    Buffer.add_string buf "\n";
+    Buffer.add_string buf {|        <label for="tab-examples">Examples</label>|};
+    Buffer.add_string buf "\n");
+  Printf.bprintf buf
+    {|        <input type="radio" id="tab-api" name="nav-tab"%s>|} (checked "api");
+  Buffer.add_string buf "\n";
+  Buffer.add_string buf {|        <label for="tab-api">API</label>|};
+  Buffer.add_string buf "\n";
+  Buffer.add_string buf {|        <div class="tab-panel" id="panel-guides">|};
+  Buffer.add_string buf "\n";
+  Buffer.add_string buf {|          <ul class="nav-links">|};
+  Buffer.add_string buf "\n";
+  Buffer.add_string buf guides_items;
+  Buffer.add_string buf "\n";
+  Buffer.add_string buf {|          </ul>|};
+  Buffer.add_string buf "\n";
+  Buffer.add_string buf {|        </div>|};
+  Buffer.add_string buf "\n";
+  if has_examples then (
+    Buffer.add_string buf {|        <div class="tab-panel" id="panel-examples">|};
+    Buffer.add_string buf "\n";
+    Buffer.add_string buf {|          <ul class="nav-links">|};
+    Buffer.add_string buf "\n";
+    Buffer.add_string buf examples_items;
+    Buffer.add_string buf "\n";
+    Buffer.add_string buf {|          </ul>|};
+    Buffer.add_string buf "\n";
+    Buffer.add_string buf {|        </div>|};
+    Buffer.add_string buf "\n");
+  Printf.bprintf buf
+    {|        <div class="tab-panel" id="panel-api">|};
+  Buffer.add_string buf "\n";
+  Printf.bprintf buf
+    {|          <ul class="nav-links" id="%s-api-nav">|} lib_name;
+  Buffer.add_string buf "\n";
+  Buffer.add_string buf {|          </ul>|};
+  Buffer.add_string buf "\n";
+  Buffer.add_string buf {|        </div>|};
+  Buffer.add_string buf "\n";
+  Buffer.add_string buf {|      </div>|};
+  Buffer.contents buf
 
 let url_of_path path =
   let segments = url_segments path in
@@ -433,9 +487,8 @@ let apply_template ~template ~title ~breadcrumbs ~content ~lib ~is_lib_index
       |> replace "{{lib_display}}" lib.display
       |> replace "{{lib_color}}" lib.color
       |> replace "{{lib_description}}" lib.description
-      |> replace "{{lib_nav}}" (generate_lib_nav ~current_url lib.name)
-      |> replace "{{lib_examples_nav}}"
-           (generate_lib_examples_nav ~current_url lib.name)
+      |> replace "{{lib_tab_nav}}"
+           (generate_tab_nav ~current_url lib.name)
       |> replace "{{lib_hero}}" hero
       |> replace "{{lib_breadcrumb}}" lib_breadcrumb
       |> replace "{{prev_next}}"
