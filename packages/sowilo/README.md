@@ -14,10 +14,10 @@ Load an image, detect edges, and save the result:
 open Sowilo
 
 let () =
-  let img = Nx_io.load_image "photo.png" |> Rune.of_nx |> to_float in
+  let img = Nx_io.load_image "photo.png" |> to_float in
   let gray = to_grayscale img in
   let edges = canny ~low:0.2 ~high:0.6 gray in
-  Nx_io.save_image (Rune.to_nx (to_uint8 edges)) "edges.png"
+  Nx_io.save_image (to_uint8 edges) "edges.png"
 ```
 
 ## Features

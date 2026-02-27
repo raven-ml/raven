@@ -29,7 +29,7 @@ open Sowilo
 
 let img =
   Nx_io.load_image "photo.png"  (* Nx uint8 tensor [H; W; C] *)
-  |> Rune.of_nx                 (* Rune uint8 tensor *)
+                  (* Rune uint8 tensor *)
   |> to_float                   (* Rune float32 tensor in [0, 1] *)
 ```
 
@@ -65,7 +65,7 @@ Load an image, convert to grayscale, blur, and detect edges:
 open Sowilo
 
 let () =
-  let img = Nx_io.load_image "photo.png" |> Rune.of_nx |> to_float in
+  let img = Nx_io.load_image "photo.png" |> to_float in
 
   let edges =
     img
@@ -75,7 +75,7 @@ let () =
   in
 
   (* Save: convert back to uint8, then to Nx for I/O *)
-  Nx_io.save_image (Rune.to_nx (to_uint8 edges)) "edges.png"
+  Nx_io.save_image (to_uint8 edges) "edges.png"
 ```
 
 Operations compose naturally with `|>`. Each takes a tensor and returns a
@@ -90,7 +90,7 @@ Adjust brightness, contrast, saturation, hue, and gamma:
 open Sowilo
 
 let () =
-  let img = Nx_io.load_image "photo.png" |> Rune.of_nx |> to_float in
+  let img = Nx_io.load_image "photo.png" |> to_float in
 
   (* Each function takes a factor and an image *)
   let bright = adjust_brightness 1.3 img in
@@ -112,7 +112,7 @@ Resize, crop, flip, rotate, and pad:
 open Sowilo
 
 let () =
-  let img = Nx_io.load_image "photo.png" |> Rune.of_nx |> to_float in
+  let img = Nx_io.load_image "photo.png" |> to_float in
 
   let small = resize ~height:224 ~width:224 img in
   let cropped = crop ~y:50 ~x:100 ~height:200 ~width:200 img in
@@ -138,7 +138,7 @@ Build structuring elements and apply morphological operations:
 open Sowilo
 
 let () =
-  let img = Nx_io.load_image "photo.png" |> Rune.of_nx |> to_float in
+  let img = Nx_io.load_image "photo.png" |> to_float in
   let gray = to_grayscale img in
   let binary = threshold 0.5 gray in
 
@@ -167,7 +167,7 @@ Sowilo provides four edge detection methods:
 open Sowilo
 
 let () =
-  let img = Nx_io.load_image "photo.png" |> Rune.of_nx |> to_float in
+  let img = Nx_io.load_image "photo.png" |> to_float in
   let gray = to_grayscale img in
 
   (* Sobel: returns horizontal and vertical gradients *)
@@ -195,7 +195,7 @@ Convert back to uint8 and use `Nx_io.save_image`:
 <!-- $MDX skip -->
 ```ocaml
 let save result path =
-  Nx_io.save_image (Rune.to_nx (to_uint8 result)) path
+  Nx_io.save_image (to_uint8 result) path
 ```
 
 ## Displaying with Hugin
@@ -205,7 +205,7 @@ Use Hugin for visualization:
 <!-- $MDX skip -->
 ```ocaml
 let () =
-  let img = Nx_io.load_image "photo.png" |> Rune.of_nx |> to_float in
+  let img = Nx_io.load_image "photo.png" |> to_float in
   let gray = to_grayscale img in
   let edges = canny ~low:0.2 ~high:0.6 gray in
 
@@ -214,13 +214,13 @@ let () =
   let ax1 = Hugin.subplot ~nrows:1 ~ncols:2 ~index:1 fig in
   ignore
     (ax1
-    |> Hugin.Plotting.imshow ~data:(Rune.to_nx img)
+    |> Hugin.Plotting.imshow ~data:img
     |> Hugin.Axes.set_title "Original");
 
   let ax2 = Hugin.subplot ~nrows:1 ~ncols:2 ~index:2 fig in
   ignore
     (ax2
-    |> Hugin.Plotting.imshow ~data:(Rune.to_nx edges)
+    |> Hugin.Plotting.imshow ~data:edges
          ~cmap:Hugin.Artist.Colormap.gray
     |> Hugin.Axes.set_title "Canny Edges");
 

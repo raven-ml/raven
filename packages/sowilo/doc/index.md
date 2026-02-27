@@ -35,7 +35,7 @@ open Sowilo
 
 let () =
   (* Load image and convert to float32 [0, 1] *)
-  let img = Nx_io.load_image "photo.png" |> Rune.of_nx |> to_float in
+  let img = Nx_io.load_image "photo.png" |> to_float in
 
   (* Process: grayscale, blur, edge detection *)
   let edges =
@@ -46,7 +46,7 @@ let () =
   in
 
   (* Save result *)
-  Nx_io.save_image (Rune.to_nx (to_uint8 edges)) "edges.png"
+  Nx_io.save_image (to_uint8 edges) "edges.png"
 ```
 
 ## Learn More

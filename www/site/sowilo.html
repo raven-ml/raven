@@ -75,7 +75,7 @@ edges = cv2.Canny(
 (* Load and convert *)
 let img =
   Nx_io.load_image "photo.png"
-  |> Rune.of_nx |> to_float
+  |> to_float
 
 let gray = to_grayscale img
 
@@ -232,14 +232,14 @@ let loss params img label =
 
 let () =
   (* Load and convert to float32 [0, 1] *)
-  let img = Nx_io.load_image "photo.png" |> Rune.of_nx |> to_float in
+  let img = Nx_io.load_image "photo.png" |> to_float in
 
   (* Detect edges *)
   let gray = to_grayscale img in
   let edges = canny ~low:0.2 ~high:0.6 gray in
 
   (* Save result *)
-  let result = Rune.to_nx (to_uint8 edges) in
+  let result = to_uint8 edges in
   Nx_io.save_image result "edges.png"</code></pre>
 
     <p>For now, check out the <a href="/docs/sowilo/">documentation</a> to learn more.</p>

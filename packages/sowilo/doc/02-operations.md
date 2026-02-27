@@ -11,7 +11,7 @@ Converts a tensor to float32 and scales to [0, 1] by dividing by 255.
 
 <!-- $MDX skip -->
 ```ocaml
-let img = Nx_io.load_image "photo.png" |> Rune.of_nx |> Sowilo.to_float
+let img = Nx_io.load_image "photo.png" |> Sowilo.to_float
 (* uint8 [0, 255] -> float32 [0.0, 1.0] *)
 ```
 

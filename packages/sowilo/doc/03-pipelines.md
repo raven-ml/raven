@@ -59,7 +59,7 @@ let process_batch paths =
   (* Load and stack into [N; H; W; C] *)
   let images =
     List.map
-      (fun p -> Nx_io.load_image p |> Rune.of_nx |> to_float)
+      (fun p -> Nx_io.load_image p|> to_float)
       paths
   in
   let batch = Rune.stack ~axis:0 images in
@@ -188,21 +188,21 @@ let visualize_pipeline img =
   let ax1 = Hugin.subplot ~nrows:1 ~ncols:3 ~index:1 fig in
   ignore
     (ax1
-    |> Hugin.Plotting.imshow ~data:(Rune.to_nx gray)
+    |> Hugin.Plotting.imshow ~data:gray
          ~cmap:Hugin.Artist.Colormap.gray
     |> Hugin.Axes.set_title "Grayscale");
 
   let ax2 = Hugin.subplot ~nrows:1 ~ncols:3 ~index:2 fig in
   ignore
     (ax2
-    |> Hugin.Plotting.imshow ~data:(Rune.to_nx blurred)
+    |> Hugin.Plotting.imshow ~data:blurred
          ~cmap:Hugin.Artist.Colormap.gray
     |> Hugin.Axes.set_title "Gaussian Blur");
 
   let ax3 = Hugin.subplot ~nrows:1 ~ncols:3 ~index:3 fig in
   ignore
     (ax3
-    |> Hugin.Plotting.imshow ~data:(Rune.to_nx edges)
+    |> Hugin.Plotting.imshow ~data:edges
          ~cmap:Hugin.Artist.Colormap.gray
     |> Hugin.Axes.set_title "Canny Edges");
 
