@@ -4,15 +4,16 @@
 
 - bring in talon changes
 - consider rename talon to talf
-
-## alphaX
-
-- close rune grad performances gap (within <2x of pytorch)
-- close nx performance gaps (within <2x of numpy)
+- generate docs with odoc3 + dream-style html rewriting to integrate in www/
+- explore renames (sowilo, talon, etc.)
 
 ## beta (jit)
 
 goalpost: jit-compiled gpt2 matching pytorch performance
+
+perf:
+- close rune grad performances gap (within <2x of pytorch)
+- close nx performance gaps (within <2x of numpy)
 
 feature requests:
 - vmap (that compose with jvp!)
@@ -29,7 +30,5 @@ quill
 - support images (upstream)
 
 docs/website
-- generate docs with odoc3 + dream-style html rewriting to integrate in www/
 - favicon
 - more tutorials
-
