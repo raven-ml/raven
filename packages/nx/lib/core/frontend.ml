@@ -1768,7 +1768,7 @@ module Make (B : Backend_intf.S) = struct
              (normalize_and_check_index ~op:"slice" dim_size)
              (Array.of_list indices))
     | N -> New_axis
-    | M _ -> failwith "Mask slicing not supported in slice_internal"
+    | M _ -> invalid_arg "slice: mask slicing not supported"
 
   let slice_internal specs x =
     let input_shape = shape x in
@@ -1874,7 +1874,7 @@ module Make (B : Backend_intf.S) = struct
                  init ctx Dtype.int32 [| Array.length indices |]
                    (fun k -> Int32.of_int indices.(k.(0))))
             | New_axis ->
-                failwith "New_axis not supported in set_slice")
+                invalid_arg "set_slice: New_axis not supported")
           full_specs
       in
       let target_shape =
