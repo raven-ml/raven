@@ -73,7 +73,7 @@ type average =
 
 (** {1:compute Common Metric Functions} *)
 
-val accuracy : (float, 'a) Rune.t -> ('b, 'c) Rune.t -> float
+val accuracy : (float, 'a) Nx.t -> ('b, 'c) Nx.t -> float
 (** [accuracy predictions targets] is the fraction of correct predictions.
 
     Multi-class: [predictions] has shape [[batch; num_classes]] (logits or
@@ -84,7 +84,7 @@ val accuracy : (float, 'a) Rune.t -> ('b, 'c) Rune.t -> float
     [0.5] count as class [1]. *)
 
 val binary_accuracy :
-  ?threshold:float -> (float, 'a) Rune.t -> (float, 'a) Rune.t -> float
+  ?threshold:float -> (float, 'a) Nx.t -> (float, 'a) Nx.t -> float
 (** [binary_accuracy ?threshold predictions targets] is the fraction of correct
     binary predictions.
 
@@ -93,7 +93,7 @@ val binary_accuracy :
 
 (** {1:classification Classification} *)
 
-val precision : average -> (float, 'a) Rune.t -> ('b, 'c) Rune.t -> float
+val precision : average -> (float, 'a) Nx.t -> ('b, 'c) Nx.t -> float
 (** [precision avg predictions targets] is the precision score.
 
     [predictions] has shape [[batch; num_classes]] (logits or probabilities).
@@ -102,14 +102,14 @@ val precision : average -> (float, 'a) Rune.t -> ('b, 'c) Rune.t -> float
 
     When a class has no predicted instances, its precision is [0.0]. *)
 
-val recall : average -> (float, 'a) Rune.t -> ('b, 'c) Rune.t -> float
+val recall : average -> (float, 'a) Nx.t -> ('b, 'c) Nx.t -> float
 (** [recall avg predictions targets] is the recall score.
 
     Input convention is the same as {!precision}.
 
     When a class has no true instances, its recall is [0.0]. *)
 
-val f1 : average -> (float, 'a) Rune.t -> ('b, 'c) Rune.t -> float
+val f1 : average -> (float, 'a) Nx.t -> ('b, 'c) Nx.t -> float
 (** [f1 avg predictions targets] is the F1 score (harmonic mean of {!precision}
     and {!recall}).
 

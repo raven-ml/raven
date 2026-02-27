@@ -8,7 +8,7 @@ open Sowilo
 
 (* Helpers *)
 
-let create_gray_f h w value = Rune.full Rune.float32 [| h; w; 1 |] value
+let create_gray_f h w value = Nx.full Nx.float32 [| h; w; 1 |] value
 
 let create_checkerboard h w =
   let data =
@@ -16,7 +16,7 @@ let create_checkerboard h w =
         let row = i / w and col = i mod w in
         if (row + col) mod 2 = 0 then 1.0 else 0.0)
   in
-  Rune.create Rune.float32 [| h; w; 1 |] data
+  Nx.create Nx.float32 [| h; w; 1 |] data
 
 let create_centered_square h w square_size =
   let data =
@@ -32,18 +32,18 @@ let create_centered_square h w square_size =
         then 1.0
         else 0.0)
   in
-  Rune.create Rune.float32 [| h; w; 1 |] data
+  Nx.create Nx.float32 [| h; w; 1 |] data
 
 let check_shape msg expected_shape tensor =
-  equal ~msg (array int) expected_shape (Rune.shape tensor)
+  equal ~msg (array int) expected_shape (Nx.shape tensor)
 
 let check_pixel_f msg expected tensor indices =
-  let actual = Rune.item indices tensor in
+  let actual = Nx.item indices tensor in
   let diff = Float.abs (expected -. actual) in
   if diff > 0.01 then failf "%s: expected ~%.3f, got %.3f" msg expected actual
 
 let check_pixel_i msg expected tensor indices =
-  let actual = Rune.item indices tensor in
+  let actual = Nx.item indices tensor in
   equal ~msg int expected actual
 
 (* ───── Geometric Transform Tests ───── *)
@@ -52,27 +52,27 @@ let test_flip_vertical () =
   let img = create_checkerboard 4 4 in
   let flipped = vflip img in
   check_pixel_f "top-left after flip"
-    (Rune.item [ 3; 0; 0 ] img)
+    (Nx.item [ 3; 0; 0 ] img)
     flipped [ 0; 0; 0 ];
   check_pixel_f "top-right after flip"
-    (Rune.item [ 3; 3; 0 ] img)
+    (Nx.item [ 3; 3; 0 ] img)
     flipped [ 0; 3; 0 ];
-  check_shape "flip preserves shape" (Rune.shape img) flipped
+  check_shape "flip preserves shape" (Nx.shape img) flipped
 
 let test_flip_horizontal () =
   let img = create_checkerboard 4 4 in
   let flipped = hflip img in
   check_pixel_f "top-left after flip"
-    (Rune.item [ 0; 3; 0 ] img)
+    (Nx.item [ 0; 3; 0 ] img)
     flipped [ 0; 0; 0 ];
   check_pixel_f "bottom-left after flip"
-    (Rune.item [ 3; 3; 0 ] img)
+    (Nx.item [ 3; 3; 0 ] img)
     flipped [ 3; 0; 0 ];
-  check_shape "flip preserves shape" (Rune.shape img) flipped
+  check_shape "flip preserves shape" (Nx.shape img) flipped
 
 let test_flip_batch () =
   let data = [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0; 7.0; 8.0 |] in
-  let img = Rune.create Rune.float32 [| 2; 2; 2; 1 |] data in
+  let img = Nx.create Nx.float32 [| 2; 2; 2; 1 |] data in
   let flipped_v = vflip img in
   check_shape "vertical batch shape" [| 2; 2; 2; 1 |] flipped_v;
   check_pixel_f "batch 0 vertical flip" 3.0 flipped_v [ 0; 0; 0; 0 ];
@@ -83,28 +83,28 @@ let test_flip_batch () =
 
 let test_crop () =
   let data = Array.init (10 * 10) (fun i -> Float.of_int i /. 100.0) in
-  let img = Rune.create Rune.float32 [| 10; 10; 1 |] data in
+  let img = Nx.create Nx.float32 [| 10; 10; 1 |] data in
   let cropped = crop ~y:2 ~x:3 ~height:5 ~width:4 img in
   check_shape "crop shape" [| 5; 4; 1 |] cropped;
-  check_pixel_f "crop content" (Rune.item [ 2; 3; 0 ] img) cropped [ 0; 0; 0 ];
+  check_pixel_f "crop content" (Nx.item [ 2; 3; 0 ] img) cropped [ 0; 0; 0 ];
   raises ~msg:"crop out of bounds"
     (Invalid_argument "crop: region y=8 x=8 h=5 w=5 exceeds image 10x10")
     (fun () -> ignore (crop ~y:8 ~x:8 ~height:5 ~width:5 img))
 
 let test_crop_batch () =
   let data = Array.init (2 * 4 * 4) (fun i -> Float.of_int i) in
-  let img = Rune.create Rune.float32 [| 2; 4; 4; 1 |] data in
+  let img = Nx.create Nx.float32 [| 2; 4; 4; 1 |] data in
   let cropped = crop ~y:1 ~x:1 ~height:2 ~width:2 img in
   check_shape "batch crop shape" [| 2; 2; 2; 1 |] cropped;
   check_pixel_f "batch crop value"
-    (Rune.item [ 0; 1; 1; 0 ] img)
+    (Nx.item [ 0; 1; 1; 0 ] img)
     cropped [ 0; 0; 0; 0 ];
   check_pixel_f "batch crop second batch"
-    (Rune.item [ 1; 2; 2; 0 ] img)
+    (Nx.item [ 1; 2; 2; 0 ] img)
     cropped [ 1; 1; 1; 0 ]
 
 let test_resize_nearest () =
-  let img = Rune.create Rune.float32 [| 2; 2; 1 |] [| 0.1; 0.2; 0.3; 0.4 |] in
+  let img = Nx.create Nx.float32 [| 2; 2; 1 |] [| 0.1; 0.2; 0.3; 0.4 |] in
   let resized = resize ~interpolation:Nearest ~height:4 ~width:4 img in
   check_shape "resize nearest shape" [| 4; 4; 1 |] resized;
   check_pixel_f "nearest top-left" 0.1 resized [ 0; 0; 0 ];
@@ -113,18 +113,18 @@ let test_resize_nearest () =
   check_pixel_f "nearest bottom-right" 0.4 resized [ 3; 3; 0 ]
 
 let test_resize_bilinear () =
-  let img = Rune.create Rune.float32 [| 2; 2; 1 |] [| 0.0; 1.0; 0.0; 1.0 |] in
+  let img = Nx.create Nx.float32 [| 2; 2; 1 |] [| 0.0; 1.0; 0.0; 1.0 |] in
   let resized = resize ~height:3 ~width:3 img in
   check_shape "resize bilinear shape" [| 3; 3; 1 |] resized;
   check_pixel_f "bilinear left edge" 0.0 resized [ 0; 0; 0 ];
   check_pixel_f "bilinear right edge" 1.0 resized [ 0; 2; 0 ];
-  let center = Rune.item [ 1; 1; 0 ] resized in
+  let center = Nx.item [ 1; 1; 0 ] resized in
   if center < 0.4 || center > 0.6 then
     failf "Bilinear resize center expected ~0.5, got %.3f" center
 
 let test_resize_batch () =
   let data = [| 0.1; 0.2; 0.3; 0.4; 0.5; 0.6; 0.7; 0.8 |] in
-  let img = Rune.create Rune.float32 [| 2; 2; 2; 1 |] data in
+  let img = Nx.create Nx.float32 [| 2; 2; 2; 1 |] data in
   let resized = resize ~interpolation:Nearest ~height:4 ~width:4 img in
   check_shape "resize batch shape" [| 2; 4; 4; 1 |] resized;
   check_pixel_f "batch0 top-left" 0.1 resized [ 0; 0; 0; 0 ];
@@ -132,13 +132,13 @@ let test_resize_batch () =
 
 let test_resize_color_bilinear () =
   let img =
-    Rune.create Rune.float32 [| 1; 2; 2; 3 |]
+    Nx.create Nx.float32 [| 1; 2; 2; 3 |]
       [| 0.0; 0.0; 0.0; 1.0; 0.0; 0.0; 0.0; 1.0; 0.0; 1.0; 1.0; 0.0 |]
   in
   let resized = resize ~height:3 ~width:3 img in
   check_shape "resize color shape" [| 1; 3; 3; 3 |] resized;
-  let center_r = Rune.item [ 0; 1; 1; 0 ] resized in
-  let center_g = Rune.item [ 0; 1; 1; 1 ] resized in
+  let center_r = Nx.item [ 0; 1; 1; 0 ] resized in
+  let center_g = Nx.item [ 0; 1; 1; 1 ] resized in
   if center_r < 0.4 || center_r > 0.6 then
     failf "Color bilinear resize R expected ~0.5, got %.3f" center_r;
   if center_g < 0.4 || center_g > 0.6 then
@@ -149,7 +149,7 @@ let test_resize_color_bilinear () =
 
 let test_to_grayscale () =
   let rgb =
-    Rune.create Rune.float32 [| 2; 2; 3 |]
+    Nx.create Nx.float32 [| 2; 2; 3 |]
       [|
         1.0;
         0.0;
@@ -179,15 +179,15 @@ let test_to_grayscale () =
 (* ───── Data Type Conversion Tests ───── *)
 
 let test_float_conversions () =
-  let uint8_img = Rune.full Rune.uint8 [| 2; 2; 1 |] 255 in
+  let uint8_img = Nx.full Nx.uint8 [| 2; 2; 1 |] 255 in
   let float_img = to_float uint8_img in
-  let float_val = Rune.item [ 0; 0; 0 ] float_img in
+  let float_val = Nx.item [ 0; 0; 0 ] float_img in
   equal ~msg:"to_float normalization" (float 0.001) 1.0 float_val;
   let uint8_back = to_uint8 float_img in
   check_shape "round-trip shape" [| 2; 2; 1 |] uint8_back;
   check_pixel_i "round-trip value" 255 uint8_back [ 0; 0; 0 ];
   let out_of_range =
-    Rune.create Rune.float32 [| 2; 2; 1 |] [| -0.5; 0.5; 1.5; 0.75 |]
+    Nx.create Nx.float32 [| 2; 2; 1 |] [| -0.5; 0.5; 1.5; 0.75 |]
   in
   let clipped = to_uint8 out_of_range in
   check_pixel_i "clipped negative" 0 clipped [ 0; 0; 0 ];
@@ -200,16 +200,16 @@ let test_float_conversions () =
 let test_gaussian_blur () =
   let img = create_centered_square 10 10 4 in
   let blurred = gaussian_blur ~sigma:1.0 ~ksize:3 img in
-  check_shape "blur preserves shape" (Rune.shape img) blurred;
-  let edge_val = Rune.item [ 3; 3; 0 ] blurred in
+  check_shape "blur preserves shape" (Nx.shape img) blurred;
+  let edge_val = Nx.item [ 3; 3; 0 ] blurred in
   if edge_val = 0.0 || edge_val = 1.0 then
     failf "Edge not smoothed: got %.3f" edge_val
 
 let test_box_blur () =
   let data = [| 0.0; 0.0; 0.0; 0.0; 1.0; 0.0; 0.0; 0.0; 0.0 |] in
-  let img = Rune.create Rune.float32 [| 3; 3; 1 |] data in
+  let img = Nx.create Nx.float32 [| 3; 3; 1 |] data in
   let filtered = box_blur ~ksize:3 img in
-  let center = Rune.item [ 1; 1; 0 ] filtered in
+  let center = Nx.item [ 1; 1; 0 ] filtered in
   let expected = 1.0 /. 9.0 in
   if Float.abs (center -. expected) > 0.02 then
     failf "Box filter center: expected ~%.3f, got %.3f" expected center
@@ -217,11 +217,11 @@ let test_box_blur () =
 let test_median_blur () =
   let img = create_gray_f 5 5 0.5 in
   let filtered = median_blur ~ksize:3 img in
-  check_shape "median blur shape" (Rune.shape img) filtered
+  check_shape "median blur shape" (Nx.shape img) filtered
 
 let test_median_blur_preserves_median () =
   let data = [| 0.0; 0.0; 0.0; 0.0; 1.0; 0.0; 0.0; 0.0; 0.0 |] in
-  let img = Rune.create Rune.float32 [| 3; 3; 1 |] data in
+  let img = Nx.create Nx.float32 [| 3; 3; 1 |] data in
   let filtered = median_blur ~ksize:3 img in
   check_pixel_f "median removes impulse noise" 0.0 filtered [ 1; 1; 0 ]
 
@@ -229,7 +229,7 @@ let test_median_blur_preserves_median () =
 
 let test_threshold () =
   let img =
-    Rune.create Rune.float32 [| 2; 3; 1 |] [| 0.2; 0.4; 0.6; 0.8; 0.99; 0.1 |]
+    Nx.create Nx.float32 [| 2; 3; 1 |] [| 0.2; 0.4; 0.6; 0.8; 0.99; 0.1 |]
   in
   let binary = threshold 0.5 img in
   check_pixel_f "below threshold" 0.0 binary [ 0; 0; 0 ];
@@ -254,11 +254,11 @@ let test_erosion () =
   let white_count = ref 0 in
   for i = 0 to 9 do
     for j = 0 to 9 do
-      if Rune.item [ i; j; 0 ] eroded > 0.5 then incr white_count
+      if Nx.item [ i; j; 0 ] eroded > 0.5 then incr white_count
     done
   done;
   equal ~msg:"erosion reduces white area" int 4 !white_count;
-  let center = Rune.item [ 4; 4; 0 ] eroded in
+  let center = Nx.item [ 4; 4; 0 ] eroded in
   if center < 0.5 then failf "erosion center not preserved: %.3f" center
 
 let test_dilation () =
@@ -268,7 +268,7 @@ let test_dilation () =
   let white_count = ref 0 in
   for i = 0 to 9 do
     for j = 0 to 9 do
-      if Rune.item [ i; j; 0 ] dilated > 0.5 then incr white_count
+      if Nx.item [ i; j; 0 ] dilated > 0.5 then incr white_count
     done
   done;
   equal ~msg:"dilation expands white area" int 36 !white_count
@@ -276,18 +276,18 @@ let test_dilation () =
 let test_dilation_kernel_shape () =
   let data = Array.make (5 * 5) 0.0 in
   data.((2 * 5) + 2) <- 1.0;
-  let img = Rune.create Rune.float32 [| 5; 5; 1 |] data in
+  let img = Nx.create Nx.float32 [| 5; 5; 1 |] data in
   let rect = structuring_element Rect (3, 3) in
   let cross = structuring_element Cross (3, 3) in
   let dilated_rect = dilate ~kernel:rect img in
   let dilated_cross = dilate ~kernel:cross img in
   let count_white tensor =
-    let shape = Rune.shape tensor in
+    let shape = Nx.shape tensor in
     let h = shape.(0) and w = shape.(1) in
     let total = ref 0 in
     for i = 0 to h - 1 do
       for j = 0 to w - 1 do
-        if Rune.item [ i; j; 0 ] tensor > 0.5 then incr total
+        if Nx.item [ i; j; 0 ] tensor > 0.5 then incr total
       done
     done;
     !total
@@ -305,10 +305,10 @@ let test_sobel () =
         let j = idx mod 5 in
         if j >= 2 then 1.0 else 0.0)
   in
-  let img = Rune.create Rune.float32 [| 5; 5; 1 |] img_data in
+  let img = Nx.create Nx.float32 [| 5; 5; 1 |] img_data in
   let gx, _gy = sobel img in
-  check_shape "sobel shape" (Rune.shape img) gx;
-  let edge_response = Float.abs (Rune.item [ 2; 2; 0 ] gx) in
+  check_shape "sobel shape" (Nx.shape img) gx;
+  let edge_response = Float.abs (Nx.item [ 2; 2; 0 ] gx) in
   if edge_response < 0.1 then
     failf "Sobel X edge response too weak: %.3f" edge_response;
   (* Horizontal edge: top half black, bottom half white *)
@@ -317,20 +317,20 @@ let test_sobel () =
         let i = idx / 5 in
         if i >= 2 then 1.0 else 0.0)
   in
-  let img_h = Rune.create Rune.float32 [| 5; 5; 1 |] img_h_data in
+  let img_h = Nx.create Nx.float32 [| 5; 5; 1 |] img_h_data in
   let _gx, gy = sobel img_h in
-  let edge_response_y = Float.abs (Rune.item [ 2; 2; 0 ] gy) in
+  let edge_response_y = Float.abs (Nx.item [ 2; 2; 0 ] gy) in
   if edge_response_y < 0.1 then
     failf "Sobel Y edge response too weak: %.3f" edge_response_y
 
 let test_canny () =
   let img = create_centered_square 20 20 10 in
   let edges = canny ~low:0.2 ~high:0.6 img in
-  check_shape "canny shape" (Rune.shape img) edges;
+  check_shape "canny shape" (Nx.shape img) edges;
   let edge_count = ref 0 in
   for i = 0 to 19 do
     for j = 0 to 19 do
-      if Rune.item [ i; j; 0 ] edges > 0.5 then incr edge_count
+      if Nx.item [ i; j; 0 ] edges > 0.5 then incr edge_count
     done
   done;
   if !edge_count = 0 then fail "Canny detected no edges";
@@ -346,11 +346,11 @@ let test_pipeline () =
   let kernel = structuring_element Rect (3, 3) in
   let cleaned = erode ~kernel binary in
   let final = dilate ~kernel cleaned in
-  check_shape "pipeline preserves shape" (Rune.shape img) final;
+  check_shape "pipeline preserves shape" (Nx.shape img) final;
   let white_count = ref 0 in
   for i = 0 to 19 do
     for j = 0 to 19 do
-      if Rune.item [ i; j; 0 ] final > 0.5 then incr white_count
+      if Nx.item [ i; j; 0 ] final > 0.5 then incr white_count
     done
   done;
   if !white_count = 0 then fail "Pipeline eliminated all features"

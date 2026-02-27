@@ -25,6 +25,7 @@ dune pkg lock && dune build rune
 Here's a simple example computing the gradient of a function:
 
 ```ocaml
+open Nx
 open Rune
 
 (* Define a function *)
@@ -160,6 +161,7 @@ let train_step params x y lr =
 
 **Higher-order derivatives:**
 ```ocaml
+open Nx
 open Rune
 
 let () =
@@ -173,6 +175,7 @@ let () =
 
 **Multiple inputs with grads:**
 ```ocaml
+open Nx
 open Rune
 
 let () =

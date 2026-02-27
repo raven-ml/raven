@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module T = Tensor
+module T = Nx
 
 type gradient_check_result = {
   max_abs_error : float;

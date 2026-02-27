@@ -66,7 +66,7 @@ let q_set s a v = q.((s * n_actions) + a) <- v
 let clip_ranges = [| (-2.4, 2.4); (-3.0, 3.0); (-0.21, 0.21); (-3.0, 3.0) |]
 
 let discretize obs =
-  let arr = (Rune.to_array obs : float array) in
+  let arr = (Nx.to_array obs : float array) in
   let bin i =
     let lo, hi = clip_ranges.(i) in
     let v = Float.max lo (Float.min hi arr.(i)) in
@@ -93,15 +93,15 @@ let () =
   Printf.printf "alpha = %.2f, gamma = %.2f, episodes = %d\n\n" alpha gamma
     n_episodes;
 
-  Rune.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.run ~seed:42 @@ fun () ->
   let sample_uniform () =
-    let t = Rune.rand Rune.float32 [| 1 |] in
-    (Rune.to_array t : float array).(0)
+    let t = Nx.rand Nx.float32 [| 1 |] in
+    (Nx.to_array t : float array).(0)
   in
 
   let sample_random_action () =
-    let t = Rune.randint Rune.int32 ~high:n_actions [| 1 |] 0 in
-    Int32.to_int (Rune.to_array t : Int32.t array).(0)
+    let t = Nx.randint Nx.int32 ~high:n_actions [| 1 |] 0 in
+    Int32.to_int (Nx.to_array t : Int32.t array).(0)
   in
 
   let env = Fehu_envs.Cartpole.make () in

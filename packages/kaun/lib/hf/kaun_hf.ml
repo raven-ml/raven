@@ -144,7 +144,7 @@ let json_mem name = function
 
 (* Tensor conversion *)
 
-let to_ptree_tensor (Nx_io.P nx) = Kaun.Ptree.P (Rune.of_nx nx)
+let to_ptree_tensor (Nx_io.P nx) = Kaun.Ptree.P nx
 
 (* Loading *)
 

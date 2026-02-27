@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type tensor = P : ('a, 'layout) Rune.t -> tensor
+type tensor = P : ('a, 'layout) Nx.t -> tensor
 type t = Tensor of tensor | List of t list | Dict of (string * t) list
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
@@ -48,24 +48,22 @@ let dict kvs =
   Dict kvs
 
 module Tensor = struct
-  let dtype (P t) = Nx_core.Dtype.pack (Rune.dtype t)
-  let shape (P t) = Rune.shape t
-  let numel (P t) = Rune.numel t
+  let dtype (P t) = Nx_core.Dtype.pack (Nx.dtype t)
+  let shape (P t) = Nx.shape t
+  let numel (P t) = Nx.numel t
 
-  let to_typed (type a l) (dtype : (a, l) Rune.dtype) (P t) :
-      (a, l) Rune.t option =
-    match Nx_core.Dtype.equal_witness (Rune.dtype t) dtype with
+  let to_typed (type a l) (dtype : (a, l) Nx.dtype) (P t) : (a, l) Nx.t option =
+    match Nx_core.Dtype.equal_witness (Nx.dtype t) dtype with
     | Some Type.Equal -> Some t
     | None -> None
 
-  let to_typed_exn (type a l) (dtype : (a, l) Rune.dtype) (P t) : (a, l) Rune.t
-      =
-    match Nx_core.Dtype.equal_witness (Rune.dtype t) dtype with
+  let to_typed_exn (type a l) (dtype : (a, l) Nx.dtype) (P t) : (a, l) Nx.t =
+    match Nx_core.Dtype.equal_witness (Nx.dtype t) dtype with
     | Some Type.Equal -> t
     | None ->
         invalid_argf "dtype mismatch: expected %s, got %s"
           (Nx_core.Dtype.to_string dtype)
-          (Nx_core.Dtype.to_string (Rune.dtype t))
+          (Nx_core.Dtype.to_string (Nx.dtype t))
 end
 
 module Dict = struct
@@ -90,16 +88,15 @@ module List = struct
     match t with List xs -> xs | _ -> expected ?ctx "List"
 end
 
-type 'r tensor_handler = { run : 'a 'layout. ('a, 'layout) Rune.t -> 'r }
+type 'r tensor_handler = { run : 'a 'layout. ('a, 'layout) Nx.t -> 'r }
 
 type map_handler = {
-  run : 'a 'layout. ('a, 'layout) Rune.t -> ('a, 'layout) Rune.t;
+  run : 'a 'layout. ('a, 'layout) Nx.t -> ('a, 'layout) Nx.t;
 }
 
 type map2_handler = {
   run :
-    'a 'layout.
-    ('a, 'layout) Rune.t -> ('a, 'layout) Rune.t -> ('a, 'layout) Rune.t;
+    'a 'layout. ('a, 'layout) Nx.t -> ('a, 'layout) Nx.t -> ('a, 'layout) Nx.t;
 }
 
 let with_tensor (P t) (handler : _ tensor_handler) = handler.run t
@@ -119,7 +116,7 @@ let map2 (f : map2_handler) a b =
   let rec go a b =
     match (a, b) with
     | Tensor (P x), Tensor (P y) -> (
-        match Nx_core.Dtype.equal_witness (Rune.dtype x) (Rune.dtype y) with
+        match Nx_core.Dtype.equal_witness (Nx.dtype x) (Nx.dtype y) with
         | Some Type.Equal -> Tensor (P (f.run x y))
         | None -> invalid_arg "dtype mismatch")
     | List xs, List ys ->
@@ -194,7 +191,7 @@ let flatten_with_paths t =
   go "" t;
   Stdlib.List.rev !acc
 
-let zeros_like t = map { run = Rune.zeros_like } t
+let zeros_like t = map { run = Nx.zeros_like } t
 let count_parameters t = fold (fun acc p -> acc + Tensor.numel p) 0 t
 
 let pp_shape shape =
@@ -208,8 +205,8 @@ let rec pp_with_indent indent ppf = function
           run =
             (fun t ->
               Format.fprintf ppf "Tensor(%s, %s)"
-                (Nx_core.Dtype.to_string (Rune.dtype t))
-                (pp_shape (Rune.shape t)));
+                (Nx_core.Dtype.to_string (Nx.dtype t))
+                (pp_shape (Nx.shape t)));
         }
   | List [] -> Format.pp_print_string ppf "List []"
   | List xs ->

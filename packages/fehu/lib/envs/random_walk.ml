@@ -5,8 +5,8 @@
 
 open Fehu
 
-type obs = (float, Rune.float32_elt) Rune.t
-type act = (int32, Rune.int32_elt) Rune.t
+type obs = (float, Nx.float32_elt) Nx.t
+type act = (int32, Nx.int32_elt) Nx.t
 type render = string
 
 let step_size = 1.0
@@ -17,7 +17,7 @@ let observation_space =
   Space.Box.create ~low:[| -.max_position |] ~high:[| max_position |]
 
 let action_space = Space.Discrete.create 2
-let make_obs position = Rune.create Rune.float32 [| 1 |] [| position |]
+let make_obs position = Nx.create Nx.float32 [| 1 |] [| position |]
 
 let render_ansi position =
   let offset = int_of_float (position +. max_position) in

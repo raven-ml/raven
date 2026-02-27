@@ -4,8 +4,8 @@
   ---------------------------------------------------------------------------*)
 
 open Nx_core
-open Nx_rune
-module T = Tensor
+open Nx_effect
+module T = Nx
 
 (* ───── Type Definitions & Utils ───── *)
 

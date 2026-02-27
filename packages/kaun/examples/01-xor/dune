@@ -1,3 +1,3 @@
 (executable
  (name main)
- (libraries rune kaun))
+ (libraries nx rune kaun))

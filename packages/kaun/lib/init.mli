@@ -6,14 +6,13 @@
 (** Weight initialization strategies.
 
     Initializers map a shape and float dtype to tensors. Random keys are
-    obtained implicitly via {!Rune.Rng.next_key}. Named families (Glorot, He,
+    obtained implicitly via {!Nx.Rng.next_key}. Named families (Glorot, He,
     LeCun) are defined in terms of {!variance_scaling}. *)
 
 (** {1:types Types} *)
 
 type t = {
-  f :
-    'layout. int array -> (float, 'layout) Rune.dtype -> (float, 'layout) Rune.t;
+  f : 'layout. int array -> (float, 'layout) Nx.dtype -> (float, 'layout) Nx.t;
 }
 (** [t] is the type for initializers.
 

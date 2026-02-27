@@ -79,7 +79,7 @@ val boundary_values : 'a t -> Value.t list
 (** {1:space_types Space types} *)
 
 module Discrete : sig
-  type element = (int32, Rune.int32_elt) Rune.t
+  type element = (int32, Nx.int32_elt) Nx.t
   (** Discrete action represented as a scalar int32 tensor. *)
 
   val create : ?start:int -> int -> element t
@@ -106,7 +106,7 @@ module Discrete : sig
 end
 
 module Box : sig
-  type element = (float, Rune.float32_elt) Rune.t
+  type element = (float, Nx.float32_elt) Nx.t
   (** Continuous vector represented as a float32 tensor. *)
 
   val create : low:float array -> high:float array -> element t
@@ -128,7 +128,7 @@ module Box : sig
 end
 
 module Multi_binary : sig
-  type element = (int32, Rune.int32_elt) Rune.t
+  type element = (int32, Nx.int32_elt) Nx.t
   (** Binary vector for multi-label scenarios. *)
 
   val create : int -> element t
@@ -139,7 +139,7 @@ module Multi_binary : sig
 end
 
 module Multi_discrete : sig
-  type element = (int32, Rune.int32_elt) Rune.t
+  type element = (int32, Nx.int32_elt) Nx.t
   (** Multiple discrete choices with independent cardinalities. *)
 
   val create : int array -> element t

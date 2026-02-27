@@ -5,16 +5,16 @@ let value = testable ~pp:Value.pp ~equal:Value.equal ()
 
 (* Helpers *)
 
-let int32_scalar v = Rune.scalar Rune.int32 (Int32.of_int v)
+let int32_scalar v = Nx.scalar Nx.int32 (Int32.of_int v)
 
 let int32_vec arr =
-  Rune.create Rune.int32 [| Array.length arr |] (Array.map Int32.of_int arr)
+  Nx.create Nx.int32 [| Array.length arr |] (Array.map Int32.of_int arr)
 
-let float32_vec arr = Rune.create Rune.float32 [| Array.length arr |] arr
+let float32_vec arr = Nx.create Nx.float32 [| Array.length arr |] arr
 
 let read_float32_vec t =
-  let n = (Rune.shape t).(0) in
-  let arr : float array = Rune.to_array (Rune.reshape [| n |] t) in
+  let n = (Nx.shape t).(0) in
+  let arr : float array = Nx.to_array (Nx.reshape [| n |] t) in
   arr
 
 (* Discrete *)
@@ -446,7 +446,7 @@ let test_tuple_unpack_valid () =
 (* Entry point *)
 
 let () =
-  Rune.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.run ~seed:42 @@ fun () ->
   run "Fehu.Space"
     [
       group "Discrete"

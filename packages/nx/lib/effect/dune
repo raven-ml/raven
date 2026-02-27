@@ -1,0 +1,4 @@
+(library
+ (name nx_effect)
+ (public_name nx.effect)
+ (libraries nx_core nx_backend nx_buffer))

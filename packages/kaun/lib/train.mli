@@ -25,7 +25,7 @@ type 'l state
 val make : model:('i, 'o) Layer.t -> optimizer:Optim.algorithm -> ('i, 'o) t
 (** [make ~model ~optimizer] creates a trainer. *)
 
-val init : ('i, 'o) t -> dtype:(float, 'l) Rune.dtype -> 'l state
+val init : ('i, 'o) t -> dtype:(float, 'l) Nx.dtype -> 'l state
 (** [init trainer ~dtype] initializes model variables and optimizer state.
 
     Random keys for weight initialization are drawn from the implicit RNG scope.
@@ -52,9 +52,9 @@ val step :
   'l state ->
   training:bool ->
   ?ctx:Context.t ->
-  loss:(('o, 'l) Rune.t -> (float, 'l) Rune.t) ->
-  ('i, 'in_elt) Rune.t ->
-  (float, 'l) Rune.t * 'l state
+  loss:(('o, 'l) Nx.t -> (float, 'l) Nx.t) ->
+  ('i, 'in_elt) Nx.t ->
+  (float, 'l) Nx.t * 'l state
 (** [step trainer st ~training ?ctx ~loss x] performs one training step.
 
     Computes the forward pass, differentiates the loss with respect to trainable
@@ -70,7 +70,7 @@ val fit :
   'l state ->
   ?ctx:Context.t ->
   ?report:(step:int -> loss:float -> 'l state -> unit) ->
-  (('i, 'in_elt) Rune.t * (('o, 'l) Rune.t -> (float, 'l) Rune.t)) Data.t ->
+  (('i, 'in_elt) Nx.t * (('o, 'l) Nx.t -> (float, 'l) Nx.t)) Data.t ->
   'l state
 (** [fit trainer st ?ctx ?report data] trains the model over [data] and returns
     the final state.
@@ -96,8 +96,8 @@ val predict :
   ('i, 'o) t ->
   'l state ->
   ?ctx:Context.t ->
-  ('i, 'in_elt) Rune.t ->
-  ('o, 'l) Rune.t
+  ('i, 'in_elt) Nx.t ->
+  ('o, 'l) Nx.t
 (** [predict trainer st ?ctx x] runs the model in evaluation mode (no state
     updates, no dropout).
 

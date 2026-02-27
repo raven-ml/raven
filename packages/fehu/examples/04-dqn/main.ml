@@ -71,7 +71,7 @@ let q_network =
 (* Forward pass: obs [batch; 4] -> q_values [batch; 2] *)
 
 let forward params net_state obs =
-  let vars = Layer.make_vars ~params ~state:net_state ~dtype:Rune.float32 in
+  let vars = Layer.make_vars ~params ~state:net_state ~dtype:Nx.float32 in
   fst (Layer.apply q_network vars ~training:false obs)
 
 (* Epsilon schedule: linear decay *)
@@ -84,7 +84,7 @@ let epsilon step =
 
 (* Copy parameters for the target network *)
 
-let copy_params params = Ptree.map { run = (fun t -> Rune.copy t) } params
+let copy_params params = Ptree.map { run = (fun t -> Nx.copy t) } params
 
 (* Main *)
 
@@ -100,11 +100,11 @@ let () =
     "Epsilon: %.2f -> %.2f over %d steps, target update every %d steps\n\n"
     epsilon_start epsilon_end epsilon_decay_steps target_update_interval;
 
-  Rune.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.run ~seed:42 @@ fun () ->
   let env = Fehu_envs.Cartpole.make () in
 
   (* Initialize network *)
-  let vars = Layer.init q_network ~dtype:Rune.float32 in
+  let vars = Layer.init q_network ~dtype:Nx.float32 in
   let params = ref (Layer.params vars) in
   let net_state = Layer.state vars in
   let target_params = ref (copy_params !params) in
@@ -119,35 +119,35 @@ let () =
   let buffer = Buffer.create ~capacity:buffer_capacity in
 
   let sample_uniform () =
-    let t = Rune.rand Rune.float32 [| 1 |] in
-    (Rune.to_array t : float array).(0)
+    let t = Nx.rand Nx.float32 [| 1 |] in
+    (Nx.to_array t : float array).(0)
   in
 
   (* Epsilon-greedy action selection *)
   let select_action obs eps =
     if sample_uniform () < eps then Space.sample (Env.action_space env)
     else begin
-      let obs_batch = Rune.reshape [| 1; 4 |] obs in
+      let obs_batch = Nx.reshape [| 1; 4 |] obs in
       let q_values =
         Rune.no_grad (fun () -> forward !params net_state obs_batch)
       in
       let action_idx =
-        Rune.argmax q_values ~axis:(-1) ~keepdims:false |> Rune.cast Rune.int32
+        Nx.argmax q_values ~axis:(-1) ~keepdims:false |> Nx.cast Nx.int32
       in
-      Rune.reshape [||] action_idx
+      Nx.reshape [||] action_idx
     end
   in
 
   (* Greedy policy for evaluation *)
   let greedy_policy obs =
-    let obs_batch = Rune.reshape [| 1; 4 |] obs in
+    let obs_batch = Nx.reshape [| 1; 4 |] obs in
     let q_values =
       Rune.no_grad (fun () -> forward !params net_state obs_batch)
     in
     let action_idx =
-      Rune.argmax q_values ~axis:(-1) ~keepdims:false |> Rune.cast Rune.int32
+      Nx.argmax q_values ~axis:(-1) ~keepdims:false |> Nx.cast Nx.int32
     in
-    Rune.reshape [||] action_idx
+    Nx.reshape [||] action_idx
   in
 
   (* Training step *)
@@ -158,39 +158,37 @@ let () =
     let n = Array.length obs_arr in
 
     (* Stack into batch tensors *)
-    let obs_batch = Rune.stack (Array.to_list obs_arr) in
-    let next_obs_batch = Rune.stack (Array.to_list next_obs_arr) in
+    let obs_batch = Nx.stack (Array.to_list obs_arr) in
+    let next_obs_batch = Nx.stack (Array.to_list next_obs_arr) in
     let actions_batch =
-      Rune.stack
-        (Array.to_list (Array.map (fun a -> Rune.reshape [| 1 |] a) act_arr))
+      Nx.stack
+        (Array.to_list (Array.map (fun a -> Nx.reshape [| 1 |] a) act_arr))
     in
-    let rewards_t = Rune.create Rune.float32 [| n |] rew_arr in
+    let rewards_t = Nx.create Nx.float32 [| n |] rew_arr in
 
     (* Done mask: 1.0 if not done, 0.0 if done *)
     let done_mask =
       Array.init n (fun i -> if term_arr.(i) || trunc_arr.(i) then 0.0 else 1.0)
     in
-    let done_mask_t = Rune.create Rune.float32 [| n |] done_mask in
+    let done_mask_t = Nx.create Nx.float32 [| n |] done_mask in
 
     (* Compute TD target with target network (no gradient) *)
     let td_target =
       Rune.no_grad (fun () ->
           let target_q = forward !target_params net_state next_obs_batch in
-          let max_q = Rune.max target_q ~axes:[ 1 ] ~keepdims:false in
-          Rune.add rewards_t
-            (Rune.mul
-               (Rune.scalar Rune.float32 gamma)
-               (Rune.mul max_q done_mask_t)))
+          let max_q = Nx.max target_q ~axes:[ 1 ] ~keepdims:false in
+          Nx.add rewards_t
+            (Nx.mul (Nx.scalar Nx.float32 gamma) (Nx.mul max_q done_mask_t)))
     in
     let td_target = Rune.detach td_target in
 
     (* Loss: MSE between predicted Q and TD target *)
     let loss_fn p =
       let q_values = forward p net_state obs_batch in
-      let q_selected = Rune.take_along_axis ~axis:1 actions_batch q_values in
-      let q_selected = Rune.reshape [| n |] q_selected in
-      let diff = Rune.sub q_selected td_target in
-      Rune.mean (Rune.mul diff diff)
+      let q_selected = Nx.take_along_axis ~axis:1 actions_batch q_values in
+      let q_selected = Nx.reshape [| n |] q_selected in
+      let diff = Nx.sub q_selected td_target in
+      Nx.mean (Nx.mul diff diff)
     in
 
     let loss, grads = Grad.value_and_grad loss_fn !params in
@@ -199,7 +197,7 @@ let () =
     in
     params := new_params;
     opt_state := new_opt_state;
-    Rune.item [] loss
+    Nx.item [] loss
   in
 
   (* Main training loop *)

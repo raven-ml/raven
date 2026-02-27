@@ -82,38 +82,38 @@ let boundary_values s = s.boundaries
 (* Discrete *)
 
 module Discrete = struct
-  type element = (int32, Rune.int32_elt) Rune.t
+  type element = (int32, Nx.int32_elt) Nx.t
 
   let to_int tensor =
-    let reshaped = Rune.reshape [| 1 |] tensor in
-    let arr : Int32.t array = Rune.to_array reshaped in
+    let reshaped = Nx.reshape [| 1 |] tensor in
+    let arr : Int32.t array = Nx.to_array reshaped in
     Int32.to_int arr.(0)
 
-  let of_int v = Rune.scalar Rune.int32 (Int32.of_int v)
+  let of_int v = Nx.scalar Nx.int32 (Int32.of_int v)
 
   let create ?(start = 0) n =
     if n <= 0 then invalid_arg err_discrete_n;
     let hi = start + n in
     let contains tensor =
-      let reshaped = Rune.reshape [| 1 |] tensor in
-      let arr : Int32.t array = Rune.to_array reshaped in
+      let reshaped = Nx.reshape [| 1 |] tensor in
+      let arr : Int32.t array = Nx.to_array reshaped in
       Array.length arr = 1
       &&
       let v = Int32.to_int arr.(0) in
       v >= start && v < hi
     in
     let sample () =
-      let tensor = Rune.randint Rune.int32 ~high:hi [| 1 |] start in
-      let arr : Int32.t array = Rune.to_array tensor in
-      Rune.scalar Rune.int32 arr.(0)
+      let tensor = Nx.randint Nx.int32 ~high:hi [| 1 |] start in
+      let arr : Int32.t array = Nx.to_array tensor in
+      Nx.scalar Nx.int32 arr.(0)
     in
     let pack tensor =
-      let arr : Int32.t array = Rune.to_array (Rune.reshape [| 1 |] tensor) in
+      let arr : Int32.t array = Nx.to_array (Nx.reshape [| 1 |] tensor) in
       Value.Int (Int32.to_int arr.(0))
     in
     let unpack = function
       | Value.Int v when v >= start && v < hi ->
-          Ok (Rune.scalar Rune.int32 (Int32.of_int v))
+          Ok (Nx.scalar Nx.int32 (Int32.of_int v))
       | Value.Int v -> errorf "Discrete value %d outside [%d, %d)" v start hi
       | other -> errorf "Discrete expects Int, got %s" (Value.to_string other)
     in
@@ -147,7 +147,7 @@ end
 (* Box *)
 
 module Box = struct
-  type element = (float, Rune.float32_elt) Rune.t
+  type element = (float, Nx.float32_elt) Nx.t
 
   let create ~low ~high =
     let arity = Array.length low in
@@ -162,11 +162,11 @@ module Box = struct
     let low = Array.copy low in
     let high = Array.copy high in
     let contains tensor =
-      let sh = Rune.shape tensor in
+      let sh = Nx.shape tensor in
       Array.length sh = 1
       && sh.(0) = arity
       &&
-      let values = Rune.to_array tensor in
+      let values = Nx.to_array tensor in
       let rec loop i =
         if i = arity then true
         else
@@ -176,8 +176,8 @@ module Box = struct
       loop 0
     in
     let sample () =
-      let uniform = Rune.rand Rune.float32 [| arity |] in
-      let draws = Rune.to_array uniform in
+      let uniform = Nx.rand Nx.float32 [| arity |] in
+      let draws = Nx.to_array uniform in
       let values =
         Array.init arity (fun i ->
             let lo = low.(i) in
@@ -190,12 +190,12 @@ module Box = struct
                 let v = -1e6 +. (draws.(i) *. 2e6) in
                 Float.max lo (Float.min hi v))
       in
-      Rune.create Rune.float32 [| arity |] values
+      Nx.create Nx.float32 [| arity |] values
     in
-    let pack tensor = Value.Float_array (Array.copy (Rune.to_array tensor)) in
+    let pack tensor = Value.Float_array (Array.copy (Nx.to_array tensor)) in
     let unpack = function
       | Value.Float_array arr when Array.length arr = arity ->
-          let tensor = Rune.create Rune.float32 [| arity |] arr in
+          let tensor = Nx.create Nx.float32 [| arity |] arr in
           if contains tensor then Ok tensor
           else
             errorf "Box value outside bounds: %s"
@@ -242,21 +242,21 @@ end
 (* Multi_binary *)
 
 module Multi_binary = struct
-  type element = (int32, Rune.int32_elt) Rune.t
+  type element = (int32, Nx.int32_elt) Nx.t
 
   let create n =
     if n <= 0 then invalid_arg err_mb_n;
     let contains tensor =
-      let sh = Rune.shape tensor in
+      let sh = Nx.shape tensor in
       Array.length sh = 1
       && sh.(0) = n
       &&
-      let arr : Int32.t array = Rune.to_array tensor in
+      let arr : Int32.t array = Nx.to_array tensor in
       Array.for_all (fun v -> v = Int32.zero || v = Int32.one) arr
     in
-    let sample () = Rune.randint Rune.int32 ~high:2 [| n |] 0 in
+    let sample () = Nx.randint Nx.int32 ~high:2 [| n |] 0 in
     let pack tensor =
-      let arr : Int32.t array = Rune.to_array tensor in
+      let arr : Int32.t array = Nx.to_array tensor in
       Value.Bool_array
         (Array.init n (fun i -> not (Int32.equal arr.(i) Int32.zero)))
     in
@@ -265,7 +265,7 @@ module Multi_binary = struct
           let data =
             Array.map (fun b -> if b then Int32.one else Int32.zero) arr
           in
-          Ok (Rune.create Rune.int32 [| n |] data)
+          Ok (Nx.create Nx.int32 [| n |] data)
       | Value.Bool_array arr ->
           errorf "Multi_binary expects vector of size %d, got size %d" n
             (Array.length arr)
@@ -295,7 +295,7 @@ end
 (* Multi_discrete *)
 
 module Multi_discrete = struct
-  type element = (int32, Rune.int32_elt) Rune.t
+  type element = (int32, Nx.int32_elt) Nx.t
 
   let create nvec =
     let arity = Array.length nvec in
@@ -308,11 +308,11 @@ module Multi_discrete = struct
             (strf "Space.Multi_discrete.create: nvec[%d] must be > 0" i))
       nvec;
     let contains tensor =
-      let sh = Rune.shape tensor in
+      let sh = Nx.shape tensor in
       Array.length sh = 1
       && sh.(0) = arity
       &&
-      let arr : Int32.t array = Rune.to_array tensor in
+      let arr : Int32.t array = Nx.to_array tensor in
       let rec loop i =
         if i = arity then true
         else
@@ -324,20 +324,20 @@ module Multi_discrete = struct
     let sample () =
       let data =
         Array.init arity (fun i ->
-            let tensor = Rune.randint Rune.int32 ~high:nvec.(i) [| 1 |] 0 in
-            let arr = Rune.to_array tensor in
+            let tensor = Nx.randint Nx.int32 ~high:nvec.(i) [| 1 |] 0 in
+            let arr = Nx.to_array tensor in
             arr.(0))
       in
-      Rune.create Rune.int32 [| arity |] data
+      Nx.create Nx.int32 [| arity |] data
     in
     let pack tensor =
-      let arr : Int32.t array = Rune.to_array tensor in
+      let arr : Int32.t array = Nx.to_array tensor in
       Value.Int_array (Array.map Int32.to_int arr)
     in
     let unpack = function
       | Value.Int_array arr when Array.length arr = arity ->
           let data = Array.map Int32.of_int arr in
-          let tensor = Rune.create Rune.int32 [| arity |] data in
+          let tensor = Nx.create Nx.int32 [| arity |] data in
           if contains tensor then Ok tensor
           else
             errorf "Multi_discrete value outside bounds: %s"
@@ -523,9 +523,9 @@ module Sequence = struct
             if max_len = min_length then min_length
             else
               let tensor =
-                Rune.randint Rune.int32 ~high:(max_len + 1) [| 1 |] min_length
+                Nx.randint Nx.int32 ~high:(max_len + 1) [| 1 |] min_length
               in
-              let arr = Rune.to_array tensor in
+              let arr = Nx.to_array tensor in
               Int32.to_int arr.(0)
       in
       if length = 0 then []
@@ -602,16 +602,14 @@ module Text = struct
       let length =
         if max_length = 1 then 1
         else
-          let tensor =
-            Rune.randint Rune.int32 ~high:(max_length + 1) [| 1 |] 1
-          in
-          let arr = Rune.to_array tensor in
+          let tensor = Nx.randint Nx.int32 ~high:(max_length + 1) [| 1 |] 1 in
+          let arr = Nx.to_array tensor in
           Int32.to_int arr.(0)
       in
       if length = 0 then ""
       else
-        let idxs = Rune.randint Rune.int32 ~high:charset_len [| length |] 0 in
-        let arr = Rune.to_array idxs in
+        let idxs = Nx.randint Nx.int32 ~high:charset_len [| length |] 0 in
+        let arr = Nx.to_array idxs in
         Bytes.init length (fun i -> charset.[Int32.to_int arr.(i)])
         |> Bytes.to_string
     in

@@ -7,14 +7,14 @@ open Kaun
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
-let require_float_dtype (type p in_elt) ~ctx (expected : (float, p) Rune.dtype)
-    (x : (float, in_elt) Rune.t) : (float, p) Rune.t =
-  match Nx_core.Dtype.equal_witness expected (Rune.dtype x) with
+let require_float_dtype (type p in_elt) ~ctx (expected : (float, p) Nx.dtype)
+    (x : (float, in_elt) Nx.t) : (float, p) Nx.t =
+  match Nx_core.Dtype.equal_witness expected (Nx.dtype x) with
   | Some Type.Equal -> x
   | None ->
       invalid_argf "%s: dtype mismatch (expected %s, got %s)" ctx
         (Nx_core.Dtype.to_string expected)
-        (Nx_core.Dtype.to_string (Rune.dtype x))
+        (Nx_core.Dtype.to_string (Nx.dtype x))
 
 (* Config *)
 
@@ -66,7 +66,7 @@ let get_from_ctx_int32 ~name ~default ctx =
   match ctx with
   | Some c -> (
       match Context.find c ~name with
-      | Some tensor -> Ptree.Tensor.to_typed_exn Rune.int32 tensor
+      | Some tensor -> Ptree.Tensor.to_typed_exn Nx.int32 tensor
       | None -> default ())
   | None -> default ()
 
@@ -75,14 +75,13 @@ let get_attention_mask_bool ctx ~batch ~seq =
   | Some c -> (
       match Context.find c ~name:Attention.attention_mask_key with
       | Some tensor -> (
-          match Ptree.Tensor.to_typed Rune.bool tensor with
+          match Ptree.Tensor.to_typed Nx.bool tensor with
           | Some m -> m
           | None ->
-              let int_mask = Ptree.Tensor.to_typed_exn Rune.int32 tensor in
-              Rune.not_equal int_mask
-                (Rune.zeros Rune.int32 (Rune.shape int_mask)))
-      | None -> Rune.broadcast_to [| batch; seq |] (Rune.scalar Rune.bool true))
-  | None -> Rune.broadcast_to [| batch; seq |] (Rune.scalar Rune.bool true)
+              let int_mask = Ptree.Tensor.to_typed_exn Nx.int32 tensor in
+              Nx.not_equal int_mask (Nx.zeros Nx.int32 (Nx.shape int_mask)))
+      | None -> Nx.broadcast_to [| batch; seq |] (Nx.scalar Nx.bool true))
+  | None -> Nx.broadcast_to [| batch; seq |] (Nx.scalar Nx.bool true)
 
 let fields ~ctx t = Ptree.Dict.fields_exn ~ctx t
 let get fs ~name dtype = Ptree.Dict.get_tensor_exn fs ~name dtype
@@ -90,10 +89,9 @@ let find ~ctx key fs = Ptree.Dict.find_exn ~ctx key fs
 
 (* Self-attention with biased projections *)
 
-let self_attention (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
-    ~training ~attention_mask ~params (x : (float, l) Rune.t) :
-    (float, l) Rune.t =
-  let shape = Rune.shape x in
+let self_attention (type l) ~(cfg : config) ~(dtype : (float, l) Nx.dtype)
+    ~training ~attention_mask ~params (x : (float, l) Nx.t) : (float, l) Nx.t =
+  let shape = Nx.shape x in
   let batch = shape.(0) in
   let seq = shape.(1) in
   let h = cfg.hidden_size in
@@ -104,22 +102,22 @@ let self_attention (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
   let proj name =
     let w = get fs ~name:(name ^ "_weight") dtype in
     let b = get fs ~name:(name ^ "_bias") dtype in
-    fun t -> Rune.add (Rune.matmul t w) b
+    fun t -> Nx.add (Nx.matmul t w) b
   in
   let q = proj "q" x in
   let k = proj "k" x in
   let v = proj "v" x in
 
   let split_heads t =
-    Rune.reshape [| batch; seq; heads; head_dim |] t
-    |> Rune.transpose ~axes:[ 0; 2; 1; 3 ]
+    Nx.reshape [| batch; seq; heads; head_dim |] t
+    |> Nx.transpose ~axes:[ 0; 2; 1; 3 ]
   in
   let q = split_heads q in
   let k = split_heads k in
   let v = split_heads v in
 
   (* Broadcast mask [batch; seq] -> [batch; 1; 1; seq] *)
-  let attention_mask = Rune.reshape [| batch; 1; 1; seq |] attention_mask in
+  let attention_mask = Nx.reshape [| batch; 1; 1; seq |] attention_mask in
 
   let dropout_rate =
     if training && cfg.attention_dropout_prob > 0.0 then
@@ -133,21 +131,20 @@ let self_attention (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
 
   (* Merge heads *)
   let merged =
-    Rune.transpose attn ~axes:[ 0; 2; 1; 3 ]
-    |> Rune.contiguous
-    |> Rune.reshape [| batch; seq; h |]
+    Nx.transpose attn ~axes:[ 0; 2; 1; 3 ]
+    |> Nx.contiguous
+    |> Nx.reshape [| batch; seq; h |]
   in
 
   (* Output projection *)
   let o_w = get fs ~name:"o_weight" dtype in
   let o_b = get fs ~name:"o_bias" dtype in
-  Rune.add (Rune.matmul merged o_w) o_b
+  Nx.add (Nx.matmul merged o_w) o_b
 
 (* Encoder block *)
 
-let encoder_block (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
-    ~training ~attention_mask ~params (x : (float, l) Rune.t) :
-    (float, l) Rune.t =
+let encoder_block (type l) ~(cfg : config) ~(dtype : (float, l) Nx.dtype)
+    ~training ~attention_mask ~params (x : (float, l) Nx.t) : (float, l) Nx.t =
   let fs = fields ~ctx:"Bert.block" params in
 
   (* Self-attention *)
@@ -168,7 +165,7 @@ let encoder_block (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
   let ln1_b = get fs ~name:"attn_ln_beta" dtype in
   let x =
     Kaun.Fn.layer_norm ~gamma:ln1_g ~beta:ln1_b ~epsilon:cfg.layer_norm_eps
-      (Rune.add x attn)
+      (Nx.add x attn)
   in
 
   (* FFN: up -> GELU -> down *)
@@ -177,8 +174,8 @@ let encoder_block (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
   let ffn_down_w = get fs ~name:"ffn_down_weight" dtype in
   let ffn_down_b = get fs ~name:"ffn_down_bias" dtype in
 
-  let y = Rune.add (Rune.matmul x ffn_up_w) ffn_up_b |> Kaun.Activation.gelu in
-  let y = Rune.add (Rune.matmul y ffn_down_w) ffn_down_b in
+  let y = Nx.add (Nx.matmul x ffn_up_w) ffn_up_b |> Kaun.Activation.gelu in
+  let y = Nx.add (Nx.matmul y ffn_down_w) ffn_down_b in
 
   (* Hidden dropout on FFN output *)
   let y =
@@ -191,15 +188,15 @@ let encoder_block (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
   let ln2_g = get fs ~name:"ffn_ln_gamma" dtype in
   let ln2_b = get fs ~name:"ffn_ln_beta" dtype in
   Kaun.Fn.layer_norm ~gamma:ln2_g ~beta:ln2_b ~epsilon:cfg.layer_norm_eps
-    (Rune.add x y)
+    (Nx.add x y)
 
 (* Forward: embeddings + encoder stack *)
 
 let encode (type l in_elt) ~(cfg : config) ~params
-    ~(dtype : (float, l) Rune.dtype) ~training ?ctx
-    (input_ids : (int32, in_elt) Rune.t) : (float, l) Rune.t =
-  let input_ids = Rune.cast Rune.int32 input_ids in
-  let shape = Rune.shape input_ids in
+    ~(dtype : (float, l) Nx.dtype) ~training ?ctx
+    (input_ids : (int32, in_elt) Nx.t) : (float, l) Nx.t =
+  let input_ids = Nx.cast Nx.int32 input_ids in
+  let shape = Nx.shape input_ids in
   let batch = shape.(0) in
   let seq = shape.(1) in
 
@@ -210,7 +207,7 @@ let encode (type l in_elt) ~(cfg : config) ~params
   (* Read auxiliary inputs from context *)
   let token_type_ids =
     get_from_ctx_int32 ~name:token_type_ids_key ctx ~default:(fun () ->
-        Rune.zeros Rune.int32 [| batch; seq |])
+        Nx.zeros Nx.int32 [| batch; seq |])
   in
   let attention_mask = get_attention_mask_bool ctx ~batch ~seq in
 
@@ -228,17 +225,17 @@ let encode (type l in_elt) ~(cfg : config) ~params
 
   (* Embedding lookup: word + position + token_type *)
   let position_ids =
-    Rune.arange_f Rune.float32 0.0 (float_of_int seq) 1.0
-    |> Rune.cast Rune.int32
-    |> Rune.reshape [| 1; seq |]
-    |> Rune.broadcast_to [| batch; seq |]
-    |> Rune.contiguous
+    Nx.arange_f Nx.float32 0.0 (float_of_int seq) 1.0
+    |> Nx.cast Nx.int32
+    |> Nx.reshape [| 1; seq |]
+    |> Nx.broadcast_to [| batch; seq |]
+    |> Nx.contiguous
   in
-  let token_type_ids = Rune.contiguous token_type_ids in
+  let token_type_ids = Nx.contiguous token_type_ids in
   let tok = Kaun.Fn.embedding ~scale:false ~embedding:word_emb input_ids in
   let pos = Kaun.Fn.embedding ~scale:false ~embedding:pos_emb position_ids in
   let typ = Kaun.Fn.embedding ~scale:false ~embedding:type_emb token_type_ids in
-  let x = Rune.add tok (Rune.add pos typ) in
+  let x = Nx.add tok (Nx.add pos typ) in
   let x =
     Kaun.Fn.layer_norm ~gamma:ln_g ~beta:ln_b ~epsilon:cfg.layer_norm_eps x
   in
@@ -265,8 +262,8 @@ let encode (type l in_elt) ~(cfg : config) ~params
 
 let init_block_params ~dtype ~hidden ~intermediate =
   let w = Init.normal ~stddev:0.02 () in
-  let zeros n = Rune.zeros dtype [| n |] in
-  let ones n = Rune.ones dtype [| n |] in
+  let zeros n = Nx.zeros dtype [| n |] in
+  let ones n = Nx.ones dtype [| n |] in
   let attn_params =
     Ptree.dict
       [
@@ -311,8 +308,8 @@ let init_encoder_params ~cfg ~dtype =
             ("word", Ptree.tensor word);
             ("pos", Ptree.tensor pos);
             ("type", Ptree.tensor typ);
-            ("ln_gamma", Ptree.tensor (Rune.ones dtype [| h |]));
-            ("ln_beta", Ptree.tensor (Rune.zeros dtype [| h |]));
+            ("ln_gamma", Ptree.tensor (Nx.ones dtype [| h |]));
+            ("ln_beta", Ptree.tensor (Nx.zeros dtype [| h |]));
           ] );
       ("layers", Ptree.list blocks);
     ]
@@ -339,7 +336,7 @@ let pooler (cfg : config) () : (float, float) Layer.t =
     Layer.init =
       (fun ~dtype ->
         let w = w_init.f [| cfg.hidden_size; cfg.hidden_size |] dtype in
-        let b = Rune.zeros dtype [| cfg.hidden_size |] in
+        let b = Nx.zeros dtype [| cfg.hidden_size |] in
         Layer.make_vars
           ~params:
             (Ptree.dict
@@ -352,12 +349,11 @@ let pooler (cfg : config) () : (float, float) Layer.t =
         let fs = fields ~ctx:"Bert.pooler" params in
         let w = get fs ~name:"weight" dtype in
         let b = get fs ~name:"bias" dtype in
-        let batch = (Rune.shape x).(0) in
+        let batch = (Nx.shape x).(0) in
         let cls =
-          Rune.slice [ A; R (0, 1) ] x
-          |> Rune.reshape [| batch; cfg.hidden_size |]
+          Nx.slice [ A; R (0, 1) ] x |> Nx.reshape [| batch; cfg.hidden_size |]
         in
-        (Rune.add (Rune.matmul cls w) b |> Rune.tanh, Ptree.empty));
+        (Nx.add (Nx.matmul cls w) b |> Nx.tanh, Ptree.empty));
   }
 
 let for_sequence_classification (cfg : config) ~num_labels () :
@@ -379,14 +375,13 @@ let for_sequence_classification (cfg : config) ~num_labels () :
                      [
                        ("weight", Ptree.tensor pool_w);
                        ( "bias",
-                         Ptree.tensor (Rune.zeros dtype [| cfg.hidden_size |])
-                       );
+                         Ptree.tensor (Nx.zeros dtype [| cfg.hidden_size |]) );
                      ] );
                  ( "classifier",
                    Ptree.dict
                      [
                        ("weight", Ptree.tensor cls_w);
-                       ("bias", Ptree.tensor (Rune.zeros dtype [| num_labels |]));
+                       ("bias", Ptree.tensor (Nx.zeros dtype [| num_labels |]));
                      ] );
                ])
           ~state:Ptree.empty ~dtype);
@@ -404,12 +399,12 @@ let for_sequence_classification (cfg : config) ~num_labels () :
         let pool_fs = fields ~ctx:"Bert.seq_cls.pooler" pool_params in
         let pool_w = get pool_fs ~name:"weight" dtype in
         let pool_b = get pool_fs ~name:"bias" dtype in
-        let batch = (Rune.shape hidden).(0) in
+        let batch = (Nx.shape hidden).(0) in
         let cls =
-          Rune.slice [ A; R (0, 1) ] hidden
-          |> Rune.reshape [| batch; cfg.hidden_size |]
+          Nx.slice [ A; R (0, 1) ] hidden
+          |> Nx.reshape [| batch; cfg.hidden_size |]
         in
-        let pooled = Rune.add (Rune.matmul cls pool_w) pool_b |> Rune.tanh in
+        let pooled = Nx.add (Nx.matmul cls pool_w) pool_b |> Nx.tanh in
 
         (* Dropout on pooled output during fine-tuning *)
         let pooled =
@@ -422,7 +417,7 @@ let for_sequence_classification (cfg : config) ~num_labels () :
         let cls_fs = fields ~ctx:"Bert.seq_cls.classifier" cls_params in
         let cls_w = get cls_fs ~name:"weight" dtype in
         let cls_b = get cls_fs ~name:"bias" dtype in
-        (Rune.add (Rune.matmul pooled cls_w) cls_b, Ptree.empty));
+        (Nx.add (Nx.matmul pooled cls_w) cls_b, Ptree.empty));
   }
 
 let for_masked_lm (cfg : config) () : (int32, float) Layer.t =
@@ -442,15 +437,13 @@ let for_masked_lm (cfg : config) () : (int32, float) Layer.t =
                      [
                        ("dense_weight", Ptree.tensor dense_w);
                        ( "dense_bias",
-                         Ptree.tensor (Rune.zeros dtype [| cfg.hidden_size |])
-                       );
+                         Ptree.tensor (Nx.zeros dtype [| cfg.hidden_size |]) );
                        ( "ln_gamma",
-                         Ptree.tensor (Rune.ones dtype [| cfg.hidden_size |]) );
+                         Ptree.tensor (Nx.ones dtype [| cfg.hidden_size |]) );
                        ( "ln_beta",
-                         Ptree.tensor (Rune.zeros dtype [| cfg.hidden_size |])
-                       );
+                         Ptree.tensor (Nx.zeros dtype [| cfg.hidden_size |]) );
                        ( "decoder_bias",
-                         Ptree.tensor (Rune.zeros dtype [| cfg.vocab_size |]) );
+                         Ptree.tensor (Nx.zeros dtype [| cfg.vocab_size |]) );
                      ] );
                ])
           ~state:Ptree.empty ~dtype);
@@ -471,7 +464,7 @@ let for_masked_lm (cfg : config) () : (int32, float) Layer.t =
         let ln_b = get mlm_fs ~name:"ln_beta" dtype in
         let dec_b = get mlm_fs ~name:"decoder_bias" dtype in
 
-        let h = Rune.add (Rune.matmul hidden dw) db |> Kaun.Activation.gelu in
+        let h = Nx.add (Nx.matmul hidden dw) db |> Kaun.Activation.gelu in
         let h =
           Kaun.Fn.layer_norm ~gamma:ln_g ~beta:ln_b ~epsilon:cfg.layer_norm_eps
             h
@@ -483,9 +476,7 @@ let for_masked_lm (cfg : config) () : (int32, float) Layer.t =
         let emb_fs = fields ~ctx:"Bert.mlm.embeddings" emb_t in
         let word_emb = get emb_fs ~name:"word" dtype in
         let logits =
-          Rune.add
-            (Rune.matmul h (Rune.transpose word_emb ~axes:[ 1; 0 ]))
-            dec_b
+          Nx.add (Nx.matmul h (Nx.transpose word_emb ~axes:[ 1; 0 ])) dec_b
         in
         (logits, Ptree.empty));
   }
@@ -528,10 +519,8 @@ let parse_config json =
 
 (* HuggingFace weight mapping *)
 
-let transpose_weight (Ptree.P t) = Ptree.P (Rune.transpose t ~axes:[ 1; 0 ])
-
-let cast_tensor dtype (Ptree.P t) =
-  Ptree.P (Rune.cast dtype (Rune.of_nx (Rune.to_nx t)))
+let transpose_weight (Ptree.P t) = Ptree.P (Nx.transpose t ~axes:[ 1; 0 ])
+let cast_tensor dtype (Ptree.P t) = Ptree.P (Nx.cast dtype t)
 
 let map_hf_weights ~cfg ~dtype hf_weights =
   let tbl = Hashtbl.create (List.length hf_weights) in
@@ -636,6 +625,6 @@ let from_pretrained ?(model_id = "bert-base-uncased") () =
   let cfg = parse_config json in
   let hf_weights = Kaun_hf.load_weights ~model_id () in
   let encoder_params, pooler_params, mlm_params =
-    map_hf_weights ~cfg ~dtype:Rune.float32 hf_weights
+    map_hf_weights ~cfg ~dtype:Nx.float32 hf_weights
   in
   (cfg, encoder_params, pooler_params, mlm_params)

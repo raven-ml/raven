@@ -24,12 +24,12 @@ type 'a t
 val of_array : 'a array -> 'a t
 (** [of_array a] is a pipeline yielding the elements of [a] in order. *)
 
-val of_tensor : ('a, 'b) Rune.t -> ('a, 'b) Rune.t t
+val of_tensor : ('a, 'b) Nx.t -> ('a, 'b) Nx.t t
 (** [of_tensor t] is a pipeline yielding slices along the first dimension of
     [t]. Each element has shape [t.shape[1:]]. *)
 
 val of_tensors :
-  ('a, 'b) Rune.t * ('c, 'd) Rune.t -> (('a, 'b) Rune.t * ('c, 'd) Rune.t) t
+  ('a, 'b) Nx.t * ('c, 'd) Nx.t -> (('a, 'b) Nx.t * ('c, 'd) Nx.t) t
 (** [of_tensors (x, y)] is a pipeline yielding paired slices along the first
     dimension of [x] and [y].
 
@@ -99,16 +99,16 @@ val length : 'a t -> int option
 
 (** {1:utilities Utilities} *)
 
-val stack_batch : ('a, 'b) Rune.t array -> ('a, 'b) Rune.t
+val stack_batch : ('a, 'b) Nx.t array -> ('a, 'b) Nx.t
 (** [stack_batch tensors] stacks an array of tensors along a new first axis.
-    Equivalent to [Rune.stack (Array.to_list tensors)]. *)
+    Equivalent to [Nx.stack (Array.to_list tensors)]. *)
 
 val prepare :
   ?shuffle:bool ->
   batch_size:int ->
   ?drop_last:bool ->
-  ('a, 'b) Rune.t * ('c, 'd) Rune.t ->
-  (('a, 'b) Rune.t * ('c, 'd) Rune.t) t
+  ('a, 'b) Nx.t * ('c, 'd) Nx.t ->
+  (('a, 'b) Nx.t * ('c, 'd) Nx.t) t
 (** [prepare ?shuffle ~batch_size (x, y)] is a pipeline that yields batched
     tensor pairs from [x] and [y].
 

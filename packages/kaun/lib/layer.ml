@@ -6,20 +6,20 @@
 type 'layout vars = {
   params : Ptree.t;
   state : Ptree.t;
-  dtype : (float, 'layout) Rune.dtype;
+  dtype : (float, 'layout) Nx.dtype;
 }
 
 type ('input, 'output) t = {
-  init : 'layout. dtype:(float, 'layout) Rune.dtype -> 'layout vars;
+  init : 'layout. dtype:(float, 'layout) Nx.dtype -> 'layout vars;
   apply :
     'layout 'in_elt.
     params:Ptree.t ->
     state:Ptree.t ->
-    dtype:(float, 'layout) Rune.dtype ->
+    dtype:(float, 'layout) Nx.dtype ->
     training:bool ->
     ?ctx:Context.t ->
-    ('input, 'in_elt) Rune.t ->
-    ('output, 'layout) Rune.t * Ptree.t;
+    ('input, 'in_elt) Nx.t ->
+    ('output, 'layout) Nx.t * Ptree.t;
 }
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
@@ -33,27 +33,27 @@ let make_vars ~params ~state ~dtype = { params; state; dtype }
 module Dtype = Nx_core.Dtype
 
 let require_same_float_dtype (type p in_elt) ~ctx
-    (expected : (float, p) Rune.dtype) (x : (float, in_elt) Rune.t) :
-    (float, p) Rune.t =
-  match Dtype.equal_witness expected (Rune.dtype x) with
-  | Some Type.Equal -> (x : (float, p) Rune.t)
+    (expected : (float, p) Nx.dtype) (x : (float, in_elt) Nx.t) :
+    (float, p) Nx.t =
+  match Dtype.equal_witness expected (Nx.dtype x) with
+  | Some Type.Equal -> (x : (float, p) Nx.t)
   | None ->
       invalid_argf "%s: input dtype %s does not match model dtype %s" ctx
-        (Dtype.to_string (Rune.dtype x))
+        (Dtype.to_string (Nx.dtype x))
         (Dtype.to_string expected)
 
-let require_int32_indices (type in_elt) ~ctx (x : (int32, in_elt) Rune.t) :
-    (int32, Bigarray.int32_elt) Rune.t =
-  match Dtype.equal_witness Rune.int32 (Rune.dtype x) with
-  | Some Type.Equal -> (x : (int32, Bigarray.int32_elt) Rune.t)
+let require_int32_indices (type in_elt) ~ctx (x : (int32, in_elt) Nx.t) :
+    (int32, Bigarray.int32_elt) Nx.t =
+  match Dtype.equal_witness Nx.int32 (Nx.dtype x) with
+  | Some Type.Equal -> (x : (int32, Bigarray.int32_elt) Nx.t)
   | None ->
       invalid_argf "%s: expected int32 indices, got %s" ctx
-        (Dtype.to_string (Rune.dtype x))
+        (Dtype.to_string (Nx.dtype x))
 
 let init t ~dtype = t.init ~dtype
 
 let apply (type a b layout in_elt) (t : (a, b) t) (vars : layout vars) ~training
-    ?ctx (x : (a, in_elt) Rune.t) =
+    ?ctx (x : (a, in_elt) Nx.t) =
   let y, state =
     t.apply ~params:vars.params ~state:vars.state ~dtype:vars.dtype ~training
       ?ctx x
@@ -64,10 +64,10 @@ let compose left right =
   {
     init =
       (fun ~dtype ->
-        let k1 = Rune.Rng.next_key () in
-        let k2 = Rune.Rng.next_key () in
-        let left_vars = Rune.Rng.with_key k1 (fun () -> left.init ~dtype) in
-        let right_vars = Rune.Rng.with_key k2 (fun () -> right.init ~dtype) in
+        let k1 = Nx.Rng.next_key () in
+        let k2 = Nx.Rng.next_key () in
+        let left_vars = Nx.Rng.with_key k1 (fun () -> left.init ~dtype) in
+        let right_vars = Nx.Rng.with_key k2 (fun () -> right.init ~dtype) in
         {
           params =
             Ptree.dict
@@ -138,7 +138,7 @@ let linear ~in_features ~out_features ?weight_init ?bias_init () =
         let fields = Ptree.Dict.fields_exn ~ctx:"Layer.linear" params in
         let weight = Ptree.Dict.get_tensor_exn fields ~name:"weight" dtype in
         let bias = Ptree.Dict.get_tensor_exn fields ~name:"bias" dtype in
-        (Rune.add (Rune.matmul x weight) bias, state));
+        (Nx.add (Nx.matmul x weight) bias, state));
   }
 
 (* Convolution *)
@@ -152,7 +152,7 @@ let conv1d ~in_channels ~out_channels ?(kernel_size = 3) ?(stride = 1)
         let weight =
           weight_init.f [| out_channels; in_channels; kernel_size |] dtype
         in
-        let bias = Rune.zeros dtype [| out_channels |] in
+        let bias = Nx.zeros dtype [| out_channels |] in
         {
           params =
             Ptree.dict
@@ -172,7 +172,7 @@ let conv1d ~in_channels ~out_channels ?(kernel_size = 3) ?(stride = 1)
           | `Same | `Valid -> x
           | `Causal ->
               let pad_left = (kernel_size - 1) * dilation in
-              Rune.pad [| (0, 0); (0, 0); (pad_left, 0) |] 0.0 x
+              Nx.pad [| (0, 0); (0, 0); (pad_left, 0) |] 0.0 x
         in
         let padding =
           match padding with `Same -> `Same | `Valid | `Causal -> `Valid
@@ -189,7 +189,7 @@ let conv2d ~in_channels ~out_channels ?(kernel_size = (3, 3)) () =
         let weight =
           weight_init.f [| out_channels; in_channels; kh; kw |] dtype
         in
-        let bias = Rune.zeros dtype [| out_channels |] in
+        let bias = Nx.zeros dtype [| out_channels |] in
         {
           params =
             Ptree.dict
@@ -213,8 +213,8 @@ let layer_norm ~dim ?(eps = 1e-5) () =
   {
     init =
       (fun ~dtype ->
-        let gamma = Rune.ones dtype [| dim |] in
-        let beta = Rune.zeros dtype [| dim |] in
+        let gamma = Nx.ones dtype [| dim |] in
+        let beta = Nx.zeros dtype [| dim |] in
         {
           params =
             Ptree.dict
@@ -236,7 +236,7 @@ let rms_norm ~dim ?(eps = 1e-6) () =
   {
     init =
       (fun ~dtype ->
-        let scale = Rune.ones dtype [| dim |] in
+        let scale = Nx.ones dtype [| dim |] in
         {
           params = Ptree.dict [ ("scale", Ptree.tensor scale) ];
           state = Ptree.empty;
@@ -255,10 +255,10 @@ let batch_norm ~num_features () =
   {
     init =
       (fun ~dtype ->
-        let scale = Rune.ones dtype [| num_features |] in
-        let bias = Rune.zeros dtype [| num_features |] in
-        let running_mean = Rune.zeros dtype [| num_features |] in
-        let running_var = Rune.ones dtype [| num_features |] in
+        let scale = Nx.ones dtype [| num_features |] in
+        let bias = Nx.zeros dtype [| num_features |] in
+        let running_mean = Nx.zeros dtype [| num_features |] in
+        let running_var = Nx.ones dtype [| num_features |] in
         {
           params =
             Ptree.dict
@@ -291,7 +291,7 @@ let batch_norm ~num_features () =
         let running_var =
           Ptree.Dict.get_tensor_exn state_fields ~name:"running_var" dtype
         in
-        let rank = Array.length (Rune.shape x) in
+        let rank = Array.length (Nx.shape x) in
         let axes =
           match rank with
           | 2 -> [ 0 ]
@@ -302,18 +302,18 @@ let batch_norm ~num_features () =
         if training then
           let momentum = 0.99 in
           let one_minus = 1.0 -. momentum in
-          let batch_mean = Rune.mean ~axes x in
-          let batch_var = Rune.var ~axes x in
+          let batch_mean = Nx.mean ~axes x in
+          let batch_var = Nx.var ~axes x in
           let y = Fn.batch_norm ~axes ~scale ~bias x in
           let running_mean' =
-            Rune.add
-              (Rune.mul running_mean (Rune.scalar dtype momentum))
-              (Rune.mul batch_mean (Rune.scalar dtype one_minus))
+            Nx.add
+              (Nx.mul running_mean (Nx.scalar dtype momentum))
+              (Nx.mul batch_mean (Nx.scalar dtype one_minus))
           in
           let running_var' =
-            Rune.add
-              (Rune.mul running_var (Rune.scalar dtype momentum))
-              (Rune.mul batch_var (Rune.scalar dtype one_minus))
+            Nx.add
+              (Nx.mul running_var (Nx.scalar dtype momentum))
+              (Nx.mul batch_var (Nx.scalar dtype one_minus))
           in
           let state' =
             Ptree.dict
@@ -327,20 +327,19 @@ let batch_norm ~num_features () =
           let scale_eval, bias_eval =
             match rank with
             | 2 ->
-                ( Rune.reshape [| 1; num_features |] scale,
-                  Rune.reshape [| 1; num_features |] bias )
+                ( Nx.reshape [| 1; num_features |] scale,
+                  Nx.reshape [| 1; num_features |] bias )
             | 3 ->
-                ( Rune.reshape [| 1; num_features; 1 |] scale,
-                  Rune.reshape [| 1; num_features; 1 |] bias )
+                ( Nx.reshape [| 1; num_features; 1 |] scale,
+                  Nx.reshape [| 1; num_features; 1 |] bias )
             | 4 ->
-                ( Rune.reshape [| 1; num_features; 1; 1 |] scale,
-                  Rune.reshape [| 1; num_features; 1; 1 |] bias )
+                ( Nx.reshape [| 1; num_features; 1; 1 |] scale,
+                  Nx.reshape [| 1; num_features; 1; 1 |] bias )
             | _ -> (scale, bias)
           in
           let y =
-            Rune.standardize ~axes ~mean:running_mean ~variance:running_var x
-            |> fun normalized ->
-            Rune.add (Rune.mul normalized scale_eval) bias_eval
+            Nx.standardize ~axes ~mean:running_mean ~variance:running_var x
+            |> fun normalized -> Nx.add (Nx.mul normalized scale_eval) bias_eval
           in
           (y, state));
   }
@@ -393,7 +392,7 @@ let relu () =
       (fun ~params ~state ~dtype ~training ?ctx x ->
         ignore (params, training, ctx);
         let x = require_same_float_dtype ~ctx:"Layer.relu" dtype x in
-        (Rune.relu x, state));
+        (Nx.relu x, state));
   }
 
 let gelu () =
@@ -423,7 +422,7 @@ let tanh () =
       (fun ~params ~state ~dtype ~training ?ctx x ->
         ignore (params, training, ctx);
         let x = require_same_float_dtype ~ctx:"Layer.tanh" dtype x in
-        (Rune.tanh x, state));
+        (Nx.tanh x, state));
   }
 
 let sigmoid () =
@@ -433,7 +432,7 @@ let sigmoid () =
       (fun ~params ~state ~dtype ~training ?ctx x ->
         ignore (params, training, ctx);
         let x = require_same_float_dtype ~ctx:"Layer.sigmoid" dtype x in
-        (Rune.sigmoid x, state));
+        (Nx.sigmoid x, state));
   }
 
 (* Pooling *)
@@ -469,15 +468,15 @@ let flatten () =
       (fun ~params ~state ~dtype ~training ?ctx x ->
         ignore (params, training, ctx);
         let x = require_same_float_dtype ~ctx:"Layer.flatten" dtype x in
-        let shape = Rune.shape x in
+        let shape = Nx.shape x in
         if Array.length shape = 0 then
           invalid_arg "Layer.flatten: expected rank >= 1";
         let batch_size = shape.(0) in
         let flat_size =
           Array.fold_left ( * ) 1 (Array.sub shape 1 (Array.length shape - 1))
         in
-        let x = if Rune.is_c_contiguous x then x else Rune.contiguous x in
-        (Rune.reshape [| batch_size; flat_size |] x, state));
+        let x = if Nx.is_c_contiguous x then x else Nx.contiguous x in
+        (Nx.reshape [| batch_size; flat_size |] x, state));
   }
 
 (* Composition *)
@@ -487,13 +486,13 @@ let sequential layers =
     init =
       (fun ~dtype ->
         let n = List.length layers in
-        let keys = Array.init n (fun _ -> Rune.Rng.next_key ()) in
+        let keys = Array.init n (fun _ -> Nx.Rng.next_key ()) in
         let acc_params = ref [] in
         let acc_state = ref [] in
         List.iteri
           (fun i module_ ->
             let vars =
-              Rune.Rng.with_key keys.(i) (fun () -> module_.init ~dtype)
+              Nx.Rng.with_key keys.(i) (fun () -> module_.init ~dtype)
             in
             acc_params := vars.params :: !acc_params;
             acc_state := vars.state :: !acc_state)

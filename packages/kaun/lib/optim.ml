@@ -44,14 +44,14 @@ let float_of_scalar (type a b) (dtype : (a, b) Dtype.t) (value : a) : float =
       value
   | _ -> invalid_arg err_expected_float_dtype
 
-let scalar dt x = Rune.scalar dt (Dtype.of_float dt x)
+let scalar dt x = Nx.scalar dt (Dtype.of_float dt x)
 
 let tensor_sum_sq (Ptree.P t) =
-  let dtype = Rune.dtype t in
-  let sq = Rune.mul t t in
-  float_of_scalar dtype (Rune.item [] (Rune.sum sq))
+  let dtype = Nx.dtype t in
+  let sq = Nx.mul t t in
+  float_of_scalar dtype (Nx.item [] (Nx.sum sq))
 
-let zeros_like t = Ptree.map { run = Rune.zeros_like } t
+let zeros_like t = Ptree.map { run = Nx.zeros_like } t
 
 (* Schedules *)
 
@@ -106,7 +106,7 @@ let step (A { schedule; _ }) (S s) params grads =
   (updates, S { count; data; spec = s.spec })
 
 let apply_updates params updates =
-  Ptree.map2 { run = (fun p u -> Rune.add p u) } params updates
+  Ptree.map2 { run = (fun p u -> Nx.add p u) } params updates
 
 let update algo st params grads =
   let updates, st' = step algo st params grads in
@@ -136,8 +136,8 @@ let clip_by_global_norm max_norm grads =
       {
         run =
           (fun t ->
-            let dt = Rune.dtype t in
-            Rune.mul t (scalar dt scale));
+            let dt = Nx.dtype t in
+            Nx.mul t (scalar dt scale));
       }
       grads
 
@@ -156,8 +156,8 @@ let sgd ~lr ?(momentum = 0.) ?(nesterov = false) () =
                 {
                   run =
                     (fun g ->
-                      let dt = Rune.dtype g in
-                      Rune.mul (scalar dt (-.lr)) g);
+                      let dt = Nx.dtype g in
+                      Nx.mul (scalar dt (-.lr)) g);
                 }
                 grads
             in
@@ -179,8 +179,8 @@ let sgd ~lr ?(momentum = 0.) ?(nesterov = false) () =
                 {
                   run =
                     (fun v g ->
-                      let dt = Rune.dtype g in
-                      Rune.add (Rune.mul v (scalar dt momentum)) g);
+                      let dt = Nx.dtype g in
+                      Nx.add (Nx.mul v (scalar dt momentum)) g);
                 }
                 vel grads
             in
@@ -190,9 +190,9 @@ let sgd ~lr ?(momentum = 0.) ?(nesterov = false) () =
                   {
                     run =
                       (fun g v ->
-                        let dt = Rune.dtype g in
-                        Rune.mul (scalar dt (-.lr))
-                          (Rune.add g (Rune.mul v (scalar dt momentum))));
+                        let dt = Nx.dtype g in
+                        Nx.mul (scalar dt (-.lr))
+                          (Nx.add g (Nx.mul v (scalar dt momentum))));
                   }
                   grads new_vel
               else
@@ -200,8 +200,8 @@ let sgd ~lr ?(momentum = 0.) ?(nesterov = false) () =
                   {
                     run =
                       (fun v ->
-                        let dt = Rune.dtype v in
-                        Rune.mul (scalar dt (-.lr)) v);
+                        let dt = Nx.dtype v in
+                        Nx.mul (scalar dt (-.lr)) v);
                   }
                   new_vel
             in
@@ -234,10 +234,10 @@ let adam ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) () =
               {
                 run =
                   (fun m g ->
-                    let dt = Rune.dtype g in
-                    Rune.add
-                      (Rune.mul m (scalar dt b1))
-                      (Rune.mul g (scalar dt (1. -. b1))));
+                    let dt = Nx.dtype g in
+                    Nx.add
+                      (Nx.mul m (scalar dt b1))
+                      (Nx.mul g (scalar dt (1. -. b1))));
               }
               mu grads
           in
@@ -246,10 +246,10 @@ let adam ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) () =
               {
                 run =
                   (fun v g ->
-                    let dt = Rune.dtype g in
-                    Rune.add
-                      (Rune.mul v (scalar dt b2))
-                      (Rune.mul (Rune.mul g g) (scalar dt (1. -. b2))));
+                    let dt = Nx.dtype g in
+                    Nx.add
+                      (Nx.mul v (scalar dt b2))
+                      (Nx.mul (Nx.mul g g) (scalar dt (1. -. b2))));
               }
               nu grads
           in
@@ -260,12 +260,11 @@ let adam ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) () =
               {
                 run =
                   (fun m v ->
-                    let dt = Rune.dtype m in
-                    let m_hat = Rune.div m (scalar dt bc1) in
-                    let v_hat = Rune.div v (scalar dt bc2) in
-                    Rune.mul (scalar dt (-.lr))
-                      (Rune.div m_hat
-                         (Rune.add (Rune.sqrt v_hat) (scalar dt eps))));
+                    let dt = Nx.dtype m in
+                    let m_hat = Nx.div m (scalar dt bc1) in
+                    let v_hat = Nx.div v (scalar dt bc2) in
+                    Nx.mul (scalar dt (-.lr))
+                      (Nx.div m_hat (Nx.add (Nx.sqrt v_hat) (scalar dt eps))));
               }
               new_mu new_nu
           in
@@ -300,10 +299,10 @@ let adamw ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) ?(weight_decay = 0.01) ()
               {
                 run =
                   (fun m g ->
-                    let dt = Rune.dtype g in
-                    Rune.add
-                      (Rune.mul m (scalar dt b1))
-                      (Rune.mul g (scalar dt (1. -. b1))));
+                    let dt = Nx.dtype g in
+                    Nx.add
+                      (Nx.mul m (scalar dt b1))
+                      (Nx.mul g (scalar dt (1. -. b1))));
               }
               mu grads
           in
@@ -312,10 +311,10 @@ let adamw ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) ?(weight_decay = 0.01) ()
               {
                 run =
                   (fun v g ->
-                    let dt = Rune.dtype g in
-                    Rune.add
-                      (Rune.mul v (scalar dt b2))
-                      (Rune.mul (Rune.mul g g) (scalar dt (1. -. b2))));
+                    let dt = Nx.dtype g in
+                    Nx.add
+                      (Nx.mul v (scalar dt b2))
+                      (Nx.mul (Nx.mul g g) (scalar dt (1. -. b2))));
               }
               nu grads
           in
@@ -326,12 +325,11 @@ let adamw ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) ?(weight_decay = 0.01) ()
               {
                 run =
                   (fun m v ->
-                    let dt = Rune.dtype m in
-                    let m_hat = Rune.div m (scalar dt bc1) in
-                    let v_hat = Rune.div v (scalar dt bc2) in
-                    Rune.mul (scalar dt (-.lr))
-                      (Rune.div m_hat
-                         (Rune.add (Rune.sqrt v_hat) (scalar dt eps))));
+                    let dt = Nx.dtype m in
+                    let m_hat = Nx.div m (scalar dt bc1) in
+                    let v_hat = Nx.div v (scalar dt bc2) in
+                    Nx.mul (scalar dt (-.lr))
+                      (Nx.div m_hat (Nx.add (Nx.sqrt v_hat) (scalar dt eps))));
               }
               new_mu new_nu
           in
@@ -340,14 +338,14 @@ let adamw ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) ?(weight_decay = 0.01) ()
               {
                 run =
                   (fun p ->
-                    let dt = Rune.dtype p in
-                    Rune.mul p (scalar dt (-.lr *. weight_decay)));
+                    let dt = Nx.dtype p in
+                    Nx.mul p (scalar dt (-.lr *. weight_decay)));
               }
               params
           in
           let updates =
             Ptree.map2
-              { run = (fun adam decay -> Rune.add adam decay) }
+              { run = (fun adam decay -> Nx.add adam decay) }
               adam_updates decay_updates
           in
           (updates, (new_mu, new_nu)));
@@ -377,10 +375,10 @@ let rmsprop ~lr ?(decay = 0.9) ?(eps = 1e-8) ?(momentum = 0.) () =
                 {
                   run =
                     (fun v g ->
-                      let dt = Rune.dtype g in
-                      Rune.add
-                        (Rune.mul v (scalar dt decay))
-                        (Rune.mul (Rune.mul g g) (scalar dt (1. -. decay))));
+                      let dt = Nx.dtype g in
+                      Nx.add
+                        (Nx.mul v (scalar dt decay))
+                        (Nx.mul (Nx.mul g g) (scalar dt (1. -. decay))));
                 }
                 nu grads
             in
@@ -389,9 +387,9 @@ let rmsprop ~lr ?(decay = 0.9) ?(eps = 1e-8) ?(momentum = 0.) () =
                 {
                   run =
                     (fun g v ->
-                      let dt = Rune.dtype g in
-                      Rune.mul (scalar dt (-.lr))
-                        (Rune.div g (Rune.add (Rune.sqrt v) (scalar dt eps))));
+                      let dt = Nx.dtype g in
+                      Nx.mul (scalar dt (-.lr))
+                        (Nx.div g (Nx.add (Nx.sqrt v) (scalar dt eps))));
                 }
                 grads new_nu
             in
@@ -418,10 +416,10 @@ let rmsprop ~lr ?(decay = 0.9) ?(eps = 1e-8) ?(momentum = 0.) () =
                 {
                   run =
                     (fun v g ->
-                      let dt = Rune.dtype g in
-                      Rune.add
-                        (Rune.mul v (scalar dt decay))
-                        (Rune.mul (Rune.mul g g) (scalar dt (1. -. decay))));
+                      let dt = Nx.dtype g in
+                      Nx.add
+                        (Nx.mul v (scalar dt decay))
+                        (Nx.mul (Nx.mul g g) (scalar dt (1. -. decay))));
                 }
                 nu grads
             in
@@ -430,8 +428,8 @@ let rmsprop ~lr ?(decay = 0.9) ?(eps = 1e-8) ?(momentum = 0.) () =
                 {
                   run =
                     (fun g v ->
-                      let dt = Rune.dtype g in
-                      Rune.div g (Rune.add (Rune.sqrt v) (scalar dt eps)));
+                      let dt = Nx.dtype g in
+                      Nx.div g (Nx.add (Nx.sqrt v) (scalar dt eps)));
                 }
                 grads new_nu
             in
@@ -440,8 +438,8 @@ let rmsprop ~lr ?(decay = 0.9) ?(eps = 1e-8) ?(momentum = 0.) () =
                 {
                   run =
                     (fun v s ->
-                      let dt = Rune.dtype v in
-                      Rune.add (Rune.mul v (scalar dt momentum)) s);
+                      let dt = Nx.dtype v in
+                      Nx.add (Nx.mul v (scalar dt momentum)) s);
                 }
                 vel scaled
             in
@@ -450,8 +448,8 @@ let rmsprop ~lr ?(decay = 0.9) ?(eps = 1e-8) ?(momentum = 0.) () =
                 {
                   run =
                     (fun v ->
-                      let dt = Rune.dtype v in
-                      Rune.mul (scalar dt (-.lr)) v);
+                      let dt = Nx.dtype v in
+                      Nx.mul (scalar dt (-.lr)) v);
                 }
                 new_vel
             in
@@ -476,7 +474,7 @@ let adagrad ~lr ?(eps = 1e-8) () =
         (fun ~step:_ ~lr accum _params grads ->
           let new_accum =
             Ptree.map2
-              { run = (fun acc g -> Rune.add acc (Rune.mul g g)) }
+              { run = (fun acc g -> Nx.add acc (Nx.mul g g)) }
               accum grads
           in
           let updates =
@@ -484,9 +482,9 @@ let adagrad ~lr ?(eps = 1e-8) () =
               {
                 run =
                   (fun g acc ->
-                    let dt = Rune.dtype g in
-                    Rune.mul (scalar dt (-.lr))
-                      (Rune.div g (Rune.add (Rune.sqrt acc) (scalar dt eps))));
+                    let dt = Nx.dtype g in
+                    Nx.mul (scalar dt (-.lr))
+                      (Nx.div g (Nx.add (Nx.sqrt acc) (scalar dt eps))));
               }
               grads new_accum
           in

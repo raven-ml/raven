@@ -200,7 +200,7 @@ let derive_id env suffix =
   match env.id with None -> None | Some id -> Some (id ^ suffix)
 
 let clamp_tensor ~low ~high tensor =
-  let data = Rune.to_array tensor in
+  let data = Nx.to_array tensor in
   let clipped = Array.copy data in
   let upper = Array.length clipped - 1 in
   for idx = 0 to upper do
@@ -209,7 +209,7 @@ let clamp_tensor ~low ~high tensor =
     let v = clipped.(idx) in
     if v < lo then clipped.(idx) <- lo else if v > hi then clipped.(idx) <- hi
   done;
-  Rune.create Rune.float32 (Rune.shape tensor) clipped
+  Nx.create Nx.float32 (Nx.shape tensor) clipped
 
 (* Wrappers *)
 

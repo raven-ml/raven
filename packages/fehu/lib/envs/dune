@@ -1,4 +1,4 @@
 (library
  (name fehu_envs)
  (public_name fehu.envs)
- (libraries fehu rune))
+ (libraries fehu nx rune))

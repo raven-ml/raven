@@ -16,7 +16,7 @@
 (** {1:core Core} *)
 
 val value_and_grad :
-  (Ptree.t -> (float, 'l) Rune.t) -> Ptree.t -> (float, 'l) Rune.t * Ptree.t
+  (Ptree.t -> (float, 'l) Nx.t) -> Ptree.t -> (float, 'l) Nx.t * Ptree.t
 (** [value_and_grad f params] is [(f params, grads)].
 
     [params] must contain only floating-point leaves and all leaves must have
@@ -26,16 +26,16 @@ val value_and_grad :
     across leaves. Error messages include leaf paths. *)
 
 val value_and_grad_aux :
-  (Ptree.t -> (float, 'l) Rune.t * 'aux) ->
+  (Ptree.t -> (float, 'l) Nx.t * 'aux) ->
   Ptree.t ->
-  (float, 'l) Rune.t * Ptree.t * 'aux
+  (float, 'l) Nx.t * Ptree.t * 'aux
 (** [value_and_grad_aux f params] differentiates [fst (f params)] and returns
     [(loss, grads, aux)].
 
     The same dtype constraints and errors as {!value_and_grad} apply. *)
 
 val value_and_grad_mixed :
-  (Ptree.t -> (float, 'l) Rune.t) -> Ptree.t -> (float, 'l) Rune.t * Ptree.t
+  (Ptree.t -> (float, 'l) Nx.t) -> Ptree.t -> (float, 'l) Nx.t * Ptree.t
 (** [value_and_grad_mixed f params] supports mixed floating dtypes/layouts by
     grouping leaves and running multiple autodiff passes.
 
@@ -45,5 +45,5 @@ val value_and_grad_mixed :
     Raises [Invalid_argument] if any leaf is non-float. Error messages include
     leaf paths. *)
 
-val grad : (Ptree.t -> (float, 'l) Rune.t) -> Ptree.t -> Ptree.t
+val grad : (Ptree.t -> (float, 'l) Nx.t) -> Ptree.t -> Ptree.t
 (** [grad f params] is [snd (value_and_grad f params)]. *)

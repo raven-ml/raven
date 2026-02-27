@@ -24,8 +24,8 @@ module Random_walk : sig
 
       {b Render modes}: [ansi]. *)
 
-  type obs = (float, Rune.float32_elt) Rune.t
-  type act = (int32, Rune.int32_elt) Rune.t
+  type obs = (float, Nx.float32_elt) Nx.t
+  type act = (int32, Nx.int32_elt) Nx.t
   type render = string
 
   val make :
@@ -48,8 +48,8 @@ module Cartpole : sig
 
       {b Render modes}: [ansi]. *)
 
-  type obs = (float, Rune.float32_elt) Rune.t
-  type act = (int32, Rune.int32_elt) Rune.t
+  type obs = (float, Nx.float32_elt) Nx.t
+  type act = (int32, Nx.int32_elt) Nx.t
   type render = string
 
   val make :
@@ -71,8 +71,8 @@ module Grid_world : sig
 
       {b Render modes}: [ansi], [rgb_array]. *)
 
-  type obs = (int32, Rune.int32_elt) Rune.t
-  type act = (int32, Rune.int32_elt) Rune.t
+  type obs = (int32, Nx.int32_elt) Nx.t
+  type act = (int32, Nx.int32_elt) Nx.t
   type render = Text of string | Image of Fehu.Render.image
 
   val make :
@@ -97,8 +97,8 @@ module Mountain_car : sig
 
       {b Render modes}: [ansi]. *)
 
-  type obs = (float, Rune.float32_elt) Rune.t
-  type act = (int32, Rune.int32_elt) Rune.t
+  type obs = (float, Nx.float32_elt) Nx.t
+  type act = (int32, Nx.int32_elt) Nx.t
   type render = string
 
   val make :

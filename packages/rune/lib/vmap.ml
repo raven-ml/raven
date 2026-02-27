@@ -3,9 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Nx_rune
+open Nx_effect
 open Nx_core
-module T = Tensor
+module T = Nx
 
 (* Type to represent mapping specification for a single axis *)
 type axis_spec =
@@ -246,7 +246,7 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
 
   (* Helper to get physical shape (backend view) of a tensor *)
   let phys_shape_of : type a b. (a, b) t -> int array =
-   fun t -> View.shape (Nx_rune.view t)
+   fun t -> View.shape (Nx_effect.view t)
   in
 
   (* Derive present batch prefix length by matching leading physical dims
@@ -264,7 +264,7 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
   in
 
   let phys_shrink : type a b. (a, b) t -> (int * int) array -> (a, b) t =
-   fun t limits -> Nx_rune.shrink t limits
+   fun t limits -> Nx_effect.shrink t limits
   in
 
   (* Effectful shape ops under suspension so AD can track duals *)
@@ -609,7 +609,7 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
               Some
                 (fun (k : (c, _) continuation) ->
                   (* Get the actual view from the backend *)
-                  let actual_view = Nx_rune.view tensor in
+                  let actual_view = Nx_effect.view tensor in
 
                   (* Collect ALL batch dims from outermost (0) to current
                      level *)

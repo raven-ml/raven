@@ -20,7 +20,7 @@ let make_state t vars =
   { vars; opt_state }
 
 let step (type i o l in_elt) (t : (i, o) t) (st : l state) ~training ?ctx
-    ~(loss : (o, l) Rune.t -> (float, l) Rune.t) (x : (i, in_elt) Rune.t) =
+    ~(loss : (o, l) Nx.t -> (float, l) Nx.t) (x : (i, in_elt) Nx.t) =
   let loss_val, grads, new_layer_state =
     Grad.value_and_grad_aux
       (fun params ->
@@ -41,8 +41,7 @@ let step (type i o l in_elt) (t : (i, o) t) (st : l state) ~training ?ctx
 exception Early_stop
 
 let fit (type i o l in_elt) (t : (i, o) t) (st : l state) ?ctx ?report
-    (data : ((i, in_elt) Rune.t * ((o, l) Rune.t -> (float, l) Rune.t)) Data.t)
-    =
+    (data : ((i, in_elt) Nx.t * ((o, l) Nx.t -> (float, l) Nx.t)) Data.t) =
   let st = ref st in
   let i = ref 0 in
   (try
@@ -52,13 +51,13 @@ let fit (type i o l in_elt) (t : (i, o) t) (st : l state) ?ctx ?report
          let loss_val, st' = step t !st ~training:true ?ctx ~loss x in
          st := st';
          match report with
-         | Some f -> f ~step:!i ~loss:(Rune.item [] loss_val) !st
+         | Some f -> f ~step:!i ~loss:(Nx.item [] loss_val) !st
          | None -> ())
        data
    with Early_stop -> ());
   !st
 
 let predict (type i o l in_elt) (t : (i, o) t) (st : l state) ?ctx
-    (x : (i, in_elt) Rune.t) =
+    (x : (i, in_elt) Nx.t) =
   let y, _ = Layer.apply t.model st.vars ~training:false ?ctx x in
   y

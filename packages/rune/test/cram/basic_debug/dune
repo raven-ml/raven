@@ -1,6 +1,6 @@
 (executables
  (names basic_debug debug_with_grad)
- (libraries rune))
+ (libraries nx rune))
 
 (cram
  (enabled_if false)

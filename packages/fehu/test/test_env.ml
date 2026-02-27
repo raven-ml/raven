@@ -9,26 +9,26 @@ let make_test_env ?(max_steps = 100) () =
   let reset _env ?options:_ () =
     state := 5.0;
     steps := 0;
-    (Rune.create Rune.float32 [| 1 |] [| !state |], Info.empty)
+    (Nx.create Nx.float32 [| 1 |] [| !state |], Info.empty)
   in
   let step _env action =
-    let a : Int32.t array = Rune.to_array (Rune.reshape [| 1 |] action) in
+    let a : Int32.t array = Nx.to_array (Nx.reshape [| 1 |] action) in
     state := !state +. if Int32.to_int a.(0) = 0 then -1.0 else 1.0;
     incr steps;
     let terminated = !state <= 0.0 || !state >= 10.0 in
     let truncated = (not terminated) && !steps >= max_steps in
     Env.step_result
-      ~observation:(Rune.create Rune.float32 [| 1 |] [| !state |])
+      ~observation:(Nx.create Nx.float32 [| 1 |] [| !state |])
       ~reward:1.0 ~terminated ~truncated ()
   in
   Env.create ~id:"Test-v0" ~observation_space:obs_space ~action_space:act_space
     ~reset ~step ()
 
-let action_left = Rune.create Rune.int32 [| 1 |] [| 0l |]
-let action_right = Rune.create Rune.int32 [| 1 |] [| 1l |]
+let action_left = Nx.create Nx.int32 [| 1 |] [| 0l |]
+let action_right = Nx.create Nx.int32 [| 1 |] [| 1l |]
 
 let read_obs obs =
-  let arr : float array = Rune.to_array (Rune.reshape [| 1 |] obs) in
+  let arr : float array = Nx.to_array (Nx.reshape [| 1 |] obs) in
   arr.(0)
 
 (* Creation *)
@@ -67,7 +67,7 @@ let test_render_mode_invalid () =
 let test_reset_obs () =
   let env = make_test_env () in
   let obs, _info = Env.reset env () in
-  equal ~msg:"reset obs shape" (array int) [| 1 |] (Rune.shape obs);
+  equal ~msg:"reset obs shape" (array int) [| 1 |] (Nx.shape obs);
   equal ~msg:"reset obs value" (float 0.0) 5.0 (read_obs obs)
 
 let test_step_after_reset () =
@@ -141,7 +141,7 @@ let test_close_idempotent () =
 (* step_result *)
 
 let test_step_result_defaults () =
-  let obs = Rune.create Rune.float32 [| 1 |] [| 0.0 |] in
+  let obs = Nx.create Nx.float32 [| 1 |] [| 0.0 |] in
   let s = Env.step_result ~observation:obs () in
   equal ~msg:"default reward" (float 0.0) 0.0 s.reward;
   is_false ~msg:"default terminated" s.terminated;
@@ -149,7 +149,7 @@ let test_step_result_defaults () =
   is_true ~msg:"default info empty" (Info.is_empty s.info)
 
 let test_step_result_custom () =
-  let obs = Rune.create Rune.float32 [| 1 |] [| 0.0 |] in
+  let obs = Nx.create Nx.float32 [| 1 |] [| 0.0 |] in
   let info = Info.set "k" (Info.int 1) Info.empty in
   let s =
     Env.step_result ~observation:obs ~reward:5.0 ~terminated:true
@@ -176,7 +176,7 @@ let test_time_limit_needs_reset () =
       Env.step wrapped action_right)
 
 let () =
-  Rune.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.run ~seed:42 @@ fun () ->
   run "Fehu.Env"
     [
       group "creation"

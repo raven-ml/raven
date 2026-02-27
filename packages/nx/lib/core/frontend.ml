@@ -468,33 +468,33 @@ module Make (B : Backend_intf.S) = struct
     op ~out a' b';
     out
 
-  let add ?out a b = binop?out B.add a b
+  let add ?out a b = binop ?out B.add a b
   let add_s ?out t s = add ?out t (scalar_like t s)
   let radd_s ?out s t = add ?out (scalar_like t s) t
-  let sub ?out a b = binop?out B.sub a b
+  let sub ?out a b = binop ?out B.sub a b
   let sub_s ?out t s = sub ?out t (scalar_like t s)
   let rsub_s ?out s t = sub ?out (scalar_like t s) t
-  let mul ?out a b = binop?out B.mul a b
+  let mul ?out a b = binop ?out B.mul a b
   let mul_s ?out t s = mul ?out t (scalar_like t s)
   let rmul_s ?out s t = mul ?out (scalar_like t s) t
-  let div ?out a b = binop?out B.div a b
+  let div ?out a b = binop ?out B.div a b
   let div_s ?out t s = div ?out t (scalar_like t s)
   let rdiv_s ?out s t = div ?out (scalar_like t s) t
-  let pow ?out a b = binop?out B.pow a b
+  let pow ?out a b = binop ?out B.pow a b
   let pow_s ?out t s = pow ?out t (scalar_like t s)
   let rpow_s ?out s t = pow ?out (scalar_like t s) t
-  let maximum ?out a b = binop?out B.max a b
+  let maximum ?out a b = binop ?out B.max a b
   let maximum_s ?out t s = maximum ?out t (scalar_like t s)
   let rmaximum_s ?out s t = maximum ?out (scalar_like t s) t
-  let minimum ?out a b = binop?out B.min a b
+  let minimum ?out a b = binop ?out B.min a b
   let minimum_s ?out t s = minimum ?out t (scalar_like t s)
   let rminimum_s ?out s t = minimum ?out (scalar_like t s) t
-  let mod_ ?out a b = binop?out B.mod_ a b
+  let mod_ ?out a b = binop ?out B.mod_ a b
   let mod_s ?out t s = mod_ ?out t (scalar_like t s)
   let rmod_s ?out s t = mod_ ?out (scalar_like t s) t
-  let bitwise_xor ?out a b = binop?out B.xor a b
-  let bitwise_or ?out a b = binop?out B.or_ a b
-  let bitwise_and ?out a b = binop?out B.and_ a b
+  let bitwise_xor ?out a b = binop ?out B.xor a b
+  let bitwise_or ?out a b = binop ?out B.or_ a b
+  let bitwise_and ?out a b = binop ?out B.and_ a b
 
   (* ───── Logical and Comparison Operations ───── *)
 
@@ -509,10 +509,10 @@ module Make (B : Backend_intf.S) = struct
     | Dtype.UInt8 | Dtype.Bool | Dtype.UInt4 -> binop ?out B.xor x one
     | _ -> sub ?out one x
 
-  let cmpeq ?out a b = cmpop?out B.cmpeq a b
-  let cmpne ?out a b = cmpop?out B.cmpne a b
-  let cmplt ?out a b = cmpop?out B.cmplt a b
-  let cmple ?out a b = cmpop?out B.cmple a b
+  let cmpeq ?out a b = cmpop ?out B.cmpeq a b
+  let cmpne ?out a b = cmpop ?out B.cmpne a b
+  let cmplt ?out a b = cmpop ?out B.cmplt a b
+  let cmple ?out a b = cmpop ?out B.cmple a b
   let cmpgt ?out a b = cmplt ?out b a
   let cmpge ?out a b = cmple ?out b a
   let less = cmplt
@@ -539,7 +539,7 @@ module Make (B : Backend_intf.S) = struct
     op ~out x;
     out
 
-  let neg ?out x = unaryop?out B.neg x
+  let neg ?out x = unaryop ?out B.neg x
 
   let bitwise_not ?out x =
     let dt = dtype x in
@@ -548,13 +548,13 @@ module Make (B : Backend_intf.S) = struct
          (B.full (B.context x) dt [||] (Dtype.minus_one dt)))
 
   let invert ?out x = bitwise_not ?out x
-  let sin ?out x = unaryop?out B.sin x
-  let cos ?out x = unaryop?out B.cos x
-  let sqrt ?out x = unaryop?out B.sqrt x
-  let recip ?out x = unaryop?out B.recip x
-  let log ?out x = unaryop?out B.log x
-  let exp ?out x = unaryop?out B.exp x
-  let abs ?out x = unaryop?out B.abs x
+  let sin ?out x = unaryop ?out B.sin x
+  let cos ?out x = unaryop ?out B.cos x
+  let sqrt ?out x = unaryop ?out B.sqrt x
+  let recip ?out x = unaryop ?out B.recip x
+  let log ?out x = unaryop ?out B.log x
+  let exp ?out x = unaryop ?out B.exp x
+  let abs ?out x = unaryop ?out B.abs x
 
   let log2 ?out x =
     mul ?out (log x)
@@ -569,43 +569,46 @@ module Make (B : Backend_intf.S) = struct
             (scalar (B.context x) (dtype x)
                (Dtype.of_float (dtype x) (Stdlib.log 2.0)))))
 
-  let tan ?out x = unaryop?out B.tan x
+  let tan ?out x = unaryop ?out B.tan x
   let square ?out x = mul ?out x x
-  let sign ?out x = unaryop?out B.sign x
+  let sign ?out x = unaryop ?out B.sign x
   let relu ?out x = maximum ?out x (zeros_like x)
 
   let sigmoid ?out x =
     let dt = dtype x in
     let neg_one_over_log2 =
-      B.full (B.context x) dt [||] (-1.0 /. Stdlib.log 2.0)
+      B.full (B.context x) dt [||] (Dtype.of_float dt (-1.0 /. Stdlib.log 2.0))
     in
     recip ?out (add (ones_like x) (exp2 (mul x neg_one_over_log2)))
 
   let rsqrt ?out x = recip ?out (sqrt x)
-  let asin ?out x = unaryop?out B.asin x
-  let acos ?out x = unaryop?out B.acos x
-  let atan ?out x = unaryop?out B.atan x
-  let sinh ?out x = unaryop?out B.sinh x
-  let cosh ?out x = unaryop?out B.cosh x
-  let tanh ?out x = unaryop?out B.tanh x
+  let asin ?out x = unaryop ?out B.asin x
+  let acos ?out x = unaryop ?out B.acos x
+  let atan ?out x = unaryop ?out B.atan x
+  let sinh ?out x = unaryop ?out B.sinh x
+  let cosh ?out x = unaryop ?out B.cosh x
+  let tanh ?out x = unaryop ?out B.tanh x
 
   let asinh ?out x =
-    let one_x = full (B.context x) (dtype x) (shape x) 1.0 in
+    let dt = dtype x in
+    let one_x = full (B.context x) dt (shape x) (Dtype.one dt) in
     log ?out (add x (sqrt (add (square x) one_x)))
 
   let acosh ?out x =
-    let one_x = full (B.context x) (dtype x) (shape x) 1.0 in
+    let dt = dtype x in
+    let one_x = full (B.context x) dt (shape x) (Dtype.one dt) in
     log ?out (add x (sqrt (sub (square x) one_x)))
 
   let atanh ?out x =
-    let one_x = full (B.context x) (dtype x) (shape x) 1.0 in
-    let two_x = full (B.context x) (dtype x) (shape x) 2.0 in
+    let dt = dtype x in
+    let one_x = full (B.context x) dt (shape x) (Dtype.one dt) in
+    let two_x = full (B.context x) dt (shape x) (Dtype.two dt) in
     div ?out (log (div (add one_x x) (sub one_x x))) two_x
 
-  let trunc ?out x = unaryop?out B.trunc x
-  let ceil ?out x = unaryop?out B.ceil x
-  let floor ?out x = unaryop?out B.floor x
-  let round ?out x = unaryop?out B.round x
+  let trunc ?out x = unaryop ?out B.trunc x
+  let ceil ?out x = unaryop ?out B.ceil x
+  let floor ?out x = unaryop ?out B.floor x
+  let round ?out x = unaryop ?out B.round x
 
   let isinf ?out x =
     if not (Dtype.is_float (dtype x)) then
@@ -613,10 +616,12 @@ module Make (B : Backend_intf.S) = struct
     else
       let dt = dtype x in
       let pos_inf =
-        broadcast_to (shape x) (B.full (B.context x) dt [||] Float.infinity)
+        broadcast_to (shape x)
+          (B.full (B.context x) dt [||] (Dtype.of_float dt Float.infinity))
       in
       let neg_inf =
-        broadcast_to (shape x) (B.full (B.context x) dt [||] Float.neg_infinity)
+        broadcast_to (shape x)
+          (B.full (B.context x) dt [||] (Dtype.of_float dt Float.neg_infinity))
       in
       logical_or ?out (cmpeq x pos_inf) (cmpeq x neg_inf)
 
@@ -685,7 +690,7 @@ module Make (B : Backend_intf.S) = struct
 
   (* ───── Binary Mathematical Functions ───── *)
 
-  let atan2 ?out y x = binop?out B.atan2 y x
+  let atan2 ?out y x = binop ?out B.atan2 y x
 
   (* sqrt(x² + y²) with overflow protection via max * sqrt(1 + (min/max)²) *)
   let hypot ?out x y =
@@ -3984,9 +3989,10 @@ module Make (B : Backend_intf.S) = struct
     let nd = Array.length (shape x) in
     let axes_norm = List.map (fun ax -> if ax < 0 then nd + ax else ax) axes in
     let max_x = max x ~axes:axes_norm ~keepdims:true in
+    let dt = dtype x in
     let shifted =
       if scale = 1.0 then sub x max_x
-      else mul (scalar_like x scale) (sub x max_x)
+      else mul (scalar_like x (Dtype.of_float dt scale)) (sub x max_x)
     in
     let e = exp shifted in
     div ?out e (sum e ~axes:axes_norm ~keepdims:true)
@@ -3997,8 +4003,10 @@ module Make (B : Backend_intf.S) = struct
     else
       let max_x = max x ~axes:axes_norm ~keepdims:true in
       let shifted = sub x max_x in
+      let dt = dtype x in
       let scaled =
-        if scale = 1.0 then shifted else mul (scalar_like shifted scale) shifted
+        if scale = 1.0 then shifted
+        else mul (scalar_like shifted (Dtype.of_float dt scale)) shifted
       in
       let log_den = log (sum (exp scaled) ~axes:axes_norm ~keepdims:true) in
       sub ?out scaled log_den
@@ -4029,7 +4037,10 @@ module Make (B : Backend_intf.S) = struct
       let log_sum = logsumexp ~axes:axes_norm ~keepdims:true x in
       let count = List.fold_left (fun acc ax -> acc * dim ax x) 1 axes_norm in
       let log_mean =
-        sub log_sum (log (scalar_like log_sum (float_of_int count)))
+        sub log_sum
+          (log
+             (scalar_like log_sum
+                (Dtype.of_float (dtype x) (float_of_int count))))
       in
       if keepdims then copy_to_out ?out log_mean
       else copy_to_out ?out (squeeze ~axes:(List.rev axes_norm) log_mean)
@@ -4076,9 +4087,11 @@ module Make (B : Backend_intf.S) = struct
           else var x ~axes:axes_norm ~keepdims:true
     in
     div ?out (sub x mean_tensor)
-      (sqrt (add variance_tensor (scalar_like x epsilon)))
+      (sqrt
+         (add variance_tensor
+            (scalar_like x (Dtype.of_float (dtype x) epsilon))))
 
-  let erf ?out x = unaryop?out B.erf x
+  let erf ?out x = unaryop ?out B.erf x
 
   let extract_patches ~kernel_size ~stride ~dilation ~padding x =
     B.unfold x ~kernel_size ~stride ~dilation ~padding

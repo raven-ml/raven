@@ -9,16 +9,16 @@ let make_test_env ?(max_steps = 100) () =
   let reset _env ?options:_ () =
     state := 5.0;
     steps := 0;
-    (Rune.create Rune.float32 [| 1 |] [| !state |], Info.empty)
+    (Nx.create Nx.float32 [| 1 |] [| !state |], Info.empty)
   in
   let step _env action =
-    let a : Int32.t array = Rune.to_array (Rune.reshape [| 1 |] action) in
+    let a : Int32.t array = Nx.to_array (Nx.reshape [| 1 |] action) in
     state := !state +. if Int32.to_int a.(0) = 0 then -1.0 else 1.0;
     incr steps;
     let terminated = !state <= 0.0 || !state >= 10.0 in
     let truncated = (not terminated) && !steps >= max_steps in
     Env.step_result
-      ~observation:(Rune.create Rune.float32 [| 1 |] [| !state |])
+      ~observation:(Nx.create Nx.float32 [| 1 |] [| !state |])
       ~reward:1.0 ~terminated ~truncated ()
   in
   Env.create ~id:"Test-v0" ~observation_space:obs_space ~action_space:act_space
@@ -28,13 +28,13 @@ let make_test_env ?(max_steps = 100) () =
 
 let test_rollout_length () =
   let env = make_test_env () in
-  let policy _obs = (Rune.create Rune.int32 [| 1 |] [| 1l |], None, None) in
+  let policy _obs = (Nx.create Nx.int32 [| 1 |] [| 1l |], None, None) in
   let traj = Collect.rollout env ~policy ~n_steps:5 in
   equal ~msg:"length = 5" int 5 (Collect.length traj)
 
 let test_rollout_arrays_length () =
   let env = make_test_env () in
-  let policy _obs = (Rune.create Rune.int32 [| 1 |] [| 1l |], None, None) in
+  let policy _obs = (Nx.create Nx.int32 [| 1 |] [| 1l |], None, None) in
   let traj = Collect.rollout env ~policy ~n_steps:5 in
   equal ~msg:"observations" int 5 (Array.length traj.observations);
   equal ~msg:"actions" int 5 (Array.length traj.actions);
@@ -46,18 +46,18 @@ let test_rollout_arrays_length () =
 
 let test_rollout_next_obs_populated () =
   let env = make_test_env () in
-  let policy _obs = (Rune.create Rune.int32 [| 1 |] [| 1l |], None, None) in
+  let policy _obs = (Nx.create Nx.int32 [| 1 |] [| 1l |], None, None) in
   let traj = Collect.rollout env ~policy ~n_steps:3 in
   for i = 0 to 2 do
     let arr : float array =
-      Rune.to_array (Rune.reshape [| 1 |] traj.next_observations.(i))
+      Nx.to_array (Nx.reshape [| 1 |] traj.next_observations.(i))
     in
     is_true ~msg:"next_obs is finite" (Float.is_finite arr.(0))
   done
 
 let test_rollout_no_log_probs () =
   let env = make_test_env () in
-  let policy _obs = (Rune.create Rune.int32 [| 1 |] [| 1l |], None, None) in
+  let policy _obs = (Nx.create Nx.int32 [| 1 |] [| 1l |], None, None) in
   let traj = Collect.rollout env ~policy ~n_steps:3 in
   is_none ~msg:"log_probs" traj.log_probs;
   is_none ~msg:"values" traj.values
@@ -65,7 +65,7 @@ let test_rollout_no_log_probs () =
 let test_rollout_with_log_probs () =
   let env = make_test_env () in
   let policy _obs =
-    (Rune.create Rune.int32 [| 1 |] [| 1l |], Some (-0.5), Some 1.0)
+    (Nx.create Nx.int32 [| 1 |] [| 1l |], Some (-0.5), Some 1.0)
   in
   let traj = Collect.rollout env ~policy ~n_steps:4 in
   is_some ~msg:"log_probs present" traj.log_probs;
@@ -77,13 +77,13 @@ let test_rollout_with_log_probs () =
 
 let test_episodes_count () =
   let env = make_test_env ~max_steps:10 () in
-  let policy _obs = (Rune.create Rune.int32 [| 1 |] [| 1l |], None, None) in
+  let policy _obs = (Nx.create Nx.int32 [| 1 |] [| 1l |], None, None) in
   let eps = Collect.episodes env ~policy ~n_episodes:2 ~max_steps:10 () in
   equal ~msg:"2 episodes" int 2 (List.length eps)
 
 let test_episodes_positive_length () =
   let env = make_test_env ~max_steps:10 () in
-  let policy _obs = (Rune.create Rune.int32 [| 1 |] [| 1l |], None, None) in
+  let policy _obs = (Nx.create Nx.int32 [| 1 |] [| 1l |], None, None) in
   let eps = Collect.episodes env ~policy ~n_episodes:2 ~max_steps:10 () in
   List.iter
     (fun ep ->
@@ -94,7 +94,7 @@ let test_episodes_positive_length () =
 
 let test_concat_two () =
   let env = make_test_env () in
-  let policy _obs = (Rune.create Rune.int32 [| 1 |] [| 1l |], None, None) in
+  let policy _obs = (Nx.create Nx.int32 [| 1 |] [| 1l |], None, None) in
   let t1 = Collect.rollout env ~policy ~n_steps:3 in
   let t2 = Collect.rollout env ~policy ~n_steps:4 in
   let t = Collect.concat [ t1; t2 ] in
@@ -105,13 +105,13 @@ let test_concat_empty_raises () =
 
 let test_concat_singleton () =
   let env = make_test_env () in
-  let policy _obs = (Rune.create Rune.int32 [| 1 |] [| 1l |], None, None) in
+  let policy _obs = (Nx.create Nx.int32 [| 1 |] [| 1l |], None, None) in
   let t1 = Collect.rollout env ~policy ~n_steps:5 in
   let t = Collect.concat [ t1 ] in
   equal ~msg:"same length" int 5 (Collect.length t)
 
 let () =
-  Rune.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.run ~seed:42 @@ fun () ->
   run "Fehu.Collect"
     [
       group "rollout"

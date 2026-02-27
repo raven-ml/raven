@@ -10,8 +10,7 @@
 
 (** {1:classification Classification} *)
 
-val cross_entropy :
-  (float, 'a) Rune.t -> (float, 'a) Rune.t -> (float, 'a) Rune.t
+val cross_entropy : (float, 'a) Nx.t -> (float, 'a) Nx.t -> (float, 'a) Nx.t
 (** [cross_entropy logits one_hot_labels] is softmax cross-entropy.
 
     [logits] has shape [[...; num_classes]] and must be rank >= 1.
@@ -22,8 +21,7 @@ val cross_entropy :
     Raises [Invalid_argument] if ranks or shapes differ, or if [num_classes] is
     not positive. *)
 
-val cross_entropy_sparse :
-  (float, 'a) Rune.t -> ('c, 'd) Rune.t -> (float, 'a) Rune.t
+val cross_entropy_sparse : (float, 'a) Nx.t -> ('c, 'd) Nx.t -> (float, 'a) Nx.t
 (** [cross_entropy_sparse logits class_indices] is {!cross_entropy} with integer
     labels.
 
@@ -34,7 +32,7 @@ val cross_entropy_sparse :
     non-class dimensions differ, or the class dimension is non-positive. *)
 
 val binary_cross_entropy :
-  (float, 'a) Rune.t -> (float, 'a) Rune.t -> (float, 'a) Rune.t
+  (float, 'a) Nx.t -> (float, 'a) Nx.t -> (float, 'a) Nx.t
 (** [binary_cross_entropy logits labels] is sigmoid binary cross-entropy.
 
     [logits] are raw (not sigmoid-normalized). [labels] are typically in
@@ -44,12 +42,12 @@ val binary_cross_entropy :
 
 (** {1:regression Regression} *)
 
-val mse : ('a, 'b) Rune.t -> ('a, 'b) Rune.t -> ('a, 'b) Rune.t
+val mse : ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
 (** [mse predictions targets] is [mean ((predictions - targets)^2)].
 
-    Shape compatibility follows Rune broadcasting semantics. *)
+    Shape compatibility follows Nx broadcasting semantics. *)
 
-val mae : ('a, 'b) Rune.t -> ('a, 'b) Rune.t -> ('a, 'b) Rune.t
+val mae : ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
 (** [mae predictions targets] is [mean (abs (predictions - targets))].
 
-    Shape compatibility follows Rune broadcasting semantics. *)
+    Shape compatibility follows Nx broadcasting semantics. *)

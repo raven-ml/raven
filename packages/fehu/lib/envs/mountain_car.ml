@@ -5,8 +5,8 @@
 
 open Fehu
 
-type obs = (float, Rune.float32_elt) Rune.t
-type act = (int32, Rune.int32_elt) Rune.t
+type obs = (float, Nx.float32_elt) Nx.t
+type act = (int32, Nx.int32_elt) Nx.t
 type render = string
 
 (* Physics constants matching Gymnasium MountainCar-v0 *)
@@ -28,15 +28,15 @@ let observation_space =
 let action_space = Space.Discrete.create 3
 
 let make_obs position velocity =
-  Rune.create Rune.float32 [| 2 |] [| position; velocity |]
+  Nx.create Nx.float32 [| 2 |] [| position; velocity |]
 
 let make ?render_mode () =
   let position = ref 0.0 in
   let velocity = ref 0.0 in
   let steps = ref 0 in
   let reset _env ?options:_ () =
-    let r = Rune.rand Rune.float32 [| 1 |] in
-    let v = (Rune.to_array r).(0) in
+    let r = Nx.rand Nx.float32 [| 1 |] in
+    let v = (Nx.to_array r).(0) in
     position := -0.6 +. (v *. 0.2);
     velocity := 0.0;
     steps := 0;

@@ -5,8 +5,8 @@
 
 open Fehu
 
-type obs = (float, Rune.float32_elt) Rune.t
-type act = (int32, Rune.int32_elt) Rune.t
+type obs = (float, Nx.float32_elt) Nx.t
+type act = (int32, Nx.int32_elt) Nx.t
 type render = string
 
 (* Physics constants matching Gymnasium CartPole-v1 *)
@@ -37,7 +37,7 @@ let observation_space =
 let action_space = Space.Discrete.create 2
 
 let make_obs x x_dot theta theta_dot =
-  Rune.create Rune.float32 [| 4 |] [| x; x_dot; theta; theta_dot |]
+  Nx.create Nx.float32 [| 4 |] [| x; x_dot; theta; theta_dot |]
 
 let make ?render_mode () =
   let x = ref 0.0 in
@@ -47,8 +47,8 @@ let make ?render_mode () =
   let steps = ref 0 in
   let reset _env ?options:_ () =
     let random_state () =
-      let r = Rune.rand Rune.float32 [| 1 |] in
-      let v = (Rune.to_array r).(0) in
+      let r = Nx.rand Nx.float32 [| 1 |] in
+      let v = (Nx.to_array r).(0) in
       (v -. 0.5) *. 0.1
     in
     x := random_state ();

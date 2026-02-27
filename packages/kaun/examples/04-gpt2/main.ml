@@ -33,10 +33,10 @@ let generate model vars ~max_tokens prompt =
   for _ = 1 to max_tokens do
     let ids = Array.of_list !tokens in
     let n = Array.length ids in
-    let input = Rune.create Rune.int32 [| 1; n |] ids in
+    let input = Nx.create Nx.int32 [| 1; n |] ids in
     let logits, _ = Layer.apply model vars ~training:false input in
-    let last = Rune.slice [ I 0; I (n - 1) ] logits in
-    let next : int32 = Rune.item [] (Rune.argmax ~axis:0 last) in
+    let last = Nx.slice [ I 0; I (n - 1) ] logits in
+    let next : int32 = Nx.item [] (Nx.argmax ~axis:0 last) in
     tokens := !tokens @ [ next ]
   done;
   Array.of_list !tokens
@@ -45,18 +45,18 @@ let generate model vars ~max_tokens prompt =
 
 let print_top_k ~k model vars input_ids ~pos =
   let logits, _ = Layer.apply model vars ~training:false input_ids in
-  let row = Rune.slice [ I 0; I pos ] logits in
-  let sorted = Rune.argsort ~descending:true ~axis:0 row in
-  let probs = Rune.softmax ~axes:[ 0 ] row in
+  let row = Nx.slice [ I 0; I pos ] logits in
+  let sorted = Nx.argsort ~descending:true ~axis:0 row in
+  let probs = Nx.softmax ~axes:[ 0 ] row in
   for i = 0 to k - 1 do
-    let idx = Int32.to_int (Rune.item [ i ] sorted) in
-    let prob : float = Rune.item [ idx ] probs in
+    let idx = Int32.to_int (Nx.item [ i ] sorted) in
+    let prob : float = Nx.item [ idx ] probs in
     Printf.printf "    #%d  token %-6d  p=%.4f\n" (i + 1) idx prob
   done
 
 let () =
   let model_id = "gpt2" in
-  let dtype = Rune.float32 in
+  let dtype = Nx.float32 in
 
   (* Load tokenizer and model *)
   Printf.printf "Loading %s...\n%!" model_id;
@@ -73,9 +73,7 @@ let () =
   Printf.printf "  Prompt: \"Hello world\"\n";
   Printf.printf "  Top 5 continuations:\n";
   let hello_ids = encode tokenizer "Hello world" in
-  let hello =
-    Rune.create Rune.int32 [| 1; Array.length hello_ids |] hello_ids
-  in
+  let hello = Nx.create Nx.int32 [| 1; Array.length hello_ids |] hello_ids in
   print_top_k ~k:5 model vars hello ~pos:(Array.length hello_ids - 1);
 
   (* --- Greedy generation from several prompts --- *)

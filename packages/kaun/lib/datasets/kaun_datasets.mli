@@ -13,8 +13,8 @@ val mnist :
   ?normalize:bool ->
   ?data_format:[ `NCHW | `NHWC ] ->
   unit ->
-  (Rune.float32_t * Rune.float32_t) Kaun.Data.t
-  * (Rune.float32_t * Rune.float32_t) Kaun.Data.t
+  (Nx.float32_t * Nx.float32_t) Kaun.Data.t
+  * (Nx.float32_t * Nx.float32_t) Kaun.Data.t
 (** [mnist ()] is [(train, test)] where each is a {!Kaun.Data.t} pipeline
     yielding [(image, label)] pairs.
 
@@ -34,8 +34,8 @@ val cifar10 :
   ?normalize:bool ->
   ?data_format:[ `NCHW | `NHWC ] ->
   unit ->
-  (Rune.float32_t * Rune.float32_t) Kaun.Data.t
-  * (Rune.float32_t * Rune.float32_t) Kaun.Data.t
+  (Nx.float32_t * Nx.float32_t) Kaun.Data.t
+  * (Nx.float32_t * Nx.float32_t) Kaun.Data.t
 (** [cifar10 ()] is [(train, test)] where each is a {!Kaun.Data.t} pipeline
     yielding [(image, label)] pairs.
 

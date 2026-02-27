@@ -6,7 +6,7 @@
 open Windtrap
 module Data = Kaun.Data
 
-let dtype = Rune.float32
+let dtype = Nx.float32
 
 (* Constructors *)
 
@@ -28,28 +28,28 @@ let test_of_fn_negative () =
     (fun () -> ignore (Data.of_fn (-1) Fun.id))
 
 let test_of_tensor () =
-  let t = Rune.create dtype [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
+  let t = Nx.create dtype [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
   let d = Data.of_tensor t in
   equal ~msg:"length" (option int) (Some 3) (Data.length d);
   let a = Data.to_array d in
   equal ~msg:"count" int 3 (Array.length a);
-  equal ~msg:"shape" (list int) [ 2 ] (Array.to_list (Rune.shape a.(0)));
-  equal ~msg:"first elem" (float 1e-6) 1.0 (Rune.item [ 0 ] a.(0))
+  equal ~msg:"shape" (list int) [ 2 ] (Array.to_list (Nx.shape a.(0)));
+  equal ~msg:"first elem" (float 1e-6) 1.0 (Nx.item [ 0 ] a.(0))
 
 let test_of_tensors () =
-  let x = Rune.create dtype [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
-  let y = Rune.create dtype [| 3 |] [| 10.0; 20.0; 30.0 |] in
+  let x = Nx.create dtype [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
+  let y = Nx.create dtype [| 3 |] [| 10.0; 20.0; 30.0 |] in
   let d = Data.of_tensors (x, y) in
   equal ~msg:"length" (option int) (Some 3) (Data.length d);
   let a = Data.to_array d in
   equal ~msg:"count" int 3 (Array.length a);
   let x0, y0 = a.(0) in
-  equal ~msg:"x0 shape" (list int) [ 2 ] (Array.to_list (Rune.shape x0));
-  equal ~msg:"y0 scalar" (float 1e-6) 10.0 (Rune.item [] y0)
+  equal ~msg:"x0 shape" (list int) [ 2 ] (Array.to_list (Nx.shape x0));
+  equal ~msg:"y0 scalar" (float 1e-6) 10.0 (Nx.item [] y0)
 
 let test_of_tensors_mismatch () =
-  let x = Rune.create dtype [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
-  let y = Rune.create dtype [| 2 |] [| 10.0; 20.0 |] in
+  let x = Nx.create dtype [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
+  let y = Nx.create dtype [| 2 |] [| 10.0; 20.0 |] in
   raises_match
     (fun exn -> match exn with Invalid_argument _ -> true | _ -> false)
     (fun () -> ignore (Data.of_tensors (x, y)))
@@ -89,22 +89,22 @@ let test_map_batch () =
 
 let test_shuffle_deterministic () =
   let d1 =
-    Rune.Rng.run ~seed:42 @@ fun () ->
+    Nx.Rng.run ~seed:42 @@ fun () ->
     Data.of_array [| 0; 1; 2; 3; 4; 5; 6; 7 |] |> Data.shuffle |> Data.to_array
   in
   let d2 =
-    Rune.Rng.run ~seed:42 @@ fun () ->
+    Nx.Rng.run ~seed:42 @@ fun () ->
     Data.of_array [| 0; 1; 2; 3; 4; 5; 6; 7 |] |> Data.shuffle |> Data.to_array
   in
   equal ~msg:"same seed same order" (array int) d1 d2
 
 let test_shuffle_different_seed () =
   let a1 =
-    Rune.Rng.run ~seed:1 @@ fun () ->
+    Nx.Rng.run ~seed:1 @@ fun () ->
     Data.of_array [| 0; 1; 2; 3; 4; 5; 6; 7 |] |> Data.shuffle |> Data.to_array
   in
   let a2 =
-    Rune.Rng.run ~seed:2 @@ fun () ->
+    Nx.Rng.run ~seed:2 @@ fun () ->
     Data.of_array [| 0; 1; 2; 3; 4; 5; 6; 7 |] |> Data.shuffle |> Data.to_array
   in
   is_true ~msg:"different seed different order" (a1 <> a2)
@@ -140,14 +140,14 @@ let test_length () =
 let test_stack_batch () =
   let tensors =
     [|
-      Rune.create dtype [| 2 |] [| 1.0; 2.0 |];
-      Rune.create dtype [| 2 |] [| 3.0; 4.0 |];
-      Rune.create dtype [| 2 |] [| 5.0; 6.0 |];
+      Nx.create dtype [| 2 |] [| 1.0; 2.0 |];
+      Nx.create dtype [| 2 |] [| 3.0; 4.0 |];
+      Nx.create dtype [| 2 |] [| 5.0; 6.0 |];
     |]
   in
   let stacked = Data.stack_batch tensors in
-  equal ~msg:"shape" (list int) [ 3; 2 ] (Array.to_list (Rune.shape stacked));
-  equal ~msg:"value" (float 1e-6) 3.0 (Rune.item [ 1; 0 ] stacked)
+  equal ~msg:"shape" (list int) [ 3; 2 ] (Array.to_list (Nx.shape stacked));
+  equal ~msg:"value" (float 1e-6) 3.0 (Nx.item [ 1; 0 ] stacked)
 
 let () =
   run "Kaun.Data"

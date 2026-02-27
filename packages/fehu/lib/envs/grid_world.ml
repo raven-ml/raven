@@ -5,8 +5,8 @@
 
 open Fehu
 
-type obs = (int32, Rune.int32_elt) Rune.t
-type act = (int32, Rune.int32_elt) Rune.t
+type obs = (int32, Nx.int32_elt) Nx.t
+type act = (int32, Nx.int32_elt) Nx.t
 type render = Text of string | Image of Render.image
 
 let grid_size = 5
@@ -21,7 +21,7 @@ let is_valid row col =
   && not (is_obstacle row col)
 
 let make_obs row col =
-  Rune.create Rune.int32 [| 2 |] [| Int32.of_int row; Int32.of_int col |]
+  Nx.create Nx.int32 [| 2 |] [| Int32.of_int row; Int32.of_int col |]
 
 (* ANSI rendering *)
 

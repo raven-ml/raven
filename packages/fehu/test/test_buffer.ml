@@ -112,7 +112,7 @@ let test_add_after_clear () =
   equal ~msg:"size = 1 after re-add" int 1 (Buffer.size buf)
 
 let () =
-  Rune.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.run ~seed:42 @@ fun () ->
   run "Fehu.Buffer"
     [
       group "creation"

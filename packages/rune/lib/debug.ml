@@ -3,8 +3,8 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-open Nx_rune
-module T = Tensor
+open Nx_effect
+module T = Nx
 
 type tensor_ref = Tensor_ref : ('a, 'b) T.t -> tensor_ref
 

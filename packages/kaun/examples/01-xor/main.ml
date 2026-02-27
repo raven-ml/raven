@@ -6,12 +6,12 @@
 open Kaun
 
 let () =
-  Rune.Rng.run ~seed:42 @@ fun () ->
-  let dtype = Rune.float32 in
+  Nx.Rng.run ~seed:42 @@ fun () ->
+  let dtype = Nx.float32 in
 
   (* XOR dataset *)
-  let x = Rune.create dtype [| 4; 2 |] [| 0.; 0.; 0.; 1.; 1.; 0.; 1.; 1. |] in
-  let y = Rune.create dtype [| 4; 1 |] [| 0.; 1.; 1.; 0. |] in
+  let x = Nx.create dtype [| 4; 2 |] [| 0.; 0.; 0.; 1.; 1.; 0.; 1.; 1. |] in
+  let y = Nx.create dtype [| 4; 1 |] [| 0.; 1.; 1.; 0. |] in
 
   (* Model *)
   let model =
@@ -41,11 +41,11 @@ let () =
   in
 
   (* Evaluate *)
-  let pred = Train.predict trainer st x |> Rune.sigmoid in
+  let pred = Train.predict trainer st x |> Nx.sigmoid in
   Printf.printf "\npredictions (expected 0 1 1 0):\n";
   for i = 0 to 3 do
     Printf.printf "  [%.0f, %.0f] -> %.3f\n"
-      (Rune.item [ i; 0 ] x)
-      (Rune.item [ i; 1 ] x)
-      (Rune.item [ i; 0 ] pred)
+      (Nx.item [ i; 0 ] x)
+      (Nx.item [ i; 1 ] x)
+      (Nx.item [ i; 0 ] pred)
   done

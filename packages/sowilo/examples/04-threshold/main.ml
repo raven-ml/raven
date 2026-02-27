@@ -6,22 +6,20 @@
 let image_path = "sowilo/examples/lena.png"
 
 let () =
-  let img = Sowilo.to_float (Rune.of_nx (Nx_io.load_image image_path)) in
+  let img = Sowilo.to_float (Nx_io.load_image image_path) in
   let gray = Sowilo.to_grayscale img in
   let thresh = Sowilo.threshold 0.5 gray in
   let fig = Hugin.figure ~width:1000 ~height:500 () in
   let ax1 = Hugin.subplot ~nrows:1 ~ncols:2 ~index:1 fig in
   ignore
     (ax1
-    |> Hugin.Plotting.imshow ~data:(Rune.to_nx gray)
-         ~cmap:Hugin.Artist.Colormap.gray
+    |> Hugin.Plotting.imshow ~data:gray ~cmap:Hugin.Artist.Colormap.gray
     |> Hugin.Axes.set_title "Grayscale"
     |> Hugin.Axes.set_xticks [] |> Hugin.Axes.set_yticks []);
   let ax2 = Hugin.subplot ~nrows:1 ~ncols:2 ~index:2 fig in
   ignore
     (ax2
-    |> Hugin.Plotting.imshow ~data:(Rune.to_nx thresh)
-         ~cmap:Hugin.Artist.Colormap.gray
+    |> Hugin.Plotting.imshow ~data:thresh ~cmap:Hugin.Artist.Colormap.gray
     |> Hugin.Axes.set_title "Binary Threshold (128)"
     |> Hugin.Axes.set_xticks [] |> Hugin.Axes.set_yticks []);
   Hugin.show fig

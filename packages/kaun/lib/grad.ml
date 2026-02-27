@@ -38,8 +38,8 @@ let value_and_grad_aux f params =
     Ptree.with_tensor first_leaf
       {
         run =
-          (fun (type a layout) (first_tensor : (a, layout) Rune.t) ->
-            let first_dtype : (a, layout) Dtype.t = Rune.dtype first_tensor in
+          (fun (type a layout) (first_tensor : (a, layout) Nx.t) ->
+            let first_dtype : (a, layout) Dtype.t = Nx.dtype first_tensor in
             if not (Dtype.is_float first_dtype) then
               err_non_float fn_name first_path first_dtype;
             let typed_inputs =
@@ -49,14 +49,12 @@ let value_and_grad_aux f params =
                   Ptree.with_tensor leaf
                     {
                       run =
-                        (fun (type a2 layout2)
-                          (tensor : (a2, layout2) Rune.t)
-                        ->
-                          let dtype = Rune.dtype tensor in
+                        (fun (type a2 layout2) (tensor : (a2, layout2) Nx.t) ->
+                          let dtype = Nx.dtype tensor in
                           if not (Dtype.is_float dtype) then
                             err_non_float fn_name path dtype;
                           match Dtype.equal_witness first_dtype dtype with
-                          | Some Type.Equal -> (tensor : (a, layout) Rune.t)
+                          | Some Type.Equal -> (tensor : (a, layout) Nx.t)
                           | None -> err_mismatch fn_name path first_dtype dtype);
                     })
                 leaves
@@ -107,7 +105,7 @@ let value_and_grad_mixed f params =
     let groups = Hashtbl.create 8 in
     Array.iteri
       (fun index (Ptree.P tensor) ->
-        let dtype = Rune.dtype tensor in
+        let dtype = Nx.dtype tensor in
         if not (Dtype.is_float dtype) then
           err_non_float fn_name paths_array.(index) dtype;
         let group_key = Dtype.to_string dtype in
@@ -127,8 +125,8 @@ let value_and_grad_mixed f params =
         Ptree.with_tensor repr
           {
             run =
-              (fun (type a layout) (repr_tensor : (a, layout) Rune.t) ->
-                let repr_dtype : (a, layout) Dtype.t = Rune.dtype repr_tensor in
+              (fun (type a layout) (repr_tensor : (a, layout) Nx.t) ->
+                let repr_dtype : (a, layout) Dtype.t = Nx.dtype repr_tensor in
                 let typed_inputs =
                   List.map
                     (fun index ->
@@ -136,11 +134,11 @@ let value_and_grad_mixed f params =
                         {
                           run =
                             (fun (type a2 layout2)
-                              (tensor : (a2, layout2) Rune.t)
+                              (tensor : (a2, layout2) Nx.t)
                             ->
-                              let dtype = Rune.dtype tensor in
+                              let dtype = Nx.dtype tensor in
                               match Dtype.equal_witness repr_dtype dtype with
-                              | Some Type.Equal -> (tensor : (a, layout) Rune.t)
+                              | Some Type.Equal -> (tensor : (a, layout) Nx.t)
                               | None ->
                                   err_mismatch fn_name paths_array.(index)
                                     repr_dtype dtype);

@@ -63,7 +63,7 @@ let network =
 (* Forward pass: obs [batch; 4] -> logits [batch; 2] *)
 
 let forward params net_state obs =
-  let vars = Layer.make_vars ~params ~state:net_state ~dtype:Rune.float32 in
+  let vars = Layer.make_vars ~params ~state:net_state ~dtype:Nx.float32 in
   fst (Layer.apply network vars ~training:false obs)
 
 (* Main *)
@@ -75,11 +75,11 @@ let () =
   Printf.printf "Rollout: %d steps/update, gamma = %.2f, lr = %.4f\n\n" n_steps
     gamma lr;
 
-  Rune.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.run ~seed:42 @@ fun () ->
   let env = Fehu_envs.Cartpole.make () in
 
   (* Initialize network *)
-  let vars = Layer.init network ~dtype:Rune.float32 in
+  let vars = Layer.init network ~dtype:Nx.float32 in
   let params = ref (Layer.params vars) in
   let net_state = Layer.state vars in
 
@@ -90,25 +90,25 @@ let () =
   let opt_state = ref (Optim.init algo !params) in
 
   let policy obs =
-    let obs_batch = Rune.reshape [| 1; 4 |] obs in
+    let obs_batch = Nx.reshape [| 1; 4 |] obs in
     let logits = Rune.no_grad (fun () -> forward !params net_state obs_batch) in
-    let action_idx = Rune.categorical logits in
-    let action = Rune.reshape [||] action_idx in
-    let log_probs = Rune.log_softmax logits in
-    let action_1 = Rune.reshape [| 1; 1 |] action_idx in
-    let log_prob = Rune.take_along_axis ~axis:1 action_1 log_probs in
-    let lp = Rune.item [ 0; 0 ] log_prob in
+    let action_idx = Nx.categorical logits in
+    let action = Nx.reshape [||] action_idx in
+    let log_probs = Nx.log_softmax logits in
+    let action_1 = Nx.reshape [| 1; 1 |] action_idx in
+    let log_prob = Nx.take_along_axis ~axis:1 action_1 log_probs in
+    let lp = Nx.item [ 0; 0 ] log_prob in
     (action, Some lp, None)
   in
 
   (* Greedy policy for evaluation *)
   let greedy_policy obs =
-    let obs_batch = Rune.reshape [| 1; 4 |] obs in
+    let obs_batch = Nx.reshape [| 1; 4 |] obs in
     let logits = Rune.no_grad (fun () -> forward !params net_state obs_batch) in
     let action_idx =
-      Rune.argmax logits ~axis:(-1) ~keepdims:false |> Rune.cast Rune.int32
+      Nx.argmax logits ~axis:(-1) ~keepdims:false |> Nx.cast Nx.int32
     in
-    Rune.reshape [||] action_idx
+    Nx.reshape [||] action_idx
   in
 
   (* Training loop *)
@@ -131,24 +131,23 @@ let () =
     let returns = Gae.normalize returns in
 
     (* Stack observations and actions into batch tensors *)
-    let obs_batch = Rune.stack (Array.to_list traj.observations) in
+    let obs_batch = Nx.stack (Array.to_list traj.observations) in
     let actions_batch =
-      Rune.stack
-        (Array.to_list
-           (Array.map (fun a -> Rune.reshape [| 1 |] a) traj.actions))
+      Nx.stack
+        (Array.to_list (Array.map (fun a -> Nx.reshape [| 1 |] a) traj.actions))
     in
-    let returns_t = Rune.create Rune.float32 [| n |] returns in
+    let returns_t = Nx.create Nx.float32 [| n |] returns in
 
     (* Policy gradient loss *)
     let loss_fn p =
       let logits = forward p net_state obs_batch in
-      let log_probs = Rune.log_softmax logits in
+      let log_probs = Nx.log_softmax logits in
       let action_log_probs =
-        Rune.take_along_axis ~axis:1 actions_batch log_probs
+        Nx.take_along_axis ~axis:1 actions_batch log_probs
       in
-      let action_log_probs = Rune.reshape [| n |] action_log_probs in
-      let weighted = Rune.mul action_log_probs returns_t in
-      Rune.neg (Rune.mean weighted)
+      let action_log_probs = Nx.reshape [| n |] action_log_probs in
+      let weighted = Nx.mul action_log_probs returns_t in
+      Nx.neg (Nx.mean weighted)
     in
 
     let loss, grads = Grad.value_and_grad loss_fn !params in
@@ -165,7 +164,7 @@ let () =
       in
       Printf.printf
         "  update %3d  loss = %6.3f  eval: reward = %5.1f +/- %4.1f\n%!" update
-        (Rune.item [] loss) stats.mean_reward stats.std_reward;
+        (Nx.item [] loss) stats.mean_reward stats.std_reward;
       reward_history.(!eval_idx) <- stats.mean_reward;
       incr eval_idx
     end

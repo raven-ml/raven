@@ -3,14 +3,14 @@ open Fehu_envs
 open Windtrap
 
 let read_float obs =
-  let arr : float array = Rune.to_array (Rune.reshape [| 1 |] obs) in
+  let arr : float array = Nx.to_array (Nx.reshape [| 1 |] obs) in
   arr.(0)
 
 let read_int32_array obs n =
-  let arr : Int32.t array = Rune.to_array (Rune.reshape [| n |] obs) in
+  let arr : Int32.t array = Nx.to_array (Nx.reshape [| n |] obs) in
   Array.map Int32.to_int arr
 
-let discrete action = Rune.create Rune.int32 [| 1 |] [| Int32.of_int action |]
+let discrete action = Nx.create Nx.int32 [| 1 |] [| Int32.of_int action |]
 
 (* Random_walk *)
 
@@ -75,7 +75,7 @@ let test_cp_creation () =
 let test_cp_reset_shape () =
   let env = Cartpole.make () in
   let obs, _info = Env.reset env () in
-  let shape = Rune.shape obs in
+  let shape = Nx.shape obs in
   equal ~msg:"obs shape [4]" (array int) [| 4 |] shape
 
 let test_cp_step_reward () =
@@ -182,14 +182,14 @@ let test_mc_creation () =
 let test_mc_reset_shape () =
   let env = Mountain_car.make () in
   let obs, _info = Env.reset env () in
-  let shape = Rune.shape obs in
+  let shape = Nx.shape obs in
   equal ~msg:"obs shape [2]" (array int) [| 2 |] shape
 
 let test_mc_step_coast () =
   let env = Mountain_car.make () in
   let _obs, _info = Env.reset env () in
   let s = Env.step env (discrete 1) in
-  let shape = Rune.shape s.observation in
+  let shape = Nx.shape s.observation in
   equal ~msg:"obs shape after step" (array int) [| 2 |] shape;
   is_false ~msg:"not terminated" s.terminated
 
@@ -200,7 +200,7 @@ let test_mc_reward () =
   equal ~msg:"reward -1.0" (float 1e-6) (-1.0) s.reward
 
 let () =
-  Rune.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.run ~seed:42 @@ fun () ->
   run "Fehu_envs"
     [
       group "RandomWalk"

@@ -10,7 +10,7 @@
     lists ([List]) or string-keyed dicts ([Dict]). *)
 
 type tensor =
-  | P : ('a, 'layout) Rune.t -> tensor
+  | P : ('a, 'layout) Nx.t -> tensor
       (** A packed tensor. The wrapper hides dtype and layout parameters. *)
 
 type t =
@@ -20,7 +20,7 @@ type t =
 
 (** {1:constructors Constructors} *)
 
-val tensor : ('a, 'layout) Rune.t -> t
+val tensor : ('a, 'layout) Nx.t -> t
 (** [tensor x] is [Tensor (P x)]. *)
 
 val list : t list -> t
@@ -47,11 +47,11 @@ module Tensor : sig
   val numel : tensor -> int
   (** [numel t] is the number of elements in [t]. *)
 
-  val to_typed : ('a, 'l) Rune.dtype -> tensor -> ('a, 'l) Rune.t option
+  val to_typed : ('a, 'l) Nx.dtype -> tensor -> ('a, 'l) Nx.t option
   (** [to_typed dtype t] is [Some x] iff [t] has dtype [dtype], with [x] the
       typed tensor. It is [None] on dtype mismatch. *)
 
-  val to_typed_exn : ('a, 'l) Rune.dtype -> tensor -> ('a, 'l) Rune.t
+  val to_typed_exn : ('a, 'l) Nx.dtype -> tensor -> ('a, 'l) Nx.t
   (** [to_typed_exn dtype t] is the typed tensor in [t].
 
       Raises [Invalid_argument] if [t]'s dtype is not [dtype]. *)
@@ -80,7 +80,7 @@ module Dict : sig
       prefixed to the error message. *)
 
   val get_tensor_exn :
-    fields -> name:string -> ('a, 'l) Nx_core.Dtype.t -> ('a, 'l) Rune.t
+    fields -> name:string -> ('a, 'l) Nx_core.Dtype.t -> ('a, 'l) Nx.t
   (** [get_tensor_exn fields ~name dtype] is the typed tensor in [fields] under
       [name].
 
@@ -100,7 +100,7 @@ end
 
 (** {1:leaf Leaf Access} *)
 
-type 'r tensor_handler = { run : 'a 'layout. ('a, 'layout) Rune.t -> 'r }
+type 'r tensor_handler = { run : 'a 'layout. ('a, 'layout) Nx.t -> 'r }
 (** Rank-2 handler for unpacking {!tensor}. *)
 
 val with_tensor : tensor -> 'a tensor_handler -> 'a
@@ -115,7 +115,7 @@ val as_tensor_exn : ?ctx:string -> t -> tensor
 (** {1:functional Functional Operations} *)
 
 type map_handler = {
-  run : 'a 'layout. ('a, 'layout) Rune.t -> ('a, 'layout) Rune.t;
+  run : 'a 'layout. ('a, 'layout) Nx.t -> ('a, 'layout) Nx.t;
 }
 (** Rank-2 tensor mapper used by {!map}. *)
 
@@ -124,8 +124,7 @@ val map : map_handler -> t -> t
 
 type map2_handler = {
   run :
-    'a 'layout.
-    ('a, 'layout) Rune.t -> ('a, 'layout) Rune.t -> ('a, 'layout) Rune.t;
+    'a 'layout. ('a, 'layout) Nx.t -> ('a, 'layout) Nx.t -> ('a, 'layout) Nx.t;
 }
 (** Rank-2 tensor zipper used by {!map2}. *)
 
@@ -170,7 +169,7 @@ val flatten_with_paths : t -> (string * tensor) list
 
 val zeros_like : t -> t
 (** [zeros_like t] has the same structure as [t], with each tensor replaced by
-    [Rune.zeros_like]. *)
+    [Nx.zeros_like]. *)
 
 val count_parameters : t -> int
 (** [count_parameters t] is the sum of {!Tensor.numel} over all leaf tensors. *)

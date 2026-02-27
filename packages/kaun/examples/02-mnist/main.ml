@@ -32,20 +32,20 @@ let collect ds =
       xs := x :: !xs;
       ys := y :: !ys)
     ds;
-  ( Rune.stack ~axis:0 (List.rev !xs),
-    Rune.cast Rune.int32 (Rune.stack ~axis:0 (List.rev !ys)) )
+  ( Nx.stack ~axis:0 (List.rev !xs),
+    Nx.cast Nx.int32 (Nx.stack ~axis:0 (List.rev !ys)) )
 
 let () =
-  Rune.Rng.run ~seed:42 @@ fun () ->
-  let dtype = Rune.float32 in
+  Nx.Rng.run ~seed:42 @@ fun () ->
+  let dtype = Nx.float32 in
 
   (* Load MNIST into full tensors (once) *)
   Printf.printf "Loading MNIST...\n%!";
   let train_ds, test_ds = Kaun_datasets.mnist () in
   let x_train, y_train = collect train_ds in
   let x_test, y_test = collect test_ds in
-  let n_train = (Rune.shape x_train).(0) in
-  Printf.printf "  train: %d  test: %d\n%!" n_train (Rune.shape x_test).(0);
+  let n_train = (Nx.shape x_train).(0) in
+  Printf.printf "  train: %d  test: %d\n%!" n_train (Nx.shape x_test).(0);
 
   (* Test batches (fixed order, no shuffle) *)
   let test_batches = Data.prepare ~batch_size (x_test, y_test) in

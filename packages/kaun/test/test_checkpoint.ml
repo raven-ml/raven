@@ -12,16 +12,13 @@ let with_tmpfile f =
   let path = Filename.temp_file "ckpt" ".safetensors" in
   Fun.protect ~finally:(fun () -> Sys.remove path) (fun () -> f path)
 
-let to_array t =
-  Rune.to_array (Rune.reshape [| -1 |] (Rune.cast Rune.float32 t))
+let to_array t = Nx.to_array (Nx.reshape [| -1 |] (Nx.cast Nx.float32 t))
 
 (* Checkpoint save/load *)
 
 let test_roundtrip_single_tensor () =
   with_tmpfile (fun path ->
-      let t =
-        Rune.create Rune.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-      in
+      let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
       let tree = Ptree.tensor t in
       Checkpoint.save path tree;
       let loaded = Checkpoint.load path ~like:tree in
@@ -35,8 +32,8 @@ let test_roundtrip_single_tensor () =
 
 let test_roundtrip_nested_tree () =
   with_tmpfile (fun path ->
-      let w = Rune.create Rune.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-      let b = Rune.create Rune.float32 [| 2 |] [| 0.1; 0.2 |] in
+      let w = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+      let b = Nx.create Nx.float32 [| 2 |] [| 0.1; 0.2 |] in
       let tree =
         Ptree.dict
           [
@@ -57,8 +54,8 @@ let test_roundtrip_nested_tree () =
 
 let test_roundtrip_list_tree () =
   with_tmpfile (fun path ->
-      let t0 = Rune.create Rune.float32 [| 3 |] [| 1.; 2.; 3. |] in
-      let t1 = Rune.create Rune.float32 [| 2 |] [| 4.; 5. |] in
+      let t0 = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+      let t1 = Nx.create Nx.float32 [| 2 |] [| 4.; 5. |] in
       let tree = Ptree.list [ Ptree.tensor t0; Ptree.tensor t1 ] in
       Checkpoint.save path tree;
       let loaded = Checkpoint.load path ~like:tree in
@@ -70,7 +67,7 @@ let test_roundtrip_list_tree () =
 
 let test_missing_key () =
   with_tmpfile (fun path ->
-      let t = Rune.create Rune.float32 [| 2 |] [| 1.; 2. |] in
+      let t = Nx.create Nx.float32 [| 2 |] [| 1.; 2. |] in
       let small = Ptree.dict [ ("a", Ptree.tensor t) ] in
       Checkpoint.save path small;
       let big = Ptree.dict [ ("a", Ptree.tensor t); ("b", Ptree.tensor t) ] in
@@ -79,14 +76,12 @@ let test_missing_key () =
 
 let test_shape_mismatch () =
   with_tmpfile (fun path ->
-      let t =
-        Rune.create Rune.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |]
-      in
+      let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
       let tree = Ptree.tensor t in
       Checkpoint.save path tree;
       let wrong =
         Ptree.tensor
-          (Rune.create Rune.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |])
+          (Nx.create Nx.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |])
       in
       raises_invalid_arg
         "Checkpoint.load: shape mismatch for \"\": expected [3; 2], got [2; 3]"
@@ -94,10 +89,10 @@ let test_shape_mismatch () =
 
 let test_dtype_casting () =
   with_tmpfile (fun path ->
-      let t = Rune.create Rune.float32 [| 3 |] [| 1.; 2.; 3. |] in
+      let t = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
       Checkpoint.save path (Ptree.tensor t);
       let template =
-        Ptree.tensor (Rune.create Rune.float64 [| 3 |] [| 0.; 0.; 0. |])
+        Ptree.tensor (Nx.create Nx.float64 [| 3 |] [| 0.; 0.; 0. |])
       in
       let loaded = Checkpoint.load path ~like:template in
       match loaded with
@@ -115,7 +110,7 @@ let test_empty_tree () =
 (* Optim state serialization *)
 
 let test_optim_sgd_no_momentum () =
-  let params = Ptree.tensor (Rune.create Rune.float32 [| 2 |] [| 1.; 2. |]) in
+  let params = Ptree.tensor (Nx.create Nx.float32 [| 2 |] [| 1.; 2. |]) in
   let algo = Optim.sgd ~lr:(Optim.Schedule.constant 0.01) () in
   let st = Optim.init algo params in
   let count, trees = Optim.state_to_trees st in
@@ -127,7 +122,7 @@ let test_optim_sgd_no_momentum () =
   equal ~msg:"trees roundtrip" int 0 (List.length trees')
 
 let test_optim_sgd_momentum () =
-  let params = Ptree.tensor (Rune.create Rune.float32 [| 2 |] [| 1.; 2. |]) in
+  let params = Ptree.tensor (Nx.create Nx.float32 [| 2 |] [| 1.; 2. |]) in
   let algo = Optim.sgd ~lr:(Optim.Schedule.constant 0.01) ~momentum:0.9 () in
   let st = Optim.init algo params in
   let count, trees = Optim.state_to_trees st in
@@ -135,7 +130,7 @@ let test_optim_sgd_momentum () =
   equal ~msg:"one tree" int 1 (List.length trees)
 
 let test_optim_adam_roundtrip () =
-  let params = Ptree.tensor (Rune.create Rune.float32 [| 2 |] [| 1.; 2. |]) in
+  let params = Ptree.tensor (Nx.create Nx.float32 [| 2 |] [| 1.; 2. |]) in
   let algo = Optim.adam ~lr:(Optim.Schedule.constant 0.001) () in
   let st = Optim.init algo params in
   let count, trees = Optim.state_to_trees st in

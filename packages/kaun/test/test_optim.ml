@@ -63,16 +63,16 @@ let test_exponential_decay () =
 let quadratic_loss params =
   (* f(x) = 0.5 * sum(x^2), grad = x *)
   let (Ptree.P t) = Ptree.as_tensor_exn params in
-  let t = Ptree.Tensor.to_typed_exn Rune.float32 (Ptree.P t) in
-  Rune.mul (Rune.scalar Rune.float32 0.5) (Rune.sum (Rune.mul t t))
+  let t = Ptree.Tensor.to_typed_exn Nx.float32 (Ptree.P t) in
+  Nx.mul (Nx.scalar Nx.float32 0.5) (Nx.sum (Nx.mul t t))
 
 let make_params values =
-  Ptree.tensor (Rune.create Rune.float32 [| Array.length values |] values)
+  Ptree.tensor (Nx.create Nx.float32 [| Array.length values |] values)
 
 let get_values params =
   let (Ptree.P t) = Ptree.as_tensor_exn params in
-  let t = Ptree.Tensor.to_typed_exn Rune.float32 (Ptree.P t) in
-  Rune.to_array (Rune.reshape [| -1 |] t)
+  let t = Ptree.Tensor.to_typed_exn Nx.float32 (Ptree.P t) in
+  Nx.to_array (Nx.reshape [| -1 |] t)
 
 let train_steps algo params ~steps =
   let state = Optim.init algo params in
@@ -202,15 +202,15 @@ let test_global_norm () =
   let t =
     Ptree.dict
       [
-        ("a", Ptree.tensor (Rune.create Rune.float32 [| 2 |] [| 3.0; 4.0 |]));
-        ("b", Ptree.tensor (Rune.create Rune.float32 [| 1 |] [| 0.0 |]));
+        ("a", Ptree.tensor (Nx.create Nx.float32 [| 2 |] [| 3.0; 4.0 |]));
+        ("b", Ptree.tensor (Nx.create Nx.float32 [| 1 |] [| 0.0 |]));
       ]
   in
   (* sqrt(9 + 16 + 0) = 5 *)
   equal ~msg:"global_norm" (float 1e-5) 5.0 (Optim.global_norm t)
 
 let test_clip_by_global_norm () =
-  let t = Ptree.tensor (Rune.create Rune.float32 [| 2 |] [| 3.0; 4.0 |]) in
+  let t = Ptree.tensor (Nx.create Nx.float32 [| 2 |] [| 3.0; 4.0 |]) in
   (* norm = 5, clip to 2.5 → scale by 0.5 *)
   let clipped = Optim.clip_by_global_norm 2.5 t in
   let v = get_values clipped in
@@ -218,7 +218,7 @@ let test_clip_by_global_norm () =
   equal ~msg:"clipped[1]" (float 1e-5) 2.0 v.(1)
 
 let test_clip_no_op () =
-  let t = Ptree.tensor (Rune.create Rune.float32 [| 2 |] [| 1.0; 1.0 |]) in
+  let t = Ptree.tensor (Nx.create Nx.float32 [| 2 |] [| 1.0; 1.0 |]) in
   (* norm = sqrt(2) ~ 1.41, max_norm = 5.0 → no clipping *)
   let clipped = Optim.clip_by_global_norm 5.0 t in
   let v = get_values clipped in
@@ -244,29 +244,29 @@ let test_multi_param_tree () =
   let params =
     Ptree.dict
       [
-        ("w", Ptree.tensor (Rune.create Rune.float32 [| 2 |] [| 4.0; -2.0 |]));
-        ("b", Ptree.tensor (Rune.create Rune.float32 [| 1 |] [| 1.0 |]));
+        ("w", Ptree.tensor (Nx.create Nx.float32 [| 2 |] [| 4.0; -2.0 |]));
+        ("b", Ptree.tensor (Nx.create Nx.float32 [| 1 |] [| 1.0 |]));
       ]
   in
   let f p =
     let fields = Ptree.Dict.fields_exn p in
-    let w = Ptree.Dict.get_tensor_exn fields ~name:"w" Rune.float32 in
-    let b = Ptree.Dict.get_tensor_exn fields ~name:"b" Rune.float32 in
-    Rune.add
-      (Rune.mul (Rune.scalar Rune.float32 0.5) (Rune.sum (Rune.mul w w)))
-      (Rune.mul (Rune.scalar Rune.float32 0.5) (Rune.sum (Rune.mul b b)))
+    let w = Ptree.Dict.get_tensor_exn fields ~name:"w" Nx.float32 in
+    let b = Ptree.Dict.get_tensor_exn fields ~name:"b" Nx.float32 in
+    Nx.add
+      (Nx.mul (Nx.scalar Nx.float32 0.5) (Nx.sum (Nx.mul w w)))
+      (Nx.mul (Nx.scalar Nx.float32 0.5) (Nx.sum (Nx.mul b b)))
   in
   let state = Optim.init algo params in
   let _loss, grads = Grad.value_and_grad f params in
   let updates, _state' = Optim.step algo state params grads in
   let result = Optim.apply_updates params updates in
   let fields = Ptree.Dict.fields_exn result in
-  let w = Ptree.Dict.get_tensor_exn fields ~name:"w" Rune.float32 in
-  let b = Ptree.Dict.get_tensor_exn fields ~name:"b" Rune.float32 in
+  let w = Ptree.Dict.get_tensor_exn fields ~name:"w" Nx.float32 in
+  let b = Ptree.Dict.get_tensor_exn fields ~name:"b" Nx.float32 in
   (* w_new = w - lr * w = w * 0.9 *)
-  equal ~msg:"w[0]" (float 1e-5) 3.6 (Rune.item [ 0 ] w);
-  equal ~msg:"w[1]" (float 1e-5) (-1.8) (Rune.item [ 1 ] w);
-  equal ~msg:"b[0]" (float 1e-5) 0.9 (Rune.item [ 0 ] b)
+  equal ~msg:"w[0]" (float 1e-5) 3.6 (Nx.item [ 0 ] w);
+  equal ~msg:"w[1]" (float 1e-5) (-1.8) (Nx.item [ 1 ] w);
+  equal ~msg:"b[0]" (float 1e-5) 0.9 (Nx.item [ 0 ] b)
 
 let () =
   run "Kaun.Optim"

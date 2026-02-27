@@ -27,14 +27,14 @@ let of_array a =
   }
 
 let of_tensor t =
-  let n = (Rune.shape t).(0) in
+  let n = (Nx.shape t).(0) in
   let i = ref 0 in
   {
     next =
       (fun () ->
         if !i >= n then None
         else
-          let v = Rune.slice [ I !i ] t in
+          let v = Nx.slice [ I !i ] t in
           incr i;
           Some v);
     reset = (fun () -> i := 0);
@@ -42,8 +42,8 @@ let of_tensor t =
   }
 
 let of_tensors (x, y) =
-  let nx = (Rune.shape x).(0) in
-  let ny = (Rune.shape y).(0) in
+  let nx = (Nx.shape x).(0) in
+  let ny = (Nx.shape y).(0) in
   if nx <> ny then
     invalid_arg
       (Printf.sprintf "Data.of_tensors: first dimensions differ (%d vs %d)" nx
@@ -55,8 +55,8 @@ let of_tensors (x, y) =
       (fun () ->
         if !i >= n then None
         else
-          let vx = Rune.slice [ I !i ] x in
-          let vy = Rune.slice [ I !i ] y in
+          let vx = Nx.slice [ I !i ] x in
+          let vy = Nx.slice [ I !i ] y in
           incr i;
           Some (vx, vy));
     reset = (fun () -> i := 0);
@@ -125,8 +125,8 @@ let shuffle t =
   match t.length with
   | None -> invalid_arg "Data.shuffle: requires a pipeline with known length"
   | Some n ->
-      let perm_tensor = Rune.permutation n in
-      let perm = Array.map Int32.to_int (Rune.to_array perm_tensor) in
+      let perm_tensor = Nx.permutation n in
+      let perm = Array.map Int32.to_int (Nx.to_array perm_tensor) in
       (* Eagerly materialize the upstream into an array *)
       let elements =
         Array.init n (fun _ ->
@@ -190,12 +190,12 @@ let length t = t.length
 
 (* Utilities *)
 
-let stack_batch tensors = Rune.stack (Array.to_list tensors)
+let stack_batch tensors = Nx.stack (Array.to_list tensors)
 let shuffle_pipeline = shuffle
 
 let prepare ?(shuffle = false) ~batch_size ?(drop_last = true) (x, y) =
-  let nx = (Rune.shape x).(0) in
-  let ny = (Rune.shape y).(0) in
+  let nx = (Nx.shape x).(0) in
+  let ny = (Nx.shape y).(0) in
   if nx <> ny then
     invalid_arg
       (Printf.sprintf "Data.prepare: first dimensions differ (%d vs %d)" nx ny);
@@ -207,7 +207,7 @@ let prepare ?(shuffle = false) ~batch_size ?(drop_last = true) (x, y) =
   map_batch ~drop_last batch_size
     (fun idx_arr ->
       let n = Array.length idx_arr in
-      let xs = Array.init n (fun j -> Rune.slice [ I idx_arr.(j) ] x) in
-      let ys = Array.init n (fun j -> Rune.slice [ I idx_arr.(j) ] y) in
+      let xs = Array.init n (fun j -> Nx.slice [ I idx_arr.(j) ] x) in
+      let ys = Array.init n (fun j -> Nx.slice [ I idx_arr.(j) ] y) in
       (stack_batch xs, stack_batch ys))
     indices

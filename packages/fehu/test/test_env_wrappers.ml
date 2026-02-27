@@ -9,26 +9,26 @@ let make_test_env ?(max_steps = 100) () =
   let reset _env ?options:_ () =
     state := 5.0;
     steps := 0;
-    (Rune.create Rune.float32 [| 1 |] [| !state |], Info.empty)
+    (Nx.create Nx.float32 [| 1 |] [| !state |], Info.empty)
   in
   let step _env action =
-    let a : Int32.t array = Rune.to_array (Rune.reshape [| 1 |] action) in
+    let a : Int32.t array = Nx.to_array (Nx.reshape [| 1 |] action) in
     state := !state +. if Int32.to_int a.(0) = 0 then -1.0 else 1.0;
     incr steps;
     let terminated = !state <= 0.0 || !state >= 10.0 in
     let truncated = (not terminated) && !steps >= max_steps in
     Env.step_result
-      ~observation:(Rune.create Rune.float32 [| 1 |] [| !state |])
+      ~observation:(Nx.create Nx.float32 [| 1 |] [| !state |])
       ~reward:1.0 ~terminated ~truncated ()
   in
   Env.create ~id:"Test-v0" ~observation_space:obs_space ~action_space:act_space
     ~reset ~step ()
 
-let action_left = Rune.create Rune.int32 [| 1 |] [| 0l |]
-let action_right = Rune.create Rune.int32 [| 1 |] [| 1l |]
+let action_left = Nx.create Nx.int32 [| 1 |] [| 0l |]
+let action_right = Nx.create Nx.int32 [| 1 |] [| 1l |]
 
 let read_obs obs =
-  let arr : float array = Rune.to_array (Rune.reshape [| 1 |] obs) in
+  let arr : float array = Nx.to_array (Nx.reshape [| 1 |] obs) in
   arr.(0)
 
 let value = testable ~pp:Value.pp ~equal:Value.equal ()
@@ -78,7 +78,7 @@ let test_map_observation_reset () =
     Env.map_observation ~observation_space:double_space
       ~f:(fun obs info ->
         let v = read_obs obs in
-        (Rune.create Rune.float32 [| 1 |] [| v *. 2.0 |], info))
+        (Nx.create Nx.float32 [| 1 |] [| v *. 2.0 |], info))
       env
   in
   let obs, _info = Env.reset wrapped () in
@@ -91,7 +91,7 @@ let test_map_observation_step () =
     Env.map_observation ~observation_space:double_space
       ~f:(fun obs info ->
         let v = read_obs obs in
-        (Rune.create Rune.float32 [| 1 |] [| v *. 2.0 |], info))
+        (Nx.create Nx.float32 [| 1 |] [| v *. 2.0 |], info))
       env
   in
   let _obs, _info = Env.reset wrapped () in
@@ -117,9 +117,9 @@ let test_map_action_flip () =
   let wrapped =
     Env.map_action ~action_space:(Env.action_space env)
       ~f:(fun action ->
-        let a : Int32.t array = Rune.to_array (Rune.reshape [| 1 |] action) in
+        let a : Int32.t array = Nx.to_array (Nx.reshape [| 1 |] action) in
         let flipped = if Int32.to_int a.(0) = 0 then 1l else 0l in
-        Rune.create Rune.int32 [| 1 |] [| flipped |])
+        Nx.create Nx.int32 [| 1 |] [| flipped |])
       env
   in
   let _obs, _info = Env.reset wrapped () in
@@ -161,13 +161,13 @@ let make_box_action_env () =
   let last_action = ref 0.0 in
   let reset _env ?options:_ () =
     last_action := 0.0;
-    (Rune.create Rune.float32 [| 1 |] [| 5.0 |], Info.empty)
+    (Nx.create Nx.float32 [| 1 |] [| 5.0 |], Info.empty)
   in
   let step _env action =
-    let a : float array = Rune.to_array (Rune.reshape [| 1 |] action) in
+    let a : float array = Nx.to_array (Nx.reshape [| 1 |] action) in
     last_action := a.(0);
     Env.step_result
-      ~observation:(Rune.create Rune.float32 [| 1 |] [| a.(0) |])
+      ~observation:(Nx.create Nx.float32 [| 1 |] [| a.(0) |])
       ~reward:1.0 ()
   in
   let env =
@@ -180,9 +180,9 @@ let test_clip_action () =
   let env, last_action = make_box_action_env () in
   let wrapped = Env.clip_action env in
   let _obs, _info = Env.reset wrapped () in
-  let _step = Env.step wrapped (Rune.create Rune.float32 [| 1 |] [| 2.0 |]) in
+  let _step = Env.step wrapped (Nx.create Nx.float32 [| 1 |] [| 2.0 |]) in
   equal ~msg:"clamped to upper" (float 0.0) 1.0 !last_action;
-  let _step = Env.step wrapped (Rune.create Rune.float32 [| 1 |] [| -0.5 |]) in
+  let _step = Env.step wrapped (Nx.create Nx.float32 [| 1 |] [| -0.5 |]) in
   equal ~msg:"clamped to lower" (float 0.0) 0.0 !last_action
 
 (* clip_observation *)
@@ -193,13 +193,13 @@ let make_box_obs_env () =
   let obs_val = ref 5.0 in
   let reset _env ?options:_ () =
     obs_val := 5.0;
-    (Rune.create Rune.float32 [| 1 |] [| !obs_val |], Info.empty)
+    (Nx.create Nx.float32 [| 1 |] [| !obs_val |], Info.empty)
   in
   let step _env action =
-    let a : Int32.t array = Rune.to_array (Rune.reshape [| 1 |] action) in
+    let a : Int32.t array = Nx.to_array (Nx.reshape [| 1 |] action) in
     obs_val := !obs_val +. if Int32.to_int a.(0) = 0 then -3.0 else 3.0;
     Env.step_result
-      ~observation:(Rune.create Rune.float32 [| 1 |] [| !obs_val |])
+      ~observation:(Nx.create Nx.float32 [| 1 |] [| !obs_val |])
       ~reward:1.0 ()
   in
   Env.create ~id:"BoxObs-v0" ~observation_space:obs_space
@@ -211,16 +211,12 @@ let test_clip_observation () =
   let _obs, _info = Env.reset wrapped () in
   (* Step right: inner obs = 8.0, clipped to 8.0 *)
   let s1 = Env.step wrapped action_right in
-  let arr1 : float array =
-    Rune.to_array (Rune.reshape [| 1 |] s1.observation)
-  in
+  let arr1 : float array = Nx.to_array (Nx.reshape [| 1 |] s1.observation) in
   equal ~msg:"clipped to upper" (float 0.0) 8.0 arr1.(0);
   let _obs, _info = Env.reset wrapped () in
   (* Step left: inner obs = 2.0, within bounds *)
   let s2 = Env.step wrapped action_left in
-  let arr2 : float array =
-    Rune.to_array (Rune.reshape [| 1 |] s2.observation)
-  in
+  let arr2 : float array = Nx.to_array (Nx.reshape [| 1 |] s2.observation) in
   equal ~msg:"within bounds" (float 0.0) 2.0 arr2.(0)
 
 let test_clip_observation_space () =
@@ -297,7 +293,7 @@ let test_time_limit_needs_reset () =
       Env.step wrapped action_right)
 
 let () =
-  Rune.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.run ~seed:42 @@ fun () ->
   run "Fehu.Env (wrappers)"
     [
       group "state sharing"

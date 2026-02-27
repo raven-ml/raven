@@ -13,9 +13,7 @@ let save path tree =
   let items =
     List.map
       (fun (name, pt) ->
-        let nx =
-          Ptree.with_tensor pt { run = (fun t -> Nx_io.P (Rune.to_nx t)) }
-        in
+        let nx = Ptree.with_tensor pt { run = (fun t -> Nx_io.P t) } in
         (name, nx))
       pairs
   in
@@ -35,15 +33,15 @@ let load path ~like =
               {
                 run =
                   (fun tmpl ->
-                    let expected = Rune.shape tmpl in
+                    let expected = Nx.shape tmpl in
                     let actual = Nx.shape nx in
                     if expected <> actual then
                       invalid_argf
                         "Checkpoint.load: shape mismatch for %S: expected %s, \
                          got %s"
                         name (shape_to_string expected) (shape_to_string actual);
-                    let casted = Nx.cast (Rune.dtype tmpl) nx in
-                    Ptree.P (Rune.of_nx casted));
+                    let casted = Nx.cast (Nx.dtype tmpl) nx in
+                    Ptree.P casted);
               })
       path_leaves
   in

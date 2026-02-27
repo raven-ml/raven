@@ -8,13 +8,13 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 module Dtype = Nx_core.Dtype
 
 let require_same_float_dtype (type p in_elt) ~ctx
-    (expected : (float, p) Rune.dtype) (x : (float, in_elt) Rune.t) :
-    (float, p) Rune.t =
-  match Dtype.equal_witness expected (Rune.dtype x) with
-  | Some Type.Equal -> (x : (float, p) Rune.t)
+    (expected : (float, p) Nx.dtype) (x : (float, in_elt) Nx.t) :
+    (float, p) Nx.t =
+  match Dtype.equal_witness expected (Nx.dtype x) with
+  | Some Type.Equal -> (x : (float, p) Nx.t)
   | None ->
       invalid_argf "%s: input dtype %s does not match model dtype %s" ctx
-        (Dtype.to_string (Rune.dtype x))
+        (Dtype.to_string (Nx.dtype x))
         (Dtype.to_string expected)
 
 let normalize_axis ~ctx ~ndim axis =
@@ -27,7 +27,7 @@ let normalize_axis ~ctx ~ndim axis =
 
 let rope ?(theta = 10000.0) ?(seq_dim = -2) x =
   let ctx = "Attention.rope" in
-  let shape = Rune.shape x in
+  let shape = Nx.shape x in
   let ndim = Array.length shape in
   if ndim < 2 then invalid_argf "%s: expected rank >= 2, got rank %d" ctx ndim;
   let seq_axis = normalize_axis ~ctx ~ndim seq_dim in
@@ -40,35 +40,35 @@ let rope ?(theta = 10000.0) ?(seq_dim = -2) x =
   if head_dim mod 2 <> 0 then
     invalid_argf "%s: head_dim must be even, got %d" ctx head_dim;
   let half = head_dim / 2 in
-  let dtype = Rune.dtype x in
+  let dtype = Nx.dtype x in
   let inv_freq =
-    let exponents = Rune.arange_f dtype 0.0 (float_of_int head_dim) 2.0 in
+    let exponents = Nx.arange_f dtype 0.0 (float_of_int head_dim) 2.0 in
     let normalized =
-      Rune.div exponents (Rune.scalar dtype (float_of_int head_dim))
+      Nx.div exponents (Nx.scalar dtype (float_of_int head_dim))
     in
-    Rune.pow (Rune.scalar dtype theta) (Rune.neg normalized)
+    Nx.pow (Nx.scalar dtype theta) (Nx.neg normalized)
   in
-  let positions = Rune.arange_f dtype 0.0 (float_of_int seq_len) 1.0 in
+  let positions = Nx.arange_f dtype 0.0 (float_of_int seq_len) 1.0 in
   let angles =
-    Rune.matmul
-      (Rune.reshape [| seq_len; 1 |] positions)
-      (Rune.reshape [| 1; half |] inv_freq)
+    Nx.matmul
+      (Nx.reshape [| seq_len; 1 |] positions)
+      (Nx.reshape [| 1; half |] inv_freq)
   in
   let broadcast_shape = Array.make ndim 1 in
   broadcast_shape.(seq_axis) <- seq_len;
   broadcast_shape.(ndim - 1) <- half;
-  let cos_angles = Rune.reshape broadcast_shape (Rune.cos angles) in
-  let sin_angles = Rune.reshape broadcast_shape (Rune.sin angles) in
+  let cos_angles = Nx.reshape broadcast_shape (Nx.cos angles) in
+  let sin_angles = Nx.reshape broadcast_shape (Nx.sin angles) in
   let last_axis_slice start stop =
-    let slices = Array.make ndim Rune.A in
-    slices.(ndim - 1) <- Rune.R (start, stop);
+    let slices = Array.make ndim Nx.A in
+    slices.(ndim - 1) <- Nx.R (start, stop);
     Array.to_list slices
   in
-  let x1 = Rune.slice (last_axis_slice 0 half) x in
-  let x2 = Rune.slice (last_axis_slice half head_dim) x in
-  let r1 = Rune.sub (Rune.mul x1 cos_angles) (Rune.mul x2 sin_angles) in
-  let r2 = Rune.add (Rune.mul x1 sin_angles) (Rune.mul x2 cos_angles) in
-  Rune.concatenate ~axis:(-1) [ r1; r2 ]
+  let x1 = Nx.slice (last_axis_slice 0 half) x in
+  let x2 = Nx.slice (last_axis_slice half head_dim) x in
+  let r1 = Nx.sub (Nx.mul x1 cos_angles) (Nx.mul x2 sin_angles) in
+  let r2 = Nx.add (Nx.mul x1 sin_angles) (Nx.mul x2 cos_angles) in
+  Nx.concatenate ~axis:(-1) [ r1; r2 ]
 
 (* Multi-head self-attention *)
 
@@ -125,7 +125,7 @@ let multi_head_attention ~embed_dim ~num_heads ?(num_kv_heads = num_heads)
         let x =
           require_same_float_dtype ~ctx:"Attention.multi_head_attention" dtype x
         in
-        let shape = Rune.shape x in
+        let shape = Nx.shape x in
         let batch = shape.(0) in
         let seq_len = shape.(1) in
         let fields =
@@ -137,12 +137,12 @@ let multi_head_attention ~embed_dim ~num_heads ?(num_kv_heads = num_heads)
         let k_proj = get "k_proj" in
         let v_proj = get "v_proj" in
         let out_proj = get "out_proj" in
-        let q = Rune.matmul x q_proj in
-        let k = Rune.matmul x k_proj in
-        let v = Rune.matmul x v_proj in
+        let q = Nx.matmul x q_proj in
+        let k = Nx.matmul x k_proj in
+        let v = Nx.matmul x v_proj in
         let reshape_heads t heads =
-          let t = Rune.reshape [| batch; seq_len; heads; head_dim |] t in
-          Rune.transpose t ~axes:[ 0; 2; 1; 3 ]
+          let t = Nx.reshape [| batch; seq_len; heads; head_dim |] t in
+          Nx.transpose t ~axes:[ 0; 2; 1; 3 ]
         in
         let q = reshape_heads q num_heads in
         let k = reshape_heads k num_kv_heads in
@@ -150,14 +150,14 @@ let multi_head_attention ~embed_dim ~num_heads ?(num_kv_heads = num_heads)
         let repeat_kv t =
           if num_kv_heads < num_heads then
             let repetition = num_heads / num_kv_heads in
-            let shape = Rune.shape t in
-            let expanded = Rune.expand_dims [ 2 ] t in
+            let shape = Nx.shape t in
+            let expanded = Nx.expand_dims [ 2 ] t in
             let target =
               [| shape.(0); shape.(1); repetition; shape.(2); shape.(3) |]
             in
-            Rune.broadcast_to target expanded
-            |> Rune.contiguous
-            |> Rune.reshape [| shape.(0); num_heads; shape.(2); shape.(3) |]
+            Nx.broadcast_to target expanded
+            |> Nx.contiguous
+            |> Nx.reshape [| shape.(0); num_heads; shape.(2); shape.(3) |]
           else t
         in
         let k = repeat_kv k in
@@ -181,25 +181,25 @@ let multi_head_attention ~embed_dim ~num_heads ?(num_kv_heads = num_heads)
               | None -> None
               | Some tensor ->
                   let bool_mask =
-                    match Ptree.Tensor.to_typed Rune.bool tensor with
+                    match Ptree.Tensor.to_typed Nx.bool tensor with
                     | Some m -> m
                     | None ->
                         (* int/float mask: cast to int32, nonzero = true *)
                         let int_mask =
-                          match Ptree.Tensor.to_typed Rune.int32 tensor with
+                          match Ptree.Tensor.to_typed Nx.int32 tensor with
                           | Some m -> m
                           | None ->
                               let (Ptree.P raw) = tensor in
-                              Rune.cast Rune.int32 raw
+                              Nx.cast Nx.int32 raw
                         in
-                        Rune.not_equal int_mask
-                          (Rune.zeros Rune.int32 (Rune.shape int_mask))
+                        Nx.not_equal int_mask
+                          (Nx.zeros Nx.int32 (Nx.shape int_mask))
                   in
-                  let mask_shape = Rune.shape bool_mask in
+                  let mask_shape = Nx.shape bool_mask in
                   let ndim = Array.length mask_shape in
                   let reshaped =
                     if ndim = 2 then
-                      Rune.reshape
+                      Nx.reshape
                         [| mask_shape.(0); 1; 1; mask_shape.(1) |]
                         bool_mask
                     else bool_mask
@@ -211,10 +211,10 @@ let multi_head_attention ~embed_dim ~num_heads ?(num_kv_heads = num_heads)
             v
         in
         let merged =
-          Rune.transpose attn ~axes:[ 0; 2; 1; 3 ]
-          |> Rune.contiguous
-          |> Rune.reshape [| batch; seq_len; embed_dim |]
+          Nx.transpose attn ~axes:[ 0; 2; 1; 3 ]
+          |> Nx.contiguous
+          |> Nx.reshape [| batch; seq_len; embed_dim |]
         in
-        let output = Rune.matmul merged out_proj in
+        let output = Nx.matmul merged out_proj in
         (output, state));
   }

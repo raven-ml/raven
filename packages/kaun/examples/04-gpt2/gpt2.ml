@@ -50,9 +50,9 @@ let find ~ctx key fs = Ptree.Dict.find_exn ~ctx key fs
 (* Causal self-attention with combined QKV *)
 
 let causal_self_attention (type l) ~(cfg : config)
-    ~(dtype : (float, l) Rune.dtype) ~training ~params (x : (float, l) Rune.t) :
-    (float, l) Rune.t =
-  let shape = Rune.shape x in
+    ~(dtype : (float, l) Nx.dtype) ~training ~params (x : (float, l) Nx.t) :
+    (float, l) Nx.t =
+  let shape = Nx.shape x in
   let batch = shape.(0) in
   let seq = shape.(1) in
   let h = cfg.n_embd in
@@ -63,17 +63,17 @@ let causal_self_attention (type l) ~(cfg : config)
   (* Combined QKV projection: [batch, seq, 3*h] *)
   let qkv_w = get fs ~name:"qkv_weight" dtype in
   let qkv_b = get fs ~name:"qkv_bias" dtype in
-  let qkv = Rune.add (Rune.matmul x qkv_w) qkv_b in
+  let qkv = Nx.add (Nx.matmul x qkv_w) qkv_b in
 
   (* Split into Q, K, V *)
-  let qkv_parts = Rune.split ~axis:(-1) 3 qkv in
+  let qkv_parts = Nx.split ~axis:(-1) 3 qkv in
   let q = List.nth qkv_parts 0 in
   let k = List.nth qkv_parts 1 in
   let v = List.nth qkv_parts 2 in
 
   let split_heads t =
-    Rune.reshape [| batch; seq; heads; head_dim |] t
-    |> Rune.transpose ~axes:[ 0; 2; 1; 3 ]
+    Nx.reshape [| batch; seq; heads; head_dim |] t
+    |> Nx.transpose ~axes:[ 0; 2; 1; 3 ]
   in
   let q = split_heads q in
   let k = split_heads k in
@@ -89,20 +89,20 @@ let causal_self_attention (type l) ~(cfg : config)
 
   (* Merge heads *)
   let merged =
-    Rune.transpose attn ~axes:[ 0; 2; 1; 3 ]
-    |> Rune.contiguous
-    |> Rune.reshape [| batch; seq; h |]
+    Nx.transpose attn ~axes:[ 0; 2; 1; 3 ]
+    |> Nx.contiguous
+    |> Nx.reshape [| batch; seq; h |]
   in
 
   (* Output projection *)
   let o_w = get fs ~name:"o_weight" dtype in
   let o_b = get fs ~name:"o_bias" dtype in
-  Rune.add (Rune.matmul merged o_w) o_b
+  Nx.add (Nx.matmul merged o_w) o_b
 
 (* Transformer block (pre-norm) *)
 
-let transformer_block (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
-    ~training ~params (x : (float, l) Rune.t) : (float, l) Rune.t =
+let transformer_block (type l) ~(cfg : config) ~(dtype : (float, l) Nx.dtype)
+    ~training ~params (x : (float, l) Nx.t) : (float, l) Nx.t =
   let fs = fields ~ctx:"Gpt2.block" params in
 
   (* Pre-norm attention *)
@@ -123,7 +123,7 @@ let transformer_block (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
       Kaun.Fn.dropout ~rate:cfg.resid_pdrop attn
     else attn
   in
-  let x = Rune.add x attn in
+  let x = Nx.add x attn in
 
   (* Pre-norm FFN *)
   let ln2_g = get fs ~name:"ln2_gamma" dtype in
@@ -138,9 +138,9 @@ let transformer_block (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
   let ffn_down_b = get fs ~name:"ffn_down_bias" dtype in
 
   let y =
-    Rune.add (Rune.matmul x' ffn_up_w) ffn_up_b |> Kaun.Activation.gelu_approx
+    Nx.add (Nx.matmul x' ffn_up_w) ffn_up_b |> Kaun.Activation.gelu_approx
   in
-  let y = Rune.add (Rune.matmul y ffn_down_w) ffn_down_b in
+  let y = Nx.add (Nx.matmul y ffn_down_w) ffn_down_b in
 
   (* Residual dropout *)
   let y =
@@ -148,15 +148,15 @@ let transformer_block (type l) ~(cfg : config) ~(dtype : (float, l) Rune.dtype)
       Kaun.Fn.dropout ~rate:cfg.resid_pdrop y
     else y
   in
-  Rune.add x y
+  Nx.add x y
 
 (* Forward: embeddings + transformer stack + final layer norm *)
 
 let decode (type l in_elt) ~(cfg : config) ~params
-    ~(dtype : (float, l) Rune.dtype) ~training
-    (input_ids : (int32, in_elt) Rune.t) : (float, l) Rune.t =
-  let input_ids = Rune.cast Rune.int32 input_ids in
-  let shape = Rune.shape input_ids in
+    ~(dtype : (float, l) Nx.dtype) ~training (input_ids : (int32, in_elt) Nx.t)
+    : (float, l) Nx.t =
+  let input_ids = Nx.cast Nx.int32 input_ids in
+  let shape = Nx.shape input_ids in
   let batch = shape.(0) in
   let seq = shape.(1) in
 
@@ -173,15 +173,15 @@ let decode (type l in_elt) ~(cfg : config) ~params
 
   (* Embedding lookup: token + position *)
   let position_ids =
-    Rune.arange_f Rune.float32 0.0 (float_of_int seq) 1.0
-    |> Rune.cast Rune.int32
-    |> Rune.reshape [| 1; seq |]
-    |> Rune.broadcast_to [| batch; seq |]
-    |> Rune.contiguous
+    Nx.arange_f Nx.float32 0.0 (float_of_int seq) 1.0
+    |> Nx.cast Nx.int32
+    |> Nx.reshape [| 1; seq |]
+    |> Nx.broadcast_to [| batch; seq |]
+    |> Nx.contiguous
   in
   let tok = Kaun.Fn.embedding ~scale:false ~embedding:wte input_ids in
   let pos = Kaun.Fn.embedding ~scale:false ~embedding:wpe position_ids in
-  let x = Rune.add tok pos in
+  let x = Nx.add tok pos in
 
   (* Embedding dropout *)
   let x =
@@ -208,8 +208,8 @@ let decode (type l in_elt) ~(cfg : config) ~params
 
 let init_block_params ~dtype ~n_embd ~n_inner =
   let w = Init.normal ~stddev:0.02 () in
-  let zeros n = Rune.zeros dtype [| n |] in
-  let ones n = Rune.ones dtype [| n |] in
+  let zeros n = Nx.zeros dtype [| n |] in
+  let ones n = Nx.ones dtype [| n |] in
   let attn_params =
     Ptree.dict
       [
@@ -246,8 +246,8 @@ let init_decoder_params ~cfg ~dtype =
       ("wte", Ptree.tensor wte);
       ("wpe", Ptree.tensor wpe);
       ("layers", Ptree.list blocks);
-      ("ln_f_gamma", Ptree.tensor (Rune.ones dtype [| h |]));
-      ("ln_f_beta", Ptree.tensor (Rune.zeros dtype [| h |]));
+      ("ln_f_gamma", Ptree.tensor (Nx.ones dtype [| h |]));
+      ("ln_f_beta", Ptree.tensor (Nx.zeros dtype [| h |]));
     ]
 
 (* Layers *)
@@ -280,7 +280,7 @@ let for_causal_lm (cfg : config) () : (int32, float) Layer.t =
         (* Tied LM head: logits = hidden @ wte^T *)
         let root = fields ~ctx:"Gpt2.lm_head" params in
         let wte = get root ~name:"wte" dtype in
-        let logits = Rune.matmul hidden (Rune.transpose wte ~axes:[ 1; 0 ]) in
+        let logits = Nx.matmul hidden (Nx.transpose wte ~axes:[ 1; 0 ]) in
         (logits, Ptree.empty));
   }
 
@@ -321,8 +321,7 @@ let parse_config json =
 
 (* HuggingFace weight mapping *)
 
-let cast_tensor dtype (Ptree.P t) =
-  Ptree.P (Rune.cast dtype (Rune.of_nx (Rune.to_nx t)))
+let cast_tensor dtype (Ptree.P t) = Ptree.P (Nx.cast dtype t)
 
 let map_hf_weights ~cfg ~dtype hf_weights =
   let tbl = Hashtbl.create (List.length hf_weights) in
@@ -371,5 +370,5 @@ let from_pretrained ?(model_id = "gpt2") () =
   let json = Kaun_hf.load_config ~model_id () in
   let cfg = parse_config json in
   let hf_weights = Kaun_hf.load_weights ~model_id () in
-  let params = map_hf_weights ~cfg ~dtype:Rune.float32 hf_weights in
+  let params = map_hf_weights ~cfg ~dtype:Nx.float32 hf_weights in
   (cfg, params)

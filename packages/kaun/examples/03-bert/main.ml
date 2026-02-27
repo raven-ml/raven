@@ -12,13 +12,13 @@
 open Kaun
 
 let print_shape name t =
-  let shape = Rune.shape t in
+  let shape = Nx.shape t in
   Printf.printf "%s: [%s]\n" name
     (String.concat "; " (Array.to_list (Array.map string_of_int shape)))
 
 let () =
-  Rune.Rng.run ~seed:42 @@ fun () ->
-  let dtype = Rune.float32 in
+  Nx.Rng.run ~seed:42 @@ fun () ->
+  let dtype = Nx.float32 in
   let num_labels = 2 in
 
   (* Load pretrained encoder + pooler from HuggingFace *)
@@ -45,7 +45,7 @@ let () =
                   ( "weight",
                     Ptree.tensor
                       (w_init.f [| cfg.hidden_size; cfg.hidden_size |] dtype) );
-                  ("bias", Ptree.tensor (Rune.zeros dtype [| cfg.hidden_size |]));
+                  ("bias", Ptree.tensor (Nx.zeros dtype [| cfg.hidden_size |]));
                 ] );
         ( "classifier",
           Ptree.dict
@@ -53,7 +53,7 @@ let () =
               ( "weight",
                 Ptree.tensor (w_init.f [| cfg.hidden_size; num_labels |] dtype)
               );
-              ("bias", Ptree.tensor (Rune.zeros dtype [| num_labels |]));
+              ("bias", Ptree.tensor (Nx.zeros dtype [| num_labels |]));
             ] );
       ]
   in
@@ -63,7 +63,7 @@ let () =
 
   (* Tiny synthetic dataset (token ids from bert-base-uncased tokenizer) *)
   let input_ids =
-    Rune.create Rune.int32 [| 4; 6 |]
+    Nx.create Nx.int32 [| 4; 6 |]
       [|
         101l;
         1045l;
@@ -95,9 +95,9 @@ let () =
         (* "terrible film" -> 0 *)
       |]
   in
-  let labels = Rune.create Rune.int32 [| 4 |] [| 1l; 1l; 0l; 0l |] in
+  let labels = Nx.create Nx.int32 [| 4 |] [| 1l; 1l; 0l; 0l |] in
   let attention_mask =
-    Rune.create Rune.int32 [| 4; 6 |]
+    Nx.create Nx.int32 [| 4; 6 |]
       [|
         1l;
         1l;
@@ -161,11 +161,11 @@ let () =
     [| "I love this"; "great movie"; "I hate this"; "terrible film" |]
   in
   for i = 0 to 3 do
-    let row = Rune.slice [ I i ] logits in
-    let v0 = Rune.item [ 0 ] row in
-    let v1 = Rune.item [ 1 ] row in
+    let row = Nx.slice [ I i ] logits in
+    let v0 = Nx.item [ 0 ] row in
+    let v1 = Nx.item [ 1 ] row in
     let pred = if v1 > v0 then "positive" else "negative" in
-    let label = Int32.to_int (Rune.item [ i ] labels) in
+    let label = Int32.to_int (Nx.item [ i ] labels) in
     let expected = if label = 1 then "positive" else "negative" in
     Printf.printf "  %-20s  pred=%-8s  expected=%-8s  %s\n"
       (Printf.sprintf "\"%s\"" sentences.(i))

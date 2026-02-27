@@ -47,14 +47,14 @@ let make_renderable_env () =
   let state = ref 5.0 in
   let reset _env ?options:_ () =
     state := 5.0;
-    (Rune.create Rune.float32 [| 1 |] [| !state |], Info.empty)
+    (Nx.create Nx.float32 [| 1 |] [| !state |], Info.empty)
   in
   let step _env action =
-    let a : Int32.t array = Rune.to_array (Rune.reshape [| 1 |] action) in
+    let a : Int32.t array = Nx.to_array (Nx.reshape [| 1 |] action) in
     state := !state +. if Int32.to_int a.(0) = 0 then -1.0 else 1.0;
     let terminated = !state <= 0.0 || !state >= 10.0 in
     Env.step_result
-      ~observation:(Rune.create Rune.float32 [| 1 |] [| !state |])
+      ~observation:(Nx.create Nx.float32 [| 1 |] [| !state |])
       ~reward:1.0 ~terminated ()
   in
   let render () =
@@ -67,14 +67,14 @@ let make_renderable_env () =
 let test_rollout_sink_called () =
   let env = make_renderable_env () in
   let count = ref 0 in
-  let policy _obs = Rune.create Rune.int32 [| 1 |] [| 1l |] in
+  let policy _obs = Nx.create Nx.int32 [| 1 |] [| 1l |] in
   let sink _frame = incr count in
   Render.rollout env ~policy ~steps:3 ~sink ();
   equal ~msg:"sink called 3 times" int 3 !count
 
 (* on_render *)
 
-let action_right = Rune.create Rune.int32 [| 1 |] [| 1l |]
+let action_right = Nx.create Nx.int32 [| 1 |] [| 1l |]
 
 let test_on_render_frame_count () =
   let env = make_renderable_env () in
@@ -103,7 +103,7 @@ let test_on_render_id () =
     (Env.id wrapped)
 
 let () =
-  Rune.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.run ~seed:42 @@ fun () ->
   run "Fehu.Render"
     [
       group "image"

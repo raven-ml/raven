@@ -5,7 +5,11 @@
 
 open Windtrap
 open Test_rune_support
-module T = Rune
+
+module T = struct
+  include Nx
+  include Rune
+end
 
 let eps = 1e-6
 

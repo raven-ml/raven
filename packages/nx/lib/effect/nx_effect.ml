@@ -7,8 +7,18 @@ open Nx_core
 
 (* Types *)
 
-type context = Native_context : Nx_backend.context -> context
-type ('a, 'b) t = Native_tensor : ('a, 'b) Nx_backend.t -> ('a, 'b) t
+type context = Nx_backend.context
+
+(* OCaml extensible GADT constructors (the [E_add], [E_mul], ... below) require
+   that type variables in the payload be deducible from the return type. With a
+   transparent alias [type ('a,'b) t = ('a,'b) Nx_backend.t], the compiler sees
+   through to the concrete record and concludes that ['a] and ['b] are not
+   injective — so every effect definition fails with "type variable cannot be
+   deduced". Wrapping in a single-constructor GADT restores injectivity: [T] is
+   a fresh constructor whose parameters are, by definition, determined by the
+   return type. At runtime this is a zero-cost box (single-field
+   constructor). *)
+type ('a, 'b) t = T : ('a, 'b) Nx_backend.t -> ('a, 'b) t
 
 (* Effects *)
 
@@ -356,29 +366,26 @@ type _ Effect.t +=
 
 (* Unwrap *)
 
-let unwrap (Native_tensor t) = t
+let unwrap (T t) = t
 
 (* Lenses *)
 
-let create_context () : context = Native_context (Nx_backend.create_context ())
-
-let context (type a b) (Native_tensor t : (a, b) t) =
-  Native_context (Nx_backend.context t)
-
+let create_context () : context = Nx_backend.create_context ()
+let context (type a b) (T t : (a, b) t) = Nx_backend.context t
 let to_device (_ctx : context) (t : ('a, 'b) t) : ('a, 'b) t = t
 
 let view (type a b) (x : (a, b) t) : View.t =
   try Effect.perform (E_view x)
   with Effect.Unhandled _ -> Nx_backend.view (unwrap x)
 
-let dtype (type a b) (Native_tensor t : (a, b) t) = Nx_backend.dtype t
-let to_host (type a b) (Native_tensor t : (a, b) t) = Nx_backend.to_host t
+let dtype (type a b) (T t : (a, b) t) = Nx_backend.dtype t
+let to_host (type a b) (T t : (a, b) t) = Nx_backend.to_host t
 
 (* Fallback dispatch helpers.
 
    Each helper performs an effect. When no handler is installed, it falls back
    to the C backend. The pattern is uniform: try the effect, on [Unhandled]
-   unwrap the [Native_tensor] and call [Nx_backend]. *)
+   unwrap the [T] and call [Nx_backend]. *)
 
 let binary_op ~out eff cpu_op a b =
   try Effect.perform (eff ())
@@ -395,7 +402,7 @@ let reduce_op ~out eff cpu_op ~axes ~keepdims t_in =
 
 let movement_op eff cpu_op t_in arg =
   try Effect.perform (eff ())
-  with Effect.Unhandled _ -> Native_tensor (cpu_op (unwrap t_in) arg)
+  with Effect.Unhandled _ -> T (cpu_op (unwrap t_in) arg)
 
 let assign dst src =
   try Effect.perform (E_assign { dst; src })
@@ -602,7 +609,7 @@ let flip t_in dims_to_flip =
 let pad t_in padding_config fill_value =
   try Effect.perform (E_pad { t_in; padding_config; fill_value })
   with Effect.Unhandled _ ->
-    Native_tensor (Nx_backend.pad (unwrap t_in) padding_config fill_value)
+    T (Nx_backend.pad (unwrap t_in) padding_config fill_value)
 
 (* Creation operations *)
 
@@ -610,41 +617,30 @@ let buffer ctx dtype shape_arr =
   let size_in_elements = Array.fold_left ( * ) 1 shape_arr in
   let flat =
     try Effect.perform (E_buffer { context = ctx; dtype; size_in_elements })
-    with Effect.Unhandled _ -> (
-      match ctx with
-      | Native_context native_ctx ->
-          Native_tensor (Nx_backend.buffer native_ctx dtype shape_arr))
+    with Effect.Unhandled _ -> T (Nx_backend.buffer ctx dtype shape_arr)
   in
   reshape flat shape_arr
 
 let const_scalar ctx value dtype =
   try Effect.perform (E_const_scalar { context = ctx; value; dtype })
-  with Effect.Unhandled _ -> (
-    match ctx with
-    | Native_context native_ctx ->
-        Native_tensor (Nx_backend.full native_ctx dtype [||] value))
+  with Effect.Unhandled _ -> T (Nx_backend.full ctx dtype [||] value)
 
 let full ctx dtype shape_arr value =
-  match ctx with
-  | Native_context native_ctx ->
-      Native_tensor (Nx_backend.full native_ctx dtype shape_arr value)
+  T (Nx_backend.full ctx dtype shape_arr value)
 
 let from_host ctx array =
   try Effect.perform (E_from_host { context = ctx; array })
-  with Effect.Unhandled _ -> (
-    match ctx with
-    | Native_context ctx -> Native_tensor (Nx_backend.from_host ctx array))
+  with Effect.Unhandled _ -> T (Nx_backend.from_host ctx array)
 
 (* Copy operations *)
 
 let contiguous t_in =
   try Effect.perform (E_contiguous { t_in })
-  with Effect.Unhandled _ ->
-    Native_tensor (Nx_backend.contiguous (unwrap t_in))
+  with Effect.Unhandled _ -> T (Nx_backend.contiguous (unwrap t_in))
 
 let copy t_in =
   try Effect.perform (E_copy { t_in })
-  with Effect.Unhandled _ -> Native_tensor (Nx_backend.copy (unwrap t_in))
+  with Effect.Unhandled _ -> T (Nx_backend.copy (unwrap t_in))
 
 (* Ternary operations *)
 
@@ -686,7 +682,7 @@ let scatter ?(mode = `Set) ?(unique_indices = false) data_template ~indices
     ~updates ~axis =
   try Effect.perform (E_scatter { data_template; indices; updates; axis })
   with Effect.Unhandled _ ->
-    Native_tensor
+    T
       (Nx_backend.scatter ~mode ~unique_indices (unwrap data_template)
          ~indices:(unwrap indices) ~updates:(unwrap updates) ~axis)
 
@@ -704,15 +700,14 @@ let threefry ~out key ctr =
 let unfold t_in ~kernel_size ~stride ~dilation ~padding =
   try Effect.perform (E_unfold { t_in; kernel_size; stride; dilation; padding })
   with Effect.Unhandled _ ->
-    Native_tensor
-      (Nx_backend.unfold (unwrap t_in) ~kernel_size ~stride ~dilation ~padding)
+    T (Nx_backend.unfold (unwrap t_in) ~kernel_size ~stride ~dilation ~padding)
 
 let fold t_in ~output_size ~kernel_size ~stride ~dilation ~padding =
   try
     Effect.perform
       (E_fold { t_in; output_size; kernel_size; stride; dilation; padding })
   with Effect.Unhandled _ ->
-    Native_tensor
+    T
       (Nx_backend.fold (unwrap t_in) ~output_size ~kernel_size ~stride ~dilation
          ~padding)
 
@@ -728,62 +723,60 @@ let matmul ~out a b =
 let fft ?out t ~axes =
   try Effect.perform (E_fft { t; axes })
   with Effect.Unhandled _ ->
-    Native_tensor (Nx_backend.fft ?out:(Option.map unwrap out) (unwrap t) ~axes)
+    T (Nx_backend.fft ?out:(Option.map unwrap out) (unwrap t) ~axes)
 
 let ifft ?out t ~axes =
   try Effect.perform (E_ifft { t; axes })
   with Effect.Unhandled _ ->
-    Native_tensor
-      (Nx_backend.ifft ?out:(Option.map unwrap out) (unwrap t) ~axes)
+    T (Nx_backend.ifft ?out:(Option.map unwrap out) (unwrap t) ~axes)
 
 let rfft (type a c) ?out (t : (float, a) t) ~(dtype : (Complex.t, c) Dtype.t)
     ~axes : (Complex.t, c) t =
   let result =
     Nx_backend.rfft ?out:(Option.map unwrap out) (unwrap t) ~dtype ~axes
   in
-  (Native_tensor result : (Complex.t, c) t)
+  (T result : (Complex.t, c) t)
 
 let irfft (type a c) ?out ?s (t : (Complex.t, a) t)
     ~(dtype : (float, c) Dtype.t) ~axes : (float, c) t =
   let result =
     Nx_backend.irfft ?out:(Option.map unwrap out) ?s (unwrap t) ~dtype ~axes
   in
-  (Native_tensor result : (float, c) t)
+  (T result : (float, c) t)
 
 (* Linear algebra *)
 
 let cholesky ~upper t_in =
   try Effect.perform (E_cholesky { t_in; upper })
-  with Effect.Unhandled _ ->
-    Native_tensor (Nx_backend.cholesky ~upper (unwrap t_in))
+  with Effect.Unhandled _ -> T (Nx_backend.cholesky ~upper (unwrap t_in))
 
 let qr ~reduced t_in =
   try Effect.perform (E_qr { t_in; reduced })
   with Effect.Unhandled _ ->
     let q, r = Nx_backend.qr ~reduced (unwrap t_in) in
-    (Native_tensor q, Native_tensor r)
+    (T q, T r)
 
 let svd ~full_matrices t_in =
   try Effect.perform (E_svd { t_in; full_matrices })
   with Effect.Unhandled _ ->
     let u, s, vt = Nx_backend.svd ~full_matrices (unwrap t_in) in
-    (Native_tensor u, Native_tensor s, Native_tensor vt)
+    (T u, T s, T vt)
 
 let eig ~vectors t_in =
   try Effect.perform (E_eig { t_in; vectors })
   with Effect.Unhandled _ ->
     let vals, vecs_opt = Nx_backend.eig ~vectors (unwrap t_in) in
-    (Native_tensor vals, Option.map (fun v -> Native_tensor v) vecs_opt)
+    (T vals, Option.map (fun v -> T v) vecs_opt)
 
 let eigh ~vectors t_in =
   try Effect.perform (E_eigh { t_in; vectors })
   with Effect.Unhandled _ ->
     let vals, vecs_opt = Nx_backend.eigh ~vectors (unwrap t_in) in
-    (Native_tensor vals, Option.map (fun v -> Native_tensor v) vecs_opt)
+    (T vals, Option.map (fun v -> T v) vecs_opt)
 
 let triangular_solve ~upper ~transpose ~unit_diag a b =
   try Effect.perform (E_triangular_solve { a; b; upper; transpose; unit_diag })
   with Effect.Unhandled _ ->
-    Native_tensor
+    T
       (Nx_backend.triangular_solve ~upper ~transpose ~unit_diag (unwrap a)
          (unwrap b))

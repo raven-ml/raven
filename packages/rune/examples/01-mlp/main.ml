@@ -3,6 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+open Nx
 open Rune
 
 (* Forward pass: computes the MLP output *)

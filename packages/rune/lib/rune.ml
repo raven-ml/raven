@@ -3,40 +3,6 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-include Tensor
-module Rng = Tensor.Rng
-
-type ('a, 'b) t = ('a, 'b) Tensor.t
-type float16_t = (float, float16_elt) t
-type float32_t = (float, float32_elt) t
-type float64_t = (float, float64_elt) t
-type int8_t = (int, int8_elt) t
-type uint8_t = (int, uint8_elt) t
-type int16_t = (int, int16_elt) t
-type uint16_t = (int, uint16_elt) t
-type int32_t = (int32, int32_elt) t
-type int64_t = (int64, int64_elt) t
-type uint32_t = (int32, uint32_elt) t
-type uint64_t = (int64, uint64_elt) t
-type complex64_t = (Complex.t, complex32_elt) t
-type complex128_t = (Complex.t, complex64_elt) t
-
-(* Re-export extended type aliases *)
-type bfloat16_t = (float, Nx_buffer.bfloat16_elt) t
-type bool_t = (bool, Nx_buffer.bool_elt) t
-type int4_t = (int, Nx_buffer.int4_signed_elt) t
-type uint4_t = (int, Nx_buffer.int4_unsigned_elt) t
-type float8_e4m3_t = (float, Nx_buffer.float8_e4m3_elt) t
-type float8_e5m2_t = (float, Nx_buffer.float8_e5m2_elt) t
-
-(* Re-export extended dtype value constructors *)
-let bfloat16 = Nx_core.Dtype.bfloat16
-let bool = Nx_core.Dtype.bool
-let int4 = Nx_core.Dtype.int4
-let uint4 = Nx_core.Dtype.uint4
-let float8_e4m3 = Nx_core.Dtype.float8_e4m3
-let float8_e5m2 = Nx_core.Dtype.float8_e5m2
-
 (* ───── Autodiff ───── *)
 
 let vjp = Autodiff.vjp
@@ -95,8 +61,3 @@ let debug = Debug.debug
 let debug_with_context = Debug.with_context
 let debug_push_context = Debug.push_context
 let debug_pop_context = Debug.pop_context
-
-(* ───── Nx Interop ───── *)
-
-let of_nx nx_tensor = of_bigarray (Nx.to_bigarray nx_tensor)
-let to_nx t = Nx.of_bigarray (to_bigarray t)

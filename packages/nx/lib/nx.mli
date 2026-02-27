@@ -26,7 +26,7 @@
 
 (** {1:types Types} *)
 
-type ('a, 'b) t
+type ('a, 'b) t = ('a, 'b) Nx_effect.t
 (** The type for tensors with OCaml element type ['a] and buffer element kind
     ['b]. *)
 
@@ -439,9 +439,8 @@ val meshgrid :
         meshgrid x y
       - : (float, float32_elt) t * (float, float32_elt) t =
       ([[0, 1, 2],
-        [0, 1, 2]],
-       [[0, 0, 0],
-        [1, 1, 1]])
+        [0, 1, 2]], [[0, 0, 0],
+                     [1, 1, 1]])
     ]} *)
 
 val tril : ?k:int -> ('a, 'b) t -> ('a, 'b) t
@@ -496,9 +495,9 @@ val one_hot : num_classes:int -> ('a, 'b) t -> (int, uint8_elt) t
     Sampling functions use the implicit RNG state managed by {!module-Rng}. Wrap
     calls in {!Rng.run} for reproducibility:
 
-    {[
+    {v
       Rng.run ~seed:42 (fun () -> rand float32 [| 3 |])
-    ]} *)
+    v} *)
 
 module Rng = Nx_core.Rng
 (** Splittable RNG keys with implicit-state management. *)
@@ -859,7 +858,9 @@ val stack : ?axis:int -> ('a, 'b) t list -> ('a, 'b) t
         stack [ a; b ]
       - : (int32, int32_elt) t = [[1, 2],
                                   [3, 4]]
-      # stack ~axis:1 [ a; b ]
+      # let a = create int32 [| 2 |] [| 1l; 2l |] in
+        let b = create int32 [| 2 |] [| 3l; 4l |] in
+        stack ~axis:1 [ a; b ]
       - : (int32, int32_elt) t = [[1, 3],
                                   [2, 4]]
     ]}
@@ -1373,7 +1374,7 @@ val recip : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 
 (** {2:math_exp Exponential and logarithmic} *)
 
-val log : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+val log : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [log ?out t] is the element-wise natural logarithm. [out] defaults to a
     fresh allocation. *)
 
@@ -1381,7 +1382,7 @@ val log2 : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [log2 ?out t] is the element-wise base-2 logarithm. [out] defaults to a
     fresh allocation. *)
 
-val exp : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+val exp : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [exp ?out t] is the element-wise exponential. [out] defaults to a fresh
     allocation. *)
 
@@ -1395,54 +1396,53 @@ val sin : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [sin ?out t] is the element-wise sine. [out] defaults to a fresh allocation.
 *)
 
-val cos : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+val cos : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [cos ?out t] is the element-wise cosine. [out] defaults to a fresh
     allocation. *)
 
-val tan : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+val tan : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [tan ?out t] is the element-wise tangent. [out] defaults to a fresh
     allocation. *)
 
-val asin : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+val asin : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [asin ?out t] is the element-wise arcsine. [out] defaults to a fresh
     allocation. *)
 
-val acos : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+val acos : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [acos ?out t] is the element-wise arccosine. [out] defaults to a fresh
     allocation. *)
 
-val atan : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+val atan : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [atan ?out t] is the element-wise arctangent. [out] defaults to a fresh
     allocation. *)
 
-val atan2 :
-  ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t -> (float, 'a) t
+val atan2 : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [atan2 ?out y x] is the element-wise two-argument arctangent, returning
     angles in \[[-π], [π]\]. [out] defaults to a fresh allocation. *)
 
 (** {2:math_hyp Hyperbolic} *)
 
-val sinh : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+val sinh : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [sinh ?out t] is the element-wise hyperbolic sine. [out] defaults to a fresh
     allocation. *)
 
-val cosh : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+val cosh : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [cosh ?out t] is the element-wise hyperbolic cosine. [out] defaults to a
     fresh allocation. *)
 
-val tanh : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+val tanh : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [tanh ?out t] is the element-wise hyperbolic tangent. [out] defaults to a
     fresh allocation. *)
 
-val asinh : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+val asinh : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [asinh ?out t] is the element-wise inverse hyperbolic sine. [out] defaults
     to a fresh allocation. *)
 
-val acosh : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+val acosh : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [acosh ?out t] is the element-wise inverse hyperbolic cosine. [out] defaults
     to a fresh allocation. *)
 
-val atanh : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+val atanh : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [atanh ?out t] is the element-wise inverse hyperbolic tangent. [out]
     defaults to a fresh allocation. *)
 
@@ -1452,15 +1452,15 @@ val trunc : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [trunc ?out t] rounds each element toward zero. [out] defaults to a fresh
     allocation. *)
 
-val ceil : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+val ceil : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [ceil ?out t] rounds each element toward positive infinity. [out] defaults
     to a fresh allocation. *)
 
-val floor : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+val floor : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [floor ?out t] rounds each element toward negative infinity. [out] defaults
     to a fresh allocation. *)
 
-val round : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+val round : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [round ?out t] rounds each element to the nearest integer. Ties round away
     from zero (not banker's rounding). [out] defaults to a fresh allocation.
 
@@ -1499,9 +1499,10 @@ val lerp_scalar_weight :
 (** [lerp_scalar_weight ?out a b w] is like {!lerp} with a scalar weight. [out]
     defaults to a fresh allocation. *)
 
-val isinf : ?out:(bool, bool_elt) t -> (float, 'a) t -> (bool, bool_elt) t
+val isinf : ?out:(bool, bool_elt) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [isinf ?out t] is [true] where [t] is positive or negative infinity, [false]
-    elsewhere. [out] defaults to a fresh allocation.
+    elsewhere. Non-float dtypes always return all [false]. [out] defaults to a
+    fresh allocation.
 
     {@ocaml[
       # create float32 [| 4 |]
@@ -1519,9 +1520,9 @@ val isnan : ?out:(bool, bool_elt) t -> ('a, 'b) t -> (bool, bool_elt) t
 
     See also {!isinf}, {!isfinite}. *)
 
-val isfinite : ?out:(bool, bool_elt) t -> (float, 'a) t -> (bool, bool_elt) t
-(** [isfinite ?out t] is [true] where [t] is neither infinite nor NaN. [out]
-    defaults to a fresh allocation.
+val isfinite : ?out:(bool, bool_elt) t -> ('a, 'b) t -> (bool, bool_elt) t
+(** [isfinite ?out t] is [true] where [t] is neither infinite nor NaN. Non-float
+    dtypes always return all [true]. [out] defaults to a fresh allocation.
 
     See also {!isinf}, {!isnan}. *)
 
@@ -2674,8 +2675,7 @@ val fftshift : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t
 
     {@ocaml[
       # fftfreq 5 |> fftshift
-      - : (float, float64_elt) t =
-      [-0.4, -0.2, 0, 0.2, 0.4]
+      - : (float, float64_elt) t = [-0.4, -0.2, 0, 0.2, 0.4]
     ]}
 
     See also {!ifftshift}. *)
@@ -2696,7 +2696,7 @@ val relu : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
       - : (float, float32_elt) t = [0, 0, 0, 1, 2]
     ]} *)
 
-val sigmoid : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+val sigmoid : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [sigmoid ?out t] is [1 / (1 + exp(-t))] element-wise. Output in [(0, 1)].
     [out] defaults to a fresh allocation.
 
@@ -2706,11 +2706,7 @@ val sigmoid : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
     ]} *)
 
 val softmax :
-  ?out:(float, 'a) t ->
-  ?axes:int list ->
-  ?scale:float ->
-  (float, 'a) t ->
-  (float, 'a) t
+  ?out:('a, 'b) t -> ?axes:int list -> ?scale:float -> ('a, 'b) t -> ('a, 'b) t
 (** [softmax ?out ?axes ?scale t] is the softmax normalisation
     [exp(scale * (t - max t)) / Σ exp(scale * (t - max t))]. [axes] defaults to
     [[-1]]. [scale] defaults to [1.0]. Output sums to [1] along the specified
@@ -2725,22 +2721,18 @@ val softmax :
     See also {!log_softmax}. *)
 
 val log_softmax :
-  ?out:(float, 'a) t ->
-  ?axes:int list ->
-  ?scale:float ->
-  (float, 'a) t ->
-  (float, 'a) t
+  ?out:('a, 'b) t -> ?axes:int list -> ?scale:float -> ('a, 'b) t -> ('a, 'b) t
 (** [log_softmax ?out ?axes ?scale t] is the natural logarithm of {!softmax}.
     Same defaults as {!softmax}. [out] defaults to a fresh allocation.
 
     See also {!softmax}, {!logsumexp}. *)
 
 val logsumexp :
-  ?out:(float, 'a) t ->
+  ?out:('a, 'b) t ->
   ?axes:int list ->
   ?keepdims:bool ->
-  (float, 'a) t ->
-  (float, 'a) t
+  ('a, 'b) t ->
+  ('a, 'b) t
 (** [logsumexp ?out ?axes ?keepdims t] is [log(Σ exp(t))] computed in a
     numerically stable way. [axes] defaults to all. [keepdims] defaults to
     [false]. [out] defaults to a fresh allocation.
@@ -2748,11 +2740,11 @@ val logsumexp :
     See also {!logmeanexp}, {!log_softmax}. *)
 
 val logmeanexp :
-  ?out:(float, 'a) t ->
+  ?out:('a, 'b) t ->
   ?axes:int list ->
   ?keepdims:bool ->
-  (float, 'a) t ->
-  (float, 'a) t
+  ('a, 'b) t ->
+  ('a, 'b) t
 (** [logmeanexp ?out ?axes ?keepdims t] is [log(mean(exp(t)))]: {!logsumexp}
     minus [log N]. [axes] defaults to all. [keepdims] defaults to [false]. [out]
     defaults to a fresh allocation.
@@ -2760,19 +2752,19 @@ val logmeanexp :
     See also {!logsumexp}. *)
 
 val standardize :
-  ?out:(float, 'a) t ->
+  ?out:('a, 'b) t ->
   ?axes:int list ->
-  ?mean:(float, 'a) t ->
-  ?variance:(float, 'a) t ->
+  ?mean:('a, 'b) t ->
+  ?variance:('a, 'b) t ->
   ?epsilon:float ->
-  (float, 'a) t ->
-  (float, 'a) t
+  ('a, 'b) t ->
+  ('a, 'b) t
 (** [standardize ?out ?axes ?mean ?variance ?epsilon t] is
     [(t - mean) / sqrt(variance + epsilon)]. When [mean] or [variance] are
     omitted, they are computed along [axes] (default all). [epsilon] defaults to
     [1e-5]. [out] defaults to a fresh allocation. *)
 
-val erf : ?out:(float, 'a) t -> (float, 'a) t -> (float, 'a) t
+val erf : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [erf ?out t] is the error function [erf(x) = (2/√π) ∫₀ˣ e^{-u²} du]. [out]
     defaults to a fresh allocation.
 

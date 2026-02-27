@@ -25,7 +25,7 @@ val params : 'layout vars -> Ptree.t
 val state : 'layout vars -> Ptree.t
 (** [state v] is [v]'s non-trainable mutable state tree. *)
 
-val dtype : 'layout vars -> (float, 'layout) Rune.dtype
+val dtype : 'layout vars -> (float, 'layout) Nx.dtype
 (** [dtype v] is [v]'s floating dtype witness. *)
 
 val with_params : 'layout vars -> Ptree.t -> 'layout vars
@@ -37,7 +37,7 @@ val with_state : 'layout vars -> Ptree.t -> 'layout vars
 val make_vars :
   params:Ptree.t ->
   state:Ptree.t ->
-  dtype:(float, 'layout) Rune.dtype ->
+  dtype:(float, 'layout) Nx.dtype ->
   'layout vars
 (** [make_vars ~params ~state ~dtype] builds model variables.
 
@@ -45,23 +45,23 @@ val make_vars :
     {!Layer} module. *)
 
 type ('input, 'output) t = {
-  init : 'layout. dtype:(float, 'layout) Rune.dtype -> 'layout vars;
+  init : 'layout. dtype:(float, 'layout) Nx.dtype -> 'layout vars;
   apply :
     'layout 'in_elt.
     params:Ptree.t ->
     state:Ptree.t ->
-    dtype:(float, 'layout) Rune.dtype ->
+    dtype:(float, 'layout) Nx.dtype ->
     training:bool ->
     ?ctx:Context.t ->
-    ('input, 'in_elt) Rune.t ->
-    ('output, 'layout) Rune.t * Ptree.t;
+    ('input, 'in_elt) Nx.t ->
+    ('output, 'layout) Nx.t * Ptree.t;
 }
 (** The type for layers.
 
     [init] creates fresh [params] and [state]. [apply] computes a forward pass
     and returns updated [state]. Random operations (weight initialization,
-    dropout) use the implicit RNG scope established by {!Rune.Rng.run} or
-    {!Rune.Rng.with_key}.
+    dropout) use the implicit RNG scope established by {!Nx.Rng.run} or
+    {!Nx.Rng.with_key}.
 
     The input tensor's dtype witness ['in_elt] is independent of the model's
     float dtype witness ['layout]. This allows layers like {!embedding} to
@@ -73,19 +73,19 @@ type ('input, 'output) t = {
     encoder memory). Most layers ignore it; transformer layers read from it
     using well-known key names. See {!Context}. *)
 
-val init : ('a, 'b) t -> dtype:(float, 'layout) Rune.dtype -> 'layout vars
+val init : ('a, 'b) t -> dtype:(float, 'layout) Nx.dtype -> 'layout vars
 (** [init m ~dtype] is [m]'s fresh variables.
 
     Composite layers ({!compose}, {!sequential}) isolate sub-network RNG streams
-    via {!Rune.Rng.with_key}. *)
+    via {!Nx.Rng.with_key}. *)
 
 val apply :
   ('a, 'b) t ->
   'layout vars ->
   training:bool ->
   ?ctx:Context.t ->
-  ('a, 'in_elt) Rune.t ->
-  ('b, 'layout) Rune.t * 'layout vars
+  ('a, 'in_elt) Nx.t ->
+  ('b, 'layout) Nx.t * 'layout vars
 (** [apply m vars ~training ?ctx x] is the forward pass of [m].
 
     Returns [(y, vars')] where [params vars' = params vars] and [state vars'] is

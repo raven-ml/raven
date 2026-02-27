@@ -11,7 +11,7 @@
 open Fehu
 
 let () =
-  Rune.Rng.run ~seed:42 @@ fun () ->
+  Nx.Rng.run ~seed:42 @@ fun () ->
   Printf.printf "Random Agent on CartPole-v1\n";
   Printf.printf "===========================\n\n";
 

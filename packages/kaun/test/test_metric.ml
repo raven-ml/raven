@@ -82,7 +82,7 @@ let test_eval_many_empty_raises () =
 let test_accuracy_multiclass () =
   (* logits: batch=4, classes=3 *)
   let predictions =
-    Rune.create Rune.float32 [| 4; 3 |]
+    Nx.create Nx.float32 [| 4; 3 |]
       [|
         (* predicted class 2 *) 0.1;
         0.2;
@@ -99,27 +99,27 @@ let test_accuracy_multiclass () =
       |]
   in
   (* targets: class indices *)
-  let targets = Rune.create Rune.int32 [| 4 |] [| 2l; 0l; 0l; 0l |] in
+  let targets = Nx.create Nx.int32 [| 4 |] [| 2l; 0l; 0l; 0l |] in
   (* correct: sample 0 (2=2), sample 1 (0=0), sample 3 (0=0) = 3/4 *)
   equal ~msg:"multiclass accuracy" (float 1e-6) 0.75
     (Metric.accuracy predictions targets)
 
 let test_accuracy_binary () =
-  let predictions = Rune.create Rune.float32 [| 4 |] [| 0.8; 0.3; 0.6; 0.1 |] in
-  let targets = Rune.create Rune.int32 [| 4 |] [| 1l; 0l; 1l; 1l |] in
+  let predictions = Nx.create Nx.float32 [| 4 |] [| 0.8; 0.3; 0.6; 0.1 |] in
+  let targets = Nx.create Nx.int32 [| 4 |] [| 1l; 0l; 1l; 1l |] in
   (* predicted: 1, 0, 1, 0; targets: 1, 0, 1, 1 => 3/4 correct *)
   equal ~msg:"binary accuracy" (float 1e-6) 0.75
     (Metric.accuracy predictions targets)
 
 let test_binary_accuracy_default_threshold () =
-  let predictions = Rune.create Rune.float32 [| 4 |] [| 0.8; 0.3; 0.6; 0.1 |] in
-  let targets = Rune.create Rune.float32 [| 4 |] [| 1.0; 0.0; 1.0; 1.0 |] in
+  let predictions = Nx.create Nx.float32 [| 4 |] [| 0.8; 0.3; 0.6; 0.1 |] in
+  let targets = Nx.create Nx.float32 [| 4 |] [| 1.0; 0.0; 1.0; 1.0 |] in
   equal ~msg:"binary_accuracy default" (float 1e-6) 0.75
     (Metric.binary_accuracy predictions targets)
 
 let test_binary_accuracy_custom_threshold () =
-  let predictions = Rune.create Rune.float32 [| 4 |] [| 0.8; 0.3; 0.6; 0.1 |] in
-  let targets = Rune.create Rune.float32 [| 4 |] [| 1.0; 1.0; 1.0; 0.0 |] in
+  let predictions = Nx.create Nx.float32 [| 4 |] [| 0.8; 0.3; 0.6; 0.1 |] in
+  let targets = Nx.create Nx.float32 [| 4 |] [| 1.0; 1.0; 1.0; 0.0 |] in
   (* threshold=0.25: predicted 1, 1, 1, 0; targets: 1, 1, 1, 0 => 4/4 *)
   equal ~msg:"binary_accuracy threshold=0.25" (float 1e-6) 1.0
     (Metric.binary_accuracy ~threshold:0.25 predictions targets)
@@ -136,7 +136,7 @@ let test_binary_accuracy_custom_threshold () =
    Per-class f1: [2/3; 1/2; 1/1] *)
 
 let prf_predictions () =
-  Rune.create Rune.float32 [| 6; 3 |]
+  Nx.create Nx.float32 [| 6; 3 |]
     [|
       (* pred 0 *) 0.8;
       0.1;
@@ -158,7 +158,7 @@ let prf_predictions () =
       0.2;
     |]
 
-let prf_targets () = Rune.create Rune.int32 [| 6 |] [| 0l; 1l; 1l; 2l; 0l; 0l |]
+let prf_targets () = Nx.create Nx.int32 [| 6 |] [| 0l; 1l; 1l; 2l; 0l; 0l |]
 
 let test_precision_macro () =
   let predictions = prf_predictions () in
@@ -230,10 +230,10 @@ let test_micro_equals_accuracy () =
 let test_precision_zero_predictions () =
   (* class 2 has no predictions: pred=[0,1,0], targets=[0,1,2] *)
   let predictions =
-    Rune.create Rune.float32 [| 3; 3 |]
+    Nx.create Nx.float32 [| 3; 3 |]
       [| 0.8; 0.2; 0.0; 0.1; 0.9; 0.0; 0.6; 0.4; 0.0 |]
   in
-  let targets = Rune.create Rune.int32 [| 3 |] [| 0l; 1l; 2l |] in
+  let targets = Nx.create Nx.int32 [| 3 |] [| 0l; 1l; 2l |] in
   (* class 0: TP=1, FP=1 => P=1/2 class 1: TP=1, FP=0 => P=1 class 2: TP=0, FP=0
      => P=0.0 (zero-div) macro = (1/2 + 1 + 0) / 3 = 0.5 *)
   equal ~msg:"precision with missing class" (float 1e-6) 0.5
@@ -242,7 +242,7 @@ let test_precision_zero_predictions () =
 let test_binary_f1 () =
   (* 2-class problem *)
   let predictions =
-    Rune.create Rune.float32 [| 4; 2 |]
+    Nx.create Nx.float32 [| 4; 2 |]
       [|
         0.9;
         0.1;
@@ -258,7 +258,7 @@ let test_binary_f1 () =
         (* pred 0 *)
       |]
   in
-  let targets = Rune.create Rune.int32 [| 4 |] [| 0l; 1l; 0l; 0l |] in
+  let targets = Nx.create Nx.int32 [| 4 |] [| 0l; 1l; 0l; 0l |] in
   (* class 0: TP=2, FP=0, FN=1 => P=1.0, R=2/3, F1=2*1*(2/3)/(1+2/3)=4/5 *)
   (* class 1: TP=1, FP=1, FN=0 => P=1/2, R=1.0, F1=2*(1/2)*1/(1/2+1)=2/3 *)
   let expected_macro = ((4.0 /. 5.0) +. (2.0 /. 3.0)) /. 2.0 in

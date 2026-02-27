@@ -14,10 +14,10 @@
 val batch_norm :
   ?axes:int list ->
   ?epsilon:float ->
-  scale:(float, 'b) Rune.t ->
-  bias:(float, 'b) Rune.t ->
-  (float, 'b) Rune.t ->
-  (float, 'b) Rune.t
+  scale:(float, 'b) Nx.t ->
+  bias:(float, 'b) Nx.t ->
+  (float, 'b) Nx.t ->
+  (float, 'b) Nx.t
 (** [batch_norm ?axes ?epsilon ~scale ~bias x] normalizes [x] along [axes], then
     applies learnable [scale] and [bias].
 
@@ -32,10 +32,10 @@ val batch_norm :
 val layer_norm :
   ?axes:int list ->
   ?epsilon:float ->
-  ?gamma:(float, 'b) Rune.t ->
-  ?beta:(float, 'b) Rune.t ->
-  (float, 'b) Rune.t ->
-  (float, 'b) Rune.t
+  ?gamma:(float, 'b) Nx.t ->
+  ?beta:(float, 'b) Nx.t ->
+  (float, 'b) Nx.t ->
+  (float, 'b) Nx.t
 (** [layer_norm ?axes ?epsilon ?gamma ?beta x] subtracts the mean and divides by
     the standard deviation along [axes], optionally scaling by [gamma] and
     shifting by [beta].
@@ -48,9 +48,9 @@ val layer_norm :
 val rms_norm :
   ?axes:int list ->
   ?epsilon:float ->
-  ?gamma:(float, 'b) Rune.t ->
-  (float, 'b) Rune.t ->
-  (float, 'b) Rune.t
+  ?gamma:(float, 'b) Nx.t ->
+  (float, 'b) Nx.t ->
+  (float, 'b) Nx.t
 (** [rms_norm ?axes ?epsilon ?gamma x] normalizes [x] by the root mean square
     along [axes], optionally scaling by [gamma].
 
@@ -63,9 +63,9 @@ val rms_norm :
 
 val embedding :
   ?scale:bool ->
-  embedding:(float, 'b) Rune.t ->
-  (int32, Rune.int32_elt) Rune.t ->
-  (float, 'b) Rune.t
+  embedding:(float, 'b) Nx.t ->
+  (int32, Nx.int32_elt) Nx.t ->
+  (float, 'b) Nx.t
 (** [embedding ?scale ~embedding indices] gathers rows of [embedding] at
     positions given by [indices].
 
@@ -80,7 +80,7 @@ val embedding :
 
 (** {1:dropout Dropout} *)
 
-val dropout : rate:float -> (float, 'b) Rune.t -> (float, 'b) Rune.t
+val dropout : rate:float -> (float, 'b) Nx.t -> (float, 'b) Nx.t
 (** [dropout ~rate x] randomly zeroes elements of [x] with probability [rate]
     and scales the remaining values by [1 / (1 - rate)].
 
@@ -95,14 +95,14 @@ val dropout : rate:float -> (float, 'b) Rune.t -> (float, 'b) Rune.t
 (** {1:attention Attention} *)
 
 val dot_product_attention :
-  ?attention_mask:(bool, Rune.bool_elt) Rune.t ->
+  ?attention_mask:(bool, Nx.bool_elt) Nx.t ->
   ?scale:float ->
   ?dropout_rate:float ->
   ?is_causal:bool ->
-  (float, 'b) Rune.t ->
-  (float, 'b) Rune.t ->
-  (float, 'b) Rune.t ->
-  (float, 'b) Rune.t
+  (float, 'b) Nx.t ->
+  (float, 'b) Nx.t ->
+  (float, 'b) Nx.t ->
+  (float, 'b) Nx.t
 (** [dot_product_attention ?attention_mask ?scale ?dropout_rate ?is_causal q k
      v] is scaled dot-product attention.
 
@@ -128,10 +128,10 @@ val conv1d :
   ?stride:int ->
   ?dilation:int ->
   ?padding:[ `Same | `Valid ] ->
-  ?bias:(float, 'b) Rune.t ->
-  (float, 'b) Rune.t ->
-  (float, 'b) Rune.t ->
-  (float, 'b) Rune.t
+  ?bias:(float, 'b) Nx.t ->
+  (float, 'b) Nx.t ->
+  (float, 'b) Nx.t ->
+  (float, 'b) Nx.t
 (** [conv1d ?groups ?stride ?dilation ?padding ?bias x w] computes 1D
     convolution.
 
@@ -148,10 +148,10 @@ val conv2d :
   ?stride:int * int ->
   ?dilation:int * int ->
   ?padding:[ `Same | `Valid ] ->
-  ?bias:(float, 'b) Rune.t ->
-  (float, 'b) Rune.t ->
-  (float, 'b) Rune.t ->
-  (float, 'b) Rune.t
+  ?bias:(float, 'b) Nx.t ->
+  (float, 'b) Nx.t ->
+  (float, 'b) Nx.t ->
+  (float, 'b) Nx.t
 (** [conv2d ?groups ?stride ?dilation ?padding ?bias x w] computes 2D
     convolution.
 
@@ -171,8 +171,8 @@ val max_pool1d :
   ?dilation:int ->
   ?padding:[ `Same | `Valid ] ->
   ?ceil_mode:bool ->
-  ('a, 'b) Rune.t ->
-  ('a, 'b) Rune.t
+  ('a, 'b) Nx.t ->
+  ('a, 'b) Nx.t
 (** [max_pool1d ~kernel_size ?stride ?dilation ?padding ?ceil_mode x] applies 1D
     max pooling.
 
@@ -185,8 +185,8 @@ val max_pool2d :
   ?dilation:int * int ->
   ?padding:[ `Same | `Valid ] ->
   ?ceil_mode:bool ->
-  ('a, 'b) Rune.t ->
-  ('a, 'b) Rune.t
+  ('a, 'b) Nx.t ->
+  ('a, 'b) Nx.t
 (** [max_pool2d ~kernel_size ?stride ?dilation ?padding ?ceil_mode x] applies 2D
     max pooling.
 
@@ -201,8 +201,8 @@ val avg_pool1d :
   ?padding:[ `Same | `Valid ] ->
   ?ceil_mode:bool ->
   ?count_include_pad:bool ->
-  (float, 'b) Rune.t ->
-  (float, 'b) Rune.t
+  (float, 'b) Nx.t ->
+  (float, 'b) Nx.t
 (** [avg_pool1d ~kernel_size ?stride ?dilation ?padding ?ceil_mode
      ?count_include_pad x] applies 1D average pooling.
 
@@ -217,8 +217,8 @@ val avg_pool2d :
   ?padding:[ `Same | `Valid ] ->
   ?ceil_mode:bool ->
   ?count_include_pad:bool ->
-  (float, 'b) Rune.t ->
-  (float, 'b) Rune.t
+  (float, 'b) Nx.t ->
+  (float, 'b) Nx.t
 (** [avg_pool2d ~kernel_size ?stride ?dilation ?padding ?ceil_mode
      ?count_include_pad x] applies 2D average pooling.
 

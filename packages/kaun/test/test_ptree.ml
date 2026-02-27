@@ -29,11 +29,11 @@ let raises_invalid_arg_contains needle f =
       | _ -> false)
     f
 
-let f32_leaf v = Ptree.tensor (Rune.full Rune.float32 [| 1 |] v)
+let f32_leaf v = Ptree.tensor (Nx.full Nx.float32 [| 1 |] v)
 
 let f32_value_of_tensor p =
-  let t = Ptree.Tensor.to_typed_exn Rune.float32 p in
-  Rune.item [ 0 ] t
+  let t = Ptree.Tensor.to_typed_exn Nx.float32 p in
+  Nx.item [ 0 ] t
 
 let f32_value_of_tree t =
   let p = Ptree.as_tensor_exn t in
@@ -47,9 +47,9 @@ let collect_f32_values t =
         Ptree.with_tensor p
           {
             run =
-              (fun (type a) (type layout) (x : (a, layout) Rune.t) ->
-                let y = Rune.cast Rune.float32 x in
-                Rune.item [ 0 ] (Rune.reshape [| -1 |] y));
+              (fun (type a) (type layout) (x : (a, layout) Nx.t) ->
+                let y = Nx.cast Nx.float32 x in
+                Nx.item [ 0 ] (Nx.reshape [| -1 |] y));
           }
       in
       values := v :: !values)
@@ -73,35 +73,35 @@ let test_dict_key_validation () =
        ])
 
 let test_tensor_module () =
-  let p = Ptree.P (Rune.zeros Rune.float32 [| 2; 3 |]) in
+  let p = Ptree.P (Nx.zeros Nx.float32 [| 2; 3 |]) in
   let dtype_matches =
     match Ptree.Tensor.dtype p with
-    | Nx_core.Dtype.Pack dt -> Nx_core.Dtype.equal dt Rune.float32
+    | Nx_core.Dtype.Pack dt -> Nx_core.Dtype.equal dt Nx.float32
   in
   equal ~msg:"dtype" bool true dtype_matches;
   equal ~msg:"shape" (list int) [ 2; 3 ] (Array.to_list (Ptree.Tensor.shape p));
   equal ~msg:"numel" int 6 (Ptree.Tensor.numel p);
   equal ~msg:"to_typed hit" bool true
-    (Option.is_some (Ptree.Tensor.to_typed Rune.float32 p));
+    (Option.is_some (Ptree.Tensor.to_typed Nx.float32 p));
   equal ~msg:"to_typed miss" bool true
-    (Option.is_none (Ptree.Tensor.to_typed Rune.float64 p));
+    (Option.is_none (Ptree.Tensor.to_typed Nx.float64 p));
   raises_invalid_arg_contains "dtype mismatch" (fun () ->
-      Ptree.Tensor.to_typed_exn Rune.float64 p)
+      Ptree.Tensor.to_typed_exn Nx.float64 p)
 
 let test_leaf_access () =
-  let p = Ptree.P (Rune.full Rune.float32 [| 1 |] 7.0) in
+  let p = Ptree.P (Nx.full Nx.float32 [| 1 |] 7.0) in
   let v =
     Ptree.with_tensor p
       {
         run =
-          (fun (type a) (type layout) (t : (a, layout) Rune.t) ->
-            let t = Rune.cast Rune.float32 t in
-            Rune.item [ 0 ] t);
+          (fun (type a) (type layout) (t : (a, layout) Nx.t) ->
+            let t = Nx.cast Nx.float32 t in
+            Nx.item [ 0 ] t);
       }
   in
   equal ~msg:"with_tensor" (float 1e-6) 7.0 v;
   equal ~msg:"as_tensor_exn" (float 1e-6) 7.0
-    (f32_value_of_tree (Ptree.tensor (Rune.full Rune.float32 [| 1 |] 7.0)));
+    (f32_value_of_tree (Ptree.tensor (Nx.full Nx.float32 [| 1 |] 7.0)));
   raises_invalid_arg_contains "ctx" (fun () ->
       Ptree.as_tensor_exn ~ctx:"ctx" (Ptree.list []))
 
@@ -117,18 +117,18 @@ let test_dict_access () =
   raises_invalid_arg_contains "ctx" (fun () ->
       Ptree.Dict.find_exn ~ctx:"ctx" "x" fields);
   equal ~msg:"get_tensor_exn" (float 1e-6) 3.0
-    (Rune.item [ 0 ] (Ptree.Dict.get_tensor_exn fields ~name:"w" Rune.float32));
+    (Nx.item [ 0 ] (Ptree.Dict.get_tensor_exn fields ~name:"w" Nx.float32));
   raises_invalid_arg_any (fun () ->
-      Ptree.Dict.get_tensor_exn fields ~name:"x" Rune.float32);
+      Ptree.Dict.get_tensor_exn fields ~name:"x" Nx.float32);
   raises_invalid_arg_any (fun () ->
-      Ptree.Dict.get_tensor_exn fields ~name:"w" Rune.float64);
+      Ptree.Dict.get_tensor_exn fields ~name:"w" Nx.float64);
   raises_invalid_arg_any (fun () ->
       Ptree.Dict.get_tensor_exn
         (Ptree.Dict.fields_exn (Ptree.dict [ ("node", Ptree.list []) ]))
-        ~name:"node" Rune.float32);
+        ~name:"node" Nx.float32);
   raises_invalid_arg_contains "ctx" (fun () ->
       Ptree.Dict.fields_exn ~ctx:"ctx"
-        (Ptree.tensor (Rune.zeros Rune.float32 [| 1 |])))
+        (Ptree.tensor (Nx.zeros Nx.float32 [| 1 |])))
 
 let test_list_access () =
   let items =
@@ -148,10 +148,10 @@ let test_map () =
     Ptree.map
       {
         run =
-          (fun (type a) (type layout) (t : (a, layout) Rune.t) ->
-            let dt = Rune.dtype t in
+          (fun (type a) (type layout) (t : (a, layout) Nx.t) ->
+            let dt = Nx.dtype t in
             let ten = Nx_core.Dtype.of_float dt 10.0 in
-            Rune.add t (Rune.scalar dt ten));
+            Nx.add t (Nx.scalar dt ten));
       }
       tree
   in
@@ -163,35 +163,35 @@ let test_map () =
 let test_map2_success_and_order () =
   let lhs = Ptree.dict [ ("z", f32_leaf 1.0); ("a", f32_leaf 2.0) ] in
   let rhs = Ptree.dict [ ("a", f32_leaf 20.0); ("z", f32_leaf 10.0) ] in
-  let out = Ptree.map2 { run = Rune.add } lhs rhs in
+  let out = Ptree.map2 { run = Nx.add } lhs rhs in
   let fields = Ptree.Dict.fields_exn out in
   equal ~msg:"preserve lhs key order" (list string) [ "z"; "a" ]
     (List.map fst fields);
   equal ~msg:"z value" (float 1e-6) 11.0
-    (Rune.item [ 0 ] (Ptree.Dict.get_tensor_exn fields ~name:"z" Rune.float32));
+    (Nx.item [ 0 ] (Ptree.Dict.get_tensor_exn fields ~name:"z" Nx.float32));
   equal ~msg:"a value" (float 1e-6) 22.0
-    (Rune.item [ 0 ] (Ptree.Dict.get_tensor_exn fields ~name:"a" Rune.float32))
+    (Nx.item [ 0 ] (Ptree.Dict.get_tensor_exn fields ~name:"a" Nx.float32))
 
 let test_map2_errors () =
   raises_invalid_arg_contains "structure mismatch" (fun () ->
-      Ptree.map2 { run = Rune.add } (f32_leaf 1.0)
+      Ptree.map2 { run = Nx.add } (f32_leaf 1.0)
         (Ptree.dict [ ("x", f32_leaf 1.0) ]));
   raises_invalid_arg_contains "list length mismatch" (fun () ->
-      Ptree.map2 { run = Rune.add }
+      Ptree.map2 { run = Nx.add }
         (Ptree.list [ f32_leaf 1.0 ])
         (Ptree.list [ f32_leaf 1.0; f32_leaf 2.0 ]));
   raises_invalid_arg_contains "dict size mismatch" (fun () ->
-      Ptree.map2 { run = Rune.add }
+      Ptree.map2 { run = Nx.add }
         (Ptree.dict [ ("a", f32_leaf 1.0) ])
         (Ptree.dict [ ("a", f32_leaf 1.0); ("b", f32_leaf 2.0) ]));
   raises_invalid_arg_contains "not found in second dict" (fun () ->
-      Ptree.map2 { run = Rune.add }
+      Ptree.map2 { run = Nx.add }
         (Ptree.dict [ ("a", f32_leaf 1.0) ])
         (Ptree.dict [ ("b", f32_leaf 1.0) ]));
   raises_invalid_arg_contains "dtype mismatch" (fun () ->
-      Ptree.map2 { run = Rune.add }
-        (Ptree.tensor (Rune.ones Rune.float32 [| 1 |]))
-        (Ptree.tensor (Rune.ones Rune.int32 [| 1 |])))
+      Ptree.map2 { run = Nx.add }
+        (Ptree.tensor (Nx.ones Nx.float32 [| 1 |]))
+        (Ptree.tensor (Nx.ones Nx.int32 [| 1 |])))
 
 let test_iter_and_fold_order () =
   let tree =
@@ -229,9 +229,8 @@ let test_flatten_and_rebuild () =
     List.map
       (fun (Ptree.P t) ->
         Ptree.P
-          (Rune.add t
-             (Rune.scalar (Rune.dtype t)
-                (Nx_core.Dtype.of_float (Rune.dtype t) 10.0))))
+          (Nx.add t
+             (Nx.scalar (Nx.dtype t) (Nx_core.Dtype.of_float (Nx.dtype t) 10.0))))
       leaves
   in
   let rebuilt = rebuild leaves_plus_10 in
@@ -269,8 +268,8 @@ let test_zeros_like_and_count_parameters () =
   let tree =
     Ptree.dict
       [
-        ("w", Ptree.tensor (Rune.ones Rune.float32 [| 2; 3 |]));
-        ("b", Ptree.tensor (Rune.full Rune.float32 [| 4 |] 5.0));
+        ("w", Ptree.tensor (Nx.ones Nx.float32 [| 2; 3 |]));
+        ("b", Ptree.tensor (Nx.full Nx.float32 [| 4 |] 5.0));
       ]
   in
   equal ~msg:"count parameters" int 10 (Ptree.count_parameters tree);
@@ -281,13 +280,13 @@ let test_zeros_like_and_count_parameters () =
       Ptree.with_tensor p
         {
           run =
-            (fun (type a) (type layout) (x : (a, layout) Rune.t) ->
-              let y = Rune.cast Rune.float32 x in
-              let flat = Rune.reshape [| -1 |] y in
-              let n = Rune.numel flat in
+            (fun (type a) (type layout) (x : (a, layout) Nx.t) ->
+              let y = Nx.cast Nx.float32 x in
+              let flat = Nx.reshape [| -1 |] y in
+              let n = Nx.numel flat in
               for i = 0 to n - 1 do
                 equal ~msg:"zeros_like values" (float 1e-6) 0.0
-                  (Rune.item [ i ] flat)
+                  (Nx.item [ i ] flat)
               done);
         })
     zeros
@@ -296,7 +295,7 @@ let test_pp () =
   let tree =
     Ptree.dict
       [
-        ("w", Ptree.tensor (Rune.ones Rune.float32 [| 2 |]));
+        ("w", Ptree.tensor (Nx.ones Nx.float32 [| 2 |]));
         ("b", Ptree.list [ f32_leaf 1.0 ]);
       ]
   in

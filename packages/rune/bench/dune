@@ -1,4 +1,4 @@
 (executable
  (name bench_grad_rune)
  (modules bench_grad_rune)
- (libraries rune ubench))
+ (libraries nx rune ubench))

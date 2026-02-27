@@ -11,8 +11,7 @@
 
 (** {1:rope Rotary Position Embeddings} *)
 
-val rope :
-  ?theta:float -> ?seq_dim:int -> (float, 'a) Rune.t -> (float, 'a) Rune.t
+val rope : ?theta:float -> ?seq_dim:int -> (float, 'a) Nx.t -> (float, 'a) Nx.t
 (** [rope ?theta ?seq_dim x] applies rotary position embeddings to [x].
 
     [x] may have any rank [>= 2], with shape [[d0; ...; dn-1]] where:

@@ -1,11 +1,11 @@
 (tests
  (names test_vjp test_gradcheck test_jvp)
  (package rune)
- (libraries rune nx_core windtrap test_rune_support))
+ (libraries nx rune nx_core windtrap test_rune_support))
 
 (test
  (name test_vmap)
  (enabled_if false)
  (package rune)
  (modules test_vmap)
- (libraries rune nx_core windtrap test_rune_support))
+ (libraries nx rune nx_core windtrap test_rune_support))

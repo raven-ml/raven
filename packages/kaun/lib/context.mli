@@ -43,8 +43,8 @@ val get_float_exn :
   ctx:string ->
   t ->
   name:string ->
-  dtype:(float, 'l) Rune.dtype ->
-  (float, 'l) Rune.t
+  dtype:(float, 'l) Nx.dtype ->
+  (float, 'l) Nx.t
 (** [get_float_exn ~ctx t ~name ~dtype] is the float tensor bound to [name],
     cast-checked against [dtype].
 
@@ -52,12 +52,12 @@ val get_float_exn :
     [ctx] is used in error messages. *)
 
 val get_int32_exn :
-  ctx:string -> t -> name:string -> (int32, Bigarray.int32_elt) Rune.t
+  ctx:string -> t -> name:string -> (int32, Bigarray.int32_elt) Nx.t
 (** [get_int32_exn ~ctx t ~name] is the int32 tensor bound to [name].
 
     Raises [Invalid_argument] if [name] is missing or has a different dtype. *)
 
-val get_bool_exn : ctx:string -> t -> name:string -> (bool, Nx.bool_elt) Rune.t
+val get_bool_exn : ctx:string -> t -> name:string -> (bool, Nx.bool_elt) Nx.t
 (** [get_bool_exn ~ctx t ~name] is the bool tensor bound to [name].
 
     Raises [Invalid_argument] if [name] is missing or has a different dtype. *)

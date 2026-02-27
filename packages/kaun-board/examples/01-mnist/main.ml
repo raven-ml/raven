@@ -11,12 +11,12 @@ let lr = 0.001
 
 (* Yield (x_batch, y_batch) slices from full tensors *)
 let batches x y =
-  let n = (Rune.shape x).(0) in
+  let n = (Nx.shape x).(0) in
   let num_batches = n / batch_size in
   Data.of_fn num_batches (fun i ->
       let s = i * batch_size in
       let e = s + batch_size in
-      (Rune.slice [ R (s, e) ] x, Rune.slice [ R (s, e) ] y))
+      (Nx.slice [ R (s, e) ] x, Nx.slice [ R (s, e) ] y))
 
 let model =
   Layer.sequential
@@ -41,11 +41,11 @@ let collect ds =
       xs := x :: !xs;
       ys := y :: !ys)
     ds;
-  ( Rune.stack ~axis:0 (List.rev !xs),
-    Rune.cast Rune.int32 (Rune.stack ~axis:0 (List.rev !ys)) )
+  ( Nx.stack ~axis:0 (List.rev !xs),
+    Nx.cast Nx.int32 (Nx.stack ~axis:0 (List.rev !ys)) )
 
 let () =
-  let dtype = Rune.float32 in
+  let dtype = Nx.float32 in
 
   (* Set up kaun-board logger *)
   let logger =
@@ -66,8 +66,8 @@ let () =
   let train_ds, test_ds = Kaun_datasets.mnist () in
   let x_train, y_train = collect train_ds in
   let x_test, y_test = collect test_ds in
-  let n_train = (Rune.shape x_train).(0) in
-  Printf.printf "  train: %d  test: %d\n%!" n_train (Rune.shape x_test).(0);
+  let n_train = (Nx.shape x_train).(0) in
+  Printf.printf "  train: %d  test: %d\n%!" n_train (Nx.shape x_test).(0);
 
   (* Test batches (fixed) *)
   let test_batches = batches x_test y_test in
@@ -82,9 +82,9 @@ let () =
 
   for epoch = 1 to epochs do
     (* Shuffle training data at the tensor level *)
-    let perm = Rune.permutation n_train in
-    let x_shuf = Rune.take ~axis:0 perm x_train in
-    let y_shuf = Rune.take ~axis:0 perm y_train in
+    let perm = Nx.permutation n_train in
+    let x_shuf = Nx.take ~axis:0 perm x_train in
+    let y_shuf = Nx.take ~axis:0 perm y_train in
     let train_batches = batches x_shuf y_shuf in
 
     (* Train *)
@@ -101,7 +101,7 @@ let () =
             x
         in
         st := st';
-        let loss = Rune.item [] loss_val in
+        let loss = Nx.item [] loss_val in
         Metric.observe tracker "loss" loss;
         Kaun_board.Log.log_scalar logger ~step:!global_step ~epoch
           ~tag:"train/loss" loss;

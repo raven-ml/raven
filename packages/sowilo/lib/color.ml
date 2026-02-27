@@ -4,94 +4,90 @@
   ---------------------------------------------------------------------------*)
 
 let to_grayscale img =
-  let shape = Rune.shape img in
+  let shape = Nx.shape img in
   let rank = Array.length shape in
   let c_axis = rank - 1 in
   (* Flatten spatial dims, matmul with [3;1] weights, reshape back *)
   let spatial = Array.sub shape 0 (rank - 1) in
   let n_pixels = Array.fold_left ( * ) 1 spatial in
-  let flat = Rune.reshape [| n_pixels; shape.(c_axis) |] img in
-  let weights = Rune.create Rune.float32 [| 3; 1 |] [| 0.299; 0.587; 0.114 |] in
-  let result = Rune.matmul flat weights in
+  let flat = Nx.reshape [| n_pixels; shape.(c_axis) |] img in
+  let weights = Nx.create Nx.float32 [| 3; 1 |] [| 0.299; 0.587; 0.114 |] in
+  let result = Nx.matmul flat weights in
   let out_shape = Array.copy shape in
   out_shape.(c_axis) <- 1;
-  Rune.reshape out_shape result
+  Nx.reshape out_shape result
 
 (* RGB to HSV conversion using piecewise hue computation *)
 
 let rgb_to_hsv img =
-  let shape = Rune.shape img in
+  let shape = Nx.shape img in
   let rank = Array.length shape in
   let c_axis = rank - 1 in
   let slice_channel i =
     let slices =
-      List.init rank (fun ax ->
-          if ax = c_axis then Rune.R (i, i + 1) else Rune.A)
+      List.init rank (fun ax -> if ax = c_axis then Nx.R (i, i + 1) else Nx.A)
     in
-    Rune.slice slices img
+    Nx.slice slices img
   in
   let r = slice_channel 0 in
   let g = slice_channel 1 in
   let b = slice_channel 2 in
-  let cmax = Rune.maximum (Rune.maximum r g) b in
-  let cmin = Rune.minimum (Rune.minimum r g) b in
-  let delta = Rune.sub cmax cmin in
-  let eps = Rune.scalar_like img 1e-7 in
-  let delta_safe = Rune.add delta eps in
+  let cmax = Nx.maximum (Nx.maximum r g) b in
+  let cmin = Nx.minimum (Nx.minimum r g) b in
+  let delta = Nx.sub cmax cmin in
+  let eps = Nx.scalar_like img 1e-7 in
+  let delta_safe = Nx.add delta eps in
   (* Hue computation: piecewise by which channel is max *)
-  let is_r_max = Rune.equal cmax r in
-  let is_g_max =
-    Rune.logical_and (Rune.equal cmax g) (Rune.logical_not is_r_max)
-  in
-  let h_r = Rune.div (Rune.sub g b) delta_safe in
-  let h_g = Rune.add_s (Rune.div (Rune.sub b r) delta_safe) 2.0 in
-  let h_b = Rune.add_s (Rune.div (Rune.sub r g) delta_safe) 4.0 in
-  let h = Rune.where is_r_max h_r (Rune.where is_g_max h_g h_b) in
+  let is_r_max = Nx.equal cmax r in
+  let is_g_max = Nx.logical_and (Nx.equal cmax g) (Nx.logical_not is_r_max) in
+  let h_r = Nx.div (Nx.sub g b) delta_safe in
+  let h_g = Nx.add_s (Nx.div (Nx.sub b r) delta_safe) 2.0 in
+  let h_b = Nx.add_s (Nx.div (Nx.sub r g) delta_safe) 4.0 in
+  let h = Nx.where is_r_max h_r (Nx.where is_g_max h_g h_b) in
   (* Normalize to [0, 1]: divide by 6, wrap negatives *)
-  let h = Rune.div_s h 6.0 in
-  let h = Rune.where (Rune.less h (Rune.zeros_like h)) (Rune.add_s h 1.0) h in
+  let h = Nx.div_s h 6.0 in
+  let h = Nx.where (Nx.less h (Nx.zeros_like h)) (Nx.add_s h 1.0) h in
   (* Saturation *)
   let s =
-    Rune.where (Rune.greater cmax eps)
-      (Rune.div delta (Rune.add cmax eps))
-      (Rune.zeros_like cmax)
+    Nx.where (Nx.greater cmax eps)
+      (Nx.div delta (Nx.add cmax eps))
+      (Nx.zeros_like cmax)
   in
   (* Value *)
   let v = cmax in
-  Rune.concatenate ~axis:c_axis [ h; s; v ]
+  Nx.concatenate ~axis:c_axis [ h; s; v ]
 
 (* HSV to RGB conversion *)
 
 let hsv_to_rgb img =
-  let shape = Rune.shape img in
+  let shape = Nx.shape img in
   let rank = Array.length shape in
   let c_axis = rank - 1 in
   let slice_channel i =
     let slices =
-      List.init rank (fun ax ->
-          if ax = c_axis then Rune.R (i, i + 1) else Rune.A)
+      List.init rank (fun ax -> if ax = c_axis then Nx.R (i, i + 1) else Nx.A)
     in
-    Rune.slice slices img
+    Nx.slice slices img
   in
   let h = slice_channel 0 in
   let s = slice_channel 1 in
   let v = slice_channel 2 in
   (* h is in [0, 1], scale to [0, 6) *)
-  let h6 = Rune.mul_s h 6.0 in
-  let hi = Rune.floor h6 in
-  let f = Rune.sub h6 hi in
-  let one = Rune.ones_like v in
-  let p = Rune.mul v (Rune.sub one s) in
-  let q = Rune.mul v (Rune.sub one (Rune.mul s f)) in
-  let t_ = Rune.mul v (Rune.sub one (Rune.mul s (Rune.sub one f))) in
+  let h6 = Nx.mul_s h 6.0 in
+  let hi = Nx.floor h6 in
+  let f = Nx.sub h6 hi in
+  let one = Nx.ones_like v in
+  let p = Nx.mul v (Nx.sub one s) in
+  let q = Nx.mul v (Nx.sub one (Nx.mul s f)) in
+  let t_ = Nx.mul v (Nx.sub one (Nx.mul s (Nx.sub one f))) in
   (* Select r, g, b based on hi mod 6 *)
-  let hi_mod = Rune.mod_ h6 (Rune.scalar_like h6 6.0) in
-  let hi_floor = Rune.floor hi_mod in
+  let hi_mod = Nx.mod_ h6 (Nx.scalar_like h6 6.0) in
+  let hi_floor = Nx.floor hi_mod in
   let is_sect n =
-    let n_t = Rune.scalar_like hi_floor (Float.of_int n) in
-    Rune.logical_and
-      (Rune.greater_equal hi_floor n_t)
-      (Rune.less hi_floor (Rune.scalar_like hi_floor (Float.of_int (n + 1))))
+    let n_t = Nx.scalar_like hi_floor (Float.of_int n) in
+    Nx.logical_and
+      (Nx.greater_equal hi_floor n_t)
+      (Nx.less hi_floor (Nx.scalar_like hi_floor (Float.of_int (n + 1))))
   in
   let s0 = is_sect 0 in
   let s1 = is_sect 1 in
@@ -100,78 +96,78 @@ let hsv_to_rgb img =
   let s4 = is_sect 4 in
   (* s5 is the remainder *)
   let r =
-    Rune.where s0 v
-      (Rune.where s1 q (Rune.where s2 p (Rune.where s3 p (Rune.where s4 t_ v))))
+    Nx.where s0 v
+      (Nx.where s1 q (Nx.where s2 p (Nx.where s3 p (Nx.where s4 t_ v))))
   in
   let g =
-    Rune.where s0 t_
-      (Rune.where s1 v (Rune.where s2 v (Rune.where s3 q (Rune.where s4 p p))))
+    Nx.where s0 t_
+      (Nx.where s1 v (Nx.where s2 v (Nx.where s3 q (Nx.where s4 p p))))
   in
   let b =
-    Rune.where s0 p
-      (Rune.where s1 p (Rune.where s2 t_ (Rune.where s3 v (Rune.where s4 v q))))
+    Nx.where s0 p
+      (Nx.where s1 p (Nx.where s2 t_ (Nx.where s3 v (Nx.where s4 v q))))
   in
-  Rune.concatenate ~axis:c_axis [ r; g; b ]
+  Nx.concatenate ~axis:c_axis [ r; g; b ]
 
 let adjust_brightness factor img =
-  Rune.clip ~min:0.0 ~max:1.0 (Rune.mul_s img factor)
+  Nx.clip ~min:0.0 ~max:1.0 (Nx.mul_s img factor)
 
 let adjust_contrast factor img =
-  let shape = Rune.shape img in
+  let shape = Nx.shape img in
   let rank = Array.length shape in
   (* Mean per channel, keep spatial dims *)
   let axes = List.init (rank - 1) Fun.id in
-  let mean = Rune.mean ~axes ~keepdims:true img in
-  let shifted = Rune.sub img mean in
-  Rune.clip ~min:0.0 ~max:1.0 (Rune.add mean (Rune.mul_s shifted factor))
+  let mean = Nx.mean ~axes ~keepdims:true img in
+  let shifted = Nx.sub img mean in
+  Nx.clip ~min:0.0 ~max:1.0 (Nx.add mean (Nx.mul_s shifted factor))
 
 let adjust_saturation factor img =
   let hsv = rgb_to_hsv img in
-  let shape = Rune.shape hsv in
+  let shape = Nx.shape hsv in
   let rank = Array.length shape in
   let c_axis = rank - 1 in
   let h =
-    Rune.slice
-      (List.init rank (fun ax -> if ax = c_axis then Rune.R (0, 1) else Rune.A))
+    Nx.slice
+      (List.init rank (fun ax -> if ax = c_axis then Nx.R (0, 1) else Nx.A))
       hsv
   in
   let s =
-    Rune.slice
-      (List.init rank (fun ax -> if ax = c_axis then Rune.R (1, 2) else Rune.A))
+    Nx.slice
+      (List.init rank (fun ax -> if ax = c_axis then Nx.R (1, 2) else Nx.A))
       hsv
   in
   let v =
-    Rune.slice
-      (List.init rank (fun ax -> if ax = c_axis then Rune.R (2, 3) else Rune.A))
+    Nx.slice
+      (List.init rank (fun ax -> if ax = c_axis then Nx.R (2, 3) else Nx.A))
       hsv
   in
-  let s' = Rune.clip ~min:0.0 ~max:1.0 (Rune.mul_s s factor) in
-  hsv_to_rgb (Rune.concatenate ~axis:c_axis [ h; s'; v ])
+  let s' = Nx.clip ~min:0.0 ~max:1.0 (Nx.mul_s s factor) in
+  hsv_to_rgb (Nx.concatenate ~axis:c_axis [ h; s'; v ])
 
 let adjust_hue delta img =
   let hsv = rgb_to_hsv img in
-  let shape = Rune.shape hsv in
+  let shape = Nx.shape hsv in
   let rank = Array.length shape in
   let c_axis = rank - 1 in
   let h =
-    Rune.slice
-      (List.init rank (fun ax -> if ax = c_axis then Rune.R (0, 1) else Rune.A))
+    Nx.slice
+      (List.init rank (fun ax -> if ax = c_axis then Nx.R (0, 1) else Nx.A))
       hsv
   in
   let s =
-    Rune.slice
-      (List.init rank (fun ax -> if ax = c_axis then Rune.R (1, 2) else Rune.A))
+    Nx.slice
+      (List.init rank (fun ax -> if ax = c_axis then Nx.R (1, 2) else Nx.A))
       hsv
   in
   let v =
-    Rune.slice
-      (List.init rank (fun ax -> if ax = c_axis then Rune.R (2, 3) else Rune.A))
+    Nx.slice
+      (List.init rank (fun ax -> if ax = c_axis then Nx.R (2, 3) else Nx.A))
       hsv
   in
   (* Wrap hue to [0, 1] *)
-  let h' = Rune.add_s h delta in
-  let h' = Rune.sub h' (Rune.floor h') in
-  hsv_to_rgb (Rune.concatenate ~axis:c_axis [ h'; s; v ])
+  let h' = Nx.add_s h delta in
+  let h' = Nx.sub h' (Nx.floor h') in
+  hsv_to_rgb (Nx.concatenate ~axis:c_axis [ h'; s; v ])
 
-let adjust_gamma gamma img = Rune.pow_s img gamma
-let invert img = Rune.sub (Rune.ones_like img) img
+let adjust_gamma gamma img = Nx.pow_s img gamma
+let invert img = Nx.sub (Nx.ones_like img) img

@@ -3,10 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module F = Nx_core.Make_frontend (Nx_backend)
+module F = Nx_core.Make_frontend (Nx_effect)
 include F
 
-let context = Lazy.from_fun Nx_backend.create_context
+let context = Lazy.from_fun Nx_effect.create_context
 
 module Rng = Nx_core.Rng
 
