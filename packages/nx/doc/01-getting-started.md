@@ -92,7 +92,7 @@ let () =
     (Array.to_list (shape x) |> List.map string_of_int |> String.concat "; ");
   Printf.printf "ndim: %d\n" (ndim x);         (* 3 *)
   Printf.printf "size: %d\n" (size x);          (* 24 *)
-  Printf.printf "dtype: %s\n" (Dtype.to_string (dtype x))
+  Printf.printf "dtype: %s\n" (dtype_to_string (dtype x))
 ```
 
 ## Element-wise Operations
