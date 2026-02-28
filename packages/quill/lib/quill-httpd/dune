@@ -2,7 +2,14 @@
  (name quill_httpd)
  (public_name quill.httpd)
  (modules httpd quill_httpd protocol assets)
- (libraries quill quill.markdown quill.raven unix threads.posix))
+ (libraries
+  quill
+  quill.markdown
+  quill.raven
+  jsont
+  jsont.bytesrw
+  unix
+  threads.posix))
 
 ; Generate assets.ml from committed frontend/dist
 

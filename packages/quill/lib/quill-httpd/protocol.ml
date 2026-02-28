@@ -5,254 +5,52 @@
 
 open Quill
 
-let err_expected_char : _ format = "expected '%c' at %d"
-let err_invalid_token = "invalid token"
-let err_unterminated_string = "unterminated string"
-let err_unterminated_escape = "unterminated escape"
-let err_short_unicode = "short unicode escape"
-let err_bad_unicode = "bad unicode escape"
-let err_bad_escape : _ format = "bad escape '\\%c'"
-let err_unexpected_char : _ format = "unexpected char '%c' at %d"
-let err_missing_field : _ format = "missing or invalid field '%s'"
-let err_invalid_item : _ format = "invalid item in '%s'"
-let err_unknown_kind : _ format = "unknown cell kind '%s'"
-let err_unknown_msg_type : _ format = "unknown message type '%s'"
-let err_expected_object = "expected JSON object"
 let ( let* ) = Result.bind
 
 (* ───── JSON helpers ───── *)
 
-let json_escape s =
-  let buf = Buffer.create (String.length s) in
-  for i = 0 to String.length s - 1 do
-    match String.unsafe_get s i with
-    | '"' -> Buffer.add_string buf {|\"|}
-    | '\\' -> Buffer.add_string buf {|\\|}
-    | '\n' -> Buffer.add_string buf {|\n|}
-    | '\r' -> Buffer.add_string buf {|\r|}
-    | '\t' -> Buffer.add_string buf {|\t|}
-    | c when Char.code c < 0x20 ->
-        Buffer.add_string buf (Printf.sprintf "\\u%04x" (Char.code c))
-    | c -> Buffer.add_char buf c
-  done;
-  Buffer.contents buf
+let json_obj pairs =
+  Jsont.Json.object' (List.map (fun (k, v) -> (Jsont.Json.name k, v)) pairs)
 
-let jstr s = Printf.sprintf {|"%s"|} (json_escape s)
+let json_mem name = function
+  | Jsont.Object (mems, _) -> (
+      match Jsont.Json.find_mem name mems with
+      | Some (_, v) -> v
+      | None -> Jsont.Null ((), Jsont.Meta.none))
+  | _ -> Jsont.Null ((), Jsont.Meta.none)
 
-(* ───── Minimal JSON parser ───── *)
+let json_of_string s =
+  match Jsont_bytesrw.decode_string Jsont.json s with
+  | Ok v -> Ok v
+  | Error e -> Error e
 
-type json =
-  | Jstring of string
-  | Jnumber of float
-  | Jbool of bool
-  | Jnull
-  | Jarray of json list
-  | Jobject of (string * json) list
+let json_to_string j =
+  match Jsont_bytesrw.encode_string ~format:Jsont.Minify Jsont.json j with
+  | Ok s -> s
+  | Error e -> failwith e
 
-exception Parse_error of string
+(* ───── Field extraction ───── *)
 
-let parse_json (s : string) : json =
-  let len = String.length s in
-  let pos = ref 0 in
-  let peek () = if !pos < len then String.unsafe_get s !pos else '\x00' in
-  let advance () = incr pos in
-  let skip_ws () =
-    while
-      !pos < len
-      &&
-      let c = String.unsafe_get s !pos in
-      c = ' ' || c = '\t' || c = '\n' || c = '\r'
-    do
-      incr pos
-    done
-  in
-  let expect c =
-    skip_ws ();
-    if !pos < len && String.unsafe_get s !pos = c then incr pos
-    else raise (Parse_error (Printf.sprintf err_expected_char c !pos))
-  in
-  let rec parse_value () =
-    skip_ws ();
-    match peek () with
-    | '"' -> Jstring (parse_string ())
-    | '{' -> parse_object ()
-    | '[' -> parse_array ()
-    | 't' ->
-        if !pos + 4 <= len && String.sub s !pos 4 = "true" then (
-          pos := !pos + 4;
-          Jbool true)
-        else raise (Parse_error err_invalid_token)
-    | 'f' ->
-        if !pos + 5 <= len && String.sub s !pos 5 = "false" then (
-          pos := !pos + 5;
-          Jbool false)
-        else raise (Parse_error err_invalid_token)
-    | 'n' ->
-        if !pos + 4 <= len && String.sub s !pos 4 = "null" then (
-          pos := !pos + 4;
-          Jnull)
-        else raise (Parse_error err_invalid_token)
-    | c when c = '-' || (c >= '0' && c <= '9') -> parse_number ()
-    | c -> raise (Parse_error (Printf.sprintf err_unexpected_char c !pos))
-  and parse_string () =
-    expect '"';
-    let buf = Buffer.create 32 in
-    let rec loop () =
-      if !pos >= len then raise (Parse_error err_unterminated_string);
-      match String.unsafe_get s !pos with
-      | '"' ->
-          advance ();
-          Buffer.contents buf
-      | '\\' ->
-          advance ();
-          if !pos >= len then raise (Parse_error err_unterminated_escape);
-          (match String.unsafe_get s !pos with
-          | '"' ->
-              Buffer.add_char buf '"';
-              advance ()
-          | '\\' ->
-              Buffer.add_char buf '\\';
-              advance ()
-          | '/' ->
-              Buffer.add_char buf '/';
-              advance ()
-          | 'n' ->
-              Buffer.add_char buf '\n';
-              advance ()
-          | 'r' ->
-              Buffer.add_char buf '\r';
-              advance ()
-          | 't' ->
-              Buffer.add_char buf '\t';
-              advance ()
-          | 'b' ->
-              Buffer.add_char buf '\b';
-              advance ()
-          | 'u' ->
-              advance ();
-              if !pos + 4 > len then raise (Parse_error err_short_unicode);
-              let hex =
-                try int_of_string ("0x" ^ String.sub s !pos 4)
-                with _ -> raise (Parse_error err_bad_unicode)
-              in
-              pos := !pos + 4;
-              if hex < 0x80 then Buffer.add_char buf (Char.chr hex)
-              else if hex < 0x800 then (
-                Buffer.add_char buf (Char.chr (0xC0 lor (hex lsr 6)));
-                Buffer.add_char buf (Char.chr (0x80 lor (hex land 0x3F))))
-              else (
-                Buffer.add_char buf (Char.chr (0xE0 lor (hex lsr 12)));
-                Buffer.add_char buf
-                  (Char.chr (0x80 lor ((hex lsr 6) land 0x3F)));
-                Buffer.add_char buf (Char.chr (0x80 lor (hex land 0x3F))))
-          | c -> raise (Parse_error (Printf.sprintf err_bad_escape c)));
-          loop ()
-      | c ->
-          Buffer.add_char buf c;
-          advance ();
-          loop ()
-    in
-    loop ()
-  and parse_number () =
-    let start = !pos in
-    if peek () = '-' then advance ();
-    while
-      !pos < len
-      && String.unsafe_get s !pos >= '0'
-      && String.unsafe_get s !pos <= '9'
-    do
-      advance ()
-    done;
-    if !pos < len && String.unsafe_get s !pos = '.' then (
-      advance ();
-      while
-        !pos < len
-        && String.unsafe_get s !pos >= '0'
-        && String.unsafe_get s !pos <= '9'
-      do
-        advance ()
-      done);
-    if
-      !pos < len
-      && (String.unsafe_get s !pos = 'e' || String.unsafe_get s !pos = 'E')
-    then (
-      advance ();
-      if
-        !pos < len
-        && (String.unsafe_get s !pos = '+' || String.unsafe_get s !pos = '-')
-      then advance ();
-      while
-        !pos < len
-        && String.unsafe_get s !pos >= '0'
-        && String.unsafe_get s !pos <= '9'
-      do
-        advance ()
-      done);
-    Jnumber (float_of_string (String.sub s start (!pos - start)))
-  and parse_object () =
-    expect '{';
-    skip_ws ();
-    if peek () = '}' then (
-      advance ();
-      Jobject [])
-    else
-      let rec loop acc =
-        skip_ws ();
-        let key = parse_string () in
-        expect ':';
-        let value = parse_value () in
-        let acc = (key, value) :: acc in
-        skip_ws ();
-        if peek () = ',' then (
-          advance ();
-          loop acc)
-        else (
-          expect '}';
-          Jobject (List.rev acc))
-      in
-      loop []
-  and parse_array () =
-    expect '[';
-    skip_ws ();
-    if peek () = ']' then (
-      advance ();
-      Jarray [])
-    else
-      let rec loop acc =
-        let value = parse_value () in
-        let acc = value :: acc in
-        skip_ws ();
-        if peek () = ',' then (
-          advance ();
-          loop acc)
-        else (
-          expect ']';
-          Jarray (List.rev acc))
-      in
-      loop []
-  in
-  parse_value ()
+let get_string name json =
+  match json_mem name json with
+  | Jsont.String (s, _) -> Ok s
+  | _ -> Error (Printf.sprintf "missing or invalid field '%s'" name)
 
-let get_string key fields =
-  match List.assoc_opt key fields with
-  | Some (Jstring s) -> Ok s
-  | _ -> Error (Printf.sprintf err_missing_field key)
+let get_int name json =
+  match json_mem name json with
+  | Jsont.Number (n, _) -> Ok (int_of_float n)
+  | _ -> Error (Printf.sprintf "missing or invalid field '%s'" name)
 
-let get_int key fields =
-  match List.assoc_opt key fields with
-  | Some (Jnumber n) -> Ok (int_of_float n)
-  | _ -> Error (Printf.sprintf err_missing_field key)
-
-let get_string_list key fields =
-  match List.assoc_opt key fields with
-  | Some (Jarray items) ->
+let get_string_list name json =
+  match json_mem name json with
+  | Jsont.Array (items, _) ->
       let rec collect acc = function
         | [] -> Ok (List.rev acc)
-        | Jstring s :: rest -> collect (s :: acc) rest
-        | _ -> Error (Printf.sprintf err_invalid_item key)
+        | Jsont.String (s, _) :: rest -> collect (s :: acc) rest
+        | _ :: _ -> Error (Printf.sprintf "invalid item in '%s'" name)
       in
       collect [] items
-  | _ -> Error (Printf.sprintf err_missing_field key)
+  | _ -> Error (Printf.sprintf "missing or invalid field '%s'" name)
 
 (* ───── Client message parsing ───── *)
 
@@ -276,70 +74,69 @@ type client_msg =
   | Type_at of { request_id : string; code : string; pos : int }
   | Diagnostics of { request_id : string; code : string }
 
-let parse_kind fields =
-  match get_string "kind" fields with
+let parse_kind json =
+  match get_string "kind" json with
   | Ok "code" -> Ok `Code
   | Ok "text" -> Ok `Text
-  | Ok k -> Error (Printf.sprintf err_unknown_kind k)
+  | Ok k -> Error (Printf.sprintf "unknown cell kind '%s'" k)
   | Error e -> Error e
 
 let client_msg_of_json s =
-  match parse_json s with
-  | Jobject fields -> (
-      match get_string "type" fields with
+  match json_of_string s with
+  | Error e -> Error e
+  | Ok json -> (
+      match get_string "type" json with
       | Ok "update_source" ->
-          let* cell_id = get_string "cell_id" fields in
-          let* source = get_string "source" fields in
+          let* cell_id = get_string "cell_id" json in
+          let* source = get_string "source" json in
           Ok (Update_source { cell_id; source })
       | Ok "checkpoint" -> Ok Checkpoint
       | Ok "execute_cell" ->
-          let* cell_id = get_string "cell_id" fields in
+          let* cell_id = get_string "cell_id" json in
           Ok (Execute_cell { cell_id })
       | Ok "execute_cells" ->
-          let* cell_ids = get_string_list "cell_ids" fields in
+          let* cell_ids = get_string_list "cell_ids" json in
           Ok (Execute_cells { cell_ids })
       | Ok "execute_all" -> Ok Execute_all
       | Ok "interrupt" -> Ok Interrupt
       | Ok "insert_cell" ->
-          let* pos = get_int "pos" fields in
-          let* kind = parse_kind fields in
+          let* pos = get_int "pos" json in
+          let* kind = parse_kind json in
           Ok (Insert_cell { pos; kind })
       | Ok "delete_cell" ->
-          let* cell_id = get_string "cell_id" fields in
+          let* cell_id = get_string "cell_id" json in
           Ok (Delete_cell { cell_id })
       | Ok "move_cell" ->
-          let* cell_id = get_string "cell_id" fields in
-          let* pos = get_int "pos" fields in
+          let* cell_id = get_string "cell_id" json in
+          let* pos = get_int "pos" json in
           Ok (Move_cell { cell_id; pos })
       | Ok "set_cell_kind" ->
-          let* cell_id = get_string "cell_id" fields in
-          let* kind = parse_kind fields in
+          let* cell_id = get_string "cell_id" json in
+          let* kind = parse_kind json in
           Ok (Set_cell_kind { cell_id; kind })
       | Ok "clear_outputs" ->
-          let* cell_id = get_string "cell_id" fields in
+          let* cell_id = get_string "cell_id" json in
           Ok (Clear_outputs { cell_id })
       | Ok "clear_all_outputs" -> Ok Clear_all_outputs
       | Ok "save" -> Ok Save
       | Ok "undo" -> Ok Undo
       | Ok "redo" -> Ok Redo
       | Ok "complete" ->
-          let* request_id = get_string "request_id" fields in
-          let* code = get_string "code" fields in
-          let* pos = get_int "pos" fields in
+          let* request_id = get_string "request_id" json in
+          let* code = get_string "code" json in
+          let* pos = get_int "pos" json in
           Ok (Complete { request_id; code; pos })
       | Ok "type_at" ->
-          let* request_id = get_string "request_id" fields in
-          let* code = get_string "code" fields in
-          let* pos = get_int "pos" fields in
+          let* request_id = get_string "request_id" json in
+          let* code = get_string "code" json in
+          let* pos = get_int "pos" json in
           Ok (Type_at { request_id; code; pos })
       | Ok "diagnostics" ->
-          let* request_id = get_string "request_id" fields in
-          let* code = get_string "code" fields in
+          let* request_id = get_string "request_id" json in
+          let* code = get_string "code" json in
           Ok (Diagnostics { request_id; code })
-      | Ok t -> Error (Printf.sprintf err_unknown_msg_type t)
+      | Ok t -> Error (Printf.sprintf "unknown message type '%s'" t)
       | Error e -> Error e)
-  | _ -> Error err_expected_object
-  | exception Parse_error msg -> Error msg
 
 (* ───── Server message encoding ───── *)
 
@@ -350,63 +147,116 @@ let status_string = function
 
 let output_to_json (o : Cell.output) =
   match o with
-  | Stdout text -> Printf.sprintf {|{"kind":"stdout","text":%s}|} (jstr text)
-  | Stderr text -> Printf.sprintf {|{"kind":"stderr","text":%s}|} (jstr text)
-  | Error text -> Printf.sprintf {|{"kind":"error","text":%s}|} (jstr text)
+  | Stdout text ->
+      json_obj
+        [
+          ("kind", Jsont.Json.string "stdout"); ("text", Jsont.Json.string text);
+        ]
+  | Stderr text ->
+      json_obj
+        [
+          ("kind", Jsont.Json.string "stderr"); ("text", Jsont.Json.string text);
+        ]
+  | Error text ->
+      json_obj
+        [
+          ("kind", Jsont.Json.string "error"); ("text", Jsont.Json.string text);
+        ]
   | Display { mime; data } ->
-      Printf.sprintf {|{"kind":"display","mime":%s,"data":%s}|} (jstr mime)
-        (jstr data)
+      json_obj
+        [
+          ("kind", Jsont.Json.string "display");
+          ("mime", Jsont.Json.string mime);
+          ("data", Jsont.Json.string data);
+        ]
 
 let cell_to_json (cell : Cell.t) (status : Session.cell_status) =
   match cell with
   | Code { id; source; language; outputs; execution_count } ->
-      let outputs_json =
-        "[" ^ String.concat "," (List.map output_to_json outputs) ^ "]"
-      in
-      Printf.sprintf
-        {|{"id":%s,"kind":"code","source":%s,"language":%s,"outputs":%s,"execution_count":%d,"status":%s}|}
-        (jstr id) (jstr source) (jstr language) outputs_json execution_count
-        (jstr (status_string status))
+      json_obj
+        [
+          ("id", Jsont.Json.string id);
+          ("kind", Jsont.Json.string "code");
+          ("source", Jsont.Json.string source);
+          ("language", Jsont.Json.string language);
+          ("outputs", Jsont.Json.list (List.map output_to_json outputs));
+          ("execution_count", Jsont.Json.int execution_count);
+          ("status", Jsont.Json.string (status_string status));
+        ]
   | Text { id; source } ->
       let html = Quill_markdown.Edit.to_html source in
-      Printf.sprintf
-        {|{"id":%s,"kind":"text","source":%s,"rendered_html":%s,"status":%s}|}
-        (jstr id) (jstr source) (jstr html)
-        (jstr (status_string status))
+      json_obj
+        [
+          ("id", Jsont.Json.string id);
+          ("kind", Jsont.Json.string "text");
+          ("source", Jsont.Json.string source);
+          ("rendered_html", Jsont.Json.string html);
+          ("status", Jsont.Json.string (status_string status));
+        ]
 
 let notebook_to_json ~cells ~can_undo ~can_redo =
-  let cells_json =
-    "["
-    ^ String.concat "," (List.map (fun (c, s) -> cell_to_json c s) cells)
-    ^ "]"
-  in
-  Printf.sprintf {|{"type":"notebook","cells":%s,"can_undo":%b,"can_redo":%b}|}
-    cells_json can_undo can_redo
+  json_to_string
+    (json_obj
+       [
+         ("type", Jsont.Json.string "notebook");
+         ( "cells",
+           Jsont.Json.list (List.map (fun (c, s) -> cell_to_json c s) cells) );
+         ("can_undo", Jsont.Json.bool can_undo);
+         ("can_redo", Jsont.Json.bool can_redo);
+       ])
 
 let cell_output_to_json ~cell_id output =
-  Printf.sprintf {|{"type":"cell_output","cell_id":%s,"output":%s}|}
-    (jstr cell_id) (output_to_json output)
+  json_to_string
+    (json_obj
+       [
+         ("type", Jsont.Json.string "cell_output");
+         ("cell_id", Jsont.Json.string cell_id);
+         ("output", output_to_json output);
+       ])
 
 let cell_status_to_json ~cell_id status =
-  Printf.sprintf {|{"type":"cell_status","cell_id":%s,"status":%s}|}
-    (jstr cell_id)
-    (jstr (status_string status))
+  json_to_string
+    (json_obj
+       [
+         ("type", Jsont.Json.string "cell_status");
+         ("cell_id", Jsont.Json.string cell_id);
+         ("status", Jsont.Json.string (status_string status));
+       ])
 
 let cell_inserted_to_json ~pos cell status =
-  Printf.sprintf {|{"type":"cell_inserted","pos":%d,"cell":%s}|} pos
-    (cell_to_json cell status)
+  json_to_string
+    (json_obj
+       [
+         ("type", Jsont.Json.string "cell_inserted");
+         ("pos", Jsont.Json.int pos);
+         ("cell", cell_to_json cell status);
+       ])
 
 let cell_deleted_to_json ~cell_id =
-  Printf.sprintf {|{"type":"cell_deleted","cell_id":%s}|} (jstr cell_id)
+  json_to_string
+    (json_obj
+       [
+         ("type", Jsont.Json.string "cell_deleted");
+         ("cell_id", Jsont.Json.string cell_id);
+       ])
 
 let cell_moved_to_json ~cell_id ~pos =
-  Printf.sprintf {|{"type":"cell_moved","cell_id":%s,"pos":%d}|} (jstr cell_id)
-    pos
+  json_to_string
+    (json_obj
+       [
+         ("type", Jsont.Json.string "cell_moved");
+         ("cell_id", Jsont.Json.string cell_id);
+         ("pos", Jsont.Json.int pos);
+       ])
 
 let cell_updated_to_json cell status =
-  Printf.sprintf {|{"type":"cell_updated","cell_id":%s,"cell":%s}|}
-    (jstr (Cell.id cell))
-    (cell_to_json cell status)
+  json_to_string
+    (json_obj
+       [
+         ("type", Jsont.Json.string "cell_updated");
+         ("cell_id", Jsont.Json.string (Cell.id cell));
+         ("cell", cell_to_json cell status);
+       ])
 
 let completion_kind_to_string = function
   | Kernel.Value -> "value"
@@ -417,51 +267,85 @@ let completion_kind_to_string = function
   | Label -> "label"
 
 let completion_item_to_json (item : Kernel.completion_item) =
-  Printf.sprintf {|{"label":%s,"kind":%s,"detail":%s}|} (jstr item.label)
-    (jstr (completion_kind_to_string item.kind))
-    (jstr item.detail)
+  json_obj
+    [
+      ("label", Jsont.Json.string item.label);
+      ("kind", Jsont.Json.string (completion_kind_to_string item.kind));
+      ("detail", Jsont.Json.string item.detail);
+    ]
 
 let completions_to_json ~request_id items =
-  let items_json =
-    "[" ^ String.concat "," (List.map completion_item_to_json items) ^ "]"
-  in
-  Printf.sprintf {|{"type":"completions","request_id":%s,"items":%s}|}
-    (jstr request_id) items_json
+  json_to_string
+    (json_obj
+       [
+         ("type", Jsont.Json.string "completions");
+         ("request_id", Jsont.Json.string request_id);
+         ("items", Jsont.Json.list (List.map completion_item_to_json items));
+       ])
 
 let type_at_to_json ~request_id info =
   let info_json =
     match info with
-    | None -> "null"
+    | None -> Jsont.Json.null ()
     | Some (ti : Kernel.type_info) ->
-        let doc_json = match ti.doc with Some d -> jstr d | None -> "null" in
-        Printf.sprintf {|{"type":%s,"doc":%s,"from":%d,"to":%d}|} (jstr ti.typ)
-          doc_json ti.from_pos ti.to_pos
+        let doc_json =
+          match ti.doc with
+          | Some d -> Jsont.Json.string d
+          | None -> Jsont.Json.null ()
+        in
+        json_obj
+          [
+            ("type", Jsont.Json.string ti.typ);
+            ("doc", doc_json);
+            ("from", Jsont.Json.int ti.from_pos);
+            ("to", Jsont.Json.int ti.to_pos);
+          ]
   in
-  Printf.sprintf {|{"type":"type_at","request_id":%s,"info":%s}|}
-    (jstr request_id) info_json
+  json_to_string
+    (json_obj
+       [
+         ("type", Jsont.Json.string "type_at");
+         ("request_id", Jsont.Json.string request_id);
+         ("info", info_json);
+       ])
 
 let severity_to_string = function
   | Kernel.Error -> "error"
   | Warning -> "warning"
 
 let diagnostic_to_json (d : Kernel.diagnostic) =
-  Printf.sprintf {|{"from":%d,"to":%d,"severity":%s,"message":%s}|} d.from_pos
-    d.to_pos
-    (jstr (severity_to_string d.severity))
-    (jstr d.message)
+  json_obj
+    [
+      ("from", Jsont.Json.int d.from_pos);
+      ("to", Jsont.Json.int d.to_pos);
+      ("severity", Jsont.Json.string (severity_to_string d.severity));
+      ("message", Jsont.Json.string d.message);
+    ]
 
 let diagnostics_to_json ~request_id items =
-  let items_json =
-    "[" ^ String.concat "," (List.map diagnostic_to_json items) ^ "]"
-  in
-  Printf.sprintf {|{"type":"diagnostics","request_id":%s,"items":%s}|}
-    (jstr request_id) items_json
+  json_to_string
+    (json_obj
+       [
+         ("type", Jsont.Json.string "diagnostics");
+         ("request_id", Jsont.Json.string request_id);
+         ("items", Jsont.Json.list (List.map diagnostic_to_json items));
+       ])
 
-let saved_to_json () = {|{"type":"saved"}|}
+let saved_to_json () =
+  json_to_string (json_obj [ ("type", Jsont.Json.string "saved") ])
 
 let undo_redo_to_json ~can_undo ~can_redo =
-  Printf.sprintf {|{"type":"undo_redo","can_undo":%b,"can_redo":%b}|} can_undo
-    can_redo
+  json_to_string
+    (json_obj
+       [
+         ("type", Jsont.Json.string "undo_redo");
+         ("can_undo", Jsont.Json.bool can_undo);
+         ("can_redo", Jsont.Json.bool can_redo);
+       ])
 
 let error_to_json msg =
-  Printf.sprintf {|{"type":"error","message":%s}|} (jstr msg)
+  json_to_string
+    (json_obj
+       [
+         ("type", Jsont.Json.string "error"); ("message", Jsont.Json.string msg);
+       ])

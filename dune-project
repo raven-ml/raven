@@ -212,6 +212,7 @@
   dune
   cmarkit
   cmdliner
+  jsont
   (windtrap :with-test)
   (mdx :with-test))
  (tags
