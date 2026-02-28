@@ -5,6 +5,13 @@
 
 open Quill
 
+(* Dedicated log channel: a dup of stderr taken at module init, before any
+   FD redirection by the toplevel kernel. This ensures debug logging never
+   writes to the capture pipe, avoiding feedback loops. *)
+let log_fd = Unix.dup ~cloexec:true Unix.stderr
+let log_oc = Unix.out_channel_of_descr log_fd
+let log fmt = Printf.ksprintf (fun s -> output_string log_oc s; flush log_oc) fmt
+
 let err_file_not_found : _ format = "Error: %s not found\n%!"
 
 (* ───── File I/O ───── *)
@@ -39,7 +46,7 @@ let send st msg =
   let preview =
     if String.length msg > 120 then String.sub msg 0 120 ^ "…" else msg
   in
-  Printf.eprintf "[ws:send] %s\n%!" preview;
+  log "[ws:send] %s\n%!" preview;
   match st.ws with Some ws -> Httpd.ws_send ws msg | None -> ()
 
 let send_undo_redo st =
@@ -96,12 +103,12 @@ let on_kernel_event st = function
         | Error _ -> "error"
         | Display _ -> "display"
       in
-      Printf.eprintf "[kernel] output %s for %s\n%!" kind cell_id;
+      log "[kernel] output %s for %s\n%!" kind cell_id;
       locked st (fun () ->
           st.session <- Session.apply_output cell_id output st.session;
           send st (Protocol.cell_output_to_json ~cell_id output))
   | Kernel.Finished { cell_id; success } ->
-      Printf.eprintf "[kernel] finished %s success=%b\n%!" cell_id success;
+      log "[kernel] finished %s success=%b\n%!" cell_id success;
       locked st (fun () ->
           st.session <- Session.finish_execution cell_id ~success st.session;
           match Doc.find cell_id (Session.doc st.session) with
@@ -109,7 +116,7 @@ let on_kernel_event st = function
               let status = Session.cell_status cell_id st.session in
               send st (Protocol.cell_updated_to_json cell status)
           | None ->
-              Printf.eprintf "[kernel] cell %s not found after finish!\n%!"
+              log "[kernel] cell %s not found after finish!\n%!"
                 cell_id)
   | Kernel.Status_changed _ -> ()
 
@@ -209,7 +216,7 @@ let client_msg_name = function
   | Diagnostics _ -> "diagnostics"
 
 let handle_msg st msg =
-  Printf.eprintf "[ws:recv] %s\n%!" (client_msg_name msg);
+  log "[ws:recv] %s\n%!" (client_msg_name msg);
   match msg with
   | Protocol.Interrupt -> st.kernel.interrupt ()
   | Protocol.Complete { request_id; code; pos } ->
@@ -230,7 +237,7 @@ let handle_msg st msg =
   | msg -> locked st (fun () -> handle_client_msg st msg)
 
 let ws_handler st _req ws =
-  Printf.eprintf "[ws] connection opened\n%!";
+  log "[ws] connection opened\n%!";
   locked st (fun () ->
       st.ws <- Some ws;
       send_notebook st);
@@ -245,7 +252,7 @@ let ws_handler st _req ws =
             locked st (fun () -> send st (Protocol.error_to_json err));
             loop ())
     | None ->
-        Printf.eprintf "[ws] connection closed\n%!";
+        log "[ws] connection closed\n%!";
         locked st (fun () ->
             (* Only clear if we're still the active connection *)
             match st.ws with

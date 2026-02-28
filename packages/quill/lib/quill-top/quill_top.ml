@@ -122,15 +122,7 @@ let capture ~on_stdout ~on_stderr ~on_display f =
             (fun fd ->
               match read_available fd with
               | Some s when s <> "" ->
-                  (* Temporarily restore real stderr/stdout before calling
-                     callbacks, so any logging inside the callback (e.g.
-                     Printf.eprintf in the event handler) goes to the real
-                     terminal, not back into the capture pipe. *)
-                  Unix.dup2 ~cloexec:false stdout_backup Unix.stdout;
-                  Unix.dup2 ~cloexec:false stderr_backup Unix.stderr;
-                  if fd == rd_out then on_stdout s else on_stderr s;
-                  Unix.dup2 ~cloexec:false wr_out Unix.stdout;
-                  Unix.dup2 ~cloexec:false wr_err Unix.stderr
+                  if fd == rd_out then on_stdout s else on_stderr s
               | _ -> ())
             ready
         done)
