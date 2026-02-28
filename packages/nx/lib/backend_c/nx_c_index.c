@@ -189,8 +189,8 @@ typedef struct {
 
 static void multi_iterator_init(multi_iterator_t *it, const ndarray_t *nd) {
   it->ndim = nd->ndim;
-  it->shape = (long *)caml_stat_alloc(it->ndim * sizeof(long));
-  it->coords = (long *)caml_stat_alloc(it->ndim * sizeof(long));
+  it->shape = (long *)malloc(it->ndim * sizeof(long));
+  it->coords = (long *)calloc(it->ndim, sizeof(long));
   it->has_elements = 1;
   for (int i = 0; i < it->ndim; i++) {
     long dim = nd->shape[i];
@@ -211,8 +211,8 @@ static int multi_iterator_next(multi_iterator_t *it) {
 }
 
 static void multi_iterator_destroy(multi_iterator_t *it) {
-  caml_stat_free(it->shape);
-  caml_stat_free(it->coords);
+  free(it->shape);
+  free(it->coords);
 }
 
 static long compute_offset(const ndarray_t *nd, const long *coords) {
@@ -295,9 +295,7 @@ static inline size_t elem_size_from_kind(int kind) {
 }
 
 // Zero the output array - requires passing the value to access bigarray
-static void zero_ndarray(ndarray_t *nd, value v_tensor, int kind) {
-  value v_data = Field(v_tensor, FFI_TENSOR_DATA);
-  struct caml_ba_array *ba = Caml_ba_array_val(v_data);
+static void zero_ndarray(ndarray_t *nd, void *data, int kind) {
   long total_elems = total_elements_safe(nd);
   double bytes_per_elem = get_elem_byte_size(kind);
   long total_bytes;
@@ -306,7 +304,7 @@ static void zero_ndarray(ndarray_t *nd, value v_tensor, int kind) {
   } else {
     total_bytes = (long)(total_elems * bytes_per_elem);
   }
-  memset(ba->data, 0, total_bytes);
+  memset(data, 0, total_bytes);
 }
 
 // Helper to copy data from one ndarray to another (assuming same shape)
@@ -438,7 +436,7 @@ static const char *generic_gather(const ndarray_t *data,
 static const char *generic_scatter(const ndarray_t *template,
                                    const ndarray_t *indices,
                                    const ndarray_t *updates, ndarray_t *out,
-                                   value v_out, int axis, elem_op_fn op,
+                                   void *out_raw_data, int axis, elem_op_fn op,
                                    int unique, int kind, int mode) {
   const char *error_msg = NULL;
 
@@ -483,7 +481,7 @@ static const char *generic_scatter(const ndarray_t *template,
     copy_ndarray(template, out, kind);
   } else {
     // Add mode - zero the output
-    zero_ndarray(out, v_out, kind);
+    zero_ndarray(out, out_raw_data, kind);
   }
 
   multi_iterator_t it;
@@ -767,13 +765,17 @@ static void dispatch_scatter(value v_template, value v_indices, value v_updates,
 
   if (!op) caml_failwith("scatter not supported for dtype");
 
-  int unique = Bool_val(
-      v_unique);  // Currently ignored, but can be used for future optimizations
+  int unique = Bool_val(v_unique);
+  int mode = Int_val(v_mode);
+
+  // Derive the raw data pointer for zeroing BEFORE releasing the runtime lock.
+  value actual_v_out = (v_out == Val_int(0)) ? v_template : v_out;
+  value v_actual_data = Field(actual_v_out, FFI_TENSOR_DATA);
+  void *out_raw_data = Caml_ba_data_val(v_actual_data);
 
   caml_enter_blocking_section();
-  value actual_v_out = (v_out == Val_int(0)) ? v_template : v_out;
   const char *error = generic_scatter(&templ, &indices, &updates, &out,
-                                      actual_v_out, axis, op, unique, kind, Int_val(v_mode));
+                                      out_raw_data, axis, op, unique, kind, mode);
   caml_leave_blocking_section();
 
   cleanup_ndarray(&indices);
@@ -804,7 +806,8 @@ CAMLprim value caml_nx_op_gather(value v_data, value v_indices, value v_out,
 CAMLprim value caml_nx_op_scatter(value v_template, value v_indices,
                                   value v_updates, value v_axis, value v_out,
                                   value v_mode, value v_unique) {
-  CAMLparam0();  // More params, but camlparam max 5, use 0 for simplicity
+  CAMLparam5(v_template, v_indices, v_updates, v_axis, v_out);
+  CAMLxparam2(v_mode, v_unique);
   dispatch_scatter(v_template, v_indices, v_updates, v_out, Int_val(v_axis),
                    v_mode, v_unique);
   CAMLreturn(Val_unit);

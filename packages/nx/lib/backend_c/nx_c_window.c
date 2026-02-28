@@ -296,26 +296,12 @@ static long leading_offset(const ndarray_t* t, int leading_ndim,
 // input:  (*leading, *spatial_K)
 // output: (*leading, kernel_prod, L)
 static void nx_c_unfold_impl(const ndarray_t* in, ndarray_t* out,
-                             value v_kernel_size, value v_stride,
-                             value v_dilation, value v_padding,
+                             int K, const long* kernel_size,
+                             const long* stride_arr, const long* dilation_arr,
+                             const long* pad_before, const long* pad_after,
                              int leading_ndim, const type_ops_t* ops,
                              size_t elem_size) {
-  int K = Wosize_val(v_kernel_size);
-
-  long* kernel_size = (long*)calloc(K, sizeof(long));
-  long* stride = (long*)calloc(K, sizeof(long));
-  long* dilation = (long*)calloc(K, sizeof(long));
-  long* pad_before = (long*)calloc(K, sizeof(long));
-  long* pad_after = (long*)calloc(K, sizeof(long));
   long* out_spatial = (long*)calloc(K, sizeof(long));
-
-  for (int d = 0; d < K; d++) {
-    kernel_size[d] = Long_val(Field(v_kernel_size, d));
-    stride[d] = Long_val(Field(v_stride, d));
-    dilation[d] = Long_val(Field(v_dilation, d));
-    pad_before[d] = Long_val(Field(v_padding, 2 * d));
-    pad_after[d] = Long_val(Field(v_padding, 2 * d + 1));
-  }
 
   // Compute leading_size = product of all leading dimensions
   long leading_size = 1;
@@ -324,10 +310,10 @@ static void nx_c_unfold_impl(const ndarray_t* in, ndarray_t* out,
   long kernel_prod = 1;
   bool no_padding = true;
   for (int d = 0; d < K; d++) {
-    long effective_ker = dilation[d] * (kernel_size[d] - 1) + 1;
+    long effective_ker = dilation_arr[d] * (kernel_size[d] - 1) + 1;
     long padded = in->shape[leading_ndim + d] + pad_before[d] + pad_after[d];
     long diff = padded - effective_ker;
-    out_spatial[d] = (diff / stride[d]) + 1;
+    out_spatial[d] = (diff / stride_arr[d]) + 1;
     kernel_prod *= kernel_size[d];
     if (pad_before[d] != 0 || pad_after[d] != 0) no_padding = false;
   }
@@ -356,7 +342,7 @@ static void nx_c_unfold_impl(const ndarray_t* in, ndarray_t* out,
       for (long kf = 0; kf < kernel_prod; ++kf) {
         long offset = 0;
         for (int d = 0; d < K; ++d)
-          offset += coords[d] * dilation[d] * in->strides[leading_ndim + d];
+          offset += coords[d] * dilation_arr[d] * in->strides[leading_ndim + d];
         kernel_offsets[kf] = offset;
         for (int d = K - 1; d >= 0; --d) {
           coords[d]++;
@@ -372,7 +358,7 @@ static void nx_c_unfold_impl(const ndarray_t* in, ndarray_t* out,
   if (no_padding) {
     long stride_steps[MAX_SPATIAL_DIMS];
     for (int d = 0; d < K; ++d)
-      stride_steps[d] = stride[d] * in->strides[leading_ndim + d];
+      stride_steps[d] = stride_arr[d] * in->strides[leading_ndim + d];
 
     for (long lead = 0; lead < leading_size; ++lead) {
       long base_in = leading_offset(in, leading_ndim, lead);
@@ -423,7 +409,7 @@ static void nx_c_unfold_impl(const ndarray_t* in, ndarray_t* out,
         bool valid = true;
         for (int d = 0; d < K; d++) {
           long sp =
-              block_pos[d] * stride[d] + k_pos[d] * dilation[d] - pad_before[d];
+              block_pos[d] * stride_arr[d] + k_pos[d] * dilation_arr[d] - pad_before[d];
           if (sp < 0 || sp >= in->shape[leading_ndim + d]) {
             valid = false;
             break;
@@ -443,11 +429,6 @@ static void nx_c_unfold_impl(const ndarray_t* in, ndarray_t* out,
   }
 
 cleanup:
-  free(kernel_size);
-  free(stride);
-  free(dilation);
-  free(pad_before);
-  free(pad_after);
   free(out_spatial);
   free(out_cumprod);
   if (kernel_offsets) free(kernel_offsets);
@@ -457,27 +438,11 @@ cleanup:
 // input:  (*leading, kernel_prod, L)
 // output: (*leading, *output_size)
 static void nx_c_fold_impl(const ndarray_t* in, ndarray_t* out,
-                           value v_output_size, value v_kernel_size,
-                           value v_stride, value v_dilation, value v_padding,
-                           int leading_ndim, const type_ops_t* ops,
-                           size_t elem_size) {
-  int K = Wosize_val(v_output_size);
-
-  long* output_size = (long*)calloc(K, sizeof(long));
-  long* kernel_size = (long*)calloc(K, sizeof(long));
-  long* stride = (long*)calloc(K, sizeof(long));
-  long* dilation = (long*)calloc(K, sizeof(long));
-  long* pad_before = (long*)calloc(K, sizeof(long));
-  long* pad_after = (long*)calloc(K, sizeof(long));
-
-  for (int d = 0; d < K; d++) {
-    output_size[d] = Long_val(Field(v_output_size, d));
-    kernel_size[d] = Long_val(Field(v_kernel_size, d));
-    stride[d] = Long_val(Field(v_stride, d));
-    dilation[d] = Long_val(Field(v_dilation, d));
-    pad_before[d] = Long_val(Field(v_padding, 2 * d));
-    pad_after[d] = Long_val(Field(v_padding, 2 * d + 1));
-  }
+                           int K, const long* output_size,
+                           const long* kernel_size, const long* stride_arr,
+                           const long* dilation_arr, const long* pad_before,
+                           const long* pad_after, int leading_ndim,
+                           const type_ops_t* ops, size_t elem_size) {
 
   // Compute leading_size = product of all leading dimensions
   long leading_size = 1;
@@ -489,10 +454,10 @@ static void nx_c_fold_impl(const ndarray_t* in, ndarray_t* out,
   long expected_block[MAX_SPATIAL_DIMS];
   long expected_L = 1;
   for (int d = 0; d < K; d++) {
-    long effective_ker = dilation[d] * (kernel_size[d] - 1) + 1;
+    long effective_ker = dilation_arr[d] * (kernel_size[d] - 1) + 1;
     long padded = output_size[d] + pad_before[d] + pad_after[d];
     long diff = padded - effective_ker;
-    expected_block[d] = (diff / stride[d]) + 1;
+    expected_block[d] = (diff / stride_arr[d]) + 1;
     expected_L *= expected_block[d];
   }
 
@@ -529,7 +494,7 @@ static void nx_c_fold_impl(const ndarray_t* in, ndarray_t* out,
         bool valid = true;
         for (int d = 0; d < K; d++) {
           long sp =
-              block_pos[d] * stride[d] + k_pos[d] * dilation[d] - pad_before[d];
+              block_pos[d] * stride_arr[d] + k_pos[d] * dilation_arr[d] - pad_before[d];
           if (sp < 0 || sp >= out->shape[leading_ndim + d]) {
             valid = false;
             break;
@@ -546,12 +511,6 @@ static void nx_c_fold_impl(const ndarray_t* in, ndarray_t* out,
     }
   }
 
-  free(output_size);
-  free(kernel_size);
-  free(stride);
-  free(dilation);
-  free(pad_before);
-  free(pad_after);
   free(out_cumprod);
 }
 
@@ -665,10 +624,30 @@ CAMLprim value caml_nx_op_unfold(value v_in, value v_kernel_size,
     }
   }
 
+  // Extract OCaml arrays into C arrays BEFORE releasing the runtime lock.
+  long* c_kernel_size = (long*)calloc(K, sizeof(long));
+  long* c_stride = (long*)calloc(K, sizeof(long));
+  long* c_dilation = (long*)calloc(K, sizeof(long));
+  long* c_pad_before = (long*)calloc(K, sizeof(long));
+  long* c_pad_after = (long*)calloc(K, sizeof(long));
+  for (int d = 0; d < K; d++) {
+    c_kernel_size[d] = Long_val(Field(v_kernel_size, d));
+    c_stride[d] = Long_val(Field(v_stride, d));
+    c_dilation[d] = Long_val(Field(v_dilation, d));
+    c_pad_before[d] = Long_val(Field(v_padding, 2 * d));
+    c_pad_after[d] = Long_val(Field(v_padding, 2 * d + 1));
+  }
+
   caml_enter_blocking_section();
-  nx_c_unfold_impl(&input, &output, v_kernel_size, v_stride, v_dilation,
-                   v_padding, leading_ndim, ops, elem_size);
+  nx_c_unfold_impl(&input, &output, K, c_kernel_size, c_stride, c_dilation,
+                   c_pad_before, c_pad_after, leading_ndim, ops, elem_size);
   caml_leave_blocking_section();
+
+  free(c_kernel_size);
+  free(c_stride);
+  free(c_dilation);
+  free(c_pad_before);
+  free(c_pad_after);
 
   cleanup_ndarray(&input);
   cleanup_ndarray(&output);
@@ -754,10 +733,34 @@ CAMLprim value caml_nx_op_fold(value v_in, value v_output_size,
     }
   }
 
+  // Extract OCaml arrays into C arrays BEFORE releasing the runtime lock.
+  long* c_output_size = (long*)calloc(K, sizeof(long));
+  long* c_kernel_size = (long*)calloc(K, sizeof(long));
+  long* c_stride = (long*)calloc(K, sizeof(long));
+  long* c_dilation = (long*)calloc(K, sizeof(long));
+  long* c_pad_before = (long*)calloc(K, sizeof(long));
+  long* c_pad_after = (long*)calloc(K, sizeof(long));
+  for (int d = 0; d < K; d++) {
+    c_output_size[d] = Long_val(Field(v_output_size, d));
+    c_kernel_size[d] = Long_val(Field(v_kernel_size, d));
+    c_stride[d] = Long_val(Field(v_stride, d));
+    c_dilation[d] = Long_val(Field(v_dilation, d));
+    c_pad_before[d] = Long_val(Field(v_padding, 2 * d));
+    c_pad_after[d] = Long_val(Field(v_padding, 2 * d + 1));
+  }
+
   caml_enter_blocking_section();
-  nx_c_fold_impl(&input, &output, v_output_size, v_kernel_size, v_stride,
-                 v_dilation, v_padding, leading_ndim, ops, elem_size);
+  nx_c_fold_impl(&input, &output, K, c_output_size, c_kernel_size, c_stride,
+                 c_dilation, c_pad_before, c_pad_after, leading_ndim, ops,
+                 elem_size);
   caml_leave_blocking_section();
+
+  free(c_output_size);
+  free(c_kernel_size);
+  free(c_stride);
+  free(c_dilation);
+  free(c_pad_before);
+  free(c_pad_after);
 
   cleanup_ndarray(&input);
   cleanup_ndarray(&output);
