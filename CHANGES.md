@@ -23,17 +23,14 @@ kaun-board — were built as part of our Outreachy internships.
 - **kaun-board** (new, Outreachy) — TUI dashboard for monitoring training
   runs in the terminal. Live metrics, loss curves, and system stats.
 - **quill** — Rewritten from the ground up with two interfaces: a terminal UI
-  with syntax highlighting, code completion, and a compact single-line footer,
-  and a web frontend via `quill serve` with a CodeMirror 6 editor,
-  WebSocket-based execution, autocompletion, and diagnostics.
+  with syntax highlighting and code completion, and a web frontend via
+  `quill serve` with a CodeMirror 6 editor, WebSocket-based execution,
+  autocompletion, and diagnostics.
 - **brot** — The tokenization library formerly known as saga. Complete rewrite
   with a cleaner API. [1.3-6x faster than HuggingFace Tokenizers](packages/brot/bench/)
   on most benchmarks.
-- **kaun** — Simplified API: new `Fn` and `Activation` modules, CIFAR-10
-  dataset, CLI binary.
-- **nx** — Redesigned backend interface, new buffer abstraction, scipy-style
-  signal processing, RNG moved to Nx with effect-based scoping. Einsum
-  **8-20x** faster, matmul dispatch at BLAS parity with NumPy.
+- **nx** — Redesigned backend interface, RNG with effect-based scoping.
+  Einsum **8-20x** faster, matmul dispatch at BLAS parity with NumPy.
 
 ### Breaking changes
 
@@ -52,8 +49,8 @@ kaun-board — were built as part of our Outreachy internships.
   use `Rune.debug f x` instead.
 - **rune**: Removed JIT/LLVM backend. This will come back in a future
   release with a proper ML compiler.
-- **kaun**: Rewritten core modules, datasets, and HuggingFace integration.
-  Removed `kaun-models`. Extracted console into `kaun-board`.
+- **kaun**: Rewritten core modules API, datasets, and HuggingFace integration.
+  Removed `kaun-models`.
 - **brot**: Renamed from saga. Rewritten API focused on tokenization.
 
 ### Nx
