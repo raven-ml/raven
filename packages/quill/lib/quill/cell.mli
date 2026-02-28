@@ -33,6 +33,14 @@ type output =
             ["text/html"], ["image/png"]). Binary data is base64-encoded in
             [data]. *)
 
+type Format.stag +=
+  | Display_tag of { mime : string; data : string }
+        (** Semantic tag for rich display output. When a pretty-printer opens
+            this tag on a formatter configured by the notebook kernel, the
+            payload is emitted as a {!Display} output. On other formatters the
+            tag is silently ignored and only the text content between the
+            open/close tags is printed. *)
+
 (** {1:cells Cells} *)
 
 type t = private

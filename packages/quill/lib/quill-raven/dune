@@ -12,7 +12,5 @@
   sowilo
   talon
   brot
-  fehu
-  findlib
-  compiler-libs.toplevel)
+  fehu)
  (modes byte))

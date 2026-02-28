@@ -79,12 +79,29 @@ function renderDisplay(mime, data) {
   return div;
 }
 
+/**
+ * Apply carriage-return semantics to terminal text.
+ * A bare \r (not followed by \n) rewinds to the start of the current line,
+ * so subsequent text overwrites it — used by training progress displays.
+ */
+function applyCarriageReturn(existing, incoming) {
+  const combined = existing + incoming;
+  const lines = combined.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const parts = lines[i].split('\r');
+    // Keep only the last segment after any \r
+    lines[i] = parts[parts.length - 1];
+  }
+  return lines.join('\n');
+}
+
 /** Append an output to a cell's output container, coalescing consecutive stdout. */
 export function appendOutputToContainer(container, output) {
-  // Coalesce consecutive stdout without creating a DOM element
+  // Coalesce consecutive stdout, applying \r semantics for progress updates
   if (output.kind === 'stdout' && container.lastElementChild &&
       container.lastElementChild.classList.contains('output-stdout')) {
-    container.lastElementChild.textContent += output.text;
+    container.lastElementChild.textContent =
+      applyCarriageReturn(container.lastElementChild.textContent, output.text);
     return;
   }
   const el = renderOutput(output);

@@ -28,47 +28,55 @@ let raven_packages =
 
 let raven_printers = [ "Nx.pp_data" ]
 
+(* ───── Pretty-printers ───── *)
+
+let base64_encode_string input =
+  let alphabet =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+  in
+  let len = String.length input in
+  let out_len = (len + 2) / 3 * 4 in
+  let out = Bytes.create out_len in
+  let rec loop i j =
+    if i < len then begin
+      let b0 = Char.code (String.unsafe_get input i) in
+      let b1 =
+        if i + 1 < len then Char.code (String.unsafe_get input (i + 1)) else 0
+      in
+      let b2 =
+        if i + 2 < len then Char.code (String.unsafe_get input (i + 2)) else 0
+      in
+      Bytes.unsafe_set out j (String.unsafe_get alphabet (b0 lsr 2));
+      Bytes.unsafe_set out (j + 1)
+        (String.unsafe_get alphabet (((b0 land 3) lsl 4) lor (b1 lsr 4)));
+      Bytes.unsafe_set out (j + 2)
+        (if i + 1 < len then
+           String.unsafe_get alphabet (((b1 land 0xf) lsl 2) lor (b2 lsr 6))
+         else '=');
+      Bytes.unsafe_set out (j + 3)
+        (if i + 2 < len then String.unsafe_get alphabet (b2 land 0x3f) else '=');
+      loop (i + 3) (j + 4)
+    end
+  in
+  loop 0 0;
+  Bytes.unsafe_to_string out
+
+let pp_figure fmt (figure : Hugin.figure) =
+  let png_data = Hugin.render figure in
+  let b64 = base64_encode_string png_data in
+  Format.pp_open_stag fmt
+    (Quill.Cell.Display_tag { mime = "image/png"; data = b64 });
+  Format.fprintf fmt "<figure>";
+  Format.pp_close_stag fmt ()
+
 (* ───── Setup ───── *)
 
-let install_printer name =
-  try
-    let phrase =
-      Printf.sprintf "#install_printer %s;;" name
-      |> Lexing.from_string
-      |> !Toploop.parse_toplevel_phrase
-    in
-    ignore (Toploop.execute_phrase false Format.err_formatter phrase)
-  with _ -> ()
-
-let setup_raven_toplevel () =
-  Quill_top.initialize_if_needed ();
-  (try
-     Findlib.init ();
-     List.iter
-       (fun pkg ->
-         match Findlib.package_directory pkg with
-         | dir -> Topdirs.dir_directory dir
-         | exception Findlib.No_such_package _ -> ())
-       raven_packages
-   with _ -> ());
-  List.iter install_printer raven_printers
+let setup () =
+  Quill_top.add_packages raven_packages;
+  List.iter Quill_top.install_printer raven_printers;
+  Quill_top.install_printer_fn ~ty:"Hugin.figure" (fun fmt obj ->
+      pp_figure fmt (Obj.obj obj))
 
 (* ───── Kernel ───── *)
 
-let create ~on_event =
-  let base = Quill_top.create ~on_event in
-  let first_run = ref true in
-  let ensure_setup () =
-    if !first_run then (
-      setup_raven_toplevel ();
-      first_run := false)
-  in
-  let execute ~cell_id ~code =
-    ensure_setup ();
-    base.execute ~cell_id ~code
-  in
-  let complete ~code ~pos =
-    ensure_setup ();
-    base.complete ~code ~pos
-  in
-  { base with Quill.Kernel.execute; complete }
+let create ~on_event = Quill_top.create ~setup ~on_event ()

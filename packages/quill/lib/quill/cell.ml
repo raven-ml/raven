@@ -27,6 +27,8 @@ type output =
   | Error of string
   | Display of { mime : string; data : string }
 
+type Format.stag += Display_tag of { mime : string; data : string }
+
 (* ───── Cells ───── *)
 
 type t =

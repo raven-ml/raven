@@ -21,9 +21,55 @@ let initialize_if_needed () =
         Sys.interactive := true;
         initialized := true))
 
+(* ───── Toplevel primitives ───── *)
+
+let add_packages pkgs =
+  (try Findlib.init () with _ -> ());
+  List.iter
+    (fun pkg ->
+      match Findlib.package_directory pkg with
+      | dir -> Topdirs.dir_directory dir
+      | exception Findlib.No_such_package _ -> ())
+    pkgs
+
+let install_printer name =
+  try
+    let phrase =
+      Printf.sprintf "#install_printer %s;;" name
+      |> Lexing.from_string
+      |> !Toploop.parse_toplevel_phrase
+    in
+    ignore (Toploop.execute_phrase false Format.err_formatter phrase)
+  with _ -> ()
+
+let install_printer_fn ~ty f =
+  try
+    let parts = String.split_on_char '.' ty in
+    match Longident.unflatten parts with
+    | None -> ()
+    | Some lid ->
+        let path, _decl = Env.find_type_by_name lid !Toploop.toplevel_env in
+        let ty_expr = Ctype.newconstr path [] in
+        let printer_path = Path.Pident (Ident.create_local ty) in
+        Toploop.install_printer printer_path ty_expr f
+  with _ -> ()
+
 (* ───── Output capture ───── *)
 
-let drain_into fd buf =
+(** [read_available fd] reads whatever bytes are currently available on [fd]
+    without blocking indefinitely (the caller uses [Unix.select] first). Returns
+    [None] on EOF. *)
+let read_available fd =
+  let tmp = Bytes.create 4096 in
+  match Unix.read fd tmp 0 4096 with
+  | 0 -> None
+  | n -> Some (Bytes.sub_string tmp 0 n)
+  | exception Unix.Unix_error (Unix.EAGAIN, _, _) -> Some ""
+
+(** [drain_remaining fd] reads all remaining bytes after the write end is
+    closed. *)
+let drain_remaining fd =
+  let buf = Buffer.create 256 in
   let tmp = Bytes.create 4096 in
   let rec loop () =
     match Unix.read fd tmp 0 4096 with
@@ -33,24 +79,63 @@ let drain_into fd buf =
         loop ()
   in
   loop ();
-  Unix.close fd
+  Unix.close fd;
+  Buffer.contents buf
 
-let capture f =
+let capture ~on_stdout ~on_stderr ~on_display f =
   let buf_out = Buffer.create 256 in
   let buf_err = Buffer.create 256 in
   let ppf_out = Format.formatter_of_buffer buf_out in
   let ppf_err = Format.formatter_of_buffer buf_err in
+  (* Intercept Display_tag semantic tags on the toplevel formatter *)
+  Format.pp_set_print_tags ppf_out true;
+  Format.pp_set_formatter_stag_functions ppf_out
+    {
+      mark_open_stag = (fun _ -> "");
+      mark_close_stag = (fun _ -> "");
+      print_open_stag =
+        (fun stag ->
+          match stag with
+          | Quill.Cell.Display_tag { mime; data } ->
+              on_display (Quill.Cell.Display { mime; data })
+          | _ -> ());
+      print_close_stag = (fun _ -> ());
+    };
   (* Pipes for raw stdout/stderr from user code (e.g. print_string) *)
   let rd_out, wr_out = Unix.pipe ~cloexec:true () in
   let rd_err, wr_err = Unix.pipe ~cloexec:true () in
   let stdout_backup = Unix.dup ~cloexec:true Unix.stdout in
   let stderr_backup = Unix.dup ~cloexec:true Unix.stderr in
-  (* Drain pipes in background threads to avoid deadlock when user code writes
-     more than the OS pipe buffer (~64KB). *)
-  let buf_raw_out = Buffer.create 256 in
-  let buf_raw_err = Buffer.create 256 in
-  let t_out = Thread.create (fun () -> drain_into rd_out buf_raw_out) () in
-  let t_err = Thread.create (fun () -> drain_into rd_err buf_raw_err) () in
+  (* Poll pipes in a background thread, streaming output as it arrives. Uses
+     Unix.select with a 50ms timeout so training progress prints (Printf.printf
+     "\rstep %d loss: %.4f%!" ...) appear in real time. *)
+  let stop = Atomic.make false in
+  let poll_thread =
+    Thread.create
+      (fun () ->
+        while not (Atomic.get stop) do
+          let ready, _, _ =
+            try Unix.select [ rd_out; rd_err ] [] [] 0.05
+            with Unix.Unix_error (Unix.EINTR, _, _) -> ([], [], [])
+          in
+          List.iter
+            (fun fd ->
+              match read_available fd with
+              | Some s when s <> "" ->
+                  (* Temporarily restore real stderr/stdout before calling
+                     callbacks, so any logging inside the callback (e.g.
+                     Printf.eprintf in the event handler) goes to the real
+                     terminal, not back into the capture pipe. *)
+                  Unix.dup2 ~cloexec:false stdout_backup Unix.stdout;
+                  Unix.dup2 ~cloexec:false stderr_backup Unix.stderr;
+                  if fd == rd_out then on_stdout s else on_stderr s;
+                  Unix.dup2 ~cloexec:false wr_out Unix.stdout;
+                  Unix.dup2 ~cloexec:false wr_err Unix.stderr
+              | _ -> ())
+            ready
+        done)
+      ()
+  in
   let result = ref None in
   Fun.protect
     (fun () ->
@@ -68,24 +153,22 @@ let capture f =
       Unix.dup2 ~cloexec:false stderr_backup Unix.stderr;
       Unix.close stdout_backup;
       Unix.close stderr_backup;
-      (* Close write ends so drain threads see EOF *)
+      (* Close write ends so poll thread and drain see EOF *)
       Unix.close wr_out;
       Unix.close wr_err);
-  Thread.join t_out;
-  Thread.join t_err;
-  let stdout_text =
-    let toplevel = Buffer.contents buf_out in
-    let raw = Buffer.contents buf_raw_out in
-    if raw = "" then toplevel else if toplevel = "" then raw else toplevel ^ raw
-  in
-  let stderr_text =
-    let warnings = Buffer.contents buf_err in
-    let raw = Buffer.contents buf_raw_err in
-    if raw = "" then warnings else if warnings = "" then raw else warnings ^ raw
-  in
+  (* Stop the poll thread and drain any remaining bytes *)
+  Atomic.set stop true;
+  Thread.join poll_thread;
+  let rest_out = drain_remaining rd_out in
+  let rest_err = drain_remaining rd_err in
+  if rest_out <> "" then on_stdout rest_out;
+  if rest_err <> "" then on_stderr rest_err;
+  (* Format buffer output (toplevel results like "val x = ...") *)
+  let toplevel_out = Buffer.contents buf_out in
+  let toplevel_err = Buffer.contents buf_err in
   match !result with
   | None -> failwith "capture: unreachable"
-  | Some ok -> (ok, stdout_text, stderr_text)
+  | Some ok -> (ok, toplevel_out, toplevel_err)
 
 (* ───── Execution ───── *)
 
@@ -364,21 +447,29 @@ let compute_diagnostics ~code =
 
 let status_ref = ref Quill.Kernel.Idle
 
-let create ~on_event =
+let create ?setup ~on_event () =
+  let setup_done = ref false in
+  let ensure_setup () =
+    if not !setup_done then (
+      initialize_if_needed ();
+      (match setup with Some f -> f () | None -> ());
+      setup_done := true)
+  in
   let execute ~cell_id ~code =
-    initialize_if_needed ();
+    ensure_setup ();
     status_ref := Quill.Kernel.Busy;
     on_event (Quill.Kernel.Status_changed Busy);
-    let ok, stdout_text, stderr_text =
-      capture (fun ppf_out ppf_err -> execute_code ppf_out ppf_err code)
+    let emit output = on_event (Quill.Kernel.Output { cell_id; output }) in
+    let ok, toplevel_out, toplevel_err =
+      capture
+        ~on_stdout:(fun s -> emit (Quill.Cell.Stdout s))
+        ~on_stderr:(fun s -> emit (Quill.Cell.Stderr s))
+        ~on_display:emit
+        (fun ppf_out ppf_err -> execute_code ppf_out ppf_err code)
     in
-    (* Emit outputs *)
-    if stdout_text <> "" then
-      on_event
-        (Quill.Kernel.Output { cell_id; output = Quill.Cell.Stdout stdout_text });
-    if stderr_text <> "" then
-      on_event
-        (Quill.Kernel.Output { cell_id; output = Quill.Cell.Stderr stderr_text });
+    (* Emit toplevel formatter output (val bindings, type info) *)
+    if toplevel_out <> "" then emit (Quill.Cell.Stdout toplevel_out);
+    if toplevel_err <> "" then emit (Quill.Cell.Stderr toplevel_err);
     (* Signal completion *)
     on_event (Quill.Kernel.Finished { cell_id; success = ok });
     status_ref := Quill.Kernel.Idle;
@@ -389,7 +480,7 @@ let create ~on_event =
     try Unix.kill (Unix.getpid ()) Sys.sigint with _ -> ()
   in
   let complete ~code ~pos =
-    initialize_if_needed ();
+    ensure_setup ();
     try complete_names ~code ~pos with _ -> []
   in
   let status () = !status_ref in
@@ -404,12 +495,12 @@ let create ~on_event =
     type_at =
       Some
         (fun ~code ~pos ->
-          initialize_if_needed ();
+          ensure_setup ();
           try type_at_pos ~code ~pos with _ -> None);
     diagnostics =
       Some
         (fun ~code ->
-          initialize_if_needed ();
+          ensure_setup ();
           try compute_diagnostics ~code with _ -> []);
     status;
     shutdown;
