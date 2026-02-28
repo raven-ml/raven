@@ -256,8 +256,10 @@ let ws_handler st _req ws =
     match Httpd.ws_recv ws with
     | Some msg -> (
         match Protocol.client_msg_of_json msg with
-        | Ok client_msg ->
-            handle_msg st client_msg;
+        | Ok client_msg -> (
+            try handle_msg st client_msg
+            with exn ->
+              log "[ws] handle_msg error: %s\n%!" (Printexc.to_string exn));
             loop ()
         | Error err ->
             locked st (fun () -> send st (Protocol.error_to_json err));

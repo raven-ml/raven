@@ -24,13 +24,35 @@ let initialize_if_needed () =
 (* ───── Toplevel primitives ───── *)
 
 let add_packages pkgs =
-  (try Findlib.init () with _ -> ());
-  List.iter
-    (fun pkg ->
-      match Findlib.package_directory pkg with
-      | dir -> Topdirs.dir_directory dir
-      | exception Findlib.No_such_package _ -> ())
-    pkgs
+  match Findlib.init () with
+  | () ->
+      List.iter
+        (fun pkg ->
+          match Findlib.package_directory pkg with
+          | dir -> Topdirs.dir_directory dir
+          | exception _ -> ())
+        pkgs
+  | exception _ ->
+      (* Findlib unavailable (e.g. running outside dune exec) —
+         fall back to OCAMLPATH to locate .cmi directories. *)
+      let sep = if Sys.win32 then ';' else ':' in
+      (match Sys.getenv_opt "OCAMLPATH" with
+      | None -> ()
+      | Some ocamlpath ->
+          let roots = String.split_on_char sep ocamlpath in
+          List.iter
+            (fun pkg ->
+              let subdir =
+                String.concat Filename.dir_sep
+                  (String.split_on_char '.' pkg)
+              in
+              List.iter
+                (fun root ->
+                  let dir = Filename.concat root subdir in
+                  if Sys.file_exists dir && Sys.is_directory dir then
+                    Topdirs.dir_directory dir)
+                roots)
+            pkgs)
 
 let install_printer name =
   try
@@ -56,14 +78,18 @@ let install_printer_fn ~ty f =
 
 (* ───── Output capture ───── *)
 
-(** [read_available fd] reads whatever bytes are currently available on [fd]
-    without blocking indefinitely (the caller uses [Unix.select] first). Returns
-    [None] on EOF. *)
-let read_available fd =
-  let tmp = Bytes.create 4096 in
-  match Unix.read fd tmp 0 4096 with
+(** Pre-allocated read buffer for the poll thread. Avoids major heap
+    allocations (4096 > minor heap max) that could trigger GC while the
+    execute thread is inside Nx C code. *)
+let poll_buf = Bytes.create 4096
+
+(** [read_available fd buf] reads whatever bytes are currently available on
+    [fd] into [buf] without blocking indefinitely (the caller uses
+    [Unix.select] first). Returns [None] on EOF. *)
+let read_available fd buf =
+  match Unix.read fd buf 0 (Bytes.length buf) with
   | 0 -> None
-  | n -> Some (Bytes.sub_string tmp 0 n)
+  | n -> Some (Bytes.sub_string buf 0 n)
   | exception Unix.Unix_error (Unix.EAGAIN, _, _) -> Some ""
 
 (** [drain_remaining fd] reads all remaining bytes after the write end is
@@ -120,7 +146,7 @@ let capture ~on_stdout ~on_stderr ~on_display f =
           in
           List.iter
             (fun fd ->
-              match read_available fd with
+              match read_available fd poll_buf with
               | Some s when s <> "" ->
                   if fd == rd_out then on_stdout s else on_stderr s
               | _ -> ())
@@ -450,9 +476,9 @@ let create ?setup ~on_event () =
   let setup_done = ref false in
   let ensure_setup () =
     if not !setup_done then (
+      setup_done := true;
       initialize_if_needed ();
-      (match setup with Some f -> f () | None -> ());
-      setup_done := true)
+      (match setup with Some f -> f () | None -> ()))
   in
   let execute ~cell_id ~code =
     ensure_setup ();
@@ -479,8 +505,13 @@ let create ?setup ~on_event () =
     try Unix.kill (Unix.getpid ()) Sys.sigint with _ -> ()
   in
   let complete ~code ~pos =
-    ensure_setup ();
-    try complete_names ~code ~pos with _ -> []
+    try
+      ensure_setup ();
+      complete_names ~code ~pos
+    with exn ->
+      Printf.eprintf "[quill-top] complete error: %s\n%!"
+        (Printexc.to_string exn);
+      []
   in
   let status () = !status_ref in
   let shutdown () =
@@ -494,13 +525,23 @@ let create ?setup ~on_event () =
     type_at =
       Some
         (fun ~code ~pos ->
-          ensure_setup ();
-          try type_at_pos ~code ~pos with _ -> None);
+          try
+            ensure_setup ();
+            type_at_pos ~code ~pos
+          with exn ->
+            Printf.eprintf "[quill-top] type_at error: %s\n%!"
+              (Printexc.to_string exn);
+            None);
     diagnostics =
       Some
         (fun ~code ->
-          ensure_setup ();
-          try compute_diagnostics ~code with _ -> []);
+          try
+            ensure_setup ();
+            compute_diagnostics ~code
+          with exn ->
+            Printf.eprintf "[quill-top] diagnostics error: %s\n%!"
+              (Printexc.to_string exn);
+            []);
     status;
     shutdown;
   }

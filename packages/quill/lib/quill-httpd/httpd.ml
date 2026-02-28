@@ -768,8 +768,12 @@ let is_websocket_upgrade req =
 let handle_ws_upgrade server req fd reader =
   match find_route server.routes req with
   | Some (`Websocket handler) -> (
-      (* Use a long receive timeout for WebSocket (effectively infinite) *)
+      (* Use long timeouts for WebSocket (effectively infinite).
+         Both recv and send must be increased — the initial HTTP
+         SO_SNDTIMEO of 30s would otherwise kill the connection when
+         the process is paused (e.g. inside a debugger). *)
       Unix.setsockopt_float fd Unix.SO_RCVTIMEO 86400.0;
+      Unix.setsockopt_float fd Unix.SO_SNDTIMEO 86400.0;
       ws_handshake req fd;
       let ws =
         {
@@ -779,7 +783,9 @@ let handle_ws_upgrade server req fd reader =
           ws_closed = false;
         }
       in
-      try handler req ws with _ -> ())
+      try handler req ws
+      with exn ->
+        Printf.eprintf "[ws] handler error: %s\n%!" (Printexc.to_string exn))
   | _ -> write_response fd (response ~status:404 "Not Found")
 
 let dispatch_http server req =

@@ -96,7 +96,7 @@ loss after every batch -- you should see it decrease in real time.
 
 <!-- quill:cell id="c_mnist_train_code" -->
 ```ocaml
-let epochs = 3
+let epochs = 1
 
 let () =
   let n_train = (Nx.shape x_train).(0) in
