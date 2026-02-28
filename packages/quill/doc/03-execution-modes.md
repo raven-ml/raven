@@ -2,8 +2,8 @@
 
 Quill provides five ways to work with notebooks: the terminal UI for
 interactive exploration, a web frontend for browser-based editing, batch
-evaluation for automation, watch mode for a live editing workflow, and
-fmt for cleaning up outputs.
+execution for automation, watch mode for a live editing workflow, and
+clean for stripping outputs.
 
 ## Terminal UI
 
@@ -14,7 +14,14 @@ The default command opens the TUI:
 quill notebook.md
 ```
 
-If the file doesn't exist, Quill creates it with a default template.
+If the file doesn't exist, Quill creates it with a starter template.
+With no arguments, `quill` defaults to `notebook.md` in the current
+directory:
+
+<!-- $MDX skip -->
+```bash
+quill
+```
 
 ### Layout
 
@@ -82,13 +89,16 @@ Start the web notebook server:
 quill serve notebook.md
 ```
 
-This opens an HTTP server at `http://127.0.0.1:8888`. Use `--port`
-(or `-p`) to change the port:
+This starts an HTTP server at `http://127.0.0.1:8888` and opens the
+notebook in your browser. Use `--port` (or `-p`) to change the port:
 
 <!-- $MDX skip -->
 ```bash
 quill serve --port 9000 notebook.md
 ```
+
+With no file argument, `quill serve` defaults to `notebook.md` in the
+current directory, creating it if needed.
 
 ### Features
 
@@ -124,13 +134,13 @@ connection drops. A banner appears during disconnection with the
 reconnection status. Reconnection uses exponential backoff (up to 30
 seconds).
 
-## Batch Evaluation
+## Batch Execution
 
 Non-interactive execution of all code cells:
 
 <!-- $MDX skip -->
 ```bash
-quill eval notebook.md
+quill run notebook.md
 ```
 
 Executes every code cell in order and prints the complete notebook with
@@ -145,36 +155,35 @@ Use cases:
 
 <!-- $MDX skip -->
 ```bash
-quill eval --inplace notebook.md
+quill run --inplace notebook.md
 ```
 
 Same as above, but writes outputs back into the file. After running,
 the file contains `<!-- quill:output -->` sections below each code
 block.
 
-### Watch mode
+## Watch Mode
 
 <!-- $MDX skip -->
 ```bash
-quill eval --watch notebook.md
-quill eval --watch --inplace notebook.md
+quill watch notebook.md
 ```
 
-Polls the file for changes every second. On each change, re-executes
-all cells. A timestamp is printed on each re-evaluation:
+Watches the file for changes and re-executes all cells on every save,
+writing outputs back into the file. A timestamp is printed on each
+re-evaluation:
 
     [14:32:05] File changed, re-evaluating...
 
 Watch mode runs until interrupted with `Ctrl-C`.
 
-## The Live Editing Workflow
+### The Live Editing Workflow
 
-Combining watch mode with in-place updates creates a live notebook
-experience using your own editor:
+`quill watch` creates a live notebook experience using your own editor:
 
 1. Open two terminals (or splits in tmux / zellij)
 2. Terminal 1: open the notebook in your editor (`vim notebook.md`)
-3. Terminal 2: `quill eval --watch --inplace notebook.md`
+3. Terminal 2: `quill watch notebook.md`
 4. Edit and save in terminal 1. Terminal 2 detects the change,
    re-executes all cells, and writes outputs back into the file.
 5. Your editor picks up the file change (vim with `:set autoread`,
@@ -183,14 +192,14 @@ experience using your own editor:
 This gives you the "edit in your editor, see results update" workflow
 without a browser or notebook server.
 
-## Formatting
+## Cleaning
 
 Strip all outputs from a notebook:
 
 <!-- $MDX skip -->
 ```bash
-quill fmt notebook.md            # print clean markdown to stdout
-quill fmt --inplace notebook.md  # strip outputs from the file
+quill clean notebook.md            # print clean markdown to stdout
+quill clean --inplace notebook.md  # strip outputs from the file
 ```
 
 Cell IDs are preserved. Only `<!-- quill:output -->` sections are
@@ -198,14 +207,27 @@ removed.
 
 Use cases:
 - **Clean diffs**: strip outputs before committing, regenerate with
-  `quill eval --inplace` in CI
+  `quill run --inplace` in CI
 - **Fresh start**: remove stale outputs before a full re-run
 - **Sharing**: send a clean notebook without outputs
 
+## Creating Notebooks
+
+Create a new notebook from a starter template:
+
+<!-- $MDX skip -->
+```bash
+quill new                   # creates notebook.md
+quill new analysis.md       # creates analysis.md
+```
+
+The starter template includes working examples of Nx arrays, Hugin
+plotting, and Rune automatic differentiation.
+
 ## Raven Packages
 
-All execution modes (TUI, web, and eval) use the Raven kernel, which
-pre-loads these packages automatically:
+All execution modes (TUI, web, run, and watch) use the Raven kernel,
+which pre-loads these packages automatically:
 
 - **Nx** — n-dimensional arrays
 - **Rune** — tensor computation with autodiff

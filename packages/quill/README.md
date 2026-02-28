@@ -12,14 +12,14 @@ store outputs directly in the markdown as HTML comments.
 - Markdown notebooks: notebooks are `.md` files with fenced OCaml code
   blocks — git-friendly, editor-agnostic, zero lock-in
 - Terminal UI: full-screen TUI for cell navigation, execution, and
-  output display
+  output display — no browser required
 - Web frontend: `quill serve` opens a browser-based notebook with
   CodeMirror 6 editor, real-time execution, autocompletion, and
   diagnostics
-- Batch evaluation: `quill eval` executes all code blocks and prints or
+- Batch execution: `quill run` executes all code blocks and prints or
   saves results
-- Watch mode: `quill eval --watch --inplace` re-executes on file change
-  for a live editing workflow
+- Live editing: `quill watch` re-executes on file change for a live
+  editing workflow
 - Output format: cell outputs stored as HTML comments, invisible in
   rendered markdown
 - Raven integrated: Nx, Rune, Kaun, Hugin, Sowilo, Talon, Brot, and
@@ -27,30 +27,19 @@ store outputs directly in the markdown as HTML comments.
 
 ## Quick Start
 
-Create a file `notebook.md`:
-
-    # My Notebook
-
-    ```ocaml
-    let x = 2 + 2
-    let () = Printf.printf "Result: %d\n" x
-    ```
-
-Run it:
-
 <!-- $MDX skip -->
 ```bash
-# Open in the terminal UI
-quill notebook.md
+# Open a notebook in the terminal UI (creates it if new)
+quill
 
-# Or open in the browser
-quill serve notebook.md
+# Open in the browser
+quill serve
 
-# Or evaluate from the command line
-quill eval notebook.md
+# Execute all cells from the command line
+quill run notebook.md
 
-# Or live-edit: outputs update on every save
-quill eval --watch --inplace notebook.md
+# Live-edit: outputs update on every save
+quill watch notebook.md
 ```
 
 ## Contributing

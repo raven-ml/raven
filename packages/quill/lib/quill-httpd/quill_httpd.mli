@@ -10,7 +10,10 @@
 
 (** {1:serving Serving} *)
 
-val serve : ?addr:string -> ?port:int -> string -> unit
+val serve :
+  ?addr:string -> ?port:int -> ?on_ready:(unit -> unit) -> string -> unit
 (** [serve path] starts the web notebook server for the notebook at [path].
-    [addr] defaults to ["127.0.0.1"], [port] to [8888]. Blocks until the server
-    is stopped. Exits the process with status [1] if [path] does not exist. *)
+    [addr] defaults to ["127.0.0.1"], [port] to [8888]. [on_ready] is called
+    after the server is listening but before it starts accepting connections.
+    Blocks until the server is stopped. Exits the process with status [1] if
+    [path] does not exist. *)

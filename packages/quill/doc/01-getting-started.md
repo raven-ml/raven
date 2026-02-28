@@ -18,6 +18,34 @@ git clone https://github.com/raven-ml/raven
 cd raven && dune build quill
 ```
 
+## Your First Notebook
+
+The fastest way to get started:
+
+<!-- $MDX skip -->
+```bash
+quill
+```
+
+This creates `notebook.md` with a starter template and opens the
+terminal UI. Run each cell with `Enter` to see arrays, plots, and
+automatic differentiation in action.
+
+You can also create a named notebook:
+
+<!-- $MDX skip -->
+```bash
+quill new analysis.md
+quill analysis.md
+```
+
+Or open an existing notebook:
+
+<!-- $MDX skip -->
+```bash
+quill notebook.md
+```
+
 ## Creating a Notebook
 
 Any `.md` file with fenced OCaml code blocks is a Quill notebook. Create
@@ -44,13 +72,13 @@ a file `notebook.md`:
 Code blocks share state: variables defined in one block are available in
 all subsequent blocks.
 
-## Running with `quill eval`
+## Running with `quill run`
 
 Batch-execute all code blocks:
 
 <!-- $MDX skip -->
 ```bash
-quill eval notebook.md
+quill run notebook.md
 ```
 
 This prints the complete notebook with outputs to stdout. The original
@@ -60,21 +88,21 @@ file is not modified. Useful for quick checks and CI.
 
 <!-- $MDX skip -->
 ```bash
-quill eval --inplace notebook.md
+quill run --inplace notebook.md
 ```
 
 Executes all code blocks and writes outputs back into the file as HTML
 comments. The file now contains `<!-- quill:output -->` sections below
 each code block. The notebook remains valid, readable markdown.
 
-### Watch mode
+## Watch Mode
 
 <!-- $MDX skip -->
 ```bash
-quill eval --watch --inplace notebook.md
+quill watch notebook.md
 ```
 
-Monitors the file for changes (polling every second). On each save,
+Watches the file for changes (polling every second). On each save,
 re-executes all cells and writes outputs back. This enables a live
 editing workflow: edit in your favorite editor in one terminal, see
 results update in the file.
@@ -129,8 +157,8 @@ Start the web frontend:
 quill serve notebook.md
 ```
 
-This starts an HTTP server at `http://127.0.0.1:8888`. Open the URL in
-your browser to get a full notebook interface with:
+This starts an HTTP server at `http://127.0.0.1:8888` and opens the
+notebook in your browser. The web UI provides:
 
 - **CodeMirror 6 editor** with OCaml syntax highlighting
 - **Real-time execution** via WebSocket — outputs appear as cells run
@@ -154,8 +182,8 @@ Remove all outputs from a notebook:
 
 <!-- $MDX skip -->
 ```bash
-quill fmt notebook.md            # print clean markdown to stdout
-quill fmt --inplace notebook.md  # strip outputs from the file
+quill clean notebook.md            # print clean markdown to stdout
+quill clean --inplace notebook.md  # strip outputs from the file
 ```
 
 Useful before committing to git for clean diffs, or to get a fresh start
@@ -189,4 +217,4 @@ automatically.
 - [Notebook Format](02-notebook-format/) — how markdown maps to cells,
   how outputs are serialized
 - [Execution Modes](03-execution-modes/) — TUI, web frontend, live
-  editing workflow, batch evaluation
+  editing workflow, batch execution

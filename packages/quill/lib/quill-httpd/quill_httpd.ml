@@ -249,17 +249,16 @@ let ws_handler st _req ws =
          let md = read_file st.path in
          let doc = Quill_markdown.of_string md in
          st.session <- Session.create doc
-       with exn ->
-         log "[ws] reload failed: %s\n%!" (Printexc.to_string exn));
+       with exn -> log "[ws] reload failed: %s\n%!" (Printexc.to_string exn));
       send_notebook st);
   let rec loop () =
     match Httpd.ws_recv ws with
     | Some msg -> (
         match Protocol.client_msg_of_json msg with
-        | Ok client_msg -> (
-            try handle_msg st client_msg
-            with exn ->
-              log "[ws] handle_msg error: %s\n%!" (Printexc.to_string exn));
+        | Ok client_msg ->
+            (try handle_msg st client_msg
+             with exn ->
+               log "[ws] handle_msg error: %s\n%!" (Printexc.to_string exn));
             loop ()
         | Error err ->
             locked st (fun () -> send st (Protocol.error_to_json err));
@@ -276,7 +275,7 @@ let ws_handler st _req ws =
 
 (* ───── Entry point ───── *)
 
-let serve ?(addr = "127.0.0.1") ?(port = 8888) path =
+let serve ?(addr = "127.0.0.1") ?(port = 8888) ?on_ready path =
   if not (Sys.file_exists path) then (
     Printf.eprintf err_file_not_found path;
     exit 1);
@@ -311,6 +310,7 @@ let serve ?(addr = "127.0.0.1") ?(port = 8888) path =
         Assets.index_html);
   Httpd.static server ~prefix:"/assets/" ~loader:Assets.lookup ();
   Httpd.websocket server "/ws" (ws_handler st);
-  Printf.printf "Quill web: http://%s:%d\n%!" addr port;
+  Printf.printf "Quill: http://%s:%d (Ctrl-C to stop)\n%!" addr port;
+  (match on_ready with Some f -> f () | None -> ());
   Httpd.run server;
   st.kernel.shutdown ()
