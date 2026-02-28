@@ -13,7 +13,7 @@ export function renderOutput(output) {
 function renderStdout(text) {
   const pre = document.createElement('pre');
   pre.className = 'output output-stdout';
-  pre.textContent = text;
+  pre.textContent = applyCarriageReturn('', text);
   return pre;
 }
 
