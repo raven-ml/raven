@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Quill</title>
+  <link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+  <header class="toolbar">
+    <div class="toolbar-left">
+      <span class="notebook-title">Quill</span>
+    </div>
+    <div class="toolbar-center">
+      <span class="kernel-status" id="kernel-status">
+        <span class="status-dot"></span>
+        <span class="status-text">Connecting</span>
+      </span>
+    </div>
+    <div class="toolbar-right">
+      <button class="btn" id="btn-run-all" title="Run all cells (Ctrl+Shift+Enter)">Run All</button>
+      <button class="btn" id="btn-interrupt" title="Interrupt execution">Interrupt</button>
+      <button class="btn" id="btn-clear-all" title="Clear all outputs">Clear All</button>
+      <button class="btn" id="btn-save" title="Save notebook (Ctrl+S)">Save</button>
+      <button class="btn btn-help" id="btn-help" title="Keyboard shortcuts (?)">?</button>
+    </div>
+  </header>
+
+  <div id="connection-banner" class="connection-banner" hidden>
+    <span class="connection-banner-dot"></span>
+    Connection lost &mdash; reconnecting&hellip;
+  </div>
+
+  <main class="notebook" id="notebook"></main>
+
+  <!-- Keyboard shortcuts dialog -->
+  <div id="shortcuts-dialog" class="dialog-backdrop" hidden>
+    <div class="dialog">
+      <div class="dialog-header">
+        <h3>Keyboard Shortcuts</h3>
+        <button class="dialog-close" id="shortcuts-close" title="Close">&times;</button>
+      </div>
+      <div class="dialog-body shortcuts-grid">
+        <div class="shortcut-group">
+          <h4>Navigation</h4>
+          <dl>
+            <div><dt><kbd>j</kbd> / <kbd>&darr;</kbd></dt><dd>Focus next cell</dd></div>
+            <div><dt><kbd>k</kbd> / <kbd>&uarr;</kbd></dt><dd>Focus previous cell</dd></div>
+            <div><dt><kbd>Enter</kbd></dt><dd>Edit focused cell</dd></div>
+            <div><dt><kbd>Escape</kbd></dt><dd>Exit editor</dd></div>
+          </dl>
+        </div>
+        <div class="shortcut-group">
+          <h4>Execution</h4>
+          <dl>
+            <div><dt><kbd>Ctrl</kbd>+<kbd>Enter</kbd></dt><dd>Run cell</dd></div>
+            <div><dt><kbd>Shift</kbd>+<kbd>Enter</kbd></dt><dd>Run cell &amp; move next</dd></div>
+            <div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd></dt><dd>Run all cells</dd></div>
+          </dl>
+        </div>
+        <div class="shortcut-group">
+          <h4>Cells</h4>
+          <dl>
+            <div><dt><kbd>a</kbd></dt><dd>Add code cell below</dd></div>
+            <div><dt><kbd>t</kbd></dt><dd>Add text cell below</dd></div>
+            <div><dt><kbd>d</kbd></dt><dd>Delete focused cell</dd></div>
+            <div><dt><kbd>m</kbd></dt><dd>Toggle code / text</dd></div>
+            <div><dt><kbd>Shift</kbd>+<kbd>J</kbd></dt><dd>Move cell down</dd></div>
+            <div><dt><kbd>Shift</kbd>+<kbd>K</kbd></dt><dd>Move cell up</dd></div>
+          </dl>
+        </div>
+        <div class="shortcut-group">
+          <h4>File</h4>
+          <dl>
+            <div><dt><kbd>Ctrl</kbd>+<kbd>S</kbd></dt><dd>Save</dd></div>
+            <div><dt><kbd>Ctrl</kbd>+<kbd>Z</kbd></dt><dd>Undo</dd></div>
+            <div><dt><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></dt><dd>Redo</dd></div>
+            <div><dt><kbd>?</kbd></dt><dd>This dialog</dd></div>
+          </dl>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast-container" class="toast-container"></div>
+
+  <script type="module" src="/assets/app.js"></script>
+</body>
+</html>

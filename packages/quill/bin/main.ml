@@ -112,9 +112,21 @@ let fmt_term =
   let doc = "Strip outputs from a notebook." in
   Cmd.v (Cmd.info "fmt" ~doc) Term.(const fmt_cmd $ inplace_flag $ path_arg)
 
+let port_flag =
+  Arg.(
+    value & opt int 8888
+    & info [ "port"; "p" ] ~docv:"PORT" ~doc:"Port to listen on (default 8888).")
+
+let serve_term =
+  let doc = "Start the web notebook server." in
+  Cmd.v (Cmd.info "serve" ~doc)
+    Term.(
+      const (fun port path -> Quill_httpd.serve ~port path)
+      $ port_flag $ path_arg)
+
 let quill_cmd =
   let doc = "Interactive notebooks for OCaml." in
   let info = Cmd.info "quill" ~version:"1.0.0" ~doc in
-  Cmd.group ~default:default_term info [ eval_term; fmt_term ]
+  Cmd.group ~default:default_term info [ eval_term; fmt_term; serve_term ]
 
 let () = exit (Cmd.eval quill_cmd)

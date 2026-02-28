@@ -1,0 +1,18 @@
+(library
+ (name quill_httpd)
+ (public_name quill.httpd)
+ (modules httpd quill_httpd protocol assets)
+ (libraries quill quill.markdown quill.raven unix threads.posix))
+
+; Generate assets.ml from committed frontend/dist
+
+(rule
+ (targets assets.ml)
+ (deps
+  (glob_files frontend/dist/*.js)
+  (glob_files frontend/dist/*.css)
+  (glob_files frontend/fonts/*.woff2)
+  frontend/index.html
+  support/gen_assets.ml)
+ (action
+  (run ocaml support/gen_assets.ml frontend assets.ml)))

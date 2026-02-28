@@ -26,7 +26,7 @@ let raven_packages =
     "fehu.algorithms";
   ]
 
-let raven_printers = [ "Nx.pp_data"; "Rune.pp_data" ]
+let raven_printers = [ "Nx.pp_data" ]
 
 (* ───── Setup ───── *)
 

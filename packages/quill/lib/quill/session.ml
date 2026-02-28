@@ -100,8 +100,11 @@ let set_cell_kind cell_id kind s =
       with_history_push
         (fun doc ->
           let src = Cell.source c in
+          let id = Cell.id c in
           let c' =
-            match kind with `Code -> Cell.code src | `Text -> Cell.text src
+            match kind with
+            | `Code -> Cell.code ~id src
+            | `Text -> Cell.text ~id src
           in
           Doc.replace cell_id c' doc)
         s

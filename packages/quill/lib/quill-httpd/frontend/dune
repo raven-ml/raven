@@ -1,0 +1,17 @@
+; Dev: rebuild dist from sources and promote to source tree
+
+(rule
+ (targets
+  (dir dist))
+ (enabled_if
+  (= %{profile} dev))
+ (deps
+  (glob_files src/*.js)
+  (glob_files css/*.css)
+  (glob_files fonts/*.woff2)
+  esbuild.config.mjs)
+ (mode
+  (promote (until-clean)))
+ (action
+  (bash
+   "NODE_PATH=%{workspace_root}/packages/quill/lib/quill-httpd/frontend/node_modules node %{workspace_root}/packages/quill/lib/quill-httpd/frontend/esbuild.config.mjs --production 2>&1")))

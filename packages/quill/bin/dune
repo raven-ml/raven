@@ -4,4 +4,11 @@
  (public_name quill)
  (package quill)
  (link_flags -linkall)
- (libraries quill quill.markdown quill.raven quill.tui cmdliner unix))
+ (libraries
+  quill
+  quill.markdown
+  quill.raven
+  quill.tui
+  quill.httpd
+  cmdliner
+  unix))

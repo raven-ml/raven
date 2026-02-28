@@ -1,5 +1,6 @@
 (lang dune 3.21)
 
+
 (name raven)
 
 (source
@@ -16,6 +17,8 @@
 (bug_reports "https://github.com/raven-ml/raven/issues")
 
 (using mdx 0.4)
+
+(using directory-targets 0.1)
 
 (version 1.0.0~alpha2)
 
