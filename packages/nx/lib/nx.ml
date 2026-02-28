@@ -8,7 +8,9 @@ include F
 
 let context = Lazy.from_fun Nx_effect.create_context
 
-module Rng = Nx_core.Rng
+module Rng = struct
+  include Nx_core.Rng
+end
 
 (* Re-export extended type aliases *)
 type bfloat16_t = (float, Nx_buffer.bfloat16_elt) t
