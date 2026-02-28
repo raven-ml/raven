@@ -1,6 +1,5 @@
 (lang dune 3.21)
 
-
 (name raven)
 
 (source
@@ -25,27 +24,8 @@
 (implicit_transitive_deps false)
 
 (generate_opam_files true)
+
 (opam_file_location inside_opam_directory)
-
-(pin
- (url git+https://github.com/tmattio/mosaic)
- (package
-  (name matrix)))
-
-(pin
- (url git+https://github.com/tmattio/mosaic)
- (package
-  (name toffee)))
-
-(pin
- (url git+https://github.com/tmattio/mosaic)
- (package
-  (name mosaic)))
-
-(pin
- (url git+https://github.com/tmattio/mosaic)
- (package
-  (name tree-sitter)))
 
 (package
  (name nx)
