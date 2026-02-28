@@ -3,6 +3,7 @@
  (libraries tolk))
 
 (rule
+ (package tolk)
  (targets
   clang_bitcast_f32_to_i32.actual
   clang_cast_f16_to_f32.actual
@@ -55,6 +56,7 @@
 
 (rule
  (alias runtest)
+ (package tolk)
  (action
   (progn
    (diff clang_bitcast_f32_to_i32.expected clang_bitcast_f32_to_i32.actual)

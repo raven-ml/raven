@@ -1,3 +1,4 @@
 (tests
  (names test_dtype test_renderer)
+ (package tolk)
  (libraries tolk windtrap))

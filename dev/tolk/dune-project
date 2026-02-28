@@ -9,4 +9,5 @@
   "Tolk is a port of tinygrad in OCaml. A minimal, readable ML compiler for the Raven ecosystem.")
  (depends
   (ocaml
-   (>= 5.2))))
+   (>= 5.2))
+  (windtrap :with-test)))
