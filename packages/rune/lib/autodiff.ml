@@ -18,10 +18,7 @@ module Physical_tbl = struct
 
     let equal = ( == )
 
-    let hash obj =
-      (* Hash on the object's address, not its contents. Obj.magic to nativeint
-         extracts the pointer value. *)
-      Hashtbl.hash (Obj.magic obj : nativeint)
+    let hash obj = Hashtbl.hash obj
   end)
 
   type ('k, 'v) t = 'v Tbl.t
@@ -46,11 +43,10 @@ let ln2 = 0.693147180559945309417
 let two_over_sqrt_pi = 1.12837916709551257390
 
 let float_scalar_like (type a b) (x : (a, b) T.t) (v : float) : (a, b) T.t =
-  Obj.magic (T.full (T.dtype x) [||] (Obj.magic v : a))
+  T.full (T.dtype x) [||] (Dtype.of_float (T.dtype x) v)
 
 (* d/dx sin(x) = cos(x) *)
-let deriv_sin (type a b) (x : (a, b) T.t) : (a, b) T.t =
-  Obj.magic (T.cos (Obj.magic x))
+let deriv_sin (type a b) (x : (a, b) T.t) : (a, b) T.t = T.cos x
 
 (* d/dx sqrt(x) = 1 / (2 * sqrt(x)) *)
 let deriv_sqrt (type a b) (sqrt_x : (a, b) T.t) : (a, b) T.t =
@@ -62,7 +58,7 @@ let deriv_recip (type a b) (x : (a, b) T.t) : (a, b) T.t =
 
 (* d/dx tan(x) = 1/cos^2(x) *)
 let deriv_tan (type a b) (x : (a, b) T.t) : (a, b) T.t =
-  let cos_x = Obj.magic (T.cos (Obj.magic x)) in
+  let cos_x = T.cos x in
   T.recip (T.mul cos_x cos_x)
 
 (* d/dx asin(x) = 1/sqrt(1 - x^2) *)
@@ -91,9 +87,7 @@ let deriv_pow_wrt_base (type a b) (base : (a, b) T.t) (exp : (a, b) T.t) :
 (* d/db (a^b) = a^b * ln(a) = a^b * log2(a) * ln(2) *)
 let deriv_pow_wrt_exp (type a b) (base : (a, b) T.t) (result : (a, b) T.t) :
     (a, b) T.t =
-  let ln_base =
-    T.mul (Obj.magic (T.log2 (Obj.magic base))) (float_scalar_like base ln2)
-  in
+  let ln_base = T.mul (T.log2 base) (float_scalar_like base ln2) in
   T.mul result ln_base
 
 (* Reduce gradient to match source shape (for broadcasting). *)

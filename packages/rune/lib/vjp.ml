@@ -245,8 +245,7 @@ let make_handler tape seed_output =
               let fwd = continue k () in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
-              let g =
-                T.mul twg_out.grad (T.neg (Obj.magic (T.sin (Obj.magic t_in))))
+              let g = T.mul twg_out.grad (T.neg (T.sin t_in))
               in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
@@ -354,8 +353,7 @@ let make_handler tape seed_output =
               let fwd = continue k () in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
-              let g =
-                T.mul twg_out.grad (Obj.magic (T.cosh (Obj.magic t_in)))
+              let g = T.mul twg_out.grad (T.cosh t_in)
               in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
@@ -366,8 +364,7 @@ let make_handler tape seed_output =
               let fwd = continue k () in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
-              let g =
-                T.mul twg_out.grad (Obj.magic (T.sinh (Obj.magic t_in)))
+              let g = T.mul twg_out.grad (T.sinh t_in)
               in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)

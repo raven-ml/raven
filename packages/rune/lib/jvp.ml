@@ -189,8 +189,7 @@ let make_handler dual_map =
               cos ~out t_in;
               let d = get_dual t_in in
               (* d/dx cos(x) = -sin(x) *)
-              let tan =
-                T.mul d.tangent (T.neg (Obj.magic (T.sin (Obj.magic d.primal))))
+              let tan = T.mul d.tangent (T.neg (T.sin d.primal))
               in
               register out { primal = out; tangent = tan };
               continue k ())
@@ -277,8 +276,7 @@ let make_handler dual_map =
             (fun k ->
               sinh ~out t_in;
               let d = get_dual t_in in
-              let tanv =
-                T.mul d.tangent (Obj.magic (T.cosh (Obj.magic d.primal)))
+              let tanv = T.mul d.tangent (T.cosh d.primal)
               in
               register out { primal = out; tangent = tanv };
               continue k ())
@@ -287,8 +285,7 @@ let make_handler dual_map =
             (fun k ->
               cosh ~out t_in;
               let d = get_dual t_in in
-              let tanv =
-                T.mul d.tangent (Obj.magic (T.sinh (Obj.magic d.primal)))
+              let tanv = T.mul d.tangent (T.sinh d.primal)
               in
               register out { primal = out; tangent = tanv };
               continue k ())
