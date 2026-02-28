@@ -18,6 +18,14 @@ depends: [
   "cmdliner"
   "jsont"
   "mosaic"
+  "nx" {= version}
+  "brot" {= version}
+  "talon" {= version}
+  "rune" {= version}
+  "kaun" {= version}
+  "sowilo" {= version}
+  "fehu" {= version}
+  "hugin" {= version}
   "windtrap" {with-test}
   "mdx" {with-test}
   "odoc" {with-doc}

@@ -194,6 +194,24 @@
   cmdliner
   jsont
   mosaic
+  ; we depend on all the core packages to load them into quill's toplevel
+  (nx
+   (= :version))
+  (brot
+   (= :version))
+  (talon
+   (= :version))
+  (rune
+   (= :version))
+  (kaun
+   (= :version))
+  (sowilo
+   (= :version))
+  (fehu
+   (= :version))
+  (hugin
+   (= :version))
+  ; tests
   (windtrap :with-test)
   (mdx :with-test))
  (tags
