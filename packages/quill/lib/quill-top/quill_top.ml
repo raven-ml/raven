@@ -32,19 +32,18 @@ let add_packages pkgs =
           | dir -> Topdirs.dir_directory dir
           | exception _ -> ())
         pkgs
-  | exception _ ->
-      (* Findlib unavailable (e.g. running outside dune exec) —
-         fall back to OCAMLPATH to locate .cmi directories. *)
+  | exception _ -> (
+      (* Findlib unavailable (e.g. running outside dune exec) — fall back to
+         OCAMLPATH to locate .cmi directories. *)
       let sep = if Sys.win32 then ';' else ':' in
-      (match Sys.getenv_opt "OCAMLPATH" with
+      match Sys.getenv_opt "OCAMLPATH" with
       | None -> ()
       | Some ocamlpath ->
           let roots = String.split_on_char sep ocamlpath in
           List.iter
             (fun pkg ->
               let subdir =
-                String.concat Filename.dir_sep
-                  (String.split_on_char '.' pkg)
+                String.concat Filename.dir_sep (String.split_on_char '.' pkg)
               in
               List.iter
                 (fun root ->
@@ -78,14 +77,14 @@ let install_printer_fn ~ty f =
 
 (* ───── Output capture ───── *)
 
-(** Pre-allocated read buffer for the poll thread. Avoids major heap
-    allocations (4096 > minor heap max) that could trigger GC while the
-    execute thread is inside Nx C code. *)
+(** Pre-allocated read buffer for the poll thread. Avoids major heap allocations
+    (4096 > minor heap max) that could trigger GC while the execute thread is
+    inside Nx C code. *)
 let poll_buf = Bytes.create 4096
 
-(** [read_available fd buf] reads whatever bytes are currently available on
-    [fd] into [buf] without blocking indefinitely (the caller uses
-    [Unix.select] first). Returns [None] on EOF. *)
+(** [read_available fd buf] reads whatever bytes are currently available on [fd]
+    into [buf] without blocking indefinitely (the caller uses [Unix.select]
+    first). Returns [None] on EOF. *)
 let read_available fd buf =
   match Unix.read fd buf 0 (Bytes.length buf) with
   | 0 -> None
@@ -478,7 +477,7 @@ let create ?setup ~on_event () =
     if not !setup_done then (
       setup_done := true;
       initialize_if_needed ();
-      (match setup with Some f -> f () | None -> ()))
+      match setup with Some f -> f () | None -> ())
   in
   let execute ~cell_id ~code =
     ensure_setup ();

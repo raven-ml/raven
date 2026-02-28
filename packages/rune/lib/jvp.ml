@@ -189,8 +189,7 @@ let make_handler dual_map =
               cos ~out t_in;
               let d = get_dual t_in in
               (* d/dx cos(x) = -sin(x) *)
-              let tan = T.mul d.tangent (T.neg (T.sin d.primal))
-              in
+              let tan = T.mul d.tangent (T.neg (T.sin d.primal)) in
               register out { primal = out; tangent = tan };
               continue k ())
       | E_log { out; t_in } ->
@@ -276,8 +275,7 @@ let make_handler dual_map =
             (fun k ->
               sinh ~out t_in;
               let d = get_dual t_in in
-              let tanv = T.mul d.tangent (T.cosh d.primal)
-              in
+              let tanv = T.mul d.tangent (T.cosh d.primal) in
               register out { primal = out; tangent = tanv };
               continue k ())
       | E_cosh { out; t_in } ->
@@ -285,8 +283,7 @@ let make_handler dual_map =
             (fun k ->
               cosh ~out t_in;
               let d = get_dual t_in in
-              let tanv = T.mul d.tangent (T.sinh d.primal)
-              in
+              let tanv = T.mul d.tangent (T.sinh d.primal) in
               register out { primal = out; tangent = tanv };
               continue k ())
       | E_tanh { out; t_in } ->

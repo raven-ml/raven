@@ -4265,7 +4265,10 @@ module Make (B : Backend_intf.S) = struct
               done;
               fprintf fmt ",";
               if axis = ndim - 1 then fprintf fmt " ..., "
-              else (pp_print_cut fmt (); fprintf fmt "..."; pp_print_cut fmt ());
+              else (
+                pp_print_cut fmt ();
+                fprintf fmt "...";
+                pp_print_cut fmt ());
               for i = dim_size - edge to dim_size - 1 do
                 sep fmt axis (i = dim_size - edge);
                 pp_slice fmt (indices @ [ i ])
@@ -4280,10 +4283,8 @@ module Make (B : Backend_intf.S) = struct
       in
       (* Print shape and dtype header for non-trivial tensors *)
       if ndim > 1 || sz > edge * 2 then (
-        fprintf fmt "%s [%s] "
-          (Dtype.to_string dtype)
-          (Array.to_list shape |> List.map string_of_int
-           |> String.concat "; ");
+        fprintf fmt "%s [%s] " (Dtype.to_string dtype)
+          (Array.to_list shape |> List.map string_of_int |> String.concat "; ");
         pp_print_cut fmt ());
       if sz > 0 then pp_slice fmt [] else fprintf fmt "[]"
 

@@ -17,7 +17,6 @@ module Physical_tbl = struct
     type t = Obj.t
 
     let equal = ( == )
-
     let hash obj = Hashtbl.hash obj
   end)
 
