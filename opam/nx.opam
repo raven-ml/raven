@@ -48,6 +48,7 @@ depexts: [
   ["openblas" "lapacke" "cblas"] {os-distribution = "arch"}
   ["openblas"] {os = "macos" & os-distribution = "homebrew"}
   ["openblas" "lapacke"] {os = "freebsd"}
+  ["mingw64-x86_64-cblas" "mingw64-x86_64-lapack"] {os = "cygwin"}
 ]
 x-ci-accept-failures: [
   "oraclelinux-7"

@@ -61,7 +61,7 @@
   re
   jsont
   bytesrw
-  uunf
+  (uunf (>= 15.1.0))
   uucp
   (windtrap :with-test)
   (mdx :with-test))

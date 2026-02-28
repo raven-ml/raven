@@ -2,4 +2,4 @@
  (name brot)
  (public_name brot)
  (private_modules bpe wordpiece word_level unigram chars)
- (libraries re jsont jsont.bytesrw uucp uunf uunf.string))
+ (libraries re jsont jsont.bytesrw uucp uunf))
