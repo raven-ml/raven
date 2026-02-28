@@ -1,8 +1,0 @@
-(executables
- (names basic_debug debug_with_grad)
- (libraries nx rune))
-
-(cram
- (enabled_if false)
- (package rune)
- (deps ./basic_debug.exe ./debug_with_grad.exe))

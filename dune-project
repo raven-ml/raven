@@ -120,7 +120,8 @@
    (= :version))
   jsont
   bytesrw
-  (windtrap :with-test))
+  (windtrap :with-test)
+  (mdx :with-test))
  (tags
   (neural-networks machine-learning deep-learning)))
 
