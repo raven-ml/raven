@@ -34,6 +34,9 @@ let write_file path content =
     ~finally:(fun () -> close_out oc)
     (fun () -> output_string oc content)
 
+let get_mtime path =
+  try (Unix.stat path).Unix.st_mtime with Unix.Unix_error _ -> 0.
+
 (* ───── Server state ───── *)
 
 type state = {
@@ -42,6 +45,7 @@ type state = {
   path : string;
   mutex : Mutex.t;
   mutable ws : Httpd.ws option;
+  mutable last_mtime : float;
 }
 
 let locked st f =
@@ -189,6 +193,7 @@ let handle_client_msg st = function
         Quill_markdown.to_string_with_outputs (Session.doc st.session)
       in
       write_file st.path content;
+      st.last_mtime <- get_mtime st.path;
       send st (Protocol.saved_to_json ())
   | Protocol.Undo ->
       st.session <- Session.undo st.session;
@@ -244,12 +249,17 @@ let ws_handler st _req ws =
   log "[ws] connection opened\n%!";
   locked st (fun () ->
       st.ws <- Some ws;
-      (* Reload document from disk so page refresh picks up file changes *)
-      (try
-         let md = read_file st.path in
-         let doc = Quill_markdown.of_string md in
-         st.session <- Session.create doc
-       with exn -> log "[ws] reload failed: %s\n%!" (Printexc.to_string exn));
+      (* Reload document from disk only if the file changed since we last
+         loaded or saved it. Re-parsing a file without cell ID markers
+         generates new random IDs, which would invalidate the session. *)
+      let mtime = get_mtime st.path in
+      if mtime > st.last_mtime then (
+        (try
+           let md = read_file st.path in
+           let doc = Quill_markdown.of_string md in
+           st.session <- Session.create doc;
+           st.last_mtime <- mtime
+         with exn -> log "[ws] reload failed: %s\n%!" (Printexc.to_string exn)));
       send_notebook st);
   let rec loop () =
     match Httpd.ws_recv ws with
@@ -299,6 +309,7 @@ let serve ?(addr = "127.0.0.1") ?(port = 8888) ?on_ready path =
       path;
       mutex;
       ws = None;
+      last_mtime = get_mtime path;
     }
   in
   let on_event ev = on_kernel_event st ev in
