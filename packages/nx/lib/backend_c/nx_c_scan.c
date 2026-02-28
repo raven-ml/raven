@@ -29,33 +29,30 @@ static scan_plan_t scan_prepare(const ndarray_t *input, const ndarray_t *output,
   plan.op_name = op_name;
 
   if (!input || !output) {
-    caml_failwith("associative_scan: null tensor");
+    fprintf(stderr, "nx: associative_scan: null tensor\n");
+    abort();
   }
 
   if (input->ndim != output->ndim) {
-    char msg[128];
-    snprintf(msg, sizeof(msg), "%s: rank mismatch", op_name);
-    caml_failwith(msg);
+    fprintf(stderr, "nx: %s: rank mismatch\n", op_name);
+    abort();
   }
 
   if (input->ndim <= 0) {
-    char msg[128];
-    snprintf(msg, sizeof(msg), "%s: tensor rank must be >= 1", op_name);
-    caml_failwith(msg);
+    fprintf(stderr, "nx: %s: tensor rank must be >= 1\n", op_name);
+    abort();
   }
 
   if (axis < 0 || axis >= input->ndim) {
-    char msg[128];
-    snprintf(msg, sizeof(msg), "%s: axis %d out of bounds for rank %d",
-             op_name, axis, input->ndim);
-    caml_failwith(msg);
+    fprintf(stderr, "nx: %s: axis %d out of bounds for rank %d\n",
+            op_name, axis, input->ndim);
+    abort();
   }
 
   for (int i = 0; i < input->ndim; ++i) {
     if (input->shape[i] != output->shape[i]) {
-      char msg[128];
-      snprintf(msg, sizeof(msg), "%s: shape mismatch on dim %d", op_name, i);
-      caml_failwith(msg);
+      fprintf(stderr, "nx: %s: shape mismatch on dim %d\n", op_name, i);
+      abort();
     }
   }
 
@@ -70,7 +67,8 @@ static scan_plan_t scan_prepare(const ndarray_t *input, const ndarray_t *output,
     if (!plan.outer_axes || !plan.outer_coord) {
       if (plan.outer_axes) free(plan.outer_axes);
       if (plan.outer_coord) free(plan.outer_coord);
-      caml_failwith("associative_scan: allocation failed");
+      fprintf(stderr, "nx: associative_scan: allocation failed\n");
+      abort();
     }
     int idx = 0;
     for (int i = 0; i < input->ndim; ++i) {

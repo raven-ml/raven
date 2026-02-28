@@ -91,7 +91,8 @@ static inline void iterate_inner_dims_unary(const ndarray_t *x,
   int inner_ndim = x->ndim - 1;
   int *coords = (int *)calloc(inner_ndim, sizeof(int));
   if (!coords) {
-    caml_failwith("iterate_inner_dims_unary: allocation failed");
+    fprintf(stderr, "nx: iterate_inner_dims_unary: allocation failed\n");
+    abort();
   }
 
   // Iterate over inner dimensions
@@ -135,7 +136,8 @@ static inline void iterate_inner_dims_unary(const ndarray_t *x,
 #define UNARY_OP_IMPL(name, T, suffix)                                         \
   static void nx_c_##name##_##suffix(const ndarray_t *x, ndarray_t *z) {       \
     if (!x || !z) {                                                            \
-      caml_failwith("nx_c_" #name "_" #suffix ": null pointer");               \
+      fprintf(stderr, "nx: nx_c_" #name "_" #suffix ": null pointer\n");       \
+      abort();                                                                 \
     }                                                                          \
     long total = total_elements_safe(x);                                       \
     if (total == 0) return;                                                    \
@@ -352,7 +354,7 @@ static const unary_op_table sqrt_table = {.i8 = NULL,
 
 // Reciprocal - separate handling for integers (check zero) vs floats (IEEE 754)
 #define INT_RECIP_OP(x) \
-  ((x) == 0 ? (caml_failwith("division by zero"), (x)) : (1 / (x)))
+  ((x) == 0 ? (fprintf(stderr, "nx: division by zero\n"), abort(), (x)) : (1 / (x)))
 #define FLOAT_RECIP_OP(x) (1 / (x))
 #define COMPLEX32_RECIP_OP(x) (1.0f / (x))
 #define COMPLEX64_RECIP_OP(x) (1.0 / (x))

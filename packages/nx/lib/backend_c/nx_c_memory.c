@@ -110,8 +110,8 @@ static long get_element_size(int kind) {
 // Core copy function: copies data from src to dst (assumes same shape and
 // dtype)
 static void nx_c_copy(const ndarray_t *src, const ndarray_t *dst, int kind) {
-  if (!src || !dst) caml_failwith("nx_c_copy: null pointer");
-  if (!same_shape(src, dst)) caml_failwith("nx_c_copy: shape mismatch");
+  if (!src || !dst) { fprintf(stderr, "nx: nx_c_copy: null pointer\n"); abort(); }
+  if (!same_shape(src, dst)) { fprintf(stderr, "nx: nx_c_copy: shape mismatch\n"); abort(); }
 
   long total = total_elements_safe(src);
   if (total == 0) return;

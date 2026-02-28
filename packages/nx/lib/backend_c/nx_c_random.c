@@ -71,7 +71,8 @@ static tfry_ctr_t threefry2x32(tfry_key_t key, tfry_ctr_t ctr) {
 static void nx_c_threefry_i32(const ndarray_t *key_p, const ndarray_t *ctr_p,
                               ndarray_t *out_p) {
   if (!key_p || !ctr_p || !out_p) {
-    caml_failwith("nx_c_threefry_i32: null pointer");
+    fprintf(stderr, "nx: nx_c_threefry_i32: null pointer\n");
+    abort();
   }
 
   ndarray_t key = *key_p;

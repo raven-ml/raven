@@ -32,7 +32,8 @@ static inline void iterate_inner_dims_fill(const ndarray_t *z, long outer_idx,
   int inner_ndim = z->ndim - 1;
   int *coords = (int *)calloc(inner_ndim, sizeof(int));
   if (!coords) {
-    caml_failwith("iterate_inner_dims_fill: allocation failed");
+    fprintf(stderr, "nx: iterate_inner_dims_fill: allocation failed\n");
+    abort();
   }
 
   // Iterate over inner dimensions
@@ -143,7 +144,8 @@ static inline void iterate_inner_dims_copy(const ndarray_t *src,
   int inner_ndim = src->ndim - 1;
   int *coords = (int *)calloc(inner_ndim, sizeof(int));
   if (!coords) {
-    caml_failwith("iterate_inner_dims_copy: allocation failed");
+    fprintf(stderr, "nx: iterate_inner_dims_copy: allocation failed\n");
+    abort();
   }
 
   bool done = false;
@@ -184,7 +186,8 @@ static inline void iterate_inner_dims_copy(const ndarray_t *src,
 #define FILL_OP_IMPL(name, T, suffix)                                          \
   static void nx_c_##name##_##suffix(const ndarray_t *z, void *val_p) {        \
     if (!z) {                                                                  \
-      caml_failwith("nx_c_" #name "_" #suffix ": null pointer");               \
+      fprintf(stderr, "nx: nx_c_" #name "_" #suffix ": null pointer\n");       \
+      abort();                                                                 \
     }                                                                          \
     long total = total_elements_safe(z);                                       \
     if (total == 0) return;                                                    \
@@ -275,7 +278,8 @@ static inline void iterate_inner_dims_copy(const ndarray_t *src,
   static void nx_c_##name##_##suffix(const ndarray_t *src,                     \
                                      const ndarray_t *dst, long *pad_before) { \
     if (!src || !dst) {                                                        \
-      caml_failwith("nx_c_" #name "_" #suffix ": null pointer");               \
+      fprintf(stderr, "nx: nx_c_" #name "_" #suffix ": null pointer\n");       \
+      abort();                                                                 \
     }                                                                          \
     long total = total_elements_safe(src);                                     \
     if (total == 0) return;                                                    \
@@ -297,7 +301,8 @@ static inline void iterate_inner_dims_copy(const ndarray_t *src,
       int ndim = src->ndim;                                                    \
       int *coords = (int *)calloc(ndim, sizeof(int));                          \
       if (!coords) {                                                           \
-        caml_failwith("nx_c_" #name "_" #suffix ": allocation failed");        \
+        fprintf(stderr, "nx: nx_c_" #name "_" #suffix ": allocation failed\n"); \
+        abort();                                                               \
       }                                                                        \
       bool done = false;                                                       \
       while (!done) {                                                          \
@@ -386,7 +391,8 @@ static inline void iterate_inner_dims_copy(const ndarray_t *src,
       int ndim = src->ndim;                                                    \
       int *coords = (int *)calloc(ndim, sizeof(int));                          \
       if (!coords) {                                                           \
-        caml_failwith("nx_c_" #name "_" #suffix ": allocation failed");        \
+        fprintf(stderr, "nx: nx_c_" #name "_" #suffix ": allocation failed\n"); \
+        abort();                                                               \
       }                                                                        \
       bool done = false;                                                       \
       while (!done) {                                                          \

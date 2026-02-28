@@ -217,22 +217,23 @@ static void get_coord_from_idx(long idx, const ndarray_t *nd, int *coord) {
                                      ndarray_t *output, const int *axes,   \
                                      int num_axes, bool keepdims) {        \
     if (!input || !output) {                                               \
-      caml_failwith("nx_c_" #name "_" #suffix ": null pointer");           \
+      fprintf(stderr, "nx: nx_c_" #name "_" #suffix ": null pointer\n");   \
+      abort();                                                             \
     }                                                                      \
     bool *is_reduced = (bool *)calloc(input->ndim, sizeof(bool));          \
-    if (!is_reduced) caml_failwith("allocation failed");                   \
+    if (!is_reduced) { fprintf(stderr, "nx: allocation failed\n"); abort(); } \
     for (int i = 0; i < num_axes; ++i) {                                   \
       if (axes[i] < 0 || axes[i] >= input->ndim) {                         \
-        free(is_reduced);                                                  \
-        caml_failwith("invalid axis");                                     \
+        fprintf(stderr, "nx: invalid axis\n");                             \
+        abort();                                                           \
       }                                                                    \
       is_reduced[axes[i]] = true;                                          \
     }                                                                      \
     int num_kept = input->ndim - num_axes;                                 \
     int *kept_axes = (int *)malloc(num_kept * sizeof(int));                \
     if (!kept_axes) {                                                      \
-      free(is_reduced);                                                    \
-      caml_failwith("allocation failed");                                  \
+      fprintf(stderr, "nx: allocation failed\n");                          \
+      abort();                                                             \
     }                                                                      \
     int kk = 0;                                                            \
     for (int i = 0; i < input->ndim; ++i) {                                \
@@ -249,8 +250,9 @@ static void get_coord_from_idx(long idx, const ndarray_t *nd, int *coord) {
     if (reduce_prod == 0 && !HAS_IDENTITY) {                               \
       free(is_reduced);                                                    \
       free(kept_axes);                                                     \
-      caml_failwith("zero-size array to reduction operation " #name        \
-                    " which has no identity");                             \
+      fprintf(stderr, "nx: zero-size array to reduction operation " #name  \
+              " which has no identity\n");                                  \
+      abort();                             \
     }                                                                      \
     long total_out = total_elements_safe(output);                          \
     if (total_out == 0) {                                                  \
@@ -470,17 +472,16 @@ static void get_coord_from_idx(long idx, const ndarray_t *nd, int *coord) {
                                                           idx < total_out;     \
                                                           ++idx) {             \
       int *local_out_coord = (int *)calloc(output->ndim, sizeof(int));         \
-      if (!local_out_coord) caml_failwith("allocation failed");                \
+      if (!local_out_coord) { fprintf(stderr, "nx: allocation failed\n"); abort(); } \
       int *local_in_coord = (int *)calloc(input->ndim, sizeof(int));           \
       if (!local_in_coord) {                                                   \
-        free(local_out_coord);                                                 \
-        caml_failwith("allocation failed");                                    \
+        fprintf(stderr, "nx: allocation failed\n");                            \
+        abort();                                                               \
       }                                                                        \
       int *local_reduced_coord = (int *)calloc(num_axes, sizeof(int));         \
       if (!local_reduced_coord) {                                              \
-        free(local_out_coord);                                                 \
-        free(local_in_coord);                                                  \
-        caml_failwith("allocation failed");                                    \
+        fprintf(stderr, "nx: allocation failed\n");                            \
+        abort();                                                               \
       }                                                                        \
       get_coord_from_idx(idx, output, local_out_coord);                        \
       memset(local_in_coord, 0, input->ndim * sizeof(int));                    \

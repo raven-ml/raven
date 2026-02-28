@@ -115,7 +115,8 @@ static inline void iterate_inner_dims(const ndarray_t *x, const ndarray_t *y,
   if (inner_ndim > MAX_NDIM) {
     coords = (int *)calloc(inner_ndim, sizeof(int));
     if (!coords) {
-      caml_failwith("iterate_inner_dims: allocation failed");
+      fprintf(stderr, "nx: iterate_inner_dims: allocation failed\n");
+      abort();
     }
     heap_alloc = true;
   } else {
@@ -168,7 +169,8 @@ static inline void iterate_inner_dims(const ndarray_t *x, const ndarray_t *y,
   static void nx_c_##name##_##suffix(const ndarray_t *x, const ndarray_t *y,   \
                                      ndarray_t *z) {                           \
     if (!x || !y || !z) {                                                      \
-      caml_failwith("nx_c_" #name "_" #suffix ": null pointer");               \
+      fprintf(stderr, "nx: nx_c_" #name "_" #suffix ": null pointer\n");       \
+      abort();                                                                 \
     }                                                                          \
     long total = total_elements_safe(x);                                       \
     if (total == 0) return;                                                    \
@@ -370,7 +372,7 @@ BUILD_DISPATCH_TABLE(mul);
 
 // Integer division - truncates and checks for zero
 #define INT_DIV_OP(x, y) \
-  ((y) == 0 ? (caml_failwith("division by zero"), (x)) : ((x) / (y)))
+  ((y) == 0 ? (fprintf(stderr, "nx: division by zero\n"), abort(), (x)) : ((x) / (y)))
 
 // Integer types
 BINARY_OP_FOR_TYPE(idiv, int8_t, i8, INT_DIV_OP)
@@ -517,7 +519,7 @@ BUILD_DISPATCH_TABLE(min);
 
 // =========== MODULO ===========
 #define MOD_OP(x, y) \
-  ((y) == 0 ? (caml_failwith("modulo by zero"), 0) : ((x) % (y)))
+  ((y) == 0 ? (fprintf(stderr, "nx: modulo by zero\n"), abort(), 0) : ((x) % (y)))
 #define FMOD_OP(x, y) (fmod((x), (y)))
 
 // Integer modulo
@@ -672,7 +674,8 @@ static const binary_op_table atan2_table = {.i8 = NULL,
   static void nx_c_##name##_##suffix(const ndarray_t *x, const ndarray_t *y,   \
                                      ndarray_t *z) {                           \
     if (!x || !y || !z) {                                                      \
-      caml_failwith("nx_c_" #name "_" #suffix ": null pointer");               \
+      fprintf(stderr, "nx: nx_c_" #name "_" #suffix ": null pointer\n");       \
+      abort();                                                                 \
     }                                                                          \
     long total = total_elements_safe(x);                                       \
     if (total == 0) return;                                                    \

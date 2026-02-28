@@ -66,10 +66,12 @@ static inline void nd_iterator_init_ternary(nd_iterator_ternary_t *it,
                                             const ndarray_t *y,
                                             const ndarray_t *z) {
   if (!it || !cond || !x || !y || !z) {
-    caml_failwith("nd_iterator_init_ternary: null pointer");
+    fprintf(stderr, "nx: nd_iterator_init_ternary: null pointer\n");
+    abort();
   }
   if (cond->ndim != x->ndim || x->ndim != y->ndim || y->ndim != z->ndim) {
-    caml_failwith("nd_iterator_init_ternary: dimension mismatch");
+    fprintf(stderr, "nx: nd_iterator_init_ternary: dimension mismatch\n");
+    abort();
   }
   it->ndim = cond->ndim;
   it->shape = cond->shape;
@@ -79,7 +81,8 @@ static inline void nd_iterator_init_ternary(nd_iterator_ternary_t *it,
   it->y_strides = y->strides;
   it->z_strides = z->strides;
   if (!it->coords) {
-    caml_failwith("nd_iterator_init_ternary: allocation failed");
+    fprintf(stderr, "nx: nd_iterator_init_ternary: allocation failed\n");
+    abort();
   }
 }
 
@@ -186,7 +189,8 @@ static inline void iterate_inner_dims_ternary(
   int inner_ndim = x->ndim - 1;
   int *coords = (int *)calloc(inner_ndim, sizeof(int));
   if (!coords) {
-    caml_failwith("iterate_inner_dims_ternary: allocation failed");
+    fprintf(stderr, "nx: iterate_inner_dims_ternary: allocation failed\n");
+    abort();
   }
 
   // Iterate over inner dimensions
@@ -239,7 +243,8 @@ static inline void iterate_inner_dims_ternary(
                                      const ndarray_t *x, const ndarray_t *y,   \
                                      ndarray_t *z) {                           \
     if (!cond || !x || !y || !z) {                                             \
-      caml_failwith("nx_c_" #name "_" #suffix ": null pointer");               \
+      fprintf(stderr, "nx: nx_c_" #name "_" #suffix ": null pointer\n");       \
+      abort();                                                                 \
     }                                                                          \
     long total = total_elements_safe(x);                                       \
     if (total == 0) return;                                                    \
@@ -308,7 +313,8 @@ static inline void iterate_inner_dims_ternary(
   static void nx_c_where_##suffix(const ndarray_t *cond, const ndarray_t *x,   \
                                   const ndarray_t *y, ndarray_t *z) {          \
     if (!cond || !x || !y || !z) {                                             \
-      caml_failwith("nx_c_where_" #suffix ": null pointer");                   \
+      fprintf(stderr, "nx: nx_c_where_" #suffix ": null pointer\n");           \
+      abort();                                                                 \
     }                                                                          \
     long total = total_elements_safe(x);                                       \
     if (total == 0) return;                                                    \

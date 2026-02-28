@@ -109,7 +109,8 @@ static inline void iterate_inner_dims2(const ndarray_t *x, const ndarray_t *z,
   int inner_ndim = x->ndim - 1;
   int *coords = (int *)calloc(inner_ndim, sizeof(int));
   if (!coords) {
-    caml_failwith("iterate_inner_dims2: allocation failed");
+    fprintf(stderr, "nx: iterate_inner_dims2: allocation failed\n");
+    abort();
   }
 
   bool done = false;
@@ -143,8 +144,9 @@ static inline void iterate_inner_dims2(const ndarray_t *x, const ndarray_t *z,
   static void nx_c_cast_##src_suffix##_to_##dst_suffix(const ndarray_t *src,   \
                                                        ndarray_t *dst) {       \
     if (!src || !dst) {                                                        \
-      caml_failwith("nx_c_cast_" #src_suffix "_to_" #dst_suffix                \
-                    ": null pointer");                                         \
+      fprintf(stderr, "nx: nx_c_cast_" #src_suffix "_to_" #dst_suffix          \
+              ": null pointer\n");                                             \
+      abort();                                         \
     }                                                                          \
     long total = total_elements_safe(src);                                     \
     if (total == 0) return;                                                    \

@@ -18,6 +18,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "nx_buffer_stubs.h"  // For extended kinds, caml_ba_* typedefs, and conversions
@@ -179,6 +180,12 @@ typedef struct {
   MACRO(caml_ba_fp8_e5m2, f8e5m2, NX_BA_FP8_E5M2)
 
 // Helper functions for safe operations
+//
+// IMPORTANT: Functions in this header may be called from within
+// caml_enter_blocking_section() / caml_leave_blocking_section() pairs.
+// They must NEVER call caml_failwith or any other OCaml runtime function.
+// Use fprintf(stderr, ...) + abort() for unrecoverable errors instead.
+
 static inline long total_elements_safe(const ndarray_t *arr) {
   if (!arr || arr->ndim == 0) return 1;
   long total = 1;
@@ -186,7 +193,8 @@ static inline long total_elements_safe(const ndarray_t *arr) {
     long dim = arr->shape[i];
     if (dim <= 0) return 0;
     if (total > LONG_MAX / dim) {
-      caml_failwith("total_elements_safe: integer overflow");
+      fprintf(stderr, "nx: total_elements_safe: integer overflow\n");
+      abort();
     }
     total *= dim;
   }
@@ -228,10 +236,12 @@ static inline void nd_iterator_init_safe(nd_iterator_t *it, const ndarray_t *x,
                                          const ndarray_t *y,
                                          const ndarray_t *z) {
   if (!it || !x || !y || !z) {
-    caml_failwith("nd_iterator_init_safe: null pointer");
+    fprintf(stderr, "nx: nd_iterator_init_safe: null pointer\n");
+    abort();
   }
   if (x->ndim != y->ndim || x->ndim != z->ndim) {
-    caml_failwith("nd_iterator_init_safe: dimension mismatch");
+    fprintf(stderr, "nx: nd_iterator_init_safe: dimension mismatch\n");
+    abort();
   }
   it->ndim = x->ndim;
   it->shape = x->shape;
@@ -240,7 +250,8 @@ static inline void nd_iterator_init_safe(nd_iterator_t *it, const ndarray_t *x,
   it->y_strides = y->strides;
   it->z_strides = z->strides;
   if (!it->coords) {
-    caml_failwith("nd_iterator_init_safe: allocation failed");
+    fprintf(stderr, "nx: nd_iterator_init_safe: allocation failed\n");
+    abort();
   }
 }
 
@@ -277,14 +288,16 @@ static inline void nd_iterator_destroy(nd_iterator_t *it) {
 // Single array iterator functions
 static inline void nd_iterator_init(nd_single_iterator_t *it, const ndarray_t *arr) {
   if (!it || !arr) {
-    caml_failwith("nd_iterator_init: null pointer");
+    fprintf(stderr, "nx: nd_iterator_init: null pointer\n");
+    abort();
   }
   it->ndim = arr->ndim;
   it->shape = arr->shape;
   it->coords = (int *)calloc(arr->ndim, sizeof(int));
   it->strides = arr->strides;
   if (!it->coords) {
-    caml_failwith("nd_iterator_init: allocation failed");
+    fprintf(stderr, "nx: nd_iterator_init: allocation failed\n");
+    abort();
   }
 }
 
@@ -316,10 +329,12 @@ static inline void nd_single_iterator_destroy(nd_single_iterator_t *it) {
 // Copy iterator functions
 static inline void nd_copy_iterator_init(nd_copy_iterator_t *it, const ndarray_t *src, const ndarray_t *dst) {
   if (!it || !src || !dst) {
-    caml_failwith("nd_copy_iterator_init: null pointer");
+    fprintf(stderr, "nx: nd_copy_iterator_init: null pointer\n");
+    abort();
   }
   if (src->ndim != dst->ndim) {
-    caml_failwith("nd_copy_iterator_init: dimension mismatch");
+    fprintf(stderr, "nx: nd_copy_iterator_init: dimension mismatch\n");
+    abort();
   }
   it->ndim = src->ndim;
   it->shape = src->shape;
@@ -327,7 +342,8 @@ static inline void nd_copy_iterator_init(nd_copy_iterator_t *it, const ndarray_t
   it->src_strides = src->strides;
   it->dst_strides = dst->strides;
   if (!it->coords) {
-    caml_failwith("nd_copy_iterator_init: allocation failed");
+    fprintf(stderr, "nx: nd_copy_iterator_init: allocation failed\n");
+    abort();
   }
 }
 
