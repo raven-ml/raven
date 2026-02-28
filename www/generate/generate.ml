@@ -101,7 +101,9 @@ let generate_lib_examples_nav_items ~current_url lib_name =
     | _ ->
         entries
         |> List.map (fun (title, url) ->
-            let active = if url = current_url then {| class="active"|} else "" in
+            let active =
+              if url = current_url then {| class="active"|} else ""
+            in
             Printf.sprintf {|          <li><a href="%s"%s>%s</a></li>|} url
               active title)
         |> String.concat "\n"
@@ -142,8 +144,7 @@ let generate_tab_nav ~current_url lib_name =
       {|        <input type="radio" id="tab-examples" name="nav-tab"%s>|}
       (checked "examples");
     Buffer.add_char buf '\n';
-    Buffer.add_string buf
-      {|        <label for="tab-examples">Examples</label>|};
+    Buffer.add_string buf {|        <label for="tab-examples">Examples</label>|};
     Buffer.add_char buf '\n');
   if has_api then (
     Printf.bprintf buf
@@ -237,12 +238,9 @@ let process_markdown path content =
   let page_title =
     match h1 with
     | Some t -> t
-    | None ->
-        Site.title_case (Filename.chop_extension (Filename.basename path))
+    | None -> Site.title_case (Filename.chop_extension (Filename.basename path))
   in
-  let breadcrumbs =
-    Site.make_breadcrumbs (Site.url_segments path) page_title
-  in
+  let breadcrumbs = Site.make_breadcrumbs (Site.url_segments path) page_title in
   let lib =
     match String.split_on_char '/' path with
     | "docs" :: lib_name :: _ -> Site.find_library lib_name
@@ -250,16 +248,11 @@ let process_markdown path content =
   in
   let is_lib_index =
     match String.split_on_char '/' path with
-    | "docs" :: lib_name :: rest
-      when Site.find_library lib_name <> None -> (
-        match rest with
-        | [ "index.md" ] | [] -> true
-        | _ -> false)
+    | "docs" :: lib_name :: rest when Site.find_library lib_name <> None -> (
+        match rest with [ "index.md" ] | [] -> true | _ -> false)
     | _ -> false
   in
-  let html =
-    if is_lib_index then Site.strip_h1 html else html
-  in
+  let html = if is_lib_index then Site.strip_h1 html else html in
   let template = Site.read_file (select_template path) in
   apply_template ~template ~title ~breadcrumbs ~content:html ~lib ~is_lib_index
     ~page_title ~path
@@ -299,13 +292,10 @@ let highlight_html_code_blocks html =
                     i := !i + 1
                 | Some content_end -> (
                     let raw =
-                      String.sub html content_start
-                        (content_end - content_start)
+                      String.sub html content_start (content_end - content_start)
                     in
                     let code =
-                      raw
-                      |> Site.replace "&amp;" "&"
-                      |> Site.replace "&lt;" "<"
+                      raw |> Site.replace "&amp;" "&" |> Site.replace "&lt;" "<"
                       |> Site.replace "&gt;" ">"
                     in
                     match Hilite.src_code_to_html ~lang code with
@@ -326,8 +316,7 @@ let process_file ~path full_path =
     match ext with
     | ".md" -> (dest_path path, process_markdown path (Site.read_file full_path))
     | ".html" | ".htm" ->
-        (dest_path path,
-         highlight_html_code_blocks (Site.read_file full_path))
+        (dest_path path, highlight_html_code_blocks (Site.read_file full_path))
     | _ -> (Filename.concat build_dir path, Site.read_file full_path)
   in
   Site.ensure_dir (Filename.dirname out);
@@ -380,12 +369,8 @@ let process_example ~lib example_dir =
   let html = prose_html ^ "\n" ^ code_html in
   let h1 = Site.extract_h1 html in
   let title = match h1 with Some t -> t ^ " - raven" | None -> "raven" in
-  let page_title =
-    match h1 with Some t -> t | None -> Site.title_case slug
-  in
-  let breadcrumbs =
-    Site.make_breadcrumbs (Site.url_segments path) page_title
-  in
+  let page_title = match h1 with Some t -> t | None -> Site.title_case slug in
+  let breadcrumbs = Site.make_breadcrumbs (Site.url_segments path) page_title in
   let template = Site.read_file (select_template path) in
   let content =
     apply_template ~template ~title ~breadcrumbs ~content:html ~lib:(Some lib)
@@ -419,8 +404,8 @@ let () =
               let rel_dir = Filename.dirname rel in
               let clean_base =
                 if Filename.extension rel_base = ".md" then
-                  Site.strip_order_prefix
-                    (Filename.chop_extension rel_base) ^ ".md"
+                  Site.strip_order_prefix (Filename.chop_extension rel_base)
+                  ^ ".md"
                 else rel_base
               in
               let clean_rel =
@@ -440,6 +425,6 @@ let () =
             let full = Filename.concat dir entry in
             if Sys.is_directory full then process_example ~lib full));
   let tab_nav lib_name =
-    fun current_url -> generate_tab_nav ~current_url lib_name
+   fun current_url -> generate_tab_nav ~current_url lib_name
   in
   Api.generate ~build_dir ~templates_dir ~tab_nav

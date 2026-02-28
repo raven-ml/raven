@@ -89,7 +89,7 @@ let libraries =
 let find_library name = List.find_opt (fun lib -> lib.name = name) libraries
 
 (*---------------------------------------------------------------------------
-   String utilities
+  String utilities
   ---------------------------------------------------------------------------*)
 
 let replace pattern replacement s =
@@ -151,8 +151,8 @@ let strip_order_prefix s =
 (* Strip order prefixes from each segment of a relative href path.
    "../02-pipeline/" → "../pipeline/", "05-algorithms/" → "algorithms/" *)
 let strip_href_order_prefixes href =
-  if String.length href = 0 || href.[0] = '/' || String.contains href ':'
-  then href
+  if String.length href = 0 || href.[0] = '/' || String.contains href ':' then
+    href
   else
     let anchor, path =
       match String.index_opt href '#' with
@@ -162,13 +162,14 @@ let strip_href_order_prefixes href =
     in
     let parts = String.split_on_char '/' path in
     let cleaned =
-      List.map (fun seg -> if seg = ".." then seg else strip_order_prefix seg)
+      List.map
+        (fun seg -> if seg = ".." then seg else strip_order_prefix seg)
         parts
     in
     String.concat "/" cleaned ^ anchor
 
-(* Rewrite all href="..." in [html] to strip order prefixes from
-   relative paths. *)
+(* Rewrite all href="..." in [html] to strip order prefixes from relative
+   paths. *)
 let rewrite_doc_hrefs html =
   let buf = Buffer.create (String.length html) in
   let attr = {|href="|} in
@@ -180,10 +181,10 @@ let rewrite_doc_hrefs html =
     | None ->
         Buffer.add_string buf (String.sub html !i (len - !i));
         i := len
-    | Some pos ->
+    | Some pos -> (
         Buffer.add_string buf (String.sub html !i (pos + attr_len - !i));
         let href_start = pos + attr_len in
-        (match String.index_from_opt html href_start '"' with
+        match String.index_from_opt html href_start '"' with
         | None -> i := href_start
         | Some href_end ->
             let href = String.sub html href_start (href_end - href_start) in
@@ -203,7 +204,7 @@ let title_case s =
   |> String.concat " "
 
 (*---------------------------------------------------------------------------
-   File system
+  File system
   ---------------------------------------------------------------------------*)
 
 let read_file path = In_channel.with_open_bin path In_channel.input_all
@@ -224,7 +225,7 @@ let rec walk dir =
       if Sys.is_directory path then walk path else [ path ])
 
 (*---------------------------------------------------------------------------
-   HTML utilities
+  HTML utilities
   ---------------------------------------------------------------------------*)
 
 let extract_h1 html =
@@ -246,10 +247,11 @@ let strip_h1 html =
       | None -> html
       | Some k ->
           let after = k + 5 in
-          String.sub html 0 i ^ String.sub html after (String.length html - after))
+          String.sub html 0 i
+          ^ String.sub html after (String.length html - after))
 
 (*---------------------------------------------------------------------------
-   Paths and URLs
+  Paths and URLs
   ---------------------------------------------------------------------------*)
 
 let strip_prefix ~prefix path =
@@ -266,7 +268,7 @@ let url_of_path path =
   "/" ^ String.concat "/" segments ^ "/"
 
 (*---------------------------------------------------------------------------
-   Breadcrumbs
+  Breadcrumbs
   ---------------------------------------------------------------------------*)
 
 let breadcrumb_sep = {|<span class="breadcrumb-separator">/</span>|}
@@ -295,7 +297,7 @@ let make_breadcrumbs segments title =
         breadcrumb_sep title
 
 (*---------------------------------------------------------------------------
-   Template application
+  Template application
   ---------------------------------------------------------------------------*)
 
 let apply_template ~template ~title ~breadcrumbs ~content ~lib ~is_lib_index
@@ -329,8 +331,7 @@ let apply_template ~template ~title ~breadcrumbs ~content ~lib ~is_lib_index
           let symbol_html =
             if lib.symbol = "" then ""
             else
-              Printf.sprintf {|<span class="rune-symbol">%s</span> |}
-                lib.symbol
+              Printf.sprintf {|<span class="rune-symbol">%s</span> |} lib.symbol
           in
           Printf.sprintf
             {|      <div class="docs-hero" style="--lib-color: var(--color-%s)">
@@ -343,8 +344,7 @@ let apply_template ~template ~title ~breadcrumbs ~content ~lib ~is_lib_index
       in
       let lib_breadcrumb =
         if is_lib_index then
-          Printf.sprintf
-            {|<span class="breadcrumb-text %s">%s</span>|}
+          Printf.sprintf {|<span class="breadcrumb-text %s">%s</span>|}
             lib.color lib.display
         else
           Printf.sprintf
