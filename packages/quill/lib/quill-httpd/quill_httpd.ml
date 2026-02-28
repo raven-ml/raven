@@ -53,10 +53,6 @@ let locked st f =
   Fun.protect ~finally:(fun () -> Mutex.unlock st.mutex) f
 
 let send st msg =
-  let preview =
-    if String.length msg > 120 then String.sub msg 0 120 ^ "…" else msg
-  in
-  log "[ws:send] %s\n%!" preview;
   st.ws_clients <-
     List.filter
       (fun ws ->
@@ -99,6 +95,7 @@ let execute_cell_ids st cell_ids =
                 st.session <- Session.clear_outputs cell_id st.session;
                 st.session <- Session.mark_running cell_id st.session;
                 send st (Protocol.cell_status_to_json ~cell_id Session.Running);
+                log "[exec] %s running\n%!" cell_id;
                 Some source
             | _ -> None)
       in
@@ -111,26 +108,21 @@ let execute_cell_ids st cell_ids =
 
 let on_kernel_event st = function
   | Kernel.Output { cell_id; output } ->
-      let kind =
-        match output with
-        | Cell.Stdout _ -> "stdout"
-        | Stderr _ -> "stderr"
-        | Error _ -> "error"
-        | Display _ -> "display"
-      in
-      log "[kernel] output %s for %s\n%!" kind cell_id;
+      (match output with
+      | Cell.Error msg -> log "[exec] %s error: %s\n%!" cell_id msg
+      | _ -> ());
       locked st (fun () ->
           st.session <- Session.apply_output cell_id output st.session;
           send st (Protocol.cell_output_to_json ~cell_id output))
   | Kernel.Finished { cell_id; success } ->
-      log "[kernel] finished %s success=%b\n%!" cell_id success;
+      log "[exec] %s %s\n%!" cell_id (if success then "done" else "failed");
       locked st (fun () ->
           st.session <- Session.finish_execution cell_id ~success st.session;
           match Doc.find cell_id (Session.doc st.session) with
           | Some cell ->
               let status = Session.cell_status cell_id st.session in
               send st (Protocol.cell_updated_to_json cell status)
-          | None -> log "[kernel] cell %s not found after finish!\n%!" cell_id)
+          | None -> log "[exec] %s not found after finish\n%!" cell_id)
   | Kernel.Status_changed _ -> ()
 
 (* ───── Client message handler ───── *)
@@ -164,17 +156,23 @@ let handle_client_msg st = function
       in
       st.session <- Session.insert_cell ~pos cell st.session;
       let status = Session.cell_status (Cell.id cell) st.session in
+      let kind_s = match kind with `Code -> "code" | `Text -> "text" in
+      log "[cell] insert %s %s at %d\n%!" kind_s (Cell.id cell) pos;
       send st (Protocol.cell_inserted_to_json ~pos cell status);
       send_undo_redo st
   | Protocol.Delete_cell { cell_id } ->
+      log "[cell] delete %s\n%!" cell_id;
       st.session <- Session.remove_cell cell_id st.session;
       send st (Protocol.cell_deleted_to_json ~cell_id);
       send_undo_redo st
   | Protocol.Move_cell { cell_id; pos } ->
+      log "[cell] move %s to %d\n%!" cell_id pos;
       st.session <- Session.move_cell cell_id ~pos st.session;
       send st (Protocol.cell_moved_to_json ~cell_id ~pos);
       send_undo_redo st
   | Protocol.Set_cell_kind { cell_id; kind } ->
+      let kind_s = match kind with `Code -> "code" | `Text -> "text" in
+      log "[cell] set %s to %s\n%!" cell_id kind_s;
       st.session <- Session.set_cell_kind cell_id kind st.session;
       (match Doc.find cell_id (Session.doc st.session) with
       | Some cell ->
@@ -199,6 +197,7 @@ let handle_client_msg st = function
       in
       write_file st.path content;
       st.last_mtime <- get_mtime st.path;
+      log "[save] %s\n%!" st.path;
       send st (Protocol.saved_to_json ())
   | Protocol.Undo ->
       st.session <- Session.undo st.session;
@@ -209,30 +208,10 @@ let handle_client_msg st = function
 
 (* ───── WebSocket handler ───── *)
 
-let client_msg_name = function
-  | Protocol.Update_source _ -> "update_source"
-  | Checkpoint -> "checkpoint"
-  | Execute_cell _ -> "execute_cell"
-  | Execute_cells _ -> "execute_cells"
-  | Execute_all -> "execute_all"
-  | Interrupt -> "interrupt"
-  | Insert_cell _ -> "insert_cell"
-  | Delete_cell _ -> "delete_cell"
-  | Move_cell _ -> "move_cell"
-  | Set_cell_kind _ -> "set_cell_kind"
-  | Clear_outputs _ -> "clear_outputs"
-  | Clear_all_outputs -> "clear_all_outputs"
-  | Save -> "save"
-  | Undo -> "undo"
-  | Redo -> "redo"
-  | Complete _ -> "complete"
-  | Type_at _ -> "type_at"
-  | Diagnostics _ -> "diagnostics"
-
-let handle_msg st msg =
-  log "[ws:recv] %s\n%!" (client_msg_name msg);
-  match msg with
-  | Protocol.Interrupt -> st.kernel.interrupt ()
+let handle_msg st = function
+  | Protocol.Interrupt ->
+      log "[exec] interrupt\n%!";
+      st.kernel.interrupt ()
   | Protocol.Complete { request_id; code; pos } ->
       let items = st.kernel.complete ~code ~pos in
       locked st (fun () ->
@@ -251,9 +230,9 @@ let handle_msg st msg =
   | msg -> locked st (fun () -> handle_client_msg st msg)
 
 let ws_handler st _req ws =
-  log "[ws] connection opened\n%!";
   locked st (fun () ->
       st.ws_clients <- ws :: st.ws_clients;
+      log "[ws] connected (%d active)\n%!" (List.length st.ws_clients);
       (* Reload document from disk only if the file changed since we last
          loaded or saved it. Re-parsing a file without cell ID markers
          generates new random IDs, which would invalidate the session. *)
@@ -263,8 +242,10 @@ let ws_handler st _req ws =
            let md = read_file st.path in
            let doc = Quill_markdown.of_string md in
            st.session <- Session.create doc;
-           st.last_mtime <- mtime
-         with exn -> log "[ws] reload failed: %s\n%!" (Printexc.to_string exn)));
+           st.last_mtime <- mtime;
+           log "[ws] reloaded %s\n%!" st.path
+         with exn ->
+           log "[ws] reload failed: %s\n%!" (Printexc.to_string exn)));
       send_notebook st);
   let rec loop () =
     match Httpd.ws_recv ws with
@@ -273,16 +254,18 @@ let ws_handler st _req ws =
         | Ok client_msg ->
             (try handle_msg st client_msg
              with exn ->
-               log "[ws] handle_msg error: %s\n%!" (Printexc.to_string exn));
+               log "[error] %s\n%!" (Printexc.to_string exn));
             loop ()
         | Error err ->
+            log "[error] bad message: %s\n%!" err;
             locked st (fun () -> send st (Protocol.error_to_json err));
             loop ())
     | None ->
-        log "[ws] connection closed\n%!";
         locked st (fun () ->
             st.ws_clients <-
-              List.filter (fun w -> w != ws) st.ws_clients)
+              List.filter (fun w -> w != ws) st.ws_clients;
+            log "[ws] disconnected (%d active)\n%!"
+              (List.length st.ws_clients))
   in
   loop ()
 
