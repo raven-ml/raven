@@ -244,6 +244,13 @@ let ws_handler st _req ws =
   log "[ws] connection opened\n%!";
   locked st (fun () ->
       st.ws <- Some ws;
+      (* Reload document from disk so page refresh picks up file changes *)
+      (try
+         let md = read_file st.path in
+         let doc = Quill_markdown.of_string md in
+         st.session <- Session.create doc
+       with exn ->
+         log "[ws] reload failed: %s\n%!" (Printexc.to_string exn));
       send_notebook st);
   let rec loop () =
     match Httpd.ws_recv ws with
