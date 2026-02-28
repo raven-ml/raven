@@ -33,17 +33,6 @@ let model =
       Layer.linear ~in_features:128 ~out_features:10 ();
     ]
 
-(* Collect Data.t of (image, label) pairs into full (x, y) tensors *)
-let collect ds =
-  let xs = ref [] and ys = ref [] in
-  Data.iter
-    (fun (x, y) ->
-      xs := x :: !xs;
-      ys := y :: !ys)
-    ds;
-  ( Nx.stack ~axis:0 (List.rev !xs),
-    Nx.cast Nx.int32 (Nx.stack ~axis:0 (List.rev !ys)) )
-
 let () =
   let dtype = Nx.float32 in
 
@@ -61,11 +50,8 @@ let () =
   Printf.printf "Run ID: %s\n%!" (Kaun_board.Log.run_id logger);
   Printf.printf "To monitor: kaun-board %s\n\n%!" (Kaun_board.Log.run_id logger);
 
-  (* Load MNIST into full tensors (once) *)
   Printf.printf "Loading MNIST...\n%!";
-  let train_ds, test_ds = Kaun_datasets.mnist () in
-  let x_train, y_train = collect train_ds in
-  let x_test, y_test = collect test_ds in
+  let (x_train, y_train), (x_test, y_test) = Kaun_datasets.mnist () in
   let n_train = (Nx.shape x_train).(0) in
   Printf.printf "  train: %d  test: %d\n%!" n_train (Nx.shape x_test).(0);
 

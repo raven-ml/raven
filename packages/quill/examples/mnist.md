@@ -16,22 +16,14 @@ We use three raven packages:
 ## 1. Loading the dataset
 
 `Kaun_datasets.mnist` downloads MNIST the first time and caches it locally.
-It returns two data pipelines (train and test), each yielding `(image, label)`
-pairs. We collect them into full tensors for batching and shuffling during
-training. Labels are cast to int32 for `cross_entropy_sparse`.
+It returns `((x_train, y_train), (x_test, y_test))` — images as float32
+in [0, 1] with shape `[N; 1; 28; 28]`, labels as int32 with shape `[N]`.
 
 ```ocaml
 open Kaun
 
-let collect ds =
-  let a = Data.to_array ds in
-  Data.stack_batch (Array.map fst a),
-  Nx.cast Nx.int32 (Data.stack_batch (Array.map snd a))
-
 let () = Printf.printf "Loading MNIST...\n%!"
-let train_ds, test_ds = Kaun_datasets.mnist ()
-let x_train, y_train = collect train_ds
-let x_test, y_test = collect test_ds
+let (x_train, y_train), (x_test, y_test) = Kaun_datasets.mnist ()
 
 let () =
   let s = Nx.shape x_train in

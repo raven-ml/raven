@@ -136,25 +136,11 @@ let model =
       Layer.linear ~in_features:128 ~out_features:10 ();
     ]
 
-(* Collect a Data.t of (image, label) pairs into full tensors *)
-let collect ds =
-  let xs = ref [] and ys = ref [] in
-  Data.iter
-    (fun (x, y) ->
-      xs := x :: !xs;
-      ys := y :: !ys)
-    ds;
-  ( Nx.stack ~axis:0 (List.rev !xs),
-    Nx.astype Nx.Int32 (Nx.stack ~axis:0 (List.rev !ys)) )
-
 let () =
   Nx.Rng.run ~seed:42 @@ fun () ->
 
-  (* Load MNIST *)
   Printf.printf "Loading MNIST...\n%!";
-  let train_ds, test_ds = Kaun_datasets.mnist () in
-  let x_train, y_train = collect train_ds in
-  let x_test, y_test = collect test_ds in
+  let (x_train, y_train), (x_test, y_test) = Kaun_datasets.mnist () in
   let n_train = (Nx.shape x_train).(0) in
   Printf.printf "  train: %d  test: %d\n%!" n_train (Nx.shape x_test).(0);
 
@@ -203,9 +189,9 @@ let () =
 
 Key points:
 
-- `Kaun_datasets.mnist ()` returns `(train, test)` data pipelines of
-  `(image, label)` pairs. Images are float32 in [0, 1] with shape
-  `[|1; 28; 28|]` (NCHW format).
+- `Kaun_datasets.mnist ()` returns `((x_train, y_train), (x_test, y_test))`
+  as float32 tensor pairs. Images have shape `[N; 1; 28; 28]` (NCHW),
+  labels `[N]`.
 - `Data.prepare ~shuffle:key ~batch_size (x, y)` creates a shuffled,
   batched pipeline of tensor pairs.
 - `Data.map` attaches the loss function to each batch, producing the

@@ -423,7 +423,9 @@ let compute_diagnostics ~code =
     (* Clamp to valid range; skip diagnostics with no usable location *)
     let from_pos = clamp 0 len from_pos in
     let to_pos = clamp 0 len to_pos in
-    let to_pos = if to_pos <= from_pos then min (from_pos + 1) len else to_pos in
+    let to_pos =
+      if to_pos <= from_pos then min (from_pos + 1) len else to_pos
+    in
     if from_pos < len then
       diags := Quill.Kernel.{ from_pos; to_pos; severity; message } :: !diags
   in

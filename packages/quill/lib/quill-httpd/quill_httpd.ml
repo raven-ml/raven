@@ -5,12 +5,18 @@
 
 open Quill
 
-(* Dedicated log channel: a dup of stderr taken at module init, before any
-   FD redirection by the toplevel kernel. This ensures debug logging never
-   writes to the capture pipe, avoiding feedback loops. *)
+(* Dedicated log channel: a dup of stderr taken at module init, before any FD
+   redirection by the toplevel kernel. This ensures debug logging never writes
+   to the capture pipe, avoiding feedback loops. *)
 let log_fd = Unix.dup ~cloexec:true Unix.stderr
 let log_oc = Unix.out_channel_of_descr log_fd
-let log fmt = Printf.ksprintf (fun s -> output_string log_oc s; flush log_oc) fmt
+
+let log fmt =
+  Printf.ksprintf
+    (fun s ->
+      output_string log_oc s;
+      flush log_oc)
+    fmt
 
 let err_file_not_found : _ format = "Error: %s not found\n%!"
 
@@ -115,9 +121,7 @@ let on_kernel_event st = function
           | Some cell ->
               let status = Session.cell_status cell_id st.session in
               send st (Protocol.cell_updated_to_json cell status)
-          | None ->
-              log "[kernel] cell %s not found after finish!\n%!"
-                cell_id)
+          | None -> log "[kernel] cell %s not found after finish!\n%!" cell_id)
   | Kernel.Status_changed _ -> ()
 
 (* ───── Client message handler ───── *)
