@@ -22,8 +22,10 @@ kaun-board — were built as part of our Outreachy internships.
   in pure OCaml.
 - **kaun-board** (new, Outreachy) — TUI dashboard for monitoring training
   runs in the terminal. Live metrics, loss curves, and system stats.
-- **quill** — Reborn as a terminal application. Markdown notebooks with live
-  editing, syntax highlighting, and code completion — no browser needed.
+- **quill** — Rewritten from the ground up with two interfaces: a terminal UI
+  with syntax highlighting, code completion, and a compact single-line footer,
+  and a web frontend via `quill serve` with a CodeMirror 6 editor,
+  WebSocket-based execution, autocompletion, and diagnostics.
 - **brot** — The tokenization library formerly known as saga. Complete rewrite
   with a cleaner API. [1.3-6x faster than HuggingFace Tokenizers](packages/brot/bench/)
   on most benchmarks.
@@ -155,7 +157,7 @@ TUI dashboard for monitoring training runs in the terminal. Displays live metric
 
 ### Quill
 
-Rewritten as a terminal application — no browser needed. Markdown notebooks with live editing, syntax highlighting, code completion, and a compact single-line footer. Runs entirely in the terminal.
+Rewritten from the ground up. Terminal UI with syntax highlighting, code completion, and a compact single-line footer. Web frontend via `quill serve` with a CodeMirror 6 editor, WebSocket-based execution, autocompletion, and diagnostics. Markdown notebook format shared across both interfaces.
 
 ### Hugin
 

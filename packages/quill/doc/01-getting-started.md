@@ -120,6 +120,34 @@ in another editor, the TUI reloads automatically.
 Quitting with unsaved changes requires pressing `q` twice, or `s` to
 save first.
 
+## Running with the Web UI
+
+Start the web frontend:
+
+<!-- $MDX skip -->
+```bash
+quill serve notebook.md
+```
+
+This starts an HTTP server at `http://127.0.0.1:8888`. Open the URL in
+your browser to get a full notebook interface with:
+
+- **CodeMirror 6 editor** with OCaml syntax highlighting
+- **Real-time execution** via WebSocket — outputs appear as cells run
+- **Autocompletion** and **type-at-position** for OCaml code
+- **Diagnostics** — errors and warnings shown inline
+- **Keyboard shortcuts** — `j`/`k` navigation, `Ctrl+Enter` to execute
+
+Use `--port` (or `-p`) to change the port:
+
+<!-- $MDX skip -->
+```bash
+quill serve --port 9000 notebook.md
+```
+
+The web UI shares the same markdown notebook format and Raven kernel as
+the TUI and batch evaluator.
+
 ## Stripping Outputs
 
 Remove all outputs from a notebook:
@@ -160,5 +188,5 @@ automatically.
 
 - [Notebook Format](02-notebook-format/) — how markdown maps to cells,
   how outputs are serialized
-- [Execution Modes](03-execution-modes/) — TUI details, live editing
-  workflow, batch evaluation
+- [Execution Modes](03-execution-modes/) — TUI, web frontend, live
+  editing workflow, batch evaluation

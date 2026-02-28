@@ -4,15 +4,18 @@ Interactive notebooks for OCaml.
 
 Quill turns markdown files into interactive OCaml notebooks. It is part
 of the Raven ecosystem. Write prose and code in any text editor, execute
-code blocks with a terminal UI or batch evaluator, and store outputs
-directly in the markdown as HTML comments.
+code blocks with a terminal UI, web frontend, or batch evaluator, and
+store outputs directly in the markdown as HTML comments.
 
 ## Features
 
 - Markdown notebooks: notebooks are `.md` files with fenced OCaml code
   blocks — git-friendly, editor-agnostic, zero lock-in
 - Terminal UI: full-screen TUI for cell navigation, execution, and
-  output display — no browser required
+  output display
+- Web frontend: `quill serve` opens a browser-based notebook with
+  CodeMirror 6 editor, real-time execution, autocompletion, and
+  diagnostics
 - Batch evaluation: `quill eval` executes all code blocks and prints or
   saves results
 - Watch mode: `quill eval --watch --inplace` re-executes on file change
@@ -39,6 +42,9 @@ Run it:
 ```bash
 # Open in the terminal UI
 quill notebook.md
+
+# Or open in the browser
+quill serve notebook.md
 
 # Or evaluate from the command line
 quill eval notebook.md

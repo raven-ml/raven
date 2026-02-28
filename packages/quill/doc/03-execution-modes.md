@@ -1,8 +1,9 @@
 # Execution Modes
 
-Quill provides four ways to work with notebooks: the terminal UI for
-interactive exploration, batch evaluation for automation, watch mode for
-a live editing workflow, and fmt for cleaning up outputs.
+Quill provides five ways to work with notebooks: the terminal UI for
+interactive exploration, a web frontend for browser-based editing, batch
+evaluation for automation, watch mode for a live editing workflow, and
+fmt for cleaning up outputs.
 
 ## Terminal UI
 
@@ -71,6 +72,57 @@ bar shows: "Unsaved changes. Press q again to quit, s to save."
 
 Press `Ctrl-C` to interrupt a running execution. This sends an
 interrupt signal to the kernel.
+
+## Web Frontend
+
+Start the web notebook server:
+
+<!-- $MDX skip -->
+```bash
+quill serve notebook.md
+```
+
+This opens an HTTP server at `http://127.0.0.1:8888`. Use `--port`
+(or `-p`) to change the port:
+
+<!-- $MDX skip -->
+```bash
+quill serve --port 9000 notebook.md
+```
+
+### Features
+
+The web UI provides a full notebook interface in the browser:
+
+- **CodeMirror 6 editor** with OCaml syntax highlighting and theming
+- **Real-time execution** — cell outputs stream via WebSocket as code runs
+- **Autocompletion** — context-aware completions for OCaml code
+- **Type information** — hover over identifiers to see their types
+- **Diagnostics** — errors and warnings shown inline in the editor
+- **Undo / redo** — checkpoint-based history
+- **Cell management** — insert, delete, move, and toggle cells between
+  code and text
+
+### Keyboard Shortcuts
+
+| Key | Action |
+| --- | --- |
+| j / k | Navigate cells |
+| Enter | Edit focused cell |
+| Ctrl-Enter | Execute focused cell |
+| Ctrl-Shift-Enter | Execute all cells |
+| a | Insert code cell below |
+| t | Insert text cell below |
+| d | Delete focused cell |
+| Ctrl-S | Save |
+| Ctrl-C | Interrupt execution |
+
+### Connection Status
+
+The web UI automatically reconnects if the server restarts or the
+connection drops. A banner appears during disconnection with the
+reconnection status. Reconnection uses exponential backoff (up to 30
+seconds).
 
 ## Batch Evaluation
 
@@ -152,7 +204,7 @@ Use cases:
 
 ## Raven Packages
 
-All execution modes (TUI and eval) use the Raven kernel, which
+All execution modes (TUI, web, and eval) use the Raven kernel, which
 pre-loads these packages automatically:
 
 - **Nx** — n-dimensional arrays

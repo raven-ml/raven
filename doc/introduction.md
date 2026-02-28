@@ -82,7 +82,7 @@ While we aim to feel familiar to Python users, Raven brings genuine innovations 
 
 **Rune** implements automatic differentiation using OCaml's effects system. As far as we know, it is the first project of this scale to use effects for autodiff, building on recent research, and implementing Jax's vision for functional numerical computation with a truly functional foundation.
 
-**Quill** reimagines the notebook experience. Instead of Jupyter's cell-based approach, we're building something closer to Typora: a seamless writing experience where code and markdown flow together naturally, with plans for real-time collaboration.
+**Quill** reimagines the notebook experience. Instead of Jupyter's cell-based approach, we're building something closer to Typora: a seamless writing experience where code and markdown flow together naturally. Quill works both in the terminal and in the browser, with plans for real-time collaboration.
 
 **Current Focus**
 We're currently focused on JIT compilation and performance. The alpha milestone is complete — we've trained GPT-2 end-to-end on CPU using the full Raven stack. The next step is making it fast through LLVM-based JIT compilation targeting CPU, CUDA, and Metal. See the [roadmap](/docs/roadmap/) for details.

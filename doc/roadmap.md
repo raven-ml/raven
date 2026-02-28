@@ -14,7 +14,7 @@ Raven is in **alpha**. The core stack (Nx → Rune → Kaun) works end-to-end: w
 | **hugin** | Alpha | 2D/3D plots, scatter, bar, contour, images |
 | **fehu** | Alpha | Environments (CartPole, GridWorld, MountainCar), vectorized envs, GAE |
 | **sowilo** | Alpha | Geometric transforms, filters, edge detection, morphological ops |
-| **quill** | Alpha | TUI, batch eval, markdown notebook format |
+| **quill** | Alpha | TUI, web frontend, batch eval, markdown notebook format |
 
 APIs will change. Bug reports and feedback are welcome.
 

@@ -212,12 +212,13 @@ show fig
 ## Quill: Interactive Notebooks
 
 Plain markdown files as notebooks. Fenced OCaml code blocks are
-executable cells with all Raven libraries pre-loaded. TUI for
-interactive exploration, batch mode for automated evaluation.
+executable cells with all Raven libraries pre-loaded. Terminal UI, web
+frontend, and batch mode for interactive or automated evaluation.
 
 <!-- $MDX skip -->
 ```bash
 quill notebook.md        # interactive TUI
+quill serve notebook.md  # web frontend
 quill eval notebook.md   # batch evaluation
 ```
 
