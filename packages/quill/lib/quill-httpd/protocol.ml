@@ -397,8 +397,23 @@ let cell_updated_to_json cell status =
     (jstr (Cell.id cell))
     (cell_to_json cell status)
 
+let completion_kind_to_string = function
+  | Kernel.Value -> "value"
+  | Type -> "type"
+  | Module -> "module"
+  | Module_type -> "module_type"
+  | Constructor -> "constructor"
+  | Label -> "label"
+
+let completion_item_to_json (item : Kernel.completion_item) =
+  Printf.sprintf {|{"label":%s,"kind":%s,"detail":%s}|} (jstr item.label)
+    (jstr (completion_kind_to_string item.kind))
+    (jstr item.detail)
+
 let completions_to_json ~request_id items =
-  let items_json = "[" ^ String.concat "," (List.map jstr items) ^ "]" in
+  let items_json =
+    "[" ^ String.concat "," (List.map completion_item_to_json items) ^ "]"
+  in
   Printf.sprintf {|{"type":"completions","request_id":%s,"items":%s}|}
     (jstr request_id) items_json
 

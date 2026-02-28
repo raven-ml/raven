@@ -360,7 +360,11 @@ let build_completion ?(force = false) m code ~cursor ~selection =
       if (not force) && String.length prefix = 0 then None
       else
         let kernel_items =
-          try m.kernel.complete ~code ~pos:cursor_byte with _ -> []
+          try
+            List.map
+              (fun (c : Kernel.completion_item) -> c.label)
+              (m.kernel.complete ~code ~pos:cursor_byte)
+          with _ -> []
         in
         let items =
           unique_sorted

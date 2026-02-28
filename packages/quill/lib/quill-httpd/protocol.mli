@@ -80,7 +80,8 @@ val cell_updated_to_json : Quill.Cell.t -> Quill.Session.cell_status -> string
 (** [cell_updated_to_json cell status] is a ["cell_updated"] JSON message for
     [cell] with [status]. *)
 
-val completions_to_json : request_id:string -> string list -> string
+val completions_to_json :
+  request_id:string -> Quill.Kernel.completion_item list -> string
 (** [completions_to_json ~request_id items] is a ["completions"] JSON message
     with completion [items] for the given [request_id]. *)
 

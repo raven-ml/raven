@@ -258,6 +258,8 @@ let serve ?(addr = "127.0.0.1") ?(port = 8888) path =
           execute = (fun ~cell_id:_ ~code:_ -> ());
           interrupt = ignore;
           complete = (fun ~code:_ ~pos:_ -> []);
+          type_at = None;
+          diagnostics = None;
           status = (fun () -> Kernel.Starting);
           shutdown = ignore;
         };

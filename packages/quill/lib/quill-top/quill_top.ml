@@ -150,15 +150,6 @@ let is_ident_char = function
 
 let is_path_char c = is_ident_char c || Char.equal c '.'
 
-let unique_sorted strings =
-  let sorted = List.sort String.compare strings in
-  let rec dedup acc = function
-    | a :: (b :: _ as tl) when String.equal a b -> dedup acc tl
-    | x :: tl -> dedup (x :: acc) tl
-    | [] -> List.rev acc
-  in
-  dedup [] sorted
-
 let parse_completion_context code pos =
   let len = String.length code in
   let pos = clamp 0 len pos in
@@ -185,42 +176,70 @@ let parse_completion_context code pos =
           let qualifier = Longident.unflatten (List.rev rev_qual) in
           (qualifier, prefix)
 
-let collect_env_names env qualifier =
-  let add name acc = if String.length name = 0 then acc else name :: acc in
-  let names =
-    Env.fold_values (fun name _ _ acc -> add name acc) qualifier env []
+let format_type env ty =
+  Printtyp.wrap_printing_env ~error:false env (fun () ->
+      Format.asprintf "%a" Printtyp.type_scheme ty)
+
+let collect_env_items env qualifier =
+  let open Quill.Kernel in
+  let add label kind detail acc =
+    if String.length label = 0 then acc else { label; kind; detail } :: acc
   in
-  let names =
-    Env.fold_types (fun name _ _ acc -> add name acc) qualifier env names
+  let items =
+    Env.fold_values
+      (fun name _path (vd : Types.value_description) acc ->
+        add name Value (format_type env vd.val_type) acc)
+      qualifier env []
   in
-  let names =
-    Env.fold_modules (fun name _ _ acc -> add name acc) qualifier env names
+  let items =
+    Env.fold_types
+      (fun name _path (td : Types.type_declaration) acc ->
+        let detail =
+          match td.type_manifest with
+          | Some ty -> "= " ^ format_type env ty
+          | None -> (
+              match td.type_kind with
+              | Type_abstract _ -> "abstract"
+              | Type_record _ -> "record"
+              | Type_variant _ -> "variant"
+              | Type_open -> "open")
+        in
+        add name Type detail acc)
+      qualifier env items
   in
-  let names =
-    Env.fold_modtypes (fun name _ _ acc -> add name acc) qualifier env names
+  let items =
+    Env.fold_modules
+      (fun name _path (_md : Types.module_declaration) acc ->
+        add name Module "module" acc)
+      qualifier env items
   in
-  let names =
-    Env.fold_classes (fun name _ _ acc -> add name acc) qualifier env names
+  let items =
+    Env.fold_modtypes
+      (fun name _path (_mtd : Types.modtype_declaration) acc ->
+        add name Module_type "module type" acc)
+      qualifier env items
   in
-  let names =
-    Env.fold_cltypes (fun name _ _ acc -> add name acc) qualifier env names
-  in
-  let names =
+  let items =
     Env.fold_constructors
-      (fun (c : Data_types.constructor_description) acc -> add c.cstr_name acc)
-      qualifier env names
+      (fun (c : Data_types.constructor_description) acc ->
+        let detail = format_type env c.cstr_res in
+        add c.cstr_name Constructor detail acc)
+      qualifier env items
   in
   Env.fold_labels
-    (fun (l : Data_types.label_description) acc -> add l.lbl_name acc)
-    qualifier env names
+    (fun (l : Data_types.label_description) acc ->
+      let detail = format_type env l.lbl_arg in
+      add l.lbl_name Label detail acc)
+    qualifier env items
 
 let complete_names ~code ~pos =
   let qualifier, prefix = parse_completion_context code pos in
   let env = !Toploop.toplevel_env in
-  collect_env_names env qualifier
-  |> List.filter (fun name ->
-      String.length prefix = 0 || starts_with ~prefix name)
-  |> unique_sorted
+  collect_env_items env qualifier
+  |> List.filter (fun (item : Quill.Kernel.completion_item) ->
+      String.length prefix = 0 || starts_with ~prefix item.label)
+  |> List.sort_uniq (fun (a : Quill.Kernel.completion_item) b ->
+      String.compare a.label b.label)
 
 (* ───── Kernel interface ───── *)
 
@@ -259,4 +278,12 @@ let create ~on_event =
     status_ref := Quill.Kernel.Shutting_down;
     on_event (Quill.Kernel.Status_changed Shutting_down)
   in
-  { Quill.Kernel.execute; interrupt; complete; status; shutdown }
+  {
+    Quill.Kernel.execute;
+    interrupt;
+    complete;
+    type_at = None;
+    diagnostics = None;
+    status;
+    shutdown;
+  }

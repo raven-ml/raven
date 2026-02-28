@@ -75,6 +75,18 @@ const quillHighlightStyle = HighlightStyle.define([
 
 // --- Completion source ---
 
+function mapCompletionKind(kind) {
+  switch (kind) {
+    case 'value': return 'variable';
+    case 'type': return 'type';
+    case 'module': return 'namespace';
+    case 'module_type': return 'interface';
+    case 'constructor': return 'enum';
+    case 'label': return 'property';
+    default: return 'variable';
+  }
+}
+
 function makeCompletionSource(wsClient) {
   return async (context) => {
     const trigger = context.matchBefore(/[\w.]+$/);
@@ -88,7 +100,11 @@ function makeCompletionSource(wsClient) {
       if (!items || items.length === 0) return null;
       return {
         from: trigger ? trigger.from : context.pos,
-        options: items.map(label => ({ label, type: 'variable' })),
+        options: items.map(item => ({
+          label: item.label,
+          type: mapCompletionKind(item.kind),
+          detail: item.detail,
+        })),
       };
     } catch {
       return null;

@@ -789,8 +789,7 @@ let dispatch_http server req =
       with exn ->
         Printf.eprintf err_handler (Printexc.to_string exn);
         response ~status:500 "Internal Server Error")
-  | Some (`Static (prefix, loader)) ->
-      serve_static ~prefix ~loader req
+  | Some (`Static (prefix, loader)) -> serve_static ~prefix ~loader req
   | Some (`Websocket _) -> response ~status:426 "Upgrade Required"
   | None -> response ~status:404 "Not Found"
 
