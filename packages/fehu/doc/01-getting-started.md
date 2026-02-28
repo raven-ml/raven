@@ -23,7 +23,6 @@ cd raven && dune build fehu
 Environments are created via factory functions in `Fehu_envs`. Randomness is
 provided by the implicit RNG scope from `Nx.Rng.run`:
 
-<!-- $MDX skip -->
 ```ocaml
 open Fehu
 
@@ -40,7 +39,6 @@ the same episode sequence.
 An environment follows a strict lifecycle: `reset` must be called before the
 first `step`, and again after any terminal step (terminated or truncated).
 
-<!-- $MDX skip -->
 ```ocaml
 open Fehu
 
@@ -58,7 +56,6 @@ let () = Nx.Rng.run ~seed:42 @@ fun () ->
 
 A complete episode loop:
 
-<!-- $MDX skip -->
 ```ocaml
 open Fehu
 
@@ -89,7 +86,6 @@ provide sampling, validation, and serialization.
 Integer choices. Used for environments with a finite number of actions (e.g.,
 left/right).
 
-<!-- $MDX skip -->
 ```ocaml
 open Fehu
 
@@ -113,7 +109,6 @@ let _valid = Space.contains space act (* true *)
 Continuous vectors with per-dimension bounds. Used for continuous observations
 (e.g., position, velocity) and continuous actions.
 
-<!-- $MDX skip -->
 ```ocaml
 open Fehu
 
@@ -148,9 +143,8 @@ cart leaves +/-2.4. Truncates at 500 steps.
 - **Observation**: Box [4] -- x, x_dot, theta, theta_dot
 - **Actions**: Discrete 2 -- 0 = push left, 1 = push right
 
-<!-- $MDX skip -->
 ```ocaml
-let env = Fehu_envs.Cartpole.make ()
+let _env = Nx.Rng.run ~seed:42 @@ fun () -> Fehu_envs.Cartpole.make ()
 ```
 
 ### MountainCar
@@ -162,9 +156,8 @@ step. Terminates when position >= 0.5 with non-negative velocity. Truncates at
 - **Observation**: Box [2] -- position, velocity
 - **Actions**: Discrete 3 -- 0 = push left, 1 = coast, 2 = push right
 
-<!-- $MDX skip -->
 ```ocaml
-let env = Fehu_envs.Mountain_car.make ()
+let _env = Nx.Rng.run ~seed:42 @@ fun () -> Fehu_envs.Mountain_car.make ()
 ```
 
 ### GridWorld
@@ -176,9 +169,8 @@ steps.
 - **Observation**: Multi_discrete [5; 5] -- (row, col)
 - **Actions**: Discrete 4 -- 0 = up, 1 = down, 2 = left, 3 = right
 
-<!-- $MDX skip -->
 ```ocaml
-let env = Fehu_envs.Grid_world.make ()
+let _env = Nx.Rng.run ~seed:42 @@ fun () -> Fehu_envs.Grid_world.make ()
 ```
 
 ### RandomWalk
@@ -189,9 +181,8 @@ boundaries or after 200 steps.
 - **Observation**: Box [1] in [-10.0, 10.0]
 - **Actions**: Discrete 2 -- 0 = left, 1 = right
 
-<!-- $MDX skip -->
 ```ocaml
-let env = Fehu_envs.Random_walk.make ()
+let _env = Nx.Rng.run ~seed:42 @@ fun () -> Fehu_envs.Random_walk.make ()
 ```
 
 ## Render Modes
@@ -199,18 +190,20 @@ let env = Fehu_envs.Random_walk.make ()
 Environments can optionally render their state. Pass `~render_mode` when
 creating the environment:
 
-<!-- $MDX skip -->
 ```ocaml
-let env = Fehu_envs.Cartpole.make
-  ~render_mode:`Ansi ()
+open Fehu
 
-let _obs, _info = Env.reset env ()
-let _s = Env.step env (Space.Discrete.of_int 0)
+let () = Nx.Rng.run ~seed:42 @@ fun () ->
+  let env = Fehu_envs.Cartpole.make
+    ~render_mode:`Ansi () in
 
-(* Render after reset or step *)
-match Env.render env with
-| Some text -> print_endline text
-| None -> ()
+  let _obs, _info = Env.reset env () in
+  let _s = Env.step env (Space.Discrete.of_int 0) in
+
+  (* Render after reset or step *)
+  match Env.render env with
+  | Some text -> print_endline text
+  | None -> ()
 ```
 
 Supported render modes vary by environment: `Ansi` for text output,

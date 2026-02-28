@@ -25,7 +25,6 @@ and training loops.
 
 Create an environment, run a random agent, and evaluate:
 
-<!-- $MDX skip -->
 ```ocaml
 open Fehu
 

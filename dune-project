@@ -172,7 +172,8 @@
   dune
   (nx
    (= :version))
-  (windtrap :with-test))
+  (windtrap :with-test)
+  (mdx :with-test))
  (tags
   (reinforcement-learning machine-learning environments)))
 

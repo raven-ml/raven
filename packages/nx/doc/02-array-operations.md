@@ -40,14 +40,16 @@ let () =
 
 `flatten` collapses dimensions into one. `unflatten` expands a dimension back:
 
-<!-- $MDX skip -->
 ```ocaml
-let x = Nx.zeros Nx.Float32 [|2; 3; 4|] in
-Nx.flatten x |> Nx.shape                     (* [|24|] *)
-Nx.flatten ~start_dim:1 x |> Nx.shape        (* [|2; 12|] *)
+open Nx
 
-let y = Nx.zeros Nx.Float32 [|2; 12|] in
-Nx.unflatten 1 [|3; 4|] y |> Nx.shape        (* [|2; 3; 4|] *)
+let () =
+  let x = zeros Float32 [|2; 3; 4|] in
+  ignore (flatten x |> shape);                  (* [|24|] *)
+  ignore (flatten ~start_dim:1 x |> shape);     (* [|2; 12|] *)
+
+  let y = zeros Float32 [|2; 12|] in
+  ignore (unflatten 1 [|3; 4|] y |> shape)      (* [|2; 3; 4|] *)
 ```
 
 ### squeeze and unsqueeze

@@ -1,0 +1,4 @@
+(mdx
+ (files *.md)
+ (package kaun)
+ (libraries kaun rune nx nx.io))
