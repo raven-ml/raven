@@ -4223,7 +4223,7 @@ module Make (B : Backend_intf.S) = struct
       | Complex64 -> fprintf fmt "(%g+%gi)" elt.re elt.im
       | Complex128 -> fprintf fmt "(%g+%gi)" elt.re elt.im
     in
-    let edge = 3 in
+    let edge = 2 in
     if sz = 0 && ndim > 0 then fprintf fmt "[]"
     else if ndim = 0 then
       if sz > 0 then
@@ -4278,6 +4278,13 @@ module Make (B : Backend_intf.S) = struct
             pp_close_box fmt ());
           fprintf fmt "]"
       in
+      (* Print shape and dtype header for non-trivial tensors *)
+      if ndim > 1 || sz > edge * 2 then (
+        fprintf fmt "%s [%s] "
+          (Dtype.to_string dtype)
+          (Array.to_list shape |> List.map string_of_int
+           |> String.concat "; ");
+        pp_print_cut fmt ());
       if sz > 0 then pp_slice fmt [] else fprintf fmt "[]"
 
   let format_to_string pp x =
