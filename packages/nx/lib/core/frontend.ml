@@ -4223,39 +4223,58 @@ module Make (B : Backend_intf.S) = struct
       | Complex64 -> fprintf fmt "(%g+%gi)" elt.re elt.im
       | Complex128 -> fprintf fmt "(%g+%gi)" elt.re elt.im
     in
+    let edge = 3 in
     if sz = 0 && ndim > 0 then fprintf fmt "[]"
     else if ndim = 0 then
       if sz > 0 then
         pp_element fmt (Nx_buffer.unsafe_get buffer (View.offset view))
       else fprintf fmt "<empty scalar>"
     else
+      let strides =
+        match View.strides_opt view with
+        | Some s -> s
+        | None ->
+            invalid_arg
+              "pp_data: cannot print tensor with non-materializable view"
+      in
+      let base_offset = View.offset view in
+      let sep fmt axis first =
+        if not first then (
+          fprintf fmt ",";
+          if axis = ndim - 1 then fprintf fmt " " else pp_print_cut fmt ())
+      in
       let rec pp_slice fmt indices =
         let depth = List.length indices in
         if depth = ndim then
           let md_index = Array.of_list indices in
-          let strides =
-            match View.strides_opt view with
-            | Some s -> s
-            | None ->
-                invalid_arg
-                  "pp_data: cannot print tensor with non-materializable view"
-          in
-          let offset = Shape.ravel_index md_index strides + View.offset view in
+          let offset = Shape.ravel_index md_index strides + base_offset in
           if offset < 0 || offset >= Nx_buffer.length buffer then
             fprintf fmt "<OOB:%d/%d>" offset (Nx_buffer.length buffer)
           else pp_element fmt (Nx_buffer.unsafe_get buffer offset)
         else
           let axis = depth in
           let dim_size = shape.(axis) in
+          let truncate = dim_size > edge * 2 in
           fprintf fmt "[";
           if dim_size > 0 then (
             if axis < ndim - 1 then pp_open_vbox fmt 0 else pp_open_hbox fmt ();
-            for i = 0 to dim_size - 1 do
-              if i > 0 then (
-                fprintf fmt ",";
-                if axis = ndim - 1 then fprintf fmt " " else pp_print_cut fmt ());
-              pp_slice fmt (indices @ [ i ])
-            done;
+            if truncate then (
+              for i = 0 to edge - 1 do
+                sep fmt axis (i = 0);
+                pp_slice fmt (indices @ [ i ])
+              done;
+              fprintf fmt ",";
+              if axis = ndim - 1 then fprintf fmt " ..., "
+              else (pp_print_cut fmt (); fprintf fmt "..."; pp_print_cut fmt ());
+              for i = dim_size - edge to dim_size - 1 do
+                sep fmt axis (i = dim_size - edge);
+                pp_slice fmt (indices @ [ i ])
+              done)
+            else
+              for i = 0 to dim_size - 1 do
+                sep fmt axis (i = 0);
+                pp_slice fmt (indices @ [ i ])
+              done;
             pp_close_box fmt ());
           fprintf fmt "]"
       in
