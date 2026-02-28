@@ -82,7 +82,9 @@ While we aim to feel familiar to Python users, Raven brings genuine innovations 
 
 **Rune** implements automatic differentiation using OCaml's effects system. As far as we know, it is the first project of this scale to use effects for autodiff, building on recent research, and implementing Jax's vision for functional numerical computation with a truly functional foundation.
 
-**Quill** reimagines the notebook experience. Instead of Jupyter's cell-based approach, we're building something closer to Typora: a seamless writing experience where code and markdown flow together naturally. Quill works both in the terminal and in the browser, with plans for real-time collaboration.
+**Quill** rethinks notebooks. Notebooks are plain markdown files — git-friendly, readable without special tooling, and editable in any text editor. Quill runs them as a TUI in the terminal or as a web frontend in the browser, with all Raven packages pre-loaded and zero setup.
+
+**Deployment** is where Raven's story diverges most from Python. AOT compilation generates all compute kernels at compile time, producing binaries with no BLAS or CUDA runtime dependency. This makes it possible to deploy models as MirageOS unikernels — minimal attack surface, millisecond boot, deterministic behavior — or as static binaries with no Python runtime, no dependency hell.
 
 **Current Focus**
-We're currently focused on JIT compilation and performance. The alpha milestone is complete — we've trained GPT-2 end-to-end on CPU using the full Raven stack. The next step is making it fast through LLVM-based JIT compilation targeting CPU, CUDA, and Metal. See the [roadmap](/docs/roadmap/) for details.
+The alpha milestone is complete — we've trained GPT-2 end-to-end on CPU using the full Raven stack. We're now focused on integrating tolk as a JIT transformation in Rune, with the goal of matching PyTorch performance. After that, V1 brings production-ready training and deployment: AOT compilation, inference serving, ONNX import, and MirageOS unikernel deployment. See the [roadmap](/docs/roadmap/) for details.

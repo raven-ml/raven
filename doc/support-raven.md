@@ -4,28 +4,31 @@
 
 Python's monopoly on scientific computing forces an impossible choice: ship everything in Python (endure runtime crashes, the GIL's multicore ceiling, and gigabyte containers), or prototype in Python then rewrite for production (doubling the work and creating siloed teams).
 
-**We think there's a better way.** OCaml lets you prototype as quickly as Python and scale the same code to production. Same expressiveness, strong typing catches bugs before they crash your ML pipeline, while JIT compilation matches NumPy/PyTorch performance. One language from research to production—it just needs a production-grade ML stack.
+**We think there's a better way.** OCaml lets you prototype as quickly as Python and scale the same code to production. Same expressiveness, strong typing catches bugs before they crash your ML pipeline, while JIT compilation matches NumPy/PyTorch performance. One language from research to production — it just needs a production-grade ML stack.
 
-**Raven brings that stack to OCaml:** Nx (NumPy), Rune (JAX with effects-based autodiff), Kaun (PyTorch/Flax), Hugin (Matplotlib), and Quill (notebooks done right). You can now ship ML models in 10 MB statically-linked binaries; Port to new hardware in days. We built Raven for teams that want both development speed and reliable systems.
+**Raven brings that stack to OCaml:** Nx (NumPy), Rune (JAX with effects-based autodiff), Kaun (Flax), Brot (tokenization), Hugin (Matplotlib), and Quill (notebooks done right). Train models with automatic differentiation and JIT compilation, then deploy as a MirageOS unikernel or a static binary — no Python, no CUDA dependency hell, no 5 GB Docker images. We built Raven for teams that want both development speed and reliable systems.
 
 _Learn more: [Introduction](/docs/introduction)_
 
-_We're currently pre-alpha with working simple neural networks. Next milestone: An MNIST demo in Quill running on CUDA/Metal GPU and Rune's kernel-fusing JIT._
+_We're in alpha with the full stack working end-to-end (we've trained GPT-2 on CPU). Next milestone: JIT compilation via tolk with performance close to PyTorch._
 
 ## Roadmap & Funding Goals
 
 _See the [full roadmap](/docs/roadmap) for our complete vision and timeline._
 
-### €50k - First Release (Q3 2025)
-- MNIST training demo in Quill notebook
-- CUDA and Metal GPU backends for Nx
-- Basic JIT compilation in Rune with kernel fusion
-- API stabilization and v1.0 release
+### Beta — JIT Compilation & Performance
+- Integrate tolk (tinygrad-based compiler) as a JIT transformation in Rune
+- Target CPU, CUDA, Metal, OpenCL, and HIP
+- Kernel fusion and optimization
+- Performance within 2x of PyTorch on standard workloads
 
-### €150k - Performance Parity (Q1 2026)
-- Full JIT compiler targeting LLVM, Metal and Cuda
-- Performance matching NumPy/PyTorch on standard benchmarks
-- Complete Kaun with modern architectures (transformers, etc.)
+### V1 — Production-Ready Training & Deployment
+- Production training: gradient accumulation, mixed precision, gradient checkpointing, flash attention
+- ONNX import for PyTorch model portability
+- AOT compilation to standalone binaries (CPU and GPU)
+- Inference engine with KV cache, continuous batching, and PagedAttention
+- MirageOS unikernel deployment
+- Post-training quantization (INT8/INT4)
 
 We're also open to discussing custom sponsorship packages based on your needs.
 
