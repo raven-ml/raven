@@ -135,7 +135,8 @@ let handle_client_msg st = function
           (Doc.cells (Session.doc st.session))
       in
       execute_async st cell_ids
-  | Protocol.Interrupt | Protocol.Complete _ ->
+  | Protocol.Interrupt | Protocol.Complete _ | Protocol.Type_at _
+  | Protocol.Diagnostics _ ->
       assert false (* dispatched by [handle_msg] before reaching here *)
   | Protocol.Insert_cell { pos; kind } ->
       let cell =
@@ -204,6 +205,8 @@ let client_msg_name = function
   | Undo -> "undo"
   | Redo -> "redo"
   | Complete _ -> "complete"
+  | Type_at _ -> "type_at"
+  | Diagnostics _ -> "diagnostics"
 
 let handle_msg st msg =
   Printf.eprintf "[ws:recv] %s\n%!" (client_msg_name msg);
@@ -213,6 +216,17 @@ let handle_msg st msg =
       let items = st.kernel.complete ~code ~pos in
       locked st (fun () ->
           send st (Protocol.completions_to_json ~request_id items))
+  | Protocol.Type_at { request_id; code; pos } ->
+      let info =
+        match st.kernel.type_at with Some f -> f ~code ~pos | None -> None
+      in
+      locked st (fun () -> send st (Protocol.type_at_to_json ~request_id info))
+  | Protocol.Diagnostics { request_id; code } ->
+      let items =
+        match st.kernel.diagnostics with Some f -> f ~code | None -> []
+      in
+      locked st (fun () ->
+          send st (Protocol.diagnostics_to_json ~request_id items))
   | msg -> locked st (fun () -> handle_client_msg st msg)
 
 let ws_handler st _req ws =

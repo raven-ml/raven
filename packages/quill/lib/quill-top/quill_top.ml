@@ -241,6 +241,125 @@ let complete_names ~code ~pos =
   |> List.sort_uniq (fun (a : Quill.Kernel.completion_item) b ->
       String.compare a.label b.label)
 
+(* ───── Parse and typecheck ───── *)
+
+let parse_phrases code =
+  let code = ensure_terminator code in
+  let lb = Lexing.from_string code in
+  lb.lex_curr_p <-
+    { pos_fname = "//toplevel//"; pos_lnum = 1; pos_bol = 0; pos_cnum = 0 };
+  let phrases = ref [] in
+  (try
+     while true do
+       let phr = !Toploop.parse_toplevel_phrase lb in
+       phrases := phr :: !phrases
+     done
+   with End_of_file -> ());
+  List.rev !phrases
+
+let typecheck_structure env structure =
+  let tstr, _sig, _names, _shape, _env =
+    Typemod.type_toplevel_phrase env structure
+  in
+  tstr
+
+(* ───── Type at position ───── *)
+
+let loc_contains (loc : Location.t) pos =
+  (not loc.loc_ghost)
+  && loc.loc_start.pos_cnum <= pos
+  && pos <= loc.loc_end.pos_cnum
+
+let loc_span (loc : Location.t) = loc.loc_end.pos_cnum - loc.loc_start.pos_cnum
+
+let find_type_at_pos env (tstr : Typedtree.structure) pos =
+  let best = ref None in
+  let update loc ty =
+    if loc_contains loc pos then
+      match !best with
+      | Some (_, prev_loc, _) when loc_span loc >= loc_span prev_loc -> ()
+      | _ ->
+          let typ = format_type env ty in
+          best := Some (typ, loc, None)
+  in
+  let iter =
+    {
+      Tast_iterator.default_iterator with
+      expr =
+        (fun self (e : Typedtree.expression) ->
+          update e.exp_loc e.exp_type;
+          Tast_iterator.default_iterator.expr self e);
+      pat =
+        (fun (type k) self (p : k Typedtree.general_pattern) ->
+          update p.pat_loc p.pat_type;
+          Tast_iterator.default_iterator.pat self p);
+    }
+  in
+  iter.structure iter tstr;
+  match !best with
+  | None -> None
+  | Some (typ, loc, doc) ->
+      Some
+        Quill.Kernel.
+          {
+            typ;
+            doc;
+            from_pos = loc.loc_start.pos_cnum;
+            to_pos = loc.loc_end.pos_cnum;
+          }
+
+let type_at_pos ~code ~pos =
+  let env = !Toploop.toplevel_env in
+  let phrases = parse_phrases code in
+  let rec try_phrases = function
+    | [] -> None
+    | Parsetree.Ptop_def structure :: rest -> (
+        match typecheck_structure env structure with
+        | tstr -> (
+            match find_type_at_pos env tstr pos with
+            | Some _ as result -> result
+            | None -> try_phrases rest)
+        | exception _ -> try_phrases rest)
+    | _ :: rest -> try_phrases rest
+  in
+  try_phrases phrases
+
+(* ───── Diagnostics ───── *)
+
+let loc_to_positions (loc : Location.t) =
+  (loc.loc_start.pos_cnum, loc.loc_end.pos_cnum)
+
+let error_loc_of_exn exn =
+  match exn with
+  | Location.Error report -> report.main.loc
+  | _ -> Location.in_file "//toplevel//"
+
+let format_exn exn =
+  match Location.error_of_exn exn with
+  | Some (`Ok report) -> Format.asprintf "%a" Location.print_report report
+  | _ -> Printexc.to_string exn
+
+let compute_diagnostics ~code =
+  let env = !Toploop.toplevel_env in
+  let diags = ref [] in
+  let add_diag severity loc message =
+    let from_pos, to_pos = loc_to_positions loc in
+    let to_pos = if to_pos <= from_pos then from_pos + 1 else to_pos in
+    diags := Quill.Kernel.{ from_pos; to_pos; severity; message } :: !diags
+  in
+  (match parse_phrases code with
+  | phrases ->
+      List.iter
+        (function
+          | Parsetree.Ptop_def structure -> (
+              try ignore (Typemod.type_toplevel_phrase env structure)
+              with exn ->
+                add_diag Error (error_loc_of_exn exn) (format_exn exn))
+          | _ -> ())
+        phrases
+  | exception exn -> add_diag Error (error_loc_of_exn exn) (format_exn exn));
+  List.rev !diags
+
 (* ───── Kernel interface ───── *)
 
 let status_ref = ref Quill.Kernel.Idle
@@ -282,8 +401,16 @@ let create ~on_event =
     Quill.Kernel.execute;
     interrupt;
     complete;
-    type_at = None;
-    diagnostics = None;
+    type_at =
+      Some
+        (fun ~code ~pos ->
+          initialize_if_needed ();
+          try type_at_pos ~code ~pos with _ -> None);
+    diagnostics =
+      Some
+        (fun ~code ->
+          initialize_if_needed ();
+          try compute_diagnostics ~code with _ -> []);
     status;
     shutdown;
   }

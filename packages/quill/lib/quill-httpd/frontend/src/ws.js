@@ -6,6 +6,8 @@ export class WsClient {
     this.ws = null;
     this.reconnectDelay = 1000;
     this._pendingCompletions = new Map();
+    this._pendingTypeAt = new Map();
+    this._pendingDiagnostics = new Map();
     this._requestCounter = 0;
     this._sourceDebounceTimers = new Map();
   }
@@ -91,6 +93,22 @@ export class WsClient {
         }
         break;
       }
+      case 'type_at': {
+        const resolve = this._pendingTypeAt.get(msg.request_id);
+        if (resolve) {
+          this._pendingTypeAt.delete(msg.request_id);
+          resolve(msg);
+        }
+        break;
+      }
+      case 'diagnostics': {
+        const resolve = this._pendingDiagnostics.get(msg.request_id);
+        if (resolve) {
+          this._pendingDiagnostics.delete(msg.request_id);
+          resolve(msg);
+        }
+        break;
+      }
       case 'saved':
         this.store.emit('saved');
         break;
@@ -156,11 +174,38 @@ export class WsClient {
     return new Promise((resolve) => {
       this._pendingCompletions.set(requestId, resolve);
       this.send({ type: 'complete', request_id: requestId, code, pos });
-      // Timeout after 3s
       setTimeout(() => {
         if (this._pendingCompletions.has(requestId)) {
           this._pendingCompletions.delete(requestId);
           resolve([]);
+        }
+      }, 3000);
+    });
+  }
+
+  typeAt(code, pos) {
+    const requestId = `req_${++this._requestCounter}`;
+    return new Promise((resolve) => {
+      this._pendingTypeAt.set(requestId, resolve);
+      this.send({ type: 'type_at', request_id: requestId, code, pos });
+      setTimeout(() => {
+        if (this._pendingTypeAt.has(requestId)) {
+          this._pendingTypeAt.delete(requestId);
+          resolve(null);
+        }
+      }, 3000);
+    });
+  }
+
+  diagnostics(code) {
+    const requestId = `req_${++this._requestCounter}`;
+    return new Promise((resolve) => {
+      this._pendingDiagnostics.set(requestId, resolve);
+      this.send({ type: 'diagnostics', request_id: requestId, code });
+      setTimeout(() => {
+        if (this._pendingDiagnostics.has(requestId)) {
+          this._pendingDiagnostics.delete(requestId);
+          resolve({ items: [] });
         }
       }, 3000);
     });

@@ -1,6 +1,6 @@
 // CodeMirror 6 editor setup for OCaml code cells.
 
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, dropCursor, highlightSpecialChars } from '@codemirror/view';
+import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, dropCursor, highlightSpecialChars, hoverTooltip } from '@codemirror/view';
 import { EditorState } from '@codemirror/state';
 import { StreamLanguage, bracketMatching, indentOnInput } from '@codemirror/language';
 import { oCaml } from '@codemirror/legacy-modes/mode/mllike';
@@ -8,6 +8,7 @@ import { closeBrackets } from '@codemirror/autocomplete';
 import { autocompletion } from '@codemirror/autocomplete';
 import { history, defaultKeymap, historyKeymap } from '@codemirror/commands';
 import { highlightSelectionMatches } from '@codemirror/search';
+import { linter } from '@codemirror/lint';
 import { tags } from '@lezer/highlight';
 import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 
@@ -54,6 +55,29 @@ const quillTheme = EditorView.theme({
     '& > ul > li[aria-selected]': {
       backgroundColor: '#3a3a50',
     },
+  },
+  '.cm-tooltip-hover': {
+    padding: '4px 8px',
+    maxWidth: '500px',
+  },
+  '.cm-type-tooltip code': {
+    fontFamily: "'JetBrains Mono', 'SF Mono', 'Fira Code', monospace",
+    fontSize: '13px',
+    color: '#ffcb6b',
+  },
+  '.cm-type-tooltip .cm-type-doc': {
+    marginTop: '4px',
+    paddingTop: '4px',
+    borderTop: '1px solid #32323a',
+    fontSize: '12px',
+    color: '#9da5b4',
+    whiteSpace: 'pre-wrap',
+  },
+  '.cm-diagnostic-error': {
+    borderBottom: '2px solid #ff5370',
+  },
+  '.cm-diagnostic-warning': {
+    borderBottom: '2px solid #ffcb6b',
   },
 }, { dark: true });
 
@@ -112,6 +136,60 @@ function makeCompletionSource(wsClient) {
   };
 }
 
+// --- Hover tooltip source ---
+
+function makeHoverSource(wsClient) {
+  return hoverTooltip(async (view, pos) => {
+    const code = view.state.doc.toString();
+    try {
+      const result = await wsClient.typeAt(code, pos);
+      if (!result || !result.info) return null;
+      return {
+        pos: result.info.from,
+        end: result.info.to,
+        above: true,
+        create() {
+          const dom = document.createElement('div');
+          dom.className = 'cm-type-tooltip';
+          const typeLine = document.createElement('code');
+          typeLine.textContent = result.info.type;
+          dom.appendChild(typeLine);
+          if (result.info.doc) {
+            const docLine = document.createElement('div');
+            docLine.className = 'cm-type-doc';
+            docLine.textContent = result.info.doc;
+            dom.appendChild(docLine);
+          }
+          return { dom };
+        },
+      };
+    } catch {
+      return null;
+    }
+  }, { hoverTime: 300 });
+}
+
+// --- Lint source ---
+
+function makeLintSource(wsClient) {
+  return linter(async (view) => {
+    const code = view.state.doc.toString();
+    if (!code.trim()) return [];
+    try {
+      const result = await wsClient.diagnostics(code);
+      if (!result || !result.items) return [];
+      return result.items.map(d => ({
+        from: d.from,
+        to: Math.min(d.to, code.length),
+        severity: d.severity,
+        message: d.message,
+      }));
+    } catch {
+      return [];
+    }
+  }, { delay: 500 });
+}
+
 // --- Editor creation ---
 
 export function createEditor(container, source, options) {
@@ -153,7 +231,9 @@ export function createEditor(container, source, options) {
       autocompletion({
         override: [makeCompletionSource(wsClient)],
         activateOnTyping: true,
-      })
+      }),
+      makeHoverSource(wsClient),
+      makeLintSource(wsClient),
     );
   }
 

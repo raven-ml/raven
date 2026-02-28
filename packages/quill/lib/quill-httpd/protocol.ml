@@ -273,6 +273,8 @@ type client_msg =
   | Undo
   | Redo
   | Complete of { request_id : string; code : string; pos : int }
+  | Type_at of { request_id : string; code : string; pos : int }
+  | Diagnostics of { request_id : string; code : string }
 
 let parse_kind fields =
   match get_string "kind" fields with
@@ -325,6 +327,15 @@ let client_msg_of_json s =
           let* code = get_string "code" fields in
           let* pos = get_int "pos" fields in
           Ok (Complete { request_id; code; pos })
+      | Ok "type_at" ->
+          let* request_id = get_string "request_id" fields in
+          let* code = get_string "code" fields in
+          let* pos = get_int "pos" fields in
+          Ok (Type_at { request_id; code; pos })
+      | Ok "diagnostics" ->
+          let* request_id = get_string "request_id" fields in
+          let* code = get_string "code" fields in
+          Ok (Diagnostics { request_id; code })
       | Ok t -> Error (Printf.sprintf err_unknown_msg_type t)
       | Error e -> Error e)
   | _ -> Error err_expected_object
@@ -415,6 +426,35 @@ let completions_to_json ~request_id items =
     "[" ^ String.concat "," (List.map completion_item_to_json items) ^ "]"
   in
   Printf.sprintf {|{"type":"completions","request_id":%s,"items":%s}|}
+    (jstr request_id) items_json
+
+let type_at_to_json ~request_id info =
+  let info_json =
+    match info with
+    | None -> "null"
+    | Some (ti : Kernel.type_info) ->
+        let doc_json = match ti.doc with Some d -> jstr d | None -> "null" in
+        Printf.sprintf {|{"type":%s,"doc":%s,"from":%d,"to":%d}|} (jstr ti.typ)
+          doc_json ti.from_pos ti.to_pos
+  in
+  Printf.sprintf {|{"type":"type_at","request_id":%s,"info":%s}|}
+    (jstr request_id) info_json
+
+let severity_to_string = function
+  | Kernel.Error -> "error"
+  | Warning -> "warning"
+
+let diagnostic_to_json (d : Kernel.diagnostic) =
+  Printf.sprintf {|{"from":%d,"to":%d,"severity":%s,"message":%s}|} d.from_pos
+    d.to_pos
+    (jstr (severity_to_string d.severity))
+    (jstr d.message)
+
+let diagnostics_to_json ~request_id items =
+  let items_json =
+    "[" ^ String.concat "," (List.map diagnostic_to_json items) ^ "]"
+  in
+  Printf.sprintf {|{"type":"diagnostics","request_id":%s,"items":%s}|}
     (jstr request_id) items_json
 
 let saved_to_json () = {|{"type":"saved"}|}

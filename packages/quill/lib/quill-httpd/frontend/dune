@@ -9,9 +9,9 @@
   (glob_files src/*.js)
   (glob_files css/*.css)
   (glob_files fonts/*.woff2)
-  esbuild.config.mjs)
+  esbuild.config.mjs
+  (source_tree node_modules))
  (mode
   (promote (until-clean)))
  (action
-  (bash
-   "NODE_PATH=%{workspace_root}/packages/quill/lib/quill-httpd/frontend/node_modules node %{workspace_root}/packages/quill/lib/quill-httpd/frontend/esbuild.config.mjs --production 2>&1")))
+  (bash "node esbuild.config.mjs --production 2>&1")))

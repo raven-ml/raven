@@ -38,6 +38,10 @@ type client_msg =
   | Complete of { request_id : string; code : string; pos : int }
       (** Request completions for [code] at cursor position [pos]. [request_id]
           correlates the response. *)
+  | Type_at of { request_id : string; code : string; pos : int }
+      (** Request type information at cursor position [pos] in [code]. *)
+  | Diagnostics of { request_id : string; code : string }
+      (** Request parse and type diagnostics for [code]. *)
 
 val client_msg_of_json : string -> (client_msg, string) result
 (** [client_msg_of_json s] parses a JSON string into a client message. Returns
@@ -84,6 +88,15 @@ val completions_to_json :
   request_id:string -> Quill.Kernel.completion_item list -> string
 (** [completions_to_json ~request_id items] is a ["completions"] JSON message
     with completion [items] for the given [request_id]. *)
+
+val type_at_to_json :
+  request_id:string -> Quill.Kernel.type_info option -> string
+(** [type_at_to_json ~request_id info] is a ["type_at"] JSON response. *)
+
+val diagnostics_to_json :
+  request_id:string -> Quill.Kernel.diagnostic list -> string
+(** [diagnostics_to_json ~request_id items] is a ["diagnostics"] JSON response.
+*)
 
 val saved_to_json : unit -> string
 (** [saved_to_json ()] is a ["saved"] JSON message. *)
