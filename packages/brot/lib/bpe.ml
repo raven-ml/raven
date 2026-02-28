@@ -19,8 +19,8 @@ module Merge_map = struct
   type t = { keys : int array; values : int array; mask : int }
 
   let[@inline] hash key =
-    let h = key * 0x517CC1B727220A95 in
-    h lxor (h lsr 29)
+    let h = key * 0x1B873593 in
+    h lxor (h lsr 16)
 
   let create entries =
     let n = List.length entries in
