@@ -1,0 +1,12 @@
+(lang dune 3.21)
+
+(name tolk)
+
+(package
+ (name tolk)
+ (synopsis "An ML compiler inspired by tinygrad")
+ (description
+  "Tolk is a port of tinygrad in OCaml. A minimal, readable ML compiler for the Raven ecosystem.")
+ (depends
+  (ocaml
+   (>= 5.2))))

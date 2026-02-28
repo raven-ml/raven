@@ -1,0 +1,12 @@
+(lang dune 3.21)
+
+(name mimir)
+
+(package
+ (name mimir)
+ (synopsis "Experimental inference engine for Raven")
+ (description
+  "Mimir is an inference engine for the Raven ecosystem. It provides sampling, KV cache management, request scheduling, and structured generation for serving ML models.")
+ (depends
+  (ocaml
+   (>= 5.2))))

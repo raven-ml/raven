@@ -2,4 +2,5 @@
 
 (library
  (name tolk)
+ (public_name tolk)
  (libraries unix))
