@@ -44,7 +44,7 @@ type state = {
   mutable kernel : Kernel.t;
   path : string;
   mutex : Mutex.t;
-  mutable ws : Httpd.ws option;
+  mutable ws_clients : Httpd.ws list;
   mutable last_mtime : float;
 }
 
@@ -57,7 +57,12 @@ let send st msg =
     if String.length msg > 120 then String.sub msg 0 120 ^ "…" else msg
   in
   log "[ws:send] %s\n%!" preview;
-  match st.ws with Some ws -> Httpd.ws_send ws msg | None -> ()
+  st.ws_clients <-
+    List.filter
+      (fun ws ->
+        try Httpd.ws_send ws msg; true
+        with _ -> false)
+      st.ws_clients
 
 let send_undo_redo st =
   send st
@@ -248,7 +253,7 @@ let handle_msg st msg =
 let ws_handler st _req ws =
   log "[ws] connection opened\n%!";
   locked st (fun () ->
-      st.ws <- Some ws;
+      st.ws_clients <- ws :: st.ws_clients;
       (* Reload document from disk only if the file changed since we last
          loaded or saved it. Re-parsing a file without cell ID markers
          generates new random IDs, which would invalidate the session. *)
@@ -276,10 +281,8 @@ let ws_handler st _req ws =
     | None ->
         log "[ws] connection closed\n%!";
         locked st (fun () ->
-            (* Only clear if we're still the active connection *)
-            match st.ws with
-            | Some w when w == ws -> st.ws <- None
-            | _ -> ())
+            st.ws_clients <-
+              List.filter (fun w -> w != ws) st.ws_clients)
   in
   loop ()
 
@@ -308,7 +311,7 @@ let serve ?(addr = "127.0.0.1") ?(port = 8888) ?on_ready path =
         };
       path;
       mutex;
-      ws = None;
+      ws_clients = [];
       last_mtime = get_mtime path;
     }
   in
@@ -321,7 +324,9 @@ let serve ?(addr = "127.0.0.1") ?(port = 8888) ?on_ready path =
         Assets.index_html);
   Httpd.static server ~prefix:"/assets/" ~loader:Assets.lookup ();
   Httpd.websocket server "/ws" (ws_handler st);
-  Printf.printf "Quill: http://%s:%d (Ctrl-C to stop)\n%!" addr port;
-  (match on_ready with Some f -> f () | None -> ());
-  Httpd.run server;
+  let after_start () =
+    Printf.printf "Quill: http://%s:%d (Ctrl-C to stop)\n%!" addr port;
+    match on_ready with Some f -> f () | None -> ()
+  in
+  Httpd.run ~after_start server;
   st.kernel.shutdown ()
