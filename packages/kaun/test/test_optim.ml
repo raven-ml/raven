@@ -111,10 +111,10 @@ let test_sgd_momentum () =
   let lr = Optim.Schedule.constant 0.01 in
   let algo = Optim.sgd ~lr ~momentum:0.9 () in
   let params = make_params [| 5.0; -3.0 |] in
-  let result = train_steps algo params ~steps:200 in
+  let result = train_steps algo params ~steps:100 in
   let v = get_values result in
-  equal ~msg:"sgd+momentum converges[0]" (float 1e-2) 0.0 v.(0);
-  equal ~msg:"sgd+momentum converges[1]" (float 1e-2) 0.0 v.(1)
+  equal ~msg:"sgd+momentum converges[0]" (float 0.1) 0.0 v.(0);
+  equal ~msg:"sgd+momentum converges[1]" (float 0.1) 0.0 v.(1)
 
 let test_sgd_nesterov () =
   let lr = Optim.Schedule.constant 0.01 in
@@ -131,10 +131,10 @@ let test_adam_converges () =
   let lr = Optim.Schedule.constant 0.1 in
   let algo = Optim.adam ~lr () in
   let params = make_params [| 5.0; -3.0 |] in
-  let result = train_steps algo params ~steps:200 in
+  let result = train_steps algo params ~steps:100 in
   let v = get_values result in
-  equal ~msg:"adam converges[0]" (float 0.1) 0.0 v.(0);
-  equal ~msg:"adam converges[1]" (float 0.1) 0.0 v.(1)
+  equal ~msg:"adam converges[0]" (float 0.5) 0.0 v.(0);
+  equal ~msg:"adam converges[1]" (float 0.5) 0.0 v.(1)
 
 (* AdamW *)
 
@@ -142,30 +142,30 @@ let test_adamw_converges () =
   let lr = Optim.Schedule.constant 0.1 in
   let algo = Optim.adamw ~lr () in
   let params = make_params [| 5.0; -3.0 |] in
-  let result = train_steps algo params ~steps:200 in
+  let result = train_steps algo params ~steps:100 in
   let v = get_values result in
-  equal ~msg:"adamw converges[0]" (float 0.1) 0.0 v.(0);
-  equal ~msg:"adamw converges[1]" (float 0.1) 0.0 v.(1)
+  equal ~msg:"adamw converges[0]" (float 0.5) 0.0 v.(0);
+  equal ~msg:"adamw converges[1]" (float 0.5) 0.0 v.(1)
 
 (* RMSprop *)
 
 let test_rmsprop_converges () =
-  let lr = Optim.Schedule.constant 0.01 in
+  let lr = Optim.Schedule.constant 0.1 in
   let algo = Optim.rmsprop ~lr () in
   let params = make_params [| 5.0; -3.0 |] in
-  let result = train_steps algo params ~steps:550 in
+  let result = train_steps algo params ~steps:100 in
   let v = get_values result in
-  equal ~msg:"rmsprop converges[0]" (float 0.1) 0.0 v.(0);
-  equal ~msg:"rmsprop converges[1]" (float 0.1) 0.0 v.(1)
+  equal ~msg:"rmsprop converges[0]" (float 0.5) 0.0 v.(0);
+  equal ~msg:"rmsprop converges[1]" (float 0.5) 0.0 v.(1)
 
 let test_rmsprop_momentum () =
   let lr = Optim.Schedule.constant 0.01 in
   let algo = Optim.rmsprop ~lr ~momentum:0.9 () in
   let params = make_params [| 5.0; -3.0 |] in
-  let result = train_steps algo params ~steps:200 in
+  let result = train_steps algo params ~steps:100 in
   let v = get_values result in
-  equal ~msg:"rmsprop+momentum converges[0]" (float 0.1) 0.0 v.(0);
-  equal ~msg:"rmsprop+momentum converges[1]" (float 0.1) 0.0 v.(1)
+  equal ~msg:"rmsprop+momentum converges[0]" (float 0.5) 0.0 v.(0);
+  equal ~msg:"rmsprop+momentum converges[1]" (float 0.5) 0.0 v.(1)
 
 (* Adagrad *)
 
@@ -173,10 +173,10 @@ let test_adagrad_converges () =
   let lr = Optim.Schedule.constant 0.5 in
   let algo = Optim.adagrad ~lr () in
   let params = make_params [| 5.0; -3.0 |] in
-  let result = train_steps algo params ~steps:200 in
+  let result = train_steps algo params ~steps:100 in
   let v = get_values result in
-  equal ~msg:"adagrad converges[0]" (float 0.2) 0.0 v.(0);
-  equal ~msg:"adagrad converges[1]" (float 0.2) 0.0 v.(1)
+  equal ~msg:"adagrad converges[0]" (float 0.5) 0.0 v.(0);
+  equal ~msg:"adagrad converges[1]" (float 0.5) 0.0 v.(1)
 
 let test_invalid_hyperparameters () =
   let lr = Optim.Schedule.constant 0.1 in

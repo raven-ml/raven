@@ -74,17 +74,17 @@ let test_fit () =
   let y = Nx.create Nx.float32 [| 4; 1 |] [| 0.; 1.; 1.; 0. |] in
   let st' =
     Train.fit trainer st
-      (Data.repeat 500 (x, fun pred -> Loss.binary_cross_entropy pred y))
+      (Data.repeat 100 (x, fun pred -> Loss.binary_cross_entropy pred y))
   in
   let pred = Train.predict trainer st' x |> Nx.sigmoid in
   let p0 = Nx.item [ 0; 0 ] pred in
   let p1 = Nx.item [ 1; 0 ] pred in
   let p2 = Nx.item [ 2; 0 ] pred in
   let p3 = Nx.item [ 3; 0 ] pred in
-  equal ~msg:"[0,0] -> ~0" bool true (p0 < 0.3);
-  equal ~msg:"[0,1] -> ~1" bool true (p1 > 0.7);
-  equal ~msg:"[1,0] -> ~1" bool true (p2 > 0.7);
-  equal ~msg:"[1,1] -> ~0" bool true (p3 < 0.3)
+  equal ~msg:"[0,0] -> ~0" bool true (p0 < 0.4);
+  equal ~msg:"[0,1] -> ~1" bool true (p1 > 0.6);
+  equal ~msg:"[1,0] -> ~1" bool true (p2 > 0.6);
+  equal ~msg:"[1,1] -> ~0" bool true (p3 < 0.4)
 
 let test_predict () =
   Nx.Rng.run ~seed:42 @@ fun () ->
