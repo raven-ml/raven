@@ -2,4 +2,4 @@
  (name rune)
  (public_name rune)
  (private_modules autodiff jvp vjp)
- (libraries nx_core nx nx_buffer nx_effect))
+ (libraries nx.core nx nx.buffer nx.effect))

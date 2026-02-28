@@ -1,4 +1,4 @@
 (mdx
  (files *.md)
  (package hugin)
- (libraries hugin nx nx_io))
+ (libraries hugin nx nx.io))

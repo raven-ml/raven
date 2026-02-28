@@ -1,7 +1,7 @@
 (library
  (name test_nx_support)
  (modules test_nx_support)
- (libraries nx_core nx windtrap))
+ (libraries nx.core nx windtrap))
 
 (tests
  (names
@@ -17,12 +17,12 @@
   test_nx_rng)
  (package nx)
  (modules :standard \ test_nx_support test_nx_io)
- (libraries nx_buffer nx nx_core windtrap test_nx_support))
+ (libraries nx.buffer nx nx.core windtrap test_nx_support))
 
 (test
  (name test_nx_io)
  (package nx)
  (modules test_nx_io)
- (libraries nx nx_io windtrap)
+ (libraries nx nx.io windtrap)
  (deps
   (glob_files fixtures/*)))

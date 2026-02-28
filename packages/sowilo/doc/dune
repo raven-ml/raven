@@ -1,4 +1,4 @@
 (mdx
  (files *.md)
  (package sowilo)
- (libraries sowilo rune nx nx_io))
+ (libraries sowilo))

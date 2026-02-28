@@ -1,5 +1,5 @@
 (library
  (name sowilo)
  (public_name sowilo)
- (libraries nx nx_core)
+ (libraries nx nx.core)
  (private_modules helpers color transform filter morphology edge))

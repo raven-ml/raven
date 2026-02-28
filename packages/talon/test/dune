@@ -6,4 +6,4 @@
 (test
  (name test_talon_csv)
  (package talon)
- (libraries talon talon_csv windtrap nx))
+ (libraries talon talon.csv windtrap nx))
