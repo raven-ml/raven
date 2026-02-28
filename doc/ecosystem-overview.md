@@ -219,7 +219,7 @@ frontend, and batch mode for interactive or automated evaluation.
 ```bash
 quill notebook.md        # interactive TUI
 quill serve notebook.md  # web frontend
-quill eval notebook.md   # batch evaluation
+quill run notebook.md    # batch evaluation
 ```
 
 [Quill documentation →](/docs/quill/)

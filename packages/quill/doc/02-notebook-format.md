@@ -44,8 +44,8 @@ before the cell:
 Cell IDs are generated automatically for cells that lack them. They
 enable the TUI and session to track cells across file reloads and edits.
 
-Users do not need to manage cell IDs. They are preserved by `quill fmt`
-and `quill eval --inplace`. Deleting them is harmless — fresh IDs are
+Users do not need to manage cell IDs. They are preserved by `quill clean`
+and `quill run --inplace`. Deleting them is harmless — fresh IDs are
 assigned on the next load.
 
 ## Output Format
@@ -97,8 +97,8 @@ The output format uses HTML comments for several reasons:
    specification. No custom syntax, no extensions, no preprocessing.
 3. **Single file.** Outputs live in the notebook itself. No sidecar
    files, no `.ipynb_checkpoints`, no separate output directories.
-4. **Clean stripping.** `quill fmt` removes all output sections in one
-   pass. `quill eval --inplace` regenerates them. This makes it easy to
+4. **Clean stripping.** `quill clean` removes all output sections in one
+   pass. `quill run --inplace` regenerates them. This makes it easy to
    commit clean notebooks and regenerate outputs in CI.
 
 ## Non-OCaml Code Blocks
@@ -108,7 +108,7 @@ Code blocks without a language tag, or with a language other than
 
     ```bash
     # This is not executed — it's documentation
-    quill eval notebook.md
+    quill run notebook.md
     ```
 
     ```json
