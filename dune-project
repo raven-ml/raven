@@ -29,6 +29,7 @@
 
 (package
  (name nx)
+ (dir packages/nx)
  (synopsis "N-dimensional arrays for OCaml")
  (description
   "Nx provides n-dimensional arrays with NumPy-like semantics and OCaml's type safety. 19 data types, broadcasting, slicing, linear algebra, FFT, and I/O. The numerical foundation for the Raven ecosystem.")
@@ -49,6 +50,7 @@
 
 (package
  (name brot)
+ (dir packages/brot)
  (synopsis "Tokenization for OCaml")
  (description
   "Fast, HuggingFace-compatible tokenization for language models. BPE, WordPiece, Unigram, word-level, and character-level algorithms with composable pipelines and training from scratch.")
@@ -61,12 +63,14 @@
   bytesrw
   uunf
   uucp
-  (windtrap :with-test))
+  (windtrap :with-test)
+  (mdx :with-test))
  (tags
   (tokenization bpe wordpiece subword-tokenization language-models)))
 
 (package
  (name talon)
+ (dir packages/talon)
  (synopsis "Dataframes for OCaml")
  (description
   "Fast and elegant dataframes with type-safe operations. Heterogeneous columns, applicative row operations, vectorized aggregations, and CSV I/O, built on Nx.")
@@ -77,12 +81,14 @@
   (nx
    (= :version))
   re
-  (windtrap :with-test))
+  (windtrap :with-test)
+  (mdx :with-test))
  (tags
   (dataframe data-manipulation data-science tabular-data)))
 
 (package
  (name rune)
+ (dir packages/rune)
  (synopsis "Functional transformations for Nx arrays")
  (description
   "Automatic differentiation and vectorizing maps for Nx tensors. Reverse-mode AD (grad, vjp), forward-mode AD (jvp), vmap, and gradient checking, built on OCaml 5 effect handlers.")
@@ -93,12 +99,14 @@
   (dune-configurator :build)
   (nx
    (= :version))
-  (windtrap :with-test))
+  (windtrap :with-test)
+  (mdx :with-test))
  (tags
   (automatic-differentiation machine-learning deep-learning optimization)))
 
 (package
  (name kaun)
+ (dir packages/kaun)
  (synopsis "Neural networks for OCaml")
  (description
   "Composable layers, parameter trees, optimizers, training loops, data pipelines, and HuggingFace Hub integration. Built on Rune.")
@@ -111,12 +119,14 @@
   (nx
    (= :version))
   jsont
+  bytesrw
   (windtrap :with-test))
  (tags
   (neural-networks machine-learning deep-learning)))
 
 (package
  (name kaun-board)
+ (dir packages/kaun-board)
  (synopsis "Training dashboard and logging for Raven")
  (description
   "Lightweight training logger and terminal dashboard for monitoring runs. The core library (kaun-board) provides a Log API for writing JSONL events and a reader for consuming them. The TUI library (kaun-board.tui) provides a Mosaic-based dashboard.")
@@ -135,6 +145,7 @@
 
 (package
  (name sowilo)
+ (dir packages/sowilo)
  (synopsis "Differentiable computer vision for OCaml")
  (description
   "Image processing operations expressed as Nx tensor computations. Geometric transforms, spatial filters, edge detection, morphological operations, and color space conversions, all compatible with Rune.grad and Rune.vmap.")
@@ -144,12 +155,14 @@
   dune
   (nx
    (= :version))
-  (windtrap :with-test))
+  (windtrap :with-test)
+  (mdx :with-test))
  (tags
   (computer-vision image-processing feature-detection machine-learning)))
 
 (package
  (name fehu)
+ (dir packages/fehu)
  (synopsis "Reinforcement learning for OCaml")
  (description
   "Type-safe RL environments, observation/action spaces, vectorized environments, trajectory collection, replay buffers, and generalized advantage estimation. Built on Nx.")
@@ -165,6 +178,7 @@
 
 (package
  (name hugin)
+ (dir packages/hugin)
  (synopsis "Plotting for OCaml")
  (description
   "Publication-quality 2D and 3D plots using Cairo rendering. Line plots, scatter, bar charts, contour plots, and image display from Nx tensors.")
@@ -177,12 +191,14 @@
   cairo2
   (nx
    (= :version))
-  (windtrap :with-test))
+  (windtrap :with-test)
+  (mdx :with-test))
  (tags
   (visualization plotting charts data-science graphics)))
 
 (package
  (name quill)
+ (dir packages/quill)
  (synopsis "Notebooks as markdown files")
  (description
   "Quill turns markdown files into interactive OCaml notebooks. Terminal UI for cell navigation and execution, batch evaluation with watch mode, and in-place output serialization. All Raven packages are pre-loaded.")
@@ -219,6 +235,7 @@
 
 (package
  (name raven)
+ (dir packages/raven)
  (allow_empty)
  (synopsis "Modern scientific computing for OCaml")
  (description

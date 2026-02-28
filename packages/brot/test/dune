@@ -12,4 +12,4 @@
   test_processors
   test_pretokenizers)
  (package brot)
- (libraries brot nx windtrap unix jsont))
+ (libraries brot windtrap unix jsont))

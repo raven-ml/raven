@@ -17,6 +17,7 @@ depends: [
   "rune" {= version}
   "nx" {= version}
   "jsont"
+  "bytesrw"
   "windtrap" {with-test}
   "odoc" {with-doc}
 ]

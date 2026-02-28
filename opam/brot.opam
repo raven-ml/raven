@@ -22,6 +22,7 @@ depends: [
   "uunf"
   "uucp"
   "windtrap" {with-test}
+  "mdx" {with-test}
   "odoc" {with-doc}
 ]
 build: [
