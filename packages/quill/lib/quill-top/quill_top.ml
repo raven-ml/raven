@@ -425,10 +425,15 @@ let format_exn exn =
 let compute_diagnostics ~code =
   let env = !Toploop.toplevel_env in
   let diags = ref [] in
+  let len = String.length code in
   let add_diag severity loc message =
     let from_pos, to_pos = loc_to_positions loc in
-    let to_pos = if to_pos <= from_pos then from_pos + 1 else to_pos in
-    diags := Quill.Kernel.{ from_pos; to_pos; severity; message } :: !diags
+    (* Clamp to valid range; skip diagnostics with no usable location *)
+    let from_pos = clamp 0 len from_pos in
+    let to_pos = clamp 0 len to_pos in
+    let to_pos = if to_pos <= from_pos then min (from_pos + 1) len else to_pos in
+    if from_pos < len then
+      diags := Quill.Kernel.{ from_pos; to_pos; severity; message } :: !diags
   in
   (match parse_phrases code with
   | phrases ->
