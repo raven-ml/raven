@@ -1029,7 +1029,7 @@ let view_code_cell m ~index ~is_focused ~is_editing ~status source outputs =
           line_number
             ~line_colors:(active_line_colors source m.edit_cursor)
             (textarea ~id:textarea_id ~value:source
-               ?cursor:m.edit_cursor_override ~highlights ?ghost_text
+               ?cursor:m.edit_cursor_override ~spans:highlights ?ghost_text
                ~ghost_text_color:(Ansi.Color.grayscale ~level:10)
                ~text_color:output_fg ~background_color:cell_bg_focused
                ~focused_text_color:output_fg
@@ -1048,7 +1048,7 @@ let view_code_cell m ~index ~is_focused ~is_editing ~status source outputs =
       box
         ~padding:(padding_lrtb ~l:1 ~r:1 ~t:1 ~b:0)
         ~size:{ width = pct 100; height = auto }
-        [ code ~highlights source ]
+        [ code ~spans:highlights source ]
   in
   let status_row =
     match status with
