@@ -15,5 +15,5 @@ val serve :
 (** [serve path] starts the web notebook server for the notebook at [path].
     [addr] defaults to ["127.0.0.1"], [port] to [8888]. [on_ready] is called
     after the server socket is bound and listening, before the accept loop
-    starts. Blocks until the server is stopped. Exits the process with
-    status [1] if [path] does not exist. *)
+    starts. Blocks until the server is stopped. Exits the process with status
+    [1] if [path] does not exist. *)

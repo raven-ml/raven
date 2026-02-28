@@ -56,7 +56,9 @@ let send st msg =
   st.ws_clients <-
     List.filter
       (fun ws ->
-        try Httpd.ws_send ws msg; true
+        try
+          Httpd.ws_send ws msg;
+          true
         with _ -> false)
       st.ws_clients
 
@@ -233,19 +235,18 @@ let ws_handler st _req ws =
   locked st (fun () ->
       st.ws_clients <- ws :: st.ws_clients;
       log "[ws] connected (%d active)\n%!" (List.length st.ws_clients);
-      (* Reload document from disk only if the file changed since we last
-         loaded or saved it. Re-parsing a file without cell ID markers
-         generates new random IDs, which would invalidate the session. *)
+      (* Reload document from disk only if the file changed since we last loaded
+         or saved it. Re-parsing a file without cell ID markers generates new
+         random IDs, which would invalidate the session. *)
       let mtime = get_mtime st.path in
-      if mtime > st.last_mtime then (
-        (try
+      (if mtime > st.last_mtime then
+         try
            let md = read_file st.path in
            let doc = Quill_markdown.of_string md in
            st.session <- Session.create doc;
            st.last_mtime <- mtime;
            log "[ws] reloaded %s\n%!" st.path
-         with exn ->
-           log "[ws] reload failed: %s\n%!" (Printexc.to_string exn)));
+         with exn -> log "[ws] reload failed: %s\n%!" (Printexc.to_string exn));
       send_notebook st);
   let rec loop () =
     match Httpd.ws_recv ws with
@@ -253,8 +254,7 @@ let ws_handler st _req ws =
         match Protocol.client_msg_of_json msg with
         | Ok client_msg ->
             (try handle_msg st client_msg
-             with exn ->
-               log "[error] %s\n%!" (Printexc.to_string exn));
+             with exn -> log "[error] %s\n%!" (Printexc.to_string exn));
             loop ()
         | Error err ->
             log "[error] bad message: %s\n%!" err;
@@ -262,10 +262,8 @@ let ws_handler st _req ws =
             loop ())
     | None ->
         locked st (fun () ->
-            st.ws_clients <-
-              List.filter (fun w -> w != ws) st.ws_clients;
-            log "[ws] disconnected (%d active)\n%!"
-              (List.length st.ws_clients))
+            st.ws_clients <- List.filter (fun w -> w != ws) st.ws_clients;
+            log "[ws] disconnected (%d active)\n%!" (List.length st.ws_clients))
   in
   loop ()
 
