@@ -145,12 +145,13 @@ let supported_ops t = t.supported_ops
 
 (* ───── Construction ───── *)
 
-(* 0x8FFFFFFF: conservative upper bound for grid dimensions. Backends override
-   with actual hardware limits (e.g., CUDA gridDim.x = 2^31-1). *)
+(* 0x3FFFFFFF: conservative upper bound for grid dimensions that fits in a
+   31-bit OCaml int. Backends override with actual hardware limits (e.g., CUDA
+   gridDim.x = 2^31-1). *)
 let make ?(tensor_cores = []) ?(load_store_widths = fun _ -> [ 1 ])
     ?(has_threads = false)
-    ?(global_max = Some [ 0x8FFFFFFF; 0x8FFFFFFF; 0x8FFFFFFF ])
-    ?(local_max = Some [ 0x8FFFFFFF; 0x8FFFFFFF; 0x8FFFFFFF ])
+    ?(global_max = Some [ 0x3FFFFFFF; 0x3FFFFFFF; 0x3FFFFFFF ])
+    ?(local_max = Some [ 0x3FFFFFFF; 0x3FFFFFFF; 0x3FFFFFFF ])
     ?(code_for_op = []) ?supported_ops ~name ~device ~has_local ~has_shared
     ~shared_max ~render () =
   let supported_ops =

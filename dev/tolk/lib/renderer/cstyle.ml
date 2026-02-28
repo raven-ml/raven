@@ -1350,7 +1350,7 @@ let rewrite_manual_bf16_cast (program : Program.t) : Program.t =
                 let mask =
                   emit (Program.Neg { src = cond_u32; dtype = u32_dt })
                 in
-                let inv = mask ^: cu 0xFFFFFFFF in
+                let inv = mask ^: cu (lnot 0) in
                 a &: mask |: (b &: inv)
               in
               let src' = map_ref src in

@@ -531,7 +531,7 @@ let float_to_bf16 x =
         (Int32.add u
            (Int32.add 0x7FFFl
               (Int32.logand (Int32.shift_right_logical u 16) 1l)))
-        (Int32.of_int 0xFFFF0000)
+        0xFFFF_0000l
     in
     Int32.float_of_bits u
 
