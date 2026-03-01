@@ -1,7 +1,7 @@
 # Getting Started
 
-This guide covers creating a notebook, executing it in different modes,
-and viewing results.
+This guide covers the REPL, creating a notebook, executing it in
+different modes, and viewing results.
 
 ## Installation
 
@@ -18,18 +18,44 @@ git clone https://github.com/raven-ml/raven
 cd raven && dune build quill
 ```
 
-## Your First Notebook
+## The REPL
 
-The fastest way to get started:
+The fastest way to try Quill:
 
 <!-- $MDX skip -->
 ```bash
 quill
 ```
 
-This creates `notebook.md` with a starter template and opens the
-terminal UI. Run each cell with `Enter` to see arrays, plots, and
-automatic differentiation in action.
+This launches an interactive toplevel. Type OCaml expressions, press
+Enter to evaluate. All Raven packages are pre-loaded — try
+`Nx.create Float32 [|3|] [|1.; 2.; 3.|]` right away.
+
+| Key | Action |
+| --- | --- |
+| Enter | Submit (if phrase is complete) |
+| Ctrl-Enter | Insert newline |
+| Tab | Trigger completion |
+| Ctrl-T | Type at cursor |
+| Up / Down | History navigation |
+| Ctrl-C | Clear input / interrupt |
+| Ctrl-D | Quit (on empty input) |
+
+Quill also works in pipes: `echo 'print_endline "hello"' | quill`
+executes the input and prints the result.
+
+## Your First Notebook
+
+Create a notebook with a starter template:
+
+<!-- $MDX skip -->
+```bash
+quill new notebook.md
+quill notebook.md
+```
+
+This opens the terminal UI. Run each cell with `Enter` to see arrays,
+plots, and automatic differentiation in action.
 
 You can also create a named notebook:
 

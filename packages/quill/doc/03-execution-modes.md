@@ -1,13 +1,42 @@
 # Execution Modes
 
-Quill provides five ways to work with notebooks: the terminal UI for
-interactive exploration, a web frontend for browser-based editing, batch
-execution for automation, watch mode for a live editing workflow, and
-clean for stripping outputs.
+Quill provides six execution modes: the interactive REPL, the terminal
+notebook UI, a web frontend, batch execution, watch mode, and clean.
+
+## Interactive REPL
+
+Run `quill` with no file argument to launch the interactive toplevel:
+
+<!-- $MDX skip -->
+```bash
+quill
+```
+
+The REPL provides:
+
+- **Syntax highlighting** via tree-sitter
+- **Tab completion** with ghost text preview
+- **Persistent history** — Up/Down to recall previous expressions
+- **Smart submission** — Enter submits complete phrases, inserts a
+  newline for incomplete code. Ctrl-Enter always inserts a newline
+- **Type inspection** — Ctrl-T shows the type at the cursor
+- **Interrupt** — Ctrl-C clears input (idle) or interrupts execution
+
+### Piped Mode
+
+When stdin is not a terminal, Quill reads code from stdin, executes it,
+and prints the output:
+
+<!-- $MDX skip -->
+```bash
+echo 'List.iter print_endline ["a"; "b"; "c"]' | quill
+```
+
+This is useful for scripting and one-off evaluation.
 
 ## Terminal UI
 
-The default command opens the TUI:
+Open a notebook in the TUI:
 
 <!-- $MDX skip -->
 ```bash
@@ -15,13 +44,6 @@ quill notebook.md
 ```
 
 If the file doesn't exist, Quill creates it with a starter template.
-With no arguments, `quill` defaults to `notebook.md` in the current
-directory:
-
-<!-- $MDX skip -->
-```bash
-quill
-```
 
 ### Layout
 
@@ -226,7 +248,7 @@ plotting, and Rune automatic differentiation.
 
 ## Raven Packages
 
-All execution modes (TUI, web, run, and watch) use the Raven kernel,
+All execution modes (REPL, TUI, web, run, and watch) use the Raven kernel,
 which pre-loads these packages automatically:
 
 - **Nx** — n-dimensional arrays

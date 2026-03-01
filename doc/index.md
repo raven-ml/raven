@@ -18,7 +18,7 @@ Welcome to Raven's documentation. Raven is an ecosystem of OCaml libraries for n
 | ᚨ | [**brot**](/docs/brot/) | HF Tokenizers | Fast tokenization for language models |
 | ᛃ | [**talon**](/docs/talon/) | Pandas / Polars | DataFrames with type-safe columns |
 | ᛞ | [**hugin**](/docs/hugin/) | Matplotlib | Data visualization and plotting |
-| ᛈ | [**quill**](/docs/quill/) | Jupyter | Notebooks as markdown files |
+| ᛈ | [**quill**](/docs/quill/) | Jupyter + IPython | Interactive REPL and markdown notebooks |
 | ᚠ | [**fehu**](/docs/fehu/) | Gymnasium | Reinforcement learning environments |
 | ᛋ | [**sowilo**](/docs/sowilo/) | OpenCV | Differentiable computer vision |
 

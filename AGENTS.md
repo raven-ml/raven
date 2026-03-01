@@ -40,7 +40,7 @@ raven is inspired by unix's philosophy of doing one thing well, and tinygrad's p
 - **talon**: dataframe library for data manipulation and analysis - equivalent to pandas and polars.
 - **brot**: tokenization and text processing - equivalent to huggingface tokenizers and parts of huggingface transformers.
 - **hugin**: visualization library for plotting and rendering - equivalent to matplotlib and plotly.
-- **quill**: interactive notebook environment for ocaml - equivalent to jupyter notebooks.
+- **quill**: interactive computing environment for ocaml - equivalent to jupyter notebooks and ipython.
 - **sowilo**: image processing and computer vision built on rune - equivalent to opencv with differentiable operations.
 
 ## project structure

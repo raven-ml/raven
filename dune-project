@@ -201,9 +201,9 @@
 (package
  (name quill)
  (dir packages/quill)
- (synopsis "Notebooks as markdown files")
+ (synopsis "Interactive REPL and markdown notebooks")
  (description
-  "Quill turns markdown files into interactive OCaml notebooks. Terminal UI for cell navigation and execution, batch evaluation with watch mode, and in-place output serialization.")
+  "Quill is a REPL and notebook environment for OCaml. Interactive toplevel with syntax highlighting, completion, and history. Markdown notebooks with a terminal UI, web frontend, batch evaluation, and watch mode.")
  (depends
   (ocaml
    (>= 5.2.0))
@@ -215,7 +215,7 @@
   (windtrap :with-test)
   (mdx :with-test))
  (tags
-  (notebooks interactive-computing literate-programming)))
+  (repl toplevel notebooks interactive-computing literate-programming)))
 
 (package
  (name raven)

@@ -14,7 +14,7 @@ This page maps Python scientific computing concepts to their Raven equivalents. 
 | Matplotlib | [Hugin](/docs/hugin/) | 2D/3D plotting with Cairo |
 | Gymnasium | [Fehu](/docs/fehu/) | RL environments and training utilities |
 | OpenCV | [Sowilo](/docs/sowilo/) | Differentiable image processing |
-| Jupyter | [Quill](/docs/quill/) | Markdown files as notebooks |
+| Jupyter + IPython | [Quill](/docs/quill/) | Interactive REPL and markdown notebooks |
 
 ## Key Differences
 

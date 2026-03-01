@@ -64,8 +64,8 @@ let libraries =
       name = "quill";
       display = {|<span class="rune-symbol">ᛈ</span> quill|};
       color = "color-green";
-      description = "Notebooks as markdown files";
-      tagline = "Notebooks as markdown files";
+      description = "Interactive REPL and markdown notebooks";
+      tagline = "Interactive REPL and markdown notebooks";
       symbol = {|ᛈ|};
     };
     {

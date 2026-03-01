@@ -1,14 +1,18 @@
 # Quill
 
-Interactive notebooks for OCaml.
+Interactive computing environment for OCaml.
 
-Quill turns markdown files into interactive OCaml notebooks. It is part
-of the Raven ecosystem. Write prose and code in any text editor, execute
-code blocks with a terminal UI, web frontend, or batch evaluator, and
-store outputs directly in the markdown as HTML comments.
+Quill is a REPL and notebook environment for OCaml. Run `quill` for an
+interactive toplevel with syntax highlighting, completion, and persistent
+history — or open a markdown file for a full notebook experience with a
+terminal UI, web frontend, or batch evaluator. Part of the Raven
+ecosystem.
 
 ## Features
 
+- Interactive REPL: `quill` launches a toplevel with syntax highlighting,
+  tab completion with ghost text, persistent history, smart phrase-aware
+  submission, and type inspection — no browser or file required
 - Markdown notebooks: notebooks are `.md` files with fenced OCaml code
   blocks — git-friendly, editor-agnostic, zero lock-in
 - Terminal UI: full-screen TUI for cell navigation, execution, and
@@ -29,11 +33,14 @@ store outputs directly in the markdown as HTML comments.
 
 <!-- $MDX skip -->
 ```bash
-# Open a notebook in the terminal UI (creates it if new)
+# Interactive REPL
 quill
 
+# Open a notebook in the terminal UI
+quill notebook.md
+
 # Open in the browser
-quill serve
+quill serve notebook.md
 
 # Execute all cells from the command line
 quill run notebook.md

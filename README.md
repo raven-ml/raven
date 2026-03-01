@@ -55,7 +55,7 @@ let () = Hugin.(figure () |> subplot |> Plotting.plot ~x ~y |> ignore; show ())
 | ᚨ | [**brot**](packages/brot/) | HF Tokenizers | Fast, HuggingFace-compatible tokenization |
 | ᛃ | [**talon**](packages/talon/) | Polars | Fast and elegant dataframes with type-safe operations |
 | ᛞ | [**hugin**](packages/hugin/) | Matplotlib | Publication-quality plotting |
-| ᛈ | [**quill**](packages/quill/) | Jupyter | Notebooks as markdown files |
+| ᛈ | [**quill**](packages/quill/) | Jupyter + IPython | Interactive REPL and markdown notebooks |
 | ᚠ | [**fehu**](packages/fehu/) | Gymnasium | Reinforcement learning environments |
 | ᛋ | [**sowilo**](packages/sowilo/) | OpenCV | Differentiable computer vision |
 
