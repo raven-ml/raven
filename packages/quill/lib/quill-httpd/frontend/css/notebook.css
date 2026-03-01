@@ -571,6 +571,7 @@ body {
 }
 .cell-markdown th { background: var(--bg-output); }
 .cell-markdown strong { color: var(--text-primary); }
+.cell-markdown math[display="block"] { display: block; margin: 0.5em 0; }
 
 /* ───── Cell dividers ───── */
 

@@ -1,6 +1,7 @@
 // Cell renderer for code and text cells.
 
 import { createEditor } from './editor.js';
+import { renderMath } from './math.js';
 import { appendOutputToContainer, renderOutput } from './output.js';
 
 const editors = new Map(); // cellId -> EditorView
@@ -127,6 +128,7 @@ function createTextCell(cell, wsClient, store) {
   const markdownView = document.createElement('div');
   markdownView.className = 'cell-markdown';
   markdownView.innerHTML = cell.rendered_html || '<p class="cell-markdown-empty">Empty text cell \u2014 click to edit</p>';
+  renderMath(markdownView);
   content.appendChild(markdownView);
 
   // Editor container (hidden by default)
