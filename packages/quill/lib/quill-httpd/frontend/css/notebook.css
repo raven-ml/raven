@@ -318,6 +318,10 @@ body {
   transition: border-color 0.15s, background 0.15s;
 }
 
+.cell.cell-text {
+  background: transparent;
+}
+
 .cell.focused {
   border-left-color: var(--border-accent);
   background: var(--bg-cell-focused);

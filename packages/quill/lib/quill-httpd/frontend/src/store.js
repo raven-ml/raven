@@ -37,7 +37,8 @@ export class Store {
     this.canRedo = data.can_redo;
     this.loaded = true;
     if (!this.focusedCellId || !this.cells.find(c => c.id === this.focusedCellId)) {
-      this.focusedCellId = this.cells.length > 0 ? this.cells[0].id : null;
+      const firstCode = this.cells.find(c => c.kind === 'code');
+      this.focusedCellId = firstCode ? firstCode.id : (this.cells.length > 0 ? this.cells[0].id : null);
     }
     this.emit('notebook:loaded', this.cells);
   }
@@ -143,6 +144,14 @@ export class Store {
     const prev = this.focusedCellId;
     this.focusedCellId = cellId;
     this.emit('focus:changed', { cellId, prevCellId: prev });
+  }
+
+  clearFocus() {
+    if (this.focusedCellId) {
+      const prev = this.focusedCellId;
+      this.focusedCellId = null;
+      this.emit('focus:changed', { cellId: null, prevCellId: prev });
+    }
   }
 
   focusNext() {

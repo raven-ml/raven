@@ -110,6 +110,13 @@ shortcutsDialog.addEventListener('click', (e) => {
 // Export for shortcuts.js
 window._quillToggleShortcuts = toggleShortcutsDialog;
 
+// Click outside cells to unfocus
+document.addEventListener('mousedown', (e) => {
+  if (!e.target.closest('.cell') && !e.target.closest('.toolbar') && !e.target.closest('.dialog-backdrop')) {
+    store.clearFocus();
+  }
+});
+
 // Init keyboard shortcuts
 initShortcuts(store, wsClient);
 
