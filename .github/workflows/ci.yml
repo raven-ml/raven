@@ -14,6 +14,7 @@ jobs:
         os:
           - ubuntu-latest
           - macos-latest
+          - windows-latest
 
     runs-on: ${{ matrix.os }}
 
@@ -37,68 +38,55 @@ jobs:
         run: |
           brew install libev curl cairo pkg-config sdl2
 
+      - name: Install system dependencies (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: D:\cygwin\setup-x86_64.exe --quiet-mode --no-desktop --no-shortcuts --no-startmenu --root D:\cygwin --site https://mirrors.kernel.org/sourceware/cygwin/ --packages mingw64-x86_64-openblas,mingw64-x86_64-lapack,mingw64-x86_64-cairo,mingw64-x86_64-SDL2,pkg-config
+
       - name: Install OCaml dependencies
         run: opam install . --deps-only --with-test
 
       - name: Build and test nx
         run: |
-          echo "::group::nx"
           opam exec -- dune build --release packages/nx
           opam exec -- dune build --release @packages/nx/runtest
-          echo "::endgroup::"
 
       - name: Build and test brot
         run: |
-          echo "::group::brot"
           opam exec -- dune build --release packages/brot
           opam exec -- dune build --release @packages/brot/runtest
-          echo "::endgroup::"
 
       - name: Build and test talon
         run: |
-          echo "::group::talon"
           opam exec -- dune build --release packages/talon
           opam exec -- dune build --release @packages/talon/runtest
-          echo "::endgroup::"
 
       - name: Build and test rune
         run: |
-          echo "::group::rune"
           opam exec -- dune build --release packages/rune
           opam exec -- dune build --release @packages/rune/runtest
-          echo "::endgroup::"
 
       - name: Build and test kaun
         run: |
-          echo "::group::kaun"
           opam exec -- dune build --release packages/kaun
           opam exec -- dune build --release @packages/kaun/runtest
-          echo "::endgroup::"
 
       - name: Build and test fehu
         run: |
-          echo "::group::fehu"
           opam exec -- dune build --release packages/fehu
           opam exec -- dune build --release @packages/fehu/runtest
-          echo "::endgroup::"
 
       - name: Build and test sowilo
         run: |
-          echo "::group::sowilo"
           opam exec -- dune build --release packages/sowilo
           opam exec -- dune build --release @packages/sowilo/runtest
-          echo "::endgroup::"
 
       - name: Build and test hugin
         run: |
-          echo "::group::hugin"
           opam exec -- dune build --release packages/hugin
           opam exec -- dune build --release @packages/hugin/runtest
-          echo "::endgroup::"
 
       - name: Build and test quill
         run: |
-          echo "::group::quill"
           opam exec -- dune build --release packages/quill
           opam exec -- dune build --release @packages/quill/runtest
-          echo "::endgroup::"
