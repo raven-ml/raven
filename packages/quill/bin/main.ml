@@ -183,13 +183,32 @@ let port_flag =
     value & opt int 8888
     & info [ "port"; "p" ] ~docv:"PORT" ~doc:"Port to listen on (default 8888).")
 
-(* Default: TUI *)
+(* Default: REPL when no args, notebook TUI when file given *)
 let default_term =
   Term.(
     const (fun path ->
-        ensure_file path;
-        Quill_tui.run ~create_kernel:Quill_raven.create path)
-    $ optional_path_arg "notebook.md")
+        match path with
+        | None ->
+            if Unix.isatty Unix.stdin then
+              Quill_repl.run ~create_kernel:Quill_raven.create
+            else Quill_repl.run_pipe ~create_kernel:Quill_raven.create
+        | Some path ->
+            ensure_file path;
+            Quill_tui.run ~create_kernel:Quill_raven.create path)
+    $ Arg.(
+        value
+        & pos 0 (some string) None
+        & info [] ~docv:"FILE" ~doc:"Notebook file to open (TUI mode)."))
+
+(* notebook: explicit TUI subcommand *)
+let notebook_term =
+  let doc = "Open a notebook in the terminal UI." in
+  Cmd.v (Cmd.info "notebook" ~doc)
+    Term.(
+      const (fun path ->
+          ensure_file path;
+          Quill_tui.run ~create_kernel:Quill_raven.create path)
+      $ optional_path_arg "notebook.md")
 
 (* serve: web UI *)
 let serve_term =
@@ -227,9 +246,9 @@ let new_term =
     Term.(const new_cmd $ optional_path_arg "notebook.md")
 
 let quill_cmd =
-  let doc = "Interactive notebooks for OCaml." in
+  let doc = "Interactive OCaml toplevel and notebooks." in
   let info = Cmd.info "quill" ~version:"1.0.0" ~doc in
   Cmd.group ~default:default_term info
-    [ serve_term; run_term; watch_term; clean_term; new_term ]
+    [ notebook_term; serve_term; run_term; watch_term; clean_term; new_term ]
 
 let () = exit (Cmd.eval quill_cmd)

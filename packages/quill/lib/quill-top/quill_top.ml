@@ -10,9 +10,9 @@ let findlib_predicates = ref [ "byte"; "toploop" ]
 let ensure_findlib () =
   match Findlib.init () with () -> true | exception _ -> false
 
-(* Mark packages that are already linked into the executable. Their .cmi
-   files need to be on the search path, but we must not try to load their
-   .cma again. *)
+(* Mark packages that are already linked into the executable. Their .cmi files
+   need to be on the search path, but we must not try to load their .cma
+   again. *)
 let add_packages pkgs =
   if ensure_findlib () then
     List.iter
@@ -43,8 +43,8 @@ let add_packages pkgs =
               roots)
           pkgs
 
-(* Load a package that is NOT linked into the executable: resolve its
-   dependency chain, add directories, and load .cma archives. *)
+(* Load a package that is NOT linked into the executable: resolve its dependency
+   chain, add directories, and load .cma archives. *)
 let load_package pkg =
   if not (ensure_findlib ()) then
     Printf.eprintf "[quill] #require: findlib unavailable\n%!"
@@ -71,8 +71,7 @@ let load_package pkg =
               with Not_found -> ""
             in
             let archives =
-              String.split_on_char ' ' archive
-              |> List.filter (fun s -> s <> "")
+              String.split_on_char ' ' archive |> List.filter (fun s -> s <> "")
             in
             List.iter
               (fun arch ->
@@ -521,6 +520,25 @@ let compute_diagnostics ~code =
   | exception exn -> add_diag Error (error_loc_of_exn exn) (format_exn exn));
   List.rev !diags
 
+(* ───── Phrase completeness ───── *)
+
+let is_complete_phrase code =
+  let trimmed = String.trim code in
+  if trimmed = "" then false
+  else if String.ends_with ~suffix:";;" trimmed then true
+  else
+    (* Try parsing with ";;" appended. If it parses, the phrase is complete. If
+       End_of_file, the parser consumed the phrase and wants more. If syntax
+       error, the code is broken -- submit to show the error. *)
+    let code_term = trimmed ^ ";;" in
+    let lb = Lexing.from_string code_term in
+    lb.lex_curr_p <-
+      { pos_fname = "//toplevel//"; pos_lnum = 1; pos_bol = 0; pos_cnum = 0 };
+    match !Toploop.parse_toplevel_phrase lb with
+    | _ -> true
+    | exception End_of_file -> false
+    | exception _ -> true
+
 (* ───── Kernel interface ───── *)
 
 let status_ref = ref Quill.Kernel.Idle
@@ -595,6 +613,13 @@ let create ?setup ~on_event () =
             Printf.eprintf "[quill-top] diagnostics error: %s\n%!"
               (Printexc.to_string exn);
             []);
+    is_complete =
+      Some
+        (fun code ->
+          try
+            ensure_setup ();
+            is_complete_phrase code
+          with _ -> false);
     status;
     shutdown;
   }

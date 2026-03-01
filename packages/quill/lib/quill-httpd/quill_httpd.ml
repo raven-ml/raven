@@ -287,6 +287,7 @@ let serve ?(addr = "127.0.0.1") ?(port = 8888) ?on_ready path =
           complete = (fun ~code:_ ~pos:_ -> []);
           type_at = None;
           diagnostics = None;
+          is_complete = None;
           status = (fun () -> Kernel.Starting);
           shutdown = ignore;
         };

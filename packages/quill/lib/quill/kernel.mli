@@ -79,6 +79,7 @@ type t = {
   complete : code:string -> pos:int -> completion_item list;
   type_at : (code:string -> pos:int -> type_info option) option;
   diagnostics : (code:string -> diagnostic list) option;
+  is_complete : (string -> bool) option;
   status : unit -> status;
   shutdown : unit -> unit;
 }
@@ -93,5 +94,7 @@ type t = {
     - [type_at] when [Some f], [f ~code ~pos] returns type information at the
       given cursor position.
     - [diagnostics] when [Some f], [f ~code] returns parse and type errors.
+    - [is_complete] when [Some f], [f code] returns [true] if [code] contains a
+      complete toplevel phrase ready for execution.
     - [status ()] returns the current kernel status.
     - [shutdown ()] initiates graceful shutdown. *)

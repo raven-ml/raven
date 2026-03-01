@@ -8,6 +8,7 @@
   quill
   quill.markdown
   quill.raven
+  quill.repl
   quill.tui
   quill.httpd
   cmdliner
