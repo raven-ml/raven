@@ -153,8 +153,28 @@ export class WsClient {
     this.send({ type: 'execute_cell', cell_id: cellId });
   }
 
-  executeCells(cellIds) { this.send({ type: 'execute_cells', cell_ids: cellIds }); }
-  executeAll() { this.send({ type: 'execute_all' }); }
+  executeCells(cellIds) {
+    for (const cellId of cellIds) {
+      this.cancelPendingSource(cellId);
+      const cell = this.store.findCell(cellId);
+      if (cell) {
+        this.send({ type: 'update_source', cell_id: cellId, source: cell.source });
+      }
+    }
+    this.send({ type: 'execute_cells', cell_ids: cellIds });
+  }
+
+  executeAll() {
+    for (const [cellId, timer] of this._sourceDebounceTimers) {
+      clearTimeout(timer);
+      const cell = this.store.findCell(cellId);
+      if (cell) {
+        this.send({ type: 'update_source', cell_id: cellId, source: cell.source });
+      }
+    }
+    this._sourceDebounceTimers.clear();
+    this.send({ type: 'execute_all' });
+  }
   interrupt() { this.send({ type: 'interrupt' }); }
 
   insertCell(pos, kind) { this.send({ type: 'insert_cell', pos, kind }); }
