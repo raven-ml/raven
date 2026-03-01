@@ -161,7 +161,7 @@ module Artist : sig
 
   (** Size specification for scatter markers. *)
   type scatter_size =
-    | Uniform of float         (** Same size for all points. *)
+    | Uniform of float  (** Same size for all points. *)
     | Varying of Nx.float32_t  (** Per-point sizes as a 1D tensor. *)
 
   val scatter :
@@ -177,8 +177,8 @@ module Artist : sig
 
       Create a scatter plot artist for points (x.[i], y.[i]).
 
-      When [s_data] is provided, each point gets its own marker size
-      from the corresponding element; [s] is ignored in that case.
+      When [s_data] is provided, each point gets its own marker size from the
+      corresponding element; [s] is ignored in that case.
 
       {2 Parameters}
       - [?s]: uniform marker size in points (default 20.0).
@@ -423,8 +423,8 @@ module Artist : sig
     ?label:string ->
     float ->
     t
-  (** [hline ?color ?linewidth ?linestyle ?label y] is a horizontal
-      reference line at [y] spanning the full axes width. *)
+  (** [hline ?color ?linewidth ?linestyle ?label y] is a horizontal reference
+      line at [y] spanning the full axes width. *)
 
   val vline :
     ?color:color ->
@@ -433,8 +433,8 @@ module Artist : sig
     ?label:string ->
     float ->
     t
-  (** [vline ?color ?linewidth ?linestyle ?label x] is a vertical
-      reference line at [x] spanning the full axes height. *)
+  (** [vline ?color ?linewidth ?linestyle ?label x] is a vertical reference line
+      at [x] spanning the full axes height. *)
 
   val abline :
     ?color:color ->
@@ -445,8 +445,8 @@ module Artist : sig
     intercept:float ->
     unit ->
     t
-  (** [abline ?color ?linewidth ?linestyle ?label ~slope ~intercept ()]
-      is a diagonal line [y = slope * x + intercept] spanning the axes. *)
+  (** [abline ?color ?linewidth ?linestyle ?label ~slope ~intercept ()] is a
+      diagonal line [y = slope * x + intercept] spanning the axes. *)
 
   val text_labels :
     ?color:color ->
@@ -1040,8 +1040,8 @@ module Plotting : sig
 
       Create a scatter plot of points (x, y) on the axes.
 
-      When [s_data] is provided, each point gets its own marker size
-      from the corresponding element; [s] is ignored.
+      When [s_data] is provided, each point gets its own marker size from the
+      corresponding element; [s] is ignored.
 
       {2 Parameters}
       - [?s]: uniform marker size (default 20.0).
@@ -1391,8 +1391,8 @@ module Plotting : sig
     y:float ->
     Axes.t ->
     Axes.t
-  (** [axhline ?color ?linewidth ?linestyle ?label ~y axes]
-      adds a horizontal reference line at [y]. *)
+  (** [axhline ?color ?linewidth ?linestyle ?label ~y axes] adds a horizontal
+      reference line at [y]. *)
 
   val axvline :
     ?color:Artist.color ->
@@ -1402,8 +1402,8 @@ module Plotting : sig
     x:float ->
     Axes.t ->
     Axes.t
-  (** [axvline ?color ?linewidth ?linestyle ?label ~x axes]
-      adds a vertical reference line at [x]. *)
+  (** [axvline ?color ?linewidth ?linestyle ?label ~x axes] adds a vertical
+      reference line at [x]. *)
 
   val abline :
     ?color:Artist.color ->
@@ -1414,8 +1414,8 @@ module Plotting : sig
     intercept:float ->
     Axes.t ->
     Axes.t
-  (** [abline ?color ?linewidth ?linestyle ?label ~slope ~intercept axes]
-      adds a diagonal line [y = slope * x + intercept]. *)
+  (** [abline ?color ?linewidth ?linestyle ?label ~slope ~intercept axes] adds a
+      diagonal line [y = slope * x + intercept]. *)
 
   val text_labels :
     ?color:Artist.color ->
@@ -1425,8 +1425,8 @@ module Plotting : sig
     string array ->
     Axes.t ->
     Axes.t
-  (** [text_labels ?color ?fontsize ~x ~y labels axes] places
-      [labels.(i)] centered at [(x.(i), y.(i))] for each point. *)
+  (** [text_labels ?color ?fontsize ~x ~y labels axes] places [labels.(i)]
+      centered at [(x.(i), y.(i))] for each point. *)
 end
 
 (** {1 Top-Level API}

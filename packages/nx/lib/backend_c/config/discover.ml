@@ -33,12 +33,11 @@ int main() {
 let openblas_default system : C.Pkg_config.package_conf =
   match system with
   | "mingw" | "mingw64" ->
-      (* On cygwin, discover.exe is a mingw binary whose Sys.file_exists
-         cannot resolve cygwin paths.  The C compiler is a cygwin binary
-         and handles them fine, so pass the known sysroot paths directly. *)
+      (* On cygwin, discover.exe is a mingw binary whose Sys.file_exists cannot
+         resolve cygwin paths. The C compiler is a cygwin binary and handles
+         them fine, so pass the known sysroot paths directly. *)
       let triplet =
-        if system = "mingw64" then "x86_64-w64-mingw32"
-        else "i686-w64-mingw32"
+        if system = "mingw64" then "x86_64-w64-mingw32" else "i686-w64-mingw32"
       in
       let prefix = "/usr/" ^ triplet ^ "/sys-root/mingw" in
       {
@@ -50,9 +49,7 @@ let openblas_default system : C.Pkg_config.package_conf =
         [ "/usr/local/opt/openblas/lib"; "/opt/OpenBLAS/lib/"; "/usr/lib" ]
         |> List.filter Sys.file_exists
       in
-      let libs =
-        List.map (fun path -> "-L" ^ path) search @ [ "-lopenblas" ]
-      in
+      let libs = List.map (fun path -> "-L" ^ path) search @ [ "-lopenblas" ] in
       let include_dirs =
         [ "/usr/include/openblas" ] |> List.filter Sys.file_exists
       in

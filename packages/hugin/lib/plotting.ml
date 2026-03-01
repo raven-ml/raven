@@ -212,8 +212,9 @@ let axvline ?color ?linewidth ?linestyle ?label ~x ax =
   Axes.add_artist artist ax
 
 let abline ?color ?linewidth ?linestyle ?label ~slope ~intercept ax =
-  let artist = Artist.abline ?color ?linewidth ?linestyle ?label
-    ~slope ~intercept () in
+  let artist =
+    Artist.abline ?color ?linewidth ?linestyle ?label ~slope ~intercept ()
+  in
   Axes.add_artist artist ax
 
 let text_labels ?color ?fontsize ~x ~y labels ax =

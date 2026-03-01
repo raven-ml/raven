@@ -182,15 +182,17 @@ let render_scatter cr (t_ctx : Transforms.context2d) (s : Artist.scatter) =
           Cairo.rectangle cr (px -. 0.5) (py -. 0.5) ~w:1.0 ~h:1.0;
           Cairo.fill cr
       | Artist.Square ->
-          Cairo.rectangle cr (px -. side /. 2.0) (py -. side /. 2.0)
+          Cairo.rectangle cr
+            (px -. (side /. 2.0))
+            (py -. (side /. 2.0))
             ~w:side ~h:side;
           Cairo.fill cr
       | Artist.Triangle ->
           let h = side *. 1.2 in
           let hb = h *. 0.866 /. sqrt 3. in
-          Cairo.move_to cr px (py -. h /. 2.0);
-          Cairo.line_to cr (px +. hb) (py +. h /. 2.0);
-          Cairo.line_to cr (px -. hb) (py +. h /. 2.0);
+          Cairo.move_to cr px (py -. (h /. 2.0));
+          Cairo.line_to cr (px +. hb) (py +. (h /. 2.0));
+          Cairo.line_to cr (px -. hb) (py +. (h /. 2.0));
           Cairo.fill cr
       | Artist.Plus ->
           Cairo.set_line_width cr default_line_width;
@@ -694,12 +696,14 @@ let render_aline cr (t_ctx : Transforms.context2d) (dl : Artist.diag_line) =
   set_linestyle cr dl.diag_linestyle;
   let lims = t_ctx.data_lims in
   let x0 = lims.xmin and x1 = lims.xmax in
-  let y0 = dl.slope *. x0 +. dl.intercept in
-  let y1 = dl.slope *. x1 +. dl.intercept in
+  let y0 = (dl.slope *. x0) +. dl.intercept in
+  let y1 = (dl.slope *. x1) +. dl.intercept in
   let px0, py0 = Transforms.transform t_ctx ~x:x0 ~y:y0 in
   let px1, py1 = Transforms.transform t_ctx ~x:x1 ~y:y1 in
-  if Float.is_finite px0 && Float.is_finite py0 &&
-     Float.is_finite px1 && Float.is_finite py1 then (
+  if
+    Float.is_finite px0 && Float.is_finite py0 && Float.is_finite px1
+    && Float.is_finite py1
+  then (
     Cairo.move_to cr px0 py0;
     Cairo.line_to cr px1 py1;
     Cairo.stroke cr);
@@ -719,7 +723,9 @@ let render_text_labels cr (t_ctx : Transforms.context2d)
     if Float.is_finite px && Float.is_finite py then (
       let text = tl.labels.(i) in
       let te = Cairo.text_extents cr text in
-      Cairo.move_to cr (px -. te.Cairo.width /. 2.0) (py +. te.Cairo.height /. 2.0);
+      Cairo.move_to cr
+        (px -. (te.Cairo.width /. 2.0))
+        (py +. (te.Cairo.height /. 2.0));
       Cairo.show_text cr text)
   done;
   Cairo.restore cr
