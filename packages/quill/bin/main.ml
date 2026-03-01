@@ -24,8 +24,8 @@ let raven_packages =
 let raven_top_packages = [ "nx.top"; "hugin.top" ]
 
 let setup () =
-  (* Mark packages already linked into the quill executable so that
-     load_package does not try to load their .cma archives again. *)
+  (* Mark packages already linked into the quill executable so that load_package
+     does not try to load their .cma archives again. *)
   Quill_top.add_packages
     [
       "compiler-libs";

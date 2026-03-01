@@ -1974,3 +1974,8 @@ val render : ?format:string -> figure -> string
       let png_data = save_to_buffer fig in
       (* Use png_data, e.g., for network transmission or further processing *)
     ]} *)
+
+val pp_figure : Format.formatter -> figure -> unit
+(** [pp_figure fmt fig] renders [fig] as a markdown data-URI image
+    [![figure](data:image/png;base64,...)]. Used as a toplevel pretty-printer so
+    that figures display inline. *)
