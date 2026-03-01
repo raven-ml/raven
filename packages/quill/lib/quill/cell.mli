@@ -41,6 +41,24 @@ type Format.stag +=
             tag is silently ignored and only the text content between the
             open/close tags is printed. *)
 
+(** {1:attrs Cell attributes} *)
+
+type attrs = {
+  collapsed : bool;
+      (** When [true], the cell renders as a compact one-line bar. Source and
+          outputs are hidden until the user expands the cell. Purely
+          presentational — execution is unaffected. *)
+  hide_source : bool;
+      (** When [true], the code editor is folded away and only outputs are
+          visible. Clicking the placeholder reveals the source. Only meaningful
+          for code cells. Purely presentational — execution is unaffected. *)
+}
+(** The type for cell display attributes. All attributes are purely
+    presentational and never affect execution semantics. *)
+
+val default_attrs : attrs
+(** [default_attrs] is [{collapsed = false; hide_source = false}]. *)
+
 (** {1:cells Cells} *)
 
 type t = private
@@ -50,8 +68,9 @@ type t = private
       language : string;
       outputs : output list;
       execution_count : int;
+      attrs : attrs;
     }
-  | Text of { id : id; source : string }
+  | Text of { id : id; source : string; attrs : attrs }
       (** The type for notebook cells.
 
           - [Code] is an executable code cell. [language] identifies the kernel
@@ -64,14 +83,15 @@ type t = private
 
 (** {1:constructors Constructors} *)
 
-val code : ?id:id -> ?language:string -> string -> t
-(** [code ?id ?language source] is a code cell with the given [source].
-    [language] defaults to ["ocaml"]. A fresh identifier is generated when [id]
-    is not provided. *)
+val code : ?id:id -> ?language:string -> ?attrs:attrs -> string -> t
+(** [code ?id ?language ?attrs source] is a code cell with the given [source].
+    [language] defaults to ["ocaml"]. [attrs] defaults to {!default_attrs}. A
+    fresh identifier is generated when [id] is not provided. *)
 
-val text : ?id:id -> string -> t
-(** [text ?id source] is a text cell with the given [source]. A fresh identifier
-    is generated when [id] is not provided. *)
+val text : ?id:id -> ?attrs:attrs -> string -> t
+(** [text ?id ?attrs source] is a text cell with the given [source]. [attrs]
+    defaults to {!default_attrs}. A fresh identifier is generated when [id] is
+    not provided. *)
 
 (** {1:accessors Accessors} *)
 
@@ -81,10 +101,16 @@ val id : t -> id
 val source : t -> string
 (** [source c] is the source text of cell [c]. *)
 
+val attrs : t -> attrs
+(** [attrs c] is the display attributes of cell [c]. *)
+
 (** {1:transformations Transformations} *)
 
 val set_source : string -> t -> t
 (** [set_source s c] is [c] with source replaced by [s]. *)
+
+val set_attrs : attrs -> t -> t
+(** [set_attrs a c] is [c] with display attributes replaced by [a]. *)
 
 val set_outputs : output list -> t -> t
 (** [set_outputs os c] is [c] with outputs replaced by [os]. Text cells are

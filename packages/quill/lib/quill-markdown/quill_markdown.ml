@@ -50,7 +50,7 @@ let code_block_range b =
   | _ -> None
 
 let cell_id_open = "<!-- quill:cell id=\""
-let cell_id_close = "\" -->"
+let comment_close = "-->"
 let output_open = "<!-- quill:output -->"
 let output_close = "<!-- /quill:output -->"
 
@@ -67,36 +67,56 @@ let find_substring haystack needle start =
     in
     loop start
 
+let parse_attrs_tokens s =
+  let tokens = String.split_on_char ' ' s |> List.filter (fun t -> t <> "") in
+  let rec loop (attrs : Quill.Cell.attrs) = function
+    | [] -> attrs
+    | "collapsed" :: rest -> loop { attrs with collapsed = true } rest
+    | "hide-source" :: rest -> loop { attrs with hide_source = true } rest
+    | _ :: rest -> loop attrs rest
+  in
+  loop Quill.Cell.default_attrs tokens
+
+let quote = "\""
+
 let try_parse_cell_id s start =
   match find_substring s cell_id_open start with
   | Some open_pos -> (
       let id_start = open_pos + String.length cell_id_open in
-      match find_substring s cell_id_close id_start with
-      | Some close_pos ->
-          let id = String.sub s id_start (close_pos - id_start) in
-          let comment_end = close_pos + String.length cell_id_close in
-          Some (id, open_pos, comment_end)
+      match find_substring s quote id_start with
+      | Some quote_pos -> (
+          let id = String.sub s id_start (quote_pos - id_start) in
+          match find_substring s comment_close (quote_pos + 1) with
+          | Some close_pos ->
+              let attrs_str =
+                String.sub s (quote_pos + 1) (close_pos - quote_pos - 1)
+              in
+              let attrs = parse_attrs_tokens attrs_str in
+              let comment_end = close_pos + String.length comment_close in
+              Some (id, attrs, open_pos, comment_end)
+          | None -> None)
       | None -> None)
   | None -> None
 
 let strip_leading_cell_id s =
   let s_trimmed = trim_blank_lines s in
   match try_parse_cell_id s_trimmed 0 with
-  | Some (id, 0, comment_end) ->
+  | Some (id, attrs, 0, comment_end) ->
       let rest =
         if comment_end < String.length s_trimmed then
           String.sub s_trimmed comment_end
             (String.length s_trimmed - comment_end)
         else ""
       in
-      Some (id, trim_blank_lines rest)
+      Some (id, attrs, trim_blank_lines rest)
   | _ -> None
 
 let strip_trailing_cell_id s =
   let s_trimmed = trim_blank_lines s in
   let len = String.length s_trimmed in
-  let marker_len = String.length cell_id_open + String.length cell_id_close in
-  if len < marker_len then None
+  (* Minimum length: cell_id_open + closing quote + space + comment_close *)
+  let min_len = String.length cell_id_open + String.length "\" -->" in
+  if len < min_len then None
   else
     (* Scan backwards for the last newline to find the last line *)
     let last_line_start =
@@ -109,12 +129,13 @@ let strip_trailing_cell_id s =
       String.sub s_trimmed last_line_start (len - last_line_start)
     in
     match try_parse_cell_id last_line 0 with
-    | Some (id, 0, comment_end) when comment_end = String.length last_line ->
+    | Some (id, attrs, 0, comment_end)
+      when comment_end = String.length last_line ->
         let rest =
           if last_line_start > 0 then String.sub s_trimmed 0 last_line_start
           else ""
         in
-        Some (id, trim_blank_lines rest)
+        Some (id, attrs, trim_blank_lines rest)
     | _ -> None
 
 let out_marker_prefix = "<!-- out:"
@@ -246,27 +267,31 @@ let of_string md =
     (fun (first, last, lang, code) ->
       (* Text between previous position and this code block *)
       let code_id = ref None in
+      let code_attrs = ref Quill.Cell.default_attrs in
       (if !cursor < first then
          let gap = String.sub md !cursor (first - !cursor) in
          (* Extract trailing cell ID for the code block *)
          let gap =
            match strip_trailing_cell_id gap with
-           | Some (id, rest) ->
+           | Some (id, attrs, rest) ->
                code_id := Some id;
+               code_attrs := attrs;
                rest
            | None -> gap
          in
          (* Extract leading cell ID for the text cell *)
-         let text_id, gap =
+         let text_id, text_attrs, gap =
            match strip_leading_cell_id gap with
-           | Some (id, rest) -> (Some id, rest)
-           | None -> (None, gap)
+           | Some (id, attrs, rest) -> (Some id, Some attrs, rest)
+           | None -> (None, None, gap)
          in
          let gap = trim_blank_lines gap in
          if not (is_blank gap) then
-           cells := Quill.Cell.text ?id:text_id gap :: !cells);
+           cells := Quill.Cell.text ?id:text_id ?attrs:text_attrs gap :: !cells);
       (* The code block itself *)
-      let cell = Quill.Cell.code ?id:!code_id ~language:lang code in
+      let cell =
+        Quill.Cell.code ?id:!code_id ~attrs:!code_attrs ~language:lang code
+      in
       (* Check for output markers immediately after the code block *)
       let cell, end_pos =
         match parse_outputs md ~after:(last + 1) with
@@ -280,14 +305,15 @@ let of_string md =
   (* Remaining text after last code block *)
   (if !cursor < String.length md then
      let remaining = String.sub md !cursor (String.length md - !cursor) in
-     let text_id, remaining =
+     let text_id, text_attrs, remaining =
        match strip_leading_cell_id remaining with
-       | Some (id, rest) -> (Some id, rest)
-       | None -> (None, remaining)
+       | Some (id, attrs, rest) -> (Some id, Some attrs, rest)
+       | None -> (None, None, remaining)
      in
      let remaining = trim_blank_lines remaining in
      if not (is_blank remaining) then
-       cells := Quill.Cell.text ?id:text_id remaining :: !cells);
+       cells :=
+         Quill.Cell.text ?id:text_id ?attrs:text_attrs remaining :: !cells);
   Quill.Doc.of_cells (List.rev !cells)
 
 (* ───── Rendering ───── *)
@@ -312,19 +338,21 @@ let render_output buf = function
       Buffer.add_string buf " -->\n";
       add_content buf data
 
-let render_cell_id buf id =
+let render_cell_id buf id (attrs : Quill.Cell.attrs) =
   Buffer.add_string buf cell_id_open;
   Buffer.add_string buf id;
-  Buffer.add_string buf cell_id_close;
-  Buffer.add_char buf '\n'
+  Buffer.add_char buf '"';
+  if attrs.collapsed then Buffer.add_string buf " collapsed";
+  if attrs.hide_source then Buffer.add_string buf " hide-source";
+  Buffer.add_string buf " -->\n"
 
 let render_cell ~with_outputs buf = function
-  | Quill.Cell.Text { id; source; _ } ->
-      render_cell_id buf id;
+  | Quill.Cell.Text { id; source; attrs; _ } ->
+      render_cell_id buf id attrs;
       Buffer.add_string buf source;
       Buffer.add_char buf '\n'
-  | Quill.Cell.Code { id; source; language; outputs; _ } ->
-      render_cell_id buf id;
+  | Quill.Cell.Code { id; source; language; outputs; attrs; _ } ->
+      render_cell_id buf id attrs;
       Buffer.add_string buf "```";
       Buffer.add_string buf language;
       Buffer.add_char buf '\n';

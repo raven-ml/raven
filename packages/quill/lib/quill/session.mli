@@ -77,6 +77,9 @@ val clear_all_outputs : t -> t
 val set_cell_kind : Cell.id -> [ `Code | `Text ] -> t -> t
 (** [set_cell_kind id kind s] changes cell [id] to the given [kind]. *)
 
+val set_cell_attrs : Cell.id -> Cell.attrs -> t -> t
+(** [set_cell_attrs id attrs s] sets the display attributes of cell [id]. *)
+
 (** {1:execution Execution state}
 
     Update transient cell status. These do not touch the kernel -- the caller is

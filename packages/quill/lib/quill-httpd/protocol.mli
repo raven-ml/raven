@@ -29,6 +29,8 @@ type client_msg =
       (** Move cell [cell_id] to position [pos]. *)
   | Set_cell_kind of { cell_id : string; kind : [ `Code | `Text ] }
       (** Change the kind of cell [cell_id] to [kind]. *)
+  | Set_cell_attrs of { cell_id : string; attrs : Quill.Cell.attrs }
+      (** Set the display attributes of cell [cell_id]. *)
   | Clear_outputs of { cell_id : string }
       (** Clear outputs of cell [cell_id]. *)
   | Clear_all_outputs  (** Clear outputs of all cells. *)

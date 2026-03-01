@@ -99,12 +99,21 @@ let set_cell_kind cell_id kind s =
         (fun doc ->
           let src = Cell.source c in
           let id = Cell.id c in
+          let attrs = Cell.attrs c in
           let c' =
             match kind with
-            | `Code -> Cell.code ~id src
-            | `Text -> Cell.text ~id src
+            | `Code -> Cell.code ~id ~attrs src
+            | `Text -> Cell.text ~id ~attrs src
           in
           Doc.replace cell_id c' doc)
+        s
+  | None -> s
+
+let set_cell_attrs cell_id attrs s =
+  match Doc.find cell_id s.doc with
+  | Some c ->
+      with_history_push
+        (fun doc -> Doc.replace cell_id (Cell.set_attrs attrs c) doc)
         s
   | None -> s
 

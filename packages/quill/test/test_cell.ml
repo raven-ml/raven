@@ -67,9 +67,46 @@ let transformation_tests =
         | _ -> fail "expected Code cell");
   ]
 
+let attrs_tests =
+  [
+    test "default attrs" (fun () ->
+        let c = Cell.code "x" in
+        let a = Cell.attrs c in
+        is_false ~msg:"not collapsed" a.collapsed;
+        is_false ~msg:"not hide_source" a.hide_source);
+    test "default attrs on text" (fun () ->
+        let c = Cell.text "x" in
+        let a = Cell.attrs c in
+        is_false ~msg:"not collapsed" a.collapsed;
+        is_false ~msg:"not hide_source" a.hide_source);
+    test "code with attrs" (fun () ->
+        let a = { Cell.collapsed = true; hide_source = false } in
+        let c = Cell.code ~attrs:a "x" in
+        let a' = Cell.attrs c in
+        is_true ~msg:"collapsed" a'.collapsed;
+        is_false ~msg:"not hide_source" a'.hide_source);
+    test "set_attrs on code" (fun () ->
+        let c = Cell.code "x" in
+        let c = Cell.set_attrs { collapsed = false; hide_source = true } c in
+        let a = Cell.attrs c in
+        is_false ~msg:"not collapsed" a.collapsed;
+        is_true ~msg:"hide_source" a.hide_source);
+    test "set_attrs on text" (fun () ->
+        let c = Cell.text "x" in
+        let c = Cell.set_attrs { collapsed = true; hide_source = false } c in
+        is_true ~msg:"collapsed" (Cell.attrs c).collapsed);
+    test "set_source preserves attrs" (fun () ->
+        let a = { Cell.collapsed = true; hide_source = true } in
+        let c = Cell.code ~attrs:a "old" |> Cell.set_source "new" in
+        let a' = Cell.attrs c in
+        is_true ~msg:"collapsed preserved" a'.collapsed;
+        is_true ~msg:"hide_source preserved" a'.hide_source);
+  ]
+
 let () =
   run "Cell"
     [
       group "Constructors" constructor_tests;
       group "Transformations" transformation_tests;
+      group "Attributes" attrs_tests;
     ]

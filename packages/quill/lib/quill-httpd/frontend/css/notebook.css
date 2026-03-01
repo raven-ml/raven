@@ -573,6 +573,56 @@ body {
 .cell-markdown strong { color: var(--text-primary); }
 .cell-markdown math[display="block"] { display: block; margin: 0.5em 0; }
 
+/* ───── Collapsed cells ───── */
+
+.cell-collapsed-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+  border-radius: 3px;
+  transition: color 0.15s;
+}
+
+.cell-collapsed-bar:hover {
+  color: var(--text-secondary);
+}
+
+.cell-collapsed-toggle {
+  font-size: 10px;
+  width: 12px;
+  text-align: center;
+}
+
+.cell-collapsed-source {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-code);
+  font-size: 12px;
+}
+
+/* ───── Source-hidden cells ───── */
+
+.cell-source-placeholder {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  color: var(--text-dim);
+  font-size: 11px;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.cell-source-placeholder:hover {
+  color: var(--text-secondary);
+}
+
 /* ───── Cell dividers ───── */
 
 .cell-divider {

@@ -30,6 +30,12 @@ type output =
 
 type Format.stag += Display_tag of { mime : string; data : string }
 
+(* ───── Attributes ───── *)
+
+type attrs = { collapsed : bool; hide_source : bool }
+
+let default_attrs = { collapsed = false; hide_source = false }
+
 (* ───── Cells ───── *)
 
 type t =
@@ -39,23 +45,29 @@ type t =
       language : string;
       outputs : output list;
       execution_count : int;
+      attrs : attrs;
     }
-  | Text of { id : id; source : string }
+  | Text of { id : id; source : string; attrs : attrs }
 
-let code ?id ?(language = "ocaml") source =
+let code ?id ?(language = "ocaml") ?(attrs = default_attrs) source =
   let id = match id with Some id -> id | None -> fresh_id () in
-  Code { id; source; language; outputs = []; execution_count = 0 }
+  Code { id; source; language; outputs = []; execution_count = 0; attrs }
 
-let text ?id source =
+let text ?id ?(attrs = default_attrs) source =
   let id = match id with Some id -> id | None -> fresh_id () in
-  Text { id; source }
+  Text { id; source; attrs }
 
 let id = function Code c -> c.id | Text t -> t.id
 let source = function Code c -> c.source | Text t -> t.source
+let attrs = function Code c -> c.attrs | Text t -> t.attrs
 
 let set_source s = function
   | Code c -> Code { c with source = s }
   | Text t -> Text { t with source = s }
+
+let set_attrs a = function
+  | Code c -> Code { c with attrs = a }
+  | Text t -> Text { t with attrs = a }
 
 let set_outputs os = function
   | Code c -> Code { c with outputs = os }

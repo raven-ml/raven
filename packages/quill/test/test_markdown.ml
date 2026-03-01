@@ -299,6 +299,120 @@ let structured_output_tests =
         | _ -> fail "expected Code cell");
   ]
 
+let attrs_tests =
+  [
+    test "parse collapsed attr" (fun () ->
+        let md =
+          "<!-- quill:cell id=\"c_1\" collapsed -->\n```ocaml\nlet x = 1\n```\n"
+        in
+        let doc = Quill_markdown.of_string md in
+        match Doc.nth 0 doc with
+        | Some (Cell.Code { attrs; _ }) ->
+            is_true ~msg:"collapsed" attrs.collapsed;
+            is_false ~msg:"not hide_source" attrs.hide_source
+        | _ -> fail "expected Code cell");
+    test "parse hide-source attr" (fun () ->
+        let md =
+          "<!-- quill:cell id=\"c_1\" hide-source -->\n\
+           ```ocaml\n\
+           let x = 1\n\
+           ```\n"
+        in
+        let doc = Quill_markdown.of_string md in
+        match Doc.nth 0 doc with
+        | Some (Cell.Code { attrs; _ }) ->
+            is_false ~msg:"not collapsed" attrs.collapsed;
+            is_true ~msg:"hide_source" attrs.hide_source
+        | _ -> fail "expected Code cell");
+    test "parse multiple attrs" (fun () ->
+        let md =
+          "<!-- quill:cell id=\"c_1\" collapsed hide-source -->\n\
+           ```ocaml\n\
+           let x = 1\n\
+           ```\n"
+        in
+        let doc = Quill_markdown.of_string md in
+        match Doc.nth 0 doc with
+        | Some (Cell.Code { attrs; _ }) ->
+            is_true ~msg:"collapsed" attrs.collapsed;
+            is_true ~msg:"hide_source" attrs.hide_source
+        | _ -> fail "expected Code cell");
+    test "unknown attrs are ignored" (fun () ->
+        let md =
+          "<!-- quill:cell id=\"c_1\" collapsed future-flag -->\n\
+           ```ocaml\n\
+           let x = 1\n\
+           ```\n"
+        in
+        let doc = Quill_markdown.of_string md in
+        match Doc.nth 0 doc with
+        | Some (Cell.Code { attrs; id; _ }) ->
+            equal string "c_1" id;
+            is_true ~msg:"collapsed" attrs.collapsed
+        | _ -> fail "expected Code cell");
+    test "no attrs is backward compatible" (fun () ->
+        let md = "<!-- quill:cell id=\"c_1\" -->\n```ocaml\nlet x = 1\n```\n" in
+        let doc = Quill_markdown.of_string md in
+        match Doc.nth 0 doc with
+        | Some (Cell.Code { attrs; id; _ }) ->
+            equal string "c_1" id;
+            is_false ~msg:"not collapsed" attrs.collapsed;
+            is_false ~msg:"not hide_source" attrs.hide_source
+        | _ -> fail "expected Code cell");
+    test "collapsed text cell" (fun () ->
+        let md =
+          "<!-- quill:cell id=\"t_1\" collapsed -->\n# Hidden section\n"
+        in
+        let doc = Quill_markdown.of_string md in
+        match Doc.nth 0 doc with
+        | Some (Cell.Text { attrs; _ }) ->
+            is_true ~msg:"collapsed" attrs.collapsed
+        | _ -> fail "expected Text cell");
+    test "roundtrip collapsed" (fun () ->
+        let a = { Cell.collapsed = true; hide_source = false } in
+        let c = Cell.code ~id:"c_1" ~attrs:a "let x = 1" in
+        let doc = Doc.of_cells [ c ] in
+        let md = Quill_markdown.to_string doc in
+        let doc2 = Quill_markdown.of_string md in
+        match Doc.nth 0 doc2 with
+        | Some (Cell.Code { id; attrs; _ }) ->
+            equal string "c_1" id;
+            is_true ~msg:"collapsed survives" attrs.collapsed;
+            is_false ~msg:"hide_source unchanged" attrs.hide_source
+        | _ -> fail "expected Code cell");
+    test "roundtrip hide-source" (fun () ->
+        let a = { Cell.collapsed = false; hide_source = true } in
+        let c = Cell.code ~id:"c_2" ~attrs:a "let x = 1" in
+        let doc = Doc.of_cells [ c ] in
+        let md = Quill_markdown.to_string doc in
+        let doc2 = Quill_markdown.of_string md in
+        match Doc.nth 0 doc2 with
+        | Some (Cell.Code { id; attrs; _ }) ->
+            equal string "c_2" id;
+            is_false ~msg:"not collapsed" attrs.collapsed;
+            is_true ~msg:"hide_source survives" attrs.hide_source
+        | _ -> fail "expected Code cell");
+    test "roundtrip both attrs" (fun () ->
+        let a = { Cell.collapsed = true; hide_source = true } in
+        let c = Cell.code ~id:"c_3" ~attrs:a "let x = 1" in
+        let doc = Doc.of_cells [ c ] in
+        let md = Quill_markdown.to_string doc in
+        let doc2 = Quill_markdown.of_string md in
+        match Doc.nth 0 doc2 with
+        | Some (Cell.Code { attrs; _ }) ->
+            is_true ~msg:"collapsed survives" attrs.collapsed;
+            is_true ~msg:"hide_source survives" attrs.hide_source
+        | _ -> fail "expected Code cell");
+    test "default attrs produce no tokens" (fun () ->
+        let c = Cell.code ~id:"c_4" "let x = 1" in
+        let doc = Doc.of_cells [ c ] in
+        let md = Quill_markdown.to_string doc in
+        is_true ~msg:"no collapsed token"
+          (not
+             (String.split_on_char ' ' md
+             |> List.exists (fun w -> w = "collapsed"))));
+  ]
+
 let () =
   run "Markdown"
     [
@@ -306,4 +420,5 @@ let () =
       group "Rendering" rendering_tests;
       group "ID persistence" id_persistence_tests;
       group "Structured outputs" structured_output_tests;
+      group "Attributes" attrs_tests;
     ]

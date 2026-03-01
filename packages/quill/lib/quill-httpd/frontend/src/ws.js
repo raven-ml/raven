@@ -181,6 +181,7 @@ export class WsClient {
   deleteCell(cellId) { this.send({ type: 'delete_cell', cell_id: cellId }); }
   moveCell(cellId, pos) { this.send({ type: 'move_cell', cell_id: cellId, pos }); }
   setCellKind(cellId, kind) { this.send({ type: 'set_cell_kind', cell_id: cellId, kind }); }
+  setCellAttrs(cellId, attrs) { this.send({ type: 'set_cell_attrs', cell_id: cellId, ...attrs }); }
 
   clearOutputs(cellId) { this.send({ type: 'clear_outputs', cell_id: cellId }); }
   clearAllOutputs() { this.send({ type: 'clear_all_outputs' }); }

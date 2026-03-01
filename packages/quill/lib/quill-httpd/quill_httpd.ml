@@ -220,6 +220,15 @@ let handle_client_msg st = function
           send st (Protocol.cell_updated_to_json cell status)
       | None -> ());
       send_undo_redo st
+  | Protocol.Set_cell_attrs { cell_id; attrs } ->
+      log "[cell] set attrs %s\n%!" cell_id;
+      st.session <- Session.set_cell_attrs cell_id attrs st.session;
+      (match Doc.find cell_id (Session.doc st.session) with
+      | Some cell ->
+          let status = Session.cell_status cell_id st.session in
+          send st (Protocol.cell_updated_to_json cell status)
+      | None -> ());
+      send_undo_redo st
   | Protocol.Clear_outputs { cell_id } -> (
       st.session <- Session.clear_outputs cell_id st.session;
       match Doc.find cell_id (Session.doc st.session) with
