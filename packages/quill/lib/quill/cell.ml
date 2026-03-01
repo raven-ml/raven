@@ -12,12 +12,13 @@ let () = Random.self_init ()
 let fresh_id () =
   let n = 12 in
   let chars = "abcdefghijklmnopqrstuvwxyz0123456789" in
-  let buf = Buffer.create (n + 2) in
-  Buffer.add_string buf "c_";
-  for _ = 1 to n do
-    Buffer.add_char buf chars.[Random.int (String.length chars)]
+  let b = Bytes.create (n + 2) in
+  Bytes.unsafe_set b 0 'c';
+  Bytes.unsafe_set b 1 '_';
+  for i = 0 to n - 1 do
+    Bytes.unsafe_set b (i + 2) chars.[Random.int 36]
   done;
-  Buffer.contents buf
+  Bytes.unsafe_to_string b
 
 (* ───── Outputs ───── *)
 
@@ -69,15 +70,17 @@ let apply_cr s =
   in
   String.concat "\n" (List.map apply_line lines)
 
+let rec append_or_coalesce o acc = function
+  | [] -> List.rev (o :: acc)
+  | [ Stdout prev ] -> begin
+      match o with
+      | Stdout next -> List.rev (Stdout (apply_cr (prev ^ next)) :: acc)
+      | _ -> List.rev (o :: Stdout prev :: acc)
+    end
+  | out :: rest -> append_or_coalesce o (out :: acc) rest
+
 let append_output o = function
-  | Code c ->
-      let outputs =
-        match (o, List.rev c.outputs) with
-        | Stdout new_text, Stdout prev_text :: rest ->
-            List.rev (Stdout (apply_cr (prev_text ^ new_text)) :: rest)
-        | _ -> c.outputs @ [ o ]
-      in
-      Code { c with outputs }
+  | Code c -> Code { c with outputs = append_or_coalesce o [] c.outputs }
   | Text _ as t -> t
 
 let clear_outputs = function

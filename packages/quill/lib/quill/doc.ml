@@ -49,14 +49,13 @@ let find_index id d =
 let insert ~pos cell d =
   let id = Cell.id cell in
   let by_id = Id_map.add id cell d.by_id in
-  let n = List.length d.order in
-  let pos = Int.max 0 (Int.min pos n) in
-  let rec build i = function
-    | rest when i = pos -> id :: rest
-    | hd :: rest -> hd :: build (i + 1) rest
-    | [] -> [ id ]
+  let pos = max 0 pos in
+  let rec loop i acc = function
+    | rest when i = pos -> List.rev_append acc (id :: rest)
+    | hd :: rest -> loop (i + 1) (hd :: acc) rest
+    | [] -> List.rev (id :: acc)
   in
-  { d with order = build 0 d.order; by_id }
+  { d with order = loop 0 [] d.order; by_id }
 
 let remove id d =
   if not (Id_map.mem id d.by_id) then d
@@ -81,21 +80,21 @@ let move id ~pos d =
   match find_index id d with
   | None -> d
   | Some i ->
-      let cell = Id_map.find id d.by_id in
-      let order = List.filter (fun i -> not (String.equal i id)) d.order in
-      let pos = if pos > i then pos - 1 else pos in
-      let n = List.length order in
-      let pos = Int.max 0 (Int.min pos n) in
-      let rec build j = function
-        | rest when j = pos -> id :: rest
-        | hd :: rest -> hd :: build (j + 1) rest
-        | [] -> [ id ]
-      in
-      { d with order = build 0 order; by_id = Id_map.add id cell d.by_id }
+      if i = pos then d
+      else
+        let order = List.filter (fun x -> not (String.equal x id)) d.order in
+        let pos = if pos > i then pos - 1 else pos in
+        let pos = max 0 pos in
+        let rec loop j acc = function
+          | rest when j = pos -> List.rev_append acc (id :: rest)
+          | hd :: rest -> loop (j + 1) (hd :: acc) rest
+          | [] -> List.rev (id :: acc)
+        in
+        { d with order = loop 0 [] order }
 
 let update id f d =
   match find id d with None -> d | Some c -> replace id (f c) d
 
 let clear_all_outputs d =
-  let by_id = Id_map.map (fun c -> Cell.clear_outputs c) d.by_id in
+  let by_id = Id_map.map Cell.clear_outputs d.by_id in
   { d with by_id }

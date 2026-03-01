@@ -20,21 +20,19 @@ type history = {
 
 let empty_history capacity = { past = []; future = []; count = 0; capacity }
 
-let rec take n = function
-  | _ when n <= 0 -> []
-  | [] -> []
-  | x :: rest -> x :: take (n - 1) rest
+let take n xs =
+  let rec loop acc n = function
+    | [] -> List.rev acc
+    | _ when n <= 0 -> List.rev acc
+    | x :: rest -> loop (x :: acc) (n - 1) rest
+  in
+  loop [] n xs
 
 let push_history doc h =
   let past = doc :: h.past in
   if h.count >= h.capacity then
-    {
-      past = take h.capacity past;
-      future = [];
-      count = h.capacity;
-      capacity = h.capacity;
-    }
-  else { past; future = []; count = h.count + 1; capacity = h.capacity }
+    { h with past = take h.capacity past; future = []; count = h.capacity }
+  else { h with past; future = []; count = h.count + 1 }
 
 (* ───── Session ───── *)
 
@@ -142,7 +140,7 @@ let undo s =
           count = s.history.count - 1;
         }
       in
-      { s with doc = prev; history }
+      { s with doc = prev; last_checkpoint = prev; history }
   | [] -> s
 
 let redo s =
@@ -156,7 +154,7 @@ let redo s =
           count = s.history.count + 1;
         }
       in
-      { s with doc = next; history }
+      { s with doc = next; last_checkpoint = next; history }
   | [] -> s
 
 (* ───── Reload ───── *)
