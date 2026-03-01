@@ -3,10 +3,11 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* CIFAR-10 example with kaun-board logging. *)
 open Kaun
 
 let batch_size = 64
-let epochs = 3
+let epochs = 15
 let lr = 0.001
 
 (* Yield (x_batch, y_batch) slices from full tensors *)
@@ -18,17 +19,18 @@ let batches x y =
       let e = s + batch_size in
       (Nx.slice [ R (s, e) ] x, Nx.slice [ R (s, e) ] y))
 
+(* CNN for CIFAR-10: 32x32x3 -> conv 3->8 -> pool -> conv 8->16 -> pool -> 8*8*16 -> dense -> 10 *)
 let model =
   Layer.sequential
     [
-      Layer.conv2d ~in_channels:1 ~out_channels:16 ();
+      Layer.conv2d ~in_channels:3 ~out_channels:8 ();
       Layer.relu ();
-      Layer.max_pool2d ~kernel_size:(2, 2) ();
-      Layer.conv2d ~in_channels:16 ~out_channels:32 ();
+      Layer.avg_pool2d ~kernel_size:(2, 2) ();
+      Layer.conv2d ~in_channels:8 ~out_channels:16 ();
       Layer.relu ();
-      Layer.max_pool2d ~kernel_size:(2, 2) ();
+      Layer.avg_pool2d ~kernel_size:(2, 2) ();
       Layer.flatten ();
-      Layer.linear ~in_features:(32 * 7 * 7) ~out_features:128 ();
+      Layer.linear ~in_features:(8 * 8 * 16) ~out_features:128 ();
       Layer.relu ();
       Layer.linear ~in_features:128 ~out_features:10 ();
     ]
@@ -38,7 +40,7 @@ let () =
 
   (* Set up kaun-board logger *)
   let logger =
-    Kaun_board.Log.create ~experiment:"mnist"
+    Kaun_board.Log.create ~experiment:"cifar10"
       ~config:
         [
           ("lr", Jsont.Json.number lr);
@@ -50,15 +52,13 @@ let () =
   Printf.printf "Run ID: %s\n%!" (Kaun_board.Log.run_id logger);
   Printf.printf "To monitor: dune exec kaun-board %s\n\n%!" (Kaun_board.Log.run_id logger);
 
-  Printf.printf "Loading MNIST...\n%!";
-  let (x_train, y_train), (x_test, y_test) = Kaun_datasets.mnist () in
+  Printf.printf "Loading CIFAR-10...\n%!";
+  let (x_train, y_train), (x_test, y_test) = Kaun_datasets.cifar10 () in
   let n_train = (Nx.shape x_train).(0) in
   Printf.printf "  train: %d  test: %d\n%!" n_train (Nx.shape x_test).(0);
 
-  (* Test batches (fixed) *)
   let test_batches = batches x_test y_test in
 
-  (* Trainer *)
   let trainer =
     Train.make ~model
       ~optimizer:(Optim.adam ~lr:(Optim.Schedule.constant lr) ())
@@ -67,13 +67,11 @@ let () =
   let global_step = ref 0 in
 
   for epoch = 1 to epochs do
-    (* Shuffle training data at the tensor level *)
     let perm = Nx.permutation n_train in
     let x_shuf = Nx.take ~axis:0 perm x_train in
     let y_shuf = Nx.take ~axis:0 perm y_train in
     let train_batches = batches x_shuf y_shuf in
 
-    (* Train *)
     let num_batches = n_train / batch_size in
     let tracker = Metric.tracker () in
     let batch_i = ref 0 in
@@ -103,7 +101,6 @@ let () =
           Metric.accuracy logits y)
         train_batches
     in
-    (* Evaluate *)
     Data.reset test_batches;
     let test_acc =
       Metric.eval
