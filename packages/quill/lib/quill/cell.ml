@@ -60,8 +60,24 @@ let set_outputs os = function
   | Code c -> Code { c with outputs = os }
   | Text _ as t -> t
 
+let apply_cr s =
+  let lines = String.split_on_char '\n' s in
+  let apply_line line =
+    match String.rindex_opt line '\r' with
+    | None -> line
+    | Some i -> String.sub line (i + 1) (String.length line - i - 1)
+  in
+  String.concat "\n" (List.map apply_line lines)
+
 let append_output o = function
-  | Code c -> Code { c with outputs = c.outputs @ [ o ] }
+  | Code c ->
+      let outputs =
+        match (o, List.rev c.outputs) with
+        | Stdout new_text, Stdout prev_text :: rest ->
+            List.rev (Stdout (apply_cr (prev_text ^ new_text)) :: rest)
+        | _ -> c.outputs @ [ o ]
+      in
+      Code { c with outputs }
   | Text _ as t -> t
 
 let clear_outputs = function

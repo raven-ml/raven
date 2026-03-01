@@ -4,26 +4,22 @@
   ---------------------------------------------------------------------------*)
 
 let run ~create_kernel doc =
-  let outputs = ref [] in
+  let doc = ref doc in
+  let cur_id = ref "" in
   let on_event = function
-    | Kernel.Output { output; cell_id = _ } -> outputs := output :: !outputs
+    | Kernel.Output { output; cell_id = _ } ->
+        doc := Doc.update !cur_id (Cell.append_output output) !doc
     | _ -> ()
   in
   let (kernel : Kernel.t) = create_kernel ~on_event in
-  let doc = ref doc in
   List.iter
     (fun cell ->
       match cell with
       | Cell.Code { id; source; language = _; outputs = _; execution_count = _ }
         ->
-          outputs := [];
+          cur_id := id;
           kernel.execute ~cell_id:id ~code:source;
-          let cell_outputs = List.rev !outputs in
-          doc :=
-            Doc.update id
-              (fun c ->
-                Cell.set_outputs cell_outputs (Cell.increment_execution_count c))
-              !doc
+          doc := Doc.update id Cell.increment_execution_count !doc
       | Cell.Text _ -> ())
     (Doc.cells !doc);
   kernel.shutdown ();
