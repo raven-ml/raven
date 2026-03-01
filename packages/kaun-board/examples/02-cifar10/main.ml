@@ -123,4 +123,5 @@ let () =
   done;
 
   Kaun_board.Log.close logger;
-  Printf.printf "\nDone. Run logged to %s\n" (Kaun_board.Log.run_dir logger)
+  Printf.printf "\nDone. Run logged to %s\n" (Kaun_board.Log.run_dir logger);
+  Printf.printf "To monitor this run: dune exec kaun-board\n"
