@@ -175,6 +175,8 @@ let line_count s =
 
 (* History *)
 
+let history_sep = "(**)"
+
 let history_path () =
   let base =
     match Sys.getenv_opt "XDG_DATA_HOME" with
@@ -184,51 +186,33 @@ let history_path () =
         | Some home -> Filename.concat home ".local/share"
         | None -> "/tmp")
   in
-  Filename.concat (Filename.concat base "quill") "history"
-
-let escape_newlines s =
-  let buf = Buffer.create (String.length s) in
-  String.iter
-    (fun c ->
-      match c with
-      | '\n' -> Buffer.add_string buf "\\n"
-      | '\\' -> Buffer.add_string buf "\\\\"
-      | c -> Buffer.add_char buf c)
-    s;
-  Buffer.contents buf
-
-let unescape_newlines s =
-  let len = String.length s in
-  let buf = Buffer.create len in
-  let i = ref 0 in
-  while !i < len do
-    if !i + 1 < len && s.[!i] = '\\' then begin
-      (match s.[!i + 1] with
-      | 'n' -> Buffer.add_char buf '\n'
-      | '\\' -> Buffer.add_char buf '\\'
-      | c ->
-          Buffer.add_char buf '\\';
-          Buffer.add_char buf c);
-      i := !i + 2
-    end
-    else begin
-      Buffer.add_char buf s.[!i];
-      incr i
-    end
-  done;
-  Buffer.contents buf
+  Filename.concat (Filename.concat base "quill") "history.ml"
 
 let load_history path =
   if not (Sys.file_exists path) then [||]
   else
     let ic = open_in path in
-    let lines = ref [] in
+    let buf = Buffer.create 4096 in
     (try
        while true do
-         lines := unescape_newlines (input_line ic) :: !lines
+         Buffer.add_char buf (input_char ic)
        done
      with End_of_file -> close_in ic);
-    Array.of_list (List.rev !lines)
+    let content = Buffer.contents buf in
+    let lines = String.split_on_char '\n' content in
+    let rec loop acc curr = function
+      | [] ->
+          let entry = String.concat "\n" (List.rev curr) in
+          let entries = if String.trim entry = "" then acc else entry :: acc in
+          Array.of_list (List.rev entries)
+      | l :: ls ->
+          if String.trim l = history_sep then
+            let entry = String.concat "\n" (List.rev curr) in
+            let acc = if String.trim entry = "" then acc else entry :: acc in
+            loop acc [] ls
+          else loop acc (l :: curr) ls
+    in
+    loop [] [] lines
 
 let save_history path entries count =
   let dir = Filename.dirname path in
@@ -239,9 +223,10 @@ let save_history path entries count =
     ~finally:(fun () -> close_out oc)
     (fun () ->
       for i = 0 to count - 1 do
-        output_string oc (escape_newlines entries.(i));
-        output_char oc '\n'
-      done)
+        if i > 0 then Printf.fprintf oc "\n%s\n" history_sep;
+        output_string oc entries.(i)
+      done;
+      output_char oc '\n')
 
 (* Model *)
 
@@ -274,6 +259,7 @@ type model = {
   pending_cell_id : Cell.id option;
   counter : int;
   type_info : Kernel.type_info option;
+  ctrl_x_pending : bool;
 }
 
 type msg =
@@ -291,6 +277,9 @@ type msg =
   | Execution_done
   | Show_type
   | Dismiss_type
+  | Chord_prefix
+  | Edit_external
+  | Clear_screen
   | Interrupt
   | Quit
 
@@ -431,6 +420,13 @@ let apply_completion m c choice =
   }
   |> recompute_completion
 
+(* External editor *)
+
+let editor_cmd () =
+  match Sys.getenv_opt "VISUAL" with
+  | Some e -> Some e
+  | None -> Sys.getenv_opt "EDITOR"
+
 (* Phrase completeness *)
 
 let is_complete m =
@@ -570,6 +566,7 @@ let init ~create_kernel () =
       pending_cell_id = None;
       counter = 0;
       type_info = None;
+      ctrl_x_pending = false;
     },
     banner )
 
@@ -607,6 +604,9 @@ let handle_submit m =
       Cmd.batch [ input_cmd; exec_cmd ] )
 
 let update msg m =
+  let m =
+    match msg with Chord_prefix -> m | _ -> { m with ctrl_x_pending = false }
+  in
   match msg with
   | Input_changed v ->
       let m =
@@ -740,9 +740,62 @@ let update msg m =
           ({ m with type_info = info }, Cmd.none)
       | None -> (m, Cmd.none))
   | Dismiss_type -> ({ m with type_info = None }, Cmd.none)
+  | Chord_prefix -> ({ m with ctrl_x_pending = true }, Cmd.none)
+  | Edit_external -> (
+      match editor_cmd () with
+      | None -> (m, Cmd.none)
+      | Some editor ->
+          let tmp = Filename.temp_file "quill" ".ml" in
+          let oc = open_out tmp in
+          output_string oc m.input;
+          close_out oc;
+          let cmd =
+            Cmd.perform (fun dispatch ->
+                ignore
+                  (Sys.command
+                     (Printf.sprintf "%s %s" editor (Filename.quote tmp)));
+                let ic = open_in tmp in
+                let buf = Buffer.create 256 in
+                (try
+                   while true do
+                     Buffer.add_char buf (input_char ic)
+                   done
+                 with End_of_file -> close_in ic);
+                (try Sys.remove tmp with Sys_error _ -> ());
+                dispatch (Input_changed (Buffer.contents buf)))
+          in
+          (m, cmd))
+  | Clear_screen -> (m, Cmd.static_clear)
   | Interrupt ->
-      m.kernel.interrupt ();
-      (m, Cmd.none)
+      if m.execution_state = Executing then begin
+        m.kernel.interrupt ();
+        (m, Cmd.none)
+      end
+      else if m.input <> "" then
+        let commit =
+          Cmd.static_commit
+            (box ~flex_direction:Row
+               ~size:{ width = pct 100; height = auto }
+               [
+                 text
+                   ~style:(Ansi.Style.make ~fg:prompt_fg ~bold:true ())
+                   prompt_str;
+                 text ~style:(Ansi.Style.make ~fg:hint_fg ()) m.input;
+               ])
+        in
+        ( {
+            m with
+            input = "";
+            input_cursor = 0;
+            input_cursor_override = Some 0;
+            input_selection = None;
+            draft = "";
+            completion = None;
+            completion_popup_open = false;
+            history_cursor = m.history_count;
+          },
+          Cmd.batch [ commit; Cmd.focus textarea_id ] )
+      else (m, Cmd.none)
   | Quit ->
       m.kernel.shutdown ();
       (m, Cmd.quit)
@@ -852,92 +905,103 @@ let view m =
 let on_key m ev =
   let data = Event.Key.data ev in
   let md = data.modifier in
-  match data.key with
-  (* Completion keys -- checked first *)
-  | Escape when m.completion_popup_open ->
-      Event.Key.prevent_default ev;
-      Some Dismiss_completion
-  | Enter
-    when m.completion_popup_open
-         && not (md.ctrl || md.alt || md.super || md.shift) ->
-      Event.Key.prevent_default ev;
-      Some Accept_completion
-  | Tab when m.completion_popup_open && md.shift ->
-      Event.Key.prevent_default ev;
-      Some Prev_completion
-  | Tab when m.completion_popup_open ->
-      Event.Key.prevent_default ev;
-      Some Accept_completion
-  | Char c
-    when m.completion_popup_open && md.ctrl
-         && lowercase_codepoint (Uchar.to_int c) = Char.code 'n' ->
-      Event.Key.prevent_default ev;
-      Some Next_completion
-  | Char c
-    when m.completion_popup_open && md.ctrl
-         && lowercase_codepoint (Uchar.to_int c) = Char.code 'p' ->
-      Event.Key.prevent_default ev;
-      Some Prev_completion
-  (* Ctrl+Space: trigger completion *)
-  | Char c when md.ctrl && Uchar.to_int c = Char.code ' ' ->
-      Event.Key.prevent_default ev;
-      Some Trigger_completion
-  (* Tab: trigger completion *)
-  | Tab when Option.is_none m.input_selection ->
-      Event.Key.prevent_default ev;
-      Some Trigger_completion
-  (* Enter: submit if complete, otherwise newline *)
-  | Enter when not (md.ctrl || md.shift || md.alt || md.super) ->
-      if m.execution_state = Executing then begin
+  (* Ctrl+X prefix: second key of chord *)
+  if m.ctrl_x_pending then begin
+    match data.key with
+    | Char c
+      when md.ctrl && lowercase_codepoint (Uchar.to_int c) = Char.code 'e' ->
         Event.Key.prevent_default ev;
-        None
-      end
-      else if is_complete m then begin
+        Some Edit_external
+    | _ -> None
+  end
+  else
+    match data.key with
+    (* Completion keys -- checked first *)
+    | Escape when m.completion_popup_open ->
         Event.Key.prevent_default ev;
-        Some (Input_submitted m.input)
-      end
-      else None
-  (* Up at first line: history prev *)
-  | Up
-    when (not (md.ctrl || md.alt || md.super))
-         && cursor_line m.input m.input_cursor = 0
-         && Option.is_none m.input_selection ->
-      Event.Key.prevent_default ev;
-      Some History_prev
-  (* Down at last line: history next *)
-  | Down
-    when (not (md.ctrl || md.alt || md.super))
-         && cursor_line m.input m.input_cursor = line_count m.input - 1
-         && Option.is_none m.input_selection ->
-      Event.Key.prevent_default ev;
-      Some History_next
-  (* Ctrl+C: interrupt *)
-  | Char c
-    when md.ctrl
-         && lowercase_codepoint (Uchar.to_int c) = Char.code 'c'
-         && m.execution_state = Executing ->
-      Event.Key.prevent_default ev;
-      Some Interrupt
-  (* Ctrl+C on empty input while idle: clear input *)
-  | Char c
-    when md.ctrl
-         && lowercase_codepoint (Uchar.to_int c) = Char.code 'c'
-         && m.execution_state = Idle && m.input <> "" ->
-      Event.Key.prevent_default ev;
-      Some (Input_changed "")
-  (* Ctrl+D on empty: quit *)
-  | Char c
-    when md.ctrl
-         && lowercase_codepoint (Uchar.to_int c) = Char.code 'd'
-         && m.input = "" && m.execution_state = Idle ->
-      Event.Key.prevent_default ev;
-      Some Quit
-  (* Ctrl+T: show type *)
-  | Char c when md.ctrl && lowercase_codepoint (Uchar.to_int c) = Char.code 't'
-    ->
-      Event.Key.prevent_default ev;
-      Some Show_type
-  | _ -> None
+        Some Dismiss_completion
+    | Enter
+      when m.completion_popup_open
+           && not (md.ctrl || md.alt || md.super || md.shift) ->
+        Event.Key.prevent_default ev;
+        Some Accept_completion
+    | Tab when m.completion_popup_open && md.shift ->
+        Event.Key.prevent_default ev;
+        Some Prev_completion
+    | Tab when m.completion_popup_open ->
+        Event.Key.prevent_default ev;
+        Some Accept_completion
+    | Char c
+      when m.completion_popup_open && md.ctrl
+           && lowercase_codepoint (Uchar.to_int c) = Char.code 'n' ->
+        Event.Key.prevent_default ev;
+        Some Next_completion
+    | Char c
+      when m.completion_popup_open && md.ctrl
+           && lowercase_codepoint (Uchar.to_int c) = Char.code 'p' ->
+        Event.Key.prevent_default ev;
+        Some Prev_completion
+    (* Ctrl+Space: trigger completion *)
+    | Char c when md.ctrl && Uchar.to_int c = Char.code ' ' ->
+        Event.Key.prevent_default ev;
+        Some Trigger_completion
+    (* Tab: trigger completion *)
+    | Tab when Option.is_none m.input_selection ->
+        Event.Key.prevent_default ev;
+        Some Trigger_completion
+    (* Enter: submit if complete, otherwise newline *)
+    | Enter when not (md.ctrl || md.shift || md.alt || md.super) ->
+        if m.execution_state = Executing then begin
+          Event.Key.prevent_default ev;
+          None
+        end
+        else if is_complete m then begin
+          Event.Key.prevent_default ev;
+          Some (Input_submitted m.input)
+        end
+        else None
+    (* Up at first line: history prev *)
+    | Up
+      when (not (md.ctrl || md.alt || md.super))
+           && cursor_line m.input m.input_cursor = 0
+           && Option.is_none m.input_selection ->
+        Event.Key.prevent_default ev;
+        Some History_prev
+    (* Down at last line: history next *)
+    | Down
+      when (not (md.ctrl || md.alt || md.super))
+           && cursor_line m.input m.input_cursor = line_count m.input - 1
+           && Option.is_none m.input_selection ->
+        Event.Key.prevent_default ev;
+        Some History_next
+    (* Ctrl+L: clear screen *)
+    | Char c
+      when md.ctrl && lowercase_codepoint (Uchar.to_int c) = Char.code 'l' ->
+        Event.Key.prevent_default ev;
+        Some Clear_screen
+    (* Ctrl+C: interrupt or cancel *)
+    | Char c
+      when md.ctrl && lowercase_codepoint (Uchar.to_int c) = Char.code 'c' ->
+        Event.Key.prevent_default ev;
+        Some Interrupt
+    (* Ctrl+D on empty: quit *)
+    | Char c
+      when md.ctrl
+           && lowercase_codepoint (Uchar.to_int c) = Char.code 'd'
+           && m.input = "" && m.execution_state = Idle ->
+        Event.Key.prevent_default ev;
+        Some Quit
+    (* Ctrl+X: start chord prefix *)
+    | Char c
+      when md.ctrl && lowercase_codepoint (Uchar.to_int c) = Char.code 'x' ->
+        Event.Key.prevent_default ev;
+        Some Chord_prefix
+    (* Ctrl+T: show type *)
+    | Char c
+      when md.ctrl && lowercase_codepoint (Uchar.to_int c) = Char.code 't' ->
+        Event.Key.prevent_default ev;
+        Some Show_type
+    | _ -> None
 
 (* Subscriptions *)
 
@@ -945,7 +1009,7 @@ let subscriptions m =
   Sub.batch
     [
       (if m.execution_state = Executing then
-         Sub.every 0.05 (fun () -> Execution_tick)
+         Sub.on_tick (fun ~dt:_ -> Execution_tick)
        else Sub.none);
       Sub.on_key_all (on_key m);
     ]
