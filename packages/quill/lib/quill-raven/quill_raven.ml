@@ -7,6 +7,9 @@
 
 let raven_packages =
   [
+    "unix";
+    "threads";
+    "threads.posix";
     "nx";
     "nx.core";
     "nx.backend";

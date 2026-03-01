@@ -11,6 +11,7 @@
   hugin
   sowilo
   talon
+  talon.csv
   brot
   fehu)
  (modes byte))

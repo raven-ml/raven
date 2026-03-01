@@ -3,6 +3,88 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* ───── Toplevel primitives ───── *)
+
+let findlib_predicates = ref [ "byte"; "toploop" ]
+
+let ensure_findlib () =
+  match Findlib.init () with () -> true | exception _ -> false
+
+(* Mark packages that are already linked into the executable. Their .cmi
+   files need to be on the search path, but we must not try to load their
+   .cma again. *)
+let add_packages pkgs =
+  if ensure_findlib () then
+    List.iter
+      (fun pkg ->
+        (match Findlib.package_directory pkg with
+        | dir -> Topdirs.dir_directory dir
+        | exception _ -> ());
+        if not (Findlib.is_recorded_package pkg) then
+          Findlib.record_package Findlib.Record_core pkg)
+      pkgs
+  else
+    (* Findlib unavailable — fall back to OCAMLPATH. *)
+    let sep = if Sys.win32 then ';' else ':' in
+    match Sys.getenv_opt "OCAMLPATH" with
+    | None -> ()
+    | Some ocamlpath ->
+        let roots = String.split_on_char sep ocamlpath in
+        List.iter
+          (fun pkg ->
+            let subdir =
+              String.concat Filename.dir_sep (String.split_on_char '.' pkg)
+            in
+            List.iter
+              (fun root ->
+                let dir = Filename.concat root subdir in
+                if Sys.file_exists dir && Sys.is_directory dir then
+                  Topdirs.dir_directory dir)
+              roots)
+          pkgs
+
+(* Load a package that is NOT linked into the executable: resolve its
+   dependency chain, add directories, and load .cma archives. *)
+let load_package pkg =
+  if not (ensure_findlib ()) then
+    Printf.eprintf "[quill] #require: findlib unavailable\n%!"
+  else begin
+    let ancestors =
+      Findlib.package_deep_ancestors !findlib_predicates [ pkg ]
+    in
+    List.iter
+      (fun p ->
+        let loaded =
+          Findlib.is_recorded_package p
+          && Findlib.type_of_recorded_package p = Findlib.Record_load
+        in
+        let incore =
+          Findlib.is_recorded_package p
+          && Findlib.type_of_recorded_package p = Findlib.Record_core
+        in
+        if not loaded then begin
+          let d = Findlib.package_directory p in
+          Topdirs.dir_directory d;
+          if not incore then begin
+            let archive =
+              try Findlib.package_property !findlib_predicates p "archive"
+              with Not_found -> ""
+            in
+            let archives =
+              String.split_on_char ' ' archive
+              |> List.filter (fun s -> s <> "")
+            in
+            List.iter
+              (fun arch ->
+                let path = Findlib.resolve_path ~base:d arch in
+                Topdirs.dir_load Format.err_formatter path)
+              archives
+          end;
+          Findlib.record_package Findlib.Record_load p
+        end)
+      ancestors
+  end
+
 (* ───── Initialization ───── *)
 
 let initialized = ref false
@@ -18,40 +100,12 @@ let initialize_if_needed () =
         Topeval.init ();
         Toploop.initialize_toplevel_env ();
         Toploop.input_name := "//toplevel//";
+        (* Register #require directive for loading packages at runtime. *)
+        Toploop.add_directive "require"
+          (Directive_string (fun pkg -> load_package pkg))
+          { section = "Loading code"; doc = "Load a findlib package" };
         Sys.interactive := true;
         initialized := true))
-
-(* ───── Toplevel primitives ───── *)
-
-let add_packages pkgs =
-  match Findlib.init () with
-  | () ->
-      List.iter
-        (fun pkg ->
-          match Findlib.package_directory pkg with
-          | dir -> Topdirs.dir_directory dir
-          | exception _ -> ())
-        pkgs
-  | exception _ -> (
-      (* Findlib unavailable (e.g. running outside dune exec) — fall back to
-         OCAMLPATH to locate .cmi directories. *)
-      let sep = if Sys.win32 then ';' else ':' in
-      match Sys.getenv_opt "OCAMLPATH" with
-      | None -> ()
-      | Some ocamlpath ->
-          let roots = String.split_on_char sep ocamlpath in
-          List.iter
-            (fun pkg ->
-              let subdir =
-                String.concat Filename.dir_sep (String.split_on_char '.' pkg)
-              in
-              List.iter
-                (fun root ->
-                  let dir = Filename.concat root subdir in
-                  if Sys.file_exists dir && Sys.is_directory dir then
-                    Topdirs.dir_directory dir)
-                roots)
-            pkgs)
 
 let install_printer name =
   try
