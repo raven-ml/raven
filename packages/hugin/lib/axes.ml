@@ -273,7 +273,10 @@ let calculate_data_bounds (ax : t) : (float * float * float * float) option =
           update_bounds_from_arrays fb.xdata fb.y2data
       | Artist.Contour c -> update_bounds_from_arrays c.x c.y
       | Artist.ContourFilled cf -> update_bounds_from_arrays cf.x cf.y
-      | Artist.Text _ -> ())
+      | Artist.Text _ -> ()
+      | Artist.HLine _ | Artist.VLine _ | Artist.ALine _ -> ()
+      | Artist.TextLabels tl ->
+          update_bounds_from_arrays tl.tl_xdata tl.tl_ydata)
     ax.artists;
 
   if !has_finite_data then Some (!min_x, !max_x, !min_y, !max_y) else None

@@ -158,11 +158,11 @@ let render_scatter cr (t_ctx : Transforms.context2d) (s : Artist.scatter) =
   Render_utils.set_source_color cr s.c;
   let default_line_width = 1.0 in
 
-  let radius = sqrt (s.s /. Float.pi) in
-  let side = sqrt s.s in
-  let plus_arm_half_length = sqrt s.s /. 2.0 in
-  let triangle_height = sqrt s.s *. 1.2 in
-  let triangle_base = triangle_height *. 0.866 *. 2. /. sqrt 3. in
+  let get_size i =
+    match s.s with
+    | Artist.Uniform v -> v
+    | Artist.Varying arr -> Nx.item [ i ] arr
+  in
 
   for i = 0 to n - 1 do
     let x = Nx.item [ i ] s.xdata in
@@ -170,6 +170,10 @@ let render_scatter cr (t_ctx : Transforms.context2d) (s : Artist.scatter) =
     let px, py = Transforms.transform t_ctx ~x ~y in
 
     if Float.is_finite px && Float.is_finite py then
+      let sz = get_size i in
+      let radius = sqrt (sz /. Float.pi) in
+      let side = sqrt sz in
+      let arm = side /. 2.0 in
       match s.marker with
       | Artist.Circle ->
           Cairo.arc cr px py ~r:radius ~a1:0. ~a2:(2. *. Float.pi);
@@ -178,30 +182,29 @@ let render_scatter cr (t_ctx : Transforms.context2d) (s : Artist.scatter) =
           Cairo.rectangle cr (px -. 0.5) (py -. 0.5) ~w:1.0 ~h:1.0;
           Cairo.fill cr
       | Artist.Square ->
-          let x_tl = px -. (side /. 2.0) in
-          let y_tl = py -. (side /. 2.0) in
-          Cairo.rectangle cr x_tl y_tl ~w:side ~h:side;
+          Cairo.rectangle cr (px -. side /. 2.0) (py -. side /. 2.0)
+            ~w:side ~h:side;
           Cairo.fill cr
       | Artist.Triangle ->
-          let half_base = triangle_base /. 2.0 in
-          let half_height = triangle_height /. 2.0 in
-          Cairo.move_to cr px (py -. half_height);
-          Cairo.line_to cr (px +. half_base) (py +. half_height);
-          Cairo.line_to cr (px -. half_base) (py +. half_height);
+          let h = side *. 1.2 in
+          let hb = h *. 0.866 /. sqrt 3. in
+          Cairo.move_to cr px (py -. h /. 2.0);
+          Cairo.line_to cr (px +. hb) (py +. h /. 2.0);
+          Cairo.line_to cr (px -. hb) (py +. h /. 2.0);
           Cairo.fill cr
       | Artist.Plus ->
           Cairo.set_line_width cr default_line_width;
-          Cairo.move_to cr (px -. plus_arm_half_length) py;
-          Cairo.line_to cr (px +. plus_arm_half_length) py;
-          Cairo.move_to cr px (py -. plus_arm_half_length);
-          Cairo.line_to cr px (py +. plus_arm_half_length);
+          Cairo.move_to cr (px -. arm) py;
+          Cairo.line_to cr (px +. arm) py;
+          Cairo.move_to cr px (py -. arm);
+          Cairo.line_to cr px (py +. arm);
           Cairo.stroke cr
       | Artist.Star ->
           Cairo.set_line_width cr default_line_width;
-          Cairo.move_to cr (px -. plus_arm_half_length) py;
-          Cairo.line_to cr (px +. plus_arm_half_length) py;
-          Cairo.move_to cr px (py -. plus_arm_half_length);
-          Cairo.line_to cr px (py +. plus_arm_half_length);
+          Cairo.move_to cr (px -. arm) py;
+          Cairo.line_to cr (px +. arm) py;
+          Cairo.move_to cr px (py -. arm);
+          Cairo.line_to cr px (py +. arm);
           Cairo.stroke cr
       | Artist.None -> ()
     else ()
@@ -652,6 +655,75 @@ let render_contour_filled cr (t_ctx : Transforms.context2d)
 
   Cairo.restore cr
 
+let set_linestyle cr = function
+  | Artist.Dashed -> Cairo.set_dash cr ~ofs:0.0 [| 6.0; 6.0 |]
+  | Artist.Dotted -> Cairo.set_dash cr ~ofs:0.0 [| 1.0; 3.0 |]
+  | Artist.DashDot -> Cairo.set_dash cr ~ofs:0.0 [| 6.0; 3.0; 1.0; 3.0 |]
+  | Artist.Solid | Artist.None -> Cairo.set_dash cr ~ofs:0.0 [||]
+
+let render_hline cr (t_ctx : Transforms.context2d) (rl : Artist.ref_line) =
+  Cairo.save cr;
+  Render_utils.set_source_color cr rl.ref_color;
+  Cairo.set_line_width cr rl.ref_linewidth;
+  set_linestyle cr rl.ref_linestyle;
+  let _, py = Transforms.transform t_ctx ~x:0.0 ~y:rl.position in
+  if Float.is_finite py then (
+    let pb = t_ctx.pixel_bounds in
+    Cairo.move_to cr pb.left py;
+    Cairo.line_to cr (pb.left +. pb.width) py;
+    Cairo.stroke cr);
+  Cairo.restore cr
+
+let render_vline cr (t_ctx : Transforms.context2d) (rl : Artist.ref_line) =
+  Cairo.save cr;
+  Render_utils.set_source_color cr rl.ref_color;
+  Cairo.set_line_width cr rl.ref_linewidth;
+  set_linestyle cr rl.ref_linestyle;
+  let px, _ = Transforms.transform t_ctx ~x:rl.position ~y:0.0 in
+  if Float.is_finite px then (
+    let pb = t_ctx.pixel_bounds in
+    Cairo.move_to cr px pb.top;
+    Cairo.line_to cr px (pb.top +. pb.height);
+    Cairo.stroke cr);
+  Cairo.restore cr
+
+let render_aline cr (t_ctx : Transforms.context2d) (dl : Artist.diag_line) =
+  Cairo.save cr;
+  Render_utils.set_source_color cr dl.diag_color;
+  Cairo.set_line_width cr dl.diag_linewidth;
+  set_linestyle cr dl.diag_linestyle;
+  let lims = t_ctx.data_lims in
+  let x0 = lims.xmin and x1 = lims.xmax in
+  let y0 = dl.slope *. x0 +. dl.intercept in
+  let y1 = dl.slope *. x1 +. dl.intercept in
+  let px0, py0 = Transforms.transform t_ctx ~x:x0 ~y:y0 in
+  let px1, py1 = Transforms.transform t_ctx ~x:x1 ~y:y1 in
+  if Float.is_finite px0 && Float.is_finite py0 &&
+     Float.is_finite px1 && Float.is_finite py1 then (
+    Cairo.move_to cr px0 py0;
+    Cairo.line_to cr px1 py1;
+    Cairo.stroke cr);
+  Cairo.restore cr
+
+let render_text_labels cr (t_ctx : Transforms.context2d)
+    (tl : Artist.text_labels) =
+  Cairo.save cr;
+  Render_utils.set_source_color cr tl.tl_color;
+  Cairo.select_font_face cr "Sans" ~slant:Upright ~weight:Normal;
+  Cairo.set_font_size cr tl.tl_fontsize;
+  let n = Nx.size tl.tl_xdata in
+  for i = 0 to n - 1 do
+    let x = Nx.item [ i ] tl.tl_xdata in
+    let y = Nx.item [ i ] tl.tl_ydata in
+    let px, py = Transforms.transform t_ctx ~x ~y in
+    if Float.is_finite px && Float.is_finite py then (
+      let text = tl.labels.(i) in
+      let te = Cairo.text_extents cr text in
+      Cairo.move_to cr (px -. te.Cairo.width /. 2.0) (py +. te.Cairo.height /. 2.0);
+      Cairo.show_text cr text)
+  done;
+  Cairo.restore cr
+
 let render_artist cr t_ctx artist =
   match (artist, t_ctx) with
   | Artist.Line3D l, Transforms.Ctx3D ctx3d -> render_line3d cr ctx3d l
@@ -668,6 +740,11 @@ let render_artist cr t_ctx artist =
   | Artist.Contour c, Transforms.Ctx2D ctx2d -> render_contour cr ctx2d c
   | Artist.ContourFilled cf, Transforms.Ctx2D ctx2d ->
       render_contour_filled cr ctx2d cf
+  | Artist.HLine rl, Transforms.Ctx2D ctx2d -> render_hline cr ctx2d rl
+  | Artist.VLine rl, Transforms.Ctx2D ctx2d -> render_vline cr ctx2d rl
+  | Artist.ALine dl, Transforms.Ctx2D ctx2d -> render_aline cr ctx2d dl
+  | Artist.TextLabels tl, Transforms.Ctx2D ctx2d ->
+      render_text_labels cr ctx2d tl
   | _, _ ->
       Printf.eprintf
         "Warning: Mismatched artist type and transform context type. Skipping \

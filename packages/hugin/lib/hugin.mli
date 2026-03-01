@@ -159,40 +159,38 @@ module Artist : sig
         Axes.add_artist a3d ax3d
       ]} *)
 
+  (** Size specification for scatter markers. *)
+  type scatter_size =
+    | Uniform of float         (** Same size for all points. *)
+    | Varying of Nx.float32_t  (** Per-point sizes as a 1D tensor. *)
+
   val scatter :
     ?s:float ->
+    ?s_data:Nx.float32_t ->
     ?c:color ->
     ?marker:marker_style ->
     ?label:string ->
     Nx.float32_t ->
     Nx.float32_t ->
     t
-  (** [scatter ?s ?c ?marker ?label x y]
+  (** [scatter ?s ?s_data ?c ?marker ?label x y]
 
       Create a scatter plot artist for points (x.[i], y.[i]).
 
+      When [s_data] is provided, each point gets its own marker size
+      from the corresponding element; [s] is ignored in that case.
+
       {2 Parameters}
-      - [?s]: marker size in points (default 6.0).
+      - [?s]: uniform marker size in points (default 20.0).
+      - [?s_data]: per-point marker sizes as a 1D float32 tensor.
       - [?c]: marker color (default [Artist.Color.blue]).
       - [?marker]: marker style (default [Circle]).
       - [?label]: legend entry.
       - [x]: 1D float32 nx of x coordinates.
       - [y]: 1D float32 nx of y coordinates.
 
-      {2 Returns}
-      - an artist [t] representing the scatter plot.
-
       {2 Raises}
-      - [Invalid_argument] if lengths of [x] and [y] differ.
-
-      {2 Examples}
-      {[
-        let sc =
-          scatter ~s:10. ~c:Color.red ~marker:Circle ~label:"pts" ~x x_arr ~y
-            y_arr
-        in
-        Axes.add_artist sc axes
-      ]} *)
+      - [Invalid_argument] if lengths of [x], [y], or [s_data] differ. *)
 
   val bar :
     ?width:float ->
@@ -417,6 +415,48 @@ module Artist : sig
         let cf = contourf ~cmap:Coolwarm ~levels:[| 0.0; 0.5; 1.0 |] x y z in
         Axes.add_artist cf axes
       ]} *)
+
+  val hline :
+    ?color:color ->
+    ?linewidth:float ->
+    ?linestyle:line_style ->
+    ?label:string ->
+    float ->
+    t
+  (** [hline ?color ?linewidth ?linestyle ?label y] is a horizontal
+      reference line at [y] spanning the full axes width. *)
+
+  val vline :
+    ?color:color ->
+    ?linewidth:float ->
+    ?linestyle:line_style ->
+    ?label:string ->
+    float ->
+    t
+  (** [vline ?color ?linewidth ?linestyle ?label x] is a vertical
+      reference line at [x] spanning the full axes height. *)
+
+  val abline :
+    ?color:color ->
+    ?linewidth:float ->
+    ?linestyle:line_style ->
+    ?label:string ->
+    slope:float ->
+    intercept:float ->
+    unit ->
+    t
+  (** [abline ?color ?linewidth ?linestyle ?label ~slope ~intercept ()]
+      is a diagonal line [y = slope * x + intercept] spanning the axes. *)
+
+  val text_labels :
+    ?color:color ->
+    ?fontsize:float ->
+    Nx.float32_t ->
+    Nx.float32_t ->
+    string array ->
+    t
+  (** [text_labels ?color ?fontsize x y labels] places text [labels.(i)]
+      centered at [(x.(i), y.(i))] for each point. *)
 end
 
 (** Module for axes-level operations (the plotting area). *)
@@ -988,6 +1028,7 @@ module Plotting : sig
 
   val scatter :
     ?s:float ->
+    ?s_data:Nx.float32_t ->
     ?c:Artist.color ->
     ?marker:Artist.marker_style ->
     ?label:string ->
@@ -995,29 +1036,24 @@ module Plotting : sig
     y:Nx.float32_t ->
     Axes.t ->
     Axes.t
-  (** [scatter ?s ?c ?marker ?label ~x ~y axes]
+  (** [scatter ?s ?s_data ?c ?marker ?label ~x ~y axes]
 
       Create a scatter plot of points (x, y) on the axes.
 
+      When [s_data] is provided, each point gets its own marker size
+      from the corresponding element; [s] is ignored.
+
       {2 Parameters}
-      - [?s]: marker size.
+      - [?s]: uniform marker size (default 20.0).
+      - [?s_data]: per-point marker sizes.
       - [?c]: marker color.
       - [?marker]: style of marker.
       - [?label]: legend label.
       - [x], [y]: coordinate arrays.
       - [axes]: target axes.
 
-      {2 Returns}
-      - axes with scatter artist added.
-
       {2 Raises}
-      - [Invalid_argument] on length mismatch.
-
-      {2 Examples}
-      {[
-        let ax = scatter x_arr y_arr ax in
-        ...
-      ]} *)
+      - [Invalid_argument] on length mismatch. *)
 
   val bar :
     ?width:float ->
@@ -1346,6 +1382,51 @@ module Plotting : sig
         let ax = contourf ~cmap:Coolwarm ~levels:[|0.0; 1.0|] ~x ~y ~z ax in
         ...
       ]} *)
+
+  val axhline :
+    ?color:Artist.color ->
+    ?linewidth:float ->
+    ?linestyle:Artist.line_style ->
+    ?label:string ->
+    y:float ->
+    Axes.t ->
+    Axes.t
+  (** [axhline ?color ?linewidth ?linestyle ?label ~y axes]
+      adds a horizontal reference line at [y]. *)
+
+  val axvline :
+    ?color:Artist.color ->
+    ?linewidth:float ->
+    ?linestyle:Artist.line_style ->
+    ?label:string ->
+    x:float ->
+    Axes.t ->
+    Axes.t
+  (** [axvline ?color ?linewidth ?linestyle ?label ~x axes]
+      adds a vertical reference line at [x]. *)
+
+  val abline :
+    ?color:Artist.color ->
+    ?linewidth:float ->
+    ?linestyle:Artist.line_style ->
+    ?label:string ->
+    slope:float ->
+    intercept:float ->
+    Axes.t ->
+    Axes.t
+  (** [abline ?color ?linewidth ?linestyle ?label ~slope ~intercept axes]
+      adds a diagonal line [y = slope * x + intercept]. *)
+
+  val text_labels :
+    ?color:Artist.color ->
+    ?fontsize:float ->
+    x:Nx.float32_t ->
+    y:Nx.float32_t ->
+    string array ->
+    Axes.t ->
+    Axes.t
+  (** [text_labels ?color ?fontsize ~x ~y labels axes] places
+      [labels.(i)] centered at [(x.(i), y.(i))] for each point. *)
 end
 
 (** {1 Top-Level API}
@@ -1476,37 +1557,32 @@ val scatter :
   ?xlabel:string ->
   ?ylabel:string ->
   ?s:float ->
+  ?s_data:Nx.float32_t ->
   ?c:Artist.color ->
   ?marker:Artist.marker_style ->
   ?label:string ->
   Nx.float32_t ->
   Nx.float32_t ->
   figure
-(** [scatter ?title ?xlabel ?ylabel ?s ?c ?marker ?label x y]
+(** [scatter ?title ?xlabel ?ylabel ?s ?s_data ?c ?marker ?label x y]
 
     Create a new figure and scatter plot points (x,y).
+
+    When [s_data] is provided, each point gets its own marker size.
 
     {2 Parameters}
     - [?title]: figure title.
     - [?xlabel]: x-axis label.
     - [?ylabel]: y-axis label.
-    - [?s]: marker size in points.
+    - [?s]: uniform marker size (default 20.0).
+    - [?s_data]: per-point marker sizes.
     - [?c]: marker color.
     - [?marker]: marker style.
     - [?label]: legend entry.
     - [x], [y]: coordinate arrays.
 
-    {2 Returns}
-    - a [figure] containing the scatter plot.
-
     {2 Raises}
-    - [Invalid_argument] if lengths of [x] and [y] differ.
-
-    {2 Examples}
-    {[
-      let fig = scatter x_arr y_arr in
-      savefig fig "scatter.png"
-    ]} *)
+    - [Invalid_argument] if lengths differ. *)
 
 val hist :
   ?bins:[ `Num of int | `Edges of float array ] ->

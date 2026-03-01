@@ -46,10 +46,10 @@ let plot3d ?title ?xlabel ?ylabel ?zlabel ?color ?linewidth ?linestyle ?marker
   let _ = apply_decorations ?title ?xlabel ?ylabel ?zlabel ax in
   fig
 
-let scatter ?title ?xlabel ?ylabel ?s ?c ?marker ?label x y =
+let scatter ?title ?xlabel ?ylabel ?s ?s_data ?c ?marker ?label x y =
   let fig = Figure.create () in
   let ax = Figure.add_subplot fig in
-  let ax = Plotting.scatter ?s ?c ?marker ?label ~x ~y ax in
+  let ax = Plotting.scatter ?s ?s_data ?c ?marker ?label ~x ~y ax in
   let _ = apply_decorations ?title ?xlabel ?ylabel ax in
   fig
 

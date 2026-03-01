@@ -205,11 +205,13 @@ type line3d = {
   label : string option;
 }
 
+type scatter_size = Uniform of float | Varying of Nx.float32_t
+
 type scatter = {
   xdata : Nx.float32_t;
   ydata : Nx.float32_t;
-  s : float; (* Size *)
-  c : color; (* Color *)
+  s : scatter_size;
+  c : color;
   marker : marker_style;
   label : string option;
 }
@@ -290,6 +292,31 @@ type contour_filled = {
   alpha : float; (* Alpha transparency *)
 }
 
+type ref_line = {
+  position : float;
+  ref_color : color;
+  ref_linewidth : float;
+  ref_linestyle : line_style;
+  ref_label : string option;
+}
+
+type diag_line = {
+  slope : float;
+  intercept : float;
+  diag_color : color;
+  diag_linewidth : float;
+  diag_linestyle : line_style;
+  diag_label : string option;
+}
+
+type text_labels = {
+  tl_xdata : Nx.float32_t;
+  tl_ydata : Nx.float32_t;
+  labels : string array;
+  tl_color : color;
+  tl_fontsize : float;
+}
+
 (* The main Artist variant type *)
 type t =
   | Line2D of line2d
@@ -303,6 +330,10 @@ type t =
   | FillBetween of fill_between
   | Contour of contour
   | ContourFilled of contour_filled
+  | HLine of ref_line
+  | VLine of ref_line
+  | ALine of diag_line
+  | TextLabels of text_labels
 
 let line2d ?(color = Color.blue) ?(linewidth = 1.5) ?(linestyle = Solid)
     ?(marker = None) ?label x y =
@@ -326,9 +357,17 @@ let line3d ?(color = Color.blue) ?(linewidth = 1.5) ?(linestyle = Solid)
       label;
     }
 
-let scatter ?(s = 20.0) ?(c = Color.blue) ?(marker = Circle) ?label x y =
+let scatter ?(s = 20.0) ?s_data ?(c = Color.blue) ?(marker = Circle) ?label
+    x y =
   if Nx.ndim x <> Nx.ndim y then
     invalid_arg "Artist.scatter: x and y dimensions must match";
+  let s = match s_data with
+    | Some arr ->
+        if Nx.size arr <> Nx.size x then
+          invalid_arg "Artist.scatter: s_data length must match x length";
+        Varying arr
+    | None -> Uniform s
+  in
   Scatter { xdata = x; ydata = y; s; c; marker; label }
 
 let bar ?(width = 0.8) ?(bottom = 0.0) ?(color = Color.blue) ?label ~height x =
@@ -419,3 +458,26 @@ let contourf ?(cmap = Viridis) ?(alpha = 1.0) ~levels x y z =
     invalid_arg "Artist.contourf: alpha must be between 0.0 and 1.0";
 
   ContourFilled { x; y; z; levels; cmap = Some cmap; alpha }
+
+let hline ?(color = Color.gray) ?(linewidth = 1.0) ?(linestyle = Dashed)
+    ?label y =
+  HLine { position = y; ref_color = color; ref_linewidth = linewidth;
+          ref_linestyle = linestyle; ref_label = label }
+
+let vline ?(color = Color.gray) ?(linewidth = 1.0) ?(linestyle = Dashed)
+    ?label x =
+  VLine { position = x; ref_color = color; ref_linewidth = linewidth;
+          ref_linestyle = linestyle; ref_label = label }
+
+let abline ?(color = Color.gray) ?(linewidth = 1.0) ?(linestyle = Dashed)
+    ?label ~slope ~intercept () =
+  ALine { slope; intercept; diag_color = color; diag_linewidth = linewidth;
+          diag_linestyle = linestyle; diag_label = label }
+
+let text_labels ?(color = Color.black) ?(fontsize = 10.0) x y labels =
+  if Nx.size x <> Nx.size y then
+    invalid_arg "Artist.text_labels: x and y must have the same size";
+  if Nx.size x <> Array.length labels then
+    invalid_arg "Artist.text_labels: labels length must match x length";
+  TextLabels { tl_xdata = x; tl_ydata = y; labels;
+               tl_color = color; tl_fontsize = fontsize }
