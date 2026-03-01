@@ -30,18 +30,34 @@ int main() {
 }
 |}
 
-let openblas_default : C.Pkg_config.package_conf =
-  let search =
-    [ "/usr/local/opt/openblas/lib"; "/opt/OpenBLAS/lib/"; "/usr/lib" ]
-    |> List.filter Sys.file_exists
-  in
-  let libs = List.map (fun path -> "-L" ^ path) search @ [ "-lopenblas" ] in
-  let cflags =
-    if Sys.file_exists "/usr/include/openblas" then
-      [ "-I/usr/include/openblas" ]
-    else []
-  in
-  { C.Pkg_config.cflags; libs }
+let openblas_default system : C.Pkg_config.package_conf =
+  match system with
+  | "mingw" | "mingw64" ->
+      (* On cygwin, discover.exe is a mingw binary whose Sys.file_exists
+         cannot resolve cygwin paths.  The C compiler is a cygwin binary
+         and handles them fine, so pass the known sysroot paths directly. *)
+      let triplet =
+        if system = "mingw64" then "x86_64-w64-mingw32"
+        else "i686-w64-mingw32"
+      in
+      let prefix = "/usr/" ^ triplet ^ "/sys-root/mingw" in
+      {
+        C.Pkg_config.cflags = [ "-I" ^ Filename.concat prefix "include" ];
+        libs = [ "-L" ^ Filename.concat prefix "lib"; "-lcblas" ];
+      }
+  | _ ->
+      let search =
+        [ "/usr/local/opt/openblas/lib"; "/opt/OpenBLAS/lib/"; "/usr/lib" ]
+        |> List.filter Sys.file_exists
+      in
+      let libs =
+        List.map (fun path -> "-L" ^ path) search @ [ "-lopenblas" ]
+      in
+      let include_dirs =
+        [ "/usr/include/openblas" ] |> List.filter Sys.file_exists
+      in
+      let cflags = List.map (fun path -> "-I" ^ path) include_dirs in
+      { C.Pkg_config.cflags; libs }
 
 let default_ldlibs = [ "-lm" ]
 
@@ -202,7 +218,10 @@ let () =
       let openblas_conf =
         match pkg_query c "openblas" with
         | Some conf -> conf
-        | None -> openblas_default
+        | None -> (
+            match pkg_query c "cblas" with
+            | Some conf -> conf
+            | None -> openblas_default system)
       in
 
       let filter_openmp_flags flags =
