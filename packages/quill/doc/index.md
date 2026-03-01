@@ -1,11 +1,13 @@
 # Quill
 
-Quill turns markdown files into interactive OCaml notebooks. Write prose
-and code in any text editor, execute code blocks with a terminal UI, web
-frontend, or batch evaluator, and store outputs directly in the markdown.
+Quill is a REPL and notebook environment for OCaml. Run `quill` for an
+interactive toplevel with syntax highlighting, completion, and persistent
+history — or open a markdown file for a full notebook with a terminal UI,
+web frontend, or batch evaluator.
 
 ## Features
 
+- **Interactive REPL**: `quill` launches a toplevel with syntax highlighting, tab completion with ghost text, persistent history, smart phrase-aware submission, and type inspection
 - **Markdown notebooks**: notebooks are `.md` files with fenced OCaml code blocks — git-friendly, editor-agnostic, zero lock-in
 - **Terminal UI**: full-screen TUI for cell navigation, execution, and output display
 - **Web frontend**: `quill serve` opens a browser-based notebook with CodeMirror 6 editor, real-time execution, autocompletion, and diagnostics
@@ -16,16 +18,21 @@ frontend, or batch evaluator, and store outputs directly in the markdown.
 
 ## Quick Start
 
+Launch the REPL:
+
 <!-- $MDX skip -->
 ```bash
 quill
 ```
 
-This creates `notebook.md` with a starter template and opens the
-terminal UI. Run each cell with `Enter` to see arrays, plots, and
-automatic differentiation.
+Or open a notebook in the terminal UI:
 
-Or open a notebook in the browser:
+<!-- $MDX skip -->
+```bash
+quill notebook.md
+```
+
+Or in the browser:
 
 <!-- $MDX skip -->
 ```bash
@@ -41,6 +48,6 @@ quill run notebook.md
 
 ## Next Steps
 
-- [Getting Started](01-getting-started/) — create a notebook, run it, view results
+- [Getting Started](01-getting-started/) — REPL, notebooks, execution modes
 - [Notebook Format](02-notebook-format/) — how markdown becomes cells, how outputs are stored
-- [Execution Modes](03-execution-modes/) — TUI, web, run, watch, and clean
+- [Execution Modes](03-execution-modes/) — REPL, TUI, web, run, watch, and clean

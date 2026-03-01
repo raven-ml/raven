@@ -32,8 +32,8 @@ let plot3d ?color ?linewidth ?linestyle ?marker ?label ~x ~y ~z ax =
   in
   Axes.add_artist artist ax
 
-let scatter ?s ?c ?marker ?label ~x ~y ax =
-  let artist = Artist.scatter ?s ?c ?marker ?label x y in
+let scatter ?s ?s_data ?c ?marker ?label ~x ~y ax =
+  let artist = Artist.scatter ?s ?s_data ?c ?marker ?label x y in
   Axes.add_artist artist ax
 
 let bar ?width ?(bottom = 0.0) ?color ?label ~x ~height ax =
@@ -201,4 +201,22 @@ let contour ?colors ?linewidths ?linestyles ~levels ~x ~y ~z ax =
 
 let contourf ?cmap ?alpha ~levels ~x ~y ~z ax =
   let artist = Artist.contourf ?cmap ?alpha ~levels x y z in
+  Axes.add_artist artist ax
+
+let axhline ?color ?linewidth ?linestyle ?label ~y ax =
+  let artist = Artist.hline ?color ?linewidth ?linestyle ?label y in
+  Axes.add_artist artist ax
+
+let axvline ?color ?linewidth ?linestyle ?label ~x ax =
+  let artist = Artist.vline ?color ?linewidth ?linestyle ?label x in
+  Axes.add_artist artist ax
+
+let abline ?color ?linewidth ?linestyle ?label ~slope ~intercept ax =
+  let artist =
+    Artist.abline ?color ?linewidth ?linestyle ?label ~slope ~intercept ()
+  in
+  Axes.add_artist artist ax
+
+let text_labels ?color ?fontsize ~x ~y labels ax =
+  let artist = Artist.text_labels ?color ?fontsize x y labels in
   Axes.add_artist artist ax

@@ -46,10 +46,10 @@ let plot3d ?title ?xlabel ?ylabel ?zlabel ?color ?linewidth ?linestyle ?marker
   let _ = apply_decorations ?title ?xlabel ?ylabel ?zlabel ax in
   fig
 
-let scatter ?title ?xlabel ?ylabel ?s ?c ?marker ?label x y =
+let scatter ?title ?xlabel ?ylabel ?s ?s_data ?c ?marker ?label x y =
   let fig = Figure.create () in
   let ax = Figure.add_subplot fig in
-  let ax = Plotting.scatter ?s ?c ?marker ?label ~x ~y ax in
+  let ax = Plotting.scatter ?s ?s_data ?c ?marker ?label ~x ~y ax in
   let _ = apply_decorations ?title ?xlabel ?ylabel ax in
   fig
 
@@ -135,3 +135,39 @@ let savefig ?dpi ?format filename fig =
   Cairo_sdl_backend.save ?dpi ?format fig filename canvas
 
 let render ?(format = "png") fig = Cairo_sdl_backend.save_to_buffer ~format fig
+
+let base64_encode_string input =
+  let alphabet =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+  in
+  let len = String.length input in
+  let out_len = (len + 2) / 3 * 4 in
+  let out = Bytes.create out_len in
+  let rec loop i j =
+    if i < len then begin
+      let b0 = Char.code (String.unsafe_get input i) in
+      let b1 =
+        if i + 1 < len then Char.code (String.unsafe_get input (i + 1)) else 0
+      in
+      let b2 =
+        if i + 2 < len then Char.code (String.unsafe_get input (i + 2)) else 0
+      in
+      Bytes.unsafe_set out j (String.unsafe_get alphabet (b0 lsr 2));
+      Bytes.unsafe_set out (j + 1)
+        (String.unsafe_get alphabet (((b0 land 3) lsl 4) lor (b1 lsr 4)));
+      Bytes.unsafe_set out (j + 2)
+        (if i + 1 < len then
+           String.unsafe_get alphabet (((b1 land 0xf) lsl 2) lor (b2 lsr 6))
+         else '=');
+      Bytes.unsafe_set out (j + 3)
+        (if i + 2 < len then String.unsafe_get alphabet (b2 land 0x3f) else '=');
+      loop (i + 3) (j + 4)
+    end
+  in
+  loop 0 0;
+  Bytes.unsafe_to_string out
+
+let pp_figure fmt fig =
+  let image_data = render fig in
+  let base64_data = base64_encode_string image_data in
+  Format.fprintf fmt "![figure](data:image/png;base64,%s)" base64_data

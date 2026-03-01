@@ -331,6 +331,15 @@ let render_axes_2d cr fig_width fig_height (ax : Axes.t) =
             | Artist.FillBetween fb when fb.label <> None ->
                 labeled_artists :=
                   (artist, Option.get fb.label) :: !labeled_artists
+            | Artist.HLine rl when rl.ref_label <> None ->
+                labeled_artists :=
+                  (artist, Option.get rl.ref_label) :: !labeled_artists
+            | Artist.VLine rl when rl.ref_label <> None ->
+                labeled_artists :=
+                  (artist, Option.get rl.ref_label) :: !labeled_artists
+            | Artist.ALine dl when dl.diag_label <> None ->
+                labeled_artists :=
+                  (artist, Option.get dl.diag_label) :: !labeled_artists
             | _ -> ())
           ax.artists;
 
@@ -479,6 +488,20 @@ let render_axes_2d cr fig_width fig_height (ax : Axes.t) =
                 Cairo.rectangle cr sample_x (item_y -. 5.0)
                   ~w:legend_sample_width ~h:10.0;
                 Cairo.fill cr
+            | Artist.HLine rl | Artist.VLine rl ->
+                Render_utils.set_source_color cr rl.ref_color;
+                Cairo.set_line_width cr rl.ref_linewidth;
+                Artist_renderer.set_linestyle cr rl.ref_linestyle;
+                Cairo.move_to cr sample_x item_y;
+                Cairo.line_to cr (sample_x +. legend_sample_width) item_y;
+                Cairo.stroke cr
+            | Artist.ALine dl ->
+                Render_utils.set_source_color cr dl.diag_color;
+                Cairo.set_line_width cr dl.diag_linewidth;
+                Artist_renderer.set_linestyle cr dl.diag_linestyle;
+                Cairo.move_to cr sample_x item_y;
+                Cairo.line_to cr (sample_x +. legend_sample_width) item_y;
+                Cairo.stroke cr
             | _ -> ());
             Cairo.restore cr;
 

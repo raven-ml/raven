@@ -1,12 +1,24 @@
 // Cell renderer for code and text cells.
 
 import { createEditor } from './editor.js';
+import { renderMath } from './math.js';
 import { appendOutputToContainer, renderOutput } from './output.js';
 
 const editors = new Map(); // cellId -> EditorView
 
 export function getEditor(cellId) {
   return editors.get(cellId);
+}
+
+function getAttrs(cell) {
+  return cell.attrs || {};
+}
+
+function firstLine(source) {
+  if (!source) return '';
+  const nl = source.indexOf('\n');
+  const line = nl === -1 ? source : source.slice(0, nl);
+  return line.length > 60 ? line.slice(0, 57) + '...' : line;
 }
 
 export function createCellElement(cell, wsClient, store) {
@@ -34,6 +46,7 @@ export function createCellElement(cell, wsClient, store) {
 function createCodeCell(cell, wsClient, store) {
   const wrapper = document.createElement('div');
   wrapper.className = 'cell-wrapper';
+  const attrs = getAttrs(cell);
 
   // Gutter
   const gutter = document.createElement('div');
@@ -51,6 +64,31 @@ function createCodeCell(cell, wsClient, store) {
   const content = document.createElement('div');
   content.className = 'cell-content';
 
+  // Collapsed bar (for collapsed cells)
+  const collapsedBar = document.createElement('div');
+  collapsedBar.className = 'cell-collapsed-bar';
+  const collapseToggle = document.createElement('span');
+  collapseToggle.className = 'cell-collapsed-toggle';
+  collapseToggle.textContent = '\u25B8'; // ▸
+  collapsedBar.appendChild(collapseToggle);
+  const collapsedSource = document.createElement('span');
+  collapsedSource.className = 'cell-collapsed-source';
+  collapsedSource.textContent = firstLine(cell.source) || '(empty)';
+  collapsedBar.appendChild(collapsedSource);
+  content.appendChild(collapsedBar);
+
+  // Source placeholder (for hide-source cells)
+  const sourcePlaceholder = document.createElement('div');
+  sourcePlaceholder.className = 'cell-source-placeholder';
+  const sourceToggle = document.createElement('span');
+  sourceToggle.className = 'cell-collapsed-toggle';
+  sourceToggle.textContent = '\u25B8'; // ▸
+  sourcePlaceholder.appendChild(sourceToggle);
+  const sourceLabel = document.createElement('span');
+  sourceLabel.textContent = 'code';
+  sourcePlaceholder.appendChild(sourceLabel);
+  content.appendChild(sourcePlaceholder);
+
   // Editor container
   const editorContainer = document.createElement('div');
   editorContainer.className = 'cell-editor';
@@ -59,7 +97,6 @@ function createCodeCell(cell, wsClient, store) {
   // Mount CodeMirror
   const view = createEditor(editorContainer, cell.source, {
     onChange: (source) => {
-      // Update local cell source
       cell.source = source;
       wsClient.updateSource(cell.id, source);
     },
@@ -77,30 +114,6 @@ function createCodeCell(cell, wsClient, store) {
   });
   editors.set(cell.id, view);
 
-  // Actions
-  const actions = document.createElement('div');
-  actions.className = 'cell-actions';
-  actions.innerHTML = `
-    <button data-action="run" title="Evaluate cell (Ctrl+Enter)">Run</button>
-    <button data-action="delete" title="Delete cell (d)">Delete</button>
-    <button data-action="move-up" title="Move cell up (Shift+K)">\u2191</button>
-    <button data-action="move-down" title="Move cell down (Shift+J)">\u2193</button>
-    <button data-action="toggle-type" title="Convert to text cell (m)">\u21C4 Text</button>
-  `;
-  actions.addEventListener('click', (e) => {
-    const action = e.target.dataset.action;
-    if (!action) return;
-    const idx = store.findCellIndex(cell.id);
-    switch (action) {
-      case 'run': wsClient.executeCell(cell.id); break;
-      case 'delete': wsClient.deleteCell(cell.id); break;
-      case 'move-up': if (idx > 0) wsClient.moveCell(cell.id, idx - 1); break;
-      case 'move-down': if (idx < store.cells.length - 1) wsClient.moveCell(cell.id, idx + 1); break;
-      case 'toggle-type': wsClient.setCellKind(cell.id, 'text'); break;
-    }
-  });
-  content.appendChild(actions);
-
   // Outputs
   const outputsContainer = document.createElement('div');
   outputsContainer.className = 'cell-outputs';
@@ -112,6 +125,79 @@ function createCodeCell(cell, wsClient, store) {
   }
   content.appendChild(outputsContainer);
 
+  // Collapse/expand state management
+  let isCollapsed = !!attrs.collapsed;
+  let isSourceHidden = !!attrs.hide_source;
+
+  function applyVisualState() {
+    if (isCollapsed) {
+      collapsedBar.style.display = '';
+      sourcePlaceholder.style.display = 'none';
+      editorContainer.style.display = 'none';
+      outputsContainer.style.display = 'none';
+      collapseToggle.textContent = '\u25B8'; // ▸
+    } else if (isSourceHidden) {
+      collapsedBar.style.display = 'none';
+      sourcePlaceholder.style.display = '';
+      editorContainer.style.display = 'none';
+      outputsContainer.style.display = '';
+      sourceToggle.textContent = '\u25B8'; // ▸
+    } else {
+      collapsedBar.style.display = 'none';
+      sourcePlaceholder.style.display = 'none';
+      editorContainer.style.display = '';
+      outputsContainer.style.display = '';
+    }
+  }
+
+  collapsedBar.addEventListener('click', () => {
+    isCollapsed = false;
+    applyVisualState();
+  });
+
+  sourcePlaceholder.addEventListener('click', () => {
+    isSourceHidden = false;
+    applyVisualState();
+  });
+
+  applyVisualState();
+
+  // Actions
+  const actions = document.createElement('div');
+  actions.className = 'cell-actions';
+  actions.innerHTML = `
+    <button data-action="run" title="Evaluate cell (Ctrl+Enter)">Run</button>
+    <button data-action="delete" title="Delete cell (d)">Delete</button>
+    <button data-action="move-up" title="Move cell up (Shift+K)">\u2191</button>
+    <button data-action="move-down" title="Move cell down (Shift+J)">\u2193</button>
+    <button data-action="toggle-type" title="Convert to text cell (m)">\u21C4 Text</button>
+    <button data-action="toggle-collapse" title="Toggle collapsed (z)">${attrs.collapsed ? 'Expand' : 'Collapse'}</button>
+    <button data-action="toggle-hide-source" title="Toggle hide source (Z)">${attrs.hide_source ? 'Show src' : 'Hide src'}</button>
+  `;
+  actions.addEventListener('click', (e) => {
+    const action = e.target.dataset.action;
+    if (!action) return;
+    const idx = store.findCellIndex(cell.id);
+    switch (action) {
+      case 'run': wsClient.executeCell(cell.id); break;
+      case 'delete': wsClient.deleteCell(cell.id); break;
+      case 'move-up': if (idx > 0) wsClient.moveCell(cell.id, idx - 1); break;
+      case 'move-down': if (idx < store.cells.length - 1) wsClient.moveCell(cell.id, idx + 1); break;
+      case 'toggle-type': wsClient.setCellKind(cell.id, 'text'); break;
+      case 'toggle-collapse': {
+        const newAttrs = { ...getAttrs(cell), collapsed: !attrs.collapsed };
+        wsClient.setCellAttrs(cell.id, newAttrs);
+        break;
+      }
+      case 'toggle-hide-source': {
+        const newAttrs = { ...getAttrs(cell), hide_source: !attrs.hide_source };
+        wsClient.setCellAttrs(cell.id, newAttrs);
+        break;
+      }
+    }
+  });
+  content.appendChild(actions);
+
   wrapper.appendChild(content);
   return wrapper;
 }
@@ -119,14 +205,29 @@ function createCodeCell(cell, wsClient, store) {
 function createTextCell(cell, wsClient, store) {
   const wrapper = document.createElement('div');
   wrapper.className = 'cell-wrapper';
+  const attrs = getAttrs(cell);
 
   const content = document.createElement('div');
   content.className = 'cell-content';
+
+  // Collapsed bar (for collapsed text cells)
+  const collapsedBar = document.createElement('div');
+  collapsedBar.className = 'cell-collapsed-bar';
+  const collapseToggle = document.createElement('span');
+  collapseToggle.className = 'cell-collapsed-toggle';
+  collapseToggle.textContent = '\u25B8'; // ▸
+  collapsedBar.appendChild(collapseToggle);
+  const collapsedSource = document.createElement('span');
+  collapsedSource.className = 'cell-collapsed-source';
+  collapsedSource.textContent = firstLine(cell.source) || '(empty)';
+  collapsedBar.appendChild(collapsedSource);
+  content.appendChild(collapsedBar);
 
   // Rendered markdown view
   const markdownView = document.createElement('div');
   markdownView.className = 'cell-markdown';
   markdownView.innerHTML = cell.rendered_html || '<p class="cell-markdown-empty">Empty text cell \u2014 click to edit</p>';
+  renderMath(markdownView);
   content.appendChild(markdownView);
 
   // Editor container (hidden by default)
@@ -136,6 +237,26 @@ function createTextCell(cell, wsClient, store) {
   content.appendChild(editorContainer);
 
   let editorView = null;
+  let isCollapsed = !!attrs.collapsed;
+
+  function applyVisualState() {
+    if (isCollapsed) {
+      collapsedBar.style.display = '';
+      markdownView.style.display = 'none';
+      editorContainer.style.display = 'none';
+      collapseToggle.textContent = '\u25B8'; // ▸
+    } else {
+      collapsedBar.style.display = 'none';
+      markdownView.style.display = '';
+    }
+  }
+
+  collapsedBar.addEventListener('click', () => {
+    isCollapsed = false;
+    applyVisualState();
+  });
+
+  applyVisualState();
 
   // Double-click to edit
   markdownView.addEventListener('dblclick', () => {
@@ -178,6 +299,7 @@ function createTextCell(cell, wsClient, store) {
     <button data-action="move-up" title="Move cell up (Shift+K)">\u2191</button>
     <button data-action="move-down" title="Move cell down (Shift+J)">\u2193</button>
     <button data-action="toggle-type" title="Convert to code cell (m)">\u21C4 Code</button>
+    <button data-action="toggle-collapse" title="Toggle collapsed (z)">${attrs.collapsed ? 'Expand' : 'Collapse'}</button>
   `;
   actions.addEventListener('click', (e) => {
     const action = e.target.dataset.action;
@@ -189,6 +311,11 @@ function createTextCell(cell, wsClient, store) {
       case 'move-up': if (idx > 0) wsClient.moveCell(cell.id, idx - 1); break;
       case 'move-down': if (idx < store.cells.length - 1) wsClient.moveCell(cell.id, idx + 1); break;
       case 'toggle-type': wsClient.setCellKind(cell.id, 'code'); break;
+      case 'toggle-collapse': {
+        const newAttrs = { ...getAttrs(cell), collapsed: !attrs.collapsed };
+        wsClient.setCellAttrs(cell.id, newAttrs);
+        break;
+      }
     }
   });
   content.appendChild(actions);

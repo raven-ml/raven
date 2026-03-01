@@ -16,8 +16,14 @@ val initialize_if_needed : unit -> unit
 
 val add_packages : string list -> unit
 (** [add_packages pkgs] resolves each findlib package name and adds its
-    directory to the toplevel load path. Unknown packages are silently skipped.
-    Must be called after {!initialize_if_needed}. *)
+    directory to the toplevel load path, marking each as already linked into the
+    executable. Unknown packages are silently skipped. *)
+
+val load_package : string -> unit
+(** [load_package pkg] resolves the findlib package [pkg] and all its transitive
+    dependencies, adds their directories, and dynamically loads their bytecode
+    archives. Packages already loaded or marked in-core via {!add_packages} are
+    skipped. Raises if the package is not found. *)
 
 val install_printer : string -> unit
 (** [install_printer name] installs a toplevel pretty-printer by evaluating

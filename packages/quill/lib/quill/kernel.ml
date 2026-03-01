@@ -46,6 +46,7 @@ type t = {
   complete : code:string -> pos:int -> completion_item list;
   type_at : (code:string -> pos:int -> type_info option) option;
   diagnostics : (code:string -> diagnostic list) option;
+  is_complete : (string -> bool) option;
   status : unit -> status;
   shutdown : unit -> unit;
 }

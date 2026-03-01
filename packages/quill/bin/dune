@@ -7,8 +7,10 @@
  (libraries
   quill
   quill.markdown
-  quill.raven
+  quill.top
+  quill.repl
   quill.tui
   quill.httpd
   cmdliner
+  findlib
   unix))

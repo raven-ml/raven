@@ -3,6 +3,87 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* ───── Toplevel primitives ───── *)
+
+let findlib_predicates = ref [ "byte"; "toploop" ]
+
+let ensure_findlib () =
+  match Findlib.init () with () -> true | exception _ -> false
+
+(* Mark packages that are already linked into the executable. Their .cmi files
+   need to be on the search path, but we must not try to load their .cma
+   again. *)
+let add_packages pkgs =
+  if ensure_findlib () then
+    List.iter
+      (fun pkg ->
+        (match Findlib.package_directory pkg with
+        | dir -> Topdirs.dir_directory dir
+        | exception _ -> ());
+        if not (Findlib.is_recorded_package pkg) then
+          Findlib.record_package Findlib.Record_core pkg)
+      pkgs
+  else
+    (* Findlib unavailable — fall back to OCAMLPATH. *)
+    let sep = if Sys.win32 then ';' else ':' in
+    match Sys.getenv_opt "OCAMLPATH" with
+    | None -> ()
+    | Some ocamlpath ->
+        let roots = String.split_on_char sep ocamlpath in
+        List.iter
+          (fun pkg ->
+            let subdir =
+              String.concat Filename.dir_sep (String.split_on_char '.' pkg)
+            in
+            List.iter
+              (fun root ->
+                let dir = Filename.concat root subdir in
+                if Sys.file_exists dir && Sys.is_directory dir then
+                  Topdirs.dir_directory dir)
+              roots)
+          pkgs
+
+(* Load a package that is NOT linked into the executable: resolve its dependency
+   chain, add directories, and load .cma archives. *)
+let load_package pkg =
+  if not (ensure_findlib ()) then
+    Printf.eprintf "[quill] #require: findlib unavailable\n%!"
+  else begin
+    let ancestors =
+      Findlib.package_deep_ancestors !findlib_predicates [ pkg ]
+    in
+    List.iter
+      (fun p ->
+        let loaded =
+          Findlib.is_recorded_package p
+          && Findlib.type_of_recorded_package p = Findlib.Record_load
+        in
+        let incore =
+          Findlib.is_recorded_package p
+          && Findlib.type_of_recorded_package p = Findlib.Record_core
+        in
+        if not loaded then begin
+          let d = Findlib.package_directory p in
+          Topdirs.dir_directory d;
+          if not incore then begin
+            let archive =
+              try Findlib.package_property !findlib_predicates p "archive"
+              with Not_found -> ""
+            in
+            let archives =
+              String.split_on_char ' ' archive |> List.filter (fun s -> s <> "")
+            in
+            List.iter
+              (fun arch ->
+                let path = Findlib.resolve_path ~base:d arch in
+                Topdirs.dir_load Format.err_formatter path)
+              archives
+          end;
+          Findlib.record_package Findlib.Record_load p
+        end)
+      ancestors
+  end
+
 (* ───── Initialization ───── *)
 
 let initialized = ref false
@@ -18,40 +99,12 @@ let initialize_if_needed () =
         Topeval.init ();
         Toploop.initialize_toplevel_env ();
         Toploop.input_name := "//toplevel//";
+        (* Register #require directive for loading packages at runtime. *)
+        Toploop.add_directive "require"
+          (Directive_string (fun pkg -> load_package pkg))
+          { section = "Loading code"; doc = "Load a findlib package" };
         Sys.interactive := true;
         initialized := true))
-
-(* ───── Toplevel primitives ───── *)
-
-let add_packages pkgs =
-  match Findlib.init () with
-  | () ->
-      List.iter
-        (fun pkg ->
-          match Findlib.package_directory pkg with
-          | dir -> Topdirs.dir_directory dir
-          | exception _ -> ())
-        pkgs
-  | exception _ -> (
-      (* Findlib unavailable (e.g. running outside dune exec) — fall back to
-         OCAMLPATH to locate .cmi directories. *)
-      let sep = if Sys.win32 then ';' else ':' in
-      match Sys.getenv_opt "OCAMLPATH" with
-      | None -> ()
-      | Some ocamlpath ->
-          let roots = String.split_on_char sep ocamlpath in
-          List.iter
-            (fun pkg ->
-              let subdir =
-                String.concat Filename.dir_sep (String.split_on_char '.' pkg)
-              in
-              List.iter
-                (fun root ->
-                  let dir = Filename.concat root subdir in
-                  if Sys.file_exists dir && Sys.is_directory dir then
-                    Topdirs.dir_directory dir)
-                roots)
-            pkgs)
 
 let install_printer name =
   try
@@ -204,15 +257,22 @@ let execute_code ppf_out ppf_err code =
   let orig_input_lexbuf = !Location.input_lexbuf in
   Location.input_lexbuf := Some lb;
   let phrases = ref [] in
-  (try
-     while true do
-       let phr = !Toploop.parse_toplevel_phrase lb in
-       phrases := phr :: !phrases
-     done
-   with End_of_file -> ());
+  let parse_ok =
+    try
+      while true do
+        let phr = !Toploop.parse_toplevel_phrase lb in
+        phrases := phr :: !phrases
+      done;
+      assert false
+    with
+    | End_of_file -> true
+    | e ->
+        Location.report_exception ppf_err e;
+        false
+  in
   let phrases = List.rev !phrases in
   let num_phrases = List.length phrases in
-  let success = ref true in
+  let success = ref parse_ok in
   Fun.protect
     (fun () ->
       List.iteri
@@ -440,7 +500,6 @@ let format_exn exn =
   | _ -> Printexc.to_string exn
 
 let compute_diagnostics ~code =
-  let env = !Toploop.toplevel_env in
   let diags = ref [] in
   let len = String.length code in
   let add_diag severity loc message =
@@ -455,17 +514,113 @@ let compute_diagnostics ~code =
       diags := Quill.Kernel.{ from_pos; to_pos; severity; message } :: !diags
   in
   (match parse_phrases code with
-  | phrases ->
-      List.iter
-        (function
-          | Parsetree.Ptop_def structure -> (
-              try ignore (Typemod.type_toplevel_phrase env structure)
-              with exn ->
-                add_diag Error (error_loc_of_exn exn) (format_exn exn))
-          | _ -> ())
-        phrases
+  | _ -> ()
   | exception exn -> add_diag Error (error_loc_of_exn exn) (format_exn exn));
   List.rev !diags
+
+(* ───── Phrase completeness ───── *)
+
+let is_complete_phrase code =
+  let trimmed = String.trim code in
+  if trimmed = "" then false
+  else if String.ends_with ~suffix:";;" trimmed then true
+  else
+    (* Try parsing with ";;" appended. If it parses, the phrase is complete. If
+       End_of_file, the parser consumed the phrase and wants more. If syntax
+       error, the code is broken -- submit to show the error. *)
+    let code_term = trimmed ^ ";;" in
+    let lb = Lexing.from_string code_term in
+    lb.lex_curr_p <-
+      { pos_fname = "//toplevel//"; pos_lnum = 1; pos_bol = 0; pos_cnum = 0 };
+    match !Toploop.parse_toplevel_phrase lb with
+    | _ -> true
+    | exception End_of_file -> false
+    | exception _ -> true
+
+(* ───── Markdown image detection ───── *)
+
+(** Scan [s] for markdown data-URI images [![...](data:MIME;base64,DATA)] and
+    emit each as a Display output. Surrounding text is emitted as Stdout. This
+    allows pretty-printers (e.g. hugin.top) to render rich images in quill
+    without depending on quill. *)
+let emit_with_images ~emit s =
+  let len = String.length s in
+  let text_start = ref 0 in
+  let i = ref 0 in
+  while !i < len - 1 do
+    if
+      Char.equal (String.unsafe_get s !i) '!'
+      && Char.equal (String.unsafe_get s (!i + 1)) '['
+    then begin
+      let start = !i in
+      (* Skip past alt text to find ]( *)
+      let j = ref (!i + 2) in
+      while !j < len && not (Char.equal (String.unsafe_get s !j) ']') do
+        incr j
+      done;
+      if
+        !j < len - 1
+        && Char.equal (String.unsafe_get s !j) ']'
+        && Char.equal (String.unsafe_get s (!j + 1)) '('
+      then begin
+        let paren_start = !j + 2 in
+        (* Check for data: URI *)
+        let prefix = "data:" in
+        let prefix_len = String.length prefix in
+        if
+          paren_start + prefix_len < len
+          && String.sub s paren_start prefix_len = prefix
+        then begin
+          (* Find ;base64, *)
+          let k = ref (paren_start + prefix_len) in
+          let base64_marker = ";base64," in
+          let marker_len = String.length base64_marker in
+          let found_marker = ref false in
+          let mime_end = ref 0 in
+          while !k < len - marker_len && not !found_marker do
+            if String.sub s !k marker_len = base64_marker then begin
+              found_marker := true;
+              mime_end := !k
+            end
+            else incr k
+          done;
+          if !found_marker then begin
+            let data_start = !mime_end + marker_len in
+            (* Find closing ) *)
+            let m = ref data_start in
+            while !m < len && not (Char.equal (String.unsafe_get s !m) ')') do
+              incr m
+            done;
+            if !m < len then begin
+              let mime =
+                String.sub s (paren_start + prefix_len)
+                  (!mime_end - paren_start - prefix_len)
+              in
+              let data = String.sub s data_start (!m - data_start) in
+              (* Emit text before this image *)
+              if start > !text_start then
+                emit
+                  (Quill.Cell.Stdout
+                     (String.sub s !text_start (start - !text_start)));
+              emit (Quill.Cell.Display { mime; data });
+              i := !m + 1;
+              text_start := !i
+            end
+            else incr i
+          end
+          else incr i
+        end
+        else incr i
+      end
+      else incr i
+    end
+    else incr i
+  done;
+  (* Emit remaining text *)
+  if !text_start < len then begin
+    let rest = String.sub s !text_start (len - !text_start) in
+    if String.trim rest <> "" then emit (Quill.Cell.Stdout rest)
+  end
 
 (* ───── Kernel interface ───── *)
 
@@ -491,8 +646,9 @@ let create ?setup ~on_event () =
         ~on_display:emit
         (fun ppf_out ppf_err -> execute_code ppf_out ppf_err code)
     in
-    (* Emit toplevel formatter output (val bindings, type info) *)
-    if toplevel_out <> "" then emit (Quill.Cell.Stdout toplevel_out);
+    (* Emit toplevel formatter output (val bindings, type info). Scan for
+       markdown data-URI images and convert to Display outputs. *)
+    if toplevel_out <> "" then emit_with_images ~emit toplevel_out;
     if toplevel_err <> "" then emit (Quill.Cell.Stderr toplevel_err);
     (* Signal completion *)
     on_event (Quill.Kernel.Finished { cell_id; success = ok });
@@ -541,6 +697,13 @@ let create ?setup ~on_event () =
             Printf.eprintf "[quill-top] diagnostics error: %s\n%!"
               (Printexc.to_string exn);
             []);
+    is_complete =
+      Some
+        (fun code ->
+          try
+            ensure_setup ();
+            is_complete_phrase code
+          with _ -> false);
     status;
     shutdown;
   }

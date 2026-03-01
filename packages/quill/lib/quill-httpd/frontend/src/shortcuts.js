@@ -129,6 +129,26 @@ export function initShortcuts(store, wsClient) {
             }
           }
           return;
+        case 'z':
+          e.preventDefault();
+          if (store.focusedCellId) {
+            const cell = store.findCell(store.focusedCellId);
+            if (cell) {
+              const attrs = cell.attrs || {};
+              wsClient.setCellAttrs(store.focusedCellId, { ...attrs, collapsed: !attrs.collapsed });
+            }
+          }
+          return;
+        case 'Z':
+          e.preventDefault();
+          if (store.focusedCellId) {
+            const cell = store.findCell(store.focusedCellId);
+            if (cell && cell.kind === 'code') {
+              const attrs = cell.attrs || {};
+              wsClient.setCellAttrs(store.focusedCellId, { ...attrs, hide_source: !attrs.hide_source });
+            }
+          }
+          return;
       }
     }
   });

@@ -1,0 +1,12 @@
+(library
+ (name quill_repl)
+ (public_name quill.repl)
+ (libraries
+  quill
+  mosaic
+  mosaic.ui
+  toffee
+  matrix
+  matrix.grid
+  tree-sitter.ocaml
+  unix))

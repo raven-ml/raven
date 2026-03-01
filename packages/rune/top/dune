@@ -1,6 +1,0 @@
-(library
- (name rune_top)
- (public_name rune.top)
- (modules rune_top)
- (libraries rune compiler-libs.toplevel)
- (modes byte))

@@ -53,7 +53,7 @@ operations under the hood.
 | Process and transform images | [Sowilo](/docs/sowilo/) |
 | Build RL environments and agents | [Fehu](/docs/fehu/) |
 | Create plots and visualizations | [Hugin](/docs/hugin/) |
-| Run code interactively in notebooks | [Quill](/docs/quill/) |
+| Run code interactively (REPL or notebooks) | [Quill](/docs/quill/) |
 
 ---
 
@@ -209,15 +209,17 @@ show fig
 
 [Hugin documentation →](/docs/hugin/)
 
-## Quill: Interactive Notebooks
+## Quill: Interactive Computing
 
-Plain markdown files as notebooks. Fenced OCaml code blocks are
-executable cells with all Raven libraries pre-loaded. Terminal UI, web
-frontend, and batch mode for interactive or automated evaluation.
+Interactive REPL and markdown notebooks. Launch `quill` for a toplevel
+with syntax highlighting, completion, and history, or open a markdown
+file for a full notebook experience. Terminal UI, web frontend, and
+batch mode with all Raven libraries pre-loaded.
 
 <!-- $MDX skip -->
 ```bash
-quill notebook.md        # interactive TUI
+quill                    # interactive REPL
+quill notebook.md        # notebook TUI
 quill serve notebook.md  # web frontend
 quill run notebook.md    # batch evaluation
 ```

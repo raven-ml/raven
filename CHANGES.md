@@ -156,6 +156,8 @@ TUI dashboard for monitoring training runs in the terminal. Displays live metric
 
 Rewritten from the ground up. Terminal UI with syntax highlighting, code completion, and a compact single-line footer. Web frontend via `quill serve` with a CodeMirror 6 editor, WebSocket-based execution, autocompletion, and diagnostics. Markdown notebook format shared across both interfaces.
 
+Interactive REPL: `quill` with no file argument launches a toplevel with syntax highlighting, tab completion, persistent history, smart phrase-aware submission, and piped mode.
+
 ### Hugin
 
 - Fix potential bad memory access in rendering.

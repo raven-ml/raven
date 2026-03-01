@@ -41,6 +41,9 @@ let get_int name json =
   | Jsont.Number (n, _) -> Ok (int_of_float n)
   | _ -> Error (Printf.sprintf "missing or invalid field '%s'" name)
 
+let get_bool name json =
+  match json_mem name json with Jsont.Bool (b, _) -> Ok b | _ -> Ok false
+
 let get_string_list name json =
   match json_mem name json with
   | Jsont.Array (items, _) ->
@@ -65,6 +68,7 @@ type client_msg =
   | Delete_cell of { cell_id : string }
   | Move_cell of { cell_id : string; pos : int }
   | Set_cell_kind of { cell_id : string; kind : [ `Code | `Text ] }
+  | Set_cell_attrs of { cell_id : string; attrs : Cell.attrs }
   | Clear_outputs of { cell_id : string }
   | Clear_all_outputs
   | Save
@@ -114,6 +118,12 @@ let client_msg_of_json s =
           let* cell_id = get_string "cell_id" json in
           let* kind = parse_kind json in
           Ok (Set_cell_kind { cell_id; kind })
+      | Ok "set_cell_attrs" ->
+          let* cell_id = get_string "cell_id" json in
+          let* collapsed = get_bool "collapsed" json in
+          let* hide_source = get_bool "hide_source" json in
+          Ok
+            (Set_cell_attrs { cell_id; attrs = { Cell.collapsed; hide_source } })
       | Ok "clear_outputs" ->
           let* cell_id = get_string "cell_id" json in
           Ok (Clear_outputs { cell_id })
@@ -170,9 +180,15 @@ let output_to_json (o : Cell.output) =
           ("data", Jsont.Json.string data);
         ]
 
+let attrs_to_json (a : Cell.attrs) =
+  let pairs = ref [] in
+  if a.hide_source then pairs := ("hide_source", Jsont.Json.bool true) :: !pairs;
+  if a.collapsed then pairs := ("collapsed", Jsont.Json.bool true) :: !pairs;
+  json_obj !pairs
+
 let cell_to_json (cell : Cell.t) (status : Session.cell_status) =
   match cell with
-  | Code { id; source; language; outputs; execution_count } ->
+  | Code { id; source; language; outputs; execution_count; attrs } ->
       json_obj
         [
           ("id", Jsont.Json.string id);
@@ -182,8 +198,9 @@ let cell_to_json (cell : Cell.t) (status : Session.cell_status) =
           ("outputs", Jsont.Json.list (List.map output_to_json outputs));
           ("execution_count", Jsont.Json.int execution_count);
           ("status", Jsont.Json.string (status_string status));
+          ("attrs", attrs_to_json attrs);
         ]
-  | Text { id; source } ->
+  | Text { id; source; attrs } ->
       let html = Quill_markdown.Edit.to_html source in
       json_obj
         [
@@ -192,6 +209,7 @@ let cell_to_json (cell : Cell.t) (status : Session.cell_status) =
           ("source", Jsont.Json.string source);
           ("rendered_html", Jsont.Json.string html);
           ("status", Jsont.Json.string (status_string status));
+          ("attrs", attrs_to_json attrs);
         ]
 
 let notebook_to_json ~cells ~can_undo ~can_redo =

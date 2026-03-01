@@ -46,6 +46,14 @@ type state = {
   mutex : Mutex.t;
   mutable ws_clients : Httpd.ws list;
   mutable last_mtime : float;
+  (* Execution queue: serializes all kernel.execute calls through a single
+     worker thread. [exec_mutex] protects [exec_queue] and [exec_cancelled];
+     [exec_cond] is signaled when new work is enqueued. Lock ordering: [mutex] >
+     [exec_mutex] (never reversed). *)
+  exec_queue : Cell.id Queue.t;
+  exec_mutex : Mutex.t;
+  exec_cond : Condition.t;
+  mutable exec_cancelled : bool;
 }
 
 let locked st f =
@@ -79,17 +87,48 @@ let send_notebook st =
        ~can_undo:(Session.can_undo st.session)
        ~can_redo:(Session.can_redo st.session))
 
-(* ───── Execution ───── *)
+(* ───── Execution queue ───── *)
 
-let execute_cell_ids st cell_ids =
-  locked st (fun () ->
-      List.iter
-        (fun cell_id ->
-          st.session <- Session.mark_queued cell_id st.session;
-          send st (Protocol.cell_status_to_json ~cell_id Session.Queued))
-        cell_ids);
+(* Enqueue cell IDs for execution. Called while [st.mutex] is held. *)
+let enqueue_execution st cell_ids =
+  st.session <- Session.checkpoint st.session;
   List.iter
     (fun cell_id ->
+      st.session <- Session.mark_queued cell_id st.session;
+      send st (Protocol.cell_status_to_json ~cell_id Session.Queued))
+    cell_ids;
+  Mutex.lock st.exec_mutex;
+  List.iter (fun cell_id -> Queue.push cell_id st.exec_queue) cell_ids;
+  Condition.signal st.exec_cond;
+  Mutex.unlock st.exec_mutex
+
+(* Long-lived worker thread: pops cell IDs one at a time and executes them.
+   Checks [exec_cancelled] between cells to support interrupt-and-drain. *)
+let exec_worker st =
+  let rec loop () =
+    Mutex.lock st.exec_mutex;
+    while Queue.is_empty st.exec_queue do
+      Condition.wait st.exec_cond st.exec_mutex
+    done;
+    let cell_id = Queue.pop st.exec_queue in
+    if st.exec_cancelled then begin
+      (* Drain remaining queued cells and mark all cancelled cells idle *)
+      let cancelled =
+        cell_id :: Queue.fold (fun acc id -> id :: acc) [] st.exec_queue
+      in
+      Queue.clear st.exec_queue;
+      st.exec_cancelled <- false;
+      Mutex.unlock st.exec_mutex;
+      locked st (fun () ->
+          List.iter
+            (fun cid ->
+              st.session <- Session.mark_idle cid st.session;
+              send st (Protocol.cell_status_to_json ~cell_id:cid Session.Idle))
+            cancelled);
+      loop ()
+    end
+    else begin
+      Mutex.unlock st.exec_mutex;
       let source =
         locked st (fun () ->
             match Doc.find cell_id (Session.doc st.session) with
@@ -101,10 +140,13 @@ let execute_cell_ids st cell_ids =
                 Some source
             | _ -> None)
       in
-      match source with
+      (match source with
       | Some code -> st.kernel.execute ~cell_id ~code
-      | None -> ())
-    cell_ids
+      | None -> ());
+      loop ()
+    end
+  in
+  loop ()
 
 (* ───── Kernel event handler ───── *)
 
@@ -129,18 +171,14 @@ let on_kernel_event st = function
 
 (* ───── Client message handler ───── *)
 
-let execute_async st cell_ids =
-  st.session <- Session.checkpoint st.session;
-  ignore (Thread.create (fun () -> execute_cell_ids st cell_ids) () : Thread.t)
-
 let handle_client_msg st = function
   | Protocol.Update_source { cell_id; source } ->
       st.session <- Session.update_source cell_id source st.session
   | Protocol.Checkpoint ->
       st.session <- Session.checkpoint st.session;
       send_undo_redo st
-  | Protocol.Execute_cell { cell_id } -> execute_async st [ cell_id ]
-  | Protocol.Execute_cells { cell_ids } -> execute_async st cell_ids
+  | Protocol.Execute_cell { cell_id } -> enqueue_execution st [ cell_id ]
+  | Protocol.Execute_cells { cell_ids } -> enqueue_execution st cell_ids
   | Protocol.Execute_all ->
       let cell_ids =
         List.filter_map
@@ -148,7 +186,7 @@ let handle_client_msg st = function
             match c with Cell.Code { id; _ } -> Some id | Text _ -> None)
           (Doc.cells (Session.doc st.session))
       in
-      execute_async st cell_ids
+      enqueue_execution st cell_ids
   | Protocol.Interrupt | Protocol.Complete _ | Protocol.Type_at _
   | Protocol.Diagnostics _ ->
       assert false (* dispatched by [handle_msg] before reaching here *)
@@ -176,6 +214,15 @@ let handle_client_msg st = function
       let kind_s = match kind with `Code -> "code" | `Text -> "text" in
       log "[cell] set %s to %s\n%!" cell_id kind_s;
       st.session <- Session.set_cell_kind cell_id kind st.session;
+      (match Doc.find cell_id (Session.doc st.session) with
+      | Some cell ->
+          let status = Session.cell_status cell_id st.session in
+          send st (Protocol.cell_updated_to_json cell status)
+      | None -> ());
+      send_undo_redo st
+  | Protocol.Set_cell_attrs { cell_id; attrs } ->
+      log "[cell] set attrs %s\n%!" cell_id;
+      st.session <- Session.set_cell_attrs cell_id attrs st.session;
       (match Doc.find cell_id (Session.doc st.session) with
       | Some cell ->
           let status = Session.cell_status cell_id st.session in
@@ -213,6 +260,9 @@ let handle_client_msg st = function
 let handle_msg st = function
   | Protocol.Interrupt ->
       log "[exec] interrupt\n%!";
+      Mutex.lock st.exec_mutex;
+      st.exec_cancelled <- true;
+      Mutex.unlock st.exec_mutex;
       st.kernel.interrupt ()
   | Protocol.Complete { request_id; code; pos } ->
       let items = st.kernel.complete ~code ~pos in
@@ -269,7 +319,7 @@ let ws_handler st _req ws =
 
 (* ───── Entry point ───── *)
 
-let serve ?(addr = "127.0.0.1") ?(port = 8888) ?on_ready path =
+let serve ~create_kernel ?(addr = "127.0.0.1") ?(port = 8888) ?on_ready path =
   if not (Sys.file_exists path) then (
     Printf.eprintf err_file_not_found path;
     exit 1);
@@ -287,6 +337,7 @@ let serve ?(addr = "127.0.0.1") ?(port = 8888) ?on_ready path =
           complete = (fun ~code:_ ~pos:_ -> []);
           type_at = None;
           diagnostics = None;
+          is_complete = None;
           status = (fun () -> Kernel.Starting);
           shutdown = ignore;
         };
@@ -294,10 +345,15 @@ let serve ?(addr = "127.0.0.1") ?(port = 8888) ?on_ready path =
       mutex;
       ws_clients = [];
       last_mtime = get_mtime path;
+      exec_queue = Queue.create ();
+      exec_mutex = Mutex.create ();
+      exec_cond = Condition.create ();
+      exec_cancelled = false;
     }
   in
   let on_event ev = on_kernel_event st ev in
-  st.kernel <- Quill_raven.create ~on_event;
+  st.kernel <- create_kernel ~on_event;
+  ignore (Thread.create exec_worker st : Thread.t);
   let server = Httpd.create ~addr ~port () in
   Httpd.route server GET "/" (fun _req ->
       Httpd.response
