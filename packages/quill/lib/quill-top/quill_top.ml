@@ -500,7 +500,6 @@ let format_exn exn =
   | _ -> Printexc.to_string exn
 
 let compute_diagnostics ~code =
-  let env = !Toploop.toplevel_env in
   let diags = ref [] in
   let len = String.length code in
   let add_diag severity loc message =
@@ -515,15 +514,7 @@ let compute_diagnostics ~code =
       diags := Quill.Kernel.{ from_pos; to_pos; severity; message } :: !diags
   in
   (match parse_phrases code with
-  | phrases ->
-      List.iter
-        (function
-          | Parsetree.Ptop_def structure -> (
-              try ignore (Typemod.type_toplevel_phrase env structure)
-              with exn ->
-                add_diag Error (error_loc_of_exn exn) (format_exn exn))
-          | _ -> ())
-        phrases
+  | _ -> ()
   | exception exn -> add_diag Error (error_loc_of_exn exn) (format_exn exn));
   List.rev !diags
 
