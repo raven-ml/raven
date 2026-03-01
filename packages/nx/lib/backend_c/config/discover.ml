@@ -42,8 +42,8 @@ let openblas_default system : C.Pkg_config.package_conf =
       in
       let prefix = "/usr/" ^ triplet ^ "/sys-root/mingw" in
       {
-        C.Pkg_config.cflags = [ "-I" ^ Filename.concat prefix "include" ];
-        libs = [ "-L" ^ Filename.concat prefix "lib"; "-lcblas" ];
+        C.Pkg_config.cflags = [ "-I" ^ prefix ^ "/include" ];
+        libs = [ "-L" ^ prefix ^ "/lib"; "-lcblas" ];
       }
   | _ ->
       let search =
