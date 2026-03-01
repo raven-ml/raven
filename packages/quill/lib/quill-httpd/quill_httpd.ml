@@ -269,7 +269,7 @@ let ws_handler st _req ws =
 
 (* ───── Entry point ───── *)
 
-let serve ?(addr = "127.0.0.1") ?(port = 8888) ?on_ready path =
+let serve ~create_kernel ?(addr = "127.0.0.1") ?(port = 8888) ?on_ready path =
   if not (Sys.file_exists path) then (
     Printf.eprintf err_file_not_found path;
     exit 1);
@@ -298,7 +298,7 @@ let serve ?(addr = "127.0.0.1") ?(port = 8888) ?on_ready path =
     }
   in
   let on_event ev = on_kernel_event st ev in
-  st.kernel <- Quill_raven.create ~on_event;
+  st.kernel <- create_kernel ~on_event;
   let server = Httpd.create ~addr ~port () in
   Httpd.route server GET "/" (fun _req ->
       Httpd.response

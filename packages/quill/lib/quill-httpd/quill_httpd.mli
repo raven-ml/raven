@@ -11,9 +11,15 @@
 (** {1:serving Serving} *)
 
 val serve :
-  ?addr:string -> ?port:int -> ?on_ready:(unit -> unit) -> string -> unit
-(** [serve path] starts the web notebook server for the notebook at [path].
-    [addr] defaults to ["127.0.0.1"], [port] to [8888]. [on_ready] is called
-    after the server socket is bound and listening, before the accept loop
-    starts. Blocks until the server is stopped. Exits the process with status
-    [1] if [path] does not exist. *)
+  create_kernel:(on_event:(Quill.Kernel.event -> unit) -> Quill.Kernel.t) ->
+  ?addr:string ->
+  ?port:int ->
+  ?on_ready:(unit -> unit) ->
+  string ->
+  unit
+(** [serve ~create_kernel path] starts the web notebook server for the notebook
+    at [path]. [create_kernel] is called once to obtain a kernel. [addr]
+    defaults to ["127.0.0.1"], [port] to [8888]. [on_ready] is called after the
+    server socket is bound and listening, before the accept loop starts. Blocks
+    until the server is stopped. Exits the process with status [1] if [path]
+    does not exist. *)

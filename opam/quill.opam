@@ -3,7 +3,7 @@ opam-version: "2.0"
 version: "1.0.0~alpha3"
 synopsis: "Notebooks as markdown files"
 description:
-  "Quill turns markdown files into interactive OCaml notebooks. Terminal UI for cell navigation and execution, batch evaluation with watch mode, and in-place output serialization. All Raven packages are pre-loaded."
+  "Quill turns markdown files into interactive OCaml notebooks. Terminal UI for cell navigation and execution, batch evaluation with watch mode, and in-place output serialization."
 maintainer: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 authors: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 license: "ISC"
@@ -18,14 +18,6 @@ depends: [
   "cmdliner"
   "jsont"
   "mosaic"
-  "nx" {= version}
-  "brot" {= version}
-  "talon" {= version}
-  "rune" {= version}
-  "kaun" {= version}
-  "sowilo" {= version}
-  "fehu" {= version}
-  "hugin" {= version}
   "windtrap" {with-test}
   "mdx" {with-test}
   "odoc" {with-doc}

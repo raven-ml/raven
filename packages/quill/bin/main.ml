@@ -3,13 +3,61 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* Raven packages to load, in dependency order. nx.c (virtual library
+   implementation) must come before nx so that Nx_backend is defined. *)
+let raven_packages =
+  [
+    "nx.c";
+    "nx";
+    "nx.io";
+    "rune";
+    "kaun";
+    "kaun.datasets";
+    "hugin";
+    "sowilo";
+    "talon";
+    "talon.csv";
+    "brot";
+    "fehu";
+  ]
+
+let raven_top_packages = [ "nx.top"; "hugin.top" ]
+
+let setup () =
+  (* Mark packages already linked into the quill executable so that
+     load_package does not try to load their .cma archives again. *)
+  Quill_top.add_packages
+    [
+      "compiler-libs";
+      "compiler-libs.common";
+      "compiler-libs.bytecomp";
+      "compiler-libs.toplevel";
+      "findlib";
+      "findlib.internal";
+      "unix";
+      "threads";
+      "threads.posix";
+    ];
+  (* Load each raven package if it is installed. *)
+  List.iter
+    (fun pkg ->
+      match Quill_top.load_package pkg with
+      | () -> ()
+      | exception Fl_package_base.No_such_package _ -> ()
+      | exception exn ->
+          Printf.eprintf "[quill] failed to load %s: %s\n%!" pkg
+            (Printexc.to_string exn))
+    (raven_packages @ raven_top_packages)
+
+let create_kernel ~on_event = Quill_top.create ~setup ~on_event ()
+
 (* ───── Template ───── *)
 
 let default_template =
   {|# Welcome to Quill
 
 Interactive OCaml notebooks — run each cell with **Enter** to see results.
-All [Raven](https://github.com/raven-ml) packages are pre-loaded.
+[Raven](https://github.com/raven-ml) packages are loaded automatically when installed.
 
 ## Arrays with Nx
 
@@ -90,7 +138,7 @@ let open_browser url =
 let run_once inplace path =
   let md = read_file path in
   let doc = Quill_markdown.of_string md in
-  let doc = Quill.Eval.run ~create_kernel:Quill_raven.create doc in
+  let doc = Quill.Eval.run ~create_kernel doc in
   let result = Quill_markdown.to_string_with_outputs doc in
   if inplace then (
     write_file path result;
@@ -189,12 +237,11 @@ let default_term =
     const (fun path ->
         match path with
         | None ->
-            if Unix.isatty Unix.stdin then
-              Quill_repl.run ~create_kernel:Quill_raven.create
-            else Quill_repl.run_pipe ~create_kernel:Quill_raven.create
+            if Unix.isatty Unix.stdin then Quill_repl.run ~create_kernel
+            else Quill_repl.run_pipe ~create_kernel
         | Some path ->
             ensure_file path;
-            Quill_tui.run ~create_kernel:Quill_raven.create path)
+            Quill_tui.run ~create_kernel path)
     $ Arg.(
         value
         & pos 0 (some string) None
@@ -207,7 +254,7 @@ let notebook_term =
     Term.(
       const (fun path ->
           ensure_file path;
-          Quill_tui.run ~create_kernel:Quill_raven.create path)
+          Quill_tui.run ~create_kernel path)
       $ optional_path_arg "notebook.md")
 
 (* serve: web UI *)
@@ -218,7 +265,9 @@ let serve_term =
       const (fun port path ->
           ensure_file path;
           let url = Printf.sprintf "http://127.0.0.1:%d" port in
-          Quill_httpd.serve ~port ~on_ready:(fun () -> open_browser url) path)
+          Quill_httpd.serve ~create_kernel ~port
+            ~on_ready:(fun () -> open_browser url)
+            path)
       $ port_flag
       $ optional_path_arg "notebook.md")
 
