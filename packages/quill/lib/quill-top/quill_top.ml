@@ -257,15 +257,22 @@ let execute_code ppf_out ppf_err code =
   let orig_input_lexbuf = !Location.input_lexbuf in
   Location.input_lexbuf := Some lb;
   let phrases = ref [] in
-  (try
-     while true do
-       let phr = !Toploop.parse_toplevel_phrase lb in
-       phrases := phr :: !phrases
-     done
-   with End_of_file -> ());
+  let parse_ok =
+    (try
+       while true do
+         let phr = !Toploop.parse_toplevel_phrase lb in
+         phrases := phr :: !phrases
+       done;
+       assert false
+     with
+     | End_of_file -> true
+     | e ->
+         Location.report_exception ppf_err e;
+         false)
+  in
   let phrases = List.rev !phrases in
   let num_phrases = List.length phrases in
-  let success = ref true in
+  let success = ref parse_ok in
   Fun.protect
     (fun () ->
       List.iteri
