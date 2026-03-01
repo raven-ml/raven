@@ -36,7 +36,9 @@ export class Store {
     this.canUndo = data.can_undo;
     this.canRedo = data.can_redo;
     this.loaded = true;
-    this.focusedCellId = this.cells.length > 0 ? this.cells[0].id : null;
+    if (!this.focusedCellId || !this.cells.find(c => c.id === this.focusedCellId)) {
+      this.focusedCellId = this.cells.length > 0 ? this.cells[0].id : null;
+    }
     this.emit('notebook:loaded', this.cells);
   }
 
