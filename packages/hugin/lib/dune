@@ -1,6 +1,17 @@
-(include_subdirs qualified)
-
 (library
  (name hugin)
  (public_name hugin)
- (libraries nx nx.io cairo2 usdl))
+ (private_modules
+  axis
+  spec
+  scale
+  ticks
+  scene
+  prepared
+  resolve
+  image_util
+  cairo_sdl
+  cairo_backend
+  svg_backend
+  cmap_data)
+ (libraries nx nx.buffer ucairo usdl))

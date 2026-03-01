@@ -61,7 +61,8 @@
   re
   jsont
   bytesrw
-  (uunf (>= 15.1.0))
+  (uunf
+   (>= 15.1.0))
   uucp
   (windtrap :with-test)
   (mdx :with-test))
@@ -181,16 +182,15 @@
 (package
  (name hugin)
  (dir packages/hugin)
- (synopsis "Plotting for OCaml")
- (description
-  "Publication-quality 2D and 3D plots using Cairo rendering. Line plots, scatter, bar charts, contour plots, and image display from Nx tensors.")
+ (synopsis "Declarative plotting and visualization for OCaml")
+ (description "Composable, beautiful-by-default plotting built on Nx.")
  (depends
   (ocaml
    (>= 5.2.0))
   dune
   (dune-configurator :build)
-  conf-sdl2
-  cairo2
+  (conf-sdl2 :build)
+  (conf-cairo :build)
   (nx
    (= :version))
   (windtrap :with-test)

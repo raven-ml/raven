@@ -1,0 +1,11 @@
+(executable
+ (name main)
+ (libraries hugin nx))
+
+(rule
+ (targets decorations.png)
+ (deps main.exe)
+ (action
+  (run ./main.exe))
+ (mode
+  (promote (until-clean))))

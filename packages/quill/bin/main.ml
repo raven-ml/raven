@@ -73,10 +73,13 @@ let y = Nx.sin x
 Hugin renders plots directly in the notebook.
 
 ```ocaml
-let _fig =
-  Hugin.plot ~title:"A sine wave" ~xlabel:"x" ~ylabel:"y"
-    (Nx.linspace Nx.float32 0. 6.28 200)
-    (Nx.sin (Nx.linspace Nx.float32 0. 6.28 200))
+let x = Nx.linspace Nx.float32 0. 6.28 200
+let y = Nx.sin x
+
+let _ =
+  Hugin.line ~x ~y ()
+  |> Hugin.title "A sine wave"
+  |> Hugin.xlabel "x" |> Hugin.ylabel "y"
 ```
 
 ## Automatic Differentiation with Rune
@@ -96,17 +99,17 @@ let gradient = Rune.grad f x                   (* f'(2) = 3·2² = 12 *)
 Plot a function alongside its derivative.
 
 ```ocaml
-let fig =
-  let xs = Nx.linspace Nx.float32 (-2.) 3. 200 in
-  let ys = Nx.pow_s xs 3. in
-  let gs = Nx.mul_s (Nx.pow_s xs 2.) 3. in
-  let fig = Hugin.figure ~width:600 ~height:300 () in
-  let ax = Hugin.subplot fig in
-  let ax = Hugin.Plotting.plot ~x:xs ~y:ys ~label:"f(x) = x³" ax in
-  let ax = Hugin.Plotting.plot ~x:xs ~y:gs ~label:"f'(x) = 3x²" ax in
-  let ax = Hugin.Axes.set_xlabel "x" ax in
-  let _ = Hugin.Axes.set_ylabel "y" ax in
-  fig
+let xs = Nx.linspace Nx.float32 (-2.) 3. 200
+let ys = Nx.pow_s xs 3.
+let gs = Nx.mul_s (Nx.pow_s xs 2.) 3.
+
+let _ =
+  Hugin.layers [
+    Hugin.line ~x:xs ~y:ys ~label:"f(x) = x³" ();
+    Hugin.line ~x:xs ~y:gs ~label:"f'(x) = 3x²" ();
+  ]
+  |> Hugin.xlabel "x" |> Hugin.ylabel "y"
+  |> Hugin.legend ()
 ```
 |}
 

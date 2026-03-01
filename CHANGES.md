@@ -160,8 +160,29 @@ Interactive REPL: `quill` with no file argument launches a toplevel with syntax 
 
 ### Hugin
 
-- Fix potential bad memory access in rendering.
-- Fix single-channel HWC image handling in `float32_to_cairo_surface`.
+Rewritten from the ground up with a declarative, composable API. Plots are
+built by combining inert mark descriptions (`line`, `point`, `bar`, `hist`,
+`heatmap`, `contour`, `errorbar`, etc.) with `layers`, decorating them
+(`title`, `xlabel`, `legend`, etc.), and laying them out (`grid`, `hstack`,
+`vstack`). A compilation pass resolves data to a Scene IR that separate
+backends render.
+
+- New declarative specification API replacing the imperative figure/axes/artist
+  architecture. Marks compose with `layers`, decorations chain functionally,
+  and grid layouts nest arbitrarily.
+- **ucairo** — Minimal Cairo FFI bindings (36 C stubs) replacing the `cairo2`
+  opam dependency.
+- Dual-backend rendering: Cairo (PNG, PDF, interactive SDL window) and SVG from
+  a shared Scene IR.
+- OKLCH perceptual color space with `Color.oklch`, `Color.hex`, named CSS
+  colors, and alpha support.
+- Curated colormaps (`Cmap.viridis`, `plasma`, `inferno`, `magma`, `cividis`,
+  `turbo`, `coolwarm`, `spectral`).
+- Theme system with `light`, `dark`, and `minimal` presets.
+- Linear, log, and symlog axis scaling with automatic tick generation.
+- Legend placement with configurable location and multi-column layout.
+- Interactive `show` with SDL window resizing, Escape/Q to close.
+- Rewritten examples and documentation.
 
 ### Talon
 

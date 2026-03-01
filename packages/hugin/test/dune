@@ -1,0 +1,11 @@
+(tests
+ (names
+  test_color
+  test_cmap
+  test_scale
+  test_ticks
+  test_resolve
+  test_svg_backend
+  test_image_util)
+ (package hugin)
+ (libraries hugin nx windtrap))

@@ -20,25 +20,13 @@ let () =
   let img = Sowilo.to_float (Nx_io.load_image image_path) in
   let gray = Sowilo.to_grayscale img in
   let gx, gy = Sowilo.sobel gray in
-  let fig = Hugin.figure ~width:1200 ~height:400 () in
-  let ax1 = Hugin.subplot ~nrows:1 ~ncols:3 ~index:1 fig in
-  ignore
-    (ax1
-    |> Hugin.Plotting.imshow ~data:gray ~cmap:Hugin.Artist.Colormap.gray
-    |> Hugin.Axes.set_title "Grayscale"
-    |> Hugin.Axes.set_xticks [] |> Hugin.Axes.set_yticks []);
-  let ax2 = Hugin.subplot ~nrows:1 ~ncols:3 ~index:2 fig in
-  ignore
-    (ax2
-    |> Hugin.Plotting.imshow ~data:(normalize_gradient gx)
-         ~cmap:Hugin.Artist.Colormap.gray
-    |> Hugin.Axes.set_title "Sobel X"
-    |> Hugin.Axes.set_xticks [] |> Hugin.Axes.set_yticks []);
-  let ax3 = Hugin.subplot ~nrows:1 ~ncols:3 ~index:3 fig in
-  ignore
-    (ax3
-    |> Hugin.Plotting.imshow ~data:(normalize_gradient gy)
-         ~cmap:Hugin.Artist.Colormap.gray
-    |> Hugin.Axes.set_title "Sobel Y"
-    |> Hugin.Axes.set_xticks [] |> Hugin.Axes.set_yticks []);
-  Hugin.show fig
+  Hugin.hstack
+    [
+      Hugin.imshow ~data:gray ~cmap:Hugin.Cmap.gray ()
+      |> Hugin.title "Grayscale";
+      Hugin.imshow ~data:(normalize_gradient gx) ~cmap:Hugin.Cmap.gray ()
+      |> Hugin.title "Sobel X";
+      Hugin.imshow ~data:(normalize_gradient gy) ~cmap:Hugin.Cmap.gray ()
+      |> Hugin.title "Sobel Y";
+    ]
+  |> Hugin.show

@@ -3,111 +3,150 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Minimal SDL2 Bindings *)
+(** Minimal SDL2 bindings.
 
-(** Opaque types for SDL objects *)
+    Thin bindings covering window creation, renderer management, surface pixel
+    access, and event polling. Designed for the Cairo-SDL integration layer; not
+    a general-purpose SDL binding.
+
+    All functions raise [Failure] on SDL errors. *)
+
+(** {1:init Initialization} *)
+
+val init : unit -> unit
+(** [init ()] initializes SDL video and sets the render scale quality hint.
+
+    Raises [Failure] if SDL initialization fails. *)
+
+val quit : unit -> unit
+(** [quit ()] shuts down SDL. *)
+
+(** {1:handles Handle types} *)
+
+type renderer
+(** The type for SDL renderers. *)
+
+type surface
+(** The type for SDL surfaces. *)
+
+type texture
+(** The type for SDL textures. *)
+
+(** {1:window Window} *)
+
 module Window : sig
   type t
+  (** The type for SDL windows. *)
+
+  val create : title:string -> w:int -> h:int -> t
+  (** [create ~title ~w ~h] is a resizable, high-DPI-aware window.
+
+      Raises [Failure] if window creation fails. *)
+
+  val destroy : t -> unit
+  (** [destroy t] frees the window. Safe to call more than once. *)
 end
+
+(** {1:renderer Renderer} *)
 
 module Renderer : sig
-  type t
+  type t = renderer
+  (** The type for SDL renderers. *)
+
+  val create : Window.t -> t
+  (** [create win] is a hardware-accelerated, vsync-enabled renderer for [win].
+
+      Raises [Failure] if renderer creation fails. *)
+
+  val output_size : t -> int * int
+  (** [output_size t] is [(w, h)] in pixels (accounting for high-DPI scaling).
+
+      Raises [Failure] if the query fails. *)
+
+  val clear : t -> unit
+  (** [clear t] clears the render target. *)
+
+  val copy : t -> texture -> unit
+  (** [copy t tex] copies [tex] to the entire render target. *)
+
+  val present : t -> unit
+  (** [present t] presents the composed backbuffer. *)
+
+  val destroy : t -> unit
+  (** [destroy t] frees the renderer. Safe to call more than once. *)
 end
+
+(** {1:surface Surface} *)
 
 module Surface : sig
-  type t
+  type t = surface
+  (** The type for SDL surfaces. *)
+
+  val create_argb8888 : w:int -> h:int -> t
+  (** [create_argb8888 ~w ~h] is a 32-bit ARGB8888 surface.
+
+      Raises [Failure] if allocation fails. *)
+
+  val pitch : t -> int
+  (** [pitch t] is the byte length of one row. *)
+
+  val pixels :
+    t -> (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
+  (** [pixels t] is the raw pixel buffer. The bigarray is a view onto
+      SDL-managed memory; it must not outlive the surface. *)
+
+  val destroy : t -> unit
+  (** [destroy t] frees the surface. Safe to call more than once. *)
 end
 
+(** {1:texture Texture} *)
+
 module Texture : sig
-  type t
+  type t = texture
+  (** The type for SDL textures. *)
+
+  val of_surface : renderer -> surface -> t
+  (** [of_surface ren surf] creates a texture from [surf].
+
+      Raises [Failure] if texture creation fails. *)
+
+  val destroy : t -> unit
+  (** [destroy t] frees the texture. Safe to call more than once. *)
 end
+
+(** {1:event Events} *)
 
 module Event : sig
   type t
+  (** The type for event storage. *)
+
+  type event_type = [ `Quit | `Window_event | `Key_down | `Unknown of int ]
+  (** The type for event kinds. *)
+
+  type window_event =
+    [ `Resized | `Size_changed | `Exposed | `Close | `Unknown of int ]
+  (** The type for window event sub-kinds. *)
+
+  val create : unit -> t
+  (** [create ()] allocates event storage. *)
+
+  val wait : t -> bool
+  (** [wait t] blocks until an event arrives. Returns [true] if an event was
+      received, [false] on error. Releases the runtime lock while blocking. *)
+
+  val typ : t -> event_type
+  (** [typ t] is the kind of the last received event. *)
+
+  val window_event_id : t -> window_event
+  (** [window_event_id t] is the window event sub-kind. Only meaningful when
+      [typ t] is [`Window_event]. *)
+
+  val keycode : t -> int
+  (** [keycode t] is the key code. Only meaningful when [typ t] is [`Key_down].
+  *)
 end
 
-(** Result type for functions that can fail *)
-type 'a result = Ok of 'a | Error of string
-
-(** Initialization and Shutdown *)
-module Init : sig
-  val video : int
-end
-
-val init : int -> unit result
-val quit : unit -> unit
-val get_error : unit -> string
-
-(** Hints *)
-module Hint : sig
-  val render_scale_quality : string (* SDL hints are strings *)
-end
-
-val set_hint : string -> string -> bool
-
-(** Window Management *)
-module Window_flags : sig
-  val windowed : int
-  val resizable : int
-  val allow_highdpi : int
-end
-
-val create_window : title:string -> w:int -> h:int -> int -> Window.t result
-val destroy_window : Window.t -> unit
-
-(** Renderer Management *)
-module Renderer_flags : sig
-  val accelerated : int
-  val presentvsync : int
-end
-
-val create_renderer : flags:int -> Window.t -> Renderer.t result
-val destroy_renderer : Renderer.t -> unit
-val get_renderer_output_size : Renderer.t -> (int * int) result
-val render_clear : Renderer.t -> unit result
-val render_copy : Renderer.t -> Texture.t -> unit result
-val render_present : Renderer.t -> unit
-
-(** Surface Management *)
-module Pixel : sig
-  (* We only need ARGB8888 which SDL maps internally. Pass the
-     SDL_PIXELFORMAT_ARGB8888 enum value directly. We'll define it as an int32
-     constant in the .ml file. *)
-  val format_argb8888 : int32
-end
-
-val create_rgb_surface_with_format :
-  w:int -> h:int -> depth:int -> int32 -> Surface.t result
-
-val free_surface : Surface.t -> unit
-val get_surface_pitch : Surface.t -> int
-
-val get_surface_pixels :
-  Surface.t ->
-  (int, Bigarray.int8_unsigned_elt, Bigarray.c_layout) Bigarray.Array1.t
-
-val create_texture_from_surface : Renderer.t -> Surface.t -> Texture.t result
-(** Texture Management *)
-
-val destroy_texture : Texture.t -> unit
-
-(** Event Handling *)
-module Event_type : sig
-  type t = [ `Quit | `Window_event | `Key_down | `Unknown of int ]
-end
-
-module Window_event_id : sig
-  type t = [ `Resized | `Size_changed | `Exposed | `Close | `Unknown of int ]
-end
-
-val create_event : unit -> Event.t (* Allocates storage for one event *)
-val wait_event : Event.t option -> bool result
-(* Fills the provided event, returns Ok true on success, Ok false on SDL_QUIT,
-   Error on error *)
-
-val get_event_type : Event.t -> Event_type.t
-val get_window_event_id : Event.t -> Window_event_id.t
-val get_event_keycode : Event.t -> int
+(** {1:keycode Key codes} *)
 
 module Keycode : sig
   val escape : int

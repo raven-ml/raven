@@ -11,4 +11,4 @@ let install_printer name =
   in
   Toploop.execute_phrase false Format.err_formatter phrase |> ignore
 
-let () = install_printer "Hugin.pp_figure"
+let () = install_printer "Hugin.pp"

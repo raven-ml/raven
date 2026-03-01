@@ -1,4 +1,0 @@
-(mdx
- (files *.md)
- (package hugin)
- (libraries hugin nx nx.io))

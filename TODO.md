@@ -6,8 +6,6 @@
 - consider rename talon to talf
 - explore renames (sowilo, talon, etc.)
 - quill: fix bytecode+threads segfault
-- hugin: fix plot3d
-- hugin: fix contour
 
 ## beta (jit)
 

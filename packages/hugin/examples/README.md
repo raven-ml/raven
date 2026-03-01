@@ -1,39 +1,65 @@
 # Hugin Examples
 
-A collection of OCaml programs (with `Hugin` + `Nx`) showcasing common plotting tasks, alongside equivalent Python/Matplotlib scripts for comparison.
+Learn Hugin through progressively complex examples. Start with `01-line-plot`
+and work through the numbered examples in order.
 
-## Directory Layout
+## Examples
 
-Each numbered folder contains a self-contained example. For most, you'll find both an OCaml implementation and a Python counterpart:
+| Example | Concept | Key Functions |
+|---------|---------|---------------|
+| [`01-line-plot`](./01-line-plot/) | Your first plot | `line`, `render_png` |
+| [`02-styling`](./02-styling/) | Colors, line styles, markers | `~color`, `~line_style`, `~marker`, `~alpha` |
+| [`03-scatter`](./03-scatter/) | Scatter plots and color mapping | `point`, `~color_by` |
+| [`04-bar-chart`](./04-bar-chart/) | Bar charts with categorical axes | `bar`, `xlabel`, `ylabel`, `xticks` |
+| [`05-histogram`](./05-histogram/) | Histograms and density | `hist`, `~bins`, `~density` |
+| [`06-layers`](./06-layers/) | Overlaying marks and legends | `layers`, `fill_between`, `hline`, `legend` |
+| [`07-decorations`](./07-decorations/) | Axis control and grid lines | `xscale`, `xlim`, `ylim`, `xtick_format`, `grid_lines` |
+| [`08-grid-layout`](./08-grid-layout/) | Multi-panel layouts | `Layout.grid` |
+| [`09-themes`](./09-themes/) | Themes and context scaling | `Theme.default`, `Theme.dark`, `Theme.talk` |
+| [`10-showcase`](./10-showcase/) | Full showcase with multiple outputs | All mark types, `heatmap`, `render_svg` |
+| [`11-errorbar`](./11-errorbar/) | Measurement uncertainty | `errorbar`, `~yerr`, `~cap_size` |
 
-1. **01-plot2d**
-   Basic 2D line plots of sine & cosine with legend, grid, labels.
+## Running Examples
 
-2. **02-imshow**
-   Load & display an image via `Nx_io.load_image` + `Hugin.imshow`.
-
-3. **02-plot3d**
-   Generate a 3D helix and render with `Hugin.plot3d`.
-
-4. **04-subplot**
-   A 4×3 grid showing line, scatter, bar, histogram, step, fill, error bars, imshow, matshow, 3D, and combined plots.
-
-## Building & Running
-
-### OCaml
-
-From the root of the Raven repository:
+All examples can be run with:
 
 ```bash
-dune exec hugin/examples/01-plot2d/main.exe
-dune exec hugin/examples/02-imshow/main.exe path/to/image.png
-dune exec hugin/examples/02-plot3d/main.exe
-dune exec hugin/examples/04-subplot/main.exe
+dune exec dev/hugin/examples/<name>/main.exe
 ```
 
-Or cd into a folder:
+For example:
 
 ```bash
-cd hugin/examples/01-plot2d
-dune exec main.exe
+dune exec dev/hugin/examples/01-line-plot/main.exe
+```
+
+## Quick Reference
+
+### Single Plot
+
+```ocaml
+open Hugin
+
+let x = Nx.linspace Nx.float32 0. 6.28 100 in
+let y = Nx.sin x in
+line ~x ~y () |> title "Sine" |> render_png "plot.png"
+```
+
+### Multiple Marks on Shared Axes
+
+```ocaml
+layers
+  [
+    line ~x ~y:(Nx.sin x) ~label:"sin" ();
+    line ~x ~y:(Nx.cos x) ~label:"cos" ~line_style:`Dashed ();
+  ]
+|> legend |> render_png "plot.png"
+```
+
+### Grid Layout
+
+```ocaml
+let p1 = line ~x ~y:(Nx.sin x) () |> title "sin" in
+let p2 = line ~x ~y:(Nx.cos x) () |> title "cos" in
+Layout.grid [ [ p1; p2 ] ] |> render_png "grid.png"
 ```

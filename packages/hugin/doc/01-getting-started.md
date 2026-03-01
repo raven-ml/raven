@@ -1,10 +1,10 @@
-# Getting Started with hugin
+# Getting Started
 
-This guide shows you how to create plots with hugin.
+This guide covers installation, your first plot, and the key concepts behind Hugin.
 
 ## Installation
 
-First, install the system dependencies:
+Install system dependencies:
 
 <!-- $MDX skip -->
 ```bash
@@ -22,117 +22,169 @@ Then install hugin:
 opam install hugin
 ```
 
-For now, build from source:
+Or build from source:
 
 <!-- $MDX skip -->
 ```bash
 git clone https://github.com/raven-ml/raven
-cd raven
-dune pkg lock && dune build hugin
+cd raven && dune build dev/hugin
+```
+
+Add to your `dune` file:
+
+<!-- $MDX skip -->
+```dune
+(executable
+ (name main)
+ (libraries hugin))
 ```
 
 ## Your First Plot
 
-Here's a working example that creates a simple line plot:
-
 <!-- $MDX skip -->
 ```ocaml
 open Hugin
-open Nx
 
 let () =
-  (* Create data *)
-  let x = linspace float32 0. (2. *. Float.pi) 100 in
-  let y = Nx.map (fun x -> Float.sin x) x in
-  
-  (* Create figure and plot *)
-  let fig = figure ~width:800 ~height:600 () in
-  let ax = subplot fig in
-  let _ = 
-    ax
-    |> Plotting.plot ~x ~y ~color:Artist.Color.blue ~label:"sin(x)"
-    |> Axes.set_xlabel "x"
-    |> Axes.set_ylabel "y" 
-    |> Axes.set_title "Sine Wave"
-  in
-  
-  (* Display the plot *)
-  show fig
+  let x = Nx.linspace Nx.float32 0. (2. *. Float.pi) 100 in
+  let y = Nx.sin x in
+  line ~x ~y () |> title "Sine wave" |> render_png "sine.png"
 ```
+
+This creates a 1-D array of 100 points, computes the sine, builds a line specification, adds a title, and writes a PNG file.
 
 ## Key Concepts
 
-**Pipeline style.** Hugin embraces OCaml's `|>` operator. You build plots by piping axes through transformations:
+### Marks
+
+A mark constructor (`line`, `point`, `bar`, `hist`, `heatmap`, etc.) takes data arrays and optional visual properties and returns an immutable plot specification of type `t`. A mark is already a complete spec — you can render it directly:
 
 <!-- $MDX skip -->
 ```ocaml
-subplot fig
-|> Plotting.plot ~x ~y
-|> Axes.set_title "My Plot"
-|> Axes.grid true
+line ~x ~y () |> render_png "plot.png"
 ```
 
-**Module organization.** Functions are organized by purpose:
-- `Plotting` - plot functions (plot, scatter, bar, etc.)
-- `Axes` - axis manipulation (set_xlabel, set_xlim, etc.)
-- `Artist` - colors and styles
+### Decorations
 
-**Colors are records.** Instead of strings, use predefined colors:
+Decoration functions add metadata to a spec. They are designed for the `|>` pipeline:
+
 <!-- $MDX skip -->
 ```ocaml
-Artist.Color.red
-Artist.Color.blue
-Artist.Color.(rgba 0.5 0.5 0.5 1.0)  (* custom RGBA *)
+line ~x ~y ()
+|> title "My Plot"
+|> xlabel "Time (s)"
+|> ylabel "Amplitude"
+|> xlim 0. 10.
+|> grid_lines true
 ```
 
-## Common Plots
+Decorations include `title`, `xlabel`, `ylabel`, `xlim`, `ylim`, `xscale`, `yscale`, `grid_lines`, `legend`, `xticks`, `yticks`, `xinvert`, `yinvert`, `with_theme`, and tick formatting.
+
+### Composition
+
+`layers` overlays multiple marks on shared axes:
 
 <!-- $MDX skip -->
 ```ocaml
-(* Line plot with style *)
-Plotting.plot ~x ~y
-  ~color:Artist.Color.red 
-  ~linestyle:Artist.Dashed 
-  ~linewidth:2.0
-  ax
-
-(* Scatter plot *)
-Plotting.scatter ~x ~y 
-  ~color:Artist.Color.green
-  ~marker:Artist.Circle
-  ~size:5.0
-  ax
-
-(* Multiple lines *)
-let ax = subplot fig in
-let _ = 
-  ax
-  |> Plotting.plot ~x ~y1 ~label:"sin(x)"
-  |> Plotting.plot ~x ~y2 ~label:"cos(x)"
-  |> Axes.set_xlabel "x"
-in ()
-
-(* Subplots *)
-let ax1 = subplot ~nrows:2 ~ncols:1 ~index:1 fig in
-let ax2 = subplot ~nrows:2 ~ncols:1 ~index:2 fig in
-(* plot on ax1 and ax2 separately *)
-
-(* Save to file *)
-savefig fig "plot.png"
+layers [
+  line ~x ~y:(Nx.sin x) ~label:"sin" ();
+  line ~x ~y:(Nx.cos x) ~label:"cos" ~line_style:`Dashed ();
+]
+|> legend |> render_png "overlay.png"
 ```
 
-## Display Images
+You can mix mark types freely. A `line` with `point` markers, a `bar` chart with `hline` reference lines — anything goes.
+
+### Layout
+
+`Layout.grid` arranges specs in rows and columns:
 
 <!-- $MDX skip -->
 ```ocaml
-(* Load and display an image *)
-let img = Nx_io.load_image "photo.jpg" in
-let fig = imshow ~title:"My Image" img in
-show fig
+let p1 = line ~x ~y:(Nx.sin x) () |> title "sin" in
+let p2 = line ~x ~y:(Nx.cos x) () |> title "cos" in
+Layout.grid [ [ p1; p2 ] ] |> render_png "grid.png"
+```
+
+`Layout.hstack` and `Layout.vstack` are shorthands for single-row and single-column grids.
+
+### Rendering
+
+Four output modes:
+
+| Function | Output |
+|----------|--------|
+| `render_png "file.png" t` | PNG image file |
+| `render_svg "file.svg" t` | SVG document file |
+| `render_pdf "file.pdf" t` | PDF document file |
+| `show t` | Interactive SDL window (resize, Esc to close) |
+
+All renderers accept optional `~width` and `~height` (default 1600×1200) and `~theme`.
+
+`render_svg_to_string` and `render_to_buffer` return the output as a string instead of writing a file.
+
+## Common Marks
+
+### Line
+
+<!-- $MDX skip -->
+```ocaml
+line ~x ~y ()
+line ~x ~y ~color:Color.blue ~line_style:`Dashed ~line_width:2.0 ()
+line ~x ~y ~step:`Post ()  (* staircase plot *)
+```
+
+### Scatter
+
+<!-- $MDX skip -->
+```ocaml
+point ~x ~y ()
+point ~x ~y ~color_by:values ~size:8. ~marker:Star ()
+point ~x ~y ~size_by:weights ()  (* variable marker size *)
+```
+
+### Bar Chart
+
+<!-- $MDX skip -->
+```ocaml
+bar ~x:categories ~height:values ()
+bar ~x:categories ~height:values ~width:0.5 ~color:Color.orange ()
+```
+
+### Histogram
+
+<!-- $MDX skip -->
+```ocaml
+hist ~x:data ()
+hist ~x:data ~bins:(`Num 30) ~density:true ~color:Color.green ()
+```
+
+### Heatmap
+
+<!-- $MDX skip -->
+```ocaml
+(* data has shape [|rows; cols|] *)
+heatmap ~data ()
+heatmap ~data ~annotate:true ~cmap:Cmap.viridis ()
+```
+
+### Fill Between
+
+<!-- $MDX skip -->
+```ocaml
+fill_between ~x ~y1:(Nx.sub y err) ~y2:(Nx.add y err) ~alpha:0.3 ()
+```
+
+### Error Bars
+
+<!-- $MDX skip -->
+```ocaml
+errorbar ~x ~y ~yerr:(`Symmetric err) ()
+errorbar ~x ~y ~yerr:(`Asymmetric (lo, hi)) ~xerr:(`Symmetric xerr) ()
 ```
 
 ## Next Steps
 
-Check out the [Matplotlib Comparison](/docs/hugin/matplotlib-comparison/) to see how hugin's functional approach differs from Matplotlib's object-oriented style.
-
-The examples in `hugin/examples/` show more complex plots including 3D visualization.
+- [Marks and Styling](/docs/hugin/marks-and-styling/) — full mark catalog and visual properties
+- [Layout and Decorations](/docs/hugin/layout-and-decorations/) — axes, scales, themes, multi-panel
+- [Colors and Colormaps](/docs/hugin/colors-and-colormaps/) — OKLCH colors and colormap reference
