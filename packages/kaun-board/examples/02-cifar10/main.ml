@@ -50,7 +50,7 @@ let () =
       ()
   in
   Printf.printf "Run ID: %s\n%!" (Kaun_board.Log.run_id logger);
-  Printf.printf "To monitor: kaun-board %s\n\n%!" (Kaun_board.Log.run_id logger);
+  Printf.printf "To monitor: dune exec kaun-board %s\n\n%!" (Kaun_board.Log.run_id logger);
 
   Printf.printf "Loading CIFAR-10...\n%!";
   let (x_train, y_train), (x_test, y_test) = Kaun_datasets.cifar10 () in
