@@ -13,6 +13,11 @@
 
 (** {1:types Types} *)
 
+type direction = [ `Min | `Max ]
+(** Whether the metric is better when minimized ([`Min]) or maximized ([`Max]).
+    Used for best-value tracking; when omitted, the store uses a tag heuristic
+    (e.g. tags containing "loss" or "error" prefer lower). *)
+
 type t =
   | Scalar of {
       step : int;  (** Training step (iteration count). *)
@@ -20,6 +25,7 @@ type t =
       tag : string;  (** Metric name (e.g. ["train/loss"]). *)
       value : float;  (** Metric value. *)
       wall_time : float;  (** Unix timestamp of the observation. *)
+      direction : direction option;  (** Minimize or maximize for best value. *)
     }  (** A scalar metric observation. *)
 
 (** {1:converting Converting} *)

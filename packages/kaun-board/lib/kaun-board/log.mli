@@ -40,17 +40,33 @@ val create :
 
 (** {1:logging Logging} *)
 
-val log_scalar : t -> step:int -> ?epoch:int -> tag:string -> float -> unit
+val log_scalar :
+  t ->
+  step:int ->
+  ?epoch:int ->
+  ?direction:Event.direction ->
+  tag:string ->
+  float ->
+  unit
 (** [log_scalar t ~step ~tag v] appends a scalar event with metric name [tag]
     and value [v].
 
-    [epoch] defaults to [None]. *)
+    [epoch] defaults to [None]. [direction] indicates whether lower or higher
+    is better for best-value tracking; when omitted, the dashboard uses a
+    heuristic (e.g. tags containing "loss" prefer lower). *)
 
-val log_scalars : t -> step:int -> ?epoch:int -> (string * float) list -> unit
+val log_scalars :
+  t ->
+  step:int ->
+  ?epoch:int ->
+  ?directions:(string * Event.direction) list ->
+  (string * float) list ->
+  unit
 (** [log_scalars t ~step pairs] appends one scalar event per [(tag, value)]
     pair.
 
-    [epoch] defaults to [None]. *)
+    [epoch] defaults to [None]. [directions] maps tag names to [direction] for
+    best-value tracking; tags not listed fall back to the heuristic. *)
 
 (** {1:accessors Accessors} *)
 

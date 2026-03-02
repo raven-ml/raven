@@ -12,6 +12,7 @@ type tag_data = {
   history : history_point list;
   best_min : best_value option;
   best_max : best_value option;
+  preferred_direction : [ `Min | `Max ] option;
 }
 
 type t = {
@@ -62,6 +63,7 @@ let update store events =
               history = [ hp ];
               best_min = Some { step = s.step; value = s.value };
               best_max = Some { step = s.step; value = s.value };
+              preferred_direction = s.direction;
             }
         | Some d ->
             let latest =
@@ -73,7 +75,18 @@ let update store events =
             let best_max =
               update_best d.best_max ~step:s.step ~value:s.value ~compare:( > )
             in
-            { latest; history = d.history @ [ hp ]; best_min; best_max }
+            let preferred_direction =
+              match s.direction with
+              | Some _ -> s.direction
+              | None -> d.preferred_direction
+            in
+            {
+              latest;
+              history = d.history @ [ hp ];
+              best_min;
+              best_max;
+              preferred_direction;
+            }
       in
       Hashtbl.replace store.by_tag s.tag data)
     events
@@ -110,12 +123,25 @@ let prefers_lower tag =
 let best_for_tag store tag =
   match Hashtbl.find_opt store.by_tag tag with
   | None -> None
-  | Some d -> if prefers_lower tag then d.best_min else d.best_max
+  | Some d ->
+      let use_min =
+        match d.preferred_direction with
+        | Some `Min -> true
+        | Some `Max -> false
+        | None -> prefers_lower tag
+      in
+      if use_min then d.best_min else d.best_max
 
 let best_metrics store =
   Hashtbl.fold
     (fun tag d acc ->
-      match if prefers_lower tag then d.best_min else d.best_max with
+      let use_min =
+        match d.preferred_direction with
+        | Some `Min -> true
+        | Some `Max -> false
+        | None -> prefers_lower tag
+      in
+      match if use_min then d.best_min else d.best_max with
       | None -> acc
       | Some best -> (tag, best) :: acc)
     store.by_tag []
