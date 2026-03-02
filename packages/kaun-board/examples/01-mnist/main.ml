@@ -48,7 +48,7 @@ let () =
       ()
   in
   Printf.printf "Run ID: %s\n%!" (Kaun_board.Log.run_id logger);
-  Printf.printf "To monitor: kaun-board %s\n\n%!" (Kaun_board.Log.run_id logger);
+  Printf.printf "To monitor: dune exec kaun-board %s\n\n%!" (Kaun_board.Log.run_id logger);
 
   Printf.printf "Loading MNIST...\n%!";
   let (x_train, y_train), (x_test, y_test) = Kaun_datasets.mnist () in
@@ -95,6 +95,14 @@ let () =
       train_batches;
     Printf.printf "\n%!";
 
+    Data.reset train_batches;
+    let train_acc =
+      Metric.eval
+        (fun (x, y) ->
+          let logits = Train.predict trainer !st x in
+          Metric.accuracy logits y)
+        train_batches
+    in
     (* Evaluate *)
     Data.reset test_batches;
     let test_acc =
@@ -107,10 +115,14 @@ let () =
 
     let avg_loss = Metric.mean tracker "loss" in
     Kaun_board.Log.log_scalars logger ~step:!global_step ~epoch
-      [ ("train/loss_avg", avg_loss); ("test/accuracy", test_acc) ];
+      [
+        ("train/loss_avg", avg_loss);
+        ("train/accuracy", train_acc);
+        ("test/accuracy", test_acc);
+      ];
 
-    Printf.printf "epoch %d  train_loss: %.4f  test_acc: %.2f%%\n%!" epoch
-      avg_loss (test_acc *. 100.)
+    Printf.printf "epoch %d  train_loss: %.4f  train_acc: %.2f%%  test_acc: %.2f%%\n%!"
+      epoch avg_loss (train_acc *. 100.) (test_acc *. 100.)
   done;
 
   Kaun_board.Log.close logger;
