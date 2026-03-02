@@ -16,6 +16,7 @@ type model = {
   metrics_state : Metrics.state;
   sys_panel : Sys_panel.t;
   mode : mode;
+  chart_smooth : int;  (* 0 = off, 1..3 = smoothness level *)
 }
 
 and mode = Dashboard | Detail of string
@@ -26,6 +27,7 @@ type msg =
   | Metrics_msg of Metrics.msg
   | Open_metric of string
   | Close_metric
+  | Toggle_smooth
 
 (* Helpers *)
 
@@ -69,7 +71,16 @@ let view_dashboard m =
       Footer.view ();
     ]
 
+let smooth_alpha = function 1 -> 0.5 | 2 -> 0.3 | 3 -> 0.15 | _ -> 0.2
+
 let view_detail m tag =
+  let smooth_label =
+    if m.chart_smooth = 0 then "  \xe2\x80\xa2  [S] smooth"
+    else Printf.sprintf "  \xe2\x80\xa2  [S] smooth [%d]" m.chart_smooth
+  in
+  let smooth_param =
+    if m.chart_smooth = 0 then None else Some (smooth_alpha m.chart_smooth)
+  in
   box ~flex_direction:Column
     ~size:{ width = pct 100; height = pct 100 }
     ~background:(Ansi.Color.of_rgb 20 20 30)
@@ -82,7 +93,7 @@ let view_detail m tag =
               (Ansi.Style.make ~bold:true
                  ~fg:(Ansi.Color.grayscale ~level:14)
                  ())
-            "Chart View  \xe2\x80\xa2  [Esc/q] back";
+            ("Chart View  \xe2\x80\xa2  [Esc/q] back" ^ smooth_label);
         ];
       box ~flex_grow:1.0 ~justify_content:Center ~align_items:Center
         ~size:{ width = pct 100; height = pct 100 }
@@ -93,6 +104,7 @@ let view_detail m tag =
               (Option.map
                  (fun (b : Store.best_value) -> b.value)
                  (Store.best_for_tag m.store tag))
+            ~smooth:smooth_param
             ~size:{ width = pct 80; height = pct 80 };
         ];
     ]
@@ -121,6 +133,7 @@ let init ~run =
       metrics_state;
       sys_panel;
       mode = Dashboard;
+      chart_smooth = 0;
     },
     Cmd.none )
 
@@ -139,6 +152,11 @@ let update msg m =
       ({ m with metrics_state = metrics_state' }, Cmd.none)
   | Open_metric tag -> ({ m with mode = Detail tag }, Cmd.none)
   | Close_metric -> ({ m with mode = Dashboard }, Cmd.none)
+  | Toggle_smooth -> (
+      match m.mode with
+      | Dashboard -> (m, Cmd.none)
+      | Detail _ ->
+          ({ m with chart_smooth = (m.chart_smooth + 1) mod 4 }, Cmd.none))
   | Quit ->
       Run.close_events m.stream;
       (m, Cmd.quit)
@@ -152,6 +170,14 @@ let subscriptions m =
       Sub.on_key (fun ev ->
           let key_data = Mosaic_ui.Event.Key.data ev in
           match key_data.key with
+          | Char c when Uchar.equal c (Uchar.of_char 's') -> (
+              match m.mode with
+              | Dashboard -> None
+              | Detail _ -> Some Toggle_smooth)
+          | Char c when Uchar.equal c (Uchar.of_char 'S') -> (
+              match m.mode with
+              | Dashboard -> None
+              | Detail _ -> Some Toggle_smooth)
           | Char c when Uchar.equal c (Uchar.of_char 'q') -> (
               match m.mode with
               | Dashboard -> Some Quit
