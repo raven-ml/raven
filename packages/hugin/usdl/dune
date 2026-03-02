@@ -1,7 +1,6 @@
 (library
  (name usdl)
  (public_name hugin.usdl)
- (wrapped false)
  (foreign_stubs
   (language c)
   (names usdl_stubs)

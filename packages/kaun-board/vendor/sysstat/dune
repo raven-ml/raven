@@ -1,8 +1,7 @@
 (library
- (name kaun_board_sysstat)
+ (name sysstat)
  (public_name kaun-board.sysstat)
  (modules sysstat)
- (wrapped false)
  (libraries unix str)
  (foreign_stubs
   (language c)

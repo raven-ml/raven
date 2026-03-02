@@ -1,7 +1,6 @@
 (library
  (name ucairo)
  (public_name hugin.ucairo)
- (wrapped false)
  (foreign_stubs
   (language c)
   (names ucairo_stubs)
