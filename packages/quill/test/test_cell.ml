@@ -51,7 +51,7 @@ let transformation_tests =
         let c =
           Cell.code "x"
           |> Cell.append_output (Cell.Stdout "a")
-          |> Cell.append_output (Cell.Stdout "b")
+          |> Cell.append_output (Cell.Stderr "b")
         in
         match c with
         | Cell.Code { outputs; _ } -> equal int 2 (List.length outputs)

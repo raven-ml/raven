@@ -98,7 +98,7 @@ let execution_state_tests =
         let s = Session.mark_running (Cell.id c) s in
         let s = Session.apply_output (Cell.id c) (Cell.Stdout "val x = 1") s in
         let s =
-          Session.apply_output (Cell.id c) (Cell.Stdout "more output") s
+          Session.apply_output (Cell.id c) (Cell.Stderr "more output") s
         in
         let s = Session.finish_execution (Cell.id c) ~success:true s in
         (match Session.cell_status (Cell.id c) s with
