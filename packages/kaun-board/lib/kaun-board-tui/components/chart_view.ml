@@ -67,13 +67,15 @@ let latest_value history =
 
 let view ~tag ~history_for_tag ~best ~size ~smooth =
   let history = history_for_tag tag in
-  let display_history = if smooth then ema 0.2 history else history in
+  let display_history =
+    match smooth with None -> history | Some alpha -> ema alpha history
+  in
   let title =
     match latest_value history with
     | None -> tag
     | Some v -> Printf.sprintf "%s [%.4f]" tag v
   in
-  let title = if smooth then title ^ " (EMA)" else title in
+  let title = if Option.is_some smooth then title ^ " (EMA)" else title in
   box ~flex_direction:Column ~gap:(gap 1) ~align_items:Center ~size
     [
       box ~border:true ~title ~padding:(padding 1)

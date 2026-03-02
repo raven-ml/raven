@@ -16,7 +16,7 @@ type model = {
   metrics_state : Metrics.state;
   sys_panel : Sys_panel.t;
   mode : mode;
-  chart_smooth : bool;
+  chart_smooth : int;  (* 0 = off, 1..3 = smoothness level *)
 }
 
 and mode = Dashboard | Detail of string
@@ -71,10 +71,15 @@ let view_dashboard m =
       Footer.view ();
     ]
 
+let smooth_alpha = function 1 -> 0.5 | 2 -> 0.3 | 3 -> 0.15 | _ -> 0.2
+
 let view_detail m tag =
   let smooth_label =
-    if m.chart_smooth then "  \xe2\x80\xa2  [S] smooth [active]"
-    else "  \xe2\x80\xa2  [S] smooth"
+    if m.chart_smooth = 0 then "  \xe2\x80\xa2  [S] smooth"
+    else Printf.sprintf "  \xe2\x80\xa2  [S] smooth [%d]" m.chart_smooth
+  in
+  let smooth_param =
+    if m.chart_smooth = 0 then None else Some (smooth_alpha m.chart_smooth)
   in
   box ~flex_direction:Column
     ~size:{ width = pct 100; height = pct 100 }
@@ -99,7 +104,7 @@ let view_detail m tag =
               (Option.map
                  (fun (b : Store.best_value) -> b.value)
                  (Store.best_for_tag m.store tag))
-            ~smooth:m.chart_smooth
+            ~smooth:smooth_param
             ~size:{ width = pct 80; height = pct 80 };
         ];
     ]
@@ -128,7 +133,7 @@ let init ~run =
       metrics_state;
       sys_panel;
       mode = Dashboard;
-      chart_smooth = false;
+      chart_smooth = 0;
     },
     Cmd.none )
 
@@ -151,7 +156,7 @@ let update msg m =
       match m.mode with
       | Dashboard -> (m, Cmd.none)
       | Detail _ ->
-          ({ m with chart_smooth = not m.chart_smooth }, Cmd.none))
+          ({ m with chart_smooth = (m.chart_smooth + 1) mod 4 }, Cmd.none))
   | Quit ->
       Run.close_events m.stream;
       (m, Cmd.quit)
