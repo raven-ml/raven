@@ -72,7 +72,10 @@ let view_dashboard m =
     ]
 
 let view_detail m tag =
-  let smooth_hint = if m.chart_smooth then "  \xe2\x80\xa2  [S] EMA on" else "" in
+  let smooth_label =
+    if m.chart_smooth then "  \xe2\x80\xa2  [S] smooth [active]"
+    else "  \xe2\x80\xa2  [S] smooth"
+  in
   box ~flex_direction:Column
     ~size:{ width = pct 100; height = pct 100 }
     ~background:(Ansi.Color.of_rgb 20 20 30)
@@ -85,8 +88,7 @@ let view_detail m tag =
               (Ansi.Style.make ~bold:true
                  ~fg:(Ansi.Color.grayscale ~level:14)
                  ())
-            ("Chart View  \xe2\x80\xa2  [Esc/q] back  \xe2\x80\xa2  [S] smooth"
-             ^ smooth_hint);
+            ("Chart View  \xe2\x80\xa2  [Esc/q] back" ^ smooth_label);
         ];
       box ~flex_grow:1.0 ~justify_content:Center ~align_items:Center
         ~size:{ width = pct 100; height = pct 100 }
