@@ -120,28 +120,24 @@ let prefers_lower tag =
   let tag_lower = String.lowercase_ascii tag in
   contains_substring tag_lower "loss" || contains_substring tag_lower "error"
 
+let use_min_for_best tag d =
+  match d.preferred_direction with
+  | Some `Min -> true
+  | Some `Max -> false
+  | None -> prefers_lower tag
+
 let best_for_tag store tag =
   match Hashtbl.find_opt store.by_tag tag with
   | None -> None
   | Some d ->
-      let use_min =
-        match d.preferred_direction with
-        | Some `Min -> true
-        | Some `Max -> false
-        | None -> prefers_lower tag
-      in
-      if use_min then d.best_min else d.best_max
+      if use_min_for_best tag d then d.best_min else d.best_max
 
 let best_metrics store =
   Hashtbl.fold
     (fun tag d acc ->
-      let use_min =
-        match d.preferred_direction with
-        | Some `Min -> true
-        | Some `Max -> false
-        | None -> prefers_lower tag
-      in
-      match if use_min then d.best_min else d.best_max with
+      match
+        if use_min_for_best tag d then d.best_min else d.best_max
+      with
       | None -> acc
       | Some best -> (tag, best) :: acc)
     store.by_tag []
