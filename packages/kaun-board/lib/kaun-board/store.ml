@@ -12,7 +12,7 @@ type tag_data = {
   history : history_point list;
   best_min : best_value option;
   best_max : best_value option;
-  preferred_direction : [ `Min | `Max ] option;
+  preferred_direction : [ `Min | `Max ];
 }
 
 type t = {
@@ -49,6 +49,27 @@ let update_best best ~step ~value ~compare =
   | None -> Some candidate
   | Some prev -> if compare value prev.value then Some candidate else Some prev
 
+let contains_substring haystack needle =
+  let hlen = String.length haystack in
+  let nlen = String.length needle in
+  if nlen > hlen then false
+  else
+    let rec check i =
+      if i > hlen - nlen then false
+      else if String.sub haystack i nlen = needle then true
+      else check (i + 1)
+    in
+    check 0
+
+let prefers_lower tag =
+  let tag_lower = String.lowercase_ascii tag in
+  contains_substring tag_lower "loss" || contains_substring tag_lower "error"
+
+let resolve_direction tag direction_opt =
+  match direction_opt with
+  | Some d -> d
+  | None -> if prefers_lower tag then `Min else `Max
+
 let update store events =
   List.iter
     (fun (Event.Scalar s) ->
@@ -63,7 +84,7 @@ let update store events =
               history = [ hp ];
               best_min = Some { step = s.step; value = s.value };
               best_max = Some { step = s.step; value = s.value };
-              preferred_direction = s.direction;
+              preferred_direction = resolve_direction s.tag s.direction;
             }
         | Some d ->
             let latest =
@@ -77,7 +98,7 @@ let update store events =
             in
             let preferred_direction =
               match s.direction with
-              | Some _ -> s.direction
+              | Some d' -> d'
               | None -> d.preferred_direction
             in
             {
@@ -102,41 +123,19 @@ let history_for_tag store tag =
   | None -> []
   | Some d -> List.map (fun (p : history_point) -> (p.step, p.value)) d.history
 
-(* Heuristic: metrics with "loss" or "error" in the name prefer lower values *)
-
-let contains_substring haystack needle =
-  let hlen = String.length haystack in
-  let nlen = String.length needle in
-  if nlen > hlen then false
-  else
-    let rec check i =
-      if i > hlen - nlen then false
-      else if String.sub haystack i nlen = needle then true
-      else check (i + 1)
-    in
-    check 0
-
-let prefers_lower tag =
-  let tag_lower = String.lowercase_ascii tag in
-  contains_substring tag_lower "loss" || contains_substring tag_lower "error"
-
-let use_min_for_best tag d =
-  match d.preferred_direction with
-  | Some `Min -> true
-  | Some `Max -> false
-  | None -> prefers_lower tag
+let use_min_for_best d = d.preferred_direction = `Min
 
 let best_for_tag store tag =
   match Hashtbl.find_opt store.by_tag tag with
   | None -> None
   | Some d ->
-      if use_min_for_best tag d then d.best_min else d.best_max
+      if use_min_for_best d then d.best_min else d.best_max
 
 let best_metrics store =
   Hashtbl.fold
     (fun tag d acc ->
       match
-        if use_min_for_best tag d then d.best_min else d.best_max
+        if use_min_for_best d then d.best_min else d.best_max
       with
       | None -> acc
       | Some best -> (tag, best) :: acc)
