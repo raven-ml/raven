@@ -21,9 +21,8 @@ in
 Printf.printf "To monitor: kaun-board %s\n" (Kaun_board.Log.run_id logger);
 
 (* In your training loop *)
-Kaun_board.Log.log_scalar logger ~step ~epoch ~tag:"train/loss" loss;
-Kaun_board.Log.log_scalars logger ~step ~epoch
-  [ ("train/loss_avg", avg_loss); ("test/accuracy", test_acc) ];
+Kaun_board.Log.scalars logger ~step ~epoch
+  [ ("train/loss", loss); ("train/loss_avg", avg_loss); ("test/accuracy", test_acc) ];
 
 Kaun_board.Log.close logger
 ```
