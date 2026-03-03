@@ -46,7 +46,7 @@ module Fixtures = struct
 end
 
 let force_float_sum df column =
-  let total = Talon.Agg.Float.sum df column in
+  let total = Talon.Agg.sum df column in
   ignore total
 
 let bench_filter df =
@@ -70,7 +70,7 @@ let bench_group df =
   in
   let total =
     List.fold_left
-      (fun acc (_key, group_df) -> acc +. Talon.Agg.Float.sum group_df "amount")
+      (fun acc (_key, group_df) -> acc +. Talon.Agg.sum group_df "amount")
       0. groups
   in
   ignore total

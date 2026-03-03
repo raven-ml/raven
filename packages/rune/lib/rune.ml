@@ -22,6 +22,13 @@ let jvp = Jvp.jvp
 let jvp_aux = Jvp.jvp_aux
 let jvps = Jvp.jvps
 
+(* Custom differentiation rules *)
+
+let custom_vjp = Custom_diff.custom_vjp
+let custom_vjps = Custom_diff.custom_vjps
+let custom_jvp = Custom_diff.custom_jvp
+let custom_jvps = Custom_diff.custom_jvps
+
 (* Gradient checking *)
 
 type method_ = Finite_diff.method_

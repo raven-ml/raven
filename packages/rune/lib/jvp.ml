@@ -747,6 +747,24 @@ let make_handler dual_map =
               let tan = ifft d.tangent ~axes in
               register res { primal = res; tangent = tan };
               continue k res)
+      (* Custom differentiation *)
+      | Autodiff.E_ad_mode_query -> Some (fun k -> continue k `JVP)
+      | Autodiff.E_custom_jvp { cj_jvp } ->
+          Some
+            (fun k ->
+              let get_tangent packed =
+                let t : (_, _) t = Obj.obj packed in
+                Obj.repr (get_dual t).tangent
+              in
+              let primal_packed, tangent_packed =
+                Autodiff.without_autodiff (fun () -> cj_jvp get_tangent)
+              in
+              let primal : (_, _) t = Obj.obj primal_packed in
+              (* tangent has the same representation as primal — the user's
+                 jvp_rule returns matching types, but OCaml can't prove it *)
+              let tangent : (_, _) t = Obj.obj tangent_packed in
+              register primal { primal; tangent = Obj.magic tangent };
+              continue k primal_packed)
       | _ -> None
   in
   { retc = Fun.id; exnc = raise; effc }

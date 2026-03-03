@@ -48,7 +48,8 @@ let () =
       ()
   in
   Printf.printf "Run ID: %s\n%!" (Kaun_board.Log.run_id logger);
-  Printf.printf "To monitor: dune exec kaun-board %s\n\n%!" (Kaun_board.Log.run_id logger);
+  Printf.printf "To monitor: dune exec kaun-board %s\n\n%!"
+    (Kaun_board.Log.run_id logger);
 
   Printf.printf "Loading MNIST...\n%!";
   let (x_train, y_train), (x_test, y_test) = Kaun_datasets.mnist () in
@@ -121,7 +122,8 @@ let () =
         ("test/accuracy", test_acc);
       ];
 
-    Printf.printf "epoch %d  train_loss: %.4f  train_acc: %.2f%%  test_acc: %.2f%%\n%!"
+    Printf.printf
+      "epoch %d  train_loss: %.4f  train_acc: %.2f%%  test_acc: %.2f%%\n%!"
       epoch avg_loss (train_acc *. 100.) (test_acc *. 100.)
   done;
 

@@ -81,7 +81,6 @@
   dune
   (nx
    (= :version))
-  re
   (windtrap :with-test)
   (mdx :with-test))
  (tags

@@ -76,7 +76,7 @@ Hugin renders plots directly in the notebook.
 let x = Nx.linspace Nx.float32 0. 6.28 200
 let y = Nx.sin x
 
-let _ =
+let _fig =
   Hugin.line ~x ~y ()
   |> Hugin.title "A sine wave"
   |> Hugin.xlabel "x" |> Hugin.ylabel "y"
@@ -99,17 +99,19 @@ let gradient = Rune.grad f x                   (* f'(2) = 3·2² = 12 *)
 Plot a function alongside its derivative.
 
 ```ocaml
-let xs = Nx.linspace Nx.float32 (-2.) 3. 200
-let ys = Nx.pow_s xs 3.
-let gs = Nx.mul_s (Nx.pow_s xs 2.) 3.
+let f x = Nx.pow_s x 3.
 
-let _ =
+let xs = Nx.linspace Nx.float32 (-2.) 3. 200
+let ys = f xs
+let gs = Rune.grad f xs
+
+let _fig =
   Hugin.layers [
     Hugin.line ~x:xs ~y:ys ~label:"f(x) = x³" ();
     Hugin.line ~x:xs ~y:gs ~label:"f'(x) = 3x²" ();
   ]
   |> Hugin.xlabel "x" |> Hugin.ylabel "y"
-  |> Hugin.legend ()
+  |> Hugin.legend
 ```
 |}
 
@@ -148,14 +150,6 @@ let run_once inplace path =
     Printf.printf "Updated %s\n%!" path)
   else print_string result
 
-let run_cmd inplace path =
-  if not (Sys.file_exists path) then (
-    Printf.eprintf "Error: %s not found\n%!" path;
-    exit 1);
-  run_once inplace path
-
-(* ───── Watch ───── *)
-
 let get_mtime path =
   try Some (Unix.stat path).Unix.st_mtime with Unix.Unix_error _ -> None
 
@@ -174,18 +168,21 @@ let rec watch_loop path last_mtime =
       watch_loop path new_mtime
   | Some _ -> watch_loop path last_mtime
 
-let watch_cmd path =
+let run_cmd watch inplace path =
   if not (Sys.file_exists path) then (
     Printf.eprintf "Error: %s not found\n%!" path;
     exit 1);
-  run_once true path;
-  match get_mtime path with
-  | None ->
-      Printf.eprintf "Error: Cannot watch %s\n%!" path;
-      exit 1
-  | Some mtime ->
-      Printf.printf "\nWatching %s for changes... (Ctrl-C to stop)\n%!" path;
-      watch_loop path mtime
+  if watch then begin
+    run_once true path;
+    match get_mtime path with
+    | None ->
+        Printf.eprintf "Error: Cannot watch %s\n%!" path;
+        exit 1
+    | Some mtime ->
+        Printf.printf "\nWatching %s for changes... (Ctrl-C to stop)\n%!" path;
+        watch_loop path mtime
+  end
+  else run_once inplace path
 
 (* ───── Clean ───── *)
 
@@ -234,26 +231,22 @@ let port_flag =
     value & opt int 8888
     & info [ "port"; "p" ] ~docv:"PORT" ~doc:"Port to listen on (default 8888).")
 
-(* Default: REPL when no args, notebook TUI when file given *)
+(* Default: REPL when no args *)
 let default_term =
   Term.(
-    const (fun path ->
-        match path with
-        | None ->
-            if Unix.isatty Unix.stdin then Quill_repl.run ~create_kernel
-            else Quill_repl.run_pipe ~create_kernel
-        | Some path ->
-            ensure_file path;
-            Quill_tui.run ~create_kernel path)
-    $ Arg.(
-        value
-        & pos 0 (some string) None
-        & info [] ~docv:"FILE" ~doc:"Notebook file to open (TUI mode)."))
+    const (fun () ->
+        if Unix.isatty Unix.stdin then Quill_repl.run ~create_kernel
+        else Quill_repl.run_pipe ~create_kernel)
+    $ const ())
 
-(* notebook: explicit TUI subcommand *)
-let notebook_term =
+let watch_flag =
+  Arg.(
+    value & flag & info [ "watch"; "w" ] ~doc:"Re-execute on every file save.")
+
+(* note: TUI *)
+let note_term =
   let doc = "Open a notebook in the terminal UI." in
-  Cmd.v (Cmd.info "notebook" ~doc)
+  Cmd.v (Cmd.info "note" ~doc)
     Term.(
       const (fun path ->
           ensure_file path;
@@ -274,16 +267,11 @@ let serve_term =
       $ port_flag
       $ optional_path_arg "notebook.md")
 
-(* run: batch execution *)
+(* run: batch execution, optionally watching *)
 let run_term =
   let doc = "Execute all code blocks in a notebook." in
   Cmd.v (Cmd.info "run" ~doc)
-    Term.(const run_cmd $ inplace_flag $ required_path_arg)
-
-(* watch: live editing *)
-let watch_term =
-  let doc = "Watch a notebook and re-execute on every save." in
-  Cmd.v (Cmd.info "watch" ~doc) Term.(const watch_cmd $ required_path_arg)
+    Term.(const run_cmd $ watch_flag $ inplace_flag $ required_path_arg)
 
 (* clean: strip outputs *)
 let clean_term =
@@ -301,6 +289,6 @@ let quill_cmd =
   let doc = "Interactive OCaml toplevel and notebooks." in
   let info = Cmd.info "quill" ~version:"1.0.0" ~doc in
   Cmd.group ~default:default_term info
-    [ notebook_term; serve_term; run_term; watch_term; clean_term; new_term ]
+    [ note_term; serve_term; run_term; clean_term; new_term ]
 
 let () = exit (Cmd.eval quill_cmd)

@@ -144,6 +144,67 @@ val detach : ('a, 'b) Nx.t -> ('a, 'b) Nx.t
 
     See also {!no_grad}. *)
 
+(** {1:custom Custom differentiation rules}
+
+    Override automatic differentiation with user-supplied forward and backward
+    (or tangent) rules. Useful for implicit differentiation, surrogate
+    gradients, and other computations where the derivative is algorithmically
+    distinct from the primal.
+
+    Under reverse-mode AD ({!grad}, {!vjp}), the custom backward rule is used
+    instead of tracing through the forward function. Under forward-mode AD
+    ({!jvp}) or outside AD, the forward function is traced normally.
+
+    {b Higher-order derivatives.} The backward function runs outside the inner
+    handler's continuation, so its {!Nx} operations are traced by enclosing AD
+    handlers. This means [grad (fun x -> grad (custom_vjp_fn) x) x] works
+    correctly. *)
+
+val custom_vjp :
+  fwd:(('a, 'b) Nx.t -> ('c, 'd) Nx.t * 'res) ->
+  bwd:('res -> ('c, 'd) Nx.t -> ('a, 'b) Nx.t) ->
+  ('a, 'b) Nx.t ->
+  ('c, 'd) Nx.t
+(** [custom_vjp ~fwd ~bwd x] computes [fwd x] with a custom VJP rule.
+
+    [fwd] returns [(y, residuals)] where [y] is the output and [residuals] is
+    auxiliary data saved for the backward pass (e.g. intermediate values needed
+    by the backward rule). [residuals] is not differentiated.
+
+    [bwd residuals g] receives the output cotangent [g] and returns the input
+    cotangent. It is only called under reverse-mode AD ({!grad}, {!vjp}); under
+    forward-mode AD ({!jvp}) or outside AD, [fwd] is traced normally instead. *)
+
+val custom_vjps :
+  fwd:(('a, 'b) Nx.t list -> ('c, 'd) Nx.t * 'res) ->
+  bwd:('res -> ('c, 'd) Nx.t -> ('a, 'b) Nx.t list) ->
+  ('a, 'b) Nx.t list ->
+  ('c, 'd) Nx.t
+(** [custom_vjps ~fwd ~bwd xs] is like {!custom_vjp} for functions with multiple
+    inputs. [bwd] must return a list of the same length as [xs]. *)
+
+val custom_jvp :
+  fwd:(('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
+  jvp_rule:(('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('c, 'd) Nx.t * ('c, 'd) Nx.t) ->
+  ('a, 'b) Nx.t ->
+  ('c, 'd) Nx.t
+(** [custom_jvp ~fwd ~jvp_rule x] computes [fwd x] with a custom JVP rule.
+
+    [jvp_rule primal tangent] receives the primal input and its tangent, and
+    returns [(y, dy)] where [y] is the primal output and [dy] is its tangent. It
+    is only called under forward-mode AD ({!jvp}); under reverse-mode AD
+    ({!grad}, {!vjp}) or outside AD, [fwd] is traced normally instead. *)
+
+val custom_jvps :
+  fwd:(('a, 'b) Nx.t list -> ('c, 'd) Nx.t) ->
+  jvp_rule:
+    (('a, 'b) Nx.t list -> ('a, 'b) Nx.t list -> ('c, 'd) Nx.t * ('c, 'd) Nx.t) ->
+  ('a, 'b) Nx.t list ->
+  ('c, 'd) Nx.t
+(** [custom_jvps ~fwd ~jvp_rule xs] is like {!custom_jvp} for functions with
+    multiple inputs. [jvp_rule primals tangents] receives a list of primals and
+    their tangents, and returns [(y, dy)]. *)
+
 (** {1:gradcheck Gradient checking}
 
     Compare autodiff gradients against finite-difference approximations. Useful

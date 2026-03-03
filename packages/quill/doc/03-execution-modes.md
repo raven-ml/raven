@@ -1,7 +1,7 @@
 # Execution Modes
 
-Quill provides six execution modes: the interactive REPL, the terminal
-notebook UI, a web frontend, batch execution, watch mode, and clean.
+Quill provides five execution modes: the interactive REPL, the terminal
+notebook UI, a web frontend, batch execution (with optional watch), and clean.
 
 ## Interactive REPL
 
@@ -40,7 +40,7 @@ Open a notebook in the TUI:
 
 <!-- $MDX skip -->
 ```bash
-quill notebook.md
+quill note notebook.md
 ```
 
 If the file doesn't exist, Quill creates it with a starter template.
@@ -188,7 +188,7 @@ block.
 
 <!-- $MDX skip -->
 ```bash
-quill watch notebook.md
+quill run --watch notebook.md
 ```
 
 Watches the file for changes and re-executes all cells on every save,
@@ -201,11 +201,11 @@ Watch mode runs until interrupted with `Ctrl-C`.
 
 ### The Live Editing Workflow
 
-`quill watch` creates a live notebook experience using your own editor:
+`quill run -w` creates a live notebook experience using your own editor:
 
 1. Open two terminals (or splits in tmux / zellij)
 2. Terminal 1: open the notebook in your editor (`vim notebook.md`)
-3. Terminal 2: `quill watch notebook.md`
+3. Terminal 2: `quill run -w notebook.md`
 4. Edit and save in terminal 1. Terminal 2 detects the change,
    re-executes all cells, and writes outputs back into the file.
 5. Your editor picks up the file change (vim with `:set autoread`,
