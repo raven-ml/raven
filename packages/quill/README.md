@@ -22,7 +22,7 @@ ecosystem.
   diagnostics
 - Batch execution: `quill run` executes all code blocks and prints or
   saves results
-- Live editing: `quill watch` re-executes on file change for a live
+- Live editing: `quill run --watch` re-executes on file change for a live
   editing workflow
 - Output format: cell outputs stored as HTML comments, invisible in
   rendered markdown
@@ -37,7 +37,7 @@ ecosystem.
 quill
 
 # Open a notebook in the terminal UI
-quill notebook.md
+quill note notebook.md
 
 # Open in the browser
 quill serve notebook.md
@@ -46,7 +46,7 @@ quill serve notebook.md
 quill run notebook.md
 
 # Live-edit: outputs update on every save
-quill watch notebook.md
+quill run -w notebook.md
 ```
 
 ## Contributing

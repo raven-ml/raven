@@ -51,7 +51,7 @@ Create a notebook with a starter template:
 <!-- $MDX skip -->
 ```bash
 quill new notebook.md
-quill notebook.md
+quill note notebook.md
 ```
 
 This opens the terminal UI. Run each cell with `Enter` to see arrays,
@@ -62,14 +62,14 @@ You can also create a named notebook:
 <!-- $MDX skip -->
 ```bash
 quill new analysis.md
-quill analysis.md
+quill note analysis.md
 ```
 
 Or open an existing notebook:
 
 <!-- $MDX skip -->
 ```bash
-quill notebook.md
+quill note notebook.md
 ```
 
 ## Creating a Notebook
@@ -125,7 +125,7 @@ each code block. The notebook remains valid, readable markdown.
 
 <!-- $MDX skip -->
 ```bash
-quill watch notebook.md
+quill run --watch notebook.md
 ```
 
 Watches the file for changes (polling every second). On each save,
@@ -135,11 +135,11 @@ results update in the file.
 
 ## Running with the TUI
 
-The default command opens the terminal UI:
+Open a notebook in the terminal UI:
 
 <!-- $MDX skip -->
 ```bash
-quill notebook.md
+quill note notebook.md
 ```
 
 The TUI displays a full-screen interface with:

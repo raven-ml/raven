@@ -12,7 +12,7 @@ web frontend, or batch evaluator.
 - **Terminal UI**: full-screen TUI for cell navigation, execution, and output display
 - **Web frontend**: `quill serve` opens a browser-based notebook with CodeMirror 6 editor, real-time execution, autocompletion, and diagnostics
 - **Batch execution**: `quill run` executes all code blocks and prints or saves results
-- **Watch mode**: `quill watch` re-executes on file change for a live editing workflow
+- **Watch mode**: `quill run --watch` re-executes on file change for a live editing workflow
 - **Output format**: cell outputs stored as `<!-- quill:output -->` HTML comments, invisible in rendered markdown
 - **Raven integrated**: Nx, Rune, Kaun, Hugin, Sowilo, Talon, Brot, and Fehu are pre-loaded
 
@@ -29,7 +29,7 @@ Or open a notebook in the terminal UI:
 
 <!-- $MDX skip -->
 ```bash
-quill notebook.md
+quill note notebook.md
 ```
 
 Or in the browser:
@@ -50,4 +50,4 @@ quill run notebook.md
 
 - [Getting Started](01-getting-started/) — REPL, notebooks, execution modes
 - [Notebook Format](02-notebook-format/) — how markdown becomes cells, how outputs are stored
-- [Execution Modes](03-execution-modes/) — REPL, TUI, web, run, watch, and clean
+- [Execution Modes](03-execution-modes/) — REPL, TUI, web, run, and clean
