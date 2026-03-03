@@ -16,7 +16,7 @@ type model = {
   metrics_state : Metrics.state;
   sys_panel : Sys_panel.t;
   mode : mode;
-  chart_smooth : int;  (* 0 = off, 1..3 = smoothness level *)
+  chart_smooth : int; (* 0 = off, 1..3 = smoothness level *)
 }
 
 and mode = Dashboard | Detail of string
