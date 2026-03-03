@@ -18,12 +18,17 @@ open Talon
 
 let () =
   let df = create [
-    "name", Col.string_list ["Alice"; "Bob"; "Charlie"];
-    "age", Col.int32_list [25l; 30l; 35l];
-    "score", Col.float64_list [92.5; 87.3; 95.1];
+    ("name", Col.string [|"Alice"; "Bob"; "Charlie"|]);
+    ("age", Col.int32 [|25l; 30l; 35l|]);
+    ("score", Col.float64 [|92.5; 87.3; 95.1|]);
   ] in
   print df
 ```
+Shape: (3, 3)
+name	age	score
+Alice	25	92.5
+Bob	30	87.3
+Charlie	35	95.1
 
 ## Next Steps
 

@@ -76,180 +76,42 @@ let columns_of_rows na_values dtype_spec column_names data_rows =
             with Not_found -> detect_dtype na_values values)
         | None -> detect_dtype na_values values
       in
+      let parse_col values ~parse ~make =
+        let arr =
+          List.map
+            (fun v ->
+              if is_null_value na_values v then None
+              else try Some (parse v) with _ -> None)
+            values
+          |> Array.of_list
+        in
+        make arr
+      in
       let column =
         match dtype with
         | `Float32 ->
-            let arr =
-              List.map
-                (fun v ->
-                  if is_null_value na_values v then None
-                  else try Some (float_of_string v) with _ -> None)
-                values
-              |> Array.of_list
-            in
-            Talon.Col.float32_opt arr
+            parse_col values ~parse:float_of_string ~make:Talon.Col.float32_opt
         | `Float64 ->
-            let arr =
-              List.map
-                (fun v ->
-                  if is_null_value na_values v then None
-                  else try Some (float_of_string v) with _ -> None)
-                values
-              |> Array.of_list
-            in
-            Talon.Col.float64_opt arr
+            parse_col values ~parse:float_of_string ~make:Talon.Col.float64_opt
         | `Int32 ->
-            let arr =
-              List.map
-                (fun v ->
-                  if is_null_value na_values v then None
-                  else try Some (Int32.of_string v) with _ -> None)
-                values
-              |> Array.of_list
-            in
-            Talon.Col.int32_opt arr
+            parse_col values ~parse:Int32.of_string ~make:Talon.Col.int32_opt
         | `Int64 ->
-            let arr =
-              List.map
-                (fun v ->
-                  if is_null_value na_values v then None
-                  else try Some (Int64.of_string v) with _ -> None)
-                values
-              |> Array.of_list
-            in
-            Talon.Col.int64_opt arr
+            parse_col values ~parse:Int64.of_string ~make:Talon.Col.int64_opt
         | `Bool ->
-            let arr =
-              List.map
-                (fun v ->
-                  if is_null_value na_values v then None
-                  else
-                    match String.lowercase_ascii v with
-                    | "true" | "t" | "yes" | "y" | "1" -> Some true
-                    | "false" | "f" | "no" | "n" | "0" -> Some false
-                    | _ -> None)
-                values
-              |> Array.of_list
-            in
-            Talon.Col.bool_opt arr
-        | `String ->
-            let arr =
-              List.map
-                (fun v -> if is_null_value na_values v then None else Some v)
-                values
-              |> Array.of_list
-            in
-            Talon.Col.string_opt arr
+            parse_col values ~make:Talon.Col.bool_opt ~parse:(fun v ->
+                match String.lowercase_ascii v with
+                | "true" | "t" | "yes" | "y" | "1" -> true
+                | "false" | "f" | "no" | "n" | "0" -> false
+                | _ -> raise Exit)
+        | `String -> parse_col values ~parse:Fun.id ~make:Talon.Col.string_opt
       in
       (name, column))
     column_names
 
-(* Returns a function [int -> string] for a column, extracting the underlying
-   array once so that repeated row access is O(1) per cell. *)
-let col_to_string_fn na_repr col =
-  match col with
-  | Talon.Col.P (dtype, tensor, mask) -> (
-      let is_null =
-        match mask with Some m -> fun i -> m.(i) | None -> fun _ -> false
-      in
-      match dtype with
-      | Nx.Float32 ->
-          let arr : float array = Nx.to_array tensor in
-          fun i ->
-            if is_null i then na_repr
-            else
-              let v = arr.(i) in
-              if classify_float v = FP_nan then na_repr else string_of_float v
-      | Nx.Float64 ->
-          let arr : float array = Nx.to_array tensor in
-          fun i ->
-            if is_null i then na_repr
-            else
-              let v = arr.(i) in
-              if classify_float v = FP_nan then na_repr else string_of_float v
-      | Nx.Float16 ->
-          let arr : float array = Nx.to_array tensor in
-          fun i ->
-            if is_null i then na_repr
-            else
-              let v = arr.(i) in
-              if classify_float v = FP_nan then na_repr else string_of_float v
-      | Nx.BFloat16 ->
-          let arr : float array = Nx.to_array tensor in
-          fun i ->
-            if is_null i then na_repr
-            else
-              let v = arr.(i) in
-              if classify_float v = FP_nan then na_repr else string_of_float v
-      | Nx.Float8_e4m3 ->
-          let arr : float array = Nx.to_array tensor in
-          fun i ->
-            if is_null i then na_repr
-            else
-              let v = arr.(i) in
-              if classify_float v = FP_nan then na_repr else string_of_float v
-      | Nx.Float8_e5m2 ->
-          let arr : float array = Nx.to_array tensor in
-          fun i ->
-            if is_null i then na_repr
-            else
-              let v = arr.(i) in
-              if classify_float v = FP_nan then na_repr else string_of_float v
-      | Nx.Int8 ->
-          let arr : int array = Nx.to_array tensor in
-          fun i -> if is_null i then na_repr else string_of_int arr.(i)
-      | Nx.UInt8 ->
-          let arr : int array = Nx.to_array tensor in
-          fun i -> if is_null i then na_repr else string_of_int arr.(i)
-      | Nx.Int16 ->
-          let arr : int array = Nx.to_array tensor in
-          fun i -> if is_null i then na_repr else string_of_int arr.(i)
-      | Nx.UInt16 ->
-          let arr : int array = Nx.to_array tensor in
-          fun i -> if is_null i then na_repr else string_of_int arr.(i)
-      | Nx.Int32 ->
-          let arr : int32 array = Nx.to_array tensor in
-          fun i -> if is_null i then na_repr else Int32.to_string arr.(i)
-      | Nx.Int64 ->
-          let arr : int64 array = Nx.to_array tensor in
-          fun i -> if is_null i then na_repr else Int64.to_string arr.(i)
-      | Nx.UInt32 ->
-          let arr : int32 array = Nx.to_array tensor in
-          fun i -> if is_null i then na_repr else Int32.to_string arr.(i)
-      | Nx.UInt64 ->
-          let arr : int64 array = Nx.to_array tensor in
-          fun i -> if is_null i then na_repr else Int64.to_string arr.(i)
-      | Nx.Complex64 ->
-          let arr : Complex.t array = Nx.to_array tensor in
-          fun i ->
-            if is_null i then na_repr
-            else
-              let c = arr.(i) in
-              Printf.sprintf "%g+%gi" c.re c.im
-      | Nx.Complex128 ->
-          let arr : Complex.t array = Nx.to_array tensor in
-          fun i ->
-            if is_null i then na_repr
-            else
-              let c = arr.(i) in
-              Printf.sprintf "%g+%gi" c.re c.im
-      | Nx.Bool ->
-          let arr : bool array = Nx.to_array tensor in
-          fun i -> if is_null i then na_repr else string_of_bool arr.(i)
-      | Nx.Int4 ->
-          let arr : int array = Nx.to_array tensor in
-          fun i -> if is_null i then na_repr else string_of_int arr.(i)
-      | Nx.UInt4 ->
-          let arr : int array = Nx.to_array tensor in
-          fun i -> if is_null i then na_repr else string_of_int arr.(i))
-  | Talon.Col.S arr -> (
-      fun i -> match arr.(i) with Some s -> s | None -> na_repr)
-  | Talon.Col.B arr -> (
-      fun i -> match arr.(i) with Some b -> string_of_bool b | None -> na_repr)
-
 let col_string_fns na_repr df =
   List.map
-    (fun name -> col_to_string_fn na_repr (Talon.get_column_exn df name))
+    (fun name ->
+      Talon.Col.to_string_fn ~null:na_repr (Talon.get_column_exn df name))
     (Talon.column_names df)
 
 let df_of_rows ?names ?(na_values = default_na_values) ?dtype_spec rows =

@@ -26,17 +26,17 @@ Let's create a simple dataframe and explore its features:
 ```ocaml
 open Talon
 
-(* Create a dataframe from lists *)
+(* Create a dataframe from arrays *)
 let df = create [
-  ("name", Col.string_list ["Alice"; "Bob"; "Charlie"; "Dana"]);
-  ("age", Col.int32_list [25l; 30l; 35l; 28l]);
-  ("height", Col.float64_list [1.70; 1.80; 1.75; 1.65]);
-  ("weight", Col.float64_list [65.0; 82.0; 90.0; 70.0]);
-  ("active", Col.bool_list [true; false; true; true])
+  ("name", Col.string [|"Alice"; "Bob"; "Charlie"; "Dana"|]);
+  ("age", Col.int32 [|25l; 30l; 35l; 28l|]);
+  ("height", Col.float64 [|1.70; 1.80; 1.75; 1.65|]);
+  ("weight", Col.float64 [|65.0; 82.0; 90.0; 70.0|]);
+  ("active", Col.bool [|true; false; true; true|])
 ]
 
 (* Check the shape *)
-let () = Printf.printf "Rows: %d, Columns: %d\n" 
+let () = Printf.printf "Rows: %d, Columns: %d\n"
   (num_rows df) (num_columns df)
 
 (* Print the dataframe *)
@@ -50,12 +50,12 @@ One of Talon's strengths is type-safe row operations:
 ```ocaml
 (* Calculate BMI: weight / (height^2) *)
 let df = with_column df "bmi" Nx.float64
-  Row.(map2 (number "weight") (number "height") 
+  Row.(map2 (number "weight") (number "height")
     ~f:(fun w h -> w /. (h ** 2.)))
 
 (* Add a categorical column based on BMI *)
 let categories =
-  match to_float64_array df "bmi" with
+  match to_array Nx.float64 df "bmi" with
   | Some arr ->
     Array.map (fun bmi ->
       if bmi < 18.5 then "underweight"
@@ -64,8 +64,7 @@ let categories =
       else "obese") arr
   | None -> [||]
 
-let df = add_column df "category"
-  (Col.string_list (Array.to_list categories))
+let df = add_column df "category" (Col.string categories)
 ```
 
 ## row-wise operations
@@ -75,20 +74,20 @@ Talon excels at operations across many columns:
 ```ocaml
 (* Sum across multiple columns *)
 let df_scores = create [
-  ("student", Col.string_list ["Alice"; "Bob"]);
-  ("math", Col.float64_list [92.0; 85.0]);
-  ("science", Col.float64_list [88.0; 92.0]);
-  ("history", Col.float64_list [95.0; 78.0]);
-  ("english", Col.float64_list [90.0; 88.0])
+  ("student", Col.string [|"Alice"; "Bob"|]);
+  ("math", Col.float64 [|92.0; 85.0|]);
+  ("science", Col.float64 [|88.0; 92.0|]);
+  ("history", Col.float64 [|95.0; 78.0|]);
+  ("english", Col.float64 [|90.0; 88.0|])
 ]
 
 (* Calculate total score *)
-let scores = Row.Agg.sum df_scores 
+let scores = Agg.row_sum df_scores
   ~names:["math"; "science"; "history"; "english"]
 let df_scores = add_column df_scores "total" scores
 
 (* Calculate average score *)
-let avg = Row.Agg.mean df_scores 
+let avg = Agg.row_mean df_scores
   ~names:["math"; "science"; "history"; "english"]
 let df_scores = add_column df_scores "average" avg
 ```
@@ -106,23 +105,23 @@ let sorted = sort_values ~ascending:false df_scores "total"
 
 ## working with column selectors
 
-Talon provides powerful column selection utilities:
+Talon provides composable column selection via `select_columns`:
 
 ```ocaml
 (* Select all numeric columns *)
-let numeric_cols = Cols.numeric df
+let numeric_cols = select_columns df `Numeric
 
-(* Select columns by prefix *)
-let price_cols = Cols.with_prefix df "price_"
-
-(* Select columns by suffix *)
-let total_cols = Cols.with_suffix df "_total"
+(* Select columns by prefix using standard list operations *)
+let price_cols =
+  List.filter (fun n -> String.starts_with ~prefix:"price_" n) (column_names df)
 
 (* Select all except specific columns *)
-let feature_cols = Cols.except df ["id"; "name"; "timestamp"]
+let feature_cols =
+  List.filter (fun n -> not (List.mem n ["id"; "name"; "timestamp"]))
+    (column_names df)
 
 (* Use selectors in operations *)
-let row_totals = Row.Agg.sum df ~names:numeric_cols
+let row_totals = Agg.row_sum df ~names:numeric_cols
 ```
 
 ## functional transformations
@@ -131,24 +130,22 @@ Use applicative functors for elegant row transformations:
 
 ```ocaml
 let df = create [
-  ("a", Col.float64_list [1.0; 2.0; 3.0]);
-  ("b", Col.float64_list [4.0; 5.0; 6.0]);
-  ("c", Col.float64_list [7.0; 8.0; 9.0]);
-  ("x", Col.float64_list [10.0; 20.0; 30.0]);
-  ("y", Col.float64_list [0.5; 0.5; 0.5]);
-  ("z", Col.float64_list [1.0; 2.0; 3.0])
+  ("a", Col.float64 [|1.0; 2.0; 3.0|]);
+  ("b", Col.float64 [|4.0; 5.0; 6.0|]);
+  ("c", Col.float64 [|7.0; 8.0; 9.0|]);
+  ("x", Col.float64 [|10.0; 20.0; 30.0|]);
+  ("y", Col.float64 [|0.5; 0.5; 0.5|]);
+  ("z", Col.float64 [|1.0; 2.0; 3.0|])
 ]
 
-(* Map over multiple columns at once *)
-let df = with_columns_map df
-  Row.([
-    ("sum", Nx.float64,
-      map3 (number "a") (number "b") (number "c") ~f:(fun a b c -> a +. b +. c));
-    ("product", Nx.float64,
-      map3 (number "a") (number "b") (number "c") ~f:(fun a b c -> a *. b *. c));
-    ("mean", Nx.float64,
-      map3 (number "a") (number "b") (number "c") ~f:(fun a b c -> (a +. b +. c) /. 3.0))
-  ])
+(* Add multiple computed columns *)
+let df = with_column df "sum" Nx.float64
+  Row.(map3 (number "a") (number "b") (number "c")
+    ~f:(fun a b c -> a +. b +. c))
+
+let df = with_column df "product" Nx.float64
+  Row.(map3 (number "a") (number "b") (number "c")
+    ~f:(fun a b c -> a *. b *. c))
 
 (* Use applicative operations *)
 let df = with_column df "result" Nx.float64
@@ -162,13 +159,13 @@ let df = with_column df "result" Nx.float64
 
 ```ocaml
 let df1 = create [
-  ("id", Col.int32_list [1l; 2l; 3l]);
-  ("name", Col.string_list ["Alice"; "Bob"; "Charlie"])
+  ("id", Col.int32 [|1l; 2l; 3l|]);
+  ("name", Col.string [|"Alice"; "Bob"; "Charlie"|])
 ]
 
 let df2 = create [
-  ("id", Col.int32_list [2l; 3l; 4l]);
-  ("score", Col.float64_list [85.0; 92.0; 88.0])
+  ("id", Col.int32 [|2l; 3l; 4l|]);
+  ("score", Col.float64 [|85.0; 92.0; 88.0|])
 ]
 
 (* Inner join *)
@@ -182,9 +179,9 @@ let left_joined = join df1 df2 ~on:"id" ~how:`Left ()
 
 ```ocaml
 let sales = create [
-  ("date", Col.string_list ["2024-01"; "2024-01"; "2024-02"; "2024-02"]);
-  ("product", Col.string_list ["A"; "B"; "A"; "B"]);
-  ("amount", Col.float64_list [100.0; 150.0; 120.0; 180.0])
+  ("date", Col.string [|"2024-01"; "2024-01"; "2024-02"; "2024-02"|]);
+  ("product", Col.string [|"A"; "B"; "A"; "B"|]);
+  ("amount", Col.float64 [|100.0; 150.0; 120.0; 180.0|])
 ]
 
 let pivoted = pivot sales ~index:"date" ~columns:"product" ~values:"amount" ()

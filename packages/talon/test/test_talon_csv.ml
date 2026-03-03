@@ -37,7 +37,9 @@ let test_of_string_dtype_spec () =
   let df = Talon_csv.of_string ~dtype_spec csv in
   check_int "rows" 3 (num_rows df);
   match to_bool_array df "flag" with
-  | Some arr -> check_bool "bool values" true (arr = [| true; false; true |])
+  | Some arr ->
+      check_bool "bool values" true
+        (arr = [| Some true; Some false; Some true |])
   | None -> fail "flag column should be bool"
 
 let test_of_string_header_only () =
@@ -50,8 +52,8 @@ let test_to_string_basic () =
   let df =
     create
       [
-        ("name", Col.string_list [ "Alice"; "Bob" ]);
-        ("age", Col.int32_list [ 25l; 30l ]);
+        ("name", Col.string [| "Alice"; "Bob" |]);
+        ("age", Col.int32 [| 25l; 30l |]);
       ]
   in
   let csv = Talon_csv.to_string df in
@@ -60,8 +62,7 @@ let test_to_string_basic () =
 
 let test_to_string_custom_sep () =
   let df =
-    create
-      [ ("a", Col.int32_list [ 1l; 2l ]); ("b", Col.int32_list [ 3l; 4l ]) ]
+    create [ ("a", Col.int32 [| 1l; 2l |]); ("b", Col.int32 [| 3l; 4l |]) ]
   in
   let csv = Talon_csv.to_string ~sep:';' df in
   check_bool "has semicolon" true (String.contains csv ';');
@@ -69,7 +70,7 @@ let test_to_string_custom_sep () =
 
 let test_to_string_with_nulls () =
   let df =
-    create [ ("values", Col.float32_opt [| Some 1.0; None; Some 3.0 |]) ]
+    create [ ("values", Col.float32_opt [| Some 1.; None; Some 3. |]) ]
   in
   let csv = Talon_csv.to_string ~na_repr:"NULL" df in
   check_bool "has NULL" true (String.contains csv 'N')
@@ -78,9 +79,9 @@ let test_round_trip () =
   let df1 =
     create
       [
-        ("id", Col.int32_list [ 1l; 2l; 3l ]);
-        ("value", Col.float32_list [ 1.5; 2.5; 3.5 ]);
-        ("label", Col.string_list [ "a"; "b"; "c" ]);
+        ("id", Col.int32 [| 1l; 2l; 3l |]);
+        ("value", Col.float32 [| 1.5; 2.5; 3.5 |]);
+        ("label", Col.string [| "a"; "b"; "c" |]);
       ]
   in
   let csv = Talon_csv.to_string df1 in
@@ -99,7 +100,7 @@ let test_auto_detect_dtypes () =
   in
   let df = Talon_csv.of_string csv in
   check_int "rows" 2 (num_rows df);
-  match to_int32_array df "int_col" with
+  match to_array Nx.int32 df "int_col" with
   | Some arr -> check_bool "int values" true (arr = [| 42l; 100l |])
   | None -> fail "int_col should be int32"
 
@@ -119,13 +120,13 @@ let test_big_int_detection () =
   let df = Talon_csv.of_string csv in
   check_int "rows" 1 (num_rows df);
   let col = get_column_exn df "id" in
-  let is_int64 = match col with Col.P (Nx.Int64, _, _) -> true | _ -> false in
+  let is_int64 = Col.to_tensor Nx.int64 col <> None in
   check_bool "big int detected as Int64" true is_int64;
-  match to_int64_array df "id" with
+  match to_array Nx.int64 df "id" with
   | Some arr ->
       check_int "array length" 1 (Array.length arr);
       check_bool "correct value" true (arr.(0) = 9223372036854775806L)
-  | None -> fail "to_int64_array should return Some for Int64 column"
+  | None -> fail "to_array Nx.int64 should return Some for Int64 column"
 
 let reading_tests =
   [
