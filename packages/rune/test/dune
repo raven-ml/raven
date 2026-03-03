@@ -1,5 +1,5 @@
 (tests
- (names test_vjp test_gradcheck test_jvp)
+ (names test_vjp test_gradcheck test_jvp test_custom_diff)
  (package rune)
  (libraries nx rune nx.core windtrap test_rune_support))
 

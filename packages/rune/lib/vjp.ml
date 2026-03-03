@@ -1157,6 +1157,24 @@ let make_handler tape seed_output =
               let grad_contrib = fft g ~axes in
               twg_in.grad <- T.add twg_in.grad grad_contrib;
               fwd)
+      (* Custom differentiation *)
+      | Autodiff.E_ad_mode_query -> Some (fun k -> continue k `VJP)
+      | Autodiff.E_custom_vjp { cv_fwd; cv_bwd } ->
+          Some
+            (fun k ->
+              let output_packed = Autodiff.without_autodiff cv_fwd in
+              let result = continue k output_packed in
+              let get_grad packed =
+                let t : (_, _) t = Obj.obj packed in
+                Obj.repr (get_or_init t).grad
+              in
+              let acc_grad inp_packed dg_packed =
+                let t : (_, _) t = Obj.obj inp_packed in
+                let twg = get_or_init t in
+                twg.grad <- T.add twg.grad (Obj.magic dg_packed)
+              in
+              cv_bwd get_grad acc_grad;
+              result)
       | _ -> None
   in
   {

@@ -89,6 +89,23 @@ let deriv_pow_wrt_exp (type a b) (base : (a, b) T.t) (result : (a, b) T.t) :
   let ln_base = T.mul (T.log2 base) (float_scalar_like base ln2) in
   T.mul result ln_base
 
+(* Custom differentiation effects *)
+
+type _ Effect.t +=
+  | E_ad_mode_query : [ `VJP | `JVP ] Effect.t
+  | E_custom_vjp : {
+      cv_fwd : unit -> Obj.t;
+      cv_bwd : (Obj.t -> Obj.t) -> (Obj.t -> Obj.t -> unit) -> unit;
+    }
+      -> Obj.t Effect.t
+  | E_custom_jvp : {
+      cj_jvp : (Obj.t -> Obj.t) -> Obj.t * Obj.t;
+    }
+      -> Obj.t Effect.t
+
+let query_ad_mode () =
+  try Some (Effect.perform E_ad_mode_query) with Effect.Unhandled _ -> None
+
 (* Reduce gradient to match source shape (for broadcasting). *)
 let unbroadcast_grad (type a b) (g : (a, b) T.t) (src_shape : int array) :
     (a, b) T.t =

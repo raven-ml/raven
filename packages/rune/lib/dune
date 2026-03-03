@@ -1,5 +1,5 @@
 (library
  (name rune)
  (public_name rune)
- (private_modules autodiff jvp vjp)
+ (private_modules autodiff jvp vjp custom_diff)
  (libraries nx.core nx nx.buffer nx.effect))
