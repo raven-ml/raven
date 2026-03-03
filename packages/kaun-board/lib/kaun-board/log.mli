@@ -11,7 +11,7 @@
     {[
       let logger = Log.create ~experiment:"mnist" () in
       (* in training loop *)
-      Log.log_scalar logger ~step ~tag:"train/loss" loss;
+      Log.scalars logger ~step ~epoch [ ("train/loss", loss) ];
       Log.close logger
     ]} *)
 
@@ -40,17 +40,11 @@ val create :
 
 (** {1:logging Logging} *)
 
-val log_scalar : t -> step:int -> ?epoch:int -> tag:string -> float -> unit
-(** [log_scalar t ~step ~tag v] appends a scalar event with metric name [tag]
-    and value [v].
+val scalars : t -> step:int -> ?epoch:int -> (string * float) list -> unit
+(** [scalars t ~step pairs] appends one scalar event per [(tag, value)] pair.
 
-    [epoch] defaults to [None]. *)
-
-val log_scalars : t -> step:int -> ?epoch:int -> (string * float) list -> unit
-(** [log_scalars t ~step pairs] appends one scalar event per [(tag, value)]
-    pair.
-
-    [epoch] defaults to [None]. *)
+    [epoch] defaults to [None]. For a single metric use a one-element list, e.g.
+    [ ("train/loss", loss) ]. *)
 
 (** {1:accessors Accessors} *)
 
