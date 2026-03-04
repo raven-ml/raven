@@ -20,9 +20,9 @@ let logger =
 in
 Printf.printf "To monitor: kaun-board %s\n" (Kaun_board.Log.run_id logger);
 
-(* In your training loop *)
+(* In your training loop: (tag, value, minimize) *)
 Kaun_board.Log.scalars logger ~step ~epoch
-  [ ("train/loss", loss); ("train/loss_avg", avg_loss); ("test/accuracy", test_acc) ];
+  [ ("train/loss", loss, true); ("train/accuracy", acc, false) ];
 
 Kaun_board.Log.close logger
 ```
