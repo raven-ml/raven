@@ -28,7 +28,7 @@ let ema alpha history =
       in
       (s0, v0) :: loop [] v0 rest
 
-let draw_metric_chart history grid ~width ~height =
+let draw_metric_chart ~hover history grid ~width ~height =
   if history = [] then ()
   else
     let data =
@@ -55,7 +55,37 @@ let draw_metric_chart history grid ~width ~height =
            ~style:(Ansi.Style.make ~fg:Ansi.Color.cyan ())
            ~x:fst ~y:snd data
     in
-    ignore (Charts.draw chart grid ~width ~height)
+    let layout = Charts.draw chart grid ~width ~height in
+    match hover with
+    | None -> ()
+    | Some (px, py) -> (
+        if not (Charts.Layout.is_inside_plot layout ~px ~py) then ()
+        else
+          let radius, policy = (4, `Nearest_x) in
+          match Charts.Layout.hit_test layout ~px ~py ~radius ~policy with
+          | Some hit -> (
+              match hit.payload with
+              | Charts.Hit.XY { x; y } ->
+                  let lines =
+                    [
+                      Printf.sprintf "Step: %d" (int_of_float x);
+                      Printf.sprintf "Value: %.4g" y;
+                    ]
+                  in
+                  Charts.Overlay.tooltip layout grid ~x ~y lines
+              | _ -> ())
+          | None -> (
+              (* Free cursor: tooltip at interpolated data coords *)
+              match Charts.Layout.data_of_px layout ~px ~py with
+              | None -> ()
+              | Some (x, y) ->
+                  let lines =
+                    [
+                      Printf.sprintf "Step: %.0f" x;
+                      Printf.sprintf "Value: %.4g" y;
+                    ]
+                  in
+                  Charts.Overlay.tooltip ~anchor:`Right layout grid ~x ~y lines))
 
 let latest_value history =
   let rec last = function
@@ -65,7 +95,7 @@ let latest_value history =
   in
   last history
 
-let view ~tag ~history_for_tag ~best ~size ~smooth =
+let view ~tag ~history_for_tag ~best ~size ~smooth ~hover ~on_mouse =
   let history = history_for_tag tag in
   let display_history =
     match smooth with None -> history | Some alpha -> ema alpha history
@@ -76,18 +106,22 @@ let view ~tag ~history_for_tag ~best ~size ~smooth =
     | Some v -> Printf.sprintf "%s [%.4f]" tag v
   in
   let title = if Option.is_some smooth then title ^ " (EMA)" else title in
+  let canvas_content =
+    canvas
+      ~live:true
+      ~on_mouse
+      ~size:{ width = pct 100; height = pct 100 }
+      (fun c ~delta:_ ->
+        Canvas.clear c;
+        draw_metric_chart ~hover display_history (Canvas.grid c)
+          ~width:(Canvas.width c) ~height:(Canvas.height c))
+  in
   box ~flex_direction:Column ~gap:(gap 1) ~align_items:Center ~size
     [
       box ~border:true ~title ~padding:(padding 1)
         ~size:{ width = pct 100; height = pct 100 }
         ~flex_grow:1.0
-        [
-          canvas
-            ~size:{ width = pct 100; height = pct 100 }
-            (fun c ~delta:_ ->
-              draw_metric_chart display_history (Canvas.grid c)
-                ~width:(Canvas.width c) ~height:(Canvas.height c));
-        ];
+        [ canvas_content ];
       (match best with
       | None -> box [] ~size:{ width = px 0; height = px 0 }
       | Some value ->
