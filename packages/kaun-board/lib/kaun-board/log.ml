@@ -18,10 +18,7 @@ let write_scalar t ~step ~epoch ~tag value =
     ~finally:(fun () -> Mutex.unlock t.mutex)
     (fun () -> if not t.closed then Run.append_event t.run event)
 
-let log_scalar t ~step ?epoch ~tag value =
-  write_scalar t ~step ~epoch ~tag value
-
-let log_scalars t ~step ?epoch pairs =
+let scalars t ~step ?epoch pairs =
   List.iter (fun (tag, value) -> write_scalar t ~step ~epoch ~tag value) pairs
 
 let run_id t = Run.run_id t.run
