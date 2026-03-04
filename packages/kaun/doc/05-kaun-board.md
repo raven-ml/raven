@@ -36,9 +36,9 @@ let logger =
 in
 Printf.printf "To monitor: kaun-board %s\n" (Kaun_board.Log.run_id logger);
 
-(* In your training loop *)
+(* In your training loop: (tag, value, minimize) *)
 Kaun_board.Log.scalars logger ~step ~epoch
-  [ ("train/loss", loss); ("train/loss_avg", avg_loss); ("test/accuracy", test_acc) ];
+  [ ("train/loss", loss, true); ("train/accuracy", acc, false) ];
 
 Kaun_board.Log.close logger
 ```
@@ -48,9 +48,9 @@ Key points:
 - `Log.create` creates a run directory and returns a logger. The
   `~experiment` name is appended to the run ID. `~config` stores
   hyperparameters in the run manifest.
-- `Log.scalars` appends scalar events from a list of (tag, value) pairs.
-  `~step` is required, `~epoch` is optional. Use a one-element list for
-  a single metric.
+- `Log.scalars` appends scalar events from a list of (tag, value, minimize).
+  `minimize`: [true] = lower is better (e.g. loss), [false] = higher is better
+  (e.g. accuracy). `~step` is required, `~epoch` is optional.
 - `Log.close` marks the session as closed. Always call it when
   training ends.
 
@@ -64,7 +64,7 @@ let logger = Kaun_board.Log.create ~experiment:"mnist" () in
 
 let st = Train.fit trainer st
   ~report:(fun ~step ~loss _st ->
-    Kaun_board.Log.scalars logger ~step [ ("train/loss", loss) ])
+    Kaun_board.Log.scalars logger ~step [ ("train/loss", loss, true) ])
   data
 in
 
@@ -88,7 +88,7 @@ Data.iter (fun (x, y) ->
   in
   st := st';
   let loss = Nx.item [] loss_val in
-  Kaun_board.Log.scalars logger ~step:!step [ ("train/loss", loss) ]
+  Kaun_board.Log.scalars logger ~step:!step [ ("train/loss", loss, true) ]
 ) data;
 
 Kaun_board.Log.close logger
