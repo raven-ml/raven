@@ -1140,7 +1140,147 @@ let cat (type a b) ~(out : (a, b) t) (xs : (a, b) t list) ~(axis : int) : unit =
       Op_cat.cat_bool srcs out_arr rank axis out_offset out_strides
     | _ -> assert false)
 
-let cast ~out:_ _ = invalid_arg "cast: not implemented"
+let cast (type a b c d) ~(out : (c, d) t) (x : (a, b) t) : unit =
+  let in_view = x.view in
+  let in_shape = shape in_view in
+  let target_dtype = out.dtype in
+  let n = numel in_view in
+  let out =
+    let t = buffer x.context target_dtype [|n|] in
+    { t with view = View.reshape t.view in_shape }
+  in
+  let in_offset = View.offset in_view in
+  let in_strides = View.strides in_view in
+  let out_offset = View.offset out.view in
+  let out_strides = View.strides out.view in
+  match (x.buffer, out.buffer) with
+  | Float64 src, Float32 dst ->
+      Op_cast.cast_float64_float32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Float64 src, Int8 dst ->
+      Op_cast.cast_float64_int8 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Float64 src, Int16 dst ->
+      Op_cast.cast_float64_int16 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Float64 src, Int32 dst ->
+      Op_cast.cast_float64_int32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Float64 src, Int64 dst ->
+      Op_cast.cast_float64_int64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Float64 src, Bool dst ->
+      Op_cast.cast_float64_bool src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Float32 src, Float64 dst ->
+      Op_cast.cast_float32_float64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Float32 src, Int8 dst ->
+      Op_cast.cast_float32_int8 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Float32 src, Int16 dst ->
+      Op_cast.cast_float32_int16 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Float32 src, Int32 dst ->
+      Op_cast.cast_float32_int32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Float32 src, Int64 dst ->
+      Op_cast.cast_float32_int64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Float32 src, Bool dst ->
+      Op_cast.cast_float32_bool src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Int8 src, Float64 dst ->
+      Op_cast.cast_int8_float64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Int8 src, Float32 dst ->
+      Op_cast.cast_int8_float32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Int8 src, Int16 dst ->
+      Op_cast.cast_int8_int16 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Int8 src, Int32 dst ->
+      Op_cast.cast_int8_int32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Int8 src, Int64 dst ->
+      Op_cast.cast_int8_int64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Int8 src, Bool dst ->
+      Op_cast.cast_int8_bool src dst n in_shape in_offset in_strides out_offset
+        out_strides;
+  | Int16 src, Float64 dst ->
+      Op_cast.cast_int16_float64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Int16 src, Float32 dst ->
+      Op_cast.cast_int16_float32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Int16 src, Int8 dst ->
+      Op_cast.cast_int16_int8 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Int16 src, Int32 dst ->
+      Op_cast.cast_int16_int32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Int16 src, Int64 dst ->
+      Op_cast.cast_int16_int64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Int16 src, Bool dst ->
+      Op_cast.cast_int16_bool src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Int32 src, Float64 dst ->
+      Op_cast.cast_int32_float64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Int32 src, Float32 dst ->
+      Op_cast.cast_int32_float32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Int32 src, Int8 dst ->
+      Op_cast.cast_int32_int8 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Int32 src, Int16 dst ->
+      Op_cast.cast_int32_int16 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Int32 src, Int64 dst ->
+      Op_cast.cast_int32_int64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Int32 src, Bool dst ->
+      Op_cast.cast_int32_bool src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Int64 src, Float64 dst ->
+      Op_cast.cast_int64_float64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Int64 src, Float32 dst ->
+      Op_cast.cast_int64_float32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Int64 src, Int8 dst ->
+      Op_cast.cast_int64_int8 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Int64 src, Int16 dst ->
+      Op_cast.cast_int64_int16 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Int64 src, Int32 dst ->
+      Op_cast.cast_int64_int32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Int64 src, Bool dst ->
+      Op_cast.cast_int64_bool src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Bool src, Float64 dst ->
+      Op_cast.cast_bool_float64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Bool src, Float32 dst ->
+      Op_cast.cast_bool_float32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Bool src, Int8 dst ->
+      Op_cast.cast_bool_int8 src dst n in_shape in_offset in_strides out_offset
+        out_strides;
+  | Bool src, Int16 dst ->
+      Op_cast.cast_bool_int16 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Bool src, Int32 dst ->
+      Op_cast.cast_bool_int32 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | Bool src, Int64 dst ->
+      Op_cast.cast_bool_int64 src dst n in_shape in_offset in_strides
+        out_offset out_strides;
+  | _ -> invalid_arg "unsupported cast"
 
 let contiguous (type a b) (t : (a, b) t) : (a, b) t =
   let v = t.view in
