@@ -58,10 +58,7 @@ val history_for_tag : t -> string -> (int * float) list
 
 val best_for_tag : t -> string -> best_value option
 (** [best_for_tag store tag] is the best value for [tag], if any.
-
-    {b Note.} "Best" is minimum for tags containing ["loss"] or ["error"],
-    maximum otherwise. *)
+    "Best" is determined by the [minimize] flag on the event (lower vs higher). *)
 
 val best_metrics : t -> (string * best_value) list
-(** [best_metrics store] is the best value per tag, sorted by tag name. Uses the
-    same heuristic as {!best_for_tag}. *)
+(** [best_metrics store] is the best value per tag, sorted by tag name. *)
