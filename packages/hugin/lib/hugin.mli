@@ -378,6 +378,22 @@ val ytick_format : (float -> string) -> t -> t
 (** [ytick_format fmt t] is [t] with y-axis tick labels formatted by [fmt].
     Overrides auto-generated labels while preserving tick positions. *)
 
+val frame : bool -> t -> t
+(** [frame visible t] is [t] with the axis border rectangle shown or hidden.
+    [visible] defaults to [true]. *)
+
+val no_axes : t -> t
+(** [no_axes t] hides the axis frame, ticks, and tick labels. Title is
+    preserved. The full panel area is used for marks. Useful for image grids:
+
+    {[
+      List.init 10 (fun i ->
+          Hugin.imshow ~data:digits.(i) ~cmap:Cmap.gray ()
+          |> Hugin.title (string_of_int labels.(i))
+          |> Hugin.no_axes)
+      |> Hugin.hstack
+    ]} *)
+
 (** {1:layout Layout} *)
 
 val grid : ?gap:float -> t list list -> t

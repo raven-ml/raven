@@ -203,6 +203,7 @@ type decoration =
   | With_theme of Theme.t
   | Xtick_format of (float -> string)
   | Ytick_format of (float -> string)
+  | Frame of bool
       (** The type for plot decorations. Applied via {!Decorated} nodes. *)
 
 type t =
@@ -458,6 +459,13 @@ val xtick_format : (float -> string) -> t -> t
 
 val ytick_format : (float -> string) -> t -> t
 (** [ytick_format fmt t] formats y-axis tick labels with [fmt]. *)
+
+val frame : bool -> t -> t
+(** [frame visible t] shows or hides the axis border rectangle. *)
+
+val no_axes : t -> t
+(** [no_axes t] hides the axis frame, ticks, and tick labels. The full panel
+    area is used for marks. Title is preserved. Useful for image grids. *)
 
 (** {1:layout Layout} *)
 

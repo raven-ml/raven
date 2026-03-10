@@ -65,6 +65,8 @@ let yticks = Spec.yticks
 let with_theme = Spec.with_theme
 let xtick_format = Spec.xtick_format
 let ytick_format = Spec.ytick_format
+let frame = Spec.frame
+let no_axes = Spec.no_axes
 
 (* Layout *)
 

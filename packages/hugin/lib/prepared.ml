@@ -146,6 +146,7 @@ type collected = {
   y : Axis.config;
   title : string option;
   grid_visible : bool option;
+  frame_visible : bool option;
   legend_loc : Spec.legend_loc option;
   legend_ncol : int;
   theme_override : Theme.t option;
@@ -158,6 +159,7 @@ let empty_collected =
     y = Axis.empty_config;
     title = None;
     grid_visible = None;
+    frame_visible = None;
     legend_loc = None;
     legend_ncol = 1;
     theme_override = None;
@@ -201,6 +203,8 @@ and apply_decoration c = function
       { c with x = { c.x with tick_format = Some f } }
   | Spec.Ytick_format f when c.y.tick_format = None ->
       { c with y = { c.y with tick_format = Some f } }
+  | Spec.Frame v when c.frame_visible = None ->
+      { c with frame_visible = Some v }
   | _ -> c
 
 (* Auto-coloring *)
@@ -384,6 +388,7 @@ type panel = {
   legend_loc : Spec.legend_loc option;
   legend_ncol : int;
   grid_visible : bool option;
+  frame_visible : bool option;
   theme_override : Theme.t option;
   colorbar_range : (float * float) option;
   size_by_range : (float * float) option;
@@ -586,6 +591,7 @@ let compile_panel theme spec =
       legend_loc = c.legend_loc;
       legend_ncol = c.legend_ncol;
       grid_visible = c.grid_visible;
+      frame_visible = c.frame_visible;
       theme_override = c.theme_override;
       colorbar_range = color_by_range marks;
       size_by_range = size_by_range marks;

@@ -877,19 +877,22 @@ let emit_axes ~text_measurer sx sy plot_area (theme : Theme.t) ~xticks ~yticks
   end;
 
   (* Axis border *)
-  let lx = plot_area.rx and ty = plot_area.ry in
-  let rx = lx +. plot_area.rw and by = ty +. plot_area.rh in
-  prims :=
-    Scene.Path
-      {
-        points = [| (lx, ty); (rx, ty); (rx, by); (lx, by) |];
-        close = true;
-        fill = None;
-        stroke = Some axis_color;
-        line_width = lw;
-        dash = [];
-      }
-    :: !prims;
+  let show_frame = Option.value ~default:true pp.frame_visible in
+  if show_frame then begin
+    let lx = plot_area.rx and ty = plot_area.ry in
+    let rx = lx +. plot_area.rw and by = ty +. plot_area.rh in
+    prims :=
+      Scene.Path
+        {
+          points = [| (lx, ty); (rx, ty); (rx, by); (lx, by) |];
+          close = true;
+          fill = None;
+          stroke = Some axis_color;
+          line_width = lw;
+          dash = [];
+        }
+      :: !prims
+  end;
 
   (* Title *)
   begin match pp.title with
@@ -1357,14 +1360,20 @@ let compute_layout ~text_measurer (theme : Theme.t) (pp : Prepared.panel) xticks
   let tl = theme.tick_length *. sf in
 
   (* Left padding: y-tick labels + gap + optional ylabel *)
-  let max_ytick_w =
-    List.fold_left
-      (fun acc (_, label) ->
-        let w, _ = text_measurer ~font:tick_font label in
-        Float.max acc w)
-      0. yticks
+  let left =
+    let base = theme.padding *. sf in
+    match yticks with
+    | [] -> base
+    | _ ->
+        let max_ytick_w =
+          List.fold_left
+            (fun acc (_, label) ->
+              let w, _ = text_measurer ~font:tick_font label in
+              Float.max acc w)
+            0. yticks
+        in
+        base +. max_ytick_w +. tl +. (8. *. sf)
   in
-  let left = (theme.padding *. sf) +. max_ytick_w +. tl +. (8. *. sf) in
   let left =
     match pp.y.label with
     | Some s ->
@@ -1374,8 +1383,14 @@ let compute_layout ~text_measurer (theme : Theme.t) (pp : Prepared.panel) xticks
   in
 
   (* Bottom padding: x-tick labels + gap + optional xlabel *)
-  let _, tick_h = text_measurer ~font:tick_font "0" in
-  let bottom = (theme.padding *. sf) +. tick_h +. tl +. (8. *. sf) in
+  let bottom =
+    let base = theme.padding *. sf in
+    match xticks with
+    | [] -> base
+    | _ ->
+        let _, tick_h = text_measurer ~font:tick_font "0" in
+        base +. tick_h +. tl +. (8. *. sf)
+  in
   let bottom =
     match pp.x.label with
     | Some s ->

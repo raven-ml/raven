@@ -51,6 +51,7 @@ type panel = {
   legend_loc : Spec.legend_loc option;
   legend_ncol : int;
   grid_visible : bool option;
+  frame_visible : bool option;
   theme_override : Theme.t option;
   colorbar_range : (float * float) option;
   size_by_range : (float * float) option;
