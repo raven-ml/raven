@@ -278,25 +278,20 @@ let next_notebook project nb =
   | _ -> None
 
 let number toc nb =
-  let result = ref [] in
-  let rec search counter items =
-    List.iter
-      (fun item ->
-        match item with
-        | Notebook (n, children) -> (
-            incr counter;
-            if n.path = nb.path then result := [ !counter ]
-            else
-              let sub_counter = ref 0 in
-              search sub_counter children;
-              match !result with [] -> () | sub -> result := !counter :: sub)
-        | Section _ -> counter := 0
-        | Separator -> ())
-      items
+  let rec search counter = function
+    | [] -> None
+    | Notebook (n, children) :: rest ->
+        incr counter;
+        if n.path = nb.path then Some [ !counter ]
+        else begin
+          match search (ref 0) children with
+          | Some sub -> Some (!counter :: sub)
+          | None -> search counter rest
+        end
+    | Section _ :: rest -> counter := 0; search counter rest
+    | Separator :: rest -> search counter rest
   in
-  let counter = ref 0 in
-  search counter toc;
-  !result
+  match search (ref 0) toc with Some ns -> ns | None -> []
 
 let number_string = function
   | [] -> ""
