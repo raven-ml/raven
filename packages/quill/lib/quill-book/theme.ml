@@ -480,7 +480,7 @@ figcaption, blockquote:has(> strong:first-child) {
   }
 
   .page-nav {
-    grid-column: 1 / -1;
+    grid-column: 1;
     grid-row: 2;
   }
 }
@@ -698,7 +698,9 @@ figcaption, blockquote:has(> strong:first-child) {
 /* ─── Print page ─── */
 
 .print-chapter {
-  margin-bottom: 3rem;
+  max-width: var(--content-width);
+  margin: 0 auto 3rem;
+  padding: 0 2rem;
   page-break-after: always;
 }
 
@@ -802,6 +804,10 @@ let template_html =
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{chapter_title}} — {{book_title}}</title>
 <link rel="stylesheet" href="{{root_path}}style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]})"></script>
 <script>
 (function() {
   var t = localStorage.getItem('quill-theme');
@@ -942,6 +948,10 @@ let print_template_html =
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{book_title}} — Print</title>
 <link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.21/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body,{delimiters:[{left:'$$',right:'$$',display:true},{left:'$',right:'$',display:false}]})"></script>
 <script>
 (function() {
   var t = localStorage.getItem('quill-theme');
