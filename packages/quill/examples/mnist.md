@@ -140,7 +140,7 @@ let _fig =
     let img = Nx.get [i; 0] x_test |> Nx.reshape [|28; 28|] in
     let true_l = Nx.item [i] y_test in
     let logits = Train.predict trainer !st (Nx.get [i] x_test |> Nx.expand_dims [0]) in
-    let pred_l = Nx.item [] (Nx.argmax ~axis:1 logits) in
+    let pred_l = Nx.item [0] (Nx.argmax ~axis:1 logits) in
     Hugin.imshow ~data:img ~cmap:Hugin.Cmap.gray ()
     |> Hugin.title (Printf.sprintf "%ld->%ld" true_l pred_l)
     |> Hugin.no_axes)
