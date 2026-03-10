@@ -451,13 +451,13 @@ figcaption, blockquote:has(> strong:first-child) {
 }
 
 @media (min-width: 1200px) {
-  main {
+  main:has(> .page-toc) {
     display: grid;
     grid-template-columns: 1fr 14rem;
     grid-template-rows: 1fr auto;
   }
 
-  article {
+  main:has(> .page-toc) > article {
     grid-column: 1;
     grid-row: 1;
   }
@@ -479,7 +479,7 @@ figcaption, blockquote:has(> strong:first-child) {
     scrollbar-color: var(--border) transparent;
   }
 
-  .page-nav {
+  main:has(> .page-toc) > .page-nav {
     grid-column: 1;
     grid-row: 2;
   }
