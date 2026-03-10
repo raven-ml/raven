@@ -47,6 +47,7 @@ type msg =
   | Focus_next
   | Focus_prev
   | Execute_focused
+  | Execute_and_advance
   | Execute_all
   | Interrupt
   | Insert_code_below
@@ -73,6 +74,7 @@ type msg =
   | Prev_completion
   | Accept_completion
   | Dismiss_completion
+  | Deferred_focus_editor
 
 (* ───── Palette ───── *)
 
@@ -507,6 +509,10 @@ let editor_on_key m ev =
     | Char c when md.ctrl && Uchar.to_int c = Char.code ' ' ->
         Event.Key.prevent_default ev;
         Some Trigger_completion
+    | Line_feed when not (md.ctrl || md.alt || md.super) ->
+        (* Shift+Enter arrives as Line_feed (0x0a) without shift flag *)
+        Event.Key.prevent_default ev;
+        Some Execute_and_advance
     | _ -> None
 
 (* ───── Init ───── *)
@@ -524,13 +530,32 @@ let init ~create_kernel ~path () =
   let doc = Quill_markdown.of_string md in
   let session = Session.create doc in
   let last_mtime = get_mtime path in
+  let n = Doc.length doc in
+  (* Start in edit mode on the last code cell (REPL-like) *)
+  let focus = if n > 0 then n - 1 else 0 in
+  let is_code_cell =
+    match Doc.nth focus doc with Some (Cell.Code _) -> true | _ -> false
+  in
+  let edit_cursor =
+    match Doc.nth focus doc with
+    | Some (Cell.Code { source; _ }) -> grapheme_count source
+    | _ -> 0
+  in
+  let initial_mode = if is_code_cell then Editing else Normal in
+  let title_cmd =
+    Cmd.set_title (Printf.sprintf "Quill - %s" (Filename.basename path))
+  in
+  let initial_cmd =
+    if is_code_cell then Cmd.batch [ title_cmd; Cmd.focus textarea_id ]
+    else title_cmd
+  in
   ( {
       session;
       kernel;
       event_queue;
       path;
-      focus = 0;
-      mode = Normal;
+      focus;
+      mode = initial_mode;
       dirty = false;
       footer_msg = None;
       last_mtime;
@@ -540,13 +565,13 @@ let init ~create_kernel ~path () =
       clock = 0.;
       viewport_width = 120;
       viewport_height = 32;
-      edit_cursor = 0;
-      edit_cursor_override = None;
+      edit_cursor;
+      edit_cursor_override = (if is_code_cell then Some edit_cursor else None);
       edit_selection = None;
       completion_popup_open = false;
       completion = None;
     },
-    Cmd.set_title (Printf.sprintf "Quill - %s" (Filename.basename path)) )
+    initial_cmd )
 
 (* ───── File reload ───── *)
 
@@ -595,6 +620,85 @@ let execute_all_cells m =
     (Doc.cells (Session.doc !session));
   clear_footer_message { m with session = !session; dirty = true }
 
+(* ───── REPL flow: execute and advance ───── *)
+
+(** Execute the focused cell, then create a new empty cell below and enter edit
+    mode on it. This gives the REPL-like "type, run, type more" flow. *)
+let execute_and_advance m =
+  match focused_cell m with
+  | Some (Cell.Code { id; source; _ }) ->
+      let m = execute_cell m id source in
+      (* Insert new code cell below *)
+      let pos = m.focus + 1 in
+      let cell = Cell.code "" in
+      let session = Session.insert_cell ~pos cell m.session in
+      let n = Doc.length (Session.doc session) in
+      let focus = min pos (n - 1) in
+      let m =
+        {
+          m with
+          session;
+          focus;
+          mode = Editing;
+          edit_cursor = 0;
+          edit_cursor_override = Some 0;
+          edit_selection = None;
+          completion_popup_open = false;
+          completion = None;
+        }
+      in
+      (* Defer focus: the new textarea doesn't exist yet in the render tree.
+         Dispatch a message that will issue Cmd.focus on the next update cycle,
+         after the view has re-rendered with the new cell. *)
+      (m, Cmd.perform (fun dispatch -> dispatch Deferred_focus_editor))
+  | Some (Cell.Text _) ->
+      (* Text cell: just advance to the next cell (or create one) *)
+      let n = cell_count m in
+      let pos = m.focus + 1 in
+      if pos < n then
+        (* Next cell exists — focus it and enter edit mode *)
+        let source =
+          match Doc.nth pos (Session.doc m.session) with
+          | Some (Cell.Code { source; _ } | Cell.Text { source; _ }) -> source
+          | None -> ""
+        in
+        let edit_cursor = grapheme_count source in
+        let m =
+          {
+            m with
+            focus = pos;
+            mode = Editing;
+            edit_cursor;
+            edit_cursor_override = Some edit_cursor;
+            edit_selection = None;
+            completion_popup_open = false;
+            completion = None;
+          }
+        in
+        (m, Cmd.perform (fun dispatch -> dispatch Deferred_focus_editor))
+      else
+        (* No next cell — create a new code cell *)
+        let cell = Cell.code "" in
+        let session = Session.insert_cell ~pos cell m.session in
+        let n = Doc.length (Session.doc session) in
+        let focus = min pos (n - 1) in
+        let m =
+          {
+            m with
+            session;
+            focus;
+            dirty = true;
+            mode = Editing;
+            edit_cursor = 0;
+            edit_cursor_override = Some 0;
+            edit_selection = None;
+            completion_popup_open = false;
+            completion = None;
+          }
+        in
+        (m, Cmd.perform (fun dispatch -> dispatch Deferred_focus_editor))
+  | None -> (with_footer_message m Warning "No cell to advance from", Cmd.none)
+
 (* ───── Update ───── *)
 
 let tick_model m dt =
@@ -635,6 +739,7 @@ let update_quit m =
 
 let update_editing msg m =
   match msg with
+  | Deferred_focus_editor -> (m, Cmd.focus textarea_id)
   | Toggle_help -> update_toggle_help m
   | Dismiss_message ->
       ({ m with confirm_quit = false; footer_msg = None }, Cmd.none)
@@ -719,35 +824,17 @@ let update_editing msg m =
   | Dismiss_completion ->
       ( { m with completion_popup_open = false } |> recompute_completion,
         Cmd.none )
-  | Submit_edit _ -> (
+  | Submit_edit _ ->
+      (* Ctrl+Enter (on_submit): execute and advance (REPL flow) *)
+      execute_and_advance m
+  | Execute_focused -> (
+      (* Ctrl+Enter in edit mode: execute and stay *)
       match focused_cell m with
       | Some (Cell.Code { id; source; _ }) ->
-          let session = Session.checkpoint m.session in
-          let m =
-            {
-              m with
-              session;
-              mode = Normal;
-              completion_popup_open = false;
-              completion = None;
-              edit_cursor_override = None;
-              edit_selection = None;
-            }
-          in
           let m = execute_cell m id source in
-          (m, Cmd.focus scroll_box_id)
-      | _ ->
-          let session = Session.checkpoint m.session in
-          ( {
-              m with
-              mode = Normal;
-              session;
-              completion_popup_open = false;
-              completion = None;
-              edit_cursor_override = None;
-              edit_selection = None;
-            },
-            Cmd.focus scroll_box_id ))
+          (m, Cmd.none)
+      | _ -> (m, Cmd.none))
+  | Execute_and_advance -> execute_and_advance m
   | Save -> update_save m
   | Quit ->
       let session = Session.checkpoint m.session in
@@ -788,6 +875,7 @@ let update_normal msg m =
       | Some (Cell.Text _) ->
           (with_footer_message m Error "Cannot execute a text cell", Cmd.none)
       | None -> (with_footer_message m Warning "No cell to execute", Cmd.none))
+  | Execute_and_advance -> execute_and_advance m
   | Execute_all -> (execute_all_cells m, Cmd.none)
   | Interrupt ->
       m.kernel.interrupt ();
@@ -797,7 +885,23 @@ let update_normal msg m =
       let cell = Cell.code "" in
       let session = Session.insert_cell ~pos cell m.session in
       let n = Doc.length (Session.doc session) in
-      ({ m with session; focus = min pos (n - 1); dirty = true }, Cmd.none)
+      let focus = min pos (n - 1) in
+      (* Enter edit mode on the new cell (REPL-like) *)
+      let m =
+        {
+          m with
+          session;
+          focus;
+          dirty = true;
+          mode = Editing;
+          edit_cursor = 0;
+          edit_cursor_override = Some 0;
+          edit_selection = None;
+          completion_popup_open = false;
+          completion = None;
+        }
+      in
+      (m, Cmd.focus textarea_id)
   | Insert_text_below ->
       let pos = m.focus + 1 in
       let cell = Cell.text "" in
@@ -858,7 +962,7 @@ let update_normal msg m =
       else ({ m with reload_acc }, Cmd.none)
   | Enter_edit -> (
       match focused_cell m with
-      | Some (Cell.Code { source; _ }) ->
+      | Some (Cell.Code { source; _ } | Cell.Text { source; _ }) ->
           let edit_cursor = grapheme_count source in
           let m =
             {
@@ -872,7 +976,7 @@ let update_normal msg m =
             }
           in
           (recompute_completion m, Cmd.focus textarea_id)
-      | _ -> (m, Cmd.none))
+      | None -> (m, Cmd.none))
   | _ -> (m, Cmd.none)
 
 let update msg m =
@@ -1030,7 +1134,7 @@ let view_code_cell m ~index ~is_focused ~is_editing ~status source outputs =
         ~padding:(padding_lrtb ~l:1 ~r:1 ~t:0 ~b:0)
         ~size:{ width = pct 100; height = auto }
         [
-          line_number
+          line_number ~flex_grow:1.
             ~line_colors:(active_line_colors source m.edit_cursor)
             (textarea ~id:textarea_id ~value:source
                ?cursor:m.edit_cursor_override ~spans:highlights ?ghost_text
@@ -1050,7 +1154,7 @@ let view_code_cell m ~index ~is_focused ~is_editing ~status source outputs =
     else
       let highlights = highlight_source source in
       box
-        ~padding:(padding_lrtb ~l:1 ~r:1 ~t:1 ~b:0)
+        ~padding:(padding_lrtb ~l:1 ~r:1 ~t:0 ~b:0)
         ~size:{ width = pct 100; height = auto }
         [ code ~spans:highlights source ]
   in
@@ -1074,7 +1178,7 @@ let view_code_cell m ~index ~is_focused ~is_editing ~status source outputs =
       box ~flex_direction:Column ~border:true ~border_sides:[ `Top ]
         ~border_style:Border.single ~border_color:border_unfocused
         ~size:{ width = pct 100; height = auto }
-        ~padding:(padding 1)
+        ~padding:(padding_lrtb ~l:1 ~r:1 ~t:0 ~b:0)
         (List.map view_output outputs)
   in
   box ~flex_direction:Column ~border:true ~border_color
@@ -1083,12 +1187,48 @@ let view_code_cell m ~index ~is_focused ~is_editing ~status source outputs =
     ~size:{ width = pct 100; height = auto }
     [ source_view; completion_panel ~is_editing m; status_row; output_section ]
 
-let view_text_cell ~is_focused source =
-  box
-    ?background:(if is_focused then Some cell_bg_focused else None)
-    ~size:{ width = pct 100; height = auto }
-    ~padding:(padding_lrtb ~l:2 ~r:2 ~t:0 ~b:0)
-    [ markdown source ]
+let view_text_cell ~is_focused ~is_editing m source =
+  if is_editing then
+    box ~background:cell_bg_focused ~border:true ~border_color:border_focused
+      ~border_style:Border.rounded ~title:" text \xe2\x9c\x8e "
+      ~title_alignment:`Left
+      ~size:{ width = pct 100; height = auto }
+      [
+        box
+          ~padding:(padding_lrtb ~l:1 ~r:1 ~t:0 ~b:0)
+          ~size:{ width = pct 100; height = auto }
+          [
+            textarea ~id:textarea_id ~value:source
+              ?cursor:m.edit_cursor_override ~text_color:output_fg
+              ~background_color:cell_bg_focused ~focused_text_color:output_fg
+              ~focused_background_color:cell_bg_focused ~cursor_style:`Line
+              ~cursor_color:accent ~wrap:`Word
+              ~size:{ width = pct 100; height = auto }
+              ~on_key:(fun ev ->
+                let data = Event.Key.data ev in
+                if data.event_type = Release then None
+                else
+                  match data.key with
+                  | Line_feed
+                    when not
+                           (data.modifier.ctrl || data.modifier.alt
+                          || data.modifier.super) ->
+                      Event.Key.prevent_default ev;
+                      Some Execute_and_advance
+                  | _ -> None)
+              ~on_input:(fun s -> Some (Edit_source s))
+              ~on_submit:(fun _s -> Some Execute_and_advance)
+              ~on_cursor:(fun ~cursor ~selection ->
+                Some (Edit_cursor_changed (cursor, selection)))
+              ();
+          ];
+      ]
+  else
+    box
+      ?background:(if is_focused then Some cell_bg_focused else None)
+      ~size:{ width = pct 100; height = auto }
+      ~padding:(padding_lrtb ~l:2 ~r:2 ~t:0 ~b:0)
+      [ markdown source ]
 
 let view_cell ~index ~focus ~mode m cell =
   let is_focused = index = focus in
@@ -1097,7 +1237,9 @@ let view_cell ~index ~focus ~mode m cell =
       let status = Session.cell_status id m.session in
       let is_editing = is_focused && mode = Editing in
       view_code_cell m ~index ~is_focused ~is_editing ~status source outputs
-  | Cell.Text { source; _ } -> view_text_cell ~is_focused source
+  | Cell.Text { source; _ } ->
+      let is_editing = is_focused && mode = Editing in
+      view_text_cell ~is_focused ~is_editing m source
 
 let view_cells m =
   let cells = Doc.cells (Session.doc m.session) in
@@ -1154,57 +1296,26 @@ let footer_kernel_label m =
 let footer_actions m =
   if m.confirm_quit then
     [
-      { key = "q"; label = "Confirm Quit" };
+      { key = "q"; label = "Confirm" };
       { key = "s"; label = "Save" };
       { key = "Esc"; label = "Cancel" };
-      { key = "?"; label = "Help" };
     ]
   else
     match m.mode with
     | Editing ->
         [
-          { key = "Esc"; label = "Exit" };
+          { key = "Shift-Enter"; label = "Run" };
           { key = "Tab"; label = "Complete" };
-          { key = "Ctrl-Enter"; label = "Run" };
-          { key = "Ctrl-S"; label = "Save" };
-          { key = "Ctrl-C"; label = "Interrupt" };
+          { key = "Esc"; label = "Exit" };
           { key = "?"; label = "Help" };
         ]
-    | Normal -> (
-        if has_running m then
-          [
-            { key = "Ctrl-C"; label = "Interrupt" };
-            { key = "j/k"; label = "Navigate" };
-            { key = "s"; label = "Save" };
-            { key = "q"; label = "Quit" };
-            { key = "?"; label = "Help" };
-          ]
-        else
-          match focused_cell m with
-          | Some (Cell.Code _) ->
-              [
-                { key = "Enter"; label = "Run" };
-                { key = "e"; label = "Edit" };
-                { key = "a"; label = "+Code" };
-                { key = "t"; label = "+Text" };
-                { key = "s"; label = "Save" };
-                { key = "?"; label = "Help" };
-              ]
-          | Some (Cell.Text _) ->
-              [
-                { key = "m"; label = "To Code" };
-                { key = "a"; label = "+Code" };
-                { key = "t"; label = "+Text" };
-                { key = "s"; label = "Save" };
-                { key = "?"; label = "Help" };
-              ]
-          | None ->
-              [
-                { key = "a"; label = "+Code" };
-                { key = "t"; label = "+Text" };
-                { key = "s"; label = "Save" };
-                { key = "?"; label = "Help" };
-              ])
+    | Normal ->
+        [
+          { key = "Enter"; label = "Edit" };
+          { key = "x"; label = "Run" };
+          { key = "j/k"; label = "Navigate" };
+          { key = "?"; label = "Help" };
+        ]
 
 let footer_action_limit tier =
   match tier with Wide -> 4 | Medium -> 3 | Compact -> 2 | Tiny -> 1
@@ -1227,7 +1338,7 @@ let footer_action_label tier label =
 
 let truncate_text max_len s =
   if String.length s <= max_len then s
-  else String.sub s 0 (max 0 (max_len - 1)) ^ "…"
+  else String.sub s 0 (max 0 (max_len - 1)) ^ "\xe2\x80\xa6"
 
 let footer_message_view tier m =
   match m.footer_msg with
@@ -1360,43 +1471,37 @@ let view_footer_help_overlay m =
               [
                 box ~flex_direction:Column ~gap:(gap 1)
                   [
-                    section_title "Navigation";
+                    section_title "Normal mode";
+                    item "Enter" "Enter edit mode";
+                    item "x" "Execute focused cell";
                     item "j / k" "Focus next / previous cell";
-                    item "Up / Down" "Focus next / previous cell";
                     item "J / K" "Move cell down / up";
-                  ];
-                box ~flex_direction:Column ~gap:(gap 1)
-                  [
-                    section_title "Execution";
-                    item "Enter" "Run focused code cell";
-                    item "Ctrl-A" "Run all code cells";
-                    item "Ctrl-C" "Interrupt execution";
-                  ];
-                box ~flex_direction:Column ~gap:(gap 1)
-                  [
-                    section_title "Cell management";
-                    item "a / t" "Insert code / text cell";
+                    item "a / t" "Insert code / text cell below";
                     item "d" "Delete focused cell";
-                    item "m" "Toggle focused cell kind";
-                    item "c / Ctrl-L" "Clear focused / all outputs";
+                    item "m" "Toggle cell kind (code/text)";
+                    item "c" "Clear focused cell outputs";
+                    item "s" "Save notebook";
+                    item "q" "Quit";
                   ];
                 box ~flex_direction:Column ~gap:(gap 1)
                   [
-                    section_title "File and session";
-                    item "s / Ctrl-S" "Save notebook";
-                    item "q" "Quit (double press if modified)";
-                    item "Esc" "Dismiss footer message";
-                    item "?" "Toggle this help panel";
-                  ];
-                box ~flex_direction:Column ~gap:(gap 1)
-                  [
-                    section_title "Editing mode";
-                    item "Esc" "Exit editor";
-                    item "Tab / Shift-Tab" "Complete / previous suggestion";
-                    item "Ctrl-Space" "Open completion suggestions";
-                    item "Ctrl-N / Ctrl-P" "Next / previous suggestion";
-                    item "Ctrl-Enter" "Submit and run code cell";
+                    section_title "Edit mode";
+                    item "Shift-Enter" "Execute and advance (REPL flow)";
+                    item "Ctrl-Enter" "Execute and advance (REPL flow)";
+                    item "Esc" "Exit to normal mode";
+                    item "Tab" "Trigger / accept completion";
+                    item "Shift-Tab" "Previous completion";
+                    item "Ctrl-Space" "Open completion popup";
+                    item "Ctrl-N / Ctrl-P" "Next / previous completion";
                     item "Ctrl-S" "Save notebook";
+                  ];
+                box ~flex_direction:Column ~gap:(gap 1)
+                  [
+                    section_title "Global";
+                    item "Ctrl-A" "Execute all cells";
+                    item "Ctrl-C" "Interrupt execution";
+                    item "Ctrl-L" "Clear all outputs";
+                    item "?" "Toggle this help panel";
                   ];
               ];
           ];
@@ -1461,8 +1566,7 @@ let subscriptions model =
                   | Char c when char_eq 'k' c -> Some Focus_prev
                   | Char c when char_eq 'J' c -> Some Move_down
                   | Char c when char_eq 'K' c -> Some Move_up
-                  | Char c when char_eq 'e' c -> Some Enter_edit
-                  | Char c when char_eq 'i' c -> Some Enter_edit
+                  | Char c when char_eq 'x' c -> Some Execute_focused
                   | Char c when char_eq 'a' c -> Some Insert_code_below
                   | Char c when char_eq 't' c -> Some Insert_text_below
                   | Char c when char_eq 'd' c -> Some Delete_focused
@@ -1473,7 +1577,8 @@ let subscriptions model =
                   | Char c when char_eq '?' c -> Some Toggle_help
                   | Down -> Some Focus_next
                   | Up -> Some Focus_prev
-                  | Enter -> Some Execute_focused
+                  | Enter ->
+                      Some Enter_edit (* Enter = edit mode, not execute *)
                   | Escape -> Some Dismiss_message
                   | _ -> None));
       (* Escape in editing mode: textarea does not consume it, so on_key
