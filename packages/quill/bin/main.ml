@@ -5,19 +5,20 @@
 
 let raven_packages =
   [
-    "nx.top";
+    "nx.c";
     "nx.io";
     "rune";
     "kaun";
     "kaun.datasets";
     "hugin";
-    "hugin.top";
     "sowilo";
     "talon";
     "talon.csv";
     "brot";
     "fehu";
   ]
+
+let raven_printers = [ "Nx.pp_data"; "Hugin.pp" ]
 
 let load_optional pkg =
   match Quill_top.load_package pkg with
@@ -43,10 +44,11 @@ let setup () =
       "threads";
       "threads.posix";
     ];
-  (* Prefer the umbrella top package when available; otherwise fall back to
-     loading individual packages so partial installs still work. *)
-  if not (load_optional "raven.top") then
-    List.iter (fun pkg -> ignore (load_optional pkg)) raven_packages
+  (* Load raven packages individually. We skip the .top packages (nx.top,
+     hugin.top, raven.top) — they only install printers during module init,
+     which fails inside dir_load. We install printers ourselves below. *)
+  List.iter (fun pkg -> ignore (load_optional pkg)) raven_packages;
+  List.iter Quill_top.install_printer raven_printers
 
 let create_kernel ~on_event = Quill_top.create ~setup ~on_event ()
 
@@ -137,11 +139,114 @@ let open_browser url =
   let cmd = if Sys.file_exists "/usr/bin/open" then "open" else "xdg-open" in
   ignore (Sys.command (cmd ^ " " ^ Filename.quote url))
 
-(* ───── Run ───── *)
+(* ───── Project loading ───── *)
 
-let run_once inplace path =
+let is_dir path = Sys.file_exists path && Sys.is_directory path
+
+let discover_notebooks dir =
+  let entries = Sys.readdir dir in
+  let mds =
+    Array.to_list entries
+    |> List.filter (fun name -> Filename.check_suffix name ".md")
+    |> List.sort String.compare
+  in
+  List.map
+    (fun name ->
+      let title = Quill_project.title_of_filename name in
+      Quill_project.Notebook ({ title; path = name }, []))
+    mds
+
+let load_project dir =
+  let conf_path = Filename.concat dir "quill.conf" in
+  if Sys.file_exists conf_path then (
+    let source = read_file conf_path in
+    match Quill_project.parse_config source with
+    | Ok (config, toc) ->
+        let title =
+          match config.title with Some t -> t | None -> Filename.basename dir
+        in
+        { Quill_project.title; root = dir; toc; config }
+    | Error msg ->
+        Printf.eprintf "Error: %s\n%!" msg;
+        exit 1)
+  else
+    let toc = discover_notebooks dir in
+    let title = Filename.basename dir in
+    {
+      Quill_project.title;
+      root = dir;
+      toc;
+      config = Quill_project.default_config;
+    }
+
+let scratch_dir =
+  match Sys.getenv_opt "XDG_DATA_HOME" with
+  | Some dir -> Filename.concat dir "quill"
+  | None ->
+      Filename.concat
+        (Filename.concat (Sys.getenv "HOME") ".local/share")
+        "quill"
+
+let scratch_path = Filename.concat scratch_dir "scratch.md"
+
+let ensure_scratch_dir () =
+  if not (Sys.file_exists scratch_dir) then
+    ignore
+      (Sys.command (Printf.sprintf "mkdir -p %s" (Filename.quote scratch_dir)))
+
+(* ───── Default: TUI notebook ───── *)
+
+let default_cmd path =
+  let path =
+    match path with
+    | Some p -> p
+    | None ->
+        ensure_scratch_dir ();
+        scratch_path
+  in
+  Quill_tui.run ~create_kernel path
+
+(* ───── Serve: web notebook ───── *)
+
+let serve_notebook port path =
+  ensure_file path;
+  let url = Printf.sprintf "http://127.0.0.1:%d" port in
+  Quill_server.serve ~create_kernel ~port
+    ~on_ready:(fun () -> open_browser url)
+    path
+
+let serve_project port project =
+  let prelude nb_path =
+    let nb_dir =
+      Filename.concat project.Quill_project.root (Filename.dirname nb_path)
+    in
+    let path = Filename.concat nb_dir "prelude.ml" in
+    if Sys.file_exists path then Some (read_file path) else None
+  in
+  let url = Printf.sprintf "http://127.0.0.1:%d" port in
+  Quill_server.serve_dir ~create_kernel ~port ~prelude ~toc:project.toc
+    ~on_ready:(fun () -> open_browser url)
+    project.root
+
+let serve_cmd port path =
+  if is_dir path then serve_project port (load_project path)
+  else serve_notebook port path
+
+(* ───── Run: batch execution ───── *)
+
+let run_file ?prelude inplace path =
   let md = read_file path in
   let doc = Quill_markdown.of_string md in
+  let create_kernel ~on_event =
+    let k = create_kernel ~on_event in
+    (match prelude with
+    | Some p ->
+        let code = read_file p in
+        k.Quill.Kernel.execute ~cell_id:"__prelude__" ~code
+    | None -> ());
+    k
+  in
+  let doc = Quill.Doc.clear_all_outputs doc in
   let doc = Quill.Eval.run ~create_kernel doc in
   let result = Quill_markdown.to_string_with_outputs doc in
   if inplace then (
@@ -152,7 +257,7 @@ let run_once inplace path =
 let get_mtime path =
   try Some (Unix.stat path).Unix.st_mtime with Unix.Unix_error _ -> None
 
-let rec watch_loop path last_mtime =
+let rec watch_loop ?prelude path last_mtime =
   Unix.sleepf 1.0;
   match get_mtime path with
   | None ->
@@ -162,132 +267,168 @@ let rec watch_loop path last_mtime =
       let tm = Unix.localtime (Unix.gettimeofday ()) in
       Printf.printf "\n[%02d:%02d:%02d] File changed, re-evaluating...\n%!"
         tm.Unix.tm_hour tm.Unix.tm_min tm.Unix.tm_sec;
-      run_once true path;
+      run_file ?prelude true path;
       let new_mtime = Option.value ~default:mtime (get_mtime path) in
-      watch_loop path new_mtime
-  | Some _ -> watch_loop path last_mtime
+      watch_loop ?prelude path new_mtime
+  | Some _ -> watch_loop ?prelude path last_mtime
 
-let run_cmd watch inplace path =
+let run_project ?prelude project =
+  List.iter
+    (fun (nb : Quill_project.notebook) ->
+      let path = Filename.concat project.Quill_project.root nb.path in
+      if Sys.file_exists path then (
+        Printf.printf "  Running %s...\n%!" nb.title;
+        run_file ?prelude true path))
+    (Quill_project.notebooks project)
+
+let run_cmd watch inplace prelude path =
   if not (Sys.file_exists path) then (
     Printf.eprintf "Error: %s not found\n%!" path;
     exit 1);
-  if watch then begin
-    run_once true path;
+  if is_dir path then run_project ?prelude (load_project path)
+  else if watch then begin
+    run_file ?prelude true path;
     match get_mtime path with
     | None ->
         Printf.eprintf "Error: Cannot watch %s\n%!" path;
         exit 1
     | Some mtime ->
         Printf.printf "\nWatching %s for changes... (Ctrl-C to stop)\n%!" path;
-        watch_loop path mtime
+        watch_loop ?prelude path mtime
   end
-  else run_once inplace path
+  else run_file ?prelude inplace path
 
-(* ───── Clean ───── *)
+(* ───── Build: static HTML ───── *)
 
-let clean_cmd inplace path =
+let build_cmd skip_eval output path =
+  if not (is_dir path) then (
+    Printf.eprintf "Error: %s is not a directory\n%!" path;
+    exit 1);
+  let project = load_project path in
+  Quill_book.Build.build ~create_kernel ~skip_eval ?output project
+
+(* ───── Clean: strip outputs ───── *)
+
+let clean_cmd path =
   if not (Sys.file_exists path) then (
     Printf.eprintf "Error: %s not found\n%!" path;
     exit 1);
-  let md = read_file path in
-  let doc = Quill_markdown.of_string md in
-  let doc = Quill.Doc.clear_all_outputs doc in
-  let result = Quill_markdown.to_string doc in
-  if inplace then (
+  if is_dir path then begin
+    let project = load_project path in
+    List.iter
+      (fun (nb : Quill_project.notebook) ->
+        let path = Filename.concat project.root nb.path in
+        if Sys.file_exists path then (
+          let md = read_file path in
+          let doc = Quill_markdown.of_string md in
+          let doc = Quill.Doc.clear_all_outputs doc in
+          let result = Quill_markdown.to_string doc in
+          write_file path result;
+          Printf.printf "  Cleaned %s\n%!" nb.title))
+      (Quill_project.notebooks project);
+    Printf.printf "Done.\n%!"
+  end
+  else begin
+    let md = read_file path in
+    let doc = Quill_markdown.of_string md in
+    let doc = Quill.Doc.clear_all_outputs doc in
+    let result = Quill_markdown.to_string doc in
     write_file path result;
-    Printf.printf "Stripped outputs from %s\n%!" path)
-  else print_string result
-
-(* ───── New ───── *)
-
-let new_cmd path =
-  if Sys.file_exists path then (
-    Printf.eprintf "Error: %s already exists\n%!" path;
-    exit 1);
-  write_file path default_template;
-  Printf.printf "Created %s\n%!" path
+    Printf.printf "Stripped outputs from %s\n%!" path
+  end
 
 (* ───── Cmdliner ───── *)
 
 open Cmdliner
 
+let optional_path_arg =
+  Arg.(
+    value
+    & pos 0 (some string) None
+    & info [] ~docv:"FILE"
+        ~doc:"Path to a notebook file. If omitted, opens a scratch notebook.")
+
+let serve_path_arg =
+  Arg.(
+    value & pos 0 string "notebook.md"
+    & info [] ~docv:"PATH"
+        ~doc:
+          "Path to a notebook file or project directory (contains quill.conf).")
+
 let required_path_arg =
   Arg.(
     required
     & pos 0 (some string) None
-    & info [] ~docv:"FILE" ~doc:"Path to a markdown notebook file.")
-
-let optional_path_arg default =
-  Arg.(value & pos 0 string default & info [] ~docv:"FILE")
-
-let inplace_flag =
-  Arg.(
-    value & flag
-    & info [ "inplace"; "i" ] ~doc:"Write changes back into the file.")
+    & info [] ~docv:"PATH"
+        ~doc:
+          "Path to a notebook file or project directory (contains quill.conf).")
 
 let port_flag =
   Arg.(
     value & opt int 8888
     & info [ "port"; "p" ] ~docv:"PORT" ~doc:"Port to listen on (default 8888).")
 
-(* Default: REPL when no args *)
-let default_term =
-  Term.(
-    const (fun () ->
-        if Unix.isatty Unix.stdin then Quill_repl.run ~create_kernel
-        else Quill_repl.run_pipe ~create_kernel)
-    $ const ())
-
 let watch_flag =
   Arg.(
     value & flag & info [ "watch"; "w" ] ~doc:"Re-execute on every file save.")
 
-(* note: TUI *)
-let note_term =
-  let doc = "Open a notebook in the terminal UI." in
-  Cmd.v (Cmd.info "note" ~doc)
-    Term.(
-      const (fun path ->
-          ensure_file path;
-          Quill_tui.run ~create_kernel path)
-      $ optional_path_arg "notebook.md")
+let inplace_flag =
+  Arg.(
+    value & flag
+    & info [ "inplace"; "i" ] ~doc:"Write changes back into the file.")
 
-(* serve: web UI *)
+let prelude_flag =
+  Arg.(
+    value
+    & opt (some string) None
+    & info [ "prelude" ] ~docv:"FILE"
+        ~doc:"Execute OCaml code from $(docv) before the notebook cells.")
+
+let skip_eval_flag =
+  Arg.(
+    value & flag
+    & info [ "skip-eval" ]
+        ~doc:"Render HTML from existing outputs without re-executing code.")
+
+let output_flag =
+  Arg.(
+    value
+    & opt (some string) None
+    & info [ "output"; "o" ] ~docv:"DIR"
+        ~doc:"Output directory (default: build/ inside the project directory).")
+
+(* Default: TUI notebook *)
+let default_term = Term.(const default_cmd $ optional_path_arg)
+
+(* serve: web notebook *)
 let serve_term =
-  let doc = "Start the web notebook server." in
+  let doc = "Open a notebook or project in the browser." in
   Cmd.v (Cmd.info "serve" ~doc)
-    Term.(
-      const (fun port path ->
-          ensure_file path;
-          let url = Printf.sprintf "http://127.0.0.1:%d" port in
-          Quill_httpd.serve ~create_kernel ~port
-            ~on_ready:(fun () -> open_browser url)
-            path)
-      $ port_flag
-      $ optional_path_arg "notebook.md")
+    Term.(const serve_cmd $ port_flag $ serve_path_arg)
 
-(* run: batch execution, optionally watching *)
+(* run: batch execution *)
 let run_term =
-  let doc = "Execute all code blocks in a notebook." in
+  let doc = "Execute all code blocks in a notebook or project." in
   Cmd.v (Cmd.info "run" ~doc)
-    Term.(const run_cmd $ watch_flag $ inplace_flag $ required_path_arg)
+    Term.(
+      const run_cmd $ watch_flag $ inplace_flag $ prelude_flag
+      $ required_path_arg)
+
+(* build: static HTML *)
+let build_term =
+  let doc = "Build a project directory as a static HTML site." in
+  Cmd.v (Cmd.info "build" ~doc)
+    Term.(const build_cmd $ skip_eval_flag $ output_flag $ required_path_arg)
 
 (* clean: strip outputs *)
 let clean_term =
-  let doc = "Strip outputs from a notebook." in
-  Cmd.v (Cmd.info "clean" ~doc)
-    Term.(const clean_cmd $ inplace_flag $ required_path_arg)
-
-(* new: create notebook *)
-let new_term =
-  let doc = "Create a new notebook from a starter template." in
-  Cmd.v (Cmd.info "new" ~doc)
-    Term.(const new_cmd $ optional_path_arg "notebook.md")
+  let doc = "Strip outputs from a notebook or all project notebooks." in
+  Cmd.v (Cmd.info "clean" ~doc) Term.(const clean_cmd $ required_path_arg)
 
 let quill_cmd =
-  let doc = "Interactive OCaml toplevel and notebooks." in
+  let doc = "Interactive OCaml notebooks." in
   let info = Cmd.info "quill" ~version:"1.0.0" ~doc in
   Cmd.group ~default:default_term info
-    [ note_term; serve_term; run_term; clean_term; new_term ]
+    [ serve_term; run_term; build_term; clean_term ]
 
 let () = exit (Cmd.eval quill_cmd)

@@ -6,11 +6,13 @@
  (link_flags -linkall)
  (libraries
   quill
+  quill.project
   quill.markdown
   quill.top
-  quill.repl
   quill.tui
-  quill.httpd
+  quill.server
+  quill.book
   cmdliner
   findlib
-  unix))
+  unix
+  threads.posix))
