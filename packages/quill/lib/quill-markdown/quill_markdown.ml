@@ -347,8 +347,7 @@ let render_cell_id buf id (attrs : Quill.Cell.attrs) =
   Buffer.add_string buf " -->\n"
 
 let render_cell ~with_outputs buf = function
-  | Quill.Cell.Text { id; source; attrs; _ } ->
-      render_cell_id buf id attrs;
+  | Quill.Cell.Text { source; _ } ->
       Buffer.add_string buf source;
       Buffer.add_char buf '\n'
   | Quill.Cell.Code { id; source; language; outputs; attrs; _ } ->
