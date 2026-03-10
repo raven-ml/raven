@@ -1,0 +1,4 @@
+(library
+ (name quill_book)
+ (public_name quill.book)
+ (libraries quill quill.project quill.markdown cmarkit unix))
