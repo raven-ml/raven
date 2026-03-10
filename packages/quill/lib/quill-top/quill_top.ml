@@ -43,46 +43,75 @@ let add_packages pkgs =
               roots)
           pkgs
 
-(* Load a package that is NOT linked into the executable: resolve its dependency
-   chain, add directories, and load .cma archives. *)
+(* Try loading a single ancestor package. Returns [true] on success, [false]
+   if the archive references an undefined global (dependency not yet loaded). *)
+let try_load_ancestor p =
+  let loaded =
+    Findlib.is_recorded_package p
+    && Findlib.type_of_recorded_package p = Findlib.Record_load
+  in
+  if loaded then true
+  else
+    let incore =
+      Findlib.is_recorded_package p
+      && Findlib.type_of_recorded_package p = Findlib.Record_core
+    in
+    let d = Findlib.package_directory p in
+    Topdirs.dir_directory d;
+    if incore then begin
+      Findlib.record_package Findlib.Record_load p;
+      true
+    end
+    else
+      let archive =
+        try Findlib.package_property !findlib_predicates p "archive"
+        with Not_found -> ""
+      in
+      let archives =
+        String.split_on_char ' ' archive |> List.filter (fun s -> s <> "")
+      in
+      try
+        List.iter
+          (fun arch ->
+            let path = Findlib.resolve_path ~base:d arch in
+            Topdirs.dir_load Format.err_formatter path)
+          archives;
+        Findlib.record_package Findlib.Record_load p;
+        true
+      with Symtable.Error (Undefined_global _) -> false
+
+(* Load a package: resolve its dependency chain and load archives.
+
+   Findlib's topological sort does not account for virtual library
+   implementations (a virtual package has no archive; its implementation
+   archive may appear later in the ancestor list). This causes
+   [Undefined_global] when a dependent is loaded before the implementation.
+
+   We handle this with a fixpoint loop: load what we can, collect failures,
+   and retry until either everything succeeds or no progress is made. *)
 let load_package pkg =
   if not (ensure_findlib ()) then
     Printf.eprintf "[quill] #require: findlib unavailable\n%!"
-  else begin
+  else
     let ancestors =
       Findlib.package_deep_ancestors !findlib_predicates [ pkg ]
     in
-    List.iter
-      (fun p ->
-        let loaded =
-          Findlib.is_recorded_package p
-          && Findlib.type_of_recorded_package p = Findlib.Record_load
-        in
-        let incore =
-          Findlib.is_recorded_package p
-          && Findlib.type_of_recorded_package p = Findlib.Record_core
-        in
-        if not loaded then begin
-          let d = Findlib.package_directory p in
-          Topdirs.dir_directory d;
-          if not incore then begin
-            let archive =
-              try Findlib.package_property !findlib_predicates p "archive"
-              with Not_found -> ""
-            in
-            let archives =
-              String.split_on_char ' ' archive |> List.filter (fun s -> s <> "")
-            in
-            List.iter
-              (fun arch ->
-                let path = Findlib.resolve_path ~base:d arch in
-                Topdirs.dir_load Format.err_formatter path)
-              archives
-          end;
-          Findlib.record_package Findlib.Record_load p
-        end)
-      ancestors
-  end
+    let rec loop remaining =
+      let deferred =
+        List.filter (fun p -> not (try_load_ancestor p)) remaining
+      in
+      match deferred with
+      | [] -> ()
+      | _ when List.length deferred < List.length remaining ->
+          loop deferred
+      | _ ->
+          (* No progress — report the packages we cannot load *)
+          List.iter
+            (fun p ->
+              Printf.eprintf "[quill] failed to load package %s\n%!" p)
+            deferred
+    in
+    loop ancestors
 
 (* ───── Initialization ───── *)
 
