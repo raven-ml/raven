@@ -968,13 +968,16 @@ def run_and_print(
     *,
     config: Config = default_config,
     output_format: str = "pretty",
+    sort_by_wall: bool = True,
     verbose: bool = False,
 ) -> List[AnalysisResult]:
     results = run_silent(benchmarks, config=config)
     print("\nBenchmark Results:")
     fmt = output_format.lower()
     if fmt in {"pretty", "table"}:
-        print_pretty_table(results, ascii_only=config.ascii_only_output)
+        print_pretty_table(
+            results, ascii_only=config.ascii_only_output, sort_by_wall=sort_by_wall
+        )
     elif fmt == "json":
         print_json(results)
     elif fmt == "csv":
@@ -991,10 +994,15 @@ def run(
     *,
     config: Config = default_config,
     output_format: str = "pretty",
+    sort_by_wall: bool = True,
     verbose: bool = False,
 ) -> List[AnalysisResult]:
     return run_and_print(
-        benchmarks, config=config, output_format=output_format, verbose=verbose
+        benchmarks,
+        config=config,
+        output_format=output_format,
+        sort_by_wall=sort_by_wall,
+        verbose=verbose,
     )
 
 
@@ -1006,6 +1014,7 @@ def print_pretty_table(
     results: Sequence[AnalysisResult],
     *,
     ascii_only: bool = False,
+    sort_by_wall: bool = True,
 ) -> None:
     if not results:
         print("No benchmark results to display.")
@@ -1051,7 +1060,11 @@ def print_pretty_table(
     fastest_cpu = min(r.time_stats.avg for r in results)
     lowest_memory = min(r.memory_stats.avg for r in results)
 
-    sorted_results = sorted(results, key=lambda r: r.wall_stats.avg)
+    sorted_results = (
+        sorted(results, key=lambda r: r.wall_stats.avg)
+        if sort_by_wall
+        else list(results)
+    )
 
     rows_data: List[Tuple[AnalysisResult, List[str]]] = []
     for entry in sorted_results:

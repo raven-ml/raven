@@ -74,6 +74,12 @@ let ops_f32 ~size =
       (name, "Nx (OxCaml)", fun () -> ignore (ox_op a_fe));
     ]
   in
+  let random_pair name nx_op ox_op =
+    [
+      (name, "Nx (C)", fun () -> ignore (nx_op ()));
+      (name, "Nx (OxCaml)", fun () -> ignore (ox_op ()));
+    ]
+  in
   [
     bin_pair "Add" (fun ~out a b -> Nx.add ~out a b) (fun ~out a b -> Nx_ox.add ~out a b);
     bin_pair "Matmul" (fun ~out a b -> Nx.matmul ~out a b) (fun ~out a b -> Nx_ox.matmul ~out a b);
@@ -116,13 +122,19 @@ let ops_f32 ~size =
     reduce_pair "Reduce_max" (fun ~out a -> Nx.max ~out a) (fun ~out a -> Nx_ox.max ~out a);
     reduce_pair "Reduce_min" (fun ~out a -> Nx.min ~out a) (fun ~out a -> Nx_ox.min ~out a);
     no_out_unary_pair "Cum_sum" (fun a -> Nx.cumsum a) (fun a -> Nx_ox.cumsum a);
+    no_out_unary_pair "Scan_sum_axis1" (fun a -> Nx.cumsum ~axis:1 a) (fun a -> Nx_ox.cumsum ~axis:1 a);
     no_out_unary_pair "Cum_prod" (fun a -> Nx.cumprod a) (fun a -> Nx_ox.cumprod a);
+    no_out_unary_pair "Scan_prod_axis1" (fun a -> Nx.cumprod ~axis:1 a) (fun a -> Nx_ox.cumprod ~axis:1 a);
     no_out_unary_pair "Cum_max" (fun a -> Nx.cummax a) (fun a -> Nx_ox.cummax a);
+    no_out_unary_pair "Scan_max_axis1" (fun a -> Nx.cummax ~axis:1 a) (fun a -> Nx_ox.cummax ~axis:1 a);
     no_out_unary_pair "Cum_min" (fun a -> Nx.cummin a) (fun a -> Nx_ox.cummin a);
+    no_out_unary_pair "Scan_min_axis1" (fun a -> Nx.cummin ~axis:1 a) (fun a -> Nx_ox.cummin ~axis:1 a);
     no_out_unary_pair "Argmax" (fun a -> Nx.argmax a) (fun a -> Nx_ox.argmax a);
     no_out_unary_pair "Argmin" (fun a -> Nx.argmin a) (fun a -> Nx_ox.argmin a);
     no_out_sort_pair "Sort" (fun a -> Nx.sort a) (fun a -> Nx_ox.sort a);
     no_out_unary_pair "Argsort" (fun a -> Nx.argsort a) (fun a -> Nx_ox.argsort a);
+    random_pair "Threefry_rand" (fun () -> Nx.rand Nx.Float32 shape) (fun () -> Nx_ox.rand ctx Nx_ox.float32 shape);
+    random_pair "Threefry_randn" (fun () -> Nx.randn Nx.Float32 shape) (fun () -> Nx_ox.randn ctx Nx_ox.float32 shape);
   ]
   |> List.concat
 
@@ -188,6 +200,12 @@ let ops_f64 ~size =
       (name, "Nx (OxCaml)", fun () -> ignore (ox_op a_fe));
     ]
   in
+  let random_pair name nx_op ox_op =
+    [
+      (name, "Nx (C)", fun () -> ignore (nx_op ()));
+      (name, "Nx (OxCaml)", fun () -> ignore (ox_op ()));
+    ]
+  in
   [
     bin_pair "Add" (fun ~out a b -> Nx.add ~out a b) (fun ~out a b -> Nx_ox.add ~out a b);
     bin_pair "Matmul" (fun ~out a b -> Nx.matmul ~out a b) (fun ~out a b -> Nx_ox.matmul ~out a b);
@@ -230,13 +248,19 @@ let ops_f64 ~size =
     reduce_pair "Reduce_max" (fun ~out a -> Nx.max ~out a) (fun ~out a -> Nx_ox.max ~out a);
     reduce_pair "Reduce_min" (fun ~out a -> Nx.min ~out a) (fun ~out a -> Nx_ox.min ~out a);
     no_out_unary_pair "Cum_sum" (fun a -> Nx.cumsum a) (fun a -> Nx_ox.cumsum a);
+    no_out_unary_pair "Scan_sum_axis1" (fun a -> Nx.cumsum ~axis:1 a) (fun a -> Nx_ox.cumsum ~axis:1 a);
     no_out_unary_pair "Cum_prod" (fun a -> Nx.cumprod a) (fun a -> Nx_ox.cumprod a);
+    no_out_unary_pair "Scan_prod_axis1" (fun a -> Nx.cumprod ~axis:1 a) (fun a -> Nx_ox.cumprod ~axis:1 a);
     no_out_unary_pair "Cum_max" (fun a -> Nx.cummax a) (fun a -> Nx_ox.cummax a);
+    no_out_unary_pair "Scan_max_axis1" (fun a -> Nx.cummax ~axis:1 a) (fun a -> Nx_ox.cummax ~axis:1 a);
     no_out_unary_pair "Cum_min" (fun a -> Nx.cummin a) (fun a -> Nx_ox.cummin a);
+    no_out_unary_pair "Scan_min_axis1" (fun a -> Nx.cummin ~axis:1 a) (fun a -> Nx_ox.cummin ~axis:1 a);
     no_out_unary_pair "Argmax" (fun a -> Nx.argmax a) (fun a -> Nx_ox.argmax a);
     no_out_unary_pair "Argmin" (fun a -> Nx.argmin a) (fun a -> Nx_ox.argmin a);
     no_out_sort_pair "Sort" (fun a -> Nx.sort a) (fun a -> Nx_ox.sort a);
     no_out_unary_pair "Argsort" (fun a -> Nx.argsort a) (fun a -> Nx_ox.argsort a);
+    random_pair "Threefry_rand" (fun () -> Nx.rand Nx.Float64 shape) (fun () -> Nx_ox.rand ctx Nx_ox.float64 shape);
+    random_pair "Threefry_randn" (fun () -> Nx.randn Nx.Float64 shape) (fun () -> Nx_ox.randn ctx Nx_ox.float64 shape);
   ]
   |> List.concat
 
