@@ -3,17 +3,15 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Raven packages to load, in dependency order. nx.c (virtual library
-   implementation) must come before nx so that Nx_backend is defined. *)
 let raven_packages =
   [
-    "nx.c";
-    "nx";
+    "nx.top";
     "nx.io";
     "rune";
     "kaun";
     "kaun.datasets";
     "hugin";
+    "hugin.top";
     "sowilo";
     "talon";
     "talon.csv";
@@ -21,7 +19,14 @@ let raven_packages =
     "fehu";
   ]
 
-let raven_top_packages = [ "nx.top"; "hugin.top" ]
+let load_optional pkg =
+  match Quill_top.load_package pkg with
+  | () -> true
+  | exception Fl_package_base.No_such_package _ -> false
+  | exception exn ->
+      Printf.eprintf "[quill] failed to load %s: %s\n%!" pkg
+        (Printexc.to_string exn);
+      false
 
 let setup () =
   (* Mark packages already linked into the quill executable so that load_package
@@ -38,16 +43,10 @@ let setup () =
       "threads";
       "threads.posix";
     ];
-  (* Load each raven package if it is installed. *)
-  List.iter
-    (fun pkg ->
-      match Quill_top.load_package pkg with
-      | () -> ()
-      | exception Fl_package_base.No_such_package _ -> ()
-      | exception exn ->
-          Printf.eprintf "[quill] failed to load %s: %s\n%!" pkg
-            (Printexc.to_string exn))
-    (raven_packages @ raven_top_packages)
+  (* Prefer the umbrella top package when available; otherwise fall back to
+     loading individual packages so partial installs still work. *)
+  if not (load_optional "raven.top") then
+    List.iter (fun pkg -> ignore (load_optional pkg)) raven_packages
 
 let create_kernel ~on_event = Quill_top.create ~setup ~on_event ()
 

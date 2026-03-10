@@ -1,0 +1,18 @@
+(library
+ (name raven_top)
+ (public_name raven.top)
+ (modules raven_top)
+ (libraries
+  nx.top
+  nx.io
+  rune
+  kaun
+  kaun.datasets
+  hugin
+  hugin.top
+  sowilo
+  talon
+  talon.csv
+  brot
+  fehu)
+ (modes byte))

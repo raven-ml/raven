@@ -219,7 +219,6 @@
 (package
  (name raven)
  (dir packages/raven)
- (allow_empty)
  (synopsis "Modern scientific computing for OCaml")
  (description
   "Raven is an ecosystem of composable libraries for numerical computing in OCaml. Tensors, automatic differentiation, neural networks, dataframes, plotting, tokenization, computer vision, reinforcement learning, and interactive notebooks.")
