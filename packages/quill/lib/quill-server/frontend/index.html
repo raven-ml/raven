@@ -31,7 +31,10 @@
     Connection lost &mdash; reconnecting&hellip;
   </div>
 
-  <main class="notebook" id="notebook"></main>
+  <div class="layout" id="layout">
+    <nav class="sidebar" id="sidebar" hidden></nav>
+    <main class="notebook" id="notebook"></main>
+  </div>
 
   <!-- Keyboard shortcuts dialog -->
   <div id="shortcuts-dialog" class="dialog-backdrop" hidden>
@@ -48,6 +51,8 @@
             <div><dt><kbd>k</kbd> / <kbd>&uarr;</kbd></dt><dd>Focus previous cell</dd></div>
             <div><dt><kbd>Enter</kbd></dt><dd>Edit focused cell</dd></div>
             <div><dt><kbd>Escape</kbd></dt><dd>Exit editor</dd></div>
+            <div><dt><kbd>&larr;</kbd></dt><dd>Previous chapter</dd></div>
+            <div><dt><kbd>&rarr;</kbd></dt><dd>Next chapter</dd></div>
           </dl>
         </div>
         <div class="shortcut-group">

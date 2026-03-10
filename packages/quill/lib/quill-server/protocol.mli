@@ -11,6 +11,11 @@
     - {{!client}Client messages}
     - {{!server}Server messages} *)
 
+(** {1:json JSON helpers} *)
+
+val json_obj : (string * Jsont.Json.t) list -> Jsont.Json.t
+val json_to_string : Jsont.Json.t -> string
+
 (** {1:client Client messages} *)
 
 type client_msg =

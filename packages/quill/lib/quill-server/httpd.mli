@@ -22,7 +22,8 @@ type meth =
   | HEAD
   | POST
   | PUT
-  | DELETE  (** The type for HTTP request methods. *)
+  | DELETE
+  | OPTIONS  (** The type for HTTP request methods. *)
 
 type request = {
   meth : meth;  (** The request method. *)

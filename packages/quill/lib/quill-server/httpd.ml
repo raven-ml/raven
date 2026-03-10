@@ -399,7 +399,7 @@ let write_string fd s = write_all fd s 0 (String.length s)
   Types
   ---------------------------------------------------------------------------*)
 
-type meth = GET | HEAD | POST | PUT | DELETE
+type meth = GET | HEAD | POST | PUT | DELETE | OPTIONS
 
 type request = {
   meth : meth;
@@ -439,6 +439,7 @@ let meth_of_string = function
   | "POST" -> POST
   | "PUT" -> PUT
   | "DELETE" -> DELETE
+  | "OPTIONS" -> OPTIONS
   | _ -> failwith err_unsupported_meth
 
 let trim_header_value s start =
@@ -789,15 +790,21 @@ let handle_ws_upgrade server req fd reader =
   | _ -> write_response fd (response ~status:404 "Not Found")
 
 let dispatch_http server req =
-  match find_route server.routes req with
-  | Some (`Handler h) -> (
-      try h req
-      with exn ->
-        Printf.eprintf err_handler (Printexc.to_string exn);
-        response ~status:500 "Internal Server Error")
-  | Some (`Static (prefix, loader)) -> serve_static ~prefix ~loader req
-  | Some (`Websocket _) -> response ~status:426 "Upgrade Required"
-  | None -> response ~status:404 "Not Found"
+  match req.meth with
+  | OPTIONS ->
+      response ~status:204
+        ~headers:[ ("Allow", "GET, HEAD, POST, PUT, DELETE, OPTIONS") ]
+        ""
+  | _ -> (
+      match find_route server.routes req with
+      | Some (`Handler h) -> (
+          try h req
+          with exn ->
+            Printf.eprintf err_handler (Printexc.to_string exn);
+            response ~status:500 "Internal Server Error")
+      | Some (`Static (prefix, loader)) -> serve_static ~prefix ~loader req
+      | Some (`Websocket _) -> response ~status:426 "Upgrade Required"
+      | None -> response ~status:404 "Not Found")
 
 let handle_connection server fd client_addr =
   let reader = reader_create fd in
@@ -818,6 +825,12 @@ let handle_connection server fd client_addr =
       | exception Unix.Unix_error (Unix.ETIMEDOUT, _, _) -> ()
       | exception Unix.Unix_error (Unix.EAGAIN, _, _) -> ()
       | exception Unix.Unix_error (Unix.ECONNRESET, _, _) -> ()
+      | exception Failure msg when msg = err_unsupported_meth ->
+          (* Unsupported method: request was well-formed, safe to continue. *)
+          Printf.eprintf err_parse msg;
+          (try write_response fd (response ~status:405 "Method Not Allowed")
+           with _ -> ());
+          loop true
       | exception exn -> (
           Printf.eprintf err_parse (Printexc.to_string exn);
           try write_response fd (response ~status:400 "Bad Request")

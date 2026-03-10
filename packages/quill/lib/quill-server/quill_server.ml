@@ -37,6 +37,27 @@ let write_file path content =
 let get_mtime path =
   try (Unix.stat path).Unix.st_mtime with Unix.Unix_error _ -> 0.
 
+(* Serve files from the notebook's directory (for images, figures, etc.).
+   Security: rejects ".." segments, resolves symlinks with Unix.realpath, and
+   verifies the canonical path is strictly under base_dir. *)
+let file_loader base_dir rel_path =
+  let segments = String.split_on_char '/' rel_path in
+  if List.exists (fun s -> s = "" || s = "." || s = "..") segments then None
+  else
+    let path = Filename.concat base_dir rel_path in
+    if Sys.file_exists path && not (Sys.is_directory path) then
+      try
+        let real = Unix.realpath path in
+        let real_base = Unix.realpath base_dir in
+        let prefix = real_base ^ "/" in
+        if
+          String.length real > String.length prefix
+          && String.sub real 0 (String.length prefix) = prefix
+        then Some (read_file real)
+        else None
+      with _ -> None
+    else None
+
 (* ───── Server state ───── *)
 
 type state = {
@@ -319,14 +340,10 @@ let ws_handler st _req ws =
 
 (* ───── Entry point ───── *)
 
-let serve ~create_kernel ?(addr = "127.0.0.1") ?(port = 8888) ?on_ready path =
-  if not (Sys.file_exists path) then (
-    Printf.eprintf err_file_not_found path;
-    exit 1);
+let make_state ~create_kernel path =
   let md = read_file path in
   let doc = Quill_markdown.of_string md in
   let session = Session.create doc in
-  let mutex = Mutex.create () in
   let st =
     {
       session;
@@ -342,7 +359,7 @@ let serve ~create_kernel ?(addr = "127.0.0.1") ?(port = 8888) ?on_ready path =
           shutdown = ignore;
         };
       path;
-      mutex;
+      mutex = Mutex.create ();
       ws_clients = [];
       last_mtime = get_mtime path;
       exec_queue = Queue.create ();
@@ -354,6 +371,13 @@ let serve ~create_kernel ?(addr = "127.0.0.1") ?(port = 8888) ?on_ready path =
   let on_event ev = on_kernel_event st ev in
   st.kernel <- create_kernel ~on_event;
   ignore (Thread.create exec_worker st : Thread.t);
+  st
+
+let serve ~create_kernel ?(addr = "127.0.0.1") ?(port = 8888) ?on_ready path =
+  if not (Sys.file_exists path) then (
+    Printf.eprintf err_file_not_found path;
+    exit 1);
+  let st = make_state ~create_kernel path in
   let server = Httpd.create ~addr ~port () in
   Httpd.route server GET "/" (fun _req ->
       Httpd.response
@@ -361,9 +385,127 @@ let serve ~create_kernel ?(addr = "127.0.0.1") ?(port = 8888) ?on_ready path =
         Assets.index_html);
   Httpd.static server ~prefix:"/assets/" ~loader:Assets.lookup ();
   Httpd.websocket server "/ws" (ws_handler st);
+  let base_dir =
+    let abs =
+      if Filename.is_relative path then Filename.concat (Sys.getcwd ()) path
+      else path
+    in
+    Filename.dirname abs
+  in
+  Httpd.static server ~prefix:"/" ~loader:(file_loader base_dir) ();
   let after_start () =
     Printf.printf "Quill: http://%s:%d (Ctrl-C to stop)\n%!" addr port;
     match on_ready with Some f -> f () | None -> ()
   in
   Httpd.run ~after_start server;
   st.kernel.shutdown ()
+
+(* ───── Directory mode ───── *)
+
+let notebook_url_path (nb : Quill_project.notebook) =
+  let dir = Filename.dirname nb.path in
+  if dir = "." then "/" ^ nb.path ^ "/" else "/" ^ dir ^ "/"
+
+let rec toc_notebooks toc =
+  List.concat_map
+    (fun e ->
+      match e with
+      | Quill_project.Notebook (nb, children) ->
+          if Quill_project.is_placeholder nb then toc_notebooks children
+          else nb :: toc_notebooks children
+      | _ -> [])
+    toc
+
+let toc_to_json toc =
+  let rec entry_json = function
+    | Quill_project.Notebook (nb, children) ->
+        let fields =
+          [
+            ("type", Jsont.Json.string "notebook");
+            ("title", Jsont.Json.string nb.title);
+            ("path", Jsont.Json.string nb.path);
+            ("url", Jsont.Json.string (notebook_url_path nb));
+            ( "number",
+              Jsont.Json.string
+                (Quill_project.number_string (Quill_project.number toc nb)) );
+            ("placeholder", Jsont.Json.bool (Quill_project.is_placeholder nb));
+            ("children", Jsont.Json.list (List.map entry_json children));
+          ]
+        in
+        Protocol.json_obj fields
+    | Quill_project.Section title ->
+        Protocol.json_obj
+          [
+            ("type", Jsont.Json.string "section");
+            ("title", Jsont.Json.string title);
+          ]
+    | Quill_project.Separator ->
+        Protocol.json_obj [ ("type", Jsont.Json.string "separator") ]
+  in
+  Protocol.json_to_string (Jsont.Json.list (List.map entry_json toc))
+
+let serve_dir ~create_kernel ?(addr = "127.0.0.1") ?(port = 8888) ?on_ready
+    ?(prelude = fun _ -> None) ~(toc : Quill_project.toc_item list) root =
+  let notebooks = toc_notebooks toc in
+  let states : (string, state) Hashtbl.t = Hashtbl.create 16 in
+  let states_mutex = Mutex.create () in
+  let get_or_create_state nb_path =
+    Mutex.lock states_mutex;
+    let st =
+      match Hashtbl.find_opt states nb_path with
+      | Some st -> st
+      | None ->
+          let abs_path = Filename.concat root nb_path in
+          let create_kernel ~on_event =
+            let k = create_kernel ~on_event in
+            (match prelude nb_path with
+            | Some code -> k.Kernel.execute ~cell_id:"__prelude__" ~code
+            | None -> ());
+            k
+          in
+          let st = make_state ~create_kernel abs_path in
+          Hashtbl.replace states nb_path st;
+          log "[dir] created state for %s\n%!" nb_path;
+          st
+    in
+    Mutex.unlock states_mutex;
+    st
+  in
+  let server = Httpd.create ~addr ~port () in
+  let serve_html _req =
+    Httpd.response
+      ~headers:[ ("Content-Type", "text/html; charset=utf-8") ]
+      Assets.index_html
+  in
+  Httpd.route server GET "/" serve_html;
+  List.iter
+    (fun (nb : Quill_project.notebook) ->
+      let url = notebook_url_path nb in
+      Httpd.route server GET url serve_html;
+      let url_noslash = String.sub url 0 (String.length url - 1) in
+      if url_noslash <> "" then Httpd.route server GET url_noslash serve_html)
+    notebooks;
+  Httpd.route server GET "/api/notebooks" (fun _req ->
+      Httpd.json (toc_to_json toc));
+  Httpd.static server ~prefix:"/assets/" ~loader:Assets.lookup ();
+  Httpd.websocket server "/ws" (fun req ws ->
+      let nb_path =
+        match List.assoc_opt "path" req.query with
+        | Some p -> p
+        | None -> (
+            match notebooks with
+            | nb :: _ -> nb.path
+            | [] ->
+                log "[ws] no notebooks and no path param\n%!";
+                Httpd.ws_close ws;
+                failwith "no notebooks")
+      in
+      let st = get_or_create_state nb_path in
+      ws_handler st req ws);
+  Httpd.static server ~prefix:"/" ~loader:(file_loader root) ();
+  let after_start () =
+    Printf.printf "Quill: http://%s:%d (Ctrl-C to stop)\n%!" addr port;
+    match on_ready with Some f -> f () | None -> ()
+  in
+  Httpd.run ~after_start server;
+  Hashtbl.iter (fun _ st -> st.kernel.shutdown ()) states

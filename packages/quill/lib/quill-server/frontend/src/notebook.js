@@ -120,6 +120,11 @@ export class NotebookRenderer {
     // Add final divider
     this.container.appendChild(this._createDivider(this.store.cells.length));
 
+    // Re-append chapter navigation if present (book mode)
+    if (window._quillChapterNavEl) {
+      this.container.appendChild(window._quillChapterNavEl);
+    }
+
     // Apply focus
     if (this.store.focusedCellId) {
       const el = document.querySelector(`[data-cell-id="${this.store.focusedCellId}"]`);
@@ -127,22 +132,104 @@ export class NotebookRenderer {
     }
   }
 
+  _splitRenderedHtml(html) {
+    // Split server-rendered HTML by h1/h2 headings, returning an array of
+    // HTML fragments.  Each fragment starts at a heading and runs until the
+    // next heading (or the end).  Any content before the first heading is
+    // returned as the first element with index -1.
+    if (!html) return [];
+    const container = document.createElement('div');
+    container.innerHTML = html;
+    const parts = [];
+    let buf = [];
+    let seenHeading = false;
+    for (const node of Array.from(container.childNodes)) {
+      const tag = node.nodeName;
+      if (tag === 'H1' || tag === 'H2') {
+        if (buf.length > 0) {
+          parts.push(buf.map(n => n.outerHTML || n.textContent).join(''));
+        }
+        buf = [node];
+        seenHeading = true;
+      } else {
+        if (!seenHeading && buf.length === 0 && parts.length === 0) {
+          // Content before first heading
+          buf.push(node);
+        } else {
+          buf.push(node);
+        }
+      }
+    }
+    if (buf.length > 0) {
+      parts.push(buf.map(n => n.outerHTML || n.textContent).join(''));
+    }
+    return parts;
+  }
+
   _groupIntoSections(cells) {
     const sections = [];
     let current = { name: null, cells: [] };
+    const headingRe = /^#{1,2}\s+(.+)/gm;
 
     for (const cell of cells) {
-      // Check if this text cell starts a new section
       if (cell.kind === 'text' && cell.source) {
-        const match = cell.source.match(/^#{1,2}\s+(.+)/m);
-        if (match && current.cells.length > 0) {
-          sections.push(current);
-          current = { name: match[1].trim(), cells: [] };
-        } else if (match && current.cells.length === 0) {
-          current.name = match[1].trim();
+        // Find all headings and their positions in this cell
+        const headings = [];
+        let m;
+        while ((m = headingRe.exec(cell.source)) !== null) {
+          headings.push({ name: m[1].trim(), index: m.index });
         }
+        headingRe.lastIndex = 0;
+
+        if (headings.length <= 1) {
+          // Zero or one heading — original behavior
+          const match = headings[0];
+          if (match && current.cells.length > 0) {
+            sections.push(current);
+            current = { name: match.name, cells: [] };
+          } else if (match && current.cells.length === 0) {
+            current.name = match.name;
+          }
+          current.cells.push(cell);
+        } else {
+          // Multiple headings — split cell into virtual sub-cells
+          // Also split the rendered HTML so each virtual cell gets its own fragment
+          const htmlParts = this._splitRenderedHtml(cell.rendered_html);
+          // htmlParts[0] may be content before first heading
+          let htmlIdx = 0;
+          const hasPreHeadingContent = cell.source.slice(0, headings[0].index).trim().length > 0;
+
+          for (let i = 0; i < headings.length; i++) {
+            const start = headings[i].index;
+            const end = i + 1 < headings.length ? headings[i + 1].index : cell.source.length;
+            const source = cell.source.slice(start, end).trim();
+
+            // Text before the first heading stays in the current section
+            if (i === 0 && start > 0) {
+              const before = cell.source.slice(0, start).trim();
+              if (before) {
+                const preHtml = hasPreHeadingContent && htmlParts.length > 0 ? htmlParts[htmlIdx++] : null;
+                current.cells.push({
+                  ...cell, source: before, rendered_html: preHtml,
+                  id: cell.id + '_v0', _virtual: true
+                });
+              }
+            }
+
+            if (current.cells.length > 0) {
+              sections.push(current);
+            }
+            current = { name: headings[i].name, cells: [] };
+            const partHtml = htmlIdx < htmlParts.length ? htmlParts[htmlIdx++] : null;
+            current.cells.push({
+              ...cell, source, rendered_html: partHtml,
+              id: cell.id + '_v' + (i + 1), _virtual: true
+            });
+          }
+        }
+      } else {
+        current.cells.push(cell);
       }
-      current.cells.push(cell);
     }
     if (current.cells.length > 0 || sections.length === 0) {
       sections.push(current);

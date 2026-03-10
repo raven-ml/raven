@@ -10,11 +10,15 @@ export class WsClient {
     this._pendingDiagnostics = new Map();
     this._requestCounter = 0;
     this._sourceDebounceTimers = new Map();
+    this.chapterPath = null; // Set by app.js in directory mode
   }
 
   connect() {
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = `${protocol}//${location.host}/ws`;
+    let url = `${protocol}//${location.host}/ws`;
+    if (this.chapterPath) {
+      url += `?path=${encodeURIComponent(this.chapterPath)}`;
+    }
     this.ws = new WebSocket(url);
     this.ws.onopen = () => {
       const wasDisconnected = this.reconnectDelay > 1000;

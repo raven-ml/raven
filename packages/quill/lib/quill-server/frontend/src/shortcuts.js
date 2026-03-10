@@ -44,6 +44,18 @@ export function initShortcuts(store, wsClient) {
           e.preventDefault();
           if (window._quillToggleShortcuts) window._quillToggleShortcuts();
           return;
+        case 'ArrowLeft':
+          if (!store.focusedCellId && window._quillChapterNav && window._quillChapterNav.prev) {
+            e.preventDefault();
+            location.href = window._quillChapterNav.prev;
+          }
+          return;
+        case 'ArrowRight':
+          if (!store.focusedCellId && window._quillChapterNav && window._quillChapterNav.next) {
+            e.preventDefault();
+            location.href = window._quillChapterNav.next;
+          }
+          return;
         case 'j':
         case 'ArrowDown':
           e.preventDefault();

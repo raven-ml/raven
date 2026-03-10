@@ -120,5 +120,95 @@ document.addEventListener('mousedown', (e) => {
 // Init keyboard shortcuts
 initShortcuts(store, wsClient);
 
-// Connect WebSocket
-wsClient.connect();
+// --- Sidebar (directory mode) ---
+
+async function initSidebar() {
+  try {
+    const res = await fetch('/api/notebooks');
+    if (!res.ok) return; // Single-file mode, no notebooks
+    const chapters = await res.json();
+    if (!chapters || chapters.length === 0) return;
+
+    const sidebar = document.getElementById('sidebar');
+    const layout = document.getElementById('layout');
+    sidebar.hidden = false;
+    layout.classList.add('has-sidebar');
+
+    const currentPath = location.pathname;
+
+    for (const entry of chapters) {
+      if (entry.type === 'section') {
+        const part = document.createElement('div');
+        part.className = 'sidebar-part';
+        part.textContent = entry.title;
+        sidebar.appendChild(part);
+      } else if (entry.type === 'separator') {
+        const sep = document.createElement('div');
+        sep.className = 'sidebar-separator';
+        sidebar.appendChild(sep);
+      } else if (entry.type === 'notebook') {
+        const link = document.createElement('a');
+        link.className = 'sidebar-chapter';
+        link.href = entry.url;
+        link.textContent = entry.title;
+        // Highlight active notebook
+        if (currentPath === entry.url || currentPath === entry.url.replace(/\/$/, '')) {
+          link.classList.add('active');
+        }
+        sidebar.appendChild(link);
+      }
+    }
+
+    // Find active notebook and compute prev/next
+    const chapterEntries = chapters.filter(ch => ch.type === 'notebook');
+    const activeIdx = chapterEntries.findIndex(
+      ch => currentPath === ch.url || currentPath === ch.url.replace(/\/$/, '')
+    );
+
+    if (activeIdx >= 0) {
+      wsClient.chapterPath = chapterEntries[activeIdx].path;
+
+      const prev = activeIdx > 0 ? chapterEntries[activeIdx - 1] : null;
+      const next = activeIdx < chapterEntries.length - 1 ? chapterEntries[activeIdx + 1] : null;
+
+      // Expose for keyboard shortcuts
+      window._quillChapterNav = {
+        prev: prev ? prev.url : null,
+        next: next ? next.url : null,
+      };
+
+      // Render prev/next navigation after the notebook container
+      // (placed outside #notebook so renderAll() doesn't destroy it)
+      const nav = document.createElement('div');
+      nav.className = 'chapter-nav';
+
+      if (prev) {
+        const prevLink = document.createElement('a');
+        prevLink.className = 'chapter-nav-link chapter-nav-prev';
+        prevLink.href = prev.url;
+        prevLink.innerHTML = `<span class="chapter-nav-dir">\u2190 Previous</span><span class="chapter-nav-title">${prev.title}</span>`;
+        nav.appendChild(prevLink);
+      } else {
+        nav.appendChild(document.createElement('span'));
+      }
+
+      if (next) {
+        const nextLink = document.createElement('a');
+        nextLink.className = 'chapter-nav-link chapter-nav-next';
+        nextLink.href = next.url;
+        nextLink.innerHTML = `<span class="chapter-nav-dir">Next \u2192</span><span class="chapter-nav-title">${next.title}</span>`;
+        nav.appendChild(nextLink);
+      }
+
+      // Store the nav element globally so the notebook renderer can
+      // re-append it after renderAll() clears the container.
+      window._quillChapterNavEl = nav;
+      container.appendChild(nav);
+    }
+  } catch {
+    // No sidebar in single-file mode
+  }
+}
+
+// Initialize sidebar (if directory mode), then connect WebSocket
+initSidebar().then(() => wsClient.connect());
