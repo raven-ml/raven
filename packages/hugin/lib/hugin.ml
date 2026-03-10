@@ -118,7 +118,25 @@ let render_to_buffer ?(theme = Theme.default) ?(width = default_width)
   let scene = resolve_with_cairo ~theme ~width ~height spec in
   Cairo_backend.render_to_buffer ~width ~height scene
 
+let infer_dimensions spec =
+  let rec grid_shape = function
+    | Spec.Grid { rows; _ } ->
+        let nrows = List.length rows in
+        let ncols =
+          List.fold_left (fun acc row -> max acc (List.length row)) 0 rows
+        in
+        Some (nrows, ncols)
+    | Spec.Decorated { inner; _ } -> grid_shape inner
+    | _ -> None
+  in
+  match grid_shape spec with
+  | Some (nrows, ncols) when ncols > 0 ->
+      let cell_w = default_width /. float ncols in
+      (default_width, cell_w *. float nrows)
+  | _ -> (default_width, default_height)
+
 let pp fmt spec =
-  let buf = render_to_buffer spec in
+  let width, height = infer_dimensions spec in
+  let buf = render_to_buffer ~width ~height spec in
   let b64 = Image_util.base64_encode buf in
   Format.fprintf fmt "![figure](data:image/png;base64,%s)" b64

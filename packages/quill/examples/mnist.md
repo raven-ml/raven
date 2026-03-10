@@ -42,10 +42,10 @@ let _fig =
   List.init 10 (fun i ->
     let img = Nx.get [i; 0] x_train |> Nx.reshape [|28; 28|] in
     let label = Nx.item [i] y_train in
-    Hugin.imshow ~data:img ~cmap:Cmap.gray ()
+    Hugin.imshow ~data:img ~cmap:Hugin.Cmap.gray ()
     |> Hugin.title (Printf.sprintf "%ld" label)
     |> Hugin.no_axes)
-  |> Hugin.hstack
+  |> Hugin.hstack ~gap:0.
 ```
 
 <!-- quill:cell id="c_mnist_model_text" -->
@@ -139,10 +139,10 @@ let _fig =
   List.init 10 (fun i ->
     let img = Nx.get [i; 0] x_test |> Nx.reshape [|28; 28|] in
     let true_l = Nx.item [i] y_test in
-    let logits = Train.predict trainer !st (Nx.get [i] x_test |> Nx.expand_dims 0) in
+    let logits = Train.predict trainer !st (Nx.get [i] x_test |> Nx.expand_dims [0]) in
     let pred_l = Nx.item [] (Nx.argmax ~axis:1 logits) in
-    Hugin.imshow ~data:img ~cmap:Cmap.gray ()
+    Hugin.imshow ~data:img ~cmap:Hugin.Cmap.gray ()
     |> Hugin.title (Printf.sprintf "%ld->%ld" true_l pred_l)
     |> Hugin.no_axes)
-  |> Hugin.hstack
+  |> Hugin.hstack ~gap:0.
 ```

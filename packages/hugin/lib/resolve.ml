@@ -285,17 +285,9 @@ let emit_image_mark sx sy plot_area ~data ~extent =
       let h = Float.abs (py1 -. py0) in
       [ Scene.Image { x; y; w; h; data } ]
   | None ->
-      let shape = Nx.shape data in
-      let img_h = float shape.(0) and img_w = float shape.(1) in
-      let aspect = img_w /. img_h in
-      let plot_aspect = plot_area.rw /. plot_area.rh in
-      let w, h =
-        if aspect > plot_aspect then (plot_area.rw, plot_area.rw /. aspect)
-        else (plot_area.rh *. aspect, plot_area.rh)
-      in
-      let x = plot_area.rx +. ((plot_area.rw -. w) /. 2.) in
-      let y = plot_area.ry +. ((plot_area.rh -. h) /. 2.) in
-      [ Scene.Image { x; y; w; h; data } ]
+      [ Scene.Image
+          { x = plot_area.rx; y = plot_area.ry;
+            w = plot_area.rw; h = plot_area.rh; data } ]
 
 let emit_text_mark sx sy plot_area theme ~x ~y ~content ~color ~font_size =
   let color = Option.value ~default:Color.black color in
