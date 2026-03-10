@@ -24,6 +24,8 @@
     For batch evaluation of notebooks without an interactive session, see
     {!Eval}.
 
+    For organizing notebooks into projects, see {!Quill_project}.
+
     {1 Modules} *)
 
 module Cell = Cell

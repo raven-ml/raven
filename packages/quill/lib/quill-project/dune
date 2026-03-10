@@ -1,0 +1,3 @@
+(library
+ (name quill_project)
+ (public_name quill.project))
