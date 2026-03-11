@@ -27,6 +27,14 @@ let ops_f32 ~size =
   let out_fe = Nx_ox.empty ctx Nx_ox.float32 shape in
   let out_fe_scalar = Nx_ox.empty ctx Nx_ox.float32 [||] in
   let out_fe_bool = Nx_ox.empty ctx Nx_ox.bool shape in
+  let pad_config = [| (1, 1); (1, 1) |] in
+  let shrink_config = [| (1, size - 1); (1, size - 1) |] in
+  let gather_indices_c = Nx.arange Nx.int32 0 size 1 in
+  let gather_indices_fe = Nx_ox.arange ctx Nx_ox.int32 0 size 1 in
+  let scatter_template_c = Nx.zeros Nx.float32 shape in
+  let scatter_template_fe = Nx_ox.zeros ctx Nx_ox.float32 shape in
+  let scatter_updates_c = Nx.arange Nx.float32 0 size 1 in
+  let scatter_updates_fe = Nx_ox.arange ctx Nx_ox.float32 0 size 1 in
   let bin_pair name nx_op ox_op =
     [
       (name, "Nx (C)", fun () -> ignore (nx_op ~out:out_c a b));
@@ -72,6 +80,12 @@ let ops_f32 ~size =
     [
       (name, "Nx (C)", fun () -> ignore (nx_op a));
       (name, "Nx (OxCaml)", fun () -> ignore (ox_op a_fe));
+    ]
+  in
+  let no_out_pair name nx_op ox_op =
+    [
+      (name, "Nx (C)", fun () -> ignore (nx_op ()));
+      (name, "Nx (OxCaml)", fun () -> ignore (ox_op ()));
     ]
   in
   let random_pair name nx_op ox_op =
@@ -133,6 +147,26 @@ let ops_f32 ~size =
     no_out_unary_pair "Argmin" (fun a -> Nx.argmin a) (fun a -> Nx_ox.argmin a);
     no_out_sort_pair "Sort" (fun a -> Nx.sort a) (fun a -> Nx_ox.sort a);
     no_out_unary_pair "Argsort" (fun a -> Nx.argsort a) (fun a -> Nx_ox.argsort a);
+    no_out_pair "Cat"
+      (fun () -> Nx.concatenate ~axis:0 [ a; b ])
+      (fun () -> Nx_ox.concatenate ~axis:0 [ a_fe; b_fe ]);
+    no_out_pair "Pad" (fun () -> Nx.pad pad_config 0.0 a)
+      (fun () -> Nx_ox.pad pad_config 0.0 a_fe);
+    no_out_pair "Shrink" (fun () -> Nx.shrink shrink_config a)
+      (fun () -> Nx_ox.shrink shrink_config a_fe);
+    no_out_pair "Flip" (fun () -> Nx.flip ~axes:[ 0 ] a)
+      (fun () -> Nx_ox.flip ~axes:[ 0 ] a_fe);
+    no_out_pair "Cast" (fun () -> Nx.cast Nx.float64 a)
+      (fun () -> Nx_ox.cast Nx_ox.float64 a_fe);
+    no_out_pair "Gather" (fun () -> Nx.take gather_indices_c a)
+      (fun () -> Nx_ox.take gather_indices_fe a_fe);
+    no_out_pair "Scatter"
+      (fun () ->
+        Nx.put ~indices:gather_indices_c ~values:scatter_updates_c
+          scatter_template_c)
+      (fun () ->
+        Nx_ox.put ~indices:gather_indices_fe ~values:scatter_updates_fe
+          scatter_template_fe);
     random_pair "Threefry_rand" (fun () -> Nx.rand Nx.Float32 shape) (fun () -> Nx_ox.rand ctx Nx_ox.float32 shape);
     random_pair "Threefry_randn" (fun () -> Nx.randn Nx.Float32 shape) (fun () -> Nx_ox.randn ctx Nx_ox.float32 shape);
   ]
@@ -153,6 +187,14 @@ let ops_f64 ~size =
   let out_fe = Nx_ox.empty ctx Nx_ox.float64 shape in
   let out_fe_scalar = Nx_ox.empty ctx Nx_ox.float64 [||] in
   let out_fe_bool = Nx_ox.empty ctx Nx_ox.bool shape in
+  let pad_config = [| (1, 1); (1, 1) |] in
+  let shrink_config = [| (1, size - 1); (1, size - 1) |] in
+  let gather_indices_c = Nx.arange Nx.int32 0 size 1 in
+  let gather_indices_fe = Nx_ox.arange ctx Nx_ox.int32 0 size 1 in
+  let scatter_template_c = Nx.zeros Nx.float64 shape in
+  let scatter_template_fe = Nx_ox.zeros ctx Nx_ox.float64 shape in
+  let scatter_updates_c = Nx.arange Nx.float64 0 size 1 in
+  let scatter_updates_fe = Nx_ox.arange ctx Nx_ox.float64 0 size 1 in
   let bin_pair name nx_op ox_op =
     [
       (name, "Nx (C)", fun () -> ignore (nx_op ~out:out_c a b));
@@ -198,6 +240,12 @@ let ops_f64 ~size =
     [
       (name, "Nx (C)", fun () -> ignore (nx_op a));
       (name, "Nx (OxCaml)", fun () -> ignore (ox_op a_fe));
+    ]
+  in
+  let no_out_pair name nx_op ox_op =
+    [
+      (name, "Nx (C)", fun () -> ignore (nx_op ()));
+      (name, "Nx (OxCaml)", fun () -> ignore (ox_op ()));
     ]
   in
   let random_pair name nx_op ox_op =
@@ -259,6 +307,26 @@ let ops_f64 ~size =
     no_out_unary_pair "Argmin" (fun a -> Nx.argmin a) (fun a -> Nx_ox.argmin a);
     no_out_sort_pair "Sort" (fun a -> Nx.sort a) (fun a -> Nx_ox.sort a);
     no_out_unary_pair "Argsort" (fun a -> Nx.argsort a) (fun a -> Nx_ox.argsort a);
+    no_out_pair "Cat"
+      (fun () -> Nx.concatenate ~axis:0 [ a; b ])
+      (fun () -> Nx_ox.concatenate ~axis:0 [ a_fe; b_fe ]);
+    no_out_pair "Pad" (fun () -> Nx.pad pad_config 0.0 a)
+      (fun () -> Nx_ox.pad pad_config 0.0 a_fe);
+    no_out_pair "Shrink" (fun () -> Nx.shrink shrink_config a)
+      (fun () -> Nx_ox.shrink shrink_config a_fe);
+    no_out_pair "Flip" (fun () -> Nx.flip ~axes:[ 0 ] a)
+      (fun () -> Nx_ox.flip ~axes:[ 0 ] a_fe);
+    no_out_pair "Cast" (fun () -> Nx.cast Nx.float32 a)
+      (fun () -> Nx_ox.cast Nx_ox.float32 a_fe);
+    no_out_pair "Gather" (fun () -> Nx.take gather_indices_c a)
+      (fun () -> Nx_ox.take gather_indices_fe a_fe);
+    no_out_pair "Scatter"
+      (fun () ->
+        Nx.put ~indices:gather_indices_c ~values:scatter_updates_c
+          scatter_template_c)
+      (fun () ->
+        Nx_ox.put ~indices:gather_indices_fe ~values:scatter_updates_fe
+          scatter_template_fe);
     random_pair "Threefry_rand" (fun () -> Nx.rand Nx.Float64 shape) (fun () -> Nx_ox.rand ctx Nx_ox.float64 shape);
     random_pair "Threefry_randn" (fun () -> Nx.randn Nx.Float64 shape) (fun () -> Nx_ox.randn ctx Nx_ox.float64 shape);
   ]

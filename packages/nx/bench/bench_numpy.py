@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable, List, Sequence, Tuple
 
 import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
 
 _ROOT = Path(__file__).resolve().parents[3]
 
@@ -50,6 +51,13 @@ def _numpy_operations(
     a = _RNG.random((size, size), dtype=dtype)
     b = _RNG.random((size, size), dtype=dtype)
     cond = np.less(a, b)
+    indices = np.arange(size, dtype=np.int32)
+    scatter_template = np.zeros_like(a)
+    scatter_updates = np.arange(size, dtype=dtype)
+    cast_dtype = np.float64 if dtype == np.float32 else np.float32
+    pad_config = ((1, 1), (1, 1))
+    kernel_size = (3, 3)
+    stride = (1, 1)
 
     def _cumsum_flat(x: np.ndarray) -> np.ndarray:
         return np.cumsum(x, axis=None).reshape(x.shape)
@@ -116,6 +124,23 @@ def _numpy_operations(
         ("Argmin", lambda a=a: np.argmin(a)),
         ("Sort", lambda a=a: np.sort(a)),
         ("Argsort", lambda a=a: np.argsort(a)),
+        ("Cat", lambda a=a, b=b: np.concatenate([a, b], axis=0)),
+        (
+            "Pad",
+            lambda a=a, pad_config=pad_config: np.pad(
+                a, pad_config, mode="constant"
+            ),
+        ),
+        ("Shrink", lambda a=a: a[1:-1, 1:-1]),
+        ("Flip", lambda a=a: np.flip(a, axis=0)),
+        ("Cast", lambda a=a, dt=cast_dtype: a.astype(dt, copy=False)),
+        ("Gather", lambda a=a, idx=indices: np.take(a, idx)),
+        (
+            "Scatter",
+            lambda t=scatter_template, idx=indices, upd=scatter_updates: np.put(
+                t, idx, upd
+            ),
+        ),
         (
             "Threefry_rand",
             lambda size=size, dtype=dtype: _RNG.random((size, size)).astype(
