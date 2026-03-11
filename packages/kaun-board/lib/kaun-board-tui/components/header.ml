@@ -21,8 +21,8 @@ let badge_color = function
 
 (* Styles *)
 
-let header_bg = Ansi.Color.of_rgb 30 80 100
-let dim_style = Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:10) ()
+let border_color = Ansi.Color.grayscale ~level:6
+let dim_style = Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:14) ()
 let label_style = Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:16) ()
 let value_style = Ansi.Style.make ~bold:true ~fg:Ansi.Color.white ()
 let muted_style = Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:14) ()
@@ -88,10 +88,11 @@ let view ~run_id ~latest_epoch ~total_epochs ~latest_step ~elapsed_secs ~status
       stats @ [ sep (); text ~style:muted_style (format_elapsed elapsed_secs) ]
     else [ text ~style:muted_style (format_elapsed elapsed_secs) ]
   in
-  box ~padding:(padding_xy 2 0) ~background:header_bg
+  box ~flex_direction:Column
     ~size:{ width = pct 100; height = auto }
     [
-      box ~flex_direction:Row ~gap:(gap 2) ~align_items:Center
+      box ~padding:(padding_xy 2 0) ~flex_direction:Row ~gap:(gap 2)
+        ~align_items:Center
         ~size:{ width = pct 100; height = auto }
         ([
            text ~style:value_style "Kaun Board";
@@ -106,4 +107,8 @@ let view ~run_id ~latest_epoch ~total_epochs ~latest_step ~elapsed_secs ~status
               ~style:(Ansi.Style.make ~bold:true ~fg:status_color ())
               (status_label status);
           ]);
+      box
+        ~size:{ width = pct 100; height = px 1 }
+        ~background:border_color
+        [ text " " ];
     ]
