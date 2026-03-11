@@ -97,7 +97,7 @@ let view_dashboard m =
               selected = m.metrics_state.selected;
             };
           divider ();
-          scroll_box ~scroll_y:true ~scroll_x:false
+          box
             ~size:{ width = pct 34; height = pct 100 }
             [ Sys_panel.view m.sys_panel ];
         ];
