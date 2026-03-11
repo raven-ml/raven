@@ -11,6 +11,7 @@ open Kaun_board
 type model = {
   run_id : string;
   total_epochs : int option;
+  created_at : float;
   run_status : Header.run_status;
   store : Store.t;
   stream : Run.event_stream;
@@ -42,6 +43,16 @@ let compute_run_status ~stream ~total_epochs ~latest_epoch : Header.run_status =
       let age = Unix.gettimeofday () -. Run.last_mtime stream in
       if age > stopped_threshold_sec then Stopped else Live
 
+let latest_step store =
+  let metrics = Store.latest_metrics store in
+  match metrics with
+  | [] -> None
+  | _ ->
+      Some
+        (List.fold_left
+           (fun acc (_, (m : Store.metric)) -> max acc m.step)
+           0 metrics)
+
 let visible_chart_tags (m : model) : string list =
   let latest = Store.latest_metrics m.store in
   let all_tags = List.map fst latest in
@@ -62,7 +73,8 @@ let view_dashboard m =
     [
       Header.view ~run_id:m.run_id
         ~latest_epoch:(Store.latest_epoch m.store)
-        ~status:m.run_status;
+        ~total_epochs:m.total_epochs ~latest_step:(latest_step m.store)
+        ~created_at:m.created_at ~status:m.run_status;
       box ~flex_direction:Row ~flex_grow:1.0
         ~size:{ width = pct 100; height = pct 100 }
         [
@@ -135,6 +147,7 @@ let view m =
 let init ~run =
   let run_id = Run.run_id run in
   let total_epochs = Run.total_epochs run in
+  let created_at = Run.created_at run in
   let stream = Run.open_events run in
   let store = Store.create () in
   let initial_events = Run.read_events stream in
@@ -146,6 +159,7 @@ let init ~run =
   ( {
       run_id;
       total_epochs;
+      created_at;
       run_status;
       store;
       stream;
