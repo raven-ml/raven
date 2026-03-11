@@ -218,6 +218,7 @@
 
 (package
  (name raven)
+ (allow_empty)
  (dir packages/raven)
  (synopsis "Modern scientific computing for OCaml")
  (description
