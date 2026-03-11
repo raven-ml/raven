@@ -27,6 +27,7 @@ type msg =
   | Quit
   | Metrics_msg of Metrics.msg
   | Open_metric of string
+  | Open_selected
   | Close_metric
   | Toggle_smooth
 
@@ -72,6 +73,7 @@ let view_dashboard m =
               screen_width = m.metrics_state.screen_width;
               screen_height = m.metrics_state.screen_height;
               current_batch = m.metrics_state.current_batch;
+              selected = m.metrics_state.selected;
             };
           divider ();
           scroll_box ~scroll_y:true ~scroll_x:false
@@ -172,6 +174,12 @@ let update msg m =
       in
       ({ m with metrics_state = metrics_state' }, Cmd.none)
   | Open_metric tag -> ({ m with mode = Detail tag }, Cmd.none)
+  | Open_selected ->
+      let visible = visible_chart_tags m in
+      let idx = m.metrics_state.selected in
+      if idx < List.length visible then
+        ({ m with mode = Detail (List.nth visible idx) }, Cmd.none)
+      else (m, Cmd.none)
   | Close_metric -> ({ m with mode = Dashboard }, Cmd.none)
   | Toggle_smooth -> (
       match m.mode with
@@ -194,23 +202,24 @@ let subscriptions m =
             let hi = Uchar.of_char (Char.uppercase_ascii ch) in
             Uchar.equal c lo || Uchar.equal c hi
           in
-          let key = (Mosaic_ui.Event.Key.data ev).key in
-          match (key, m.mode) with
+          let data = Mosaic_ui.Event.Key.data ev in
+          match (data.key, m.mode) with
           | Char c, Detail _ when is c 's' -> Some Toggle_smooth
           | Char c, Dashboard when is c 'q' -> Some Quit
           | Char c, Detail _ when is c 'q' -> Some Close_metric
           | Escape, Dashboard -> Some Quit
           | Escape, Detail _ -> Some Close_metric
-          | Left, Dashboard -> Some (Metrics_msg Metrics.Prev_batch)
-          | Right, Dashboard -> Some (Metrics_msg Metrics.Next_batch)
-          | Char c, Dashboard ->
-              let idx = Uchar.to_int c - Uchar.to_int (Uchar.of_char '1') in
-              if idx >= 0 && idx <= 8 then
-                let visible = visible_chart_tags m in
-                if idx < List.length visible then
-                  Some (Open_metric (List.nth visible idx))
-                else None
-              else None
+          | Left, Dashboard -> Some (Metrics_msg Metrics.Select_left)
+          | Right, Dashboard -> Some (Metrics_msg Metrics.Select_right)
+          | Up, Dashboard -> Some (Metrics_msg Metrics.Select_up)
+          | Down, Dashboard -> Some (Metrics_msg Metrics.Select_down)
+          | Char c, Dashboard when is c '[' ->
+              Some (Metrics_msg Metrics.Prev_batch)
+          | Char c, Dashboard when is c ']' ->
+              Some (Metrics_msg Metrics.Next_batch)
+          | Enter, Dashboard -> Some Open_selected
+          | Char c, Dashboard when Uchar.equal c (Uchar.of_char ' ') ->
+              Some Open_selected
           | _ -> None);
     ]
 
