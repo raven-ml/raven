@@ -2143,9 +2143,7 @@ let assemble_kernel ~(lang : lang) ~(preamble_gen : render_meta -> string) ~name
   let all_params = param_strs @ scalar_param_strs @ extra_params in
   let kernel_prefix = lang.kernel_prefix meta in
   let preamble = preamble_gen meta in
-  let inner_name =
-    if fixed_abi && String.equal name "kern" then "kern_" else name
-  in
+  let inner_name = if fixed_abi then name ^ "_" else name in
   let signature =
     if fixed_abi then
       Printf.sprintf "static %s %s(%s)" kernel_prefix inner_name
@@ -2172,10 +2170,10 @@ let assemble_kernel ~(lang : lang) ~(preamble_gen : render_meta -> string) ~name
     let all_args = cast_args @ scalar_args in
     Printf.sprintf
       "%s\n\
-       void kern(const unsigned long long *bufs, const long long *vals) {\n\
+       void %s(const unsigned long long *bufs, const long long *vals) {\n\
       \  %s(%s);\n\
        }"
-      kernel_src inner_name
+      kernel_src name inner_name
       (String.concat ", " all_args)
   else kernel_src
 
