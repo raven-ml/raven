@@ -230,7 +230,7 @@ let rec chunk_by n lst =
 let view (params : view_params) =
   if params.metric_tags = [] then
     box ~padding:(padding 1)
-      ~size:{ width = pct 66; height = pct 100 }
+      ~size:{ width = pct 66; height = auto }
       [ text ~style:hint_style "  Waiting for metrics..." ]
   else
     let columns = calculate_columns params.screen_width in
@@ -246,7 +246,7 @@ let view (params : view_params) =
     in
     let rows = chunk_by columns visible_metrics in
     box ~flex_direction:Column ~padding:(padding 1) ~gap:(gap 1)
-      ~size:{ width = pct 66; height = pct 100 }
+      ~size:{ width = pct 66; height = auto }
       ([
          (if w.total_batches > 1 then
             box ~flex_direction:Row ~justify_content:Flex_end

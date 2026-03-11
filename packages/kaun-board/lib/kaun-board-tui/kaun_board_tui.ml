@@ -83,8 +83,9 @@ let view_dashboard m =
         ~latest_epoch:(Store.latest_epoch m.store)
         ~total_epochs:m.total_epochs ~latest_step:(latest_step m.store)
         ~elapsed_secs:(elapsed_secs m) ~status:m.run_status;
-      box ~flex_direction:Row ~flex_grow:1.0
-        ~size:{ width = pct 100; height = pct 100 }
+      box ~flex_direction:Row ~flex_grow:1.0 ~flex_shrink:1.0
+        ~overflow:{ x = Hidden; y = Hidden }
+        ~size:{ width = pct 100; height = auto }
         [
           Metrics.view
             {
@@ -98,7 +99,7 @@ let view_dashboard m =
             };
           divider ();
           box
-            ~size:{ width = pct 34; height = pct 100 }
+            ~size:{ width = pct 34; height = auto }
             [ Sys_panel.view m.sys_panel ];
         ];
       Footer.view ~mode:Dashboard;
