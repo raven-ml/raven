@@ -17,7 +17,8 @@ type model = {
   metrics_state : Metrics.state;
   sys_panel : Sys_panel.t;
   mode : mode;
-  chart_smooth : int; (* 0 = off, 1..3 = smoothness level *)
+  chart_smooth : int;  (* 0 = off, 1..3 = smoothness level *)
+  chart_hover : (int * int) option;
 }
 
 and mode = Dashboard | Detail of string
@@ -29,6 +30,7 @@ type msg =
   | Open_metric of string
   | Close_metric
   | Toggle_smooth
+  | Chart_hover of (int * int) option
 
 (* Helpers *)
 
@@ -119,6 +121,14 @@ let view_detail m tag =
                  (fun (b : Store.best_value) -> b.value)
                  (Store.best_for_tag m.store tag))
             ~smooth:smooth_param
+            ~hover:m.chart_hover
+            ~on_mouse:(fun ev ->
+              let px = Mosaic_ui.Event.Mouse.x ev in
+              let py = Mosaic_ui.Event.Mouse.y ev in
+              match Mosaic_ui.Event.Mouse.kind ev with
+              | Move | Drag _ -> Some (Chart_hover (Some (px, py)))
+              | Out -> Some (Chart_hover None)
+              | _ -> None)
             ~size:{ width = pct 80; height = pct 80 };
         ];
     ]
@@ -151,6 +161,7 @@ let init ~run =
       sys_panel;
       mode = Dashboard;
       chart_smooth = 0;
+      chart_hover = None;
     },
     Cmd.none )
 
@@ -171,8 +182,14 @@ let update msg m =
         Metrics.update metrics_msg m.metrics_state ~total_metrics
       in
       ({ m with metrics_state = metrics_state' }, Cmd.none)
-  | Open_metric tag -> ({ m with mode = Detail tag }, Cmd.none)
-  | Close_metric -> ({ m with mode = Dashboard }, Cmd.none)
+  | Open_metric tag ->
+      ({ m with mode = Detail tag; chart_hover = None }, Cmd.none)
+  | Close_metric ->
+      ({ m with mode = Dashboard; chart_hover = None }, Cmd.none)
+  | Chart_hover pos -> (
+      match m.mode with
+      | Dashboard -> (m, Cmd.none)
+      | Detail _ -> ({ m with chart_hover = pos }, Cmd.none))
   | Toggle_smooth -> (
       match m.mode with
       | Dashboard -> (m, Cmd.none)
