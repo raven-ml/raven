@@ -53,6 +53,14 @@ let latest_step store =
            (fun acc (_, (m : Store.metric)) -> max acc m.step)
            0 metrics)
 
+let elapsed_secs m =
+  let end_time =
+    match m.run_status with
+    | Header.Live -> Unix.gettimeofday ()
+    | Stopped | Done -> Run.last_mtime m.stream
+  in
+  end_time -. m.created_at
+
 let visible_chart_tags (m : model) : string list =
   let latest = Store.latest_metrics m.store in
   let all_tags = List.map fst latest in
@@ -74,7 +82,7 @@ let view_dashboard m =
       Header.view ~run_id:m.run_id
         ~latest_epoch:(Store.latest_epoch m.store)
         ~total_epochs:m.total_epochs ~latest_step:(latest_step m.store)
-        ~created_at:m.created_at ~status:m.run_status;
+        ~elapsed_secs:(elapsed_secs m) ~status:m.run_status;
       box ~flex_direction:Row ~flex_grow:1.0
         ~size:{ width = pct 100; height = pct 100 }
         [

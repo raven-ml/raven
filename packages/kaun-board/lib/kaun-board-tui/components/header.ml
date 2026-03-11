@@ -22,9 +22,10 @@ let badge_color = function
 (* Styles *)
 
 let header_bg = Ansi.Color.of_rgb 30 80 100
-let hint_style = Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:14) ()
-let step_color = Ansi.Color.cyan
-let epoch_color = Ansi.Color.cyan
+let dim_style = Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:10) ()
+let label_style = Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:16) ()
+let value_style = Ansi.Style.make ~bold:true ~fg:Ansi.Color.white ()
+let muted_style = Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:14) ()
 
 (* Helpers *)
 
@@ -49,50 +50,60 @@ let format_step step =
 
 (* View *)
 
-let view ~run_id ~latest_epoch ~total_epochs ~latest_step ~created_at ~status =
-  let badge_bg = badge_color status in
-  let epoch_text =
+let view ~run_id ~latest_epoch ~total_epochs ~latest_step ~elapsed_secs ~status
+    =
+  let status_color = badge_color status in
+  let epoch_items =
     match (latest_epoch, total_epochs) with
-    | None, _ -> None
-    | Some e, Some t -> Some (Printf.sprintf "Epoch %d/%d" e t)
-    | Some e, None -> Some (Printf.sprintf "Epoch %d" e)
+    | None, _ -> []
+    | Some e, Some t ->
+        [
+          text ~style:label_style "Epoch ";
+          text ~style:value_style (Printf.sprintf "%d/%d" e t);
+        ]
+    | Some e, None ->
+        [
+          text ~style:label_style "Epoch ";
+          text ~style:value_style (string_of_int e);
+        ]
   in
-  let step_text =
+  let step_items =
     match latest_step with
-    | None -> None
-    | Some s -> Some (Printf.sprintf "Step %s" (format_step s))
+    | None -> []
+    | Some s ->
+        [
+          text ~style:label_style "Step ";
+          text ~style:value_style (format_step s);
+        ]
   in
-  let elapsed = Unix.gettimeofday () -. created_at in
-  let elapsed_text = format_elapsed elapsed in
-  let sep () = text ~style:hint_style "\u{2022}" in
+  let sep () = text ~style:dim_style " \u{00B7} " in
+  let stats =
+    [ epoch_items; step_items ]
+    |> List.filter (fun l -> l <> [])
+    |> List.mapi (fun i items -> if i > 0 then sep () :: items else items)
+    |> List.flatten
+  in
+  let stats =
+    if stats <> [] then
+      stats @ [ sep (); text ~style:muted_style (format_elapsed elapsed_secs) ]
+    else [ text ~style:muted_style (format_elapsed elapsed_secs) ]
+  in
   box ~padding:(padding_xy 2 0) ~background:header_bg
     ~size:{ width = pct 100; height = auto }
     [
       box ~flex_direction:Row ~gap:(gap 2) ~align_items:Center
         ~size:{ width = pct 100; height = auto }
         ([
-           text ~style:(Ansi.Style.make ~bold:true ()) "\u{25B8} Kaun Board";
-           text
-             ~style:(Ansi.Style.make ~fg:step_color ())
-             (Printf.sprintf "Run: %s" run_id);
+           text ~style:value_style "Kaun Board";
+           text ~style:dim_style "\u{2502}";
+           text ~style:muted_style run_id;
          ]
-        @ (match epoch_text with
-          | None -> []
-          | Some s ->
-              [ sep (); text ~style:(Ansi.Style.make ~fg:epoch_color ()) s ])
-        @ (match step_text with
-          | None -> []
-          | Some s ->
-              [ sep (); text ~style:(Ansi.Style.make ~fg:step_color ()) s ])
+        @ stats
         @ [
-            sep ();
-            text ~style:hint_style elapsed_text;
             box ~flex_grow:1.0 ~size:{ width = auto; height = auto } [];
-            box ~padding:(padding_xy 1 0) ~background:badge_bg
-              [
-                text
-                  ~style:(Ansi.Style.make ~bold:true ~fg:Ansi.Color.white ())
-                  (status_label status);
-              ];
+            text ~style:(Ansi.Style.make ~fg:status_color ()) "\u{25CF}";
+            text
+              ~style:(Ansi.Style.make ~bold:true ~fg:status_color ())
+              (status_label status);
           ]);
     ]
