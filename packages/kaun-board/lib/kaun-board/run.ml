@@ -238,6 +238,8 @@ let open_events t =
     pending = "";
   }
 
+let last_mtime stream = stream.last_mtime
+
 let close_events stream =
   Option.iter
     (fun ic ->

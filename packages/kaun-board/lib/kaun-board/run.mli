@@ -96,6 +96,11 @@ val read_events : event_stream -> Event.t list
     Automatically resets to the beginning if the underlying file has been
     rotated or truncated. *)
 
+val last_mtime : event_stream -> float
+(** [last_mtime stream] is the last observed modification time of the event log
+    file, as recorded by {!read_events}. Returns [0.0] before the first
+    successful read. *)
+
 val close_events : event_stream -> unit
 (** [close_events stream] releases the stream's file descriptor. Safe to call
     multiple times. *)

@@ -10,7 +10,6 @@ open Kaun_board
 
 type model = {
   run_id : string;
-  run_dir : string;
   total_epochs : int option;
   run_status : Header.run_status;
   store : Store.t;
@@ -35,14 +34,12 @@ type msg =
 
 let stopped_threshold_sec = 5.0
 
-let compute_run_status ~run_dir ~total_epochs ~latest_epoch : Header.run_status
-    =
-  let now = Unix.gettimeofday () in
-  let events_path = Filename.concat run_dir "events.jsonl" in
-  let mtime = try (Unix.stat events_path).Unix.st_mtime with _ -> 0.0 in
+let compute_run_status ~stream ~total_epochs ~latest_epoch : Header.run_status =
   match (total_epochs, latest_epoch) with
   | Some total, Some e when e >= total -> Done
-  | _ -> if now -. mtime > stopped_threshold_sec then Stopped else Live
+  | _ ->
+      let age = Unix.gettimeofday () -. Run.last_mtime stream in
+      if age > stopped_threshold_sec then Stopped else Live
 
 let visible_chart_tags (m : model) : string list =
   let latest = Store.latest_metrics m.store in
@@ -135,19 +132,17 @@ let view m =
 
 let init ~run =
   let run_id = Run.run_id run in
-  let run_dir = Run.dir run in
   let total_epochs = Run.total_epochs run in
   let stream = Run.open_events run in
   let store = Store.create () in
   let initial_events = Run.read_events stream in
   Store.update store initial_events;
   let latest_epoch = Store.latest_epoch store in
-  let run_status = compute_run_status ~run_dir ~total_epochs ~latest_epoch in
+  let run_status = compute_run_status ~stream ~total_epochs ~latest_epoch in
   let metrics_state = Metrics.initial_state () in
   let sys_panel = Sys_panel.create () in
   ( {
       run_id;
-      run_dir;
       total_epochs;
       run_status;
       store;
@@ -166,7 +161,7 @@ let update msg m =
       Store.update m.store new_events;
       let sys_panel = Sys_panel.update m.sys_panel ~dt in
       let run_status =
-        compute_run_status ~run_dir:m.run_dir ~total_epochs:m.total_epochs
+        compute_run_status ~stream:m.stream ~total_epochs:m.total_epochs
           ~latest_epoch:(Store.latest_epoch m.store)
       in
       ({ m with sys_panel; run_status }, Cmd.none)
