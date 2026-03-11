@@ -47,6 +47,7 @@ type t = {
   experiment_name : string option;
   tags : string list;
   config : (string * Jsont.json) list;
+  total_epochs : int option;
   dir : string;
 }
 
@@ -54,6 +55,7 @@ let run_id t = t.run_id
 let created_at t = t.created_at
 let experiment_name t = t.experiment_name
 let tags t = t.tags
+let total_epochs t = t.total_epochs
 let dir t = t.dir
 
 (* Path helpers *)
@@ -135,7 +137,13 @@ let load dir =
         | Jsont.Object (mems, _) -> List.map (fun ((k, _), v) -> (k, v)) mems
         | _ -> []
       in
-      Some { run_id; created_at; experiment_name; tags; config; dir }
+      let total_epochs =
+        match json_mem "total_epochs" json with
+        | Jsont.Number (f, _) -> Some (int_of_float f)
+        | _ -> None
+      in
+      Some
+        { run_id; created_at; experiment_name; tags; config; total_epochs; dir }
     with _ -> None
 
 let write_manifest t =
@@ -176,6 +184,7 @@ let create ?base_dir ?experiment ?(tags = []) ?(config = []) () =
       experiment_name = experiment;
       tags;
       config;
+      total_epochs = None;
       dir;
     }
   in

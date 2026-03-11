@@ -35,6 +35,10 @@ val experiment_name : t -> string option
 val tags : t -> string list
 (** [tags r] is the metadata tags associated with [r]. *)
 
+val total_epochs : t -> int option
+(** [total_epochs r] is [r]'s expected total number of epochs, if specified in
+    the manifest. *)
+
 (** {1:constructors Constructors} *)
 
 val create :
