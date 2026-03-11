@@ -72,7 +72,11 @@ let view_dashboard m =
       Footer.view ();
     ]
 
-let smooth_alpha = function 1 -> 0.5 | 2 -> 0.3 | 3 -> 0.15 | _ -> 0.2
+let smooth_alpha = function
+  | 1 -> 0.5
+  | 2 -> 0.3
+  | 3 -> 0.15
+  | _ -> assert false
 
 let view_detail m tag =
   let smooth_label =
