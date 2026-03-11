@@ -12,6 +12,7 @@ type model = {
   run_id : string;
   run_dir : string;
   total_epochs : int option;
+  run_status : Header.run_status;
   store : Store.t;
   stream : Run.event_stream;
   metrics_state : Metrics.state;
@@ -31,6 +32,17 @@ type msg =
   | Toggle_smooth
 
 (* Helpers *)
+
+let stopped_threshold_sec = 5.0
+
+let compute_run_status ~run_dir ~total_epochs ~latest_epoch : Header.run_status
+    =
+  let now = Unix.gettimeofday () in
+  let events_path = Filename.concat run_dir "events.jsonl" in
+  let mtime = try (Unix.stat events_path).Unix.st_mtime with _ -> 0.0 in
+  match (total_epochs, latest_epoch) with
+  | Some total, Some e when e >= total -> Done
+  | _ -> if now -. mtime > stopped_threshold_sec then Stopped else Live
 
 let visible_chart_tags (m : model) : string list =
   let latest = Store.latest_metrics m.store in
@@ -52,7 +64,7 @@ let view_dashboard m =
     [
       Header.view ~run_id:m.run_id
         ~latest_epoch:(Store.latest_epoch m.store)
-        ~total_epochs:m.total_epochs ~run_dir:m.run_dir;
+        ~status:m.run_status;
       box ~flex_direction:Row ~flex_grow:1.0
         ~size:{ width = pct 100; height = pct 100 }
         [
@@ -129,12 +141,15 @@ let init ~run =
   let store = Store.create () in
   let initial_events = Run.read_events stream in
   Store.update store initial_events;
+  let latest_epoch = Store.latest_epoch store in
+  let run_status = compute_run_status ~run_dir ~total_epochs ~latest_epoch in
   let metrics_state = Metrics.initial_state () in
   let sys_panel = Sys_panel.create () in
   ( {
       run_id;
       run_dir;
       total_epochs;
+      run_status;
       store;
       stream;
       metrics_state;
@@ -150,7 +165,11 @@ let update msg m =
       let new_events = Run.read_events m.stream in
       Store.update m.store new_events;
       let sys_panel = Sys_panel.update m.sys_panel ~dt in
-      ({ m with sys_panel }, Cmd.none)
+      let run_status =
+        compute_run_status ~run_dir:m.run_dir ~total_epochs:m.total_epochs
+          ~latest_epoch:(Store.latest_epoch m.store)
+      in
+      ({ m with sys_panel; run_status }, Cmd.none)
   | Metrics_msg metrics_msg ->
       let total_metrics = List.length (Store.latest_metrics m.store) in
       let metrics_state' =

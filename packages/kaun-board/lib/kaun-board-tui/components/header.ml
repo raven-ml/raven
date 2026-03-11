@@ -9,19 +9,6 @@ open Mosaic
 
 type run_status = Live | Stopped | Done
 
-let stopped_threshold_sec = 5.0
-let events_path run_dir = Filename.concat run_dir "events.jsonl"
-
-let compute_status ~run_dir ~total_epochs ~(latest_epoch : int option) :
-    run_status =
-  let now = Unix.gettimeofday () in
-  let mtime =
-    try (Unix.stat (events_path run_dir)).Unix.st_mtime with _ -> 0.0
-  in
-  match (total_epochs, latest_epoch) with
-  | Some total, Some e when e >= total -> Done
-  | _ -> if now -. mtime > stopped_threshold_sec then Stopped else Live
-
 let status_label = function
   | Live -> "LIVE"
   | Stopped -> "Stopped"
@@ -41,8 +28,7 @@ let epoch_color = Ansi.Color.cyan
 
 (* View *)
 
-let view ~run_id ~latest_epoch ~total_epochs ~run_dir =
-  let status = compute_status ~run_dir ~total_epochs ~latest_epoch in
+let view ~run_id ~latest_epoch ~status =
   let badge_bg = badge_color status in
   box ~padding:(padding 1) ~background:header_bg
     ~size:{ width = pct 100; height = auto }
