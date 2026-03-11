@@ -146,6 +146,19 @@ let load dir =
         { run_id; created_at; experiment_name; tags; config; total_epochs; dir }
     with _ -> None
 
+let latest base_dir =
+  if not (Sys.file_exists base_dir) then None
+  else
+    let entries = Sys.readdir base_dir in
+    Array.sort (fun a b -> String.compare b a) entries;
+    let rec find i =
+      if i >= Array.length entries then None
+      else
+        let dir = Filename.concat base_dir entries.(i) in
+        match load dir with Some run -> Some run | None -> find (i + 1)
+    in
+    find 0
+
 let write_manifest t =
   let experiment_field =
     Option.map (fun e -> ("experiment", Jsont.Json.string e)) t.experiment_name

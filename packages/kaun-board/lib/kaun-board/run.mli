@@ -64,7 +64,14 @@ val load : string -> t option
 (** [load dir] is the run in [dir], if [dir] contains a valid [run.json]
     manifest, and [None] otherwise.
 
-    See also {!create}. *)
+    See also {!create} and {!latest}. *)
+
+val latest : string -> t option
+(** [latest base_dir] is the most recent run in [base_dir], determined by
+    reverse-sorting directory entries and loading the first valid manifest.
+    Returns [None] if [base_dir] does not exist or contains no valid runs.
+
+    See also {!load}. *)
 
 (** {1:events Events} *)
 

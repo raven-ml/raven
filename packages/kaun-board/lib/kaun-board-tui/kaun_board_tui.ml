@@ -219,25 +219,12 @@ let subscriptions m =
           | _ -> None);
     ]
 
-let latest_run base_dir =
-  if not (Sys.file_exists base_dir) then None
-  else
-    let entries = Sys.readdir base_dir in
-    Array.sort (fun a b -> String.compare b a) entries;
-    let rec find i =
-      if i >= Array.length entries then None
-      else
-        let dir = Filename.concat base_dir entries.(i) in
-        match Run.load dir with Some run -> Some run | None -> find (i + 1)
-    in
-    find 0
-
 let run ?base_dir ?runs () =
   let base_dir = Option.value base_dir ~default:(Kaun_board.Env.base_dir ()) in
   let run =
     match runs with
     | Some [ run_id ] -> Run.load (Filename.concat base_dir run_id)
-    | None | Some [] -> latest_run base_dir
+    | None | Some [] -> Run.latest base_dir
     | Some _ ->
         Printf.printf "kaun-board: please specify a single run\n%!";
         None
