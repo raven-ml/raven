@@ -21,7 +21,6 @@ let badge_color = function
 
 (* Styles *)
 
-let border_color = Ansi.Color.grayscale ~level:6
 let dim_style = Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:14) ()
 let label_style = Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:16) ()
 let value_style = Ansi.Style.make ~bold:true ~fg:Ansi.Color.white ()
@@ -88,27 +87,19 @@ let view ~run_id ~latest_epoch ~total_epochs ~latest_step ~elapsed_secs ~status
       stats @ [ sep (); text ~style:muted_style (format_elapsed elapsed_secs) ]
     else [ text ~style:muted_style (format_elapsed elapsed_secs) ]
   in
-  box ~flex_direction:Column
+  box ~padding:(padding_xy 2 0) ~flex_direction:Row ~gap:(gap 2)
+    ~align_items:Center
     ~size:{ width = pct 100; height = auto }
-    [
-      box ~padding:(padding_xy 2 0) ~flex_direction:Row ~gap:(gap 2)
-        ~align_items:Center
-        ~size:{ width = pct 100; height = auto }
-        ([
-           text ~style:value_style "Kaun Board";
-           text ~style:dim_style "\u{2502}";
-           text ~style:muted_style run_id;
-         ]
-        @ stats
-        @ [
-            box ~flex_grow:1.0 ~size:{ width = auto; height = auto } [];
-            text ~style:(Ansi.Style.make ~fg:status_color ()) "\u{25CF}";
-            text
-              ~style:(Ansi.Style.make ~bold:true ~fg:status_color ())
-              (status_label status);
-          ]);
-      box
-        ~size:{ width = pct 100; height = px 1 }
-        ~background:border_color
-        [ text " " ];
-    ]
+    ([
+       text ~style:value_style "Kaun Board";
+       text ~style:dim_style "\u{2502}";
+       text ~style:muted_style run_id;
+     ]
+    @ stats
+    @ [
+        box ~flex_grow:1.0 ~size:{ width = auto; height = auto } [];
+        text ~style:(Ansi.Style.make ~fg:status_color ()) "\u{25CF}";
+        text
+          ~style:(Ansi.Style.make ~bold:true ~fg:status_color ())
+          (status_label status);
+      ])
