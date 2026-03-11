@@ -43,8 +43,8 @@ let add_packages pkgs =
               roots)
           pkgs
 
-(* Try loading a single ancestor package. Returns [true] on success, [false]
-   if the archive references an undefined global (dependency not yet loaded). *)
+(* Try loading a single ancestor package. Returns [true] on success, [false] if
+   the archive references an undefined global (dependency not yet loaded). *)
 let try_load_ancestor p =
   let loaded =
     Findlib.is_recorded_package p
@@ -83,12 +83,12 @@ let try_load_ancestor p =
 (* Load a package: resolve its dependency chain and load archives.
 
    Findlib's topological sort does not account for virtual library
-   implementations (a virtual package has no archive; its implementation
-   archive may appear later in the ancestor list). This causes
-   [Undefined_global] when a dependent is loaded before the implementation.
+   implementations (a virtual package has no archive; its implementation archive
+   may appear later in the ancestor list). This causes [Undefined_global] when a
+   dependent is loaded before the implementation.
 
-   We handle this with a fixpoint loop: load what we can, collect failures,
-   and retry until either everything succeeds or no progress is made. *)
+   We handle this with a fixpoint loop: load what we can, collect failures, and
+   retry until either everything succeeds or no progress is made. *)
 let load_package pkg =
   if not (ensure_findlib ()) then
     Printf.eprintf "[quill] #require: findlib unavailable\n%!"
@@ -102,13 +102,11 @@ let load_package pkg =
       in
       match deferred with
       | [] -> ()
-      | _ when List.length deferred < List.length remaining ->
-          loop deferred
+      | _ when List.length deferred < List.length remaining -> loop deferred
       | _ ->
           (* No progress — report the packages we cannot load *)
           List.iter
-            (fun p ->
-              Printf.eprintf "[quill] failed to load package %s\n%!" p)
+            (fun p -> Printf.eprintf "[quill] failed to load package %s\n%!" p)
             deferred
     in
     loop ancestors

@@ -288,7 +288,9 @@ let number toc nb =
           | Some sub -> Some (!counter :: sub)
           | None -> search counter rest
         end
-    | Section _ :: rest -> counter := 0; search counter rest
+    | Section _ :: rest ->
+        counter := 0;
+        search counter rest
     | Separator :: rest -> search counter rest
   in
   match search (ref 0) toc with Some ns -> ns | None -> []

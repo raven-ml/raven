@@ -322,8 +322,8 @@ let chapter_html (doc : Quill.Doc.t) =
 (* ───── TOC rendering ───── *)
 
 let notebook_output_path (nb : Quill_project.notebook) =
-  (* chapters/01-intro/chapter.md → chapters/01-intro/index.html
-     hello.md → hello.html *)
+  (* chapters/01-intro/chapter.md → chapters/01-intro/index.html hello.md →
+     hello.html *)
   let dir = Filename.dirname nb.path in
   if dir = "." || dir = Filename.current_dir_name then
     Filename.remove_extension (Filename.basename nb.path) ^ ".html"

@@ -67,9 +67,7 @@ let block_source t block =
   String.sub t.source block.span.first len
 
 let to_html source =
-  let doc =
-    Cmarkit.Doc.of_string ~heading_auto_ids:true ~strict:false source
-  in
+  let doc = Cmarkit.Doc.of_string ~heading_auto_ids:true ~strict:false source in
   Cmarkit_html.of_doc ~safe:true doc
 
 let block_to_html t block = to_html (block_source t block)

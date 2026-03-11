@@ -285,9 +285,7 @@ let ytick_format fmt t = decorate (Ytick_format fmt) t
 let frame v t = decorate (Frame v) t
 
 let no_axes t =
-  t |> decorate (Frame false)
-  |> decorate (Xticks [])
-  |> decorate (Yticks [])
+  t |> decorate (Frame false) |> decorate (Xticks []) |> decorate (Yticks [])
   |> decorate (Grid_visible false)
 
 (* Layout *)

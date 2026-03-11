@@ -285,9 +285,16 @@ let emit_image_mark sx sy plot_area ~data ~extent =
       let h = Float.abs (py1 -. py0) in
       [ Scene.Image { x; y; w; h; data } ]
   | None ->
-      [ Scene.Image
-          { x = plot_area.rx; y = plot_area.ry;
-            w = plot_area.rw; h = plot_area.rh; data } ]
+      [
+        Scene.Image
+          {
+            x = plot_area.rx;
+            y = plot_area.ry;
+            w = plot_area.rw;
+            h = plot_area.rh;
+            data;
+          };
+      ]
 
 let emit_text_mark sx sy plot_area theme ~x ~y ~content ~color ~font_size =
   let color = Option.value ~default:Color.black color in
