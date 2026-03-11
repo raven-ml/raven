@@ -168,44 +168,23 @@ let subscriptions m =
       Sub.on_resize (fun ~width ~height ->
           Metrics_msg (Metrics.Resize (width, height)));
       Sub.on_key (fun ev ->
-          let key_data = Mosaic_ui.Event.Key.data ev in
-          match key_data.key with
-          | Char c when Uchar.equal c (Uchar.of_char 's') -> (
-              match m.mode with
-              | Dashboard -> None
-              | Detail _ -> Some Toggle_smooth)
-          | Char c when Uchar.equal c (Uchar.of_char 'S') -> (
-              match m.mode with
-              | Dashboard -> None
-              | Detail _ -> Some Toggle_smooth)
-          | Char c when Uchar.equal c (Uchar.of_char 'q') -> (
-              match m.mode with
-              | Dashboard -> Some Quit
-              | Detail _ -> Some Close_metric)
-          | Char c when Uchar.equal c (Uchar.of_char 'Q') -> (
-              match m.mode with
-              | Dashboard -> Some Quit
-              | Detail _ -> Some Close_metric)
-          | Escape -> (
-              match m.mode with
-              | Dashboard -> Some Quit
-              | Detail _ -> Some Close_metric)
-          | Left -> (
-              match m.mode with
-              | Dashboard -> Some (Metrics_msg Metrics.Prev_batch)
-              | Detail _ -> None)
-          | Right -> (
-              match m.mode with
-              | Dashboard -> Some (Metrics_msg Metrics.Next_batch)
-              | Detail _ -> None)
-          | Char c when m.mode = Dashboard ->
-              let one = Uchar.of_char '1' and nine = Uchar.of_char '9' in
-              let idx =
-                if Uchar.compare c one >= 0 && Uchar.compare c nine <= 0 then
-                  Uchar.to_int c - Uchar.to_int one
-                else -1
-              in
-              if idx >= 0 then
+          let is c ch =
+            let lo = Uchar.of_char ch in
+            let hi = Uchar.of_char (Char.uppercase_ascii ch) in
+            Uchar.equal c lo || Uchar.equal c hi
+          in
+          let key = (Mosaic_ui.Event.Key.data ev).key in
+          match (key, m.mode) with
+          | Char c, Detail _ when is c 's' -> Some Toggle_smooth
+          | Char c, Dashboard when is c 'q' -> Some Quit
+          | Char c, Detail _ when is c 'q' -> Some Close_metric
+          | Escape, Dashboard -> Some Quit
+          | Escape, Detail _ -> Some Close_metric
+          | Left, Dashboard -> Some (Metrics_msg Metrics.Prev_batch)
+          | Right, Dashboard -> Some (Metrics_msg Metrics.Next_batch)
+          | Char c, Dashboard ->
+              let idx = Uchar.to_int c - Uchar.to_int (Uchar.of_char '1') in
+              if idx >= 0 && idx <= 8 then
                 let visible = visible_chart_tags m in
                 if idx < List.length visible then
                   Some (Open_metric (List.nth visible idx))
