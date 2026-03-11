@@ -1,0 +1,15 @@
+(include_subdirs no)
+
+(library
+ (name tolk_metal)
+ (public_name tolk.metal)
+ (enabled_if
+  (= %{system} macosx))
+ (libraries tolk threads)
+ (c_library_flags
+  (-framework Metal -framework Foundation -framework CoreGraphics))
+ (foreign_stubs
+  (language c)
+  (names tolk_metal_stubs)
+  (flags
+   (:standard -fblocks -x objective-c))))

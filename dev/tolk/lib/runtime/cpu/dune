@@ -1,0 +1,9 @@
+(include_subdirs no)
+
+(library
+ (name tolk_cpu)
+ (public_name tolk.cpu)
+ (libraries tolk unix threads)
+ (foreign_stubs
+  (language c)
+  (names tolk_cpu_stubs)))

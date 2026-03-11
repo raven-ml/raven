@@ -1,4 +1,11 @@
 (tests
- (names test_dtype test_renderer)
+ (names test_dtype test_program_spec test_renderer test_elf test_cpu_runtime)
  (package tolk)
- (libraries tolk windtrap))
+ (libraries tolk tolk.cpu windtrap))
+
+(tests
+ (names test_metal_runtime)
+ (package tolk)
+ (enabled_if
+  (= %{system} macosx))
+ (libraries tolk tolk.metal windtrap))
