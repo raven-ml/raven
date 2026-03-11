@@ -242,32 +242,32 @@ let view (params : view_params) =
     let rows = chunk_by columns visible_metrics in
     box ~flex_direction:Column ~padding:(padding 1) ~gap:(gap 1)
       ~size:{ width = pct 66; height = pct 100 }
-      [
-        (if w.total_batches > 1 then
-           box ~flex_direction:Row ~justify_content:Space_between
-             ~align_items:Center
-             [
-               text ~style:(Ansi.Style.make ~bold:true ()) "Metrics:";
-               text ~style:hint_style
-                 (Printf.sprintf "Batch %d/%d (← →)" (w.current_batch + 1)
-                    w.total_batches);
-             ]
-         else
-           box ~flex_direction:Row
-             [ text ~style:(Ansi.Style.make ~bold:true ()) "Metrics:" ]);
-        box ~flex_direction:Column ~gap:(gap 1)
-          (List.mapi
-             (fun row_idx row ->
-               box
-                 ~key:(Printf.sprintf "row-%d" row_idx)
-                 ~flex_direction:Row ~gap:(gap 1)
-                 ~size:{ width = pct 100; height = auto }
-                 (List.map
-                    (fun (local_idx, tag) ->
-                      view_metric_chart ~history_for_tag:params.history_for_tag
-                        ~columns
-                        ~selected:(local_idx = params.selected)
-                        tag)
-                    row))
-             rows);
-      ]
+      ([
+         (if w.total_batches > 1 then
+            box ~flex_direction:Row ~justify_content:Flex_end
+              ~align_items:Center
+              ~size:{ width = pct 100; height = auto }
+              [
+                text ~style:hint_style
+                  (Printf.sprintf "Batch %d/%d" (w.current_batch + 1)
+                     w.total_batches);
+              ]
+          else box ~size:{ width = px 0; height = px 0 } []);
+       ]
+      @ [
+          box ~flex_direction:Column ~gap:(gap 1)
+            (List.mapi
+               (fun row_idx row ->
+                 box
+                   ~key:(Printf.sprintf "row-%d" row_idx)
+                   ~flex_direction:Row ~gap:(gap 1)
+                   ~size:{ width = pct 100; height = auto }
+                   (List.map
+                      (fun (local_idx, tag) ->
+                        view_metric_chart
+                          ~history_for_tag:params.history_for_tag ~columns
+                          ~selected:(local_idx = params.selected)
+                          tag)
+                      row))
+               rows);
+        ])

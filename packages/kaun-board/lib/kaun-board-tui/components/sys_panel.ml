@@ -308,7 +308,6 @@ let view (t : t) =
   box ~flex_direction:Column ~padding:(padding 1) ~gap:(gap 2)
     ~size:{ width = pct 100; height = auto }
     [
-      text ~style:(Ansi.Style.make ~bold:true ()) "System";
       view_cpu_bar t.cpu;
       view_mem_bar t.memory;
       view_sparklines ~sparkline_cpu:t.sparkline_cpu
