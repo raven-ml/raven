@@ -13,9 +13,6 @@ let hint_style = Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:14) ()
 let axis_style =
   Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:12) ~dim:true ()
 
-let y_axis_style =
-  Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:12) ~dim:true ()
-
 let grid_style =
   Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:6) ~dim:true ()
 
@@ -105,7 +102,7 @@ let visible_chart_tags (s : state) ~total_metrics ~all_tags : string list =
 
 (* Chart drawing *)
 
-let draw_metric_chart ~hover history grid ~width ~height =
+let draw_metric_chart history grid ~width ~height =
   if history = [] then ()
   else
     let data =
@@ -121,7 +118,7 @@ let draw_metric_chart ~hover history grid ~width ~height =
              |> Charts.Axis.with_style axis_style)
            ~y:
              (Charts.Axis.default |> Charts.Axis.with_ticks 2
-             |> Charts.Axis.with_style y_axis_style
+             |> Charts.Axis.with_style axis_style
              |> Charts.Axis.with_format (fun _ v -> Printf.sprintf "%.1f" v))
       |> Charts.with_grid
            (Charts.Gridlines.default
@@ -132,28 +129,7 @@ let draw_metric_chart ~hover history grid ~width ~height =
            ~style:(Ansi.Style.make ~fg:Ansi.Color.cyan ())
            ~x:fst ~y:snd data
     in
-    let layout = Charts.draw chart grid ~width ~height in
-    match hover with
-    | None -> ()
-    | Some (px, py) -> (
-        if Charts.Layout.is_inside_plot layout ~px ~py then
-          match
-            Charts.Layout.hit_test layout ~px ~py ~radius:4 ~policy:`Nearest_x
-          with
-          | Some hit -> (
-              match hit.payload with
-              | Charts.Hit.XY { x; y } ->
-                  let lines =
-                    [
-                      Printf.sprintf "Step: %d" (int_of_float x);
-                      Printf.sprintf "Value: %.4f" y;
-                    ]
-                  in
-                  Charts.Overlay.crosshair layout grid ~x ~y;
-                  Charts.Overlay.marker layout grid ~x ~y;
-                  Charts.Overlay.tooltip layout grid ~x ~y lines
-              | _ -> ())
-          | None -> ())
+    ignore (Charts.draw chart grid ~width ~height)
 
 let view_metric_chart ~history_for_tag ~columns tag =
   let history = history_for_tag tag in
@@ -174,8 +150,8 @@ let view_metric_chart ~history_for_tag ~columns tag =
       canvas
         ~size:{ width = pct 100; height = pct 100 }
         (fun c ~delta:_ ->
-          draw_metric_chart ~hover:None history (Canvas.grid c)
-            ~width:(Canvas.width c) ~height:(Canvas.height c));
+          draw_metric_chart history (Canvas.grid c) ~width:(Canvas.width c)
+            ~height:(Canvas.height c));
     ]
 
 (* View *)

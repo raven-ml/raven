@@ -9,9 +9,6 @@ module Charts = Matrix_charts
 let axis_style =
   Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:12) ~dim:true ()
 
-let y_axis_style =
-  Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:12) ~dim:true ()
-
 let grid_style =
   Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:6) ~dim:true ()
 
@@ -44,7 +41,7 @@ let draw_metric_chart history grid ~width ~height =
              |> Charts.Axis.with_style axis_style)
            ~y:
              (Charts.Axis.default |> Charts.Axis.with_ticks 4
-             |> Charts.Axis.with_style y_axis_style
+             |> Charts.Axis.with_style axis_style
              |> Charts.Axis.with_format (fun _ v -> Printf.sprintf "%.4g" v))
       |> Charts.with_grid
            (Charts.Gridlines.default
