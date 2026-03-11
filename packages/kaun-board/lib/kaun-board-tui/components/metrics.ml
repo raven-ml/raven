@@ -187,29 +187,21 @@ let view_metric_chart ~history_for_tag ~best_for_tag ~columns ~selected tag =
     | _ :: rest -> last_value rest
   in
   let title =
-    match last_value history with
-    | Some value -> Printf.sprintf "%s [%.4f]" tag value
-    | None -> tag
+    match (last_value history, best) with
+    | Some value, Some (b : Kaun_board.Store.best_value) ->
+        Printf.sprintf "%s [%.4f] best: %.4f" tag value b.value
+    | Some value, None -> Printf.sprintf "%s [%.4f]" tag value
+    | None, _ -> tag
   in
   let border_color = if selected then selected_border else dim_border in
   box ~key:tag ~border:true ~border_color ~title ~padding:(padding 0)
     ~size:{ width = pct width_pct; height = px 14 }
-    ~flex_direction:Column
     [
-      canvas ~flex_grow:1.0
+      canvas
         ~size:{ width = pct 100; height = pct 100 }
         (fun c ~delta:_ ->
           draw_metric_chart history (Canvas.grid c) ~width:(Canvas.width c)
             ~height:(Canvas.height c));
-      (match best with
-      | Some (b : Kaun_board.Store.best_value) ->
-          box ~padding:(padding_xy 1 0)
-            ~size:{ width = pct 100; height = auto }
-            [
-              text ~style:best_style
-                (Printf.sprintf "best: %.4f @ step %d" b.value b.step);
-            ]
-      | None -> box ~size:{ width = px 0; height = px 0 } []);
     ]
 
 (* View *)
