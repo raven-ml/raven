@@ -11,6 +11,7 @@ open Kaun_board
 type model = {
   run_id : string;
   run_dir : string;
+  total_epochs : int option;
   store : Store.t;
   stream : Run.event_stream;
   metrics_state : Metrics.state;
@@ -51,7 +52,7 @@ let view_dashboard m =
     [
       Header.view ~run_id:m.run_id
         ~latest_epoch:(Store.latest_epoch m.store)
-        ~run_dir:m.run_dir;
+        ~total_epochs:m.total_epochs ~run_dir:m.run_dir;
       box ~flex_direction:Row ~flex_grow:1.0
         ~size:{ width = pct 100; height = pct 100 }
         [
@@ -116,9 +117,36 @@ let view m =
 
 (* TEA core *)
 
+let read_total_epochs run_dir =
+  let path = Filename.concat run_dir "run.json" in
+  if not (Sys.file_exists path) then None
+  else
+    try
+      let ic = open_in path in
+      let s =
+        Fun.protect
+          ~finally:(fun () -> close_in ic)
+          (fun () -> really_input_string ic (in_channel_length ic))
+      in
+      match Jsont_bytesrw.decode_string Jsont.json s with
+      | Error _ -> None
+      | Ok json -> (
+          let find name = function
+            | Jsont.Object (mems, _) -> (
+                match Jsont.Json.find_mem name mems with
+                | Some (_, v) -> v
+                | None -> Jsont.Null ((), Jsont.Meta.none))
+            | _ -> Jsont.Null ((), Jsont.Meta.none)
+          in
+          match find "total_epochs" json with
+          | Jsont.Number (f, _) -> Some (int_of_float f)
+          | _ -> None)
+    with _ -> None
+
 let init ~run =
   let run_id = Run.run_id run in
   let run_dir = Run.dir run in
+  let total_epochs = read_total_epochs run_dir in
   let stream = Run.open_events run in
   let store = Store.create () in
   let initial_events = Run.read_events stream in
@@ -128,6 +156,7 @@ let init ~run =
   ( {
       run_id;
       run_dir;
+      total_epochs;
       store;
       stream;
       metrics_state;
