@@ -11,6 +11,5 @@ let view () =
   box ~padding:(padding 1)
     [
       text ~style:hint_style
-        "1\xe2\x80\x939 Chart View \xe2\x80\xa2 \xe2\x86\x90 \xe2\x86\x92 \
-         Change Batch \xe2\x80\xa2 Esc back \xe2\x80\xa2 Ctrl-C quit";
+        "1–9 Chart View • ← → Change Batch • Esc back • Ctrl-C quit";
     ]

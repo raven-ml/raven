@@ -36,7 +36,7 @@ let view ~run_id ~latest_epoch ~status =
       box ~flex_direction:Row ~gap:(gap 2) ~align_items:Center
         ~size:{ width = pct 100; height = auto }
         [
-          text ~style:(Ansi.Style.make ~bold:true ()) "\xe2\x96\xb8 Kaun Board";
+          text ~style:(Ansi.Style.make ~bold:true ()) "▸ Kaun Board";
           text
             ~style:(Ansi.Style.make ~fg:step_color ())
             (Printf.sprintf "Run: %s" run_id);

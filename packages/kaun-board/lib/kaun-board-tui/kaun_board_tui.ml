@@ -89,8 +89,8 @@ let smooth_alpha = function
 
 let view_detail m tag =
   let smooth_label =
-    if m.chart_smooth = 0 then "  \xe2\x80\xa2  [S] smooth"
-    else Printf.sprintf "  \xe2\x80\xa2  [S] smooth [%d]" m.chart_smooth
+    if m.chart_smooth = 0 then "  •  [S] smooth"
+    else Printf.sprintf "  •  [S] smooth [%d]" m.chart_smooth
   in
   let smooth_param =
     if m.chart_smooth = 0 then None else Some (smooth_alpha m.chart_smooth)
@@ -107,7 +107,7 @@ let view_detail m tag =
               (Ansi.Style.make ~bold:true
                  ~fg:(Ansi.Color.grayscale ~level:14)
                  ())
-            ("Chart View  \xe2\x80\xa2  [Esc/q] back" ^ smooth_label);
+            ("Chart View  •  [Esc/q] back" ^ smooth_label);
         ];
       box ~flex_grow:1.0 ~justify_content:Center ~align_items:Center
         ~size:{ width = pct 100; height = pct 100 }

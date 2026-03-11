@@ -202,8 +202,8 @@ let view (params : view_params) =
              [
                text ~style:(Ansi.Style.make ~bold:true ()) "Metrics:";
                text ~style:hint_style
-                 (Printf.sprintf "Batch %d/%d (\xe2\x86\x90 \xe2\x86\x92)"
-                    (w.current_batch + 1) w.total_batches);
+                 (Printf.sprintf "Batch %d/%d (← →)" (w.current_batch + 1)
+                    w.total_batches);
              ]
          else
            box ~flex_direction:Row
