@@ -89,6 +89,7 @@ let view ~run_id ~latest_epoch ~total_epochs ~latest_step ~elapsed_secs ~status
   in
   box ~padding:(padding_xy 2 0) ~flex_direction:Row ~gap:(gap 2)
     ~align_items:Center
+    ~background:(Ansi.Color.grayscale ~level:2)
     ~size:{ width = pct 100; height = auto }
     ([
        text ~style:value_style "Kaun Board";
