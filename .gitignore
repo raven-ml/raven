@@ -30,3 +30,6 @@ CLAUDE.local.md
 
 # Run logs
 runs/
+
+# Agents
+.agents/
