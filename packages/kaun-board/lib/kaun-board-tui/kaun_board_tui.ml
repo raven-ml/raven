@@ -101,7 +101,7 @@ let view_dashboard m =
             ~size:{ width = pct 34; height = pct 100 }
             [ Sys_panel.view m.sys_panel ];
         ];
-      Footer.view ();
+      Footer.view ~mode:Dashboard;
     ]
 
 let smooth_alpha = function
@@ -111,10 +111,6 @@ let smooth_alpha = function
   | _ -> assert false
 
 let view_detail m tag =
-  let smooth_label =
-    if m.chart_smooth = 0 then "  •  [S] smooth"
-    else Printf.sprintf "  •  [S] smooth [%d]" m.chart_smooth
-  in
   let smooth_param =
     if m.chart_smooth = 0 then None else Some (smooth_alpha m.chart_smooth)
   in
@@ -122,16 +118,6 @@ let view_detail m tag =
     ~size:{ width = pct 100; height = pct 100 }
     ~background:(Ansi.Color.of_rgb 20 20 30)
     [
-      box ~padding:(padding 1)
-        ~size:{ width = pct 100; height = auto }
-        [
-          text
-            ~style:
-              (Ansi.Style.make ~bold:true
-                 ~fg:(Ansi.Color.grayscale ~level:14)
-                 ())
-            ("Chart View  •  [Esc/q] back" ^ smooth_label);
-        ];
       box ~flex_grow:1.0 ~justify_content:Center ~align_items:Center
         ~size:{ width = pct 100; height = pct 100 }
         [
@@ -144,6 +130,7 @@ let view_detail m tag =
             ~smooth:smooth_param
             ~size:{ width = pct 80; height = pct 80 };
         ];
+      Footer.view ~mode:(Detail { smooth = m.chart_smooth });
     ]
 
 let view m =
