@@ -159,11 +159,18 @@ async function initSidebar() {
       }
     }
 
+    // When visiting '/', highlight the first notebook
+    if (currentPath === '/' && !sidebar.querySelector('.sidebar-chapter.active')) {
+      const first = sidebar.querySelector('.sidebar-chapter');
+      if (first) first.classList.add('active');
+    }
+
     // Find active notebook and compute prev/next
     const chapterEntries = chapters.filter(ch => ch.type === 'notebook');
-    const activeIdx = chapterEntries.findIndex(
+    let activeIdx = chapterEntries.findIndex(
       ch => currentPath === ch.url || currentPath === ch.url.replace(/\/$/, '')
     );
+    if (activeIdx < 0 && currentPath === '/') activeIdx = 0;
 
     if (activeIdx >= 0) {
       wsClient.chapterPath = chapterEntries[activeIdx].path;
