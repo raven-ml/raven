@@ -57,7 +57,7 @@ let view_dashboard m =
         [
           Metrics.view
             {
-              latest_metrics = Store.latest_metrics m.store;
+              metric_tags = List.map fst (Store.latest_metrics m.store);
               history_for_tag = Store.history_for_tag m.store;
               screen_width = m.metrics_state.screen_width;
               screen_height = m.metrics_state.screen_height;
