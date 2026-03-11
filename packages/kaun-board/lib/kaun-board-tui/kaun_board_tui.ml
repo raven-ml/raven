@@ -117,7 +117,6 @@ let view_detail m tag =
   in
   box ~flex_direction:Column
     ~size:{ width = pct 100; height = pct 100 }
-    ~background:(Ansi.Color.of_rgb 20 20 30)
     [
       box ~flex_grow:1.0 ~justify_content:Center ~align_items:Center
         ~size:{ width = pct 100; height = pct 100 }

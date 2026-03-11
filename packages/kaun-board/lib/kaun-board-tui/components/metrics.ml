@@ -174,7 +174,7 @@ let draw_metric_chart history grid ~width ~height =
     ignore (Charts.draw chart grid ~width ~height)
 
 let dim_border = Ansi.Color.grayscale ~level:6
-let selected_border = Ansi.Color.cyan
+let selected_border = Ansi.Color.white
 let best_style = Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:12) ()
 
 let view_metric_chart ~history_for_tag ~best_for_tag ~columns ~selected tag =
@@ -245,35 +245,38 @@ let view (params : view_params) =
       |> List.mapi (fun local_idx (_, tag) -> (local_idx, tag))
     in
     let rows = chunk_by columns visible_metrics in
-    box ~flex_direction:Column ~padding:(padding 1) ~gap:(gap 1)
+    let batch_header =
+      if w.total_batches > 1 then
+        [
+          box ~flex_direction:Row ~justify_content:Flex_end ~align_items:Center
+            ~size:{ width = pct 100; height = auto }
+            [
+              text ~style:hint_style
+                (Printf.sprintf "Batch %d/%d" (w.current_batch + 1)
+                   w.total_batches);
+            ];
+        ]
+      else []
+    in
+    let charts =
+      [
+        box ~flex_direction:Column ~gap:(gap 1)
+          (List.mapi
+             (fun row_idx row ->
+               box
+                 ~key:(Printf.sprintf "row-%d" row_idx)
+                 ~flex_direction:Row ~gap:(gap 1)
+                 ~size:{ width = pct 100; height = auto }
+                 (List.map
+                    (fun (local_idx, tag) ->
+                      view_metric_chart ~history_for_tag:params.history_for_tag
+                        ~best_for_tag:params.best_for_tag ~columns
+                        ~selected:(local_idx = params.selected)
+                        tag)
+                    row))
+             rows);
+      ]
+    in
+    box ~flex_direction:Column ~padding:(padding_lrtb 1 1 1 0) ~gap:(gap 1)
       ~size:{ width = pct 66; height = auto }
-      ([
-         (if w.total_batches > 1 then
-            box ~flex_direction:Row ~justify_content:Flex_end
-              ~align_items:Center
-              ~size:{ width = pct 100; height = auto }
-              [
-                text ~style:hint_style
-                  (Printf.sprintf "Batch %d/%d" (w.current_batch + 1)
-                     w.total_batches);
-              ]
-          else box ~size:{ width = px 0; height = px 0 } []);
-       ]
-      @ [
-          box ~flex_direction:Column ~gap:(gap 1)
-            (List.mapi
-               (fun row_idx row ->
-                 box
-                   ~key:(Printf.sprintf "row-%d" row_idx)
-                   ~flex_direction:Row ~gap:(gap 1)
-                   ~size:{ width = pct 100; height = auto }
-                   (List.map
-                      (fun (local_idx, tag) ->
-                        view_metric_chart
-                          ~history_for_tag:params.history_for_tag
-                          ~best_for_tag:params.best_for_tag ~columns
-                          ~selected:(local_idx = params.selected)
-                          tag)
-                      row))
-               rows);
-        ])
+      (batch_header @ charts)
