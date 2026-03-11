@@ -908,6 +908,64 @@ body {
   box-shadow: 0 1px 0 var(--border-unfocused);
 }
 
+/* ───── Page TOC (right side) ───── */
+
+.page-toc {
+  display: none;
+}
+
+@media (min-width: 1200px) {
+  .page-toc {
+    display: block;
+    position: sticky;
+    top: 57px; /* toolbar height + 16px */
+    align-self: flex-start;
+    width: 200px;
+    min-width: 200px;
+    max-height: calc(100vh - 57px);
+    overflow-y: auto;
+    padding: 16px 16px 16px 0;
+    font-size: 12px;
+  }
+
+  .page-toc[hidden] {
+    display: none;
+  }
+}
+
+.page-toc-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 8px;
+}
+
+.page-toc ul {
+  list-style: none;
+  border-left: 1px solid var(--border-unfocused);
+  padding-left: 0;
+}
+
+.page-toc li {
+  padding: 3px 0 3px 12px;
+}
+
+.page-toc li.toc-h3 {
+  padding-left: 24px;
+}
+
+.page-toc a {
+  color: var(--text-dim);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.page-toc a:hover {
+  color: var(--text-accent);
+}
+
 /* ───── Chapter navigation ───── */
 
 .chapter-nav {

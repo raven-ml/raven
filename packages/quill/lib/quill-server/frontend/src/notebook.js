@@ -125,6 +125,9 @@ export class NotebookRenderer {
       this.container.appendChild(window._quillChapterNavEl);
     }
 
+    // Update on-page TOC
+    this._updatePageToc();
+
     // Apply focus
     if (this.store.focusedCellId) {
       const el = document.querySelector(`[data-cell-id="${this.store.focusedCellId}"]`);
@@ -328,5 +331,31 @@ export class NotebookRenderer {
     if (this.store.cells.length === 0) {
       this.renderAll();
     }
+  }
+
+  _updatePageToc() {
+    const tocNav = document.getElementById('page-toc');
+    if (!tocNav) return;
+
+    // Collect h2/h3 headings with ids from rendered markdown cells
+    const headings = [];
+    this.container.querySelectorAll('.cell-markdown h2[id], .cell-markdown h3[id]').forEach(el => {
+      headings.push({ level: el.tagName === 'H3' ? 3 : 2, id: el.id, text: el.textContent });
+    });
+
+    if (headings.length === 0) {
+      tocNav.hidden = true;
+      tocNav.innerHTML = '';
+      return;
+    }
+
+    let html = '<div class="page-toc-title">On this page</div><ul>\n';
+    for (const h of headings) {
+      const cls = h.level === 3 ? ' class="toc-h3"' : '';
+      html += `<li${cls}><a href="#${h.id}">${h.text}</a></li>\n`;
+    }
+    html += '</ul>';
+    tocNav.innerHTML = html;
+    tocNav.hidden = false;
   }
 }
