@@ -90,6 +90,7 @@ let view_dashboard m =
             {
               metric_tags = List.map fst (Store.latest_metrics m.store);
               history_for_tag = Store.history_for_tag m.store;
+              best_for_tag = Store.best_for_tag m.store;
               screen_width = m.metrics_state.screen_width;
               screen_height = m.metrics_state.screen_height;
               current_batch = m.metrics_state.current_batch;

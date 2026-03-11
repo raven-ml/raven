@@ -175,9 +175,11 @@ let draw_metric_chart history grid ~width ~height =
 
 let dim_border = Ansi.Color.grayscale ~level:6
 let selected_border = Ansi.Color.cyan
+let best_style = Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:12) ()
 
-let view_metric_chart ~history_for_tag ~columns ~selected tag =
+let view_metric_chart ~history_for_tag ~best_for_tag ~columns ~selected tag =
   let history = history_for_tag tag in
+  let best = best_for_tag tag in
   let width_pct = if columns = 1 then 100 else 49 in
   let rec last_value = function
     | [] -> None
@@ -192,12 +194,22 @@ let view_metric_chart ~history_for_tag ~columns ~selected tag =
   let border_color = if selected then selected_border else dim_border in
   box ~key:tag ~border:true ~border_color ~title ~padding:(padding 0)
     ~size:{ width = pct width_pct; height = px 14 }
+    ~flex_direction:Column
     [
-      canvas
+      canvas ~flex_grow:1.0
         ~size:{ width = pct 100; height = pct 100 }
         (fun c ~delta:_ ->
           draw_metric_chart history (Canvas.grid c) ~width:(Canvas.width c)
             ~height:(Canvas.height c));
+      (match best with
+      | Some (b : Kaun_board.Store.best_value) ->
+          box ~padding:(padding_xy 1 0)
+            ~size:{ width = pct 100; height = auto }
+            [
+              text ~style:best_style
+                (Printf.sprintf "best: %.4f @ step %d" b.value b.step);
+            ]
+      | None -> box ~size:{ width = px 0; height = px 0 } []);
     ]
 
 (* View *)
@@ -205,6 +217,7 @@ let view_metric_chart ~history_for_tag ~columns ~selected tag =
 type view_params = {
   metric_tags : string list;
   history_for_tag : string -> (int * float) list;
+  best_for_tag : string -> Kaun_board.Store.best_value option;
   screen_width : int;
   screen_height : int;
   current_batch : int;
@@ -265,7 +278,8 @@ let view (params : view_params) =
                    (List.map
                       (fun (local_idx, tag) ->
                         view_metric_chart
-                          ~history_for_tag:params.history_for_tag ~columns
+                          ~history_for_tag:params.history_for_tag
+                          ~best_for_tag:params.best_for_tag ~columns
                           ~selected:(local_idx = params.selected)
                           tag)
                       row))
