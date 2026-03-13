@@ -22,6 +22,7 @@ depends: [
   "dune" {>= "3.21"}
   "cmarkit"
   "cmdliner"
+  "bytesrw"
   "jsont"
   "mosaic"
   "windtrap" {with-test}

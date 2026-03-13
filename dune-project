@@ -209,6 +209,7 @@
   dune
   cmarkit
   cmdliner
+  bytesrw
   jsont
   mosaic
   (windtrap :with-test)
