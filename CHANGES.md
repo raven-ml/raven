@@ -5,7 +5,56 @@ All notable changes to this project will be documented in this file.
 - Only document user-facing changes (features, bug fixes, performance improvements, API changes, etc.)
 - Add new entries at the top of the appropriate section (most recent first)
 
-## [1.0.0~alpha3] - Unreleased
+## [1.0.0~beta1] - Unreleased
+
+### Vega (new)
+
+- New package: per-parameter gradient-based optimizers (SGD, Adam, AdamW,
+  RMSprop, Adagrad) and learning-rate schedules. Built on Nx with no autodiff
+  dependency. Optimizers compose via `Vega.chain` and schedules are plain
+  `int -> float` functions. Equivalent to Optax in JAX.
+
+### Nx
+
+- Add `Shape.reduce_output_shape` for computing output shapes after axis
+  reduction.
+- Add machine learning examples: PCA, K-Means, DBSCAN, and t-SNE implemented
+  from Nx primitives.
+- Fix incorrect results for views and slices in binary, unary, ternary, cast,
+  and shape C stubs. The `iterate_inner_dims` helpers did not account for the
+  ndarray offset, producing wrong results when the data starts at a non-zero
+  offset in the underlying buffer.
+
+### Rune
+
+- Add `Rune.jacfwd` and `Rune.jacrev` for computing full Jacobian matrices.
+  `jacfwd` uses forward-mode AD (column-by-column via JVP); `jacrev` uses
+  reverse-mode AD (row-by-row via VJP). Prefer `jacfwd` when inputs are smaller
+  than outputs, and `jacrev` otherwise.
+
+### Kaun
+
+- Optimizers extracted to the new Vega package. `Kaun.Optim` now delegates to
+  Vega for per-leaf updates across parameter trees. `Train.make` accepts a
+  `Vega.t` directly instead of `Optim.algorithm`. Learning-rate schedules move
+  from `Optim.Schedule` to `Vega.Schedule`.
+
+### Talon
+
+- Add `Talon.take` for selecting rows by an array of indices. Indices may repeat
+  and need not be sorted.
+- Fix CSV auto-detection defaulting numeric columns to float32. Parsed values go
+  through `float_of_string` which produces 64-bit floats; defaulting to float32
+  silently truncated precision. Now defaults to float64.
+
+### Quill
+
+- Resolve relative notebook paths to absolute and change into the notebook
+  directory before execution, so that relative file references in code cells
+  work correctly.
+- Add `vega` to the default Raven packages loaded in Quill kernels.
+
+## [1.0.0~alpha3] - 2026-03-14
 
 This release reshapes raven's foundations. Every package received API
 improvements, several were rewritten, and two new packages — nx-oxcaml and
