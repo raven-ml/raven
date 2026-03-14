@@ -20,6 +20,7 @@ type t =
       tag : string;
       value : float;
       wall_time : float;
+      minimize : bool;  (* true = lower is better, false = higher is better *)
     }
 
 let of_json (json : Jsont.json) : (t, string) result =
@@ -51,12 +52,18 @@ let of_json (json : Jsont.json) : (t, string) result =
           | Jsont.Number (f, _) -> f
           | _ -> 0.0
         in
-        Ok (Scalar { step; epoch; tag; value; wall_time })
+        let minimize =
+          match json_mem "minimize" json with
+          | Jsont.Bool (b, _) -> b
+          | _ -> false
+        in
+        Ok (Scalar { step; epoch; tag; value; wall_time; minimize })
     | Jsont.String (other, _) -> Error ("unknown event type: " ^ other)
     | _ -> Error "missing or invalid type field"
   with Failure msg -> Error msg
 
-let to_json (Scalar { step; epoch; tag; value; wall_time }) : Jsont.json =
+let to_json (Scalar { step; epoch; tag; value; wall_time; minimize }) : Jsont.json
+    =
   let epoch_field =
     Option.map (fun e -> ("epoch", Jsont.Json.int e)) epoch |> Option.to_list
   in
@@ -67,5 +74,6 @@ let to_json (Scalar { step; epoch; tag; value; wall_time }) : Jsont.json =
        ("wall_time", Jsont.Json.number wall_time);
        ("tag", Jsont.Json.string tag);
        ("value", Jsont.Json.number value);
+       ("minimize", Jsont.Json.bool minimize);
      ]
     @ epoch_field)

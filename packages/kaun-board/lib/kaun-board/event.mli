@@ -20,6 +20,7 @@ type t =
       tag : string;  (** Metric name (e.g. ["train/loss"]). *)
       value : float;  (** Metric value. *)
       wall_time : float;  (** Unix timestamp of the observation. *)
+      minimize : bool;  (** [true] = lower is better, [false] = higher is better. *)
     }  (** A scalar metric observation. *)
 
 (** {1:converting Converting} *)
