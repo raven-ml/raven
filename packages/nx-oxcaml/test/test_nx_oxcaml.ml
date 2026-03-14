@@ -51,8 +51,7 @@ let test_add_float64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 1.0; 2.0; 3.0 |] in
   let b = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 10.0; 20.0; 30.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 3 |] in
-  Nx_backend.add ~out a b;
+  let out = Nx_backend.add a b in
   let d = Nx_ox.to_array out in
   check_float "add_float64[0]" ~eps:1e-9 11.0 d.(0);
   check_float "add_float64[1]" ~eps:1e-9 22.0 d.(1);
@@ -62,8 +61,7 @@ let test_add_float32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| 1.5; 2.5; 3.5 |] in
   let b = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| 0.5; 0.5; 0.5 |] in
-  let out = Nx_ox.empty ctx Dtype.Float32 [| 3 |] in
-  Nx_backend.add ~out a b;
+  let out = Nx_backend.add a b in
   let d = Nx_ox.to_array out in
   check_float "add_float32[0]" ~eps:1e-6 2.0 d.(0);
   check_float "add_float32[1]" ~eps:1e-6 3.0 d.(1);
@@ -73,8 +71,7 @@ let test_add_int32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int32 [| 3 |] [| 1l; 2l; 3l |] in
   let b = Nx_ox.create ctx Dtype.Int32 [| 3 |] [| 100l; 200l; 300l |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 3 |] in
-  Nx_backend.add ~out a b;
+  let out = Nx_backend.add a b in
   let d = Nx_ox.to_array out in
   check_int32 "add_int32[0]" 101l d.(0);
   check_int32 "add_int32[1]" 202l d.(1);
@@ -84,8 +81,7 @@ let test_add_int64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 1000L; 2000L; 3000L |] in
   let b = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 1L; 2L; 3L |] in
-  let out = Nx_ox.empty ctx Dtype.Int64 [| 3 |] in
-  Nx_backend.add ~out a b;
+  let out = Nx_backend.add a b in
   let d = Nx_ox.to_array out in
   check_int64 "add_int64[0]" 1001L d.(0);
   check_int64 "add_int64[1]" 2002L d.(1);
@@ -95,8 +91,7 @@ let test_sub_float64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 10.0; 20.0; 30.0 |] in
   let b = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 1.0; 2.0; 3.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 3 |] in
-  Nx_backend.sub ~out a b;
+  let out = Nx_backend.sub a b in
   let d = Nx_ox.to_array out in
   check_float "sub_float64[0]" ~eps:1e-9 9.0 d.(0);
   check_float "sub_float64[1]" ~eps:1e-9 18.0 d.(1);
@@ -106,8 +101,7 @@ let test_sub_float32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| 5.0; 10.0; 15.0 |] in
   let b = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| 1.0; 2.0; 3.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float32 [| 3 |] in
-  Nx_backend.sub ~out a b;
+  let out = Nx_backend.sub a b in
   let d = Nx_ox.to_array out in
   check_float "sub_float32[0]" ~eps:1e-6 4.0 d.(0);
   check_float "sub_float32[1]" ~eps:1e-6 8.0 d.(1);
@@ -117,8 +111,7 @@ let test_sub_int32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int32 [| 3 |] [| 100l; 200l; 300l |] in
   let b = Nx_ox.create ctx Dtype.Int32 [| 3 |] [| 1l; 2l; 3l |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 3 |] in
-  Nx_backend.sub ~out a b;
+  let out = Nx_backend.sub a b in
   let d = Nx_ox.to_array out in
   check_int32 "sub_int32[0]" 99l d.(0);
   check_int32 "sub_int32[1]" 198l d.(1);
@@ -128,8 +121,7 @@ let test_sub_int64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 1000L; 2000L; 3000L |] in
   let b = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 1L; 2L; 3L |] in
-  let out = Nx_ox.empty ctx Dtype.Int64 [| 3 |] in
-  Nx_backend.sub ~out a b;
+  let out = Nx_backend.sub a b in
   let d = Nx_ox.to_array out in
   check_int64 "sub_int64[0]" 999L d.(0);
   check_int64 "sub_int64[1]" 1998L d.(1);
@@ -139,8 +131,7 @@ let test_add_single_element () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float64 [| 1 |] [| 42.0 |] in
   let b = Nx_ox.create ctx Dtype.Float64 [| 1 |] [| 8.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 1 |] in
-  Nx_backend.add ~out a b;
+  let out = Nx_backend.add a b in
   let d = Nx_ox.to_array out in
   check_float "add_single[0]" ~eps:1e-9 50.0 d.(0)
 
@@ -148,8 +139,7 @@ let test_add_negative_values () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float64 [| 2 |] [| -5.0; 10.0 |] in
   let b = Nx_ox.create ctx Dtype.Float64 [| 2 |] [| -3.0; -7.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 2 |] in
-  Nx_backend.add ~out a b;
+  let out = Nx_backend.add a b in
   let d = Nx_ox.to_array out in
   check_float "add_neg[0]" ~eps:1e-9 (-8.0) d.(0);
   check_float "add_neg[1]" ~eps:1e-9 3.0 d.(1)
@@ -158,8 +148,7 @@ let test_sub_to_zero () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int32 [| 2 |] [| 5l; 10l |] in
   let b = Nx_ox.create ctx Dtype.Int32 [| 2 |] [| 5l; 10l |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 2 |] in
-  Nx_backend.sub ~out a b;
+  let out = Nx_backend.sub a b in
   let d = Nx_ox.to_array out in
   check_int32 "sub_zero[0]" 0l d.(0);
   check_int32 "sub_zero[1]" 0l d.(1)
@@ -168,7 +157,7 @@ let test_in_place_add () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 1.0; 2.0; 3.0 |] in
   let b = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 10.0; 20.0; 30.0 |] in
-  Nx_backend.add ~out:a a b;
+  let a = Nx_backend.add a b in
   let d = Nx_ox.to_array a in
   check_float "inplace_add[0]" ~eps:1e-9 11.0 d.(0);
   check_float "inplace_add[1]" ~eps:1e-9 22.0 d.(1);
@@ -178,8 +167,7 @@ let test_mul_float64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 1.0; 2.0; 3.0 |] in
   let b = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 10.0; 20.0; 30.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 3 |] in
-  Nx_backend.mul ~out a b;
+  let out = Nx_backend.mul a b in
   let d = Nx_ox.to_array out in
   check_float "mul_float64[0]" ~eps:1e-9 10.0 d.(0);
   check_float "mul_float64[1]" ~eps:1e-9 40.0 d.(1);
@@ -189,8 +177,7 @@ let test_mul_float32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| 1.5; 2.5; 3.5 |] in
   let b = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| 0.5; 0.5; 2.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float32 [| 3 |] in
-  Nx_backend.mul ~out a b;
+  let out = Nx_backend.mul a b in
   let d = Nx_ox.to_array out in
   check_float "mul_float32[0]" ~eps:1e-6 0.75 d.(0);
   check_float "mul_float32[1]" ~eps:1e-6 1.25 d.(1);
@@ -200,8 +187,7 @@ let test_mul_int32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int32 [| 3 |] [| 1l; 2l; 3l |] in
   let b = Nx_ox.create ctx Dtype.Int32 [| 3 |] [| 100l; 200l; 300l |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 3 |] in
-  Nx_backend.mul ~out a b;
+  let out = Nx_backend.mul a b in
   let d = Nx_ox.to_array out in
   check_int32 "mul_int32[0]" 100l d.(0);
   check_int32 "mul_int32[1]" 400l d.(1);
@@ -211,8 +197,7 @@ let test_mul_int64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 1000L; 2000L; 3000L |] in
   let b = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 1L; 2L; 3L |] in
-  let out = Nx_ox.empty ctx Dtype.Int64 [| 3 |] in
-  Nx_backend.mul ~out a b;
+  let out = Nx_backend.mul a b in
   let d = Nx_ox.to_array out in
   check_int64 "mul_int64[0]" 1000L d.(0);
   check_int64 "mul_int64[1]" 4000L d.(1);
@@ -222,8 +207,7 @@ let test_fdiv_float64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 1.0; 2.0; 2.0 |] in
   let b = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 0.0; 2.0; 3.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 3 |] in
-  Nx_backend.div ~out b a;
+  let out = Nx_backend.div b a in
   let d = Nx_ox.to_array out in
   check_float "fdiv_float64[0]" ~eps:1e-9 0.0 d.(0);
   check_float "fdiv_float64[1]" ~eps:1e-9 1.0 d.(1);
@@ -233,8 +217,7 @@ let test_fdiv_float32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| 1.5; 2.5; 7.0 |] in
   let b = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| 0.5; 0.5; 2.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float32 [| 3 |] in
-  Nx_backend.div ~out a b;
+  let out = Nx_backend.div a b in
   let d = Nx_ox.to_array out in
   check_float "fdiv_float32[0]" ~eps:1e-6 3.0 d.(0);
   check_float "fdiv_float32[1]" ~eps:1e-6 5.0 d.(1);
@@ -244,8 +227,7 @@ let test_fdiv_int32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int32 [| 3 |] [| 1l; 2l; 3l |] in
   let b = Nx_ox.create ctx Dtype.Int32 [| 3 |] [| 100l; 1l; 2l |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 3 |] in
-  Nx_backend.div ~out a b;
+  let out = Nx_backend.div a b in
   let d = Nx_ox.to_array out in
   check_int32 "fdiv_int32[0]" 0l d.(0);
   check_int32 "fdiv_int32[1]" 2l d.(1);
@@ -255,8 +237,7 @@ let test_fdiv_int64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 1000L; 2000L; 3000L |] in
   let b = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 1L; 2L; 3L |] in
-  let out = Nx_ox.empty ctx Dtype.Int64 [| 3 |] in
-  Nx_backend.div ~out a b;
+  let out = Nx_backend.div a b in
   let d = Nx_ox.to_array out in
   check_int64 "fdiv_int64[0]" 1000L d.(0);
   check_int64 "fdiv_int64[1]" 1000L d.(1);
@@ -266,8 +247,7 @@ let test_idiv_int32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int32 [| 3 |] [| 1l; 2l; 3l |] in
   let b = Nx_ox.create ctx Dtype.Int32 [| 3 |] [| 100l; 1l; 2l |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 3 |] in
-  Nx_backend.div ~out a b;
+  let out = Nx_backend.div a b in
   let d = Nx_ox.to_array out in
   check_int32 "idiv_int32[0]" 0l d.(0);
   check_int32 "idiv_int32[1]" 2l d.(1);
@@ -277,8 +257,7 @@ let test_idiv_int64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 1000L; 2000L; 3000L |] in
   let b = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 1L; 2L; 3L |] in
-  let out = Nx_ox.empty ctx Dtype.Int64 [| 3 |] in
-  Nx_backend.div ~out a b;
+  let out = Nx_backend.div a b in
   let d = Nx_ox.to_array out in
   check_int64 "idiv_int64[0]" 1000L d.(0);
   check_int64 "idiv_int64[1]" 1000L d.(1);
@@ -288,8 +267,7 @@ let test_mod_float64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 1.0; 2.0; 2.0 |] in
   let b = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 0.0; 2.0; 3.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 3 |] in
-  Nx_backend.mod_ ~out b a;
+  let out = Nx_backend.mod_ b a in
   let d = Nx_ox.to_array out in
   check_float "mod_float64[0]" ~eps:1e-9 0.0 d.(0);
   (* 0 mod 1 = 0 *)
@@ -302,8 +280,7 @@ let test_mod_float32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| 1.5; 2.5; 7.0 |] in
   let b = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| 0.5; 0.5; 2.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float32 [| 3 |] in
-  Nx_backend.mod_ ~out a b;
+  let out = Nx_backend.mod_ a b in
   let d = Nx_ox.to_array out in
   check_float "mod_float32[0]" ~eps:1e-6 0.0 d.(0);
   (* 1.5 mod 0.5 = 0 *)
@@ -316,8 +293,7 @@ let test_mod_int32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int32 [| 3 |] [| 1l; 2l; 3l |] in
   let b = Nx_ox.create ctx Dtype.Int32 [| 3 |] [| 100l; 1l; 2l |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 3 |] in
-  Nx_backend.mod_ ~out a b;
+  let out = Nx_backend.mod_ a b in
   let d = Nx_ox.to_array out in
   check_int32 "mod_int32[0]" 1l d.(0);
   (* 1 mod 100 = 1 *)
@@ -330,8 +306,7 @@ let test_mod_int64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 1000L; 2000L; 3000L |] in
   let b = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 1L; 2L; 3L |] in
-  let out = Nx_ox.empty ctx Dtype.Int64 [| 3 |] in
-  Nx_backend.mod_ ~out a b;
+  let out = Nx_backend.mod_ a b in
   let d = Nx_ox.to_array out in
   check_int64 "mod_int64[0]" 0L d.(0);
   (* 1000 mod 1 = 0 *)
@@ -344,8 +319,7 @@ let test_max_float64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 1.0; 2.0; 2.0 |] in
   let b = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 0.0; 2.5; 1.5 |] in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 3 |] in
-  Nx_backend.max ~out a b;
+  let out = Nx_backend.max a b in
   let d = Nx_ox.to_array out in
   check_float "max_float64[0]" ~eps:1e-9 1.0 d.(0);
   check_float "max_float64[1]" ~eps:1e-9 2.5 d.(1);
@@ -355,8 +329,7 @@ let test_max_float32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| 1.5; 2.5; 7.0 |] in
   let b = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| 2.0; 2.0; 3.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float32 [| 3 |] in
-  Nx_backend.max ~out a b;
+  let out = Nx_backend.max a b in
   let d = Nx_ox.to_array out in
   check_float "max_float32[0]" ~eps:1e-6 2.0 d.(0);
   check_float "max_float32[1]" ~eps:1e-6 2.5 d.(1);
@@ -366,8 +339,7 @@ let test_max_int32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int32 [| 3 |] [| 1l; 2l; 3l |] in
   let b = Nx_ox.create ctx Dtype.Int32 [| 3 |] [| 0l; 3l; 2l |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 3 |] in
-  Nx_backend.max ~out a b;
+  let out = Nx_backend.max a b in
   let d = Nx_ox.to_array out in
   check_int32 "max_int32[0]" 1l d.(0);
   check_int32 "max_int32[1]" 3l d.(1);
@@ -377,8 +349,7 @@ let test_max_int64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 1000L; 2000L; 3000L |] in
   let b = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 1500L; 1500L; 1000L |] in
-  let out = Nx_ox.empty ctx Dtype.Int64 [| 3 |] in
-  Nx_backend.max ~out a b;
+  let out = Nx_backend.max a b in
   let d = Nx_ox.to_array out in
   check_int64 "max_int64[0]" 1500L d.(0);
   check_int64 "max_int64[1]" 2000L d.(1);
@@ -388,8 +359,7 @@ let test_min_float64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 1.0; 2.0; 2.0 |] in
   let b = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 0.0; 2.5; 1.5 |] in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 3 |] in
-  Nx_backend.min ~out a b;
+  let out = Nx_backend.min a b in
   let d = Nx_ox.to_array out in
   check_float "min_float64[0]" ~eps:1e-9 0.0 d.(0);
   check_float "min_float64[1]" ~eps:1e-9 2.0 d.(1);
@@ -399,8 +369,7 @@ let test_min_float32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| 1.5; 2.5; 7.0 |] in
   let b = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| 2.0; 2.0; 3.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float32 [| 3 |] in
-  Nx_backend.min ~out a b;
+  let out = Nx_backend.min a b in
   let d = Nx_ox.to_array out in
   check_float "min_float32[0]" ~eps:1e-6 1.5 d.(0);
   check_float "min_float32[1]" ~eps:1e-6 2.0 d.(1);
@@ -410,8 +379,7 @@ let test_min_int32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int32 [| 3 |] [| 1l; 2l; 3l |] in
   let b = Nx_ox.create ctx Dtype.Int32 [| 3 |] [| 0l; 3l; 2l |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 3 |] in
-  Nx_backend.min ~out a b;
+  let out = Nx_backend.min a b in
   let d = Nx_ox.to_array out in
   check_int32 "min_int32[0]" 0l d.(0);
   check_int32 "min_int32[1]" 2l d.(1);
@@ -421,8 +389,7 @@ let test_min_int64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 1000L; 2000L; 3000L |] in
   let b = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 1500L; 1500L; 1000L |] in
-  let out = Nx_ox.empty ctx Dtype.Int64 [| 3 |] in
-  Nx_backend.min ~out a b;
+  let out = Nx_backend.min a b in
   let d = Nx_ox.to_array out in
   check_int64 "min_int64[0]" 1000L d.(0);
   check_int64 "min_int64[1]" 1500L d.(1);
@@ -432,8 +399,7 @@ let test_pow_float64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 2.0; 3.0; 4.0 |] in
   let b = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 3.0; 2.0; 0.5 |] in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 3 |] in
-  Nx_backend.pow ~out a b;
+  let out = Nx_backend.pow a b in
   let d = Nx_ox.to_array out in
   check_float "pow_float64[0]" ~eps:1e-9 8.0 d.(0);
   (* 2^3 *)
@@ -446,8 +412,7 @@ let test_pow_float32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| 2.0; 5.0; 9.0 |] in
   let b = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| 3.0; 1.0; 0.5 |] in
-  let out = Nx_ox.empty ctx Dtype.Float32 [| 3 |] in
-  Nx_backend.pow ~out a b;
+  let out = Nx_backend.pow a b in
   let d = Nx_ox.to_array out in
   check_float "pow_float32[0]" ~eps:1e-6 8.0 d.(0);
   (* 2^3 *)
@@ -460,8 +425,7 @@ let test_and_int32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int32 [| 3 |] [| 0b1101l; 0b1010l; 0b1111l |] in
   let b = Nx_ox.create ctx Dtype.Int32 [| 3 |] [| 0b1011l; 0b1100l; 0b0101l |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 3 |] in
-  Nx_backend.and_ ~out a b;
+  let out = Nx_backend.and_ a b in
   let d = Nx_ox.to_array out in
   check_int32 "and_int32[0]" 0b1001l d.(0);
   (* 1101 & 1011 *)
@@ -474,8 +438,7 @@ let test_and_int64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 0b1101L; 0b1010L; 0b1111L |] in
   let b = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 0b1011L; 0b1100L; 0b0101L |] in
-  let out = Nx_ox.empty ctx Dtype.Int64 [| 3 |] in
-  Nx_backend.and_ ~out a b;
+  let out = Nx_backend.and_ a b in
   let d = Nx_ox.to_array out in
   check_int64 "and_int64[0]" 0b1001L d.(0);
   check_int64 "and_int64[1]" 0b1000L d.(1);
@@ -485,8 +448,7 @@ let test_or_int32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int32 [| 3 |] [| 0b1101l; 0b1010l; 0b1111l |] in
   let b = Nx_ox.create ctx Dtype.Int32 [| 3 |] [| 0b1011l; 0b1100l; 0b0101l |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 3 |] in
-  Nx_backend.or_ ~out a b;
+  let out = Nx_backend.or_ a b in
   let d = Nx_ox.to_array out in
   check_int32 "or_int32[0]" 0b1111l d.(0);
   (* 1101 | 1011 *)
@@ -499,8 +461,7 @@ let test_or_int64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 0b1101L; 0b1010L; 0b1111L |] in
   let b = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 0b1011L; 0b1100L; 0b0101L |] in
-  let out = Nx_ox.empty ctx Dtype.Int64 [| 3 |] in
-  Nx_backend.or_ ~out a b;
+  let out = Nx_backend.or_ a b in
   let d = Nx_ox.to_array out in
   check_int64 "or_int64[0]" 0b1111L d.(0);
   check_int64 "or_int64[1]" 0b1110L d.(1);
@@ -510,8 +471,7 @@ let test_xor_int32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int32 [| 3 |] [| 0b1101l; 0b1010l; 0b1111l |] in
   let b = Nx_ox.create ctx Dtype.Int32 [| 3 |] [| 0b1011l; 0b1100l; 0b0101l |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 3 |] in
-  Nx_backend.xor ~out a b;
+  let out = Nx_backend.xor a b in
   let d = Nx_ox.to_array out in
   check_int32 "xor_int32[0]" 0b0110l d.(0);
   (* 1101 ^ 1011 *)
@@ -524,8 +484,7 @@ let test_xor_int64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 0b1101L; 0b1010L; 0b1111L |] in
   let b = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 0b1011L; 0b1100L; 0b0101L |] in
-  let out = Nx_ox.empty ctx Dtype.Int64 [| 3 |] in
-  Nx_backend.xor ~out a b;
+  let out = Nx_backend.xor a b in
   let d = Nx_ox.to_array out in
   check_int64 "xor_int64[0]" 0b0110L d.(0);
   check_int64 "xor_int64[1]" 0b0110L d.(1);
@@ -534,8 +493,7 @@ let test_xor_int64 () =
 let test_neg_float64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 1.0; -2.5; 0.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 3 |] in
-  Nx_backend.neg ~out a;
+  let out = Nx_backend.neg a in
   let d = Nx_ox.to_array out in
   check_float "neg_float64[0]" ~eps:1e-9 (-1.0) d.(0);
   check_float "neg_float64[1]" ~eps:1e-9 2.5 d.(1);
@@ -544,8 +502,7 @@ let test_neg_float64 () =
 let test_neg_float32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| 1.5; -3.0; 0.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float32 [| 3 |] in
-  Nx_backend.neg ~out a;
+  let out = Nx_backend.neg a in
   let d = Nx_ox.to_array out in
   check_float "neg_float32[0]" ~eps:1e-6 (-1.5) d.(0);
   check_float "neg_float32[1]" ~eps:1e-6 3.0 d.(1);
@@ -554,8 +511,7 @@ let test_neg_float32 () =
 let test_neg_int32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int32 [| 3 |] [| 1l; (-2l); 0l |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 3 |] in
-  Nx_backend.neg ~out a;
+  let out = Nx_backend.neg a in
   let d = Nx_ox.to_array out in
   check_int32 "neg_int32[0]" (-1l) d.(0);
   check_int32 "neg_int32[1]" 2l d.(1);
@@ -564,8 +520,7 @@ let test_neg_int32 () =
 let test_neg_int64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 10L; (-20L); 0L |] in
-  let out = Nx_ox.empty ctx Dtype.Int64 [| 3 |] in
-  Nx_backend.neg ~out a;
+  let out = Nx_backend.neg a in
   let d = Nx_ox.to_array out in
   check_int64 "neg_int64[0]" (-10L) d.(0);
   check_int64 "neg_int64[1]" 20L d.(1);
@@ -574,8 +529,7 @@ let test_neg_int64 () =
 let test_abs_float64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| -1.0; 2.5; -0.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 3 |] in
-  Nx_backend.abs ~out a;
+  let out = Nx_backend.abs a in
   let d = Nx_ox.to_array out in
   check_float "abs_float64[0]" ~eps:1e-9 1.0 d.(0);
   check_float "abs_float64[1]" ~eps:1e-9 2.5 d.(1);
@@ -584,8 +538,7 @@ let test_abs_float64 () =
 let test_abs_float32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| -1.5; 3.0; 0.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float32 [| 3 |] in
-  Nx_backend.abs ~out a;
+  let out = Nx_backend.abs a in
   let d = Nx_ox.to_array out in
   check_float "abs_float32[0]" ~eps:1e-6 1.5 d.(0);
   check_float "abs_float32[1]" ~eps:1e-6 3.0 d.(1);
@@ -594,8 +547,7 @@ let test_abs_float32 () =
 let test_abs_int32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int32 [| 3 |] [| (-1l); 2l; 0l |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 3 |] in
-  Nx_backend.abs ~out a;
+  let out = Nx_backend.abs a in
   let d = Nx_ox.to_array out in
   check_int32 "abs_int32[0]" 1l d.(0);
   check_int32 "abs_int32[1]" 2l d.(1);
@@ -604,8 +556,7 @@ let test_abs_int32 () =
 let test_abs_int64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| (-10L); 20L; 0L |] in
-  let out = Nx_ox.empty ctx Dtype.Int64 [| 3 |] in
-  Nx_backend.abs ~out a;
+  let out = Nx_backend.abs a in
   let d = Nx_ox.to_array out in
   check_int64 "abs_int64[0]" 10L d.(0);
   check_int64 "abs_int64[1]" 20L d.(1);
@@ -614,8 +565,7 @@ let test_abs_int64 () =
 let test_log_float64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 1.0; 2.718281828459045; 10.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 3 |] in
-  Nx_backend.log ~out a;
+  let out = Nx_backend.log a in
   let d = Nx_ox.to_array out in
   check_float "log_float64[0]" ~eps:1e-9 0.0 d.(0);
   check_float "log_float64[1]" ~eps:1e-9 1.0 d.(1);
@@ -624,8 +574,7 @@ let test_log_float64 () =
 let test_log_float32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| 1.0; 2.7182817; 10.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float32 [| 3 |] in
-  Nx_backend.log ~out a;
+  let out = Nx_backend.log a in
   let d = Nx_ox.to_array out in
   check_float "log_float32[0]" ~eps:1e-6 0.0 d.(0);
   check_float "log_float32[1]" ~eps:1e-6 1.0 d.(1);
@@ -634,8 +583,7 @@ let test_log_float32 () =
 let test_exp_float64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 0.0; 1.0; 2.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 3 |] in
-  Nx_backend.exp ~out a;
+  let out = Nx_backend.exp a in
   let d = Nx_ox.to_array out in
   check_float "exp_float64[0]" ~eps:1e-9 1.0 d.(0);
   check_float "exp_float64[1]" ~eps:1e-9 2.718281828459045 d.(1);
@@ -644,8 +592,7 @@ let test_exp_float64 () =
 let test_exp_float32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| 0.0; 1.0; 2.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float32 [| 3 |] in
-  Nx_backend.exp ~out a;
+  let out = Nx_backend.exp a in
   let d = Nx_ox.to_array out in
   check_float "exp_float32[0]" ~eps:1e-6 1.0 d.(0);
   check_float "exp_float32[1]" ~eps:1e-6 2.7182817 d.(1);
@@ -657,8 +604,7 @@ let test_sin_float64 () =
     Nx_ox.create ctx Dtype.Float64 [| 3 |]
       [| 0.0; 1.5707963267948966; 3.141592653589793 |]
   in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 3 |] in
-  Nx_backend.sin ~out a;
+  let out = Nx_backend.sin a in
   let d = Nx_ox.to_array out in
   check_float "sin_float64[0]" ~eps:1e-9 0.0 d.(0);
   check_float "sin_float64[1]" ~eps:1e-9 1.0 d.(1);
@@ -667,8 +613,7 @@ let test_sin_float64 () =
 let test_sin_float32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| 0.0; 1.5707964; 3.1415927 |] in
-  let out = Nx_ox.empty ctx Dtype.Float32 [| 3 |] in
-  Nx_backend.sin ~out a;
+  let out = Nx_backend.sin a in
   let d = Nx_ox.to_array out in
   check_float "sin_float32[0]" ~eps:1e-6 0.0 d.(0);
   check_float "sin_float32[1]" ~eps:1e-6 1.0 d.(1);
@@ -680,8 +625,7 @@ let test_cos_float64 () =
     Nx_ox.create ctx Dtype.Float64 [| 3 |]
       [| 0.0; 1.5707963267948966; 3.141592653589793 |]
   in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 3 |] in
-  Nx_backend.cos ~out a;
+  let out = Nx_backend.cos a in
   let d = Nx_ox.to_array out in
   check_float "cos_float64[0]" ~eps:1e-9 1.0 d.(0);
   check_float "cos_float64[1]" ~eps:1e-9 0.0 d.(1);
@@ -690,8 +634,7 @@ let test_cos_float64 () =
 let test_cos_float32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| 0.0; 1.5707964; 3.1415927 |] in
-  let out = Nx_ox.empty ctx Dtype.Float32 [| 3 |] in
-  Nx_backend.cos ~out a;
+  let out = Nx_backend.cos a in
   let d = Nx_ox.to_array out in
   check_float "cos_float32[0]" ~eps:1e-6 1.0 d.(0);
   check_float "cos_float32[1]" ~eps:1e-6 0.0 d.(1);
@@ -700,8 +643,7 @@ let test_cos_float32 () =
 let test_sqrt_float64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 0.0; 4.0; 9.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 3 |] in
-  Nx_backend.sqrt ~out a;
+  let out = Nx_backend.sqrt a in
   let d = Nx_ox.to_array out in
   check_float "sqrt_float64[0]" ~eps:1e-9 0.0 d.(0);
   check_float "sqrt_float64[1]" ~eps:1e-9 2.0 d.(1);
@@ -710,8 +652,7 @@ let test_sqrt_float64 () =
 let test_sqrt_float32 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| 0.0; 4.0; 9.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float32 [| 3 |] in
-  Nx_backend.sqrt ~out a;
+  let out = Nx_backend.sqrt a in
   let d = Nx_ox.to_array out in
   check_float "sqrt_float32[0]" ~eps:1e-6 0.0 d.(0);
   check_float "sqrt_float32[1]" ~eps:1e-6 2.0 d.(1);
@@ -720,8 +661,7 @@ let test_sqrt_float32 () =
 let test_recip_float64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 0.5; 0.25; 0.125 |] in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 3 |] in
-  Nx_backend.recip ~out a;
+  let out = Nx_backend.recip a in
   let d = Nx_ox.to_array out in
   check_float "recip_float64[0]" ~eps:1e-9 2.0 d.(0);
   check_float "recip_float64[1]" ~eps:1e-9 4.0 d.(1);
@@ -731,8 +671,7 @@ let test_cmpeq_int64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 1L; 2L; 3L |] in
   let b = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 1L; 2L; 4L |] in
-  let out = Nx_ox.empty ctx Dtype.Bool [| 3 |] in
-  Nx_backend.cmpeq ~out a b;
+  let out = Nx_backend.cmpeq a b in
   let d = Nx_ox.to_array out in
   check_bool "cmpeq_bool[0]" true d.(0);
   check_bool "cmpeq_bool[1]" true d.(1);
@@ -742,8 +681,7 @@ let test_cmpeq_float64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 1.0; 2.0; 3.0 |] in
   let b = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 1.0; 2.0; 4.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Bool [| 3 |] in
-  Nx_backend.cmpeq ~out a b;
+  let out = Nx_backend.cmpeq a b in
   let d = Nx_ox.to_array out in
   check_bool "cmpeq_bool[0]" true d.(0);
   check_bool "cmpeq_bool[1]" true d.(1);
@@ -753,8 +691,7 @@ let test_cmpne_int64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 1L; 2L; 3L |] in
   let b = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 1L; 2L; 4L |] in
-  let out = Nx_ox.empty ctx Dtype.Bool [| 3 |] in
-  Nx_backend.cmpne ~out a b;
+  let out = Nx_backend.cmpne a b in
   let d = Nx_ox.to_array out in
   check_bool "cmpne_bool[0]" false d.(0);
   check_bool "cmpne_bool[1]" false d.(1);
@@ -764,8 +701,7 @@ let test_cmpne_float64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 1.0; 2.0; 3.0 |] in
   let b = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 1.0; 2.0; 4.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Bool [| 3 |] in
-  Nx_backend.cmpne ~out a b;
+  let out = Nx_backend.cmpne a b in
   let d = Nx_ox.to_array out in
   check_bool "cmpne_bool[0]" false d.(0);
   check_bool "cmpne_bool[1]" false d.(1);
@@ -775,8 +711,7 @@ let test_cmplt_float64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 0.5; 1.0; 2.0 |] in
   let b = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 1.0; 1.0; 1.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Bool [| 3 |] in
-  Nx_backend.cmplt ~out a b;
+  let out = Nx_backend.cmplt a b in
   let d = Nx_ox.to_array out in
   check_bool "cmplt_bool[0]" true d.(0);
   check_bool "cmplt_bool[1]" false d.(1);
@@ -786,8 +721,7 @@ let test_cmplt_int64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 0L; 1L; 2L |] in
   let b = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 1L; 1L; 1L |] in
-  let out = Nx_ox.empty ctx Dtype.Bool [| 3 |] in
-  Nx_backend.cmplt ~out a b;
+  let out = Nx_backend.cmplt a b in
   let d = Nx_ox.to_array out in
   check_bool "cmplt_bool[0]" true d.(0);
   check_bool "cmplt_bool[1]" false d.(1);
@@ -797,8 +731,7 @@ let test_cmple_float64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 0.5; 1.0; 2.0 |] in
   let b = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 1.0; 1.0; 1.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Bool [| 3 |] in
-  Nx_backend.cmple ~out a b;
+  let out = Nx_backend.cmple a b in
   let d = Nx_ox.to_array out in
   check_bool "cmple_bool[0]" true d.(0);
   check_bool "cmple_bool[1]" true d.(1);
@@ -808,8 +741,7 @@ let test_cmple_int64 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 0L; 1L; 2L |] in
   let b = Nx_ox.create ctx Dtype.Int64 [| 3 |] [| 1L; 1L; 1L |] in
-  let out = Nx_ox.empty ctx Dtype.Bool [| 3 |] in
-  Nx_backend.cmple ~out a b;
+  let out = Nx_backend.cmple a b in
   let d = Nx_ox.to_array out in
   check_bool "cmple_bool[0]" true d.(0);
   check_bool "cmple_bool[1]" true d.(1);
@@ -822,8 +754,7 @@ let test_where_float64_basic () =
   let if_false =
     Nx_ox.create ctx Dtype.Float64 [| 4 |] [| 10.0; 20.0; 30.0; 40.0 |]
   in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 4 |] in
-  Nx_backend.where ~out cond if_true if_false;
+  let out = Nx_backend.where cond if_true if_false in
   let d = Nx_ox.to_array out in
   check_float "where_basic[0]" ~eps:1e-9 1.0 d.(0);
   check_float "where_basic[1]" ~eps:1e-9 20.0 d.(1);
@@ -837,8 +768,7 @@ let test_where_float32_basic () =
   let if_false =
     Nx_ox.create ctx Dtype.Float32 [| 4 |] [| 10.0; 20.0; 30.0; 40.0 |]
   in
-  let out = Nx_ox.empty ctx Dtype.Float32 [| 4 |] in
-  Nx_backend.where ~out cond if_true if_false;
+  let out = Nx_backend.where cond if_true if_false in
   let d = Nx_ox.to_array out in
   check_float "where_float32[0]" ~eps:1e-6 1.0 d.(0);
   check_float "where_float32[1]" ~eps:1e-6 20.0 d.(1);
@@ -850,8 +780,7 @@ let test_where_int32_basic () =
   let cond = Nx_ox.create ctx Dtype.Bool [| 4 |] [| true; false; true; false |] in
   let if_true = Nx_ox.create ctx Dtype.Int32 [| 4 |] [| 1l; 2l; 3l; 4l |] in
   let if_false = Nx_ox.create ctx Dtype.Int32 [| 4 |] [| 10l; 20l; 30l; 40l |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 4 |] in
-  Nx_backend.where ~out cond if_true if_false;
+  let out = Nx_backend.where cond if_true if_false in
   let d = Nx_ox.to_array out in
   check_int32 "where_int32[0]" 1l d.(0);
   check_int32 "where_int32[1]" 20l d.(1);
@@ -863,8 +792,7 @@ let test_where_int32_zero_negative () =
   let cond = Nx_ox.create ctx Dtype.Bool [| 4 |] [| true; false; false; true |] in
   let if_true = Nx_ox.create ctx Dtype.Int32 [| 4 |] [| 0l; (-1l); (-2l); 3l |] in
   let if_false = Nx_ox.create ctx Dtype.Int32 [| 4 |] [| 5l; 6l; 7l; 8l |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 4 |] in
-  Nx_backend.where ~out cond if_true if_false;
+  let out = Nx_backend.where cond if_true if_false in
   let d = Nx_ox.to_array out in
   check_int32 "where_int32_zero_neg[0]" 0l d.(0);
   check_int32 "where_int32_zero_neg[1]" 6l d.(1);
@@ -876,8 +804,7 @@ let test_where_int64_zero_negative () =
   let cond = Nx_ox.create ctx Dtype.Bool [| 4 |] [| true; false; false; true |] in
   let if_true = Nx_ox.create ctx Dtype.Int64 [| 4 |] [| 0L; (-1L); (-2L); 3L |] in
   let if_false = Nx_ox.create ctx Dtype.Int64 [| 4 |] [| 5L; 6L; 7L; 8L |] in
-  let out = Nx_ox.empty ctx Dtype.Int64 [| 4 |] in
-  Nx_backend.where ~out cond if_true if_false;
+  let out = Nx_backend.where cond if_true if_false in
   let d = Nx_ox.to_array out in
   check_int64 "where_int64_zero_neg[0]" 0L d.(0);
   check_int64 "where_int64_zero_neg[1]" 6L d.(1);
@@ -889,8 +816,7 @@ let test_where_int8_basic () =
   let cond = Nx_ox.create ctx Dtype.Bool [| 4 |] [| true; false; true; false |] in
   let if_true = Nx_ox.create ctx Dtype.Int8 [| 4 |] [| 1; 2; 3; 4 |] in
   let if_false = Nx_ox.create ctx Dtype.Int8 [| 4 |] [| 10; 20; 30; 40 |] in
-  let out = Nx_ox.empty ctx Dtype.Int8 [| 4 |] in
-  Nx_backend.where ~out cond if_true if_false;
+  let out = Nx_backend.where cond if_true if_false in
   let d = Nx_ox.to_array out in
   check_int "where_int8[0]" 1 d.(0);
   check_int "where_int8[1]" 20 d.(1);
@@ -902,8 +828,7 @@ let test_where_int16_zero_negative () =
   let cond = Nx_ox.create ctx Dtype.Bool [| 4 |] [| true; false; false; true |] in
   let if_true = Nx_ox.create ctx Dtype.Int16 [| 4 |] [| 0; (-1); (-2); 3 |] in
   let if_false = Nx_ox.create ctx Dtype.Int16 [| 4 |] [| 5; 6; 7; 8 |] in
-  let out = Nx_ox.empty ctx Dtype.Int16 [| 4 |] in
-  Nx_backend.where ~out cond if_true if_false;
+  let out = Nx_backend.where cond if_true if_false in
   let d = Nx_ox.to_array out in
   check_int "where_int16_zero_neg[0]" 0 d.(0);
   check_int "where_int16_zero_neg[1]" 6 d.(1);
@@ -914,8 +839,7 @@ let test_matmul_2d () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float64 [| 2; 2 |] [| 1.; 1.; 1.; 1. |] in
   let b = Nx_ox.create ctx Dtype.Float64 [| 2; 2 |] [| 1.; 1.; 1.; 1. |] in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 2; 2 |] in
-  Nx_backend.matmul ~out a b;
+  let out = Nx_backend.matmul a b in
   let d = Nx_ox.to_array out in
   check_float "mm[0,0]" ~eps:1e-9 2.0 d.(0);
   check_float "mm[1,1]" ~eps:1e-9 2.0 d.(1);
@@ -932,8 +856,7 @@ let test_matmul_identity () =
     Nx_ox.create ctx Dtype.Float64 [| 3; 3 |]
       [| 1.; 0.; 0.; 0.; 1.; 0.; 0.; 0.; 1. |]
   in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 2; 3 |] in
-  Nx_backend.matmul ~out a id;
+  let out = Nx_backend.matmul a id in
   let d = Nx_ox.to_array out in
   check_float "id@0" ~eps:1e-9 1. d.(0);
   check_float "id@1" ~eps:1e-9 2. d.(1);
@@ -952,8 +875,7 @@ let test_matmul_rectangular () =
     Nx_ox.create ctx Dtype.Float64 [| 3; 4 |]
       [| 7.; 8.; 9.; 10.; 11.; 12.; 13.; 14.; 15.; 16.; 17.; 18. |]
   in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 2; 4 |] in
-  Nx_backend.matmul ~out a b;
+  let out = Nx_backend.matmul a b in
   let d = Nx_ox.to_array out in
   (* row 0 *)
   check_float "rect[0,0]" ~eps:1e-9 74. d.(0);
@@ -976,8 +898,7 @@ let test_matmul_batched () =
     Nx_ox.create ctx Dtype.Float64 [| 2; 2; 2 |]
       [| 3.; 4.; 5.; 6.; 1.; 1.; 1.; 1. |]
   in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 2; 2; 2 |] in
-  Nx_backend.matmul ~out a b;
+  let out = Nx_backend.matmul a b in
   let d = Nx_ox.to_array out in
   (* batch 0 *)
   check_float "bat0[0,0]" ~eps:1e-9 3. d.(0);
@@ -994,8 +915,7 @@ let test_matmul_dot_product () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Float64 [| 1; 3 |] [| 1.; 2.; 3. |] in
   let b = Nx_ox.create ctx Dtype.Float64 [| 3; 1 |] [| 4.; 5.; 6. |] in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 1; 1 |] in
-  Nx_backend.matmul ~out a b;
+  let out = Nx_backend.matmul a b in
   let d = Nx_ox.to_array out in
   check_float "dot" ~eps:1e-9 32. d.(0)
 
@@ -1009,8 +929,7 @@ let test_matmul_rectangular_f32 () =
     Nx_ox.create ctx Dtype.Float32 [| 3; 4 |]
       [| 7.; 8.; 9.; 10.; 11.; 12.; 13.; 14.; 15.; 16.; 17.; 18. |]
   in
-  let out = Nx_ox.empty ctx Dtype.Float32 [| 2; 4 |] in
-  Nx_backend.matmul ~out a b;
+  let out = Nx_backend.matmul a b in
   let d = Nx_ox.to_array out in
   (* row 0 *)
   check_float "rect[0,0]" ~eps:1e-9 74. d.(0);
@@ -1033,8 +952,7 @@ let test_matmul_batched_f32 () =
     Nx_ox.create ctx Dtype.Float32 [| 2; 2; 2 |]
       [| 3.; 4.; 5.; 6.; 1.; 1.; 1.; 1. |]
   in
-  let out = Nx_ox.empty ctx Dtype.Float32 [| 2; 2; 2 |] in
-  Nx_backend.matmul ~out a b;
+  let out = Nx_backend.matmul a b in
   let d = Nx_ox.to_array out in
   (* batch 0 *)
   check_float "bat0[0,0]" ~eps:1e-9 3. d.(0);
@@ -1106,8 +1024,7 @@ let test_shrink_int32_view () =
   let x = Nx_ox.create ctx Dtype.Int32 [| 2; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l |] in
   let y = Nx_backend.shrink x [| (0, 2); (1, 3) |] in
   let zeros = Nx_ox.create ctx Dtype.Int32 [| 2; 2 |] [| 0l; 0l; 0l; 0l |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 2; 2 |] in
-  Nx_backend.add ~out y zeros;
+  let out = Nx_backend.add y zeros in
   let d = Nx_ox.to_array out in
   check_int32 "shrink_int32_view[0]" 2l d.(0);
   check_int32 "shrink_int32_view[1]" 3l d.(1);
@@ -1121,8 +1038,7 @@ let test_flip_int32_view () =
   let zeros =
     Nx_ox.create ctx Dtype.Int32 [| 2; 3 |] [| 0l; 0l; 0l; 0l; 0l; 0l |]
   in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 2; 3 |] in
-  Nx_backend.add ~out y zeros;
+  let out = Nx_backend.add y zeros in
   let d = Nx_ox.to_array out in
   check_int32 "flip_int32_view[0]" 4l d.(0);
   check_int32 "flip_int32_view[1]" 5l d.(1);
@@ -1135,8 +1051,7 @@ let test_cat_int32_axis1 () =
   let ctx = Nx_backend.create_context () in
   let a = Nx_ox.create ctx Dtype.Int32 [| 2; 2 |] [| 1l; 2l; 3l; 4l |] in
   let b = Nx_ox.create ctx Dtype.Int32 [| 2; 2 |] [| 5l; 6l; 7l; 8l |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 2; 4 |] in
-  Nx_backend.cat ~out [ a; b ] ~axis:1;
+  let out = Nx_backend.cat [ a; b ] ~axis:1 in
   let d = Nx_ox.to_array out in
   check_int32 "cat_int32_axis1[0]" 1l d.(0);
   check_int32 "cat_int32_axis1[1]" 2l d.(1);
@@ -1157,8 +1072,7 @@ let test_gather_int32_axis1 () =
   let indices =
     Nx_ox.create ctx Dtype.Int32 [| 2; 3 |] [| 3l; 1l; 0l; 0l; 2l; 2l |] 
   in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 2; 3 |] in
-  Nx_backend.gather ~out:out data indices ~axis:1;
+  let out = Nx_backend.gather data indices ~axis:1 in
   let d = Nx_ox.to_array out in
   check_int32 "gather_int32_axis1[0]" 13l d.(0);
   check_int32 "gather_int32_axis1[1]" 11l d.(1);
@@ -1171,8 +1085,7 @@ let test_gather_float32_axis0_contiguous () =
   let ctx = Nx_backend.create_context () in
   let data = Nx_ox.create ctx Dtype.Float32 [| 8 |] [| 0.5; 1.5; 2.5; 3.5; 4.5; 5.5; 6.5; 7.5 |] in
   let indices = Nx_ox.create ctx Dtype.Int32 [| 8 |] [| 7l; 0l; 6l; 1l; 5l; 2l; 4l; 3l |] in
-  let out = Nx_ox.empty ctx Dtype.Float32 [| 8 |] in
-  Nx_backend.gather ~out data indices ~axis:0;
+  let out = Nx_backend.gather data indices ~axis:0 in
   let d = Nx_ox.to_array out in
   check_float "gather_float32_axis0_contiguous[0]" ~eps:1e-6 7.5 d.(0);
   check_float "gather_float32_axis0_contiguous[1]" ~eps:1e-6 0.5 d.(1);
@@ -1249,8 +1162,7 @@ let test_gather_float64_axis0_contiguous () =
   let indices =
     Nx_ox.create ctx Dtype.Int32 [| 6 |] [| 5l; 3l; 1l; 0l; 4l; 2l |]
   in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 6 |] in
-  Nx_backend.gather ~out data indices ~axis:0;
+  let out = Nx_backend.gather data indices ~axis:0 in
   let d = Nx_ox.to_array out in
   check_float "gather_f64_contiguous[0]" ~eps:1e-12 60.0 d.(0);
   check_float "gather_f64_contiguous[1]" ~eps:1e-12 40.0 d.(1);
@@ -1270,8 +1182,7 @@ let test_gather_float64_axis0_2d () =
   let indices =
     Nx_ox.create ctx Dtype.Int32 [| 2; 2 |] [| 2l; 0l; 1l; 2l |]
   in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 2; 2 |] in
-  Nx_backend.gather ~out data indices ~axis:0;
+  let out = Nx_backend.gather data indices ~axis:0 in
   let d = Nx_ox.to_array out in
   check_float "gather_f64_axis0_2d[0]" ~eps:1e-12 5.0 d.(0);
   check_float "gather_f64_axis0_2d[1]" ~eps:1e-12 2.0 d.(1);
@@ -1289,8 +1200,7 @@ let test_gather_int32_axis0_contiguous () =
     Nx_ox.create ctx Dtype.Int32 [| 8 |]
       [| 7l; 5l; 3l; 1l; 6l; 4l; 2l; 0l |]
   in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 8 |] in
-  Nx_backend.gather ~out data indices ~axis:0;
+  let out = Nx_backend.gather data indices ~axis:0 in
   let d = Nx_ox.to_array out in
   check_int32 "gather_i32_contiguous[0]" 80l d.(0);
   check_int32 "gather_i32_contiguous[1]" 60l d.(1);
@@ -1311,8 +1221,7 @@ let test_gather_int64_axis0_contiguous () =
   let indices =
     Nx_ox.create ctx Dtype.Int32 [| 6 |] [| 4l; 2l; 0l; 5l; 3l; 1l |]
   in
-  let out = Nx_ox.empty ctx Dtype.Int64 [| 6 |] in
-  Nx_backend.gather ~out data indices ~axis:0;
+  let out = Nx_backend.gather data indices ~axis:0 in
   let d = Nx_ox.to_array out in
   check_int64 "gather_i64_contiguous[0]" 500L d.(0);
   check_int64 "gather_i64_contiguous[1]" 300L d.(1);
@@ -1326,8 +1235,7 @@ let test_gather_single_element () =
   let ctx = Nx_backend.create_context () in
   let data = Nx_ox.create ctx Dtype.Float64 [| 3 |] [| 1.0; 2.0; 3.0 |] in
   let indices = Nx_ox.create ctx Dtype.Int32 [| 1 |] [| 2l |] in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 1 |] in
-  Nx_backend.gather ~out data indices ~axis:0;
+  let out = Nx_backend.gather data indices ~axis:0 in
   let d = Nx_ox.to_array out in
   check_float "gather_single[0]" ~eps:1e-12 3.0 d.(0)
 
@@ -1341,8 +1249,7 @@ let test_gather_negative_axis () =
   let indices =
     Nx_ox.create ctx Dtype.Int32 [| 2; 2 |] [| 3l; 0l; 1l; 2l |]
   in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 2; 2 |] in
-  Nx_backend.gather ~out data indices ~axis:(-1);
+  let out = Nx_backend.gather data indices ~axis:(-1) in
   let d = Nx_ox.to_array out in
   check_int32 "gather_neg_axis[0]" 13l d.(0);
   check_int32 "gather_neg_axis[1]" 10l d.(1);
@@ -1710,8 +1617,7 @@ let test_associative_scan_sum_int32_axis1 () =
   let x =
     Nx_ox.create ctx Dtype.Int32 [| 2; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l |]
   in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 2; 3 |] in
-  Nx_backend.associative_scan ~out ~axis:1 ~op:`Sum x;
+  let out = Nx_backend.associative_scan ~axis:1 ~op:`Sum x in
   let d = Nx_ox.to_array out in
   check_int32 "associative_scan_sum_int32_axis1[0]" 1l d.(0);
   check_int32 "associative_scan_sum_int32_axis1[1]" 3l d.(1);
@@ -1725,8 +1631,7 @@ let test_associative_scan_prod_int64_axis0 () =
   let x =
     Nx_ox.create ctx Dtype.Int64 [| 2; 3 |] [| 1L; 2L; 3L; 4L; 5L; 6L |]
   in
-  let out = Nx_ox.empty ctx Dtype.Int64 [| 2; 3 |] in
-  Nx_backend.associative_scan ~out ~axis:0 ~op:`Prod x;
+  let out = Nx_backend.associative_scan ~axis:0 ~op:`Prod x in
   let d = Nx_ox.to_array out in
   check_int64 "associative_scan_prod_int64_axis0[0]" 1L d.(0);
   check_int64 "associative_scan_prod_int64_axis0[1]" 2L d.(1);
@@ -1741,8 +1646,7 @@ let test_associative_scan_sum_int32_permuted_view () =
     Nx_ox.create ctx Dtype.Int32 [| 2; 3 |] [| 1l; 2l; 3l; 4l; 5l; 6l |]
   in
   let x_permuted = Nx_backend.permute x [| 1; 0 |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 3; 2 |] in
-  Nx_backend.associative_scan ~out ~axis:1 ~op:`Sum x_permuted;
+  let out = Nx_backend.associative_scan ~axis:1 ~op:`Sum x_permuted in
   let d = Nx_ox.to_array out in
   check_int32 "associative_scan_sum_int32_permuted_view[0]" 1l d.(0);
   check_int32 "associative_scan_sum_int32_permuted_view[1]" 5l d.(1);
@@ -1754,8 +1658,7 @@ let test_associative_scan_sum_int32_permuted_view () =
 let test_associative_scan_zero_axis_length () =
   let ctx = Nx_backend.create_context () in
   let x = Nx_ox.empty ctx Dtype.Float32 [| 0; 3 |] in
-  let out = Nx_ox.empty ctx Dtype.Float32 [| 0; 3 |] in
-  Nx_backend.associative_scan ~out ~axis:0 ~op:`Max x;
+  let out = Nx_backend.associative_scan ~axis:0 ~op:`Max x in
   check_int "associative_scan_zero_axis_length:numel"
     (numel (Nx_backend.view out)) 0
 
@@ -1773,12 +1676,10 @@ let test_threefry_strided_view_matches_contiguous () =
   in
   let key_perm = Nx_backend.permute key_base [| 1; 0 |] in
   let ctr_perm = Nx_backend.permute ctr_base [| 1; 0 |] in
-  let out_perm = Nx_ox.empty ctx Dtype.Int32 [| 2; 2 |] in
-  Nx_backend.threefry ~out:out_perm key_perm ctr_perm;
+  let out_perm = Nx_backend.threefry key_perm ctr_perm in
   let key_contig = Nx_backend.contiguous key_perm in
   let ctr_contig = Nx_backend.contiguous ctr_perm in
-  let out_contig = Nx_ox.empty ctx Dtype.Int32 [| 2; 2 |] in
-  Nx_backend.threefry ~out:out_contig key_contig ctr_contig;
+  let out_contig = Nx_backend.threefry key_contig ctr_contig in
   let perm_data = Nx_ox.to_array out_perm in
   let contig_data = Nx_ox.to_array out_contig in
   for i = 0 to Array.length perm_data - 1 do
@@ -1789,8 +1690,7 @@ let test_threefry_strided_view_matches_contiguous () =
 let test_argmax_float64_1d () =
   let ctx = Nx_backend.create_context () in
   let x = Nx_ox.create ctx Dtype.Float64 [| 5 |] [| 1.0; 5.0; 3.0; 2.0; 4.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 1 |] in
-  Nx_backend.argmax ~out ~axis:0 ~keepdims:true x;
+  let out = Nx_backend.argmax ~axis:0 ~keepdims:true x in
   let d = Nx_ox.to_array out in
   check_int32 "argmax_float64_1d" 1l d.(0)
 
@@ -1798,8 +1698,7 @@ let test_argmax_float64_2d_axis0 () =
   let ctx = Nx_backend.create_context () in
   (* [[1, 4], [3, 2]] -> axis 0 -> [1, 0] *)
   let x = Nx_ox.create ctx Dtype.Float64 [| 2; 2 |] [| 1.0; 4.0; 3.0; 2.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 2 |] in
-  Nx_backend.argmax ~out ~axis:0 ~keepdims:false x;
+  let out = Nx_backend.argmax ~axis:0 ~keepdims:false x in
   let d = Nx_ox.to_array out in
   check_int32 "argmax_float64_2d_axis0[0]" 1l d.(0);
   check_int32 "argmax_float64_2d_axis0[1]" 0l d.(1)
@@ -1808,8 +1707,7 @@ let test_argmax_float64_2d_axis1 () =
   let ctx = Nx_backend.create_context () in
   (* [[1, 4], [3, 2]] -> axis 1 -> [1, 0] *)
   let x = Nx_ox.create ctx Dtype.Float64 [| 2; 2 |] [| 1.0; 4.0; 3.0; 2.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 2 |] in
-  Nx_backend.argmax ~out ~axis:1 ~keepdims:false x;
+  let out = Nx_backend.argmax ~axis:1 ~keepdims:false x in
   let d = Nx_ox.to_array out in
   check_int32 "argmax_float64_2d_axis1[0]" 1l d.(0);
   check_int32 "argmax_float64_2d_axis1[1]" 0l d.(1)
@@ -1817,32 +1715,28 @@ let test_argmax_float64_2d_axis1 () =
 let test_argmin_float64_1d () =
   let ctx = Nx_backend.create_context () in
   let x = Nx_ox.create ctx Dtype.Float64 [| 5 |] [| 3.0; 1.0; 5.0; 2.0; 4.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 1 |] in
-  Nx_backend.argmin ~out ~axis:0 ~keepdims:true x;
+  let out = Nx_backend.argmin ~axis:0 ~keepdims:true x in
   let d = Nx_ox.to_array out in
   check_int32 "argmin_float64_1d" 1l d.(0)
 
 let test_argmax_int32 () =
   let ctx = Nx_backend.create_context () in
   let x = Nx_ox.create ctx Dtype.Int32 [| 4 |] [| 10l; 30l; 20l; 5l |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 1 |] in
-  Nx_backend.argmax ~out ~axis:0 ~keepdims:true x;
+  let out = Nx_backend.argmax ~axis:0 ~keepdims:true x in
   let d = Nx_ox.to_array out in
   check_int32 "argmax_int32" 1l d.(0)
 
 let test_argmin_int64 () =
   let ctx = Nx_backend.create_context () in
   let x = Nx_ox.create ctx Dtype.Int64 [| 4 |] [| 10L; 30L; 5L; 20L |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 1 |] in
-  Nx_backend.argmin ~out ~axis:0 ~keepdims:true x;
+  let out = Nx_backend.argmin ~axis:0 ~keepdims:true x in
   let d = Nx_ox.to_array out in
   check_int32 "argmin_int64" 2l d.(0)
 
 let test_sort_float64_ascending () =
   let ctx = Nx_backend.create_context () in
   let x = Nx_ox.create ctx Dtype.Float64 [| 5 |] [| 3.0; 1.0; 4.0; 1.5; 2.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 5 |] in
-  Nx_backend.sort ~out ~axis:0 ~descending:false x;
+  let out = Nx_backend.sort ~axis:0 ~descending:false x in
   let d = Nx_ox.to_array out in
   check_float "sort_f64_asc[0]" ~eps:1e-10 1.0 d.(0);
   check_float "sort_f64_asc[1]" ~eps:1e-10 1.5 d.(1);
@@ -1853,8 +1747,7 @@ let test_sort_float64_ascending () =
 let test_sort_float64_descending () =
   let ctx = Nx_backend.create_context () in
   let x = Nx_ox.create ctx Dtype.Float64 [| 4 |] [| 3.0; 1.0; 4.0; 2.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 4 |] in
-  Nx_backend.sort ~out ~axis:0 ~descending:true x;
+  let out = Nx_backend.sort ~axis:0 ~descending:true x in
   let d = Nx_ox.to_array out in
   check_float "sort_f64_desc[0]" ~eps:1e-10 4.0 d.(0);
   check_float "sort_f64_desc[1]" ~eps:1e-10 3.0 d.(1);
@@ -1864,8 +1757,7 @@ let test_sort_float64_descending () =
 let test_sort_int32_1d () =
   let ctx = Nx_backend.create_context () in
   let x = Nx_ox.create ctx Dtype.Int32 [| 4 |] [| 3l; 1l; 4l; 2l |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 4 |] in
-  Nx_backend.sort ~out ~axis:0 ~descending:false x;
+  let out = Nx_backend.sort ~axis:0 ~descending:false x in
   let d = Nx_ox.to_array out in
   check_int32 "sort_i32_1d[0]" 1l d.(0);
   check_int32 "sort_i32_1d[1]" 2l d.(1);
@@ -1876,8 +1768,7 @@ let test_sort_int32_2d_axis1 () =
   let ctx = Nx_backend.create_context () in
   (* [[3, 1, 2], [6, 4, 5]] -> sort axis 1 -> [[1, 2, 3], [4, 5, 6]] *)
   let x = Nx_ox.create ctx Dtype.Int32 [| 2; 3 |] [| 3l; 1l; 2l; 6l; 4l; 5l |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 2; 3 |] in
-  Nx_backend.sort ~out ~axis:1 ~descending:false x;
+  let out = Nx_backend.sort ~axis:1 ~descending:false x in
   let d = Nx_ox.to_array out in
   check_int32 "sort_i32_2d_axis1[0]" 1l d.(0);
   check_int32 "sort_i32_2d_axis1[1]" 2l d.(1);
@@ -1890,8 +1781,7 @@ let test_sort_int32_2d_axis0 () =
   let ctx = Nx_backend.create_context () in
   (* [[3, 1], [1, 3]] -> sort axis 0 -> [[1, 1], [3, 3]] *)
   let x = Nx_ox.create ctx Dtype.Int32 [| 2; 2 |] [| 3l; 1l; 1l; 3l |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 2; 2 |] in
-  Nx_backend.sort ~out ~axis:0 ~descending:false x;
+  let out = Nx_backend.sort ~axis:0 ~descending:false x in
   let d = Nx_ox.to_array out in
   check_int32 "sort_i32_2d_axis0[0]" 1l d.(0);
   check_int32 "sort_i32_2d_axis0[1]" 1l d.(1);
@@ -1902,8 +1792,7 @@ let test_argsort_float64 () =
   let ctx = Nx_backend.create_context () in
   (* [3.0, 1.0, 4.0, 2.0] -> argsort asc -> [1, 3, 0, 2] *)
   let x = Nx_ox.create ctx Dtype.Float64 [| 4 |] [| 3.0; 1.0; 4.0; 2.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 4 |] in
-  Nx_backend.argsort ~out ~axis:0 ~descending:false x;
+  let out = Nx_backend.argsort ~axis:0 ~descending:false x in
   let d = Nx_ox.to_array out in
   check_int32 "argsort_f64[0]" 1l d.(0);
   check_int32 "argsort_f64[1]" 3l d.(1);
@@ -1914,8 +1803,7 @@ let test_argsort_descending () =
   let ctx = Nx_backend.create_context () in
   (* [3.0, 1.0, 4.0, 2.0] -> argsort desc -> [2, 0, 3, 1] *)
   let x = Nx_ox.create ctx Dtype.Float64 [| 4 |] [| 3.0; 1.0; 4.0; 2.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Int32 [| 4 |] in
-  Nx_backend.argsort ~out ~axis:0 ~descending:true x;
+  let out = Nx_backend.argsort ~axis:0 ~descending:true x in
   let d = Nx_ox.to_array out in
   check_int32 "argsort_desc[0]" 2l d.(0);
   check_int32 "argsort_desc[1]" 0l d.(1);
@@ -1926,8 +1814,7 @@ let test_atan2_float64 () =
   let ctx = Nx_backend.create_context () in
   let y = Nx_ox.create ctx Dtype.Float64 [| 4 |] [| 1.0; -1.0; 1.0; 0.0 |] in
   let x = Nx_ox.create ctx Dtype.Float64 [| 4 |] [| 1.0; 1.0; -1.0; 1.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float64 [| 4 |] in
-  Nx_backend.atan2 ~out y x;
+  let out = Nx_backend.atan2 y x in
   let data = Nx_ox.to_array out in
   check_float "atan2_float64[0]" ~eps:1e-10 (Float.atan2 1.0 1.0) data.(0);
   check_float "atan2_float64[1]" ~eps:1e-10 (Float.atan2 (-1.0) 1.0) data.(1);
@@ -1938,8 +1825,7 @@ let test_atan2_float32 () =
   let ctx = Nx_backend.create_context () in
   let y = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| 1.0; 0.0; -1.0 |] in
   let x = Nx_ox.create ctx Dtype.Float32 [| 3 |] [| 0.0; 1.0; -1.0 |] in
-  let out = Nx_ox.empty ctx Dtype.Float32 [| 3 |] in
-  Nx_backend.atan2 ~out y x;
+  let out = Nx_backend.atan2 y x in
   let data = Nx_ox.to_array out in
   check_float "atan2_float32[0]" ~eps:1e-5 (Float.atan2 1.0 0.0) data.(0);
   check_float "atan2_float32[1]" ~eps:1e-5 (Float.atan2 0.0 1.0) data.(1);

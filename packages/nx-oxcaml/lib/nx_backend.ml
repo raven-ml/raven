@@ -170,12 +170,13 @@ let full (type a b) context (dtype : (a, b) Dtype.t) (shape_arr : int array)
   | _ -> invalid_arg "full: unsupported dtype");
   t
 
-let add (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let add (type a b) (a : (a, b) t) (b : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vb = b.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer, b.buffer) with
+  (match (out.buffer, a.buffer, b.buffer) with
   | Float64 out_arr, Float64 a_arr, Float64 b_arr ->
       par out.context.pool vol (fun s e -> Op_add.add_float64 a_arr b_arr out_arr va vb vout s e)
   | Float32 out_arr, Float32 a_arr, Float32 b_arr ->
@@ -184,14 +185,16 @@ let add (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
       par out.context.pool vol (fun s e -> Op_add.add_int32 a_arr b_arr out_arr va vb vout s e)
   | Int64 out_arr, Int64 a_arr, Int64 b_arr ->
       par out.context.pool vol (fun s e -> Op_add.add_int64 a_arr b_arr out_arr va vb vout s e)
-  | _ -> invalid_arg "buffer: unsupported dtype"
+  | _ -> invalid_arg "buffer: unsupported dtype");
+  out
 
-let sub (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let sub (type a b) (a : (a, b) t) (b : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vb = b.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer, b.buffer) with
+  (match (out.buffer, a.buffer, b.buffer) with
   | Float64 out_arr, Float64 a_arr, Float64 b_arr ->
       par out.context.pool vol (fun s e -> Op_sub.sub_float64 a_arr b_arr out_arr va vb vout s e)
   | Float32 out_arr, Float32 a_arr, Float32 b_arr ->
@@ -200,14 +203,16 @@ let sub (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
       par out.context.pool vol (fun s e -> Op_sub.sub_int32 a_arr b_arr out_arr va vb vout s e)
   | Int64 out_arr, Int64 a_arr, Int64 b_arr ->
       par out.context.pool vol (fun s e -> Op_sub.sub_int64 a_arr b_arr out_arr va vb vout s e)
-  | _ -> invalid_arg "buffer: unsupported dtype"
+  | _ -> invalid_arg "buffer: unsupported dtype");
+  out
 
-let mul (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let mul (type a b) (a : (a, b) t) (b : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vb = b.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer, b.buffer) with
+  (match (out.buffer, a.buffer, b.buffer) with
   | Float64 out_arr, Float64 a_arr, Float64 b_arr ->
       par out.context.pool vol (fun s e -> Op_mul.mul_float64 a_arr b_arr out_arr va vb vout s e)
   | Float32 out_arr, Float32 a_arr, Float32 b_arr ->
@@ -216,14 +221,16 @@ let mul (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
       par out.context.pool vol (fun s e -> Op_mul.mul_int32 a_arr b_arr out_arr va vb vout s e)
   | Int64 out_arr, Int64 a_arr, Int64 b_arr ->
       par out.context.pool vol (fun s e -> Op_mul.mul_int64 a_arr b_arr out_arr va vb vout s e)
-  | _ -> invalid_arg "buffer: unsupported dtype"
+  | _ -> invalid_arg "buffer: unsupported dtype");
+  out
 
-let idiv (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let idiv (type a b) (a : (a, b) t) (b : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vb = b.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer, b.buffer) with
+  (match (out.buffer, a.buffer, b.buffer) with
   | Float64 out_arr, Float64 a_arr, Float64 b_arr ->
       par out.context.pool vol (fun s e -> Op_idiv.idiv_float64 a_arr b_arr out_arr va vb vout s e)
   | Float32 out_arr, Float32 a_arr, Float32 b_arr ->
@@ -232,14 +239,16 @@ let idiv (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
       par out.context.pool vol (fun s e -> Op_idiv.idiv_int32 a_arr b_arr out_arr va vb vout s e)
   | Int64 out_arr, Int64 a_arr, Int64 b_arr ->
       par out.context.pool vol (fun s e -> Op_idiv.idiv_int64 a_arr b_arr out_arr va vb vout s e)
-  | _ -> invalid_arg "buffer: unsupported dtype"
+  | _ -> invalid_arg "buffer: unsupported dtype");
+  out
 
-let fdiv (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let fdiv (type a b) (a : (a, b) t) (b : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vb = b.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer, b.buffer) with
+  (match (out.buffer, a.buffer, b.buffer) with
   | Float64 out_arr, Float64 a_arr, Float64 b_arr ->
       par out.context.pool vol (fun s e -> Op_fdiv.fdiv_float64 a_arr b_arr out_arr va vb vout s e)
   | Float32 out_arr, Float32 a_arr, Float32 b_arr ->
@@ -248,19 +257,21 @@ let fdiv (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
       par out.context.pool vol (fun s e -> Op_fdiv.fdiv_int32 a_arr b_arr out_arr va vb vout s e)
   | Int64 out_arr, Int64 a_arr, Int64 b_arr ->
       par out.context.pool vol (fun s e -> Op_fdiv.fdiv_int64 a_arr b_arr out_arr va vb vout s e)
-  | _ -> invalid_arg "fdiv: unsupported dtype"
+  | _ -> invalid_arg "fdiv: unsupported dtype");
+  out
 
-let div ~out x y =
-  let dt = dtype out in
-  if Dtype.is_int dt || Dtype.is_uint dt then idiv ~out x y
-  else fdiv ~out x y
+let div x y =
+  let dt = dtype x in
+  if Dtype.is_int dt || Dtype.is_uint dt then idiv x y
+  else fdiv x y
 
-let mod_ (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let mod_ (type a b) (a : (a, b) t) (b : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vb = b.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer, b.buffer) with
+  (match (out.buffer, a.buffer, b.buffer) with
   | Float64 out_arr, Float64 a_arr, Float64 b_arr ->
       par out.context.pool vol (fun s e -> Op_mod.mod_float64 a_arr b_arr out_arr va vb vout s e)
   | Float32 out_arr, Float32 a_arr, Float32 b_arr ->
@@ -269,28 +280,31 @@ let mod_ (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
       par out.context.pool vol (fun s e -> Op_mod.mod_int32 a_arr b_arr out_arr va vb vout s e)
   | Int64 out_arr, Int64 a_arr, Int64 b_arr ->
       par out.context.pool vol (fun s e -> Op_mod.mod_int64 a_arr b_arr out_arr va vb vout s e)
-  | _ -> invalid_arg "buffer: unsupported dtype"
+  | _ -> invalid_arg "buffer: unsupported dtype");
+  out
 
-let pow (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let pow (type a b) (a : (a, b) t) (b : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vb = b.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer, b.buffer) with
+  (match (out.buffer, a.buffer, b.buffer) with
   | Float64 out_arr, Float64 a_arr, Float64 b_arr ->
       par out.context.pool vol (fun s e -> Op_pow.pow_float64 a_arr b_arr out_arr va vb vout s e)
   | Float32 out_arr, Float32 a_arr, Float32 b_arr ->
       par out.context.pool vol (fun s e -> Op_pow.pow_float32 a_arr b_arr out_arr va vb vout s e)
   | _ ->
-      invalid_arg "pow: not implemented for unboxed ints"
+      invalid_arg "pow: not implemented for unboxed ints");
+  out
 
-let cmpeq (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t)
-    (b : (a, b) t) : unit =
+let cmpeq (type a b) (a : (a, b) t) (b : (a, b) t) : (bool, Nx_buffer.bool_elt) t =
+  let out = buffer a.context Dtype.Bool (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vb = b.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer, b.buffer) with
+  (match (out.buffer, a.buffer, b.buffer) with
   | Bool out_arr, Float64 a_arr, Float64 b_arr ->
       par out.context.pool vol (fun s e -> Op_cmpeq.cmpeq_float64 a_arr b_arr out_arr va vb vout s e)
   | Bool out_arr, Float32 a_arr, Float32 b_arr ->
@@ -299,15 +313,16 @@ let cmpeq (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t)
       par out.context.pool vol (fun s e -> Op_cmpeq.cmpeq_int32 a_arr b_arr out_arr va vb vout s e)
   | Bool out_arr, Int64 a_arr, Int64 b_arr ->
       par out.context.pool vol (fun s e -> Op_cmpeq.cmpeq_int64 a_arr b_arr out_arr va vb vout s e)
-  | _ -> invalid_arg "buffer: unsupported dtype"
+  | _ -> invalid_arg "buffer: unsupported dtype");
+  out
 
-let cmpne (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t)
-    (b : (a, b) t) : unit =
+let cmpne (type a b) (a : (a, b) t) (b : (a, b) t) : (bool, Nx_buffer.bool_elt) t =
+  let out = buffer a.context Dtype.Bool (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vb = b.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer, b.buffer) with
+  (match (out.buffer, a.buffer, b.buffer) with
   | Bool out_arr, Float64 a_arr, Float64 b_arr ->
       par out.context.pool vol (fun s e -> Op_cmpne.cmpne_float64 a_arr b_arr out_arr va vb vout s e)
   | Bool out_arr, Float32 a_arr, Float32 b_arr ->
@@ -316,15 +331,16 @@ let cmpne (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t)
       par out.context.pool vol (fun s e -> Op_cmpne.cmpne_int32 a_arr b_arr out_arr va vb vout s e)
   | Bool out_arr, Int64 a_arr, Int64 b_arr ->
       par out.context.pool vol (fun s e -> Op_cmpne.cmpne_int64 a_arr b_arr out_arr va vb vout s e)
-  | _ -> invalid_arg "buffer: unsupported dtype"
+  | _ -> invalid_arg "buffer: unsupported dtype");
+  out
 
-let cmplt (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t)
-    (b : (a, b) t) : unit =
+let cmplt (type a b) (a : (a, b) t) (b : (a, b) t) : (bool, Nx_buffer.bool_elt) t =
+  let out = buffer a.context Dtype.Bool (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vb = b.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer, b.buffer) with
+  (match (out.buffer, a.buffer, b.buffer) with
   | Bool out_arr, Float64 a_arr, Float64 b_arr ->
       par out.context.pool vol (fun s e -> Op_cmplt.cmplt_float64 a_arr b_arr out_arr va vb vout s e)
   | Bool out_arr, Float32 a_arr, Float32 b_arr ->
@@ -333,15 +349,16 @@ let cmplt (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t)
       par out.context.pool vol (fun s e -> Op_cmplt.cmplt_int32 a_arr b_arr out_arr va vb vout s e)
   | Bool out_arr, Int64 a_arr, Int64 b_arr ->
       par out.context.pool vol (fun s e -> Op_cmplt.cmplt_int64 a_arr b_arr out_arr va vb vout s e)
-  | _ -> invalid_arg "buffer: unsupported dtype"
+  | _ -> invalid_arg "buffer: unsupported dtype");
+  out
 
-let cmple (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t)
-    (b : (a, b) t) : unit =
+let cmple (type a b) (a : (a, b) t) (b : (a, b) t) : (bool, Nx_buffer.bool_elt) t =
+  let out = buffer a.context Dtype.Bool (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vb = b.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer, b.buffer) with
+  (match (out.buffer, a.buffer, b.buffer) with
   | Bool out_arr, Float64 a_arr, Float64 b_arr ->
       par out.context.pool vol (fun s e -> Op_cmple.cmple_float64 a_arr b_arr out_arr va vb vout s e)
   | Bool out_arr, Float32 a_arr, Float32 b_arr ->
@@ -350,14 +367,16 @@ let cmple (type a b) ~(out : (bool, Nx_buffer.bool_elt) t) (a : (a, b) t)
       par out.context.pool vol (fun s e -> Op_cmple.cmple_int32 a_arr b_arr out_arr va vb vout s e)
   | Bool out_arr, Int64 a_arr, Int64 b_arr ->
       par out.context.pool vol (fun s e -> Op_cmple.cmple_int64 a_arr b_arr out_arr va vb vout s e)
-  | _ -> invalid_arg "buffer: unsupported dtype"
+  | _ -> invalid_arg "buffer: unsupported dtype");
+  out
 
-let max (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let max (type a b) (a : (a, b) t) (b : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vb = b.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer, b.buffer) with
+  (match (out.buffer, a.buffer, b.buffer) with
   | Float64 out_arr, Float64 a_arr, Float64 b_arr ->
       par out.context.pool vol (fun s e -> Op_max.max_float64 a_arr b_arr out_arr va vb vout s e)
   | Float32 out_arr, Float32 a_arr, Float32 b_arr ->
@@ -366,14 +385,16 @@ let max (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
       par out.context.pool vol (fun s e -> Op_max.max_int32 a_arr b_arr out_arr va vb vout s e)
   | Int64 out_arr, Int64 a_arr, Int64 b_arr ->
       par out.context.pool vol (fun s e -> Op_max.max_int64 a_arr b_arr out_arr va vb vout s e)
-  | _ -> invalid_arg "max: unsupported dtype"
+  | _ -> invalid_arg "max: unsupported dtype");
+  out
 
-let min (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let min (type a b) (a : (a, b) t) (b : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vb = b.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer, b.buffer) with
+  (match (out.buffer, a.buffer, b.buffer) with
   | Float64 out_arr, Float64 a_arr, Float64 b_arr ->
       par out.context.pool vol (fun s e -> Op_min.min_float64 a_arr b_arr out_arr va vb vout s e)
   | Float32 out_arr, Float32 a_arr, Float32 b_arr ->
@@ -382,49 +403,57 @@ let min (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
       par out.context.pool vol (fun s e -> Op_min.min_int32 a_arr b_arr out_arr va vb vout s e)
   | Int64 out_arr, Int64 a_arr, Int64 b_arr ->
       par out.context.pool vol (fun s e -> Op_min.min_int64 a_arr b_arr out_arr va vb vout s e)
-  | _ -> invalid_arg "min: unsupported dtype"
+  | _ -> invalid_arg "min: unsupported dtype");
+  out
 
-let xor (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let xor (type a b) (a : (a, b) t) (b : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vb = b.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer, b.buffer) with
+  (match (out.buffer, a.buffer, b.buffer) with
   | Int32 out_arr, Int32 a_arr, Int32 b_arr ->
       par out.context.pool vol (fun s e -> Op_xor.xor_int32 a_arr b_arr out_arr va vb vout s e)
   | Int64 out_arr, Int64 a_arr, Int64 b_arr ->
       par out.context.pool vol (fun s e -> Op_xor.xor_int64 a_arr b_arr out_arr va vb vout s e)
-  | _ -> invalid_arg "or_: not implemented for unboxed ints"
+  | _ -> invalid_arg "or_: not implemented for unboxed ints");
+  out
 
-let or_ (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let or_ (type a b) (a : (a, b) t) (b : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vb = b.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer, b.buffer) with
+  (match (out.buffer, a.buffer, b.buffer) with
   | Int32 out_arr, Int32 a_arr, Int32 b_arr ->
       par out.context.pool vol (fun s e -> Op_or.or_int32 a_arr b_arr out_arr va vb vout s e)
   | Int64 out_arr, Int64 a_arr, Int64 b_arr ->
       par out.context.pool vol (fun s e -> Op_or.or_int64 a_arr b_arr out_arr va vb vout s e)
-  | _ -> invalid_arg "or_: not implemented for unboxed ints"
+  | _ -> invalid_arg "or_: not implemented for unboxed ints");
+  out
 
-let and_ (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let and_ (type a b) (a : (a, b) t) (b : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vb = b.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer, b.buffer) with
+  (match (out.buffer, a.buffer, b.buffer) with
   | Int32 out_arr, Int32 a_arr, Int32 b_arr ->
       par out.context.pool vol (fun s e -> Op_and.and_int32 a_arr b_arr out_arr va vb vout s e)
   | Int64 out_arr, Int64 a_arr, Int64 b_arr ->
       par out.context.pool vol (fun s e -> Op_and.and_int64 a_arr b_arr out_arr va vb vout s e)
-  | _ -> invalid_arg "and_: not implemented for unboxed ints"
+  | _ -> invalid_arg "and_: not implemented for unboxed ints");
+  out
 
-let neg (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let neg (type a b) (a : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer) with
+  (match (out.buffer, a.buffer) with
   | Float64 out_arr, Float64 a_arr ->
       par out.context.pool vol (fun s e -> Op_neg.neg_float64 a_arr out_arr va vout s e)
   | Float32 out_arr, Float32 a_arr ->
@@ -437,13 +466,15 @@ let neg (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
       par out.context.pool vol (fun s e -> Op_neg.neg_int32 a_arr out_arr va vout s e)
   | Int64 out_arr, Int64 a_arr ->
       par out.context.pool vol (fun s e -> Op_neg.neg_int64 a_arr out_arr va vout s e)
-  | _ -> invalid_arg "buffer: unsupported dtype"
+  | _ -> invalid_arg "buffer: unsupported dtype");
+  out
 
-let recip (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let recip (type a b) (a : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer) with
+  (match (out.buffer, a.buffer) with
   | Float64 out_arr, Float64 a_arr ->
       par out.context.pool vol (fun s e -> Op_recip.recip_float64 a_arr out_arr va vout s e)
   | Float32 out_arr, Float32 a_arr ->
@@ -456,13 +487,15 @@ let recip (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
       par out.context.pool vol (fun s e -> Op_recip.recip_int32 a_arr out_arr va vout s e)
   | Int64 out_arr, Int64 a_arr ->
       par out.context.pool vol (fun s e -> Op_recip.recip_int64 a_arr out_arr va vout s e)
-  | _ -> invalid_arg "buffer: unsupported dtype"
+  | _ -> invalid_arg "buffer: unsupported dtype");
+  out
 
-let abs (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let abs (type a b) (a : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer) with
+  (match (out.buffer, a.buffer) with
   | Float64 out_arr, Float64 a_arr ->
       par out.context.pool vol (fun s e -> Op_abs.abs_float64 a_arr out_arr va vout s e)
   | Float32 out_arr, Float32 a_arr ->
@@ -475,69 +508,81 @@ let abs (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
       par out.context.pool vol (fun s e -> Op_abs.abs_int32 a_arr out_arr va vout s e)
   | Int64 out_arr, Int64 a_arr ->
       par out.context.pool vol (fun s e -> Op_abs.abs_int64 a_arr out_arr va vout s e)
-  | _ -> invalid_arg "buffer: unsupported dtype"
+  | _ -> invalid_arg "buffer: unsupported dtype");
+  out
 
-let sqrt (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let sqrt (type a b) (a : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer) with
+  (match (out.buffer, a.buffer) with
   | Float64 out_arr, Float64 a_arr ->
       par out.context.pool vol (fun s e -> Op_sqrt.sqrt_float64 a_arr out_arr va vout s e)
   | Float32 out_arr, Float32 a_arr ->
       par out.context.pool vol (fun s e -> Op_sqrt.sqrt_float32 a_arr out_arr va vout s e)
   | _ ->
-      invalid_arg "sqrt: not implemented for unboxed ints"
+      invalid_arg "sqrt: not implemented for unboxed ints");
+  out
 
-let exp (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let exp (type a b) (a : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer) with
+  (match (out.buffer, a.buffer) with
   | Float64 out_arr, Float64 a_arr ->
       par out.context.pool vol (fun s e -> Op_exp.exp_float64 a_arr out_arr va vout s e)
   | Float32 out_arr, Float32 a_arr ->
       par out.context.pool vol (fun s e -> Op_exp.exp_float32 a_arr out_arr va vout s e)
-  | _ -> invalid_arg "exp: not implemented for unboxed ints"
+  | _ -> invalid_arg "exp: not implemented for unboxed ints");
+  out
 
-let log (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let log (type a b) (a : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer) with
+  (match (out.buffer, a.buffer) with
   | Float64 out_arr, Float64 a_arr ->
       par out.context.pool vol (fun s e -> Op_log.log_float64 a_arr out_arr va vout s e)
   | Float32 out_arr, Float32 a_arr ->
       par out.context.pool vol (fun s e -> Op_log.log_float32 a_arr out_arr va vout s e)
-  | _ -> invalid_arg "log: not implemented for unboxed ints"
+  | _ -> invalid_arg "log: not implemented for unboxed ints");
+  out
 
-let sin (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let sin (type a b) (a : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer) with
+  (match (out.buffer, a.buffer) with
   | Float64 out_arr, Float64 a_arr ->
       par out.context.pool vol (fun s e -> Op_sin.sin_float64 a_arr out_arr va vout s e)
   | Float32 out_arr, Float32 a_arr ->
       par out.context.pool vol (fun s e -> Op_sin.sin_float32 a_arr out_arr va vout s e)
-  | _ -> invalid_arg "sin: not implemented for unboxed ints"
+  | _ -> invalid_arg "sin: not implemented for unboxed ints");
+  out
 
-let cos (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let cos (type a b) (a : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer) with
+  (match (out.buffer, a.buffer) with
   | Float64 out_arr, Float64 a_arr ->
       par out.context.pool vol (fun s e -> Op_cos.cos_float64 a_arr out_arr va vout s e)
   | Float32 out_arr, Float32 a_arr ->
       par out.context.pool vol (fun s e -> Op_cos.cos_float32 a_arr out_arr va vout s e)
-  | _ -> invalid_arg "cos: not implemented for unboxed ints"
+  | _ -> invalid_arg "cos: not implemented for unboxed ints");
+  out
 
-let sign (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let sign (type a b) (a : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer) with
+  (match (out.buffer, a.buffer) with
   | Float64 out_arr, Float64 a_arr ->
       par out.context.pool vol (fun s e -> Op_sign.sign_float64 a_arr out_arr va vout s e)
   | Float32 out_arr, Float32 a_arr ->
@@ -552,104 +597,122 @@ let sign (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
       par out.context.pool vol (fun s e -> Op_sign.sign_int64 a_arr out_arr va vout s e)
   | Bool out_arr, Bool a_arr ->
       par out.context.pool vol (fun s e -> Op_sign.sign_bool a_arr out_arr va vout s e)
-  | _ -> assert false
+  | _ -> assert false);
+  out
 
-let tan (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let tan (type a b) (a : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer) with
+  (match (out.buffer, a.buffer) with
   | Float64 out_arr, Float64 a_arr ->
       par out.context.pool vol (fun s e -> Op_tan.tan_float64 a_arr out_arr va vout s e)
   | Float32 out_arr, Float32 a_arr ->
       par out.context.pool vol (fun s e -> Op_tan.tan_float32 a_arr out_arr va vout s e)
-  | _ -> invalid_arg "tan: not implemented for unboxed ints"
+  | _ -> invalid_arg "tan: not implemented for unboxed ints");
+  out
 
-let asin (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let asin (type a b) (a : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer) with
+  (match (out.buffer, a.buffer) with
   | Float64 out_arr, Float64 a_arr ->
       par out.context.pool vol (fun s e -> Op_asin.asin_float64 a_arr out_arr va vout s e)
   | Float32 out_arr, Float32 a_arr ->
       par out.context.pool vol (fun s e -> Op_asin.asin_float32 a_arr out_arr va vout s e)
-  | _ -> invalid_arg "asin: not implemented for unboxed ints"
+  | _ -> invalid_arg "asin: not implemented for unboxed ints");
+  out
 
-let acos (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let acos (type a b) (a : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer) with
+  (match (out.buffer, a.buffer) with
   | Float64 out_arr, Float64 a_arr ->
       par out.context.pool vol (fun s e -> Op_acos.acos_float64 a_arr out_arr va vout s e)
   | Float32 out_arr, Float32 a_arr ->
       par out.context.pool vol (fun s e -> Op_acos.acos_float32 a_arr out_arr va vout s e)
-  | _ -> invalid_arg "acos: not implemented for unboxed ints"
+  | _ -> invalid_arg "acos: not implemented for unboxed ints");
+  out
 
-let atan (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let atan (type a b) (a : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer) with
+  (match (out.buffer, a.buffer) with
   | Float64 out_arr, Float64 a_arr ->
       par out.context.pool vol (fun s e -> Op_atan.atan_float64 a_arr out_arr va vout s e)
   | Float32 out_arr, Float32 a_arr ->
       par out.context.pool vol (fun s e -> Op_atan.atan_float32 a_arr out_arr va vout s e)
-  | _ -> invalid_arg "atan: not implemented for unboxed ints"
+  | _ -> invalid_arg "atan: not implemented for unboxed ints");
+  out
 
-let atan2 (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit =
+let atan2 (type a b) (a : (a, b) t) (b : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vb = b.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer, b.buffer) with
+  (match (out.buffer, a.buffer, b.buffer) with
   | Float64 out_arr, Float64 a_arr, Float64 b_arr ->
       par out.context.pool vol (fun s e ->
           Op_atan2.atan2_float64 a_arr b_arr out_arr va vb vout s e)
   | Float32 out_arr, Float32 a_arr, Float32 b_arr ->
       par out.context.pool vol (fun s e ->
           Op_atan2.atan2_float32 a_arr b_arr out_arr va vb vout s e)
-  | _ -> invalid_arg "atan2: not implemented for unboxed ints"
+  | _ -> invalid_arg "atan2: not implemented for unboxed ints");
+  out
 
-let sinh (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let sinh (type a b) (a : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer) with
+  (match (out.buffer, a.buffer) with
   | Float64 out_arr, Float64 a_arr ->
       par out.context.pool vol (fun s e -> Op_sinh.sinh_float64 a_arr out_arr va vout s e)
   | Float32 out_arr, Float32 a_arr ->
       par out.context.pool vol (fun s e -> Op_sinh.sinh_float32 a_arr out_arr va vout s e)
-  | _ -> invalid_arg "sinh: not implemented for unboxed ints"
+  | _ -> invalid_arg "sinh: not implemented for unboxed ints");
+  out
 
-let cosh (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let cosh (type a b) (a : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer) with
+  (match (out.buffer, a.buffer) with
   | Float64 out_arr, Float64 a_arr ->
       par out.context.pool vol (fun s e -> Op_cosh.cosh_float64 a_arr out_arr va vout s e)
   | Float32 out_arr, Float32 a_arr ->
       par out.context.pool vol (fun s e -> Op_cosh.cosh_float32 a_arr out_arr va vout s e)
-  | _ -> invalid_arg "cosh: not implemented for unboxed ints"
+  | _ -> invalid_arg "cosh: not implemented for unboxed ints");
+  out
 
-let tanh (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let tanh (type a b) (a : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer) with
+  (match (out.buffer, a.buffer) with
   | Float64 out_arr, Float64 a_arr ->
       par out.context.pool vol (fun s e -> Op_tanh.tanh_float64 a_arr out_arr va vout s e)
   | Float32 out_arr, Float32 a_arr ->
       par out.context.pool vol (fun s e -> Op_tanh.tanh_float32 a_arr out_arr va vout s e)
-  | _ -> invalid_arg "tanh: not implemented for unboxed ints"
+  | _ -> invalid_arg "tanh: not implemented for unboxed ints");
+  out
 
-let trunc (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let trunc (type a b) (a : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer) with
+  (match (out.buffer, a.buffer) with
   | Float64 out_arr, Float64 a_arr ->
       par out.context.pool vol (fun s e -> Op_trunc.trunc_float64 a_arr out_arr va vout s e)
   | Float32 out_arr, Float32 a_arr ->
@@ -664,13 +727,15 @@ let trunc (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
       par out.context.pool vol (fun s e -> Op_trunc.trunc_int64 a_arr out_arr va vout s e)
   | Bool out_arr, Bool a_arr ->
       par out.context.pool vol (fun s e -> Op_trunc.trunc_bool a_arr out_arr va vout s e)
-  | _ -> assert false
+  | _ -> assert false);
+  out
 
-let ceil (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let ceil (type a b) (a : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer) with
+  (match (out.buffer, a.buffer) with
   | Float64 out_arr, Float64 a_arr ->
       par out.context.pool vol (fun s e -> Op_ceil.ceil_float64 a_arr out_arr va vout s e)
   | Float32 out_arr, Float32 a_arr ->
@@ -685,13 +750,15 @@ let ceil (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
       par out.context.pool vol (fun s e -> Op_ceil.ceil_int64 a_arr out_arr va vout s e)
   | Bool out_arr, Bool a_arr ->
       par out.context.pool vol (fun s e -> Op_ceil.ceil_bool a_arr out_arr va vout s e)
-  | _ -> assert false
+  | _ -> assert false);
+  out
 
-let floor (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let floor (type a b) (a : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer) with
+  (match (out.buffer, a.buffer) with
   | Float64 out_arr, Float64 a_arr ->
       par out.context.pool vol (fun s e -> Op_floor.floor_float64 a_arr out_arr va vout s e)
   | Float32 out_arr, Float32 a_arr ->
@@ -706,13 +773,15 @@ let floor (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
       par out.context.pool vol (fun s e -> Op_floor.floor_int64 a_arr out_arr va vout s e)
   | Bool out_arr, Bool a_arr ->
       par out.context.pool vol (fun s e -> Op_floor.floor_bool a_arr out_arr va vout s e)
-  | _ -> assert false
+  | _ -> assert false);
+  out
 
-let round (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let round (type a b) (a : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer) with
+  (match (out.buffer, a.buffer) with
   | Float64 out_arr, Float64 a_arr ->
       par out.context.pool vol (fun s e -> Op_round.round_float64 a_arr out_arr va vout s e)
   | Float32 out_arr, Float32 a_arr ->
@@ -727,27 +796,31 @@ let round (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
       par out.context.pool vol (fun s e -> Op_round.round_int64 a_arr out_arr va vout s e)
   | Bool out_arr, Bool a_arr ->
       par out.context.pool vol (fun s e -> Op_round.round_bool a_arr out_arr va vout s e)
-  | _ -> assert false
+  | _ -> assert false);
+  out
 
-let erf (type a b) ~(out : (a, b) t) (a : (a, b) t) : unit =
+let erf (type a b) (a : (a, b) t) : (a, b) t =
+  let out = buffer a.context a.dtype (shape a.view) in
   let vout = out.view in
   let va = a.view in
   let vol = numel vout in
-  match (out.buffer, a.buffer) with
+  (match (out.buffer, a.buffer) with
   | Float64 out_arr, Float64 a_arr ->
       par out.context.pool vol (fun s e -> Op_erf.erf_float64 a_arr out_arr va vout s e)
   | Float32 out_arr, Float32 a_arr ->
       par out.context.pool vol (fun s e -> Op_erf.erf_float32 a_arr out_arr va vout s e)
-  | _ -> invalid_arg "erf: not implemented for unboxed ints"
+  | _ -> invalid_arg "erf: not implemented for unboxed ints");
+  out
 
-let where (type a b) ~(out : (a, b) t) (cond : (bool, Nx_buffer.bool_elt) t)
-    (if_true : (a, b) t) (if_false : (a, b) t) : unit =
+let where (type a b) (cond : (bool, Nx_buffer.bool_elt) t)
+    (if_true : (a, b) t) (if_false : (a, b) t) : (a, b) t =
+  let out = buffer if_true.context if_true.dtype (shape if_true.view) in
   let vout = out.view in
   let vtrue = if_true.view in
   let vfalse = if_false.view in
   let vcond = cond.view in
   let vol = numel vout in
-  match (out.buffer, cond.buffer, if_true.buffer, if_false.buffer) with
+  (match (out.buffer, cond.buffer, if_true.buffer, if_false.buffer) with
   | Float64 out_arr, Bool cond_arr, Float64 true_arr, Float64 false_arr ->
       par out.context.pool vol (fun s e ->
           Op_where.where_float64 cond_arr true_arr false_arr out_arr vcond vtrue vfalse vout s e)
@@ -766,13 +839,15 @@ let where (type a b) ~(out : (a, b) t) (cond : (bool, Nx_buffer.bool_elt) t)
   | Int16 out_arr, Bool cond_arr, Int16 true_arr, Int16 false_arr ->
       par out.context.pool vol (fun s e ->
           Op_where.where_int16 cond_arr true_arr false_arr out_arr vcond vtrue vfalse vout s e)
-  | _ -> invalid_arg "where: not implemented for this dtype"
+  | _ -> invalid_arg "where: not implemented for this dtype");
+  out
 
-let reduce_sum (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
-    unit =
+let reduce_sum (type a b) ~axes ~keepdims (a : (a, b) t) : (a, b) t =
+  let out_shape = Shape.reduce_output_shape (shape a.view) axes keepdims in
+  let out = buffer a.context a.dtype out_shape in
   let vout = out.view in
   let va = a.view in
-  match (out.buffer, a.buffer) with
+  (match (out.buffer, a.buffer) with
   | Float64 out_arr, Float64 a_arr ->
       Reduce_ops.reduce_sum_float64 out.context.pool ~out_arr ~a_arr ~va ~vout
         ~axes ~keepdims
@@ -785,13 +860,15 @@ let reduce_sum (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
   | Int64 out_arr, Int64 a_arr ->
       Reduce_ops.reduce_sum_int64 out.context.pool ~out_arr ~a_arr ~va ~vout
         ~axes ~keepdims
-  | _ -> invalid_arg "buffer: unsupported dtype"
+  | _ -> invalid_arg "buffer: unsupported dtype");
+  out
 
-let reduce_prod (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
-    unit =
+let reduce_prod (type a b) ~axes ~keepdims (a : (a, b) t) : (a, b) t =
+  let out_shape = Shape.reduce_output_shape (shape a.view) axes keepdims in
+  let out = buffer a.context a.dtype out_shape in
   let vout = out.view in
   let va = a.view in
-  match (out.buffer, a.buffer) with
+  (match (out.buffer, a.buffer) with
   | Float64 out_arr, Float64 a_arr ->
       Reduce_ops.reduce_prod_float64 out.context.pool ~out_arr ~a_arr ~va ~vout
         ~axes ~keepdims
@@ -804,13 +881,15 @@ let reduce_prod (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
   | Int64 out_arr, Int64 a_arr ->
       Reduce_ops.reduce_prod_int64 out.context.pool ~out_arr ~a_arr ~va ~vout
         ~axes ~keepdims
-  | _ -> invalid_arg "buffer: unsupported dtype"
+  | _ -> invalid_arg "buffer: unsupported dtype");
+  out
 
-let reduce_max (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
-    unit =
+let reduce_max (type a b) ~axes ~keepdims (a : (a, b) t) : (a, b) t =
+  let out_shape = Shape.reduce_output_shape (shape a.view) axes keepdims in
+  let out = buffer a.context a.dtype out_shape in
   let vout = out.view in
   let va = a.view in
-  match (out.buffer, a.buffer) with
+  (match (out.buffer, a.buffer) with
   | Float64 out_arr, Float64 a_arr ->
       Reduce_ops.reduce_max_float64 out.context.pool ~out_arr ~a_arr ~va ~vout
         ~axes ~keepdims
@@ -823,13 +902,15 @@ let reduce_max (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
   | Int64 out_arr, Int64 a_arr ->
       Reduce_ops.reduce_max_int64 out.context.pool ~out_arr ~a_arr ~va ~vout
         ~axes ~keepdims
-  | _ -> invalid_arg "buffer: unsupported dtype"
+  | _ -> invalid_arg "buffer: unsupported dtype");
+  out
 
-let reduce_min (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
-    unit =
+let reduce_min (type a b) ~axes ~keepdims (a : (a, b) t) : (a, b) t =
+  let out_shape = Shape.reduce_output_shape (shape a.view) axes keepdims in
+  let out = buffer a.context a.dtype out_shape in
   let vout = out.view in
   let va = a.view in
-  match (out.buffer, a.buffer) with
+  (match (out.buffer, a.buffer) with
   | Float64 out_arr, Float64 a_arr ->
       Reduce_ops.reduce_min_float64 out.context.pool ~out_arr ~a_arr ~va ~vout
         ~axes ~keepdims
@@ -842,15 +923,13 @@ let reduce_min (type a b) ~(out : (a, b) t) ~axes ~keepdims (a : (a, b) t) :
   | Int64 out_arr, Int64 a_arr ->
       Reduce_ops.reduce_min_int64 out.context.pool ~out_arr ~a_arr ~va ~vout
         ~axes ~keepdims
-  | _ -> invalid_arg "buffer: unsupported dtype"
+  | _ -> invalid_arg "buffer: unsupported dtype");
+  out
 
-let associative_scan (type a b) ~(out : (a, b) t) ~(axis : int)
-    ~(op : [ `Sum | `Prod | `Max | `Min ]) (x : (a, b) t) : unit =
+let associative_scan (type a b) ~(axis : int)
+    ~(op : [ `Sum | `Prod | `Max | `Min ]) (x : (a, b) t) : (a, b) t =
   let in_shape = shape x.view in
-  let out_shape = shape out.view in
-  if in_shape <> out_shape then
-    err "associative_scan" "shape mismatch: expected %s, got %s"
-      (Shape.to_string in_shape) (Shape.to_string out_shape);
+  let out = buffer x.context x.dtype in_shape in
   let rank = Array.length in_shape in
   if rank = 0 then
     invalid_arg "associative_scan: tensor, requires rank >= 1";
@@ -863,7 +942,7 @@ let associative_scan (type a b) ~(out : (a, b) t) ~(axis : int)
     err "associative_scan" "%s not supported for dtype %s" op_name
       (Dtype.to_string dtype)
   in
-  match (out.buffer, x.buffer) with
+  (match (out.buffer, x.buffer) with
   | Float64 out_arr, Float64 in_arr ->
       Op_associative_scan.scan_float64 out.context.pool ~out_arr ~in_arr
         ~shape:in_shape ~axis ~in_view:x.view ~out_view:out.view ~op
@@ -883,13 +962,15 @@ let associative_scan (type a b) ~(out : (a, b) t) ~(axis : int)
       Op_associative_scan.scan_int64 out.context.pool ~out_arr ~in_arr
         ~shape:in_shape ~axis ~in_view:x.view ~out_view:out.view ~op
   | Bool _, Bool _ -> unsupported_for_dtype out.dtype
-  | _ -> invalid_arg "associative_scan: unsupported dtype"
+  | _ -> invalid_arg "associative_scan: unsupported dtype");
+  out
 
-let argmax (type a b) ~(out : (int32, Dtype.int32_elt) t) ~axis ~keepdims
-    (x : (a, b) t) : unit =
+let argmax (type a b) ~axis ~keepdims (x : (a, b) t) : (int32, Dtype.int32_elt) t =
+  let out_shape = Shape.reduce_output_shape (shape x.view) [| axis |] keepdims in
+  let out = buffer x.context Dtype.Int32 out_shape in
   let vout = out.view in
   let va = x.view in
-  match (out.buffer, x.buffer) with
+  (match (out.buffer, x.buffer) with
   | Int32 out_arr, Float64 a_arr ->
       Op_argmax.argmax_float64 out.context.pool ~out_arr ~a_arr ~va ~vout ~axis
         ~keepdims
@@ -902,13 +983,15 @@ let argmax (type a b) ~(out : (int32, Dtype.int32_elt) t) ~axis ~keepdims
   | Int32 out_arr, Int64 a_arr ->
       Op_argmax.argmax_int64 out.context.pool ~out_arr ~a_arr ~va ~vout ~axis
         ~keepdims
-  | _ -> invalid_arg "argmax: unsupported dtype"
+  | _ -> invalid_arg "argmax: unsupported dtype");
+  out
 
-let argmin (type a b) ~(out : (int32, Dtype.int32_elt) t) ~axis ~keepdims
-    (x : (a, b) t) : unit =
+let argmin (type a b) ~axis ~keepdims (x : (a, b) t) : (int32, Dtype.int32_elt) t =
+  let out_shape = Shape.reduce_output_shape (shape x.view) [| axis |] keepdims in
+  let out = buffer x.context Dtype.Int32 out_shape in
   let vout = out.view in
   let va = x.view in
-  match (out.buffer, x.buffer) with
+  (match (out.buffer, x.buffer) with
   | Int32 out_arr, Float64 a_arr ->
       Op_argmax.argmin_float64 out.context.pool ~out_arr ~a_arr ~va ~vout ~axis
         ~keepdims
@@ -921,10 +1004,12 @@ let argmin (type a b) ~(out : (int32, Dtype.int32_elt) t) ~axis ~keepdims
   | Int32 out_arr, Int64 a_arr ->
       Op_argmax.argmin_int64 out.context.pool ~out_arr ~a_arr ~va ~vout ~axis
         ~keepdims
-  | _ -> invalid_arg "argmin: unsupported dtype"
+  | _ -> invalid_arg "argmin: unsupported dtype");
+  out
 
-let sort (type a b) ~(out : (a, b) t) ~axis ~descending (x : (a, b) t) : unit =
-  match (out.buffer, x.buffer) with
+let sort (type a b) ~axis ~descending (x : (a, b) t) : (a, b) t =
+  let out = buffer x.context x.dtype (shape x.view) in
+  (match (out.buffer, x.buffer) with
   | Float64 out_arr, Float64 a_arr ->
       Op_sort.sort_float64 out.context.pool ~out_arr ~a_arr ~va:x.view
         ~vout:out.view ~axis ~descending
@@ -937,11 +1022,12 @@ let sort (type a b) ~(out : (a, b) t) ~axis ~descending (x : (a, b) t) : unit =
   | Int64 out_arr, Int64 a_arr ->
       Op_sort.sort_int64 out.context.pool ~out_arr ~a_arr ~va:x.view
         ~vout:out.view ~axis ~descending
-  | _ -> invalid_arg "sort: unsupported dtype"
+  | _ -> invalid_arg "sort: unsupported dtype");
+  out
 
-let argsort (type a b) ~(out : (int32, Dtype.int32_elt) t) ~axis ~descending
-    (x : (a, b) t) : unit =
-  match (out.buffer, x.buffer) with
+let argsort (type a b) ~axis ~descending (x : (a, b) t) : (int32, Dtype.int32_elt) t =
+  let out = buffer x.context Dtype.Int32 (shape x.view) in
+  (match (out.buffer, x.buffer) with
   | Int32 out_arr, Float64 a_arr ->
       Op_sort.argsort_float64 out.context.pool ~out_arr ~a_arr ~va:x.view
         ~vout:out.view ~axis ~descending
@@ -954,7 +1040,8 @@ let argsort (type a b) ~(out : (int32, Dtype.int32_elt) t) ~axis ~descending
   | Int32 out_arr, Int64 a_arr ->
       Op_sort.argsort_int64 out.context.pool ~out_arr ~a_arr ~va:x.view
         ~vout:out.view ~axis ~descending
-  | _ -> invalid_arg "argsort: unsupported dtype"
+  | _ -> invalid_arg "argsort: unsupported dtype");
+  out
 
 let from_host (type a b) ctx (array : (a, b) Nx_buffer.t) :
     (a, b) t =
@@ -1078,14 +1165,21 @@ let pad (type a b) (x : (a, b) t) (padding : (int * int) array)
     { dtype = Dtype.Bool; buffer = Bool out_arr; view = out_view; context }
   | _ -> assert false
 
-let cat (type a b) ~(out : (a, b) t) (xs : (a, b) t list) ~(axis : int) : unit =
+let cat (type a b) (xs : (a, b) t list) ~(axis : int) : (a, b) t =
   match xs with
   | [] -> invalid_arg "cat: empty input list"
   | x0 :: _ ->
-    let rank = Array.length (shape x0.view) in
+    let first_shape = shape x0.view in
+    let rank = Array.length first_shape in
     let axis = if axis < 0 then rank + axis else axis in
     if axis < 0 || axis >= rank then
       err "cat" "axis %d out of bounds for %dD tensor" axis rank;
+    let total_axis_size =
+      List.fold_left (fun acc t -> acc + (shape t.view).(axis)) 0 xs
+    in
+    let out_shape = Array.copy first_shape in
+    out_shape.(axis) <- total_axis_size;
+    let out = buffer x0.context x0.dtype out_shape in
     let out_offset = View.offset out.view in
     let out_strides = View.strides out.view in
     (match (x0, out) with
@@ -1138,22 +1232,22 @@ let cat (type a b) ~(out : (a, b) t) (xs : (a, b) t list) ~(axis : int) : unit =
           xs
       in
       Op_cat.cat_bool srcs out_arr rank axis out_offset out_strides
-    | _ -> assert false)
+    | _ -> assert false);
+    out
 
-let cast (type a b c d) ~(out : (c, d) t) (x : (a, b) t) : unit =
+let cast (type a b c d) ~(dtype : (c, d) Dtype.t) (x : (a, b) t) : (c, d) t =
   let in_view = x.view in
   let in_shape = shape in_view in
-  let target_dtype = out.dtype in
   let n = numel in_view in
   let out =
-    let t = buffer x.context target_dtype [|n|] in
+    let t = buffer x.context dtype [|n|] in
     { t with view = View.reshape t.view in_shape }
   in
   let in_offset = View.offset in_view in
   let in_strides = View.strides in_view in
   let out_offset = View.offset out.view in
   let out_strides = View.strides out.view in
-  match (x.buffer, out.buffer) with
+  (match (x.buffer, out.buffer) with
   | Float64 src, Float32 dst ->
       Op_cast.cast_float64_float32 src dst n in_shape in_offset in_strides
         out_offset out_strides;
@@ -1280,7 +1374,8 @@ let cast (type a b c d) ~(out : (c, d) t) (x : (a, b) t) : unit =
   | Bool src, Int64 dst ->
       Op_cast.cast_bool_int64 src dst n in_shape in_offset in_strides
         out_offset out_strides;
-  | _ -> invalid_arg "unsupported cast"
+  | _ -> invalid_arg "unsupported cast");
+  out
 
 let contiguous (type a b) (t : (a, b) t) : (a, b) t =
   let v = t.view in
@@ -1392,33 +1487,30 @@ let assign (type a b) (dst : (a, b) t) (src : (a, b) t) : unit =
     for i = 0 to n - 1 do d.(i) <- s.(i) done
   | _ -> invalid_arg "assign: unsupported dtype"
 
-let threefry ~(out : (int32, Dtype.int32_elt) t)
-    (key : (int32, Dtype.int32_elt) t) (counter : (int32, Dtype.int32_elt) t) :
-    unit =
+let threefry (key : (int32, Dtype.int32_elt) t)
+    (counter : (int32, Dtype.int32_elt) t) : (int32, Dtype.int32_elt) t =
   let key_shape = shape key.view in
   let ctr_shape = shape counter.view in
-  let out_shape = shape out.view in
   if key_shape <> ctr_shape then
     err "threefry" "shape mismatch: expected %s, got %s"
       (Shape.to_string key_shape) (Shape.to_string ctr_shape);
-  if out_shape <> ctr_shape then
-    err "threefry" "shape mismatch: expected %s, got %s"
-      (Shape.to_string ctr_shape) (Shape.to_string out_shape);
   let rank = Array.length key_shape in
   if rank = 0 then
     invalid_arg "threefry: tensor, requires rank >= 1 with last dimension size 2";
   let last_dim = rank - 1 in
   if key_shape.(last_dim) <> 2 then
     invalid_arg "threefry: shape, last dimension must be 2 for Threefry2x32";
-  match (out.buffer, key.buffer, counter.buffer) with
+  let out = buffer key.context Dtype.Int32 key_shape in
+  (match (out.buffer, key.buffer, counter.buffer) with
   | Int32 out_arr, Int32 key_arr, Int32 ctr_arr ->
       Op_threefry.threefry_int32 out.context.pool ~out_arr ~key_arr ~ctr_arr
         ~shape:key_shape ~key_view:key.view ~ctr_view:counter.view
         ~out_view:out.view
-  | _ -> assert false
+  | _ -> assert false);
+  out
 
-let gather (type a b) ~(out : (a, b) t) (data : (a, b) t)
-    (indices : (int32, Dtype.int32_elt) t) ~(axis : int) =
+let gather (type a b) (data : (a, b) t)
+    (indices : (int32, Dtype.int32_elt) t) ~(axis : int) : (a, b) t =
   let dshape = shape data.view in
   let ishape = shape indices.view in
   if Array.length dshape <> Array.length ishape then
@@ -1427,6 +1519,7 @@ let gather (type a b) ~(out : (a, b) t) (data : (a, b) t)
   let axis = if axis < 0 then rank + axis else axis in
   if axis < 0 || axis >= rank then
     err "gather" "axis %d out of bounds for %dD tensor" axis rank;
+  let out = buffer data.context data.dtype ishape in
   let n = numel indices.view in
   let data_offset = View.offset data.view in
   let data_strides = View.strides data.view in
@@ -1441,7 +1534,7 @@ let gather (type a b) ~(out : (a, b) t) (data : (a, b) t)
     f ishape dshape axis idx_arr data_offset data_strides idx_offset
       idx_strides out_offset out_strides s e)
   in
-  match (data.buffer, out.buffer) with
+  (match (data.buffer, out.buffer) with
   | Float64 src, Float64 dst ->
       run (Op_gather.gather_float64 src dst)
   | Float32 src, Float32 dst ->
@@ -1456,7 +1549,8 @@ let gather (type a b) ~(out : (a, b) t) (data : (a, b) t)
       run (Op_gather.gather_int64 src dst)
   | Bool src, Bool dst ->
       run (Op_gather.gather_bool src dst)
-  | _ -> invalid_arg "gather: unsupported dtype"
+  | _ -> invalid_arg "gather: unsupported dtype");
+  out
 
 let scatter ?(mode = `Set) ?(unique_indices = false) (type a b)
     (data_template : (a, b) t)
@@ -1769,17 +1863,24 @@ let fold :
       invalid_arg "fold: unsupported dtype, bool fold is undefined because overlaps are summed"
   | _ -> invalid_arg "fold: unsupported dtype"
 
-let matmul (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit
-    =
+let matmul (type a b) (a : (a, b) t) (b : (a, b) t) : (a, b) t =
+  let a_shape = shape a.view in
+  let b_shape = shape b.view in
+  let x_ndim = Array.length a_shape in
+  let y_ndim = Array.length b_shape in
+  let m = a_shape.(x_ndim - 2) in
+  let n = b_shape.(y_ndim - 1) in
+  let batch_dims = Array.sub a_shape 0 (x_ndim - 2) in
+  let out_shape = Array.append batch_dims [| m; n |] in
+  let out = buffer a.context a.dtype out_shape in
   let va = a.view and vb = b.view and vout = out.view in
-  let m = (shape vout).(0) in
   let nd_out = Array.length (shape vout) in
   let batch_shape = Array.sub (shape vout) 0 (Stdlib.max 0 (nd_out - 2)) in
   let batch_sz =
     if Array.length batch_shape = 0 then 1 else Shape.numel batch_shape
   in
   let total_units = batch_sz * m in
-  match (out.buffer, a.buffer, b.buffer) with
+  (match (out.buffer, a.buffer, b.buffer) with
   | Float64 c, Float64 a, Float64 b ->
       if
         View.is_c_contiguous va && View.is_c_contiguous vb
@@ -1835,7 +1936,8 @@ let matmul (type a b) ~(out : (a, b) t) (a : (a, b) t) (b : (a, b) t) : unit
         Parallel.parallel_for out.context.pool 0 (total_units - 1) (fun s e ->
             Op_matmul.matmul_int32_slow a b c va vb vout s e)
   | _ ->
-      invalid_arg "matmul: not implemented for small unboxed ints"
+      invalid_arg "matmul: not implemented for small unboxed ints");
+  out
 
 let fft ?out:_ _ ~axes:_ =
   invalid_arg "fft: not implemented"

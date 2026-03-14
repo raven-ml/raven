@@ -10,7 +10,7 @@ homepage: "https://github.com/raven-ml/raven"
 bug-reports: "https://github.com/raven-ml/raven/issues"
 depends: [
   "ocaml-variants" {= "5.2.0+ox"}
-  "dune" {>= "3.20"}
+  "dune" {>= "3.21"}
   "nx"
   "odoc" {with-doc}
 ]
