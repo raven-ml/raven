@@ -21,6 +21,7 @@
   --color-talon: #ec4899;     /* pink */
   --color-fehu: #84cc16;      /* lime */
   --color-vega: #eab308;      /* yellow */
+  --color-norn: #14b8a6;      /* teal */
   
   /* Syntax highlighting */
   --syntax-comment: #666;
@@ -145,6 +146,7 @@ hr {
 .color-pink { color: var(--color-talon); }   /* talon */
 .color-lime { color: var(--color-fehu); }    /* fehu */
 .color-yellow { color: var(--color-vega); }  /* vega */
+.color-teal { color: var(--color-norn); }   /* norn */
 
 /* Remove underlines from colored library links */
 a.color-blue,
@@ -156,7 +158,8 @@ a.color-indigo,
 a.color-green,
 a.color-pink,
 a.color-lime,
-a.color-yellow {
+a.color-yellow,
+a.color-teal {
   text-decoration: none;
 }
 

@@ -1,0 +1,8 @@
+(test
+ (name test_norn)
+ (package norn)
+ (libraries nx rune norn windtrap))
+
+(executable
+ (name debug_nuts)
+ (libraries nx rune norn))

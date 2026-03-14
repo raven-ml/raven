@@ -44,6 +44,14 @@ let libraries =
       symbol = {|ᚹ|};
     };
     {
+      name = "norn";
+      display = {|<span class="rune-symbol">ᚾ</span> norn|};
+      color = "color-teal";
+      description = "MCMC sampling with automatic gradients";
+      tagline = "MCMC sampling for OCaml";
+      symbol = {|ᚾ|};
+    };
+    {
       name = "hugin";
       display = {|<span class="rune-symbol">ᛞ</span> hugin|};
       color = "color-purple";

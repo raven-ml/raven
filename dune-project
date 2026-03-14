@@ -105,6 +105,24 @@
   (automatic-differentiation machine-learning deep-learning optimization)))
 
 (package
+ (name norn)
+ (dir packages/norn)
+ (synopsis "MCMC sampling for OCaml")
+ (description
+  "Markov chain Monte Carlo samplers with automatic gradients via Rune. Hamiltonian Monte Carlo with dual-averaging step-size adaptation.")
+ (depends
+  (ocaml
+   (>= 5.2.0))
+  dune
+  (nx
+   (= :version))
+  (rune
+   (= :version))
+  (windtrap :with-test))
+ (tags
+  (mcmc sampling bayesian machine-learning)))
+
+(package
  (name vega)
  (dir packages/vega)
  (synopsis "Per-parameter gradient-based optimizers for OCaml")

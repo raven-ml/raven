@@ -7,6 +7,15 @@ All notable changes to this project will be documented in this file.
 
 ## [1.0.0~beta1] - Unreleased
 
+### Norn (new)
+
+- New package: Markov chain Monte Carlo sampling with automatic gradients via
+  Rune. Provides HMC and NUTS samplers with Stan-style window adaptation (dual
+  averaging for step size, Welford estimation for mass matrix). Includes
+  symplectic integrators (leapfrog, mclachlan, yoshida), mass matrix metrics
+  (unit, diagonal, dense), and convergence diagnostics (ESS, split R-hat).
+  Equivalent to BlackJAX/PyMC in Python.
+
 ### Vega (new)
 
 - New package: per-parameter gradient-based optimizers (SGD, Adam, AdamW,
