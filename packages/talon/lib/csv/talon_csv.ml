@@ -53,7 +53,7 @@ let detect_dtype na_values values =
               with _ -> false)
             non_null_values
         in
-        if all_float then `Float32 else `String
+        if all_float then `Float64 else `String
 
 let columns_of_rows na_values dtype_spec column_names data_rows =
   let num_cols = List.length column_names in
