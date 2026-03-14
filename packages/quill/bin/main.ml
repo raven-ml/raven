@@ -9,6 +9,7 @@ let raven_packages =
     "nx.io";
     "rune";
     "vega";
+    "norn";
     "kaun";
     "kaun.datasets";
     "hugin";
