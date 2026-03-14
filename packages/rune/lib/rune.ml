@@ -22,6 +22,11 @@ let jvp = Jvp.jvp
 let jvp_aux = Jvp.jvp_aux
 let jvps = Jvp.jvps
 
+(* Jacobian *)
+
+let jacfwd = Jacobian.jacfwd
+let jacrev = Jacobian.jacrev
+
 (* Custom differentiation rules *)
 
 let custom_vjp = Custom_diff.custom_vjp

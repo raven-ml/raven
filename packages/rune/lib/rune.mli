@@ -131,6 +131,24 @@ val jvps :
     tangent in [vs] must have the same shape as the corresponding primal in
     [xs]. *)
 
+(** {1:jacobian Jacobian computation} *)
+
+val jacfwd : (Nx.float64_t -> Nx.float64_t) -> Nx.float64_t -> Nx.float64_t
+(** [jacfwd f x] is the [{m} x {n}] Jacobian matrix of [f] at [x], computed
+    column-by-column via forward-mode AD (JVP). [f] maps a 1-D tensor of shape
+    [[n]] to a 1-D tensor of shape [[m]]. Entry [J(i,j)] is
+    {e d(output_i) / d(input_j)}.
+
+    Performs [n] JVP evaluations. Prefer over {!jacrev} when [n <= m]. *)
+
+val jacrev : (Nx.float64_t -> Nx.float64_t) -> Nx.float64_t -> Nx.float64_t
+(** [jacrev f x] is the [{m} x {n}] Jacobian matrix of [f] at [x], computed
+    row-by-row via reverse-mode AD (VJP). [f] maps a 1-D tensor of shape [[n]]
+    to a 1-D tensor of shape [[m]]. Entry [J(i,j)] is
+    {e d(output_i) / d(input_j)}.
+
+    Performs [m] VJP evaluations. Prefer over {!jacfwd} when [m <= n]. *)
+
 (** {1:stop Stopping gradients} *)
 
 val no_grad : (unit -> 'a) -> 'a
