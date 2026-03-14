@@ -42,17 +42,10 @@ function renderDisplay(mime, data) {
     pre.textContent = data;
     div.appendChild(pre);
   } else if (mime === 'text/html') {
-    const iframe = document.createElement('iframe');
-    iframe.sandbox = 'allow-scripts';
-    iframe.srcdoc = data;
-    iframe.style.width = '100%';
-    iframe.style.border = 'none';
-    iframe.onload = () => {
-      try {
-        iframe.style.height = iframe.contentDocument.body.scrollHeight + 'px';
-      } catch { /* cross-origin */ }
-    };
-    div.appendChild(iframe);
+    const wrapper = document.createElement('div');
+    wrapper.className = 'display-html';
+    wrapper.innerHTML = data;
+    div.appendChild(wrapper);
   } else if (mime.startsWith('image/')) {
     const img = document.createElement('img');
     if (mime === 'image/svg+xml') {

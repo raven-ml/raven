@@ -962,6 +962,23 @@ val cast_column : t -> string -> ('a, 'b) Nx.dtype -> t
     Raises [Not_found] if the column does not exist. Raises [Invalid_argument]
     if the source column is not numeric. *)
 
+val to_html : ?max_rows:int -> ?max_cols:int -> t -> string
+(** [to_html ?max_rows ?max_cols df] is [df] formatted as an HTML table string.
+
+    Generates a [<table>] element with [<thead>] and [<tbody>]. Truncated
+    rows and columns show ellipsis markers. A trailing [<p>] shows the
+    shape when the table is truncated.
+
+    [max_rows] defaults to [20]. [max_cols] defaults to [10]. *)
+
+val pp_display : Format.formatter -> t -> unit
+(** [pp_display ppf df] formats [df] as a data URI containing an HTML table.
+
+    This printer is intended for notebook environments (Quill) where the data
+    URI pattern is detected and rendered as rich HTML output. Uses fixed
+    defaults (max_rows=20, max_cols=10). For custom limits, use {!to_html}
+    directly. *)
+
 val pp_info : Format.formatter -> t -> unit
 (** [pp_info ppf df] formats detailed information about [df] on [ppf]: shape,
     column names and types, null counts, and memory usage. *)

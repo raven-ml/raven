@@ -20,7 +20,7 @@ let raven_packages =
     "fehu";
   ]
 
-let raven_printers = [ "Nx.pp_data"; "Hugin.pp" ]
+let raven_printers = [ "Nx.pp_data"; "Hugin.pp"; "Talon.pp_display" ]
 
 let load_optional pkg =
   match Quill_top.load_package pkg with
@@ -244,10 +244,16 @@ let serve_cmd port path =
 
 (* ───── Run: batch execution ───── *)
 
-let run_file ?prelude inplace path =
+let run_file ?prelude ?figures_dir inplace path =
   let abs_path = resolve_path path in
   let abs_prelude = Option.map resolve_path prelude in
   let nb_dir = Filename.dirname abs_path in
+  let figures_dir =
+    Option.map
+      (fun d ->
+        if Filename.is_relative d then Filename.concat nb_dir d else d)
+      figures_dir
+  in
   let md = read_file abs_path in
   let doc = Quill_markdown.of_string md in
   let create_kernel ~on_event =
@@ -267,7 +273,7 @@ let run_file ?prelude inplace path =
       ~finally:(fun () -> Sys.chdir prev_cwd)
       (fun () -> Quill.Eval.run ~create_kernel doc)
   in
-  let result = Quill_markdown.to_string_with_outputs doc in
+  let result = Quill_markdown.to_string_with_outputs ?figures_dir doc in
   if inplace then (
     write_file abs_path result;
     Printf.printf "Updated %s\n%!" abs_path)
@@ -276,7 +282,7 @@ let run_file ?prelude inplace path =
 let get_mtime path =
   try Some (Unix.stat path).Unix.st_mtime with Unix.Unix_error _ -> None
 
-let rec watch_loop ?prelude path last_mtime =
+let rec watch_loop ?prelude ?figures_dir path last_mtime =
   Unix.sleepf 1.0;
   match get_mtime path with
   | None ->
@@ -286,36 +292,36 @@ let rec watch_loop ?prelude path last_mtime =
       let tm = Unix.localtime (Unix.gettimeofday ()) in
       Printf.printf "\n[%02d:%02d:%02d] File changed, re-evaluating...\n%!"
         tm.Unix.tm_hour tm.Unix.tm_min tm.Unix.tm_sec;
-      run_file ?prelude true path;
+      run_file ?prelude ?figures_dir true path;
       let new_mtime = Option.value ~default:mtime (get_mtime path) in
-      watch_loop ?prelude path new_mtime
-  | Some _ -> watch_loop ?prelude path last_mtime
+      watch_loop ?prelude ?figures_dir path new_mtime
+  | Some _ -> watch_loop ?prelude ?figures_dir path last_mtime
 
-let run_project ?prelude project =
+let run_project ?prelude ?figures_dir project =
   List.iter
     (fun (nb : Quill_project.notebook) ->
       let path = Filename.concat project.Quill_project.root nb.path in
       if Sys.file_exists path then (
         Printf.printf "  Running %s...\n%!" nb.title;
-        run_file ?prelude true path))
+        run_file ?prelude ?figures_dir true path))
     (Quill_project.notebooks project)
 
-let run_cmd watch inplace prelude path =
+let run_cmd watch inplace prelude figures_dir path =
   if not (Sys.file_exists path) then (
     Printf.eprintf "Error: %s not found\n%!" path;
     exit 1);
-  if is_dir path then run_project ?prelude (load_project path)
+  if is_dir path then run_project ?prelude ?figures_dir (load_project path)
   else if watch then begin
-    run_file ?prelude true path;
+    run_file ?prelude ?figures_dir true path;
     match get_mtime path with
     | None ->
         Printf.eprintf "Error: Cannot watch %s\n%!" path;
         exit 1
     | Some mtime ->
         Printf.printf "\nWatching %s for changes... (Ctrl-C to stop)\n%!" path;
-        watch_loop ?prelude path mtime
+        watch_loop ?prelude ?figures_dir path mtime
   end
-  else run_file ?prelude inplace path
+  else run_file ?prelude ?figures_dir inplace path
 
 (* ───── Build: static HTML ───── *)
 
@@ -327,6 +333,19 @@ let build_cmd skip_eval output path =
   Quill_book.Build.build ~create_kernel ~skip_eval ?output project
 
 (* ───── Clean: strip outputs ───── *)
+
+let rec rm_rf path =
+  if Sys.file_exists path then
+    if Sys.is_directory path then (
+      Array.iter
+        (fun name -> rm_rf (Filename.concat path name))
+        (Sys.readdir path);
+      Unix.rmdir path)
+    else Sys.remove path
+
+let clean_figures_dir dir =
+  let figures = Filename.concat dir "figures" in
+  if Sys.file_exists figures && Sys.is_directory figures then rm_rf figures
 
 let clean_cmd path =
   if not (Sys.file_exists path) then (
@@ -343,6 +362,8 @@ let clean_cmd path =
           let doc = Quill.Doc.clear_all_outputs doc in
           let result = Quill_markdown.to_string doc in
           write_file path result;
+          let nb_dir = Filename.dirname path in
+          clean_figures_dir nb_dir;
           Printf.printf "  Cleaned %s\n%!" nb.title))
       (Quill_project.notebooks project);
     Printf.printf "Done.\n%!"
@@ -353,6 +374,8 @@ let clean_cmd path =
     let doc = Quill.Doc.clear_all_outputs doc in
     let result = Quill_markdown.to_string doc in
     write_file path result;
+    let nb_dir = Filename.dirname path in
+    clean_figures_dir nb_dir;
     Printf.printf "Stripped outputs from %s\n%!" path
   end
 
@@ -403,6 +426,14 @@ let prelude_flag =
     & info [ "prelude" ] ~docv:"FILE"
         ~doc:"Execute OCaml code from $(docv) before the notebook cells.")
 
+let figures_dir_flag =
+  Arg.(
+    value
+    & opt (some string) None
+    & info [ "figures-dir" ] ~docv:"DIR"
+        ~doc:
+          "Write images to $(docv) and reference by path instead of inlining.")
+
 let skip_eval_flag =
   Arg.(
     value & flag
@@ -431,7 +462,7 @@ let run_term =
   Cmd.v (Cmd.info "run" ~doc)
     Term.(
       const run_cmd $ watch_flag $ inplace_flag $ prelude_flag
-      $ required_path_arg)
+      $ figures_dir_flag $ required_path_arg)
 
 (* build: static HTML *)
 let build_term =

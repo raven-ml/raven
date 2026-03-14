@@ -264,13 +264,12 @@ let render_output buf (output : Quill.Cell.output) =
       Buffer.add_string buf "</pre>\n"
   | Display { mime; data } ->
       if String.length mime >= 6 && String.sub mime 0 6 = "image/" then (
-        Buffer.add_string buf {|<pre class="output">|};
-        Buffer.add_string buf {|<img src="data:|};
+        Buffer.add_string buf {|<div class="output"><img src="data:|};
         Buffer.add_string buf mime;
         Buffer.add_string buf ";base64,";
         Buffer.add_string buf data;
-        Buffer.add_string buf {|">|};
-        Buffer.add_string buf "</pre>\n")
+        Buffer.add_string buf {|"></div>|};
+        Buffer.add_char buf '\n')
       else if mime = "text/html" then (
         Buffer.add_string buf {|<div class="output">|};
         Buffer.add_string buf data;

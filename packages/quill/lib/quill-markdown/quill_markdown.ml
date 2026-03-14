@@ -141,7 +141,160 @@ let strip_trailing_cell_id s =
 let out_marker_prefix = "<!-- out:"
 let out_marker_suffix = " -->"
 
-let parse_output_sections content =
+let is_image mime =
+  String.length mime >= 6 && String.sub mime 0 6 = "image/"
+
+let extension_of_mime mime =
+  match mime with
+  | "image/png" -> "png"
+  | "image/jpeg" -> "jpg"
+  | "image/gif" -> "gif"
+  | "image/svg+xml" -> "svg"
+  | "image/webp" -> "webp"
+  | _ ->
+      if is_image mime && String.length mime > 6 then
+        String.sub mime 6 (String.length mime - 6)
+      else "bin"
+
+let base64_decode_table =
+  let t = Array.make 256 (-1) in
+  String.iteri
+    (fun i c ->
+      t.(Char.code c) <- i)
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  t
+
+let base64_decode s =
+  let len = String.length s in
+  (* Count valid base64 characters *)
+  let valid = ref 0 in
+  for i = 0 to len - 1 do
+    let c = Char.code (String.unsafe_get s i) in
+    if base64_decode_table.(c) >= 0 then incr valid
+  done;
+  let out_len = !valid * 3 / 4 in
+  let out = Bytes.create out_len in
+  let j = ref 0 in
+  let acc = ref 0 in
+  let bits = ref 0 in
+  for i = 0 to len - 1 do
+    let c = Char.code (String.unsafe_get s i) in
+    let v = base64_decode_table.(c) in
+    if v >= 0 then begin
+      acc := (!acc lsl 6) lor v;
+      bits := !bits + 6;
+      if !bits >= 8 then begin
+        bits := !bits - 8;
+        if !j < out_len then begin
+          Bytes.unsafe_set out !j (Char.chr ((!acc lsr !bits) land 0xff));
+          incr j
+        end
+      end
+    end
+  done;
+  Bytes.sub_string out 0 !j
+
+(* Extract src attribute value from an <img> tag *)
+let extract_img_src s =
+  let src_attr = "src=\"" in
+  match find_substring s src_attr 0 with
+  | None -> None
+  | Some i ->
+      let start = i + String.length src_attr in
+      let rec find_quote j =
+        if j >= String.length s then None
+        else if s.[j] = '"' then Some (String.sub s start (j - start))
+        else find_quote (j + 1)
+      in
+      find_quote start
+
+(* Extract base64 data from a data URI: data:mime;base64,DATA *)
+let extract_data_uri_base64 src =
+  let prefix = "data:" in
+  let marker = ";base64," in
+  if
+    String.length src > String.length prefix
+    && String.sub src 0 (String.length prefix) = prefix
+  then
+    match find_substring src marker 0 with
+    | Some i ->
+        let data_start = i + String.length marker in
+        Some (String.sub src data_start (String.length src - data_start))
+    | None -> None
+  else None
+
+(* Parse image Display data from <img> tag content *)
+let parse_image_display ?base_dir mime content =
+  match extract_img_src content with
+  | Some src -> begin
+      match extract_data_uri_base64 src with
+      | Some base64 ->
+          (* Inline data URI: extract base64 directly *)
+          Quill.Cell.Display { mime; data = base64 }
+      | None -> begin
+          (* File reference: read and base64-encode *)
+          match base_dir with
+          | Some dir ->
+              let path = Filename.concat dir src in
+              let ic = open_in_bin path in
+              let raw =
+                Fun.protect
+                  ~finally:(fun () -> close_in ic)
+                  (fun () -> really_input_string ic (in_channel_length ic))
+              in
+              let data =
+                (* Reuse the base64_encode from Hugin's image_util convention *)
+                let alphabet =
+                  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz\
+                   0123456789+/"
+                in
+                let len = String.length raw in
+                let out_len = (len + 2) / 3 * 4 in
+                let out = Bytes.create out_len in
+                let rec loop i j =
+                  if i < len then begin
+                    let b0 = Char.code (String.unsafe_get raw i) in
+                    let b1 =
+                      if i + 1 < len then
+                        Char.code (String.unsafe_get raw (i + 1))
+                      else 0
+                    in
+                    let b2 =
+                      if i + 2 < len then
+                        Char.code (String.unsafe_get raw (i + 2))
+                      else 0
+                    in
+                    Bytes.unsafe_set out j
+                      (String.unsafe_get alphabet (b0 lsr 2));
+                    Bytes.unsafe_set out (j + 1)
+                      (String.unsafe_get alphabet
+                         (((b0 land 3) lsl 4) lor (b1 lsr 4)));
+                    Bytes.unsafe_set out (j + 2)
+                      (if i + 1 < len then
+                         String.unsafe_get alphabet
+                           (((b1 land 0xf) lsl 2) lor (b2 lsr 6))
+                       else '=');
+                    Bytes.unsafe_set out (j + 3)
+                      (if i + 2 < len then
+                         String.unsafe_get alphabet (b2 land 0x3f)
+                       else '=');
+                    loop (i + 3) (j + 4)
+                  end
+                in
+                loop 0 0;
+                Bytes.unsafe_to_string out
+              in
+              Quill.Cell.Display { mime; data }
+          | None ->
+              (* No base_dir, store src as placeholder *)
+              Quill.Cell.Display { mime; data = "" }
+        end
+    end
+  | None ->
+      (* No <img> tag — treat as raw data *)
+      Quill.Cell.Display { mime; data = content }
+
+let parse_output_sections ?base_dir content =
   let lines = String.split_on_char '\n' content in
   let flush_section tag buf acc =
     let text = Buffer.contents buf in
@@ -172,7 +325,9 @@ let parse_output_sections content =
               let mime =
                 String.sub display_tag plen (String.length display_tag - plen)
               in
-              Quill.Cell.Display { mime; data = trimmed }
+              if is_image mime then
+                parse_image_display ?base_dir mime trimmed
+              else Quill.Cell.Display { mime; data = trimmed }
             else (* Unknown tag, treat as stdout *)
               Quill.Cell.Stdout trimmed
       in
@@ -226,7 +381,7 @@ let parse_output_sections content =
     if !tag <> "" then acc := flush_section !tag buf !acc;
     List.rev !acc
 
-let parse_outputs md ~after =
+let parse_outputs ?base_dir md ~after =
   let len = String.length md in
   let pos = ref after in
   while !pos < len && (md.[!pos] = '\n' || md.[!pos] = '\r') do
@@ -245,13 +400,13 @@ let parse_outputs md ~after =
           let content =
             String.sub md content_start (close_pos - content_start)
           in
-          let outputs = parse_output_sections content in
+          let outputs = parse_output_sections ?base_dir content in
           let end_pos = close_pos + String.length output_close in
           Some (outputs, end_pos)
       | None -> None)
   | _ -> None
 
-let of_string md =
+let of_string ?base_dir md =
   let doc = Cmarkit.Doc.of_string ~locs:true md in
   let top_blocks =
     match Cmarkit.Doc.block doc with
@@ -294,7 +449,7 @@ let of_string md =
       in
       (* Check for output markers immediately after the code block *)
       let cell, end_pos =
-        match parse_outputs md ~after:(last + 1) with
+        match parse_outputs ?base_dir md ~after:(last + 1) with
         | Some (outputs, end_pos) ->
             (Quill.Cell.set_outputs outputs cell, end_pos)
         | None -> (cell, last + 1)
@@ -322,7 +477,47 @@ let add_content buf s =
   Buffer.add_string buf s;
   if s <> "" && s.[String.length s - 1] <> '\n' then Buffer.add_char buf '\n'
 
-let render_output buf = function
+let rec mkdir_p dir =
+  if Sys.file_exists dir then ()
+  else (
+    mkdir_p (Filename.dirname dir);
+    try Unix.mkdir dir 0o755 with Unix.Unix_error (Unix.EEXIST, _, _) -> ())
+
+let write_figure_file ~path ~data =
+  mkdir_p (Filename.dirname path);
+  let raw = base64_decode data in
+  let oc = open_out_bin path in
+  Fun.protect
+    ~finally:(fun () -> close_out oc)
+    (fun () -> output_string oc raw)
+
+(* Extract cell ID prefix from a figure filename like "c_abc123.png" or
+   "c_abc123-2.png" *)
+let cell_id_of_figure_name name =
+  let base = Filename.remove_extension name in
+  (* Strip trailing -N suffix *)
+  match String.rindex_opt base '-' with
+  | Some i ->
+      let suffix = String.sub base (i + 1) (String.length base - i - 1) in
+      let all_digits =
+        String.length suffix > 0
+        && String.to_seq suffix
+           |> Seq.for_all (fun c -> c >= '0' && c <= '9')
+      in
+      if all_digits then String.sub base 0 i else base
+  | None -> base
+
+let clean_orphan_figures ~figures_dir ~cell_ids =
+  if Sys.file_exists figures_dir && Sys.is_directory figures_dir then
+    let entries = Sys.readdir figures_dir in
+    Array.iter
+      (fun name ->
+        let cid = cell_id_of_figure_name name in
+        if not (List.mem cid cell_ids) then
+          Sys.remove (Filename.concat figures_dir name))
+      entries
+
+let render_output ?figures_dir ~cell_id ~img_counter buf = function
   | Quill.Cell.Stdout s ->
       Buffer.add_string buf "<!-- out:stdout -->\n";
       add_content buf s
@@ -336,7 +531,31 @@ let render_output buf = function
       Buffer.add_string buf "<!-- out:display ";
       Buffer.add_string buf mime;
       Buffer.add_string buf " -->\n";
-      add_content buf data
+      if is_image mime then begin
+        let ext = extension_of_mime mime in
+        match figures_dir with
+        | Some dir ->
+            (* Disk mode: write file, reference by path *)
+            incr img_counter;
+            let basename =
+              if !img_counter = 1 then cell_id ^ "." ^ ext
+              else cell_id ^ "-" ^ string_of_int !img_counter ^ "." ^ ext
+            in
+            let path = Filename.concat dir basename in
+            write_figure_file ~path ~data;
+            Buffer.add_string buf "<img src=\"figures/";
+            Buffer.add_string buf basename;
+            Buffer.add_string buf "\">\n"
+        | None ->
+            (* Inline mode (default): data URI in <img> tag *)
+            Buffer.add_string buf "<img src=\"data:";
+            Buffer.add_string buf mime;
+            Buffer.add_string buf ";base64,";
+            Buffer.add_string buf data;
+            Buffer.add_string buf "\">\n"
+      end
+      else if mime = "text/html" then add_content buf data
+      else add_content buf data
 
 let render_cell_id buf id (attrs : Quill.Cell.attrs) =
   Buffer.add_string buf cell_id_open;
@@ -346,7 +565,7 @@ let render_cell_id buf id (attrs : Quill.Cell.attrs) =
   if attrs.hide_source then Buffer.add_string buf " hide-source";
   Buffer.add_string buf " -->\n"
 
-let render_cell ~with_outputs buf = function
+let render_cell ?figures_dir ~with_outputs buf = function
   | Quill.Cell.Text { source; _ } ->
       Buffer.add_string buf source;
       Buffer.add_char buf '\n'
@@ -361,17 +580,32 @@ let render_cell ~with_outputs buf = function
       if with_outputs && outputs <> [] then (
         Buffer.add_char buf '\n';
         Buffer.add_string buf "<!-- quill:output -->\n";
-        List.iter (render_output buf) outputs;
+        let img_counter = ref 0 in
+        List.iter
+          (render_output ?figures_dir ~cell_id:id ~img_counter buf)
+          outputs;
         Buffer.add_string buf "<!-- /quill:output -->")
 
-let render ~with_outputs doc =
+let render ?figures_dir ~with_outputs doc =
   let buf = Buffer.create 4096 in
   let cells = Quill.Doc.cells doc in
+  (* Clean orphaned figures before writing new ones *)
+  (match figures_dir with
+  | Some dir ->
+      let cell_ids =
+        List.filter_map
+          (function
+            | Quill.Cell.Code { id; _ } -> Some id
+            | Quill.Cell.Text _ -> None)
+          cells
+      in
+      clean_orphan_figures ~figures_dir:dir ~cell_ids
+  | None -> ());
   let rec loop = function
     | [] -> ()
-    | [ c ] -> render_cell ~with_outputs buf c
+    | [ c ] -> render_cell ?figures_dir ~with_outputs buf c
     | c :: rest ->
-        render_cell ~with_outputs buf c;
+        render_cell ?figures_dir ~with_outputs buf c;
         Buffer.add_char buf '\n';
         Buffer.add_char buf '\n';
         loop rest
@@ -382,6 +616,7 @@ let render ~with_outputs doc =
   if s <> "" && s.[String.length s - 1] <> '\n' then s ^ "\n" else s
 
 let to_string doc = render ~with_outputs:false doc
-let to_string_with_outputs doc = render ~with_outputs:true doc
+let to_string_with_outputs ?figures_dir doc =
+  render ?figures_dir ~with_outputs:true doc
 
 module Edit = Edit

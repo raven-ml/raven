@@ -58,6 +58,9 @@ All notable changes to this project will be documented in this file.
 
 ### Talon
 
+- Add `to_html` and `pp_display` for rich table rendering in Quill notebooks.
+  Tables display as styled HTML in the web UI and published books, and as inline
+  HTML in markdown output files.
 - Add `Talon.take` for selecting rows by an array of indices. Indices may repeat
   and need not be sorted.
 - Fix CSV auto-detection defaulting numeric columns to float32. Parsed values go
@@ -73,6 +76,13 @@ All notable changes to this project will be documented in this file.
 
 ### Quill
 
+- Fix image Display outputs showing raw base64 text in markdown files. Images now
+  render as inline `<img>` tags with data URIs, visible in any markdown viewer.
+- Add `--figures-dir` flag to `quill run` for writing images to disk and
+  referencing them by path instead of inlining base64 data.
+- Add rich table display for Talon dataframes in liveview and published books.
+- Improve table styling in the web notebook and book build with clean borders,
+  monospace font, and proper header treatment.
 - Resolve relative notebook paths to absolute and change into the notebook
   directory before execution, so that relative file references in code cells
   work correctly.

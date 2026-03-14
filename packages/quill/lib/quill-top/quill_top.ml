@@ -564,12 +564,50 @@ let is_complete_phrase code =
     | exception End_of_file -> false
     | exception _ -> true
 
-(* ───── Markdown image detection ───── *)
+(* ───── Rich display detection ───── *)
 
-(** Scan [s] for markdown data-URI images [![...](data:MIME;base64,DATA)] and
+let base64_decode_table =
+  let t = Array.make 256 (-1) in
+  String.iteri
+    (fun i c -> t.(Char.code c) <- i)
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  t
+
+let base64_decode s =
+  let len = String.length s in
+  let valid = ref 0 in
+  for i = 0 to len - 1 do
+    if base64_decode_table.(Char.code (String.unsafe_get s i)) >= 0 then
+      incr valid
+  done;
+  let out_len = !valid * 3 / 4 in
+  let out = Bytes.create out_len in
+  let j = ref 0 in
+  let acc = ref 0 in
+  let bits = ref 0 in
+  for i = 0 to len - 1 do
+    let v = base64_decode_table.(Char.code (String.unsafe_get s i)) in
+    if v >= 0 then begin
+      acc := (!acc lsl 6) lor v;
+      bits := !bits + 6;
+      if !bits >= 8 then begin
+        bits := !bits - 8;
+        if !j < out_len then begin
+          Bytes.unsafe_set out !j (Char.chr ((!acc lsr !bits) land 0xff));
+          incr j
+        end
+      end
+    end
+  done;
+  Bytes.sub_string out 0 !j
+
+(** Scan [s] for markdown data-URI patterns [![...](data:MIME;base64,DATA)] and
     emit each as a Display output. Surrounding text is emitted as Stdout. This
-    allows pretty-printers (e.g. hugin.top) to render rich images in quill
-    without depending on quill. *)
+    allows pretty-printers (e.g. hugin, talon) to render rich content in quill
+    without depending on quill.
+
+    For text MIME types, the base64 data is decoded so that Display.data
+    contains raw text. For binary types (image), data remains base64-encoded. *)
 let emit_with_images ~emit s =
   let len = String.length s in
   let text_start = ref 0 in
@@ -623,7 +661,15 @@ let emit_with_images ~emit s =
                 String.sub s (paren_start + prefix_len)
                   (!mime_end - paren_start - prefix_len)
               in
-              let data = String.sub s data_start (!m - data_start) in
+              let raw_data = String.sub s data_start (!m - data_start) in
+              (* For text MIME types, decode base64 to raw text *)
+              let data =
+                if
+                  String.length mime >= 5
+                  && String.sub mime 0 5 = "text/"
+                then base64_decode raw_data
+                else raw_data
+              in
               (* Emit text before this image *)
               if start > !text_start then
                 emit

@@ -393,6 +393,44 @@ code {
   border-radius: 3px;
 }
 
+.output:has(table) {
+  white-space: normal;
+  word-break: normal;
+}
+
+.output table {
+  border-collapse: collapse;
+  width: auto;
+  margin: 0;
+  font-family: ui-monospace, "Cascadia Code", "Source Code Pro", Menlo,
+    Consolas, monospace;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.output th {
+  padding: 0.3rem 0.75rem;
+  text-align: left;
+  font-weight: 600;
+  border: none;
+  border-bottom: 2px solid var(--border);
+  background: transparent;
+  white-space: nowrap;
+}
+
+.output td {
+  padding: 0.2rem 0.75rem;
+  border: none;
+  border-bottom: 1px solid var(--output-border);
+  white-space: nowrap;
+}
+
+.output p {
+  margin: 0.3rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
 /* Collapsed cells */
 details.collapsed {
   margin: 1.2rem 0;

@@ -588,6 +588,45 @@ body {
   margin: 4px 0;
 }
 
+.output-display .display-html {
+  white-space: normal;
+  word-break: normal;
+  overflow-x: auto;
+}
+
+.output-display table {
+  border-collapse: collapse;
+  font-family: var(--font-code);
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 4px 0;
+}
+
+.output-display th {
+  padding: 5px 12px;
+  text-align: left;
+  font-weight: 600;
+  color: var(--text-primary);
+  border-bottom: 2px solid var(--border-unfocused);
+  white-space: nowrap;
+}
+
+.output-display td {
+  padding: 3px 12px;
+  border-bottom: 1px solid var(--border-unfocused);
+  white-space: nowrap;
+}
+
+.output-display tbody tr:hover {
+  background: var(--bg-output);
+}
+
+.output-display p {
+  margin: 4px 0 0;
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
 /* ───── Markdown cells ───── */
 
 .cell-markdown {

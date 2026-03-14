@@ -1450,3 +1450,108 @@ let pp_info ppf t =
     (column_types t)
 
 let info t = pp_info Format.std_formatter t
+
+(* ───── Rich display ───── *)
+
+let html_escape s =
+  let buf = Buffer.create (String.length s + 8) in
+  String.iter
+    (function
+      | '<' -> Buffer.add_string buf "&lt;"
+      | '>' -> Buffer.add_string buf "&gt;"
+      | '&' -> Buffer.add_string buf "&amp;"
+      | '"' -> Buffer.add_string buf "&quot;"
+      | c -> Buffer.add_char buf c)
+    s;
+  Buffer.contents buf
+
+let to_html ?(max_rows = 20) ?(max_cols = 10) t =
+  let n_rows = num_rows t in
+  let n_cols = num_columns t in
+  let rows_to_show = min max_rows n_rows in
+  let cols_to_show = min max_cols n_cols in
+  let names = column_names t in
+  let names_to_show = list_take cols_to_show names in
+  let fmts =
+    List.map
+      (fun name ->
+        match get_column t name with
+        | Some col -> Col.to_string_fn col
+        | None -> fun _ -> "")
+      names_to_show
+  in
+  let buf = Buffer.create 512 in
+  Buffer.add_string buf "<table>\n<thead><tr>";
+  List.iter
+    (fun name ->
+      Buffer.add_string buf "<th>";
+      Buffer.add_string buf (html_escape name);
+      Buffer.add_string buf "</th>")
+    names_to_show;
+  if n_cols > cols_to_show then Buffer.add_string buf "<th>\xe2\x80\xa6</th>";
+  Buffer.add_string buf "</tr></thead>\n<tbody>\n";
+  for i = 0 to rows_to_show - 1 do
+    Buffer.add_string buf "<tr>";
+    List.iter
+      (fun f ->
+        Buffer.add_string buf "<td>";
+        Buffer.add_string buf (html_escape (f i));
+        Buffer.add_string buf "</td>")
+      fmts;
+    if n_cols > cols_to_show then
+      Buffer.add_string buf "<td>\xe2\x80\xa6</td>";
+    Buffer.add_string buf "</tr>\n"
+  done;
+  if n_rows > rows_to_show then begin
+    Buffer.add_string buf "<tr>";
+    for _ = 1 to List.length names_to_show do
+      Buffer.add_string buf "<td>\xe2\x80\xa6</td>"
+    done;
+    if n_cols > cols_to_show then
+      Buffer.add_string buf "<td>\xe2\x80\xa6</td>";
+    Buffer.add_string buf "</tr>\n"
+  end;
+  Buffer.add_string buf "</tbody>\n</table>\n";
+  Buffer.add_string buf "<p><small>";
+  Buffer.add_string buf (string_of_int n_rows);
+  Buffer.add_string buf " rows \xc3\x97 ";
+  Buffer.add_string buf (string_of_int n_cols);
+  Buffer.add_string buf " columns</small></p>";
+  Buffer.contents buf
+
+let base64_encode input =
+  let alphabet =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+  in
+  let len = String.length input in
+  let out_len = (len + 2) / 3 * 4 in
+  let out = Bytes.create out_len in
+  let rec loop i j =
+    if i < len then begin
+      let b0 = Char.code (String.unsafe_get input i) in
+      let b1 =
+        if i + 1 < len then Char.code (String.unsafe_get input (i + 1)) else 0
+      in
+      let b2 =
+        if i + 2 < len then Char.code (String.unsafe_get input (i + 2)) else 0
+      in
+      Bytes.unsafe_set out j (String.unsafe_get alphabet (b0 lsr 2));
+      Bytes.unsafe_set out (j + 1)
+        (String.unsafe_get alphabet (((b0 land 3) lsl 4) lor (b1 lsr 4)));
+      Bytes.unsafe_set out (j + 2)
+        (if i + 1 < len then
+           String.unsafe_get alphabet (((b1 land 0xf) lsl 2) lor (b2 lsr 6))
+         else '=');
+      Bytes.unsafe_set out (j + 3)
+        (if i + 2 < len then String.unsafe_get alphabet (b2 land 0x3f)
+         else '=');
+      loop (i + 3) (j + 4)
+    end
+  in
+  loop 0 0;
+  Bytes.unsafe_to_string out
+
+let pp_display ppf t =
+  let html = to_html t in
+  let b64 = base64_encode html in
+  Format.fprintf ppf "![](data:text/html;base64,%s)" b64
