@@ -65,7 +65,7 @@ let test_fit () =
         Layer.linear ~in_features:4 ~out_features:1 ();
       ]
   in
-  let optimizer = Kaun.Optim.adam ~lr:(Kaun.Optim.Schedule.constant 0.01) () in
+  let optimizer = Kaun.Optim.adam ~lr:(Kaun.Optim.Schedule.constant 0.05) () in
   let trainer = Train.make ~model ~optimizer in
   let st = Train.init trainer ~dtype:Nx.float32 in
   let x =
@@ -74,7 +74,7 @@ let test_fit () =
   let y = Nx.create Nx.float32 [| 4; 1 |] [| 0.; 1.; 1.; 0. |] in
   let st' =
     Train.fit trainer st
-      (Data.repeat 100 (x, fun pred -> Loss.binary_cross_entropy pred y))
+      (Data.repeat 30 (x, fun pred -> Loss.binary_cross_entropy pred y))
   in
   let pred = Train.predict trainer st' x |> Nx.sigmoid in
   let p0 = Nx.item [ 0; 0 ] pred in
