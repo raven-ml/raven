@@ -51,9 +51,30 @@ let make_tensor kind shape n f =
   done;
   Nx.reshape shape (Nx.of_buffer ba ~shape:[| n |])
 
-let blit_tensor kind shape n data_bytes src_off =
+(* Byte-swap 16-bit elements in [buf] from native to little-endian or back *)
+let swap_16 buf n =
+  for i = 0 to n - 1 do
+    let pos = i * 2 in
+    let b0 = Bytes.get buf pos in
+    Bytes.set buf pos (Bytes.get buf (pos + 1));
+    Bytes.set buf (pos + 1) b0
+  done
+
+(* Load 16-bit LE data into a tensor, byte-swapping on big-endian *)
+let blit_tensor_16le kind shape n data offset =
+  let byte_len = n * 2 in
   let ba = Nx_buffer.create kind n in
-  Nx_buffer.blit_from_bytes ~src_off ~dst_off:0 ~len:n data_bytes ba;
+  let tmp = Bytes.create byte_len in
+  if Sys.big_endian then begin
+    for i = 0 to n - 1 do
+      let src = offset + i * 2 in
+      let dst = i * 2 in
+      Bytes.set tmp dst data.[src + 1];
+      Bytes.set tmp (dst + 1) data.[src]
+    done
+  end
+  else Bytes.blit_string data offset tmp 0 byte_len;
+  Nx_buffer.blit_from_bytes ~src_off:0 ~dst_off:0 ~len:n tmp ba;
   Nx.reshape shape (Nx.of_buffer ba ~shape:[| n |])
 
 (* Loading *)
@@ -61,7 +82,6 @@ let blit_tensor kind shape n data_bytes src_off =
 let load_tensor (view : Safetensors.tensor_view) =
   let shape = Array.of_list view.shape in
   let n = Array.fold_left ( * ) 1 shape in
-  let data_bytes = Bytes.unsafe_of_string view.data in
   match view.dtype with
   | F32 ->
       let f i =
@@ -80,11 +100,11 @@ let load_tensor (view : Safetensors.tensor_view) =
   | F16 ->
       if view.offset land 1 <> 0 then
         fail_msg "unaligned float16 tensor offset: %d" view.offset;
-      Some (P (blit_tensor Float16 shape n data_bytes (view.offset / 2)))
+      Some (P (blit_tensor_16le Float16 shape n view.data view.offset))
   | BF16 ->
       if view.offset land 1 <> 0 then
         fail_msg "unaligned bfloat16 tensor offset: %d" view.offset;
-      Some (P (blit_tensor Bfloat16 shape n data_bytes (view.offset / 2)))
+      Some (P (blit_tensor_16le Bfloat16 shape n view.data view.offset))
   | _ -> None
 
 let load_safetensors path =
@@ -137,14 +157,16 @@ let tensor_to_bytes (type a b) (arr : (a, b) Nx.t) =
         write_i32_le bytes (i * 4) (Nx_buffer.unsafe_get buf i)
       done;
       (Safetensors.I32, Bytes.unsafe_to_string bytes)
-  | Float16 ->
+  | Float16 | Bfloat16 ->
+      let tag =
+        match Nx_buffer.kind buf with
+        | Float16 -> Safetensors.F16
+        | _ -> Safetensors.BF16
+      in
       let bytes = Bytes.create (n * 2) in
       Nx_buffer.blit_to_bytes ~src_off:0 ~dst_off:0 ~len:n buf bytes;
-      (Safetensors.F16, Bytes.unsafe_to_string bytes)
-  | Bfloat16 ->
-      let bytes = Bytes.create (n * 2) in
-      Nx_buffer.blit_to_bytes ~src_off:0 ~dst_off:0 ~len:n buf bytes;
-      (Safetensors.BF16, Bytes.unsafe_to_string bytes)
+      if Sys.big_endian then swap_16 bytes n;
+      (tag, Bytes.unsafe_to_string bytes)
   | _ ->
       fail_msg "unsupported dtype for safetensors: %s"
         (Nx_core.Dtype.of_buffer_kind (Nx_buffer.kind buf)
