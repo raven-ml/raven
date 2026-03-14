@@ -1,12 +1,5 @@
 # todo
 
-## alpha3
-
-- bring in talon changes
-- consider rename talon to talf
-- explore renames (sowilo, talon, etc.)
-- quill: fix bytecode+threads segfault
-
 ## beta (jit)
 
 goalpost: jit-compiled gpt2 matching pytorch performance
