@@ -76,7 +76,7 @@ let test_vmap_no_out_axis () =
   let f = T.vmap ~out_axes:(T.OutSingle None) (fun t -> T.sum t) in
   let result = f x in
   (* First row sum: 0+1+2 = 3 *)
-  check_scalar ~eps "vmap no out axis" 3. (scalar_value result)
+  check_scalar ~eps "vmap no out axis" 3. (T.item [ 0 ] result)
 
 (* Test vmap with broadcasting *)
 let test_vmap_broadcast () =

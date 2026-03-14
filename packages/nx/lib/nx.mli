@@ -20,9 +20,7 @@
     shapes differ: dimensions are aligned from the right and each pair must be
     equal or one of them must be 1.
 
-    {b The [?out] convention.} Many operations accept an optional [?out] tensor.
-    When provided, the result is written into [out] instead of allocating a
-    fresh tensor; the shape of [out] must match the result shape. *)
+    {b Immutable tensors.} All operations return freshly allocated tensors. *)
 
 (** {1:types Types} *)
 
@@ -1304,43 +1302,35 @@ val argwhere : ('a, 'b) t -> (int32, int32_elt) t
     - [op_s t s] — tensor-scalar.
     - [rop_s s t] — scalar-tensor (reversed operands). *)
 
-val add : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [add ?out a b] is the element-wise sum of [a] and [b]. [out] defaults to a
-    fresh allocation. *)
+val add : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [add a b] is the element-wise sum of [a] and [b]. *)
 
-val add_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [add_s ?out t s] adds scalar [s] to each element of [t]. [out] defaults to a
-    fresh allocation. *)
+val add_s : ('a, 'b) t -> 'a -> ('a, 'b) t
+(** [add_s t s] adds scalar [s] to each element of [t]. *)
 
-val radd_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [radd_s ?out s t] is [add_s ?out t s]. *)
+val radd_s : 'a -> ('a, 'b) t -> ('a, 'b) t
+(** [radd_s s t] is [add_s t s]. *)
 
-val sub : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [sub ?out a b] is the element-wise difference [a - b]. [out] defaults to a
-    fresh allocation. *)
+val sub : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [sub a b] is the element-wise difference [a - b]. *)
 
-val sub_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [sub_s ?out t s] subtracts scalar [s] from each element. [out] defaults to a
-    fresh allocation. *)
+val sub_s : ('a, 'b) t -> 'a -> ('a, 'b) t
+(** [sub_s t s] subtracts scalar [s] from each element. *)
 
-val rsub_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [rsub_s ?out s t] is [s - t] element-wise. [out] defaults to a fresh
-    allocation. *)
+val rsub_s : 'a -> ('a, 'b) t -> ('a, 'b) t
+(** [rsub_s s t] is [s - t] element-wise. *)
 
-val mul : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [mul ?out a b] is the element-wise product of [a] and [b]. [out] defaults to
-    a fresh allocation. *)
+val mul : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [mul a b] is the element-wise product of [a] and [b]. *)
 
-val mul_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [mul_s ?out t s] multiplies each element by scalar [s]. [out] defaults to a
-    fresh allocation. *)
+val mul_s : ('a, 'b) t -> 'a -> ('a, 'b) t
+(** [mul_s t s] multiplies each element by scalar [s]. *)
 
-val rmul_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [rmul_s ?out s t] is [mul_s ?out t s]. *)
+val rmul_s : 'a -> ('a, 'b) t -> ('a, 'b) t
+(** [rmul_s s t] is [mul_s t s]. *)
 
-val div : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [div ?out a b] is the element-wise quotient [a / b]. [out] defaults to a
-    fresh allocation.
+val div : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [div a b] is the element-wise quotient [a / b].
 
     Float dtypes use true division. Integer dtypes truncate toward zero.
 
@@ -1351,41 +1341,32 @@ val div : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
       - : (int32, int32_elt) t = [-3, 4]
     ]} *)
 
-val div_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [div_s ?out t s] divides each element by scalar [s]. [out] defaults to a
-    fresh allocation. *)
+val div_s : ('a, 'b) t -> 'a -> ('a, 'b) t
+(** [div_s t s] divides each element by scalar [s]. *)
 
-val rdiv_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [rdiv_s ?out s t] is [s / t] element-wise. [out] defaults to a fresh
-    allocation. *)
+val rdiv_s : 'a -> ('a, 'b) t -> ('a, 'b) t
+(** [rdiv_s s t] is [s / t] element-wise. *)
 
-val pow : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [pow ?out base exp] is [base] raised to [exp] element-wise. [out] defaults
-    to a fresh allocation. *)
+val pow : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [pow base exp] is [base] raised to [exp] element-wise. *)
 
-val pow_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [pow_s ?out t s] raises each element to scalar power [s]. [out] defaults to
-    a fresh allocation. *)
+val pow_s : ('a, 'b) t -> 'a -> ('a, 'b) t
+(** [pow_s t s] raises each element to scalar power [s]. *)
 
-val rpow_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [rpow_s ?out s t] is [s{^t}] element-wise. [out] defaults to a fresh
-    allocation. *)
+val rpow_s : 'a -> ('a, 'b) t -> ('a, 'b) t
+(** [rpow_s s t] is [s{^t}] element-wise. *)
 
-val mod_ : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [mod_ ?out a b] is the element-wise remainder of [a / b]. [out] defaults to
-    a fresh allocation. *)
+val mod_ : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [mod_ a b] is the element-wise remainder of [a / b]. *)
 
-val mod_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [mod_s ?out t s] is the remainder of each element divided by scalar [s].
-    [out] defaults to a fresh allocation. *)
+val mod_s : ('a, 'b) t -> 'a -> ('a, 'b) t
+(** [mod_s t s] is the remainder of each element divided by scalar [s]. *)
 
-val rmod_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [rmod_s ?out s t] is [s mod t] element-wise. [out] defaults to a fresh
-    allocation. *)
+val rmod_s : 'a -> ('a, 'b) t -> ('a, 'b) t
+(** [rmod_s s t] is [s mod t] element-wise. *)
 
-val neg : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [neg ?out t] is the element-wise negation of [t]. [out] defaults to a fresh
-    allocation. *)
+val neg : ('a, 'b) t -> ('a, 'b) t
+(** [neg t] is the element-wise negation of [t]. *)
 
 val conjugate : ('a, 'b) t -> ('a, 'b) t
 (** [conjugate t] is the complex conjugate of [t]. For complex dtypes, negates
@@ -1395,14 +1376,12 @@ val conjugate : ('a, 'b) t -> ('a, 'b) t
 
 (** {2:math_basic Basic} *)
 
-val abs : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [abs ?out t] is the element-wise absolute value. [out] defaults to a fresh
-    allocation. *)
+val abs : ('a, 'b) t -> ('a, 'b) t
+(** [abs t] is the element-wise absolute value. *)
 
-val sign : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [sign ?out t] is [-1], [0], or [1] according to the sign of each element.
-    For unsigned types, returns [1] for non-zero, [0] for zero. [out] defaults
-    to a fresh allocation.
+val sign : ('a, 'b) t -> ('a, 'b) t
+(** [sign t] is [-1], [0], or [1] according to the sign of each element. For
+    unsigned types, returns [1] for non-zero, [0] for zero.
 
     {@ocaml[
       # create float32 [| 3 |] [| -2.; 0.; 3.5 |]
@@ -1410,113 +1389,90 @@ val sign : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
       - : (float, float32_elt) t = [-1, 0, 1]
     ]} *)
 
-val square : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [square ?out t] is the element-wise square. [out] defaults to a fresh
-    allocation. *)
+val square : ('a, 'b) t -> ('a, 'b) t
+(** [square t] is the element-wise square. *)
 
-val sqrt : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [sqrt ?out t] is the element-wise square root. [out] defaults to a fresh
-    allocation. *)
+val sqrt : ('a, 'b) t -> ('a, 'b) t
+(** [sqrt t] is the element-wise square root. *)
 
-val rsqrt : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [rsqrt ?out t] is the element-wise reciprocal square root ([1 / sqrt t]).
-    [out] defaults to a fresh allocation. *)
+val rsqrt : ('a, 'b) t -> ('a, 'b) t
+(** [rsqrt t] is the element-wise reciprocal square root ([1 / sqrt t]). *)
 
-val recip : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [recip ?out t] is the element-wise reciprocal ([1 / t]). [out] defaults to a
-    fresh allocation. *)
+val recip : ('a, 'b) t -> ('a, 'b) t
+(** [recip t] is the element-wise reciprocal ([1 / t]). *)
 
 (** {2:math_exp Exponential and logarithmic} *)
 
-val log : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [log ?out t] is the element-wise natural logarithm. [out] defaults to a
-    fresh allocation. *)
+val log : ('a, 'b) t -> ('a, 'b) t
+(** [log t] is the element-wise natural logarithm. *)
 
-val log2 : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [log2 ?out t] is the element-wise base-2 logarithm. [out] defaults to a
-    fresh allocation. *)
+val log2 : ('a, 'b) t -> ('a, 'b) t
+(** [log2 t] is the element-wise base-2 logarithm. *)
 
-val exp : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [exp ?out t] is the element-wise exponential. [out] defaults to a fresh
-    allocation. *)
+val exp : ('a, 'b) t -> ('a, 'b) t
+(** [exp t] is the element-wise exponential. *)
 
-val exp2 : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [exp2 ?out t] is [2{^t}] element-wise. [out] defaults to a fresh allocation.
-*)
+val exp2 : ('a, 'b) t -> ('a, 'b) t
+(** [exp2 t] is [2{^t}] element-wise. *)
 
 (** {2:math_trig Trigonometric} *)
 
-val sin : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [sin ?out t] is the element-wise sine. [out] defaults to a fresh allocation.
-*)
+val sin : ('a, 'b) t -> ('a, 'b) t
+(** [sin t] is the element-wise sine. *)
 
-val cos : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [cos ?out t] is the element-wise cosine. [out] defaults to a fresh
-    allocation. *)
+val cos : ('a, 'b) t -> ('a, 'b) t
+(** [cos t] is the element-wise cosine. *)
 
-val tan : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [tan ?out t] is the element-wise tangent. [out] defaults to a fresh
-    allocation. *)
+val tan : ('a, 'b) t -> ('a, 'b) t
+(** [tan t] is the element-wise tangent. *)
 
-val asin : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [asin ?out t] is the element-wise arcsine. [out] defaults to a fresh
-    allocation. *)
+val asin : ('a, 'b) t -> ('a, 'b) t
+(** [asin t] is the element-wise arcsine. *)
 
-val acos : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [acos ?out t] is the element-wise arccosine. [out] defaults to a fresh
-    allocation. *)
+val acos : ('a, 'b) t -> ('a, 'b) t
+(** [acos t] is the element-wise arccosine. *)
 
-val atan : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [atan ?out t] is the element-wise arctangent. [out] defaults to a fresh
-    allocation. *)
+val atan : ('a, 'b) t -> ('a, 'b) t
+(** [atan t] is the element-wise arctangent. *)
 
-val atan2 : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [atan2 ?out y x] is the element-wise two-argument arctangent, returning
-    angles in \[[-π], [π]\]. [out] defaults to a fresh allocation. *)
+val atan2 : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [atan2 y x] is the element-wise two-argument arctangent, returning angles in
+    \[[-π], [π]\]. *)
 
 (** {2:math_hyp Hyperbolic} *)
 
-val sinh : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [sinh ?out t] is the element-wise hyperbolic sine. [out] defaults to a fresh
-    allocation. *)
+val sinh : ('a, 'b) t -> ('a, 'b) t
+(** [sinh t] is the element-wise hyperbolic sine. *)
 
-val cosh : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [cosh ?out t] is the element-wise hyperbolic cosine. [out] defaults to a
-    fresh allocation. *)
+val cosh : ('a, 'b) t -> ('a, 'b) t
+(** [cosh t] is the element-wise hyperbolic cosine. *)
 
-val tanh : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [tanh ?out t] is the element-wise hyperbolic tangent. [out] defaults to a
-    fresh allocation. *)
+val tanh : ('a, 'b) t -> ('a, 'b) t
+(** [tanh t] is the element-wise hyperbolic tangent. *)
 
-val asinh : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [asinh ?out t] is the element-wise inverse hyperbolic sine. [out] defaults
-    to a fresh allocation. *)
+val asinh : ('a, 'b) t -> ('a, 'b) t
+(** [asinh t] is the element-wise inverse hyperbolic sine. *)
 
-val acosh : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [acosh ?out t] is the element-wise inverse hyperbolic cosine. [out] defaults
-    to a fresh allocation. *)
+val acosh : ('a, 'b) t -> ('a, 'b) t
+(** [acosh t] is the element-wise inverse hyperbolic cosine. *)
 
-val atanh : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [atanh ?out t] is the element-wise inverse hyperbolic tangent. [out]
-    defaults to a fresh allocation. *)
+val atanh : ('a, 'b) t -> ('a, 'b) t
+(** [atanh t] is the element-wise inverse hyperbolic tangent. *)
 
 (** {2:math_round Rounding} *)
 
-val trunc : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [trunc ?out t] rounds each element toward zero. [out] defaults to a fresh
-    allocation. *)
+val trunc : ('a, 'b) t -> ('a, 'b) t
+(** [trunc t] rounds each element toward zero. *)
 
-val ceil : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [ceil ?out t] rounds each element toward positive infinity. [out] defaults
-    to a fresh allocation. *)
+val ceil : ('a, 'b) t -> ('a, 'b) t
+(** [ceil t] rounds each element toward positive infinity. *)
 
-val floor : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [floor ?out t] rounds each element toward negative infinity. [out] defaults
-    to a fresh allocation. *)
+val floor : ('a, 'b) t -> ('a, 'b) t
+(** [floor t] rounds each element toward negative infinity. *)
 
-val round : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [round ?out t] rounds each element to the nearest integer. Ties round away
-    from zero (not banker's rounding). [out] defaults to a fresh allocation.
+val round : ('a, 'b) t -> ('a, 'b) t
+(** [round t] rounds each element to the nearest integer. Ties round away from
+    zero (not banker's rounding).
 
     {@ocaml[
       # create float32 [| 4 |] [| 2.5; 3.5; -2.5; -3.5 |]
@@ -1526,9 +1482,8 @@ val round : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 
 (** {2:math_misc Other} *)
 
-val hypot : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [hypot ?out x y] is [sqrt(x² + y²)] computed without intermediate overflow.
-    [out] defaults to a fresh allocation.
+val hypot : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [hypot x y] is [sqrt(x² + y²)] computed without intermediate overflow.
 
     {@ocaml[
       # hypot (scalar float32 3.) (scalar float32 4.)
@@ -1536,10 +1491,9 @@ val hypot : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
       - : float = 5.
     ]} *)
 
-val lerp :
-  ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [lerp ?out a b w] is the linear interpolation [a + w * (b - a)]. [w] is
-    typically in \[[0], [1]\]. [out] defaults to a fresh allocation.
+val lerp : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [lerp a b w] is the linear interpolation [a + w * (b - a)]. [w] is typically
+    in \[[0], [1]\].
 
     {@ocaml[
       # let a = create float32 [| 2 |] [| 1.; 2. |] in
@@ -1548,15 +1502,12 @@ val lerp :
       - : (float, float32_elt) t = [2, 3.5]
     ]} *)
 
-val lerp_scalar_weight :
-  ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [lerp_scalar_weight ?out a b w] is like {!lerp} with a scalar weight. [out]
-    defaults to a fresh allocation. *)
+val lerp_scalar_weight : ('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
+(** [lerp_scalar_weight a b w] is like {!lerp} with a scalar weight. *)
 
-val isinf : ?out:(bool, bool_elt) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [isinf ?out t] is [true] where [t] is positive or negative infinity, [false]
-    elsewhere. Non-float dtypes always return all [false]. [out] defaults to a
-    fresh allocation.
+val isinf : ('a, 'b) t -> (bool, bool_elt) t
+(** [isinf t] is [true] where [t] is positive or negative infinity, [false]
+    elsewhere. Non-float dtypes always return all [false].
 
     {@ocaml[
       # create float32 [| 4 |]
@@ -1568,101 +1519,73 @@ val isinf : ?out:(bool, bool_elt) t -> ('a, 'b) t -> (bool, bool_elt) t
 
     See also {!isnan}, {!isfinite}. *)
 
-val isnan : ?out:(bool, bool_elt) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [isnan ?out t] is [true] where [t] is NaN, [false] elsewhere. Non-float
-    dtypes always return all [false]. [out] defaults to a fresh allocation.
+val isnan : ('a, 'b) t -> (bool, bool_elt) t
+(** [isnan t] is [true] where [t] is NaN, [false] elsewhere. Non-float dtypes
+    always return all [false].
 
     See also {!isinf}, {!isfinite}. *)
 
-val isfinite : ?out:(bool, bool_elt) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [isfinite ?out t] is [true] where [t] is neither infinite nor NaN. Non-float
-    dtypes always return all [true]. [out] defaults to a fresh allocation.
+val isfinite : ('a, 'b) t -> (bool, bool_elt) t
+(** [isfinite t] is [true] where [t] is neither infinite nor NaN. Non-float
+    dtypes always return all [true].
 
     See also {!isinf}, {!isnan}. *)
 
 (** {1:comparison Comparison and logic} *)
 
-val cmplt :
-  ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [cmplt ?out a b] is [true] where [a < b], [false] elsewhere. [out] defaults
-    to a fresh allocation. *)
+val cmplt : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
+(** [cmplt a b] is [true] where [a < b], [false] elsewhere. *)
 
-val less :
-  ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
+val less : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [less a b] is {!cmplt}. *)
 
-val less_s : ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
-(** [less_s ?out t s] is [true] where [t < s]. [out] defaults to a fresh
-    allocation. *)
+val less_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
+(** [less_s t s] is [true] where [t < s]. *)
 
-val cmpne :
-  ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [cmpne ?out a b] is [true] where [a ≠ b], [false] elsewhere. [out] defaults
-    to a fresh allocation. *)
+val cmpne : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
+(** [cmpne a b] is [true] where [a ≠ b], [false] elsewhere. *)
 
-val not_equal :
-  ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
+val not_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [not_equal a b] is {!cmpne}. *)
 
-val not_equal_s :
-  ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
-(** [not_equal_s ?out t s] is [true] where [t ≠ s]. [out] defaults to a fresh
-    allocation. *)
+val not_equal_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
+(** [not_equal_s t s] is [true] where [t ≠ s]. *)
 
-val cmpeq :
-  ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [cmpeq ?out a b] is [true] where [a = b], [false] elsewhere. [out] defaults
-    to a fresh allocation. *)
+val cmpeq : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
+(** [cmpeq a b] is [true] where [a = b], [false] elsewhere. *)
 
-val equal :
-  ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
+val equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [equal a b] is {!cmpeq}. *)
 
-val equal_s : ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
-(** [equal_s ?out t s] is [true] where [t = s]. [out] defaults to a fresh
-    allocation. *)
+val equal_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
+(** [equal_s t s] is [true] where [t = s]. *)
 
-val cmpgt :
-  ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [cmpgt ?out a b] is [true] where [a > b], [false] elsewhere. [out] defaults
-    to a fresh allocation. *)
+val cmpgt : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
+(** [cmpgt a b] is [true] where [a > b], [false] elsewhere. *)
 
-val greater :
-  ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
+val greater : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [greater a b] is {!cmpgt}. *)
 
-val greater_s :
-  ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
-(** [greater_s ?out t s] is [true] where [t > s]. [out] defaults to a fresh
-    allocation. *)
+val greater_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
+(** [greater_s t s] is [true] where [t > s]. *)
 
-val cmple :
-  ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [cmple ?out a b] is [true] where [a ≤ b], [false] elsewhere. [out] defaults
-    to a fresh allocation. *)
+val cmple : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
+(** [cmple a b] is [true] where [a ≤ b], [false] elsewhere. *)
 
-val less_equal :
-  ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
+val less_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [less_equal a b] is {!cmple}. *)
 
-val less_equal_s :
-  ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
-(** [less_equal_s ?out t s] is [true] where [t ≤ s]. [out] defaults to a fresh
-    allocation. *)
+val less_equal_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
+(** [less_equal_s t s] is [true] where [t ≤ s]. *)
 
-val cmpge :
-  ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [cmpge ?out a b] is [true] where [a ≥ b], [false] elsewhere. [out] defaults
-    to a fresh allocation. *)
+val cmpge : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
+(** [cmpge a b] is [true] where [a ≥ b], [false] elsewhere. *)
 
-val greater_equal :
-  ?out:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
+val greater_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [greater_equal a b] is {!cmpge}. *)
 
-val greater_equal_s :
-  ?out:(bool, bool_elt) t -> ('a, 'b) t -> 'a -> (bool, bool_elt) t
-(** [greater_equal_s ?out t s] is [true] where [t ≥ s]. [out] defaults to a
-    fresh allocation. *)
+val greater_equal_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
+(** [greater_equal_s t s] is [true] where [t ≥ s]. *)
 
 val array_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
 (** [array_equal a b] is a scalar [true] iff all elements of [a] and [b] are
@@ -1675,53 +1598,41 @@ val array_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
       - : bool = true
     ]} *)
 
-val maximum : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [maximum ?out a b] is the element-wise maximum of [a] and [b]. [out]
-    defaults to a fresh allocation. *)
+val maximum : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [maximum a b] is the element-wise maximum of [a] and [b]. *)
 
-val maximum_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [maximum_s ?out t s] is the element-wise maximum of [t] and scalar [s].
-    [out] defaults to a fresh allocation. *)
+val maximum_s : ('a, 'b) t -> 'a -> ('a, 'b) t
+(** [maximum_s t s] is the element-wise maximum of [t] and scalar [s]. *)
 
-val rmaximum_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [rmaximum_s ?out s t] is [maximum_s ?out t s]. *)
+val rmaximum_s : 'a -> ('a, 'b) t -> ('a, 'b) t
+(** [rmaximum_s s t] is [maximum_s t s]. *)
 
-val minimum : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [minimum ?out a b] is the element-wise minimum of [a] and [b]. [out]
-    defaults to a fresh allocation. *)
+val minimum : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [minimum a b] is the element-wise minimum of [a] and [b]. *)
 
-val minimum_s : ?out:('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [minimum_s ?out t s] is the element-wise minimum of [t] and scalar [s].
-    [out] defaults to a fresh allocation. *)
+val minimum_s : ('a, 'b) t -> 'a -> ('a, 'b) t
+(** [minimum_s t s] is the element-wise minimum of [t] and scalar [s]. *)
 
-val rminimum_s : ?out:('a, 'b) t -> 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [rminimum_s ?out s t] is [minimum_s ?out t s]. *)
+val rminimum_s : 'a -> ('a, 'b) t -> ('a, 'b) t
+(** [rminimum_s s t] is [minimum_s t s]. *)
 
-val logical_and : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [logical_and ?out a b] is the element-wise logical AND. Non-zero is [true].
-    [out] defaults to a fresh allocation. *)
+val logical_and : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [logical_and a b] is the element-wise logical AND. Non-zero is [true]. *)
 
-val logical_or : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [logical_or ?out a b] is the element-wise logical OR. [out] defaults to a
-    fresh allocation. *)
+val logical_or : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [logical_or a b] is the element-wise logical OR. *)
 
-val logical_xor : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [logical_xor ?out a b] is the element-wise logical XOR. [out] defaults to a
-    fresh allocation. *)
+val logical_xor : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [logical_xor a b] is the element-wise logical XOR. *)
 
-val logical_not : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [logical_not ?out t] is the element-wise logical NOT: non-zero becomes [0],
-    zero becomes [1]. [out] defaults to a fresh allocation. *)
+val logical_not : ('a, 'b) t -> ('a, 'b) t
+(** [logical_not t] is the element-wise logical NOT: non-zero becomes [0], zero
+    becomes [1]. *)
 
-val where :
-  ?out:('a, 'b) t ->
-  (bool, bool_elt) t ->
-  ('a, 'b) t ->
-  ('a, 'b) t ->
-  ('a, 'b) t
-(** [where ?out cond if_true if_false] selects elements from [if_true] where
-    [cond] is [true] and from [if_false] elsewhere. All three inputs broadcast
-    to a common shape. [out] defaults to a fresh allocation.
+val where : (bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [where cond if_true if_false] selects elements from [if_true] where [cond]
+    is [true] and from [if_false] elsewhere. All three inputs broadcast to a
+    common shape.
 
     {@ocaml[
       # let x =
@@ -1733,39 +1644,34 @@ val where :
       - : (float, float32_elt) t = [0, 2, 0, 4]
     ]} *)
 
-val clamp : ?out:('a, 'b) t -> ?min:'a -> ?max:'a -> ('a, 'b) t -> ('a, 'b) t
-(** [clamp ?out ?min ?max t] clamps elements to \[[min], [max]\]. Either bound
-    may be omitted. [out] defaults to a fresh allocation.
+val clamp : ?min:'a -> ?max:'a -> ('a, 'b) t -> ('a, 'b) t
+(** [clamp ?min ?max t] clamps elements to \[[min], [max]\]. Either bound may be
+    omitted.
 
     See also {!clip}. *)
 
-val clip : ?out:('a, 'b) t -> ?min:'a -> ?max:'a -> ('a, 'b) t -> ('a, 'b) t
-(** [clip ?out ?min ?max t] is {!clamp}. *)
+val clip : ?min:'a -> ?max:'a -> ('a, 'b) t -> ('a, 'b) t
+(** [clip ?min ?max t] is {!clamp}. *)
 
 (** {1:bitwise Bitwise operations} *)
 
-val bitwise_xor : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [bitwise_xor ?out a b] is the element-wise bitwise XOR. [out] defaults to a
-    fresh allocation. *)
+val bitwise_xor : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [bitwise_xor a b] is the element-wise bitwise XOR. *)
 
-val bitwise_or : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [bitwise_or ?out a b] is the element-wise bitwise OR. [out] defaults to a
-    fresh allocation. *)
+val bitwise_or : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [bitwise_or a b] is the element-wise bitwise OR. *)
 
-val bitwise_and : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [bitwise_and ?out a b] is the element-wise bitwise AND. [out] defaults to a
-    fresh allocation. *)
+val bitwise_and : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [bitwise_and a b] is the element-wise bitwise AND. *)
 
-val bitwise_not : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [bitwise_not ?out t] is the element-wise bitwise NOT. [out] defaults to a
-    fresh allocation. *)
+val bitwise_not : ('a, 'b) t -> ('a, 'b) t
+(** [bitwise_not t] is the element-wise bitwise NOT. *)
 
-val invert : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [invert ?out t] is {!bitwise_not}. *)
+val invert : ('a, 'b) t -> ('a, 'b) t
+(** [invert t] is {!bitwise_not}. *)
 
-val lshift : ?out:('a, 'b) t -> ('a, 'b) t -> int -> ('a, 'b) t
-(** [lshift ?out t n] left-shifts each element by [n] bits. [out] defaults to a
-    fresh allocation.
+val lshift : ('a, 'b) t -> int -> ('a, 'b) t
+(** [lshift t n] left-shifts each element by [n] bits.
 
     Raises [Invalid_argument] if [n] is negative or the dtype is not an integer
     type.
@@ -1778,9 +1684,8 @@ val lshift : ?out:('a, 'b) t -> ('a, 'b) t -> int -> ('a, 'b) t
 
     See also {!rshift}. *)
 
-val rshift : ?out:('a, 'b) t -> ('a, 'b) t -> int -> ('a, 'b) t
-(** [rshift ?out t n] right-shifts each element by [n] bits. [out] defaults to a
-    fresh allocation.
+val rshift : ('a, 'b) t -> int -> ('a, 'b) t
+(** [rshift t n] right-shifts each element by [n] bits.
 
     Raises [Invalid_argument] if [n] is negative or the dtype is not an integer
     type.
@@ -1939,16 +1844,11 @@ end
 
 (** {1:reduction Reductions} *)
 
-val sum :
-  ?out:('a, 'b) t ->
-  ?axes:int list ->
-  ?keepdims:bool ->
-  ('a, 'b) t ->
-  ('a, 'b) t
-(** [sum ?out ?axes ?keepdims t] sums elements along [axes]. When [axes] is
-    omitted, reduces all axes (returns a scalar). When [keepdims] is [true],
-    reduced axes are kept with size 1. [keepdims] defaults to [false]. Negative
-    axes count from the end. [out] defaults to a fresh allocation.
+val sum : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
+(** [sum ?axes ?keepdims t] sums elements along [axes]. When [axes] is omitted,
+    reduces all axes (returns a scalar). When [keepdims] is [true], reduced axes
+    are kept with size 1. [keepdims] defaults to [false]. Negative axes count
+    from the end.
 
     {@ocaml[
       # create float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |]
@@ -1962,14 +1862,9 @@ val sum :
       - : (float, float32_elt) t = float32 [1; 1] [[3]]
     ]} *)
 
-val max :
-  ?out:('a, 'b) t ->
-  ?axes:int list ->
-  ?keepdims:bool ->
-  ('a, 'b) t ->
-  ('a, 'b) t
-(** [max ?out ?axes ?keepdims t] is the maximum along [axes]. NaN propagates.
-    [keepdims] defaults to [false]. [out] defaults to a fresh allocation.
+val max : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
+(** [max ?axes ?keepdims t] is the maximum along [axes]. NaN propagates.
+    [keepdims] defaults to [false].
 
     {@ocaml[
       # create float32 [| 2; 3 |]
@@ -1978,23 +1873,13 @@ val max :
       - : float = 6.
     ]} *)
 
-val min :
-  ?out:('a, 'b) t ->
-  ?axes:int list ->
-  ?keepdims:bool ->
-  ('a, 'b) t ->
-  ('a, 'b) t
-(** [min ?out ?axes ?keepdims t] is the minimum along [axes]. NaN propagates.
-    [keepdims] defaults to [false]. [out] defaults to a fresh allocation. *)
+val min : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
+(** [min ?axes ?keepdims t] is the minimum along [axes]. NaN propagates.
+    [keepdims] defaults to [false]. *)
 
-val prod :
-  ?out:('a, 'b) t ->
-  ?axes:int list ->
-  ?keepdims:bool ->
-  ('a, 'b) t ->
-  ('a, 'b) t
-(** [prod ?out ?axes ?keepdims t] is the product along [axes]. [keepdims]
-    defaults to [false]. [out] defaults to a fresh allocation.
+val prod : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
+(** [prod ?axes ?keepdims t] is the product along [axes]. [keepdims] defaults to
+    [false].
 
     {@ocaml[
       # create int32 [| 3 |] [| 2l; 3l; 4l |]
@@ -2028,15 +1913,9 @@ val cummin : ?axis:int -> ('a, 'b) t -> ('a, 'b) t
 
     See also {!cummax}. *)
 
-val mean :
-  ?out:('a, 'b) t ->
-  ?axes:int list ->
-  ?keepdims:bool ->
-  ('a, 'b) t ->
-  ('a, 'b) t
-(** [mean ?out ?axes ?keepdims t] is the arithmetic mean along [axes]. NaN
-    propagates. [keepdims] defaults to [false]. [out] defaults to a fresh
-    allocation.
+val mean : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
+(** [mean ?axes ?keepdims t] is the arithmetic mean along [axes]. NaN
+    propagates. [keepdims] defaults to [false].
 
     {@ocaml[
       # create float32 [| 4 |] [| 1.; 2.; 3.; 4. |]
@@ -2045,16 +1924,11 @@ val mean :
     ]} *)
 
 val var :
-  ?out:('a, 'b) t ->
-  ?axes:int list ->
-  ?keepdims:bool ->
-  ?ddof:int ->
-  ('a, 'b) t ->
-  ('a, 'b) t
-(** [var ?out ?axes ?keepdims ?ddof t] is the variance along [axes]. [ddof]
-    (delta degrees of freedom) defaults to [0] (population variance); use [1]
-    for sample variance. Computed as [E[(X - E[X])²] / (N - ddof)]. [keepdims]
-    defaults to [false]. [out] defaults to a fresh allocation.
+  ?axes:int list -> ?keepdims:bool -> ?ddof:int -> ('a, 'b) t -> ('a, 'b) t
+(** [var ?axes ?keepdims ?ddof t] is the variance along [axes]. [ddof] (delta
+    degrees of freedom) defaults to [0] (population variance); use [1] for
+    sample variance. Computed as [E[(X - E[X])²] / (N - ddof)]. [keepdims]
+    defaults to [false].
 
     Raises [Invalid_argument] if [ddof >= N].
 
@@ -2070,27 +1944,16 @@ val var :
     See also {!std}. *)
 
 val std :
-  ?out:('a, 'b) t ->
-  ?axes:int list ->
-  ?keepdims:bool ->
-  ?ddof:int ->
-  ('a, 'b) t ->
-  ('a, 'b) t
-(** [std ?out ?axes ?keepdims ?ddof t] is the standard deviation:
+  ?axes:int list -> ?keepdims:bool -> ?ddof:int -> ('a, 'b) t -> ('a, 'b) t
+(** [std ?axes ?keepdims ?ddof t] is the standard deviation:
     [sqrt({!var} ~ddof t)]. [ddof] defaults to [0]. [keepdims] defaults to
-    [false]. [out] defaults to a fresh allocation.
+    [false].
 
     See also {!var}. *)
 
-val all :
-  ?out:(bool, bool_elt) t ->
-  ?axes:int list ->
-  ?keepdims:bool ->
-  ('a, 'b) t ->
-  (bool, bool_elt) t
-(** [all ?out ?axes ?keepdims t] is [true] iff every element along [axes] is
-    non-zero. [keepdims] defaults to [false]. [out] defaults to a fresh
-    allocation.
+val all : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (bool, bool_elt) t
+(** [all ?axes ?keepdims t] is [true] iff every element along [axes] is
+    non-zero. [keepdims] defaults to [false].
 
     {@ocaml[
       # create int32 [| 3 |] [| 1l; 2l; 3l |]
@@ -2103,15 +1966,9 @@ val all :
 
     See also {!any}. *)
 
-val any :
-  ?out:(bool, bool_elt) t ->
-  ?axes:int list ->
-  ?keepdims:bool ->
-  ('a, 'b) t ->
-  (bool, bool_elt) t
-(** [any ?out ?axes ?keepdims t] is [true] iff at least one element along [axes]
-    is non-zero. [keepdims] defaults to [false]. [out] defaults to a fresh
-    allocation.
+val any : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> (bool, bool_elt) t
+(** [any ?axes ?keepdims t] is [true] iff at least one element along [axes] is
+    non-zero. [keepdims] defaults to [false].
 
     See also {!all}. *)
 
@@ -2174,9 +2031,8 @@ val argsort :
 
 (** {2:linalg_products Products} *)
 
-val dot : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [dot ?out a b] is the generalised dot product. [out] defaults to a fresh
-    allocation.
+val dot : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [dot a b] is the generalised dot product.
 
     Contracts the last axis of [a] with:
     - the only axis of [b] when [b] is 1-D,
@@ -2206,10 +2062,8 @@ val dot : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 
     See also {!matmul}, {!vdot}, {!vecdot}. *)
 
-val matmul : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [matmul ?out a b] is the matrix product of [a] and [b] with batch
-    broadcasting. [out] defaults to a fresh allocation; ignored when either
-    input is 1-D.
+val matmul : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [matmul a b] is the matrix product of [a] and [b] with batch broadcasting.
 
     Dimension rules:
     - 1-D × 1-D → scalar (inner product).
@@ -2272,9 +2126,9 @@ val inner : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 
     See also {!dot}, {!outer}. *)
 
-val outer : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [outer ?out a b] is the outer product. Inputs are flattened to 1-D; the
-    result has shape [[numel a; numel b]]. [out] defaults to a fresh allocation.
+val outer : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [outer a b] is the outer product. Inputs are flattened to 1-D; the result
+    has shape [[numel a; numel b]].
 
     See also {!inner}. *)
 
@@ -2324,10 +2178,9 @@ val matrix_power : ('a, 'b) t -> int -> ('a, 'b) t
     Raises [Invalid_argument] if [t] is not square, the dtype is not
     floating-point or complex, or [n < 0] and [t] is singular. *)
 
-val cross :
-  ?out:('a, 'b) t -> ?axis:int -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [cross ?out ?axis a b] is the cross product of 3-element vectors along
-    [axis]. [axis] defaults to [-1]. [out] defaults to a fresh allocation.
+val cross : ?axis:int -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+(** [cross ?axis a b] is the cross product of 3-element vectors along [axis].
+    [axis] defaults to [-1].
 
     Raises [Invalid_argument] if the axis dimension is not 3. *)
 
@@ -2475,9 +2328,9 @@ val matrix_rank :
 
     Raises [Invalid_argument] if the dtype is not floating-point or complex. *)
 
-val trace : ?out:('a, 'b) t -> ?offset:int -> ('a, 'b) t -> ('a, 'b) t
-(** [trace ?out ?offset t] is the sum along the [offset]-th diagonal. [offset]
-    defaults to [0]. [out] defaults to a fresh allocation.
+val trace : ?offset:int -> ('a, 'b) t -> ('a, 'b) t
+(** [trace ?offset t] is the sum along the [offset]-th diagonal. [offset]
+    defaults to [0].
 
     Raises [Invalid_argument] if [t] has fewer than 2 dimensions.
 
@@ -2544,86 +2397,74 @@ type fft_norm = [ `Backward | `Forward | `Ortho ]
     - [`Ortho] — normalise by [1/√n] on both. *)
 
 val fft :
-  ?out:(Complex.t, 'a) t ->
   ?axis:int ->
   ?n:int ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (Complex.t, 'a) t
-(** [fft ?out ?axis ?n ?norm x] is the 1-D discrete Fourier transform along
-    [axis]. [axis] defaults to [-1]. [n] truncates or zero-pads the input.
-    [norm] defaults to [`Backward]. [out] defaults to a fresh allocation.
+(** [fft ?axis ?n ?norm x] is the 1-D discrete Fourier transform along [axis].
+    [axis] defaults to [-1]. [n] truncates or zero-pads the input. [norm]
+    defaults to [`Backward].
 
     See also {!ifft}, {!rfft}. *)
 
 val ifft :
-  ?out:(Complex.t, 'a) t ->
   ?axis:int ->
   ?n:int ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (Complex.t, 'a) t
-(** [ifft ?out ?axis ?n ?norm x] is the inverse of {!fft}. [out] defaults to a
-    fresh allocation.
+(** [ifft ?axis ?n ?norm x] is the inverse of {!fft}.
 
     See also {!fft}, {!irfft}. *)
 
 val fft2 :
-  ?out:(Complex.t, 'a) t ->
   ?axes:int list ->
   ?s:int list ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (Complex.t, 'a) t
-(** [fft2 ?out ?axes ?s ?norm x] is the 2-D FFT. [axes] defaults to the last
-    two. [out] defaults to a fresh allocation.
+(** [fft2 ?axes ?s ?norm x] is the 2-D FFT. [axes] defaults to the last two.
 
     Raises [Invalid_argument] if the input has fewer than 2 dimensions.
 
     See also {!ifft2}, {!fft}. *)
 
 val ifft2 :
-  ?out:(Complex.t, 'a) t ->
   ?axes:int list ->
   ?s:int list ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (Complex.t, 'a) t
-(** [ifft2 ?out ?axes ?s ?norm x] is the inverse of {!fft2}. [out] defaults to a
-    fresh allocation. *)
+(** [ifft2 ?axes ?s ?norm x] is the inverse of {!fft2}. *)
 
 val fftn :
-  ?out:(Complex.t, 'a) t ->
   ?axes:int list ->
   ?s:int list ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (Complex.t, 'a) t
-(** [fftn ?out ?axes ?s ?norm x] is the N-D FFT. [axes] defaults to all. [out]
-    defaults to a fresh allocation.
+(** [fftn ?axes ?s ?norm x] is the N-D FFT. [axes] defaults to all.
 
     See also {!ifftn}. *)
 
 val ifftn :
-  ?out:(Complex.t, 'a) t ->
   ?axes:int list ->
   ?s:int list ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (Complex.t, 'a) t
-(** [ifftn ?out ?axes ?s ?norm x] is the inverse of {!fftn}. [out] defaults to a
-    fresh allocation. *)
+(** [ifftn ?axes ?s ?norm x] is the inverse of {!fftn}. *)
 
 val rfft :
-  ?out:(Complex.t, complex64_elt) t ->
   ?axis:int ->
   ?n:int ->
   ?norm:fft_norm ->
   (float, 'a) t ->
   (Complex.t, complex64_elt) t
-(** [rfft ?out ?axis ?n ?norm x] is the 1-D FFT of real input. Returns only the
+(** [rfft ?axis ?n ?norm x] is the 1-D FFT of real input. Returns only the
     non-redundant positive frequencies; the output size along the transformed
-    axis is [n/2 + 1]. [out] defaults to a fresh allocation.
+    axis is [n/2 + 1].
 
     {@ocaml[
       # create float64 [| 4 |] [| 0.; 1.; 2.; 3. |]
@@ -2634,60 +2475,51 @@ val rfft :
     See also {!irfft}, {!fft}. *)
 
 val irfft :
-  ?out:(float, float64_elt) t ->
   ?axis:int ->
   ?n:int ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (float, float64_elt) t
-(** [irfft ?out ?axis ?n ?norm x] is the inverse of {!rfft}, producing real
-    output. Assumes Hermitian symmetry. [out] defaults to a fresh allocation.
+(** [irfft ?axis ?n ?norm x] is the inverse of {!rfft}, producing real output.
+    Assumes Hermitian symmetry.
 
     See also {!rfft}. *)
 
 val rfft2 :
-  ?out:(Complex.t, complex64_elt) t ->
   ?axes:int list ->
   ?s:int list ->
   ?norm:fft_norm ->
   (float, 'a) t ->
   (Complex.t, complex64_elt) t
-(** [rfft2 ?out ?axes ?s ?norm x] is the 2-D FFT of real input. [out] defaults
-    to a fresh allocation.
+(** [rfft2 ?axes ?s ?norm x] is the 2-D FFT of real input.
 
     See also {!irfft2}, {!rfft}. *)
 
 val irfft2 :
-  ?out:(float, float64_elt) t ->
   ?axes:int list ->
   ?s:int list ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (float, float64_elt) t
-(** [irfft2 ?out ?axes ?s ?norm x] is the inverse of {!rfft2}. [out] defaults to
-    a fresh allocation. *)
+(** [irfft2 ?axes ?s ?norm x] is the inverse of {!rfft2}. *)
 
 val rfftn :
-  ?out:(Complex.t, complex64_elt) t ->
   ?axes:int list ->
   ?s:int list ->
   ?norm:fft_norm ->
   (float, 'a) t ->
   (Complex.t, complex64_elt) t
-(** [rfftn ?out ?axes ?s ?norm x] is the N-D FFT of real input. [out] defaults
-    to a fresh allocation.
+(** [rfftn ?axes ?s ?norm x] is the N-D FFT of real input.
 
     See also {!irfftn}, {!rfft}. *)
 
 val irfftn :
-  ?out:(float, float64_elt) t ->
   ?axes:int list ->
   ?s:int list ->
   ?norm:fft_norm ->
   (Complex.t, 'a) t ->
   (float, float64_elt) t
-(** [irfftn ?out ?axes ?s ?norm x] is the inverse of {!rfftn}. [out] defaults to
-    a fresh allocation. *)
+(** [irfftn ?axes ?s ?norm x] is the inverse of {!rfftn}. *)
 
 val hfft :
   ?axis:int ->
@@ -2739,9 +2571,8 @@ val ifftshift : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t
 
 (** {1:activation Activation functions} *)
 
-val relu : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [relu ?out t] is [max(0, t)] element-wise. [out] defaults to a fresh
-    allocation.
+val relu : ('a, 'b) t -> ('a, 'b) t
+(** [relu t] is [max(0, t)] element-wise.
 
     {@ocaml[
       # create float32 [| 5 |]
@@ -2750,21 +2581,19 @@ val relu : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
       - : (float, float32_elt) t = float32 [5] [0, 0, ..., 1, 2]
     ]} *)
 
-val sigmoid : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [sigmoid ?out t] is [1 / (1 + exp(-t))] element-wise. Output in [(0, 1)].
-    [out] defaults to a fresh allocation.
+val sigmoid : ('a, 'b) t -> ('a, 'b) t
+(** [sigmoid t] is [1 / (1 + exp(-t))] element-wise. Output in [(0, 1)].
 
     {@ocaml[
       # sigmoid (scalar float32 0.) |> item []
       - : float = 0.5
     ]} *)
 
-val softmax :
-  ?out:('a, 'b) t -> ?axes:int list -> ?scale:float -> ('a, 'b) t -> ('a, 'b) t
-(** [softmax ?out ?axes ?scale t] is the softmax normalisation
+val softmax : ?axes:int list -> ?scale:float -> ('a, 'b) t -> ('a, 'b) t
+(** [softmax ?axes ?scale t] is the softmax normalisation
     [exp(scale * (t - max t)) / Σ exp(scale * (t - max t))]. [axes] defaults to
     [[-1]]. [scale] defaults to [1.0]. Output sums to [1] along the specified
-    axes. [out] defaults to a fresh allocation.
+    axes.
 
     {@ocaml[
       # create float32 [| 3 |] [| 1.; 2.; 3. |]
@@ -2774,53 +2603,38 @@ val softmax :
 
     See also {!log_softmax}. *)
 
-val log_softmax :
-  ?out:('a, 'b) t -> ?axes:int list -> ?scale:float -> ('a, 'b) t -> ('a, 'b) t
-(** [log_softmax ?out ?axes ?scale t] is the natural logarithm of {!softmax}.
-    Same defaults as {!softmax}. [out] defaults to a fresh allocation.
+val log_softmax : ?axes:int list -> ?scale:float -> ('a, 'b) t -> ('a, 'b) t
+(** [log_softmax ?axes ?scale t] is the natural logarithm of {!softmax}. Same
+    defaults as {!softmax}.
 
     See also {!softmax}, {!logsumexp}. *)
 
-val logsumexp :
-  ?out:('a, 'b) t ->
-  ?axes:int list ->
-  ?keepdims:bool ->
-  ('a, 'b) t ->
-  ('a, 'b) t
-(** [logsumexp ?out ?axes ?keepdims t] is [log(Σ exp(t))] computed in a
-    numerically stable way. [axes] defaults to all. [keepdims] defaults to
-    [false]. [out] defaults to a fresh allocation.
+val logsumexp : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
+(** [logsumexp ?axes ?keepdims t] is [log(Σ exp(t))] computed in a numerically
+    stable way. [axes] defaults to all. [keepdims] defaults to [false].
 
     See also {!logmeanexp}, {!log_softmax}. *)
 
-val logmeanexp :
-  ?out:('a, 'b) t ->
-  ?axes:int list ->
-  ?keepdims:bool ->
-  ('a, 'b) t ->
-  ('a, 'b) t
-(** [logmeanexp ?out ?axes ?keepdims t] is [log(mean(exp(t)))]: {!logsumexp}
-    minus [log N]. [axes] defaults to all. [keepdims] defaults to [false]. [out]
-    defaults to a fresh allocation.
+val logmeanexp : ?axes:int list -> ?keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
+(** [logmeanexp ?axes ?keepdims t] is [log(mean(exp(t)))]: {!logsumexp} minus
+    [log N]. [axes] defaults to all. [keepdims] defaults to [false].
 
     See also {!logsumexp}. *)
 
 val standardize :
-  ?out:('a, 'b) t ->
   ?axes:int list ->
   ?mean:('a, 'b) t ->
   ?variance:('a, 'b) t ->
   ?epsilon:float ->
   ('a, 'b) t ->
   ('a, 'b) t
-(** [standardize ?out ?axes ?mean ?variance ?epsilon t] is
+(** [standardize ?axes ?mean ?variance ?epsilon t] is
     [(t - mean) / sqrt(variance + epsilon)]. When [mean] or [variance] are
     omitted, they are computed along [axes] (default all). [epsilon] defaults to
-    [1e-5]. [out] defaults to a fresh allocation. *)
+    [1e-5]. *)
 
-val erf : ?out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [erf ?out t] is the error function [erf(x) = (2/√π) ∫₀ˣ e^{-u²} du]. [out]
-    defaults to a fresh allocation.
+val erf : ('a, 'b) t -> ('a, 'b) t
+(** [erf t] is the error function [erf(x) = (2/√π) ∫₀ˣ e^{-u²} du].
 
     {@ocaml[
       # erf (scalar float32 0.) |> item []

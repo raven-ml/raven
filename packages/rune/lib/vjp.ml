@@ -79,20 +79,16 @@ let make_handler tape seed_output =
       | E_threefry { key; ctr } ->
           Some
             (fun k ->
-              let res =
-                let out = buffer (context ctr) (dtype ctr) (T.shape ctr) in
-                threefry ~out key ctr;
-                out
-              in
+              let res = threefry key ctr in
               let fwd = continue k res in
               let _ = get_or_init res in
               fwd)
       (* Binary Arithmetic *)
-      | E_add { out; a; b } ->
+      | E_add { a; b } ->
           Some
             (fun k ->
-              add ~out a b;
-              let fwd = continue k () in
+              let out = add a b in
+              let fwd = continue k out in
               let twg_a = get_or_init a in
               let twg_b = get_or_init b in
               let twg_out = get_or_init out in
@@ -102,11 +98,11 @@ let make_handler tape seed_output =
               twg_b.grad <-
                 T.add twg_b.grad (Autodiff.unbroadcast_grad g (T.shape b));
               fwd)
-      | E_sub { out; a; b } ->
+      | E_sub { a; b } ->
           Some
             (fun k ->
-              sub ~out a b;
-              let fwd = continue k () in
+              let out = sub a b in
+              let fwd = continue k out in
               let twg_a = get_or_init a in
               let twg_b = get_or_init b in
               let twg_out = get_or_init out in
@@ -117,11 +113,11 @@ let make_handler tape seed_output =
                 T.add twg_b.grad
                   (Autodiff.unbroadcast_grad (T.neg g) (T.shape b));
               fwd)
-      | E_mul { out; a; b } ->
+      | E_mul { a; b } ->
           Some
             (fun k ->
-              mul ~out a b;
-              let fwd = continue k () in
+              let out = mul a b in
+              let fwd = continue k out in
               let twg_a = get_or_init a in
               let twg_b = get_or_init b in
               let twg_out = get_or_init out in
@@ -133,11 +129,11 @@ let make_handler tape seed_output =
                 T.add twg_b.grad
                   (Autodiff.unbroadcast_grad (T.mul g a) (T.shape b));
               fwd)
-      | E_fdiv { out; a; b } ->
+      | E_fdiv { a; b } ->
           Some
             (fun k ->
-              div ~out a b;
-              let fwd = continue k () in
+              let out = div a b in
+              let fwd = continue k out in
               let twg_a = get_or_init a in
               let twg_b = get_or_init b in
               let twg_out = get_or_init out in
@@ -149,11 +145,11 @@ let make_handler tape seed_output =
               twg_b.grad <-
                 T.add twg_b.grad (Autodiff.unbroadcast_grad gb (T.shape b));
               fwd)
-      | E_pow { out; a; b } ->
+      | E_pow { a; b } ->
           Some
             (fun k ->
-              pow ~out a b;
-              let fwd = continue k () in
+              let out = pow a b in
+              let fwd = continue k out in
               let twg_a = get_or_init a in
               let twg_b = get_or_init b in
               let twg_out = get_or_init out in
@@ -165,11 +161,11 @@ let make_handler tape seed_output =
               twg_b.grad <-
                 T.add twg_b.grad (Autodiff.unbroadcast_grad gb (T.shape b));
               fwd)
-      | E_max { out; a; b } ->
+      | E_max { a; b } ->
           Some
             (fun k ->
-              max ~out a b;
-              let fwd = continue k () in
+              let out = max a b in
+              let fwd = continue k out in
               let twg_a = get_or_init a in
               let twg_b = get_or_init b in
               let twg_out = get_or_init out in
@@ -183,11 +179,11 @@ let make_handler tape seed_output =
               twg_b.grad <-
                 T.add twg_b.grad (Autodiff.unbroadcast_grad gb (T.shape b));
               fwd)
-      | E_min { out; a; b } ->
+      | E_min { a; b } ->
           Some
             (fun k ->
-              min ~out a b;
-              let fwd = continue k () in
+              let out = min a b in
+              let fwd = continue k out in
               let twg_a = get_or_init a in
               let twg_b = get_or_init b in
               let twg_out = get_or_init out in
@@ -201,11 +197,11 @@ let make_handler tape seed_output =
               twg_b.grad <-
                 T.add twg_b.grad (Autodiff.unbroadcast_grad gb (T.shape b));
               fwd)
-      | E_atan2 { out; a; b } ->
+      | E_atan2 { a; b } ->
           Some
             (fun k ->
-              atan2 ~out a b;
-              let fwd = continue k () in
+              let out = atan2 a b in
+              let fwd = continue k out in
               let twg_a = get_or_init a in
               let twg_b = get_or_init b in
               let twg_out = get_or_init out in
@@ -219,196 +215,196 @@ let make_handler tape seed_output =
                 T.add twg_b.grad (Autodiff.unbroadcast_grad gb (T.shape b));
               fwd)
       (* Unary Arithmetic *)
-      | E_neg { out; t_in } ->
+      | E_neg { t_in } ->
           Some
             (fun k ->
-              neg ~out t_in;
-              let fwd = continue k () in
+              let out = neg t_in in
+              let fwd = continue k out in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
               twg_in.grad <- T.add twg_in.grad (T.neg twg_out.grad);
               fwd)
-      | E_sin { out; t_in } ->
+      | E_sin { t_in } ->
           Some
             (fun k ->
-              sin ~out t_in;
-              let fwd = continue k () in
+              let out = sin t_in in
+              let fwd = continue k out in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
               let g = T.mul twg_out.grad (Autodiff.deriv_sin t_in) in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
-      | E_cos { out; t_in } ->
+      | E_cos { t_in } ->
           Some
             (fun k ->
-              cos ~out t_in;
-              let fwd = continue k () in
+              let out = cos t_in in
+              let fwd = continue k out in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
               let g = T.mul twg_out.grad (T.neg (T.sin t_in)) in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
-      | E_log { out; t_in } ->
+      | E_log { t_in } ->
           Some
             (fun k ->
-              log ~out t_in;
-              let fwd = continue k () in
+              let out = log t_in in
+              let fwd = continue k out in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
               let g = T.mul twg_out.grad (T.recip t_in) in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
-      | E_exp { out; t_in } ->
+      | E_exp { t_in } ->
           Some
             (fun k ->
-              exp ~out t_in;
-              let fwd = continue k () in
+              let out = exp t_in in
+              let fwd = continue k out in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
               let g = T.mul twg_out.grad out in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
-      | E_sqrt { out; t_in } ->
+      | E_sqrt { t_in } ->
           Some
             (fun k ->
-              sqrt ~out t_in;
-              let fwd = continue k () in
+              let out = sqrt t_in in
+              let fwd = continue k out in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
               let g = T.mul twg_out.grad (Autodiff.deriv_sqrt out) in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
-      | E_recip { out; t_in } ->
+      | E_recip { t_in } ->
           Some
             (fun k ->
-              recip ~out t_in;
-              let fwd = continue k () in
+              let out = recip t_in in
+              let fwd = continue k out in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
               let g = T.mul twg_out.grad (Autodiff.deriv_recip t_in) in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
-      | E_abs { out; t_in } ->
+      | E_abs { t_in } ->
           Some
             (fun k ->
-              abs ~out t_in;
-              let fwd = continue k () in
+              let out = abs t_in in
+              let fwd = continue k out in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
               let g = T.mul twg_out.grad (T.sign t_in) in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
-      | E_sign { out; t_in } ->
+      | E_sign { t_in } ->
           Some
             (fun k ->
-              sign ~out t_in;
-              let fwd = continue k () in
+              let out = sign t_in in
+              let fwd = continue k out in
               let _ = get_or_init out in
               fwd)
-      | E_tan { out; t_in } ->
+      | E_tan { t_in } ->
           Some
             (fun k ->
-              tan ~out t_in;
-              let fwd = continue k () in
+              let out = tan t_in in
+              let fwd = continue k out in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
               let g = T.mul twg_out.grad (Autodiff.deriv_tan t_in) in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
-      | E_asin { out; t_in } ->
+      | E_asin { t_in } ->
           Some
             (fun k ->
-              asin ~out t_in;
-              let fwd = continue k () in
+              let out = asin t_in in
+              let fwd = continue k out in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
               let g = T.mul twg_out.grad (Autodiff.deriv_asin t_in) in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
-      | E_acos { out; t_in } ->
+      | E_acos { t_in } ->
           Some
             (fun k ->
-              acos ~out t_in;
-              let fwd = continue k () in
+              let out = acos t_in in
+              let fwd = continue k out in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
               let g = T.mul twg_out.grad (Autodiff.deriv_acos t_in) in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
-      | E_atan { out; t_in } ->
+      | E_atan { t_in } ->
           Some
             (fun k ->
-              atan ~out t_in;
-              let fwd = continue k () in
+              let out = atan t_in in
+              let fwd = continue k out in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
               let g = T.mul twg_out.grad (Autodiff.deriv_atan t_in) in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
-      | E_sinh { out; t_in } ->
+      | E_sinh { t_in } ->
           Some
             (fun k ->
-              sinh ~out t_in;
-              let fwd = continue k () in
+              let out = sinh t_in in
+              let fwd = continue k out in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
               let g = T.mul twg_out.grad (T.cosh t_in) in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
-      | E_cosh { out; t_in } ->
+      | E_cosh { t_in } ->
           Some
             (fun k ->
-              cosh ~out t_in;
-              let fwd = continue k () in
+              let out = cosh t_in in
+              let fwd = continue k out in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
               let g = T.mul twg_out.grad (T.sinh t_in) in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
-      | E_tanh { out; t_in } ->
+      | E_tanh { t_in } ->
           Some
             (fun k ->
-              tanh ~out t_in;
-              let fwd = continue k () in
+              let out = tanh t_in in
+              let fwd = continue k out in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
               let one = T.ones_like out in
               let g = T.mul twg_out.grad (T.sub one (T.mul out out)) in
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
-      | E_trunc { out; t_in } ->
+      | E_trunc { t_in } ->
           Some
             (fun k ->
-              trunc ~out t_in;
-              let fwd = continue k () in
+              let out = trunc t_in in
+              let fwd = continue k out in
               let _ = get_or_init out in
               fwd)
-      | E_ceil { out; t_in } ->
+      | E_ceil { t_in } ->
           Some
             (fun k ->
-              ceil ~out t_in;
-              let fwd = continue k () in
+              let out = ceil t_in in
+              let fwd = continue k out in
               let _ = get_or_init out in
               fwd)
-      | E_floor { out; t_in } ->
+      | E_floor { t_in } ->
           Some
             (fun k ->
-              floor ~out t_in;
-              let fwd = continue k () in
+              let out = floor t_in in
+              let fwd = continue k out in
               let _ = get_or_init out in
               fwd)
-      | E_round { out; t_in } ->
+      | E_round { t_in } ->
           Some
             (fun k ->
-              round ~out t_in;
-              let fwd = continue k () in
+              let out = round t_in in
+              let fwd = continue k out in
               let _ = get_or_init out in
               fwd)
-      | E_erf { out; t_in } ->
+      | E_erf { t_in } ->
           Some
             (fun k ->
-              erf ~out t_in;
-              let fwd = continue k () in
+              let out = erf t_in in
+              let fwd = continue k out in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
               let g = T.mul twg_out.grad (Autodiff.deriv_erf t_in) in
@@ -495,22 +491,7 @@ let make_handler tape seed_output =
       | E_cat { t_list; axis } ->
           Some
             (fun k ->
-              let res =
-                match t_list with
-                | [] -> failwith "cat: empty tensor list"
-                | first :: _ ->
-                    let first_shape = T.shape first in
-                    let rank = Array.length first_shape in
-                    let axis = if axis < 0 then axis + rank else axis in
-                    let out_shape = Array.copy first_shape in
-                    out_shape.(axis) <-
-                      List.fold_left
-                        (fun acc t -> acc + (T.shape t).(axis))
-                        0 t_list;
-                    let out = buffer (context first) (dtype first) out_shape in
-                    cat ~out t_list ~axis;
-                    out
-              in
+              let res = cat t_list ~axis in
               let fwd = continue k res in
               let twg_res = get_or_init res in
               let g = twg_res.grad in
@@ -529,11 +510,11 @@ let make_handler tape seed_output =
                 t_list;
               fwd)
       (* Reductions *)
-      | E_reduce_sum { out; t_in; axes; keepdims } ->
+      | E_reduce_sum { t_in; axes; keepdims } ->
           Some
             (fun k ->
-              reduce_sum ~out ~axes ~keepdims t_in;
-              let fwd = continue k () in
+              let out = reduce_sum ~axes ~keepdims t_in in
+              let fwd = continue k out in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
               let g =
@@ -548,11 +529,11 @@ let make_handler tape seed_output =
               let g_bc = T.broadcast_to (T.shape t_in) g in
               twg_in.grad <- T.add twg_in.grad g_bc;
               fwd)
-      | E_reduce_max { out; t_in; axes; keepdims } ->
+      | E_reduce_max { t_in; axes; keepdims } ->
           Some
             (fun k ->
-              reduce_max ~out ~axes ~keepdims t_in;
-              let fwd = continue k () in
+              let out = reduce_max ~axes ~keepdims t_in in
+              let fwd = continue k out in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
               let shape_in = T.shape t_in in
@@ -576,11 +557,11 @@ let make_handler tape seed_output =
               let mask = T.cast (dtype out) (T.equal t_in out_bc) in
               twg_in.grad <- T.add twg_in.grad (T.mul g_bc mask);
               fwd)
-      | E_reduce_min { out; t_in; axes; keepdims } ->
+      | E_reduce_min { t_in; axes; keepdims } ->
           Some
             (fun k ->
-              reduce_min ~out ~axes ~keepdims t_in;
-              let fwd = continue k () in
+              let out = reduce_min ~axes ~keepdims t_in in
+              let fwd = continue k out in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
               let shape_in = T.shape t_in in
@@ -604,40 +585,40 @@ let make_handler tape seed_output =
               let mask = T.cast (dtype out) (T.equal t_in out_bc) in
               twg_in.grad <- T.add twg_in.grad (T.mul g_bc mask);
               fwd)
-      | E_argmax { out; t_in; axis; keepdims } ->
+      | E_argmax { t_in; axis; keepdims } ->
           Some
             (fun k ->
-              argmax ~out ~axis ~keepdims t_in;
-              let fwd = continue k () in
+              let out = argmax ~axis ~keepdims t_in in
+              let fwd = continue k out in
               let _ = get_or_init out in
               fwd)
-      | E_argmin { out; t_in; axis; keepdims } ->
+      | E_argmin { t_in; axis; keepdims } ->
           Some
             (fun k ->
-              argmin ~out ~axis ~keepdims t_in;
-              let fwd = continue k () in
+              let out = argmin ~axis ~keepdims t_in in
+              let fwd = continue k out in
               let _ = get_or_init out in
               fwd)
-      | E_sort { out; t_in; axis; descending } ->
+      | E_sort { t_in; axis; descending } ->
           Some
             (fun k ->
-              sort ~out ~axis ~descending t_in;
-              let fwd = continue k () in
+              let out = sort ~axis ~descending t_in in
+              let fwd = continue k out in
               let _ = get_or_init out in
               fwd)
-      | E_argsort { out; t_in; axis; descending } ->
+      | E_argsort { t_in; axis; descending } ->
           Some
             (fun k ->
-              argsort ~out ~axis ~descending t_in;
-              let fwd = continue k () in
+              let out = argsort ~axis ~descending t_in in
+              let fwd = continue k out in
               let _ = get_or_init out in
               fwd)
       (* Matrix Operations *)
-      | E_matmul { out; a; b } ->
+      | E_matmul { a; b } ->
           Some
             (fun k ->
-              matmul ~out a b;
-              let fwd = continue k () in
+              let out = matmul a b in
+              let fwd = continue k out in
               let twg_a = get_or_init a in
               let twg_b = get_or_init b in
               let twg_out = get_or_init out in
@@ -693,11 +674,11 @@ let make_handler tape seed_output =
               twg_b.grad <- T.add twg_b.grad grad_b;
               fwd)
       (* Selection *)
-      | E_where { out; condition; if_true; if_false } ->
+      | E_where { condition; if_true; if_false } ->
           Some
             (fun k ->
-              where ~out condition if_true if_false;
-              let fwd = continue k () in
+              let out = where condition if_true if_false in
+              let fwd = continue k out in
               let twg_t = get_or_init if_true in
               let twg_f = get_or_init if_false in
               let twg_out = get_or_init out in
@@ -708,41 +689,41 @@ let make_handler tape seed_output =
               twg_f.grad <- T.add twg_f.grad (T.mul g inv_mask);
               fwd)
       (* Comparisons (no gradient) *)
-      | E_cmplt { out; a; b } ->
+      | E_cmplt { a; b } ->
           Some
             (fun k ->
-              cmplt ~out a b;
-              continue k ())
-      | E_cmpne { out; a; b } ->
+              let out = cmplt a b in
+              continue k out)
+      | E_cmpne { a; b } ->
           Some
             (fun k ->
-              cmpne ~out a b;
-              continue k ())
-      | E_cmpeq { out; a; b } ->
+              let out = cmpne a b in
+              continue k out)
+      | E_cmpeq { a; b } ->
           Some
             (fun k ->
-              cmpeq ~out a b;
-              continue k ())
-      | E_cmple { out; a; b } ->
+              let out = cmpeq a b in
+              continue k out)
+      | E_cmple { a; b } ->
           Some
             (fun k ->
-              cmple ~out a b;
-              continue k ())
-      | E_xor { out; a; b } ->
+              let out = cmple a b in
+              continue k out)
+      | E_xor { a; b } ->
           Some
             (fun k ->
-              xor ~out a b;
-              continue k ())
-      | E_or { out; a; b } ->
+              let out = xor a b in
+              continue k out)
+      | E_or { a; b } ->
           Some
             (fun k ->
-              or_ ~out a b;
-              continue k ())
-      | E_and { out; a; b } ->
+              let out = or_ a b in
+              continue k out)
+      | E_and { a; b } ->
           Some
             (fun k ->
-              and_ ~out a b;
-              continue k ())
+              let out = and_ a b in
+              continue k out)
       (* Other *)
       | E_copy { t_in } ->
           Some
@@ -762,23 +743,17 @@ let make_handler tape seed_output =
               let twg_res = get_or_init res in
               twg_in.grad <- T.add twg_in.grad twg_res.grad;
               fwd)
-      | E_assign { dst; src } ->
+      | E_assign _ ->
           Some
-            (fun k ->
-              assign dst src;
-              let fwd = continue k () in
-              let twg_src = get_or_init src in
-              let twg_dst = get_or_init dst in
-              twg_src.grad <- T.add twg_src.grad twg_dst.grad;
-              fwd)
+            (fun _k ->
+              invalid_arg
+                "in-place mutation (set_item, set_slice, blit, assign) \
+                 cannot be used inside grad/value_and_grad — use scatter \
+                 instead")
       | E_cast { t_in; target_dtype } ->
           Some
             (fun k ->
-              let res =
-                let out = buffer (context t_in) target_dtype (T.shape t_in) in
-                cast ~out t_in;
-                out
-              in
+              let res = cast ~dtype:target_dtype t_in in
               let fwd = continue k res in
               let twg_in = get_or_init t_in in
               let twg_res = get_or_init res in
@@ -786,11 +761,11 @@ let make_handler tape seed_output =
               twg_in.grad <- T.add twg_in.grad g;
               fwd)
       (* Reduce Prod *)
-      | E_reduce_prod { out; t_in; axes; keepdims } ->
+      | E_reduce_prod { t_in; axes; keepdims } ->
           Some
             (fun k ->
-              reduce_prod ~out ~axes ~keepdims t_in;
-              let fwd = continue k () in
+              let out = reduce_prod ~axes ~keepdims t_in in
+              let fwd = continue k out in
               let twg_in = get_or_init t_in in
               let twg_out = get_or_init out in
               let shape_in = T.shape t_in in
@@ -821,11 +796,7 @@ let make_handler tape seed_output =
       | E_associative_scan { t_in; axis; op } ->
           Some
             (fun k ->
-              let res =
-                let out = buffer (context t_in) (dtype t_in) (T.shape t_in) in
-                associative_scan ~out ~axis ~op t_in;
-                out
-              in
+              let res = associative_scan ~axis ~op t_in in
               let fwd = continue k res in
               let twg_in = get_or_init t_in in
               let twg_res = get_or_init res in
@@ -951,13 +922,7 @@ let make_handler tape seed_output =
       | E_gather { data; indices; axis } ->
           Some
             (fun k ->
-              let res =
-                let out =
-                  buffer (context data) (dtype data) (T.shape indices)
-                in
-                gather ~out data indices ~axis;
-                out
-              in
+              let res = gather data indices ~axis in
               let fwd = continue k res in
               let twg_data = get_or_init data in
               let _ = get_or_init indices in
@@ -980,11 +945,7 @@ let make_handler tape seed_output =
               let _ = get_or_init indices in
               let twg_res = get_or_init res in
               let g = twg_res.grad in
-              let grad_upd =
-                let out = buffer (context g) (dtype g) (T.shape indices) in
-                gather ~out g indices ~axis;
-                out
-              in
+              let grad_upd = gather g indices ~axis in
               twg_upd.grad <- T.add twg_upd.grad grad_upd;
               let mask =
                 scatter

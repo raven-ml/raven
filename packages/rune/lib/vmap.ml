@@ -582,17 +582,9 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                       let result = copy t_in in
                       continue k result
                   | Some p ->
-                      (* Compute output shape by removing axis p *)
-                      let in_shape = phys_shape_of t_in in
-                      let out_shape =
-                        in_shape |> Array.to_list
-                        |> List.filteri (fun i _ -> i <> p)
-                        |> Array.of_list
+                      let result =
+                        reduce_sum ~axes:[| p |] ~keepdims:false t_in
                       in
-                      (* Allocate output tensor *)
-                      let dt = dtype t_in in
-                      let result = T.empty dt out_shape in
-                      reduce_sum ~out:result ~axes:[| p |] ~keepdims:false t_in;
                       (* Update bdim mappings: current level removed; others
                          after p shift left *)
                       PhysicalTbl.set_bdim env.shared result ~level:env.level
@@ -684,7 +676,7 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                     ~bdim:None;
                   continue k result)
           (* Binary operations - handle broadcasting *)
-          | E_add { out; a; b } ->
+          | E_add { a; b } ->
               Some
                 (fun k ->
                   let a =
@@ -742,12 +734,12 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                   let target_phys = Array.append target_pref target_log in
                   let a'' = broadcast_to_canonical a' target_phys in
                   let b'' = broadcast_to_canonical b' target_phys in
-                  add ~out a'' b'';
+                  let out = add a'' b'' in
                   (* Set result bdim based on whether any input was batched *)
                   set_bdim out
                     (match (ba, bb) with None, None -> None | _ -> Some p);
-                  continue k ())
-          | E_mul { out; a; b } ->
+                  continue k out)
+          | E_mul { a; b } ->
               Some
                 (fun k ->
                   let a =
@@ -801,11 +793,11 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                   let target_phys = Array.append target_pref target_log in
                   let a'' = broadcast_to_canonical a' target_phys in
                   let b'' = broadcast_to_canonical b' target_phys in
-                  mul ~out a'' b'';
+                  let out = mul a'' b'' in
                   set_bdim out
                     (match (ba, bb) with None, None -> None | _ -> Some p);
-                  continue k ())
-          | E_fdiv { out; a; b } ->
+                  continue k out)
+          | E_fdiv { a; b } ->
               Some
                 (fun k ->
                   let a, b = unify_outer_bdims a b in
@@ -821,11 +813,11 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                     if ba = None && bb = None then (a, b)
                     else (align_to p a, align_to p b)
                   in
-                  div ~out a' b';
+                  let out = div a' b' in
                   set_bdim out
                     (match (ba, bb) with None, None -> None | _ -> Some p);
-                  continue k ())
-          | E_idiv { out; a; b } ->
+                  continue k out)
+          | E_idiv { a; b } ->
               Some
                 (fun k ->
                   let a, b = unify_outer_bdims a b in
@@ -841,11 +833,11 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                     if ba = None && bb = None then (a, b)
                     else (align_to p a, align_to p b)
                   in
-                  div ~out a' b';
+                  let out = div a' b' in
                   set_bdim out
                     (match (ba, bb) with None, None -> None | _ -> Some p);
-                  continue k ())
-          | E_max { out; a; b } ->
+                  continue k out)
+          | E_max { a; b } ->
               Some
                 (fun k ->
                   let a, b = unify_outer_bdims a b in
@@ -861,11 +853,11 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                     if ba = None && bb = None then (a, b)
                     else (align_to p a, align_to p b)
                   in
-                  max ~out a' b';
+                  let out = max a' b' in
                   set_bdim out
                     (match (ba, bb) with None, None -> None | _ -> Some p);
-                  continue k ())
-          | E_mod { out; a; b } ->
+                  continue k out)
+          | E_mod { a; b } ->
               Some
                 (fun k ->
                   let a, b = unify_outer_bdims a b in
@@ -881,11 +873,11 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                     if ba = None && bb = None then (a, b)
                     else (align_to p a, align_to p b)
                   in
-                  mod_ ~out a' b';
+                  let out = mod_ a' b' in
                   set_bdim out
                     (match (ba, bb) with None, None -> None | _ -> Some p);
-                  continue k ())
-          | E_pow { out; a; b } ->
+                  continue k out)
+          | E_pow { a; b } ->
               Some
                 (fun k ->
                   let a, b = unify_outer_bdims a b in
@@ -901,11 +893,11 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                     if ba = None && bb = None then (a, b)
                     else (align_to p a, align_to p b)
                   in
-                  pow ~out a' b';
+                  let out = pow a' b' in
                   set_bdim out
                     (match (ba, bb) with None, None -> None | _ -> Some p);
-                  continue k ())
-          | E_xor { out; a; b } ->
+                  continue k out)
+          | E_xor { a; b } ->
               Some
                 (fun k ->
                   let a, b = unify_outer_bdims a b in
@@ -921,11 +913,11 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                     if ba = None && bb = None then (a, b)
                     else (align_to p a, align_to p b)
                   in
-                  xor ~out a' b';
+                  let out = xor a' b' in
                   set_bdim out
                     (match (ba, bb) with None, None -> None | _ -> Some p);
-                  continue k ())
-          | E_or { out; a; b } ->
+                  continue k out)
+          | E_or { a; b } ->
               Some
                 (fun k ->
                   let a, b = unify_outer_bdims a b in
@@ -941,11 +933,11 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                     if ba = None && bb = None then (a, b)
                     else (align_to p a, align_to p b)
                   in
-                  or_ ~out a' b';
+                  let out = or_ a' b' in
                   set_bdim out
                     (match (ba, bb) with None, None -> None | _ -> Some p);
-                  continue k ())
-          | E_and { out; a; b } ->
+                  continue k out)
+          | E_and { a; b } ->
               Some
                 (fun k ->
                   let a, b = unify_outer_bdims a b in
@@ -961,12 +953,12 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                     if ba = None && bb = None then (a, b)
                     else (align_to p a, align_to p b)
                   in
-                  and_ ~out a' b';
+                  let out = and_ a' b' in
                   set_bdim out
                     (match (ba, bb) with None, None -> None | _ -> Some p);
-                  continue k ())
+                  continue k out)
           (* Comparison operations *)
-          | E_cmplt { out; a; b } ->
+          | E_cmplt { a; b } ->
               Some
                 (fun k ->
                   let ba = get_bdim a and bb = get_bdim b in
@@ -981,11 +973,11 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                     if ba = None && bb = None then (a, b)
                     else (align_to p a, align_to p b)
                   in
-                  cmplt ~out a' b';
+                  let out = cmplt a' b' in
                   set_bdim out
                     (match (ba, bb) with None, None -> None | _ -> Some p);
-                  continue k ())
-          | E_cmpne { out; a; b } ->
+                  continue k out)
+          | E_cmpne { a; b } ->
               Some
                 (fun k ->
                   let ba = get_bdim a and bb = get_bdim b in
@@ -1000,11 +992,11 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                     if ba = None && bb = None then (a, b)
                     else (align_to p a, align_to p b)
                   in
-                  cmpne ~out a' b';
+                  let out = cmpne a' b' in
                   set_bdim out
                     (match (ba, bb) with None, None -> None | _ -> Some p);
-                  continue k ())
-          | E_cmpeq { out; a; b } ->
+                  continue k out)
+          | E_cmpeq { a; b } ->
               Some
                 (fun k ->
                   let ba = get_bdim a and bb = get_bdim b in
@@ -1019,11 +1011,11 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                     if ba = None && bb = None then (a, b)
                     else (align_to p a, align_to p b)
                   in
-                  cmpeq ~out a' b';
+                  let out = cmpeq a' b' in
                   set_bdim out
                     (match (ba, bb) with None, None -> None | _ -> Some p);
-                  continue k ())
-          | E_cmple { out; a; b } ->
+                  continue k out)
+          | E_cmple { a; b } ->
               Some
                 (fun k ->
                   let ba = get_bdim a and bb = get_bdim b in
@@ -1038,47 +1030,47 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                     if ba = None && bb = None then (a, b)
                     else (align_to p a, align_to p b)
                   in
-                  cmple ~out a' b';
+                  let out = cmple a' b' in
                   set_bdim out
                     (match (ba, bb) with None, None -> None | _ -> Some p);
-                  continue k ())
+                  continue k out)
           (* Unary operations - preserve batch status *)
-          | E_neg { out; t_in } ->
+          | E_neg { t_in } ->
               Some
                 (fun k ->
-                  neg ~out t_in;
+                  let out = neg t_in in
                   set_bdim out (get_bdim t_in);
-                  continue k ())
-          | E_sin { out; t_in } ->
+                  continue k out)
+          | E_sin { t_in } ->
               Some
                 (fun k ->
-                  sin ~out t_in;
+                  let out = sin t_in in
                   set_bdim out (get_bdim t_in);
-                  continue k ())
-          | E_sqrt { out; t_in } ->
+                  continue k out)
+          | E_sqrt { t_in } ->
               Some
                 (fun k ->
-                  sqrt ~out t_in;
+                  let out = sqrt t_in in
                   set_bdim out (get_bdim t_in);
-                  continue k ())
-          | E_recip { out; t_in } ->
+                  continue k out)
+          | E_recip { t_in } ->
               Some
                 (fun k ->
-                  recip ~out t_in;
+                  let out = recip t_in in
                   set_bdim out (get_bdim t_in);
-                  continue k ())
+                  continue k out)
           (* Reduction operations with correct axes adjustment *)
-          | E_reduce_sum { out; t_in; axes; keepdims } ->
+          | E_reduce_sum { t_in; axes; keepdims } ->
               Some
                 (fun k ->
                   match get_bdim t_in with
                   | None ->
-                      reduce_sum ~out ~axes ~keepdims t_in;
+                      let out = reduce_sum ~axes ~keepdims t_in in
                       set_bdim out None;
-                      continue k ()
+                      continue k out
                   | Some p ->
                       let adjusted_axes = Array.map (phys_axis ~bdim:p) axes in
-                      reduce_sum ~out ~axes:adjusted_axes ~keepdims t_in;
+                      let out = reduce_sum ~axes:adjusted_axes ~keepdims t_in in
                       (* Update bdim based on axes removed *)
                       let new_p =
                         if keepdims then Some p
@@ -1091,18 +1083,18 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                           Some (p - num_removed_before_p)
                       in
                       set_bdim out new_p;
-                      continue k ())
-          | E_reduce_max { out; t_in; axes; keepdims } ->
+                      continue k out)
+          | E_reduce_max { t_in; axes; keepdims } ->
               Some
                 (fun k ->
                   match get_bdim t_in with
                   | None ->
-                      reduce_max ~out ~axes ~keepdims t_in;
+                      let out = reduce_max ~axes ~keepdims t_in in
                       set_bdim out None;
-                      continue k ()
+                      continue k out
                   | Some p ->
                       let adjusted_axes = Array.map (phys_axis ~bdim:p) axes in
-                      reduce_max ~out ~axes:adjusted_axes ~keepdims t_in;
+                      let out = reduce_max ~axes:adjusted_axes ~keepdims t_in in
                       let new_p =
                         if keepdims then Some p
                         else
@@ -1114,18 +1106,20 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                           Some (p - num_removed_before_p)
                       in
                       set_bdim out new_p;
-                      continue k ())
-          | E_reduce_prod { out; t_in; axes; keepdims } ->
+                      continue k out)
+          | E_reduce_prod { t_in; axes; keepdims } ->
               Some
                 (fun k ->
                   match get_bdim t_in with
                   | None ->
-                      reduce_prod ~out ~axes ~keepdims t_in;
+                      let out = reduce_prod ~axes ~keepdims t_in in
                       set_bdim out None;
-                      continue k ()
+                      continue k out
                   | Some p ->
                       let adjusted_axes = Array.map (phys_axis ~bdim:p) axes in
-                      reduce_prod ~out ~axes:adjusted_axes ~keepdims t_in;
+                      let out =
+                        reduce_prod ~axes:adjusted_axes ~keepdims t_in
+                      in
                       let new_p =
                         if keepdims then Some p
                         else
@@ -1137,7 +1131,7 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                           Some (p - num_removed_before_p)
                       in
                       set_bdim out new_p;
-                      continue k ())
+                      continue k out)
           (* Shape operations - adjust for batch dimension only if batched *)
           | E_reshape { t_in; new_shape } ->
               Some
@@ -1291,7 +1285,7 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                           set_bdim result (Some p);
                           continue k result)
           (* Matrix multiplication *)
-          | E_matmul { out; a; b } ->
+          | E_matmul { a; b } ->
               Some
                 (fun k ->
                   let a = canonicalize_batch_positions a in
@@ -1308,12 +1302,12 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                     if ba = None && bb = None then (a, b)
                     else (align_to p a, align_to p b)
                   in
-                  matmul ~out a' b';
+                  let out = matmul a' b' in
                   set_bdim out
                     (match (ba, bb) with None, None -> None | _ -> Some p);
-                  continue k ())
+                  continue k out)
           (* Where operation *)
-          | E_where { out; condition; if_true; if_false } ->
+          | E_where { condition; if_true; if_false } ->
               Some
                 (fun k ->
                   (* Canonicalize and unify outer batch dims across all three
@@ -1425,20 +1419,14 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                     broadcast_to_canonical if_false' target_phys
                   in
 
-                  where ~out condition'' if_true'' if_false'';
+                  let out = where condition'' if_true'' if_false'' in
                   set_bdim out (if any_batched then Some p else None);
-                  continue k ())
+                  continue k out)
           (* Cast operation *)
           | E_cast { t_in; target_dtype } ->
               Some
                 (fun k ->
-                  let result =
-                    let out =
-                      buffer (context t_in) target_dtype (T.shape t_in)
-                    in
-                    cast ~out t_in;
-                    out
-                  in
+                  let result = cast ~dtype:target_dtype t_in in
                   set_bdim result (get_bdim t_in);
                   continue k result)
           (* Copy operations *)
@@ -1461,13 +1449,7 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                   let bd = get_bdim data and bi = get_bdim indices in
                   match bd with
                   | None ->
-                      let result =
-                        let out =
-                          buffer (context data) (dtype data) (T.shape indices)
-                        in
-                        gather ~out data indices ~axis;
-                        out
-                      in
+                      let result = gather data indices ~axis in
                       set_bdim result bi;
                       continue k result
                   | Some p ->
@@ -1476,13 +1458,7 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                         if Option.is_none bi then align_to p indices
                         else indices
                       in
-                      let result =
-                        let out =
-                          buffer (context data) (dtype data) (T.shape indices')
-                        in
-                        gather ~out data indices' ~axis:adjusted_axis;
-                        out
-                      in
+                      let result = gather data indices' ~axis:adjusted_axis in
                       set_bdim result (Some p);
                       continue k result)
           | E_scatter { data_template; indices; updates; axis } ->
@@ -1521,24 +1497,7 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                   let bdims = List.map get_bdim t_list in
                   let any_batched = List.exists Option.is_some bdims in
                   if not any_batched then (
-                    let result =
-                      match t_list with
-                      | [] -> failwith "cat: empty tensor list"
-                      | first :: _ ->
-                          let first_shape = T.shape first in
-                          let rank = Array.length first_shape in
-                          let axis = if axis < 0 then axis + rank else axis in
-                          let out_shape = Array.copy first_shape in
-                          out_shape.(axis) <-
-                            List.fold_left
-                              (fun acc t -> acc + (T.shape t).(axis))
-                              0 t_list;
-                          let out =
-                            buffer (context first) (dtype first) out_shape
-                          in
-                          cat ~out t_list ~axis;
-                          out
-                    in
+                    let result = cat t_list ~axis in
                     set_bdim result None;
                     continue k result)
                   else
@@ -1558,27 +1517,7 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                     (* Align all tensors to position p *)
                     let t_list' = List.map (fun t -> align_to p t) t_list in
                     let adjusted_axis = phys_axis ~bdim:p axis in
-                    let result =
-                      match t_list' with
-                      | [] -> failwith "cat: empty tensor list"
-                      | first :: _ ->
-                          let first_shape = T.shape first in
-                          let rank = Array.length first_shape in
-                          let axis =
-                            if adjusted_axis < 0 then adjusted_axis + rank
-                            else adjusted_axis
-                          in
-                          let out_shape = Array.copy first_shape in
-                          out_shape.(axis) <-
-                            List.fold_left
-                              (fun acc t -> acc + (T.shape t).(axis))
-                              0 t_list';
-                          let out =
-                            buffer (context first) (dtype first) out_shape
-                          in
-                          cat ~out t_list' ~axis;
-                          out
-                    in
+                    let result = cat t_list' ~axis:adjusted_axis in
                     set_bdim result (Some p);
                     continue k result)
           | E_pad { t_in; padding_config; fill_value } ->
@@ -1644,6 +1583,12 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                       let result = flip t_in adjusted_dims in
                       set_bdim result (Some p);
                       continue k result)
+          | E_assign _ ->
+              Some
+                (fun _k ->
+                  invalid_arg
+                    "in-place mutation (set_item, set_slice, blit, assign) \
+                     cannot be used inside vmap — use scatter instead")
           (* Let other operations pass through *)
           | _ -> None);
   }

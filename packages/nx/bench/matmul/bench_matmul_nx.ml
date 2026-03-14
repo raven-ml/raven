@@ -28,11 +28,7 @@ let add_case (type a b) benches case (dtype : (a, b) Nx.dtype) dtype_label =
   let lhs, rhs = setup_operands dtype case in
   let name = benchmark_name case dtype_label "" in
   let fn () = ignore (Nx.matmul lhs rhs) in
-  benches := Ubench.bench name fn :: !benches;
-  let out = Nx.empty dtype [| case.m; case.n |] in
-  let name_reuse = benchmark_name case dtype_label " reuse" in
-  let fn_reuse () = ignore (Nx.matmul ~out lhs rhs) in
-  benches := Ubench.bench name_reuse fn_reuse :: !benches
+  benches := Ubench.bench name fn :: !benches
 
 let build_benchmarks () =
   let benches = ref [] in

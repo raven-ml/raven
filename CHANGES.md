@@ -25,6 +25,10 @@ All notable changes to this project will be documented in this file.
 
 ### Nx
 
+- Remove `~out` parameter from all backend compute operations. Operations now
+  allocate and return their result instead of writing to a caller-provided
+  buffer. This simplifies the effect system, fixes vmap, and prepares the
+  architecture for JIT compilation.
 - Add `Shape.reduce_output_shape` for computing output shapes after axis
   reduction.
 - Add machine learning examples: PCA, K-Means, DBSCAN, and t-SNE implemented
@@ -40,6 +44,10 @@ All notable changes to this project will be documented in this file.
   `jacfwd` uses forward-mode AD (column-by-column via JVP); `jacrev` uses
   reverse-mode AD (row-by-row via VJP). Prefer `jacfwd` when inputs are smaller
   than outputs, and `jacrev` otherwise.
+- Guard against in-place tensor mutation inside `grad`, `vjp`, `jvp`, and
+  `vmap`. Using `set_item`, `set_slice`, `blit`, or `assign` inside these
+  transformations now raises `Invalid_argument` with a message directing users
+  to use `scatter` instead.
 
 ### Kaun
 

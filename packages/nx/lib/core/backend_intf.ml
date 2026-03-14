@@ -23,7 +23,6 @@
     - Broadcasting inputs to matching shapes before calling binary operations.
     - Promoting dtypes to compatible types before calling operations.
     - Validating parameters (axes in range, shapes compatible, etc.).
-    - Allocating output tensors with the correct shape and dtype.
 
     The backend can assume all inputs are well-formed. It is responsible for:
     - Executing the operation correctly for all supported dtypes.
@@ -32,13 +31,11 @@
 
     {1 Conventions}
 
-    - Binary, unary, reduction, and other compute operations write results to a
-      caller-provided [~out] buffer for memory reuse. The frontend controls all
-      allocation.
+    - All compute operations allocate and return their result. The frontend
+      passes pre-broadcasted, pre-validated inputs and receives the result
+      tensor.
     - Movement operations manipulate view metadata (shape, strides, offset)
-      without copying data when possible.
-    - Operations that must allocate by nature ([copy], [contiguous], [pad],
-      [scatter]) return new tensor handles. *)
+      without copying data when possible. *)
 module type S = sig
   (** {1 Types} *)
 
@@ -75,8 +72,8 @@ module type S = sig
   val buffer : context -> ('a, 'b) Dtype.t -> int array -> ('a, 'b) t
   (** [buffer ctx dtype shape] allocates an uninitialized tensor.
 
-      Contents are undefined. Used internally by the frontend to pre-allocate
-      [~out] buffers before calling operations.
+      Contents are undefined. Used internally by backends to allocate output
+      tensors.
 
       {b Backend must:} return a tensor with the given shape and dtype whose
       view is C-contiguous. *)
@@ -101,279 +98,238 @@ module type S = sig
 
   (** {1 Element-wise Binary Operations}
 
-      {b Frontend guarantees:} [out], [a], and [b] have identical shapes (after
-      broadcasting) and compatible dtypes (after promotion). [out] is
-      C-contiguous and pre-allocated with the correct shape.
+      {b Frontend guarantees:} [a] and [b] have identical shapes (after
+      broadcasting) and compatible dtypes (after promotion).
 
-      {b Backend must:} write exactly [numel] elements to [out], respecting the
-      strides of [a] and [b] (which may be non-contiguous or broadcast).
+      {b Backend must:} allocate a C-contiguous output tensor with the correct
+      shape and write the result.
 
       {2 Arithmetic} *)
 
-  val add : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [add ~out a b] computes [out.{i} <- a.{i} + b.{i}]. *)
+  val add : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [add a b] is the element-wise sum of [a] and [b]. *)
 
-  val sub : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [sub ~out a b] computes [out.{i} <- a.{i} - b.{i}]. *)
+  val sub : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [sub a b] is the element-wise difference of [a] and [b]. *)
 
-  val mul : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [mul ~out a b] computes [out.{i} <- a.{i} * b.{i}]. *)
+  val mul : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [mul a b] is the element-wise product of [a] and [b]. *)
 
-  val div : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [div ~out a b] computes [out.{i} <- a.{i} / b.{i}].
+  val div : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [div a b] is the element-wise quotient of [a] and [b].
 
       Integer dtypes use truncation toward zero (C division). Floating-point
       dtypes use IEEE 754 division. *)
 
-  val mod_ : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [mod_ ~out a b] computes the remainder of [a / b].
+  val mod_ : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [mod_ a b] is the element-wise remainder of [a / b].
 
       Integers use C's [%] operator (truncated division). Floats use [fmod]. The
       sign of the result follows the dividend [a]. *)
 
-  val pow : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [pow ~out base exponent] computes [out.{i} <- base.{i} ^ exponent.{i}]. *)
+  val pow : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [pow base exponent] is the element-wise power [base ^ exponent]. *)
 
-  val atan2 : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [atan2 ~out y x] computes [out.{i} <- atan2(y.{i}, x.{i})].
+  val atan2 : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [atan2 y x] is the element-wise arc tangent of [y / x].
 
       Returns the angle in radians in [(-π, π\]], handling all quadrants. *)
 
   (** {2 Comparison}
 
-      Comparison operations produce boolean tensors.
+      Comparison operations produce boolean tensors. *)
 
-      {b Frontend guarantees:} [out] is a [(bool, bool_elt)] tensor with the
-      same shape as [a] and [b]. *)
+  val cmpeq : ('a, 'b) t -> ('a, 'b) t -> (bool, Dtype.bool_elt) t
+  (** [cmpeq a b] is the element-wise equality test of [a] and [b]. *)
 
-  val cmpeq : out:(bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [cmpeq ~out a b] computes [out.{i} <- (a.{i} = b.{i})]. *)
+  val cmpne : ('a, 'b) t -> ('a, 'b) t -> (bool, Dtype.bool_elt) t
+  (** [cmpne a b] is the element-wise inequality test of [a] and [b]. *)
 
-  val cmpne : out:(bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [cmpne ~out a b] computes [out.{i} <- (a.{i} <> b.{i})]. *)
+  val cmplt : ('a, 'b) t -> ('a, 'b) t -> (bool, Dtype.bool_elt) t
+  (** [cmplt a b] is the element-wise less-than test of [a] and [b]. *)
 
-  val cmplt : out:(bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [cmplt ~out a b] computes [out.{i} <- (a.{i} < b.{i})]. *)
-
-  val cmple : out:(bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [cmple ~out a b] computes [out.{i} <- (a.{i} <= b.{i})]. *)
+  val cmple : ('a, 'b) t -> ('a, 'b) t -> (bool, Dtype.bool_elt) t
+  (** [cmple a b] is the element-wise less-or-equal test of [a] and [b]. *)
 
   (** {2 Min/Max} *)
 
-  val max : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [max ~out a b] computes [out.{i} <- max(a.{i}, b.{i})]. *)
+  val max : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [max a b] is the element-wise maximum of [a] and [b]. *)
 
-  val min : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [min ~out a b] computes [out.{i} <- min(a.{i}, b.{i})]. *)
+  val min : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [min a b] is the element-wise minimum of [a] and [b]. *)
 
   (** {2 Bitwise}
 
       Operate on the binary representation of integer and boolean dtypes. For
       booleans, these are equivalent to logical AND/OR/XOR. *)
 
-  val xor : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [xor ~out a b] computes bitwise XOR. *)
+  val xor : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [xor a b] is the element-wise bitwise XOR of [a] and [b]. *)
 
-  val or_ : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [or_ ~out a b] computes bitwise OR. *)
+  val or_ : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [or_ a b] is the element-wise bitwise OR of [a] and [b]. *)
 
-  val and_ : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [and_ ~out a b] computes bitwise AND. *)
+  val and_ : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [and_ a b] is the element-wise bitwise AND of [a] and [b]. *)
 
   (** {1 Element-wise Unary Operations}
 
-      {b Frontend guarantees:} [out] and [x] have the same shape and dtype.
-      [out] is C-contiguous.
+      {b Frontend guarantees:} [x] has compatible dtype.
 
-      {b Backend must:} write exactly [numel] elements to [out], respecting the
-      strides of [x].
+      {b Backend must:} allocate a C-contiguous output tensor with the correct
+      shape and write the result.
 
       {2 Arithmetic} *)
 
-  val neg : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [neg ~out x] computes [out.{i} <- -x.{i}]. *)
+  val neg : ('a, 'b) t -> ('a, 'b) t
+  (** [neg x] is the element-wise negation of [x]. *)
 
-  val recip : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [recip ~out x] computes [out.{i} <- 1 / x.{i}]. *)
+  val recip : ('a, 'b) t -> ('a, 'b) t
+  (** [recip x] is the element-wise reciprocal of [x]. *)
 
-  val abs : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [abs ~out x] computes [out.{i} <- |x.{i}|]. *)
+  val abs : ('a, 'b) t -> ('a, 'b) t
+  (** [abs x] is the element-wise absolute value of [x]. *)
 
-  val sqrt : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [sqrt ~out x] computes [out.{i} <- √x.{i}]. *)
+  val sqrt : ('a, 'b) t -> ('a, 'b) t
+  (** [sqrt x] is the element-wise square root of [x]. *)
 
-  val sign : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [sign ~out x] computes the sign function: [-1] for negative, [0] for zero,
+  val sign : ('a, 'b) t -> ('a, 'b) t
+  (** [sign x] is the element-wise sign of [x]: [-1] for negative, [0] for zero,
       [1] for positive. Returns NaN for floating-point NaN inputs. *)
 
   (** {2 Exponential and Logarithm} *)
 
-  val exp : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [exp ~out x] computes [out.{i} <- eˣ⁽ⁱ⁾]. *)
+  val exp : ('a, 'b) t -> ('a, 'b) t
+  (** [exp x] is the element-wise exponential of [x]. *)
 
-  val log : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [log ~out x] computes [out.{i} <- ln(x.{i})]. *)
+  val log : ('a, 'b) t -> ('a, 'b) t
+  (** [log x] is the element-wise natural logarithm of [x]. *)
 
   (** {2 Trigonometric}
 
       All inputs are in radians. *)
 
-  val sin : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [sin ~out x] computes [out.{i} <- sin(x.{i})]. *)
+  val sin : ('a, 'b) t -> ('a, 'b) t
+  (** [sin x] is the element-wise sine of [x]. *)
 
-  val cos : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [cos ~out x] computes [out.{i} <- cos(x.{i})]. *)
+  val cos : ('a, 'b) t -> ('a, 'b) t
+  (** [cos x] is the element-wise cosine of [x]. *)
 
-  val tan : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [tan ~out x] computes [out.{i} <- tan(x.{i})]. *)
+  val tan : ('a, 'b) t -> ('a, 'b) t
+  (** [tan x] is the element-wise tangent of [x]. *)
 
-  val asin : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [asin ~out x] computes [out.{i} <- arcsin(x.{i})].
+  val asin : ('a, 'b) t -> ('a, 'b) t
+  (** [asin x] is the element-wise arc sine of [x].
 
       Returns values in [[-π/2, π/2]]. *)
 
-  val acos : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [acos ~out x] computes [out.{i} <- arccos(x.{i})].
+  val acos : ('a, 'b) t -> ('a, 'b) t
+  (** [acos x] is the element-wise arc cosine of [x].
 
       Returns values in [[0, π]]. *)
 
-  val atan : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [atan ~out x] computes [out.{i} <- arctan(x.{i})].
+  val atan : ('a, 'b) t -> ('a, 'b) t
+  (** [atan x] is the element-wise arc tangent of [x].
 
       Returns values in [[-π/2, π/2]]. *)
 
   (** {2 Hyperbolic} *)
 
-  val sinh : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [sinh ~out x] computes [out.{i} <- sinh(x.{i})]. *)
+  val sinh : ('a, 'b) t -> ('a, 'b) t
+  (** [sinh x] is the element-wise hyperbolic sine of [x]. *)
 
-  val cosh : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [cosh ~out x] computes [out.{i} <- cosh(x.{i})]. *)
+  val cosh : ('a, 'b) t -> ('a, 'b) t
+  (** [cosh x] is the element-wise hyperbolic cosine of [x]. *)
 
-  val tanh : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [tanh ~out x] computes [out.{i} <- tanh(x.{i})]. *)
+  val tanh : ('a, 'b) t -> ('a, 'b) t
+  (** [tanh x] is the element-wise hyperbolic tangent of [x]. *)
 
   (** {2 Rounding}
 
       For integer dtypes, all rounding operations are the identity. *)
 
-  val trunc : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [trunc ~out x] rounds toward zero. *)
+  val trunc : ('a, 'b) t -> ('a, 'b) t
+  (** [trunc x] rounds each element toward zero. *)
 
-  val ceil : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [ceil ~out x] rounds toward positive infinity. *)
+  val ceil : ('a, 'b) t -> ('a, 'b) t
+  (** [ceil x] rounds each element toward positive infinity. *)
 
-  val floor : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [floor ~out x] rounds toward negative infinity. *)
+  val floor : ('a, 'b) t -> ('a, 'b) t
+  (** [floor x] rounds each element toward negative infinity. *)
 
-  val round : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [round ~out x] rounds to nearest integer, half away from zero (C's
+  val round : ('a, 'b) t -> ('a, 'b) t
+  (** [round x] rounds each element to nearest integer, half away from zero (C's
       [round]). *)
 
   (** {2 Special Functions} *)
 
-  val erf : out:('a, 'b) t -> ('a, 'b) t -> unit
-  (** [erf ~out x] computes the error function [erf(x) = 2/√π ∫₀ˣ e^(-t²) dt].
-  *)
+  val erf : ('a, 'b) t -> ('a, 'b) t
+  (** [erf x] computes the error function [erf(x) = 2/√π ∫₀ˣ e^(-t²) dt]. *)
 
   (** {1 Ternary Operations} *)
 
-  val where :
-    out:('a, 'b) t ->
-    (bool, Dtype.bool_elt) t ->
-    ('a, 'b) t ->
-    ('a, 'b) t ->
-    unit
-  (** [where ~out cond if_true if_false] selects elements: [if_true.{i}] where
+  val where : (bool, Dtype.bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [where cond if_true if_false] selects elements: [if_true.{i}] where
       [cond.{i}] is true, [if_false.{i}] otherwise.
 
-      {b Frontend guarantees:} all four tensors have identical shapes. [cond] is
-      boolean. [out], [if_true], [if_false] share the same dtype. *)
+      {b Frontend guarantees:} all three input tensors have identical shapes.
+      [cond] is boolean. [if_true] and [if_false] share the same dtype. *)
 
   (** {1 Reduction Operations}
 
       Reductions aggregate values along one or more axes.
 
       {b Frontend guarantees:} [axes] contains valid, non-negative, deduplicated
-      axis indices. [out] is pre-allocated with the correct shape: reduced axes
-      are either removed or kept as size-1 dimensions depending on [keepdims].
+      axis indices. *)
+
+  val reduce_sum : axes:int array -> keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
+  (** [reduce_sum ~axes ~keepdims x] sums elements of [x] along [axes]. *)
+
+  val reduce_prod : axes:int array -> keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
+  (** [reduce_prod ~axes ~keepdims x] multiplies elements of [x] along [axes].
   *)
 
-  val reduce_sum :
-    out:('a, 'b) t -> axes:int array -> keepdims:bool -> ('a, 'b) t -> unit
-  (** [reduce_sum ~out ~axes ~keepdims x] sums elements along [axes]. *)
+  val reduce_max : axes:int array -> keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
+  (** [reduce_max ~axes ~keepdims x] finds the maximum of [x] along [axes]. *)
 
-  val reduce_prod :
-    out:('a, 'b) t -> axes:int array -> keepdims:bool -> ('a, 'b) t -> unit
-  (** [reduce_prod ~out ~axes ~keepdims x] multiplies elements along [axes]. *)
-
-  val reduce_max :
-    out:('a, 'b) t -> axes:int array -> keepdims:bool -> ('a, 'b) t -> unit
-  (** [reduce_max ~out ~axes ~keepdims x] finds maximum along [axes]. *)
-
-  val reduce_min :
-    out:('a, 'b) t -> axes:int array -> keepdims:bool -> ('a, 'b) t -> unit
-  (** [reduce_min ~out ~axes ~keepdims x] finds minimum along [axes]. *)
+  val reduce_min : axes:int array -> keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
+  (** [reduce_min ~axes ~keepdims x] finds the minimum of [x] along [axes]. *)
 
   val argmax :
-    out:(int32, Dtype.int32_elt) t ->
-    axis:int ->
-    keepdims:bool ->
-    ('a, 'b) t ->
-    unit
-  (** [argmax ~out ~axis ~keepdims x] writes int32 indices of maximum values
-      along [axis] to [out]. For ties, returns the first occurrence.
+    axis:int -> keepdims:bool -> ('a, 'b) t -> (int32, Dtype.int32_elt) t
+  (** [argmax ~axis ~keepdims x] returns int32 indices of maximum values of [x]
+      along [axis]. For ties, returns the first occurrence.
 
-      {b Frontend guarantees:} [axis] is valid and non-negative. [out] has the
-      correct reduced shape with int32 dtype. *)
+      {b Frontend guarantees:} [axis] is valid and non-negative. *)
 
   val argmin :
-    out:(int32, Dtype.int32_elt) t ->
-    axis:int ->
-    keepdims:bool ->
-    ('a, 'b) t ->
-    unit
-  (** [argmin ~out ~axis ~keepdims x] writes int32 indices of minimum values
-      along [axis] to [out]. For ties, returns the first occurrence.
+    axis:int -> keepdims:bool -> ('a, 'b) t -> (int32, Dtype.int32_elt) t
+  (** [argmin ~axis ~keepdims x] returns int32 indices of minimum values of [x]
+      along [axis]. For ties, returns the first occurrence.
 
-      {b Frontend guarantees:} [axis] is valid and non-negative. [out] has the
-      correct reduced shape with int32 dtype. *)
+      {b Frontend guarantees:} [axis] is valid and non-negative. *)
 
   val associative_scan :
-    out:('a, 'b) t ->
-    axis:int ->
-    op:[ `Sum | `Prod | `Max | `Min ] ->
-    ('a, 'b) t ->
-    unit
-  (** [associative_scan ~out ~axis ~op x] computes an inclusive prefix scan
+    axis:int -> op:[ `Sum | `Prod | `Max | `Min ] -> ('a, 'b) t -> ('a, 'b) t
+  (** [associative_scan ~axis ~op x] computes an inclusive prefix scan of [x]
       along [axis]. [`Sum] for cumulative sum, [`Prod] for cumulative product,
       [`Max]/[`Min] for running max/min.
 
-      {b Frontend guarantees:} [axis] is valid and non-negative. [out] has the
-      same shape as [x]. *)
+      {b Frontend guarantees:} [axis] is valid and non-negative. *)
 
   (** {1 Sort Operations}
 
-      {b Frontend guarantees:} [axis] is valid and non-negative. [out] is
-      pre-allocated with the correct shape and dtype. *)
+      {b Frontend guarantees:} [axis] is valid and non-negative. *)
 
-  val sort : out:('a, 'b) t -> axis:int -> descending:bool -> ('a, 'b) t -> unit
-  (** [sort ~out ~axis ~descending x] sorts elements along [axis]. NaN values
-      are placed at the end regardless of sort direction.
-
-      {b Frontend guarantees:} [out] has the same shape and dtype as [x]. *)
+  val sort : axis:int -> descending:bool -> ('a, 'b) t -> ('a, 'b) t
+  (** [sort ~axis ~descending x] sorts elements of [x] along [axis]. NaN values
+      are placed at the end regardless of sort direction. *)
 
   val argsort :
-    out:(int32, Dtype.int32_elt) t ->
-    axis:int ->
-    descending:bool ->
-    ('a, 'b) t ->
-    unit
-  (** [argsort ~out ~axis ~descending x] writes int32 indices that would sort
-      elements along [axis] to [out].
-
-      {b Frontend guarantees:} [out] has the same shape as [x] with int32 dtype.
-  *)
+    axis:int -> descending:bool -> ('a, 'b) t -> (int32, Dtype.int32_elt) t
+  (** [argsort ~axis ~descending x] returns int32 indices that would sort
+      elements of [x] along [axis]. *)
 
   (** {1 Movement Operations}
 
@@ -417,23 +373,19 @@ module type S = sig
 
       {b Backend must:} allocate a new buffer and copy data. *)
 
-  val cat : out:('a, 'b) t -> ('a, 'b) t list -> axis:int -> unit
-  (** [cat ~out tensors ~axis] concatenates [tensors] along [axis] into [out].
+  val cat : ('a, 'b) t list -> axis:int -> ('a, 'b) t
+  (** [cat tensors ~axis] concatenates [tensors] along [axis].
 
       {b Frontend guarantees:} all tensors have the same shape except along
-      [axis]. [axis] is valid. The list is non-empty. [out] is pre-allocated
-      with the correct concatenated shape. *)
+      [axis]. [axis] is valid. The list is non-empty. *)
 
   (** {1 Type Conversion and Memory} *)
 
-  val cast : out:('c, 'd) t -> ('a, 'b) t -> unit
-  (** [cast ~out x] converts elements of [x] to the dtype of [out].
+  val cast : dtype:('c, 'd) Dtype.t -> ('a, 'b) t -> ('c, 'd) t
+  (** [cast ~dtype x] converts elements of [x] to [dtype].
 
       Float-to-int truncates toward zero. Int-to-float may lose precision for
-      large values.
-
-      {b Frontend guarantees:} [out] is pre-allocated with the correct shape and
-      target dtype. *)
+      large values. *)
 
   val contiguous : ('a, 'b) t -> ('a, 'b) t
   (** [contiguous t] returns a C-contiguous version of [t].
@@ -460,30 +412,23 @@ module type S = sig
   (** {1 Random Number Generation} *)
 
   val threefry :
-    out:(int32, Dtype.int32_elt) t ->
     (int32, Dtype.int32_elt) t ->
     (int32, Dtype.int32_elt) t ->
-    unit
-  (** [threefry ~out key counter] applies the Threefry-2x32 hash function.
+    (int32, Dtype.int32_elt) t
+  (** [threefry key counter] applies the Threefry-2x32 hash function.
 
       {b Frontend guarantees:} [key] and [counter] are int32 tensors with
-      compatible shapes. [out] is pre-allocated with the same shape as
-      [counter]. *)
+      compatible shapes. *)
 
   (** {1 Indexed Access Operations} *)
 
   val gather :
-    out:('a, 'b) t ->
-    ('a, 'b) t ->
-    (int32, Dtype.int32_elt) t ->
-    axis:int ->
-    unit
-  (** [gather ~out data indices ~axis] selects elements from [data] along [axis]
-      using [indices] and writes them to [out].
+    ('a, 'b) t -> (int32, Dtype.int32_elt) t -> axis:int -> ('a, 'b) t
+  (** [gather data indices ~axis] selects elements from [data] along [axis]
+      using [indices].
 
       {b Frontend guarantees:} [rank data = rank indices]. [axis] is valid.
-      Index values are in range for [data]'s size along [axis]. [out] has the
-      same shape as [indices] and the same dtype as [data]. *)
+      Index values are in range for [data]'s size along [axis]. *)
 
   val scatter :
     ?mode:[ `Set | `Add ] ->
@@ -551,17 +496,16 @@ module type S = sig
 
   (** {1 Matrix Operations} *)
 
-  val matmul : out:('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> unit
-  (** [matmul ~out a b] computes matrix multiplication [a × b].
+  val matmul : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [matmul a b] computes matrix multiplication [a × b].
 
       For 2D inputs: standard matrix multiply. For higher dimensions: batched
       multiply on the last two dimensions, with broadcasting via strides.
 
       {b Frontend guarantees:} [a]'s last dim equals [b]'s second-to-last dim.
-      [out] is C-contiguous with the correct output shape.
 
-      {b Backend must:} write the result to [out]. May use BLAS for performance.
-      [a] and [b] may be non-contiguous. *)
+      {b Backend must:} allocate and return the result. May use BLAS for
+      performance. [a] and [b] may be non-contiguous. *)
 
   (** {1 Fourier Transforms}
 

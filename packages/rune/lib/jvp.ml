@@ -56,36 +56,32 @@ let make_handler dual_map =
       | E_threefry { key; ctr } ->
           Some
             (fun k ->
-              let res =
-                let out = buffer (context ctr) (dtype ctr) (T.shape ctr) in
-                threefry ~out key ctr;
-                out
-              in
+              let res = threefry key ctr in
               register res { primal = res; tangent = T.zeros_like res };
               continue k res)
       (* Binary Arithmetic *)
-      | E_add { out; a; b } ->
+      | E_add { a; b } ->
           Some
             (fun k ->
-              add ~out a b;
+              let out = add a b in
               let da = get_dual a in
               let db = get_dual b in
               let tan = T.add da.tangent db.tangent in
               register out { primal = out; tangent = tan };
-              continue k ())
-      | E_sub { out; a; b } ->
+              continue k out)
+      | E_sub { a; b } ->
           Some
             (fun k ->
-              sub ~out a b;
+              let out = sub a b in
               let da = get_dual a in
               let db = get_dual b in
               let tan = T.sub da.tangent db.tangent in
               register out { primal = out; tangent = tan };
-              continue k ())
-      | E_mul { out; a; b } ->
+              continue k out)
+      | E_mul { a; b } ->
           Some
             (fun k ->
-              mul ~out a b;
+              let out = mul a b in
               let da = get_dual a in
               let db = get_dual b in
               (* d(a*b) = da*b + a*db *)
@@ -93,11 +89,11 @@ let make_handler dual_map =
                 T.add (T.mul da.tangent db.primal) (T.mul da.primal db.tangent)
               in
               register out { primal = out; tangent = tan };
-              continue k ())
-      | E_fdiv { out; a; b } ->
+              continue k out)
+      | E_fdiv { a; b } ->
           Some
             (fun k ->
-              div ~out a b;
+              let out = div a b in
               let da = get_dual a in
               let db = get_dual b in
               (* d(a/b) = da/b - a*db/b^2 *)
@@ -107,11 +103,11 @@ let make_handler dual_map =
               in
               let tan = T.sub term1 term2 in
               register out { primal = out; tangent = tan };
-              continue k ())
-      | E_pow { out; a; b } ->
+              continue k out)
+      | E_pow { a; b } ->
           Some
             (fun k ->
-              pow ~out a b;
+              let out = pow a b in
               let da = get_dual a in
               let db = get_dual b in
               let term1 =
@@ -123,11 +119,11 @@ let make_handler dual_map =
               in
               let tan = T.add term1 term2 in
               register out { primal = out; tangent = tan };
-              continue k ())
-      | E_max { out; a; b } ->
+              continue k out)
+      | E_max { a; b } ->
           Some
             (fun k ->
-              max ~out a b;
+              let out = max a b in
               let da = get_dual a in
               let db = get_dual b in
               let mask_a = T.cast (dtype a) (T.cmpgt a b) in
@@ -136,11 +132,11 @@ let make_handler dual_map =
                 T.add (T.mul da.tangent mask_a) (T.mul db.tangent mask_b)
               in
               register out { primal = out; tangent = tan };
-              continue k ())
-      | E_min { out; a; b } ->
+              continue k out)
+      | E_min { a; b } ->
           Some
             (fun k ->
-              min ~out a b;
+              let out = min a b in
               let da = get_dual a in
               let db = get_dual b in
               let mask_a = T.cast (dtype a) (T.cmplt a b) in
@@ -149,11 +145,11 @@ let make_handler dual_map =
                 T.add (T.mul da.tangent mask_a) (T.mul db.tangent mask_b)
               in
               register out { primal = out; tangent = tan };
-              continue k ())
-      | E_atan2 { out; a; b } ->
+              continue k out)
+      | E_atan2 { a; b } ->
           Some
             (fun k ->
-              atan2 ~out a b;
+              let out = atan2 a b in
               let da = get_dual a in
               let db = get_dual b in
               let denom =
@@ -165,168 +161,168 @@ let make_handler dual_map =
                   (T.mul db.tangent (T.neg (T.div da.primal denom)))
               in
               register out { primal = out; tangent = tan };
-              continue k ())
+              continue k out)
       (* Unary Arithmetic *)
-      | E_neg { out; t_in } ->
+      | E_neg { t_in } ->
           Some
             (fun k ->
-              neg ~out t_in;
+              let out = neg t_in in
               let d = get_dual t_in in
               let tan = T.neg d.tangent in
               register out { primal = out; tangent = tan };
-              continue k ())
-      | E_sin { out; t_in } ->
+              continue k out)
+      | E_sin { t_in } ->
           Some
             (fun k ->
-              sin ~out t_in;
+              let out = sin t_in in
               let d = get_dual t_in in
               let tan = T.mul d.tangent (Autodiff.deriv_sin d.primal) in
               register out { primal = out; tangent = tan };
-              continue k ())
-      | E_cos { out; t_in } ->
+              continue k out)
+      | E_cos { t_in } ->
           Some
             (fun k ->
-              cos ~out t_in;
+              let out = cos t_in in
               let d = get_dual t_in in
               (* d/dx cos(x) = -sin(x) *)
               let tan = T.mul d.tangent (T.neg (T.sin d.primal)) in
               register out { primal = out; tangent = tan };
-              continue k ())
-      | E_log { out; t_in } ->
+              continue k out)
+      | E_log { t_in } ->
           Some
             (fun k ->
-              log ~out t_in;
+              let out = log t_in in
               let d = get_dual t_in in
               let tan = T.mul d.tangent (T.recip d.primal) in
               register out { primal = out; tangent = tan };
-              continue k ())
-      | E_exp { out; t_in } ->
+              continue k out)
+      | E_exp { t_in } ->
           Some
             (fun k ->
-              exp ~out t_in;
+              let out = exp t_in in
               let d = get_dual t_in in
               let tan = T.mul d.tangent out in
               register out { primal = out; tangent = tan };
-              continue k ())
-      | E_sqrt { out; t_in } ->
+              continue k out)
+      | E_sqrt { t_in } ->
           Some
             (fun k ->
-              sqrt ~out t_in;
+              let out = sqrt t_in in
               let d = get_dual t_in in
               let tan = T.mul d.tangent (Autodiff.deriv_sqrt out) in
               register out { primal = out; tangent = tan };
-              continue k ())
-      | E_recip { out; t_in } ->
+              continue k out)
+      | E_recip { t_in } ->
           Some
             (fun k ->
-              recip ~out t_in;
+              let out = recip t_in in
               let d = get_dual t_in in
               let tan = T.mul d.tangent (Autodiff.deriv_recip d.primal) in
               register out { primal = out; tangent = tan };
-              continue k ())
-      | E_abs { out; t_in } ->
+              continue k out)
+      | E_abs { t_in } ->
           Some
             (fun k ->
-              abs ~out t_in;
+              let out = abs t_in in
               let d = get_dual t_in in
               let tan = T.mul d.tangent (T.sign d.primal) in
               register out { primal = out; tangent = tan };
-              continue k ())
-      | E_sign { out; t_in } ->
+              continue k out)
+      | E_sign { t_in } ->
           Some
             (fun k ->
-              sign ~out t_in;
+              let out = sign t_in in
               register out { primal = out; tangent = T.zeros_like out };
-              continue k ())
-      | E_tan { out; t_in } ->
+              continue k out)
+      | E_tan { t_in } ->
           Some
             (fun k ->
-              tan ~out t_in;
+              let out = tan t_in in
               let d = get_dual t_in in
               let tanv = T.mul d.tangent (Autodiff.deriv_tan d.primal) in
               register out { primal = out; tangent = tanv };
-              continue k ())
-      | E_asin { out; t_in } ->
+              continue k out)
+      | E_asin { t_in } ->
           Some
             (fun k ->
-              asin ~out t_in;
+              let out = asin t_in in
               let d = get_dual t_in in
               let tanv = T.mul d.tangent (Autodiff.deriv_asin d.primal) in
               register out { primal = out; tangent = tanv };
-              continue k ())
-      | E_acos { out; t_in } ->
+              continue k out)
+      | E_acos { t_in } ->
           Some
             (fun k ->
-              acos ~out t_in;
+              let out = acos t_in in
               let d = get_dual t_in in
               let tanv = T.mul d.tangent (Autodiff.deriv_acos d.primal) in
               register out { primal = out; tangent = tanv };
-              continue k ())
-      | E_atan { out; t_in } ->
+              continue k out)
+      | E_atan { t_in } ->
           Some
             (fun k ->
-              atan ~out t_in;
+              let out = atan t_in in
               let d = get_dual t_in in
               let tanv = T.mul d.tangent (Autodiff.deriv_atan d.primal) in
               register out { primal = out; tangent = tanv };
-              continue k ())
-      | E_sinh { out; t_in } ->
+              continue k out)
+      | E_sinh { t_in } ->
           Some
             (fun k ->
-              sinh ~out t_in;
+              let out = sinh t_in in
               let d = get_dual t_in in
               let tanv = T.mul d.tangent (T.cosh d.primal) in
               register out { primal = out; tangent = tanv };
-              continue k ())
-      | E_cosh { out; t_in } ->
+              continue k out)
+      | E_cosh { t_in } ->
           Some
             (fun k ->
-              cosh ~out t_in;
+              let out = cosh t_in in
               let d = get_dual t_in in
               let tanv = T.mul d.tangent (T.sinh d.primal) in
               register out { primal = out; tangent = tanv };
-              continue k ())
-      | E_tanh { out; t_in } ->
+              continue k out)
+      | E_tanh { t_in } ->
           Some
             (fun k ->
-              tanh ~out t_in;
+              let out = tanh t_in in
               let d = get_dual t_in in
               let one = T.ones_like out in
               let tanv = T.mul d.tangent (T.sub one (T.mul out out)) in
               register out { primal = out; tangent = tanv };
-              continue k ())
-      | E_trunc { out; t_in } ->
+              continue k out)
+      | E_trunc { t_in } ->
           Some
             (fun k ->
-              trunc ~out t_in;
+              let out = trunc t_in in
               register out { primal = out; tangent = T.zeros_like out };
-              continue k ())
-      | E_ceil { out; t_in } ->
+              continue k out)
+      | E_ceil { t_in } ->
           Some
             (fun k ->
-              ceil ~out t_in;
+              let out = ceil t_in in
               register out { primal = out; tangent = T.zeros_like out };
-              continue k ())
-      | E_floor { out; t_in } ->
+              continue k out)
+      | E_floor { t_in } ->
           Some
             (fun k ->
-              floor ~out t_in;
+              let out = floor t_in in
               register out { primal = out; tangent = T.zeros_like out };
-              continue k ())
-      | E_round { out; t_in } ->
+              continue k out)
+      | E_round { t_in } ->
           Some
             (fun k ->
-              round ~out t_in;
+              let out = round t_in in
               register out { primal = out; tangent = T.zeros_like out };
-              continue k ())
-      | E_erf { out; t_in } ->
+              continue k out)
+      | E_erf { t_in } ->
           Some
             (fun k ->
-              erf ~out t_in;
+              let out = erf t_in in
               let d = get_dual t_in in
               let tanv = T.mul d.tangent (Autodiff.deriv_erf d.primal) in
               register out { primal = out; tangent = tanv };
-              continue k ())
+              continue k out)
       (* Shape Operations *)
       | E_reshape { t_in; new_shape } ->
           Some
@@ -381,54 +377,24 @@ let make_handler dual_map =
       | E_cat { t_list; axis } ->
           Some
             (fun k ->
-              let res =
-                match t_list with
-                | [] -> failwith "cat: empty tensor list"
-                | first :: _ ->
-                    let first_shape = T.shape first in
-                    let rank = Array.length first_shape in
-                    let axis = if axis < 0 then axis + rank else axis in
-                    let out_shape = Array.copy first_shape in
-                    out_shape.(axis) <-
-                      List.fold_left
-                        (fun acc t -> acc + (T.shape t).(axis))
-                        0 t_list;
-                    let out = buffer (context first) (dtype first) out_shape in
-                    cat ~out t_list ~axis;
-                    out
-              in
+              let res = cat t_list ~axis in
               let tangents = List.map (fun t -> (get_dual t).tangent) t_list in
-              let tan =
-                match tangents with
-                | [] -> failwith "cat: empty tensor list"
-                | first :: _ ->
-                    let first_shape = T.shape first in
-                    let rank = Array.length first_shape in
-                    let axis = if axis < 0 then axis + rank else axis in
-                    let out_shape = Array.copy first_shape in
-                    out_shape.(axis) <-
-                      List.fold_left
-                        (fun acc t -> acc + (T.shape t).(axis))
-                        0 tangents;
-                    let out = buffer (context first) (dtype first) out_shape in
-                    cat ~out tangents ~axis;
-                    out
-              in
+              let tan = cat tangents ~axis in
               register res { primal = res; tangent = tan };
               continue k res)
       (* Reductions *)
-      | E_reduce_sum { out; t_in; axes; keepdims } ->
+      | E_reduce_sum { t_in; axes; keepdims } ->
           Some
             (fun k ->
-              reduce_sum ~out ~axes ~keepdims t_in;
+              let out = reduce_sum ~axes ~keepdims t_in in
               let d = get_dual t_in in
               let tan = T.sum d.tangent ~axes:(Array.to_list axes) ~keepdims in
               register out { primal = out; tangent = tan };
-              continue k ())
-      | E_reduce_max { out; t_in; axes; keepdims } ->
+              continue k out)
+      | E_reduce_max { t_in; axes; keepdims } ->
           Some
             (fun k ->
-              reduce_max ~out ~axes ~keepdims t_in;
+              let out = reduce_max ~axes ~keepdims t_in in
               let d = get_dual t_in in
               let shape_in = T.shape t_in in
               let out_bc =
@@ -445,11 +411,11 @@ let make_handler dual_map =
                   ~keepdims
               in
               register out { primal = out; tangent = tan };
-              continue k ())
-      | E_reduce_min { out; t_in; axes; keepdims } ->
+              continue k out)
+      | E_reduce_min { t_in; axes; keepdims } ->
           Some
             (fun k ->
-              reduce_min ~out ~axes ~keepdims t_in;
+              let out = reduce_min ~axes ~keepdims t_in in
               let d = get_dual t_in in
               let shape_in = T.shape t_in in
               let out_bc =
@@ -466,32 +432,32 @@ let make_handler dual_map =
                   ~keepdims
               in
               register out { primal = out; tangent = tan };
-              continue k ())
-      | E_argmax { out; t_in; axis; keepdims } ->
+              continue k out)
+      | E_argmax { t_in; axis; keepdims } ->
           Some
             (fun k ->
-              argmax ~out ~axis ~keepdims t_in;
-              continue k ())
-      | E_argmin { out; t_in; axis; keepdims } ->
+              let out = argmax ~axis ~keepdims t_in in
+              continue k out)
+      | E_argmin { t_in; axis; keepdims } ->
           Some
             (fun k ->
-              argmin ~out ~axis ~keepdims t_in;
-              continue k ())
-      | E_sort { out; t_in; axis; descending } ->
+              let out = argmin ~axis ~keepdims t_in in
+              continue k out)
+      | E_sort { t_in; axis; descending } ->
           Some
             (fun k ->
-              sort ~out ~axis ~descending t_in;
-              continue k ())
-      | E_argsort { out; t_in; axis; descending } ->
+              let out = sort ~axis ~descending t_in in
+              continue k out)
+      | E_argsort { t_in; axis; descending } ->
           Some
             (fun k ->
-              argsort ~out ~axis ~descending t_in;
-              continue k ())
+              let out = argsort ~axis ~descending t_in in
+              continue k out)
       (* Matrix Operations *)
-      | E_matmul { out; a; b } ->
+      | E_matmul { a; b } ->
           Some
             (fun k ->
-              matmul ~out a b;
+              let out = matmul a b in
               let da = get_dual a in
               let db = get_dual b in
               (* d(A@B) = dA@B + A@dB *)
@@ -501,53 +467,53 @@ let make_handler dual_map =
                   (T.matmul da.primal db.tangent)
               in
               register out { primal = out; tangent = tan };
-              continue k ())
+              continue k out)
       (* Selection *)
-      | E_where { out; condition; if_true; if_false } ->
+      | E_where { condition; if_true; if_false } ->
           Some
             (fun k ->
-              where ~out condition if_true if_false;
+              let out = where condition if_true if_false in
               let dt = get_dual if_true in
               let df = get_dual if_false in
               let tan = T.where condition dt.tangent df.tangent in
               register out { primal = out; tangent = tan };
-              continue k ())
+              continue k out)
       (* Comparisons (no gradient) *)
-      | E_cmplt { out; a; b } ->
+      | E_cmplt { a; b } ->
           Some
             (fun k ->
-              cmplt ~out a b;
-              continue k ())
-      | E_cmpne { out; a; b } ->
+              let out = cmplt a b in
+              continue k out)
+      | E_cmpne { a; b } ->
           Some
             (fun k ->
-              cmpne ~out a b;
-              continue k ())
-      | E_cmpeq { out; a; b } ->
+              let out = cmpne a b in
+              continue k out)
+      | E_cmpeq { a; b } ->
           Some
             (fun k ->
-              cmpeq ~out a b;
-              continue k ())
-      | E_cmple { out; a; b } ->
+              let out = cmpeq a b in
+              continue k out)
+      | E_cmple { a; b } ->
           Some
             (fun k ->
-              cmple ~out a b;
-              continue k ())
-      | E_xor { out; a; b } ->
+              let out = cmple a b in
+              continue k out)
+      | E_xor { a; b } ->
           Some
             (fun k ->
-              xor ~out a b;
-              continue k ())
-      | E_or { out; a; b } ->
+              let out = xor a b in
+              continue k out)
+      | E_or { a; b } ->
           Some
             (fun k ->
-              or_ ~out a b;
-              continue k ())
-      | E_and { out; a; b } ->
+              let out = or_ a b in
+              continue k out)
+      | E_and { a; b } ->
           Some
             (fun k ->
-              and_ ~out a b;
-              continue k ())
+              let out = and_ a b in
+              continue k out)
       (* Other *)
       | E_copy { t_in } ->
           Some
@@ -565,36 +531,25 @@ let make_handler dual_map =
               let tan = contiguous d.tangent in
               register res { primal = res; tangent = tan };
               continue k res)
-      | E_assign { dst; src } ->
+      | E_assign _ ->
           Some
-            (fun k ->
-              assign dst src;
-              let d_src = get_dual src in
-              register dst { primal = dst; tangent = d_src.tangent };
-              continue k ())
+            (fun _k ->
+              invalid_arg
+                "in-place mutation (set_item, set_slice, blit, assign) \
+                 cannot be used inside jvp — use scatter instead")
       | E_cast { t_in; target_dtype } ->
           Some
             (fun k ->
-              let res =
-                let out = buffer (context t_in) target_dtype (T.shape t_in) in
-                cast ~out t_in;
-                out
-              in
+              let res = cast ~dtype:target_dtype t_in in
               let d = get_dual t_in in
-              let tan =
-                let out =
-                  buffer (context d.tangent) target_dtype (T.shape d.tangent)
-                in
-                cast ~out d.tangent;
-                out
-              in
+              let tan = cast ~dtype:target_dtype d.tangent in
               register res { primal = res; tangent = tan };
               continue k res)
       (* Reduce Prod *)
-      | E_reduce_prod { out; t_in; axes; keepdims } ->
+      | E_reduce_prod { t_in; axes; keepdims } ->
           Some
             (fun k ->
-              reduce_prod ~out ~axes ~keepdims t_in;
+              let out = reduce_prod ~axes ~keepdims t_in in
               let d = get_dual t_in in
               let shape_in = T.shape t_in in
               let out_bc =
@@ -609,35 +564,19 @@ let make_handler dual_map =
               let contrib = T.mul (T.div out_bc d.primal) d.tangent in
               let tan = T.sum contrib ~axes:(Array.to_list axes) ~keepdims in
               register out { primal = out; tangent = tan };
-              continue k ())
+              continue k out)
       (* Associative Scan *)
       | E_associative_scan { t_in; axis; op } ->
           Some
             (fun k ->
-              let res =
-                let out = buffer (context t_in) (dtype t_in) (T.shape t_in) in
-                associative_scan ~out ~axis ~op t_in;
-                out
-              in
+              let res = associative_scan ~axis ~op t_in in
               let d = get_dual t_in in
               let tan =
                 match op with
-                | `Sum ->
-                    let out =
-                      buffer (context d.tangent) (dtype d.tangent)
-                        (T.shape d.tangent)
-                    in
-                    associative_scan ~out ~axis ~op:`Sum d.tangent;
-                    out
+                | `Sum -> associative_scan ~axis ~op:`Sum d.tangent
                 | `Prod ->
                     let ratio = T.div d.tangent d.primal in
-                    let cumsum_ratio =
-                      let out =
-                        buffer (context ratio) (dtype ratio) (T.shape ratio)
-                      in
-                      associative_scan ~out ~axis ~op:`Sum ratio;
-                      out
-                    in
+                    let cumsum_ratio = associative_scan ~axis ~op:`Sum ratio in
                     T.mul res cumsum_ratio
                 | `Max ->
                     let ndim = Array.length (T.shape res) in
@@ -692,21 +631,9 @@ let make_handler dual_map =
       | E_gather { data; indices; axis } ->
           Some
             (fun k ->
-              let res =
-                let out =
-                  buffer (context data) (dtype data) (T.shape indices)
-                in
-                gather ~out data indices ~axis;
-                out
-              in
+              let res = gather data indices ~axis in
               let d = get_dual data in
-              let tan =
-                let out =
-                  buffer (context d.tangent) (dtype d.tangent) (T.shape indices)
-                in
-                gather ~out d.tangent indices ~axis;
-                out
-              in
+              let tan = gather d.tangent indices ~axis in
               register res { primal = res; tangent = tan };
               continue k res)
       (* Scatter *)
