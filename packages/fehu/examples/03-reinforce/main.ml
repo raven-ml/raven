@@ -86,7 +86,7 @@ let () =
   Printf.printf "Parameters: %d\n\n" (Ptree.count_parameters !params);
 
   (* Optimizer *)
-  let algo = Optim.adam ~lr:(Optim.Schedule.constant lr) () in
+  let algo = Vega.adam (Vega.Schedule.constant lr) in
   let opt_state = ref (Optim.init algo !params) in
 
   let policy obs =
