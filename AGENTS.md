@@ -60,6 +60,19 @@ raven is inspired by unix's philosophy of doing one thing well, and tinygrad's p
 - prefer loop-based implementations over higher-order functions for performance-critical code.
 - use unsafe Bigarray and Bytes functions (e.g. `Bigarray.Array1.unsafe_get`) when safety checks are redundant.
 
+## changelog
+
+every user-facing commit MUST include a corresponding entry in `CHANGES.md`. if a commit adds a feature, fixes a bug, changes an API, or improves performance in a way that users would notice, update the changelog as part of that commit.
+
+entries go under the current unreleased version, grouped by package with `### Package` headers. add new entries at the top of the relevant package section.
+
+writing style:
+- lead with what changed from the user's perspective, not what code was modified.
+- explain *why* when the reason isn't obvious (e.g. a bug fix should say what was wrong).
+- name the affected functions or types so users can find them.
+- keep each entry to 1-3 lines. use backticks for code identifiers.
+- do not include internal refactors, style changes, or test-only changes.
+
 ## important rules
 
 - NEVER stage or commit changes unless explicitly requested
@@ -70,3 +83,4 @@ raven is inspired by unix's philosophy of doing one thing well, and tinygrad's p
 - NEVER git checkout or reset any file unless explicitly requested
 - NEVER add new backend operations to nx unless explicitly requested
 - NEVER hide warnings and NEVER hide unused variables by adding an underscore. ALWAYS treat warnings as errors that need a proper fix.
+- ALWAYS add changelog entry(ies) in `CHANGES.md` when committing user-facing changes.
