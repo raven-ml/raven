@@ -105,6 +105,22 @@
   (automatic-differentiation machine-learning deep-learning optimization)))
 
 (package
+ (name vega)
+ (dir packages/vega)
+ (synopsis "Per-parameter gradient-based optimizers for OCaml")
+ (description
+  "Typed, per-parameter optimizer primitives: Adam, AdamW, SGD, RMSprop, Adagrad, and learning-rate schedules. Built on Nx with no autodiff dependency.")
+ (depends
+  (ocaml
+   (>= 5.2.0))
+  dune
+  (nx
+   (= :version))
+  (windtrap :with-test))
+ (tags
+  (optimization machine-learning gradient-descent)))
+
+(package
  (name kaun)
  (dir packages/kaun)
  (synopsis "Neural networks for OCaml")
@@ -115,6 +131,8 @@
    (>= 5.2.0))
   dune
   (rune
+   (= :version))
+  (vega
    (= :version))
   (nx
    (= :version))
@@ -232,6 +250,8 @@
   (talon
    (= :version))
   (rune
+   (= :version))
+  (vega
    (= :version))
   (kaun
    (= :version))

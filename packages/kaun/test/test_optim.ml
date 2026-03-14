@@ -11,13 +11,13 @@ module Grad = Kaun.Grad
 (* Schedules *)
 
 let test_constant_schedule () =
-  let s = Optim.Schedule.constant 0.01 in
+  let s = Vega.Schedule.constant 0.01 in
   equal ~msg:"step 1" (float 1e-10) 0.01 (s 1);
   equal ~msg:"step 100" (float 1e-10) 0.01 (s 100);
   equal ~msg:"step 0" (float 1e-10) 0.01 (s 0)
 
 let test_cosine_decay () =
-  let s = Optim.Schedule.cosine_decay ~init_value:0.1 ~decay_steps:100 () in
+  let s = Vega.Schedule.cosine_decay ~init_value:0.1 ~decay_steps:100 () in
   equal ~msg:"step 0" (float 1e-10) 0.1 (s 0);
   equal ~msg:"step 100 (fully decayed)" (float 1e-10) 0.0 (s 100);
   equal ~msg:"step 200 (past decay)" (float 1e-10) 0.0 (s 200);
@@ -26,13 +26,13 @@ let test_cosine_decay () =
 
 let test_cosine_decay_alpha () =
   let s =
-    Optim.Schedule.cosine_decay ~init_value:0.1 ~decay_steps:100 ~alpha:0.1 ()
+    Vega.Schedule.cosine_decay ~init_value:0.1 ~decay_steps:100 ~alpha:0.1 ()
   in
   equal ~msg:"step 100 (alpha floor)" (float 1e-10) 0.01 (s 100)
 
 let test_warmup_cosine () =
   let s =
-    Optim.Schedule.warmup_cosine ~init_value:0.0 ~peak_value:0.01
+    Vega.Schedule.warmup_cosine ~init_value:0.0 ~peak_value:0.01
       ~warmup_steps:100
   in
   equal ~msg:"step 0" (float 1e-10) 0.0 (s 0);
@@ -40,10 +40,7 @@ let test_warmup_cosine () =
   equal ~msg:"step 200 (past warmup)" (float 1e-10) 0.01 (s 200)
 
 let test_warmup_linear () =
-  let s =
-    Optim.Schedule.warmup_linear ~init_value:0.0 ~peak_value:0.1
-      ~warmup_steps:10
-  in
+  let s = Vega.Schedule.linear ~init_value:0.0 ~end_value:0.1 ~steps:10 in
   equal ~msg:"step 0" (float 1e-10) 0.0 (s 0);
   equal ~msg:"step 5 (midpoint)" (float 1e-10) 0.05 (s 5);
   equal ~msg:"step 10 (peak)" (float 1e-10) 0.1 (s 10);
@@ -51,7 +48,7 @@ let test_warmup_linear () =
 
 let test_exponential_decay () =
   let s =
-    Optim.Schedule.exponential_decay ~init_value:1.0 ~decay_rate:0.5
+    Vega.Schedule.exponential_decay ~init_value:1.0 ~decay_rate:0.5
       ~decay_steps:10
   in
   equal ~msg:"step 0" (float 1e-10) 1.0 (s 0);
@@ -80,8 +77,8 @@ let train_steps algo params ~steps =
   let s = ref state in
   for _ = 1 to steps do
     let _loss, grads = Grad.value_and_grad quadratic_loss !p in
-    let updates, state' = Optim.step algo !s !p grads in
-    p := Optim.apply_updates !p updates;
+    let new_params, state' = Optim.step !s !p grads in
+    p := new_params;
     s := state'
   done;
   !p
@@ -89,8 +86,8 @@ let train_steps algo params ~steps =
 (* SGD *)
 
 let test_sgd_basic () =
-  let lr = Optim.Schedule.constant 0.1 in
-  let algo = Optim.sgd ~lr () in
+  let lr = Vega.Schedule.constant 0.1 in
+  let algo = Vega.sgd lr in
   let params = make_params [| 4.0; -3.0 |] in
   let result = train_steps algo params ~steps:1 in
   let v = get_values result in
@@ -99,8 +96,8 @@ let test_sgd_basic () =
   equal ~msg:"sgd[1] after 1 step" (float 1e-5) (-2.7) v.(1)
 
 let test_sgd_converges () =
-  let lr = Optim.Schedule.constant 0.1 in
-  let algo = Optim.sgd ~lr () in
+  let lr = Vega.Schedule.constant 0.1 in
+  let algo = Vega.sgd lr in
   let params = make_params [| 10.0; -8.0 |] in
   let result = train_steps algo params ~steps:100 in
   let v = get_values result in
@@ -108,8 +105,8 @@ let test_sgd_converges () =
   equal ~msg:"sgd converges[1]" (float 1e-3) 0.0 v.(1)
 
 let test_sgd_momentum () =
-  let lr = Optim.Schedule.constant 0.01 in
-  let algo = Optim.sgd ~lr ~momentum:0.9 () in
+  let lr = Vega.Schedule.constant 0.01 in
+  let algo = Vega.sgd ~momentum:0.9 lr in
   let params = make_params [| 5.0; -3.0 |] in
   let result = train_steps algo params ~steps:100 in
   let v = get_values result in
@@ -117,8 +114,8 @@ let test_sgd_momentum () =
   equal ~msg:"sgd+momentum converges[1]" (float 0.1) 0.0 v.(1)
 
 let test_sgd_nesterov () =
-  let lr = Optim.Schedule.constant 0.01 in
-  let algo = Optim.sgd ~lr ~momentum:0.9 ~nesterov:true () in
+  let lr = Vega.Schedule.constant 0.01 in
+  let algo = Vega.sgd ~momentum:0.9 ~nesterov:true lr in
   let params = make_params [| 5.0; -3.0 |] in
   let result = train_steps algo params ~steps:100 in
   let v = get_values result in
@@ -128,8 +125,8 @@ let test_sgd_nesterov () =
 (* Adam *)
 
 let test_adam_converges () =
-  let lr = Optim.Schedule.constant 0.1 in
-  let algo = Optim.adam ~lr () in
+  let lr = Vega.Schedule.constant 0.1 in
+  let algo = Vega.adam lr in
   let params = make_params [| 5.0; -3.0 |] in
   let result = train_steps algo params ~steps:100 in
   let v = get_values result in
@@ -139,8 +136,8 @@ let test_adam_converges () =
 (* AdamW *)
 
 let test_adamw_converges () =
-  let lr = Optim.Schedule.constant 0.1 in
-  let algo = Optim.adamw ~lr () in
+  let lr = Vega.Schedule.constant 0.1 in
+  let algo = Vega.adamw lr in
   let params = make_params [| 5.0; -3.0 |] in
   let result = train_steps algo params ~steps:100 in
   let v = get_values result in
@@ -150,8 +147,8 @@ let test_adamw_converges () =
 (* RMSprop *)
 
 let test_rmsprop_converges () =
-  let lr = Optim.Schedule.constant 0.1 in
-  let algo = Optim.rmsprop ~lr () in
+  let lr = Vega.Schedule.constant 0.1 in
+  let algo = Vega.rmsprop lr in
   let params = make_params [| 5.0; -3.0 |] in
   let result = train_steps algo params ~steps:100 in
   let v = get_values result in
@@ -159,8 +156,8 @@ let test_rmsprop_converges () =
   equal ~msg:"rmsprop converges[1]" (float 0.5) 0.0 v.(1)
 
 let test_rmsprop_momentum () =
-  let lr = Optim.Schedule.constant 0.01 in
-  let algo = Optim.rmsprop ~lr ~momentum:0.9 () in
+  let lr = Vega.Schedule.constant 0.01 in
+  let algo = Vega.rmsprop ~momentum:0.9 lr in
   let params = make_params [| 5.0; -3.0 |] in
   let result = train_steps algo params ~steps:100 in
   let v = get_values result in
@@ -170,8 +167,8 @@ let test_rmsprop_momentum () =
 (* Adagrad *)
 
 let test_adagrad_converges () =
-  let lr = Optim.Schedule.constant 0.5 in
-  let algo = Optim.adagrad ~lr () in
+  let lr = Vega.Schedule.constant 0.5 in
+  let algo = Vega.adagrad lr in
   let params = make_params [| 5.0; -3.0 |] in
   let result = train_steps algo params ~steps:100 in
   let v = get_values result in
@@ -179,22 +176,22 @@ let test_adagrad_converges () =
   equal ~msg:"adagrad converges[1]" (float 0.5) 0.0 v.(1)
 
 let test_invalid_hyperparameters () =
-  let lr = Optim.Schedule.constant 0.1 in
+  let lr = Vega.Schedule.constant 0.1 in
   raises_match
     (fun exn -> match exn with Invalid_argument _ -> true | _ -> false)
-    (fun () -> ignore (Optim.sgd ~lr ~momentum:1.0 ()));
+    (fun () -> ignore (Vega.sgd ~momentum:1.0 lr));
   raises_match
     (fun exn -> match exn with Invalid_argument _ -> true | _ -> false)
-    (fun () -> ignore (Optim.adam ~lr ~eps:0.0 ()));
+    (fun () -> ignore (Vega.adam ~eps:0.0 lr));
   raises_match
     (fun exn -> match exn with Invalid_argument _ -> true | _ -> false)
-    (fun () -> ignore (Optim.adamw ~lr ~weight_decay:(-0.1) ()));
+    (fun () -> ignore (Vega.adamw ~weight_decay:(-0.1) lr));
   raises_match
     (fun exn -> match exn with Invalid_argument _ -> true | _ -> false)
-    (fun () -> ignore (Optim.rmsprop ~lr ~decay:1.0 ()));
+    (fun () -> ignore (Vega.rmsprop ~decay:1.0 lr));
   raises_match
     (fun exn -> match exn with Invalid_argument _ -> true | _ -> false)
-    (fun () -> ignore (Optim.adagrad ~lr ~eps:0.0 ()))
+    (fun () -> ignore (Vega.adagrad ~eps:0.0 lr))
 
 (* Gradient utilities *)
 
@@ -225,22 +222,11 @@ let test_clip_no_op () =
   equal ~msg:"no clip[0]" (float 1e-5) 1.0 v.(0);
   equal ~msg:"no clip[1]" (float 1e-5) 1.0 v.(1)
 
-(* apply_updates *)
-
-let test_apply_updates () =
-  let params = make_params [| 1.0; 2.0; 3.0 |] in
-  let updates = make_params [| -0.1; 0.2; -0.3 |] in
-  let result = Optim.apply_updates params updates in
-  let v = get_values result in
-  equal ~msg:"apply[0]" (float 1e-5) 0.9 v.(0);
-  equal ~msg:"apply[1]" (float 1e-5) 2.2 v.(1);
-  equal ~msg:"apply[2]" (float 1e-5) 2.7 v.(2)
-
 (* Multi-parameter tree *)
 
 let test_multi_param_tree () =
-  let lr = Optim.Schedule.constant 0.1 in
-  let algo = Optim.sgd ~lr () in
+  let lr = Vega.Schedule.constant 0.1 in
+  let algo = Vega.sgd lr in
   let params =
     Ptree.dict
       [
@@ -258,8 +244,7 @@ let test_multi_param_tree () =
   in
   let state = Optim.init algo params in
   let _loss, grads = Grad.value_and_grad f params in
-  let updates, _state' = Optim.step algo state params grads in
-  let result = Optim.apply_updates params updates in
+  let result, _state' = Optim.step state params grads in
   let fields = Ptree.Dict.fields_exn result in
   let w = Ptree.Dict.get_tensor_exn fields ~name:"w" Nx.float32 in
   let b = Ptree.Dict.get_tensor_exn fields ~name:"b" Nx.float32 in
@@ -303,6 +288,5 @@ let () =
           test "clip_by_global_norm" test_clip_by_global_norm;
           test "clip no-op" test_clip_no_op;
         ];
-      group "apply_updates" [ test "element-wise add" test_apply_updates ];
       group "multi-param" [ test "tree optimizer step" test_multi_param_tree ];
     ]

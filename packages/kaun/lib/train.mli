@@ -22,7 +22,7 @@ type 'l state
 
 (** {1:core Core} *)
 
-val make : model:('i, 'o) Layer.t -> optimizer:Optim.algorithm -> ('i, 'o) t
+val make : model:('i, 'o) Layer.t -> optimizer:Vega.t -> ('i, 'o) t
 (** [make ~model ~optimizer] creates a trainer. *)
 
 val init : ('i, 'o) t -> dtype:(float, 'l) Nx.dtype -> 'l state

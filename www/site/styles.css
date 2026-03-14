@@ -20,6 +20,7 @@
   --color-sowilo: #6366f1;    /* indigo */
   --color-talon: #ec4899;     /* pink */
   --color-fehu: #84cc16;      /* lime */
+  --color-vega: #eab308;      /* yellow */
   
   /* Syntax highlighting */
   --syntax-comment: #666;
@@ -143,6 +144,7 @@ hr {
 .color-indigo { color: var(--color-sowilo); } /* sowilo */
 .color-pink { color: var(--color-talon); }   /* talon */
 .color-lime { color: var(--color-fehu); }    /* fehu */
+.color-yellow { color: var(--color-vega); }  /* vega */
 
 /* Remove underlines from colored library links */
 a.color-blue,
@@ -153,7 +155,8 @@ a.color-red,
 a.color-indigo,
 a.color-green,
 a.color-pink,
-a.color-lime {
+a.color-lime,
+a.color-yellow {
   text-decoration: none;
 }
 

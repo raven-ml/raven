@@ -1,0 +1,4 @@
+(test
+ (name test_vega)
+ (package vega)
+ (libraries vega nx nx.core windtrap))

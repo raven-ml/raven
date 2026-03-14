@@ -36,6 +36,14 @@ let libraries =
       symbol = {|ᚲ|};
     };
     {
+      name = "vega";
+      display = {|<span class="rune-symbol">ᚹ</span> vega|};
+      color = "color-yellow";
+      description = "Composable gradient-based optimizers";
+      tagline = "Composable gradient-based optimizers for OCaml";
+      symbol = {|ᚹ|};
+    };
+    {
       name = "hugin";
       display = {|<span class="rune-symbol">ᛞ</span> hugin|};
       color = "color-purple";

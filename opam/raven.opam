@@ -17,6 +17,7 @@ depends: [
   "brot" {= version}
   "talon" {= version}
   "rune" {= version}
+  "vega" {= version}
   "kaun" {= version}
   "kaun-board" {= version}
   "sowilo" {= version}

@@ -73,7 +73,7 @@ let () =
   (* Create a trainer: model + optimizer *)
   let trainer =
     Train.make ~model
-      ~optimizer:(Optim.adam ~lr:(Optim.Schedule.constant 0.01) ())
+      ~optimizer:(Vega.adam (Vega.Schedule.constant 0.01))
   in
 
   (* Initialize training state (model vars + optimizer state) *)
@@ -150,7 +150,7 @@ let () =
   (* Trainer *)
   let trainer =
     Train.make ~model
-      ~optimizer:(Optim.adam ~lr:(Optim.Schedule.constant lr) ())
+      ~optimizer:(Vega.adam (Vega.Schedule.constant lr))
   in
   let st = ref (Train.init trainer ~dtype:Nx.Float32) in
 

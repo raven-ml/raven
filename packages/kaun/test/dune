@@ -13,4 +13,4 @@
   test_metric
   test_checkpoint)
  (package kaun)
- (libraries rune nx nx.core nx.io kaun windtrap))
+ (libraries rune vega nx nx.core nx.io kaun windtrap))

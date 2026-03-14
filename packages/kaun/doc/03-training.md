@@ -6,25 +6,25 @@ training.
 
 ## Optimizers
 
-An `Optim.algorithm` pairs a learning-rate schedule with an update rule.
-All optimizers take `~lr` as a `Schedule.t`:
+Optimizers are provided by the `Vega` package and take a `Schedule.t`
+as the learning rate:
 
 <!-- $MDX skip -->
 ```ocaml
 (* SGD with momentum *)
-Optim.sgd ~lr:(Optim.Schedule.constant 0.1) ~momentum:0.9 ()
+Vega.sgd ~momentum:0.9 (Vega.Schedule.constant 0.1)
 
 (* Adam *)
-Optim.adam ~lr:(Optim.Schedule.constant 1e-3) ()
+Vega.adam (Vega.Schedule.constant 1e-3)
 
 (* AdamW with weight decay *)
-Optim.adamw ~lr:(Optim.Schedule.constant 1e-3) ~weight_decay:0.01 ()
+Vega.adamw ~weight_decay:0.01 (Vega.Schedule.constant 1e-3)
 
 (* RMSprop *)
-Optim.rmsprop ~lr:(Optim.Schedule.constant 1e-3) ()
+Vega.rmsprop (Vega.Schedule.constant 1e-3)
 
 (* Adagrad *)
-Optim.adagrad ~lr:(Optim.Schedule.constant 0.01) ()
+Vega.adagrad (Vega.Schedule.constant 0.01)
 ```
 
 `sgd` supports optional `~momentum` (default 0.0) and `~nesterov`
@@ -40,22 +40,22 @@ learning rates:
 <!-- $MDX skip -->
 ```ocaml
 (* Fixed learning rate *)
-Optim.Schedule.constant 1e-3
+Vega.Schedule.constant 1e-3
 
 (* Cosine decay from 1e-3 to 0 over 10000 steps *)
-Optim.Schedule.cosine_decay ~init_value:1e-3 ~decay_steps:10000 ()
+Vega.Schedule.cosine_decay ~init_value:1e-3 ~decay_steps:10000 ()
 
 (* Cosine decay with minimum alpha *)
-Optim.Schedule.cosine_decay ~init_value:1e-3 ~decay_steps:10000 ~alpha:1e-5 ()
+Vega.Schedule.cosine_decay ~init_value:1e-3 ~decay_steps:10000 ~alpha:1e-5 ()
 
 (* Linear warmup from 0 to 1e-3 over 1000 steps *)
-Optim.Schedule.warmup_linear ~init_value:0. ~peak_value:1e-3 ~warmup_steps:1000
+Vega.Schedule.linear ~init_value:0. ~end_value:1e-3 ~steps:1000
 
 (* Cosine warmup *)
-Optim.Schedule.warmup_cosine ~init_value:0. ~peak_value:1e-3 ~warmup_steps:1000
+Vega.Schedule.warmup_cosine ~init_value:0. ~peak_value:1e-3 ~warmup_steps:1000
 
 (* Exponential decay *)
-Optim.Schedule.exponential_decay ~init_value:1e-3 ~decay_rate:0.96 ~decay_steps:1000
+Vega.Schedule.exponential_decay ~init_value:1e-3 ~decay_rate:0.96 ~decay_steps:1000
 ```
 
 Compose schedules by writing a custom function:
@@ -64,9 +64,9 @@ Compose schedules by writing a custom function:
 ```ocaml
 let warmup_then_cosine step =
   if step <= 1000 then
-    Optim.Schedule.warmup_linear ~init_value:0. ~peak_value:1e-3 ~warmup_steps:1000 step
+    Vega.Schedule.linear ~init_value:0. ~end_value:1e-3 ~steps:1000 step
   else
-    Optim.Schedule.cosine_decay ~init_value:1e-3 ~decay_steps:9000 () (step - 1000)
+    Vega.Schedule.cosine_decay ~init_value:1e-3 ~decay_steps:9000 () (step - 1000)
 ```
 
 ## Loss Functions
@@ -180,7 +180,7 @@ Create a trainer by pairing a model with an optimizer, then initialize:
 <!-- $MDX skip -->
 ```ocaml
 let trainer = Train.make ~model
-  ~optimizer:(Optim.adam ~lr:(Optim.Schedule.constant 1e-3) ())
+  ~optimizer:(Vega.adam (Vega.Schedule.constant 1e-3))
 
 let st = Train.init trainer ~dtype:Nx.Float32
 ```

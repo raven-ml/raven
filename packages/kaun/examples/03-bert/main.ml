@@ -142,8 +142,7 @@ let () =
   Printf.printf "\n=== Training ===\n%!";
   let trainer =
     Train.make ~model
-      ~optimizer:
-        (Optim.adamw ~lr:(Optim.Schedule.constant 2e-5) ~weight_decay:0.01 ())
+      ~optimizer:(Vega.adamw ~weight_decay:0.01 (Vega.Schedule.constant 2e-5))
   in
   let st = Train.make_state trainer vars in
   let st =

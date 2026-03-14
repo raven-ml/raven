@@ -111,7 +111,7 @@ let test_empty_tree () =
 
 let test_optim_sgd_no_momentum () =
   let params = Ptree.tensor (Nx.create Nx.float32 [| 2 |] [| 1.; 2. |]) in
-  let algo = Optim.sgd ~lr:(Optim.Schedule.constant 0.01) () in
+  let algo = Vega.sgd (Vega.Schedule.constant 0.01) in
   let st = Optim.init algo params in
   let count, trees = Optim.state_to_trees st in
   equal ~msg:"count" int 0 count;
@@ -123,7 +123,7 @@ let test_optim_sgd_no_momentum () =
 
 let test_optim_sgd_momentum () =
   let params = Ptree.tensor (Nx.create Nx.float32 [| 2 |] [| 1.; 2. |]) in
-  let algo = Optim.sgd ~lr:(Optim.Schedule.constant 0.01) ~momentum:0.9 () in
+  let algo = Vega.sgd ~momentum:0.9 (Vega.Schedule.constant 0.01) in
   let st = Optim.init algo params in
   let count, trees = Optim.state_to_trees st in
   equal ~msg:"count" int 0 count;
@@ -131,7 +131,7 @@ let test_optim_sgd_momentum () =
 
 let test_optim_adam_roundtrip () =
   let params = Ptree.tensor (Nx.create Nx.float32 [| 2 |] [| 1.; 2. |]) in
-  let algo = Optim.adam ~lr:(Optim.Schedule.constant 0.001) () in
+  let algo = Vega.adam (Vega.Schedule.constant 0.001) in
   let st = Optim.init algo params in
   let count, trees = Optim.state_to_trees st in
   equal ~msg:"count" int 0 count;
@@ -142,8 +142,8 @@ let test_optim_adam_roundtrip () =
   equal ~msg:"trees roundtrip" int 2 (List.length trees')
 
 let test_optim_wrong_tree_count () =
-  let algo = Optim.adam ~lr:(Optim.Schedule.constant 0.001) () in
-  raises_invalid_arg "Optim.state_of_trees: adam expects 2 trees, got 1"
+  let algo = Vega.adam (Vega.Schedule.constant 0.001) in
+  raises_invalid_arg "Optim.state_of_trees: expected 2 moment trees, got 1"
     (fun () -> ignore (Optim.state_of_trees algo ~count:0 [ Ptree.empty ]))
 
 let () =

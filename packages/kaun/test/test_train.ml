@@ -19,7 +19,7 @@ let test_make_init () =
         Layer.linear ~in_features:4 ~out_features:1 ();
       ]
   in
-  let optimizer = Kaun.Optim.adam ~lr:(Kaun.Optim.Schedule.constant 0.01) () in
+  let optimizer = Vega.adam (Vega.Schedule.constant 0.01) in
   let trainer = Train.make ~model ~optimizer in
   let st = Train.init trainer ~dtype:Nx.float32 in
   let vars = Train.vars st in
@@ -36,7 +36,7 @@ let test_step () =
         Layer.linear ~in_features:4 ~out_features:1 ();
       ]
   in
-  let optimizer = Kaun.Optim.adam ~lr:(Kaun.Optim.Schedule.constant 0.01) () in
+  let optimizer = Vega.adam (Vega.Schedule.constant 0.01) in
   let trainer = Train.make ~model ~optimizer in
   let st = Train.init trainer ~dtype:Nx.float32 in
   let x =
@@ -65,7 +65,7 @@ let test_fit () =
         Layer.linear ~in_features:4 ~out_features:1 ();
       ]
   in
-  let optimizer = Kaun.Optim.adam ~lr:(Kaun.Optim.Schedule.constant 0.05) () in
+  let optimizer = Vega.adam (Vega.Schedule.constant 0.05) in
   let trainer = Train.make ~model ~optimizer in
   let st = Train.init trainer ~dtype:Nx.float32 in
   let x =
@@ -92,7 +92,7 @@ let test_predict () =
     Layer.sequential
       [ Layer.linear ~in_features:3 ~out_features:2 (); Layer.relu () ]
   in
-  let optimizer = Kaun.Optim.sgd ~lr:(Kaun.Optim.Schedule.constant 0.01) () in
+  let optimizer = Vega.sgd (Vega.Schedule.constant 0.01) in
   let trainer = Train.make ~model ~optimizer in
   let st = Train.init trainer ~dtype:Nx.float32 in
   let x = Nx.ones Nx.float32 [| 2; 3 |] in
@@ -104,7 +104,7 @@ let test_fit_with_reporting () =
   let model =
     Layer.sequential [ Layer.linear ~in_features:2 ~out_features:1 () ]
   in
-  let optimizer = Kaun.Optim.sgd ~lr:(Kaun.Optim.Schedule.constant 0.01) () in
+  let optimizer = Vega.sgd (Vega.Schedule.constant 0.01) in
   let trainer = Train.make ~model ~optimizer in
   let st = Train.init trainer ~dtype:Nx.float32 in
   let x = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
@@ -123,7 +123,7 @@ let test_fit_early_stop () =
   let model =
     Layer.sequential [ Layer.linear ~in_features:2 ~out_features:1 () ]
   in
-  let optimizer = Kaun.Optim.sgd ~lr:(Kaun.Optim.Schedule.constant 0.01) () in
+  let optimizer = Vega.sgd (Vega.Schedule.constant 0.01) in
   let trainer = Train.make ~model ~optimizer in
   let st = Train.init trainer ~dtype:Nx.float32 in
   let x = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
@@ -149,7 +149,7 @@ let test_batch_norm_state_threading () =
         Layer.linear ~in_features:4 ~out_features:1 ();
       ]
   in
-  let optimizer = Kaun.Optim.adam ~lr:(Kaun.Optim.Schedule.constant 0.01) () in
+  let optimizer = Vega.adam (Vega.Schedule.constant 0.01) in
   let trainer = Train.make ~model ~optimizer in
   let st0 = Train.init trainer ~dtype:Nx.float32 in
   let x =

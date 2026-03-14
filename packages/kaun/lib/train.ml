@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type ('i, 'o) t = { model : ('i, 'o) Layer.t; optimizer : Optim.algorithm }
+type ('i, 'o) t = { model : ('i, 'o) Layer.t; optimizer : Vega.t }
 type 'l state = { vars : 'l Layer.vars; opt_state : Optim.state }
 
 let make ~model ~optimizer = { model; optimizer }
@@ -30,7 +30,7 @@ let step (type i o l in_elt) (t : (i, o) t) (st : l state) ~training ?ctx
       (Layer.params st.vars)
   in
   let new_params, opt_state =
-    Optim.update t.optimizer st.opt_state (Layer.params st.vars) grads
+    Optim.step st.opt_state (Layer.params st.vars) grads
   in
   let vars =
     Layer.with_params st.vars new_params |> fun v ->

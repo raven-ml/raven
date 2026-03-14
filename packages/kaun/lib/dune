@@ -1,4 +1,4 @@
 (library
  (name kaun)
  (public_name kaun)
- (libraries rune nx nx.core nx.io))
+ (libraries rune vega nx nx.core nx.io))

@@ -38,7 +38,7 @@ let () =
   ] in
 
   let trainer = Train.make ~model
-    ~optimizer:(Optim.adam ~lr:(Optim.Schedule.constant 0.01) ())
+    ~optimizer:(Vega.adam (Vega.Schedule.constant 0.01))
   in
   let st = Train.init trainer ~dtype:Nx.Float32 in
   let st = Train.fit trainer st

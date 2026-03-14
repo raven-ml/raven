@@ -1,0 +1,4 @@
+(library
+ (name vega)
+ (public_name vega)
+ (libraries nx.core nx))

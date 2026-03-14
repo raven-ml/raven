@@ -140,7 +140,7 @@ let vars = Layer.with_params vars params in
 
 (* 4. Use for inference *)
 let trainer = Train.make ~model
-  ~optimizer:(Optim.adam ~lr:(Optim.Schedule.constant 1e-5) ())
+  ~optimizer:(Vega.adam (Vega.Schedule.constant 1e-5))
 in
 let st = Train.make_state trainer vars in
 let logits = Train.predict trainer st input_ids

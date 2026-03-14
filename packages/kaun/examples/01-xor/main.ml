@@ -25,8 +25,7 @@ let () =
 
   (* Trainer = model + optimizer *)
   let trainer =
-    Train.make ~model
-      ~optimizer:(Optim.adam ~lr:(Optim.Schedule.constant 0.01) ())
+    Train.make ~model ~optimizer:(Vega.adam (Vega.Schedule.constant 0.01))
   in
 
   (* Initialize train state (vars + optimizer state) *)

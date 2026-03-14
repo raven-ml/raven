@@ -38,8 +38,7 @@ let () =
 
   (* Trainer *)
   let trainer =
-    Train.make ~model
-      ~optimizer:(Optim.adam ~lr:(Optim.Schedule.constant lr) ())
+    Train.make ~model ~optimizer:(Vega.adam (Vega.Schedule.constant lr))
   in
   let st = ref (Train.init trainer ~dtype) in
 

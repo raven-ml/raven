@@ -24,7 +24,7 @@ records.
 | Forward pass      | `model(x)` (stateful method)                   | `model.apply(params, x)`           | `Layer.apply model vars ~training x`                  |
 | Mutation          | Modules are mutable objects                    | Params are immutable dicts         | `Layer.vars` and `Ptree.t` are immutable              |
 | Autograd          | Dynamic tape (`autograd`)                      | Functional transforms (`jax.grad`) | Rune effect-based autodiff                            |
-| Optimizer         | `torch.optim.Adam(model.parameters(), lr=...)` | `optax.adam(lr)`                   | `Optim.adam ~lr:(Schedule.constant lr) ()`            |
+| Optimizer         | `torch.optim.Adam(model.parameters(), lr=...)` | `optax.adam(lr)`                   | `Vega.adam (Vega.Schedule.constant lr)`               |
 | Training loop     | Manual (or Lightning/etc.)                     | Manual (or Orbax/etc.)             | `Train.fit` or manual `Train.step`                    |
 | Data loading      | `DataLoader`                                   | `tf.data` or manual                | `Data.t` lazy pipeline                                |
 | Checkpointing     | `torch.save` / `torch.load` (pickle)           | Orbax / msgpack                    | SafeTensors via `Checkpoint.save` / `Checkpoint.load` |
@@ -232,49 +232,49 @@ params = optax.apply_updates(params, updates)
 <!-- $MDX skip -->
 ```ocaml
 (* Schedule is a function: step -> lr *)
-let schedule = Optim.Schedule.cosine_decay ~init_value:1e-3 ~decay_steps:10000 ()
+let schedule = Vega.Schedule.cosine_decay ~init_value:1e-3 ~decay_steps:10000 ()
 
-(* Optimizer takes the schedule directly *)
-let optimizer = Optim.adam ~lr:schedule ()
+(* Optimizer *)
+let tx = Vega.adam schedule
 
-(* Manual update *)
-let st = Optim.init optimizer params in
-let updates, st' = Optim.step optimizer st params grads in
+(* Init and update via Kaun's Optim bridge *)
+let st = Optim.init tx params in
+let updates, st' = Optim.update st params grads in
 let params' = Optim.apply_updates params updates
 
 (* Or use the convenience function *)
-let params', st' = Optim.update optimizer st params grads
+let params', st' = Optim.step st params grads
 ```
 
 Available optimizers:
 
 <!-- $MDX skip -->
 ```ocaml
-Optim.sgd ~lr:schedule ~momentum:0.9 ~nesterov:true ()
-Optim.adam ~lr:schedule ~b1:0.9 ~b2:0.999 ~eps:1e-8 ()
-Optim.adamw ~lr:schedule ~weight_decay:0.01 ()
-Optim.rmsprop ~lr:schedule ~decay:0.9 ~momentum:0.0 ()
-Optim.adagrad ~lr:schedule ~eps:1e-8 ()
+Vega.sgd ~momentum:0.9 ~nesterov:true schedule
+Vega.adam ~b1:0.9 ~b2:0.999 ~eps:1e-8 schedule
+Vega.adamw ~weight_decay:0.01 schedule
+Vega.rmsprop ~decay:0.9 ~momentum:0.0 schedule
+Vega.adagrad ~eps:1e-8 schedule
 ```
 
 Available schedules:
 
 <!-- $MDX skip -->
 ```ocaml
-Optim.Schedule.constant 1e-3
-Optim.Schedule.cosine_decay ~init_value:1e-3 ~decay_steps:10000 ()
-Optim.Schedule.warmup_cosine ~init_value:0. ~peak_value:1e-3 ~warmup_steps:1000
-Optim.Schedule.warmup_linear ~init_value:0. ~peak_value:1e-3 ~warmup_steps:1000
-Optim.Schedule.exponential_decay ~init_value:1e-3 ~decay_rate:0.96 ~decay_steps:1000
+Vega.Schedule.constant 1e-3
+Vega.Schedule.cosine_decay ~init_value:1e-3 ~decay_steps:10000 ()
+Vega.Schedule.warmup_cosine ~init_value:0. ~peak_value:1e-3 ~warmup_steps:1000
+Vega.Schedule.linear ~init_value:0. ~end_value:1e-3 ~steps:1000
+Vega.Schedule.exponential_decay ~init_value:1e-3 ~decay_rate:0.96 ~decay_steps:1000
 ```
 
 Key differences:
 
 * PyTorch couples the optimizer to the model via `model.parameters()`.
-  Kaun and Optax are decoupled -- they operate on parameter trees.
-* PyTorch separates scheduler from optimizer. Kaun (like Optax) bakes
-  the schedule into the optimizer via the `~lr` argument.
-* A Kaun schedule is just `int -> float`. Compose them by writing a
+  Vega and Optax are decoupled -- they operate on parameter trees.
+* PyTorch separates scheduler from optimizer. Vega (like Optax) bakes
+  the schedule into the optimizer as its last positional argument.
+* A Vega schedule is just `int -> float`. Compose them by writing a
   plain OCaml function.
 
 ---
@@ -343,7 +343,7 @@ for epoch in range(10):
 ```ocaml
 let trainer =
   Train.make ~model
-    ~optimizer:(Optim.adam ~lr:(Optim.Schedule.constant 1e-3) ())
+    ~optimizer:(Vega.adam (Vega.Schedule.constant 1e-3))
 
 let st = Nx.Rng.run ~seed:42 @@ fun () ->
   Train.init trainer ~dtype:Nx.Float32
@@ -514,8 +514,8 @@ Key differences:
 | Forward pass (training)      | `model.train(); y = model(x)`                      | `Layer.apply model vars ~training:true x`                      |
 | Forward pass (eval)          | `model.eval(); y = model(x)`                       | `Train.predict trainer st x`                                   |
 | Count parameters             | `sum(p.numel() for p in model.parameters())`       | `Ptree.count_parameters (Layer.params vars)`                   |
-| Create optimizer             | `Adam(model.parameters(), lr=1e-3)`                | `Optim.adam ~lr:(Optim.Schedule.constant 1e-3) ()`             |
-| Cosine decay schedule        | `CosineAnnealingLR(opt, T_max=N)`                  | `Optim.Schedule.cosine_decay ~init_value:lr ~decay_steps:N ()` |
+| Create optimizer             | `Adam(model.parameters(), lr=1e-3)`                | `Vega.adam (Vega.Schedule.constant 1e-3)`                      |
+| Cosine decay schedule        | `CosineAnnealingLR(opt, T_max=N)`                  | `Vega.Schedule.cosine_decay ~init_value:lr ~decay_steps:N ()` |
 | Compute loss                 | `F.cross_entropy(logits, labels)`                  | `Loss.cross_entropy_sparse logits labels`                      |
 | Training step                | `zero_grad(); loss.backward(); opt.step()`         | `Train.step trainer st ~training:true ~loss x`                 |
 | Full training loop           | Manual `for` loop                                  | `Train.fit trainer st data`                                    |

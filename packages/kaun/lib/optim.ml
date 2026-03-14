@@ -5,22 +5,9 @@
 
 module Dtype = Nx_core.Dtype
 
-(* Errors and helpers *)
+(* Helpers *)
 
 let err_expected_float_dtype = "Optim: expected floating-point dtype"
-let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
-
-let validate_positive ctx name value =
-  if value <= 0.0 then
-    invalid_argf "%s: expected %s > 0.0, got %g" ctx name value
-
-let validate_non_negative ctx name value =
-  if value < 0.0 then
-    invalid_argf "%s: expected %s >= 0.0, got %g" ctx name value
-
-let validate_unit_interval ctx name value =
-  if value < 0.0 || value >= 1.0 then
-    invalid_argf "%s: expected 0.0 <= %s < 1.0, got %g" ctx name value
 
 let float_of_scalar (type a b) (dtype : (a, b) Dtype.t) (value : a) : float =
   match dtype with
@@ -51,81 +38,144 @@ let tensor_sum_sq (Ptree.P t) =
   let sq = Nx.mul t t in
   float_of_scalar dtype (Nx.item [] (Nx.sum sq))
 
-let zeros_like t = Ptree.map { run = Nx.zeros_like } t
+(* Per-leaf packed Vega state with captured dtype for type unification *)
 
-(* Schedules *)
+type packed_vega_state =
+  | PVS : {
+      dtype : ('a, 'b) Dtype.t;
+      st : ('a, 'b) Vega.state;
+    }
+      -> packed_vega_state
 
-module Schedule = struct
-  type t = int -> float
+(* State *)
 
-  let constant value _ = value
+type state = { tx : Vega.t; leaf_states : packed_vega_state array }
 
-  let cosine_decay ~init_value ~decay_steps ?(alpha = 0.) () step =
-    if step >= decay_steps then alpha *. init_value
-    else
-      let ratio = float_of_int step /. float_of_int decay_steps in
-      let cosine_val = 0.5 *. (1. +. Stdlib.cos (Float.pi *. ratio)) in
-      (((1. -. alpha) *. cosine_val) +. alpha) *. init_value
+(* Init *)
 
-  let warmup_cosine ~init_value ~peak_value ~warmup_steps step =
-    if step >= warmup_steps then peak_value
-    else
-      let ratio = float_of_int step /. float_of_int warmup_steps in
-      let cosine_val = 0.5 *. (1. -. Stdlib.cos (Float.pi *. ratio)) in
-      init_value +. ((peak_value -. init_value) *. cosine_val)
+let init tx params =
+  let leaves, _ = Ptree.flatten params in
+  let leaf_states =
+    Array.of_list
+      (List.map
+         (fun pt ->
+           Ptree.with_tensor pt
+             {
+               run = (fun t -> PVS { dtype = Nx.dtype t; st = Vega.init tx t });
+             })
+         leaves)
+  in
+  { tx; leaf_states }
 
-  let exponential_decay ~init_value ~decay_rate ~decay_steps step =
-    let ratio = float_of_int step /. float_of_int decay_steps in
-    init_value *. (decay_rate ** ratio)
+(* Update: returns updates tree (not new params) *)
 
-  let warmup_linear ~init_value ~peak_value ~warmup_steps step =
-    if step >= warmup_steps then peak_value
-    else
-      let ratio = float_of_int step /. float_of_int warmup_steps in
-      init_value +. ((peak_value -. init_value) *. ratio)
-end
+let update st params grads =
+  let param_leaves, rebuild = Ptree.flatten params in
+  let grad_leaves, _ = Ptree.flatten grads in
+  let n = Array.length st.leaf_states in
+  let update_packed = Array.make n (List.hd param_leaves) in
+  let new_leaf_states = Array.make n st.leaf_states.(0) in
+  List.iteri
+    (fun i param_pt ->
+      let grad_pt = List.nth grad_leaves i in
+      let (PVS { dtype = dt; st = vega_st }) = st.leaf_states.(i) in
+      let param_t = Ptree.Tensor.to_typed_exn dt param_pt in
+      let grad_t = Ptree.Tensor.to_typed_exn dt grad_pt in
+      let upd, new_vega_st = Vega.update vega_st ~grad:grad_t ~param:param_t in
+      update_packed.(i) <- Ptree.P upd;
+      new_leaf_states.(i) <- PVS { dtype = dt; st = new_vega_st })
+    param_leaves;
+  let updates = rebuild (Array.to_list update_packed) in
+  (updates, { tx = st.tx; leaf_states = new_leaf_states })
 
-(* Optimizer core *)
-
-type 'a spec = {
-  init : Ptree.t -> 'a;
-  update : step:int -> lr:float -> 'a -> Ptree.t -> Ptree.t -> Ptree.t * 'a;
-  to_trees : 'a -> Ptree.t list;
-  of_trees : Ptree.t list -> 'a;
-}
-
-type algorithm = A : { schedule : Schedule.t; spec : 'a spec } -> algorithm
-type state = S : { count : int; data : 'a; spec : 'a spec } -> state
-
-let init (A { spec; _ }) params = S { count = 0; data = spec.init params; spec }
-
-let step (A { schedule; _ }) (S s) params grads =
-  let count = s.count + 1 in
-  let lr = schedule count in
-  let updates, data = s.spec.update ~step:count ~lr s.data params grads in
-  (updates, S { count; data; spec = s.spec })
+(* Apply updates: add updates to params *)
 
 let apply_updates params updates =
-  Ptree.map2 { run = (fun p u -> Nx.add p u) } params updates
+  Ptree.map2 { run = (fun param upd -> Nx.add param upd) } params updates
 
-let update algo st params grads =
-  let updates, st' = step algo st params grads in
-  (apply_updates params updates, st')
+(* Step: convenience for update + apply_updates *)
+
+let step st params grads =
+  let updates, new_st = update st params grads in
+  let new_params = apply_updates params updates in
+  (new_params, new_st)
+
+(* Serialization *)
+
+let state_to_trees st =
+  let n = Array.length st.leaf_states in
+  if n = 0 then (0, [])
+  else
+    (* Get count from first leaf (all leaves share the same count) *)
+    let (PVS { st = first_st; _ }) = st.leaf_states.(0) in
+    let count, _ = Vega.state_to_tensors first_st in
+    (* Extract per-leaf tensor arrays *)
+    let per_leaf_tensors = Array.make n [||] in
+    for i = 0 to n - 1 do
+      let (PVS { st = vega_st; _ }) = st.leaf_states.(i) in
+      let _, tensors = Vega.state_to_tensors vega_st in
+      per_leaf_tensors.(i) <- Array.map (fun t -> Ptree.P t) tensors
+    done;
+    (* Determine number of state tensors per leaf *)
+    let n_tensors = Array.length per_leaf_tensors.(0) in
+    if n_tensors = 0 then (count, [])
+    else
+      (* Transpose: per-leaf x per-tensor -> per-tensor x per-leaf *)
+      let tensor_trees =
+        List.init n_tensors (fun m ->
+            let leaves =
+              List.init n (fun i -> Ptree.Tensor per_leaf_tensors.(i).(m))
+            in
+            Ptree.List leaves)
+      in
+      (count, tensor_trees)
+
+let state_of_trees tx ~count trees =
+  let n_trees = List.length trees in
+  let expected_tensors = Vega.n_tensors tx in
+  if n_trees <> expected_tensors then
+    invalid_arg
+      (Printf.sprintf "Optim.state_of_trees: expected %d moment trees, got %d"
+         expected_tensors n_trees);
+  if n_trees = 0 then { tx; leaf_states = [||] }
+  else
+    let first_tree = List.hd trees in
+    let first_items = Ptree.List.items_exn first_tree in
+    let n_leaves = List.length first_items in
+    (* Collect per-tensor leaf lists *)
+    let tensor_leaves =
+      List.map
+        (fun tree -> List.map Ptree.as_tensor_exn (Ptree.List.items_exn tree))
+        trees
+    in
+    (* Transpose: per-tensor x per-leaf -> per-leaf x per-tensor *)
+    let leaf_states =
+      Array.init n_leaves (fun i ->
+          let leaf_tensors =
+            List.map (fun moment -> List.nth moment i) tensor_leaves
+          in
+          (* Use the first tensor's dtype as reference *)
+          let ref_pt = List.hd leaf_tensors in
+          Ptree.with_tensor ref_pt
+            {
+              run =
+                (fun ref_t ->
+                  let dt = Nx.dtype ref_t in
+                  let typed_tensors =
+                    Array.of_list
+                      (List.map (Ptree.Tensor.to_typed_exn dt) leaf_tensors)
+                  in
+                  let vega_st = Vega.state_of_tensors tx ~count typed_tensors in
+                  PVS { dtype = dt; st = vega_st });
+            })
+    in
+    { tx; leaf_states }
 
 (* Gradient utilities *)
 
 let global_norm t =
   let sum_sq = Ptree.fold (fun acc p -> acc +. tensor_sum_sq p) 0. t in
   sqrt sum_sq
-
-let err_trees_length name expected got =
-  invalid_argf "Optim.state_of_trees: %s expects %d trees, got %d" name expected
-    got
-
-let state_to_trees (S s) = (s.count, s.spec.to_trees s.data)
-
-let state_of_trees (A { spec; _ }) ~count trees =
-  S { count; data = spec.of_trees trees; spec }
 
 let clip_by_global_norm max_norm grads =
   let norm = global_norm grads in
@@ -140,360 +190,3 @@ let clip_by_global_norm max_norm grads =
             Nx.mul t (scalar dt scale));
       }
       grads
-
-(* SGD *)
-
-let sgd ~lr ?(momentum = 0.) ?(nesterov = false) () =
-  validate_unit_interval "Optim.sgd" "momentum" momentum;
-  if momentum = 0. then
-    let spec =
-      {
-        init = (fun _ -> ());
-        update =
-          (fun ~step:_ ~lr () _params grads ->
-            let updates =
-              Ptree.map
-                {
-                  run =
-                    (fun g ->
-                      let dt = Nx.dtype g in
-                      Nx.mul (scalar dt (-.lr)) g);
-                }
-                grads
-            in
-            (updates, ()));
-        to_trees = (fun () -> []);
-        of_trees =
-          (fun l -> if l <> [] then err_trees_length "sgd" 0 (List.length l));
-      }
-    in
-    A { schedule = lr; spec }
-  else
-    let spec =
-      {
-        init = (fun params -> zeros_like params);
-        update =
-          (fun ~step:_ ~lr vel _params grads ->
-            let new_vel =
-              Ptree.map2
-                {
-                  run =
-                    (fun v g ->
-                      let dt = Nx.dtype g in
-                      Nx.add (Nx.mul v (scalar dt momentum)) g);
-                }
-                vel grads
-            in
-            let updates =
-              if nesterov then
-                Ptree.map2
-                  {
-                    run =
-                      (fun g v ->
-                        let dt = Nx.dtype g in
-                        Nx.mul (scalar dt (-.lr))
-                          (Nx.add g (Nx.mul v (scalar dt momentum))));
-                  }
-                  grads new_vel
-              else
-                Ptree.map
-                  {
-                    run =
-                      (fun v ->
-                        let dt = Nx.dtype v in
-                        Nx.mul (scalar dt (-.lr)) v);
-                  }
-                  new_vel
-            in
-            (updates, new_vel));
-        to_trees = (fun vel -> [ vel ]);
-        of_trees =
-          (function
-          | [ vel ] -> vel
-          | l -> err_trees_length "sgd" 1 (List.length l));
-      }
-    in
-    A { schedule = lr; spec }
-
-(* Adam *)
-
-let adam ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) () =
-  validate_unit_interval "Optim.adam" "b1" b1;
-  validate_unit_interval "Optim.adam" "b2" b2;
-  validate_positive "Optim.adam" "eps" eps;
-  let spec =
-    {
-      init =
-        (fun params ->
-          let z = zeros_like params in
-          (z, z));
-      update =
-        (fun ~step ~lr (mu, nu) _params grads ->
-          let new_mu =
-            Ptree.map2
-              {
-                run =
-                  (fun m g ->
-                    let dt = Nx.dtype g in
-                    Nx.add
-                      (Nx.mul m (scalar dt b1))
-                      (Nx.mul g (scalar dt (1. -. b1))));
-              }
-              mu grads
-          in
-          let new_nu =
-            Ptree.map2
-              {
-                run =
-                  (fun v g ->
-                    let dt = Nx.dtype g in
-                    Nx.add
-                      (Nx.mul v (scalar dt b2))
-                      (Nx.mul (Nx.mul g g) (scalar dt (1. -. b2))));
-              }
-              nu grads
-          in
-          let bc1 = 1. -. (b1 ** float_of_int step) in
-          let bc2 = 1. -. (b2 ** float_of_int step) in
-          let updates =
-            Ptree.map2
-              {
-                run =
-                  (fun m v ->
-                    let dt = Nx.dtype m in
-                    let m_hat = Nx.div m (scalar dt bc1) in
-                    let v_hat = Nx.div v (scalar dt bc2) in
-                    Nx.mul (scalar dt (-.lr))
-                      (Nx.div m_hat (Nx.add (Nx.sqrt v_hat) (scalar dt eps))));
-              }
-              new_mu new_nu
-          in
-          (updates, (new_mu, new_nu)));
-      to_trees = (fun (mu, nu) -> [ mu; nu ]);
-      of_trees =
-        (function
-        | [ mu; nu ] -> (mu, nu)
-        | l -> err_trees_length "adam" 2 (List.length l));
-    }
-  in
-  A { schedule = lr; spec }
-
-(* AdamW *)
-
-let adamw ~lr ?(b1 = 0.9) ?(b2 = 0.999) ?(eps = 1e-8) ?(weight_decay = 0.01) ()
-    =
-  validate_unit_interval "Optim.adamw" "b1" b1;
-  validate_unit_interval "Optim.adamw" "b2" b2;
-  validate_positive "Optim.adamw" "eps" eps;
-  validate_non_negative "Optim.adamw" "weight_decay" weight_decay;
-  let spec =
-    {
-      init =
-        (fun params ->
-          let z = zeros_like params in
-          (z, z));
-      update =
-        (fun ~step ~lr (mu, nu) params grads ->
-          let new_mu =
-            Ptree.map2
-              {
-                run =
-                  (fun m g ->
-                    let dt = Nx.dtype g in
-                    Nx.add
-                      (Nx.mul m (scalar dt b1))
-                      (Nx.mul g (scalar dt (1. -. b1))));
-              }
-              mu grads
-          in
-          let new_nu =
-            Ptree.map2
-              {
-                run =
-                  (fun v g ->
-                    let dt = Nx.dtype g in
-                    Nx.add
-                      (Nx.mul v (scalar dt b2))
-                      (Nx.mul (Nx.mul g g) (scalar dt (1. -. b2))));
-              }
-              nu grads
-          in
-          let bc1 = 1. -. (b1 ** float_of_int step) in
-          let bc2 = 1. -. (b2 ** float_of_int step) in
-          let adam_updates =
-            Ptree.map2
-              {
-                run =
-                  (fun m v ->
-                    let dt = Nx.dtype m in
-                    let m_hat = Nx.div m (scalar dt bc1) in
-                    let v_hat = Nx.div v (scalar dt bc2) in
-                    Nx.mul (scalar dt (-.lr))
-                      (Nx.div m_hat (Nx.add (Nx.sqrt v_hat) (scalar dt eps))));
-              }
-              new_mu new_nu
-          in
-          let decay_updates =
-            Ptree.map
-              {
-                run =
-                  (fun p ->
-                    let dt = Nx.dtype p in
-                    Nx.mul p (scalar dt (-.lr *. weight_decay)));
-              }
-              params
-          in
-          let updates =
-            Ptree.map2
-              { run = (fun adam decay -> Nx.add adam decay) }
-              adam_updates decay_updates
-          in
-          (updates, (new_mu, new_nu)));
-      to_trees = (fun (mu, nu) -> [ mu; nu ]);
-      of_trees =
-        (function
-        | [ mu; nu ] -> (mu, nu)
-        | l -> err_trees_length "adamw" 2 (List.length l));
-    }
-  in
-  A { schedule = lr; spec }
-
-(* RMSprop *)
-
-let rmsprop ~lr ?(decay = 0.9) ?(eps = 1e-8) ?(momentum = 0.) () =
-  validate_unit_interval "Optim.rmsprop" "decay" decay;
-  validate_positive "Optim.rmsprop" "eps" eps;
-  validate_unit_interval "Optim.rmsprop" "momentum" momentum;
-  if momentum = 0. then
-    let spec =
-      {
-        init = (fun params -> zeros_like params);
-        update =
-          (fun ~step:_ ~lr nu _params grads ->
-            let new_nu =
-              Ptree.map2
-                {
-                  run =
-                    (fun v g ->
-                      let dt = Nx.dtype g in
-                      Nx.add
-                        (Nx.mul v (scalar dt decay))
-                        (Nx.mul (Nx.mul g g) (scalar dt (1. -. decay))));
-                }
-                nu grads
-            in
-            let updates =
-              Ptree.map2
-                {
-                  run =
-                    (fun g v ->
-                      let dt = Nx.dtype g in
-                      Nx.mul (scalar dt (-.lr))
-                        (Nx.div g (Nx.add (Nx.sqrt v) (scalar dt eps))));
-                }
-                grads new_nu
-            in
-            (updates, new_nu));
-        to_trees = (fun nu -> [ nu ]);
-        of_trees =
-          (function
-          | [ nu ] -> nu
-          | l -> err_trees_length "rmsprop" 1 (List.length l));
-      }
-    in
-    A { schedule = lr; spec }
-  else
-    let spec =
-      {
-        init =
-          (fun params ->
-            let z = zeros_like params in
-            (z, z));
-        update =
-          (fun ~step:_ ~lr (nu, vel) _params grads ->
-            let new_nu =
-              Ptree.map2
-                {
-                  run =
-                    (fun v g ->
-                      let dt = Nx.dtype g in
-                      Nx.add
-                        (Nx.mul v (scalar dt decay))
-                        (Nx.mul (Nx.mul g g) (scalar dt (1. -. decay))));
-                }
-                nu grads
-            in
-            let scaled =
-              Ptree.map2
-                {
-                  run =
-                    (fun g v ->
-                      let dt = Nx.dtype g in
-                      Nx.div g (Nx.add (Nx.sqrt v) (scalar dt eps)));
-                }
-                grads new_nu
-            in
-            let new_vel =
-              Ptree.map2
-                {
-                  run =
-                    (fun v s ->
-                      let dt = Nx.dtype v in
-                      Nx.add (Nx.mul v (scalar dt momentum)) s);
-                }
-                vel scaled
-            in
-            let updates =
-              Ptree.map
-                {
-                  run =
-                    (fun v ->
-                      let dt = Nx.dtype v in
-                      Nx.mul (scalar dt (-.lr)) v);
-                }
-                new_vel
-            in
-            (updates, (new_nu, new_vel)));
-        to_trees = (fun (nu, vel) -> [ nu; vel ]);
-        of_trees =
-          (function
-          | [ nu; vel ] -> (nu, vel)
-          | l -> err_trees_length "rmsprop" 2 (List.length l));
-      }
-    in
-    A { schedule = lr; spec }
-
-(* Adagrad *)
-
-let adagrad ~lr ?(eps = 1e-8) () =
-  validate_positive "Optim.adagrad" "eps" eps;
-  let spec =
-    {
-      init = (fun params -> zeros_like params);
-      update =
-        (fun ~step:_ ~lr accum _params grads ->
-          let new_accum =
-            Ptree.map2
-              { run = (fun acc g -> Nx.add acc (Nx.mul g g)) }
-              accum grads
-          in
-          let updates =
-            Ptree.map2
-              {
-                run =
-                  (fun g acc ->
-                    let dt = Nx.dtype g in
-                    Nx.mul (scalar dt (-.lr))
-                      (Nx.div g (Nx.add (Nx.sqrt acc) (scalar dt eps))));
-              }
-              grads new_accum
-          in
-          (updates, new_accum));
-      to_trees = (fun accum -> [ accum ]);
-      of_trees =
-        (function
-        | [ accum ] -> accum
-        | l -> err_trees_length "adagrad" 1 (List.length l));
-    }
-  in
-  A { schedule = lr; spec }
