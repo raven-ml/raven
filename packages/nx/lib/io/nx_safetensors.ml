@@ -67,7 +67,7 @@ let blit_tensor_16le kind shape n data offset =
   let tmp = Bytes.create byte_len in
   if Sys.big_endian then begin
     for i = 0 to n - 1 do
-      let src = offset + i * 2 in
+      let src = offset + (i * 2) in
       let dst = i * 2 in
       Bytes.set tmp dst data.[src + 1];
       Bytes.set tmp (dst + 1) data.[src]
