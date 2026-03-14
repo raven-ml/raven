@@ -131,6 +131,10 @@ let write_file path content =
     ~finally:(fun () -> close_out oc)
     (fun () -> output_string oc content)
 
+let resolve_path path =
+  if Filename.is_relative path then Filename.concat (Sys.getcwd ()) path
+  else path
+
 let ensure_file path =
   if not (Sys.file_exists path) then (
     write_file path default_template;
@@ -205,16 +209,20 @@ let default_cmd path =
         ensure_scratch_dir ();
         scratch_path
   in
-  Quill_tui.run ~create_kernel path
+  let abs_path = resolve_path path in
+  Sys.chdir (Filename.dirname abs_path);
+  Quill_tui.run ~create_kernel abs_path
 
 (* ───── Serve: web notebook ───── *)
 
 let serve_notebook port path =
-  ensure_file path;
+  let abs_path = resolve_path path in
+  ensure_file abs_path;
+  Sys.chdir (Filename.dirname abs_path);
   let url = Printf.sprintf "http://127.0.0.1:%d" port in
   Quill_server.serve ~create_kernel ~port
     ~on_ready:(fun () -> open_browser url)
-    path
+    abs_path
 
 let serve_project port project =
   let prelude nb_path =
@@ -236,11 +244,14 @@ let serve_cmd port path =
 (* ───── Run: batch execution ───── *)
 
 let run_file ?prelude inplace path =
-  let md = read_file path in
+  let abs_path = resolve_path path in
+  let abs_prelude = Option.map resolve_path prelude in
+  let nb_dir = Filename.dirname abs_path in
+  let md = read_file abs_path in
   let doc = Quill_markdown.of_string md in
   let create_kernel ~on_event =
     let k = create_kernel ~on_event in
-    (match prelude with
+    (match abs_prelude with
     | Some p ->
         let code = read_file p in
         k.Quill.Kernel.execute ~cell_id:"__prelude__" ~code
@@ -248,11 +259,17 @@ let run_file ?prelude inplace path =
     k
   in
   let doc = Quill.Doc.clear_all_outputs doc in
-  let doc = Quill.Eval.run ~create_kernel doc in
+  let prev_cwd = Sys.getcwd () in
+  Sys.chdir nb_dir;
+  let doc =
+    Fun.protect
+      ~finally:(fun () -> Sys.chdir prev_cwd)
+      (fun () -> Quill.Eval.run ~create_kernel doc)
+  in
   let result = Quill_markdown.to_string_with_outputs doc in
   if inplace then (
-    write_file path result;
-    Printf.printf "Updated %s\n%!" path)
+    write_file abs_path result;
+    Printf.printf "Updated %s\n%!" abs_path)
   else print_string result
 
 let get_mtime path =
