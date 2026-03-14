@@ -1,0 +1,3 @@
+(executables
+ (names pca kmeans dbscan tsne)
+ (libraries nx))

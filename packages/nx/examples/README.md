@@ -1,7 +1,7 @@
 # Nx Examples
 
-Nine standalone examples that teach Nx from the ground up. Each builds on the
-previous one, progressing from array creation to image processing.
+Ten standalone examples that teach Nx from the ground up. Each builds on the
+previous one, progressing from array creation to machine learning.
 
 ## Examples
 
@@ -16,6 +16,7 @@ previous one, progressing from array creation to image processing.
 | 07  | [Linear Algebra](07-linear-algebra/)                         | `@@`, `/@`, `inv`, `det`, `lstsq`, `eigh`, `svd`                     |
 | 08  | [Signal Processing](08-signal-processing/)                   | `rfft`, `irfft`, `rfftfreq`, frequency filtering                     |
 | 09  | [Image Processing](09-image-processing/)                     | `correlate2d`, `max_pool2d`, Sobel edges, `Nx_io.save_image`         |
+| 10  | [Machine Learning](10-machine-learning/)                     | PCA, K-Means, DBSCAN, t-SNE from Nx primitives                       |
 
 ## Running
 
@@ -24,10 +25,10 @@ From the repository root:
 ```bash
 dune exec nx/examples/01-creating-arrays/main.exe
 dune exec nx/examples/02-infix-and-arithmetic/main.exe
-# ... and so on through 09
+# ... and so on through 10
 ```
 
 ## Dependencies
 
-- Examples 01-08 use only `nx`
+- Examples 01-08 and 10 use only `nx`
 - Example 09 adds `nx.io` (image I/O)
