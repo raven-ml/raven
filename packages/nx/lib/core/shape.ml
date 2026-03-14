@@ -173,4 +173,17 @@ let broadcast_index_into target_multi_idx source_shape result =
     else result.(source_idx_pos) <- target_multi_idx.(target_idx_pos)
   done
 
+let reduce_output_shape input_shape axes keepdims =
+  if keepdims then
+    Array.mapi
+      (fun i dim -> if Array.exists (( = ) i) axes then 1 else dim)
+      input_shape
+  else
+    let filtered = ref [] in
+    Array.iteri
+      (fun i dim ->
+        if not (Array.exists (( = ) i) axes) then filtered := dim :: !filtered)
+      input_shape;
+    Array.of_list (List.rev !filtered)
+
 let pp fmt shape = Format.fprintf fmt "%s" (to_string shape)

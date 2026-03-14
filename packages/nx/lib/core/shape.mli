@@ -91,6 +91,11 @@ val broadcast_index_into : int array -> t -> int array -> unit
 
 (** {1:format Formatting} *)
 
+val reduce_output_shape : t -> int array -> bool -> t
+(** [reduce_output_shape shape axes keepdims] is the output shape after reducing
+    [axes]. Reduced axes are removed when [keepdims] is [false] or replaced by
+    [1] when [true]. *)
+
 val pp : Format.formatter -> t -> unit
 (** [pp] formats shapes with the same syntax as [to_string]. *)
 
