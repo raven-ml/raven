@@ -462,6 +462,77 @@ let normalize_imshow (theme : Theme.t) marks =
 
 type contour_paths = { level : float; paths : (float * float) array list }
 
+(* Join 2-point segments that share endpoints into connected polylines. Marching
+   squares produces one segment per cell edge crossing. Segments from adjacent
+   cells share exact floating-point endpoints (deterministic lerp), so we chain
+   them with exact equality via a hashtable. *)
+let join_segments segments =
+  let n = List.length segments in
+  if n = 0 then []
+  else
+    let segs = Array.of_list segments in
+    let visited = Array.make n false in
+    let adj = Hashtbl.create (2 * n) in
+    Array.iteri
+      (fun i (a, b) ->
+        let add pt =
+          let cur = try Hashtbl.find adj pt with Not_found -> [] in
+          Hashtbl.replace adj pt (i :: cur)
+        in
+        add a;
+        add b)
+      segs;
+    let find_unvisited_neighbor pt =
+      match Hashtbl.find adj pt with
+      | exception Not_found -> None
+      | neighbors ->
+          let rec scan = function
+            | [] -> None
+            | j :: rest -> if visited.(j) then scan rest else Some j
+          in
+          scan neighbors
+    in
+    let chains = ref [] in
+    for start = 0 to n - 1 do
+      if not visited.(start) then begin
+        visited.(start) <- true;
+        let a0, b0 = segs.(start) in
+        (* front: backward extensions (cons'd, so in chain order). back: forward
+           extensions (cons'd, so reversed). *)
+        let front = ref [ a0 ] in
+        let back = ref [ b0 ] in
+        (* Extend forward from b0 *)
+        let cur = ref b0 in
+        let go = ref true in
+        while !go do
+          match find_unvisited_neighbor !cur with
+          | None -> go := false
+          | Some j ->
+              visited.(j) <- true;
+              let a, b = segs.(j) in
+              let next = if a = !cur then b else a in
+              back := next :: !back;
+              cur := next
+        done;
+        (* Extend backward from a0 *)
+        cur := a0;
+        go := true;
+        while !go do
+          match find_unvisited_neighbor !cur with
+          | None -> go := false
+          | Some j ->
+              visited.(j) <- true;
+              let a, b = segs.(j) in
+              let next = if a = !cur then b else a in
+              front := next :: !front;
+              cur := next
+        done;
+        (* front is in chain order; back is reversed *)
+        chains := Array.of_list (!front @ List.rev !back) :: !chains
+      end
+    done;
+    List.rev !chains
+
 let trace_contours ~rows ~cols (data : Nx.float32_t) levels =
   let get r c =
     if r >= 0 && r < rows && c >= 0 && c < cols then Nx.item [ r; c ] data
@@ -523,7 +594,7 @@ let trace_contours ~rows ~cols (data : Nx.float32_t) levels =
           end
         done
       done;
-      let paths = List.map (fun (a, b) -> [| a; b |]) !segments in
+      let paths = join_segments !segments in
       { level; paths })
     levels
 

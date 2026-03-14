@@ -56,6 +56,13 @@ All notable changes to this project will be documented in this file.
   through `float_of_string` which produces 64-bit floats; defaulting to float32
   silently truncated precision. Now defaults to float64.
 
+### Hugin
+
+- Fix contour rendering. The marching squares implementation produced disconnected
+  2-point line segments instead of joined polylines. Contour lines now render as
+  smooth connected curves, and filled contours (`~filled:true`) produce correct
+  closed polygons instead of degenerate 2-point fills.
+
 ### Quill
 
 - Resolve relative notebook paths to absolute and change into the notebook
