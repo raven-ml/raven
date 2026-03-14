@@ -358,6 +358,16 @@ let reindex_rows t indices =
   List.map (fun (name, col) -> (name, Col.reindex col indices)) t.columns
   |> create
 
+let take t indices =
+  let n = num_rows t in
+  Array.iter
+    (fun i ->
+      if i < 0 || i >= n then
+        invalid_arg
+          (Printf.sprintf "Talon.take: index %d out of bounds for %d rows" i n))
+    indices;
+  reindex_rows t indices
+
 (* Slicing and filtering *)
 
 let head ?(n = 5) t =

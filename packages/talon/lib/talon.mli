@@ -539,6 +539,13 @@ val slice : t -> start:int -> stop:int -> t
     Raises [Invalid_argument] if [start < 0], [stop < start], or indices are out
     of bounds. *)
 
+val take : t -> int array -> t
+(** [take df indices] is the rows of [df] at the given 0-based [indices].
+
+    Indices may repeat (to duplicate rows) and need not be sorted.
+
+    Raises [Invalid_argument] if any index is out of bounds. *)
+
 val sample : ?n:int -> ?frac:float -> ?replace:bool -> ?seed:int -> t -> t
 (** [sample ?n ?frac ?replace ?seed df] is a random sample of rows from [df].
 
