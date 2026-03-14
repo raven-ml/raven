@@ -1,0 +1,3 @@
+(executable
+ (name main)
+ (libraries nx rune vega norn umbra))

@@ -1,0 +1,18 @@
+(lang dune 3.21)
+
+(name umbra)
+
+(package
+ (name umbra)
+ (synopsis "Astronomy library for OCaml")
+ (description
+  "Physical units, celestial coordinates, FITS I/O, cosmological distances, and catalog cross-matching. Built on Nx and Talon.")
+ (depends
+  (ocaml
+   (>= 5.2.0))
+  dune
+  (nx
+   (>= 1.0.0~alpha3))
+  (talon
+   (>= 1.0.0~alpha3))
+  (windtrap :with-test)))

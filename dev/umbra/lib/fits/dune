@@ -1,0 +1,5 @@
+(library
+ (name umbra_fits)
+ (public_name umbra.fits)
+ (private_modules fits_parser)
+ (libraries nx nx.io talon unix))
