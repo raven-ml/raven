@@ -98,14 +98,15 @@ static inline void iterate_inner_dims(const ndarray_t *x, const ndarray_t *y,
                                       kernel_fn kernel, void *x_data,
                                       void *y_data, void *z_data) {
   if (x->ndim <= 1) {
-    kernel(x_data, y_data, z_data, outer_idx * x->strides[0],
-           outer_idx * y->strides[0], outer_idx * z->strides[0]);
+    kernel(x_data, y_data, z_data, x->offset + outer_idx * x->strides[0],
+           y->offset + outer_idx * y->strides[0],
+           z->offset + outer_idx * z->strides[0]);
     return;
   }
 
-  long x_base = outer_idx * x->strides[0];
-  long y_base = outer_idx * y->strides[0];
-  long z_base = outer_idx * z->strides[0];
+  long x_base = x->offset + outer_idx * x->strides[0];
+  long y_base = y->offset + outer_idx * y->strides[0];
+  long z_base = z->offset + outer_idx * z->strides[0];
 
   // Create temporary iterator for inner dimensions
   int inner_ndim = x->ndim - 1;

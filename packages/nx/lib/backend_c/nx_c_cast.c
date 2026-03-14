@@ -98,13 +98,13 @@ static inline void iterate_inner_dims2(const ndarray_t *x, const ndarray_t *z,
                                        long outer_idx, kernel_fn kernel,
                                        void *x_data, void *z_data) {
   if (x->ndim <= 1) {
-    kernel(x_data, z_data, outer_idx * x->strides[0],
-           outer_idx * z->strides[0]);
+    kernel(x_data, z_data, x->offset + outer_idx * x->strides[0],
+           z->offset + outer_idx * z->strides[0]);
     return;
   }
 
-  long x_base = outer_idx * x->strides[0];
-  long z_base = outer_idx * z->strides[0];
+  long x_base = x->offset + outer_idx * x->strides[0];
+  long z_base = z->offset + outer_idx * z->strides[0];
 
   int inner_ndim = x->ndim - 1;
   int *coords = (int *)calloc(inner_ndim, sizeof(int));

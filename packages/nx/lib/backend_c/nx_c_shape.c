@@ -22,11 +22,11 @@ static inline void iterate_inner_dims_fill(const ndarray_t *z, long outer_idx,
                                            fill_kernel_fn kernel, void *val,
                                            void *z_data) {
   if (z->ndim <= 1) {
-    kernel(z_data, val, outer_idx * z->strides[0]);
+    kernel(z_data, val, z->offset + outer_idx * z->strides[0]);
     return;
   }
 
-  long z_base = outer_idx * z->strides[0];
+  long z_base = z->offset + outer_idx * z->strides[0];
 
   // Create temporary iterator for inner dimensions
   int inner_ndim = z->ndim - 1;
@@ -133,14 +133,14 @@ static inline void iterate_inner_dims_copy(const ndarray_t *src,
                                            void *src_data, void *dst_data,
                                            long *pad_before) {
   if (src->ndim <= 1) {
-    long src_base = outer_idx * src->strides[0];
-    long dst_base = (outer_idx + pad_before[0]) * dst->strides[0];
+    long src_base = src->offset + outer_idx * src->strides[0];
+    long dst_base = dst->offset + (outer_idx + pad_before[0]) * dst->strides[0];
     kernel(src_data, dst_data, src_base, dst_base);
     return;
   }
 
-  long src_base = outer_idx * src->strides[0];
-  long dst_base = (outer_idx + pad_before[0]) * dst->strides[0];
+  long src_base = src->offset + outer_idx * src->strides[0];
+  long dst_base = dst->offset + (outer_idx + pad_before[0]) * dst->strides[0];
   int inner_ndim = src->ndim - 1;
   int *coords = (int *)calloc(inner_ndim, sizeof(int));
   if (!coords) {
