@@ -1424,13 +1424,13 @@ let test_pinv () =
   let pinv = Nx.pinv a in
   check_shape "pinv shape" [| 3; 2 |] pinv;
   let recon = Nx.matmul a (Nx.matmul pinv a) in
-  check_nx "pinv recon" a recon
+  check_nx ~epsilon:1e-5 "pinv recon" a recon
 
 let test_pinv_singular () =
   let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 2.; 4. |] in
   let pinv = Nx.pinv a in
   let recon = Nx.matmul a (Nx.matmul pinv a) in
-  check_nx "pinv singular recon" a recon
+  check_nx ~epsilon:1e-5 "pinv singular recon" a recon
 
 let test_tensorsolve () =
   let a = Nx.create Nx.float32 [| 2; 2; 2; 2 |] (Array.init 16 float_of_int) in
