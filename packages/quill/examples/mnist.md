@@ -78,7 +78,7 @@ let batch_size = 64
 
 let trainer =
   Train.make ~model
-    ~optimizer:(Optim.adam ~lr:(Optim.Schedule.constant 0.001) ())
+    ~optimizer:(Vega.adam (Vega.Schedule.constant 0.001))
 
 let st = ref (Nx.Rng.run ~seed:42 @@ fun () -> Train.init trainer ~dtype:Nx.float32)
 ```
