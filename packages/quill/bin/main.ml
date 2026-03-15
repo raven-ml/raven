@@ -250,8 +250,7 @@ let run_file ?prelude ?figures_dir inplace path =
   let nb_dir = Filename.dirname abs_path in
   let figures_dir =
     Option.map
-      (fun d ->
-        if Filename.is_relative d then Filename.concat nb_dir d else d)
+      (fun d -> if Filename.is_relative d then Filename.concat nb_dir d else d)
       figures_dir
   in
   let md = read_file abs_path in

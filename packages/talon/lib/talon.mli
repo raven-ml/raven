@@ -965,9 +965,9 @@ val cast_column : t -> string -> ('a, 'b) Nx.dtype -> t
 val to_html : ?max_rows:int -> ?max_cols:int -> t -> string
 (** [to_html ?max_rows ?max_cols df] is [df] formatted as an HTML table string.
 
-    Generates a [<table>] element with [<thead>] and [<tbody>]. Truncated
-    rows and columns show ellipsis markers. A trailing [<p>] shows the
-    shape when the table is truncated.
+    Generates a [<table>] element with [<thead>] and [<tbody>]. Truncated rows
+    and columns show ellipsis markers. A trailing [<p>] shows the shape when the
+    table is truncated.
 
     [max_rows] defaults to [20]. [max_cols] defaults to [10]. *)
 

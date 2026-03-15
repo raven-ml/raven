@@ -1498,8 +1498,7 @@ let to_html ?(max_rows = 20) ?(max_cols = 10) t =
         Buffer.add_string buf (html_escape (f i));
         Buffer.add_string buf "</td>")
       fmts;
-    if n_cols > cols_to_show then
-      Buffer.add_string buf "<td>\xe2\x80\xa6</td>";
+    if n_cols > cols_to_show then Buffer.add_string buf "<td>\xe2\x80\xa6</td>";
     Buffer.add_string buf "</tr>\n"
   done;
   if n_rows > rows_to_show then begin
@@ -1507,8 +1506,7 @@ let to_html ?(max_rows = 20) ?(max_cols = 10) t =
     for _ = 1 to List.length names_to_show do
       Buffer.add_string buf "<td>\xe2\x80\xa6</td>"
     done;
-    if n_cols > cols_to_show then
-      Buffer.add_string buf "<td>\xe2\x80\xa6</td>";
+    if n_cols > cols_to_show then Buffer.add_string buf "<td>\xe2\x80\xa6</td>";
     Buffer.add_string buf "</tr>\n"
   end;
   Buffer.add_string buf "</tbody>\n</table>\n";
@@ -1543,8 +1541,7 @@ let base64_encode input =
            String.unsafe_get alphabet (((b1 land 0xf) lsl 2) lor (b2 lsr 6))
          else '=');
       Bytes.unsafe_set out (j + 3)
-        (if i + 2 < len then String.unsafe_get alphabet (b2 land 0x3f)
-         else '=');
+        (if i + 2 < len then String.unsafe_get alphabet (b2 land 0x3f) else '=');
       loop (i + 3) (j + 4)
     end
   in

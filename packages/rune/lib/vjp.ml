@@ -747,9 +747,8 @@ let make_handler tape seed_output =
           Some
             (fun _k ->
               invalid_arg
-                "in-place mutation (set_item, set_slice, blit, assign) \
-                 cannot be used inside grad/value_and_grad — use scatter \
-                 instead")
+                "in-place mutation (set_item, set_slice, blit, assign) cannot \
+                 be used inside grad/value_and_grad — use scatter instead")
       | E_cast { t_in; target_dtype } ->
           Some
             (fun k ->

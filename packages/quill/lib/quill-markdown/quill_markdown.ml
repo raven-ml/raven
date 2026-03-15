@@ -140,9 +140,7 @@ let strip_trailing_cell_id s =
 
 let out_marker_prefix = "<!-- out:"
 let out_marker_suffix = " -->"
-
-let is_image mime =
-  String.length mime >= 6 && String.sub mime 0 6 = "image/"
+let is_image mime = String.length mime >= 6 && String.sub mime 0 6 = "image/"
 
 let extension_of_mime mime =
   match mime with
@@ -159,8 +157,7 @@ let extension_of_mime mime =
 let base64_decode_table =
   let t = Array.make 256 (-1) in
   String.iteri
-    (fun i c ->
-      t.(Char.code c) <- i)
+    (fun i c -> t.(Char.code c) <- i)
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   t
 
@@ -245,8 +242,7 @@ let parse_image_display ?base_dir mime content =
               let data =
                 (* Reuse the base64_encode from Hugin's image_util convention *)
                 let alphabet =
-                  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz\
-                   0123456789+/"
+                  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
                 in
                 let len = String.length raw in
                 let out_len = (len + 2) / 3 * 4 in
@@ -325,8 +321,7 @@ let parse_output_sections ?base_dir content =
               let mime =
                 String.sub display_tag plen (String.length display_tag - plen)
               in
-              if is_image mime then
-                parse_image_display ?base_dir mime trimmed
+              if is_image mime then parse_image_display ?base_dir mime trimmed
               else Quill.Cell.Display { mime; data = trimmed }
             else (* Unknown tag, treat as stdout *)
               Quill.Cell.Stdout trimmed
@@ -487,9 +482,7 @@ let write_figure_file ~path ~data =
   mkdir_p (Filename.dirname path);
   let raw = base64_decode data in
   let oc = open_out_bin path in
-  Fun.protect
-    ~finally:(fun () -> close_out oc)
-    (fun () -> output_string oc raw)
+  Fun.protect ~finally:(fun () -> close_out oc) (fun () -> output_string oc raw)
 
 (* Extract cell ID prefix from a figure filename like "c_abc123.png" or
    "c_abc123-2.png" *)
@@ -501,8 +494,7 @@ let cell_id_of_figure_name name =
       let suffix = String.sub base (i + 1) (String.length base - i - 1) in
       let all_digits =
         String.length suffix > 0
-        && String.to_seq suffix
-           |> Seq.for_all (fun c -> c >= '0' && c <= '9')
+        && String.to_seq suffix |> Seq.for_all (fun c -> c >= '0' && c <= '9')
       in
       if all_digits then String.sub base 0 i else base
   | None -> base
@@ -595,8 +587,7 @@ let render ?figures_dir ~with_outputs doc =
       let cell_ids =
         List.filter_map
           (function
-            | Quill.Cell.Code { id; _ } -> Some id
-            | Quill.Cell.Text _ -> None)
+            | Quill.Cell.Code { id; _ } -> Some id | Quill.Cell.Text _ -> None)
           cells
       in
       clean_orphan_figures ~figures_dir:dir ~cell_ids
@@ -616,6 +607,7 @@ let render ?figures_dir ~with_outputs doc =
   if s <> "" && s.[String.length s - 1] <> '\n' then s ^ "\n" else s
 
 let to_string doc = render ~with_outputs:false doc
+
 let to_string_with_outputs ?figures_dir doc =
   render ?figures_dir ~with_outputs:true doc
 

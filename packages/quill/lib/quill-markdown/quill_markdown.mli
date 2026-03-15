@@ -41,6 +41,7 @@ val to_string_with_outputs : ?figures_dir:string -> Quill.Doc.t -> string
 
     When [figures_dir] is provided, images are written to disk as
     [<figures_dir>/<cell-id>.<ext>] and referenced by relative path. Orphaned
-    figure files (from deleted or changed cells) are cleaned up automatically. *)
+    figure files (from deleted or changed cells) are cleaned up automatically.
+*)
 
 module Edit : module type of Edit

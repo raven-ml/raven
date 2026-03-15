@@ -664,10 +664,8 @@ let emit_with_images ~emit s =
               let raw_data = String.sub s data_start (!m - data_start) in
               (* For text MIME types, decode base64 to raw text *)
               let data =
-                if
-                  String.length mime >= 5
-                  && String.sub mime 0 5 = "text/"
-                then base64_decode raw_data
+                if String.length mime >= 5 && String.sub mime 0 5 = "text/" then
+                  base64_decode raw_data
                 else raw_data
               in
               (* Emit text before this image *)
