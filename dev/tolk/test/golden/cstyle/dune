@@ -19,6 +19,22 @@
   clang_unary_sqrt_f32.actual
   clang_vectorize_gep.actual
   clang_where_select.actual
+  cuda_bitcast_f32_to_i32.actual
+  cuda_cast_f16_to_f32.actual
+  cuda_conditional.actual
+  cuda_const_inf_nan.actual
+  cuda_gated_load.actual
+  cuda_loop.actual
+  cuda_multi_param.actual
+  cuda_nested_loops.actual
+  cuda_shared_memory.actual
+  cuda_simple_add_f32.actual
+  cuda_simple_mul_i32.actual
+  cuda_special_dims.actual
+  cuda_unary_sqrt_f16.actual
+  cuda_unary_sqrt_f32.actual
+  cuda_vectorize_gep.actual
+  cuda_where_select.actual
   metal_bitcast_f32_to_i32.actual
   metal_cast_f16_to_f32.actual
   metal_conditional.actual
@@ -73,6 +89,22 @@
    (diff clang_unary_sqrt_f32.expected clang_unary_sqrt_f32.actual)
    (diff clang_vectorize_gep.expected clang_vectorize_gep.actual)
    (diff clang_where_select.expected clang_where_select.actual)
+   (diff cuda_bitcast_f32_to_i32.expected cuda_bitcast_f32_to_i32.actual)
+   (diff cuda_cast_f16_to_f32.expected cuda_cast_f16_to_f32.actual)
+   (diff cuda_conditional.expected cuda_conditional.actual)
+   (diff cuda_const_inf_nan.expected cuda_const_inf_nan.actual)
+   (diff cuda_gated_load.expected cuda_gated_load.actual)
+   (diff cuda_loop.expected cuda_loop.actual)
+   (diff cuda_multi_param.expected cuda_multi_param.actual)
+   (diff cuda_nested_loops.expected cuda_nested_loops.actual)
+   (diff cuda_shared_memory.expected cuda_shared_memory.actual)
+   (diff cuda_simple_add_f32.expected cuda_simple_add_f32.actual)
+   (diff cuda_simple_mul_i32.expected cuda_simple_mul_i32.actual)
+   (diff cuda_special_dims.expected cuda_special_dims.actual)
+   (diff cuda_unary_sqrt_f16.expected cuda_unary_sqrt_f16.actual)
+   (diff cuda_unary_sqrt_f32.expected cuda_unary_sqrt_f32.actual)
+   (diff cuda_vectorize_gep.expected cuda_vectorize_gep.actual)
+   (diff cuda_where_select.expected cuda_where_select.actual)
    (diff metal_bitcast_f32_to_i32.expected metal_bitcast_f32_to_i32.actual)
    (diff metal_cast_f16_to_f32.expected metal_cast_f16_to_f32.actual)
    (diff metal_conditional.expected metal_conditional.actual)
