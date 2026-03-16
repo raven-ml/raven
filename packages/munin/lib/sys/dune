@@ -1,0 +1,18 @@
+(library
+ (name munin_sys)
+ (public_name munin.sys)
+ (private_modules sysstat)
+ (libraries unix str munin threads.posix)
+ (foreign_stubs
+  (language c)
+  (flags
+   (:standard
+    (:include c_flags.sexp)))
+  (names sysstat_stubs))
+ (c_library_flags
+  (:include c_library_flags.sexp)))
+
+(rule
+ (targets c_flags.sexp c_library_flags.sexp)
+ (action
+  (run %{exe:config/discover.exe})))

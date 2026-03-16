@@ -60,6 +60,7 @@ let () = Hugin.(figure () |> subplot |> Plotting.plot ~x ~y |> ignore; show ())
 | ᛈ   | [**quill**](packages/quill/)   | Jupyter + IPython | Interactive REPL and markdown notebooks                  |
 | ᚠ   | [**fehu**](packages/fehu/)     | Gymnasium         | Reinforcement learning environments                      |
 | ᛋ   | [**sowilo**](packages/sowilo/) | OpenCV            | Differentiable computer vision                           |
+| ᛗ   | [**munin**](packages/munin/)  | W&B / MLFlow      | Local experiment tracking with live TUI dashboard        |
 
 ## Getting started
 

@@ -1,0 +1,5 @@
+(executable
+ (name main)
+ (public_name munin)
+ (package munin)
+ (libraries munin munin.tui cmdliner jsont jsont.bytesrw))

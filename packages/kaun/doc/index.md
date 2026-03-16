@@ -60,4 +60,4 @@ let () =
 
 ## See Also
 
-- [Kaun Board](05-kaun-board/) — training dashboard with live metric charts and system monitoring
+- [Munin](/docs/munin/) — experiment tracking with live terminal dashboard and CLI

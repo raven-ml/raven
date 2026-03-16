@@ -162,23 +162,25 @@
   (neural-networks machine-learning deep-learning)))
 
 (package
- (name kaun-board)
- (dir packages/kaun-board)
- (synopsis "Training dashboard and logging for Raven")
+ (name munin)
+ (dir packages/munin)
+ (synopsis "Local experiment tracking for Raven")
  (description
-  "Lightweight training logger and terminal dashboard for monitoring runs. The core library (kaun-board) provides a Log API for writing JSONL events and a reader for consuming them. The TUI library (kaun-board.tui) provides a Mosaic-based dashboard.")
+  "Local-first experiment tracking with append-only event logs, versioned artifacts, a terminal dashboard, and a CLI. The core library (munin) provides Session, Run, Store, and Artifact modules. The TUI library (munin.tui) provides a Mosaic-based dashboard.")
  (depends
   (ocaml
    (>= 5.2.0))
   dune
   jsont
   bytesrw
+  sha
   cmdliner
   mosaic
   (dune-configurator :build)
-  matrix)
+  matrix
+  (windtrap :with-test))
  (tags
-  (training-dashboard monitoring logging machine-learning)))
+  (experiment-tracking machine-learning monitoring)))
 
 (package
  (name sowilo)
@@ -273,7 +275,7 @@
    (= :version))
   (kaun
    (= :version))
-  (kaun-board
+  (munin
    (= :version))
   (sowilo
    (= :version))

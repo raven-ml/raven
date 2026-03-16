@@ -100,6 +100,14 @@ let libraries =
       tagline = "Differentiable computer vision for OCaml";
       symbol = {|ᛋ|};
     };
+    {
+      name = "munin";
+      display = {|<span class="rune-symbol">ᛗ</span> munin|};
+      color = "color-munin";
+      description = "Local experiment tracking with live TUI dashboard";
+      tagline = "Experiment tracking for OCaml";
+      symbol = {|ᛗ|};
+    };
   ]
 
 let find_library name = List.find_opt (fun lib -> lib.name = name) libraries

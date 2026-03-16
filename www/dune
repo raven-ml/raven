@@ -16,6 +16,7 @@
   (source_tree ../packages/sowilo/doc)
   (source_tree ../packages/fehu/doc)
   (source_tree ../packages/quill/doc)
+  (source_tree ../packages/munin/doc)
   (source_tree ../packages/nx/examples)
   (source_tree ../packages/rune/examples)
   (source_tree ../packages/kaun/examples)
@@ -25,6 +26,7 @@
   (source_tree ../packages/sowilo/examples)
   (source_tree ../packages/fehu/examples)
   (source_tree ../packages/quill/examples)
+  (source_tree ../packages/munin/examples)
   generate/generate.exe)
  (action
   (run generate/generate.exe)))

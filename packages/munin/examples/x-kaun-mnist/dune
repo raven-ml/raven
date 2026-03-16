@@ -1,0 +1,3 @@
+(executable
+ (name main)
+ (libraries nx rune vega kaun kaun.datasets munin munin.sys))

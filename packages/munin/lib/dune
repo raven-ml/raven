@@ -1,0 +1,6 @@
+(library
+ (name munin)
+ (public_name munin)
+ (wrapped false)
+ (private_modules env fs json_utils event_log)
+ (libraries unix jsont jsont.bytesrw sha))

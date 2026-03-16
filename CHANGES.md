@@ -7,6 +7,17 @@ All notable changes to this project will be documented in this file.
 
 ## [1.0.0~beta1] - Unreleased
 
+### Munin (new)
+
+Local experiment tracking for Raven. Evolves `kaun-board` into a full
+experiment tracker — the Raven equivalent of W&B or MLFlow, without a server.
+Log metrics and artifacts from your training script, monitor runs live in the
+terminal with `munin watch`, then compare results with `munin compare`. Data
+is plain JSON on disk, so `jq` and shell scripts work out of the box. Git
+commit, command line, and system info are captured automatically. The
+`munin.sys` sub-library adds opt-in CPU and memory monitoring in a background
+thread.
+
 ### Norn (new)
 
 - New package: Markov chain Monte Carlo sampling with automatic gradients via

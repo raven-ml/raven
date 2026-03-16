@@ -1,0 +1,4 @@
+(test
+ (name test_munin)
+ (package munin)
+ (libraries munin munin.sys unix threads.posix windtrap jsont))

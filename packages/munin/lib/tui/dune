@@ -1,0 +1,12 @@
+(library
+ (name munin_tui)
+ (public_name munin.tui)
+ (libraries
+  munin
+  unix
+  mosaic
+  mosaic.ui
+  jsont
+  jsont.bytesrw
+  matrix.charts
+  matrix.grid))
