@@ -836,7 +836,16 @@ let matmul x y =
   let y_ndim = Array.length y_shape in
   let m = x_shape.(x_ndim - 2) in
   let n = y_shape.(y_ndim - 1) in
-  let batch_dims = Array.sub x_shape 0 (x_ndim - 2) in
+  let max_ndim = Int.max x_ndim y_ndim in
+  let batch_nd = max_ndim - 2 in
+  let batch_dims =
+    Array.init batch_nd (fun i ->
+        let a_idx = i - (max_ndim - x_ndim) in
+        let b_idx = i - (max_ndim - y_ndim) in
+        let sa = if a_idx >= 0 then x_shape.(a_idx) else 1 in
+        let sb = if b_idx >= 0 then y_shape.(b_idx) else 1 in
+        Int.max sa sb)
+  in
   let out_shape = Array.append batch_dims [| m; n |] in
   let out = buffer () (dtype x) out_shape in
   let x_ffi = to_ffi_tensor x' in
