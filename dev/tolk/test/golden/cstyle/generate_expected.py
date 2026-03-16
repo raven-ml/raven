@@ -16,7 +16,12 @@ tolk's .actual output against these tinygrad-generated .expected files.
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "..", "..", "_tinygrad"))
+sys.path.insert(
+    0,
+    os.path.join(
+        os.path.dirname(__file__), "..", "..", "..", "..", "..", "_tinygrad"
+    ),
+)
 
 from tinygrad.uop.ops import UOp, Ops, KernelInfo, AxisType
 from tinygrad.dtype import dtypes, AddrSpace
