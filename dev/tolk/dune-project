@@ -4,9 +4,9 @@
 
 (package
  (name tolk)
- (synopsis "An ML compiler inspired by tinygrad")
+ (synopsis "A minimal ML compiler for GPU tensor computation")
  (description
-  "Tolk is a port of tinygrad in OCaml. A minimal, readable ML compiler for the Raven ecosystem.")
+  "Tolk is a minimal, readable ML compiler for GPU tensor computation in the Raven ecosystem.")
  (depends
   (ocaml
    (>= 5.2))
