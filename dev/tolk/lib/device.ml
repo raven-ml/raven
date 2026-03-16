@@ -5,6 +5,8 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
+open Tolk_ir
+
 module Context = struct
   type 'a var = { name : string; default : 'a; parse : string -> 'a option }
 
@@ -403,7 +405,7 @@ module Program_cache = struct
       Renderer.local_max renderer,
       Renderer.shared_max renderer )
 
-  let kernel_key (program : Ir.Program.t) =
+  let kernel_key (program : Tolk_ir.Program.t) =
     Digest.to_hex (Digest.string (Marshal.to_string program []))
 
   let clone program = { program with Program.entry_addr = None; cleanup = None }

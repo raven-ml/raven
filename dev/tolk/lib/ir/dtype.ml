@@ -26,16 +26,9 @@ type scalar =
 
 type addr_space = Global | Local | Reg
 type t = { scalar : scalar; count : int }
+type ptr = { base : t; addrspace : addr_space; v : int; size : int }
 
-type ptr = {
-  base : t;
-  addrspace : addr_space;
-  v : int;
-  size : int;
-  image : (int * int) option;
-}
-
-(* ───── Constructors ───── *)
+(* Constructors *)
 
 let void = { scalar = Void; count = 1 }
 let bool = { scalar = Bool; count = 1 }
@@ -57,7 +50,7 @@ let index = { scalar = Index; count = 1 }
 let default_float = float32
 let default_int = int32
 
-(* ───── Predicates ───── *)
+(* Predicates *)
 
 let is_float t =
   match t.scalar with
@@ -77,7 +70,7 @@ let is_unsigned t =
 
 let is_bool t = t.scalar = Bool
 
-(* ───── Properties ───── *)
+(* Properties *)
 
 let scalar_bitsize = function
   | Void -> 0
@@ -117,7 +110,7 @@ let scalar_priority = function
 
 let priority t = scalar_priority t.scalar
 
-(* ───── Operations ───── *)
+(* Operations *)
 
 let scalar_of t = { t with count = 1 }
 
@@ -165,7 +158,7 @@ let max t =
       `Float infinity
   | Void -> invalid_arg "void has no numeric bounds"
 
-(* ───── Type Promotion ───── *)
+(* Type Promotion *)
 
 (* Type promotion lattice based on JAX JEP-9407. See:
    https://jax.readthedocs.io/en/latest/jep/9407-type-promotion.html
@@ -323,7 +316,7 @@ let finfo dt =
   | Fp8e4m3 -> (4, 3)
   | _ -> invalid_arg "finfo expects a floating-point dtype"
 
-(* ───── Comparison ───── *)
+(* Comparison *)
 
 let equal a b = a.scalar = b.scalar && a.count = b.count
 
@@ -332,7 +325,7 @@ let compare a b =
   | 0 -> Int.compare a.count b.count
   | c -> c
 
-(* ───── Pretty Printing ───── *)
+(* Pretty Printing *)
 
 let scalar_to_string = function
   | Void -> "void"
@@ -367,15 +360,13 @@ let addr_space_to_string = function
 
 let pp_addr_space fmt a = Format.pp_print_string fmt (addr_space_to_string a)
 
-(* ───── Pointer Operations ───── *)
+(* Pointer Operations *)
 
 module Ptr = struct
-  let create t ?(size = -1) ?(addrspace = Global) ?(v = 1) ?image () =
+  let create t ?(size = -1) ?(addrspace = Global) ?(v = 1) () =
     if v < 1 then
       invalid_arg (Printf.sprintf "pointer vcount must be >= 1, got %d" v);
-    if Option.is_some image && addrspace <> Global then
-      invalid_arg "image pointers must be in global address space";
-    { base = t; addrspace; v; size; image }
+    { base = t; addrspace; v; size }
 
   let vec p n =
     if n < 1 then
@@ -387,15 +378,14 @@ module Ptr = struct
 
   let equal a b =
     equal a.base b.base && a.addrspace = b.addrspace && a.v = b.v
-    && a.size = b.size && a.image = b.image
+    && a.size = b.size
 
   let compare a b =
     let ( |? ) c f = if c <> 0 then c else f () in
     scalar_compare a.base.scalar b.base.scalar |? fun () ->
     Int.compare a.base.count b.base.count |? fun () ->
     Stdlib.compare a.addrspace b.addrspace |? fun () ->
-    Int.compare a.v b.v |? fun () ->
-    Int.compare a.size b.size |? fun () -> Stdlib.compare a.image b.image
+    Int.compare a.v b.v |? fun () -> Int.compare a.size b.size
 
   let to_string p =
     let base = to_string p.base in
@@ -406,7 +396,7 @@ module Ptr = struct
   let pp fmt p = Format.pp_print_string fmt (to_string p)
 end
 
-(* ───── C Type Names ───── *)
+(* C Type Names *)
 
 (* C-language type names used by codegen renderers as fallback when no
    device-specific type_map override exists. *)
@@ -429,7 +419,7 @@ let scalar_cname = function
   | Fp8e5m2 -> "float8_e5m2"
   | Index -> "index"
 
-(* ───── FP Conversion ───── *)
+(* FP Conversion *)
 
 (* Converts float64 to fp16 precision by extracting IEEE 754 binary64 fields,
    re-biasing the exponent for the fp16 range, and applying

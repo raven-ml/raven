@@ -73,8 +73,6 @@ type ptr = {
   addrspace : addr_space;  (** Memory address space. *)
   v : int;  (** Pointer vector width (distinct from [base.count]). *)
   size : int;  (** Element count, or [-1] for unbounded. *)
-  image : (int * int) option;
-      (** Optional 2D image shape [(height, width)] for image-backed buffers. *)
 }
 (** Pointer into a typed buffer in a GPU memory space. *)
 
@@ -147,11 +145,11 @@ val default_int : t
 val is_float : t -> bool
 (** [is_float t] is [true] iff [t.scalar] is a floating-point type ({!Float16},
     {!Bfloat16}, {!Float32}, {!Float64}, {!Fp8e4m3}, or {!Fp8e5m2}). Ignores
-    {!val-t.count}. *)
+    [t.count]. *)
 
 val is_int : t -> bool
 (** [is_int t] is [true] iff [t.scalar] is a signed or unsigned integer type,
-    including {!Index}. Ignores {!val-t.count}. *)
+    including {!Index}. Ignores [t.count]. *)
 
 val is_unsigned : t -> bool
 (** [is_unsigned t] is [true] iff [t.scalar] is one of {!Uint8}, {!Uint16},
@@ -312,22 +310,13 @@ val pp_addr_space : Format.formatter -> addr_space -> unit
 
 (** Operations on pointer types. *)
 module Ptr : sig
-  val create :
-    t ->
-    ?size:int ->
-    ?addrspace:addr_space ->
-    ?v:int ->
-    ?image:int * int ->
-    unit ->
-    ptr
-  (** [create base ?size ?addrspace ?v ?image ()] is a pointer to [base] with:
+  val create : t -> ?size:int -> ?addrspace:addr_space -> ?v:int -> unit -> ptr
+  (** [create base ?size ?addrspace ?v ()] is a pointer to [base] with:
       - [size] element count. Defaults to [-1] (unbounded).
       - [addrspace] memory space. Defaults to {!Global}.
       - [v] pointer vector width. Defaults to [1].
-      - [image] optional 2D image shape [(height, width)].
 
-      Raises [Invalid_argument] if [v < 1] or [image] is provided with a
-      non-{!Global} address space. *)
+      Raises [Invalid_argument] if [v < 1]. *)
 
   val vec : ptr -> int -> ptr
   (** [vec p n] is [p] with pointer vector width [n].
@@ -344,7 +333,7 @@ module Ptr : sig
 
   val equal : ptr -> ptr -> bool
   (** [equal a b] is [true] iff all fields of [a] and [b] are structurally equal
-      ([base], [addrspace], [v], [size], [image]).
+      ([base], [addrspace], [v], [size]).
 
       {b Note.} IR validators may use partial field comparisons (e.g., index
       validation ignores [size], pointer concatenation validation ignores [v]).

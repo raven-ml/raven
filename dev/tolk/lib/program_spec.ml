@@ -5,7 +5,7 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-open Ir.Program
+open Tolk_ir
 
 type var = { name : string; lo : int; hi : int; dtype : Dtype.t }
 type core_id = { var_index : int; lo : int; hi : int }
@@ -66,10 +66,10 @@ module Estimates = struct
       mem = add_estimate a.mem b.mem;
     }
 
-  let of_kernel (estimates : Ir.Kernel.estimates) =
+  let of_kernel (estimates : Kernel.estimates) =
     let of_estimate = function
-      | Ir.Kernel.Int n -> Int n
-      | Ir.Kernel.Symbolic s -> Symbolic s
+      | Kernel.Int n -> Int n
+      | Kernel.Symbolic s -> Symbolic s
     in
     {
       ops = of_estimate estimates.ops;
@@ -86,7 +86,7 @@ type launch = {
 
 type t = {
   name : string;
-  program : Ir.Program.t;
+  program : Program.t;
   vars : var list;
   outs : int list;
   ins : int list;
@@ -95,10 +95,10 @@ type t = {
   core_id : core_id option;
 }
 
-let unsupported_launch_expr ~ref_ instr =
+let unsupported_launch_expr ~ref_ view =
   invalid_arg
-    (Format.asprintf "unsupported launch expression at ref %d: %a" ref_ pp_instr
-       instr)
+    (Format.asprintf "unsupported launch expression at ref %d: %a" ref_
+       Program.pp_view view)
 
 let mark_axis seen ~kind axis =
   if axis < 0 || axis >= Array.length seen then
@@ -112,21 +112,30 @@ let set_axis dims axis value =
     invalid_arg (Printf.sprintf "launch axis %d out of bounds" axis);
   dims.(axis) <- value
 
-let trace_to_param (program : Ir.Program.t) (ref_ : int) : int option =
+let trace_to_param (program : Program.t) (ref_ : int) : int option =
   let index_ptr =
-    match program.(ref_) with
+    match Program.view program ref_ with
     | Index { ptr; _ } -> Some ptr
     | Cast { src; _ } | Bitcast { src; _ } -> (
-        match program.(src) with Index { ptr; _ } -> Some ptr | _ -> None)
+        match Program.view program src with
+        | Index { ptr; _ } -> Some ptr
+        | _ -> None)
     | _ -> None
   in
   Option.bind index_ptr (fun ptr ->
-      match program.(ptr) with Param { idx; _ } -> Some idx | _ -> None)
+      match Program.view program ptr with
+      | Param { idx; _ } -> Some idx
+      | _ -> None)
 
-let scalar_expr_of_program (program : Ir.Program.t) var_index_of_ref =
+let scalar_expr_of_program (program : Program.t) var_index_of_ref =
   let rec expr_of_ref ref_ =
-    match program.(ref_) with
-    | Const { value = Int n; _ } -> Scalar_expr.Const n
+    match Program.view program ref_ with
+    | Const { value; _ } -> (
+        match Const.view value with
+        | Int n -> Scalar_expr.Const (Int64.to_int n)
+        | _ ->
+            invalid_arg
+              (Printf.sprintf "non-integer constant at ref %d" ref_))
     | Define_var _ -> (
         match Hashtbl.find_opt var_index_of_ref ref_ with
         | Some index -> Scalar_expr.Var index
@@ -134,27 +143,35 @@ let scalar_expr_of_program (program : Ir.Program.t) var_index_of_ref =
             invalid_arg
               (Printf.sprintf "unknown scalar variable at ref %d" ref_))
     | Cast { src; _ } | Bitcast { src; _ } -> expr_of_ref src
-    | Neg { src; _ } -> Scalar_expr.Neg (expr_of_ref src)
-    | Add { lhs; rhs; _ } -> Scalar_expr.Add (expr_of_ref lhs, expr_of_ref rhs)
-    | Sub { lhs; rhs; _ } -> Scalar_expr.Sub (expr_of_ref lhs, expr_of_ref rhs)
-    | Mul { lhs; rhs; _ } -> Scalar_expr.Mul (expr_of_ref lhs, expr_of_ref rhs)
-    | Idiv { lhs; rhs; _ } -> Scalar_expr.Idiv (expr_of_ref lhs, expr_of_ref rhs)
-    | Mod { lhs; rhs; _ } -> Scalar_expr.Mod (expr_of_ref lhs, expr_of_ref rhs)
-    | Shl { lhs; rhs; _ } -> Scalar_expr.Shl (expr_of_ref lhs, expr_of_ref rhs)
-    | Shr { lhs; rhs; _ } -> Scalar_expr.Shr (expr_of_ref lhs, expr_of_ref rhs)
-    | Max { lhs; rhs; _ } -> Scalar_expr.Max (expr_of_ref lhs, expr_of_ref rhs)
-    | instr -> unsupported_launch_expr ~ref_ instr
+    | Unary { op = `Neg; src; _ } -> Scalar_expr.Neg (expr_of_ref src)
+    | Binary { op = `Add; lhs; rhs; _ } ->
+        Scalar_expr.Add (expr_of_ref lhs, expr_of_ref rhs)
+    | Binary { op = `Sub; lhs; rhs; _ } ->
+        Scalar_expr.Sub (expr_of_ref lhs, expr_of_ref rhs)
+    | Binary { op = `Mul; lhs; rhs; _ } ->
+        Scalar_expr.Mul (expr_of_ref lhs, expr_of_ref rhs)
+    | Binary { op = `Idiv; lhs; rhs; _ } ->
+        Scalar_expr.Idiv (expr_of_ref lhs, expr_of_ref rhs)
+    | Binary { op = `Mod; lhs; rhs; _ } ->
+        Scalar_expr.Mod (expr_of_ref lhs, expr_of_ref rhs)
+    | Binary { op = `Shl; lhs; rhs; _ } ->
+        Scalar_expr.Shl (expr_of_ref lhs, expr_of_ref rhs)
+    | Binary { op = `Shr; lhs; rhs; _ } ->
+        Scalar_expr.Shr (expr_of_ref lhs, expr_of_ref rhs)
+    | Binary { op = `Max; lhs; rhs; _ } ->
+        Scalar_expr.Max (expr_of_ref lhs, expr_of_ref rhs)
+    | v -> unsupported_launch_expr ~ref_ v
   in
   expr_of_ref
 
 let default_dims () =
   [| Scalar_expr.Const 1; Scalar_expr.Const 1; Scalar_expr.Const 1 |]
 
-let collect_vars (program : Ir.Program.t) =
+let collect_vars (program : Program.t) =
   let raw = ref [] in
-  Array.iteri
-    (fun ref_ (instr : Ir.Program.instr) ->
-      match instr with
+  Program.iteri
+    (fun ref_ (v : Program.view) ->
+      match v with
       | Define_var { name; lo; hi; dtype } ->
           raw := (ref_, { name; lo; hi; dtype }) :: !raw
       | _ -> ())
@@ -171,12 +188,12 @@ let collect_vars (program : Ir.Program.t) =
     sorted;
   (List.map snd sorted, var_index_of_ref)
 
-let collect_buffers (program : Ir.Program.t) =
+let collect_buffers (program : Program.t) =
   let outs = ref [] in
   let ins = ref [] in
-  Array.iter
-    (fun (instr : Ir.Program.instr) ->
-      match instr with
+  Program.iteri
+    (fun _id (v : Program.view) ->
+      match v with
       | Store { dst; _ } ->
           trace_to_param program dst
           |> Option.iter (fun idx -> outs := idx :: !outs)
@@ -187,7 +204,7 @@ let collect_buffers (program : Ir.Program.t) =
     program;
   (List.sort_uniq Int.compare !outs, List.sort_uniq Int.compare !ins)
 
-let collect_launch (program : Ir.Program.t) var_index_of_ref scalar_expr =
+let collect_launch (program : Program.t) var_index_of_ref scalar_expr =
   let global = default_dims () in
   let local = default_dims () in
   let seen_global = Array.make 3 false in
@@ -195,12 +212,12 @@ let collect_launch (program : Ir.Program.t) var_index_of_ref scalar_expr =
   let has_thread_groups = ref false in
   let has_threads = ref false in
   let core_id = ref None in
-  Array.iteri
-    (fun ref_ (instr : Ir.Program.instr) ->
-      match instr with
+  Program.iteri
+    (fun ref_ (v : Program.view) ->
+      match v with
       | Special { dim; size; _ } ->
           let expr = scalar_expr size in
-          let axis = Ir.special_axis dim in
+          let axis = Special_dim.axis dim in
           begin match dim with
           | Group_id _ ->
               if !has_threads then
@@ -248,8 +265,7 @@ let collect_launch (program : Ir.Program.t) var_index_of_ref scalar_expr =
   in
   (launch, !core_id)
 
-let of_program ?(estimates = Estimates.zero) ~name (program : Ir.Program.t) : t
-    =
+let of_program ?(estimates = Estimates.zero) ~name (program : Program.t) : t =
   let vars, var_index_of_ref = collect_vars program in
   let scalar_expr = scalar_expr_of_program program var_index_of_ref in
   let outs, ins = collect_buffers program in

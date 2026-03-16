@@ -74,7 +74,7 @@ end
     location, caching policy, and optional external backing. *)
 module Buffer_spec : sig
   type t = {
-    image : Dtype.t option;
+    image : Tolk_ir.Dtype.t option;
         (** Image format hint, or [None] for plain buffers. *)
     uncached : bool;  (** [true] to request uncached memory. *)
     cpu_access : bool;  (** [true] to request CPU-accessible device memory. *)
@@ -182,7 +182,7 @@ module Buffer : sig
   val create :
     device:string ->
     size:int ->
-    dtype:Dtype.t ->
+    dtype:Tolk_ir.Dtype.t ->
     ?spec:Buffer_spec.t ->
     Allocator.packed ->
     t
@@ -191,7 +191,7 @@ module Buffer : sig
 
       [spec] defaults to {!Buffer_spec.default}. *)
 
-  val view : t -> size:int -> dtype:Dtype.t -> offset:int -> t
+  val view : t -> size:int -> dtype:Tolk_ir.Dtype.t -> offset:int -> t
   (** [view b ~size ~dtype ~offset] is a view into [b] starting at byte [offset]
       and spanning [size] elements of [dtype]. The view shares the base buffer's
       allocator and spec.
@@ -213,7 +213,7 @@ module Buffer : sig
   val size : t -> int
   (** [size b] is the element count. *)
 
-  val dtype : t -> Dtype.t
+  val dtype : t -> Tolk_ir.Dtype.t
   (** [dtype b] is the element dtype. *)
 
   val spec : t -> Buffer_spec.t
@@ -493,7 +493,7 @@ val compile_program :
   t ->
   ?name:string ->
   ?estimates:Program_spec.Estimates.t ->
-  Ir.Program.t ->
+  Tolk_ir.Program.t ->
   Program.t
 (** [compile_program d ?name ?estimates program] renders and compiles [program]
     for [d], returning a prepared {!Program.t}.
@@ -506,7 +506,7 @@ val compile_program :
     {!Program_spec.Estimates.zero}. *)
 
 val create_buffer :
-  size:int -> dtype:Dtype.t -> ?spec:Buffer_spec.t -> t -> Buffer.t
+  size:int -> dtype:Tolk_ir.Dtype.t -> ?spec:Buffer_spec.t -> t -> Buffer.t
 (** [create_buffer ~size ~dtype ?spec d] is an unallocated buffer for [size]
     elements of [dtype] on [d].
 
@@ -533,7 +533,7 @@ module Multi_buffer : sig
   val create :
     devices:device list ->
     size:int ->
-    dtype:Dtype.t ->
+    dtype:Tolk_ir.Dtype.t ->
     ?spec:Buffer_spec.t ->
     unit ->
     t
@@ -554,7 +554,7 @@ module Multi_buffer : sig
   val size : t -> int
   (** [size t] is the element count (same across all buffers). *)
 
-  val dtype : t -> Dtype.t
+  val dtype : t -> Tolk_ir.Dtype.t
   (** [dtype t] is the element dtype (same across all buffers). *)
 
   val is_allocated : t -> bool

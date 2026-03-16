@@ -1,0 +1,6 @@
+(include_subdirs no)
+
+(library
+ (name tolk_ir)
+ (public_name tolk.ir)
+ (libraries unix))

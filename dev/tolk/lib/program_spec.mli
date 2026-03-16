@@ -23,7 +23,7 @@ type var = {
   name : string;  (** Variable name matching the IR definition. *)
   lo : int;  (** Inclusive lower bound. *)
   hi : int;  (** Inclusive upper bound. *)
-  dtype : Dtype.t;  (** Scalar data type. *)
+  dtype : Tolk_ir.Dtype.t;  (** Scalar data type. *)
 }
 (** The type for scalar kernel parameters with runtime bounds.
 
@@ -81,8 +81,8 @@ module Estimates : sig
       an [Int]. When either side is [Symbolic], the result is [Symbolic] with
       the expressions concatenated. *)
 
-  val of_kernel : Ir.Kernel.estimates -> t
-  (** [of_kernel e] is the lossless conversion of {!Ir.Kernel.estimates} [e]. *)
+  val of_kernel : Tolk_ir.Kernel.estimates -> t
+  (** [of_kernel e] is the lossless conversion of {!Tolk_ir.Kernel.estimates} [e]. *)
 end
 
 (** {1:spec Kernel specifications} *)
@@ -99,7 +99,7 @@ type t
 
 (** {2:constructors Constructors} *)
 
-val of_program : ?estimates:Estimates.t -> name:string -> Ir.Program.t -> t
+val of_program : ?estimates:Estimates.t -> name:string -> Tolk_ir.Program.t -> t
 (** [of_program ~name program] extracts a kernel description from [program].
 
     [estimates] defaults to {!Estimates.zero}.
@@ -120,7 +120,7 @@ val with_estimates : Estimates.t -> t -> t
 val name : t -> string
 (** [name spec] is the kernel entry-point name. *)
 
-val program : t -> Ir.Program.t
+val program : t -> Tolk_ir.Program.t
 (** [program spec] is the lowered IR program consumed by renderers. *)
 
 val vars : t -> var list

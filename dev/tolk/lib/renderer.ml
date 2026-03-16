@@ -5,14 +5,14 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(* ───── Types ───── *)
+(* Types *)
 
 type tensor_core = {
   dims : int * int * int;
   threads : int;
   elements_per_thread : int * int * int;
-  dtype_in : Dtype.scalar;
-  dtype_out : Dtype.scalar;
+  dtype_in : Tolk_ir.Dtype.scalar;
+  dtype_out : Tolk_ir.Dtype.scalar;
   opts : string list;
   swizzle :
     (string list * string list * string list)
@@ -121,13 +121,13 @@ type t = {
   local_max : int list option;
   shared_max : int;
   tensor_cores : tensor_core list;
-  load_store_widths : Dtype.t -> int list;
-  render : ?name:string -> Ir.Program.t -> string;
+  load_store_widths : Tolk_ir.Dtype.t -> int list;
+  render : ?name:string -> Tolk_ir.Program.t -> string;
   code_for_op : code_op list;
   supported_ops : supported_ops;
 }
 
-(* ───── Accessors ───── *)
+(* Accessors *)
 
 let name t = t.name
 let device t = t.device
@@ -143,7 +143,7 @@ let render t = t.render
 let code_for_op t = t.code_for_op
 let supported_ops t = t.supported_ops
 
-(* ───── Construction ───── *)
+(* Construction *)
 
 (* 0x3FFFFFFF: conservative upper bound for grid dimensions that fits in a
    31-bit OCaml int. Backends override with actual hardware limits (e.g., CUDA

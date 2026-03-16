@@ -62,8 +62,8 @@ type tensor_core = {
   elements_per_thread : int * int * int;
       (** [(a, b, c)] elements each thread contributes for operands A, B, and
           accumulator C. *)
-  dtype_in : Dtype.scalar;  (** Element type of the A and B input operands. *)
-  dtype_out : Dtype.scalar;  (** Element type of the C accumulator operand. *)
+  dtype_in : Tolk_ir.Dtype.scalar;  (** Element type of the A and B input operands. *)
+  dtype_out : Tolk_ir.Dtype.scalar;  (** Element type of the C accumulator operand. *)
   opts : string list;
       (** Scheduling option strings applied when this tensor core is active
           (e.g., ["UP"], ["LC"]). These are passed to the kernel optimizer to
@@ -180,7 +180,7 @@ val supported_ops : t -> supported_ops
 
 (** {1:load_store Load/store policy} *)
 
-val load_store_widths : t -> Dtype.t -> int list
+val load_store_widths : t -> Tolk_ir.Dtype.t -> int list
 (** [load_store_widths r dtype] is the preferred vector widths for load/store
     coalescing of [dtype], ordered from widest to narrowest. The list must
     include [1] (scalar fallback).
@@ -190,7 +190,7 @@ val load_store_widths : t -> Dtype.t -> int list
 
 (** {1:rendering Rendering} *)
 
-val render : t -> ?name:string -> Ir.Program.t -> string
+val render : t -> ?name:string -> Tolk_ir.Program.t -> string
 (** [render r ~name program] converts [program] to backend-specific source code.
 
     [name] defaults to ["kernel"]. *)
@@ -199,7 +199,7 @@ val render : t -> ?name:string -> Ir.Program.t -> string
 
 val make :
   ?tensor_cores:tensor_core list ->
-  ?load_store_widths:(Dtype.t -> int list) ->
+  ?load_store_widths:(Tolk_ir.Dtype.t -> int list) ->
   ?has_threads:bool ->
   ?global_max:int list option ->
   ?local_max:int list option ->
@@ -210,7 +210,7 @@ val make :
   has_local:bool ->
   has_shared:bool ->
   shared_max:int ->
-  render:(?name:string -> Ir.Program.t -> string) ->
+  render:(?name:string -> Tolk_ir.Program.t -> string) ->
   unit ->
   t
 (** [make ~name ~device ~has_local ~has_shared ~shared_max ~render ()] is a
