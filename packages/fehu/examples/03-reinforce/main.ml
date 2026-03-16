@@ -151,9 +151,7 @@ let () =
     in
 
     let loss, grads = Grad.value_and_grad loss_fn !params in
-    let new_params, new_opt_state =
-      Optim.update algo !opt_state !params grads
-    in
+    let new_params, new_opt_state = Optim.update !opt_state !params grads in
     params := new_params;
     opt_state := new_opt_state;
 
