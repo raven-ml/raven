@@ -48,9 +48,9 @@ val compile_llvmir : string -> bytes
     Behaves identically to {!compile_clang} except the input language is LLVM IR
     ([-x ir]) instead of C.
 
-    {b Note.} Unlike tinygrad's [CPULLVMCompiler] which uses the LLVM C API
-    directly, this invokes clang as a subprocess. This avoids a library
-    dependency on LLVM at the cost of per-compilation subprocess overhead.
+    {b Note.} This invokes clang as a subprocess rather than using the
+    LLVM C API directly. This avoids a library dependency on LLVM at the
+    cost of per-compilation subprocess overhead.
 
     Raises {!Device.Compiler.Compile_error} if clang exits with a non-zero
     status. *)

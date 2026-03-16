@@ -73,8 +73,7 @@ let read_pipes stdout_fd stderr_fd =
 
 (* Key flags: -fno-math-errno ensures __builtin_sqrt becomes a single
    instruction, not a function call. -ffixed-x18 avoids ARM's platform-reserved
-   register (macOS context switch / Windows TEB). See tinygrad
-   compiler_cpu.py. *)
+   register (macOS context switch / Windows TEB). *)
 let compile ~lang src =
   let arch = if is_windows then "AMD64" else host_arch in
   let target = if is_windows then "x86_64" else arch in
@@ -130,8 +129,7 @@ let compile ~lang src =
 
 let compile_clang src = compile ~lang:"c" src
 
-(* Divergence from tinygrad: tinygrad's CPULLVMCompiler uses the LLVM C API
-   directly to compile IR to object code. Tolk invokes clang as a subprocess
-   with -x ir, which is simpler (no LLVM library dependency) but has subprocess
-   overhead per compilation. *)
+(* Compiles LLVM IR to object code by invoking clang with -x ir.
+   This avoids a library dependency on LLVM at the cost of per-compilation
+   subprocess overhead. *)
 let compile_llvmir src = compile ~lang:"ir" src
