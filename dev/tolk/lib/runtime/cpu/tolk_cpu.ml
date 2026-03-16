@@ -7,7 +7,7 @@
 
 open Tolk
 
-(* ───── FFI Externals ───── *)
+(* FFI Externals *)
 
 external cpu_alloc : int -> nativeint = "caml_tolk_cpu_alloc"
 external cpu_free : nativeint -> unit = "caml_tolk_cpu_free"
@@ -51,7 +51,7 @@ let load_program program =
 
 let unload_program loaded = exec_free loaded.base loaded.size
 
-(* ───── Allocator ───── *)
+(* Allocator *)
 
 (* Tinygrad uses mmap (MAP_ANON | MAP_SHARED) for CPU buffers. Tolk uses
    calloc/free for simplicity. Mmap becomes relevant for shared-memory IPC or
@@ -80,7 +80,7 @@ let raw_allocator =
     supports_copy_from_disk = false;
   }
 
-(* ───── Execution Queue ───── *)
+(* Execution Queue *)
 
 (* Tinygrad uses recursive CPUWorker threads: each worker can spawn sub-workers
    for parallel kernel execution. Tolk uses a flat two-tier model: a single
@@ -321,7 +321,7 @@ module Cpu_queue = struct
         pool_shutdown t.pool
 end
 
-(* ───── Device Registration ───── *)
+(* Device Registration *)
 
 let create name =
   let clang =

@@ -7,7 +7,7 @@
 
 open Tolk
 
-(* ───── Host Detection ───── *)
+(* Host Detection *)
 
 let uname flag =
   try
@@ -24,7 +24,7 @@ let cc =
 let host_arch = uname "-m"
 let is_windows = String.equal Sys.os_type "Win32"
 
-(* ───── Subprocess Helpers ───── *)
+(* Subprocess Helpers *)
 
 let write_all_fd fd bytes =
   let len = Bytes.length bytes in
@@ -69,7 +69,7 @@ let read_pipes stdout_fd stderr_fd =
       loop [ stdout_fd; stderr_fd ];
       (Buffer.contents stdout_buf, Buffer.contents stderr_buf))
 
-(* ───── Compilation ───── *)
+(* Compilation *)
 
 (* Key flags: -fno-math-errno ensures __builtin_sqrt becomes a single
    instruction, not a function call. -ffixed-x18 avoids ARM's platform-reserved
