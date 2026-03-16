@@ -8,13 +8,13 @@
 (** C-family language renderers.
 
     {!Renderer.t} values for C-style GPU and CPU backends: CUDA, HIP, Metal,
-    OpenCL, and Clang. Each renderer converts an {!Ir.Program.t} into
+    OpenCL, and Clang. Each renderer converts a {!Tolk_ir.Program.t} into
     backend-specific source code via {!Renderer.render}.
 
-    GPU renderers map {!Ir.special_dim} values to backend-specific workitem
-    expressions (e.g., [blockIdx]/[threadIdx] for CUDA, [get_global_id] for
-    OpenCL, [gid]/[lid] for Metal). The CPU renderer ({!clang}) has no GPU
-    thread support.
+    GPU renderers map {!Tolk_ir.Special_dim.t} values to backend-specific
+    workitem expressions (e.g., [blockIdx]/[threadIdx] for CUDA,
+    [get_global_id] for OpenCL, [gid]/[lid] for Metal). The CPU renderer
+    ({!clang}) has no GPU thread support.
 
     See {!Renderer} for the renderer interface. *)
 
@@ -103,19 +103,8 @@ val metal : Renderer.t
 
 (** {1:cuda CUDA} *)
 
-(** The type for CUDA SM architecture tiers.
-
-    Selects tensor core (MMA) configurations for the CUDA renderer:
-    - {!SM75}: 8x16x8 tiles, f16 input.
-    - {!SM80}: 8x16x16 tiles (f16, bf16) + 8x16x8 (f16, tf32).
-    - {!SM89}: {!SM80} + 8x16x32 tiles for fp8 (e4m3, e5m2). *)
-type cuda_arch =
-  | SM75  (** SM 7.5 (Turing). *)
-  | SM80  (** SM 8.0 (Ampere). *)
-  | SM89  (** SM 8.9 (Ada Lovelace, includes fp8). *)
-
-val cuda : ?arch:cuda_arch -> unit -> Renderer.t
-(** [cuda ?arch ()] is a CUDA renderer for NVIDIA GPUs.
+val cuda : Gpu_target.cuda -> Renderer.t
+(** [cuda arch] is a CUDA renderer for NVIDIA GPUs.
 
     Generates CUDA C code using [blockIdx]/[threadIdx] for thread indexing. Uses
     [extern "C" __global__] with [__launch_bounds__] when local dimensions are
@@ -125,26 +114,15 @@ val cuda : ?arch:cuda_arch -> unit -> Renderer.t
     Device is ["CUDA"]. Shared memory limit is 48KB. Global grid max is
     \[2{^ 31}-1, 65535, 65535\]. Local block max is \[1024, 1024, 64\].
 
-    [arch] selects tensor cores. When omitted, reads [CUDA_ARCH] (or [CUDA_SM]
-    as fallback) from the environment and maps to the nearest tier; if neither
-    is set, produces a renderer with no tensor cores. *)
+    [arch] selects tensor core configurations:
+    - {!Gpu_target.SM75}: 8x16x8 tiles, f16 input.
+    - {!Gpu_target.SM80}: 8x16x16 tiles (f16, bf16) + 8x16x8 (f16, tf32).
+    - {!Gpu_target.SM89}: {!Gpu_target.SM80} + 8x16x32 tiles for fp8. *)
 
 (** {1:amd AMD} *)
 
-(** The type for AMD GPU architecture families.
-
-    Selects tensor core configurations and preamble builtins for the AMD HIP
-    renderer:
-    - RDNA (gaming): WMMA instructions, 32-thread wavefronts.
-    - CDNA (compute): MFMA instructions, 64-thread wavefronts. *)
-type amd_arch =
-  | RDNA3  (** RDNA3 (WMMA 16x16x16, 32-thread wavefront). *)
-  | RDNA4  (** RDNA4 (WMMA 16x16x16, gfx12 builtins). *)
-  | CDNA3  (** CDNA3 (MFMA fp8/bf16, 16x16x32/16, 64-thread wavefront). *)
-  | CDNA4  (** CDNA4 (MFMA fp8/bf16/f16, 16x16x128/32/16). *)
-
-val amd : ?arch:amd_arch -> unit -> Renderer.t
-(** [amd ?arch ()] is an AMD HIP renderer.
+val amd : Gpu_target.amd -> Renderer.t
+(** [amd arch] is an AMD HIP renderer.
 
     Generates HIP code using OCKL work item functions ([__ockl_get_group_id],
     [__ockl_get_local_id]) for thread indexing and OCML transcendentals
@@ -156,4 +134,8 @@ val amd : ?arch:amd_arch -> unit -> Renderer.t
     Device is ["AMD"]. Shared memory limit is 64KB. Global grid max is
     \[2{^ 31}-1, 65535, 65535\].
 
-    [arch] defaults to {!RDNA3}. *)
+    [arch] selects tensor core configurations:
+    - {!Gpu_target.RDNA3}: WMMA 16x16x16, 32-thread wavefront.
+    - {!Gpu_target.RDNA4}: WMMA 16x16x16, gfx12 builtins.
+    - {!Gpu_target.CDNA3}: MFMA fp8/bf16, 16x16x32/16, 64-thread wavefront.
+    - {!Gpu_target.CDNA4}: MFMA fp8/bf16/f16, 16x16x128/32/16. *)
