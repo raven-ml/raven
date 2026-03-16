@@ -49,22 +49,12 @@ let compile_c src =
         String.concat " "
           [
             Filename.quote (cc ());
-            "-c";
-            "-x";
-            "c";
-            arch_flag;
+            "-c"; "-x"; "c"; arch_flag;
             Filename.quote (Printf.sprintf "--target=%s-none-unknown-elf" arch);
-            "-O2";
-            "-fPIC";
-            "-ffreestanding";
-            "-fno-math-errno";
-            "-nostdlib";
-            "-fno-ident";
-            Filename.quote src_path;
-            "-o";
-            Filename.quote obj_path;
-            "2>";
-            Filename.quote err_path;
+            "-O2"; "-fPIC"; "-ffreestanding"; "-fno-math-errno";
+            "-nostdlib"; "-fno-ident";
+            Filename.quote src_path; "-o"; Filename.quote obj_path;
+            "2>"; Filename.quote err_path;
           ]
       in
       match Sys.command command with
@@ -75,75 +65,67 @@ let compile_c src =
             (if String.equal err "" then "clang failed"
              else "clang failed:\n" ^ err))
 
-let test_load_clang_object_exposes_relocation_sections () =
-  let obj =
-    compile_c
-      {|
-        int something;
-        int test(int x) { return something + x; }
-      |}
-  in
-  let elf = Elf.load obj in
-  let section_names =
-    Elf.sections elf |> Array.to_list
-    |> List.map (fun (section : Elf.section) -> section.Elf.name)
-  in
-  is_true (List.mem ".text" section_names);
-  is_true
-    (List.mem ".rela.text" section_names || List.mem ".rel.text" section_names)
+let load_c src = Elf.load (compile_c src)
 
-let test_bss_is_laid_out_in_image () =
-  let obj =
-    compile_c
-      {|
-        int counter;
-        int test(void) { return 1; }
-      |}
-  in
-  let elf = Elf.load obj in
-  match Elf.find_section elf ".bss" with
-  | None -> failwith "expected .bss section"
-  | Some bss ->
-      equal int 4 bss.size;
-      is_true (Bytes.length (Elf.image elf) >= bss.addr + bss.size);
-      equal string "\000\000\000\000" (Bytes.to_string bss.content)
-
-let test_entry_symbol_offset_is_reported () =
-  let obj = compile_c {|
-        int test(int x) { return x + 1; }
-      |} in
-  let elf = Elf.load obj in
-  let off = Elf.find_symbol_offset elf "test" in
-  is_true (off >= 0);
-  match Elf.find_section elf ".text" with
-  | None -> failwith "expected .text section"
-  | Some text -> is_true (off >= text.addr && off < text.addr + text.size)
-
-let test_undefined_external_is_preserved_in_relocations () =
-  let obj =
-    compile_c
-      {|
-        float powf(float, float);
-        float test(float x, float y) { return powf(x, y); }
-      |}
-  in
-  let elf = Elf.load obj in
-  let names =
-    Elf.relocs elf |> List.map (fun (reloc : Elf.reloc) -> reloc.symbol.name)
-  in
-  is_true (List.mem "powf" names)
+let require_section elf name =
+  match Elf.find_section elf name with
+  | Some s -> s
+  | None -> failwith ("expected " ^ name ^ " section")
 
 let () =
   run "Elf"
     [
       group "Parsing"
         [
-          test "clang object exposes relocation sections"
-            test_load_clang_object_exposes_relocation_sections;
-          test "bss is laid out in image" test_bss_is_laid_out_in_image;
-          test "entry symbol offset is reported"
-            test_entry_symbol_offset_is_reported;
-          test "undefined external is preserved in relocations"
-            test_undefined_external_is_preserved_in_relocations;
+          test "clang object exposes relocation sections" (fun () ->
+            let elf =
+              load_c
+                {|
+                  int something;
+                  int test(int x) { return something + x; }
+                |}
+            in
+            let names =
+              Elf.sections elf |> Array.to_list
+              |> List.map (fun (s : Elf.section) -> s.name)
+            in
+            is_true (List.mem ".text" names);
+            is_true
+              (List.mem ".rela.text" names || List.mem ".rel.text" names));
+          test "bss is laid out in image" (fun () ->
+            let elf =
+              load_c
+                {|
+                  int counter;
+                  int test(void) { return 1; }
+                |}
+            in
+            let bss = require_section elf ".bss" in
+            equal int 4 bss.size;
+            is_true (Bytes.length (Elf.image elf) >= bss.addr + bss.size);
+            equal string "\000\000\000\000" (Bytes.to_string bss.content));
+          test "entry symbol offset is reported" (fun () ->
+            let elf =
+              load_c {|
+                int test(int x) { return x + 1; }
+              |}
+            in
+            let off = Elf.find_symbol_offset elf "test" in
+            is_true (off >= 0);
+            let text = require_section elf ".text" in
+            is_true (off >= text.addr && off < text.addr + text.size));
+          test "undefined external is preserved in relocations" (fun () ->
+            let elf =
+              load_c
+                {|
+                  float powf(float, float);
+                  float test(float x, float y) { return powf(x, y); }
+                |}
+            in
+            let names =
+              Elf.relocs elf
+              |> List.map (fun (r : Elf.reloc) -> r.symbol.name)
+            in
+            is_true (List.mem "powf" names));
         ];
     ]
