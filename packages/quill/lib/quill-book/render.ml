@@ -575,3 +575,14 @@ let print_page_html ~book_title ~chapters =
   Theme.print_template_html
   |> replace_all ~pattern:"{{book_title}}" ~with_:(escape_html book_title)
   |> replace_all ~pattern:"{{chapters}}" ~with_:chapters_html
+
+let standalone_page_html ~title ~content ~live_reload_script =
+  let page_toc =
+    let headings = extract_headings content in
+    page_toc_html headings
+  in
+  Theme.standalone_html
+  |> replace_all ~pattern:"{{title}}" ~with_:(escape_html title)
+  |> replace_all ~pattern:"{{content}}" ~with_:content
+  |> replace_all ~pattern:"{{page_toc}}" ~with_:page_toc
+  |> replace_all ~pattern:"{{live_reload_script}}" ~with_:live_reload_script

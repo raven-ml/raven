@@ -22,3 +22,15 @@ val build :
 
     [output] defaults to [build/] inside the project root. [live_reload_script]
     defaults to [""] (empty). *)
+
+val build_file :
+  create_kernel:(on_event:(Quill.Kernel.event -> unit) -> Quill.Kernel.t) ->
+  ?skip_eval:bool ->
+  ?output:string ->
+  ?live_reload_script:string ->
+  string ->
+  unit
+(** [build_file ~create_kernel path] builds a single notebook file to a
+    self-contained HTML page. [output] is the output directory (defaults to the
+    directory containing the source file). [live_reload_script] defaults to [""]
+    (empty). *)

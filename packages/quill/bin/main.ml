@@ -325,11 +325,13 @@ let run_cmd watch inplace prelude figures_dir path =
 (* ───── Build: static HTML ───── *)
 
 let build_cmd skip_eval output path =
-  if not (is_dir path) then (
-    Printf.eprintf "Error: %s is not a directory\n%!" path;
+  if not (Sys.file_exists path) then (
+    Printf.eprintf "Error: %s not found\n%!" path;
     exit 1);
-  let project = load_project path in
-  Quill_book.Build.build ~create_kernel ~skip_eval ?output project
+  if is_dir path then (
+    let project = load_project path in
+    Quill_book.Build.build ~create_kernel ~skip_eval ?output project)
+  else Quill_book.Build.build_file ~create_kernel ~skip_eval ?output path
 
 (* ───── Clean: strip outputs ───── *)
 
@@ -465,7 +467,7 @@ let run_term =
 
 (* build: static HTML *)
 let build_term =
-  let doc = "Build a project directory as a static HTML site." in
+  let doc = "Build a notebook or project as static HTML." in
   Cmd.v (Cmd.info "build" ~doc)
     Term.(const build_cmd $ skip_eval_flag $ output_flag $ required_path_arg)
 

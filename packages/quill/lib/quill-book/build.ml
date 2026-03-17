@@ -250,3 +250,55 @@ let build ~create_kernel ?(skip_eval = false) ?output ?(live_reload_script = "")
   build_print_page ~output_dir ~toc:project.toc project notebook_contents;
   build_index ~output_dir project ~live_reload_script;
   Printf.printf "Done → %s\n%!" output_dir
+
+let build_file ~create_kernel ?(skip_eval = false) ?output
+    ?(live_reload_script = "") path =
+  let abs_path =
+    if Filename.is_relative path then Filename.concat (Sys.getcwd ()) path
+    else path
+  in
+  let nb_dir = Filename.dirname abs_path in
+  let basename = Filename.basename abs_path in
+  let title = Quill_project.title_of_filename basename in
+  let md = read_file abs_path in
+  let doc = Quill_markdown.of_string md in
+  let doc =
+    if skip_eval then doc
+    else
+      let create_kernel ~on_event =
+        let k = create_kernel ~on_event in
+        let prelude = Filename.concat nb_dir "prelude.ml" in
+        (if Sys.file_exists prelude then
+           let code = read_file prelude in
+           k.Quill.Kernel.execute ~cell_id:"__prelude__" ~code);
+        k
+      in
+      let prev_cwd = Sys.getcwd () in
+      Sys.chdir nb_dir;
+      Fun.protect
+        ~finally:(fun () -> Sys.chdir prev_cwd)
+        (fun () ->
+          let doc = Quill.Doc.clear_all_outputs doc in
+          Quill.Eval.run ~create_kernel doc)
+  in
+  let content = Render.chapter_html doc in
+  let html =
+    Render.standalone_page_html ~title ~content ~live_reload_script
+  in
+  let output_dir =
+    match output with Some dir -> dir | None -> nb_dir
+  in
+  mkdir_p output_dir;
+  let html_name = Filename.remove_extension basename ^ ".html" in
+  let output_path = Filename.concat output_dir html_name in
+  write_file output_path html;
+  if output_dir <> nb_dir then begin
+    let asset_dirs = [ "figures"; "images"; "assets" ] in
+    List.iter
+      (fun name ->
+        let src = Filename.concat nb_dir name in
+        let dst = Filename.concat output_dir name in
+        copy_dir_contents ~src_dir:src ~dst_dir:dst)
+      asset_dirs
+  end;
+  Printf.printf "Built %s → %s\n%!" title output_path
