@@ -25,20 +25,11 @@ type media_entry = {
   path : string;
 }
 
-type t = {
-  root : string;
-  id : string;
-  dir : string;
-  experiment_name : string;
-  name : string option;
-  group : string option;
-  parent_id : string option;
-  started_at : float;
-  ended_at : float option;
-  status : status;
-  provenance : provenance;
-  tags : string list;
+(* Heavy data loaded on demand from manifest + events *)
+type full = {
   params : (string * Value.t) list;
+  provenance : provenance;
+  ended_at : float option;
   summary : (string * Value.t) list;
   latest_metrics : (string * metric) list;
   histories : (string * metric list) list;
@@ -48,7 +39,25 @@ type t = {
   output_artifacts : Artifact.t list;
 }
 
+(* Header fields are always available without I/O *)
+type t = {
+  root : string;
+  id : string;
+  dir : string;
+  experiment_name : string;
+  name : string option;
+  group : string option;
+  parent_id : string option;
+  started_at : float;
+  status : status;
+  tags : string list;
+  full : full Lazy.t;
+}
+
 let schema_version = 2
+
+(* Header accessors — no I/O *)
+
 let id t = t.id
 let dir t = t.dir
 let experiment_name t = t.experiment_name
@@ -56,42 +65,52 @@ let name t = t.name
 let group t = t.group
 let parent_id t = t.parent_id
 let started_at t = t.started_at
-let ended_at t = t.ended_at
 let status t = t.status
-let provenance t = t.provenance
-let notes t = t.provenance.notes
 let tags t = t.tags
-let params t = t.params
-let summary t = t.summary
-let latest_metrics t = t.latest_metrics
-let input_artifacts t = t.input_artifacts
-let output_artifacts t = t.output_artifacts
-let metric_defs t = t.metric_defs
-let media_keys t = List.map fst t.media
+let resumable t = t.status = `running
+
+(* Full accessors — forces lazy on first access *)
+
+let full t = Lazy.force t.full
+let params t = (full t).params
+let provenance t = (full t).provenance
+let notes t = (full t).provenance.notes
+let ended_at t = (full t).ended_at
+let summary t = (full t).summary
+let find_param t key = List.assoc_opt key (full t).params
+let find_summary t key = List.assoc_opt key (full t).summary
+let latest_metrics t = (full t).latest_metrics
+let metric_keys t = List.map fst (full t).latest_metrics
+let input_artifacts t = (full t).input_artifacts
+let output_artifacts t = (full t).output_artifacts
+let metric_defs t = (full t).metric_defs
+let media_keys t = List.map fst (full t).media
 
 let media_history t key =
-  match List.assoc_opt key t.media with Some entries -> entries | None -> []
-
-let resumable t = t.status = `running
-let find_param t key = List.assoc_opt key t.params
-let find_summary t key = List.assoc_opt key t.summary
-let metric_keys t = List.map fst t.latest_metrics
+  match List.assoc_opt key (full t).media with
+  | Some entries -> entries
+  | None -> []
 
 let metric_history t key =
-  match List.assoc_opt key t.histories with
+  match List.assoc_opt key (full t).histories with
   | Some history -> history
   | None -> []
 
-let manifest_path root experiment id =
+(* Paths *)
+
+let run_dir ~root ~experiment id =
   Filename.concat
     (Filename.concat
-       (Filename.concat
-          (Filename.concat (Filename.concat root "experiments") experiment)
-          "runs")
-       id)
-    "run.json"
+       (Filename.concat (Filename.concat root "experiments") experiment)
+       "runs")
+    id
+
+let manifest_path root experiment id =
+  Filename.concat (run_dir ~root ~experiment id) "run.json"
 
 let events_path dir = Filename.concat dir "events.jsonl"
+
+(* Parsing helpers *)
 
 let status_of_string = function
   | "finished" -> `finished
@@ -132,9 +151,10 @@ let sorted_of_hashtbl tbl =
   Hashtbl.to_seq tbl |> List.of_seq
   |> List.sort (fun (a, _) (b, _) -> String.compare a b)
 
-let materialize root experiment id dir manifest_json =
+(* Materialize full data from manifest JSON + event log *)
+let materialize_full root dir manifest_json =
   let tag_seen = Hashtbl.create 8 in
-  let tags =
+  let initial_tags =
     Json_utils.json_mem "tags" manifest_json
     |> Json_utils.json_string_list
     |> List.fold_left (push_tag tag_seen) []
@@ -154,7 +174,7 @@ let materialize root experiment id dir manifest_json =
   let output_seen = Hashtbl.create 8 in
   let input_artifacts = ref [] in
   let output_artifacts = ref [] in
-  let tags = ref tags in
+  let tags = ref initial_tags in
   let status = ref `running in
   let ended_at = ref None in
   let notes =
@@ -225,7 +245,6 @@ let materialize root experiment id dir manifest_json =
         match Hashtbl.find_opt history_table key with
         | None | Some [] -> ()
         | Some history ->
-            (* history is in reverse chronological order (newest first) *)
             let auto =
               match def.summary with
               | `Min ->
@@ -246,9 +265,7 @@ let materialize root experiment id dir manifest_json =
                       0. history
                   in
                   Some (sum /. Float.of_int n)
-              | `Last ->
-                  (* newest is first in reversed list *)
-                  Some (List.hd history).value
+              | `Last -> Some (List.hd history).value
               | `None -> None
             in
             Option.iter
@@ -263,34 +280,22 @@ let materialize root experiment id dir manifest_json =
   let base_provenance =
     Json_utils.json_mem "provenance" manifest_json |> provenance_of_json
   in
-  {
-    root;
-    id;
-    dir;
-    experiment_name = experiment;
-    name = Json_utils.json_mem "name" manifest_json |> Json_utils.json_string;
-    group = Json_utils.json_mem "group" manifest_json |> Json_utils.json_string;
-    parent_id =
-      Json_utils.json_mem "parent_id" manifest_json |> Json_utils.json_string;
-    started_at =
-      Option.value
-        (Json_utils.json_mem "started_at" manifest_json
-        |> Json_utils.json_number)
-        ~default:0.0;
-    ended_at = !ended_at;
-    status = !status;
-    provenance = { base_provenance with notes = !notes };
-    tags = List.rev !tags;
-    params;
-    summary;
-    latest_metrics;
-    histories;
-    metric_defs;
-    media;
-    input_artifacts = List.rev !input_artifacts;
-    output_artifacts = List.rev !output_artifacts;
-  }
+  ( !status,
+    List.rev !tags,
+    {
+      params;
+      provenance = { base_provenance with notes = !notes };
+      ended_at = !ended_at;
+      summary;
+      latest_metrics;
+      histories;
+      metric_defs;
+      media;
+      input_artifacts = List.rev !input_artifacts;
+      output_artifacts = List.rev !output_artifacts;
+    } )
 
+(* Full eager load — reads manifest + events immediately *)
 let load ~root ~experiment ~id =
   let path = manifest_path root experiment id in
   if not (Sys.file_exists path) then None
@@ -306,9 +311,60 @@ let load ~root ~experiment ~id =
       in
       if not schema_ok then None
       else
-        let dir = Filename.dirname path in
-        Some (materialize root experiment id dir json)
+        let dir = run_dir ~root ~experiment id in
+        let name = Json_utils.json_mem "name" json |> Json_utils.json_string in
+        let group =
+          Json_utils.json_mem "group" json |> Json_utils.json_string
+        in
+        let parent_id =
+          Json_utils.json_mem "parent_id" json |> Json_utils.json_string
+        in
+        let started_at =
+          Option.value
+            (Json_utils.json_mem "started_at" json |> Json_utils.json_number)
+            ~default:0.0
+        in
+        let status, tags, full_data = materialize_full root dir json in
+        Some
+          {
+            root;
+            id;
+            dir;
+            experiment_name = experiment;
+            name;
+            group;
+            parent_id;
+            started_at;
+            status;
+            tags;
+            full = Lazy.from_val full_data;
+          }
     with _ -> None
+
+(* Lazy load from index — reads manifest + events only when full data
+   accessed *)
+let load_from_index ~root id (entry : Index.entry) =
+  let dir = run_dir ~root ~experiment:entry.experiment id in
+  let full =
+    lazy
+      (let path = manifest_path root entry.experiment id in
+       let json = Fs.read_file path |> Json_utils.json_of_string in
+       let _status, _tags, full_data = materialize_full root dir json in
+       full_data)
+  in
+  {
+    root;
+    id;
+    dir;
+    experiment_name = entry.experiment;
+    name = entry.name;
+    group = entry.group;
+    parent_id = entry.parent_id;
+    started_at = entry.started_at;
+    status = entry.status;
+    tags = entry.tags;
+    full;
+  }
 
 let list ~root ~experiment ?status:status_filter ?tag ?parent
     ?group:group_filter () =

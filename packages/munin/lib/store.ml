@@ -11,22 +11,55 @@ let open_ ?root () =
 
 let list_experiments t = Fs.list_dirs (Filename.concat t.root "experiments")
 
-let list_runs t ?experiment ?status ?tag ?parent ?group () =
+(* Index-based listing: filter on header fields, return lazy Run.t *)
+let list_runs_indexed index ~root ?experiment ?status ?tag ?parent ?group () =
+  Hashtbl.to_seq index |> List.of_seq
+  |> List.filter_map (fun (id, (entry : Index.entry)) ->
+      if
+        Option.fold ~none:true ~some:(String.equal entry.experiment) experiment
+        && Option.fold ~none:true ~some:(( = ) entry.status) status
+        && Option.fold ~none:true
+             ~some:(fun t -> List.exists (String.equal t) entry.tags)
+             tag
+        && Option.fold ~none:true
+             ~some:(fun p -> entry.parent_id = Some p)
+             parent
+        && Option.fold ~none:true ~some:(fun g -> entry.group = Some g) group
+      then Some (Run.load_from_index ~root id entry)
+      else None)
+  |> List.sort (fun a b -> String.compare (Run.id b) (Run.id a))
+
+(* Filesystem-based listing: fallback when no index *)
+let list_runs_scan ~root ?experiment ?status ?tag ?parent ?group () =
   let runs =
     match experiment with
     | Some experiment ->
-        Run.list ~root:t.root ~experiment ?status ?tag ?parent ?group ()
+        Run.list ~root ~experiment ?status ?tag ?parent ?group ()
     | None ->
-        Fs.list_dirs (Filename.concat t.root "experiments")
+        Fs.list_dirs (Filename.concat root "experiments")
         |> List.concat_map (fun experiment ->
-            Run.list ~root:t.root ~experiment ?status ?tag ?parent ?group ())
+            Run.list ~root ~experiment ?status ?tag ?parent ?group ())
   in
   List.sort (fun a b -> String.compare (Run.id b) (Run.id a)) runs
 
+let list_runs t ?experiment ?status ?tag ?parent ?group () =
+  match Index.read t.root with
+  | Some index ->
+      list_runs_indexed index ~root:t.root ?experiment ?status ?tag ?parent
+        ?group ()
+  | None ->
+      list_runs_scan ~root:t.root ?experiment ?status ?tag ?parent ?group ()
+
 let find_run t id =
-  List.find_map
-    (fun experiment -> Run.load ~root:t.root ~experiment ~id)
-    (list_experiments t)
+  match Index.read t.root with
+  | Some index -> (
+      match Hashtbl.find_opt index id with
+      | Some entry -> Some (Run.load_from_index ~root:t.root id entry)
+      | None -> None)
+  | None ->
+      List.find_map
+        (fun experiment -> Run.load ~root:t.root ~experiment ~id)
+        (list_experiments t)
 
 let latest_run t ?experiment ?status ?tag ?group () =
   match list_runs t ?experiment ?status ?tag ?group () with
@@ -46,7 +79,8 @@ let delete_run t run =
       (Run.experiment_name run)
   in
   if Fs.list_dirs (Filename.concat exp_dir "runs") = [] then
-    Fs.remove_tree exp_dir
+    Fs.remove_tree exp_dir;
+  Index.remove t.root ~id:(Run.id run)
 
 let gc t =
   let blobs_dir = Filename.concat (Filename.concat t.root "blobs") "sha256" in

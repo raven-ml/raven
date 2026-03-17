@@ -180,5 +180,6 @@ val output_artifacts : t -> Artifact.t list
 (**/**)
 
 val status_of_string : string -> status
+val load_from_index : root:string -> string -> Index.entry -> t
 
 (**/**)

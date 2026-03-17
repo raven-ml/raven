@@ -86,14 +86,14 @@ let provenance_json ?notes ~command ~cwd ~hostname ~pid ~git_commit ~git_dirty
     @ optional_field "git_commit" Jsont.Json.string git_commit
     @ optional_field "git_dirty" Jsont.Json.bool git_dirty)
 
-let make_manifest ~id ~experiment ?name ?group ?parent ~tags ~params ~provenance
-    () =
+let make_manifest ~id ~experiment ~started_at ?name ?group ?parent ~tags ~params
+    ~provenance () =
   Json_utils.json_obj
     ([
        ("schema_version", Jsont.Json.int schema_version);
        ("id", Jsont.Json.string id);
        ("experiment", Jsont.Json.string experiment);
-       ("started_at", Jsont.Json.number (Unix.gettimeofday ()));
+       ("started_at", Jsont.Json.number started_at);
        ("tags", Jsont.Json.list (List.map Jsont.Json.string tags));
        ( "params",
          Json_utils.json_obj
@@ -137,11 +137,15 @@ let start ?root ~experiment ?name ?group ?parent ?(tags = []) ?(params = [])
     provenance_json ?notes ~command ~cwd ~hostname ~pid ~git_commit ~git_dirty
       ~env ()
   in
+  let started_at = Unix.gettimeofday () in
+  let parent_id = Option.map Run.id parent in
   let manifest =
-    make_manifest ~id ~experiment ?name ?group ?parent ~tags ~params ~provenance
-      ()
+    make_manifest ~id ~experiment ~started_at ?name ?group ?parent ~tags ~params
+      ~provenance ()
   in
   write_manifest (manifest_path dir) manifest;
+  Index.add root ~id
+    { experiment; name; group; parent_id; status = `running; tags; started_at };
   { root; experiment; id; dir; mutex = Mutex.create (); closed = false }
 
 let finish ?(status = `finished) t () =
@@ -153,6 +157,7 @@ let finish ?(status = `finished) t () =
                status = status_to_string status;
                ended_at = Unix.gettimeofday ();
              });
+        Index.update_status t.root ~id:t.id (status :> Index.status);
         t.closed <- true))
 
 let with_run ?root ~experiment ?name ?parent ?tags ?params ?notes ?capture_env f
@@ -182,6 +187,7 @@ let resume run =
     }
   in
   append_event t (Event_log.Resumed { at = Unix.gettimeofday () });
+  Index.update_status root ~id:(Run.id run) `running;
   t
 
 let run t =
