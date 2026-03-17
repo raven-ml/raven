@@ -47,9 +47,45 @@ let kv_row k v =
       text ~style:val_style v;
     ]
 
+let badge_style =
+  Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:10) ~dim:true ()
+
+let format_summary_value ~(metric_defs : (string * Munin.Run.metric_def) list)
+    ~(best_for_tag : string -> float option) k (m : Munin.Run.metric) =
+  let def = List.assoc_opt k metric_defs in
+  let value =
+    match (def, best_for_tag k) with
+    | Some { summary = `Min | `Max; _ }, Some bv -> format_float bv
+    | _ -> format_float m.value
+  in
+  let summary_badge =
+    match def with
+    | Some { summary = `Min; _ } -> " (min)"
+    | Some { summary = `Max; _ } -> " (max)"
+    | Some { summary = `Mean; _ } -> " (mean)"
+    | Some { summary = `None; _ } -> " (none)"
+    | Some { summary = `Last; _ } | None -> ""
+  in
+  let goal_arrow =
+    match def with
+    | Some { goal = Some `Minimize; _ } -> " \u{2193}"
+    | Some { goal = Some `Maximize; _ } -> " \u{2191}"
+    | _ -> ""
+  in
+  box ~flex_direction:Row ~gap:(gap 0)
+    ~size:{ width = pct 100; height = auto }
+    [
+      text ~style:key_style k;
+      box ~flex_grow:1.0 ~size:{ width = auto; height = auto } [];
+      text ~style:val_style value;
+      text ~style:badge_style (summary_badge ^ goal_arrow);
+    ]
+
 let view ~(run : Munin.Run.t)
     ~(latest_metrics : (string * Munin.Run.metric) list)
-    ~(step_metrics : string list) =
+    ~(step_metrics : string list)
+    ~(metric_defs : (string * Munin.Run.metric_def) list)
+    ~(best_for_tag : string -> float option) =
   let params = Munin.Run.params run in
   let metrics =
     List.filter
@@ -63,9 +99,9 @@ let view ~(run : Munin.Run.t)
      else [])
     @
     if metrics <> [] then
-      [ section_header "Metrics" ]
+      [ section_header "Summary" ]
       @ List.map
-          (fun (k, (m : Munin.Run.metric)) -> kv_row k (format_float m.value))
+          (fun (k, m) -> format_summary_value ~metric_defs ~best_for_tag k m)
           metrics
     else []
   in

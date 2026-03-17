@@ -16,9 +16,11 @@ type model = {
   smooth : Theme.smooth;
   show_system : bool;
   screen_width : int;
+  was_live : bool;
+  run_completed : bool;
 }
 
-and mode = Dashboard | Detail of string
+and mode = Dashboard | Detail of string | Info
 
 type msg =
   | Tick of float
@@ -27,6 +29,8 @@ type msg =
   | Open_metric of string
   | Open_selected
   | Close_metric
+  | Open_info
+  | Close_info
   | Toggle_smooth
   | Toggle_system
   | Terminal_resize of int * int
@@ -78,6 +82,11 @@ let metrics_width m =
   if m.show_system then int_of_float (float_of_int m.screen_width *. 0.66)
   else m.screen_width
 
+let best_value monitor tag =
+  Option.map
+    (fun (b : Munin.Run.metric) -> b.value)
+    (Munin.Run_monitor.best monitor tag)
+
 (* View *)
 
 let divider () =
@@ -102,15 +111,115 @@ let user_metric_tags monitor =
       if is_sys_metric tag || List.mem tag sms then None else Some tag)
     (Munin.Run_monitor.metrics monitor)
 
+let blocks =
+  [|
+    "\u{2581}";
+    "\u{2582}";
+    "\u{2583}";
+    "\u{2584}";
+    "\u{2585}";
+    "\u{2586}";
+    "\u{2587}";
+    "\u{2588}";
+  |]
+
+let mini_sparkline history ~width =
+  let values = List.map snd history in
+  let n = List.length values in
+  if n = 0 then ""
+  else
+    let arr =
+      if n <= width then Array.of_list values
+      else
+        let a = Array.of_list values in
+        Array.sub a (n - width) width
+    in
+    let len = Array.length arr in
+    let lo = Array.fold_left min infinity arr in
+    let hi = Array.fold_left max neg_infinity arr in
+    let range = hi -. lo in
+    let buf = Buffer.create (len * 3) in
+    Array.iter
+      (fun v ->
+        let idx =
+          if range = 0. then 3
+          else int_of_float ((v -. lo) /. range *. 7.) |> max 0 |> min 7
+        in
+        Buffer.add_string buf blocks.(idx))
+      arr;
+    Buffer.contents buf
+
+let spark_style = Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:10) ()
+let bold_white = Ansi.Style.make ~bold:true ~fg:Ansi.Color.white ()
+
+let view_summary_banner m =
+  let elapsed = elapsed_secs m in
+  let h = int_of_float elapsed / 3600 in
+  let mi = int_of_float elapsed mod 3600 / 60 in
+  let s = int_of_float elapsed mod 60 in
+  let duration = Printf.sprintf "%02d:%02d:%02d" h mi s in
+  let status_color = Theme.status_color m.run_status in
+  let status_label = Theme.status_label m.run_status in
+  let metric_tags = user_metric_tags m.monitor in
+  let capped =
+    if List.length metric_tags > 8 then
+      List.filteri (fun i _ -> i < 8) metric_tags
+    else metric_tags
+  in
+  let metric_entries =
+    List.map
+      (fun tag ->
+        let history = Munin.Run_monitor.history m.monitor tag in
+        let spark = mini_sparkline history ~width:8 in
+        let value =
+          match best_value m.monitor tag with
+          | Some v -> Printf.sprintf "%.4g" v
+          | None -> (
+              match Theme.last_value history with
+              | Some v -> Printf.sprintf "%.4g" v
+              | None -> "-")
+        in
+        box ~flex_direction:Row ~gap:(gap 1)
+          ~size:{ width = pct 50; height = auto }
+          [
+            text ~style:Theme.muted_style tag;
+            text ~style:spark_style spark;
+            text ~style:bold_white value;
+          ])
+      capped
+  in
+  let rec pairs = function
+    | [] -> []
+    | [ x ] -> [ [ x ] ]
+    | x :: y :: rest -> [ x; y ] :: pairs rest
+  in
+  let metric_rows =
+    List.map
+      (fun row ->
+        box ~flex_direction:Row ~size:{ width = pct 100; height = auto } row)
+      (pairs metric_entries)
+  in
+  box ~border:true
+    ~border_color:(Ansi.Color.grayscale ~level:8)
+    ~title:(Printf.sprintf " Run %s " status_label)
+    ~padding:(padding_xy 2 0)
+    ~size:{ width = pct 100; height = auto }
+    ([
+       box ~flex_direction:Row ~gap:(gap 1)
+         ~size:{ width = pct 100; height = auto }
+         [
+           text
+             ~style:(Ansi.Style.make ~fg:status_color ())
+             (Printf.sprintf "%s in %s" status_label duration);
+         ];
+     ]
+    @ metric_rows)
+
 let view_dashboard m =
   let all_metrics = Munin.Run_monitor.metrics m.monitor in
   let metric_tags = user_metric_tags m.monitor in
   let history_for_tag tag = Munin.Run_monitor.history m.monitor tag in
-  let best_for_tag tag =
-    Option.map
-      (fun (b : Munin.Run.metric) -> b.value)
-      (Munin.Run_monitor.best m.monitor tag)
-  in
+  let best_for_tag tag = best_value m.monitor tag in
   let goal_for_tag tag =
     match List.assoc_opt tag (Munin.Run_monitor.metric_defs m.monitor) with
     | Some (d : Munin.Run.metric_def) -> d.goal
@@ -145,11 +254,60 @@ let view_dashboard m =
           [
             System.view sys_values ~history_for_tag;
             Overview.view ~run:m.run ~latest_metrics:all_metrics
-              ~step_metrics:(step_metrics m.monitor);
+              ~step_metrics:(step_metrics m.monitor)
+              ~metric_defs:(Munin.Run_monitor.metric_defs m.monitor)
+              ~best_for_tag:(best_value m.monitor);
           ];
       ]
     else []
   in
+  let banner = if m.run_completed then [ view_summary_banner m ] else [] in
+  box ~flex_direction:Column
+    ~size:{ width = pct 100; height = pct 100 }
+    ([
+       Header.view ~run_id:(Munin.Run.id m.run) ~run_name:(Munin.Run.name m.run)
+         ~tags:(Munin.Run.tags m.run) ~latest_epoch:(latest_epoch m.monitor)
+         ~total_epochs:(total_epochs m.run) ~latest_step:(latest_step m.monitor)
+         ~elapsed_secs:(elapsed_secs m) ~status:m.run_status;
+     ]
+    @ banner
+    @ [
+        box ~flex_direction:Row ~flex_grow:1.0 ~flex_shrink:1.0
+          ~overflow:{ x = Hidden; y = Hidden }
+          ~size:{ width = pct 100; height = auto }
+          ([
+             box
+               ~size:{ width = pct metrics_pct; height = auto }
+               [
+                 Metrics.view m.metrics_state ~metric_tags ~history_for_tag
+                   ~best_for_tag ~goal_for_tag;
+               ];
+           ]
+          @ right_panel);
+        Footer.view ~mode:`Dashboard;
+      ])
+
+let view_detail m tag =
+  let smooth_param = Theme.smooth_alpha m.smooth in
+  let history_for_tag t = Munin.Run_monitor.history m.monitor t in
+  let metric_def =
+    List.assoc_opt tag (Munin.Run_monitor.metric_defs m.monitor)
+  in
+  box ~flex_direction:Column
+    ~size:{ width = pct 100; height = pct 100 }
+    [
+      box ~flex_grow:1.0 ~justify_content:Center ~align_items:Center
+        ~size:{ width = pct 100; height = pct 100 }
+        [
+          Detail.view ~tag ~history_for_tag ~best:(best_value m.monitor tag)
+            ~smooth:smooth_param ~metric_def
+            ~size:{ width = pct 80; height = pct 80 };
+        ];
+      Footer.view ~mode:(`Detail m.smooth);
+    ]
+
+let view_info m =
+  let all_metrics = Munin.Run_monitor.metrics m.monitor in
   box ~flex_direction:Column
     ~size:{ width = pct 100; height = pct 100 }
     [
@@ -157,45 +315,23 @@ let view_dashboard m =
         ~tags:(Munin.Run.tags m.run) ~latest_epoch:(latest_epoch m.monitor)
         ~total_epochs:(total_epochs m.run) ~latest_step:(latest_step m.monitor)
         ~elapsed_secs:(elapsed_secs m) ~status:m.run_status;
-      box ~flex_direction:Row ~flex_grow:1.0 ~flex_shrink:1.0
-        ~overflow:{ x = Hidden; y = Hidden }
+      box ~flex_grow:1.0 ~flex_shrink:1.0 ~overflow:{ x = Hidden; y = Hidden }
         ~size:{ width = pct 100; height = auto }
-        ([
-           box
-             ~size:{ width = pct metrics_pct; height = auto }
-             [
-               Metrics.view m.metrics_state ~metric_tags ~history_for_tag
-                 ~best_for_tag ~goal_for_tag;
-             ];
-         ]
-        @ right_panel);
-      Footer.view ~mode:`Dashboard;
-    ]
-
-let view_detail m tag =
-  let smooth_param = Theme.smooth_alpha m.smooth in
-  let history_for_tag t = Munin.Run_monitor.history m.monitor t in
-  box ~flex_direction:Column
-    ~size:{ width = pct 100; height = pct 100 }
-    [
-      box ~flex_grow:1.0 ~justify_content:Center ~align_items:Center
-        ~size:{ width = pct 100; height = pct 100 }
         [
-          Detail.view ~tag ~history_for_tag
-            ~best:
-              (Option.map
-                 (fun (b : Munin.Run.metric) -> b.value)
-                 (Munin.Run_monitor.best m.monitor tag))
-            ~smooth:smooth_param
-            ~size:{ width = pct 80; height = pct 80 };
+          Info.view ~run:m.run ~status:m.run_status
+            ~elapsed_secs:(elapsed_secs m)
+            ~metric_defs:(Munin.Run_monitor.metric_defs m.monitor)
+            ~latest_metrics:all_metrics ~step_metrics:(step_metrics m.monitor)
+            ~best_for_tag:(best_value m.monitor);
         ];
-      Footer.view ~mode:(`Detail m.smooth);
+      Footer.view ~mode:`Info;
     ]
 
 let view m =
   match m.mode with
   | Dashboard -> view_dashboard m
   | Detail tag -> view_detail m tag
+  | Info -> view_info m
 
 (* TEA core *)
 
@@ -215,6 +351,8 @@ let init ~run =
       smooth = Theme.Off;
       show_system = true;
       screen_width = 80;
+      was_live = run_status = Theme.Live;
+      run_completed = false;
     },
     Cmd.none )
 
@@ -225,7 +363,12 @@ let update msg m =
       let run_status =
         run_status_of_live_status (Munin.Run_monitor.live_status m.monitor)
       in
-      ({ m with run_status }, Cmd.none)
+      let run_completed =
+        m.run_completed
+        || m.was_live && run_status <> Theme.Live
+           && run_status <> Theme.Stopped
+      in
+      ({ m with run_status; run_completed }, Cmd.none)
   | Terminal_resize (width, height) ->
       let m = { m with screen_width = width } in
       let mw = metrics_width m in
@@ -250,10 +393,12 @@ let update msg m =
       | Some tag -> ({ m with mode = Detail tag }, Cmd.none)
       | None -> (m, Cmd.none))
   | Close_metric -> ({ m with mode = Dashboard }, Cmd.none)
+  | Open_info -> ({ m with mode = Info }, Cmd.none)
+  | Close_info -> ({ m with mode = Dashboard }, Cmd.none)
   | Toggle_smooth -> (
       match m.mode with
-      | Dashboard -> (m, Cmd.none)
-      | Detail _ -> ({ m with smooth = Theme.next_smooth m.smooth }, Cmd.none))
+      | Detail _ -> ({ m with smooth = Theme.next_smooth m.smooth }, Cmd.none)
+      | Dashboard | Info -> (m, Cmd.none))
   | Toggle_system ->
       let m = { m with show_system = not m.show_system } in
       let mw = metrics_width m in
@@ -284,8 +429,11 @@ let subscriptions m =
           | Char c, Detail _ when is c 's' -> Some Toggle_smooth
           | Char c, Dashboard when is c 'q' -> Some Quit
           | Char c, Detail _ when is c 'q' -> Some Close_metric
+          | Char c, Info when is c 'q' -> Some Close_info
+          | Char c, Dashboard when is c 'i' -> Some Open_info
           | Escape, Dashboard -> Some Quit
           | Escape, Detail _ -> Some Close_metric
+          | Escape, Info -> Some Close_info
           | Left, Dashboard -> Some (Metrics_msg Metrics.Select_left)
           | Right, Dashboard -> Some (Metrics_msg Metrics.Select_right)
           | Up, Dashboard -> Some (Metrics_msg Metrics.Select_up)

@@ -125,6 +125,42 @@ let selected_tag (s : state) ~total_metrics ~all_tags =
   let idx = w.start_idx + s.selected in
   if idx < w.end_idx then List.nth_opt all_tags idx else None
 
+(* Metric grouping *)
+
+let group_prefix tag =
+  match String.index_opt tag '/' with
+  | Some i -> String.sub tag 0 i
+  | None -> ""
+
+let section_style =
+  Ansi.Style.make ~fg:(Ansi.Color.grayscale ~level:12) ~dim:true ()
+
+let view_group_header prefix =
+  box
+    ~size:{ width = pct 100; height = auto }
+    [ text ~style:section_style (Printf.sprintf "\u{2500}\u{2500} %s " prefix) ]
+
+let prefix_groups metrics =
+  let rec go current_prefix acc group = function
+    | [] ->
+        let groups =
+          if group = [] then acc else (current_prefix, List.rev group) :: acc
+        in
+        List.rev groups
+    | ((_, tag) as item) :: rest ->
+        let p = group_prefix tag in
+        if String.equal p current_prefix then
+          go current_prefix acc (item :: group) rest
+        else
+          let acc =
+            if group = [] then acc else (current_prefix, List.rev group) :: acc
+          in
+          go p acc [ item ] rest
+  in
+  match metrics with
+  | [] -> []
+  | ((_, tag) as item) :: rest -> go (group_prefix tag) [] [ item ] rest
+
 (* Chart rendering *)
 
 let dim_border = Ansi.Color.grayscale ~level:6
@@ -190,7 +226,7 @@ let view (s : state) ~metric_tags ~history_for_tag ~best_for_tag ~goal_for_tag =
       |> List.filter (fun (i, _) -> i >= w.start_idx && i < w.end_idx)
       |> List.mapi (fun local_idx (_, tag) -> (local_idx, tag))
     in
-    let rows = chunk_by columns visible_metrics in
+    let groups = prefix_groups visible_metrics in
     let batch_header =
       if w.total_batches > 1 then
         [
@@ -205,22 +241,29 @@ let view (s : state) ~metric_tags ~history_for_tag ~best_for_tag ~goal_for_tag =
       else []
     in
     let charts =
-      [
-        box ~flex_direction:Column ~gap:(gap 1)
-          (List.mapi
-             (fun row_idx row ->
-               box
-                 ~key:(Printf.sprintf "row-%d" row_idx)
-                 ~flex_direction:Row ~gap:(gap 1)
-                 ~size:{ width = pct 100; height = auto }
-                 (List.map
-                    (fun (local_idx, tag) ->
-                      view_metric_chart ~history_for_tag ~best_for_tag
-                        ~goal_for_tag ~columns
-                        ~selected:(local_idx = s.selected) tag)
-                    row))
-             rows);
-      ]
+      List.concat_map
+        (fun (prefix, group_metrics) ->
+          let header =
+            if prefix <> "" then [ view_group_header prefix ] else []
+          in
+          let rows = chunk_by columns group_metrics in
+          let chart_rows =
+            List.mapi
+              (fun row_idx row ->
+                box
+                  ~key:(Printf.sprintf "row-%s-%d" prefix row_idx)
+                  ~flex_direction:Row ~gap:(gap 1)
+                  ~size:{ width = pct 100; height = auto }
+                  (List.map
+                     (fun (local_idx, tag) ->
+                       view_metric_chart ~history_for_tag ~best_for_tag
+                         ~goal_for_tag ~columns
+                         ~selected:(local_idx = s.selected) tag)
+                     row))
+              rows
+          in
+          header @ chart_rows)
+        groups
     in
     box ~flex_direction:Column ~padding:(padding_lrtb 1 1 1 0) ~gap:(gap 1)
       ~size:{ width = pct 100; height = auto }
