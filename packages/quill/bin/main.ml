@@ -474,10 +474,26 @@ let clean_term =
   let doc = "Strip outputs from a notebook or all project notebooks." in
   Cmd.v (Cmd.info "clean" ~doc) Term.(const clean_cmd $ required_path_arg)
 
+let subcommands = [ serve_term; run_term; build_term; clean_term ]
+let known_commands = List.map Cmd.name subcommands
+
 let quill_cmd =
   let doc = "Interactive OCaml notebooks." in
   let info = Cmd.info "quill" ~version:"1.0.0" ~doc in
-  Cmd.group ~default:default_term info
-    [ serve_term; run_term; build_term; clean_term ]
+  Cmd.group ~default:default_term info subcommands
 
-let () = exit (Cmd.eval quill_cmd)
+let () =
+  (* cmdliner's Cmd.group matches the first positional arg against subcommand
+     names before falling through to the default term. Pre-parse argv to insert
+     "--" when the first arg is not a known subcommand, so that
+     [quill file.md] works without requiring [quill -- file.md]. *)
+  let argv =
+    let a = Sys.argv in
+    if Array.length a >= 2
+       && String.length a.(1) > 0
+       && a.(1).[0] <> '-'
+       && not (List.mem a.(1) known_commands)
+    then Array.concat [ [| a.(0); "--" |]; Array.sub a 1 (Array.length a - 1) ]
+    else a
+  in
+  exit (Cmd.eval ~argv quill_cmd)

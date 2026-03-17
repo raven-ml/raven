@@ -87,6 +87,8 @@ thread.
 
 ### Quill
 
+- Allow `quill file.md` without requiring `quill -- file.md` or `quill run file.md`.
+  The CLI now detects file arguments and routes them to the default TUI command.
 - Fix image Display outputs showing raw base64 text in markdown files. Images now
   render as inline `<img>` tags with data URIs, visible in any markdown viewer.
 - Add `--figures-dir` flag to `quill run` for writing images to disk and
