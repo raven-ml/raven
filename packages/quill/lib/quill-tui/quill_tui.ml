@@ -530,9 +530,7 @@ let init ~create_kernel ~path () =
   let doc = Quill_markdown.of_string md in
   let session = Session.create doc in
   let last_mtime = get_mtime path in
-  let n = Doc.length doc in
-  (* Start in edit mode on the last code cell (REPL-like) *)
-  let focus = if n > 0 then n - 1 else 0 in
+  let focus = 0 in
   let is_code_cell =
     match Doc.nth focus doc with Some (Cell.Code _) -> true | _ -> false
   in
