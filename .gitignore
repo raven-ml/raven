@@ -9,6 +9,7 @@ _*/
 
 # Dune lock files
 dune.lock/
+dune-tsan.lock/
 
 # Development tools lock files
 dev-tools.locks/
