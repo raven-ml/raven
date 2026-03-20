@@ -3,8 +3,19 @@
 (lock_dir
  (path dune.lock))
 
+; Pin ocaml-variants to the 5.4 branch which includes the
+; __tsan_func_exit signature fix (ocaml/ocaml#14082).
+; Remove this pin once OCaml 5.4.2 is released.
+(pin
+ (name ocaml-variants)
+ (url "git+https://github.com/ocaml/ocaml#5.4")
+ (package
+  (name ocaml-variants)
+  (version 5.4.2+trunk)))
+
 (lock_dir
  (path dune-tsan.lock)
+ (pins ocaml-variants)
  (depopts ocaml-option-tsan))
 
 (context default)
