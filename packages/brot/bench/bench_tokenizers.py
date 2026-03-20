@@ -10,9 +10,12 @@ _DATA_DIR = _ROOT / "data"
 
 import sys
 
-vendor_dir = _ROOT.parents[1] / "vendor" / "ubench"
-if str(vendor_dir) not in sys.path:
-    sys.path.insert(0, str(vendor_dir))
+_SCRIPTS_DIR = _ROOT
+while not (_SCRIPTS_DIR / "dune-project").exists():
+    _SCRIPTS_DIR = _SCRIPTS_DIR.parent
+_SCRIPTS_DIR = _SCRIPTS_DIR / "scripts"
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
 
 import ubench  # type: ignore
 

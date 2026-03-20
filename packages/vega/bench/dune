@@ -1,0 +1,10 @@
+(executable
+ (name bench_vega)
+ (libraries nx vega thumper))
+
+(rule
+ (alias runtest)
+ (action
+  (progn
+   (run %{exe:bench_vega.exe} -q)
+   (diff? vega.thumper vega.thumper.corrected))))

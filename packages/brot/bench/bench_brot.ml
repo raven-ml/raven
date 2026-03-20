@@ -8,7 +8,7 @@
 open Brot
 
 module Fixtures = struct
-  let data_dir = Filename.concat (Sys.getcwd ()) "brot/bench/data"
+  let data_dir = Filename.concat (Sys.getcwd ()) "packages/brot/bench/data"
 
   let read_file name =
     let path = Filename.concat data_dir name in
@@ -36,9 +36,9 @@ module Fixtures = struct
     loop [] 32
 end
 
-let encode_single tok text = encode tok text |> ignore
-let encode_batch tok texts = encode_batch tok texts |> ignore
-let decode_ids tok ids = decode tok ids |> ignore
+let encode_single tok text = encode tok text |> Thumper.consume
+let encode_batch tok texts = encode_batch tok texts |> Thumper.consume
+let decode_ids tok ids = decode tok ids |> Thumper.consume
 
 let make_suite ~label ~tokenizer =
   let open Fixtures in
@@ -48,15 +48,15 @@ let make_suite ~label ~tokenizer =
   in
   let benches =
     [
-      Ubench.bench "Encode/single_short" (fun () ->
+      Thumper.bench "Encode/single_short" (fun () ->
           encode_single tokenizer short_text);
-      Ubench.bench "Encode/single_long" (fun () ->
+      Thumper.bench "Encode/single_long" (fun () ->
           encode_single tokenizer long_text);
-      Ubench.bench "Encode/batch_32" (fun () -> encode_batch tokenizer batch_32);
-      Ubench.bench "Decode/long" (fun () -> decode_ids tokenizer decode_input);
+      Thumper.bench "Encode/batch_32" (fun () -> encode_batch tokenizer batch_32);
+      Thumper.bench "Decode/long" (fun () -> decode_ids tokenizer decode_input);
     ]
   in
-  Ubench.group label benches
+  Thumper.group label benches
 
 let all_benchmarks =
   let open Fixtures in
@@ -71,4 +71,4 @@ let all_benchmarks =
   in
   [ gpt2; bert; llama ]
 
-let () = Ubench.run_cli all_benchmarks
+let () = Thumper.run "brot" all_benchmarks

@@ -7,10 +7,12 @@ from typing import Any, Callable, List, Sequence, Tuple
 
 import numpy as np
 
-_ROOT = Path(__file__).resolve().parents[3]
-_UBENCH_DIR = _ROOT / "vendor" / "ubench"
-if str(_UBENCH_DIR) not in sys.path:
-    sys.path.insert(0, str(_UBENCH_DIR))
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+while not (_SCRIPTS_DIR / "dune-project").exists():
+    _SCRIPTS_DIR = _SCRIPTS_DIR.parent
+_SCRIPTS_DIR = _SCRIPTS_DIR / "scripts"
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
 
 import ubench  # type: ignore
 

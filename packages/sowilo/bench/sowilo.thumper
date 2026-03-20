@@ -1,0 +1,22 @@
+# thumper baseline
+# version: 1
+# suite_name: sowilo
+# host: 1480401c3b76ed18
+# cpu: Apple M1 Max
+# ocaml: 5.4.1
+# git: 31747323
+# dirty: true
+# command: /Users/tmattio/Workspace/raven/_build/default/packages/sowilo/bench/bench_sowilo.exe --bless --quick
+
+sowilo/canny_1080p	alloc_words	4.967600e+04	4.967600e+04	4.967600e+04	0.000000e+00	5	1
+sowilo/canny_1080p	cpu_time	1.632088e+00	1.630246e+00	1.633625e+00	1.035134e-03	5	0
+sowilo/canny_1080p	wall_time	1.004940e+00	1.004072e+00	1.005668e+00	7.940793e-04	5	0
+sowilo/gaussianblur_1080p	alloc_words	5.710000e+03	5.710000e+03	5.710000e+03	0.000000e+00	5	1
+sowilo/gaussianblur_1080p	cpu_time	9.470104e-01	9.413222e-01	9.487540e-01	3.923816e-03	5	1
+sowilo/gaussianblur_1080p	wall_time	4.713762e-01	4.703494e-01	4.733366e-01	3.168658e-03	5	0
+sowilo/sobel_720p	alloc_words	4.243000e+03	4.243000e+03	4.243000e+03	0.000000e+00	5	1
+sowilo/sobel_720p	cpu_time	2.632349e-01	2.609808e-01	2.647416e-01	7.143433e-03	5	1
+sowilo/sobel_720p	wall_time	1.352112e-01	1.348894e-01	1.356552e-01	2.831791e-03	5	0
+sowilo/tograyscale_1080p	alloc_words	5.140000e+02	5.140000e+02	5.140000e+02	0.000000e+00	5	1
+sowilo/tograyscale_1080p	cpu_time	2.350553e-03	2.324044e-03	2.368710e-03	9.501148e-03	5	0
+sowilo/tograyscale_1080p	wall_time	3.986396e-04	3.931048e-04	4.076624e-04	1.825903e-02	5	0

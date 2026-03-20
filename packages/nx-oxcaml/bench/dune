@@ -1,3 +1,28 @@
-(executables
- (names bench_nx_oxcaml)
- (libraries nx nx.core ubench nx_oxcaml))
+(library
+ (name bench_nx_common)
+ (modules bench_nx_common)
+ (libraries nx thumper))
+
+(executable
+ (name bench_nx_c)
+ (modules bench_nx_c)
+ (libraries bench_nx_common nx.c))
+
+(executable
+ (name bench_nx_oxcaml)
+ (modules bench_nx_oxcaml)
+ (libraries bench_nx_common nx_oxcaml))
+
+(rule
+ (alias runtest)
+ (action
+  (progn
+   (run %{exe:bench_nx_c.exe} -q)
+   (diff? nx_c.thumper nx_c.thumper.corrected))))
+
+(rule
+ (alias runtest)
+ (action
+  (progn
+   (run %{exe:bench_nx_oxcaml.exe} -q)
+   (diff? nx_oxcaml.thumper nx_oxcaml.thumper.corrected))))

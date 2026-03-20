@@ -1,4 +1,11 @@
 (executable
  (name bench_matmul_nx)
  (modules bench_matmul_nx)
- (libraries nx ubench))
+ (libraries nx thumper))
+
+(rule
+ (alias runtest)
+ (action
+  (progn
+   (run %{exe:bench_matmul_nx.exe} -q)
+   (diff? nx_matmul.thumper nx_matmul.thumper.corrected))))

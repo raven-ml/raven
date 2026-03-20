@@ -1,3 +1,10 @@
 (executable
  (name bench_talon)
- (libraries talon talon.csv ubench))
+ (libraries talon talon.csv thumper))
+
+(rule
+ (alias runtest)
+ (action
+  (progn
+   (run %{exe:bench_talon.exe} -q)
+   (diff? talon.thumper talon.thumper.corrected))))

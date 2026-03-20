@@ -1,3 +1,10 @@
 (executable
  (name bench_sowilo)
- (libraries sowilo nx.io nx ubench))
+ (libraries sowilo nx.io nx thumper))
+
+(rule
+ (alias runtest)
+ (action
+  (progn
+   (run %{exe:bench_sowilo.exe} -q)
+   (diff? sowilo.thumper sowilo.thumper.corrected))))

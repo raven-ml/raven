@@ -1,0 +1,10 @@
+(executable
+ (name bench_fehu)
+ (libraries nx fehu thumper))
+
+(rule
+ (alias runtest)
+ (action
+  (progn
+   (run %{exe:bench_fehu.exe} -q)
+   (diff? fehu.thumper fehu.thumper.corrected))))

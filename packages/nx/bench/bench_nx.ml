@@ -17,16 +17,16 @@ let nx_operations_f32 ~size =
 
   let ops =
     [
-      ("Add", fun () -> ignore (Nx.add a b));
-      ("Mul", fun () -> ignore (Nx.mul a b));
+      ("Add", fun () -> Thumper.consume (Nx.add a b));
+      ("Mul", fun () -> Thumper.consume (Nx.mul a b));
     ]
   in
 
   let ops =
     ops
     @ [
-        ("Sum", fun () -> ignore (Nx.sum a));
-        ("Transpose", fun () -> ignore (Nx.transpose a));
+        ("Sum", fun () -> Thumper.consume (Nx.sum a));
+        ("Transpose", fun () -> Thumper.consume (Nx.transpose a));
       ]
   in
 
@@ -39,50 +39,45 @@ let nx_operations_f64 ~size =
 
   let ops =
     [
-      ("Add", fun () -> ignore (Nx.add a b));
-      ("Mul", fun () -> ignore (Nx.mul a b));
+      ("Add", fun () -> Thumper.consume (Nx.add a b));
+      ("Mul", fun () -> Thumper.consume (Nx.mul a b));
     ]
   in
 
   let ops =
     ops
     @ [
-        ("Sum", fun () -> ignore (Nx.sum a));
-        ("Transpose", fun () -> ignore (Nx.transpose a));
+        ("Sum", fun () -> Thumper.consume (Nx.sum a));
+        ("Transpose", fun () -> Thumper.consume (Nx.transpose a));
       ]
   in
 
   ops
 
 let build_benchmarks () =
-  let benchmarks = ref [] in
+  let f32_benches = ref [] in
+  let f64_benches = ref [] in
   List.iter
     (fun size ->
-      (* Float32 benchmarks *)
       let ops_f32 = nx_operations_f32 ~size in
       List.iter
         (fun (op_name, fn) ->
           let bench_name = benchmark_name op_name size "f32" in
-          benchmarks := Ubench.bench bench_name fn :: !benchmarks)
+          f32_benches := Thumper.bench bench_name fn :: !f32_benches)
         ops_f32;
 
-      (* Float64 benchmarks *)
       let ops_f64 = nx_operations_f64 ~size in
       List.iter
         (fun (op_name, fn) ->
           let bench_name = benchmark_name op_name size "f64" in
-          benchmarks := Ubench.bench bench_name fn :: !benchmarks)
+          f64_benches := Thumper.bench bench_name fn :: !f64_benches)
         ops_f64)
     sizes;
-  List.rev !benchmarks
-
-let default_config () =
-  let open Ubench.Config in
-  default |> time_limit 1.0 |> warmup 1 |> min_measurements 5
-  |> geometric_scale 1.3 |> gc_stabilization false |> build
+  [
+    Thumper.group "f32" (List.rev !f32_benches);
+    Thumper.group "f64" (List.rev !f64_benches);
+  ]
 
 let () =
   let benchmarks = build_benchmarks () in
-  let config = default_config () in
-  (* Mirror the Python defaults for fair comparisons with NumPy benchmarks. *)
-  ignore (Ubench.run ~config benchmarks)
+  Thumper.run "nx" benchmarks

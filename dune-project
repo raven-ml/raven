@@ -27,6 +27,10 @@
 
 (opam_file_location inside_opam_directory)
 
+(pin
+ (url "git+https://github.com/invariant-hq/thumper.git")
+ (package (name thumper)))
+
 (package
  (name nx)
  (dir packages/nx)
@@ -44,7 +48,8 @@
   logs
   ; tests
   (windtrap :with-test)
-  (mdx :with-test))
+  (mdx :with-test)
+  (thumper :with-test))
  (tags
   (numerical-computation tensor-library machine-learning)))
 
@@ -65,7 +70,8 @@
    (>= 15.1.0))
   uucp
   (windtrap :with-test)
-  (mdx :with-test))
+  (mdx :with-test)
+  (thumper :with-test))
  (tags
   (tokenization bpe wordpiece subword-tokenization language-models)))
 
@@ -82,7 +88,8 @@
   (nx
    (= :version))
   (windtrap :with-test)
-  (mdx :with-test))
+  (mdx :with-test)
+  (thumper :with-test))
  (tags
   (dataframe data-manipulation data-science tabular-data)))
 
@@ -100,7 +107,8 @@
   (nx
    (= :version))
   (windtrap :with-test)
-  (mdx :with-test))
+  (mdx :with-test)
+  (thumper :with-test))
  (tags
   (automatic-differentiation machine-learning deep-learning optimization)))
 
@@ -118,7 +126,8 @@
    (= :version))
   (rune
    (= :version))
-  (windtrap :with-test))
+  (windtrap :with-test)
+  (thumper :with-test))
  (tags
   (mcmc sampling bayesian machine-learning)))
 
@@ -134,7 +143,8 @@
   dune
   (nx
    (= :version))
-  (windtrap :with-test))
+  (windtrap :with-test)
+  (thumper :with-test))
  (tags
   (optimization machine-learning gradient-descent)))
 
@@ -157,7 +167,8 @@
   jsont
   bytesrw
   (windtrap :with-test)
-  (mdx :with-test))
+  (mdx :with-test)
+  (thumper :with-test))
  (tags
   (neural-networks machine-learning deep-learning)))
 
@@ -195,7 +206,8 @@
   (nx
    (= :version))
   (windtrap :with-test)
-  (mdx :with-test))
+  (mdx :with-test)
+  (thumper :with-test))
  (tags
   (computer-vision image-processing feature-detection machine-learning)))
 
@@ -212,7 +224,8 @@
   (nx
    (= :version))
   (windtrap :with-test)
-  (mdx :with-test))
+  (mdx :with-test)
+  (thumper :with-test))
  (tags
   (reinforcement-learning machine-learning environments)))
 

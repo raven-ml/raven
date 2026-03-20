@@ -1,0 +1,58 @@
+# thumper baseline
+# version: 1
+# suite_name: fehu
+# host: 1480401c3b76ed18
+# cpu: Apple M1 Max
+# ocaml: 5.4.1
+# git: 31747323
+# dirty: true
+# command: /Users/tmattio/Workspace/raven/_build/default/packages/fehu/bench/bench_fehu.exe --bless --quick
+
+buffer_add/add__full_buffer__cap_10000_	alloc_words	0.000000e+00	0.000000e+00	0.000000e+00	inf	5	0
+buffer_add/add__full_buffer__cap_10000_	cpu_time	1.226649e-08	1.223096e-08	1.229882e-08	2.766164e-03	5	0
+buffer_add/add__full_buffer__cap_10000_	wall_time	1.227909e-08	1.224626e-08	1.230893e-08	2.552074e-03	5	0
+buffer_create/create_fill_cap_100	alloc_words	2.116000e+03	2.116000e+03	2.116000e+03	0.000000e+00	5	0
+buffer_create/create_fill_cap_100	cpu_time	1.430951e-06	1.419749e-06	1.441342e-06	7.544736e-03	5	0
+buffer_create/create_fill_cap_100	wall_time	1.433376e-06	1.418645e-06	1.445267e-06	9.286558e-03	5	1
+buffer_create/create_fill_cap_1000	alloc_words	2.101600e+04	2.101600e+04	2.101600e+04	0.000000e+00	5	0
+buffer_create/create_fill_cap_1000	cpu_time	1.815813e-05	1.805756e-05	1.829634e-05	6.575071e-03	5	1
+buffer_create/create_fill_cap_1000	wall_time	1.817186e-05	1.806923e-05	1.829684e-05	6.262546e-03	5	1
+buffer_create/create_fill_cap_10000	alloc_words	2.100160e+05	2.100160e+05	2.100160e+05	0.000000e+00	5	0
+buffer_create/create_fill_cap_10000	cpu_time	1.670111e-04	1.660089e-04	1.677894e-04	5.330490e-03	5	0
+buffer_create/create_fill_cap_10000	wall_time	1.673292e-04	1.663936e-04	1.679940e-04	4.782197e-03	5	1
+gae/compute_n_1024	alloc_words	2.053000e+03	2.053000e+03	2.053000e+03	0.000000e+00	5	0
+gae/compute_n_1024	cpu_time	4.432903e-06	4.388681e-06	4.472044e-06	9.402727e-03	5	0
+gae/compute_n_1024	wall_time	4.434699e-06	4.389286e-06	4.487822e-06	1.110972e-02	5	0
+gae/compute_n_256	alloc_words	5.170000e+02	5.170000e+02	5.170000e+02	0.000000e+00	5	0
+gae/compute_n_256	cpu_time	8.899175e-07	8.873495e-07	8.928650e-07	3.098850e-03	5	1
+gae/compute_n_256	wall_time	8.917142e-07	8.886773e-07	8.955820e-07	3.871563e-03	5	1
+gae/compute_n_4096	alloc_words	8.197000e+03	8.197000e+03	8.197000e+03	0.000000e+00	5	0
+gae/compute_n_4096	cpu_time	1.953902e-05	1.938466e-05	1.977415e-05	9.967171e-03	5	0
+gae/compute_n_4096	wall_time	1.954775e-05	1.938586e-05	1.974381e-05	9.155682e-03	5	0
+gae_from_values/compute_from_values_n_1024	alloc_words	5.130000e+03	5.130000e+03	5.130000e+03	0.000000e+00	5	0
+gae_from_values/compute_from_values_n_1024	cpu_time	7.572262e-06	7.451256e-06	7.687885e-06	1.562475e-02	5	0
+gae_from_values/compute_from_values_n_1024	wall_time	7.577999e-06	7.456862e-06	7.698184e-06	1.592253e-02	5	0
+gae_from_values/compute_from_values_n_256	alloc_words	1.290000e+03	1.290000e+03	1.290000e+03	0.000000e+00	5	0
+gae_from_values/compute_from_values_n_256	cpu_time	1.573065e-06	1.567452e-06	1.579053e-06	3.687355e-03	5	0
+gae_from_values/compute_from_values_n_256	wall_time	1.573980e-06	1.567490e-06	1.582763e-06	4.851611e-03	5	0
+gae_from_values/compute_from_values_n_4096	alloc_words	2.049000e+04	2.049000e+04	2.049000e+04	0.000000e+00	5	0
+gae_from_values/compute_from_values_n_4096	cpu_time	3.301526e-05	3.259093e-05	3.336488e-05	1.172117e-02	5	0
+gae_from_values/compute_from_values_n_4096	wall_time	3.310795e-05	3.264492e-05	3.349818e-05	1.288613e-02	5	0
+normalize/normalize_n_1024	alloc_words	3.083000e+03	3.083000e+03	3.083000e+03	0.000000e+00	5	0
+normalize/normalize_n_1024	cpu_time	8.499536e-06	8.421020e-06	8.595588e-06	1.026924e-02	5	2
+normalize/normalize_n_1024	wall_time	8.507517e-06	8.425891e-06	8.596021e-06	9.998763e-03	5	2
+normalize/normalize_n_256	alloc_words	7.790000e+02	7.790000e+02	7.790000e+02	0.000000e+00	5	0
+normalize/normalize_n_256	cpu_time	1.998406e-06	1.990551e-06	2.005793e-06	3.813604e-03	5	0
+normalize/normalize_n_256	wall_time	1.999451e-06	1.990430e-06	2.006996e-06	4.142583e-03	5	0
+normalize/normalize_n_4096	alloc_words	1.229900e+04	1.229900e+04	1.229900e+04	0.000000e+00	5	0
+normalize/normalize_n_4096	cpu_time	3.403318e-05	3.376822e-05	3.423778e-05	6.898544e-03	5	0
+normalize/normalize_n_4096	wall_time	3.405293e-05	3.381521e-05	3.430319e-05	7.164939e-03	5	0
+returns/returns_n_1024	alloc_words	1.025000e+03	1.025000e+03	1.025000e+03	0.000000e+00	5	0
+returns/returns_n_1024	cpu_time	2.979521e-06	2.946996e-06	3.001828e-06	9.201606e-03	5	0
+returns/returns_n_1024	wall_time	2.994462e-06	2.963207e-06	3.022511e-06	9.902417e-03	5	0
+returns/returns_n_256	alloc_words	2.570000e+02	2.570000e+02	2.570000e+02	0.000000e+00	5	0
+returns/returns_n_256	cpu_time	6.113050e-07	6.027021e-07	6.163104e-07	1.113047e-02	5	1
+returns/returns_n_256	wall_time	6.123541e-07	6.072009e-07	6.175059e-07	8.414242e-03	5	1
+returns/returns_n_4096	alloc_words	4.097000e+03	4.097000e+03	4.097000e+03	0.000000e+00	5	0
+returns/returns_n_4096	cpu_time	1.194814e-05	1.181334e-05	1.212174e-05	1.290600e-02	5	0
+returns/returns_n_4096	wall_time	1.196891e-05	1.180767e-05	1.211994e-05	1.304521e-02	5	0

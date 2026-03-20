@@ -1,0 +1,55 @@
+# thumper baseline
+# version: 1
+# suite_name: rune_grad
+# host: 1480401c3b76ed18
+# cpu: Apple M1 Max
+# ocaml: 5.4.1
+# git: 31747323
+# dirty: true
+# command: /Users/tmattio/Workspace/raven/_build/default/packages/rune/bench/bench_grad_rune.exe --bless --quick
+
+chaingrad/chaingrad_large__rune_	alloc_words	3.427000e+03	3.427000e+03	3.427000e+03	0.000000e+00	5	1
+chaingrad/chaingrad_large__rune_	cpu_time	2.575002e-02	2.530498e-02	2.609798e-02	1.539802e-02	5	0
+chaingrad/chaingrad_large__rune_	wall_time	1.077314e-02	1.054344e-02	1.096362e-02	1.950124e-02	5	1
+chaingrad/chaingrad_medium__rune_	alloc_words	3.427000e+03	3.427000e+03	3.427000e+03	0.000000e+00	5	0
+chaingrad/chaingrad_medium__rune_	cpu_time	8.607342e-03	8.485994e-03	8.722955e-03	1.376503e-02	5	2
+chaingrad/chaingrad_medium__rune_	wall_time	4.498331e-03	4.451612e-03	4.545550e-03	1.044142e-02	5	0
+chaingrad/chaingrad_small__rune_	alloc_words	3.427000e+03	3.427000e+03	3.427000e+03	0.000000e+00	5	1
+chaingrad/chaingrad_small__rune_	cpu_time	8.645667e-04	8.491358e-04	8.911334e-04	2.428820e-02	5	0
+chaingrad/chaingrad_small__rune_	wall_time	4.201428e-04	4.124162e-04	4.264762e-04	1.673242e-02	5	0
+higherordergrad/higherordergrad_large__rune_	alloc_words	1.295800e+04	1.295800e+04	1.295800e+04	0.000000e+00	5	0
+higherordergrad/higherordergrad_large__rune_	cpu_time	1.040014e-04	1.021400e-04	1.065322e-04	2.111615e-02	5	1
+higherordergrad/higherordergrad_large__rune_	wall_time	1.042034e-04	1.023945e-04	1.065158e-04	1.977508e-02	5	1
+higherordergrad/higherordergrad_medium__rune_	alloc_words	1.295800e+04	1.295800e+04	1.295800e+04	0.000000e+00	5	0
+higherordergrad/higherordergrad_medium__rune_	cpu_time	8.657577e-05	8.584802e-05	8.740691e-05	9.003085e-03	5	0
+higherordergrad/higherordergrad_medium__rune_	wall_time	8.674316e-05	8.597056e-05	8.771604e-05	1.006120e-02	5	0
+higherordergrad/higherordergrad_small__rune_	alloc_words	1.295800e+04	1.295800e+04	1.295800e+04	0.000000e+00	5	0
+higherordergrad/higherordergrad_small__rune_	cpu_time	7.090812e-05	7.050030e-05	7.130218e-05	5.654316e-03	5	0
+higherordergrad/higherordergrad_small__rune_	wall_time	7.104141e-05	7.062549e-05	7.143284e-05	5.682210e-03	5	0
+matmulgrad/matmulgrad_large__rune_	alloc_words	2.222000e+03	2.222000e+03	2.222000e+03	0.000000e+00	5	1
+matmulgrad/matmulgrad_large__rune_	cpu_time	1.748642e-02	1.734108e-02	1.773867e-02	1.136857e-02	5	0
+matmulgrad/matmulgrad_large__rune_	wall_time	1.061543e-02	1.053023e-02	1.087078e-02	1.604026e-02	5	0
+matmulgrad/matmulgrad_medium__rune_	alloc_words	2.222000e+03	2.222000e+03	2.222000e+03	0.000000e+00	5	0
+matmulgrad/matmulgrad_medium__rune_	cpu_time	4.644163e-03	4.586986e-03	4.685784e-03	1.063679e-02	5	0
+matmulgrad/matmulgrad_medium__rune_	wall_time	3.179440e-03	3.169223e-03	3.192833e-03	3.712898e-03	5	2
+matmulgrad/matmulgrad_small__rune_	alloc_words	2.222000e+03	2.222000e+03	2.222000e+03	0.000000e+00	5	0
+matmulgrad/matmulgrad_small__rune_	cpu_time	5.446490e-04	5.364458e-04	5.531460e-04	1.533115e-02	5	2
+matmulgrad/matmulgrad_small__rune_	wall_time	2.831983e-04	2.808265e-04	2.856499e-04	8.516019e-03	5	1
+scalargrad/scalargrad_large__rune_	alloc_words	1.090000e+03	1.090000e+03	1.090000e+03	0.000000e+00	5	0
+scalargrad/scalargrad_large__rune_	cpu_time	4.372699e-06	4.355628e-06	4.401643e-06	5.261614e-03	5	1
+scalargrad/scalargrad_large__rune_	wall_time	4.377339e-06	4.360202e-06	4.409181e-06	5.594660e-03	5	1
+scalargrad/scalargrad_medium__rune_	alloc_words	1.090000e+03	1.090000e+03	1.090000e+03	0.000000e+00	5	0
+scalargrad/scalargrad_medium__rune_	cpu_time	4.479495e-06	4.438746e-06	4.539990e-06	1.130083e-02	5	0
+scalargrad/scalargrad_medium__rune_	wall_time	4.485193e-06	4.445813e-06	4.532181e-06	9.628058e-03	5	0
+scalargrad/scalargrad_small__rune_	alloc_words	1.090000e+03	1.090000e+03	1.090000e+03	0.000000e+00	5	0
+scalargrad/scalargrad_small__rune_	cpu_time	4.530607e-06	4.437655e-06	4.587361e-06	1.652164e-02	5	2
+scalargrad/scalargrad_small__rune_	wall_time	4.540945e-06	4.442283e-06	4.619599e-06	1.952420e-02	5	2
+vectorgrad/vectorgrad_large__rune_	alloc_words	1.948000e+03	1.948000e+03	1.948000e+03	0.000000e+00	5	0
+vectorgrad/vectorgrad_large__rune_	cpu_time	1.660253e-05	1.649366e-05	1.672837e-05	7.068456e-03	5	0
+vectorgrad/vectorgrad_large__rune_	wall_time	1.662005e-05	1.650883e-05	1.674066e-05	6.974237e-03	5	0
+vectorgrad/vectorgrad_medium__rune_	alloc_words	1.948000e+03	1.948000e+03	1.948000e+03	0.000000e+00	5	0
+vectorgrad/vectorgrad_medium__rune_	cpu_time	1.262289e-05	1.250797e-05	1.269161e-05	7.274341e-03	5	1
+vectorgrad/vectorgrad_medium__rune_	wall_time	1.262778e-05	1.250697e-05	1.269567e-05	7.471640e-03	5	1
+vectorgrad/vectorgrad_small__rune_	alloc_words	1.948000e+03	1.948000e+03	1.948000e+03	0.000000e+00	5	0
+vectorgrad/vectorgrad_small__rune_	cpu_time	9.503489e-06	9.442741e-06	9.554159e-06	5.861941e-03	5	0
+vectorgrad/vectorgrad_small__rune_	wall_time	9.514726e-06	9.462623e-06	9.571061e-06	5.698448e-03	5	0

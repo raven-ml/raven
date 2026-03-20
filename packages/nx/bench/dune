@@ -1,4 +1,11 @@
 (executable
  (name bench_nx)
  (modules bench_nx)
- (libraries nx ubench str))
+ (libraries nx thumper str))
+
+(rule
+ (alias runtest)
+ (action
+  (progn
+   (run %{exe:bench_nx.exe} -q)
+   (diff? nx.thumper nx.thumper.corrected))))

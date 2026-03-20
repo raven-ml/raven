@@ -1,0 +1,10 @@
+(executable
+ (name bench_kaun)
+ (libraries nx rune kaun thumper))
+
+(rule
+ (alias runtest)
+ (action
+  (progn
+   (run %{exe:bench_kaun.exe} -q)
+   (diff? kaun.thumper kaun.thumper.corrected))))

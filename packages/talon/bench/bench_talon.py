@@ -6,10 +6,12 @@ from typing import Any, List
 
 import pandas as pd
 
-_ROOT = Path(__file__).resolve().parents[2]
-_UBENCH = _ROOT / "vendor" / "ubench"
-if str(_UBENCH) not in sys.path:
-    sys.path.insert(0, str(_UBENCH))
+_SCRIPTS_DIR = Path(__file__).resolve().parent
+while not (_SCRIPTS_DIR / "dune-project").exists():
+    _SCRIPTS_DIR = _SCRIPTS_DIR.parent
+_SCRIPTS_DIR = _SCRIPTS_DIR / "scripts"
+if str(_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS_DIR))
 
 import ubench  # type: ignore
 

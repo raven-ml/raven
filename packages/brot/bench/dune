@@ -2,4 +2,11 @@
 
 (executable
  (name bench_brot)
- (libraries brot ubench unix))
+ (libraries brot thumper unix))
+
+(rule
+ (alias runtest)
+ (action
+  (progn
+   (run %{exe:bench_brot.exe} -q)
+   (diff? brot.thumper brot.thumper.corrected))))

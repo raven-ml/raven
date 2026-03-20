@@ -1,0 +1,22 @@
+# thumper baseline
+# version: 1
+# suite_name: talon
+# host: 1480401c3b76ed18
+# cpu: Apple M1 Max
+# ocaml: 5.4.1
+# git: 31747323
+# dirty: true
+# command: /Users/tmattio/Workspace/raven/_build/default/packages/talon/bench/bench_talon.exe --bless --quick
+
+talon/filter_high_value	alloc_words	5.829060e+05	5.829060e+05	5.829060e+05	0.000000e+00	5	0
+talon/filter_high_value	cpu_time	3.465705e-03	3.398246e-03	3.551483e-03	2.210760e-02	5	0
+talon/filter_high_value	wall_time	3.471535e-03	3.408034e-03	3.535678e-03	1.838436e-02	5	0
+talon/group_category_region	alloc_words	1.970381e+06	1.970381e+06	1.970381e+06	0.000000e+00	5	1
+talon/group_category_region	cpu_time	1.762447e-02	1.746038e-02	1.799537e-02	1.517769e-02	5	1
+talon/group_category_region	wall_time	1.763611e-02	1.745952e-02	1.811992e-02	1.872291e-02	5	1
+talon/join_customer_lookup	alloc_words	3.093605e+06	3.093605e+06	3.093605e+06	0.000000e+00	5	1
+talon/join_customer_lookup	cpu_time	2.282571e-02	2.273004e-02	2.290595e-02	3.853322e-03	5	0
+talon/join_customer_lookup	wall_time	2.283701e-02	2.275199e-02	2.291955e-02	3.668491e-03	5	0
+talon/sort_amount_desc	alloc_words	1.991202e+06	1.991202e+06	1.991202e+06	0.000000e+00	5	1
+talon/sort_amount_desc	cpu_time	2.935218e-02	2.877947e-02	2.979120e-02	1.723426e-02	5	2
+talon/sort_amount_desc	wall_time	2.937058e-02	2.873829e-02	2.981201e-02	1.827888e-02	5	2

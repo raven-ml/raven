@@ -6,7 +6,7 @@
 (* Sowilo image processing benchmarks using synthetic PNG fixtures. *)
 
 module Fixtures = struct
-  let data_dir = Filename.concat (Sys.getcwd ()) "sowilo/bench/data"
+  let data_dir = Filename.concat (Sys.getcwd ()) "packages/sowilo/bench/data"
 
   let load_image name =
     let path = Filename.concat data_dir name in
@@ -22,7 +22,7 @@ module Fixtures = struct
   let gray_720 () = Lazy.force gray_720
 end
 
-let force_tensor tensor = ignore (Nx.to_buffer tensor)
+let force_tensor tensor = Thumper.consume (Nx.to_buffer tensor)
 
 let bench_grayscale img =
   let gray = Sowilo.to_grayscale img in
@@ -45,11 +45,11 @@ let all_benchmarks =
   let gray_1080 = Fixtures.gray_1080 () in
   let gray_720 = Fixtures.gray_720 () in
   [
-    Ubench.bench "ToGrayscale/1080p" (fun () -> bench_grayscale color_1080);
-    Ubench.bench "GaussianBlur/1080p" (fun () -> bench_gaussian color_1080);
-    Ubench.bench "Sobel/720p" (fun () -> bench_sobel gray_720);
-    Ubench.bench "Canny/1080p" (fun () -> bench_canny gray_1080);
+    Thumper.bench "ToGrayscale/1080p" (fun () -> bench_grayscale color_1080);
+    Thumper.bench "GaussianBlur/1080p" (fun () -> bench_gaussian color_1080);
+    Thumper.bench "Sobel/720p" (fun () -> bench_sobel gray_720);
+    Thumper.bench "Canny/1080p" (fun () -> bench_canny gray_1080);
   ]
-  |> fun benches -> [ Ubench.group "Sowilo" benches ]
+  |> fun benches -> [ Thumper.group "Sowilo" benches ]
 
-let () = Ubench.run_cli all_benchmarks
+let () = Thumper.run "sowilo" all_benchmarks

@@ -1,0 +1,40 @@
+# thumper baseline
+# version: 1
+# suite_name: nx_conv2d
+# host: 1480401c3b76ed18
+# cpu: Apple M1 Max
+# ocaml: 5.4.1
+# git: 31747323
+# dirty: true
+# command: ./bench_conv2d_nx.exe -q
+
+correlate_1d_10k_batched_f32__nx_	alloc_words	9.310000e+02	9.310000e+02	9.310000e+02	0.000000e+00	10	1
+correlate_1d_10k_batched_f32__nx_	cpu_time	6.759299e-03	6.742944e-03	6.781850e-03	2.877945e-03	10	0
+correlate_1d_10k_batched_f32__nx_	wall_time	6.144004e-03	6.131814e-03	6.158235e-03	2.150099e-03	10	0
+correlate_1d_1k_f32__nx_	alloc_words	8.160000e+02	8.160000e+02	8.160000e+02	0.000000e+00	10	0
+correlate_1d_1k_f32__nx_	cpu_time	6.460449e-06	6.450824e-06	6.471332e-06	1.587145e-03	10	0
+correlate_1d_1k_f32__nx_	wall_time	6.461020e-06	6.451447e-06	6.471827e-06	1.577114e-03	10	1
+correlate_2d_256x256_f32__nx_	alloc_words	8.990000e+02	8.990000e+02	8.990000e+02	0.000000e+00	10	0
+correlate_2d_256x256_f32__nx_	cpu_time	4.401137e-03	4.389369e-03	4.411961e-03	2.566629e-03	10	0
+correlate_2d_256x256_f32__nx_	wall_time	3.977256e-03	3.968869e-03	3.986821e-03	2.256904e-03	10	0
+correlate_2d_64x64_f32__nx_	alloc_words	8.990000e+02	8.990000e+02	8.990000e+02	0.000000e+00	10	2
+correlate_2d_64x64_f32__nx_	cpu_time	4.350262e-04	4.309908e-04	4.382260e-04	8.315777e-03	10	3
+correlate_2d_64x64_f32__nx_	wall_time	3.878239e-04	3.848593e-04	3.897182e-04	6.264335e-03	10	2
+correlate_2d_batch_8x256x256_f32__nx_	alloc_words	1.016000e+03	1.016000e+03	1.016000e+03	0.000000e+00	10	1
+correlate_2d_batch_8x256x256_f32__nx_	cpu_time	3.718025e-02	3.711858e-02	3.722040e-02	1.369329e-03	10	2
+correlate_2d_batch_8x256x256_f32__nx_	wall_time	3.247770e-02	3.246563e-02	3.250109e-02	5.459608e-04	10	1
+correlate_2d_batch_8x64x64_f32__nx_	alloc_words	1.016000e+03	1.016000e+03	1.016000e+03	0.000000e+00	10	0
+correlate_2d_batch_8x64x64_f32__nx_	cpu_time	2.536084e-03	2.526750e-03	2.546429e-03	3.879779e-03	10	0
+correlate_2d_batch_8x64x64_f32__nx_	wall_time	2.322492e-03	2.315861e-03	2.330876e-03	3.232401e-03	10	0
+extract_patches_2d_256x256_k3_s1_f32__nx_	alloc_words	1.390000e+02	1.390000e+02	1.390000e+02	0.000000e+00	10	0
+extract_patches_2d_256x256_k3_s1_f32__nx_	cpu_time	7.138257e-04	7.129127e-04	7.148739e-04	1.373699e-03	10	1
+extract_patches_2d_256x256_k3_s1_f32__nx_	wall_time	7.139240e-04	7.129017e-04	7.150828e-04	1.527537e-03	10	0
+extract_patches_2d_64x64_k3_s1_f32__nx_	alloc_words	1.390000e+02	1.390000e+02	1.390000e+02	0.000000e+00	10	1
+extract_patches_2d_64x64_k3_s1_f32__nx_	cpu_time	6.823460e-05	6.808474e-05	6.831762e-05	1.706495e-03	10	3
+extract_patches_2d_64x64_k3_s1_f32__nx_	wall_time	6.821857e-05	6.813969e-05	6.832750e-05	1.376542e-03	10	2
+extract_patches_2d_64x64_k3_s2_f32__nx_	alloc_words	1.390000e+02	1.390000e+02	1.390000e+02	0.000000e+00	10	0
+extract_patches_2d_64x64_k3_s2_f32__nx_	cpu_time	1.160441e-05	1.159022e-05	1.162028e-05	1.295226e-03	10	0
+extract_patches_2d_64x64_k3_s2_f32__nx_	wall_time	1.160520e-05	1.158941e-05	1.162151e-05	1.382895e-03	10	0
+extract_patches_2d_8x3x64x64_k3_s1_f32__nx_	alloc_words	1.390000e+02	1.390000e+02	1.390000e+02	0.000000e+00	10	0
+extract_patches_2d_8x3x64x64_k3_s1_f32__nx_	cpu_time	1.006386e-03	1.005213e-03	1.007881e-03	1.325399e-03	10	0
+extract_patches_2d_8x3x64x64_k3_s1_f32__nx_	wall_time	1.006492e-03	1.005348e-03	1.008017e-03	1.325981e-03	10	0

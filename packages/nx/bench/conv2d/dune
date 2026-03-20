@@ -1,3 +1,10 @@
 (executable
  (name bench_conv2d_nx)
- (libraries nx ubench))
+ (libraries nx thumper))
+
+(rule
+ (alias runtest)
+ (action
+  (progn
+   (run %{exe:bench_conv2d_nx.exe} -q)
+   (diff? nx_conv2d.thumper nx_conv2d.thumper.corrected))))

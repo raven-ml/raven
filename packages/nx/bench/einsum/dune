@@ -1,4 +1,11 @@
 (executable
  (name bench_einsum_nx)
  (modules bench_einsum_nx)
- (libraries nx ubench))
+ (libraries nx thumper))
+
+(rule
+ (alias runtest)
+ (action
+  (progn
+   (run %{exe:bench_einsum_nx.exe} -q)
+   (diff? nx_einsum.thumper nx_einsum.thumper.corrected))))

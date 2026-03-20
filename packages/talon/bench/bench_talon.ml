@@ -8,7 +8,7 @@
 module Row = Talon.Row
 
 module Fixtures = struct
-  let data_dir = Filename.concat (Sys.getcwd ()) "talon/bench/data"
+  let data_dir = Filename.concat (Sys.getcwd ()) "packages/talon/bench/data"
 
   let load_csv name dtype_spec =
     Talon_csv.read ~dtype_spec (Filename.concat data_dir name)
@@ -47,7 +47,7 @@ end
 
 let force_float_sum df column =
   let total = Talon.Agg.sum df column in
-  ignore total
+  Thumper.consume total
 
 let bench_filter df =
   let filtered =
@@ -73,7 +73,7 @@ let bench_group df =
       (fun acc (_key, group_df) -> acc +. Talon.Agg.sum group_df "amount")
       0. groups
   in
-  ignore total
+  Thumper.consume total
 
 let bench_join df customers =
   let joined = Talon.join df customers ~on:"customer_id" ~how:`Left () in
@@ -87,12 +87,12 @@ let all_benchmarks =
   let transactions = Fixtures.transactions () in
   let customers = Fixtures.customers () in
   [
-    Ubench.bench "Filter/high_value" (fun () -> bench_filter transactions);
-    Ubench.bench "Group/category_region" (fun () -> bench_group transactions);
-    Ubench.bench "Join/customer_lookup" (fun () ->
+    Thumper.bench "Filter/high_value" (fun () -> bench_filter transactions);
+    Thumper.bench "Group/category_region" (fun () -> bench_group transactions);
+    Thumper.bench "Join/customer_lookup" (fun () ->
         bench_join transactions customers);
-    Ubench.bench "Sort/amount_desc" (fun () -> bench_sort transactions);
+    Thumper.bench "Sort/amount_desc" (fun () -> bench_sort transactions);
   ]
-  |> fun benches -> [ Ubench.group "Talon" benches ]
+  |> fun benches -> [ Thumper.group "Talon" benches ]
 
-let () = Ubench.run_cli all_benchmarks
+let () = Thumper.run "talon" all_benchmarks

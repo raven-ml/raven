@@ -1,0 +1,34 @@
+# thumper baseline
+# version: 1
+# suite_name: norn
+# host: 1480401c3b76ed18
+# cpu: Apple M1 Max
+# ocaml: 5.4.1
+# git: 31747323
+# dirty: true
+# command: /Users/tmattio/Workspace/raven/_build/default/packages/norn/bench/bench_norn.exe --bless --quick
+
+ess/ess_2d_n100	alloc_words	7.352397e+06	7.352397e+06	7.352397e+06	0.000000e+00	5	1
+ess/ess_2d_n100	cpu_time	1.559885e-02	1.557237e-02	1.567803e-02	3.386704e-03	5	0
+ess/ess_2d_n100	wall_time	1.560669e-02	1.557799e-02	1.567933e-02	3.246829e-03	5	0
+ess/ess_5d_n100	alloc_words	1.837855e+07	1.837855e+07	1.837855e+07	0.000000e+00	5	1
+ess/ess_5d_n100	cpu_time	4.013211e-02	3.996071e-02	4.034314e-02	4.764651e-03	5	0
+ess/ess_5d_n100	wall_time	4.025803e-02	4.005148e-02	4.049841e-02	5.550847e-03	5	0
+hmc/hmc_2d_3lf	alloc_words	2.538700e+04	2.538700e+04	2.538700e+04	0.000000e+00	5	0
+hmc/hmc_2d_3lf	cpu_time	1.123211e-04	1.114248e-04	1.134997e-04	9.236276e-03	5	1
+hmc/hmc_2d_3lf	wall_time	1.124071e-04	1.114420e-04	1.136754e-04	9.934176e-03	5	1
+hmc/hmc_5d_3lf	alloc_words	2.548300e+04	2.548200e+04	2.548300e+04	1.962092e-05	5	0
+hmc/hmc_5d_3lf	cpu_time	1.165771e-04	1.158171e-04	1.172042e-04	5.949159e-03	5	0
+hmc/hmc_5d_3lf	wall_time	1.167592e-04	1.160356e-04	1.174092e-04	5.882306e-03	5	0
+nuts/nuts_2d_d3	alloc_words	8.002300e+04	5.842900e+04	8.409700e+04	1.603789e-01	5	0
+nuts/nuts_2d_d3	cpu_time	3.536361e-04	3.497111e-04	3.602631e-04	1.491926e-02	5	0
+nuts/nuts_2d_d3	wall_time	3.537679e-04	3.499804e-04	3.604565e-04	1.480642e-02	5	0
+nuts/nuts_5d_d3	alloc_words	8.291500e+04	8.290400e+04	8.291900e+04	9.045408e-05	5	1
+nuts/nuts_5d_d3	cpu_time	3.620090e-04	3.591001e-04	3.636080e-04	6.226318e-03	5	0
+nuts/nuts_5d_d3	wall_time	3.621874e-04	3.585911e-04	3.638656e-04	7.281394e-03	5	0
+rhat/rhat_2d_n100	alloc_words	3.096500e+04	3.096500e+04	3.096500e+04	0.000000e+00	5	0
+rhat/rhat_2d_n100	cpu_time	1.348335e-04	1.338291e-04	1.359049e-04	7.697749e-03	5	1
+rhat/rhat_2d_n100	wall_time	1.351109e-04	1.339526e-04	1.364586e-04	9.274007e-03	5	1
+rhat/rhat_5d_n100	alloc_words	3.096500e+04	3.096500e+04	3.096500e+04	0.000000e+00	5	0
+rhat/rhat_5d_n100	cpu_time	1.453519e-04	1.445829e-04	1.461137e-04	5.265860e-03	5	0
+rhat/rhat_5d_n100	wall_time	1.457385e-04	1.450074e-04	1.464628e-04	4.993161e-03	5	0

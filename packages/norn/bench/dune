@@ -1,0 +1,10 @@
+(executable
+ (name bench_norn)
+ (libraries nx rune norn thumper))
+
+(rule
+ (alias runtest)
+ (action
+  (progn
+   (run %{exe:bench_norn.exe} -q)
+   (diff? norn.thumper norn.thumper.corrected))))

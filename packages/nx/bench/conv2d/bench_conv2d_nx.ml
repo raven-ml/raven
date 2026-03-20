@@ -36,7 +36,8 @@ let build_benchmarks () =
       let k = Nx.rand Nx.Float32 kernel_shape in
       let name = Printf.sprintf "correlate %s f32 (%s)" label backend_name in
       benchmarks :=
-        Ubench.bench name (fun () -> ignore (Nx.correlate x k)) :: !benchmarks)
+        Thumper.bench name (fun () -> Thumper.consume (Nx.correlate x k))
+        :: !benchmarks)
     correlate_configs;
   List.iter
     (fun (label, input_shape, kernel_size, stride) ->
@@ -48,19 +49,13 @@ let build_benchmarks () =
         Printf.sprintf "extract_patches %s f32 (%s)" label backend_name
       in
       benchmarks :=
-        Ubench.bench name (fun () ->
-            ignore
+        Thumper.bench name (fun () ->
+            Thumper.consume
               (Nx.extract_patches ~kernel_size ~stride ~dilation ~padding x))
         :: !benchmarks)
     extract_patches_configs;
   List.rev !benchmarks
 
-let default_config () =
-  let open Ubench.Config in
-  default |> time_limit 1.0 |> warmup 1 |> min_measurements 5
-  |> geometric_scale 1.3 |> gc_stabilization false |> build
-
 let () =
   let benchmarks = build_benchmarks () in
-  let config = default_config () in
-  ignore (Ubench.run ~config benchmarks)
+  Thumper.run "nx_conv2d" benchmarks

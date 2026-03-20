@@ -3,4 +3,4 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-let () = Thumper.run "nx_oxcaml" (Bench_nx_common.benchmarks ())
+let () = Thumper.run "nx_c" (Bench_nx_common.benchmarks ())

@@ -36,7 +36,6 @@ let setup_f32 spec size =
       let shape = [| size |] in
       [ Nx.rand Nx.Float32 shape; Nx.rand Nx.Float32 shape ]
   | "ContractReduce1" ->
-      (* ij,kj-> needs two (size, size) matrices *)
       let shape = [| size; size |] in
       [ Nx.rand Nx.Float32 shape; Nx.rand Nx.Float32 shape ]
   | "IndependentSum" ->
@@ -56,7 +55,6 @@ let setup_f64 spec size =
       let shape = [| size |] in
       [ Nx.rand Nx.Float64 shape; Nx.rand Nx.Float64 shape ]
   | "ContractReduce1" ->
-      (* ij,kj-> needs two (size, size) matrices *)
       let shape = [| size; size |] in
       [ Nx.rand Nx.Float64 shape; Nx.rand Nx.Float64 shape ]
   | "IndependentSum" ->
@@ -65,40 +63,36 @@ let setup_f64 spec size =
   | _ -> failwith ("Unknown einsum operation: " ^ spec.name)
 
 let build_benchmarks () =
-  let benchmarks = ref [] in
+  let f32_benches = ref [] in
+  let f64_benches = ref [] in
 
-  (* Float32 benchmarks *)
   List.iter
     (fun size ->
       List.iter
         (fun spec ->
           let operands = setup_f32 spec size |> Array.of_list in
           let bench_name = benchmark_name spec.name size "f32" in
-          let fn () = ignore (Nx.einsum spec.subscripts operands) in
-          benchmarks := Ubench.bench bench_name fn :: !benchmarks)
+          let fn () = Thumper.consume (Nx.einsum spec.subscripts operands) in
+          f32_benches := Thumper.bench bench_name fn :: !f32_benches)
         einsum_specs)
     sizes;
 
-  (* Float64 benchmarks *)
   List.iter
     (fun size ->
       List.iter
         (fun spec ->
           let operands = setup_f64 spec size |> Array.of_list in
           let bench_name = benchmark_name spec.name size "f64" in
-          let fn () = ignore (Nx.einsum spec.subscripts operands) in
-          benchmarks := Ubench.bench bench_name fn :: !benchmarks)
+          let fn () = Thumper.consume (Nx.einsum spec.subscripts operands) in
+          f64_benches := Thumper.bench bench_name fn :: !f64_benches)
         einsum_specs)
     sizes;
 
-  List.rev !benchmarks
-
-let default_config () =
-  let open Ubench.Config in
-  default |> time_limit 1.0 |> warmup 1 |> min_measurements 5
-  |> geometric_scale 1.3 |> gc_stabilization false |> build
+  [
+    Thumper.group "f32" (List.rev !f32_benches);
+    Thumper.group "f64" (List.rev !f64_benches);
+  ]
 
 let () =
   let benchmarks = build_benchmarks () in
-  let config = default_config () in
-  ignore (Ubench.run ~config benchmarks)
+  Thumper.run "nx_einsum" benchmarks

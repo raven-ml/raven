@@ -27,24 +27,22 @@ let setup_operands (type a b) (dtype : (a, b) Nx.dtype) case =
 let add_case (type a b) benches case (dtype : (a, b) Nx.dtype) dtype_label =
   let lhs, rhs = setup_operands dtype case in
   let name = benchmark_name case dtype_label "" in
-  let fn () = ignore (Nx.matmul lhs rhs) in
-  benches := Ubench.bench name fn :: !benches
+  let fn () = Thumper.consume (Nx.matmul lhs rhs) in
+  benches := Thumper.bench name fn :: !benches
 
 let build_benchmarks () =
-  let benches = ref [] in
+  let f32_benches = ref [] in
+  let f64_benches = ref [] in
   List.iter
     (fun case ->
-      add_case benches case Nx.Float32 "f32";
-      add_case benches case Nx.Float64 "f64")
+      add_case f32_benches case Nx.Float32 "f32";
+      add_case f64_benches case Nx.Float64 "f64")
     cases;
-  List.rev !benches
-
-let default_config () =
-  let open Ubench.Config in
-  default |> time_limit 1.0 |> warmup 1 |> min_measurements 5
-  |> geometric_scale 1.3 |> gc_stabilization false |> build
+  [
+    Thumper.group "f32" (List.rev !f32_benches);
+    Thumper.group "f64" (List.rev !f64_benches);
+  ]
 
 let () =
   let benchmarks = build_benchmarks () in
-  let config = default_config () in
-  ignore (Ubench.run ~config benchmarks)
+  Thumper.run "nx_matmul" benchmarks

@@ -1,0 +1,73 @@
+# thumper baseline
+# version: 1
+# suite_name: kaun
+# host: 1480401c3b76ed18
+# cpu: Apple M1 Max
+# ocaml: 5.4.1
+# git: 31747323
+# dirty: true
+# command: /Users/tmattio/Workspace/raven/_build/default/packages/kaun/bench/bench_kaun.exe --bless --quick
+
+attention/dot_product_attention__32_8_128_32_	alloc_words	2.137000e+03	2.137000e+03	2.137000e+03	0.000000e+00	5	1
+attention/dot_product_attention__32_8_128_32_	cpu_time	9.671033e-02	9.639139e-02	9.768167e-02	6.670834e-03	5	0
+attention/dot_product_attention__32_8_128_32_	wall_time	7.475045e-02	7.419780e-02	7.636849e-02	1.451961e-02	5	0
+attention/dot_product_attention_causal__32_8_128_32_	alloc_words	8.969000e+03	8.969000e+03	8.969000e+03	0.000000e+00	5	1
+attention/dot_product_attention_causal__32_8_128_32_	cpu_time	1.370568e-01	1.362397e-01	1.373701e-01	4.123616e-03	5	0
+attention/dot_product_attention_causal__32_8_128_32_	wall_time	1.113716e-01	1.109278e-01	1.116209e-01	3.111817e-03	5	0
+attention/rope__32_128_32_	alloc_words	6.995000e+03	6.995000e+03	6.995000e+03	0.000000e+00	5	0
+attention/rope__32_128_32_	cpu_time	4.598942e-03	4.544050e-03	4.656300e-03	1.220391e-02	5	0
+attention/rope__32_128_32_	wall_time	3.115630e-03	3.091075e-03	3.141427e-03	8.080598e-03	5	0
+convolution/conv1d__32_64_128__k_3	alloc_words	5.000000e+02	5.000000e+02	5.000000e+02	0.000000e+00	5	0
+convolution/conv1d__32_64_128__k_3	cpu_time	1.620888e-03	1.596007e-03	1.637217e-03	1.271213e-02	5	0
+convolution/conv1d__32_64_128__k_3	wall_time	1.626572e-03	1.602353e-03	1.644431e-03	1.293450e-02	5	0
+convolution/conv1d_same__32_64_128__k_3	alloc_words	5.100000e+02	5.100000e+02	5.100000e+02	0.000000e+00	5	0
+convolution/conv1d_same__32_64_128__k_3	cpu_time	5.615602e-03	5.517316e-03	5.660000e-03	1.270422e-02	5	2
+convolution/conv1d_same__32_64_128__k_3	wall_time	1.344058e-03	1.329492e-03	1.358392e-03	1.075103e-02	5	0
+convolution/conv2d__32_64_32_32__k_3x3	alloc_words	6.070000e+02	6.070000e+02	6.070000e+02	0.000000e+00	5	1
+convolution/conv2d__32_64_32_32__k_3x3	cpu_time	2.908078e-02	2.856329e-02	2.982455e-02	2.168548e-02	5	0
+convolution/conv2d__32_64_32_32__k_3x3	wall_time	3.174315e-02	2.900269e-02	3.589196e-02	1.085158e-01	5	1
+convolution/conv2d_same__32_64_32_32__k_3x3	alloc_words	6.200000e+02	6.200000e+02	6.200000e+02	0.000000e+00	5	1
+convolution/conv2d_same__32_64_32_32__k_3x3	cpu_time	1.506193e-01	1.496805e-01	1.521535e-01	8.209534e-03	5	0
+convolution/conv2d_same__32_64_32_32__k_3x3	wall_time	3.016738e-02	2.915340e-02	3.056394e-02	2.337867e-02	5	1
+embedding/embedding__32_128__vocab_32000_dim_256	alloc_words	9.950000e+02	9.950000e+02	9.950000e+02	0.000000e+00	5	0
+embedding/embedding__32_128__vocab_32000_dim_256	cpu_time	7.132733e-03	7.093132e-03	7.245324e-03	1.066859e-02	5	1
+embedding/embedding__32_128__vocab_32000_dim_256	wall_time	6.695677e-03	6.659470e-03	6.761231e-03	7.598951e-03	5	1
+layer/layer_layer_norm__32_128_256_	alloc_words	3.773000e+03	3.773000e+03	3.773000e+03	0.000000e+00	5	1
+layer/layer_layer_norm__32_128_256_	cpu_time	2.918713e-02	2.908128e-02	2.951400e-02	7.412812e-03	5	1
+layer/layer_layer_norm__32_128_256_	wall_time	2.688614e-02	2.676829e-02	2.714231e-02	6.955731e-03	5	2
+layer/layer_linear__32_128_256_-__32_128_256_	alloc_words	5.640000e+02	5.640000e+02	5.640000e+02	0.000000e+00	5	0
+layer/layer_linear__32_128_256_-__32_128_256_	cpu_time	7.458522e-03	7.400407e-03	7.510652e-03	7.390491e-03	5	0
+layer/layer_linear__32_128_256_-__32_128_256_	wall_time	6.948420e-03	6.920065e-03	6.969745e-03	3.574904e-03	5	0
+layer/layer_multi_head_attention__32_128_256__h_8	alloc_words	3.827000e+03	3.827000e+03	3.827000e+03	0.000000e+00	5	1
+layer/layer_multi_head_attention__32_128_256__h_8	cpu_time	1.053272e-01	1.052223e-01	1.058294e-01	2.882088e-03	5	0
+layer/layer_multi_head_attention__32_128_256__h_8	wall_time	8.404089e-02	8.353135e-02	8.467066e-02	6.778344e-03	5	1
+loss/binary_cross_entropy__32_	alloc_words	5.785000e+03	5.785000e+03	5.785000e+03	0.000000e+00	5	0
+loss/binary_cross_entropy__32_	cpu_time	2.444898e-05	2.428635e-05	2.461726e-05	6.767379e-03	5	0
+loss/binary_cross_entropy__32_	wall_time	2.458928e-05	2.440828e-05	2.479800e-05	7.924565e-03	5	0
+loss/cross_entropy__32_10_	alloc_words	1.968000e+03	1.968000e+03	1.968000e+03	0.000000e+00	5	0
+loss/cross_entropy__32_10_	cpu_time	1.317014e-05	1.291714e-05	1.357537e-05	2.498951e-02	5	1
+loss/cross_entropy__32_10_	wall_time	1.346084e-05	1.302917e-05	1.403663e-05	3.742195e-02	5	1
+loss/mae__32_10_	alloc_words	6.390000e+02	6.390000e+02	6.390000e+02	0.000000e+00	6	0
+loss/mae__32_10_	cpu_time	3.343846e-06	3.255477e-06	3.435480e-06	2.691551e-02	6	0
+loss/mae__32_10_	wall_time	3.398029e-06	3.290374e-06	3.521626e-06	3.402740e-02	6	0
+loss/mse__32_10_	alloc_words	7.030000e+02	7.030000e+02	7.030000e+02	0.000000e+00	5	0
+loss/mse__32_10_	cpu_time	3.414987e-06	3.392142e-06	3.434869e-06	6.255854e-03	5	0
+loss/mse__32_10_	wall_time	3.428576e-06	3.401322e-06	3.456842e-06	8.096629e-03	5	0
+normalization/batch_norm__32_256_	alloc_words	4.656000e+03	4.656000e+03	4.656000e+03	0.000000e+00	5	0
+normalization/batch_norm__32_256_	cpu_time	2.447512e-04	2.412132e-04	2.483533e-04	1.458635e-02	5	0
+normalization/batch_norm__32_256_	wall_time	2.451437e-04	2.417406e-04	2.493240e-04	1.546732e-02	5	0
+normalization/batch_norm__32_256_8_8_	alloc_words	5.006000e+03	5.006000e+03	5.006000e+03	0.000000e+00	10	1
+normalization/batch_norm__32_256_8_8_	cpu_time	2.507420e-02	2.377102e-02	2.591671e-02	4.278692e-02	10	0
+normalization/batch_norm__32_256_8_8_	wall_time	2.386942e-02	2.278693e-02	2.460672e-02	3.811965e-02	10	0
+normalization/layer_norm__32_128_256_	alloc_words	3.754000e+03	3.754000e+03	3.754000e+03	0.000000e+00	5	1
+normalization/layer_norm__32_128_256_	cpu_time	2.951118e-02	2.887281e-02	2.970830e-02	1.415546e-02	5	0
+normalization/layer_norm__32_128_256_	wall_time	2.723408e-02	2.674500e-02	2.737987e-02	1.165582e-02	5	0
+normalization/rms_norm__32_128_256_	alloc_words	1.868000e+03	1.868000e+03	1.868000e+03	0.000000e+00	5	0
+normalization/rms_norm__32_128_256_	cpu_time	7.965700e-03	7.931148e-03	7.994719e-03	3.990293e-03	5	0
+normalization/rms_norm__32_128_256_	wall_time	7.253412e-03	7.224232e-03	7.272761e-03	3.345277e-03	5	2
+pooling/avg_pool2d__32_64_32_32__k_2x2	alloc_words	9.650000e+02	9.650000e+02	9.650000e+02	0.000000e+00	5	1
+pooling/avg_pool2d__32_64_32_32__k_2x2	cpu_time	2.944396e-02	2.936873e-02	2.954386e-02	2.973982e-03	5	0
+pooling/avg_pool2d__32_64_32_32__k_2x2	wall_time	2.400500e-02	2.392232e-02	2.405630e-02	2.790660e-03	5	0
+pooling/max_pool2d__32_64_32_32__k_2x2	alloc_words	4.980000e+02	4.980000e+02	4.980000e+02	0.000000e+00	5	1
+pooling/max_pool2d__32_64_32_32__k_2x2	cpu_time	7.406087e-02	7.315733e-02	7.438250e-02	8.271349e-03	5	0
+pooling/max_pool2d__32_64_32_32__k_2x2	wall_time	2.149041e-02	2.079528e-02	2.253364e-02	4.044505e-02	5	1
