@@ -1035,6 +1035,64 @@ let irfft (type a b c d) ?out ?s (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes
 
   out
 
+let dct (type a b) (x : (a, b) t) ~dct_type ~ortho ~axes : (a, b) t =
+  let x' = materialize x in
+  let in_shape = shape x' in
+  let out_shape = Array.copy in_shape in
+  let out = create_tensor x.context x.dtype out_shape in
+  let elem_size = Dtype.itemsize x.dtype in
+  let strides_in = contiguous_strides in_shape elem_size in
+  let strides_out = contiguous_strides out_shape elem_size in
+  let ndim = Array.length in_shape in
+  let axes_normalized =
+    Array.map (fun ax -> if ax < 0 then ndim + ax else ax) axes
+  in
+  (match (x.dtype : (a, b) Dtype.t) with
+  | Dtype.Float32 ->
+      Pocketfft.dct_f32 ~shape:in_shape ~stride_in:strides_in
+        ~stride_out:strides_out ~axes:axes_normalized ~dct_type ~ortho ~fct:1.0
+        ~data_in:(Nx_buffer.to_bigarray1 x'.buffer)
+        ~data_out:(Nx_buffer.to_bigarray1 out.buffer)
+        ~nthreads:1
+  | Dtype.Float64 ->
+      Pocketfft.dct_f64 ~shape:in_shape ~stride_in:strides_in
+        ~stride_out:strides_out ~axes:axes_normalized ~dct_type ~ortho ~fct:1.0
+        ~data_in:(Nx_buffer.to_bigarray1 x'.buffer)
+        ~data_out:(Nx_buffer.to_bigarray1 out.buffer)
+        ~nthreads:1
+  | _ -> invalid_arg "dct: unsupported dtype (must be float32 or float64)");
+  out
+
+let dst (type a b) (x : (a, b) t) ~dst_type ~ortho ~axes : (a, b) t =
+  let x' = materialize x in
+  let in_shape = shape x' in
+  let out_shape = Array.copy in_shape in
+  let out = create_tensor x.context x.dtype out_shape in
+  let elem_size = Dtype.itemsize x.dtype in
+  let strides_in = contiguous_strides in_shape elem_size in
+  let strides_out = contiguous_strides out_shape elem_size in
+  let ndim = Array.length in_shape in
+  let axes_normalized =
+    Array.map (fun ax -> if ax < 0 then ndim + ax else ax) axes
+  in
+  (match (x.dtype : (a, b) Dtype.t) with
+  | Dtype.Float32 ->
+      Pocketfft.dst_f32 ~shape:in_shape ~stride_in:strides_in
+        ~stride_out:strides_out ~axes:axes_normalized ~dct_type:dst_type ~ortho
+        ~fct:1.0
+        ~data_in:(Nx_buffer.to_bigarray1 x'.buffer)
+        ~data_out:(Nx_buffer.to_bigarray1 out.buffer)
+        ~nthreads:1
+  | Dtype.Float64 ->
+      Pocketfft.dst_f64 ~shape:in_shape ~stride_in:strides_in
+        ~stride_out:strides_out ~axes:axes_normalized ~dct_type:dst_type ~ortho
+        ~fct:1.0
+        ~data_in:(Nx_buffer.to_bigarray1 x'.buffer)
+        ~data_out:(Nx_buffer.to_bigarray1 out.buffer)
+        ~nthreads:1
+  | _ -> invalid_arg "dst: unsupported dtype (must be float32 or float64)");
+  out
+
 (* ───── Linear Algebra Operations ───── *)
 
 let cholesky ~upper x =
