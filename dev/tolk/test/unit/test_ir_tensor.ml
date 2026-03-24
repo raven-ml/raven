@@ -264,7 +264,14 @@ let () =
           test "assign ok" (fun () ->
             let b = T.create () in
             let _u, _d, buf = emit_buffer b in
-            ignore (T.assign b ~target:buf ~value:(mk_f32 b) ());
+            let assigned = T.assign b ~target:buf ~value:(mk_f32 b) () in
+            (* assign emits Store+After *)
+            (match T.view (T.finish b) assigned with
+            | After { deps; _ } ->
+                is_true (List.exists (fun d ->
+                  match T.view (T.finish b) d with Store _ -> true | _ -> false)
+                  deps)
+            | _ -> fail "expected After from assign");
             T.validate (T.finish b));
           test "detach ok" (fun () ->
             let b = T.create () in
@@ -276,7 +283,7 @@ let () =
             T.validate (T.finish b));
           test "copy ok" (fun () ->
             let b = T.create () in
-            ignore (T.copy b ~src:(mk_f32 b) ~device:(T.device b (Single "GPU")));
+            ignore (T.copy b ~src:(mk_f32 b) ~device:(T.device b (Single "GPU")) ());
             T.validate (T.finish b));
           test "allreduce ok" (fun () ->
             let b = T.create () in
@@ -290,7 +297,7 @@ let () =
             T.validate (T.finish b));
           test "reduce_axis ok" (fun () ->
             let b = T.create () in
-            ignore (T.reduce_axis b ~src:(mk_f32 b) ~op:`Add ~axes:[ 0 ] ~dtype:D.float32);
+            ignore (T.reduce_axis b ~src:(mk_f32 b) ~op:`Add ~axes:[ 0 ]);
             T.validate (T.finish b));
           test "reshape ok" (fun () ->
             let b = T.create () in
@@ -363,10 +370,10 @@ let () =
             let _buf, index = mk_index_on_buf b in
             ignore (T.buffer_view b ~src:index ~size:512 ~offset:(-1) ~dtype:D.float32);
             raises_validate "non-negative" (fun () -> T.validate (T.finish b)));
-          test "reject buffer_view src not index" (fun () ->
+          test "reject buffer_view src not buffer or index" (fun () ->
             let b = T.create () in
             ignore (T.buffer_view b ~src:(mk_f32 b) ~size:512 ~offset:0 ~dtype:D.float32);
-            raises_validate "must be Index" (fun () -> T.validate (T.finish b)));
+            raises_validate "must be Buffer or Index" (fun () -> T.validate (T.finish b)));
           test "reject vconst count mismatch" (fun () ->
             let b = T.create () in
             ignore
@@ -398,22 +405,14 @@ let () =
             let b = T.create () in
             ignore (T.param b ~slot:0 ~dtype:D.float32 ~device:(mk_f32 b) ());
             raises_validate "Device" (fun () -> T.validate (T.finish b)));
-          test "reject assign target dtype mismatch" (fun () ->
-            let b = T.create () in
-            let target = mk_i32 b in
-            ignore
-              (T.emit b
-                 (Assign { target; value = mk_f32 b; extras = []; dtype = D.int32 }));
-            raises_validate "Assign value" (fun () -> T.validate (T.finish b)));
           test "reject reduce_axis empty axes" (fun () ->
             let b = T.create () in
-            ignore (T.reduce_axis b ~src:(mk_f32 b) ~op:`Add ~axes:[] ~dtype:D.float32);
+            ignore (T.reduce_axis b ~src:(mk_f32 b) ~op:`Add ~axes:[]);
             raises_validate "at least one axis" (fun () -> T.validate (T.finish b)));
           test "reject reduce_axis duplicate axes" (fun () ->
             let b = T.create () in
             ignore
-              (T.reduce_axis b ~src:(mk_f32 b) ~op:`Add ~axes:[ 0; 1; 0 ]
-                 ~dtype:D.float32);
+              (T.reduce_axis b ~src:(mk_f32 b) ~op:`Add ~axes:[ 0; 1; 0 ]);
             raises_validate "unique" (fun () -> T.validate (T.finish b)));
           test "reject permute invalid order" (fun () ->
             let b = T.create () in
@@ -439,7 +438,7 @@ let () =
             raises_validate "width mismatch" (fun () -> T.validate (T.finish b)));
           test "reject copy device not device" (fun () ->
             let b = T.create () in
-            ignore (T.copy b ~src:(mk_f32 b) ~device:(mk_f32 b));
+            ignore (T.copy b ~src:(mk_f32 b) ~device:(mk_f32 b) ());
             raises_validate "Device" (fun () -> T.validate (T.finish b)));
           test "reject allreduce device not device" (fun () ->
             let b = T.create () in
@@ -688,5 +687,142 @@ let () =
             is_true (contains s "  0:");
             is_true (contains s "  1:");
             is_true (contains s "  2:"));
+        ];
+      group "Shape computation"
+        [
+          test "buffer shape" (fun () ->
+            let b = T.create () in
+            let _u, _d, buf = emit_buffer b in
+            let shapes = T.compute_shapes (T.finish b) in
+            equal (option (list int)) (Some [ 1024 ]) shapes.(buf));
+          test "const shape is empty" (fun () ->
+            let b = T.create () in
+            let c = mk_f32 b in
+            let shapes = T.compute_shapes (T.finish b) in
+            equal (option (list int)) (Some []) shapes.(c));
+          test "reshape shape" (fun () ->
+            let b = T.create () in
+            let _u, _d, buf = emit_buffer b in
+            let shape = mk_shape_2x3 b in
+            let r = T.reshape b ~src:buf ~shape in
+            let shapes = T.compute_shapes (T.finish b) in
+            equal (option (list int)) (Some [ 2; 3 ]) shapes.(r));
+          test "permute shape" (fun () ->
+            let b = T.create () in
+            let _u, _d, buf = emit_buffer ~dtype:D.float32 b in
+            let d1 = T.const b (C.int D.index 4) in
+            let d2 = T.const b (C.int D.index 8) in
+            let shape =
+              T.emit b (Vectorize { srcs = [ d1; d2 ]; dtype = D.vec D.index 2 })
+            in
+            let reshaped = T.reshape b ~src:buf ~shape in
+            let p = T.permute b ~src:reshaped ~order:[ 1; 0 ] in
+            let shapes = T.compute_shapes (T.finish b) in
+            equal (option (list int)) (Some [ 8; 4 ]) shapes.(p));
+          test "unary inherits shape" (fun () ->
+            let b = T.create () in
+            let _u, _d, buf = emit_buffer b in
+            let neg = T.unary b ~op:`Neg ~src:buf in
+            let shapes = T.compute_shapes (T.finish b) in
+            equal (option (list int)) shapes.(buf) shapes.(neg));
+          test "binary inherits lhs shape" (fun () ->
+            let b = T.create () in
+            let _u, _d, buf = emit_buffer b in
+            let c = mk_f32 b in
+            let add = T.binary b ~op:`Add ~lhs:buf ~rhs:c in
+            let shapes = T.compute_shapes (T.finish b) in
+            equal (option (list int)) shapes.(buf) shapes.(add));
+          test "reduce_axis collapses axes" (fun () ->
+            let b = T.create () in
+            let _u, _d, buf = emit_buffer ~dtype:D.float32 b in
+            let d1 = T.const b (C.int D.index 4) in
+            let d2 = T.const b (C.int D.index 8) in
+            let shape =
+              T.emit b (Vectorize { srcs = [ d1; d2 ]; dtype = D.vec D.index 2 })
+            in
+            let reshaped = T.reshape b ~src:buf ~shape in
+            let red = T.reduce_axis b ~src:reshaped ~op:`Add ~axes:[ 1 ] in
+            let shapes = T.compute_shapes (T.finish b) in
+            equal (option (list int)) (Some [ 4; 1 ]) shapes.(red));
+          test "sink has no shape" (fun () ->
+            let b = T.create () in
+            let sink = T.sink b [] in
+            let shapes = T.compute_shapes (T.finish b) in
+            is_none shapes.(sink));
+        ];
+      group "Device computation"
+        [
+          test "device node" (fun () ->
+            let b = T.create () in
+            let d = T.device b (Single "GPU") in
+            let devs = T.compute_devices (T.finish b) in
+            equal (option string) (Some "GPU")
+              (match devs.(d) with
+               | Some (Single s) -> Some s
+               | _ -> None));
+          test "buffer inherits device" (fun () ->
+            let b = T.create () in
+            let u = T.unique b ~id:0 in
+            let d = T.device b (Single "CPU") in
+            let buf = T.buffer b ~unique:u ~device:d ~size:64 ~dtype:D.float32 in
+            let devs = T.compute_devices (T.finish b) in
+            equal (option string) (Some "CPU")
+              (match devs.(buf) with
+               | Some (Single s) -> Some s
+               | _ -> None));
+        ];
+      group "Analysis"
+        [
+          test "backward_slice includes root" (fun () ->
+            let b = T.create () in
+            let a = mk_f32 b in
+            let neg = T.unary b ~op:`Neg ~src:a in
+            let slice = T.backward_slice (T.finish b) neg in
+            is_true (List.mem neg slice);
+            is_true (List.mem a slice));
+          test "backward_slice is topological" (fun () ->
+            let b = T.create () in
+            let a = mk_f32 b in
+            let neg = T.unary b ~op:`Neg ~src:a in
+            let slice = T.backward_slice (T.finish b) neg in
+            let idx_a =
+              let rec find i = function
+                | [] -> -1 | x :: _ when x = a -> i | _ :: rest -> find (i + 1) rest
+              in find 0 slice
+            in
+            let idx_neg =
+              let rec find i = function
+                | [] -> -1 | x :: _ when x = neg -> i | _ :: rest -> find (i + 1) rest
+              in find 0 slice
+            in
+            is_true (idx_a < idx_neg));
+          test "consumer_map tracks consumers" (fun () ->
+            let b = T.create () in
+            let a = mk_f32 b in
+            let neg = T.unary b ~op:`Neg ~src:a in
+            let consumers = T.consumer_map (T.finish b) in
+            is_true (List.mem neg consumers.(a)));
+          test "base follows through movement ops" (fun () ->
+            let b = T.create () in
+            let _u, _d, buf = emit_buffer b in
+            let shape = mk_shape_2x3 b in
+            let reshaped = T.reshape b ~src:buf ~shape in
+            let perm = T.permute b ~src:reshaped ~order:[ 1; 0 ] in
+            equal int buf (T.base (T.finish b) perm));
+          test "base stops at non-movement" (fun () ->
+            let b = T.create () in
+            let a = mk_f32 b in
+            let neg = T.unary b ~op:`Neg ~src:a in
+            equal int neg (T.base (T.finish b) neg));
+          test "merge_builder appends nodes" (fun () ->
+            let b1 = T.create () in
+            ignore (mk_f32 b1);
+            ignore (mk_i32 b1);
+            let prog = T.finish b1 in
+            let b2 = T.create () in
+            ignore (T.unique b2 ~id:42);
+            let prog', shift = T.merge_builder prog b2 in
+            equal int (T.length prog + 1) (T.length prog');
+            equal int (T.length prog) (shift 0));
         ];
     ]
