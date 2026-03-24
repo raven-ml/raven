@@ -36,6 +36,14 @@ thread.
 
 ### Nx
 
+- **Breaking:** `rfft`, `irfft`, `rfft2`, `irfft2`, `rfftn`, `irfftn`, `hfft`,
+  and `ihfft` now require an explicit `~dtype` parameter that selects the output
+  precision. Use `~dtype:complex128` (or `~dtype:float64` for inverse) for the
+  previous behavior. This fixes Float32 input crashing and enables single-precision
+  FFT: `rfft ~dtype:complex64` with Float32 input returns Complex64 output.
+- Add DCT and DST (Discrete Cosine/Sine Transform) to the public API: `dct`,
+  `idct`, `dctn`, `idctn`, `dst`, `idst`, `dstn`, `idstn`. All support types
+  1–4, ortho/backward/forward normalization, and both float32 and float64.
 - Remove `~out` parameter from all backend compute operations. Operations now
   allocate and return their result instead of writing to a caller-provided
   buffer. This simplifies the effect system, fixes vmap, and prepares the
