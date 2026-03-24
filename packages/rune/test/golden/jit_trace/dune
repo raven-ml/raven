@@ -4,11 +4,7 @@
 
 (rule
  (package rune)
- (targets
-  add_const.actual
-  mul_self.actual
-  sum.actual
-  chain.actual)
+ (targets add_const.actual mul_self.actual sum.actual chain.actual)
  (action
   (run ./generate_actual.exe .)))
 

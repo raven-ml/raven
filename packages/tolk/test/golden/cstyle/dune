@@ -1,6 +1,6 @@
 (executable
  (name generate_actual)
- (libraries tolk))
+ (libraries tolk tolk.ir))
 
 (rule
  (package tolk)

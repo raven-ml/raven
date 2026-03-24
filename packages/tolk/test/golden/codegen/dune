@@ -1,6 +1,6 @@
 (executable
  (name generate_actual)
- (libraries tolk))
+ (libraries tolk tolk.ir))
 
 (rule
  (package tolk)
@@ -72,7 +72,9 @@
   (progn
    (diff clang_dot_product.expected clang_dot_product.actual)
    (diff clang_elementwise_add.expected clang_elementwise_add.actual)
-   (diff clang_elementwise_cast_f16.expected clang_elementwise_cast_f16.actual)
+   (diff
+    clang_elementwise_cast_f16.expected
+    clang_elementwise_cast_f16.actual)
    (diff clang_elementwise_int32.expected clang_elementwise_int32.actual)
    (diff clang_elementwise_sqrt.expected clang_elementwise_sqrt.actual)
    (diff clang_elementwise_where.expected clang_elementwise_where.actual)
@@ -99,7 +101,9 @@
    (diff metal_dot_product.expected metal_dot_product.actual)
    (diff metal_elementwise_2d.expected metal_elementwise_2d.actual)
    (diff metal_elementwise_add.expected metal_elementwise_add.actual)
-   (diff metal_elementwise_cast_f16.expected metal_elementwise_cast_f16.actual)
+   (diff
+    metal_elementwise_cast_f16.expected
+    metal_elementwise_cast_f16.actual)
    (diff metal_elementwise_int32.expected metal_elementwise_int32.actual)
    (diff metal_elementwise_sqrt.expected metal_elementwise_sqrt.actual)
    (diff metal_elementwise_where.expected metal_elementwise_where.actual)
@@ -113,7 +117,9 @@
    (diff opencl_dot_product.expected opencl_dot_product.actual)
    (diff opencl_elementwise_2d.expected opencl_elementwise_2d.actual)
    (diff opencl_elementwise_add.expected opencl_elementwise_add.actual)
-   (diff opencl_elementwise_cast_f16.expected opencl_elementwise_cast_f16.actual)
+   (diff
+    opencl_elementwise_cast_f16.expected
+    opencl_elementwise_cast_f16.actual)
    (diff opencl_elementwise_int32.expected opencl_elementwise_int32.actual)
    (diff opencl_elementwise_sqrt.expected opencl_elementwise_sqrt.actual)
    (diff opencl_elementwise_where.expected opencl_elementwise_where.actual)
