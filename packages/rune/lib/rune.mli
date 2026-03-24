@@ -365,6 +365,47 @@ val vmaps :
 
     [in_axes] defaults to [Map 0] for every input. *)
 
+(** {1:jit JIT compilation} *)
+
+val jit :
+  ?device:Tolk.Device.t ->
+  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
+  (('a, 'b) Nx.t -> ('c, 'd) Nx.t)
+(** [jit f] returns a JIT-compiled version of [f].
+
+    - Call 1 (warmup): executes eagerly
+    - Call 2 (capture): intercepts tensor operations, builds computation graph,
+      compiles via Tolk's codegen pipeline
+    - Calls 3+ (replay): executes the compiled schedule without recompilation
+
+    Raises [Invalid_argument] if input shapes or dtypes change after capture.
+
+    Matches tinygrad's {b TinyJit} semantics. *)
+
+type jit_traced = Jit.traced = {
+  tensor_graph : Tolk_ir.Tensor.t;
+      (** High-level operation graph before scheduling. *)
+  kernel_graph : Tolk_ir.Tensor.t;
+      (** Scheduled graph with [Call] nodes containing kernel ASTs. *)
+  rendered_source : string list;
+      (** Rendered source code for each kernel (one per [Call] node). *)
+}
+(** Result of tracing a function through the JIT capture handler. *)
+
+val trace_graph :
+  ?device:Tolk.Device.t ->
+  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
+  ('a, 'b) Nx.t ->
+  jit_traced
+(** [trace_graph ?device f x] traces [f] applied to [x], capturing the
+    computation graph without executing it.
+
+    Returns the tensor graph, kernel graph, and rendered source for each
+    kernel. Useful for debugging what the JIT produces, inspecting gradient
+    graphs, or comparing against reference implementations.
+
+    When [device] is omitted, renders using the C backend (clang). *)
+
 (** {1:debug Debugging} *)
 
 val debug : ('a -> 'b) -> 'a -> 'b

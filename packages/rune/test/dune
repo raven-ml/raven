@@ -1,7 +1,8 @@
 (tests
- (names test_vjp test_gradcheck test_jvp test_custom_diff test_jacobian)
+ (names test_vjp test_gradcheck test_jvp test_custom_diff test_jacobian test_jit
+        test_jit_grad test_jit_vmap)
  (package rune)
- (libraries nx rune nx.core windtrap test_rune_support))
+ (libraries nx rune nx.core windtrap test_rune_support tolk tolk.ir tolk.cpu))
 
 (test
  (name test_vmap)

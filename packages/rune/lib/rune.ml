@@ -69,6 +69,18 @@ type 'a out_axes_spec = 'a Vmap.out_axes_spec =
 let vmap = Vmap.vmap
 let vmaps = Vmap.vmaps
 
+(* JIT *)
+
+let jit ?device f = Jit.trace ?device f
+
+type jit_traced = Jit.traced = {
+  tensor_graph : Tolk_ir.Tensor.t;
+  kernel_graph : Tolk_ir.Tensor.t;
+  rendered_source : string list;
+}
+
+let trace_graph = Jit.trace_graph
+
 (* Debugging *)
 
 let debug = Debug.debug

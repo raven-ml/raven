@@ -1,0 +1,5 @@
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+void E_4n2(float* restrict data0_4, float* restrict data1_4) {
+  float4 val0 = (*((float4*)((data1_4+0))));
+  *((float4*)((data0_4+0))) = (float4){(1.0f+(val0[0]*2.0f)),(1.0f+(val0[1]*2.0f)),(1.0f+(val0[2]*2.0f)),(1.0f+(val0[3]*2.0f))};
+}

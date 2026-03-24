@@ -1,0 +1,23 @@
+(executable
+ (name generate_actual)
+ (libraries nx rune tolk tolk.ir))
+
+(rule
+ (package rune)
+ (targets
+  add_const.actual
+  mul_self.actual
+  sum.actual
+  chain.actual)
+ (action
+  (run ./generate_actual.exe .)))
+
+(rule
+ (alias runtest)
+ (package rune)
+ (action
+  (progn
+   (diff add_const.expected add_const.actual)
+   (diff mul_self.expected mul_self.actual)
+   (diff sum.expected sum.actual)
+   (diff chain.expected chain.actual))))

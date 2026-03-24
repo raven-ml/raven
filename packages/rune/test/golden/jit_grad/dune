@@ -1,0 +1,23 @@
+(executable
+ (name generate_actual)
+ (libraries nx rune tolk tolk.ir))
+
+(rule
+ (package rune)
+ (targets
+  grad_square.actual
+  grad_sin.actual
+  grad_polynomial.actual
+  grad_cube.actual)
+ (action
+  (run ./generate_actual.exe .)))
+
+(rule
+ (alias runtest)
+ (package rune)
+ (action
+  (progn
+   (diff grad_square.expected grad_square.actual)
+   (diff grad_sin.expected grad_sin.actual)
+   (diff grad_polynomial.expected grad_polynomial.actual)
+   (diff grad_cube.expected grad_cube.actual))))
