@@ -422,6 +422,10 @@ val view : t -> view
 val dtype : t -> Dtype.t option
 (** [dtype n] is the value dtype of [n], if any. Effect nodes return [None]. *)
 
+val any_dtype : t -> Dtype.any option
+(** [any_dtype n] is the full dtype of [n] preserving ptr/value distinction.
+    Matches tinygrad's [UOp.dtype]. *)
+
 val sort : t -> sort
 (** [sort n] is the coarse role of [n]. *)
 

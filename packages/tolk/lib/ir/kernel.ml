@@ -326,6 +326,24 @@ let rec node_dtype node = match node.Hashcons.node.view with
       Some dtype
   | Sink _ | Group _ | After _ | Store _ | End _ | Barrier | Custom _ -> None
 
+let node_any_dtype node = match node.Hashcons.node.view with
+  | Param { dtype; _ } | Param_image { dtype; _ } | Define_local { dtype; _ }
+  | Define_reg { dtype; _ } | Bufferize { dtype; _ }
+  | Ptrcat { dtype; _ } ->
+      Some (Dtype.ptr_to_any dtype)
+  | Index { dtype; _ } | Cast { dtype; _ } | Vectorize { dtype; _ } ->
+      Some dtype
+  | Define_var { dtype; _ } | Const { dtype; _ } | Vconst { dtype; _ }
+  | Invalid_index { dtype; _ }
+  | Load { dtype; _ } | Unary { dtype; _ } | Binary { dtype; _ }
+  | Ternary { dtype; _ } | Bitcast { dtype; _ }
+  | Cat { dtype; _ } | Gep { dtype; _ }
+  | Range { dtype; _ } | Special { dtype; _ } | Reduce { dtype; _ }
+  | Unroll { dtype; _ } | Contract { dtype; _ } | Wmma { dtype; _ }
+  | Custom_inline { dtype; _ } ->
+      Some (Dtype.to_any dtype)
+  | Sink _ | Group _ | After _ | Store _ | End _ | Barrier | Custom _ -> None
+
 let value_dtype_exn ctx node =
   match node_dtype node with
   | Some dtype -> dtype
@@ -729,6 +747,7 @@ let is_alu node = match node.Hashcons.node.view with
   | _ -> false
 
 let is_ptr node = Option.is_some (get_ptr_dtype node)
+let any_dtype node = node_any_dtype node
 let dtype_or default node = match node_dtype node with Some dt -> dt | None -> default
 
 let first_match rules node =

@@ -112,6 +112,16 @@ val any_count : any -> int
 (** [any_count a] is the vector width. [any_count (T dt)] is
     [count dt]. [any_count (P p)] is [count (base p)]. *)
 
+val vcount : any -> int
+(** [vcount a] is the vector count matching tinygrad's [dtype.vcount].
+    [vcount (T dt)] is [count dt]. [vcount (P p)] is [ptr_v p]. *)
+
+val any_scalar_of : any -> any
+(** [any_scalar_of a] is the scalar version of [a].
+    Matches tinygrad's [dtype.scalar()].
+    [any_scalar_of (T dt)] is [T (scalar_of dt)].
+    [any_scalar_of (P p)] is [P (scalar_ptr_of p)]. *)
+
 val any_to_val : any -> t
 (** [any_to_val (T dt)] is [dt]. [any_to_val (P p)] is [base p]. *)
 

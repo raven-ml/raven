@@ -45,6 +45,7 @@ let ptr_v p = p.v
 
 let any_scalar = function T dt -> dt.scalar | P p -> p.base.scalar
 let any_count = function T dt -> dt.count | P p -> p.base.count
+let vcount = function T dt -> dt.count | P p -> p.v
 let any_to_val = function T dt -> dt | P p -> p.base
 let any_is_ptr = function T _ -> false | P _ -> true
 
@@ -149,6 +150,10 @@ let priority t = scalar_priority t.scalar
 (* Operations *)
 
 let scalar_of t = { t with count = 1 }
+
+let any_scalar_of = function
+  | T dt -> T (scalar_of dt)
+  | P p -> P { p with base = scalar_of p.base; v = 1 }
 
 let vec t n =
   if t.count <> 1 then
