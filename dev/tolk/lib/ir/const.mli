@@ -68,3 +68,13 @@ val to_string : t -> string
 
 val pp : Format.formatter -> t -> unit
 (** [pp] formats a constant with {!to_string}. *)
+
+(** {1:helpers Dtype-aware helpers} *)
+
+val zero : Dtype.t -> t
+(** [zero dtype] is the zero constant for [dtype]: [0.0] for floats,
+    [false] for bools, [0] for integers. *)
+
+val identity_element : Op.reduce -> Dtype.t -> t
+(** [identity_element op dtype] is the identity element for reduction [op]
+    on [dtype]: [0] for [`Add], [1] for [`Mul], [dtype.min] for [`Max]. *)

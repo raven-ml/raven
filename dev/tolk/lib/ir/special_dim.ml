@@ -11,7 +11,6 @@ let axis = function Group_id a | Local_id a | Global_idx a -> a
 let equal = ( = )
 let compare = Stdlib.compare
 
-let pp fmt = function
-  | Group_id i -> Format.fprintf fmt "gid%d" i
-  | Local_id i -> Format.fprintf fmt "lid%d" i
-  | Global_idx i -> Format.fprintf fmt "idx%d" i
+let pp fmt t =
+  let s = match t with Group_id _ -> "gid" | Local_id _ -> "lid" | Global_idx _ -> "idx" in
+  Format.fprintf fmt "%s%d" s (axis t)

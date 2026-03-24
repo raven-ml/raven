@@ -259,13 +259,13 @@ let () =
         [
           test "operations" (fun () ->
             let v = Dtype.vec Dtype.int32 4 in
-            equal dtype { scalar = Int32; count = 4 } v;
+            equal dtype (Dtype.vec Dtype.int32 4) v;
             (* Count=1 is identity. *)
             equal dtype Dtype.int32 (Dtype.vec Dtype.int32 1);
             (* Void ignores count. *)
             equal dtype Dtype.void (Dtype.vec Dtype.void 4);
             (* index.vec(0) for empty shape vectors. *)
-            equal int 0 (Dtype.vec Dtype.index 0).count;
+            equal int 0 (Dtype.count (Dtype.vec Dtype.index 0));
             (* scalar_of strips count. *)
             equal dtype Dtype.int32 (Dtype.scalar_of v);
             equal dtype Dtype.float64 (Dtype.scalar_of Dtype.float64));

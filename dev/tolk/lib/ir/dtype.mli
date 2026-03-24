@@ -7,23 +7,27 @@
 
 (** Data types for tensor computations.
 
-    This module defines the {e scalar} types (booleans, integers, floats),
-    {e vector} types (a scalar repeated [count] times), and {e pointer} types
-    (references into GPU memory spaces) that form the type system for tolk's IR.
+    This module defines three levels of data type:
 
-    {b Promotion.} Scalar types are organized in a promotion lattice based on
-    {{:https://jax.readthedocs.io/en/latest/jep/9407-type-promotion.html} JAX
-     JEP-9407}. Promotion is total: any pair of numeric types has a common
-    supertype, at the cost of some lossy edges (e.g., [Uint64] promotes through
-    fp8 to reach floats). See {!least_upper_dtype}.
+    - {!t} — value dtypes (a {!scalar} identity with a vector width).
+    - {!ptr} — pointer dtypes (a value dtype plus address space, buffer
+      element count, and pointer vector width).
+    - {!any} — the union of both, for IR nodes whose dtype can be either
+      (e.g., [Index]).
 
-    {b Vectorization.} A dtype [{scalar; count}] represents [count] lanes of
-    [scalar]. Most operations work on the scalar component and ignore [count].
-    Use {!vec} and {!scalar_of} to move between scalar and vector forms.
+    {b Promotion.} Scalar types are organized in a promotion lattice based
+    on {{:https://jax.readthedocs.io/en/latest/jep/9407-type-promotion.html}
+    JAX JEP-9407}. Promotion is total: any pair of numeric types has a
+    common supertype, at the cost of some lossy edges (e.g., [Uint64]
+    promotes through fp8 to reach floats). See {!least_upper_dtype}.
+
+    {b Vectorization.} A value dtype represents [count] lanes of a
+    [scalar]. Most operations work on the scalar component and ignore
+    [count]. Use {!vec} and {!scalar_of} to convert.
 
     {b Index.} The {!Index} scalar is a symbolic type for loop counters and
-    address arithmetic. It does not participate in promotion and is lowered to
-    [int32] or [int64] by backends. *)
+    address arithmetic. It does not participate in promotion and is lowered
+    to [int32] or [int64] by backends. *)
 
 (** {1:scalars Scalar types} *)
 
@@ -62,74 +66,93 @@ type addr_space =
 
 (** {1:types Data types} *)
 
-type t = {
-  scalar : scalar;  (** The element type. *)
-  count : int;  (** Vector width. [1] for scalar types. *)
-}
-(** Data type with optional vectorization. A scalar dtype has [count = 1]. *)
+type t
+(** Value dtype: a {!scalar} identity with a vector width ([count]).
+    Invariant: [count >= 0]; [count = 0] only when [scalar = Index]. *)
 
-type ptr = {
-  base : t;  (** Pointed-to element type. *)
-  addrspace : addr_space;  (** Memory address space. *)
-  v : int;  (** Pointer vector width (distinct from [base.count]). *)
-  size : int;  (** Element count, or [-1] for unbounded. *)
-}
-(** Pointer into a typed buffer in a GPU memory space. *)
+type ptr
+(** Pointer dtype: a value dtype ({!base}) plus address space, buffer
+    element count, and pointer vector width.
+    Invariant: pointer vector width [>= 1]. *)
+
+type any = T of t | P of ptr
+(** A dtype that is either a value or a pointer. Used in IR nodes
+    whose dtype can be either (e.g., [Index] nodes that may or may
+    not carry pointer semantics). *)
+
+(** {2:val_accessors Value dtype accessors} *)
+
+val scalar : t -> scalar
+(** [scalar dt] is the element type of [dt]. *)
+
+val count : t -> int
+(** [count dt] is the vector width of [dt]. [1] for scalar types. *)
+
+(** {2:ptr_accessors Pointer dtype accessors} *)
+
+val base : ptr -> t
+(** [base p] is the pointed-to value dtype. *)
+
+val addrspace : ptr -> addr_space
+(** [addrspace p] is the memory address space of [p]. *)
+
+val ptr_size : ptr -> int
+(** [ptr_size p] is the element count of [p], or [-1] for unbounded. *)
+
+val ptr_v : ptr -> int
+(** [ptr_v p] is the pointer vector width of [p]. *)
+
+(** {2:any_accessors Any dtype accessors} *)
+
+val any_scalar : any -> scalar
+(** [any_scalar a] is the scalar identity. [any_scalar (T dt)] is
+    [scalar dt]. [any_scalar (P p)] is [scalar (base p)]. *)
+
+val any_count : any -> int
+(** [any_count a] is the vector width. [any_count (T dt)] is
+    [count dt]. [any_count (P p)] is [count (base p)]. *)
+
+val any_to_val : any -> t
+(** [any_to_val (T dt)] is [dt]. [any_to_val (P p)] is [base p]. *)
+
+val any_is_ptr : any -> bool
+(** [any_is_ptr a] is [true] iff [a] is [P _]. *)
+
+(** {2:coercions Coercions} *)
+
+val to_any : t -> any
+(** [to_any dt] is [T dt]. *)
+
+val ptr_to_any : ptr -> any
+(** [ptr_to_any p] is [P p]. *)
+
+val ptr_base_to_any : ptr -> any
+(** [ptr_base_to_any p] is [T (base p)]. *)
 
 (** {1:constructors Constructors}
 
     Scalar dtype constants. All have [count = 1]. *)
 
 val void : t
-(** [void] is [{scalar = Void; count = 1}]. *)
-
 val bool : t
-(** [bool] is [{scalar = Bool; count = 1}]. *)
-
 val int8 : t
-(** [int8] is [{scalar = Int8; count = 1}]. *)
-
 val int16 : t
-(** [int16] is [{scalar = Int16; count = 1}]. *)
-
 val int32 : t
-(** [int32] is [{scalar = Int32; count = 1}]. *)
-
 val int64 : t
-(** [int64] is [{scalar = Int64; count = 1}]. *)
-
 val uint8 : t
-(** [uint8] is [{scalar = Uint8; count = 1}]. *)
-
 val uint16 : t
-(** [uint16] is [{scalar = Uint16; count = 1}]. *)
-
 val uint32 : t
-(** [uint32] is [{scalar = Uint32; count = 1}]. *)
-
 val uint64 : t
-(** [uint64] is [{scalar = Uint64; count = 1}]. *)
-
 val float16 : t
-(** [float16] is [{scalar = Float16; count = 1}]. *)
-
 val bfloat16 : t
-(** [bfloat16] is [{scalar = Bfloat16; count = 1}]. *)
-
 val float32 : t
-(** [float32] is [{scalar = Float32; count = 1}]. *)
-
 val float64 : t
-(** [float64] is [{scalar = Float64; count = 1}]. *)
-
 val fp8e4m3 : t
-(** [fp8e4m3] is [{scalar = Fp8e4m3; count = 1}]. *)
-
 val fp8e5m2 : t
-(** [fp8e5m2] is [{scalar = Fp8e5m2; count = 1}]. *)
-
 val index : t
-(** [index] is [{scalar = Index; count = 1}]. *)
+
+val of_scalar : scalar -> t
+(** [of_scalar s] is the scalar dtype for [s] with [count = 1]. *)
 
 val default_float : t
 (** [default_float] is {!float32}. Used by {!least_upper_float} and
@@ -140,60 +163,87 @@ val default_int : t
 (** [default_int] is {!int32}. Used by {!sum_acc_dtype} to widen narrow integer
     accumulators. *)
 
+(** {2:ptr_constructors Pointer dtype constructors} *)
+
+val ptr_of : t -> addrspace:addr_space -> size:int -> ptr
+(** [ptr_of base ~addrspace ~size] is a pointer to [base] in [addrspace]
+    with [size] elements. Pointer vector width defaults to [1]. *)
+
+val ptr_of_v : t -> addrspace:addr_space -> size:int -> v:int -> ptr
+(** [ptr_of_v base ~addrspace ~size ~v] is like {!ptr_of} with explicit
+    pointer vector width [v].
+
+    Raises [Invalid_argument] if [v < 1]. *)
+
+(** {2:ptr_with Pointer dtype transformers} *)
+
+val ptr_with_v : ptr -> int -> ptr
+(** [ptr_with_v p n] is [p] with pointer vector width [n].
+
+    Raises [Invalid_argument] if [n < 1]. *)
+
+val ptr_with_scalar : ptr -> ptr
+(** [ptr_with_scalar p] is [p] with pointer vector width [1].
+
+    See also {!ptr_with_v}. *)
+
+val ptr_with_size : ptr -> int -> ptr
+(** [ptr_with_size p n] is [p] with element count [n]. *)
+
+val ptr_with_base : ptr -> t -> ptr
+(** [ptr_with_base p dt] is [p] with pointed-to value dtype [dt]. *)
+
 (** {1:predicates Predicates} *)
 
 val is_float : t -> bool
-(** [is_float t] is [true] iff [t.scalar] is a floating-point type ({!Float16},
-    {!Bfloat16}, {!Float32}, {!Float64}, {!Fp8e4m3}, or {!Fp8e5m2}). Ignores
-    [t.count]. *)
+(** [is_float dt] is [true] iff [scalar dt] is a floating-point type
+    ({!Float16}, {!Bfloat16}, {!Float32}, {!Float64}, {!Fp8e4m3}, or
+    {!Fp8e5m2}). *)
 
 val is_int : t -> bool
-(** [is_int t] is [true] iff [t.scalar] is a signed or unsigned integer type,
-    including {!Index}. Ignores [t.count]. *)
+(** [is_int dt] is [true] iff [scalar dt] is a signed or unsigned integer
+    type, including {!Index}. *)
 
 val is_unsigned : t -> bool
-(** [is_unsigned t] is [true] iff [t.scalar] is one of {!Uint8}, {!Uint16},
-    {!Uint32}, or {!Uint64}. *)
+(** [is_unsigned dt] is [true] iff [scalar dt] is one of {!Uint8},
+    {!Uint16}, {!Uint32}, or {!Uint64}. *)
 
 val is_bool : t -> bool
-(** [is_bool t] is [true] iff [t.scalar] is {!Bool}. Includes vectorized bools
-    (e.g., [count > 1]). *)
+(** [is_bool dt] is [true] iff [scalar dt] is {!Bool}. *)
 
 val is_fp8 : t -> bool
-(** [is_fp8 t] is [true] iff [t.scalar] is {!Fp8e4m3} or {!Fp8e5m2}. *)
+(** [is_fp8 dt] is [true] iff [scalar dt] is {!Fp8e4m3} or {!Fp8e5m2}. *)
 
 (** {1:properties Properties} *)
 
 val bitsize : t -> int
-(** [bitsize t] is the total size of [t] in bits, i.e., the scalar bit width
-    multiplied by [count]. {!Void} has bitsize [0]. {!Index} has a sentinel
-    bitsize of [800]. *)
+(** [bitsize dt] is the total size of [dt] in bits, i.e., the scalar bit
+    width multiplied by [count dt]. {!Void} has bitsize [0]. {!Index} has
+    a sentinel bitsize of [800]. *)
 
 val itemsize : t -> int
-(** [itemsize t] is [{!bitsize} t] rounded up to the nearest byte (i.e.,
-    [(bitsize t + 7) / 8]). *)
+(** [itemsize dt] is [{!bitsize} dt] rounded up to the nearest byte. *)
 
 val priority : t -> int
-(** [priority t] is the promotion priority of [t.scalar]. Higher priority types
-    absorb lower ones in {!least_upper_dtype}. Ranges from [-1] ({!Void},
-    {!Index}) through [0] ({!Bool}) to [14] ({!Float64}). *)
+(** [priority dt] is the promotion priority of [scalar dt]. Higher priority
+    types absorb lower ones in {!least_upper_dtype}. Ranges from [-1]
+    ({!Void}, {!Index}) through [0] ({!Bool}) to [14] ({!Float64}). *)
 
 (** {1:operations Operations} *)
 
 val vec : t -> int -> t
-(** [vec t n] is a vector type with [n] lanes of [t.scalar].
+(** [vec dt n] is a vector type with [n] lanes of [scalar dt].
 
-    If [n = 1] or [t.scalar] is {!Void}, the result is [t] unchanged.
-    [vec index 0] is permitted to represent empty shape vectors (scalar tensors
-    with zero dimensions).
+    If [n = 1] or [scalar dt] is {!Void}, returns [dt] unchanged.
+    [vec index 0] is permitted for empty shape vectors.
 
-    Raises [Invalid_argument] if [t.count <> 1] (already vectorized), [n < 0],
-    or [n = 0] on a non-{!Index} dtype.
+    Raises [Invalid_argument] if [count dt <> 1] (already vectorized),
+    [n < 0], or [n = 0] on a non-{!Index} dtype.
 
     See also {!scalar_of}. *)
 
 val scalar_of : t -> t
-(** [scalar_of t] is [t] with [count = 1].
+(** [scalar_of dt] is [dt] with [count = 1].
 
     See also {!vec}. *)
 
@@ -209,16 +259,16 @@ type bound =
     - [`Float f] for floating-point bounds ([-infinity] and [infinity]). *)
 
 val min : t -> bound
-(** [min t] is the smallest value representable by [t.scalar].
+(** [min dt] is the smallest value representable by [scalar dt].
 
-    Raises [Invalid_argument] if [t.scalar] is {!Void}.
+    Raises [Invalid_argument] if [scalar dt] is {!Void}.
 
     See also {!max}. *)
 
 val max : t -> bound
-(** [max t] is the largest value representable by [t.scalar].
+(** [max dt] is the largest value representable by [scalar dt].
 
-    Raises [Invalid_argument] if [t.scalar] is {!Void}.
+    Raises [Invalid_argument] if [scalar dt] is {!Void}.
 
     See also {!min}. *)
 
@@ -244,26 +294,26 @@ val least_upper_float : t -> t
 
 val can_lossless_cast : t -> t -> bool
 (** [can_lossless_cast src dst] is [true] iff every value representable by
-    [src.scalar] is exactly representable by [dst.scalar]. {!Bool} casts
+    [scalar src] is exactly representable by [scalar dst]. {!Bool} casts
     losslessly to any type. {!Index} accepts all integer types as lossless
     sources.
 
     This checks exact representability, not promotion: for example,
-    [can_lossless_cast int32 float32] is [false] (float32 cannot represent all
-    32-bit integers).
+    [can_lossless_cast int32 float32] is [false] (float32 cannot represent
+    all 32-bit integers).
 
     See also {!least_upper_dtype}. *)
 
 val sum_acc_dtype : t -> t
-(** [sum_acc_dtype t] is the accumulator dtype for sum-like reductions over [t].
-    The result always has [count = 1].
+(** [sum_acc_dtype dt] is the accumulator dtype for sum-like reductions
+    over [dt]. The result always has [count = 1].
 
     Widening rules:
     - Unsigned integers promote to at least {!uint32}.
     - Signed integers and booleans promote to at least {!int32}.
     - Floats promote to at least {!float32}.
 
-    Raises [Invalid_argument] if [t.scalar] is {!Index}. *)
+    Raises [Invalid_argument] if [scalar dt] is {!Index}. *)
 
 val finfo : t -> int * int
 (** [finfo t] is [(exponent_bits, mantissa_bits)] for the floating-point dtype
@@ -277,11 +327,28 @@ val finfo : t -> int * int
 (** {1:comparison Comparison} *)
 
 val equal : t -> t -> bool
-(** [equal a b] is [true] iff [a] and [b] have the same [scalar] and [count]. *)
+(** [equal a b] is [true] iff [a] and [b] have the same scalar and count. *)
 
 val compare : t -> t -> int
-(** [compare a b] is a total order over dtypes. Orders first by scalar promotion
-    priority and bit width, then by [count]. *)
+(** [compare a b] is a total order over value dtypes. Orders first by scalar
+    promotion priority and bit width, then by count. *)
+
+val ptr_equal : ptr -> ptr -> bool
+(** [ptr_equal a b] is [true] iff all fields of [a] and [b] are
+    structurally equal (base, addrspace, v, size).
+
+    {b Note.} IR validators may use partial field comparisons (e.g.,
+    index validation ignores size). Those are intentionally different
+    from this structural equality. *)
+
+val ptr_compare : ptr -> ptr -> int
+(** [ptr_compare a b] is a total order over pointer types. *)
+
+val any_equal : any -> any -> bool
+(** [any_equal a b] is [true] iff [a] and [b] carry the same dtype. *)
+
+val any_compare : any -> any -> int
+(** [any_compare a b] is a total order over {!any} values. *)
 
 (** {1:fmt Formatting} *)
 
@@ -290,65 +357,31 @@ val scalar_to_string : scalar -> string
     ["bool"], ["void"], ["index"]). *)
 
 val to_string : t -> string
-(** [to_string t] is the short name of [t]. For scalar types this is
-    [scalar_to_string t.scalar]. For vector types it appends the count with a
-    multiplication sign (e.g., ["f32×4"]). *)
+(** [to_string dt] is the short name of [dt]. For scalar types this is
+    [scalar_to_string (scalar dt)]. For vector types it appends the count
+    (e.g., ["f32×4"]). *)
+
+val ptr_to_string : ptr -> string
+(** [ptr_to_string p] is a human-readable representation of [p] (e.g.,
+    ["f32* \[global\]"]). *)
 
 val pp_scalar : Format.formatter -> scalar -> unit
 (** [pp_scalar] formats a {!scalar} using {!scalar_to_string}. *)
 
 val pp : Format.formatter -> t -> unit
-(** [pp] formats a dtype using {!to_string}. *)
+(** [pp] formats a value dtype using {!to_string}. *)
+
+val pp_ptr : Format.formatter -> ptr -> unit
+(** [pp_ptr] formats a pointer dtype using {!ptr_to_string}. *)
+
+val pp_any : Format.formatter -> any -> unit
+(** [pp_any] formats an {!any} dtype. *)
 
 val addr_space_to_string : addr_space -> string
 (** [addr_space_to_string a] is ["global"], ["local"], or ["reg"]. *)
 
 val pp_addr_space : Format.formatter -> addr_space -> unit
-(** [pp_addr_space] formats an {!addr_space} using {!addr_space_to_string}. *)
-
-(** {1:ptr Pointer operations} *)
-
-(** Operations on pointer types. *)
-module Ptr : sig
-  val create : t -> ?size:int -> ?addrspace:addr_space -> ?v:int -> unit -> ptr
-  (** [create base ?size ?addrspace ?v ()] is a pointer to [base] with:
-      - [size] element count. Defaults to [-1] (unbounded).
-      - [addrspace] memory space. Defaults to {!Global}.
-      - [v] pointer vector width. Defaults to [1].
-
-      Raises [Invalid_argument] if [v < 1]. *)
-
-  val vec : ptr -> int -> ptr
-  (** [vec p n] is [p] with pointer vector width [n].
-
-      Raises [Invalid_argument] if [n < 1]. *)
-
-  val scalar : ptr -> ptr
-  (** [scalar p] is [p] with pointer vector width [1].
-
-      See also {!vec}. *)
-
-  val vcount : ptr -> int
-  (** [vcount p] is the pointer vector width of [p]. *)
-
-  val equal : ptr -> ptr -> bool
-  (** [equal a b] is [true] iff all fields of [a] and [b] are structurally equal
-      ([base], [addrspace], [v], [size]).
-
-      {b Note.} IR validators may use partial field comparisons (e.g., index
-      validation ignores [size], pointer concatenation validation ignores [v]).
-      Those are intentionally different from this structural equality. *)
-
-  val compare : ptr -> ptr -> int
-  (** [compare a b] is a total order over pointer types. *)
-
-  val to_string : ptr -> string
-  (** [to_string p] is a human-readable representation of [p] (e.g.,
-      ["f32* [global]"]). *)
-
-  val pp : Format.formatter -> ptr -> unit
-  (** [pp] formats a pointer type using {!to_string}. *)
-end
+(** [pp_addr_space] formats an address space. *)
 
 (** {1:cnames C type names} *)
 
@@ -389,20 +422,21 @@ val fp8_to_float : scalar -> int -> float
     See also {!float_to_fp8}. *)
 
 val truncate_float : t -> float -> float
-(** [truncate_float t x] truncates [x] to the precision of floating-point dtype
-    [t]. For {!Float64} this is the identity. For {!Float32} it round-trips
-    through [Int32.bits_of_float]. For narrower types it uses {!float_to_fp16},
-    {!float_to_bf16}, or the fp8 conversion pair.
+(** [truncate_float dt x] truncates [x] to the precision of floating-point
+    dtype [dt]. For {!Float64} this is the identity. For {!Float32} it
+    round-trips through [Int32.bits_of_float]. For narrower types it uses
+    {!float_to_fp16}, {!float_to_bf16}, or the fp8 conversion pair.
 
-    Raises [Invalid_argument] if [t] is not floating-point.
+    Raises [Invalid_argument] if [dt] is not floating-point.
 
     See also {!truncate_int}. *)
 
 val truncate_int : t -> int -> int
-(** [truncate_int t x] truncates integer [x] to the range of integer dtype [t].
-    Unsigned types use bitwise masking. Signed types and {!Index} use modular
-    arithmetic with sign extension. {!Bool} maps nonzero to [1] and zero to [0].
+(** [truncate_int dt x] truncates integer [x] to the range of integer dtype
+    [dt]. Unsigned types use bitwise masking. Signed types and {!Index} use
+    modular arithmetic with sign extension. {!Bool} maps nonzero to [1] and
+    zero to [0].
 
-    Raises [Invalid_argument] if [t] is not an integer, index, or bool type.
+    Raises [Invalid_argument] if [dt] is not an integer, index, or bool type.
 
     See also {!truncate_float}. *)

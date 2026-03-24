@@ -38,39 +38,24 @@ let compare_binary = Stdlib.compare
 let equal_ternary = ( = )
 let compare_ternary = Stdlib.compare
 
-let pp_reduce fmt = function
-  | `Add -> Format.pp_print_string fmt "add"
-  | `Mul -> Format.pp_print_string fmt "mul"
-  | `Max -> Format.pp_print_string fmt "max"
+let string_of_reduce = function
+  | `Add -> "add" | `Mul -> "mul" | `Max -> "max"
 
-let pp_unary fmt = function
-  | `Neg -> Format.pp_print_string fmt "neg"
-  | `Exp2 -> Format.pp_print_string fmt "exp2"
-  | `Log2 -> Format.pp_print_string fmt "log2"
-  | `Sin -> Format.pp_print_string fmt "sin"
-  | `Sqrt -> Format.pp_print_string fmt "sqrt"
-  | `Recip -> Format.pp_print_string fmt "recip"
-  | `Trunc -> Format.pp_print_string fmt "trunc"
+let string_of_unary = function
+  | `Neg -> "neg" | `Exp2 -> "exp2" | `Log2 -> "log2" | `Sin -> "sin"
+  | `Sqrt -> "sqrt" | `Recip -> "recip" | `Trunc -> "trunc"
 
-let pp_binary fmt = function
-  | `Add -> Format.pp_print_string fmt "add"
-  | `Sub -> Format.pp_print_string fmt "sub"
-  | `Mul -> Format.pp_print_string fmt "mul"
-  | `Fdiv -> Format.pp_print_string fmt "fdiv"
-  | `Idiv -> Format.pp_print_string fmt "idiv"
-  | `Mod -> Format.pp_print_string fmt "mod"
-  | `Max -> Format.pp_print_string fmt "max"
-  | `Pow -> Format.pp_print_string fmt "pow"
-  | `Shl -> Format.pp_print_string fmt "shl"
-  | `Shr -> Format.pp_print_string fmt "shr"
-  | `And -> Format.pp_print_string fmt "and"
-  | `Or -> Format.pp_print_string fmt "or"
-  | `Xor -> Format.pp_print_string fmt "xor"
-  | `Threefry -> Format.pp_print_string fmt "threefry"
-  | `Cmplt -> Format.pp_print_string fmt "cmplt"
-  | `Cmpeq -> Format.pp_print_string fmt "cmpeq"
-  | `Cmpne -> Format.pp_print_string fmt "cmpne"
+let string_of_binary = function
+  | `Add -> "add" | `Sub -> "sub" | `Mul -> "mul" | `Fdiv -> "fdiv"
+  | `Idiv -> "idiv" | `Mod -> "mod" | `Max -> "max" | `Pow -> "pow"
+  | `Shl -> "shl" | `Shr -> "shr" | `And -> "and" | `Or -> "or"
+  | `Xor -> "xor" | `Threefry -> "threefry" | `Cmplt -> "cmplt"
+  | `Cmpeq -> "cmpeq" | `Cmpne -> "cmpne"
 
-let pp_ternary fmt = function
-  | `Where -> Format.pp_print_string fmt "where"
-  | `Mulacc -> Format.pp_print_string fmt "mulacc"
+let string_of_ternary = function
+  | `Where -> "where" | `Mulacc -> "mulacc"
+
+let pp_reduce fmt op = Format.pp_print_string fmt (string_of_reduce op)
+let pp_unary fmt op = Format.pp_print_string fmt (string_of_unary op)
+let pp_binary fmt op = Format.pp_print_string fmt (string_of_binary op)
+let pp_ternary fmt op = Format.pp_print_string fmt (string_of_ternary op)
