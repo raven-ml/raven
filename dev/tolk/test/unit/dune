@@ -1,10 +1,10 @@
 (tests
- (names test_program_spec test_cstyle test_elf test_runtime_cpu)
+ (names test_program_spec test_cstyle test_elf test_runtime_cpu test_runtime_search)
  (package tolk)
  (libraries tolk tolk.cpu windtrap))
 
 (tests
- (names test_ir_dtype test_ir_program test_ir_kernel test_ir_tensor)
+ (names test_ir_dtype test_ir_program test_ir_kernel test_ir_tensor test_ir_symbolic)
  (package tolk)
  (libraries tolk.ir windtrap))
 
@@ -12,8 +12,15 @@
  (names
   test_codegen_devectorizer
   test_codegen_expander
+  test_codegen_gpudims
+  test_codegen_heuristic
   test_codegen_images
-  test_codegen_linearizer)
+  test_codegen_linearizer
+  test_codegen_postrange
+  test_codegen_search
+  test_codegen_simplify
+  test_codegen_tc
+  test_schedule_rangeify)
  (package tolk)
  (libraries tolk windtrap))
 

@@ -12,7 +12,7 @@ module P = Program
 (* Helpers *)
 
 let dt = Dtype.float32
-let global_ptr dt = Dtype.Ptr.create dt ~addrspace:Global ()
+let global_ptr dt = Dtype.ptr_of dt ~addrspace:Global ~size:(-1)
 let ptr = global_ptr dt
 
 let i32 n = K.const (Const.int Dtype.int32 n)
@@ -115,7 +115,7 @@ let () =
             let sum = K.binary ~op:`Add ~lhs:r0 ~rhs:r1 in
             let idx = K.index ~ptr:p0 ~idxs:[ sum ] () in
             let st = K.store ~dst:idx ~value:(f32 1.0) ~ranges:[] in
-            let e = K.end_ ~value:st ~ranges:[ r0; r1 ] in
+            let e = K.end_ ~value:st ~ranges:[ r0; r1 ] () in
             let program = linearize (K.sink [ e ]) in
             P.validate program;
             equal int 2 (count_ranges program);
@@ -152,7 +152,7 @@ let () =
             let sum = K.binary ~op:`Add ~lhs:r0 ~rhs:r1 in
             let idx_out = K.index ~ptr:p1 ~idxs:[ sum ] () in
             let st = K.store ~dst:idx_out ~value:ld ~ranges:[] in
-            let e = K.end_ ~value:st ~ranges:[ r0; r1 ] in
+            let e = K.end_ ~value:st ~ranges:[ r0; r1 ] () in
             let program = linearize (K.sink [ e ]) in
             P.validate program;
             let load_pos = find_load program in
@@ -217,9 +217,14 @@ let () =
             let ld = K.load ~src:idx_gated ~alt:(f32 2.0) () in
             let r1 = loop_range ~axis:1 (i32 3) in
             let add = K.binary ~op:`Add ~lhs:ld ~rhs:(f32 1.0) in
-            let idx_out = K.index ~ptr:p1 ~idxs:[ r0; r1 ] () in
+            let flat_idx =
+              K.binary ~op:`Add
+                ~lhs:(K.binary ~op:`Mul ~lhs:r0 ~rhs:(i32 3))
+                ~rhs:r1
+            in
+            let idx_out = K.index ~ptr:p1 ~idxs:[ flat_idx ] () in
             let st = K.store ~dst:idx_out ~value:add ~ranges:[] in
-            let e = K.end_ ~value:st ~ranges:[ r0; r1 ] in
+            let e = K.end_ ~value:st ~ranges:[ r0; r1 ] () in
             let program = linearize (K.sink [ e ]) in
             P.validate program;
             let outer = find_range ~axis:0 program in
@@ -234,31 +239,19 @@ let () =
                    | P.Binary { op = `Cmplt; _ } | P.Index _ -> true
                    | _ -> false)
                  (List.init (inner - outer - 1) (fun i -> outer + i + 1))));
-          test "gated stores remain raw before post-linearize cleanup"
+          test "gated stores become IF/STORE/ENDIF"
             (fun () ->
+            (* Gated stores are converted to IF/STORE/ENDIF in the linearizer. *)
             let p0 = K.param ~idx:0 ~dtype:ptr in
             let gate = K.const (Const.bool true) in
             let idx = K.index ~ptr:p0 ~idxs:[ i32 0 ] ~gate () in
             let st = K.store ~dst:idx ~value:(f32 1.0) ~ranges:[] in
             let program = linearize (K.sink [ st ]) in
             P.validate program;
-            equal int 0
+            equal int 1
               (count program (function P.If _ -> true | _ -> false));
-            equal int 0
-              (count program (function P.Endif _ -> true | _ -> false));
-            let store_pos = find_store program in
-            (match P.view program store_pos with
-             | P.Store { dst; _ } ->
-                 (match P.view program dst with
-                  | P.Index { gate = Some gate_id; _ } ->
-                      (match P.view program gate_id with
-                       | P.Const { value; dtype } ->
-                           (match Const.view value with
-                            | Bool true -> is_true (Dtype.equal dtype Dtype.bool)
-                            | _ -> failwith "expected Bool true const")
-                       | view -> fail_view "expected gate const" view)
-                  | view -> fail_view "expected gated store index" view)
-             | view -> fail_view "expected Store" view));
+            equal int 1
+              (count program (function P.Endif _ -> true | _ -> false)));
           test "equal-priority nodes use structural tie-breaks" (fun () ->
             let sub = K.binary ~op:`Sub ~lhs:(i32 2) ~rhs:(i32 1) in
             let add = K.binary ~op:`Add ~lhs:(i32 1) ~rhs:(i32 2) in
@@ -279,11 +272,11 @@ let () =
             let out_ptr = global_ptr dt in
             let in_ptr = global_ptr dt in
             let bias_ptr = global_ptr dt in
-            let reg_ptr = Dtype.Ptr.create dt ~size:1 ~addrspace:Reg () in
+            let reg_ptr = Dtype.ptr_of dt ~addrspace:Reg ~size:1 in
             let p0 = K.param ~idx:0 ~dtype:out_ptr in
             let p1 = K.param ~idx:1 ~dtype:in_ptr in
             let p2 = K.param ~idx:2 ~dtype:bias_ptr in
-            let dreg = K.define_reg ~size:1 ~dtype:reg_ptr in
+            let dreg = K.define_reg ~size:1 ~dtype:reg_ptr ~slot:0 in
             let reg_idx = K.index ~ptr:dreg ~idxs:[ i32 0 ] () in
             let st_init = K.store ~dst:reg_idx ~value:(f32 0.0) ~ranges:[] in
             let r0 = reduce_range ~axis:0 (i32 4) in
@@ -291,7 +284,7 @@ let () =
             let st_acc =
               K.store ~dst:reg_idx ~value:(K.load ~src:idx_in ()) ~ranges:[]
             in
-            let e = K.end_ ~value:st_acc ~ranges:[ r0 ] in
+            let e = K.end_ ~value:st_acc ~ranges:[ r0 ] () in
             let acc_after = K.after ~src:dreg ~deps:[ e ] in
             let acc_val =
               K.load ~src:(K.index ~ptr:acc_after ~idxs:[ i32 0 ] ()) ()
@@ -323,11 +316,11 @@ let () =
             let out_ptr = global_ptr dt in
             let in_ptr = global_ptr dt in
             let bias_ptr = global_ptr dt in
-            let reg_ptr = Dtype.Ptr.create dt ~size:1 ~addrspace:Reg () in
+            let reg_ptr = Dtype.ptr_of dt ~addrspace:Reg ~size:1 in
             let p0 = K.param ~idx:0 ~dtype:out_ptr in
             let p1 = K.param ~idx:1 ~dtype:in_ptr in
             let p2 = K.param ~idx:2 ~dtype:bias_ptr in
-            let dreg = K.define_reg ~size:1 ~dtype:reg_ptr in
+            let dreg = K.define_reg ~size:1 ~dtype:reg_ptr ~slot:0 in
             let reg_idx = K.index ~ptr:dreg ~idxs:[ i32 0 ] () in
             let st_init = K.store ~dst:reg_idx ~value:(f32 0.0) ~ranges:[] in
             let idx_bias = K.index ~ptr:p2 ~idxs:[ i32 0 ] () in
@@ -337,7 +330,7 @@ let () =
             let ld_in = K.load ~src:idx_in () in
             let add_in = K.binary ~op:`Add ~lhs:ld_in ~rhs:ld_bias in
             let st_reg = K.store ~dst:reg_idx ~value:add_in ~ranges:[] in
-            let e = K.end_ ~value:st_reg ~ranges:[ r0 ] in
+            let e = K.end_ ~value:st_reg ~ranges:[ r0 ] () in
             let acc_after = K.after ~src:dreg ~deps:[ e ] in
             let acc_val =
               K.load ~src:(K.index ~ptr:acc_after ~idxs:[ i32 0 ] ()) ()
@@ -372,9 +365,9 @@ let () =
             is_true (List.hd pre_range_loads < range_pos));
           test "loop-carried reg stores stay inside the range" (fun () ->
             let input_ptr = global_ptr dt in
-            let reg_ptr = Dtype.Ptr.create dt ~size:4 ~addrspace:Reg () in
+            let reg_ptr = Dtype.ptr_of dt ~addrspace:Reg ~size:4 in
             let p0 = K.param ~idx:0 ~dtype:input_ptr in
-            let dreg = K.define_reg ~size:4 ~dtype:reg_ptr in
+            let dreg = K.define_reg ~size:4 ~dtype:reg_ptr ~slot:0 in
             let ri n = K.index ~ptr:dreg ~idxs:[ i32 n ] () in
             let st_init n = K.store ~dst:(ri n) ~value:(f32 0.0) ~ranges:[] in
             let r0 = loop_range ~axis:0 (i32 4) in
@@ -384,7 +377,7 @@ let () =
               let add = K.binary ~op:`Add ~lhs:ld ~rhs:(f32 0.0) in
               K.store ~dst:(ri n) ~value:add ~ranges:[]
             in
-            let e = K.end_ ~value:ld ~ranges:[ r0 ] in
+            let e = K.end_ ~value:ld ~ranges:[ r0 ] () in
             let program =
               linearize
                 (K.sink
@@ -468,14 +461,14 @@ let () =
                 ~dst:(K.index ~ptr:p0 ~idxs:[ r0 ] ())
                 ~value:(f32 1.0) ~ranges:[]
             in
-            let e0 = K.end_ ~value:st0 ~ranges:[ r0 ] in
+            let e0 = K.end_ ~value:st0 ~ranges:[ r0 ] () in
             let r1 = loop_range ~axis:1 (i32 4) in
             let st1 =
               K.store
                 ~dst:(K.index ~ptr:p1 ~idxs:[ r1 ] ())
                 ~value:(f32 1.0) ~ranges:[]
             in
-            let e1 = K.end_ ~value:st1 ~ranges:[ r1 ] in
+            let e1 = K.end_ ~value:st1 ~ranges:[ r1 ] () in
             let program = linearize (K.sink [ e0; e1 ]) in
             P.validate program;
             equal int 2 (count_ranges program);
@@ -492,7 +485,7 @@ let () =
             let sum2 = K.binary ~op:`Add ~lhs:sum ~rhs:r2 in
             let idx = K.index ~ptr:p0 ~idxs:[ sum2 ] () in
             let st = K.store ~dst:idx ~value:(f32 1.0) ~ranges:[] in
-            let e = K.end_ ~value:st ~ranges:[ r0; r1; r2 ] in
+            let e = K.end_ ~value:st ~ranges:[ r0; r1; r2 ] () in
             let program = linearize (K.sink [ e ]) in
             P.validate program;
             equal int 3 (count_ranges program);
@@ -510,7 +503,7 @@ let () =
             let out_ptr = global_ptr dt in
             let in_ptr_a = global_ptr dt in
             let in_ptr_b = global_ptr dt in
-            let reg_ptr = Dtype.Ptr.create dt ~size:1 ~addrspace:Reg () in
+            let reg_ptr = Dtype.ptr_of dt ~addrspace:Reg ~size:1 in
             let p0 = K.param ~idx:0 ~dtype:out_ptr in
             let p1 = K.param ~idx:1 ~dtype:in_ptr_a in
             let p2 = K.param ~idx:2 ~dtype:in_ptr_b in
@@ -522,11 +515,11 @@ let () =
               let st_acc =
                 K.store ~dst:ri ~value:(K.load ~src:idx ()) ~ranges:[]
               in
-              let e = K.end_ ~value:st_acc ~ranges:[ r ] in
+              let e = K.end_ ~value:st_acc ~ranges:[ r ] () in
               (st_init, e)
             in
-            let dreg_a = K.define_reg ~size:1 ~dtype:reg_ptr in
-            let dreg_b = K.define_reg ~size:1 ~dtype:reg_ptr in
+            let dreg_a = K.define_reg ~size:1 ~dtype:reg_ptr ~slot:0 in
+            let dreg_b = K.define_reg ~size:1 ~dtype:reg_ptr ~slot:1 in
             let st_init_a, e0 = make_reduce dreg_a p1 0 in
             let st_init_b, e1 = make_reduce dreg_b p2 1 in
             let af_a = K.after ~src:dreg_a ~deps:[ e0 ] in
@@ -558,7 +551,7 @@ let () =
                   ~dst:(K.index ~ptr:p ~idxs:[ r ] ())
                   ~value:(f32 1.0) ~ranges:[]
               in
-              K.end_ ~value:st ~ranges:[ r ]
+              K.end_ ~value:st ~ranges:[ r ] ()
             in
             let e0 = make_branch 0 0 in
             let e1 = make_branch 1 1 in
@@ -583,7 +576,7 @@ let () =
                   ~dtype:dt));
           test "unlowered Bufferize is rejected" (fun () ->
             test_unlowered_rejected "Bufferize" (fun () ->
-                let buf_ptr = Dtype.Ptr.create dt ~addrspace:Global () in
+                let buf_ptr = Dtype.ptr_of dt ~addrspace:Global ~size:(-1) in
                 let opts : Kernel.bufferize_opts =
                   { device = None; addrspace = Global; removable = false }
                 in
@@ -644,10 +637,10 @@ let () =
             in
             is_true (find_var "a" < find_var "b"));
           test "define_local before define_reg" (fun () ->
-            let local_ptr = Dtype.Ptr.create dt ~size:256 ~addrspace:Local () in
-            let reg_ptr = Dtype.Ptr.create dt ~size:1 ~addrspace:Reg () in
+            let local_ptr = Dtype.ptr_of dt ~addrspace:Local ~size:256 in
+            let reg_ptr = Dtype.ptr_of dt ~addrspace:Reg ~size:1 in
             let dl = K.define_local ~size:256 ~dtype:local_ptr in
-            let dr = K.define_reg ~size:1 ~dtype:reg_ptr in
+            let dr = K.define_reg ~size:1 ~dtype:reg_ptr ~slot:0 in
             let st ptr_node =
               K.store
                 ~dst:(K.index ~ptr:ptr_node ~idxs:[ i32 0 ] ())
@@ -673,7 +666,7 @@ let () =
             let sum = K.binary ~op:`Add ~lhs:r_outer ~rhs:r_inner in
             let idx = K.index ~ptr:p0 ~idxs:[ sum ] () in
             let st = K.store ~dst:idx ~value:(f32 1.0) ~ranges:[] in
-            let e = K.end_ ~value:st ~ranges:[ r_outer; r_inner ] in
+            let e = K.end_ ~value:st ~ranges:[ r_outer; r_inner ] () in
             let program = linearize (K.sink [ e ]) in
             P.validate program;
             let outer = find_range ~axis:0 program in
@@ -694,7 +687,7 @@ let () =
             let idx = K.index ~ptr:p0 ~idxs:[ sum2 ] () in
             let st = K.store ~dst:idx ~value:(f32 1.0) ~ranges:[] in
             let e =
-              K.end_ ~value:st ~ranges:[ r_global; r_loop; r_reduce ]
+              K.end_ ~value:st ~ranges:[ r_global; r_loop; r_reduce ] ()
             in
             let program = linearize (K.sink [ e ]) in
             P.validate program;
@@ -709,7 +702,7 @@ let () =
             let p0 = K.param ~idx:0 ~dtype:ptr in
             let idx = K.index ~ptr:p0 ~idxs:[ i32 0 ] () in
             let st = K.store ~dst:idx ~value:(f32 1.0) ~ranges:[] in
-            let e = K.end_ ~value:st ~ranges:[] in
+            let e = K.end_ ~value:st ~ranges:[] () in
             let program = linearize (K.sink [ e ]) in
             P.validate program;
             equal int 0 (count_ranges program);
@@ -742,7 +735,7 @@ let () =
                 | _ -> false)));
           test "cast and bitcast emission" (fun () ->
             let c1f = f32 1.0 in
-            let casted = K.cast ~src:c1f ~dtype:Dtype.int32 in
+            let casted = K.cast ~src:c1f ~dtype:(Dtype.to_any Dtype.int32) in
             let bitcoded = K.bitcast ~src:c1f ~dtype:Dtype.int32 in
             let sum = K.binary ~op:`Add ~lhs:casted ~rhs:bitcoded in
             let program = linearize (K.sink [ sum ]) in
@@ -766,7 +759,7 @@ let () =
             P.validate program;
             ignore
               (find_unique_position "gep" program (function
-                | P.Gep { idx = 1; _ } -> true
+                | P.Gep { idxs = [1]; _ } -> true
                 | _ -> false)));
           test "custom and custom_inline emission" (fun () ->
             let ci =
@@ -784,9 +777,9 @@ let () =
                 | P.Custom_inline _ -> true
                 | _ -> false)));
           test "after on ptr maps directly" (fun () ->
-            let reg_ptr = Dtype.Ptr.create dt ~size:1 ~addrspace:Reg () in
+            let reg_ptr = Dtype.ptr_of dt ~addrspace:Reg ~size:1 in
             let p0 = K.param ~idx:0 ~dtype:ptr in
-            let dreg = K.define_reg ~size:1 ~dtype:reg_ptr in
+            let dreg = K.define_reg ~size:1 ~dtype:reg_ptr ~slot:0 in
             let reg_idx = K.index ~ptr:dreg ~idxs:[ i32 0 ] () in
             let st_init = K.store ~dst:reg_idx ~value:(f32 0.0) ~ranges:[] in
             let af = K.after ~src:dreg ~deps:[ st_init ] in

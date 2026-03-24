@@ -6,12 +6,21 @@
 open Tolk_ir.Program
 module Program = Tolk_ir.Program
 
-type image_index = {
-  ptr : int;
-  idxs : int list;
-  gate : int option;
-  dtype : Tolk_ir.Dtype.ptr;
-}
+let strf = Printf.sprintf
+
+let err_unsupported ren =
+  strf "Images.rewrite: renderer %s does not support OpenCL image parameters"
+    (Renderer.name ren)
+
+let err_bad_dtype s =
+  strf "Images.rewrite: unsupported image base dtype %s"
+    (Tolk_ir.Dtype.scalar_to_string s)
+
+let err_need_2_coords = "Images.rewrite: image access requires exactly two coordinates"
+let err_load_not_f4 = "Images.rewrite: image loads must produce float4 values"
+let err_store_not_f4 = "Images.rewrite: image stores must write float4 values"
+let err_gate_no_alt = "Images.rewrite: gated image loads require an alt value"
+let err_alt_no_gate = "Images.rewrite: image load alt requires a gated index"
 
 let int2_dtype = Tolk_ir.Dtype.vec Tolk_ir.Dtype.int32 2
 let float4_dtype = Tolk_ir.Dtype.vec Tolk_ir.Dtype.float32 4
@@ -19,126 +28,80 @@ let float4_dtype = Tolk_ir.Dtype.vec Tolk_ir.Dtype.float32 4
 let supports_images (renderer : Renderer.t) =
   match Renderer.device renderer with "CL" | "QCOM" -> true | _ -> false
 
-let fail_unsupported (renderer : Renderer.t) =
-  failwith
-    (Printf.sprintf
-       "Images.rewrite: renderer %s does not support OpenCL image parameters"
-       (Renderer.name renderer))
+let is_image_param program ref_ =
+  match Program.view program ref_ with Param_image _ -> true | _ -> false
 
-let image_param_dtype_of (program : Tolk_ir.Program.t) ref_ =
-  match Program.view program ref_ with
-  | Param_image { dtype; _ } -> Some dtype
-  | _ -> None
-
-let image_index_of (program : Tolk_ir.Program.t) ref_ =
-  match Program.view program ref_ with
-  | Index { ptr; idxs; gate; dtype } -> (
-      match image_param_dtype_of program ptr with
-      | Some _ -> Some { ptr; idxs; gate; dtype }
-      | None -> None)
-  | _ -> None
-
-let validate_image_param_dtype (ptr_dtype : Tolk_ir.Dtype.ptr) =
-  match ptr_dtype.base.scalar with
+let validate_image_access (dtype : Tolk_ir.Dtype.ptr) idxs =
+  (match Tolk_ir.Dtype.scalar (Tolk_ir.Dtype.base dtype) with
   | Tolk_ir.Dtype.Float16 | Tolk_ir.Dtype.Float32 -> ()
-  | scalar ->
-      failwith
-        (Printf.sprintf "Images.rewrite: unsupported image base dtype %s"
-           (Tolk_ir.Dtype.scalar_to_string scalar))
-
-let validate_image_index info =
-  validate_image_param_dtype info.dtype;
-  if List.length info.idxs <> 2 then
-    failwith "Images.rewrite: image access requires exactly two coordinates"
+  | s -> failwith (err_bad_dtype s));
+  if List.length idxs <> 2 then failwith err_need_2_coords
 
 let has_param_images (program : Tolk_ir.Program.t) =
-  let found = ref false in
-  Program.iteri
-    (fun _id v -> match v with Param_image _ -> found := true | _ -> ())
-    program;
-  !found
+  try
+    Program.iteri
+      (fun _id v -> match v with Param_image _ -> raise_notrace Exit | _ -> ())
+      program;
+    false
+  with Exit -> true
 
-let rewrite (renderer : Renderer.t) (program : Tolk_ir.Program.t) :
-    Tolk_ir.Program.t =
+let rewrite (renderer : Renderer.t) (program : Tolk_ir.Program.t) =
   if has_param_images program && not (supports_images renderer) then
-    fail_unsupported renderer;
+    failwith (err_unsupported renderer);
   Program.rebuild
     (fun ~emit ~map_ref instr ->
       match instr with
-      | Param_image _ ->
-          None (* keep as-is; renderer handles image typing *)
-      | Index { ptr; idxs; dtype; _ } -> (
-          match image_param_dtype_of program ptr with
-          | None -> None
-          | Some _ ->
-              let info = { ptr; idxs; gate = None; dtype } in
-              validate_image_index info;
-              Some
-                (emit
-                   (Custom_inline
-                      {
-                        fmt = "(int2)({0}, {1})";
-                        args = List.map map_ref idxs;
-                        dtype = int2_dtype;
-                      })))
+      | Param_image _ -> None
+      | Index { ptr; idxs; dtype; _ } when is_image_param program ptr ->
+          validate_image_access dtype idxs;
+          Some
+            (emit
+               (Custom_inline
+                  { fmt = "(int2)({0}, {1})";
+                    args = List.map map_ref idxs;
+                    dtype = int2_dtype }))
       | Load { src; alt; dtype } -> (
-          match image_index_of program src with
-          | None -> None
-          | Some info ->
-              validate_image_index info;
+          match Program.view program src with
+          | Index { ptr; idxs; gate; dtype = idx_dtype }
+            when is_image_param program ptr ->
+              validate_image_access idx_dtype idxs;
               if not (Tolk_ir.Dtype.equal dtype float4_dtype) then
-                failwith
-                  "Images.rewrite: image loads must produce float4 values";
-              let ptr = map_ref info.ptr in
-              let idx = map_ref src in
-              let rewritten =
-                match (info.gate, alt) with
-                | None, None ->
-                    Custom_inline
-                      {
-                        fmt = "read_imagef({0}, smp, {1})";
-                        args = [ ptr; idx ];
-                        dtype;
-                      }
-                | Some gate, Some alt_ref ->
-                    Custom_inline
-                      {
-                        fmt = "({2}?read_imagef({0}, smp, {1}):{3})";
-                        args = [ ptr; idx; map_ref gate; map_ref alt_ref ];
-                        dtype;
-                      }
-                | Some _, None ->
-                    failwith
-                      "Images.rewrite: gated image loads require an alt value"
-                | None, Some _ ->
-                    failwith
-                      "Images.rewrite: image load alt requires a gated index"
-              in
-              Some (emit rewritten))
-      | Store { dst; value } -> (
-          match image_index_of program dst with
-          | None -> None
-          | Some info ->
-              validate_image_index info;
-              if
-                not
-                  (Tolk_ir.Dtype.equal
-                     (Option.value ~default:Tolk_ir.Dtype.void
-                        (Program.dtype program value))
-                     float4_dtype)
-              then
-                failwith "Images.rewrite: image stores must write float4 values";
-              let args = [ map_ref info.ptr; map_ref dst; map_ref value ] in
+                failwith err_load_not_f4;
+              let ptr = map_ref ptr and idx = map_ref src in
               Some
                 (emit
-                   (match info.gate with
+                   (match gate, alt with
+                   | None, None ->
+                       Custom_inline
+                         { fmt = "read_imagef({0}, smp, {1})";
+                           args = [ ptr; idx ]; dtype }
+                   | Some g, Some a ->
+                       Custom_inline
+                         { fmt = "({2}?read_imagef({0}, smp, {1}):{3})";
+                           args = [ ptr; idx; map_ref g; map_ref a ]; dtype }
+                   | Some _, None -> failwith err_gate_no_alt
+                   | None, Some _ -> failwith err_alt_no_gate))
+          | _ -> None)
+      | Store { dst; value } -> (
+          match Program.view program dst with
+          | Index { ptr; idxs; gate; dtype } when is_image_param program ptr ->
+              validate_image_access dtype idxs;
+              let vdt =
+                Option.value ~default:Tolk_ir.Dtype.void
+                  (Program.dtype program value)
+              in
+              if not (Tolk_ir.Dtype.equal vdt float4_dtype) then
+                failwith err_store_not_f4;
+              let args = [ map_ref ptr; map_ref dst; map_ref value ] in
+              Some
+                (emit
+                   (match gate with
                    | None ->
                        Custom { fmt = "write_imagef({0}, {1}, {2});"; args }
-                   | Some gate ->
+                   | Some g ->
                        Custom
-                         {
-                           fmt = "if ({3}) write_imagef({0}, {1}, {2});";
-                           args = args @ [ map_ref gate ];
-                         })))
+                         { fmt = "if ({3}) write_imagef({0}, {1}, {2});";
+                           args = args @ [ map_ref g ] }))
+          | _ -> None)
       | _ -> None)
     program

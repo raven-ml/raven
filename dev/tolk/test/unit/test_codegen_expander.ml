@@ -10,8 +10,8 @@ open Tolk_ir
 module K = Kernel
 
 let dt = Dtype.float32
-let ptr = Dtype.Ptr.create dt ~addrspace:Global ()
-let global_ptr dt = Dtype.Ptr.create dt ~addrspace:Global ()
+let ptr = Dtype.ptr_of dt ~addrspace:Global ~size:(-1)
+let global_ptr dt = Dtype.ptr_of dt ~addrspace:Global ~size:(-1)
 let pp_kernel root = Format.asprintf "%a" K.pp root
 let i32 n = K.const (Const.int Dtype.int32 n)
 let idx_const n = K.const (Const.int Dtype.index n)
@@ -24,7 +24,6 @@ let kernel_info ?opts_to_apply () =
     applied_opts = [];
     opts_to_apply;
     estimates = None;
-    metadata_tags = [];
   }
 
 let metal_like_tc =
@@ -512,7 +511,7 @@ let () =
             let r0 =
               K.range ~size:(idx_const 4) ~axis:0 ~kind:Axis_kind.Global ()
             in
-            let end_node = K.end_ ~value:c5 ~ranges:[ r0 ] in
+            let end_node = K.end_ ~value:c5 ~ranges:[ r0 ] () in
             let bcast = K.vectorize ~srcs:[ c5; c5; c5; c5 ] in
             let after = K.after ~src:bcast ~deps:[ end_node ] in
             let root = K.sink ~kernel_info:(kernel_info ()) [ after ] in
@@ -521,7 +520,7 @@ let () =
             is_true
               (count_reachable expanded (function
                  | K.After { src; _ } ->
-                     (K.dtype_or Dtype.void src).count = 1
+                     Dtype.count (K.dtype_or Dtype.void src) = 1
                  | _ -> false)
               > 0);
             K.validate expanded);
@@ -532,14 +531,14 @@ let () =
               K.range ~size:(idx_const 4) ~axis:0 ~kind:Axis_kind.Global ()
             in
             let bcast = K.vectorize ~srcs:[ c5; c5; c5; c5 ] in
-            let end_node = K.end_ ~value:bcast ~ranges:[ r0 ] in
+            let end_node = K.end_ ~value:bcast ~ranges:[ r0 ] () in
             let root = K.sink ~kernel_info:(kernel_info ()) [ end_node ] in
             let expanded = Expander.expand root in
             let _ = find_sink expanded in
             is_true
               (count_reachable expanded (function
                  | K.End { value; _ } ->
-                     (K.dtype_or Dtype.void value).count = 1
+                     Dtype.count (K.dtype_or Dtype.void value) = 1
                  | _ -> false)
               > 0);
             K.validate expanded);
@@ -845,7 +844,7 @@ let () =
             let r0 = K.range ~size:c4 ~axis:0 ~kind:Axis_kind.Upcast () in
             let idx = K.index ~ptr:p0 ~idxs:[ r0 ] () in
             let store = K.store ~dst:idx ~value:(i32 7) ~ranges:[] in
-            let end_node = K.end_ ~value:store ~ranges:[ r0 ] in
+            let end_node = K.end_ ~value:store ~ranges:[ r0 ] () in
             let root = K.sink ~kernel_info:(kernel_info ()) [ end_node ] in
             let expanded = Expander.expand root in
             assert_no_contract_unroll expanded;

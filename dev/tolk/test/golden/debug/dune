@@ -1,0 +1,22 @@
+(executable
+ (name generate_actual)
+ (libraries tolk unix))
+
+(rule
+ (package tolk)
+ (targets elementwise_add.actual elementwise_add_opt.actual)
+ (action
+  (setenv DEBUG 6
+   (run ./generate_actual.exe .))))
+
+(rule
+ (alias runtest)
+ (package tolk)
+ (action
+  (diff elementwise_add.expected elementwise_add.actual)))
+
+(rule
+ (alias runtest)
+ (package tolk)
+ (action
+  (diff elementwise_add_opt.expected elementwise_add_opt.actual)))

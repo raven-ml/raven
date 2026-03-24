@@ -1,0 +1,276 @@
+=== early movement ops ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.CONST           :            dtypes.weakint                           []                               256
+   2 Ops.RANGE           : 0          dtypes.weakint                           ['256']                          (0, AxisType.GLOBAL)
+   3 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [0, 2]                           None
+   4 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   5 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [4, 2]                           None
+   6 Ops.LOAD            : 0          dtypes.float                             [5]                              None
+   7 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+   8 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [7, 2]                           None
+   9 Ops.LOAD            : 0          dtypes.float                             [8]                              None
+  10 Ops.ADD             : 0          dtypes.float                             [6, 9]                           None
+  11 Ops.STORE           : 0          dtypes.void                              [3, 10]                          None
+  12 Ops.END             :            dtypes.void                              [11, 2]                          None
+  13 Ops.SINK            :            dtypes.void                              [12]                             KernelInfo(name='elementwise_add', axis_types=(AxisType.GLOBAL,), dont_use_locals=False, applied_opts=(), opts_to_apply=(), estimates=None)
+=== load collapse ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.CONST           :            dtypes.weakint                           []                               256
+   2 Ops.RANGE           : 0          dtypes.weakint                           ['256']                          (0, AxisType.GLOBAL)
+   3 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [0, 2]                           None
+   4 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   5 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [4, 2]                           None
+   6 Ops.LOAD            : 0          dtypes.float                             [5]                              None
+   7 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+   8 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [7, 2]                           None
+   9 Ops.LOAD            : 0          dtypes.float                             [8]                              None
+  10 Ops.ADD             : 0          dtypes.float                             [6, 9]                           None
+  11 Ops.STORE           : 0          dtypes.void                              [3, 10]                          None
+  12 Ops.END             :            dtypes.void                              [11, 2]                          None
+  13 Ops.SINK            :            dtypes.void                              [12]                             KernelInfo(name='elementwise_add', axis_types=(AxisType.GLOBAL,), dont_use_locals=False, applied_opts=(), opts_to_apply=(), estimates=None)
+=== split ranges ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.CONST           :            dtypes.weakint                           []                               256
+   2 Ops.RANGE           : 0          dtypes.weakint                           ['256']                          (0, AxisType.GLOBAL)
+   3 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [0, 2]                           None
+   4 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   5 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [4, 2]                           None
+   6 Ops.LOAD            : 0          dtypes.float                             [5]                              None
+   7 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+   8 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [7, 2]                           None
+   9 Ops.LOAD            : 0          dtypes.float                             [8]                              None
+  10 Ops.ADD             : 0          dtypes.float                             [6, 9]                           None
+  11 Ops.STORE           : 0          dtypes.void                              [3, 10]                          None
+  12 Ops.END             :            dtypes.void                              [11, 2]                          None
+  13 Ops.SINK            :            dtypes.void                              [12]                             KernelInfo(name='elementwise_add', axis_types=(AxisType.GLOBAL,), dont_use_locals=False, applied_opts=(), opts_to_apply=(), estimates=None)
+=== initial symbolic ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.CONST           :            dtypes.weakint                           []                               256
+   2 Ops.RANGE           : 0          dtypes.weakint                           ['256']                          (0, AxisType.GLOBAL)
+   3 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [0, 2]                           None
+   4 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   5 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [4, 2]                           None
+   6 Ops.LOAD            : 0          dtypes.float                             [5]                              None
+   7 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+   8 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [7, 2]                           None
+   9 Ops.LOAD            : 0          dtypes.float                             [8]                              None
+  10 Ops.ADD             : 0          dtypes.float                             [6, 9]                           None
+  11 Ops.STORE           : 0          dtypes.void                              [3, 10]                          None
+  12 Ops.END             :            dtypes.void                              [11, 2]                          None
+  13 Ops.SINK            :            dtypes.void                              [12]                             KernelInfo(name='elementwise_add', axis_types=(AxisType.GLOBAL,), dont_use_locals=False, applied_opts=(), opts_to_apply=(), estimates=None)
+=== simplify ranges ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.CONST           :            dtypes.weakint                           []                               256
+   2 Ops.RANGE           : 0          dtypes.weakint                           ['256']                          (0, AxisType.GLOBAL)
+   3 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [0, 2]                           None
+   4 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   5 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [4, 2]                           None
+   6 Ops.LOAD            : 0          dtypes.float                             [5]                              None
+   7 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+   8 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [7, 2]                           None
+   9 Ops.LOAD            : 0          dtypes.float                             [8]                              None
+  10 Ops.ADD             : 0          dtypes.float                             [6, 9]                           None
+  11 Ops.STORE           : 0          dtypes.void                              [3, 10]                          None
+  12 Ops.END             :            dtypes.void                              [11, 2]                          None
+  13 Ops.SINK            :            dtypes.void                              [12]                             KernelInfo(name='elementwise_add', axis_types=(AxisType.GLOBAL,), dont_use_locals=False, applied_opts=(), opts_to_apply=(), estimates=None)
+=== postopt symbolic ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.CONST           :            dtypes.weakint                           []                               256
+   2 Ops.RANGE           : 0          dtypes.weakint                           ['256']                          (0, AxisType.GLOBAL)
+   3 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [0, 2]                           None
+   4 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   5 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [4, 2]                           None
+   6 Ops.LOAD            : 0          dtypes.float                             [5]                              None
+   7 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+   8 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [7, 2]                           None
+   9 Ops.LOAD            : 0          dtypes.float                             [8]                              None
+  10 Ops.ADD             : 0          dtypes.float                             [6, 9]                           None
+  11 Ops.STORE           : 0          dtypes.void                              [3, 10]                          None
+  12 Ops.END             :            dtypes.void                              [11, 2]                          None
+  13 Ops.SINK            :            dtypes.void                              [12]                             KernelInfo(name='elementwise_add', axis_types=(), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None)
+=== expander ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.CONST           :            dtypes.weakint                           []                               256
+   2 Ops.RANGE           : 0          dtypes.weakint                           ['256']                          (0, AxisType.GLOBAL)
+   3 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [0, 2]                           None
+   4 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   5 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [4, 2]                           None
+   6 Ops.LOAD            : 0          dtypes.float                             [5]                              None
+   7 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+   8 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [7, 2]                           None
+   9 Ops.LOAD            : 0          dtypes.float                             [8]                              None
+  10 Ops.ADD             : 0          dtypes.float                             [6, 9]                           None
+  11 Ops.STORE           : 0          dtypes.void                              [3, 10]                          None
+  12 Ops.END             :            dtypes.void                              [11, 2]                          None
+  13 Ops.SINK            :            dtypes.void                              [12]                             KernelInfo(name='elementwise_add', axis_types=(), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None)
+=== add local buffers ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.CONST           :            dtypes.weakint                           []                               256
+   2 Ops.RANGE           : 0          dtypes.weakint                           ['256']                          (0, AxisType.GLOBAL)
+   3 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [0, 2]                           None
+   4 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   5 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [4, 2]                           None
+   6 Ops.LOAD            : 0          dtypes.float                             [5]                              None
+   7 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+   8 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [7, 2]                           None
+   9 Ops.LOAD            : 0          dtypes.float                             [8]                              None
+  10 Ops.ADD             : 0          dtypes.float                             [6, 9]                           None
+  11 Ops.STORE           : 0          dtypes.void                              [3, 10]                          None
+  12 Ops.END             :            dtypes.void                              [11, 2]                          None
+  13 Ops.SINK            :            dtypes.void                              [12]                             KernelInfo(name='elementwise_add', axis_types=(), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None)
+=== remove_reduce ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.CONST           :            dtypes.weakint                           []                               256
+   2 Ops.RANGE           : 0          dtypes.weakint                           ['256']                          (0, AxisType.GLOBAL)
+   3 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [0, 2]                           None
+   4 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   5 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [4, 2]                           None
+   6 Ops.LOAD            : 0          dtypes.float                             [5]                              None
+   7 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+   8 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [7, 2]                           None
+   9 Ops.LOAD            : 0          dtypes.float                             [8]                              None
+  10 Ops.ADD             : 0          dtypes.float                             [6, 9]                           None
+  11 Ops.STORE           : 0          dtypes.void                              [3, 10]                          None
+  12 Ops.END             :            dtypes.void                              [11, 2]                          None
+  13 Ops.SINK            :            dtypes.void                              [12]                             KernelInfo(name='elementwise_add', axis_types=(), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None)
+=== add gpudims ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.DEFINE_VAR      :            dtypes.int                               []                               ('core_id', 0, 255)
+   2 Ops.CAST            :            dtypes.weakint                           [1]                              None
+   3 Ops.INDEX           :            dtypes.float.ptr(-1)                     [0, 2]                           None
+   4 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   5 Ops.INDEX           :            dtypes.float.ptr(-1)                     [4, 2]                           None
+   6 Ops.LOAD            :            dtypes.float                             [5]                              None
+   7 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+   8 Ops.INDEX           :            dtypes.float.ptr(-1)                     [7, 2]                           None
+   9 Ops.LOAD            :            dtypes.float                             [8]                              None
+  10 Ops.ADD             :            dtypes.float                             [6, 9]                           None
+  11 Ops.STORE           :            dtypes.void                              [3, 10]                          None
+  12 Ops.END             :            dtypes.void                              [11, 2]                          None
+  13 Ops.SINK            :            dtypes.void                              [12]                             KernelInfo(name='elementwise_add', axis_types=(), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None)
+=== ** add loads (code) ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.DEFINE_VAR      :            dtypes.int                               []                               ('core_id', 0, 255)
+   2 Ops.CAST            :            dtypes.weakint                           [1]                              None
+   3 Ops.INDEX           :            dtypes.float.ptr(-1)                     [0, 2]                           None
+   4 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   5 Ops.INDEX           :            dtypes.float.ptr(-1)                     [4, 2]                           None
+   6 Ops.LOAD            :            dtypes.float                             [5]                              None
+   7 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+   8 Ops.INDEX           :            dtypes.float.ptr(-1)                     [7, 2]                           None
+   9 Ops.LOAD            :            dtypes.float                             [8]                              None
+  10 Ops.ADD             :            dtypes.float                             [6, 9]                           None
+  11 Ops.STORE           :            dtypes.void                              [3, 10]                          None
+  12 Ops.END             :            dtypes.void                              [11, 2]                          None
+  13 Ops.SINK            :            dtypes.void                              [12]                             KernelInfo(name='elementwise_add', axis_types=(), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None)
+=== devectorize ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.DEFINE_VAR      :            dtypes.int                               []                               ('core_id', 0, 255)
+   2 Ops.CAST            :            dtypes.weakint                           [1]                              None
+   3 Ops.INDEX           :            dtypes.float.ptr(-1)                     [0, 2]                           None
+   4 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   5 Ops.INDEX           :            dtypes.float.ptr(-1)                     [4, 2]                           None
+   6 Ops.LOAD            :            dtypes.float                             [5]                              None
+   7 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+   8 Ops.INDEX           :            dtypes.float.ptr(-1)                     [7, 2]                           None
+   9 Ops.LOAD            :            dtypes.float                             [8]                              None
+  10 Ops.ADD             :            dtypes.float                             [6, 9]                           None
+  11 Ops.STORE           :            dtypes.void                              [3, 10]                          None
+  12 Ops.END             :            dtypes.void                              [11, 2]                          None
+  13 Ops.SINK            :            dtypes.void                              [12]                             KernelInfo(name='elementwise_add', axis_types=(), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None)
+=== lower all index dtypes ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.DEFINE_VAR      :            dtypes.int                               []                               ('core_id', 0, 255)
+   2 Ops.INDEX           :            dtypes.float.ptr(-1)                     [0, 1]                           None
+   3 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   4 Ops.INDEX           :            dtypes.float.ptr(-1)                     [3, 1]                           None
+   5 Ops.LOAD            :            dtypes.float                             [4]                              None
+   6 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+   7 Ops.INDEX           :            dtypes.float.ptr(-1)                     [6, 1]                           None
+   8 Ops.LOAD            :            dtypes.float                             [7]                              None
+   9 Ops.ADD             :            dtypes.float                             [5, 8]                           None
+  10 Ops.STORE           :            dtypes.void                              [2, 9]                           None
+  11 Ops.END             :            dtypes.void                              [10, 1]                          None
+  12 Ops.SINK            :            dtypes.void                              [11]                             KernelInfo(name='elementwise_add', axis_types=(), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None)
+=== post index symbolic ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.DEFINE_VAR      :            dtypes.int                               []                               ('core_id', 0, 255)
+   2 Ops.INDEX           :            dtypes.float.ptr(-1)                     [0, 1]                           None
+   3 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   4 Ops.INDEX           :            dtypes.float.ptr(-1)                     [3, 1]                           None
+   5 Ops.LOAD            :            dtypes.float                             [4]                              None
+   6 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+   7 Ops.INDEX           :            dtypes.float.ptr(-1)                     [6, 1]                           None
+   8 Ops.LOAD            :            dtypes.float                             [7]                              None
+   9 Ops.ADD             :            dtypes.float                             [5, 8]                           None
+  10 Ops.STORE           :            dtypes.void                              [2, 9]                           None
+  11 Ops.END             :            dtypes.void                              [10, 1]                          None
+  12 Ops.SINK            :            dtypes.void                              [11]                             KernelInfo(name='elementwise_add', axis_types=(), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None)
+=== decompositions ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.DEFINE_VAR      :            dtypes.int                               []                               ('core_id', 0, 255)
+   2 Ops.INDEX           :            dtypes.float.ptr(-1)                     [0, 1]                           None
+   3 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   4 Ops.INDEX           :            dtypes.float.ptr(-1)                     [3, 1]                           None
+   5 Ops.LOAD            :            dtypes.float                             [4]                              None
+   6 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+   7 Ops.INDEX           :            dtypes.float.ptr(-1)                     [6, 1]                           None
+   8 Ops.LOAD            :            dtypes.float                             [7]                              None
+   9 Ops.ADD             :            dtypes.float                             [5, 8]                           None
+  10 Ops.STORE           :            dtypes.void                              [2, 9]                           None
+  11 Ops.END             :            dtypes.void                              [10, 1]                          None
+  12 Ops.SINK            :            dtypes.void                              [11]                             KernelInfo(name='elementwise_add', axis_types=(), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None)
+=== decomp dtypes ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.DEFINE_VAR      :            dtypes.int                               []                               ('core_id', 0, 255)
+   2 Ops.INDEX           :            dtypes.float.ptr(-1)                     [0, 1]                           None
+   3 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   4 Ops.INDEX           :            dtypes.float.ptr(-1)                     [3, 1]                           None
+   5 Ops.LOAD            :            dtypes.float                             [4]                              None
+   6 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+   7 Ops.INDEX           :            dtypes.float.ptr(-1)                     [6, 1]                           None
+   8 Ops.LOAD            :            dtypes.float                             [7]                              None
+   9 Ops.ADD             :            dtypes.float                             [5, 8]                           None
+  10 Ops.STORE           :            dtypes.void                              [2, 9]                           None
+  11 Ops.END             :            dtypes.void                              [10, 1]                          None
+  12 Ops.SINK            :            dtypes.void                              [11]                             KernelInfo(name='elementwise_add', axis_types=(), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None)
+=== transcendental ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.DEFINE_VAR      :            dtypes.int                               []                               ('core_id', 0, 255)
+   2 Ops.INDEX           :            dtypes.float.ptr(-1)                     [0, 1]                           None
+   3 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   4 Ops.INDEX           :            dtypes.float.ptr(-1)                     [3, 1]                           None
+   5 Ops.LOAD            :            dtypes.float                             [4]                              None
+   6 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+   7 Ops.INDEX           :            dtypes.float.ptr(-1)                     [6, 1]                           None
+   8 Ops.LOAD            :            dtypes.float                             [7]                              None
+   9 Ops.ADD             :            dtypes.float                             [5, 8]                           None
+  10 Ops.STORE           :            dtypes.void                              [2, 9]                           None
+  11 Ops.END             :            dtypes.void                              [10, 1]                          None
+  12 Ops.SINK            :            dtypes.void                              [11]                             KernelInfo(name='elementwise_add', axis_types=(), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None)
+=== final rewrite ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.DEFINE_VAR      :            dtypes.int                               []                               ('core_id', 0, 255)
+   2 Ops.INDEX           :            dtypes.float.ptr(-1)                     [0, 1]                           None
+   3 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   4 Ops.INDEX           :            dtypes.float.ptr(-1)                     [3, 1]                           None
+   5 Ops.LOAD            :            dtypes.float                             [4]                              None
+   6 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+   7 Ops.INDEX           :            dtypes.float.ptr(-1)                     [6, 1]                           None
+   8 Ops.LOAD            :            dtypes.float                             [7]                              None
+   9 Ops.ADD             :            dtypes.float                             [5, 8]                           None
+  10 Ops.STORE           :            dtypes.void                              [2, 9]                           None
+  11 Ops.SINK            :            dtypes.void                              [10]                             KernelInfo(name='elementwise_add', axis_types=(), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None)
+=== add control flow ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.DEFINE_VAR      :            dtypes.int                               []                               ('core_id', 0, 255)
+   2 Ops.INDEX           :            dtypes.float.ptr(-1)                     [0, 1]                           None
+   3 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   4 Ops.INDEX           :            dtypes.float.ptr(-1)                     [3, 1]                           None
+   5 Ops.LOAD            :            dtypes.float                             [4]                              None
+   6 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+   7 Ops.INDEX           :            dtypes.float.ptr(-1)                     [6, 1]                           None
+   8 Ops.LOAD            :            dtypes.float                             [7]                              None
+   9 Ops.ADD             :            dtypes.float                             [5, 8]                           None
+  10 Ops.STORE           :            dtypes.void                              [2, 9]                           None
+  11 Ops.SINK            :            dtypes.void                              [10]                             KernelInfo(name='elementwise_add', axis_types=(), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None)

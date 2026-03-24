@@ -1,0 +1,456 @@
+=== early movement ops ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.CONST           :            dtypes.weakint                           []                               256
+   2 Ops.RANGE           : 0          dtypes.weakint                           ['256']                          (0, AxisType.GLOBAL)
+   3 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [0, 2]                           None
+   4 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   5 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [4, 2]                           None
+   6 Ops.LOAD            : 0          dtypes.float                             [5]                              None
+   7 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+   8 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [7, 2]                           None
+   9 Ops.LOAD            : 0          dtypes.float                             [8]                              None
+  10 Ops.ADD             : 0          dtypes.float                             [6, 9]                           None
+  11 Ops.STORE           : 0          dtypes.void                              [3, 10]                          None
+  12 Ops.END             :            dtypes.void                              [11, 2]                          None
+  13 Ops.SINK            :            dtypes.void                              [12]                             KernelInfo(name='elementwise_add_opt', axis_types=(AxisType.GLOBAL,), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None)
+=== load collapse ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.CONST           :            dtypes.weakint                           []                               256
+   2 Ops.RANGE           : 0          dtypes.weakint                           ['256']                          (0, AxisType.GLOBAL)
+   3 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [0, 2]                           None
+   4 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   5 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [4, 2]                           None
+   6 Ops.LOAD            : 0          dtypes.float                             [5]                              None
+   7 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+   8 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [7, 2]                           None
+   9 Ops.LOAD            : 0          dtypes.float                             [8]                              None
+  10 Ops.ADD             : 0          dtypes.float                             [6, 9]                           None
+  11 Ops.STORE           : 0          dtypes.void                              [3, 10]                          None
+  12 Ops.END             :            dtypes.void                              [11, 2]                          None
+  13 Ops.SINK            :            dtypes.void                              [12]                             KernelInfo(name='elementwise_add_opt', axis_types=(AxisType.GLOBAL,), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None)
+=== split ranges ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.CONST           :            dtypes.weakint                           []                               256
+   2 Ops.RANGE           : 0          dtypes.weakint                           ['256']                          (0, AxisType.GLOBAL)
+   3 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [0, 2]                           None
+   4 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   5 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [4, 2]                           None
+   6 Ops.LOAD            : 0          dtypes.float                             [5]                              None
+   7 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+   8 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [7, 2]                           None
+   9 Ops.LOAD            : 0          dtypes.float                             [8]                              None
+  10 Ops.ADD             : 0          dtypes.float                             [6, 9]                           None
+  11 Ops.STORE           : 0          dtypes.void                              [3, 10]                          None
+  12 Ops.END             :            dtypes.void                              [11, 2]                          None
+  13 Ops.SINK            :            dtypes.void                              [12]                             KernelInfo(name='elementwise_add_opt', axis_types=(AxisType.GLOBAL,), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None)
+=== initial symbolic ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.CONST           :            dtypes.weakint                           []                               256
+   2 Ops.RANGE           : 0          dtypes.weakint                           ['256']                          (0, AxisType.GLOBAL)
+   3 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [0, 2]                           None
+   4 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   5 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [4, 2]                           None
+   6 Ops.LOAD            : 0          dtypes.float                             [5]                              None
+   7 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+   8 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [7, 2]                           None
+   9 Ops.LOAD            : 0          dtypes.float                             [8]                              None
+  10 Ops.ADD             : 0          dtypes.float                             [6, 9]                           None
+  11 Ops.STORE           : 0          dtypes.void                              [3, 10]                          None
+  12 Ops.END             :            dtypes.void                              [11, 2]                          None
+  13 Ops.SINK            :            dtypes.void                              [12]                             KernelInfo(name='elementwise_add_opt', axis_types=(AxisType.GLOBAL,), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None)
+=== simplify ranges ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.CONST           :            dtypes.weakint                           []                               256
+   2 Ops.RANGE           : 0          dtypes.weakint                           ['256']                          (0, AxisType.GLOBAL)
+   3 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [0, 2]                           None
+   4 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   5 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [4, 2]                           None
+   6 Ops.LOAD            : 0          dtypes.float                             [5]                              None
+   7 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+   8 Ops.INDEX           : 0          dtypes.float.ptr(-1)                     [7, 2]                           None
+   9 Ops.LOAD            : 0          dtypes.float                             [8]                              None
+  10 Ops.ADD             : 0          dtypes.float                             [6, 9]                           None
+  11 Ops.STORE           : 0          dtypes.void                              [3, 10]                          None
+  12 Ops.END             :            dtypes.void                              [11, 2]                          None
+  13 Ops.SINK            :            dtypes.void                              [12]                             KernelInfo(name='elementwise_add_opt', axis_types=(AxisType.GLOBAL,), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None)
+=== postopt symbolic ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.CONST           :            dtypes.weakint                           []                               64
+   2 Ops.RANGE           : 0          dtypes.weakint                           ['64']                           (0, AxisType.GLOBAL)
+   3 Ops.CONST           :            dtypes.weakint                           []                               4
+   4 Ops.MUL             : 0          dtypes.weakint                           [2, '4']                         None
+   5 Ops.RANGE           : 1          dtypes.weakint                           ['4']                            (1, AxisType.UPCAST)
+   6 Ops.ADD             : 0,1        dtypes.weakint                           [4, 5]                           None
+   7 Ops.INDEX           : 0,1        dtypes.float.ptr(-1)                     [0, 6]                           None
+   8 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   9 Ops.INDEX           : 0,1        dtypes.float.ptr(-1)                     [8, 6]                           None
+  10 Ops.LOAD            : 0,1        dtypes.float                             [9]                              None
+  11 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+  12 Ops.INDEX           : 0,1        dtypes.float.ptr(-1)                     [11, 6]                          None
+  13 Ops.LOAD            : 0,1        dtypes.float                             [12]                             None
+  14 Ops.ADD             : 0,1        dtypes.float                             [10, 13]                         None
+  15 Ops.STORE           : 0,1        dtypes.void                              [7, 14]                          None
+  16 Ops.END             :            dtypes.void                              [15, 2, 5]                       None
+  17 Ops.SINK            :            dtypes.void                              [16]                             KernelInfo(name='elementwise_add_opt', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None)
+=== expander ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.VECTORIZE       :            dtypes.float.ptr(-1).vec(4)              [0, 0, 0, 0]                     None
+   2 Ops.CONST           :            dtypes.weakint                           []                               64
+   3 Ops.RANGE           : 0          dtypes.weakint                           ['64']                           (0, AxisType.GLOBAL)
+   4 Ops.CONST           :            dtypes.weakint                           []                               4
+   5 Ops.MUL             : 0          dtypes.weakint                           [3, '4']                         None
+   6 Ops.VECTORIZE       : 0          dtypes.weakint.vec(4)                    [5, 5, 5, 5]                     None
+   7 Ops.VCONST          :            dtypes.weakint.vec(4)                    []                               (0, 1, 2, 3)
+   8 Ops.ADD             : 0          dtypes.weakint.vec(4)                    [6, 7]                           None
+   9 Ops.INDEX           : 0          dtypes.float.ptr(-1).vec(4)              [1, 8]                           None
+  10 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+  11 Ops.VECTORIZE       :            dtypes.float.ptr(-1).vec(4)              [10, 10, 10, 10]                 None
+  12 Ops.INDEX           : 0          dtypes.float.ptr(-1).vec(4)              [11, 8]                          None
+  13 Ops.LOAD            : 0          dtypes.float.vec(4)                      [12]                             None
+  14 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+  15 Ops.VECTORIZE       :            dtypes.float.ptr(-1).vec(4)              [14, 14, 14, 14]                 None
+  16 Ops.INDEX           : 0          dtypes.float.ptr(-1).vec(4)              [15, 8]                          None
+  17 Ops.LOAD            : 0          dtypes.float.vec(4)                      [16]                             None
+  18 Ops.ADD             : 0          dtypes.float.vec(4)                      [13, 17]                         None
+  19 Ops.STORE           : 0          dtypes.void                              [9, 18]                          None
+  20 Ops.END             :            dtypes.void                              [19, 3]                          None
+  21 Ops.SINK            :            dtypes.void                              [20]                             KernelInfo(name='elementwise_add_opt', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None)
+=== add local buffers ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.VECTORIZE       :            dtypes.float.ptr(-1).vec(4)              [0, 0, 0, 0]                     None
+   2 Ops.CONST           :            dtypes.weakint                           []                               64
+   3 Ops.RANGE           : 0          dtypes.weakint                           ['64']                           (0, AxisType.GLOBAL)
+   4 Ops.CONST           :            dtypes.weakint                           []                               4
+   5 Ops.MUL             : 0          dtypes.weakint                           [3, '4']                         None
+   6 Ops.VECTORIZE       : 0          dtypes.weakint.vec(4)                    [5, 5, 5, 5]                     None
+   7 Ops.VCONST          :            dtypes.weakint.vec(4)                    []                               (0, 1, 2, 3)
+   8 Ops.ADD             : 0          dtypes.weakint.vec(4)                    [6, 7]                           None
+   9 Ops.INDEX           : 0          dtypes.float.ptr(-1).vec(4)              [1, 8]                           None
+  10 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+  11 Ops.VECTORIZE       :            dtypes.float.ptr(-1).vec(4)              [10, 10, 10, 10]                 None
+  12 Ops.INDEX           : 0          dtypes.float.ptr(-1).vec(4)              [11, 8]                          None
+  13 Ops.LOAD            : 0          dtypes.float.vec(4)                      [12]                             None
+  14 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+  15 Ops.VECTORIZE       :            dtypes.float.ptr(-1).vec(4)              [14, 14, 14, 14]                 None
+  16 Ops.INDEX           : 0          dtypes.float.ptr(-1).vec(4)              [15, 8]                          None
+  17 Ops.LOAD            : 0          dtypes.float.vec(4)                      [16]                             None
+  18 Ops.ADD             : 0          dtypes.float.vec(4)                      [13, 17]                         None
+  19 Ops.STORE           : 0          dtypes.void                              [9, 18]                          None
+  20 Ops.END             :            dtypes.void                              [19, 3]                          None
+  21 Ops.SINK            :            dtypes.void                              [20]                             KernelInfo(name='elementwise_add_opt', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None)
+=== remove_reduce ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.VECTORIZE       :            dtypes.float.ptr(-1).vec(4)              [0, 0, 0, 0]                     None
+   2 Ops.CONST           :            dtypes.weakint                           []                               64
+   3 Ops.RANGE           : 0          dtypes.weakint                           ['64']                           (0, AxisType.GLOBAL)
+   4 Ops.CONST           :            dtypes.weakint                           []                               4
+   5 Ops.MUL             : 0          dtypes.weakint                           [3, '4']                         None
+   6 Ops.VECTORIZE       : 0          dtypes.weakint.vec(4)                    [5, 5, 5, 5]                     None
+   7 Ops.VCONST          :            dtypes.weakint.vec(4)                    []                               (0, 1, 2, 3)
+   8 Ops.ADD             : 0          dtypes.weakint.vec(4)                    [6, 7]                           None
+   9 Ops.INDEX           : 0          dtypes.float.ptr(-1).vec(4)              [1, 8]                           None
+  10 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+  11 Ops.VECTORIZE       :            dtypes.float.ptr(-1).vec(4)              [10, 10, 10, 10]                 None
+  12 Ops.INDEX           : 0          dtypes.float.ptr(-1).vec(4)              [11, 8]                          None
+  13 Ops.LOAD            : 0          dtypes.float.vec(4)                      [12]                             None
+  14 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+  15 Ops.VECTORIZE       :            dtypes.float.ptr(-1).vec(4)              [14, 14, 14, 14]                 None
+  16 Ops.INDEX           : 0          dtypes.float.ptr(-1).vec(4)              [15, 8]                          None
+  17 Ops.LOAD            : 0          dtypes.float.vec(4)                      [16]                             None
+  18 Ops.ADD             : 0          dtypes.float.vec(4)                      [13, 17]                         None
+  19 Ops.STORE           : 0          dtypes.void                              [9, 18]                          None
+  20 Ops.END             :            dtypes.void                              [19, 3]                          None
+  21 Ops.SINK            :            dtypes.void                              [20]                             KernelInfo(name='elementwise_add_opt', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None)
+=== add gpudims ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.VECTORIZE       :            dtypes.float.ptr(-1).vec(4)              [0, 0, 0, 0]                     None
+   2 Ops.DEFINE_VAR      :            dtypes.int                               []                               ('core_id', 0, 63)
+   3 Ops.CAST            :            dtypes.weakint                           [2]                              None
+   4 Ops.CONST           :            dtypes.weakint                           []                               4
+   5 Ops.MUL             :            dtypes.weakint                           [3, '4']                         None
+   6 Ops.VECTORIZE       :            dtypes.weakint.vec(4)                    [5, 5, 5, 5]                     None
+   7 Ops.VCONST          :            dtypes.weakint.vec(4)                    []                               (0, 1, 2, 3)
+   8 Ops.ADD             :            dtypes.weakint.vec(4)                    [6, 7]                           None
+   9 Ops.INDEX           :            dtypes.float.ptr(-1).vec(4)              [1, 8]                           None
+  10 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+  11 Ops.VECTORIZE       :            dtypes.float.ptr(-1).vec(4)              [10, 10, 10, 10]                 None
+  12 Ops.INDEX           :            dtypes.float.ptr(-1).vec(4)              [11, 8]                          None
+  13 Ops.LOAD            :            dtypes.float.vec(4)                      [12]                             None
+  14 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+  15 Ops.VECTORIZE       :            dtypes.float.ptr(-1).vec(4)              [14, 14, 14, 14]                 None
+  16 Ops.INDEX           :            dtypes.float.ptr(-1).vec(4)              [15, 8]                          None
+  17 Ops.LOAD            :            dtypes.float.vec(4)                      [16]                             None
+  18 Ops.ADD             :            dtypes.float.vec(4)                      [13, 17]                         None
+  19 Ops.STORE           :            dtypes.void                              [9, 18]                          None
+  20 Ops.END             :            dtypes.void                              [19, 3]                          None
+  21 Ops.SINK            :            dtypes.void                              [20]                             KernelInfo(name='elementwise_add_opt', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None)
+=== ** add loads (code) ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.VECTORIZE       :            dtypes.float.ptr(-1).vec(4)              [0, 0, 0, 0]                     None
+   2 Ops.DEFINE_VAR      :            dtypes.int                               []                               ('core_id', 0, 63)
+   3 Ops.CAST            :            dtypes.weakint                           [2]                              None
+   4 Ops.CONST           :            dtypes.weakint                           []                               4
+   5 Ops.MUL             :            dtypes.weakint                           [3, '4']                         None
+   6 Ops.VECTORIZE       :            dtypes.weakint.vec(4)                    [5, 5, 5, 5]                     None
+   7 Ops.VCONST          :            dtypes.weakint.vec(4)                    []                               (0, 1, 2, 3)
+   8 Ops.ADD             :            dtypes.weakint.vec(4)                    [6, 7]                           None
+   9 Ops.INDEX           :            dtypes.float.ptr(-1).vec(4)              [1, 8]                           None
+  10 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+  11 Ops.VECTORIZE       :            dtypes.float.ptr(-1).vec(4)              [10, 10, 10, 10]                 None
+  12 Ops.INDEX           :            dtypes.float.ptr(-1).vec(4)              [11, 8]                          None
+  13 Ops.LOAD            :            dtypes.float.vec(4)                      [12]                             None
+  14 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+  15 Ops.VECTORIZE       :            dtypes.float.ptr(-1).vec(4)              [14, 14, 14, 14]                 None
+  16 Ops.INDEX           :            dtypes.float.ptr(-1).vec(4)              [15, 8]                          None
+  17 Ops.LOAD            :            dtypes.float.vec(4)                      [16]                             None
+  18 Ops.ADD             :            dtypes.float.vec(4)                      [13, 17]                         None
+  19 Ops.STORE           :            dtypes.void                              [9, 18]                          None
+  20 Ops.END             :            dtypes.void                              [19, 3]                          None
+  21 Ops.SINK            :            dtypes.void                              [20]                             KernelInfo(name='elementwise_add_opt', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None)
+=== devectorize ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.DEFINE_VAR      :            dtypes.int                               []                               ('core_id', 0, 63)
+   2 Ops.CAST            :            dtypes.weakint                           [1]                              None
+   3 Ops.CONST           :            dtypes.weakint                           []                               4
+   4 Ops.MUL             :            dtypes.weakint                           [2, '4']                         None
+   5 Ops.INDEX           :            dtypes.float.ptr(-1)                     [0, 4]                           None
+   6 Ops.CAST            :            dtypes.float.vec(4).ptr(-1)              [5]                              None
+   7 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   8 Ops.INDEX           :            dtypes.float.ptr(-1)                     [7, 4]                           None
+   9 Ops.CAST            :            dtypes.float.vec(4).ptr(-1)              [8]                              None
+  10 Ops.LOAD            :            dtypes.float.vec(4)                      [9]                              None
+  11 Ops.GEP             :            dtypes.float                             [10]                             (0,)
+  12 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+  13 Ops.INDEX           :            dtypes.float.ptr(-1)                     [12, 4]                          None
+  14 Ops.CAST            :            dtypes.float.vec(4).ptr(-1)              [13]                             None
+  15 Ops.LOAD            :            dtypes.float.vec(4)                      [14]                             None
+  16 Ops.GEP             :            dtypes.float                             [15]                             (0,)
+  17 Ops.ADD             :            dtypes.float                             [11, 16]                         None
+  18 Ops.GEP             :            dtypes.float                             [10]                             (1,)
+  19 Ops.GEP             :            dtypes.float                             [15]                             (1,)
+  20 Ops.ADD             :            dtypes.float                             [18, 19]                         None
+  21 Ops.GEP             :            dtypes.float                             [10]                             (2,)
+  22 Ops.GEP             :            dtypes.float                             [15]                             (2,)
+  23 Ops.ADD             :            dtypes.float                             [21, 22]                         None
+  24 Ops.GEP             :            dtypes.float                             [10]                             (3,)
+  25 Ops.GEP             :            dtypes.float                             [15]                             (3,)
+  26 Ops.ADD             :            dtypes.float                             [24, 25]                         None
+  27 Ops.VECTORIZE       :            dtypes.float.vec(4)                      [17, 20, 23, 26]                 None
+  28 Ops.STORE           :            dtypes.void                              [6, 27]                          None
+  29 Ops.END             :            dtypes.void                              [28, 2]                          None
+  30 Ops.SINK            :            dtypes.void                              [29]                             KernelInfo(name='elementwise_add_opt', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None)
+=== lower all index dtypes ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.DEFINE_VAR      :            dtypes.int                               []                               ('core_id', 0, 63)
+   2 Ops.CONST           :            dtypes.int                               []                               4
+   3 Ops.MUL             :            dtypes.int                               [1, '4']                         None
+   4 Ops.INDEX           :            dtypes.float.ptr(-1)                     [0, 3]                           None
+   5 Ops.CAST            :            dtypes.float.vec(4).ptr(-1)              [4]                              None
+   6 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   7 Ops.INDEX           :            dtypes.float.ptr(-1)                     [6, 3]                           None
+   8 Ops.CAST            :            dtypes.float.vec(4).ptr(-1)              [7]                              None
+   9 Ops.LOAD            :            dtypes.float.vec(4)                      [8]                              None
+  10 Ops.GEP             :            dtypes.float                             [9]                              (0,)
+  11 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+  12 Ops.INDEX           :            dtypes.float.ptr(-1)                     [11, 3]                          None
+  13 Ops.CAST            :            dtypes.float.vec(4).ptr(-1)              [12]                             None
+  14 Ops.LOAD            :            dtypes.float.vec(4)                      [13]                             None
+  15 Ops.GEP             :            dtypes.float                             [14]                             (0,)
+  16 Ops.ADD             :            dtypes.float                             [10, 15]                         None
+  17 Ops.GEP             :            dtypes.float                             [9]                              (1,)
+  18 Ops.GEP             :            dtypes.float                             [14]                             (1,)
+  19 Ops.ADD             :            dtypes.float                             [17, 18]                         None
+  20 Ops.GEP             :            dtypes.float                             [9]                              (2,)
+  21 Ops.GEP             :            dtypes.float                             [14]                             (2,)
+  22 Ops.ADD             :            dtypes.float                             [20, 21]                         None
+  23 Ops.GEP             :            dtypes.float                             [9]                              (3,)
+  24 Ops.GEP             :            dtypes.float                             [14]                             (3,)
+  25 Ops.ADD             :            dtypes.float                             [23, 24]                         None
+  26 Ops.VECTORIZE       :            dtypes.float.vec(4)                      [16, 19, 22, 25]                 None
+  27 Ops.STORE           :            dtypes.void                              [5, 26]                          None
+  28 Ops.END             :            dtypes.void                              [27, 1]                          None
+  29 Ops.SINK            :            dtypes.void                              [28]                             KernelInfo(name='elementwise_add_opt', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None)
+=== post index symbolic ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.DEFINE_VAR      :            dtypes.int                               []                               ('core_id', 0, 63)
+   2 Ops.CONST           :            dtypes.int                               []                               4
+   3 Ops.MUL             :            dtypes.int                               [1, '4']                         None
+   4 Ops.INDEX           :            dtypes.float.ptr(-1)                     [0, 3]                           None
+   5 Ops.CAST            :            dtypes.float.vec(4).ptr(-1)              [4]                              None
+   6 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   7 Ops.INDEX           :            dtypes.float.ptr(-1)                     [6, 3]                           None
+   8 Ops.CAST            :            dtypes.float.vec(4).ptr(-1)              [7]                              None
+   9 Ops.LOAD            :            dtypes.float.vec(4)                      [8]                              None
+  10 Ops.GEP             :            dtypes.float                             [9]                              (0,)
+  11 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+  12 Ops.INDEX           :            dtypes.float.ptr(-1)                     [11, 3]                          None
+  13 Ops.CAST            :            dtypes.float.vec(4).ptr(-1)              [12]                             None
+  14 Ops.LOAD            :            dtypes.float.vec(4)                      [13]                             None
+  15 Ops.GEP             :            dtypes.float                             [14]                             (0,)
+  16 Ops.ADD             :            dtypes.float                             [10, 15]                         None
+  17 Ops.GEP             :            dtypes.float                             [9]                              (1,)
+  18 Ops.GEP             :            dtypes.float                             [14]                             (1,)
+  19 Ops.ADD             :            dtypes.float                             [17, 18]                         None
+  20 Ops.GEP             :            dtypes.float                             [9]                              (2,)
+  21 Ops.GEP             :            dtypes.float                             [14]                             (2,)
+  22 Ops.ADD             :            dtypes.float                             [20, 21]                         None
+  23 Ops.GEP             :            dtypes.float                             [9]                              (3,)
+  24 Ops.GEP             :            dtypes.float                             [14]                             (3,)
+  25 Ops.ADD             :            dtypes.float                             [23, 24]                         None
+  26 Ops.VECTORIZE       :            dtypes.float.vec(4)                      [16, 19, 22, 25]                 None
+  27 Ops.STORE           :            dtypes.void                              [5, 26]                          None
+  28 Ops.END             :            dtypes.void                              [27, 1]                          None
+  29 Ops.SINK            :            dtypes.void                              [28]                             KernelInfo(name='elementwise_add_opt', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None)
+=== decompositions ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.DEFINE_VAR      :            dtypes.int                               []                               ('core_id', 0, 63)
+   2 Ops.CONST           :            dtypes.int                               []                               2
+   3 Ops.SHL             :            dtypes.int                               [1, '2']                         None
+   4 Ops.INDEX           :            dtypes.float.ptr(-1)                     [0, 3]                           None
+   5 Ops.CAST            :            dtypes.float.vec(4).ptr(-1)              [4]                              None
+   6 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   7 Ops.INDEX           :            dtypes.float.ptr(-1)                     [6, 3]                           None
+   8 Ops.CAST            :            dtypes.float.vec(4).ptr(-1)              [7]                              None
+   9 Ops.LOAD            :            dtypes.float.vec(4)                      [8]                              None
+  10 Ops.GEP             :            dtypes.float                             [9]                              (0,)
+  11 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+  12 Ops.INDEX           :            dtypes.float.ptr(-1)                     [11, 3]                          None
+  13 Ops.CAST            :            dtypes.float.vec(4).ptr(-1)              [12]                             None
+  14 Ops.LOAD            :            dtypes.float.vec(4)                      [13]                             None
+  15 Ops.GEP             :            dtypes.float                             [14]                             (0,)
+  16 Ops.ADD             :            dtypes.float                             [10, 15]                         None
+  17 Ops.GEP             :            dtypes.float                             [9]                              (1,)
+  18 Ops.GEP             :            dtypes.float                             [14]                             (1,)
+  19 Ops.ADD             :            dtypes.float                             [17, 18]                         None
+  20 Ops.GEP             :            dtypes.float                             [9]                              (2,)
+  21 Ops.GEP             :            dtypes.float                             [14]                             (2,)
+  22 Ops.ADD             :            dtypes.float                             [20, 21]                         None
+  23 Ops.GEP             :            dtypes.float                             [9]                              (3,)
+  24 Ops.GEP             :            dtypes.float                             [14]                             (3,)
+  25 Ops.ADD             :            dtypes.float                             [23, 24]                         None
+  26 Ops.VECTORIZE       :            dtypes.float.vec(4)                      [16, 19, 22, 25]                 None
+  27 Ops.STORE           :            dtypes.void                              [5, 26]                          None
+  28 Ops.END             :            dtypes.void                              [27, 1]                          None
+  29 Ops.SINK            :            dtypes.void                              [28]                             KernelInfo(name='elementwise_add_opt', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None)
+=== decomp dtypes ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.DEFINE_VAR      :            dtypes.int                               []                               ('core_id', 0, 63)
+   2 Ops.CONST           :            dtypes.int                               []                               2
+   3 Ops.SHL             :            dtypes.int                               [1, '2']                         None
+   4 Ops.INDEX           :            dtypes.float.ptr(-1)                     [0, 3]                           None
+   5 Ops.CAST            :            dtypes.float.vec(4).ptr(-1)              [4]                              None
+   6 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   7 Ops.INDEX           :            dtypes.float.ptr(-1)                     [6, 3]                           None
+   8 Ops.CAST            :            dtypes.float.vec(4).ptr(-1)              [7]                              None
+   9 Ops.LOAD            :            dtypes.float.vec(4)                      [8]                              None
+  10 Ops.GEP             :            dtypes.float                             [9]                              (0,)
+  11 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+  12 Ops.INDEX           :            dtypes.float.ptr(-1)                     [11, 3]                          None
+  13 Ops.CAST            :            dtypes.float.vec(4).ptr(-1)              [12]                             None
+  14 Ops.LOAD            :            dtypes.float.vec(4)                      [13]                             None
+  15 Ops.GEP             :            dtypes.float                             [14]                             (0,)
+  16 Ops.ADD             :            dtypes.float                             [10, 15]                         None
+  17 Ops.GEP             :            dtypes.float                             [9]                              (1,)
+  18 Ops.GEP             :            dtypes.float                             [14]                             (1,)
+  19 Ops.ADD             :            dtypes.float                             [17, 18]                         None
+  20 Ops.GEP             :            dtypes.float                             [9]                              (2,)
+  21 Ops.GEP             :            dtypes.float                             [14]                             (2,)
+  22 Ops.ADD             :            dtypes.float                             [20, 21]                         None
+  23 Ops.GEP             :            dtypes.float                             [9]                              (3,)
+  24 Ops.GEP             :            dtypes.float                             [14]                             (3,)
+  25 Ops.ADD             :            dtypes.float                             [23, 24]                         None
+  26 Ops.VECTORIZE       :            dtypes.float.vec(4)                      [16, 19, 22, 25]                 None
+  27 Ops.STORE           :            dtypes.void                              [5, 26]                          None
+  28 Ops.END             :            dtypes.void                              [27, 1]                          None
+  29 Ops.SINK            :            dtypes.void                              [28]                             KernelInfo(name='elementwise_add_opt', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None)
+=== transcendental ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.DEFINE_VAR      :            dtypes.int                               []                               ('core_id', 0, 63)
+   2 Ops.CONST           :            dtypes.int                               []                               2
+   3 Ops.SHL             :            dtypes.int                               [1, '2']                         None
+   4 Ops.INDEX           :            dtypes.float.ptr(-1)                     [0, 3]                           None
+   5 Ops.CAST            :            dtypes.float.vec(4).ptr(-1)              [4]                              None
+   6 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   7 Ops.INDEX           :            dtypes.float.ptr(-1)                     [6, 3]                           None
+   8 Ops.CAST            :            dtypes.float.vec(4).ptr(-1)              [7]                              None
+   9 Ops.LOAD            :            dtypes.float.vec(4)                      [8]                              None
+  10 Ops.GEP             :            dtypes.float                             [9]                              (0,)
+  11 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+  12 Ops.INDEX           :            dtypes.float.ptr(-1)                     [11, 3]                          None
+  13 Ops.CAST            :            dtypes.float.vec(4).ptr(-1)              [12]                             None
+  14 Ops.LOAD            :            dtypes.float.vec(4)                      [13]                             None
+  15 Ops.GEP             :            dtypes.float                             [14]                             (0,)
+  16 Ops.ADD             :            dtypes.float                             [10, 15]                         None
+  17 Ops.GEP             :            dtypes.float                             [9]                              (1,)
+  18 Ops.GEP             :            dtypes.float                             [14]                             (1,)
+  19 Ops.ADD             :            dtypes.float                             [17, 18]                         None
+  20 Ops.GEP             :            dtypes.float                             [9]                              (2,)
+  21 Ops.GEP             :            dtypes.float                             [14]                             (2,)
+  22 Ops.ADD             :            dtypes.float                             [20, 21]                         None
+  23 Ops.GEP             :            dtypes.float                             [9]                              (3,)
+  24 Ops.GEP             :            dtypes.float                             [14]                             (3,)
+  25 Ops.ADD             :            dtypes.float                             [23, 24]                         None
+  26 Ops.VECTORIZE       :            dtypes.float.vec(4)                      [16, 19, 22, 25]                 None
+  27 Ops.STORE           :            dtypes.void                              [5, 26]                          None
+  28 Ops.END             :            dtypes.void                              [27, 1]                          None
+  29 Ops.SINK            :            dtypes.void                              [28]                             KernelInfo(name='elementwise_add_opt', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None)
+=== final rewrite ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.DEFINE_VAR      :            dtypes.int                               []                               ('core_id', 0, 63)
+   2 Ops.CONST           :            dtypes.int                               []                               2
+   3 Ops.SHL             :            dtypes.int                               [1, '2']                         None
+   4 Ops.INDEX           :            dtypes.float.ptr(-1)                     [0, 3]                           None
+   5 Ops.CAST            :            dtypes.float.vec(4).ptr(-1)              [4]                              None
+   6 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   7 Ops.INDEX           :            dtypes.float.ptr(-1)                     [6, 3]                           None
+   8 Ops.CAST            :            dtypes.float.vec(4).ptr(-1)              [7]                              None
+   9 Ops.LOAD            :            dtypes.float.vec(4)                      [8]                              None
+  10 Ops.GEP             :            dtypes.float                             [9]                              (0,)
+  11 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+  12 Ops.INDEX           :            dtypes.float.ptr(-1)                     [11, 3]                          None
+  13 Ops.CAST            :            dtypes.float.vec(4).ptr(-1)              [12]                             None
+  14 Ops.LOAD            :            dtypes.float.vec(4)                      [13]                             None
+  15 Ops.GEP             :            dtypes.float                             [14]                             (0,)
+  16 Ops.ADD             :            dtypes.float                             [10, 15]                         None
+  17 Ops.GEP             :            dtypes.float                             [9]                              (1,)
+  18 Ops.GEP             :            dtypes.float                             [14]                             (1,)
+  19 Ops.ADD             :            dtypes.float                             [17, 18]                         None
+  20 Ops.GEP             :            dtypes.float                             [9]                              (2,)
+  21 Ops.GEP             :            dtypes.float                             [14]                             (2,)
+  22 Ops.ADD             :            dtypes.float                             [20, 21]                         None
+  23 Ops.GEP             :            dtypes.float                             [9]                              (3,)
+  24 Ops.GEP             :            dtypes.float                             [14]                             (3,)
+  25 Ops.ADD             :            dtypes.float                             [23, 24]                         None
+  26 Ops.VECTORIZE       :            dtypes.float.vec(4)                      [16, 19, 22, 25]                 None
+  27 Ops.STORE           :            dtypes.void                              [5, 26]                          None
+  28 Ops.SINK            :            dtypes.void                              [27]                             KernelInfo(name='elementwise_add_opt', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None)
+=== add control flow ===
+   0 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               2
+   1 Ops.DEFINE_VAR      :            dtypes.int                               []                               ('core_id', 0, 63)
+   2 Ops.CONST           :            dtypes.int                               []                               2
+   3 Ops.SHL             :            dtypes.int                               [1, '2']                         None
+   4 Ops.INDEX           :            dtypes.float.ptr(-1)                     [0, 3]                           None
+   5 Ops.CAST            :            dtypes.float.vec(4).ptr(-1)              [4]                              None
+   6 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               0
+   7 Ops.INDEX           :            dtypes.float.ptr(-1)                     [6, 3]                           None
+   8 Ops.CAST            :            dtypes.float.vec(4).ptr(-1)              [7]                              None
+   9 Ops.LOAD            :            dtypes.float.vec(4)                      [8]                              None
+  10 Ops.GEP             :            dtypes.float                             [9]                              (0,)
+  11 Ops.PARAM           :            dtypes.float.ptr(-1)                     []                               1
+  12 Ops.INDEX           :            dtypes.float.ptr(-1)                     [11, 3]                          None
+  13 Ops.CAST            :            dtypes.float.vec(4).ptr(-1)              [12]                             None
+  14 Ops.LOAD            :            dtypes.float.vec(4)                      [13]                             None
+  15 Ops.GEP             :            dtypes.float                             [14]                             (0,)
+  16 Ops.ADD             :            dtypes.float                             [10, 15]                         None
+  17 Ops.GEP             :            dtypes.float                             [9]                              (1,)
+  18 Ops.GEP             :            dtypes.float                             [14]                             (1,)
+  19 Ops.ADD             :            dtypes.float                             [17, 18]                         None
+  20 Ops.GEP             :            dtypes.float                             [9]                              (2,)
+  21 Ops.GEP             :            dtypes.float                             [14]                             (2,)
+  22 Ops.ADD             :            dtypes.float                             [20, 21]                         None
+  23 Ops.GEP             :            dtypes.float                             [9]                              (3,)
+  24 Ops.GEP             :            dtypes.float                             [14]                             (3,)
+  25 Ops.ADD             :            dtypes.float                             [23, 24]                         None
+  26 Ops.VECTORIZE       :            dtypes.float.vec(4)                      [16, 19, 22, 25]                 None
+  27 Ops.STORE           :            dtypes.void                              [5, 26]                          None
+  28 Ops.SINK            :            dtypes.void                              [27]                             KernelInfo(name='elementwise_add_opt', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None)

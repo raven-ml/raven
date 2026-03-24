@@ -23,7 +23,7 @@
 val pm_reduce : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t
 (** [pm_reduce kernel] lowers all {!Tolk_ir.Kernel.view.Reduce}
     operations in [kernel] to explicit accumulator loops. Runs until
-    fixpoint (bounded by {!Tolk_ir.Kernel.rewrite_fixpoint}).
+    fixpoint via {!Tolk_ir.Kernel.graph_rewrite}.
 
     The pass performs four rewrites:
     - {b Reduce lowering.} Transforms
@@ -53,6 +53,9 @@ val pm_add_loads : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t
     which depends on the consuming instruction's structure, not just
     the referenced node. *)
 
+val pm_devectorize_rule : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option
+(** Individual devectorize rule for composition. *)
+
 val pm_devectorize : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t
 (** [pm_devectorize kernel] scalarizes wide vector operations in
     [kernel] before final rendering.
@@ -76,6 +79,9 @@ val pm_devectorize : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t
     - {b Gate cleanup.} Drops trivially-true gates from
       {!Tolk_ir.Kernel.view.Index} nodes. *)
 
+val pm_correct_load_store_rule : Renderer.t -> Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option
+(** Individual correct_load_store rule for composition. *)
+
 val pm_correct_load_store : Renderer.t -> Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t
 (** [pm_correct_load_store renderer kernel] splits oversized
     {!Tolk_ir.Kernel.view.Load}/{!Tolk_ir.Kernel.view.Store} operations
@@ -88,6 +94,19 @@ val pm_correct_load_store : Renderer.t -> Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t
 
     Currently splits to scalar only; intermediate-width splitting is
     deferred until the Kernel IR gains a pointer-narrowing mechanism. *)
+
+val load_store_folding_rule : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option
+(** Vectorized load/store restructuring: expand/fold INDEX on VECTORIZE,
+    push GEP through LOAD/STORE, spread PTRCAT across LOAD/STORE.
+    *)
+
+val load_store_indexing_rule : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option
+(** Gate simplification on INDEX nodes (drop true gates).
+    *)
+
+val pm_render_rule : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option
+(** [pm_render_rule] is the individual rewrite rule for pm_render,
+    suitable for composition with other rules in a single fixpoint. *)
 
 val pm_render : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t
 (** [pm_render kernel] performs final transformations before
