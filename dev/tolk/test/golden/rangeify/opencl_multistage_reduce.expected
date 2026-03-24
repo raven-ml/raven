@@ -1,0 +1,29 @@
+__kernel void r_32_16_32_2n2(__global float* data0_32, __global float* data1_32768) {
+  __attribute__ ((aligned (16))) __local float temp0[16];
+  float acc0[1];
+  float acc1[1];
+  float acc2[1];
+  int gidx0 = get_group_id(0); /* 32 */
+  int lidx0 = get_local_id(0); /* 16 */
+  *(acc1+0) = 0.0f;
+  for (int Ridx1 = 0; Ridx1 < 2; Ridx1++) {
+    *(acc0+0) = 0.0f;
+    for (int Ridx0 = 0; Ridx0 < 32; Ridx0++) {
+      float val0 = (*(data1_32768+((lidx0<<6)+(Ridx1<<5)+Ridx0+(gidx0<<10))));
+      *(acc0+0) = ((*(acc0+0))+val0);
+    }
+    float alu4 = (((*(acc0+0))<0.0f)?0.0f:(*(acc0+0)));
+    *(acc1+0) = ((*(acc1+0))+alu4);
+  }
+  *(temp0+lidx0) = (*(acc1+0));
+  barrier(CLK_LOCAL_MEM_FENCE);
+  *(acc2+0) = 0.0f;
+  for (int Ridx103 = 0; Ridx103 < 16; Ridx103++) {
+    float val1 = (*(temp0+Ridx103));
+    *(acc2+0) = ((*(acc2+0))+val1);
+  }
+  bool alu12 = (lidx0==0);
+  if (alu12) {
+    *(data0_32+gidx0) = (*(acc2+0));
+  }
+}

@@ -1,0 +1,151 @@
+(executable
+ (name generate_actual)
+ (libraries tolk))
+
+(rule
+ (package tolk)
+ (targets
+  clang_binop_permute.actual
+  clang_binop_reshape.actual
+  clang_contiguous_add.actual
+  clang_diamond.actual
+  clang_elementwise_3way.actual
+  clang_elementwise_add.actual
+  clang_expand_permute.actual
+  clang_mulacc.actual
+  clang_multistage_reduce.actual
+  clang_permute_through_reshape.actual
+  clang_reduce_permute_binop.actual
+  clang_reduce_reshape_binop.actual
+  clang_reduce_shrink.actual
+  clang_reduce_unary.actual
+  clang_reshape_chain.actual
+  clang_shrink_fuse.actual
+  clang_two_sum.actual
+  cuda_binop_permute.actual
+  cuda_binop_reshape.actual
+  cuda_contiguous_add.actual
+  cuda_diamond.actual
+  cuda_elementwise_3way.actual
+  cuda_elementwise_add.actual
+  cuda_expand_permute.actual
+  cuda_mulacc.actual
+  cuda_multistage_reduce.actual
+  cuda_permute_through_reshape.actual
+  cuda_reduce_permute_binop.actual
+  cuda_reduce_reshape_binop.actual
+  cuda_reduce_shrink.actual
+  cuda_reduce_unary.actual
+  cuda_reshape_chain.actual
+  cuda_shrink_fuse.actual
+  cuda_two_sum.actual
+  metal_binop_permute.actual
+  metal_binop_reshape.actual
+  metal_contiguous_add.actual
+  metal_diamond.actual
+  metal_elementwise_3way.actual
+  metal_elementwise_add.actual
+  metal_expand_permute.actual
+  metal_mulacc.actual
+  metal_multistage_reduce.actual
+  metal_permute_through_reshape.actual
+  metal_reduce_permute_binop.actual
+  metal_reduce_reshape_binop.actual
+  metal_reduce_shrink.actual
+  metal_reduce_unary.actual
+  metal_reshape_chain.actual
+  metal_shrink_fuse.actual
+  metal_two_sum.actual
+  opencl_binop_permute.actual
+  opencl_binop_reshape.actual
+  opencl_contiguous_add.actual
+  opencl_diamond.actual
+  opencl_elementwise_3way.actual
+  opencl_elementwise_add.actual
+  opencl_expand_permute.actual
+  opencl_mulacc.actual
+  opencl_multistage_reduce.actual
+  opencl_permute_through_reshape.actual
+  opencl_reduce_permute_binop.actual
+  opencl_reduce_reshape_binop.actual
+  opencl_reduce_shrink.actual
+  opencl_reduce_unary.actual
+  opencl_reshape_chain.actual
+  opencl_shrink_fuse.actual
+  opencl_two_sum.actual)
+ (action
+  (run ./generate_actual.exe .)))
+
+(rule
+ (alias runtest)
+ (package tolk)
+ (action
+  (progn
+   (diff clang_binop_permute.expected clang_binop_permute.actual)
+   (diff clang_binop_reshape.expected clang_binop_reshape.actual)
+   (diff clang_contiguous_add.expected clang_contiguous_add.actual)
+   (diff clang_diamond.expected clang_diamond.actual)
+   (diff clang_elementwise_3way.expected clang_elementwise_3way.actual)
+   (diff clang_elementwise_add.expected clang_elementwise_add.actual)
+   (diff clang_expand_permute.expected clang_expand_permute.actual)
+   (diff clang_mulacc.expected clang_mulacc.actual)
+   (diff clang_multistage_reduce.expected clang_multistage_reduce.actual)
+   (diff clang_permute_through_reshape.expected clang_permute_through_reshape.actual)
+   (diff clang_reduce_permute_binop.expected clang_reduce_permute_binop.actual)
+   (diff clang_reduce_reshape_binop.expected clang_reduce_reshape_binop.actual)
+   (diff clang_reduce_shrink.expected clang_reduce_shrink.actual)
+   (diff clang_reduce_unary.expected clang_reduce_unary.actual)
+   (diff clang_reshape_chain.expected clang_reshape_chain.actual)
+   (diff clang_shrink_fuse.expected clang_shrink_fuse.actual)
+   (diff clang_two_sum.expected clang_two_sum.actual)
+   (diff cuda_binop_permute.expected cuda_binop_permute.actual)
+   (diff cuda_binop_reshape.expected cuda_binop_reshape.actual)
+   (diff cuda_contiguous_add.expected cuda_contiguous_add.actual)
+   (diff cuda_diamond.expected cuda_diamond.actual)
+   (diff cuda_elementwise_3way.expected cuda_elementwise_3way.actual)
+   (diff cuda_elementwise_add.expected cuda_elementwise_add.actual)
+   (diff cuda_expand_permute.expected cuda_expand_permute.actual)
+   (diff cuda_mulacc.expected cuda_mulacc.actual)
+   (diff cuda_multistage_reduce.expected cuda_multistage_reduce.actual)
+   (diff cuda_permute_through_reshape.expected cuda_permute_through_reshape.actual)
+   (diff cuda_reduce_permute_binop.expected cuda_reduce_permute_binop.actual)
+   (diff cuda_reduce_reshape_binop.expected cuda_reduce_reshape_binop.actual)
+   (diff cuda_reduce_shrink.expected cuda_reduce_shrink.actual)
+   (diff cuda_reduce_unary.expected cuda_reduce_unary.actual)
+   (diff cuda_reshape_chain.expected cuda_reshape_chain.actual)
+   (diff cuda_shrink_fuse.expected cuda_shrink_fuse.actual)
+   (diff cuda_two_sum.expected cuda_two_sum.actual)
+   (diff metal_binop_permute.expected metal_binop_permute.actual)
+   (diff metal_binop_reshape.expected metal_binop_reshape.actual)
+   (diff metal_contiguous_add.expected metal_contiguous_add.actual)
+   (diff metal_diamond.expected metal_diamond.actual)
+   (diff metal_elementwise_3way.expected metal_elementwise_3way.actual)
+   (diff metal_elementwise_add.expected metal_elementwise_add.actual)
+   (diff metal_expand_permute.expected metal_expand_permute.actual)
+   (diff metal_mulacc.expected metal_mulacc.actual)
+   (diff metal_multistage_reduce.expected metal_multistage_reduce.actual)
+   (diff metal_permute_through_reshape.expected metal_permute_through_reshape.actual)
+   (diff metal_reduce_permute_binop.expected metal_reduce_permute_binop.actual)
+   (diff metal_reduce_reshape_binop.expected metal_reduce_reshape_binop.actual)
+   (diff metal_reduce_shrink.expected metal_reduce_shrink.actual)
+   (diff metal_reduce_unary.expected metal_reduce_unary.actual)
+   (diff metal_reshape_chain.expected metal_reshape_chain.actual)
+   (diff metal_shrink_fuse.expected metal_shrink_fuse.actual)
+   (diff metal_two_sum.expected metal_two_sum.actual)
+   (diff opencl_binop_permute.expected opencl_binop_permute.actual)
+   (diff opencl_binop_reshape.expected opencl_binop_reshape.actual)
+   (diff opencl_contiguous_add.expected opencl_contiguous_add.actual)
+   (diff opencl_diamond.expected opencl_diamond.actual)
+   (diff opencl_elementwise_3way.expected opencl_elementwise_3way.actual)
+   (diff opencl_elementwise_add.expected opencl_elementwise_add.actual)
+   (diff opencl_expand_permute.expected opencl_expand_permute.actual)
+   (diff opencl_mulacc.expected opencl_mulacc.actual)
+   (diff opencl_multistage_reduce.expected opencl_multistage_reduce.actual)
+   (diff opencl_permute_through_reshape.expected opencl_permute_through_reshape.actual)
+   (diff opencl_reduce_permute_binop.expected opencl_reduce_permute_binop.actual)
+   (diff opencl_reduce_reshape_binop.expected opencl_reduce_reshape_binop.actual)
+   (diff opencl_reduce_shrink.expected opencl_reduce_shrink.actual)
+   (diff opencl_reduce_unary.expected opencl_reduce_unary.actual)
+   (diff opencl_reshape_chain.expected opencl_reshape_chain.actual)
+   (diff opencl_shrink_fuse.expected opencl_shrink_fuse.actual)
+   (diff opencl_two_sum.expected opencl_two_sum.actual))))

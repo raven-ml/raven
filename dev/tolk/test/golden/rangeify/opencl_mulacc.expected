@@ -1,0 +1,24 @@
+__kernel void r_16_16n2(__global float* data0_1, __global float* data1_256, __global float* data2_256) {
+  __attribute__ ((aligned (16))) __local float temp0[16];
+  float acc0[1];
+  float acc1[1];
+  int lidx0 = get_local_id(0); /* 16 */
+  *(acc0+0) = 0.0f;
+  for (int Ridx0 = 0; Ridx0 < 16; Ridx0++) {
+    int alu1 = ((lidx0<<4)+Ridx0);
+    float val0 = (*(data1_256+alu1));
+    float val1 = (*(data2_256+alu1));
+    *(acc0+0) = ((*(acc0+0))+(val0*val1));
+  }
+  *(temp0+lidx0) = (*(acc0+0));
+  barrier(CLK_LOCAL_MEM_FENCE);
+  *(acc1+0) = 0.0f;
+  for (int Ridx101 = 0; Ridx101 < 16; Ridx101++) {
+    float val2 = (*(temp0+Ridx101));
+    *(acc1+0) = ((*(acc1+0))+val2);
+  }
+  bool alu9 = (lidx0==0);
+  if (alu9) {
+    *(data0_1+0) = (*(acc1+0));
+  }
+}

@@ -1,0 +1,8 @@
+__kernel void E_4_4n3(__global float* data0_16, __global float* data1_131072, __global float* data2_131072, __global float* data3_16) {
+  int lidx0 = get_local_id(0); /* 4 */
+  int alu0 = (lidx0<<2);
+  float4 val0 = (*((__global float4*)((data1_131072+alu0))));
+  float4 val1 = (*((__global float4*)((data2_131072+alu0))));
+  float4 val2 = (*((__global float4*)((data3_16+alu0))));
+  *((__global float4*)((data0_16+alu0))) = (float4)((val0.x*val1.x*val2.x),(val0.y*val1.y*val2.y),(val0.z*val1.z*val2.z),(val0.w*val1.w*val2.w));
+}

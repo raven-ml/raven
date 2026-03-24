@@ -1,0 +1,9 @@
+#include <metal_stdlib>
+using namespace metal;
+kernel void E_4_4n6(device float* data0_16, device float* data1_16, device float* data2_16, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  int lidx0 = lid.x; /* 4 */
+  int alu0 = (lidx0<<2);
+  float4 val0 = (*((device float4*)((data1_16+alu0))));
+  float4 val1 = (*((device float4*)((data2_16+alu0))));
+  *((device float4*)((data0_16+alu0))) = float4((val0.x+val1.x),(val0.y+val1.y),(val0.z+val1.z),(val0.w+val1.w));
+}

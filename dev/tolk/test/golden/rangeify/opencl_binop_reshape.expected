@@ -1,0 +1,9 @@
+__kernel void E_5_2n2(__global float* data0_10, __global float* data1_10, __global float* data2_10, __global float* data3_10) {
+  int gidx0 = get_group_id(0); /* 5 */
+  int lidx0 = get_local_id(0); /* 2 */
+  int alu0 = (lidx0+(gidx0<<1));
+  float val0 = (*(data1_10+alu0));
+  float val1 = (*(data2_10+alu0));
+  float val2 = (*(data3_10+alu0));
+  *(data0_10+alu0) = (val0+val1+val2);
+}

@@ -1,0 +1,20 @@
+__kernel void r_5_5_2_2_10n2(__global float* data0_100, __global float* data1_1000, __global float* data2_100) {
+  int gidx0 = get_group_id(0); /* 5 */
+  int gidx1 = get_group_id(1); /* 5 */
+  int lidx0 = get_local_id(0); /* 2 */
+  int lidx1 = get_local_id(1); /* 2 */
+  int alu0 = (lidx0+(gidx1<<1)+(gidx0*20)+(lidx1*10));
+  float val0 = (*(data1_1000+alu0));
+  float val1 = (*(data1_1000+(alu0+100)));
+  float val2 = (*(data1_1000+(alu0+200)));
+  float val3 = (*(data1_1000+(alu0+300)));
+  float val4 = (*(data1_1000+(alu0+400)));
+  float val5 = (*(data1_1000+(alu0+500)));
+  float val6 = (*(data1_1000+(alu0+600)));
+  float val7 = (*(data1_1000+(alu0+700)));
+  float val8 = (*(data1_1000+(alu0+800)));
+  float val9 = (*(data1_1000+(alu0+900)));
+  int alu1 = (lidx1+(gidx0<<1)+(gidx1*20)+(lidx0*10));
+  float val10 = (*(data2_100+alu1));
+  *(data0_100+alu1) = (val0+val1+val2+val3+val4+val5+val6+val7+val8+val9+val10);
+}

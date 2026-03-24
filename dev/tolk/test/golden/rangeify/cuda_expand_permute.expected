@@ -1,0 +1,19 @@
+#define INFINITY (__int_as_float(0x7f800000))
+#define NAN (__int_as_float(0x7fffffff))
+template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
+extern "C" __global__ void __launch_bounds__(8) E_5_5_5_2_2_2(float* data0_1000, float* data1_100, float* data2_100) {
+  int gidx0 = blockIdx.x; /* 5 */
+  int gidx1 = blockIdx.y; /* 5 */
+  int lidx1 = threadIdx.y; /* 2 */
+  int lidx2 = threadIdx.z; /* 2 */
+  int alu0 = (lidx1+(gidx1<<1));
+  int alu1 = (alu0+(gidx0*20)+(lidx2*10));
+  float val0 = (*(data1_100+alu1));
+  int gidx2 = blockIdx.z; /* 5 */
+  int lidx0 = threadIdx.x; /* 2 */
+  int alu2 = (alu0+(gidx2*20)+(lidx0*10));
+  float val1 = (*(data1_100+alu2));
+  float val2 = (*(data2_100+alu1));
+  float val3 = (*(data2_100+alu2));
+  *(data0_1000+(lidx2+(gidx0<<1)+(gidx1*20)+(lidx1*10)+(gidx2*200)+(lidx0*100))) = (val1+val3+val0+val2);
+}

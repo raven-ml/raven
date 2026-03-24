@@ -1,0 +1,15 @@
+void E_10_10_10(float* restrict data0_1000, float* restrict data1_100, float* restrict data2_100) {
+  for (int Lidx0 = 0; Lidx0 < 10; Lidx0++) {
+    for (int Lidx1 = 0; Lidx1 < 10; Lidx1++) {
+      int alu0 = ((Lidx0*10)+Lidx1);
+      float val0 = (*(data1_100+alu0));
+      float val1 = (*(data2_100+alu0));
+      for (int Lidx2 = 0; Lidx2 < 10; Lidx2++) {
+        int alu1 = ((Lidx2*10)+Lidx1);
+        float val2 = (*(data1_100+alu1));
+        float val3 = (*(data2_100+alu1));
+        *(data0_1000+((Lidx1*10)+Lidx2+(Lidx0*100))) = (val0+val1+val2+val3);
+      }
+    }
+  }
+}

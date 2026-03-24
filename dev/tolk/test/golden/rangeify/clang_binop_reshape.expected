@@ -1,0 +1,8 @@
+void E_10(float* restrict data0_10, float* restrict data1_10, float* restrict data2_10, float* restrict data3_10) {
+  for (int Lidx0 = 0; Lidx0 < 10; Lidx0++) {
+    float val0 = (*(data1_10+Lidx0));
+    float val1 = (*(data2_10+Lidx0));
+    float val2 = (*(data3_10+Lidx0));
+    *(data0_10+Lidx0) = (val0+val1+val2);
+  }
+}

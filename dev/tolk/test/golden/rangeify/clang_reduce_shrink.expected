@@ -1,0 +1,16 @@
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+void r_16_32(float* restrict data0_16, float* restrict data1_1024, float* restrict data2_16) {
+  for (int Lidx1 = 0; Lidx1 < 16; Lidx1++) {
+    float val0 = (*(data2_16+Lidx1));
+    int alu0 = (Lidx1<<5);
+    float4 val1 = (*((float4*)((data1_1024+(alu0+4)))));
+    float4 val2 = (*((float4*)((data1_1024+(alu0+8)))));
+    float4 val3 = (*((float4*)((data1_1024+(alu0+12)))));
+    float4 val4 = (*((float4*)((data1_1024+(alu0+16)))));
+    float4 val5 = (*((float4*)((data1_1024+(alu0+20)))));
+    float4 val6 = (*((float4*)((data1_1024+(alu0+24)))));
+    float4 val7 = (*((float4*)((data1_1024+(alu0+28)))));
+    float4 val8 = (*((float4*)((data1_1024+alu0))));
+    *(data0_16+Lidx1) = (val8[0]+val8[1]+val8[2]+val8[3]+val1[0]+val1[1]+val1[2]+val1[3]+val2[0]+val2[1]+val2[2]+val2[3]+val3[0]+val3[1]+val3[2]+val3[3]+val4[0]+val4[1]+val4[2]+val4[3]+val5[0]+val5[1]+val5[2]+val5[3]+val6[0]+val6[1]+val6[2]+val6[3]+val7[0]+val7[1]+val7[2]+val7[3]+val0);
+  }
+}

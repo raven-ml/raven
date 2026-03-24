@@ -1,0 +1,15 @@
+__kernel void E_8_4n6(__global float* data0_32, __global float* data1_32, __global float* data2_32) {
+  int lidx0 = get_local_id(0); /* 8 */
+  int alu0 = (lidx0<<2);
+  float4 val0 = (*((__global float4*)((data1_32+alu0))));
+  float4 val1 = (*((__global float4*)((data2_32+alu0))));
+  *((__global float4*)((data0_32+alu0))) = (float4)((val0.x+val1.x),(val0.y+val1.y),(val0.z+val1.z),(val0.w+val1.w));
+}
+---
+__kernel void E_8_4n7(__global float* data0_32, __global float* data1_32, __global float* data2_32) {
+  int lidx0 = get_local_id(0); /* 8 */
+  int alu0 = (lidx0<<2);
+  float4 val0 = (*((__global float4*)((data1_32+alu0))));
+  float4 val1 = (*((__global float4*)((data2_32+alu0))));
+  *((__global float4*)((data0_32+alu0))) = (float4)((val0.x+val1.x),(val0.y+val1.y),(val0.z+val1.z),(val0.w+val1.w));
+}

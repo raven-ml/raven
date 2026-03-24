@@ -1,0 +1,20 @@
+void r_10_10_10(float* restrict data0_100, float* restrict data1_1000, float* restrict data2_100) {
+  for (int Lidx1 = 0; Lidx1 < 10; Lidx1++) {
+    for (int Lidx2 = 0; Lidx2 < 10; Lidx2++) {
+      int alu0 = ((Lidx2*10)+Lidx1);
+      float val0 = (*(data1_1000+(alu0+100)));
+      float val1 = (*(data1_1000+(alu0+200)));
+      float val2 = (*(data1_1000+(alu0+300)));
+      float val3 = (*(data1_1000+(alu0+400)));
+      float val4 = (*(data1_1000+(alu0+500)));
+      float val5 = (*(data1_1000+(alu0+600)));
+      float val6 = (*(data1_1000+(alu0+700)));
+      float val7 = (*(data1_1000+(alu0+800)));
+      float val8 = (*(data1_1000+(alu0+900)));
+      float val9 = (*(data1_1000+alu0));
+      int alu1 = ((Lidx1*10)+Lidx2);
+      float val10 = (*(data2_100+alu1));
+      *(data0_100+alu1) = (val9+val0+val1+val2+val3+val4+val5+val6+val7+val8+val10);
+    }
+  }
+}

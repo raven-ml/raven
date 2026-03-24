@@ -1,0 +1,17 @@
+__kernel void E_16_4_4n3(__global float* data0_256, __global float* data1_256, __global float* data2_256) {
+  int lidx0 = get_local_id(0); /* 16 */
+  int lidx1 = get_local_id(1); /* 4 */
+  int alu0 = (lidx0+(lidx1<<6));
+  float val0 = (*(data1_256+alu0));
+  int alu1 = (alu0+16);
+  float val1 = (*(data1_256+alu1));
+  int alu2 = (alu0+32);
+  float val2 = (*(data1_256+alu2));
+  int alu3 = (alu0+48);
+  float val3 = (*(data1_256+alu3));
+  float val4 = (*(data2_256+alu0));
+  float val5 = (*(data2_256+alu1));
+  float val6 = (*(data2_256+alu2));
+  float val7 = (*(data2_256+alu3));
+  *((__global float4*)((data0_256+((lidx0<<4)+(lidx1<<2))))) = (float4)((val0+val4),(val1+val5),(val2+val6),(val3+val7));
+}

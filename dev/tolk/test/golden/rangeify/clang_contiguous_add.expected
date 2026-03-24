@@ -1,0 +1,19 @@
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+void E_8_4(float* restrict data0_32, float* restrict data1_32, float* restrict data2_32) {
+  for (int Lidx0 = 0; Lidx0 < 8; Lidx0++) {
+    int alu0 = (Lidx0<<2);
+    float4 val0 = (*((float4*)((data1_32+alu0))));
+    float4 val1 = (*((float4*)((data2_32+alu0))));
+    *((float4*)((data0_32+alu0))) = (float4){(val0[0]+val1[0]),(val0[1]+val1[1]),(val0[2]+val1[2]),(val0[3]+val1[3])};
+  }
+}
+---
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+void E_8_4n1(float* restrict data0_32, float* restrict data1_32, float* restrict data2_32) {
+  for (int Lidx0 = 0; Lidx0 < 8; Lidx0++) {
+    int alu0 = (Lidx0<<2);
+    float4 val0 = (*((float4*)((data1_32+alu0))));
+    float4 val1 = (*((float4*)((data2_32+alu0))));
+    *((float4*)((data0_32+alu0))) = (float4){(val0[0]+val1[0]),(val0[1]+val1[1]),(val0[2]+val1[2]),(val0[3]+val1[3])};
+  }
+}

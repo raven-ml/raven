@@ -1,0 +1,19 @@
+#include <metal_stdlib>
+using namespace metal;
+kernel void E_8_4n4(device float* data0_32, device float* data1_32, device float* data2_32, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  int lidx0 = lid.x; /* 8 */
+  int alu0 = (lidx0<<2);
+  float4 val0 = (*((device float4*)((data1_32+alu0))));
+  float4 val1 = (*((device float4*)((data2_32+alu0))));
+  *((device float4*)((data0_32+alu0))) = float4((val0.x+val1.x),(val0.y+val1.y),(val0.z+val1.z),(val0.w+val1.w));
+}
+---
+#include <metal_stdlib>
+using namespace metal;
+kernel void E_8_4n5(device float* data0_32, device float* data1_32, device float* data2_32, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  int lidx0 = lid.x; /* 8 */
+  int alu0 = (lidx0<<2);
+  float4 val0 = (*((device float4*)((data1_32+alu0))));
+  float4 val1 = (*((device float4*)((data2_32+alu0))));
+  *((device float4*)((data0_32+alu0))) = float4((val0.x+val1.x),(val0.y+val1.y),(val0.z+val1.z),(val0.w+val1.w));
+}

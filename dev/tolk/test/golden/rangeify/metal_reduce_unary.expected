@@ -1,0 +1,19 @@
+#include <metal_stdlib>
+using namespace metal;
+kernel void r_16n2(device float* data0_1, device float* data1_16, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  threadgroup __attribute__((aligned(16))) float temp0[16];
+  float acc0[1];
+  int lidx0 = lid.x; /* 16 */
+  float val0 = (*(data1_16+lidx0));
+  *(temp0+lidx0) = val0;
+  threadgroup_barrier(mem_flags::mem_threadgroup);
+  *(acc0+0) = 0.0f;
+  for (int Ridx101 = 0; Ridx101 < 16; Ridx101++) {
+    float val1 = (*(temp0+Ridx101));
+    *(acc0+0) = ((*(acc0+0))+val1);
+  }
+  bool alu5 = (lidx0==0);
+  if (alu5) {
+    *(data0_1+0) = -sqrt((*(acc0+0)));
+  }
+}
