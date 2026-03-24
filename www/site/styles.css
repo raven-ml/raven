@@ -23,6 +23,7 @@
   --color-vega: #eab308;      /* yellow */
   --color-norn: #14b8a6;      /* teal */
   --color-munin: #f97316;     /* orange-warm */
+  --color-tolk: #64748b;      /* slate */
   
   /* Syntax highlighting */
   --syntax-comment: #666;
@@ -149,6 +150,7 @@ hr {
 .color-yellow { color: var(--color-vega); }  /* vega */
 .color-teal { color: var(--color-norn); }   /* norn */
 .color-munin { color: var(--color-munin); } /* munin */
+.color-slate { color: var(--color-tolk); }  /* tolk */
 
 /* Remove underlines from colored library links */
 a.color-blue,
@@ -162,7 +164,8 @@ a.color-pink,
 a.color-lime,
 a.color-yellow,
 a.color-teal,
-a.color-munin {
+a.color-munin,
+a.color-slate {
   text-decoration: none;
 }
 

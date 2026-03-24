@@ -50,6 +50,7 @@ let () = Hugin.(figure () |> subplot |> Plotting.plot ~x ~y |> ignore; show ())
 |     | Package                        | Like              | What it does                                             |
 | --- | ------------------------------ | ----------------- | -------------------------------------------------------- |
 |     | [**nx**](packages/nx/)         | NumPy             | N-dimensional arrays with linear algebra operations      |
+| ᛏ   | [**tolk**](packages/tolk/)     | tinygrad          | Minimal ML compiler for GPU tensor computation           |
 | ᚱ   | [**rune**](packages/rune/)     | JAX               | Automatic differentiation and functional transformations |
 | ᚲ   | [**kaun**](packages/kaun/)     | Flax              | Neural networks and training                             |
 | ᚹ   | [**vega**](packages/vega/)     | Optax             | Composable gradient-based optimizers                     |

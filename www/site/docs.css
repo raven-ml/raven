@@ -106,6 +106,7 @@ body {
 .nav-links a.color-red { color: var(--color-kaun) !important; }     /* kaun */
 .nav-links a.color-indigo { color: var(--color-sowilo) !important; } /* sowilo */
 .nav-links a.color-lime { color: var(--color-fehu) !important; }    /* fehu */
+.nav-links a.color-slate { color: var(--color-tolk) !important; }   /* tolk */
 
 /* Tab navigation */
 .nav-tabs {

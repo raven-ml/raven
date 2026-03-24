@@ -20,6 +20,14 @@ let libraries =
       symbol = "";
     };
     {
+      name = "tolk";
+      display = {|<span class="rune-symbol">ᛏ</span> tolk|};
+      color = "color-slate";
+      description = "Minimal ML compiler for GPU tensor computation";
+      tagline = "GPU tensor compiler for OCaml";
+      symbol = {|ᛏ|};
+    };
+    {
       name = "rune";
       display = {|<span class="rune-symbol">ᚱ</span> rune|};
       color = "color-orange";

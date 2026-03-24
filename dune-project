@@ -29,7 +29,8 @@
 
 (pin
  (url "git+https://github.com/invariant-hq/thumper.git")
- (package (name thumper)))
+ (package
+  (name thumper)))
 
 (package
  (name nx)
@@ -124,7 +125,6 @@
   (ocaml
    (>= 5.2))
   dune
-  (dune-configurator :build)
   (windtrap :with-test)
   (thumper :with-test))
  (tags
@@ -295,6 +295,8 @@
   "Raven is an ecosystem of composable libraries for numerical computing in OCaml. Tensors, automatic differentiation, neural networks, dataframes, plotting, tokenization, computer vision, reinforcement learning, and interactive notebooks.")
  (depends
   (nx
+   (= :version))
+  (tolk
    (= :version))
   (brot
    (= :version))

@@ -20,6 +20,13 @@ let libraries =
         ("nx.effect", "Nx_effect");
         ("nx.io", "Nx_io");
       ] );
+    ( "tolk",
+      [
+        ("tolk", "Tolk");
+        ("tolk.ir", "Tolk_ir");
+        ("tolk.cpu", "Tolk_cpu");
+        ("tolk.metal", "Tolk_metal");
+      ] );
     ("rune", [ ("rune", "Rune") ]);
     ( "kaun",
       [
