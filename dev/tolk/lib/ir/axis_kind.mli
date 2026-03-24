@@ -28,7 +28,6 @@ type t =
   | Reduce  (** Reduction axis. *)
   | Upcast  (** Vectorization (upcast) axis. *)
   | Unroll  (** Unrolled loop axis. *)
-  | Outer  (** Outer loop axis. *)
   | Placeholder  (** Placeholder for unassigned axes. *)
 
 (** {1:predicates Predicates and comparisons} *)
@@ -41,6 +40,22 @@ val compare : t -> t -> int
 
 (** {1:fmt Formatting} *)
 
+val to_string : t -> string
+(** [to_string kind] is a lowercase string (e.g. ["global"], ["group_reduce"]). *)
+
 val pp : Format.formatter -> t -> unit
-(** [pp] formats an axis kind as a lowercase string (e.g. ["global"],
-    ["thread"], ["group_reduce"]). *)
+(** [pp] formats an axis kind with {!to_string}. *)
+
+(** {1:data Data definitions} *)
+
+(* CR: that's a weird API, I suspect this is used to implement something that should be provided in axis_kind itself possibly? *)
+val to_pos : t -> int
+(** [to_pos kind] is the sorting priority for [kind]. *)
+
+(* CR: what is this used for? if it's really useful we should document *)
+val letter : t -> string
+(** [letter kind] is a single-character label (e.g. ["g"], ["l"], ["R"]). *)
+
+(* CR: is this even used? That's such a weird api, seems out of place? *)
+val color : t -> string
+(** [color kind] is a debug color name (e.g. ["blue"], ["cyan"]). *)
