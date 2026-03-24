@@ -1,0 +1,10 @@
+__kernel void reduce_rows(__global float* data0, __global float* data1) {
+  float acc0[1];
+  int gidx0 = get_group_id(0); /* 8 */
+  *(acc0+0) = 0.0f;
+  for (int Ridx1 = 0; Ridx1 < 32; Ridx1++) {
+    float val0 = (*(data0+((gidx0<<5)+Ridx1)));
+    *(acc0+0) = ((*(acc0+0))+val0);
+  }
+  *(data1+gidx0) = (*(acc0+0));
+}

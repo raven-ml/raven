@@ -1,0 +1,126 @@
+(executable
+ (name generate_actual)
+ (libraries tolk))
+
+(rule
+ (package tolk)
+ (targets
+  clang_dot_product.actual
+  clang_elementwise_add.actual
+  clang_elementwise_cast_f16.actual
+  clang_elementwise_int32.actual
+  clang_elementwise_sqrt.actual
+  clang_elementwise_where.actual
+  clang_gated_store.actual
+  clang_multi_output.actual
+  clang_no_optimize.actual
+  clang_parallel_reduce.actual
+  clang_reduce_rows.actual
+  clang_sum_reduce.actual
+  cuda_dot_product.actual
+  cuda_elementwise_2d.actual
+  cuda_elementwise_add.actual
+  cuda_elementwise_cast_f16.actual
+  cuda_elementwise_int32.actual
+  cuda_elementwise_sqrt.actual
+  cuda_elementwise_where.actual
+  cuda_gated_store.actual
+  cuda_matmul_small.actual
+  cuda_multi_output.actual
+  cuda_no_optimize.actual
+  cuda_parallel_reduce.actual
+  cuda_reduce_rows.actual
+  cuda_sum_reduce.actual
+  metal_dot_product.actual
+  metal_elementwise_2d.actual
+  metal_elementwise_add.actual
+  metal_elementwise_cast_f16.actual
+  metal_elementwise_int32.actual
+  metal_elementwise_sqrt.actual
+  metal_elementwise_where.actual
+  metal_gated_store.actual
+  metal_matmul_small.actual
+  metal_multi_output.actual
+  metal_no_optimize.actual
+  metal_parallel_reduce.actual
+  metal_reduce_rows.actual
+  metal_sum_reduce.actual
+  opencl_dot_product.actual
+  opencl_elementwise_2d.actual
+  opencl_elementwise_add.actual
+  opencl_elementwise_cast_f16.actual
+  opencl_elementwise_int32.actual
+  opencl_elementwise_sqrt.actual
+  opencl_elementwise_where.actual
+  opencl_gated_store.actual
+  opencl_matmul_small.actual
+  opencl_multi_output.actual
+  opencl_no_optimize.actual
+  opencl_parallel_reduce.actual
+  opencl_reduce_rows.actual
+  opencl_sum_reduce.actual)
+ (action
+  (run ./generate_actual.exe .)))
+
+; max_reduce .expected files are kept as reference for when decomposition
+; steps (18-21) are ported. No .actual is generated yet so no diff rules.
+
+(rule
+ (alias runtest)
+ (package tolk)
+ (action
+  (progn
+   (diff clang_dot_product.expected clang_dot_product.actual)
+   (diff clang_elementwise_add.expected clang_elementwise_add.actual)
+   (diff clang_elementwise_cast_f16.expected clang_elementwise_cast_f16.actual)
+   (diff clang_elementwise_int32.expected clang_elementwise_int32.actual)
+   (diff clang_elementwise_sqrt.expected clang_elementwise_sqrt.actual)
+   (diff clang_elementwise_where.expected clang_elementwise_where.actual)
+   (diff clang_gated_store.expected clang_gated_store.actual)
+   (diff clang_multi_output.expected clang_multi_output.actual)
+   (diff clang_no_optimize.expected clang_no_optimize.actual)
+   (diff clang_parallel_reduce.expected clang_parallel_reduce.actual)
+   (diff clang_reduce_rows.expected clang_reduce_rows.actual)
+   (diff clang_sum_reduce.expected clang_sum_reduce.actual)
+   (diff cuda_dot_product.expected cuda_dot_product.actual)
+   (diff cuda_elementwise_2d.expected cuda_elementwise_2d.actual)
+   (diff cuda_elementwise_add.expected cuda_elementwise_add.actual)
+   (diff cuda_elementwise_cast_f16.expected cuda_elementwise_cast_f16.actual)
+   (diff cuda_elementwise_int32.expected cuda_elementwise_int32.actual)
+   (diff cuda_elementwise_sqrt.expected cuda_elementwise_sqrt.actual)
+   (diff cuda_elementwise_where.expected cuda_elementwise_where.actual)
+   (diff cuda_gated_store.expected cuda_gated_store.actual)
+   (diff cuda_matmul_small.expected cuda_matmul_small.actual)
+   (diff cuda_multi_output.expected cuda_multi_output.actual)
+   (diff cuda_no_optimize.expected cuda_no_optimize.actual)
+   (diff cuda_parallel_reduce.expected cuda_parallel_reduce.actual)
+   (diff cuda_reduce_rows.expected cuda_reduce_rows.actual)
+   (diff cuda_sum_reduce.expected cuda_sum_reduce.actual)
+   (diff metal_dot_product.expected metal_dot_product.actual)
+   (diff metal_elementwise_2d.expected metal_elementwise_2d.actual)
+   (diff metal_elementwise_add.expected metal_elementwise_add.actual)
+   (diff metal_elementwise_cast_f16.expected metal_elementwise_cast_f16.actual)
+   (diff metal_elementwise_int32.expected metal_elementwise_int32.actual)
+   (diff metal_elementwise_sqrt.expected metal_elementwise_sqrt.actual)
+   (diff metal_elementwise_where.expected metal_elementwise_where.actual)
+   (diff metal_gated_store.expected metal_gated_store.actual)
+   (diff metal_matmul_small.expected metal_matmul_small.actual)
+   (diff metal_multi_output.expected metal_multi_output.actual)
+   (diff metal_no_optimize.expected metal_no_optimize.actual)
+   (diff metal_parallel_reduce.expected metal_parallel_reduce.actual)
+   (diff metal_reduce_rows.expected metal_reduce_rows.actual)
+   (diff metal_sum_reduce.expected metal_sum_reduce.actual)
+   (diff opencl_dot_product.expected opencl_dot_product.actual)
+   (diff opencl_elementwise_2d.expected opencl_elementwise_2d.actual)
+   (diff opencl_elementwise_add.expected opencl_elementwise_add.actual)
+   (diff opencl_elementwise_cast_f16.expected opencl_elementwise_cast_f16.actual)
+   (diff opencl_elementwise_int32.expected opencl_elementwise_int32.actual)
+   (diff opencl_elementwise_sqrt.expected opencl_elementwise_sqrt.actual)
+   (diff opencl_elementwise_where.expected opencl_elementwise_where.actual)
+   (diff opencl_gated_store.expected opencl_gated_store.actual)
+   (diff opencl_matmul_small.expected opencl_matmul_small.actual)
+   (diff opencl_multi_output.expected opencl_multi_output.actual)
+   (diff opencl_no_optimize.expected opencl_no_optimize.actual)
+   (diff opencl_parallel_reduce.expected opencl_parallel_reduce.actual)
+   (diff opencl_reduce_rows.expected opencl_reduce_rows.actual)
+   (diff opencl_sum_reduce.expected opencl_sum_reduce.actual))))

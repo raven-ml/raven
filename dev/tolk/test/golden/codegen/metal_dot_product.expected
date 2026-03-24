@@ -1,0 +1,12 @@
+#include <metal_stdlib>
+using namespace metal;
+kernel void dot_product(device float* data0, device float* data1, device float* data2, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  float acc0[1];
+  *(acc0+0) = 0.0f;
+  for (int Ridx0 = 0; Ridx0 < 128; Ridx0++) {
+    float val0 = (*(data0+Ridx0));
+    float val1 = (*(data1+Ridx0));
+    *(acc0+0) = ((*(acc0+0))+(val0*val1));
+  }
+  *(data2+0) = (*(acc0+0));
+}

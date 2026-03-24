@@ -1,0 +1,6 @@
+__kernel void multi_output(__global float* data0, __global float* data1, __global float* data2) {
+  int gidx0 = get_group_id(0); /* 256 */
+  float val0 = (*(data0+gidx0));
+  *(data1+gidx0) = (val0+1.0f);
+  *(data2+gidx0) = (val0*2.0f);
+}

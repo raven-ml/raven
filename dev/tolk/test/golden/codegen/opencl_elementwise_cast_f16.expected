@@ -1,0 +1,7 @@
+#pragma OPENCL EXTENSION cl_khr_fp16 : enable
+__kernel void elementwise_cast_f16(__global half* data0, __global float* data1, __global float* data2) {
+  int gidx0 = get_group_id(0); /* 256 */
+  half val0 = (*(data0+gidx0));
+  float val1 = (*(data1+gidx0));
+  *(data2+gidx0) = (((float)(val0))+val1);
+}

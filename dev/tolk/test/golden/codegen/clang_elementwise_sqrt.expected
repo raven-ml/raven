@@ -1,0 +1,4 @@
+void elementwise_sqrt(float* restrict data0, float* restrict data1, const int core_id) {
+  float val0 = (*(data0+core_id));
+  *(data1+core_id) = __builtin_sqrtf(val0);
+}

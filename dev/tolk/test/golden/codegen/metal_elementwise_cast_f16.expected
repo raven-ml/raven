@@ -1,0 +1,8 @@
+#include <metal_stdlib>
+using namespace metal;
+kernel void elementwise_cast_f16(device half* data0, device float* data1, device float* data2, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  int gidx0 = gid.x; /* 256 */
+  half val0 = (*(data0+gidx0));
+  float val1 = (*(data1+gidx0));
+  *(data2+gidx0) = (((float)(val0))+val1);
+}

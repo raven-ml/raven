@@ -1,0 +1,8 @@
+void gated_store(float* restrict data0, float* restrict data1, float* restrict data2, const int core_id) {
+  float val0 = (*(data0+core_id));
+  float val1 = (*(data1+core_id));
+  _Bool alu0 = (core_id<200);
+  if (alu0) {
+    *(data2+core_id) = (val0+val1);
+  }
+}

@@ -1,0 +1,5 @@
+void elementwise_int32(int* restrict data0, int* restrict data1, int* restrict data2, const int core_id) {
+  int val0 = (*(data0+core_id));
+  int val1 = (*(data1+core_id));
+  *(data2+core_id) = (val0+val1);
+}

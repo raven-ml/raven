@@ -1,0 +1,8 @@
+#include <metal_stdlib>
+using namespace metal;
+kernel void elementwise_where(device float* data0, device float* data1, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  int gidx0 = gid.x; /* 256 */
+  float val0 = (*(data0+gidx0));
+  float alu0 = ((0.0f<val0)?val0:0.0f);
+  *(data1+gidx0) = alu0;
+}

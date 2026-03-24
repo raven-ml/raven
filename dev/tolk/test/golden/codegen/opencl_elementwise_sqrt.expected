@@ -1,0 +1,5 @@
+__kernel void elementwise_sqrt(__global float* data0, __global float* data1) {
+  int gidx0 = get_group_id(0); /* 256 */
+  float val0 = (*(data0+gidx0));
+  *(data1+gidx0) = sqrt(val0);
+}

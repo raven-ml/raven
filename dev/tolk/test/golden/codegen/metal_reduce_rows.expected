@@ -1,0 +1,12 @@
+#include <metal_stdlib>
+using namespace metal;
+kernel void reduce_rows(device float* data0, device float* data1, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  float acc0[1];
+  int gidx0 = gid.x; /* 8 */
+  *(acc0+0) = 0.0f;
+  for (int Ridx1 = 0; Ridx1 < 32; Ridx1++) {
+    float val0 = (*(data0+((gidx0<<5)+Ridx1)));
+    *(acc0+0) = ((*(acc0+0))+val0);
+  }
+  *(data1+gidx0) = (*(acc0+0));
+}

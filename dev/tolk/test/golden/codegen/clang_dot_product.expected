@@ -1,0 +1,10 @@
+void dot_product(float* restrict data0, float* restrict data1, float* restrict data2) {
+  float acc0[1];
+  *(acc0+0) = 0.0f;
+  for (int Ridx0 = 0; Ridx0 < 128; Ridx0++) {
+    float val0 = (*(data0+Ridx0));
+    float val1 = (*(data1+Ridx0));
+    *(acc0+0) = ((*(acc0+0))+(val0*val1));
+  }
+  *(data2+0) = (*(acc0+0));
+}

@@ -1,0 +1,7 @@
+#include <metal_stdlib>
+using namespace metal;
+kernel void elementwise_sqrt(device float* data0, device float* data1, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  int gidx0 = gid.x; /* 256 */
+  float val0 = (*(data0+gidx0));
+  *(data1+gidx0) = sqrt(val0);
+}

@@ -1,0 +1,9 @@
+__kernel void sum_reduce(__global float* data0, __global float* data1) {
+  float acc0[1];
+  *(acc0+0) = 0.0f;
+  for (int Ridx0 = 0; Ridx0 < 256; Ridx0++) {
+    float val0 = (*(data0+Ridx0));
+    *(acc0+0) = ((*(acc0+0))+val0);
+  }
+  *(data1+0) = (*(acc0+0));
+}

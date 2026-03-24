@@ -1,0 +1,5 @@
+void multi_output(float* restrict data0, float* restrict data1, float* restrict data2, const int core_id) {
+  float val0 = (*(data0+core_id));
+  *(data1+core_id) = (val0+1.0f);
+  *(data2+core_id) = (val0*2.0f);
+}

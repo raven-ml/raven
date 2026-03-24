@@ -1,0 +1,9 @@
+void reduce_rows(float* restrict data0, float* restrict data1, const int core_id) {
+  float acc0[1];
+  *(acc0+0) = 0.0f;
+  for (int Ridx1 = 0; Ridx1 < 32; Ridx1++) {
+    float val0 = (*(data0+((core_id<<5)+Ridx1)));
+    *(acc0+0) = ((*(acc0+0))+val0);
+  }
+  *(data1+core_id) = (*(acc0+0));
+}

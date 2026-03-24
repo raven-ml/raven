@@ -1,0 +1,6 @@
+__kernel void elementwise_add(__global float* data0, __global float* data1, __global float* data2) {
+  int gidx0 = get_group_id(0); /* 256 */
+  float val0 = (*(data0+gidx0));
+  float val1 = (*(data1+gidx0));
+  *(data2+gidx0) = (val0+val1);
+}

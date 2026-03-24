@@ -1,0 +1,13 @@
+void parallel_reduce(float* restrict data0, float* restrict data1, float* restrict data2) {
+  float acc0[1];
+  float acc1[1];
+  *(acc0+0) = 0.0f;
+  *(acc1+0) = 0.0f;
+  for (int Ridx0 = 0; Ridx0 < 128; Ridx0++) {
+    float val0 = (*(data0+Ridx0));
+    *(acc0+0) = ((*(acc0+0))+val0);
+    *(acc1+0) = ((*(acc1+0))+(val0*val0));
+  }
+  *(data1+0) = (*(acc0+0));
+  *(data2+0) = (*(acc1+0));
+}

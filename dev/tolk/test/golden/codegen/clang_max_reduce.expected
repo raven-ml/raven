@@ -1,0 +1,10 @@
+void max_reduce(float* restrict data0, float* restrict data1) {
+  float acc0[1];
+  *(acc0+0) = ((float)(-__builtin_inff()));
+  for (int Ridx0 = 0; Ridx0 < 64; Ridx0++) {
+    float val0 = (*(data0+Ridx0));
+    float alu1 = (((*(acc0+0))<val0)?val0:(*(acc0+0)));
+    *(acc0+0) = alu1;
+  }
+  *(data1+0) = (*(acc0+0));
+}
