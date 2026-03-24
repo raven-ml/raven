@@ -12,9 +12,9 @@ module Sd = Tolk_ir.Special_dim
 
 (* Helpers *)
 
-let global_ptr dt = D.Ptr.create dt ()
-let local_ptr dt = D.Ptr.create dt ~addrspace:Local ()
-let reg_ptr dt = D.Ptr.create dt ~addrspace:Reg ()
+let global_ptr dt = D.ptr_of dt ~addrspace:Global ~size:(-1)
+let local_ptr dt = D.ptr_of dt ~addrspace:Local ~size:(-1)
+let reg_ptr dt = D.ptr_of dt ~addrspace:Reg ~size:(-1)
 let mk_idx () = K.const (C.int D.index 0)
 let mk_f32 () = K.const (C.float D.float32 1.0)
 let mk_i32 () = K.const (C.int D.int32 0)
@@ -143,17 +143,17 @@ let () =
             is_true (K.gep_multi ~src:v ~idxs:[ 0 ] == add);
             let result = K.gep_multi ~src:v ~idxs:[ 0; 1 ] in
             (match K.view result with
-             | Vectorize _ -> ()
-             | _ -> fail "expected Vectorize"));
-          test "gep_multi multi gives vectorize" (fun () ->
+             | Gep { idxs = [0; 1]; _ } -> ()
+             | _ -> fail "expected multi-element Gep"));
+          test "gep_multi multi gives gep" (fun () ->
             let v =
               K.vectorize
                 ~srcs:[ mk_f32 (); mk_f32 (); mk_f32 (); mk_f32 () ]
             in
             let result = K.gep_multi ~src:v ~idxs:[ 0; 2 ] in
             (match K.view result with
-             | Vectorize _ -> ()
-             | _ -> fail "expected Vectorize"));
+             | Gep { idxs = [0; 2]; _ } -> ()
+             | _ -> fail "expected multi-element Gep"));
           test "broadcast scalar to n" (fun () ->
             let s = mk_f32 () in
             let b = K.broadcast s 4 in
@@ -161,9 +161,10 @@ let () =
             (match K.view b with
              | Vectorize { srcs; _ } -> equal int 4 (List.length srcs)
              | _ -> fail "expected Vectorize"));
-          test "broadcast pointer identity" (fun () ->
+          test "broadcast pointer creates vectorize" (fun () ->
             let p = mk_param () in
-            is_true (K.broadcast p 4 == p));
+            let b = K.broadcast p 4 in
+            is_true (match K.view b with K.Vectorize { srcs; _ } -> List.length srcs = 4 | _ -> false));
           test "broadcast n <= 1 identity" (fun () ->
             let s = mk_f32 () in
             is_true (K.broadcast s 1 == s);
@@ -182,7 +183,7 @@ let () =
           test "define_local local" (fun () ->
             validate_ok (K.define_local ~size:8 ~dtype:(local_ptr D.float32)));
           test "define_reg reg" (fun () ->
-            validate_ok (K.define_reg ~size:4 ~dtype:(reg_ptr D.float32)));
+            validate_ok (K.define_reg ~size:4 ~dtype:(reg_ptr D.float32) ~slot:0));
           test "define_var" (fun () ->
             validate_ok (K.define_var ~name:"n" ~lo:0 ~hi:10 ()));
           test "const all types" (fun () ->
@@ -249,7 +250,7 @@ let () =
           test "reject define_reg local addrspace" (fun () ->
             raises_validate "Reg addrspace" (fun () ->
                 validate_ok
-                  (K.define_reg ~size:4 ~dtype:(local_ptr D.float32))));
+                  (K.define_reg ~size:4 ~dtype:(local_ptr D.float32) ~slot:0)));
           test "reject define_var vector" (fun () ->
             raises_validate "must be scalar" (fun () ->
                 validate_ok
@@ -310,7 +311,7 @@ let () =
                 validate_ok
                   (K.binary ~op:`Idiv ~lhs:(mk_f32 ()) ~rhs:(mk_f32 ()))));
           test "reject where non-bool cond" (fun () ->
-            raises_validate "must be bool scalar" (fun () ->
+            raises_validate "must be bool" (fun () ->
                 validate_ok
                   (K.ternary ~op:`Where ~a:(mk_i32 ()) ~b:(mk_f32 ())
                      ~c:(mk_f32 ()))));
@@ -409,7 +410,7 @@ let () =
                  (K.define_local ~size:8 ~dtype:(local_ptr D.float32))
                = K.Pointer);
             is_true
-              (K.sort (K.define_reg ~size:4 ~dtype:(reg_ptr D.float32))
+              (K.sort (K.define_reg ~size:4 ~dtype:(reg_ptr D.float32) ~slot:0)
                = K.Pointer);
             is_true
               (K.sort
@@ -471,16 +472,16 @@ let () =
                    | _ -> None)
               | _ -> None
             in
-            let nodes = K.toposort (K.rebuild rewrite root) in
+            let nodes = K.toposort (K.graph_rewrite rewrite root) in
             is_false (has_const_int 3 nodes);
             is_true (has_const_int 4 nodes));
-          test "rebuild no match identity" (fun () ->
+          test "graph_rewrite no match identity" (fun () ->
             let root = K.sink [ K.unary ~op:`Neg ~src:(mk_f32 ()) ] in
-            let result = K.rebuild (fun _ -> None) root in
+            let result = K.graph_rewrite (fun _ -> None) root in
             equal int
               (List.length (K.toposort root))
               (List.length (K.toposort result)));
-          test "rewrite_fixpoint converges" (fun () ->
+          test "graph_rewrite simplifies" (fun () ->
             let x = mk_f32 () in
             let zero = K.const (C.float D.float32 0.0) in
             let root =
@@ -498,23 +499,8 @@ let () =
               | _ -> None
             in
             is_true
-              (List.length (K.toposort (K.rewrite_fixpoint rewrite root))
+              (List.length (K.toposort (K.graph_rewrite rewrite root))
                < List.length (K.toposort root)));
-          test "rewrite_fixpoint diverges raises" (fun () ->
-            let three = K.const (C.int D.index 3) in
-            let four = K.const (C.int D.index 4) in
-            let root = K.sink [ three ] in
-            let rewrite node =
-              match K.view node with
-              | Const { value; _ } ->
-                  (match C.view value with
-                   | Int n when Int64.to_int n = 3 -> Some four
-                   | Int n when Int64.to_int n = 4 -> Some three
-                   | _ -> None)
-              | _ -> None
-            in
-            raises_validate "fixpoint not reached" (fun () ->
-                ignore (K.rewrite_fixpoint ~max_iters:4 rewrite root)));
           test "first_match returns first" (fun () ->
             let r1 _ = Some (K.const_int 1) in
             let r2 _ = Some (K.const_int 2) in
@@ -588,9 +574,161 @@ let () =
                 applied_opts = [ K.Opt.Local { axis = 0; amount = 4 } ];
                 opts_to_apply = None;
                 estimates = None;
-                metadata_tags = [ "test" ];
               }
             in
             K.validate (K.sink ~kernel_info:ki []));
+        ];
+      group "Constructor short-circuits"
+        [
+          test "group singleton returns child" (fun () ->
+            let x = mk_f32 () in
+            is_true (K.group [ x ] == x));
+          test "group empty creates Group" (fun () ->
+            (match K.view (K.group []) with
+             | Group _ -> ()
+             | _ -> fail "expected Group"));
+          test "group multi creates Group" (fun () ->
+            let a = mk_f32 () and b = mk_f32 () in
+            (match K.view (K.group [ a; b ]) with
+             | Group { srcs } -> equal int 2 (List.length srcs)
+             | _ -> fail "expected Group"));
+          test "after empty deps returns src" (fun () ->
+            let x = mk_f32 () in
+            is_true (K.after ~src:x ~deps:[] == x));
+          test "after with deps creates After" (fun () ->
+            let x = mk_f32 () and d = mk_f32 () in
+            (match K.view (K.after ~src:x ~deps:[ d ]) with
+             | After { src; deps } ->
+                 is_true (src == x);
+                 equal int 1 (List.length deps)
+             | _ -> fail "expected After"));
+        ];
+      group "Range analysis"
+        [
+          test "ended_ranges for End" (fun () ->
+            let size = K.const (C.int D.index 4) in
+            let r0 = K.range ~size ~axis:0 ~kind:Ak.Loop () in
+            let ended = K.end_ ~value:(mk_f32 ()) ~ranges:[ r0 ] () in
+            let ers = K.ended_ranges ended in
+            equal int 1 (List.length ers);
+            is_true (List.hd ers == r0));
+          test "ended_ranges for Reduce" (fun () ->
+            let size = K.const (C.int D.index 4) in
+            let r0 = K.range ~size ~axis:0 ~kind:Ak.Reduce () in
+            let red = K.reduce ~op:`Add ~src:(mk_f32 ()) ~ranges:[ r0 ]
+                ~dtype:D.float32 in
+            let ers = K.ended_ranges red in
+            equal int 1 (List.length ers);
+            is_true (List.hd ers == r0));
+          test "ended_ranges for Store" (fun () ->
+            let size = K.const (C.int D.index 4) in
+            let r0 = K.range ~size ~axis:0 ~kind:Ak.Loop () in
+            let idx = K.index ~ptr:(mk_param ()) ~idxs:[ mk_idx () ] () in
+            let st = K.store ~dst:idx ~value:(mk_f32 ()) ~ranges:[ r0 ] in
+            let ers = K.ended_ranges st in
+            equal int 1 (List.length ers);
+            is_true (List.hd ers == r0));
+          test "ended_ranges for After delegates to deps" (fun () ->
+            let size = K.const (C.int D.index 4) in
+            let r0 = K.range ~size ~axis:0 ~kind:Ak.Loop () in
+            let ended = K.end_ ~value:(mk_f32 ()) ~ranges:[ r0 ] () in
+            let aft = K.after ~src:(mk_f32 ()) ~deps:[ ended ] in
+            let ers = K.ended_ranges aft in
+            equal int 1 (List.length ers);
+            is_true (List.hd ers == r0));
+          test "ended_ranges for leaf is empty" (fun () ->
+            equal int 0 (List.length (K.ended_ranges (mk_f32 ()))));
+          test "ended_ranges for Contract with live" (fun () ->
+            let size = K.const (C.int D.index 4) in
+            let r0 = K.range ~size ~axis:0 ~kind:Ak.Upcast () in
+            let r1 = K.range ~size ~axis:1 ~kind:Ak.Upcast () in
+            let r2 = K.range ~size ~axis:2 ~kind:Ak.Loop () in
+            let live _ = [ r0; r1; r2 ] in
+            let contract =
+              K.contract ~src:(mk_f32 ()) ~axes:[ (0, 4); (1, 4) ]
+                ~dtype:(D.vec D.float32 16)
+            in
+            let ers = K.ended_ranges ~live contract in
+            equal int 2 (List.length ers);
+            is_true (List.exists (fun r -> r == r0) ers);
+            is_true (List.exists (fun r -> r == r1) ers);
+            is_false (List.exists (fun r -> r == r2) ers));
+          test "ended_ranges for Contract without live is empty" (fun () ->
+            let contract =
+              K.contract ~src:(mk_f32 ()) ~axes:[ (0, 4) ]
+                ~dtype:(D.vec D.float32 4)
+            in
+            equal int 0 (List.length (K.ended_ranges contract)));
+          test "live_ranges_tbl simple reduce" (fun () ->
+            let size = K.const (C.int D.index 4) in
+            let r0 = K.range ~size ~axis:0 ~kind:Ak.Reduce () in
+            let red = K.reduce ~op:`Add ~src:(mk_f32 ()) ~ranges:[ r0 ]
+                ~dtype:D.float32 in
+            let root = K.sink [ red ] in
+            let tbl = K.live_ranges_tbl root in
+            (* r0 is live at itself *)
+            let r0_live =
+              match K.Ref_tbl.find_opt tbl r0 with Some r -> r | None -> []
+            in
+            is_true (List.exists (fun r -> r == r0) r0_live);
+            (* r0 is NOT live at reduce (it's ended there) *)
+            let red_live =
+              match K.Ref_tbl.find_opt tbl red with Some r -> r | None -> []
+            in
+            is_false (List.exists (fun r -> r == r0) red_live));
+          test "live_ranges_tbl nested ranges" (fun () ->
+            let size = K.const (C.int D.index 4) in
+            let r0 = K.range ~size ~axis:0 ~kind:Ak.Loop () in
+            let r1 = K.range ~size ~axis:1 ~kind:Ak.Reduce () in
+            (* src depends on both ranges so both are in its backward slice *)
+            let src = K.binary ~op:`Add ~lhs:r0 ~rhs:r1 in
+            let red = K.reduce ~op:`Add ~src ~ranges:[ r1 ]
+                ~dtype:D.index in
+            let ended = K.end_ ~value:red ~ranges:[ r0 ] () in
+            let root = K.sink [ ended ] in
+            let tbl = K.live_ranges_tbl root in
+            (* r0 and r1 are both live at src (it depends on both ranges) *)
+            let src_live =
+              match K.Ref_tbl.find_opt tbl src with Some r -> r | None -> []
+            in
+            is_true (List.exists (fun r -> r == r0) src_live);
+            is_true (List.exists (fun r -> r == r1) src_live);
+            (* r1 is ended at reduce, but r0 is still live *)
+            let red_live =
+              match K.Ref_tbl.find_opt tbl red with Some r -> r | None -> []
+            in
+            is_true (List.exists (fun r -> r == r0) red_live);
+            is_false (List.exists (fun r -> r == r1) red_live));
+        ];
+      group "Substitute"
+        [
+          test "substitute replaces by identity" (fun () ->
+            let a = K.const (C.float D.float32 1.0) in
+            let b = K.const (C.float D.float32 2.0) in
+            let add = K.binary ~op:`Add ~lhs:a ~rhs:b in
+            let root = K.sink [ add ] in
+            let c = K.const (C.float D.float32 3.0) in
+            let result = K.substitute [ (a, c) ] root in
+            (* The old a should be replaced with c *)
+            let nodes = K.toposort result in
+            is_true (List.exists (fun n -> n == c) nodes);
+            is_false (List.exists (fun n -> n == a) nodes));
+          test "substitute no match identity" (fun () ->
+            let a = mk_f32 () and b = mk_f32 () in
+            let add = K.binary ~op:`Add ~lhs:a ~rhs:b in
+            let root = K.sink [ add ] in
+            let result = K.substitute [] root in
+            is_true (result == root));
+          test "substitute propagates tags" (fun () ->
+            let tags = K.Ref_tbl.create 4 in
+            let a = mk_f32 () in
+            K.Ref_tbl.replace tags a 42;
+            let b = mk_f32 () in
+            let add = K.binary ~op:`Add ~lhs:a ~rhs:b in
+            let root = K.sink [ add ] in
+            let c = mk_f32 () in
+            let _ = K.substitute ~tags [ (a, c) ] root in
+            (* Tag should be copied from a to c *)
+            equal (option int) (Some 42) (K.Ref_tbl.find_opt tags c));
         ];
     ]

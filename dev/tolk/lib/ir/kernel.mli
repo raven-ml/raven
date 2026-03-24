@@ -16,7 +16,7 @@
     - inspect nodes with {!view};
     - analyze them with {!dtype}, {!sort}, {!children}, and {!toposort};
     - validate with {!validate};
-    - rewrite DAGs with {!map_children}, {!rebuild}, and {!rewrite_fixpoint}.
+    - rewrite DAGs with {!map_children} and {!graph_rewrite}.
 
     Validation is intentionally relaxed for late-kernel IR: transient
     vectorized index-like values are allowed before devectorization, and
@@ -26,7 +26,9 @@
 (** {1:types Types} *)
 
 type t
-(** A kernel DAG node. Values are hash-consed on demand with {!intern}. *)
+(** A kernel DAG node. Values are hash-consed: structurally identical nodes
+    are physically identical, enabling correct deduplication in
+    {!graph_rewrite}. *)
 
 type sort =
   | Value  (** Scalar or vector computation. *)
@@ -105,7 +107,6 @@ type kernel_info = {
   opts_to_apply : Opt.t list option;
       (** Remaining options to apply, or [None] for auto-tuning. *)
   estimates : estimates option;  (** Cost estimates, if computed. *)
-  metadata_tags : string list;  (** User-facing tags from call-site metadata. *)
 }
 (** Non-semantic kernel annotations currently carried by {!Sink}. *)
 
@@ -122,8 +123,8 @@ type view =
       (** Image buffer parameter with pixel dimensions. *)
   | Define_local of { size : int; dtype : Dtype.ptr }
       (** Local (workgroup-shared) memory buffer of [size] elements. *)
-  | Define_reg of { size : int; dtype : Dtype.ptr }
-      (** Register-backed buffer of [size] elements. *)
+  | Define_reg of { size : int; dtype : Dtype.ptr; slot : int }
+      (** Register-backed buffer of [size] elements at accumulator [slot]. *)
   | Define_var of { name : string; lo : int; hi : int; dtype : Dtype.t }
       (** Scalar loop or index variable bounded by \[[lo];[hi]\]. *)
   | Bufferize of {
@@ -136,8 +137,11 @@ type view =
       (** Compile-time constant. *)
   | Invalid_index of { dtype : Dtype.t }
       (** Invalid index sentinel. *)
-  | Index of { ptr : t; idxs : t list; gate : t option; dtype : Dtype.ptr }
-      (** Indexes into [ptr] with per-dimension [idxs] and optional [gate]. *)
+  | Index of { ptr : t; idxs : t list; gate : t option; dtype : Dtype.any }
+      (** Indexes into [ptr] with per-dimension [idxs] and optional [gate].
+          When [dtype] is [P _], the node is a pointer-typed index (buffer
+          address). When [dtype] is [T _], it is a value-typed index that
+          [pm_add_loads] will later wrap with {!Load}. *)
   | Ptrcat of { srcs : t list; dtype : Dtype.ptr }
       (** Concatenates pointer bundles. *)
   | Load of { src : t; alt : t option; dtype : Dtype.t }
@@ -150,17 +154,21 @@ type view =
       (** Binary arithmetic, logic, or comparison. *)
   | Ternary of { op : Op.ternary; a : t; b : t; c : t; dtype : Dtype.t }
       (** Ternary operation ([Where] or [Mulacc]). *)
-  | Cast of { src : t; dtype : Dtype.t }
-      (** Type cast. *)
+  | Cast of { src : t; dtype : Dtype.any }
+      (** Type cast. When [dtype] is [P _], this is a pointer reinterpretation
+          (e.g. widening an Index pointer for grouped loads). *)
   | Bitcast of { src : t; dtype : Dtype.t }
       (** Bit-preserving reinterpretation. *)
-  | Vectorize of { srcs : t list; dtype : Dtype.t }
-      (** Packs scalar [srcs] into a vector. *)
+  | Vectorize of { srcs : t list; dtype : Dtype.any }
+      (** Packs scalar [srcs] into a vector.  When the sources are pointers,
+          [dtype] is [P _] with [v = List.length srcs]. *)
   | Cat of { srcs : t list; dtype : Dtype.t }
       (** Concatenates vectors with a common scalar type. *)
-  | Gep of { src : t; idx : int; dtype : Dtype.t }
-      (** Extracts element [idx] from a vector. *)
-  | Range of { size : t; dtype : Dtype.t; axis : int; kind : Axis_kind.t }
+  | Gep of { src : t; idxs : int list; dtype : Dtype.t }
+      (** Extracts elements at [idxs] from a vector. When [idxs] has one
+          element, the result is scalar. When [idxs] has multiple elements,
+          the result is a vector of the extracted elements. *)
+  | Range of { size : t; dtype : Dtype.t; axis : int; sub : int list; kind : Axis_kind.t }
       (** Loop or index variable over \[[0];[size-1]\] on [axis]. *)
   | End of { value : t; ranges : t list }
       (** Closes loop [ranges] around [value]. *)
@@ -199,10 +207,14 @@ val sink : ?kernel_info:kernel_info -> t list -> t
 (** [sink ?kernel_info srcs] is a kernel root with semantic sources [srcs]. *)
 
 val group : t list -> t
-(** [group srcs] groups effect-like children without introducing a value. *)
+(** [group srcs] groups effect-like children without introducing a value.
+
+    Returns [src] unchanged when [srcs] is a singleton list. *)
 
 val after : src:t -> deps:t list -> t
-(** [after ~src ~deps] sequences [src] after [deps]. *)
+(** [after ~src ~deps] sequences [src] after [deps].
+
+    Returns [src] unchanged when [deps] is empty. *)
 
 val param : idx:int -> dtype:Dtype.ptr -> t
 (** [param ~idx ~dtype] is a global buffer parameter. *)
@@ -213,8 +225,11 @@ val param_image : idx:int -> dtype:Dtype.ptr -> width:int -> height:int -> t
 val define_local : size:int -> dtype:Dtype.ptr -> t
 (** [define_local ~size ~dtype] defines a local-memory buffer. *)
 
-val define_reg : size:int -> dtype:Dtype.ptr -> t
-(** [define_reg ~size ~dtype] defines a register-backed buffer. *)
+val define_reg : size:int -> dtype:Dtype.ptr -> slot:int -> t
+(** [define_reg ~size ~dtype ~slot] defines a register-backed buffer.
+
+    [slot] is a unique accumulator index that prevents parallel reduce
+    accumulators from being merged by {!intern}. *)
 
 val define_var : name:string -> lo:int -> hi:int -> ?dtype:Dtype.t -> unit -> t
 (** [define_var ~name ~lo ~hi ()] is a scalar loop or index variable.
@@ -233,12 +248,21 @@ val invalid_index : ?lanes:int -> unit -> t
 
     [lanes] defaults to [1]. *)
 
-val index : ptr:t -> idxs:t list -> ?gate:t -> unit -> t
-(** [index ~ptr ~idxs ?gate ()] indexes pointer [ptr].
+val index : ptr:t -> idxs:t list -> ?gate:t -> ?as_ptr:bool -> unit -> t
+(** [index ~ptr ~idxs ?gate ?as_ptr ()] indexes pointer [ptr].
 
-    The result pointer dtype is derived from [ptr].
+    When [as_ptr] is [true] (the default), the result is a pointer-typed
+    index ([dtype = P pty]). When [as_ptr] is [false], the result is a
+    value-typed index ([dtype = T base]) that [pm_add_loads] will later
+    wrap with {!Load}.
 
     Raises [Invalid_argument] if [ptr] does not produce a pointer. *)
+
+val index_raw : ptr:t -> idxs:t list -> ?gate:t -> dtype:Dtype.any -> unit -> t
+(** [index_raw ~ptr ~idxs ?gate ~dtype ()] creates an Index node with an
+    explicit [Dtype.any] dtype. Unlike {!index}, this does not validate [ptr]
+    and does not derive the dtype from [ptr]. Used by rewrite rules that need
+    to change an Index's dtype directly (e.g., [pm_add_loads]). *)
 
 val ptrcat : srcs:t list -> dtype:Dtype.ptr -> t
 (** [ptrcat ~srcs ~dtype] concatenates pointer bundles. *)
@@ -268,8 +292,9 @@ val ternary : op:Op.ternary -> a:t -> b:t -> c:t -> t
 
     [Where] inherits the dtype of [b]. [Mulacc] inherits the dtype of [a]. *)
 
-val cast : src:t -> dtype:Dtype.t -> t
-(** [cast ~src ~dtype] casts [src] to [dtype]. *)
+val cast : src:t -> dtype:Dtype.any -> t
+(** [cast ~src ~dtype] casts [src] to [dtype]. When [dtype] is [P _], the
+    result is a pointer-typed node (e.g. widening an Index for grouped loads). *)
 
 val bitcast : src:t -> dtype:Dtype.t -> t
 (** [bitcast ~src ~dtype] bitcasts [src] to [dtype]. *)
@@ -292,13 +317,24 @@ val gep : src:t -> idx:int -> t
     Raises [Invalid_argument] if [src] does not produce a dtype. *)
 
 val range :
-  size:t -> axis:int -> kind:Axis_kind.t -> ?dtype:Dtype.t -> unit -> t
+  size:t -> axis:int -> ?sub:int list -> kind:Axis_kind.t -> ?dtype:Dtype.t -> unit -> t
 (** [range ~size ~axis ~kind ()] is a loop/index variable over [size].
 
     [dtype] defaults to {!Dtype.index}. *)
 
-val end_ : value:t -> ranges:t list -> t
-(** [end_ ~value ~ranges] closes loop ranges around [value]. *)
+val end_ : value:t -> ranges:t list -> ?tag:string -> unit -> t
+(** [end_ ~value ~ranges ()] closes loop ranges around [value].
+
+    [tag] sets the node's tag. Pass [~tag:"mergeable"] to mark Ends
+    created by reduce-to-accumulator lowering. *)
+
+val tag : t -> string option
+(** [tag node] is the node's tag, or [None]. *)
+
+val with_tag : string -> t -> t
+(** [with_tag s node] returns a node with the same view as [node] and tag
+    [Some s]. Because tags are part of the hash-consing key, the result may
+    be a different physical node than [node]. *)
 
 val barrier : t
 (** [barrier] is a barrier effect. *)
@@ -348,14 +384,15 @@ val gep_multi : src:t -> idxs:int list -> t
 (** [gep_multi ~src ~idxs] extracts elements at [idxs] from vector [src].
 
     Returns [src] unchanged if [idxs] is [[0]] and [src] is scalar.
-    Returns a single {!Gep} for one index. Returns {!Vectorize} of {!Gep}s
-    for multiple indices. *)
+    Returns a single scalar {!Gep} for one index. Returns a multi-element
+    {!Gep} for multiple indices. *)
 
 val broadcast : t -> int -> t
 (** [broadcast node n] repeats [node] into an [n]-wide vector.
 
     Scalars become {!Vectorize} with [n] copies. Vectors become {!Cat} of
-    [n] copies. Pointer nodes return unchanged. [n <= 1] returns [node]. *)
+    [n] copies. Pointer nodes become {!Vectorize} with pointer vector
+    width [n]. [n <= 1] returns [node]. *)
 
 val const_int : int -> t
 (** [const_int n] is an {!Dtype.index} constant [n]. *)
@@ -399,7 +436,44 @@ val is_alu : t -> bool
 val is_ptr : t -> bool
 (** [is_ptr node] is [true] for pointer-producing nodes ({!Param},
     {!Param_image}, {!Define_local}, {!Define_reg}, {!Bufferize}, {!Index},
-    {!Ptrcat}), including through {!After}/{!Cast}/{!Bitcast} wrappers. *)
+    {!Ptrcat}, {!Vectorize} with [P _] dtype), including through
+    {!After}/{!Cast}/{!Bitcast} wrappers. *)
+
+val get_ptr_dtype : t -> Dtype.ptr option
+(** [get_ptr_dtype node] returns the pointer dtype of [node], if it is a
+    pointer-producing node. Follows through {!After}/{!Cast}/{!Bitcast}
+    wrappers. *)
+
+val is_range : t -> bool
+(** [is_range node] is [true] for {!Range} nodes. *)
+
+val is_const : t -> bool
+(** [is_const node] is [true] for {!Const} nodes. *)
+
+val range_size : t -> t
+(** [range_size node] is the [size] child of a {!Range} node.
+
+    Raises [Invalid_argument] if [node] is not a {!Range}. *)
+
+val range_axis : t -> int
+(** [range_axis node] is the [axis] of a {!Range} node.
+
+    Raises [Invalid_argument] if [node] is not a {!Range}. *)
+
+val range_kind : t -> Axis_kind.t
+(** [range_kind node] is the [kind] of a {!Range} node.
+
+    Raises [Invalid_argument] if [node] is not a {!Range}. *)
+
+val range_sub : t -> int list
+(** [range_sub node] is the [sub] indices of a {!Range} node.
+
+    Raises [Invalid_argument] if [node] is not a {!Range}. *)
+
+val const_to_int : t -> int
+(** [const_to_int node] extracts the integer value of a {!Const} node.
+
+    Raises [Invalid_argument] if [node] is not an integer constant. *)
 
 val dtype_or : Dtype.t -> t -> Dtype.t
 (** [dtype_or default node] is the value dtype of [node], or [default] if
@@ -428,24 +502,142 @@ val replace : t -> ?children:t list -> ?dtype:Dtype.t -> unit -> t
     [children] must have the same length as [children node]. [dtype] applies
     only to value-dtype nodes; pointer-dtype nodes and effect nodes ignore it.
 
-    The result is NOT interned; call {!intern} if hash-consing is needed. *)
+    The result is interned (hash-consed via {!mk}). *)
 
 val map_children : (t -> t) -> view -> view
 (** [map_children f v] rebuilds the direct children of [v] with [f]. *)
 
-val rebuild : (t -> t option) -> t -> t
-(** [rebuild f root] rebuilds [root] bottom-up.
 
-    Children are rebuilt first. Then [f] is applied to the rebuilt node. When
-    [f n] is [Some n'], [n'] replaces [n]. When it is [None], [n] is kept. The
-    result is interned before being returned. *)
+val graph_rewrite : ?name:string -> (t -> t option) -> t -> t
+(** [graph_rewrite ?name f root] applies [f] to every node in the DAG
+    rooted at [root] in a single pass. Each node is processed at most
+    once. When a rewrite produces a new node, that node is fully
+    processed (its children are visited), but already-processed nodes
+    are never re-visited. [name] is used in error messages. *)
 
-val rewrite_fixpoint : ?max_iters:int -> (t -> t option) -> t -> t
-(** [rewrite_fixpoint ?max_iters f root] repeatedly applies {!rebuild} with [f]
-    until the root stops changing.
+val substitute : ?tags:int Ref_tbl.t -> (t * t) list -> t -> t
+(** [substitute ?tags mappings root] replaces nodes in [root] by physical
+    identity ([==]). Each [(old, new_)] pair causes [old] to be replaced
+    with [new_].
 
-    Raises [Failure] if [max_iters] rewrites are applied without reaching a
-    fixpoint. [max_iters] defaults to [16]. *)
+    When [tags] is provided, tag propagation is enabled: if a replaced or
+    rebuilt node has an entry in [tags], the entry is copied to the new node. *)
+
+(** {1:analysis Analysis} *)
+
+val backward_slice : t -> t list
+(** [backward_slice root] is all nodes transitively reachable from [root]
+    (walking children), in topological order (leaves first).
+
+    {b Note.} The result includes [root] itself (as the last element). *)
+
+val in_backward_slice : t -> t -> bool
+(** [in_backward_slice needle haystack] is [true] if [needle] appears in the
+    transitive dependencies of [haystack]. Uses physical identity ([==]). *)
+
+val find_nodes : (t -> bool) -> t -> t list
+(** [find_nodes pred root] returns all nodes in [root]'s DAG satisfying [pred],
+    in topological order. *)
+
+val range_start : t -> int option
+(** [range_start v] is the child index at which range arguments begin for
+    nodes that carry them.
+
+    Returns [Some 1] for {!view.Bufferize}, {!view.Reduce}, {!view.End};
+    [Some 2] for {!view.Store}; [Some 3] for {!view.Wmma};
+    [None] for all other nodes. *)
+
+val ended_ranges : ?live:(t -> t list) -> t -> t list
+(** [ended_ranges ?live node] is the list of ranges closed by [node].
+
+    For {!view.Bufferize}, {!view.Reduce}, {!view.Store}, {!view.Wmma}, and
+    {!view.End}: range children from the range-start offset onward. For
+    {!view.After}: the union of [ended_ranges] of deps. For {!view.Contract}:
+    ranges from the source whose axis matches one of the contract's axis IDs,
+    looked up via [live]. Otherwise: empty.
+
+    [live] defaults to [fun _ -> []] and is required for correct {!view.Contract}
+    handling. {!live_ranges_tbl} provides the appropriate lookup automatically. *)
+
+val live_ranges : t -> t list
+(** [live_ranges node] is the set of {!view.Range} nodes that are transitively
+    reachable from [node]'s children and have not been ended by any inner
+    {!view.Reduce}, {!view.Store}, or {!view.End} node. If [node] is itself a
+    {!view.Range}, it is included.
+
+    {b Note.} Computed by a full bottom-up traversal of [node]'s DAG.
+    Not cached — callers that need live ranges for many nodes in the same
+    DAG should use {!live_ranges_tbl} instead. *)
+
+val live_ranges_tbl : t -> t list Ref_tbl.t
+(** [live_ranges_tbl root] precomputes {!live_ranges} for every node in the
+    DAG rooted at [root]. The returned table maps each node to its live
+    ranges.
+
+    Use this when the gate function of a traversal needs live-range
+    information for many nodes. *)
+
+(** {1:operators Operators}
+
+    {!module-O} provides infix operators for building arithmetic Kernel DAG
+    nodes. Open locally in codegen modules:
+
+    {[
+      let open Kernel.O in
+      let idx = base * int_ stride + offset in
+      ...
+    ]} *)
+
+module O : sig
+  val ( + ) : t -> t -> t
+  (** Binary {!Op.Add}. *)
+
+  val ( * ) : t -> t -> t
+  (** Binary {!Op.Mul}. *)
+
+  val ( / ) : t -> t -> t
+  (** Binary {!Op.Idiv}. *)
+
+  val ( mod ) : t -> t -> t
+  (** Binary {!Op.Mod}. *)
+
+  val ( < ) : t -> t -> t
+  (** Binary {!Op.Cmplt}. Result has boolean scalar dtype. *)
+
+  val eq : t -> t -> t
+  (** Binary {!Op.Cmpeq}. *)
+
+  val ne : t -> t -> t
+  (** Binary {!Op.Cmpne}. *)
+
+  val where : t -> t -> t -> t
+  (** [where cond then_ else_] is {!Op.Where}. *)
+
+  val neg : t -> t
+  (** Unary {!Op.Neg}. *)
+
+  val not_ : t -> t
+  (** Logical NOT: [eq node (bool_ false)]. *)
+
+  val cast : Dtype.t -> t -> t
+  (** [cast dtype node] casts [node] to [dtype]. *)
+
+  val int_ : int -> t
+  (** [int_ n] is [const_int n] ({!Dtype.index}-typed). *)
+
+  val float_ : float -> t
+  (** [float_ x] is [const_float x] ({!Dtype.float32}-typed). *)
+
+  val bool_ : bool -> t
+  (** [bool_ b] is [const_bool b]. *)
+end
+
+(** {1:comparison Comparison} *)
+
+val compare_structure : t -> t -> int
+(** [compare_structure a b] compares two nodes by recursive structural key
+    (op ordinal, arg, dtype, children). Used for canonicalizing commutative
+    operations. *)
 
 (** {1:formatting Formatting} *)
 
@@ -454,3 +646,13 @@ val pp_view : Format.formatter -> t -> unit
 
 val pp : Format.formatter -> t -> unit
 (** [pp] formats the whole DAG rooted at its argument. *)
+
+val view_op_name : view -> string
+(** [view_op_name v] is the operation name of [v] as an ["Ops.XXX"] string
+    (e.g., ["Ops.SINK"], ["Ops.LOAD"], ["Ops.ADD"]). *)
+
+val print_uops : ?label:string -> t -> unit
+(** [print_uops ?label root] prints the DAG rooted at [root] in columnar
+    format to stderr (one node per line: id, op, dtype, sources, value).
+    When [label] is provided, ["=== label ==="] is printed before the
+    listing. *)
