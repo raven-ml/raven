@@ -71,7 +71,7 @@ let assert_dtype msg expected actual =
 
 (* Program builder helpers *)
 
-let global_ptr dt = Dtype.Ptr.create dt ~addrspace:Global ()
+let global_ptr dt = Dtype.ptr_of dt ~addrspace:Global ~size:(-1)
 let f32_image_ptr = global_ptr Dtype.float32
 let vec_ptr = global_ptr float4_dt
 

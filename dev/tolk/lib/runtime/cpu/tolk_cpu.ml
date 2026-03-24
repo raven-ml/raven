@@ -339,6 +339,7 @@ let create name =
       ~exec:(fun program buffers args ->
         Cpu_queue.exec state program buffers args)
       ~synchronize:(fun () -> Cpu_queue.synchronize state)
+      ()
   in
   let compiler_set =
     Device.Compiler.
@@ -351,4 +352,4 @@ let create name =
   let allocator =
     Device.Allocator.Pack (Device.Lru_allocator.wrap raw_allocator)
   in
-  Device.make ~name ~allocator ~compiler_set ~queue ~prepare_program
+  Device.make ~name ~allocator ~compiler_set ~queue ~prepare_program ()

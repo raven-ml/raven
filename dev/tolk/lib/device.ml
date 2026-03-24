@@ -262,15 +262,17 @@ module Program = struct
     spec : Program_spec.t;
     src : string;
     binary : bytes;
+    applied_opts : Kernel.Opt.t list;
     mutable entry_addr : nativeint option;
     mutable cleanup : (unit -> unit) option;
   }
 
-  let make ~spec ~src ~binary =
-    { spec; src; binary; entry_addr = None; cleanup = None }
+  let make ?(applied_opts = []) ~spec ~src ~binary () =
+    { spec; src; binary; applied_opts; entry_addr = None; cleanup = None }
 
   let name t = Program_spec.name t.spec
   let src t = t.src
+  let applied_opts t = t.applied_opts
   let entry_name = name
   let entry_addr t = t.entry_addr
   let set_entry_addr t addr = t.entry_addr <- Some addr
@@ -292,16 +294,55 @@ module Program = struct
       t.cleanup
 
   let launch_dims t args = Program_spec.launch_dims t.spec args
+
+  let with_global_override global_override t =
+    { t with spec = Program_spec.with_global_dims global_override t.spec }
 end
 
 module Queue = struct
   type t = {
     exec : Program.t -> Buffer.t list -> int list -> unit;
+    timed_exec : (Program.t -> Buffer.t list -> int list -> float) option;
     synchronize : unit -> unit;
   }
 
-  let make ~exec ~synchronize = { exec; synchronize }
+  let make ~exec ?timed_exec ~synchronize () = { exec; timed_exec; synchronize }
   let exec t program bufs args = t.exec program bufs args
+
+  exception Exec_timeout
+
+  let timed_exec ?timeout_ms t program bufs args =
+    let install_timeout () =
+      match timeout_ms with
+      | Some ms when ms > 0 ->
+          let secs = max 1 (ms / 1000) in
+          let prev = Sys.signal Sys.sigalrm
+            (Sys.Signal_handle (fun _ -> raise Exec_timeout)) in
+          ignore (Unix.alarm secs);
+          Some prev
+      | _ -> None
+    in
+    let cancel_timeout prev =
+      match prev with
+      | Some handler ->
+          ignore (Unix.alarm 0);
+          Sys.set_signal Sys.sigalrm handler
+      | None -> ()
+    in
+    let prev = install_timeout () in
+    match
+      (match t.timed_exec with
+       | Some f -> f program bufs args
+       | None ->
+           let t0 = Unix.gettimeofday () in
+           t.exec program bufs args;
+           t.synchronize ();
+           Unix.gettimeofday () -. t0)
+    with
+    | tm -> cancel_timeout prev; tm
+    | exception Exec_timeout -> cancel_timeout prev; infinity
+    | exception exn -> cancel_timeout prev; raise exn
+
   let synchronize t = t.synchronize ()
 end
 
@@ -364,6 +405,7 @@ type t = {
   compiler_set : Compiler.set;
   queue : Queue.t;
   prepare_program : Program.t -> unit;
+  invalidate_caches_fn : (unit -> unit) option;
 }
 
 type device = t
@@ -409,15 +451,23 @@ module Program_cache = struct
     Digest.to_hex (Digest.string (Marshal.to_string program []))
 
   let clone program = { program with Program.entry_addr = None; cleanup = None }
+
+  let mutex = Mutex.create ()
 end
 
-let make ~name ~allocator ~compiler_set ~queue ~prepare_program =
-  { name; allocator; compiler_set; queue; prepare_program }
+let make ~name ~allocator ~compiler_set ~queue ~prepare_program
+    ?invalidate_caches () =
+  { name; allocator; compiler_set; queue; prepare_program;
+    invalidate_caches_fn = invalidate_caches }
 
 let name d = d.name
 let renderer d = fst (Compiler.choose d.compiler_set)
 
-let compile_program d ?name ?(estimates = Program_spec.Estimates.zero) program =
+(* Two-level program cache: compiles the kernel once for a "base" device
+   (e.g. the first GPU) and clones the template for other devices sharing
+   the same compiler and renderer context, avoiding redundant render+compile
+   work in multi-device setups. *)
+let compile_program d ?name ?(applied_opts = []) ?(estimates = Program_spec.Estimates.zero) program =
   let render, comp = Compiler.choose d.compiler_set in
   let kernel_name = Option.value name ~default:"kern" in
   let kkey = Program_cache.kernel_key program in
@@ -434,37 +484,42 @@ let compile_program d ?name ?(estimates = Program_spec.Estimates.zero) program =
       }
   in
   let ckey = make_key ~device:d.name ~base:false in
-  match Program_cache.Cache.find_opt Program_cache.cache ckey with
-  | Some cached -> cached
-  | None ->
-      let bkey =
-        make_key ~device:(Program_cache.base_device d.name) ~base:true
-      in
-      let build_program () =
-        let src = Renderer.render render ~name:kernel_name program in
-        let binary = comp.compile src in
-        let spec =
-          Program_spec.of_program ~name:kernel_name ~estimates program
-        in
-        Program.make ~spec ~src ~binary
-      in
-      let template =
-        match Program_cache.Cache.find_opt Program_cache.cache bkey with
-        | Some cached -> Program_cache.clone cached
-        | None ->
-            let tmpl = Program_cache.clone (build_program ()) in
-            Program_cache.Cache.add Program_cache.cache bkey tmpl;
-            tmpl
-      in
-      let program = Program_cache.clone template in
-      d.prepare_program program;
-      Program_cache.Cache.add Program_cache.cache ckey program;
-      program
+  Mutex.lock Program_cache.mutex;
+  Fun.protect
+    ~finally:(fun () -> Mutex.unlock Program_cache.mutex)
+    (fun () ->
+      match Program_cache.Cache.find_opt Program_cache.cache ckey with
+      | Some cached -> cached
+      | None ->
+          let bkey =
+            make_key ~device:(Program_cache.base_device d.name) ~base:true
+          in
+          let build_program () =
+            let src = Renderer.render render ~name:kernel_name program in
+            let binary = comp.compile src in
+            let spec =
+              Program_spec.of_program ~name:kernel_name ~estimates program
+            in
+            Program.make ~applied_opts ~spec ~src ~binary ()
+          in
+          let template =
+            match Program_cache.Cache.find_opt Program_cache.cache bkey with
+            | Some cached -> Program_cache.clone cached
+            | None ->
+                let tmpl = Program_cache.clone (build_program ()) in
+                Program_cache.Cache.add Program_cache.cache bkey tmpl;
+                tmpl
+          in
+          let program = Program_cache.clone template in
+          d.prepare_program program;
+          Program_cache.Cache.add Program_cache.cache ckey program;
+          program)
 
 let create_buffer ~size ~dtype ?spec d =
   Buffer.create ~device:d.name ~size ~dtype ?spec d.allocator
 
 let queue d = d.queue
+let invalidate_caches d = Option.iter (fun f -> f ()) d.invalidate_caches_fn
 
 module Multi_buffer = struct
   type t = { bufs : Buffer.t list }

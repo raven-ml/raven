@@ -120,6 +120,11 @@ let load ~link_symbol ~entry obj =
   let elf = Elf.load obj in
   prepare ~link_symbol ~entry elf
 
+(* Patches a single relocation in the loaded ELF image at runtime. Handles
+   x86_64 PC-relative (PC32, PLT32) and ARM64 page-relative (ADRP, ADD/LDSTn
+   lo12, CALL26/JUMP26) relocation types. For ARM64 CALL26/JUMP26 targets
+   beyond the +/-128 MiB direct-branch range, emits a trampoline stub (LDR X17
+   + BR X17 + 8-byte absolute address) appended to the image. *)
 let apply_reloc image ~base reloc =
   let open Int64 in
   let ploc = reloc.offset in

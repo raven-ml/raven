@@ -40,7 +40,9 @@ let render_custom_fmt fmt args =
         let field = String.sub fmt (!i + 1) (!j - !i - 1) |> String.trim in
         let idx =
           if field = "" then (let k = !next in incr next; k)
-          else match int_of_string_opt field with Some k -> k | None -> 0
+          else match int_of_string_opt field with
+            | Some k -> k
+            | None -> invalid_arg (strf "render_custom_fmt: non-numeric placeholder {%s}" field)
         in
         if idx >= 0 && idx < n then Buffer.add_string buf a.(idx);
         i := !j + 1
@@ -72,15 +74,15 @@ let base_scalar_name : scalar_name = function
   | Fp8e5m2 -> "unsigned char" | Index -> "long long"
 
 let render_dtype_str (sn : scalar_name) (dt : Dtype.t) =
-  let base = sn dt.scalar in
-  if dt.count > 1 then
-    strf "%s%d" (String.map (fun c -> if c = ' ' then '_' else c) base) dt.count
+  let base = sn (Dtype.scalar dt) in
+  if Dtype.count dt > 1 then
+    strf "%s%d" (String.map (fun c -> if c = ' ' then '_' else c) base) (Dtype.count dt)
   else base
 
 (* Constant rendering *)
 
 let render_float_lit f =
-  let s = strf "%g" f in
+  let s = strf "%.17g" f in
   if String.contains s '.' || String.contains s 'e' || String.contains s 'E'
   then s else s ^ ".0"
 
@@ -105,12 +107,12 @@ let render_const_base ~infinity ~nan_ ~render_cast (c : Const.t) (dt : Dtype.t) 
       if Float.is_nan f then strf "(%s)" (render_cast dt nan_)
       else if f = Float.infinity then strf "(%s)" (render_cast dt infinity)
       else if f = Float.neg_infinity then strf "(%s)" (render_cast dt ("-" ^ infinity))
-      else (match dt.scalar with
+      else (match Dtype.scalar dt with
         | Float64 -> render_float_lit f
         | Float16 | Bfloat16 | Fp8e4m3 | Fp8e5m2 ->
             strf "(%s)" (render_cast dt (render_float_lit f ^ "f"))
         | _ -> render_float_lit f ^ "f")
-  | Int v -> (match dt.scalar with
+  | Int v -> (match Dtype.scalar dt with
       | Int64 -> strf "%Ldll" v
       | Uint64 -> strf "%Luull" v
       | Uint32 -> strf "%uu" (truncate_u32 (Int64.to_int v))
@@ -125,6 +127,13 @@ type code_for_op = {
   binary : Op.binary -> string -> string -> Dtype.t -> string;
   ternary : Op.ternary -> string -> string -> string -> Dtype.t -> string;
 }
+
+(* Ops handled by base_code_for_op — passed to Renderer.make so
+   supported_ops_of_code_for_op derives accurate decomposition flags. *)
+let base_code_for_op_list : Renderer.code_op list =
+  [ Sqrt; Recip; Neg; Exp2; Log2; Sin; Trunc;
+    And; Xor; Or; Add; Sub; Mul; Mod; Idiv; Cmpne;
+    Shr; Shl; Cmplt; Where; Cmpeq; Fdiv ]
 
 let base_code_for_op = {
   unary = (fun op x _dt -> match op with
@@ -193,7 +202,7 @@ let is_associative = function
 let base_render : rule = fun program id v lang r ->
   match v with
   | Define_reg { size; dtype } ->
-      Some (strf "%s %s[%d];" (lang.type_map dtype.base) r.(id) size)
+      Some (strf "%s %s[%d];" (lang.type_map (Dtype.base dtype)) r.(id) size)
   | If { cond; _ } -> Some (strf "if (%s) {" r.(cond))
   | End_range _ | Endif _ -> Some "}"
   | Wmma { name; a; b; c; _ } ->
@@ -206,7 +215,7 @@ let base_render : rule = fun program id v lang r ->
       let l, rr = lang.float4_style in
       Some (strf "%s%s%s%s" (lang.float4_ctor dtype) l
         (String.concat "," (List.map (fun s -> r.(s)) srcs)) rr)
-  | Cast { src; dtype } when dtype.count > 1 ->
+  | Cast { src; dtype } when Dtype.count dtype > 1 ->
       Some (strf "__builtin_convertvector(%s, %s)" r.(src) (lang.type_map dtype))
   | Cast { src; dtype } ->
       Some (strf "(%s)" (lang.render_cast dtype r.(src)))
@@ -214,18 +223,15 @@ let base_render : rule = fun program id v lang r ->
       Some (lang.render_bitcast program src dtype r.(src))
   | Define_local { size; dtype } ->
       Some (strf "%s%s%s %s[%d];"
-        lang.smem_align lang.smem_prefix (lang.type_map dtype.base) r.(id) size)
+        lang.smem_align lang.smem_prefix (lang.type_map (Dtype.base dtype)) r.(id) size)
   | Barrier -> Some lang.barrier
   | Special { dim; size; _ } ->
       Some (strf "%s; /* %s */" (lang.code_for_workitem dim) r.(size))
   | Const { value; dtype } -> Some (lang.render_const value dtype)
   | Index { ptr; idxs; _ } ->
       let idx_str = match idxs with
-        | [idx] ->
-            (* strip parens around Add indices — the outer [] already delimit *)
-            (match Program.view program idx with
-            | Binary { op = `Add; _ } -> strip_parens r.(idx)
-            | _ -> r.(idx))
+        | [] -> "0"
+        | [idx] -> r.(idx)
         | _ -> String.concat "+" (List.map (fun s -> r.(s)) idxs)
       in
       Some (strf "(%s+%s)" r.(ptr) idx_str)
@@ -238,20 +244,31 @@ let base_render : rule = fun program id v lang r ->
   | Unary { op; src; dtype } ->
       Some (lang.code_for_op.unary op r.(src) dtype)
   | Binary { op; lhs; rhs; dtype } ->
-      let a = if is_associative op then strip_parens r.(lhs) else r.(lhs) in
-      let b = if is_associative op then strip_parens r.(rhs) else r.(rhs) in
-      Some (lang.code_for_op.binary op a b dtype)
+      (* Strip parens only when the child is the SAME associative op as the
+         parent. This avoids incorrectly flattening e.g. (a+b)*c -> a+b*c. *)
+      let strip_if_same_op child =
+        match Program.view program child with
+        | Binary { op = child_op; _ } when child_op = op && is_associative op ->
+            strip_parens r.(child)
+        | _ -> r.(child)
+      in
+      Some (lang.code_for_op.binary op (strip_if_same_op lhs) (strip_if_same_op rhs) dtype)
   | Ternary { op; a; b; c; dtype } ->
       Some (lang.code_for_op.ternary op r.(a) r.(b) r.(c) dtype)
-  | Gep { src; idx; _ } ->
+  | Gep { src; idxs; dtype } ->
       let src_count = match Program.dtype program src with
-        | Some dt -> dt.count | None -> 1
+        | Some dt -> Dtype.count dt | None -> 1
       in
-      let accessor =
-        if src_count > lang.gep_arr_threshold then strf "[%d]" idx
-        else strf ".%s" (vec_elem_name idx)
+      let elem idx =
+        if src_count > lang.gep_arr_threshold then r.(src) ^ strf "[%d]" idx
+        else r.(src) ^ strf ".%s" (vec_elem_name idx)
       in
-      Some (r.(src) ^ accessor)
+      (match idxs with
+      | [idx] -> Some (elem idx)
+      | _ ->
+          let l, rr = lang.float4_style in
+          Some (strf "%s%s%s%s" (lang.float4_ctor dtype) l
+            (String.concat "," (List.map elem idxs)) rr))
   | Custom { fmt; args } | Custom_inline { fmt; args; _ } ->
       Some (render_custom_fmt fmt (List.map (fun s -> r.(s)) args))
   | _ -> None
@@ -272,11 +289,11 @@ let should_inline use_count program id (v : view) =
   | Const _ | Gep _ | Index _ | Custom_inline _ -> true
   | Load { src; alt = None; _ } -> (
       match Program.view program src with
-      | Index { dtype; _ } -> dtype.addrspace = Dtype.Reg
+      | Index { dtype; _ } -> Dtype.addrspace dtype = Dtype.Reg
       | _ -> false)
   | Unary _ | Binary _ | Ternary _ -> (
       match v with Ternary { op = `Where; _ } -> false | _ -> use_count <= 1)
-  | Cast { dtype; _ } -> dtype.count = 1 && use_count <= 1
+  | Cast { dtype; _ } -> Dtype.count dtype = 1 && use_count <= 1
   | Bitcast _ | Vectorize _ -> use_count <= 1
   | _ -> false
 
@@ -297,7 +314,11 @@ let axis_letter_of_kind : Axis_kind.t -> string = function
   | Loop -> "L" | Reduce -> "R" | Upcast -> "U" | Global -> "G"
   | _ -> "X"
 
-let range_name kind axis = strf "%sidx%d" (axis_letter_of_kind kind) axis
+let range_name kind axis sub =
+  let base = strf "%sidx%d" (axis_letter_of_kind kind) axis in
+  match sub with
+  | [] -> base
+  | _ -> strf "%s_%s" base (String.concat "_" (List.map string_of_int sub))
 
 (* Metadata collection *)
 
@@ -329,7 +350,11 @@ let collect_wmma_args program =
   ) program;
   dedup (List.rev !wmmas)
 
-(* The render loop — direct translation of CStyleLanguage._render *)
+(* Multi-pass rendering pipeline: first computes per-node use-counts for
+   inlining decisions (single-use expressions are emitted inline rather than
+   assigned to temporaries), then marks writable refs by following Store→Index
+   chains so buffer parameters are declared mutable, and finally walks the
+   program in topological order to emit C-style source. *)
 
 let render_program (lang : lang) (program : Program.t) =
   let n = Program.length program in
@@ -379,7 +404,7 @@ let render_program (lang : lang) (program : Program.t) =
     | After { src; _ } -> r.(id) <- r.(src)
     | Param { idx; dtype } ->
         let name =
-          if dtype.size > 0 then strf "data%d_%d" idx dtype.size
+          if Dtype.ptr_size dtype > 0 then strf "data%d_%d" idx (Dtype.ptr_size dtype)
           else strf "data%d" idx
         in
         r.(id) <- name;
@@ -397,7 +422,7 @@ let render_program (lang : lang) (program : Program.t) =
     | _ ->
         let prefix = match v with
           | Special { dim; _ } -> r.(id) <- special_name dim; None
-          | Range { axis; kind; _ } -> r.(id) <- range_name kind axis; None
+          | Range { axis; kind; sub; _ } -> r.(id) <- range_name kind axis sub; None
           | _ ->
               let p = prefix_of v in
               r.(id) <- peek_name p;
@@ -443,8 +468,8 @@ let default_render_kernel lang name kernel bufs program =
     | Buf_ptr dtype ->
       let type_str =
         lang.buffer_prefix ^
-        (render_dtype_str (fun s -> lang.type_map { Dtype.scalar = s; count = 1 })
-           dtype.base) ^
+        (render_dtype_str (fun s -> lang.type_map (Dtype.of_scalar s))
+           (Dtype.base dtype)) ^
         "*" ^ lang.buffer_suffix
       in
       strf "%s %s" type_str b.buf_name
@@ -512,27 +537,27 @@ let clang_scalar_name : scalar_name = function
 
 let clang_render_vector_prefix scalar_name (dt : Dtype.t) =
   let type_map = render_dtype_str scalar_name in
-  let scalar = type_map { dt with count = 1 } in
+  let scalar = type_map (Dtype.scalar_of dt) in
   let vec = type_map dt in
   let alignment =
     let sz = Dtype.itemsize dt in
     1 lsl (int_of_float (log (float_of_int sz) /. log 2.0))
   in
   strf "typedef %s %s __attribute__((aligned(%d),ext_vector_type(%d)));"
-    scalar vec alignment dt.count
+    scalar vec alignment (Dtype.count dt)
 
 let clang_render_kernel lang name kernel bufs program =
   let used = collect_used_dtypes program in
   let vec_defs = List.filter_map (fun (dt : Dtype.t) ->
-    if dt.count > 1 then Some (clang_render_vector_prefix clang_scalar_name dt)
+    if Dtype.count dt > 1 then Some (clang_render_vector_prefix clang_scalar_name dt)
     else None) used
   in
   let wmma_defs = List.concat_map (fun wi ->
     let type_map = render_dtype_str clang_scalar_name in
     let n, m, _ = wi.wi_dims in
-    let out = type_map { scalar = wi.wi_dtype_in; count = n * n } in
-    let dt1 = type_map { scalar = wi.wi_dtype_in; count = n } in
-    let dt2 = type_map { scalar = wi.wi_dtype_in; count = m } in
+    let out = type_map (Dtype.vec (Dtype.of_scalar wi.wi_dtype_in) (n * n)) in
+    let dt1 = type_map (Dtype.vec (Dtype.of_scalar wi.wi_dtype_in) n) in
+    let dt2 = type_map (Dtype.vec (Dtype.of_scalar wi.wi_dtype_in) m) in
     [ {|#define AMX_SET(imm5) __asm("nop\\nnop\\nnop\\n.word (0x201000+(%0<<5)+%1)" : : "i"(17), "i"(imm5) : "memory")|};
       {|#define AMX(op, gpr, btf) __asm(".word (0x201000+(%0 << 5)+0%1-((0%1>>4)*6))" : : "i"(op), "r"((unsigned long long)(gpr)+(btf)) : "memory")|};
       strf {|static %s __%s(%s data1, %s data2, %s data0){
@@ -555,8 +580,8 @@ let clang_lang = make_lang ~scalar_name:clang_scalar_name
   ~infinity:{|__builtin_inff()|} ~nan_:{|__builtin_nanf("")|}
   ~code_for_op:{ base_code_for_op with
     unary = (fun op x dt -> match op with
-      | `Sqrt -> strf "%s(%s)" (if dt.scalar = Float64 then "__builtin_sqrt" else "__builtin_sqrtf") x
-      | `Trunc -> strf "%s(%s)" (if dt.scalar = Float64 then "__builtin_trunc" else "__builtin_truncf") x
+      | `Sqrt -> strf "%s(%s)" (if Dtype.scalar dt = Float64 then "__builtin_sqrt" else "__builtin_sqrtf") x
+      | `Trunc -> strf "%s(%s)" (if Dtype.scalar dt = Float64 then "__builtin_trunc" else "__builtin_truncf") x
       | _ -> base_code_for_op.unary op x dt);
     binary = (fun op a b dt -> match op with
       | `Fdiv -> strf "(%s/%s)" a b
@@ -579,7 +604,7 @@ let opencl_render_bitcast tm program src_id dst v =
   strf "as_%s((%s)(%s))" (tm dst) (tm src_dt) v
 
 let opencl_bf16_const_rule : rule = fun _program _id v _lang _r -> match v with
-  | Const { value; dtype } when dtype.scalar = Dtype.Bfloat16 -> (
+  | Const { value; dtype } when Dtype.scalar dtype = Dtype.Bfloat16 -> (
       match Const.view value with
       | Float f -> Some (strf "%uu" (float_to_bf16_bits f))
       | _ -> None)
@@ -587,7 +612,7 @@ let opencl_bf16_const_rule : rule = fun _program _id v _lang _r -> match v with
 
 let opencl_render_kernel lang name kernel bufs program =
   let has_half = List.exists (fun (dt : Dtype.t) ->
-    dt.scalar = Dtype.Float16) (collect_used_dtypes program) in
+    Dtype.scalar dt = Dtype.Float16) (collect_used_dtypes program) in
   let prefix = if has_half then
     "#pragma OPENCL EXTENSION cl_khr_fp16 : enable\n" else "" in
   prefix ^ default_render_kernel lang name kernel bufs program
@@ -613,14 +638,14 @@ let opencl_lang = make_lang ~scalar_name:opencl_scalar_name
 (* Intel *)
 
 let intel_bf16_cast_rule : rule = fun program _id v lang r -> match v with
-  | Cast { src; dtype } when dtype.scalar = Dtype.Bfloat16 -> (
+  | Cast { src; dtype } when Dtype.scalar dtype = Dtype.Bfloat16 -> (
       match Program.dtype program src with
-      | Some src_dt when src_dt.scalar = Dtype.Float32 ->
+      | Some src_dt when Dtype.scalar src_dt = Dtype.Float32 ->
           Some (strf "intel_convert_bfloat16_as_ushort(%s)" r.(src))
       | _ -> None)
-  | Cast { src; dtype } when dtype.scalar = Dtype.Float32 -> (
+  | Cast { src; dtype } when Dtype.scalar dtype = Dtype.Float32 -> (
       match Program.dtype program src with
-      | Some src_dt when src_dt.scalar = Dtype.Bfloat16 ->
+      | Some src_dt when Dtype.scalar src_dt = Dtype.Bfloat16 ->
           Some (strf "intel_convert_as_bfloat16_float(%s)" r.(src))
       | _ -> None)
   | _ -> None
@@ -663,10 +688,10 @@ let metal_render_kernel lang name kernel bufs program =
   let type_map = render_dtype_str metal_scalar_name in
   let prefix = ["#include <metal_stdlib>"; "using namespace metal;"] in
   let wmma_prefix = List.map (fun wi ->
-    let dstr_out = type_map { scalar = wi.wi_dtype_out; count = 2 } in
-    let dstr_in = type_map { scalar = wi.wi_dtype_in; count = 2 } in
-    let simd_in = type_map { scalar = wi.wi_dtype_in; count = 1 } in
-    let simd_out = type_map { scalar = wi.wi_dtype_out; count = 1 } in
+    let dstr_out = type_map (Dtype.vec (Dtype.of_scalar wi.wi_dtype_out) 2) in
+    let dstr_in = type_map (Dtype.vec (Dtype.of_scalar wi.wi_dtype_in) 2) in
+    let simd_in = type_map (Dtype.of_scalar wi.wi_dtype_in) in
+    let simd_out = type_map (Dtype.of_scalar wi.wi_dtype_out) in
     strf {|%s __%s(%s a, %s b, %s c){
   simdgroup_%s8x8 mat_a, mat_b; simdgroup_%s8x8 mat_c;
   mat_a.thread_elements()[0] = a[0]; mat_b.thread_elements()[0] = b[0]; mat_c.thread_elements()[0] = c[0];
@@ -693,7 +718,7 @@ let metal_lang = make_lang ~scalar_name:metal_scalar_name
     match dim with
     | Group_id _ -> strf "gid.%c" (Char.chr (120 + a))
     | Local_id _ -> strf "lid.%c" (Char.chr (120 + a))
-    | Global_idx _ -> strf "(gid.%c*lid.%c)" (Char.chr (120 + a)) (Char.chr (120 + a)))
+    | Global_idx _ -> failwith "Metal does not support Global_idx specials")
   ~code_for_op:{ base_code_for_op with
     unary = (fun op x _dt -> match op with
       | `Sin -> strf "precise::sin(%s)" x
@@ -711,7 +736,7 @@ let cuda_scalar_name : scalar_name = function
   | s -> base_scalar_name s
 
 let is_half_or_bf16 (dt : Dtype.t) =
-  match dt.scalar with Float16 | Bfloat16 -> true | _ -> false
+  match Dtype.scalar dt with Float16 | Bfloat16 -> true | _ -> false
 
 let cuda_render_bitcast tm program src_id dst v =
   let src_dt = match Program.dtype program src_id with Some dt -> dt | None -> dst in
@@ -720,8 +745,8 @@ let cuda_render_bitcast tm program src_id dst v =
 let cuda_render_vector_prefix scalar_name (dt : Dtype.t) =
   let type_map = render_dtype_str scalar_name in
   let vec = type_map dt in
-  let scal = type_map { dt with count = 1 } in
-  let nms = List.init dt.count vec_elem_name in
+  let scal = type_map (Dtype.scalar_of dt) in
+  let nms = List.init (Dtype.count dt) vec_elem_name in
   let elems = String.concat ", " nms in
   let header = String.concat ", "
     (List.map (fun x -> strf "%s %s" scal x) nms) in
@@ -743,16 +768,16 @@ let cuda_render_kernel lang name kernel bufs program =
   ] in
   let used = collect_used_dtypes program in
   if List.exists (fun (dt : Dtype.t) ->
-    dt.scalar = Fp8e4m3 || dt.scalar = Fp8e5m2) used then
+    Dtype.scalar dt = Fp8e4m3 || Dtype.scalar dt = Fp8e5m2) used then
     prefix := !prefix @ [("#include <cuda_fp8.h>")];
-  if List.exists (fun (dt : Dtype.t) -> dt.scalar = Float16) used then
+  if List.exists (fun (dt : Dtype.t) -> Dtype.scalar dt = Float16) used then
     prefix := !prefix @ ["#include <cuda_fp16.h>"];
-  if List.exists (fun (dt : Dtype.t) -> dt.scalar = Bfloat16) used then
+  if List.exists (fun (dt : Dtype.t) -> Dtype.scalar dt = Bfloat16) used then
     prefix := !prefix @ ["#include <cuda_bf16.h>"];
   let vec_defs = List.filter_map (fun (dt : Dtype.t) ->
-    let need = match dt.scalar with
-      | Float16 | Bfloat16 -> List.mem dt.count [4; 8]
-      | Fp8e4m3 | Fp8e5m2 -> List.mem dt.count [2; 4; 8; 16]
+    let need = match Dtype.scalar dt with
+      | Float16 | Bfloat16 -> List.mem (Dtype.count dt) [4; 8]
+      | Fp8e4m3 | Fp8e5m2 -> List.mem (Dtype.count dt) [2; 4; 8; 16]
       | _ -> false
     in
     if need then Some (cuda_render_vector_prefix cuda_scalar_name dt)
@@ -764,10 +789,10 @@ let cuda_render_kernel lang name kernel bufs program =
     let n, m, k = wi.wi_dims in
     let ua, ub, uc = wi.wi_upcast_axes in
     let upcast_sizes = [prod (List.map snd ua); prod (List.map snd ub); prod (List.map snd uc)] in
-    let wmma_dtypes = List.map2 (fun dt size -> type_map { Dtype.scalar = dt; count = size })
+    let wmma_dtypes = List.map2 (fun dt size -> type_map (Dtype.vec (Dtype.of_scalar dt) size))
       [wi.wi_dtype_in; wi.wi_dtype_in; wi.wi_dtype_out] upcast_sizes in
     let n_operands = List.map2 (fun dt size ->
-      size * (Dtype.itemsize { scalar = dt; count = 1 }) / 4)
+      size * (Dtype.itemsize (Dtype.of_scalar dt)) / 4)
       [wi.wi_dtype_in; wi.wi_dtype_in; wi.wi_dtype_out] upcast_sizes in
     let total_ops = List.fold_left (+) 0 n_operands in
     let operands = List.init total_ops (fun i -> strf "%%%d" i) in
@@ -841,7 +866,7 @@ let amd_scalar_name ~cdna4 : scalar_name = function
   | s -> base_scalar_name s
 
 let ocml op (dt : Dtype.t) =
-  let bits = match dt.scalar with Float16 -> 16 | Float64 -> 64 | _ -> 32 in
+  let bits = match Dtype.scalar dt with Float16 -> 16 | Float64 -> 64 | _ -> 32 in
   strf "__ocml_%s_f%d" op bits
 
 let fp8_index = function
@@ -850,11 +875,11 @@ let fp8_index = function
 let amd_render_vector_prefix scalar_name (dt : Dtype.t) =
   let type_map = render_dtype_str scalar_name in
   let vec = type_map dt in
-  let scal = type_map { dt with count = 1 } in
-  let nms = List.init dt.count vec_elem_name in
+  let scal = type_map (Dtype.scalar_of dt) in
+  let nms = List.init (Dtype.count dt) vec_elem_name in
   strf "typedef %s %s __attribute__((ext_vector_type(%d)));\n\
         static inline __attribute__((device)) %s make_%s(%s) { return { %s }; }"
-    scal vec dt.count vec vec
+    scal vec (Dtype.count dt) vec vec
     (String.concat ", " (List.map (fun x -> strf "%s %s" scal x) nms))
     (String.concat ", " nms)
 
@@ -873,15 +898,15 @@ let amd_cdna_wmma_rule : rule = fun _program _id v _lang r -> match v with
   | _ -> None
 
 let amd_cdna_fp8_cast_rule : rule = fun program _id v lang r -> match v with
-  | Cast { src; dtype } when (dtype.scalar = Fp8e4m3 || dtype.scalar = Fp8e5m2) -> (
+  | Cast { src; dtype } when (Dtype.scalar dtype = Fp8e4m3 || Dtype.scalar dtype = Fp8e5m2) -> (
       match Program.dtype program src with
-      | Some src_dt when src_dt.scalar = Float32 ->
-          Some (strf "f32_to_fp8(%s, %d)" r.(src) (fp8_index dtype.scalar))
+      | Some src_dt when Dtype.scalar src_dt = Float32 ->
+          Some (strf "f32_to_fp8(%s, %d)" r.(src) (fp8_index (Dtype.scalar dtype)))
       | _ -> None)
-  | Cast { src; dtype } when dtype.scalar = Float32 -> (
+  | Cast { src; dtype } when Dtype.scalar dtype = Float32 -> (
       match Program.dtype program src with
-      | Some src_dt when src_dt.scalar = Fp8e4m3 || src_dt.scalar = Fp8e5m2 ->
-          let cvt = if src_dt.scalar = Fp8e5m2 then "bf8" else "fp8" in
+      | Some src_dt when Dtype.scalar src_dt = Fp8e4m3 || Dtype.scalar src_dt = Fp8e5m2 ->
+          let cvt = if Dtype.scalar src_dt = Fp8e5m2 then "bf8" else "fp8" in
           Some (strf "__builtin_amdgcn_cvt_f32_%s((unsigned int)%s, 0)" cvt r.(src))
       | _ -> None)
   | _ -> None
@@ -915,22 +940,22 @@ let amd_render_kernel ~cdna ~cdna4 ~rdna4 ~tensor_cores scalar_name
   Program.iteri (fun _id v -> match v with
     | Unary { op; dtype; _ } ->
         List.iter (fun (tag, name, attr) ->
-          if op = tag && (dtype.scalar = Float16 || dtype.scalar = Float32 || dtype.scalar = Float64) then
-            let bits = match dtype.scalar with Float16 -> 16 | Float64 -> 64 | _ -> 32 in
-            let dt_name = base_scalar_name dtype.scalar in
+          if op = tag && (Dtype.scalar dtype = Float16 || Dtype.scalar dtype = Float32 || Dtype.scalar dtype = Float64) then
+            let bits = match Dtype.scalar dtype with Float16 -> 16 | Float64 -> 64 | _ -> 32 in
+            let dt_name = base_scalar_name (Dtype.scalar dtype) in
             let decl = strf {|extern "C" __attribute__((device%s)) %s __ocml_%s_f%d(%s);|}
               (if attr = "" then "" else ", " ^ attr) dt_name name bits dt_name in
             ocml_decls := decl :: !ocml_decls
         ) ocml_ops
     | _ -> ()) program;
   prefix := !prefix @ !ockl @ dedup (List.rev !ocml_decls);
-  if List.exists (fun (dt : Dtype.t) -> dt.scalar = Bfloat16) used then
+  if List.exists (fun (dt : Dtype.t) -> Dtype.scalar dt = Bfloat16) used then
     prefix := !prefix @
       [strf "typedef %s hip_bfloat16;" (if cdna4 then "__bf16" else "unsigned short")];
-  if List.exists (fun (dt : Dtype.t) -> dt.scalar = Float16) used then
+  if List.exists (fun (dt : Dtype.t) -> Dtype.scalar dt = Float16) used then
     prefix := !prefix @ ["#define half _Float16"];
   if List.exists (fun (dt : Dtype.t) ->
-    dt.scalar = Fp8e4m3 || dt.scalar = Fp8e5m2) used then begin
+    Dtype.scalar dt = Fp8e4m3 || Dtype.scalar dt = Fp8e5m2) used then begin
     prefix := !prefix @ ["typedef unsigned char hip_bf8;"; "typedef unsigned char hip_fp8;"];
     prefix := !prefix @ [{|static inline __attribute__((device)) unsigned char f32_to_fp8(float v, int is_bf8) {
   v = (((*(unsigned*)&v)&0x7F800000)!=0x7F800000)?__builtin_amdgcn_fmed3f(v,is_bf8?57344.0f:448.0f,is_bf8?-57344.0f:-448.0f) : v;
@@ -938,7 +963,7 @@ let amd_render_kernel ~cdna ~cdna4 ~rdna4 ~tensor_cores scalar_name
 }|}]
   end;
   prefix := !prefix @ List.filter_map (fun (dt : Dtype.t) ->
-    if dt.count > 1 then Some (amd_render_vector_prefix scalar_name dt)
+    if Dtype.count dt > 1 then Some (amd_render_vector_prefix scalar_name dt)
     else None) used;
   (* WMMA defines *)
   let wmma_type_map = ref [(Dtype.Bfloat16, "bf16"); (Dtype.Float32, "f32"); (Dtype.Float16, "f16");
@@ -1018,7 +1043,7 @@ let amd_lang ~cdna ~cdna4 ~rdna4 ~tensor_cores =
    (e.g. bfloat16 on clang) through float32 intermediates. *)
 
 let is_non_native_float (non_native : Dtype.scalar list) (dt : Dtype.t) =
-  List.mem dt.scalar non_native
+  Dtype.count dt = 1 && List.mem (Dtype.scalar dt) non_native
 
 let promote_non_native_floats (non_native : Dtype.scalar list) program =
   let f32 = Dtype.float32 in
@@ -1050,7 +1075,7 @@ let clang_abi_wrapper name bufs =
   let val_idx = ref 0 in
   let call_args = List.map (fun b -> match b.buf_kind with
     | Buf_ptr dtype | Buf_image dtype ->
-      let c_type = base_scalar_name dtype.base.scalar in
+      let c_type = base_scalar_name (Dtype.scalar (Dtype.base dtype)) in
       let arg = strf "(%s*)bufs[%d]" c_type !buf_idx in
       incr buf_idx; arg
     | Buf_int ->
@@ -1085,8 +1110,8 @@ let clang_abi_lang = make_lang ~scalar_name:clang_scalar_name
   ~infinity:{|__builtin_inff()|} ~nan_:{|__builtin_nanf("")|}
   ~code_for_op:{ base_code_for_op with
     unary = (fun op x dt -> match op with
-      | `Sqrt -> strf "%s(%s)" (if dt.scalar = Float64 then "__builtin_sqrt" else "__builtin_sqrtf") x
-      | `Trunc -> strf "%s(%s)" (if dt.scalar = Float64 then "__builtin_trunc" else "__builtin_truncf") x
+      | `Sqrt -> strf "%s(%s)" (if Dtype.scalar dt = Float64 then "__builtin_sqrt" else "__builtin_sqrtf") x
+      | `Trunc -> strf "%s(%s)" (if Dtype.scalar dt = Float64 then "__builtin_trunc" else "__builtin_truncf") x
       | _ -> base_code_for_op.unary op x dt);
     binary = (fun op a b dt -> match op with
       | `Fdiv -> strf "(%s/%s)" a b
@@ -1095,103 +1120,70 @@ let clang_abi_lang = make_lang ~scalar_name:clang_scalar_name
   ~render_kernel_hook:clang_abi_render_kernel
   ()
 
+let clang_amx =
+  match Sys.getenv_opt "AMX" with
+  | Some "1" -> true
+  | _ -> false
+
 let clang =
-  Renderer.make
+  Renderer.make ~code_for_op:base_code_for_op_list
     ~name:"clang" ~device:"CPU"
     ~has_local:false ~has_shared:false ~shared_max:0
     ~has_threads:clang_has_threads
+    ~tensor_cores:(if clang_amx then Tc.amx else [])
     ~render:(fun ?name program ->
       render_fn clang_abi_lang ?name (clang_bf16_promote program)) ()
 
 let clang_no_abi =
-  Renderer.make
+  Renderer.make ~code_for_op:base_code_for_op_list
     ~name:"clang" ~device:"CPU"
     ~has_local:false ~has_shared:false ~shared_max:0
     ~has_threads:clang_has_threads
+    ~tensor_cores:(if clang_amx then Tc.amx else [])
     ~render:(fun ?name program ->
       render_fn clang_lang ?name (clang_bf16_promote program)) ()
 
 let opencl =
-  Renderer.make
+  Renderer.make ~code_for_op:base_code_for_op_list
     ~name:"opencl" ~device:"CL"
     ~has_local:true ~has_shared:true ~shared_max:(32 * 1024)
     ~render:(render_fn opencl_lang) ()
 
 let intel =
-  Renderer.make
+  Renderer.make ~code_for_op:base_code_for_op_list
     ~name:"intel" ~device:"CL"
+    ~tensor_cores:Tc.intel
     ~has_local:true ~has_shared:true ~shared_max:(32 * 1024)
     ~render:(render_fn intel_lang) ()
 
 let qcom =
-  Renderer.make
+  Renderer.make ~code_for_op:base_code_for_op_list
     ~name:"qcom" ~device:"QCOM"
     ~has_local:true ~has_shared:true ~shared_max:(32 * 1024)
     ~render:(render_fn opencl_lang) ()
 
+let metal_is_arm64 =
+  try
+    let ic = Unix.open_process_in "uname -m" in
+    let machine = String.trim (input_line ic) in
+    ignore (Unix.close_process_in ic);
+    machine = "arm64"
+  with _ -> false
+
 let metal =
-  Renderer.make
+  Renderer.make ~code_for_op:base_code_for_op_list
     ~name:"metal" ~device:"METAL"
+    ~tensor_cores:(if metal_is_arm64 then Tc.metal else [])
     ~has_local:true ~has_shared:true ~shared_max:(32 * 1024)
     ~render:(render_fn metal_lang) ()
 
-(* CUDA tensor cores *)
-
-let cuda_tc_opts = ["u0";"l0";"l0";"l1";"l1";"l1";"u1"]
-
-let cuda_8168_f16 =
-  let swizzle =
-    ( (["r1";"r2";"l2";"l3";"l4"], ["r0";"u1"], ["l0";"l1";"u0"]),
-      (["r1";"r2";"u0";"l0";"l1"], ["u1";"r0"], ["l2";"l3";"l4"]) )
-  in
-  List.map (fun (di, do_) ->
-    { Renderer.dims = (8, 16, 8); threads = 32;
-      elements_per_thread = (4, 2, 4);
-      dtype_in = di; dtype_out = do_;
-      opts = cuda_tc_opts; swizzle })
-    Dtype.[ (Float16, Float32); (Float16, Float16) ]
-
-let cuda_81616 =
-  let swizzle =
-    ( (["r1";"r2";"l2";"l3";"l4"], ["u1";"r3"], ["l0";"l1";"u0";"r0"]),
-      (["r1";"r2";"u0";"l0";"l1"], ["r0";"r3"], ["l2";"l3";"l4";"u1"]) )
-  in
-  List.map (fun (di, do_) ->
-    { Renderer.dims = (8, 16, 16); threads = 32;
-      elements_per_thread = (8, 4, 4);
-      dtype_in = di; dtype_out = do_;
-      opts = cuda_tc_opts; swizzle })
-    Dtype.[ (Float16, Float32); (Bfloat16, Float32); (Float16, Float16) ]
-
-let cuda_8168_tf32 =
-  let swizzle =
-    ( (["r0";"r1";"l2";"l3";"l4"], ["u1";"r2"], ["l0";"l1";"u0"]),
-      (["r0";"r1";"u0";"l0";"l1"], ["u1";"r2"], ["l2";"l3";"l4"]) )
-  in
-  [ { Renderer.dims = (8, 16, 8); threads = 32;
-      elements_per_thread = (4, 2, 4);
-      dtype_in = Dtype.Float32; dtype_out = Dtype.Float32;
-      opts = cuda_tc_opts; swizzle } ]
-
-let cuda_81632_f8 =
-  let swizzle =
-    ( (["r2";"r3";"l2";"l3";"l4"], ["u1";"r4"], ["l0";"l1";"u0";"r0";"r1"]),
-      (["r2";"r3";"u0";"l0";"l1"], ["r1";"r4"], ["l2";"l3";"l4";"u1";"r0"]) )
-  in
-  List.map (fun (di, do_) ->
-    { Renderer.dims = (8, 16, 32); threads = 32;
-      elements_per_thread = (16, 8, 4);
-      dtype_in = di; dtype_out = do_;
-      opts = cuda_tc_opts; swizzle })
-    Dtype.[ (Fp8e4m3, Float32); (Fp8e5m2, Float32) ]
-
 let cuda_tensor_cores = function
-  | Gpu_target.SM75 -> cuda_8168_f16
-  | Gpu_target.SM80 -> cuda_81616 @ cuda_8168_f16 @ cuda_8168_tf32
-  | Gpu_target.SM89 -> cuda_81616 @ cuda_8168_f16 @ cuda_8168_tf32 @ cuda_81632_f8
+  | Gpu_target.SM75 -> Tc.cuda_sm75
+  | Gpu_target.SM80 -> Tc.cuda_sm80
+  | Gpu_target.SM89 -> Tc.cuda_sm89
 
 let cuda (arch : Gpu_target.cuda) =
-  Renderer.make
+  Renderer.make ~code_for_op:base_code_for_op_list
     ~name:"cuda" ~device:"CUDA"
     ~tensor_cores:(cuda_tensor_cores arch)
     ~has_local:true ~has_shared:true ~shared_max:(48 * 1024)
@@ -1199,16 +1191,24 @@ let cuda (arch : Gpu_target.cuda) =
     ~local_max:(Some [1024; 1024; 64])
     ~render:(render_fn cuda_lang) ()
 
+let amd_tensor_cores = function
+  | Gpu_target.RDNA3 -> Tc.amd_rdna3
+  | Gpu_target.RDNA4 -> Tc.amd_rdna4
+  | Gpu_target.CDNA3 -> Tc.amd_cdna3
+  | Gpu_target.CDNA4 -> Tc.amd_cdna4
+
 let amd (arch : Gpu_target.amd) =
+  let tensor_cores = amd_tensor_cores arch in
   let cdna, cdna4, rdna4 = match arch with
     | Gpu_target.CDNA3 -> (true, false, false)
     | Gpu_target.CDNA4 -> (true, true, false)
     | Gpu_target.RDNA4 -> (false, false, true)
     | Gpu_target.RDNA3 -> (false, false, false)
   in
-  let lang = amd_lang ~cdna ~cdna4 ~rdna4 ~tensor_cores:[] in
-  Renderer.make
+  let lang = amd_lang ~cdna ~cdna4 ~rdna4 ~tensor_cores in
+  Renderer.make ~code_for_op:base_code_for_op_list
     ~name:"amd" ~device:"AMD"
+    ~tensor_cores
     ~has_local:true ~has_shared:true ~shared_max:(64 * 1024)
     ~global_max:(Some [0x7FFFFFFF; 65535; 65535])
     ~render:(render_fn lang) ()

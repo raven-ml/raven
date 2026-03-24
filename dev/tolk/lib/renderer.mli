@@ -57,7 +57,7 @@ type code_op =
 (** {2:tensor_cores Tensor cores} *)
 
 type tensor_core = {
-  dims : int * int * int;  (** [(m, n, k)] matrix-multiply tile dimensions. *)
+  dims : int * int * int;  (** [(n, m, k)] matrix-multiply tile dimensions. *)
   threads : int;  (** Number of threads cooperating on one tile. *)
   elements_per_thread : int * int * int;
       (** [(a, b, c)] elements each thread contributes for operands A, B, and
@@ -85,37 +85,11 @@ type tensor_core = {
 
 (** {2:supported_ops Supported operations} *)
 
-type supported_ops = {
-  has_exp2 : bool;  (** Base-2 exponential. *)
-  has_log2 : bool;  (** Base-2 logarithm. *)
-  has_sin : bool;  (** Sine. *)
-  has_sqrt : bool;  (** Square root. *)
-  has_recip : bool;  (** Reciprocal. *)
-  has_neg : bool;  (** Arithmetic negation. *)
-  has_sub : bool;  (** Subtraction. *)
-  has_max : bool;  (** Maximum. *)
-  has_shl : bool;  (** Bitwise left shift. *)
-  has_shr : bool;  (** Bitwise right shift. *)
-  has_and : bool;  (** Bitwise AND. *)
-  has_or : bool;  (** Bitwise OR. *)
-  has_cmplt : bool;  (** Less-than comparison. *)
-  has_cmpeq : bool;  (** Equality comparison. *)
-  has_fdiv : bool;  (** Floating-point division. *)
-  has_threefry : bool;  (** Threefry 2x32 PRNG mixing. *)
-  has_mulacc : bool;  (** Fused multiply-accumulate. *)
-}
-(** Backend capability flags consumed by the decomposition pass. Each [has_*]
-    flag is [true] iff the backend natively supports the corresponding operation
-    -- the pass lowers unsupported operations into sequences of supported ones.
-
-    Construct with {!supported_ops_of_code_for_op} or supply directly to
-    {!make}. See {!all_supported_ops}. *)
-
-val all_supported_ops : supported_ops
+val all_supported_ops : Tolk_ir.Decompositions.supported_ops
 (** [all_supported_ops] marks every decomposable operation as natively
     supported. *)
 
-val supported_ops_of_code_for_op : code_op list -> supported_ops
+val supported_ops_of_code_for_op : code_op list -> Tolk_ir.Decompositions.supported_ops
 (** [supported_ops_of_code_for_op ops] derives capability flags from a list of
     natively rendered operations. An operation absent from [ops] is marked
     unsupported. *)
@@ -173,10 +147,27 @@ val code_for_op : t -> code_op list
 
     See also {!val-supported_ops}. *)
 
-val supported_ops : t -> supported_ops
+val supported_ops : t -> Tolk_ir.Decompositions.supported_ops
 (** [supported_ops r] is the backend capability flags for the decomposition
     pass, derived from {!val-code_for_op} unless explicitly overridden via
     {!make}. *)
+
+val supports_dtype : t -> Tolk_ir.Dtype.t -> bool
+(** [supports_dtype r dt] is [true] iff the backend natively supports [dt].
+    When [false], the decomposition pass emulates [dt] using supported types. *)
+
+val emulated_float_dtypes : t -> (Tolk_ir.Dtype.scalar * Tolk_ir.Dtype.scalar) list
+(** [emulated_float_dtypes r] is the list of [(from, to)] dtype pairs for
+    float emulation. Each [from] float is promoted to [to] (typically f32).
+    Empty for backends that natively support all float types. *)
+
+val pre_matcher : t -> (Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option) option
+(** [pre_matcher r] is an optional device-specific rewrite rule applied
+    before decompositions. *)
+
+val extra_matcher : t -> (Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option) option
+(** [extra_matcher r] is an optional device-specific rewrite rule composed
+    into the final rewrite fixpoint. *)
 
 (** {1:load_store Load/store policy} *)
 
@@ -204,7 +195,9 @@ val make :
   ?global_max:int list option ->
   ?local_max:int list option ->
   ?code_for_op:code_op list ->
-  ?supported_ops:supported_ops ->
+  ?supported_ops:Tolk_ir.Decompositions.supported_ops ->
+  ?pre_matcher:(Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option) ->
+  ?extra_matcher:(Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option) ->
   name:string ->
   device:string ->
   has_local:bool ->
@@ -220,8 +213,8 @@ val make :
     - [tensor_cores]: [[]] (none).
     - [load_store_widths]: [fun _ -> [1]] (scalar only).
     - [has_threads]: [false].
-    - [global_max]: [Some [0x3FFFFFFF; 0x3FFFFFFF; 0x3FFFFFFF]].
-    - [local_max]: [Some [0x3FFFFFFF; 0x3FFFFFFF; 0x3FFFFFFF]].
+    - [global_max]: [Some [0x8FFFFFFF; 0x8FFFFFFF; 0x8FFFFFFF]].
+    - [local_max]: [Some [0x8FFFFFFF; 0x8FFFFFFF; 0x8FFFFFFF]].
     - [code_for_op]: [[]] (no custom ops).
     - [supported_ops]: derived from [code_for_op] via
       {!supported_ops_of_code_for_op}. When [code_for_op] is [[]], defaults to

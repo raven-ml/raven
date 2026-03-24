@@ -271,7 +271,7 @@ module Queue = struct
 
   let create state =
     Device.Queue.make ~exec:(dispatch state) ~synchronize:(fun () ->
-        State.synchronize state)
+        State.synchronize state) ()
 end
 
 let create name =
@@ -289,4 +289,4 @@ let create name =
   in
   let queue = Queue.create state in
   Device.make ~name ~allocator ~compiler_set ~queue
-    ~prepare_program:(Program.prepare state)
+    ~prepare_program:(Program.prepare state) ()

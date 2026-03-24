@@ -8,7 +8,7 @@ open Tolk
 open Tolk_ir
 module P = Program
 
-let global_ptr dt = Dtype.Ptr.create dt ~addrspace:Global ()
+let global_ptr dt = Dtype.ptr_of dt ~addrspace:Global ~size:(-1)
 
 let spec_of ?(estimates : Program_spec.Estimates.t option) b =
   Program_spec.of_program ~name:"kern" ?estimates (P.finish b)
@@ -138,5 +138,114 @@ let () =
             match estimates.ops with
             | Program_spec.Estimates.Symbolic "n" -> ()
             | _ -> failwith "expected symbolic ops estimate");
+        ];
+      group "Estimates.of_program"
+        [
+          test "counts basic ALU ops" (fun () ->
+            let b = P.create () in
+            let a =
+              P.emit b (Const { value = Const.float Dtype.float32 1.0; dtype = Dtype.float32 })
+            in
+            let c =
+              P.emit b (Const { value = Const.float Dtype.float32 2.0; dtype = Dtype.float32 })
+            in
+            let _ = P.emit b (Binary { op = `Add; lhs = a; rhs = c; dtype = Dtype.float32 }) in
+            let _ = P.emit b (Unary { op = `Neg; src = a; dtype = Dtype.float32 }) in
+            let est = Program_spec.Estimates.of_program (P.finish b) in
+            begin match est.ops with
+            | Program_spec.Estimates.Int 2 -> ()
+            | Program_spec.Estimates.Int n ->
+                failwith (Printf.sprintf "expected 2 FLOPs, got %d" n)
+            | _ -> failwith "expected exact int ops estimate"
+            end);
+          test "mulacc counts as 2 FLOPs" (fun () ->
+            let b = P.create () in
+            let a =
+              P.emit b (Const { value = Const.float Dtype.float32 1.0; dtype = Dtype.float32 })
+            in
+            let c =
+              P.emit b (Const { value = Const.float Dtype.float32 2.0; dtype = Dtype.float32 })
+            in
+            let d =
+              P.emit b (Const { value = Const.float Dtype.float32 3.0; dtype = Dtype.float32 })
+            in
+            let _ =
+              P.emit b (Ternary { op = `Mulacc; a; b = c; c = d; dtype = Dtype.float32 })
+            in
+            let est = Program_spec.Estimates.of_program (P.finish b) in
+            begin match est.ops with
+            | Program_spec.Estimates.Int 2 -> ()
+            | Program_spec.Estimates.Int n ->
+                failwith (Printf.sprintf "expected 2 FLOPs, got %d" n)
+            | _ -> failwith "expected exact int ops estimate"
+            end);
+          test "loop multiplier stacks" (fun () ->
+            let b = P.create () in
+            let c10 =
+              P.emit b (Const { value = Const.int Dtype.int32 10; dtype = Dtype.int32 })
+            in
+            let range =
+              P.emit b
+                (Range
+                   { size = c10; dtype = Dtype.int32; axis = 0; sub = [];
+                     kind = Axis_kind.Loop })
+            in
+            let a =
+              P.emit b (Const { value = Const.float Dtype.float32 1.0; dtype = Dtype.float32 })
+            in
+            let add =
+              P.emit b (Binary { op = `Add; lhs = a; rhs = a; dtype = Dtype.float32 })
+            in
+            let _ = P.emit b (End_range { dep = add; range }) in
+            let est = Program_spec.Estimates.of_program (P.finish b) in
+            begin match est.ops with
+            | Program_spec.Estimates.Int 10 -> ()
+            | Program_spec.Estimates.Int n ->
+                failwith (Printf.sprintf "expected 10 FLOPs (1 op * 10 iters), got %d" n)
+            | _ -> failwith "expected exact int ops estimate"
+            end);
+          test "load/store tracks lds bytes" (fun () ->
+            let ptr = global_ptr Dtype.float32 in
+            let b = P.create () in
+            let p0 = P.emit b (Param { idx = 0; dtype = ptr }) in
+            let c0 =
+              P.emit b (Const { value = Const.int Dtype.int32 0; dtype = Dtype.int32 })
+            in
+            let idx = P.emit b (Index { ptr = p0; idxs = [ c0 ]; gate = None; dtype = ptr }) in
+            let ld = P.emit b (Load { src = idx; alt = None; dtype = Dtype.float32 }) in
+            let _ = P.emit b (Store { dst = idx; value = ld }) in
+            let est = Program_spec.Estimates.of_program (P.finish b) in
+            begin match est.lds with
+            | Program_spec.Estimates.Int n when n = 4 + 4 -> ()
+            | Program_spec.Estimates.Int n ->
+                failwith (Printf.sprintf "expected 8 lds bytes (4 load + 4 store), got %d" n)
+            | _ -> failwith "expected exact int lds estimate"
+            end);
+          test "index arithmetic excluded from FLOPs" (fun () ->
+            let ptr = global_ptr Dtype.float32 in
+            let b = P.create () in
+            let p0 = P.emit b (Param { idx = 0; dtype = ptr }) in
+            let c0 =
+              P.emit b (Const { value = Const.int Dtype.int32 0; dtype = Dtype.int32 })
+            in
+            let c1 =
+              P.emit b (Const { value = Const.int Dtype.int32 1; dtype = Dtype.int32 })
+            in
+            (* This add is used as an index operand — should be excluded. *)
+            let idx_expr =
+              P.emit b (Binary { op = `Add; lhs = c0; rhs = c1; dtype = Dtype.int32 })
+            in
+            let idx =
+              P.emit b
+                (Index { ptr = p0; idxs = [ idx_expr ]; gate = None; dtype = ptr })
+            in
+            let _ = P.emit b (Load { src = idx; alt = None; dtype = Dtype.float32 }) in
+            let est = Program_spec.Estimates.of_program (P.finish b) in
+            begin match est.ops with
+            | Program_spec.Estimates.Int 0 -> ()
+            | Program_spec.Estimates.Int n ->
+                failwith (Printf.sprintf "expected 0 FLOPs (index add excluded), got %d" n)
+            | _ -> failwith "expected exact int ops estimate"
+            end);
         ];
     ]

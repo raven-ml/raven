@@ -8,7 +8,7 @@ open Tolk
 open Tolk_ir
 module P = Program
 
-let global_ptr dt = Dtype.Ptr.create dt ~addrspace:Global ()
+let global_ptr dt = Dtype.ptr_of dt ~addrspace:Global ~size:(-1)
 
 let int32_to_bytes values =
   let bytes = Bytes.create (List.length values * 4) in

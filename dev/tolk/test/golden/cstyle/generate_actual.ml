@@ -12,8 +12,8 @@ open Tolk
 open Tolk_ir
 module P = Program
 
-let global_ptr dt = Dtype.Ptr.create dt ~addrspace:Global ()
-let local_ptr dt = Dtype.Ptr.create dt ~addrspace:Local ()
+let global_ptr dt = Dtype.ptr_of dt ~addrspace:Global ~size:(-1)
+let local_ptr dt = Dtype.ptr_of dt ~addrspace:Local ~size:(-1)
 
 (* IR program builders — must match generate_expected.py exactly. *)
 
@@ -57,12 +57,12 @@ let make_loop () =
   let b = P.create () in
   let p0 = P.emit b (Param { idx = 0; dtype = ptr }) in
   let c10 = P.emit b (Const { value = Const.int Dtype.int32 10; dtype = Dtype.int32 }) in
-  let r = P.emit b (Range { size = c10; dtype = Dtype.int32; axis = 0; kind = Axis_kind.Loop }) in
+  let r = P.emit b (Range { size = c10; dtype = Dtype.int32; axis = 0; sub = []; kind = Axis_kind.Loop }) in
   let idx0 = P.emit b (Index { ptr = p0; idxs = [ r ]; gate = None; dtype = ptr }) in
   let ld = P.emit b (Load { src = idx0; alt = None; dtype = dt }) in
   let idx1 = P.emit b (Index { ptr = p0; idxs = [ r ]; gate = None; dtype = ptr }) in
   let _ = P.emit b (Store { dst = idx1; value = ld }) in
-  let _ = P.emit b (End_range { range = r }) in
+  let _ = P.emit b (End_range { dep = ld; range = r }) in
   P.finish b
 
 let make_gated_load () =
@@ -138,15 +138,15 @@ let make_nested_loops () =
   let p0 = P.emit b (Param { idx = 0; dtype = ptr }) in
   let c10 = P.emit b (Const { value = Const.int Dtype.int32 10; dtype = Dtype.int32 }) in
   let c5 = P.emit b (Const { value = Const.int Dtype.int32 5; dtype = Dtype.int32 }) in
-  let r0 = P.emit b (Range { size = c10; dtype = Dtype.int32; axis = 0; kind = Axis_kind.Loop }) in
-  let r1 = P.emit b (Range { size = c5; dtype = Dtype.int32; axis = 1; kind = Axis_kind.Loop }) in
+  let r0 = P.emit b (Range { size = c10; dtype = Dtype.int32; axis = 0; sub = []; kind = Axis_kind.Loop }) in
+  let r1 = P.emit b (Range { size = c5; dtype = Dtype.int32; axis = 1; sub = []; kind = Axis_kind.Loop }) in
   let sum = P.emit b (Binary { op = `Add; lhs = r0; rhs = r1; dtype = Dtype.int32 }) in
   let idx0 = P.emit b (Index { ptr = p0; idxs = [ sum ]; gate = None; dtype = ptr }) in
   let ld = P.emit b (Load { src = idx0; alt = None; dtype = dt }) in
   let idx1 = P.emit b (Index { ptr = p0; idxs = [ sum ]; gate = None; dtype = ptr }) in
   let _ = P.emit b (Store { dst = idx1; value = ld }) in
-  let _ = P.emit b (End_range { range = r1 }) in
-  let _ = P.emit b (End_range { range = r0 }) in
+  let _ = P.emit b (End_range { dep = ld; range = r1 }) in
+  let _ = P.emit b (End_range { dep = r0; range = r0 }) in
   P.finish b
 
 let make_multi_param () =
@@ -275,7 +275,7 @@ let make_vectorize_gep () =
   let ld2 = P.emit b (Load { src = idx2; alt = None; dtype = dt }) in
   let ld3 = P.emit b (Load { src = idx3; alt = None; dtype = dt }) in
   let vec = P.emit b (Vectorize { srcs = [ ld0; ld1; ld2; ld3 ]; dtype = vdt }) in
-  let gep = P.emit b (Gep { src = vec; idx = 2; dtype = dt }) in
+  let gep = P.emit b (Gep { src = vec; idxs = [2]; dtype = dt }) in
   let oidx = P.emit b (Index { ptr = p1; idxs = [ c0 ]; gate = None; dtype = ptr }) in
   let _ = P.emit b (Store { dst = oidx; value = gep }) in
   P.finish b

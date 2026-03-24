@@ -21,8 +21,8 @@ let gpu_renderers = List.filter (fun (name, _) -> name <> "clang") all_renderers
 (* Helpers *)
 
 let dt = Dtype.float32
-let global_ptr dt = Dtype.Ptr.create dt ~addrspace:Global ()
-let local_ptr dt = Dtype.Ptr.create dt ~addrspace:Local ()
+let global_ptr dt = Dtype.ptr_of dt ~addrspace:Global ~size:(-1)
+let local_ptr dt = Dtype.ptr_of dt ~addrspace:Local ~size:(-1)
 let render r prog = Renderer.render r prog
 let render_with_images r prog = Renderer.render r (Images.rewrite r prog)
 let int32_c n = Const.int Dtype.int32 n
@@ -160,12 +160,12 @@ let make_loop () =
   let b = P.create () in
   let p0 = P.emit b (Param { idx = 0; dtype = ptr }) in
   let c10 = P.emit b (Const { value = int32_c 10; dtype = Dtype.int32 }) in
-  let r = P.emit b (Range { size = c10; dtype = Dtype.int32; axis = 0; kind = Axis_kind.Loop }) in
+  let r = P.emit b (Range { size = c10; dtype = Dtype.int32; axis = 0; sub = []; kind = Axis_kind.Loop }) in
   let idx0 = P.emit b (Index { ptr = p0; idxs = [ r ]; gate = None; dtype = ptr }) in
   let ld = P.emit b (Load { src = idx0; alt = None; dtype = dt }) in
   let idx1 = P.emit b (Index { ptr = p0; idxs = [ r ]; gate = None; dtype = ptr }) in
   let _ = P.emit b (Store { dst = idx1; value = ld }) in
-  let _ = P.emit b (End_range { range = r }) in
+  let _ = P.emit b (End_range { dep = ld; range = r }) in
   P.finish b
 
 let make_nested_loops () =
@@ -174,15 +174,15 @@ let make_nested_loops () =
   let p0 = P.emit b (Param { idx = 0; dtype = ptr }) in
   let c10 = P.emit b (Const { value = int32_c 10; dtype = Dtype.int32 }) in
   let c5 = P.emit b (Const { value = int32_c 5; dtype = Dtype.int32 }) in
-  let r0 = P.emit b (Range { size = c10; dtype = Dtype.int32; axis = 0; kind = Axis_kind.Loop }) in
-  let r1 = P.emit b (Range { size = c5; dtype = Dtype.int32; axis = 1; kind = Axis_kind.Loop }) in
+  let r0 = P.emit b (Range { size = c10; dtype = Dtype.int32; axis = 0; sub = []; kind = Axis_kind.Loop }) in
+  let r1 = P.emit b (Range { size = c5; dtype = Dtype.int32; axis = 1; sub = []; kind = Axis_kind.Loop }) in
   let sum = P.emit b (Binary { op = `Add; lhs = r0; rhs = r1; dtype = Dtype.int32 }) in
   let idx0 = P.emit b (Index { ptr = p0; idxs = [ sum ]; gate = None; dtype = ptr }) in
   let ld = P.emit b (Load { src = idx0; alt = None; dtype = dt }) in
   let idx1 = P.emit b (Index { ptr = p0; idxs = [ sum ]; gate = None; dtype = ptr }) in
   let _ = P.emit b (Store { dst = idx1; value = ld }) in
-  let _ = P.emit b (End_range { range = r1 }) in
-  let _ = P.emit b (End_range { range = r0 }) in
+  let _ = P.emit b (End_range { dep = ld; range = r1 }) in
+  let _ = P.emit b (End_range { dep = r0; range = r0 }) in
   P.finish b
 
 let make_special dim =
@@ -294,7 +294,7 @@ let make_vectorize_gep () =
   let ld2 = P.emit b (Load { src = idx2; alt = None; dtype = dt }) in
   let ld3 = P.emit b (Load { src = idx3; alt = None; dtype = dt }) in
   let vec = P.emit b (Vectorize { srcs = [ ld0; ld1; ld2; ld3 ]; dtype = vdt }) in
-  let gep = P.emit b (Gep { src = vec; idx = 2; dtype = dt }) in
+  let gep = P.emit b (Gep { src = vec; idxs = [2]; dtype = dt }) in
   let oidx = P.emit b (Index { ptr = p1; idxs = [ c0 ]; gate = None; dtype = ptr }) in
   let _ = P.emit b (Store { dst = oidx; value = gep }) in
   P.finish b
@@ -707,10 +707,12 @@ let () =
               (render Cstyle.opencl prog) "get_local_id(1)");
           test "Global_idx" (fun () ->
             let prog = make_special (Special_dim.Global_idx 2) in
-            assert_contains "cuda blockIdx.z"
-              (render (Cstyle.cuda Gpu_target.SM80) prog) "blockIdx.z";
-            assert_contains "metal gid.z"
-              (render Cstyle.metal prog) "gid.z";
+            assert_contains "cuda global idx formula"
+              (render (Cstyle.cuda Gpu_target.SM80) prog)
+              "(blockIdx.z*blockDim.z+threadIdx.z)";
+            raises_match
+              (function Failure _ -> true | _ -> false)
+              (fun () -> ignore (render Cstyle.metal prog));
             assert_contains "opencl get_global_id(2)"
               (render Cstyle.opencl prog) "get_global_id(2)");
           test "Clang fails" (fun () ->
@@ -902,7 +904,7 @@ let () =
             (pair safe_dtype renderer_testable)
             (fun (dt, (_name, renderer)) ->
               let const_value =
-                match dt.Dtype.scalar with
+                match Dtype.scalar dt with
                 | Dtype.Float32 | Dtype.Float64 -> Const.float dt 1.0
                 | _ -> Const.int dt 1
               in

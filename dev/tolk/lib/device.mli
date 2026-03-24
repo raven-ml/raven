@@ -321,10 +321,16 @@ module Program : sig
 
   (** {1:constructors Constructors} *)
 
-  val make : spec:Program_spec.t -> src:string -> binary:bytes -> t
-  (** [make ~spec ~src ~binary] is a program with the given spec, rendered
-      source, and compiled binary. The entry address and cleanup callback are
-      initially unset. *)
+  val make :
+    ?applied_opts:Tolk_ir.Kernel.Opt.t list ->
+    spec:Program_spec.t ->
+    src:string ->
+    binary:bytes ->
+    unit ->
+    t
+  (** [make ?applied_opts ~spec ~src ~binary ()] is a program with the given
+      spec, rendered source, and compiled binary. [applied_opts] defaults to
+      [[]]. The entry address and cleanup callback are initially unset. *)
 
   (** {1:accessors Accessors} *)
 
@@ -333,6 +339,9 @@ module Program : sig
 
   val src : t -> string
   (** [src t] is the rendered source code. *)
+
+  val applied_opts : t -> Tolk_ir.Kernel.Opt.t list
+  (** [applied_opts t] is the optimization options applied during codegen. *)
 
   val binary : t -> bytes
   (** [binary t] is the compiled binary blob. *)
@@ -366,6 +375,12 @@ module Program : sig
   (** [launch_dims t args] evaluates launch dimensions from scalar [args].
       Delegates to {!Program_spec.launch_dims}. *)
 
+  val with_global_override : int array -> t -> t
+  (** [with_global_override global t] returns a copy of [t] with the global
+      launch dimensions replaced by the constant values in [global]. The
+      source, binary, entry address, and cleanup callback are shared with the
+      original. Used by beam search to scale down kernel size during timing. *)
+
   (** {1:lifecycle Lifecycle} *)
 
   val set_entry_addr : t -> nativeint -> unit
@@ -394,6 +409,10 @@ module Queue : sig
     exec : Program.t -> Buffer.t list -> int list -> unit;
         (** [exec program bufs var_args] dispatches [program] with [bufs] as
             buffer arguments and [var_args] as scalar variable values. *)
+    timed_exec : (Program.t -> Buffer.t list -> int list -> float) option;
+        (** [timed_exec program bufs var_args] is like {!field-exec} but returns
+            the execution time in seconds. [None] if the backend does not
+            support hardware-level timing. *)
     synchronize : unit -> unit;
         (** [synchronize ()] blocks until all queued work completes. *)
   }
@@ -403,15 +422,30 @@ module Queue : sig
 
   val make :
     exec:(Program.t -> Buffer.t list -> int list -> unit) ->
+    ?timed_exec:(Program.t -> Buffer.t list -> int list -> float) ->
     synchronize:(unit -> unit) ->
+    unit ->
     t
-  (** [make ~exec ~synchronize] is a queue with the given dispatch and
-      synchronisation functions. *)
+  (** [make ~exec ?timed_exec ~synchronize ()] is a queue with the given
+      dispatch and synchronisation functions.
+
+      When [timed_exec] is [None], {!val-timed_exec} falls back to wall-clock
+      timing around {!val-exec} + {!val-synchronize}. *)
 
   (** {1:operations Operations} *)
 
   val exec : t -> Program.t -> Buffer.t list -> int list -> unit
   (** [exec q program bufs var_args] dispatches [program] on [q]. *)
+
+  val timed_exec :
+    ?timeout_ms:int -> t -> Program.t -> Buffer.t list -> int list -> float
+  (** [timed_exec ?timeout_ms q program bufs var_args] dispatches [program] on
+      [q] and returns the execution time in seconds. Uses hardware timing if
+      available, otherwise falls back to wall-clock timing around exec +
+      synchronize.
+
+      When [timeout_ms] is provided, the execution is aborted if it exceeds
+      the timeout. Returns [infinity] on timeout. *)
 
   val synchronize : t -> unit
   (** [synchronize q] blocks until all work queued on [q] completes. *)
@@ -477,11 +511,19 @@ val make :
   compiler_set:Compiler.set ->
   queue:Queue.t ->
   prepare_program:(Program.t -> unit) ->
+  ?invalidate_caches:(unit -> unit) ->
+  unit ->
   t
-(** [make ~name ~allocator ~compiler_set ~queue ~prepare_program] is a device
-    runtime. [prepare_program] is called once on each freshly compiled or cloned
+(** [make ~name ~allocator ~compiler_set ~queue ~prepare_program
+    ?invalidate_caches ()] is a device runtime.
+
+    [prepare_program] is called once on each freshly compiled or cloned
     {!Program.t} before it is cached and returned — backends use this hook to
-    resolve entry addresses, load binaries, or perform device-specific setup. *)
+    resolve entry addresses, load binaries, or perform device-specific setup.
+
+    [invalidate_caches] is called by beam search between timing runs to flush
+    device caches (e.g., L2). When [None] (default), {!invalidate_caches} is a
+    no-op. *)
 
 val name : t -> string
 (** [name d] is [d]'s device name. *)
@@ -492,6 +534,7 @@ val renderer : t -> Renderer.t
 val compile_program :
   t ->
   ?name:string ->
+  ?applied_opts:Tolk_ir.Kernel.Opt.t list ->
   ?estimates:Program_spec.Estimates.t ->
   Tolk_ir.Program.t ->
   Program.t
@@ -514,6 +557,11 @@ val create_buffer :
 
 val queue : t -> Queue.t
 (** [queue d] is [d]'s execution queue. *)
+
+val invalidate_caches : t -> unit
+(** [invalidate_caches d] flushes device caches (e.g., L2) if the device
+    supports it. No-op if [~invalidate_caches] was not provided to {!make}.
+    Called by beam search between timing runs for consistent measurements. *)
 
 (** {1:multi_buffer Multi-device buffers} *)
 

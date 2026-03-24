@@ -71,9 +71,12 @@ let read_pipes stdout_fd stderr_fd =
 
 (* Compilation *)
 
-(* Key flags: -fno-math-errno ensures __builtin_sqrt becomes a single
-   instruction, not a function call. -ffixed-x18 avoids ARM's platform-reserved
-   register (macOS context switch / Windows TEB). *)
+(* Spawns a C compiler subprocess (clang by default) with stdin/stdout/stderr
+   pipes, feeding source on stdin and collecting object code from stdout via
+   select-based multiplexing. Key flags: -fno-math-errno ensures sqrt becomes a
+   single instruction; -ffixed-x18 avoids ARM's platform-reserved register
+   (macOS context switch / Windows TEB); --target=<arch>-none-unknown-elf
+   produces a relocatable ELF regardless of host triple. *)
 let compile ~lang src =
   let arch = if is_windows then "AMD64" else host_arch in
   let target = if is_windows then "x86_64" else arch in

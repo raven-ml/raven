@@ -83,6 +83,13 @@ module Estimates : sig
 
   val of_kernel : Tolk_ir.Kernel.estimates -> t
   (** [of_kernel e] is the lossless conversion of {!Tolk_ir.Kernel.estimates} [e]. *)
+
+  val of_program : Tolk_ir.Program.t -> t
+  (** [of_program p] computes estimates by walking [p]. Counts FLOPs (excluding
+      index arithmetic), load/store bytes, and total memory accessed (capped at
+      buffer size for re-reads). Loop multipliers are stacked through
+      {!Tolk_ir.Program.view.Range}/{!Tolk_ir.Program.view.End_range} and
+      {!Tolk_ir.Program.view.Special} nodes. *)
 end
 
 (** {1:spec Kernel specifications} *)
@@ -115,6 +122,11 @@ val of_program : ?estimates:Estimates.t -> name:string -> Tolk_ir.Program.t -> t
 val with_estimates : Estimates.t -> t -> t
 (** [with_estimates e spec] is [spec] with estimates replaced by [e]. *)
 
+val with_global_dims : int array -> t -> t
+(** [with_global_dims dims spec] is [spec] with the global launch dimensions
+    replaced by constant values [dims]. Used by beam search to scale down
+    kernel size during timing. *)
+
 (** {2:accessors Accessors} *)
 
 val name : t -> string
@@ -133,6 +145,9 @@ val outs : t -> int list
 val ins : t -> int list
 (** [ins spec] is the sorted, deduplicated parameter indices read by the kernel.
 *)
+
+val globals : t -> int list
+(** [globals spec] is the sorted, deduplicated union of {!outs} and {!ins}. *)
 
 val core_id : t -> core_id option
 (** [core_id spec] is the runtime-managed ["core_id"] variable, if any. *)
