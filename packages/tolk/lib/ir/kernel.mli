@@ -135,6 +135,8 @@ type view =
     }  (** Materializes [src] into a buffer. *)
   | Const of { value : Const.t; dtype : Dtype.t }
       (** Compile-time constant. *)
+  | Vconst of { values : Const.t list; dtype : Dtype.t }
+      (** Vector of compile-time constants (one per lane). *)
   | Invalid_index of { dtype : Dtype.t }
       (** Invalid index sentinel. *)
   | Index of { ptr : t; idxs : t list; gate : t option; dtype : Dtype.any }
@@ -242,6 +244,9 @@ val bufferize :
 
 val const : Const.t -> t
 (** [const c] is a constant node with dtype derived from [c]. *)
+
+val vconst : values:Const.t list -> dtype:Dtype.t -> t
+(** [vconst ~values ~dtype] is a vector constant with one value per lane. *)
 
 val invalid_index : ?lanes:int -> unit -> t
 (** [invalid_index ?lanes ()] is the invalid index sentinel.

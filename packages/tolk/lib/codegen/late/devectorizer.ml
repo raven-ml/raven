@@ -734,6 +734,12 @@ let expand_vector_const (node : K.t) : K.t option =
       Some (K.vectorize ~srcs:(List.init (Dtype.count dtype) (fun _ -> c)))
   | _ -> None
 
+let expand_vconst (node : K.t) : K.t option =
+  match K.view node with
+  | Vconst { values; _ } ->
+      Some (K.vectorize ~srcs:(List.map K.const values))
+  | _ -> None
+
 let trivial_gep (node : K.t) : K.t option =
   match K.view node with
   | Gep { src; idxs = [0]; _ } -> (
@@ -844,7 +850,7 @@ let where_after_gated_load (node : K.t) : K.t option =
 
 let pm_render_rule =
   K.first_match [
-    expand_vector_const; trivial_gep; lower_cat;
+    expand_vector_const; expand_vconst; trivial_gep; lower_cat;
     trivial_vectorize; where_after_gated_load; masked_load_alt;
   ]
 

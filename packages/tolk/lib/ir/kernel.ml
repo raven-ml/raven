@@ -80,6 +80,7 @@ and view =
       opts : bufferize_opts;
     }
   | Const of { value : Const.t; dtype : Dtype.t }
+  | Vconst of { values : Const.t list; dtype : Dtype.t }
   | Invalid_index of { dtype : Dtype.t }
   | Index of { ptr : t; idxs : t list; gate : t option; dtype : Dtype.any }
   | Ptrcat of { srcs : t list; dtype : Dtype.ptr }
@@ -144,6 +145,12 @@ let shallow_hash_view v =
         | Bool b -> add b | Int i -> add i
         | Float f -> add (Int64.bits_of_float f));
        add dtype
+   | Vconst { values; dtype } ->
+       List.iter (fun v ->
+         match Const.view v with
+         | Bool b -> add b | Int i -> add i
+         | Float f -> add (Int64.bits_of_float f)) values;
+       add dtype
    | Invalid_index { dtype } -> add dtype
    | Index { ptr; idxs; gate; dtype } -> add_id ptr; List.iter add_id idxs; (match gate with Some g -> add_id g | None -> ()); add dtype
    | Ptrcat { srcs; dtype } -> List.iter add_id srcs; add dtype
@@ -191,6 +198,9 @@ let shallow_equal_view v1 v2 =
     Bufferize { src = s2; ranges = r2; dtype = d2; opts = o2 } ->
       s1 == s2 && List.length r1 = List.length r2 && List.for_all2 (==) r1 r2 && d1 = d2 && o1 = o2
   | Const r1, Const r2 -> Const.equal r1.value r2.value && r1.dtype = r2.dtype
+  | Vconst r1, Vconst r2 ->
+      r1.dtype = r2.dtype && List.length r1.values = List.length r2.values
+      && List.for_all2 Const.equal r1.values r2.values
   | Invalid_index r1, Invalid_index r2 -> r1.dtype = r2.dtype
   | Index { ptr = p1; idxs = i1; gate = g1; dtype = d1 },
     Index { ptr = p2; idxs = i2; gate = g2; dtype = d2 } ->
@@ -272,6 +282,7 @@ let define_var ~name ~lo ~hi ?(dtype = Dtype.index) () =
 
 let bufferize ~src ~ranges ~dtype ~opts = mk (Bufferize { src; ranges; dtype; opts })
 let const value = mk (Const { value; dtype = Const.dtype value })
+let vconst ~values ~dtype = mk (Vconst { values; dtype })
 
 let invalid_index ?(lanes = 1) () =
   mk (Invalid_index { dtype = Dtype.vec Dtype.index lanes })
@@ -304,7 +315,8 @@ let rec node_dtype node = match node.Hashcons.node.view with
       Some (Dtype.base dtype)
   | Index { dtype; _ } | Cast { dtype; _ } | Vectorize { dtype; _ } ->
       Some (Dtype.any_to_val dtype)
-  | Define_var { dtype; _ } | Const { dtype; _ } | Invalid_index { dtype; _ }
+  | Define_var { dtype; _ } | Const { dtype; _ } | Vconst { dtype; _ }
+  | Invalid_index { dtype; _ }
   | Load { dtype; _ } | Unary { dtype; _ } | Binary { dtype; _ }
   | Ternary { dtype; _ } | Bitcast { dtype; _ }
   | Cat { dtype; _ } | Gep { dtype; _ }
@@ -396,6 +408,8 @@ let gep ~src ~idx =
       List.nth srcs idx
   | Const { value; _ } ->
       mk (Const { value; dtype = Dtype.scalar_of (Const.dtype value) })
+  | Vconst { values; dtype } when idx >= 0 && idx < List.length values ->
+      mk (Const { value = List.nth values idx; dtype = Dtype.scalar_of dtype })
   | _ -> (
       match node_dtype src with
       | Some dt -> mk (Gep { src; idxs = [idx]; dtype = Dtype.scalar_of dt })
@@ -486,7 +500,7 @@ let children node = match node.Hashcons.node.view with
   | Sink { srcs; _ } | Group { srcs } -> srcs
   | After { src; deps } -> src :: deps
   | Param _ | Param_image _ | Define_local _ | Define_reg _ | Define_var _
-  | Const _ | Invalid_index _ | Barrier ->
+  | Const _ | Vconst _ | Invalid_index _ | Barrier ->
       []
   | Bufferize { src; ranges; _ } -> src :: ranges
   | Index { ptr; idxs; gate; _ } -> (ptr :: idxs) @ Option.to_list gate
@@ -541,6 +555,8 @@ let replace node ?children:childs ?(dtype : Dtype.t option) () =
         Define_var { name; lo; hi; dtype = dt old_dt }
     | Const { value; dtype = old_dt } ->
         Const { value; dtype = dt old_dt }
+    | Vconst { values; dtype = old_dt } ->
+        Vconst { values; dtype = dt old_dt }
     | Invalid_index { dtype = old_dt } ->
         Invalid_index { dtype = dt old_dt }
     | Bufferize { dtype = ptr_dt; opts; _ } ->
@@ -628,7 +644,7 @@ let map_children f (instr : view) : view =
   | Group { srcs } -> Group { srcs = fl srcs }
   | After { src; deps } -> After { src = f src; deps = fl deps }
   | Param _ | Param_image _ | Define_local _ | Define_reg _ | Define_var _
-  | Const _ | Invalid_index _ | Barrier ->
+  | Const _ | Vconst _ | Invalid_index _ | Barrier ->
       instr
   | Bufferize { src; ranges; dtype; opts } ->
       Bufferize { src = f src; ranges = fl ranges; dtype; opts }
@@ -857,6 +873,10 @@ let validate root =
           | Float _ ->
               if not (Dtype.is_float dtype) then
                 fail instr "Float const must have float dtype")
+      | Vconst { values; dtype } ->
+          if values = [] then fail instr "Vconst must have at least one value";
+          if Dtype.count dtype <> List.length values then
+            fail instr "Vconst dtype count must match values length"
       | Invalid_index { dtype } ->
           if Dtype.scalar dtype <> Dtype.Index then
             fail instr "Invalid_index must have Index dtype"
@@ -1105,6 +1125,7 @@ let view_op_name = function
   | Define_var _ -> "Ops.DEFINE_VAR"
   | Bufferize _ -> "Ops.BUFFERIZE"
   | Const _ -> "Ops.CONST"
+  | Vconst _ -> "Ops.VCONST"
   | Invalid_index _ -> "Ops.INVALID_INDEX"
   | Index _ -> "Ops.INDEX"
   | Ptrcat _ -> "Ops.PTRCAT"
@@ -1192,6 +1213,8 @@ let const_value_str value =
 
 let view_arg = function
   | Const { value; _ } -> const_value_str value
+  | Vconst { values; _ } ->
+      Printf.sprintf "(%s)" (String.concat ", " (List.map const_value_str values))
   | Param { idx; _ } | Param_image { idx; _ } -> string_of_int idx
   | Define_var { name; lo; hi; _ } ->
       Printf.sprintf "('%s', %d, %d)" name lo hi
@@ -1558,7 +1581,8 @@ let view_ordinal = function
   | Vectorize _ -> 19 | Index _ -> 20 | Load _ -> 21 | Store _ -> 22
   | Wmma _ -> 23 | Cast _ -> 24 | Bitcast _ -> 25 | Unary _ -> 26
   | Binary _ -> 27 | Ternary _ -> 28 | Barrier -> 29 | Range _ -> 30
-  | End _ -> 31 | Const _ -> 33 | Custom _ -> 34 | Custom_inline _ -> 35
+  | End _ -> 31 | Const _ -> 33 | Vconst _ -> 33 | Custom _ -> 34
+  | Custom_inline _ -> 35
   | Reduce _ -> 100 | Cat _ | Ptrcat _ | Unroll _ | Contract _
   | Bufferize _ | Invalid_index _ -> 100
 
@@ -1592,6 +1616,14 @@ let compare_view_args a b =
   | Bufferize { opts = o1; _ }, Bufferize { opts = o2; _ } ->
       Stdlib.compare o1 o2
   | Const { value = v1; _ }, Const { value = v2; _ } -> Const.compare v1 v2
+  | Vconst { values = v1; _ }, Vconst { values = v2; _ } ->
+      let rec cmp a b = match a, b with
+        | [], [] -> 0 | [], _ -> -1 | _, [] -> 1
+        | x :: xs, y :: ys ->
+            let c = Const.compare x y in
+            if c <> 0 then c else cmp xs ys
+      in
+      cmp v1 v2
   | Invalid_index _, Invalid_index _ -> 0
   | Index _, Index _ -> 0
   | Ptrcat _, Ptrcat _ -> 0
@@ -1647,7 +1679,8 @@ let node_any_dtype node = match node.Hashcons.node.view with
       Some (Dtype.ptr_to_any dtype)
   | Index { dtype; _ } | Cast { dtype; _ } | Vectorize { dtype; _ } ->
       Some dtype
-  | Define_var { dtype; _ } | Const { dtype; _ } | Invalid_index { dtype; _ }
+  | Define_var { dtype; _ } | Const { dtype; _ } | Vconst { dtype; _ }
+  | Invalid_index { dtype; _ }
   | Load { dtype; _ } | Unary { dtype; _ } | Binary { dtype; _ }
   | Ternary { dtype; _ } | Bitcast { dtype; _ }
   | Cat { dtype; _ } | Gep { dtype; _ }
@@ -1722,6 +1755,9 @@ let pp_view_with ids fmt instr =
         ranges pp_ptr dtype
   | Const { value; dtype } ->
       Format.fprintf fmt "const %a : %a" Const.pp value Dtype.pp dtype
+  | Vconst { values; dtype } ->
+      Format.fprintf fmt "vconst (%a) : %a"
+        (Format.pp_print_list ~pp_sep:pp_comma Const.pp) values Dtype.pp dtype
   | Invalid_index { dtype } ->
       Format.fprintf fmt "invalid_index : %a" Dtype.pp dtype
   | Index { ptr; idxs; gate; dtype } ->

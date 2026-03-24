@@ -280,8 +280,9 @@ let range_to_unroll node =
               let s = Int64.to_int n in
               let scalar = Dtype.scalar_of dtype in
               let vec =
-                K.vectorize
-                  ~srcs:(List.init s (fun i -> K.const (Const.int scalar i)))
+                K.vconst
+                  ~values:(List.init s (fun i -> Const.int scalar i))
+                  ~dtype:(Dtype.vec scalar s)
               in
               Some (K.unroll ~src:vec ~axes:[ (axis, s) ] ~dtype)
           | _ -> None)

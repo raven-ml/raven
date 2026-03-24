@@ -248,6 +248,7 @@ let view_ordinal_and_arg = function
   | K.Range { axis; kind; _ } -> (30, TA_pair (axis, axis_kind_rank kind))
   | K.End _ -> (31, TA_none)
   | K.Const { value; _ } -> (33, TA_int (Hashtbl.hash (Const.view value)))
+  | K.Vconst { values; _ } -> (33, TA_int (Hashtbl.hash (List.map Const.view values)))
   | K.Custom { fmt; _ } -> (34, TA_str fmt)
   | K.Custom_inline { fmt; _ } -> (35, TA_str fmt)
   | K.Reduce { op; _ } -> (100, TA_int (Hashtbl.hash op))
@@ -535,6 +536,7 @@ let emit_node ctx node =
   | Custom_inline { fmt; args; dtype } ->
     emit_set_emit ctx node (Custom_inline { fmt; args = ms ctx args; dtype })
   | Invalid_index _ -> failwith (err_unlowered "Invalid_index")
+  | Vconst _ -> failwith (err_unlowered "Vconst")
   | Ptrcat _ -> failwith (err_unlowered "Ptrcat")
   | Cat _ -> failwith (err_unlowered "Cat")
   | Reduce _ -> failwith (err_unlowered "Reduce")

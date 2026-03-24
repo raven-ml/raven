@@ -74,6 +74,24 @@ let gep_const node =
       | _ -> None)
   | _ -> None
 
+let gep_vconst node =
+  match K.view node with
+  | Gep { src; idxs; _ } ->
+      (match K.view src with
+      | Vconst { values; dtype } ->
+          let n = List.length values in
+          if List.for_all (fun i -> i >= 0 && i < n) idxs then
+            match idxs with
+            | [idx] -> Some (K.const (List.nth values idx))
+            | _ ->
+                Some
+                  (K.vconst
+                     ~values:(List.map (List.nth values) idxs)
+                     ~dtype:(Dtype.vec (Dtype.scalar_of dtype) (List.length idxs)))
+          else None
+      | _ -> None)
+  | _ -> None
+
 let gep_void node =
   match K.view node with
   | Gep { src; dtype; _ } when Dtype.equal dtype Dtype.void -> Some src
@@ -144,8 +162,8 @@ let gep_identity node =
 
 let gep_pushing =
   K.first_match
-    [ gep_vectorize; gep_const; gep_void; gep_identity; cat_to_vectorize;
-      vectorize_in_order_gep; gep_through_alu ]
+    [ gep_vectorize; gep_const; gep_vconst; gep_void; gep_identity;
+      cat_to_vectorize; vectorize_in_order_gep; gep_through_alu ]
 
 (* ALU/Vectorize reordering *)
 
