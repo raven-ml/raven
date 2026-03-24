@@ -44,11 +44,11 @@
 
     Train a new tokenizer:
     {[
-      let texts = [ "Hello world"; "How are you?"; "Hello again" ] in
-      let tokenizer =
-        Brot.train_bpe (`Seq (List.to_seq texts)) ~vocab_size:1000
-      in
-      Brot.save_pretrained tokenizer ~path:"./my_tokenizer"
+    let texts = [ "Hello world"; "How are you?"; "Hello again" ] in
+    let tokenizer =
+      Brot.train_bpe (`Seq (List.to_seq texts)) ~vocab_size:1000
+    in
+    Brot.save_pretrained tokenizer ~path:"./my_tokenizer"
     ]}
 
     {!modules:Encoding Normalizer Pre_tokenizer Post_processor Decoder} *)

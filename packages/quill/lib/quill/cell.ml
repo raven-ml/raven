@@ -84,11 +84,11 @@ let apply_cr s =
 
 let rec append_or_coalesce o acc = function
   | [] -> List.rev (o :: acc)
-  | [ Stdout prev ] -> begin
-      match o with
+  | [ Stdout prev ] ->
+      begin match o with
       | Stdout next -> List.rev (Stdout (apply_cr (prev ^ next)) :: acc)
       | _ -> List.rev (o :: Stdout prev :: acc)
-    end
+      end
   | out :: rest -> append_or_coalesce o (out :: acc) rest
 
 let append_output o = function

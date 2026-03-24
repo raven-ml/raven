@@ -8,7 +8,7 @@
     GPT-2 inputs are passed as int32 [input_ids]:
 
     {[
-      Layer.apply model vars ~training:false input_ids
+    Layer.apply model vars ~training:false input_ids
     ]}
 
     Position ids are computed automatically from the sequence length. *)

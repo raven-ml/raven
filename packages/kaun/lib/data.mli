@@ -9,9 +9,8 @@
     are built by composing constructors, transformers, and consumers.
 
     {[
-      Data.of_array examples |> Data.shuffle
-      |> Data.map_batch 32 collate
-      |> Data.iter train_step
+    Data.of_array examples |> Data.shuffle |> Data.map_batch 32 collate
+    |> Data.iter train_step
     ]} *)
 
 (** {1:types Types} *)

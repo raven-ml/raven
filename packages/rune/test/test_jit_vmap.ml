@@ -6,8 +6,8 @@
 (* Test suite for JIT + vmap composition.
 
    Each test verifies that jit(vmap(f))(x) produces the same result as
-   vmap(f)(x), ensuring that vectorized mapping composes correctly with
-   JIT compilation. *)
+   vmap(f)(x), ensuring that vectorized mapping composes correctly with JIT
+   compilation. *)
 
 open Windtrap
 open Test_rune_support
@@ -20,8 +20,7 @@ end
 let eps = 1e-4
 
 let get_cpu_device () : Tolk.Device.t option =
-  try Some (Tolk_cpu.create "CPU")
-  with _ -> None
+  try Some (Tolk_cpu.create "CPU") with _ -> None
 
 (* ───── jit(vmap(f)) vs vmap(f) ───── *)
 
@@ -34,9 +33,12 @@ let test_jit_vmap_mul_scalar () =
       let x = T.full T.float32 [| 3; 4 |] 3.0 in
       let expected = T.vmap f x in
       let vmap_jit = T.jit ~device:dev (T.vmap f) in
-      let _ = vmap_jit x in  (* warmup *)
-      let _ = vmap_jit x in  (* capture *)
-      let result = vmap_jit x in  (* replay *)
+      let _ = vmap_jit x in
+      (* warmup *)
+      let _ = vmap_jit x in
+      (* capture *)
+      let result = vmap_jit x in
+      (* replay *)
       check_rune ~eps "jit(vmap(x*2))" expected result
 
 let test_jit_vmap_self_add () =

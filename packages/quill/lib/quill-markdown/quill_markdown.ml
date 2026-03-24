@@ -223,14 +223,14 @@ let extract_data_uri_base64 src =
 (* Parse image Display data from <img> tag content *)
 let parse_image_display ?base_dir mime content =
   match extract_img_src content with
-  | Some src -> begin
-      match extract_data_uri_base64 src with
+  | Some src ->
+      begin match extract_data_uri_base64 src with
       | Some base64 ->
           (* Inline data URI: extract base64 directly *)
           Quill.Cell.Display { mime; data = base64 }
-      | None -> begin
+      | None ->
           (* File reference: read and base64-encode *)
-          match base_dir with
+          begin match base_dir with
           | Some dir ->
               let path = Filename.concat dir src in
               let ic = open_in_bin path in
@@ -284,8 +284,8 @@ let parse_image_display ?base_dir mime content =
           | None ->
               (* No base_dir, store src as placeholder *)
               Quill.Cell.Display { mime; data = "" }
-        end
-    end
+          end
+      end
   | None ->
       (* No <img> tag — treat as raw data *)
       Quill.Cell.Display { mime; data = content }

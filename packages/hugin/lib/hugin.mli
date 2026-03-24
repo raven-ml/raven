@@ -12,10 +12,10 @@
     {!render_svg}.
 
     {[
-      let x = Nx.linspace Float32 0. 6.28 100 in
-      let y = Nx.map (fun v -> Float.sin v) x in
-      Hugin.line ~x ~y () |> Hugin.title "Sine wave"
-      |> Hugin.render_png "sine.png"
+    let x = Nx.linspace Float32 0. 6.28 100 in
+    let y = Nx.map (fun v -> Float.sin v) x in
+    Hugin.line ~x ~y () |> Hugin.title "Sine wave"
+    |> Hugin.render_png "sine.png"
     ]} *)
 
 (** {1:sub Sub-modules} *)
@@ -315,7 +315,7 @@ val layers : t list -> t
     Decoration functions add metadata to a specification. They are designed for
     the [|>] pipeline:
     {[
-      line ~x ~y () |> title "My Plot" |> xlabel "Time"
+    line ~x ~y () |> title "My Plot" |> xlabel "Time"
     ]} *)
 
 val title : string -> t -> t
@@ -387,11 +387,11 @@ val no_axes : t -> t
     preserved. The full panel area is used for marks. Useful for image grids:
 
     {[
-      List.init 10 (fun i ->
-          Hugin.imshow ~data:digits.(i) ~cmap:Cmap.gray ()
-          |> Hugin.title (string_of_int labels.(i))
-          |> Hugin.no_axes)
-      |> Hugin.hstack
+    List.init 10 (fun i ->
+        Hugin.imshow ~data:digits.(i) ~cmap:Cmap.gray ()
+        |> Hugin.title (string_of_int labels.(i))
+        |> Hugin.no_axes)
+    |> Hugin.hstack
     ]} *)
 
 (** {1:layout Layout} *)

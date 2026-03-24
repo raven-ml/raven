@@ -14,7 +14,9 @@ let make_arrays n =
   let values = Array.init n (fun i -> Float.of_int (i mod 10) *. 0.1) in
   let terminated = Array.init n (fun i -> i mod 50 = 49) in
   let truncated = Array.init n (fun i -> i mod 100 = 99) in
-  let next_values = Array.init n (fun i -> Float.of_int ((i + 1) mod 10) *. 0.1) in
+  let next_values =
+    Array.init n (fun i -> Float.of_int ((i + 1) mod 10) *. 0.1)
+  in
   (rewards, values, terminated, truncated, next_values)
 
 let gae_benchmarks () =
@@ -24,11 +26,9 @@ let gae_benchmarks () =
     (fun (label, n) ->
       let rewards, values, terminated, truncated, next_values = make_arrays n in
       benches :=
-        Thumper.bench
-          (Printf.sprintf "compute n=%s" label)
-          (fun () ->
-              (Gae.compute ~rewards ~values ~terminated ~truncated ~next_values
-                 ~gamma ~lambda))
+        Thumper.bench (Printf.sprintf "compute n=%s" label) (fun () ->
+            Gae.compute ~rewards ~values ~terminated ~truncated ~next_values
+              ~gamma ~lambda)
         :: !benches)
     sizes;
   List.rev !benches
@@ -40,11 +40,10 @@ let gae_from_values_benchmarks () =
     (fun (label, n) ->
       let rewards, values, terminated, truncated, _ = make_arrays n in
       benches :=
-        Thumper.bench
-          (Printf.sprintf "compute_from_values n=%s" label)
+        Thumper.bench (Printf.sprintf "compute_from_values n=%s" label)
           (fun () ->
-              (Gae.compute_from_values ~rewards ~values ~terminated ~truncated
-                 ~last_value:0.0 ~gamma ~lambda))
+            Gae.compute_from_values ~rewards ~values ~terminated ~truncated
+              ~last_value:0.0 ~gamma ~lambda)
         :: !benches)
     sizes;
   List.rev !benches
@@ -56,10 +55,8 @@ let returns_benchmarks () =
     (fun (label, n) ->
       let rewards, _, terminated, truncated, _ = make_arrays n in
       benches :=
-        Thumper.bench
-          (Printf.sprintf "returns n=%s" label)
-          (fun () ->
-            (Gae.returns ~rewards ~terminated ~truncated ~gamma))
+        Thumper.bench (Printf.sprintf "returns n=%s" label) (fun () ->
+            Gae.returns ~rewards ~terminated ~truncated ~gamma)
         :: !benches)
     sizes;
   List.rev !benches
@@ -71,9 +68,8 @@ let normalize_benchmarks () =
     (fun (label, n) ->
       let arr = Array.init n (fun i -> Float.of_int i *. 0.01) in
       benches :=
-        Thumper.bench
-          (Printf.sprintf "normalize n=%s" label)
-          (fun () -> (Gae.normalize arr))
+        Thumper.bench (Printf.sprintf "normalize n=%s" label) (fun () ->
+            Gae.normalize arr)
         :: !benches)
     sizes;
   List.rev !benches
@@ -106,18 +102,14 @@ let buffer_add_benchmarks () =
       truncated = false;
     }
   in
-  [
-    Thumper.bench "add (full buffer, cap=10000)" (fun () ->
-        Buffer.add buf tr);
-  ]
+  [ Thumper.bench "add (full buffer, cap=10000)" (fun () -> Buffer.add buf tr) ]
 
 let buffer_create_benchmarks () =
   let sizes = [ ("100", 100); ("1000", 1000); ("10000", 10000) ] in
   List.map
     (fun (label, n) ->
-      Thumper.bench
-        (Printf.sprintf "create+fill cap=%s" label)
-        (fun () -> (fill_buffer n)))
+      Thumper.bench (Printf.sprintf "create+fill cap=%s" label) (fun () ->
+          fill_buffer n))
     sizes
 
 let build_benchmarks () =

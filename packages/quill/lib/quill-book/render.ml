@@ -124,9 +124,10 @@ let highlight_ocaml buf source =
       if !i < len then incr i;
       span "string" (String.sub source start (!i - start))
     end
-    else if c = '\'' && !i + 1 < len then begin
+    else if c = '\'' && !i + 1 < len then
       (* Character literal or type variable — check for char literal patterns *)
-      if !i + 2 < len && source.[!i + 1] <> '\'' && source.[!i + 2] = '\'' then begin
+      begin if !i + 2 < len && source.[!i + 1] <> '\'' && source.[!i + 2] = '\''
+      then begin
         (* 'x' *)
         span "string" (String.sub source !i 3);
         i := !i + 3
@@ -141,7 +142,7 @@ let highlight_ocaml buf source =
         buf_add_escaped buf (String.make 1 c);
         incr i
       end
-    end
+      end
     else if is_digit c then begin
       (* Number literal *)
       let start = !i in

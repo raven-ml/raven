@@ -6,14 +6,14 @@
 (** CSV codec for Talon dataframes.
 
     {[
-      (* From string *)
-      let df = Talon_csv.of_string csv_text
+    (* From string *)
+    let df = Talon_csv.of_string csv_text
 
-      (* From file (streaming) *)
-      let df =
-        Talon_csv.read "data.csv"
-          (* To file (streaming) *)
-          Talon_csv.write "out.csv" df
+    (* From file (streaming) *)
+    let df =
+      Talon_csv.read "data.csv"
+        (* To file (streaming) *)
+        Talon_csv.write "out.csv" df
     ]} *)
 
 type dtype_spec =

@@ -4,12 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 let lr = Vega.Schedule.constant 1e-3
-
-let shapes =
-  [
-    ("256", [| 256; 256 |]);
-    ("1024", [| 1024; 1024 |]);
-  ]
+let shapes = [ ("256", [| 256; 256 |]); ("1024", [| 1024; 1024 |]) ]
 
 let make_step_bench name tx (label, shape) =
   let param = Nx.rand Nx.Float32 shape in
@@ -21,15 +16,13 @@ let make_step_bench name tx (label, shape) =
       state := new_state;
       new_param)
 
-let optimizer_benches name tx =
-  List.map (make_step_bench name tx) shapes
+let optimizer_benches name tx = List.map (make_step_bench name tx) shapes
 
 let build_benchmarks () =
   [
     Thumper.group "SGD" (optimizer_benches "SGD" (Vega.sgd lr));
     Thumper.group "SGD+Momentum"
-      (optimizer_benches "SGD+Momentum"
-         (Vega.sgd ~momentum:0.9 lr));
+      (optimizer_benches "SGD+Momentum" (Vega.sgd ~momentum:0.9 lr));
     Thumper.group "Adam" (optimizer_benches "Adam" (Vega.adam lr));
     Thumper.group "AdamW" (optimizer_benches "AdamW" (Vega.adamw lr));
     Thumper.group "RMSprop" (optimizer_benches "RMSprop" (Vega.rmsprop lr));
@@ -39,7 +32,8 @@ let build_benchmarks () =
     Thumper.group "LAMB" (optimizer_benches "LAMB" (Vega.lamb lr));
     Thumper.group "LARS" (optimizer_benches "LARS" (Vega.lars lr));
     Thumper.group "Adan" (optimizer_benches "Adan" (Vega.adan lr));
-    Thumper.group "Adafactor" (optimizer_benches "Adafactor" (Vega.adafactor ()));
+    Thumper.group "Adafactor"
+      (optimizer_benches "Adafactor" (Vega.adafactor ()));
   ]
 
 let () =

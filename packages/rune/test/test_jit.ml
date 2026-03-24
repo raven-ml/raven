@@ -5,9 +5,9 @@
 
 (* Test suite for the JIT effect handler.
 
-   Tests are split into two groups:
-   - Without device: tests the graph building and state machine
-   - With device: tests the full pipeline (build → compile → execute → replay)
+   Tests are split into two groups: - Without device: tests the graph building
+   and state machine - With device: tests the full pipeline (build → compile →
+   execute → replay)
 
    Without a device, capture should fail (no eager fallback). *)
 
@@ -28,9 +28,10 @@ let test_jit_no_device_fails () =
   let f x = T.add x (T.scalar T.float32 1.0) in
   let f_jit = T.jit f in
   let x = T.scalar T.float32 5.0 in
-  let _ = f_jit x in  (* warmup: ok, runs eagerly *)
+  let _ = f_jit x in
+  (* warmup: ok, runs eagerly *)
   let raised = ref false in
-  (try ignore (f_jit x)  (* capture: should fail, no device *)
+  (try ignore (f_jit x) (* capture: should fail, no device *)
    with Failure _ -> raised := true);
   is_true !raised
 
@@ -44,7 +45,10 @@ let test_jit_warmup_is_eager () =
 
 let test_jit_warmup_calls_f () =
   let called = ref false in
-  let f x = called := true; T.add x (T.scalar T.float32 1.0) in
+  let f x =
+    called := true;
+    T.add x (T.scalar T.float32 1.0)
+  in
   let f_jit = T.jit f in
   let x = T.scalar T.float32 0.0 in
   let _ = f_jit x in
@@ -52,13 +56,11 @@ let test_jit_warmup_calls_f () =
 
 (* ───── With device: full pipeline ───── *)
 
-(* To test the full pipeline, we need a Tolk device. The CPU device is
-   available via tolk.cpu. These tests will only run when a device is
-   available. *)
+(* To test the full pipeline, we need a Tolk device. The CPU device is available
+   via tolk.cpu. These tests will only run when a device is available. *)
 
 let get_cpu_device () : Tolk.Device.t option =
-  try Some (Tolk_cpu.create "CPU")
-  with _ -> None
+  try Some (Tolk_cpu.create "CPU") with _ -> None
 
 let test_jit_capture_compiles () =
   match get_cpu_device () with
@@ -67,7 +69,8 @@ let test_jit_capture_compiles () =
       let f x = T.add x (T.scalar T.float32 1.0) in
       let f_jit = T.jit ~device:dev f in
       let x = T.scalar T.float32 5.0 in
-      let _ = f_jit x in  (* warmup *)
+      let _ = f_jit x in
+      (* warmup *)
       (* Capture should build graph, compile, and return result *)
       let result = f_jit x in
       check_scalar ~eps "capture result" 6.0 (scalar_value result)
@@ -77,14 +80,20 @@ let test_jit_replay_no_recompile () =
   | None -> ()
   | Some dev ->
       let call_count = ref 0 in
-      let f x = incr call_count; T.add x (T.scalar T.float32 1.0) in
+      let f x =
+        incr call_count;
+        T.add x (T.scalar T.float32 1.0)
+      in
       let f_jit = T.jit ~device:dev f in
       let x = T.scalar T.float32 5.0 in
-      let _ = f_jit x in  (* warmup: f called *)
+      let _ = f_jit x in
+      (* warmup: f called *)
       equal int 1 !call_count;
-      let _ = f_jit x in  (* capture: f called under handler *)
+      let _ = f_jit x in
+      (* capture: f called under handler *)
       equal int 2 !call_count;
-      let _ = f_jit x in  (* replay: f should NOT be called *)
+      let _ = f_jit x in
+      (* replay: f should NOT be called *)
       equal int 2 !call_count
 
 let test_jit_replay_different_values () =
@@ -93,9 +102,12 @@ let test_jit_replay_different_values () =
   | Some dev ->
       let f x = T.mul x (T.scalar T.float32 3.0) in
       let f_jit = T.jit ~device:dev f in
-      let _ = f_jit (T.scalar T.float32 2.0) in (* warmup *)
-      let _ = f_jit (T.scalar T.float32 2.0) in (* capture *)
-      let result = f_jit (T.scalar T.float32 7.0) in (* replay *)
+      let _ = f_jit (T.scalar T.float32 2.0) in
+      (* warmup *)
+      let _ = f_jit (T.scalar T.float32 2.0) in
+      (* capture *)
+      let result = f_jit (T.scalar T.float32 7.0) in
+      (* replay *)
       check_scalar ~eps "replay 7*3" 21.0 (scalar_value result)
 
 let test_jit_shape_mismatch_rejected () =
@@ -106,8 +118,10 @@ let test_jit_shape_mismatch_rejected () =
       let f_jit = T.jit ~device:dev f in
       let x4 = T.full T.float32 [| 4 |] 1.0 in
       let x8 = T.full T.float32 [| 8 |] 1.0 in
-      let _ = f_jit x4 in  (* warmup *)
-      let _ = f_jit x4 in  (* capture *)
+      let _ = f_jit x4 in
+      (* warmup *)
+      let _ = f_jit x4 in
+      (* capture *)
       let raised = ref false in
       (try ignore (f_jit x8) with Invalid_argument _ -> raised := true);
       is_true !raised
@@ -122,16 +136,19 @@ let test_jit_chain () =
       in
       let f_jit = T.jit ~device:dev f in
       let x = T.scalar T.float32 4.0 in
-      let _ = f_jit x in  (* warmup *)
-      let _ = f_jit x in  (* capture *)
-      let result = f_jit x in  (* replay *)
+      let _ = f_jit x in
+      (* warmup *)
+      let _ = f_jit x in
+      (* capture *)
+      let result = f_jit x in
+      (* replay *)
       check_scalar ~eps "chain (4+1)*2" 10.0 (scalar_value result)
 
 let test_jit_reduce () =
   match get_cpu_device () with
   | None -> ()
   | Some dev ->
-      let f x = T.sum ~axes:[0] x in
+      let f x = T.sum ~axes:[ 0 ] x in
       let f_jit = T.jit ~device:dev f in
       let x = T.full T.float32 [| 4 |] 3.0 in
       let _ = f_jit x in

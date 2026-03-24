@@ -63,5 +63,5 @@ val print_page_html :
 val standalone_page_html :
   title:string -> content:string -> live_reload_script:string -> string
 (** [standalone_page_html ~title ~content ~live_reload_script] renders a
-    self-contained HTML page for a single notebook. CSS is inlined, no sidebar or
-    multi-page navigation. *)
+    self-contained HTML page for a single notebook. CSS is inlined, no sidebar
+    or multi-page navigation. *)

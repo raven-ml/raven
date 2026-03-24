@@ -26,13 +26,12 @@ let normalization_benchmarks () =
   let bn2_bias = Nx.zeros Nx.float32 [| dim |] in
   [
     Thumper.bench "layer_norm [32;128;256]" (fun () ->
-        (Fn.layer_norm ~gamma ~beta x));
-    Thumper.bench "rms_norm [32;128;256]" (fun () ->
-        (Fn.rms_norm x));
+        Fn.layer_norm ~gamma ~beta x);
+    Thumper.bench "rms_norm [32;128;256]" (fun () -> Fn.rms_norm x);
     Thumper.bench "batch_norm [32;256;8;8]" (fun () ->
-        (Fn.batch_norm ~scale:bn4_scale ~bias:bn4_bias x_4d));
+        Fn.batch_norm ~scale:bn4_scale ~bias:bn4_bias x_4d);
     Thumper.bench "batch_norm [32;256]" (fun () ->
-        (Fn.batch_norm ~scale:bn2_scale ~bias:bn2_bias x_2d));
+        Fn.batch_norm ~scale:bn2_scale ~bias:bn2_bias x_2d);
   ]
 
 let attention_benchmarks () =
@@ -43,11 +42,10 @@ let attention_benchmarks () =
   let x = Nx.rand Nx.float32 [| batch; seq_len; head_dim |] in
   [
     Thumper.bench "dot_product_attention [32;8;128;32]" (fun () ->
-        (Fn.dot_product_attention q k v));
+        Fn.dot_product_attention q k v);
     Thumper.bench "dot_product_attention causal [32;8;128;32]" (fun () ->
-        (Fn.dot_product_attention ~is_causal:true q k v));
-    Thumper.bench "rope [32;128;32]" (fun () ->
-        (Attention.rope x));
+        Fn.dot_product_attention ~is_causal:true q k v);
+    Thumper.bench "rope [32;128;32]" (fun () -> Attention.rope x);
   ]
 
 let loss_benchmarks () =
@@ -59,13 +57,11 @@ let loss_benchmarks () =
   let binary_labels = Nx.zeros Nx.float32 [| batch |] in
   [
     Thumper.bench "cross_entropy [32;10]" (fun () ->
-        (Loss.cross_entropy logits labels_onehot));
+        Loss.cross_entropy logits labels_onehot);
     Thumper.bench "binary_cross_entropy [32]" (fun () ->
-        (Loss.binary_cross_entropy binary_logits binary_labels));
-    Thumper.bench "mse [32;10]" (fun () ->
-        (Loss.mse predictions targets));
-    Thumper.bench "mae [32;10]" (fun () ->
-        (Loss.mae predictions targets));
+        Loss.binary_cross_entropy binary_logits binary_labels);
+    Thumper.bench "mse [32;10]" (fun () -> Loss.mse predictions targets);
+    Thumper.bench "mae [32;10]" (fun () -> Loss.mae predictions targets);
   ]
 
 let conv_benchmarks () =
@@ -74,23 +70,21 @@ let conv_benchmarks () =
   let x2d = Nx.rand Nx.float32 [| batch; 64; 32; 32 |] in
   let w2d = Nx.rand Nx.float32 [| 128; 64; 3; 3 |] in
   [
-    Thumper.bench "conv1d [32;64;128] k=3" (fun () ->
-        (Fn.conv1d x1d w1d));
+    Thumper.bench "conv1d [32;64;128] k=3" (fun () -> Fn.conv1d x1d w1d);
     Thumper.bench "conv1d same [32;64;128] k=3" (fun () ->
-        (Fn.conv1d ~padding:`Same x1d w1d));
-    Thumper.bench "conv2d [32;64;32;32] k=3x3" (fun () ->
-        (Fn.conv2d x2d w2d));
+        Fn.conv1d ~padding:`Same x1d w1d);
+    Thumper.bench "conv2d [32;64;32;32] k=3x3" (fun () -> Fn.conv2d x2d w2d);
     Thumper.bench "conv2d same [32;64;32;32] k=3x3" (fun () ->
-        (Fn.conv2d ~padding:`Same x2d w2d));
+        Fn.conv2d ~padding:`Same x2d w2d);
   ]
 
 let pooling_benchmarks () =
   let x2d = Nx.rand Nx.float32 [| batch; 64; 32; 32 |] in
   [
     Thumper.bench "max_pool2d [32;64;32;32] k=2x2" (fun () ->
-        (Fn.max_pool2d ~kernel_size:(2, 2) x2d));
+        Fn.max_pool2d ~kernel_size:(2, 2) x2d);
     Thumper.bench "avg_pool2d [32;64;32;32] k=2x2" (fun () ->
-        (Fn.avg_pool2d ~kernel_size:(2, 2) x2d));
+        Fn.avg_pool2d ~kernel_size:(2, 2) x2d);
   ]
 
 let layer_benchmarks () =
@@ -99,18 +93,16 @@ let layer_benchmarks () =
   let linear_vars = Layer.init linear_layer ~dtype:Nx.float32 in
   let ln_layer = Layer.layer_norm ~dim () in
   let ln_vars = Layer.init ln_layer ~dtype:Nx.float32 in
-  let mha_layer =
-    Attention.multi_head_attention ~embed_dim:dim ~num_heads ()
-  in
+  let mha_layer = Attention.multi_head_attention ~embed_dim:dim ~num_heads () in
   let mha_vars = Layer.init mha_layer ~dtype:Nx.float32 in
   let x = Nx.rand Nx.float32 [| batch; seq_len; dim |] in
   [
     Thumper.bench "Layer.linear [32;128;256]->[32;128;256]" (fun () ->
-        (Layer.apply linear_layer linear_vars ~training:false x));
+        Layer.apply linear_layer linear_vars ~training:false x);
     Thumper.bench "Layer.layer_norm [32;128;256]" (fun () ->
-        (Layer.apply ln_layer ln_vars ~training:false x));
+        Layer.apply ln_layer ln_vars ~training:false x);
     Thumper.bench "Layer.multi_head_attention [32;128;256] h=8" (fun () ->
-        (Layer.apply mha_layer mha_vars ~training:false x));
+        Layer.apply mha_layer mha_vars ~training:false x);
   ]
 
 let embedding_benchmarks () =
@@ -118,13 +110,13 @@ let embedding_benchmarks () =
   let vocab_size = 32000 in
   let embed_dim = dim in
   let table = Nx.rand Nx.float32 [| vocab_size; embed_dim |] in
-  let indices = Nx.create Nx.int32 [| batch; seq_len |]
-      (Array.init (batch * seq_len) (fun i ->
-           Int32.of_int (i mod vocab_size)))
+  let indices =
+    Nx.create Nx.int32 [| batch; seq_len |]
+      (Array.init (batch * seq_len) (fun i -> Int32.of_int (i mod vocab_size)))
   in
   [
     Thumper.bench "embedding [32;128] vocab=32000 dim=256" (fun () ->
-        (Fn.embedding ~embedding:table indices));
+        Fn.embedding ~embedding:table indices);
   ]
 
 let build_benchmarks () =

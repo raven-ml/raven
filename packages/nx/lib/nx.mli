@@ -495,9 +495,7 @@ val one_hot : num_classes:int -> ('a, 'b) t -> (int, uint8_elt) t
     Sampling functions use the implicit RNG state managed by {!module-Rng}. Wrap
     calls in {!Rng.run} for reproducibility:
 
-    {v
-      Rng.run ~seed:42 (fun () -> rand float32 [| 3 |])
-    v} *)
+    {v   Rng.run ~seed:42 (fun () -> rand float32 [| 3 |]) v} *)
 
 module Rng : sig
   (** Splittable RNG keys and implicit key management.

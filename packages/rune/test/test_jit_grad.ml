@@ -6,8 +6,8 @@
 (* Test suite for JIT + grad composition.
 
    Each test verifies that jit(grad(f))(x) produces the same result as
-   grad(f)(x), ensuring that automatic differentiation composes correctly
-   with JIT compilation. *)
+   grad(f)(x), ensuring that automatic differentiation composes correctly with
+   JIT compilation. *)
 
 open Windtrap
 open Test_rune_support
@@ -20,8 +20,7 @@ end
 let eps = 1e-4
 
 let get_cpu_device () : Tolk.Device.t option =
-  try Some (Tolk_cpu.create "CPU")
-  with _ -> None
+  try Some (Tolk_cpu.create "CPU") with _ -> None
 
 (* ───── jit(grad(f)) vs grad(f) ───── *)
 
@@ -34,9 +33,12 @@ let test_jit_grad_square () =
       let x = T.full T.float32 [| 4 |] 3.0 in
       let expected = T.grad f x in
       let grad_jit = T.jit ~device:dev (T.grad f) in
-      let _ = grad_jit x in  (* warmup *)
-      let _ = grad_jit x in  (* capture *)
-      let result = grad_jit x in  (* replay *)
+      let _ = grad_jit x in
+      (* warmup *)
+      let _ = grad_jit x in
+      (* capture *)
+      let result = grad_jit x in
+      (* replay *)
       check_rune ~eps "jit(grad(sum(x*x)))" expected result
 
 let test_jit_grad_add_const () =
@@ -104,10 +106,13 @@ let test_jit_grad_replay_different_input () =
       let x1 = T.full T.float32 [| 4 |] 3.0 in
       let x2 = T.full T.float32 [| 4 |] 5.0 in
       let grad_jit = T.jit ~device:dev (T.grad f) in
-      let _ = grad_jit x1 in  (* warmup *)
-      let _ = grad_jit x1 in  (* capture *)
+      let _ = grad_jit x1 in
+      (* warmup *)
+      let _ = grad_jit x1 in
+      (* capture *)
       let expected = T.grad f x2 in
-      let result = grad_jit x2 in  (* replay with different input *)
+      let result = grad_jit x2 in
+      (* replay with different input *)
       check_rune ~eps "jit(grad(sum(x*x))) replay" expected result
 
 (* ───── Test runner ───── *)

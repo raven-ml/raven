@@ -370,7 +370,8 @@ val vmaps :
 val jit :
   ?device:Tolk.Device.t ->
   (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
-  (('a, 'b) Nx.t -> ('c, 'd) Nx.t)
+  ('a, 'b) Nx.t ->
+  ('c, 'd) Nx.t
 (** [jit f] returns a JIT-compiled version of [f].
 
     - Call 1 (warmup): executes eagerly
@@ -400,9 +401,9 @@ val trace_graph :
 (** [trace_graph ?device f x] traces [f] applied to [x], capturing the
     computation graph without executing it.
 
-    Returns the tensor graph, kernel graph, and rendered source for each
-    kernel. Useful for debugging what the JIT produces, inspecting gradient
-    graphs, or comparing against reference implementations.
+    Returns the tensor graph, kernel graph, and rendered source for each kernel.
+    Useful for debugging what the JIT produces, inspecting gradient graphs, or
+    comparing against reference implementations.
 
     When [device] is omitted, renders using the C backend (clang). *)
 

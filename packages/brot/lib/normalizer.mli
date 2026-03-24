@@ -12,12 +12,12 @@
 
     Compose normalizers with {!val-sequence}:
     {[
-      let n =
-        Normalizer.sequence
-          [ Normalizer.nfd; Normalizer.strip_accents; Normalizer.lowercase ]
-      in
-      Normalizer.apply n "Caf\u{00E9}"
-      (* "cafe" *)
+    let n =
+      Normalizer.sequence
+        [ Normalizer.nfd; Normalizer.strip_accents; Normalizer.lowercase ]
+    in
+    Normalizer.apply n "Caf\u{00E9}"
+    (* "cafe" *)
     ]}
 
     See {!Brot} for the full tokenization pipeline. *)

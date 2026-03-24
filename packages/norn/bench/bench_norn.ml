@@ -17,9 +17,7 @@ let hmc_benches () =
     (fun (label, dim, num_leapfrog) ->
       let log_prob = make_log_prob dim in
       let metric = Norn.unit_metric dim in
-      let kernel =
-        Norn.hmc_kernel ~num_leapfrog ~step_size:0.1 ~metric ()
-      in
+      let kernel = Norn.hmc_kernel ~num_leapfrog ~step_size:0.1 ~metric () in
       let init = Nx.zeros f64 [| dim |] in
       let state = ref (kernel.init init log_prob) in
       Thumper.bench (Printf.sprintf "HMC/%s" label) (fun () ->
@@ -34,9 +32,7 @@ let nuts_benches () =
     (fun (label, dim, max_depth) ->
       let log_prob = make_log_prob dim in
       let metric = Norn.unit_metric dim in
-      let kernel =
-        Norn.nuts_kernel ~max_depth ~step_size:0.1 ~metric ()
-      in
+      let kernel = Norn.nuts_kernel ~max_depth ~step_size:0.1 ~metric () in
       let init = Nx.zeros f64 [| dim |] in
       let state = ref (kernel.init init log_prob) in
       Thumper.bench (Printf.sprintf "NUTS/%s" label) (fun () ->
@@ -50,8 +46,7 @@ let ess_benches () =
   List.map
     (fun (label, dim, n) ->
       let samples = Nx.randn f64 [| n; dim |] in
-      Thumper.bench (Printf.sprintf "ESS/%s" label) (fun () ->
-          (Norn.ess samples)))
+      Thumper.bench (Printf.sprintf "ESS/%s" label) (fun () -> Norn.ess samples))
     cases
 
 let rhat_benches () =
@@ -60,7 +55,7 @@ let rhat_benches () =
     (fun (label, dim, n) ->
       let chains = Array.init 4 (fun _ -> Nx.randn f64 [| n; dim |]) in
       Thumper.bench (Printf.sprintf "Rhat/%s" label) (fun () ->
-          (Norn.rhat chains)))
+          Norn.rhat chains))
     cases
 
 let () =

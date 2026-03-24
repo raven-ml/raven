@@ -282,12 +282,8 @@ let build_file ~create_kernel ?(skip_eval = false) ?output
           Quill.Eval.run ~create_kernel doc)
   in
   let content = Render.chapter_html doc in
-  let html =
-    Render.standalone_page_html ~title ~content ~live_reload_script
-  in
-  let output_dir =
-    match output with Some dir -> dir | None -> nb_dir
-  in
+  let html = Render.standalone_page_html ~title ~content ~live_reload_script in
+  let output_dir = match output with Some dir -> dir | None -> nb_dir in
   mkdir_p output_dir;
   let html_name = Filename.remove_extension basename ^ ".html" in
   let output_path = Filename.concat output_dir html_name in

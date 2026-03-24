@@ -9,18 +9,18 @@ let nice_num v round =
   let exp = Float.floor (Float.log10 v) in
   let frac = v /. Float.pow 10. exp in
   let nice =
-    if round then begin
-      if frac < 1.5 then 1.
+    if round then
+      begin if frac < 1.5 then 1.
       else if frac < 3. then 2.
       else if frac < 7. then 5.
       else 10.
-    end
-    else begin
-      if frac <= 1. then 1.
+      end
+    else
+      begin if frac <= 1. then 1.
       else if frac <= 2. then 2.
       else if frac <= 5. then 5.
       else 10.
-    end
+      end
   in
   nice *. Float.pow 10. exp
 

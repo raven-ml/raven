@@ -19,10 +19,10 @@
       value in a given unit as an {!Nx.float64_t}.
 
     {[
-      open Unit
+    open Unit
 
-      let d = Length.(kpc 10.0 + pc 500.0)
-      let d_mpc = Length.in_mpc d
+    let d = Length.(kpc 10.0 + pc 500.0)
+    let d_mpc = Length.in_mpc d
     ]} *)
 
 (** {1:types Types} *)

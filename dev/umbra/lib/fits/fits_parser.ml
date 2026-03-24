@@ -89,13 +89,13 @@ let parse_card card =
       let i = ref 1 in
       let buf = Buffer.create 68 in
       while !i < len do
-        if rest.[!i] = '\'' then begin
-          if !i + 1 < len && rest.[!i + 1] = '\'' then begin
+        if rest.[!i] = '\'' then
+          begin if !i + 1 < len && rest.[!i + 1] = '\'' then begin
             Buffer.add_char buf '\'';
             i := !i + 2
           end
           else i := len
-        end
+          end
         else begin
           Buffer.add_char buf rest.[!i];
           i := !i + 1
@@ -103,8 +103,8 @@ let parse_card card =
       done;
       { key; value = trim_right (Buffer.contents buf); comment = "" }
     end
-    else begin
-      match String.index_opt rest '/' with
+    else
+      begin match String.index_opt rest '/' with
       | Some i ->
           let value = trim_right (String.sub rest 0 i) in
           let comment =
@@ -112,7 +112,7 @@ let parse_card card =
           in
           { key; value; comment }
       | None -> { key; value = trim_right rest; comment = "" }
-    end
+      end
 
 let read_one_header ic =
   let keywords = ref [] in

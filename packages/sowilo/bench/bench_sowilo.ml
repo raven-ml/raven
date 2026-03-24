@@ -22,7 +22,7 @@ module Fixtures = struct
   let gray_720 () = Lazy.force gray_720
 end
 
-let force_tensor tensor = (Nx.to_buffer tensor)
+let force_tensor tensor = Nx.to_buffer tensor
 
 let bench_grayscale img =
   let gray = Sowilo.to_grayscale img in

@@ -5,9 +5,9 @@
 
 (** JIT compilation via effect handler.
 
-    Intercepts {!Nx} tensor operations to build a computation graph, compiles
-    it into optimized machine code, and replays the compiled schedule on
-    subsequent calls.
+    Intercepts {!Nx} tensor operations to build a computation graph, compiles it
+    into optimized machine code, and replays the compiled schedule on subsequent
+    calls.
 
     {b Usage:}
     {[
@@ -23,15 +23,16 @@
 val trace :
   ?device:Tolk.Device.t ->
   (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
-  (('a, 'b) Nx.t -> ('c, 'd) Nx.t)
+  ('a, 'b) Nx.t ->
+  ('c, 'd) Nx.t
 (** [trace ?device f] returns a JIT-compiled version of [f].
 
-    The returned function has the same type as [f] but compiles the
-    computation graph on the second call and replays the compiled schedule
-    on subsequent calls.
+    The returned function has the same type as [f] but compiles the computation
+    graph on the second call and replays the compiled schedule on subsequent
+    calls.
 
-    [device] selects the execution backend. When omitted, the computation
-    graph is still captured but execution falls back to the C backend.
+    [device] selects the execution backend. When omitted, the computation graph
+    is still captured but execution falls back to the C backend.
 
     Raises [Invalid_argument] if input shapes or dtypes change after capture. *)
 
@@ -55,9 +56,9 @@ val trace_graph :
 (** [trace_graph ?device f x] traces [f] applied to [x], capturing the
     computation graph without executing it.
 
-    Returns the tensor graph, kernel graph, and rendered source for each
-    kernel. Useful for debugging what the JIT produces, inspecting gradient
-    graphs, or comparing against reference implementations.
+    Returns the tensor graph, kernel graph, and rendered source for each kernel.
+    Useful for debugging what the JIT produces, inspecting gradient graphs, or
+    comparing against reference implementations.
 
     When [device] is omitted, renders using the C backend (clang). *)
 

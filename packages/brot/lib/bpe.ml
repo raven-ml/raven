@@ -312,8 +312,8 @@ let apply_merges model dropout word queue =
             (Array.unsafe_get sym_c next_pos)
         in
         let packed = Merge_map.find merges key in
-        if packed >= 0 && merge_new_id packed = new_id then begin
-          if use_dropout && Random.float 1.0 < p then begin
+        if packed >= 0 && merge_new_id packed = new_id then
+          begin if use_dropout && Random.float 1.0 < p then begin
             let s = queue.skip_size in
             if s = Array.length queue.skip_keys then begin
               let new_cap = max 8 (s * 2) in
@@ -367,7 +367,7 @@ let apply_merges model dropout word queue =
                 Merge_queue.push queue (merge_rank v) pos (merge_new_id v)
             end
           end
-        end
+          end
       end
     end
   done;
@@ -446,20 +446,20 @@ let init_word_fast model word text text_len =
     end
   in
   let handle_unk byte_len =
-    if model.unk_id >= 0 then begin
-      if model.fuse_unk then begin
-        if !pending_unk_id >= 0 then
+    if model.unk_id >= 0 then
+      begin if model.fuse_unk then
+        begin if !pending_unk_id >= 0 then
           pending_unk_len := !pending_unk_len + byte_len
         else begin
           pending_unk_id := model.unk_id;
           pending_unk_len := byte_len
         end
-      end
+        end
       else begin
         flush_unk ();
         add_symbol word model.unk_id byte_len
       end
-    end
+      end
   in
   while !pos < text_len do
     let b = Char.code (String.unsafe_get text !pos) in
@@ -488,10 +488,10 @@ let init_word_fast model word text text_len =
         flush_unk ();
         add_symbol word id byte_len
       end
-      else if model.byte_fallback then begin
-        if not (try_byte_fallback model word flush_unk text !pos byte_len) then
-          handle_unk byte_len
-      end
+      else if model.byte_fallback then
+        begin if not (try_byte_fallback model word flush_unk text !pos byte_len)
+        then handle_unk byte_len
+        end
       else handle_unk byte_len;
       pos := !pos + byte_len
     end
@@ -511,20 +511,20 @@ let init_word_slow model word text text_len =
     end
   in
   let handle_unk byte_len =
-    if model.unk_id >= 0 then begin
-      if model.fuse_unk then begin
-        if !pending_unk_id >= 0 then
+    if model.unk_id >= 0 then
+      begin if model.fuse_unk then
+        begin if !pending_unk_id >= 0 then
           pending_unk_len := !pending_unk_len + byte_len
         else begin
           pending_unk_id := model.unk_id;
           pending_unk_len := byte_len
         end
-      end
+        end
       else begin
         flush_unk ();
         add_symbol word model.unk_id byte_len
       end
-    end
+      end
   in
   let has_prefix = model.continuing_subword_prefix <> None in
   let has_suffix = model.end_of_word_suffix <> None in
@@ -564,11 +564,11 @@ let init_word_slow model word text text_len =
             flush_unk ();
             add_symbol word id byte_len
         | None ->
-            if model.byte_fallback then begin
-              if
+            if model.byte_fallback then
+              begin if
                 not (try_byte_fallback model word flush_unk text start byte_len)
               then handle_unk byte_len
-            end
+              end
             else handle_unk byte_len
       end
       else begin
@@ -588,10 +588,11 @@ let init_word_slow model word text text_len =
           flush_unk ();
           add_symbol word id byte_len
         end
-        else if model.byte_fallback then begin
-          if not (try_byte_fallback model word flush_unk text start byte_len)
+        else if model.byte_fallback then
+          begin if
+            not (try_byte_fallback model word flush_unk text start byte_len)
           then handle_unk byte_len
-        end
+          end
         else handle_unk byte_len
       end
     end

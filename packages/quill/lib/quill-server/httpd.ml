@@ -812,8 +812,8 @@ let handle_connection server fd client_addr =
   Unix.setsockopt_float fd Unix.SO_SNDTIMEO 30.0;
   Unix.setsockopt fd Unix.TCP_NODELAY true;
   let rec loop keep_alive =
-    if keep_alive && server.running then begin
-      match parse_request reader client_addr with
+    if keep_alive && server.running then
+      begin match parse_request reader client_addr with
       | req, ka ->
           if is_websocket_upgrade req then
             handle_ws_upgrade server req fd reader
@@ -835,7 +835,7 @@ let handle_connection server fd client_addr =
           Printf.eprintf err_parse (Printexc.to_string exn);
           try write_response fd (response ~status:400 "Bad Request")
           with _ -> ())
-    end
+      end
   in
   loop true
 
@@ -856,8 +856,8 @@ let run ?(after_start = ignore) server =
   server.routes <- List.rev server.routes;
   after_start ();
   let rec accept_loop () =
-    if server.running then begin
-      match Unix.accept sock with
+    if server.running then
+      begin match Unix.accept sock with
       | client_fd, client_addr ->
           Unix.clear_nonblock client_fd;
           ignore
@@ -882,7 +882,7 @@ let run ?(after_start = ignore) server =
           Printf.eprintf err_accept (Printexc.to_string exn);
           Thread.delay 0.01;
           accept_loop ()
-    end
+      end
   in
   accept_loop ();
   close_silent sock;

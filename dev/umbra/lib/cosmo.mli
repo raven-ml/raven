@@ -226,9 +226,9 @@ val z_at_value :
 
     For distance functions, unwrap the unit first:
     {[
-      z_at_value
-        (fun ~p z -> Unit.Length.in_mpc (Cosmo.comoving_distance ~p z))
-        target
+    z_at_value
+      (fun ~p z -> Unit.Length.in_mpc (Cosmo.comoving_distance ~p z))
+      target
     ]}
 
     [zmin] defaults to [1e-8]. [zmax] defaults to [1000.0]. [xtol] defaults to

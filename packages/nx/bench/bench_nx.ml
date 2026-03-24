@@ -15,19 +15,11 @@ let nx_operations_f32 ~size =
   let a = Nx.rand Nx.Float32 shape in
   let b = Nx.rand Nx.Float32 shape in
 
-  let ops =
-    [
-      ("Add", fun () -> (Nx.add a b));
-      ("Mul", fun () -> (Nx.mul a b));
-    ]
-  in
+  let ops = [ ("Add", fun () -> Nx.add a b); ("Mul", fun () -> Nx.mul a b) ] in
 
   let ops =
     ops
-    @ [
-        ("Sum", fun () -> (Nx.sum a));
-        ("Transpose", fun () -> (Nx.transpose a));
-      ]
+    @ [ ("Sum", fun () -> Nx.sum a); ("Transpose", fun () -> Nx.transpose a) ]
   in
 
   ops
@@ -37,19 +29,11 @@ let nx_operations_f64 ~size =
   let a = Nx.rand Nx.Float64 shape in
   let b = Nx.rand Nx.Float64 shape in
 
-  let ops =
-    [
-      ("Add", fun () -> (Nx.add a b));
-      ("Mul", fun () -> (Nx.mul a b));
-    ]
-  in
+  let ops = [ ("Add", fun () -> Nx.add a b); ("Mul", fun () -> Nx.mul a b) ] in
 
   let ops =
     ops
-    @ [
-        ("Sum", fun () -> (Nx.sum a));
-        ("Transpose", fun () -> (Nx.transpose a));
-      ]
+    @ [ ("Sum", fun () -> Nx.sum a); ("Transpose", fun () -> Nx.transpose a) ]
   in
 
   ops

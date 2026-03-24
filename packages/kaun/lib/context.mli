@@ -11,12 +11,12 @@
     names.
 
     {[
-      let ctx =
-        Context.empty
-        |> Context.set ~name:"attention_mask" (Ptree.P mask)
-        |> Context.set ~name:"token_type_ids" (Ptree.P ids)
-      in
-      Layer.apply model vars ~training:false ~ctx input_ids
+    let ctx =
+      Context.empty
+      |> Context.set ~name:"attention_mask" (Ptree.P mask)
+      |> Context.set ~name:"token_type_ids" (Ptree.P ids)
+    in
+    Layer.apply model vars ~training:false ~ctx input_ids
     ]} *)
 
 (** {1:types Types} *)

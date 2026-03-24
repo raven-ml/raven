@@ -9,13 +9,12 @@
     {!Context}:
 
     {[
-      let ctx =
-        Context.empty
-        |> Context.set ~name:Bert.token_type_ids_key (Ptree.P token_type_ids)
-        |> Context.set ~name:Attention.attention_mask_key
-             (Ptree.P attention_mask)
-      in
-      Layer.apply model vars ~training:false ~ctx input_ids
+    let ctx =
+      Context.empty
+      |> Context.set ~name:Bert.token_type_ids_key (Ptree.P token_type_ids)
+      |> Context.set ~name:Attention.attention_mask_key (Ptree.P attention_mask)
+    in
+    Layer.apply model vars ~training:false ~ctx input_ids
     ]}
 
     When absent, [token_type_ids] defaults to zeros and [attention_mask]

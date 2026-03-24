@@ -3,10 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Generates .actual files for grad+JIT golden tests. Each file contains
-   the rendered C source from tracing grad(f) through the JIT capture
-   handler via [Jit.trace_graph]. Dune diff rules compare .actual against
-   .expected (generated from tinygrad's backward computation). *)
+(* Generates .actual files for grad+JIT golden tests. Each file contains the
+   rendered C source from tracing grad(f) through the JIT capture handler via
+   [Jit.trace_graph]. Dune diff rules compare .actual against .expected
+   (generated from tinygrad's backward computation). *)
 
 let write_actual dir name content =
   let filename = Filename.concat dir (name ^ ".actual") in
@@ -34,17 +34,16 @@ let grad_sin () =
 (* grad(sum((x+1)*x)) = 2x+1, shape [4] *)
 let grad_polynomial () =
   let x = Nx.full Nx.float32 [| 4 |] 2.0 in
-  grad_source (fun x -> Nx.sum (Nx.mul (Nx.add x (Nx.scalar Nx.float32 1.0)) x)) x
+  grad_source
+    (fun x -> Nx.sum (Nx.mul (Nx.add x (Nx.scalar Nx.float32 1.0)) x))
+    x
 
 (* grad(sum(x*x*x)) = 3*x^2, shape [4] *)
 let grad_cube () =
   let x = Nx.full Nx.float32 [| 4 |] 2.0 in
   grad_source (fun x -> Nx.sum (Nx.mul (Nx.mul x x) x)) x
 
-type test_case = {
-  name : string;
-  generate : unit -> string;
-}
+type test_case = { name : string; generate : unit -> string }
 
 let test_cases =
   [

@@ -11,13 +11,13 @@
     optimizers:
 
     {[
-      let tx =
-        Vega.chain
-          [
-            Vega.scale_by_adam ();
-            Vega.add_decayed_weights ~rate:(Schedule.constant 0.01) ();
-            Vega.scale_by_learning_rate lr;
-          ]
+    let tx =
+      Vega.chain
+        [
+          Vega.scale_by_adam ();
+          Vega.add_decayed_weights ~rate:(Schedule.constant 0.01) ();
+          Vega.scale_by_learning_rate lr;
+        ]
     ]}
 
     Common optimizers are provided as aliases: {!adam}, {!sgd}, {!adamw}, etc.
@@ -77,8 +77,8 @@ val step :
 
     Convenience for:
     {[
-      let updates, state = update state ~grad ~param in
-      (apply_updates ~param ~updates, state)
+    let updates, state = update state ~grad ~param in
+    (apply_updates ~param ~updates, state)
     ]} *)
 
 (** {1:scaling Scaling Transforms} *)

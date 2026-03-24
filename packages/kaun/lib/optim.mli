@@ -34,8 +34,8 @@ val step : state -> Ptree.t -> Ptree.t -> Ptree.t * state
 
     Convenience for:
     {[
-      let updates, state = update state params grads in
-      (apply_updates params updates, state)
+    let updates, state = update state params grads in
+    (apply_updates params updates, state)
     ]} *)
 
 (** {1:serialization Serialization} *)

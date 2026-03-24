@@ -328,9 +328,9 @@ let build_cmd skip_eval output path =
   if not (Sys.file_exists path) then (
     Printf.eprintf "Error: %s not found\n%!" path;
     exit 1);
-  if is_dir path then (
+  if is_dir path then
     let project = load_project path in
-    Quill_book.Build.build ~create_kernel ~skip_eval ?output project)
+    Quill_book.Build.build ~create_kernel ~skip_eval ?output project
   else Quill_book.Build.build_file ~create_kernel ~skip_eval ?output path
 
 (* ───── Clean: strip outputs ───── *)
@@ -487,14 +487,15 @@ let quill_cmd =
 let () =
   (* cmdliner's Cmd.group matches the first positional arg against subcommand
      names before falling through to the default term. Pre-parse argv to insert
-     "--" when the first arg is not a known subcommand, so that
-     [quill file.md] works without requiring [quill -- file.md]. *)
+     "--" when the first arg is not a known subcommand, so that [quill file.md]
+     works without requiring [quill -- file.md]. *)
   let argv =
     let a = Sys.argv in
-    if Array.length a >= 2
-       && String.length a.(1) > 0
-       && a.(1).[0] <> '-'
-       && not (List.mem a.(1) known_commands)
+    if
+      Array.length a >= 2
+      && String.length a.(1) > 0
+      && a.(1).[0] <> '-'
+      && not (List.mem a.(1) known_commands)
     then Array.concat [ [| a.(0); "--" |]; Array.sub a 1 (Array.length a - 1) ]
     else a
   in

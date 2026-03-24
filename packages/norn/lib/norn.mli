@@ -12,14 +12,14 @@
 
     {b Quick start.}
     {[
-      let result = Norn.nuts ~n:1000 log_prob (Nx.zeros Nx.float64 [| dim |])
+    let result = Norn.nuts ~n:1000 log_prob (Nx.zeros Nx.float64 [| dim |])
     ]}
 
     For configured usage, construct a kernel and pass it to {!sample}:
     {[
-      let result =
-        Norn.sample ~n:1000 log_prob init (fun ~step_size ~metric ->
-            Norn.nuts_kernel ~step_size ~metric ())
+    let result =
+      Norn.sample ~n:1000 log_prob init (fun ~step_size ~metric ->
+          Norn.nuts_kernel ~step_size ~metric ())
     ]} *)
 
 (** {1:types Types} *)

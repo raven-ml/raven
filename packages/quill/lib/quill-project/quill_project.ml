@@ -283,11 +283,11 @@ let number toc nb =
     | Notebook (n, children) :: rest ->
         incr counter;
         if n.path = nb.path then Some [ !counter ]
-        else begin
-          match search (ref 0) children with
+        else
+          begin match search (ref 0) children with
           | Some sub -> Some (!counter :: sub)
           | None -> search counter rest
-        end
+          end
     | Section _ :: rest ->
         counter := 0;
         search counter rest

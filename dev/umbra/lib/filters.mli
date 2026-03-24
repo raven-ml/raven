@@ -10,7 +10,7 @@
     Each value is a pre-built {!Photometry.bandpass}.
 
     {[
-      let mag = Photometry.ab_mag Filters.sdss_r sed
+    let mag = Photometry.ab_mag Filters.sdss_r sed
     ]} *)
 
 (** {1:sdss SDSS ugriz} *)

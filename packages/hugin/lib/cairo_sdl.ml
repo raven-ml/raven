@@ -48,8 +48,8 @@ let present t =
 
 let resize t =
   let nw, nh = Usdl.Renderer.output_size t.renderer in
-  if nw <> t.width || nh <> t.height then begin
-    if nw > 0 && nh > 0 then begin
+  if nw <> t.width || nh <> t.height then
+    begin if nw > 0 && nh > 0 then begin
       Ucairo.Surface.finish t.cairo_surface;
       Usdl.Surface.destroy t.surface;
       let surface = Usdl.Surface.create_argb8888 ~w:nw ~h:nh in
@@ -60,7 +60,7 @@ let resize t =
       t.width <- w;
       t.height <- h
     end
-  end
+    end
 
 let destroy t =
   Ucairo.Surface.finish t.cairo_surface;

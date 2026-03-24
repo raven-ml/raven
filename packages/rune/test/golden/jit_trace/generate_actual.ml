@@ -3,10 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Generates .actual files for JIT trace golden tests. Each file contains
-   the rendered C source from tracing a function through the JIT capture
-   handler via [Jit.trace_graph]. Dune diff rules compare .actual against
-   .expected (generated from the reference tinygrad pipeline). *)
+(* Generates .actual files for JIT trace golden tests. Each file contains the
+   rendered C source from tracing a function through the JIT capture handler via
+   [Jit.trace_graph]. Dune diff rules compare .actual against .expected
+   (generated from the reference tinygrad pipeline). *)
 
 let write_actual dir name content =
   let filename = Filename.concat dir (name ^ ".actual") in
@@ -39,13 +39,12 @@ let trace_sum () =
 (* c = (a + scalar(1.0)) * scalar(2.0), shape [256] *)
 let trace_chain () =
   let x = Nx.full Nx.float32 [| 256 |] 0.0 in
-  trace_source (fun x ->
-    Nx.mul (Nx.add x (Nx.scalar Nx.float32 1.0)) (Nx.scalar Nx.float32 2.0)) x
+  trace_source
+    (fun x ->
+      Nx.mul (Nx.add x (Nx.scalar Nx.float32 1.0)) (Nx.scalar Nx.float32 2.0))
+    x
 
-type test_case = {
-  name : string;
-  generate : unit -> string;
-}
+type test_case = { name : string; generate : unit -> string }
 
 let test_cases =
   [

@@ -217,23 +217,23 @@ let show_interactive ~theme ~width ~height prepared =
   let quit = ref false in
   while not !quit do
     if not (Usdl.Event.wait ev) then quit := true
-    else begin
-      match Usdl.Event.typ ev with
+    else
+      begin match Usdl.Event.typ ev with
       | `Quit -> quit := true
-      | `Window_event -> begin
-          match Usdl.Event.window_event_id ev with
+      | `Window_event ->
+          begin match Usdl.Event.window_event_id ev with
           | `Resized | `Size_changed ->
               Cairo_sdl.resize csdl;
               render_current ()
           | `Exposed -> render_current ()
           | `Close -> quit := true
           | _ -> ()
-        end
+          end
       | `Key_down ->
           let keycode = Usdl.Event.keycode ev in
           if keycode = Usdl.Keycode.escape || keycode = Usdl.Keycode.q then
             quit := true
       | _ -> ()
-    end
+      end
   done;
   Cairo_sdl.destroy csdl

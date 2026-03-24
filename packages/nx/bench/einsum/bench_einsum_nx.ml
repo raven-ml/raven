@@ -72,7 +72,7 @@ let build_benchmarks () =
         (fun spec ->
           let operands = setup_f32 spec size |> Array.of_list in
           let bench_name = benchmark_name spec.name size "f32" in
-          let fn () = (Nx.einsum spec.subscripts operands) in
+          let fn () = Nx.einsum spec.subscripts operands in
           f32_benches := Thumper.bench bench_name fn :: !f32_benches)
         einsum_specs)
     sizes;
@@ -83,7 +83,7 @@ let build_benchmarks () =
         (fun spec ->
           let operands = setup_f64 spec size |> Array.of_list in
           let bench_name = benchmark_name spec.name size "f64" in
-          let fn () = (Nx.einsum spec.subscripts operands) in
+          let fn () = Nx.einsum spec.subscripts operands in
           f64_benches := Thumper.bench bench_name fn :: !f64_benches)
         einsum_specs)
     sizes;
