@@ -62,12 +62,16 @@ type view =
       (** Bit-preserving reinterpretation. *)
   | Vectorize of { srcs : id list; dtype : Dtype.t }
       (** Packs scalar [srcs] into a vector. *)
-  | Gep of { src : id; idx : int; dtype : Dtype.t }
-      (** Extracts element [idx] from a vector. *)
-  | Range of { size : id; dtype : Dtype.t; axis : int; kind : Axis_kind.t }
+  | Gep of { src : id; idxs : int list; dtype : Dtype.t }
+      (** Extracts elements at [idxs] from a vector. When [idxs] has one
+          element, the result is scalar. When [idxs] has multiple elements,
+          the result is a vector of the extracted elements. *)
+  | Range of { size : id; dtype : Dtype.t; axis : int; sub : int list; kind : Axis_kind.t }
       (** Loop variable over \[[0];[size-1]\] on [axis]. *)
-  | End_range of { range : id }
-      (** Closes the loop opened by [range]. *)
+  | End_range of { dep : id; range : id }
+      (** Closes the loop opened by [range]. [dep] is the last value produced
+          inside the loop body, ensuring the body completes before the loop
+          closes. *)
   | If of { cond : id; idx_for_dedup : id }
       (** Conditional branch on [cond]. *)
   | Endif of { if_ : id }

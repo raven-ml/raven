@@ -44,6 +44,12 @@ module Op = Op
 module Kernel = Kernel
 (** Codegen-oriented DAG IR (memory-level graph stage). *)
 
+module Divandmod = Divandmod
+(** Division and modulo folding for index-typed expressions. *)
+
+module Decompositions = Decomposition
+(** Hardware-level decompositions for unsupported operations. *)
+
 module Symbolic = Symbolic
 (** Symbolic simplification rules for {!Kernel} IR. *)
 

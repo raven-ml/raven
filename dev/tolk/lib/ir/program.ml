@@ -5,6 +5,8 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
+let strf = Printf.sprintf
+
 (* Types *)
 
 type id = int
@@ -27,9 +29,15 @@ type view =
   | Cast of { src : id; dtype : Dtype.t }
   | Bitcast of { src : id; dtype : Dtype.t }
   | Vectorize of { srcs : id list; dtype : Dtype.t }
-  | Gep of { src : id; idx : int; dtype : Dtype.t }
-  | Range of { size : id; dtype : Dtype.t; axis : int; kind : Axis_kind.t }
-  | End_range of { range : id }
+  | Gep of { src : id; idxs : int list; dtype : Dtype.t }
+  | Range of {
+      size : id;
+      dtype : Dtype.t;
+      axis : int;
+      sub : int list;
+      kind : Axis_kind.t;
+    }
+  | End_range of { dep : id; range : id }
   | If of { cond : id; idx_for_dedup : id }
   | Endif of { if_ : id }
   | Barrier
@@ -58,27 +66,14 @@ let binary ~op ~lhs ~rhs ~dtype = Binary { op; lhs; rhs; dtype }
 let ternary ~op ~a ~b ~c ~dtype = Ternary { op; a; b; c; dtype }
 
 let dtype_of = function
-  | Param { dtype; _ }
-  | Param_image { dtype; _ }
-  | Define_local { dtype; _ }
-  | Define_reg { dtype; _ }
-  | Index { dtype; _ } ->
-      Some dtype.base
-  | Define_var { dtype; _ }
-  | Const { dtype; _ }
-  | Load { dtype; _ }
-  | After { dtype; _ }
-  | Unary { dtype; _ }
-  | Binary { dtype; _ }
-  | Ternary { dtype; _ }
-  | Cast { dtype; _ }
-  | Bitcast { dtype; _ }
-  | Vectorize { dtype; _ }
-  | Gep { dtype; _ }
-  | Range { dtype; _ }
-  | Special { dtype; _ }
-  | Wmma { dtype; _ }
-  | Custom_inline { dtype; _ } ->
+  | Param { dtype; _ } | Param_image { dtype; _ } | Define_local { dtype; _ }
+  | Define_reg { dtype; _ } | Index { dtype; _ } ->
+      Some (Dtype.base dtype)
+  | Define_var { dtype; _ } | Const { dtype; _ } | Load { dtype; _ }
+  | After { dtype; _ } | Unary { dtype; _ } | Binary { dtype; _ }
+  | Ternary { dtype; _ } | Cast { dtype; _ } | Bitcast { dtype; _ }
+  | Vectorize { dtype; _ } | Gep { dtype; _ } | Range { dtype; _ }
+  | Special { dtype; _ } | Wmma { dtype; _ } | Custom_inline { dtype; _ } ->
       Some dtype
   | Store _ | End_range _ | If _ | Endif _ | Barrier | Custom _ -> None
 
@@ -89,7 +84,7 @@ let refs_of = function
   | Unary { src; _ } | Cast { src; _ } | Bitcast { src; _ } | Gep { src; _ } ->
       [ src ]
   | Range { size; _ } | Special { size; _ } -> [ size ]
-  | End_range { range } -> [ range ]
+  | End_range { dep; range } -> [ dep; range ]
   | Endif { if_ } -> [ if_ ]
   | Store { dst; value } -> [ dst; value ]
   | After { src; deps; _ } -> src :: deps
@@ -101,84 +96,43 @@ let refs_of = function
   | Index { ptr; idxs; gate; _ } -> (ptr :: idxs) @ Option.to_list gate
   | Load { src; alt; _ } -> src :: Option.to_list alt
 
-let map_refs map_ref (instr : view) : view =
-  let map_ref_opt = Option.map map_ref in
+let map_children f instr =
   match instr with
   | Param _ | Param_image _ | Define_local _ | Define_reg _ | Define_var _
   | Const _ | Barrier ->
       instr
-  | Index { ptr; idxs; gate; dtype } ->
+  | Index r ->
       Index
-        {
-          ptr = map_ref ptr;
-          idxs = List.map map_ref idxs;
-          gate = map_ref_opt gate;
-          dtype;
-        }
-  | Load { src; alt; dtype } ->
-      Load { src = map_ref src; alt = map_ref_opt alt; dtype }
-  | After { src; deps; dtype } ->
-      After { src = map_ref src; deps = List.map map_ref deps; dtype }
-  | Store { dst; value } -> Store { dst = map_ref dst; value = map_ref value }
-  | Unary { op; src; dtype } -> Unary { op; src = map_ref src; dtype }
-  | Binary { op; lhs; rhs; dtype } ->
-      Binary { op; lhs = map_ref lhs; rhs = map_ref rhs; dtype }
-  | Ternary { op; a; b; c; dtype } ->
-      Ternary { op; a = map_ref a; b = map_ref b; c = map_ref c; dtype }
-  | Cast { src; dtype } -> Cast { src = map_ref src; dtype }
-  | Bitcast { src; dtype } -> Bitcast { src = map_ref src; dtype }
-  | Vectorize { srcs; dtype } ->
-      Vectorize { srcs = List.map map_ref srcs; dtype }
-  | Gep { src; idx; dtype } -> Gep { src = map_ref src; idx; dtype }
-  | Range { size; dtype; axis; kind } ->
-      Range { size = map_ref size; dtype; axis; kind }
-  | End_range { range } -> End_range { range = map_ref range }
+        { r with ptr = f r.ptr; idxs = List.map f r.idxs;
+          gate = Option.map f r.gate }
+  | Load r -> Load { r with src = f r.src; alt = Option.map f r.alt }
+  | After r -> After { r with src = f r.src; deps = List.map f r.deps }
+  | Store { dst; value } -> Store { dst = f dst; value = f value }
+  | Unary r -> Unary { r with src = f r.src }
+  | Binary r -> Binary { r with lhs = f r.lhs; rhs = f r.rhs }
+  | Ternary r -> Ternary { r with a = f r.a; b = f r.b; c = f r.c }
+  | Cast r -> Cast { r with src = f r.src }
+  | Bitcast r -> Bitcast { r with src = f r.src }
+  | Vectorize r -> Vectorize { r with srcs = List.map f r.srcs }
+  | Gep r -> Gep { r with src = f r.src }
+  | Range r -> Range { r with size = f r.size }
+  | End_range { dep; range } -> End_range { dep = f dep; range = f range }
   | If { cond; idx_for_dedup } ->
-      If { cond = map_ref cond; idx_for_dedup = map_ref idx_for_dedup }
-  | Endif { if_ } -> Endif { if_ = map_ref if_ }
-  | Special { dim; size; dtype } -> Special { dim; size = map_ref size; dtype }
-  | Wmma
-      {
-        name;
-        a;
-        b;
-        c;
-        dtype;
-        dims;
-        dtype_in;
-        dtype_out;
-        device;
-        threads;
-        upcast_axes;
-        reduce_axes;
-      } ->
-      Wmma
-        {
-          name;
-          a = map_ref a;
-          b = map_ref b;
-          c = map_ref c;
-          dtype;
-          dims;
-          dtype_in;
-          dtype_out;
-          device;
-          threads;
-          upcast_axes;
-          reduce_axes;
-        }
-  | Custom { fmt; args } -> Custom { fmt; args = List.map map_ref args }
-  | Custom_inline { fmt; args; dtype } ->
-      Custom_inline { fmt; args = List.map map_ref args; dtype }
+      If { cond = f cond; idx_for_dedup = f idx_for_dedup }
+  | Endif { if_ } -> Endif { if_ = f if_ }
+  | Special r -> Special { r with size = f r.size }
+  | Wmma w -> Wmma { w with a = f w.a; b = f w.b; c = f w.c }
+  | Custom r -> Custom { r with args = List.map f r.args }
+  | Custom_inline r -> Custom_inline { r with args = List.map f r.args }
 
 (* Validation *)
 
-let validate (program : t) : unit =
+let validate (program : t) =
   let range_stack = ref [] in
   let if_stack = ref [] in
   let seen_specials = Hashtbl.create 8 in
   let fail i msg =
-    failwith (Printf.sprintf "Program.validate: instruction %d: %s" i msg)
+    failwith (strf "Program.validate: instruction %d: %s" i msg)
   in
   let get_dtype r =
     if r < 0 || r >= Array.length program then None else dtype_of program.(r)
@@ -187,18 +141,16 @@ let validate (program : t) : unit =
     match expected, got with
     | Some expected, Some got when Dtype.equal expected got -> ()
     | Some expected, Some got ->
-        fail i
-          (Printf.sprintf "%s: expected %s, got %s" ctx
-             (Dtype.to_string expected) (Dtype.to_string got))
-    | None, _ -> fail i (Printf.sprintf "%s: expected dtype not available" ctx)
-    | _, None -> fail i (Printf.sprintf "%s: operand dtype not available" ctx)
+        fail i (strf "%s: expected %s, got %s" ctx
+                  (Dtype.to_string expected) (Dtype.to_string got))
+    | None, _ -> fail i (strf "%s: expected dtype not available" ctx)
+    | _, None -> fail i (strf "%s: operand dtype not available" ctx)
   in
   let check_dtype_match i ~ctx left right =
     match left, right with
     | Some left, Some right when Dtype.equal left right -> ()
-    | Some _, Some _ ->
-        fail i (Printf.sprintf "%s: operand dtypes don't match" ctx)
-    | _ -> fail i (Printf.sprintf "%s: operand dtype not available" ctx)
+    | Some _, Some _ -> fail i (strf "%s: operand dtypes don't match" ctx)
+    | _ -> fail i (strf "%s: operand dtype not available" ctx)
   in
   let check_shift_rhs i rhs dtype =
     match get_dtype rhs with
@@ -209,11 +161,11 @@ let validate (program : t) : unit =
   in
   let check_scalar_bool i ~ctx r =
     match get_dtype r with
-    | Some dt when dt.scalar = Dtype.Bool && dt.count = 1 -> ()
-    | Some dt when dt.count > 1 ->
-        fail i (Printf.sprintf "%s must be scalar (not vector)" ctx)
-    | Some _ -> fail i (Printf.sprintf "%s must be bool" ctx)
-    | None -> fail i (Printf.sprintf "%s dtype not available" ctx)
+    | Some dt when Dtype.scalar dt = Dtype.Bool && Dtype.count dt = 1 -> ()
+    | Some dt when Dtype.count dt > 1 ->
+        fail i (strf "%s must be scalar (not vector)" ctx)
+    | Some _ -> fail i (strf "%s must be bool" ctx)
+    | None -> fail i (strf "%s dtype not available" ctx)
   in
   let rec index_ref r =
     match program.(r) with
@@ -221,14 +173,18 @@ let validate (program : t) : unit =
     | Cast { src; _ } | Bitcast { src; _ } | After { src; _ } -> index_ref src
     | _ -> None
   in
-  let is_index_ref r = Option.is_some (index_ref r) in
+  let require_index_ref i ~ctx r =
+    match index_ref r with
+    | Some idx -> idx
+    | None -> fail i (strf "%s must reference Index (or casted Index)" ctx)
+  in
   let check_int_scalar i ~ctx r =
     match get_dtype r with
-    | Some dt when Dtype.is_int dt && dt.count = 1 -> ()
-    | Some dt when dt.count <> 1 ->
-        fail i (Printf.sprintf "%s must be scalar (not vector)" ctx)
-    | Some _ -> fail i (Printf.sprintf "%s must be int" ctx)
-    | None -> fail i (Printf.sprintf "%s dtype not available" ctx)
+    | Some dt when Dtype.is_int dt && Dtype.count dt = 1 -> ()
+    | Some dt when Dtype.count dt <> 1 ->
+        fail i (strf "%s must be scalar (not vector)" ctx)
+    | Some _ -> fail i (strf "%s must be int" ctx)
+    | None -> fail i (strf "%s dtype not available" ctx)
   in
   let check_index_base i ptr =
     match program.(ptr) with
@@ -236,41 +192,48 @@ let validate (program : t) : unit =
     | _ ->
         fail i "Index base must be a Param/Param_image/Define_local/Define_reg"
   in
+  let ptr_dtype_of i ptr =
+    match program.(ptr) with
+    | Param { dtype; _ } | Param_image { dtype; _ }
+    | Define_local { dtype; _ } | Define_reg { dtype; _ } -> dtype
+    | _ -> fail i "must index a pointer definition"
+  in
   Array.iteri
     (fun i instr ->
       List.iter
         (fun r ->
           if r < 0 || r >= i then
-            fail i
-              (Printf.sprintf "references %%%d (out of bounds or forward)" r))
+            fail i (strf "references %%%d (out of bounds or forward)" r))
         (refs_of instr);
       (match dtype_of instr with
-      | Some dt when dt.scalar = Dtype.Index ->
+      | Some dt when Dtype.scalar dt = Dtype.Index ->
           fail i
             "Index dtype not allowed in linearized program (should be lowered)"
       | _ -> ());
       match instr with
       | Param { dtype; _ } | Param_image { dtype; _ } ->
-          if dtype.addrspace <> Dtype.Global then
+          if Dtype.addrspace dtype <> Dtype.Global then
             fail i "Param must have Global addrspace"
       | Define_local { dtype; _ } ->
-          if dtype.addrspace <> Dtype.Local then
+          if Dtype.addrspace dtype <> Dtype.Local then
             fail i "Define_local must have Local addrspace"
       | Define_reg { dtype; _ } ->
-          if dtype.addrspace <> Dtype.Reg then
+          if Dtype.addrspace dtype <> Dtype.Reg then
             fail i "Define_reg must have Reg addrspace"
       | Define_var { lo; hi; dtype; _ } ->
-          if dtype.count <> 1 then fail i "Define_var must be scalar";
-          if not (Dtype.is_int dtype || dtype.scalar = Dtype.Index) then
+          if Dtype.count dtype <> 1 then fail i "Define_var must be scalar";
+          if not (Dtype.is_int dtype || Dtype.scalar dtype = Dtype.Index) then
             fail i "Define_var must be int/index";
           if lo > hi then fail i "Define_var bounds invalid (lo > hi)"
       | Range { size; dtype; _ } ->
           if not (Dtype.is_int dtype) then fail i "Range must have int dtype";
-          if dtype.count <> 1 then fail i "Range must be scalar";
+          if Dtype.count dtype <> 1 then fail i "Range must be scalar";
           check_dtype_eq i ~ctx:"Range size" ~expected:(Some dtype)
             ~got:(get_dtype size);
           range_stack := i :: !range_stack
-      | End_range { range } -> (
+      | End_range { dep; range } -> (
+          if dep < 0 || dep >= i then
+            fail i (strf "End_range dep references %%%d (invalid)" dep);
           (match program.(range) with
           | Range _ -> ()
           | _ -> fail i "End_range must reference a Range");
@@ -280,8 +243,7 @@ let validate (program : t) : unit =
       | If { cond; idx_for_dedup } ->
           if_stack := i :: !if_stack;
           check_scalar_bool i ~ctx:"If condition" cond;
-          if not (is_index_ref idx_for_dedup) then
-            fail i "If idx_for_dedup must reference Index (or casted Index)"
+          ignore (require_index_ref i ~ctx:"If idx_for_dedup" idx_for_dedup)
       | Endif { if_ } -> (
           (match program.(if_) with
           | If _ -> ()
@@ -296,38 +258,30 @@ let validate (program : t) : unit =
                 (Format.asprintf "duplicate Special %a (first at %d)"
                    Special_dim.pp dim first_idx)
           | None -> Hashtbl.add seen_specials dim i);
-          if dtype.scalar <> Dtype.Int32 || dtype.count <> 1 then
+          if Dtype.scalar dtype <> Dtype.Int32 || Dtype.count dtype <> 1 then
             fail i "Special must be int32 scalar";
           check_dtype_eq i ~ctx:"Special size" ~expected:(Some dtype)
             ~got:(get_dtype size)
       | Index { ptr; idxs; gate; _ } ->
           check_index_base i ptr;
-          if idxs = [] then fail i "Index must have at least one index";
+          (match idxs with
+          | [ _ ] -> ()
+          | [] -> fail i "Index must have exactly one index"
+          | _ ->
+              fail i
+                (strf "Index must have exactly one index (got %d)"
+                   (List.length idxs)));
           List.iter (check_int_scalar i ~ctx:"Index operand") idxs;
           Option.iter (check_scalar_bool i ~ctx:"Index gate") gate
       | Load { src; alt; dtype } -> (
-          if not (is_index_ref src) then
-            fail i "Load src must reference Index (or casted Index)";
-          let idx_ref =
-            match index_ref src with
-            | Some idx_ref -> idx_ref
-            | None -> fail i "Load src requires Index (or casted Index)"
-          in
+          let idx_ref = require_index_ref i ~ctx:"Load src" src in
           let ptr, gate =
             match program.(idx_ref) with
             | Index { ptr; gate; _ } -> (ptr, gate)
             | _ -> fail i "Load src requires Index"
           in
-          let ptr_dtype =
-            match program.(ptr) with
-            | Param { dtype; _ }
-            | Param_image { dtype; _ }
-            | Define_local { dtype; _ }
-            | Define_reg { dtype; _ } ->
-                dtype
-            | _ -> fail i "Load src must index a pointer definition"
-          in
-          check_dtype_eq i ~ctx:"Load dtype" ~expected:(Some ptr_dtype.base)
+          let ptr_dtype = ptr_dtype_of i ptr in
+          check_dtype_eq i ~ctx:"Load dtype" ~expected:(Some (Dtype.base ptr_dtype))
             ~got:(Some dtype);
           match alt with
           | None -> ()
@@ -352,21 +306,17 @@ let validate (program : t) : unit =
           check_dtype_eq i ~ctx:"Where branch else" ~expected:(Some dtype)
             ~got:(get_dtype else_)
       | Binary { op = `Cmplt | `Cmpeq | `Cmpne; lhs; rhs; dtype } ->
-          if dtype.scalar <> Dtype.Bool then
+          if Dtype.scalar dtype <> Dtype.Bool then
             fail i "comparison result must be bool";
           check_dtype_match i ~ctx:"comparison operands" (get_dtype lhs)
             (get_dtype rhs)
       | Binary { op = `Idiv | `Mod; dtype; _ } ->
           if not (Dtype.is_int dtype) then fail i "Idiv/Mod must have int dtype"
       | Binary
-          {
-            op =
+          { op =
               ( `Add | `Sub | `Mul | `Fdiv | `Max | `Pow | `And | `Or | `Xor
               | `Threefry );
-            lhs;
-            rhs;
-            dtype;
-          } ->
+            lhs; rhs; dtype } ->
           check_dtype_match i ~ctx:"binary ALU lhs" (Some dtype) (get_dtype lhs);
           check_dtype_match i ~ctx:"binary ALU rhs" (Some dtype) (get_dtype rhs)
       | Binary { op = `Shl | `Shr; lhs; rhs; dtype } ->
@@ -379,87 +329,78 @@ let validate (program : t) : unit =
           check_dtype_match i ~ctx:"Mulacc b" (Some dtype) (get_dtype b);
           check_dtype_match i ~ctx:"Mulacc c" (Some dtype) (get_dtype c)
       | Vectorize { srcs; dtype } ->
-          if List.length srcs <= 1 then
-            fail i "Vectorize must have more than one source";
-          if List.length srcs <> dtype.count then
-            fail i
-              (Printf.sprintf "Vectorize has %d sources but dtype.count=%d"
-                 (List.length srcs) dtype.count);
+          let n = List.length srcs in
+          if n <= 1 then fail i "Vectorize must have more than one source";
+          if n <> Dtype.count dtype then
+            fail i (strf "Vectorize has %d sources but dtype.count=%d"
+                      n (Dtype.count dtype));
           List.iteri
             (fun j src_ref ->
               match get_dtype src_ref with
               | Some src_dt ->
-                  if src_dt.count <> 1 then
-                    fail i
-                      (Printf.sprintf "Vectorize source %d must be scalar" j);
-                  if src_dt.scalar <> dtype.scalar then
-                    fail i
-                      (Printf.sprintf
-                         "Vectorize source %d has wrong scalar type" j)
+                  if Dtype.count src_dt <> 1 then
+                    fail i (strf "Vectorize source %d must be scalar" j);
+                  if Dtype.scalar src_dt <> Dtype.scalar dtype then
+                    fail i (strf "Vectorize source %d has wrong scalar type" j)
               | None ->
-                  fail i
-                    (Printf.sprintf "Vectorize source %d dtype not available" j))
+                  fail i (strf "Vectorize source %d dtype not available" j))
             srcs
-      | Gep { src; idx; dtype } -> (
+      | Gep { src; idxs; dtype } -> (
+          if idxs = [] then fail i "Gep must have at least one index";
           match get_dtype src with
           | Some src_dt ->
-              if src_dt.count <= 1 then fail i "Gep source must be a vector";
-              if idx < 0 || idx >= src_dt.count then
-                fail i
-                  (Printf.sprintf
-                     "Gep index %d out of bounds (vector has %d elements)" idx
-                     src_dt.count);
-              if dtype.scalar <> src_dt.scalar || dtype.count <> 1 then
-                fail i "Gep result must be scalar of source vector type"
+              if Dtype.count src_dt <= 1 then fail i "Gep source must be a vector";
+              List.iter (fun idx ->
+                if idx < 0 || idx >= Dtype.count src_dt then
+                  fail i (strf "Gep index %d out of bounds (vector has %d elements)"
+                            idx (Dtype.count src_dt))) idxs;
+              let n = List.length idxs in
+              if n = 1 then begin
+                if Dtype.scalar dtype <> Dtype.scalar src_dt || Dtype.count dtype <> 1 then
+                  fail i "Gep result must be scalar of source vector type"
+              end else begin
+                if Dtype.scalar dtype <> Dtype.scalar src_dt || Dtype.count dtype <> n then
+                  fail i "Gep result must be vec(scalar, len(idxs))"
+              end
           | None -> fail i "Gep source dtype not available")
       | Wmma { dims = n, m, k; dtype; dtype_out; _ } ->
           if n <= 0 || m <= 0 || k <= 0 then fail i "Wmma dims must be positive";
-          if dtype.scalar <> dtype_out then
+          if Dtype.scalar dtype <> dtype_out then
             fail i "Wmma result dtype must match dtype_out"
-      | Store { dst; value } -> (
-          if not (is_index_ref dst) then
-            fail i "Store dst must reference Index (or casted Index)";
-          match index_ref dst with
-          | Some idx_ref -> (
-              match program.(idx_ref) with
-              | Index { ptr; _ } -> (
-                  match program.(ptr) with
-                  | Param { dtype = ptr_dtype; _ }
-                  | Param_image { dtype = ptr_dtype; _ }
-                  | Define_local { dtype = ptr_dtype; _ }
-                  | Define_reg { dtype = ptr_dtype; _ } ->
-                      check_dtype_eq i ~ctx:"Store value"
-                        ~expected:(Some ptr_dtype.base) ~got:(get_dtype value)
-                  | _ -> fail i "Store dst must index a pointer definition")
-              | _ -> fail i "Store dst requires Index")
-          | None -> fail i "Store dst requires Index (or casted Index)")
+      | Store { dst; value } ->
+          let idx_ref = require_index_ref i ~ctx:"Store dst" dst in
+          let ptr =
+            match program.(idx_ref) with
+            | Index { ptr; _ } -> ptr
+            | _ -> fail i "Store dst requires Index"
+          in
+          let ptr_dtype = ptr_dtype_of i ptr in
+          check_dtype_eq i ~ctx:"Store value"
+            ~expected:(Some (Dtype.base ptr_dtype)) ~got:(get_dtype value)
       | Const _ | Cast _ | Bitcast _ | Barrier | Custom _ | Custom_inline _ ->
           ())
     program;
   if !range_stack <> [] then
-    failwith
-      (Printf.sprintf "Program.validate: %d unclosed Range(s) at end of program"
-         (List.length !range_stack));
+    failwith (strf "Program.validate: %d unclosed Range(s) at end of program"
+                (List.length !range_stack));
   if !if_stack <> [] then
-    failwith
-      (Printf.sprintf "Program.validate: %d unclosed If(s) at end of program"
-         (List.length !if_stack))
+    failwith (strf "Program.validate: %d unclosed If(s) at end of program"
+                (List.length !if_stack))
 
 (* Formatting *)
 
-let pp_comma fmt () = Format.fprintf fmt ", "
 let pp_ref fmt r = Format.fprintf fmt "%%%d" r
-let pp_refs fmt refs = Format.pp_print_list ~pp_sep:pp_comma pp_ref fmt refs
+
+let pp_refs fmt refs =
+  Format.pp_print_list ~pp_sep:(fun fmt () -> Format.fprintf fmt ", ")
+    pp_ref fmt refs
 
 let pp_ptr fmt (dtype : Dtype.ptr) =
-  Format.fprintf fmt "%a*%s [%a]" Dtype.pp dtype.base
-    (if dtype.v = 1 then "" else Printf.sprintf ".vec(%d)" dtype.v)
-    Dtype.pp_addr_space dtype.addrspace
+  Format.fprintf fmt "%s" (Dtype.ptr_to_string dtype)
 
-let pp_program pp_view fmt t =
-  Array.iteri
-    (fun i instr -> Format.fprintf fmt "%3d: %a@\n" i pp_view instr)
-    t
+let pp_opt_ref label fmt = function
+  | None -> ()
+  | Some r -> Format.fprintf fmt " %s=%%%d" label r
 
 let pp_view fmt = function
   | Param { idx; dtype } -> Format.fprintf fmt "param %d : %a" idx pp_ptr dtype
@@ -476,14 +417,10 @@ let pp_view fmt = function
       Format.fprintf fmt "const %a : %a" Const.pp value Dtype.pp dtype
   | Index { ptr; idxs; gate; dtype } ->
       Format.fprintf fmt "index %a, %a%a : %a" pp_ref ptr pp_refs idxs
-        (fun fmt -> function
-          | None -> () | Some g -> Format.fprintf fmt " gate=%%%d" g)
-        gate pp_ptr dtype
+        (pp_opt_ref "gate") gate pp_ptr dtype
   | Load { src; alt; dtype } ->
       Format.fprintf fmt "load %a%a : %a" pp_ref src
-        (fun fmt -> function
-          | None -> () | Some a -> Format.fprintf fmt " alt=%%%d" a)
-        alt Dtype.pp dtype
+        (pp_opt_ref "alt") alt Dtype.pp dtype
   | After { src; deps; dtype } ->
       Format.fprintf fmt "after %a, deps=[%a] : %a" pp_ref src pp_refs deps
         Dtype.pp dtype
@@ -503,12 +440,24 @@ let pp_view fmt = function
         pp_ref c Dtype.pp dtype
   | Vectorize { srcs; dtype } ->
       Format.fprintf fmt "vec %a : %a" pp_refs srcs Dtype.pp dtype
-  | Gep { src; idx; dtype } ->
-      Format.fprintf fmt "gep %a, %d : %a" pp_ref src idx Dtype.pp dtype
-  | Range { size; dtype; axis; kind } ->
-      Format.fprintf fmt "range %a : %a [axis=%d, %a]" pp_ref size Dtype.pp
+  | Gep { src; idxs; dtype } ->
+      Format.fprintf fmt "gep %a, [%a] : %a" pp_ref src
+        (Format.pp_print_list ~pp_sep:(fun fmt () -> Format.fprintf fmt ";")
+           Format.pp_print_int) idxs
+        Dtype.pp dtype
+  | Range { size; dtype; axis; sub; kind } ->
+      Format.fprintf fmt "range %a : %a [axis=%d, %a%a]" pp_ref size Dtype.pp
         dtype axis Axis_kind.pp kind
-  | End_range { range } -> Format.fprintf fmt "end_range %a" pp_ref range
+        (fun fmt sub ->
+          if sub <> [] then
+            Format.fprintf fmt ", sub=[%a]"
+              (Format.pp_print_list
+                 ~pp_sep:(fun fmt () -> Format.fprintf fmt ";")
+                 Format.pp_print_int)
+              sub)
+        sub
+  | End_range { dep; range } ->
+      Format.fprintf fmt "end_range %a, dep=%a" pp_ref range pp_ref dep
   | If { cond; idx_for_dedup } ->
       Format.fprintf fmt "if %a, %a" pp_ref cond pp_ref idx_for_dedup
   | Endif { if_ } -> Format.fprintf fmt "endif %a" pp_ref if_
@@ -516,20 +465,8 @@ let pp_view fmt = function
   | Special { dim; size; dtype } ->
       Format.fprintf fmt "special %a, %a : %a" Special_dim.pp dim pp_ref size
         Dtype.pp dtype
-  | Wmma
-      {
-        name;
-        a;
-        b;
-        c;
-        dtype;
-        dims = n, m, k;
-        dtype_in;
-        dtype_out;
-        device;
-        threads;
-        _;
-      } ->
+  | Wmma { name; a; b; c; dtype; dims = n, m, k; dtype_in; dtype_out;
+           device; threads; _ } ->
       Format.fprintf fmt
         "wmma.%s %a, %a, %a : %a [%dx%dx%d, %a -> %a, %s, threads=%d]" name
         pp_ref a pp_ref b pp_ref c Dtype.pp dtype n m k Dtype.pp_scalar dtype_in
@@ -540,29 +477,8 @@ let pp_view fmt = function
       Format.fprintf fmt "custom_inline \"%s\" %a : %a" f pp_refs args Dtype.pp
         dtype
 
-let pp fmt t = pp_program pp_view fmt t
-
-(* Rewriting *)
-
-let rebuild_internal f program =
-  let n = Array.length program in
-  let remap = Array.make n (-1) in
-  let acc = ref [] in
-  let next = ref 0 in
-  let emit instr =
-    let idx = !next in
-    acc := instr :: !acc;
-    incr next;
-    idx
-  in
-  let map_ref r = remap.(r) in
-  Array.iteri
-    (fun i instr ->
-      match f ~emit ~map_ref instr with
-      | Some idx -> remap.(i) <- idx
-      | None -> remap.(i) <- emit (map_refs map_ref instr))
-    program;
-  Array.of_list (List.rev !acc)
+let pp fmt t =
+  Array.iteri (fun i instr -> Format.fprintf fmt "%3d: %a@\n" i pp_view instr) t
 
 (* Building *)
 
@@ -577,15 +493,36 @@ let ensure builder =
     builder.data <- next
   end
 
-let emit builder (instr : view) =
+let emit builder instr =
   ensure builder;
   let id = builder.len in
   builder.data.(id) <- instr;
   builder.len <- id + 1;
   id
 
-let finish builder = Array.init builder.len (fun i -> builder.data.(i))
-let view (program : t) (id : id) : view = program.(id)
+let finish builder = Array.sub builder.data 0 builder.len
+let view (program : t) id = program.(id)
+
+(* Rewrite a program's instruction array in one forward pass. [f] is called
+   on each instruction and may return [Some id] to replace it (e.g. for
+   deduplication or custom lowering), or [None] to keep the default behavior
+   of remapping children and emitting into the new array. A [remap] array
+   translates old instruction ids to new ones so that later instructions
+   referencing earlier ones stay consistent after rewriting. *)
+
+let rebuild f program =
+  let n = Array.length program in
+  let remap = Array.make n (-1) in
+  let b = create () in
+  let emit_view instr = emit b instr in
+  let map_ref r = remap.(r) in
+  Array.iteri
+    (fun i instr ->
+      match f ~emit:emit_view ~map_ref instr with
+      | Some idx -> remap.(i) <- idx
+      | None -> remap.(i) <- emit_view (map_children map_ref instr))
+    program;
+  finish b
 
 (* Inspecting *)
 
@@ -608,8 +545,6 @@ let index_gate program id =
   in
   walk id
 
-let map_children = map_refs
-
 let map_alu ~map_ref ~dtype = function
   | Unary { op; src; _ } -> Unary { op; src = map_ref src; dtype }
   | Binary { op; lhs; rhs; _ } ->
@@ -619,7 +554,7 @@ let map_alu ~map_ref ~dtype = function
   | _ -> invalid_arg "Program.map_alu expects an ALU view"
 
 let sort program id =
-  match view program id with
+  match program.(id) with
   | Param _ | Param_image _ | Define_local _ | Define_reg _ | Index _ -> Pointer
   | Define_var _ | Range _ | Special _ -> Index
   | Store _ | End_range _ | If _ | Endif _ | Barrier | Custom _ -> Effect
@@ -627,5 +562,3 @@ let sort program id =
   | Const _ | Load _ | After _ | Unary _ | Binary _ | Ternary _ | Cast _
   | Bitcast _ | Vectorize _ | Gep _ | Wmma _ | Custom_inline _ ->
       Value
-
-let rebuild = rebuild_internal

@@ -12,9 +12,9 @@ module Sd = Tolk_ir.Special_dim
 
 (* Helpers *)
 
-let global_ptr dt = D.Ptr.create dt ()
-let local_ptr dt = D.Ptr.create dt ~addrspace:Local ()
-let reg_ptr dt = D.Ptr.create dt ~addrspace:Reg ()
+let global_ptr dt = D.ptr_of dt ~addrspace:Global ~size:(-1)
+let local_ptr dt = D.ptr_of dt ~addrspace:Local ~size:(-1)
+let reg_ptr dt = D.ptr_of dt ~addrspace:Reg ~size:(-1)
 let dt = D.float32
 let gptr = global_ptr dt
 
@@ -172,8 +172,8 @@ let () =
             ignore (P.emit b (Param { idx = 3; dtype = global_ptr D.int32 }));
             match P.view (P.finish b) 0 with
             | Param { idx = 3; dtype } ->
-                is_true (dtype.addrspace = D.Global);
-                is_true (D.equal dtype.base D.int32)
+                is_true (D.addrspace dtype = D.Global);
+                is_true (D.equal (D.base dtype) D.int32)
             | _ -> fail "expected Param with idx=3");
         ];
       group "Inspection"
@@ -196,9 +196,9 @@ let () =
             let size = emit_i32 b 10 in
             let range =
               P.emit b
-                (Range { size; dtype = D.int32; axis = 0; kind = Ak.Loop })
+                (Range { size; dtype = D.int32; axis = 0; sub = []; kind = Ak.Loop })
             in
-            ignore (P.emit b (End_range { range }));
+            ignore (P.emit b (End_range { dep = range; range }));
             is_none (P.dtype (P.finish b) 2));
           test "sort pointer" (fun () ->
             let b = P.create () in
@@ -226,7 +226,7 @@ let () =
             let size = emit_i32 b 10 in
             ignore
               (P.emit b
-                 (Range { size; dtype = D.int32; axis = 0; kind = Ak.Loop }));
+                 (Range { size; dtype = D.int32; axis = 0; sub = []; kind = Ak.Loop }));
             ignore
               (P.emit b
                  (Special { dim = Sd.Group_id 0; size; dtype = D.int32 }));
@@ -400,17 +400,17 @@ let () =
                 let size = emit_i32 b 10 in
                 let range =
                   P.emit b
-                    (Range { size; dtype = D.int32; axis = 0; kind = Ak.Loop })
+                    (Range { size; dtype = D.int32; axis = 0; sub = []; kind = Ak.Loop })
                 in
-                ignore (P.emit b (End_range { range }))));
+                ignore (P.emit b (End_range { dep = range; range }))));
           test "range float rejected" (fun () ->
             rejects "int dtype" (fun b ->
                 let size = emit_f32 b 10.0 in
                 let range =
                   P.emit b
-                    (Range { size; dtype = dt; axis = 0; kind = Ak.Loop })
+                    (Range { size; dtype = dt; axis = 0; sub = []; kind = Ak.Loop })
                 in
-                ignore (P.emit b (End_range { range }))));
+                ignore (P.emit b (End_range { dep = range; range }))));
           test "range vector rejected" (fun () ->
             rejects "scalar" (fun b ->
                 let size = emit_i32 b 10 in
@@ -421,10 +421,11 @@ let () =
                          size;
                          dtype = D.vec D.int32 4;
                          axis = 0;
+                         sub = [];
                          kind = Ak.Loop;
                        })
                 in
-                ignore (P.emit b (End_range { range }))));
+                ignore (P.emit b (End_range { dep = range; range }))));
           test "range size mismatch rejected" (fun () ->
             rejects "Range size" (fun b ->
                 let size =
@@ -433,32 +434,32 @@ let () =
                 in
                 let range =
                   P.emit b
-                    (Range { size; dtype = D.int32; axis = 0; kind = Ak.Loop })
+                    (Range { size; dtype = D.int32; axis = 0; sub = []; kind = Ak.Loop })
                 in
-                ignore (P.emit b (End_range { range }))));
+                ignore (P.emit b (End_range { dep = range; range }))));
           test "end_range not range rejected" (fun () ->
             rejects "must reference a Range" (fun b ->
                 let c = emit_i32 b 0 in
-                ignore (P.emit b (End_range { range = c }))));
+                ignore (P.emit b (End_range { dep = c; range = c }))));
           test "unclosed range rejected" (fun () ->
             rejects "unclosed Range" (fun b ->
                 let size = emit_i32 b 10 in
                 ignore
                   (P.emit b
                      (Range
-                        { size; dtype = D.int32; axis = 0; kind = Ak.Loop }))));
+                        { size; dtype = D.int32; axis = 0; sub = []; kind = Ak.Loop }))));
           test "end_range unbalanced rejected" (fun () ->
             rejects "unbalanced End_range" (fun b ->
                 let size = emit_i32 b 10 in
                 let outer =
                   P.emit b
-                    (Range { size; dtype = D.int32; axis = 0; kind = Ak.Loop })
+                    (Range { size; dtype = D.int32; axis = 0; sub = []; kind = Ak.Loop })
                 in
                 ignore
                   (P.emit b
                      (Range
-                        { size; dtype = D.int32; axis = 1; kind = Ak.Loop }));
-                ignore (P.emit b (End_range { range = outer }))));
+                        { size; dtype = D.int32; axis = 1; sub = []; kind = Ak.Loop }));
+                ignore (P.emit b (End_range { dep = outer; range = outer }))));
           (* If / Endif *)
           test "if/endif ok" (fun () ->
             validates (fun b ->
@@ -547,12 +548,26 @@ let () =
                           dtype = gptr;
                         }))));
           test "index empty idxs rejected" (fun () ->
-            rejects "at least one index" (fun b ->
+            rejects "exactly one index" (fun b ->
                 ignore (P.emit b (Param { idx = 0; dtype = gptr }));
                 ignore
                   (P.emit b
                      (Index
                         { ptr = 0; idxs = []; gate = None; dtype = gptr }))));
+          test "index multi-element idxs rejected" (fun () ->
+            rejects "exactly one index" (fun b ->
+                ignore (P.emit b (Param { idx = 0; dtype = gptr }));
+                let i0 = emit_i32 b 0 in
+                let i1 = emit_i32 b 1 in
+                ignore
+                  (P.emit b
+                     (Index
+                        {
+                          ptr = 0;
+                          idxs = [ i0; i1 ];
+                          gate = None;
+                          dtype = gptr;
+                        }))));
           test "index float operand rejected" (fun () ->
             rejects "must be int" (fun b ->
                 ignore (P.emit b (Param { idx = 0; dtype = gptr }));
@@ -805,7 +820,7 @@ let () =
                   P.emit b
                     (Vectorize { srcs = [ a; c ]; dtype = D.vec dt 2 })
                 in
-                ignore (P.emit b (Gep { src = v; idx = 1; dtype = dt }))));
+                ignore (P.emit b (Gep { src = v; idxs = [1]; dtype = dt }))));
           test "gep out of bounds rejected" (fun () ->
             rejects "out of bounds" (fun b ->
                 let a = emit_f32 b 1.0 in
@@ -814,7 +829,7 @@ let () =
                   P.emit b
                     (Vectorize { srcs = [ a; c ]; dtype = D.vec dt 2 })
                 in
-                ignore (P.emit b (Gep { src = v; idx = 5; dtype = dt }))));
+                ignore (P.emit b (Gep { src = v; idxs = [5]; dtype = dt }))));
           (* Store *)
           test "store ok" (fun () ->
             validates (fun b ->
@@ -863,14 +878,14 @@ let () =
                 let size = emit_i32 b 10 in
                 let outer =
                   P.emit b
-                    (Range { size; dtype = D.int32; axis = 0; kind = Ak.Loop })
+                    (Range { size; dtype = D.int32; axis = 0; sub = []; kind = Ak.Loop })
                 in
                 let inner =
                   P.emit b
-                    (Range { size; dtype = D.int32; axis = 1; kind = Ak.Loop })
+                    (Range { size; dtype = D.int32; axis = 1; sub = []; kind = Ak.Loop })
                 in
-                ignore (P.emit b (End_range { range = inner }));
-                ignore (P.emit b (End_range { range = outer }))));
+                ignore (P.emit b (End_range { dep = inner; range = inner }));
+                ignore (P.emit b (End_range { dep = outer; range = outer }))));
           test "nested ifs balanced" (fun () ->
             validates (fun b ->
                 let addr = emit_index_chain b in
@@ -889,25 +904,25 @@ let () =
                 let size = emit_i32 b 10 in
                 let range =
                   P.emit b
-                    (Range { size; dtype = D.int32; axis = 0; kind = Ak.Loop })
+                    (Range { size; dtype = D.int32; axis = 0; sub = []; kind = Ak.Loop })
                 in
                 let cond = emit_bool b true in
                 let if_ = P.emit b (If { cond; idx_for_dedup = addr }) in
                 ignore (P.emit b (Endif { if_ }));
-                ignore (P.emit b (End_range { range }))));
+                ignore (P.emit b (End_range { dep = range; range }))));
           test "sequential ranges" (fun () ->
             validates (fun b ->
                 let size = emit_i32 b 10 in
                 let r1 =
                   P.emit b
-                    (Range { size; dtype = D.int32; axis = 0; kind = Ak.Loop })
+                    (Range { size; dtype = D.int32; axis = 0; sub = []; kind = Ak.Loop })
                 in
-                ignore (P.emit b (End_range { range = r1 }));
+                ignore (P.emit b (End_range { dep = r1; range = r1 }));
                 let r2 =
                   P.emit b
-                    (Range { size; dtype = D.int32; axis = 1; kind = Ak.Loop })
+                    (Range { size; dtype = D.int32; axis = 1; sub = []; kind = Ak.Loop })
                 in
-                ignore (P.emit b (End_range { range = r2 }))));
+                ignore (P.emit b (End_range { dep = r2; range = r2 }))));
         ];
       group "Rewriting"
         [
