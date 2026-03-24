@@ -17,16 +17,16 @@ let nx_operations_f32 ~size =
 
   let ops =
     [
-      ("Add", fun () -> Thumper.consume (Nx.add a b));
-      ("Mul", fun () -> Thumper.consume (Nx.mul a b));
+      ("Add", fun () -> (Nx.add a b));
+      ("Mul", fun () -> (Nx.mul a b));
     ]
   in
 
   let ops =
     ops
     @ [
-        ("Sum", fun () -> Thumper.consume (Nx.sum a));
-        ("Transpose", fun () -> Thumper.consume (Nx.transpose a));
+        ("Sum", fun () -> (Nx.sum a));
+        ("Transpose", fun () -> (Nx.transpose a));
       ]
   in
 
@@ -39,16 +39,16 @@ let nx_operations_f64 ~size =
 
   let ops =
     [
-      ("Add", fun () -> Thumper.consume (Nx.add a b));
-      ("Mul", fun () -> Thumper.consume (Nx.mul a b));
+      ("Add", fun () -> (Nx.add a b));
+      ("Mul", fun () -> (Nx.mul a b));
     ]
   in
 
   let ops =
     ops
     @ [
-        ("Sum", fun () -> Thumper.consume (Nx.sum a));
-        ("Transpose", fun () -> Thumper.consume (Nx.transpose a));
+        ("Sum", fun () -> (Nx.sum a));
+        ("Transpose", fun () -> (Nx.transpose a));
       ]
   in
 

@@ -36,9 +36,9 @@ module Fixtures = struct
     loop [] 32
 end
 
-let encode_single tok text = encode tok text |> Thumper.consume
-let encode_batch tok texts = encode_batch tok texts |> Thumper.consume
-let decode_ids tok ids = decode tok ids |> Thumper.consume
+let encode_single tok text = encode tok text
+let encode_batch tok texts = encode_batch tok texts
+let decode_ids tok ids = decode tok ids
 
 let make_suite ~label ~tokenizer =
   let open Fixtures in

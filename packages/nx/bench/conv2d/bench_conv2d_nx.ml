@@ -36,7 +36,7 @@ let build_benchmarks () =
       let k = Nx.rand Nx.Float32 kernel_shape in
       let name = Printf.sprintf "correlate %s f32 (%s)" label backend_name in
       benchmarks :=
-        Thumper.bench name (fun () -> Thumper.consume (Nx.correlate x k))
+        Thumper.bench name (fun () -> (Nx.correlate x k))
         :: !benchmarks)
     correlate_configs;
   List.iter
@@ -50,7 +50,6 @@ let build_benchmarks () =
       in
       benchmarks :=
         Thumper.bench name (fun () ->
-            Thumper.consume
               (Nx.extract_patches ~kernel_size ~stride ~dilation ~padding x))
         :: !benchmarks)
     extract_patches_configs;

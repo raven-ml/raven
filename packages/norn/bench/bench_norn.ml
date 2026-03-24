@@ -25,7 +25,7 @@ let hmc_benches () =
       Thumper.bench (Printf.sprintf "HMC/%s" label) (fun () ->
           let new_state, info = kernel.step !state log_prob in
           state := new_state;
-          Thumper.consume info.Norn.acceptance_rate))
+          info.Norn.acceptance_rate))
     cases
 
 let nuts_benches () =
@@ -42,7 +42,7 @@ let nuts_benches () =
       Thumper.bench (Printf.sprintf "NUTS/%s" label) (fun () ->
           let new_state, info = kernel.step !state log_prob in
           state := new_state;
-          Thumper.consume info.Norn.acceptance_rate))
+          info.Norn.acceptance_rate))
     cases
 
 let ess_benches () =
@@ -51,7 +51,7 @@ let ess_benches () =
     (fun (label, dim, n) ->
       let samples = Nx.randn f64 [| n; dim |] in
       Thumper.bench (Printf.sprintf "ESS/%s" label) (fun () ->
-          Thumper.consume (Norn.ess samples)))
+          (Norn.ess samples)))
     cases
 
 let rhat_benches () =
@@ -60,7 +60,7 @@ let rhat_benches () =
     (fun (label, dim, n) ->
       let chains = Array.init 4 (fun _ -> Nx.randn f64 [| n; dim |]) in
       Thumper.bench (Printf.sprintf "Rhat/%s" label) (fun () ->
-          Thumper.consume (Norn.rhat chains)))
+          (Norn.rhat chains)))
     cases
 
 let () =

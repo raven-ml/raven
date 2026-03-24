@@ -27,7 +27,6 @@ let gae_benchmarks () =
         Thumper.bench
           (Printf.sprintf "compute n=%s" label)
           (fun () ->
-            Thumper.consume
               (Gae.compute ~rewards ~values ~terminated ~truncated ~next_values
                  ~gamma ~lambda))
         :: !benches)
@@ -44,7 +43,6 @@ let gae_from_values_benchmarks () =
         Thumper.bench
           (Printf.sprintf "compute_from_values n=%s" label)
           (fun () ->
-            Thumper.consume
               (Gae.compute_from_values ~rewards ~values ~terminated ~truncated
                  ~last_value:0.0 ~gamma ~lambda))
         :: !benches)
@@ -61,7 +59,7 @@ let returns_benchmarks () =
         Thumper.bench
           (Printf.sprintf "returns n=%s" label)
           (fun () ->
-            Thumper.consume (Gae.returns ~rewards ~terminated ~truncated ~gamma))
+            (Gae.returns ~rewards ~terminated ~truncated ~gamma))
         :: !benches)
     sizes;
   List.rev !benches
@@ -75,7 +73,7 @@ let normalize_benchmarks () =
       benches :=
         Thumper.bench
           (Printf.sprintf "normalize n=%s" label)
-          (fun () -> Thumper.consume (Gae.normalize arr))
+          (fun () -> (Gae.normalize arr))
         :: !benches)
     sizes;
   List.rev !benches
@@ -119,7 +117,7 @@ let buffer_create_benchmarks () =
     (fun (label, n) ->
       Thumper.bench
         (Printf.sprintf "create+fill cap=%s" label)
-        (fun () -> Thumper.consume (fill_buffer n)))
+        (fun () -> (fill_buffer n)))
     sizes
 
 let build_benchmarks () =

@@ -13,8 +13,8 @@ let ops_f32 ~size =
   let a = Nx.rand Nx.Float32 shape in
   let b = Nx.rand Nx.Float32 shape in
   [
-    ("Add", fun () -> Thumper.consume (Nx.add a b));
-    ("Matmul", fun () -> Thumper.consume (Nx.matmul a b));
+    ("Add", fun () -> (Nx.add a b));
+    ("Matmul", fun () -> (Nx.matmul a b));
   ]
 
 let ops_f64 ~size =
@@ -22,8 +22,8 @@ let ops_f64 ~size =
   let a = Nx.rand Nx.Float64 shape in
   let b = Nx.rand Nx.Float64 shape in
   [
-    ("Add", fun () -> Thumper.consume (Nx.add a b));
-    ("Matmul", fun () -> Thumper.consume (Nx.matmul a b));
+    ("Add", fun () -> (Nx.add a b));
+    ("Matmul", fun () -> (Nx.matmul a b));
   ]
 
 let benchmarks () =

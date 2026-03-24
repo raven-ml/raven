@@ -47,7 +47,7 @@ end
 
 let force_float_sum df column =
   let total = Talon.Agg.sum df column in
-  Thumper.consume total
+  total
 
 let bench_filter df =
   let filtered =
@@ -73,7 +73,7 @@ let bench_group df =
       (fun acc (_key, group_df) -> acc +. Talon.Agg.sum group_df "amount")
       0. groups
   in
-  Thumper.consume total
+  total
 
 let bench_join df customers =
   let joined = Talon.join df customers ~on:"customer_id" ~how:`Left () in

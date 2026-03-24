@@ -19,7 +19,7 @@ let make_step_bench name tx (label, shape) =
   Thumper.bench (Printf.sprintf "%s/%s" name label) (fun () ->
       let new_param, new_state = Vega.step !state ~grad ~param in
       state := new_state;
-      Thumper.consume new_param)
+      new_param)
 
 let optimizer_benches name tx =
   List.map (make_step_bench name tx) shapes

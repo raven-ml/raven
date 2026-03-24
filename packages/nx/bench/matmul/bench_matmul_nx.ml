@@ -27,7 +27,7 @@ let setup_operands (type a b) (dtype : (a, b) Nx.dtype) case =
 let add_case (type a b) benches case (dtype : (a, b) Nx.dtype) dtype_label =
   let lhs, rhs = setup_operands dtype case in
   let name = benchmark_name case dtype_label "" in
-  let fn () = Thumper.consume (Nx.matmul lhs rhs) in
+  let fn () = (Nx.matmul lhs rhs) in
   benches := Thumper.bench name fn :: !benches
 
 let build_benchmarks () =
