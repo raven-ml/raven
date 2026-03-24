@@ -6,7 +6,7 @@ full_rewrite_to_sink + linearize + render pipeline.  This produces the reference
 source code that Tolk's Pipeline.full_rewrite_to_sink must match.
 
 Usage:
-    uv run dev/tolk/test/golden/codegen/generate_expected.py
+    uv run packages/tolk/test/golden/codegen/generate_expected.py
 
 After running, commit the generated .expected files.
 """

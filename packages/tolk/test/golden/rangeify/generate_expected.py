@@ -7,7 +7,7 @@ This produces the reference source code that Tolk's
 Rangeify.get_kernel_graph -> Pipeline -> Linearizer -> Renderer must match.
 
 Usage:
-    uv run dev/tolk/test/golden/rangeify/generate_expected.py
+    uv run packages/tolk/test/golden/rangeify/generate_expected.py
 
 After running, commit the generated .expected files.
 """

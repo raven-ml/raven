@@ -106,11 +106,29 @@
   (dune-configurator :build)
   (nx
    (= :version))
+  (tolk
+   (= :version))
   (windtrap :with-test)
   (mdx :with-test)
   (thumper :with-test))
  (tags
   (automatic-differentiation machine-learning deep-learning optimization)))
+
+(package
+ (name tolk)
+ (dir packages/tolk)
+ (synopsis "A minimal ML compiler for GPU tensor computation")
+ (description
+  "Tolk is a minimal, readable ML compiler for GPU tensor computation in the Raven ecosystem.")
+ (depends
+  (ocaml
+   (>= 5.2))
+  dune
+  (dune-configurator :build)
+  (windtrap :with-test)
+  (thumper :with-test))
+ (tags
+  (compiler gpu tensor-computation)))
 
 (package
  (name norn)

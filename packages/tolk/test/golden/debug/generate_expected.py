@@ -5,7 +5,7 @@ Captures the exact print_uops output after each named graph_rewrite stage
 in full_rewrite_to_sink, concatenated into a single file with === headers.
 
 Usage:
-    uv run dev/tolk/test/golden/debug/generate_expected.py
+    uv run packages/tolk/test/golden/debug/generate_expected.py
 """
 
 import io
