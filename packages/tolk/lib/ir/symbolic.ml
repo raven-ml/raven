@@ -41,7 +41,7 @@ let is_const_bool b node =
   | _ -> false
 
 let is_index_dtype dt =
-  Dtype.is_int dt && Dtype.equal (Dtype.scalar_of dt) Dtype.index
+  Dtype.Val.is_int dt && Dtype.Val.equal (Dtype.Val.scalarize dt) Dtype.Val.index
 
 (* GEP pushing *)
 
@@ -87,23 +87,23 @@ let gep_vconst node =
                 Some
                   (K.vconst
                      ~values:(List.map (List.nth values) idxs)
-                     ~dtype:(Dtype.vec (Dtype.scalar_of dtype) (List.length idxs)))
+                     ~dtype:(Dtype.Val.vec (List.length idxs) (Dtype.Val.scalarize dtype)))
           else None
       | _ -> None)
   | _ -> None
 
 let gep_void node =
   match K.view node with
-  | Gep { src; dtype; _ } when Dtype.equal dtype Dtype.void -> Some src
+  | Gep { src; dtype; _ } when Dtype.Val.equal dtype Dtype.Val.void -> Some src
   | _ -> None
 
-let cat_to_vectorize node =
+let vcat_to_vectorize node =
   match K.view node with
-  | Cat { srcs; _ } ->
+  | Vcat { srcs; _ } ->
       let expanded =
         List.concat_map
           (fun s ->
-            let count = Dtype.count (K.dtype_or Dtype.void s) in
+            let count = Dtype.count (K.dtype s) in
             List.init count (fun i -> K.gep ~src:s ~idx:i))
           srcs
       in
@@ -116,7 +116,7 @@ let vectorize_in_order_gep node =
       (match K.view first with
       | Gep { src = base; idxs = [0]; _ } ->
           let count = List.length srcs in
-          if count = Dtype.count (K.dtype_or Dtype.void base) then
+          if count = Dtype.count (K.dtype base) then
             let rec check i = function
               | [] -> true
               | s :: rest ->
@@ -132,18 +132,18 @@ let vectorize_in_order_gep node =
 
 let gep_through_alu node =
   match K.view node with
-  | Gep { src; idxs = [idx]; dtype } when Dtype.equal (Dtype.scalar_of dtype) Dtype.index
+  | Gep { src; idxs = [idx]; dtype } when Dtype.Val.equal (Dtype.Val.scalarize dtype) Dtype.Val.index
     ->
       (match K.view src with
-      | Binary { op; lhs; rhs; dtype = alu_dt } when Dtype.is_int alu_dt ->
+      | Binary { op; lhs; rhs; dtype = alu_dt } when Dtype.Val.is_int alu_dt ->
           Some
             (K.binary ~op
                ~lhs:(K.gep ~src:lhs ~idx)
                ~rhs:(K.gep ~src:rhs ~idx))
-      | Unary { op; src = inner; dtype = alu_dt } when Dtype.is_int alu_dt ->
+      | Unary { op; src = inner; dtype = alu_dt } when Dtype.Val.is_int alu_dt ->
           Some (K.unary ~op ~src:(K.gep ~src:inner ~idx))
       | Cast { src = inner; _ } ->
-          Some (K.cast ~src:(K.gep ~src:inner ~idx) ~dtype:(Dtype.to_any dtype))
+          Some (K.cast ~src:(K.gep ~src:inner ~idx) ~dtype:(Dtype.Val dtype))
       | _ -> None)
   | _ -> None
 
@@ -153,7 +153,7 @@ let gep_through_alu node =
 let gep_identity node =
   match K.view node with
   | Gep { src; idxs; _ } when not (K.is_ptr src) ->
-      let src_count = match K.dtype src with
+      let src_count = match K.dtype_opt src with
         | Some dt -> Dtype.count dt | None -> -1
       in
       if src_count > 0 && idxs = List.init src_count Fun.id then Some src
@@ -163,7 +163,7 @@ let gep_identity node =
 let gep_pushing =
   K.first_match
     [ gep_vectorize; gep_const; gep_vconst; gep_void; gep_identity;
-      cat_to_vectorize; vectorize_in_order_gep; gep_through_alu ]
+      vcat_to_vectorize; vectorize_in_order_gep; gep_through_alu ]
 
 (* ALU/Vectorize reordering *)
 
@@ -178,17 +178,17 @@ let alu_through_broadcast_vectorize node =
       (match K.view lhs, K.view rhs with
       | Vectorize { srcs = lsrcs; dtype = ldt },
         Vectorize { srcs = rsrcs; dtype = rdt }
-        when Dtype.count (Dtype.any_to_val ldt) = Dtype.count (Dtype.any_to_val rdt)
-             && Dtype.count (Dtype.any_to_val ldt) > 0
+        when Dtype.count ldt = Dtype.count rdt
+             && Dtype.count ldt > 0
              && is_broadcast lsrcs && is_broadcast rsrcs ->
           let scalar = K.binary ~op ~lhs:(List.hd lsrcs) ~rhs:(List.hd rsrcs) in
-          Some (K.vectorize ~srcs:(List.init (Dtype.count (Dtype.any_to_val ldt)) (fun _ -> scalar)))
+          Some (K.vectorize ~srcs:(List.init (Dtype.count ldt) (fun _ -> scalar)))
       | _ -> None)
   | Unary { op; src; _ } ->
       (match K.view src with
-      | Vectorize { srcs; dtype } when Dtype.count (Dtype.any_to_val dtype) > 0 && is_broadcast srcs ->
+      | Vectorize { srcs; dtype } when Dtype.count dtype > 0 && is_broadcast srcs ->
           let scalar = K.unary ~op ~src:(List.hd srcs) in
-          Some (K.vectorize ~srcs:(List.init (Dtype.count (Dtype.any_to_val dtype)) (fun _ -> scalar)))
+          Some (K.vectorize ~srcs:(List.init (Dtype.count dtype) (fun _ -> scalar)))
       | _ -> None)
   | _ -> None
 
@@ -292,7 +292,7 @@ let self_fold node =
   | Binary { op = `Xor; lhs; rhs; dtype } when lhs == rhs ->
       Some (K.const (Const.int64 dtype 0L))
   | Binary { op = `Cmpne; lhs; rhs; dtype }
-    when lhs == rhs && Dtype.is_int dtype ->
+    when lhs == rhs && Dtype.Val.is_int dtype ->
       Some (K.const_bool false)
   | _ -> None
 
@@ -325,13 +325,20 @@ let identity_fold node =
       else if is_const_int 0 lhs then Some rhs
       else None
   | Cast { src; dtype } ->
-      if Dtype.to_any (K.dtype_or Dtype.void src) = dtype then Some src else None
+      (* Only fold identity cast for value-typed nodes.  Ptr-typed casts
+         (e.g. Cast(Index, Ptr pty)) must remain for the devectorizer's
+         extract_cast_index pattern.  Use the value projection so that a
+         ptr-typed source never matches a Ptr-typed Cast target. *)
+      let src_dt =
+        Option.map (fun d -> Dtype.Val (Dtype.val_of d)) (K.dtype_opt src)
+      in
+      if src_dt = Some dtype then Some src else None
   | _ -> None
 
 let float_div_fold node =
   match K.view node with
   | Binary { op = `Fdiv; lhs; rhs; _ } when lhs == rhs ->
-      Some (K.const (Const.float (K.dtype_or Dtype.float32 node) 1.0))
+      Some (K.const (Const.float (Dtype.val_of (K.dtype node)) 1.0))
   | Binary { op = `Fdiv; lhs; rhs; _ } ->
       (match K.view lhs with
       | Binary { op = `Mul; lhs = x; rhs = y; _ } when y == rhs -> Some x
@@ -361,12 +368,14 @@ let idempotent_fold node =
 
 let trunc_int node =
   match K.view node with
-  | Unary { op = `Trunc; src; _ } when Dtype.is_int (K.dtype_or Dtype.void src)
+  | Unary { op = `Trunc; src; _ } when Dtype.is_int (K.dtype src)
     -> Some src
   | _ -> None
 
 let bool_arith_fold node =
-  let dt = K.dtype_or Dtype.void node in
+  match K.dtype_opt node with
+  | None -> None
+  | Some dt ->
   if not (Dtype.is_bool dt) then None
   else
     match K.view node with
@@ -396,7 +405,7 @@ let double_not_fold node =
 let bool_where_identity node =
   match K.view node with
   | Ternary { op = `Where; a; b; c; _ }
-    when Dtype.is_bool (K.dtype_or Dtype.void a) ->
+    when Dtype.is_bool (K.dtype a) ->
       (match K.view b, K.view c with
       | Const { value = bv; _ }, Const { value = cv; _ } ->
           (match Const.view bv, Const.view cv with
@@ -409,28 +418,28 @@ let bool_where_identity node =
 
 let const_cast_fold node =
   match K.view node with
-  | Cast { src; dtype = Dtype.T dtype } ->
+  | Cast { src; dtype = Dtype.Val dtype } ->
       (match K.view src with
       | Const { value; _ } ->
           (match Const.view value with
           | Int v ->
-              if Dtype.is_int dtype then Some (K.const (Const.int64 dtype v))
-              else if Dtype.is_float dtype then
+              if Dtype.Val.is_int dtype then Some (K.const (Const.int64 dtype v))
+              else if Dtype.Val.is_float dtype then
                 Some (K.const (Const.float dtype (Int64.to_float v)))
-              else if Dtype.is_bool dtype then
+              else if Dtype.Val.is_bool dtype then
                 Some (K.const (Const.bool (v <> 0L)))
               else None
           | Float f ->
-              if Dtype.is_float dtype then Some (K.const (Const.float dtype f))
-              else if Dtype.is_int dtype then
+              if Dtype.Val.is_float dtype then Some (K.const (Const.float dtype f))
+              else if Dtype.Val.is_int dtype then
                 Some (K.const (Const.int64 dtype (Int64.of_float f)))
-              else if Dtype.is_bool dtype then
+              else if Dtype.Val.is_bool dtype then
                 Some (K.const (Const.bool (f <> 0.0)))
               else None
           | Bool b ->
-              if Dtype.is_int dtype then
+              if Dtype.Val.is_int dtype then
                 Some (K.const (Const.int64 dtype (if b then 1L else 0L)))
-              else if Dtype.is_float dtype then
+              else if Dtype.Val.is_float dtype then
                 Some (K.const (Const.float dtype (if b then 1.0 else 0.0)))
               else None)
       | _ -> None)
@@ -441,9 +450,9 @@ let double_cast_fold node =
   | Cast { src; dtype = b_dt } ->
       (match K.view src with
       | Cast { src = x; dtype = a_dt } ->
-          let x_dt = K.dtype_or Dtype.void x in
-          let b = Dtype.any_to_val b_dt and a = Dtype.any_to_val a_dt in
-          if Dtype.equal x_dt b && Dtype.can_lossless_cast b a then
+          let x_dt = K.dtype x in
+          let b = Dtype.val_of b_dt and a = Dtype.val_of a_dt in
+          if Dtype.equal x_dt (Dtype.Val b) && Dtype.Val.can_lossless_cast b a then
             Some x
           else None
       | _ -> None)
@@ -451,7 +460,7 @@ let double_cast_fold node =
 
 let cast_to_bool node =
   match K.view node with
-  | Cast { src; dtype = Dtype.T dt } when Dtype.is_bool dt ->
+  | Cast { src; dtype = Dtype.Val dt } when Dtype.Val.is_bool dt ->
       Some (K.binary ~op:`Cmpne ~lhs:src ~rhs:(K.zero_like src))
   | _ -> None
 
@@ -513,7 +522,7 @@ let divmod_reconstitute node =
                                       if mul = 1L then base
                                       else
                                         K.binary ~op:`Mul ~lhs:base
-                                          ~rhs:(K.const (Const.int64 Dtype.index mul))
+                                          ~rhs:(K.const (Const.int64 Dtype.Val.index mul))
                                     in
                                     Some
                                       (List.fold_left
@@ -544,7 +553,7 @@ let commutative_flip node =
 
 let combine_terms node =
   match K.view node with
-  | Binary { op = `Add; lhs; rhs; dtype } when lhs == rhs && Dtype.is_int dtype ->
+  | Binary { op = `Add; lhs; rhs; dtype } when lhs == rhs && Dtype.Val.is_int dtype ->
       Some (K.binary ~op:`Mul ~lhs ~rhs:(K.const (Const.int64 dtype 2L)))
   | Binary { op = `Add; lhs; rhs; _ } ->
       let extract_mul_const n =
@@ -553,7 +562,7 @@ let combine_terms node =
             Option.map (fun cv -> (x, cv)) (const_int_val c)
         | _ -> None
       in
-      let dt = K.dtype_or Dtype.index node in
+      let dt = Dtype.val_of (K.dtype node) in
       (match extract_mul_const lhs, extract_mul_const rhs with
       | Some (x1, c1), Some (x2, c2) when x1 == x2 ->
           Some (K.binary ~op:`Mul ~lhs:x1
@@ -630,16 +639,21 @@ let max_fold node =
   | _ -> None
 
 let range_collapse node =
-  let dtype = K.dtype_or Dtype.void node in
-  if not (is_index_dtype dtype) then None
-  else
-    match K.view node with
-    | Binary _ | Unary _ | Ternary _ | Define_var _ | Range _ ->
-        let lo = Divandmod.vmin node and hi = Divandmod.vmax node in
-        if lo = hi && lo <> Int64.min_int && hi <> Int64.max_int then
-          Some (K.const (Const.int64 dtype lo))
-        else None
-    | _ -> None
+  match K.dtype_opt node with
+  | None -> None
+  | Some dt ->
+  let dtype = Dtype.val_of dt in
+  let is_cmp = match K.view node with
+    | Binary { op = `Cmplt | `Cmpne; _ } -> true | _ -> false in
+  if not (is_cmp || is_index_dtype dtype) then None
+  else match K.view node with
+  | Binary _ | Unary _ | Ternary _ | Define_var _ | Range _ | Special _ ->
+      let lo = Divandmod.vmin node and hi = Divandmod.vmax node in
+      if lo = hi && (is_cmp || (lo <> Int64.min_int && hi <> Int64.max_int))
+      then Some (K.const (if is_cmp then Const.bool (lo <> 0L)
+                          else Const.int64 dtype lo))
+      else None
+  | _ -> None
 
 let lt_const_fold node =
   match K.view node with
@@ -776,7 +790,7 @@ let cast_chain_fold node =
   | Cast { src; dtype = b_dt } ->
       (match K.view src with
       | Cast { src = x; dtype = a_dt } ->
-          if Dtype.can_lossless_cast (K.dtype_or Dtype.void x) (Dtype.any_to_val a_dt) then
+          if Dtype.Val.can_lossless_cast (Dtype.val_of (K.dtype x)) (Dtype.val_of a_dt) then
             Some (K.cast ~src:x ~dtype:b_dt)
           else None
       | _ -> None)
@@ -795,7 +809,7 @@ let after_cleanup node =
 let bool_or_not node =
   match K.view node with
   | Binary { op = `Or; lhs = x; rhs; _ }
-    when Dtype.is_bool (K.dtype_or Dtype.void node) ->
+    when Dtype.is_bool (K.dtype node) ->
       (* x | !x -> true, or !x | x -> true *)
       let is_not_of target n =
         match K.view n with
@@ -822,7 +836,7 @@ let flatten_removable srcs =
 let sink_cleanup node =
   match K.view node with
   | Sink { srcs; kernel_info } when List.exists is_removable_from_sink srcs ->
-      Some (K.sink ~kernel_info:(Option.get kernel_info) (flatten_removable srcs))
+      Some (K.sink ?kernel_info (flatten_removable srcs))
   | Group { srcs } when List.exists is_removable_from_sink srcs ->
       Some (K.group (flatten_removable srcs))
   | _ -> None
@@ -842,7 +856,7 @@ let empty_unroll node =
 let pow_fold node =
   match K.view node with
   | Binary { op = `Pow; lhs = base; rhs = exp; dtype }
-    when Dtype.is_float dtype ->
+    when Dtype.Val.is_float dtype ->
       Some (Decomposition.xpow ~base ~exponent:exp)
   | _ -> None
 
@@ -877,7 +891,7 @@ let reciprocal_algebra node =
           | Binary { op = `Add; lhs = a; rhs = b; _ }
             when (a == x && is_const_int 1 b) ||
                  (b == x && is_const_int 1 a) ->
-              let one = K.const (Const.float (K.dtype_or Dtype.float32 node) 1.0) in
+              let one = K.const (Const.float (Dtype.val_of (K.dtype node)) 1.0) in
               Some (K.binary ~op:`Sub ~lhs:one ~rhs)
           | _ -> None)
       | _ -> None)
@@ -926,7 +940,7 @@ let decompose_invalid_gate node =
 
 let invalid_is_index inv =
   match K.view inv with
-  | Invalid_index { dtype; _ } -> Dtype.equal (Dtype.scalar_of dtype) Dtype.index
+  | Invalid_index { dtype; _ } -> Dtype.Val.equal (Dtype.Val.scalarize dtype) Dtype.Val.index
   | _ -> false
 
 let propagate_invalid node =
@@ -966,7 +980,7 @@ let propagate_invalid node =
             else
               Some (K.ternary ~op:`Where ~a:cond
                       ~b:(build x)
-                      ~c:(K.cast ~src:inv ~dtype:(Dtype.to_any Dtype.bool)))
+                      ~c:(K.cast ~src:inv ~dtype:Dtype.bool))
         | None -> None
       in
       (match handle_side lhs
@@ -1000,7 +1014,7 @@ let propagate_invalid node =
                   ~c:inv)
       | None -> None)
   | Bitcast { src; dtype } when is_invalid src ->
-      Some (K.cast ~src ~dtype:(Dtype.to_any dtype))
+      Some (K.cast ~src ~dtype:(Dtype.Val dtype))
   | Bitcast { src; dtype } ->
       (match decompose_invalid_gate src with
       | Some (cond, x, inv) ->
@@ -1019,7 +1033,7 @@ let fold_gated_load_store node =
             match alt with
             | Some a -> a
             | None ->
-                if Dtype.is_float dtype then K.const (Const.float dtype 0.0)
+                if Dtype.Val.is_float dtype then K.const (Const.float dtype 0.0)
                 else K.const (Const.int64 dtype 0L)
           in
           Some zero
@@ -1103,3 +1117,205 @@ let sym =
      @ [ pow_fold; where_cast_push; reciprocal_algebra;
          distribute_neg_full; distribute_mul_index;
          fold_gated_load_store ])
+
+(* Validity analysis — parse bound constraints from AND-chained conditions
+   and simplify expressions given those bounds.  Used by load_store_indexing
+   in the devectorizer to simplify index validity gates. *)
+
+let split_and node =
+  let rec go acc = function
+    | [] -> List.rev acc
+    | n :: rest -> match K.view n with
+      | Binary { op = `And; lhs; rhs; _ } -> go acc (lhs :: rhs :: rest)
+      | _ -> go (n :: acc) rest
+  in
+  go [] [node]
+
+(* Parse a comparison into (expr, is_upper_bound, constant).
+   Returns (X, true, c) for X <= c, and (X, false, c) for X >= c. *)
+let parse_valid v =
+  match K.view v with
+  | Binary { op = `Cmpne; lhs = s0; rhs = one; _ }
+    when K.const_arg one = Some (Int 1L) ->
+      (match K.view s0 with
+       | Binary { op = `Cmplt; lhs = x; rhs = c; _ }
+         when Dtype.is_int (K.dtype x) ->
+           Some (x, false, K.vmin c)
+       | _ -> None)
+  | Binary { op = `Cmplt; lhs = x; rhs = c; _ }
+    when Dtype.is_int (K.dtype x) ->
+      Some (x, true, K.vmax c - 1)
+  | _ -> None
+
+let is_irreducible node = match K.view node with
+  | Const _ | Vconst _ | Define_var _ | Special _ | Range _ -> true
+  | _ -> false
+
+(* Simplify [uop] given that [valid] is known to be true.  Parses bound
+   constraints from [valid], substitutes bounded expressions with fresh
+   define_var proxies, simplifies, then substitutes back. *)
+let uop_given_valid ?(try_simplex = true) valid uop =
+  let bounds : (K.t, int option * int option) Hashtbl.t = Hashtbl.create 8 in
+  List.iter (fun stmt ->
+    match parse_valid stmt with
+    | None -> ()
+    | Some (expr, is_upper, c) ->
+        let lo, hi = match Hashtbl.find_opt bounds expr with
+          | Some (lo, hi) -> lo, hi | None -> None, None in
+        let lo, hi = if is_upper then lo, Some c else Some c, hi in
+        Hashtbl.replace bounds expr (lo, hi))
+    (split_and valid);
+
+  let simplify node = K.graph_rewrite symbolic node in
+  let all_same = function
+    | [] -> true | x :: rest -> List.for_all (fun y -> y = x) rest in
+
+  let uop = ref uop in
+  let all_candidates = ref [] in
+  let i = ref 0 in
+  Hashtbl.iter (fun expr (lo_opt, hi_opt) ->
+    let v0 = match lo_opt with Some v -> v | None -> K.vmin expr in
+    let v1 = match hi_opt with Some v -> v | None -> K.vmax expr in
+    let fake = K.define_var ~name:(Printf.sprintf "fake%d" !i)
+      ~lo:v0 ~hi:v1 ~dtype:(Dtype.val_of (K.dtype expr)) () in
+    all_candidates := (expr, fake) :: !all_candidates;
+
+    if try_simplex then begin
+      let candidates = ref [[(expr, fake)]] in
+      if v0 = 1 then
+        (match K.view expr with
+         | Binary { op = `Add; _ } ->
+             let addends = Divandmod.split_add expr in
+             if List.for_all (fun u ->
+               is_irreducible u && K.vmin u = 0) addends
+             then
+               candidates := (List.mapi (fun _j xi ->
+                 (xi, K.define_var
+                   ~name:(Printf.sprintf "fake%d" !i)
+                   ~lo:1 ~hi:(K.vmax xi)
+                   ~dtype:(Dtype.val_of (K.dtype xi)) ())) addends) :: !candidates
+         | _ -> ());
+
+      List.iter (fun candidate ->
+        let newuops = List.map (fun (x, new_x) ->
+          K.substitute [(x, new_x)] !uop) candidate in
+        if not (List.exists (fun u -> u == !uop) newuops) then begin
+          let newuops = List.map2 (fun (_, new_x) u ->
+            let s = simplify u in
+            simplify (K.substitute
+              [(new_x, fst (List.find (fun (_, f) -> f = new_x) candidate))] s))
+            candidate newuops in
+          if all_same newuops then
+            uop := List.hd newuops
+          else match K.view !uop with
+          | Vectorize { srcs = [_; _]; _ } ->
+              let src0s = List.map (fun u ->
+                List.hd (K.children u)) newuops in
+              let src1s = List.map (fun u ->
+                List.nth (K.children u) 1) newuops in
+              if all_same src0s then
+                uop := K.replace !uop
+                  ~children:[List.hd src0s; List.nth (K.children !uop) 1] ();
+              if all_same src1s then
+                uop := K.replace !uop
+                  ~children:[List.hd (K.children !uop); List.hd src1s] ()
+          | _ -> ()
+        end)
+        !candidates
+    end;
+    incr i)
+    bounds;
+
+  let sub_dict = !all_candidates in
+  let s_uop = K.substitute sub_dict !uop in
+  if s_uop != !uop then begin
+    let rev = List.map (fun (x, new_x) -> (new_x, x)) sub_dict in
+    uop := simplify (K.substitute rev (simplify s_uop))
+  end;
+  !uop
+
+(* Extract the real index from a possibly-gated index expression.
+   where(cond, x, Invalid) → x;  anything else → self. *)
+let get_idx node =
+  match K.view node with
+  | Ternary { op = `Where; b = x; c = inv; _ }
+    when (match K.view inv with Invalid_index _ -> true | _ -> false) -> x
+  | _ -> node
+
+(* Extract the validity condition from a possibly-gated index expression.
+   where(cond, x, Invalid) → cond;  anything else → const true. *)
+let get_valid node =
+  match K.view node with
+  | Ternary { op = `Where; a = cond; c = inv; _ }
+    when (match K.view inv with Invalid_index _ -> true | _ -> false) -> cond
+  | _ -> K.const_bool true
+
+(* Wrap an index in a validity gate: where(cond, idx, Invalid). *)
+let with_valid cond idx =
+  match K.view cond with
+  | Ternary { op = `Where; _ } when K.const_arg cond = Some (Bool true) -> idx
+  | _ ->
+      K.ternary ~op:`Where ~a:cond ~b:idx
+        ~c:(K.invalid_index ~lanes:(Dtype.count (K.dtype idx)) ())
+
+(* Move WHERE conditions from around loads into the INDEX gate.
+   Matches where(cond, buf.index(idx), 0): conditions whose ranges are a
+   subset of idx's ranges (and that don't introduce new INDEX deps) are
+   moved into the index's validity gate. *)
+let where_on_load cond buf idx =
+  let where_clauses = split_and cond in
+  let load_valid = get_valid idx in
+  let in_load = split_and load_valid in
+  let idx_indexes = List.filter (fun u ->
+    match K.view u with Index _ -> true | _ -> false)
+    (K.backward_slice idx) in
+  let idx_ranges = K.live_ranges idx in
+  let can_move c =
+    let c_ranges = K.live_ranges c in
+    List.for_all (fun r -> List.exists (fun ir -> ir == r) idx_ranges) c_ranges
+    && List.for_all (fun u -> match K.view u with
+         | Index _ -> List.exists (fun iu -> iu == u) idx_indexes
+         | _ -> true)
+         (K.backward_slice c)
+  in
+  let movable = List.filter (fun c ->
+    not (List.exists (fun il -> il == c) in_load)) where_clauses in
+  let moved, keep = List.partition can_move movable in
+  if List.length keep = List.length where_clauses then None
+  else
+    let new_valid = List.fold_left (fun acc c ->
+      K.binary ~op:`And ~lhs:acc ~rhs:c) load_valid moved in
+    let new_idx = K.index ~ptr:buf ~idxs:[with_valid new_valid (get_idx idx)] () in
+    let outer = match keep with
+      | [] -> new_idx
+      | _ ->
+          let outer_cond = List.fold_left (fun acc c ->
+            K.binary ~op:`And ~lhs:acc ~rhs:c) (K.const_bool true) keep in
+          K.ternary ~op:`Where ~a:outer_cond ~b:new_idx
+            ~c:(K.const_int 0) in
+    Some outer
+
+let is_zero_const n = match K.const_arg n with
+  | Some (Int 0L) | Some (Bool false) -> true
+  | Some (Float f) -> f = 0.0
+  | _ -> false
+
+(* Move WHERE conditions into INDEX validity gates.
+   Rule 1: where(cond, buf.index(idx), 0)
+   Rule 2: where(cond, 0, buf.index(idx)) — negates the condition. *)
+let pm_move_where_on_load node =
+  match K.view node with
+  | Ternary { op = `Where; a = cond; b = load; c = zero; _ }
+    when is_zero_const zero ->
+      (match K.view load with
+       | Index { ptr; idxs = [idx]; _ } ->
+           where_on_load cond ptr idx
+       | _ -> None)
+  | Ternary { op = `Where; a = cond; b = zero; c = load; _ }
+    when is_zero_const zero ->
+      (match K.view load with
+       | Index { ptr; idxs = [idx]; _ } ->
+           let negated = K.binary ~op:`Cmpne ~lhs:cond ~rhs:(K.const_bool true) in
+           where_on_load negated ptr idx
+       | _ -> None)
+  | _ -> None

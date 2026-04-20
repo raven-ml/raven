@@ -29,7 +29,7 @@ val gep_pushing : Kernel.t -> Kernel.t option
     - [Gep(Vectorize(a,b,c,...), i)] → lane [i]
     - [Gep(Const(c), _)] → [Const(c)]
     - [Gep(void, _)] → source
-    - [Cat(a, b)] → [Vectorize(Gep(a,0), ..., Gep(b,0), ...)] *)
+    - [Vcat(a, b)] → [Vectorize(Gep(a,0), ..., Gep(b,0), ...)] *)
 
 val symbolic_simple : Kernel.t -> Kernel.t option
 (** Phase 1: generic folding. Constant folding, identity removal,
@@ -56,3 +56,24 @@ val sym : Kernel.t -> Kernel.t option
     - GEP pushing and vectorize reordering
     - [ALU(Vectorize(x,...), Vectorize(y,...))] → [Vectorize(ALU(x,y), ...)]
     - POW → [exp2(exponent * log2(base))] via {!Decomposition.xpow} *)
+
+val split_and : Kernel.t -> Kernel.t list
+(** [split_and node] flattens an AND tree into a list of conjuncts. *)
+
+val is_irreducible : Kernel.t -> bool
+(** [is_irreducible node] is [true] for Const, Vconst, Define_var,
+    Special, and Range nodes. *)
+
+val parse_valid : Kernel.t -> (Kernel.t * bool * int) option
+(** [parse_valid v] parses a comparison into [(expr, is_upper_bound, c)].
+    Returns [(X, true, c)] for [X <= c], [(X, false, c)] for [X >= c]. *)
+
+val uop_given_valid : ?try_simplex:bool -> Kernel.t -> Kernel.t -> Kernel.t
+(** [uop_given_valid valid uop] simplifies [uop] given that [valid] is true.
+    Parses bound constraints from [valid], substitutes bounded expressions
+    with proxies, simplifies, and substitutes back. *)
+
+val pm_move_where_on_load : Kernel.t -> Kernel.t option
+(** [pm_move_where_on_load node] moves WHERE conditions from around
+    loads into the INDEX validity gate when the condition's ranges are
+    a subset of the index's ranges. *)

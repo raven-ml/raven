@@ -27,7 +27,7 @@ type view =
 val view : t -> view
 (** [view c] is the payload of [c]. *)
 
-val dtype : t -> Dtype.t
+val dtype : t -> Dtype.Val.t
 (** [dtype c] is the dtype of [c]. *)
 
 (** {1:constructors Constructors} *)
@@ -35,19 +35,19 @@ val dtype : t -> Dtype.t
 val bool : bool -> t
 (** [bool b] is a boolean constant with dtype {!Dtype.bool}. *)
 
-val int : Dtype.t -> int -> t
+val int : Dtype.Val.t -> int -> t
 (** [int dtype n] is an integer constant.
 
     Raises [Invalid_argument] if [dtype] is not a scalar integer or boolean
     dtype. *)
 
-val int64 : Dtype.t -> int64 -> t
+val int64 : Dtype.Val.t -> int64 -> t
 (** [int64 dtype n] is an integer constant.
 
     Raises [Invalid_argument] if [dtype] is not a scalar integer or boolean
     dtype. *)
 
-val float : Dtype.t -> float -> t
+val float : Dtype.Val.t -> float -> t
 (** [float dtype x] is a floating-point constant.
 
     Raises [Invalid_argument] if [dtype] is not a scalar float dtype. *)
@@ -71,10 +71,10 @@ val pp : Format.formatter -> t -> unit
 
 (** {1:helpers Dtype-aware helpers} *)
 
-val zero : Dtype.t -> t
+val zero : Dtype.Val.t -> t
 (** [zero dtype] is the zero constant for [dtype]: [0.0] for floats,
     [false] for bools, [0] for integers. *)
 
-val identity_element : Op.reduce -> Dtype.t -> t
+val identity_element : Op.reduce -> Dtype.Val.t -> t
 (** [identity_element op dtype] is the identity element for reduction [op]
     on [dtype]: [0] for [`Add], [1] for [`Mul], [dtype.min] for [`Max]. *)

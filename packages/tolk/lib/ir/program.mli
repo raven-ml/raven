@@ -30,43 +30,43 @@ type sort = Value | Pointer | Index | Effect
 (** Coarse instruction role. *)
 
 type view =
-  | Param of { idx : int; dtype : Dtype.ptr }
+  | Param of { idx : int; dtype : Dtype.Ptr.t }
       (** Global buffer parameter at index [idx]. *)
-  | Param_image of { idx : int; dtype : Dtype.ptr; width : int; height : int }
+  | Param_image of { idx : int; dtype : Dtype.Ptr.t; width : int; height : int }
       (** Image buffer parameter with pixel dimensions. *)
-  | Define_local of { size : int; dtype : Dtype.ptr }
+  | Define_local of { size : int; dtype : Dtype.Ptr.t }
       (** Local (workgroup-shared) memory buffer of [size] elements. *)
-  | Define_reg of { size : int; dtype : Dtype.ptr }
+  | Define_reg of { size : int; dtype : Dtype.Ptr.t }
       (** Register-backed buffer of [size] elements. *)
-  | Define_var of { name : string; lo : int; hi : int; dtype : Dtype.t }
+  | Define_var of { name : string; lo : int; hi : int; dtype : Dtype.Val.t }
       (** Scalar loop or index variable bounded by \[[lo];[hi]\]. *)
-  | Const of { value : Const.t; dtype : Dtype.t }
+  | Const of { value : Const.t; dtype : Dtype.Val.t }
       (** Compile-time constant. *)
-  | Index of { ptr : id; idxs : id list; gate : id option; dtype : Dtype.ptr }
+  | Index of { ptr : id; idxs : id list; gate : id option; dtype : Dtype.Ptr.t }
       (** Indexes into [ptr] with per-dimension [idxs] and optional [gate]. *)
-  | Load of { src : id; alt : id option; dtype : Dtype.t }
+  | Load of { src : id; alt : id option; dtype : Dtype.Val.t }
       (** Loads from pointer [src]. [alt] is used when gated. *)
-  | After of { src : id; deps : id list; dtype : Dtype.t }
+  | After of { src : id; deps : id list; dtype : Dtype.Val.t }
       (** Sequences [src] after [deps]. *)
   | Store of { dst : id; value : id }
       (** Stores [value] through pointer [dst]. *)
-  | Unary of { op : Op.unary; src : id; dtype : Dtype.t }
+  | Unary of { op : Op.unary; src : id; dtype : Dtype.Val.t }
       (** Unary arithmetic or transcendental. *)
-  | Binary of { op : Op.binary; lhs : id; rhs : id; dtype : Dtype.t }
+  | Binary of { op : Op.binary; lhs : id; rhs : id; dtype : Dtype.Val.t }
       (** Binary arithmetic, logic, or comparison. *)
-  | Ternary of { op : Op.ternary; a : id; b : id; c : id; dtype : Dtype.t }
+  | Ternary of { op : Op.ternary; a : id; b : id; c : id; dtype : Dtype.Val.t }
       (** Ternary operation ([Where] or [Mulacc]). *)
-  | Cast of { src : id; dtype : Dtype.t }
+  | Cast of { src : id; dtype : Dtype.Val.t }
       (** Type cast. *)
-  | Bitcast of { src : id; dtype : Dtype.t }
+  | Bitcast of { src : id; dtype : Dtype.Val.t }
       (** Bit-preserving reinterpretation. *)
-  | Vectorize of { srcs : id list; dtype : Dtype.t }
+  | Vectorize of { srcs : id list; dtype : Dtype.Val.t }
       (** Packs scalar [srcs] into a vector. *)
-  | Gep of { src : id; idxs : int list; dtype : Dtype.t }
+  | Gep of { src : id; idxs : int list; dtype : Dtype.Val.t }
       (** Extracts elements at [idxs] from a vector. When [idxs] has one
           element, the result is scalar. When [idxs] has multiple elements,
           the result is a vector of the extracted elements. *)
-  | Range of { size : id; dtype : Dtype.t; axis : int; sub : int list; kind : Axis_kind.t }
+  | Range of { size : id; dtype : Dtype.Val.t; axis : int; sub : int list; kind : Axis_kind.t }
       (** Loop variable over \[[0];[size-1]\] on [axis]. *)
   | End_range of { dep : id; range : id }
       (** Closes the loop opened by [range]. [dep] is the last value produced
@@ -77,14 +77,14 @@ type view =
   | Endif of { if_ : id }
       (** Closes the conditional opened by [if_]. *)
   | Barrier  (** Workgroup barrier. *)
-  | Special of { dim : Special_dim.t; size : id; dtype : Dtype.t }
+  | Special of { dim : Special_dim.t; size : id; dtype : Dtype.Val.t }
       (** Backend-provided hardware index. *)
   | Wmma of {
       name : string;
       a : id;
       b : id;
       c : id;
-      dtype : Dtype.t;
+      dtype : Dtype.Val.t;
       dims : int * int * int;
       dtype_in : Dtype.scalar;
       dtype_out : Dtype.scalar;
@@ -95,7 +95,7 @@ type view =
     }  (** Tensor-core matrix multiply-accumulate primitive. *)
   | Custom of { fmt : string; args : id list }
       (** Backend-specific effect or statement. *)
-  | Custom_inline of { fmt : string; args : id list; dtype : Dtype.t }
+  | Custom_inline of { fmt : string; args : id list; dtype : Dtype.Val.t }
       (** Backend-specific inline value expression. *)
 (** Read-only instruction view. Pattern-match via {!view}. *)
 
@@ -118,7 +118,7 @@ val view : t -> id -> view
 val length : t -> int
 (** [length t] is the number of instructions in [t]. *)
 
-val dtype : t -> id -> Dtype.t option
+val dtype : t -> id -> Dtype.Val.t option
 (** [dtype t id] is the value dtype of [id], if any. Effect instructions
     return [None]. *)
 
@@ -136,7 +136,11 @@ val iteri : (id -> view -> unit) -> t -> unit
 val is_alu : view -> bool
 (** [is_alu v] is [true] iff [v] is {!Unary}, {!Binary}, or {!Ternary}. *)
 
-val dtype_of_view : view -> Dtype.t option
+val is_ptr : t -> id -> bool
+(** [is_ptr t id] is [true] iff instruction [id] produces a pointer
+    ({!Param}, {!Param_image}, {!Define_local}, or {!Index}). *)
+
+val dtype_of_view : view -> Dtype.Val.t option
 (** [dtype_of_view v] is the result dtype of [v], if any. Effect views
     return [None]. For pointer views, returns the base type. *)
 
@@ -157,7 +161,7 @@ val map_children : (id -> id) -> view -> view
 (** [map_children f v] rebuilds [v] with [f] applied to every child ref.
     Non-reference fields (dtype, constants, options) are preserved. *)
 
-val map_alu : map_ref:(id -> id) -> dtype:Dtype.t -> view -> view
+val map_alu : map_ref:(id -> id) -> dtype:Dtype.Val.t -> view -> view
 (** [map_alu ~map_ref ~dtype v] remaps child refs and replaces the dtype
     of an ALU view.
 

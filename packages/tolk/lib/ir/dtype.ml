@@ -25,102 +25,8 @@ type scalar =
   | Index
 
 type addr_space = Global | Local | Reg
-type t = { scalar : scalar; count : int }
-type ptr = { base : t; addrspace : addr_space; v : int; size : int }
-type any = T of t | P of ptr
 
-(* Value dtype accessors *)
-
-let scalar dt = dt.scalar
-let count dt = dt.count
-
-(* Pointer dtype accessors *)
-
-let base p = p.base
-let addrspace p = p.addrspace
-let ptr_size p = p.size
-let ptr_v p = p.v
-
-(* Any dtype accessors *)
-
-let any_scalar = function T dt -> dt.scalar | P p -> p.base.scalar
-let any_count = function T dt -> dt.count | P p -> p.base.count
-let vcount = function T dt -> dt.count | P p -> p.v
-let any_to_val = function T dt -> dt | P p -> p.base
-let any_is_ptr = function T _ -> false | P _ -> true
-
-(* Coercions *)
-
-let to_any dt = T dt
-let ptr_to_any p = P p
-let ptr_base_to_any p = T p.base
-
-(* Constructors *)
-
-let of_scalar s = { scalar = s; count = 1 }
-let void = of_scalar Void
-let bool = of_scalar Bool
-let int8 = of_scalar Int8
-let int16 = of_scalar Int16
-let int32 = of_scalar Int32
-let int64 = of_scalar Int64
-let uint8 = of_scalar Uint8
-let uint16 = of_scalar Uint16
-let uint32 = of_scalar Uint32
-let uint64 = of_scalar Uint64
-let float16 = of_scalar Float16
-let bfloat16 = of_scalar Bfloat16
-let float32 = of_scalar Float32
-let float64 = of_scalar Float64
-let fp8e4m3 = of_scalar Fp8e4m3
-let fp8e5m2 = of_scalar Fp8e5m2
-let index = of_scalar Index
-let default_float = float32
-let default_int = int32
-
-(* Pointer dtype constructors *)
-
-let err_ptr_vcount n =
-  Printf.sprintf "pointer vcount must be >= 1, got %d" n
-
-let ptr_of base ~addrspace ~size =
-  { base; addrspace; v = 1; size }
-
-let ptr_of_v base ~addrspace ~size ~v =
-  if v < 1 then invalid_arg (err_ptr_vcount v);
-  { base; addrspace; v; size }
-
-(* Pointer dtype transformers *)
-
-let ptr_with_v p n =
-  if n < 1 then invalid_arg (err_ptr_vcount n);
-  { p with v = n }
-
-let ptr_with_scalar p = if p.v = 1 then p else { p with v = 1 }
-let ptr_with_size p n = { p with size = n }
-let ptr_with_base p dt = { p with base = dt }
-
-(* Predicates *)
-
-let is_float t =
-  match t.scalar with
-  | Float16 | Bfloat16 | Float32 | Float64 | Fp8e4m3 | Fp8e5m2 -> true
-  | _ -> false
-
-let is_fp8 t = match t.scalar with Fp8e4m3 | Fp8e5m2 -> true | _ -> false
-
-let is_int t =
-  match t.scalar with
-  | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64 | Index ->
-      true
-  | _ -> false
-
-let is_unsigned t =
-  match t.scalar with Uint8 | Uint16 | Uint32 | Uint64 -> true | _ -> false
-
-let is_bool t = t.scalar = Bool
-
-(* Properties *)
+(* Shared scalar-level functions *)
 
 let scalar_bitsize = function
   | Void -> 0
@@ -129,10 +35,7 @@ let scalar_bitsize = function
   | Int16 | Uint16 | Float16 | Bfloat16 -> 16
   | Int32 | Uint32 | Float32 -> 32
   | Int64 | Uint64 | Float64 -> 64
-  | Index -> 800 (* sentinel: symbolic, not a machine type *)
-
-let bitsize t = scalar_bitsize t.scalar * t.count
-let itemsize t = (bitsize t + 7) / 8
+  | Index -> 800
 
 let scalar_priority = function
   | Void | Index -> -1
@@ -145,59 +48,31 @@ let scalar_priority = function
   | Float16 -> 11 | Bfloat16 -> 12
   | Float32 -> 13 | Float64 -> 14
 
-let priority t = scalar_priority t.scalar
+let scalar_compare a b =
+  let c = Int.compare (scalar_priority a) (scalar_priority b) in
+  if c <> 0 then c
+  else
+    let c = Int.compare (scalar_bitsize a) (scalar_bitsize b) in
+    if c <> 0 then c else Stdlib.compare a b
 
-(* Operations *)
+let scalar_is_float = function
+  | Float16 | Bfloat16 | Float32 | Float64 | Fp8e4m3 | Fp8e5m2 -> true
+  | _ -> false
 
-let scalar_of t = { t with count = 1 }
+let scalar_is_fp8 = function Fp8e4m3 | Fp8e5m2 -> true | _ -> false
 
-let any_scalar_of = function
-  | T dt -> T (scalar_of dt)
-  | P p -> P { p with base = scalar_of p.base; v = 1 }
+let scalar_is_int = function
+  | Int8 | Int16 | Int32 | Int64 | Uint8 | Uint16 | Uint32 | Uint64 | Index ->
+      true
+  | _ -> false
 
-let vec t n =
-  if t.count <> 1 then
-    invalid_arg (Printf.sprintf "can't vectorize type with count %d" t.count);
-  if n < 0 then invalid_arg (Printf.sprintf "vector size must be >= 0, got %d" n);
-  if n = 0 && t.scalar <> Index then
-    invalid_arg "only index dtype can use zero-length vectors";
-  if n = 1 || t.scalar = Void then t else { t with count = n }
+let scalar_is_unsigned = function
+  | Uint8 | Uint16 | Uint32 | Uint64 -> true
+  | _ -> false
 
-type bound =
-  [ `Bool of bool | `SInt of int64 | `UInt of int64 | `Float of float ]
+let scalar_is_bool = function Bool -> true | _ -> false
 
-let err_void_bounds = "void has no numeric bounds"
-
-let min t =
-  let b = scalar_bitsize t.scalar in
-  match t.scalar with
-  | Bool -> `Bool false
-  | Uint8 | Uint16 | Uint32 | Uint64 -> `UInt 0L
-  | Index -> `SInt Int64.min_int
-  | Int8 | Int16 | Int32 | Int64 ->
-      if b >= 64 then `SInt Int64.min_int
-      else `SInt Int64.(neg (shift_left 1L (b - 1)))
-  | Float16 | Bfloat16 | Float32 | Float64 | Fp8e4m3 | Fp8e5m2 ->
-      `Float neg_infinity
-  | Void -> invalid_arg err_void_bounds
-
-let max t =
-  let b = scalar_bitsize t.scalar in
-  match t.scalar with
-  | Bool -> `Bool true
-  | Uint8 | Uint16 | Uint32 | Uint64 ->
-      if b >= 64 then `UInt Int64.minus_one
-      else `UInt Int64.(sub (shift_left 1L b) 1L)
-  | Index -> `SInt Int64.max_int
-  | Int8 | Int16 | Int32 | Int64 ->
-      if b >= 64 then `SInt Int64.max_int
-      else `SInt Int64.(sub (shift_left 1L (b - 1)) 1L)
-  | Float16 | Bfloat16 | Float32 | Float64 | Fp8e4m3 | Fp8e5m2 ->
-      `Float infinity
-  | Void -> invalid_arg err_void_bounds
-
-(* Type promotion lattice (JAX JEP-9407). Promotion is total: any pair of
-   numeric types has a common supertype, at the cost of some lossy edges. *)
+(* Promotion lattice *)
 
 let promo_lattice =
   [ Bool, [ Int8; Uint8 ];
@@ -232,13 +107,6 @@ let rec scalar_ancestors s =
       Hashtbl.add ancestor_cache s set;
       set
 
-let scalar_compare a b =
-  let c = Int.compare (scalar_priority a) (scalar_priority b) in
-  if c <> 0 then c
-  else
-    let c = Int.compare (scalar_bitsize a) (scalar_bitsize b) in
-    if c <> 0 then c else Stdlib.compare a b
-
 let min_by_priority scalars =
   Scalar_set.fold
     (fun s best ->
@@ -248,61 +116,264 @@ let min_by_priority scalars =
       | _ -> best)
     scalars None
 
-(* Find the least upper bound of a list of dtypes in the promotion lattice.
-   Computes the ancestor set of each scalar (all types it can promote to),
-   intersects them, and picks the smallest element by priority/bitsize.
-   This mirrors NumPy/JAX-style type promotion. *)
-let least_upper_dtype dts =
-  if List.exists (fun d -> d.scalar = Index) dts then
-    invalid_arg "Index does not participate in dtype promotion";
-  match dts with
-  | [] -> invalid_arg "least_upper_dtype requires at least one dtype"
-  | [ d ] -> scalar_of d
-  | first :: rest ->
-      let intersection =
-        List.fold_left
-          (fun acc d -> Scalar_set.inter acc (scalar_ancestors d.scalar))
-          (scalar_ancestors first.scalar) rest
-      in
-      match min_by_priority intersection with
-      | Some s -> of_scalar s
-      | None -> invalid_arg "least_upper_dtype: no common type in promotion lattice"
+(* Val module *)
 
-let least_upper_float dt =
-  if is_float dt then scalar_of dt
-  else least_upper_dtype [ scalar_of dt; float32 ]
+module Val = struct
+  type t = { scalar : scalar; count : int }
 
-let can_lossless_cast dt0 dt1 =
-  let s0 = dt0.scalar and s1 = dt1.scalar in
-  s0 = s1 || s0 = Bool ||
-  match s1 with
-  | Index ->
-      List.mem s0 [ Uint8; Uint16; Uint32; Uint64; Int8; Int16; Int32; Int64 ]
-  | Float64 ->
-      List.mem s0
-        [ Float32; Float16; Bfloat16; Fp8e4m3; Fp8e5m2;
-          Uint32; Uint16; Uint8; Int32; Int16; Int8 ]
-  | Float32 ->
-      List.mem s0
-        [ Float16; Bfloat16; Fp8e4m3; Fp8e5m2; Uint16; Uint8; Int16; Int8 ]
-  | Float16 -> List.mem s0 [ Fp8e4m3; Fp8e5m2; Uint8; Int8 ]
-  | Uint64 -> List.mem s0 [ Uint32; Uint16; Uint8 ]
-  | Uint32 -> List.mem s0 [ Uint16; Uint8 ]
-  | Uint16 -> s0 = Uint8
-  | Int64 -> List.mem s0 [ Uint32; Uint16; Uint8; Int32; Int16; Int8 ]
-  | Int32 -> List.mem s0 [ Uint16; Uint8; Int16; Int8 ]
-  | Int16 -> List.mem s0 [ Uint8; Int8 ]
-  | _ -> false
+  let scalar dt = dt.scalar
+  let count dt = dt.count
+  let of_scalar s = { scalar = s; count = 1 }
+  let void = of_scalar Void
+  let bool = of_scalar Bool
+  let int8 = of_scalar Int8
+  let int16 = of_scalar Int16
+  let int32 = of_scalar Int32
+  let int64 = of_scalar Int64
+  let uint8 = of_scalar Uint8
+  let uint16 = of_scalar Uint16
+  let uint32 = of_scalar Uint32
+  let uint64 = of_scalar Uint64
+  let float16 = of_scalar Float16
+  let bfloat16 = of_scalar Bfloat16
+  let float32 = of_scalar Float32
+  let float64 = of_scalar Float64
+  let fp8e4m3 = of_scalar Fp8e4m3
+  let fp8e5m2 = of_scalar Fp8e5m2
+  let index = of_scalar Index
+  let default_float = float32
+  let default_int = int32
 
-let sum_acc_dtype dt =
-  if dt.scalar = Index then invalid_arg "sum_acc_dtype does not accept index dtype";
-  let dt = scalar_of dt in
-  if is_unsigned dt then least_upper_dtype [ dt; uint32 ]
-  else if is_int dt || is_bool dt then least_upper_dtype [ dt; int32 ]
-  else least_upper_dtype [ dt; float32 ]
+  let scalarize dt = if dt.count = 1 then dt else { dt with count = 1 }
+
+  let vec n dt =
+    if dt.count <> 1 then
+      invalid_arg (Printf.sprintf "can't vectorize type with count %d" dt.count);
+    if n < 0 then invalid_arg (Printf.sprintf "vector size must be >= 0, got %d" n);
+    if n = 0 && dt.scalar <> Index then
+      invalid_arg "only index dtype can use zero-length vectors";
+    if n = 1 || dt.scalar = Void then dt else { dt with count = n }
+
+  let with_scalar s dt = { dt with scalar = s }
+
+  let is_float dt = scalar_is_float dt.scalar
+  let is_int dt = scalar_is_int dt.scalar
+  let is_unsigned dt = scalar_is_unsigned dt.scalar
+  let is_bool dt = scalar_is_bool dt.scalar
+  let is_fp8 dt = scalar_is_fp8 dt.scalar
+  let bitsize dt = scalar_bitsize dt.scalar * dt.count
+  let itemsize dt = (bitsize dt + 7) / 8
+  let priority dt = scalar_priority dt.scalar
+
+  let least_upper_dtype dts =
+    if List.exists (fun d -> d.scalar = Index) dts then
+      invalid_arg "Index does not participate in dtype promotion";
+    match dts with
+    | [] -> invalid_arg "least_upper_dtype requires at least one dtype"
+    | [ d ] -> scalarize d
+    | first :: rest ->
+        let intersection =
+          List.fold_left
+            (fun acc d -> Scalar_set.inter acc (scalar_ancestors d.scalar))
+            (scalar_ancestors first.scalar) rest
+        in
+        (match min_by_priority intersection with
+        | Some s -> of_scalar s
+        | None ->
+            invalid_arg "least_upper_dtype: no common type in promotion lattice")
+
+  let least_upper_float dt =
+    if scalar_is_float dt.scalar then scalarize dt
+    else least_upper_dtype [ scalarize dt; float32 ]
+
+  let can_lossless_cast dt0 dt1 =
+    let s0 = dt0.scalar and s1 = dt1.scalar in
+    s0 = s1 || s0 = Bool ||
+    match s1 with
+    | Index ->
+        List.mem s0 [ Uint8; Uint16; Uint32; Uint64; Int8; Int16; Int32; Int64 ]
+    | Float64 ->
+        List.mem s0
+          [ Float32; Float16; Bfloat16; Fp8e4m3; Fp8e5m2;
+            Uint32; Uint16; Uint8; Int32; Int16; Int8 ]
+    | Float32 ->
+        List.mem s0
+          [ Float16; Bfloat16; Fp8e4m3; Fp8e5m2; Uint16; Uint8; Int16; Int8 ]
+    | Float16 -> List.mem s0 [ Fp8e4m3; Fp8e5m2; Uint8; Int8 ]
+    | Uint64 -> List.mem s0 [ Uint32; Uint16; Uint8 ]
+    | Uint32 -> List.mem s0 [ Uint16; Uint8 ]
+    | Uint16 -> s0 = Uint8
+    | Int64 -> List.mem s0 [ Uint32; Uint16; Uint8; Int32; Int16; Int8 ]
+    | Int32 -> List.mem s0 [ Uint16; Uint8; Int16; Int8 ]
+    | Int16 -> List.mem s0 [ Uint8; Int8 ]
+    | _ -> false
+
+  let sum_acc_dtype dt =
+    if dt.scalar = Index then
+      invalid_arg "sum_acc_dtype does not accept index dtype";
+    let dt = scalarize dt in
+    if scalar_is_unsigned dt.scalar then least_upper_dtype [ dt; uint32 ]
+    else if scalar_is_int dt.scalar || scalar_is_bool dt.scalar then
+      least_upper_dtype [ dt; int32 ]
+    else least_upper_dtype [ dt; float32 ]
+
+  let equal a b = a.scalar = b.scalar && a.count = b.count
+
+  let compare a b =
+    let c = scalar_compare a.scalar b.scalar in
+    if c <> 0 then c else Int.compare a.count b.count
+
+  let to_string t =
+    let s = match t.scalar with
+      | Void -> "void"   | Bool -> "bool"   | Index -> "index"
+      | Int8 -> "i8"     | Int16 -> "i16"   | Int32 -> "i32"   | Int64 -> "i64"
+      | Uint8 -> "u8"    | Uint16 -> "u16"  | Uint32 -> "u32"  | Uint64 -> "u64"
+      | Float16 -> "f16" | Bfloat16 -> "bf16"
+      | Float32 -> "f32" | Float64 -> "f64"
+      | Fp8e4m3 -> "fp8e4m3" | Fp8e5m2 -> "fp8e5m2"
+    in
+    if t.count = 1 then s else Printf.sprintf "%s×%d" s t.count
+
+  let pp fmt t = Format.pp_print_string fmt (to_string t)
+end
+
+(* Ptr module *)
+
+module Ptr = struct
+  type t = {
+    scalar : scalar;
+    count : int;
+    addrspace : addr_space;
+    v : int;
+    size : int;
+  }
+
+  let scalar p = p.scalar
+  let count p = p.count
+  let addrspace p = p.addrspace
+  let v p = p.v
+  let size p = p.size
+  let base p : Val.t = { scalar = p.scalar; count = p.count }
+
+  let err_vcount n = Printf.sprintf "pointer vcount must be >= 1, got %d" n
+
+  let create (base : Val.t) ~addrspace ~size =
+    { scalar = base.scalar; count = base.count; addrspace; v = 1; size }
+
+  let create_v (base : Val.t) ~addrspace ~size ~v =
+    if v < 1 then invalid_arg (err_vcount v);
+    { scalar = base.scalar; count = base.count; addrspace; v; size }
+
+  let scalarize p =
+    if p.v = 1 && p.count = 1 then p
+    else { p with count = 1; v = 1 }
+
+  let vec n p =
+    if n < 1 then invalid_arg (err_vcount n);
+    if p.v = n then p else { p with v = n }
+
+  let with_base (dt : Val.t) p =
+    { p with scalar = dt.scalar; count = dt.count }
+
+  let with_size n p = { p with size = n }
+
+  let equal a b =
+    a.scalar = b.scalar && a.count = b.count
+    && a.addrspace = b.addrspace && a.v = b.v && a.size = b.size
+
+  let compare a b =
+    let ( |? ) c f = if c <> 0 then c else f () in
+    scalar_compare a.scalar b.scalar |? fun () ->
+    Int.compare a.count b.count |? fun () ->
+    Stdlib.compare a.addrspace b.addrspace |? fun () ->
+    Int.compare a.v b.v |? fun () -> Int.compare a.size b.size
+
+  let to_string p =
+    let base = Val.to_string { Val.scalar = p.scalar; count = p.count } in
+    let vec = if p.v = 1 then "" else Printf.sprintf ".vec(%d)" p.v in
+    let space = match p.addrspace with
+      | Global -> "global" | Local -> "local" | Reg -> "reg"
+    in
+    Printf.sprintf "%s*%s [%s]" base vec space
+
+  let pp fmt p = Format.pp_print_string fmt (to_string p)
+end
+
+(* Unified type *)
+
+type t = Val of Val.t | Ptr of Ptr.t
+
+(* Dispatching accessors *)
+
+let scalar = function Val v -> Val.scalar v | Ptr p -> Ptr.scalar p
+let count = function Val v -> Val.count v | Ptr p -> Ptr.count p
+let vcount = function Val v -> Val.count v | Ptr p -> Ptr.v p
+let is_ptr = function Ptr _ -> true | Val _ -> false
+let val_of = function Val v -> v | Ptr p -> Ptr.base p
+
+(* Dispatching transformers *)
+
+let scalarize = function
+  | Val v -> Val (Val.scalarize v)
+  | Ptr p -> Ptr (Ptr.scalarize p)
+
+let vec n = function
+  | Val v -> Val (Val.vec n v)
+  | Ptr p -> Ptr (Ptr.vec n p)
+
+(* Predicates *)
+
+let is_float dt = scalar_is_float (scalar dt)
+let is_int dt = scalar_is_int (scalar dt)
+let is_unsigned dt = scalar_is_unsigned (scalar dt)
+let is_bool dt = scalar_is_bool (scalar dt)
+let is_fp8 dt = scalar_is_fp8 (scalar dt)
+
+(* Properties *)
+
+let bitsize dt = scalar_bitsize (scalar dt) * count dt
+let itemsize dt = (bitsize dt + 7) / 8
+let priority dt = scalar_priority (scalar dt)
+
+(* Bounds *)
+
+type bound =
+  [ `Bool of bool | `SInt of int64 | `UInt of int64 | `Float of float ]
+
+let err_void_bounds = "void has no numeric bounds"
+
+let min dt =
+  let s = scalar dt in
+  let b = scalar_bitsize s in
+  match s with
+  | Bool -> `Bool false
+  | Uint8 | Uint16 | Uint32 | Uint64 -> `UInt 0L
+  | Index -> `SInt Int64.min_int
+  | Int8 | Int16 | Int32 | Int64 ->
+      if b >= 64 then `SInt Int64.min_int
+      else `SInt Int64.(neg (shift_left 1L (b - 1)))
+  | Float16 | Bfloat16 | Float32 | Float64 | Fp8e4m3 | Fp8e5m2 ->
+      `Float neg_infinity
+  | Void -> invalid_arg err_void_bounds
+
+let max dt =
+  let s = scalar dt in
+  let b = scalar_bitsize s in
+  match s with
+  | Bool -> `Bool true
+  | Uint8 | Uint16 | Uint32 | Uint64 ->
+      if b >= 64 then `UInt Int64.minus_one
+      else `UInt Int64.(sub (shift_left 1L b) 1L)
+  | Index -> `SInt Int64.max_int
+  | Int8 | Int16 | Int32 | Int64 ->
+      if b >= 64 then `SInt Int64.max_int
+      else `SInt Int64.(sub (shift_left 1L (b - 1)) 1L)
+  | Float16 | Bfloat16 | Float32 | Float64 | Fp8e4m3 | Fp8e5m2 ->
+      `Float infinity
+  | Void -> invalid_arg err_void_bounds
 
 let finfo dt =
-  match dt.scalar with
+  match scalar dt with
   | Float16 -> 5, 10   | Bfloat16 -> 8, 7
   | Float32 -> 8, 23   | Float64 -> 11, 52
   | Fp8e5m2 -> 5, 2    | Fp8e4m3 -> 4, 3
@@ -310,37 +381,25 @@ let finfo dt =
 
 (* Comparison *)
 
-let equal a b = a.scalar = b.scalar && a.count = b.count
-
-let compare a b =
-  let c = scalar_compare a.scalar b.scalar in
-  if c <> 0 then c else Int.compare a.count b.count
-
-let ptr_equal a b =
-  equal a.base b.base && a.addrspace = b.addrspace
-  && a.v = b.v && a.size = b.size
-
-let ptr_compare a b =
-  let ( |? ) c f = if c <> 0 then c else f () in
-  scalar_compare a.base.scalar b.base.scalar |? fun () ->
-  Int.compare a.base.count b.base.count |? fun () ->
-  Stdlib.compare a.addrspace b.addrspace |? fun () ->
-  Int.compare a.v b.v |? fun () -> Int.compare a.size b.size
-
-let any_equal a b =
+let equal a b =
   match a, b with
-  | T a, T b -> equal a b
-  | P a, P b -> ptr_equal a b
+  | Val a, Val b -> Val.equal a b
+  | Ptr a, Ptr b -> Ptr.equal a b
   | _ -> false
 
-let any_compare a b =
+let compare a b =
   match a, b with
-  | T a, T b -> compare a b
-  | P a, P b -> ptr_compare a b
-  | T _, P _ -> -1
-  | P _, T _ -> 1
+  | Val a, Val b -> Val.compare a b
+  | Ptr a, Ptr b -> Ptr.compare a b
+  | Val _, Ptr _ -> -1
+  | Ptr _, Val _ -> 1
 
 (* Formatting *)
+
+let to_string = function Val v -> Val.to_string v | Ptr p -> Ptr.to_string p
+let pp fmt dt = Format.pp_print_string fmt (to_string dt)
+
+(* Scalar formatting *)
 
 let scalar_to_string = function
   | Void -> "void"   | Bool -> "bool"   | Index -> "index"
@@ -350,29 +409,12 @@ let scalar_to_string = function
   | Float32 -> "f32" | Float64 -> "f64"
   | Fp8e4m3 -> "fp8e4m3" | Fp8e5m2 -> "fp8e5m2"
 
-let to_string t =
-  let s = scalar_to_string t.scalar in
-  if t.count = 1 then s else Printf.sprintf "%s×%d" s t.count
+let pp_scalar fmt s = Format.pp_print_string fmt (scalar_to_string s)
 
 let addr_space_to_string = function
   | Global -> "global" | Local -> "local" | Reg -> "reg"
 
 let pp_addr_space fmt a = Format.pp_print_string fmt (addr_space_to_string a)
-
-let ptr_to_string p =
-  let vec = if p.v = 1 then "" else Printf.sprintf ".vec(%d)" p.v in
-  Printf.sprintf "%s*%s [%s]" (to_string p.base) vec
-    (addr_space_to_string p.addrspace)
-
-let pp_scalar fmt s = Format.pp_print_string fmt (scalar_to_string s)
-let pp fmt t = Format.pp_print_string fmt (to_string t)
-let pp_ptr fmt p = Format.pp_print_string fmt (ptr_to_string p)
-
-let pp_any fmt = function
-  | T dt -> pp fmt dt
-  | P p -> pp_ptr fmt p
-
-(* C type names *)
 
 let scalar_cname = function
   | Void -> "void"          | Bool -> "bool"           | Index -> "index"
@@ -383,6 +425,29 @@ let scalar_cname = function
   | Float16 -> "half"       | Bfloat16 -> "__bf16"
   | Float32 -> "float"      | Float64 -> "double"
   | Fp8e4m3 -> "float8_e4m3"  | Fp8e5m2 -> "float8_e5m2"
+
+(* Convenience constructors — wrapped as Dtype.t *)
+
+let of_scalar s = Val (Val.of_scalar s)
+let void = Val Val.void
+let bool = Val Val.bool
+let int8 = Val Val.int8
+let int16 = Val Val.int16
+let int32 = Val Val.int32
+let int64 = Val Val.int64
+let uint8 = Val Val.uint8
+let uint16 = Val Val.uint16
+let uint32 = Val Val.uint32
+let uint64 = Val Val.uint64
+let float16 = Val Val.float16
+let bfloat16 = Val Val.bfloat16
+let float32 = Val Val.float32
+let float64 = Val Val.float64
+let fp8e4m3 = Val Val.fp8e4m3
+let fp8e5m2 = Val Val.fp8e5m2
+let index = Val Val.index
+let default_float = Val Val.default_float
+let default_int = Val Val.default_int
 
 (* FP conversion *)
 
@@ -593,18 +658,18 @@ let fp8_to_float scalar x =
       if fp16_sign = 1 then Float.neg f else f
   | _ -> invalid_arg "fp8_to_float: expected Fp8e4m3 or Fp8e5m2"
 
-let truncate_float t x =
-  match t.scalar with
+let truncate_float (dt : Val.t) x =
+  match dt.scalar with
   | Float64 -> x
   | Float32 -> Int32.float_of_bits (Int32.bits_of_float x)
   | Float16 -> float_to_fp16 x
   | Bfloat16 -> float_to_bf16 x
-  | Fp8e4m3 | Fp8e5m2 -> fp8_to_float t.scalar (float_to_fp8 t.scalar x)
+  | Fp8e4m3 | Fp8e5m2 -> fp8_to_float dt.scalar (float_to_fp8 dt.scalar x)
   | _ -> invalid_arg "truncate_float: expected a floating-point dtype"
 
-let truncate_int t x =
-  let b = scalar_bitsize t.scalar in
-  match t.scalar with
+let truncate_int (dt : Val.t) x =
+  let b = scalar_bitsize dt.scalar in
+  match dt.scalar with
   | Bool -> if x <> 0 then 1 else 0
   | Uint8 | Uint16 | Uint32 | Uint64 ->
       if b >= Sys.int_size then x else x land ((1 lsl b) - 1)

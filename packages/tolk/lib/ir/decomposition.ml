@@ -22,7 +22,7 @@ let const_int_val node =
     (match Const.view value with Int v -> Some v | _ -> None)
   | _ -> None
 
-let iconst v = K.const (Const.int64 Dtype.index v)
+let iconst v = K.const (Const.int64 Dtype.Val.index v)
 
 (* Transcendentals *)
 
@@ -33,19 +33,19 @@ let xpow ~base ~exponent =
   let ret = K.unary ~op:`Exp2
     ~src:(K.binary ~op:`Mul ~lhs:exponent
             ~rhs:(K.unary ~op:`Log2 ~src:abs_base)) in
-  let fdt = K.dtype_or Dtype.float32 ret in
-  let int_exp = K.cast ~src:(K.cast ~src:exponent ~dtype:(Dtype.to_any Dtype.int32))
-    ~dtype:(Dtype.to_any (K.dtype_or Dtype.float32 exponent)) in
+  let fdt = K.dtype ret in
+  let int_exp = K.cast ~src:(K.cast ~src:exponent ~dtype:Dtype.int32)
+    ~dtype:(K.dtype exponent) in
   let non_int = K.binary ~op:`Cmpne ~lhs:exponent ~rhs:int_exp in
   let abs_exp = K.ternary ~op:`Where
     ~a:(K.binary ~op:`Cmplt ~lhs:exponent ~rhs:(K.const_float 0.0))
     ~b:(K.unary ~op:`Neg ~src:exponent) ~c:exponent in
   let is_odd = K.cast
     ~src:(K.binary ~op:`Mod
-            ~lhs:(K.cast ~src:abs_exp ~dtype:(Dtype.to_any Dtype.int32))
-            ~rhs:(K.const (Const.int Dtype.int32 2)))
-    ~dtype:(Dtype.to_any Dtype.bool) in
-  let nan_c = K.const (Const.float fdt Float.nan) in
+            ~lhs:(K.cast ~src:abs_exp ~dtype:Dtype.int32)
+            ~rhs:(K.const (Const.int Dtype.Val.int32 2)))
+    ~dtype:Dtype.bool in
+  let nan_c = K.const (Const.float (Dtype.val_of fdt) Float.nan) in
   let neg_base = K.ternary ~op:`Where ~a:non_int ~b:nan_c
     ~c:(K.ternary ~op:`Where ~a:is_odd
           ~b:(K.unary ~op:`Neg ~src:ret) ~c:ret) in
@@ -53,30 +53,30 @@ let xpow ~base ~exponent =
     ~lhs:(K.binary ~op:`Cmpeq ~lhs:base ~rhs:(K.const_float 0.0))
     ~rhs:(K.binary ~op:`Cmpeq ~lhs:exponent ~rhs:(K.const_float 0.0)) in
   K.ternary ~op:`Where ~a:zero_zero
-    ~b:(K.const (Const.float fdt 1.0))
+    ~b:(K.const (Const.float (Dtype.val_of fdt) 1.0))
     ~c:(K.ternary ~op:`Where ~a:is_neg ~b:neg_base ~c:ret)
 
 (* IEEE 754 helpers *)
 
-let mantissa_bits dt = snd (Dtype.finfo (Dtype.scalar_of dt))
+let mantissa_bits dt = snd (Dtype.finfo dt)
 
 let exponent_bias dt =
-  let e, _ = Dtype.finfo (Dtype.scalar_of dt) in (1 lsl (e - 1)) - 1
+  let e, _ = Dtype.finfo dt in (1 lsl (e - 1)) - 1
 
 let exponent_mask dt =
-  let e, _ = Dtype.finfo (Dtype.scalar_of dt) in (1 lsl e) - 1
+  let e, _ = Dtype.finfo dt in (1 lsl e) - 1
 
 (* Shift by constant via mul/div by power of 2. *)
 
 let shr_const x n =
-  let dt = K.dtype_or Dtype.int32 x in
+  let dt = K.dtype x in
   K.binary ~op:`Idiv ~lhs:x
-    ~rhs:(K.const (Const.int64 dt (Int64.shift_left 1L n)))
+    ~rhs:(K.const (Const.int64 (Dtype.val_of dt) (Int64.shift_left 1L n)))
 
 let shl_const x n =
-  let dt = K.dtype_or Dtype.int32 x in
+  let dt = K.dtype x in
   K.binary ~op:`Mul ~lhs:x
-    ~rhs:(K.const (Const.int64 dt (Int64.shift_left 1L n)))
+    ~rhs:(K.const (Const.int64 (Dtype.val_of dt) (Int64.shift_left 1L n)))
 
 let const_of_node_int node =
   match K.view node with
@@ -95,9 +95,9 @@ let expr_shl x y =
   | None -> failwith "expr_shl: non-constant shift amount"
 
 let lazy_map_numbers x ~inf:inf_val ~ninf:ninf_val ~nan:nan_val ~ratio =
-  let fdt = K.dtype_or Dtype.float32 x in
-  let pos_inf = K.const (Const.float fdt Float.infinity) in
-  let neg_inf = K.const (Const.float fdt Float.neg_infinity) in
+  let fdt = K.dtype x in
+  let pos_inf = K.const (Const.float (Dtype.val_of fdt) Float.infinity) in
+  let neg_inf = K.const (Const.float (Dtype.val_of fdt) Float.neg_infinity) in
   K.ternary ~op:`Where
     ~a:(K.binary ~op:`Cmpne ~lhs:x ~rhs:pos_inf)
     ~b:(K.ternary ~op:`Where
@@ -108,8 +108,8 @@ let lazy_map_numbers x ~inf:inf_val ~ninf:ninf_val ~nan:nan_val ~ratio =
     ~c:inf_val
 
 let polyN x coeffs =
-  let fdt = K.dtype_or Dtype.float32 x in
-  let c v = K.const (Const.float fdt v) in
+  let fdt = K.dtype x in
+  let c v = K.const (Const.float (Dtype.val_of fdt) v) in
   match coeffs with
   | [] -> c 0.0
   | first :: rest ->
@@ -117,8 +117,8 @@ let polyN x coeffs =
       (fun acc ci -> K.binary ~op:`Add ~lhs:(K.binary ~op:`Mul ~lhs:acc ~rhs:x) ~rhs:(c ci))
       (c first) rest
 
-let const_like node v = K.const (Const.float (Dtype.scalar_of (K.dtype_or Dtype.float32 node)) v)
-let int_const_like node v = K.const (Const.int64 (K.dtype_or Dtype.int32 node) v)
+let const_like node v = K.const (Const.float (K.dtype node |> Dtype.scalarize |> Dtype.val_of) v)
+let int_const_like node v = K.const (Const.int64 (Dtype.val_of (K.dtype node)) v)
 
 let int_for_float = function
   | Dtype.Float64 -> Dtype.int64
@@ -139,45 +139,45 @@ let float_for_int = function
   | _ -> Dtype.float32
 
 let rintk d =
-  let fdt = K.dtype_or Dtype.float32 d in
-  let out_dtype = Dtype.vec (int_for_float (Dtype.scalar (Dtype.scalar_of fdt))) (Dtype.count fdt) in
+  let fdt = K.dtype d in
+  let out_dtype = Dtype.vec (Dtype.count fdt) (int_for_float (Dtype.scalar fdt)) in
   let zero = const_like d 0.0 in
   let rounded = K.binary ~op:`Add ~lhs:d
     ~rhs:(K.ternary ~op:`Where
             ~a:(K.binary ~op:`Cmplt ~lhs:d ~rhs:zero)
             ~b:(const_like d (-0.5)) ~c:(const_like d 0.5)) in
-  K.cast ~src:rounded ~dtype:(Dtype.to_any out_dtype)
+  K.cast ~src:rounded ~dtype:out_dtype
 
 let pow2if q float_dtype =
-  let qdt = K.dtype_or Dtype.int32 q in
-  let scalar = Dtype.scalar (Dtype.scalar_of qdt) in
+  let qdt = K.dtype q in
+  let scalar = Dtype.scalar qdt in
   let out_scalar = match scalar with
-    | Int16 -> Dtype.scalar_of float_dtype
+    | Int16 -> Dtype.scalarize float_dtype
     | _ -> float_for_int scalar
   in
-  let out_dtype = Dtype.vec out_scalar (Dtype.count qdt) in
+  let out_dtype = Dtype.vec (Dtype.count qdt) out_scalar in
   let q_biased = K.binary ~op:`Add ~lhs:q
     ~rhs:(int_const_like q (Int64.of_int (exponent_bias out_dtype))) in
-  K.bitcast ~src:(shl_const q_biased (mantissa_bits out_dtype)) ~dtype:out_dtype
+  K.bitcast ~src:(shl_const q_biased (mantissa_bits out_dtype)) ~dtype:(Dtype.val_of out_dtype)
 
 let ilogb2k d =
-  let fdt = K.dtype_or Dtype.float32 d in
-  let int_dtype = Dtype.vec (int_for_float (Dtype.scalar (Dtype.scalar_of fdt))) (Dtype.count fdt) in
-  let dint = K.bitcast ~src:d ~dtype:int_dtype in
+  let fdt = K.dtype d in
+  let int_dtype = Dtype.vec (Dtype.count fdt) (int_for_float (Dtype.scalar fdt)) in
+  let dint = K.bitcast ~src:d ~dtype:(Dtype.val_of int_dtype) in
   let masked = K.binary ~op:`And ~lhs:(shr_const dint (mantissa_bits fdt))
-    ~rhs:(K.const (Const.int64 int_dtype (Int64.of_int (exponent_mask fdt)))) in
+    ~rhs:(K.const (Const.int64 (Dtype.val_of int_dtype) (Int64.of_int (exponent_mask fdt)))) in
   K.binary ~op:`Sub ~lhs:masked
-    ~rhs:(K.const (Const.int64 int_dtype (Int64.of_int (exponent_bias fdt))))
+    ~rhs:(K.const (Const.int64 (Dtype.val_of int_dtype) (Int64.of_int (exponent_bias fdt))))
 
 let ldexp3k d e =
-  let fdt = K.dtype_or Dtype.float32 d in
-  let int_dtype = Dtype.vec (int_for_float (Dtype.scalar (Dtype.scalar_of fdt))) (Dtype.count fdt) in
-  let m1 = K.bitcast ~src:d ~dtype:int_dtype in
-  let m2 = shl_const (K.cast ~src:e ~dtype:(Dtype.to_any int_dtype)) (mantissa_bits fdt) in
-  K.bitcast ~src:(K.binary ~op:`Add ~lhs:m1 ~rhs:m2) ~dtype:fdt
+  let fdt = K.dtype d in
+  let int_dtype = Dtype.vec (Dtype.count fdt) (int_for_float (Dtype.scalar fdt)) in
+  let m1 = K.bitcast ~src:d ~dtype:(Dtype.val_of int_dtype) in
+  let m2 = shl_const (K.cast ~src:e ~dtype:int_dtype) (mantissa_bits fdt) in
+  K.bitcast ~src:(K.binary ~op:`Add ~lhs:m1 ~rhs:m2) ~dtype:(Dtype.val_of fdt)
 
 let ldexp2k d e =
-  let fdt = K.dtype_or Dtype.float32 d in
+  let fdt = K.dtype d in
   let half = shr_const e 1 in
   let other = K.binary ~op:`Sub ~lhs:e ~rhs:half in
   K.binary ~op:`Mul
@@ -185,27 +185,27 @@ let ldexp2k d e =
     ~rhs:(pow2if other fdt)
 
 let frexp_decomp v =
-  let fdt = K.dtype_or Dtype.float32 v in
-  let scalar = Dtype.scalar (Dtype.scalar_of fdt) in
+  let fdt = K.dtype v in
+  let scalar = Dtype.scalar fdt in
   let mantissa_mask, half_exp_bits = match scalar with
     | Dtype.Float64 -> (0x000FFFFFFFFFFFFFL, 0x3FE0000000000000L)
     | Float32 -> (0x807FFFFFL, 0x3F000000L)
     | Float16 -> (0x83FFL, 0x3800L)
     | _ -> (0x807FFFFFL, 0x3F000000L)
   in
-  let uint_dtype = Dtype.vec (uint_for_float scalar) (Dtype.count fdt) in
-  let bits = K.bitcast ~src:v ~dtype:uint_dtype in
+  let uint_dtype = Dtype.vec (Dtype.count fdt) (uint_for_float scalar) in
+  let bits = K.bitcast ~src:v ~dtype:(Dtype.val_of uint_dtype) in
   let exponent = K.binary ~op:`And ~lhs:(shr_const bits (mantissa_bits fdt))
-    ~rhs:(K.const (Const.int64 uint_dtype (Int64.of_int (exponent_mask fdt)))) in
-  let mantissa = K.bitcast ~dtype:fdt
+    ~rhs:(K.const (Const.int64 (Dtype.val_of uint_dtype) (Int64.of_int (exponent_mask fdt)))) in
+  let mantissa = K.bitcast ~dtype:(Dtype.val_of fdt)
     ~src:(K.binary ~op:`Or
             ~lhs:(K.binary ~op:`And ~lhs:bits
-                    ~rhs:(K.const (Const.int64 uint_dtype mantissa_mask)))
-            ~rhs:(K.const (Const.int64 uint_dtype half_exp_bits))) in
+                    ~rhs:(K.const (Const.int64 (Dtype.val_of uint_dtype) mantissa_mask)))
+            ~rhs:(K.const (Const.int64 (Dtype.val_of uint_dtype) half_exp_bits))) in
   let exp = K.binary ~op:`Add
     ~lhs:(K.binary ~op:`Sub ~lhs:exponent
-            ~rhs:(K.const (Const.int64 uint_dtype (Int64.of_int (exponent_bias fdt)))))
-    ~rhs:(K.const (Const.int64 uint_dtype 1L)) in
+            ~rhs:(K.const (Const.int64 (Dtype.val_of uint_dtype) (Int64.of_int (exponent_bias fdt)))))
+    ~rhs:(K.const (Const.int64 (Dtype.val_of uint_dtype) 1L)) in
   (mantissa, exp)
 
 (* Payne-Hanek range reduction: reduce an arbitrary floating-point angle d
@@ -215,43 +215,43 @@ let frexp_decomp v =
    r is the reduced angle and q mod 4 selects the trig quadrant. *)
 
 let payne_hanek_reduction d =
-  let fdt = K.dtype_or Dtype.float32 d in
+  let fdt = K.dtype d in
   let two_over_pi_f =
     [| 0x00000000; 0x28be60db; 0x9391054a; 0x7f09d5f4; 0x7d4d3770;
        0x36d8a566; 0x4f10e410 |] in
   let intermediate_dtype =
-    if Dtype.scalar (Dtype.scalar_of fdt) = Dtype.Float16 then
-      Dtype.vec Dtype.float32 (Dtype.count fdt)
+    if Dtype.scalar fdt = Dtype.Float16 then
+      Dtype.vec (Dtype.count fdt) Dtype.float32
     else fdt in
   let f, e_raw = frexp_decomp d in
-  let uint64_dt = Dtype.vec Dtype.uint64 (Dtype.count fdt) in
-  let int32_dt = Dtype.vec Dtype.int32 (Dtype.count fdt) in
-  let uint32_dt = Dtype.vec Dtype.uint32 (Dtype.count fdt) in
-  let ia = K.cast ~dtype:(Dtype.to_any uint64_dt)
+  let uint64_dt = Dtype.vec (Dtype.count fdt) Dtype.uint64 in
+  let int32_dt = Dtype.vec (Dtype.count fdt) Dtype.int32 in
+  let uint32_dt = Dtype.vec (Dtype.count fdt) Dtype.uint32 in
+  let ia = K.cast ~dtype:uint64_dt
     ~src:(K.binary ~op:`Mul
-            ~lhs:(K.cast ~src:f ~dtype:(Dtype.to_any intermediate_dtype))
-            ~rhs:(K.const (Const.float (Dtype.scalar_of intermediate_dtype) 4.294967296e9))) in
-  let i = shr_const (K.cast ~src:e_raw ~dtype:(Dtype.to_any uint64_dt)) 5 in
+            ~lhs:(K.cast ~src:f ~dtype:intermediate_dtype)
+            ~rhs:(K.const (Const.float (intermediate_dtype |> Dtype.scalarize |> Dtype.val_of) 4.294967296e9))) in
+  let i = shr_const (K.cast ~src:e_raw ~dtype:uint64_dt) 5 in
   let e = K.binary ~op:`And
-    ~lhs:(K.cast ~src:e_raw ~dtype:(Dtype.to_any int32_dt))
-    ~rhs:(K.const (Const.int Dtype.int32 31)) in
+    ~lhs:(K.cast ~src:e_raw ~dtype:int32_dt)
+    ~rhs:(K.const (Const.int Dtype.Val.int32 31)) in
   let offset = K.binary ~op:`Sub
-    ~lhs:(K.const (Const.int Dtype.int32 32)) ~rhs:e in
+    ~lhs:(K.const (Const.int Dtype.Val.int32 32)) ~rhs:e in
   let rec take an off count =
     if count + off < Array.length two_over_pi_f - 1 then
       let inner = take an off (count + 1) in
       K.ternary ~op:`Where
         ~a:(K.binary ~op:`Cmpne ~lhs:i
-              ~rhs:(K.const (Const.int64 uint64_dt (Int64.of_int count))))
+              ~rhs:(K.const (Const.int64 (Dtype.val_of uint64_dt) (Int64.of_int count))))
         ~b:inner
-        ~c:(K.const (Const.int64 uint32_dt (Int64.of_int two_over_pi_f.(count + off))))
+        ~c:(K.const (Const.int64 (Dtype.val_of uint32_dt) (Int64.of_int two_over_pi_f.(count + off))))
     else an in
   let shift_lazy op x y =
-    K.cast ~dtype:(Dtype.to_any uint32_dt)
+    K.cast ~dtype:uint32_dt
       ~src:(K.binary ~op
-              ~lhs:(K.cast ~src:x ~dtype:(Dtype.to_any uint64_dt))
-              ~rhs:(K.cast ~src:(pow2if y fdt) ~dtype:(Dtype.to_any uint64_dt))) in
-  let zero_u32 = K.const (Const.int64 uint32_dt 0L) in
+              ~lhs:(K.cast ~src:x ~dtype:uint64_dt)
+              ~rhs:(K.cast ~src:(pow2if y fdt) ~dtype:uint64_dt)) in
+  let zero_u32 = K.const (Const.int64 (Dtype.val_of uint32_dt) 0L) in
   let a = Array.init 4 (fun off -> take zero_u32 off 0) in
   let combine ai aj =
     K.binary ~op:`Or
@@ -262,37 +262,37 @@ let payne_hanek_reduction d =
   let lo = combine 2 3 in
   let hp_mul x y =
     K.binary ~op:`Mul
-      ~lhs:(K.cast ~src:x ~dtype:(Dtype.to_any uint64_dt))
-      ~rhs:(K.cast ~src:y ~dtype:(Dtype.to_any uint64_dt)) in
+      ~lhs:(K.cast ~src:x ~dtype:uint64_dt)
+      ~rhs:(K.cast ~src:y ~dtype:uint64_dt) in
   let p = K.binary ~op:`Add
     ~lhs:(K.binary ~op:`Add
             ~lhs:(shl_const (hp_mul ia hi) 32)
             ~rhs:(hp_mul ia mi))
     ~rhs:(shr_const (hp_mul ia lo) 32) in
-  let q = K.cast ~src:(shr_const p 62) ~dtype:(Dtype.to_any int32_dt) in
+  let q = K.cast ~src:(shr_const p 62) ~dtype:int32_dt in
   let p_masked = K.binary ~op:`And ~lhs:p
-    ~rhs:(K.const (Const.int64 Dtype.uint64 0x3ffffffffffffffFL)) in
-  let r = K.cast ~dtype:(Dtype.to_any fdt)
+    ~rhs:(K.const (Const.int64 Dtype.Val.uint64 0x3ffffffffffffffFL)) in
+  let r = K.cast ~dtype:fdt
     ~src:(K.binary ~op:`Mul
-            ~lhs:(K.cast ~src:p_masked ~dtype:(Dtype.to_any intermediate_dtype))
-            ~rhs:(K.const (Const.float (Dtype.scalar_of intermediate_dtype) 3.4061215800865545e-19))) in
+            ~lhs:(K.cast ~src:p_masked ~dtype:intermediate_dtype)
+            ~rhs:(K.const (Const.float (intermediate_dtype |> Dtype.scalarize |> Dtype.val_of) 3.4061215800865545e-19))) in
   let f_lt_half = K.binary ~op:`Cmplt ~lhs:f ~rhs:(const_like f 0.5) in
   let r_adj = K.binary ~op:`Sub ~lhs:r ~rhs:(const_like r (Float.pi /. 2.0)) in
-  let q_adj = K.binary ~op:`Add ~lhs:q ~rhs:(K.const (Const.int Dtype.int32 1)) in
+  let q_adj = K.binary ~op:`Add ~lhs:q ~rhs:(K.const (Const.int Dtype.Val.int32 1)) in
   (K.ternary ~op:`Where ~a:f_lt_half ~b:r ~c:r_adj,
    K.ternary ~op:`Where ~a:f_lt_half ~b:q ~c:q_adj)
 
 let cody_waite_reduction d =
-  let fdt = K.dtype_or Dtype.float32 d in
-  let scalar = Dtype.scalar (Dtype.scalar_of fdt) in
+  let fdt = K.dtype d in
+  let scalar = Dtype.scalar fdt in
   let m_1_pi = 0.318309886183790671537767526745028724 in
   let muladd q c r = K.binary ~op:`Add
     ~lhs:(K.binary ~op:`Mul ~lhs:q ~rhs:c) ~rhs:r in
   let qdh =
     if scalar = Dtype.Float64 then
       K.binary ~op:`Mul
-        ~lhs:(K.cast ~dtype:(Dtype.to_any fdt)
-                ~src:(K.cast ~dtype:(Dtype.to_any (Dtype.vec Dtype.int64 (Dtype.count fdt)))
+        ~lhs:(K.cast ~dtype:fdt
+                ~src:(K.cast ~dtype:(Dtype.vec (Dtype.count fdt) Dtype.int64)
                         ~src:(K.binary ~op:`Mul ~lhs:d
                                 ~rhs:(const_like d (m_1_pi /. Float.of_int (1 lsl 24))))))
         ~rhs:(const_like d (Float.of_int (1 lsl 24)))
@@ -303,7 +303,7 @@ let cody_waite_reduction d =
                ~lhs:(K.binary ~op:`Mul ~lhs:d ~rhs:(const_like d m_1_pi))
                ~rhs:qdh)
     else rintk (K.binary ~op:`Mul ~lhs:d ~rhs:(const_like d m_1_pi)) in
-  let q_float = K.cast ~src:quadrant ~dtype:(Dtype.to_any fdt) in
+  let q_float = K.cast ~src:quadrant ~dtype:fdt in
   let r = match scalar with
     | Dtype.Float64 ->
       let pi_a = 3.1415926218032836914 and pi_b = 3.1786509424591713469e-08 in
@@ -316,28 +316,28 @@ let cody_waite_reduction d =
       let r = muladd q_float (const_like d (-.pi_c)) r in
       muladd (K.binary ~op:`Add ~lhs:qdh ~rhs:q_float) (const_like d (-.pi_d)) r
     | Dtype.Float16 ->
-      let f32_dt = Dtype.vec Dtype.float32 (Dtype.count fdt) in
-      let q32 = K.cast ~src:q_float ~dtype:(Dtype.to_any f32_dt) in
-      let c v = K.const (Const.float Dtype.float32 v) in
-      let r = muladd q32 (c (-3.1414794921875)) (K.cast ~src:d ~dtype:(Dtype.to_any f32_dt)) in
+      let f32_dt = Dtype.vec (Dtype.count fdt) Dtype.float32 in
+      let q32 = K.cast ~src:q_float ~dtype:f32_dt in
+      let c v = K.const (Const.float Dtype.Val.float32 v) in
+      let r = muladd q32 (c (-3.1414794921875)) (K.cast ~src:d ~dtype:f32_dt) in
       let r = muladd q32 (c (-0.00011315941810607910156)) r in
       let r = muladd q32 (c (-1.9841872589410058936e-09)) r in
-      K.cast ~src:(muladd q32 (c (-1.2154201256553420762e-10)) r) ~dtype:(Dtype.to_any fdt)
+      K.cast ~src:(muladd q32 (c (-1.2154201256553420762e-10)) r) ~dtype:fdt
     | _ ->
       let r = muladd q_float (const_like d (-3.1414794921875)) d in
       let r = muladd q_float (const_like d (-0.00011315941810607910156)) r in
       let r = muladd q_float (const_like d (-1.9841872589410058936e-09)) r in
       muladd q_float (const_like d (-1.2154201256553420762e-10)) r
   in
-  (r, K.cast ~src:quadrant ~dtype:(Dtype.to_any (Dtype.vec Dtype.int32 (Dtype.count fdt))))
+  (r, K.cast ~src:quadrant ~dtype:(Dtype.vec (Dtype.count fdt) Dtype.int32))
 
 (* Sine polynomial *)
 
 let trig_poly d coeff32 coeff64 =
-  let fdt = K.dtype_or Dtype.float32 d in
+  let fdt = K.dtype d in
   let d2 = K.binary ~op:`Mul ~lhs:d ~rhs:d in
   let coeffs =
-    if Dtype.scalar (Dtype.scalar_of fdt) = Dtype.Float64 then coeff64
+    if Dtype.scalar fdt = Dtype.Float64 then coeff64
     else coeff32
   in
   K.binary ~op:`Mul ~lhs:d ~rhs:(polyN d2 coeffs)
@@ -353,10 +353,10 @@ let sin_poly d =
       -0.166666666666666657414808; 1.0 ]
 
 let ifand q n =
-  let dt = K.dtype_or Dtype.int32 q in
+  let dt = K.dtype q in
   K.binary ~op:`Cmpne
-    ~lhs:(K.binary ~op:`And ~lhs:q ~rhs:(K.const (Const.int64 dt (Int64.of_int n))))
-    ~rhs:(K.const (Const.int64 dt 0L))
+    ~lhs:(K.binary ~op:`And ~lhs:q ~rhs:(K.const (Const.int64 (Dtype.val_of dt) (Int64.of_int n))))
+    ~rhs:(K.const (Const.int64 (Dtype.val_of dt) 0L))
 
 let sign_flip r q n =
   K.binary ~op:`Mul ~lhs:r
@@ -374,8 +374,8 @@ let sin_poly_large d q =
 (* Toplevel transcendentals *)
 
 let xsin ?(fast = false) ?(switch_over = 30.0) d =
-  let fdt = K.dtype_or Dtype.float32 d in
-  let nan_c = K.const (Const.float (Dtype.scalar_of fdt) Float.nan) in
+  let fdt = K.dtype d in
+  let nan_c = K.const (Const.float (fdt |> Dtype.scalarize |> Dtype.val_of) Float.nan) in
   let zero = const_like d 0.0 in
   let x = lazy_map_numbers d ~inf:zero ~ninf:zero ~nan:zero ~ratio:d in
   let x_sign = K.ternary ~op:`Where
@@ -400,12 +400,12 @@ let xsin ?(fast = false) ?(switch_over = 30.0) d =
   lazy_map_numbers d ~inf:nan_c ~ninf:nan_c ~nan:nan_c ~ratio:result
 
 let xexp2 d =
-  let fdt = K.dtype_or Dtype.float32 d in
-  let scalar = Dtype.scalar (Dtype.scalar_of fdt) in
+  let fdt = K.dtype d in
+  let scalar = Dtype.scalar fdt in
   let zero = const_like d 0.0 in
   let x = lazy_map_numbers d ~inf:zero ~ninf:zero ~nan:zero ~ratio:d in
   let q = rintk x in
-  let s = K.binary ~op:`Sub ~lhs:x ~rhs:(K.cast ~src:q ~dtype:(Dtype.to_any fdt)) in
+  let s = K.binary ~op:`Sub ~lhs:x ~rhs:(K.cast ~src:q ~dtype:fdt) in
   let u =
     if scalar = Dtype.Float64 then
       polyN s
@@ -429,13 +429,13 @@ let xexp2 d =
     ~a:(K.binary ~op:`Cmplt ~lhs:d ~rhs:(const_like d upper)) ~b:u ~c:inf in
   let u = K.ternary ~op:`Where
     ~a:(K.binary ~op:`Cmplt ~lhs:d ~rhs:(const_like d lower)) ~b:zero ~c:u in
-  let nan_c = K.const (Const.float (Dtype.scalar_of fdt) Float.nan) in
+  let nan_c = K.const (Const.float (fdt |> Dtype.scalarize |> Dtype.val_of) Float.nan) in
   K.ternary ~op:`Where
     ~a:(K.binary ~op:`Cmpne ~lhs:d ~rhs:d) ~b:nan_c ~c:u
 
 let xlog2 d =
-  let fdt = K.dtype_or Dtype.float32 d in
-  let scalar = Dtype.scalar (Dtype.scalar_of fdt) in
+  let fdt = K.dtype d in
+  let scalar = Dtype.scalar fdt in
   let denormal_exp = if scalar = Dtype.Float16 then 10 else 64 in
   let flt_min_val = if scalar = Dtype.Float16 then 6.1e-5 else 1e-4 in
   let is_denormal = K.binary ~op:`Cmplt ~lhs:d ~rhs:(const_like d flt_min_val) in
@@ -443,7 +443,7 @@ let xlog2 d =
     ~b:(K.binary ~op:`Mul ~lhs:d ~rhs:(const_like d (Float.of_int (1 lsl denormal_exp))))
     ~c:d in
   let e = K.cast ~src:(ilogb2k (K.binary ~op:`Mul ~lhs:a ~rhs:(const_like a (1.0 /. 0.75))))
-    ~dtype:(Dtype.to_any fdt) in
+    ~dtype:fdt in
   let m = ldexp3k a (K.unary ~op:`Neg ~src:e) in
   let e = K.ternary ~op:`Where ~a:is_denormal
     ~b:(K.binary ~op:`Sub ~lhs:e ~rhs:(const_like e (Float.of_int denormal_exp)))
@@ -476,7 +476,7 @@ let xlog2 d =
       else base in
   let inf = const_like d Float.infinity in
   let neg_inf = const_like d Float.neg_infinity in
-  let nan_c = K.const (Const.float (Dtype.scalar_of fdt) Float.nan) in
+  let nan_c = K.const (Const.float (fdt |> Dtype.scalarize |> Dtype.val_of) Float.nan) in
   let r = K.ternary ~op:`Where
     ~a:(K.binary ~op:`Cmpne ~lhs:d ~rhs:inf) ~b:r ~c:inf in
   let r = K.ternary ~op:`Where
@@ -495,18 +495,18 @@ let xlog2 d =
 (* Threefry *)
 
 let threefry2x32 x key =
-  let u64 = K.dtype_or Dtype.uint64 x in
+  let u64 = K.dtype x in
   let u32 = Dtype.uint32 in
-  let mask32 = K.const (Const.int64 u64 0xFFFFFFFFL) in
-  let lo v = K.cast ~src:(K.binary ~op:`And ~lhs:v ~rhs:mask32) ~dtype:(Dtype.to_any u32) in
-  let hi v = K.cast ~src:(K.binary ~op:`And ~lhs:(shr_const v 32) ~rhs:mask32) ~dtype:(Dtype.to_any u32) in
+  let mask32 = K.const (Const.int64 (Dtype.val_of u64) 0xFFFFFFFFL) in
+  let lo v = K.cast ~src:(K.binary ~op:`And ~lhs:v ~rhs:mask32) ~dtype:u32 in
+  let hi v = K.cast ~src:(K.binary ~op:`And ~lhs:(shr_const v 32) ~rhs:mask32) ~dtype:u32 in
   let x0 = lo x and x1 = hi x in
   let key0 = lo key and key1 = hi key in
   let rotations = [| [| 13; 15; 26; 6 |]; [| 17; 29; 16; 24 |] |] in
   let ks = [| key1;
     K.binary ~op:`Xor
       ~lhs:(K.binary ~op:`Xor ~lhs:key0 ~rhs:key1)
-      ~rhs:(K.const (Const.int64 u32 0x1BD11BDAL));
+      ~rhs:(K.const (Const.int64 (Dtype.val_of u32) 0x1BD11BDAL));
     key0 |] in
   let xr0 = ref (K.binary ~op:`Add ~lhs:x0 ~rhs:ks.(2)) in
   let xr1 = ref (K.binary ~op:`Add ~lhs:x1 ~rhs:ks.(0)) in
@@ -523,11 +523,11 @@ let threefry2x32 x key =
     xr0 := K.binary ~op:`Add ~lhs:!xr0 ~rhs:ks.(i mod 3);
     xr1 := K.binary ~op:`Add ~lhs:!xr1
       ~rhs:(K.binary ~op:`Add ~lhs:ks.((i + 1) mod 3)
-              ~rhs:(K.const (Const.int64 u32 (Int64.of_int (i + 1)))))
+              ~rhs:(K.const (Const.int64 (Dtype.val_of u32) (Int64.of_int (i + 1)))))
   done;
   K.binary ~op:`Or
-    ~lhs:(shl_const (K.cast ~src:!xr1 ~dtype:(Dtype.to_any u64)) 32)
-    ~rhs:(K.cast ~src:!xr0 ~dtype:(Dtype.to_any u64))
+    ~lhs:(shl_const (K.cast ~src:!xr1 ~dtype:u64) 32)
+    ~rhs:(K.cast ~src:!xr0 ~dtype:u64)
 
 (* Pattern matching *)
 
@@ -554,14 +554,14 @@ type supported_ops = {
 }
 
 let transcendental_dtypes dt =
-  let s = Dtype.scalar (Dtype.scalar_of dt) in
+  let s = Dtype.Val.scalar dt in
   s = Dtype.Float16 || s = Dtype.Float32 || s = Dtype.Float64
 
 let get_transcendental_patterns (ops : supported_ops) node =
   let via_f32 f d dtype =
     if transcendental_dtypes dtype then Some (f d)
-    else if Dtype.is_float dtype then
-      Some (K.cast ~src:(f (K.cast ~src:d ~dtype:(Dtype.to_any Dtype.float32))) ~dtype:(Dtype.to_any dtype))
+    else if Dtype.Val.is_float dtype then
+      Some (K.cast ~src:(f (K.cast ~src:d ~dtype:Dtype.float32)) ~dtype:(Dtype.Val dtype))
     else None in
   match K.view node with
   | Unary { op = `Exp2; src = d; dtype }
@@ -637,7 +637,7 @@ type l2i_op =
   | `Xor | `Or | `And | `Where | `Max | `Cast | `Bitcast ]
 
 let rec l2i (op : l2i_op) (dt : Dtype.t) (uops : K.t list) : K.t * K.t =
-  let zero = K.const (Const.int dt 0) in
+  let zero = K.const (Const.int (Dtype.val_of dt) 0) in
   let a0, a1 = match uops with
     | [a0; a1] -> (a0, a1)
     | [a0; a1; _; _] -> (a0, a1)
@@ -650,23 +650,23 @@ let rec l2i (op : l2i_op) (dt : Dtype.t) (uops : K.t list) : K.t * K.t =
   match op with
   | `Neg -> l2i `Sub dt [zero; zero; a0; a1]
   | `Shl ->
-      let b0_mod = K.binary ~op:`And ~lhs:b0 ~rhs:(K.const (Const.int dt 31)) in
+      let b0_mod = K.binary ~op:`And ~lhs:b0 ~rhs:(K.const (Const.int (Dtype.val_of dt) 31)) in
       let lo = expr_shl a0 b0_mod in
       let hi = K.binary ~op:`Or
         ~lhs:(expr_shl a1 b0_mod)
-        ~rhs:(expr_shr (expr_shr a0 (K.const (Const.int dt 1)))
-                (K.binary ~op:`Sub ~lhs:(K.const (Const.int dt 31)) ~rhs:b0_mod)) in
-      let ge32 = K.binary ~op:`Cmplt ~lhs:(K.const (Const.int dt 31)) ~rhs:b0 in
+        ~rhs:(expr_shr (expr_shr a0 (K.const (Const.int (Dtype.val_of dt) 1)))
+                (K.binary ~op:`Sub ~lhs:(K.const (Const.int (Dtype.val_of dt) 31)) ~rhs:b0_mod)) in
+      let ge32 = K.binary ~op:`Cmplt ~lhs:(K.const (Const.int (Dtype.val_of dt) 31)) ~rhs:b0 in
       (K.ternary ~op:`Where ~a:ge32 ~b:zero ~c:lo,
        K.ternary ~op:`Where ~a:ge32 ~b:lo ~c:hi)
   | `Shr ->
-      let b0_mod = K.binary ~op:`And ~lhs:b0 ~rhs:(K.const (Const.int dt 31)) in
+      let b0_mod = K.binary ~op:`And ~lhs:b0 ~rhs:(K.const (Const.int (Dtype.val_of dt) 31)) in
       let lo = K.binary ~op:`Or
         ~lhs:(expr_shr a0 b0_mod)
-        ~rhs:(expr_shl (expr_shl a1 (K.const (Const.int dt 1)))
-                (K.binary ~op:`Sub ~lhs:(K.const (Const.int dt 31)) ~rhs:b0_mod)) in
+        ~rhs:(expr_shl (expr_shl a1 (K.const (Const.int (Dtype.val_of dt) 1)))
+                (K.binary ~op:`Sub ~lhs:(K.const (Const.int (Dtype.val_of dt) 31)) ~rhs:b0_mod)) in
       let hi = expr_shr a1 b0_mod in
-      let ge32 = K.binary ~op:`Cmplt ~lhs:(K.const (Const.int dt 31)) ~rhs:b0 in
+      let ge32 = K.binary ~op:`Cmplt ~lhs:(K.const (Const.int (Dtype.val_of dt) 31)) ~rhs:b0 in
       (K.ternary ~op:`Where ~a:ge32 ~b:hi ~c:lo,
        K.ternary ~op:`Where ~a:ge32 ~b:zero ~c:hi)
   | `Add ->
@@ -674,18 +674,18 @@ let rec l2i (op : l2i_op) (dt : Dtype.t) (uops : K.t list) : K.t * K.t =
       let carry =
         K.cast
           ~src:(K.binary ~op:`Cmplt
-            ~lhs:(K.bitcast ~src:low ~dtype:Dtype.uint32)
-            ~rhs:(K.bitcast ~src:a0 ~dtype:Dtype.uint32))
-          ~dtype:(Dtype.to_any dt)
+            ~lhs:(K.bitcast ~src:low ~dtype:Dtype.Val.uint32)
+            ~rhs:(K.bitcast ~src:a0 ~dtype:Dtype.Val.uint32))
+          ~dtype:dt
       in
       (low, K.binary ~op:`Add ~lhs:(K.binary ~op:`Add ~lhs:a1 ~rhs:b1) ~rhs:carry)
   | `Sub ->
       let borrow =
         K.cast
           ~src:(K.binary ~op:`Cmplt
-            ~lhs:(K.bitcast ~src:a0 ~dtype:Dtype.uint32)
-            ~rhs:(K.bitcast ~src:b0 ~dtype:Dtype.uint32))
-          ~dtype:(Dtype.to_any dt)
+            ~lhs:(K.bitcast ~src:a0 ~dtype:Dtype.Val.uint32)
+            ~rhs:(K.bitcast ~src:b0 ~dtype:Dtype.Val.uint32))
+          ~dtype:dt
       in
       (K.binary ~op:`Sub ~lhs:a0 ~rhs:b0,
        K.binary ~op:`Sub ~lhs:(K.binary ~op:`Sub ~lhs:a1 ~rhs:b1) ~rhs:borrow)
@@ -693,8 +693,8 @@ let rec l2i (op : l2i_op) (dt : Dtype.t) (uops : K.t list) : K.t * K.t =
       let hi_lt = K.binary ~op:`Cmplt ~lhs:a1 ~rhs:b1 in
       let hi_eq = K.binary ~op:`Cmpeq ~lhs:a1 ~rhs:b1 in
       let lo_lt = K.binary ~op:`Cmplt
-        ~lhs:(K.bitcast ~src:a0 ~dtype:Dtype.uint32)
-        ~rhs:(K.bitcast ~src:b0 ~dtype:Dtype.uint32) in
+        ~lhs:(K.bitcast ~src:a0 ~dtype:Dtype.Val.uint32)
+        ~rhs:(K.bitcast ~src:b0 ~dtype:Dtype.Val.uint32) in
       (K.binary ~op:`Or ~lhs:hi_lt ~rhs:(K.binary ~op:`And ~lhs:hi_eq ~rhs:lo_lt), zero)
   | `Cmpeq ->
       (K.binary ~op:`And
@@ -716,25 +716,25 @@ let rec l2i (op : l2i_op) (dt : Dtype.t) (uops : K.t list) : K.t * K.t =
   | `Max -> l2i `Where dt (fst (l2i `Cmplt dt uops) :: b0 :: b1 :: a0 :: [a1])
   | _ -> failwith "l2i: unsupported op"
 
-let widen_long_ptr (dtype : Dtype.ptr) size =
-  let new_base = long_to_int_dtype (Dtype.scalar_of (Dtype.base dtype)) in
-  Dtype.ptr_of new_base ~addrspace:(Dtype.addrspace dtype) ~size:(size * 2)
+let widen_long_ptr (dtype : Dtype.Ptr.t) size =
+  let new_base = Dtype.Val (Dtype.Ptr.base dtype) |> Dtype.scalarize |> long_to_int_dtype in
+  Dtype.Ptr.create (Dtype.val_of new_base) ~addrspace:(Dtype.Ptr.addrspace dtype) ~size:(size * 2)
 
 let pm_long_decomp (node : K.t) : K.t option =
   match K.view node with
-  | Param { idx; dtype } when is_long_dtype (Dtype.base dtype) ->
-    Some (K.param ~idx ~dtype:(widen_long_ptr dtype (Dtype.ptr_size dtype)))
-  | Define_local { size; dtype } when is_long_dtype (Dtype.base dtype) ->
+  | Param { idx; dtype } when is_long_dtype (Dtype.Val (Dtype.Ptr.base dtype)) ->
+    Some (K.param ~idx ~dtype:(widen_long_ptr dtype (Dtype.Ptr.size dtype)))
+  | Define_local { size; dtype } when is_long_dtype (Dtype.Val (Dtype.Ptr.base dtype)) ->
     Some (K.define_local ~size:(size * 2) ~dtype:(widen_long_ptr dtype size))
-  | Define_reg { size; dtype; slot } when is_long_dtype (Dtype.base dtype) ->
+  | Define_reg { size; dtype; slot } when is_long_dtype (Dtype.Val (Dtype.Ptr.base dtype)) ->
     Some (K.define_reg ~size:(size * 2) ~dtype:(widen_long_ptr dtype size) ~slot)
-  | Index { dtype = Dtype.P pty; _ }
-    when is_long_dtype (Dtype.scalar_of (Dtype.base pty)) ->
+  | Index { dtype = Dtype.Ptr pty; _ }
+    when is_long_dtype (Dtype.Val (Dtype.Ptr.base pty) |> Dtype.scalarize) ->
     let off = match K.tag node with Some "1" -> 1 | _ -> 0 in
     Some (K.replace (reindex_long node off 2)
-            ~dtype:(long_to_int_dtype (Dtype.scalar_of (Dtype.base pty))) ())
+            ~dtype:(Dtype.Val (Dtype.Ptr.base pty) |> Dtype.scalarize |> long_to_int_dtype) ())
   | Store { dst; value; ranges } when K.tag node = None ->
-    (match K.dtype value with
+    (match K.dtype_opt value with
     | Some dt when is_long_dtype dt ->
       Some (K.group [
         K.with_tag "0" (K.store ~dst:(reindex_long dst 0 2)
@@ -742,34 +742,34 @@ let pm_long_decomp (node : K.t) : K.t option =
         K.with_tag "1" (K.store ~dst:(reindex_long dst 1 2)
           ~value:(K.with_tag "1" value) ~ranges)])
     | _ -> None)
-  | Load { src; dtype; _ } when is_long_dtype dtype ->
+  | Load { src; dtype; _ } when is_long_dtype (Dtype.Val dtype) ->
     (match K.tag node with
     | Some tag_str ->
       Some (K.load ~src:(reindex_long src (if tag_str = "1" then 1 else 0) 2) ())
     | None -> None)
-  | Const { value; dtype } when is_long_dtype dtype ->
+  | Const { value; dtype } when is_long_dtype (Dtype.Val dtype) ->
     (match K.tag node, Const.view value with
     | Some "1", Int n ->
-      Some (K.const (Const.int (long_to_int_dtype dtype)
+      Some (K.const (Const.int (Dtype.val_of (long_to_int_dtype (Dtype.Val dtype)))
               (Int64.to_int (Int64.shift_right_logical n 32))))
     | Some _, Int n ->
-      Some (K.const (Const.int (long_to_int_dtype dtype)
+      Some (K.const (Const.int (Dtype.val_of (long_to_int_dtype (Dtype.Val dtype)))
               (Int64.to_int (Int64.logand n 0xFFFFFFFFL))))
     | _ -> None)
   | Binary { op = (`Cmplt | `Cmpeq | `Cmpne) as op; lhs; rhs; _ }
-    when (match K.dtype lhs with Some dt -> is_long_dtype dt | None -> false) ->
-    let dt = long_to_int_dtype (K.dtype_or Dtype.int32 lhs) in
+    when (match K.dtype_opt lhs with Some dt -> is_long_dtype dt | None -> false) ->
+    let dt = long_to_int_dtype (K.dtype lhs) in
     Some (fst (l2i op dt [
       K.with_tag "0" lhs; K.with_tag "1" lhs;
       K.with_tag "0" rhs; K.with_tag "1" rhs]))
   | (Binary { dtype; _ } | Unary { dtype; _ } | Ternary { dtype; _ })
-    when is_long_dtype dtype && K.tag node <> None ->
-    let dt = long_to_int_dtype dtype in
+    when is_long_dtype (Dtype.Val dtype) && K.tag node <> None ->
+    let dt = long_to_int_dtype (Dtype.Val dtype) in
     let expanded = List.concat_map (fun c ->
-      match K.dtype c with
+      match K.dtype_opt c with
       | Some cdt when is_long_dtype cdt ->
-        [K.cast ~src:(K.with_tag "0" c) ~dtype:(Dtype.to_any dt);
-         K.cast ~src:(K.with_tag "1" c) ~dtype:(Dtype.to_any dt)]
+        [K.cast ~src:(K.with_tag "0" c) ~dtype:dt;
+         K.cast ~src:(K.with_tag "1" c) ~dtype:dt]
       | _ -> [c]) (K.children node) in
     let to_l2i_op : K.view -> l2i_op = function
       | Binary { op = `Add; _ } -> `Add | Binary { op = `Sub; _ } -> `Sub
@@ -801,17 +801,17 @@ let f2f (v : K.t) ~(fr : Dtype.scalar) ~(to_ : Dtype.scalar) : K.t =
   let to_uint = Dtype.of_scalar (f2f_dt to_) in
   let fr_uint = Dtype.of_scalar (f2f_dt fr) in
   (* Use Int64 for all mask/shift computations to avoid overflow on wide floats *)
-  let i64_const dt n = K.const (Const.int64 dt n) in
+  let i64_const dt n = K.const (Const.int64 (Dtype.val_of dt) n) in
   if fe <= te && fm < tm then begin
     let sign = shl_const
       (K.cast ~src:(K.binary ~op:`And ~lhs:v
         ~rhs:(i64_const fr_uint (Int64.shift_left 1L (fs - 1))))
-        ~dtype:(Dtype.to_any to_uint))
+        ~dtype:to_uint)
       (ts - fs) in
     let nosign = K.cast
       ~src:(K.binary ~op:`And ~lhs:v
         ~rhs:(i64_const fr_uint (Int64.sub (Int64.shift_left 1L (fs - 1)) 1L)))
-      ~dtype:(Dtype.to_any to_uint) in
+      ~dtype:to_uint in
     let exp = shr_const nosign fm in
     let norm = K.binary ~op:`Add
       ~lhs:(shl_const nosign (tm - fm))
@@ -826,11 +826,11 @@ let f2f (v : K.t) ~(fr : Dtype.scalar) ~(to_ : Dtype.scalar) : K.t =
     K.bitcast
       ~src:(K.binary ~op:`Or ~lhs:sign
         ~rhs:(K.ternary ~op:`Where ~a:is_zero
-          ~b:(K.const (Const.int to_uint 0))
+          ~b:(K.const (Const.int (Dtype.val_of to_uint) 0))
           ~c:(K.ternary ~op:`Where ~a:is_nan ~b:nan ~c:norm)))
-      ~dtype:(Dtype.of_scalar to_)
+      ~dtype:(Dtype.Val.of_scalar to_)
   end else
-    K.cast ~src:v ~dtype:(Dtype.to_any (Dtype.of_scalar to_))
+    K.cast ~src:v ~dtype:(Dtype.of_scalar to_)
 
 let f2f_clamp (v : K.t) ~(dt_scalar : Dtype.scalar) : K.t =
   let dt = Dtype.of_scalar dt_scalar in
@@ -838,9 +838,9 @@ let f2f_clamp (v : K.t) ~(dt_scalar : Dtype.scalar) : K.t =
   let max_exp, max_man = (1 lsl e) - 2, (1 lsl m) - 1 in
   let max_val = 2.0 ** Float.of_int (max_exp - exponent_bias dt) *.
     (1.0 +. Float.of_int max_man /. Float.of_int (1 lsl m)) in
-  let mx = K.const (Const.float (K.dtype_or Dtype.float32 v) max_val) in
+  let mx = K.const (Const.float (Dtype.val_of (K.dtype v)) max_val) in
   let neg_mx = K.unary ~op:`Neg ~src:mx in
-  let inf = K.const (Const.float (K.dtype_or Dtype.float32 v) infinity) in
+  let inf = K.const (Const.float (Dtype.val_of (K.dtype v)) infinity) in
   let is_nan = K.binary ~op:`Cmpne ~lhs:v ~rhs:v in
   let lt_neg = K.binary ~op:`Cmplt ~lhs:v ~rhs:neg_mx in
   let gt_pos = K.binary ~op:`Cmplt ~lhs:mx ~rhs:v in
@@ -855,31 +855,31 @@ type float_decomp_ctx = {
 
 let pm_float_decomp (ctx : float_decomp_ctx) (node : K.t) : K.t option =
   let fr = ctx.from_dtype and to_ = ctx.to_dtype in
-  let rebase_ptr (dtype : Dtype.ptr) =
-    let new_base = Dtype.vec (Dtype.of_scalar (f2f_dt fr)) (Dtype.count (Dtype.base dtype)) in
-    Dtype.ptr_of new_base ~addrspace:(Dtype.addrspace dtype) ~size:(Dtype.ptr_size dtype) in
+  let rebase_ptr (dtype : Dtype.Ptr.t) =
+    let new_base = Dtype.Val.vec (Dtype.Ptr.count dtype) (Dtype.Val.of_scalar (f2f_dt fr)) in
+    Dtype.Ptr.create new_base ~addrspace:(Dtype.Ptr.addrspace dtype) ~size:(Dtype.Ptr.size dtype) in
   let tag n = K.with_tag (Dtype.scalar_to_string fr) n in
   match K.view node with
-  | Param { idx; dtype } when Dtype.scalar (Dtype.base dtype) = fr ->
+  | Param { idx; dtype } when Dtype.Ptr.scalar dtype = fr ->
     Some (tag (K.param ~idx ~dtype:(rebase_ptr dtype)))
-  | Define_local { size; dtype } when Dtype.scalar (Dtype.base dtype) = fr ->
+  | Define_local { size; dtype } when Dtype.Ptr.scalar dtype = fr ->
     Some (tag (K.define_local ~size ~dtype:(rebase_ptr dtype)))
-  | Define_reg { size; dtype; slot } when Dtype.scalar (Dtype.base dtype) = fr ->
+  | Define_reg { size; dtype; slot } when Dtype.Ptr.scalar dtype = fr ->
     Some (tag (K.define_reg ~size ~dtype:(rebase_ptr dtype) ~slot))
-  | Load { src; dtype; _ } when Dtype.scalar_of dtype = Dtype.of_scalar fr ->
-    let storage_dt = Dtype.vec (Dtype.of_scalar (f2f_dt fr)) (Dtype.count dtype) in
+  | Load { src; dtype; _ } when Dtype.Val.scalar dtype = fr ->
+    let storage_dt = Dtype.vec (Dtype.Val.count dtype) (Dtype.of_scalar (f2f_dt fr)) in
     Some (f2f (K.replace (K.load ~src ()) ~dtype:storage_dt ()) ~fr ~to_)
-  | Cast { src; dtype } when Dtype.scalar_of (Dtype.any_to_val dtype) = Dtype.of_scalar fr ->
-    Some (f2f_clamp (K.cast ~src ~dtype:(Dtype.to_any (Dtype.vec (Dtype.of_scalar to_) (Dtype.count (Dtype.any_to_val dtype))))) ~dt_scalar:fr)
+  | Cast { src; dtype } when Dtype.scalar dtype = fr ->
+    Some (f2f_clamp (K.cast ~src ~dtype:(Dtype.vec (Dtype.count dtype) (Dtype.of_scalar to_))) ~dt_scalar:fr)
   | (Binary { dtype; _ } | Unary { dtype; _ } | Ternary { dtype; _ })
-    when Dtype.scalar_of dtype = Dtype.of_scalar fr ->
+    when Dtype.Val.scalar dtype = fr ->
     let new_children = List.map (fun c ->
-      match K.dtype c with
+      match K.dtype_opt c with
       | Some cdt when Dtype.scalar cdt = fr ->
-        K.cast ~src:c ~dtype:(Dtype.to_any (Dtype.vec (Dtype.of_scalar to_) (Dtype.count cdt)))
+        K.cast ~src:c ~dtype:(Dtype.vec (Dtype.count cdt) (Dtype.of_scalar to_))
       | _ -> c) (K.children node) in
     Some (K.replace node ~children:new_children
-            ~dtype:(Dtype.vec (Dtype.of_scalar to_) (Dtype.count dtype)) ())
+            ~dtype:(Dtype.vec (Dtype.Val.count dtype) (Dtype.of_scalar to_)) ())
   | _ -> None
 
 (* Late rewrite patterns *)
@@ -890,14 +890,14 @@ let get_late_rewrite_patterns (ops : supported_ops) node =
     when not ops.has_max && ops.has_cmplt ->
     Some (K.ternary ~op:`Where ~a:(K.binary ~op:`Cmplt ~lhs ~rhs) ~b:rhs ~c:lhs)
   | Binary { op = `Mod; lhs = x; rhs; dtype }
-    when ops.has_and && Dtype.is_int dtype
-         && (Dtype.is_unsigned dtype || Divandmod.vmin x >= 0L) ->
+    when ops.has_and && Dtype.Val.is_int dtype
+         && (Dtype.Val.is_unsigned dtype || Divandmod.vmin x >= 0L) ->
     (match const_int_val rhs with
     | Some c when c > 0L && Option.is_some (log2_of_power c) ->
       Some (K.binary ~op:`And ~lhs:x ~rhs:(K.const (Const.int64 dtype (Int64.sub c 1L))))
     | _ -> None)
   | Binary { op = `Mul; lhs; rhs; dtype }
-    when ops.has_shl && Dtype.is_int dtype ->
+    when ops.has_shl && Dtype.Val.is_int dtype ->
     let try_shift base c_node = match const_int_val c_node with
       | Some c when c > 0L ->
         Option.map (fun n ->
@@ -907,7 +907,7 @@ let get_late_rewrite_patterns (ops : supported_ops) node =
       | _ -> None in
     (match try_shift lhs rhs with Some _ as r -> r | None -> try_shift rhs lhs)
   | Binary { op = `Idiv; lhs = x; rhs; dtype }
-    when ops.has_shr && Dtype.is_int dtype && Dtype.is_unsigned dtype ->
+    when ops.has_shr && Dtype.Val.is_int dtype && Dtype.Val.is_unsigned dtype ->
     (match const_int_val rhs with
     | Some c when c > 0L ->
       Option.map (fun n ->
@@ -916,7 +916,7 @@ let get_late_rewrite_patterns (ops : supported_ops) node =
         (log2_of_power c)
     | _ -> None)
   | Binary { op = `Idiv; lhs = x; rhs; dtype }
-    when ops.has_shr && Dtype.is_int dtype && not (Dtype.is_unsigned dtype) ->
+    when ops.has_shr && Dtype.Val.is_int dtype && not (Dtype.Val.is_unsigned dtype) ->
     (match const_int_val rhs with
     | Some c when c > 0L ->
       (match log2_of_power c with
@@ -931,7 +931,7 @@ let get_late_rewrite_patterns (ops : supported_ops) node =
       | None -> if not ops.disable_fast_idiv then fast_idiv x c else None)
     | _ -> None)
   | Binary { op = `Idiv; lhs = x; rhs; dtype }
-    when ops.has_shr && Dtype.is_int dtype && not ops.disable_fast_idiv ->
+    when ops.has_shr && Dtype.Val.is_int dtype && not ops.disable_fast_idiv ->
     (match const_int_val rhs with
     | Some d when d > 0L && Option.is_none (log2_of_power d) -> fast_idiv x d
     | _ -> None)
@@ -951,5 +951,5 @@ let get_late_rewrite_patterns (ops : supported_ops) node =
       | _ -> None)
   | Unary { op = `Recip; src = x; _ } when ops.has_fdiv ->
     Some (K.binary ~op:`Fdiv
-            ~lhs:(K.const (Const.float (K.dtype_or Dtype.float32 x) 1.0)) ~rhs:x)
+            ~lhs:(K.const (Const.float (Dtype.val_of (K.dtype x)) 1.0)) ~rhs:x)
   | _ -> None

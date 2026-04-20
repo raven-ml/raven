@@ -34,7 +34,7 @@ let max4 a b c d = max a (max b (max c d))
 
 (* Node helpers *)
 
-let iconst v = K.const (Const.int64 Dtype.index v)
+let iconst v = K.const (Const.int64 Dtype.Val.index v)
 
 let const_int_val node =
   match K.view node with
@@ -73,12 +73,16 @@ let rec vmin node =
   | Binary { op = `Mod; lhs; _ } ->
       if vmin lhs >= 0L then 0L else Int64.min_int
   | Binary { op = `Max; lhs; rhs; _ } -> max (vmin lhs) (vmin rhs)
+  | Binary { op = `Cmplt; lhs; rhs; _ } ->
+      if vmax lhs < vmin rhs then 1L else 0L
+  | Binary { op = `Cmpne; lhs; rhs; _ } ->
+      if vmax lhs < vmin rhs || vmax rhs < vmin lhs then 1L else 0L
   | Binary { op = `And; lhs; rhs; _ } ->
       if vmin lhs >= 0L && vmin rhs >= 0L then 0L else Int64.min_int
   | Unary { op = `Neg; src; _ } -> Int64.neg (vmax src)
   | Cast { src; dtype } ->
-      let dt = Dtype.any_to_val dtype in
-      if Dtype.is_int dt then vmin src else Int64.min_int
+      let dt = Dtype.val_of dtype in
+      if Dtype.Val.is_int dt then vmin src else Int64.min_int
   | Ternary { op = `Where; b; c; _ } -> min (vmin b) (vmin c)
   | _ -> Int64.min_int
 
@@ -108,10 +112,15 @@ and vmax node =
       if vmin lhs >= 0L then min (vmax lhs) (Int64.sub (vmax rhs) 1L)
       else Int64.max_int
   | Binary { op = `Max; lhs; rhs; _ } -> max (vmax lhs) (vmax rhs)
+  | Binary { op = `Cmplt; lhs; rhs; _ } ->
+      if vmin lhs >= vmax rhs then 0L else 1L
+  | Binary { op = `Cmpne; lhs; rhs; _ } ->
+      if vmin lhs = vmax lhs && vmin lhs = vmin rhs && vmin rhs = vmax rhs
+      then 0L else 1L
   | Unary { op = `Neg; src; _ } -> Int64.neg (vmin src)
   | Cast { src; dtype } ->
-      let dt = Dtype.any_to_val dtype in
-      if Dtype.is_int dt then vmax src else Int64.max_int
+      let dt = Dtype.val_of dtype in
+      if Dtype.Val.is_int dt then vmax src else Int64.max_int
   | Ternary { op = `Where; b; c; _ } -> max (vmax b) (vmax c)
   | _ -> Int64.max_int
 
@@ -193,7 +202,7 @@ let rec cartesian = function
 (* fold_divmod_general *)
 
 let is_index_dtype dtype =
-  Dtype.is_int dtype && Dtype.equal (Dtype.scalar_of dtype) Dtype.index
+  Dtype.Val.is_int dtype && Dtype.Val.equal (Dtype.Val.scalarize dtype) Dtype.Val.index
 
 let ( ||| ) a b = match a with Some _ -> a | None -> b ()
 
