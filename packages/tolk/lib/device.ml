@@ -7,27 +7,10 @@
 
 open Tolk_ir
 
-module Context = struct
-  type 'a var = { name : string; default : 'a; parse : string -> 'a option }
-
-  let make ~name ~default ~parse = { name; default; parse }
-  let get_opt v = Option.bind (Sys.getenv_opt v.name) v.parse
-  let get v = Option.value (get_opt v) ~default:v.default
-
-  let int ~name ~default =
-    make ~name ~default ~parse:(fun raw -> int_of_string_opt (String.trim raw))
-
-  let string ~name ~default =
-    let parse raw =
-      let value = String.trim raw in
-      if value = "" then None else Some value
-    in
-    make ~name ~default ~parse
-end
+(* Buffer + Allocators *)
 
 module Buffer_spec = struct
   type t = {
-    image : Dtype.t option;
     uncached : bool;
     cpu_access : bool;
     host : bool;
@@ -37,7 +20,6 @@ module Buffer_spec = struct
 
   let default =
     {
-      image = None;
       uncached = false;
       cpu_access = false;
       host = false;
@@ -66,6 +48,8 @@ module Allocator = struct
 end
 
 module Lru_allocator = struct
+  let lru_var = Helpers.Context_var.int ~key:"LRU" ~default:1
+
   let wrap (inner : 'buf Allocator.t) : 'buf Allocator.t =
     let cache : (int * Buffer_spec.t * 'buf) list ref = ref [] in
     let free_cache () =
@@ -90,7 +74,9 @@ module Lru_allocator = struct
           find [] !cache);
       free =
         (fun buf size spec ->
-          if (not spec.Buffer_spec.nolru) && Option.is_none spec.external_ptr
+          if Helpers.Context_var.get lru_var <> 0
+             && (not spec.Buffer_spec.nolru)
+             && Option.is_none spec.external_ptr
           then cache := (size, spec, buf) :: !cache
           else inner.free buf size spec);
     }
@@ -159,6 +145,8 @@ module Buffer = struct
     match (buf.base, buf.buf) with
     | _, None -> ()
     | None, Some raw ->
+        (* Catch use-after-free early: freeing a base while views still
+           reference it would leave dangling pointers. *)
         if buf.allocated_views <> 0 then
           invalid_arg "base buffer still has allocated views";
         buf.allocator.free raw (nbytes t) buf.spec;
@@ -194,6 +182,7 @@ module Buffer = struct
   let dtype (Pack b) = b.dtype
   let spec (Pack b) = b.spec
   let supports_offset (Pack b) = Option.is_some b.allocator.offset
+  let allocator (Pack b) = Allocator.Pack (base_raw b).allocator
 
   let ensure_size t bytes =
     let expected = nbytes t in
@@ -246,6 +235,10 @@ module Buffer = struct
     ensure_allocated t;
     match b.buf with Some raw -> b.allocator.addr raw | None -> assert false
 
+  (* XXX: copy_between belongs in the engine layer, not the device layer.
+     tinygrad's BufferCopy and BufferXfer live in realize.py with fast paths
+     (disk, zero-copy via _as_buffer, device-to-device _transfer).  This
+     naive CPU bounce should move when tolk gains an engine/realize module. *)
   let copy_between ~dst ~src =
     if size dst <> size src then invalid_arg "buffer copy size mismatch";
     if not (Dtype.equal (dtype dst) (dtype src)) then
@@ -257,159 +250,76 @@ module Buffer = struct
     copyin dst tmp
 end
 
-module Program = struct
-  type t = {
-    spec : Program_spec.t;
-    src : string;
-    binary : bytes;
-    applied_opts : Kernel.Opt.t list;
-    mutable entry_addr : nativeint option;
-    mutable cleanup : (unit -> unit) option;
-  }
+(* Compiled devices *)
 
-  let make ?(applied_opts = []) ~spec ~src ~binary () =
-    { spec; src; binary; applied_opts; entry_addr = None; cleanup = None }
+type prog = {
+  call :
+    nativeint array -> global:int array -> local:int array option ->
+    vals:int64 array -> wait:bool -> timeout:int option -> float option;
+  free : unit -> unit;
+}
 
-  let name t = Program_spec.name t.spec
-  let src t = t.src
-  let applied_opts t = t.applied_opts
-  let entry_name = name
-  let entry_addr t = t.entry_addr
-  let set_entry_addr t addr = t.entry_addr <- Some addr
-  let binary t = t.binary
-  let vars t = Program_spec.vars t.spec
-  let outs t = Program_spec.outs t.spec
-  let ins t = Program_spec.ins t.spec
-  let core_id t = Program_spec.core_id t.spec
-  let launch_kind t = Program_spec.launch_kind t.spec
-  let estimates t = Program_spec.estimates t.spec
-  let set_cleanup t f = t.cleanup <- Some f
+type runtime = string -> bytes -> runtimevars:(string * int) list -> prog
 
-  let release t =
-    Option.iter
-      (fun f ->
-        f ();
-        t.cleanup <- None;
-        t.entry_addr <- None)
-      t.cleanup
-
-  let launch_dims t args = Program_spec.launch_dims t.spec args
-
-  let with_global_override global_override t =
-    { t with spec = Program_spec.with_global_dims global_override t.spec }
-end
-
-module Queue = struct
-  type t = {
-    exec : Program.t -> Buffer.t list -> int list -> unit;
-    timed_exec : (Program.t -> Buffer.t list -> int list -> float) option;
-    synchronize : unit -> unit;
-  }
-
-  let make ~exec ?timed_exec ~synchronize () = { exec; timed_exec; synchronize }
-  let exec t program bufs args = t.exec program bufs args
-
-  exception Exec_timeout
-
-  let timed_exec ?timeout_ms t program bufs args =
-    let install_timeout () =
-      match timeout_ms with
-      | Some ms when ms > 0 ->
-          let secs = max 1 (ms / 1000) in
-          let prev = Sys.signal Sys.sigalrm
-            (Sys.Signal_handle (fun _ -> raise Exec_timeout)) in
-          ignore (Unix.alarm secs);
-          Some prev
-      | _ -> None
-    in
-    let cancel_timeout prev =
-      match prev with
-      | Some handler ->
-          ignore (Unix.alarm 0);
-          Sys.set_signal Sys.sigalrm handler
-      | None -> ()
-    in
-    let prev = install_timeout () in
-    match
-      (match t.timed_exec with
-       | Some f -> f program bufs args
-       | None ->
-           let t0 = Unix.gettimeofday () in
-           t.exec program bufs args;
-           t.synchronize ();
-           Unix.gettimeofday () -. t0)
-    with
-    | tm -> cancel_timeout prev; tm
-    | exception Exec_timeout -> cancel_timeout prev; infinity
-    | exception exn -> cancel_timeout prev; raise exn
-
-  let synchronize t = t.synchronize ()
-end
-
-module Compiler = struct
-  type t = { name : string; compile : string -> bytes }
-
-  exception Compile_error of string
-
-  let make ~name ~compile = { name; compile }
-
-  type pair = {
+module Renderer_set = struct
+  type entry = {
     renderer : Renderer.t;
-    compiler : t option;
-    ctrl : int Context.var option;
+    ctrl : int Helpers.Context_var.t option;
   }
 
-  type set = { pairs : pair list; ctrl : string Context.var option }
+  type t = { entries : entry list; ctrl : string Helpers.Context_var.t option }
 
-  let pair_name (pair : pair) =
-    let raw =
-      match pair.compiler with
-      | Some comp -> comp.name
-      | None -> Renderer.name pair.renderer
-    in
-    String.uppercase_ascii raw
+  let make ?ctrl entries =
+    { entries = List.map (fun (renderer, ctrl) -> { renderer; ctrl }) entries;
+      ctrl }
 
-  let ctrl_value (pair : pair) = Option.map Context.get pair.ctrl
+  let entry_name (e : entry) =
+    match Renderer.compiler e.renderer with
+    | Some comp -> String.uppercase_ascii (Compiler.name comp)
+    | None -> String.uppercase_ascii (Renderer.name e.renderer)
 
-  let choose set =
-    let pick_pair = function
-      | [] -> invalid_arg "no available compiler pairs"
-      | [ pair ] -> pair
-      | _ -> invalid_arg "multiple compiler pairs forced"
+  let ctrl_value (e : entry) = Option.map Helpers.Context_var.get e.ctrl
+
+  let select set =
+    let pick = function
+      | [] -> invalid_arg "no available renderers"
+      | [ e ] -> e
+      | _ -> invalid_arg "multiple renderers forced"
     in
     let by_priority () =
-      let forced = List.filter (fun p -> ctrl_value p = Some 1) set.pairs in
+      let forced = List.filter (fun e -> ctrl_value e = Some 1) set.entries in
       match forced with
-      | _ :: _ -> pick_pair forced
+      | _ :: _ -> pick forced
       | [] ->
-          pick_pair (List.filter (fun p -> ctrl_value p <> Some 0) set.pairs)
+          pick (List.filter (fun e -> ctrl_value e <> Some 0) set.entries)
     in
     let selected =
-      match Option.bind set.ctrl Context.get_opt with
+      match Option.map Helpers.Context_var.get set.ctrl with
       | None -> by_priority ()
       | Some name -> (
           let name = String.uppercase_ascii name in
-          match List.find_opt (fun p -> pair_name p = name) set.pairs with
+          match List.find_opt (fun e -> entry_name e = name) set.entries with
           | None ->
-              invalid_arg (Printf.sprintf "unknown compiler selection: %s" name)
-          | Some pair -> pair)
+              invalid_arg (Printf.sprintf "unknown renderer selection: %s" name)
+          | Some entry -> entry)
     in
-    match selected.compiler with
-    | None -> invalid_arg "selected compiler pair has no compiler"
-    | Some comp -> (selected.renderer, comp)
+    selected.renderer
 end
 
 type t = {
   name : string;
   allocator : Allocator.packed;
-  compiler_set : Compiler.set;
-  queue : Queue.t;
-  prepare_program : Program.t -> unit;
+  renderer_set : Renderer_set.t;
+  runtime : runtime;
+  synchronize : unit -> unit;
   invalidate_caches_fn : (unit -> unit) option;
 }
 
 type device = t
 
+(* XXX: Program_cache belongs in the engine layer, not the device layer.
+   tinygrad's method_cache and get_runner live in realize.py.  Move this
+   when tolk gains an engine/realize module. *)
 module Program_cache = struct
   type renderer_context =
     string * bool * bool * bool * int list option * int list option * int
@@ -433,7 +343,7 @@ module Program_cache = struct
 
   module Cache = Hashtbl.Make (Key)
 
-  let cache : Program.t Cache.t = Cache.create 64
+  let cache : Program_spec.t Cache.t = Cache.create 64
 
   let base_device name =
     match String.split_on_char ':' name with [] -> name | head :: _ -> head
@@ -450,34 +360,38 @@ module Program_cache = struct
   let kernel_key (program : Tolk_ir.Program.t) =
     Digest.to_hex (Digest.string (Marshal.to_string program []))
 
-  let clone program = { program with Program.entry_addr = None; cleanup = None }
-
   let mutex = Mutex.create ()
 end
 
-let make ~name ~allocator ~compiler_set ~queue ~prepare_program
+let make ~name ~allocator ~renderer_set ~runtime ~synchronize
     ?invalidate_caches () =
-  { name; allocator; compiler_set; queue; prepare_program;
+  { name; allocator; renderer_set; runtime; synchronize;
     invalidate_caches_fn = invalidate_caches }
 
 let name d = d.name
-let renderer d = fst (Compiler.choose d.compiler_set)
+let renderer d = Renderer_set.select d.renderer_set
+let runtime d = d.runtime
+let synchronize d = d.synchronize ()
 
 (* Two-level program cache: compiles the kernel once for a "base" device
    (e.g. the first GPU) and clones the template for other devices sharing
    the same compiler and renderer context, avoiding redundant render+compile
    work in multi-device setups. *)
 let compile_program d ?name ?(applied_opts = []) ?(estimates = Program_spec.Estimates.zero) program =
-  let render, comp = Compiler.choose d.compiler_set in
+  let ren = Renderer_set.select d.renderer_set in
+  let comp = match Renderer.compiler ren with
+    | Some c -> c
+    | None -> invalid_arg "device has no compiler"
+  in
   let kernel_name = Option.value name ~default:"kern" in
   let kkey = Program_cache.kernel_key program in
   let make_key ~device ~base =
     Program_cache.
       {
         device;
-        compiler = comp.name;
+        compiler = Compiler.name comp;
         kernel_key = kkey;
-        context = Program_cache.renderer_context render;
+        context = Program_cache.renderer_context ren;
         entry_name = kernel_name;
         estimates;
         base;
@@ -494,31 +408,26 @@ let compile_program d ?name ?(applied_opts = []) ?(estimates = Program_spec.Esti
           let bkey =
             make_key ~device:(Program_cache.base_device d.name) ~base:true
           in
-          let build_program () =
-            let src = Renderer.render render ~name:kernel_name program in
-            let binary = comp.compile src in
-            let spec =
-              Program_spec.of_program ~name:kernel_name ~estimates program
-            in
-            Program.make ~applied_opts ~spec ~src ~binary ()
+          let build_spec () =
+            let src = Renderer.render ren ~name:kernel_name program in
+            let lib = Compiler.compile_cached comp src in
+            Program_spec.of_program ~name:kernel_name ~src ~device:d.name
+              ~lib ~applied_opts ~estimates program
           in
-          let template =
+          let spec =
             match Program_cache.Cache.find_opt Program_cache.cache bkey with
-            | Some cached -> Program_cache.clone cached
+            | Some cached -> cached
             | None ->
-                let tmpl = Program_cache.clone (build_program ()) in
-                Program_cache.Cache.add Program_cache.cache bkey tmpl;
-                tmpl
+                let s = build_spec () in
+                Program_cache.Cache.add Program_cache.cache bkey s;
+                s
           in
-          let program = Program_cache.clone template in
-          d.prepare_program program;
-          Program_cache.Cache.add Program_cache.cache ckey program;
-          program)
+          Program_cache.Cache.add Program_cache.cache ckey spec;
+          spec)
 
 let create_buffer ~size ~dtype ?spec d =
   Buffer.create ~device:d.name ~size ~dtype ?spec d.allocator
 
-let queue d = d.queue
 let invalidate_caches d = Option.iter (fun f -> f ()) d.invalidate_caches_fn
 
 module Multi_buffer = struct

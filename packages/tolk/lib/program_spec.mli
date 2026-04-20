@@ -64,7 +64,7 @@ module Estimates : sig
   (** The type for a single cost component. *)
   type estimate =
     | Int of int  (** Exact integer count. *)
-    | Symbolic of string  (** Symbolic expression from the IR. *)
+    | Symbolic of Tolk_ir.Kernel.t  (** Symbolic expression depending on runtime variables. *)
 
   type t = {
     ops : estimate;  (** Arithmetic operation count. *)
@@ -106,10 +106,20 @@ type t
 
 (** {2:constructors Constructors} *)
 
-val of_program : ?estimates:Estimates.t -> name:string -> Tolk_ir.Program.t -> t
-(** [of_program ~name program] extracts a kernel description from [program].
+val of_program :
+  name:string ->
+  src:string ->
+  device:string ->
+  ?lib:bytes ->
+  ?applied_opts:Tolk_ir.Kernel.Opt.t list ->
+  ?estimates:Estimates.t ->
+  Tolk_ir.Program.t ->
+  t
+(** [of_program ~name ~src ~device ?lib ?applied_opts ?estimates program]
+    extracts a kernel description from [program].
 
-    [estimates] defaults to {!Estimates.zero}.
+    [lib] defaults to [None] (not yet compiled). [applied_opts] defaults
+    to [[]]. [estimates] defaults to {!Estimates.zero}.
 
     Raises [Invalid_argument] if:
     - launch metadata depends on an unsupported scalar instruction,
@@ -119,21 +129,35 @@ val of_program : ?estimates:Estimates.t -> name:string -> Tolk_ir.Program.t -> t
     - ["core_id"] is defined more than once, or
     - ["core_id"] has a lower bound different from [0]. *)
 
+val with_lib : bytes -> t -> t
+(** [with_lib lib spec] is [spec] with [lib] set to [Some lib]. *)
+
 val with_estimates : Estimates.t -> t -> t
 (** [with_estimates e spec] is [spec] with estimates replaced by [e]. *)
 
 val with_global_dims : int array -> t -> t
 (** [with_global_dims dims spec] is [spec] with the global launch dimensions
-    replaced by constant values [dims]. Used by beam search to scale down
-    kernel size during timing. *)
+    replaced by constant values [dims]. *)
 
 (** {2:accessors Accessors} *)
 
 val name : t -> string
 (** [name spec] is the kernel entry-point name. *)
 
+val src : t -> string
+(** [src spec] is the rendered source code. *)
+
+val device : t -> string
+(** [device spec] is the target device name. *)
+
 val program : t -> Tolk_ir.Program.t
-(** [program spec] is the lowered IR program consumed by renderers. *)
+(** [program spec] is the lowered IR program. *)
+
+val lib : t -> bytes option
+(** [lib spec] is the compiled binary, or [None] if not yet compiled. *)
+
+val applied_opts : t -> Tolk_ir.Kernel.Opt.t list
+(** [applied_opts spec] is the optimization options applied during codegen. *)
 
 val vars : t -> var list
 (** [vars spec] is the scalar variable definitions in stable argument order. *)
@@ -160,15 +184,19 @@ val estimates : t -> Estimates.t
 
 (** {2:launch Launch dimensions} *)
 
-val launch_dims : t -> int list -> int array * int array option
-(** [launch_dims spec args] evaluates the launch dimensions of [spec] using
-    runtime scalar values [args].
+val global_size : t -> Tolk_ir.Kernel.t array
+(** [global_size spec] is the symbolic global launch dimensions (length [3]).
+    Use {!launch_dims} to evaluate them to concrete integers. *)
 
-    The first element of the pair is the global dimensions (length [3]). The
-    second is the local dimensions when meaningful:
-    - {!Serial} produces [([|1; 1; 1|], Some [|1; 1; 1|])].
-    - {!Thread_groups} produces [(global, Some local)].
-    - {!Threads} produces [(global, None)].
+val local_size : t -> Tolk_ir.Kernel.t array option
+(** [local_size spec] is the symbolic local launch dimensions, or [None]
+    for flat-thread ({!Threads}) kernels. *)
 
-    [args] must contain one value per {!var} in the order returned by {!vars}.
-*)
+val launch_dims : t -> (string * int) list -> int array * int array option
+(** [launch_dims spec var_vals] evaluates the launch dimensions of [spec]
+    using name-keyed variable bindings [var_vals].
+
+    Returns [(global, local)] where [global] has length [3] and [local] is:
+    - [Some [|1; 1; 1|]] for {!Serial}.
+    - [Some local] for {!Thread_groups}.
+    - [None] for {!Threads}. *)

@@ -8,8 +8,8 @@
 (** Device runtime abstraction.
 
     A {e device} bundles the pieces needed to run compiled kernels on a specific
-    backend: an {!Allocator.packed} for buffer management, a {!Compiler.set} for
-    rendering and compiling IR programs, a {!Queue.t} for kernel dispatch, and a
+    backend: an {!Allocator.packed} for buffer management, a {!Renderer_set.t}
+    for renderer/compiler selection, a {!Queue.t} for kernel dispatch, and a
     preparation hook for device-specific program setup.
 
     {!Buffer.t} values are existentially packed so that the concrete backend
@@ -26,46 +26,6 @@ type device = t
 (** Alias for {!t}, used in signatures where [device] reads better than
     [Device.t]. *)
 
-(** {1:context Context variables} *)
-
-(** Environment-backed configuration variables.
-
-    A {!var} is bound to an environment variable name and carries a default
-    value and a parser. The variable is resolved lazily from {!Sys.getenv} on
-    each call to {!get} or {!get_opt}. *)
-module Context : sig
-  (** {1:types Types} *)
-
-  type 'a var
-  (** The type for environment-backed variables of type ['a]. *)
-
-  (** {1:constructors Constructors} *)
-
-  val make : name:string -> default:'a -> parse:(string -> 'a option) -> 'a var
-  (** [make ~name ~default ~parse] is a variable bound to the environment
-      variable [name]. [parse] converts the raw string value; it must return
-      [None] to reject a value (in which case {!get} falls back to [default]).
-  *)
-
-  val int : name:string -> default:int -> int var
-  (** [int ~name ~default] is a variable that parses an integer. Leading and
-      trailing whitespace is trimmed before parsing. *)
-
-  val string : name:string -> default:string -> string var
-  (** [string ~name ~default] is a variable that parses a non-empty string. The
-      value is trimmed; empty or whitespace-only values are treated as unset. *)
-
-  (** {1:accessors Accessors} *)
-
-  val get : 'a var -> 'a
-  (** [get v] is the parsed value of [v], or the default if the environment
-      variable is unset, empty, or rejected by the parser. *)
-
-  val get_opt : 'a var -> 'a option
-  (** [get_opt v] is [Some value] if the environment variable is set and
-      accepted by the parser, and [None] otherwise. *)
-end
-
 (** {1:buffer_spec Buffer specification} *)
 
 (** Buffer allocation options.
@@ -74,8 +34,6 @@ end
     location, caching policy, and optional external backing. *)
 module Buffer_spec : sig
   type t = {
-    image : Tolk_ir.Dtype.t option;
-        (** Image format hint, or [None] for plain buffers. *)
     uncached : bool;  (** [true] to request uncached memory. *)
     cpu_access : bool;  (** [true] to request CPU-accessible device memory. *)
     host : bool;  (** [true] to allocate in host memory. *)
@@ -88,8 +46,8 @@ module Buffer_spec : sig
 
   val default : t
   (** [default] is
-      [{image = None; uncached = false; cpu_access = false; host = false; nolru
-       = false; external_ptr = None}]. *)
+      [{uncached = false; cpu_access = false; host = false; nolru = false;
+       external_ptr = None}]. *)
 end
 
 (** {1:allocator Allocator} *)
@@ -265,6 +223,9 @@ module Buffer : sig
   (** [supports_offset b] is [true] iff [b]'s allocator provides offset views.
   *)
 
+  val allocator : t -> Allocator.packed
+  (** [allocator b] is the allocator of [b]'s base buffer. *)
+
   (** {1:refcount Reference counting} *)
 
   val uop_refcount : t -> int
@@ -304,203 +265,41 @@ module Buffer : sig
   (** [addr b] is the device address of [b]. Allocates [b] if needed. *)
 end
 
-(** {1:program Compiled programs} *)
+(** {1:prog Runtime program handle} *)
 
-(** Compiled kernel programs with runtime metadata.
+type prog = {
+  call :
+    nativeint array -> global:int array -> local:int array option ->
+    vals:int64 array -> wait:bool -> timeout:int option -> float option;
+  free : unit -> unit;
+}
+(** A device-specific dispatch handle. *)
 
-    A {!t} bundles a compiled binary, the rendered source, and the
-    {!Program_spec.t} from which launch dimensions, variable bindings, and
-    buffer indices are derived. An optional cleanup callback (registered via
-    {!set_cleanup}) releases device-specific resources when {!release} is
-    called. *)
-module Program : sig
-  (** {1:types Types} *)
+type runtime = string -> bytes -> runtimevars:(string * int) list -> prog
+(** [runtime name lib ~runtimevars] creates a dispatch handle for [lib]
+    with entry point [name]. [runtimevars] maps variable names (e.g.
+    ["core_id"]) to their index in the vals array. *)
 
+(** {1:renderer_set Renderer selection} *)
+
+(** Available renderers for a device.
+
+    Each renderer carries its own {!Compiler.t} via {!Renderer.compiler}.
+    The active renderer is chosen at {!Device.compile_program} time:
+    explicit environment override takes priority, then forced entries
+    ([ctrl = 1]), then the first non-disabled entry. *)
+module Renderer_set : sig
   type t
-  (** The type for compiled kernel programs. *)
-
-  (** {1:constructors Constructors} *)
+  (** The type for renderer sets. *)
 
   val make :
-    ?applied_opts:Tolk_ir.Kernel.Opt.t list ->
-    spec:Program_spec.t ->
-    src:string ->
-    binary:bytes ->
-    unit ->
+    ?ctrl:string Helpers.Context_var.t ->
+    (Renderer.t * int Helpers.Context_var.t option) list ->
     t
-  (** [make ?applied_opts ~spec ~src ~binary ()] is a program with the given
-      spec, rendered source, and compiled binary. [applied_opts] defaults to
-      [[]]. The entry address and cleanup callback are initially unset. *)
-
-  (** {1:accessors Accessors} *)
-
-  val name : t -> string
-  (** [name t] is the kernel name from the spec. *)
-
-  val src : t -> string
-  (** [src t] is the rendered source code. *)
-
-  val applied_opts : t -> Tolk_ir.Kernel.Opt.t list
-  (** [applied_opts t] is the optimization options applied during codegen. *)
-
-  val binary : t -> bytes
-  (** [binary t] is the compiled binary blob. *)
-
-  val entry_name : t -> string
-  (** [entry_name t] is the entry symbol name. Currently equal to {!name}. *)
-
-  val entry_addr : t -> nativeint option
-  (** [entry_addr t] is the cached entry address, or [None] if not yet resolved.
-  *)
-
-  val vars : t -> Program_spec.var list
-  (** [vars t] is the scalar variable definitions in argument order. *)
-
-  val outs : t -> int list
-  (** [outs t] is the written buffer parameter indices. *)
-
-  val ins : t -> int list
-  (** [ins t] is the read buffer parameter indices. *)
-
-  val core_id : t -> Program_spec.core_id option
-  (** [core_id t] is the runtime-managed ["core_id"] metadata, if any. *)
-
-  val launch_kind : t -> Program_spec.launch_kind
-  (** [launch_kind t] is the kernel launch model. *)
-
-  val estimates : t -> Program_spec.Estimates.t
-  (** [estimates t] is the kernel cost estimates. *)
-
-  val launch_dims : t -> int list -> int array * int array option
-  (** [launch_dims t args] evaluates launch dimensions from scalar [args].
-      Delegates to {!Program_spec.launch_dims}. *)
-
-  val with_global_override : int array -> t -> t
-  (** [with_global_override global t] returns a copy of [t] with the global
-      launch dimensions replaced by the constant values in [global]. The
-      source, binary, entry address, and cleanup callback are shared with the
-      original. Used by beam search to scale down kernel size during timing. *)
-
-  (** {1:lifecycle Lifecycle} *)
-
-  val set_entry_addr : t -> nativeint -> unit
-  (** [set_entry_addr t addr] caches the resolved entry address. *)
-
-  val set_cleanup : t -> (unit -> unit) -> unit
-  (** [set_cleanup t f] registers a device-specific cleanup callback. Replaces
-      any previously registered callback. *)
-
-  val release : t -> unit
-  (** [release t] invokes the cleanup callback (if any), then clears both the
-      cleanup callback and the cached entry address. *)
-end
-
-(** {1:queue Execution queue} *)
-
-(** Kernel execution queue.
-
-    A queue serialises kernel dispatch and synchronisation for one device. The
-    abstraction models device execution only; backend-specific host scheduling
-    (e.g., CPU worker fan-out) does not belong here. *)
-module Queue : sig
-  (** {1:types Types} *)
-
-  type t = {
-    exec : Program.t -> Buffer.t list -> int list -> unit;
-        (** [exec program bufs var_args] dispatches [program] with [bufs] as
-            buffer arguments and [var_args] as scalar variable values. *)
-    timed_exec : (Program.t -> Buffer.t list -> int list -> float) option;
-        (** [timed_exec program bufs var_args] is like {!field-exec} but returns
-            the execution time in seconds. [None] if the backend does not
-            support hardware-level timing. *)
-    synchronize : unit -> unit;
-        (** [synchronize ()] blocks until all queued work completes. *)
-  }
-  (** The type for kernel execution queues. *)
-
-  (** {1:constructors Constructors} *)
-
-  val make :
-    exec:(Program.t -> Buffer.t list -> int list -> unit) ->
-    ?timed_exec:(Program.t -> Buffer.t list -> int list -> float) ->
-    synchronize:(unit -> unit) ->
-    unit ->
-    t
-  (** [make ~exec ?timed_exec ~synchronize ()] is a queue with the given
-      dispatch and synchronisation functions.
-
-      When [timed_exec] is [None], {!val-timed_exec} falls back to wall-clock
-      timing around {!val-exec} + {!val-synchronize}. *)
-
-  (** {1:operations Operations} *)
-
-  val exec : t -> Program.t -> Buffer.t list -> int list -> unit
-  (** [exec q program bufs var_args] dispatches [program] on [q]. *)
-
-  val timed_exec :
-    ?timeout_ms:int -> t -> Program.t -> Buffer.t list -> int list -> float
-  (** [timed_exec ?timeout_ms q program bufs var_args] dispatches [program] on
-      [q] and returns the execution time in seconds. Uses hardware timing if
-      available, otherwise falls back to wall-clock timing around exec +
-      synchronize.
-
-      When [timeout_ms] is provided, the execution is aborted if it exceeds
-      the timeout. Returns [infinity] on timeout. *)
-
-  val synchronize : t -> unit
-  (** [synchronize q] blocks until all work queued on [q] completes. *)
-end
-
-(** {1:compiler Compiler} *)
-
-(** Kernel compiler and renderer pairing.
-
-    A {!Compiler.t} turns rendered source code into a compiled binary. A {!pair}
-    associates a {!Renderer.t} with an optional compiler and an optional
-    environment variable control. A {!set} collects available pairs and provides
-    a global override variable.
-
-    The active pair is chosen by {!Device.compile_program} at compile time:
-    explicit environment override takes priority, then forced pairs
-    ([ctrl = 1]), then the first non-disabled pair. *)
-module Compiler : sig
-  (** {1:types Types} *)
-
-  type t = {
-    name : string;  (** Compiler name (e.g., ["clang"], ["nvcc"]). *)
-    compile : string -> bytes;
-        (** [compile src] compiles source code [src] and returns the binary.
-            Raises {!Compile_error} on failure. *)
-  }
-  (** The type for kernel compilers. *)
-
-  exception Compile_error of string
-  (** Raised by {!field-compile} when compilation fails. The payload is a
-      human-readable error message. *)
-
-  val make : name:string -> compile:(string -> bytes) -> t
-  (** [make ~name ~compile] is a compiler with the given name and compilation
-      function. *)
-
-  type pair = {
-    renderer : Renderer.t;  (** The renderer that produces source code. *)
-    compiler : t option;
-        (** The compiler that turns source into binary, or [None] for
-            renderer-only backends (e.g., interpreter). *)
-    ctrl : int Context.var option;
-        (** Environment variable controlling this pair. [1] forces selection;
-            [0] disables it. [None] means always eligible. *)
-  }
-  (** A renderer/compiler pair with optional environment control. *)
-
-  type set = {
-    pairs : pair list;
-        (** Available renderer/compiler pairs, in priority order. *)
-    ctrl : string Context.var option;
-        (** Global override: when set, its value is matched against compiler
-            names (case-insensitive) to select a pair directly. *)
-  }
-  (** A set of renderer/compiler pairs for a device. *)
+  (** [make ?ctrl entries] is a renderer set from [entries]. Each entry
+      pairs a renderer with an optional environment variable control
+      ([1] forces selection, [0] disables). [ctrl] is a global override
+      that selects by compiler name (case-insensitive). *)
 end
 
 (** {1:device_operations Device operations} *)
@@ -508,28 +307,30 @@ end
 val make :
   name:string ->
   allocator:Allocator.packed ->
-  compiler_set:Compiler.set ->
-  queue:Queue.t ->
-  prepare_program:(Program.t -> unit) ->
+  renderer_set:Renderer_set.t ->
+  runtime:runtime ->
+  synchronize:(unit -> unit) ->
   ?invalidate_caches:(unit -> unit) ->
   unit ->
   t
-(** [make ~name ~allocator ~compiler_set ~queue ~prepare_program
+(** [make ~name ~allocator ~renderer_set ~runtime ~synchronize
     ?invalidate_caches ()] is a device runtime.
 
-    [prepare_program] is called once on each freshly compiled or cloned
-    {!Program.t} before it is cached and returned — backends use this hook to
-    resolve entry addresses, load binaries, or perform device-specific setup.
+    [runtime name lib] loads a compiled binary and returns a dispatch handle.
 
-    [invalidate_caches] is called by beam search between timing runs to flush
-    device caches (e.g., L2). When [None] (default), {!invalidate_caches} is a
-    no-op. *)
+    [synchronize ()] blocks until all pending work on the device completes. *)
 
 val name : t -> string
 (** [name d] is [d]'s device name. *)
 
 val renderer : t -> Renderer.t
-(** [renderer d] is the active renderer, selected from [d]'s compiler set. *)
+(** [renderer d] is the active renderer. *)
+
+val runtime : t -> runtime
+(** [runtime d] is [d]'s runtime factory. *)
+
+val synchronize : t -> unit
+(** [synchronize d] blocks until all pending work on [d] completes. *)
 
 val compile_program :
   t ->
@@ -537,7 +338,7 @@ val compile_program :
   ?applied_opts:Tolk_ir.Kernel.Opt.t list ->
   ?estimates:Program_spec.Estimates.t ->
   Tolk_ir.Program.t ->
-  Program.t
+  Program_spec.t
 (** [compile_program d ?name ?estimates program] renders and compiles [program]
     for [d], returning a prepared {!Program.t}.
 
@@ -554,9 +355,6 @@ val create_buffer :
     elements of [dtype] on [d].
 
     [spec] defaults to {!Buffer_spec.default}. *)
-
-val queue : t -> Queue.t
-(** [queue d] is [d]'s execution queue. *)
 
 val invalidate_caches : t -> unit
 (** [invalidate_caches d] flushes device caches (e.g., L2) if the device

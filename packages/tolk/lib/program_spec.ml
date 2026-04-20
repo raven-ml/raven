@@ -14,38 +14,10 @@ let thread_count core_id = core_id.hi - core_id.lo + 1
 
 type launch_kind = Serial | Thread_groups | Threads
 
-module Scalar_expr = struct
-  type t =
-    | Const of int
-    | Var of int
-    | Neg of t
-    | Add of t * t
-    | Sub of t * t
-    | Mul of t * t
-    | Idiv of t * t
-    | Mod of t * t
-    | Shl of t * t
-    | Shr of t * t
-    | Max of t * t
-
-  let rec eval_with args = function
-    | Const n -> n
-    | Var i -> args.(i)
-    | Neg expr -> -eval_with args expr
-    | Add (lhs, rhs) -> eval_with args lhs + eval_with args rhs
-    | Sub (lhs, rhs) -> eval_with args lhs - eval_with args rhs
-    | Mul (lhs, rhs) -> eval_with args lhs * eval_with args rhs
-    | Idiv (lhs, rhs) -> eval_with args lhs / eval_with args rhs
-    | Mod (lhs, rhs) -> eval_with args lhs mod eval_with args rhs
-    | Shl (lhs, rhs) -> eval_with args lhs lsl eval_with args rhs
-    | Shr (lhs, rhs) -> eval_with args lhs asr eval_with args rhs
-    | Max (lhs, rhs) -> max (eval_with args lhs) (eval_with args rhs)
-
-  let eval args expr = eval_with (Array.of_list args) expr
-end
+module K = Kernel
 
 module Estimates = struct
-  type estimate = Int of int | Symbolic of string
+  type estimate = Int of int | Symbolic of Kernel.t
   type t = { ops : estimate; lds : estimate; mem : estimate }
 
   let zero = { ops = Int 0; lds = Int 0; mem = Int 0 }
@@ -54,10 +26,13 @@ module Estimates = struct
     match (a, b) with
     | Int a, Int b -> Int (a + b)
     | Symbolic s, Int 0 | Int 0, Symbolic s -> Symbolic s
-    | Symbolic a, Symbolic b when String.equal a b -> Symbolic a
-    | Symbolic a, Int b | Int b, Symbolic a ->
-        Symbolic (Printf.sprintf "(%s)+(%d)" a b)
-    | Symbolic a, Symbolic b -> Symbolic (Printf.sprintf "(%s)+(%s)" a b)
+    | Symbolic a, Symbolic b when a == b -> Symbolic a
+    | Symbolic a, Int b ->
+        Symbolic (Kernel.binary ~op:`Add ~lhs:a ~rhs:(Kernel.const_int b))
+    | Int a, Symbolic b ->
+        Symbolic (Kernel.binary ~op:`Add ~lhs:(Kernel.const_int a) ~rhs:b)
+    | Symbolic a, Symbolic b ->
+        Symbolic (Kernel.binary ~op:`Add ~lhs:a ~rhs:b)
 
   let ( + ) a b =
     {
@@ -93,7 +68,7 @@ module Estimates = struct
       | _ -> 1
     in
     let scalar_itemsize (dtype : Dtype.t) =
-      Dtype.itemsize (Dtype.scalar_of dtype)
+      Dtype.itemsize (Dtype.scalarize dtype)
     in
     let rec find_param id =
       match P.view program id with
@@ -102,22 +77,22 @@ module Estimates = struct
       | After { src; _ } -> find_param src
       | _ -> None
     in
-    let track_mem key (ptr : Dtype.ptr) itemsize =
+    let track_mem key (ptr : Dtype.Ptr.t) itemsize =
       let prev = Option.value ~default:0 (Hashtbl.find_opt mem key) in
       let accessed = prev + itemsize * !mults in
       Hashtbl.replace mem key
-        (if Dtype.ptr_size ptr > 0 then
-           min accessed (Dtype.ptr_size ptr * Dtype.itemsize (Dtype.base ptr))
+        (if Dtype.Ptr.size ptr > 0 then
+           min accessed (Dtype.Ptr.size ptr * Dtype.Val.itemsize (Dtype.Ptr.base ptr))
          else accessed)
     in
     let is_reg_access id =
       match P.view program id with
-      | Index { dtype = ptr; _ } -> Dtype.addrspace ptr = Reg
+      | Index { dtype = ptr; _ } -> Dtype.Ptr.addrspace ptr = Reg
       | _ -> false
     in
     let store_itemsize value =
       match P.dtype program value with
-      | Some dt -> scalar_itemsize dt
+      | Some dt -> scalar_itemsize (Dtype.Val dt)
       | None -> 1
     in
     (* Exclude load/store indexing and if-conditions from FLOP counting. *)
@@ -154,7 +129,7 @@ module Estimates = struct
          | Load { src; dtype; _ } ->
              (match find_param src with
               | Some (idx, ptr) ->
-                  track_mem (idx, false) ptr (scalar_itemsize dtype)
+                  track_mem (idx, false) ptr (scalar_itemsize (Dtype.Val dtype))
               | None -> ())
          | Store { dst; value; _ } ->
              (match find_param dst with
@@ -172,18 +147,18 @@ module Estimates = struct
             mults := !mults * (hi + 1)
         | Load { src; dtype; _ } ->
             if not (is_reg_access src) then
-              lds := !lds + scalar_itemsize dtype * !mults
+              lds := !lds + scalar_itemsize (Dtype.Val dtype) * !mults
         | Store { dst; value; _ } ->
             if not (is_reg_access dst) then
               lds := !lds + store_itemsize value * !mults
         | Unary { dtype; _ } | Binary { dtype; _ }
           when not (Hashtbl.mem dont_count id) ->
-            flops := !flops + !mults * Dtype.count dtype
+            flops := !flops + !mults * Dtype.Val.count dtype
         | Ternary { op = `Mulacc; dtype; _ }
           when not (Hashtbl.mem dont_count id) ->
-            flops := !flops + 2 * !mults * Dtype.count dtype
+            flops := !flops + 2 * !mults * Dtype.Val.count dtype
         | Ternary { dtype; _ } when not (Hashtbl.mem dont_count id) ->
-            flops := !flops + !mults * Dtype.count dtype
+            flops := !flops + !mults * Dtype.Val.count dtype
         | Wmma { dims = m, n, k; threads; _ }
           when not (Hashtbl.mem dont_count id) ->
             flops := !flops + 2 * (m * n * k / threads) * !mults
@@ -195,14 +170,19 @@ end
 
 type launch = {
   kind : launch_kind;
-  global : Scalar_expr.t array;
-  local : Scalar_expr.t array option;
+  global : K.t array;
+  local : K.t array option;
 }
 
 type t = {
   name : string;
+  src : string;
+  device : string;
   program : Program.t;
+  lib : bytes option;
+  applied_opts : Kernel.Opt.t list;
   vars : var list;
+  globals : int list;
   outs : int list;
   ins : int list;
   launch : launch;
@@ -242,53 +222,42 @@ let trace_to_param (program : Program.t) (ref_ : int) : int option =
       | Param { idx; _ } -> Some idx
       | _ -> None)
 
-let scalar_expr_of_program (program : Program.t) var_index_of_ref =
+(* Convert a Program IR reference to a K.t expression for launch dimensions. *)
+let kernel_expr_of_program (program : Program.t) var_nodes =
   let rec expr_of_ref ref_ =
     match Program.view program ref_ with
     | Const { value; _ } -> (
         match Const.view value with
-        | Int n -> Scalar_expr.Const (Int64.to_int n)
+        | Int n -> K.const_int (Int64.to_int n)
         | _ ->
             invalid_arg
               (Printf.sprintf "non-integer constant at ref %d" ref_))
     | Define_var _ -> (
-        match Hashtbl.find_opt var_index_of_ref ref_ with
-        | Some index -> Scalar_expr.Var index
+        match Hashtbl.find_opt var_nodes ref_ with
+        | Some node -> node
         | None ->
             invalid_arg
               (Printf.sprintf "unknown scalar variable at ref %d" ref_))
     | Cast { src; _ } | Bitcast { src; _ } -> expr_of_ref src
-    | Unary { op = `Neg; src; _ } -> Scalar_expr.Neg (expr_of_ref src)
-    | Binary { op = `Add; lhs; rhs; _ } ->
-        Scalar_expr.Add (expr_of_ref lhs, expr_of_ref rhs)
-    | Binary { op = `Sub; lhs; rhs; _ } ->
-        Scalar_expr.Sub (expr_of_ref lhs, expr_of_ref rhs)
-    | Binary { op = `Mul; lhs; rhs; _ } ->
-        Scalar_expr.Mul (expr_of_ref lhs, expr_of_ref rhs)
-    | Binary { op = `Idiv; lhs; rhs; _ } ->
-        Scalar_expr.Idiv (expr_of_ref lhs, expr_of_ref rhs)
-    | Binary { op = `Mod; lhs; rhs; _ } ->
-        Scalar_expr.Mod (expr_of_ref lhs, expr_of_ref rhs)
-    | Binary { op = `Shl; lhs; rhs; _ } ->
-        Scalar_expr.Shl (expr_of_ref lhs, expr_of_ref rhs)
-    | Binary { op = `Shr; lhs; rhs; _ } ->
-        Scalar_expr.Shr (expr_of_ref lhs, expr_of_ref rhs)
-    | Binary { op = `Max; lhs; rhs; _ } ->
-        Scalar_expr.Max (expr_of_ref lhs, expr_of_ref rhs)
+    | Unary { op = `Neg; src; _ } -> K.unary ~op:`Neg ~src:(expr_of_ref src)
+    | Binary { op; lhs; rhs; _ } ->
+        K.binary ~op ~lhs:(expr_of_ref lhs) ~rhs:(expr_of_ref rhs)
     | v -> unsupported_launch_expr ~ref_ v
   in
   expr_of_ref
 
-let default_dims () =
-  [| Scalar_expr.Const 1; Scalar_expr.Const 1; Scalar_expr.Const 1 |]
+let default_dims () = [| K.const_int 1; K.const_int 1; K.const_int 1 |]
 
 let collect_vars (program : Program.t) =
   let raw = ref [] in
+  let var_nodes = Hashtbl.create 8 in
   Program.iteri
     (fun ref_ (v : Program.view) ->
       match v with
       | Define_var { name; lo; hi; dtype } ->
-          raw := (ref_, { name; lo; hi; dtype }) :: !raw
+          raw := (ref_, { name; lo; hi; dtype = Dtype.Val dtype }) :: !raw;
+          Hashtbl.replace var_nodes ref_
+            (K.define_var ~name ~lo ~hi ~dtype ())
       | _ -> ())
     program;
   let sorted =
@@ -301,7 +270,7 @@ let collect_vars (program : Program.t) =
   List.iteri
     (fun index (ref_, _) -> Hashtbl.add var_index_of_ref ref_ index)
     sorted;
-  (List.map snd sorted, var_index_of_ref)
+  (List.map snd sorted, var_index_of_ref, var_nodes)
 
 let collect_buffers (program : Program.t) =
   let outs = ref [] in
@@ -363,10 +332,6 @@ let collect_launch (program : Program.t) var_index_of_ref scalar_expr =
               mark_axis seen_global ~kind:"global_idx" axis;
               set_axis global axis expr
           end
-      (* NOTE: core_id is kept as separate metadata rather than injected into
-         global_size[0], because CPU dispatch is conceptually different from GPU
-         grid dimensions; the CPU runtime reads core_id directly via
-         [Program_spec.core_id]. *)
       | Define_var { name = "core_id"; lo; hi; _ } -> (
           match !core_id with
           | Some _ -> invalid_arg "core_id must be defined at most once"
@@ -377,6 +342,7 @@ let collect_launch (program : Program.t) var_index_of_ref scalar_expr =
                 | Some index -> index
                 | None -> invalid_arg "core_id missing from variable table"
               in
+              global.(0) <- K.const_int (hi + 1);
               core_id := Some { var_index; lo; hi })
       | _ -> ())
     program;
@@ -388,32 +354,41 @@ let collect_launch (program : Program.t) var_index_of_ref scalar_expr =
   in
   (launch, !core_id)
 
-let of_program ?(estimates = Estimates.zero) ~name (program : Program.t) : t =
-  let vars, var_index_of_ref = collect_vars program in
-  let scalar_expr = scalar_expr_of_program program var_index_of_ref in
+let of_program ~name ~src ~device ?lib ?(applied_opts = [])
+    ?(estimates = Estimates.zero) (program : Program.t) : t =
+  let vars, var_index_of_ref, var_nodes = collect_vars program in
+  let kernel_expr = kernel_expr_of_program program var_nodes in
   let outs, ins = collect_buffers program in
-  let launch, core_id = collect_launch program var_index_of_ref scalar_expr in
-  { name; program; vars; outs; ins; launch; estimates; core_id }
+  let globals = List.sort_uniq Int.compare (outs @ ins) in
+  let launch, core_id = collect_launch program var_index_of_ref kernel_expr in
+  { name; src; device; program; lib; applied_opts; vars; globals; outs; ins;
+    launch; estimates; core_id }
 
+let with_lib lib t = { t with lib = Some lib }
 let with_estimates estimates t = { t with estimates }
 
 let with_global_dims dims t =
-  let new_launch =
-    { t.launch with global = Array.map (fun v -> Scalar_expr.Const v) dims }
-  in
-  { t with launch = new_launch }
+  { t with launch = { t.launch with global = Array.map K.const_int dims } }
+
 let name t = t.name
+let src t = t.src
+let device t = t.device
 let program t = t.program
+let lib t = t.lib
+let applied_opts t = t.applied_opts
 let vars t = t.vars
+let globals t = t.globals
 let outs t = t.outs
 let ins t = t.ins
-let globals t = List.sort_uniq Int.compare (t.outs @ t.ins)
 let core_id t = t.core_id
 let launch_kind t = t.launch.kind
 let estimates t = t.estimates
 
-let launch_dims t args =
-  let eval_dims dims = Array.map (Scalar_expr.eval args) dims in
+let global_size t = t.launch.global
+let local_size t = t.launch.local
+
+let launch_dims t var_vals =
+  let eval_dims dims = Array.map (fun d -> K.sym_infer d var_vals) dims in
   let global = eval_dims t.launch.global in
   let local = Option.map eval_dims t.launch.local in
   (global, local)
