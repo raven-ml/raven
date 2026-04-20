@@ -5,41 +5,58 @@
 
 type t = int -> float
 
+(* Cosine annealing factor: 1 -> 0 as ratio goes 0 -> 1. *)
+let cosine_decay_factor ratio =
+  0.5 *. (1. +. Stdlib.cos (Float.pi *. ratio))
+
 let constant value _ = value
 
 let linear ~init_value ~end_value ~steps step =
+  if steps <= 0 then invalid_arg "Schedule.linear: steps must be positive";
   if step >= steps then end_value
   else
     let ratio = float_of_int step /. float_of_int steps in
     init_value +. ((end_value -. init_value) *. ratio)
 
 let cosine_decay ~init_value ~decay_steps ?(alpha = 0.) () step =
+  if decay_steps <= 0 then
+    invalid_arg "Schedule.cosine_decay: decay_steps must be positive";
   if step >= decay_steps then alpha *. init_value
   else
     let ratio = float_of_int step /. float_of_int decay_steps in
-    let cosine_val = 0.5 *. (1. +. Stdlib.cos (Float.pi *. ratio)) in
+    let cosine_val = cosine_decay_factor ratio in
     (((1. -. alpha) *. cosine_val) +. alpha) *. init_value
 
 let exponential_decay ~init_value ~decay_rate ~decay_steps step =
+  if decay_steps <= 0 then
+    invalid_arg "Schedule.exponential_decay: decay_steps must be positive";
   let ratio = float_of_int step /. float_of_int decay_steps in
   init_value *. (decay_rate ** ratio)
 
-let polynomial_decay ~init_value ~end_value ~decay_steps ?(power = 1.0) () step
-    =
+let polynomial_decay ~init_value ~end_value ~decay_steps ?(power = 1.0) ()
+    step =
+  if decay_steps <= 0 then
+    invalid_arg "Schedule.polynomial_decay: decay_steps must be positive";
   if step >= decay_steps then end_value
   else
     let ratio = float_of_int step /. float_of_int decay_steps in
     end_value +. ((init_value -. end_value) *. ((1. -. ratio) ** power))
 
 let warmup_cosine ~init_value ~peak_value ~warmup_steps step =
+  if warmup_steps <= 0 then
+    invalid_arg "Schedule.warmup_cosine: warmup_steps must be positive";
   if step >= warmup_steps then peak_value
   else
     let ratio = float_of_int step /. float_of_int warmup_steps in
-    let cosine_val = 0.5 *. (1. -. Stdlib.cos (Float.pi *. ratio)) in
+    let cosine_val = 1. -. cosine_decay_factor ratio in
     init_value +. ((peak_value -. init_value) *. cosine_val)
 
 let warmup_cosine_decay ~init_value ~peak_value ~warmup_steps ~decay_steps
     ?(end_value = 0.) () step =
+  if warmup_steps <= 0 then
+    invalid_arg "Schedule.warmup_cosine_decay: warmup_steps must be positive";
+  if decay_steps <= 0 then
+    invalid_arg "Schedule.warmup_cosine_decay: decay_steps must be positive";
   if step <= warmup_steps then
     let ratio = float_of_int step /. float_of_int warmup_steps in
     init_value +. ((peak_value -. init_value) *. ratio)
@@ -48,24 +65,25 @@ let warmup_cosine_decay ~init_value ~peak_value ~warmup_steps ~decay_steps
     if decay_step >= decay_steps then end_value
     else
       let ratio = float_of_int decay_step /. float_of_int decay_steps in
-      let cosine_val = 0.5 *. (1. +. Stdlib.cos (Float.pi *. ratio)) in
+      let cosine_val = cosine_decay_factor ratio in
       end_value +. ((peak_value -. end_value) *. cosine_val)
 
-let cosine_decay_restarts ~init_value ~decay_steps ?(t_mul = 1.0) ?(m_mul = 1.0)
-    ?(alpha = 0.) () =
+let cosine_decay_restarts ~init_value ~decay_steps ?(t_mul = 1.0)
+    ?(m_mul = 1.0) ?(alpha = 0.) () =
   if decay_steps <= 0 then
     invalid_arg "Schedule.cosine_decay_restarts: decay_steps must be positive";
   fun step ->
-    if t_mul = 1.0 then begin
+    (* Fast path for uniform period (exact float comparison is
+       intentional: 1.0 is the unmodified default). *)
+    if t_mul = 1.0 then
       let cycle = step / decay_steps in
       let pos = step - (cycle * decay_steps) in
       let amp = init_value *. (m_mul ** float_of_int cycle) in
       let ratio = float_of_int pos /. float_of_int decay_steps in
-      let cosine_val = 0.5 *. (1. +. Stdlib.cos (Float.pi *. ratio)) in
+      let cosine_val = cosine_decay_factor ratio in
       (((1. -. alpha) *. cosine_val) +. alpha) *. amp
-    end
     else begin
-      (* Geometric series: find which cycle step falls in *)
+      (* Geometric period: find which cycle [step] falls in. *)
       let remaining = ref step in
       let cycle = ref 0 in
       let period = ref (float_of_int decay_steps) in
@@ -76,7 +94,7 @@ let cosine_decay_restarts ~init_value ~decay_steps ?(t_mul = 1.0) ?(m_mul = 1.0)
       done;
       let amp = init_value *. (m_mul ** float_of_int !cycle) in
       let ratio = float_of_int !remaining /. !period in
-      let cosine_val = 0.5 *. (1. +. Stdlib.cos (Float.pi *. ratio)) in
+      let cosine_val = cosine_decay_factor ratio in
       (((1. -. alpha) *. cosine_val) +. alpha) *. amp
     end
 
@@ -97,7 +115,7 @@ let one_cycle ~max_value ~total_steps ?(div_factor = 25.0)
       if decay_step >= decay_steps then end_value
       else
         let ratio = float_of_int decay_step /. float_of_int decay_steps in
-        let cosine_val = 0.5 *. (1. +. Stdlib.cos (Float.pi *. ratio)) in
+        let cosine_val = cosine_decay_factor ratio in
         end_value +. ((max_value -. end_value) *. cosine_val)
 
 let piecewise_constant ~boundaries ~values =
