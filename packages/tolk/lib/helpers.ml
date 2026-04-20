@@ -5,7 +5,53 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(* Shared helpers. *)
+(* Environment *)
+
+let getenv name default =
+  match Sys.getenv_opt name with
+  | Some s -> (try int_of_string s with Failure _ -> default)
+  | None -> default
+
+let getenv_str name default =
+  match Sys.getenv_opt name with
+  | Some s when s <> "" -> s
+  | _ -> default
+
+let amx = getenv "AMX" 0 <> 0
+let allow_half8 = getenv "ALLOW_HALF8" 0 <> 0
+
+(* Context variables *)
+
+module Context_var = struct
+  type 'a t = { key : string; value : 'a ref }
+
+  let int ~key ~default =
+    let value = getenv key default in
+    { key; value = ref value }
+
+  let string ~key ~default =
+    let value =
+      match Sys.getenv_opt key with
+      | Some s ->
+          let v = String.trim s in
+          if v = "" then default else v
+      | None -> default
+    in
+    { key; value = ref value }
+
+  let get v = !(v.value)
+
+  type binding = B : 'a t * 'a -> binding
+
+  let with_context overrides f =
+    let saved = List.map (fun (B (v, _)) -> B (v, !(v.value))) overrides in
+    List.iter (fun (B (v, x)) -> v.value := x) overrides;
+    Fun.protect
+      ~finally:(fun () -> List.iter (fun (B (v, old)) -> v.value := old) saved)
+      f
+end
+
+(* Collections *)
 
 (* Preserves first occurrence, removes duplicates. *)
 let dedup_by eq lst =
