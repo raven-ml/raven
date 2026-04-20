@@ -1951,6 +1951,12 @@ let rfft ?out:_ _ ~dtype:_ ~axes:_ =
 let irfft ?out:_ ?s:_ _ ~dtype:_ ~axes:_ =
   invalid_arg "irfft: not implemented"
 
+let dct _ ~dct_type:_ ~ortho:_ ~axes:_ =
+  invalid_arg "dct: not implemented"
+
+let dst _ ~dst_type:_ ~ortho:_ ~axes:_ =
+  invalid_arg "dst: not implemented"
+
 let cholesky ~upper:_ _ =
   invalid_arg "cholesky: not implemented"
 

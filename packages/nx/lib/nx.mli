@@ -2458,17 +2458,17 @@ val rfft :
   ?axis:int ->
   ?n:int ->
   ?norm:fft_norm ->
+  dtype:(Complex.t, 'b) dtype ->
   (float, 'a) t ->
-  (Complex.t, complex64_elt) t
-(** [rfft ?axis ?n ?norm x] is the 1-D FFT of real input. Returns only the
-    non-redundant positive frequencies; the output size along the transformed
-    axis is [n/2 + 1].
+  (Complex.t, 'b) t
+(** [rfft ?axis ?n ?norm ~dtype x] is the 1-D FFT of real input. Returns only
+    the non-redundant positive frequencies; the output size along the
+    transformed axis is [n/2 + 1]. [dtype] selects the output precision:
+    [complex64] for single precision, [complex128] for double.
 
-    {@ocaml[
-      # create float64 [| 4 |] [| 0.; 1.; 2.; 3. |]
-        |> rfft |> shape
-      - : int array = [|3|]
-    ]}
+    The input and output precisions must be compatible:
+    - [Float32] input with [~dtype:complex64]
+    - [Float64] input with [~dtype:complex128]
 
     See also {!irfft}, {!fft}. *)
 
@@ -2476,10 +2476,12 @@ val irfft :
   ?axis:int ->
   ?n:int ->
   ?norm:fft_norm ->
+  dtype:(float, 'b) dtype ->
   (Complex.t, 'a) t ->
-  (float, float64_elt) t
-(** [irfft ?axis ?n ?norm x] is the inverse of {!rfft}, producing real output.
-    Assumes Hermitian symmetry.
+  (float, 'b) t
+(** [irfft ?axis ?n ?norm ~dtype x] is the inverse of {!rfft}, producing real
+    output. Assumes Hermitian symmetry. [dtype] selects the output precision:
+    [float32] or [float64].
 
     See also {!rfft}. *)
 
@@ -2487,9 +2489,10 @@ val rfft2 :
   ?axes:int list ->
   ?s:int list ->
   ?norm:fft_norm ->
+  dtype:(Complex.t, 'b) dtype ->
   (float, 'a) t ->
-  (Complex.t, complex64_elt) t
-(** [rfft2 ?axes ?s ?norm x] is the 2-D FFT of real input.
+  (Complex.t, 'b) t
+(** [rfft2 ?axes ?s ?norm ~dtype x] is the 2-D FFT of real input.
 
     See also {!irfft2}, {!rfft}. *)
 
@@ -2497,17 +2500,19 @@ val irfft2 :
   ?axes:int list ->
   ?s:int list ->
   ?norm:fft_norm ->
+  dtype:(float, 'b) dtype ->
   (Complex.t, 'a) t ->
-  (float, float64_elt) t
-(** [irfft2 ?axes ?s ?norm x] is the inverse of {!rfft2}. *)
+  (float, 'b) t
+(** [irfft2 ?axes ?s ?norm ~dtype x] is the inverse of {!rfft2}. *)
 
 val rfftn :
   ?axes:int list ->
   ?s:int list ->
   ?norm:fft_norm ->
+  dtype:(Complex.t, 'b) dtype ->
   (float, 'a) t ->
-  (Complex.t, complex64_elt) t
-(** [rfftn ?axes ?s ?norm x] is the N-D FFT of real input.
+  (Complex.t, 'b) t
+(** [rfftn ?axes ?s ?norm ~dtype x] is the N-D FFT of real input.
 
     See also {!irfftn}, {!rfft}. *)
 
@@ -2515,26 +2520,29 @@ val irfftn :
   ?axes:int list ->
   ?s:int list ->
   ?norm:fft_norm ->
+  dtype:(float, 'b) dtype ->
   (Complex.t, 'a) t ->
-  (float, float64_elt) t
-(** [irfftn ?axes ?s ?norm x] is the inverse of {!rfftn}. *)
+  (float, 'b) t
+(** [irfftn ?axes ?s ?norm ~dtype x] is the inverse of {!rfftn}. *)
 
 val hfft :
   ?axis:int ->
   ?n:int ->
   ?norm:fft_norm ->
+  dtype:(float, 'b) dtype ->
   (Complex.t, 'a) t ->
-  (float, float64_elt) t
-(** [hfft ?axis ?n ?norm x] is the FFT of a signal with Hermitian symmetry,
-    producing real output. *)
+  (float, 'b) t
+(** [hfft ?axis ?n ?norm ~dtype x] is the FFT of a signal with Hermitian
+    symmetry, producing real output. *)
 
 val ihfft :
   ?axis:int ->
   ?n:int ->
   ?norm:fft_norm ->
+  dtype:(Complex.t, 'b) dtype ->
   (float, 'a) t ->
-  (Complex.t, complex64_elt) t
-(** [ihfft ?axis ?n ?norm x] is the inverse of {!hfft}. *)
+  (Complex.t, 'b) t
+(** [ihfft ?axis ?n ?norm ~dtype x] is the inverse of {!hfft}. *)
 
 val fftfreq : ?d:float -> int -> (float, float64_elt) t
 (** [fftfreq ?d n] is the DFT sample frequencies for window length [n] and
@@ -2566,6 +2574,81 @@ val fftshift : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t
 
 val ifftshift : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t
 (** [ifftshift ?axes t] is the inverse of {!fftshift}. *)
+
+(** {2:dct Discrete Cosine and Sine Transforms} *)
+
+val dct :
+  ?type_:int ->
+  ?axis:int ->
+  ?norm:fft_norm ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [dct ?type_ ?axis ?norm x] computes the 1-D Discrete Cosine Transform
+    along [axis] (default [-1]). [type_] selects the DCT variant (1–4,
+    default 2). [norm] defaults to [`Backward].
+
+    See also {!idct}, {!dctn}. *)
+
+val idct :
+  ?type_:int ->
+  ?axis:int ->
+  ?norm:fft_norm ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [idct ?type_ ?axis ?norm x] is the inverse of {!dct}. DCT-II and DCT-III
+    are inverses of each other, as are DCT-I and DCT-IV of themselves. *)
+
+val dctn :
+  ?type_:int ->
+  ?norm:fft_norm ->
+  ?axes:int list ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [dctn ?type_ ?norm ?axes x] computes the N-D DCT. [axes] defaults to all. *)
+
+val idctn :
+  ?type_:int ->
+  ?norm:fft_norm ->
+  ?axes:int list ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [idctn ?type_ ?norm ?axes x] is the inverse of {!dctn}. *)
+
+val dst :
+  ?type_:int ->
+  ?axis:int ->
+  ?norm:fft_norm ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [dst ?type_ ?axis ?norm x] computes the 1-D Discrete Sine Transform
+    along [axis] (default [-1]). [type_] selects the DST variant (1–4,
+    default 2). [norm] defaults to [`Backward].
+
+    See also {!idst}, {!dstn}. *)
+
+val idst :
+  ?type_:int ->
+  ?axis:int ->
+  ?norm:fft_norm ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [idst ?type_ ?axis ?norm x] is the inverse of {!dst}. *)
+
+val dstn :
+  ?type_:int ->
+  ?norm:fft_norm ->
+  ?axes:int list ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [dstn ?type_ ?norm ?axes x] computes the N-D DST. [axes] defaults to all. *)
+
+val idstn :
+  ?type_:int ->
+  ?norm:fft_norm ->
+  ?axes:int list ->
+  (float, 'a) t ->
+  (float, 'a) t
+(** [idstn ?type_ ?norm ?axes x] is the inverse of {!dstn}. *)
 
 (** {1:activation Activation functions} *)
 

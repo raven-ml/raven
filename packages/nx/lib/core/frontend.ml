@@ -3682,15 +3682,15 @@ module Make (B : Backend_intf.S) = struct
     let r = B.ifft xp ~axes:(Array.of_list axes_list) in
     apply_fft_scale scale r
 
-  let rfftn ?axes ?s ?(norm = `Backward) x =
+  let rfftn ~dtype ?axes ?s ?(norm = `Backward) x =
     let nd = ndim x in
     let axes_list = match axes with None -> [ nd - 1 ] | Some ax -> ax in
     let xp = pad_or_truncate_for_fft x axes_list s in
     let scale = fft_norm_scale norm axes_list xp in
-    let r = B.rfft xp ~dtype:Dtype.Complex128 ~axes:(Array.of_list axes_list) in
+    let r = B.rfft xp ~dtype ~axes:(Array.of_list axes_list) in
     apply_fft_scale scale r
 
-  let irfftn ?axes ?s ?(norm = `Backward) x =
+  let irfftn ~dtype ?axes ?s ?(norm = `Backward) x =
     let nd = ndim x in
     let axes_list = match axes with None -> [ nd - 1 ] | Some ax -> ax in
     let input_shape = shape x in
@@ -3716,7 +3716,7 @@ module Make (B : Backend_intf.S) = struct
       match s with None -> None | Some _ -> Some (Array.of_list output_sizes)
     in
     let r =
-      B.irfft ?s:s_param x ~dtype:Dtype.Float64 ~axes:(Array.of_list axes_list)
+      B.irfft ?s:s_param x ~dtype ~axes:(Array.of_list axes_list)
     in
     if norm_scale <> 1.0 then
       mul r (scalar (B.context r) (B.dtype r) norm_scale)
@@ -3731,13 +3731,13 @@ module Make (B : Backend_intf.S) = struct
     let s = match n with None -> None | Some sz -> Some [ sz ] in
     ifftn x ~axes:[ axis ] ?s ~norm
 
-  let rfft ?(axis = -1) ?n ?(norm = `Backward) x =
+  let rfft ?(axis = -1) ?n ?(norm = `Backward) ~dtype x =
     let s = match n with None -> None | Some sz -> Some [ sz ] in
-    rfftn x ~axes:[ axis ] ?s ~norm
+    rfftn ~dtype x ~axes:[ axis ] ?s ~norm
 
-  let irfft ?(axis = -1) ?n ?(norm = `Backward) x =
+  let irfft ?(axis = -1) ?n ?(norm = `Backward) ~dtype x =
     let s = match n with None -> None | Some sz -> Some [ sz ] in
-    irfftn x ~axes:[ axis ] ?s ~norm
+    irfftn ~dtype x ~axes:[ axis ] ?s ~norm
 
   (* 2D FFT *)
 
@@ -3771,36 +3771,36 @@ module Make (B : Backend_intf.S) = struct
         (match axes with None -> List.init (ndim x) Fun.id | Some ax -> ax)
       ?s ~norm
 
-  let rfft2 ?axes ?s ?(norm = `Backward) x =
+  let rfft2 ?axes ?s ?(norm = `Backward) ~dtype x =
     let axes_list = check_fft2 ~op:"rfft2" x axes in
-    rfftn x ~axes:axes_list ?s ~norm
+    rfftn ~dtype x ~axes:axes_list ?s ~norm
 
-  let irfft2 ?axes ?s ?(norm = `Backward) x =
+  let irfft2 ?axes ?s ?(norm = `Backward) ~dtype x =
     let axes_list = check_fft2 ~op:"irfft2" x axes in
-    irfftn x ~axes:axes_list ?s ~norm
+    irfftn ~dtype x ~axes:axes_list ?s ~norm
 
-  let rfftn ?axes ?s ?(norm = `Backward) x =
-    rfftn x
+  let rfftn ?axes ?s ?(norm = `Backward) ~dtype x =
+    rfftn ~dtype x
       ~axes:
         (match axes with None -> List.init (ndim x) Fun.id | Some ax -> ax)
       ?s ~norm
 
-  let irfftn ?axes ?s ?(norm = `Backward) x =
-    irfftn x
+  let irfftn ?axes ?s ?(norm = `Backward) ~dtype x =
+    irfftn ~dtype x
       ~axes:
         (match axes with None -> List.init (ndim x) Fun.id | Some ax -> ax)
       ?s ~norm
 
   (* Hermitian FFT *)
-  let hfft ?(axis = -1) ?n ?norm x =
+  let hfft ?(axis = -1) ?n ?(norm = `Backward) ~dtype x =
     let n = match n with None -> 2 * (dim axis x - 1) | Some n -> n in
     let axis = resolve_single_axis x axis in
-    irfftn x ~axes:[ axis ] ~s:[ n ] ?norm
+    irfftn ~dtype x ~axes:[ axis ] ~s:[ n ] ~norm
 
-  let ihfft ?(axis = -1) ?n ?norm x =
+  let ihfft ?(axis = -1) ?n ?(norm = `Backward) ~dtype x =
     let n = match n with None -> dim axis x | Some n -> n in
     let axis = resolve_single_axis x axis in
-    rfftn x ~axes:[ axis ] ~s:[ n ] ?norm
+    rfftn ~dtype x ~axes:[ axis ] ~s:[ n ] ~norm
 
   (* FFT helpers *)
   let fftfreq ctx ?(d = 1.0) n =
@@ -3852,6 +3852,70 @@ module Make (B : Backend_intf.S) = struct
         let axis = resolve_single_axis acc axis in
         roll (-(sh.(axis) / 2)) acc ~axis)
       x axes_list
+
+  (* ───── Discrete Cosine / Sine Transforms ───── *)
+
+  let dctn ?(type_ = 2) ?(norm = `Backward) ?axes x =
+    let nd = ndim x in
+    let axes_list =
+      match axes with None -> List.init nd Fun.id | Some ax -> ax
+    in
+    if type_ < 1 || type_ > 4 then
+      invalid_arg "dct: type must be 1, 2, 3, or 4";
+    let ortho = norm = `Ortho in
+    let r = B.dct x ~dct_type:type_ ~ortho ~axes:(Array.of_list axes_list) in
+    if (not ortho) && norm = `Forward then
+      let n =
+        List.fold_left
+          (fun acc ax ->
+            let ax = if ax < 0 then nd + ax else ax in
+            acc * (shape x).(ax))
+          1 axes_list
+      in
+      mul r (scalar (B.context r) (B.dtype r) (1.0 /. float_of_int n))
+    else r
+
+  let dstn ?(type_ = 2) ?(norm = `Backward) ?axes x =
+    let nd = ndim x in
+    let axes_list =
+      match axes with None -> List.init nd Fun.id | Some ax -> ax
+    in
+    if type_ < 1 || type_ > 4 then
+      invalid_arg "dst: type must be 1, 2, 3, or 4";
+    let ortho = norm = `Ortho in
+    let r = B.dst x ~dst_type:type_ ~ortho ~axes:(Array.of_list axes_list) in
+    if (not ortho) && norm = `Forward then
+      let n =
+        List.fold_left
+          (fun acc ax ->
+            let ax = if ax < 0 then nd + ax else ax in
+            acc * (shape x).(ax))
+          1 axes_list
+      in
+      mul r (scalar (B.context r) (B.dtype r) (1.0 /. float_of_int n))
+    else r
+
+  let dct ?(type_ = 2) ?(axis = -1) ?(norm = `Backward) x =
+    dctn ~type_ ~norm ~axes:[ axis ] x
+
+  let dst ?(type_ = 2) ?(axis = -1) ?(norm = `Backward) x =
+    dstn ~type_ ~norm ~axes:[ axis ] x
+
+  let idct ?(type_ = 2) ?(axis = -1) ?(norm = `Backward) x =
+    let inv_type = match type_ with 2 -> 3 | 3 -> 2 | t -> t in
+    dct ~type_:inv_type ~axis ~norm x
+
+  let idst ?(type_ = 2) ?(axis = -1) ?(norm = `Backward) x =
+    let inv_type = match type_ with 2 -> 3 | 3 -> 2 | t -> t in
+    dst ~type_:inv_type ~axis ~norm x
+
+  let idctn ?(type_ = 2) ?(norm = `Backward) ?axes x =
+    let inv_type = match type_ with 2 -> 3 | 3 -> 2 | t -> t in
+    dctn ~type_:inv_type ~norm ?axes x
+
+  let idstn ?(type_ = 2) ?(norm = `Backward) ?axes x =
+    let inv_type = match type_ with 2 -> 3 | 3 -> 2 | t -> t in
+    dstn ~type_:inv_type ~norm ?axes x
 
   (* ───── Neural Network Operations ───── *)
 

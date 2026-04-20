@@ -193,11 +193,11 @@ let test_rfft_irfft () =
         sin (two_pi *. Float.of_int i /. Float.of_int n_even))
   in
   let input_even = Nx.create Nx.float64 shape_even signal_even in
-  let rfft_even = Nx.rfft input_even in
+  let rfft_even = Nx.rfft ~dtype:Nx.complex128 input_even in
   equal ~msg:"rfft even shape" (array int)
     [| (n_even / 2) + 1 |]
     (Nx.shape rfft_even);
-  let irfft_even = Nx.irfft rfft_even ~n:n_even in
+  let irfft_even = Nx.irfft ~dtype:Nx.float64 rfft_even ~n:n_even in
   check_t ~eps:1e-10 "rfft even reconstruct" shape_even signal_even irfft_even;
 
   (* 1D odd *)
@@ -205,11 +205,11 @@ let test_rfft_irfft () =
   let shape_odd = [| n_odd |] in
   let signal_odd = Array.init n_odd (fun i -> Float.of_int i) in
   let input_odd = Nx.create Nx.float64 shape_odd signal_odd in
-  let rfft_odd = Nx.rfft input_odd in
+  let rfft_odd = Nx.rfft ~dtype:Nx.complex128 input_odd in
   equal ~msg:"rfft odd shape" (array int)
     [| (n_odd / 2) + 1 |]
     (Nx.shape rfft_odd);
-  let irfft_odd = Nx.irfft rfft_odd ~n:n_odd in
+  let irfft_odd = Nx.irfft ~dtype:Nx.float64 rfft_odd ~n:n_odd in
   check_t ~eps:1e-10 "rfft odd reconstruct" shape_odd signal_odd irfft_odd;
 
   (* 2D *)
@@ -217,9 +217,9 @@ let test_rfft_irfft () =
   let shape_2d = [| m; n |] in
   let signal_2d = Array.init (m * n) Float.of_int in
   let input_2d = Nx.create Nx.float64 shape_2d signal_2d in
-  let rfft_2d = Nx.rfft2 input_2d in
+  let rfft_2d = Nx.rfft2 ~dtype:Nx.complex128 input_2d in
   equal ~msg:"rfft2 shape" (array int) [| m; (n / 2) + 1 |] (Nx.shape rfft_2d);
-  let irfft_2d = Nx.irfft2 rfft_2d ~s:[ m; n ] in
+  let irfft_2d = Nx.irfft2 ~dtype:Nx.float64 rfft_2d ~s:[ m; n ] in
   check_t "rfft2 reconstruct" shape_2d signal_2d irfft_2d;
 
   (* ND last axis transform *)
@@ -227,10 +227,10 @@ let test_rfft_irfft () =
   let size_nd = 2 * 3 * 8 in
   let signal_nd = Array.init size_nd (fun i -> Float.of_int i) in
   let input_nd = Nx.create Nx.float64 shape_nd signal_nd in
-  let rfft_nd = Nx.rfftn input_nd ~axes:[ 2 ] in
+  let rfft_nd = Nx.rfftn ~dtype:Nx.complex128 input_nd ~axes:[ 2 ] in
   equal ~msg:"rfftn last axis shape" (array int) [| 2; 3; 5 |]
     (Nx.shape rfft_nd);
-  let irfft_nd = Nx.irfftn rfft_nd ~axes:[ 2 ] ~s:[ 8 ] in
+  let irfft_nd = Nx.irfftn ~dtype:Nx.float64 rfft_nd ~axes:[ 2 ] ~s:[ 8 ] in
   check_t "rfftn last axis reconstruct" shape_nd signal_nd irfft_nd
 
 let test_rfft_axes () =
@@ -240,15 +240,15 @@ let test_rfft_axes () =
   let input = Nx.create Nx.float64 shape signal in
 
   (* Specific axis *)
-  let rfft_axis1 = Nx.rfftn input ~axes:[ 1 ] in
+  let rfft_axis1 = Nx.rfftn ~dtype:Nx.complex128 input ~axes:[ 1 ] in
   equal ~msg:"rfft axis 1" (array int) [| 4; 4; 8 |] (Nx.shape rfft_axis1);
 
   (* Multiple axes, last is halved *)
-  let rfft_axes_01 = Nx.rfftn input ~axes:[ 0; 1 ] in
+  let rfft_axes_01 = Nx.rfftn ~dtype:Nx.complex128 input ~axes:[ 0; 1 ] in
   equal ~msg:"rfft axes [0;1]" (array int) [| 4; 4; 8 |] (Nx.shape rfft_axes_01);
 
   (* Negative axis *)
-  let rfft_neg1 = Nx.rfftn input ~axes:[ -1 ] in
+  let rfft_neg1 = Nx.rfftn ~dtype:Nx.complex128 input ~axes:[ -1 ] in
   equal ~msg:"rfft axis -1" (array int) [| 4; 6; 5 |] (Nx.shape rfft_neg1)
 
 let test_rfft_size () =
@@ -261,11 +261,11 @@ let test_rfft_size () =
 
   (* Pad last axis *)
   let pad_size = 16 in
-  let rfft_padded = Nx.rfft input ~n:pad_size in
+  let rfft_padded = Nx.rfft ~dtype:Nx.complex128 input ~n:pad_size in
   equal ~msg:"rfft padded" (array int)
     [| (pad_size / 2) + 1 |]
     (Nx.shape rfft_padded);
-  let irfft_padded = Nx.irfft rfft_padded ~n in
+  let irfft_padded = Nx.irfft ~dtype:Nx.float64 rfft_padded ~n in
   (* Note: rfft(x, n=16) -> irfft(X, n=8) does NOT give back the original
      signal. This is expected behavior that matches NumPy. *)
   equal ~msg:"rfft pad reconstruct shape" (array int) shape
@@ -288,7 +288,7 @@ let test_rfft_size () =
 
   (* Truncate *)
   let trunc_size = 4 in
-  let rfft_trunc = Nx.rfft input ~n:trunc_size in
+  let rfft_trunc = Nx.rfft ~dtype:Nx.complex128 input ~n:trunc_size in
   equal ~msg:"rfft trunc" (array int)
     [| (trunc_size / 2) + 1 |]
     (Nx.shape rfft_trunc)
@@ -300,18 +300,18 @@ let test_rfft_norm () =
   let input = Nx.create Nx.float64 shape signal in
 
   (* Backward *)
-  let rfft_backward = Nx.rfft input ~norm:`Backward in
-  let irfft_backward = Nx.irfft rfft_backward ~n ~norm:`Backward in
+  let rfft_backward = Nx.rfft ~dtype:Nx.complex128 input ~norm:`Backward in
+  let irfft_backward = Nx.irfft ~dtype:Nx.float64 rfft_backward ~n ~norm:`Backward in
   check_t "rfft backward" shape signal irfft_backward;
 
   (* Forward *)
-  let rfft_forward = Nx.rfft input ~norm:`Forward in
-  let irfft_forward = Nx.irfft rfft_forward ~n ~norm:`Forward in
+  let rfft_forward = Nx.rfft ~dtype:Nx.complex128 input ~norm:`Forward in
+  let irfft_forward = Nx.irfft ~dtype:Nx.float64 rfft_forward ~n ~norm:`Forward in
   check_t "rfft forward" shape signal irfft_forward;
 
   (* Ortho *)
-  let rfft_ortho = Nx.rfft input ~norm:`Ortho in
-  let irfft_ortho = Nx.irfft rfft_ortho ~n ~norm:`Ortho in
+  let rfft_ortho = Nx.rfft ~dtype:Nx.complex128 input ~norm:`Ortho in
+  let irfft_ortho = Nx.irfft ~dtype:Nx.float64 rfft_ortho ~n ~norm:`Ortho in
   check_t "rfft ortho" shape signal irfft_ortho
 
 let test_rfft_edge_cases () =
@@ -323,9 +323,9 @@ let test_rfft_edge_cases () =
   let shape = [| 1 |] in
   let signal_data = [| 5.0 |] in
   let single = Nx.create Nx.float64 shape signal_data in
-  let rfft_single = Nx.rfft single in
+  let rfft_single = Nx.rfft ~dtype:Nx.complex128 single in
   equal ~msg:"rfft size 1 shape" (array int) [| 1 |] (Nx.shape rfft_single);
-  let irfft_single = Nx.irfft rfft_single ~n:1 in
+  let irfft_single = Nx.irfft ~dtype:Nx.float64 rfft_single ~n:1 in
   check_t "rfft size 1 reconstruct" shape signal_data irfft_single
 
 (* Test Hermitian FFT *)
@@ -336,9 +336,9 @@ let test_hfft_ihfft () =
     Array.init n (fun i -> sin (two_pi *. Float.of_int i /. Float.of_int n))
   in
   let input = Nx.create Nx.float64 shape signal in
-  let ihfft_out = Nx.ihfft input ~n in
+  let ihfft_out = Nx.ihfft ~dtype:Nx.complex128 input ~n in
   equal ~msg:"ihfft shape" (array int) [| (n / 2) + 1 |] (Nx.shape ihfft_out);
-  let hfft_out = Nx.hfft ihfft_out ~n in
+  let hfft_out = Nx.hfft ~dtype:Nx.float64 ihfft_out ~n in
   check_t "hfft/ihfft" shape signal hfft_out
 
 (* Test helper routines *)
@@ -388,6 +388,153 @@ let test_fftshift () =
   let unshifted = Nx.ifftshift shifted in
   check_t "ifftshift 1D" x_shape x_data unshifted
 
+(* Test rfft with float32 input (was crashing before fix) *)
+let test_rfft_float32 () =
+  let n = 8 in
+  let shape = [| n |] in
+  let signal =
+    Array.init n (fun i ->
+        sin (two_pi *. Float.of_int i /. Float.of_int n))
+  in
+  let input = Nx.create Nx.float32 shape signal in
+  let rfft_out = Nx.rfft ~dtype:Nx.complex64 input in
+  equal ~msg:"rfft float32 shape" (array int)
+    [| (n / 2) + 1 |]
+    (Nx.shape rfft_out);
+  (* Verify output is finite *)
+  let mag = Nx.abs (Nx.cast Nx.float64 rfft_out) in
+  let all_finite = Nx.all (Nx.isfinite mag) in
+  equal ~msg:"rfft float32 all finite" bool true (Nx.item [] all_finite)
+
+(* Test DCT/IDCT roundtrip *)
+let test_dct_idct () =
+  (* Type II/III roundtrip (most common) *)
+  let n = 8 in
+  let shape = [| n |] in
+  let signal = Array.init n (fun i -> Float.of_int i +. 1.0) in
+  let input = Nx.create Nx.float64 shape signal in
+  let dct_out = Nx.dct input ~norm:`Ortho in
+  equal ~msg:"dct shape" (array int) shape (Nx.shape dct_out);
+  let idct_out = Nx.idct dct_out ~norm:`Ortho in
+  check_t ~eps:1e-10 "dct-II/idct ortho roundtrip" shape signal idct_out;
+
+  (* Type I roundtrip *)
+  let input1 = Nx.create Nx.float64 shape signal in
+  let dct1 = Nx.dct ~type_:1 input1 ~norm:`Ortho in
+  let idct1 = Nx.idct ~type_:1 dct1 ~norm:`Ortho in
+  check_t ~eps:1e-10 "dct-I roundtrip" shape signal idct1;
+
+  (* Type IV roundtrip *)
+  let input4 = Nx.create Nx.float64 shape signal in
+  let dct4 = Nx.dct ~type_:4 input4 ~norm:`Ortho in
+  let idct4 = Nx.idct ~type_:4 dct4 ~norm:`Ortho in
+  check_t ~eps:1e-10 "dct-IV roundtrip" shape signal idct4
+
+let test_dct_float32 () =
+  let n = 8 in
+  let shape = [| n |] in
+  let signal = Array.init n (fun i -> Float.of_int i +. 1.0) in
+  let input = Nx.create Nx.float32 shape signal in
+  let dct_out = Nx.dct input ~norm:`Ortho in
+  equal ~msg:"dct float32 shape" (array int) shape (Nx.shape dct_out);
+  let idct_out = Nx.idct dct_out ~norm:`Ortho in
+  check_t ~eps:1e-4 "dct float32 roundtrip" shape signal idct_out
+
+let test_dct_axes () =
+  let shape = [| 3; 8 |] in
+  let signal = Array.init (3 * 8) Float.of_int in
+  let input = Nx.create Nx.float64 shape signal in
+
+  (* DCT along last axis *)
+  let dct_last = Nx.dct input ~axis:(-1) ~norm:`Ortho in
+  equal ~msg:"dct axis -1 shape" (array int) shape (Nx.shape dct_last);
+  let idct_last = Nx.idct dct_last ~axis:(-1) ~norm:`Ortho in
+  check_t ~eps:1e-10 "dct axis -1 roundtrip" shape signal idct_last;
+
+  (* DCT along first axis *)
+  let dct_first = Nx.dct input ~axis:0 ~norm:`Ortho in
+  equal ~msg:"dct axis 0 shape" (array int) shape (Nx.shape dct_first);
+  let idct_first = Nx.idct dct_first ~axis:0 ~norm:`Ortho in
+  check_t ~eps:1e-10 "dct axis 0 roundtrip" shape signal idct_first
+
+let test_dct_norm () =
+  let n = 4 in
+  let shape = [| n |] in
+  let signal = [| 1.0; 2.0; 3.0; 4.0 |] in
+  let input = Nx.create Nx.float64 shape signal in
+
+  (* Backward norm *)
+  let dct_bwd = Nx.dct input ~norm:`Backward in
+  let idct_bwd = Nx.idct dct_bwd ~norm:`Backward in
+  check_t ~eps:1e-10 "dct backward roundtrip" shape signal idct_bwd;
+
+  (* Ortho norm *)
+  let dct_ortho = Nx.dct input ~norm:`Ortho in
+  let idct_ortho = Nx.idct dct_ortho ~norm:`Ortho in
+  check_t ~eps:1e-10 "dct ortho roundtrip" shape signal idct_ortho
+
+(* Test DST/IDST roundtrip *)
+let test_dst_idst () =
+  let n = 8 in
+  let shape = [| n |] in
+  let signal = Array.init n (fun i -> Float.of_int i +. 1.0) in
+  let input = Nx.create Nx.float64 shape signal in
+  let dst_out = Nx.dst input ~norm:`Ortho in
+  equal ~msg:"dst shape" (array int) shape (Nx.shape dst_out);
+  let idst_out = Nx.idst dst_out ~norm:`Ortho in
+  check_t ~eps:1e-10 "dst-II/idst ortho roundtrip" shape signal idst_out;
+
+  (* Type IV roundtrip *)
+  let input4 = Nx.create Nx.float64 shape signal in
+  let dst4 = Nx.dst ~type_:4 input4 ~norm:`Ortho in
+  let idst4 = Nx.idst ~type_:4 dst4 ~norm:`Ortho in
+  check_t ~eps:1e-10 "dst-IV roundtrip" shape signal idst4
+
+let test_dst_float32 () =
+  let n = 8 in
+  let shape = [| n |] in
+  let signal = Array.init n (fun i -> Float.of_int i +. 1.0) in
+  let input = Nx.create Nx.float32 shape signal in
+  let dst_out = Nx.dst input ~norm:`Ortho in
+  equal ~msg:"dst float32 shape" (array int) shape (Nx.shape dst_out);
+  let idst_out = Nx.idst dst_out ~norm:`Ortho in
+  check_t ~eps:1e-4 "dst float32 roundtrip" shape signal idst_out
+
+let test_dctn_idstn () =
+  let shape = [| 4; 6 |] in
+  let signal = Array.init (4 * 6) Float.of_int in
+  let input = Nx.create Nx.float64 shape signal in
+  let dctn_out = Nx.dctn input ~norm:`Ortho in
+  equal ~msg:"dctn shape" (array int) shape (Nx.shape dctn_out);
+  let idctn_out = Nx.idctn dctn_out ~norm:`Ortho in
+  check_t ~eps:1e-10 "dctn/idctn roundtrip" shape signal idctn_out;
+
+  (* N-D DST *)
+  let dstn_out = Nx.dstn input ~norm:`Ortho in
+  equal ~msg:"dstn shape" (array int) shape (Nx.shape dstn_out);
+  let idstn_out = Nx.idstn dstn_out ~norm:`Ortho in
+  check_t ~eps:1e-10 "dstn/idstn roundtrip" shape signal idstn_out
+
+let test_dct_edge_cases () =
+  (* Size 1 *)
+  let shape = [| 1 |] in
+  let signal = [| 5.0 |] in
+  let single = Nx.create Nx.float64 shape signal in
+  let dct_single = Nx.dct single ~norm:`Ortho in
+  let idct_single = Nx.idct dct_single ~norm:`Ortho in
+  check_t "dct size 1" shape signal idct_single;
+
+  (* Invalid type *)
+  let input = Nx.ones Nx.float64 [| 8 |] in
+  (try
+     ignore (Nx.dct ~type_:5 input);
+     failwith "should have raised"
+   with Invalid_argument _ -> ());
+  (try
+     ignore (Nx.dct ~type_:0 input);
+     failwith "should have raised"
+   with Invalid_argument _ -> ())
+
 let suite =
   [
     group "fft/ifft"
@@ -405,8 +552,23 @@ let suite =
         test "size" test_rfft_size;
         test "norm" test_rfft_norm;
         test "edge_cases" test_rfft_edge_cases;
+        test "float32" test_rfft_float32;
       ];
     group "hfft/ihfft" [ test "basic" test_hfft_ihfft ];
+    group "dct/idct"
+      [
+        test "basic" test_dct_idct;
+        test "float32" test_dct_float32;
+        test "axes" test_dct_axes;
+        test "norm" test_dct_norm;
+        test "edge_cases" test_dct_edge_cases;
+      ];
+    group "dst/idst"
+      [
+        test "basic" test_dst_idst;
+        test "float32" test_dst_float32;
+      ];
+    group "dctn/dstn" [ test "basic" test_dctn_idstn ];
     group "helpers"
       [
         test "fftfreq" test_fftfreq;

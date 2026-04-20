@@ -593,6 +593,14 @@ let irfft (type a c) ?out ?s (t : (Complex.t, a) t)
   in
   (T result : (float, c) t)
 
+(* DCT/DST — direct backend calls, no effects needed *)
+
+let dct t ~dct_type ~ortho ~axes =
+  T (Nx_backend.dct (unwrap t) ~dct_type ~ortho ~axes)
+
+let dst t ~dst_type ~ortho ~axes =
+  T (Nx_backend.dst (unwrap t) ~dst_type ~ortho ~axes)
+
 (* Linear algebra *)
 
 let cholesky ~upper t_in =

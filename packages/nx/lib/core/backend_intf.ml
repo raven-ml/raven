@@ -551,6 +551,24 @@ module type S = sig
       specifies output sizes along the transformed axes; [None] infers sizes
       from the input. *)
 
+  val dct :
+    (float, 'a) t ->
+    dct_type:int ->
+    ortho:bool ->
+    axes:int array ->
+    (float, 'a) t
+  (** [dct t ~dct_type ~ortho ~axes] computes the Discrete Cosine Transform
+      along [axes]. [dct_type] is 1, 2, 3, or 4. *)
+
+  val dst :
+    (float, 'a) t ->
+    dst_type:int ->
+    ortho:bool ->
+    axes:int array ->
+    (float, 'a) t
+  (** [dst t ~dst_type ~ortho ~axes] computes the Discrete Sine Transform
+      along [axes]. [dst_type] is 1, 2, 3, or 4. *)
+
   (** {1 Linear Algebra}
 
       All linalg operations support batching: the last two dimensions are the
