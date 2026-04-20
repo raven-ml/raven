@@ -27,7 +27,6 @@
   test_codegen_images
   test_codegen_linearizer
   test_codegen_postrange
-  test_codegen_search
   test_codegen_simplify
   test_codegen_tc
   test_schedule_rangeify)

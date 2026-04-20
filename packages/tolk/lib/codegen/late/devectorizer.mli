@@ -8,115 +8,84 @@
 (** Late reduction lowering and devectorization.
 
     Transforms Kernel IR from abstract buffer references into concrete
-    {!Tolk_ir.Kernel.view.Load}/{!Tolk_ir.Kernel.view.Store} operations
-    and scalarizes wide vector operations before linearization.
+    {!Tolk_ir.Kernel.view.Load}/{!Tolk_ir.Kernel.view.Store} operations,
+    scalarises wide vector operations, and folds load/store grouping before
+    linearisation.
 
-    The passes run in this order:
-    + {!pm_reduce} — lower reductions to accumulator loops
-    + {!pm_add_loads} — insert explicit loads
-    + {!pm_devectorize} — split wide vector ops into scalar
-    + {!pm_correct_load_store} — split oversized memory ops
-    + {!pm_render} — prepare for rendering
+    Image-related passes are omitted; Tolk handles images separately via
+    {!Images}.
 
-    See also {!Expander}, {!Linearizer}, and {!Images}. *)
+    The passes run in this order (composed by {!Lowering.lower}):
+    + {!pm_reduce} — lower reductions to accumulator loops.
+    + {!pm_add_loads} — insert explicit loads.
+    + {!pm_devectorize} — scalarise, fold, correct, and simplify.
+    + {!pm_render} — prepare for rendering.
+
+    See also {!Expander}, {!Linearizer}. *)
+
+(** {1:passes Passes} *)
 
 val pm_reduce : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t
-(** [pm_reduce kernel] lowers all {!Tolk_ir.Kernel.view.Reduce}
-    operations in [kernel] to explicit accumulator loops. Runs until
-    fixpoint via {!Tolk_ir.Kernel.graph_rewrite}.
-
-    The pass performs four rewrites:
-    - {b Reduce lowering.} Transforms
-      {!Tolk_ir.Kernel.view.Reduce} nodes into
-      {!Tolk_ir.Kernel.view.Define_reg} accumulator initialization,
-      explicit accumulation inside the range loop, and
-      {!Tolk_ir.Kernel.view.End} to close the reduction scope.
-    - {b Parallel-reduce merging.} Merges parallel reduces that share
-      the same range into a single {!Tolk_ir.Kernel.view.End} via
-      {!Tolk_ir.Kernel.view.Group}.
-    - {b Wmma accumulate folding.} Folds
-      [{!Tolk_ir.Kernel.view.Wmma}(...) + add] into
-      [{!Tolk_ir.Kernel.view.Wmma}(a, b, c + add)] for tensor-core
-      built-in accumulate.
-    - {b Gep pushing.} Pushes {!Tolk_ir.Kernel.view.Gep} through
-      {!Tolk_ir.Kernel.view.Vectorize} and
-      {!Tolk_ir.Kernel.view.Const}. *)
+(** [pm_reduce root] lowers {!Tolk_ir.Kernel.view.Reduce} nodes to
+    explicit {!Tolk_ir.Kernel.view.Define_reg} accumulator loops with
+    {!Tolk_ir.Kernel.view.End}. Parallel reductions that share the same
+    range are merged into a single {!Tolk_ir.Kernel.view.End} via
+    {!Tolk_ir.Kernel.view.Group}. Also folds
+    [{!Tolk_ir.Kernel.view.Wmma} + add] into the WMMA accumulator.
+    Includes GEP pushing ({!Symbolic.gep_pushing}) in the same fixpoint,
+    matching tinygrad's [pm_reduce+gep_pushing] composition. *)
 
 val pm_add_loads : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t
-(** [pm_add_loads kernel] inserts explicit {!Tolk_ir.Kernel.view.Load}
-    instructions for {!Tolk_ir.Kernel.view.Index} nodes that are
-    consumed as values (by ALU ops) rather than as pointers (by
-    {!Tolk_ir.Kernel.view.Load}/{!Tolk_ir.Kernel.view.Store}).
+(** [pm_add_loads root] inserts explicit {!Tolk_ir.Kernel.view.Load}
+    for value-typed {!Tolk_ir.Kernel.view.Index} nodes, and collapses
+    [Store(Load(x), v)] to [Store(x, v)]. *)
 
-    This is a direct pass (not rewrite-engine based) because it
-    requires distinguishing pointer consumers from value consumers,
-    which depends on the consuming instruction's structure, not just
-    the referenced node. *)
+val pm_devectorize : Renderer.t -> Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t
+(** [pm_devectorize renderer root] runs a single fixpoint that:
 
-val pm_devectorize_rule : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option
-(** Individual devectorize rule for composition. *)
+    - Scalarises vectorised ALU, Cast, Bitcast, and WMMA.
+    - Scalarises {!Tolk_ir.Kernel.view.Define_local}/
+      {!Tolk_ir.Kernel.view.Define_reg} with vector base types.
+    - Scalarises vector {!Tolk_ir.Kernel.view.Index} on local/reg
+      memory (plain, broadcast, and GEP patterns).
+    - Reorders {!Tolk_ir.Kernel.view.Cast} through
+      {!Tolk_ir.Kernel.view.After}.
+    - Expands and folds vectorised INDEX for load/store grouping
+      (consecutive offsets share a single wide pointer).
+    - Pushes {!Tolk_ir.Kernel.view.Gep} through Load/Store.
+    - Spreads {!Tolk_ir.Kernel.view.Ptrcat} across Load/Store.
+    - Splits oversized Load/Store for [renderer]
+      (as reported by {!Renderer.supports_float4}).
+    - Drops trivially-true gates from
+      {!Tolk_ir.Kernel.view.Index}.
+    - Applies symbolic simplification. *)
 
-val pm_devectorize : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t
-(** [pm_devectorize kernel] scalarizes wide vector operations in
-    [kernel] before final rendering.
+val load_store_indexing : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option
+(** [load_store_indexing node] simplifies INDEX validity gates:
+    drops always-true gates, simplifies gated indexes via
+    {!Symbolic.uop_given_valid}, and for image buffers drops redundant
+    validity clauses proved by image dimension bounds. *)
 
-    The pass performs:
-    - {b ALU scalarization.} Splits vectorized ALU operations into
-      per-lane scalar operations wrapped in
-      {!Tolk_ir.Kernel.view.Vectorize}. For example,
-      [Add(float4, float4)] becomes
-      [Vectorize(Add(f32, f32), …, Add(f32, f32))].
-    - {b Cast reordering.} Reorders {!Tolk_ir.Kernel.view.Cast}
-      through {!Tolk_ir.Kernel.view.After}.
-    - {b Wmma splitting.} Splits oversized
-      {!Tolk_ir.Kernel.view.Wmma} results into multiple smaller
-      instructions followed by
-      {!Tolk_ir.Kernel.view.Vectorize}.
-    - {b Local/register devectorization.} Scalarizes vectorized
-      {!Tolk_ir.Kernel.view.Define_local}/
-      {!Tolk_ir.Kernel.view.Define_reg} buffers by rewriting their
-      vector loads and stores into per-lane scalar accesses.
-    - {b Gate cleanup.} Drops trivially-true gates from
-      {!Tolk_ir.Kernel.view.Index} nodes. *)
+val no_vectorized_alu : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option
+(** [no_vectorized_alu node] scalarizes a vectorized ALU, Cast, or Bitcast
+    by extracting each lane via GEP, applying the scalar operation, and
+    re-vectorizing.  Returns [None] for scalar nodes or image-index WHERE
+    patterns.  Used by renderer [extra_pm] to devectorize bool-typed ops
+    and WHERE in the final rewrite fixpoint. *)
 
-val pm_correct_load_store_rule : Renderer.t -> Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option
-(** Individual correct_load_store rule for composition. *)
-
-val pm_correct_load_store : Renderer.t -> Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t
-(** [pm_correct_load_store renderer kernel] splits oversized
-    {!Tolk_ir.Kernel.view.Load}/{!Tolk_ir.Kernel.view.Store} operations
-    into scalar operations when [renderer] does not support the full
-    vector width (as reported by {!Renderer.load_store_widths}).
-
-    Register-addrspace accesses are skipped (already handled by
-    {!pm_devectorize}). Image fixup is not included; Tolk handles
-    images separately via {!Images.rewrite}.
-
-    Currently splits to scalar only; intermediate-width splitting is
-    deferred until the Kernel IR gains a pointer-narrowing mechanism. *)
-
-val load_store_folding_rule : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option
-(** Vectorized load/store restructuring: expand/fold INDEX on VECTORIZE,
-    push GEP through LOAD/STORE, spread PTRCAT across LOAD/STORE.
-    *)
-
-val load_store_indexing_rule : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option
-(** Gate simplification on INDEX nodes (drop true gates).
-    *)
+(** {1:render Render preparation} *)
 
 val pm_render_rule : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option
-(** [pm_render_rule] is the individual rewrite rule for pm_render,
-    suitable for composition with other rules in a single fixpoint. *)
+(** [pm_render_rule node] is the individual render-preparation rewrite
+    rule, suitable for composition with decomposition and renderer rules
+    in a final fixpoint.
+
+    Expands vector {!Tolk_ir.Kernel.view.Const},
+    {!Tolk_ir.Kernel.view.Vconst}, and multi-element
+    {!Tolk_ir.Kernel.view.Gep} to {!Tolk_ir.Kernel.view.Vectorize};
+    removes trivial GEP and single-element Vectorize; gives gated loads
+    a zero alt value; folds [Where(cond, gated_load, fallback)] into the
+    load's alt. *)
 
 val pm_render : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t
-(** [pm_render kernel] performs final transformations before
-    linearization:
-    - Expands vector constants into explicit
-      {!Tolk_ir.Kernel.view.Vectorize} of scalar constants.
-    - Simplifies trivial {!Tolk_ir.Kernel.view.Gep} (single-element
-      on scalar source).
-    - Simplifies trivial {!Tolk_ir.Kernel.view.Vectorize} (single
-      source).
-    - Gives masked loads a default alt value of [0].
-    - Folds [Where(cond, gated_load(cond), alt)] into a masked
-      {!Tolk_ir.Kernel.view.Load} alt. *)
+(** [pm_render root] runs {!pm_render_rule} to fixpoint. *)

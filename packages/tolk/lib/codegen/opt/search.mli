@@ -5,36 +5,10 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(** Beam search kernel optimizer.
+(** Beam search kernel optimiser.
 
-    Enumerates optimization actions and iteratively searches for the fastest
-    kernel configuration by compiling and timing candidates.
-
-    *)
-
-val actions : Tolk_ir.Kernel.Opt.t list
-(** Static list of ~200 candidate optimizations. *)
-
-val get_kernel_actions :
-  ?include_0:bool ->
-  ?max_up:int ->
-  Postrange.t ->
-  (int * Postrange.t) list
-(** [get_kernel_actions ?include_0 ?max_up s] enumerates all valid
-    optimization actions for the current scheduler state.
-
-    Returns [(action_id, scheduler)] pairs. When [include_0] is [true]
-    (default), the identity action [(0, s)] is included. [max_up] defaults
-    to the [BEAM_UPCAST_MAX] environment variable (default [256]). *)
-
-val get_test_global_size : int array -> int -> int array * float
-(** [get_test_global_size global_size max_global_size] scales down
-    [global_size] dimensions so their product fits within [max_global_size].
-    Returns [(scaled_dims, factor)] where [factor] is the ratio of the
-    original product to the scaled product. Halves dimensions from last to
-    first, stopping at 16 per dimension.
-
-    Used by beam search to quickly evaluate scaled-down kernels. *)
+    Explores the space of kernel optimisations by compiling, timing, and
+    selecting the best candidates over multiple rounds. *)
 
 val beam_search :
   ?allow_test_size:bool ->
@@ -44,17 +18,12 @@ val beam_search :
   int ->
   Device.t ->
   Postrange.t
-(** [beam_search ?allow_test_size ?disable_cache s rawbufs amt device] finds
-    the best optimization by iterative beam search. Expands, compiles, and
-    times candidates at each step, keeping the top [amt] performers. The
-    renderer is read from [Postrange.ren s].
+(** [beam_search s rawbufs amt device] optimises scheduler [s] using
+    beam search with beam width [amt].
 
-    When [allow_test_size] is [true] (default), global dimensions are scaled
-    down during timing for faster beam iterations.
+    - [allow_test_size] (default [true]) scales down global dimensions
+      during timing to stay within hardware limits.
+    - [disable_cache] (default from [IGNORE_BEAM_CACHE] env) skips the
+      on-disk result cache.
 
-    When [disable_cache] is [true], disk cache is bypassed regardless of the
-    [CACHELEVEL] and [IGNORE_BEAM_CACHE] environment variables. Default is
-    [false].
-
-    Uses {!Lowering.lower_and_linearize} and {!Device.compile_program}
-    internally to compile candidates. *)
+    Returns the best scheduler found. *)

@@ -5,58 +5,48 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(** Range simplification pattern matchers.
+(** Range simplification passes.
 
-    These passes simplify range structure in Kernel IR before late lowering.
+    Each pass takes a Kernel root and returns the transformed root after
+    running its rewrite rules to fixpoint via {!Tolk_ir.Kernel.graph_rewrite}.
 
-    Each function takes a Kernel root and returns the transformed root after
-    running its pattern matcher(s) to fixpoint via
-    {!Tolk_ir.Kernel.graph_rewrite}. *)
+    Passes are composed in the codegen pipeline in this order:
+    {!pm_load_collapse}, {!pm_split_ranges}, initial symbolic +
+    {!flatten_range}, {!pm_simplify_ranges}. *)
 
-val node_vmin : Tolk_ir.Kernel.t -> int
-(** [node_vmin n] is a lower bound on the integer value of [n].
-    Used by reduce collapse to create symbolic placeholders with tight
-    bounds. *)
-
-val node_vmax : Tolk_ir.Kernel.t -> int
-(** [node_vmax n] is an upper bound on the integer value of [n]. *)
+val flatten_range : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option
+(** [flatten_range node] toposorts the range children of a Reduce, Store,
+    or End node and reattaches them in sorted order. Returns [None] for
+    other nodes or when already sorted. *)
 
 val pm_flatten_range : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t
-(** [pm_flatten_range root] toposorts the range children of
-    {!Tolk_ir.Kernel.view.Reduce}, {!Tolk_ir.Kernel.view.Store}, and
-    {!Tolk_ir.Kernel.view.End} nodes and reattaches them in sorted order. *)
+(** [pm_flatten_range root] applies {!flatten_range} to all nodes in the
+    DAG. *)
 
 val pm_split_ranges : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t
-(** [pm_split_ranges root] splits ranges where [Range % Const] appears and
-    the range size divides the constant. Each qualifying range [r] with
-    divisor [c] is replaced with [Range(size/c) * c + Range(c)].
+(** [pm_split_ranges root] splits ranges where [range % C] appears and
+    the range size divides [C]. Each qualifying range with divisor [C]
+    becomes [outer(size/C) * C + inner(C)].
 
-    Image stores are excluded: their ranges are not substituted. *)
+    Image stores are excluded. *)
 
 val pm_simplify_ranges : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t
-(** [pm_simplify_ranges root] performs two simplifications:
-
-    - {b Merge adjacent ranges.} For {!Tolk_ir.Kernel.view.End} and
-      {!Tolk_ir.Kernel.view.Reduce} nodes, tries merging pairs of ranges
-      with the same kind into a single [Range(s0 * s1)], keeping the
-      merge only if it does not increase the divmod count.
-    - {b Shrink gated ranges.} From {!Tolk_ir.Kernel.view.Index} nodes,
-      detects guards of the form [r < c] and shrinks the corresponding
-      range bound. Reduce ranges are never shrunk. *)
+(** [pm_simplify_ranges root] merges adjacent ranges with the same kind
+    into a single range when it does not increase the divmod count, and
+    shrinks gated ranges based on [r < C] guards extracted from Index
+    nodes. Reduce ranges are never shrunk. *)
 
 val pm_reduce_unparented : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t
-(** [pm_reduce_unparented root] removes reduce ranges that are not referenced
-    in the reduce source. For [ADD] reduces, the removed range size is
-    multiplied into the result. For [MUL], the range size is exponentiated. *)
+(** [pm_reduce_unparented root] removes reduce ranges not referenced in
+    the reduce source. For ADD reduces the removed range size is multiplied
+    into the result; for MUL it is exponentiated. *)
 
 val pm_reduce_simplify : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t
-(** [pm_reduce_simplify root] combines {!pm_reduce_unparented} with symbolic
+(** [pm_reduce_simplify root] combines {!pm_reduce_unparented} with
     reduce collapse: algebraic simplification that eliminates ranges from
-    ADD reduces when possible (arange optimization, indexing). *)
+    ADD reduces when possible. *)
 
 val pm_load_collapse : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t
-(** [pm_load_collapse root] extends reduce collapse with load-specific rules
-    for collapsing reduces over gated loads (tensor indexing patterns).
-
-    Also includes an undo rule to prevent math on loaded index values that
-    could overflow. *)
+(** [pm_load_collapse root] collapses reduces over gated loads (tensor
+    indexing patterns) and includes an undo rule to prevent arithmetic
+    on loaded index values that could overflow. *)

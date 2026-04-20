@@ -18,23 +18,24 @@
     global stores are gated with validity masks. *)
 
 val get_grouped_dims :
-  string -> Tolk_ir.Kernel.t array -> int list option -> reverse:bool -> Tolk_ir.Kernel.t list
-(** [get_grouped_dims prefix dims max_sizes ~reverse] maps logical [dims] to
-    physical SPECIAL dimension nodes.
+  string ->
+  Tolk_ir.Kernel.t array ->
+  int list option ->
+  reverse:bool ->
+  Tolk_ir.Kernel.t list
+(** [get_grouped_dims prefix dims max_sizes ~reverse] maps logical [dims]
+    to physical SPECIAL dimension nodes.
 
-    [dims] are kernel expression nodes (typically constant-valued, but
-    symbolic expressions are accepted for the grouping path).
+    [prefix] is ["gidx"], ["lidx"], or ["idx"]. [max_sizes] constrains
+    physical dimensions ([None] for no constraint). When [reverse], dims
+    are reversed before mapping and the result reversed back.
 
-    [prefix] is ["gidx"], ["lidx"], or ["idx"]. [max_sizes] constrains physical
-    dimensions (or [None] for no constraint). When [reverse], dims are reversed
-    before mapping and the result reversed back.
-
-    This is the core grouping/splitting/contraction logic used by
-    {!pm_add_gpudims}. *)
+    Raises [Failure] if dims cannot be grouped or split to fit
+    [max_sizes]. *)
 
 val pm_add_gpudims : Renderer.t -> Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t
-(** [pm_add_gpudims renderer root] replaces GPU-mappable ranges in [root] with
-    SPECIAL dimension nodes sized to the renderer's grid limits.
+(** [pm_add_gpudims renderer root] replaces GPU-mappable ranges in [root]
+    with SPECIAL dimension nodes sized to the renderer's grid limits.
 
-    Returns [root] unchanged when the kernel has no GPU-mappable ranges or
-    already contains SPECIAL nodes. *)
+    Returns [root] unchanged when the kernel has no GPU-mappable ranges
+    or already contains SPECIAL nodes. *)

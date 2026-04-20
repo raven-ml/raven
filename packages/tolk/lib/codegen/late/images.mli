@@ -7,9 +7,9 @@
 
     See also {!Devectorizer} and {!Linearizer}. *)
 
-val rewrite : Renderer.t -> Tolk_ir.Program.t -> Tolk_ir.Program.t
-(** [rewrite renderer program] lowers {!Tolk_ir.Program.Param_image}-based
+val rewrite : Renderer.t -> Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t
+(** [rewrite renderer root] lowers {!Tolk_ir.Kernel.view.Param_image}-based
     memory operations into explicit OpenCL image builtins for [renderer].
 
-    Raises [Failure] if [program] uses images and [renderer] does not
+    Raises [Failure] if [root] uses images and [renderer] does not
     support them. *)
