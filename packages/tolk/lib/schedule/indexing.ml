@@ -9,7 +9,23 @@
 
    Converts the high-level tensor graph (with movement ops, REDUCE_AXIS, etc.)
    into an indexed representation with explicit RANGE loops, BUFFERIZE nodes,
-   and INDEX operations. The main entry point is {!run_rangeify}. *)
+   and INDEX operations.
+
+   The algorithm has three phases:
+
+   1. Build the realize map: decide which nodes need their own buffer
+      (realization boundary).  Realized nodes get fresh ranges and produce
+      BUFFERIZE + INDEX pairs in the final graph.
+
+   2. Backward range propagation (run_rangeify): walk the graph in reverse
+      toposort.  Each node either inherits ranges from its single consumer,
+      merges ranges from multiple consumers, or gets fresh ranges when
+      realized.  Movement ops transform ranges (permute, reshape, etc.)
+      instead of existing as nodes in the output.
+
+   3. Apply rangeify (pm_apply_rangeify): rewrite the graph bottom-up,
+      replacing REDUCE_AXIS with REDUCE, PAD with WHERE, inserting
+      BUFFERIZE/INDEX/END nodes, and removing movement ops. *)
 
 open Tolk_ir
 module T = Tensor
@@ -17,48 +33,24 @@ module D = Dtype
 module C = Const
 module Ak = Axis_kind
 
-(* Predicates *)
-
+(* Ops that never need realization — they produce contiguous output by
+   definition, so their consumers can always index directly into them.
+   tinygrad also includes DEFINE_REG and LOAD, which don't exist in the
+   tensor-level IR (they are kernel-only ops). *)
 let is_always_contiguous = function
-  | T.Contiguous _ | T.Copy _ | T.Buffer _ | T.Buffer_view _
+  | T.Contiguous _ | T.After _ | T.Copy _ | T.Buffer _ | T.Buffer_view _
   | T.Const _ | T.Bind _ | T.Device _ | T.Mselect _ | T.Mstack _ | T.Param _
   | T.Define_local _ | T.Call _ ->
       true
   | _ -> false
 
-(** [is_assign_after v] returns [true] when [v] is an [After] node whose
-    deps include at least one [Store], i.e. the Store+After pattern that
-    encodes buffer assignment. *)
-let is_assign_after program = function
-  | T.After { deps; _ } ->
-      List.exists (fun d ->
-        match T.view program d with T.Store _ -> true | _ -> false) deps
-  | _ -> false
+(* Helpers *)
 
-let is_movement_op = function
-  | T.Reshape _ | T.Expand _ | T.Pad _ | T.Shrink _ | T.Permute _ | T.Flip _
-    ->
-      true
-  | _ -> false
+let idx n = T.const (C.int D.Val.index n) D.index
+let btrue = T.const (C.bool true) D.bool
+let bfalse = T.const (C.bool false) D.bool
 
-let is_elementwise = function
-  | T.Unary _ | T.Binary _ | T.Ternary _ | T.Cast _ | T.Bitcast _ -> true
-  | _ -> false
-
-let pcontig_var = Device.Context.int ~name:"PCONTIG" ~default:0
-
-(* Small helpers *)
-
-let select_by_axes axes xs =
-  List.filteri (fun idx _ -> List.mem idx axes) xs
-
-let and_all b = function
-  | [] -> T.const b (C.bool true)
-  | [ v ] -> v
-  | first :: rest ->
-      List.fold_left
-        (fun acc v -> T.binary b ~op:`And ~lhs:acc ~rhs:v)
-        first rest
+let select_axes axes xs = List.filteri (fun i _ -> List.mem i axes) xs
 
 let movement_src = function
   | T.Reshape { src; _ } | T.Expand { src; _ } | T.Pad { src; _ }
@@ -66,839 +58,625 @@ let movement_src = function
       Some src
   | _ -> None
 
-let map_device = function
-  | Some (T.Single d) -> Some (Kernel.Device_single d)
-  | Some (T.Multi ds) -> Some (Kernel.Device_multi ds)
-  | None -> None
+let is_movement_op v = Option.is_some (movement_src v)
 
-(* Get_idx / get_valid *)
+(* Boolean fold: MUL for conjunction, ADD for disjunction — matching
+   tinygrad's .prod() and .sum() on bool UOps. *)
+let bool_reduce op identity vs =
+  List.fold_left (fun acc v -> T.binary ~op ~lhs:acc ~rhs:v) identity vs
 
-let get_idx program r =
-  match T.view program r with
-  | Ternary { op = `Where; b = idx; c = else_; _ } -> (
-      match T.view program else_ with
-      | Invalid_index _ -> idx
-      | _ -> r)
-  | _ -> r
+let prod_valid vs = bool_reduce `Mul btrue vs
+let sum_valid vs = bool_reduce `Add bfalse vs
 
-let get_valid b program r =
-  match T.view program r with
-  | Ternary { op = `Where; a = valid; c = else_; _ } -> (
-      match T.view program else_ with
-      | Invalid_index _ -> valid
-      | _ -> T.const b (C.bool true))
-  | Invalid_index _ -> T.const b (C.bool false)
-  | _ -> T.const b (C.bool true)
+(* r >= s  encoded as  NOT(r < s),  matching tinygrad's
+   (self < x).logical_not() → CMPNE(CMPLT(r, s), true). *)
+let ge r s =
+  T.binary ~op:`Cmpne
+    ~lhs:(T.binary ~op:`Cmplt ~lhs:r ~rhs:(idx s)) ~rhs:btrue
 
 (* Indexing context *)
 
 type realize_state =
-  | Marked
-  | Realized of int list
+  | Marked        (* pending realization — set during realize map construction *)
+  | Realized of int list  (* resolved — records which axes were realized *)
 
 type indexing_context = {
-  realize_map : realize_state option array;
-  range_map : (T.id list * T.id list) option array;
+  realize_map : (int, realize_state) Hashtbl.t;
+  range_map : (int, T.t list * T.t list) Hashtbl.t;
   mutable range_idx : int;
-  range_axes : (T.id, int) Hashtbl.t;
 }
 
-let create_context n =
-  {
-    realize_map = Array.make n None;
-    range_map = Array.make n None;
-    range_idx = 0;
-    range_axes = Hashtbl.create 64;
-  }
+let create_context () = {
+  realize_map = Hashtbl.create 256;
+  range_map = Hashtbl.create 256;
+  range_idx = 0;
+}
 
-let new_range b ctx size ~kind =
-  if size = 1 then T.const b (C.int D.index 0)
+(* Size-1 dimensions collapse to constant 0.  [size] is concrete — tinygrad
+   accepts [sint] (symbolic or int) but we only handle static shapes here. *)
+let new_range ctx size ?(kind = Ak.Loop) () =
+  if size = 1 then idx 0
   else begin
     let axis = ctx.range_idx in
     ctx.range_idx <- ctx.range_idx + 1;
-    let sz = T.const b (C.int D.index size) in
-    let id = T.range b ~size:sz ~axis ~kind () in
-    Hashtbl.replace ctx.range_axes id axis;
-    id
+    T.range ~size:(idx size) ~axis ~kind ()
   end
 
-let range_axis_of ctx id =
-  match Hashtbl.find_opt ctx.range_axes id with
-  | Some axis -> [ axis ]
-  | None -> []
+(* Context accessors — keyed by T.tag (unique per hash-consed node). *)
+
+let realize_get ctx n = Hashtbl.find_opt ctx.realize_map (T.tag n)
+let realize_set ctx n v = Hashtbl.replace ctx.realize_map (T.tag n) v
+let realize_del ctx n = Hashtbl.remove ctx.realize_map (T.tag n)
+let realize_mem ctx n = Hashtbl.mem ctx.realize_map (T.tag n)
+
+let range_get ctx n = Hashtbl.find_opt ctx.range_map (T.tag n)
+let range_set ctx n v = Hashtbl.replace ctx.range_map (T.tag n) v
 
 (* Generate realize map *)
 
-(* Three-pass scan deciding which tensor nodes must be materialized into buffers.
-   Pass 1 marks Copy/Contiguous and After-with-Store (assign) nodes.
-   Pass 2 marks movement-op sources of Copy/Mselect/Mstack whose base is not
-   inherently contiguous (they need a buffer to read from).  After-with-Store
-   is treated as contiguous for base-checking purposes (the target buffer is
-   contiguous).
-   Pass 3 handles assign hazards: unmarks Copy/Buffer_view values when the
-   target has no hazardous movement ops, and marks values that alias their
-   own assignment target (write-after-read). *)
-let generate_realize_map program ctx =
-  let n = T.length program in
-  let mark id =
-    if ctx.realize_map.(id) = None then ctx.realize_map.(id) <- Some Marked
-  in
-  for i = 0 to n - 1 do
-    match T.view program i with
-    | Copy _ | Contiguous _ -> mark i
-    | After { deps; _ } ->
-        if List.exists
-             (fun d -> match T.view program d with Store _ -> true | _ -> false)
-             deps
-        then mark i
-    | _ -> ()
-  done;
-  let is_base_contiguous base_id =
-    let base_v = T.view program base_id in
-    is_always_contiguous base_v || is_assign_after program base_v
-  in
-  for i = 0 to n - 1 do
-    match T.view program i with
-    | Copy { src; _ } | Mselect { src; _ } ->
-        if not (is_base_contiguous (T.base program src)) then mark src
-    | Mstack { srcs; _ } ->
-        List.iter
-          (fun s ->
-            if not (is_base_contiguous (T.base program s)) then mark s)
-          srcs
-    | _ -> ()
-  done;
-  for i = 0 to n - 1 do
-    match T.view program i with
-    | After { src = target; deps; _ }
-      when List.exists (fun d ->
-        match T.view program d with Store _ -> true | _ -> false) deps ->
-        let value =
-          List.find_map (fun d ->
-            match T.view program d with
-            | Store { value; _ } -> Some value | _ -> None) deps
-        in
-        (match value with
-        | Some value ->
-            (match T.view program value with
-            | Copy _ | Buffer_view _ when ctx.realize_map.(value) <> None ->
-                let has_hazardous_movement =
-                  List.exists
-                    (fun dep ->
-                      match T.view program dep with
-                      | Shrink _ | Permute _ | Flip _ | Pad _ -> true
-                      | _ -> false)
-                    (T.backward_slice program target)
-                in
-                if not has_hazardous_movement then ctx.realize_map.(value) <- None
-            | _ -> ());
-            let target_base = T.base program target in
-            if List.mem target_base (T.backward_slice program value) then
-              mark value
-        | None -> ())
-    | _ -> ()
-  done
+let has_store_dep deps =
+  List.exists (fun d -> match T.view d with T.Store _ -> true | _ -> false) deps
 
-(* Tensor <-> Kernel conversion for symbolic simplification *)
+(* Does [n] or any node in its backward slice match one of the
+   non-injective view ops?  (RESHAPE and EXPAND are excluded —
+   tinygrad only checks SHRINK, PERMUTE, FLIP, PAD here.) *)
+let has_view_op_in_slice n =
+  List.exists (fun x ->
+    match T.view x with
+    | T.Shrink _ | T.Permute _ | T.Flip _ | T.Pad _ -> true
+    | _ -> false)
+    (n :: T.backward_slice n)
 
-let rec tensor_to_kernel program id =
-  match T.view program id with
-  | Const { value; _ } -> Kernel.const value
-  | Range { size; axis; sub; kind; dtype } ->
-      Kernel.range ~size:(tensor_to_kernel program size) ~axis ~sub ~kind ~dtype
-        ()
-  | Binary { op; lhs; rhs; _ } ->
-      Kernel.binary ~op ~lhs:(tensor_to_kernel program lhs)
-        ~rhs:(tensor_to_kernel program rhs)
-  | Unary { op; src; _ } ->
-      Kernel.unary ~op ~src:(tensor_to_kernel program src)
-  | Ternary { op; a; b; c; _ } ->
-      Kernel.ternary ~op ~a:(tensor_to_kernel program a)
-        ~b:(tensor_to_kernel program b) ~c:(tensor_to_kernel program c)
-  | Invalid_index { dtype } -> Kernel.invalid_index ~lanes:(Dtype.count dtype) ()
-  | v ->
-      invalid_arg
-        (Format.asprintf "tensor_to_kernel: unsupported node: %a"
-           T.pp_view v)
+let mark_non_contiguous_src ctx s =
+  if not (is_always_contiguous (T.view (T.base s))) then
+    realize_set ctx s Marked
 
-let rec kernel_to_tensor b k =
-  match Kernel.view k with
-  | Const { value; _ } -> T.const b value
-  | Range { size; axis; sub; kind; dtype } ->
-      T.range b ~size:(kernel_to_tensor b size) ~axis ~sub ~kind ~dtype ()
-  | Binary { op; lhs; rhs; _ } ->
-      T.binary b ~op ~lhs:(kernel_to_tensor b lhs)
-        ~rhs:(kernel_to_tensor b rhs)
-  | Unary { op; src; _ } -> T.unary b ~op ~src:(kernel_to_tensor b src)
-  | Ternary { op; a; b = b_; c; _ } ->
-      T.ternary b ~op ~a:(kernel_to_tensor b a)
-        ~b:(kernel_to_tensor b b_) ~c:(kernel_to_tensor b c)
-  | Invalid_index { dtype } -> T.invalid_index b ~dtype
-  | _ ->
-      invalid_arg
-        (Format.asprintf "kernel_to_tensor: unsupported node: %a"
-           Kernel.pp_view k)
+(* Mirrors tinygrad's pm_generate_realize_map PatternMatcher.
+   All four blocks fire independently per node — a PatternMatcher rule
+   that returns None continues to the next rule rather than short-
+   circuiting. *)
+let generate_realize_map ctx root =
+  let nodes = T.toposort root in
+  List.iter (fun n ->
+    let v = T.view n in
+    (* Rule 1: always realize COPY and CONTIGUOUS *)
+    (match v with
+     | T.Copy _ | T.Contiguous _ -> realize_set ctx n Marked
+     | _ -> ());
+    (* Rule 2: realize AFTER that has a STORE dep *)
+    (match v with
+     | T.After { deps; _ } when has_store_dep deps -> realize_set ctx n Marked
+     | _ -> ());
+    (* Rule 3: realize non-contiguous sources of COPY/MSELECT/MSTACK *)
+    (match v with
+     | T.Copy { src; _ } | T.Mselect { src; _ } ->
+         mark_non_contiguous_src ctx src
+     | T.Mstack { srcs; _ } ->
+         List.iter (mark_non_contiguous_src ctx) srcs
+     | _ -> ());
+    (* Rule 4: conditionally unrealize or re-realize the value in a
+       single-dep Store+After.  Only fires when deps = [Store]. *)
+    (match v with
+     | T.After { deps = [d]; _ } -> begin
+         match T.view d with
+         | T.Store { dst; value } ->
+             (* Unrealize COPY/BUFFER_VIEW when the target buffer IS the
+                output and no view ops distort the destination. *)
+             (match T.view value with
+              | T.Copy _ | T.Buffer_view _
+                when realize_mem ctx value
+                     && not (has_view_op_in_slice dst) ->
+                  realize_del ctx value
+              | _ -> ());
+             (* WAR hazard: dest's base in value's backward slice means
+                the write aliases a read — force a temporary. *)
+             let base = T.base dst in
+             if List.exists (fun x -> x == base)
+                  (value :: T.backward_slice value) then
+               realize_set ctx value Marked
+         | _ -> ()
+       end
+     | _ -> ()))
+    nodes
 
-let simplify_tensor_expr b program id =
-  let k = tensor_to_kernel program id in
-  kernel_to_tensor b (Kernel.graph_rewrite Symbolic.symbolic k)
+(* Tensor ↔ Kernel conversion for symbolic simplification.
+   Only index arithmetic nodes are expected — anything else is a bug. *)
 
-(* Apply_movement_op *)
+module K = Kernel
 
-(* Two-phase index transformation for reshape: first collapses the output-space
-   ranges into a single flat index via weighted sum (stride = cumulative product
-   of trailing dimensions), then extracts per-input-dimension indices via repeated
-   mod/div. This is the standard modular-arithmetic reshape decomposition. *)
-let apply_reshape b program in_shape out_shape rngs =
-  let rev_out = List.rev out_shape in
-  let rev_rngs = List.rev rngs in
-  let axes_in =
-    let acc = ref 1 in
-    List.map2
-      (fun s r ->
-        let term =
-          if !acc = 1 then r
-          else
-            T.binary b ~op:`Mul ~lhs:r
-              ~rhs:(T.const b (C.int D.index !acc))
-        in
-        acc := !acc * s;
-        term)
-      rev_out rev_rngs
-  in
-  let combined =
-    match axes_in with
-    | [] -> T.const b (C.int D.index 0)
-    | [ x ] -> x
-    | first :: rest ->
-        List.fold_left
-          (fun acc term -> T.binary b ~op:`Add ~lhs:acc ~rhs:term)
-          first rest
-  in
-  let rev_in = List.rev in_shape in
-  let axes_out =
-    let remaining = ref combined in
-    List.map
-      (fun s ->
-        if s = 1 then T.const b (C.int D.index 0)
-        else begin
-          let divisor = T.const b (C.int D.index s) in
-          let r = T.binary b ~op:`Mod ~lhs:!remaining ~rhs:divisor in
-          remaining := T.binary b ~op:`Idiv ~lhs:!remaining ~rhs:divisor;
-          r
-        end)
-      rev_in
-  in
-  let result = List.rev axes_out in
-  let program' = T.finish b in
-  List.map (fun id -> simplify_tensor_expr b program' id) result
+let rec tensor_to_kernel n =
+  match T.view n with
+  | T.Const { value; _ } -> K.const value
+  | T.Range { size; axis; sub; kind; dtype } ->
+      K.range ~size:(tensor_to_kernel size) ~axis ~sub ~kind
+        ~dtype:(D.val_of dtype) ()
+  | T.Binary { op; lhs; rhs; _ } ->
+      K.binary ~op ~lhs:(tensor_to_kernel lhs) ~rhs:(tensor_to_kernel rhs)
+  | T.Unary { op; src; _ } ->
+      K.unary ~op ~src:(tensor_to_kernel src)
+  | T.Ternary { op; a; b; c; _ } ->
+      K.ternary ~op ~a:(tensor_to_kernel a)
+        ~b:(tensor_to_kernel b) ~c:(tensor_to_kernel c)
+  | T.Invalid_index { dtype } ->
+      K.const (C.int (D.val_of (D.scalarize dtype)) 0)
+  | v -> failwith (Format.asprintf "tensor_to_kernel: unexpected %a" T.pp_view v)
 
-(* Maps output-space index ranges back to input-space coordinates for each
-   movement op: Shrink adds offsets, Permute reorders via argsort, Flip
-   mirrors against (dim-1), Expand zeros out broadcast axes, Pad inserts
-   validity guards and offset adjustments, Reshape delegates to apply_reshape. *)
-let apply_movement_op b program ~shapes op rngs =
-  match op with
-  | T.Shrink { before; _ } -> (
-      match T.extract_int_shape program before with
-      | Some starts ->
-          List.map2
-            (fun r ss ->
-              if ss = 0 then r
-              else T.binary b ~op:`Add ~lhs:r
-                     ~rhs:(T.const b (C.int D.index ss)))
-            rngs starts
-      | None -> rngs)
-  | Permute { order; _ } ->
-      let n = List.length order in
-      let argsorted = Array.make n 0 in
-      List.iteri (fun i p -> argsorted.(p) <- i) order;
-      List.init n (fun i -> List.nth rngs argsorted.(i))
-  | Flip { src; dims; _ } -> (
-      match shapes.(src) with
+let rec kernel_to_tensor k =
+  match K.view k with
+  | K.Const { value; dtype } -> T.const value (D.Val dtype)
+  | K.Range { size; axis; sub; kind; dtype } ->
+      T.range ~size:(kernel_to_tensor size) ~axis ~sub ~kind
+        ~dtype:(D.Val dtype) ()
+  | K.Binary { op; lhs; rhs; _ } ->
+      T.binary ~op ~lhs:(kernel_to_tensor lhs) ~rhs:(kernel_to_tensor rhs)
+  | K.Unary { op; src; _ } ->
+      T.unary ~op ~src:(kernel_to_tensor src)
+  | K.Ternary { op; a; b; c; _ } ->
+      T.ternary ~op ~a:(kernel_to_tensor a)
+        ~b:(kernel_to_tensor b) ~c:(kernel_to_tensor c)
+  | _ -> failwith (Format.asprintf "kernel_to_tensor: unexpected %a" K.pp_view k)
+
+(* Round-trip through Kernel IR to apply symbolic simplification. *)
+let simplify_tensor_expr expr =
+  let k = tensor_to_kernel expr in
+  let k = K.graph_rewrite (K.first_match [Symbolic.sym]) k in
+  kernel_to_tensor k
+
+(* Movement ops — reshape *)
+
+let argsort order =
+  let indexed = List.mapi (fun i v -> (v, i)) order in
+  List.map snd (List.sort (fun (a, _) (b, _) -> compare a b) indexed)
+
+(* Reshape: linearize output dims into a scalar index, decompose into input
+   dims via mod/div, then simplify the resulting expressions.
+
+   A placeholder substitution trick keeps the simplifier from confusing actual
+   range identities with the arithmetic it needs to reduce. *)
+let apply_reshape in_shape out_shape rngs =
+  let rngs = List.map simplify_tensor_expr rngs in
+  (* Collect all Range nodes and create Placeholder stand-ins *)
+  let all_ranges = T.ranges (T.sink rngs) in
+  let sub_fwd = List.mapi (fun i r ->
+    let size = match T.view r with
+      | T.Range { size; _ } -> size | _ -> idx 1 in
+    (r, T.range ~size ~axis:i ~kind:Ak.Placeholder ())) all_ranges in
+  let sub_rev = List.map (fun (k, v) -> (v, k)) sub_fwd in
+  let rngs = List.map (T.substitute sub_fwd) rngs in
+  (* Linearize: weighted positional sum of output ranges *)
+  let _, terms = List.fold_right (fun (s, r) (stride, ts) ->
+    let t = if stride = 1 then r
+      else T.binary ~op:`Mul ~lhs:(idx stride) ~rhs:r in
+    (stride * s, t :: ts)) (List.combine out_shape rngs) (1, []) in
+  let combined = List.fold_left (fun a t ->
+    T.binary ~op:`Add ~lhs:a ~rhs:t) (idx 0) terms in
+  (* Decompose: peel off input dimensions right-to-left.
+     The ref + rev_map/rev processes in_shape in reverse while the ref
+     accumulates the running quotient; rev_map reverses the result. *)
+  let combined = ref combined in
+  let axes = List.rev_map (fun s ->
+    let r = T.binary ~op:`Mod ~lhs:!combined ~rhs:(idx s) in
+    combined := T.binary ~op:`Idiv ~lhs:!combined ~rhs:(idx s);
+    r) (List.rev in_shape) in
+  (* Simplify, then restore actual ranges *)
+  List.map (fun r ->
+    T.substitute sub_rev (simplify_tensor_expr r)) axes
+
+(* Transform ranges through a movement op.  Each case defines how output
+   indices map to input indices — this is the inverse of the movement. *)
+let apply_movement_op ~shapes v rngs =
+  match v with
+  | T.Shrink _ -> begin
+      match T.extract_marg_pairs v with
+      | Some pairs ->
+          List.map2 (fun r (ss, _) ->
+            if ss = 0 then r
+            else T.binary ~op:`Add ~lhs:r ~rhs:(idx ss))
+            rngs pairs
+      | None -> rngs
+    end
+  | T.Permute { order; _ } ->
+      List.map (fun p -> List.nth rngs p) (argsort order)
+  | T.Flip { src; dims; _ } -> begin
+      match shapes src with
       | Some in_shape ->
-          List.map2
-            (fun r (s, f) ->
-              if not f then r
-              else T.binary b ~op:`Sub
-                     ~lhs:(T.const b (C.int D.index (s - 1))) ~rhs:r)
-            rngs (List.combine in_shape dims)
-      | None -> rngs)
-  | Expand { src; shape; _ } -> (
-      match (shapes.(src), T.extract_int_shape program shape) with
+          List.map2 (fun r (f, s) ->
+            if not f then r
+            else T.binary ~op:`Sub ~lhs:(idx (s - 1)) ~rhs:r)
+            rngs (List.combine dims in_shape)
+      | None -> rngs
+    end
+  | T.Expand { src; shape; _ } -> begin
+      match shapes src, T.extract_int_shape shape with
       | Some in_shape, Some out_shape ->
-          List.map2
-            (fun r (in_s, out_s) ->
-              if in_s = out_s then r else T.const b (C.int D.index 0))
+          List.map2 (fun r (in_s, out_s) ->
+            if in_s = out_s then r else idx 0)
             rngs (List.combine in_shape out_shape)
-      | _ -> rngs)
-  | Pad { src; before; after; _ } -> (
-      match
-        ( shapes.(src),
-          T.extract_int_shape program before,
-          T.extract_int_shape program after )
-      with
-      | Some in_shape, Some pad_before, Some pad_after ->
-          List.map2
-            (fun r ((sh, s), e) ->
-              if s = 0 && e = 0 then r
-              else
-                let s_node = T.const b (C.int D.index s) in
-                let sh_plus_s = T.const b (C.int D.index (sh + s)) in
-                let lt_s = T.binary b ~op:`Cmplt ~lhs:r ~rhs:s_node in
-                let ge_s =
-                  T.binary b ~op:`Cmpeq ~lhs:lt_s
-                    ~rhs:(T.const b (C.bool false))
-                in
-                let lt_end = T.binary b ~op:`Cmplt ~lhs:r ~rhs:sh_plus_s in
-                let valid = T.binary b ~op:`And ~lhs:ge_s ~rhs:lt_end in
-                let offset = T.binary b ~op:`Sub ~lhs:r ~rhs:s_node in
-                T.ternary b ~op:`Where ~a:valid ~b:offset
-                  ~c:(T.invalid_index b ~dtype:D.index))
-            rngs
-            (List.combine (List.combine in_shape pad_before) pad_after)
-      | _ -> rngs)
-  | Reshape { src; shape; _ } -> (
-      match (shapes.(src), T.extract_int_shape program shape) with
+      | _ -> rngs
+    end
+  | T.Pad { src; _ } -> begin
+      match shapes src, T.extract_marg_pairs v with
+      | Some in_shape, Some pairs ->
+          (* The where(r-s, invalid) is intentionally outside the
+             graph_rewrite so that convert_pad_to_where wraps the pad
+             with only the newly added validity condition *)
+          List.map2 (fun (r, sh) (s, e) ->
+            if s = 0 && e = 0 then r
+            else
+              let valid = simplify_tensor_expr
+                (T.binary ~op:`And ~lhs:(ge r s)
+                   ~rhs:(T.binary ~op:`Cmplt ~lhs:r
+                            ~rhs:(idx (sh + s)))) in
+              T.ternary ~op:`Where ~a:valid
+                ~b:(T.binary ~op:`Sub ~lhs:r ~rhs:(idx s))
+                ~c:(T.invalid_index ~dtype:D.index))
+            (List.combine rngs in_shape) pairs
+      | _ -> rngs
+    end
+  | T.Reshape { src; shape; _ } -> begin
+      match shapes src, T.extract_int_shape shape with
       | Some in_shape, Some out_shape ->
-          apply_reshape b program in_shape out_shape rngs
-      | _ -> rngs)
-  | _ -> rngs
-
-(* Run_rangeify *)
-
-(* Backward walk over the tensor graph computing per-node index ranges and
-   realize (buffering) decisions. Realized nodes get fresh RANGE variables;
-   single-consumer nodes inherit their consumer's ranges directly. When a node
-   has multiple consumers, per-axis ranges are compared: matching axes are
-   merged (with validity OR), while conflicting axes force a realize boundary
-   so each consumer gets independent iteration. The PCONTIG heuristic relaxes
-   merging for partially-contiguous access patterns. Ending-range tracking
-   propagates through elementwise and reduce nodes to detect axes that must
-   be realized due to ordering conflicts (range axis > ending axis). *)
-let run_rangeify b program ~shapes =
-  let n = T.length program in
-  let ctx = create_context n in
-  generate_realize_map program ctx;
-  let consumers = T.consumer_map program in
-  let ending_ranges : T.id list array = Array.make n [] in
-  for i = n - 1 downto 0 do
-    let v = T.view program i in
-    let skip =
-      match v with
-      | Device _ | Unique _ | Lunique _ | Call _ | Mstack _ | Mselect _ -> true
-      | After { deps; _ } ->
-          not
-            (List.exists
-               (fun d ->
-                 match T.view program d with Store _ -> true | _ -> false)
-               deps)
-      | _ -> false
-    in
-    if not skip then begin
-      let is_index_dtype =
-        match T.dtype program i with
-        | Some dt -> D.scalar dt = D.Index && D.count dt = 1
-        | None -> false
-      in
-      if not is_index_dtype then begin
-        ending_ranges.(i) <-
-          List.concat_map (fun c -> ending_ranges.(c)) consumers.(i);
-        let consumer_rngs =
-          List.filter_map
-            (fun c ->
-              match ctx.range_map.(c) with
-              | Some (in_rngs, _) -> Some in_rngs
-              | None -> None)
-            consumers.(i)
-        in
-        let got_ranges = ref false in
-        let out_rngs = ref (
-          if ctx.realize_map.(i) <> None then begin
-            let shape =
-              match shapes.(i) with Some s -> s | None -> []
-            in
-            let rngs =
-              List.map (fun s -> new_range b ctx s ~kind:Ak.Loop) shape
-            in
-            ending_ranges.(i) <- [];
-            ctx.realize_map.(i) <-
-              Some (Realized (List.init (List.length shape) Fun.id));
-            got_ranges := true;
-            rngs
-          end
-          else if consumer_rngs = [] then []
-          else if List.length consumer_rngs = 1 then begin
-            got_ranges := true;
-            List.hd consumer_rngs
-          end
-          else begin
-            let shape =
-              match shapes.(i) with Some s -> s | None -> []
-            in
-            let n_axes = List.length shape in
-            let pcontig = Device.Context.get pcontig_var in
-            let all_rngs =
-              List.init n_axes (fun ax ->
-                  List.filter_map
-                    (fun cr ->
-                      if ax < List.length cr then Some (List.nth cr ax)
-                      else None)
-                    consumer_rngs)
-            in
-            let program' = T.finish b in
-            let rngs_valids =
-              List.map
-                (fun per_axis ->
-                  ( List.map (fun r -> get_idx program' r) per_axis,
-                    List.map (fun r -> get_valid b program' r) per_axis ))
-                all_rngs
-            in
-            let all_all_same =
-              List.for_all
-                (fun (local_rngs, _) ->
-                  match local_rngs with
-                  | [] -> true
-                  | first :: rest -> List.for_all (( = ) first) rest)
-                rngs_valids
-            in
-            let realize_axes = ref [] in
-            let rngs =
-              List.mapi
-                (fun ax (local_rngs, valids) ->
-                  let axis_same =
-                    match local_rngs with
-                    | [] -> true
-                    | first :: rest -> List.for_all (( = ) first) rest
-                  in
-                  if all_all_same || (pcontig > 0 && axis_same) then begin
-                    match (local_rngs, valids) with
-                    | idx :: _, _ ->
-                        (* TODO(F6): apply symbolic simplification here.
-                           Currently skipped because simplify_tensor_expr
-                           creates builder nodes that conflict with the
-                           merge_builder id shift. *)
-                        let merged_valid =
-                          match valids with
-                          | [] -> T.const b (C.bool true)
-                          | [ v ] -> v
-                          | first :: rest ->
-                              List.fold_left
-                                (fun acc v ->
-                                  T.binary b ~op:`Or ~lhs:acc ~rhs:v)
-                                first rest
-                        in
-                        T.ternary b ~op:`Where ~a:merged_valid ~b:idx
-                          ~c:(T.invalid_index b ~dtype:D.index)
-                    | [], _ ->
-                        new_range b ctx (List.nth shape ax) ~kind:Ak.Loop
-                  end
-                  else begin
-                    realize_axes := ax :: !realize_axes;
-                    new_range b ctx (List.nth shape ax) ~kind:Ak.Loop
-                  end)
-                rngs_valids
-            in
-            if !realize_axes <> [] then
-              ctx.realize_map.(i) <-
-                Some (Realized (List.rev !realize_axes));
-            got_ranges := true;
-            rngs
-          end)
-        in
-        if ending_ranges.(i) <> []
-           && (is_elementwise v
-              || match v with Reduce_axis _ -> true | _ -> false)
-        then begin
-          let pcontig = Device.Context.get pcontig_var in
-          let prev_realize =
-            match ctx.realize_map.(i) with
-            | Some (Realized axes) -> axes
-            | _ -> []
-          in
-          let new_realize_axes = ref prev_realize in
-          List.iteri
-            (fun idx r ->
-              if not (List.mem idx !new_realize_axes) then begin
-                let should_realize =
-                  pcontig <= 1
-                  || (let r_ranges = range_axis_of ctx r in
-                      let e_axes =
-                        List.concat_map
-                          (fun e -> range_axis_of ctx e)
-                          ending_ranges.(i)
-                      in
-                      List.exists
-                        (fun rr -> List.exists (fun ea -> rr > ea) e_axes)
-                        r_ranges)
-                in
-                if should_realize then
-                  new_realize_axes := idx :: !new_realize_axes
-              end)
-            !out_rngs;
-          ending_ranges.(i) <- [];
-          if !new_realize_axes <> prev_realize then begin
-            let realize_axes = List.rev !new_realize_axes in
-            ctx.realize_map.(i) <- Some (Realized realize_axes);
-            out_rngs :=
-              List.mapi
-                (fun idx r ->
-                  if List.mem idx realize_axes
-                     && not (List.mem idx prev_realize)
-                  then begin
-                    let shape =
-                      match shapes.(i) with Some s -> s | None -> []
-                    in
-                    if idx < List.length shape then
-                      new_range b ctx (List.nth shape idx) ~kind:Ak.Loop
-                    else r
-                  end
-                  else r)
-                !out_rngs
-          end
-        end;
-        if !got_ranges || !out_rngs <> [] then begin
-          let in_rngs = ref !out_rngs in
-          if is_movement_op v then
-            in_rngs := apply_movement_op b program ~shapes v !out_rngs;
-          (match v with
-          | Expand _ when shapes.(i) <> None ->
-              let new_ending =
-                List.filter_map
-                  (fun (ri, ro) ->
-                    if ri <> ro && Hashtbl.mem ctx.range_axes ro then Some ro
-                    else None)
-                  (List.combine !in_rngs !out_rngs)
-              in
-              ending_ranges.(i) <- ending_ranges.(i) @ new_ending
-          | _ -> ());
-          (match v with
-          | Reduce_axis { src; axes; _ } -> (
-              match shapes.(src) with
-              | Some src_shape ->
-                  in_rngs :=
-                    List.mapi
-                      (fun idx (r, s) ->
-                        if List.mem idx axes then
-                          new_range b ctx s ~kind:Ak.Reduce
-                        else r)
-                      (List.combine !in_rngs src_shape)
-              | None -> ())
-          | _ -> ());
-          ctx.range_map.(i) <- Some (!in_rngs, !out_rngs)
-        end
-      end
+          apply_reshape in_shape out_shape rngs
+      | _ -> rngs
     end
-  done;
-  let merged, shift = T.merge_builder program b in
-  let merged_n = T.length merged in
-  for i = 0 to n - 1 do
-    match ctx.range_map.(i) with
-    | Some (in_rngs, out_rngs) ->
-        ctx.range_map.(i) <-
-          Some (List.map shift in_rngs, List.map shift out_rngs)
-    | None -> ()
-  done;
-  let extend_opt_array arr new_len =
-    let old_len = Array.length arr in
-    if new_len > old_len then begin
-      let arr' = Array.make new_len None in
-      Array.blit arr 0 arr' 0 old_len;
-      arr'
+  | _ -> assert false
+
+(* Apply rangeify — graph rewrite rules *)
+
+(* Extract the index value from a possibly-gated range expression.
+   where(valid, index, invalid) → index;  anything else → itself. *)
+let get_idx r =
+  match T.view r with
+  | T.Ternary { op = `Where; b = value; c = else_; _ } ->
+      (match T.view else_ with T.Invalid_index _ -> value | _ -> r)
+  | _ -> r
+
+(* Extract the validity condition from a possibly-gated range expression.
+   where(valid, _, invalid) → valid;  invalid → false;  else → true. *)
+let get_valid r =
+  match T.view r with
+  | T.Ternary { op = `Where; a = valid; c = else_; _ } ->
+      (match T.view else_ with T.Invalid_index _ -> valid | _ -> btrue)
+  | T.Invalid_index _ -> bfalse
+  | _ -> btrue
+
+(* Direct buffer sources: can be indexed without realization.
+   Matches PARAM, BUFFER_VIEW, MSTACK, MSELECT, and AFTER nodes whose
+   deps don't include STORE or END (plain scheduling barriers). *)
+let is_direct_buffer = function
+  | T.Param _ | T.Buffer_view _ | T.Mstack _ | T.Mselect _ -> true
+  | T.After { deps; _ } ->
+      not (List.exists (fun d ->
+        match T.view d with T.Store _ | T.End _ -> true | _ -> false) deps)
+  | _ -> false
+
+let map_device = function
+  | Some (T.Single d) -> Some (K.Device_single d)
+  | Some (T.Multi ds) -> Some (K.Device_multi ds)
+  | None -> None
+
+(* REDUCE_AXIS → REDUCE with explicit range children.
+   Selects the input ranges at the reduce axes. *)
+let convert_reduce_axis ctx n =
+  match T.view n with
+  | T.Reduce_axis { src; op; axes; dtype } -> begin
+      match range_get ctx n with
+      | Some ((in_rngs, _) as entry) ->
+          let ranges = select_axes axes in_rngs in
+          let ret = T.reduce ~src ~ranges ~op ~dtype in
+          range_set ctx ret entry;
+          Some ret
+      | None -> None
     end
-    else arr
-  in
-  let ctx =
-    {
-      ctx with
-      realize_map = extend_opt_array ctx.realize_map merged_n;
-      range_map = extend_opt_array ctx.range_map merged_n;
-    }
-  in
-  (ctx, merged)
+  | _ -> None
 
-(* Apply_rangeify_pass *)
+(* PAD → WHERE(valid, src, 0).
+   Collects validity conditions from each input range and MULs them. *)
+let convert_pad_to_where ctx n =
+  match range_get ctx n with
+  | None -> None
+  | Some ((in_rngs, _) as entry) ->
+      let valid = prod_valid (List.map get_valid in_rngs) in
+      let src = match T.view n with T.Pad { src; _ } -> src | _ -> assert false in
+      let dtype = match T.dtype n with Some d -> d | None -> D.float32 in
+      let ret = T.ternary ~op:`Where ~a:valid ~b:src
+        ~c:(T.const (C.zero (D.val_of dtype)) dtype) in
+      range_set ctx ret entry;
+      Some ret
 
-(* Manual translation pass that applies the rangeify rewrite rules.
+(* Strip movement ops — their effect is already captured in the range_map.
+   Also remove when the source is an INDEX (already lowered). *)
+let remove_movement_op ctx n =
+  match movement_src (T.view n) with
+  | Some src ->
+      if Option.is_some (range_get ctx n) then Some src
+      else (match T.view src with T.Index _ -> Some src | _ -> None)
+  | None -> None
 
-   Walks the OLD program (which includes merged range nodes), uses OLD ids
-   for ctx lookups, and builds a new program with remapped ids. *)
-let apply_rangeify_pass program ctx ~shapes:_ ~devices =
-  let n = T.length program in
-  let b = T.create () in
-  let remap = Array.make n (-1) in
-  let map_ref id = if id >= 0 && id < n then remap.(id) else id in
-  (* Pre-emit builder-created nodes (range/const/arith from multi-consumer
-     merge) that appear at the end of the program. *)
-  for i = 0 to n - 1 do
-    if remap.(i) = -1 && ctx.realize_map.(i) = None
-       && ctx.range_map.(i) = None
-       && (match T.view program i with
-          | Range _ | Const _ | Invalid_index _ | Vconst _ | Binary _
-          | Unary _ | Ternary _ ->
-              true
-          | _ -> false)
-    then begin
-      let children = T.children_of (T.view program i) in
-      List.iter
-        (fun c ->
-          if c >= 0 && c < n && remap.(c) = -1 then
-            remap.(c) <- T.emit b (T.map_children map_ref (T.view program c)))
-        children;
-      remap.(i) <- T.emit b (T.map_children map_ref (T.view program i))
-    end
-  done;
-  (* Build reverse map: new_id -> list of old_ids.
-     Maintained incrementally as remap entries are added.
-     When looking up a child for realize_map, we pick the first old_id
-     that IS in realize_map, avoiding the non-injectivity problem from
-     movement-op aliasing. *)
-  let rev_remap : (int, int list) Hashtbl.t = Hashtbl.create n in
-  let add_rev_remap ~old_id ~new_id =
-    if new_id >= 0 then begin
-      let prev = match Hashtbl.find_opt rev_remap new_id with
-        | Some l -> l | None -> []
-      in
-      Hashtbl.replace rev_remap new_id (old_id :: prev)
-    end
-  in
-  (* Seed with pre-emitted entries *)
-  Array.iteri (fun old_id new_id -> add_rev_remap ~old_id ~new_id) remap;
-  for i = 0 to n - 1 do
-    if remap.(i) <> -1 then ()
-    else begin
-    let old_v = T.view program i in
-    let mapped_v = T.map_children map_ref old_v in
-
-    (* Rule 1: REDUCE_AXIS -> REDUCE *)
-    let node_result =
-      match old_v with
-      | Reduce_axis { op; axes; dtype; _ } -> (
-          match ctx.range_map.(i) with
+(* For each child of [n], insert BUFFERIZE/INDEX/END as needed:
+   - Direct buffer sources get an INDEX with the consumer's input ranges.
+   - Realized non-STORE sources get BUFFERIZE + INDEX.
+   - Realized STORE sources get END (closing ranges).
+   Returns None when no children changed. *)
+let create_bufferize_and_index ctx ~devices n =
+  match T.view n with
+  | T.Bufferize _ | T.Index _ -> None
+  | _ ->
+      let parent_is_copy = match T.view n with T.Copy _ -> true | _ -> false in
+      let parent_rngs = range_get ctx n in
+      let children = T.children n in
+      let changed = ref false in
+      let new_children = List.map (fun s ->
+        let sv = T.view s in
+        if is_direct_buffer sv then
+          match parent_rngs with
           | Some (in_rngs, _) ->
-              let mapped_src =
-                match mapped_v with Reduce_axis { src; _ } -> src | _ -> 0
-              in
-              Some
-                (T.Reduce
-                   {
-                     src = mapped_src;
-                     ranges = List.map map_ref (select_by_axes axes in_rngs);
-                     op;
-                     dtype;
-                   })
-          | None -> None)
-      | _ -> None
-    in
-    (* Rule 2: PAD -> WHERE *)
-    let node_result =
-      match node_result with
-      | Some _ -> node_result
-      | None -> (
-          match old_v with
-          | Pad { dtype; _ } -> (
-              match ctx.range_map.(i) with
-              | Some (in_rngs, _) ->
-                  let valids =
-                    List.filter_map
-                      (fun r ->
-                        match T.view program r with
-                        | Ternary { op = `Where; a = valid; _ } -> Some valid
-                        | _ -> None)
-                      in_rngs
-                  in
-                  let valid =
-                    and_all b (List.map map_ref valids)
-                  in
-                  let mapped_src =
-                    match mapped_v with Pad { src; _ } -> src | _ -> 0
-                  in
-                  Some
-                    (T.Ternary
-                       {
-                         op = `Where;
-                         a = valid;
-                         b = mapped_src;
-                         c = T.const b (C.zero dtype);
-                         dtype;
-                       })
-              | None -> None)
-          | _ -> None)
+              changed := true;
+              (* Strip pointer → value dtype, matching tinygrad's .dtype.base *)
+              let dtype = match T.dtype s with
+                | Some d -> D.Val (D.val_of d) | None -> D.index in
+              T.index ~ptr:s ~idxs:in_rngs ~dtype ()
+          | None -> s
+        else match realize_get ctx s with
+        | Some (Realized realized_axes) ->
+            changed := true;
+            let out_rngs = match range_get ctx s with
+              | Some (_, out) -> out | None -> [] in
+            let closed = select_axes realized_axes out_rngs in
+            (match sv with
+             | T.Store _ ->
+                 let ranges = List.filter (fun r ->
+                   match T.view r with T.Range _ -> true | _ -> false) closed in
+                 realize_del ctx s;
+                 T.end_ ~value:s ~ranges
+             | _ ->
+                 let removable = not parent_is_copy
+                   && not (is_always_contiguous sv) in
+                 let is_local =
+                   List.length out_rngs <> List.length realized_axes in
+                 let addrspace = if is_local then D.Local else D.Global in
+                 let device = map_device (devices s) in
+                 let opts : K.bufferize_opts =
+                   { device; addrspace; removable } in
+                 let src_dtype = match T.dtype s with
+                   | Some d -> d | None -> D.float32 in
+                 let buf = T.bufferize ~src:s ~ranges:closed
+                   ~dtype:src_dtype ~opts in
+                 match parent_rngs with
+                 | Some (in_rngs, _) ->
+                     let idxs = select_axes realized_axes in_rngs in
+                     let idx_dtype = D.Val (D.val_of src_dtype) in
+                     T.index ~ptr:buf ~idxs ~dtype:idx_dtype ()
+                 | None -> buf)
+        | _ -> s) children in
+      if !changed then Some (T.replace n ~children:new_children ())
+      else None
+
+(* Cascading rules matching tinygrad's pm_apply_rangeify PatternMatcher.
+   Rules 1–2 are op-specific; rule 3 (All) matches everything; rule 4
+   matches movement ops.  On None, each falls through to the next. *)
+let apply_rangeify_pass ctx ~devices root =
+  T.graph_rewrite ~name:"apply rangeify"
+    ~on_rebuild:(fun ~old_n ~new_n ->
+      if T.tag old_n <> T.tag new_n then begin
+        (match realize_get ctx old_n with
+        | Some v -> realize_set ctx new_n v | None -> ());
+        (match range_get ctx old_n with
+        | Some v -> range_set ctx new_n v | None -> ())
+      end)
+    (fun n ->
+      let specific = match T.view n with
+        | T.Reduce_axis _ -> convert_reduce_axis ctx n
+        | T.Pad _ -> convert_pad_to_where ctx n
+        | _ -> None in
+      match specific with
+      | Some _ -> specific
+      | None ->
+      match create_bufferize_and_index ctx ~devices n with
+      | Some _ as r -> r
+      | None -> remove_movement_op ctx n) root
+
+(* Run rangeify — backward range propagation *)
+
+let pcontig_var = Helpers.Context_var.int ~key:"PCONTIG" ~default:0
+
+let all_same = function
+  | [] -> true
+  | x :: rest -> List.for_all (fun y -> y == x) rest
+
+let is_elementwise_or_reduce = function
+  | T.Unary _ | T.Binary _ | T.Ternary _ | T.Cast _ | T.Bitcast _
+  | T.Reduce_axis _ -> true
+  | _ -> false
+
+(* Only called on nodes from T.ranges, which are always Range. *)
+let range_axis r = match T.view r with
+  | T.Range { axis; _ } -> axis | _ -> assert false
+
+(* Transpose a list of equal-length lists: one per consumer →
+   one per axis. *)
+let transpose = function
+  | [] -> []
+  | first :: _ as lists ->
+      List.mapi (fun i _ -> List.map (fun l -> List.nth l i) lists) first
+
+(* Check whether ended ranges force additional axes to be realized.
+   Clears ending ranges and returns the (possibly updated) out_rngs. *)
+let check_ending_ranges ctx ~pcontig ~get_ending ~set_ending ~out_shape x out_rngs =
+  if get_ending x = [] then out_rngs
+  else begin
+    let existing = match realize_get ctx x with
+      | Some (Realized axes) -> axes | _ -> [] in
+    let realize_axis = ref existing in
+    List.iteri (fun i r ->
+      if not (List.mem i !realize_axis) then
+        if pcontig <= 1 ||
+           List.exists (fun rr ->
+             List.exists (fun e ->
+               range_axis rr > range_axis e) (get_ending x))
+             (T.ranges r)
+        then realize_axis := !realize_axis @ [i]) out_rngs;
+    set_ending x [];
+    if !realize_axis <> [] then begin
+      realize_set ctx x (Realized !realize_axis);
+      List.mapi (fun i r ->
+        if List.mem i !realize_axis then
+          new_range ctx (List.nth out_shape i) ()
+        else r) out_rngs
+    end else out_rngs
+  end
+
+(* Main backward walk.  For each node (roots-to-leaves) we determine:
+   - out_rngs: one range expression per output axis
+   - rngs: one range expression per input axis (= out_rngs transformed
+     by movement ops, with fresh Reduce ranges for REDUCE_AXIS)
+
+   The pair (rngs, out_rngs) is stored in range_map for use by
+   apply_rangeify_pass. *)
+let run_rangeify root ~shapes =
+  let ctx = create_context () in
+  generate_realize_map ctx root;
+  let consumers = T.consumer_map root in
+  let toposort = T.toposort ~enter_calls:false root in
+  let ending : (int, T.t list) Hashtbl.t = Hashtbl.create 256 in
+  let get_ending x =
+    Option.value ~default:[] (Hashtbl.find_opt ending (T.tag x)) in
+  let set_ending x v = Hashtbl.replace ending (T.tag x) v in
+  let pcontig = Helpers.Context_var.get pcontig_var in
+
+  List.iter (fun x ->
+    let v = T.view x in
+
+    (* Skip non-rangeable nodes.
+       Lunique is OCaml-specific (tinygrad only skips UNIQUE). *)
+    let skip = match v with
+      | T.Device _ | T.Unique _ | T.Lunique _
+      | T.Call _ | T.Linear _
+      | T.Mstack _ | T.Mselect _ -> true
+      | T.After { deps; _ } -> not (has_store_dep deps)
+      | _ ->
+          match T.dtype x with
+          | Some dt -> D.scalar dt = D.Index
+          | None -> false in
+    if skip then () else begin
+
+    (* Propagate ending ranges from consumers *)
+    set_ending x (List.concat_map get_ending (consumers x));
+
+    let out_shape = Option.value ~default:[] (shapes x) in
+
+    (* Input ranges of consumers that already have ranges *)
+    let consumer_rngs = List.filter_map (fun c ->
+      match range_get ctx c with
+      | Some (in_rngs, _) -> Some in_rngs
+      | None -> None) (consumers x) in
+
+    (* --- Determine output ranges --- *)
+    let out_rngs =
+      if realize_mem ctx x then begin
+        (* 1. Realized → fresh ranges, end all, mark all axes *)
+        let out = List.map (fun s -> new_range ctx s ()) out_shape in
+        set_ending x [];
+        assert (realize_get ctx x = Some Marked);
+        realize_set ctx x
+          (Realized (List.init (List.length out_shape) Fun.id));
+        Some out
+      end
+      else match List.length consumer_rngs with
+      | 0 -> None  (* no consumer has ranges → skip *)
+      | 1 -> Some (List.hd consumer_rngs)
+      | _ ->
+          (* 3. Multiple consumers → merge per-axis *)
+          let n = List.length (List.hd consumer_rngs) in
+          if not (List.for_all (fun l -> List.length l = n) consumer_rngs) then begin
+            (* Consumer ranges disagree on rank → realize *)
+            let n_out = List.length out_shape in
+            let out = List.map (fun s -> new_range ctx s ()) out_shape in
+            realize_set ctx x (Realized (List.init n_out Fun.id));
+            Some out
+          end else
+          (* Truncate to min of consumer rank and output rank, matching
+             tinygrad's zip truncation behavior. *)
+          let per_axis_full = transpose consumer_rngs in
+          let n_out = List.length out_shape in
+          let per_axis = List.filteri (fun i _ -> i < n_out) per_axis_full in
+          let rngs_valids = List.map (fun axis_rngs ->
+            let local = List.map get_idx axis_rngs in
+            let valids = List.map get_valid axis_rngs in
+            (local, valids)) per_axis in
+          let all_all_same =
+            List.for_all (fun (lr, _) -> all_same lr) rngs_valids in
+          let out = ref [] and realize_axes = ref [] in
+          List.iteri (fun i (local_rngs, valids) ->
+            if all_all_same || (pcontig > 0 && all_same local_rngs) then begin
+              (* Ranges agree — merge validity with OR *)
+              let merged = simplify_tensor_expr
+                (T.ternary ~op:`Where ~a:(sum_valid valids)
+                   ~b:(List.hd local_rngs)
+                   ~c:(T.invalid_index ~dtype:D.index)) in
+              out := merged :: !out
+            end else begin
+              (* Ranges disagree — fresh range, mark axis *)
+              out := new_range ctx (List.nth out_shape i) () :: !out;
+              realize_axes := i :: !realize_axes
+            end) rngs_valids;
+          let realize_axes = List.rev !realize_axes in
+          if realize_axes <> [] then
+            realize_set ctx x (Realized realize_axes);
+          Some (List.rev !out)
     in
 
-    (* Rule 3: create BUFFERIZE + INDEX for realized sources.
-       Fires on ALL nodes (GroupOp.All) including those already transformed by
-       Rules 1/2. We operate on the effective view and use rev_remap to find
-       old child ids. *)
-    let effective_v = match node_result with Some v -> v | None -> mapped_v in
-    let result =
-      match effective_v with
-      | Bufferize _ | Index _ -> node_result
-      | _ ->
-          let children_new = T.children_of effective_v in
-          let changed = ref false in
-          let new_children =
-            List.map
-              (fun new_s ->
-                (* Find the old_id for this new child.  rev_remap maps
-                   new_id -> old_id list (multiple old nodes may alias
-                   to the same new node after movement-op removal).
-                   Pick the first old_id that is in realize_map. *)
-                let old_candidates =
-                  match Hashtbl.find_opt rev_remap new_s with
-                  | Some l -> l | None -> []
-                in
-                let old_s =
-                  match List.find_opt
-                    (fun o -> o >= 0 && o < n && ctx.realize_map.(o) <> None)
-                    old_candidates
-                  with
-                  | Some o -> o
-                  | None -> (
-                      match old_candidates with o :: _ -> o | [] -> -1)
-                in
-                if old_s >= 0 && old_s < n
-                   && ctx.realize_map.(old_s) <> None then begin
-                  match ctx.realize_map.(old_s) with
-                  | Some (Realized axes) -> (
-                      match ctx.range_map.(old_s) with
-                      | Some (_, out_rngs) ->
-                          let closed = select_by_axes axes out_rngs in
-                          if match T.view program old_s with
-                             | Store _ -> true
-                             | _ -> false
-                          then begin
-                            let range_ids =
-                              List.filter
-                                (fun r ->
-                                  match T.view program r with
-                                  | Range _ -> true
-                                  | _ -> false)
-                                closed
-                            in
-                            changed := true;
-                            T.end_ b ~value:new_s
-                              ~ranges:(List.map map_ref range_ids)
-                          end
-                          else begin
-                            let is_copy =
-                              match effective_v with Copy _ -> true | _ -> false
-                            in
-                            let removable =
-                              (not is_copy)
-                              && not (is_always_contiguous
-                                       (T.view program old_s))
-                            in
-                            let is_local =
-                              List.length out_rngs <> List.length axes
-                            in
-                            let addrspace =
-                              if is_local then D.Local else D.Global
-                            in
-                            let opts : Kernel.bufferize_opts =
-                              {
-                                device = map_device devices.(old_s);
-                                addrspace;
-                                removable;
-                              }
-                            in
-                            let dtype =
-                              match T.dtype program old_s with
-                              | Some d -> d
-                              | None -> D.float32
-                            in
-                            let mapped_closed = List.map map_ref closed in
-                            let bufferized =
-                              T.bufferize b ~src:new_s ~ranges:mapped_closed
-                                ~dtype ~opts
-                            in
-                            changed := true;
-                            match ctx.range_map.(i) with
-                            | Some (in_rngs, _) ->
-                                let idx_rngs =
-                                  select_by_axes axes in_rngs
-                                in
-                                T.index b ~ptr:bufferized
-                                  ~idxs:(List.map map_ref idx_rngs) ~dtype ()
-                            | None -> bufferized
-                          end
-                      | None -> new_s)
-                  | _ -> new_s
-                end
-                else if old_s >= 0 && old_s < n
-                   && (match T.view program old_s with
-                      | Param _ | Buffer_view _ | Mstack _ | Mselect _
-                      | After _ ->
-                          true
-                      | _ -> false)
-                   && ctx.range_map.(i) <> None
-                then begin
-                  match ctx.range_map.(i) with
-                  | Some (in_rngs, _) ->
-                      let dtype =
-                        match T.dtype program old_s with
-                        | Some d -> d
-                        | None -> D.index
-                      in
-                      changed := true;
-                      T.index b ~ptr:new_s
-                        ~idxs:(List.map map_ref in_rngs) ~dtype ()
-                  | None -> new_s
-                end
-                else new_s)
-              children_new
-          in
-          if !changed then begin
-            let tbl = Hashtbl.create 8 in
-            List.iter2
-              (fun orig_s new_s -> Hashtbl.replace tbl orig_s new_s)
-              children_new new_children;
-            Some
-              (T.map_children
-                 (fun id ->
-                   match Hashtbl.find_opt tbl id with
-                   | Some s -> s
-                   | None -> id)
-                 effective_v)
-          end
-          else node_result
+    match out_rngs with
+    | None -> ()
+    | Some out_rngs ->
+
+    (* --- Ending range check --- *)
+    (* Elementwise/reduce ops with ended ranges may need to realize
+       additional axes to prevent stale range references. *)
+    let out_rngs =
+      if is_elementwise_or_reduce v then
+        check_ending_ranges ctx ~pcontig ~get_ending ~set_ending
+          ~out_shape x out_rngs
+      else out_rngs
     in
-    (* Rule 4: remove movement op.
-       Alias the remap to the source's remap instead of emitting. *)
-    let aliased = ref false in
-    let result =
-      match result with
-      | Some _ -> result
-      | None -> (
-          match movement_src old_v with
-          | Some src ->
-              if ctx.range_map.(i) <> None
-                 || (match T.view program src with
-                    | Index _ -> true
-                    | _ -> false)
-              then begin
-                aliased := true;
-                None
-              end
-              else None
-          | None -> None)
-    in
-    if !aliased then begin
-      match movement_src old_v with
-      | Some src ->
-          let new_id = map_ref src in
-          remap.(i) <- new_id;
-          add_rev_remap ~old_id:i ~new_id
-      | None ->
-          let new_id = T.emit b mapped_v in
-          remap.(i) <- new_id;
-          add_rev_remap ~old_id:i ~new_id
-    end
-    else begin
-      let new_id = T.emit b (match result with Some v -> v | None -> mapped_v) in
-      remap.(i) <- new_id;
-      add_rev_remap ~old_id:i ~new_id
-    end
-    end
-  done;
-  T.finish b
+
+    (* --- Compute input ranges --- *)
+    let rngs = out_rngs in
+
+    (* Movement ops transform output ranges into input ranges *)
+    let rngs =
+      if is_movement_op v then apply_movement_op ~shapes v rngs
+      else rngs in
+
+    (* EXPAND: track ending ranges for axes that changed
+       (range was replaced by const 0 for broadcasted dims).
+       tinygrad guards this with all(isinstance(y,int) or y.op is not
+       Ops.RANGE for y in x.shape) to skip when EXPAND injects a range
+       via a symbolic shape.  With static int shapes this is always true. *)
+    (match v with
+     | T.Expand _ ->
+         let diff = List.filter_map (fun (ri, ro) ->
+           if ri != ro then Some ro else None)
+           (List.combine rngs out_rngs) in
+         if diff <> [] then
+           set_ending x (get_ending x @ T.ranges (T.sink diff))
+     | _ -> ());
+
+    (* REDUCE_AXIS: create Reduce-kind ranges for the reduction axes *)
+    let rngs = match v with
+      | T.Reduce_axis { axes; src; _ } -> begin
+          match shapes src with
+          | Some src_shape ->
+              List.mapi (fun i (r, s) ->
+                if List.mem i axes
+                then new_range ctx s ~kind:Ak.Reduce ()
+                else r) (List.combine rngs src_shape)
+          | None -> rngs
+        end
+      | _ -> rngs in
+
+    range_set ctx x (rngs, out_rngs)
+    end)
+    (List.rev toposort);
+
+  ctx
