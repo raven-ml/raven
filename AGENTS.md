@@ -80,7 +80,8 @@ writing style:
 - NEVER use the `--force` argument
 - NEVER run dune build with DUNE_CACHE=disabled
 - NEVER try to remove the dune lock file
-- NEVER git checkout or reset any file unless explicitly requested
+- NEVER use git stash, git checkout, git reset, git restore, or ANY git command that modifies the working tree
+- NEVER use git commands to "test" or "isolate" changes — reason about the code instead
 - NEVER add new backend operations to nx unless explicitly requested
 - NEVER hide warnings and NEVER hide unused variables by adding an underscore. ALWAYS treat warnings as errors that need a proper fix.
 - ALWAYS add changelog entry(ies) in `CHANGES.md` when committing user-facing changes.
