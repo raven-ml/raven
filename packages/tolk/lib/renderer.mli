@@ -8,10 +8,14 @@
 (** GPU kernel renderer.
 
     A renderer converts {!Ir.Program.t} programs to backend-specific source
-    code. The abstract type {!type-t} encapsulates target capabilities (memory
-    hierarchy, grid limits, supported operations) and a rendering function.
+    code and owns its {!Compiler.t}. The abstract type {!type-t} encapsulates
+    target capabilities (memory hierarchy, grid limits, supported operations),
+    a rendering function, and an optional compiler.
+
     Backends construct renderers via {!make}, supplying only the fields that
-    differ from the defaults.
+    differ from the defaults. The compiler is typically attached by the
+    device backend via {!with_compiler} or the [?compiler] parameter of
+    {!make}.
 
     See {!Cstyle} for C-family language backends (CUDA, Metal, OpenCL, HIP,
     Clang). *)
@@ -54,35 +58,6 @@ type code_op =
   | Mulacc  (** Fused multiply-accumulate. *)
   | Threefry  (** Threefry 2x32 PRNG mixing function. *)
 
-(** {2:tensor_cores Tensor cores} *)
-
-type tensor_core = {
-  dims : int * int * int;  (** [(n, m, k)] matrix-multiply tile dimensions. *)
-  threads : int;  (** Number of threads cooperating on one tile. *)
-  elements_per_thread : int * int * int;
-      (** [(a, b, c)] elements each thread contributes for operands A, B, and
-          accumulator C. *)
-  dtype_in : Tolk_ir.Dtype.scalar;  (** Element type of the A and B input operands. *)
-  dtype_out : Tolk_ir.Dtype.scalar;  (** Element type of the C accumulator operand. *)
-  opts : string list;
-      (** Scheduling option strings applied when this tensor core is active
-          (e.g., ["UP"], ["LC"]). These are passed to the kernel optimizer to
-          configure tiling and unrolling. *)
-  swizzle :
-    (string list * string list * string list)
-    * (string list * string list * string list);
-      (** Operand layout remapping as
-          [((a_src, b_src, c_src), (a_dst, b_dst, c_dst))]. Each operand triple
-          contains (local, upcast, reduce) dimension index strings. The source
-          swizzle describes the logical layout; the destination swizzle
-          describes the physical layout required by the hardware instruction. *)
-}
-(** The type for tensor core (WMMA/MFMA) configurations.
-
-    Describes a hardware matrix-multiply-accumulate instruction: tile geometry,
-    thread mapping, dtype requirements, and the dimension swizzle needed to lay
-    data out for the instruction. *)
-
 (** {2:supported_ops Supported operations} *)
 
 val all_supported_ops : Tolk_ir.Decompositions.supported_ops
@@ -109,6 +84,10 @@ val device : t -> string
     Passed as context to codegen rewrite passes for device-specific
     transformations. *)
 
+val compiler : t -> Compiler.t option
+(** [compiler r] is [r]'s compiler, or [None] if the renderer has no
+    associated compiler (e.g., interpreter backends). *)
+
 val has_local : t -> bool
 (** [has_local r] is [true] iff [r] supports local thread IDs. *)
 
@@ -123,6 +102,11 @@ val global_max : t -> int list option
 (** [global_max r] is the maximum global grid dimensions [[x; y; z]], or [None]
     when unconstrained. The list has exactly three elements when present. *)
 
+val global_prod_max : t -> int list option
+(** [global_prod_max r] is the per-axis product limit for global dimensions, or
+    [None] when unconstrained. When present, each global dimension is capped at
+    [min(global_max.(i), global_prod_max.(i) / local_hw.(i))]. *)
+
 val local_max : t -> int list option
 (** [local_max r] is the maximum local workgroup dimensions [[x; y; z]], or
     [None] when unconstrained. The list has exactly three elements when present.
@@ -135,7 +119,7 @@ val shared_max : t -> int
     - For GPU backends, a conservative default (e.g., 32 KB for OpenCL, 48 KB
       for CUDA). Actual limits may vary by device. *)
 
-val tensor_cores : t -> tensor_core list
+val tensor_cores : t -> Tc.t list
 (** [tensor_cores r] is the list of {!type-tensor_core} configurations supported
     by [r]. Empty when the backend has no hardware matrix-multiply support. *)
 
@@ -171,13 +155,10 @@ val extra_matcher : t -> (Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option) option
 
 (** {1:load_store Load/store policy} *)
 
-val load_store_widths : t -> Tolk_ir.Dtype.t -> int list
-(** [load_store_widths r dtype] is the preferred vector widths for load/store
-    coalescing of [dtype], ordered from widest to narrowest. The list must
-    include [1] (scalar fallback).
-
-    The devectorizer uses this list to split wide accesses into the largest
-    widths the backend supports. *)
+val supports_float4 : t -> bool
+(** [supports_float4 r] is [true] iff [r] supports vectorized (float4/float2)
+    load and store operations.  The devectorizer uses this to decide whether
+    wide accesses can be folded.  Defaults to [true]. *)
 
 (** {1:rendering Rendering} *)
 
@@ -189,13 +170,15 @@ val render : t -> ?name:string -> Tolk_ir.Program.t -> string
 (** {1:construction Construction} *)
 
 val make :
-  ?tensor_cores:tensor_core list ->
-  ?load_store_widths:(Tolk_ir.Dtype.t -> int list) ->
+  ?tensor_cores:Tc.t list ->
+  ?supports_float4:bool ->
   ?has_threads:bool ->
-  ?global_max:int list option ->
-  ?local_max:int list option ->
+  ?global_max:int list ->
+  ?global_prod_max:int list ->
+  ?local_max:int list ->
   ?code_for_op:code_op list ->
   ?supported_ops:Tolk_ir.Decompositions.supported_ops ->
+  ?compiler:Compiler.t ->
   ?pre_matcher:(Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option) ->
   ?extra_matcher:(Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option) ->
   name:string ->
@@ -211,11 +194,16 @@ val make :
 
     Optional parameters and their defaults:
     - [tensor_cores]: [[]] (none).
-    - [load_store_widths]: [fun _ -> [1]] (scalar only).
+    - [supports_float4]: [true].
     - [has_threads]: [false].
     - [global_max]: [Some [0x8FFFFFFF; 0x8FFFFFFF; 0x8FFFFFFF]].
+    - [global_prod_max]: [None].
     - [local_max]: [Some [0x8FFFFFFF; 0x8FFFFFFF; 0x8FFFFFFF]].
     - [code_for_op]: [[]] (no custom ops).
     - [supported_ops]: derived from [code_for_op] via
       {!supported_ops_of_code_for_op}. When [code_for_op] is [[]], defaults to
-      {!all_supported_ops}. *)
+      {!all_supported_ops}.
+    - [compiler]: [None]. *)
+
+val with_compiler : Compiler.t -> t -> t
+(** [with_compiler c r] is [r] with compiler set to [Some c]. *)

@@ -7,17 +7,6 @@
 
 (* Types *)
 
-type tensor_core = {
-  dims : int * int * int;
-  threads : int;
-  elements_per_thread : int * int * int;
-  dtype_in : Tolk_ir.Dtype.scalar;
-  dtype_out : Tolk_ir.Dtype.scalar;
-  opts : string list;
-  swizzle :
-    (string list * string list * string list)
-    * (string list * string list * string list);
-}
 
 (* ALU operations a backend can provide custom rendering for. *)
 type code_op =
@@ -74,14 +63,16 @@ let supported_ops_of_code_for_op (ops : code_op list) : Tolk_ir.Decompositions.s
 type t = {
   name : string;
   device : string;
+  compiler : Compiler.t option;
   has_local : bool;
   has_threads : bool;
   has_shared : bool;
   global_max : int list option;
+  global_prod_max : int list option;
   local_max : int list option;
   shared_max : int;
-  tensor_cores : tensor_core list;
-  load_store_widths : Tolk_ir.Dtype.t -> int list;
+  tensor_cores : Tc.t list;
+  supports_float4 : bool;
   render : ?name:string -> Tolk_ir.Program.t -> string;
   code_for_op : code_op list;
   supported_ops : Tolk_ir.Decompositions.supported_ops;
@@ -93,14 +84,16 @@ type t = {
 
 let name t = t.name
 let device t = t.device
+let compiler t = t.compiler
 let has_local t = t.has_local
 let has_threads t = t.has_threads
 let has_shared t = t.has_shared
 let global_max t = t.global_max
+let global_prod_max t = t.global_prod_max
 let local_max t = t.local_max
 let shared_max t = t.shared_max
 let tensor_cores t = t.tensor_cores
-let load_store_widths t = t.load_store_widths
+let supports_float4 t = t.supports_float4
 let render t = t.render
 let code_for_op t = t.code_for_op
 let supported_ops t = t.supported_ops
@@ -117,11 +110,14 @@ let emulated_float_dtypes _t : (Tolk_ir.Dtype.scalar * Tolk_ir.Dtype.scalar) lis
 (* 0x8FFFFFFF: conservative upper bound for grid/block dimensions.
    Backends override with actual hardware limits (e.g., CUDA
    gridDim.x = 2^31-1). *)
-let make ?(tensor_cores = []) ?(load_store_widths = fun _ -> [ 1 ])
+let with_compiler compiler t = { t with compiler = Some compiler }
+
+let make ?(tensor_cores = []) ?(supports_float4 = true)
     ?(has_threads = false)
-    ?(global_max = Some [ 0x8FFFFFFF; 0x8FFFFFFF; 0x8FFFFFFF ])
-    ?(local_max = Some [ 0x8FFFFFFF; 0x8FFFFFFF; 0x8FFFFFFF ])
-    ?(code_for_op = []) ?supported_ops ?pre_matcher ?extra_matcher
+    ?(global_max = [ 0x8FFFFFFF; 0x8FFFFFFF; 0x8FFFFFFF ])
+    ?global_prod_max
+    ?(local_max = [ 0x8FFFFFFF; 0x8FFFFFFF; 0x8FFFFFFF ])
+    ?(code_for_op = []) ?supported_ops ?compiler ?pre_matcher ?extra_matcher
     ~name ~device ~has_local ~has_shared ~shared_max ~render () =
   let supported_ops =
     match supported_ops with
@@ -133,14 +129,16 @@ let make ?(tensor_cores = []) ?(load_store_widths = fun _ -> [ 1 ])
   {
     name;
     device;
+    compiler;
     has_local;
     has_threads;
     has_shared;
-    global_max;
-    local_max;
+    global_max = Some global_max;
+    global_prod_max;
+    local_max = Some local_max;
     shared_max;
     tensor_cores;
-    load_store_widths;
+    supports_float4;
     render;
     code_for_op;
     supported_ops;
