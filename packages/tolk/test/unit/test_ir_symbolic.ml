@@ -15,11 +15,11 @@ module C = Const
 
 (* Helpers *)
 
-let idx n = K.const (C.int D.index n)
-let f32 x = K.const (C.float D.float32 x)
+let idx n = K.const (C.int D.Val.index n)
+let f32 x = K.const (C.float D.Val.float32 x)
 
-let var name lo hi = K.define_var ~name ~lo ~hi ~dtype:D.index ()
-let range size = K.range ~size:(idx size) ~axis:0 ~kind:Axis_kind.Loop ~dtype:D.index ()
+let var name lo hi = K.define_var ~name ~lo ~hi ~dtype:D.Val.index ()
+let range size = K.range ~size:(idx size) ~axis:0 ~kind:Axis_kind.Loop ~dtype:D.Val.index ()
 
 (* Apply sym to a single node (not bottom-up). *)
 let sym n = Symbolic.sym n
@@ -345,11 +345,11 @@ let bool_cast_fold_tests =
           | Binary { op = `And; _ } | Const _ -> ()
           | _ -> fail "expected AND or const"));
       test "cast(const(3), float32) → const(3.0)" (fun () ->
-          let expr = K.cast ~src:(idx 3) ~dtype:(D.to_any D.float32) in
+          let expr = K.cast ~src:(idx 3) ~dtype:(D.float32) in
           simplifies_to_float expr 3.0);
       test "cast to same dtype → x" (fun () ->
           let x = var "x" 0 10 in
-          fires sym (K.cast ~src:x ~dtype:(D.to_any D.index)) x);
+          fires sym (K.cast ~src:x ~dtype:(D.index)) x);
       test "nested where: a.where(b.where(c,d), d) → (a&b).where(c,d)" (fun () ->
           let a = K.const_bool true and b = K.const_bool true in
           let c = idx 1 and d = idx 0 in
@@ -439,7 +439,7 @@ let where_fold_tests =
           let s = K.const_bool true in
           let a = idx 5 and b = idx 0 in
           let w = K.ternary ~op:`Where ~a:s ~b:a ~c:b in
-          let expr = K.cast ~src:w ~dtype:(D.to_any D.float32) in
+          let expr = K.cast ~src:w ~dtype:(D.float32) in
           let result = simplify expr in
           simplifies_to_float expr 5.0;
           ignore result);

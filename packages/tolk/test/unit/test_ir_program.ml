@@ -12,9 +12,9 @@ module Sd = Tolk_ir.Special_dim
 
 (* Helpers *)
 
-let global_ptr dt = D.ptr_of dt ~addrspace:Global ~size:(-1)
-let local_ptr dt = D.ptr_of dt ~addrspace:Local ~size:(-1)
-let reg_ptr dt = D.ptr_of dt ~addrspace:Reg ~size:(-1)
+let global_ptr dt = D.Ptr.create (D.val_of dt) ~addrspace:Global ~size:(-1)
+let local_ptr dt = D.Ptr.create (D.val_of dt) ~addrspace:Local ~size:(-1)
+let reg_ptr dt = D.Ptr.create (D.val_of dt) ~addrspace:Reg ~size:(-1)
 let dt = D.float32
 let gptr = global_ptr dt
 
@@ -37,18 +37,18 @@ let raises_invalid fn =
   raises_match (function Invalid_argument _ -> true | _ -> false) fn
 
 let emit_i32 b n =
-  P.emit b (Const { value = C.int D.int32 n; dtype = D.int32 })
+  P.emit b (Const { value = C.int D.Val.int32 n; dtype = D.Val.int32 })
 
 let emit_f32 b x =
-  P.emit b (Const { value = C.float dt x; dtype = dt })
+  P.emit b (Const { value = C.float (D.val_of dt) x; dtype = D.val_of dt })
 
 let emit_bool b v =
-  P.emit b (Const { value = C.bool v; dtype = D.bool })
+  P.emit b (Const { value = C.bool v; dtype = D.Val.bool })
 
 (* Emit Param(global f32) -> Const(0:i32) -> Index -> Load.
    Returns (ptr_id, idx_id, addr_id, value_id). *)
-let emit_load_chain ?(dtype = dt) b =
-  let ptr_dt = global_ptr dtype in
+let emit_load_chain ?(dtype = D.val_of dt) b =
+  let ptr_dt = global_ptr (D.Val dtype) in
   let ptr = P.emit b (Param { idx = 0; dtype = ptr_dt }) in
   let idx = emit_i32 b 0 in
   let addr =
@@ -59,8 +59,8 @@ let emit_load_chain ?(dtype = dt) b =
 
 (* Emit a gated load chain with gate and alt.
    Returns (ptr_id, idx_id, gate_id, addr_id, alt_id, value_id). *)
-let emit_gated_load_chain ?(dtype = dt) b =
-  let ptr_dt = global_ptr dtype in
+let emit_gated_load_chain ?(dtype = D.val_of dt) b =
+  let ptr_dt = global_ptr (D.Val dtype) in
   let ptr = P.emit b (Param { idx = 0; dtype = ptr_dt }) in
   let idx = emit_i32 b 0 in
   let gate = emit_bool b true in
@@ -99,7 +99,7 @@ let wmma_fields ?(dims = (16, 16, 16)) ?(dtype_in = D.Float32)
       a;
       b;
       c;
-      dtype = dt;
+      dtype = D.val_of dt;
       dims;
       dtype_in;
       dtype_out;
@@ -172,8 +172,8 @@ let () =
             ignore (P.emit b (Param { idx = 3; dtype = global_ptr D.int32 }));
             match P.view (P.finish b) 0 with
             | Param { idx = 3; dtype } ->
-                is_true (D.addrspace dtype = D.Global);
-                is_true (D.equal (D.base dtype) D.int32)
+                is_true (D.Ptr.addrspace dtype = D.Global);
+                is_true (D.Val.equal (D.Ptr.base dtype) D.Val.int32)
             | _ -> fail "expected Param with idx=3");
         ];
       group "Inspection"
@@ -181,11 +181,11 @@ let () =
           test "dtype value" (fun () ->
             let b = P.create () in
             ignore (emit_f32 b 1.0);
-            some (of_equal D.equal) dt (P.dtype (P.finish b) 0));
+            some (of_equal D.Val.equal) (D.val_of dt) (P.dtype (P.finish b) 0));
           test "dtype pointer" (fun () ->
             let b = P.create () in
             ignore (P.emit b (Param { idx = 0; dtype = gptr }));
-            some (of_equal D.equal) dt (P.dtype (P.finish b) 0));
+            some (of_equal D.Val.equal) (D.val_of dt) (P.dtype (P.finish b) 0));
           test "dtype effect" (fun () ->
             let b = P.create () in
             let _ptr, _idx, addr, value = emit_load_chain b in
@@ -196,7 +196,7 @@ let () =
             let size = emit_i32 b 10 in
             let range =
               P.emit b
-                (Range { size; dtype = D.int32; axis = 0; sub = []; kind = Ak.Loop })
+                (Range { size; dtype = D.Val.int32; axis = 0; sub = []; kind = Ak.Loop })
             in
             ignore (P.emit b (End_range { dep = range; range }));
             is_none (P.dtype (P.finish b) 2));
@@ -222,14 +222,14 @@ let () =
             ignore
               (P.emit b
                  (Define_var
-                    { name = "n"; lo = 0; hi = 10; dtype = D.int32 }));
+                    { name = "n"; lo = 0; hi = 10; dtype = D.Val.int32 }));
             let size = emit_i32 b 10 in
             ignore
               (P.emit b
-                 (Range { size; dtype = D.int32; axis = 0; sub = []; kind = Ak.Loop }));
+                 (Range { size; dtype = D.Val.int32; axis = 0; sub = []; kind = Ak.Loop }));
             ignore
               (P.emit b
-                 (Special { dim = Sd.Group_id 0; size; dtype = D.int32 }));
+                 (Special { dim = Sd.Group_id 0; size; dtype = D.Val.int32 }));
             let p = P.finish b in
             is_true (P.sort p 0 = P.Index);
             is_true (P.sort p 2 = P.Index);
@@ -245,11 +245,11 @@ let () =
           test "sort value" (fun () ->
             let b = P.create () in
             let _ptr, _idx, _addr, value = emit_load_chain b in
-            ignore (P.emit b (Unary { op = `Neg; src = value; dtype = dt }));
+            ignore (P.emit b (Unary { op = `Neg; src = value; dtype = D.val_of dt }));
             ignore
               (P.emit b
                  (Binary
-                    { op = `Add; lhs = value; rhs = value; dtype = dt }));
+                    { op = `Add; lhs = value; rhs = value; dtype = D.val_of dt }));
             let p = P.finish b in
             is_true (P.sort p 1 = P.Value);
             is_true (P.sort p 3 = P.Value);
@@ -259,31 +259,31 @@ let () =
             let b = P.create () in
             let barrier = P.emit b Barrier in
             ignore
-              (P.emit b (After { src = barrier; deps = []; dtype = D.void }));
+              (P.emit b (After { src = barrier; deps = []; dtype = D.Val.void }));
             is_true (P.sort (P.finish b) 1 = P.Effect));
           test "children binary" (fun () ->
             let b = P.create () in
             let a = emit_f32 b 1.0 in
             let c = emit_f32 b 2.0 in
-            ignore (P.emit b (Binary { op = `Add; lhs = a; rhs = c; dtype = dt }));
+            ignore (P.emit b (Binary { op = `Add; lhs = a; rhs = c; dtype = D.val_of dt }));
             equal (list int) [ a; c ] (P.children (P.finish b) 2));
         ];
       group "Predicates"
         [
           test "is_alu true" (fun () ->
-            is_true (P.is_alu (Unary { op = `Neg; src = 0; dtype = dt }));
+            is_true (P.is_alu (Unary { op = `Neg; src = 0; dtype = D.val_of dt }));
             is_true
-              (P.is_alu (Binary { op = `Add; lhs = 0; rhs = 1; dtype = dt }));
+              (P.is_alu (Binary { op = `Add; lhs = 0; rhs = 1; dtype = D.val_of dt }));
             is_true
               (P.is_alu
                  (Ternary
-                    { op = `Where; a = 0; b = 1; c = 2; dtype = dt })));
+                    { op = `Where; a = 0; b = 1; c = 2; dtype = D.val_of dt })));
           test "is_alu false" (fun () ->
             is_false
-              (P.is_alu (Const { value = C.float dt 1.0; dtype = dt }));
+              (P.is_alu (Const { value = C.float (D.val_of dt) 1.0; dtype = D.val_of dt }));
             is_false (P.is_alu Barrier);
             is_false (P.is_alu (Store { dst = 0; value = 1 }));
-            is_false (P.is_alu (Cast { src = 0; dtype = dt })));
+            is_false (P.is_alu (Cast { src = 0; dtype = D.val_of dt })));
           test "index_gate direct" (fun () ->
             let b = P.create () in
             ignore (P.emit b (Param { idx = 0; dtype = gptr }));
@@ -305,7 +305,7 @@ let () =
                 (Index
                    { ptr = 0; idxs = [ idx ]; gate = Some gate; dtype = gptr })
             in
-            let cast = P.emit b (Cast { src = addr; dtype = dt }) in
+            let cast = P.emit b (Cast { src = addr; dtype = D.val_of dt }) in
             some int gate (P.index_gate (P.finish b) cast));
           test "index_gate none" (fun () ->
             let b = P.create () in
@@ -323,16 +323,16 @@ let () =
           test "forward ref rejected" (fun () ->
             rejects "out of bounds or forward" (fun b ->
                 ignore
-                  (P.emit b (Unary { op = `Neg; src = 1; dtype = dt }));
+                  (P.emit b (Unary { op = `Neg; src = 1; dtype = D.val_of dt }));
                 ignore (emit_f32 b 1.0)));
           test "self ref rejected" (fun () ->
             rejects "out of bounds or forward" (fun b ->
-                ignore (P.emit b (Unary { op = `Neg; src = 0; dtype = dt }))));
+                ignore (P.emit b (Unary { op = `Neg; src = 0; dtype = D.val_of dt }))));
           test "index dtype rejected" (fun () ->
             rejects "Index dtype not allowed" (fun b ->
                 ignore
                   (P.emit b
-                     (Const { value = C.int D.index 0; dtype = D.index }))));
+                     (Const { value = C.int D.Val.index 0; dtype = D.Val.index }))));
           test "empty program accepted" (fun () ->
             validates (fun _b -> ()));
         ];
@@ -370,13 +370,13 @@ let () =
                 ignore
                   (P.emit b
                      (Define_var
-                        { name = "n"; lo = 0; hi = 10; dtype = D.int32 }))));
+                        { name = "n"; lo = 0; hi = 10; dtype = D.Val.int32 }))));
           test "define_var float rejected" (fun () ->
             rejects "must be int/index" (fun b ->
                 ignore
                   (P.emit b
                      (Define_var
-                        { name = "x"; lo = 0; hi = 4; dtype = dt }))));
+                        { name = "x"; lo = 0; hi = 4; dtype = D.val_of dt }))));
           test "define_var vector rejected" (fun () ->
             rejects "must be scalar" (fun b ->
                 ignore
@@ -386,21 +386,21 @@ let () =
                           name = "v";
                           lo = 0;
                           hi = 4;
-                          dtype = D.vec D.int32 4;
+                          dtype = D.Val.vec 4 D.Val.int32;
                         }))));
           test "define_var lo > hi rejected" (fun () ->
             rejects "lo > hi" (fun b ->
                 ignore
                   (P.emit b
                      (Define_var
-                        { name = "x"; lo = 5; hi = 3; dtype = D.int32 }))));
+                        { name = "x"; lo = 5; hi = 3; dtype = D.Val.int32 }))));
           (* Range / End_range *)
           test "range int ok" (fun () ->
             validates (fun b ->
                 let size = emit_i32 b 10 in
                 let range =
                   P.emit b
-                    (Range { size; dtype = D.int32; axis = 0; sub = []; kind = Ak.Loop })
+                    (Range { size; dtype = D.Val.int32; axis = 0; sub = []; kind = Ak.Loop })
                 in
                 ignore (P.emit b (End_range { dep = range; range }))));
           test "range float rejected" (fun () ->
@@ -408,7 +408,7 @@ let () =
                 let size = emit_f32 b 10.0 in
                 let range =
                   P.emit b
-                    (Range { size; dtype = dt; axis = 0; sub = []; kind = Ak.Loop })
+                    (Range { size; dtype = D.val_of dt; axis = 0; sub = []; kind = Ak.Loop })
                 in
                 ignore (P.emit b (End_range { dep = range; range }))));
           test "range vector rejected" (fun () ->
@@ -419,7 +419,7 @@ let () =
                     (Range
                        {
                          size;
-                         dtype = D.vec D.int32 4;
+                         dtype = D.Val.vec 4 D.Val.int32;
                          axis = 0;
                          sub = [];
                          kind = Ak.Loop;
@@ -430,11 +430,11 @@ let () =
             rejects "Range size" (fun b ->
                 let size =
                   P.emit b
-                    (Const { value = C.int D.int64 10; dtype = D.int64 })
+                    (Const { value = C.int D.Val.int64 10; dtype = D.Val.int64 })
                 in
                 let range =
                   P.emit b
-                    (Range { size; dtype = D.int32; axis = 0; sub = []; kind = Ak.Loop })
+                    (Range { size; dtype = D.Val.int32; axis = 0; sub = []; kind = Ak.Loop })
                 in
                 ignore (P.emit b (End_range { dep = range; range }))));
           test "end_range not range rejected" (fun () ->
@@ -447,18 +447,18 @@ let () =
                 ignore
                   (P.emit b
                      (Range
-                        { size; dtype = D.int32; axis = 0; sub = []; kind = Ak.Loop }))));
+                        { size; dtype = D.Val.int32; axis = 0; sub = []; kind = Ak.Loop }))));
           test "end_range unbalanced rejected" (fun () ->
             rejects "unbalanced End_range" (fun b ->
                 let size = emit_i32 b 10 in
                 let outer =
                   P.emit b
-                    (Range { size; dtype = D.int32; axis = 0; sub = []; kind = Ak.Loop })
+                    (Range { size; dtype = D.Val.int32; axis = 0; sub = []; kind = Ak.Loop })
                 in
                 ignore
                   (P.emit b
                      (Range
-                        { size; dtype = D.int32; axis = 1; sub = []; kind = Ak.Loop }));
+                        { size; dtype = D.Val.int32; axis = 1; sub = []; kind = Ak.Loop }));
                 ignore (P.emit b (End_range { dep = outer; range = outer }))));
           (* If / Endif *)
           test "if/endif ok" (fun () ->
@@ -483,7 +483,7 @@ let () =
           test "if idx through cast ok" (fun () ->
             validates (fun b ->
                 let addr = emit_index_chain b in
-                let cast = P.emit b (Cast { src = addr; dtype = D.int32 }) in
+                let cast = P.emit b (Cast { src = addr; dtype = D.Val.int32 }) in
                 let cond = emit_bool b true in
                 let if_ = P.emit b (If { cond; idx_for_dedup = cast }) in
                 ignore (P.emit b (Endif { if_ }))));
@@ -503,35 +503,35 @@ let () =
                 ignore
                   (P.emit b
                      (Special
-                        { dim = Sd.Group_id 0; size; dtype = D.int32 }))));
+                        { dim = Sd.Group_id 0; size; dtype = D.Val.int32 }))));
           test "special float rejected" (fun () ->
             rejects "must be int32 scalar" (fun b ->
                 let size = emit_f32 b 32.0 in
                 ignore
                   (P.emit b
-                     (Special { dim = Sd.Group_id 0; size; dtype = dt }))));
+                     (Special { dim = Sd.Group_id 0; size; dtype = D.val_of dt }))));
           test "special duplicate rejected" (fun () ->
             rejects "duplicate Special" (fun b ->
                 let size = emit_i32 b 32 in
                 ignore
                   (P.emit b
                      (Special
-                        { dim = Sd.Group_id 0; size; dtype = D.int32 }));
+                        { dim = Sd.Group_id 0; size; dtype = D.Val.int32 }));
                 ignore
                   (P.emit b
                      (Special
-                        { dim = Sd.Group_id 0; size; dtype = D.int32 }))));
+                        { dim = Sd.Group_id 0; size; dtype = D.Val.int32 }))));
           test "special different dims ok" (fun () ->
             validates (fun b ->
                 let size = emit_i32 b 32 in
                 ignore
                   (P.emit b
                      (Special
-                        { dim = Sd.Group_id 0; size; dtype = D.int32 }));
+                        { dim = Sd.Group_id 0; size; dtype = D.Val.int32 }));
                 ignore
                   (P.emit b
                      (Special
-                        { dim = Sd.Local_id 1; size; dtype = D.int32 }))));
+                        { dim = Sd.Local_id 1; size; dtype = D.Val.int32 }))));
           (* Index *)
           test "index ok" (fun () ->
             validates (fun b -> ignore (emit_index_chain b)));
@@ -602,7 +602,7 @@ let () =
                 let c = emit_i32 b 0 in
                 ignore
                   (P.emit b
-                     (Load { src = c; alt = None; dtype = D.int32 }))));
+                     (Load { src = c; alt = None; dtype = D.Val.int32 }))));
           test "load alt gated ok" (fun () ->
             validates (fun b -> ignore (emit_gated_load_chain b)));
           test "load alt without gate rejected" (fun () ->
@@ -622,26 +622,26 @@ let () =
                 let alt = emit_f32 b 0.0 in
                 ignore
                   (P.emit b
-                     (Load { src = addr; alt = Some alt; dtype = dt }))));
+                     (Load { src = addr; alt = Some alt; dtype = D.val_of dt }))));
           (* After *)
           test "after barrier void ok" (fun () ->
             validates (fun b ->
                 let barrier = P.emit b Barrier in
                 ignore
                   (P.emit b
-                     (After { src = barrier; deps = []; dtype = D.void }))));
+                     (After { src = barrier; deps = []; dtype = D.Val.void }))));
           test "after barrier non-void rejected" (fun () ->
             rejects "void dtype" (fun b ->
                 let barrier = P.emit b Barrier in
                 ignore
                   (P.emit b
-                     (After { src = barrier; deps = []; dtype = dt }))));
+                     (After { src = barrier; deps = []; dtype = D.val_of dt }))));
           test "after value mismatch rejected" (fun () ->
             rejects "After src" (fun b ->
                 let _ptr, _idx, _addr, value = emit_load_chain b in
                 ignore
                   (P.emit b
-                     (After { src = value; deps = []; dtype = D.int32 }))));
+                     (After { src = value; deps = []; dtype = D.Val.int32 }))));
           (* ALU: Where *)
           test "where ok" (fun () ->
             validates (fun b ->
@@ -656,7 +656,7 @@ let () =
                           a = cond;
                           b = t;
                           c = e;
-                          dtype = dt;
+                          dtype = D.val_of dt;
                         }))));
           test "where non-bool rejected" (fun () ->
             rejects "must be bool" (fun b ->
@@ -671,7 +671,7 @@ let () =
                           a = cond;
                           b = t;
                           c = e;
-                          dtype = dt;
+                          dtype = D.val_of dt;
                         }))));
           test "where mismatched arms rejected" (fun () ->
             rejects "Where branch" (fun b ->
@@ -686,7 +686,7 @@ let () =
                           a = cond;
                           b = t;
                           c = e;
-                          dtype = dt;
+                          dtype = D.val_of dt;
                         }))));
           (* ALU: Cmp *)
           test "cmp ok" (fun () ->
@@ -696,7 +696,7 @@ let () =
                 ignore
                   (P.emit b
                      (Binary
-                        { op = `Cmplt; lhs = a; rhs = c; dtype = D.bool }))));
+                        { op = `Cmplt; lhs = a; rhs = c; dtype = D.Val.bool }))));
           test "cmp non-bool result rejected" (fun () ->
             rejects "comparison result must be bool" (fun b ->
                 let a = emit_f32 b 1.0 in
@@ -704,7 +704,7 @@ let () =
                 ignore
                   (P.emit b
                      (Binary
-                        { op = `Cmplt; lhs = a; rhs = c; dtype = D.int32 }))));
+                        { op = `Cmplt; lhs = a; rhs = c; dtype = D.Val.int32 }))));
           test "cmp operands mismatch rejected" (fun () ->
             rejects "don't match" (fun b ->
                 let a = emit_f32 b 1.0 in
@@ -712,7 +712,7 @@ let () =
                 ignore
                   (P.emit b
                      (Binary
-                        { op = `Cmpeq; lhs = a; rhs = c; dtype = D.bool }))));
+                        { op = `Cmpeq; lhs = a; rhs = c; dtype = D.Val.bool }))));
           (* ALU: Idiv/Mod *)
           test "idiv int ok" (fun () ->
             validates (fun b ->
@@ -721,14 +721,14 @@ let () =
                 ignore
                   (P.emit b
                      (Binary
-                        { op = `Idiv; lhs = a; rhs = c; dtype = D.int32 }))));
+                        { op = `Idiv; lhs = a; rhs = c; dtype = D.Val.int32 }))));
           test "idiv float rejected" (fun () ->
             rejects "int dtype" (fun b ->
                 let a = emit_f32 b 1.0 in
                 let c = emit_f32 b 2.0 in
                 ignore
                   (P.emit b
-                     (Binary { op = `Idiv; lhs = a; rhs = c; dtype = dt }))));
+                     (Binary { op = `Idiv; lhs = a; rhs = c; dtype = D.val_of dt }))));
           (* ALU: Shift *)
           test "shift ok" (fun () ->
             validates (fun b ->
@@ -737,30 +737,30 @@ let () =
                 ignore
                   (P.emit b
                      (Binary
-                        { op = `Shl; lhs = a; rhs = c; dtype = D.int32 }))));
+                        { op = `Shl; lhs = a; rhs = c; dtype = D.Val.int32 }))));
           test "shift rhs mismatch rejected" (fun () ->
             rejects "shift rhs must match" (fun b ->
                 let a = emit_i32 b 8 in
                 let c =
                   P.emit b
-                    (Const { value = C.int D.int64 2; dtype = D.int64 })
+                    (Const { value = C.int D.Val.int64 2; dtype = D.Val.int64 })
                 in
                 ignore
                   (P.emit b
                      (Binary
-                        { op = `Shl; lhs = a; rhs = c; dtype = D.int32 }))));
+                        { op = `Shl; lhs = a; rhs = c; dtype = D.Val.int32 }))));
           (* ALU: Unary *)
           test "unary ok" (fun () ->
             validates (fun b ->
                 let a = emit_f32 b 1.0 in
                 ignore
-                  (P.emit b (Unary { op = `Neg; src = a; dtype = dt }))));
+                  (P.emit b (Unary { op = `Neg; src = a; dtype = D.val_of dt }))));
           test "unary mismatch rejected" (fun () ->
             rejects "unary ALU" (fun b ->
                 let a = emit_f32 b 1.0 in
                 ignore
                   (P.emit b
-                     (Unary { op = `Neg; src = a; dtype = D.int32 }))));
+                     (Unary { op = `Neg; src = a; dtype = D.Val.int32 }))));
           (* ALU: Binary general *)
           test "binary alu ok" (fun () ->
             validates (fun b ->
@@ -768,14 +768,14 @@ let () =
                 let c = emit_f32 b 2.0 in
                 ignore
                   (P.emit b
-                     (Binary { op = `Add; lhs = a; rhs = c; dtype = dt }))));
+                     (Binary { op = `Add; lhs = a; rhs = c; dtype = D.val_of dt }))));
           test "binary alu lhs mismatch rejected" (fun () ->
             rejects "binary ALU lhs" (fun b ->
                 let a = emit_i32 b 1 in
                 let c = emit_f32 b 2.0 in
                 ignore
                   (P.emit b
-                     (Binary { op = `Add; lhs = a; rhs = c; dtype = dt }))));
+                     (Binary { op = `Add; lhs = a; rhs = c; dtype = D.val_of dt }))));
           (* ALU: Mulacc *)
           test "mulacc ok" (fun () ->
             validates (fun b ->
@@ -785,7 +785,7 @@ let () =
                 ignore
                   (P.emit b
                      (Ternary
-                        { op = `Mulacc; a; b = c; c = d; dtype = dt }))));
+                        { op = `Mulacc; a; b = c; c = d; dtype = D.val_of dt }))));
           test "mulacc mismatch rejected" (fun () ->
             rejects "Mulacc" (fun b ->
                 let a = emit_f32 b 1.0 in
@@ -794,7 +794,7 @@ let () =
                 ignore
                   (P.emit b
                      (Ternary
-                        { op = `Mulacc; a; b = c; c = d; dtype = dt }))));
+                        { op = `Mulacc; a; b = c; c = d; dtype = D.val_of dt }))));
           (* Vectorize *)
           test "vectorize ok" (fun () ->
             validates (fun b ->
@@ -804,13 +804,13 @@ let () =
                 ignore
                   (P.emit b
                      (Vectorize
-                        { srcs = [ a; c; d ]; dtype = D.vec dt 3 }))));
+                        { srcs = [ a; c; d ]; dtype = D.Val.vec 3 (D.val_of dt) }))));
           test "vectorize one source rejected" (fun () ->
             rejects "more than one source" (fun b ->
                 let a = emit_f32 b 1.0 in
                 ignore
                   (P.emit b
-                     (Vectorize { srcs = [ a ]; dtype = D.vec dt 1 }))));
+                     (Vectorize { srcs = [ a ]; dtype = D.Val.vec 1 (D.val_of dt) }))));
           (* Gep *)
           test "gep ok" (fun () ->
             validates (fun b ->
@@ -818,18 +818,18 @@ let () =
                 let c = emit_f32 b 2.0 in
                 let v =
                   P.emit b
-                    (Vectorize { srcs = [ a; c ]; dtype = D.vec dt 2 })
+                    (Vectorize { srcs = [ a; c ]; dtype = D.Val.vec 2 (D.val_of dt) })
                 in
-                ignore (P.emit b (Gep { src = v; idxs = [1]; dtype = dt }))));
+                ignore (P.emit b (Gep { src = v; idxs = [1]; dtype = D.val_of dt }))));
           test "gep out of bounds rejected" (fun () ->
             rejects "out of bounds" (fun b ->
                 let a = emit_f32 b 1.0 in
                 let c = emit_f32 b 2.0 in
                 let v =
                   P.emit b
-                    (Vectorize { srcs = [ a; c ]; dtype = D.vec dt 2 })
+                    (Vectorize { srcs = [ a; c ]; dtype = D.Val.vec 2 (D.val_of dt) })
                 in
-                ignore (P.emit b (Gep { src = v; idxs = [5]; dtype = dt }))));
+                ignore (P.emit b (Gep { src = v; idxs = [5]; dtype = D.val_of dt }))));
           (* Store *)
           test "store ok" (fun () ->
             validates (fun b ->
@@ -878,11 +878,11 @@ let () =
                 let size = emit_i32 b 10 in
                 let outer =
                   P.emit b
-                    (Range { size; dtype = D.int32; axis = 0; sub = []; kind = Ak.Loop })
+                    (Range { size; dtype = D.Val.int32; axis = 0; sub = []; kind = Ak.Loop })
                 in
                 let inner =
                   P.emit b
-                    (Range { size; dtype = D.int32; axis = 1; sub = []; kind = Ak.Loop })
+                    (Range { size; dtype = D.Val.int32; axis = 1; sub = []; kind = Ak.Loop })
                 in
                 ignore (P.emit b (End_range { dep = inner; range = inner }));
                 ignore (P.emit b (End_range { dep = outer; range = outer }))));
@@ -904,7 +904,7 @@ let () =
                 let size = emit_i32 b 10 in
                 let range =
                   P.emit b
-                    (Range { size; dtype = D.int32; axis = 0; sub = []; kind = Ak.Loop })
+                    (Range { size; dtype = D.Val.int32; axis = 0; sub = []; kind = Ak.Loop })
                 in
                 let cond = emit_bool b true in
                 let if_ = P.emit b (If { cond; idx_for_dedup = addr }) in
@@ -915,12 +915,12 @@ let () =
                 let size = emit_i32 b 10 in
                 let r1 =
                   P.emit b
-                    (Range { size; dtype = D.int32; axis = 0; sub = []; kind = Ak.Loop })
+                    (Range { size; dtype = D.Val.int32; axis = 0; sub = []; kind = Ak.Loop })
                 in
                 ignore (P.emit b (End_range { dep = r1; range = r1 }));
                 let r2 =
                   P.emit b
-                    (Range { size; dtype = D.int32; axis = 1; sub = []; kind = Ak.Loop })
+                    (Range { size; dtype = D.Val.int32; axis = 1; sub = []; kind = Ak.Loop })
                 in
                 ignore (P.emit b (End_range { dep = r2; range = r2 }))));
         ];
@@ -928,7 +928,7 @@ let () =
         [
           test "map_children binary" (fun () ->
             let view : P.view =
-              Binary { op = `Add; lhs = 2; rhs = 5; dtype = dt }
+              Binary { op = `Add; lhs = 2; rhs = 5; dtype = D.val_of dt }
             in
             match P.map_children (fun id -> id + 10) view with
             | Binary { lhs = 12; rhs = 15; _ } -> ()
@@ -942,17 +942,17 @@ let () =
             | _ -> fail "expected unchanged Param");
           test "map_alu remaps" (fun () ->
             let view : P.view =
-              Unary { op = `Neg; src = 5; dtype = dt }
+              Unary { op = `Neg; src = 5; dtype = D.val_of dt }
             in
-            match P.map_alu ~map_ref:(fun r -> r + 1) ~dtype:D.int32 view with
-            | Unary { op = `Neg; src = 6; dtype } when D.equal dtype D.int32 ->
+            match P.map_alu ~map_ref:(fun r -> r + 1) ~dtype:D.Val.int32 view with
+            | Unary { op = `Neg; src = 6; dtype } when D.Val.equal dtype D.Val.int32 ->
                 ()
             | _ -> fail "expected remapped Unary with int32 dtype");
           test "map_alu non-alu raises" (fun () ->
             raises_invalid (fun () ->
                 ignore
-                  (P.map_alu ~map_ref:Fun.id ~dtype:dt
-                     (Const { value = C.float dt 1.0; dtype = dt }))));
+                  (P.map_alu ~map_ref:Fun.id ~dtype:(D.val_of dt)
+                     (Const { value = C.float (D.val_of dt) 1.0; dtype = D.val_of dt }))));
           test "rebuild identity" (fun () ->
             let b = P.create () in
             let _ptr, _idx, addr, value = emit_load_chain b in

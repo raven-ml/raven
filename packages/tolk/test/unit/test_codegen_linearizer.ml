@@ -11,21 +11,21 @@ module P = Program
 
 (* Helpers *)
 
-let dt = Dtype.float32
-let global_ptr dt = Dtype.ptr_of dt ~addrspace:Global ~size:(-1)
+let dt = Dtype.Val.float32
+let global_ptr dt = Dtype.Ptr.create dt ~addrspace:Global ~size:(-1)
 let ptr = global_ptr dt
 
-let i32 n = K.const (Const.int Dtype.int32 n)
-let f32 x = K.const (Const.float Dtype.float32 x)
+let i32 n = K.const (Const.int Dtype.Val.int32 n)
+let f32 x = K.const (Const.float Dtype.Val.float32 x)
 
 let loop_range ~axis size =
-  K.range ~size ~axis ~kind:Axis_kind.Loop ~dtype:Dtype.int32 ()
+  K.range ~size ~axis ~kind:Axis_kind.Loop ~dtype:Dtype.Val.int32 ()
 
 let reduce_range ~axis size =
-  K.range ~size ~axis ~kind:Axis_kind.Reduce ~dtype:Dtype.int32 ()
+  K.range ~size ~axis ~kind:Axis_kind.Reduce ~dtype:Dtype.Val.int32 ()
 
 let global_range ~axis size =
-  K.range ~size ~axis ~kind:Axis_kind.Global ~dtype:Dtype.int32 ()
+  K.range ~size ~axis ~kind:Axis_kind.Global ~dtype:Dtype.Val.int32 ()
 
 let load_one_elem () =
   let p0 = K.param ~idx:0 ~dtype:ptr in
@@ -67,7 +67,10 @@ let count program pred =
   P.iteri (fun _ view -> if pred view then incr n) program;
   !n
 
-let linearize = Linearizer.linearize
+let linearize sink =
+  let sink = Linearizer.pm_split_ends sink in
+  let sink = Linearizer.pm_add_control_flow sink in
+  Linearizer.linearize sink
 
 let count_ranges prog = count prog (function P.Range _ -> true | _ -> false)
 
@@ -173,7 +176,7 @@ let () =
             in
             (match P.view program after_pos with
              | P.After { src; deps = [ dep ]; dtype } ->
-                 is_true (Dtype.equal dtype dt);
+                 is_true (Dtype.Val.equal dtype dt);
                  (match (P.view program src, P.view program dep) with
                   | P.Load _, P.Const { value; _ } ->
                       (match Const.view value with
@@ -199,7 +202,7 @@ let () =
             in
             (match P.view program after_pos with
              | P.After { src; deps = [ dep ]; dtype } ->
-                 is_true (Dtype.equal dtype Dtype.void);
+                 is_true (Dtype.Val.equal dtype Dtype.Val.void);
                  (match (P.view program src, P.view program dep) with
                   | P.Store _, P.Store _ -> ()
                   | src_view, dep_view ->
@@ -272,7 +275,7 @@ let () =
             let out_ptr = global_ptr dt in
             let in_ptr = global_ptr dt in
             let bias_ptr = global_ptr dt in
-            let reg_ptr = Dtype.ptr_of dt ~addrspace:Reg ~size:1 in
+            let reg_ptr = Dtype.Ptr.create dt ~addrspace:Reg ~size:1 in
             let p0 = K.param ~idx:0 ~dtype:out_ptr in
             let p1 = K.param ~idx:1 ~dtype:in_ptr in
             let p2 = K.param ~idx:2 ~dtype:bias_ptr in
@@ -316,7 +319,7 @@ let () =
             let out_ptr = global_ptr dt in
             let in_ptr = global_ptr dt in
             let bias_ptr = global_ptr dt in
-            let reg_ptr = Dtype.ptr_of dt ~addrspace:Reg ~size:1 in
+            let reg_ptr = Dtype.Ptr.create dt ~addrspace:Reg ~size:1 in
             let p0 = K.param ~idx:0 ~dtype:out_ptr in
             let p1 = K.param ~idx:1 ~dtype:in_ptr in
             let p2 = K.param ~idx:2 ~dtype:bias_ptr in
@@ -365,7 +368,7 @@ let () =
             is_true (List.hd pre_range_loads < range_pos));
           test "loop-carried reg stores stay inside the range" (fun () ->
             let input_ptr = global_ptr dt in
-            let reg_ptr = Dtype.ptr_of dt ~addrspace:Reg ~size:4 in
+            let reg_ptr = Dtype.Ptr.create dt ~addrspace:Reg ~size:4 in
             let p0 = K.param ~idx:0 ~dtype:input_ptr in
             let dreg = K.define_reg ~size:4 ~dtype:reg_ptr ~slot:0 in
             let ri n = K.index ~ptr:dreg ~idxs:[ i32 n ] () in
@@ -503,7 +506,7 @@ let () =
             let out_ptr = global_ptr dt in
             let in_ptr_a = global_ptr dt in
             let in_ptr_b = global_ptr dt in
-            let reg_ptr = Dtype.ptr_of dt ~addrspace:Reg ~size:1 in
+            let reg_ptr = Dtype.Ptr.create dt ~addrspace:Reg ~size:1 in
             let p0 = K.param ~idx:0 ~dtype:out_ptr in
             let p1 = K.param ~idx:1 ~dtype:in_ptr_a in
             let p2 = K.param ~idx:2 ~dtype:in_ptr_b in
@@ -576,16 +579,16 @@ let () =
                   ~dtype:dt));
           test "unlowered Bufferize is rejected" (fun () ->
             test_unlowered_rejected "Bufferize" (fun () ->
-                let buf_ptr = Dtype.ptr_of dt ~addrspace:Global ~size:(-1) in
+                let buf_ptr = Dtype.Ptr.create dt ~addrspace:Global ~size:(-1) in
                 let opts : Kernel.bufferize_opts =
                   { device = None; addrspace = Global; removable = false }
                 in
                 K.bufferize ~src:(load_one_elem ()) ~ranges:[] ~dtype:buf_ptr
                   ~opts));
-          test "unlowered Cat is rejected" (fun () ->
-            test_unlowered_rejected "Cat" (fun () ->
+          test "unlowered Vcat is rejected" (fun () ->
+            test_unlowered_rejected "Vcat" (fun () ->
                 let v = K.vectorize ~srcs:[ f32 1.0; f32 2.0 ] in
-                K.cat ~srcs:[ v; v ]));
+                K.vcat ~srcs:[ v; v ]));
           test "unlowered Ptrcat is rejected" (fun () ->
             test_unlowered_rejected "Ptrcat" (fun () ->
                 let p0 = K.param ~idx:0 ~dtype:ptr in
@@ -622,10 +625,10 @@ let () =
             is_true (find_param 1 < find_param 2));
           test "define_var ordered by name" (fun () ->
             let vb =
-              K.define_var ~name:"b" ~lo:0 ~hi:10 ~dtype:Dtype.int32 ()
+              K.define_var ~name:"b" ~lo:0 ~hi:10 ~dtype:Dtype.Val.int32 ()
             in
             let va =
-              K.define_var ~name:"a" ~lo:0 ~hi:10 ~dtype:Dtype.int32 ()
+              K.define_var ~name:"a" ~lo:0 ~hi:10 ~dtype:Dtype.Val.int32 ()
             in
             let sum = K.binary ~op:`Add ~lhs:va ~rhs:vb in
             let program = linearize (K.sink [ sum ]) in
@@ -637,8 +640,8 @@ let () =
             in
             is_true (find_var "a" < find_var "b"));
           test "define_local before define_reg" (fun () ->
-            let local_ptr = Dtype.ptr_of dt ~addrspace:Local ~size:256 in
-            let reg_ptr = Dtype.ptr_of dt ~addrspace:Reg ~size:1 in
+            let local_ptr = Dtype.Ptr.create dt ~addrspace:Local ~size:256 in
+            let reg_ptr = Dtype.Ptr.create dt ~addrspace:Reg ~size:1 in
             let dl = K.define_local ~size:256 ~dtype:local_ptr in
             let dr = K.define_reg ~size:1 ~dtype:reg_ptr ~slot:0 in
             let st ptr_node =
@@ -735,8 +738,8 @@ let () =
                 | _ -> false)));
           test "cast and bitcast emission" (fun () ->
             let c1f = f32 1.0 in
-            let casted = K.cast ~src:c1f ~dtype:(Dtype.to_any Dtype.int32) in
-            let bitcoded = K.bitcast ~src:c1f ~dtype:Dtype.int32 in
+            let casted = K.cast ~src:c1f ~dtype:(Dtype.int32) in
+            let bitcoded = K.bitcast ~src:c1f ~dtype:Dtype.Val.int32 in
             let sum = K.binary ~op:`Add ~lhs:casted ~rhs:bitcoded in
             let program = linearize (K.sink [ sum ]) in
             P.validate program;
@@ -764,7 +767,7 @@ let () =
           test "custom and custom_inline emission" (fun () ->
             let ci =
               K.custom_inline ~fmt:"get_val(%d)" ~args:[ i32 0 ]
-                ~dtype:Dtype.int32
+                ~dtype:Dtype.Val.int32
             in
             let ce = K.custom ~fmt:"barrier()" ~args:[] in
             let af = K.after ~src:ci ~deps:[ ce ] in
@@ -777,7 +780,7 @@ let () =
                 | P.Custom_inline _ -> true
                 | _ -> false)));
           test "after on ptr maps directly" (fun () ->
-            let reg_ptr = Dtype.ptr_of dt ~addrspace:Reg ~size:1 in
+            let reg_ptr = Dtype.Ptr.create dt ~addrspace:Reg ~size:1 in
             let p0 = K.param ~idx:0 ~dtype:ptr in
             let dreg = K.define_reg ~size:1 ~dtype:reg_ptr ~slot:0 in
             let reg_idx = K.index ~ptr:dreg ~idxs:[ i32 0 ] () in

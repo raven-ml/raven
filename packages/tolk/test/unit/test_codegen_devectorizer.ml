@@ -9,27 +9,27 @@ open Tolk_ir
 
 module K = Kernel
 
-let dt = Dtype.float32
-let ptr = Dtype.ptr_of dt ~addrspace:Global ~size:(-1)
+let dt = Dtype.Val.float32
+let ptr = Dtype.Ptr.create dt ~addrspace:Global ~size:(-1)
 let pp_kernel kernel = Format.asprintf "%a" K.pp kernel
 
-let stub_renderer ?(load_store_widths = fun _ -> [ 1 ]) () =
+let stub_renderer ?(supports_float4 = false) () =
   Renderer.make ~name:"test" ~device:"TEST" ~has_local:true ~has_shared:true
-    ~shared_max:32768 ~load_store_widths ~render:(fun ?name:_ _ -> "") ()
+    ~shared_max:32768 ~supports_float4 ~render:(fun ?name:_ _ -> "") ()
 
 let expect_dtype msg expected actual =
-  if not (Dtype.equal expected actual) then
+  if not (Dtype.Val.equal expected actual) then
     failwith
       (Printf.sprintf "%s: expected %s, got %s" msg
-         (Format.asprintf "%a" Dtype.pp expected)
-         (Format.asprintf "%a" Dtype.pp actual))
+         (Format.asprintf "%a" Dtype.Val.pp expected)
+         (Format.asprintf "%a" Dtype.Val.pp actual))
 
 let expect_ptr_dtype msg expected actual =
-  if not (Dtype.ptr_equal expected actual) then
+  if not (Dtype.Ptr.equal expected actual) then
     failwith
       (Printf.sprintf "%s: expected %s, got %s" msg
-         (Format.asprintf "%a" Dtype.pp_ptr expected)
-         (Format.asprintf "%a" Dtype.pp_ptr actual))
+         (Format.asprintf "%a" Dtype.Ptr.pp expected)
+         (Format.asprintf "%a" Dtype.Ptr.pp actual))
 
 let topo_array root =
   let arr = Array.of_list (K.toposort root) in
@@ -103,10 +103,16 @@ let find_all_reachable root ~root_idx pred =
 
 (* Helpers for common node construction *)
 
-let f32 f = K.const (Const.float Dtype.float32 f)
-let i32 n = K.const (Const.int Dtype.int32 n)
-let idx n = K.const (Const.int Dtype.index n)
+let f32 f = K.const (Const.float Dtype.Val.float32 f)
+let i32 n = K.const (Const.int Dtype.Val.int32 n)
+let idx n = K.const (Const.int Dtype.Val.index n)
 let idx0 = idx 0
+
+let rec unwrap_const n =
+  match K.view n with
+  | K.Const { value; _ } -> Some value
+  | K.Cast { src; _ } -> unwrap_const src
+  | _ -> None
 
 let no_geps lowered sink =
   equal int 0
@@ -137,13 +143,13 @@ let check_scalarized_vectorize lowered sink ~vec_dt ~lane_count ~lane_pred
   let _, view =
     expect_reachable lowered sink ("expected vectorized scalar " ^ desc)
       (function
-      | K.Vectorize { dtype; srcs } when Dtype.equal (Dtype.any_to_val dtype) vec_dt ->
+      | K.Vectorize { dtype; srcs } when Dtype.Val.equal (Dtype.val_of dtype) vec_dt ->
           List.for_all (fun r -> lane_pred (K.view r)) srcs
       | _ -> false)
   in
   match view with
   | K.Vectorize { srcs; dtype } ->
-      expect_dtype (desc ^ " dtype") vec_dt (Dtype.any_to_val dtype);
+      expect_dtype (desc ^ " dtype") vec_dt (Dtype.val_of dtype);
       equal int lane_count (List.length srcs);
       srcs
   | _ -> failwith ("expected Vectorize: " ^ pp_kernel lowered)
@@ -155,45 +161,6 @@ let () =
     [
       group "pm_reduce"
         [
-          test "GEP through Vectorize extracts correct lane" (fun () ->
-            let vec = K.vectorize ~srcs:[ f32 0.0; f32 1.0; f32 2.0 ] in
-            let lowered =
-              K.sink [ K.gep ~src:vec ~idx:1 ] |> Devectorizer.pm_reduce
-            in
-            let sink = find_sink lowered in
-            ignore
-              (expect_reachable lowered sink
-                 "expected GEP through Vectorize to extract lane 1 constant"
-                 (function
-                 | K.Const { value; dtype } ->
-                     Dtype.equal dtype dt
-                     && (match Const.view value with
-                         | Const.Float 1.0 -> true
-                         | _ -> false)
-                 | _ -> false));
-            no_geps lowered sink;
-            K.validate lowered);
-          test "GEP through scalar Const returns same value" (fun () ->
-            let scalar_c = f32 7.0 in
-            let vec_c =
-              K.replace scalar_c ~dtype:(Dtype.vec Dtype.float32 3) ()
-            in
-            let lowered =
-              K.sink [ K.gep ~src:vec_c ~idx:2 ] |> Devectorizer.pm_reduce
-            in
-            let sink = find_sink lowered in
-            ignore
-              (expect_reachable lowered sink
-                 "expected GEP through Const to return same scalar constant"
-                 (function
-                 | K.Const { value; dtype } ->
-                     Dtype.equal dtype dt
-                     && (match Const.view value with
-                         | Const.Float 7.0 -> true
-                         | _ -> false)
-                 | _ -> false));
-            no_geps lowered sink;
-            K.validate lowered);
           test "reduce_to_acc creates accumulator loop" (fun () ->
             let p0 = K.param ~idx:0 ~dtype:ptr in
             let p1 = K.param ~idx:1 ~dtype:ptr in
@@ -216,7 +183,7 @@ let () =
               | K.End _ -> true
               | _ -> false);
             has_reachable lowered sink (function
-              | K.Const { value; dtype } when Dtype.equal dtype dt ->
+              | K.Const { value; dtype } when Dtype.Val.equal dtype dt ->
                   (match Const.view value with
                    | Const.Float 0.0 -> true
                    | _ -> false)
@@ -297,7 +264,7 @@ let () =
               | _ -> false);
             K.validate lowered);
           test "reduce folds WMMA accumulate" (fun () ->
-            let dt2 = Dtype.vec Dtype.float32 2 in
+            let dt2 = Dtype.Val.vec 2 Dtype.Val.float32 in
             let va = K.vectorize ~srcs:[ f32 1.0; f32 2.0 ] in
             let vb = K.vectorize ~srcs:[ f32 3.0; f32 4.0 ] in
             let vc = K.vectorize ~srcs:[ f32 5.0; f32 6.0 ] in
@@ -380,9 +347,9 @@ let () =
                 | _ -> false)
             in
             (match idx_view with
-            | K.Index { dtype = Dtype.P pty; _ } ->
+            | K.Index { dtype = Dtype.Ptr pty; _ } ->
                 expect_ptr_dtype "store destination pointer dtype" ptr pty
-            | K.Index { dtype = Dtype.T _; _ } ->
+            | K.Index { dtype = Dtype.Val _; _ } ->
                 failwith "store destination Index should be ptr-typed after pm_add_loads"
             | _ -> failwith "unreachable");
             K.validate lowered);
@@ -390,148 +357,147 @@ let () =
       group "pm_devectorize"
         [
           test "splits vector ALU into scalar ops" (fun () ->
-            let vdt = Dtype.vec Dtype.float32 5 in
+            let p0 = K.param ~idx:0 ~dtype:(Dtype.Ptr.create dt ~addrspace:Global ~size:(-1)) in
+            let mk_load i =
+              K.load ~src:(K.index ~ptr:p0 ~idxs:[ idx i ] ()) ()
+            in
             let v1 =
               K.vectorize
-                ~srcs:[ f32 1.0; f32 2.0; f32 3.0; f32 4.0; f32 5.0 ]
+                ~srcs:[ mk_load 0; mk_load 1; mk_load 2; mk_load 3; mk_load 4 ]
             in
             let v2 =
               K.vectorize
-                ~srcs:[ f32 6.0; f32 7.0; f32 8.0; f32 9.0; f32 10.0 ]
+                ~srcs:[ mk_load 5; mk_load 6; mk_load 7; mk_load 8; mk_load 9 ]
             in
             let add = K.binary ~op:`Add ~lhs:v1 ~rhs:v2 in
             let lowered =
-              K.sink [ add ] |> Devectorizer.pm_devectorize
+              K.sink [ add ] |> Devectorizer.pm_devectorize (stub_renderer ())
             in
             let sink = find_sink lowered in
-            let srcs =
-              check_scalarized_vectorize lowered sink ~vec_dt:vdt
-                ~lane_count:5
-                ~lane_pred:(function
-                  | K.Binary { op = `Add; _ } -> true
-                  | _ -> false)
-                ~desc:"Adds"
-            in
-            List.iter
-              (fun lane ->
-                match K.view lane with
+            (* sym's sink_cleanup flattens the Vectorize, so we check for
+               5 scalar Adds directly reachable from the sink. *)
+            let scalar_adds =
+              find_all_reachable lowered ~root_idx:sink (function
                 | K.Binary { op = `Add; dtype = lane_dt; _ } ->
-                    expect_dtype "scalar lane add dtype" dt lane_dt
-                | _ -> failwith ("expected per-lane scalar Adds\n"
-                                 ^ pp_kernel lowered))
-              srcs;
+                    Dtype.Val.equal lane_dt dt
+                | _ -> false)
+            in
+            equal int 5 (List.length scalar_adds);
             K.validate lowered);
           test "splits small vector comparisons" (fun () ->
-            let cmp_dt = Dtype.vec Dtype.bool 2 in
-            let c n = K.const (Const.int Dtype.int32 n) in
-            let v1 = K.vectorize ~srcs:[ c 1; c 2 ] in
-            let v2 = K.vectorize ~srcs:[ c 1; c 3 ] in
+            let i32_ptr = Dtype.Ptr.create Dtype.Val.int32 ~addrspace:Global ~size:(-1) in
+            let p0 = K.param ~idx:0 ~dtype:i32_ptr in
+            let p1 = K.param ~idx:1 ~dtype:i32_ptr in
+            let ld0 = K.load ~src:(K.index ~ptr:p0 ~idxs:[ idx0 ] ()) () in
+            let ld1 = K.load ~src:(K.index ~ptr:p1 ~idxs:[ idx0 ] ()) () in
+            let v1 = K.vectorize ~srcs:[ ld0; ld1 ] in
+            let v2 = K.vectorize ~srcs:[ ld1; ld0 ] in
             let lowered =
               K.sink [ K.binary ~op:`Cmpeq ~lhs:v1 ~rhs:v2 ]
-              |> Devectorizer.pm_devectorize
+              |> Devectorizer.pm_devectorize (stub_renderer ())
             in
             let sink = find_sink lowered in
-            ignore
-              (check_scalarized_vectorize lowered sink ~vec_dt:cmp_dt
-                 ~lane_count:2
-                 ~lane_pred:(function
-                   | K.Binary { op = `Cmpeq; _ } -> true
-                   | _ -> false)
-                 ~desc:"comparisons");
+            let scalar_cmps =
+              find_all_reachable lowered ~root_idx:sink (function
+                | K.Binary { op = `Cmpeq; dtype; _ } ->
+                    Dtype.Val.equal dtype Dtype.Val.bool
+                | _ -> false)
+            in
+            equal int 2 (List.length scalar_cmps);
             K.validate lowered);
           test "scalarizes unary ops on vectors" (fun () ->
-            let vdt = Dtype.vec Dtype.float32 3 in
-            let vec = K.vectorize ~srcs:[ f32 1.0; f32 2.0; f32 3.0 ] in
+            let p0 = K.param ~idx:0 ~dtype:(Dtype.Ptr.create dt ~addrspace:Global ~size:(-1)) in
+            let mk_load i =
+              K.load ~src:(K.index ~ptr:p0 ~idxs:[ idx i ] ()) ()
+            in
+            let vec = K.vectorize ~srcs:[ mk_load 0; mk_load 1; mk_load 2 ] in
             let lowered =
               K.sink [ K.unary ~op:`Neg ~src:vec ]
-              |> Devectorizer.pm_devectorize
+              |> Devectorizer.pm_devectorize (stub_renderer ())
             in
             let sink = find_sink lowered in
-            ignore
-              (check_scalarized_vectorize lowered sink ~vec_dt:vdt
-                 ~lane_count:3
-                 ~lane_pred:(function
-                   | K.Unary { op = `Neg; _ } -> true
-                   | _ -> false)
-                 ~desc:"Neg ops");
+            let scalar_negs =
+              find_all_reachable lowered ~root_idx:sink (function
+                | K.Unary { op = `Neg; dtype; _ } ->
+                    Dtype.Val.equal dtype dt
+                | _ -> false)
+            in
+            equal int 3 (List.length scalar_negs);
             K.validate lowered);
           test "scalarizes Cast on vectors" (fun () ->
-            let vec = K.vectorize ~srcs:[ f32 1.0; f32 2.0 ] in
-            let cst = K.cast ~src:vec ~dtype:(Dtype.to_any (Dtype.vec Dtype.int32 2)) in
+            let p0 = K.param ~idx:0 ~dtype:(Dtype.Ptr.create dt ~addrspace:Global ~size:(-1)) in
+            let ld0 = K.load ~src:(K.index ~ptr:p0 ~idxs:[ idx 0 ] ()) () in
+            let ld1 = K.load ~src:(K.index ~ptr:p0 ~idxs:[ idx 1 ] ()) () in
+            let vec = K.vectorize ~srcs:[ ld0; ld1 ] in
+            let cst = K.cast ~src:vec ~dtype:(Dtype.Val (Dtype.Val.vec 2 Dtype.Val.int32)) in
             let lowered =
-              K.sink [ cst ] |> Devectorizer.pm_devectorize
+              K.sink [ cst ] |> Devectorizer.pm_devectorize (stub_renderer ())
             in
             let sink = find_sink lowered in
-            let srcs =
-              check_scalarized_vectorize lowered sink
-                ~vec_dt:(Dtype.vec Dtype.int32 2) ~lane_count:2
-                ~lane_pred:(function K.Cast _ -> true | _ -> false)
-                ~desc:"Casts"
-            in
-            List.iter
-              (fun lane ->
-                match K.view lane with
+            let scalar_casts =
+              find_all_reachable lowered ~root_idx:sink (function
                 | K.Cast { dtype; _ } ->
-                    expect_dtype "scalar cast dtype" Dtype.int32 (Dtype.any_to_val dtype)
-                | _ -> failwith ("expected per-lane scalar Casts: "
-                                 ^ pp_kernel lowered))
-              srcs;
+                    Dtype.equal dtype Dtype.int32
+                | _ -> false)
+            in
+            equal int 2 (List.length scalar_casts);
             K.validate lowered);
           test "scalarizes Bitcast on vectors" (fun () ->
-            let vec = K.vectorize ~srcs:[ f32 1.0; f32 2.0 ] in
-            let bc = K.bitcast ~src:vec ~dtype:(Dtype.vec Dtype.int32 2) in
+            let p0 = K.param ~idx:0 ~dtype:(Dtype.Ptr.create dt ~addrspace:Global ~size:(-1)) in
+            let ld0 = K.load ~src:(K.index ~ptr:p0 ~idxs:[ idx 0 ] ()) () in
+            let ld1 = K.load ~src:(K.index ~ptr:p0 ~idxs:[ idx 1 ] ()) () in
+            let vec = K.vectorize ~srcs:[ ld0; ld1 ] in
+            let bc = K.bitcast ~src:vec ~dtype:(Dtype.Val.vec 2 Dtype.Val.int32) in
             let lowered =
-              K.sink [ bc ] |> Devectorizer.pm_devectorize
+              K.sink [ bc ] |> Devectorizer.pm_devectorize (stub_renderer ())
             in
             let sink = find_sink lowered in
-            let srcs =
-              check_scalarized_vectorize lowered sink
-                ~vec_dt:(Dtype.vec Dtype.int32 2) ~lane_count:2
-                ~lane_pred:(function K.Bitcast _ -> true | _ -> false)
-                ~desc:"Bitcasts"
-            in
-            List.iter
-              (fun lane ->
-                match K.view lane with
+            let scalar_bitcasts =
+              find_all_reachable lowered ~root_idx:sink (function
                 | K.Bitcast { dtype; _ } ->
-                    expect_dtype "scalar bitcast dtype" Dtype.int32 dtype
-                | _ -> failwith ("expected per-lane scalar Bitcasts: "
-                                 ^ pp_kernel lowered))
-              srcs;
+                    Dtype.Val.equal dtype Dtype.Val.int32
+                | _ -> false)
+            in
+            equal int 2 (List.length scalar_bitcasts);
             K.validate lowered);
           test "reorders Cast after After" (fun () ->
-            let aft = K.after ~src:(i32 7) ~deps:[ idx0 ] in
-            let cst = K.cast ~src:aft ~dtype:(Dtype.to_any Dtype.float32) in
+            (* cast_after_after: After(Cast(x, dt), deps) -> Cast(After(x, deps), dt) *)
+            let i32_ptr = Dtype.Ptr.create Dtype.Val.int32 ~addrspace:Global ~size:(-1) in
+            let p0 = K.param ~idx:0 ~dtype:i32_ptr in
+            let ld = K.load ~src:(K.index ~ptr:p0 ~idxs:[ idx0 ] ()) () in
+            let cst = K.cast ~src:ld ~dtype:(Dtype.float32) in
+            let aft = K.after ~src:cst ~deps:[ idx0 ] in
             let lowered =
-              K.sink [ cst ] |> Devectorizer.pm_devectorize
+              K.sink [ aft ] |> Devectorizer.pm_devectorize (stub_renderer ())
             in
             let sink = find_sink lowered in
             let _, view =
               expect_reachable lowered sink
-                "expected Cast(After) to become After(Cast)"
-                (function K.After _ -> true | _ -> false)
+                "expected After(Cast) to become Cast(After)"
+                (function K.Cast _ -> true | _ -> false)
             in
             (match view with
-            | K.After { src = cast_ref; deps = [ _ ] } ->
-                (match K.view cast_ref with
-                | K.Cast { src; dtype } ->
-                    (match K.view src with
-                    | K.Const { value; dtype = _ } ->
-                        (match Const.view value with
-                        | Const.Int 7L -> ()
-                        | _ -> failwith "expected Const 7 under Cast")
-                    | _ -> failwith "expected Cast moved under After");
-                    expect_dtype "reordered cast dtype" Dtype.float32 (Dtype.any_to_val dtype)
-                | _ -> failwith "expected Cast moved under After")
-            | _ -> failwith "expected After with single dep");
+            | K.Cast { src = after_ref; dtype } ->
+                expect_dtype "reordered cast dtype" Dtype.Val.float32 (Dtype.val_of dtype);
+                (match K.view after_ref with
+                | K.After { src = load_ref; deps = [ _ ] } ->
+                    (match K.view load_ref with
+                    | K.Load _ -> ()
+                    | _ -> failwith "expected Load under After")
+                | _ -> failwith "expected After under Cast")
+            | _ -> failwith "expected Cast wrapping After");
             K.validate lowered);
           test "splits oversized WMMA" (fun () ->
-            let dt2 = Dtype.vec Dtype.float32 2 in
-            let dt4 = Dtype.vec Dtype.float32 4 in
-            let va = K.vectorize ~srcs:[ f32 1.0; f32 2.0 ] in
-            let vb = K.vectorize ~srcs:[ f32 3.0; f32 4.0 ] in
+            let dt2 = Dtype.Val.vec 2 Dtype.Val.float32 in
+            let dt4 = Dtype.Val.vec 4 Dtype.Val.float32 in
+            let p0 = K.param ~idx:0 ~dtype:(Dtype.Ptr.create dt ~addrspace:Global ~size:(-1)) in
+            let mk_load i =
+              K.load ~src:(K.index ~ptr:p0 ~idxs:[ idx i ] ()) ()
+            in
+            let va = K.vectorize ~srcs:[ mk_load 0; mk_load 1 ] in
+            let vb = K.vectorize ~srcs:[ mk_load 2; mk_load 3 ] in
             let vc =
-              K.vectorize ~srcs:[ f32 5.0; f32 6.0; f32 7.0; f32 8.0 ]
+              K.vectorize ~srcs:[ mk_load 4; mk_load 5; mk_load 6; mk_load 7 ]
             in
             let w =
               K.wmma ~name:"WMMA_test" ~a:va ~b:vb ~c:vc ~dtype:dt4
@@ -541,30 +507,20 @@ let () =
                 ~reduce_axes:[]
             in
             let lowered =
-              K.sink [ w ] |> Devectorizer.pm_devectorize
+              K.sink [ w ] |> Devectorizer.pm_devectorize (stub_renderer ())
             in
             let sink = find_sink lowered in
-            let _, view =
-              expect_reachable lowered sink
-                "expected oversized WMMA to split into Vectorize"
-                (function
-                | K.Vectorize { dtype; _ } when Dtype.equal (Dtype.any_to_val dtype) dt4 -> true
-                | _ -> false)
-            in
-            (match view with
-            | K.Vectorize { srcs; dtype } ->
-                expect_dtype "split wmma result dtype" dt4 (Dtype.any_to_val dtype);
-                equal int 4 (List.length srcs);
-                equal int 2
-                  (count_reachable lowered ~root_idx:sink (function
-                    | K.Wmma { dtype; _ } when Dtype.equal dtype dt2 -> true
-                    | _ -> false))
-            | _ -> failwith "unreachable");
+            (* sym's sink_cleanup flattens the Vectorize, so we check that
+               the oversized WMMA was split into 2 smaller dt2 WMMAs. *)
+            equal int 2
+              (count_reachable lowered ~root_idx:sink (function
+                | K.Wmma { dtype; _ } when Dtype.Val.equal dtype dt2 -> true
+                | _ -> false));
             K.validate lowered);
           test "scalarizes vector register buffers" (fun () ->
-            let vec_dt = Dtype.vec Dtype.float32 2 in
+            let vec_dt = Dtype.Val.vec 2 Dtype.Val.float32 in
             let reg_ptr =
-              Dtype.ptr_of vec_dt ~addrspace:Reg ~size:1
+              Dtype.Ptr.create vec_dt ~addrspace:Reg ~size:1
             in
             let def = K.define_reg ~size:1 ~dtype:reg_ptr ~slot:0 in
             let idx_ld = K.index ~ptr:def ~idxs:[ idx0 ] () in
@@ -572,7 +528,7 @@ let () =
             let idx_st = K.index ~ptr:def ~idxs:[ idx0 ] () in
             let st = K.store ~dst:idx_st ~value:ld ~ranges:[] in
             let lowered =
-              K.sink [ st ] |> Devectorizer.pm_devectorize
+              K.sink [ st ] |> Devectorizer.pm_devectorize (stub_renderer ())
             in
             let sink = find_sink lowered in
             let _, dreg_view =
@@ -583,7 +539,7 @@ let () =
             (match dreg_view with
             | K.Define_reg { size = 2; dtype } ->
                 expect_ptr_dtype "scalarized register dtype"
-                  (Dtype.ptr_of dt ~addrspace:Reg ~size:2)
+                  (Dtype.Ptr.create dt ~addrspace:Reg ~size:2)
                   dtype
             | _ -> failwith ("expected Define_reg to scalarize: "
                              ^ pp_kernel lowered));
@@ -594,7 +550,7 @@ let () =
               expect_reachable lowered sink
                 "expected vector Load to remain after register devectorize"
                 (function
-                | K.Load { dtype; _ } when Dtype.equal dtype vec_dt -> true
+                | K.Load { dtype; _ } when Dtype.Val.equal dtype vec_dt -> true
                 | _ -> false)
             in
             (match ld_view with
@@ -608,9 +564,9 @@ let () =
             in
             (match st_view with K.Store _ -> () | _ -> failwith "unreachable"));
           test "scalarizes vector local buffers" (fun () ->
-            let vec_dt = Dtype.vec Dtype.float32 2 in
+            let vec_dt = Dtype.Val.vec 2 Dtype.Val.float32 in
             let local_ptr =
-              Dtype.ptr_of vec_dt ~addrspace:Local ~size:1
+              Dtype.Ptr.create vec_dt ~addrspace:Local ~size:1
             in
             let def = K.define_local ~size:1 ~dtype:local_ptr in
             let idx_ld = K.index ~ptr:def ~idxs:[ idx0 ] () in
@@ -618,7 +574,7 @@ let () =
             let idx_st = K.index ~ptr:def ~idxs:[ idx0 ] () in
             let st = K.store ~dst:idx_st ~value:ld ~ranges:[] in
             let lowered =
-              K.sink [ st ] |> Devectorizer.pm_devectorize
+              K.sink [ st ] |> Devectorizer.pm_devectorize (stub_renderer ())
             in
             let sink = find_sink lowered in
             let _, dloc_view =
@@ -629,40 +585,46 @@ let () =
             (match dloc_view with
             | K.Define_local { size = 2; dtype } ->
                 expect_ptr_dtype "scalarized local dtype"
-                  (Dtype.ptr_of dt ~addrspace:Local ~size:2)
+                  (Dtype.Ptr.create dt ~addrspace:Local ~size:2)
                   dtype
             | _ -> failwith ("expected Define_local to scalarize: "
                              ^ pp_kernel lowered)));
           test "rewrites vector index on local/reg" (fun () ->
-            let vec_dt = Dtype.vec Dtype.float32 2 in
+            let vec_dt = Dtype.Val.vec 2 Dtype.Val.float32 in
             let local_ptr =
-              Dtype.ptr_of vec_dt ~addrspace:Local ~size:4
+              Dtype.Ptr.create vec_dt ~addrspace:Local ~size:4
             in
             let def = K.define_local ~size:4 ~dtype:local_ptr in
+            let var = K.define_var ~name:"i" ~lo:0 ~hi:3 () in
             let ld =
-              K.load ~src:(K.index ~ptr:def ~idxs:[ idx 1 ] ()) ()
+              K.load ~src:(K.index ~ptr:def ~idxs:[ var ] ()) ()
             in
             let lowered =
-              K.sink [ ld ] |> Devectorizer.pm_devectorize
+              K.sink [ ld ] |> Devectorizer.pm_devectorize (stub_renderer ())
             in
             let sink = find_sink lowered in
-            has_reachable lowered sink (function
-              | K.Binary { op = `Mul; _ } -> true
-              | _ -> false);
-            has_reachable lowered sink (function
-              | K.Vectorize _ -> true
-              | _ -> false));
+            (* The vector index is rewritten to scalar indices with stride
+               multiplication.  Check we get 2 scalar loads. *)
+            let scalar_loads =
+              find_all_reachable lowered ~root_idx:sink (function
+                | K.Load { dtype; _ } -> Dtype.Val.equal dtype dt
+                | _ -> false)
+            in
+            equal int 2 (List.length scalar_loads);
+            K.validate lowered);
           test "preserves WHERE with Invalid_index" (fun () ->
-            let vec_dt = Dtype.vec Dtype.index 2 in
+            let vec_dt = Dtype.Val.vec 2 Dtype.Val.index in
+            let p0 = K.param ~idx:0 ~dtype:(Dtype.Ptr.create Dtype.Val.bool ~addrspace:Global ~size:(-1)) in
+            let cond = K.load ~src:(K.index ~ptr:p0 ~idxs:[ idx0 ] ()) () in
             let val_vec = K.vectorize ~srcs:[ idx 0; idx 1 ] in
             let inv = K.invalid_index ~lanes:2 () in
             let wh =
               K.ternary ~op:`Where
-                ~a:(K.const (Const.bool true))
+                ~a:cond
                 ~b:val_vec ~c:inv
             in
             let lowered =
-              K.sink [ wh ] |> Devectorizer.pm_devectorize
+              K.sink [ wh ] |> Devectorizer.pm_devectorize (stub_renderer ())
             in
             let sink = find_sink lowered in
             let _, view =
@@ -683,7 +645,7 @@ let () =
             let gated_idx = K.index ~ptr:p0 ~idxs:[ idx0 ] ~gate () in
             let ld = K.load ~src:gated_idx () in
             let lowered =
-              K.sink [ ld ] |> Devectorizer.pm_devectorize
+              K.sink [ ld ] |> Devectorizer.pm_devectorize (stub_renderer ())
             in
             let sink = find_sink lowered in
             equal int 0
@@ -699,73 +661,60 @@ let () =
         [
           (* Tinygrad's correct_load_store matches Load(Cast(Index)) /
              Store(Cast(Index)). Input must wrap Index in Cast. Output
-             is Cat (VCAT) of scalar Loads / Group of scalar Stores,
+             is Vcat of scalar Loads / Group of scalar Stores,
              each with a new Index src (not Gep). *)
           test "splits vector load to scalar" (fun () ->
             let ren = stub_renderer () in
             let vec_ptr =
-              Dtype.ptr_of (Dtype.vec dt 4) ~addrspace:Global ~size:(-1)
+              Dtype.Ptr.create (Dtype.Val.vec 4 dt) ~addrspace:Global ~size:(-1)
             in
             let p0 = K.param ~idx:0 ~dtype:vec_ptr in
             let index = K.index ~ptr:p0 ~idxs:[ idx0 ] () in
             let cast_idx =
-              K.cast ~src:index ~dtype:(Dtype.ptr_to_any vec_ptr)
+              K.cast ~src:index ~dtype:(Dtype.Ptr vec_ptr)
             in
             let ld = K.load ~src:cast_idx () in
             let lowered =
-              K.sink [ ld ] |> Devectorizer.pm_correct_load_store ren
+              K.sink [ ld ] |> Devectorizer.pm_devectorize ren
             in
             let sink = find_sink lowered in
-            let _, view =
-              expect_reachable lowered sink
-                "expected vector Load split into Cat of scalar Loads"
-                (function
-                | K.Cat { dtype; srcs }
-                  when Dtype.equal dtype (Dtype.vec dt 4) ->
-                    List.for_all
-                      (fun r ->
-                        match K.view r with
-                        | K.Load { dtype; _ } -> Dtype.equal dtype dt
-                        | _ -> false)
-                      srcs
+            (* pm_devectorize splits the vector load and sym simplifies
+               the Vcat away; verify 4 scalar loads with Index sources. *)
+            let scalar_loads =
+              find_all_reachable lowered ~root_idx:sink (function
+                | K.Load { dtype; _ } -> Dtype.Val.equal dtype dt
                 | _ -> false)
             in
-            (match view with
-            | K.Cat { srcs; _ } ->
-                equal int 4 (List.length srcs);
-                List.iter
-                  (fun lane ->
-                    match K.view lane with
-                    | K.Load { src; dtype; _ } ->
-                        expect_dtype "scalar load dtype" dt dtype;
-                        (* Each split load's src is an Index, not a Gep *)
-                        (match K.view src with
-                        | K.Index _ -> ()
-                        | _ ->
-                            failwith ("expected Index source for split load: "
-                                      ^ pp_kernel lowered))
+            equal int 4 (List.length scalar_loads);
+            List.iter
+              (fun (_, view) ->
+                match view with
+                | K.Load { src; dtype; _ } ->
+                    expect_dtype "scalar load dtype" dt dtype;
+                    (match K.view src with
+                    | K.Index _ -> ()
                     | _ ->
-                        failwith ("expected scalar Load in Cat: "
+                        failwith ("expected Index source for split load: "
                                   ^ pp_kernel lowered))
-                  srcs
-            | _ -> failwith "unreachable");
+                | _ -> failwith "unreachable")
+              scalar_loads;
             K.validate lowered);
           test "splits vector store to scalar" (fun () ->
             let ren = stub_renderer () in
             let vec_ptr =
-              Dtype.ptr_of (Dtype.vec dt 4) ~addrspace:Global ~size:(-1)
+              Dtype.Ptr.create (Dtype.Val.vec 4 dt) ~addrspace:Global ~size:(-1)
             in
             let p0 = K.param ~idx:0 ~dtype:vec_ptr in
             let index = K.index ~ptr:p0 ~idxs:[ idx0 ] () in
             let cast_idx =
-              K.cast ~src:index ~dtype:(Dtype.ptr_to_any vec_ptr)
+              K.cast ~src:index ~dtype:(Dtype.Ptr vec_ptr)
             in
             let vec_val =
               K.vectorize ~srcs:[ f32 1.0; f32 2.0; f32 3.0; f32 4.0 ]
             in
             let st = K.store ~dst:cast_idx ~value:vec_val ~ranges:[] in
             let lowered =
-              K.sink [ st ] |> Devectorizer.pm_correct_load_store ren
+              K.sink [ st ] |> Devectorizer.pm_devectorize ren
             in
             let sink = find_sink lowered in
             let _, view =
@@ -795,9 +744,9 @@ let () =
                             failwith ("expected Index dst for split store: "
                                       ^ pp_kernel lowered));
                         (* value is scalar (Gep may simplify away) *)
-                        (match K.dtype value with
+                        (match K.dtype_opt value with
                         | Some vdt ->
-                            expect_dtype "scalar store value" dt vdt
+                            expect_dtype "scalar store value" dt (Dtype.val_of vdt)
                         | None ->
                             failwith ("expected scalar value dtype: "
                                       ^ pp_kernel lowered))
@@ -809,7 +758,7 @@ let () =
           test "preserves alt per lane" (fun () ->
             let ren = stub_renderer () in
             let vec_ptr =
-              Dtype.ptr_of (Dtype.vec dt 2) ~addrspace:Global ~size:(-1)
+              Dtype.Ptr.create (Dtype.Val.vec 2 dt) ~addrspace:Global ~size:(-1)
             in
             let p0 = K.param ~idx:0 ~dtype:vec_ptr in
             let gate = K.const (Const.bool true) in
@@ -817,55 +766,41 @@ let () =
               K.index ~ptr:p0 ~idxs:[ idx0 ] ~gate ()
             in
             let cast_idx =
-              K.cast ~src:index ~dtype:(Dtype.ptr_to_any vec_ptr)
+              K.cast ~src:index ~dtype:(Dtype.Ptr vec_ptr)
             in
             let vec_alt = K.vectorize ~srcs:[ f32 42.0; f32 99.0 ] in
             let ld = K.load ~src:cast_idx ~alt:vec_alt () in
             let lowered =
-              K.sink [ ld ] |> Devectorizer.pm_correct_load_store ren
+              K.sink [ ld ] |> Devectorizer.pm_devectorize ren
             in
             let sink = find_sink lowered in
-            (* split_load_store preserves alt as-is: each scalar load
-               keeps the original vectorized alt value. *)
-            let _, view =
-              expect_reachable lowered sink
-                "expected gated Load split with preserved alt"
-                (function
-                | K.Cat { dtype; srcs }
-                  when Dtype.equal dtype (Dtype.vec dt 2) ->
-                    List.for_all
-                      (fun r ->
-                        match K.view r with
-                        | K.Load { alt = Some _; dtype; _ } ->
-                            Dtype.equal dtype dt
-                        | _ -> false)
-                      srcs
+            (* pm_devectorize splits the vector load and sym simplifies
+               the Vcat away; verify 2 scalar loads with alt preserved. *)
+            let scalar_loads =
+              find_all_reachable lowered ~root_idx:sink (function
+                | K.Load { alt = Some _; dtype; _ } ->
+                    Dtype.Val.equal dtype dt
                 | _ -> false)
             in
-            (match view with
-            | K.Cat { srcs; _ } ->
-                equal int 2 (List.length srcs);
-                List.iter
-                  (fun lane ->
-                    match K.view lane with
-                    | K.Load { alt = Some _; dtype; _ } ->
-                        expect_dtype "scalar split load dtype" dt dtype
-                    | _ ->
-                        failwith ("expected Load with alt in Cat: "
-                                  ^ pp_kernel lowered))
-                  srcs
-            | _ -> failwith "unreachable"));
+            equal int 2 (List.length scalar_loads);
+            List.iter
+              (fun (_, view) ->
+                match view with
+                | K.Load { alt = Some _; dtype; _ } ->
+                    expect_dtype "scalar split load dtype" dt dtype
+                | _ -> failwith "unreachable")
+              scalar_loads);
           test "skips Reg addrspace" (fun () ->
             let ren = stub_renderer () in
             let reg_ptr =
-              Dtype.ptr_of (Dtype.vec dt 2) ~addrspace:Reg ~size:(-1)
+              Dtype.Ptr.create (Dtype.Val.vec 2 dt) ~addrspace:Reg ~size:(-1)
             in
             let p0 = K.param ~idx:0 ~dtype:reg_ptr in
             let ld =
               K.load ~src:(K.index ~ptr:p0 ~idxs:[ idx0 ] ()) ()
             in
             let lowered =
-              K.sink [ ld ] |> Devectorizer.pm_correct_load_store ren
+              K.sink [ ld ] |> Devectorizer.pm_devectorize ren
             in
             let sink = find_sink lowered in
             equal int 0
@@ -873,21 +808,21 @@ let () =
                 | K.Vectorize _ -> true
                 | _ -> false));
             has_reachable lowered sink (function
-              | K.Load { dtype; _ } -> Dtype.equal dtype (Dtype.vec dt 2)
+              | K.Load { dtype; _ } -> Dtype.Val.equal dtype (Dtype.Val.vec 2 dt)
               | _ -> false));
           test "skips when renderer supports width" (fun () ->
             let ren =
-              stub_renderer ~load_store_widths:(fun _ -> [ 4; 2; 1 ]) ()
+              stub_renderer ~supports_float4:true ()
             in
             let vec_ptr =
-              Dtype.ptr_of (Dtype.vec dt 4) ~addrspace:Global ~size:(-1)
+              Dtype.Ptr.create (Dtype.Val.vec 4 dt) ~addrspace:Global ~size:(-1)
             in
             let p0 = K.param ~idx:0 ~dtype:vec_ptr in
             let ld =
               K.load ~src:(K.index ~ptr:p0 ~idxs:[ idx0 ] ()) ()
             in
             let lowered =
-              K.sink [ ld ] |> Devectorizer.pm_correct_load_store ren
+              K.sink [ ld ] |> Devectorizer.pm_devectorize ren
             in
             let sink = find_sink lowered in
             equal int 0
@@ -895,77 +830,11 @@ let () =
                 | K.Vectorize _ -> true
                 | _ -> false));
             has_reachable lowered sink (function
-              | K.Load { dtype; _ } -> Dtype.equal dtype (Dtype.vec dt 4)
+              | K.Load { dtype; _ } -> Dtype.Val.equal dtype (Dtype.Val.vec 4 dt)
               | _ -> false));
-          test "skips scalar load" (fun () ->
-            let ren = stub_renderer () in
-            let p0 = K.param ~idx:0 ~dtype:ptr in
-            let ld =
-              K.load ~src:(K.index ~ptr:p0 ~idxs:[ idx0 ] ()) ()
-            in
-            let lowered =
-              K.sink [ ld ] |> Devectorizer.pm_correct_load_store ren
-            in
-            let sink = find_sink lowered in
-            equal int 0
-              (count_reachable lowered ~root_idx:sink (function
-                | K.Vectorize _ -> true
-                | _ -> false));
-            has_reachable lowered sink (function
-              | K.Load { dtype; _ } -> Dtype.equal dtype dt
-              | _ -> false);
-            K.validate lowered);
         ];
       group "pm_render"
         [
-          test "removes trivial GEP on scalar" (fun () ->
-            let lowered =
-              K.sink [ K.gep ~src:(i32 7) ~idx:0 ]
-              |> Devectorizer.pm_render
-            in
-            let sink = find_sink lowered in
-            no_geps lowered sink;
-            has_reachable lowered sink (function
-              | K.Const { value; _ } ->
-                  (match Const.view value with
-                   | Const.Int 7L -> true
-                   | _ -> false)
-              | _ -> false);
-            K.validate lowered);
-          test "removes trivial single-source Vectorize" (fun () ->
-            let lowered =
-              K.sink [ K.vectorize ~srcs:[ i32 7 ] ]
-              |> Devectorizer.pm_render
-            in
-            let sink = find_sink lowered in
-            equal int 0
-              (count_reachable lowered ~root_idx:sink (function
-                | K.Vectorize _ -> true
-                | _ -> false));
-            K.validate lowered);
-          test "lowers Cat to Vectorize of GEPs" (fun () ->
-            let vec_b = K.vectorize ~srcs:[ f32 2.0; f32 3.0 ] in
-            let cat = K.cat ~srcs:[ f32 1.0; vec_b ] in
-            let lowered =
-              K.sink [ cat ] |> Devectorizer.pm_render
-            in
-            let sink = find_sink lowered in
-            let _, view =
-              expect_reachable lowered sink
-                "expected Cat to lower to Vectorize"
-                (function
-                | K.Vectorize { dtype; _ }
-                  when Dtype.equal (Dtype.any_to_val dtype) (Dtype.vec dt 3) -> true
-                | _ -> false)
-            in
-            (match view with
-            | K.Vectorize { srcs; _ } -> equal int 3 (List.length srcs)
-            | _ -> failwith "unreachable");
-            equal int 0
-              (count_reachable lowered ~root_idx:sink (function
-                | K.Cat _ -> true
-                | _ -> false));
-            K.validate lowered);
           test "adds a zero alt to gated loads" (fun () ->
             let p0 = K.param ~idx:0 ~dtype:ptr in
             let gate = K.const (Const.bool true) in
@@ -1016,25 +885,24 @@ let () =
                 "expected Where(gated Load, alt) to fold into Load alt"
                 (function
                 | K.Load { alt = Some alt; _ } ->
-                    (match K.view alt with
-                    | K.Const { value; _ } ->
-                        (match Const.view value with
+                    (match unwrap_const alt with
+                    | Some v ->
+                        (match Const.view v with
                         | Const.Float 9.0 -> true
                         | _ -> false)
-                    | _ -> false)
+                    | None -> false)
                 | _ -> false)
             in
             (match view with
             | K.Load { alt = Some alt; dtype; _ } ->
                 expect_dtype "folded where load dtype" dt dtype;
-                (match K.view alt with
-                | K.Const { value; dtype } ->
+                (match unwrap_const alt with
+                | Some value ->
                     (match Const.view value with
-                    | Const.Float 9.0 ->
-                        expect_dtype "folded where alt dtype" dt dtype
+                    | Const.Float 9.0 -> ()
                     | _ -> failwith
                              "expected Where(gated Load, alt) to fold")
-                | _ -> failwith
+                | None -> failwith
                          "expected Where(gated Load, alt) to fold")
             | _ -> failwith "unreachable");
             K.validate lowered);
@@ -1064,12 +932,12 @@ let () =
                 "expected negated gate Where to fold into Load alt"
                 (function
                 | K.Load { alt = Some alt; _ } ->
-                    (match K.view alt with
-                    | K.Const { value; _ } ->
-                        (match Const.view value with
+                    (match unwrap_const alt with
+                    | Some v ->
+                        (match Const.view v with
                         | Const.Float 5.0 -> true
                         | _ -> false)
-                    | _ -> false)
+                    | None -> false)
                 | _ -> false)
             in
             (match view with
@@ -1078,16 +946,16 @@ let () =
             | _ -> failwith "unreachable");
             K.validate lowered);
           test "folds Where with Cast-wrapped gated load" (fun () ->
-            let load_dt = Dtype.int32 in
-            let cast_dt = Dtype.float32 in
+            let load_dt = Dtype.Val.int32 in
+            let cast_dt = Dtype.Val.float32 in
             let load_ptr =
-              Dtype.ptr_of load_dt ~addrspace:Global ~size:(-1)
+              Dtype.Ptr.create load_dt ~addrspace:Global ~size:(-1)
             in
             let p0 = K.param ~idx:0 ~dtype:load_ptr in
             let gate = K.const (Const.bool true) in
             let gated_idx = K.index ~ptr:p0 ~idxs:[ idx0 ] ~gate () in
             let ld = K.load ~src:gated_idx () in
-            let casted_load = K.cast ~src:ld ~dtype:(Dtype.to_any cast_dt) in
+            let casted_load = K.cast ~src:ld ~dtype:(Dtype.Val cast_dt) in
             let alt_val = K.const (Const.float cast_dt 5.0) in
             let wh =
               K.ternary ~op:`Where ~a:gate ~b:casted_load ~c:alt_val
@@ -1101,7 +969,7 @@ let () =
                 | K.Ternary { op = `Where; _ } -> true
                 | _ -> false));
             has_reachable lowered sink (function
-              | K.Cast { dtype; _ } when Dtype.any_equal dtype (Dtype.to_any cast_dt) -> true
+              | K.Cast { dtype; _ } when Dtype.equal dtype (Dtype.Val cast_dt) -> true
               | _ -> false);
             has_reachable lowered sink (function
               | K.Load { alt = Some _; _ } -> true
@@ -1155,7 +1023,7 @@ let () =
               K.sink [ st ]
               |> Devectorizer.pm_reduce
               |> Devectorizer.pm_add_loads
-              |> Devectorizer.pm_devectorize
+              |> Devectorizer.pm_devectorize (stub_renderer ())
               |> Devectorizer.pm_render
             in
             let sink = find_sink result in

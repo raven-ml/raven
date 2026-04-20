@@ -20,8 +20,8 @@ module P = Postrange
 
 (* Helpers *)
 
-let idx n = K.const (C.int D.index n)
-let global_fptr = D.ptr_of D.float32 ~addrspace:Global ~size:(-1)
+let idx n = K.const (C.int D.Val.index n)
+let global_fptr = D.Ptr.create D.Val.float32 ~addrspace:Global ~size:(-1)
 
 let kernel_info () =
   { K.name = "test";
@@ -35,13 +35,13 @@ let kernel_info () =
 let wrap_sink srcs = K.sink ~kernel_info:(kernel_info ()) srcs
 
 let loop_range ~axis size =
-  K.range ~size:(idx size) ~axis ~kind:Ak.Loop ~dtype:D.index ()
+  K.range ~size:(idx size) ~axis ~kind:Ak.Loop ~dtype:D.Val.index ()
 
 let reduce_range ~axis size =
-  K.range ~size:(idx size) ~axis ~kind:Ak.Reduce ~dtype:D.index ()
+  K.range ~size:(idx size) ~axis ~kind:Ak.Reduce ~dtype:D.Val.index ()
 
 let global_range ~axis size =
-  K.range ~size:(idx size) ~axis ~kind:Ak.Global ~dtype:D.index ()
+  K.range ~size:(idx size) ~axis ~kind:Ak.Global ~dtype:D.Val.index ()
 
 (* Renderers *)
 
@@ -55,7 +55,7 @@ let cpu_renderer () =
 
 let thread_renderer () =
   Renderer.make ~name:"thread" ~device:"CPU" ~has_local:false ~has_shared:false
-    ~shared_max:0 ~has_threads:true ~global_max:(Some [ 32; 32; 32 ])
+    ~shared_max:0 ~has_threads:true ~global_max:[ 32; 32; 32 ]
     ~render:(fun ?name:_ _ -> "") ()
 
 (* Opt Inspection Helpers *)
@@ -141,7 +141,7 @@ let reduce_global_ast ~s0 ~s1 ~sr =
     K.index ~ptr:p1 ~idxs:[ r0 * idx sr * idx s1 + rr * idx s1 + r1 ] ()
   in
   let ld = K.load ~src:in_idx () in
-  let red = K.reduce ~op:`Add ~src:ld ~ranges:[ rr ] ~dtype:D.float32 in
+  let red = K.reduce ~op:`Add ~src:ld ~ranges:[ rr ] ~dtype:D.Val.float32 in
   let out_idx = K.index ~ptr:p0 ~idxs:[ r0 * idx s1 + r1 ] () in
   let st = K.store ~dst:out_idx ~value:red ~ranges:[] in
   let e = K.end_ ~value:st ~ranges:[ r0; r1 ] () in
@@ -169,7 +169,7 @@ let double_reduce_global_ast ~s0 ~s1 ~sr1 ~sr2 =
   in
   let ld = K.load ~src:in_idx () in
   let red =
-    K.reduce ~op:`Add ~src:ld ~ranges:[ rr1; rr2 ] ~dtype:D.float32
+    K.reduce ~op:`Add ~src:ld ~ranges:[ rr1; rr2 ] ~dtype:D.Val.float32
   in
   let out_idx = K.index ~ptr:p0 ~idxs:[ r0 * idx s1 + r1 ] () in
   let st = K.store ~dst:out_idx ~value:red ~ranges:[] in
@@ -190,7 +190,7 @@ let matmul_global_ast ~m ~n ~k =
   let ld_a = K.load ~src:idx_a () in
   let ld_b = K.load ~src:idx_b () in
   let mul = K.binary ~op:`Mul ~lhs:ld_a ~rhs:ld_b in
-  let red = K.reduce ~op:`Add ~src:mul ~ranges:[ r_k ] ~dtype:D.float32 in
+  let red = K.reduce ~op:`Add ~src:mul ~ranges:[ r_k ] ~dtype:D.Val.float32 in
   let out_idx = K.index ~ptr:p_out ~idxs:[ r_m * idx n + r_n ] () in
   let st = K.store ~dst:out_idx ~value:red ~ranges:[] in
   let e = K.end_ ~value:st ~ranges:[ r_m; r_n ] () in
@@ -212,7 +212,7 @@ let matvec_global_ast ~rows ~cols =
   let idx_x = K.index ~ptr:p_x ~idxs:[ r_j ] () in
   let idx_a = K.index ~ptr:p_a ~idxs:[ r_i * idx cols + r_j ] () in
   let mul = K.binary ~op:`Mul ~lhs:idx_x ~rhs:idx_a in
-  let red = K.reduce ~op:`Add ~src:mul ~ranges:[ r_j ] ~dtype:D.float32 in
+  let red = K.reduce ~op:`Add ~src:mul ~ranges:[ r_j ] ~dtype:D.Val.float32 in
   let out_idx = K.index ~ptr:p_out ~idxs:[ r_i ] () in
   let st = K.store ~dst:out_idx ~value:red ~ranges:[] in
   let e = K.end_ ~value:st ~ranges:[ r_i ] () in
@@ -249,7 +249,7 @@ let masked_ewise_global_ast ~s0 ~s1 =
   let in_idx = K.index ~ptr:p1 ~idxs:[ r0 * idx s1 + r1 ] () in
   let ld = K.load ~src:in_idx () in
   let cond = K.binary ~op:`Cmplt ~lhs:r1 ~rhs:(idx (s1 - 1)) in
-  let zero = K.const (C.float D.float32 0.0) in
+  let zero = K.const (C.float D.Val.float32 0.0) in
   let value = K.ternary ~op:`Where ~a:cond ~b:ld ~c:zero in
   let out_idx = K.index ~ptr:p0 ~idxs:[ r0 * idx s1 + r1 ] () in
   let st = K.store ~dst:out_idx ~value ~ranges:[] in
@@ -491,7 +491,9 @@ let local_groups_tests =
           let ast = elementwise_global_ast ~s0:128 ~s1:128 in
           let ren = gpu_renderer () in
           let opts =
-            with_env "NOLOCALS" "1" (fun () -> run_heuristic ast ren)
+            Helpers.Context_var.with_context
+              [ B (Heuristic.nolocals_var, 1) ]
+              (fun () -> run_heuristic ast ren)
           in
           is_true (has is_nolocals opts);
           is_true (not (has is_local opts)));
@@ -504,7 +506,9 @@ let local_groups_tests =
           is_true (has is_grouptop opts_default);
           let ast2 = reduce_global_ast ~s0:8 ~s1:32 ~sr:128 in
           let opts_nolocals =
-            with_env "NOLOCALS" "1" (fun () -> run_heuristic ast2 ren)
+            Helpers.Context_var.with_context
+              [ B (Heuristic.nolocals_var, 1) ]
+              (fun () -> run_heuristic ast2 ren)
           in
           is_true (not (has is_grouptop opts_nolocals)));
       (* Expand axes are prioritized for LOCAL.

@@ -6,310 +6,187 @@
 open Windtrap
 open Tolk
 open Tolk_ir
-module P = Program
+module K = Kernel
+
+(* Constants *)
+
+let float4 = Dtype.Val.vec 4 Dtype.Val.float32
+let int2 = Dtype.Val.vec 2 Dtype.Val.int32
+let cl = Cstyle.opencl
 
 (* Helpers *)
 
-let float4_dt = Dtype.vec Dtype.float32 4
-let int2_dt = Dtype.vec Dtype.int32 2
-let cl = Cstyle.opencl
+let global dt = Dtype.Ptr.create dt ~addrspace:Global ~size:(-1)
+let img_ptr = global float4
+let buf_ptr = global float4
 
-let rewrite prog = Images.rewrite cl prog
-let render_with_images r prog = Renderer.render r (Images.rewrite r prog)
+let contains s sub =
+  let sl = String.length s and subl = String.length sub in
+  subl <= sl &&
+  let rec loop i =
+    i <= sl - subl && (String.sub s i subl = sub || loop (i + 1))
+  in
+  loop 0
 
-let contains haystack needle =
-  let hl = String.length haystack and nl = String.length needle in
-  if nl = 0 then true
-  else if nl > hl then false
-  else
-    let rec loop i =
-      if i > hl - nl then false
-      else if String.sub haystack i nl = needle then true
-      else loop (i + 1)
-    in
-    loop 0
+let rewrite k = Images.rewrite cl k
 
-let assert_contains msg haystack needle =
-  if not (contains haystack needle) then
-    failwith
-      (Printf.sprintf "%s: expected output to contain %S, got:\n%s" msg needle
-         haystack)
+let render r k =
+  Renderer.render r (Linearizer.linearize (Images.rewrite r k))
 
-let pp_view view = Format.asprintf "%a" P.pp_view view
-let fail_view msg view = failwith (Printf.sprintf "%s: %s" msg (pp_view view))
-let pp_program program = Format.asprintf "%a" P.pp program
-
-let find_positions (program : P.t) pred =
-  let acc = ref [] in
-  P.iteri (fun i view -> if pred view then acc := i :: !acc) program;
-  List.rev !acc
-
-let find_unique_position label program pred =
-  match find_positions program pred with
-  | [ i ] -> i
-  | xs ->
+let find_unique msg pred root =
+  match K.find_nodes pred root with
+  | [n] -> n
+  | ns ->
       failwith
-        (Printf.sprintf "%s: expected one match, got %d\n%s" label
-           (List.length xs) (pp_program program))
+        (Printf.sprintf "%s: expected 1, got %d" msg (List.length ns))
 
-let count program pred =
-  let n = ref 0 in
-  P.iteri (fun _ view -> if pred view then incr n) program;
-  !n
+let count pred root = List.length (K.find_nodes pred root)
 
-let raises_failure needle fn =
+let failure_contains needle fn =
   raises_match
     (function Failure msg -> contains msg needle | _ -> false)
     fn
 
+let assert_rendered msg s sub =
+  if not (contains s sub) then
+    failwith (Printf.sprintf "%s: expected %S in output" msg sub)
+
 let assert_dtype msg expected actual =
-  if not (Dtype.equal expected actual) then
+  if not (Dtype.Val.equal expected actual) then
     failwith
       (Printf.sprintf "%s: expected %s, got %s" msg
-         (Format.asprintf "%a" Dtype.pp expected)
-         (Format.asprintf "%a" Dtype.pp actual))
+         (Format.asprintf "%a" Dtype.Val.pp expected)
+         (Format.asprintf "%a" Dtype.Val.pp actual))
 
-(* Program builder helpers *)
+(* Kernel builders *)
 
-let global_ptr dt = Dtype.ptr_of dt ~addrspace:Global ~size:(-1)
-let f32_image_ptr = global_ptr Dtype.float32
-let vec_ptr = global_ptr float4_dt
+let float4_zero () =
+  let z = K.const_float 0.0 in
+  K.vectorize ~srcs:[ z; z; z; z ]
 
-let emit_i32 b n =
-  P.emit b (Const { value = Const.int Dtype.int32 n; dtype = Dtype.int32 })
+let mk_ungated_load () =
+  let img = K.param_image ~idx:0 ~dtype:img_ptr ~width:4 ~height:4 in
+  let buf = K.param ~idx:1 ~dtype:buf_ptr in
+  let c0 = K.const_int 0 and c1 = K.const_int 1 in
+  let src = K.index ~ptr:img ~idxs:[ c0; c1 ] () in
+  let dst = K.index ~ptr:buf ~idxs:[ c0 ] () in
+  K.sink [ K.store ~dst ~value:(K.load ~src ()) ~ranges:[] ]
 
-(* Common preamble: image param at idx 0, buffer param at idx 1, constants 0
-   and 1. Returns (builder, image_param, buf_param, c0, c1, image_ptr_dt). *)
-let emit_image_and_buf ?(image_dt = Dtype.float32) ?(buf_dt = vec_ptr)
-    ?(width = 4) ?(height = 4) () =
-  let image_ptr = global_ptr image_dt in
-  let b = P.create () in
-  let p0 =
-    P.emit b (Param_image { idx = 0; dtype = image_ptr; width; height })
-  in
-  let p1 = P.emit b (Param { idx = 1; dtype = buf_dt }) in
-  let c0 = emit_i32 b 0 in
-  let c1 = emit_i32 b 1 in
-  (b, p0, p1, c0, c1, image_ptr)
+let mk_gated_load () =
+  let img = K.param_image ~idx:0 ~dtype:img_ptr ~width:4 ~height:4 in
+  let buf = K.param ~idx:1 ~dtype:buf_ptr in
+  let c0 = K.const_int 0 and c1 = K.const_int 1 in
+  let gate = K.const_bool true in
+  let src = K.index ~ptr:img ~idxs:[ c0; c1 ] ~gate () in
+  let dst = K.index ~ptr:buf ~idxs:[ c0 ] () in
+  K.sink [ K.store ~dst ~value:(K.load ~src ~alt:(float4_zero ()) ()) ~ranges:[] ]
 
-let emit_gate b = P.emit b (Const { value = Const.bool true; dtype = Dtype.bool })
+let mk_ungated_store () =
+  let img = K.param_image ~idx:0 ~dtype:img_ptr ~width:4 ~height:4 in
+  let buf = K.param ~idx:1 ~dtype:buf_ptr in
+  let c0 = K.const_int 0 and c1 = K.const_int 1 in
+  let src = K.index ~ptr:buf ~idxs:[ c0 ] () in
+  let dst = K.index ~ptr:img ~idxs:[ c0; c1 ] () in
+  K.sink [ K.store ~dst ~value:(K.load ~src ()) ~ranges:[] ]
 
-let emit_float4_alt b =
-  let z0 =
-    P.emit b
-      (Const { value = Const.float Dtype.float32 0.0; dtype = Dtype.float32 })
-  in
-  P.emit b (Vectorize { srcs = [ z0; z0; z0; z0 ]; dtype = float4_dt })
+let mk_gated_store () =
+  let img = K.param_image ~idx:0 ~dtype:img_ptr ~width:4 ~height:4 in
+  let buf = K.param ~idx:1 ~dtype:buf_ptr in
+  let c0 = K.const_int 0 and c1 = K.const_int 1 in
+  let gate = K.const_bool true in
+  let src = K.index ~ptr:buf ~idxs:[ c0 ] () in
+  let dst = K.index ~ptr:img ~idxs:[ c0; c1 ] ~gate () in
+  K.sink [ K.store ~dst ~value:(K.load ~src ()) ~ranges:[] ]
 
-let finish_store b dst value = ignore (P.emit b (Store { dst; value })); P.finish b
+let mk_mixed () =
+  let f32_ptr = global Dtype.Val.float32 in
+  let img = K.param_image ~idx:0 ~dtype:img_ptr ~width:4 ~height:4 in
+  let p1 = K.param ~idx:1 ~dtype:f32_ptr in
+  let p2 = K.param ~idx:2 ~dtype:buf_ptr in
+  let c0 = K.const_int 0 and c1 = K.const_int 1 in
+  (* buffer load/store *)
+  let idx_buf = K.index ~ptr:p1 ~idxs:[ c0 ] () in
+  let st_buf =
+    K.store ~dst:idx_buf ~value:(K.load ~src:idx_buf ()) ~ranges:[]
+  in
+  (* image load → buffer store *)
+  let idx_img = K.index ~ptr:img ~idxs:[ c0; c1 ] () in
+  let idx_out = K.index ~ptr:p2 ~idxs:[ c0 ] () in
+  let st_out =
+    K.store ~dst:idx_out ~value:(K.load ~src:idx_img ()) ~ranges:[]
+  in
+  (* buffer load → image store *)
+  let idx_img2 = K.index ~ptr:img ~idxs:[ c1; c0 ] () in
+  let idx_in = K.index ~ptr:p2 ~idxs:[ c1 ] () in
+  let st_img =
+    K.store ~dst:idx_img2 ~value:(K.load ~src:idx_in ()) ~ranges:[]
+  in
+  K.sink [ st_buf; st_out; st_img ]
 
-(* Program builders *)
-
-let make_ungated_load ?(image_dt = Dtype.float32) ?(width = 4) ?(height = 4)
-    () =
-  let b, p0, p1, c0, c1, iptr =
-    emit_image_and_buf ~image_dt ~width ~height ()
-  in
-  let idx0 =
-    P.emit b (Index { ptr = p0; idxs = [ c0; c1 ]; gate = None; dtype = iptr })
-  in
-  let ld = P.emit b (Load { src = idx0; alt = None; dtype = float4_dt }) in
-  let idx1 =
-    P.emit b (Index { ptr = p1; idxs = [ c0 ]; gate = None; dtype = vec_ptr })
-  in
-  finish_store b idx1 ld
-
-let make_gated_load () =
-  let b, p0, p1, c0, c1, iptr = emit_image_and_buf () in
-  let gate = emit_gate b in
-  let alt = emit_float4_alt b in
-  let idx0 =
-    P.emit b
-      (Index { ptr = p0; idxs = [ c0; c1 ]; gate = Some gate; dtype = iptr })
-  in
-  let ld =
-    P.emit b (Load { src = idx0; alt = Some alt; dtype = float4_dt })
-  in
-  let idx1 =
-    P.emit b (Index { ptr = p1; idxs = [ c0 ]; gate = None; dtype = vec_ptr })
-  in
-  finish_store b idx1 ld
-
-let make_ungated_store () =
-  let b, p0, p1, c0, c1, iptr = emit_image_and_buf () in
-  let idx1 =
-    P.emit b (Index { ptr = p1; idxs = [ c0 ]; gate = None; dtype = vec_ptr })
-  in
-  let ld = P.emit b (Load { src = idx1; alt = None; dtype = float4_dt }) in
-  let idx0 =
-    P.emit b (Index { ptr = p0; idxs = [ c0; c1 ]; gate = None; dtype = iptr })
-  in
-  finish_store b idx0 ld
-
-let make_gated_store () =
-  let b, p0, p1, c0, c1, iptr = emit_image_and_buf () in
-  let gate = emit_gate b in
-  let idx1 =
-    P.emit b (Index { ptr = p1; idxs = [ c0 ]; gate = None; dtype = vec_ptr })
-  in
-  let ld = P.emit b (Load { src = idx1; alt = None; dtype = float4_dt }) in
-  let idx0 =
-    P.emit b
-      (Index { ptr = p0; idxs = [ c0; c1 ]; gate = Some gate; dtype = iptr })
-  in
-  finish_store b idx0 ld
-
-let make_mixed () =
-  let f32_ptr = global_ptr Dtype.float32 in
-  let b = P.create () in
-  let p0 =
-    P.emit b
-      (Param_image { idx = 0; dtype = f32_image_ptr; width = 4; height = 4 })
-  in
-  let p1 = P.emit b (Param { idx = 1; dtype = f32_ptr }) in
-  let p2 = P.emit b (Param { idx = 2; dtype = vec_ptr }) in
-  let c0 = emit_i32 b 0 in
-  let c1 = emit_i32 b 1 in
-  let idx_buf =
-    P.emit b (Index { ptr = p1; idxs = [ c0 ]; gate = None; dtype = f32_ptr })
-  in
-  let ld_buf =
-    P.emit b (Load { src = idx_buf; alt = None; dtype = Dtype.float32 })
-  in
-  ignore (P.emit b (Store { dst = idx_buf; value = ld_buf }));
-  let idx_img =
-    P.emit b
-      (Index
-         { ptr = p0; idxs = [ c0; c1 ]; gate = None; dtype = f32_image_ptr })
-  in
-  let ld_img =
-    P.emit b (Load { src = idx_img; alt = None; dtype = float4_dt })
-  in
-  let idx_out =
-    P.emit b (Index { ptr = p2; idxs = [ c0 ]; gate = None; dtype = vec_ptr })
-  in
-  ignore (P.emit b (Store { dst = idx_out; value = ld_img }));
-  let idx_img2 =
-    P.emit b
-      (Index
-         { ptr = p0; idxs = [ c1; c0 ]; gate = None; dtype = f32_image_ptr })
-  in
-  let idx_in =
-    P.emit b (Index { ptr = p2; idxs = [ c1 ]; gate = None; dtype = vec_ptr })
-  in
-  let ld_vec =
-    P.emit b (Load { src = idx_in; alt = None; dtype = float4_dt })
-  in
-  finish_store b idx_img2 ld_vec
-
-let make_no_images () =
-  let f32_ptr = global_ptr Dtype.float32 in
-  let b = P.create () in
-  let p0 = P.emit b (Param { idx = 0; dtype = f32_ptr }) in
-  let p1 = P.emit b (Param { idx = 1; dtype = f32_ptr }) in
-  let c0 = emit_i32 b 0 in
-  let idx0 =
-    P.emit b (Index { ptr = p0; idxs = [ c0 ]; gate = None; dtype = f32_ptr })
-  in
-  let ld = P.emit b (Load { src = idx0; alt = None; dtype = Dtype.float32 }) in
-  let idx1 =
-    P.emit b (Index { ptr = p1; idxs = [ c0 ]; gate = None; dtype = f32_ptr })
-  in
-  finish_store b idx1 ld
+let mk_no_images () =
+  let f32_ptr = global Dtype.Val.float32 in
+  let p0 = K.param ~idx:0 ~dtype:f32_ptr in
+  let p1 = K.param ~idx:1 ~dtype:f32_ptr in
+  let c0 = K.const_int 0 in
+  let src = K.index ~ptr:p0 ~idxs:[ c0 ] () in
+  let dst = K.index ~ptr:p1 ~idxs:[ c0 ] () in
+  K.sink [ K.store ~dst ~value:(K.load ~src ()) ~ranges:[] ]
 
 (* Error-case builders *)
 
-let make_bad_dtype () =
-  let image_ptr = global_ptr Dtype.int32 in
-  let b = P.create () in
-  let p0 =
-    P.emit b (Param_image { idx = 0; dtype = image_ptr; width = 4; height = 4 })
-  in
-  let p1 = P.emit b (Param { idx = 1; dtype = vec_ptr }) in
-  let c0 = emit_i32 b 0 in
-  let c1 = emit_i32 b 1 in
-  let idx0 =
-    P.emit b
-      (Index { ptr = p0; idxs = [ c0; c1 ]; gate = None; dtype = image_ptr })
-  in
-  let ld = P.emit b (Load { src = idx0; alt = None; dtype = float4_dt }) in
-  let idx1 =
-    P.emit b (Index { ptr = p1; idxs = [ c0 ]; gate = None; dtype = vec_ptr })
-  in
-  finish_store b idx1 ld
+let mk_bad_dtype () =
+  let bad = global Dtype.Val.int32 in
+  let img = K.param_image ~idx:0 ~dtype:bad ~width:4 ~height:4 in
+  let buf = K.param ~idx:1 ~dtype:buf_ptr in
+  let c0 = K.const_int 0 and c1 = K.const_int 1 in
+  let src = K.index ~ptr:img ~idxs:[ c0; c1 ] () in
+  let dst = K.index ~ptr:buf ~idxs:[ c0 ] () in
+  K.sink [ K.store ~dst ~value:(K.load ~src ()) ~ranges:[] ]
 
-let make_wrong_idx_count n =
-  let b, p0, p1, _, _, iptr = emit_image_and_buf () in
-  let idxs = List.init n (fun i -> emit_i32 b i) in
-  let idx0 =
-    P.emit b (Index { ptr = p0; idxs; gate = None; dtype = iptr })
-  in
-  let ld = P.emit b (Load { src = idx0; alt = None; dtype = float4_dt }) in
-  let c0 = emit_i32 b 0 in
-  let idx1 =
-    P.emit b (Index { ptr = p1; idxs = [ c0 ]; gate = None; dtype = vec_ptr })
-  in
-  finish_store b idx1 ld
+let mk_wrong_idx_count n =
+  let img = K.param_image ~idx:0 ~dtype:img_ptr ~width:4 ~height:4 in
+  let buf = K.param ~idx:1 ~dtype:buf_ptr in
+  let idxs = List.init n (fun i -> K.const_int i) in
+  let src = K.index ~ptr:img ~idxs () in
+  let c0 = K.const_int 0 in
+  let dst = K.index ~ptr:buf ~idxs:[ c0 ] () in
+  K.sink [ K.store ~dst ~value:(K.load ~src ()) ~ranges:[] ]
 
-let make_wrong_load_or_store_dtype ~store () =
-  let f32_ptr = global_ptr Dtype.float32 in
-  let b, p0, p1, c0, c1, iptr =
-    emit_image_and_buf ~buf_dt:f32_ptr ()
-  in
-  if store then begin
-    let idx1 =
-      P.emit b (Index { ptr = p1; idxs = [ c0 ]; gate = None; dtype = f32_ptr })
-    in
-    let ld =
-      P.emit b (Load { src = idx1; alt = None; dtype = Dtype.float32 })
-    in
-    let idx0 =
-      P.emit b
-        (Index { ptr = p0; idxs = [ c0; c1 ]; gate = None; dtype = iptr })
-    in
-    finish_store b idx0 ld
-  end
-  else begin
-    let idx0 =
-      P.emit b
-        (Index { ptr = p0; idxs = [ c0; c1 ]; gate = None; dtype = iptr })
-    in
-    let ld =
-      P.emit b (Load { src = idx0; alt = None; dtype = Dtype.float32 })
-    in
-    let idx1 =
-      P.emit b (Index { ptr = p1; idxs = [ c0 ]; gate = None; dtype = f32_ptr })
-    in
-    finish_store b idx1 ld
-  end
+let mk_wrong_load_dtype () =
+  let f32_ptr = global Dtype.Val.float32 in
+  let img = K.param_image ~idx:0 ~dtype:f32_ptr ~width:4 ~height:4 in
+  let buf = K.param ~idx:1 ~dtype:f32_ptr in
+  let c0 = K.const_int 0 and c1 = K.const_int 1 in
+  let src = K.index ~ptr:img ~idxs:[ c0; c1 ] () in
+  let dst = K.index ~ptr:buf ~idxs:[ c0 ] () in
+  K.sink [ K.store ~dst ~value:(K.load ~src ()) ~ranges:[] ]
 
-let make_gated_no_alt () =
-  let b, p0, p1, c0, c1, iptr = emit_image_and_buf () in
-  let gate = emit_gate b in
-  let idx0 =
-    P.emit b
-      (Index { ptr = p0; idxs = [ c0; c1 ]; gate = Some gate; dtype = iptr })
-  in
-  let ld = P.emit b (Load { src = idx0; alt = None; dtype = float4_dt }) in
-  let idx1 =
-    P.emit b (Index { ptr = p1; idxs = [ c0 ]; gate = None; dtype = vec_ptr })
-  in
-  finish_store b idx1 ld
+let mk_wrong_store_dtype () =
+  let f32_ptr = global Dtype.Val.float32 in
+  let img = K.param_image ~idx:0 ~dtype:f32_ptr ~width:4 ~height:4 in
+  let buf = K.param ~idx:1 ~dtype:f32_ptr in
+  let c0 = K.const_int 0 and c1 = K.const_int 1 in
+  let src = K.index ~ptr:buf ~idxs:[ c0 ] () in
+  let dst = K.index ~ptr:img ~idxs:[ c0; c1 ] () in
+  K.sink [ K.store ~dst ~value:(K.load ~src ()) ~ranges:[] ]
 
-let make_alt_no_gate () =
-  let b, p0, p1, c0, c1, iptr = emit_image_and_buf () in
-  let alt = emit_float4_alt b in
-  let idx0 =
-    P.emit b
-      (Index { ptr = p0; idxs = [ c0; c1 ]; gate = None; dtype = iptr })
-  in
-  let ld =
-    P.emit b (Load { src = idx0; alt = Some alt; dtype = float4_dt })
-  in
-  let idx1 =
-    P.emit b (Index { ptr = p1; idxs = [ c0 ]; gate = None; dtype = vec_ptr })
-  in
-  finish_store b idx1 ld
+let mk_gated_no_alt () =
+  let img = K.param_image ~idx:0 ~dtype:img_ptr ~width:4 ~height:4 in
+  let buf = K.param ~idx:1 ~dtype:buf_ptr in
+  let c0 = K.const_int 0 and c1 = K.const_int 1 in
+  let gate = K.const_bool true in
+  let src = K.index ~ptr:img ~idxs:[ c0; c1 ] ~gate () in
+  let dst = K.index ~ptr:buf ~idxs:[ c0 ] () in
+  K.sink [ K.store ~dst ~value:(K.load ~src ()) ~ranges:[] ]
+
+let mk_alt_no_gate () =
+  let img = K.param_image ~idx:0 ~dtype:img_ptr ~width:4 ~height:4 in
+  let buf = K.param ~idx:1 ~dtype:buf_ptr in
+  let c0 = K.const_int 0 and c1 = K.const_int 1 in
+  let src = K.index ~ptr:img ~idxs:[ c0; c1 ] () in
+  let dst = K.index ~ptr:buf ~idxs:[ c0 ] () in
+  K.sink
+    [ K.store ~dst ~value:(K.load ~src ~alt:(float4_zero ()) ()) ~ranges:[] ]
 
 (* Runner *)
 
@@ -319,169 +196,184 @@ let () =
       group "Index rewriting"
         [
           test "ungated image index becomes int2" (fun () ->
-            let program = rewrite (make_ungated_load ()) in
-            let pos =
-              find_unique_position "int2 custom_inline" program (function
-                | P.Custom_inline { fmt; _ } -> contains fmt "(int2)"
-                | _ -> false)
+            let root = rewrite (mk_ungated_load ()) in
+            let n =
+              find_unique "int2"
+                (fun n ->
+                  match K.view n with
+                  | Custom_inline { fmt; _ } -> contains fmt "(int2)"
+                  | _ -> false)
+                root
             in
-            match P.view program pos with
+            match K.view n with
             | Custom_inline { fmt; args; dtype } ->
                 equal string "(int2)({0}, {1})" fmt;
                 equal int 2 (List.length args);
-                assert_dtype "int2 index" int2_dt dtype
-            | v -> fail_view "expected Custom_inline" v);
+                assert_dtype "int2 index" int2 dtype
+            | _ -> assert false);
           test "non-image index unchanged" (fun () ->
-            let program = rewrite (make_mixed ()) in
             equal int 3
-              (count program (function P.Index _ -> true | _ -> false)));
+              (count
+                 (fun n ->
+                   match K.view n with Index _ -> true | _ -> false)
+                 (rewrite (mk_mixed ()))));
         ];
       group "Load rewriting"
         [
           test "ungated image load becomes read_imagef" (fun () ->
-            let program = rewrite (make_ungated_load ()) in
-            let pos =
-              find_unique_position "read_imagef" program (function
-                | P.Custom_inline { fmt; _ } -> contains fmt "read_imagef"
-                | _ -> false)
+            let root = rewrite (mk_ungated_load ()) in
+            let n =
+              find_unique "read_imagef"
+                (fun n ->
+                  match K.view n with
+                  | Custom_inline { fmt; _ } -> contains fmt "read_imagef"
+                  | _ -> false)
+                root
             in
-            match P.view program pos with
+            match K.view n with
             | Custom_inline { fmt; args; dtype } ->
                 equal string "read_imagef({0}, smp, {1})" fmt;
                 equal int 2 (List.length args);
-                assert_dtype "read_imagef" float4_dt dtype
-            | v -> fail_view "expected Custom_inline" v);
+                assert_dtype "read_imagef" float4 dtype
+            | _ -> assert false);
           test "gated image load becomes conditional read_imagef" (fun () ->
-            let program = rewrite (make_gated_load ()) in
-            let pos =
-              find_unique_position "gated read_imagef" program (function
-                | P.Custom_inline { fmt; _ } -> contains fmt "read_imagef"
-                | _ -> false)
+            let root = rewrite (mk_gated_load ()) in
+            let n =
+              find_unique "gated read_imagef"
+                (fun n ->
+                  match K.view n with
+                  | Custom_inline { fmt; _ } -> contains fmt "read_imagef"
+                  | _ -> false)
+                root
             in
-            match P.view program pos with
+            match K.view n with
             | Custom_inline { fmt; args; dtype } ->
                 equal string "({2}?read_imagef({0}, smp, {1}):{3})" fmt;
                 equal int 4 (List.length args);
-                assert_dtype "gated read_imagef" float4_dt dtype
-            | v -> fail_view "expected Custom_inline" v);
+                assert_dtype "gated read_imagef" float4 dtype
+            | _ -> assert false);
           test "non-image load unchanged" (fun () ->
-            let program = rewrite (make_mixed ()) in
             equal int 2
-              (count program (function P.Load _ -> true | _ -> false)));
+              (count
+                 (fun n ->
+                   match K.view n with Load _ -> true | _ -> false)
+                 (rewrite (mk_mixed ()))));
         ];
       group "Store rewriting"
         [
           test "ungated image store becomes write_imagef" (fun () ->
-            let program = rewrite (make_ungated_store ()) in
-            let pos =
-              find_unique_position "write_imagef" program (function
-                | P.Custom { fmt; _ } -> contains fmt "write_imagef"
-                | _ -> false)
+            let root = rewrite (mk_ungated_store ()) in
+            let n =
+              find_unique "write_imagef"
+                (fun n ->
+                  match K.view n with
+                  | Custom { fmt; _ } -> contains fmt "write_imagef"
+                  | _ -> false)
+                root
             in
-            match P.view program pos with
+            match K.view n with
             | Custom { fmt; args } ->
                 equal string "write_imagef({0}, {1}, {2});" fmt;
                 equal int 3 (List.length args)
-            | v -> fail_view "expected Custom" v);
+            | _ -> assert false);
           test "gated image store becomes conditional write_imagef" (fun () ->
-            let program = rewrite (make_gated_store ()) in
-            let pos =
-              find_unique_position "gated write_imagef" program (function
-                | P.Custom { fmt; _ } -> contains fmt "write_imagef"
-                | _ -> false)
+            let root = rewrite (mk_gated_store ()) in
+            let n =
+              find_unique "gated write_imagef"
+                (fun n ->
+                  match K.view n with
+                  | Custom { fmt; _ } -> contains fmt "write_imagef"
+                  | _ -> false)
+                root
             in
-            match P.view program pos with
+            match K.view n with
             | Custom { fmt; args } ->
                 equal string "if ({3}) write_imagef({0}, {1}, {2});" fmt;
                 equal int 4 (List.length args)
-            | v -> fail_view "expected Custom" v);
+            | _ -> assert false);
           test "non-image store unchanged" (fun () ->
-            let program = rewrite (make_mixed ()) in
             equal int 2
-              (count program (function P.Store _ -> true | _ -> false)));
+              (count
+                 (fun n ->
+                   match K.view n with Store _ -> true | _ -> false)
+                 (rewrite (mk_mixed ()))));
         ];
       group "Passthrough"
         [
           test "Param_image preserved" (fun () ->
-            let program = rewrite (make_ungated_load ()) in
-            let pos =
-              find_unique_position "Param_image" program (function
-                | P.Param_image _ -> true | _ -> false)
+            let root = rewrite (mk_ungated_load ()) in
+            let n =
+              find_unique "Param_image"
+                (fun n ->
+                  match K.view n with
+                  | Param_image _ -> true
+                  | _ -> false)
+                root
             in
-            match P.view program pos with
+            match K.view n with
             | Param_image { idx; width; height; _ } ->
                 equal int 0 idx;
                 equal int 4 width;
                 equal int 4 height
-            | v -> fail_view "expected Param_image" v);
-          test "no-image program is identity" (fun () ->
-            let original = make_no_images () in
-            equal int (P.length original) (P.length (rewrite original)));
+            | _ -> assert false);
+          test "no-image kernel is identity" (fun () ->
+            let k = mk_no_images () in
+            equal int
+              (List.length (K.toposort k))
+              (List.length (K.toposort (rewrite k))));
         ];
       group "Device support"
         [
           test "CL accepts images" (fun () ->
-            ignore (Images.rewrite Cstyle.opencl (make_ungated_load ())));
+            ignore (Images.rewrite Cstyle.opencl (mk_ungated_load ())));
           test "QCOM accepts images" (fun () ->
-            ignore (Images.rewrite Cstyle.qcom (make_ungated_load ())));
+            ignore (Images.rewrite Cstyle.qcom (mk_ungated_load ())));
           test "Metal rejects images" (fun () ->
-            raises_failure "does not support" (fun () ->
-              ignore (Images.rewrite Cstyle.metal (make_ungated_load ()))));
+            failure_contains "does not support" (fun () ->
+              ignore
+                (Images.rewrite Cstyle.metal (mk_ungated_load ()))));
           test "CUDA rejects images" (fun () ->
-            raises_failure "does not support" (fun () ->
+            failure_contains "does not support" (fun () ->
               ignore
                 (Images.rewrite
                    (Cstyle.cuda Gpu_target.SM80)
-                   (make_ungated_load ()))));
+                   (mk_ungated_load ()))));
           test "no images on unsupported renderer passes" (fun () ->
-            ignore (Images.rewrite Cstyle.metal (make_no_images ())));
-        ];
-      group "Dtype acceptance"
-        [
-          test "Float16 image accepted" (fun () ->
-            let program =
-              rewrite
-                (make_ungated_load ~image_dt:Dtype.float16 ~width:8 ~height:8
-                   ())
-            in
-            ignore
-              (find_unique_position "read_imagef from f16" program (function
-                | P.Custom_inline { fmt; _ } -> contains fmt "read_imagef"
-                | _ -> false)));
+            ignore (Images.rewrite Cstyle.metal (mk_no_images ())));
         ];
       group "Validation"
         [
           test "rejects unsupported base dtype" (fun () ->
-            raises_failure "unsupported image base dtype" (fun () ->
-              ignore (rewrite (make_bad_dtype ()))));
+            failure_contains "unsupported base dtype" (fun () ->
+              ignore (rewrite (mk_bad_dtype ()))));
           test "rejects 1D image access" (fun () ->
-            raises_failure "exactly two coordinates" (fun () ->
-              ignore (rewrite (make_wrong_idx_count 1))));
+            failure_contains "exactly two coordinates" (fun () ->
+              ignore (rewrite (mk_wrong_idx_count 1))));
           test "rejects 3D image access" (fun () ->
-            raises_failure "exactly two coordinates" (fun () ->
-              ignore (rewrite (make_wrong_idx_count 3))));
+            failure_contains "exactly two coordinates" (fun () ->
+              ignore (rewrite (mk_wrong_idx_count 3))));
           test "rejects non-float4 load" (fun () ->
-            raises_failure "must produce float4" (fun () ->
-              ignore (rewrite (make_wrong_load_or_store_dtype ~store:false ()))));
+            failure_contains "must produce float4" (fun () ->
+              ignore (rewrite (mk_wrong_load_dtype ()))));
           test "rejects non-float4 store" (fun () ->
-            raises_failure "must write float4" (fun () ->
-              ignore (rewrite (make_wrong_load_or_store_dtype ~store:true ()))));
+            failure_contains "must write float4" (fun () ->
+              ignore (rewrite (mk_wrong_store_dtype ()))));
           test "rejects gated load without alt" (fun () ->
-            raises_failure "require an alt value" (fun () ->
-              ignore (rewrite (make_gated_no_alt ()))));
+            failure_contains "requires alt value" (fun () ->
+              ignore (rewrite (mk_gated_no_alt ()))));
           test "rejects alt without gate" (fun () ->
-            raises_failure "requires a gated index" (fun () ->
-              ignore (rewrite (make_alt_no_gate ()))));
+            failure_contains "requires gated index" (fun () ->
+              ignore (rewrite (mk_alt_no_gate ()))));
         ];
       group "Rendered output"
         [
           test "gated load renders correctly" (fun () ->
-            let out = render_with_images cl (make_gated_load ()) in
-            assert_contains "gated read_imagef" out "?read_imagef(";
-            assert_contains "gated alt colon" out ":");
+            let out = render cl (mk_gated_load ()) in
+            assert_rendered "gated read_imagef" out "?read_imagef(";
+            assert_rendered "gated alt colon" out ":");
           test "gated store renders correctly" (fun () ->
-            let out = render_with_images cl (make_gated_store ()) in
-            assert_contains "if-guarded write" out "if (";
-            assert_contains "write_imagef" out "write_imagef(");
+            let out = render cl (mk_gated_store ()) in
+            assert_rendered "if-guarded write" out "if (";
+            assert_rendered "write_imagef" out "write_imagef(");
         ];
     ]

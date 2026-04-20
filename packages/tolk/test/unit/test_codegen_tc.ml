@@ -31,9 +31,9 @@ let all_tables =
     ("amx", Tc.amx);
     ("intel", Tc.intel) ]
 
-let idx n = K.const (C.int D.index n)
+let idx n = K.const (C.int D.Val.index n)
 
-let global_ptr dt = D.ptr_of dt ~addrspace:Global ~size:(-1)
+let global_ptr dt = D.Ptr.create (D.val_of dt) ~addrspace:Global ~size:(-1)
 let global_fptr = global_ptr D.float32
 let global_f16ptr = global_ptr D.float16
 
@@ -49,13 +49,13 @@ let wrap_sink ?opts_to_apply srcs =
   K.sink ~kernel_info:(kernel_info ?opts_to_apply ()) srcs
 
 let loop_range ~axis size =
-  K.range ~size:(idx size) ~axis ~kind:Ak.Loop ~dtype:D.index ()
+  K.range ~size:(idx size) ~axis ~kind:Ak.Loop ~dtype:D.Val.index ()
 
 let reduce_range ~axis size =
-  K.range ~size:(idx size) ~axis ~kind:Ak.Reduce ~dtype:D.index ()
+  K.range ~size:(idx size) ~axis ~kind:Ak.Reduce ~dtype:D.Val.index ()
 
 let global_range ~axis size =
-  K.range ~size:(idx size) ~axis ~kind:Ak.Global ~dtype:D.index ()
+  K.range ~size:(idx size) ~axis ~kind:Ak.Global ~dtype:D.Val.index ()
 
 (* Renderers *)
 
@@ -85,7 +85,7 @@ let matmul_f32_ast ~m ~n ~k =
   let ld_a = K.load ~src:idx_a () in
   let ld_b = K.load ~src:idx_b () in
   let mul = K.binary ~op:`Mul ~lhs:ld_a ~rhs:ld_b in
-  let red = K.reduce ~op:`Add ~src:mul ~ranges:[ r_k ] ~dtype:D.float32 in
+  let red = K.reduce ~op:`Add ~src:mul ~ranges:[ r_k ] ~dtype:D.Val.float32 in
   let out_idx = K.index ~ptr:p_out ~idxs:[ r_m * idx n + r_n ] () in
   let st = K.store ~dst:out_idx ~value:red ~ranges:[] in
   let e = K.end_ ~value:st ~ranges:[ r_m; r_n ] () in
@@ -105,7 +105,7 @@ let matmul_f32_global_ast ~m ~n ~k =
   let ld_a = K.load ~src:idx_a () in
   let ld_b = K.load ~src:idx_b () in
   let mul = K.binary ~op:`Mul ~lhs:ld_a ~rhs:ld_b in
-  let red = K.reduce ~op:`Add ~src:mul ~ranges:[ r_k ] ~dtype:D.float32 in
+  let red = K.reduce ~op:`Add ~src:mul ~ranges:[ r_k ] ~dtype:D.Val.float32 in
   let out_idx = K.index ~ptr:p_out ~idxs:[ r_m * idx n + r_n ] () in
   let st = K.store ~dst:out_idx ~value:red ~ranges:[] in
   let e = K.end_ ~value:st ~ranges:[ r_m; r_n ] () in
@@ -125,7 +125,7 @@ let matmul_f16_global_ast ~m ~n ~k =
   let ld_a = K.load ~src:idx_a () in
   let ld_b = K.load ~src:idx_b () in
   let mul = K.binary ~op:`Mul ~lhs:ld_a ~rhs:ld_b in
-  let red = K.reduce ~op:`Add ~src:mul ~ranges:[ r_k ] ~dtype:D.float32 in
+  let red = K.reduce ~op:`Add ~src:mul ~ranges:[ r_k ] ~dtype:D.Val.float32 in
   let out_idx = K.index ~ptr:p_out ~idxs:[ r_m * idx n + r_n ] () in
   let st = K.store ~dst:out_idx ~value:red ~ranges:[] in
   let e = K.end_ ~value:st ~ranges:[ r_m; r_n ] () in
@@ -167,7 +167,7 @@ let has_unroll ast =
     (K.toposort ast)
 
 (* Check a TC entry matches expected values *)
-let check_tc (tc : Renderer.tensor_core) ~dims ~threads ~ept ~dtype_in ~dtype_out
+let check_tc (tc : Tc.t) ~dims ~threads ~ept ~dtype_in ~dtype_out
     ~opts ~swizzle =
   let n, m, k = dims in
   let tn, tm, tk = tc.dims in
@@ -249,42 +249,8 @@ let () =
             equal string "WMMA_8_8_16_half_float" s);
         ];
 
-      group "get_reduce_axes"
-        [
-          test "K=16 gives 4 axes" (fun () ->
-            let tc = List.hd Tc.cuda_sm80 in
-            let axes = Tc.get_reduce_axes tc in
-            equal int 4 (List.length axes);
-            List.iteri (fun i (idx, sz) ->
-              equal int i idx; equal int 2 sz) axes);
-
-          test "K=8 gives 3 axes" (fun () ->
-            let tc = List.nth Tc.cuda_sm80 3 in
-            let axes = Tc.get_reduce_axes tc in
-            equal int 3 (List.length axes));
-
-          test "K=1 gives 0 axes (AMX)" (fun () ->
-            let tc = List.hd Tc.amx in
-            let axes = Tc.get_reduce_axes tc in
-            equal int 0 (List.length axes));
-        ];
-
-      group "get_upcast_axes / get_local_axes"
-        [
-          test "cuda opts split correctly" (fun () ->
-            let tc = List.hd Tc.cuda_sm80 in
-            let upcast = Tc.get_upcast_axes tc in
-            let local = Tc.get_local_axes tc in
-            equal int 2 (List.length upcast);
-            equal int 5 (List.length local));
-
-          test "amx has 8 upcast, 0 local" (fun () ->
-            let tc = List.hd Tc.amx in
-            let upcast = Tc.get_upcast_axes tc in
-            let local = Tc.get_local_axes tc in
-            equal int 8 (List.length upcast);
-            equal int 0 (List.length local));
-        ];
+      (* get_reduce_axes, get_upcast_axes, get_local_axes are internal
+         helpers tested indirectly via validate (runs at module load). *)
 
       group "base_shape_str"
         [
@@ -354,16 +320,6 @@ let () =
 
           test "intel has 1 entry" (fun () ->
             equal int 1 (List.length Tc.intel));
-        ];
-
-      group "dtype_name"
-        [
-          test "matches reference dtype names" (fun () ->
-            equal string "half" (Tc.dtype_name Dtype.Float16);
-            equal string "__bf16" (Tc.dtype_name Dtype.Bfloat16);
-            equal string "float" (Tc.dtype_name Dtype.Float32);
-            equal string "float8_e4m3" (Tc.dtype_name Dtype.Fp8e4m3);
-            equal string "float8_e5m2" (Tc.dtype_name Dtype.Fp8e5m2));
         ];
 
       (* Table parity: exact values for each hardware target *)

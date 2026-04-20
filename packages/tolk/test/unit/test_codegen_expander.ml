@@ -9,12 +9,12 @@ open Tolk_ir
 
 module K = Kernel
 
-let dt = Dtype.float32
-let ptr = Dtype.ptr_of dt ~addrspace:Global ~size:(-1)
-let global_ptr dt = Dtype.ptr_of dt ~addrspace:Global ~size:(-1)
+let dt = Dtype.Val.float32
+let ptr = Dtype.Ptr.create dt ~addrspace:Global ~size:(-1)
+let global_ptr dt = Dtype.Ptr.create dt ~addrspace:Global ~size:(-1)
 let pp_kernel root = Format.asprintf "%a" K.pp root
-let i32 n = K.const (Const.int Dtype.int32 n)
-let idx_const n = K.const (Const.int Dtype.index n)
+let i32 n = K.const (Const.int Dtype.Val.int32 n)
+let idx_const n = K.const (Const.int Dtype.Val.index n)
 
 let kernel_info ?opts_to_apply () =
   {
@@ -28,7 +28,7 @@ let kernel_info ?opts_to_apply () =
 
 let metal_like_tc =
   {
-    Renderer.dims = (8, 8, 8);
+    Tc.dims = (8, 8, 8);
     threads = 32;
     elements_per_thread = (2, 2, 2);
     dtype_in = Dtype.Float32;
@@ -131,11 +131,11 @@ let assert_no_contract_unroll expanded =
 let expand_vec_contract ~consts ~unroll_axes ~contract_axes ~vec_width =
   let vec = K.vectorize ~srcs:consts in
   let unroll =
-    K.unroll ~src:vec ~axes:unroll_axes ~dtype:Dtype.int32
+    K.unroll ~src:vec ~axes:unroll_axes ~dtype:Dtype.Val.int32
   in
   let contract =
     K.contract ~src:unroll ~axes:contract_axes
-      ~dtype:(Dtype.vec Dtype.int32 vec_width)
+      ~dtype:(Dtype.Val.vec vec_width Dtype.Val.int32)
   in
   let root = K.sink ~kernel_info:(kernel_info ()) [ contract ] in
   let expanded = Expander.expand root in
@@ -161,10 +161,10 @@ let () =
           test "expand lowers reachable contract markers" (fun () ->
             let _ = K.range ~size:(idx_const 4) ~axis:0
               ~kind:Axis_kind.Global () in
-            let cf = K.const (Const.float Dtype.float32 3.0) in
+            let cf = K.const (Const.float Dtype.Val.float32 3.0) in
             let contract =
               K.contract ~src:cf ~axes:[ (0, 2) ]
-                ~dtype:(Dtype.vec Dtype.float32 2)
+                ~dtype:(Dtype.Val.vec 2 Dtype.Val.float32)
             in
             let root = K.sink ~kernel_info:(kernel_info ()) [ contract ] in
             let expanded = Expander.expand root in
@@ -188,7 +188,7 @@ let () =
             let idx1 = K.index ~ptr:p1 ~idxs:[ r2; r1 ] () in
             let ld0 = K.load ~src:idx0 () in
             let ld1 = K.load ~src:idx1 () in
-            let zero = K.const (Const.float Dtype.float32 0.0) in
+            let zero = K.const (Const.float Dtype.Val.float32 0.0) in
             let wmma =
               K.wmma ~name:"__metal_simdgroup_matrix_fma" ~a:ld0 ~b:ld1
                 ~c:zero ~dtype:dt ~dims:(8, 8, 8)
@@ -202,7 +202,7 @@ let () =
             in
             let contract =
               K.contract ~src:unroll ~axes:[ (0, 2); (1, 2) ]
-                ~dtype:(Dtype.vec dt 4)
+                ~dtype:(Dtype.Val.vec 4 dt)
             in
             let root =
               K.sink
@@ -243,10 +243,10 @@ let () =
             let vec = K.vectorize ~srcs:consts in
             let unroll1 =
               K.unroll ~src:vec ~axes:[ (1, 4) ]
-                ~dtype:(Dtype.vec Dtype.int32 2)
+                ~dtype:(Dtype.Val.vec 2 Dtype.Val.int32)
             in
             let unroll2 =
-              K.unroll ~src:unroll1 ~axes:[ (2, 2) ] ~dtype:Dtype.int32
+              K.unroll ~src:unroll1 ~axes:[ (2, 2) ] ~dtype:Dtype.Val.int32
             in
             let root = K.sink ~kernel_info:(kernel_info ()) [ unroll2 ] in
             let expanded = Expander.expand root in
@@ -263,11 +263,11 @@ let () =
             let consts = List.init 8 (fun i -> i32 i) in
             let vec = K.vectorize ~srcs:consts in
             let unroll =
-              K.unroll ~src:vec ~axes:[ (1, 4); (2, 2) ] ~dtype:Dtype.int32
+              K.unroll ~src:vec ~axes:[ (1, 4); (2, 2) ] ~dtype:Dtype.Val.int32
             in
             let contract =
               K.contract ~src:unroll ~axes:[ (1, 4) ]
-                ~dtype:(Dtype.vec Dtype.int32 4)
+                ~dtype:(Dtype.Val.vec 4 Dtype.Val.int32)
             in
             let root = K.sink ~kernel_info:(kernel_info ()) [ contract ] in
             let expanded = Expander.expand root in
@@ -279,7 +279,7 @@ let () =
           test "expand contract without unroll repeats scalar" (fun () ->
             let contract =
               K.contract ~src:(i32 7) ~axes:[ (2, 2) ]
-                ~dtype:(Dtype.vec Dtype.int32 2)
+                ~dtype:(Dtype.Val.vec 2 Dtype.Val.int32)
             in
             let root = K.sink ~kernel_info:(kernel_info ()) [ contract ] in
             let expanded = Expander.expand root in
@@ -306,11 +306,11 @@ let () =
             let consts = List.init 4 (fun i -> i32 i) in
             let vec = K.vectorize ~srcs:consts in
             let unroll =
-              K.unroll ~src:vec ~axes:[ (1, 4) ] ~dtype:Dtype.int32
+              K.unroll ~src:vec ~axes:[ (1, 4) ] ~dtype:Dtype.Val.int32
             in
             let contract =
               K.contract ~src:unroll ~axes:[ (1, 4); (2, 2) ]
-                ~dtype:(Dtype.vec Dtype.int32 8)
+                ~dtype:(Dtype.Val.vec 8 Dtype.Val.int32)
             in
             let root = K.sink ~kernel_info:(kernel_info ()) [ contract ] in
             let expanded = Expander.expand root in
@@ -323,7 +323,7 @@ let () =
             let consts = List.init 4 (fun i -> i32 i) in
             let vec = K.vectorize ~srcs:consts in
             let unroll =
-              K.unroll ~src:vec ~axes:[ (1, 4) ] ~dtype:Dtype.int32
+              K.unroll ~src:vec ~axes:[ (1, 4) ] ~dtype:Dtype.Val.int32
             in
             let add = K.binary ~op:`Add ~lhs:unroll ~rhs:(i32 3) in
             let root = K.sink ~kernel_info:(kernel_info ()) [ add ] in
@@ -346,11 +346,11 @@ let () =
             let consts_b = List.init 4 (fun i -> i32 (i * 4)) in
             let unroll_a =
               K.unroll ~src:(K.vectorize ~srcs:consts_a)
-                ~axes:[ (1, 4) ] ~dtype:Dtype.int32
+                ~axes:[ (1, 4) ] ~dtype:Dtype.Val.int32
             in
             let unroll_b =
               K.unroll ~src:(K.vectorize ~srcs:consts_b)
-                ~axes:[ (1, 4) ] ~dtype:Dtype.int32
+                ~axes:[ (1, 4) ] ~dtype:Dtype.Val.int32
             in
             let add = K.binary ~op:`Add ~lhs:unroll_a ~rhs:unroll_b in
             let root = K.sink ~kernel_info:(kernel_info ()) [ add ] in
@@ -371,11 +371,11 @@ let () =
             let consts_b = List.init 4 (fun i -> i32 i) in
             let unroll_a =
               K.unroll ~src:(K.vectorize ~srcs:consts_a)
-                ~axes:[ (1, 4) ] ~dtype:Dtype.int32
+                ~axes:[ (1, 4) ] ~dtype:Dtype.Val.int32
             in
             let unroll_b =
               K.unroll ~src:(K.vectorize ~srcs:consts_b)
-                ~axes:[ (2, 4) ] ~dtype:Dtype.int32
+                ~axes:[ (2, 4) ] ~dtype:Dtype.Val.int32
             in
             let add = K.binary ~op:`Add ~lhs:unroll_a ~rhs:unroll_b in
             let root = K.sink ~kernel_info:(kernel_info ()) [ add ] in
@@ -398,11 +398,11 @@ let () =
               let unroll =
                 K.unroll ~src:vec
                   ~axes:[ (1, 2); (2, 2); (3, 2); (4, 2) ]
-                  ~dtype:Dtype.int32
+                  ~dtype:Dtype.Val.int32
               in
               let contract =
                 K.contract ~src:unroll ~axes
-                  ~dtype:(Dtype.vec Dtype.int32 4)
+                  ~dtype:(Dtype.Val.vec 4 Dtype.Val.int32)
               in
               K.sink ~kernel_info:(kernel_info ()) [ contract ]
             in
@@ -461,11 +461,11 @@ let () =
             let consts_b = List.init 4 (fun i -> i32 i) in
             let unroll_a =
               K.unroll ~src:(K.vectorize ~srcs:consts_a)
-                ~axes:[ (1, 4) ] ~dtype:Dtype.int32
+                ~axes:[ (1, 4) ] ~dtype:Dtype.Val.int32
             in
             let unroll_b =
               K.unroll ~src:(K.vectorize ~srcs:consts_b)
-                ~axes:[ (2, 4) ] ~dtype:Dtype.int32
+                ~axes:[ (2, 4) ] ~dtype:Dtype.Val.int32
             in
             let add = K.binary ~op:`Add ~lhs:unroll_b ~rhs:unroll_a in
             let root = K.sink ~kernel_info:(kernel_info ()) [ add ] in
@@ -495,7 +495,7 @@ let () =
         [
           test "empty UNROLL is a no-op" (fun () ->
             let unroll =
-              K.unroll ~src:(i32 42) ~axes:[] ~dtype:Dtype.int32
+              K.unroll ~src:(i32 42) ~axes:[] ~dtype:Dtype.Val.int32
             in
             let root = K.sink ~kernel_info:(kernel_info ()) [ unroll ] in
             let expanded = Expander.expand root in
@@ -520,7 +520,7 @@ let () =
             is_true
               (count_reachable expanded (function
                  | K.After { src; _ } ->
-                     Dtype.count (K.dtype_or Dtype.void src) = 1
+                     Dtype.count (K.dtype src) = 1
                  | _ -> false)
               > 0);
             K.validate expanded);
@@ -538,7 +538,7 @@ let () =
             is_true
               (count_reachable expanded (function
                  | K.End { value; _ } ->
-                     Dtype.count (K.dtype_or Dtype.void value) = 1
+                     Dtype.count (K.dtype value) = 1
                  | _ -> false)
               > 0);
             K.validate expanded);
@@ -548,14 +548,14 @@ let () =
             let vec = K.vectorize ~srcs:consts in
             let inner =
               K.unroll ~src:vec ~axes:[ (1, 4) ]
-                ~dtype:(Dtype.vec Dtype.int32 2)
+                ~dtype:(Dtype.Val.vec 2 Dtype.Val.int32)
             in
             let outer =
-              K.unroll ~src:inner ~axes:[ (2, 2) ] ~dtype:Dtype.int32
+              K.unroll ~src:inner ~axes:[ (2, 2) ] ~dtype:Dtype.Val.int32
             in
             let contract =
               K.contract ~src:outer ~axes:[ (1, 4); (2, 2) ]
-                ~dtype:(Dtype.vec Dtype.int32 8)
+                ~dtype:(Dtype.Val.vec 8 Dtype.Val.int32)
             in
             let root = K.sink ~kernel_info:(kernel_info ()) [ contract ] in
             let expanded = Expander.expand root in
@@ -625,9 +625,9 @@ let () =
             let consts = List.init 4 (fun i -> i32 i) in
             let vec = K.vectorize ~srcs:consts in
             let unroll =
-              K.unroll ~src:vec ~axes:[ (0, 4) ] ~dtype:Dtype.int32
+              K.unroll ~src:vec ~axes:[ (0, 4) ] ~dtype:Dtype.Val.int32
             in
-            let cf = K.const (Const.float Dtype.float32 1.0) in
+            let cf = K.const (Const.float Dtype.Val.float32 1.0) in
             let r1 =
               K.range ~size:(idx_const 8) ~axis:1 ~kind:Axis_kind.Reduce ()
             in
@@ -652,9 +652,9 @@ let () =
             let consts = List.init 4 (fun i -> i32 i) in
             let vec = K.vectorize ~srcs:consts in
             let unroll =
-              K.unroll ~src:vec ~axes:[ (0, 4) ] ~dtype:Dtype.int32
+              K.unroll ~src:vec ~axes:[ (0, 4) ] ~dtype:Dtype.Val.int32
             in
-            let i32_ptr = global_ptr Dtype.int32 in
+            let i32_ptr = global_ptr Dtype.Val.int32 in
             let p0 = K.param ~idx:0 ~dtype:i32_ptr in
             let idx = K.index ~ptr:p0 ~idxs:[ idx_const 0 ] () in
             let store = K.store ~dst:idx ~value:(i32 7) ~ranges:[ unroll ] in
@@ -822,7 +822,7 @@ let () =
                 (Printexc.to_string exn ^ "\n" ^ pp_kernel expanded));
 
           test "expand consumes upcast ranges in store" (fun () ->
-            let i32_ptr = global_ptr Dtype.int32 in
+            let i32_ptr = global_ptr Dtype.Val.int32 in
             let p0 = K.param ~idx:0 ~dtype:i32_ptr in
             let c4 = idx_const 4 in
             let r0 = K.range ~size:c4 ~axis:0 ~kind:Axis_kind.Upcast () in
@@ -838,7 +838,7 @@ let () =
             K.validate expanded);
 
           test "expand consumes upcast ranges in end" (fun () ->
-            let i32_ptr = global_ptr Dtype.int32 in
+            let i32_ptr = global_ptr Dtype.Val.int32 in
             let p0 = K.param ~idx:0 ~dtype:i32_ptr in
             let c4 = idx_const 4 in
             let r0 = K.range ~size:c4 ~axis:0 ~kind:Axis_kind.Upcast () in

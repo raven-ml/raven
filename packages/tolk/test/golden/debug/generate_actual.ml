@@ -11,8 +11,8 @@ open Tolk
 open Tolk_ir
 module K = Kernel
 
-let global_fptr = Dtype.ptr_of Dtype.float32 ~addrspace:Global ~size:(-1)
-let idx n = K.const (Const.int Dtype.index n)
+let global_fptr = Dtype.Ptr.create (Dtype.val_of Dtype.float32) ~addrspace:Global ~size:(-1)
+let idx n = K.const (Const.int Dtype.Val.index n)
 
 let make_kernel ~name ~opts_to_apply =
   let p0 = K.param ~idx:0 ~dtype:global_fptr in
@@ -39,7 +39,7 @@ let run_test ~name ~sink =
   let fd = Unix.openfile path [ O_WRONLY; O_CREAT; O_TRUNC ] 0o644 in
   Unix.dup2 fd Unix.stderr;
   Unix.close fd;
-  ignore (Pipeline.full_rewrite_to_sink ~optimize:true ren sink);
+  ignore (Codegen.full_rewrite_to_sink ~optimize:true ren sink);
   flush stderr;
   Unix.dup2 saved_stderr Unix.stderr
 

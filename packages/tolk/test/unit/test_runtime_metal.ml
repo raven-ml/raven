@@ -8,7 +8,7 @@ open Tolk
 open Tolk_ir
 module P = Program
 
-let global_ptr dt = Dtype.ptr_of dt ~addrspace:Global ~size:(-1)
+let global_ptr dt = Dtype.Ptr.create dt ~addrspace:Global ~size:(-1)
 
 let int32_to_bytes values =
   let bytes = Bytes.create (List.length values * 4) in
@@ -62,12 +62,12 @@ let i32_buf device values =
 let read_i32 buf = Device.Buffer.as_bytes buf |> int32_list_of_bytes
 
 let increment_program () =
-  let dt = Dtype.int32 in
+  let dt = Dtype.Val.int32 in
   let ptr = global_ptr dt in
   let b = P.create () in
   let p0 = P.emit b (Param { idx = 0; dtype = ptr }) in
   let p1 = P.emit b (Param { idx = 1; dtype = ptr }) in
-  let c0 = P.emit b (Const { value = Const.int Dtype.int32 0; dtype = Dtype.int32 }) in
+  let c0 = P.emit b (Const { value = Const.int Dtype.Val.int32 0; dtype = Dtype.Val.int32 }) in
   let idx_src = P.emit b (Index { ptr = p1; idxs = [ c0 ]; gate = None; dtype = ptr }) in
   let idx_dst = P.emit b (Index { ptr = p0; idxs = [ c0 ]; gate = None; dtype = ptr }) in
   let l0 = P.emit b (Load { src = idx_src; alt = None; dtype = dt }) in
@@ -79,10 +79,10 @@ let increment_program () =
 let compile_incr device name =
   Device.compile_program device ~name (increment_program ())
 
-let exec_sync device program bufs =
-  let queue = Device.queue device in
-  Device.Queue.exec queue program bufs [];
-  Device.Queue.synchronize queue
+let run_spec device spec bufs =
+  let car = Realize.Compiled_runner.create ~device spec in
+  ignore (Realize.Compiled_runner.call car bufs [] ~wait:true ~timeout:None);
+  Device.synchronize device
 
 let () =
   run "Metal_runtime"
@@ -91,33 +91,19 @@ let () =
         [
           test "compile and run one kernel" (fun () ->
             let device = metal_device () in
-            let program = compile_incr device "metal_add_one" in
+            let spec = compile_incr device "metal_add_one" in
             let dst = i32_buf device [ 0 ] in
             let src = i32_buf device [ 41 ] in
-            exec_sync device program [ dst; src ];
+            run_spec device spec [ dst; src ];
             equal (list int) [ 42 ] (read_i32 dst));
-          test "queue exec is ordered" (fun () ->
+          test "exec is ordered" (fun () ->
             let device = metal_device () in
-            let program = compile_incr device "metal_ordered_add_one" in
+            let spec = compile_incr device "metal_ordered_add_one" in
             let a = i32_buf device [ 0 ] in
             let b = i32_buf device [ 0 ] in
-            let queue = Device.queue device in
-            Device.Queue.exec queue program [ b; a ] [];
-            Device.Queue.exec queue program [ a; b ] [];
-            Device.Queue.synchronize queue;
+            run_spec device spec [ b; a ];
+            run_spec device spec [ a; b ];
             equal (list int) [ 2 ] (read_i32 a);
             equal (list int) [ 1 ] (read_i32 b));
-          test "synchronize propagates unprepared program error" (fun () ->
-            let device = metal_device () in
-            let program = compile_incr device "metal_released_program" in
-            let dst = i32_buf device [ 0 ] in
-            let src = i32_buf device [ 1 ] in
-            is_true (Option.is_some (Device.Program.entry_addr program));
-            Device.Program.release program;
-            is_true (Option.is_none (Device.Program.entry_addr program));
-            let queue = Device.queue device in
-            raises_invalid_arg "metal program not prepared" (fun () ->
-                Device.Queue.exec queue program [ dst; src ] [];
-                Device.Queue.synchronize queue));
         ];
     ]

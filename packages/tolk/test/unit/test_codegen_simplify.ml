@@ -17,9 +17,9 @@ module Ak = Axis_kind
 
 (* Helpers *)
 
-let idx n = K.const (C.int D.index n)
-let f32 x = K.const (C.float D.float32 x)
-let global_fptr = D.ptr_of D.float32 ~addrspace:Global ~size:(-1)
+let idx n = K.const (C.int D.Val.index n)
+let f32 x = K.const (C.float D.Val.float32 x)
+let global_fptr = D.Ptr.create D.Val.float32 ~addrspace:Global ~size:(-1)
 
 let kernel_info () =
   {
@@ -35,11 +35,11 @@ let wrap_sink srcs = K.sink ~kernel_info:(kernel_info ()) srcs
 
 (* Build a loop range on [axis] with int [size]. *)
 let loop_range ~axis size =
-  K.range ~size:(idx size) ~axis ~kind:Ak.Loop ~dtype:D.index ()
+  K.range ~size:(idx size) ~axis ~kind:Ak.Loop ~dtype:D.Val.index ()
 
 (* Build a reduce range on [axis] with int [size]. *)
 let reduce_range ~axis size =
-  K.range ~size:(idx size) ~axis ~kind:Ak.Reduce ~dtype:D.index ()
+  K.range ~size:(idx size) ~axis ~kind:Ak.Reduce ~dtype:D.Val.index ()
 
 (* Build a gated load: LOAD(INDEX(param, WHERE(valid, idx, invalid)), alt=0). *)
 let gated_load ?(param_idx = 0) valid index_val =
@@ -94,7 +94,7 @@ let flatten_range_tests =
           let r0 = loop_range ~axis:0 4 in
           let open K.O in
           let r1 =
-            K.range ~size:(r0 + idx 1) ~axis:1 ~kind:Ak.Loop ~dtype:D.index ()
+            K.range ~size:(r0 + idx 1) ~axis:1 ~kind:Ak.Loop ~dtype:D.Val.index ()
           in
           let value = r0 + r1 in
           (* Build End with intentionally wrong order: [r1, r0] *)
@@ -178,7 +178,7 @@ let split_ranges_tests =
           let r = loop_range ~axis:0 8 in
           let open K.O in
           let img_ptr =
-            D.ptr_of (D.vec D.float32 4) ~addrspace:Global ~size:(-1)
+            D.Ptr.create (D.Val.vec 4 D.Val.float32) ~addrspace:Global ~size:(-1)
           in
           let p = K.param_image ~idx:0 ~dtype:img_ptr ~width:10 ~height:10 in
           let index_node = K.index ~ptr:p ~idxs:[ r mod idx 2 ] () in
@@ -217,7 +217,7 @@ let simplify_merge_tests =
           let r1 = reduce_range ~axis:1 4 in
           let open K.O in
           let value = (r0 * idx 4) + r1 in
-          let red = K.reduce ~op:`Add ~src:value ~ranges:[ r0; r1 ] ~dtype:D.index in
+          let red = K.reduce ~op:`Add ~src:value ~ranges:[ r0; r1 ] ~dtype:D.Val.index in
           let sink = wrap_sink [ K.end_ ~value:red ~ranges:[] () ] in
           let result = Simplify.pm_simplify_ranges sink in
           (* Different kinds: should not merge *)
@@ -257,13 +257,15 @@ let range_shrink_tests =
           equal int (List.length ranges) 1;
           equal int (range_size_int (List.hd ranges)) 8);
       (* Port of test_range_no_shrink_guard_ge_max:
-         Guard r < 300 with range max 204 -> no shrink *)
+         Guard r < 300 with range max 204 -> no shrink.
+         Symbolic folds the vacuous guard first, matching the pipeline. *)
       test "no shrink when guard >= range size" (fun () ->
           let r = loop_range ~axis:0 204 in
           let open K.O in
           let valid = r < idx 300 in
           let load = gated_load valid r in
           let sink = wrap_sink [ K.end_ ~value:load ~ranges:[ r ] () ] in
+          let sink = K.graph_rewrite Symbolic.symbolic sink in
           let result = Simplify.pm_simplify_ranges sink in
           let ranges = find_ranges result in
           equal int (List.length ranges) 1;
@@ -289,9 +291,9 @@ let range_shrink_tests =
           let r = loop_range ~axis:0 204 in
           let open K.O in
           let load = gated_load (r < idx 4) r in
-          let src = K.cast ~src:r ~dtype:(D.to_any D.float32) + load in
+          let src = K.cast ~src:r ~dtype:(D.float32) + load in
           let red =
-            K.reduce ~op:`Add ~src ~ranges:[ r ] ~dtype:D.float32
+            K.reduce ~op:`Add ~src ~ranges:[ r ] ~dtype:D.Val.float32
           in
           let sink = wrap_sink [ K.end_ ~value:red ~ranges:[] () ] in
           let result = Simplify.pm_simplify_ranges sink in
@@ -368,9 +370,9 @@ let reduce_unparented_tests =
              r1 is unparented -> result * size(r1). *)
           let r0 = loop_range ~axis:0 4 in
           let r1 = loop_range ~axis:1 5 in
-          let src = K.cast ~src:r0 ~dtype:(D.to_any D.float32) in
+          let src = K.cast ~src:r0 ~dtype:(D.float32) in
           let red =
-            K.reduce ~op:`Add ~src ~ranges:[ r0; r1 ] ~dtype:D.float32
+            K.reduce ~op:`Add ~src ~ranges:[ r0; r1 ] ~dtype:D.Val.float32
           in
           let result = Simplify.pm_reduce_unparented red in
           (* r1 should be eliminated; result should have a Mul by 5 *)
@@ -381,9 +383,9 @@ let reduce_unparented_tests =
       test "removes unparented range from MUL reduce" (fun () ->
           let r0 = loop_range ~axis:0 4 in
           let r1 = loop_range ~axis:1 3 in
-          let src = K.cast ~src:r0 ~dtype:(D.to_any D.float32) in
+          let src = K.cast ~src:r0 ~dtype:(D.float32) in
           let red =
-            K.reduce ~op:`Mul ~src ~ranges:[ r0; r1 ] ~dtype:D.float32
+            K.reduce ~op:`Mul ~src ~ranges:[ r0; r1 ] ~dtype:D.Val.float32
           in
           let result = Simplify.pm_reduce_unparented red in
           let ranges = find_ranges result in
@@ -393,9 +395,9 @@ let reduce_unparented_tests =
       test "MAX reduce ignores unparented ranges" (fun () ->
           let r0 = loop_range ~axis:0 4 in
           let r1 = loop_range ~axis:1 3 in
-          let src = K.cast ~src:r0 ~dtype:(D.to_any D.float32) in
+          let src = K.cast ~src:r0 ~dtype:(D.float32) in
           let red =
-            K.reduce ~op:`Max ~src ~ranges:[ r0; r1 ] ~dtype:D.float32
+            K.reduce ~op:`Max ~src ~ranges:[ r0; r1 ] ~dtype:D.Val.float32
           in
           let result = Simplify.pm_reduce_unparented red in
           let ranges = find_ranges result in
@@ -407,10 +409,10 @@ let reduce_unparented_tests =
           let r0 = loop_range ~axis:0 4 in
           let r1 = loop_range ~axis:1 5 in
           let open K.O in
-          let src = K.cast ~src:r0 ~dtype:(D.to_any D.float32)
-                    + K.cast ~src:r1 ~dtype:(D.to_any D.float32) in
+          let src = K.cast ~src:r0 ~dtype:(D.float32)
+                    + K.cast ~src:r1 ~dtype:(D.float32) in
           let red =
-            K.reduce ~op:`Add ~src ~ranges:[ r0; r1 ] ~dtype:D.float32
+            K.reduce ~op:`Add ~src ~ranges:[ r0; r1 ] ~dtype:D.Val.float32
           in
           let result = Simplify.pm_reduce_unparented red in
           (* Both ranges referenced, no change *)
@@ -426,12 +428,12 @@ let reduce_simplify_tests =
       test "distributes add over reduce" (fun () ->
           (* Reduce(ADD, x + y, [r]) -> Reduce(ADD, x, [r]) + Reduce(ADD, y, [r]) *)
           let r = loop_range ~axis:0 4 in
-          let x = K.cast ~src:r ~dtype:(D.to_any D.float32) in
+          let x = K.cast ~src:r ~dtype:(D.float32) in
           let y = f32 2.0 in
           let open K.O in
           let src = x + y in
           let red =
-            K.reduce ~op:`Add ~src ~ranges:[ r ] ~dtype:D.float32
+            K.reduce ~op:`Add ~src ~ranges:[ r ] ~dtype:D.Val.float32
           in
           let result = Simplify.pm_reduce_simplify red in
           (* After distribution + unparented removal, the constant term
@@ -462,7 +464,7 @@ let reduce_simplify_tests =
             K.ternary ~op:`Where ~a:cond ~b:val_ ~c:(f32 0.0)
           in
           let red =
-            K.reduce ~op:`Add ~src ~ranges:[ r ] ~dtype:D.float32
+            K.reduce ~op:`Add ~src ~ranges:[ r ] ~dtype:D.Val.float32
           in
           let result = Simplify.pm_reduce_simplify red in
           (* Range should be eliminated *)
@@ -476,7 +478,7 @@ let reduce_simplify_tests =
             K.ternary ~op:`Where ~a:cond ~b:(f32 0.0) ~c:val_
           in
           let red =
-            K.reduce ~op:`Add ~src ~ranges:[ r ] ~dtype:D.float32
+            K.reduce ~op:`Add ~src ~ranges:[ r ] ~dtype:D.Val.float32
           in
           let result = Simplify.pm_reduce_simplify red in
           (* Range should be eliminated: result is (10-3)*2 = 14 *)
@@ -487,7 +489,7 @@ let reduce_simplify_tests =
           let r = loop_range ~axis:0 5 in
           let src = f32 3.0 in
           let red =
-            K.reduce ~op:`Add ~src ~ranges:[ r ] ~dtype:D.float32
+            K.reduce ~op:`Add ~src ~ranges:[ r ] ~dtype:D.Val.float32
           in
           let result = Simplify.pm_reduce_simplify red in
           equal int (count_ranges result) 0;
@@ -496,11 +498,11 @@ let reduce_simplify_tests =
           let r = loop_range ~axis:0 4 in
           let open K.O in
           let gate = r < idx 2 in
-          let gate_cast = K.cast ~src:gate ~dtype:(D.to_any D.float32) in
+          let gate_cast = K.cast ~src:gate ~dtype:(D.float32) in
           let x = f32 5.0 in
           let src = x * gate_cast in
           let red =
-            K.reduce ~op:`Add ~src ~ranges:[ r ] ~dtype:D.float32
+            K.reduce ~op:`Add ~src ~ranges:[ r ] ~dtype:D.Val.float32
           in
           let result = Simplify.pm_reduce_simplify red in
           (* x * gate.cast() -> gate.where(x, 0) inside the reduce,
@@ -515,7 +517,7 @@ let reduce_simplify_tests =
           let cond = r1 < idx 3 in
           let src = K.ternary ~op:`Where ~a:cond ~b:(f32 1.0) ~c:(f32 0.0) in
           let red =
-            K.reduce ~op:`Add ~src ~ranges:[ r1; r2 ] ~dtype:D.float32
+            K.reduce ~op:`Add ~src ~ranges:[ r1; r2 ] ~dtype:D.Val.float32
           in
           let result = Simplify.pm_reduce_simplify red in
           (* r2 is unparented -> removed with *4 multiplier.
@@ -538,7 +540,7 @@ let reduce_simplify_tests =
           let val_ = f32 3.0 in
           let src = K.ternary ~op:`Where ~a:cond ~b:val_ ~c:(f32 0.0) in
           let red =
-            K.reduce ~op:`Add ~src ~ranges:[ r ] ~dtype:D.float32
+            K.reduce ~op:`Add ~src ~ranges:[ r ] ~dtype:D.Val.float32
           in
           let result = Simplify.pm_reduce_simplify red in
           (* Range should be eliminated: count = min(max(min(7,10)-max(2,0),0),10) = 5 *)
@@ -555,7 +557,7 @@ let reduce_simplify_tests =
           let val_ = f32 1.0 in
           let src = K.ternary ~op:`Where ~a:cond ~b:val_ ~c:(f32 0.0) in
           let red =
-            K.reduce ~op:`Add ~src ~ranges:[ r ] ~dtype:D.float32
+            K.reduce ~op:`Add ~src ~ranges:[ r ] ~dtype:D.Val.float32
           in
           let result = Simplify.pm_reduce_simplify red in
           equal int (count_ranges result) 0);
@@ -570,7 +572,7 @@ let reduce_simplify_tests =
           let val_ = f32 1.0 in
           let src = K.ternary ~op:`Where ~a:cond ~b:val_ ~c:(f32 0.0) in
           let red =
-            K.reduce ~op:`Add ~src ~ranges:[ r ] ~dtype:D.float32
+            K.reduce ~op:`Add ~src ~ranges:[ r ] ~dtype:D.Val.float32
           in
           let result = Simplify.pm_reduce_simplify red in
           (* DEFINE_VAR should be factored out as a Mul *)
@@ -589,20 +591,20 @@ let load_collapse_tests =
           let r = loop_range ~axis:0 10 in
           let load_idx = idx 3 in
           let open K.O in
-          let cond = ne load_idx (K.cast ~src:r ~dtype:(D.to_any D.index)) in
+          let cond = ne load_idx (K.cast ~src:r ~dtype:(D.index)) in
           let expr = f32 7.0 in
           let src =
             K.ternary ~op:`Where ~a:cond ~b:(f32 0.0) ~c:expr
           in
           let red =
-            K.reduce ~op:`Add ~src ~ranges:[ r ] ~dtype:D.float32
+            K.reduce ~op:`Add ~src ~ranges:[ r ] ~dtype:D.Val.float32
           in
           let result = Simplify.pm_load_collapse red in
           (* The range should be eliminated *)
           equal int (count_ranges result) 0);
       test "undo rule: no math on loaded index" (fun () ->
           (* (x:index + y) < c where x has a load -> x < (c - y) *)
-          let p = K.param ~idx:0 ~dtype:(D.ptr_of D.index ~addrspace:Global ~size:(-1)) in
+          let p = K.param ~idx:0 ~dtype:(D.Ptr.create (D.val_of D.index) ~addrspace:Global ~size:(-1)) in
           let index_node = K.index ~ptr:p ~idxs:[ idx 0 ] () in
           let loaded_idx = K.load ~src:index_node () in
           let open K.O in
@@ -631,111 +633,111 @@ let vmin_vmax_tests =
     [
       test "const int" (fun () ->
           let n = idx 42 in
-          equal int (Simplify.node_vmin n) 42;
-          equal int (Simplify.node_vmax n) 42);
+          equal int (K.vmin n) 42;
+          equal int (K.vmax n) 42);
       test "const bool" (fun () ->
           let t = K.const (C.bool true) in
           let f_ = K.const (C.bool false) in
-          equal int (Simplify.node_vmin t) 1;
-          equal int (Simplify.node_vmax t) 1;
-          equal int (Simplify.node_vmin f_) 0;
-          equal int (Simplify.node_vmax f_) 0);
+          equal int (K.vmin t) 1;
+          equal int (K.vmax t) 1;
+          equal int (K.vmin f_) 0;
+          equal int (K.vmax f_) 0);
       test "range" (fun () ->
           let r = loop_range ~axis:0 10 in
-          equal int (Simplify.node_vmin r) 0;
-          equal int (Simplify.node_vmax r) 9);
+          equal int (K.vmin r) 0;
+          equal int (K.vmax r) 9);
       test "define_var" (fun () ->
           let dv = K.define_var ~name:"x" ~lo:3 ~hi:7 () in
-          equal int (Simplify.node_vmin dv) 3;
-          equal int (Simplify.node_vmax dv) 7);
+          equal int (K.vmin dv) 3;
+          equal int (K.vmax dv) 7);
       test "add" (fun () ->
           let r = loop_range ~axis:0 4 in
           let open K.O in
           let n = r + idx 3 in
-          equal int (Simplify.node_vmin n) 3;
-          equal int (Simplify.node_vmax n) 6);
+          equal int (K.vmin n) 3;
+          equal int (K.vmax n) 6);
       test "sub" (fun () ->
           let r = loop_range ~axis:0 4 in
           let n = K.binary ~op:`Sub ~lhs:(idx 10) ~rhs:r in
-          equal int (Simplify.node_vmin n) 7;
-          equal int (Simplify.node_vmax n) 10);
+          equal int (K.vmin n) 7;
+          equal int (K.vmax n) 10);
       test "neg" (fun () ->
           let r = loop_range ~axis:0 4 in
-          let n = K.unary ~op:`Neg ~src:(K.cast ~src:r ~dtype:(D.to_any D.int32)) in
-          equal int (Simplify.node_vmin n) (-3);
-          equal int (Simplify.node_vmax n) 0);
+          let n = K.unary ~op:`Neg ~src:(K.cast ~src:r ~dtype:(D.int32)) in
+          equal int (K.vmin n) (-3);
+          equal int (K.vmax n) 0);
       test "mul with negative" (fun () ->
           let r = loop_range ~axis:0 3 in
           let open K.O in
           let n = r * idx (-2) in
-          equal int (Simplify.node_vmin n) (-4);
-          equal int (Simplify.node_vmax n) 0);
+          equal int (K.vmin n) (-4);
+          equal int (K.vmax n) 0);
       test "idiv positive" (fun () ->
           let r = loop_range ~axis:0 10 in
           let open K.O in
           let n = r / idx 3 in
-          equal int (Simplify.node_vmin n) 0;
-          equal int (Simplify.node_vmax n) 3);
+          equal int (K.vmin n) 0;
+          equal int (K.vmax n) 3);
       test "mod constant" (fun () ->
           let r = loop_range ~axis:0 10 in
           let open K.O in
           let n = r mod idx 3 in
-          equal int (Simplify.node_vmin n) 0;
-          equal int (Simplify.node_vmax n) 2);
+          equal int (K.vmin n) 0;
+          equal int (K.vmax n) 2);
       test "max" (fun () ->
           let r = loop_range ~axis:0 4 in
           let n = K.binary ~op:`Max ~lhs:r ~rhs:(idx 2) in
-          equal int (Simplify.node_vmin n) 2;
-          equal int (Simplify.node_vmax n) 3);
+          equal int (K.vmin n) 2;
+          equal int (K.vmax n) 3);
       test "cmplt known true" (fun () ->
           let r = loop_range ~axis:0 3 in
           let open K.O in
           let n = r < idx 10 in
-          equal int (Simplify.node_vmin n) 1;
-          equal int (Simplify.node_vmax n) 1);
+          equal int (K.vmin n) 1;
+          equal int (K.vmax n) 1);
       test "cmplt unknown" (fun () ->
           let r = loop_range ~axis:0 10 in
           let open K.O in
           let n = r < idx 5 in
-          equal int (Simplify.node_vmin n) 0;
-          equal int (Simplify.node_vmax n) 1);
+          equal int (K.vmin n) 0;
+          equal int (K.vmax n) 1);
       test "where int" (fun () ->
           let r1 = loop_range ~axis:0 5 in
           let r2 = loop_range ~axis:1 10 in
           let cond = K.const (C.bool true) in
           let n = K.ternary ~op:`Where ~a:cond ~b:r1 ~c:r2 in
-          equal int (Simplify.node_vmin n) 0;
-          equal int (Simplify.node_vmax n) 9);
+          equal int (K.vmin n) 0;
+          equal int (K.vmax n) 9);
       test "and mask" (fun () ->
           let r = loop_range ~axis:0 256 in
           let n = K.binary ~op:`And ~lhs:r ~rhs:(idx 15) in
-          equal int (Simplify.node_vmin n) 0;
-          equal int (Simplify.node_vmax n) 15);
+          equal int (K.vmin n) 0;
+          equal int (K.vmax n) 15);
       test "shl constant" (fun () ->
           let r = loop_range ~axis:0 4 in
           let n = K.binary ~op:`Shl ~lhs:r ~rhs:(idx 2) in
-          equal int (Simplify.node_vmin n) 0;
-          equal int (Simplify.node_vmax n) 12);
+          equal int (K.vmin n) 0;
+          equal int (K.vmax n) 12);
       test "shr constant" (fun () ->
           let r = loop_range ~axis:0 16 in
           let n = K.binary ~op:`Shr ~lhs:r ~rhs:(idx 2) in
-          equal int (Simplify.node_vmin n) 0;
-          equal int (Simplify.node_vmax n) 3);
+          equal int (K.vmin n) 0;
+          equal int (K.vmax n) 3);
       test "vectorize bounds" (fun () ->
           let r = loop_range ~axis:0 5 in
           let dv = K.define_var ~name:"x" ~lo:2 ~hi:10 () in
           let v = K.vectorize ~srcs:[ r; dv ] in
           (* vectorize: min of sources, max of sources *)
-          equal int (Simplify.node_vmin v) 0;
-          equal int (Simplify.node_vmax v) 10);
+          equal int (K.vmin v) 0;
+          equal int (K.vmax v) 10);
       test "float binary falls back to dtype" (fun () ->
           let open K.O in
           let a = f32 1.0 in
           let b = f32 2.0 in
           let n = a + b in
           (* float binary: no recursion, falls back to dtype bounds *)
-          let vmin = Simplify.node_vmin n in
-          let vmax = Simplify.node_vmax n in
+          let vmin = K.vmin n in
+          let vmax = K.vmax n in
           is_true (vmin <= 0);
           is_true (vmax > 0));
     ]
@@ -756,13 +758,13 @@ let load_collapse_extra_tests =
           let open K.O in
           (* (load_idx + y) != Cast(r) — NE lift should simplify to
              load_idx != (Cast(r, idx) - y), then gated load fires *)
-          let sum = K.cast ~src:(load_idx + y) ~dtype:(D.to_any D.index) in
-          let r_cast = K.cast ~src:r ~dtype:(D.to_any D.index) in
+          let sum = K.cast ~src:(load_idx + y) ~dtype:(D.index) in
+          let r_cast = K.cast ~src:r ~dtype:(D.index) in
           let cond = ne sum r_cast in
           let expr = f32 1.0 in
           let src = K.ternary ~op:`Where ~a:cond ~b:(f32 0.0) ~c:expr in
           let red =
-            K.reduce ~op:`Add ~src ~ranges:[ r ] ~dtype:D.float32
+            K.reduce ~op:`Add ~src ~ranges:[ r ] ~dtype:D.Val.float32
           in
           let result = Simplify.pm_load_collapse red in
           (* The expression should be simplified — at minimum the
@@ -773,14 +775,14 @@ let load_collapse_extra_tests =
           let r = loop_range ~axis:0 10 in
           let load_idx = idx 3 in
           let open K.O in
-          let r_cast = K.cast ~src:r ~dtype:(D.to_any D.index) in
+          let r_cast = K.cast ~src:r ~dtype:(D.index) in
           let cond = ne load_idx r_cast in
           let expr = f32 7.0 in
           let src =
             K.ternary ~op:`Where ~a:cond ~b:(f32 0.0) ~c:expr
           in
           let red =
-            K.reduce ~op:`Add ~src ~ranges:[ r ] ~dtype:D.float32
+            K.reduce ~op:`Add ~src ~ranges:[ r ] ~dtype:D.Val.float32
           in
           let result = Simplify.pm_load_collapse red in
           equal int (count_ranges result) 0);

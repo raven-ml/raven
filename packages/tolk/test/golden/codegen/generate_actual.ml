@@ -13,8 +13,8 @@ open Tolk
 open Tolk_ir
 module K = Kernel
 
-let global_fptr = Dtype.ptr_of Dtype.float32 ~addrspace:Global ~size:(-1)
-let idx n = K.const (Const.int Dtype.index n)
+let global_fptr = Dtype.Ptr.create Dtype.Val.float32 ~addrspace:Global ~size:(-1)
+let idx n = K.const (Const.int Dtype.Val.index n)
 
 let kernel_info ?(axis_kinds = []) name =
   {
@@ -34,7 +34,7 @@ let name_of_sink sink =
 
 (* Full pipeline chain: Kernel.t -> source string. *)
 let pipeline_to_source ?(optimize = true) ren sink =
-  let processed = Pipeline.full_rewrite_to_sink ~optimize ren sink in
+  let processed = Codegen.full_rewrite_to_sink ~optimize ren sink in
   let name = name_of_sink processed in
   let program = Linearizer.linearize processed in
   String.trim (Renderer.render ren ~name program)
@@ -58,7 +58,7 @@ let make_sum_reduce () =
   let p1 = K.param ~idx:1 ~dtype:global_fptr in
   let r0 = K.range ~size:(idx 256) ~axis:0 ~kind:Axis_kind.Reduce () in
   let ld = K.load ~src:(K.index ~ptr:p0 ~idxs:[ r0 ] ()) () in
-  let red = K.reduce ~op:`Add ~src:ld ~ranges:[ r0 ] ~dtype:Dtype.float32 in
+  let red = K.reduce ~op:`Add ~src:ld ~ranges:[ r0 ] ~dtype:Dtype.Val.float32 in
   let st =
     K.store ~dst:(K.index ~ptr:p1 ~idxs:[ idx 0 ] ()) ~value:red ~ranges:[]
   in
@@ -76,7 +76,7 @@ let make_dot_product () =
   let ld_a = K.load ~src:(K.index ~ptr:p0 ~idxs:[ r0 ] ()) () in
   let ld_b = K.load ~src:(K.index ~ptr:p1 ~idxs:[ r0 ] ()) () in
   let mul = K.binary ~op:`Mul ~lhs:ld_a ~rhs:ld_b in
-  let red = K.reduce ~op:`Add ~src:mul ~ranges:[ r0 ] ~dtype:Dtype.float32 in
+  let red = K.reduce ~op:`Add ~src:mul ~ranges:[ r0 ] ~dtype:Dtype.Val.float32 in
   let st =
     K.store ~dst:(K.index ~ptr:p2 ~idxs:[ idx 0 ] ()) ~value:red ~ranges:[]
   in
@@ -97,7 +97,7 @@ let make_matmul_small () =
   let ld_a = K.load ~src:(K.index ~ptr:pA ~idxs:[ a_idx ] ()) () in
   let ld_b = K.load ~src:(K.index ~ptr:pB ~idxs:[ b_idx ] ()) () in
   let mul = K.binary ~op:`Mul ~lhs:ld_a ~rhs:ld_b in
-  let red = K.reduce ~op:`Add ~src:mul ~ranges:[ rk ] ~dtype:Dtype.float32 in
+  let red = K.reduce ~op:`Add ~src:mul ~ranges:[ rk ] ~dtype:Dtype.Val.float32 in
   let st =
     K.store ~dst:(K.index ~ptr:pC ~idxs:[ c_idx ] ()) ~value:red ~ranges:[]
   in
@@ -141,7 +141,7 @@ let make_reduce_rows () =
   let open K.O in
   let flat = ri * int_ cols + rj in
   let ld = K.load ~src:(K.index ~ptr:p0 ~idxs:[ flat ] ()) () in
-  let red = K.reduce ~op:`Add ~src:ld ~ranges:[ rj ] ~dtype:Dtype.float32 in
+  let red = K.reduce ~op:`Add ~src:ld ~ranges:[ rj ] ~dtype:Dtype.Val.float32 in
   let st =
     K.store ~dst:(K.index ~ptr:p1 ~idxs:[ ri ] ()) ~value:red ~ranges:[]
   in
@@ -171,8 +171,8 @@ let make_multi_output () =
   let p2 = K.param ~idx:2 ~dtype:global_fptr in
   let r0 = K.range ~size:(idx 256) ~axis:0 ~kind:Axis_kind.Global () in
   let ld_a = K.load ~src:(K.index ~ptr:p0 ~idxs:[ r0 ] ()) () in
-  let one = K.const (Const.float Dtype.float32 1.0) in
-  let two = K.const (Const.float Dtype.float32 2.0) in
+  let one = K.const (Const.float Dtype.Val.float32 1.0) in
+  let two = K.const (Const.float Dtype.Val.float32 2.0) in
   let st1 =
     K.store
       ~dst:(K.index ~ptr:p1 ~idxs:[ r0 ] ())
@@ -211,7 +211,7 @@ let make_elementwise_where () =
   let p1 = K.param ~idx:1 ~dtype:global_fptr in
   let r0 = K.range ~size:(idx 256) ~axis:0 ~kind:Axis_kind.Global () in
   let ld = K.load ~src:(K.index ~ptr:p0 ~idxs:[ r0 ] ()) () in
-  let zero = K.const (Const.float Dtype.float32 0.0) in
+  let zero = K.const (Const.float Dtype.Val.float32 0.0) in
   let cond = K.binary ~op:`Cmplt ~lhs:zero ~rhs:ld in
   let w = K.ternary ~op:`Where ~a:cond ~b:ld ~c:zero in
   let st = K.store ~dst:(K.index ~ptr:p1 ~idxs:[ r0 ] ()) ~value:w ~ranges:[] in
@@ -221,13 +221,13 @@ let make_elementwise_where () =
 let make_elementwise_cast_f16 () =
   (* c[i] = (float32)a_f16[i] + b[i]. Param order: 0=f16, 1=f32, 2=out_f32.
      Build the Add as cast(ld_f16) + ld_f32 to match the reference load ordering. *)
-  let f16_ptr = Dtype.ptr_of Dtype.float16 ~addrspace:Global ~size:(-1) in
+  let f16_ptr = Dtype.Ptr.create Dtype.Val.float16 ~addrspace:Global ~size:(-1) in
   let p0 = K.param ~idx:0 ~dtype:f16_ptr in
   let p1 = K.param ~idx:1 ~dtype:global_fptr in
   let p2 = K.param ~idx:2 ~dtype:global_fptr in
   let r0 = K.range ~size:(idx 256) ~axis:0 ~kind:Axis_kind.Global () in
   let ld_a = K.load ~src:(K.index ~ptr:p0 ~idxs:[ r0 ] ()) () in
-  let cast_a = K.cast ~src:ld_a ~dtype:(Dtype.to_any Dtype.float32) in
+  let cast_a = K.cast ~src:ld_a ~dtype:Dtype.float32 in
   let ld_b = K.load ~src:(K.index ~ptr:p1 ~idxs:[ r0 ] ()) () in
   let add = K.binary ~op:`Add ~lhs:cast_a ~rhs:ld_b in
   let st = K.store ~dst:(K.index ~ptr:p2 ~idxs:[ r0 ] ()) ~value:add ~ranges:[] in
@@ -250,9 +250,9 @@ let make_parallel_reduce () =
   let p2 = K.param ~idx:2 ~dtype:global_fptr in
   let r0 = K.range ~size:(idx 128) ~axis:0 ~kind:Axis_kind.Reduce () in
   let ld = K.load ~src:(K.index ~ptr:p0 ~idxs:[ r0 ] ()) () in
-  let red1 = K.reduce ~op:`Add ~src:ld ~ranges:[ r0 ] ~dtype:Dtype.float32 in
+  let red1 = K.reduce ~op:`Add ~src:ld ~ranges:[ r0 ] ~dtype:Dtype.Val.float32 in
   let sq = K.binary ~op:`Mul ~lhs:ld ~rhs:ld in
-  let red2 = K.reduce ~op:`Add ~src:sq ~ranges:[ r0 ] ~dtype:Dtype.float32 in
+  let red2 = K.reduce ~op:`Add ~src:sq ~ranges:[ r0 ] ~dtype:Dtype.Val.float32 in
   let c0 = idx 0 in
   let st1 =
     K.store ~dst:(K.index ~ptr:p1 ~idxs:[ c0 ] ()) ~value:red1 ~ranges:[]
@@ -263,7 +263,7 @@ let make_parallel_reduce () =
   K.sink ~kernel_info:(kernel_info ~axis_kinds:[ Axis_kind.Reduce ] "parallel_reduce") [ st1; st2 ]
 
 let make_elementwise_int32 () =
-  let i32_ptr = Dtype.ptr_of Dtype.int32 ~addrspace:Global ~size:(-1) in
+  let i32_ptr = Dtype.Ptr.create Dtype.Val.int32 ~addrspace:Global ~size:(-1) in
   let p0 = K.param ~idx:0 ~dtype:i32_ptr in
   let p1 = K.param ~idx:1 ~dtype:i32_ptr in
   let p2 = K.param ~idx:2 ~dtype:i32_ptr in

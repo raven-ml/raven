@@ -8,10 +8,10 @@ open Tolk
 open Tolk_ir
 module P = Program
 
-let global_ptr dt = Dtype.ptr_of dt ~addrspace:Global ~size:(-1)
+let global_ptr dt = Dtype.Ptr.create dt ~addrspace:Global ~size:(-1)
 
 let spec_of ?(estimates : Program_spec.Estimates.t option) b =
-  Program_spec.of_program ~name:"kern" ?estimates (P.finish b)
+  Program_spec.of_program ~name:"kern" ~src:"" ~device:"CPU" ?estimates (P.finish b)
 
 let empty_spec ?estimates () = spec_of ?estimates (P.create ())
 
@@ -21,17 +21,17 @@ let () =
       group "Extraction"
         [
           test "reads and writes are deduplicated" (fun () ->
-            let ptr = global_ptr Dtype.float32 in
+            let ptr = global_ptr Dtype.Val.float32 in
             let b = P.create () in
             let p0 = P.emit b (Param { idx = 0; dtype = ptr }) in
             let p1 = P.emit b (Param { idx = 1; dtype = ptr }) in
             let c0 =
-              P.emit b (Const { value = Const.int Dtype.int32 0; dtype = Dtype.int32 })
+              P.emit b (Const { value = Const.int Dtype.Val.int32 0; dtype = Dtype.Val.int32 })
             in
             let idx1 = P.emit b (Index { ptr = p0; idxs = [ c0 ]; gate = None; dtype = ptr }) in
             let idx2 = P.emit b (Index { ptr = p1; idxs = [ c0 ]; gate = None; dtype = ptr }) in
-            let ld1 = P.emit b (Load { src = idx2; alt = None; dtype = Dtype.float32 }) in
-            let ld2 = P.emit b (Load { src = idx2; alt = None; dtype = Dtype.float32 }) in
+            let ld1 = P.emit b (Load { src = idx2; alt = None; dtype = Dtype.Val.float32 }) in
+            let ld2 = P.emit b (Load { src = idx2; alt = None; dtype = Dtype.Val.float32 }) in
             let _ = P.emit b (Store { dst = idx1; value = ld1 }) in
             let _ = P.emit b (Store { dst = idx1; value = ld2 }) in
             let spec = spec_of b in
@@ -39,45 +39,45 @@ let () =
             equal (list int) [ 1 ] (Program_spec.ins spec));
           test "thread-group launch expressions are preserved" (fun () ->
             let b = P.create () in
-            let dv = P.emit b (Define_var { name = "m"; lo = 1; hi = 32; dtype = Dtype.int32 }) in
+            let dv = P.emit b (Define_var { name = "m"; lo = 1; hi = 32; dtype = Dtype.Val.int32 }) in
             let c4 =
-              P.emit b (Const { value = Const.int Dtype.int32 4; dtype = Dtype.int32 })
+              P.emit b (Const { value = Const.int Dtype.Val.int32 4; dtype = Dtype.Val.int32 })
             in
-            let mul = P.emit b (Binary { op = `Mul; lhs = dv; rhs = c4; dtype = Dtype.int32 }) in
-            let _ = P.emit b (Special { dim = Special_dim.Group_id 0; size = mul; dtype = Dtype.index }) in
-            let _ = P.emit b (Special { dim = Special_dim.Local_id 1; size = dv; dtype = Dtype.index }) in
+            let mul = P.emit b (Binary { op = `Mul; lhs = dv; rhs = c4; dtype = Dtype.Val.int32 }) in
+            let _ = P.emit b (Special { dim = Special_dim.Group_id 0; size = mul; dtype = Dtype.Val.index }) in
+            let _ = P.emit b (Special { dim = Special_dim.Local_id 1; size = dv; dtype = Dtype.Val.index }) in
             let spec = spec_of b in
             match Program_spec.launch_kind spec with
             | Program_spec.Thread_groups ->
-                let global, local = Program_spec.launch_dims spec [ 3 ] in
+                let global, local = Program_spec.launch_dims spec [ "m", 3 ] in
                 equal (array int) [| 12; 1; 1 |] global;
                 begin match local with
                 | None -> failwith "expected local dims"
                 | Some local -> equal (array int) [| 1; 3; 1 |] local
                 end
             | _ -> failwith "expected thread-group launch metadata");
-          test "launch variables are keyed by instruction identity" (fun () ->
+          test "launch variables are resolved by name" (fun () ->
             let b = P.create () in
-            let _ = P.emit b (Define_var { name = "n"; lo = 0; hi = 7; dtype = Dtype.int32 }) in
-            let dv1 = P.emit b (Define_var { name = "n"; lo = 0; hi = 15; dtype = Dtype.int32 }) in
-            let _ = P.emit b (Special { dim = Special_dim.Group_id 0; size = dv1; dtype = Dtype.index }) in
-            let global, _local = Program_spec.launch_dims (spec_of b) [ 3; 9 ] in
+            let _ = P.emit b (Define_var { name = "m"; lo = 0; hi = 7; dtype = Dtype.Val.int32 }) in
+            let dv1 = P.emit b (Define_var { name = "n"; lo = 0; hi = 15; dtype = Dtype.Val.int32 }) in
+            let _ = P.emit b (Special { dim = Special_dim.Group_id 0; size = dv1; dtype = Dtype.Val.index }) in
+            let global, _local = Program_spec.launch_dims (spec_of b) [ "m", 3; "n", 9 ] in
             equal (array int) [| 9; 1; 1 |] global);
           test "global idx uses thread launch" (fun () ->
             let b = P.create () in
-            let dv = P.emit b (Define_var { name = "threads"; lo = 1; hi = 64; dtype = Dtype.int32 }) in
-            let _ = P.emit b (Special { dim = Special_dim.Global_idx 2; size = dv; dtype = Dtype.index }) in
+            let dv = P.emit b (Define_var { name = "threads"; lo = 1; hi = 64; dtype = Dtype.Val.int32 }) in
+            let _ = P.emit b (Special { dim = Special_dim.Global_idx 2; size = dv; dtype = Dtype.Val.index }) in
             let spec = spec_of b in
             match Program_spec.launch_kind spec with
             | Program_spec.Threads ->
-                let global, local = Program_spec.launch_dims spec [ 11 ] in
+                let global, local = Program_spec.launch_dims spec [ "threads", 11 ] in
                 equal (array int) [| 1; 1; 11 |] global;
                 equal (option pass) None local
             | _ -> failwith "expected flat thread launch metadata");
           test "core_id is explicit runtime metadata" (fun () ->
             let b = P.create () in
-            let _ = P.emit b (Define_var { name = "arg"; lo = 0; hi = 9; dtype = Dtype.int32 }) in
-            let _ = P.emit b (Define_var { name = "core_id"; lo = 0; hi = 7; dtype = Dtype.int32 }) in
+            let _ = P.emit b (Define_var { name = "arg"; lo = 0; hi = 9; dtype = Dtype.Val.int32 }) in
+            let _ = P.emit b (Define_var { name = "core_id"; lo = 0; hi = 7; dtype = Dtype.Val.int32 }) in
             let spec = spec_of b in
             match Program_spec.core_id spec with
             | None -> failwith "expected core_id metadata"
@@ -91,25 +91,25 @@ let () =
           test "duplicate launch axis is rejected" (fun () ->
             let b = P.create () in
             let c4 =
-              P.emit b (Const { value = Const.int Dtype.int32 4; dtype = Dtype.int32 })
+              P.emit b (Const { value = Const.int Dtype.Val.int32 4; dtype = Dtype.Val.int32 })
             in
-            let _ = P.emit b (Special { dim = Special_dim.Group_id 0; size = c4; dtype = Dtype.index }) in
-            let _ = P.emit b (Special { dim = Special_dim.Group_id 0; size = c4; dtype = Dtype.index }) in
+            let _ = P.emit b (Special { dim = Special_dim.Group_id 0; size = c4; dtype = Dtype.Val.index }) in
+            let _ = P.emit b (Special { dim = Special_dim.Group_id 0; size = c4; dtype = Dtype.Val.index }) in
             raises_invalid_arg "group_id axis 0 appears more than once" (fun () ->
                 ignore (spec_of b)));
           test "mixed launch models are rejected" (fun () ->
             let b = P.create () in
             let c4 =
-              P.emit b (Const { value = Const.int Dtype.int32 4; dtype = Dtype.int32 })
+              P.emit b (Const { value = Const.int Dtype.Val.int32 4; dtype = Dtype.Val.int32 })
             in
-            let _ = P.emit b (Special { dim = Special_dim.Group_id 0; size = c4; dtype = Dtype.index }) in
-            let _ = P.emit b (Special { dim = Special_dim.Global_idx 1; size = c4; dtype = Dtype.index }) in
+            let _ = P.emit b (Special { dim = Special_dim.Group_id 0; size = c4; dtype = Dtype.Val.index }) in
+            let _ = P.emit b (Special { dim = Special_dim.Global_idx 1; size = c4; dtype = Dtype.Val.index }) in
             raises_invalid_arg
               "launch metadata cannot mix flat-thread and thread-group specials"
               (fun () -> ignore (spec_of b)));
           test "core_id lower bound must be zero" (fun () ->
             let b = P.create () in
-            let _ = P.emit b (Define_var { name = "core_id"; lo = 2; hi = 7; dtype = Dtype.int32 }) in
+            let _ = P.emit b (Define_var { name = "core_id"; lo = 2; hi = 7; dtype = Dtype.Val.int32 }) in
             raises_invalid_arg "core_id must have lower bound 0" (fun () ->
                 ignore (spec_of b)));
           test "exact estimates are forwarded" (fun () ->
@@ -131,12 +131,13 @@ let () =
             | _ -> failwith "expected exact mem estimate"
             end);
           test "symbolic estimates require caller handling" (fun () ->
+            let sym_node = Kernel.define_var ~name:"n" ~lo:1 ~hi:100 () in
             let estimates =
               Program_spec.Estimates.of_kernel
-                Kernel.{ ops = Symbolic "n"; lds = Int 1; mem = Int 2 }
+                Kernel.{ ops = Symbolic sym_node; lds = Int 1; mem = Int 2 }
             in
             match estimates.ops with
-            | Program_spec.Estimates.Symbolic "n" -> ()
+            | Program_spec.Estimates.Symbolic _ -> ()
             | _ -> failwith "expected symbolic ops estimate");
         ];
       group "Estimates.of_program"
@@ -144,13 +145,13 @@ let () =
           test "counts basic ALU ops" (fun () ->
             let b = P.create () in
             let a =
-              P.emit b (Const { value = Const.float Dtype.float32 1.0; dtype = Dtype.float32 })
+              P.emit b (Const { value = Const.float Dtype.Val.float32 1.0; dtype = Dtype.Val.float32 })
             in
             let c =
-              P.emit b (Const { value = Const.float Dtype.float32 2.0; dtype = Dtype.float32 })
+              P.emit b (Const { value = Const.float Dtype.Val.float32 2.0; dtype = Dtype.Val.float32 })
             in
-            let _ = P.emit b (Binary { op = `Add; lhs = a; rhs = c; dtype = Dtype.float32 }) in
-            let _ = P.emit b (Unary { op = `Neg; src = a; dtype = Dtype.float32 }) in
+            let _ = P.emit b (Binary { op = `Add; lhs = a; rhs = c; dtype = Dtype.Val.float32 }) in
+            let _ = P.emit b (Unary { op = `Neg; src = a; dtype = Dtype.Val.float32 }) in
             let est = Program_spec.Estimates.of_program (P.finish b) in
             begin match est.ops with
             | Program_spec.Estimates.Int 2 -> ()
@@ -161,16 +162,16 @@ let () =
           test "mulacc counts as 2 FLOPs" (fun () ->
             let b = P.create () in
             let a =
-              P.emit b (Const { value = Const.float Dtype.float32 1.0; dtype = Dtype.float32 })
+              P.emit b (Const { value = Const.float Dtype.Val.float32 1.0; dtype = Dtype.Val.float32 })
             in
             let c =
-              P.emit b (Const { value = Const.float Dtype.float32 2.0; dtype = Dtype.float32 })
+              P.emit b (Const { value = Const.float Dtype.Val.float32 2.0; dtype = Dtype.Val.float32 })
             in
             let d =
-              P.emit b (Const { value = Const.float Dtype.float32 3.0; dtype = Dtype.float32 })
+              P.emit b (Const { value = Const.float Dtype.Val.float32 3.0; dtype = Dtype.Val.float32 })
             in
             let _ =
-              P.emit b (Ternary { op = `Mulacc; a; b = c; c = d; dtype = Dtype.float32 })
+              P.emit b (Ternary { op = `Mulacc; a; b = c; c = d; dtype = Dtype.Val.float32 })
             in
             let est = Program_spec.Estimates.of_program (P.finish b) in
             begin match est.ops with
@@ -182,19 +183,19 @@ let () =
           test "loop multiplier stacks" (fun () ->
             let b = P.create () in
             let c10 =
-              P.emit b (Const { value = Const.int Dtype.int32 10; dtype = Dtype.int32 })
+              P.emit b (Const { value = Const.int Dtype.Val.int32 10; dtype = Dtype.Val.int32 })
             in
             let range =
               P.emit b
                 (Range
-                   { size = c10; dtype = Dtype.int32; axis = 0; sub = [];
+                   { size = c10; dtype = Dtype.Val.int32; axis = 0; sub = [];
                      kind = Axis_kind.Loop })
             in
             let a =
-              P.emit b (Const { value = Const.float Dtype.float32 1.0; dtype = Dtype.float32 })
+              P.emit b (Const { value = Const.float Dtype.Val.float32 1.0; dtype = Dtype.Val.float32 })
             in
             let add =
-              P.emit b (Binary { op = `Add; lhs = a; rhs = a; dtype = Dtype.float32 })
+              P.emit b (Binary { op = `Add; lhs = a; rhs = a; dtype = Dtype.Val.float32 })
             in
             let _ = P.emit b (End_range { dep = add; range }) in
             let est = Program_spec.Estimates.of_program (P.finish b) in
@@ -205,14 +206,14 @@ let () =
             | _ -> failwith "expected exact int ops estimate"
             end);
           test "load/store tracks lds bytes" (fun () ->
-            let ptr = global_ptr Dtype.float32 in
+            let ptr = global_ptr Dtype.Val.float32 in
             let b = P.create () in
             let p0 = P.emit b (Param { idx = 0; dtype = ptr }) in
             let c0 =
-              P.emit b (Const { value = Const.int Dtype.int32 0; dtype = Dtype.int32 })
+              P.emit b (Const { value = Const.int Dtype.Val.int32 0; dtype = Dtype.Val.int32 })
             in
             let idx = P.emit b (Index { ptr = p0; idxs = [ c0 ]; gate = None; dtype = ptr }) in
-            let ld = P.emit b (Load { src = idx; alt = None; dtype = Dtype.float32 }) in
+            let ld = P.emit b (Load { src = idx; alt = None; dtype = Dtype.Val.float32 }) in
             let _ = P.emit b (Store { dst = idx; value = ld }) in
             let est = Program_spec.Estimates.of_program (P.finish b) in
             begin match est.lds with
@@ -222,24 +223,24 @@ let () =
             | _ -> failwith "expected exact int lds estimate"
             end);
           test "index arithmetic excluded from FLOPs" (fun () ->
-            let ptr = global_ptr Dtype.float32 in
+            let ptr = global_ptr Dtype.Val.float32 in
             let b = P.create () in
             let p0 = P.emit b (Param { idx = 0; dtype = ptr }) in
             let c0 =
-              P.emit b (Const { value = Const.int Dtype.int32 0; dtype = Dtype.int32 })
+              P.emit b (Const { value = Const.int Dtype.Val.int32 0; dtype = Dtype.Val.int32 })
             in
             let c1 =
-              P.emit b (Const { value = Const.int Dtype.int32 1; dtype = Dtype.int32 })
+              P.emit b (Const { value = Const.int Dtype.Val.int32 1; dtype = Dtype.Val.int32 })
             in
             (* This add is used as an index operand — should be excluded. *)
             let idx_expr =
-              P.emit b (Binary { op = `Add; lhs = c0; rhs = c1; dtype = Dtype.int32 })
+              P.emit b (Binary { op = `Add; lhs = c0; rhs = c1; dtype = Dtype.Val.int32 })
             in
             let idx =
               P.emit b
                 (Index { ptr = p0; idxs = [ idx_expr ]; gate = None; dtype = ptr })
             in
-            let _ = P.emit b (Load { src = idx; alt = None; dtype = Dtype.float32 }) in
+            let _ = P.emit b (Load { src = idx; alt = None; dtype = Dtype.Val.float32 }) in
             let est = Program_spec.Estimates.of_program (P.finish b) in
             begin match est.ops with
             | Program_spec.Estimates.Int 0 -> ()

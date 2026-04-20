@@ -12,12 +12,12 @@ module Sd = Tolk_ir.Special_dim
 
 (* Helpers *)
 
-let global_ptr dt = D.ptr_of dt ~addrspace:Global ~size:(-1)
-let local_ptr dt = D.ptr_of dt ~addrspace:Local ~size:(-1)
-let reg_ptr dt = D.ptr_of dt ~addrspace:Reg ~size:(-1)
-let mk_idx () = K.const (C.int D.index 0)
-let mk_f32 () = K.const (C.float D.float32 1.0)
-let mk_i32 () = K.const (C.int D.int32 0)
+let global_ptr dt = D.Ptr.create (D.val_of dt) ~addrspace:Global ~size:(-1)
+let local_ptr dt = D.Ptr.create (D.val_of dt) ~addrspace:Local ~size:(-1)
+let reg_ptr dt = D.Ptr.create (D.val_of dt) ~addrspace:Reg ~size:(-1)
+let mk_idx () = K.const (C.int D.Val.index 0)
+let mk_f32 () = K.const (C.float D.Val.float32 1.0)
+let mk_i32 () = K.const (C.int D.Val.int32 0)
 let mk_param () = K.param ~idx:0 ~dtype:(global_ptr D.float32)
 
 let mk_load () =
@@ -43,7 +43,7 @@ let raises_invalid fn =
   raises_match (function Invalid_argument _ -> true | _ -> false) fn
 
 let dtype_eq expected node =
-  match K.dtype node with
+  match K.dtype_opt node with
   | Some dt -> is_true (D.equal dt expected)
   | None -> fail "expected a dtype but got None"
 
@@ -75,7 +75,7 @@ let () =
             let s3 = mk_f32 () and s4 = mk_f32 () in
             let v1 = K.vectorize ~srcs:[ s1; s2; s3; s4 ] in
             let v2 = K.vectorize ~srcs:[ s4; s3; s2; s1 ] in
-            dtype_eq (D.vec D.bool 4) (K.binary ~op:`Cmpeq ~lhs:v1 ~rhs:v2));
+            dtype_eq (D.vec 4 D.bool) (K.binary ~op:`Cmpeq ~lhs:v1 ~rhs:v2));
           test "binary cmpne produces bool" (fun () ->
             dtype_eq D.bool
               (K.binary ~op:`Cmpne ~lhs:(mk_i32 ()) ~rhs:(mk_i32 ())));
@@ -101,13 +101,13 @@ let () =
             dtype_eq D.float32 (mk_load ()));
           test "vectorize dtype" (fun () ->
             let s1 = mk_f32 () and s2 = mk_f32 () and s3 = mk_f32 () in
-            dtype_eq (D.vec D.float32 3) (K.vectorize ~srcs:[ s1; s2; s3 ]));
+            dtype_eq (D.vec 3 D.float32) (K.vectorize ~srcs:[ s1; s2; s3 ]));
           test "cat sums counts" (fun () ->
             let a = mk_f32 () and b = mk_f32 () in
             let c = mk_f32 () and d = mk_f32 () and e = mk_f32 () in
             let v2 = K.vectorize ~srcs:[ a; b ] in
             let v3 = K.vectorize ~srcs:[ c; d; e ] in
-            dtype_eq (D.vec D.float32 5) (K.cat ~srcs:[ v2; v3 ]));
+            dtype_eq (D.vec 5 D.float32) (K.vcat ~srcs:[ v2; v3 ]));
           test "gep gives scalar" (fun () ->
             let s1 = mk_f32 () and s2 = mk_f32 () in
             let s3 = mk_f32 () and s4 = mk_f32 () in
@@ -124,13 +124,13 @@ let () =
         [
           test "vectorize empty raises" (fun () ->
             raises_invalid (fun () -> ignore (K.vectorize ~srcs:[])));
-          test "cat empty raises" (fun () ->
-            raises_invalid (fun () -> ignore (K.cat ~srcs:[])));
-          test "cat mixed scalar raises" (fun () ->
+          test "vcat empty raises" (fun () ->
+            raises_invalid (fun () -> ignore (K.vcat ~srcs:[])));
+          test "vcat mixed scalar raises" (fun () ->
             let f = mk_f32 () and i = mk_i32 () in
             let vf = K.vectorize ~srcs:[ f; f ] in
             let vi = K.vectorize ~srcs:[ i; i ] in
-            raises_invalid (fun () -> ignore (K.cat ~srcs:[ vf; vi ])));
+            raises_invalid (fun () -> ignore (K.vcat ~srcs:[ vf; vi ])));
           test "gep_multi empty raises" (fun () ->
             let v = K.vectorize ~srcs:[ mk_f32 (); mk_f32 () ] in
             raises_invalid (fun () -> ignore (K.gep_multi ~src:v ~idxs:[])));
@@ -157,7 +157,7 @@ let () =
           test "broadcast scalar to n" (fun () ->
             let s = mk_f32 () in
             let b = K.broadcast s 4 in
-            dtype_eq (D.vec D.float32 4) b;
+            dtype_eq (D.vec 4 D.float32) b;
             (match K.view b with
              | Vectorize { srcs; _ } -> equal int 4 (List.length srcs)
              | _ -> fail "expected Vectorize"));
@@ -193,7 +193,7 @@ let () =
           test "binary shift uint32 rhs" (fun () ->
             validate_ok
               (K.binary ~op:`Shl ~lhs:(mk_i32 ())
-                 ~rhs:(K.const (C.int D.uint32 2))));
+                 ~rhs:(K.const (C.int D.Val.uint32 2))));
           test "full load/store chain" (fun () ->
             let ptr = K.param ~idx:0 ~dtype:(global_ptr D.float32) in
             let idx = mk_idx () in
@@ -206,7 +206,7 @@ let () =
           test "store with ranges" (fun () ->
             let ptr = K.param ~idx:0 ~dtype:(global_ptr D.float32) in
             let index = K.index ~ptr ~idxs:[ mk_idx () ] () in
-            let size = K.const (C.int D.index 10) in
+            let size = K.const (C.int D.Val.index 10) in
             let range = K.range ~size ~axis:0 ~kind:Ak.Loop () in
             K.validate
               (K.sink
@@ -214,29 +214,29 @@ let () =
           test "contract axes" (fun () ->
             validate_ok
               (K.contract ~src:(mk_f32 ()) ~axes:[ (0, 3); (1, 2) ]
-                 ~dtype:(D.vec D.float32 6)));
+                 ~dtype:(D.Val.vec 6 D.Val.float32)));
           test "unroll axes" (fun () ->
             let s = mk_f32 () and s2 = mk_f32 () and s3 = mk_f32 () in
             let s4 = mk_f32 () and s5 = mk_f32 () and s6 = mk_f32 () in
             let src = K.vectorize ~srcs:[ s; s2; s3; s4; s5; s6 ] in
             validate_ok
-              (K.unroll ~src ~axes:[ (0, 3); (1, 2) ] ~dtype:D.float32));
+              (K.unroll ~src ~axes:[ (0, 3); (1, 2) ] ~dtype:D.Val.float32));
           test "vectorized local index operand" (fun () ->
             let ptr = local_ptr D.float32 in
-            let zero = K.const (C.int D.index 0) in
-            let one = K.const (C.int D.index 1) in
+            let zero = K.const (C.int D.Val.index 0) in
+            let one = K.const (C.int D.Val.index 1) in
             let idxs = K.vectorize ~srcs:[ zero; one ] in
             let local = K.define_local ~size:8 ~dtype:ptr in
             K.validate (K.sink [ K.index ~ptr:local ~idxs:[ idxs ] () ]));
           test "horizontal reduce src" (fun () ->
-            let one = K.const (C.float D.float32 1.0) in
-            let two = K.const (C.float D.float32 2.0) in
+            let one = K.const (C.float D.Val.float32 1.0) in
+            let two = K.const (C.float D.Val.float32 2.0) in
             let src = K.vectorize ~srcs:[ one; two ] in
-            let size = K.const (C.int D.index 2) in
+            let size = K.const (C.int D.Val.index 2) in
             let range = K.range ~size ~axis:0 ~kind:Ak.Reduce () in
             K.validate
               (K.sink
-                 [ K.reduce ~op:`Add ~src ~ranges:[ range ] ~dtype:D.float32 ]));
+                 [ K.reduce ~op:`Add ~src ~ranges:[ range ] ~dtype:D.Val.float32 ]));
         ];
       group "Validation rejection"
         [
@@ -255,11 +255,11 @@ let () =
             raises_validate "must be scalar" (fun () ->
                 validate_ok
                   (K.define_var ~name:"v" ~lo:0 ~hi:4
-                     ~dtype:(D.vec D.int32 4) ())));
+                     ~dtype:(D.Val.vec 4 D.Val.int32) ())));
           test "reject define_var float" (fun () ->
             raises_validate "must be int/index" (fun () ->
                 validate_ok
-                  (K.define_var ~name:"f" ~lo:0 ~hi:4 ~dtype:D.float32 ())));
+                  (K.define_var ~name:"f" ~lo:0 ~hi:4 ~dtype:D.Val.float32 ())));
           test "reject define_var lo > hi" (fun () ->
             raises_validate "lo > hi" (fun () ->
                 validate_ok (K.define_var ~name:"x" ~lo:5 ~hi:3 ())));
@@ -267,22 +267,22 @@ let () =
             raises_validate "Range must have int" (fun () ->
                 validate_ok
                   (K.range ~size:(mk_f32 ()) ~axis:0 ~kind:Ak.Loop
-                     ~dtype:D.float32 ())));
+                     ~dtype:D.Val.float32 ())));
           test "reject range vector" (fun () ->
             raises_validate "Range must be scalar" (fun () ->
                 validate_ok
                   (K.range ~size:(mk_i32 ()) ~axis:0 ~kind:Ak.Loop
-                     ~dtype:(D.vec D.int32 4) ())));
+                     ~dtype:(D.Val.vec 4 D.Val.int32) ())));
           test "reject special vector" (fun () ->
             raises_validate "must be scalar" (fun () ->
                 validate_ok
                   (K.special ~dim:(Sd.Group_id 0) ~size:(mk_i32 ())
-                     ~dtype:(D.vec D.int32 2) ())));
+                     ~dtype:(D.Val.vec 2 D.Val.int32) ())));
           test "reject special float" (fun () ->
             raises_validate "must be index or int32" (fun () ->
                 validate_ok
                   (K.special ~dim:(Sd.Group_id 0) ~size:(mk_f32 ())
-                     ~dtype:D.float32 ())));
+                     ~dtype:D.Val.float32 ())));
           test "reject index empty idxs" (fun () ->
             raises_validate "at least one index" (fun () ->
                 validate_ok (K.index ~ptr:(mk_param ()) ~idxs:[] ())));
@@ -352,12 +352,12 @@ let () =
             let src = K.vectorize ~srcs:[ s; s2; s3; s4 ] in
             raises_validate "count mismatch" (fun () ->
                 validate_ok
-                  (K.unroll ~src ~axes:[ (0, 3); (1, 2) ] ~dtype:D.float32)));
+                  (K.unroll ~src ~axes:[ (0, 3); (1, 2) ] ~dtype:D.Val.float32)));
           test "reject contract count mismatch" (fun () ->
             raises_validate "count mismatch" (fun () ->
                 validate_ok
                   (K.contract ~src:(mk_f32 ()) ~axes:[ (0, 3) ]
-                     ~dtype:(D.vec D.float32 2))));
+                     ~dtype:(D.Val.vec 2 D.Val.float32))));
           test "reject bufferize addrspace mismatch" (fun () ->
             let opts : K.bufferize_opts =
               { device = None; addrspace = D.Global; removable = false }
@@ -426,7 +426,7 @@ let () =
               (K.sort (K.store ~dst:index ~value:(mk_f32 ()) ~ranges:[])
                = K.Effect));
           test "sort index variants" (fun () ->
-            let size = K.const (C.int D.index 10) in
+            let size = K.const (C.int D.Val.index 10) in
             is_true
               (K.sort (K.range ~size ~axis:0 ~kind:Ak.Loop ()) = K.Index);
             is_true
@@ -461,8 +461,8 @@ let () =
       group "Rewriting"
         [
           test "rebuild replaces const" (fun () ->
-            let four = K.const (C.int D.index 4) in
-            let neg = K.unary ~op:`Neg ~src:(K.const (C.int D.index 3)) in
+            let four = K.const (C.int D.Val.index 4) in
+            let neg = K.unary ~op:`Neg ~src:(K.const (C.int D.Val.index 3)) in
             let root = K.sink [ neg ] in
             let rewrite node =
               match K.view node with
@@ -483,7 +483,7 @@ let () =
               (List.length (K.toposort result)));
           test "graph_rewrite simplifies" (fun () ->
             let x = mk_f32 () in
-            let zero = K.const (C.float D.float32 0.0) in
+            let zero = K.const (C.float D.Val.float32 0.0) in
             let root =
               K.sink [ K.binary ~op:`Add ~lhs:x ~rhs:zero ]
             in
@@ -606,22 +606,22 @@ let () =
       group "Range analysis"
         [
           test "ended_ranges for End" (fun () ->
-            let size = K.const (C.int D.index 4) in
+            let size = K.const (C.int D.Val.index 4) in
             let r0 = K.range ~size ~axis:0 ~kind:Ak.Loop () in
             let ended = K.end_ ~value:(mk_f32 ()) ~ranges:[ r0 ] () in
             let ers = K.ended_ranges ended in
             equal int 1 (List.length ers);
             is_true (List.hd ers == r0));
           test "ended_ranges for Reduce" (fun () ->
-            let size = K.const (C.int D.index 4) in
+            let size = K.const (C.int D.Val.index 4) in
             let r0 = K.range ~size ~axis:0 ~kind:Ak.Reduce () in
             let red = K.reduce ~op:`Add ~src:(mk_f32 ()) ~ranges:[ r0 ]
-                ~dtype:D.float32 in
+                ~dtype:D.Val.float32 in
             let ers = K.ended_ranges red in
             equal int 1 (List.length ers);
             is_true (List.hd ers == r0));
           test "ended_ranges for Store" (fun () ->
-            let size = K.const (C.int D.index 4) in
+            let size = K.const (C.int D.Val.index 4) in
             let r0 = K.range ~size ~axis:0 ~kind:Ak.Loop () in
             let idx = K.index ~ptr:(mk_param ()) ~idxs:[ mk_idx () ] () in
             let st = K.store ~dst:idx ~value:(mk_f32 ()) ~ranges:[ r0 ] in
@@ -629,7 +629,7 @@ let () =
             equal int 1 (List.length ers);
             is_true (List.hd ers == r0));
           test "ended_ranges for After delegates to deps" (fun () ->
-            let size = K.const (C.int D.index 4) in
+            let size = K.const (C.int D.Val.index 4) in
             let r0 = K.range ~size ~axis:0 ~kind:Ak.Loop () in
             let ended = K.end_ ~value:(mk_f32 ()) ~ranges:[ r0 ] () in
             let aft = K.after ~src:(mk_f32 ()) ~deps:[ ended ] in
@@ -639,14 +639,14 @@ let () =
           test "ended_ranges for leaf is empty" (fun () ->
             equal int 0 (List.length (K.ended_ranges (mk_f32 ()))));
           test "ended_ranges for Contract with live" (fun () ->
-            let size = K.const (C.int D.index 4) in
+            let size = K.const (C.int D.Val.index 4) in
             let r0 = K.range ~size ~axis:0 ~kind:Ak.Upcast () in
             let r1 = K.range ~size ~axis:1 ~kind:Ak.Upcast () in
             let r2 = K.range ~size ~axis:2 ~kind:Ak.Loop () in
             let live _ = [ r0; r1; r2 ] in
             let contract =
               K.contract ~src:(mk_f32 ()) ~axes:[ (0, 4); (1, 4) ]
-                ~dtype:(D.vec D.float32 16)
+                ~dtype:(D.Val.vec 16 D.Val.float32)
             in
             let ers = K.ended_ranges ~live contract in
             equal int 2 (List.length ers);
@@ -656,14 +656,14 @@ let () =
           test "ended_ranges for Contract without live is empty" (fun () ->
             let contract =
               K.contract ~src:(mk_f32 ()) ~axes:[ (0, 4) ]
-                ~dtype:(D.vec D.float32 4)
+                ~dtype:(D.Val.vec 4 D.Val.float32)
             in
             equal int 0 (List.length (K.ended_ranges contract)));
           test "live_ranges_tbl simple reduce" (fun () ->
-            let size = K.const (C.int D.index 4) in
+            let size = K.const (C.int D.Val.index 4) in
             let r0 = K.range ~size ~axis:0 ~kind:Ak.Reduce () in
             let red = K.reduce ~op:`Add ~src:(mk_f32 ()) ~ranges:[ r0 ]
-                ~dtype:D.float32 in
+                ~dtype:D.Val.float32 in
             let root = K.sink [ red ] in
             let tbl = K.live_ranges_tbl root in
             (* r0 is live at itself *)
@@ -677,13 +677,13 @@ let () =
             in
             is_false (List.exists (fun r -> r == r0) red_live));
           test "live_ranges_tbl nested ranges" (fun () ->
-            let size = K.const (C.int D.index 4) in
+            let size = K.const (C.int D.Val.index 4) in
             let r0 = K.range ~size ~axis:0 ~kind:Ak.Loop () in
             let r1 = K.range ~size ~axis:1 ~kind:Ak.Reduce () in
             (* src depends on both ranges so both are in its backward slice *)
             let src = K.binary ~op:`Add ~lhs:r0 ~rhs:r1 in
             let red = K.reduce ~op:`Add ~src ~ranges:[ r1 ]
-                ~dtype:D.index in
+                ~dtype:D.Val.index in
             let ended = K.end_ ~value:red ~ranges:[ r0 ] () in
             let root = K.sink [ ended ] in
             let tbl = K.live_ranges_tbl root in
@@ -703,11 +703,11 @@ let () =
       group "Substitute"
         [
           test "substitute replaces by identity" (fun () ->
-            let a = K.const (C.float D.float32 1.0) in
-            let b = K.const (C.float D.float32 2.0) in
+            let a = K.const (C.float D.Val.float32 1.0) in
+            let b = K.const (C.float D.Val.float32 2.0) in
             let add = K.binary ~op:`Add ~lhs:a ~rhs:b in
             let root = K.sink [ add ] in
-            let c = K.const (C.float D.float32 3.0) in
+            let c = K.const (C.float D.Val.float32 3.0) in
             let result = K.substitute [ (a, c) ] root in
             (* The old a should be replaced with c *)
             let nodes = K.toposort result in

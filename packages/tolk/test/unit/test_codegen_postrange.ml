@@ -19,8 +19,8 @@ module P = Postrange
 
 (* Helpers *)
 
-let idx n = K.const (C.int D.index n)
-let global_fptr = D.ptr_of D.float32 ~addrspace:Global ~size:(-1)
+let idx n = K.const (C.int D.Val.index n)
+let global_fptr = D.Ptr.create D.Val.float32 ~addrspace:Global ~size:(-1)
 
 let kernel_info ?(opts_to_apply = None) ?(dont_use_locals = false) () =
   {
@@ -36,13 +36,13 @@ let wrap_sink ?opts_to_apply ?dont_use_locals srcs =
   K.sink ~kernel_info:(kernel_info ?opts_to_apply ?dont_use_locals ()) srcs
 
 let loop_range ~axis size =
-  K.range ~size:(idx size) ~axis ~kind:Ak.Loop ~dtype:D.index ()
+  K.range ~size:(idx size) ~axis ~kind:Ak.Loop ~dtype:D.Val.index ()
 
 let reduce_range ~axis size =
-  K.range ~size:(idx size) ~axis ~kind:Ak.Reduce ~dtype:D.index ()
+  K.range ~size:(idx size) ~axis ~kind:Ak.Reduce ~dtype:D.Val.index ()
 
 let global_range ~axis size =
-  K.range ~size:(idx size) ~axis ~kind:Ak.Global ~dtype:D.index ()
+  K.range ~size:(idx size) ~axis ~kind:Ak.Global ~dtype:D.Val.index ()
 
 (* Renderers *)
 
@@ -56,7 +56,7 @@ let cpu_renderer () =
 
 let thread_renderer () =
   Renderer.make ~name:"thread" ~device:"CPU" ~has_local:false ~has_shared:false
-    ~shared_max:0 ~has_threads:true ~global_max:(Some [ 8; 8; 8 ])
+    ~shared_max:0 ~has_threads:true ~global_max:[ 8; 8; 8 ]
     ~render:(fun ?name:_ _ -> "") ()
 
 (* Small shared memory renderer for testing budget *)
@@ -95,7 +95,7 @@ let reduce_ast ~s0 ~s1 ~sr =
     K.index ~ptr:p1 ~idxs:[ r0 * idx sr * idx s1 + rr * idx s1 + r1 ] ()
   in
   let ld = K.load ~src:in_idx () in
-  let red = K.reduce ~op:`Add ~src:ld ~ranges:[ rr ] ~dtype:D.float32 in
+  let red = K.reduce ~op:`Add ~src:ld ~ranges:[ rr ] ~dtype:D.Val.float32 in
   let out_idx = K.index ~ptr:p0 ~idxs:[ r0 * idx s1 + r1 ] () in
   let st = K.store ~dst:out_idx ~value:red ~ranges:[] in
   let e = K.end_ ~value:st ~ranges:[ r0; r1 ] () in
@@ -112,7 +112,7 @@ let reduce_unsafe_pad_ast ~s0 ~sr =
   let ld = K.load ~src:in_idx () in
   let exp_ld = K.unary ~op:`Exp2 ~src:ld in
   let red =
-    K.reduce ~op:`Add ~src:exp_ld ~ranges:[ rr ] ~dtype:D.float32
+    K.reduce ~op:`Add ~src:exp_ld ~ranges:[ rr ] ~dtype:D.Val.float32
   in
   let out_idx = K.index ~ptr:p0 ~idxs:[ r0 ] () in
   let st = K.store ~dst:out_idx ~value:red ~ranges:[] in
@@ -128,7 +128,7 @@ let max_reduce_ast ~s0 ~sr =
   let open K.O in
   let in_idx = K.index ~ptr:p1 ~idxs:[ r0 * idx sr + rr ] () in
   let ld = K.load ~src:in_idx () in
-  let red = K.reduce ~op:`Max ~src:ld ~ranges:[ rr ] ~dtype:D.float32 in
+  let red = K.reduce ~op:`Max ~src:ld ~ranges:[ rr ] ~dtype:D.Val.float32 in
   let out_idx = K.index ~ptr:p0 ~idxs:[ r0 ] () in
   let st = K.store ~dst:out_idx ~value:red ~ranges:[] in
   let e = K.end_ ~value:st ~ranges:[ r0 ] () in
@@ -161,7 +161,7 @@ let reduce_global_ast ~s0 ~s1 ~sr =
     K.index ~ptr:p1 ~idxs:[ r0 * idx sr * idx s1 + rr * idx s1 + r1 ] ()
   in
   let ld = K.load ~src:in_idx () in
-  let red = K.reduce ~op:`Add ~src:ld ~ranges:[ rr ] ~dtype:D.float32 in
+  let red = K.reduce ~op:`Add ~src:ld ~ranges:[ rr ] ~dtype:D.Val.float32 in
   let out_idx = K.index ~ptr:p0 ~idxs:[ r0 * idx s1 + r1 ] () in
   let st = K.store ~dst:out_idx ~value:red ~ranges:[] in
   let e = K.end_ ~value:st ~ranges:[ r0; r1 ] () in
@@ -242,7 +242,7 @@ let shift_to_tests =
         let rngs = P.rngs t in
         let rng = List.hd rngs in
         let custom_rng =
-          K.range ~size:(idx 4) ~axis:99 ~kind:Ak.Warp ~dtype:D.index ()
+          K.range ~size:(idx 4) ~axis:99 ~kind:Ak.Warp ~dtype:D.Val.index ()
         in
         let _replaced, new_rng =
           P.shift_to ~input_new_rng:custom_rng t rng 4 Ak.Warp
@@ -803,7 +803,7 @@ let dispatch_tests =
 
 (* Matmul-pattern AST:  output[i,j] = sum_k(a[i,k] * b[k,j])
    Two GLOBAL ranges + one REDUCE range, MUL inside REDUCE ADD. *)
-let global_f16ptr = D.ptr_of D.float16 ~addrspace:Global ~size:(-1)
+let global_f16ptr = D.Ptr.create D.Val.float16 ~addrspace:Global ~size:(-1)
 
 let matmul_ast ~si ~sj ~sk =
   let p_out = K.param ~idx:0 ~dtype:global_fptr in
@@ -818,7 +818,7 @@ let matmul_ast ~si ~sj ~sk =
   let idx_b = K.index ~ptr:p_b ~idxs:[ rk * idx sj + rj ] () in
   let ld_b = K.load ~src:idx_b () in
   let mul = ld_a * ld_b in
-  let red = K.reduce ~op:`Add ~src:mul ~ranges:[ rk ] ~dtype:D.float32 in
+  let red = K.reduce ~op:`Add ~src:mul ~ranges:[ rk ] ~dtype:D.Val.float32 in
   let out_idx = K.index ~ptr:p_out ~idxs:[ ri * idx sj + rj ] () in
   let st = K.store ~dst:out_idx ~value:red ~ranges:[] in
   let e = K.end_ ~value:st ~ranges:[ ri; rj ] () in
