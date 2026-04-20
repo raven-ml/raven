@@ -1,6 +1,6 @@
 (executable
  (name generate_actual)
- (libraries nx rune tolk tolk.ir))
+ (libraries nx rune tolk tolk.ir tolk.cpu))
 
 (rule
  (package rune)

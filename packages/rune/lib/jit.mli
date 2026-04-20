@@ -49,18 +49,17 @@ type traced = {
 (** Result of tracing a function through the JIT capture handler. *)
 
 val trace_graph :
-  ?device:Tolk.Device.t ->
+  device:Tolk.Device.t ->
   (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
   ('a, 'b) Nx.t ->
   traced
-(** [trace_graph ?device f x] traces [f] applied to [x], capturing the
+(** [trace_graph ~device f x] traces [f] applied to [x], capturing the
     computation graph without executing it.
 
-    Returns the tensor graph, kernel graph, and rendered source for each kernel.
-    Useful for debugging what the JIT produces, inspecting gradient graphs, or
-    comparing against reference implementations.
-
-    When [device] is omitted, renders using the C backend (clang). *)
+    Returns the tensor graph, kernel graph, and rendered source for
+    each kernel.  Useful for debugging what the JIT produces,
+    inspecting gradient graphs, or comparing against reference
+    implementations. *)
 
 val reset : unit -> unit
 (** [reset ()] clears the JIT cache, forcing recompilation on the next call. *)

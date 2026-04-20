@@ -379,9 +379,7 @@ val jit :
       compiles via Tolk's codegen pipeline
     - Calls 3+ (replay): executes the compiled schedule without recompilation
 
-    Raises [Invalid_argument] if input shapes or dtypes change after capture.
-
-    Matches tinygrad's {b TinyJit} semantics. *)
+    Raises [Invalid_argument] if input shapes or dtypes change after capture. *)
 
 type jit_traced = Jit.traced = {
   tensor_graph : Tolk_ir.Tensor.t;
@@ -394,18 +392,16 @@ type jit_traced = Jit.traced = {
 (** Result of tracing a function through the JIT capture handler. *)
 
 val trace_graph :
-  ?device:Tolk.Device.t ->
+  device:Tolk.Device.t ->
   (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
   ('a, 'b) Nx.t ->
   jit_traced
-(** [trace_graph ?device f x] traces [f] applied to [x], capturing the
+(** [trace_graph ~device f x] traces [f] applied to [x], capturing the
     computation graph without executing it.
 
-    Returns the tensor graph, kernel graph, and rendered source for each kernel.
-    Useful for debugging what the JIT produces, inspecting gradient graphs, or
-    comparing against reference implementations.
-
-    When [device] is omitted, renders using the C backend (clang). *)
+    Returns the tensor graph, kernel graph, and rendered source for each
+    kernel. Useful for debugging what the JIT produces, inspecting
+    gradient graphs, or comparing against reference implementations. *)
 
 (** {1:debug Debugging} *)
 

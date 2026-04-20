@@ -5,20 +5,21 @@
 
 (* JIT compilation via effect handler.
 
-   Ported from tinygrad/engine/jit.py (TinyJit). Operations do NOT execute
-   during capture — the handler returns placeholder tensors, building a lazy
-   graph. The graph is realized (rangeify → compile → execute) when the function
-   returns. Replay re-executes the compiled schedule.
+   Intercepts Nx tensor operations to build a computation graph, then
+   delegates scheduling, compilation, memory planning, and replay to
+   the tolk JIT engine (Tolk.Jit.Tiny_jit).
 
-   State machine (matching tinygrad's cnt): - Warmup (cnt=0): execute eagerly
-   via C backend (shape gathering) - Capture (cnt=1): intercept effects, build
-   lazy graph, realize at end - Replay (cnt>=2): validate inputs, substitute
-   buffers, execute *)
+   Three phases (managed by Tiny_jit):
+   - Warmup (cnt=0): execute eagerly via C backend
+   - Capture (cnt=1): intercept effects, build lazy graph, schedule,
+     compile, and execute
+   - Replay (cnt>=2): validate inputs, substitute buffers, execute *)
 
 open Nx_effect
-module Tensor = Tolk_ir.Tensor
+module T = Tolk_ir.Tensor
+module B = Tolk.Device.Buffer
 
-(* --- Dtype mapping ------------------------------------------------------- *)
+(* Dtype mapping *)
 
 let tolk_dtype (type a b) (dt : (a, b) Nx.dtype) : Tolk_ir.Dtype.t =
   let open Tolk_ir.Dtype in
@@ -37,142 +38,156 @@ let tolk_dtype (type a b) (dt : (a, b) Nx.dtype) : Tolk_ir.Dtype.t =
   | "bool" -> bool
   | s -> failwith (Printf.sprintf "Jit: unsupported dtype %s" s)
 
-(* --- Buffer transfer ----------------------------------------------------- *)
+(* Buffer transfer *)
 
-(* Nx tensor → device buffer *)
-let nx_to_device_buffer (type a b) dev (t : (a, b) Nx_effect.t) :
-    Tolk.Device.Buffer.t =
+let nx_to_device_buffer (type a b) dev (t : (a, b) Nx_effect.t) : B.t =
   let host = Nx_effect.to_host t in
   let shape = Nx_effect.view t |> Nx_core.View.shape in
   let num_elements = Int.max 1 (Array.fold_left ( * ) 1 shape) in
   let dt = tolk_dtype (Nx_effect.dtype t) in
   let buf = Tolk.Device.create_buffer ~size:num_elements ~dtype:dt dev in
-  Tolk.Device.Buffer.ensure_allocated buf;
+  B.ensure_allocated buf;
   let nbytes = num_elements * Tolk_ir.Dtype.itemsize dt in
   let src_bytes = Bytes.create nbytes in
   Nx_buffer.blit_to_bytes host src_bytes;
-  Tolk.Device.Buffer.copyin buf src_bytes;
+  B.copyin buf src_bytes;
   buf
 
-(* Device buffer → Nx tensor *)
 let device_buffer_to_nx (type a b) (dt : (a, b) Nx.dtype) (shape : int array)
-    (buf : Tolk.Device.Buffer.t) : (a, b) Nx_effect.t =
+    (buf : B.t) : (a, b) Nx_effect.t =
   let num_elements = Int.max 1 (Array.fold_left ( * ) 1 shape) in
   let tdt = tolk_dtype dt in
   let nbytes = num_elements * Tolk_ir.Dtype.itemsize tdt in
   let dst_bytes = Bytes.create nbytes in
-  Tolk.Device.Buffer.copyout buf dst_bytes;
+  B.copyout buf dst_bytes;
   let ctx = Nx_effect.create_context () in
   let nx_buf = Nx_effect.buffer ctx dt shape in
   let host = Nx_effect.to_host nx_buf in
   Nx_buffer.blit_from_bytes dst_bytes host;
   nx_buf
 
-(* --- Identity-keyed hash table ------------------------------------------- *)
+(* Identity-keyed hash table *)
 
-(* The default polymorphic [Hashtbl] uses structural equality for [Obj.t] keys.
-   Two distinct [Nx_effect.t] values with the same dtype, shape, and data (e.g.
-   a zero-filled placeholder and a zero-filled input) would collide. We need
-   physical identity ([==]) to track tensor values through the effect
-   handler. *)
+(* Physical identity ([==]) tracks tensor values through the effect
+   handler — structural equality would collide on placeholder tensors. *)
 module Phys_tbl = Hashtbl.Make (struct
   type t = Obj.t
-
   let equal = ( == )
   let hash x = Hashtbl.hash (Obj.obj x : int)
 end)
 
-(* --- Capture context ----------------------------------------------------- *)
+(* Capture context *)
 
 type capture_ctx = {
-  builder : Tensor.builder;
-  tensor_to_id : Tensor.id Phys_tbl.t;
-  (* slot → (original Nx tensor as Obj.t, tolk dtype, shape) *)
+  tensor_to_node : T.t Phys_tbl.t;
   slot_tensors : (int, Obj.t * Tolk_ir.Dtype.t * int array) Hashtbl.t;
   mutable param_count : int;
-  device_id : Tensor.id;
+  device_node : T.t;
 }
 
-let create_capture_ctx builder device_id =
-  {
-    builder;
-    tensor_to_id = Phys_tbl.create 64;
-    slot_tensors = Hashtbl.create 16;
-    param_count = 0;
-    device_id;
-  }
+let create_capture_ctx device_node = {
+  tensor_to_node = Phys_tbl.create 64;
+  slot_tensors = Hashtbl.create 16;
+  param_count = 0;
+  device_node;
+}
 
-(* Placeholder: uninitialized Nx tensor with correct shape/dtype *)
-let make_placeholder (type a b) (dt : (a, b) Nx.dtype) (shape : int array) :
-    (a, b) Nx_effect.t =
+let make_placeholder (type a b) (dt : (a, b) Nx.dtype) (shape : int array)
+    : (a, b) Nx_effect.t =
   let ctx = Nx_effect.create_context () in
   Nx_effect.buffer ctx dt shape
 
-let register ctx (t : _ Nx_effect.t) (id : Tensor.id) : unit =
-  Phys_tbl.replace ctx.tensor_to_id (Obj.repr t) id
+let register ctx (t : _ Nx_effect.t) (node : T.t) : unit =
+  Phys_tbl.replace ctx.tensor_to_node (Obj.repr t) node
 
-let lookup_or_param ctx (t : _ Nx_effect.t) : Tensor.id =
+let shape_node dims =
+  let int_ n =
+    T.const (Tolk_ir.Const.int Tolk_ir.Dtype.Val.index n) Tolk_ir.Dtype.index in
+  match dims with
+  | [] -> T.const (Tolk_ir.Const.int Tolk_ir.Dtype.Val.index 1) Tolk_ir.Dtype.index
+  | _ ->
+      match List.map int_ dims with [d] -> d | ds -> T.vectorize ~srcs:ds
+
+(* Read a scalar value from an Nx tensor and construct a Const.t.
+   Used to fold scalar constants into the kernel IR. *)
+let read_scalar_const (type a b) (t : (a, b) Nx_effect.t)
+    (dt : Tolk_ir.Dtype.t) : Tolk_ir.Const.t =
+  let vdt = Tolk_ir.Dtype.val_of dt in
+  let nbytes = Tolk_ir.Dtype.itemsize dt in
+  let buf = Bytes.create nbytes in
+  Nx_buffer.blit_to_bytes (Nx_effect.to_host t) buf;
+  if Tolk_ir.Dtype.is_float dt then
+    let v = if nbytes = 4 then
+      Int32.float_of_bits (Bytes.get_int32_le buf 0)
+    else Int64.float_of_bits (Bytes.get_int64_le buf 0) in
+    Tolk_ir.Const.float vdt v
+  else if Tolk_ir.Dtype.equal dt Tolk_ir.Dtype.bool then
+    Tolk_ir.Const.bool (Bytes.get_uint8 buf 0 <> 0)
+  else
+    let v = if nbytes <= 4 then
+      Int32.to_int (Bytes.get_int32_le buf 0)
+    else Int64.to_int (Bytes.get_int64_le buf 0) in
+    Tolk_ir.Const.int vdt v
+
+let lookup_or_param ctx (t : _ Nx_effect.t) : T.t =
   let key = Obj.repr t in
-  match Phys_tbl.find_opt ctx.tensor_to_id key with
-  | Some id -> id
+  match Phys_tbl.find_opt ctx.tensor_to_node key with
+  | Some node -> node
   | None ->
-      let slot = ctx.param_count in
-      ctx.param_count <- slot + 1;
       let dt = tolk_dtype (Nx_effect.dtype t) in
       let shape = Nx_effect.view t |> Nx_core.View.shape in
-      let shape_id =
-        Tensor.shape ctx.builder (Tolk_ir.Shape.of_dims (Array.to_list shape))
-      in
-      let id =
-        Tensor.param ctx.builder ~slot ~dtype:dt ~shape:shape_id
-          ~device:ctx.device_id ()
-      in
-      Phys_tbl.replace ctx.tensor_to_id key id;
-      Hashtbl.replace ctx.slot_tensors slot (key, dt, shape);
-      id
+      if shape = [||] then begin
+        (* Scalar constant: fold into the IR directly. *)
+        let cv = read_scalar_const t dt in
+        let node = T.const cv dt in
+        Phys_tbl.replace ctx.tensor_to_node key node;
+        node
+      end else begin
+        let slot = ctx.param_count in
+        ctx.param_count <- slot + 1;
+        let sh = shape_node (Array.to_list shape) in
+        let node =
+          T.param ~slot ~dtype:dt ~shape:sh ~device:ctx.device_node ()
+        in
+        Phys_tbl.replace ctx.tensor_to_node key node;
+        Hashtbl.replace ctx.slot_tensors slot (key, dt, shape);
+        node
+      end
 
-(* --- Graph building ------------------------------------------------------ *)
+(* Graph building *)
 
 let emit_binary ctx op (a : _ Nx_effect.t) (b : _ Nx_effect.t) ~dtype ~shape =
-  let a_id = lookup_or_param ctx a in
-  let b_id = lookup_or_param ctx b in
-  let dt = tolk_dtype dtype in
+  let a_node = lookup_or_param ctx a in
+  let b_node = lookup_or_param ctx b in
   let out = make_placeholder dtype shape in
-  let id =
-    Tensor.emit ctx.builder (Binary { op; lhs = a_id; rhs = b_id; dtype = dt })
-  in
-  register ctx out id;
+  let node = T.binary ~op ~lhs:a_node ~rhs:b_node in
+  register ctx out node;
   out
 
 let emit_unary ctx op (src : _ Nx_effect.t) ~dtype ~shape =
-  let src_id = lookup_or_param ctx src in
-  let dt = tolk_dtype dtype in
+  let src_node = lookup_or_param ctx src in
   let out = make_placeholder dtype shape in
-  let id = Tensor.emit ctx.builder (Unary { op; src = src_id; dtype = dt }) in
-  register ctx out id;
+  let node = T.unary ~op ~src:src_node in
+  register ctx out node;
   out
 
 let emit_reduce ctx op ~axes (src : _ Nx_effect.t) ~dtype ~shape =
-  let src_id = lookup_or_param ctx src in
-  let dt = tolk_dtype dtype in
+  let src_node = lookup_or_param ctx src in
   let out = make_placeholder dtype shape in
-  let id =
-    Tensor.emit ctx.builder (Reduce_axis { src = src_id; op; axes; dtype = dt })
-  in
-  register ctx out id;
+  let node = T.reduce_axis ~src:src_node ~op ~axes in
+  register ctx out node;
   out
 
 let infer_shape (t : _ Nx_effect.t) = Nx_effect.view t |> Nx_core.View.shape
 
 let reduce_shape in_shape axes_list =
   let out =
-    List.filteri
-      (fun i _ -> not (List.mem i axes_list))
+    List.filteri (fun i _ -> not (List.mem i axes_list))
       (Array.to_list in_shape)
   in
   if out = [] then [||] else Array.of_list out
 
-(* --- Effect handler ------------------------------------------------------ *)
+(* Effect handler *)
 
 let make_capture_handler ctx =
   let open Effect.Deep in
@@ -180,530 +195,298 @@ let make_capture_handler ctx =
    fun eff ->
     match eff with
     | E_add { a; b } ->
-        Some
-          (fun k ->
-            continue k
-              (emit_binary ctx `Add a b ~dtype:(Nx_effect.dtype a)
-                 ~shape:(infer_shape a)))
+        Some (fun k -> continue k
+          (emit_binary ctx `Add a b ~dtype:(Nx_effect.dtype a)
+             ~shape:(infer_shape a)))
     | E_sub { a; b } ->
-        Some
-          (fun k ->
-            continue k
-              (emit_binary ctx `Sub a b ~dtype:(Nx_effect.dtype a)
-                 ~shape:(infer_shape a)))
+        Some (fun k -> continue k
+          (emit_binary ctx `Sub a b ~dtype:(Nx_effect.dtype a)
+             ~shape:(infer_shape a)))
     | E_mul { a; b } ->
-        Some
-          (fun k ->
-            continue k
-              (emit_binary ctx `Mul a b ~dtype:(Nx_effect.dtype a)
-                 ~shape:(infer_shape a)))
+        Some (fun k -> continue k
+          (emit_binary ctx `Mul a b ~dtype:(Nx_effect.dtype a)
+             ~shape:(infer_shape a)))
     | E_max { a; b } ->
-        Some
-          (fun k ->
-            continue k
-              (emit_binary ctx `Max a b ~dtype:(Nx_effect.dtype a)
-                 ~shape:(infer_shape a)))
+        Some (fun k -> continue k
+          (emit_binary ctx `Max a b ~dtype:(Nx_effect.dtype a)
+             ~shape:(infer_shape a)))
     | E_cmpeq { a; b } ->
-        Some
-          (fun k ->
-            continue k
-              (emit_binary ctx `Cmpeq a b ~dtype:Nx.bool ~shape:(infer_shape a)))
+        Some (fun k -> continue k
+          (emit_binary ctx `Cmpeq a b ~dtype:Nx.bool
+             ~shape:(infer_shape a)))
     | E_cmplt { a; b } ->
-        Some
-          (fun k ->
-            continue k
-              (emit_binary ctx `Cmplt a b ~dtype:Nx.bool ~shape:(infer_shape a)))
+        Some (fun k -> continue k
+          (emit_binary ctx `Cmplt a b ~dtype:Nx.bool
+             ~shape:(infer_shape a)))
     | E_neg { t_in } ->
-        Some
-          (fun k ->
-            continue k
-              (emit_unary ctx `Neg t_in ~dtype:(Nx_effect.dtype t_in)
-                 ~shape:(infer_shape t_in)))
+        Some (fun k -> continue k
+          (emit_unary ctx `Neg t_in ~dtype:(Nx_effect.dtype t_in)
+             ~shape:(infer_shape t_in)))
     | E_sqrt { t_in } ->
-        Some
-          (fun k ->
-            continue k
-              (emit_unary ctx `Sqrt t_in ~dtype:(Nx_effect.dtype t_in)
-                 ~shape:(infer_shape t_in)))
+        Some (fun k -> continue k
+          (emit_unary ctx `Sqrt t_in ~dtype:(Nx_effect.dtype t_in)
+             ~shape:(infer_shape t_in)))
     | E_sin { t_in } ->
-        Some
-          (fun k ->
-            continue k
-              (emit_unary ctx `Sin t_in ~dtype:(Nx_effect.dtype t_in)
-                 ~shape:(infer_shape t_in)))
+        Some (fun k -> continue k
+          (emit_unary ctx `Sin t_in ~dtype:(Nx_effect.dtype t_in)
+             ~shape:(infer_shape t_in)))
     | E_recip { t_in } ->
-        Some
-          (fun k ->
-            continue k
-              (emit_unary ctx `Recip t_in ~dtype:(Nx_effect.dtype t_in)
-                 ~shape:(infer_shape t_in)))
+        Some (fun k -> continue k
+          (emit_unary ctx `Recip t_in ~dtype:(Nx_effect.dtype t_in)
+             ~shape:(infer_shape t_in)))
     | E_reduce_sum { t_in; axes; keepdims = _ } ->
-        Some
-          (fun k ->
-            let axes_l = Array.to_list axes in
-            continue k
-              (emit_reduce ctx `Add ~axes:axes_l t_in
-                 ~dtype:(Nx_effect.dtype t_in)
-                 ~shape:(reduce_shape (infer_shape t_in) axes_l)))
+        Some (fun k ->
+          let axes_l = Array.to_list axes in
+          continue k
+            (emit_reduce ctx `Add ~axes:axes_l t_in
+               ~dtype:(Nx_effect.dtype t_in)
+               ~shape:(reduce_shape (infer_shape t_in) axes_l)))
     | E_reduce_max { t_in; axes; keepdims = _ } ->
-        Some
-          (fun k ->
-            let axes_l = Array.to_list axes in
-            continue k
-              (emit_reduce ctx `Max ~axes:axes_l t_in
-                 ~dtype:(Nx_effect.dtype t_in)
-                 ~shape:(reduce_shape (infer_shape t_in) axes_l)))
+        Some (fun k ->
+          let axes_l = Array.to_list axes in
+          continue k
+            (emit_reduce ctx `Max ~axes:axes_l t_in
+               ~dtype:(Nx_effect.dtype t_in)
+               ~shape:(reduce_shape (infer_shape t_in) axes_l)))
     | E_reshape { t_in; new_shape } ->
-        Some
-          (fun k ->
-            let src_id = lookup_or_param ctx t_in in
-            let dt = tolk_dtype (Nx_effect.dtype t_in) in
-            let out = make_placeholder (Nx_effect.dtype t_in) new_shape in
-            let shape_id =
-              Tensor.shape ctx.builder
-                (Tolk_ir.Shape.of_dims (Array.to_list new_shape))
-            in
-            let id =
-              Tensor.emit ctx.builder
-                (Reshape { src = src_id; shape = shape_id; dtype = dt })
-            in
-            register ctx out id;
-            continue k out)
+        Some (fun k ->
+          let src_node = lookup_or_param ctx t_in in
+          let out = make_placeholder (Nx_effect.dtype t_in) new_shape in
+          let sh = shape_node (Array.to_list new_shape) in
+          let node = T.reshape ~src:src_node ~shape:sh in
+          register ctx out node;
+          continue k out)
     | E_permute { t_in; axes } ->
-        Some
-          (fun k ->
-            let src_id = lookup_or_param ctx t_in in
-            let dt = tolk_dtype (Nx_effect.dtype t_in) in
-            let in_shape = infer_shape t_in in
-            let out_shape = Array.map (fun ax -> in_shape.(ax)) axes in
-            let out = make_placeholder (Nx_effect.dtype t_in) out_shape in
-            let id =
-              Tensor.emit ctx.builder
-                (Permute
-                   { src = src_id; order = Array.to_list axes; dtype = dt })
-            in
-            register ctx out id;
-            continue k out)
+        Some (fun k ->
+          let src_node = lookup_or_param ctx t_in in
+          let in_shape = infer_shape t_in in
+          let out_shape = Array.map (fun ax -> in_shape.(ax)) axes in
+          let out = make_placeholder (Nx_effect.dtype t_in) out_shape in
+          let node = T.permute ~src:src_node ~order:(Array.to_list axes) in
+          register ctx out node;
+          continue k out)
     | E_expand { t_in; new_target_shape } ->
-        Some
-          (fun k ->
-            let src_id = lookup_or_param ctx t_in in
-            let dt = tolk_dtype (Nx_effect.dtype t_in) in
-            let out =
-              make_placeholder (Nx_effect.dtype t_in) new_target_shape
-            in
-            let shape_id =
-              Tensor.shape ctx.builder
-                (Tolk_ir.Shape.of_dims (Array.to_list new_target_shape))
-            in
-            let id =
-              Tensor.emit ctx.builder
-                (Expand { src = src_id; shape = shape_id; dtype = dt })
-            in
-            register ctx out id;
-            continue k out)
+        Some (fun k ->
+          let src_node = lookup_or_param ctx t_in in
+          let out = make_placeholder (Nx_effect.dtype t_in) new_target_shape in
+          let sh = shape_node (Array.to_list new_target_shape) in
+          let node = T.expand ~src:src_node ~shape:sh in
+          register ctx out node;
+          continue k out)
     | E_cast { t_in; target_dtype } ->
-        Some
-          (fun k ->
-            let src_id = lookup_or_param ctx t_in in
-            let dt = tolk_dtype target_dtype in
-            let out = make_placeholder target_dtype (infer_shape t_in) in
-            let id =
-              Tensor.emit ctx.builder (Cast { src = src_id; dtype = dt })
-            in
-            register ctx out id;
-            continue k out)
+        Some (fun k ->
+          let src_node = lookup_or_param ctx t_in in
+          let dt = tolk_dtype target_dtype in
+          let out = make_placeholder target_dtype (infer_shape t_in) in
+          let node = T.cast ~src:src_node ~dtype:dt in
+          register ctx out node;
+          continue k out)
     | E_where { condition; if_true; if_false } ->
-        Some
-          (fun k ->
-            let c_id = lookup_or_param ctx condition in
-            let t_id = lookup_or_param ctx if_true in
-            let f_id = lookup_or_param ctx if_false in
-            let dt = tolk_dtype (Nx_effect.dtype if_true) in
-            let out =
-              make_placeholder (Nx_effect.dtype if_true) (infer_shape if_true)
-            in
-            let id =
-              Tensor.emit ctx.builder
-                (Ternary
-                   { op = `Where; a = c_id; b = t_id; c = f_id; dtype = dt })
-            in
-            register ctx out id;
-            continue k out)
+        Some (fun k ->
+          let c_node = lookup_or_param ctx condition in
+          let t_node = lookup_or_param ctx if_true in
+          let f_node = lookup_or_param ctx if_false in
+          let out =
+            make_placeholder (Nx_effect.dtype if_true) (infer_shape if_true)
+          in
+          let node = T.ternary ~op:`Where ~a:c_node ~b:t_node ~c:f_node in
+          register ctx out node;
+          continue k out)
     | E_const_scalar { context = _; value; dtype = dt } ->
-        Some
-          (fun k ->
-            let out = make_placeholder dt [||] in
-            let tdt = tolk_dtype dt in
-            let cv =
-              if Tolk_ir.Dtype.is_float tdt then
-                Tolk_ir.Const.float tdt (Obj.magic value : float)
-              else if Tolk_ir.Dtype.equal tdt Tolk_ir.Dtype.bool then
-                Tolk_ir.Const.bool (Obj.magic value : bool)
-              else Tolk_ir.Const.int tdt (Obj.magic value : int)
-            in
-            let id = Tensor.const ctx.builder cv in
-            register ctx out id;
-            continue k out)
-    | _ -> None (* Unhandled: will raise Effect.Unhandled *)
+        Some (fun k ->
+          let out = make_placeholder dt [||] in
+          let tdt = tolk_dtype dt in
+          let vdt = Tolk_ir.Dtype.val_of tdt in
+          let cv =
+            if Tolk_ir.Dtype.is_float tdt then
+              Tolk_ir.Const.float vdt (Obj.magic value : float)
+            else if Tolk_ir.Dtype.equal tdt Tolk_ir.Dtype.bool then
+              Tolk_ir.Const.bool (Obj.magic value : bool)
+            else Tolk_ir.Const.int vdt (Obj.magic value : int)
+          in
+          let node = T.const cv tdt in
+          register ctx out node;
+          continue k out)
+    | _ -> None
   in
   { retc = (fun x -> x); exnc = raise; effc }
 
-(* --- Graph capture ------------------------------------------------------- *)
+(* Graph capture *)
 
 let capture_graph (type a b c d) ?(device_name = "CPU")
-    (f : (a, b) Nx.t -> (c, d) Nx.t) (x : (a, b) Nx.t) :
-    Tensor.t * capture_ctx * (c, d) Nx_effect.t =
-  let builder = Tensor.create () in
-  let device_id = Tensor.device builder (Single device_name) in
-  let ctx = create_capture_ctx builder device_id in
+    (f : (a, b) Nx.t -> (c, d) Nx.t) (x : (a, b) Nx.t)
+    : T.t * capture_ctx * (c, d) Nx_effect.t =
+  let device_node = T.device (Single device_name) in
+  let ctx = create_capture_ctx device_node in
   let handler = make_capture_handler ctx in
   let result = Effect.Deep.match_with f x handler in
-  let result_id = lookup_or_param ctx result in
-  let contiguous_id = Tensor.contiguous ctx.builder ~src:result_id () in
-  ignore (Tensor.sink ctx.builder [ contiguous_id ]);
-  let graph = Tensor.finish ctx.builder in
+  let result_node = lookup_or_param ctx result in
+  let contig = T.contiguous ~src:result_node () in
+  let graph = T.sink [ contig ] in
   (graph, ctx, result)
 
-(* --- Compile + execute --------------------------------------------------- *)
+(* Scheduling bridge *)
 
-type exec_item = {
-  program : Tolk.Device.Program.t;
-  arg_node_ids : Tensor.id array;
-}
+(* Build the buffers callback for Schedule.linear_to_schedule.
+   Maps PARAM tensor nodes to device buffers: slot 0 is the function
+   input, other slots are captured constants. *)
+let make_buffers_cb ctx dev input_buf =
+  let cache : (int, B.t) Hashtbl.t = Hashtbl.create 16 in
+  fun (node : T.t) ->
+    match T.view node with
+    | Param { slot; _ } ->
+        (match Hashtbl.find_opt cache slot with
+         | Some buf -> Some buf
+         | None ->
+             let buf =
+               if slot = 0 then input_buf
+               else
+                 let repr, dt, shape = Hashtbl.find ctx.slot_tensors slot in
+                 let num = Int.max 1 (Array.fold_left ( * ) 1 shape) in
+                 let buf =
+                   Tolk.Device.create_buffer ~size:num ~dtype:dt dev in
+                 B.ensure_allocated buf;
+                 let nbytes = num * Tolk_ir.Dtype.itemsize dt in
+                 let src = Bytes.create nbytes in
+                 let host =
+                   Nx_effect.to_host (Obj.obj repr : (_, _) Nx_effect.t) in
+                 Nx_buffer.blit_to_bytes host src;
+                 B.copyin buf src;
+                 buf
+             in
+             Hashtbl.replace cache slot buf;
+             Some buf)
+    | _ -> None
 
-type input_info = { shape : int array; tolk_dtype : Tolk_ir.Dtype.t }
-
-type captured_jit = {
-  schedule : exec_item array;
-  kernel_graph : Tensor.t;
-  (* Buffers for allocated Buffer nodes (intermediates + output) *)
-  alloc_bufs : (Tensor.id, Tolk.Device.Buffer.t) Hashtbl.t;
-  (* Info for creating param device buffers on replay *)
-  slot_tensors : (int, Obj.t * Tolk_ir.Dtype.t * int array) Hashtbl.t;
-  (* Param tensor node id → slot *)
-  param_node_slots : (Tensor.id, int) Hashtbl.t;
-  expected_input_shape : int array;
-  output_shape : int array;
-  output_buf_id : Tensor.id;
-  device : Tolk.Device.t;
-}
-
-(* Extract execution items from the kernel graph. Each CALL(Ast kernel) node
-   becomes an exec_item with the compiled program and its arg node ids. *)
-let extract_schedule (dev : Tolk.Device.t) (graph : Tensor.t) : exec_item list =
-  let ren = Tolk.Device.renderer dev in
-  let items = ref [] in
-  for id = 0 to Tensor.length graph - 1 do
-    match Tensor.view graph id with
-    | Call { callee = Ast kernel; args; _ } ->
-        let program = Tolk.Lowering.compile dev ren kernel in
-        items := { program; arg_node_ids = Array.of_list args } :: !items
-    | _ -> ()
-  done;
-  List.rev !items
-
-(* Allocate device buffers for all Buffer nodes in the kernel graph. *)
-let allocate_buffers (dev : Tolk.Device.t) (graph : Tensor.t) :
-    (Tensor.id, Tolk.Device.Buffer.t) Hashtbl.t =
-  let tbl = Hashtbl.create 16 in
-  for id = 0 to Tensor.length graph - 1 do
-    match Tensor.view graph id with
-    | Buffer { size; dtype; _ } ->
-        let buf = Tolk.Device.create_buffer ~size ~dtype dev in
-        Tolk.Device.Buffer.ensure_allocated buf;
-        Hashtbl.replace tbl id buf
-    | _ -> ()
-  done;
-  tbl
-
-(* Find the output Buffer node — the highest-id Buffer in the graph. This
-   corresponds to the buffer created from the Contiguous→Bufferize chain, which
-   is emitted last by pm_add_buffers. *)
-let find_output_buffer_id (graph : Tensor.t) : Tensor.id =
-  let last_buf = ref (-1) in
-  for id = 0 to Tensor.length graph - 1 do
-    match Tensor.view graph id with Buffer _ -> last_buf := id | _ -> ()
-  done;
-  if !last_buf < 0 then failwith "Jit: no output buffer found in kernel graph";
-  !last_buf
-
-(* Build the buffer argument list for a kernel execution. Kernel params are
-   numbered by tensor_subtree_to_kernel: - Param nodes keep their original slot
-   - Buffer nodes get sequential indices starting from max(Param.slot)+1,
-   assigned in backward_slice (topological) order We sort CALL args by their
-   kernel param index to match. *)
-let build_buf_args (graph : Tensor.t)
-    (alloc_bufs : (Tensor.id, Tolk.Device.Buffer.t) Hashtbl.t)
-    (param_bufs : (Tensor.id, Tolk.Device.Buffer.t) Hashtbl.t)
-    (arg_ids : Tensor.id array) : Tolk.Device.Buffer.t list =
-  (* Compute the kernel param index for each arg. Params: slot. Buffers:
-     max_param_slot + 1 + counter in id order. *)
-  let max_param_slot =
-    Array.fold_left
-      (fun acc id ->
-        match Tensor.view graph id with
-        | Param { slot; _ } -> Int.max acc slot
-        | _ -> acc)
-      (-1) arg_ids
+(* Find the output buffer in the captured schedule — first non-None
+   buffer of the last exec item. *)
+let find_output_buf cache =
+  let n = Array.length cache in
+  let rec loop i =
+    if i < 0 then failwith "Jit: no output buffer in schedule";
+    match (cache.(i)).Tolk.Jit.bufs.(0) with
+    | Some buf -> buf
+    | None -> loop (i - 1)
   in
-  let buf_counter = ref (max_param_slot + 1) in
-  (* Walk args sorted by node id to match backward_slice order *)
-  let sorted_ids = Array.copy arg_ids in
-  Array.sort compare sorted_ids;
-  let idx_map : (Tensor.id, int) Hashtbl.t = Hashtbl.create 8 in
-  Array.iter
-    (fun node_id ->
-      match Tensor.view graph node_id with
-      | Param { slot; _ } -> Hashtbl.replace idx_map node_id slot
-      | Buffer _ ->
-          Hashtbl.replace idx_map node_id !buf_counter;
-          incr buf_counter
-      | _ -> ())
-    sorted_ids;
-  (* Build buffer list sorted by kernel param index *)
-  let indexed =
-    Array.map
-      (fun node_id ->
-        let kernel_idx = Hashtbl.find idx_map node_id in
-        let buf =
-          match Hashtbl.find_opt alloc_bufs node_id with
-          | Some b -> b
-          | None -> (
-              match Hashtbl.find_opt param_bufs node_id with
-              | Some b -> b
-              | None ->
-                  failwith (Printf.sprintf "Jit: no buffer for node %d" node_id)
-              )
-        in
-        (kernel_idx, buf))
-      arg_ids
-  in
-  Array.sort (fun (a, _) (b, _) -> compare a b) indexed;
-  Array.to_list (Array.map snd indexed)
+  loop (n - 1)
 
-(* --- State machine ------------------------------------------------------- *)
-
-type state = Warmup | Capture | Compiled of captured_jit
-
-(* --- Public API ---------------------------------------------------------- *)
+(* Public API *)
 
 let trace (type a b c d) ?(device : Tolk.Device.t option)
     (f : (a, b) Nx.t -> (c, d) Nx.t) : (a, b) Nx.t -> (c, d) Nx.t =
-  let state = ref Warmup in
-  fun (x : (a, b) Nx.t) ->
-    match !state with
-    | Warmup ->
-        state := Capture;
-        f x
-    | Capture ->
-        let dev =
-          match device with
+  (* The Tiny_jit is created lazily on the second call (capture phase),
+     because warmup runs eagerly and doesn't need a device. *)
+  let tjit_ref : (unit -> (c, d) Nx.t) Tolk.Jit.tiny_jit option ref =
+    ref None in
+  let input_nx_dtype : Obj.t option ref = ref None in
+  let input_shape : int array ref = ref [||] in
+  let output_nx_dtype : Obj.t option ref = ref None in
+  let output_shape : int array ref = ref [||] in
+  let buffers_ref : (T.t -> B.t option) ref = ref (fun _ -> None) in
+  let warmup_done = ref false in
+  let ensure_tjit () =
+    match !tjit_ref with
+    | Some t -> t
+    | None ->
+        let dev = match device with
           | Some d -> d
-          | None -> failwith "Jit.trace: device is required for JIT compilation"
+          | None -> failwith "Jit.trace: device is required for JIT"
         in
-        (* Build lazy tensor graph under effect handler *)
-        let graph, ctx, result =
-          capture_graph ~device_name:(Tolk.Device.name dev) f x
-        in
-        ignore graph;
-
-        (* Schedule: rangeify → kernel ASTs *)
-        let kernel_graph = Tolk.Rangeify.get_kernel_graph graph in
-
-        (* Compile kernels and allocate output/intermediate buffers *)
-        let schedule = Array.of_list (extract_schedule dev kernel_graph) in
-        let alloc_bufs = allocate_buffers dev kernel_graph in
-        let output_buf_id = find_output_buffer_id kernel_graph in
-
-        (* Build param node id → slot mapping for the kernel graph. After
-           rangeify, Param nodes preserve their structure. *)
-        let param_node_slots = Hashtbl.create 16 in
-        for id = 0 to Tensor.length kernel_graph - 1 do
-          match Tensor.view kernel_graph id with
-          | Param { slot; _ } -> Hashtbl.replace param_node_slots id slot
-          | _ -> ()
-        done;
-
-        (* Create device buffers for ALL params (function args + captured
-           constants). Param node id → device buffer. *)
-        let param_bufs : (Tensor.id, Tolk.Device.Buffer.t) Hashtbl.t =
-          Hashtbl.create 16
-        in
-        Hashtbl.iter
-          (fun node_id slot ->
-            let _repr, dt, shape = Hashtbl.find ctx.slot_tensors slot in
-            let num_elements = Int.max 1 (Array.fold_left ( * ) 1 shape) in
-            let buf =
-              Tolk.Device.create_buffer ~size:num_elements ~dtype:dt dev
+        let ren = Tolk.Device.renderer dev in
+        let get_program = Tolk.Codegen.get_program dev ren in
+        let device_name = Tolk.Device.name dev in
+        let fxn (input_bufs : B.t array) _var_vals
+            : unit -> (c, d) Nx.t =
+          if Tolk.Jit.is_capturing () then begin
+            (* Capture: build tensor graph under effect handler,
+               schedule, and register the linear. *)
+            let x = make_placeholder
+              (Obj.obj (Option.get !input_nx_dtype) : (a, b) Nx.dtype)
+              !input_shape in
+            let graph, ctx, result =
+              capture_graph ~device_name f x in
+            output_shape := infer_shape result;
+            output_nx_dtype :=
+              Some (Obj.repr (Nx_effect.dtype result));
+            buffers_ref := make_buffers_cb ctx dev input_bufs.(0);
+            let linear =
+              match Tolk.Schedule.lower_sink_to_linear
+                      ~get_kernel_graph:Tolk.Rangeify.get_kernel_graph
+                      graph with
+              | Some l -> l
+              | None -> failwith "Jit: scheduling failed"
             in
-            Tolk.Device.Buffer.ensure_allocated buf;
-            Hashtbl.replace param_bufs node_id buf)
-          param_node_slots;
-
-        (* Copy input data to param device buffers. Slot 0 = function argument
-           x; other slots = captured constants. *)
-        Hashtbl.iter
-          (fun node_id slot ->
-            let buf = Hashtbl.find param_bufs node_id in
-            if slot = 0 then begin
-              let host = Nx_effect.to_host x in
-              let nbytes = Tolk.Device.Buffer.nbytes buf in
-              let src = Bytes.create nbytes in
-              Nx_buffer.blit_to_bytes host src;
-              Tolk.Device.Buffer.copyin buf src
-            end
-            else begin
-              let repr, _dt, _shape = Hashtbl.find ctx.slot_tensors slot in
-              let nbytes = Tolk.Device.Buffer.nbytes buf in
-              let src = Bytes.create nbytes in
-              (* Use Obj.magic to access the Nx_effect.t for the captured
-                 tensor *)
-              let host =
-                Nx_effect.to_host (Obj.obj repr : (a, b) Nx_effect.t)
-              in
-              Nx_buffer.blit_to_bytes host src;
-              Tolk.Device.Buffer.copyin buf src
-            end)
-          param_node_slots;
-
-        (* Execute schedule *)
-        let q = Tolk.Device.queue dev in
-        Array.iter
-          (fun item ->
-            let bufs =
-              build_buf_args kernel_graph alloc_bufs param_bufs
-                item.arg_node_ids
-            in
-            Tolk.Device.Queue.exec q item.program bufs [])
-          schedule;
-        Tolk.Device.Queue.synchronize q;
-
-        (* Record for replay *)
-        let input_shape = infer_shape x in
-        let out_shape = infer_shape result in
-        state :=
-          Compiled
-            {
-              schedule;
-              kernel_graph;
-              alloc_bufs;
-              slot_tensors = ctx.slot_tensors;
-              param_node_slots;
-              expected_input_shape = input_shape;
-              output_shape = out_shape;
-              output_buf_id;
-              device = dev;
-            };
-
-        (* Copy output back to Nx tensor *)
-        let output_buf = Hashtbl.find alloc_bufs output_buf_id in
-        device_buffer_to_nx (Nx_effect.dtype result) out_shape output_buf
-    | Compiled captured ->
-        (* Validate inputs *)
-        let input_shape = infer_shape x in
-        if input_shape <> captured.expected_input_shape then
-          invalid_arg
-            (Printf.sprintf "Jit: input shape changed: expected [%s], got [%s]"
-               (String.concat ";"
-                  (List.map string_of_int
-                     (Array.to_list captured.expected_input_shape)))
-               (String.concat ";"
-                  (List.map string_of_int (Array.to_list input_shape))));
-
-        (* Create fresh param buffers and copy data *)
-        let dev = captured.device in
-        let param_bufs : (Tensor.id, Tolk.Device.Buffer.t) Hashtbl.t =
-          Hashtbl.create 16
+            Tolk.Jit.add_linear linear;
+            let out_dt : (c, d) Nx.dtype =
+              Obj.obj (Option.get !output_nx_dtype) in
+            let out_shape = !output_shape in
+            fun () ->
+              let c = Option.get
+                (Tolk.Jit.captured (Option.get !tjit_ref)) in
+              let buf = find_output_buf (Tolk.Jit.jit_cache c) in
+              device_buffer_to_nx out_dt out_shape buf
+          end else begin
+            (* Warmup inside Tiny_jit (cnt=0). *)
+            let x = device_buffer_to_nx
+              (Obj.obj (Option.get !input_nx_dtype) : (a, b) Nx.dtype)
+              !input_shape input_bufs.(0) in
+            let result = f x in
+            output_shape := infer_shape result;
+            output_nx_dtype :=
+              Some (Obj.repr (Nx_effect.dtype result));
+            fun () -> result
+          end
         in
-        Hashtbl.iter
-          (fun node_id slot ->
-            let _repr, dt, shape = Hashtbl.find captured.slot_tensors slot in
-            let num_elements = Int.max 1 (Array.fold_left ( * ) 1 shape) in
-            let buf =
-              Tolk.Device.create_buffer ~size:num_elements ~dtype:dt dev
-            in
-            Tolk.Device.Buffer.ensure_allocated buf;
-            if slot = 0 then begin
-              let host = Nx_effect.to_host x in
-              let nbytes = Tolk.Device.Buffer.nbytes buf in
-              let src = Bytes.create nbytes in
-              Nx_buffer.blit_to_bytes host src;
-              Tolk.Device.Buffer.copyin buf src
-            end
-            else begin
-              let repr, _dt, _shape = Hashtbl.find captured.slot_tensors slot in
-              let nbytes = Tolk.Device.Buffer.nbytes buf in
-              let src = Bytes.create nbytes in
-              let host =
-                Nx_effect.to_host (Obj.obj repr : (a, b) Nx_effect.t)
-              in
-              Nx_buffer.blit_to_bytes host src;
-              Tolk.Device.Buffer.copyin buf src
-            end;
-            Hashtbl.replace param_bufs node_id buf)
-          captured.param_node_slots;
+        let tjit =
+          Tolk.Jit.create ~device:dev ~get_program ~fxn () in
+        tjit_ref := Some tjit;
+        tjit
+  in
+  fun (x : (a, b) Nx.t) ->
+    if not !warmup_done then begin
+      (* Warmup: run eagerly on the C backend, no device needed. *)
+      warmup_done := true;
+      f x
+    end else begin
+      let tjit = ensure_tjit () in
+      input_nx_dtype := Some (Obj.repr (Nx_effect.dtype x));
+      input_shape := infer_shape x;
+      let dev = match device with
+        | Some d -> d
+        | None -> failwith "Jit.trace: device is required for JIT"
+      in
+      let buf = nx_to_device_buffer dev x in
+      let thunk = Tolk.Jit.call tjit [| buf |] []
+        ~buffers:(fun node -> !buffers_ref node) in
+      thunk ()
+    end
 
-        (* Execute schedule *)
-        let q = Tolk.Device.queue dev in
-        Array.iter
-          (fun item ->
-            let bufs =
-              build_buf_args captured.kernel_graph captured.alloc_bufs
-                param_bufs item.arg_node_ids
-            in
-            Tolk.Device.Queue.exec q item.program bufs [])
-          captured.schedule;
-        Tolk.Device.Queue.synchronize q;
-
-        (* Copy output back to Nx tensor *)
-        let output_buf =
-          Hashtbl.find captured.alloc_bufs captured.output_buf_id
-        in
-        device_buffer_to_nx
-          (Obj.magic (Nx_effect.dtype x) : (c, d) Nx.dtype)
-          captured.output_shape output_buf
-
-(* --- Trace graph (debug/inspection) ------------------------------------- *)
+(* Trace graph (debug/inspection) *)
 
 type traced = {
-  tensor_graph : Tensor.t;
-  kernel_graph : Tensor.t;
+  tensor_graph : T.t;
+  kernel_graph : T.t;
   rendered_source : string list;
 }
 
-let extract_rendered_sources ren kernel_graph =
+let extract_rendered_sources dev ren kernel_graph =
   let sources = ref [] in
-  for id = 0 to Tensor.length kernel_graph - 1 do
-    match Tensor.view kernel_graph id with
+  List.iter (fun node ->
+    match T.view node with
     | Call { callee = Ast kernel; _ } ->
-        let processed =
-          Tolk.Pipeline.full_rewrite_to_sink ~optimize:true ren kernel
-        in
-        let name =
-          match Tolk_ir.Kernel.view processed with
-          | Tolk_ir.Kernel.Sink { kernel_info = Some ki; _ } -> ki.name
-          | _ -> "kernel"
-        in
-        let prog = Tolk.Linearizer.linearize processed in
-        sources := String.trim (Tolk.Renderer.render ren ~name prog) :: !sources
-    | _ -> ()
-  done;
+        let p = Tolk.Codegen.get_program dev ren kernel in
+        sources := String.trim (Tolk.Program_spec.src p) :: !sources
+    | _ -> ())
+    (T.toposort kernel_graph);
   List.rev !sources
 
-let trace_graph (type a b c d) ?(device : Tolk.Device.t option)
+let trace_graph (type a b c d) ~(device : Tolk.Device.t)
     (f : (a, b) Nx.t -> (c, d) Nx.t) (x : (a, b) Nx.t) : traced =
-  let device_name =
-    match device with Some dev -> Tolk.Device.name dev | None -> "CPU"
-  in
+  let device_name = Tolk.Device.name device in
   let tensor_graph, _ctx, _result = capture_graph ~device_name f x in
   let kernel_graph = Tolk.Rangeify.get_kernel_graph tensor_graph in
-  let ren =
-    match device with
-    | Some dev -> Tolk.Device.renderer dev
-    | None -> Tolk.Cstyle.clang_no_abi
-  in
-  let rendered_source = extract_rendered_sources ren kernel_graph in
+  let ren = Tolk.Device.renderer device in
+  let rendered_source = extract_rendered_sources device ren kernel_graph in
   { tensor_graph; kernel_graph; rendered_source }
 
 let reset () = ()
