@@ -7,25 +7,19 @@
 
 (** High-level tensor graph IR.
 
-    [Tensor] is the value-graph stage of [ir_next]. Programs are array-backed
-    graphs with stable ids and backward-only references.
+    Nodes are hash-consed: structurally identical nodes are physically
+    identical ([==]), enabling efficient deduplication during graph
+    rewriting.
 
-    The public surface is intentionally uniform:
-    - build graphs with {!create}, {!emit}, and the smart constructors;
-    - inspect with {!view}, {!dtype}, and {!children};
-    - validate with {!validate};
-    - rewrite with {!map_children}, {!rebuild}, and {!rewrite_fixpoint}. *)
+    Build nodes with the smart constructors ({!sink}, {!after},
+    {!const}, …); inspect with {!view}, {!dtype}, and {!children};
+    rewrite with {!graph_rewrite} and {!substitute}. *)
 
 (** {1:types Types} *)
 
 type t
-(** A tensor graph. *)
-
-type id = int
-(** Node id. An index into the tensor graph array. *)
-
-type builder
-(** Mutable tensor graph builder. *)
+(** A tensor graph node. Hash-consed: structurally identical nodes
+    are physically identical. *)
 
 type device =
   | Single of string  (** A single named device. *)
@@ -39,427 +33,395 @@ type metadata = {
 }
 (** Call-site metadata. *)
 
+(** {2:view Node views} *)
+
 type view =
-  | Sink of { srcs : id list; kernel_info : Kernel.kernel_info option }
-      (** Graph root gathering semantic sources. *)
-  | Group of { srcs : id list }
-      (** Groups effect children without producing a value. *)
-  | After of { src : id; deps : id list; dtype : Dtype.t }
-      (** Sequences [src] after [deps]. *)
+  | Sink of { srcs : t list; kernel_info : Kernel.kernel_info option }
+  | Group of { srcs : t list }
+  | After of { src : t; deps : t list; dtype : Dtype.t }
   | Unique of { id : int }
-      (** Unique buffer identity tag. *)
   | Lunique of { id : int }
-      (** Lazy unique buffer identity tag. *)
   | Device of { device : device }
-      (** Device placement node. *)
-  | Buffer of { unique : id; device : id; size : int; dtype : Dtype.t }
-      (** Allocated buffer of [size] elements. *)
-  | Buffer_view of { src : id; size : int; offset : int; dtype : Dtype.t }
-      (** View into an existing buffer at [offset]. *)
-  | Const of { value : Const.t; dtype : Dtype.t; srcs : id list }
-      (** Compile-time constant. [srcs] are scheduling dependencies. *)
-  | Vconst of { values : Const.t list; dtype : Dtype.t; srcs : id list }
-      (** Vector of compile-time constants. *)
+  | Buffer of { unique : t; device : t; size : int; dtype : Dtype.t }
+  | Buffer_view of { src : t; size : int; offset : int; dtype : Dtype.t }
+  | Const of { value : Const.t; dtype : Dtype.t; srcs : t list }
+  | Vconst of { values : Const.t list; dtype : Dtype.t; srcs : t list }
   | Define_var of { name : string; lo : int; hi : int; dtype : Dtype.t }
-      (** Symbolic variable bounded by \[[lo];[hi]\]. *)
-  | Bind of { var : id; value : id option; dtype : Dtype.t }
-      (** Binds a symbolic variable to a concrete value. *)
+  | Bind of { var : t; value : t option; dtype : Dtype.t }
   | Param of {
       slot : int;
       dtype : Dtype.t;
-      shape : id option;
-      device : id option;
-    }  (** Function parameter at [slot]. *)
+      shape : t option;
+      device : t option;
+    }
   | Call of {
       callee : callee;
-      args : id list;
+      args : t list;
       info : call_info;
       dtype : Dtype.t;
-    }  (** Calls [callee] with [args]. *)
-  | Detach of { src : id; dtype : Dtype.t }
-      (** Detaches [src] from the gradient tape. *)
-  | Contiguous of { src : id; ranges : id list; dtype : Dtype.t }
-      (** Forces [src] into contiguous memory layout. *)
-  | Contiguous_backward of { src : id; dtype : Dtype.t }
-      (** Backward-pass contiguous marker. *)
-  | Copy of { src : id; device : id; dtype : Dtype.t }
-      (** Copies [src] to [device]. *)
-  | Allreduce of { src : id; device : id; op : Op.reduce; dtype : Dtype.t }
-      (** All-reduce [src] across devices with [op]. *)
-  | Multi of { src : id; axis : int; dtype : Dtype.t }
-      (** Distributes [src] across devices along [axis]. *)
-  | Mstack of { srcs : id list; dtype : Dtype.t }
-      (** Stacks per-device shards into a multi-device tensor. *)
-  | Mselect of { src : id; index : int; dtype : Dtype.t }
-      (** Selects shard [index] from a multi-device tensor. *)
+    }
+  | Detach of { src : t; dtype : Dtype.t }
+  | Contiguous of { src : t; ranges : t list; opts : Kernel.Opt.t list; dtype : Dtype.t }
+  | Contiguous_backward of { src : t; dtype : Dtype.t }
+  | Copy of { src : t; device : t; dtype : Dtype.t }
+  | Allreduce of { src : t; device : t; op : Op.reduce; dtype : Dtype.t }
+  | Multi of { src : t; axis : int; dtype : Dtype.t }
+  | Mstack of { srcs : t list; dtype : Dtype.t }
+  | Mselect of { src : t; index : int; dtype : Dtype.t }
   | Reduce_axis of {
-      src : id;
+      src : t;
       op : Op.reduce;
       axes : int list;
       dtype : Dtype.t;
-    }  (** Reduces [src] with [op] along [axes]. *)
-  | Reduce of { src : id; ranges : id list; op : Op.reduce; dtype : Dtype.t }
-      (** Reduces [src] over [ranges] with [op]. *)
-  | Reshape of { src : id; shape : id; dtype : Dtype.t }
-      (** Reshapes [src] to [shape]. *)
-  | Expand of { src : id; shape : id; dtype : Dtype.t }
-      (** Broadcasts [src] to [shape]. *)
-  | Pad of { src : id; before : id; after : id; dtype : Dtype.t }
-      (** Pads [src] with zeros. *)
-  | Shrink of { src : id; before : id; after : id; dtype : Dtype.t }
-      (** Shrinks [src] by trimming edges. *)
-  | Permute of { src : id; order : int list; dtype : Dtype.t }
-      (** Permutes axes of [src] according to [order]. *)
-  | Flip of { src : id; dims : bool list; dtype : Dtype.t }
-      (** Reverses [src] along dimensions where [dims] is [true]. *)
-  | Range of { size : id; dtype : Dtype.t; axis : int; sub : int list; kind : Axis_kind.t }
-      (** Loop variable over \[[0];[size-1]\] on [axis]. *)
-  | End of { value : id; ranges : id list }
-      (** Closes loop [ranges] around [value]. *)
-  | Index of { ptr : id; idxs : id list; gate : id option; dtype : Dtype.t }
-      (** Indexes into [ptr] with per-dimension [idxs] and optional [gate]. *)
-  | Store of { dst : id; value : id }
-      (** Stores [value] through pointer [dst]. *)
-  | Vectorize of { srcs : id list; dtype : Dtype.t }
-      (** Packs scalar [srcs] into a vector. *)
-  | Cast of { src : id; dtype : Dtype.t }
-      (** Type cast. *)
-  | Bitcast of { src : id; dtype : Dtype.t }
-      (** Bit-preserving reinterpretation. *)
-  | Unary of { op : Op.unary; src : id; dtype : Dtype.t }
-      (** Unary arithmetic or transcendental. *)
-  | Binary of { op : Op.binary; lhs : id; rhs : id; dtype : Dtype.t }
-      (** Binary arithmetic, logic, or comparison. *)
-  | Ternary of { op : Op.ternary; a : id; b : id; c : id; dtype : Dtype.t }
-      (** Ternary operation ([Where] or [Mulacc]). *)
-  | Noop of { src : id option; dtype : Dtype.t }
-      (** Pass-through scheduling marker. *)
+    }
+  | Reduce of { src : t; ranges : t list; op : Op.reduce; dtype : Dtype.t }
+  | Reshape of { src : t; shape : t; dtype : Dtype.t }
+  | Expand of { src : t; shape : t; dtype : Dtype.t }
+  | Pad of { src : t; before : t; after : t; dtype : Dtype.t }
+  | Shrink of { src : t; before : t; after : t; dtype : Dtype.t }
+  | Permute of { src : t; order : int list; dtype : Dtype.t }
+  | Flip of { src : t; dims : bool list; dtype : Dtype.t }
+  | Range of {
+      size : t;
+      dtype : Dtype.t;
+      axis : int;
+      sub : int list;
+      kind : Axis_kind.t;
+    }
+  | End of { value : t; ranges : t list }
+  | Index of { ptr : t; idxs : t list; gate : t option; dtype : Dtype.t }
+  | Store of { dst : t; value : t }
+  | Vectorize of { srcs : t list; dtype : Dtype.t }
+  | Cast of { src : t; dtype : Dtype.t }
+  | Bitcast of { src : t; dtype : Dtype.t }
+  | Unary of { op : Op.unary; src : t; dtype : Dtype.t }
+  | Binary of { op : Op.binary; lhs : t; rhs : t; dtype : Dtype.t }
+  | Ternary of { op : Op.ternary; a : t; b : t; c : t; dtype : Dtype.t }
+  | Noop of { src : t option; dtype : Dtype.t }
   | Bufferize of {
-      src : id;
-      ranges : id list;
+      src : t;
+      ranges : t list;
       dtype : Dtype.t;
       opts : Kernel.bufferize_opts;
-    }  (** Materializes [src] into a buffer during schedule. *)
+    }
   | Invalid_index of { dtype : Dtype.t }
-      (** Invalid index sentinel for PAD range transformations. *)
-  | Define_local of { size : int; dtype : Dtype.ptr }
-      (** Local (workgroup-shared) memory buffer of [size] elements. *)
+  | Define_local of { size : int; dtype : Dtype.Ptr.t }
   | Barrier
-      (** Workgroup barrier. *)
-
-and emit = view -> id
-(** Node emitter used by gradient hooks. *)
-
-and grad_fxn = emit:emit -> grad_output:id -> call:id -> id option list
-(** Custom gradient callback. *)
+  | Linear of { srcs : t list }
+  | Shaped_wmma of {
+      a : t; b : t; acc : t;
+      dims : int * int * int;
+      device : string;
+      threads : int;
+      dtype : Dtype.t;
+    }
+(** Node views. Each variant describes one tensor operation with
+    direct references to child nodes. *)
 
 and callee =
-  | Ref of id  (** Reference to an in-graph callable. *)
+  | Ref of t  (** Reference to an in-graph callable. *)
   | Ast of Kernel.t  (** Inline kernel AST. *)
 (** Call target. *)
 
 and call_info = {
-  grad_fxn : grad_fxn option;  (** Custom gradient, if any. *)
-  metadata : metadata list;  (** Call-site metadata stack. *)
-  name : string option;  (** Optional kernel name override. *)
-  precompile : bool;  (** [true] to precompile the kernel. *)
+  grad_fxn : grad_fxn option;
+  metadata : metadata list;
+  name : string option;
+  precompile : bool;
 }
 (** Call annotations. *)
 
-(** {1:building Building} *)
+and grad_fxn = grad_output:t -> call:t -> t option list
+(** Custom gradient callback. *)
 
-(* CR: Not sure we want all of these constructors here. Are they used? Do we have constructors like this in the other IR (kernel and program)?
-   If not, consider removing them and adding a top-level tensor.ml with a numpy-like API to build a Tolk_ir.Tensor.t *)
+(** {1:constructors Constructors} *)
 
-val create : unit -> builder
-(** [create ()] is an empty tensor graph builder. *)
+val sink : ?kernel_info:Kernel.kernel_info -> t list -> t
+(** [sink ?kernel_info srcs] is a graph root gathering [srcs]. *)
 
-val emit : builder -> view -> id
-(** [emit b v] appends [v] to [b] and returns its id. *)
+val group : t list -> t
+(** [group srcs] groups effect children. Returns [src] directly
+    when [srcs] is a singleton. *)
 
-val finish : builder -> t
-(** [finish b] is the graph built so far. *)
+val after : src:t -> deps:t list -> t
+(** [after ~src ~deps] sequences [src] after [deps]. *)
 
-val shape : builder -> Shape.t -> id
-(** [shape b s] emits the canonical node encoding of shape [s]. *)
+val unique : id:int -> t
+(** [unique ~id] is a unique buffer identity tag. *)
 
-val sink : builder -> ?kernel_info:Kernel.kernel_info -> id list -> id
-(** [sink b ?kernel_info srcs] emits a graph root with sources [srcs]. *)
+val lunique : id:int -> t
+(** [lunique ~id] is a lazy unique buffer identity tag. *)
 
-val group : builder -> id list -> id
-(** [group b srcs] emits a group of effect children. *)
+val device : device -> t
+(** [device d] is a device placement node. *)
 
-val after : builder -> src:id -> deps:id list -> id
-(** [after b ~src ~deps] emits a sequencing node. *)
+val buffer : unique:t -> device:t -> size:int -> dtype:Dtype.t -> t
+(** [buffer ~unique ~device ~size ~dtype] is a buffer allocation. *)
 
-val unique : builder -> id:int -> id
-(** [unique b ~id] emits a unique buffer identity tag. *)
+val buffer_view : src:t -> size:int -> offset:int -> dtype:Dtype.t -> t
+(** [buffer_view ~src ~size ~offset ~dtype] is a view into [src]. *)
 
-val lunique : builder -> id:int -> id
-(** [lunique b ~id] emits a lazy unique buffer identity tag. *)
-
-val device : builder -> device -> id
-(** [device b d] emits a device placement node. *)
-
-val buffer :
-  builder -> unique:id -> device:id -> size:int -> dtype:Dtype.t -> id
-(** [buffer b ~unique ~device ~size ~dtype] emits a buffer allocation. *)
-
-val buffer_view :
-  builder -> src:id -> size:int -> offset:int -> dtype:Dtype.t -> id
-(** [buffer_view b ~src ~size ~offset ~dtype] emits a view into buffer
-    [src]. *)
-
-val const : builder -> ?srcs:id list -> Const.t -> id
-(** [const b ?srcs c] emits a constant node. [srcs] are scheduling
-    dependencies. *)
+val const : ?srcs:t list -> Const.t -> Dtype.t -> t
+(** [const ?srcs c dt] is a constant [c] of type [dt]. [srcs] are
+    scheduling dependencies (default [[]]). *)
 
 val vconst :
-  builder -> values:Const.t list -> dtype:Dtype.t -> ?srcs:id list -> unit -> id
-(** [vconst b ~values ~dtype ()] emits a vector constant. *)
+  values:Const.t list -> dtype:Dtype.t -> ?srcs:t list -> unit -> t
+(** [vconst ~values ~dtype ()] is a vector of constants. *)
 
 val define_var :
-  builder -> name:string -> lo:int -> hi:int -> ?dtype:Dtype.t -> unit -> id
-(** [define_var b ~name ~lo ~hi ()] emits a symbolic variable.
+  name:string -> lo:int -> hi:int -> ?dtype:Dtype.t -> unit -> t
+(** [define_var ~name ~lo ~hi ()] is a symbolic variable bounded by
+    \[[lo];[hi]\]. [dtype] defaults to {!Dtype.index}. *)
 
-    [dtype] defaults to {!Dtype.index}. *)
-
-val bind : builder -> var:id -> ?value:id -> unit -> id
-(** [bind b ~var ?value ()] binds symbolic variable [var] to [value]. *)
+val bind : var:t -> ?value:t -> dtype:Dtype.t -> unit -> t
+(** [bind ~var ?value ~dtype ()] binds [var] to [value]. *)
 
 val param :
-  builder -> slot:int -> dtype:Dtype.t -> ?shape:id -> ?device:id -> unit -> id
-(** [param b ~slot ~dtype ()] emits a function parameter at [slot]. *)
+  slot:int -> dtype:Dtype.t -> ?shape:t -> ?device:t -> unit -> t
+(** [param ~slot ~dtype ()] is a function parameter at [slot]. *)
 
 val call :
-  builder ->
-  callee:callee ->
-  args:id list ->
-  info:call_info ->
-  dtype:Dtype.t ->
-  id
-(** [call b ~callee ~args ~info ~dtype] emits a call to [callee]. *)
+  callee:callee -> args:t list -> info:call_info -> dtype:Dtype.t -> t
+(** [call ~callee ~args ~info ~dtype] calls [callee] with [args]. *)
 
-val assign : builder -> target:id -> value:id -> ?extras:id list -> unit -> id
-(** [assign b ~target ~value ()] assigns [value] to buffer [target].
+val assign : target:t -> value:t -> ?extras:t list -> unit -> t
+(** [assign ~target ~value ()] stores [value] into [target] and
+    returns an {!After} sequencing [target] after the store. *)
 
-    Emits a [Store] of [value] into [target], then an [After] sequencing
-    [target] after the store (and any [extras]). Returns the [After] id. *)
+val detach : src:t -> t
+(** [detach ~src] detaches [src] from the gradient tape. *)
 
-val detach : builder -> src:id -> id
-(** [detach b ~src] detaches [src] from the gradient tape. *)
+val contiguous : src:t -> ?ranges:t list -> ?opts:Kernel.Opt.t list -> unit -> t
+(** [contiguous ~src ()] forces [src] into contiguous layout. *)
 
-val contiguous : builder -> src:id -> ?ranges:id list -> unit -> id
-(** [contiguous b ~src ()] forces [src] into contiguous layout. *)
+val contiguous_backward : src:t -> t
+(** [contiguous_backward ~src] is a backward-pass contiguous marker. *)
 
-val contiguous_backward : builder -> src:id -> id
-(** [contiguous_backward b ~src] emits a backward-pass contiguous marker. *)
+val copy : src:t -> device:t -> unit -> t
+(** [copy ~src ~device ()] copies [src] to [device]. *)
 
-val copy : builder -> src:id -> device:id -> unit -> id
-(** [copy b ~src ~device ()] copies [src] to [device]. For multi-device
-    sources, use {!mselect} before copying to select the desired shard. *)
+val allreduce : src:t -> device:t -> op:Op.reduce -> dtype:Dtype.t -> t
+(** [allreduce ~src ~device ~op ~dtype] all-reduces [src]. *)
 
-val allreduce : builder -> src:id -> device:id -> op:Op.reduce -> id
-(** [allreduce b ~src ~device ~op] all-reduces [src] across devices. *)
+val multi : src:t -> axis:int -> t
+(** [multi ~src ~axis] distributes [src] along [axis]. *)
 
-val multi : builder -> src:id -> axis:int -> id
-(** [multi b ~src ~axis] distributes [src] along [axis]. *)
+val mstack : srcs:t list -> t
+(** [mstack ~srcs] stacks per-device shards. *)
 
-val mstack : builder -> srcs:id list -> id
-(** [mstack b ~srcs] stacks per-device shards. *)
+val mselect : src:t -> index:int -> t
+(** [mselect ~src ~index] selects shard [index]. *)
 
-val mselect : builder -> src:id -> index:int -> id
-(** [mselect b ~src ~index] selects shard [index] from a multi tensor. *)
 
-val reduce_axis : builder -> src:id -> op:Op.reduce -> axes:int list -> id
-(** [reduce_axis b ~src ~op ~axes] reduces [src] along [axes]. Dtype is
-    inherited from [src]. *)
 
-val reduce :
-  builder -> src:id -> ranges:id list -> op:Op.reduce -> dtype:Dtype.t -> id
-(** [reduce b ~src ~ranges ~op ~dtype] reduces [src] over [ranges]. *)
+val reduce_axis : src:t -> op:Op.reduce -> axes:int list -> t
+(** [reduce_axis ~src ~op ~axes] reduces [src] along [axes]. *)
 
-val reshape : builder -> src:id -> shape:id -> id
-(** [reshape b ~src ~shape] reshapes [src]. *)
+val reduce : src:t -> ranges:t list -> op:Op.reduce -> dtype:Dtype.t -> t
+(** [reduce ~src ~ranges ~op ~dtype] reduces [src] over [ranges]. *)
 
-val expand : builder -> src:id -> shape:id -> id
-(** [expand b ~src ~shape] broadcasts [src] to [shape]. *)
+val reshape : src:t -> shape:t -> t
+(** [reshape ~src ~shape] reshapes [src] to [shape]. *)
 
-val pad : builder -> src:id -> before:id -> after:id -> id
-(** [pad b ~src ~before ~after] pads [src] with zeros. *)
+val expand : src:t -> shape:t -> t
+(** [expand ~src ~shape] broadcasts [src] to [shape]. *)
 
-val shrink : builder -> src:id -> before:id -> after:id -> id
-(** [shrink b ~src ~before ~after] trims edges of [src]. *)
+val pad : src:t -> before:t -> after:t -> t
+(** [pad ~src ~before ~after] pads [src] with zeros. *)
 
-val permute : builder -> src:id -> order:int list -> id
-(** [permute b ~src ~order] permutes axes of [src]. *)
+val shrink : src:t -> before:t -> after:t -> t
+(** [shrink ~src ~before ~after] trims edges of [src]. *)
 
-val flip : builder -> src:id -> dims:bool list -> id
-(** [flip b ~src ~dims] reverses [src] along flagged dimensions. *)
+val permute : src:t -> order:int list -> t
+(** [permute ~src ~order] permutes axes of [src]. *)
+
+val flip : src:t -> dims:bool list -> t
+(** [flip ~src ~dims] reverses [src] along flagged dimensions. *)
 
 val range :
-  builder ->
-  size:id ->
-  axis:int ->
-  ?sub:int list ->
-  kind:Axis_kind.t ->
-  ?dtype:Dtype.t ->
-  unit ->
-  id
-(** [range b ~size ~axis ~kind ()] emits a loop variable.
+  size:t -> axis:int -> ?sub:int list -> kind:Axis_kind.t ->
+  ?dtype:Dtype.t -> unit -> t
+(** [range ~size ~axis ~kind ()] is a loop variable over
+    \[[0];[size-1]\]. [dtype] defaults to {!Dtype.index}. *)
 
-    [dtype] defaults to {!Dtype.index}. *)
-
-val end_ : builder -> value:id -> ranges:id list -> id
-(** [end_ b ~value ~ranges] closes loop ranges around [value]. *)
+val end_ : value:t -> ranges:t list -> t
+(** [end_ ~value ~ranges] closes loop [ranges] around [value]. *)
 
 val index :
-  builder -> ptr:id -> idxs:id list -> ?gate:id -> dtype:Dtype.t -> unit -> id
-(** [index b ~ptr ~idxs ?gate ~dtype ()] indexes into [ptr]. *)
+  ptr:t -> idxs:t list -> ?gate:t -> dtype:Dtype.t -> unit -> t
+(** [index ~ptr ~idxs ?gate ~dtype ()] indexes into [ptr]. *)
 
-val store : builder -> dst:id -> value:id -> id
-(** [store b ~dst ~value] stores [value] through pointer [dst]. *)
+val store : dst:t -> value:t -> t
+(** [store ~dst ~value] stores [value] through [dst]. *)
 
-val vectorize : builder -> srcs:id list -> id
-(** [vectorize b ~srcs] packs scalar sources into a vector. *)
+val vectorize : srcs:t list -> t
+(** [vectorize ~srcs] packs scalar [srcs] into a vector. *)
 
-val cast : builder -> src:id -> dtype:Dtype.t -> id
-(** [cast b ~src ~dtype] casts [src] to [dtype]. *)
+val cast : src:t -> dtype:Dtype.t -> t
+(** [cast ~src ~dtype] casts [src] to [dtype]. *)
 
-val bitcast : builder -> src:id -> dtype:Dtype.t -> id
-(** [bitcast b ~src ~dtype] bitcasts [src] to [dtype]. *)
+val bitcast : src:t -> dtype:Dtype.t -> t
+(** [bitcast ~src ~dtype] bitcasts [src] to [dtype]. *)
 
-val unary : builder -> op:Op.unary -> src:id -> id
-(** [unary b ~op ~src] applies unary [op] to [src]. *)
+val unary : op:Op.unary -> src:t -> t
+(** [unary ~op ~src] applies unary [op]. *)
 
-val binary : builder -> op:Op.binary -> lhs:id -> rhs:id -> id
-(** [binary b ~op ~lhs ~rhs] applies binary [op]. *)
+val binary : op:Op.binary -> lhs:t -> rhs:t -> t
+(** [binary ~op ~lhs ~rhs] applies binary [op]. *)
 
-val ternary : builder -> op:Op.ternary -> a:id -> b:id -> c:id -> id
-(** [ternary b ~op ~a ~b ~c] applies ternary [op]. *)
+val ternary : op:Op.ternary -> a:t -> b:t -> c:t -> t
+(** [ternary ~op ~a ~b ~c] applies ternary [op]. *)
 
-val noop : builder -> ?src:id -> dtype:Dtype.t -> unit -> id
-(** [noop b ?src ~dtype ()] emits a pass-through scheduling marker. *)
+val noop : ?src:t -> dtype:Dtype.t -> unit -> t
+(** [noop ?src ~dtype ()] is a pass-through scheduling marker. *)
 
 val bufferize :
-  builder -> src:id -> ranges:id list -> dtype:Dtype.t -> opts:Kernel.bufferize_opts -> id
-(** [bufferize b ~src ~ranges ~dtype ~opts] materializes [src] into a buffer. *)
+  src:t -> ranges:t list -> dtype:Dtype.t ->
+  opts:Kernel.bufferize_opts -> t
+(** [bufferize ~src ~ranges ~dtype ~opts] materializes [src]. *)
 
-val invalid_index : builder -> dtype:Dtype.t -> id
-(** [invalid_index b ~dtype] emits an invalid index sentinel. *)
+val invalid_index : dtype:Dtype.t -> t
+(** [invalid_index ~dtype] is an invalid index sentinel. *)
 
-val define_local : builder -> size:int -> dtype:Dtype.ptr -> id
-(** [define_local b ~size ~dtype] defines a local-memory buffer. *)
+val define_local : size:int -> dtype:Dtype.Ptr.t -> t
+(** [define_local ~size ~dtype] defines a local-memory buffer. *)
 
-val barrier : builder -> id
-(** [barrier b] emits a workgroup barrier. *)
+val barrier : t
+(** [barrier] is a workgroup barrier. *)
 
-(** {1:inspection Inspecting} *)
+val linear : t list -> t
+(** [linear srcs] is a linearized schedule of [srcs]. *)
 
-val view : t -> id -> view
-(** [view t id] is the instruction at [id]. *)
+val shaped_wmma :
+  a:t -> b:t -> acc:t ->
+  dims:(int * int * int) -> device:string -> threads:int ->
+  dtype:Dtype.t -> t
+(** [shaped_wmma ~a ~b ~acc ~dims ~device ~threads ~dtype] is a shaped
+    tensor-core WMMA operation. Lowered to kernel-level {!Kernel.view.Wmma}
+    during scheduling. *)
 
-val length : t -> int
-(** [length t] is the number of nodes in [t]. *)
+val replace : t -> ?children:t list -> ?dtype:Dtype.t -> unit -> t
+(** [replace n ?children ?dtype ()] rebuilds [n] with substituted
+    children and/or dtype. Unchanged fields are preserved.
 
-val dtype : t -> id -> Dtype.t option
-(** [dtype t id] is the node dtype of [id], if any. *)
+    [children] must have the same length as [children n]. *)
 
-val children : t -> id -> id list
-(** [children t id] are the direct input ids of instruction [id]. *)
+(** {1:inspection Inspection} *)
 
-(** {1:validation Validation} *)
+val view : t -> view
+(** [view n] is the operation [n] represents. *)
 
-val validate : t -> unit
-(** [validate t] checks tensor invariants.
+val children : t -> t list
+(** [children n] are the direct input nodes of [n]. *)
 
-    Raises [Failure] on the first violation. *)
+val dtype : t -> Dtype.t option
+(** [dtype n] is [n]'s dtype, if any. *)
+
+val tag : t -> int
+(** [tag n] is [n]'s unique identity. Two nodes are physically
+    identical iff their tags are equal. *)
+
+(** {1:traversal Traversal} *)
+
+val toposort :
+  ?gate:(t -> bool) -> ?enter_calls:bool -> t -> t list
+(** [toposort ?gate ?enter_calls root] is all transitive
+    dependencies of [root] in topological order (leaves first).
+
+    [gate] controls descent: when it returns [false] for a node,
+    that node's children are not visited. Defaults to [fun _ -> true].
+
+    [enter_calls] controls whether CALL bodies (the callee) are
+    entered. Defaults to [true]. When [false], [callee] is treated
+    as opaque. *)
+
+val backward_slice : t -> t list
+(** [backward_slice root] is {!toposort} [root] without [root]
+    itself. *)
+
+val variables : t -> t list
+(** [variables root] is all {!Define_var} nodes reachable from
+    [root], in topological order. *)
+
+val ranges : t -> t list
+(** [ranges root] is all {!Range} nodes reachable from [root],
+    in topological order. *)
 
 (** {1:rewriting Rewriting} *)
 
+val children_of : view -> t list
+(** [children_of v] are the direct child nodes of [v]. *)
+
+val map_children : (t -> t) -> view -> view
+(** [map_children f v] rebuilds the children of [v] with [f]. *)
+
 val node_dtype : view -> Dtype.t option
-(** [node_dtype v] is the dtype of the view [v], if any. *)
+(** [node_dtype v] is the dtype of [v], if any. *)
 
-val children_of : view -> id list
-(** [children_of v] are the direct child ids of view [v]. *)
+val graph_rewrite :
+  ?name:string -> ?enter_calls:bool ->
+  ?on_rebuild:(old_n:t -> new_n:t -> unit) ->
+  (t -> t option) -> t -> t
+(** [graph_rewrite ?name ?enter_calls f root] rewrites [root]'s DAG.
 
-val map_children : (id -> id) -> view -> view
-(** [map_children f v] rebuilds the direct children of [v] with [f]. *)
+    Processes nodes bottom-up using a 3-stage stack:
+    {ul
+    {- Stage 0: push children for processing.}
+    {- Stage 1: rebuild with rewritten children, apply [f].
+       When [f] returns [Some n'], [n'] replaces the node and
+       is re-processed.}
+    {- Stage 2: link the original node to its final replacement.}}
 
-val rebuild : (id -> view -> view option) -> t -> t
-(** [rebuild f t] rebuilds [t] in id order.
+    Nodes that depend on not-yet-ready replacements are added to
+    a waitlist and resumed when the dependency resolves.
 
-    Children are rewritten first. [f id v] sees the rebuilt view of the node
-    previously at [id]. When it returns [Some v'], [v'] replaces [v]. *)
+    [enter_calls] controls whether CALL bodies are entered.
+    Defaults to [true]. *)
 
-(* CR: do we need rewrite_fixpoint, rebuild_grow and rewrite_fixpoint_grow? If they are unused, plan how to remove them. *)
-    
-val rewrite_fixpoint : ?max_iters:int -> (id -> view -> view option) -> t -> t
-(** [rewrite_fixpoint ?max_iters f t] repeatedly applies {!rebuild} with [f]
-    until the graph stops changing.
+val substitute : (t * t) list -> t -> t
+(** [substitute mappings root] replaces nodes by physical identity
+    ([==]). Each [(old, new_)] pair causes [old] to be replaced
+    with [new_] throughout the DAG. *)
 
-    Raises [Failure] if [max_iters] passes are reached without a fixpoint.
-    [max_iters] defaults to [16]. *)
-
-val rebuild_grow :
-  (lookup:(id -> view) -> (view -> id) -> id -> view -> view option) -> t -> t
-(** [rebuild_grow f t] is like {!rebuild}, but the rewrite function [f]
-    receives:
-    - [~lookup]: look up the view of an already-emitted node in the
-      in-construction graph (use this instead of indexing the old program)
-    - [emit]: callback [(view -> id)] to create auxiliary nodes
-    - [id]: the old node id
-    - [view]: the view with children already remapped
-
-    The output may be larger than the input. *)
-
-val rewrite_fixpoint_grow :
-  ?max_iters:int ->
-  (lookup:(id -> view) -> (view -> id) -> id -> view -> view option) ->
-  t ->
-  t
-(** [rewrite_fixpoint_grow ?max_iters f t] repeatedly applies {!rebuild_grow}
-    with [f] until the graph stops changing. *)
-
-val merge_builder : t -> builder -> t * (id -> id)
-(** [merge_builder program extra] appends all nodes from [extra] to [program].
-    Returns the extended program and a shift function that maps builder ids to
-    their positions in the extended program. *)
+val first_match : (t -> t option) list -> t -> t option
+(** [first_match rules n] tries each rule in order, returning
+    the first [Some]. Returns [None] if no rule matches. *)
 
 (** {1:analysis Analysis} *)
 
-val extract_int_shape : t -> id -> int list option
-(** [extract_int_shape t id] decodes a concrete int list from a
-    shape-encoding node (Vectorize of Consts, a single Const, or an
+val base : t -> t
+(** [base n] follows through movement ops (Reshape, Expand, Pad,
+    Shrink, Permute, Flip, Multi, Detach) to the underlying buffer
+    node. *)
+
+val extract_int_shape : t -> int list option
+(** [extract_int_shape n] decodes a concrete int list from a
+    shape-encoding node (Vectorize of Consts, single Const, or
     empty Vconst). Returns [None] if any dimension is symbolic. *)
 
-val extract_marg : t -> view -> int list option
-(** [extract_marg t v] extracts the shape argument from a Reshape or Expand
-    view. Returns [None] for other ops or symbolic shapes. *)
+val extract_marg : view -> int list option
+(** [extract_marg v] extracts the shape argument from a Reshape
+    or Expand view. Returns [None] for other ops or symbolic
+    shapes. *)
 
-val extract_marg_pairs : t -> view -> (int * int) list option
-(** [extract_marg_pairs t v] extracts the (before, after) pairs from a Pad or
-    Shrink view. Returns [None] for other ops or symbolic values. *)
+val extract_marg_pairs : view -> (int * int) list option
+(** [extract_marg_pairs v] extracts (before, after) pairs from
+    a Pad or Shrink view. Returns [None] for other ops or
+    symbolic values. *)
 
-val compute_shapes : t -> int list option array
-(** [compute_shapes t] computes the shape of every node in [t]. The returned
-    array maps each id to its shape, or [None] for nodes without shapes
-    (effects, ranges, etc.). *)
+val compute_shapes : t -> (t -> int list option)
+(** [compute_shapes root] computes the shape of every node
+    reachable from [root]. Returns a lookup function. *)
 
-val compute_devices : t -> device option array
-(** [compute_devices t] computes the device of every node in [t]. *)
+val compute_devices : t -> (t -> device option)
+(** [compute_devices root] computes the device of every node
+    reachable from [root]. Returns a lookup function. *)
 
-val base : t -> id -> id
-(** [base t id] follows through movement ops (Reshape, Expand, Pad, Shrink,
-    Permute, Flip, Multi, Detach) to the underlying buffer node. *)
-
-val consumer_map : t -> id list array
-(** [consumer_map t] builds a consumer map: for each node, the list of nodes
-    that reference it as a child. *)
-
-val backward_slice : t -> id -> id list
-(** [backward_slice t root] is all transitive dependencies of [root]
-    (inclusive), in topological order. *)
+val consumer_map : t -> (t -> t list)
+(** [consumer_map root] builds a consumer map: for each node
+    reachable from [root], the list of nodes that reference it
+    as a child. Returns a lookup function. *)
 
 (** {1:formatting Formatting} *)
 
@@ -467,4 +429,5 @@ val pp_view : Format.formatter -> view -> unit
 (** [pp_view] formats one tensor node view. *)
 
 val pp : Format.formatter -> t -> unit
-(** [pp] formats the whole graph. *)
+(** [pp] formats the DAG rooted at a node. *)
+

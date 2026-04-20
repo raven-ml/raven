@@ -49,7 +49,7 @@ type bufferize_device =
 
 type estimate =
   | Int of int  (** Concrete count. *)
-  | Symbolic of string  (** Symbolic expression (e.g. depends on a variable). *)
+  | Symbolic of t  (** Symbolic expression depending on runtime variables. *)
 (** Static or symbolic cost estimate. *)
 
 type estimates = {
@@ -87,6 +87,17 @@ module Opt : sig
 
   val pp : Format.formatter -> t -> unit
   (** [pp] formats options with {!to_string}. *)
+
+  val axis : t -> int option
+  (** [axis opt] is the axis of [opt], or [None] for [Nolocals]. *)
+
+  val amount : t -> int option
+  (** [amount opt] is the amount/arg of [opt], or [None] for [Tc], [Swap],
+      and [Nolocals]. *)
+
+  val with_amount : t -> int -> t
+  (** [with_amount opt n] returns [opt] with its amount replaced by [n].
+      No-op for [Tc], [Swap], and [Nolocals]. *)
 end
 
 type bufferize_opts = {
@@ -117,78 +128,78 @@ type view =
       (** Groups effect children without producing a value. *)
   | After of { src : t; deps : t list }
       (** Sequences [src] after [deps]. *)
-  | Param of { idx : int; dtype : Dtype.ptr }
+  | Param of { idx : int; dtype : Dtype.Ptr.t }
       (** Global buffer parameter at index [idx]. *)
-  | Param_image of { idx : int; dtype : Dtype.ptr; width : int; height : int }
+  | Param_image of { idx : int; dtype : Dtype.Ptr.t; width : int; height : int }
       (** Image buffer parameter with pixel dimensions. *)
-  | Define_local of { size : int; dtype : Dtype.ptr }
+  | Define_local of { size : int; dtype : Dtype.Ptr.t }
       (** Local (workgroup-shared) memory buffer of [size] elements. *)
-  | Define_reg of { size : int; dtype : Dtype.ptr; slot : int }
+  | Define_reg of { size : int; dtype : Dtype.Ptr.t; slot : int }
       (** Register-backed buffer of [size] elements at accumulator [slot]. *)
-  | Define_var of { name : string; lo : int; hi : int; dtype : Dtype.t }
+  | Define_var of { name : string; lo : int; hi : int; dtype : Dtype.Val.t }
       (** Scalar loop or index variable bounded by \[[lo];[hi]\]. *)
   | Bufferize of {
       src : t;
       ranges : t list;
-      dtype : Dtype.ptr;
+      dtype : Dtype.Ptr.t;
       opts : bufferize_opts;
     }  (** Materializes [src] into a buffer. *)
-  | Const of { value : Const.t; dtype : Dtype.t }
+  | Const of { value : Const.t; dtype : Dtype.Val.t }
       (** Compile-time constant. *)
-  | Vconst of { values : Const.t list; dtype : Dtype.t }
+  | Vconst of { values : Const.t list; dtype : Dtype.Val.t }
       (** Vector of compile-time constants (one per lane). *)
-  | Invalid_index of { dtype : Dtype.t }
+  | Invalid_index of { dtype : Dtype.Val.t }
       (** Invalid index sentinel. *)
-  | Index of { ptr : t; idxs : t list; gate : t option; dtype : Dtype.any }
+  | Index of { ptr : t; idxs : t list; gate : t option; dtype : Dtype.t }
       (** Indexes into [ptr] with per-dimension [idxs] and optional [gate].
-          When [dtype] is [P _], the node is a pointer-typed index (buffer
-          address). When [dtype] is [T _], it is a value-typed index that
+          When [dtype] is [Ptr _], the node is a pointer-typed index (buffer
+          address). When [dtype] is [Val _], it is a value-typed index that
           [pm_add_loads] will later wrap with {!Load}. *)
-  | Ptrcat of { srcs : t list; dtype : Dtype.ptr }
+  | Ptrcat of { srcs : t list; dtype : Dtype.Ptr.t }
       (** Concatenates pointer bundles. *)
-  | Load of { src : t; alt : t option; dtype : Dtype.t }
+  | Load of { src : t; alt : t option; dtype : Dtype.Val.t }
       (** Loads from pointer [src]. [alt] is used when gated. *)
   | Store of { dst : t; value : t; ranges : t list }
       (** Stores [value] through pointer [dst]. *)
-  | Unary of { op : Op.unary; src : t; dtype : Dtype.t }
+  | Unary of { op : Op.unary; src : t; dtype : Dtype.Val.t }
       (** Unary arithmetic or transcendental. *)
-  | Binary of { op : Op.binary; lhs : t; rhs : t; dtype : Dtype.t }
+  | Binary of { op : Op.binary; lhs : t; rhs : t; dtype : Dtype.Val.t }
       (** Binary arithmetic, logic, or comparison. *)
-  | Ternary of { op : Op.ternary; a : t; b : t; c : t; dtype : Dtype.t }
+  | Ternary of { op : Op.ternary; a : t; b : t; c : t; dtype : Dtype.Val.t }
       (** Ternary operation ([Where] or [Mulacc]). *)
-  | Cast of { src : t; dtype : Dtype.any }
-      (** Type cast. When [dtype] is [P _], this is a pointer reinterpretation
+  | Cast of { src : t; dtype : Dtype.t }
+      (** Type cast. When [dtype] is [Ptr _], this is a pointer reinterpretation
           (e.g. widening an Index pointer for grouped loads). *)
-  | Bitcast of { src : t; dtype : Dtype.t }
+  | Bitcast of { src : t; dtype : Dtype.Val.t }
       (** Bit-preserving reinterpretation. *)
-  | Vectorize of { srcs : t list; dtype : Dtype.any }
+  | Vectorize of { srcs : t list; dtype : Dtype.t }
       (** Packs scalar [srcs] into a vector.  When the sources are pointers,
-          [dtype] is [P _] with [v = List.length srcs]. *)
-  | Cat of { srcs : t list; dtype : Dtype.t }
+          [dtype] is [Ptr _] with [v = List.length srcs]. *)
+  | Vcat of { srcs : t list; dtype : Dtype.Val.t }
       (** Concatenates vectors with a common scalar type. *)
-  | Gep of { src : t; idxs : int list; dtype : Dtype.t }
+  | Gep of { src : t; idxs : int list; dtype : Dtype.Val.t }
       (** Extracts elements at [idxs] from a vector. When [idxs] has one
           element, the result is scalar. When [idxs] has multiple elements,
           the result is a vector of the extracted elements. *)
-  | Range of { size : t; dtype : Dtype.t; axis : int; sub : int list; kind : Axis_kind.t }
+  | Range of { size : t; dtype : Dtype.Val.t; axis : int; sub : int list; kind : Axis_kind.t }
       (** Loop or index variable over \[[0];[size-1]\] on [axis]. *)
   | End of { value : t; ranges : t list }
       (** Closes loop [ranges] around [value]. *)
   | Barrier  (** Workgroup barrier. *)
-  | Special of { dim : Special_dim.t; size : t; dtype : Dtype.t }
+  | Special of { dim : Special_dim.t; size : t; dtype : Dtype.Val.t }
       (** Backend-provided hardware index. *)
-  | Reduce of { op : Op.reduce; src : t; ranges : t list; dtype : Dtype.t }
+  | Reduce of { op : Op.reduce; src : t; ranges : t list; dtype : Dtype.Val.t }
       (** Reduces [src] over [ranges] with [op]. *)
-  | Unroll of { src : t; axes : (int * int) list; dtype : Dtype.t }
+  | Unroll of { src : t; axes : (int * int) list; dtype : Dtype.Val.t }
       (** Encodes unrolled lanes of [src]. *)
-  | Contract of { src : t; axes : (int * int) list; dtype : Dtype.t }
+  | Contract of { src : t; axes : (int * int) list; dtype : Dtype.Val.t }
       (** Contracts unrolled structure back into a vector dtype. *)
   | Wmma of {
       name : string;
       a : t;
       b : t;
       c : t;
-      dtype : Dtype.t;
+      dtype : Dtype.Val.t;
       dims : int * int * int;
       dtype_in : Dtype.scalar;
       dtype_out : Dtype.scalar;
@@ -199,7 +210,7 @@ type view =
     }  (** Tensor-core matrix multiply-accumulate primitive. *)
   | Custom of { fmt : string; args : t list }
       (** Backend-specific effect or statement. *)
-  | Custom_inline of { fmt : string; args : t list; dtype : Dtype.t }
+  | Custom_inline of { fmt : string; args : t list; dtype : Dtype.Val.t }
       (** Backend-specific inline value expression. *)
 (** Read-only node view. Pattern-match via {!view}. *)
 
@@ -218,34 +229,34 @@ val after : src:t -> deps:t list -> t
 
     Returns [src] unchanged when [deps] is empty. *)
 
-val param : idx:int -> dtype:Dtype.ptr -> t
+val param : idx:int -> dtype:Dtype.Ptr.t -> t
 (** [param ~idx ~dtype] is a global buffer parameter. *)
 
-val param_image : idx:int -> dtype:Dtype.ptr -> width:int -> height:int -> t
+val param_image : idx:int -> dtype:Dtype.Ptr.t -> width:int -> height:int -> t
 (** [param_image ~idx ~dtype ~width ~height] is an image parameter. *)
 
-val define_local : size:int -> dtype:Dtype.ptr -> t
+val define_local : size:int -> dtype:Dtype.Ptr.t -> t
 (** [define_local ~size ~dtype] defines a local-memory buffer. *)
 
-val define_reg : size:int -> dtype:Dtype.ptr -> slot:int -> t
+val define_reg : size:int -> dtype:Dtype.Ptr.t -> slot:int -> t
 (** [define_reg ~size ~dtype ~slot] defines a register-backed buffer.
 
     [slot] is a unique accumulator index that prevents parallel reduce
     accumulators from being merged by {!intern}. *)
 
-val define_var : name:string -> lo:int -> hi:int -> ?dtype:Dtype.t -> unit -> t
+val define_var : name:string -> lo:int -> hi:int -> ?dtype:Dtype.Val.t -> unit -> t
 (** [define_var ~name ~lo ~hi ()] is a scalar loop or index variable.
 
-    [dtype] defaults to {!Dtype.index}. *)
+    [dtype] defaults to {!Dtype.Val.index}. *)
 
 val bufferize :
-  src:t -> ranges:t list -> dtype:Dtype.ptr -> opts:bufferize_opts -> t
+  src:t -> ranges:t list -> dtype:Dtype.Ptr.t -> opts:bufferize_opts -> t
 (** [bufferize ~src ~ranges ~dtype ~opts] materializes [src] into a buffer. *)
 
 val const : Const.t -> t
 (** [const c] is a constant node with dtype derived from [c]. *)
 
-val vconst : values:Const.t list -> dtype:Dtype.t -> t
+val vconst : values:Const.t list -> dtype:Dtype.Val.t -> t
 (** [vconst ~values ~dtype] is a vector constant with one value per lane. *)
 
 val invalid_index : ?lanes:int -> unit -> t
@@ -257,19 +268,19 @@ val index : ptr:t -> idxs:t list -> ?gate:t -> ?as_ptr:bool -> unit -> t
 (** [index ~ptr ~idxs ?gate ?as_ptr ()] indexes pointer [ptr].
 
     When [as_ptr] is [true] (the default), the result is a pointer-typed
-    index ([dtype = P pty]). When [as_ptr] is [false], the result is a
-    value-typed index ([dtype = T base]) that [pm_add_loads] will later
+    index ([dtype = Ptr _]). When [as_ptr] is [false], the result is a
+    value-typed index ([dtype = Val _]) that [pm_add_loads] will later
     wrap with {!Load}.
 
     Raises [Invalid_argument] if [ptr] does not produce a pointer. *)
 
-val index_raw : ptr:t -> idxs:t list -> ?gate:t -> dtype:Dtype.any -> unit -> t
+val index_raw : ptr:t -> idxs:t list -> ?gate:t -> dtype:Dtype.t -> unit -> t
 (** [index_raw ~ptr ~idxs ?gate ~dtype ()] creates an Index node with an
-    explicit [Dtype.any] dtype. Unlike {!index}, this does not validate [ptr]
-    and does not derive the dtype from [ptr]. Used by rewrite rules that need
-    to change an Index's dtype directly (e.g., [pm_add_loads]). *)
+    explicit dtype. Unlike {!index}, this does not validate [ptr] and does
+    not derive the dtype from [ptr]. Used by rewrite rules that need to
+    change an Index's dtype directly (e.g., [pm_add_loads]). *)
 
-val ptrcat : srcs:t list -> dtype:Dtype.ptr -> t
+val ptrcat : srcs:t list -> dtype:Dtype.Ptr.t -> t
 (** [ptrcat ~srcs ~dtype] concatenates pointer bundles. *)
 
 val load : src:t -> ?alt:t -> unit -> t
@@ -297,11 +308,11 @@ val ternary : op:Op.ternary -> a:t -> b:t -> c:t -> t
 
     [Where] inherits the dtype of [b]. [Mulacc] inherits the dtype of [a]. *)
 
-val cast : src:t -> dtype:Dtype.any -> t
-(** [cast ~src ~dtype] casts [src] to [dtype]. When [dtype] is [P _], the
+val cast : src:t -> dtype:Dtype.t -> t
+(** [cast ~src ~dtype] casts [src] to [dtype]. When [dtype] is [Ptr _], the
     result is a pointer-typed node (e.g. widening an Index for grouped loads). *)
 
-val bitcast : src:t -> dtype:Dtype.t -> t
+val bitcast : src:t -> dtype:Dtype.Val.t -> t
 (** [bitcast ~src ~dtype] bitcasts [src] to [dtype]. *)
 
 val vectorize : srcs:t list -> t
@@ -310,8 +321,8 @@ val vectorize : srcs:t list -> t
     Raises [Invalid_argument] if [srcs] is empty or a source dtype is not
     available. *)
 
-val cat : srcs:t list -> t
-(** [cat ~srcs] concatenates vectors with a common scalar type.
+val vcat : srcs:t list -> t
+(** [vcat ~srcs] concatenates vectors with a common scalar type.
 
     Raises [Invalid_argument] if [srcs] is empty or a source dtype is not
     available. *)
@@ -322,10 +333,10 @@ val gep : src:t -> idx:int -> t
     Raises [Invalid_argument] if [src] does not produce a dtype. *)
 
 val range :
-  size:t -> axis:int -> ?sub:int list -> kind:Axis_kind.t -> ?dtype:Dtype.t -> unit -> t
+  size:t -> axis:int -> ?sub:int list -> kind:Axis_kind.t -> ?dtype:Dtype.Val.t -> unit -> t
 (** [range ~size ~axis ~kind ()] is a loop/index variable over [size].
 
-    [dtype] defaults to {!Dtype.index}. *)
+    [dtype] defaults to {!Dtype.Val.index}. *)
 
 val end_ : value:t -> ranges:t list -> ?tag:string -> unit -> t
 (** [end_ ~value ~ranges ()] closes loop ranges around [value].
@@ -344,18 +355,18 @@ val with_tag : string -> t -> t
 val barrier : t
 (** [barrier] is a barrier effect. *)
 
-val special : dim:Special_dim.t -> size:t -> ?dtype:Dtype.t -> unit -> t
+val special : dim:Special_dim.t -> size:t -> ?dtype:Dtype.Val.t -> unit -> t
 (** [special ~dim ~size ()] is a backend special index.
 
-    [dtype] defaults to {!Dtype.int32}. *)
+    [dtype] defaults to {!Dtype.Val.int32}. *)
 
-val reduce : op:Op.reduce -> src:t -> ranges:t list -> dtype:Dtype.t -> t
+val reduce : op:Op.reduce -> src:t -> ranges:t list -> dtype:Dtype.Val.t -> t
 (** [reduce ~op ~src ~ranges ~dtype] reduces [src] over [ranges]. *)
 
-val unroll : src:t -> axes:(int * int) list -> dtype:Dtype.t -> t
+val unroll : src:t -> axes:(int * int) list -> dtype:Dtype.Val.t -> t
 (** [unroll ~src ~axes ~dtype] encodes unrolled lanes of [src]. *)
 
-val contract : src:t -> axes:(int * int) list -> dtype:Dtype.t -> t
+val contract : src:t -> axes:(int * int) list -> dtype:Dtype.Val.t -> t
 (** [contract ~src ~axes ~dtype] contracts unrolled structure back into a vector
     dtype. *)
 
@@ -364,7 +375,7 @@ val wmma :
   a:t ->
   b:t ->
   c:t ->
-  dtype:Dtype.t ->
+  dtype:Dtype.Val.t ->
   dims:int * int * int ->
   dtype_in:Dtype.scalar ->
   dtype_out:Dtype.scalar ->
@@ -381,7 +392,7 @@ val wmma :
 val custom : fmt:string -> args:t list -> t
 (** [custom ~fmt ~args] is a backend-specific effect or statement node. *)
 
-val custom_inline : fmt:string -> args:t list -> dtype:Dtype.t -> t
+val custom_inline : fmt:string -> args:t list -> dtype:Dtype.Val.t -> t
 (** [custom_inline ~fmt ~args ~dtype] is a backend-specific inline value node.
 *)
 
@@ -395,7 +406,7 @@ val gep_multi : src:t -> idxs:int list -> t
 val broadcast : t -> int -> t
 (** [broadcast node n] repeats [node] into an [n]-wide vector.
 
-    Scalars become {!Vectorize} with [n] copies. Vectors become {!Cat} of
+    Scalars become {!Vectorize} with [n] copies. Vectors become {!Vcat} of
     [n] copies. Pointer nodes become {!Vectorize} with pointer vector
     width [n]. [n <= 1] returns [node]. *)
 
@@ -419,12 +430,13 @@ val zero_like : t -> t
 val view : t -> view
 (** [view n] is the read-only view of [n]. *)
 
-val dtype : t -> Dtype.t option
-(** [dtype n] is the value dtype of [n], if any. Effect nodes return [None]. *)
+val dtype : t -> Dtype.t
+(** [dtype n] is the dtype of [n].
 
-val any_dtype : t -> Dtype.any option
-(** [any_dtype n] is the full dtype of [n] preserving ptr/value distinction.
-    Matches tinygrad's [UOp.dtype]. *)
+    Raises [Invalid_argument] if [n] has no dtype (e.g. effect nodes). *)
+
+val dtype_opt : t -> Dtype.t option
+(** [dtype_opt n] is the dtype of [n], or [None] for effect nodes. *)
 
 val sort : t -> sort
 (** [sort n] is the coarse role of [n]. *)
@@ -439,19 +451,28 @@ val intern : t -> t
 (** [intern root] hash-conses equal nodes within the DAG reachable from [root].
 *)
 
+(* CR: replace the ad-hoc is_* and range_kind/range_axis accessors with a
+   small set of *_arg projections (const_arg, range_arg, …) that return
+   option types suitable for pattern matching.  See const_arg below. *)
+
+val const_arg : t -> Const.view option
+(** [const_arg node] is [Some v] when [node] is a {!Const}, where [v] is
+    the constant's value as a {!Const.view}. *)
+
 val is_alu : t -> bool
 (** [is_alu node] is [true] for {!Unary}, {!Binary}, and {!Ternary} nodes. *)
 
 val is_ptr : t -> bool
 (** [is_ptr node] is [true] for pointer-producing nodes ({!Param},
     {!Param_image}, {!Define_local}, {!Define_reg}, {!Bufferize}, {!Index},
-    {!Ptrcat}, {!Vectorize} with [P _] dtype), including through
+    {!Ptrcat}, {!Vectorize} with [Ptr _] dtype), including through
     {!After}/{!Cast}/{!Bitcast} wrappers. *)
 
-val get_ptr_dtype : t -> Dtype.ptr option
-(** [get_ptr_dtype node] returns the pointer dtype of [node], if it is a
-    pointer-producing node. Follows through {!After}/{!Cast}/{!Bitcast}
-    wrappers. *)
+val ptr_dtype : t -> Dtype.Ptr.t
+(** [ptr_dtype n] is the pointer dtype of [n]. Follows through
+    {!After}/{!Cast}/{!Bitcast} wrappers.
+
+    Raises [Invalid_argument] if [n] is not a pointer-producing node. *)
 
 val is_range : t -> bool
 (** [is_range node] is [true] for {!Range} nodes. *)
@@ -484,9 +505,6 @@ val const_to_int : t -> int
 
     Raises [Invalid_argument] if [node] is not an integer constant. *)
 
-val dtype_or : Dtype.t -> t -> Dtype.t
-(** [dtype_or default node] is the value dtype of [node], or [default] if
-    the node has no dtype. *)
 
 module Ref_tbl : Hashtbl.S with type key = t
 (** Hash table keyed by physical identity ([==]). *)
@@ -509,7 +527,7 @@ val replace : t -> ?children:t list -> ?dtype:Dtype.t -> unit -> t
     [children] and/or [dtype] where provided. Unchanged fields are preserved.
 
     [children] must have the same length as [children node]. [dtype] applies
-    only to value-dtype nodes; pointer-dtype nodes and effect nodes ignore it.
+    to nodes that carry a dtype field; effect nodes ignore it.
 
     The result is interned (hash-consed via {!mk}). *)
 
@@ -547,6 +565,28 @@ val in_backward_slice : t -> t -> bool
 val find_nodes : (t -> bool) -> t -> t list
 (** [find_nodes pred root] returns all nodes in [root]'s DAG satisfying [pred],
     in topological order. *)
+
+val divides : t -> int -> t option
+(** [divides node v] is [Some q] if [node] can be symbolically shown to be
+    divisible by [v], where [q] is the quotient node ([node / v]).  Returns
+    [None] when divisibility cannot be proved.
+
+    Handles {!Const}, {!Binary} [Add] (both operands must divide), and
+    {!Binary} [Mul] (either operand may divide). *)
+
+val vmin : t -> int
+(** [vmin node] is a lower bound on the value [node] can take. *)
+
+val vmax : t -> int
+(** [vmax node] is an upper bound on the value [node] can take. *)
+
+val sym_infer : t -> (string * int) list -> int
+(** [sym_infer node var_vals] evaluates [node] to a concrete integer by
+    substituting each {!Define_var} with its value from [var_vals]
+    (matched by name).
+
+    Raises [Failure] if the expression contains nodes that cannot be
+    evaluated (e.g. loads, stores, non-arithmetic ops). *)
 
 val range_start : t -> int option
 (** [range_start v] is the child index at which range arguments begin for

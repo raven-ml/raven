@@ -5,13 +5,69 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
+(* Hash-consed tensor graph IR, modelled after Kernel.t. *)
+
 type device = Single of string | Multi of string list
-type id = int
 type metadata = { name : string; caller : string; backward : bool }
 
-type emit = view -> id
-and grad_fxn = emit:emit -> grad_output:id -> call:id -> id option list
-and callee = Ref of id | Ast of Kernel.t
+type view =
+  | Sink of { srcs : t list; kernel_info : Kernel.kernel_info option }
+  | Group of { srcs : t list }
+  | After of { src : t; deps : t list; dtype : Dtype.t }
+  | Unique of { id : int }
+  | Lunique of { id : int }
+  | Device of { device : device }
+  | Buffer of { unique : t; device : t; size : int; dtype : Dtype.t }
+  | Buffer_view of { src : t; size : int; offset : int; dtype : Dtype.t }
+  | Const of { value : Const.t; dtype : Dtype.t; srcs : t list }
+  | Vconst of { values : Const.t list; dtype : Dtype.t; srcs : t list }
+  | Define_var of { name : string; lo : int; hi : int; dtype : Dtype.t }
+  | Bind of { var : t; value : t option; dtype : Dtype.t }
+  | Param of { slot : int; dtype : Dtype.t; shape : t option; device : t option }
+  | Call of { callee : callee; args : t list; info : call_info; dtype : Dtype.t }
+  | Detach of { src : t; dtype : Dtype.t }
+  | Contiguous of { src : t; ranges : t list; opts : Kernel.Opt.t list; dtype : Dtype.t }
+  | Contiguous_backward of { src : t; dtype : Dtype.t }
+  | Copy of { src : t; device : t; dtype : Dtype.t }
+  | Allreduce of { src : t; device : t; op : Op.reduce; dtype : Dtype.t }
+  | Multi of { src : t; axis : int; dtype : Dtype.t }
+  | Mstack of { srcs : t list; dtype : Dtype.t }
+  | Mselect of { src : t; index : int; dtype : Dtype.t }
+  | Reduce_axis of { src : t; op : Op.reduce; axes : int list; dtype : Dtype.t }
+  | Reduce of { src : t; ranges : t list; op : Op.reduce; dtype : Dtype.t }
+  | Reshape of { src : t; shape : t; dtype : Dtype.t }
+  | Expand of { src : t; shape : t; dtype : Dtype.t }
+  | Pad of { src : t; before : t; after : t; dtype : Dtype.t }
+  | Shrink of { src : t; before : t; after : t; dtype : Dtype.t }
+  | Permute of { src : t; order : int list; dtype : Dtype.t }
+  | Flip of { src : t; dims : bool list; dtype : Dtype.t }
+  | Range of { size : t; dtype : Dtype.t; axis : int; sub : int list; kind : Axis_kind.t }
+  | End of { value : t; ranges : t list }
+  | Index of { ptr : t; idxs : t list; gate : t option; dtype : Dtype.t }
+  | Store of { dst : t; value : t }
+  | Vectorize of { srcs : t list; dtype : Dtype.t }
+  | Cast of { src : t; dtype : Dtype.t }
+  | Bitcast of { src : t; dtype : Dtype.t }
+  | Unary of { op : Op.unary; src : t; dtype : Dtype.t }
+  | Binary of { op : Op.binary; lhs : t; rhs : t; dtype : Dtype.t }
+  | Ternary of { op : Op.ternary; a : t; b : t; c : t; dtype : Dtype.t }
+  | Noop of { src : t option; dtype : Dtype.t }
+  | Bufferize of { src : t; ranges : t list; dtype : Dtype.t; opts : Kernel.bufferize_opts }
+  | Invalid_index of { dtype : Dtype.t }
+  | Define_local of { size : int; dtype : Dtype.Ptr.t }
+  | Barrier
+  | Linear of { srcs : t list }
+  | Shaped_wmma of {
+      a : t; b : t; acc : t;
+      dims : int * int * int;
+      device : string;
+      threads : int;
+      dtype : Dtype.t;
+    }
+
+and t = view Hashcons.hash_consed
+
+and callee = Ref of t | Ast of Kernel.t
 
 and call_info = {
   grad_fxn : grad_fxn option;
@@ -20,1144 +76,1101 @@ and call_info = {
   precompile : bool;
 }
 
-and view =
-  | Sink of { srcs : id list; kernel_info : Kernel.kernel_info option }
-  | Group of { srcs : id list }
-  | After of { src : id; deps : id list; dtype : Dtype.t }
-  | Unique of { id : int }
-  | Lunique of { id : int }
-  | Device of { device : device }
-  | Buffer of { unique : id; device : id; size : int; dtype : Dtype.t }
-  | Buffer_view of { src : id; size : int; offset : int; dtype : Dtype.t }
-  | Const of { value : Const.t; dtype : Dtype.t; srcs : id list }
-  | Vconst of { values : Const.t list; dtype : Dtype.t; srcs : id list }
-  | Define_var of { name : string; lo : int; hi : int; dtype : Dtype.t }
-  | Bind of { var : id; value : id option; dtype : Dtype.t }
-  | Param of {
-      slot : int;
-      dtype : Dtype.t;
-      shape : id option;
-      device : id option;
-    }
-  | Call of {
-      callee : callee;
-      args : id list;
-      info : call_info;
-      dtype : Dtype.t;
-    }
-  | Detach of { src : id; dtype : Dtype.t }
-  | Contiguous of { src : id; ranges : id list; dtype : Dtype.t }
-  | Contiguous_backward of { src : id; dtype : Dtype.t }
-  | Copy of { src : id; device : id; dtype : Dtype.t }
-  | Allreduce of { src : id; device : id; op : Op.reduce; dtype : Dtype.t }
-  | Multi of { src : id; axis : int; dtype : Dtype.t }
-  | Mstack of { srcs : id list; dtype : Dtype.t }
-  | Mselect of { src : id; index : int; dtype : Dtype.t }
-  | Reduce_axis of {
-      src : id;
-      op : Op.reduce;
-      axes : int list;
-      dtype : Dtype.t;
-    }
-  | Reduce of { src : id; ranges : id list; op : Op.reduce; dtype : Dtype.t }
-  | Reshape of { src : id; shape : id; dtype : Dtype.t }
-  | Expand of { src : id; shape : id; dtype : Dtype.t }
-  | Pad of { src : id; before : id; after : id; dtype : Dtype.t }
-  | Shrink of { src : id; before : id; after : id; dtype : Dtype.t }
-  | Permute of { src : id; order : int list; dtype : Dtype.t }
-  | Flip of { src : id; dims : bool list; dtype : Dtype.t }
-  | Range of { size : id; dtype : Dtype.t; axis : int; sub : int list; kind : Axis_kind.t }
-  | End of { value : id; ranges : id list }
-  | Index of { ptr : id; idxs : id list; gate : id option; dtype : Dtype.t }
-  | Store of { dst : id; value : id }
-  | Vectorize of { srcs : id list; dtype : Dtype.t }
-  | Cast of { src : id; dtype : Dtype.t }
-  | Bitcast of { src : id; dtype : Dtype.t }
-  | Unary of { op : Op.unary; src : id; dtype : Dtype.t }
-  | Binary of { op : Op.binary; lhs : id; rhs : id; dtype : Dtype.t }
-  | Ternary of { op : Op.ternary; a : id; b : id; c : id; dtype : Dtype.t }
-  | Noop of { src : id option; dtype : Dtype.t }
-  | Bufferize of {
-      src : id;
-      ranges : id list;
-      dtype : Dtype.t;
-      opts : Kernel.bufferize_opts;
-    }
-  | Invalid_index of { dtype : Dtype.t }
-  | Define_local of { size : int; dtype : Dtype.ptr }
-  | Barrier
+and grad_fxn = grad_output:t -> call:t -> t option list
 
-type t = view array
-type builder = { mutable data : view array; mutable len : int }
+(* Hash-consing *)
 
-let pp_comma fmt () = Format.fprintf fmt ", "
-let pp_ref fmt r = Format.fprintf fmt "%%%d" r
-let pp_refs fmt refs = Format.pp_print_list ~pp_sep:pp_comma pp_ref fmt refs
-let create () = { data = Array.make 16 (Group { srcs = [] }); len = 0 }
+let phys_list_eq a b =
+  List.length a = List.length b && List.for_all2 (==) a b
 
-let ensure_capacity b =
-  if b.len = Array.length b.data then begin
-    let next = Array.make (2 * Array.length b.data) (Group { srcs = [] }) in
-    Array.blit b.data 0 next 0 b.len;
-    b.data <- next
-  end
+let phys_opt_eq a b =
+  match a, b with None, None -> true | Some x, Some y -> x == y | _ -> false
 
-let emit builder (instr : view) =
-  ensure_capacity builder;
-  let id = builder.len in
-  builder.data.(id) <- instr;
-  builder.len <- id + 1;
-  id
+let rec shallow_hash_view = function
+  | Sink { srcs; kernel_info } ->
+      Hashtbl.hash (0, List.map (fun n -> n.Hashcons.tag) srcs, kernel_info)
+  | Group { srcs } ->
+      Hashtbl.hash (1, List.map (fun n -> n.Hashcons.tag) srcs)
+  | After { src; deps; dtype } ->
+      Hashtbl.hash (2, src.Hashcons.tag,
+        List.map (fun n -> n.Hashcons.tag) deps, dtype)
+  | Unique { id } -> Hashtbl.hash (3, id)
+  | Lunique { id } -> Hashtbl.hash (4, id)
+  | Device { device } -> Hashtbl.hash (5, device)
+  | Buffer { unique; device; size; dtype } ->
+      Hashtbl.hash (6, unique.Hashcons.tag, device.Hashcons.tag, size, dtype)
+  | Buffer_view { src; size; offset; dtype } ->
+      Hashtbl.hash (7, src.Hashcons.tag, size, offset, dtype)
+  | Const { value; dtype; srcs } ->
+      Hashtbl.hash (8, value, dtype, List.map (fun n -> n.Hashcons.tag) srcs)
+  | Vconst { values; dtype; srcs } ->
+      Hashtbl.hash (9, values, dtype, List.map (fun n -> n.Hashcons.tag) srcs)
+  | Define_var { name; lo; hi; dtype } ->
+      Hashtbl.hash (10, name, lo, hi, dtype)
+  | Bind { var; value; dtype } ->
+      Hashtbl.hash (11, var.Hashcons.tag,
+        (match value with None -> -1 | Some v -> v.Hashcons.tag), dtype)
+  | Param { slot; dtype; shape; device } ->
+      Hashtbl.hash (12, slot, dtype,
+        (match shape with None -> -1 | Some s -> s.Hashcons.tag),
+        (match device with None -> -1 | Some d -> d.Hashcons.tag))
+  | Call { callee; args; dtype; _ } ->
+      Hashtbl.hash (13,
+        (match callee with Ref r -> r.Hashcons.tag | Ast _ -> -1),
+        List.map (fun n -> n.Hashcons.tag) args, dtype)
+  | Detach { src; dtype } -> Hashtbl.hash (14, src.Hashcons.tag, dtype)
+  | Contiguous { src; ranges; opts; dtype } ->
+      Hashtbl.hash (15, src.Hashcons.tag,
+        List.map (fun n -> n.Hashcons.tag) ranges, opts, dtype)
+  | Contiguous_backward { src; dtype } ->
+      Hashtbl.hash (16, src.Hashcons.tag, dtype)
+  | Copy { src; device; dtype } ->
+      Hashtbl.hash (17, src.Hashcons.tag, device.Hashcons.tag, dtype)
+  | Allreduce { src; device; op; dtype } ->
+      Hashtbl.hash (18, src.Hashcons.tag, device.Hashcons.tag, op, dtype)
+  | Multi { src; axis; dtype } ->
+      Hashtbl.hash (19, src.Hashcons.tag, axis, dtype)
+  | Mstack { srcs; dtype } ->
+      Hashtbl.hash (20, List.map (fun n -> n.Hashcons.tag) srcs, dtype)
+  | Mselect { src; index; dtype } ->
+      Hashtbl.hash (21, src.Hashcons.tag, index, dtype)
+  | Reduce_axis { src; op; axes; dtype } ->
+      Hashtbl.hash (22, src.Hashcons.tag, op, axes, dtype)
+  | Reduce { src; ranges; op; dtype } ->
+      Hashtbl.hash (23, src.Hashcons.tag,
+        List.map (fun n -> n.Hashcons.tag) ranges, op, dtype)
+  | Reshape { src; shape; dtype } ->
+      Hashtbl.hash (24, src.Hashcons.tag, shape.Hashcons.tag, dtype)
+  | Expand { src; shape; dtype } ->
+      Hashtbl.hash (25, src.Hashcons.tag, shape.Hashcons.tag, dtype)
+  | Pad { src; before; after; dtype } ->
+      Hashtbl.hash (26, src.Hashcons.tag, before.Hashcons.tag,
+        after.Hashcons.tag, dtype)
+  | Shrink { src; before; after; dtype } ->
+      Hashtbl.hash (27, src.Hashcons.tag, before.Hashcons.tag,
+        after.Hashcons.tag, dtype)
+  | Permute { src; order; dtype } ->
+      Hashtbl.hash (28, src.Hashcons.tag, order, dtype)
+  | Flip { src; dims; dtype } ->
+      Hashtbl.hash (29, src.Hashcons.tag, dims, dtype)
+  | Range { size; dtype; axis; sub; kind } ->
+      Hashtbl.hash (30, size.Hashcons.tag, dtype, axis, sub, kind)
+  | End { value; ranges } ->
+      Hashtbl.hash (31, value.Hashcons.tag,
+        List.map (fun n -> n.Hashcons.tag) ranges)
+  | Index { ptr; idxs; gate; dtype } ->
+      Hashtbl.hash (32, ptr.Hashcons.tag,
+        List.map (fun n -> n.Hashcons.tag) idxs,
+        (match gate with None -> -1 | Some g -> g.Hashcons.tag), dtype)
+  | Store { dst; value } ->
+      Hashtbl.hash (33, dst.Hashcons.tag, value.Hashcons.tag)
+  | Vectorize { srcs; dtype } ->
+      Hashtbl.hash (34, List.map (fun n -> n.Hashcons.tag) srcs, dtype)
+  | Cast { src; dtype } -> Hashtbl.hash (35, src.Hashcons.tag, dtype)
+  | Bitcast { src; dtype } -> Hashtbl.hash (36, src.Hashcons.tag, dtype)
+  | Unary { op; src; dtype } ->
+      Hashtbl.hash (37, op, src.Hashcons.tag, dtype)
+  | Binary { op; lhs; rhs; dtype } ->
+      Hashtbl.hash (38, op, lhs.Hashcons.tag, rhs.Hashcons.tag, dtype)
+  | Ternary { op; a; b; c; dtype } ->
+      Hashtbl.hash (39, op, a.Hashcons.tag, b.Hashcons.tag,
+        c.Hashcons.tag, dtype)
+  | Noop { src; dtype } ->
+      Hashtbl.hash (40, (match src with None -> -1 | Some s -> s.Hashcons.tag),
+        dtype)
+  | Bufferize { src; ranges; dtype; opts } ->
+      Hashtbl.hash (41, src.Hashcons.tag,
+        List.map (fun n -> n.Hashcons.tag) ranges, dtype, opts)
+  | Invalid_index { dtype } -> Hashtbl.hash (42, dtype)
+  | Define_local { size; dtype } -> Hashtbl.hash (43, size, dtype)
+  | Barrier -> Hashtbl.hash 44
+  | Linear { srcs } ->
+      Hashtbl.hash (45, List.map (fun n -> n.Hashcons.tag) srcs)
+  | Shaped_wmma { a; b; acc; dims; device; threads; dtype } ->
+      Hashtbl.hash (46, a.Hashcons.tag, b.Hashcons.tag, acc.Hashcons.tag,
+        dims, device, threads, dtype)
 
-let finish builder = Array.sub builder.data 0 builder.len
+and shallow_equal_view v1 v2 =
+  match v1, v2 with
+  | Sink s1, Sink s2 ->
+      phys_list_eq s1.srcs s2.srcs && s1.kernel_info = s2.kernel_info
+  | Group g1, Group g2 -> phys_list_eq g1.srcs g2.srcs
+  | After a1, After a2 ->
+      a1.src == a2.src && phys_list_eq a1.deps a2.deps && a1.dtype = a2.dtype
+  | Unique u1, Unique u2 -> u1.id = u2.id
+  | Lunique l1, Lunique l2 -> l1.id = l2.id
+  | Device d1, Device d2 -> d1.device = d2.device
+  | Buffer b1, Buffer b2 ->
+      b1.unique == b2.unique && b1.device == b2.device
+      && b1.size = b2.size && b1.dtype = b2.dtype
+  | Buffer_view b1, Buffer_view b2 ->
+      b1.src == b2.src && b1.size = b2.size
+      && b1.offset = b2.offset && b1.dtype = b2.dtype
+  | Const c1, Const c2 ->
+      c1.value = c2.value && c1.dtype = c2.dtype && phys_list_eq c1.srcs c2.srcs
+  | Vconst v1, Vconst v2 ->
+      v1.values = v2.values && v1.dtype = v2.dtype && phys_list_eq v1.srcs v2.srcs
+  | Define_var d1, Define_var d2 ->
+      d1.name = d2.name && d1.lo = d2.lo && d1.hi = d2.hi && d1.dtype = d2.dtype
+  | Bind b1, Bind b2 ->
+      b1.var == b2.var && phys_opt_eq b1.value b2.value && b1.dtype = b2.dtype
+  | Param p1, Param p2 ->
+      p1.slot = p2.slot && p1.dtype = p2.dtype
+      && phys_opt_eq p1.shape p2.shape && phys_opt_eq p1.device p2.device
+  | Call c1, Call c2 ->
+      (match c1.callee, c2.callee with
+       | Ref r1, Ref r2 -> r1 == r2
+       | Ast a1, Ast a2 -> a1 == a2
+       | _ -> false)
+      && phys_list_eq c1.args c2.args && c1.dtype = c2.dtype
+  | Detach d1, Detach d2 -> d1.src == d2.src && d1.dtype = d2.dtype
+  | Contiguous c1, Contiguous c2 ->
+      c1.src == c2.src && phys_list_eq c1.ranges c2.ranges
+      && c1.opts = c2.opts && c1.dtype = c2.dtype
+  | Contiguous_backward c1, Contiguous_backward c2 ->
+      c1.src == c2.src && c1.dtype = c2.dtype
+  | Copy c1, Copy c2 ->
+      c1.src == c2.src && c1.device == c2.device && c1.dtype = c2.dtype
+  | Allreduce a1, Allreduce a2 ->
+      a1.src == a2.src && a1.device == a2.device
+      && a1.op = a2.op && a1.dtype = a2.dtype
+  | Multi m1, Multi m2 ->
+      m1.src == m2.src && m1.axis = m2.axis && m1.dtype = m2.dtype
+  | Mstack m1, Mstack m2 ->
+      phys_list_eq m1.srcs m2.srcs && m1.dtype = m2.dtype
+  | Mselect m1, Mselect m2 ->
+      m1.src == m2.src && m1.index = m2.index && m1.dtype = m2.dtype
+  | Reduce_axis r1, Reduce_axis r2 ->
+      r1.src == r2.src && r1.op = r2.op && r1.axes = r2.axes && r1.dtype = r2.dtype
+  | Reduce r1, Reduce r2 ->
+      r1.src == r2.src && phys_list_eq r1.ranges r2.ranges
+      && r1.op = r2.op && r1.dtype = r2.dtype
+  | Reshape r1, Reshape r2 ->
+      r1.src == r2.src && r1.shape == r2.shape && r1.dtype = r2.dtype
+  | Expand e1, Expand e2 ->
+      e1.src == e2.src && e1.shape == e2.shape && e1.dtype = e2.dtype
+  | Pad p1, Pad p2 ->
+      p1.src == p2.src && p1.before == p2.before
+      && p1.after == p2.after && p1.dtype = p2.dtype
+  | Shrink s1, Shrink s2 ->
+      s1.src == s2.src && s1.before == s2.before
+      && s1.after == s2.after && s1.dtype = s2.dtype
+  | Permute p1, Permute p2 ->
+      p1.src == p2.src && p1.order = p2.order && p1.dtype = p2.dtype
+  | Flip f1, Flip f2 ->
+      f1.src == f2.src && f1.dims = f2.dims && f1.dtype = f2.dtype
+  | Range r1, Range r2 ->
+      r1.size == r2.size && r1.dtype = r2.dtype && r1.axis = r2.axis
+      && r1.sub = r2.sub && r1.kind = r2.kind
+  | End e1, End e2 ->
+      e1.value == e2.value && phys_list_eq e1.ranges e2.ranges
+  | Index i1, Index i2 ->
+      i1.ptr == i2.ptr && phys_list_eq i1.idxs i2.idxs
+      && phys_opt_eq i1.gate i2.gate && i1.dtype = i2.dtype
+  | Store s1, Store s2 -> s1.dst == s2.dst && s1.value == s2.value
+  | Vectorize v1, Vectorize v2 ->
+      phys_list_eq v1.srcs v2.srcs && v1.dtype = v2.dtype
+  | Cast c1, Cast c2 -> c1.src == c2.src && c1.dtype = c2.dtype
+  | Bitcast b1, Bitcast b2 -> b1.src == b2.src && b1.dtype = b2.dtype
+  | Unary u1, Unary u2 ->
+      u1.op = u2.op && u1.src == u2.src && u1.dtype = u2.dtype
+  | Binary b1, Binary b2 ->
+      b1.op = b2.op && b1.lhs == b2.lhs && b1.rhs == b2.rhs && b1.dtype = b2.dtype
+  | Ternary t1, Ternary t2 ->
+      t1.op = t2.op && t1.a == t2.a && t1.b == t2.b
+      && t1.c == t2.c && t1.dtype = t2.dtype
+  | Noop n1, Noop n2 -> phys_opt_eq n1.src n2.src && n1.dtype = n2.dtype
+  | Bufferize b1, Bufferize b2 ->
+      b1.src == b2.src && phys_list_eq b1.ranges b2.ranges
+      && b1.dtype = b2.dtype && b1.opts = b2.opts
+  | Invalid_index i1, Invalid_index i2 -> i1.dtype = i2.dtype
+  | Define_local d1, Define_local d2 -> d1.size = d2.size && d1.dtype = d2.dtype
+  | Barrier, Barrier -> true
+  | Linear l1, Linear l2 -> phys_list_eq l1.srcs l2.srcs
+  | Shaped_wmma w1, Shaped_wmma w2 ->
+      w1.a == w2.a && w1.b == w2.b && w1.acc == w2.acc
+      && w1.dims = w2.dims && w1.device = w2.device
+      && w1.threads = w2.threads && Dtype.equal w1.dtype w2.dtype
+  | _ -> false
+
+module View_hc = Hashcons.Make (struct
+  type nonrec t = view
+  let equal = shallow_equal_view
+  let hash = shallow_hash_view
+end)
+
+let hc_table = View_hc.create 4096
+let mk v = View_hc.hashcons hc_table v
+
+(* Accessors *)
+
+let view (n : t) = n.Hashcons.node
+let tag (n : t) = n.Hashcons.tag
 
 let node_dtype = function
-  | Buffer { dtype; _ }
-  | Buffer_view { dtype; _ }
-  | Const { dtype; _ }
-  | Vconst { dtype; _ }
-  | Define_var { dtype; _ }
-  | Bind { dtype; _ }
-  | Param { dtype; _ }
-  | Call { dtype; _ }
-  | After { dtype; _ }
-  | Detach { dtype; _ }
-  | Contiguous { dtype; _ }
-  | Contiguous_backward { dtype; _ }
-  | Copy { dtype; _ }
-  | Allreduce { dtype; _ }
-  | Multi { dtype; _ }
-  | Mstack { dtype; _ }
-  | Mselect { dtype; _ }
-  | Reduce_axis { dtype; _ }
-  | Reduce { dtype; _ }
-  | Reshape { dtype; _ }
-  | Expand { dtype; _ }
-  | Pad { dtype; _ }
-  | Shrink { dtype; _ }
-  | Permute { dtype; _ }
-  | Flip { dtype; _ }
-  | Range { dtype; _ }
-  | Index { dtype; _ }
-  | Vectorize { dtype; _ }
-  | Cast { dtype; _ }
-  | Bitcast { dtype; _ }
-  | Unary { dtype; _ }
-  | Binary { dtype; _ }
-  | Ternary { dtype; _ } ->
+  | After { dtype; _ } | Buffer { dtype; _ } | Buffer_view { dtype; _ }
+  | Const { dtype; _ } | Vconst { dtype; _ } | Define_var { dtype; _ }
+  | Bind { dtype; _ } | Param { dtype; _ } | Call { dtype; _ }
+  | Detach { dtype; _ } | Contiguous { dtype; _ }
+  | Contiguous_backward { dtype; _ } | Copy { dtype; _ }
+  | Allreduce { dtype; _ } | Multi { dtype; _ } | Mstack { dtype; _ }
+  | Mselect { dtype; _ } | Reduce_axis { dtype; _ } | Reduce { dtype; _ }
+  | Reshape { dtype; _ } | Expand { dtype; _ } | Pad { dtype; _ }
+  | Shrink { dtype; _ } | Permute { dtype; _ } | Flip { dtype; _ }
+  | Range { dtype; _ } | Index { dtype; _ } | Vectorize { dtype; _ }
+  | Cast { dtype; _ } | Bitcast { dtype; _ } | Unary { dtype; _ }
+  | Binary { dtype; _ } | Ternary { dtype; _ } | Noop { dtype; _ }
+  | Bufferize { dtype; _ } | Invalid_index { dtype; _ }
+  | Shaped_wmma { dtype; _ } ->
       Some dtype
-  | Noop { dtype; _ }
-  | Bufferize { dtype; _ }
-  | Invalid_index { dtype; _ } ->
-      Some dtype
-  | Define_local { dtype; _ } -> Some (Dtype.base dtype)
+  | Define_local { dtype; _ } -> Some (Dtype.Val (Dtype.Ptr.base dtype))
   | Sink _ | Group _ | Unique _ | Lunique _ | Device _ | End _ | Store _
-  | Barrier ->
-      None
+  | Barrier | Linear _ -> None
 
-let dtype_of_id builder id =
-  if id < 0 || id >= builder.len then None else node_dtype builder.data.(id)
-
-let value_dtype_exn builder ctx id =
-  match dtype_of_id builder id with
-  | Some dtype -> dtype
-  | None -> invalid_arg (Printf.sprintf "Tensor.%s expects a value node" ctx)
+let dtype n = node_dtype (view n)
+let node_dtype_of n = node_dtype (view n)
 
 let children_of = function
-  | Sink { srcs; _ } | Group { srcs } -> srcs
+  | Sink { srcs; _ } | Group { srcs } | Linear { srcs } -> srcs
   | After { src; deps; _ } -> src :: deps
-  | Unique _ | Lunique _ | Device _ | Define_var _ | Invalid_index _ | Barrier ->
-      []
+  | Unique _ | Lunique _ | Device _ | Define_var _ | Invalid_index _
+  | Barrier | Define_local _ -> []
   | Buffer { unique; device; _ } -> [ unique; device ]
   | Buffer_view { src; _ } -> [ src ]
   | Const { srcs; _ } | Vconst { srcs; _ } -> srcs
-  | Bind { var; value; _ } -> var :: Option.to_list value
-  | Param { shape; device; _ } -> Option.to_list shape @ Option.to_list device
-  | Call { callee; args; _ } -> (
-      match callee with Ref fn -> fn :: args | Ast _ -> args)
-  | Detach { src; _ }
-  | Contiguous_backward { src; _ }
-  | Multi { src; _ }
-  | Mselect { src; _ }
-  | Cast { src; _ }
-  | Bitcast { src; _ }
-  | Unary { src; _ } ->
-      [ src ]
-  | Contiguous { src; ranges; _ } | Reduce { src; ranges; _ } -> src :: ranges
-  | Copy { src; device; _ }
-  | Allreduce { src; device; _ } ->
-      [ src; device ]
-  | Mstack { srcs; _ } | Vectorize { srcs; _ } -> srcs
-  | Reduce_axis { src; _ } -> [ src ]
-  | Reshape { src; shape; _ } | Expand { src; shape; _ } -> [ src; shape ]
-  | Pad { src; before; after; _ } | Shrink { src; before; after; _ } ->
-      [ src; before; after ]
-  | Permute { src; _ } | Flip { src; _ } -> [ src ]
-  | Range { size; _ } -> [ size ]
-  | End { value; ranges } -> value :: ranges
-  | Index { ptr; idxs; gate; _ } -> (ptr :: idxs) @ Option.to_list gate
-  | Store { dst; value } -> [ dst; value ]
-  | Binary { lhs; rhs; _ } -> [ lhs; rhs ]
-  | Ternary { a; b; c; _ } -> [ a; b; c ]
-  | Noop { src; _ } -> Option.to_list src
+  | Bind { var; value; _ } ->
+      var :: (match value with Some v -> [v] | None -> [])
+  | Param { shape; device; _ } ->
+      List.filter_map Fun.id [shape; device]
+  | Call { callee; args; _ } ->
+      (match callee with Ref r -> r :: args | Ast _ -> args)
+  | Detach { src; _ } | Contiguous_backward { src; _ }
+  | Multi { src; _ } | Mselect { src; _ }
+  | Cast { src; _ } | Bitcast { src; _ }
+  | Unary { src; _ } -> [src]
+  | Contiguous { src; ranges; _ } | Reduce { src; ranges; _ }
   | Bufferize { src; ranges; _ } -> src :: ranges
-  | Define_local _ -> []
+  | Copy { src; device; _ } | Allreduce { src; device; _ } -> [src; device]
+  | Mstack { srcs; _ } | Vectorize { srcs; _ } -> srcs
+  | Reduce_axis { src; _ } -> [src]
+  | Reshape { src; shape; _ } | Expand { src; shape; _ } -> [src; shape]
+  | Pad { src; before; after; _ } | Shrink { src; before; after; _ } ->
+      [src; before; after]
+  | Permute { src; _ } | Flip { src; _ } -> [src]
+  | Range { size; _ } -> [size]
+  | End { value; ranges } -> value :: ranges
+  | Index { ptr; idxs; gate; _ } ->
+      ptr :: idxs @ (match gate with Some g -> [g] | None -> [])
+  | Store { dst; value } -> [dst; value]
+  | Binary { lhs; rhs; _ } -> [lhs; rhs]
+  | Ternary { a; b; c; _ } -> [a; b; c]
+  | Shaped_wmma { a; b; acc; _ } -> [a; b; acc]
+  | Noop { src; _ } -> (match src with Some s -> [s] | None -> [])
 
-let map_children map_ref instr =
-  let map_ref_list = List.map map_ref in
-  let map_ref_opt = Option.map map_ref in
-  match instr with
-  | Sink { srcs; kernel_info } -> Sink { srcs = map_ref_list srcs; kernel_info }
-  | Group { srcs } -> Group { srcs = map_ref_list srcs }
+let children n = children_of (view n)
+
+(* [map_children] applies [f] to every child in the same order as
+   [children_of].  All [f] calls use explicit [let]-bindings so that
+   evaluation order is left-to-right regardless of the compiler's
+   record-field evaluation order.  This matters when [f] carries
+   mutable state (e.g. the index counter in [replace]). *)
+let map_children (f : t -> t) = function
+  | Sink { srcs; kernel_info } -> Sink { srcs = List.map f srcs; kernel_info }
+  | Group { srcs } -> Group { srcs = List.map f srcs }
   | After { src; deps; dtype } ->
-      After { src = map_ref src; deps = map_ref_list deps; dtype }
-  | Unique _ | Lunique _ | Device _ | Define_var _ | Invalid_index _ | Barrier ->
-      instr
+      let src = f src in let deps = List.map f deps in
+      After { src; deps; dtype }
+  | (Unique _ | Lunique _ | Device _ | Define_var _ | Invalid_index _
+    | Barrier | Define_local _) as v -> v
   | Buffer { unique; device; size; dtype } ->
-      Buffer { unique = map_ref unique; device = map_ref device; size; dtype }
+      let unique = f unique in let device = f device in
+      Buffer { unique; device; size; dtype }
   | Buffer_view { src; size; offset; dtype } ->
-      Buffer_view { src = map_ref src; size; offset; dtype }
-  | Const { value; dtype; srcs } ->
-      Const { value; dtype; srcs = map_ref_list srcs }
-  | Vconst { values; dtype; srcs } ->
-      Vconst { values; dtype; srcs = map_ref_list srcs }
+      Buffer_view { src = f src; size; offset; dtype }
+  | Const { value; dtype; srcs } -> Const { value; dtype; srcs = List.map f srcs }
+  | Vconst { values; dtype; srcs } -> Vconst { values; dtype; srcs = List.map f srcs }
   | Bind { var; value; dtype } ->
-      Bind { var = map_ref var; value = map_ref_opt value; dtype }
+      let var = f var in let value = Option.map f value in
+      Bind { var; value; dtype }
   | Param { slot; dtype; shape; device } ->
-      Param
-        { slot; dtype; shape = map_ref_opt shape; device = map_ref_opt device }
+      let shape = Option.map f shape in let device = Option.map f device in
+      Param { slot; dtype; shape; device }
   | Call { callee; args; info; dtype } ->
-      let callee = match callee with Ref fn -> Ref (map_ref fn) | Ast _ -> callee in
-      Call { callee; args = map_ref_list args; info; dtype }
-  | Detach { src; dtype } -> Detach { src = map_ref src; dtype }
-  | Contiguous { src; ranges; dtype } ->
-      Contiguous { src = map_ref src; ranges = map_ref_list ranges; dtype }
+      let callee = match callee with Ref r -> Ref (f r) | Ast _ -> callee in
+      let args = List.map f args in
+      Call { callee; args; info; dtype }
+  | Detach { src; dtype } -> Detach { src = f src; dtype }
+  | Contiguous { src; ranges; opts; dtype } ->
+      let src = f src in let ranges = List.map f ranges in
+      Contiguous { src; ranges; opts; dtype }
   | Contiguous_backward { src; dtype } ->
-      Contiguous_backward { src = map_ref src; dtype }
+      Contiguous_backward { src = f src; dtype }
   | Copy { src; device; dtype } ->
-      Copy { src = map_ref src; device = map_ref device; dtype }
+      let src = f src in let device = f device in
+      Copy { src; device; dtype }
   | Allreduce { src; device; op; dtype } ->
-      Allreduce { src = map_ref src; device = map_ref device; op; dtype }
-  | Multi { src; axis; dtype } -> Multi { src = map_ref src; axis; dtype }
-  | Mstack { srcs; dtype } -> Mstack { srcs = map_ref_list srcs; dtype }
-  | Mselect { src; index; dtype } -> Mselect { src = map_ref src; index; dtype }
+      let src = f src in let device = f device in
+      Allreduce { src; device; op; dtype }
+  | Multi { src; axis; dtype } -> Multi { src = f src; axis; dtype }
+  | Mstack { srcs; dtype } -> Mstack { srcs = List.map f srcs; dtype }
+  | Mselect { src; index; dtype } -> Mselect { src = f src; index; dtype }
   | Reduce_axis { src; op; axes; dtype } ->
-      Reduce_axis { src = map_ref src; op; axes; dtype }
+      Reduce_axis { src = f src; op; axes; dtype }
   | Reduce { src; ranges; op; dtype } ->
-      Reduce { src = map_ref src; ranges = map_ref_list ranges; op; dtype }
+      let src = f src in let ranges = List.map f ranges in
+      Reduce { src; ranges; op; dtype }
   | Reshape { src; shape; dtype } ->
-      Reshape { src = map_ref src; shape = map_ref shape; dtype }
+      let src = f src in let shape = f shape in
+      Reshape { src; shape; dtype }
   | Expand { src; shape; dtype } ->
-      Expand { src = map_ref src; shape = map_ref shape; dtype }
+      let src = f src in let shape = f shape in
+      Expand { src; shape; dtype }
   | Pad { src; before; after; dtype } ->
-      Pad { src = map_ref src; before = map_ref before;
-            after = map_ref after; dtype }
+      let src = f src in let before = f before in let after = f after in
+      Pad { src; before; after; dtype }
   | Shrink { src; before; after; dtype } ->
-      Shrink { src = map_ref src; before = map_ref before;
-               after = map_ref after; dtype }
-  | Permute { src; order; dtype } -> Permute { src = map_ref src; order; dtype }
-  | Flip { src; dims; dtype } -> Flip { src = map_ref src; dims; dtype }
+      let src = f src in let before = f before in let after = f after in
+      Shrink { src; before; after; dtype }
+  | Permute { src; order; dtype } -> Permute { src = f src; order; dtype }
+  | Flip { src; dims; dtype } -> Flip { src = f src; dims; dtype }
   | Range { size; dtype; axis; sub; kind } ->
-      Range { size = map_ref size; dtype; axis; sub; kind }
+      Range { size = f size; dtype; axis; sub; kind }
   | End { value; ranges } ->
-      End { value = map_ref value; ranges = map_ref_list ranges }
+      let value = f value in let ranges = List.map f ranges in
+      End { value; ranges }
   | Index { ptr; idxs; gate; dtype } ->
-      Index { ptr = map_ref ptr; idxs = map_ref_list idxs;
-              gate = map_ref_opt gate; dtype }
-  | Store { dst; value } -> Store { dst = map_ref dst; value = map_ref value }
-  | Vectorize { srcs; dtype } -> Vectorize { srcs = map_ref_list srcs; dtype }
-  | Cast { src; dtype } -> Cast { src = map_ref src; dtype }
-  | Bitcast { src; dtype } -> Bitcast { src = map_ref src; dtype }
-  | Unary { op; src; dtype } -> Unary { op; src = map_ref src; dtype }
+      let ptr = f ptr in let idxs = List.map f idxs in
+      let gate = Option.map f gate in
+      Index { ptr; idxs; gate; dtype }
+  | Store { dst; value } ->
+      let dst = f dst in let value = f value in
+      Store { dst; value }
+  | Vectorize { srcs; dtype } -> Vectorize { srcs = List.map f srcs; dtype }
+  | Cast { src; dtype } -> Cast { src = f src; dtype }
+  | Bitcast { src; dtype } -> Bitcast { src = f src; dtype }
+  | Unary { op; src; dtype } -> Unary { op; src = f src; dtype }
   | Binary { op; lhs; rhs; dtype } ->
-      Binary { op; lhs = map_ref lhs; rhs = map_ref rhs; dtype }
+      let lhs = f lhs in let rhs = f rhs in
+      Binary { op; lhs; rhs; dtype }
   | Ternary { op; a; b; c; dtype } ->
-      Ternary { op; a = map_ref a; b = map_ref b; c = map_ref c; dtype }
-  | Noop { src; dtype } -> Noop { src = map_ref_opt src; dtype }
+      let a = f a in let b = f b in let c = f c in
+      Ternary { op; a; b; c; dtype }
+  | Noop { src; dtype } -> Noop { src = Option.map f src; dtype }
   | Bufferize { src; ranges; dtype; opts } ->
-      Bufferize { src = map_ref src; ranges = map_ref_list ranges; dtype; opts }
-  | Define_local _ -> instr
+      let src = f src in let ranges = List.map f ranges in
+      Bufferize { src; ranges; dtype; opts }
+  | Linear { srcs } -> Linear { srcs = List.map f srcs }
+  | Shaped_wmma w ->
+      let a = f w.a in let b = f w.b in let acc = f w.acc in
+      Shaped_wmma { w with a; b; acc }
 
-let intern (program : view array) =
-  let len = Array.length program in
-  let module Tbl = Hashtbl.Make (struct
-    type t = view
+(* Helpers used by both validation and analysis *)
 
-    let equal = ( = )
-    let hash x = Hashtbl.hash_param 100 100 x
-  end) in
-  let tbl = Tbl.create (len * 2) in
-  let map = Array.make len (-1) in
-  let next = ref 0 in
-  let acc = ref [] in
-  for i = 0 to len - 1 do
-    let mapped = map_children (fun r -> map.(r)) program.(i) in
-    match Tbl.find_opt tbl mapped with
-    | Some idx -> map.(i) <- idx
-    | None ->
-        let idx = !next in
-        incr next;
-        map.(i) <- idx;
-        Tbl.add tbl mapped idx;
-        acc := mapped :: !acc
-  done;
-  Array.of_list (List.rev !acc)
-let view program id = program.(id)
-let length program = Array.length program
-
-let dtype program id =
-  if id < 0 || id >= Array.length program then None else node_dtype program.(id)
-
-let children program id = children_of program.(id)
-
-let const builder ?(srcs = []) value =
-  emit builder (Const { value; dtype = Const.dtype value; srcs })
-
-let vconst builder ~values ~dtype ?(srcs = []) () =
-  emit builder (Vconst { values; dtype; srcs })
-
-let unique builder ~id = emit builder (Unique { id })
-let lunique builder ~id = emit builder (Lunique { id })
-let device builder device = emit builder (Device { device })
-let sink builder ?kernel_info srcs = emit builder (Sink { srcs; kernel_info })
-let group builder srcs = emit builder (Group { srcs })
-
-let after builder ~src ~deps =
-  let dtype = Option.value ~default:Dtype.void (dtype_of_id builder src) in
-  emit builder (After { src; deps; dtype })
-
-let buffer builder ~unique ~device ~size ~dtype =
-  emit builder (Buffer { unique; device; size; dtype })
-
-let buffer_view builder ~src ~size ~offset ~dtype =
-  emit builder (Buffer_view { src; size; offset; dtype })
-
-let define_var builder ~name ~lo ~hi ?(dtype = Dtype.index) () =
-  emit builder (Define_var { name; lo; hi; dtype })
-
-let bind builder ~var ?value () =
-  let dtype = value_dtype_exn builder "bind" var in
-  emit builder (Bind { var; value; dtype })
-
-let param builder ~slot ~dtype ?shape ?device () =
-  emit builder (Param { slot; dtype; shape; device })
-
-let call builder ~callee ~args ~info ~dtype =
-  emit builder (Call { callee; args; info; dtype })
-
-let detach builder ~src =
-  emit builder (Detach { src; dtype = value_dtype_exn builder "detach" src })
-
-let contiguous builder ~src ?(ranges = []) () =
-  emit builder
-    (Contiguous
-       { src; ranges; dtype = value_dtype_exn builder "contiguous" src })
-
-let contiguous_backward builder ~src =
-  emit builder
-    (Contiguous_backward
-       { src; dtype = value_dtype_exn builder "contiguous_backward" src })
-
-let copy builder ~src ~device () =
-  emit builder
-    (Copy { src; device; dtype = value_dtype_exn builder "copy" src })
-
-let allreduce builder ~src ~device ~op =
-  emit builder
-    (Allreduce
-       { src; device; op; dtype = value_dtype_exn builder "allreduce" src })
-
-let multi builder ~src ~axis =
-  emit builder
-    (Multi { src; axis; dtype = value_dtype_exn builder "multi" src })
-
-let mstack builder ~srcs =
-  match srcs with
-  | [] -> invalid_arg "Tensor.mstack expects at least one source"
-  | src :: _ ->
-      emit builder
-        (Mstack { srcs; dtype = value_dtype_exn builder "mstack" src })
-
-let mselect builder ~src ~index =
-  emit builder
-    (Mselect { src; index; dtype = value_dtype_exn builder "mselect" src })
-
-
-let reduce_axis builder ~src ~op ~axes =
-  let dtype = value_dtype_exn builder "reduce_axis" src in
-  emit builder (Reduce_axis { src; op; axes; dtype })
-
-let reduce builder ~src ~ranges ~op ~dtype =
-  emit builder (Reduce { src; ranges; op; dtype })
-
-let reshape builder ~src ~shape =
-  emit builder
-    (Reshape { src; shape; dtype = value_dtype_exn builder "reshape" src })
-
-let expand builder ~src ~shape =
-  emit builder
-    (Expand { src; shape; dtype = value_dtype_exn builder "expand" src })
-
-let pad builder ~src ~before ~after =
-  emit builder
-    (Pad { src; before; after; dtype = value_dtype_exn builder "pad" src })
-
-let shrink builder ~src ~before ~after =
-  emit builder
-    (Shrink { src; before; after; dtype = value_dtype_exn builder "shrink" src })
-
-let permute builder ~src ~order =
-  emit builder
-    (Permute { src; order; dtype = value_dtype_exn builder "permute" src })
-
-let flip builder ~src ~dims =
-  emit builder (Flip { src; dims; dtype = value_dtype_exn builder "flip" src })
-
-let range builder ~size ~axis ?(sub = []) ~kind ?(dtype = Dtype.index) () =
-  emit builder (Range { size; dtype; axis; sub; kind })
-
-let end_ builder ~value ~ranges = emit builder (End { value; ranges })
-
-let index builder ~ptr ~idxs ?gate ~dtype () =
-  emit builder (Index { ptr; idxs; gate; dtype })
-
-let store builder ~dst ~value = emit builder (Store { dst; value })
-
-let assign builder ~target ~value ?(extras = []) () =
-  let store_id = store builder ~dst:target ~value in
-  after builder ~src:target ~deps:(store_id :: extras)
-
-let vectorize builder ~srcs =
-  match srcs with
-  | [] -> invalid_arg "Tensor.vectorize expects at least one source"
-  | src :: rest ->
-      let scalar = Dtype.scalar_of (value_dtype_exn builder "vectorize" src) in
-      emit builder
-        (Vectorize { srcs; dtype = Dtype.vec scalar (1 + List.length rest) })
-
-let cast builder ~src ~dtype = emit builder (Cast { src; dtype })
-let bitcast builder ~src ~dtype = emit builder (Bitcast { src; dtype })
-
-let unary builder ~op ~src =
-  emit builder (Unary { op; src; dtype = value_dtype_exn builder "unary" src })
-
-let binary builder ~op ~lhs ~rhs =
-  let lhs_dtype = value_dtype_exn builder "binary" lhs in
-  let dtype =
-    match op with
-    | `Cmplt | `Cmpeq | `Cmpne ->
-        Dtype.vec Dtype.bool (Dtype.count lhs_dtype)
-    | _ -> lhs_dtype
-  in
-  emit builder (Binary { op; lhs; rhs; dtype })
-
-let ternary builder ~op ~a ~b ~c =
-  let dtype =
-    match op with
-    | `Where -> value_dtype_exn builder "ternary" b
-    | `Mulacc -> value_dtype_exn builder "ternary" a
-  in
-  emit builder (Ternary { op; a; b; c; dtype })
-
-let noop builder ?src ~dtype () = emit builder (Noop { src; dtype })
-
-let bufferize builder ~src ~ranges ~dtype ~opts =
-  emit builder (Bufferize { src; ranges; dtype; opts })
-
-let invalid_index builder ~dtype = emit builder (Invalid_index { dtype })
-
-let define_local builder ~size ~dtype =
-  emit builder (Define_local { size; dtype })
-
-let barrier builder = emit builder Barrier
-
-let shape builder shape =
-  let emit_dim = function
-    | Shape.Static dim -> const builder ~srcs:[] (Const.int Dtype.index dim)
-    | Shape.Symbol { name; lo; hi } -> define_var builder ~name ~lo ~hi ()
-  in
-  match Shape.dims shape with
-  | [] -> vconst builder ~values:[] ~dtype:(Dtype.vec Dtype.index 0) ()
-  | [ dim ] -> emit_dim dim
-  | dims ->
-      let srcs = List.map emit_dim dims in
-      emit builder
-        (Vectorize { srcs; dtype = Dtype.vec Dtype.index (List.length srcs) })
-
-let int_of_const value =
-  match Const.view value with
-  | Int n -> (try Some (Int64.to_int n) with Failure _ -> None)
-  | _ -> None
-
-let extract_int_shape (program : t) id =
-  match program.(id) with
-  | Vectorize { srcs; _ } ->
-      let dims =
-        List.filter_map
-          (fun s ->
-            match program.(s) with
-            | Const { value; _ } -> int_of_const value
-            | Define_var { lo; _ } -> Some lo
-            | _ -> None)
-          srcs
-      in
-      if List.length dims = List.length srcs then Some dims else None
-  | Const { value; _ } -> Option.map (fun d -> [ d ]) (int_of_const value)
+let extract_int_shape n =
+  match view n with
+  | Const { value; _ } ->
+      (match Const.view value with
+       | Int i -> Some [ Int64.to_int i ]
+       | _ -> None)
   | Vconst { values = []; _ } -> Some []
-  | _ -> None
-
-let extract_marg (program : t) = function
-  | Reshape { shape; _ } | Expand { shape; _ } -> extract_int_shape program shape
-  | _ -> None
-
-let extract_marg_pairs (program : t) = function
-  | Pad { before; after; _ } | Shrink { before; after; _ } -> (
-      match extract_int_shape program before, extract_int_shape program after with
-      | Some bs, Some es -> Some (List.combine bs es)
-      | _ -> None)
+  | Vectorize { srcs; _ } ->
+      let ints = List.filter_map (fun s ->
+        match view s with
+        | Const { value; _ } ->
+            (match Const.view value with
+             | Int i -> Some (Int64.to_int i)
+             | _ -> None)
+        | _ -> None) srcs
+      in
+      if List.length ints = List.length srcs then Some ints else None
   | _ -> None
 
 (* Validation *)
 
-let check_dtype_eq fail i ~ctx ~expected ~got =
-  match (expected, got) with
-  | Some expected, Some got when Dtype.equal expected got -> ()
-  | Some expected, Some got ->
-      fail i
-        (Printf.sprintf "%s: expected %s, got %s" ctx (Dtype.to_string expected)
-           (Dtype.to_string got))
-  | None, _ -> fail i (Printf.sprintf "%s: expected dtype not available" ctx)
-  | _, None -> fail i (Printf.sprintf "%s: operand dtype not available" ctx)
+let check cond msg = if not cond then failwith msg
 
-let check_dtype_match fail i ~ctx left right =
-  match (left, right) with
-  | Some left, Some right when Dtype.equal left right -> ()
-  | Some _, Some _ ->
-      fail i (Printf.sprintf "%s: operand dtypes don't match" ctx)
-  | _ -> fail i (Printf.sprintf "%s: operand dtype not available" ctx)
+let is_device_node n = match view n with Device _ -> true | _ -> false
+let is_unique_node n = match view n with Unique _ | Lunique _ -> true | _ -> false
+let is_define_var_node n = match view n with Define_var _ -> true | _ -> false
 
-let check_bool_scalar fail get_dtype i ~ctx r =
-  match get_dtype r with
-  | Some (dt : Dtype.t) when Dtype.scalar dt = Dtype.Bool && Dtype.count dt = 1 -> ()
-  | Some _ -> fail i (Printf.sprintf "%s must be bool scalar" ctx)
-  | None -> fail i (Printf.sprintf "%s dtype not available" ctx)
+let is_index_dtype dt = Dtype.equal (Dtype.scalarize dt) Dtype.index
 
-let check_shift_rhs fail get_dtype i rhs dtype =
-  match get_dtype rhs with
-  | Some rhs_dtype when Dtype.equal rhs_dtype dtype -> ()
-  | Some rhs_dtype when Dtype.equal rhs_dtype Dtype.uint32 -> ()
-  | Some _ -> fail i "shift rhs must match lhs dtype or be uint32"
-  | None -> fail i "shift rhs dtype not available"
+let is_index_vector_node n =
+  match view n with
+  | Const { dtype; _ } -> is_index_dtype dtype
+  | Vectorize { dtype; _ } -> is_index_dtype dtype
+  | Vconst { dtype; _ } -> is_index_dtype dtype
+  | _ -> false
 
-let check_index_like fail get_dtype i ~ctx r =
-  match get_dtype r with
-  | Some (dt : Dtype.t)
-    when Dtype.count dt = 1 && (Dtype.scalar dt = Dtype.Index || Dtype.scalar dt = Dtype.Int32) ->
-      ()
-  | Some _ -> fail i (Printf.sprintf "%s must be index or int32 scalar" ctx)
-  | None -> fail i (Printf.sprintf "%s dtype not available" ctx)
+let is_comparison = function `Cmplt | `Cmpeq | `Cmpne -> true | _ -> false
+let is_shift = function `Shl | `Shr -> true | _ -> false
 
-let validate (program : t) : unit =
-  let fail i msg =
-    failwith (Printf.sprintf "Tensor.validate: instruction %d: %s" i msg)
+(* Constructors *)
+
+let sink ?kernel_info srcs = mk (Sink { srcs; kernel_info })
+let group srcs = match srcs with [x] -> x | _ -> mk (Group { srcs })
+let after ~src ~deps =
+  let dtype = Option.value ~default:Dtype.void (dtype src) in
+  mk (After { src; deps; dtype })
+let unique ~id = mk (Unique { id })
+let lunique ~id = mk (Lunique { id })
+let device d = mk (Device { device = d })
+
+let buffer ~unique ~device ~size ~dtype =
+  check (size >= 0) "Buffer size must be non-negative";
+  check (is_unique_node unique) "Buffer unique must be Unique/Lunique";
+  check (is_device_node device) "Buffer device must be Device";
+  mk (Buffer { unique; device; size; dtype })
+
+let buffer_view ~src ~size ~offset ~dtype =
+  check (size >= 0) "Buffer_view size must be non-negative";
+  check (offset >= 0) "Buffer_view offset must be non-negative";
+  check (match view src with Buffer _ | Index _ -> true | _ -> false)
+    "Buffer_view src must be Buffer or Index";
+  mk (Buffer_view { src; size; offset; dtype })
+
+let const ?(srcs = []) value dtype =
+  (match Const.view value with
+   | Bool _ -> check (Dtype.is_bool dtype) "Bool const must have bool dtype"
+   | Int _ -> check (Dtype.is_int dtype) "Int const must have int/index dtype"
+   | Float _ -> check (Dtype.is_float dtype) "Float const must have float dtype");
+  mk (Const { value; dtype; srcs })
+
+let vconst ~values ~dtype ?(srcs = []) () =
+  check (List.length values = Dtype.count dtype)
+    "Vconst values must match vector width";
+  let scalar_dt = Dtype.scalarize dtype in
+  List.iter (fun v ->
+    match Const.view v with
+    | Int _ -> check (Dtype.is_int scalar_dt) "Vconst: expected int elements"
+    | Float _ -> check (Dtype.is_float scalar_dt) "Vconst: expected float elements"
+    | Bool _ -> check (Dtype.is_bool scalar_dt) "Vconst: expected bool elements")
+    values;
+  mk (Vconst { values; dtype; srcs })
+
+let define_var ~name ~lo ~hi ?(dtype = Dtype.index) () =
+  check (Dtype.is_int dtype) "Define_var dtype must be int/index";
+  check (lo <= hi) "Define_var lo > hi";
+  mk (Define_var { name; lo; hi; dtype })
+
+let bind ~var ?value ~dtype () =
+  check (is_define_var_node var) "Bind var must be Define_var";
+  (match value with
+   | Some v ->
+     let vdt = Option.value ~default:Dtype.void (node_dtype_of v) in
+     check (Dtype.equal vdt dtype) "Bind value dtype must match"
+   | None -> ());
+  mk (Bind { var; value; dtype })
+
+let param ~slot ~dtype ?shape ?device () =
+  (match shape with
+   | Some s -> check (is_index_vector_node s) "Param shape must be index vector"
+   | None -> ());
+  (match device with
+   | Some d -> check (is_device_node d) "Param device must be Device"
+   | None -> ());
+  mk (Param { slot; dtype; shape; device })
+
+let call ~callee ~args ~info ~dtype =
+  (match callee with
+   | Ref r ->
+     let rdt = Option.value ~default:Dtype.void (node_dtype_of r) in
+     check (Dtype.equal rdt dtype) "Call dtype must match Ref dtype"
+   | Ast _ -> ());
+  mk (Call { callee; args; info; dtype })
+
+let detach ~src =
+  let dtype = Option.value ~default:Dtype.void (dtype src) in
+  mk (Detach { src; dtype })
+
+let contiguous ~src ?(ranges = []) ?(opts = []) () =
+  let dtype = Option.value ~default:Dtype.void (dtype src) in
+  List.iter (fun r ->
+    let rdt = Option.value ~default:Dtype.void (node_dtype_of r) in
+    check (is_index_dtype rdt && Dtype.count rdt = 1)
+      "Contiguous range must be index scalar")
+    ranges;
+  mk (Contiguous { src; ranges; opts; dtype })
+
+let contiguous_backward ~src =
+  let dtype = Option.value ~default:Dtype.void (dtype src) in
+  mk (Contiguous_backward { src; dtype })
+
+let copy ~src ~device () =
+  check (is_device_node device) "Copy device must be Device";
+  let dt = Option.value ~default:Dtype.void (dtype src) in
+  mk (Copy { src; device; dtype = dt })
+
+let allreduce ~src ~device ~op ~dtype =
+  check (is_device_node device) "Allreduce device must be Device";
+  mk (Allreduce { src; device; op; dtype })
+
+let multi ~src ~axis =
+  let dtype = Option.value ~default:Dtype.void (dtype src) in
+  mk (Multi { src; axis; dtype })
+
+let mstack ~srcs =
+  check (srcs <> []) "Mstack must have srcs";
+  let dtype = match srcs with
+    | s :: _ -> Option.value ~default:Dtype.void (dtype s)
+    | [] -> Dtype.void in
+  List.iter (fun s ->
+    let sdt = Option.value ~default:Dtype.void (node_dtype_of s) in
+    check (Dtype.equal sdt dtype) "Mstack src dtypes must match")
+    srcs;
+  mk (Mstack { srcs; dtype })
+
+let mselect ~src ~index =
+  let dtype = Option.value ~default:Dtype.void (dtype src) in
+  mk (Mselect { src; index; dtype })
+
+let reduce_axis ~src ~op ~axes =
+  check (axes <> []) "Reduce_axis must have at least one axis";
+  check (List.length (List.sort_uniq Int.compare axes) = List.length axes)
+    "Reduce_axis axes must be unique";
+  let dtype = Option.value ~default:Dtype.void (dtype src) in
+  mk (Reduce_axis { src; op; axes; dtype })
+
+let reduce ~src ~ranges ~op ~dtype = mk (Reduce { src; ranges; op; dtype })
+
+let reshape ~src ~shape =
+  (match extract_int_shape shape with
+   | Some dims ->
+     check (List.for_all (fun d -> d >= 0) dims)
+       "Reshape dims must not be negative"
+   | None -> ());
+  let dtype = Option.value ~default:Dtype.void (dtype src) in
+  mk (Reshape { src; shape; dtype })
+
+let expand ~src ~shape =
+  let dtype = Option.value ~default:Dtype.void (dtype src) in
+  mk (Expand { src; shape; dtype })
+
+let pad_shrink_width n =
+  match view n with
+  | Vectorize { srcs; _ } -> Some (List.length srcs)
+  | Const _ -> Some 1
+  | Vconst { values; _ } -> Some (List.length values)
+  | _ -> None
+
+let pad ~src ~before ~after =
+  (match pad_shrink_width before, pad_shrink_width after with
+   | Some bw, Some aw ->
+     check (bw = aw) "Pad before/after width mismatch"
+   | _ -> ());
+  let dtype = Option.value ~default:Dtype.void (dtype src) in
+  mk (Pad { src; before; after; dtype })
+
+let shrink ~src ~before ~after =
+  (match pad_shrink_width before, pad_shrink_width after with
+   | Some bw, Some aw ->
+     check (bw = aw) "Shrink before/after width mismatch"
+   | _ -> ());
+  let dtype = Option.value ~default:Dtype.void (dtype src) in
+  mk (Shrink { src; before; after; dtype })
+
+let permute ~src ~order =
+  check (List.sort Int.compare order = List.init (List.length order) Fun.id)
+    "Permute order must be valid permutation";
+  let dtype = Option.value ~default:Dtype.void (dtype src) in
+  mk (Permute { src; order; dtype })
+
+let flip ~src ~dims =
+  let dtype = Option.value ~default:Dtype.void (dtype src) in
+  mk (Flip { src; dims; dtype })
+let range ~size ~axis ?(sub = []) ~kind ?(dtype = Dtype.index) () =
+  mk (Range { size; dtype; axis; sub; kind })
+let end_ ~value ~ranges = mk (End { value; ranges })
+
+let index ~ptr ~idxs ?gate ~dtype () = mk (Index { ptr; idxs; gate; dtype })
+
+let store ~dst ~value = mk (Store { dst; value })
+
+let vectorize ~srcs =
+  if srcs = [] then invalid_arg "Vectorize: srcs must not be empty";
+  let dtype = match srcs with
+    | s :: _ -> (match dtype s with Some d -> Dtype.vec (List.length srcs) (Dtype.scalarize d) | None -> Dtype.void)
+    | [] -> Dtype.void in
+  mk (Vectorize { srcs; dtype })
+
+let cast ~src ~dtype =
+  let src_dt = Option.value ~default:Dtype.void (node_dtype_of src) in
+  check (Dtype.count src_dt = Dtype.count dtype)
+    "Cast must preserve vector width";
+  mk (Cast { src; dtype })
+
+let bitcast ~src ~dtype = mk (Bitcast { src; dtype })
+
+let unary ~op ~src =
+  let dtype = Option.value ~default:Dtype.void (dtype src) in
+  mk (Unary { op; src; dtype })
+
+let binary ~op ~lhs ~rhs =
+  let lhs_dt = Option.value ~default:Dtype.void (dtype lhs) in
+  let rhs_dt = Option.value ~default:Dtype.void (dtype rhs) in
+  if is_comparison op then begin
+    check (Dtype.equal (Dtype.scalarize lhs_dt) (Dtype.scalarize rhs_dt))
+      "Comparison operands don't match";
+    let c = Dtype.count lhs_dt in
+    let dtype = if c > 1 then Dtype.vec c Dtype.bool else Dtype.bool in
+    mk (Binary { op; lhs; rhs; dtype })
+  end else if is_shift op then begin
+    check (Dtype.is_int lhs_dt) "Shift lhs must be int/index";
+    check (Dtype.equal (Dtype.scalarize rhs_dt) (Dtype.scalarize lhs_dt)
+           || Dtype.equal rhs_dt (Dtype.Val Dtype.Val.uint32))
+      "Shift rhs dtype must match lhs or be uint";
+    mk (Binary { op; lhs; rhs; dtype = lhs_dt })
+  end else begin
+    (match op with
+     | `Idiv | `Mod ->
+       check (Dtype.is_int lhs_dt) "Idiv/Mod must be int/index"
+     | _ -> ());
+    mk (Binary { op; lhs; rhs; dtype = lhs_dt })
+  end
+
+let ternary ~op ~a ~b ~c =
+  (match op with
+   | `Where ->
+     let adt = Option.value ~default:Dtype.void (dtype a) in
+     check (Dtype.is_bool adt && Dtype.count adt = 1)
+       "Where condition must be bool scalar";
+     let bdt = Option.value ~default:Dtype.void (dtype b) in
+     let cdt = Option.value ~default:Dtype.void (dtype c) in
+     check (Dtype.equal bdt cdt) "Where arms must match"
+   | `Mulacc ->
+     let adt = Option.value ~default:Dtype.void (dtype a) in
+     let bdt = Option.value ~default:Dtype.void (dtype b) in
+     let cdt = Option.value ~default:Dtype.void (dtype c) in
+     check (Dtype.equal adt bdt && Dtype.equal adt cdt)
+       "Mulacc operands must all match");
+  let dtype = Option.value ~default:Dtype.void (dtype b) in
+  mk (Ternary { op; a; b; c; dtype })
+
+let noop ?src ~dtype () = mk (Noop { src; dtype })
+let bufferize ~src ~ranges ~dtype ~opts = mk (Bufferize { src; ranges; dtype; opts })
+let invalid_index ~dtype = mk (Invalid_index { dtype })
+let define_local ~size ~dtype = mk (Define_local { size; dtype })
+let barrier = mk Barrier
+let linear srcs = mk (Linear { srcs })
+let shaped_wmma ~a ~b ~acc ~dims ~device ~threads ~dtype =
+  mk (Shaped_wmma { a; b; acc; dims; device; threads; dtype })
+
+let assign ~target ~value ?(extras = []) () =
+  let st = store ~dst:target ~value in
+  after ~src:target ~deps:(st :: extras)
+
+(* Replace *)
+
+let replace n ?children:new_ch ?dtype:new_dt () =
+  let v = view n in
+  let v = match new_ch with
+    | None -> v
+    | Some ch ->
+        let i = ref 0 in
+        map_children (fun _ -> let c = List.nth ch !i in incr i; c) v
   in
-  let get_dtype r =
-    if r < 0 || r >= Array.length program then None else node_dtype program.(r)
+  let v = match new_dt with
+    | None -> v
+    | Some dt ->
+        (match v with
+         | After r -> After { r with dtype = dt }
+         | Buffer r -> Buffer { r with dtype = dt }
+         | Buffer_view r -> Buffer_view { r with dtype = dt }
+         | Const r -> Const { r with dtype = dt }
+         | Vconst r -> Vconst { r with dtype = dt }
+         | Define_var r -> Define_var { r with dtype = dt }
+         | Bind r -> Bind { r with dtype = dt }
+         | Param r -> Param { r with dtype = dt }
+         | Call r -> Call { r with dtype = dt }
+         | Detach r -> Detach { r with dtype = dt }
+         | Contiguous r -> Contiguous { r with dtype = dt }
+         | Contiguous_backward r -> Contiguous_backward { r with dtype = dt }
+         | Copy r -> Copy { r with dtype = dt }
+         | Allreduce r -> Allreduce { r with dtype = dt }
+         | Multi r -> Multi { r with dtype = dt }
+         | Mstack r -> Mstack { r with dtype = dt }
+         | Mselect r -> Mselect { r with dtype = dt }
+         | Reduce_axis r -> Reduce_axis { r with dtype = dt }
+         | Reduce r -> Reduce { r with dtype = dt }
+         | Reshape r -> Reshape { r with dtype = dt }
+         | Expand r -> Expand { r with dtype = dt }
+         | Pad r -> Pad { r with dtype = dt }
+         | Shrink r -> Shrink { r with dtype = dt }
+         | Permute r -> Permute { r with dtype = dt }
+         | Flip r -> Flip { r with dtype = dt }
+         | Range r -> Range { r with dtype = dt }
+         | Index r -> Index { r with dtype = dt }
+         | Vectorize r -> Vectorize { r with dtype = dt }
+         | Cast r -> Cast { r with dtype = dt }
+         | Bitcast r -> Bitcast { r with dtype = dt }
+         | Unary r -> Unary { r with dtype = dt }
+         | Binary r -> Binary { r with dtype = dt }
+         | Ternary r -> Ternary { r with dtype = dt }
+         | Noop r -> Noop { r with dtype = dt }
+         | Bufferize r -> Bufferize { r with dtype = dt }
+         | Invalid_index _ -> Invalid_index { dtype = dt }
+         | Shaped_wmma r -> Shaped_wmma { r with dtype = dt }
+         | v -> v)
   in
-  let check_dtype_eq = check_dtype_eq fail in
-  let check_dtype_match = check_dtype_match fail in
-  let check_bool_scalar = check_bool_scalar fail get_dtype in
-  let check_index_like = check_index_like fail get_dtype in
-  let check_shift_rhs = check_shift_rhs fail get_dtype in
-  let check_index_scalar i ~ctx r =
-    match get_dtype r with
-    | Some dt when Dtype.scalar dt = Dtype.Index && Dtype.count dt = 1 -> ()
-    | Some _ -> fail i (Printf.sprintf "%s must be index scalar" ctx)
-    | None -> fail i (Printf.sprintf "%s dtype not available" ctx)
-  in
-  let check_index_vector i ~ctx r =
-    match get_dtype r with
-    | Some dt when Dtype.scalar dt = Dtype.Index -> ()
-    | Some _ -> fail i (Printf.sprintf "%s must be index vector" ctx)
-    | None -> fail i (Printf.sprintf "%s dtype not available" ctx)
-  in
-  let check_src_dtype i ~ctx src dtype =
-    check_dtype_eq i ~ctx ~expected:(Some dtype) ~got:(get_dtype src)
-  in
-  Array.iteri
-    (fun i instr ->
-      List.iter
-        (fun r ->
-          if r < 0 || r >= i then
-            fail i
-              (Printf.sprintf "references %%%d (out of bounds or forward)" r))
-        (children_of instr);
-      match instr with
-      | Sink _ | Group _ | Unique _ | Lunique _ | Device _ | Invalid_index _
-      | Barrier ->
-          ()
-      | Buffer { unique; device; size; _ } -> (
-          if size < 0 then fail i "Buffer size must be non-negative";
-          (match program.(unique) with
-          | Unique _ | Lunique _ -> ()
-          | _ -> fail i "Buffer unique must reference Unique/Lunique");
-          match program.(device) with
-          | Device _ -> ()
-          | _ -> fail i "Buffer device must reference Device")
-      | Buffer_view { src; size; offset; _ } -> (
-          if size < 0 then fail i "Buffer_view size must be non-negative";
-          if offset < 0 then fail i "Buffer_view offset must be non-negative";
-          match program.(src) with
-          | Buffer _ | Index _ -> ()
-          | _ -> fail i "Buffer_view src must be Buffer or Index")
-      | Const { value; dtype; _ } -> (
-          match Const.view value with
-          | Bool _ ->
-              if Dtype.scalar dtype <> Dtype.Bool then
-                fail i "Bool const must have bool dtype"
-          | Int _ ->
-              if not (Dtype.is_int dtype) then
-                fail i "Int const must have int/index dtype"
-          | Float _ ->
-              if not (Dtype.is_float dtype) then
-                fail i "Float const must have float dtype")
-      | Vconst { values; dtype; _ } ->
-          if Dtype.count dtype <> List.length values then
-            fail i "Vconst values must match vector width";
-          List.iter
-            (fun value ->
-              match Const.view value with
-              | Bool _ ->
-                  if Dtype.scalar dtype <> Dtype.Bool then
-                    fail i "Vconst bool elements must have bool dtype"
-              | Int _ ->
-                  if not (Dtype.is_int dtype) then
-                    fail i "Vconst int elements must have int/index dtype"
-              | Float _ ->
-                  if not (Dtype.is_float dtype) then
-                    fail i "Vconst float elements must have float dtype")
-            values
-      | Define_var { lo; hi; dtype; _ } ->
-          if Dtype.count dtype <> 1 then fail i "Define_var must be scalar";
-          if not (Dtype.is_int dtype || Dtype.scalar dtype = Dtype.Index) then
-            fail i "Define_var must be int/index";
-          if lo > hi then fail i "Define_var bounds invalid (lo > hi)"
-      | Bind { var; value; dtype } ->
-          (match program.(var) with
-          | Define_var { dtype = vdt; _ } ->
-              check_dtype_eq i ~ctx:"Bind dtype" ~expected:(Some vdt)
-                ~got:(Some dtype)
-          | _ -> fail i "Bind var must reference Define_var");
-          Option.iter (fun v -> check_src_dtype i ~ctx:"Bind value" v dtype) value
-      | Param { shape; device; _ } ->
-          Option.iter (check_index_vector i ~ctx:"Param shape") shape;
-          Option.iter
-            (fun d ->
-              match program.(d) with
-              | Device _ -> ()
-              | _ -> fail i "Param device must reference Device")
-            device
-      | Call { callee; dtype; _ } -> (
-          match callee with
-          | Ref fn -> check_src_dtype i ~ctx:"Call dtype" fn dtype
-          | Ast _ -> ())
-      | After { src; dtype; _ } ->
-          check_src_dtype i ~ctx:"After dtype" src dtype
-      | Detach { src; dtype }
-      | Contiguous_backward { src; dtype }
-      | Multi { src; dtype; _ }
-      | Mselect { src; dtype; _ } ->
-          check_src_dtype i ~ctx:"dtype" src dtype
-      | Reduce_axis { src; axes; dtype; _ } ->
-          check_src_dtype i ~ctx:"Reduce_axis dtype" src dtype;
-          if axes = [] then fail i "Reduce_axis must have at least one axis";
-          if List.length axes <> List.length (List.sort_uniq compare axes) then
-            fail i "Reduce_axis axes must be unique"
-      | Permute { src; order; dtype } ->
-          check_src_dtype i ~ctx:"Permute dtype" src dtype;
-          let n = List.length order in
-          if List.sort compare order <> List.init n Fun.id then
-            fail i
-              (Printf.sprintf
-                 "Permute order must be a valid permutation of 0..%d" (n - 1))
-      | Flip { src; dtype; _ } -> check_src_dtype i ~ctx:"Flip dtype" src dtype
-      | Copy { src; device; dtype } -> (
-          check_src_dtype i ~ctx:"Copy dtype" src dtype;
-          match program.(device) with
-          | Device _ -> ()
-          | _ -> fail i "Copy device must reference a Device node")
-      | Allreduce { src; device; dtype; _ } -> (
-          check_src_dtype i ~ctx:"Allreduce dtype" src dtype;
-          match program.(device) with
-          | Device _ -> ()
-          | _ -> fail i "Allreduce device must reference Device")
-      | Contiguous { src; ranges; dtype } ->
-          check_src_dtype i ~ctx:"Contiguous dtype" src dtype;
-          List.iter (check_index_scalar i ~ctx:"Contiguous range") ranges
-      | Mstack { srcs; dtype } ->
-          if srcs = [] then fail i "Mstack must have srcs";
-          List.iter (fun r -> check_src_dtype i ~ctx:"Mstack src" r dtype) srcs
-      | Reduce { src; ranges; dtype; _ } ->
-          check_src_dtype i ~ctx:"Reduce dtype" src dtype;
-          List.iter (check_index_scalar i ~ctx:"Reduce range") ranges
-      | Reshape { src; shape; dtype } -> (
-          check_src_dtype i ~ctx:"Reshape dtype" src dtype;
-          check_index_vector i ~ctx:"Shape" shape;
-          match extract_int_shape program shape with
-          | Some dims ->
-              if List.exists (fun d -> d < 0) dims then
-                fail i "Reshape shape must not contain negative numbers"
-          | None -> ())
-      | Expand { src; shape; dtype } ->
-          check_src_dtype i ~ctx:"Expand dtype" src dtype;
-          check_index_vector i ~ctx:"Shape" shape
-      | Pad { src; before; after; dtype } | Shrink { src; before; after; dtype }
-        -> (
-          check_src_dtype i ~ctx:"Pad/Shrink dtype" src dtype;
-          check_index_vector i ~ctx:"Pad/Shrink before" before;
-          check_index_vector i ~ctx:"Pad/Shrink after" after;
-          match (get_dtype before, get_dtype after) with
-          | Some bdt, Some adt when Dtype.count bdt = Dtype.count adt -> ()
-          | Some _, Some _ ->
-              fail i "Pad/Shrink before/after vector width mismatch"
-          | _ -> fail i "Pad/Shrink dtype not available")
-      | Range { size; dtype; _ } ->
-          if not (Dtype.is_int dtype) then fail i "Range must have int/index";
-          if Dtype.count dtype <> 1 then fail i "Range must be scalar";
-          check_src_dtype i ~ctx:"Range size" size dtype
-      | End { ranges; _ } ->
-          List.iter (check_index_like i ~ctx:"End range") ranges
-      | Index { idxs; gate; _ } ->
-          if idxs = [] then fail i "Index must have at least one index";
-          List.iter (check_index_scalar i ~ctx:"Index operand") idxs;
-          Option.iter (check_bool_scalar i ~ctx:"Index gate") gate
-      | Store { dst; value } -> (
-          match get_dtype dst with
-          | Some dst_dtype ->
-              check_dtype_eq i ~ctx:"Store value" ~expected:(Some dst_dtype)
-                ~got:(get_dtype value)
-          | None -> fail i "Store dst dtype not available")
-      | Vectorize { srcs; dtype } ->
-          if srcs = [] then fail i "Vectorize must have at least one operand";
-          if Dtype.count dtype <> List.length srcs then
-            fail i "Vectorize dtype count must match operand count";
-          let scalar_ty = Dtype.scalar dtype in
-          List.iter
-            (fun r ->
-              match get_dtype r with
-              | Some dt when Dtype.count dt = 1 && Dtype.scalar dt = scalar_ty -> ()
-              | Some _ -> fail i "Vectorize operands must be scalar and match"
-              | None -> fail i "Vectorize operand dtype not available")
-            srcs
-      | Cast { src; dtype } -> (
-          match get_dtype src with
-          | Some sdt ->
-              if Dtype.count sdt <> Dtype.count dtype then
-                fail i "Cast must preserve vector width"
-          | None -> fail i "Cast src dtype not available")
-      | Bitcast { src; _ } -> (
-          match get_dtype src with
-          | Some _ -> ()
-          | None -> fail i "Bitcast src dtype not available")
-      | Unary { src; dtype; _ } ->
-          check_src_dtype i ~ctx:"Unary operand" src dtype
-      | Binary
-          {
-            op =
-              ( `Add | `Sub | `Mul | `Fdiv | `Max | `Pow | `And | `Or | `Xor
-              | `Threefry );
-            lhs;
-            rhs;
-            dtype;
-          } ->
-          check_dtype_match i ~ctx:"Binary operands" (get_dtype lhs)
-            (get_dtype rhs);
-          check_dtype_eq i ~ctx:"Binary result" ~expected:(Some dtype)
-            ~got:(get_dtype lhs)
-      | Binary { op = `Idiv | `Mod; lhs; rhs; dtype } ->
-          check_dtype_match i ~ctx:"Binary operands" (get_dtype lhs)
-            (get_dtype rhs);
-          check_dtype_eq i ~ctx:"Binary result" ~expected:(Some dtype)
-            ~got:(get_dtype lhs);
-          if not (Dtype.is_int dtype) then
-            fail i "Idiv/Mod must have int/index dtype"
-      | Binary { op = `Shl | `Shr; lhs; rhs; dtype } ->
-          check_src_dtype i ~ctx:"Shift lhs" lhs dtype;
-          check_shift_rhs i rhs dtype;
-          if not (Dtype.is_int dtype) then
-            fail i "Shift must have int/index dtype"
-      | Binary { op = `Cmplt | `Cmpeq | `Cmpne; lhs; rhs; dtype } ->
-          if Dtype.scalar dtype <> Dtype.Bool then
-            fail i "Comparison must produce bool";
-          check_dtype_match i ~ctx:"Comparison operands" (get_dtype lhs)
-            (get_dtype rhs)
-      | Ternary { op = `Where; a = cond; b = then_; c = else_; dtype } ->
-          check_bool_scalar i ~ctx:"Where condition" cond;
-          check_dtype_match i ~ctx:"Where arms" (get_dtype then_)
-            (get_dtype else_);
-          check_dtype_eq i ~ctx:"Where result" ~expected:(Some dtype)
-            ~got:(get_dtype then_)
-      | Ternary { op = `Mulacc; a; b; c; dtype } ->
-          check_dtype_match i ~ctx:"Mulacc a/b" (get_dtype a) (get_dtype b);
-          check_dtype_match i ~ctx:"Mulacc a/c" (get_dtype a) (get_dtype c);
-          check_dtype_eq i ~ctx:"Mulacc result" ~expected:(Some dtype)
-            ~got:(get_dtype a)
-      | Noop { src; dtype } ->
-          Option.iter (fun s -> check_src_dtype i ~ctx:"Noop src" s dtype) src
-      | Bufferize { src; ranges; dtype; _ } ->
-          check_src_dtype i ~ctx:"Bufferize src" src dtype;
-          List.iter (check_index_scalar i ~ctx:"Bufferize range") ranges
-      | Define_local { size; _ } ->
-          if size <= 0 then fail i "Define_local size must be positive")
-    program
+  let result = mk v in
+  if result == n then n else result
 
-let rebuild rewrite program =
-  let b = create () in
-  let remap = Array.make (Array.length program) (-1) in
-  Array.iteri
-    (fun id instr ->
-      let mapped = map_children (fun r -> remap.(r)) instr in
-      let v = match rewrite id mapped with Some v -> v | None -> mapped in
-      remap.(id) <- emit b v)
-    program;
-  finish b |> intern
+(* Traversal *)
 
-let rewrite_fixpoint ?(max_iters = 16) rewrite program =
-  let rec loop n prog =
-    if n >= max_iters then
-      Printf.ksprintf failwith
-        "Tensor.rewrite_fixpoint: fixpoint not reached after %d passes" max_iters;
-    let prog' = rebuild rewrite prog in
-    if prog' = prog then prog else loop (n + 1) prog'
+let toposort ?(gate = fun _ -> true) ?(enter_calls = true) root =
+  let visited : (int, unit) Hashtbl.t = Hashtbl.create 256 in
+  let result = ref [] in
+  let stack : (t * bool) Stack.t = Stack.create () in
+  Stack.push (root, false) stack;
+  while not (Stack.is_empty stack) do
+    let node, processed = Stack.pop stack in
+    if Hashtbl.mem visited node.Hashcons.tag then ()
+    else if not processed then begin
+      if gate node then begin
+        Stack.push (node, true) stack;
+        let srcs = match view node with
+          | Call { callee = Ref c; args; _ } when not enter_calls ->
+              args @ [c]  (* skip callee body but include the ref *)
+          | Call { args; _ } when not enter_calls -> args
+          | _ -> children node
+        in
+        List.iter (fun s ->
+          if not (Hashtbl.mem visited s.Hashcons.tag) then
+            Stack.push (s, false) stack)
+          (List.rev srcs)
+      end
+    end else begin
+      Hashtbl.replace visited node.Hashcons.tag ();
+      result := node :: !result
+    end
+  done;
+  List.rev !result
+
+let backward_slice root =
+  let nodes = toposort root in
+  List.filter (fun n -> n != root) nodes
+
+let variables root =
+  List.filter (fun n ->
+    match view n with Define_var _ -> true | _ -> false)
+    (toposort root)
+
+let ranges root =
+  List.filter (fun n ->
+    match view n with Range _ -> true | _ -> false)
+    (toposort root)
+
+(* Rewriting *)
+
+module Ref_tbl = Hashtbl.Make (struct
+  type nonrec t = t
+  let equal a b = a == b
+  let hash (n : t) = n.Hashcons.tag
+end)
+
+let first_match rules n =
+  List.find_map (fun rule -> rule n) rules
+
+(* 3-stage stack-based graph rewrite. When a rewrite produces a new
+   node, that node is fully processed (children visited, rewrite
+   applied). Waitlists handle nodes whose dependencies aren't yet
+   resolved. *)
+let graph_rewrite ?(name = "") ?(enter_calls = true)
+    ?(on_rebuild : old_n:t -> new_n:t -> unit = fun ~old_n:_ ~new_n:_ -> ())
+    rewrite root =
+  let replace : t Ref_tbl.t = Ref_tbl.create 256 in
+  let on_stack : unit Ref_tbl.t = Ref_tbl.create 256 in
+  let waitlist : (t * int * t) list Ref_tbl.t = Ref_tbl.create 16 in
+  let stack : (t * int * t) Stack.t = Stack.create () in
+  let lookup c =
+    match Ref_tbl.find_opt replace c with Some r -> r | None -> c
   in
-  loop 0 program
-
-let rebuild_grow rewrite program =
-  let b = create () in
-  let remap = Array.make (Array.length program) (-1) in
-  let lookup id =
-    if id >= 0 && id < b.len then b.data.(id) else Group { srcs = [] }
+  let set_replace n v =
+    Ref_tbl.replace replace n v;
+    match Ref_tbl.find_opt waitlist n with
+    | Some waiting ->
+        Ref_tbl.remove waitlist n;
+        List.iter (fun entry -> Stack.push entry stack) waiting
+    | None -> ()
   in
-  Array.iteri
-    (fun id instr ->
-      let mapped = map_children (fun r -> remap.(r)) instr in
-      let v =
-        match rewrite ~lookup (emit b) id mapped with
-        | Some v -> v
-        | None -> mapped
-      in
-      remap.(id) <- emit b v)
-    program;
-  finish b |> intern
-
-let rewrite_fixpoint_grow ?(max_iters = 16) rewrite program =
-  let rec loop n prog =
-    if n >= max_iters then
-      Printf.ksprintf failwith
-        "Tensor.rewrite_fixpoint_grow: fixpoint not reached after %d passes" max_iters;
-    let prog' = rebuild_grow rewrite prog in
-    if prog' = prog then prog else loop (n + 1) prog'
-  in
-  loop 0 program
-
-let merge_builder (program : t) (extra : builder) =
-  let base_len = Array.length program in
-  let b = create () in
-  Array.iter (fun v -> ignore (emit b v)) program;
-  let shift id = id + base_len in
-  Array.iter
-    (fun v -> ignore (emit b (map_children shift v)))
-    (finish extra);
-  (finish b, shift)
-
-let compute_shapes (program : t) =
-  let n = Array.length program in
-  let shapes = Array.make n None in
-  let sh id = shapes.(id) in
-  for i = 0 to n - 1 do
-    shapes.(i) <-
-      (match program.(i) with
-      | Sink _ | Group _ | Unique _ | Lunique _ | Device _ | Range _ | Store _
-      | End _ | Barrier | Define_local _ ->
-          None
-      | Const _ | Vconst _ | Define_var _ | Bind _ | Invalid_index _ -> Some []
-      | Buffer { size; _ } | Buffer_view { size; _ } -> Some [ size ]
-      | Bufferize { ranges; _ } ->
-          let dims =
-            List.filter_map
-              (fun r ->
-                match program.(r) with
-                | Range { size = sz; _ } -> (
-                    match program.(sz) with
-                    | Const { value; _ } -> int_of_const value
-                    | _ -> None)
-                | Const _ -> Some 1
-                | _ -> None)
-              ranges
+  Stack.push (root, 0, root) stack;
+  Ref_tbl.replace on_stack root ();
+  let counter = ref 0 in
+  while not (Stack.is_empty stack) do
+    let n, stage, new_n = Stack.pop stack in
+    if Ref_tbl.mem replace n then ()
+    else begin
+      incr counter;
+      if !counter > 250000 then
+        failwith (Printf.sprintf "graph_rewrite(%s): %d nodes" name !counter);
+      if stage = 0 then begin
+        (* Stage 0: push self at stage 1, then push children *)
+        Stack.push (n, 1, new_n) stack;
+        let srcs =
+          if not enter_calls then
+            match view new_n with
+            | Call { args; _ } -> args
+            | _ -> children new_n
+          else children new_n
+        in
+        List.iter (fun x ->
+          if not (Ref_tbl.mem on_stack x) then begin
+            Stack.push (x, 0, x) stack;
+            Ref_tbl.replace on_stack x ()
+          end) (List.rev srcs)
+      end
+      else if stage = 1 then begin
+        (* Stage 1: check all children are ready *)
+        let all_ready = ref true in
+        let new_src =
+          List.map (fun x ->
+            match Ref_tbl.find_opt replace x with
+            | Some r -> r
+            | None -> all_ready := false; x)
+            (children new_n)
+        in
+        if not !all_ready then begin
+          let missing =
+            List.find (fun x -> not (Ref_tbl.mem replace x))
+              (children new_n)
           in
-          if List.length dims = List.length ranges then Some dims else None
-      | Param { shape; _ } -> Option.bind shape (extract_int_shape program)
-      | Reduce { src; _ }
-      | Mstack { srcs = src :: _; _ }
-      | Mselect { src; _ }
-      | Detach { src; _ }
-      | Contiguous { src; _ }
-      | Contiguous_backward { src; _ }
-      | After { src; _ }
-      | Flip { src; _ }
-      | Multi { src; _ }
-      | Unary { src; _ }
-      | Cast { src; _ }
-      | Bitcast { src; _ }
-      | Copy { src; _ }
-      | Allreduce { src; _ } ->
-          sh src
+          let prev = match Ref_tbl.find_opt waitlist missing with
+            | Some l -> l | None -> [] in
+          Ref_tbl.replace waitlist missing ((n, 1, new_n) :: prev)
+        end
+        else begin
+          let old_src = children new_n in
+          let changed =
+            List.length old_src = List.length new_src
+            && not (List.for_all2 (==) old_src new_src)
+          in
+          if not changed then begin
+            match rewrite new_n with
+            | None -> set_replace n new_n
+            | Some rewritten when rewritten == new_n -> set_replace n new_n
+            | Some rewritten ->
+                Stack.push (n, 2, rewritten) stack;
+                Stack.push (rewritten, 0, rewritten) stack
+          end
+          else begin
+            let rebuilt = mk (map_children lookup (view new_n)) in
+            on_rebuild ~old_n:new_n ~new_n:rebuilt;
+            Stack.push (n, 2, rebuilt) stack;
+            Stack.push (rebuilt, 0, rebuilt) stack
+          end
+        end
+      end
+      else begin
+        (* Stage 2: link n → result of new_n *)
+        match Ref_tbl.find_opt replace new_n with
+        | Some result -> set_replace n result
+        | None ->
+            let prev = match Ref_tbl.find_opt waitlist new_n with
+              | Some l -> l | None -> [] in
+            Ref_tbl.replace waitlist new_n ((n, 2, new_n) :: prev)
+      end
+    end
+  done;
+  lookup root
+
+let substitute mappings root =
+  let tbl : t Ref_tbl.t = Ref_tbl.create (List.length mappings) in
+  List.iter (fun (old_n, new_n) -> Ref_tbl.replace tbl old_n new_n) mappings;
+  graph_rewrite (fun n ->
+    Ref_tbl.find_opt tbl n)
+    root
+
+(* Analysis *)
+
+let rec base n =
+  match view n with
+  | Reshape { src; _ } | Expand { src; _ } | Pad { src; _ }
+  | Shrink { src; _ } | Permute { src; _ } | Flip { src; _ }
+  | Multi { src; _ } | Detach { src; _ } -> base src
+  | _ -> n
+
+let extract_marg v =
+  match v with
+  | Reshape { shape; _ } | Expand { shape; _ } -> extract_int_shape shape
+  | _ -> None
+
+let extract_marg_pairs v =
+  match v with
+  | Pad { before; after; _ } | Shrink { before; after; _ } ->
+      (match extract_int_shape before, extract_int_shape after with
+       | Some bs, Some als when List.length bs = List.length als ->
+           Some (List.combine bs als)
+       | _ -> None)
+  | _ -> None
+
+let compute_shapes root =
+  let tbl : (int, int list option) Hashtbl.t = Hashtbl.create 256 in
+  let nodes = toposort root in
+  let sh n = match Hashtbl.find_opt tbl n.Hashcons.tag with
+    | Some s -> s | None -> None in
+  List.iter (fun n ->
+    let shape = match view n with
+      | Sink _ | Group _ | Unique _ | Lunique _ | Device _ | Range _
+      | Store _ | End _ | Barrier | Define_local _ | Linear _ -> None
+      | Const _ | Vconst _ | Define_var _ | Bind _ | Invalid_index _ ->
+          Some []
+      | Buffer { size; _ } | Buffer_view { size; _ } -> Some [ size ]
+      | Param { shape; _ } ->
+          Option.bind shape extract_int_shape
+      | Reshape { shape; _ } | Expand { shape; _ } ->
+          extract_int_shape shape
+      | Pad { src; before; after; _ } ->
+          (match sh src, extract_int_shape before, extract_int_shape after with
+           | Some s, Some b, Some a ->
+               Some (List.map2 (fun si (bi, ai) -> si + bi + ai)
+                 s (List.combine b a))
+           | _ -> None)
+      | Shrink { src; before; after; _ } ->
+          (match sh src, extract_int_shape before, extract_int_shape after with
+           | Some s, Some b, Some a ->
+               Some (List.map2 (fun si (bi, ai) -> si - bi - ai)
+                 s (List.combine b a))
+           | _ -> None)
+      | Permute { src; order; _ } ->
+          Option.map (fun s ->
+            List.map (fun i -> List.nth s i) order) (sh src)
+      | Flip { src; _ } -> sh src
+      | Vectorize { srcs; _ } ->
+          (match srcs with
+           | s :: _ ->
+               Option.map (fun dims -> List.length srcs :: dims) (sh s)
+           | [] -> Some [0])
+      | Reduce_axis { src; axes; _ } ->
+          Option.map (fun s ->
+            List.mapi (fun i d -> if List.mem i axes then 1 else d) s) (sh src)
+      | Multi { src; _ } | Mselect { src; _ }
+      | Detach { src; _ } | Contiguous { src; _ }
+      | Contiguous_backward { src; _ } | Copy { src; _ }
+      | Cast { src; _ } | Bitcast { src; _ }
+      | Unary { src; _ } | Noop { src = Some src; _ } -> sh src
+      | Mstack { srcs; _ } ->
+          (match srcs with s :: _ -> sh s | [] -> None)
       | Binary { lhs; _ } -> sh lhs
       | Ternary { b; _ } -> sh b
-      | Reshape { shape; _ } | Expand { shape; _ } ->
-          extract_int_shape program shape
-      | Permute { src; order; _ } ->
-          Option.map (fun ps -> List.map (List.nth ps) order) (sh src)
-      | Pad { src; _ } as v -> (
-          match sh src, extract_marg_pairs program v with
-          | Some ps, Some pairs ->
-              Some (List.map2 (fun s (b, e) -> s + b + e) ps pairs)
-          | _ -> None)
-      | Shrink _ as v -> (
-          match extract_marg_pairs program v with
-          | Some pairs -> Some (List.map (fun (b, e) -> e - b) pairs)
-          | _ -> None)
-      | Reduce_axis { src; axes; _ } ->
-          Option.map
-            (List.mapi (fun j s -> if List.mem j axes then 1 else s))
-            (sh src)
-      | Noop { src; _ } -> Option.bind src sh
-      | Vectorize _ | Index _ | Mstack { srcs = []; _ } -> None
-      | Call { callee = Ref fn; _ } -> sh fn
-      | Call { callee = Ast _; _ } -> None)
-  done;
-  shapes
+      | Call { callee = Ast _; args; _ } ->
+          (match args with a :: _ -> sh a | [] -> None)
+      | _ -> None
+    in
+    Hashtbl.replace tbl n.Hashcons.tag shape)
+    nodes;
+  fun n -> match Hashtbl.find_opt tbl n.Hashcons.tag with
+    | Some s -> s | None -> None
 
-let compute_devices (program : t) =
-  let n = Array.length program in
-  let devices = Array.make n None in
-  let dev id = devices.(id) in
-  for i = 0 to n - 1 do
-    devices.(i) <-
-      (match program.(i) with
-      | Device { device } -> Some device
-      | Bufferize { opts; _ } -> (
-          match opts.device with
-          | Some (Device_single s) -> Some (Single s)
-          | Some (Device_multi ss) -> Some (Multi ss)
-          | _ -> None)
-      | After { src; _ } -> dev src
-      | Mselect { src; index; _ } -> (
-          match dev src with
-          | Some (Multi devs) ->
-              (try Some (Single (List.nth devs index)) with Failure _ -> None)
-          | d -> d)
+let compute_devices root =
+  let tbl : (int, device option) Hashtbl.t = Hashtbl.create 256 in
+  let nodes = toposort root in
+  let dev n = match Hashtbl.find_opt tbl n.Hashcons.tag with
+    | Some d -> d | None -> None in
+  List.iter (fun n ->
+    let d = match view n with
+      | Device { device = d } -> Some d
+      | Buffer { device = d; _ } -> dev d
+      | Copy { device = d; _ } -> dev d
+      | After { src; _ } | Detach { src; _ }
+      | Contiguous { src; _ } | Contiguous_backward { src; _ }
+      | Cast { src; _ } | Bitcast { src; _ }
+      | Unary { src; _ } | Reshape { src; _ }
+      | Expand { src; _ } | Pad { src; _ }
+      | Shrink { src; _ } | Permute { src; _ }
+      | Flip { src; _ } | Reduce_axis { src; _ }
+      | Multi { src; _ } | Mselect { src; _ }
+      | Noop { src = Some src; _ } -> dev src
+      | Binary { lhs; _ } -> dev lhs
+      | Ternary { b; _ } -> dev b
       | Mstack { srcs; _ } ->
-          let ds =
-            List.filter_map
-              (fun s ->
-                match dev s with Some (Single d) -> Some d | _ -> None)
-              srcs
-          in
-          if List.length ds = List.length srcs then Some (Multi ds) else None
-      | Copy { device = d; _ }
-      | Buffer { device = d; _ }
-      | Allreduce { device = d; _ } ->
-          dev d
-      | _ -> List.find_map dev (children_of program.(i)))
-  done;
-  devices
+          (match srcs with s :: _ -> dev s | [] -> None)
+      | Param { device = d; _ } ->
+          Option.bind d dev
+      | Call { callee = Ast _; args; _ } ->
+          (match args with a :: _ -> dev a | [] -> None)
+      | Allreduce { device = d; _ } -> dev d
+      | _ -> None
+    in
+    Hashtbl.replace tbl n.Hashcons.tag d)
+    nodes;
+  fun n -> match Hashtbl.find_opt tbl n.Hashcons.tag with
+    | Some d -> d | None -> None
 
-let rec base (program : t) id =
-  match program.(id) with
-  | Reshape { src; _ }
-  | Expand { src; _ }
-  | Pad { src; _ }
-  | Shrink { src; _ }
-  | Permute { src; _ }
-  | Flip { src; _ }
-  | Multi { src; _ }
-  | Detach { src; _ } ->
-      base program src
-  | _ -> id
+let consumer_map root =
+  let tbl : (int, t list) Hashtbl.t = Hashtbl.create 256 in
+  let nodes = toposort root in
+  List.iter (fun n ->
+    List.iter (fun c ->
+      let prev = match Hashtbl.find_opt tbl c.Hashcons.tag with
+        | Some l -> l | None -> [] in
+      Hashtbl.replace tbl c.Hashcons.tag (n :: prev))
+      (children n))
+    nodes;
+  fun n -> match Hashtbl.find_opt tbl n.Hashcons.tag with
+    | Some l -> l | None -> []
 
-let consumer_map (program : t) =
-  let n = Array.length program in
-  let consumers = Array.make n [] in
-  for i = 0 to n - 1 do
-    List.iter
-      (fun c -> consumers.(c) <- i :: consumers.(c))
-      (children_of program.(i))
-  done;
-  Array.map List.rev consumers
+(* Formatting *)
 
-let backward_slice (program : t) root =
-  let n = Array.length program in
-  let visited = Array.make n false in
-  let rec visit id =
-    if not visited.(id) then begin
-      visited.(id) <- true;
-      List.iter visit (children_of program.(id))
-    end
+let pp_view fmt v =
+  let pp_node fmt (n : t) = Format.fprintf fmt "%%%d" n.Hashcons.tag in
+  let pp_nodes fmt ns =
+    Format.pp_print_list ~pp_sep:(fun fmt () -> Format.fprintf fmt ", ")
+      pp_node fmt ns
   in
-  visit root;
-  let acc = ref [] in
-  for i = n - 1 downto 0 do
-    if visited.(i) then acc := i :: !acc
-  done;
-  !acc
-
-let pp_device fmt = function
-  | Single s -> Format.pp_print_string fmt s
-  | Multi devs ->
-      Format.fprintf fmt "[%a]"
-        (Format.pp_print_list ~pp_sep:pp_comma Format.pp_print_string)
-        devs
-
-let pp_view fmt = function
-  | Sink { srcs; kernel_info = _ } -> Format.fprintf fmt "sink %a" pp_refs srcs
-  | Group { srcs } -> Format.fprintf fmt "group %a" pp_refs srcs
-  | After { src; deps; dtype } ->
-      Format.fprintf fmt "after %a, deps=[%a] : %a" pp_ref src pp_refs deps
-        Dtype.pp dtype
-  | Unique { id } -> Format.fprintf fmt "unique #%d" id
-  | Lunique { id } -> Format.fprintf fmt "lunique #%d" id
-  | Device { device } -> Format.fprintf fmt "device %a" pp_device device
+  match v with
+  | Sink { srcs; _ } -> Format.fprintf fmt "sink [%a]" pp_nodes srcs
+  | Group { srcs } -> Format.fprintf fmt "group [%a]" pp_nodes srcs
+  | After { src; deps; _ } ->
+      Format.fprintf fmt "after %a, deps=[%a]" pp_node src pp_nodes deps
+  | Unique { id } -> Format.fprintf fmt "unique %d" id
+  | Lunique { id } -> Format.fprintf fmt "lunique %d" id
+  | Device { device = Single d } -> Format.fprintf fmt "device %s" d
+  | Device { device = Multi ds } ->
+      Format.fprintf fmt "device [%s]" (String.concat ", " ds)
   | Buffer { unique; device; size; dtype } ->
-      Format.fprintf fmt "buffer %a, %a, size=%d : %a" pp_ref unique pp_ref
-        device size Dtype.pp dtype
+      Format.fprintf fmt "buffer unique=%a device=%a size=%d : %a"
+        pp_node unique pp_node device size Dtype.pp dtype
   | Buffer_view { src; size; offset; dtype } ->
-      Format.fprintf fmt "buffer_view %a, size=%d, offset=%d : %a" pp_ref src
-        size offset Dtype.pp dtype
-  | Const { value; dtype; srcs } ->
-      Format.fprintf fmt "const %a : %a" Const.pp value Dtype.pp dtype;
-      if srcs <> [] then Format.fprintf fmt " [%a]" pp_refs srcs
-  | Vconst { values; dtype; srcs } ->
-      Format.fprintf fmt "vconst [%a] : %a"
-        (Format.pp_print_list ~pp_sep:pp_comma Const.pp)
-        values Dtype.pp dtype;
-      if srcs <> [] then Format.fprintf fmt " [%a]" pp_refs srcs
+      Format.fprintf fmt "buffer_view %a size=%d offset=%d : %a"
+        pp_node src size offset Dtype.pp dtype
+  | Const { dtype; _ } -> Format.fprintf fmt "const : %a" Dtype.pp dtype
+  | Vconst { dtype; _ } -> Format.fprintf fmt "vconst : %a" Dtype.pp dtype
   | Define_var { name; lo; hi; dtype } ->
-      Format.fprintf fmt "define_var %s : %a [%d..%d]" name Dtype.pp dtype lo hi
-  | Bind { var; value; dtype } ->
-      Format.fprintf fmt "bind %a" pp_ref var;
-      Option.iter (fun v -> Format.fprintf fmt " = %a" pp_ref v) value;
-      Format.fprintf fmt " : %a" Dtype.pp dtype
-  | Param { slot; dtype; shape; device } ->
-      Format.fprintf fmt "param %d : %a" slot Dtype.pp dtype;
-      Option.iter (fun s -> Format.fprintf fmt " shape=%a" pp_ref s) shape;
-      Option.iter (fun d -> Format.fprintf fmt " device=%a" pp_ref d) device
-  | Call { callee; args; info; dtype } ->
-      let n ast = List.length (Kernel.toposort ast) in
-      (match callee with
-      | Ref fn -> Format.fprintf fmt "call %a(" pp_ref fn
-      | Ast ast ->
-          match info.name with
-          | Some name -> Format.fprintf fmt "call <kernel:%s/%d>(" name (n ast)
-          | None -> Format.fprintf fmt "call <kernel:%d>(" (n ast));
-      Format.fprintf fmt "%a)" pp_refs args;
-      if info.precompile then Format.fprintf fmt " [precompile]";
-      if info.metadata <> [] then
-        Format.fprintf fmt " [meta=%d]" (List.length info.metadata);
-      Format.fprintf fmt " : %a" Dtype.pp dtype
-  | Detach { src; dtype } ->
-      Format.fprintf fmt "detach %a : %a" pp_ref src Dtype.pp dtype
-  | Contiguous { src; ranges; dtype } ->
-      Format.fprintf fmt "contiguous %a" pp_ref src;
-      if ranges <> [] then Format.fprintf fmt ", ranges=[%a]" pp_refs ranges;
-      Format.fprintf fmt " : %a" Dtype.pp dtype
-  | Contiguous_backward { src; dtype } ->
-      Format.fprintf fmt "contiguous_backward %a : %a" pp_ref src Dtype.pp dtype
-  | Copy { src; device; dtype } ->
-      Format.fprintf fmt "copy %a, %a : %a" pp_ref src pp_ref device Dtype.pp dtype
-  | Allreduce { src; device; op; dtype } ->
-      Format.fprintf fmt "allreduce.%a %a, %a : %a" Op.pp_reduce op pp_ref src
-        pp_ref device Dtype.pp dtype
-  | Multi { src; axis; dtype } ->
-      Format.fprintf fmt "multi %a, axis=%d : %a" pp_ref src axis Dtype.pp dtype
-  | Mstack { srcs; dtype } ->
-      Format.fprintf fmt "mstack %a : %a" pp_refs srcs Dtype.pp dtype
-  | Mselect { src; index; dtype } ->
-      Format.fprintf fmt "mselect %a, index=%d : %a" pp_ref src index Dtype.pp
-        dtype
-  | Reduce_axis { src; op; axes; dtype } ->
-      Format.fprintf fmt "reduce_axis.%a %a, axes=[%a] : %a" Op.pp_reduce op
-        pp_ref src
-        (Format.pp_print_list ~pp_sep:pp_comma Format.pp_print_int)
-        axes Dtype.pp dtype
-  | Reduce { src; ranges; op; dtype } ->
-      Format.fprintf fmt "reduce.%a %a, ranges=[%a] : %a" Op.pp_reduce op pp_ref
-        src pp_refs ranges Dtype.pp dtype
-  | Reshape { src; shape; dtype } ->
-      Format.fprintf fmt "reshape %a, %a : %a" pp_ref src pp_ref shape Dtype.pp
-        dtype
-  | Expand { src; shape; dtype } ->
-      Format.fprintf fmt "expand %a, %a : %a" pp_ref src pp_ref shape Dtype.pp
-        dtype
-  | Pad { src; before; after; dtype } ->
-      Format.fprintf fmt "pad %a, %a, %a : %a" pp_ref src pp_ref before pp_ref
-        after Dtype.pp dtype
-  | Shrink { src; before; after; dtype } ->
-      Format.fprintf fmt "shrink %a, %a, %a : %a" pp_ref src pp_ref before
-        pp_ref after Dtype.pp dtype
-  | Permute { src; order; dtype } ->
-      Format.fprintf fmt "permute %a, [%a] : %a" pp_ref src
-        (Format.pp_print_list ~pp_sep:pp_comma Format.pp_print_int)
-        order Dtype.pp dtype
-  | Flip { src; dims; dtype } ->
-      Format.fprintf fmt "flip %a, [%a] : %a" pp_ref src
-        (Format.pp_print_list ~pp_sep:pp_comma (fun fmt b ->
-             Format.fprintf fmt "%b" b))
-        dims Dtype.pp dtype
-  | Range { size; dtype; axis; sub; kind } ->
-      Format.fprintf fmt "range %a : %a [axis=%d, %a%a]" pp_ref size Dtype.pp
-        dtype axis Axis_kind.pp kind
-        (fun fmt sub ->
-          if sub <> [] then
-            Format.fprintf fmt ", sub=[%a]"
-              (Format.pp_print_list ~pp_sep:(fun fmt () -> Format.fprintf fmt ";") Format.pp_print_int)
-              sub)
-        sub
-  | End { value; ranges } ->
-      Format.fprintf fmt "end %a, ranges=[%a]" pp_ref value pp_refs ranges
-  | Index { ptr; idxs; gate; dtype } ->
-      Format.fprintf fmt "index %a, %a%a : %a" pp_ref ptr pp_refs idxs
-        (fun fmt -> function
-          | None -> () | Some g -> Format.fprintf fmt " gate=%%%d" g)
-        gate Dtype.pp dtype
+      Format.fprintf fmt "define_var %s [%d, %d] : %a" name lo hi Dtype.pp dtype
+  | Bind { var; value; _ } ->
+      Format.fprintf fmt "bind %a = %a" pp_node var
+        (Format.pp_print_option pp_node) value
+  | Param { slot; dtype; _ } ->
+      Format.fprintf fmt "param %d : %a" slot Dtype.pp dtype
+  | Call { args; dtype; _ } ->
+      Format.fprintf fmt "call [%a] : %a" pp_nodes args Dtype.pp dtype
+  | Linear { srcs } -> Format.fprintf fmt "linear [%a]" pp_nodes srcs
+  | Shaped_wmma { a; b; acc; dims = (m, n, k); device; threads; dtype } ->
+      Format.fprintf fmt "shaped_wmma %a, %a, %a dims=(%d,%d,%d) dev=%s thr=%d : %a"
+        pp_node a pp_node b pp_node acc m n k device threads Dtype.pp dtype
   | Store { dst; value } ->
-      Format.fprintf fmt "store %a, %a" pp_ref dst pp_ref value
-  | Vectorize { srcs; dtype } ->
-      Format.fprintf fmt "vec %a : %a" pp_refs srcs Dtype.pp dtype
-  | Cast { src; dtype } ->
-      Format.fprintf fmt "cast %a : %a" pp_ref src Dtype.pp dtype
-  | Bitcast { src; dtype } ->
-      Format.fprintf fmt "bitcast %a : %a" pp_ref src Dtype.pp dtype
-  | Unary { op; src; dtype } ->
-      Format.fprintf fmt "%a %a : %a" Op.pp_unary op pp_ref src Dtype.pp dtype
-  | Binary { op; lhs; rhs; dtype } ->
-      Format.fprintf fmt "%a %a, %a : %a" Op.pp_binary op pp_ref lhs pp_ref rhs
-        Dtype.pp dtype
-  | Ternary { op; a; b; c; dtype } ->
-      Format.fprintf fmt "%a %a, %a, %a : %a" Op.pp_ternary op pp_ref a pp_ref b
-        pp_ref c Dtype.pp dtype
-  | Noop { src; dtype } ->
-      Format.fprintf fmt "noop";
-      Option.iter (fun s -> Format.fprintf fmt " %a" pp_ref s) src;
-      Format.fprintf fmt " : %a" Dtype.pp dtype
-  | Bufferize { src; ranges; dtype; _ } ->
-      Format.fprintf fmt "bufferize %a, ranges=[%a] : %a" pp_ref src pp_refs
-        ranges Dtype.pp dtype
-  | Invalid_index { dtype } ->
-      Format.fprintf fmt "invalid_index : %a" Dtype.pp dtype
-  | Define_local { size; dtype } ->
-      Format.fprintf fmt "define_local size=%d : %a" size Dtype.pp_ptr dtype
+      Format.fprintf fmt "store %a <- %a" pp_node dst pp_node value
+  | End { value; ranges } ->
+      Format.fprintf fmt "end %a ranges=[%a]" pp_node value pp_nodes ranges
   | Barrier -> Format.fprintf fmt "barrier"
+  | _ -> Format.fprintf fmt "<%s>" (match v with
+      | Detach _ -> "detach" | Contiguous _ -> "contiguous"
+      | Contiguous_backward _ -> "contiguous_backward"
+      | Copy _ -> "copy" | Allreduce _ -> "allreduce"
+      | Multi _ -> "multi" | Mstack _ -> "mstack" | Mselect _ -> "mselect"
+      | Reduce_axis _ -> "reduce_axis" | Reduce _ -> "reduce"
+      | Reshape _ -> "reshape" | Expand _ -> "expand"
+      | Pad _ -> "pad" | Shrink _ -> "shrink"
+      | Permute _ -> "permute" | Flip _ -> "flip"
+      | Range _ -> "range" | Index _ -> "index"
+      | Vectorize _ -> "vectorize" | Cast _ -> "cast" | Bitcast _ -> "bitcast"
+      | Unary _ -> "unary" | Binary _ -> "binary" | Ternary _ -> "ternary"
+      | Noop _ -> "noop" | Bufferize _ -> "bufferize"
+      | Invalid_index _ -> "invalid_index" | Define_local _ -> "define_local"
+      | _ -> "unknown")
 
-let pp fmt t =
-  Array.iteri (fun i v -> Format.fprintf fmt "%3d: %a@\n" i pp_view v) t
+let pp fmt root =
+  let nodes = toposort root in
+  List.iter (fun n ->
+    Format.fprintf fmt "%3d: %a@\n" n.Hashcons.tag pp_view (view n))
+    nodes
