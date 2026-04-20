@@ -11,13 +11,13 @@
     a subprocess. The compiler targets the host architecture in freestanding
     mode ([-ffreestanding], [-nostdlib], [-fPIC]), producing
     position-independent objects suitable for JIT loading via
-    {!Device.Compiler}.
+    {!Compiler}.
 
     Source is fed on stdin and the object is read from stdout, so no temporary
     files are created.
 
     The compiler executable is controlled by the [CC] environment variable (via
-    {!Device.Context.string}), defaulting to ["clang"]. *)
+    {!Helpers.Context_var.string}), defaulting to ["clang"]. *)
 
 (** {1:compiling Compiling} *)
 
@@ -38,7 +38,7 @@ val compile_clang : string -> bytes
     {b Note.} On Windows the target is forced to [x86_64] regardless of the
     reported host architecture.
 
-    Raises {!Device.Compiler.Compile_error} if clang exits with a non-zero
+    Raises {!Compiler.Compile_error} if clang exits with a non-zero
     status. The error message includes clang's stderr output when available. *)
 
 val compile_llvmir : string -> bytes
@@ -52,5 +52,5 @@ val compile_llvmir : string -> bytes
     LLVM C API directly. This avoids a library dependency on LLVM at the
     cost of per-compilation subprocess overhead.
 
-    Raises {!Device.Compiler.Compile_error} if clang exits with a non-zero
+    Raises {!Compiler.Compile_error} if clang exits with a non-zero
     status. *)

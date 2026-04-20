@@ -206,18 +206,29 @@ module Compiler = struct
     | None -> Bytes.of_string src
     | exception Failure _ -> Bytes.of_string src
 
-  let create () = Device.Compiler.make ~name:"METAL" ~compile
+  let create () = Compiler.make ~name:"METAL" ~cachekey:"compile_metal" ~compile ()
 end
 
 module Program = struct
-  let prepare state program =
-    let handle =
-      Ffi.program_create state.State.device
-        (Device.Program.entry_name program)
-        (Device.Program.binary program)
+  let runtime state entry_name lib ~runtimevars:_ =
+    let handle = Ffi.program_create state.State.device entry_name lib in
+    let local_dims = [| 1; 1; 1 |] in
+    let call bufs ~global ~local ~vals:_ ~wait ~timeout:_ =
+      let local = Option.value local ~default:local_dims in
+      let buf_offsets = Array.make (Array.length bufs) 0 in
+      let cmd =
+        Ffi.program_dispatch state.State.queue handle bufs buf_offsets
+          [||] global local
+      in
+      state.State.in_flight <- cmd :: state.State.in_flight;
+      if wait then begin
+        State.synchronize state;
+        None
+      end else
+        None
     in
-    Device.Program.set_entry_addr program handle;
-    Device.Program.set_cleanup program (fun () -> Ffi.program_free handle)
+    let free () = Ffi.program_free handle in
+    Device.{ call; free }
 end
 
 module Icb = struct
@@ -247,46 +258,14 @@ module Icb = struct
   let release t = Ffi.icb_release t.handle
 end
 
-module Queue = struct
-  let local_dims = [| 1; 1; 1 |]
-
-  let launch_dims program args =
-    let global, local = Device.Program.launch_dims program args in
-    (global, Option.value local ~default:local_dims)
-
-  let dispatch state program buffers args =
-    let handle =
-      match Device.Program.entry_addr program with
-      | Some entry -> entry
-      | None -> invalid_arg "metal program not prepared"
-    in
-    let global, local = launch_dims program args in
-    let buf_addrs = Array.of_list (List.map Device.Buffer.addr buffers) in
-    let buf_offsets = Array.of_list (List.map Device.Buffer.offset buffers) in
-    let cmd =
-      Ffi.program_dispatch state.State.queue handle buf_addrs buf_offsets
-        (Array.of_list args) global local
-    in
-    state.State.in_flight <- cmd :: state.State.in_flight
-
-  let create state =
-    Device.Queue.make ~exec:(dispatch state) ~synchronize:(fun () ->
-        State.synchronize state) ()
-end
-
 let create name =
   let state = State.create () in
   at_exit (fun () -> State.shutdown state);
   let allocator = Allocator.create state in
-  let compiler = Compiler.create () in
-  let compiler_set =
-    Device.Compiler.
-      {
-        pairs =
-          [ { renderer = Cstyle.metal; compiler = Some compiler; ctrl = None } ];
-        ctrl = None;
-      }
+  let renderer =
+    Renderer.with_compiler (Compiler.create ()) Cstyle.metal
   in
-  let queue = Queue.create state in
-  Device.make ~name ~allocator ~compiler_set ~queue
-    ~prepare_program:(Program.prepare state) ()
+  let renderer_set = Device.Renderer_set.make [renderer, None] in
+  let runtime = Program.runtime state in
+  let synchronize () = State.synchronize state in
+  Device.make ~name ~allocator ~renderer_set ~runtime ~synchronize ()

@@ -18,8 +18,8 @@ let uname flag =
   with _ -> ""
 
 let cc =
-  let var = Device.Context.string ~name:"CC" ~default:"clang" in
-  fun () -> Device.Context.get var
+  let var = Helpers.Context_var.string ~key:"CC" ~default:"clang" in
+  fun () -> Helpers.Context_var.get var
 
 let host_arch = uname "-m"
 let is_windows = String.equal Sys.os_type "Win32"
@@ -128,7 +128,7 @@ let compile ~lang src =
         if String.equal err "" then label ^ " failed (no stderr output)"
         else Printf.sprintf "%s failed:\n%s" label err
       in
-      raise (Device.Compiler.Compile_error msg)
+      raise (Compiler.Compile_error msg)
 
 let compile_clang src = compile ~lang:"c" src
 

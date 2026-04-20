@@ -29,11 +29,9 @@ let link_symbol ?(libs = []) name =
   let libs = Array.of_list libs in
   link_symbol_raw libs name
 
-let load_program program =
+let load_program ~name ~lib =
   let prepared =
-    Elf_cpu_loader.load ~link_symbol
-      ~entry:(Device.Program.entry_name program)
-      (Device.Program.binary program)
+    Elf_cpu_loader.load ~link_symbol ~entry:name lib
   in
   let size = Elf_cpu_loader.alloc_size prepared in
   let base = exec_alloc size in
@@ -149,9 +147,9 @@ module Cpu_queue = struct
         pool.workers <- []
 
   type work = {
-    program : Device.Program.t;
-    buffers : Device.Buffer.t list;
-    args : int list;
+    entry : nativeint;
+    bufs : nativeint array;
+    vals : int64 array;
     threads : int;
     core_id_index : int option;
   }
@@ -168,28 +166,14 @@ module Cpu_queue = struct
     mutable error : exn option;
   }
 
-  let entry_addr program =
-    match Device.Program.entry_addr program with
-    | Some entry -> entry
-    | None -> invalid_arg "cpu program not prepared"
-
   let run_kernel task tid =
-    let entry = entry_addr task.program in
-    let bufs = task.buffers |> List.map Device.Buffer.addr |> Array.of_list in
-    (* Scalar arguments are stored as int64 in the vals array. The generated
-       kernel code casts to the appropriate width (e.g. (int)vals[i] for Int32).
-       Ensure vals is at least the size of Program.vars so runtime vars like
-       core_id always have a valid slot even when caller args = []. *)
-    let nvars = List.length (Device.Program.vars task.program) in
-    let nargs = List.length task.args in
-    let vals = Array.make (max nvars nargs) 0L in
-    List.iteri (fun i v -> vals.(i) <- Int64.of_int v) task.args;
+    let vals = Array.copy task.vals in
     (match task.core_id_index with
     | None -> ()
     | Some idx ->
         if idx >= 0 && idx < Array.length vals then
           vals.(idx) <- Int64.of_int tid);
-    exec_call entry bufs vals
+    exec_call task.entry task.bufs vals
 
   (* Fan out kernel execution across the Domain pool. Thread 0 runs on the
      dispatch thread; threads 1..N-1 are enqueued to pool workers. The dispatch
@@ -275,23 +259,8 @@ module Cpu_queue = struct
     t.worker_thread <- Some worker_thread;
     t
 
-  (* Tinygrad derives thread count from global_size[0] at enqueue time. Tolk
-     derives it from the program's core_id variable bounds, which is
-     self-contained: the program metadata encodes the parallelism it was
-     compiled for. *)
-  let default_threads program =
-    match Device.Program.core_id program with
-    | None -> 1
-    | Some core_id -> max 1 (Program_spec.thread_count core_id)
-
-  let exec t program buffers args =
-    let threads = default_threads program in
-    let core_id_index =
-      Option.map
-        (fun core_id -> core_id.Program_spec.var_index)
-        (Device.Program.core_id program)
-    in
-    let task = Work { program; buffers; args; threads; core_id_index } in
+  let exec t ~entry ~bufs ~vals ~threads ~core_id_index =
+    let task = Work { entry; bufs; vals; threads; core_id_index } in
     Mutex.lock t.mutex;
     Queue.add task t.tasks;
     t.pending <- t.pending + 1;
@@ -325,31 +294,34 @@ end
 
 let create name =
   let clang =
-    Device.Compiler.make ~name:"CLANG" ~compile:Compiler_cpu.compile_clang
+    Compiler.make ~name:"CLANG" ~cachekey:"compile_clang_jit"
+      ~compile:Compiler_cpu.compile_clang ()
   in
-  let prepare_program program =
-    let loaded = load_program program in
-    Device.Program.set_entry_addr program loaded.entry;
-    Device.Program.set_cleanup program (fun () -> unload_program loaded)
+  let state = Cpu_queue.create () in
+  at_exit (fun () -> Cpu_queue.shutdown state);
+  let runtime entry_name lib ~runtimevars =
+    let loaded = load_program ~name:entry_name ~lib in
+    let entry = loaded.entry in
+    let core_id_index = List.assoc_opt "core_id" runtimevars in
+    let call bufs ~global ~local:_ ~vals ~wait ~timeout:_ =
+      let threads = match core_id_index with
+        | Some _ -> max 1 global.(0)
+        | None -> 1
+      in
+      Cpu_queue.exec state ~entry ~bufs ~vals ~threads ~core_id_index;
+      if wait then begin
+        Cpu_queue.synchronize state;
+        None
+      end else
+        None
+    in
+    let free () = unload_program loaded in
+    Device.{ call; free }
   in
-  let queue =
-    let state = Cpu_queue.create () in
-    at_exit (fun () -> Cpu_queue.shutdown state);
-    Device.Queue.make
-      ~exec:(fun program buffers args ->
-        Cpu_queue.exec state program buffers args)
-      ~synchronize:(fun () -> Cpu_queue.synchronize state)
-      ()
-  in
-  let compiler_set =
-    Device.Compiler.
-      {
-        pairs =
-          [ { renderer = Cstyle.clang; compiler = Some clang; ctrl = None } ];
-        ctrl = None;
-      }
-  in
+  let synchronize () = Cpu_queue.synchronize state in
+  let renderer = Renderer.with_compiler clang Cstyle.clang in
+  let renderer_set = Device.Renderer_set.make [renderer, None] in
   let allocator =
     Device.Allocator.Pack (Device.Lru_allocator.wrap raw_allocator)
   in
-  Device.make ~name ~allocator ~compiler_set ~queue ~prepare_program ()
+  Device.make ~name ~allocator ~renderer_set ~runtime ~synchronize ()
