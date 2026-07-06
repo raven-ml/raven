@@ -7,6 +7,10 @@ All notable changes to this project will be documented in this file.
 
 ## [1.0.0~beta1] - Unreleased
 
+### General
+
+- Add compatibility with OCaml 5.5.
+
 ### Munin (new)
 
 Local experiment tracking for Raven. Evolves `kaun-board` into a full
@@ -100,6 +104,9 @@ thread.
   directory before execution, so that relative file references in code cells
   work correctly.
 - Add `vega` to the default Raven packages loaded in Quill kernels.
+- Remove `Quill_top.install_printer_fn`. It was unused and relied on
+  `Toploop.install_printer`, which was removed in OCaml 5.5. Use
+  `Quill_top.install_printer` instead.
 
 ## [1.0.0~alpha3] - 2026-03-14
 
