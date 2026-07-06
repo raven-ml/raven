@@ -9,7 +9,7 @@
 
    1. Fisher matrix: compute the Cramer-Rao bounds on temperature and extinction
    -- "how well CAN I constrain these parameters from UGRIZ photometry?" --
-   before taking any data. Computed inline from Rune.jacrev + linear algebra.
+   before taking any data. Computed inline from Rune.jacrev' + linear algebra.
 
    2. HMC sampling: full Bayesian posterior through the differentiable Spectrum
    -> Extinction -> Photometry pipeline, via Norn.hmc. *)
@@ -73,7 +73,7 @@ let obs_mags =
 
 (* Fisher information: F = J^T C^-1 J *)
 let fisher f ~params ~obs_cov =
-  let j = Rune.jacrev f params in
+  let j = Rune.jacrev' f params in
   let jt = Nx.matrix_transpose j in
   Nx.matmul (Nx.matmul jt (Nx.inv obs_cov)) j
 

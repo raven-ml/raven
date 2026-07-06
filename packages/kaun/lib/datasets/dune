@@ -1,4 +1,4 @@
 (library
  (name kaun_datasets)
  (public_name kaun.datasets)
- (libraries unix zip rune nx kaun logs))
+ (libraries unix zip nx logs))

@@ -24,7 +24,7 @@ dune exec --root . examples/09-gravitational-lensing/main.exe
 | `Nx.square`             | Squared distances for radial computation               |
 | `Nx.sqrt`               | Radial distance from lens center                       |
 | `Nx.mean`               | Mean source position across images                     |
-| `Rune.value_and_grads`  | Compute loss and gradients for all lens parameters      |
+| `Rune.value_and_grad`   | Compute loss and gradients for all lens parameters      |
 | `Vega.adam`             | Adam optimizer for parameter fitting                   |
 | `Vega.step`             | Apply one optimization update                          |
 

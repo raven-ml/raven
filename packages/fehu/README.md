@@ -16,16 +16,15 @@ Create an environment, run a random policy, and evaluate:
 open Fehu
 
 let () =
-  let rng = Rune.Rng.key 42 in
-  let env = Fehu_envs.Cartpole.make ~rng () in
+  Nx.Rng.run ~seed:42 @@ fun () ->
+  let env = Fehu_envs.Cartpole.make () in
 
   (* Run one episode *)
   let _obs, _info = Env.reset env () in
   let done_ = ref false in
   let total_reward = ref 0.0 in
   while not !done_ do
-    let act, _ = Space.sample (Env.action_space env)
-      ~rng:(Env.take_rng env) in
+    let act = Space.sample (Env.action_space env) in
     let s = Env.step env act in
     total_reward := !total_reward +. s.reward;
     done_ := s.terminated || s.truncated
@@ -34,9 +33,7 @@ let () =
 
   (* Evaluate over 10 episodes *)
   let stats = Eval.run env
-    ~policy:(fun _obs ->
-      let act, _ = Space.sample (Env.action_space env)
-        ~rng:(Env.take_rng env) in act)
+    ~policy:(fun _obs -> Space.sample (Env.action_space env))
     ~n_episodes:10 ()
   in
   Printf.printf "Mean reward: %.1f (std: %.1f)\n"

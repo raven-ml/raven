@@ -1,6 +1,6 @@
 # Getting Started
 
-This guide shows you how to compute gradients and use Rune's transformations.
+This guide shows you how to compute gradients — of single tensors first, then of your own typed parameter records.
 
 ## Installation
 
@@ -23,156 +23,184 @@ Add to your `dune` file:
 ```dune
 (executable
  (name main)
- (libraries rune))
+ (libraries rune nx))
 ```
 
 ## Your First Gradient
 
-Rune operates on Nx tensors directly. Write a function using Nx operations, then use `grad` to get its derivative:
+Rune differentiates ordinary functions over plain Nx tensors. For a function of a single tensor, use `grad'`:
 
 ```ocaml
-open Nx
-open Rune
-
 let () =
-  (* A simple function: f(x) = x² + sin(x) *)
-  let f x = add (mul x x) (sin x) in
+  (* f(x) = x² + sin(x) *)
+  let f x = Nx.add (Nx.mul x x) (Nx.sin x) in
 
-  (* grad returns a function that computes the derivative *)
-  let f' = grad f in
+  (* grad' returns a function that computes the derivative *)
+  let f' = Rune.grad' f in
 
-  let x = scalar Float32 2.0 in
-  Printf.printf "f(2)  = %.4f\n" (item [] (f x));
-  Printf.printf "f'(2) = %.4f\n" (item [] (f' x))
+  let x = Nx.scalar Nx.float32 2.0 in
+  Printf.printf "f(2)  = %.4f\n" (Nx.item [] (f x));
+  Printf.printf "f'(2) = %.4f\n" (Nx.item [] (f' x))
   (* f'(x) = 2x + cos(x), so f'(2) ≈ 3.5839 *)
 ```
 
 Key points:
-- `grad f` takes a function `f : Nx.t -> Nx.t` and returns a new function that computes the gradient
-- The input function must return a scalar tensor
-- The gradient has the same shape as the input
 
-## Value and Gradient Together
+- `grad' f` takes a function `f : Nx.t -> Nx.t` and returns a function that computes its gradient
+- The function must return a scalar tensor (exactly one element)
+- The gradient has the same shape and dtype as the input
 
-In practice, you usually want both the function value and its gradient. Use `value_and_grad` to avoid computing the forward pass twice:
+## Differentiating a Record
+
+Real models have more than one parameter. In rune the parameters are a record you define, made traversable by implementing `Nx.Ptree.S` — three one-line functions that visit the record's tensor leaves:
 
 ```ocaml
-open Nx
-open Rune
+type params = { w : Nx.float32_t; b : Nx.float32_t }
 
-let () =
-  let f x = mean (mul x x) in
-  let x = create Float32 [|3|] [|1.0; 2.0; 3.0|] in
-  let value, gradient = value_and_grad f x in
-  Printf.printf "f(x) = %.4f\n" (item [] value);
-  print_data gradient
+module Params = struct
+  type t = params
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { w; b } =
+    { w = f w; b = f b }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
+    { w = f p.w q.w; b = f p.b q.b }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { w; b } =
+    f w;
+    f b
+end
 ```
 
-## Multiple Inputs
-
-When your function takes multiple inputs, use `grads` or `value_and_grads`:
+That is the entire registration story: no ppx, no runtime tree, no string keys. Every transformation takes the module as a first-class argument and returns values of your record type:
 
 ```ocaml
-open Nx
-open Rune
-
 let () =
-  let f inputs =
-    match inputs with
-    | [x; y] -> add (mul x x) (mul y y)
-    | _ -> failwith "expected 2 inputs"
+  let x = Nx.create Nx.float32 [| 4; 3 |] (Array.init 12 float_of_int) in
+  let y = Nx.create Nx.float32 [| 4; 1 |] [| 0.; 1.; 2.; 3. |] in
+  let loss p =
+    Nx.mean (Nx.square (Nx.sub (Nx.add (Nx.matmul x p.w) p.b) y))
   in
-  let df = grads f in
-  match df [scalar Float32 3.0; scalar Float32 4.0] with
-  | [dx; dy] ->
-    Printf.printf "df/dx = %.1f\n" (item [] dx);
-    Printf.printf "df/dy = %.1f\n" (item [] dy)
-  | _ -> assert false
+  let params =
+    { w = Nx.zeros Nx.float32 [| 3; 1 |]; b = Nx.zeros Nx.float32 [| 1 |] }
+  in
+  (* The gradient is a value of type [params]. *)
+  let g = Rune.grad (module Params) loss params in
+  Printf.printf "dw:\n%s\n" (Nx.data_to_string g.w);
+  Printf.printf "db: %s\n" (Nx.data_to_string g.b)
 ```
+
+Leaves of the record that do not contribute to the result get all-zero gradients. Leaves may have different dtypes; each gradient leaf has its parameter leaf's dtype.
+
+## Gradient Descent
+
+In practice you want the loss and its gradient together; `value_and_grad` computes both in a single forward and backward pass. A training step is then a record update, and the loop is ordinary OCaml:
+
+```ocaml
+let () =
+  Nx.Rng.run ~seed:0 @@ fun () ->
+  (* Synthetic data: y = x @ w_true + 0.3. *)
+  let w_true = Nx.create Nx.float32 [| 3; 1 |] [| 2.0; -1.0; 0.5 |] in
+  let x = Nx.randn Nx.float32 [| 64; 3 |] in
+  let y = Nx.add_s (Nx.matmul x w_true) 0.3 in
+
+  let loss p =
+    let pred = Nx.add (Nx.matmul x p.w) p.b in
+    Nx.mean (Nx.square (Nx.sub pred y))
+  in
+
+  let lr = 0.1 in
+  let step p =
+    let l, g = Rune.value_and_grad (module Params) loss p in
+    let p =
+      { w = Nx.sub p.w (Nx.mul_s g.w lr); b = Nx.sub p.b (Nx.mul_s g.b lr) }
+    in
+    (p, Nx.item [] l)
+  in
+
+  let p =
+    ref { w = Nx.zeros Nx.float32 [| 3; 1 |]; b = Nx.zeros Nx.float32 [| 1 |] }
+  in
+  for i = 1 to 200 do
+    let p', l = step !p in
+    p := p';
+    if i mod 50 = 0 then Printf.printf "step %3d  loss %.6f\n" i l
+  done;
+  Printf.printf "w (expected ~[2.0; -1.0; 0.5]):\n%s\n"
+    (Nx.data_to_string !p.w)
+```
+
+This is the whole pattern — the full program is [`examples/01-gradient-descent`](https://github.com/raven-ml/raven/tree/main/packages/rune/examples/01-gradient-descent). For neural networks, [kaun](/docs/kaun/) provides layers whose parameter records compose exactly this way.
+
+## Auxiliary Outputs
+
+When the objective returns data alongside the loss — predictions, metrics, updated state — use `value_and_grad_aux`. The auxiliary value rides through undifferentiated:
+
+```ocaml
+let () =
+  let x = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
+  let f v =
+    let pred = Nx.mul v v in
+    (Nx.mean pred, pred) (* pred is auxiliary — not differentiated *)
+  in
+  let module Vec = struct
+    type t = Nx.float32_t
+
+    let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) v = f v
+    let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) = f
+    let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) v = f v
+  end in
+  let loss, g, pred = Rune.value_and_grad_aux (module Vec) f x in
+  Printf.printf "loss = %.2f\n" (Nx.item [] loss);
+  Printf.printf "grad = %s\n" (Nx.data_to_string g);
+  Printf.printf "pred = %s\n" (Nx.data_to_string pred)
+```
+
+The `Vec` module above is worth noting: a single tensor is itself a one-leaf `Ptree.S` structure, so the structured API subsumes the single-tensor one.
 
 ## Higher-Order Derivatives
 
-Since `grad` returns a regular function, you can differentiate again:
+`grad'` returns a regular function, so you can differentiate again:
 
 ```ocaml
-open Nx
-open Rune
-
 let () =
   (* f(x) = x⁴ *)
-  let f x = mul x (mul x (mul x x)) in
-  let f' = grad f in        (* 4x³ *)
-  let f'' = grad f' in      (* 12x² *)
-  let f''' = grad f'' in    (* 24x *)
-  let x = scalar Float32 2.0 in
-  Printf.printf "f(2)    = %.1f\n" (item [] (f x));
-  Printf.printf "f'(2)   = %.1f\n" (item [] (f' x));
-  Printf.printf "f''(2)  = %.1f\n" (item [] (f'' x));
-  Printf.printf "f'''(2) = %.1f\n" (item [] (f''' x))
+  let f x = Nx.mul x (Nx.mul x (Nx.mul x x)) in
+  let f' = Rune.grad' f in      (* 4x³ *)
+  let f'' = Rune.grad' f' in    (* 12x² *)
+  let f''' = Rune.grad' f'' in  (* 24x *)
+  let x = Nx.scalar Nx.float32 2.0 in
+  Printf.printf "f(2)    = %.1f\n" (Nx.item [] (f x));
+  Printf.printf "f'(2)   = %.1f\n" (Nx.item [] (f' x));
+  Printf.printf "f''(2)  = %.1f\n" (Nx.item [] (f'' x));
+  Printf.printf "f'''(2) = %.1f\n" (Nx.item [] (f''' x))
 ```
 
 ## Stopping Gradients
 
-Sometimes you need part of a computation to be treated as a constant:
+Two mechanisms hold part of a computation constant during differentiation:
 
-<!-- $MDX skip -->
 ```ocaml
-open Rune
-
-(* no_grad: nothing inside is recorded *)
-let baseline = no_grad (fun () ->
-  (* compute a baseline value that should not be differentiated *)
-  mean predictions
-)
-
-(* detach: make a single tensor a constant *)
-let target = detach current_prediction
-```
-
-## A Simple Training Loop
-
-Here is a minimal example that trains a linear model with gradient descent:
-
-<!-- $MDX skip -->
-```ocaml
-open Nx
-open Rune
-
 let () =
-  (* Data: y = 2x + 1 *)
-  let x_data = create Float32 [|4; 1|] [|1.; 2.; 3.; 4.|] in
-  let y_data = create Float32 [|4; 1|] [|3.; 5.; 7.; 9.|] in
+  let x = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
 
-  (* Parameters *)
-  let w = rand Float32 [|1; 1|] in
-  let b = zeros Float32 [|1|] in
+  (* detach: gradients do not flow through the copy. *)
+  let f v = Nx.mean (Nx.mul v (Rune.detach v)) in
+  Printf.printf "with detach:  %s\n"
+    (Nx.data_to_string (Rune.grad' f x));
 
-  let loss_fn params =
-    match params with
-    | [w; b] ->
-      let pred = add (matmul x_data w) b in
-      mean (mul (sub pred y_data) (sub pred y_data))
-    | _ -> assert false
+  (* no_grad: nothing inside is recorded. *)
+  let g v =
+    let baseline = Rune.no_grad (fun () -> Nx.mean v) in
+    Nx.mean (Nx.mul v (Nx.sub v baseline))
   in
-
-  let lr = scalar Float32 0.01 in
-  for epoch = 1 to 200 do
-    let loss, gs = value_and_grads loss_fn [w; b] in
-    match gs with
-    | [gw; gb] ->
-      ignore (sub ~out:w w (mul lr gw));
-      ignore (sub ~out:b b (mul lr gb));
-      if epoch mod 50 = 0 then
-        Printf.printf "epoch %d  loss %.6f\n" epoch (item [] loss)
-    | _ -> assert false
-  done;
-  Printf.printf "w = %.3f  b = %.3f\n" (item [0; 0] w) (item [0] b)
+  ignore (Rune.grad' g x)
 ```
 
-For real neural networks, use [Kaun](/docs/kaun/) which provides layers, optimizers, and training loops built on top of Rune.
+`detach` also serves as the escape hatch for operations whose gradient is not implemented (see [Transformations](02-transformations/)): detach their inputs if differentiation should not flow through them.
 
 ## Next Steps
 
-- [Transformations](/docs/rune/transformations/) — complete guide to grad, jvp, vmap, and more
-- [How It Works](/docs/rune/how-it-works/) — how effects-based autodiff works under the hood
-- [Kaun Getting Started](/docs/kaun/getting-started/) — high-level neural network training
+- [Transformations](02-transformations/) — vjp, jvp, vmap, Hessians, remat, custom rules, control flow
+- [How It Works](03-how-it-works/) — effects, handlers, and the tape
+- [Kaun Getting Started](/docs/kaun/getting-started/) — neural networks on top of rune

@@ -33,13 +33,40 @@ thread.
 
 ### Vega (new)
 
-- New package: per-parameter gradient-based optimizers (SGD, Adam, AdamW,
-  RMSprop, Adagrad) and learning-rate schedules. Built on Nx with no autodiff
-  dependency. Optimizers compose via `Vega.chain` and schedules are plain
-  `int -> float` functions. Equivalent to Optax in JAX.
+- New package: gradient-based optimizers and learning-rate schedules. Built
+  on Nx with no autodiff dependency. Equivalent to Optax in JAX.
+- The primary surface is structural: `sgd_init`/`sgd_step`,
+  `adam_init`/`adam_step`, `adamw_init`/`adamw_step`, `global_norm`,
+  `clip_by_global_norm`, and `clip_by_value` step whole parameter
+  structures — any type implementing `Nx.Ptree.S` — with optimizer state
+  shaped like the parameters themselves.
+- Below it, the per-tensor tier composes Optax-style gradient
+  transformations on single tensors via `Vega.chain` (RMSprop, Adagrad,
+  Lion, LAMB, RAdam, LARS, Adan, Adafactor, ...).
+- Schedules are unified across both tiers: a schedule is a plain
+  `int -> float` function; structural loops evaluate it at the step counter
+  and pass `~lr`, while per-tensor chains consume it via
+  `scale_by_learning_rate`/`scale_by_schedule`.
+- **Breaking** (relative to earlier unreleased revisions): the per-tensor
+  `clip_by_value : float -> t` transformation is renamed to `clip`; the
+  `clip_by_value` name now belongs to the structural gradient
+  transformation.
 
 ### Nx
 
+- Add `Nx.Ptree`: parameter trees. The `Ptree.S` module type is the traversal
+  interface shared across the ecosystem — autodiff transformations (Rune),
+  structural optimizers (Vega), and checkpointing (Kaun) all operate on any
+  user structure implementing its three traversals (`map`, `map2`, `iter`).
+  A stock dynamic tree (`Ptree.t` with tensor, list, and dict nodes) covers
+  structures only known at runtime.
+- Require OCaml >= 5.5.0 (module-dependent functions are used by the
+  `Ptree.S`-based APIs downstream).
+- Fix `flatten` raising on rank-0 tensors; it now reshapes them to `[|1|]`.
+- Extend safetensors I/O: cover the remaining dtypes with SafeTensors
+  equivalents (float64, int64, int8, uint8, bool, ...) and support rank-0
+  tensors. Dtypes with no SafeTensors equivalent (complex, int4) fail with a
+  clear error.
 - Route `to_host` through a new `E_to_host` effect so effect handlers observe
   value reads. Transformations can now materialize or reject concretization
   deliberately (a JIT tracer needs this; reading a batched tensor inside a
@@ -64,21 +91,38 @@ thread.
 
 ### Rune
 
-- Add `Rune.jacfwd` and `Rune.jacrev` for computing full Jacobian matrices.
-  `jacfwd` uses forward-mode AD (column-by-column via JVP); `jacrev` uses
-  reverse-mode AD (row-by-row via VJP). Prefer `jacfwd` when inputs are smaller
-  than outputs, and `jacrev` otherwise.
-- Guard against in-place tensor mutation inside `grad`, `vjp`, `jvp`, and
-  `vmap`. Using `set_item`, `set_slice`, `blit`, or `assign` inside these
-  transformations now raises `Invalid_argument` with a message directing users
-  to use `scatter` instead.
+- **Breaking.** Ground-up rewrite. Transformations now operate over typed
+  parameter structures: `grad`, `value_and_grad`, `vjp`, `jvp`, `vmap`,
+  `hvp`, and friends take a first-class module implementing `Nx.Ptree.S`
+  and return gradients with the same structure and leaf dtypes as the
+  parameters — mixed-dtype parameters differentiate in a single forward
+  and backward pass. Functions of a single tensor use the primed variants
+  (`grad'`, `value_and_grad'`, `vjp'`, `jvp'`, `vmap'`, `jacfwd'`,
+  `jacrev'`, `hessian'`, `hvp'`).
+- New transformation surface: structured-output `vjp2`/`jvp2`/`vmap2`,
+  reusable pullbacks (`vjp_fun`), gradient checkpointing (`remat`),
+  Hessian-vector products (`hvp`), custom differentiation rules
+  (`custom_vjp`, `custom_jvp`), directional gradient checking
+  (`check_grads`), staging-ready control flow (`scan`, `cond`,
+  `while_loop`), and operation logging (`with_debug`, replacing `debug`).
+- Removed: the list-based variants (`grads`, `value_and_grads`, `vjps`,
+  `jvps`, ...) — use a `Ptree.S` structure instead; the finite-difference
+  `check_gradient` API — use `check_grads`; and `jit`/`trace_graph` —
+  JIT compilation via Tolk will return as a transformation in a later
+  release.
 
 ### Kaun
 
-- Optimizers extracted to the new Vega package. `Kaun.Optim` now delegates to
-  Vega for per-leaf updates across parameter trees. `Train.make` accepts a
-  `Vega.t` directly instead of `Optim.algorithm`. Learning-rate schedules move
-  from `Optim.Schedule` to `Vega.Schedule`.
+- **Breaking.** Ground-up rewrite on typed parameter structures. There is
+  no `Layer.t` and no `Train` driver anymore: a layer is a plain record of
+  tensors with a pure `apply` function (`Linear`, `Conv`, `Embedding`,
+  `Attention`, `Layer_norm`, `Batch_norm`, `Dropout`, ...), a model is a
+  record of layers with a hand-written `Nx.Ptree.S` traversal, and a
+  training step is code you own: `Rune.value_and_grad` composed with a
+  structural Vega optimizer update. Losses, initializers, activations
+  (`Fn`), data batching, metrics, checkpoints, and HuggingFace Hub
+  integration (`kaun.hf`, `kaun.datasets`) are provided as plain functions
+  over these records.
 
 ### Talon
 

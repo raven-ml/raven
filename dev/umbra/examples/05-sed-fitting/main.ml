@@ -91,6 +91,18 @@ let forward_model log_temp av log_norm =
       Photometry.ab_mag bp sed)
     bands
 
+(* Parameter structure for Rune: a list of float64 tensors. *)
+module Params = struct
+  type t = Nx.float64_t list
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) l = List.map f l
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
+    List.map2 f a b
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) l = List.iter f l
+end
+
 (* Loss function: chi-squared *)
 let loss params =
   match params with
@@ -141,7 +153,7 @@ let () =
   let refs = [| log_temp; av; log_norm |] in
   for i = 0 to steps - 1 do
     let loss_val, grads =
-      Rune.value_and_grads loss [ !log_temp; !av; !log_norm ]
+      Rune.value_and_grad (module Params) loss [ !log_temp; !av; !log_norm ]
     in
     if i mod 200 = 0 || i = steps - 1 then
       Printf.printf "%5d  %10.4f  %8.1f  %8.3f  %8.3f\n" i (item [] loss_val)

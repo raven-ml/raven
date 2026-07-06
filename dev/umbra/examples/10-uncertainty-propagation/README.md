@@ -13,7 +13,7 @@ dune exec --root . examples/10-uncertainty-propagation/main.exe
 
 ## What You'll Learn
 
-- Computing exact Jacobians automatically with forward-mode AD (`Rune.jacfwd`)
+- Computing exact Jacobians automatically with forward-mode AD (`Rune.jacfwd'`)
 - Applying linear error propagation via the Jacobian covariance formula
 - Validating analytical uncertainty estimates with Monte Carlo sampling
 - Propagating scalar uncertainties through cosmological models with JVP
@@ -24,8 +24,8 @@ dune exec --root . examples/10-uncertainty-propagation/main.exe
 | ---------------------------- | ------------------------------------------------ |
 | `Cosmo.create_flat_lcdm`     | Create a flat Lambda-CDM cosmology               |
 | `Cosmo.distance_modulus`     | Compute distance modulus at a given redshift      |
-| `Rune.jacfwd`                | Forward-mode Jacobian of a function               |
-| `Rune.jvp`                   | Jacobian-vector product for scalar propagation    |
+| `Rune.jacfwd'`               | Forward-mode Jacobian of a function               |
+| `Rune.jvp'`                  | Jacobian-vector product for scalar propagation    |
 | `Nx.cholesky`                | Cholesky decomposition for MC sampling            |
 | `Nx.matmul`                  | Matrix multiply for J Sigma J^T                  |
 | `Nx.diag`                    | Build diagonal covariance from variances          |
@@ -37,7 +37,7 @@ Given input parameters with uncertainties (H0 = 70 +/- 1 km/s/Mpc, Omega_m =
 at five redshifts (z = 0.1 to 1.0). The propagation uses the standard linear
 formula: Sigma_out = J Sigma_in J^T, where J is the Jacobian of the distance
 modulus with respect to [H0, Omega_m]. Rather than deriving J analytically,
-`Rune.jacfwd` computes it automatically with just two JVP evaluations (one per
+`Rune.jacfwd'` computes it automatically with just two JVP evaluations (one per
 input parameter).
 
 For validation, the example draws 50,000 Monte Carlo samples from the input
@@ -46,7 +46,7 @@ computes empirical output statistics. Agreement below 1% between AD and MC
 confirms that linear propagation is accurate for these parameter ranges.
 
 A scalar API demo shows the simpler case: propagating redshift uncertainty
-(z = 0.5 +/- 0.01) through a single `jvp` call, which returns both the output
+(z = 0.5 +/- 0.01) through a single `jvp'` call, which returns both the output
 value and its sensitivity to the input perturbation.
 
 ## Try It

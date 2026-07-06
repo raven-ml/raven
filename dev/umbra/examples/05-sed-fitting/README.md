@@ -26,7 +26,7 @@ dune exec dev/umbra/examples/05-sed-fitting/main.exe
 | `Extinction.apply`           | Apply dust reddening to a spectrum             |
 | `Photometry.tophat`          | Create a rectangular bandpass                  |
 | `Photometry.ab_mag`          | Compute AB magnitude through a bandpass        |
-| `Rune.value_and_grads`       | Autodiff through the entire pipeline           |
+| `Rune.value_and_grad`        | Autodiff through the entire pipeline           |
 
 ## How It Works
 

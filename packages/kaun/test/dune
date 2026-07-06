@@ -1,16 +1,15 @@
 (tests
  (names
-  test_ptree
+  test_kaun
   test_init
-  test_loss
-  test_layer
   test_fn
-  test_optim
-  test_grad
-  test_attention
-  test_data
-  test_train
+  test_loss
   test_metric
-  test_checkpoint)
+  test_checkpoint
+  test_layers
+  test_conv
+  test_stateful
+  test_attention
+  test_data)
  (package kaun)
- (libraries rune vega nx nx.core nx.io kaun windtrap))
+ (libraries kaun rune vega nx nx.core windtrap))

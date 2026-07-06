@@ -15,6 +15,7 @@ Welcome to Raven's documentation. Raven is an ecosystem of OCaml libraries for n
 | | [**nx**](/docs/nx/) | NumPy | N-dimensional arrays with pluggable backends |
 | ᚱ | [**rune**](/docs/rune/) | JAX | Automatic differentiation and functional transformations |
 | ᚲ | [**kaun**](/docs/kaun/) | PyTorch / Flax | Neural networks and training |
+| ᚹ | [**vega**](/docs/vega/) | Optax | Gradient-based optimizers and schedules |
 | ᚨ | [**brot**](/docs/brot/) | HF Tokenizers | Fast tokenization for language models |
 | ᛃ | [**talon**](/docs/talon/) | Pandas / Polars | DataFrames with type-safe columns |
 | ᛞ | [**hugin**](/docs/hugin/) | Matplotlib | Data visualization and plotting |

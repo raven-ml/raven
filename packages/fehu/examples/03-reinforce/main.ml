@@ -50,21 +50,30 @@ let sparkline values =
               blocks.(max 0 (min 7 idx)))
             values))
 
-(* Network *)
+(* Network: Linear(4 -> 64) -> ReLU -> Linear(64 -> 2), as a plain record of
+   Linear layers with hand-written traversals (the Nx.Ptree.S contract). *)
 
-let network =
-  Layer.sequential
-    [
-      Layer.linear ~in_features:4 ~out_features:64 ();
-      Layer.relu ();
-      Layer.linear ~in_features:64 ~out_features:2 ();
-    ]
+module Policy = struct
+  type t = { l1 : Linear.t; l2 : Linear.t }
 
-(* Forward pass: obs [batch; 4] -> logits [batch; 2] *)
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { l1; l2 } =
+    { l1 = Linear.map f l1; l2 = Linear.map f l2 }
 
-let forward params net_state obs =
-  let vars = Layer.make_vars ~params ~state:net_state ~dtype:Nx.float32 in
-  fst (Layer.apply network vars ~training:false obs)
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
+    { l1 = Linear.map2 f p.l1 q.l1; l2 = Linear.map2 f p.l2 q.l2 }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { l1; l2 } =
+    Linear.iter f l1;
+    Linear.iter f l2
+
+  (* Forward pass: obs [batch; 4] -> logits [batch; 2] *)
+  let apply p obs = Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 obs))
+end
+
+let count_parameters params =
+  let n = ref 0 in
+  Policy.iter (fun t -> n := !n + Nx.numel t) params;
+  !n
 
 (* Main *)
 
@@ -79,19 +88,22 @@ let () =
   let env = Fehu_envs.Cartpole.make () in
 
   (* Initialize network *)
-  let vars = Layer.init network ~dtype:Nx.float32 in
-  let params = ref (Layer.params vars) in
-  let net_state = Layer.state vars in
+  let params =
+    ref
+      {
+        Policy.l1 = Linear.init ~inputs:4 ~outputs:64;
+        l2 = Linear.init ~inputs:64 ~outputs:2;
+      }
+  in
 
-  Printf.printf "Parameters: %d\n\n" (Ptree.count_parameters !params);
+  Printf.printf "Parameters: %d\n\n" (count_parameters !params);
 
   (* Optimizer *)
-  let algo = Vega.adam (Vega.Schedule.constant lr) in
-  let opt_state = ref (Optim.init algo !params) in
+  let opt_state = ref (Vega.adam_init (module Policy) !params) in
 
   let policy obs =
     let obs_batch = Nx.reshape [| 1; 4 |] obs in
-    let logits = Rune.no_grad (fun () -> forward !params net_state obs_batch) in
+    let logits = Rune.no_grad (fun () -> Policy.apply !params obs_batch) in
     let action_idx = Nx.categorical logits in
     let action = Nx.reshape [||] action_idx in
     let log_probs = Nx.log_softmax logits in
@@ -104,7 +116,7 @@ let () =
   (* Greedy policy for evaluation *)
   let greedy_policy obs =
     let obs_batch = Nx.reshape [| 1; 4 |] obs in
-    let logits = Rune.no_grad (fun () -> forward !params net_state obs_batch) in
+    let logits = Rune.no_grad (fun () -> Policy.apply !params obs_batch) in
     let action_idx =
       Nx.argmax logits ~axis:(-1) ~keepdims:false |> Nx.cast Nx.int32
     in
@@ -140,7 +152,7 @@ let () =
 
     (* Policy gradient loss *)
     let loss_fn p =
-      let logits = forward p net_state obs_batch in
+      let logits = Policy.apply p obs_batch in
       let log_probs = Nx.log_softmax logits in
       let action_log_probs =
         Nx.take_along_axis ~axis:1 actions_batch log_probs
@@ -150,8 +162,10 @@ let () =
       Nx.neg (Nx.mean weighted)
     in
 
-    let loss, grads = Grad.value_and_grad loss_fn !params in
-    let new_params, new_opt_state = Optim.update !opt_state !params grads in
+    let loss, grads = Rune.value_and_grad (module Policy) loss_fn !params in
+    let new_params, new_opt_state =
+      Vega.adam_step (module Policy) ~lr !opt_state ~params:!params ~grads
+    in
     params := new_params;
     opt_state := new_opt_state;
 

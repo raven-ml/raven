@@ -1,4 +1,0 @@
-(test
- (name test_hf)
- (package kaun-next)
- (libraries kaun-next kaun-next.hf rune-next nx unix jsont windtrap))

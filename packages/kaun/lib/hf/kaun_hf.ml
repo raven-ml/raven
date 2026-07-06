@@ -3,29 +3,26 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Types *)
+module Checkpoint = Kaun.Checkpoint
 
-type revision = Main | Rev of string
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
 (* Error messages *)
 
 let err_no_curl = "curl not found on PATH"
 let err_download url = Printf.sprintf "Failed to download %s" url
 
-let err_offline model_id filename =
-  Printf.sprintf "Not cached (offline): %s/%s" model_id filename
+let err_offline repo_id file =
+  Printf.sprintf "Not cached (offline): %s/%s" repo_id file
 
-let err_no_safetensors model_id =
-  Printf.sprintf "No safetensors found for %s" model_id
+let err_no_safetensors repo_id =
+  Printf.sprintf "No safetensors found for %s" repo_id
 
-let err_missing_tensor model_id name path =
-  Printf.sprintf "%s: tensor %S missing in shard %s" model_id name path
+let err_missing_tensor repo_id name shard =
+  Printf.sprintf "%s: tensor %S missing in shard %s" repo_id name shard
 
-let err_empty_weight_map = "Empty weight_map in index file"
-let err_missing_weight_map = "Missing weight_map in index file"
-
-let err_incomplete_shards =
-  "Incomplete shard loading: not all weight_map tensors were found"
+let err_bad_weight_map path =
+  Printf.sprintf "%s: missing or malformed weight_map" path
 
 (* Cache directory *)
 
@@ -40,6 +37,17 @@ let default_cache_dir () =
       in
       Filename.concat (Filename.concat xdg "raven") "huggingface"
 
+let sanitize_repo_id repo_id =
+  String.map (fun c -> if c = '/' then '-' else c) repo_id
+
+let cache_path ?cache_dir ?(revision = "main") ~file repo_id =
+  let cache_dir =
+    match cache_dir with Some d -> d | None -> default_cache_dir ()
+  in
+  let repo_dir = sanitize_repo_id repo_id in
+  Filename.concat cache_dir
+    (Filename.concat repo_dir (Filename.concat revision file))
+
 (* Filesystem *)
 
 let rec mkdir_p path =
@@ -51,11 +59,21 @@ let rec mkdir_p path =
 
 let rec rm_rf path =
   if Sys.is_directory path then begin
-    let entries = Sys.readdir path in
-    Array.iter (fun e -> rm_rf (Filename.concat path e)) entries;
+    Array.iter (fun e -> rm_rf (Filename.concat path e)) (Sys.readdir path);
     Unix.rmdir path
   end
   else Sys.remove path
+
+let clear_cache ?cache_dir ?repo_id () =
+  let cache_dir =
+    match cache_dir with Some d -> d | None -> default_cache_dir ()
+  in
+  let path =
+    match repo_id with
+    | Some id -> Filename.concat cache_dir (sanitize_repo_id id)
+    | None -> cache_dir
+  in
+  if Sys.file_exists path then rm_rf path
 
 (* HTTP via curl *)
 
@@ -64,16 +82,15 @@ let curl_available =
 
 let check_curl () = if not (Lazy.force curl_available) then failwith err_no_curl
 
-let header_flags headers =
-  List.map
-    (fun (k, v) -> Printf.sprintf "-H %s" (Filename.quote (k ^ ": " ^ v)))
-    headers
-  |> String.concat " "
-
 let curl_download ~headers ~url ~dest () =
   check_curl ();
   mkdir_p (Filename.dirname dest);
-  let hdr = header_flags headers in
+  let hdr =
+    List.map
+      (fun (k, v) -> Printf.sprintf "-H %s" (Filename.quote (k ^ ": " ^ v)))
+      headers
+    |> String.concat " "
+  in
   let cmd =
     Printf.sprintf "curl -L --fail -s %s -o %s %s" hdr (Filename.quote dest)
       (Filename.quote url)
@@ -84,48 +101,34 @@ let curl_download ~headers ~url ~dest () =
       (try Sys.remove dest with Sys_error _ -> ());
       failwith (err_download url)
 
-(* Hub URL and cache paths *)
-
-let revision_string = function Main -> "main" | Rev r -> r
-
-let hub_url ~model_id ~revision ~filename =
-  Printf.sprintf "https://huggingface.co/%s/resolve/%s/%s" model_id
-    (revision_string revision) filename
-
-let sanitize_model_id model_id =
-  String.map (fun c -> if c = '/' then '-' else c) model_id
-
-let cache_path ~cache_dir ~model_id ~revision ~filename =
-  let rev = revision_string revision in
-  let model_dir = sanitize_model_id model_id in
-  Filename.concat cache_dir
-    (Filename.concat model_dir (Filename.concat rev filename))
-
-let auth_headers = function
-  | Some t -> [ ("Authorization", "Bearer " ^ t) ]
-  | None -> []
-
 (* Downloading *)
 
-let download_file ?token ?cache_dir ?(offline = false) ?(revision = Main)
-    ~model_id ~filename () =
-  let token =
-    match token with Some _ as t -> t | None -> Sys.getenv_opt "HF_TOKEN"
-  in
-  let cache_dir = Option.value cache_dir ~default:(default_cache_dir ()) in
-  let local = cache_path ~cache_dir ~model_id ~revision ~filename in
+let download_file ?token ?cache_dir ?(offline = false) ?(revision = "main")
+    ~file repo_id =
+  let local = cache_path ?cache_dir ~revision ~file repo_id in
   if Sys.file_exists local then local
-  else if offline then failwith (err_offline model_id filename)
+  else if offline then failwith (err_offline repo_id file)
   else begin
-    let url = hub_url ~model_id ~revision ~filename in
-    curl_download ~headers:(auth_headers token) ~url ~dest:local ();
+    let token =
+      match token with Some _ as t -> t | None -> Sys.getenv_opt "HF_TOKEN"
+    in
+    let headers =
+      match token with
+      | Some t -> [ ("Authorization", "Bearer " ^ t) ]
+      | None -> []
+    in
+    let url =
+      Printf.sprintf "https://huggingface.co/%s/resolve/%s/%s" repo_id revision
+        file
+    in
+    curl_download ~headers ~url ~dest:local ();
     local
   end
 
-(* JSON helpers *)
+(* JSON *)
 
 let read_json_file path =
-  let ic = open_in path in
+  let ic = open_in_bin path in
   let s =
     Fun.protect
       ~finally:(fun () -> close_in ic)
@@ -135,118 +138,116 @@ let read_json_file path =
   | Ok v -> v
   | Error e -> failwith e
 
-let json_mem name = function
-  | Jsont.Object (mems, _) -> (
-      match Jsont.Json.find_mem name mems with
-      | Some (_, v) -> v
-      | None -> Jsont.Null ((), Jsont.Meta.none))
-  | _ -> Jsont.Null ((), Jsont.Meta.none)
+let load_config ?token ?cache_dir ?offline ?revision repo_id =
+  read_json_file
+    (download_file ?token ?cache_dir ?offline ?revision ~file:"config.json"
+       repo_id)
 
-(* Tensor conversion *)
+(* Loading checkpoints *)
 
-let to_ptree_tensor (Nx_io.P nx) = Kaun.Ptree.P nx
+(* [of_entries ~op entries] is the checkpoint holding [entries], validating name
+   distinctness and non-emptiness with [op]-labelled errors before
+   [Checkpoint.concat] can produce its own, less specific ones. *)
+let of_entries ~op entries =
+  let seen = Hashtbl.create (List.length entries) in
+  List.iter
+    (fun (name, _) ->
+      if name = "" then invalid_argf "Kaun_hf.%s: empty entry name" op;
+      if Hashtbl.mem seen name then
+        invalid_argf "Kaun_hf.%s: duplicate name %S" op name;
+      Hashtbl.add seen name ())
+    entries;
+  Checkpoint.concat
+    (List.map
+       (fun (name, Rune.Ptree.P x) -> Checkpoint.of_tensor name x)
+       entries)
 
-(* Loading *)
+let entries t = List.map (fun n -> (n, Checkpoint.get n t)) (Checkpoint.names t)
 
-let load_entries ?allowed_names path =
-  let archive = Nx_io.load_safetensors path in
-  match allowed_names with
-  | None ->
-      Hashtbl.fold
-        (fun name packed acc -> (name, to_ptree_tensor packed) :: acc)
-        archive []
-  | Some names ->
-      List.map
-        (fun name ->
-          match Hashtbl.find_opt archive name with
-          | Some packed -> (name, to_ptree_tensor packed)
-          | None -> failwith (err_missing_tensor "" name path))
-        names
-
-let try_download f =
-  try Some (f ()) with Failure _ -> None | Sys_error _ -> None
-
-let load_sharded ~download index_filename =
-  match try_download (fun () -> download index_filename) with
-  | None -> None
-  | Some index_path ->
-      let json = read_json_file index_path in
-      let weight_map =
-        match json_mem "weight_map" json with
-        | Jsont.Object (entries, _) ->
+let load_sharded ~download index_path =
+  let json = read_json_file index_path in
+  let weight_map =
+    match json with
+    | Jsont.Object (mems, _) -> (
+        match Jsont.Json.find_mem "weight_map" mems with
+        | Some (_, Jsont.Object (entries, _)) ->
             List.map
               (fun ((tensor_name, _), shard_json) ->
                 match shard_json with
                 | Jsont.String (shard, _) -> (tensor_name, shard)
-                | _ -> failwith err_missing_weight_map)
+                | _ -> failwith (err_bad_weight_map index_path))
               entries
-        | _ -> failwith err_missing_weight_map
-      in
-      if weight_map = [] then failwith err_empty_weight_map;
-      (* Group tensors by shard filename, preserving file order *)
-      let shards_by_file = Hashtbl.create 8 in
-      let file_order = ref [] in
-      List.iter
-        (fun (tensor_name, shard_filename) ->
-          match Hashtbl.find_opt shards_by_file shard_filename with
-          | Some tensors ->
-              Hashtbl.replace shards_by_file shard_filename
-                (tensor_name :: tensors)
-          | None ->
-              Hashtbl.add shards_by_file shard_filename [ tensor_name ];
-              file_order := shard_filename :: !file_order)
-        weight_map;
-      let file_order = List.rev !file_order in
-      let seen = Hashtbl.create (List.length weight_map) in
-      let entries =
-        List.fold_left
-          (fun acc shard_filename ->
-            let shard_path = download shard_filename in
-            let tensors =
-              match Hashtbl.find_opt shards_by_file shard_filename with
-              | Some names -> List.rev names
-              | None -> []
-            in
-            let new_entries = load_entries ~allowed_names:tensors shard_path in
-            List.iter
-              (fun (name, _) -> Hashtbl.replace seen name ())
-              new_entries;
-            List.rev_append new_entries acc)
-          [] file_order
-      in
-      if Hashtbl.length seen <> List.length weight_map then
-        failwith err_incomplete_shards;
-      Some (List.rev entries)
-
-let load_single ~download filename =
-  match try_download (fun () -> download filename) with
-  | None -> None
-  | Some path -> Some (load_entries path)
-
-let load_config ?token ?cache_dir ?offline ?revision ~model_id () =
-  let path =
-    download_file ?token ?cache_dir ?offline ?revision ~model_id
-      ~filename:"config.json" ()
+        | _ -> failwith (err_bad_weight_map index_path))
+    | _ -> failwith (err_bad_weight_map index_path)
   in
-  read_json_file path
-
-let load_weights ?token ?cache_dir ?offline ?revision ~model_id () =
-  let download filename =
-    download_file ?token ?cache_dir ?offline ?revision ~model_id ~filename ()
+  if weight_map = [] then failwith (err_bad_weight_map index_path);
+  let shards = Hashtbl.create 8 in
+  let shard file =
+    match Hashtbl.find_opt shards file with
+    | Some ckpt -> ckpt
+    | None ->
+        let ckpt = Checkpoint.load (download file) in
+        Hashtbl.add shards file ckpt;
+        ckpt
   in
-  match load_sharded ~download "model.safetensors.index.json" with
-  | Some entries -> entries
+  List.fold_left
+    (fun acc (name, file) ->
+      match Checkpoint.find name (shard file) with
+      | Some (Rune.Ptree.P x) ->
+          Checkpoint.concat [ acc; Checkpoint.of_tensor name x ]
+      | None -> failwith (err_missing_tensor "" name file))
+    Checkpoint.empty weight_map
+
+let load_checkpoint ?token ?cache_dir ?offline ?revision repo_id =
+  let download file =
+    download_file ?token ?cache_dir ?offline ?revision ~file repo_id
+  in
+  let try_download file =
+    try Some (download file) with Failure _ | Sys_error _ -> None
+  in
+  match try_download "model.safetensors.index.json" with
+  | Some index_path -> load_sharded ~download index_path
   | None -> (
-      match load_single ~download "model.safetensors" with
-      | Some entries -> entries
-      | None -> failwith (err_no_safetensors model_id))
+      match try_download "model.safetensors" with
+      | Some path -> Checkpoint.load path
+      | None -> failwith (err_no_safetensors repo_id))
 
-(* Cache management *)
+(* Adapting foreign checkpoints *)
 
-let clear_cache ?cache_dir ?model_id () =
-  let cache_dir = Option.value cache_dir ~default:(default_cache_dir ()) in
-  match model_id with
-  | Some id ->
-      let path = Filename.concat cache_dir (sanitize_model_id id) in
-      if Sys.file_exists path then rm_rf path
-  | None -> if Sys.file_exists cache_dir then rm_rf cache_dir
+let rename f t =
+  of_entries ~op:"rename" (List.map (fun (n, x) -> (f n, x)) (entries t))
+
+let transpose name t =
+  match Checkpoint.find name t with
+  | None -> invalid_argf "Kaun_hf.transpose: no entry named %S" name
+  | Some (Rune.Ptree.P x) ->
+      let nd = Array.length (Nx.shape x) in
+      if nd < 2 then
+        invalid_argf "Kaun_hf.transpose: entry %S has %d axes, needs at least 2"
+          name nd;
+      let x = Nx.swapaxes (nd - 2) (nd - 1) x in
+      of_entries ~op:"transpose"
+        (List.map
+           (fun (n, e) -> if n = name then (n, Rune.Ptree.P x) else (n, e))
+           (entries t))
+
+let split ?(axis = -1) name ~into t =
+  match Checkpoint.find name t with
+  | None -> invalid_argf "Kaun_hf.split: no entry named %S" name
+  | Some (Rune.Ptree.P x) ->
+      let parts = List.length into in
+      if parts = 0 then invalid_arg "Kaun_hf.split: empty name list";
+      let shape = Nx.shape x in
+      let nd = Array.length shape in
+      let axis = if axis < 0 then axis + nd else axis in
+      if axis < 0 || axis >= nd then
+        invalid_argf "Kaun_hf.split: axis out of bounds for entry %S" name;
+      if shape.(axis) mod parts <> 0 then
+        invalid_argf
+          "Kaun_hf.split: axis %d of entry %S has size %d, not a multiple of %d"
+          axis name shape.(axis) parts;
+      let sections =
+        List.map2 (fun n x -> (n, Rune.Ptree.P x)) into (Nx.split ~axis parts x)
+      in
+      let rest = List.filter (fun (n, _) -> n <> name) (entries t) in
+      of_entries ~op:"split" (rest @ sections)

@@ -27,9 +27,9 @@ let mnist ?(fashion = false) ?(normalize = true) ?(data_format = `NCHW) () =
     in
     (x, y)
   in
-  let train = make_tensors train_images train_labels in
-  let test = make_tensors test_images test_labels in
-  (train, test)
+  let train_x, train_y = make_tensors train_images train_labels in
+  let test_x, test_y = make_tensors test_images test_labels in
+  (train_x, train_y, test_x, test_y)
 
 let cifar10 ?(normalize = true) ?(data_format = `NCHW) () =
   let (train_images, train_labels), (test_images, test_labels) =
@@ -48,6 +48,6 @@ let cifar10 ?(normalize = true) ?(data_format = `NCHW) () =
     in
     (x, y)
   in
-  let train = make_tensors train_images train_labels in
-  let test = make_tensors test_images test_labels in
-  (train, test)
+  let train_x, train_y = make_tensors train_images train_labels in
+  let test_x, test_y = make_tensors test_images test_labels in
+  (train_x, train_y, test_x, test_y)

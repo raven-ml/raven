@@ -3,225 +3,68 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Functional neural network operations.
+(** Activation functions.
 
-    Stateless building blocks for neural networks: normalization, attention,
-    embedding lookup, and regularization. All functions are differentiable
-    through Rune's autodiff. *)
+    Pure, stateless nonlinearities for building models: apply them between
+    parameterized layers. Every function preserves the shape and dtype of its
+    argument, is meant for floating-point tensors, and is differentiable through
+    Rune in both reverse and forward mode. {!relu}, {!sigmoid} and {!tanh} equal
+    their {!Nx} counterparts and are included so that [Fn] is a complete
+    activation vocabulary.
 
-(** {1:norm Normalization} *)
+    Everything is element-wise except {!softmax} and {!log_softmax}, which
+    normalize along one axis. *)
 
-val batch_norm :
-  ?axes:int list ->
-  ?epsilon:float ->
-  scale:(float, 'b) Nx.t ->
-  bias:(float, 'b) Nx.t ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t
-(** [batch_norm ?axes ?epsilon ~scale ~bias x] normalizes [x] along [axes], then
-    applies learnable [scale] and [bias].
+(** {1:elementwise Element-wise activations} *)
 
-    [axes] defaults to [[0]] for 2D and [[0; 2; 3]] for 4D input. [epsilon]
-    defaults to [1e-5].
+val relu : ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+(** [relu x] is [max(x, 0)]. *)
 
-    [scale] and [bias] must broadcast across the normalized axes.
+val leaky_relu : ?negative_slope:float -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+(** [leaky_relu x] is [x] where [x > 0] and [negative_slope * x] elsewhere.
 
-    Raises [Invalid_argument] if [axes] is empty or out of bounds, or if
-    [scale]/[bias] shapes are incompatible. *)
+    [negative_slope] defaults to [0.01]. *)
 
-val layer_norm :
-  ?axes:int list ->
-  ?epsilon:float ->
-  ?gamma:(float, 'b) Nx.t ->
-  ?beta:(float, 'b) Nx.t ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t
-(** [layer_norm ?axes ?epsilon ?gamma ?beta x] subtracts the mean and divides by
-    the standard deviation along [axes], optionally scaling by [gamma] and
-    shifting by [beta].
+val sigmoid : ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+(** [sigmoid x] is [1 / (1 + exp(-x))]. Values lie in \[[0];[1]\]; the
+    computation saturates without overflowing for large [|x|]. *)
 
-    [axes] defaults to [[-1]]. [epsilon] defaults to [1e-5].
+val tanh : ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+(** [tanh x] is the hyperbolic tangent of [x]. *)
 
-    Raises [Invalid_argument] if [axes] is out of bounds, or if [gamma]/[beta]
-    shapes are incompatible. *)
+val gelu : ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+(** [gelu x] is the exact Gaussian error linear unit [x * Φ(x)], computed as
+    [0.5 * x * (1 + erf(x / sqrt 2))] where [Φ] is the standard normal CDF.
 
-val rms_norm :
-  ?axes:int list ->
-  ?epsilon:float ->
-  ?gamma:(float, 'b) Nx.t ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t
-(** [rms_norm ?axes ?epsilon ?gamma x] normalizes [x] by the root mean square
-    along [axes], optionally scaling by [gamma].
+    See {!gelu_approx} for the cheaper tanh approximation. *)
 
-    [axes] defaults to [[-1]]. [epsilon] defaults to [1e-5].
+val gelu_approx : ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+(** [gelu_approx x] is the tanh approximation of {!gelu}:
+    [0.5 * x * (1 + tanh(sqrt(2/π) * (x + 0.044715 * x³)))]. It agrees with
+    {!gelu} to about [1e-3] absolute error; use it to match models trained with
+    the approximation (GPT-2 style). *)
 
-    Raises [Invalid_argument] if [axes] is empty or out of bounds, or if [gamma]
-    shape is incompatible. *)
+val silu : ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+(** [silu x] is [x * sigmoid(x)], also known as Swish. *)
 
-(** {1:embedding Embedding} *)
+val softplus : ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+(** [softplus x] is [log(1 + exp(x))], a smooth approximation of {!relu}.
+    Computed as [max(x, 0) + log(1 + exp(-|x|))], which does not overflow for
+    large [x]. *)
 
-val embedding :
-  ?scale:bool ->
-  embedding:(float, 'b) Nx.t ->
-  (int32, Nx.int32_elt) Nx.t ->
-  (float, 'b) Nx.t
-(** [embedding ?scale ~embedding indices] gathers rows of [embedding] at
-    positions given by [indices].
+(** {1:normalizing Normalizing activations} *)
 
-    [embedding] must have shape [[vocab_size; embed_dim]]. The result has shape
-    [[*indices_shape; embed_dim]].
+val softmax : ?axis:int -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+(** [softmax ?axis x] is [exp(x) / sum(exp(x))] along [axis]. Values along
+    [axis] are positive and sum to [1]. The maximum along [axis] is subtracted
+    before exponentiating, so arbitrarily large inputs do not overflow.
 
-    When [scale] is [true] (the default), the result is multiplied by
-    [sqrt(embed_dim)].
+    [axis] defaults to [-1]; negative values count from the last axis.
 
-    Raises [Invalid_argument] if [embedding] is not rank 2 or if [vocab_size] is
-    not positive. *)
+    Raises [Invalid_argument] if [axis] is out of bounds for [x]. *)
 
-(** {1:dropout Dropout} *)
-
-val dropout : rate:float -> (float, 'b) Nx.t -> (float, 'b) Nx.t
-(** [dropout ~rate x] randomly zeroes elements of [x] with probability [rate]
-    and scales the remaining values by [1 / (1 - rate)].
-
-    [rate] must satisfy [0.0 <= rate < 1.0]. When [rate] is [0.0], [x] is
-    returned unchanged.
-
-    Random keys are drawn from the implicit RNG scope.
-
-    Raises [Invalid_argument] if [rate] is out of range or [x] is not floating
-    point. *)
-
-(** {1:attention Attention} *)
-
-val dot_product_attention :
-  ?attention_mask:(bool, Nx.bool_elt) Nx.t ->
-  ?scale:float ->
-  ?dropout_rate:float ->
-  ?is_causal:bool ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t
-(** [dot_product_attention ?attention_mask ?scale ?dropout_rate ?is_causal q k
-     v] is scaled dot-product attention.
-
-    [q], [k], [v] must have matching rank (>= 2) and the last dimension of [q]
-    and [k] must agree.
-
-    [scale] defaults to [1 / sqrt(depth)]. [is_causal] defaults to [false]; when
-    [true], a lower-triangular mask is applied (requires
-    [seq_len_q = seq_len_k]).
-
-    [attention_mask], when provided, broadcasts to the attention score shape:
-    [true] keeps scores, [false] sets them to negative infinity.
-
-    When [dropout_rate] is set, dropout is applied to attention weights using
-    keys from the implicit RNG scope.
-
-    Raises [Invalid_argument] if ranks, shapes, or dtypes are incompatible. *)
-
-(** {1:conv Convolution} *)
-
-val conv1d :
-  ?groups:int ->
-  ?stride:int ->
-  ?dilation:int ->
-  ?padding:[ `Same | `Valid ] ->
-  ?bias:(float, 'b) Nx.t ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t
-(** [conv1d ?groups ?stride ?dilation ?padding ?bias x w] computes 1D
-    convolution.
-
-    [x]: [(N, C_in, L)]. [w]: [(C_out, C_in/groups, K)].
-
-    [groups] defaults to [1]. [stride] and [dilation] default to [1]. [padding]
-    defaults to [`Valid].
-
-    Raises [Invalid_argument] if input/weight shapes are incompatible or channel
-    counts do not match [groups]. *)
-
-val conv2d :
-  ?groups:int ->
-  ?stride:int * int ->
-  ?dilation:int * int ->
-  ?padding:[ `Same | `Valid ] ->
-  ?bias:(float, 'b) Nx.t ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t
-(** [conv2d ?groups ?stride ?dilation ?padding ?bias x w] computes 2D
-    convolution.
-
-    [x]: [(N, C_in, H, W)]. [w]: [(C_out, C_in/groups, kH, kW)].
-
-    [groups] defaults to [1]. [stride] and [dilation] default to [(1, 1)].
-    [padding] defaults to [`Valid].
-
-    Raises [Invalid_argument] if input/weight shapes are incompatible or channel
-    counts do not match [groups]. *)
-
-(** {1:pool Pooling} *)
-
-val max_pool1d :
-  kernel_size:int ->
-  ?stride:int ->
-  ?dilation:int ->
-  ?padding:[ `Same | `Valid ] ->
-  ?ceil_mode:bool ->
-  ('a, 'b) Nx.t ->
-  ('a, 'b) Nx.t
-(** [max_pool1d ~kernel_size ?stride ?dilation ?padding ?ceil_mode x] applies 1D
-    max pooling.
-
-    [x]: [(N, C, L)]. [stride] defaults to [1]. [dilation] defaults to [1].
-    [padding] defaults to [`Valid]. [ceil_mode] defaults to [false]. *)
-
-val max_pool2d :
-  kernel_size:int * int ->
-  ?stride:int * int ->
-  ?dilation:int * int ->
-  ?padding:[ `Same | `Valid ] ->
-  ?ceil_mode:bool ->
-  ('a, 'b) Nx.t ->
-  ('a, 'b) Nx.t
-(** [max_pool2d ~kernel_size ?stride ?dilation ?padding ?ceil_mode x] applies 2D
-    max pooling.
-
-    [x]: [(N, C, H, W)]. [stride] defaults to [(1, 1)]. [dilation] defaults to
-    [(1, 1)]. [padding] defaults to [`Valid]. [ceil_mode] defaults to [false].
-*)
-
-val avg_pool1d :
-  kernel_size:int ->
-  ?stride:int ->
-  ?dilation:int ->
-  ?padding:[ `Same | `Valid ] ->
-  ?ceil_mode:bool ->
-  ?count_include_pad:bool ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t
-(** [avg_pool1d ~kernel_size ?stride ?dilation ?padding ?ceil_mode
-     ?count_include_pad x] applies 1D average pooling.
-
-    [x]: [(N, C, L)]. [stride] defaults to [1]. [dilation] defaults to [1].
-    [padding] defaults to [`Valid]. [ceil_mode] defaults to [false].
-    [count_include_pad] defaults to [true]. *)
-
-val avg_pool2d :
-  kernel_size:int * int ->
-  ?stride:int * int ->
-  ?dilation:int * int ->
-  ?padding:[ `Same | `Valid ] ->
-  ?ceil_mode:bool ->
-  ?count_include_pad:bool ->
-  (float, 'b) Nx.t ->
-  (float, 'b) Nx.t
-(** [avg_pool2d ~kernel_size ?stride ?dilation ?padding ?ceil_mode
-     ?count_include_pad x] applies 2D average pooling.
-
-    [x]: [(N, C, H, W)]. [stride] defaults to [(1, 1)]. [dilation] defaults to
-    [(1, 1)]. [padding] defaults to [`Valid]. [ceil_mode] defaults to [false].
-    [count_include_pad] defaults to [true]. *)
+val log_softmax : ?axis:int -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+(** [log_softmax ?axis x] is [log(softmax x)] along [axis], computed as
+    [x - max(x) - log(sum(exp(x - max(x))))]: unlike composing [log] with
+    {!softmax} it does not lose precision or produce [-inf] for entries far
+    below the maximum. Same default and errors as {!softmax}. *)

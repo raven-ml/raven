@@ -88,6 +88,18 @@ let grid_search () =
   done;
   !best_z
 
+(* Parameter structure for Rune: a list of float64 tensors. *)
+module Params = struct
+  type t = Nx.float64_t list
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) l = List.map f l
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
+    List.map2 f a b
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) l = List.iter f l
+end
+
 (* Gradient refinement around grid minimum *)
 let refine z0 =
   let loss params =
@@ -119,7 +131,9 @@ let refine z0 =
   let states = [| Vega.init algo !log_z1; Vega.init algo !log_norm |] in
   let refs = [| log_z1; log_norm |] in
   for _ = 0 to 499 do
-    let _loss_val, grads = Rune.value_and_grads loss [ !log_z1; !log_norm ] in
+    let _loss_val, grads =
+      Rune.value_and_grad (module Params) loss [ !log_z1; !log_norm ]
+    in
     List.iteri
       (fun j g ->
         let p, s = Vega.step states.(j) ~grad:g ~param:!(refs.(j)) in

@@ -1,3 +1,0 @@
-(executable
- (name main)
- (libraries nx nx.core rune vega kaun kaun.hf jsont))

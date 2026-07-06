@@ -22,7 +22,7 @@ dune exec --root . examples/11-bayesian-sed/main.exe
 
 | Function                   | Purpose                                             |
 | -------------------------- | --------------------------------------------------- |
-| `Rune.jacrev`              | Reverse-mode Jacobian for Fisher matrix computation |
+| `Rune.jacrev'`             | Reverse-mode Jacobian for Fisher matrix computation |
 | `Nx.inv`                   | Matrix inverse for Fisher -> covariance             |
 | `Nx.diagonal`              | Extract diagonal (marginal variances)               |
 | `Spectrum.blackbody`       | Generate Planck SED at given temperature            |
@@ -39,7 +39,7 @@ observations are generated at T=6500 K, A_V=0.5 with realistic photometric
 errors (0.03-0.05 mag).
 
 The Fisher information matrix F = J^T C^-1 J is computed from the Jacobian of
-the model (via `Rune.jacrev`) and the observational covariance C. Inverting F
+the model (via `Rune.jacrev'`) and the observational covariance C. Inverting F
 gives the Cramer-Rao lower bound -- the best achievable 1-sigma uncertainty on
 each parameter for a given dataset, regardless of estimation method.
 

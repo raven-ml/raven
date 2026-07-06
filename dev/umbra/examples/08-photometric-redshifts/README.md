@@ -28,7 +28,7 @@ dune exec --root . examples/08-photometric-redshifts/main.exe
 | `Extinction.apply`         | Apply dust reddening with CCM89 law                  |
 | `Photometry.ab_mag`        | Compute AB magnitude through a bandpass              |
 | `Photometry.wavelength`    | Extract the wavelength grid of a bandpass filter      |
-| `Rune.value_and_grads`     | Compute loss and parameter gradients in one pass     |
+| `Rune.value_and_grad`      | Compute loss and parameter gradients in one pass     |
 | `Vega.adam`                | Adam optimizer for gradient refinement               |
 
 ## How It Works

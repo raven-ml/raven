@@ -63,6 +63,18 @@ let img_x, img_y =
   ( create f64 [| 4 |] [| x1; x2; x3; x4 |],
     create f64 [| 4 |] [| y1; y2; y3; y4 |] )
 
+(* Parameter structure for Rune: a list of float64 tensors. *)
+module Params = struct
+  type t = Nx.float64_t list
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) l = List.map f l
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
+    List.map2 f a b
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) l = List.iter f l
+end
+
 (* Loss: given lens params, map each image back to the source plane. All images
    should map to the same source -> minimize variance of inferred source
    positions. *)
@@ -106,7 +118,9 @@ let () =
     "--------" "--------";
   let refs = [| x_l; y_l; theta_e |] in
   for i = 0 to steps - 1 do
-    let loss_val, grads = Rune.value_and_grads loss [ !x_l; !y_l; !theta_e ] in
+    let loss_val, grads =
+      Rune.value_and_grad (module Params) loss [ !x_l; !y_l; !theta_e ]
+    in
     List.iteri
       (fun j g ->
         let p, s = Vega.step states.(j) ~grad:g ~param:!(refs.(j)) in

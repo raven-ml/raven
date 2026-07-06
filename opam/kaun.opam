@@ -3,24 +3,24 @@ opam-version: "2.0"
 version: "1.0.0~alpha3"
 synopsis: "Neural networks for OCaml"
 description:
-  "Composable layers, parameter trees, optimizers, training loops, data pipelines, and HuggingFace Hub integration. Built on Rune."
+  "Neural networks built on Rune. Models are typed parameter structures with pure apply functions; training steps compose value_and_grad with structural optimizers; there is no opaque trainer or layer type."
 maintainer: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 authors: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 license: "ISC"
-tags: ["neural-networks" "machine-learning" "deep-learning"]
+tags: ["machine-learning" "deep-learning" "neural-networks"]
 homepage: "https://github.com/raven-ml/raven"
 doc: "https://raven-ml.dev/docs/"
 bug-reports: "https://github.com/raven-ml/raven/issues"
 depends: [
-  "ocaml" {>= "5.2.0"}
+  "ocaml" {>= "5.5.0"}
   "dune" {>= "3.21"}
-  "rune" {= version}
-  "vega" {= version}
   "nx" {= version}
+  "rune" {= version}
+  "vega" {= version & with-test}
+  "logs"
   "jsont"
   "bytesrw"
   "windtrap" {with-test}
-  "mdx" {with-test}
   "thumper" {with-test}
   "odoc" {with-doc}
 ]

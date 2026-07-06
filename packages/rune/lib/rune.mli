@@ -3,408 +3,351 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Functional transformations for {!Nx} tensors.
+(** Functional transformations over structured tensor collections.
 
-    Rune provides automatic differentiation (forward and reverse mode),
-    vectorising maps, and gradient checking. It operates by intercepting {!Nx}
-    tensor operations via OCaml 5 effect handlers — no special tensor type is
-    needed.
+    Rune differentiates functions over any user-defined parameter structure. A
+    structure declares how to traverse its tensor leaves by implementing
+    {!Nx.Ptree.S}; every transformation then works on it directly, preserving
+    its type. Leaves may have different dtypes: a single forward and backward
+    pass produces gradients for all of them.
 
-    {b Terminology.}
-    - {e Primal}: the input value at which a derivative is evaluated.
-    - {e Tangent}: the directional derivative seed (forward mode).
-    - {e Cotangent}: the adjoint seed propagated backward (reverse mode).
-    - {e JVP}: Jacobian-vector product (forward-mode AD).
-    - {e VJP}: vector-Jacobian product (reverse-mode AD). *)
+    {[
+    type params = { w : Nx.float32_t; b : Nx.float32_t }
 
-(** {1:reverse Reverse-mode AD}
+    module Params = struct
+      type t = params
 
-    Compute gradients of scalar-valued functions via reverse-mode
-    (backpropagation). The function [f] must return a scalar tensor; the
-    gradient has the same shape as the input. *)
+      let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { w; b } =
+        { w = f w; b = f b }
 
-val grad : (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
-(** [grad f x] is the gradient of scalar-valued [f] at [x].
+      let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q
+          =
+        { w = f p.w q.w; b = f p.b q.b }
 
-    Equivalent to [snd (value_and_grad f x)].
+      let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { w; b } =
+        f w;
+        f b
+    end
 
-    See also {!grads}, {!value_and_grad}. *)
+    let grads = Rune.grad (module Params) loss params
+    ]}
 
-val grads :
-  (('a, 'b) Nx.t list -> ('c, 'd) Nx.t) ->
-  ('a, 'b) Nx.t list ->
-  ('a, 'b) Nx.t list
-(** [grads f xs] is the list of gradients of scalar-valued [f] with respect to
-    each tensor in [xs]. The {e i}-th element of the result has the same shape
-    as the {e i}-th element of [xs].
+    Use {!Ptree} when the parameter structure is only known at runtime. *)
 
-    See also {!grad}, {!value_and_grads}. *)
+(** {1:differentiable Ptree.S structures} *)
+
+module Ptree = Nx.Ptree
+(** Parameter trees: {!Nx.Ptree.S} is the traversal interface every
+    transformation takes, and {!Nx.Ptree.t} the stock dynamic instance. *)
+
+(** {1:reverse Reverse-mode differentiation} *)
+
+val grad : (module P : Ptree.S) -> (P.t -> ('c, 'd) Nx.t) -> P.t -> P.t
+(** [grad (module P) f params] is the gradient of [f] at [params], with the same
+    structure and leaf types as [params]. Leaves of [params] that do not
+    contribute to the result have all-zero gradients.
+
+    Raises [Invalid_argument] if a parameter leaf has an integer or boolean
+    dtype (hold non-differentiable data in the closure or the auxiliary output),
+    or if [f params] is not a scalar (a tensor with exactly one element); use
+    {!vjp} to differentiate non-scalar outputs against an explicit cotangent. *)
 
 val value_and_grad :
-  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
-  ('a, 'b) Nx.t ->
-  ('c, 'd) Nx.t * ('a, 'b) Nx.t
-(** [value_and_grad f x] is [(f x, grad f x)], computed in a single
-    forward-backward pass.
-
-    See also {!value_and_grad_aux}. *)
+  (module P : Ptree.S) -> (P.t -> ('c, 'd) Nx.t) -> P.t -> ('c, 'd) Nx.t * P.t
+(** [value_and_grad (module P) f params] is
+    [(f params, grad (module P) f params)], computed in a single forward and
+    backward pass. *)
 
 val value_and_grad_aux :
-  (('a, 'b) Nx.t -> ('c, 'd) Nx.t * 'e) ->
-  ('a, 'b) Nx.t ->
-  ('c, 'd) Nx.t * ('a, 'b) Nx.t * 'e
-(** [value_and_grad_aux f x] is [(y, g, aux)] where [(y, aux) = f x] and [g] is
-    the gradient of [y] with respect to [x]. The auxiliary output [aux] is
-    carried through but not differentiated.
-
-    See also {!value_and_grads_aux}. *)
-
-val value_and_grads :
-  (('a, 'b) Nx.t list -> ('c, 'd) Nx.t) ->
-  ('a, 'b) Nx.t list ->
-  ('c, 'd) Nx.t * ('a, 'b) Nx.t list
-(** [value_and_grads f xs] is [(f xs, grads f xs)], computed in a single
-    forward-backward pass.
-
-    See also {!value_and_grads_aux}. *)
-
-val value_and_grads_aux :
-  (('a, 'b) Nx.t list -> ('c, 'd) Nx.t * 'e) ->
-  ('a, 'b) Nx.t list ->
-  ('c, 'd) Nx.t * ('a, 'b) Nx.t list * 'e
-(** [value_and_grads_aux f xs] is [(y, gs, aux)] where [(y, aux) = f xs] and
-    [gs] is the list of gradients of [y] with respect to each tensor in [xs].
-    The auxiliary output [aux] is carried through but not differentiated.
-
-    See also {!value_and_grad_aux}. *)
+  (module P : Ptree.S) ->
+  (P.t -> ('c, 'd) Nx.t * 'aux) -> P.t -> ('c, 'd) Nx.t * P.t * 'aux
+(** [value_and_grad_aux (module P) f params] is like {!value_and_grad} for an
+    objective returning auxiliary data alongside its result. The auxiliary value
+    is returned as-is and does not contribute to the gradient. *)
 
 val vjp :
+  (module P : Ptree.S) ->
+  (P.t -> ('c, 'd) Nx.t) -> P.t -> ('c, 'd) Nx.t -> ('c, 'd) Nx.t * P.t
+(** [vjp (module P) f params cotangent] is [(f params, grads)] where [grads] is
+    the vector-Jacobian product of [f] at [params] against [cotangent], with the
+    same structure and leaf types as [params]. [cotangent] must have
+    [f params]'s shape and dtype. *)
+
+val vjp2 :
+  (module P : Ptree.S) ->
+  (module Q : Ptree.S) -> (P.t -> Q.t) -> P.t -> Q.t -> Q.t * P.t
+(** [vjp2 (module P) (module Q) f params cotangents] is like {!vjp} for an
+    objective returning a structured output: [cotangents] provides one cotangent
+    per output leaf, each with its output leaf's shape and dtype, and the
+    pulled-back cotangents have [params]' structure.
+
+    Raises [Invalid_argument] if a cotangent leaf's shape does not match its
+    output leaf's shape. *)
+
+val vjp_fun :
+  (module P : Ptree.S) ->
+  (P.t -> ('c, 'd) Nx.t) -> P.t -> ('c, 'd) Nx.t * (('c, 'd) Nx.t -> P.t)
+(** [vjp_fun (module P) f params] is [(f params, pullback)]. [pullback ct] is
+    the vector-Jacobian product of [f] at [params] against [ct]; it may be
+    called any number of times with different cotangents, each call running one
+    backward pass over the recorded computation without re-running [f]. Calling
+    the pullback under another transformation (for example {!val-vmap})
+    transforms the backward pass. Pullbacks are not thread-safe.
+
+    Raises [Invalid_argument] if [ct]'s shape does not match the output's. *)
+
+val vjp_fun' :
+  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
+  ('a, 'b) Nx.t ->
+  ('c, 'd) Nx.t * (('c, 'd) Nx.t -> ('a, 'b) Nx.t)
+(** [vjp_fun' f x] is like {!vjp_fun} for a function of a single tensor. *)
+
+(** {1:forward Forward-mode differentiation} *)
+
+val jvp :
+  (module P : Ptree.S) ->
+  (P.t -> ('c, 'd) Nx.t) -> P.t -> P.t -> ('c, 'd) Nx.t * ('c, 'd) Nx.t
+(** [jvp (module P) f params tangents] is [(f params, df)] where [df] is the
+    Jacobian-vector product of [f] at [params] against [tangents], computed in a
+    single forward pass. [tangents] must be structurally equal to [params]; each
+    tangent leaf must have its parameter leaf's shape. The output may have any
+    shape.
+
+    Raises [Invalid_argument] if a tangent leaf's shape does not match its
+    parameter leaf's shape. *)
+
+val jvp_aux :
+  (module P : Ptree.S) ->
+  (P.t -> ('c, 'd) Nx.t * 'aux) ->
+  P.t ->
+  P.t ->
+  ('c, 'd) Nx.t * ('c, 'd) Nx.t * 'aux
+(** [jvp_aux (module P) f params tangents] is like {!jvp} for an objective
+    returning auxiliary data alongside its result. The auxiliary value is
+    returned as-is and does not contribute to the tangent. *)
+
+val jvp2 :
+  (module P : Ptree.S) ->
+  (module Q : Ptree.S) -> (P.t -> Q.t) -> P.t -> P.t -> Q.t * Q.t
+(** [jvp2 (module P) (module Q) f params tangents] is like {!jvp} for an
+    objective returning a structured output: the result tangent has the output's
+    structure, one tangent per output leaf. *)
+
+(** {1:vmap Vectorizing maps} *)
+
+val vmap :
+  ?in_axes:int option list ->
+  ?out_axis:int ->
+  (module P : Ptree.S) -> (P.t -> ('c, 'd) Nx.t) -> P.t -> ('c, 'd) Nx.t
+(** [vmap ?in_axes ?out_axis (module P) f params] maps [f] over the tensor
+    leaves of [params]. [f] is written for unbatched values: it observes each
+    mapped leaf without its mapped axis, and its result gains a batch axis at
+    [out_axis] (default [0]). Values [f] closes over are constants of the map,
+    and a result that does not depend on the mapped inputs is broadcast along
+    the batch axis.
+
+    [in_axes] gives the mapped axis of each leaf, paired with leaves in the
+    structure's traversal order: [Some i] maps axis [i] (negative from the end),
+    [None] passes the leaf whole as a constant. It defaults to mapping axis [0]
+    of every leaf. Mapped axes must agree on their size.
+
+    Composes with the other transformations: [vmap] of {!grad} computes
+    per-example gradients, and {!grad} of [vmap] differentiates through the map.
+
+    {b Note.} Implicit random number generation ([Nx.rand] and friends) inside
+    the mapped function draws {e identical} values for every lane: the RNG key
+    is a constant of the map. Thread distinct randomness in as mapped inputs
+    instead. Reading a batched tensor's value inside the mapped function raises.
+
+    Raises [Invalid_argument] if [in_axes] does not have one entry per leaf,
+    maps no leaf, names an axis out of bounds, or if the mapped axis sizes
+    disagree. *)
+
+val vmap2 :
+  ?in_axes:int option list ->
+  ?out_axis:int ->
+  (module P : Ptree.S) -> (module Q : Ptree.S) -> (P.t -> Q.t) -> P.t -> Q.t
+(** [vmap2 ?in_axes ?out_axis (module P) (module Q) f params] is like
+    {!val-vmap} for a mapped function returning a structured output: every
+    output leaf gains a batch axis at [out_axis], and output leaves that do not
+    depend on the mapped inputs are broadcast. *)
+
+val vmap' :
+  ?in_axis:int ->
+  ?out_axis:int ->
+  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
+  ('a, 'b) Nx.t ->
+  ('c, 'd) Nx.t
+(** [vmap' ?in_axis ?out_axis f x] is like {!val-vmap} for a function of a
+    single tensor, mapping over [x]'s axis [in_axis] and placing the batch axis
+    of the result at [out_axis]. Both default to [0]. *)
+
+(** {1:custom Custom differentiation rules} *)
+
+val custom_vjp :
+  (module P : Ptree.S) ->
+  fwd:(P.t -> ('c, 'd) Nx.t * 'res) ->
+  bwd:('res -> ('c, 'd) Nx.t -> P.t) ->
+  P.t ->
+  ('c, 'd) Nx.t
+(** [custom_vjp (module P) ~fwd ~bwd params] is [fst (fwd params)], with a
+    user-defined reverse rule. Under the innermost reverse-mode transformation,
+    [fwd]'s internal operations are not differentiated; instead
+    [bwd residual cotangent] provides the parameter gradients, with each leaf
+    matching its parameter leaf's shape and dtype. [residual] is whatever [fwd]
+    returned alongside its result. Enclosing transformations (an outer {!grad},
+    {!val-vmap}) see the forward computation itself.
+
+    Raises [Invalid_argument] if the call is differentiated in forward mode;
+    define a {!custom_jvp} rule for that. *)
+
+val custom_jvp :
+  (module P : Ptree.S) ->
+  f:(P.t -> ('c, 'd) Nx.t) ->
+  jvp:(P.t -> P.t -> ('c, 'd) Nx.t * ('c, 'd) Nx.t) ->
+  P.t ->
+  ('c, 'd) Nx.t
+(** [custom_jvp (module P) ~f ~jvp params] is [f params], with a user-defined
+    forward rule. Under the innermost forward-mode transformation,
+    [jvp params tangents] provides both the result and its tangent, replacing
+    [f]'s internal operations.
+
+    Raises [Invalid_argument] if the call is differentiated in reverse mode;
+    define a {!custom_vjp} rule for that. *)
+
+(** {1:tensor Single-tensor variants} *)
+
+val grad' : (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+(** [grad' f x] is like {!grad} for a function of a single tensor. *)
+
+val value_and_grad' :
+  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
+  ('a, 'b) Nx.t ->
+  ('c, 'd) Nx.t * ('a, 'b) Nx.t
+(** [value_and_grad' f x] is like {!value_and_grad} for a function of a single
+    tensor. *)
+
+val vjp' :
   (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
   ('a, 'b) Nx.t ->
   ('c, 'd) Nx.t ->
   ('c, 'd) Nx.t * ('a, 'b) Nx.t
-(** [vjp f x v] is [(y, g)] where [y = f x] and [g = v{^T} J{_f}(x)]
-    (vector-Jacobian product). Unlike {!grad}, [f] need not return a scalar —
-    the cotangent [v] must have the same shape as [y].
+(** [vjp' f x cotangent] is like {!vjp} for a function of a single tensor. *)
 
-    See also {!vjps}. *)
-
-val vjps :
-  (('a, 'b) Nx.t list -> ('c, 'd) Nx.t) ->
-  ('a, 'b) Nx.t list ->
-  ('c, 'd) Nx.t ->
-  ('c, 'd) Nx.t * ('a, 'b) Nx.t list
-(** [vjps f xs v] is like {!vjp} for functions with multiple inputs. Returns
-    [(y, gs)] where each gradient in [gs] corresponds to one input in [xs]. *)
-
-(** {1:forward Forward-mode AD}
-
-    Compute Jacobian-vector products by propagating tangent vectors alongside
-    primal values. Forward mode is efficient when the number of inputs is small
-    relative to the number of outputs. *)
-
-val jvp :
+val jvp' :
   (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
   ('a, 'b) Nx.t ->
   ('a, 'b) Nx.t ->
   ('c, 'd) Nx.t * ('c, 'd) Nx.t
-(** [jvp f x v] is [(y, t)] where [y = f x] and [t = J{_f}(x) v]
-    (Jacobian-vector product). The tangent [v] must have the same shape as [x].
+(** [jvp' f x tangent] is like {!jvp} for a function of a single tensor. *)
 
-    See also {!jvps}, {!jvp_aux}. *)
+(** {1:remat Gradient checkpointing} *)
 
-val jvp_aux :
-  (('a, 'b) Nx.t -> ('c, 'd) Nx.t * 'e) ->
-  ('a, 'b) Nx.t ->
-  ('a, 'b) Nx.t ->
-  ('c, 'd) Nx.t * ('c, 'd) Nx.t * 'e
-(** [jvp_aux f x v] is like {!jvp} but for functions with auxiliary output.
-    Returns [(y, t, aux)] where [aux] is carried through but not differentiated.
-*)
+val remat :
+  (module P : Ptree.S) -> (P.t -> ('c, 'd) Nx.t) -> P.t -> ('c, 'd) Nx.t
+(** [remat (module P) f params] is [f params], recomputed during the backward
+    pass instead of having its intermediate results retained by the tape:
+    reverse-mode differentiation of a [remat]ed function trades compute for
+    memory. Gradients are unchanged.
 
-val jvps :
-  (('a, 'b) Nx.t list -> ('c, 'd) Nx.t) ->
-  ('a, 'b) Nx.t list ->
-  ('a, 'b) Nx.t list ->
-  ('c, 'd) Nx.t * ('c, 'd) Nx.t
-(** [jvps f xs vs] is like {!jvp} for functions with multiple inputs. Each
-    tangent in [vs] must have the same shape as the corresponding primal in
-    [xs]. *)
+    Raises [Invalid_argument] if differentiated in forward mode (it is a
+    {!custom_vjp} rule underneath). *)
 
-(** {1:jacobian Jacobian computation} *)
+(** {1:jacobians Jacobians} *)
 
-val jacfwd : (Nx.float64_t -> Nx.float64_t) -> Nx.float64_t -> Nx.float64_t
-(** [jacfwd f x] is the [{m} x {n}] Jacobian matrix of [f] at [x], computed
-    column-by-column via forward-mode AD (JVP). [f] maps a 1-D tensor of shape
-    [[n]] to a 1-D tensor of shape [[m]]. Entry [J(i,j)] is
-    {e d(output_i) / d(input_j)}.
+val jacfwd' : (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('c, 'd) Nx.t
+(** [jacfwd' f x] is the Jacobian of [f] at [x], with shape
+    [shape (f x) @ shape x], computed column by column in forward mode (one
+    vectorized pass). Prefer it when the input is smaller than the output. *)
 
-    Performs [n] JVP evaluations. Prefer over {!jacrev} when [n <= m]. *)
+val jacrev' : (('a, 'b) Nx.t -> ('c, 'd) Nx.t) -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+(** [jacrev' f x] is the Jacobian of [f] at [x], with shape
+    [shape (f x) @ shape x], computed row by row in reverse mode (one forward
+    pass, one vectorized backward pass). Prefer it when the output is smaller
+    than the input. *)
 
-val jacrev : (Nx.float64_t -> Nx.float64_t) -> Nx.float64_t -> Nx.float64_t
-(** [jacrev f x] is the [{m} x {n}] Jacobian matrix of [f] at [x], computed
-    row-by-row via reverse-mode AD (VJP). [f] maps a 1-D tensor of shape [[n]]
-    to a 1-D tensor of shape [[m]]. Entry [J(i,j)] is
-    {e d(output_i) / d(input_j)}.
+val hessian' :
+  (('a, 'b) Nx.t -> ('a, 'b) Nx.t) -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+(** [hessian' f x] is the Hessian of the scalar objective [f] at [x], with shape
+    [shape x @ shape x] (forward over reverse). *)
 
-    Performs [m] VJP evaluations. Prefer over {!jacfwd} when [m <= n]. *)
+val hvp : (module P : Ptree.S) -> (P.t -> ('c, 'd) Nx.t) -> P.t -> P.t -> P.t
+(** [hvp (module P) f params v] is the Hessian-vector product of the scalar
+    objective [f] at [params] against [v], with [params]' structure, computed
+    without materializing the Hessian (forward over reverse). *)
 
-(** {1:stop Stopping gradients} *)
-
-val no_grad : (unit -> 'a) -> 'a
-(** [no_grad f] evaluates [f ()] without recording operations for automatic
-    differentiation. All tensors produced inside [f] are treated as constants by
-    enclosing gradient computations. *)
-
-val detach : ('a, 'b) Nx.t -> ('a, 'b) Nx.t
-(** [detach x] is a copy of [x] that is treated as a constant with respect to
-    automatic differentiation.
-
-    See also {!no_grad}. *)
-
-(** {1:custom Custom differentiation rules}
-
-    Override automatic differentiation with user-supplied forward and backward
-    (or tangent) rules. Useful for implicit differentiation, surrogate
-    gradients, and other computations where the derivative is algorithmically
-    distinct from the primal.
-
-    Under reverse-mode AD ({!grad}, {!vjp}), the custom backward rule is used
-    instead of tracing through the forward function. Under forward-mode AD
-    ({!jvp}) or outside AD, the forward function is traced normally.
-
-    {b Higher-order derivatives.} The backward function runs outside the inner
-    handler's continuation, so its {!Nx} operations are traced by enclosing AD
-    handlers. This means [grad (fun x -> grad (custom_vjp_fn) x) x] works
-    correctly. *)
-
-val custom_vjp :
-  fwd:(('a, 'b) Nx.t -> ('c, 'd) Nx.t * 'res) ->
-  bwd:('res -> ('c, 'd) Nx.t -> ('a, 'b) Nx.t) ->
-  ('a, 'b) Nx.t ->
-  ('c, 'd) Nx.t
-(** [custom_vjp ~fwd ~bwd x] computes [fwd x] with a custom VJP rule.
-
-    [fwd] returns [(y, residuals)] where [y] is the output and [residuals] is
-    auxiliary data saved for the backward pass (e.g. intermediate values needed
-    by the backward rule). [residuals] is not differentiated.
-
-    [bwd residuals g] receives the output cotangent [g] and returns the input
-    cotangent. It is only called under reverse-mode AD ({!grad}, {!vjp}); under
-    forward-mode AD ({!jvp}) or outside AD, [fwd] is traced normally instead. *)
-
-val custom_vjps :
-  fwd:(('a, 'b) Nx.t list -> ('c, 'd) Nx.t * 'res) ->
-  bwd:('res -> ('c, 'd) Nx.t -> ('a, 'b) Nx.t list) ->
-  ('a, 'b) Nx.t list ->
-  ('c, 'd) Nx.t
-(** [custom_vjps ~fwd ~bwd xs] is like {!custom_vjp} for functions with multiple
-    inputs. [bwd] must return a list of the same length as [xs]. *)
-
-val custom_jvp :
-  fwd:(('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
-  jvp_rule:(('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('c, 'd) Nx.t * ('c, 'd) Nx.t) ->
-  ('a, 'b) Nx.t ->
-  ('c, 'd) Nx.t
-(** [custom_jvp ~fwd ~jvp_rule x] computes [fwd x] with a custom JVP rule.
-
-    [jvp_rule primal tangent] receives the primal input and its tangent, and
-    returns [(y, dy)] where [y] is the primal output and [dy] is its tangent. It
-    is only called under forward-mode AD ({!jvp}); under reverse-mode AD
-    ({!grad}, {!vjp}) or outside AD, [fwd] is traced normally instead. *)
-
-val custom_jvps :
-  fwd:(('a, 'b) Nx.t list -> ('c, 'd) Nx.t) ->
-  jvp_rule:
-    (('a, 'b) Nx.t list -> ('a, 'b) Nx.t list -> ('c, 'd) Nx.t * ('c, 'd) Nx.t) ->
-  ('a, 'b) Nx.t list ->
-  ('c, 'd) Nx.t
-(** [custom_jvps ~fwd ~jvp_rule xs] is like {!custom_jvp} for functions with
-    multiple inputs. [jvp_rule primals tangents] receives a list of primals and
-    their tangents, and returns [(y, dy)]. *)
-
-(** {1:gradcheck Gradient checking}
-
-    Compare autodiff gradients against finite-difference approximations. Useful
-    for testing custom operations. *)
-
-type method_ = [ `Central | `Forward | `Backward ]
-(** The type for finite difference methods.
-    - [`Central] — [(f(x+h) - f(x-h)) / 2h]. Most accurate, requires two
-      evaluations per element.
-    - [`Forward] — [(f(x+h) - f(x)) / h].
-    - [`Backward] — [(f(x) - f(x-h)) / h]. *)
-
-val finite_diff :
-  ?eps:float ->
-  ?method_:method_ ->
+val hvp' :
   (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
+  ('a, 'b) Nx.t ->
   ('a, 'b) Nx.t ->
   ('a, 'b) Nx.t
-(** [finite_diff f x] is the gradient of scalar-valued [f] at [x] approximated
-    by finite differences.
+(** [hvp' f x v] is like {!hvp} for a function of a single tensor. *)
 
-    [eps] defaults to [1e-4]. [method_] defaults to [`Central]. *)
+(** {1:checks Gradient checking} *)
 
-val finite_diff_jacobian :
+val check_grads :
   ?eps:float ->
-  ?method_:method_ ->
-  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
+  ?tol:float ->
+  (module P : Ptree.S) -> (P.t -> ('c, 'd) Nx.t) -> P.t -> (unit, string) result
+(** [check_grads (module P) f params] compares the reverse-mode gradient of the
+    scalar objective [f] at [params] against central-difference directional
+    derivatives along deterministic directions. [Ok ()] means they agree within
+    [tol] (relative, default [1e-2]); [Error msg] describes the disagreement.
+    [eps] is the finite-difference step (default [1e-4]).
+
+    The check is directional, not per-element: it validates gradients cheaply
+    rather than exhaustively. Use float64 parameters for reliable results;
+    float32 may need a looser [tol]. *)
+
+(** {1:flow Control flow}
+
+    Eager combinators with staging-ready signatures: code written with them
+    differentiates and vectorizes today, and a future [jit] can stage them as
+    structured control flow instead of unrolled traces. *)
+
+val scan :
+  (module C : Ptree.S) ->
+  f:(C.t -> ('a, 'b) Nx.t -> C.t * ('c, 'd) Nx.t) ->
+  init:C.t ->
   ('a, 'b) Nx.t ->
-  ('c, 'd) Nx.t
-(** [finite_diff_jacobian f x] is the Jacobian of [f] at [x] approximated by
-    finite differences.
+  C.t * ('c, 'd) Nx.t
+(** [scan (module C) ~f ~init xs] folds [f] over slices of [xs] along axis 0:
+    [f carry x] returns the next carry and a per-step output. The result is the
+    final carry and the outputs stacked along a new axis 0. Differentiating
+    traces every step.
 
-    [eps] defaults to [1e-4]. [method_] defaults to [`Central]. *)
+    Raises [Invalid_argument] if [xs] is a scalar or empty along axis 0. *)
 
-type gradient_check_result = {
-  max_abs_error : float;  (** Largest absolute error across all elements. *)
-  max_rel_error : float;  (** Largest relative error across all elements. *)
-  mean_abs_error : float;  (** Mean absolute error. *)
-  mean_rel_error : float;  (** Mean relative error. *)
-  failed_indices : (int array * float * float * float) list;
-      (** [(index, autodiff, finite_diff, abs_error)] for each failed element.
-      *)
-  passed : bool;  (** [true] iff no element exceeded the tolerances. *)
-  num_checked : int;  (** Number of elements checked. *)
-  num_failed : int;  (** Number of elements that exceeded tolerances. *)
-}
-(** The type for gradient check results. *)
+val cond :
+  (bool, Nx.bool_elt) Nx.t -> then_:(unit -> 'r) -> else_:(unit -> 'r) -> 'r
+(** [cond pred ~then_ ~else_] runs one branch according to the scalar [pred].
+    Reading [pred] concretizes it: inside {!val-vmap}, a predicate that depends
+    on the mapped inputs raises, since the lanes could diverge. *)
 
-val check_gradient :
-  ?eps:float ->
-  ?rtol:float ->
-  ?atol:float ->
-  ?verbose:bool ->
-  ?check_indices:int list option ->
-  ?method_:[ `Central | `Forward | `Backward ] ->
-  ((float, 'a) Nx.t -> ('b, 'c) Nx.t) ->
-  (float, 'a) Nx.t ->
-  [ `Pass of gradient_check_result | `Fail of gradient_check_result ]
-(** [check_gradient f x] compares the autodiff gradient of [f] at [x] against a
-    finite-difference approximation.
-
-    An element passes when [abs_error <= atol] or [rel_error <= rtol].
-
-    - [eps] defaults to [1e-4].
-    - [rtol] defaults to [2e-3].
-    - [atol] defaults to [2e-3].
-    - [verbose] defaults to [false]. When [true], prints per-element failures
-      and a summary to standard output.
-    - [check_indices] defaults to [None] (check all elements). When
-      [Some indices], only the listed flat indices are checked.
-    - [method_] defaults to [`Central].
-
-    See also {!check_gradients}. *)
-
-val check_gradients :
-  ?eps:float ->
-  ?rtol:float ->
-  ?atol:float ->
-  ?verbose:bool ->
-  ?method_:[ `Central | `Forward | `Backward ] ->
-  ((float, 'a) Nx.t list -> ('b, 'c) Nx.t) ->
-  (float, 'a) Nx.t list ->
-  [ `Pass of gradient_check_result list | `Fail of gradient_check_result list ]
-(** [check_gradients f xs] is like {!check_gradient} for functions with multiple
-    inputs. Returns one {!gradient_check_result} per input tensor.
-
-    Optional parameters have the same defaults as {!check_gradient}. *)
-
-(** {1:vmap Vectorising map}
-
-    Map a computation over a batch dimension. [vmap] transforms a function that
-    operates on single examples into one that operates on batches, without the
-    user writing explicit batch loops. *)
-
-(** The type for per-input axis specifications. *)
-type axis_spec = Vmap.axis_spec =
-  | Map of int  (** Map over the axis at this index. *)
-  | NoMap  (** Do not map; broadcast the input as-is. *)
-
-(** The type for input axis specifications. *)
-type 'a in_axes_spec = 'a Vmap.in_axes_spec =
-  | Single of axis_spec  (** Apply to all inputs. *)
-  | Container of 'a  (** Per-input specifications. *)
-
-(** The type for output axis specifications. *)
-type 'a out_axes_spec = 'a Vmap.out_axes_spec =
-  | OutSingle of int option
-      (** Stack outputs along this axis ([None] to discard). *)
-  | OutContainer of 'a  (** Per-output specifications. *)
-
-val vmap :
-  ?in_axes:'a in_axes_spec ->
-  ?out_axes:'b out_axes_spec ->
-  ?axis_name:string ->
-  ?axis_size:int ->
-  (('c, 'd) Nx.t -> ('e, 'f) Nx.t) ->
-  ('c, 'd) Nx.t ->
-  ('e, 'f) Nx.t
-(** [vmap f x] is a vectorised version of [f] applied to [x].
-
-    - [in_axes] defaults to [Single (Map 0)].
-    - [out_axes] defaults to [OutSingle (Some 0)].
-    - [axis_name] is an optional label for the mapped axis (used in error
-      messages).
-    - [axis_size] overrides the batch size inferred from the input shape.
-      Required when all inputs use {!NoMap}.
-
-    See also {!vmaps}. *)
-
-val vmaps :
-  ?in_axes:Vmap.axis_spec list ->
-  ?out_axes:'b Vmap.out_axes_spec ->
-  ?axis_name:string ->
-  ?axis_size:int ->
-  (('c, 'd) Nx.t list -> ('e, 'f) Nx.t) ->
-  ('c, 'd) Nx.t list ->
-  ('e, 'f) Nx.t
-(** [vmaps f xs] is like {!vmap} for functions with multiple inputs. Each
-    element of [in_axes] corresponds to one input in [xs].
-
-    [in_axes] defaults to [Map 0] for every input. *)
-
-(** {1:jit JIT compilation} *)
-
-val jit :
-  ?device:Tolk.Device.t ->
-  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
-  ('a, 'b) Nx.t ->
-  ('c, 'd) Nx.t
-(** [jit f] returns a JIT-compiled version of [f].
-
-    - Call 1 (warmup): executes eagerly
-    - Call 2 (capture): intercepts tensor operations, builds computation graph,
-      compiles via Tolk's codegen pipeline
-    - Calls 3+ (replay): executes the compiled schedule without recompilation
-
-    Raises [Invalid_argument] if input shapes or dtypes change after capture. *)
-
-type jit_traced = Jit.traced = {
-  tensor_graph : Tolk_ir.Tensor.t;
-      (** High-level operation graph before scheduling. *)
-  kernel_graph : Tolk_ir.Tensor.t;
-      (** Scheduled graph with [Call] nodes containing kernel ASTs. *)
-  rendered_source : string list;
-      (** Rendered source code for each kernel (one per [Call] node). *)
-}
-(** Result of tracing a function through the JIT capture handler. *)
-
-val trace_graph :
-  device:Tolk.Device.t ->
-  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
-  ('a, 'b) Nx.t ->
-  jit_traced
-(** [trace_graph ~device f x] traces [f] applied to [x], capturing the
-    computation graph without executing it.
-
-    Returns the tensor graph, kernel graph, and rendered source for each kernel.
-    Useful for debugging what the JIT produces, inspecting gradient graphs, or
-    comparing against reference implementations. *)
+val while_loop :
+  (module C : Ptree.S) ->
+  cond:(C.t -> (bool, Nx.bool_elt) Nx.t) -> body:(C.t -> C.t) -> C.t -> C.t
+(** [while_loop (module C) ~cond ~body init] iterates [body] on the carry while
+    [cond] holds. Reading the predicate concretizes it, with the same
+    {!val-vmap} caveat as {!cond}. Differentiating traces every iteration
+    actually taken. *)
 
 (** {1:debug Debugging} *)
 
-val debug : ('a -> 'b) -> 'a -> 'b
-(** [debug f x] applies [f] to [x] under a tracing handler that prints every
-    tensor operation, its inputs, and its outputs to standard output. *)
+val with_debug : ?ppf:Format.formatter -> (unit -> 'a) -> 'a
+(** [with_debug f] runs [f] and logs each tensor operation it performs — the
+    operation name and output shape — to [ppf] (defaults to
+    [Format.err_formatter]). Composes with the other transformations: run it
+    outermost to also observe the operations they emit. Uncommon operations may
+    execute unlogged. *)
+
+(** {1:control Autodiff control} *)
+
+val detach : ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+(** [detach t] is a copy of [t] through which gradients do not flow. Use it to
+    hold a value constant inside a differentiated function, including as input
+    to an operation whose gradient is not implemented. *)
+
+val no_grad : (unit -> 'a) -> 'a
+(** [no_grad f] runs [f] with gradient tracking disabled: tensors it produces
+    are constants of the surrounding differentiation. *)

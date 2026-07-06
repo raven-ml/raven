@@ -4,10 +4,11 @@
   ---------------------------------------------------------------------------*)
 
 open Kaun
+module Hf = Kaun_hf
 
 let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
-(* Config *)
+(* Configuration *)
 
 type config = {
   vocab_size : int;
@@ -16,275 +17,188 @@ type config = {
   n_layer : int;
   n_head : int;
   n_inner : int;
-  resid_pdrop : float;
-  embd_pdrop : float;
-  attn_pdrop : float;
   layer_norm_eps : float;
 }
 
-let config ~vocab_size ~n_embd ~n_layer ~n_head ?(n_positions = 1024)
-    ?(n_inner = 4 * n_embd) ?(resid_pdrop = 0.1) ?(embd_pdrop = 0.1)
-    ?(attn_pdrop = 0.1) ?(layer_norm_eps = 1e-5) () =
-  if n_embd mod n_head <> 0 then
-    invalid_argf "Gpt2.config: n_embd (%d) not divisible by n_head (%d)" n_embd
-      n_head;
+(* Model: plain records of kaun layers *)
+
+type block = {
+  ln1 : Layer_norm.t;
+  attn : Attention.t;
+  ln2 : Layer_norm.t;
+  fc : Linear.t;
+  proj : Linear.t;
+}
+
+type t = {
+  wte : Embedding.t;
+  wpe : Embedding.t;
+  blocks : block list;
+  ln_f : Layer_norm.t;
+}
+
+module Params = struct
+  type nonrec t = t
+
+  let map_block (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) b =
+    {
+      ln1 = Layer_norm.map f b.ln1;
+      attn = Attention.map f b.attn;
+      ln2 = Layer_norm.map f b.ln2;
+      fc = Linear.map f b.fc;
+      proj = Linear.map f b.proj;
+    }
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p =
+    {
+      wte = Embedding.map f p.wte;
+      wpe = Embedding.map f p.wpe;
+      blocks = List.map (map_block f) p.blocks;
+      ln_f = Layer_norm.map f p.ln_f;
+    }
+
+  let map2_block (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) b
+      b' =
+    {
+      ln1 = Layer_norm.map2 f b.ln1 b'.ln1;
+      attn = Attention.map2 f b.attn b'.attn;
+      ln2 = Layer_norm.map2 f b.ln2 b'.ln2;
+      fc = Linear.map2 f b.fc b'.fc;
+      proj = Linear.map2 f b.proj b'.proj;
+    }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p p' =
+    {
+      wte = Embedding.map2 f p.wte p'.wte;
+      wpe = Embedding.map2 f p.wpe p'.wpe;
+      blocks = List.map2 (map2_block f) p.blocks p'.blocks;
+      ln_f = Layer_norm.map2 f p.ln_f p'.ln_f;
+    }
+
+  let iter_block (f : 'a 'b. ('a, 'b) Nx.t -> unit) b =
+    Layer_norm.iter f b.ln1;
+    Attention.iter f b.attn;
+    Layer_norm.iter f b.ln2;
+    Linear.iter f b.fc;
+    Linear.iter f b.proj
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) p =
+    Embedding.iter f p.wte;
+    Embedding.iter f p.wpe;
+    List.iter (iter_block f) p.blocks;
+    Layer_norm.iter f p.ln_f
+
+  let names p =
+    let pre prefix ns = List.map (fun n -> prefix ^ "." ^ n) ns in
+    let block b =
+      pre "ln1" (Layer_norm.names b.ln1)
+      @ pre "attn" (Attention.names b.attn)
+      @ pre "ln2" (Layer_norm.names b.ln2)
+      @ pre "fc" (Linear.names b.fc)
+      @ pre "proj" (Linear.names b.proj)
+    in
+    pre "wte" (Embedding.names p.wte)
+    @ pre "wpe" (Embedding.names p.wpe)
+    @ List.concat
+        (List.mapi
+           (fun i b -> pre (Printf.sprintf "blocks.%d" i) (block b))
+           p.blocks)
+    @ pre "ln_f" (Layer_norm.names p.ln_f)
+end
+
+let make cfg =
+  let zeros = Init.zeros in
+  let linear ~inputs ~outputs =
+    Linear.make ~w_init:zeros ~bias_init:zeros ~inputs ~outputs Nx.float32
+  in
+  let embedding ~vocab = Embedding.make ~init:zeros ~vocab ~dim:cfg.n_embd in
+  let block () =
+    {
+      ln1 = Layer_norm.init ~dim:cfg.n_embd;
+      attn =
+        Attention.make ~w_init:zeros ~bias_init:zeros ~embed_dim:cfg.n_embd
+          Nx.float32;
+      ln2 = Layer_norm.init ~dim:cfg.n_embd;
+      fc = linear ~inputs:cfg.n_embd ~outputs:cfg.n_inner;
+      proj = linear ~inputs:cfg.n_inner ~outputs:cfg.n_embd;
+    }
+  in
   {
-    vocab_size;
-    n_positions;
-    n_embd;
-    n_layer;
-    n_head;
-    n_inner;
-    resid_pdrop;
-    embd_pdrop;
-    attn_pdrop;
-    layer_norm_eps;
+    wte = embedding ~vocab:cfg.vocab_size Nx.float32;
+    wpe = embedding ~vocab:cfg.n_positions Nx.float32;
+    blocks = List.init cfg.n_layer (fun _ -> block ());
+    ln_f = Layer_norm.init ~dim:cfg.n_embd;
   }
 
-(* Helpers *)
+(* Forward pass (inference: dropout omitted) *)
 
-let fields ~ctx t = Ptree.Dict.fields_exn ~ctx t
-let get fs ~name dtype = Ptree.Dict.get_tensor_exn fs ~name dtype
-let find ~ctx key fs = Ptree.Dict.find_exn ~ctx key fs
-
-(* Causal self-attention with combined QKV *)
-
-let causal_self_attention (type l) ~(cfg : config)
-    ~(dtype : (float, l) Nx.dtype) ~training ~params (x : (float, l) Nx.t) :
-    (float, l) Nx.t =
-  let shape = Nx.shape x in
-  let batch = shape.(0) in
-  let seq = shape.(1) in
-  let h = cfg.n_embd in
-  let heads = cfg.n_head in
-  let head_dim = h / heads in
-  let fs = fields ~ctx:"Gpt2.attention" params in
-
-  (* Combined QKV projection: [batch, seq, 3*h] *)
-  let qkv_w = get fs ~name:"qkv_weight" dtype in
-  let qkv_b = get fs ~name:"qkv_bias" dtype in
-  let qkv = Nx.add (Nx.matmul x qkv_w) qkv_b in
-
-  (* Split into Q, K, V *)
-  let qkv_parts = Nx.split ~axis:(-1) 3 qkv in
-  let q = List.nth qkv_parts 0 in
-  let k = List.nth qkv_parts 1 in
-  let v = List.nth qkv_parts 2 in
-
-  let split_heads t =
-    Nx.reshape [| batch; seq; heads; head_dim |] t
-    |> Nx.transpose ~axes:[ 0; 2; 1; 3 ]
+let block_apply cfg b x =
+  let eps = cfg.layer_norm_eps in
+  let x =
+    Nx.add x
+      (Attention.apply ~num_heads:cfg.n_head ~causal:true b.attn
+         (Layer_norm.apply ~eps b.ln1 x))
   in
-  let q = split_heads q in
-  let k = split_heads k in
-  let v = split_heads v in
+  Nx.add x
+    (Linear.apply b.proj
+       (Fn.gelu_approx (Linear.apply b.fc (Layer_norm.apply ~eps b.ln2 x))))
 
-  let dropout_rate =
-    if training && cfg.attn_pdrop > 0.0 then Some cfg.attn_pdrop else None
-  in
-
-  let attn =
-    Kaun.Fn.dot_product_attention ~is_causal:true ?dropout_rate q k v
-  in
-
-  (* Merge heads *)
-  let merged =
-    Nx.transpose attn ~axes:[ 0; 2; 1; 3 ]
-    |> Nx.contiguous
-    |> Nx.reshape [| batch; seq; h |]
-  in
-
-  (* Output projection *)
-  let o_w = get fs ~name:"o_weight" dtype in
-  let o_b = get fs ~name:"o_bias" dtype in
-  Nx.add (Nx.matmul merged o_w) o_b
-
-(* Transformer block (pre-norm) *)
-
-let transformer_block (type l) ~(cfg : config) ~(dtype : (float, l) Nx.dtype)
-    ~training ~params (x : (float, l) Nx.t) : (float, l) Nx.t =
-  let fs = fields ~ctx:"Gpt2.block" params in
-
-  (* Pre-norm attention *)
-  let ln1_g = get fs ~name:"ln1_gamma" dtype in
-  let ln1_b = get fs ~name:"ln1_beta" dtype in
-  let x' =
-    Kaun.Fn.layer_norm ~gamma:ln1_g ~beta:ln1_b ~epsilon:cfg.layer_norm_eps x
-  in
-
-  let attn_params = find ~ctx:"Gpt2.block" "attention" fs in
-  let attn =
-    causal_self_attention ~cfg ~dtype ~training ~params:attn_params x'
-  in
-
-  (* Residual dropout *)
-  let attn =
-    if training && cfg.resid_pdrop > 0.0 then
-      Kaun.Fn.dropout ~rate:cfg.resid_pdrop attn
-    else attn
-  in
-  let x = Nx.add x attn in
-
-  (* Pre-norm FFN *)
-  let ln2_g = get fs ~name:"ln2_gamma" dtype in
-  let ln2_b = get fs ~name:"ln2_beta" dtype in
-  let x' =
-    Kaun.Fn.layer_norm ~gamma:ln2_g ~beta:ln2_b ~epsilon:cfg.layer_norm_eps x
-  in
-
-  let ffn_up_w = get fs ~name:"ffn_up_weight" dtype in
-  let ffn_up_b = get fs ~name:"ffn_up_bias" dtype in
-  let ffn_down_w = get fs ~name:"ffn_down_weight" dtype in
-  let ffn_down_b = get fs ~name:"ffn_down_bias" dtype in
-
-  let y =
-    Nx.add (Nx.matmul x' ffn_up_w) ffn_up_b |> Kaun.Activation.gelu_approx
-  in
-  let y = Nx.add (Nx.matmul y ffn_down_w) ffn_down_b in
-
-  (* Residual dropout *)
-  let y =
-    if training && cfg.resid_pdrop > 0.0 then
-      Kaun.Fn.dropout ~rate:cfg.resid_pdrop y
-    else y
-  in
-  Nx.add x y
-
-(* Forward: embeddings + transformer stack + final layer norm *)
-
-let decode (type l in_elt) ~(cfg : config) ~params
-    ~(dtype : (float, l) Nx.dtype) ~training (input_ids : (int32, in_elt) Nx.t)
-    : (float, l) Nx.t =
-  let input_ids = Nx.cast Nx.int32 input_ids in
-  let shape = Nx.shape input_ids in
-  let batch = shape.(0) in
-  let seq = shape.(1) in
-
+let logits cfg p ids =
+  let seq = (Nx.shape ids).(1) in
   if seq > cfg.n_positions then
-    invalid_argf "Gpt2.decode: seq_len=%d exceeds n_positions=%d" seq
+    invalid_argf "Gpt2.logits: seq %d exceeds n_positions %d" seq
       cfg.n_positions;
+  let pos = Nx.reshape [| 1; seq |] (Nx.arange Nx.int32 0 seq 1) in
+  let x = Nx.add (Embedding.apply p.wte ids) (Embedding.apply p.wpe pos) in
+  let x = List.fold_left (fun x b -> block_apply cfg b x) x p.blocks in
+  let h = Layer_norm.apply ~eps:cfg.layer_norm_eps p.ln_f x in
+  (* Tied LM head: logits = h @ wteᵀ. *)
+  Nx.matmul h (Nx.transpose p.wte.table)
 
-  (* Params *)
-  let root = fields ~ctx:"Gpt2.decode" params in
+(* HuggingFace checkpoint adaptation.
 
-  let wte = get root ~name:"wte" dtype in
-  let wpe = get root ~name:"wpe" dtype in
-  let layers_t = find ~ctx:"Gpt2.decode" "layers" root in
+   HF names tensors h.{i}.attn.c_attn.weight, h.{i}.mlp.c_fc.bias, ... and fuses
+   the q, k and v projections into c_attn ([n_embd; 3 * n_embd]). Its Conv1D
+   weights are already [inputs; outputs], so only splits and renames are
+   needed. *)
 
-  (* Embedding lookup: token + position *)
-  let position_ids =
-    Nx.arange_f Nx.float32 0.0 (float_of_int seq) 1.0
-    |> Nx.cast Nx.int32
-    |> Nx.reshape [| 1; seq |]
-    |> Nx.broadcast_to [| batch; seq |]
-    |> Nx.contiguous
+let hf_name name =
+  match name with
+  | "wte.weight" -> "wte.table"
+  | "wpe.weight" -> "wpe.table"
+  | "ln_f.weight" -> "ln_f.gamma"
+  | "ln_f.bias" -> "ln_f.beta"
+  | _ -> (
+      match String.split_on_char '.' name with
+      | "h" :: i :: rest -> (
+          let ours leaf = Printf.sprintf "blocks.%s.%s" i leaf in
+          match rest with
+          | [ "ln_1"; "weight" ] -> ours "ln1.gamma"
+          | [ "ln_1"; "bias" ] -> ours "ln1.beta"
+          | [ "ln_2"; "weight" ] -> ours "ln2.gamma"
+          | [ "ln_2"; "bias" ] -> ours "ln2.beta"
+          | [ "attn"; "c_proj"; "weight" ] -> ours "attn.out.w"
+          | [ "attn"; "c_proj"; "bias" ] -> ours "attn.out.b"
+          | [ "mlp"; "c_fc"; "weight" ] -> ours "fc.w"
+          | [ "mlp"; "c_fc"; "bias" ] -> ours "fc.b"
+          | [ "mlp"; "c_proj"; "weight" ] -> ours "proj.w"
+          | [ "mlp"; "c_proj"; "bias" ] -> ours "proj.b"
+          | _ -> name (* attention mask buffers; unused *))
+      | _ -> name)
+
+let of_hf ~n_layer ckpt =
+  let split_qkv ckpt i =
+    let fused leaf = Printf.sprintf "h.%d.attn.c_attn.%s" i leaf in
+    let ours p leaf = Printf.sprintf "blocks.%d.attn.%s.%s" i p leaf in
+    ckpt
+    |> Hf.split (fused "weight")
+         ~into:[ ours "q" "w"; ours "k" "w"; ours "v" "w" ]
+    |> Hf.split (fused "bias")
+         ~into:[ ours "q" "b"; ours "k" "b"; ours "v" "b" ]
   in
-  let tok = Kaun.Fn.embedding ~scale:false ~embedding:wte input_ids in
-  let pos = Kaun.Fn.embedding ~scale:false ~embedding:wpe position_ids in
-  let x = Nx.add tok pos in
+  List.fold_left split_qkv ckpt (List.init n_layer Fun.id) |> Hf.rename hf_name
 
-  (* Embedding dropout *)
-  let x =
-    if training && cfg.embd_pdrop > 0.0 then
-      Kaun.Fn.dropout ~rate:cfg.embd_pdrop x
-    else x
-  in
-
-  (* Transformer stack *)
-  let blocks = Ptree.List.items_exn ~ctx:"Gpt2.decode.layers" layers_t in
-  let x =
-    List.fold_left
-      (fun h block_params ->
-        transformer_block ~cfg ~dtype ~training ~params:block_params h)
-      x blocks
-  in
-
-  (* Final layer norm *)
-  let ln_f_g = get root ~name:"ln_f_gamma" dtype in
-  let ln_f_b = get root ~name:"ln_f_beta" dtype in
-  Kaun.Fn.layer_norm ~gamma:ln_f_g ~beta:ln_f_b ~epsilon:cfg.layer_norm_eps x
-
-(* Parameter initialization *)
-
-let init_block_params ~dtype ~n_embd ~n_inner =
-  let w = Init.normal ~stddev:0.02 () in
-  let zeros n = Nx.zeros dtype [| n |] in
-  let ones n = Nx.ones dtype [| n |] in
-  let attn_params =
-    Ptree.dict
-      [
-        ("qkv_weight", Ptree.tensor (w.f [| n_embd; 3 * n_embd |] dtype));
-        ("qkv_bias", Ptree.tensor (zeros (3 * n_embd)));
-        ("o_weight", Ptree.tensor (w.f [| n_embd; n_embd |] dtype));
-        ("o_bias", Ptree.tensor (zeros n_embd));
-      ]
-  in
-  Ptree.dict
-    [
-      ("attention", attn_params);
-      ("ln1_gamma", Ptree.tensor (ones n_embd));
-      ("ln1_beta", Ptree.tensor (zeros n_embd));
-      ("ffn_up_weight", Ptree.tensor (w.f [| n_embd; n_inner |] dtype));
-      ("ffn_up_bias", Ptree.tensor (zeros n_inner));
-      ("ffn_down_weight", Ptree.tensor (w.f [| n_inner; n_embd |] dtype));
-      ("ffn_down_bias", Ptree.tensor (zeros n_embd));
-      ("ln2_gamma", Ptree.tensor (ones n_embd));
-      ("ln2_beta", Ptree.tensor (zeros n_embd));
-    ]
-
-let init_decoder_params ~cfg ~dtype =
-  let h = cfg.n_embd in
-  let w = Init.normal ~stddev:0.02 () in
-  let wte = w.f [| cfg.vocab_size; h |] dtype in
-  let wpe = w.f [| cfg.n_positions; h |] dtype in
-  let blocks =
-    List.init cfg.n_layer (fun _ ->
-        init_block_params ~dtype ~n_embd:h ~n_inner:cfg.n_inner)
-  in
-  Ptree.dict
-    [
-      ("wte", Ptree.tensor wte);
-      ("wpe", Ptree.tensor wpe);
-      ("layers", Ptree.list blocks);
-      ("ln_f_gamma", Ptree.tensor (Nx.ones dtype [| h |]));
-      ("ln_f_beta", Ptree.tensor (Nx.zeros dtype [| h |]));
-    ]
-
-(* Layers *)
-
-let decoder (cfg : config) () : (int32, float) Layer.t =
-  {
-    Layer.init =
-      (fun ~dtype ->
-        Layer.make_vars
-          ~params:(init_decoder_params ~cfg ~dtype)
-          ~state:Ptree.empty ~dtype);
-    apply =
-      (fun ~params ~state ~dtype ~training ?ctx x ->
-        ignore (state, ctx);
-        let y = decode ~cfg ~params ~dtype ~training x in
-        (y, Ptree.empty));
-  }
-
-let for_causal_lm (cfg : config) () : (int32, float) Layer.t =
-  {
-    Layer.init =
-      (fun ~dtype ->
-        Layer.make_vars
-          ~params:(init_decoder_params ~cfg ~dtype)
-          ~state:Ptree.empty ~dtype);
-    apply =
-      (fun ~params ~state ~dtype ~training ?ctx x ->
-        ignore (state, ctx);
-        let hidden = decode ~cfg ~params ~dtype ~training x in
-        (* Tied LM head: logits = hidden @ wte^T *)
-        let root = fields ~ctx:"Gpt2.lm_head" params in
-        let wte = get root ~name:"wte" dtype in
-        let logits = Nx.matmul hidden (Nx.transpose wte ~axes:[ 1; 0 ]) in
-        (logits, Ptree.empty));
-  }
-
-(* JSON config parsing *)
+(* Pretrained loading *)
 
 let json_mem name = function
   | Jsont.Object (mems, _) -> (
@@ -293,82 +207,35 @@ let json_mem name = function
       | None -> Jsont.Null ((), Jsont.Meta.none))
   | _ -> Jsont.Null ((), Jsont.Meta.none)
 
-let json_to_int = function
+let json_int ~default json name =
+  match json_mem name json with
   | Jsont.Number (f, _) -> int_of_float f
-  | _ -> failwith "expected int"
+  | _ -> default ()
 
-let json_to_int_option = function
-  | Jsont.Number (f, _) -> Some (int_of_float f)
-  | _ -> None
-
-let json_to_float_option = function Jsont.Number (f, _) -> Some f | _ -> None
-
-let parse_config json =
-  let n_embd = json |> json_mem "n_embd" |> json_to_int in
-  config
-    ~vocab_size:(json |> json_mem "vocab_size" |> json_to_int)
-    ~n_embd
-    ~n_layer:(json |> json_mem "n_layer" |> json_to_int)
-    ~n_head:(json |> json_mem "n_head" |> json_to_int)
-    ?n_positions:(json |> json_mem "n_positions" |> json_to_int_option)
-    ?n_inner:(json |> json_mem "n_inner" |> json_to_int_option)
-    ?resid_pdrop:(json |> json_mem "resid_pdrop" |> json_to_float_option)
-    ?embd_pdrop:(json |> json_mem "embd_pdrop" |> json_to_float_option)
-    ?attn_pdrop:(json |> json_mem "attn_pdrop" |> json_to_float_option)
-    ?layer_norm_eps:
-      (json |> json_mem "layer_norm_epsilon" |> json_to_float_option)
-    ()
-
-(* HuggingFace weight mapping *)
-
-let cast_tensor dtype (Ptree.P t) = Ptree.P (Nx.cast dtype t)
-
-let map_hf_weights ~cfg ~dtype hf_weights =
-  let tbl = Hashtbl.create (List.length hf_weights) in
-  List.iter (fun (name, tensor) -> Hashtbl.add tbl name tensor) hf_weights;
-  let hf name =
-    match Hashtbl.find_opt tbl name with
-    | Some t -> cast_tensor dtype t
-    | None -> invalid_argf "from_pretrained: missing HF weight %S" name
+let config_of_json json =
+  let req name =
+    json_int
+      ~default:(fun () -> failwith ("gpt2 config.json: missing " ^ name))
+      json name
   in
-  (* GPT-2 stores weights as [in, out] — NO transpose needed *)
-  let hf_t name = Ptree.Tensor (hf name) in
-  let layer i =
-    let p s = Printf.sprintf "h.%d.%s" i s in
-    Ptree.dict
-      [
-        ( "attention",
-          Ptree.dict
-            [
-              ("qkv_weight", hf_t (p "attn.c_attn.weight"));
-              ("qkv_bias", hf_t (p "attn.c_attn.bias"));
-              ("o_weight", hf_t (p "attn.c_proj.weight"));
-              ("o_bias", hf_t (p "attn.c_proj.bias"));
-            ] );
-        ("ln1_gamma", hf_t (p "ln_1.weight"));
-        ("ln1_beta", hf_t (p "ln_1.bias"));
-        ("ffn_up_weight", hf_t (p "mlp.c_fc.weight"));
-        ("ffn_up_bias", hf_t (p "mlp.c_fc.bias"));
-        ("ffn_down_weight", hf_t (p "mlp.c_proj.weight"));
-        ("ffn_down_bias", hf_t (p "mlp.c_proj.bias"));
-        ("ln2_gamma", hf_t (p "ln_2.weight"));
-        ("ln2_beta", hf_t (p "ln_2.bias"));
-      ]
+  let n_embd = req "n_embd" in
+  {
+    vocab_size = req "vocab_size";
+    n_positions = json_int ~default:(fun () -> 1024) json "n_positions";
+    n_embd;
+    n_layer = req "n_layer";
+    n_head = req "n_head";
+    n_inner = json_int ~default:(fun () -> 4 * n_embd) json "n_inner";
+    layer_norm_eps =
+      (match json_mem "layer_norm_epsilon" json with
+      | Jsont.Number (f, _) -> f
+      | _ -> 1e-5);
+  }
+
+let from_pretrained ?(repo_id = "gpt2") () =
+  let cfg = config_of_json (Hf.load_config repo_id) in
+  let params =
+    Hf.load_checkpoint repo_id |> of_hf ~n_layer:cfg.n_layer
+    |> Checkpoint.to_params (module Params) ~like:(make cfg) ~cast:true
   in
-  Ptree.dict
-    [
-      ("wte", hf_t "wte.weight");
-      ("wpe", hf_t "wpe.weight");
-      ("layers", Ptree.list (List.init cfg.n_layer layer));
-      ("ln_f_gamma", hf_t "ln_f.weight");
-      ("ln_f_beta", hf_t "ln_f.bias");
-    ]
-
-(* Pretrained loading *)
-
-let from_pretrained ?(model_id = "gpt2") () =
-  let json = Kaun_hf.load_config ~model_id () in
-  let cfg = parse_config json in
-  let hf_weights = Kaun_hf.load_weights ~model_id () in
-  let params = map_hf_weights ~cfg ~dtype:Nx.float32 hf_weights in
   (cfg, params)

@@ -99,28 +99,7 @@
  (dir packages/rune)
  (synopsis "Functional transformations for Nx arrays")
  (description
-  "Automatic differentiation and vectorizing maps for Nx tensors. Reverse-mode AD (grad, vjp), forward-mode AD (jvp), vmap, and gradient checking, built on OCaml 5 effect handlers.")
- (depends
-  (ocaml
-   (>= 5.2.0))
-  dune
-  (dune-configurator :build)
-  (nx
-   (= :version))
-  (tolk
-   (= :version))
-  (windtrap :with-test)
-  (mdx :with-test)
-  (thumper :with-test))
- (tags
-  (automatic-differentiation machine-learning deep-learning optimization)))
-
-(package
- (name rune-next)
- (dir packages/rune-next)
- (synopsis "Functional transformations for Nx arrays (next-generation design)")
- (description
-  "Next-generation Rune built on OCaml 5.5 module-dependent functions. Autodiff transformations operate over any user-defined parameter structure through the Nx.Ptree.S interface, with full static typing and mixed-dtype parameters in a single pass.")
+  "Functional transformations for Nx arrays: typed autodiff (grad/vjp/jvp), vmap, and more, built on OCaml effect handlers. Transformations operate over any user-defined parameter structure through the Nx.Ptree.S interface, with full static typing and mixed-dtype parameters in a single pass.")
  (depends
   (ocaml
    (>= 5.5.0))
@@ -128,30 +107,25 @@
   (nx
    (= :version))
   (windtrap :with-test)
-  ; benchmarks compare against the current rune
+  (thumper :with-test))
+ (tags
+  (automatic-differentiation machine-learning deep-learning optimization)))
+
+(package
+ (name kaun)
+ (dir packages/kaun)
+ (synopsis "Neural networks for OCaml")
+ (description
+  "Neural networks built on Rune. Models are typed parameter structures with pure apply functions; training steps compose value_and_grad with structural optimizers; there is no opaque trainer or layer type.")
+ (depends
+  (ocaml
+   (>= 5.5.0))
+  dune
+  (nx
+   (= :version))
   (rune
-   (and
-    (= :version)
-    :with-test))
-  (thumper :with-test))
- (tags
-  (automatic-differentiation machine-learning deep-learning optimization)))
-
-(package
- (name kaun-next)
- (dir packages/kaun-next)
- (synopsis "Neural networks for OCaml (next-generation design)")
- (description
-  "Next-generation Kaun built on rune-next. Models are typed parameter structures with pure apply functions; training steps compose value_and_grad with structural optimizers; there is no opaque trainer or layer type.")
- (depends
-  (ocaml
-   (>= 5.5.0))
-  dune
-  (nx
    (= :version))
-  (rune-next
-   (= :version))
-  ; vega is not a library dependency: kaun-next composes with it in user
+  ; vega is not a library dependency: kaun composes with it in user
   ; code (tests and examples only).
   (vega
    (and
@@ -161,11 +135,6 @@
   jsont
   bytesrw
   (windtrap :with-test)
-  ; benchmarks compare against the current kaun
-  (kaun
-   (and
-    (= :version)
-    :with-test))
   (thumper :with-test))
  (tags
   (machine-learning deep-learning neural-networks)))
@@ -220,30 +189,6 @@
   (thumper :with-test))
  (tags
   (optimization machine-learning gradient-descent)))
-
-(package
- (name kaun)
- (dir packages/kaun)
- (synopsis "Neural networks for OCaml")
- (description
-  "Composable layers, parameter trees, optimizers, training loops, data pipelines, and HuggingFace Hub integration. Built on Rune.")
- (depends
-  (ocaml
-   (>= 5.2.0))
-  dune
-  (rune
-   (= :version))
-  (vega
-   (= :version))
-  (nx
-   (= :version))
-  jsont
-  bytesrw
-  (windtrap :with-test)
-  (mdx :with-test)
-  (thumper :with-test))
- (tags
-  (neural-networks machine-learning deep-learning)))
 
 (package
  (name munin)

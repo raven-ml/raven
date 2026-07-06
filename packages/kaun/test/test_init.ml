@@ -6,226 +6,194 @@
 open Windtrap
 module Init = Kaun.Init
 
-let string_contains s sub =
-  let slen = String.length s in
-  let sub_len = String.length sub in
-  let rec loop i =
-    if i + sub_len > slen then false
-    else if String.sub s i sub_len = sub then true
-    else loop (i + 1)
-  in
-  if sub_len = 0 then true else loop 0
-
-let raises_invalid_arg_contains needle f =
-  raises_match
-    (fun exn ->
-      match exn with
-      | Invalid_argument msg -> string_contains msg needle
-      | _ -> false)
-    f
-
 let flatten_f32 t = Nx.to_array (Nx.reshape [| -1 |] (Nx.cast Nx.float32 t))
-
-let tensor_all pred t =
-  let a = flatten_f32 t in
-  Array.for_all pred a
+let tensor_all pred t = Array.for_all pred (flatten_f32 t)
 
 let tensor_stats t =
   let a = flatten_f32 t in
-  let n = Array.length a in
-  let sum = ref 0.0 in
-  for i = 0 to n - 1 do
-    sum := !sum +. a.(i)
-  done;
-  let mean = !sum /. float_of_int n in
-  let sq = ref 0.0 in
-  for i = 0 to n - 1 do
-    let d = a.(i) -. mean in
-    sq := !sq +. (d *. d)
-  done;
-  let variance = !sq /. float_of_int n in
-  (mean, variance)
+  let n = float_of_int (Array.length a) in
+  let mean = Array.fold_left ( +. ) 0.0 a /. n in
+  let sq = Array.fold_left (fun acc x -> acc +. ((x -. mean) ** 2.0)) 0.0 a in
+  (mean, sq /. n)
 
-let compute_fans shape ~in_axis ~out_axis =
-  let rank = Array.length shape in
-  if rank = 0 then (1, 1)
-  else if rank = 1 then (shape.(0), shape.(0))
-  else
-    let normalize_axis axis = if axis < 0 then rank + axis else axis in
-    let in_axis = normalize_axis in_axis in
-    let out_axis = normalize_axis out_axis in
-    let fan_in = shape.(in_axis) in
-    let fan_out = shape.(out_axis) in
-    let receptive = ref 1 in
-    for i = 0 to rank - 1 do
-      if i <> in_axis && i <> out_axis then receptive := !receptive * shape.(i)
-    done;
-    (fan_in * !receptive, fan_out * !receptive)
-
-let expected_variance ~scale ~mode ~fan_in ~fan_out =
-  let n =
-    match mode with
-    | `Fan_in -> float_of_int fan_in
-    | `Fan_out -> float_of_int fan_out
-    | `Fan_avg -> float_of_int (fan_in + fan_out) /. 2.0
-  in
-  scale /. n
-
-let uniform_limit variance = sqrt (3.0 *. variance)
+(* Constant *)
 
 let test_constants () =
-  Nx.Rng.run ~seed:0 @@ fun () ->
   let shape = [| 11; 13 |] in
-  let zeros = Init.zeros.f shape Nx.float32 in
-  equal ~msg:"zeros" bool true (tensor_all (fun x -> x = 0.0) zeros);
-  let ones = Init.ones.f shape Nx.float32 in
-  equal ~msg:"ones" bool true (tensor_all (fun x -> x = 1.0) ones);
-  let c = (Init.constant 3.5).f shape Nx.float32 in
-  equal ~msg:"constant" bool true (tensor_all (fun x -> x = 3.5) c)
+  let zeros = Init.zeros ~fan_in:(-1) ~fan_out:0 Nx.float32 shape in
+  is_true ~msg:"zeros" (tensor_all (fun x -> x = 0.0) zeros);
+  let ones = Init.ones ~fan_in:(-1) ~fan_out:0 Nx.float32 shape in
+  is_true ~msg:"ones" (tensor_all (fun x -> x = 1.0) ones);
+  let c = Init.constant 3.5 ~fan_in:(-1) ~fan_out:0 Nx.float32 shape in
+  is_true ~msg:"constant" (tensor_all (fun x -> x = 3.5) c)
+
+(* Random *)
 
 let test_uniform_range_and_mean () =
   Nx.Rng.run ~seed:1 @@ fun () ->
   let scale = 0.25 in
-  let t = (Init.uniform ~scale ()).f [| 120_000 |] Nx.float32 in
-  equal ~msg:"uniform range" bool true
-    (tensor_all (fun x -> x >= 0.0 && x < scale) t);
+  let t = Init.uniform ~scale ~fan_in:0 ~fan_out:0 Nx.float32 [| 120_000 |] in
+  is_true ~msg:"uniform range" (tensor_all (fun x -> x >= 0.0 && x < scale) t);
   let mean, _ = tensor_stats t in
   equal ~msg:"uniform mean" (float 8e-3) (scale /. 2.0) mean
 
 let test_normal_mean_and_variance () =
   Nx.Rng.run ~seed:2 @@ fun () ->
   let stddev = 0.2 in
-  let t = (Init.normal ~stddev ()).f [| 140_000 |] Nx.float32 in
+  let t = Init.normal ~stddev ~fan_in:0 ~fan_out:0 Nx.float32 [| 140_000 |] in
   let mean, variance = tensor_stats t in
   equal ~msg:"normal mean" (float 6e-3) 0.0 mean;
   equal ~msg:"normal variance" (float 8e-3) (stddev *. stddev) variance
 
+let test_deterministic_same_seed () =
+  let shape = [| 64; 64 |] in
+  let draw seed =
+    Nx.Rng.run ~seed @@ fun () ->
+    flatten_f32 (Init.he_uniform ~fan_in:64 ~fan_out:64 Nx.float32 shape)
+  in
+  is_true ~msg:"same seed, same tensor" (draw 12 = draw 12);
+  is_true ~msg:"different seed, different tensor" (draw 12 <> draw 13)
+
+(* Variance scaling families *)
+
 let test_glorot_uniform_bounds () =
   Nx.Rng.run ~seed:3 @@ fun () ->
-  let shape = [| 64; 32 |] in
-  let fan_in, fan_out = compute_fans shape ~in_axis:(-2) ~out_axis:(-1) in
-  let variance = expected_variance ~scale:1.0 ~mode:`Fan_avg ~fan_in ~fan_out in
-  let limit = uniform_limit variance in
-  let t = (Init.glorot_uniform ()).f shape Nx.float32 in
-  equal ~msg:"glorot_uniform bounds" bool true
+  let fan_in = 64 and fan_out = 32 in
+  let limit = sqrt (6.0 /. float_of_int (fan_in + fan_out)) in
+  let t = Init.glorot_uniform ~fan_in ~fan_out Nx.float32 [| 64; 32 |] in
+  is_true ~msg:"glorot_uniform bounds"
     (tensor_all (fun x -> x >= -.limit && x <= limit) t)
 
 let test_glorot_normal_variance () =
   Nx.Rng.run ~seed:4 @@ fun () ->
-  let shape = [| 960; 480 |] in
-  let fan_in, fan_out = compute_fans shape ~in_axis:(-2) ~out_axis:(-1) in
-  let expected = expected_variance ~scale:1.0 ~mode:`Fan_avg ~fan_in ~fan_out in
-  let t = (Init.glorot_normal ()).f shape Nx.float32 in
+  let fan_in = 960 and fan_out = 480 in
+  let expected = 2.0 /. float_of_int (fan_in + fan_out) in
+  let t = Init.glorot_normal ~fan_in ~fan_out Nx.float32 [| 960; 480 |] in
   let _, variance = tensor_stats t in
   equal ~msg:"glorot_normal variance" (float 3e-4) expected variance
 
 let test_he_uniform_bounds () =
   Nx.Rng.run ~seed:5 @@ fun () ->
-  let shape = [| 128; 64 |] in
-  let fan_in, fan_out = compute_fans shape ~in_axis:(-2) ~out_axis:(-1) in
-  let variance = expected_variance ~scale:2.0 ~mode:`Fan_in ~fan_in ~fan_out in
-  let limit = uniform_limit variance in
-  let t = (Init.he_uniform ()).f shape Nx.float32 in
-  equal ~msg:"he_uniform bounds" bool true
+  let fan_in = 128 in
+  let limit = sqrt (6.0 /. float_of_int fan_in) in
+  let t = Init.he_uniform ~fan_in ~fan_out:64 Nx.float32 [| 128; 64 |] in
+  is_true ~msg:"he_uniform bounds"
     (tensor_all (fun x -> x >= -.limit && x <= limit) t)
 
 let test_he_normal_variance () =
   Nx.Rng.run ~seed:6 @@ fun () ->
-  let shape = [| 256; 64 |] in
-  let fan_in, fan_out = compute_fans shape ~in_axis:(-2) ~out_axis:(-1) in
-  let expected = expected_variance ~scale:2.0 ~mode:`Fan_in ~fan_in ~fan_out in
-  let t = (Init.he_normal ()).f shape Nx.float32 in
+  let fan_in = 256 in
+  let expected = 2.0 /. float_of_int fan_in in
+  let t = Init.he_normal ~fan_in ~fan_out:64 Nx.float32 [| 256; 64 |] in
   let _, variance = tensor_stats t in
   equal ~msg:"he_normal variance" (float 2e-3) expected variance
 
 let test_lecun_uniform_bounds () =
   Nx.Rng.run ~seed:7 @@ fun () ->
-  let shape = [| 128; 32 |] in
-  let fan_in, fan_out = compute_fans shape ~in_axis:(-2) ~out_axis:(-1) in
-  let variance = expected_variance ~scale:1.0 ~mode:`Fan_in ~fan_in ~fan_out in
-  let limit = uniform_limit variance in
-  let t = (Init.lecun_uniform ()).f shape Nx.float32 in
-  equal ~msg:"lecun_uniform bounds" bool true
+  let fan_in = 128 in
+  let limit = sqrt (3.0 /. float_of_int fan_in) in
+  let t = Init.lecun_uniform ~fan_in ~fan_out:32 Nx.float32 [| 128; 32 |] in
+  is_true ~msg:"lecun_uniform bounds"
     (tensor_all (fun x -> x >= -.limit && x <= limit) t)
 
 let test_lecun_normal_variance () =
   Nx.Rng.run ~seed:8 @@ fun () ->
-  let shape = [| 128; 16 |] in
-  let fan_in, fan_out = compute_fans shape ~in_axis:(-2) ~out_axis:(-1) in
-  let expected = expected_variance ~scale:1.0 ~mode:`Fan_in ~fan_in ~fan_out in
-  let t = (Init.lecun_normal ()).f shape Nx.float32 in
+  let fan_in = 128 in
+  let expected = 1.0 /. float_of_int fan_in in
+  let t = Init.lecun_normal ~fan_in ~fan_out:16 Nx.float32 [| 128; 16 |] in
   let _, variance = tensor_stats t in
   equal ~msg:"lecun_normal variance" (float 1.5e-3) expected variance
 
-let test_variance_scaling_axis_override () =
+let test_variance_scaling_fan_out_mode () =
   Nx.Rng.run ~seed:9 @@ fun () ->
-  let shape = [| 2; 9; 4 |] in
-  let in_axis = 2 in
-  let out_axis = 0 in
-  let fan_in, fan_out = compute_fans shape ~in_axis ~out_axis in
-  let variance = expected_variance ~scale:1.7 ~mode:`Fan_out ~fan_in ~fan_out in
-  let limit = uniform_limit variance in
+  let fan_out = 40 in
+  let scale = 1.7 in
+  let limit = sqrt (3.0 *. scale /. float_of_int fan_out) in
   let init =
-    Init.variance_scaling ~scale:1.7 ~mode:`Fan_out ~distribution:`Uniform
-      ~in_axis ~out_axis ()
+    Init.variance_scaling ~scale ~mode:`Fan_out ~distribution:`Uniform
   in
-  let t = init.f shape Nx.float32 in
-  equal ~msg:"variance_scaling axis override" bool true
+  let t = init ~fan_in:9 ~fan_out Nx.float32 [| 2; 9; 4 |] in
+  is_true ~msg:"fan_out mode bounds"
     (tensor_all (fun x -> x >= -.limit && x <= limit) t)
 
-let test_validation_errors () =
-  raises_invalid_arg_contains "scale" (fun () ->
-      ignore (Init.uniform ~scale:(-1.0) ()));
-  raises_invalid_arg_contains "stddev" (fun () ->
-      ignore (Init.normal ~stddev:(-0.1) ()));
-  raises_invalid_arg_contains "scale" (fun () ->
-      ignore
-        (Init.variance_scaling ~scale:(-1.0) ~mode:`Fan_in
-           ~distribution:`Uniform ()));
-  let init =
-    Init.variance_scaling ~scale:1.0 ~mode:`Fan_avg ~distribution:`Uniform
-      ~in_axis:9 ()
-  in
+let test_variance_follows_fans_not_shape () =
   Nx.Rng.run ~seed:10 @@ fun () ->
-  raises_invalid_arg_contains "invalid in axis" (fun () ->
-      ignore (init.f [| 3; 4 |] Nx.float32));
-  let zero_fan =
-    Init.variance_scaling ~scale:1.0 ~mode:`Fan_in ~distribution:`Uniform ()
-  in
-  raises_invalid_arg_contains "non-positive fan" (fun () ->
-      ignore (zero_fan.f [| 0; 4 |] Nx.float32))
+  (* The shape is unrelated to the fans; only the fans set the variance. *)
+  let t = Init.he_normal ~fan_in:8 ~fan_out:1 Nx.float32 [| 400; 400 |] in
+  let _, variance = tensor_stats t in
+  equal ~msg:"variance follows fan_in" (float 1e-2) (2.0 /. 8.0) variance
 
-let test_deterministic_same_seed () =
-  let init = Init.he_uniform () in
-  let shape = [| 64; 64 |] in
-  let t0 =
-    Nx.Rng.run ~seed:12 @@ fun () -> init.f shape Nx.float32 |> flatten_f32
-  in
-  let t1 =
-    Nx.Rng.run ~seed:12 @@ fun () -> init.f shape Nx.float32 |> flatten_f32
-  in
-  equal ~msg:"same seed deterministic" bool true (t0 = t1)
+(* Shape and dtype *)
+
+let test_requested_shape () =
+  Nx.Rng.run ~seed:11 @@ fun () ->
+  let shape = [| 3; 4; 5 |] in
+  let t = Init.glorot_uniform ~fan_in:4 ~fan_out:5 Nx.float32 shape in
+  equal ~msg:"shape" (array int) shape (Nx.shape t)
+
+let test_float64_dtype () =
+  Nx.Rng.run ~seed:12 @@ fun () ->
+  (* One polymorphic initializer value serves several float dtypes. *)
+  let init = Init.lecun_normal in
+  let t32 = init ~fan_in:64 ~fan_out:64 Nx.float32 [| 64; 64 |] in
+  let t64 = init ~fan_in:64 ~fan_out:64 Nx.float64 [| 64; 64 |] in
+  is_true ~msg:"float32 dtype" (Nx.dtype t32 = Nx.float32);
+  is_true ~msg:"float64 dtype" (Nx.dtype t64 = Nx.float64);
+  let _, variance = tensor_stats t64 in
+  equal ~msg:"float64 variance" (float 4e-3) (1.0 /. 64.0) variance
+
+(* Validation *)
+
+let test_negative_scale_rejected () =
+  raises_invalid_arg "scale must be >= 0, got -1" (fun () ->
+      Init.uniform ~scale:(-1.0));
+  raises_invalid_arg "stddev must be >= 0, got -0.1" (fun () ->
+      Init.normal ~stddev:(-0.1));
+  raises_invalid_arg "scale must be >= 0, got -1" (fun () ->
+      Init.variance_scaling ~scale:(-1.0) ~mode:`Fan_in ~distribution:`Uniform)
+
+let test_non_positive_fan_rejected () =
+  raises_invalid_arg "fans must be positive, got fan_in=0 fan_out=4" (fun () ->
+      Init.he_normal ~fan_in:0 ~fan_out:4 Nx.float32 [| 4; 4 |]);
+  raises_invalid_arg "fans must be positive, got fan_in=3 fan_out=-1" (fun () ->
+      Init.variance_scaling ~scale:1.0 ~mode:`Fan_in ~distribution:`Normal
+        ~fan_in:3 ~fan_out:(-1) Nx.float32 [| 3 |])
 
 let () =
-  run "Kaun.Init"
+  run "kaun init"
     [
-      group "constant" [ test "zeros ones constant" test_constants ];
+      group "constant"
+        [ test "zeros, ones, constant fill and ignore fans" test_constants ];
       group "random"
         [
-          test "uniform range and mean" test_uniform_range_and_mean;
-          test "normal mean and variance" test_normal_mean_and_variance;
-          test "deterministic same seed" test_deterministic_same_seed;
+          test "uniform stays in range with the right mean"
+            test_uniform_range_and_mean;
+          test "normal matches mean and variance" test_normal_mean_and_variance;
+          test "same seed reproduces the draw" test_deterministic_same_seed;
         ];
-      group "variance scaling families"
+      group "variance scaling"
         [
-          test "glorot uniform bounds" test_glorot_uniform_bounds;
-          test "glorot normal variance" test_glorot_normal_variance;
-          test "he uniform bounds" test_he_uniform_bounds;
-          test "he normal variance" test_he_normal_variance;
-          test "lecun uniform bounds" test_lecun_uniform_bounds;
-          test "lecun normal variance" test_lecun_normal_variance;
-          test "variance scaling axis override"
-            test_variance_scaling_axis_override;
+          test "glorot uniform respects its limit" test_glorot_uniform_bounds;
+          test "glorot normal hits fan-average variance"
+            test_glorot_normal_variance;
+          test "he uniform respects its limit" test_he_uniform_bounds;
+          test "he normal hits fan-in variance" test_he_normal_variance;
+          test "lecun uniform respects its limit" test_lecun_uniform_bounds;
+          test "lecun normal hits fan-in variance" test_lecun_normal_variance;
+          test "fan-out mode scales by fan_out"
+            test_variance_scaling_fan_out_mode;
+          test "variance follows fans, not shape"
+            test_variance_follows_fans_not_shape;
         ];
-      group "validation" [ test "invalid arguments" test_validation_errors ];
+      group "shape and dtype"
+        [
+          test "produces the requested shape" test_requested_shape;
+          test "one initializer serves float32 and float64" test_float64_dtype;
+        ];
+      group "validation"
+        [
+          test "negative scale or stddev is rejected"
+            test_negative_scale_rejected;
+          test "non-positive fans are rejected" test_non_positive_fan_rejected;
+        ];
     ]

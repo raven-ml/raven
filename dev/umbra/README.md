@@ -42,7 +42,7 @@ let model params =
   |> Nx.stack ~axis:0
 
 (* Rune differentiates through the entire pipeline *)
-let loss, grad = Rune.value_and_grad chi2 params
+let loss, grad = Rune.value_and_grad' chi2 params
 ```
 
 ## Features

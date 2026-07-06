@@ -1,3 +1,0 @@
-(executable
- (name main)
- (libraries kaun-next kaun-next.hf brot jsont nx))

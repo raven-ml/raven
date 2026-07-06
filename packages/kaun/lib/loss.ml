@@ -3,115 +3,74 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
+type reduction = [ `Mean | `Sum ]
 
-let invalid_argf_fn fn fmt =
-  Printf.ksprintf (fun msg -> invalid_argf "Loss.%s: %s" fn msg) fmt
+let invalid_argf fn fmt =
+  Printf.ksprintf (fun msg -> invalid_arg ("Loss." ^ fn ^ ": " ^ msg)) fmt
 
-let check_logits_shape ~fn logits =
-  let logits_shape = Nx.shape logits in
-  let logits_rank = Array.length logits_shape in
-  if logits_rank < 1 then invalid_argf_fn fn "logits must have rank >= 1";
-  let class_axis = logits_rank - 1 in
-  let num_classes = logits_shape.(class_axis) in
-  if num_classes <= 0 then
-    invalid_argf_fn fn "logits class dimension must be positive (got %d)"
-      num_classes;
-  logits_shape
+let shape_str s =
+  "[" ^ String.concat "; " (Array.to_list (Array.map string_of_int s)) ^ "]"
 
-let check_same_shape ~fn ~rhs_name lhs rhs =
-  let lhs_rank = Array.length lhs in
-  let rhs_rank = Array.length rhs in
-  if rhs_rank <> lhs_rank then
-    invalid_argf_fn fn "%s rank mismatch (got %d, expected %d)" rhs_name
-      rhs_rank lhs_rank;
-  for i = 0 to lhs_rank - 1 do
-    if rhs.(i) <> lhs.(i) then
-      invalid_argf_fn fn "%s shape mismatch at axis %d (got %d, expected %d)"
-        rhs_name i rhs.(i) lhs.(i)
-  done
+let reduce reduction t =
+  match reduction with `Mean -> Nx.mean t | `Sum -> Nx.sum t
 
-let check_cross_entropy_shapes logits labels =
-  let fn = "cross_entropy" in
-  let logits_shape = check_logits_shape ~fn logits in
+(* Regression *)
+
+let mse ?(reduction = `Mean) predictions targets =
+  let d = Nx.sub predictions targets in
+  reduce reduction (Nx.mul d d)
+
+let mae ?(reduction = `Mean) predictions targets =
+  reduce reduction (Nx.abs (Nx.sub predictions targets))
+
+let huber ?(delta = 1.0) ?(reduction = `Mean) predictions targets =
+  if not (delta > 0.0) then
+    invalid_argf "huber" "delta must be positive (got %g)" delta;
+  let d = Nx.sub predictions targets in
+  let abs_d = Nx.abs d in
+  let quadratic = Nx.mul_s (Nx.mul d d) 0.5 in
+  let linear = Nx.mul_s (Nx.sub_s abs_d (0.5 *. delta)) delta in
+  let in_quadratic = Nx.less_equal abs_d (Nx.full_like abs_d delta) in
+  reduce reduction (Nx.where in_quadratic quadratic linear)
+
+(* Classification *)
+
+let sigmoid_bce ?(reduction = `Mean) logits targets =
+  (* Numerically stable: max(z,0) - z*y + log(1 + exp(-|z|)). *)
+  let z = logits and y = targets in
+  let relu_z = Nx.maximum z (Nx.zeros_like z) in
+  let softplus = Nx.log (Nx.add_s (Nx.exp (Nx.neg (Nx.abs z))) 1.0) in
+  reduce reduction (Nx.add (Nx.sub relu_z (Nx.mul z y)) softplus)
+
+let check_logits ~fn logits =
+  let shape = Nx.shape logits in
+  let rank = Array.length shape in
+  if rank < 1 then invalid_argf fn "logits must have rank >= 1";
+  if shape.(rank - 1) <= 0 then
+    invalid_argf fn "logits class dimension must be positive (got %d)"
+      shape.(rank - 1);
+  shape
+
+let softmax_cross_entropy ?(reduction = `Mean) logits targets =
+  let fn = "softmax_cross_entropy" in
+  let logits_shape = check_logits ~fn logits in
+  let targets_shape = Nx.shape targets in
+  if targets_shape <> logits_shape then
+    invalid_argf fn "targets shape %s does not match logits shape %s"
+      (shape_str targets_shape) (shape_str logits_shape);
+  let log_probs = Nx.log_softmax logits in
+  reduce reduction (Nx.neg (Nx.sum ~axes:[ -1 ] (Nx.mul targets log_probs)))
+
+let softmax_cross_entropy_sparse ?(reduction = `Mean) logits labels =
+  let fn = "softmax_cross_entropy_sparse" in
+  let logits_shape = check_logits ~fn logits in
   let labels_shape = Nx.shape labels in
-  check_same_shape ~fn ~rhs_name:"labels" logits_shape labels_shape
-
-let cross_entropy logits labels =
-  check_cross_entropy_shapes logits labels;
-  let max_logits = Nx.max logits ~axes:[ -1 ] ~keepdims:true in
-  let shifted = Nx.sub logits max_logits in
-  let log_sum_exp =
-    Nx.log (Nx.sum (Nx.exp shifted) ~axes:[ -1 ] ~keepdims:true)
+  let batch_shape = Array.sub logits_shape 0 (Array.length logits_shape - 1) in
+  if labels_shape <> batch_shape then
+    invalid_argf fn "labels shape %s does not match logits batch shape %s"
+      (shape_str labels_shape) (shape_str batch_shape);
+  let log_probs = Nx.log_softmax logits in
+  let picked =
+    Nx.take_along_axis ~axis:(-1) (Nx.expand_dims [ -1 ] labels) log_probs
   in
-  let log_softmax = Nx.sub shifted log_sum_exp in
-  let per_example = Nx.neg (Nx.sum (Nx.mul labels log_softmax) ~axes:[ -1 ]) in
-  Nx.mean per_example
-
-let check_sparse_indices_dtype indices =
-  let fn = "cross_entropy_sparse" in
-  let dtype = Nx.dtype indices in
-  if not (Nx_core.Dtype.is_int dtype) then
-    invalid_argf_fn fn "expected integer labels, got %s"
-      (Nx_core.Dtype.to_string dtype)
-
-let check_sparse_shapes logits indices =
-  let fn = "cross_entropy_sparse" in
-  let logits_shape = check_logits_shape ~fn logits in
-  let indices_shape = Nx.shape indices in
-  let logits_rank = Array.length logits_shape in
-  let indices_rank = Array.length indices_shape in
-  if indices_rank <> logits_rank - 1 then
-    invalid_argf_fn fn "labels rank mismatch (got %d, expected %d)" indices_rank
-      (logits_rank - 1);
-  for i = 0 to indices_rank - 1 do
-    if indices_shape.(i) <> logits_shape.(i) then
-      invalid_argf_fn fn
-        "labels shape mismatch at axis %d (got %d, expected %d)" i
-        indices_shape.(i) logits_shape.(i)
-  done;
-  let class_axis = logits_rank - 1 in
-  logits_shape.(class_axis)
-
-let cross_entropy_sparse logits indices =
-  check_sparse_indices_dtype indices;
-  ignore (check_sparse_shapes logits indices : int);
-  let indices_int = Nx.cast Nx.int32 indices in
-  (* Numerically stable log-softmax *)
-  let max_logits = Nx.max logits ~axes:[ -1 ] ~keepdims:true in
-  let shifted = Nx.sub logits max_logits in
-  let log_sum_exp =
-    Nx.log (Nx.sum (Nx.exp shifted) ~axes:[ -1 ] ~keepdims:true)
-  in
-  (* Gather true-class logits: [...] → [...; 1] for take_along_axis *)
-  let indices_expanded = Nx.expand_dims [ -1 ] indices_int in
-  let true_logits = Nx.take_along_axis ~axis:(-1) indices_expanded shifted in
-  (* loss = -(true_logit - log_sum_exp) *)
-  let per_example =
-    Nx.neg
-      (Nx.sub
-         (Nx.squeeze ~axes:[ -1 ] true_logits)
-         (Nx.squeeze ~axes:[ -1 ] log_sum_exp))
-  in
-  Nx.mean per_example
-
-let binary_cross_entropy logits labels =
-  let fn = "binary_cross_entropy" in
-  let logits_shape = Nx.shape logits in
-  let labels_shape = Nx.shape labels in
-  check_same_shape ~fn ~rhs_name:"labels" logits_shape labels_shape;
-  let dtype = Nx.dtype logits in
-  let one = Nx.scalar dtype 1.0 in
-  let log_p = Activation.log_sigmoid logits in
-  let log_1_minus_p = Activation.log_sigmoid (Nx.neg logits) in
-  let per_element =
-    Nx.neg
-      (Nx.add (Nx.mul labels log_p) (Nx.mul (Nx.sub one labels) log_1_minus_p))
-  in
-  Nx.mean per_element
-
-let mse predictions targets =
-  let diff = Nx.sub predictions targets in
-  Nx.mean (Nx.mul diff diff)
-
-let mae predictions targets = Nx.mean (Nx.abs (Nx.sub predictions targets))
+  reduce reduction (Nx.neg (Nx.squeeze ~axes:[ -1 ] picked))

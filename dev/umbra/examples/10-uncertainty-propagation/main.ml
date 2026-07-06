@@ -8,9 +8,9 @@
    Demonstrates propagating H0 and Omega_m uncertainties through
    Umbra.Cosmo.distance_modulus using exact AD Jacobians. The linear error
    propagation formula (Sigma_out = J Sigma_in J^T) is computed automatically
-   via Rune.jacfwd. Results are validated against Monte Carlo sampling.
+   via Rune.jacfwd'. Results are validated against Monte Carlo sampling.
 
-   Fisher, propagation, and Monte Carlo are all trivial given Rune's jacfwd --
+   Fisher, propagation, and Monte Carlo are all trivial given Rune's jacfwd' --
    no dedicated library needed. *)
 
 open Nx
@@ -30,7 +30,7 @@ let distance_modulus_at z p =
 
 (* Linear error propagation: Sigma_out = J Sigma_in J^T *)
 let propagate f ~mean ~cov =
-  let j = Rune.jacfwd f mean in
+  let j = Rune.jacfwd' f mean in
   let mean_out = f mean in
   let cov_out = Nx.matmul (Nx.matmul j cov) (Nx.matrix_transpose j) in
   let cov_out = Nx.div_s (Nx.add cov_out (Nx.matrix_transpose cov_out)) 2.0 in
@@ -106,7 +106,7 @@ let () =
   Printf.printf "Propagating z = 0.5 +/- 0.01 through distance_modulus:\n";
   let x = Nx.scalar f64 0.5 in
   let y, dy =
-    Rune.jvp (fun z -> Cosmo.distance_modulus z) x (Nx.scalar f64 1.0)
+    Rune.jvp' (fun z -> Cosmo.distance_modulus z) x (Nx.scalar f64 1.0)
   in
   let mu_mean = Nx.item [] y in
   let mu_std = Float.abs (Nx.item [] dy) *. 0.01 in

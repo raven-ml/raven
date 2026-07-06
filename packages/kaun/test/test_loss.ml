@@ -4,235 +4,294 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-module Loss = Kaun.Loss
+open Kaun
 
-let flatten_f32 t = Nx.to_array (Nx.reshape [| -1 |] (Nx.cast Nx.float32 t))
+(* A bare float64 tensor as a differentiable structure, for gradient checks. *)
+module Tensor = struct
+  type t = (float, Nx.float64_elt) Nx.t
 
-let tensor_close ~eps ~expected ~actual =
-  let xs = flatten_f32 expected in
-  let ys = flatten_f32 actual in
-  let nx = Array.length xs in
-  let ny = Array.length ys in
-  if nx <> ny then false
-  else
-    let ok = ref true in
-    for i = 0 to nx - 1 do
-      if abs_float (xs.(i) -. ys.(i)) > eps then ok := false
-    done;
-    !ok
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (t : t) : t = f t
 
-let test_cross_entropy_known_value () =
-  let logits = Nx.create Nx.float32 [| 1; 3 |] [| 2.0; 0.0; -2.0 |] in
-  let labels = Nx.create Nx.float32 [| 1; 3 |] [| 1.0; 0.0; 0.0 |] in
-  let expected = log (1.0 +. exp (-2.0) +. exp (-4.0)) in
-  let actual = Loss.cross_entropy logits labels |> Nx.item [] in
-  equal ~msg:"cross_entropy known value" (float 1e-6) expected actual
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (a : t)
+      (b : t) : t =
+    f a b
 
-let test_sparse_matches_dense_2d () =
-  let logits =
-    Nx.create Nx.float32 [| 3; 4 |]
-      [| 2.0; 0.1; -1.0; 0.3; 0.2; 1.7; -0.4; 0.9; -0.1; 0.8; 1.4; -2.0 |]
-  in
-  let indices = Nx.create Nx.int32 [| 3 |] [| 0l; 1l; 2l |] in
-  let one_hot = Nx.cast Nx.float32 (Nx.one_hot ~num_classes:4 indices) in
-  let dense = Loss.cross_entropy logits one_hot in
-  let sparse = Loss.cross_entropy_sparse logits indices in
-  equal ~msg:"sparse = dense (2d)" (float 1e-6) (Nx.item [] dense)
-    (Nx.item [] sparse)
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) (t : t) = f t
+end
 
-let test_sparse_matches_dense_nd () =
-  let logits =
-    Nx.create Nx.float32 [| 2; 2; 3 |]
-      [| 0.7; -1.2; 0.5; 1.1; 0.2; -0.3; -0.8; 0.9; 0.4; 0.6; -0.5; 1.7 |]
-  in
-  let indices = Nx.create Nx.int32 [| 2; 2 |] [| 0l; 2l; 1l; 2l |] in
-  let one_hot = Nx.cast Nx.float32 (Nx.one_hot ~num_classes:3 indices) in
-  let dense = Loss.cross_entropy logits one_hot in
-  let sparse = Loss.cross_entropy_sparse logits indices in
-  equal ~msg:"sparse = dense (nd)" (float 1e-6) (Nx.item [] dense)
-    (Nx.item [] sparse)
+let vec xs = Nx.create Nx.float64 [| Array.length xs |] xs
+let mat rows cols xs = Nx.create Nx.float64 [| rows; cols |] xs
+let labels ls = Nx.create Nx.int32 [| Array.length ls |] ls
+let close ?(eps = 1e-9) expected l = equal (float eps) expected (Nx.item [] l)
 
-let test_cross_entropy_rejects_invalid_shapes () =
-  raises_invalid_arg "Loss.cross_entropy: logits must have rank >= 1" (fun () ->
-      let logits = Nx.scalar Nx.float32 0.0 in
-      let labels = Nx.scalar Nx.float32 1.0 in
-      ignore (Loss.cross_entropy logits labels));
-  raises_invalid_arg
-    "Loss.cross_entropy: labels rank mismatch (got 1, expected 2)" (fun () ->
-      let logits = Nx.zeros Nx.float32 [| 2; 3 |] in
-      let labels = Nx.zeros Nx.float32 [| 2 |] in
-      ignore (Loss.cross_entropy logits labels));
-  raises_invalid_arg
-    "Loss.cross_entropy: labels shape mismatch at axis 0 (got 4, expected 2)"
-    (fun () ->
-      let logits = Nx.zeros Nx.float32 [| 2; 3 |] in
-      let labels = Nx.zeros Nx.float32 [| 4; 3 |] in
-      ignore (Loss.cross_entropy logits labels));
-  raises_invalid_arg
-    "Loss.cross_entropy: logits class dimension must be positive (got 0)"
-    (fun () ->
-      let logits = Nx.zeros Nx.float32 [| 2; 0 |] in
-      let labels = Nx.zeros Nx.float32 [| 2; 0 |] in
-      ignore (Loss.cross_entropy logits labels))
+let close_grad ?(eps = 1e-9) expected g =
+  equal (array (float eps)) expected (Nx.to_array g)
 
-let test_sparse_rejects_non_integer_labels () =
-  let logits = Nx.zeros Nx.float32 [| 2; 3 |] in
-  let bad = Nx.zeros Nx.float32 [| 2 |] in
-  let msg =
-    Printf.sprintf "Loss.cross_entropy_sparse: expected integer labels, got %s"
-      (Nx_core.Dtype.to_string Nx.float32)
-  in
-  raises_invalid_arg msg (fun () ->
-      ignore (Loss.cross_entropy_sparse logits bad))
+let grads_ok ?msg f x =
+  match Rune.check_grads (module Tensor) f x with
+  | Ok () -> ()
+  | Error e -> fail (match msg with Some m -> m ^ ": " ^ e | None -> e)
 
-let test_sparse_rejects_shape_mismatch () =
-  let logits_2d = Nx.zeros Nx.float32 [| 2; 3 |] in
-  let bad_rank = Nx.zeros Nx.int32 [| 2; 1 |] in
-  raises_invalid_arg
-    "Loss.cross_entropy_sparse: labels rank mismatch (got 2, expected 1)"
-    (fun () -> ignore (Loss.cross_entropy_sparse logits_2d bad_rank));
-  let logits_3d = Nx.zeros Nx.float32 [| 2; 3; 4 |] in
-  let bad_shape = Nx.zeros Nx.int32 [| 2; 5 |] in
-  raises_invalid_arg
-    "Loss.cross_entropy_sparse: labels shape mismatch at axis 1 (got 5, \
-     expected 3)" (fun () ->
-      ignore (Loss.cross_entropy_sparse logits_3d bad_shape))
+(* Regression *)
 
-let test_sparse_rejects_invalid_logits_shape () =
-  raises_invalid_arg "Loss.cross_entropy_sparse: logits must have rank >= 1"
-    (fun () ->
-      let logits = Nx.scalar Nx.float32 0.0 in
-      let labels = Nx.scalar Nx.int32 0l in
-      ignore (Loss.cross_entropy_sparse logits labels));
-  raises_invalid_arg
-    "Loss.cross_entropy_sparse: logits class dimension must be positive (got 0)"
-    (fun () ->
-      let logits = Nx.zeros Nx.float32 [| 2; 0 |] in
-      let labels = Nx.zeros Nx.int32 [| 2 |] in
-      ignore (Loss.cross_entropy_sparse logits labels))
+let mse_tests =
+  [
+    test "matches the analytic mean" (fun () ->
+        close (14. /. 3.)
+          (Loss.mse (vec [| 1.; 2.; 3. |]) (vec [| 0.; 0.; 0. |])));
+    test "sum reduction adds instead of averaging" (fun () ->
+        close 14.
+          (Loss.mse ~reduction:`Sum
+             (vec [| 1.; 2.; 3. |])
+             (vec [| 0.; 0.; 0. |])));
+    test "is zero when predictions equal targets" (fun () ->
+        close 0. (Loss.mse (vec [| 1.; -2. |]) (vec [| 1.; -2. |])));
+  ]
 
-let test_binary_cross_entropy_logits_stable () =
-  let logits =
-    Nx.create Nx.float32 [| 5 |] [| 1000.0; -1000.0; 0.0; 50.0; -50.0 |]
-  in
-  let labels = Nx.create Nx.float32 [| 5 |] [| 1.0; 0.0; 1.0; 0.0; 1.0 |] in
-  let loss = Loss.binary_cross_entropy logits labels |> Nx.item [] in
-  let xs = [| 1000.0; -1000.0; 0.0; 50.0; -50.0 |] in
-  let ys = [| 1.0; 0.0; 1.0; 0.0; 1.0 |] in
-  let expected = ref 0.0 in
-  for i = 0 to Array.length xs - 1 do
-    let x = xs.(i) in
-    let y = ys.(i) in
-    let v = max x 0.0 -. (x *. y) +. log1p (exp (-.abs_float x)) in
-    expected := !expected +. v
-  done;
-  expected := !expected /. float_of_int (Array.length xs);
-  equal ~msg:"binary_cross_entropy stable value" (float 1e-6) !expected loss;
-  equal ~msg:"binary_cross_entropy finite" bool true
-    (match classify_float loss with FP_nan | FP_infinite -> false | _ -> true)
+let mae_tests =
+  [
+    test "matches the analytic mean" (fun () ->
+        close 2. (Loss.mae (vec [| 1.; -2.; 3. |]) (vec [| 0.; 0.; 0. |])));
+    test "sum reduction adds instead of averaging" (fun () ->
+        close 6.
+          (Loss.mae ~reduction:`Sum
+             (vec [| 1.; -2.; 3. |])
+             (vec [| 0.; 0.; 0. |])));
+  ]
 
-let test_binary_cross_entropy_rejects_invalid_shapes () =
-  raises_invalid_arg
-    "Loss.binary_cross_entropy: labels rank mismatch (got 1, expected 2)"
-    (fun () ->
-      let logits = Nx.zeros Nx.float32 [| 2; 1 |] in
-      let labels = Nx.zeros Nx.float32 [| 2 |] in
-      ignore (Loss.binary_cross_entropy logits labels));
-  raises_invalid_arg
-    "Loss.binary_cross_entropy: labels shape mismatch at axis 0 (got 3, \
-     expected 2)" (fun () ->
-      let logits = Nx.zeros Nx.float32 [| 2; 1 |] in
-      let labels = Nx.zeros Nx.float32 [| 3; 1 |] in
-      ignore (Loss.binary_cross_entropy logits labels))
+let huber_tests =
+  [
+    test "is half the squared error inside delta" (fun () ->
+        close 0.125 (Loss.huber (vec [| 0.5; -0.5 |]) (vec [| 0.; 0. |])));
+    test "is linear beyond delta" (fun () ->
+        close 1.5 (Loss.huber (vec [| 2.; -2. |]) (vec [| 0.; 0. |])));
+    test "agrees with both branches at the crossover" (fun () ->
+        close 0.5 (Loss.huber (vec [| 1. |]) (vec [| 0. |])));
+    test "honors a custom delta" (fun () ->
+        close 4. (Loss.huber ~delta:2. (vec [| 3. |]) (vec [| 0. |])));
+    test "sum reduction adds instead of averaging" (fun () ->
+        close 1.625
+          (Loss.huber ~reduction:`Sum (vec [| 0.5; 2. |]) (vec [| 0.; 0. |])));
+    test "rejects a non-positive delta" (fun () ->
+        raises_invalid_arg "Loss.huber: delta must be positive (got 0)"
+          (fun () -> Loss.huber ~delta:0. (vec [| 1. |]) (vec [| 0. |])));
+  ]
 
-let test_mse_gradient_exact () =
-  let predictions = Nx.create Nx.float32 [| 2; 2 |] [| 0.5; -1.0; 2.0; 3.0 |] in
-  let targets = Nx.create Nx.float32 [| 2; 2 |] [| 0.0; 1.0; 1.0; 2.0 |] in
-  let grad = Rune.grad (fun p -> Loss.mse p targets) predictions in
-  let expected =
-    Nx.create Nx.float32 [| 2; 2 |]
-      [|
-        2.0 *. (0.5 -. 0.0) /. 4.0;
-        2.0 *. (-1.0 -. 1.0) /. 4.0;
-        2.0 *. (2.0 -. 1.0) /. 4.0;
-        2.0 *. (3.0 -. 2.0) /. 4.0;
-      |]
-  in
-  equal ~msg:"mse grad exact" bool true
-    (tensor_close ~eps:1e-6 ~expected ~actual:grad)
+(* Classification *)
 
-let test_cross_entropy_sparse_dense_gradient_match () =
-  let logits =
-    Nx.create Nx.float32 [| 2; 3 |] [| 2.0; 1.0; 0.5; -1.0; 0.2; 0.0 |]
-  in
-  let indices = Nx.create Nx.int32 [| 2 |] [| 0l; 2l |] in
-  let one_hot = Nx.cast Nx.float32 (Nx.one_hot ~num_classes:3 indices) in
-  let dense_grad = Rune.grad (fun x -> Loss.cross_entropy x one_hot) logits in
-  let sparse_grad =
-    Rune.grad (fun x -> Loss.cross_entropy_sparse x indices) logits
-  in
-  equal ~msg:"cross_entropy sparse grad = dense grad" bool true
-    (tensor_close ~eps:1e-6 ~expected:dense_grad ~actual:sparse_grad)
+let sigmoid_bce_tests =
+  [
+    test "is log 2 at zero logits" (fun () ->
+        close (log 2.) (Loss.sigmoid_bce (vec [| 0.; 0. |]) (vec [| 0.; 1. |])));
+    test "matches the analytic value" (fun () ->
+        (* loss(1, 1) = loss(-1, 0) = log (1 + e^-1) *)
+        close
+          (log (1. +. exp (-1.)))
+          (Loss.sigmoid_bce (vec [| 1.; -1. |]) (vec [| 1.; 0. |])));
+    test "is zero at extreme correct logits" (fun () ->
+        close 0. (Loss.sigmoid_bce (vec [| 1000.; -1000. |]) (vec [| 1.; 0. |])));
+    test "is finite at extreme incorrect logits" (fun () ->
+        close 1000.
+          (Loss.sigmoid_bce (vec [| 1000.; -1000. |]) (vec [| 0.; 1. |])));
+    test "sum reduction adds instead of averaging" (fun () ->
+        close
+          (2. *. log 2.)
+          (Loss.sigmoid_bce ~reduction:`Sum
+             (vec [| 0.; 0. |])
+             (vec [| 0.; 1. |])));
+  ]
 
-let test_regression_values () =
-  let predictions = Nx.create Nx.float32 [| 3 |] [| 1.0; 4.0; 3.0 |] in
-  let targets = Nx.create Nx.float32 [| 3 |] [| 1.0; 1.0; 2.0 |] in
-  equal ~msg:"mse value" (float 1e-6) (10.0 /. 3.0)
-    (Nx.item [] (Loss.mse predictions targets));
-  equal ~msg:"mae value" (float 1e-6) (4.0 /. 3.0)
-    (Nx.item [] (Loss.mae predictions targets))
+let softmax_ce_tests =
+  [
+    test "is log n for uniform logits and one-hot targets" (fun () ->
+        close (log 2.)
+          (Loss.softmax_cross_entropy
+             (mat 1 2 [| 0.; 0. |])
+             (mat 1 2 [| 1.; 0. |])));
+    test "matches the analytic value" (fun () ->
+        (* -log_softmax([1;2;3]).(2) = log (1 + e^-1 + e^-2) *)
+        close
+          (log (1. +. exp (-1.) +. exp (-2.)))
+          (Loss.softmax_cross_entropy
+             (mat 1 3 [| 1.; 2.; 3. |])
+             (mat 1 3 [| 0.; 0.; 1. |])));
+    test "handles soft targets" (fun () ->
+        close (log 2.)
+          (Loss.softmax_cross_entropy
+             (mat 1 2 [| 0.; 0. |])
+             (mat 1 2 [| 0.5; 0.5 |])));
+    test "averages over the batch" (fun () ->
+        close (log 2.)
+          (Loss.softmax_cross_entropy
+             (mat 2 2 [| 0.; 0.; 0.; 0. |])
+             (mat 2 2 [| 1.; 0.; 0.; 1. |])));
+    test "sum reduction adds per-example losses" (fun () ->
+        close
+          (2. *. log 2.)
+          (Loss.softmax_cross_entropy ~reduction:`Sum
+             (mat 2 2 [| 0.; 0.; 0.; 0. |])
+             (mat 2 2 [| 1.; 0.; 0.; 1. |])));
+    test "is zero at extreme correct logits" (fun () ->
+        close 0.
+          (Loss.softmax_cross_entropy
+             (mat 1 2 [| 1000.; 0. |])
+             (mat 1 2 [| 1.; 0. |])));
+    test "is finite at extreme incorrect logits" (fun () ->
+        close 1000.
+          (Loss.softmax_cross_entropy
+             (mat 1 2 [| 1000.; 0. |])
+             (mat 1 2 [| 0.; 1. |])));
+    test "rejects mismatched target shapes" (fun () ->
+        raises_invalid_arg
+          "Loss.softmax_cross_entropy: targets shape [2; 2] does not match \
+           logits shape [2; 3]" (fun () ->
+            Loss.softmax_cross_entropy
+              (mat 2 3 (Array.make 6 0.))
+              (mat 2 2 (Array.make 4 0.))));
+    test "rejects rank-0 logits" (fun () ->
+        raises_invalid_arg
+          "Loss.softmax_cross_entropy: logits must have rank >= 1" (fun () ->
+            Loss.softmax_cross_entropy (Nx.scalar Nx.float64 0.)
+              (Nx.scalar Nx.float64 1.)));
+  ]
 
-let test_regression_broadcasting () =
-  let predictions =
-    Nx.create Nx.float32 [| 2; 3 |] [| 0.0; 1.0; 2.0; 3.0; 4.0; 5.0 |]
-  in
-  let targets = Nx.create Nx.float32 [| 1; 3 |] [| 1.0; 1.0; 1.0 |] in
-  equal ~msg:"mse broadcast" (float 1e-6) (31.0 /. 6.0)
-    (Nx.item [] (Loss.mse predictions targets));
-  equal ~msg:"mae broadcast" (float 1e-6) (11.0 /. 6.0)
-    (Nx.item [] (Loss.mae predictions targets))
+let logits_and_labels =
+  Testable.with_gen
+    Gen.(
+      pair
+        (list_size (pure 6) (float_range (-10.) 10.))
+        (list_size (pure 2) (int_range 0 2)))
+    (pair (list (float 1e-12)) (list int))
 
-let test_mae_gradient_exact () =
-  let predictions = Nx.create Nx.float32 [| 2; 2 |] [| 2.0; -1.0; 4.0; 0.0 |] in
-  let targets = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 1.0; 2.0; -3.0 |] in
-  let grad = Rune.grad (fun p -> Loss.mae p targets) predictions in
-  let expected =
-    Nx.create Nx.float32 [| 2; 2 |] [| 0.25; -0.25; 0.25; 0.25 |]
-  in
-  equal ~msg:"mae grad exact" bool true
-    (tensor_close ~eps:1e-6 ~expected ~actual:grad)
+let softmax_ce_sparse_tests =
+  [
+    test "matches the analytic value" (fun () ->
+        close (log 2.)
+          (Loss.softmax_cross_entropy_sparse
+             (mat 1 2 [| 0.; 0. |])
+             (labels [| 0l |])));
+    prop' "matches the dense loss on one-hot targets" logits_and_labels
+      (fun (xs, ls) ->
+        let logits = mat 2 3 (Array.of_list xs) in
+        let ls = labels (Array.of_list (List.map Int32.of_int ls)) in
+        let one_hot = Nx.cast Nx.float64 (Nx.one_hot ~num_classes:3 ls) in
+        close ~eps:1e-9
+          (Nx.item [] (Loss.softmax_cross_entropy logits one_hot))
+          (Loss.softmax_cross_entropy_sparse logits ls));
+    test "accepts a single unbatched example" (fun () ->
+        close (log 2.)
+          (Loss.softmax_cross_entropy_sparse
+             (vec [| 0.; 0. |])
+             (Nx.scalar Nx.int32 1l)));
+    test "is finite at extreme incorrect logits" (fun () ->
+        close 1000.
+          (Loss.softmax_cross_entropy_sparse
+             (mat 1 2 [| 1000.; 0. |])
+             (labels [| 1l |])));
+    test "sum reduction adds per-example losses" (fun () ->
+        close
+          (2. *. log 2.)
+          (Loss.softmax_cross_entropy_sparse ~reduction:`Sum
+             (mat 2 2 [| 0.; 0.; 0.; 0. |])
+             (labels [| 0l; 1l |])));
+    test "rejects labels that keep the class axis" (fun () ->
+        raises_invalid_arg
+          "Loss.softmax_cross_entropy_sparse: labels shape [2; 3] does not \
+           match logits batch shape [2]" (fun () ->
+            Loss.softmax_cross_entropy_sparse
+              (mat 2 3 (Array.make 6 0.))
+              (Nx.create Nx.int32 [| 2; 3 |] (Array.make 6 0l))));
+  ]
 
-let () =
-  run "Kaun.Loss"
-    [
-      group "cross-entropy"
-        [
-          test "cross entropy known value" test_cross_entropy_known_value;
-          test "cross entropy rejects invalid shapes"
-            test_cross_entropy_rejects_invalid_shapes;
-          test "sparse matches dense (2d)" test_sparse_matches_dense_2d;
-          test "sparse matches dense (nd)" test_sparse_matches_dense_nd;
-          test "sparse rejects non-integer labels"
-            test_sparse_rejects_non_integer_labels;
-          test "sparse rejects shape mismatch"
-            test_sparse_rejects_shape_mismatch;
-          test "sparse rejects invalid logits shape"
-            test_sparse_rejects_invalid_logits_shape;
-          test "sparse/dense gradients match"
-            test_cross_entropy_sparse_dense_gradient_match;
-        ];
-      group "binary"
-        [
-          test "binary cross entropy logits stable"
-            test_binary_cross_entropy_logits_stable;
-          test "binary cross entropy rejects invalid shapes"
-            test_binary_cross_entropy_rejects_invalid_shapes;
-        ];
-      group "regression"
-        [
-          test "mse value + mae value" test_regression_values;
-          test "mse/mae broadcasting" test_regression_broadcasting;
-          test "mse gradient exact" test_mse_gradient_exact;
-          test "mae gradient exact" test_mae_gradient_exact;
-        ];
-    ]
+(* Gradients. Rune.check_grads compares reverse-mode gradients against central
+   differences; float64 keeps the comparison reliable. Points are chosen away
+   from the kinks of mae and huber. *)
+
+let grad_tests =
+  [
+    test "mse gradient matches finite differences" (fun () ->
+        grads_ok
+          (fun p -> Loss.mse p (vec [| 0.5; -1.; 2. |]))
+          (vec [| 1.; 2.; -3. |]));
+    test "mse gradient is 2 (p - t) / n" (fun () ->
+        let g =
+          Rune.grad'
+            (fun p -> Loss.mse p (vec [| 0.; 0. |]))
+            (vec [| 1.; -2. |])
+        in
+        close_grad [| 1.; -2. |] g);
+    test "mse sum-reduction gradient matches finite differences" (fun () ->
+        grads_ok
+          (fun p -> Loss.mse ~reduction:`Sum p (vec [| 0.5; -1. |]))
+          (vec [| 1.; 2. |]));
+    test "mae gradient matches finite differences away from zero" (fun () ->
+        grads_ok
+          (fun p -> Loss.mae p (vec [| 0.; 0.; 0. |]))
+          (vec [| 1.; -2.; 3. |]));
+    test "huber gradient matches finite differences in both regions" (fun () ->
+        grads_ok
+          (fun p -> Loss.huber p (vec [| 0.; 0.; 0.; 0. |]))
+          (vec [| 0.5; -0.25; 2.; -3. |]));
+    test "huber gradient is d inside delta and +/- delta beyond" (fun () ->
+        let g =
+          Rune.grad'
+            (fun p -> Loss.huber ~reduction:`Sum p (vec [| 0.; 0. |]))
+            (vec [| 0.5; -3. |])
+        in
+        close_grad [| 0.5; -1. |] g);
+    test "sigmoid_bce gradient matches finite differences" (fun () ->
+        grads_ok
+          (fun z -> Loss.sigmoid_bce z (vec [| 1.; 0.; 0.5 |]))
+          (vec [| 0.3; -1.2; 2. |]));
+    test "sigmoid_bce gradient is finite at extreme logits" (fun () ->
+        (* Analytically (sigmoid z - y) / n. *)
+        let g =
+          Rune.grad'
+            (fun z -> Loss.sigmoid_bce z (vec [| 1.; 1. |]))
+            (vec [| 1000.; -1000. |])
+        in
+        close_grad [| 0.; -0.5 |] g);
+    test "softmax_cross_entropy gradient matches finite differences" (fun () ->
+        grads_ok
+          (fun z ->
+            Loss.softmax_cross_entropy z
+              (mat 2 3 [| 1.; 0.; 0.; 0.; 0.5; 0.5 |]))
+          (mat 2 3 [| 0.1; -0.4; 1.2; 2.; 0.; -1. |]));
+    test "softmax_cross_entropy gradient is softmax minus targets" (fun () ->
+        let g =
+          Rune.grad'
+            (fun z ->
+              Loss.softmax_cross_entropy ~reduction:`Sum z
+                (mat 1 3 [| 0.; 0.; 1. |]))
+            (mat 1 3 [| 1.; 2.; 3. |])
+        in
+        let s = exp 1. +. exp 2. +. exp 3. in
+        close_grad ~eps:1e-9
+          [| exp 1. /. s; exp 2. /. s; (exp 3. /. s) -. 1. |]
+          g);
+    test "softmax_cross_entropy gradient is finite at extreme logits" (fun () ->
+        let g =
+          Rune.grad'
+            (fun z -> Loss.softmax_cross_entropy z (mat 1 2 [| 1.; 0. |]))
+            (mat 1 2 [| 1000.; 0. |])
+        in
+        close_grad [| 0.; 0. |] g);
+    test "softmax_cross_entropy_sparse gradient matches finite differences"
+      (fun () ->
+        grads_ok
+          (fun z -> Loss.softmax_cross_entropy_sparse z (labels [| 2l; 0l |]))
+          (mat 2 3 [| 0.1; -0.4; 1.2; 2.; 0.; -1. |]));
+  ]
+
+let tests =
+  [
+    group "mse" mse_tests;
+    group "mae" mae_tests;
+    group "huber" huber_tests;
+    group "sigmoid_bce" sigmoid_bce_tests;
+    group "softmax_cross_entropy" softmax_ce_tests;
+    group "softmax_cross_entropy_sparse" softmax_ce_sparse_tests;
+    group "gradients" grad_tests;
+  ]
+
+let () = run "kaun loss" tests

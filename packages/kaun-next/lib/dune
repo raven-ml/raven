@@ -1,4 +1,0 @@
-(library
- (name kaun_next)
- (public_name kaun-next)
- (libraries nx nx.core nx.io rune-next))
