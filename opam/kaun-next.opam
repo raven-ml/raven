@@ -17,6 +17,9 @@ depends: [
   "nx" {= version}
   "rune-next" {= version}
   "vega" {= version}
+  "logs"
+  "jsont"
+  "bytesrw"
   "windtrap" {with-test}
   "odoc" {with-doc}
 ]

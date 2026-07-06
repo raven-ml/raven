@@ -1,0 +1,3 @@
+(executable
+ (name main)
+ (libraries kaun-next kaun-next.datasets rune-next vega nx))

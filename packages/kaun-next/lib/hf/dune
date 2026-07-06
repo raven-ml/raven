@@ -1,0 +1,4 @@
+(library
+ (name kaun_next_hf)
+ (public_name kaun-next.hf)
+ (libraries unix nx nx.io rune-next kaun-next jsont jsont.bytesrw))

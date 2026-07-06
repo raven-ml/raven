@@ -1,0 +1,4 @@
+(library
+ (name kaun_next_datasets)
+ (public_name kaun-next.datasets)
+ (libraries unix zip nx logs))

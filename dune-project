@@ -147,6 +147,9 @@
    (= :version))
   (vega
    (= :version))
+  logs
+  jsont
+  bytesrw
   (windtrap :with-test))
  (tags
   (machine-learning deep-learning neural-networks)))
