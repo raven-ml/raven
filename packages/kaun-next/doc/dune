@@ -1,0 +1,4 @@
+(mdx
+ (files *.md)
+ (package kaun-next)
+ (libraries kaun-next kaun-next.hf kaun-next.datasets rune-next vega nx))

@@ -1,0 +1,4 @@
+(mdx
+ (files *.md)
+ (package rune-next)
+ (libraries rune-next nx))
