@@ -5,7 +5,7 @@
 
 type t = {
   tracked : Tensor_map.Ids.t;
-  cotangents : Tensor_map.t;
+  mutable cotangents : Tensor_map.t;
   pulls : (unit -> unit) Dynarray.t;
 }
 
@@ -37,3 +37,5 @@ let accumulate tape x g =
 
 let cotangent tape x =
   match find tape x with Some g -> g | None -> Nx.zeros_like x
+
+let reset_cotangents tape = tape.cotangents <- Tensor_map.create ()

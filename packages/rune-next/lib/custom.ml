@@ -12,15 +12,15 @@
    parameters are the output's makes the effects fully typed — no erasure.
 
    Dispatch is by handler stacking: the innermost transformation that
-   understands the effect applies the rule. A transformation of the wrong mode
-   raises (a custom vjp is not forward-differentiable, and vice versa). When no
-   handler intercepts — no differentiation in scope, or only vmap — the plain
-   forward function runs at the call site, so vmap batches it like any other
-   code. *)
+   understands the effect applies its treatment. A differentiation of the wrong
+   mode raises (a custom vjp is not forward-differentiable, and vice versa);
+   vmap batches the forward function, so only a differentiation inside the vmap
+   applies the rule. When no handler intercepts — no transformation in scope —
+   the plain forward function runs at the call site. *)
 
 type ('c, 'd) vjp_call =
   | Vjp_call : {
-      tree : (module Differentiable.S with type t = 'p);
+      tree : (module Nx.Ptree.S with type t = 'p);
       params : 'p;
       fwd : 'p -> ('c, 'd) Nx.t * 'res;
       bwd : 'res -> ('c, 'd) Nx.t -> 'p;
@@ -29,7 +29,7 @@ type ('c, 'd) vjp_call =
 
 type ('c, 'd) jvp_call =
   | Jvp_call : {
-      tree : (module Differentiable.S with type t = 'p);
+      tree : (module Nx.Ptree.S with type t = 'p);
       params : 'p;
       f : 'p -> ('c, 'd) Nx.t;
       jvp : 'p -> 'p -> ('c, 'd) Nx.t * ('c, 'd) Nx.t;
@@ -40,7 +40,7 @@ type _ Effect.t +=
   | E_custom_vjp : ('c, 'd) vjp_call -> ('c, 'd) Nx.t Effect.t
   | E_custom_jvp : ('c, 'd) jvp_call -> ('c, 'd) Nx.t Effect.t
 
-let custom_vjp (type c d) (module P : Differentiable.S)
+let custom_vjp (type c d) (module P : Nx.Ptree.S)
     ~(fwd : P.t -> (c, d) Nx.t * 'res) ~(bwd : 'res -> (c, d) Nx.t -> P.t)
     (params : P.t) : (c, d) Nx.t =
   try
@@ -48,9 +48,9 @@ let custom_vjp (type c d) (module P : Differentiable.S)
       (E_custom_vjp (Vjp_call { tree = (module P); params; fwd; bwd }))
   with Effect.Unhandled _ -> fst (fwd params)
 
-let custom_jvp (type c d) (module P : Differentiable.S)
-    ~(f : P.t -> (c, d) Nx.t) ~(jvp : P.t -> P.t -> (c, d) Nx.t * (c, d) Nx.t)
-    (params : P.t) : (c, d) Nx.t =
+let custom_jvp (type c d) (module P : Nx.Ptree.S) ~(f : P.t -> (c, d) Nx.t)
+    ~(jvp : P.t -> P.t -> (c, d) Nx.t * (c, d) Nx.t) (params : P.t) :
+    (c, d) Nx.t =
   try
     Effect.perform
       (E_custom_jvp (Jvp_call { tree = (module P); params; f; jvp }))

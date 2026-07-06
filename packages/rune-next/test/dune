@@ -1,41 +1,13 @@
 (tests
- (names test_grad)
- (modules test_grad)
- (package rune-next)
- (libraries rune-next nx nx.core windtrap rune_next_test_support))
-
-(tests
- (names test_ops)
- (modules test_ops)
- (package rune-next)
- (libraries rune-next nx nx.core windtrap rune_next_test_support))
-
-(tests
- (names test_engine)
- (modules test_engine)
- (package rune-next)
- (libraries rune-next nx nx.core windtrap rune_next_test_support))
-
-(tests
- (names test_ptree)
- (modules test_ptree)
- (package rune-next)
- (libraries rune-next nx nx.core windtrap rune_next_test_support))
-
-(tests
- (names test_jvp)
- (modules test_jvp)
- (package rune-next)
- (libraries rune-next nx nx.core windtrap rune_next_test_support))
-
-(tests
- (names test_vmap)
- (modules test_vmap)
- (package rune-next)
- (libraries rune-next nx nx.core windtrap rune_next_test_support))
-
-(tests
- (names test_custom)
- (modules test_custom)
+ (names
+  test_grad
+  test_ops
+  test_engine
+  test_ptree
+  test_jvp
+  test_vmap
+  test_custom
+  test_jacobian
+  test_control)
  (package rune-next)
  (libraries rune-next nx nx.core windtrap rune_next_test_support))

@@ -37,8 +37,8 @@ let raises_invalid_arg f =
     (fun exn -> match exn with Invalid_argument _ -> true | _ -> false)
     f
 
-(* A statically-typed parameter record with mixed dtypes: the canonical
-   Differentiable instance used across suites. *)
+(* A statically-typed parameter record with mixed dtypes: the canonical Ptree.S
+   instance used across suites. *)
 
 type params = { w : Nx.float32_t; b : Nx.float32_t; scale : Nx.float64_t }
 

@@ -3,7 +3,7 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* Transformation semantics over Differentiable structures: grad,
+(* Transformation semantics over parameter-tree structures: grad,
    value_and_grad, value_and_grad_aux, and vjp on user-defined records. *)
 
 open Windtrap
@@ -48,8 +48,8 @@ let test_vjp_cotangent_scales () =
   check_arr ~msg:"dw scaled" [| 4.0; -8.0; 12.0 |] g.w
 
 let test_vjp_non_scalar_output () =
-  (* vjp accepts non-scalar outputs: f(w) = w * w with cotangent ct gives
-     2 * w * ct. *)
+  (* vjp accepts non-scalar outputs: for f(w) = w*w and cotangent ct, the
+     pulled-back cotangent is 2*w*ct. *)
   let p = params () in
   let f p = Nx.mul p.w p.w in
   let _, g = Rune_next.vjp (module Params) f p (vec32 [| 1.0; 2.0; 3.0 |]) in
@@ -95,6 +95,74 @@ let test_vjp_single_tensor () =
   let _, g = Rune_next.vjp' f (vec32 [| 1.0; 2.0 |]) (vec32 [| 10.0; 1.0 |]) in
   check_arr ~msg:"dx" [| 20.0; 4.0 |] g
 
+let test_vjp2_structured_output () =
+  (* vjp2 against cotangents equals the gradient of <cotangents, f>. *)
+  let a = vec64 [| 0.7; -1.3; 2.1 |] and b = vec64 [| 1.9; 0.8; -0.6 |] in
+  let ca = vec64 [| 1.0; -2.0; 0.5 |] and cb = vec64 [| 0.3; 1.1; -0.7 |] in
+  let f p = { fst = Nx.mul p.fst p.snd; snd = Nx.add p.fst p.snd } in
+  let _, g =
+    Rune_next.vjp2
+      (module Pair)
+      (module Pair)
+      f { fst = a; snd = b } { fst = ca; snd = cb }
+  in
+  let dotted p =
+    let y = f p in
+    Nx.add (Nx.sum (Nx.mul y.fst ca)) (Nx.sum (Nx.mul y.snd cb))
+  in
+  let expected = Rune_next.grad (module Pair) dotted { fst = a; snd = b } in
+  check_arr ~msg:"da" (to_arr expected.fst) g.fst;
+  check_arr ~msg:"db" (to_arr expected.snd) g.snd
+
+let test_vjp2_cotangent_shape_mismatch () =
+  raises_invalid_arg (fun () ->
+      ignore
+        (Rune_next.vjp2
+           (module Pair)
+           (module Pair)
+           (fun p -> p)
+           { fst = vec64 [| 1.0; 2.0 |]; snd = vec64 [| 3.0 |] }
+           { fst = vec64 [| 1.0 |]; snd = vec64 [| 1.0 |] }))
+
+let test_remat_same_gradient () =
+  (* remat changes memory behavior, never values or gradients. *)
+  let f p = Nx.sum (Nx.mul (Nx.exp p.fst) (Nx.sin p.snd)) in
+  let params =
+    { fst = vec64 [| 0.7; -1.3; 2.1 |]; snd = vec64 [| 1.9; 0.8; -0.6 |] }
+  in
+  let g = Rune_next.grad (module Pair) f params in
+  let g' =
+    Rune_next.grad
+      (module Pair)
+      (fun p -> Rune_next.remat (module Pair) f p)
+      params
+  in
+  check_arr ~msg:"d fst" (to_arr g.fst) g'.fst;
+  check_arr ~msg:"d snd" (to_arr g.snd) g'.snd
+
+let test_remat_value () =
+  let f p = Nx.sum (Nx.mul p.fst p.snd) in
+  let params =
+    { fst = vec64 [| 0.7; -1.3; 2.1 |]; snd = vec64 [| 1.9; 0.8; -0.6 |] }
+  in
+  check_arr ~msg:"value"
+    (to_arr (f params))
+    (Rune_next.remat (module Pair) f params)
+
+let test_grad_rejects_integer_leaves () =
+  raises_invalid_arg (fun () ->
+      ignore
+        (Rune_next.grad'
+           (fun x -> Nx.sum x)
+           (Nx.create Nx.int32 [| 2 |] [| 1l; 2l |])));
+  raises_invalid_arg (fun () ->
+      let module T = Rune_next.Ptree in
+      ignore
+        (Rune_next.grad
+           (module T)
+           (fun _ -> Nx.scalar f64 1.0)
+           (T.tensor (Nx.create Nx.int32 [| 2 |] [| 1l; 2l |]))))
+
 let tests =
   [
     group "grad over records"
@@ -103,16 +171,24 @@ let tests =
         test "unused leaf has zero gradient" test_grad_unused_leaf_zero;
         test "preserves structure and shapes" test_grad_preserves_structure;
         test "value_and_grad returns the value" test_value_and_grad_value;
-        test "value_and_grad_aux returns auxiliary data"
-          test_value_and_grad_aux;
+        test "value_and_grad_aux returns auxiliary data" test_value_and_grad_aux;
         test "mixed dtypes differentiate in one pass"
           test_mixed_dtype_single_pass;
         test "gradient descent converges" test_gradient_descent_converges;
+        test "rejects integer parameter leaves" test_grad_rejects_integer_leaves;
       ];
     group "vjp"
       [
         test "scales by the cotangent" test_vjp_cotangent_scales;
         test "accepts non-scalar outputs" test_vjp_non_scalar_output;
+        test "vjp2 pulls back structured cotangents" test_vjp2_structured_output;
+        test "vjp2 rejects cotangent shape mismatch"
+          test_vjp2_cotangent_shape_mismatch;
+      ];
+    group "remat"
+      [
+        test "gradients are unchanged" test_remat_same_gradient;
+        test "values are unchanged" test_remat_value;
       ];
     group "single-tensor variants"
       [

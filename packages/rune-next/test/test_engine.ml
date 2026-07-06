@@ -125,6 +125,25 @@ let test_engine_fixes =
         check_arr ~msg:"dsort" [| 30.0; 10.0; 20.0 |] (Rune_next.grad' f x));
   ]
 
+let test_with_debug_logs_and_preserves () =
+  let buf = Buffer.create 256 in
+  let ppf = Format.formatter_of_buffer buf in
+  let x = vec32 [| 1.0; -2.0; 3.0 |] in
+  let g =
+    Rune_next.with_debug ~ppf (fun () ->
+        Rune_next.grad' (fun x -> Nx.sum (Nx.mul x x)) x)
+  in
+  Format.pp_print_flush ppf ();
+  check_arr ~msg:"gradient unchanged" [| 2.0; -4.0; 6.0 |] g;
+  let log = Buffer.contents buf in
+  let contains sub =
+    let n = String.length sub and m = String.length log in
+    let rec go i = i + n <= m && (String.sub log i n = sub || go (i + 1)) in
+    go 0
+  in
+  is_true ~msg:"logs mul" (contains "mul ->");
+  is_true ~msg:"logs reduce_sum" (contains "reduce_sum ->")
+
 let tests =
   [
     group "higher order"
@@ -152,6 +171,11 @@ let tests =
         test "value reads are transparent" test_reads_are_transparent_to_grad;
       ];
     group "regressions" test_engine_fixes;
+    group "debugging"
+      [
+        test "with_debug logs ops and preserves results"
+          test_with_debug_logs_and_preserves;
+      ];
   ]
 
 let () = run "rune-next engine" tests

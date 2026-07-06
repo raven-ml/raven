@@ -75,7 +75,10 @@ let ensure_batched st x = to_batched st x (vshape st x)
    so non-negative axes shift by one and negative axes are unchanged. *)
 let taxis ax = if ax >= 0 then ax + 1 else ax
 
-let handler (st : state) =
+(* Polymorphic recursion: the nested fibers spawned for custom rules run at the
+   rule's own result type. *)
+let rec handler : type r. state -> (r, r) Effect.Deep.handler =
+ fun (st : state) ->
   let open Effect.Deep in
   (* Elementwise operations: broadcast all operands to the common batched shape
      and apply the operation unchanged. *)
@@ -368,6 +371,31 @@ let handler (st : state) =
     | E_eigh { t_in; _ } when batched st t_in -> err_no_rule "eigh"
     | E_triangular_solve { a; b; _ } when batched st a || batched st b ->
         err_no_rule "triangular_solve"
+    (* Custom rules: vmap batches the forward function. The call runs in a
+       nested fiber under this same handler state, so its operations are
+       translated like any other code and enclosing transformations see the
+       batched forward computation. Letting the call fall through instead would
+       hand physically batched tensors to an enclosing differentiation outside
+       the batching scope. Calls on constants do fall through. *)
+    | Custom.E_custom_vjp
+        (Custom.Vjp_call { tree = (module Q); params; fwd; _ }) ->
+        let any = ref false in
+        Q.iter (fun leaf -> if batched st leaf then any := true) params;
+        if not !any then None
+        else
+          Some
+            (fun k ->
+              continue k
+                (match_with (fun () -> fst (fwd params)) () (handler st)))
+    | Custom.E_custom_jvp (Custom.Jvp_call { tree = (module Q); params; f; _ })
+      ->
+        let any = ref false in
+        Q.iter (fun leaf -> if batched st leaf then any := true) params;
+        if not !any then None
+        else
+          Some
+            (fun k ->
+              continue k (match_with (fun () -> f params) () (handler st)))
     (* Operations on constants, and effects from other libraries, fall through.
        A new Nx tensor operation must be added to this match: an unmatched
        batched operand would silently produce wrong shapes. *)

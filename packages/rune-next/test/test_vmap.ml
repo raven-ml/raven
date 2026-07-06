@@ -164,6 +164,30 @@ let test_in_axes_non_leading () =
   in
   check_arr ~msg:"axis 1" (to_arr expected) y
 
+let test_in_axes_negative_axis () =
+  (* [Some (-2)] names the same axis as [Some 1] on a rank-3 leaf. *)
+  let a = Nx.moveaxis 0 1 (ms ()) in
+  let b = w32 () in
+  let y =
+    Rune_next.vmap ~in_axes:[ Some (-2); None ]
+      (module Pair)
+      (fun p -> Nx.matmul p.fst p.snd)
+      { fst = a; snd = b }
+  in
+  let expected =
+    Nx.stack ~axis:0
+      (List.init 2 (fun i -> Nx.matmul (Nx.slice [ Nx.I i ] (ms ())) b))
+  in
+  check_arr ~msg:"negative axis" (to_arr expected) y
+
+let test_in_axes_out_of_bounds () =
+  raises_invalid_arg (fun () ->
+      ignore
+        (Rune_next.vmap ~in_axes:[ Some 2; None ]
+           (module Pair)
+           (fun p -> Nx.add p.fst p.snd)
+           { fst = xs (); snd = xs () }))
+
 let test_in_axes_length_mismatch () =
   raises_invalid_arg (fun () ->
       ignore
@@ -225,6 +249,33 @@ let test_no_rule_raises () =
            (fun m -> Nx.cholesky m)
            (Nx.create f64 [| 2; 2; 2 |]
               [| 4.0; 1.0; 1.0; 3.0; 5.0; 0.5; 0.5; 2.0 |])))
+
+let test_vmap2_structured_output () =
+  (* Both output leaves gain a batch axis; one depends on the input, the other
+     is constant and broadcasts. *)
+  let c = vec64 [| 9.0 |] in
+  let y =
+    Rune_next.vmap2
+      (module Pair)
+      (module Pair)
+      (fun p -> { fst = Nx.mul p.fst p.snd; snd = c })
+      { fst = xs (); snd = xs () }
+  in
+  check_arr ~msg:"fst" (to_arr (Nx.mul (xs ()) (xs ()))) y.fst;
+  equal ~msg:"snd shape" (array int) [| 4; 1 |] (Nx.shape y.snd);
+  check_arr ~msg:"snd" [| 9.0; 9.0; 9.0; 9.0 |] y.snd
+
+let test_rng_is_identical_per_lane () =
+  (* Implicit RNG keys are constants of the map: every lane draws the same
+     values. Pinned as documented behavior until nx grows tensor-typed keys;
+     thread distinct randomness in as mapped inputs instead. *)
+  let y =
+    Nx.Rng.run ~seed:42 (fun () ->
+        Rune_next.vmap' (fun r -> Nx.add r (Nx.rand f64 [| 3 |])) (xs ()))
+  in
+  let base = Nx.sub y (xs ()) in
+  let row i = to_arr (Nx.slice [ Nx.I i ] base) in
+  equal ~msg:"lanes share draws" (array (float 1e-12)) (row 0) (row 1)
 
 (* Nesting *)
 
@@ -290,6 +341,8 @@ let tests =
         test "maps all leaves of a structure" test_vmap_structure;
         test "in_axes holds a leaf constant" test_in_axes_constant_leaf;
         test "in_axes maps a non-leading axis" test_in_axes_non_leading;
+        test "in_axes accepts a negative axis" test_in_axes_negative_axis;
+        test "in_axes rejects an out-of-bounds axis" test_in_axes_out_of_bounds;
         test "in_axes must have one entry per leaf" test_in_axes_length_mismatch;
         test "in_axes must map at least one leaf" test_in_axes_maps_no_leaf;
         test "out_axis places the structural batch axis"
@@ -302,6 +355,13 @@ let tests =
           test_reading_constant_value_is_fine;
       ];
     group "nesting" [ test "vmap of vmap" test_nested_vmap ];
+    group "randomness"
+      [
+        test "implicit RNG draws are identical per lane"
+          test_rng_is_identical_per_lane;
+      ];
+    group "structured outputs"
+      [ test "vmap2 batches every output leaf" test_vmap2_structured_output ];
     group "composition"
       [
         test "vmap of grad: per-sample gradients" test_per_sample_gradients;

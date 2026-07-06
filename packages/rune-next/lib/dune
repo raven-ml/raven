@@ -2,12 +2,12 @@
  (name rune_next)
  (public_name rune-next)
  (private_modules
-  differentiable
   custom
   tape
   reverse
   forward
   vmap
+  debug
   tensor_map
   gate
   derivs)

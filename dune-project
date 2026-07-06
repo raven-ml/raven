@@ -40,7 +40,7 @@
   "Nx provides n-dimensional arrays with NumPy-like semantics and OCaml's type safety. 19 data types, broadcasting, slicing, linear algebra, FFT, and I/O. The numerical foundation for the Raven ecosystem.")
  (depends
   (ocaml
-   (>= 5.2.0))
+   (>= 5.5.0))
   dune
   (dune-configurator :build)
   (conf-pkg-config :build)
@@ -114,6 +114,40 @@
   (thumper :with-test))
  (tags
   (automatic-differentiation machine-learning deep-learning optimization)))
+
+(package
+ (name rune-next)
+ (dir packages/rune-next)
+ (synopsis "Functional transformations for Nx arrays (next-generation design)")
+ (description
+  "Next-generation Rune built on OCaml 5.5 module-dependent functions. Autodiff transformations operate over any user-defined parameter structure through the Differentiable interface, with full static typing and mixed-dtype parameters in a single pass.")
+ (depends
+  (ocaml
+   (>= 5.5.0))
+  dune
+  (nx
+   (= :version))
+  (windtrap :with-test))
+ (tags
+  (automatic-differentiation machine-learning deep-learning optimization)))
+
+(package
+ (name kaun-next)
+ (dir packages/kaun-next)
+ (synopsis "Neural networks for OCaml (next-generation design)")
+ (description
+  "Next-generation Kaun built on rune-next. Models are typed parameter structures with pure apply functions; training steps compose value_and_grad with structural optimizers; there is no opaque trainer or layer type.")
+ (depends
+  (ocaml
+   (>= 5.5.0))
+  dune
+  (nx
+   (= :version))
+  (rune-next
+   (= :version))
+  (windtrap :with-test))
+ (tags
+  (machine-learning deep-learning neural-networks)))
 
 (package
  (name tolk)

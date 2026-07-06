@@ -43,6 +43,10 @@ val record : t -> (unit -> unit) -> unit
 
 (** {1:backward Backward pass} *)
 
+val reset_cotangents : t -> unit
+(** [reset_cotangents tape] clears the accumulated cotangents so the recorded
+    pull thunks can run a fresh backward pass against a new seed. *)
+
 val backward : t -> unit
 (** [backward tape] runs the recorded pull thunks in reverse order. Call after
     seeding the output cotangent with {!accumulate}. *)

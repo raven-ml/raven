@@ -97,6 +97,32 @@ let test_jvp_matches_grad () =
     (to_arr (Nx.sum (Nx.mul g v)))
     (Nx.reshape [| 1 |] dy)
 
+let test_jvp2_structured_output () =
+  (* Each output leaf's tangent matches the component-wise jvp. *)
+  let a = v3 () and b = b3 () in
+  let va = tangent_like (v3 ()) and vb = tangent_like (b3 ()) in
+  let f p = { fst = Nx.mul p.fst p.snd; snd = Nx.add p.fst p.snd } in
+  let _, dy =
+    Rune_next.jvp2
+      (module Pair)
+      (module Pair)
+      f { fst = a; snd = b } { fst = va; snd = vb }
+  in
+  let _, d_fst =
+    Rune_next.jvp
+      (module Pair)
+      (fun p -> Nx.mul p.fst p.snd)
+      { fst = a; snd = b } { fst = va; snd = vb }
+  in
+  let _, d_snd =
+    Rune_next.jvp
+      (module Pair)
+      (fun p -> Nx.add p.fst p.snd)
+      { fst = a; snd = b } { fst = va; snd = vb }
+  in
+  check_arr ~msg:"d fst" (to_arr d_fst) dy.fst;
+  check_arr ~msg:"d snd" (to_arr d_snd) dy.snd
+
 (* Per-op tangent rules against the directional oracle. *)
 
 let unary_cases =
@@ -302,6 +328,23 @@ let test_no_grad_stops_tangents () =
   let _, dy = Rune_next.jvp' f x (vec64 [| 1.0 |]) in
   check_arr ~msg:"df" [| 9.0 |] dy
 
+let test_detach_stops_tangents () =
+  let x = vec64 [| 3.0 |] in
+  let f x = Nx.mul x (Rune_next.detach x) in
+  (* detach x is a constant 3, so df = 3 * v, not 2 x v. *)
+  let _, dy = Rune_next.jvp' f x (vec64 [| 1.0 |]) in
+  check_arr ~msg:"df" [| 3.0 |] dy
+
+let test_jvp_structural_shape_mismatch () =
+  (* The per-leaf shape check also guards the structural entry point. *)
+  raises_invalid_arg (fun () ->
+      ignore
+        (Rune_next.jvp
+           (module Pair)
+           (fun p -> Nx.add p.fst p.snd)
+           { fst = vec64 [| 1.0; 2.0 |]; snd = vec64 [| 3.0; 4.0 |] }
+           { fst = vec64 [| 1.0 |]; snd = vec64 [| 0.0; 0.0 |] }))
+
 let test_unsupported_op_raises_when_active () =
   let x = Nx.create f64 [| 2; 2 |] [| 4.0; 1.0; 1.0; 3.0 |] in
   raises_invalid_arg (fun () ->
@@ -332,6 +375,7 @@ let tests =
         test "jvp_aux returns auxiliary data" test_jvp_aux;
         test "rejects tangent shape mismatch" test_jvp_tangent_shape_mismatch;
         test "agrees with grad on scalar objectives" test_jvp_matches_grad;
+        test "jvp2 gives per-leaf output tangents" test_jvp2_structured_output;
       ];
     group "unary rules" unary_tests;
     group "binary rules" binary_tests;
@@ -353,6 +397,9 @@ let tests =
     group "gates and errors"
       [
         test "no_grad stops tangents" test_no_grad_stops_tangents;
+        test "detach stops tangents" test_detach_stops_tangents;
+        test "rejects a leaf tangent shape mismatch"
+          test_jvp_structural_shape_mismatch;
         test "unsupported op raises when input is active"
           test_unsupported_op_raises_when_active;
         test "in-place mutation raises" test_mutation_raises;

@@ -1,0 +1,12 @@
+(tests
+ (names
+  test_kaun_next
+  test_init
+  test_fn
+  test_loss
+  test_optim
+  test_checkpoint
+  test_layers
+  test_stateful)
+ (package kaun-next)
+ (libraries kaun-next rune-next nx nx.core windtrap))

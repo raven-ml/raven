@@ -3,9 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-module type Differentiable = Differentiable.S
+module Ptree = Nx.Ptree
 
-module Ptree = Ptree
+let shape_string s =
+  String.concat "," (Array.to_list (Array.map string_of_int s))
 
 let require_scalar name y =
   if Nx.numel y <> 1 then
@@ -14,12 +15,11 @@ let require_scalar name y =
          "%s: the objective must return a scalar tensor, got shape [%s]; use \
           vjp for non-scalar outputs"
          name
-         (String.concat ","
-            (Array.to_list (Array.map string_of_int (Nx.shape y)))))
+         (shape_string (Nx.shape y)))
 
 (* Run [f params] under the reverse handler with the leaves of [params] tracked,
    seed the output cotangent, and pull gradients back to the leaves. *)
-let run_reverse (type c d) (module P : Differentiable) (f : P.t -> (c, d) Nx.t)
+let run_reverse (type c d) (module P : Ptree.S) (f : P.t -> (c, d) Nx.t)
     (params : P.t) ~(seed : (c, d) Nx.t -> (c, d) Nx.t) : (c, d) Nx.t * P.t =
   let tape = Tape.create () in
   P.iter (fun leaf -> Tape.track tape leaf) params;
@@ -28,8 +28,21 @@ let run_reverse (type c d) (module P : Differentiable) (f : P.t -> (c, d) Nx.t)
   Tape.backward tape;
   (y, P.map (fun leaf -> Tape.cotangent tape leaf) params)
 
-let value_and_grad (type c d) (module P : Differentiable)
-    (f : P.t -> (c, d) Nx.t) (params : P.t) : (c, d) Nx.t * P.t =
+(* Gradients are only defined with respect to real (or complex) leaves; integer
+   data belongs in the closure or the auxiliary output. *)
+let require_float_leaf name leaf =
+  let dt = Nx.dtype leaf in
+  if not (Nx_core.Dtype.is_float dt || Nx_core.Dtype.is_complex dt) then
+    invalid_arg
+      (Printf.sprintf
+         "%s: cannot differentiate with respect to a %s leaf; hold \
+          non-differentiable data in the closure or the auxiliary output"
+         name
+         (Nx_core.Dtype.to_string dt))
+
+let value_and_grad (type c d) (module P : Ptree.S) (f : P.t -> (c, d) Nx.t)
+    (params : P.t) : (c, d) Nx.t * P.t =
+  P.iter (fun leaf -> require_float_leaf "Rune_next.value_and_grad" leaf) params;
   let y, grads =
     run_reverse
       (module P)
@@ -40,11 +53,11 @@ let value_and_grad (type c d) (module P : Differentiable)
   in
   (y, grads)
 
-let grad (type c d) (module P : Differentiable) (f : P.t -> (c, d) Nx.t)
-    (params : P.t) : P.t =
+let grad (type c d) (module P : Ptree.S) (f : P.t -> (c, d) Nx.t) (params : P.t)
+    : P.t =
   snd (value_and_grad (module P) f params)
 
-let value_and_grad_aux (type c d) (module P : Differentiable)
+let value_and_grad_aux (type c d) (module P : Ptree.S)
     (f : P.t -> (c, d) Nx.t * 'aux) (params : P.t) : (c, d) Nx.t * P.t * 'aux =
   let aux = ref None in
   let f' ps =
@@ -55,13 +68,67 @@ let value_and_grad_aux (type c d) (module P : Differentiable)
   let y, grads = value_and_grad (module P) f' params in
   match !aux with
   | Some a -> (y, grads, a)
-  | None ->
-      invalid_arg
-        "Rune_next.value_and_grad_aux: objective did not produce a value"
+  | None -> assert false (* [f'] completed, so [aux] was set. *)
 
-let vjp (type c d) (module P : Differentiable) (f : P.t -> (c, d) Nx.t)
-    (params : P.t) (cotangent : (c, d) Nx.t) : (c, d) Nx.t * P.t =
+let vjp (type c d) (module P : Ptree.S) (f : P.t -> (c, d) Nx.t) (params : P.t)
+    (cotangent : (c, d) Nx.t) : (c, d) Nx.t * P.t =
   run_reverse (module P) f params ~seed:(fun _ -> cotangent)
+
+let err_cotangent_shape leaf cotangent =
+  invalid_arg
+    (Printf.sprintf
+       "Rune_next.vjp2: cotangent shape [%s] does not match output shape [%s]"
+       (shape_string (Nx.shape cotangent))
+       (shape_string (Nx.shape leaf)))
+
+let vjp2 (module P : Ptree.S) (module Q : Ptree.S) (f : P.t -> Q.t)
+    (params : P.t) (cotangents : Q.t) : Q.t * P.t =
+  let tape = Tape.create () in
+  P.iter (fun leaf -> Tape.track tape leaf) params;
+  let y = Effect.Deep.match_with f params (Reverse.handler tape) in
+  let (_ : Q.t) =
+    Q.map2
+      (fun yleaf ct ->
+        if Nx.shape yleaf <> Nx.shape ct then err_cotangent_shape yleaf ct;
+        Tape.accumulate tape yleaf ct;
+        yleaf)
+      y cotangents
+  in
+  Tape.backward tape;
+  (y, P.map (fun leaf -> Tape.cotangent tape leaf) params)
+
+let vjp_fun (type c d) (module P : Ptree.S) (f : P.t -> (c, d) Nx.t)
+    (params : P.t) : (c, d) Nx.t * ((c, d) Nx.t -> P.t) =
+  let tape = Tape.create () in
+  P.iter (fun leaf -> Tape.track tape leaf) params;
+  let y = Effect.Deep.match_with f params (Reverse.handler tape) in
+  let pullback ct =
+    if Nx.shape ct <> Nx.shape y then
+      invalid_arg
+        (Printf.sprintf
+           "Rune_next.vjp_fun: cotangent shape [%s] does not match output \
+            shape [%s]"
+           (shape_string (Nx.shape ct))
+           (shape_string (Nx.shape y)));
+    Tape.reset_cotangents tape;
+    Tape.accumulate tape y ct;
+    Tape.backward tape;
+    P.map (fun leaf -> Tape.cotangent tape leaf) params
+  in
+  (y, pullback)
+
+let vjp_fun' (type a b c d) (f : (a, b) Nx.t -> (c, d) Nx.t) (x : (a, b) Nx.t) :
+    (c, d) Nx.t * ((c, d) Nx.t -> (a, b) Nx.t) =
+  let tape = Tape.create () in
+  Tape.track tape x;
+  let y = Effect.Deep.match_with f x (Reverse.handler tape) in
+  let pullback ct =
+    Tape.reset_cotangents tape;
+    Tape.accumulate tape y ct;
+    Tape.backward tape;
+    Tape.cotangent tape x
+  in
+  (y, pullback)
 
 (* Forward mode *)
 
@@ -69,16 +136,14 @@ let err_tangent_shape name leaf tangent =
   invalid_arg
     (Printf.sprintf "%s: tangent shape [%s] does not match parameter shape [%s]"
        name
-       (String.concat ","
-          (Array.to_list (Array.map string_of_int (Nx.shape tangent))))
-       (String.concat ","
-          (Array.to_list (Array.map string_of_int (Nx.shape leaf)))))
+       (shape_string (Nx.shape tangent))
+       (shape_string (Nx.shape leaf)))
 
 let output_tangent store y =
   match Tensor_map.find store y with Some dy -> dy | None -> Nx.zeros_like y
 
-let jvp (type c d) (module P : Differentiable) (f : P.t -> (c, d) Nx.t)
-    (params : P.t) (tangents : P.t) : (c, d) Nx.t * (c, d) Nx.t =
+let jvp (type c d) (module P : Ptree.S) (f : P.t -> (c, d) Nx.t) (params : P.t)
+    (tangents : P.t) : (c, d) Nx.t * (c, d) Nx.t =
   let store = Tensor_map.create () in
   let (_ : P.t) =
     P.map2
@@ -92,9 +157,8 @@ let jvp (type c d) (module P : Differentiable) (f : P.t -> (c, d) Nx.t)
   let y = Effect.Deep.match_with f params (Forward.handler store) in
   (y, output_tangent store y)
 
-let jvp_aux (type c d) (module P : Differentiable)
-    (f : P.t -> (c, d) Nx.t * 'aux) (params : P.t) (tangents : P.t) :
-    (c, d) Nx.t * (c, d) Nx.t * 'aux =
+let jvp_aux (type c d) (module P : Ptree.S) (f : P.t -> (c, d) Nx.t * 'aux)
+    (params : P.t) (tangents : P.t) : (c, d) Nx.t * (c, d) Nx.t * 'aux =
   let aux = ref None in
   let f' ps =
     let y, a = f ps in
@@ -104,7 +168,22 @@ let jvp_aux (type c d) (module P : Differentiable)
   let y, dy = jvp (module P) f' params tangents in
   match !aux with
   | Some a -> (y, dy, a)
-  | None -> invalid_arg "Rune_next.jvp_aux: objective did not produce a value"
+  | None -> assert false (* [f'] completed, so [aux] was set. *)
+
+let jvp2 (module P : Ptree.S) (module Q : Ptree.S) (f : P.t -> Q.t)
+    (params : P.t) (tangents : P.t) : Q.t * Q.t =
+  let store = Tensor_map.create () in
+  let (_ : P.t) =
+    P.map2
+      (fun leaf tangent ->
+        if Nx.shape leaf <> Nx.shape tangent then
+          err_tangent_shape "Rune_next.jvp2" leaf tangent;
+        Tensor_map.set store leaf tangent;
+        leaf)
+      params tangents
+  in
+  let y = Effect.Deep.match_with f params (Forward.handler store) in
+  (y, Q.map (fun yleaf -> output_tangent store yleaf) y)
 
 (* Custom differentiation rules *)
 
@@ -116,8 +195,10 @@ let custom_jvp = Custom.custom_jvp
 let broadcast_output st y =
   if Vmap.batched st y then y else Vmap.ensure_batched st y
 
-let vmap (type c d) ?in_axes ?(out_axis = 0) (module P : Differentiable)
-    (f : P.t -> (c, d) Nx.t) (params : P.t) : (c, d) Nx.t =
+(* Validate in_axes, determine the batch size, move mapped axes to the front and
+   mark those leaves: shared by [vmap] and [vmap2]. *)
+let prepare_vmap ?in_axes (module P : Ptree.S) (params : P.t) : Vmap.state * P.t
+    =
   let leaves = ref 0 in
   P.iter (fun _ -> incr leaves) params;
   let specs =
@@ -189,9 +270,23 @@ let vmap (type c d) ?in_axes ?(out_axis = 0) (module P : Differentiable)
             leaf)
       params
   in
-  let y = Effect.Deep.match_with f params (Vmap.handler st) in
+  (st, params)
+
+let finalize_vmap st out_axis y =
   let y = broadcast_output st y in
   if out_axis = 0 then y else Nx.moveaxis 0 out_axis y
+
+let vmap (type c d) ?in_axes ?(out_axis = 0) (module P : Ptree.S)
+    (f : P.t -> (c, d) Nx.t) (params : P.t) : (c, d) Nx.t =
+  let st, params = prepare_vmap ?in_axes (module P) params in
+  let y = Effect.Deep.match_with f params (Vmap.handler st) in
+  finalize_vmap st out_axis y
+
+let vmap2 ?in_axes ?(out_axis = 0) (module P : Ptree.S) (module Q : Ptree.S)
+    (f : P.t -> Q.t) (params : P.t) : Q.t =
+  let st, params = prepare_vmap ?in_axes (module P) params in
+  let y = Effect.Deep.match_with f params (Vmap.handler st) in
+  Q.map (fun yleaf -> finalize_vmap st out_axis yleaf) y
 
 let vmap' (type a b c d) ?(in_axis = 0) ?(out_axis = 0)
     (f : (a, b) Nx.t -> (c, d) Nx.t) (x : (a, b) Nx.t) : (c, d) Nx.t =
@@ -217,6 +312,7 @@ let run_reverse' (type a b c d) (f : (a, b) Nx.t -> (c, d) Nx.t)
   (y, Tape.cotangent tape x)
 
 let value_and_grad' f x =
+  require_float_leaf "Rune_next.value_and_grad'" x;
   run_reverse' f x ~seed:(fun y ->
       require_scalar "Rune_next.value_and_grad'" y;
       Nx.ones_like y)
@@ -232,6 +328,133 @@ let jvp' (type a b c d) (f : (a, b) Nx.t -> (c, d) Nx.t) (x : (a, b) Nx.t)
   Tensor_map.set store x tangent;
   let y = Effect.Deep.match_with f x (Forward.handler store) in
   (y, output_tangent store y)
+
+(* Gradient checkpointing *)
+
+let remat (module P : Ptree.S) (f : P.t -> ('c, 'd) Nx.t) (params : P.t) :
+    ('c, 'd) Nx.t =
+  Custom.custom_vjp
+    (module P)
+    ~fwd:(fun p -> (f p, p))
+    ~bwd:(fun p ct -> snd (vjp (module P) f p ct))
+    params
+
+(* Jacobians *)
+
+(* [basis_like y] is a [numel y; shape y...] tensor whose k-th slice is the k-th
+   standard basis element of [y]'s space. *)
+let basis_like (type a b) (y : (a, b) Nx.t) : (a, b) Nx.t =
+  let n = Nx.numel y in
+  Nx.reshape (Array.append [| n |] (Nx.shape y)) (Nx.eye (Nx.dtype y) n)
+
+let jacrev' (type a b c d) (f : (a, b) Nx.t -> (c, d) Nx.t) (x : (a, b) Nx.t) :
+    (a, b) Nx.t =
+  let y, pullback = vjp_fun' f x in
+  let rows = vmap' pullback (basis_like y) in
+  Nx.reshape (Array.append (Nx.shape y) (Nx.shape x)) (Nx.contiguous rows)
+
+let jacfwd' (type a b c d) (f : (a, b) Nx.t -> (c, d) Nx.t) (x : (a, b) Nx.t) :
+    (c, d) Nx.t =
+  let cols = vmap' (fun v -> snd (jvp' f x v)) (basis_like x) in
+  (* [cols] is [numel x; shape y...]; the input axis moves last. *)
+  let rank = Array.length (Nx.shape cols) in
+  let cols = Nx.moveaxis 0 (rank - 1) cols in
+  let y_shape = Array.sub (Nx.shape cols) 0 (rank - 1) in
+  Nx.reshape (Array.append y_shape (Nx.shape x)) (Nx.contiguous cols)
+
+let hessian' (type a b) (f : (a, b) Nx.t -> (a, b) Nx.t) (x : (a, b) Nx.t) :
+    (a, b) Nx.t =
+  jacfwd' (grad' f) x
+
+let hvp (module P : Ptree.S) (f : P.t -> ('c, 'd) Nx.t) (params : P.t) (v : P.t)
+    : P.t =
+  snd (jvp2 (module P) (module P) (grad (module P) f) params v)
+
+let hvp' (type a b c d) (f : (a, b) Nx.t -> (c, d) Nx.t) (x : (a, b) Nx.t)
+    (v : (a, b) Nx.t) : (a, b) Nx.t =
+  snd (jvp' (grad' f) x v)
+
+(* Gradient checking *)
+
+let check_grads ?(eps = 1e-4) ?(tol = 1e-2) (module P : Ptree.S)
+    (f : P.t -> ('c, 'd) Nx.t) (params : P.t) : (unit, string) result =
+  let scalar_f64 t = Nx.item [] (Nx.reshape [||] (Nx.astype Nx.float64 t)) in
+  let g = grad (module P) f params in
+  (* Two deterministic directions: all-ones, and a params-derived direction so
+     the two are independent for non-constant params. *)
+  let directions =
+    [
+      ("ones", P.map (fun leaf -> Nx.ones_like leaf) params);
+      ( "params-derived",
+        P.map
+          (fun leaf -> Nx.add (Nx.sin leaf) (Derivs.float_scalar_like leaf 1.1))
+          params );
+    ]
+  in
+  let check (name, v) =
+    let bump s =
+      P.map2
+        (fun leaf vl -> Nx.add leaf (Nx.mul vl (Derivs.float_scalar_like vl s)))
+        params v
+    in
+    let numeric =
+      (scalar_f64 (f (bump eps)) -. scalar_f64 (f (bump (-.eps))))
+      /. (2.0 *. eps)
+    in
+    let analytic = ref 0.0 in
+    let (_ : P.t) =
+      P.map2
+        (fun gl vl ->
+          analytic := !analytic +. scalar_f64 (Nx.sum (Nx.mul gl vl));
+          gl)
+        g v
+    in
+    if
+      Float.abs (!analytic -. numeric)
+      <= tol *. Float.max 1.0 (Float.abs numeric)
+    then Ok ()
+    else
+      Error
+        (Printf.sprintf
+           "check_grads: directional derivative along %s is %g but the \
+            gradient predicts %g"
+           name numeric !analytic)
+  in
+  List.fold_left
+    (fun acc d -> match acc with Ok () -> check d | e -> e)
+    (Ok ()) directions
+
+(* Control flow. Eager implementations with staging-ready signatures: a future
+   jit stages these as structured control flow instead of unrolled traces. *)
+
+let scan (module C : Ptree.S) ~(f : C.t -> ('a, 'b) Nx.t -> C.t * ('c, 'd) Nx.t)
+    ~(init : C.t) (xs : ('a, 'b) Nx.t) : C.t * ('c, 'd) Nx.t =
+  let shape = Nx.shape xs in
+  if Array.length shape = 0 then
+    invalid_arg "Rune_next.scan: xs must have a leading scan axis";
+  let n = shape.(0) in
+  if n = 0 then invalid_arg "Rune_next.scan: xs is empty along the scan axis";
+  let carry = ref init in
+  let ys = ref [] in
+  for i = 0 to n - 1 do
+    let c, y = f !carry (Nx.slice [ Nx.I i ] xs) in
+    carry := c;
+    ys := y :: !ys
+  done;
+  (!carry, Nx.stack ~axis:0 (List.rev !ys))
+
+let cond (pred : (bool, Nx.bool_elt) Nx.t) ~(then_ : unit -> 'r)
+    ~(else_ : unit -> 'r) : 'r =
+  if Nx.item [] pred then then_ () else else_ ()
+
+let while_loop (module C : Ptree.S) ~(cond : C.t -> (bool, Nx.bool_elt) Nx.t)
+    ~(body : C.t -> C.t) (init : C.t) : C.t =
+  let rec go c = if Nx.item [] (cond c) then go (body c) else c in
+  go init
+
+(* Debugging *)
+
+let with_debug = Debug.with_debug
 
 (* Autodiff control *)
 

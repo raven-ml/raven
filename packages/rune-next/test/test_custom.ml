@@ -146,6 +146,22 @@ let test_custom_fwd_under_plain_vmap () =
   let y = Rune_next.vmap' my_sin xs in
   check_arr ~msg:"vmapped fwd" (to_arr (Nx.sin xs)) y
 
+let test_grad_of_vmap_of_custom () =
+  (* grad of vmap of a custom function: vmap batches the forward computation,
+     and the enclosing grad differentiates it — the rule applies only to a
+     differentiation inside the vmap. Regression: the un-translated custom call
+     used to escape the batching scope and double-count each row. *)
+  let xs = Nx.create f64 [| 2; 3 |] [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9 |] in
+  let g = Rune_next.grad' (fun x -> Nx.sum (Rune_next.vmap' my_sin x)) xs in
+  check_arr ~msg:"grad of vmapped custom" (to_arr (Nx.cos xs)) g
+
+let test_jvp_of_vmap_of_custom_jvp () =
+  (* Same boundary in forward mode: the tangent keeps the mapped shape. *)
+  let xs = Nx.create f64 [| 2; 3 |] [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9 |] in
+  let v = tangent_like xs in
+  let _, dy = Rune_next.jvp' (fun x -> Rune_next.vmap' my_sin_fwd x) xs v in
+  check_arr ~msg:"jvp of vmapped custom" (to_arr (Nx.mul v (Nx.cos xs))) dy
+
 let tests =
   [
     group "custom_vjp"
@@ -174,6 +190,10 @@ let tests =
           test_custom_rule_under_vmap_of_grad;
         test "plain vmap batches the forward function"
           test_custom_fwd_under_plain_vmap;
+        test "grad of vmap differentiates the batched forward computation"
+          test_grad_of_vmap_of_custom;
+        test "jvp of vmap keeps the mapped tangent shape"
+          test_jvp_of_vmap_of_custom_jvp;
       ];
   ]
 
