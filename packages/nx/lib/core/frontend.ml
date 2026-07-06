@@ -797,9 +797,9 @@ module Make (B : Backend_intf.S) = struct
     then
       err "flatten" "start_dim %d or end_dim %d, out of bounds for rank %d"
         start_dim end_dim r;
-    if s > e then
-      invalid_arg "flatten: dimensions, start_dim must be <= end_dim";
     if r = 0 then reshape [| 1 |] x
+    else if s > e then
+      invalid_arg "flatten: dimensions, start_dim must be <= end_dim"
     else if s = 0 && e = r - 1 then reshape [| array_prod sh |] x
     else
       let pre = Array.to_list (Array.sub sh 0 s) in

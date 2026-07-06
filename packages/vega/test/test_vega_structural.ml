@@ -3,8 +3,10 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* Tests for Vega's structural tier: optimizers over Nx.Ptree.S. *)
+
 open Windtrap
-open Kaun_next
+module S = Vega.Schedule
 
 (* A single float64 tensor, for analytic trajectory checks. *)
 module Vec = struct
@@ -54,7 +56,7 @@ let bowl_grads (params : Pair.t) =
   }
 
 let bowl_distance params =
-  Optim.global_norm
+  Vega.global_norm
     (module Pair)
     (Pair.map2 Nx.sub params (Lazy.force bowl_target))
 
@@ -65,25 +67,31 @@ let descend ~steps ~step params =
 (* Schedules *)
 
 let test_constant () =
-  let sched = Optim.constant 0.1 in
+  let sched = S.constant 0.1 in
   equal (float 0.) 0.1 (sched 0);
   equal (float 0.) 0.1 (sched 1000)
 
 let test_exponential_decay () =
-  let sched = Optim.exponential_decay ~init:0.5 ~rate:0.1 ~steps:100 in
+  let sched =
+    S.exponential_decay ~init_value:0.5 ~decay_rate:0.1 ~decay_steps:100
+  in
   equal (float 1e-12) 0.5 (sched 0);
   equal (float 1e-12) 0.05 (sched 100);
   equal (float 1e-12) 0.005 (sched 200)
 
 let test_cosine_decay () =
-  let sched = Optim.cosine_decay ~final:0.01 ~init:0.1 ~steps:100 () in
+  (* alpha = 0.1 makes the final value alpha * init_value = 0.01. *)
+  let sched = S.cosine_decay ~init_value:0.1 ~decay_steps:100 ~alpha:0.1 () in
   equal (float 1e-12) 0.1 (sched 0);
   equal (float 1e-12) 0.055 (sched 50);
   equal (float 1e-12) 0.01 (sched 100);
   equal ~msg:"stays at final past steps" (float 1e-12) 0.01 (sched 250)
 
 let test_warmup_cosine () =
-  let sched = Optim.warmup_cosine ~peak:1.0 ~warmup:10 ~steps:110 () in
+  let sched =
+    S.warmup_cosine_decay ~init_value:0.0 ~peak_value:1.0 ~warmup_steps:10
+      ~decay_steps:100 ()
+  in
   equal (float 1e-12) 0.0 (sched 0);
   equal (float 1e-12) 0.5 (sched 5);
   equal (float 1e-12) 1.0 (sched 10);
@@ -91,75 +99,83 @@ let test_warmup_cosine () =
   equal (float 1e-12) 0.0 (sched 110)
 
 let test_schedule_validation () =
-  raises_invalid_arg "Optim.exponential_decay: steps <= 0" (fun () ->
-      Optim.exponential_decay ~init:1.0 ~rate:0.5 ~steps:0);
-  raises_invalid_arg "Optim.cosine_decay: steps <= 0" (fun () ->
-      Optim.cosine_decay ~init:1.0 ~steps:(-1) ());
-  raises_invalid_arg "Optim.warmup_cosine: warmup < 0" (fun () ->
-      Optim.warmup_cosine ~peak:1.0 ~warmup:(-1) ~steps:10 ());
-  raises_invalid_arg "Optim.warmup_cosine: steps <= warmup" (fun () ->
-      Optim.warmup_cosine ~peak:1.0 ~warmup:10 ~steps:10 ())
+  raises_invalid_arg "Schedule.exponential_decay: decay_steps must be positive"
+    (fun () ->
+      ignore
+        (S.exponential_decay ~init_value:1.0 ~decay_rate:0.5 ~decay_steps:0 0));
+  raises_invalid_arg "Schedule.cosine_decay: decay_steps must be positive"
+    (fun () -> ignore (S.cosine_decay ~init_value:1.0 ~decay_steps:(-1) () 0));
+  raises_invalid_arg
+    "Schedule.warmup_cosine_decay: warmup_steps must be positive" (fun () ->
+      ignore
+        (S.warmup_cosine_decay ~init_value:0.0 ~peak_value:1.0 ~warmup_steps:0
+           ~decay_steps:10 () 0));
+  raises_invalid_arg
+    "Schedule.warmup_cosine_decay: decay_steps must be positive" (fun () ->
+      ignore
+        (S.warmup_cosine_decay ~init_value:0.0 ~peak_value:1.0 ~warmup_steps:10
+           ~decay_steps:0 () 0))
 
 (* Gradient transformations *)
 
 let test_global_norm () =
   (* sqrt (3^2 + 0^2 + 4^2 + 12^2) = 13 *)
   let grads = pair [| 3.0; 0.0 |] [| 4.0; 12.0 |] in
-  equal (float 1e-6) 13.0 (Optim.global_norm (module Pair) grads)
+  equal (float 1e-6) 13.0 (Vega.global_norm (module Pair) grads)
 
 let test_clip_by_global_norm_rescales () =
   let grads = pair [| 3.0; 0.0 |] [| 4.0 |] in
-  let clipped = Optim.clip_by_global_norm (module Pair) ~max_norm:1.0 grads in
+  let clipped = Vega.clip_by_global_norm (module Pair) ~max_norm:1.0 grads in
   equal ~msg:"norm is the bound" (float 1e-6) 1.0
-    (Optim.global_norm (module Pair) clipped);
+    (Vega.global_norm (module Pair) clipped);
   check_vec ~eps:1e-6 ~msg:"direction preserved" [| 0.6; 0.0 |] clipped.a;
   check_vec ~eps:1e-6 [| 0.8 |] clipped.b
 
 let test_clip_by_global_norm_small () =
   let grads = pair [| 3.0; 0.0 |] [| 4.0 |] in
-  let clipped = Optim.clip_by_global_norm (module Pair) ~max_norm:10.0 grads in
+  let clipped = Vega.clip_by_global_norm (module Pair) ~max_norm:10.0 grads in
   check_vec ~eps:0. [| 3.0; 0.0 |] clipped.a;
   check_vec ~eps:0. [| 4.0 |] clipped.b;
   let zeros = pair [| 0.0; 0.0 |] [| 0.0 |] in
-  let clipped = Optim.clip_by_global_norm (module Pair) ~max_norm:1.0 zeros in
+  let clipped = Vega.clip_by_global_norm (module Pair) ~max_norm:1.0 zeros in
   check_vec ~eps:0. ~msg:"zero gradients pass through" [| 0.0 |] clipped.b
 
 let test_clip_by_value () =
   let grads = pair [| -3.0; 0.2 |] [| 5.0 |] in
-  let clipped = Optim.clip_by_value (module Pair) ~max:1.0 grads in
+  let clipped = Vega.clip_by_value (module Pair) ~max:1.0 grads in
   check_vec ~eps:1e-7 [| -1.0; 0.2 |] clipped.a;
   check_vec ~eps:0. [| 1.0 |] clipped.b
 
 let test_clip_validation () =
   let grads = pair [| 1.0 |] [| 1.0 |] in
-  raises_invalid_arg "Optim.clip_by_global_norm: max_norm <= 0" (fun () ->
-      Optim.clip_by_global_norm (module Pair) ~max_norm:0.0 grads);
-  raises_invalid_arg "Optim.clip_by_value: max <= 0" (fun () ->
-      Optim.clip_by_value (module Pair) ~max:(-1.0) grads)
+  raises_invalid_arg "Vega.clip_by_global_norm: expected max_norm > 0.0, got 0"
+    (fun () -> Vega.clip_by_global_norm (module Pair) ~max_norm:0.0 grads);
+  raises_invalid_arg "Vega.clip_by_value: expected max > 0.0, got -1" (fun () ->
+      Vega.clip_by_value (module Pair) ~max:(-1.0) grads)
 
 (* SGD *)
 
 let test_sgd_first_step () =
   let params = vec [| 1.0; -2.0 |] in
   let grads = vec [| 0.5; -1.0 |] in
-  let st = Optim.sgd_init (module Vec) params in
+  let st = Vega.sgd_init (module Vec) params in
   (* Zero velocity: the first step is plain descent even with momentum. *)
   let params', st' =
-    Optim.sgd_step (module Vec) ~lr:0.1 ~momentum:0.9 st ~params ~grads
+    Vega.sgd_step (module Vec) ~lr:0.1 ~momentum:0.9 st ~params ~grads
   in
   check_vec [| 0.95; -1.9 |] params';
   check_vec ~msg:"velocity is the gradient" [| 0.5; -1.0 |] st'.velocity
 
 let test_sgd_velocity_threads () =
   let params = vec [| 0.0 |] in
-  let st = Optim.sgd_init (module Vec) params in
+  let st = Vega.sgd_init (module Vec) params in
   let params, st =
-    Optim.sgd_step
+    Vega.sgd_step
       (module Vec)
       ~lr:0.1 ~momentum:0.5 st ~params ~grads:(vec [| 1.0 |])
   in
   let _, st =
-    Optim.sgd_step
+    Vega.sgd_step
       (module Vec)
       ~lr:0.1 ~momentum:0.5 st ~params ~grads:(vec [| 2.0 |])
   in
@@ -170,10 +186,10 @@ let test_sgd_converges () =
   let params = Lazy.force bowl_start in
   let step (params, st) =
     let grads = bowl_grads params in
-    Optim.sgd_step (module Pair) ~lr:0.1 st ~params ~grads
+    Vega.sgd_step (module Pair) ~lr:0.1 st ~params ~grads
   in
   let params, _ =
-    descend ~steps:100 ~step (params, Optim.sgd_init (module Pair) params)
+    descend ~steps:100 ~step (params, Vega.sgd_init (module Pair) params)
   in
   is_true ~msg:"reaches the bottom of the bowl" (bowl_distance params < 1e-3)
 
@@ -181,18 +197,18 @@ let test_sgd_momentum_converges () =
   let params = Lazy.force bowl_start in
   let step (params, st) =
     let grads = bowl_grads params in
-    Optim.sgd_step (module Pair) ~lr:0.05 ~momentum:0.9 st ~params ~grads
+    Vega.sgd_step (module Pair) ~lr:0.05 ~momentum:0.9 st ~params ~grads
   in
   let params, _ =
-    descend ~steps:200 ~step (params, Optim.sgd_init (module Pair) params)
+    descend ~steps:200 ~step (params, Vega.sgd_init (module Pair) params)
   in
   is_true ~msg:"reaches the bottom of the bowl" (bowl_distance params < 1e-3)
 
 let test_sgd_pairs_leaves_structurally () =
   let params = pair [| 1.0; 2.0 |] [| 3.0 |] in
   let grads = pair [| 0.0; 0.0 |] [| 1.0 |] in
-  let st = Optim.sgd_init (module Pair) params in
-  let params', _ = Optim.sgd_step (module Pair) ~lr:0.5 st ~params ~grads in
+  let st = Vega.sgd_init (module Pair) params in
+  let params', _ = Vega.sgd_step (module Pair) ~lr:0.5 st ~params ~grads in
   check_vec ~eps:0. ~msg:"zero-gradient leaf untouched" [| 1.0; 2.0 |] params'.a;
   check_vec ~eps:0. [| 2.5 |] params'.b
 
@@ -202,9 +218,9 @@ let test_adam_first_step () =
   let b1 = 0.9 and b2 = 0.999 and eps = 1e-8 and lr = 0.1 in
   let g = [| 4.0; -0.5; 0.0 |] in
   let params = vec [| 1.0; -2.0; 3.0 |] in
-  let st = Optim.adam_init (module Vec) params in
+  let st = Vega.adam_init (module Vec) params in
   let params', st' =
-    Optim.adam_step (module Vec) ~lr st ~params ~grads:(vec g)
+    Vega.adam_step (module Vec) ~lr st ~params ~grads:(vec g)
   in
   (* First step analytically: mu = (1-b1) g, nu = (1-b2) g^2, and the
      bias-corrected direction is g / (|g| + eps). *)
@@ -235,12 +251,12 @@ let test_adam_reference_trajectory () =
         !p)
   in
   let params = ref (vec [| 3.0 |]) in
-  let st = ref (Optim.adam_init (module Vec) !params) in
+  let st = ref (Vega.adam_init (module Vec) !params) in
   List.iteri
     (fun i e ->
       let grads = Nx.mul_s (Nx.sub_s !params 1.0) 2.0 in
       let params', st' =
-        Optim.adam_step (module Vec) ~lr !st ~params:!params ~grads
+        Vega.adam_step (module Vec) ~lr !st ~params:!params ~grads
       in
       params := params';
       st := st';
@@ -251,31 +267,31 @@ let test_adam_converges () =
   let params = Lazy.force bowl_start in
   let step (params, st) =
     let grads = bowl_grads params in
-    Optim.adam_step (module Pair) ~lr:0.02 st ~params ~grads
+    Vega.adam_step (module Pair) ~lr:0.02 st ~params ~grads
   in
   let params, _ =
-    descend ~steps:800 ~step (params, Optim.adam_init (module Pair) params)
+    descend ~steps:800 ~step (params, Vega.adam_init (module Pair) params)
   in
   is_true ~msg:"reaches the bottom of the bowl" (bowl_distance params < 0.05)
 
 let test_adam_with_schedule_converges () =
-  let sched = Optim.cosine_decay ~init:0.1 ~steps:300 () in
+  let sched = S.cosine_decay ~init_value:0.1 ~decay_steps:300 () in
   let params = Lazy.force bowl_start in
-  let st = Optim.adam_init (module Pair) params in
+  let st = Vega.adam_init (module Pair) params in
   let state = ref (params, st) in
   for k = 0 to 299 do
     let params, st = !state in
     let grads = bowl_grads params in
-    state := Optim.adam_step (module Pair) ~lr:(sched k) st ~params ~grads
+    state := Vega.adam_step (module Pair) ~lr:(sched k) st ~params ~grads
   done;
   is_true ~msg:"decayed steps settle at the bottom"
     (bowl_distance (fst !state) < 0.02)
 
 let test_adam_zero_grads () =
   let params = vec [| 1.0; -2.0 |] in
-  let st = Optim.adam_init (module Vec) params in
+  let st = Vega.adam_init (module Vec) params in
   let params', st' =
-    Optim.adam_step (module Vec) ~lr:0.1 st ~params ~grads:(vec [| 0.0; 0.0 |])
+    Vega.adam_step (module Vec) ~lr:0.1 st ~params ~grads:(vec [| 0.0; 0.0 |])
   in
   check_vec ~eps:0. ~msg:"parameters unchanged" [| 1.0; -2.0 |] params';
   equal ~msg:"step still advances" int 1 st'.step
@@ -283,9 +299,9 @@ let test_adam_zero_grads () =
 let test_adam_step_is_pure () =
   let params = vec [| 3.0; -1.0 |] in
   let grads = vec [| 0.7; 0.3 |] in
-  let st = Optim.adam_init (module Vec) params in
-  let once, _ = Optim.adam_step (module Vec) ~lr:0.1 st ~params ~grads in
-  let again, _ = Optim.adam_step (module Vec) ~lr:0.1 st ~params ~grads in
+  let st = Vega.adam_init (module Vec) params in
+  let once, _ = Vega.adam_step (module Vec) ~lr:0.1 st ~params ~grads in
+  let again, _ = Vega.adam_step (module Vec) ~lr:0.1 st ~params ~grads in
   check_vec ~eps:0. ~msg:"same state, same step" (Nx.to_array once) again
 
 (* AdamW *)
@@ -294,7 +310,7 @@ let test_adamw_zero_decay_is_adam () =
   let grads_of params = Nx.mul_s (Nx.sub_s params 1.0) 2.0 in
   let run step =
     let params = ref (vec [| 3.0; -2.0 |]) in
-    let st = ref (Optim.adam_init (module Vec) !params) in
+    let st = ref (Vega.adam_init (module Vec) !params) in
     for _ = 1 to 5 do
       let params', st' = step !st ~params:!params ~grads:(grads_of !params) in
       params := params';
@@ -304,13 +320,11 @@ let test_adamw_zero_decay_is_adam () =
   in
   let adam =
     run (fun st ~params ~grads ->
-        Optim.adam_step (module Vec) ~lr:0.1 st ~params ~grads)
+        Vega.adam_step (module Vec) ~lr:0.1 st ~params ~grads)
   in
   let adamw =
     run (fun st ~params ~grads ->
-        Optim.adamw_step
-          (module Vec)
-          ~lr:0.1 ~weight_decay:0.0 st ~params ~grads)
+        Vega.adamw_step (module Vec) ~lr:0.1 ~weight_decay:0.0 st ~params ~grads)
   in
   check_vec ~eps:0. (Nx.to_array adam) adamw
 
@@ -320,10 +334,10 @@ let test_adamw_decays_weights () =
   let lr = 0.1 and wd = 0.5 in
   let p0 = [| 2.0; -4.0 |] in
   let params = ref (vec p0) in
-  let st = ref (Optim.adamw_init (module Vec) !params) in
+  let st = ref (Vega.adamw_init (module Vec) !params) in
   for _ = 1 to 3 do
     let params', st' =
-      Optim.adamw_step
+      Vega.adamw_step
         (module Vec)
         ~lr ~weight_decay:wd !st ~params:!params
         ~grads:(vec [| 0.0; 0.0 |])
@@ -338,10 +352,10 @@ let test_adamw_converges () =
   let params = Lazy.force bowl_start in
   let step (params, st) =
     let grads = bowl_grads params in
-    Optim.adamw_step (module Pair) ~lr:0.02 ~weight_decay:1e-3 st ~params ~grads
+    Vega.adamw_step (module Pair) ~lr:0.02 ~weight_decay:1e-3 st ~params ~grads
   in
   let params, _ =
-    descend ~steps:800 ~step (params, Optim.adamw_init (module Pair) params)
+    descend ~steps:800 ~step (params, Vega.adamw_init (module Pair) params)
   in
   is_true ~msg:"reaches the bottom of the bowl" (bowl_distance params < 0.05)
 
@@ -395,4 +409,4 @@ let tests =
       ];
   ]
 
-let () = run "kaun-next optim" tests
+let () = run "vega structural" tests

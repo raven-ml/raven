@@ -53,9 +53,7 @@ let () =
     (Vega.chain [ Vega.clip_by_norm 1.0; Vega.adam lr ])
     50;
 
-  run "clip_by_value 0.5 + adam"
-    (Vega.chain [ Vega.clip_by_value 0.5; Vega.adam lr ])
-    50;
+  run "clip 0.5 + adam" (Vega.chain [ Vega.clip 0.5; Vega.adam lr ]) 50;
 
   Printf.printf "\n";
 

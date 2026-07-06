@@ -3,12 +3,23 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Learning-rate schedules. *)
+(** Learning-rate schedules.
+
+    A schedule maps a step counter to a learning rate. It is a plain function:
+    compose or define schedules directly. This is the single schedule vocabulary
+    for both of Vega's tiers — structural training loops evaluate a schedule at
+    the loop's step counter and pass the result as a step function's [~lr];
+    per-tensor transforms such as [Vega.scale_by_learning_rate] consume the
+    schedule value itself. *)
 
 type t = int -> float
 (** The type for learning-rate schedules.
 
-    [s step] is the learning rate for 1-based [step]. *)
+    [s step] is the learning rate at step counter [step]. Schedules are defined
+    for [step >= 0] and constructors are at their initial value at [step = 0].
+    Per-tensor chains evaluate their schedules at the 1-based update count (the
+    first update evaluates at [1]); structural loops conventionally evaluate at
+    the number of completed steps, starting at [0]. *)
 
 (** {1:basic Basic} *)
 

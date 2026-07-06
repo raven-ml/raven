@@ -392,6 +392,13 @@ let test_repeat_invalid () =
 
 (* ───── Other Shape Manipulation Tests ───── *)
 
+let test_flatten_scalar () =
+  (* Rank-0 tensors flatten to shape [1] with default dims. *)
+  let t = Nx.scalar Nx.float32 7.0 in
+  let flat = Nx.flatten t in
+  equal ~msg:"shape" (array int) [| 1 |] (Nx.shape flat);
+  equal ~msg:"value" (float 1e-6) 7.0 (Nx.item [ 0 ] flat)
+
 let test_flatten_view () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let flat = Nx.flatten t in
@@ -584,6 +591,7 @@ let tile_repeat_tests =
 
 let other_manipulation_tests =
   [
+    test "flatten scalar" test_flatten_scalar;
     test "flatten view" test_flatten_view;
     test "ravel contiguous view" test_ravel_contiguous_view;
     test "ravel non-contiguous copy" test_ravel_non_contiguous_copy;

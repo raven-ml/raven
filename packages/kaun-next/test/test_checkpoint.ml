@@ -5,7 +5,6 @@
 
 open Windtrap
 module Checkpoint = Kaun_next.Checkpoint
-module Optim = Kaun_next.Optim
 
 let f32 = Nx.float32
 let f64 = Nx.float64
@@ -120,7 +119,7 @@ let loss (p : lin) =
 
 let train_step (p, st) =
   let grads = Rune_next.grad (module Lin) loss p in
-  Optim.adam_step (module Lin) ~lr:0.05 st ~params:p ~grads
+  Vega.adam_step (module Lin) ~lr:0.05 st ~params:p ~grads
 
 let rec train_steps n s =
   if n = 0 then s else train_steps (n - 1) (train_step s)
@@ -130,30 +129,30 @@ let test_resume_training () =
   let p0 =
     { lw = Nx.create f32 [| 2; 1 |] [| 0.2; -0.1 |]; lb = vec32 [| 0.0 |] }
   in
-  let p3, st3 = train_steps 3 (p0, Optim.adam_init (module Lin) p0) in
+  let p3, st3 = train_steps 3 (p0, Vega.adam_init (module Lin) p0) in
   Checkpoint.save path
     (Checkpoint.concat
        [
          Checkpoint.of_params (module Lin) ~prefix:"model" p3;
-         Checkpoint.of_params (module Lin) ~prefix:"optim.mu" st3.Optim.mu;
-         Checkpoint.of_params (module Lin) ~prefix:"optim.nu" st3.Optim.nu;
-         Checkpoint.of_int "optim.step" st3.Optim.step;
+         Checkpoint.of_params (module Lin) ~prefix:"optim.mu" st3.Vega.mu;
+         Checkpoint.of_params (module Lin) ~prefix:"optim.nu" st3.Vega.nu;
+         Checkpoint.of_int "optim.step" st3.Vega.step;
        ]);
   let expected, _ = train_steps 2 (p3, st3) in
   (* Restore into freshly initialized values and continue training. *)
   let ckpt = Checkpoint.load path in
-  let like = Optim.adam_init (module Lin) p0 in
+  let like = Vega.adam_init (module Lin) p0 in
   let p3' = Checkpoint.to_params (module Lin) ~prefix:"model" ~like:p0 ckpt in
   let st3' =
     {
-      Optim.mu =
+      Vega.mu =
         Checkpoint.to_params
           (module Lin)
-          ~prefix:"optim.mu" ~like:like.Optim.mu ckpt;
+          ~prefix:"optim.mu" ~like:like.Vega.mu ckpt;
       nu =
         Checkpoint.to_params
           (module Lin)
-          ~prefix:"optim.nu" ~like:like.Optim.nu ckpt;
+          ~prefix:"optim.nu" ~like:like.Vega.nu ckpt;
       step = Checkpoint.to_int "optim.step" ckpt;
     }
   in
@@ -162,7 +161,7 @@ let test_resume_training () =
   check_arr ~msg:"b" (to_arr expected.lb) resumed.lb;
   (* Control: dropping the optimizer state changes the trajectory, so the
      assertions above genuinely depend on restoring it. *)
-  let fresh, _ = train_steps 2 (p3', Optim.adam_init (module Lin) p3') in
+  let fresh, _ = train_steps 2 (p3', Vega.adam_init (module Lin) p3') in
   is_false ~msg:"fresh optimizer state diverges"
     (to_arr fresh.lw = to_arr expected.lw)
 

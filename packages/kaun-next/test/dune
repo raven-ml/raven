@@ -4,9 +4,12 @@
   test_init
   test_fn
   test_loss
-  test_optim
+  test_metric
   test_checkpoint
   test_layers
-  test_stateful)
+  test_conv
+  test_stateful
+  test_attention
+  test_data)
  (package kaun-next)
- (libraries kaun-next rune-next nx nx.core windtrap))
+ (libraries kaun-next rune-next vega nx nx.core windtrap))

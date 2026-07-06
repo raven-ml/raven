@@ -4,8 +4,7 @@
   ---------------------------------------------------------------------------*)
 
 (* The north-star test: a model is a plain record, the training step is
-   value_and_grad + Optim, and the loop is a fold — no trainer, no layer
-   type. *)
+   value_and_grad + Vega, and the loop is a fold — no trainer, no layer type. *)
 
 open Windtrap
 open Kaun_next
@@ -44,11 +43,11 @@ let test_xor_trains () =
   let step (params, ostate) =
     let l, grads = Rune_next.value_and_grad (module Mlp) loss params in
     let params, ostate =
-      Optim.adam_step (module Mlp) ~lr:0.05 ostate ~params ~grads
+      Vega.adam_step (module Mlp) ~lr:0.05 ostate ~params ~grads
     in
     ((params, ostate), Nx.item [] l)
   in
-  let state = ref (params, Optim.adam_init (module Mlp) params) in
+  let state = ref (params, Vega.adam_init (module Mlp) params) in
   let last = ref Float.infinity in
   for _ = 1 to 500 do
     let s, l = step !state in
@@ -76,12 +75,12 @@ let test_sgd_decreases_loss () =
   in
   let loss p = Loss.mse (Mlp.apply p x) y in
   let l0 = Nx.item [] (loss params) in
-  let state = ref (params, Optim.sgd_init (module Mlp) params) in
+  let state = ref (params, Vega.sgd_init (module Mlp) params) in
   for _ = 1 to 100 do
     let params, ostate = !state in
     let _, grads = Rune_next.value_and_grad (module Mlp) loss params in
     state :=
-      Optim.sgd_step (module Mlp) ~lr:0.1 ~momentum:0.9 ostate ~params ~grads
+      Vega.sgd_step (module Mlp) ~lr:0.1 ~momentum:0.9 ostate ~params ~grads
   done;
   let l1 = Nx.item [] (loss (fst !state)) in
   is_true ~msg:"sgd decreases the loss" (l1 < l0 *. 0.5)

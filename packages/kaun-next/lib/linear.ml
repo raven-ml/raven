@@ -3,26 +3,44 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type t = { w : Nx.float32_t; b : Nx.float32_t }
+type 'b params = { w : (float, 'b) Nx.t; b : (float, 'b) Nx.t option }
+type t = Nx.float32_elt params
 
-let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { w; b } =
-  { w = f w; b = f b }
+let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { w; b } =
+  { w = f w; b = (match b with None -> None | Some b -> Some (f b)) }
 
-let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
-  { w = f p.w q.w; b = f p.b q.b }
-
-let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { w; b } =
-  f w;
-  f b
-
-(* Glorot-uniform weights, zero bias. *)
-let init ~inputs ~outputs =
-  let limit = Stdlib.sqrt (6.0 /. float_of_int (inputs + outputs)) in
-  let w =
-    Nx.mul_s
-      (Nx.sub_s (Nx.mul_s (Nx.rand Nx.float32 [| inputs; outputs |]) 2.0) 1.0)
-      limit
+let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) p q =
+  let b =
+    match (p.b, q.b) with
+    | Some pb, Some qb -> Some (f pb qb)
+    | None, None -> None
+    | Some _, None | None, Some _ -> invalid_arg "Linear.map2: bias mismatch"
   in
-  { w; b = Nx.zeros Nx.float32 [| outputs |] }
+  { w = f p.w q.w; b }
 
-let apply p x = Nx.add (Nx.matmul x p.w) p.b
+let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { w; b } =
+  f w;
+  match b with None -> () | Some b -> f b
+
+let names p = match p.b with None -> [ "w" ] | Some _ -> [ "w"; "b" ]
+
+let make ?(w_init = Init.glorot_uniform) ?(bias_init = Init.zeros)
+    ?(bias = true) ~inputs ~outputs dtype =
+  if inputs <= 0 || outputs <= 0 then
+    Printf.ksprintf invalid_arg
+      "Linear.make: inputs and outputs must be positive, got inputs=%d \
+       outputs=%d"
+      inputs outputs;
+  let w = w_init ~fan_in:inputs ~fan_out:outputs dtype [| inputs; outputs |] in
+  let b =
+    if bias then
+      Some (bias_init ~fan_in:inputs ~fan_out:outputs dtype [| outputs |])
+    else None
+  in
+  { w; b }
+
+let init ~inputs ~outputs = make ~inputs ~outputs Nx.float32
+
+let apply p x =
+  let y = Nx.matmul x p.w in
+  match p.b with None -> y | Some b -> Nx.add y b

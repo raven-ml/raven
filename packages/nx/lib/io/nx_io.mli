@@ -100,7 +100,8 @@ val save_safetensors :
 
     [overwrite] defaults to [true].
 
-    Raises [Failure] on I/O errors. *)
+    Raises [Failure] on I/O errors, or if a tensor's dtype has no SafeTensors
+    equivalent (complex and int4 dtypes). *)
 
 (** {1:text Text format} *)
 

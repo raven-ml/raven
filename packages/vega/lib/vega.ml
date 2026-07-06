@@ -502,8 +502,8 @@ let add_decayed_weights ?(rate = Schedule.constant 0.01) () =
 
 (* Clipping transforms *)
 
-let clip_by_value delta =
-  validate_positive "Vega.clip_by_value" "delta" delta;
+let clip delta =
+  validate_positive "Vega.clip" "delta" delta;
   [
     {
       n_tensors = 0;
@@ -709,3 +709,124 @@ let state_of_tensors tx ~count tensors =
       (Printf.sprintf "Vega.state_of_tensors: expected %d tensors, got %d"
          expected got);
   { prims; count; tensors }
+
+(* Structural optimizers over parameter structures (Nx.Ptree.S). Optimizer state
+   is itself parameter-shaped: updates are pure map2 compositions, fully typed,
+   with no positional pairing. *)
+
+(* Gradient transformations *)
+
+let global_norm (module P : Nx.Ptree.S) (grads : P.t) : float =
+  let acc = ref 0.0 in
+  P.iter
+    (fun g ->
+      acc := !acc +. Nx.item [] (Nx.sum (Nx.square (Nx.cast Nx.float64 g))))
+    grads;
+  Stdlib.sqrt !acc
+
+let clip_by_global_norm (module P : Nx.Ptree.S) ~max_norm (grads : P.t) : P.t =
+  validate_positive "Vega.clip_by_global_norm" "max_norm" max_norm;
+  let norm = global_norm (module P) grads in
+  if norm <= max_norm then grads
+  else
+    let c = max_norm /. norm in
+    P.map (fun g -> Nx.mul g (scalar (Nx.dtype g) c)) grads
+
+let clip_by_value (module P : Nx.Ptree.S) ~max (grads : P.t) : P.t =
+  validate_positive "Vega.clip_by_value" "max" max;
+  P.map
+    (fun g ->
+      let of_float = Dtype.of_float (Nx.dtype g) in
+      Nx.clip ~min:(of_float (-.max)) ~max:(of_float max) g)
+    grads
+
+(* SGD *)
+
+type 'p sgd_state = { velocity : 'p }
+
+let sgd_init (module P : Nx.Ptree.S) (params : P.t) : P.t sgd_state =
+  { velocity = P.map (fun leaf -> Nx.zeros_like leaf) params }
+
+let sgd_step (module P : Nx.Ptree.S) ~lr ?(momentum = 0.0) (st : P.t sgd_state)
+    ~(params : P.t) ~(grads : P.t) : P.t * P.t sgd_state =
+  let velocity =
+    P.map2
+      (fun v g -> Nx.add (Nx.mul v (scalar (Nx.dtype v) momentum)) g)
+      st.velocity grads
+  in
+  let params =
+    P.map2
+      (fun p v -> Nx.sub p (Nx.mul v (scalar (Nx.dtype v) lr)))
+      params velocity
+  in
+  (params, { velocity })
+
+(* Adam and AdamW *)
+
+type 'p adam_state = { mu : 'p; nu : 'p; step : int }
+
+let adam_init (module P : Nx.Ptree.S) (params : P.t) : P.t adam_state =
+  let zeros () = P.map (fun leaf -> Nx.zeros_like leaf) params in
+  { mu = zeros (); nu = zeros (); step = 0 }
+
+(* Advances the moments and computes the bias-corrected update direction shared
+   by [adam_step] and [adamw_step]. *)
+let adam_direction (module P : Nx.Ptree.S) ~b1 ~b2 ~eps (st : P.t adam_state)
+    ~(grads : P.t) : P.t * P.t adam_state =
+  let step = st.step + 1 in
+  let mu =
+    P.map2
+      (fun m g ->
+        let dt = Nx.dtype m in
+        Nx.add (Nx.mul m (scalar dt b1)) (Nx.mul g (scalar dt (1.0 -. b1))))
+      st.mu grads
+  in
+  let nu =
+    P.map2
+      (fun n g ->
+        let dt = Nx.dtype n in
+        Nx.add
+          (Nx.mul n (scalar dt b2))
+          (Nx.mul (Nx.mul g g) (scalar dt (1.0 -. b2))))
+      st.nu grads
+  in
+  let c1 = 1.0 -. (b1 ** float_of_int step) in
+  let c2 = 1.0 -. (b2 ** float_of_int step) in
+  let direction =
+    P.map2
+      (fun m n ->
+        let dt = Nx.dtype m in
+        let mu_hat = Nx.div m (scalar dt c1) in
+        let nu_hat = Nx.div n (scalar dt c2) in
+        Nx.div mu_hat (Nx.add (Nx.sqrt nu_hat) (scalar dt eps)))
+      mu nu
+  in
+  (direction, { mu; nu; step })
+
+let adam_step (module P : Nx.Ptree.S) ~lr ?(b1 = 0.9) ?(b2 = 0.999)
+    ?(eps = 1e-8) (st : P.t adam_state) ~(params : P.t) ~(grads : P.t) :
+    P.t * P.t adam_state =
+  let direction, st = adam_direction (module P) ~b1 ~b2 ~eps st ~grads in
+  let params =
+    P.map2
+      (fun p d -> Nx.sub p (Nx.mul d (scalar (Nx.dtype p) lr)))
+      params direction
+  in
+  (params, st)
+
+let adamw_init (module P : Nx.Ptree.S) (params : P.t) : P.t adam_state =
+  adam_init (module P) params
+
+let adamw_step (module P : Nx.Ptree.S) ~lr ?(b1 = 0.9) ?(b2 = 0.999)
+    ?(eps = 1e-8) ?(weight_decay = 0.01) (st : P.t adam_state) ~(params : P.t)
+    ~(grads : P.t) : P.t * P.t adam_state =
+  let direction, st = adam_direction (module P) ~b1 ~b2 ~eps st ~grads in
+  let params =
+    P.map2
+      (fun p d ->
+        let dt = Nx.dtype p in
+        let decayed = Nx.add d (Nx.mul p (scalar dt weight_decay)) in
+        Nx.sub p (Nx.mul decayed (scalar dt lr)))
+      params direction
+  in
+  (params, st)

@@ -145,6 +145,8 @@
    (= :version))
   (rune-next
    (= :version))
+  (vega
+   (= :version))
   (windtrap :with-test))
  (tags
   (machine-learning deep-learning neural-networks)))
@@ -186,12 +188,12 @@
 (package
  (name vega)
  (dir packages/vega)
- (synopsis "Per-parameter gradient-based optimizers for OCaml")
+ (synopsis "Gradient-based optimizers for OCaml")
  (description
-  "Typed, per-parameter optimizer primitives: Adam, AdamW, SGD, RMSprop, Adagrad, and learning-rate schedules. Built on Nx with no autodiff dependency.")
+  "Gradient-descent optimizers: structural optimizers over parameter structures (Adam, AdamW, SGD), Optax-style per-tensor transformation chains (RMSprop, Adagrad, Lion, ...), and learning-rate schedules. Built on Nx with no autodiff dependency.")
  (depends
   (ocaml
-   (>= 5.2.0))
+   (>= 5.5.0))
   dune
   (nx
    (= :version))
