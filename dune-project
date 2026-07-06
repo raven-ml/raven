@@ -40,7 +40,7 @@
   "Nx provides n-dimensional arrays with NumPy-like semantics and OCaml's type safety. 19 data types, broadcasting, slicing, linear algebra, FFT, and I/O. The numerical foundation for the Raven ecosystem.")
  (depends
   (ocaml
-   (>= 5.2.0))
+   (>= 5.5.0))
   dune
   (dune-configurator :build)
   (conf-pkg-config :build)

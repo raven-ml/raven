@@ -497,6 +497,11 @@ val one_hot : num_classes:int -> ('a, 'b) t -> (int, uint8_elt) t
 
     {v   Rng.run ~seed:42 (fun () -> rand float32 [| 3 |]) v} *)
 
+module Ptree = Ptree
+(** Parameter trees: structures with tensor leaves. {!Ptree.S} is the traversal
+    interface shared across the Raven ecosystem; {!Ptree.t} is the stock dynamic
+    instance. *)
+
 module Rng : sig
   (** Splittable RNG keys and implicit key management.
 

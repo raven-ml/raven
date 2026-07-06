@@ -8,6 +8,8 @@ include F
 
 let context = Lazy.from_fun Nx_effect.create_context
 
+module Ptree = Ptree
+
 module Rng = struct
   include Nx_core.Rng
 end
