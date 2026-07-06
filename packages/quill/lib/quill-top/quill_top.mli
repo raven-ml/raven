@@ -31,14 +31,6 @@ val install_printer : string -> unit
     toplevel environment (i.e. its module directory was previously added via
     {!add_packages}). Silently does nothing on failure. *)
 
-val install_printer_fn :
-  ty:string -> (Format.formatter -> Obj.t -> unit) -> unit
-(** [install_printer_fn ~ty f] registers [f] as a pretty-printer for values of
-    type [ty] (e.g. ["Hugin.figure"]). The type is looked up in the toplevel
-    environment. Unlike {!install_printer}, the function does not need to be
-    resolvable by name -- it is passed directly. Silently does nothing if the
-    type cannot be resolved. *)
-
 val create :
   ?setup:(unit -> unit) ->
   on_event:(Quill.Kernel.event -> unit) ->

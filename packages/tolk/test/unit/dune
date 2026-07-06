@@ -36,6 +36,6 @@
 (tests
  (names test_runtime_metal)
  (package tolk)
- (enabled_if
+ (build_if
   (= %{system} macosx))
  (libraries tolk tolk_ir tolk.metal windtrap))

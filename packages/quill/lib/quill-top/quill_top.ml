@@ -143,18 +143,6 @@ let install_printer name =
     ignore (Toploop.execute_phrase false Format.err_formatter phrase)
   with _ -> ()
 
-let install_printer_fn ~ty f =
-  try
-    let parts = String.split_on_char '.' ty in
-    match Longident.unflatten parts with
-    | None -> ()
-    | Some lid ->
-        let path, _decl = Env.find_type_by_name lid !Toploop.toplevel_env in
-        let ty_expr = Ctype.newconstr path [] in
-        let printer_path = Path.Pident (Ident.create_local ty) in
-        Toploop.install_printer printer_path ty_expr f
-  with _ -> ()
-
 (* ───── Output capture ───── *)
 
 (** Pre-allocated read buffer for the poll thread. Avoids major heap allocations
@@ -389,7 +377,8 @@ let collect_env_items env qualifier =
               | Type_abstract _ -> "abstract"
               | Type_record _ -> "record"
               | Type_variant _ -> "variant"
-              | Type_open -> "open")
+              | Type_open -> "open"
+              | _ -> "abstract")
         in
         add name Type detail acc)
       qualifier env items
