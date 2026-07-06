@@ -207,6 +207,8 @@ type _ Effect.t +=
       indices : (int32, Dtype.int32_elt) t;
       updates : ('a, 'b) t;
       axis : int;
+      mode : [ `Set | `Add ];
+      unique_indices : bool;
     }
       -> ('a, 'b) t Effect.t
   | E_to_device : {
@@ -533,7 +535,9 @@ let gather data indices ~axis =
 
 let scatter ?(mode = `Set) ?(unique_indices = false) data_template ~indices
     ~updates ~axis =
-  try Effect.perform (E_scatter { data_template; indices; updates; axis })
+  try
+    Effect.perform
+      (E_scatter { data_template; indices; updates; axis; mode; unique_indices })
   with Effect.Unhandled _ ->
     T
       (Nx_backend.scatter ~mode ~unique_indices (unwrap data_template)

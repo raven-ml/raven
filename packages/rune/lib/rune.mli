@@ -399,9 +399,9 @@ val trace_graph :
 (** [trace_graph ~device f x] traces [f] applied to [x], capturing the
     computation graph without executing it.
 
-    Returns the tensor graph, kernel graph, and rendered source for each
-    kernel. Useful for debugging what the JIT produces, inspecting
-    gradient graphs, or comparing against reference implementations. *)
+    Returns the tensor graph, kernel graph, and rendered source for each kernel.
+    Useful for debugging what the JIT produces, inspecting gradient graphs, or
+    comparing against reference implementations. *)
 
 (** {1:debug Debugging} *)
 

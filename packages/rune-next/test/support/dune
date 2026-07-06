@@ -1,0 +1,3 @@
+(library
+ (name rune_next_test_support)
+ (libraries rune-next nx nx.core windtrap))

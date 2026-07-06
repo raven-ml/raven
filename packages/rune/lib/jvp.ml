@@ -637,10 +637,14 @@ let make_handler dual_map =
               register res { primal = res; tangent = tan };
               continue k res)
       (* Scatter *)
-      | E_scatter { data_template; indices; updates; axis } ->
+      | E_scatter
+          { data_template; indices; updates; axis; mode; unique_indices } ->
           Some
             (fun k ->
-              let res = scatter data_template ~indices ~updates ~axis in
+              let res =
+                scatter ~mode ~unique_indices data_template ~indices ~updates
+                  ~axis
+              in
               let d_template = get_dual data_template in
               let d_updates = get_dual updates in
               let mask =

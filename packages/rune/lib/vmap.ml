@@ -1461,7 +1461,8 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                       let result = gather data indices' ~axis:adjusted_axis in
                       set_bdim result (Some p);
                       continue k result)
-          | E_scatter { data_template; indices; updates; axis } ->
+          | E_scatter
+              { data_template; indices; updates; axis; mode; unique_indices } ->
               Some
                 (fun k ->
                   let bd = get_bdim data_template in
@@ -1470,7 +1471,8 @@ let make_vmap_handler ~env ~axis_size ~batched_tensors out_axis axis_name =
                   match bd with
                   | None ->
                       let result =
-                        scatter data_template ~indices ~updates ~axis
+                        scatter ~mode ~unique_indices data_template ~indices
+                          ~updates ~axis
                       in
                       set_bdim result
                         (match (bi, bu) with None, None -> None | _ -> Some 0);

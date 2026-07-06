@@ -350,10 +350,14 @@ let debug_handler () =
                   [ Tensor_ref data; Tensor_ref indices ]
                   (Tensor_ref result);
                 continue k result)
-        | E_scatter { data_template; indices; updates; axis } ->
+        | E_scatter
+            { data_template; indices; updates; axis; mode; unique_indices } ->
             Some
               (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = scatter data_template ~indices ~updates ~axis in
+                let result =
+                  scatter ~mode ~unique_indices data_template ~indices ~updates
+                    ~axis
+                in
                 log_operation !context_stack "scatter"
                   [
                     Tensor_ref data_template;

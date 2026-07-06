@@ -40,6 +40,10 @@ thread.
 
 ### Nx
 
+- Fix the scatter effect dropping its mode: `scatter ~mode:\`Add` was silently
+  executed as a `Set`-mode scatter whenever an effect handler (autodiff, vmap)
+  intercepted the operation. `E_scatter` now carries `mode` and
+  `unique_indices`.
 - Remove `~out` parameter from all backend compute operations. Operations now
   allocate and return their result instead of writing to a caller-provided
   buffer. This simplifies the effect system, fixes vmap, and prepares the

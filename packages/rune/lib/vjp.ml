@@ -934,10 +934,14 @@ let make_handler tape seed_output =
               twg_data.grad <- T.add twg_data.grad scattered_grads;
               fwd)
       (* Scatter *)
-      | E_scatter { data_template; indices; updates; axis } ->
+      | E_scatter
+          { data_template; indices; updates; axis; mode; unique_indices } ->
           Some
             (fun k ->
-              let res = scatter data_template ~indices ~updates ~axis in
+              let res =
+                scatter ~mode ~unique_indices data_template ~indices ~updates
+                  ~axis
+              in
               let fwd = continue k res in
               let twg_dt = get_or_init data_template in
               let twg_upd = get_or_init updates in
