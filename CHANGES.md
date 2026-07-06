@@ -40,6 +40,11 @@ thread.
 
 ### Nx
 
+- Route `to_host` through a new `E_to_host` effect so effect handlers observe
+  value reads. Transformations can now materialize or reject concretization
+  deliberately (a JIT tracer needs this; reading a batched tensor inside a
+  vectorizing map is now detectable instead of silently exposing the physical
+  buffer).
 - Fix the scatter effect dropping its mode: `scatter ~mode:\`Add` was silently
   executed as a `Set`-mode scatter whenever an effect handler (autodiff, vmap)
   intercepted the operation. `E_scatter` now carries `mode` and

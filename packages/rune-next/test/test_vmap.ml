@@ -202,6 +202,22 @@ let test_scalar_leaf_rejected () =
   raises_invalid_arg (fun () ->
       ignore (Rune_next.vmap' (fun x -> x) (Nx.scalar f64 1.0)))
 
+let test_reading_batched_value_raises () =
+  raises_invalid_arg (fun () ->
+      ignore
+        (Rune_next.vmap'
+           (fun r ->
+             (* Concretizing a batched tensor would expose the physical batched
+                buffer. *)
+             let (_ : float) = Nx.item [ 0 ] r in
+             r)
+           (xs ())))
+
+let test_reading_constant_value_is_fine () =
+  let c = vec64 [| 2.0 |] in
+  let y = Rune_next.vmap' (fun r -> Nx.mul_s r (Nx.item [ 0 ] c)) (xs ()) in
+  check_arr ~msg:"constant read" (to_arr (Nx.mul_s (xs ()) 2.0)) y
+
 let test_no_rule_raises () =
   raises_invalid_arg (fun () ->
       ignore
@@ -281,6 +297,9 @@ let tests =
         test "rejects mismatched batch sizes" test_batch_size_mismatch;
         test "rejects scalar leaves" test_scalar_leaf_rejected;
         test "raises without a batching rule" test_no_rule_raises;
+        test "reading a batched value raises" test_reading_batched_value_raises;
+        test "reading a constant value is fine"
+          test_reading_constant_value_is_fine;
       ];
     group "nesting" [ test "vmap of vmap" test_nested_vmap ];
     group "composition"

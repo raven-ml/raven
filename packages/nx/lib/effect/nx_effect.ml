@@ -20,6 +20,12 @@ type context = Nx_backend.context
    constructor). *)
 type ('a, 'b) t = T : ('a, 'b) Nx_backend.t -> ('a, 'b) t
 
+(* [Nx_buffer.t] is not injective in its parameters either (it abbreviates a
+   bigarray), so a host buffer cannot be an effect's result directly; the same
+   boxing trick restores deducibility for [E_to_host]. *)
+type ('a, 'b) host_buffer =
+  | Host_buffer : ('a, 'b) Nx_buffer.t -> ('a, 'b) host_buffer
+
 (* Effects *)
 
 type _ Effect.t +=
@@ -287,6 +293,7 @@ type _ Effect.t +=
       unit_diag : bool;
     }
       -> ('a, 'b) t Effect.t
+  | E_to_host : ('a, 'b) t -> ('a, 'b) host_buffer Effect.t
 
 (* Unwrap *)
 
@@ -303,7 +310,14 @@ let view (type a b) (x : (a, b) t) : View.t =
   with Effect.Unhandled _ -> Nx_backend.view (unwrap x)
 
 let dtype (type a b) (T t : (a, b) t) = Nx_backend.dtype t
-let to_host (type a b) (T t : (a, b) t) = Nx_backend.to_host t
+
+let to_host (type a b) (x : (a, b) t) : (a, b) Nx_buffer.t =
+  try
+    let (Host_buffer buf) = Effect.perform (E_to_host x) in
+    buf
+  with Effect.Unhandled _ ->
+    let (T t) = x in
+    Nx_backend.to_host t
 
 (* Fallback dispatch helpers.
 

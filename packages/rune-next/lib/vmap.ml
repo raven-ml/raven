@@ -104,6 +104,14 @@ let handler (st : state) =
               continue k
                 (Nx_core.View.create (Array.sub s 1 (Array.length s - 1))))
         else None
+    (* Reading the value of a batched tensor would expose the physical, batched
+       buffer to code that believes it is unbatched. *)
+    | E_to_host x ->
+        if batched st x then
+          invalid_arg
+            "Rune_next: cannot read the value of a batched tensor inside vmap; \
+             return it from the mapped function instead"
+        else None
     (* Constants: creation and metadata. *)
     | E_buffer _ -> None
     | E_const_scalar _ -> None

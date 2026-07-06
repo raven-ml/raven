@@ -70,6 +70,7 @@ let handler (tangents : Tensor_map.t) =
       match eff with
       (* Constants: creation, RNG, metadata. Fresh outputs are inactive. *)
       | E_view _ -> None
+      | E_to_host _ -> None
       | E_buffer _ -> None
       | E_const_scalar _ -> None
       | E_from_host _ -> None

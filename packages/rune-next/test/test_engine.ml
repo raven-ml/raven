@@ -81,6 +81,16 @@ let test_mutation_raises () =
 
 (* Statefulness *)
 
+let test_reads_are_transparent_to_grad () =
+  (* Reading a tracked tensor's value inside the objective neither raises nor
+     perturbs the gradient. *)
+  let x = vec32 [| 1.0; -2.0; 3.0 |] in
+  let f x =
+    let (_ : float) = Nx.item [ 0 ] x in
+    Nx.sum (Nx.mul x x)
+  in
+  check_arr ~msg:"dx" [| 2.0; -4.0; 6.0 |] (Rune_next.grad' f x)
+
 let test_grad_is_repeatable () =
   (* Differentiating twice with the same inputs gives the same result: no state
      leaks between tapes. *)
@@ -136,7 +146,11 @@ let tests =
         test "grad requires a scalar objective" test_grad_requires_scalar;
         test "in-place mutation raises" test_mutation_raises;
       ];
-    group "statefulness" [ test "grad is repeatable" test_grad_is_repeatable ];
+    group "statefulness"
+      [
+        test "grad is repeatable" test_grad_is_repeatable;
+        test "value reads are transparent" test_reads_are_transparent_to_grad;
+      ];
     group "regressions" test_engine_fixes;
   ]
 
