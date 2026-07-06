@@ -99,21 +99,45 @@
  (dir packages/rune)
  (synopsis "Functional transformations for Nx arrays")
  (description
-  "Automatic differentiation and vectorizing maps for Nx tensors. Reverse-mode AD (grad, vjp), forward-mode AD (jvp), vmap, and gradient checking, built on OCaml 5 effect handlers.")
+  "Functional transformations for Nx arrays: typed autodiff (grad/vjp/jvp), vmap, and more, built on OCaml effect handlers. Transformations operate over any user-defined parameter structure through the Nx.Ptree.S interface, with full static typing and mixed-dtype parameters in a single pass.")
  (depends
   (ocaml
-   (>= 5.2.0))
+   (>= 5.5.0))
   dune
-  (dune-configurator :build)
   (nx
    (= :version))
-  (tolk
-   (= :version))
   (windtrap :with-test)
-  (mdx :with-test)
   (thumper :with-test))
  (tags
   (automatic-differentiation machine-learning deep-learning optimization)))
+
+(package
+ (name kaun)
+ (dir packages/kaun)
+ (synopsis "Neural networks for OCaml")
+ (description
+  "Neural networks built on Rune. Models are typed parameter structures with pure apply functions; training steps compose value_and_grad with structural optimizers; there is no opaque trainer or layer type.")
+ (depends
+  (ocaml
+   (>= 5.5.0))
+  dune
+  (nx
+   (= :version))
+  (rune
+   (= :version))
+  ; vega is not a library dependency: kaun composes with it in user
+  ; code (tests and examples only).
+  (vega
+   (and
+    (= :version)
+    :with-test))
+  logs
+  jsont
+  bytesrw
+  (windtrap :with-test)
+  (thumper :with-test))
+ (tags
+  (machine-learning deep-learning neural-networks)))
 
 (package
  (name tolk)
@@ -152,12 +176,12 @@
 (package
  (name vega)
  (dir packages/vega)
- (synopsis "Per-parameter gradient-based optimizers for OCaml")
+ (synopsis "Gradient-based optimizers for OCaml")
  (description
-  "Typed, per-parameter optimizer primitives: Adam, AdamW, SGD, RMSprop, Adagrad, and learning-rate schedules. Built on Nx with no autodiff dependency.")
+  "Gradient-descent optimizers: structural optimizers over parameter structures (Adam, AdamW, SGD), Optax-style per-tensor transformation chains (RMSprop, Adagrad, Lion, ...), and learning-rate schedules. Built on Nx with no autodiff dependency.")
  (depends
   (ocaml
-   (>= 5.2.0))
+   (>= 5.5.0))
   dune
   (nx
    (= :version))
@@ -165,30 +189,6 @@
   (thumper :with-test))
  (tags
   (optimization machine-learning gradient-descent)))
-
-(package
- (name kaun)
- (dir packages/kaun)
- (synopsis "Neural networks for OCaml")
- (description
-  "Composable layers, parameter trees, optimizers, training loops, data pipelines, and HuggingFace Hub integration. Built on Rune.")
- (depends
-  (ocaml
-   (>= 5.2.0))
-  dune
-  (rune
-   (= :version))
-  (vega
-   (= :version))
-  (nx
-   (= :version))
-  jsont
-  bytesrw
-  (windtrap :with-test)
-  (mdx :with-test)
-  (thumper :with-test))
- (tags
-  (neural-networks machine-learning deep-learning)))
 
 (package
  (name munin)

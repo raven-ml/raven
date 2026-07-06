@@ -23,7 +23,7 @@ dune exec dev/umbra/examples/03-blackbody-fitting/main.exe
 | `Const.k_b_si`        | Boltzmann constant (J/K)                           |
 | `Const.c`             | Speed of light (typed velocity)                    |
 | `Unit.to_float`       | Extract scalar SI value from a typed constant      |
-| `Rune.value_and_grads`| Compute loss and gradients in one pass             |
+| `Rune.value_and_grad` | Compute loss and gradients in one pass             |
 | `Vega.adam`           | Adam optimizer                                     |
 | `Vega.step`           | Apply one optimization step                        |
 

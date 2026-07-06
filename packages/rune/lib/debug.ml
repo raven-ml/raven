@@ -3,551 +3,115 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* Operation logging as an effect handler. Purely observational: each
+   intercepted operation is re-performed in the enclosing context (so other
+   handlers compose as usual) and its name and output shape are printed.
+   Operations without a logging arm execute unlogged — falling through is
+   harmless here, unlike in the differentiation and batching handlers. *)
+
 open Nx_effect
 module T = Nx
 
-type tensor_ref = Tensor_ref : ('a, 'b) T.t -> tensor_ref
+let shape_string s =
+  "[" ^ String.concat "," (Array.to_list (Array.map string_of_int s)) ^ "]"
 
-(* ───── Debug Context Effects ───── *)
-
-type _ Effect.t +=
-  | E_push_debug_context : string -> unit Effect.t
-  | E_pop_debug_context : unit Effect.t
-
-type tensor_stats = {
-  mean : float;
-  std : float;
-  min_val : float;
-  max_val : float;
-  nan_count : int;
-}
-
-let push_context name =
-  try Effect.perform (E_push_debug_context name) with Effect.Unhandled _ -> ()
-
-let pop_context () =
-  try Effect.perform E_pop_debug_context with Effect.Unhandled _ -> ()
-
-let with_context name f =
-  try
-    Effect.perform (E_push_debug_context name);
-    Fun.protect f ~finally:(fun () -> Effect.perform E_pop_debug_context)
-  with Effect.Unhandled _ -> f ()
-
-let compute_stats (Tensor_ref t) =
-  try
-    let t_f32 = T.cast T.float32 t in
-    let mean = T.item [] (T.mean t_f32) in
-    let std = T.item [] (T.std t_f32) in
-    let min_val = T.item [] (T.min t_f32) in
-    let max_val = T.item [] (T.max t_f32) in
-    let is_nan = T.isnan t_f32 in
-    let nan_count =
-      int_of_float (T.item [] (T.sum (T.cast T.float32 is_nan)))
-    in
-    { mean; std; min_val; max_val; nan_count }
-  with _ ->
-    { mean = 0.0; std = 0.0; min_val = 0.0; max_val = 0.0; nan_count = 0 }
-
-let get_debug_indent context_stack =
-  let depth = List.length context_stack in
-  if depth = 0 then "├─ "
-  else
-    let rec build_prefix n =
-      if n = 0 then "" else "│  " ^ build_prefix (n - 1)
-    in
-    build_prefix depth ^ "├─ "
-
-let format_number f =
-  (* Handle negative zero *)
-  let f = if f = -0. then 0. else f in
-  (* Use 2 decimal precision for consistency *)
-  Printf.sprintf "%.2f" f
-
-let dtype_to_string (type a b) (dtype : (a, b) Nx_core.Dtype.t) =
-  match dtype with
-  | Float32 -> "f32"
-  | Float64 -> "f64"
-  | Float16 -> "f16"
-  | Int32 -> "i32"
-  | Int64 -> "i64"
-  | UInt8 -> "u8"
-  | Int8 -> "i8"
-  | Int16 -> "i16"
-  | UInt16 -> "u16"
-  | UInt32 -> "u32"
-  | UInt64 -> "u64"
-  | Complex64 -> "c64"
-  | Complex128 -> "c128"
-  | BFloat16 -> "bf16"
-  | Bool -> "bool"
-  | Int4 -> "i4"
-  | UInt4 -> "u4"
-  | Float8_e4m3 -> "f8e4m3"
-  | Float8_e5m2 -> "f8e5m2"
-
-let format_input_shapes input_tensors =
-  match input_tensors with
-  | [] -> ""
-  | tensors ->
-      tensors
-      |> List.map (function Tensor_ref t -> T.shape_to_string (T.shape t))
-      |> String.concat ","
-
-let log_operation context_stack op_name input_tensors output_tensor =
-  let indent = get_debug_indent context_stack in
-
-  (* Check if we're in a gradient context *)
-  let in_grad_context =
-    List.exists
-      (fun ctx ->
-        String.length ctx > 0 && String.starts_with ~prefix:"\xE2\x88\x87" ctx)
-      context_stack
-  in
-
-  (* Format input part with arrow *)
-  let input_part =
-    let input_str = format_input_shapes input_tensors in
-    if input_str = "" then "→ " else input_str ^ " → "
-  in
-
-  let shape_str, dtype_str =
-    match output_tensor with
-    | Tensor_ref t ->
-        let shape = T.shape_to_string (T.shape t) in
-        let dtype = dtype_to_string (T.dtype t) in
-        (shape, dtype)
-  in
-
-  (* Put dtype inside brackets for output *)
-  let output_shape_with_dtype =
-    if shape_str = "[]" then "[" ^ dtype_str ^ "]"
-    else
-      let shape_without_brackets =
-        String.sub shape_str 1 (String.length shape_str - 2)
-      in
-      "[" ^ shape_without_brackets ^ " " ^ dtype_str ^ "]"
-  in
-
-  let stats = compute_stats output_tensor in
-
-  (* Check if tensor is all zeros *)
-  let stats_str =
-    if
-      stats.mean = 0. && stats.std = 0. && stats.min_val = 0.
-      && stats.max_val = 0.
-    then Printf.sprintf " zeros nans=%d" stats.nan_count
-    else if
-      stats.mean = 1. && stats.std = 0. && stats.min_val = 1.
-      && stats.max_val = 1.
-    then Printf.sprintf " ones nans=%d" stats.nan_count
-    else
-      Printf.sprintf " μ=%s σ=%s range=[%s,%s] nans=%d"
-        (format_number stats.mean) (format_number stats.std)
-        (format_number stats.min_val)
-        (format_number stats.max_val)
-        stats.nan_count
-  in
-
-  (* Add memory usage *)
-  let memory_str =
-    match output_tensor with
-    | Tensor_ref t ->
-        let shape = T.shape t in
-        let num_elements = Array.fold_left ( * ) 1 shape in
-        let bytes_per_element =
-          match T.dtype t with
-          | Float32 | Int32 | UInt32 -> 4
-          | Float64 | Int64 | UInt64 | Complex64 -> 8
-          | Float16 | Int16 | UInt16 | BFloat16 -> 2
-          | UInt8 | Int8 | Float8_e4m3 | Float8_e5m2 | Bool -> 1
-          | Complex128 -> 16
-          | Int4 | UInt4 -> 1 (* 2 values packed per byte *)
-        in
-        let bytes = num_elements * bytes_per_element in
-        let memory_mb = float bytes /. (1024. *. 1024.) in
-        if memory_mb < 0.01 then Printf.sprintf " %.3fMB" memory_mb
-        else Printf.sprintf " %.1fMB" memory_mb
-  in
-
-  (* Add NaN warning *)
-  let nan_warning = if stats.nan_count > 0 then " ⚠ NaN detected!" else "" in
-
-  (* Check for exploding gradients in gradient operations *)
-  let grad_warning =
-    if in_grad_context then
-      (* This is a gradient operation *)
-      let max_abs =
-        Stdlib.max (abs_float stats.max_val) (abs_float stats.min_val)
-      in
-      if max_abs > 100. then " ⚠ Exploding gradients!" else ""
-    else ""
-  in
-
-  Printf.printf "%s%s %s%s%s%s%s%s\n%!" indent op_name input_part
-    output_shape_with_dtype stats_str memory_str nan_warning grad_warning
-
-let debug_handler () =
-  let context_stack = ref [] in
+let handler ppf =
   let open Effect.Deep in
-  {
-    retc = (fun x -> x);
-    exnc = raise;
-    effc =
-      (fun (type a) (eff : a Effect.t) ->
-        match eff with
-        | E_push_debug_context name ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let parent_indent = get_debug_indent !context_stack in
-                Printf.printf "%s%s\n%!" parent_indent name;
-                context_stack := name :: !context_stack;
-                continue k ())
-        | E_pop_debug_context ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                (match !context_stack with
-                | [] -> failwith "Cannot pop from an empty context stack"
-                | _ :: rest -> context_stack := rest);
-                continue k ())
-        | E_add { a; b } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let out = add a b in
-                log_operation !context_stack "add"
-                  [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref out);
-                continue k out)
-        | E_sub { a; b } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let out = sub a b in
-                log_operation !context_stack "sub"
-                  [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref out);
-                continue k out)
-        | E_mul { a; b } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let out = mul a b in
-                log_operation !context_stack "mul"
-                  [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref out);
-                continue k out)
-        | E_matmul { a; b } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let out = matmul a b in
-                log_operation !context_stack "matmul"
-                  [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref out);
-                continue k out)
-        | E_neg { t_in } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let out = neg t_in in
-                log_operation !context_stack "neg" [ Tensor_ref t_in ]
-                  (Tensor_ref out);
-                continue k out)
-        | E_reduce_sum { t_in; axes; keepdims } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let out = reduce_sum ~axes ~keepdims t_in in
-                log_operation !context_stack "sum" [ Tensor_ref t_in ]
-                  (Tensor_ref out);
-                continue k out)
-        | E_reduce_max { t_in; axes; keepdims } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let out = reduce_max ~axes ~keepdims t_in in
-                log_operation !context_stack "max" [ Tensor_ref t_in ]
-                  (Tensor_ref out);
-                continue k out)
-        | E_reduce_min { t_in; axes; keepdims } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let out = reduce_min ~axes ~keepdims t_in in
-                log_operation !context_stack "min" [ Tensor_ref t_in ]
-                  (Tensor_ref out);
-                continue k out)
-        | E_reshape { t_in; new_shape } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = reshape t_in new_shape in
-                log_operation !context_stack "reshape" [ Tensor_ref t_in ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_cast { t_in; target_dtype } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = cast ~dtype:target_dtype t_in in
-                log_operation !context_stack "cast" [ Tensor_ref t_in ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_sqrt { t_in } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let out = sqrt t_in in
-                log_operation !context_stack "sqrt" [ Tensor_ref t_in ]
-                  (Tensor_ref out);
-                continue k out)
-        | E_sin { t_in } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let out = sin t_in in
-                log_operation !context_stack "sin" [ Tensor_ref t_in ]
-                  (Tensor_ref out);
-                continue k out)
-        | E_fdiv { a; b } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let out = div a b in
-                log_operation !context_stack "div"
-                  [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref out);
-                continue k out)
-        | E_pow { a; b } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let out = pow a b in
-                log_operation !context_stack "pow"
-                  [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref out);
-                continue k out)
-        | E_max { a; b } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let out = max a b in
-                log_operation !context_stack "max"
-                  [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref out);
-                continue k out)
-        | E_where { condition; if_true; if_false } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let out = where condition if_true if_false in
-                log_operation !context_stack "where"
-                  [
-                    Tensor_ref condition;
-                    Tensor_ref if_true;
-                    Tensor_ref if_false;
-                  ]
-                  (Tensor_ref out);
-                continue k out)
-        | E_cat { t_list; axis } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = cat t_list ~axis in
-                log_operation !context_stack "cat"
-                  (List.map (fun t -> Tensor_ref t) t_list)
-                  (Tensor_ref result);
-                continue k result)
-        | E_gather { data; indices; axis } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = gather data indices ~axis in
-                log_operation !context_stack "gather"
-                  [ Tensor_ref data; Tensor_ref indices ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_scatter
-            { data_template; indices; updates; axis; mode; unique_indices } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result =
-                  scatter ~mode ~unique_indices data_template ~indices ~updates
-                    ~axis
-                in
-                log_operation !context_stack "scatter"
-                  [
-                    Tensor_ref data_template;
-                    Tensor_ref indices;
-                    Tensor_ref updates;
-                  ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_permute { t_in; axes } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = permute t_in axes in
-                log_operation !context_stack "permute" [ Tensor_ref t_in ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_expand { t_in; new_target_shape } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = expand t_in new_target_shape in
-                log_operation !context_stack "expand" [ Tensor_ref t_in ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_pad { t_in; padding_config; fill_value } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = pad t_in padding_config fill_value in
-                log_operation !context_stack "pad" [ Tensor_ref t_in ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_shrink { t_in; limits } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = shrink t_in limits in
-                log_operation !context_stack "shrink" [ Tensor_ref t_in ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_flip { t_in; dims_to_flip } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = flip t_in dims_to_flip in
-                log_operation !context_stack "flip" [ Tensor_ref t_in ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_contiguous { t_in } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = contiguous t_in in
-                log_operation !context_stack "contiguous" [ Tensor_ref t_in ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_copy { t_in } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = copy t_in in
-                log_operation !context_stack "copy" [ Tensor_ref t_in ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_buffer { context; dtype; size_in_elements } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = buffer context dtype [| size_in_elements |] in
-                log_operation !context_stack "buffer" [] (Tensor_ref result);
-                continue k result)
-        | E_const_scalar { context; value; dtype } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = const_scalar context value dtype in
-                log_operation !context_stack "const_scalar" []
-                  (Tensor_ref result);
-                continue k result)
-        | E_from_host { context; array } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = from_host context array in
-                log_operation !context_stack "from_host" [] (Tensor_ref result);
-                continue k result)
-        | E_idiv { a; b } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let out = div a b in
-                log_operation !context_stack "idiv"
-                  [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref out);
-                continue k out)
-        | E_mod { a; b } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let out = mod_ a b in
-                log_operation !context_stack "mod"
-                  [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref out);
-                continue k out)
-        | E_cmplt { a; b } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let out = cmplt a b in
-                log_operation !context_stack "lt"
-                  [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref out);
-                continue k out)
-        | E_cmpne { a; b } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let out = cmpne a b in
-                log_operation !context_stack "ne"
-                  [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref out);
-                continue k out)
-        | E_xor { a; b } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let out = xor a b in
-                log_operation !context_stack "xor"
-                  [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref out);
-                continue k out)
-        | E_or { a; b } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let out = or_ a b in
-                log_operation !context_stack "or"
-                  [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref out);
-                continue k out)
-        | E_and { a; b } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let out = and_ a b in
-                log_operation !context_stack "and"
-                  [ Tensor_ref a; Tensor_ref b ]
-                  (Tensor_ref out);
-                continue k out)
-        | E_recip { t_in } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let out = recip t_in in
-                log_operation !context_stack "recip" [ Tensor_ref t_in ]
-                  (Tensor_ref out);
-                continue k out)
-        | E_reduce_prod { t_in; axes; keepdims } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let out = reduce_prod ~axes ~keepdims t_in in
-                log_operation !context_stack "prod" [ Tensor_ref t_in ]
-                  (Tensor_ref out);
-                continue k out)
-        | E_assign { dst; src } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                assign dst src;
-                log_operation !context_stack "assign" [ Tensor_ref src ]
-                  (Tensor_ref dst);
-                continue k ())
-        | E_threefry { key; ctr } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = threefry key ctr in
-                log_operation !context_stack "threefry"
-                  [ Tensor_ref key; Tensor_ref ctr ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_to_device { t_in; context } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result = to_device context t_in in
-                log_operation !context_stack "to_device" [ Tensor_ref t_in ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_unfold { t_in; kernel_size; stride; dilation; padding } ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result =
-                  unfold t_in ~kernel_size ~stride ~dilation ~padding
-                in
-                log_operation !context_stack "unfold" [ Tensor_ref t_in ]
-                  (Tensor_ref result);
-                continue k result)
-        | E_fold { t_in; output_size; kernel_size; stride; dilation; padding }
-          ->
-            Some
-              (fun (k : (a, _) Effect.Deep.continuation) ->
-                let result =
-                  fold t_in ~output_size ~kernel_size ~stride ~dilation ~padding
-                in
-                log_operation !context_stack "fold" [ Tensor_ref t_in ]
-                  (Tensor_ref result);
-                continue k result)
-        | _ -> None);
-  }
+  (* Logs [name] with the output shape, then continues with the output. *)
+  let obs (type a b) k name (out : (a, b) t) =
+    Format.fprintf ppf "%s -> %s@." name (shape_string (T.shape out));
+    continue k out
+  in
+  let effc : type c. c Effect.t -> ((c, _) continuation -> _) option =
+   fun eff ->
+    match eff with
+    | E_add { a; b } -> Some (fun k -> obs k "add" (add a b))
+    | E_sub { a; b } -> Some (fun k -> obs k "sub" (sub a b))
+    | E_mul { a; b } -> Some (fun k -> obs k "mul" (mul a b))
+    | E_fdiv { a; b } -> Some (fun k -> obs k "div" (div a b))
+    | E_idiv { a; b } -> Some (fun k -> obs k "div" (div a b))
+    | E_pow { a; b } -> Some (fun k -> obs k "pow" (pow a b))
+    | E_mod { a; b } -> Some (fun k -> obs k "mod" (mod_ a b))
+    | E_max { a; b } -> Some (fun k -> obs k "max" (max a b))
+    | E_min { a; b } -> Some (fun k -> obs k "min" (min a b))
+    | E_atan2 { a; b } -> Some (fun k -> obs k "atan2" (atan2 a b))
+    | E_cmpeq { a; b } -> Some (fun k -> obs k "cmpeq" (cmpeq a b))
+    | E_cmpne { a; b } -> Some (fun k -> obs k "cmpne" (cmpne a b))
+    | E_cmplt { a; b } -> Some (fun k -> obs k "cmplt" (cmplt a b))
+    | E_cmple { a; b } -> Some (fun k -> obs k "cmple" (cmple a b))
+    | E_neg { t_in } -> Some (fun k -> obs k "neg" (neg t_in))
+    | E_sin { t_in } -> Some (fun k -> obs k "sin" (sin t_in))
+    | E_cos { t_in } -> Some (fun k -> obs k "cos" (cos t_in))
+    | E_tan { t_in } -> Some (fun k -> obs k "tan" (tan t_in))
+    | E_asin { t_in } -> Some (fun k -> obs k "asin" (asin t_in))
+    | E_acos { t_in } -> Some (fun k -> obs k "acos" (acos t_in))
+    | E_atan { t_in } -> Some (fun k -> obs k "atan" (atan t_in))
+    | E_sinh { t_in } -> Some (fun k -> obs k "sinh" (sinh t_in))
+    | E_cosh { t_in } -> Some (fun k -> obs k "cosh" (cosh t_in))
+    | E_tanh { t_in } -> Some (fun k -> obs k "tanh" (tanh t_in))
+    | E_exp { t_in } -> Some (fun k -> obs k "exp" (exp t_in))
+    | E_log { t_in } -> Some (fun k -> obs k "log" (log t_in))
+    | E_sqrt { t_in } -> Some (fun k -> obs k "sqrt" (sqrt t_in))
+    | E_recip { t_in } -> Some (fun k -> obs k "recip" (recip t_in))
+    | E_abs { t_in } -> Some (fun k -> obs k "abs" (abs t_in))
+    | E_sign { t_in } -> Some (fun k -> obs k "sign" (sign t_in))
+    | E_erf { t_in } -> Some (fun k -> obs k "erf" (erf t_in))
+    | E_trunc { t_in } -> Some (fun k -> obs k "trunc" (trunc t_in))
+    | E_ceil { t_in } -> Some (fun k -> obs k "ceil" (ceil t_in))
+    | E_floor { t_in } -> Some (fun k -> obs k "floor" (floor t_in))
+    | E_round { t_in } -> Some (fun k -> obs k "round" (round t_in))
+    | E_where { condition; if_true; if_false } ->
+        Some (fun k -> obs k "where" (where condition if_true if_false))
+    | E_reshape { t_in; new_shape } ->
+        Some (fun k -> obs k "reshape" (reshape t_in new_shape))
+    | E_permute { t_in; axes } ->
+        Some (fun k -> obs k "permute" (permute t_in axes))
+    | E_expand { t_in; new_target_shape } ->
+        Some (fun k -> obs k "expand" (expand t_in new_target_shape))
+    | E_pad { t_in; padding_config; fill_value } ->
+        Some (fun k -> obs k "pad" (pad t_in padding_config fill_value))
+    | E_shrink { t_in; limits } ->
+        Some (fun k -> obs k "shrink" (shrink t_in limits))
+    | E_flip { t_in; dims_to_flip } ->
+        Some (fun k -> obs k "flip" (flip t_in dims_to_flip))
+    | E_cat { t_list; axis } -> Some (fun k -> obs k "cat" (cat t_list ~axis))
+    | E_cast { t_in; target_dtype } ->
+        Some (fun k -> obs k "cast" (cast ~dtype:target_dtype t_in))
+    | E_contiguous { t_in } ->
+        Some (fun k -> obs k "contiguous" (contiguous t_in))
+    | E_copy { t_in } -> Some (fun k -> obs k "copy" (copy t_in))
+    | E_reduce_sum { t_in; axes; keepdims } ->
+        Some (fun k -> obs k "reduce_sum" (reduce_sum ~axes ~keepdims t_in))
+    | E_reduce_max { t_in; axes; keepdims } ->
+        Some (fun k -> obs k "reduce_max" (reduce_max ~axes ~keepdims t_in))
+    | E_reduce_min { t_in; axes; keepdims } ->
+        Some (fun k -> obs k "reduce_min" (reduce_min ~axes ~keepdims t_in))
+    | E_reduce_prod { t_in; axes; keepdims } ->
+        Some (fun k -> obs k "reduce_prod" (reduce_prod ~axes ~keepdims t_in))
+    | E_associative_scan { t_in; axis; op } ->
+        Some
+          (fun k -> obs k "associative_scan" (associative_scan ~axis ~op t_in))
+    | E_argmax { t_in; axis; keepdims } ->
+        Some (fun k -> obs k "argmax" (argmax ~axis ~keepdims t_in))
+    | E_argmin { t_in; axis; keepdims } ->
+        Some (fun k -> obs k "argmin" (argmin ~axis ~keepdims t_in))
+    | E_sort { t_in; axis; descending } ->
+        Some (fun k -> obs k "sort" (sort ~axis ~descending t_in))
+    | E_argsort { t_in; axis; descending } ->
+        Some (fun k -> obs k "argsort" (argsort ~axis ~descending t_in))
+    | E_gather { data; indices; axis } ->
+        Some (fun k -> obs k "gather" (gather data indices ~axis))
+    | E_scatter { data_template; indices; updates; axis; mode; unique_indices }
+      ->
+        Some
+          (fun k ->
+            obs k "scatter"
+              (scatter ~mode ~unique_indices data_template ~indices ~updates
+                 ~axis))
+    | E_matmul { a; b } -> Some (fun k -> obs k "matmul" (matmul a b))
+    | _ -> None
+  in
+  { retc = Fun.id; exnc = raise; effc }
 
-let debug f x =
-  let handler = debug_handler () in
-  Effect.Deep.match_with f x handler
+let with_debug ?(ppf = Format.err_formatter) f =
+  Effect.Deep.match_with f () (handler ppf)

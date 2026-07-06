@@ -1,13 +1,12 @@
 # Getting Started
 
-This guide covers installation, key concepts, and two complete examples:
-learning XOR and classifying MNIST digits.
+This guide walks through the whole kaun pattern once: define a model as a record, write the training step yourself, run the loop, evaluate. Everything else in the library is a refinement of this page.
 
 ## Installation
 
 <!-- $MDX skip -->
 ```bash
-opam install kaun
+opam install kaun vega
 ```
 
 Or build from source:
@@ -18,190 +17,135 @@ git clone https://github.com/raven-ml/raven
 cd raven && dune build kaun
 ```
 
-## Key Concepts
-
-**Layer.** A layer is a record `{ init; apply }`. `init` creates fresh
-parameters and state. `apply` runs the forward pass. Layers compose with
-`Layer.sequential` (homogeneous float pipelines) and `Layer.compose`
-(heterogeneous, e.g. embedding to dense).
-
-**Ptree.** A `Ptree.t` is a tree of tensors. Dict nodes hold named
-subtrees, list nodes hold ordered subtrees, and leaves hold tensors.
-Parameters and state are both `Ptree.t` values — plain data you can
-inspect, map, serialize, and load.
-
-**Layer.vars.** A `vars` bundles `params` (trainable), `state`
-(non-trainable, e.g. batch norm running statistics), and a `dtype`
-witness.
-
-**Train.** `Train.make` pairs a model with an optimizer. `Train.init`
-creates the initial training state. `Train.fit` trains over a `Data.t`
-pipeline. `Train.predict` runs inference.
-
-**Data.** `Data.t` is a lazy, composable iterator. Build from tensors or
-arrays, shuffle, batch, map, and feed to `Train.fit`.
-
-**Optim.** An optimizer combines a learning-rate schedule with an update
-rule. Schedules are functions `int -> float`.
-
-## Example: XOR
-
-The XOR problem is the simplest non-linear classification task. This
-example trains a small network to learn it.
+Add to your `dune` file:
 
 <!-- $MDX skip -->
+```dune
+(executable
+ (name main)
+ (libraries kaun rune vega nx))
+```
+
+Note the layering: kaun's library depends only on nx and rune. Optimizers come from [vega](/docs/vega/), which you depend on directly and compose in your own code — there is no trainer in between.
+
+## A Model Is a Record
+
+A kaun layer is a plain record of tensors with an `apply` function; `Linear.t` holds a weight matrix and an optional bias. A model is a record of layers, made traversable by three one-liners that delegate to each field — the `Nx.Ptree.S` interface shared by the whole Raven ecosystem:
+
 ```ocaml
 open Kaun
 
+module Mlp = struct
+  type t = { l1 : Linear.t; l2 : Linear.t }
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { l1; l2 } =
+    { l1 = Linear.map f l1; l2 = Linear.map f l2 }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
+    { l1 = Linear.map2 f p.l1 q.l1; l2 = Linear.map2 f p.l2 q.l2 }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { l1; l2 } =
+    Linear.iter f l1;
+    Linear.iter f l2
+
+  let apply p x = Linear.apply p.l2 (Nx.tanh (Linear.apply p.l1 x))
+end
+```
+
+`apply` is just a function — no base class, no forward method, no parameter registry. The three traversals are what let `Rune` differentiate values of `Mlp.t`, `Vega` step them, and `Checkpoint` save them.
+
+## Initialize Parameters
+
+Constructors draw from the implicit RNG scope; wrap the program in `Nx.Rng.run` for reproducibility. `Linear.init` gives Glorot-uniform weights and zero bias:
+
+```ocaml
 let () =
   Nx.Rng.run ~seed:42 @@ fun () ->
+  (* XOR dataset. *)
+  let x =
+    Nx.create Nx.float32 [| 4; 2 |] [| 0.; 0.; 0.; 1.; 1.; 0.; 1.; 1. |]
+  in
+  let y = Nx.create Nx.float32 [| 4; 1 |] [| 0.; 1.; 1.; 0. |] in
 
-  (* XOR dataset: 4 examples, 2 features each *)
-  let x = Nx.create Nx.Float32 [| 4; 2 |] [| 0.; 0.; 0.; 1.; 1.; 0.; 1.; 1. |] in
-  let y = Nx.create Nx.Float32 [| 4; 1 |] [| 0.; 1.; 1.; 0. |] in
-
-  (* Model: 2 -> 4 -> 1 with tanh activation *)
-  let model =
-    Layer.sequential
-      [
-        Layer.linear ~in_features:2 ~out_features:4 ();
-        Layer.tanh ();
-        Layer.linear ~in_features:4 ~out_features:1 ();
-      ]
+  let params =
+    {
+      Mlp.l1 = Linear.init ~inputs:2 ~outputs:8;
+      l2 = Linear.init ~inputs:8 ~outputs:1;
+    }
   in
 
-  (* Create a trainer: model + optimizer *)
-  let trainer =
-    Train.make ~model
-      ~optimizer:(Vega.adam (Vega.Schedule.constant 0.01))
+  (* The objective: logits from the model, binary cross-entropy on top.
+     Losses take raw logits and evaluate in log space. *)
+  let loss p = Loss.sigmoid_bce (Mlp.apply p x) y in
+
+  (* The training step: value_and_grad + one Adam update. Gradients and
+     optimizer moments are values of Mlp.t, like the parameters. *)
+  let step (params, ostate) =
+    let l, grads = Rune.value_and_grad (module Mlp) loss params in
+    let params, ostate =
+      Vega.adam_step (module Mlp) ~lr:0.05 ostate ~params ~grads
+    in
+    ((params, ostate), Nx.item [] l)
   in
 
-  (* Initialize training state (model vars + optimizer state) *)
-  let st = Train.init trainer ~dtype:Nx.Float32 in
+  (* The loop: plain OCaml. *)
+  let state = ref (params, Vega.adam_init (module Mlp) params) in
+  for i = 1 to 500 do
+    let s, l = step !state in
+    state := s;
+    if i mod 100 = 0 then Printf.printf "step %4d  loss %.6f\n" i l
+  done;
 
-  (* Train for 1000 steps on the same data *)
-  let st =
-    Train.fit trainer st
-      ~report:(fun ~step ~loss _st ->
-        if step mod 200 = 0 then
-          Printf.printf "step %4d  loss %.6f\n" step loss)
-      (Data.repeat 1000 (x, fun pred -> Loss.binary_cross_entropy pred y))
-  in
-
-  (* Predict *)
-  let pred = Train.predict trainer st x |> Nx.sigmoid in
-  Printf.printf "\npredictions (expected 0 1 1 0):\n";
+  (* Evaluate. *)
+  let pred = Fn.sigmoid (Mlp.apply (fst !state) x) in
   for i = 0 to 3 do
-    Printf.printf "  [%.0f, %.0f] -> %.3f\n"
+    Printf.printf "[%.0f, %.0f] -> %.3f\n"
       (Nx.item [ i; 0 ] x)
       (Nx.item [ i; 1 ] x)
       (Nx.item [ i; 0 ] pred)
   done
 ```
 
-Key points:
+This is the complete program — it is [`examples/01-xor`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/01-xor) nearly verbatim. Three things to notice:
 
-- `Data.repeat 1000 (x, loss_fn)` creates a pipeline that yields the
-  same `(input, loss_fn)` pair 1000 times.
-- The loss function `fun pred -> Loss.binary_cross_entropy pred y`
-  receives the model output and computes a scalar loss.
-- `Train.predict` runs in evaluation mode (no dropout, no state
-  updates).
+- **Every piece of training state is a value of your type.** Parameters, gradients, and the Adam moments (`ostate.mu`, `ostate.nu`) are all `Mlp.t` values you can print, inspect, checkpoint, or swap.
+- **The step is yours.** Want gradient clipping? Insert `Vega.clip_by_global_norm (module Mlp) ~max_norm:1.0 grads` before the update. A learning-rate schedule? Evaluate one at your step counter. Nothing is hidden behind a trainer.
+- **`(module Mlp)` is the only plumbing.** The same first-class module drives differentiation, optimization, and (with `names` added) checkpointing.
 
-## Example: MNIST
+## Scaling Up: Minibatches
 
-A convolutional network for handwritten digit classification using the
-built-in MNIST dataset loader.
+For real datasets, `Data.batches2` cuts paired tensors into a `Seq.t` of minibatches, and the epoch loop is ordinary `Seq` iteration. With `~shuffle:true`, each traversal of the sequence draws a fresh permutation from the RNG scope, so iterating once per epoch reshuffles every epoch:
 
 <!-- $MDX skip -->
 ```ocaml
-open Kaun
-
-let batch_size = 64
-let epochs = 3
-let lr = 0.001
-
-let model =
-  Layer.sequential
-    [
-      Layer.conv2d ~in_channels:1 ~out_channels:16 ();
-      Layer.relu ();
-      Layer.max_pool2d ~kernel_size:(2, 2) ();
-      Layer.conv2d ~in_channels:16 ~out_channels:32 ();
-      Layer.relu ();
-      Layer.max_pool2d ~kernel_size:(2, 2) ();
-      Layer.flatten ();
-      Layer.linear ~in_features:(32 * 7 * 7) ~out_features:128 ();
-      Layer.relu ();
-      Layer.linear ~in_features:128 ~out_features:10 ();
-    ]
-
-let () =
-  Nx.Rng.run ~seed:42 @@ fun () ->
-
-  Printf.printf "Loading MNIST...\n%!";
-  let (x_train, y_train), (x_test, y_test) = Kaun_datasets.mnist () in
-  let n_train = (Nx.shape x_train).(0) in
-  Printf.printf "  train: %d  test: %d\n%!" n_train (Nx.shape x_test).(0);
-
-  (* Fixed test batches *)
-  let test_batches = Data.prepare ~batch_size (x_test, y_test) in
-
-  (* Trainer *)
-  let trainer =
-    Train.make ~model
-      ~optimizer:(Vega.adam (Vega.Schedule.constant lr))
-  in
-  let st = ref (Train.init trainer ~dtype:Nx.Float32) in
-
-  for epoch = 1 to epochs do
-    (* Shuffle training data each epoch *)
-    let train_data =
-      Data.prepare ~shuffle:true ~batch_size (x_train, y_train)
-      |> Data.map (fun (x, y) ->
-             (x, fun logits -> Loss.cross_entropy_sparse logits y))
-    in
-    let num_batches = n_train / batch_size in
-    let tracker = Metric.tracker () in
-
-    st :=
-      Train.fit trainer !st
-        ~report:(fun ~step ~loss _st ->
-          Metric.observe tracker "loss" loss;
-          Printf.printf "\r  batch %d/%d  loss: %.4f%!" step num_batches loss)
-        train_data;
-    Printf.printf "\n%!";
-
-    (* Evaluate on test set *)
-    Data.reset test_batches;
-    let test_acc =
-      Metric.eval
-        (fun (x, y) ->
-          let logits = Train.predict trainer !st x in
-          Metric.accuracy logits y)
-        test_batches
-    in
-    Printf.printf "epoch %d  train_loss: %.4f  test_acc: %.2f%%\n%!" epoch
-      (Metric.mean tracker "loss")
-      (test_acc *. 100.)
-  done
+let train_x, train_y, test_x, test_y = Kaun_datasets.mnist () in
+let batches = Data.batches2 ~shuffle:true ~batch_size:128 (train_x, train_y) in
+let state = ref (params, Vega.adamw_init (module Mlp) params) in
+for _epoch = 1 to 3 do
+  batches
+  |> Seq.iter (fun (x, y) ->
+      let s, _ = step !state (x, y) in
+      state := s)
+done
 ```
 
-Key points:
+where `step` now takes the batch as an argument so the loss closes over it:
 
-- `Kaun_datasets.mnist ()` returns `((x_train, y_train), (x_test, y_test))`
-  as float32 tensor pairs. Images have shape `[N; 1; 28; 28]` (NCHW),
-  labels `[N]`.
-- `Data.prepare ~shuffle:key ~batch_size (x, y)` creates a shuffled,
-  batched pipeline of tensor pairs.
-- `Data.map` attaches the loss function to each batch, producing the
-  `(input, loss_fn)` pairs that `Train.fit` expects.
-- `Metric.eval` folds a function over a data pipeline and returns the
-  mean.
-- `Metric.tracker` accumulates running means for reporting.
+<!-- $MDX skip -->
+```ocaml
+let step (params, ostate) (x, y) =
+  let loss p = Loss.softmax_cross_entropy_sparse (Mlp.apply p x) y in
+  let l, grads = Rune.value_and_grad (module Mlp) loss params in
+  let params, ostate =
+    Vega.adamw_step (module Mlp) ~lr:1e-3 ostate ~params ~grads
+  in
+  ((params, ostate), Nx.item [] l)
+```
+
+[`examples/02-mnist`](https://github.com/raven-ml/raven/tree/main/packages/kaun/examples/02-mnist) runs this end to end, reaching ~97% test accuracy in one epoch.
 
 ## Next Steps
 
-- [Layers and Models](../02-layers-and-models/) — full layer catalog, composition patterns, custom layers
-- [Training](../03-training/) — optimizers, schedules, losses, data pipelines, custom loops
-- [Checkpoints and Pretrained Models](../04-checkpoints-and-pretrained/) — saving, loading, HuggingFace Hub
+- [Layers and Models](02-layers-and-models/) — the full layer catalog, nesting records, stateful layers
+- [Training](03-training/) — losses, data, metrics, clipping, schedules
+- [Checkpoints and Pretrained Models](04-checkpoints-and-pretrained/) — saving, resuming, loading GPT-2 from the Hub

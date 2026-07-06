@@ -3,408 +3,373 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* Vectorizing maps. The oracle is the loop: [vmap' f x] must equal stacking [f]
+   applied to each slice of [x] along the mapped axis. Composition with grad and
+   jvp is what vmap exists for, so it gets its own group. *)
+
 open Windtrap
-open Test_rune_support
+open Rune_test_support.Support
 
-module T = struct
-  include Nx
-  include Rune
-end
+let loop_map f x =
+  let b = (Nx.shape x).(0) in
+  Nx.stack ~axis:0 (List.init b (fun i -> f (Nx.slice [ Nx.I i ] x)))
 
-let eps = 1e-6
+let check_vmap ~msg f x =
+  check_arr ~msg (to_arr (loop_map f x)) (Rune.vmap' f x)
 
-(* Test basic vmap functionality *)
-let test_vmap_simple () =
-  let x = T.create T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  let f t = T.mul_s t 2. in
-  let vmapped_f = T.vmap f in
-  let result = vmapped_f x in
-  let expected = T.create T.float32 [| 3; 2 |] [| 2.; 4.; 6.; 8.; 10.; 12. |] in
-  check_rune ~eps "vmap simple" expected result
+(* Batched inputs: 4 rows of 3, and a batch of 2x3 matrices. *)
+let xs () =
+  Nx.create f64 [| 4; 3 |]
+    [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9; 0.2; 1.3; -0.7; 0.8; -1.6; 0.4 |]
 
-(* Test vmap with matrix multiplication *)
-let test_vmap_matmul () =
-  let batch_x =
-    T.create T.float32 [| 2; 3; 3 |]
-      [|
-        1.;
-        2.;
-        3.;
-        4.;
-        5.;
-        6.;
-        7.;
-        8.;
-        9.;
-        10.;
-        11.;
-        12.;
-        13.;
-        14.;
-        15.;
-        16.;
-        17.;
-        18.;
-      |]
-  in
-  let w = T.create T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  let batched_matmul = T.vmap (fun x -> T.matmul x w) in
-  let result = batched_matmul batch_x in
+let ms () =
+  Nx.create f64 [| 2; 2; 3 |]
+    [| 0.5; -1.2; 2.1; 1.7; -0.4; 0.9; 0.2; 1.3; -0.7; 0.8; -1.6; 0.4 |]
 
-  (* Expected: batch of 2 matrix multiplications *)
-  let expected_shape = [| 2; 3; 2 |] in
-  check_shape "vmap matmul shape" expected_shape result;
+let w32 () = mat64 3 2 [| 1.1; 0.3; -0.8; 0.6; 0.4; -1.5 |]
 
-  (* Check first batch result *)
-  let first_batch = T.get [ 0 ] result in
-  let expected_first = T.matmul (T.get [ 0 ] batch_x) w in
-  check_rune ~eps "vmap matmul first batch" expected_first first_batch
+(* Semantics against the loop oracle *)
 
-(* Test vmap with different axis *)
-let test_vmap_axis () =
-  let x = T.create T.float32 [| 2; 3; 4 |] (Array.init 24 float_of_int) in
-  let f = T.vmap ~in_axes:(T.Single (T.Map 1)) (fun t -> T.sum t) in
-  let result = f x in
-  let expected_shape = [| 3 |] in
-  check_shape "vmap axis shape" expected_shape result
+let oracle_tests =
+  [
+    test "elementwise chain" (fun () ->
+        check_vmap ~msg:"exp(sin x) + x^2"
+          (fun r -> Nx.add (Nx.exp (Nx.sin r)) (Nx.mul r r))
+          (xs ()));
+    test "closure constants broadcast" (fun () ->
+        let c = vec64 [| 2.0; -1.0; 0.5 |] in
+        check_vmap ~msg:"x * c" (fun r -> Nx.mul r c) (xs ()));
+    test "scalar closure constant" (fun () ->
+        check_vmap ~msg:"x + 3" (fun r -> Nx.add_s r 3.0) (xs ()));
+    test "full reduction" (fun () ->
+        check_vmap ~msg:"sum" (fun r -> Nx.sum r) (xs ()));
+    test "centering uses the unbatched mean" (fun () ->
+        check_vmap ~msg:"x - mean x"
+          (fun r -> Nx.sub r (Nx.mean r ~keepdims:true))
+          (xs ()));
+    test "axis reduction on matrix elements" (fun () ->
+        check_vmap ~msg:"sum axis0" (fun m -> Nx.sum ~axes:[ 0 ] m) (ms ()));
+    test "max reduction" (fun () ->
+        check_vmap ~msg:"max" (fun r -> Nx.max r ~keepdims:true) (xs ()));
+    test "vector-matrix multiply" (fun () ->
+        let w = w32 () in
+        check_vmap ~msg:"r @ w" (fun r -> Nx.matmul r w) (xs ()));
+    test "matrix-matrix multiply" (fun () ->
+        let w = w32 () in
+        check_vmap ~msg:"m @ w" (fun m -> Nx.matmul m w) (ms ()));
+    test "reshape and transpose" (fun () ->
+        check_vmap ~msg:"transpose (reshape m)"
+          (fun m -> Nx.transpose (Nx.reshape [| 3; 2 |] m))
+          (ms ()));
+    test "where selects per element" (fun () ->
+        check_vmap ~msg:"relu"
+          (fun r ->
+            Nx.where (Nx.greater r (Nx.zeros_like r)) r (Nx.zeros_like r))
+          (xs ()));
+    test "sort" (fun () ->
+        check_vmap ~msg:"sort" (fun r -> fst (Nx.sort ~axis:0 r)) (xs ()));
+    test "cumsum" (fun () ->
+        check_vmap ~msg:"cumsum" (fun r -> Nx.cumsum ~axis:0 r) (xs ()));
+    test "concatenate with itself" (fun () ->
+        check_vmap ~msg:"cat" (fun r -> Nx.concatenate ~axis:0 [ r; r ]) (xs ()));
+    test "pad" (fun () ->
+        check_vmap ~msg:"pad" (fun r -> Nx.pad [| (1, 1) |] 9.0 r) (xs ()));
+    test "slice" (fun () ->
+        check_vmap ~msg:"slice" (fun r -> Nx.slice [ Nx.R (1, 3) ] r) (xs ()));
+    test "take_along_axis with constant indices" (fun () ->
+        let idx = Nx.create Nx.int32 [| 2 |] [| 2l; 0l |] in
+        check_vmap ~msg:"gather"
+          (fun r -> Nx.take_along_axis ~axis:0 idx r)
+          (xs ()));
+    test "softmax composite" (fun () ->
+        check_vmap ~msg:"softmax"
+          (fun r ->
+            let e = Nx.exp r in
+            Nx.div e (Nx.sum e ~keepdims:true))
+          (xs ()));
+    test "constant output broadcasts" (fun () ->
+        check_vmap ~msg:"const" (fun _ -> Nx.scalar f64 7.0) (xs ()));
+  ]
 
-(* Test vmap with no output axis *)
-let test_vmap_no_out_axis () =
-  (* JAX semantics: out_axes=None only works with constant functions. For
-     non-constant outputs, JAX would error. We take first element. *)
-  let x = T.create T.float32 [| 5; 3 |] (Array.init 15 float_of_int) in
-  let f = T.vmap ~out_axes:(T.OutSingle None) (fun t -> T.sum t) in
-  let result = f x in
-  (* First row sum: 0+1+2 = 3 *)
-  check_scalar ~eps "vmap no out axis" 3. (T.item [ 0 ] result)
+(* Axes and structure *)
 
-(* Test vmap with broadcasting *)
-let test_vmap_broadcast () =
-  let x = T.create T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  let y = T.create T.float32 [| 2 |] [| 10.; 20. |] in
-  let f = T.vmap (fun t -> T.add t y) in
-  let result = f x in
-  let expected =
-    T.create T.float32 [| 3; 2 |] [| 11.; 22.; 13.; 24.; 15.; 26. |]
-  in
-  check_rune ~eps "vmap broadcast" expected result
-
-(* Test nested vmap *)
-let test_nested_vmap () =
-  let x = T.create T.float32 [| 2; 3; 4 |] (Array.init 24 float_of_int) in
-  let inner_vmap = T.vmap (fun t -> T.mul_s t 2.) in
-  let outer_vmap = T.vmap inner_vmap in
-  let result = outer_vmap x in
-  let expected_shape = [| 2; 3; 4 |] in
-  check_shape "nested vmap shape" expected_shape result;
-
-  (* Check that all values are doubled *)
-  let first_val = T.item [ 0; 0; 0 ] result in
-  check_scalar ~eps "nested vmap first value" 0. first_val
-
-(* Test vmap with reduction *)
-let test_vmap_reduction () =
-  let x = T.create T.float32 [| 4; 3; 2 |] (Array.init 24 float_of_int) in
-  let f = T.vmap (fun t -> T.sum t ~axes:[ 1 ]) in
-  let result = f x in
-  let expected_shape = [| 4; 3 |] in
-  check_shape "vmap reduction shape" expected_shape result
-
-(* Test vmap with where operation *)
-let test_vmap_where () =
-  (* JAX semantics: captured tensors are broadcast, not co-iterated *)
-  let cond =
-    T.create T.bool [| 3; 2 |] [| true; false; true; true; false; true |]
-  in
-  let x = T.create T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  let y = T.create T.float32 [| 3; 2 |] [| 10.; 20.; 30.; 40.; 50.; 60. |] in
-  let f = T.vmap (fun c -> T.where c x y) in
-  let result = f cond in
-  (* With broadcast semantics, result shape should be [3, 3, 2] Each batch
-     element sees the entire x and y arrays *)
-  let expected_shape = [| 3; 3; 2 |] in
-  check_shape "vmap where shape" expected_shape result
-(* For now, just check shape. Full value check would be complex. *)
-
-(* Test vmap with transpose *)
-let test_vmap_transpose () =
-  let x = T.create T.float32 [| 2; 3; 4 |] (Array.init 24 float_of_int) in
-  let f = T.vmap (fun t -> T.transpose t) in
-  let result = f x in
-  let expected_shape = [| 2; 4; 3 |] in
-  check_shape "vmap transpose shape" expected_shape result
-
-(* Test vmap with elementwise operations *)
-let test_vmap_elementwise () =
+let test_in_axis () =
   let x =
-    T.create T.float32 [| 3; 4 |]
-      (Array.init 12 (fun i -> float_of_int (i + 1)))
+    Nx.transpose (xs ())
+    (* [3; 4], mapped axis 1 *)
+  in
+  check_arr ~msg:"in_axis 1"
+    (to_arr (loop_map (fun r -> Nx.sum (Nx.mul r r)) (xs ())))
+    (Rune.vmap' ~in_axis:1 (fun r -> Nx.sum (Nx.mul r r)) x)
+
+let test_out_axis () =
+  let y = Rune.vmap' ~out_axis:1 (fun r -> Nx.mul r r) (xs ()) in
+  equal ~msg:"shape" (array int) [| 3; 4 |] (Nx.shape y);
+  check_arr ~msg:"values"
+    (to_arr (Nx.transpose (loop_map (fun r -> Nx.mul r r) (xs ()))))
+    y
+
+let test_vmap_structure () =
+  (* Two mapped leaves: per-slice matrix products. *)
+  let a = ms () in
+  let b =
+    Nx.create f64 [| 2; 3; 2 |]
+      [| 1.1; 0.3; -0.8; 0.6; 0.4; -1.5; 0.9; -0.2; 0.7; 1.4; -0.3; 0.5 |]
   in
   let y =
-    T.create T.float32 [| 3; 4 |]
-      (Array.init 12 (fun i -> float_of_int (i + 1)))
+    Rune.vmap
+      (module Pair)
+      (fun p -> Nx.matmul p.fst p.snd)
+      { fst = a; snd = b }
   in
-
-  (* JAX semantics: captured y is treated as a constant across the mapped axis
-     (not co-iterated). Broadcasting happens elementwise, not as a cross-product
-     over an extra axis. *)
-  let f = T.vmap (fun a -> T.add a y) in
-  let result = f x in
-  (* Under JAX semantics, result shape is [3, 4] (same as x). *)
-  let expected_shape = [| 3; 4 |] in
-  check_shape "vmap elementwise broadcast shape" expected_shape result
-
-(* Test composition: jvp (vmap f) *)
-let test_jvp_vmap_composition () =
-  let x = T.create T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  let v = T.create T.float32 [| 3; 2 |] [| 0.1; 0.2; 0.3; 0.4; 0.5; 0.6 |] in
-
-  (* Define f: sum of squares *)
-  let f t = T.sum (T.mul t t) in
-
-  (* vmap f *)
-  let vmapped_f = T.vmap f in
-
-  (* jvp of vmapped f *)
-  let primals, tangents = T.jvp vmapped_f x v in
-
-  let expected_primals = T.create T.float32 [| 3 |] [| 5.; 25.; 61. |] in
-  let expected_tangents = T.create T.float32 [| 3 |] [| 1.; 5.; 12.2 |] in
-
-  check_rune ~eps:1e-5 "jvp(vmap(f)) primals" expected_primals primals;
-  check_rune ~eps:1e-5 "jvp(vmap(f)) tangents" expected_tangents tangents
-
-(* Test composition: vmap (jvp f) *)
-let test_vmap_jvp_composition () =
-  let x = T.create T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  let v = T.create T.float32 [| 3; 2 |] [| 0.1; 0.2; 0.3; 0.4; 0.5; 0.6 |] in
-
-  (* Define f: sum of squares *)
-  let f t = T.sum (T.mul t t) in
-
-  (* Function that computes jvp and returns primals *)
-  let jvp_f_primals inputs =
-    match inputs with
-    | [ x; v ] ->
-        let primals, _ = T.jvp f x v in
-        primals
-    | _ -> failwith "jvp_f_primals expects exactly 2 inputs"
+  let expected =
+    Nx.stack ~axis:0
+      (List.init 2 (fun i ->
+           Nx.matmul (Nx.slice [ Nx.I i ] a) (Nx.slice [ Nx.I i ] b)))
   in
+  check_arr ~msg:"pair matmul" (to_arr expected) y
 
-  (* Function that computes jvp and returns tangents *)
-  let jvp_f_tangents inputs =
-    match inputs with
-    | [ x; v ] ->
-        let _, tangents = T.jvp f x v in
-        tangents
-    | _ -> failwith "jvp_f_tangents expects exactly 2 inputs"
+let test_in_axes_constant_leaf () =
+  (* Second leaf held constant: per-slice a_i @ b. *)
+  let a = ms () in
+  let b = w32 () in
+  let y =
+    Rune.vmap ~in_axes:[ Some 0; None ]
+      (module Pair)
+      (fun p -> Nx.matmul p.fst p.snd)
+      { fst = a; snd = b }
   in
-
-  (* vmap the jvp functions *)
-  let vmapped_jvp_f_primals = T.vmaps jvp_f_primals in
-  let vmapped_jvp_f_tangents = T.vmaps jvp_f_tangents in
-  let primals = vmapped_jvp_f_primals [ x; v ] in
-  let tangents = vmapped_jvp_f_tangents [ x; v ] in
-
-  let expected_primals = T.create T.float32 [| 3 |] [| 5.; 25.; 61. |] in
-  let expected_tangents = T.create T.float32 [| 3 |] [| 1.; 5.; 12.2 |] in
-
-  check_rune ~eps:1e-5 "vmap(jvp(f)) primals" expected_primals primals;
-  check_rune ~eps:1e-5 "vmap(jvp(f)) tangents" expected_tangents tangents
-
-(* Test composition: grad (vmap f) *)
-let test_grad_vmap_composition () =
-  let x = T.create T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-
-  (* Define f: sum of squares *)
-  let f t = T.sum (T.mul t t) in
-
-  (* vmap f *)
-  let vmapped_f = T.vmap f in
-
-  (* To take grad of vmap, we need to sum the output *)
-  let sum_vmapped_f x = T.sum (vmapped_f x) in
-
-  (* grad of sum of vmapped f *)
-  let grad_sum_vmapped_f = T.grad sum_vmapped_f in
-  let grads = grad_sum_vmapped_f x in
-
-  let expected_grads =
-    T.create T.float32 [| 3; 2 |] [| 2.; 4.; 6.; 8.; 10.; 12. |]
+  let expected =
+    Nx.stack ~axis:0
+      (List.init 2 (fun i -> Nx.matmul (Nx.slice [ Nx.I i ] a) b))
   in
+  check_arr ~msg:"constant leaf" (to_arr expected) y
 
-  check_rune ~eps:1e-5 "grad(sum(vmap(f)))" expected_grads grads
-
-(* Test composition: vmap (grad f) *)
-let test_vmap_grad_composition () =
-  let x = T.create T.float32 [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-
-  (* Define f: sum of squares *)
-  let f t = T.sum (T.mul t t) in
-
-  (* grad f *)
-  let grad_f = T.grad f in
-
-  (* vmap grad f *)
-  let vmapped_grad_f = T.vmap grad_f in
-  let grads = vmapped_grad_f x in
-
-  let expected_grads =
-    T.create T.float32 [| 3; 2 |] [| 2.; 4.; 6.; 8.; 10.; 12. |]
+let test_in_axes_non_leading () =
+  (* First leaf mapped along axis 1. *)
+  let a =
+    Nx.moveaxis 0 1 (ms ())
+    (* batch now at axis 1 *)
   in
-
-  check_rune ~eps:1e-5 "vmap(grad(f))" expected_grads grads
-
-(* Test composition with two-argument function: jvp (vmap g) *)
-let test_jvp_vmap_composition_two_args () =
-  let x = T.create T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-  let y = T.create T.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
-  let v_x = T.create T.float32 [| 2; 2 |] [| 0.1; 0.2; 0.3; 0.4 |] in
-  let v_y = T.create T.float32 [| 2; 2 |] [| 0.5; 0.6; 0.7; 0.8 |] in
-
-  (* Define g: sum of element-wise product *)
-  let g inputs =
-    match inputs with
-    | [ x; y ] -> T.sum (T.mul x y)
-    | _ -> failwith "g expects exactly 2 inputs"
+  let b = w32 () in
+  let y =
+    Rune.vmap ~in_axes:[ Some 1; None ]
+      (module Pair)
+      (fun p -> Nx.matmul p.fst p.snd)
+      { fst = a; snd = b }
   in
-
-  (* vmap g *)
-  let vmapped_g = T.vmaps g in
-
-  (* jvp of vmapped g *)
-  let primals, tangents = T.jvps vmapped_g [ x; y ] [ v_x; v_y ] in
-
-  let expected_primals = T.create T.float32 [| 2 |] [| 17.; 53. |] in
-  let expected_tangents = T.create T.float32 [| 2 |] [| 3.4; 10.6 |] in
-
-  check_rune ~eps:1e-5 "jvp(vmap(g)) primals" expected_primals primals;
-  check_rune ~eps:1e-5 "jvp(vmap(g)) tangents" expected_tangents tangents
-
-(* Test composition with two-argument function: vmap (jvp g) *)
-let test_vmap_jvp_composition_two_args () =
-  let x = T.create T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-  let y = T.create T.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
-  let v_x = T.create T.float32 [| 2; 2 |] [| 0.1; 0.2; 0.3; 0.4 |] in
-  let v_y = T.create T.float32 [| 2; 2 |] [| 0.5; 0.6; 0.7; 0.8 |] in
-
-  (* Define g: sum of element-wise product *)
-  let g inputs =
-    match inputs with
-    | [ x; y ] -> T.sum (T.mul x y)
-    | _ -> failwith "g expects exactly 2 inputs"
+  let expected =
+    Nx.stack ~axis:0
+      (List.init 2 (fun i -> Nx.matmul (Nx.slice [ Nx.I i ] (ms ())) b))
   in
+  check_arr ~msg:"axis 1" (to_arr expected) y
 
-  (* Function that computes jvp and returns primals *)
-  let jvp_g_primals inputs =
-    match inputs with
-    | [ x; y; v_x; v_y ] ->
-        let primals, _ = T.jvps g [ x; y ] [ v_x; v_y ] in
-        primals
-    | _ -> failwith "jvp_g_primals expects exactly 4 inputs"
+let test_in_axes_negative_axis () =
+  (* [Some (-2)] names the same axis as [Some 1] on a rank-3 leaf. *)
+  let a = Nx.moveaxis 0 1 (ms ()) in
+  let b = w32 () in
+  let y =
+    Rune.vmap ~in_axes:[ Some (-2); None ]
+      (module Pair)
+      (fun p -> Nx.matmul p.fst p.snd)
+      { fst = a; snd = b }
   in
-
-  (* Function that computes jvp and returns tangents *)
-  let jvp_g_tangents inputs =
-    match inputs with
-    | [ x; y; v_x; v_y ] ->
-        let _, tangents = T.jvps g [ x; y ] [ v_x; v_y ] in
-        tangents
-    | _ -> failwith "jvp_g_tangents expects exactly 4 inputs"
+  let expected =
+    Nx.stack ~axis:0
+      (List.init 2 (fun i -> Nx.matmul (Nx.slice [ Nx.I i ] (ms ())) b))
   in
+  check_arr ~msg:"negative axis" (to_arr expected) y
 
-  (* vmap the jvp functions *)
-  let vmapped_jvp_g_primals = T.vmaps jvp_g_primals in
-  let vmapped_jvp_g_tangents = T.vmaps jvp_g_tangents in
-  let primals = vmapped_jvp_g_primals [ x; y; v_x; v_y ] in
-  let tangents = vmapped_jvp_g_tangents [ x; y; v_x; v_y ] in
+let test_in_axes_out_of_bounds () =
+  raises_invalid_arg (fun () ->
+      ignore
+        (Rune.vmap ~in_axes:[ Some 2; None ]
+           (module Pair)
+           (fun p -> Nx.add p.fst p.snd)
+           { fst = xs (); snd = xs () }))
 
-  let expected_primals = T.create T.float32 [| 2 |] [| 17.; 53. |] in
-  let expected_tangents = T.create T.float32 [| 2 |] [| 3.4; 10.6 |] in
+let test_in_axes_length_mismatch () =
+  raises_invalid_arg (fun () ->
+      ignore
+        (Rune.vmap ~in_axes:[ Some 0 ]
+           (module Pair)
+           (fun p -> Nx.add p.fst p.snd)
+           { fst = xs (); snd = xs () }))
 
-  check_rune ~eps:1e-5 "vmap(jvp(g)) primals" expected_primals primals;
-  check_rune ~eps:1e-5 "vmap(jvp(g)) tangents" expected_tangents tangents
+let test_in_axes_maps_no_leaf () =
+  raises_invalid_arg (fun () ->
+      ignore
+        (Rune.vmap ~in_axes:[ None; None ]
+           (module Pair)
+           (fun p -> Nx.add p.fst p.snd)
+           { fst = xs (); snd = xs () }))
 
-(* Test composition with two-argument function: grad (vmap g) *)
-let test_grad_vmap_composition_two_args () =
-  let x = T.create T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-  let y = T.create T.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
-
-  (* Define g: sum of element-wise product *)
-  let g inputs =
-    match inputs with
-    | [ x; y ] -> T.sum (T.mul x y)
-    | _ -> failwith "g expects exactly 2 inputs"
+let test_structural_out_axis () =
+  let y =
+    Rune.vmap ~out_axis:1
+      (module Pair)
+      (fun p -> Nx.add p.fst p.snd)
+      { fst = xs (); snd = xs () }
   in
+  equal ~msg:"shape" (array int) [| 3; 4 |] (Nx.shape y);
+  check_arr ~msg:"values" (to_arr (Nx.transpose (Nx.add (xs ()) (xs ())))) y
 
-  (* vmap g *)
-  let vmapped_g = T.vmaps g in
+let test_batch_size_mismatch () =
+  raises_invalid_arg (fun () ->
+      ignore
+        (Rune.vmap
+           (module Pair)
+           (fun p -> Nx.add p.fst p.snd)
+           { fst = vec64 [| 1.0; 2.0 |]; snd = vec64 [| 1.0; 2.0; 3.0 |] }))
 
-  (* To take grad of vmap, we need to sum the output *)
-  let sum_vmapped_g inputs = T.sum (vmapped_g inputs) in
+let test_scalar_leaf_rejected () =
+  raises_invalid_arg (fun () ->
+      ignore (Rune.vmap' (fun x -> x) (Nx.scalar f64 1.0)))
 
-  (* grad of sum of vmapped g *)
-  let grads_list = T.grads sum_vmapped_g [ x; y ] in
-  let grad_x = List.nth grads_list 0 in
+let test_reading_batched_value_raises () =
+  raises_invalid_arg (fun () ->
+      ignore
+        (Rune.vmap'
+           (fun r ->
+             (* Concretizing a batched tensor would expose the physical batched
+                buffer. *)
+             let (_ : float) = Nx.item [ 0 ] r in
+             r)
+           (xs ())))
 
-  let expected_grads = T.create T.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
+let test_reading_constant_value_is_fine () =
+  let c = vec64 [| 2.0 |] in
+  let y = Rune.vmap' (fun r -> Nx.mul_s r (Nx.item [ 0 ] c)) (xs ()) in
+  check_arr ~msg:"constant read" (to_arr (Nx.mul_s (xs ()) 2.0)) y
 
-  check_rune ~eps:1e-5 "grad(sum(vmap(g)), argnums=0)" expected_grads grad_x
+let test_no_rule_raises () =
+  raises_invalid_arg (fun () ->
+      ignore
+        (Rune.vmap'
+           (fun m -> Nx.cholesky m)
+           (Nx.create f64 [| 2; 2; 2 |]
+              [| 4.0; 1.0; 1.0; 3.0; 5.0; 0.5; 0.5; 2.0 |])))
 
-(* Test composition with two-argument function: vmap (grad g) *)
-let test_vmap_grad_composition_two_args () =
-  let x = T.create T.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-  let y = T.create T.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
-
-  (* Define g: sum of element-wise product *)
-  let g inputs =
-    match inputs with
-    | [ x; y ] -> T.sum (T.mul x y)
-    | _ -> failwith "g expects exactly 2 inputs"
+let test_vmap2_structured_output () =
+  (* Both output leaves gain a batch axis; one depends on the input, the other
+     is constant and broadcasts. *)
+  let c = vec64 [| 9.0 |] in
+  let y =
+    Rune.vmap2
+      (module Pair)
+      (module Pair)
+      (fun p -> { fst = Nx.mul p.fst p.snd; snd = c })
+      { fst = xs (); snd = xs () }
   in
+  check_arr ~msg:"fst" (to_arr (Nx.mul (xs ()) (xs ()))) y.fst;
+  equal ~msg:"snd shape" (array int) [| 4; 1 |] (Nx.shape y.snd);
+  check_arr ~msg:"snd" [| 9.0; 9.0; 9.0; 9.0 |] y.snd
 
-  (* Function that computes grad w.r.t. first argument *)
-  let grad_g inputs =
-    match inputs with
-    | [ x; y ] ->
-        let grads = T.grads g [ x; y ] in
-        List.nth grads 0 (* Return gradient w.r.t. x *)
-    | _ -> failwith "grad_g expects exactly 2 inputs"
+let test_rng_is_identical_per_lane () =
+  (* Implicit RNG keys are constants of the map: every lane draws the same
+     values. Pinned as documented behavior until nx grows tensor-typed keys;
+     thread distinct randomness in as mapped inputs instead. *)
+  let y =
+    Nx.Rng.run ~seed:42 (fun () ->
+        Rune.vmap' (fun r -> Nx.add r (Nx.rand f64 [| 3 |])) (xs ()))
   in
+  let base = Nx.sub y (xs ()) in
+  let row i = to_arr (Nx.slice [ Nx.I i ] base) in
+  equal ~msg:"lanes share draws" (array (float 1e-12)) (row 0) (row 1)
 
-  (* vmap grad g *)
-  let vmapped_grad_g = T.vmaps grad_g in
-  let grads = vmapped_grad_g [ x; y ] in
+(* Nesting *)
 
-  let expected_grads = T.create T.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
+let test_nested_vmap () =
+  let x = ms () in
+  let f r = Nx.sum (Nx.mul r r) in
+  let y = Rune.vmap' (Rune.vmap' f) x in
+  let expected =
+    Nx.stack ~axis:0 (List.init 2 (fun i -> loop_map f (Nx.slice [ Nx.I i ] x)))
+  in
+  check_arr ~msg:"nested" (to_arr expected) y
 
-  check_rune ~eps:1e-5 "vmap(grad(g), argnums=0)" expected_grads grads
+(* Composition with differentiation *)
 
-let () =
-  run "Vmap tests"
-    [
-      group "basic"
-        [
-          test "simple" test_vmap_simple;
-          test "matmul" test_vmap_matmul;
-          test "axis" test_vmap_axis;
-          test "no_out_axis" test_vmap_no_out_axis;
-          test "broadcast" test_vmap_broadcast;
-          test "nested" test_nested_vmap;
-          test "reduction" test_vmap_reduction;
-          test "where" test_vmap_where;
-          test "transpose" test_vmap_transpose;
-          test "elementwise" test_vmap_elementwise;
-        ];
-      group "composition"
-        [
-          test "jvp_vmap" test_jvp_vmap_composition;
-          test "vmap_jvp" test_vmap_jvp_composition;
-          test "grad_vmap" test_grad_vmap_composition;
-          test "vmap_grad" test_vmap_grad_composition;
-          test "jvp_vmap_two_args" test_jvp_vmap_composition_two_args;
-          test "vmap_jvp_two_args" test_vmap_jvp_composition_two_args;
-          test "grad_vmap_two_args" test_grad_vmap_composition_two_args;
-          test "vmap_grad_two_args" test_vmap_grad_composition_two_args;
-        ];
-    ]
+let test_per_sample_gradients () =
+  (* vmap of grad: gradient of sum(x²) per row is 2x. *)
+  let f x = Nx.sum (Nx.mul x x) in
+  let g = Rune.vmap' (fun x -> Rune.grad' f x) (xs ()) in
+  check_arr ~msg:"per-sample grads"
+    (Array.map (fun v -> 2.0 *. v) (to_arr (xs ())))
+    g
+
+let test_grad_through_vmap () =
+  (* grad of vmap: d/dx sum_i sum(x_i²) = 2x. *)
+  let f x = Nx.sum (Rune.vmap' (fun r -> Nx.sum (Nx.mul r r)) x) in
+  let g = Rune.grad' f (xs ()) in
+  check_arr ~msg:"grad through vmap"
+    (Array.map (fun v -> 2.0 *. v) (to_arr (xs ())))
+    g
+
+let test_per_sample_gradients_of_gather () =
+  (* The gather gradient scatter-adds its cotangent; under vmap the scatter
+     effect must carry its Add mode or the per-sample gradients collapse to a
+     Set-mode scatter. *)
+  let idx = Nx.create Nx.int32 [| 2 |] [| 1l; 1l |] in
+  let f x =
+    let gathered = Nx.take_along_axis ~axis:0 idx x in
+    Nx.sum (Nx.mul gathered gathered)
+  in
+  let g = Rune.vmap' (fun x -> Rune.grad' f x) (xs ()) in
+  let expected =
+    Nx.stack ~axis:0
+      (List.init 4 (fun i -> Rune.grad' f (Nx.slice [ Nx.I i ] (xs ()))))
+  in
+  (* Row element 1 is gathered twice: its gradient is 2. *)
+  check_arr ~msg:"per-sample gather grads" (to_arr expected) g
+
+let test_jvp_through_vmap () =
+  (* jvp of vmap of sum(x²) along v: per row, 2 <x_i, v_i>. *)
+  let f x = Rune.vmap' (fun r -> Nx.sum (Nx.mul r r)) x in
+  let v = tangent_like (xs ()) in
+  let _, dy = Rune.jvp' f (xs ()) v in
+  let expected = Nx.sum ~axes:[ 1 ] (Nx.mul_s (Nx.mul (xs ()) v) 2.0) in
+  check_arr ~msg:"jvp through vmap" (to_arr expected) dy
+
+let tests =
+  [
+    group "loop oracle" oracle_tests;
+    group "axes and structure"
+      [
+        test "maps a non-leading axis" test_in_axis;
+        test "places the batch axis on output" test_out_axis;
+        test "maps all leaves of a structure" test_vmap_structure;
+        test "in_axes holds a leaf constant" test_in_axes_constant_leaf;
+        test "in_axes maps a non-leading axis" test_in_axes_non_leading;
+        test "in_axes accepts a negative axis" test_in_axes_negative_axis;
+        test "in_axes rejects an out-of-bounds axis" test_in_axes_out_of_bounds;
+        test "in_axes must have one entry per leaf" test_in_axes_length_mismatch;
+        test "in_axes must map at least one leaf" test_in_axes_maps_no_leaf;
+        test "out_axis places the structural batch axis"
+          test_structural_out_axis;
+        test "rejects mismatched batch sizes" test_batch_size_mismatch;
+        test "rejects scalar leaves" test_scalar_leaf_rejected;
+        test "raises without a batching rule" test_no_rule_raises;
+        test "reading a batched value raises" test_reading_batched_value_raises;
+        test "reading a constant value is fine"
+          test_reading_constant_value_is_fine;
+      ];
+    group "nesting" [ test "vmap of vmap" test_nested_vmap ];
+    group "randomness"
+      [
+        test "implicit RNG draws are identical per lane"
+          test_rng_is_identical_per_lane;
+      ];
+    group "structured outputs"
+      [ test "vmap2 batches every output leaf" test_vmap2_structured_output ];
+    group "composition"
+      [
+        test "vmap of grad: per-sample gradients" test_per_sample_gradients;
+        test "per-sample gradients of a gather"
+          test_per_sample_gradients_of_gather;
+        test "grad of vmap" test_grad_through_vmap;
+        test "jvp of vmap" test_jvp_through_vmap;
+      ];
+  ]
+
+let () = run "rune vmap" tests

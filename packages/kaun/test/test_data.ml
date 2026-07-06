@@ -4,174 +4,200 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-module Data = Kaun.Data
+open Kaun
 
-let dtype = Nx.float32
+(* [arange n cols] is an [n; cols] float32 tensor whose row [i] is [i * cols +
+   0, ..., i * cols + cols - 1]: every element identifies its example, so batch
+   contents are checkable exactly. *)
+let arange n cols =
+  Nx.create Nx.float32 [| n; cols |] (Array.init (n * cols) float_of_int)
 
-(* Constructors *)
+let shapes seq = List.of_seq (Seq.map (fun b -> Array.to_list (Nx.shape b)) seq)
 
-let test_of_array () =
-  let d = Data.of_array [| 10; 20; 30 |] in
-  equal ~msg:"length" (option int) (Some 3) (Data.length d);
-  let a = Data.to_array d in
-  equal ~msg:"elements" (array int) [| 10; 20; 30 |] a
+let elements seq =
+  List.concat_map (fun b -> Array.to_list (Nx.to_array b)) (List.of_seq seq)
 
-let test_of_fn () =
-  let d = Data.of_fn 4 (fun i -> i * i) in
-  equal ~msg:"length" (option int) (Some 4) (Data.length d);
-  let a = Data.to_array d in
-  equal ~msg:"elements" (array int) [| 0; 1; 4; 9 |] a
+let exact = float 0.
+let sorted l = List.sort Float.compare l
 
-let test_of_fn_negative () =
-  raises_match
-    (fun exn -> match exn with Invalid_argument _ -> true | _ -> false)
-    (fun () -> ignore (Data.of_fn (-1) Fun.id))
+(* Batch shapes *)
 
-let test_of_tensor () =
-  let t = Nx.create dtype [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
-  let d = Data.of_tensor t in
-  equal ~msg:"length" (option int) (Some 3) (Data.length d);
-  let a = Data.to_array d in
-  equal ~msg:"count" int 3 (Array.length a);
-  equal ~msg:"shape" (list int) [ 2 ] (Array.to_list (Nx.shape a.(0)));
-  equal ~msg:"first elem" (float 1e-6) 1.0 (Nx.item [ 0 ] a.(0))
+let test_consecutive_batches () =
+  let data = Data.batches ~batch_size:4 (arange 10 3) in
+  equal (list (list int)) [ [ 4; 3 ]; [ 4; 3 ]; [ 2; 3 ] ] (shapes data);
+  equal (list exact)
+    (List.init 30 float_of_int)
+    (elements data) ~msg:"example order preserved"
 
-let test_of_tensors () =
-  let x = Nx.create dtype [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
-  let y = Nx.create dtype [| 3 |] [| 10.0; 20.0; 30.0 |] in
-  let d = Data.of_tensors (x, y) in
-  equal ~msg:"length" (option int) (Some 3) (Data.length d);
-  let a = Data.to_array d in
-  equal ~msg:"count" int 3 (Array.length a);
-  let x0, y0 = a.(0) in
-  equal ~msg:"x0 shape" (list int) [ 2 ] (Array.to_list (Nx.shape x0));
-  equal ~msg:"y0 scalar" (float 1e-6) 10.0 (Nx.item [] y0)
+let test_drop_last () =
+  let data = Data.batches ~drop_last:true ~batch_size:4 (arange 10 3) in
+  equal (list (list int)) [ [ 4; 3 ]; [ 4; 3 ] ] (shapes data);
+  equal (list exact)
+    (List.init 24 float_of_int)
+    (elements data) ~msg:"remainder examples dropped"
 
-let test_of_tensors_mismatch () =
-  let x = Nx.create dtype [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
-  let y = Nx.create dtype [| 2 |] [| 10.0; 20.0 |] in
-  raises_match
-    (fun exn -> match exn with Invalid_argument _ -> true | _ -> false)
-    (fun () -> ignore (Data.of_tensors (x, y)))
+let test_short_batch () =
+  let data = Data.batches ~batch_size:8 (arange 3 1) in
+  equal (list (list int)) [ [ 3; 1 ] ] (shapes data)
 
-(* Transformers *)
+let test_short_batch_drop_last () =
+  let data = Data.batches ~drop_last:true ~batch_size:8 (arange 3 1) in
+  is_true ~msg:"no batch survives drop_last" (Seq.is_empty data)
 
-let test_map () =
-  let d = Data.of_array [| 1; 2; 3 |] |> Data.map (fun x -> x * 2) in
-  equal ~msg:"mapped" (array int) [| 2; 4; 6 |] (Data.to_array d)
+let test_exact_fit () =
+  let data = Data.batches ~batch_size:4 (arange 8 2) in
+  equal (list (list int)) [ [ 4; 2 ]; [ 4; 2 ] ] (shapes data)
 
-let test_batch () =
-  let d = Data.of_array [| 1; 2; 3; 4; 5 |] |> Data.batch 2 in
-  let batches = Data.to_array d in
-  equal ~msg:"num batches" int 3 (Array.length batches);
-  equal ~msg:"batch 0" (array int) [| 1; 2 |] batches.(0);
-  equal ~msg:"batch 1" (array int) [| 3; 4 |] batches.(1);
-  equal ~msg:"batch 2 (partial)" (array int) [| 5 |] batches.(2)
+let test_empty_dataset () =
+  let empty = Nx.create Nx.float32 [| 0; 2 |] [||] in
+  is_true ~msg:"no batches" (Seq.is_empty (Data.batches ~batch_size:4 empty));
+  is_true ~msg:"no shuffled batches"
+    (Seq.is_empty (Data.batches ~shuffle:true ~batch_size:4 empty))
 
-let test_batch_drop_last () =
-  let d = Data.of_array [| 1; 2; 3; 4; 5 |] |> Data.batch ~drop_last:true 2 in
-  let batches = Data.to_array d in
-  equal ~msg:"num batches" int 2 (Array.length batches);
-  equal ~msg:"batch 0" (array int) [| 1; 2 |] batches.(0);
-  equal ~msg:"batch 1" (array int) [| 3; 4 |] batches.(1)
+(* Shuffling *)
 
-let test_batch_invalid_size () =
-  raises_match
-    (fun exn -> match exn with Invalid_argument _ -> true | _ -> false)
-    (fun () -> ignore (Data.of_array [| 1; 2 |] |> Data.batch 0))
-
-let test_map_batch () =
-  let d =
-    Data.of_array [| 1; 2; 3; 4 |]
-    |> Data.map_batch 2 (fun batch -> Array.fold_left ( + ) 0 batch)
-  in
-  equal ~msg:"map_batch" (array int) [| 3; 7 |] (Data.to_array d)
+let shuffled_elements ~seed =
+  Nx.Rng.run ~seed @@ fun () ->
+  elements (Data.batches ~shuffle:true ~batch_size:4 (arange 10 1))
 
 let test_shuffle_deterministic () =
-  let d1 =
-    Nx.Rng.run ~seed:42 @@ fun () ->
-    Data.of_array [| 0; 1; 2; 3; 4; 5; 6; 7 |] |> Data.shuffle |> Data.to_array
+  equal (list exact) (shuffled_elements ~seed:0) (shuffled_elements ~seed:0)
+
+let test_shuffle_is_permutation () =
+  let seen = shuffled_elements ~seed:0 in
+  not_equal (list exact)
+    (List.init 10 float_of_int)
+    seen ~msg:"order changed by seed 0";
+  equal (list exact)
+    (List.init 10 float_of_int)
+    (sorted seen) ~msg:"same multiset of examples"
+
+let test_shuffle_keeps_batch_shapes () =
+  Nx.Rng.run ~seed:0 @@ fun () ->
+  let data = Data.batches ~shuffle:true ~batch_size:4 (arange 10 3) in
+  equal (list (list int)) [ [ 4; 3 ]; [ 4; 3 ]; [ 2; 3 ] ] (shapes data)
+
+let test_epochs_reshuffle () =
+  Nx.Rng.run ~seed:1 @@ fun () ->
+  let data = Data.batches ~shuffle:true ~batch_size:4 (arange 32 1) in
+  let epoch1 = elements data in
+  let epoch2 = elements data in
+  not_equal (list exact) epoch1 epoch2 ~msg:"traversals reshuffle";
+  equal (list exact) (sorted epoch1) (sorted epoch2)
+    ~msg:"same multiset each epoch"
+
+(* Paired datasets *)
+
+let paired n =
+  let x = Nx.create Nx.float32 [| n |] (Array.init n float_of_int) in
+  let y =
+    Nx.create Nx.float64 [| n |] (Array.init n (fun i -> float_of_int (2 * i)))
   in
-  let d2 =
-    Nx.Rng.run ~seed:42 @@ fun () ->
-    Data.of_array [| 0; 1; 2; 3; 4; 5; 6; 7 |] |> Data.shuffle |> Data.to_array
+  (x, y)
+
+let test_batches2_shapes () =
+  let x = arange 10 3 in
+  let y = Nx.create Nx.float32 [| 10; 1 |] (Array.init 10 float_of_int) in
+  let data = Data.batches2 ~batch_size:4 (x, y) in
+  equal
+    (list (pair (list int) (list int)))
+    [ ([ 4; 3 ], [ 4; 1 ]); ([ 4; 3 ], [ 4; 1 ]); ([ 2; 3 ], [ 2; 1 ]) ]
+    (List.of_seq
+       (Seq.map
+          (fun (xb, yb) ->
+            (Array.to_list (Nx.shape xb), Array.to_list (Nx.shape yb)))
+          data))
+
+let test_batches2_shuffle_keeps_pairing () =
+  Nx.Rng.run ~seed:3 @@ fun () ->
+  let data = Data.batches2 ~shuffle:true ~batch_size:4 (paired 10) in
+  let xs, ys =
+    Seq.fold_left
+      (fun (xs, ys) (xb, yb) ->
+        ( xs @ Array.to_list (Nx.to_array xb),
+          ys @ Array.to_list (Nx.to_array yb) ))
+      ([], []) data
   in
-  equal ~msg:"same seed same order" (array int) d1 d2
+  equal (list exact)
+    (List.map (fun v -> 2. *. v) xs)
+    ys ~msg:"targets track their inputs";
+  equal (list exact)
+    (List.init 10 float_of_int)
+    (sorted xs) ~msg:"all examples visited once"
 
-let test_shuffle_different_seed () =
-  let a1 =
-    Nx.Rng.run ~seed:1 @@ fun () ->
-    Data.of_array [| 0; 1; 2; 3; 4; 5; 6; 7 |] |> Data.shuffle |> Data.to_array
+(* Composition with Seq *)
+
+let test_seq_map () =
+  let data =
+    Data.batches ~batch_size:4 (arange 4 1) |> Seq.map (fun b -> Nx.mul_s b 2.)
   in
-  let a2 =
-    Nx.Rng.run ~seed:2 @@ fun () ->
-    Data.of_array [| 0; 1; 2; 3; 4; 5; 6; 7 |] |> Data.shuffle |> Data.to_array
-  in
-  is_true ~msg:"different seed different order" (a1 <> a2)
+  equal (list exact) [ 0.; 2.; 4.; 6. ] (elements data)
 
-(* Consumers *)
+let test_seq_take () =
+  let data = Data.batches ~batch_size:2 (arange 10 1) |> Seq.take 2 in
+  equal (list exact) [ 0.; 1.; 2.; 3. ] (elements data)
 
-let test_fold () =
-  let sum = Data.of_array [| 1; 2; 3; 4 |] |> Data.fold ( + ) 0 in
-  equal ~msg:"fold sum" int 10 sum
+let test_seq_fold_left () =
+  let data = Data.batches ~batch_size:4 (arange 10 1) in
+  let steps = Seq.fold_left (fun k _ -> k + 1) 0 data in
+  equal int 3 steps
 
-let test_to_seq () =
-  let s = Data.of_array [| 10; 20; 30 |] |> Data.to_seq in
-  let a = Array.of_seq s in
-  equal ~msg:"to_seq" (array int) [| 10; 20; 30 |] a
+(* Errors *)
 
-(* Properties *)
+let test_invalid_batch_size () =
+  raises_invalid_arg "Data.batches: batch_size must be positive, got 0"
+    (fun () -> Data.batches ~batch_size:0 (arange 4 1));
+  raises_invalid_arg "Data.batches2: batch_size must be positive, got -1"
+    (fun () -> Data.batches2 ~batch_size:(-1) (paired 4))
 
-let test_reset () =
-  let d = Data.of_array [| 1; 2; 3 |] in
-  let a1 = Data.to_array d in
-  Data.reset d;
-  let a2 = Data.to_array d in
-  equal ~msg:"reset re-iterates" (array int) a1 a2
+let test_scalar_input () =
+  let scalar = Nx.create Nx.float32 [||] [| 1. |] in
+  raises_invalid_arg "Data.batches: input must not be a scalar" (fun () ->
+      Data.batches ~batch_size:1 scalar)
 
-let test_length () =
-  let d = Data.of_array [| 1; 2; 3 |] in
-  equal ~msg:"known length" (option int) (Some 3) (Data.length d);
-  let d2 = Data.map (fun x -> x + 1) d in
-  equal ~msg:"map preserves length" (option int) (Some 3) (Data.length d2)
+let test_mismatched_examples () =
+  let x = arange 4 1 and y = arange 3 1 in
+  raises_invalid_arg "Data.batches2: x has 4 examples but y has 3" (fun () ->
+      Data.batches2 ~batch_size:2 (x, y))
 
-(* Utilities *)
+let tests =
+  [
+    group "batch shapes"
+      [
+        test "cuts consecutive batches and keeps the remainder"
+          test_consecutive_batches;
+        test "drop_last drops a short final batch" test_drop_last;
+        test "one short batch when batch_size exceeds examples" test_short_batch;
+        test "drop_last yields nothing when batch_size exceeds examples"
+          test_short_batch_drop_last;
+        test "exact fit yields only full batches" test_exact_fit;
+        test "empty dataset yields no batches" test_empty_dataset;
+      ];
+    group "shuffling"
+      [
+        test "same seed gives the same order" test_shuffle_deterministic;
+        test "shuffling permutes without loss" test_shuffle_is_permutation;
+        test "shuffling keeps batch shapes" test_shuffle_keeps_batch_shapes;
+        test "re-traversal reshuffles each epoch" test_epochs_reshuffle;
+      ];
+    group "paired datasets"
+      [
+        test "pairs input and target slices" test_batches2_shapes;
+        test "shuffling keeps examples paired"
+          test_batches2_shuffle_keeps_pairing;
+      ];
+    group "composition"
+      [
+        test "Seq.map transforms batches" test_seq_map;
+        test "Seq.take truncates an epoch" test_seq_take;
+        test "Seq.fold_left threads state" test_seq_fold_left;
+      ];
+    group "errors"
+      [
+        test "rejects non-positive batch_size" test_invalid_batch_size;
+        test "rejects scalar input" test_scalar_input;
+        test "rejects mismatched example counts" test_mismatched_examples;
+      ];
+  ]
 
-let test_stack_batch () =
-  let tensors =
-    [|
-      Nx.create dtype [| 2 |] [| 1.0; 2.0 |];
-      Nx.create dtype [| 2 |] [| 3.0; 4.0 |];
-      Nx.create dtype [| 2 |] [| 5.0; 6.0 |];
-    |]
-  in
-  let stacked = Data.stack_batch tensors in
-  equal ~msg:"shape" (list int) [ 3; 2 ] (Array.to_list (Nx.shape stacked));
-  equal ~msg:"value" (float 1e-6) 3.0 (Nx.item [ 1; 0 ] stacked)
-
-let () =
-  run "Kaun.Data"
-    [
-      group "constructors"
-        [
-          test "of_array" test_of_array;
-          test "of_fn" test_of_fn;
-          test "of_fn negative" test_of_fn_negative;
-          test "of_tensor" test_of_tensor;
-          test "of_tensors" test_of_tensors;
-          test "of_tensors mismatch" test_of_tensors_mismatch;
-        ];
-      group "transformers"
-        [
-          test "map" test_map;
-          test "batch" test_batch;
-          test "batch drop_last" test_batch_drop_last;
-          test "batch invalid size" test_batch_invalid_size;
-          test "map_batch" test_map_batch;
-          test "shuffle deterministic" test_shuffle_deterministic;
-          test "shuffle different seed" test_shuffle_different_seed;
-        ];
-      group "consumers" [ test "fold" test_fold; test "to_seq" test_to_seq ];
-      group "properties" [ test "reset" test_reset; test "length" test_length ];
-      group "utilities" [ test "stack_batch" test_stack_batch ];
-    ]
+let () = run "kaun data" tests

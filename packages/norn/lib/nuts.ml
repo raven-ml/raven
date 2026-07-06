@@ -158,7 +158,7 @@ let rec build_tree integrator metric step_size grad_log_prob q p g depth
 let step (integrator : Internal.integrator) (metric : Internal.metric) step_size
     max_depth (state : Internal.state) log_density_fn =
   let grad_log_prob q =
-    let lp, g = Rune.value_and_grad log_density_fn q in
+    let lp, g = Rune.value_and_grad' log_density_fn q in
     (Nx.item [] lp, g)
   in
   let dim = Nx.numel state.position in

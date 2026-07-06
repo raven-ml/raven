@@ -30,7 +30,7 @@ dune exec --root . examples/12-survey-optimization/main.exe
 | `Cosmo.planck18`            | Planck 2018 fiducial cosmology                       |
 | `Cosmo.linear_power`        | Linear matter power spectrum P(k, z)                 |
 | `Cosmo.comoving_distance`   | Comoving distance for lensing kernel computation     |
-| `Rune.value_and_grad`       | Loss and gradient for survey parameter optimization  |
+| `Rune.value_and_grad'`      | Loss and gradient for survey parameter optimization  |
 | `Vega.adam`                 | Adam optimizer for continuous parameter search       |
 
 ## How It Works

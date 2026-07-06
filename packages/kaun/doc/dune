@@ -1,4 +1,4 @@
 (mdx
  (files *.md)
  (package kaun)
- (libraries kaun rune nx nx.io))
+ (libraries kaun kaun.hf kaun.datasets rune vega nx))

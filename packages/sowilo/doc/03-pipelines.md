@@ -116,13 +116,13 @@ let loss params img label =
   let logits = model params preprocessed in
   cross_entropy logits label
 
-(* Rune.grad differentiates through augment + preprocess + model *)
+(* Rune.grad' differentiates through augment + preprocess + model *)
 ```
 
 Operations that break the gradient (`canny`, `median_blur`) should not be
 used inside differentiable pipelines. All other operations -- blurs, color
 adjustments, geometric transforms, morphology, threshold, sobel, scharr,
-laplacian -- support `Rune.grad`.
+laplacian -- support `Rune.grad'`.
 
 ## Integration with Kaun
 

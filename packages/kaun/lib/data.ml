@@ -3,211 +3,50 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type 'a t = {
-  next : unit -> 'a option;
-  reset : unit -> unit;
-  length : int option;
-}
+let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 
-(* Constructors *)
-
-let of_array a =
-  let n = Array.length a in
-  let i = ref 0 in
-  {
-    next =
-      (fun () ->
-        if !i >= n then None
-        else
-          let v = a.(!i) in
-          incr i;
-          Some v);
-    reset = (fun () -> i := 0);
-    length = Some n;
-  }
-
-let of_tensor t =
-  let n = (Nx.shape t).(0) in
-  let i = ref 0 in
-  {
-    next =
-      (fun () ->
-        if !i >= n then None
-        else
-          let v = Nx.slice [ I !i ] t in
-          incr i;
-          Some v);
-    reset = (fun () -> i := 0);
-    length = Some n;
-  }
-
-let of_tensors (x, y) =
-  let nx = (Nx.shape x).(0) in
-  let ny = (Nx.shape y).(0) in
-  if nx <> ny then
-    invalid_arg
-      (Printf.sprintf "Data.of_tensors: first dimensions differ (%d vs %d)" nx
-         ny);
-  let n = nx in
-  let i = ref 0 in
-  {
-    next =
-      (fun () ->
-        if !i >= n then None
-        else
-          let vx = Nx.slice [ I !i ] x in
-          let vy = Nx.slice [ I !i ] y in
-          incr i;
-          Some (vx, vy));
-    reset = (fun () -> i := 0);
-    length = Some n;
-  }
-
-let of_fn n f =
-  if n < 0 then
-    invalid_arg (Printf.sprintf "Data.of_fn: expected n >= 0, got %d" n);
-  let i = ref 0 in
-  {
-    next =
-      (fun () ->
-        if !i >= n then None
-        else
-          let v = f !i in
-          incr i;
-          Some v);
-    reset = (fun () -> i := 0);
-    length = Some n;
-  }
-
-let repeat n v = of_fn n (fun _ -> v)
-
-(* Transformers *)
-
-let map f t =
-  {
-    next = (fun () -> Option.map f (t.next ()));
-    reset = t.reset;
-    length = t.length;
-  }
-
-let batch ?(drop_last = false) n t =
-  if n <= 0 then
-    invalid_arg (Printf.sprintf "Data.batch: expected n > 0, got %d" n);
-  let batch_len =
-    Option.map (fun l -> if drop_last then l / n else (l + n - 1) / n) t.length
-  in
-  {
-    next =
-      (fun () ->
-        match t.next () with
-        | None -> None
-        | Some first ->
-            let buf = Array.make n first in
-            let k = ref 1 in
-            let continue = ref true in
-            while !k < n && !continue do
-              match t.next () with
-              | Some v ->
-                  buf.(!k) <- v;
-                  incr k
-              | None -> continue := false
-            done;
-            if !k < n && drop_last then None
-            else if !k < n then Some (Array.sub buf 0 !k)
-            else Some buf);
-    reset = t.reset;
-    length = batch_len;
-  }
-
-let map_batch ?drop_last n f t = map f (batch ?drop_last n t)
-
-let shuffle t =
-  match t.length with
-  | None -> invalid_arg "Data.shuffle: requires a pipeline with known length"
-  | Some n ->
-      let perm_tensor = Nx.permutation n in
-      let perm = Array.map Int32.to_int (Nx.to_array perm_tensor) in
-      (* Eagerly materialize the upstream into an array *)
-      let elements =
-        Array.init n (fun _ ->
-            match t.next () with Some v -> v | None -> assert false)
-      in
-      let i = ref 0 in
-      {
-        next =
-          (fun () ->
-            if !i >= n then None
-            else
-              let v = elements.(perm.(!i)) in
-              incr i;
-              Some v);
-        reset = (fun () -> i := 0);
-        length = Some n;
-      }
-
-(* Consumers *)
-
-let iter f t =
-  let rec loop () =
-    match t.next () with
-    | None -> ()
-    | Some v ->
-        f v;
-        loop ()
-  in
-  loop ()
-
-let iteri f t =
-  let i = ref 0 in
-  let rec loop () =
-    match t.next () with
-    | None -> ()
-    | Some v ->
-        f !i v;
-        incr i;
-        loop ()
-  in
-  loop ()
-
-let fold f init t =
-  let rec loop acc =
-    match t.next () with None -> acc | Some v -> loop (f acc v)
-  in
-  loop init
-
-let to_array t =
-  let items = ref [] in
-  iter (fun v -> items := v :: !items) t;
-  Array.of_list (List.rev !items)
-
-let rec to_seq t () =
-  match t.next () with None -> Seq.Nil | Some v -> Seq.Cons (v, to_seq t)
-
-(* Properties *)
-
-let reset t = t.reset ()
-let length t = t.length
-
-(* Utilities *)
-
-let stack_batch tensors = Nx.stack (Array.to_list tensors)
-let shuffle_pipeline = shuffle
-
-let prepare ?(shuffle = false) ~batch_size ?(drop_last = true) (x, y) =
-  let nx = (Nx.shape x).(0) in
-  let ny = (Nx.shape y).(0) in
-  if nx <> ny then
-    invalid_arg
-      (Printf.sprintf "Data.prepare: first dimensions differ (%d vs %d)" nx ny);
+let check_batch_size op batch_size =
   if batch_size <= 0 then
-    invalid_arg
-      (Printf.sprintf "Data.prepare: expected batch_size > 0, got %d" batch_size);
-  let indices = of_fn nx Fun.id in
-  let indices = if shuffle then shuffle_pipeline indices else indices in
-  map_batch ~drop_last batch_size
-    (fun idx_arr ->
-      let n = Array.length idx_arr in
-      let xs = Array.init n (fun j -> Nx.slice [ I idx_arr.(j) ] x) in
-      let ys = Array.init n (fun j -> Nx.slice [ I idx_arr.(j) ] y) in
-      (stack_batch xs, stack_batch ys))
-    indices
+    invalid_argf "Data.%s: batch_size must be positive, got %d" op batch_size
+
+let examples op t =
+  match Nx.shape t with
+  | [||] -> invalid_argf "Data.%s: input must not be a scalar" op
+  | shape -> shape.(0)
+
+(* [cut perm t start stop] is examples [start, stop) of [t]: a view without a
+   permutation, a gathered copy with one. *)
+let cut perm t start stop =
+  match perm with
+  | None -> Nx.slice [ Nx.R (start, stop) ] t
+  | Some perm -> Nx.take ~axis:0 (Nx.slice [ Nx.R (start, stop) ] perm) t
+
+(* Each traversal forces the outer thunk once, drawing one permutation per epoch
+   from the ambient RNG scope; the recursion threads it along. *)
+let batch_seq ~shuffle ~drop_last ~batch_size ~n slice =
+  let rec from perm start () =
+    if start >= n || (drop_last && start + batch_size > n) then Seq.Nil
+    else
+      let stop = min n (start + batch_size) in
+      Seq.Cons (slice perm start stop, from perm stop)
+  in
+  fun () ->
+    if n = 0 then Seq.Nil
+    else
+      let perm = if shuffle then Some (Nx.permutation n) else None in
+      from perm 0 ()
+
+let batches ?(shuffle = false) ?(drop_last = false) ~batch_size x =
+  check_batch_size "batches" batch_size;
+  let n = examples "batches" x in
+  batch_seq ~shuffle ~drop_last ~batch_size ~n (fun perm start stop ->
+      cut perm x start stop)
+
+let batches2 ?(shuffle = false) ?(drop_last = false) ~batch_size (x, y) =
+  check_batch_size "batches2" batch_size;
+  let n = examples "batches2" x in
+  let ny = examples "batches2" y in
+  if n <> ny then
+    invalid_argf "Data.batches2: x has %d examples but y has %d" n ny;
+  batch_seq ~shuffle ~drop_last ~batch_size ~n (fun perm start stop ->
+      (cut perm x start stop, cut perm y start stop))

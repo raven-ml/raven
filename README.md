@@ -22,18 +22,15 @@ let x = Nx.linspace float32 0. 10. 100
 let y = Nx.sin x
 
 (* rune — automatic differentiation *)
-let grad_f = Rune.grad (fun x -> Rune.sum (Rune.mul x x)) x
+let grad_f = Rune.grad' (fun x -> Nx.sum (Nx.mul x x)) x
 
 (* brot — tokenization *)
 let tokenizer = Brot.from_file "tokenizer.json" |> Result.get_ok
 let ids = Brot.encode_ids tokenizer "The meaning of life is"
 
 (* kaun — neural networks *)
-let model = Kaun.Layer.sequential [
-  Kaun.Layer.linear ~in_features:768 ~out_features:128 ();
-  Kaun.Layer.relu ();
-  Kaun.Layer.linear ~in_features:128 ~out_features:10 ();
-]
+let layer = Kaun.Linear.init ~inputs:768 ~outputs:10
+let logits = Kaun.Linear.apply layer x
 
 (* talon — dataframes *)
 let df = Talon.create [

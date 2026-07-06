@@ -3,207 +3,173 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-let strf = Printf.sprintf
+type average = [ `Macro | `Micro ]
 
-(* Tracker *)
+let invalid_argf fn fmt =
+  Printf.ksprintf (fun msg -> invalid_arg ("Metric." ^ fn ^ ": " ^ msg)) fmt
 
-type entry = { mutable sum : float; mutable n : int }
-type tracker = (string, entry) Hashtbl.t
+let shape_str s =
+  "[" ^ String.concat "; " (Array.to_list (Array.map string_of_int s)) ^ "]"
 
-let tracker () : tracker = Hashtbl.create 16
+(* Validates the [[...; classes]] predictions / class-index labels convention
+   and returns the class count with the labels as a flat row-major array. *)
+let check_predictions ~fn predictions labels =
+  let shape = Nx.shape predictions in
+  let rank = Array.length shape in
+  if rank < 1 then invalid_argf fn "predictions must have rank >= 1";
+  let classes = shape.(rank - 1) in
+  if classes <= 0 then
+    invalid_argf fn "predictions class dimension must be positive (got %d)"
+      classes;
+  let batch_shape = Array.sub shape 0 (rank - 1) in
+  let labels_shape = Nx.shape labels in
+  if labels_shape <> batch_shape then
+    invalid_argf fn "labels shape %s does not match predictions batch shape %s"
+      (shape_str labels_shape) (shape_str batch_shape);
+  let flat = Nx.to_array labels in
+  if Array.length flat = 0 then invalid_argf fn "there are no examples";
+  Array.iter
+    (fun l ->
+      let l = Int32.to_int l in
+      if l < 0 || l >= classes then
+        invalid_argf fn "label %d is out of range [0;%d]" l (classes - 1))
+    flat;
+  (classes, flat)
 
-let observe (t : tracker) name value =
-  match Hashtbl.find_opt t name with
-  | Some e ->
-      e.sum <- e.sum +. value;
-      e.n <- e.n + 1
-  | None -> Hashtbl.replace t name { sum = value; n = 1 }
+let fraction correct = Nx.item [] (Nx.mean (Nx.cast Nx.float64 correct))
 
-let find_entry t name = Hashtbl.find t name
+(* Accuracy *)
 
-let mean t name =
-  let e = find_entry t name in
-  e.sum /. float_of_int e.n
+let accuracy predictions labels =
+  let _ = check_predictions ~fn:"accuracy" predictions labels in
+  fraction (Nx.equal (Nx.argmax ~axis:(-1) predictions) labels)
 
-let count t name =
-  let e = find_entry t name in
-  e.n
-
-let reset t = Hashtbl.reset t
-
-let to_list t =
-  let pairs =
-    Hashtbl.fold (fun k e acc -> (k, e.sum /. float_of_int e.n) :: acc) t []
+let top_k_accuracy ~k predictions labels =
+  let fn = "top_k_accuracy" in
+  let classes, _ = check_predictions ~fn predictions labels in
+  if k < 1 || k > classes then
+    invalid_argf fn "k must be in [1;%d] (got %d)" classes k;
+  (* The label is in the top k iff fewer than [k] classes score strictly higher,
+     which needs no sort and resolves ties in the label's favor. *)
+  let label_score =
+    Nx.take_along_axis ~axis:(-1) (Nx.expand_dims [ -1 ] labels) predictions
   in
-  List.sort (fun (a, _) (b, _) -> String.compare a b) pairs
-
-let summary t =
-  let pairs = to_list t in
-  String.concat "  " (List.map (fun (k, v) -> strf "%s: %.4f" k v) pairs)
-
-(* Dataset evaluation *)
-
-let eval f data =
-  let sum = ref 0.0 in
-  let n = ref 0 in
-  Data.iter
-    (fun x ->
-      sum := !sum +. f x;
-      incr n)
-    data;
-  if !n = 0 then invalid_arg "Metric.eval: empty dataset";
-  !sum /. float_of_int !n
-
-let eval_many f data =
-  let tbl = Hashtbl.create 8 in
-  let n = ref 0 in
-  Data.iter
-    (fun x ->
-      let pairs = f x in
-      List.iter
-        (fun (k, v) ->
-          match Hashtbl.find_opt tbl k with
-          | Some e ->
-              e.sum <- e.sum +. v;
-              e.n <- e.n + 1
-          | None -> Hashtbl.replace tbl k { sum = v; n = 1 })
-        pairs;
-      incr n)
-    data;
-  if !n = 0 then invalid_arg "Metric.eval_many: empty dataset";
-  let pairs =
-    Hashtbl.fold (fun k e acc -> (k, e.sum /. float_of_int e.n) :: acc) tbl []
+  let higher =
+    Nx.sum ~axes:[ -1 ] (Nx.cast Nx.int32 (Nx.greater predictions label_score))
   in
-  List.sort (fun (a, _) (b, _) -> String.compare a b) pairs
+  fraction (Nx.less_s higher (Int32.of_int k))
 
-type average = Macro | Micro | Weighted
+(* Confusion-matrix metrics *)
 
-(* Metric functions *)
+(* Flat row-major [classes * classes] counts; row = label, column = predicted
+   class. *)
+let confusion_counts ~fn predictions labels =
+  let classes, labels = check_predictions ~fn predictions labels in
+  let predicted = Nx.to_array (Nx.argmax ~axis:(-1) predictions) in
+  let counts = Array.make (classes * classes) 0 in
+  Array.iteri
+    (fun i l ->
+      let cell = (Int32.to_int l * classes) + Int32.to_int predicted.(i) in
+      counts.(cell) <- counts.(cell) + 1)
+    labels;
+  (classes, counts)
 
-let accuracy (type a b c) (predictions : (float, a) Nx.t)
-    (targets : (b, c) Nx.t) =
-  let pred_shape = Nx.shape predictions in
-  let rank = Array.length pred_shape in
-  let predicted =
-    if rank >= 2 then
-      (* Multi-class: argmax along last axis *)
-      Nx.argmax ~axis:(-1) predictions
-    else
-      (* Binary: threshold at 0.5 *)
-      let half = Nx.scalar (Nx.dtype predictions) 0.5 in
-      Nx.cast Nx.int32 (Nx.greater predictions half)
+let confusion_matrix predictions labels =
+  let classes, counts =
+    confusion_counts ~fn:"confusion_matrix" predictions labels
   in
-  let targets_i32 = Nx.cast Nx.int32 targets in
-  let correct = Nx.equal predicted targets_i32 in
-  let correct_f = Nx.cast Nx.float32 correct in
-  Nx.item [] (Nx.mean correct_f)
+  Nx.create Nx.int32 [| classes; classes |] (Array.map Int32.of_int counts)
 
-let binary_accuracy ?(threshold = 0.5) predictions targets =
-  let dtype = Nx.dtype predictions in
-  let thresh = Nx.scalar dtype threshold in
-  let predicted = Nx.cast Nx.float32 (Nx.greater predictions thresh) in
-  let targets_f = Nx.cast Nx.float32 targets in
-  let correct = Nx.equal predicted targets_f in
-  let correct_f = Nx.cast Nx.float32 correct in
-  Nx.item [] (Nx.mean correct_f)
+(* Per-class true positives, true instances (row sums) and predicted instances
+   (column sums). *)
+let class_counts ~fn predictions labels =
+  let classes, counts = confusion_counts ~fn predictions labels in
+  let tp = Array.make classes 0 in
+  let actual = Array.make classes 0 in
+  let predicted = Array.make classes 0 in
+  for l = 0 to classes - 1 do
+    for p = 0 to classes - 1 do
+      let c = counts.((l * classes) + p) in
+      actual.(l) <- actual.(l) + c;
+      predicted.(p) <- predicted.(p) + c;
+      if l = p then tp.(l) <- tp.(l) + c
+    done
+  done;
+  (tp, actual, predicted)
 
-(* Classification metrics *)
+let ratio num den =
+  if den = 0 then 0.0 else float_of_int num /. float_of_int den
 
-let confusion_counts (type a b c) (predictions : (float, a) Nx.t)
-    (targets : (b, c) Nx.t) =
-  let pred_shape = Nx.shape predictions in
-  let num_classes = pred_shape.(Array.length pred_shape - 1) in
-  let predicted = Nx.argmax ~axis:(-1) predictions in
-  let targets_i32 = Nx.cast Nx.int32 targets in
-  let pred_oh = Nx.cast Nx.float32 (Nx.one_hot ~num_classes predicted) in
-  let tgt_oh = Nx.cast Nx.float32 (Nx.one_hot ~num_classes targets_i32) in
-  let tp = Nx.sum (Nx.mul pred_oh tgt_oh) ~axes:[ 0 ] in
-  let pred_sum = Nx.sum pred_oh ~axes:[ 0 ] in
-  let tgt_sum = Nx.sum tgt_oh ~axes:[ 0 ] in
-  let fp = Nx.sub pred_sum tp in
-  let fn = Nx.sub tgt_sum tp in
-  (tp, fp, fn, num_classes)
-
-let safe_div a b = if b = 0.0 then 0.0 else a /. b
-
-let precision avg predictions targets =
-  let tp, fp, fn, num_classes = confusion_counts predictions targets in
-  let tp = Nx.to_array tp in
-  let fp = Nx.to_array fp in
-  match avg with
-  | Micro ->
-      let tp_sum = Array.fold_left ( +. ) 0.0 tp in
-      let fp_sum = Array.fold_left ( +. ) 0.0 fp in
-      safe_div tp_sum (tp_sum +. fp_sum)
-  | Macro ->
+(* Combines per-class scores [nums.(c) / dens.(c)], zero on an empty
+   denominator. *)
+let averaged average nums dens =
+  match average with
+  | `Micro ->
+      ratio (Array.fold_left ( + ) 0 nums) (Array.fold_left ( + ) 0 dens)
+  | `Macro ->
+      let classes = Array.length nums in
       let sum = ref 0.0 in
-      for c = 0 to num_classes - 1 do
-        sum := !sum +. safe_div tp.(c) (tp.(c) +. fp.(c))
+      for c = 0 to classes - 1 do
+        sum := !sum +. ratio nums.(c) dens.(c)
       done;
-      !sum /. float_of_int num_classes
-  | Weighted ->
-      let fn = Nx.to_array fn in
-      let w_sum = ref 0.0 in
-      let total = ref 0.0 in
-      for c = 0 to num_classes - 1 do
-        let support = tp.(c) +. fn.(c) in
-        w_sum := !w_sum +. (support *. safe_div tp.(c) (tp.(c) +. fp.(c)));
-        total := !total +. support
-      done;
-      safe_div !w_sum !total
+      !sum /. float_of_int classes
 
-let recall avg predictions targets =
-  let tp, _fp, fn, num_classes = confusion_counts predictions targets in
-  let tp = Nx.to_array tp in
-  let fn = Nx.to_array fn in
-  match avg with
-  | Micro ->
-      let tp_sum = Array.fold_left ( +. ) 0.0 tp in
-      let fn_sum = Array.fold_left ( +. ) 0.0 fn in
-      safe_div tp_sum (tp_sum +. fn_sum)
-  | Macro ->
-      let sum = ref 0.0 in
-      for c = 0 to num_classes - 1 do
-        sum := !sum +. safe_div tp.(c) (tp.(c) +. fn.(c))
-      done;
-      !sum /. float_of_int num_classes
-  | Weighted ->
-      let w_sum = ref 0.0 in
-      let total = ref 0.0 in
-      for c = 0 to num_classes - 1 do
-        let support = tp.(c) +. fn.(c) in
-        w_sum := !w_sum +. (support *. safe_div tp.(c) (tp.(c) +. fn.(c)));
-        total := !total +. support
-      done;
-      safe_div !w_sum !total
+let precision ?(average = `Macro) predictions labels =
+  let tp, _, predicted = class_counts ~fn:"precision" predictions labels in
+  averaged average tp predicted
 
-let f1 avg predictions targets =
-  let tp, fp, fn, num_classes = confusion_counts predictions targets in
-  let tp = Nx.to_array tp in
-  let fp = Nx.to_array fp in
-  let fn = Nx.to_array fn in
-  match avg with
-  | Micro ->
-      let tp_sum = Array.fold_left ( +. ) 0.0 tp in
-      let fp_sum = Array.fold_left ( +. ) 0.0 fp in
-      let fn_sum = Array.fold_left ( +. ) 0.0 fn in
-      safe_div (2.0 *. tp_sum) ((2.0 *. tp_sum) +. fp_sum +. fn_sum)
-  | Macro ->
-      let sum = ref 0.0 in
-      for c = 0 to num_classes - 1 do
-        sum :=
-          !sum +. safe_div (2.0 *. tp.(c)) ((2.0 *. tp.(c)) +. fp.(c) +. fn.(c))
-      done;
-      !sum /. float_of_int num_classes
-  | Weighted ->
-      let w_sum = ref 0.0 in
-      let total = ref 0.0 in
-      for c = 0 to num_classes - 1 do
-        let support = tp.(c) +. fn.(c) in
-        w_sum :=
-          !w_sum
-          +. support
-             *. safe_div (2.0 *. tp.(c)) ((2.0 *. tp.(c)) +. fp.(c) +. fn.(c));
-        total := !total +. support
-      done;
-      safe_div !w_sum !total
+let recall ?(average = `Macro) predictions labels =
+  let tp, actual, _ = class_counts ~fn:"recall" predictions labels in
+  averaged average tp actual
+
+let f1 ?(average = `Macro) predictions labels =
+  let tp, actual, predicted = class_counts ~fn:"f1" predictions labels in
+  averaged average
+    (Array.map (fun n -> 2 * n) tp)
+    (Array.map2 ( + ) actual predicted)
+
+(* Ranking *)
+
+let auc_roc scores labels =
+  let fn = "auc_roc" in
+  let scores_shape = Nx.shape scores and labels_shape = Nx.shape labels in
+  if labels_shape <> scores_shape then
+    invalid_argf fn "labels shape %s does not match scores shape %s"
+      (shape_str labels_shape) (shape_str scores_shape);
+  let s = Nx.to_array scores in
+  let positive =
+    Array.map
+      (fun l ->
+        if l <> 0l && l <> 1l then
+          invalid_argf fn "label %ld is neither 0 nor 1" l;
+        l = 1l)
+      (Nx.to_array labels)
+  in
+  let n = Array.length s in
+  let n_pos =
+    Array.fold_left (fun acc p -> if p then acc + 1 else acc) 0 positive
+  in
+  let n_neg = n - n_pos in
+  if n_pos = 0 || n_neg = 0 then
+    invalid_argf fn "labels must contain both classes";
+  let order = Array.init n Fun.id in
+  Array.sort (fun i j -> Float.compare s.(i) s.(j)) order;
+  (* Mann-Whitney form: AUC = (R - p (p + 1) / 2) / (p n), where [R] sums the
+     ascending 1-based ranks of the positives, tied scores taking their midrank.
+     Equals trapezoidal integration of the ROC curve. *)
+  let rank_sum = ref 0.0 in
+  let i = ref 0 in
+  while !i < n do
+    let j = ref (!i + 1) in
+    while !j < n && s.(order.(!j)) = s.(order.(!i)) do
+      incr j
+    done;
+    (* Positions [!i, !j) hold ranks [!i + 1, !j]. *)
+    let midrank = float_of_int (!i + !j + 1) /. 2.0 in
+    for k = !i to !j - 1 do
+      if positive.(order.(k)) then rank_sum := !rank_sum +. midrank
+    done;
+    i := !j
+  done;
+  let n_pos = float_of_int n_pos and n_neg = float_of_int n_neg in
+  (!rank_sum -. (n_pos *. (n_pos +. 1.) /. 2.)) /. (n_pos *. n_neg)

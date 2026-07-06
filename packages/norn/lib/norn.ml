@@ -103,11 +103,11 @@ let dense_metric inv_mass_matrix =
 (* Kernels *)
 
 let grad_log_prob log_density_fn q =
-  let lp, g = Rune.value_and_grad log_density_fn q in
+  let lp, g = Rune.value_and_grad' log_density_fn q in
   (Nx.item [] lp, g)
 
 let init_state position log_density_fn =
-  let lp, g = Rune.value_and_grad log_density_fn position in
+  let lp, g = Rune.value_and_grad' log_density_fn position in
   { position; log_density = Nx.item [] lp; grad_log_density = g }
 
 let hmc_kernel ?(integrator : integrator = leapfrog) ?(num_leapfrog = 20)

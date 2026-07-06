@@ -3,74 +3,142 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Multi-head self-attention.
+(** Multi-head self-attention layers (Vaswani et al., 2017).
 
-    Provides scaled dot-product attention with support for grouped query
-    attention (GQA), causal masking, rotary position embeddings (RoPE), and
-    dropout. *)
+    An attention layer is a plain record of four {!Linear} projections: query,
+    key, value and output, each mapping [embed_dim] to [embed_dim] features.
+    Construct one with {!init} or {!make} and transform sequences with {!apply},
+    which splits the projections into heads, runs
+    {!scaled_dot_product_attention} on each head and merges the results through
+    the output projection. Like the other layers, it composes into models
+    through record nesting; {!map}, {!map2}, {!iter} and {!names} supply the
+    {!Nx.Ptree.S} and checkpoint plumbing.
 
-(** {1:rope Rotary Position Embeddings} *)
+    The head count is not a parameter: the projections are
+    [embed_dim × embed_dim] whatever the head count, so [num_heads] is an
+    argument of {!apply}, like [eps] of {!Layer_norm.apply}.
 
-val rope : ?theta:float -> ?seq_dim:int -> (float, 'a) Nx.t -> (float, 'a) Nx.t
-(** [rope ?theta ?seq_dim x] applies rotary position embeddings to [x].
+    {!scaled_dot_product_attention} is the pure core — no parameters, no head
+    bookkeeping. Use it directly for cross-attention, externally projected
+    queries and keys, or custom masking; use {!apply} for the standard
+    self-attention block. *)
 
-    [x] may have any rank [>= 2], with shape [[d0; ...; dn-1]] where:
-    - [head_dim = dn-1] (last axis).
-    - [seq_len] is on axis [seq_dim].
+(** {1:types Types} *)
 
-    [theta] defaults to [10000.0]. [seq_dim] defaults to [-2] (second-to-last
-    axis). Negative [seq_dim] values are interpreted relative to rank.
+type 'b params = {
+  q : 'b Linear.params;
+  k : 'b Linear.params;
+  v : 'b Linear.params;
+  out : 'b Linear.params;
+}
+(** The type for attention parameters with float dtype layout ['b]: the query,
+    key, value and output projections, each [embed_dim] to [embed_dim] features.
+*)
 
-    [head_dim] must be even.
+type t = Nx.float32_elt params
+(** The type for single-precision attention layers, the common case. *)
 
-    Raises [Invalid_argument] if [x] has rank < 2, if [seq_dim] is out of
-    bounds, if [seq_dim] designates the last axis, or if [head_dim] is odd. *)
+(** {1:constructors Constructors} *)
 
-(** {1:mha Multi-Head Attention} *)
-
-val attention_mask_key : string
-(** [attention_mask_key] is ["attention_mask"]. The well-known {!Context} key
-    that {!multi_head_attention} reads during the forward pass. *)
-
-val multi_head_attention :
+val make :
+  ?w_init:'b Init.t ->
+  ?bias_init:'b Init.t ->
+  ?bias:bool ->
   embed_dim:int ->
-  num_heads:int ->
-  ?num_kv_heads:int ->
-  ?dropout:float ->
-  ?is_causal:bool ->
-  ?rope:bool ->
-  ?rope_theta:float ->
-  unit ->
-  (float, float) Layer.t
-(** [multi_head_attention ~embed_dim ~num_heads ()] is a multi-head
-    self-attention layer.
+  (float, 'b) Nx.dtype ->
+  'b params
+(** [make ~embed_dim dtype] is a fresh layer attending over [embed_dim]
+    features: four {!Linear.make} projections with [inputs] and [outputs] both
+    [embed_dim]. [w_init], [bias_init] and [bias] are passed to every projection
+    and have the defaults of {!Linear.make}.
 
-    Input shape: [[batch; seq_len; embed_dim]]. Output shape:
-    [[batch; seq_len; embed_dim]].
+    Random initializers draw from the implicit RNG scope (see {!Nx.Rng}).
 
-    [num_kv_heads] defaults to [num_heads] (standard MHA). When
-    [num_kv_heads < num_heads], grouped query attention (GQA) is used.
-    [num_heads] must be divisible by [num_kv_heads].
+    Raises [Invalid_argument] if [embed_dim] is not positive. *)
 
-    [dropout] defaults to [0.0]. When positive, dropout is applied during
-    training using keys from the implicit RNG scope.
+val init : embed_dim:int -> t
+(** [init ~embed_dim] is [make ~embed_dim Nx.float32]: Glorot-uniform weights,
+    zero biases. *)
 
-    [is_causal] defaults to [false]. When [true], a causal mask prevents
-    attending to future positions.
+(** {1:applying Applying} *)
 
-    [rope] defaults to [false]. When [true], rotary position embeddings are
-    applied to Q and K before the attention computation. [rope_theta] defaults
-    to [10000.0].
+val apply :
+  ?num_heads:int ->
+  ?causal:bool ->
+  'b params ->
+  (float, 'b) Nx.t ->
+  (float, 'b) Nx.t
+(** [apply p x] is multi-head self-attention over [x], with:
 
-    When [ctx] contains {!attention_mask_key} (a bool or int32 tensor of shape
-    [[batch; seq_k]]), it is applied as a padding mask. [true] / nonzero keeps
-    the position, [false] / [0] masks it.
+    - [num_heads], the number of attention heads. Defaults to [1]. It must
+      divide the embedding dimension; each head attends over
+      [embed_dim / num_heads] features of the projected sequences.
+    - [causal], whether each position sees only itself and earlier positions.
+      Defaults to [false]. With [causal = true] the attention weights of
+      position [i] are zero on every position [j > i], so future positions
+      cannot influence the output at [i].
 
-    Parameters:
-    - [q_proj] ([[embed_dim; num_heads * head_dim]])
-    - [k_proj] ([[embed_dim; num_kv_heads * head_dim]])
-    - [v_proj] ([[embed_dim; num_kv_heads * head_dim]])
-    - [out_proj] ([[num_heads * head_dim; embed_dim]])
+    [x]'s last axis must have size [embed_dim] and its second-to-last axis is
+    the sequence; earlier axes are batch axes. The result has [x]'s shape.
+    Semantically, [apply] projects [x] with [p.q], [p.k] and [p.v], splits each
+    projection into [num_heads] heads, runs {!scaled_dot_product_attention} per
+    head, concatenates the heads back and projects with [p.out]. Differentiable
+    through Rune.
 
-    Raises [Invalid_argument] if [embed_dim] is not divisible by [num_heads], or
-    if [num_heads] is not divisible by [num_kv_heads]. *)
+    Raises [Invalid_argument] if [x] has fewer than 2 axes, [x]'s last axis does
+    not have size [embed_dim], [num_heads] is not positive, or [num_heads] does
+    not divide [embed_dim]. *)
+
+(** {1:core The attention core} *)
+
+val scaled_dot_product_attention :
+  ?mask:(bool, Nx.bool_elt) Nx.t ->
+  (float, 'b) Nx.t ->
+  (float, 'b) Nx.t ->
+  (float, 'b) Nx.t ->
+  (float, 'b) Nx.t
+(** [scaled_dot_product_attention q k v] is [softmax (q @ kᵀ / sqrt d) @ v]:
+    each of the [n] query rows takes a weighted average of the [m] value rows,
+    weighted by the softmax of its scaled dot products with the key rows.
+
+    [q] has shape [[| ...; n; d |]], [k] shape [[| ...; m; d |]] and [v] shape
+    [[| ...; m; dv |]]; the result has shape [[| ...; n; dv |]]. Leading axes
+    are batch axes and broadcast, so stacked attention heads are just a batch
+    axis. Differentiable through Rune.
+
+    [mask], when given, must broadcast to [[| ...; n; m |]]: weights are
+    computed only where it is [true], and are exactly [0] where it is [false]
+    (masked scores are set to negative infinity before the softmax). Every query
+    row must keep at least one unmasked key, otherwise its output is [nan].
+
+    Raises [Invalid_argument] if [q], [k] or [v] has fewer than 2 axes, [q] and
+    [k] differ in their last axis, or [k] and [v] differ in their second-to-last
+    axis. *)
+
+(** {1:traversals Traversals}
+
+    Plain traversals over the parameter leaves, in the order [q], [k], [v],
+    [out], each traversed as by {!Linear}. They satisfy the {!Nx.Ptree.S}
+    contract at any fixed ['b]. *)
+
+val map : ('a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) -> 'b params -> 'b params
+(** [map f p] is [p] with [f] applied to every parameter leaf. *)
+
+val map2 :
+  ('a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) ->
+  'b params ->
+  'b params ->
+  'b params
+(** [map2 f p p'] combines [p] and [p'] leafwise with [f].
+
+    Raises [Invalid_argument] if a projection of [p] has a bias and the
+    corresponding projection of [p'] does not (see {!Linear.map2}). *)
+
+val iter : ('a 'c. ('a, 'c) Nx.t -> unit) -> 'b params -> unit
+(** [iter f p] applies [f] to every parameter leaf of [p]. *)
+
+val names : 'b params -> string list
+(** [names p] is the checkpoint name of each parameter leaf of [p], in traversal
+    order: each projection's {!Linear.names} prefixed with ["q."], ["k."],
+    ["v."] and ["out."] (e.g. [["q.w"; "q.b"; ...; "out.b"]]). See
+    {!Checkpoint.Named}. *)

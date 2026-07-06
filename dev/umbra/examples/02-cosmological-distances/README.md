@@ -27,7 +27,7 @@ dune exec dev/umbra/examples/02-cosmological-distances/main.exe
 | `Cosmo.lookback_time`         | Time since light was emitted                   |
 | `Cosmo.age`                   | Age of the universe at redshift z              |
 | `Cosmo.create_flat_lcdm`     | Tensor-parameterized cosmology for autodiff    |
-| `Rune.value_and_grads`        | Forward pass + gradient computation            |
+| `Rune.value_and_grad`         | Forward pass + gradient computation            |
 
 ## How It Works
 

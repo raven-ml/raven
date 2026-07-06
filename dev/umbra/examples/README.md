@@ -16,8 +16,8 @@ Learn Umbra through progressively complex examples. Start with
 | [`07-batch-photometry`](./07-batch-photometry/) | Batched operations over temperature and extinction grids | `Spectrum.blackbody`, `Extinction.apply`, `Photometry.ab_mag` |
 | [`08-photometric-redshifts`](./08-photometric-redshifts/) | Two-stage photo-z: grid search + gradient refinement | `Spectrum.redshift`, `Photometry.ab_mag`, `Rune.value_and_grad` |
 | [`09-gravitational-lensing`](./09-gravitational-lensing/) | Point-mass lens model parameter fitting | `Rune.value_and_grad`, `Vega.adam` |
-| [`10-uncertainty-propagation`](./10-uncertainty-propagation/) | AD Jacobians for error propagation vs Monte Carlo | `Rune.jacfwd`, `Cosmo.distance_modulus` |
-| [`11-bayesian-sed`](./11-bayesian-sed/) | Fisher matrix + HMC posterior sampling | `Rune.jacrev`, `Norn.hmc` |
+| [`10-uncertainty-propagation`](./10-uncertainty-propagation/) | AD Jacobians for error propagation vs Monte Carlo | `Rune.jacfwd'`, `Cosmo.distance_modulus` |
+| [`11-bayesian-sed`](./11-bayesian-sed/) | Fisher matrix + HMC posterior sampling | `Rune.jacrev'`, `Norn.hmc` |
 | [`12-survey-optimization`](./12-survey-optimization/) | Differentiable Fisher forecasting for survey design | `Survey.angular_cl`, `Cosmo.linear_power` |
 
 ## Running Examples

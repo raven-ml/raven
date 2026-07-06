@@ -16,14 +16,14 @@ We use three raven packages:
 ## 1. Loading the dataset
 
 `Kaun_datasets.mnist` downloads MNIST the first time and caches it locally.
-It returns `((x_train, y_train), (x_test, y_test))` — images as float32
+It returns `(x_train, y_train, x_test, y_test)` — images as float32
 in [0, 1] with shape `[N; 1; 28; 28]`, labels as int32 with shape `[N]`.
 
 ```ocaml
 open Kaun
 
 let () = Printf.printf "Loading MNIST...\n%!"
-let (x_train, y_train), (x_test, y_test) = Kaun_datasets.mnist ()
+let x_train, y_train, x_test, y_test = Kaun_datasets.mnist ()
 
 let () =
   let s = Nx.shape x_train in
@@ -55,75 +55,80 @@ We use a simple multi-layer perceptron (MLP): flatten the 1x28x28 image into a
 784-element vector, pass through a hidden layer with 128 units and ReLU
 activation, then project to 10 output logits (one per digit class).
 
+In Kaun, a model is a plain record of layers with a traversal over its tensor
+leaves — no special layer type:
+
 <!-- quill:cell id="c_mnist_model_code" -->
 ```ocaml
-let model =
-  Layer.sequential [
-    Layer.flatten ();
-    Layer.linear ~in_features:784 ~out_features:128 ();
-    Layer.relu ();
-    Layer.linear ~in_features:128 ~out_features:10 ();
-  ]
+module Model = struct
+  type t = { l1 : Linear.t; l2 : Linear.t }
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { l1; l2 } =
+    { l1 = Linear.map f l1; l2 = Linear.map f l2 }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
+    { l1 = Linear.map2 f p.l1 q.l1; l2 = Linear.map2 f p.l2 q.l2 }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { l1; l2 } =
+    Linear.iter f l1;
+    Linear.iter f l2
+
+  let apply p x =
+    let x = Nx.reshape [| (Nx.shape x).(0); 784 |] x in
+    Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
+end
 ```
 
 <!-- quill:cell id="c_mnist_trainer_text" -->
-## 4. Setting up the trainer
+## 4. Initializing parameters and optimizer
 
-A `Train.t` pairs the model with an optimizer. We use Adam with a constant
-learning rate of 0.001. `Train.init` creates initial random weights.
+The parameters are just a value we construct; the optimizer state (Adam's
+moments) is a record shaped like the parameters themselves.
 
 <!-- quill:cell id="c_mnist_trainer_code" -->
 ```ocaml
 let batch_size = 64
 
-let trainer =
-  Train.make ~model
-    ~optimizer:(Vega.adam (Vega.Schedule.constant 0.001))
+let params =
+  Nx.Rng.run ~seed:42 @@ fun () ->
+  Model.{ l1 = Linear.init ~inputs:784 ~outputs:128;
+          l2 = Linear.init ~inputs:128 ~outputs:10 }
 
-let st = ref (Nx.Rng.run ~seed:42 @@ fun () -> Train.init trainer ~dtype:Nx.float32)
+let st = ref (params, Vega.adam_init (module Model) params)
 ```
 
 <!-- quill:cell id="c_mnist_train_text" -->
 ## 5. Training
 
-`Train.fit` iterates over the data, computing the forward pass, loss, gradients,
-and optimizer update on each batch. The `~report` callback prints the current
-loss after every batch -- you should see it decrease in real time.
+The training step is three lines you own: differentiate the loss with
+`Rune.value_and_grad`, then apply the optimizer update. The loop is a plain
+fold over shuffled minibatches.
 
 <!-- quill:cell id="c_mnist_train_code" -->
 ```ocaml
 let epochs = 1
 
 let () =
+  Nx.Rng.run ~seed:42 @@ fun () ->
   let n_train = (Nx.shape x_train).(0) in
   let num_batches = n_train / batch_size in
-  let test_batches = Data.prepare ~batch_size (x_test, y_test) in
   for epoch = 1 to epochs do
-    let train_data =
-      Nx.Rng.run ~seed:(42 + epoch) @@ fun () ->
-      Data.prepare ~shuffle:true ~batch_size (x_train, y_train)
-      |> Data.map (fun (x, y) ->
-          (x, fun logits -> Loss.cross_entropy_sparse logits y))
-    in
-    let tracker = Metric.tracker () in
-    st :=
-      Train.fit trainer !st
-        ~report:(fun ~step ~loss _st ->
-          Metric.observe tracker "loss" loss;
-          Printf.printf "\r  epoch %d  batch %d/%d  loss: %.4f%!" epoch step num_batches loss)
-        train_data;
+    let step = ref 0 in
+    Data.batches2 ~shuffle:true ~batch_size (x_train, y_train)
+    |> Seq.iter (fun (x, y) ->
+        let params, ostate = !st in
+        let loss, grads =
+          Rune.value_and_grad (module Model)
+            (fun p -> Loss.softmax_cross_entropy_sparse (Model.apply p x) y)
+            params
+        in
+        st := Vega.adam_step (module Model) ~lr:0.001 ostate ~params ~grads;
+        incr step;
+        Printf.printf "\r  epoch %d  batch %d/%d  loss: %.4f%!" epoch !step
+          num_batches (Nx.item [] loss));
     Printf.printf "\n%!";
-
-    Data.reset test_batches;
-    let test_acc =
-      Metric.eval
-        (fun (x, y) ->
-          let logits = Train.predict trainer !st x in
-          Metric.accuracy logits y)
-        test_batches
-    in
-    Printf.printf "  train_loss: %.4f  test_acc: %.2f%%\n%!"
-      (Metric.mean tracker "loss") (test_acc *. 100.)
+    let test_acc = Metric.accuracy (Model.apply (fst !st) x_test) y_test in
+    Printf.printf "  test_acc: %.2f%%\n%!" (test_acc *. 100.)
   done
 ```
 
@@ -139,7 +144,7 @@ let _fig =
   List.init 10 (fun i ->
     let img = Nx.get [i; 0] x_test |> Nx.reshape [|28; 28|] in
     let true_l = Nx.item [i] y_test in
-    let logits = Train.predict trainer !st (Nx.get [i] x_test |> Nx.expand_dims [0]) in
+    let logits = Model.apply (fst !st) (Nx.get [i] x_test |> Nx.expand_dims [0]) in
     let pred_l = Nx.item [0] (Nx.argmax ~axis:1 logits) in
     Hugin.imshow ~data:img ~cmap:Hugin.Cmap.gray ()
     |> Hugin.title (Printf.sprintf "%ld->%ld" true_l pred_l)

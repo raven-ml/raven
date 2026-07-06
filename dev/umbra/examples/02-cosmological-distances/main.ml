@@ -67,6 +67,18 @@ let n_sn = Array.length z_arr
 let mu_obs =
   [| 33.07; 35.47; 37.62; 39.07; 40.24; 41.42; 42.23; 42.85; 43.34; 43.74 |]
 
+(* Parameter structure for Rune: a list of float64 tensors. *)
+module Params = struct
+  type t = Nx.float64_t list
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) l = List.map f l
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
+    List.map2 f a b
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) l = List.iter f l
+end
+
 (* Forward model: compute distance modulus for all SNe. The differentiable
    parameters are H0 and Omega_m, which flow through Cosmo.distance_modulus via
    Nx tensor operations. *)
@@ -104,7 +116,9 @@ let fit_cosmology () =
 
   let refs = [| h0; omega_m |] in
   for i = 0 to steps - 1 do
-    let loss_val, grads = Rune.value_and_grads loss [ !h0; !omega_m ] in
+    let loss_val, grads =
+      Rune.value_and_grad (module Params) loss [ !h0; !omega_m ]
+    in
     List.iteri
       (fun j g ->
         let p, s = Vega.step states.(j) ~grad:g ~param:!(refs.(j)) in

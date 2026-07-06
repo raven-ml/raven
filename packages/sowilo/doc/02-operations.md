@@ -401,4 +401,4 @@ Rune tensor operations. The two exceptions are:
 | `canny` | No | Uses non-maximum suppression and hysteresis thresholding |
 
 All other operations (filters, color transforms, geometric transforms,
-morphology, threshold, sobel, scharr, laplacian) support `Rune.grad`.
+morphology, threshold, sobel, scharr, laplacian) support `Rune.grad'`.

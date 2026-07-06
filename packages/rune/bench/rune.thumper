@@ -1,0 +1,31 @@
+# thumper baseline
+# version: 1
+# suite_name: rune
+# host: 7ddbc0675390e24
+# cpu: Intel(R) Xeon(R) Platinum 8468
+# ocaml: 5.5.0
+# git: 3e26560d
+# dirty: true
+# command: /root/raven/_build/default/packages/rune/bench/bench_rune.exe --bless --quick --baseline packages/rune/bench/rune.thumper
+
+deepchain/chain_fwd__nx_eager_	alloc_words	9.434000e+03	9.434000e+03	9.434000e+03	0.000000e+00	8	0
+deepchain/chain_fwd__nx_eager_	cpu_time	8.962411e-05	8.088670e-05	9.455804e-05	7.627042e-02	8	1
+deepchain/chain_fwd__nx_eager_	wall_time	8.964943e-05	8.092790e-05	9.386285e-05	7.214184e-02	8	1
+deepchain/chain_grad	alloc_words	4.215700e+04	4.215700e+04	4.215700e+04	0.000000e+00	5	0
+deepchain/chain_grad	cpu_time	3.707475e-04	3.635236e-04	3.769000e-04	1.803979e-02	5	0
+deepchain/chain_grad	wall_time	3.706714e-04	3.635372e-04	3.778024e-04	1.924238e-02	5	0
+mlpgrad/mlp_forward__nx_eager_	alloc_words	2.757000e+03	2.757000e+03	2.757000e+03	0.000000e+00	12	1
+mlpgrad/mlp_forward__nx_eager_	cpu_time	5.165638e-01	4.862729e-01	5.947874e-01	1.050349e-01	12	0
+mlpgrad/mlp_forward__nx_eager_	wall_time	2.618511e-02	2.465868e-02	3.005268e-02	1.029974e-01	12	0
+mlpgrad/mlp_value_and_grad	alloc_words	8.988000e+03	8.988000e+03	8.988000e+03	0.000000e+00	7	0
+mlpgrad/mlp_value_and_grad	cpu_time	1.789951e+00	1.450453e+00	2.004198e+00	1.546818e-01	7	0
+mlpgrad/mlp_value_and_grad	wall_time	9.026456e-02	7.277717e-02	1.001236e-01	1.514791e-01	7	0
+mlpjvp/mlp_jvp	alloc_words	1.011300e+04	1.011300e+04	1.011300e+04	0.000000e+00	5	1
+mlpjvp/mlp_jvp	cpu_time	2.934169e+00	2.281405e+00	3.241411e+00	1.635908e-01	5	0
+mlpjvp/mlp_jvp	wall_time	1.491956e-01	1.157346e-01	1.664340e-01	1.699092e-01	5	0
+persamplegrads/per-sample_grads_ew	alloc_words	5.845000e+03	5.845000e+03	5.845000e+03	0.000000e+00	5	1
+persamplegrads/per-sample_grads_ew	cpu_time	3.954240e-02	2.610374e-02	5.284176e-02	3.380932e-01	5	1
+persamplegrads/per-sample_grads_ew	wall_time	1.727881e-03	1.697501e-03	1.756642e-03	1.711382e-02	5	0
+persamplegrads/per-sample_mlp_w3_grads	alloc_words	1.156400e+04	1.156400e+04	1.156400e+04	0.000000e+00	19	0
+persamplegrads/per-sample_mlp_w3_grads	cpu_time	4.653756e-02	4.492290e-02	5.147427e-02	7.038798e-02	19	2
+persamplegrads/per-sample_mlp_w3_grads	wall_time	2.332524e-03	2.248935e-03	2.560471e-03	6.678080e-02	19	3

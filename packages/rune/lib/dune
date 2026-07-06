@@ -1,5 +1,14 @@
 (library
  (name rune)
  (public_name rune)
- (private_modules autodiff jvp vjp custom_diff jacobian jit)
- (libraries nx.core nx nx.buffer nx.effect tolk tolk.ir))
+ (private_modules
+  custom
+  tape
+  reverse
+  forward
+  vmap
+  debug
+  tensor_map
+  gate
+  derivs)
+ (libraries nx.core nx nx.effect))

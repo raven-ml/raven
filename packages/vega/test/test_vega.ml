@@ -205,7 +205,7 @@ let test_add_decayed_weights_scheduled () =
   equal ~msg:"step 2" (array eps) [| 0.2 |] (to_arr upd2)
 
 let test_clip () =
-  let tx = Vega.clip_by_value 1.0 in
+  let tx = Vega.clip 1.0 in
   let grad = vec [| 5.0; -0.5; -3.0 |] in
   let param = vec [| 0.; 0.; 0. |] in
   let upd, _ = Vega.update (Vega.init tx param) ~grad ~param in
@@ -345,7 +345,7 @@ let test_adam_amsgrad_converges () =
 
 let test_chain_associativity () =
   let a = Vega.scale 2.0 in
-  let b = Vega.clip_by_value 5.0 in
+  let b = Vega.clip 5.0 in
   let c = Vega.scale 0.5 in
   let tx1 = Vega.chain [ Vega.chain [ a; b ]; c ] in
   let tx2 = Vega.chain [ a; b; c ] in
@@ -365,8 +365,8 @@ let test_chain_identity () =
   equal ~msg:"identity" (array eps) (to_arr upd1) (to_arr upd2)
 
 let test_chain_ordering_matters () =
-  let tx1 = Vega.chain [ Vega.clip_by_value 1.0; Vega.scale 10.0 ] in
-  let tx2 = Vega.chain [ Vega.scale 10.0; Vega.clip_by_value 1.0 ] in
+  let tx1 = Vega.chain [ Vega.clip 1.0; Vega.scale 10.0 ] in
+  let tx2 = Vega.chain [ Vega.scale 10.0; Vega.clip 1.0 ] in
   let grad = vec [| 0.5 |] in
   let param = vec [| 0. |] in
   let upd1, _ = Vega.update (Vega.init tx1 param) ~grad ~param in

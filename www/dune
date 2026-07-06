@@ -8,6 +8,7 @@
   (source_tree site)
   (source_tree ../doc)
   (source_tree ../packages/nx/doc)
+  (source_tree ../packages/vega/doc)
   (source_tree ../packages/tolk/doc)
   (source_tree ../packages/rune/doc)
   (source_tree ../packages/kaun/doc)

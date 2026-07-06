@@ -84,7 +84,7 @@ x_torch.requires_grad_(True)
 ```ocaml
 (* Raven: just use Nx tensors directly *)
 let x = Nx.create Nx.Float32 [|2|] [|1.0; 2.0|]
-let gradient = Rune.grad (fun x -> Nx.sum (Nx.mul x x)) x
+let gradient = Rune.grad' (fun x -> Nx.sum (Nx.mul x x)) x
 ```
 
 ### Functional Transformations
@@ -104,17 +104,18 @@ grads = params.grad
 
 <!-- $MDX skip -->
 ```ocaml
-(* Rune: JAX-style functional transforms *)
-let grad_fn = Rune.grad loss_fn
-let grads = grad_fn params
+(* Rune: JAX-style functional transforms over your own typed record *)
+let grads = Rune.grad (module Params) loss_fn params
 
 (* Or compute value and gradient together *)
-let loss, grads = Rune.value_and_grad loss_fn params
+let loss, grads = Rune.value_and_grad (module Params) loss_fn params
 ```
+
+Where JAX registers pytrees, Rune takes a first-class module: `Params` implements `Nx.Ptree.S` (three one-line traversals over your record's tensor leaves), and gradients come back with the same type as the parameters.
 
 ### Module-Based Layers
 
-Kaun layers are records with `init` and `apply`, not classes with `forward`.
+Kaun layers are plain records with `init` and `apply` functions, not classes with `forward` — and a model is a record you define, not a container object.
 
 ```python
 # PyTorch
@@ -128,14 +129,14 @@ model = Model()
 
 <!-- $MDX skip -->
 ```ocaml
-(* Kaun: compose layer records *)
-let model = Kaun.Layer.sequential [
-  Kaun.Layer.linear ~in_features:784 ~out_features:10 ();
-]
-let vars = Kaun.Layer.init model ~dtype:Nx.Float32
+(* Kaun: a model is a typed record of layer records *)
+type model = { linear : Kaun.Linear.t }
+
+let apply p x = Kaun.Linear.apply p.linear x
+let params = { linear = Kaun.Linear.init ~inputs:784 ~outputs:10 }
 ```
 
-Parameters are plain data (`Ptree.t` — a tree of Nx tensors), not hidden inside objects.
+Parameters are plain data (records of Nx tensors), not hidden inside objects.
 
 ### DataFrames
 

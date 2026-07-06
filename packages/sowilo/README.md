@@ -2,9 +2,8 @@
 
 Differentiable computer vision for OCaml, built on [Rune](../rune/)
 
-Sowilo provides image processing operations expressed purely through Rune
-tensor operations. All operations are compatible with `Rune.grad`,
-`Rune.jit`, and `Rune.vmap`.
+Sowilo provides image processing operations expressed purely through Nx
+tensor operations. All operations are compatible with `Rune.grad'` and `Rune.vmap'`.
 
 ## Quick Start
 
@@ -28,7 +27,7 @@ let () =
 - **Spatial filters**: `gaussian_blur`, `box_blur`, `median_blur`, `filter2d`, `unsharp_mask`
 - **Morphology**: `structuring_element` (Rect, Cross, Ellipse), `erode`, `dilate`, `opening`, `closing`, `morphological_gradient`
 - **Edge detection**: `sobel` (returns gx, gy), `scharr`, `laplacian`, `canny`
-- **Differentiable**: most operations support `Rune.grad` (exceptions: `canny`, `median_blur`)
+- **Differentiable**: most operations support `Rune.grad'` (exceptions: `canny`, `median_blur`)
 - **Batch ready**: all operations handle `[H; W; C]` and `[N; H; W; C]` tensors
 
 ## Image Conventions

@@ -33,8 +33,9 @@ through tensors.
 **Rune** adds functional transformations on top of Nx: `grad`, `jvp`,
 `vmap`. Your Nx code becomes differentiable without changes.
 
-**Kaun** builds on Rune to provide layers, optimizers, training loops,
-and HuggingFace Hub integration.
+**Kaun** builds on Rune to provide layers, losses, initializers, data
+batching, metrics, checkpoints, and HuggingFace Hub integration. Models
+are typed records you define; optimizers come from **Vega**.
 
 **Sowilo**, **Fehu**, **Talon**, **Brot**, **Hugin**, and **Quill** each
 use Nx directly for their domain. Sowilo and Fehu operations are
@@ -79,7 +80,9 @@ let mean_y = mean y
 Functional transformations for Nx tensors: reverse-mode AD (grad,
 vjp), forward-mode AD (jvp), and vectorising maps (vmap). Operates on
 `Nx.t` values directly using OCaml 5 effect handlers — no special
-tensor type needed.
+tensor type needed. Transformations work over any typed parameter
+structure through the `Nx.Ptree.S` interface; primed variants take a
+single tensor.
 
 <!-- $MDX skip -->
 ```ocaml
@@ -87,31 +90,31 @@ open Nx
 open Rune
 
 let f x = add (mul x x) (sin x)
-let f' = grad f
-let f'' = grad f'
+let f' = grad' f
+let f'' = grad' f'
 ```
 
 [Rune documentation →](/docs/rune/)
 
 ## Kaun: Neural Networks
 
-Composable layers, optimizers with learning-rate schedules, training
-loops, data pipelines, and HuggingFace Hub integration. Model
-parameters are `Ptree.t` — trees of Nx tensors you can inspect, map,
-and serialize.
+Building blocks for neural networks: layers as plain records with pure
+apply functions, losses, initializers, data batching, metrics,
+checkpoints, and HuggingFace Hub integration. A model is a typed record
+you define — there is no layer object and no trainer. Training steps
+compose `Rune.value_and_grad` with a Vega optimizer update.
 
 <!-- $MDX skip -->
 ```ocaml
 open Kaun
 
-let model = Layer.sequential [
-  Layer.linear ~in_features:784 ~out_features:128 ();
-  Layer.relu ();
-  Layer.linear ~in_features:128 ~out_features:10 ();
-]
+type mlp = { l1 : Linear.t; l2 : Linear.t }
 
-let trainer = Train.make ~model
-  ~optimizer:(Optim.adam ~lr:(Optim.Schedule.constant 0.001) ())
+let apply p x = Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
+
+let params =
+  { l1 = Linear.init ~inputs:784 ~outputs:128;
+    l2 = Linear.init ~inputs:128 ~outputs:10 }
 ```
 
 [Kaun documentation →](/docs/kaun/)

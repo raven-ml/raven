@@ -94,7 +94,7 @@ let f x = Nx.pow_s x 3.                      (* f(x) = x³ *)
 
 let x = Nx.scalar Nx.float32 2.0
 let value = f x                                (* f(2) = 8 *)
-let gradient = Rune.grad f x                   (* f'(2) = 3·2² = 12 *)
+let gradient = Rune.grad' f x                  (* f'(2) = 3·2² = 12 *)
 ```
 
 ## Putting It Together
@@ -106,7 +106,7 @@ let f x = Nx.pow_s x 3.
 
 let xs = Nx.linspace Nx.float32 (-2.) 3. 200
 let ys = f xs
-let gs = Rune.grad f xs
+let gs = Rune.vmap' (Rune.grad' f) xs
 
 let _fig =
   Hugin.layers [

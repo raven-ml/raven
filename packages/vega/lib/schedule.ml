@@ -6,9 +6,7 @@
 type t = int -> float
 
 (* Cosine annealing factor: 1 -> 0 as ratio goes 0 -> 1. *)
-let cosine_decay_factor ratio =
-  0.5 *. (1. +. Stdlib.cos (Float.pi *. ratio))
-
+let cosine_decay_factor ratio = 0.5 *. (1. +. Stdlib.cos (Float.pi *. ratio))
 let constant value _ = value
 
 let linear ~init_value ~end_value ~steps step =
@@ -33,8 +31,8 @@ let exponential_decay ~init_value ~decay_rate ~decay_steps step =
   let ratio = float_of_int step /. float_of_int decay_steps in
   init_value *. (decay_rate ** ratio)
 
-let polynomial_decay ~init_value ~end_value ~decay_steps ?(power = 1.0) ()
-    step =
+let polynomial_decay ~init_value ~end_value ~decay_steps ?(power = 1.0) () step
+    =
   if decay_steps <= 0 then
     invalid_arg "Schedule.polynomial_decay: decay_steps must be positive";
   if step >= decay_steps then end_value
@@ -68,13 +66,13 @@ let warmup_cosine_decay ~init_value ~peak_value ~warmup_steps ~decay_steps
       let cosine_val = cosine_decay_factor ratio in
       end_value +. ((peak_value -. end_value) *. cosine_val)
 
-let cosine_decay_restarts ~init_value ~decay_steps ?(t_mul = 1.0)
-    ?(m_mul = 1.0) ?(alpha = 0.) () =
+let cosine_decay_restarts ~init_value ~decay_steps ?(t_mul = 1.0) ?(m_mul = 1.0)
+    ?(alpha = 0.) () =
   if decay_steps <= 0 then
     invalid_arg "Schedule.cosine_decay_restarts: decay_steps must be positive";
   fun step ->
-    (* Fast path for uniform period (exact float comparison is
-       intentional: 1.0 is the unmodified default). *)
+    (* Fast path for uniform period (exact float comparison is intentional: 1.0
+       is the unmodified default). *)
     if t_mul = 1.0 then
       let cycle = step / decay_steps in
       let pos = step - (cycle * decay_steps) in

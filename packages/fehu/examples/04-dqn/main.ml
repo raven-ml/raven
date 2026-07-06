@@ -56,23 +56,38 @@ let sparkline values =
               blocks.(max 0 (min 7 idx)))
             values))
 
-(* Network *)
+(* Network: Linear(4 -> 128) -> ReLU -> Linear(128 -> 128) -> ReLU -> Linear(128
+   -> 2), as a plain record of Linear layers with hand-written traversals (the
+   Nx.Ptree.S contract). *)
 
-let q_network =
-  Layer.sequential
-    [
-      Layer.linear ~in_features:4 ~out_features:128 ();
-      Layer.relu ();
-      Layer.linear ~in_features:128 ~out_features:128 ();
-      Layer.relu ();
-      Layer.linear ~in_features:128 ~out_features:2 ();
-    ]
+module Q = struct
+  type t = { l1 : Linear.t; l2 : Linear.t; l3 : Linear.t }
 
-(* Forward pass: obs [batch; 4] -> q_values [batch; 2] *)
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { l1; l2; l3 } =
+    { l1 = Linear.map f l1; l2 = Linear.map f l2; l3 = Linear.map f l3 }
 
-let forward params net_state obs =
-  let vars = Layer.make_vars ~params ~state:net_state ~dtype:Nx.float32 in
-  fst (Layer.apply q_network vars ~training:false obs)
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
+    {
+      l1 = Linear.map2 f p.l1 q.l1;
+      l2 = Linear.map2 f p.l2 q.l2;
+      l3 = Linear.map2 f p.l3 q.l3;
+    }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { l1; l2; l3 } =
+    Linear.iter f l1;
+    Linear.iter f l2;
+    Linear.iter f l3
+
+  (* Forward pass: obs [batch; 4] -> q_values [batch; 2] *)
+  let apply p obs =
+    Linear.apply p.l3
+      (Fn.relu (Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 obs))))
+end
+
+let count_parameters params =
+  let n = ref 0 in
+  Q.iter (fun t -> n := !n + Nx.numel t) params;
+  !n
 
 (* Epsilon schedule: linear decay *)
 
@@ -81,10 +96,6 @@ let epsilon step =
     Float.min 1.0 (Float.of_int step /. Float.of_int epsilon_decay_steps)
   in
   epsilon_start +. (t *. (epsilon_end -. epsilon_start))
-
-(* Copy parameters for the target network *)
-
-let copy_params params = Ptree.map { run = (fun t -> Nx.copy t) } params
 
 (* Main *)
 
@@ -103,17 +114,22 @@ let () =
   Nx.Rng.run ~seed:42 @@ fun () ->
   let env = Fehu_envs.Cartpole.make () in
 
-  (* Initialize network *)
-  let vars = Layer.init q_network ~dtype:Nx.float32 in
-  let params = ref (Layer.params vars) in
-  let net_state = Layer.state vars in
-  let target_params = ref (copy_params !params) in
+  (* Initialize network. Parameter records are immutable values, so the target
+     network "copy" is just the record itself. *)
+  let params =
+    ref
+      {
+        Q.l1 = Linear.init ~inputs:4 ~outputs:128;
+        l2 = Linear.init ~inputs:128 ~outputs:128;
+        l3 = Linear.init ~inputs:128 ~outputs:2;
+      }
+  in
+  let target_params = ref !params in
 
-  Printf.printf "Parameters: %d\n\n" (Ptree.count_parameters !params);
+  Printf.printf "Parameters: %d\n\n" (count_parameters !params);
 
   (* Optimizer *)
-  let algo = Vega.adam (Vega.Schedule.constant lr) in
-  let opt_state = ref (Optim.init algo !params) in
+  let opt_state = ref (Vega.adam_init (module Q) !params) in
 
   (* Replay buffer *)
   let buffer = Buffer.create ~capacity:buffer_capacity in
@@ -128,9 +144,7 @@ let () =
     if sample_uniform () < eps then Space.sample (Env.action_space env)
     else begin
       let obs_batch = Nx.reshape [| 1; 4 |] obs in
-      let q_values =
-        Rune.no_grad (fun () -> forward !params net_state obs_batch)
-      in
+      let q_values = Rune.no_grad (fun () -> Q.apply !params obs_batch) in
       let action_idx =
         Nx.argmax q_values ~axis:(-1) ~keepdims:false |> Nx.cast Nx.int32
       in
@@ -141,9 +155,7 @@ let () =
   (* Greedy policy for evaluation *)
   let greedy_policy obs =
     let obs_batch = Nx.reshape [| 1; 4 |] obs in
-    let q_values =
-      Rune.no_grad (fun () -> forward !params net_state obs_batch)
-    in
+    let q_values = Rune.no_grad (fun () -> Q.apply !params obs_batch) in
     let action_idx =
       Nx.argmax q_values ~axis:(-1) ~keepdims:false |> Nx.cast Nx.int32
     in
@@ -175,7 +187,7 @@ let () =
     (* Compute TD target with target network (no gradient) *)
     let td_target =
       Rune.no_grad (fun () ->
-          let target_q = forward !target_params net_state next_obs_batch in
+          let target_q = Q.apply !target_params next_obs_batch in
           let max_q = Nx.max target_q ~axes:[ 1 ] ~keepdims:false in
           Nx.add rewards_t
             (Nx.mul (Nx.scalar Nx.float32 gamma) (Nx.mul max_q done_mask_t)))
@@ -184,15 +196,17 @@ let () =
 
     (* Loss: MSE between predicted Q and TD target *)
     let loss_fn p =
-      let q_values = forward p net_state obs_batch in
+      let q_values = Q.apply p obs_batch in
       let q_selected = Nx.take_along_axis ~axis:1 actions_batch q_values in
       let q_selected = Nx.reshape [| n |] q_selected in
       let diff = Nx.sub q_selected td_target in
       Nx.mean (Nx.mul diff diff)
     in
 
-    let loss, grads = Grad.value_and_grad loss_fn !params in
-    let new_params, new_opt_state = Optim.update !opt_state !params grads in
+    let loss, grads = Rune.value_and_grad (module Q) loss_fn !params in
+    let new_params, new_opt_state =
+      Vega.adam_step (module Q) ~lr !opt_state ~params:!params ~grads
+    in
     params := new_params;
     opt_state := new_opt_state;
     Nx.item [] loss
@@ -232,9 +246,8 @@ let () =
     if step >= learning_starts then begin
       last_loss := train_step ();
 
-      (* Update target network *)
-      if step mod target_update_interval = 0 then
-        target_params := copy_params !params
+      (* Update target network (hard copy: the immutable record itself) *)
+      if step mod target_update_interval = 0 then target_params := !params
     end;
 
     (* Evaluate periodically *)

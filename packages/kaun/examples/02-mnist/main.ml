@@ -3,74 +3,85 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+(* MNIST with kaun: an MLP as a plain record, minibatches from Data.batches2,
+   AdamW steps from Vega, accuracy from Metric. *)
+
 open Kaun
 
-let batch_size = 64
-let epochs = 3
-let lr = 0.001
+let batch_size = 128
+let lr = 1e-3
 
-let model =
-  Layer.sequential
-    [
-      Layer.conv2d ~in_channels:1 ~out_channels:16 ();
-      Layer.relu ();
-      Layer.max_pool2d ~kernel_size:(2, 2) ();
-      Layer.conv2d ~in_channels:16 ~out_channels:32 ();
-      Layer.relu ();
-      Layer.max_pool2d ~kernel_size:(2, 2) ();
-      Layer.flatten ();
-      Layer.linear ~in_features:(32 * 7 * 7) ~out_features:128 ();
-      Layer.relu ();
-      Layer.linear ~in_features:128 ~out_features:10 ();
-    ]
+module Mlp = struct
+  type t = { l1 : Linear.t; l2 : Linear.t }
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { l1; l2 } =
+    { l1 = Linear.map f l1; l2 = Linear.map f l2 }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
+    { l1 = Linear.map2 f p.l1 q.l1; l2 = Linear.map2 f p.l2 q.l2 }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { l1; l2 } =
+    Linear.iter f l1;
+    Linear.iter f l2
+
+  let apply p x = Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
+end
 
 let () =
   Nx.Rng.run ~seed:42 @@ fun () ->
-  let dtype = Nx.float32 in
-
   Printf.printf "Loading MNIST...\n%!";
-  let (x_train, y_train), (x_test, y_test) = Kaun_datasets.mnist () in
-  let n_train = (Nx.shape x_train).(0) in
-  Printf.printf "  train: %d  test: %d\n%!" n_train (Nx.shape x_test).(0);
+  match Kaun_datasets.mnist () with
+  | exception Failure msg ->
+      Printf.printf "MNIST unavailable (%s); skipping.\n" msg
+  | train_x, train_y, test_x, test_y ->
+      (* Flatten [N; 1; 28; 28] images for the MLP. *)
+      let flatten x = Nx.reshape [| (Nx.shape x).(0); 28 * 28 |] x in
+      let train_x = flatten train_x and test_x = flatten test_x in
+      let n_train = (Nx.shape train_x).(0) in
+      Printf.printf "  train: %d  test: %d\n%!" n_train (Nx.shape test_x).(0);
 
-  (* Test batches (fixed order, no shuffle) *)
-  let test_batches = Data.prepare ~batch_size (x_test, y_test) in
+      let params =
+        {
+          Mlp.l1 = Linear.init ~inputs:(28 * 28) ~outputs:128;
+          l2 = Linear.init ~inputs:128 ~outputs:10;
+        }
+      in
 
-  (* Trainer *)
-  let trainer =
-    Train.make ~model ~optimizer:(Vega.adam (Vega.Schedule.constant lr))
-  in
-  let st = ref (Train.init trainer ~dtype) in
+      (* Training step: value_and_grad + one AdamW update *)
+      let step (params, ostate) (x, y) =
+        let loss p = Loss.softmax_cross_entropy_sparse (Mlp.apply p x) y in
+        let l, grads = Rune.value_and_grad (module Mlp) loss params in
+        let params, ostate =
+          Vega.adamw_step (module Mlp) ~lr ostate ~params ~grads
+        in
+        ((params, ostate), Nx.item [] l)
+      in
 
-  for epoch = 1 to epochs do
-    let train_data =
-      Data.prepare ~shuffle:true ~batch_size (x_train, y_train)
-      |> Data.map (fun (x, y) ->
-          (x, fun logits -> Loss.cross_entropy_sparse logits y))
-    in
-    let num_batches = n_train / batch_size in
-    let tracker = Metric.tracker () in
-    st :=
-      Train.fit trainer !st
-        ~report:(fun ~step ~loss _st ->
-          Metric.observe tracker "loss" loss;
-          Printf.printf "\r  batch %d/%d  loss: %.4f%!" step num_batches loss)
-        train_data;
-    Printf.printf "\n%!";
+      (* One epoch over shuffled minibatches. *)
+      let n_batches = (n_train + batch_size - 1) / batch_size in
+      let batches =
+        Data.batches2 ~shuffle:true ~batch_size (train_x, train_y)
+      in
+      let (params, _), _ =
+        Seq.fold_left
+          (fun (state, i) batch ->
+            let state, l = step state batch in
+            if i mod 50 = 0 || i = n_batches then
+              Printf.printf "  batch %3d/%d  loss %.4f\n%!" i n_batches l;
+            (state, i + 1))
+          ((params, Vega.adamw_init (module Mlp) params), 1)
+          batches
+      in
 
-    (* Evaluate *)
-    Data.reset test_batches;
-    let test_acc =
-      Metric.eval
-        (fun (x, y) ->
-          let logits = Train.predict trainer !st x in
-          Metric.accuracy logits y)
-        test_batches
-    in
-
-    Printf.printf "epoch %d  train_loss: %.4f  test_acc: %.2f%%\n%!" epoch
-      (Metric.mean tracker "loss")
-      (test_acc *. 100.)
-  done;
-
-  Printf.printf "\nDone.\n"
+      (* Evaluate on the test set. *)
+      let correct, total =
+        Data.batches2 ~batch_size:1000 (test_x, test_y)
+        |> Seq.fold_left
+             (fun (correct, total) (x, y) ->
+               let n = (Nx.shape x).(0) in
+               let acc = Metric.accuracy (Mlp.apply params x) y in
+               (correct +. (acc *. float_of_int n), total + n))
+             (0., 0)
+      in
+      Printf.printf "test accuracy: %.2f%%\n"
+        (100. *. correct /. float_of_int total)

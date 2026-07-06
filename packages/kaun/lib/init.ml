@@ -3,9 +3,12 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-type t = {
-  f : 'layout. int array -> (float, 'layout) Nx.dtype -> (float, 'layout) Nx.t;
-}
+type 'b t =
+  fan_in:int ->
+  fan_out:int ->
+  (float, 'b) Nx.dtype ->
+  int array ->
+  (float, 'b) Nx.t
 
 type mode = [ `Fan_in | `Fan_out | `Fan_avg ]
 type distribution = [ `Normal | `Truncated_normal | `Uniform ]
@@ -15,121 +18,74 @@ let invalid_argf fmt = Printf.ksprintf invalid_arg fmt
 let check_non_negative what value =
   if value < 0.0 then invalid_argf "%s must be >= 0, got %g" what value
 
-let normalize_axis ~rank ~name axis =
-  let axis = if axis < 0 then rank + axis else axis in
-  if axis < 0 || axis >= rank then
-    invalid_argf "invalid %s axis: %d for rank-%d shape" name axis rank;
-  axis
-
-(* Fan computation for variance scaling. *)
-
-let compute_fans shape ~in_axis ~out_axis =
-  let rank = Array.length shape in
-  if rank = 0 then (1, 1)
-  else if rank = 1 then
-    let total = shape.(0) in
-    (total, total)
-  else
-    let in_axis = normalize_axis ~rank ~name:"in" in_axis in
-    let out_axis = normalize_axis ~rank ~name:"out" out_axis in
-    let fan_in = shape.(in_axis) in
-    let fan_out = shape.(out_axis) in
-    let receptive = ref 1 in
-    for i = 0 to rank - 1 do
-      if i <> in_axis && i <> out_axis then receptive := !receptive * shape.(i)
-    done;
-    (fan_in * !receptive, fan_out * !receptive)
-
-(* Truncated normal with bounds at +/-2 standard deviations. *)
-
-let truncated_normal ~stddev shape dtype =
-  let z = Nx.truncated_normal dtype ~lower:(-2.0) ~upper:2.0 shape in
-  Nx.mul z (Nx.scalar dtype stddev)
-
-(* Variance scaling — the general framework behind glorot/he/lecun. *)
-
-let variance_scaling ~scale ~mode ~distribution ?(in_axis = -2) ?(out_axis = -1)
-    () =
-  check_non_negative "scale" scale;
-  {
-    f =
-      (fun shape dtype ->
-        let fan_in, fan_out = compute_fans shape ~in_axis ~out_axis in
-        let n =
-          match mode with
-          | `Fan_in -> float_of_int fan_in
-          | `Fan_out -> float_of_int fan_out
-          | `Fan_avg -> float_of_int (fan_in + fan_out) /. 2.0
-        in
-        if n <= 0.0 then
-          invalid_argf "non-positive fan: fan_in=%d fan_out=%d" fan_in fan_out;
-        let variance = scale /. n in
-        match distribution with
-        | `Normal ->
-            let z = Nx.randn dtype shape in
-            Nx.mul z (Nx.scalar dtype (sqrt variance))
-        | `Truncated_normal ->
-            (* Correct for stddev loss from truncation to [-2, 2]. *)
-            truncated_normal
-              ~stddev:(sqrt variance /. 0.87962566103423978)
-              shape dtype
-        | `Uniform ->
-            let limit = sqrt (3.0 *. variance) in
-            let u = Nx.rand dtype shape in
-            Nx.sub
-              (Nx.mul u (Nx.scalar dtype (2.0 *. limit)))
-              (Nx.scalar dtype limit));
-  }
-
 (* Constant *)
 
-let constant value = { f = (fun shape dtype -> Nx.full dtype shape value) }
-let zeros = constant 0.0
-let ones = constant 1.0
+let constant value ~fan_in:_ ~fan_out:_ dtype shape = Nx.full dtype shape value
+let zeros ~fan_in:_ ~fan_out:_ dtype shape = Nx.full dtype shape 0.0
+let ones ~fan_in:_ ~fan_out:_ dtype shape = Nx.full dtype shape 1.0
 
 (* Random *)
 
-let uniform ?(scale = 0.01) () =
+let uniform ~scale =
   check_non_negative "scale" scale;
-  {
-    f =
-      (fun shape dtype -> Nx.mul (Nx.rand dtype shape) (Nx.scalar dtype scale));
-  }
+  fun ~fan_in:_ ~fan_out:_ dtype shape -> Nx.mul_s (Nx.rand dtype shape) scale
 
-let normal ?(stddev = 0.01) () =
+let normal ~stddev =
   check_non_negative "stddev" stddev;
-  {
-    f =
-      (fun shape dtype ->
-        Nx.mul (Nx.randn dtype shape) (Nx.scalar dtype stddev));
-  }
+  fun ~fan_in:_ ~fan_out:_ dtype shape -> Nx.mul_s (Nx.randn dtype shape) stddev
 
-(* Glorot / Xavier *)
+(* Variance scaling — the general scheme behind glorot/he/lecun. *)
 
-let glorot_uniform ?(in_axis = -2) ?(out_axis = -1) () =
-  variance_scaling ~scale:1.0 ~mode:`Fan_avg ~distribution:`Uniform ~in_axis
-    ~out_axis ()
+(* Standard deviation of a standard normal truncated to [-2, 2]. *)
+let truncated_stddev = 0.87962566103423978
 
-let glorot_normal ?(in_axis = -2) ?(out_axis = -1) () =
+let variance_scaling ~scale ~mode ~distribution =
+  check_non_negative "scale" scale;
+  fun ~fan_in ~fan_out dtype shape ->
+    if fan_in <= 0 || fan_out <= 0 then
+      invalid_argf "fans must be positive, got fan_in=%d fan_out=%d" fan_in
+        fan_out;
+    let n =
+      match mode with
+      | `Fan_in -> float_of_int fan_in
+      | `Fan_out -> float_of_int fan_out
+      | `Fan_avg -> float_of_int (fan_in + fan_out) /. 2.0
+    in
+    let variance = scale /. n in
+    match distribution with
+    | `Normal -> Nx.mul_s (Nx.randn dtype shape) (sqrt variance)
+    | `Truncated_normal ->
+        (* Rescale so the truncated samples reach the target variance. *)
+        let stddev = sqrt variance /. truncated_stddev in
+        Nx.mul_s
+          (Nx.truncated_normal dtype ~lower:(-2.0) ~upper:2.0 shape)
+          stddev
+    | `Uniform ->
+        let limit = sqrt (3.0 *. variance) in
+        Nx.sub_s (Nx.mul_s (Nx.rand dtype shape) (2.0 *. limit)) limit
+
+(* Named families. Eta-expanded so each exports as a polymorphic value. *)
+
+let glorot_uniform ~fan_in ~fan_out dtype shape =
+  variance_scaling ~scale:1.0 ~mode:`Fan_avg ~distribution:`Uniform ~fan_in
+    ~fan_out dtype shape
+
+let glorot_normal ~fan_in ~fan_out dtype shape =
   variance_scaling ~scale:1.0 ~mode:`Fan_avg ~distribution:`Truncated_normal
-    ~in_axis ~out_axis ()
+    ~fan_in ~fan_out dtype shape
 
-(* He / Kaiming *)
+let he_uniform ~fan_in ~fan_out dtype shape =
+  variance_scaling ~scale:2.0 ~mode:`Fan_in ~distribution:`Uniform ~fan_in
+    ~fan_out dtype shape
 
-let he_uniform ?(in_axis = -2) ?(out_axis = -1) () =
-  variance_scaling ~scale:2.0 ~mode:`Fan_in ~distribution:`Uniform ~in_axis
-    ~out_axis ()
-
-let he_normal ?(in_axis = -2) ?(out_axis = -1) () =
+let he_normal ~fan_in ~fan_out dtype shape =
   variance_scaling ~scale:2.0 ~mode:`Fan_in ~distribution:`Truncated_normal
-    ~in_axis ~out_axis ()
+    ~fan_in ~fan_out dtype shape
 
-(* LeCun *)
+let lecun_uniform ~fan_in ~fan_out dtype shape =
+  variance_scaling ~scale:1.0 ~mode:`Fan_in ~distribution:`Uniform ~fan_in
+    ~fan_out dtype shape
 
-let lecun_uniform ?(in_axis = -2) ?(out_axis = -1) () =
-  variance_scaling ~scale:1.0 ~mode:`Fan_in ~distribution:`Uniform ~in_axis
-    ~out_axis ()
-
-let lecun_normal ?(in_axis = -2) ?(out_axis = -1) () =
+let lecun_normal ~fan_in ~fan_out dtype shape =
   variance_scaling ~scale:1.0 ~mode:`Fan_in ~distribution:`Truncated_normal
-    ~in_axis ~out_axis ()
+    ~fan_in ~fan_out dtype shape

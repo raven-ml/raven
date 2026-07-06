@@ -19,8 +19,8 @@ If you already use OpenCV, this should be enough to become productive in Sowilo 
 | Channel order    | BGR by default                                       | RGB, channels-last `[H; W; C]`                                |
 | Pixel range      | uint8 `[0, 255]` or float32/64                       | float32 `[0, 1]` (convert with `to_float` / `to_uint8`)       |
 | Color conversion | `cv2.cvtColor` with 200+ codes                       | Named functions: `to_grayscale`, `rgb_to_hsv`, `hsv_to_rgb`   |
-| Autodiff         | Not available                                        | All ops (except `median_blur`, `canny`) work with `Rune.grad` |
-| Batching         | Manual loops or `np.stack`                           | Native batch dimension `[N; H; W; C]` + `Rune.vmap`           |
+| Autodiff         | Not available                                        | All ops (except `median_blur`, `canny`) work with `Rune.grad'` |
+| Batching         | Manual loops or `np.stack`                           | Native batch dimension `[N; H; W; C]` + `Rune.vmap'`           |
 | Backend          | Optimized C++/CUDA                                   | Nx C backend (CPU)                                            |
 | Mutability       | Arrays mutated in-place by convention                | Immutable tensors; operations return new `Nx.t`               |
 | Scope            | Full vision library (video, GUI, ML, features, etc.) | Image processing primitives for ML pipelines                  |
@@ -29,7 +29,7 @@ If you already use OpenCV, this should be enough to become productive in Sowilo 
 - Images are plain `Nx.t` tensors, not a separate type. Any Nx operation works on them.
 - All operations expect float32 in `[0, 1]`. Use `to_float` to convert from uint8.
 - Channel layout is always channels-last: `[H; W; C]` or `[N; H; W; C]` for batches.
-- Every operation (except `median_blur` and `canny`) is differentiable through `Rune.grad`.
+- Every operation (except `median_blur` and `canny`) is differentiable through `Rune.grad'`.
 
 ---
 
@@ -612,7 +612,7 @@ Differences:
 
 ## 10. Differentiable Pipelines
 
-This is Sowilo's key advantage over OpenCV. Because operations are expressed as Nx tensor computations, they compose with `Rune.grad` and `Rune.vmap`.
+This is Sowilo's key advantage over OpenCV. Because operations are expressed as Nx tensor computations, they compose with `Rune.grad'` and `Rune.vmap'`.
 
 ### 10.1 Gradient through image processing
 
@@ -633,7 +633,7 @@ let loss_fn brightness img target =
   let diff = Nx.sub processed target in
   Nx.sum (Nx.mul diff diff)
 
-let grad_fn = Rune.grad loss_fn
+let grad_fn = Rune.grad' loss_fn
 let grad_brightness = grad_fn 1.2 img target
 ```
 
@@ -648,12 +648,12 @@ This works because `adjust_brightness`, `adjust_contrast`, `gaussian_blur`, and 
 results = [cv2.GaussianBlur(img, (0, 0), 1.5) for img in batch]
 ```
 
-**Sowilo** with `Rune.vmap`:
+**Sowilo** with `Rune.vmap'`:
 
 <!-- $MDX skip -->
 ```ocaml
 (* Apply Gaussian blur to a batch of images in one call *)
-let blur_batch = Rune.vmap (Sowilo.gaussian_blur ~sigma:1.5)
+let blur_batch = Rune.vmap' (Sowilo.gaussian_blur ~sigma:1.5)
 let blurred_batch = blur_batch batch   (* batch shape: [N; H; W; C] *)
 ```
 
@@ -743,5 +743,5 @@ If you need these, use OpenCV from Python or a dedicated OCaml binding. Sowilo f
 | Scharr                 | `cv2.Scharr(img, CV_32F, dx, dy)`               | `Sowilo.scharr img` (returns `(gx, gy)`)                     |
 | Laplacian              | `cv2.Laplacian(img, CV_32F)`                    | `Sowilo.laplacian img`                                       |
 | Canny                  | `cv2.Canny(img, low, high)`                     | `Sowilo.canny ~low ~high img`                                |
-| Backprop through ops   | not possible                                    | `Rune.grad f` works on all ops except `median_blur`, `canny` |
-| Batch processing       | manual loop                                     | `Rune.vmap f` over batch dimension                           |
+| Backprop through ops   | not possible                                    | `Rune.grad' f` works on all ops except `median_blur`, `canny` |
+| Batch processing       | manual loop                                     | `Rune.vmap' f` over batch dimension                           |

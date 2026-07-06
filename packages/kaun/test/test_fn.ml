@@ -6,308 +6,231 @@
 open Windtrap
 module Fn = Kaun.Fn
 
-let flatten_f32 t = Nx.to_array (Nx.reshape [| -1 |] (Nx.cast Nx.float32 t))
-let check_shape msg expected t = equal ~msg (array int) expected (Nx.shape t)
+let f64 = Nx.float64
+let vec xs = Nx.create f64 [| Array.length xs |] xs
+let to_arr t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
 
-let check_values msg expected t =
-  let actual = flatten_f32 t in
-  let n = Array.length expected in
-  if Array.length actual <> n then
-    failf "%s: expected %d elements, got %d" msg n (Array.length actual);
-  for i = 0 to n - 1 do
-    equal
-      ~msg:(Printf.sprintf "%s[%d]" msg i)
-      (float 1e-4) expected.(i) actual.(i)
-  done
+let check_arr ?(eps = 1e-9) ~msg expected actual =
+  let actual = to_arr actual in
+  equal ~msg int (Array.length expected) (Array.length actual);
+  Array.iteri
+    (fun i e ->
+      equal ~msg:(Printf.sprintf "%s[%d]" msg i) (float eps) e actual.(i))
+    expected
 
-(* conv1d *)
+(* Single-tensor Ptree.S instance for Rune.check_grads. *)
+module Single = struct
+  type t = Nx.float64_t
 
-let test_conv1d_basic () =
-  let x = Nx.create Nx.float32 [| 1; 1; 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
-  let w = Nx.create Nx.float32 [| 1; 1; 3 |] [| 1.; 1.; 1. |] in
-  let result = Fn.conv1d x w in
-  check_shape "conv1d basic shape" [| 1; 1; 3 |] result;
-  check_values "conv1d basic" [| 6.; 9.; 12. |] result
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t = f t
 
-let test_conv1d_same_padding () =
-  let x = Nx.create Nx.float32 [| 1; 1; 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
-  let w = Nx.create Nx.float32 [| 1; 1; 3 |] [| 1.; 1.; 1. |] in
-  let result = Fn.conv1d ~padding:`Same x w in
-  check_shape "conv1d same shape" [| 1; 1; 5 |] result;
-  check_values "conv1d same" [| 3.; 6.; 9.; 12.; 9. |] result
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
+    f a b
 
-let test_conv1d_stride () =
-  let x =
-    Nx.create Nx.float32 [| 1; 1; 8 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |]
-  in
-  let w = Nx.create Nx.float32 [| 1; 1; 3 |] [| 1.; 1.; 1. |] in
-  let result = Fn.conv1d ~stride:2 x w in
-  check_shape "conv1d stride shape" [| 1; 1; 3 |] result;
-  check_values "conv1d stride" [| 6.; 12.; 18. |] result
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t = f t
+end
 
-let test_conv1d_dilation () =
-  let x = Nx.create Nx.float32 [| 1; 1; 7 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7. |] in
-  let w = Nx.create Nx.float32 [| 1; 1; 3 |] [| 1.; 0.; 1. |] in
-  let result = Fn.conv1d ~dilation:2 x w in
-  check_shape "conv1d dilation shape" [| 1; 1; 3 |] result;
-  (* kernel [1;0;1] with dilation=2 picks (i, i+2, i+4): 1+5=6, 2+6=8, 3+7=10 *)
-  check_values "conv1d dilation" [| 6.; 8.; 10. |] result
+(* Analytic values *)
 
-let test_conv1d_bias () =
-  let x = Nx.create Nx.float32 [| 1; 1; 3 |] [| 1.; 2.; 3. |] in
-  let w = Nx.create Nx.float32 [| 1; 1; 2 |] [| 1.; 1. |] in
-  let bias = Nx.create Nx.float32 [| 1 |] [| 10. |] in
-  let result = Fn.conv1d ~bias x w in
-  check_values "conv1d bias" [| 13.; 15. |] result
+let test_relu () =
+  check_arr ~msg:"relu" [| 0.; 0.; 0.; 1.; 2. |]
+    (Fn.relu (vec [| -2.; -1.; 0.; 1.; 2. |]))
 
-let test_conv1d_groups () =
-  let x = Nx.create Nx.float32 [| 1; 4; 4 |] (Array.init 16 float_of_int) in
-  let w =
-    Nx.create Nx.float32 [| 2; 2; 2 |] [| 1.; 1.; 1.; 1.; 1.; 1.; 1.; 1. |]
-  in
-  let result = Fn.conv1d ~groups:2 x w in
-  check_shape "conv1d groups shape" [| 1; 2; 3 |] result
+let test_leaky_relu () =
+  check_arr ~msg:"default slope" [| -0.02; 0.; 3. |]
+    (Fn.leaky_relu (vec [| -2.; 0.; 3. |]));
+  check_arr ~msg:"custom slope" [| -0.4; 2. |]
+    (Fn.leaky_relu ~negative_slope:0.2 (vec [| -2.; 2. |]))
 
-(* conv2d *)
+let test_sigmoid () =
+  check_arr ~msg:"sigmoid"
+    [| 0.5; 0.7310585786300049; 0.2689414213699951 |]
+    (Fn.sigmoid (vec [| 0.; 1.; -1. |]))
 
-let test_conv2d_basic () =
-  let x = Nx.create Nx.float32 [| 1; 1; 4; 4 |] (Array.init 16 float_of_int) in
-  let w = Nx.create Nx.float32 [| 1; 1; 3; 3 |] (Array.make 9 1.0) in
-  let result = Fn.conv2d x w in
-  check_shape "conv2d basic shape" [| 1; 1; 2; 2 |] result;
-  check_values "conv2d basic" [| 45.; 54.; 81.; 90. |] result
+let test_tanh () =
+  check_arr ~msg:"tanh"
+    [| 0.; 0.7615941559557649; -0.7615941559557649 |]
+    (Fn.tanh (vec [| 0.; 1.; -1. |]))
 
-let test_conv2d_same_padding () =
-  let x =
-    Nx.create Nx.float32 [| 1; 1; 3; 3 |]
-      [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
-  in
-  let w = Nx.create Nx.float32 [| 1; 1; 2; 2 |] [| 1.; 1.; 1.; 1. |] in
-  let result = Fn.conv2d ~padding:`Same x w in
-  check_shape "conv2d same shape" [| 1; 1; 3; 3 |] result
+let test_gelu () =
+  check_arr ~msg:"gelu"
+    [| 0.; 0.8413447460685429; -0.15865525393145707; 1.9544997361036416 |]
+    (Fn.gelu (vec [| 0.; 1.; -1.; 2. |]))
 
-let test_conv2d_stride () =
-  let x = Nx.create Nx.float32 [| 1; 1; 5; 5 |] (Array.init 25 float_of_int) in
-  let w = Nx.create Nx.float32 [| 1; 1; 3; 3 |] (Array.make 9 1.0) in
-  let result = Fn.conv2d ~stride:(2, 2) x w in
-  check_shape "conv2d stride shape" [| 1; 1; 2; 2 |] result;
-  check_values "conv2d stride" [| 54.; 72.; 144.; 162. |] result
+let test_gelu_approx () =
+  check_arr ~msg:"gelu_approx"
+    [| 0.; 0.8411919906082768; -0.15880800939172324; 1.954597694087775 |]
+    (Fn.gelu_approx (vec [| 0.; 1.; -1.; 2. |]))
 
-let test_conv2d_dilation () =
-  let x = Nx.create Nx.float32 [| 1; 1; 5; 5 |] (Array.init 25 float_of_int) in
-  let w =
-    Nx.create Nx.float32 [| 1; 1; 3; 3 |]
-      [| 1.; 0.; 0.; 0.; 0.; 0.; 0.; 0.; 1. |]
-  in
-  let result = Fn.conv2d ~dilation:(2, 2) x w in
-  check_shape "conv2d dilation shape" [| 1; 1; 1; 1 |] result;
-  check_values "conv2d dilation" [| 24. |] result
+let test_gelu_approx_close_to_gelu () =
+  (* The documented contract: about 1e-3 absolute error. *)
+  let x = vec (Array.init 33 (fun i -> -4. +. (0.25 *. float_of_int i))) in
+  let diff = Nx.max (Nx.abs (Nx.sub (Fn.gelu x) (Fn.gelu_approx x))) in
+  is_true ~msg:"within 2e-3 of exact gelu" (Nx.item [] diff < 2e-3)
 
-let test_conv2d_multi_channel () =
-  let x = Nx.create Nx.float32 [| 1; 3; 4; 4 |] (Array.init 48 float_of_int) in
-  let w = Nx.create Nx.float32 [| 2; 3; 3; 3 |] (Array.make 54 1.0) in
-  let result = Fn.conv2d x w in
-  check_shape "conv2d multi-channel shape" [| 1; 2; 2; 2 |] result
+let test_silu () =
+  check_arr ~msg:"silu"
+    [| 0.; 0.7310585786300049; -0.2689414213699951; 1.7615941559557646 |]
+    (Fn.silu (vec [| 0.; 1.; -1.; 2. |]))
 
-let test_conv2d_groups () =
-  let x = Nx.create Nx.float32 [| 1; 4; 6; 6 |] (Array.init 144 float_of_int) in
-  let w = Nx.create Nx.float32 [| 4; 2; 2; 2 |] (Array.make 32 1.0) in
-  let result = Fn.conv2d ~groups:2 x w in
-  check_shape "conv2d groups shape" [| 1; 4; 5; 5 |] result
+let test_softplus () =
+  check_arr ~msg:"softplus"
+    [| 0.6931471805599453; 1.3132616875182228; 0.31326168751822286 |]
+    (Fn.softplus (vec [| 0.; 1.; -1. |]))
 
-let test_conv2d_bias () =
-  let x = Nx.create Nx.float32 [| 1; 1; 3; 3 |] (Array.make 9 1.0) in
-  let w = Nx.create Nx.float32 [| 2; 1; 2; 2 |] (Array.make 8 1.0) in
-  let bias = Nx.create Nx.float32 [| 2 |] [| 10.; 20. |] in
-  let result = Fn.conv2d ~bias x w in
-  check_shape "conv2d bias shape" [| 1; 2; 2; 2 |] result;
-  (* Each 2x2 window of ones with all-ones kernel = 4.0, + bias *)
-  check_values "conv2d bias" [| 14.; 14.; 14.; 14.; 24.; 24.; 24.; 24. |] result
+let softmax_123 =
+  [| 0.09003057317038046; 0.24472847105479764; 0.6652409557748218 |]
 
-(* max_pool1d *)
+let test_softmax () =
+  check_arr ~msg:"softmax [1;2;3]" softmax_123
+    (Fn.softmax (vec [| 1.; 2.; 3. |]))
 
-let test_max_pool1d_basic () =
-  let x = Nx.create Nx.float32 [| 1; 1; 6 |] [| 1.; 3.; 2.; 5.; 4.; 6. |] in
-  let result = Fn.max_pool1d ~kernel_size:2 ~stride:2 x in
-  check_shape "max_pool1d shape" [| 1; 1; 3 |] result;
-  check_values "max_pool1d" [| 3.; 5.; 6. |] result
+let test_softmax_axis () =
+  let x = Nx.create f64 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  check_arr ~msg:"rows sum to 1 along the default last axis" [| 1.; 1. |]
+    (Nx.sum ~axes:[ 1 ] (Fn.softmax x));
+  check_arr ~msg:"columns sum to 1 along axis 0" [| 1.; 1.; 1. |]
+    (Nx.sum ~axes:[ 0 ] (Fn.softmax ~axis:0 x));
+  (* The rows differ by a shift, so their softmax is identical. *)
+  check_arr ~msg:"shift invariance"
+    (Array.append softmax_123 softmax_123)
+    (Fn.softmax x)
 
-let test_max_pool1d_same_padding () =
-  let x = Nx.create Nx.float32 [| 1; 1; 5 |] [| 1.; 3.; 2.; 5.; 4. |] in
-  let result = Fn.max_pool1d ~kernel_size:3 ~stride:1 ~padding:`Same x in
-  check_shape "max_pool1d same shape" [| 1; 1; 5 |] result
+let test_log_softmax () =
+  check_arr ~msg:"log_softmax [1;2;3]"
+    [| -2.4076059644443806; -1.4076059644443804; -0.4076059644443804 |]
+    (Fn.log_softmax (vec [| 1.; 2.; 3. |]));
+  let x = vec [| 0.3; -1.2; 0.8 |] in
+  check_arr ~msg:"agrees with log of softmax at moderate logits"
+    (to_arr (Nx.log (Fn.softmax x)))
+    (Fn.log_softmax x)
 
-(* max_pool2d *)
+(* Numerical stability *)
 
-let test_max_pool2d_basic () =
-  let x = Nx.create Nx.float32 [| 1; 1; 4; 4 |] (Array.init 16 float_of_int) in
-  let result = Fn.max_pool2d ~kernel_size:(2, 2) ~stride:(2, 2) x in
-  check_shape "max_pool2d shape" [| 1; 1; 2; 2 |] result;
-  check_values "max_pool2d" [| 5.; 7.; 13.; 15. |] result
+let test_softmax_large_logits () =
+  check_arr ~msg:"large logits equal shifted logits" softmax_123
+    (Fn.softmax (vec [| 1001.; 1002.; 1003. |]))
 
-let test_max_pool2d_stride1 () =
-  let x =
-    Nx.create Nx.float32 [| 1; 1; 3; 3 |]
-      [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
-  in
-  let result = Fn.max_pool2d ~kernel_size:(2, 2) ~stride:(1, 1) x in
-  check_shape "max_pool2d stride1 shape" [| 1; 1; 2; 2 |] result;
-  check_values "max_pool2d stride1" [| 5.; 6.; 8.; 9. |] result
+let test_log_softmax_extreme_logits () =
+  check_arr ~msg:"extreme spread stays finite" [| -2000.; -1000.; 0. |]
+    (Fn.log_softmax (vec [| -1000.; 0.; 1000. |]))
 
-(* avg_pool1d *)
+let test_softplus_saturates () =
+  check_arr ~msg:"softplus at large |x|" [| 1000.; 0. |]
+    (Fn.softplus (vec [| 1000.; -1000. |]))
 
-let test_avg_pool1d_basic () =
-  let x = Nx.create Nx.float32 [| 1; 1; 6 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  let result = Fn.avg_pool1d ~kernel_size:2 ~stride:2 x in
-  check_shape "avg_pool1d shape" [| 1; 1; 3 |] result;
-  check_values "avg_pool1d" [| 1.5; 3.5; 5.5 |] result
+let test_sigmoid_saturates () =
+  check_arr ~msg:"sigmoid at large |x|" [| 1.; 0. |]
+    (Fn.sigmoid (vec [| 1000.; -1000. |]))
 
-(* avg_pool2d *)
+(* Gradients: analytic derivatives via Rune.grad' on float64. *)
 
-let test_avg_pool2d_basic () =
-  let x = Nx.create Nx.float32 [| 1; 1; 4; 4 |] (Array.init 16 float_of_int) in
-  let result = Fn.avg_pool2d ~kernel_size:(2, 2) ~stride:(2, 2) x in
-  check_shape "avg_pool2d shape" [| 1; 1; 2; 2 |] result;
-  check_values "avg_pool2d" [| 2.5; 4.5; 10.5; 12.5 |] result
+let grad_of f x = Rune.grad' (fun x -> Nx.sum (f x)) x
 
-let test_avg_pool2d_same_padding () =
-  let x =
-    Nx.create Nx.float32 [| 1; 1; 3; 3 |]
-      [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9. |]
-  in
-  let result =
-    Fn.avg_pool2d ~kernel_size:(2, 2) ~stride:(2, 2) ~padding:`Same x
-  in
-  check_shape "avg_pool2d same shape" [| 1; 1; 2; 2 |] result
+let test_grad_relu () =
+  let x = vec [| -1.5; 0.5; 2.0 |] in
+  check_arr ~msg:"relu'" [| 0.; 1.; 1. |] (grad_of Fn.relu x);
+  check_arr ~msg:"leaky_relu'" [| 0.01; 1.; 1. |]
+    (grad_of (fun x -> Fn.leaky_relu x) x);
+  check_arr ~msg:"leaky_relu' custom slope" [| 0.2; 1.; 1. |]
+    (grad_of (Fn.leaky_relu ~negative_slope:0.2) x)
 
-(* Gradient tests *)
+let test_grad_sigmoid_tanh_softplus () =
+  let x = vec [| 0.9; -1.7 |] in
+  (* sigmoid' = s * (1 - s); softplus' = sigmoid; tanh' = 1 - tanh². *)
+  check_arr ~msg:"sigmoid'"
+    [| 0.2055003073422635; 0.13060574696620805 |]
+    (grad_of Fn.sigmoid x);
+  check_arr ~msg:"tanh'"
+    [| 0.4869173611483415; 0.1250098706334466 |]
+    (grad_of Fn.tanh x);
+  check_arr ~msg:"softplus'"
+    [| 0.7109495026250039; 0.1544652650835347 |]
+    (grad_of Fn.softplus x)
 
-let eps = 1e-4
+let test_grad_gelu_silu () =
+  let x = vec [| 1.0; -1.0; 0.5 |] in
+  (* gelu' = Φ(x) + x φ(x); silu' = s(x) (1 + x (1 - s(x))). *)
+  check_arr ~msg:"gelu'"
+    [| 1.0833154705876864; -0.08331547058768629; 0.8674951246561629 |]
+    (grad_of Fn.gelu x);
+  check_arr ~msg:"silu'"
+    [| 0.9276705118714869; 0.07232948812851325; 0.7399611873026519 |]
+    (grad_of Fn.silu x)
 
-let check_rune ~eps msg expected actual =
-  let xs = flatten_f32 expected in
-  let ys = flatten_f32 actual in
-  let n = Array.length xs in
-  if Array.length ys <> n then
-    failf "%s: shape mismatch: expected %d elts, got %d" msg n (Array.length ys);
-  for i = 0 to n - 1 do
-    equal ~msg:(Printf.sprintf "%s[%d]" msg i) (float eps) xs.(i) ys.(i)
-  done
+let test_grad_softmax () =
+  let x = vec [| 1.; 2.; 3. |] in
+  (* sum(softmax x) is constantly 1, so its gradient vanishes. *)
+  check_arr ~msg:"softmax rows are on the simplex" [| 0.; 0.; 0. |]
+    (grad_of (fun x -> Fn.softmax x) x);
+  (* d/dx_i sum_j log_softmax(x)_j = 1 - n * softmax(x)_i. *)
+  check_arr ~msg:"log_softmax'"
+    (Array.map (fun s -> 1. -. (3. *. s)) softmax_123)
+    (grad_of (fun x -> Fn.log_softmax x) x)
 
-let test_grad_conv2d () =
-  (* conv2d is correlation (no kernel flip), unlike the old Nx convolve2d *)
-  let x =
-    Nx.create Nx.float32 [| 1; 1; 4; 4 |]
-      (Array.init 16 (fun i -> float_of_int (i + 1)))
-  in
-  let w = Nx.create Nx.float32 [| 1; 1; 2; 2 |] [| 1.; 0.; 0.; 1. |] in
-  (* grad w.r.t. input: sum(conv2d(x, w)) → each input pixel's grad is how many
-     output windows include it, weighted by the kernel value at that position.
-     For a 2x2 kernel [1,0;0,1] on 4x4 input with Valid padding → 3x3 output.
-     JAX: jax.grad(lambda x: jnp.sum(jax.lax.conv(x, w, (1,1), 'VALID')))(x) *)
-  let f_x x = Nx.sum (Fn.conv2d x w) in
-  let grad_x = Rune.grad f_x x in
-  let expected_x =
-    Nx.create Nx.float32 [| 1; 1; 4; 4 |]
-      [| 1.; 1.; 1.; 0.; 1.; 2.; 2.; 1.; 1.; 2.; 2.; 1.; 0.; 1.; 1.; 1. |]
-  in
-  check_rune ~eps "conv2d dx" expected_x grad_x;
-  (* grad w.r.t. kernel *)
-  let f_w w = Nx.sum (Fn.conv2d x w) in
-  let grad_w = Rune.grad f_w w in
-  (* For correlation: dL/dw[i,j] = sum of x values at positions covered by
-     w[i,j] across all output windows. w[0,0] covers x[0..2,0..2], w[0,1] covers
-     x[0..2,1..3], etc. *)
-  let expected_w =
-    Nx.create Nx.float32 [| 1; 1; 2; 2 |] [| 54.; 63.; 90.; 99. |]
-  in
-  check_rune ~eps "conv2d dw" expected_w grad_w
+(* Gradients: finite-difference checks on points away from the relu kink. *)
 
-let test_grad_avg_pool2d () =
-  let x =
-    Nx.create Nx.float32 [| 1; 1; 4; 4 |]
-      (Array.init 16 (fun i -> float_of_int (i + 1)))
-  in
-  (* Non-overlapping 2x2 avg pool: each output = mean of 4 inputs. grad of
-     sum(avg_pool) = 0.25 everywhere (each input contributes to exactly one
-     output, scaled by 1/4) *)
-  let f x = Nx.sum (Fn.avg_pool2d ~kernel_size:(2, 2) ~stride:(2, 2) x) in
-  let grad_x = Rune.grad f x in
-  let expected = Nx.full Nx.float32 [| 1; 1; 4; 4 |] 0.25 in
-  check_rune ~eps "avg_pool2d dx" expected grad_x
-
-let test_grad_avg_pool2d_overlapping () =
-  let x =
-    Nx.create Nx.float32 [| 1; 1; 4; 4 |]
-      (Array.init 16 (fun i -> float_of_int (i + 1)))
-  in
-  (* Overlapping 2x2 avg pool with stride 1: 3x3 output. Each output window
-     contributes 0.25 per input pixel it covers. Corner pixels appear in 1
-     window, edge in 2, interior in 4. *)
-  let f x = Nx.sum (Fn.avg_pool2d ~kernel_size:(2, 2) ~stride:(1, 1) x) in
-  let grad_x = Rune.grad f x in
-  let expected =
-    Nx.create Nx.float32 [| 1; 1; 4; 4 |]
-      [|
-        0.25;
-        0.5;
-        0.5;
-        0.25;
-        0.5;
-        1.0;
-        1.0;
-        0.5;
-        0.5;
-        1.0;
-        1.0;
-        0.5;
-        0.25;
-        0.5;
-        0.5;
-        0.25;
-      |]
-  in
-  check_rune ~eps "avg_pool2d overlapping dx" expected grad_x
-
-let () =
-  run "Kaun.Fn"
+let grad_check_tests =
+  let x () = vec [| 0.9; -1.7; 0.3; 2.4; -0.6 |] in
+  let w () = vec [| 0.7; -0.3; 1.1; 0.2; -0.9 |] in
+  let sum f x = Nx.sum (f x) in
+  (* Weight softmax and log_softmax so the objective is not constant. *)
+  let weighted f x = Nx.sum (Nx.mul (w ()) (f x)) in
+  List.map
+    (fun (name, objective) ->
+      test (name ^ " gradient matches finite differences") (fun () ->
+          match Rune.check_grads (module Single) objective (x ()) with
+          | Ok () -> ()
+          | Error msg -> fail msg))
     [
-      group "conv1d"
-        [
-          test "basic" test_conv1d_basic;
-          test "same padding" test_conv1d_same_padding;
-          test "stride" test_conv1d_stride;
-          test "dilation" test_conv1d_dilation;
-          test "bias" test_conv1d_bias;
-          test "groups" test_conv1d_groups;
-        ];
-      group "conv2d"
-        [
-          test "basic" test_conv2d_basic;
-          test "same padding" test_conv2d_same_padding;
-          test "stride" test_conv2d_stride;
-          test "dilation" test_conv2d_dilation;
-          test "multi-channel" test_conv2d_multi_channel;
-          test "groups" test_conv2d_groups;
-          test "bias" test_conv2d_bias;
-        ];
-      group "max_pool"
-        [
-          test "1d basic" test_max_pool1d_basic;
-          test "1d same padding" test_max_pool1d_same_padding;
-          test "2d basic" test_max_pool2d_basic;
-          test "2d stride 1" test_max_pool2d_stride1;
-        ];
-      group "avg_pool"
-        [
-          test "1d basic" test_avg_pool1d_basic;
-          test "2d basic" test_avg_pool2d_basic;
-          test "2d same padding" test_avg_pool2d_same_padding;
-        ];
-      group "gradients"
-        [
-          test "conv2d" test_grad_conv2d;
-          test "avg_pool2d" test_grad_avg_pool2d;
-          test "avg_pool2d overlapping" test_grad_avg_pool2d_overlapping;
-        ];
+      ("relu", sum Fn.relu);
+      ("leaky_relu", sum (fun x -> Fn.leaky_relu x));
+      ("sigmoid", sum Fn.sigmoid);
+      ("tanh", sum Fn.tanh);
+      ("gelu", sum Fn.gelu);
+      ("gelu_approx", sum Fn.gelu_approx);
+      ("silu", sum Fn.silu);
+      ("softplus", sum Fn.softplus);
+      ("softmax", weighted (fun x -> Fn.softmax x));
+      ("log_softmax", weighted (fun x -> Fn.log_softmax x));
     ]
+
+let tests =
+  [
+    group "values"
+      [
+        test "relu clamps negatives to zero" test_relu;
+        test "leaky_relu scales negatives by the slope" test_leaky_relu;
+        test "sigmoid matches the logistic function" test_sigmoid;
+        test "tanh matches the hyperbolic tangent" test_tanh;
+        test "gelu matches the exact erf form" test_gelu;
+        test "gelu_approx matches the tanh form" test_gelu_approx;
+        test "gelu_approx stays within 2e-3 of gelu"
+          test_gelu_approx_close_to_gelu;
+        test "silu is x times sigmoid" test_silu;
+        test "softplus matches log(1 + exp x)" test_softplus;
+        test "softmax normalizes exponentials" test_softmax;
+        test "softmax normalizes along the requested axis" test_softmax_axis;
+        test "log_softmax is the log of softmax" test_log_softmax;
+      ];
+    group "numerical stability"
+      [
+        test "softmax survives large logits" test_softmax_large_logits;
+        test "log_softmax survives extreme logits"
+          test_log_softmax_extreme_logits;
+        test "softplus does not overflow" test_softplus_saturates;
+        test "sigmoid saturates cleanly" test_sigmoid_saturates;
+      ];
+    group "gradients"
+      ([
+         test "relu family has piecewise-constant gradients" test_grad_relu;
+         test "sigmoid, tanh and softplus have analytic gradients"
+           test_grad_sigmoid_tanh_softplus;
+         test "gelu and silu have analytic gradients" test_grad_gelu_silu;
+         test "softmax and log_softmax have analytic gradients"
+           test_grad_softmax;
+       ]
+      @ grad_check_tests);
+  ]
+
+let () = run "kaun fn" tests

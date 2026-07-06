@@ -3,34 +3,186 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Composable gradient-based optimizers.
+(** Gradient-descent optimizers.
 
-    Vega provides typed, per-parameter optimizer primitives that compose via
-    {!chain}. Each primitive is a gradient transformation: it takes updates
-    (gradients) and returns modified updates. Primitives are chained to build
-    optimizers:
+    Vega is the optimizer layer of the Raven ecosystem. Its primary surface is
+    {e structural}: optimizers step whole parameter structures — any type
+    implementing {!Nx.Ptree.S}. Optimizer state has the shape of the parameters
+    themselves: each algorithm keeps its per-parameter accumulators as values of
+    the user's own structure type, in a small record the training loop threads
+    explicitly ({!type:sgd_state}, {!type:adam_state}). Steps are pure
+    traversals — a step consumes a state and returns the next one — so a
+    training step is an ordinary function of [(params, state)], and
+    checkpointing an optimizer means saving a record of parameter-shaped values.
+
+    There is no optimizer object; composition is function application. Transform
+    gradients before the step (for example {!clip_by_global_norm}) and evaluate
+    a {!Schedule.t} at the loop's step counter for that step's learning rate:
+
+    {[
+      let sched =
+        Vega.Schedule.cosine_decay ~init_value:1e-3 ~decay_steps:1000 ()
+      in
+      let step k (params, st) =
+        let loss, grads = value_and_grad (module Model) f params in
+        let grads =
+          Vega.clip_by_global_norm (module Model) ~max_norm:1.0 grads
+        in
+        let params, st =
+          Vega.adamw_step (module Model) ~lr:(sched k) st ~params ~grads
+        in
+        ((params, st), loss)
+    ]}
+
+    Below the structural tier, the {{!section:chains}per-tensor tier} composes
+    Optax-style gradient transformations on single tensors via {!chain}. Use it
+    to build custom update rules from primitives, or from frameworks that manage
+    each parameter tensor separately. *)
+
+(** {1:schedules Learning-Rate Schedules}
+
+    A schedule maps a step counter to a learning rate; it is a plain function
+    [int -> float], shared by both tiers. Structural training loops evaluate a
+    schedule at the loop's step counter and pass the result as [~lr]; the
+    per-tensor {!scale_by_learning_rate} and {!scale_by_schedule} consume a
+    schedule value directly. *)
+
+module Schedule = Schedule
+
+(** {1:gradients Gradient Transformations}
+
+    Pure functions on gradient structures, applied between the backward pass and
+    the optimizer step. *)
+
+val global_norm : (module P : Nx.Ptree.S) -> P.t -> float
+(** [global_norm (module P) grads] is the L2 norm of all leaves of [grads] taken
+    together: [sqrt (sum of every element squared)]. *)
+
+val clip_by_global_norm :
+  (module P : Nx.Ptree.S) -> max_norm:float -> P.t -> P.t
+(** [clip_by_global_norm (module P) ~max_norm grads] scales [grads] so that its
+    {!global_norm} does not exceed [max_norm]. Gradients within the bound
+    (including all-zero gradients) are returned unchanged; larger ones are
+    scaled by [max_norm /. norm], preserving their direction.
+
+    Raises [Invalid_argument] if [max_norm <= 0.]. *)
+
+val clip_by_value : (module P : Nx.Ptree.S) -> max:float -> P.t -> P.t
+(** [clip_by_value (module P) ~max grads] clips every gradient element to the
+    interval \[[-. max];[max]\].
+
+    Raises [Invalid_argument] if [max <= 0.]. *)
+
+(** {1:sgd Stochastic Gradient Descent} *)
+
+type 'p sgd_state = { velocity : 'p }
+(** The state for {!sgd_step}: the momentum velocity, with the shape of the
+    parameters. *)
+
+val sgd_init : (module P : Nx.Ptree.S) -> P.t -> P.t sgd_state
+(** [sgd_init (module P) params] is the initial state for optimizing [params]:
+    an all-zero velocity of [params]' shape. *)
+
+val sgd_step :
+  (module P : Nx.Ptree.S) ->
+  lr:float ->
+  ?momentum:float ->
+  P.t sgd_state ->
+  params:P.t ->
+  grads:P.t ->
+  P.t * P.t sgd_state
+(** [sgd_step (module P) ~lr st ~params ~grads] is [(params', st')] after one
+    step of gradient descent with heavy-ball momentum. Per element:
+
+    {v
+    v' = momentum * v + g
+    p' = p - lr * v'
+    v}
+
+    [momentum] defaults to [0.], plain gradient descent: the velocity is then
+    the last gradient. *)
+
+(** {1:adam Adam and AdamW} *)
+
+type 'p adam_state = { mu : 'p; nu : 'p; step : int }
+(** The state for {!adam_step} and {!adamw_step}. [mu] and [nu] are the
+    exponential moving averages of gradients and of squared gradients (biased;
+    steps apply the correction when computing the update), each with the
+    parameters' shape. [step] is the number of completed steps. *)
+
+val adam_init : (module P : Nx.Ptree.S) -> P.t -> P.t adam_state
+(** [adam_init (module P) params] is the initial state for optimizing [params]:
+    all-zero moments and [step = 0]. *)
+
+val adam_step :
+  (module P : Nx.Ptree.S) ->
+  lr:float ->
+  ?b1:float ->
+  ?b2:float ->
+  ?eps:float ->
+  P.t adam_state ->
+  params:P.t ->
+  grads:P.t ->
+  P.t * P.t adam_state
+(** [adam_step (module P) ~lr st ~params ~grads] is [(params', st')] after one
+    Adam step (Kingma and Ba, 2015). Per element, with [t = st.step + 1]:
+
+    {v
+    mu' = b1 * mu + (1 - b1) * g
+    nu' = b2 * nu + (1 - b2) * g^2
+    d   = (mu' / (1 - b1^t)) / (sqrt (nu' / (1 - b2^t)) + eps)
+    p'  = p - lr * d
+    v}
+
+    [b1] defaults to [0.9], [b2] to [0.999], [eps] to [1e-8]. *)
+
+val adamw_init : (module P : Nx.Ptree.S) -> P.t -> P.t adam_state
+(** [adamw_init] is {!adam_init}: AdamW shares Adam's state. *)
+
+val adamw_step :
+  (module P : Nx.Ptree.S) ->
+  lr:float ->
+  ?b1:float ->
+  ?b2:float ->
+  ?eps:float ->
+  ?weight_decay:float ->
+  P.t adam_state ->
+  params:P.t ->
+  grads:P.t ->
+  P.t * P.t adam_state
+(** [adamw_step (module P) ~lr st ~params ~grads] is like {!adam_step} with
+    decoupled weight decay (Loshchilov and Hutter, 2019): with [d] Adam's
+    bias-corrected direction, the parameter update becomes
+
+    {v p' = p - lr * (d + weight_decay * p) v}
+
+    The decay applies to the parameters directly rather than through the
+    adaptive scaling, so its effective strength does not depend on the gradient
+    history. [weight_decay] defaults to [0.01]; with [weight_decay = 0.] the
+    step is exactly {!adam_step}. *)
+
+(** {1:chains Per-Tensor Transformation Chains}
+
+    An Optax-style tier below the structural API. A {!type:t} is a composable
+    gradient transformation on a single tensor: it takes updates (gradients) and
+    returns modified updates. Primitives are chained to build optimizers:
 
     {[
     let tx =
       Vega.chain
         [
           Vega.scale_by_adam ();
-          Vega.add_decayed_weights ~rate:(Schedule.constant 0.01) ();
+          Vega.add_decayed_weights ~rate:(Vega.Schedule.constant 0.01) ();
           Vega.scale_by_learning_rate lr;
         ]
     ]}
 
     Common optimizers are provided as aliases: {!adam}, {!sgd}, {!adamw}, etc.
+    The core abstraction is [t]; the per-parameter {!type:state} is fully
+    self-contained — it tracks moments, step count, and the update rule — and
+    serializes via {!state_to_tensors}. *)
 
-    {b Narrow waist.} The core abstraction is [t]: a composable gradient
-    transformation. The per-parameter {!state} is fully self-contained and
-    tracks moments, step count, and the update rule. *)
-
-(** {1:schedules Learning-Rate Schedules} *)
-
-module Schedule = Schedule
-
-(** {1:types Types} *)
+(** {2:types Types} *)
 
 type t
 (** A composable gradient transformation. Constructed via primitives like
@@ -41,7 +193,7 @@ type ('a, 'b) state
     moments, step count, and the transformation chain. Created via {!init},
     advanced via {!update} or {!step}. *)
 
-(** {1:core Core} *)
+(** {2:core Core} *)
 
 val chain : t list -> t
 (** [chain transforms] composes transforms sequentially. {!update} applies each
@@ -81,7 +233,7 @@ val step :
     (apply_updates ~param ~updates, state)
     ]} *)
 
-(** {1:scaling Scaling Transforms} *)
+(** {2:scaling Scaling Transforms} *)
 
 val scale : float -> t
 (** [scale s] multiplies updates by [s]. Stateless. *)
@@ -93,7 +245,7 @@ val scale_by_learning_rate : Schedule.t -> t
 (** [scale_by_learning_rate lr] multiplies updates by [-lr step]. Negates the
     learning rate so that {!apply_updates} performs gradient descent. *)
 
-(** {1:adaptive Adaptive Scaling Transforms} *)
+(** {2:adaptive Adaptive Scaling Transforms} *)
 
 val scale_by_adam :
   ?b1:float ->
@@ -190,7 +342,7 @@ val scale_by_adan :
     State: 4 tensors (first moment, gradient difference moment, second moment,
     previous gradient). *)
 
-(** {1:accumulation Accumulation Transforms} *)
+(** {2:accumulation Accumulation Transforms} *)
 
 val trace : ?decay:float -> ?nesterov:bool -> unit -> t
 (** [trace ?decay ?nesterov ()] accumulates a trace (momentum) of updates.
@@ -199,7 +351,7 @@ val trace : ?decay:float -> ?nesterov:bool -> unit -> t
 
     State: 1 tensor (trace/velocity). *)
 
-(** {1:regularization Regularization Transforms} *)
+(** {2:regularization Regularization Transforms} *)
 
 val add_decayed_weights : ?rate:Schedule.t -> unit -> t
 (** [add_decayed_weights ?rate ()] adds [rate step * param] to updates. When
@@ -210,10 +362,11 @@ val add_decayed_weights : ?rate:Schedule.t -> unit -> t
 
     State: 0 tensors. *)
 
-(** {1:clipping Clipping Transforms} *)
+(** {2:clipping Clipping Transforms} *)
 
-val clip_by_value : float -> t
-(** [clip_by_value delta] clips updates element-wise to [[-delta, +delta]].
+val clip : float -> t
+(** [clip delta] clips updates element-wise to [[-delta, +delta]] (Optax's
+    [clip]). The structural counterpart is {!clip_by_value}.
 
     State: 0 tensors. *)
 
@@ -223,7 +376,7 @@ val clip_by_norm : float -> t
 
     State: 0 tensors. *)
 
-(** {1:gradient_processing Gradient Processing} *)
+(** {2:gradient_processing Gradient Processing} *)
 
 val centralize : t
 (** [centralize] subtracts the mean from each gradient tensor. For tensors with
@@ -241,7 +394,7 @@ val add_noise : eta:Schedule.t -> ?gamma:float -> unit -> t
 
     State: 0 tensors. *)
 
-(** {1:robustness Robustness} *)
+(** {2:robustness Robustness} *)
 
 val apply_if_finite : t -> t
 (** [apply_if_finite tx] wraps [tx] so that if any update produced by [tx]
@@ -250,7 +403,7 @@ val apply_if_finite : t -> t
 
     State: inner state + 1 tensor (count of consecutive non-finite steps). *)
 
-(** {1:aliases Optimizer Aliases} *)
+(** {2:aliases Optimizer Aliases} *)
 
 val sgd : ?momentum:float -> ?nesterov:bool -> Schedule.t -> t
 (** [sgd lr] is stochastic gradient descent.
@@ -345,7 +498,7 @@ val adafactor : ?b2_decay:[ `Constant of float | `Rms ] -> unit -> t
     Adafactor includes its own learning rate schedule (inverse root of step) so
     no separate {!scale_by_learning_rate} is needed. *)
 
-(** {1:serialization Serialization} *)
+(** {2:serialization Serialization} *)
 
 val n_tensors : t -> int
 (** [n_tensors tx] is the total number of state tensors across all primitives in

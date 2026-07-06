@@ -3,75 +3,69 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** GPT-2 decoder and language model head.
+(** GPT-2 (Radford et al., 2019) from kaun layers.
 
-    GPT-2 inputs are passed as int32 [input_ids]:
-
-    {[
-    Layer.apply model vars ~training:false input_ids
-    ]}
-
-    Position ids are computed automatically from the sequence length. *)
-
-open Kaun
-
-(** {1:config Configuration} *)
+    The model is a plain record of {!Kaun} layers; {!logits} is its forward pass
+    and {!Params} its checkpoint plumbing. {!of_hf} adapts the HuggingFace
+    checkpoint — [h.{i}.attn.c_attn] fused qkv projections, [Conv1D] naming —
+    onto {!Params}' names, and {!from_pretrained} runs the whole pipeline:
+    download, adapt, extract typed parameters. *)
 
 type config = {
   vocab_size : int;
-  n_positions : int;
+  n_positions : int;  (** Maximum sequence length. *)
   n_embd : int;
   n_layer : int;
   n_head : int;
-  n_inner : int;
-  resid_pdrop : float;
-  embd_pdrop : float;
-  attn_pdrop : float;
+  n_inner : int;  (** MLP hidden width, [4 * n_embd] in the released models. *)
   layer_norm_eps : float;
 }
-(** The type for GPT-2 configurations. *)
+(** The type for GPT-2 hyperparameters, as in HuggingFace's [config.json]. *)
 
-val config :
-  vocab_size:int ->
-  n_embd:int ->
-  n_layer:int ->
-  n_head:int ->
-  ?n_positions:int ->
-  ?n_inner:int ->
-  ?resid_pdrop:float ->
-  ?embd_pdrop:float ->
-  ?attn_pdrop:float ->
-  ?layer_norm_eps:float ->
-  unit ->
-  config
-(** [config ~vocab_size ~n_embd ~n_layer ~n_head ()] is a GPT-2 configuration.
+type block = {
+  ln1 : Kaun.Layer_norm.t;
+  attn : Kaun.Attention.t;
+  ln2 : Kaun.Layer_norm.t;
+  fc : Kaun.Linear.t;  (** MLP up projection, [n_embd → n_inner]. *)
+  proj : Kaun.Linear.t;  (** MLP down projection, [n_inner → n_embd]. *)
+}
+(** The type for one pre-norm transformer block. *)
 
-    [n_positions] defaults to [1024]. [n_inner] defaults to [4 * n_embd].
-    Dropout rates default to [0.1]. [layer_norm_eps] defaults to [1e-5].
+type t = {
+  wte : Kaun.Embedding.t;  (** Token embeddings, also the tied LM head. *)
+  wpe : Kaun.Embedding.t;  (** Learned position embeddings. *)
+  blocks : block list;
+  ln_f : Kaun.Layer_norm.t;
+}
+(** The type for GPT-2 parameters. *)
 
-    Raises [Invalid_argument] if [n_embd] is not divisible by [n_head]. *)
+module Params : Kaun.Checkpoint.Named with type t = t
+(** Checkpoint plumbing for {!type:t}. Leaves are named [wte.table],
+    [blocks.0.attn.q.w], [ln_f.gamma], ... *)
 
-(** {1:layers Layers} *)
+val make : config -> t
+(** [make cfg] is a zero-initialized model, the [~like] template for
+    {!Kaun.Checkpoint.to_params}. *)
 
-val decoder : config -> unit -> (int32, float) Layer.t
-(** [decoder cfg ()] is the GPT-2 transformer decoder.
+val logits : config -> t -> (int32, Nx.int32_elt) Nx.t -> Nx.float32_t
+(** [logits cfg p ids] is the next-token logits for the [[| batch; seq |]] id
+    tensor [ids], of shape [[| batch; seq; vocab_size |]]. The LM head is tied
+    to [p.wte].
 
-    Input: int32 [input_ids] of shape [[batch; seq]]. Output: float hidden
-    states of shape [[batch; seq; n_embd]]. *)
+    Raises [Invalid_argument] if [ids] has more than [cfg.n_positions]
+    positions. *)
 
-val for_causal_lm : config -> unit -> (int32, float) Layer.t
-(** [for_causal_lm cfg ()] is decoder + tied LM head.
+val of_hf : n_layer:int -> Kaun.Checkpoint.t -> Kaun.Checkpoint.t
+(** [of_hf ~n_layer ckpt] adapts the HuggingFace GPT-2 checkpoint [ckpt] to
+    {!Params}' names: splits each block's fused [c_attn] weight and bias into
+    the [q], [k] and [v] projections and renames everything else. HF's [Conv1D]
+    weights are already [inputs × outputs], so no transposes are needed. Entries
+    the model does not use (attention mask buffers) are left in place and
+    ignored by extraction. *)
 
-    Output: logits [[batch; seq; vocab_size]]. Word embeddings are tied with the
-    LM head projection. *)
+val from_pretrained : ?repo_id:string -> unit -> config * t
+(** [from_pretrained ()] downloads [repo_id] (defaults to ["gpt2"]) from the
+    HuggingFace Hub — config and weights — and is the parsed configuration with
+    the pretrained parameters.
 
-(** {1:pretrained Pretrained loading} *)
-
-val from_pretrained : ?model_id:string -> unit -> config * Ptree.t
-(** [from_pretrained ?model_id ()] downloads [model_id] from HuggingFace and
-    returns [(cfg, decoder_params)].
-
-    [decoder_params] is ready for {!decoder} or {!for_causal_lm} (the LM head
-    reuses the word embedding weights).
-
-    [model_id] defaults to ["gpt2"]. *)
+    Raises [Failure] on download or parse errors. *)

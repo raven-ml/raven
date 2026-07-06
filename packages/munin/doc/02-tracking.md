@@ -181,21 +181,19 @@ Session.log_table session ~step:1 ~key:"results/per_class"
 
 ## Integration with Kaun
 
-Munin has no compile-time dependency on Kaun. Integration happens
-through `Train.fit`'s `~report` callback:
+Munin has no compile-time dependency on Kaun. Since the training loop is
+ordinary code you own, logging is a line inside it:
 
 <!-- $MDX skip -->
 ```ocaml
-open Kaun
-
 let () =
   Nx.Rng.run ~seed:42 @@ fun () ->
   let session =
-    Munin.Session.start ~experiment:"mnist" ~name:"cnn-adam"
+    Munin.Session.start ~experiment:"mnist" ~name:"mlp-adamw"
       ~params:[
         ("lr", `Float 0.001);
         ("batch_size", `Int 64);
-        ("optimizer", `String "adam");
+        ("optimizer", `String "adamw");
       ]
       ()
   in
@@ -204,36 +202,32 @@ let () =
   Munin.Session.define_metric session "val/accuracy"
     ~summary:`Max ~goal:`Maximize ();
 
-  let (x_train, y_train), (x_test, y_test) = Kaun_datasets.mnist () in
-  let trainer =
-    Train.make ~model ~optimizer:(Vega.adam (Vega.Schedule.constant 0.001))
-  in
-  let st = ref (Train.init trainer ~dtype:Nx.float32) in
+  let train_x, train_y, test_x, test_y = Kaun_datasets.mnist () in
+  let params = Model.init () in
+  let state = ref (params, Vega.adamw_init (module Model) params) in
+  let step = ref 0 in
 
   for epoch = 1 to 3 do
-    let train_data =
-      Data.prepare ~shuffle:true ~batch_size:64 (x_train, y_train)
-      |> Data.map (fun (x, y) ->
-          (x, fun logits -> Loss.cross_entropy_sparse logits y))
-    in
-    st :=
-      Train.fit trainer !st
-        ~report:(fun ~step ~loss _st ->
-          Munin.Session.log_metrics session ~step
-            [ ("train/loss", loss); ("epoch", Float.of_int epoch) ])
-        train_data;
+    Kaun.Data.batches2 ~shuffle:true ~batch_size:64 (train_x, train_y)
+    |> Seq.iter (fun (x, y) ->
+        let params, ostate = !state in
+        let loss, grads =
+          Rune.value_and_grad (module Model)
+            (fun p -> Kaun.Loss.softmax_cross_entropy_sparse (Model.apply p x) y)
+            params
+        in
+        let params, ostate =
+          Vega.adamw_step (module Model) ~lr:0.001 ostate ~params ~grads
+        in
+        state := (params, ostate);
+        incr step;
+        Munin.Session.log_metrics session ~step:!step
+          [ ("train/loss", Nx.item [] loss);
+            ("epoch", Float.of_int epoch) ]);
 
     (* Evaluate and log validation accuracy. *)
-    let test_batches = Data.prepare ~batch_size:64 (x_test, y_test) in
-    let acc =
-      Metric.eval
-        (fun (x, y) ->
-          let logits = Train.predict trainer !st x in
-          Metric.accuracy logits y)
-        test_batches
-    in
-    Munin.Session.log_metric session ~step:(epoch * 937)
-      "val/accuracy" acc
+    let acc = Kaun.Metric.accuracy (Model.apply (fst !state) test_x) test_y in
+    Munin.Session.log_metric session ~step:!step "val/accuracy" acc
   done;
 
   Munin.Session.finish session ()

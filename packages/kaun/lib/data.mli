@@ -3,118 +3,60 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Lazy, composable data pipelines for training.
+(** Minibatch sequences over in-memory tensors.
 
-    A {!type:t} is a resettable iterator over elements of type ['a]. Pipelines
-    are built by composing constructors, transformers, and consumers.
+    A dataset is a tensor — or a pair of tensors — whose axis 0 indexes
+    examples. {!batches} and {!batches2} cut it into a standard [Seq.t] of
+    minibatch tensors; the training loop is ordinary [Seq] iteration, and stdlib
+    combinators ([Seq.map], [Seq.take], [Seq.fold_left], ...) compose any
+    further transformation. This module defines no iterator type of its own.
+
+    Traversing a sequence built with [~shuffle:true] draws a fresh permutation
+    from the ambient RNG scope (see {!Nx.Rng}): iterating the same sequence once
+    per epoch reshuffles every epoch, and running the loop under {!Nx.Rng.run}
+    makes the whole schedule of permutations — hence the whole run —
+    reproducible.
 
     {[
-    Data.of_array examples |> Data.shuffle |> Data.map_batch 32 collate
-    |> Data.iter train_step
+    Nx.Rng.run ~seed:42 @@ fun () ->
+    let data = Data.batches2 ~shuffle:true ~batch_size:32 (x, y) in
+    let state = ref (params, Vega.adam_init (module Model) params) in
+    for _epoch = 1 to 10 do
+      data |> Seq.iter (fun batch -> state := fst (step !state batch))
+    done
     ]} *)
 
-(** {1:types Types} *)
-
-type 'a t
-(** The type for lazy data pipelines producing elements of type ['a]. *)
-
-(** {1:constructors Constructors} *)
-
-val of_array : 'a array -> 'a t
-(** [of_array a] is a pipeline yielding the elements of [a] in order. *)
-
-val of_tensor : ('a, 'b) Nx.t -> ('a, 'b) Nx.t t
-(** [of_tensor t] is a pipeline yielding slices along the first dimension of
-    [t]. Each element has shape [t.shape[1:]]. *)
-
-val of_tensors :
-  ('a, 'b) Nx.t * ('c, 'd) Nx.t -> (('a, 'b) Nx.t * ('c, 'd) Nx.t) t
-(** [of_tensors (x, y)] is a pipeline yielding paired slices along the first
-    dimension of [x] and [y].
-
-    Raises [Invalid_argument] if [x] and [y] have different first dimension
-    sizes. *)
-
-val of_fn : int -> (int -> 'a) -> 'a t
-(** [of_fn n f] is a pipeline yielding [f 0], [f 1], ..., [f (n - 1)].
-
-    Raises [Invalid_argument] if [n < 0]. *)
-
-val repeat : int -> 'a -> 'a t
-(** [repeat n v] is a pipeline that yields [v] exactly [n] times.
-
-    Raises [Invalid_argument] if [n < 0]. *)
-
-(** {1:transformers Transformers} *)
-
-val map : ('a -> 'b) -> 'a t -> 'b t
-(** [map f t] is a pipeline that applies [f] to each element of [t]. *)
-
-val batch : ?drop_last:bool -> int -> 'a t -> 'a array t
-(** [batch ?drop_last n t] is a pipeline yielding arrays of [n] consecutive
-    elements from [t].
-
-    [drop_last] defaults to [false]. When [true], the final batch is dropped if
-    it has fewer than [n] elements.
-
-    Raises [Invalid_argument] if [n <= 0]. *)
-
-val map_batch : ?drop_last:bool -> int -> ('a array -> 'b) -> 'a t -> 'b t
-(** [map_batch ?drop_last n f t] is [map f (batch ?drop_last n t)]. *)
-
-val shuffle : 'a t -> 'a t
-(** [shuffle t] is a pipeline that yields the elements of [t] in a random order.
-    The permutation is computed once when the pipeline is created.
-
-    Random keys are drawn from the implicit RNG scope.
-
-    Raises [Invalid_argument] if [t] has unknown length. *)
-
-(** {1:consumers Consumers} *)
-
-val iter : ('a -> unit) -> 'a t -> unit
-(** [iter f t] applies [f] to each element of [t]. *)
-
-val iteri : (int -> 'a -> unit) -> 'a t -> unit
-(** [iteri f t] applies [f i x] to each element [x] of [t], where [i] is the
-    0-based index. *)
-
-val fold : ('acc -> 'a -> 'acc) -> 'acc -> 'a t -> 'acc
-(** [fold f init t] folds [f] over the elements of [t]. *)
-
-val to_array : 'a t -> 'a array
-(** [to_array t] collects all elements of [t] into an array. *)
-
-val to_seq : 'a t -> 'a Seq.t
-(** [to_seq t] is a standard [Seq.t] view of [t]. Does not reset [t]. *)
-
-(** {1:properties Properties} *)
-
-val reset : 'a t -> unit
-(** [reset t] resets [t] so that iteration starts from the beginning. *)
-
-val length : 'a t -> int option
-(** [length t] is the number of elements in [t], if known. *)
-
-(** {1:utilities Utilities} *)
-
-val stack_batch : ('a, 'b) Nx.t array -> ('a, 'b) Nx.t
-(** [stack_batch tensors] stacks an array of tensors along a new first axis.
-    Equivalent to [Nx.stack (Array.to_list tensors)]. *)
-
-val prepare :
+val batches :
   ?shuffle:bool ->
-  batch_size:int ->
   ?drop_last:bool ->
+  batch_size:int ->
+  ('a, 'b) Nx.t ->
+  ('a, 'b) Nx.t Seq.t
+(** [batches ~batch_size x] is the sequence of minibatches of [x]: consecutive
+    slices of [batch_size] examples along axis 0, in order. Each batch has shape
+    [batch_size] followed by [x]'s remaining axes. Without shuffling, batches
+    are views of [x], not copies. A dataset with no examples is the empty
+    sequence.
+
+    - [shuffle] visits the examples in a random order instead. The permutation
+      is drawn from the ambient RNG scope at each traversal of the sequence, so
+      every traversal reshuffles (see the module preamble); batches are then
+      copies. Defaults to [false].
+    - [drop_last] drops the final batch when fewer than [batch_size] examples
+      remain; otherwise that final batch is smaller. Defaults to [false].
+
+    Raises [Invalid_argument] if [batch_size <= 0] or [x] is a scalar. *)
+
+val batches2 :
+  ?shuffle:bool ->
+  ?drop_last:bool ->
+  batch_size:int ->
   ('a, 'b) Nx.t * ('c, 'd) Nx.t ->
-  (('a, 'b) Nx.t * ('c, 'd) Nx.t) t
-(** [prepare ?shuffle ~batch_size (x, y)] is a pipeline that yields batched
-    tensor pairs from [x] and [y].
+  (('a, 'b) Nx.t * ('c, 'd) Nx.t) Seq.t
+(** [batches2 ~batch_size (x, y)] is like {!batches} for a dataset of paired
+    examples — inputs [x] and targets [y] with equal axis-0 sizes. Batches pair
+    [x]'s slice with [y]'s, and shuffling permutes both with the same
+    permutation, keeping every example aligned with its target.
 
-    Each yielded pair has shape [[batch_size; ...]] along the first dimension.
-
-    [shuffle] defaults to [false]. When [true], elements are yielded in a random
-    order. [drop_last] defaults to [true].
-
-    Raises [Invalid_argument] if [x] and [y] have different first dimension
-    sizes, or if [batch_size <= 0]. *)
+    Raises [Invalid_argument] if [batch_size <= 0], if [x] or [y] is a scalar,
+    or if [x] and [y] disagree on the number of examples. *)

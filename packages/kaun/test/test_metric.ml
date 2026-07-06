@@ -4,305 +4,226 @@
   ---------------------------------------------------------------------------*)
 
 open Windtrap
-module Metric = Kaun.Metric
+open Kaun
 
-(* Tracker *)
+let vec xs = Nx.create Nx.float64 [| Array.length xs |] xs
+let mat rows cols xs = Nx.create Nx.float64 [| rows; cols |] xs
+let labels ls = Nx.create Nx.int32 [| Array.length ls |] ls
+let close ?(eps = 1e-12) expected actual = equal (float eps) expected actual
 
-let test_tracker_observe_and_mean () =
-  let t = Metric.tracker () in
-  Metric.observe t "loss" 1.0;
-  Metric.observe t "loss" 3.0;
-  equal ~msg:"mean of two" (float 1e-10) 2.0 (Metric.mean t "loss")
-
-let test_tracker_count () =
-  let t = Metric.tracker () in
-  Metric.observe t "acc" 0.9;
-  Metric.observe t "acc" 0.8;
-  Metric.observe t "acc" 0.7;
-  equal ~msg:"count" int 3 (Metric.count t "acc")
-
-let test_tracker_not_found () =
-  let t = Metric.tracker () in
-  raises Not_found (fun () -> ignore (Metric.mean t "missing"));
-  raises Not_found (fun () -> ignore (Metric.count t "missing"))
-
-let test_tracker_reset () =
-  let t = Metric.tracker () in
-  Metric.observe t "x" 1.0;
-  Metric.reset t;
-  equal ~msg:"empty after reset"
-    (list (pair string (float 1e-10)))
-    [] (Metric.to_list t)
-
-let test_tracker_to_list_sorted () =
-  let t = Metric.tracker () in
-  Metric.observe t "loss" 0.5;
-  Metric.observe t "accuracy" 0.9;
-  Metric.observe t "lr" 0.001;
-  let names = List.map fst (Metric.to_list t) in
-  equal ~msg:"sorted by name" (list string) [ "accuracy"; "loss"; "lr" ] names
-
-let test_tracker_summary () =
-  let t = Metric.tracker () in
-  Metric.observe t "loss" 0.4;
-  Metric.observe t "accuracy" 0.9;
-  let s = Metric.summary t in
-  (* sorted: accuracy before loss *)
-  equal ~msg:"summary format" string "accuracy: 0.9000  loss: 0.4000" s
-
-(* Dataset evaluation *)
-
-let test_eval_mean () =
-  let data = Kaun.Data.of_array [| 2.0; 4.0; 6.0 |] in
-  let result = Metric.eval Fun.id data in
-  equal ~msg:"eval mean" (float 1e-10) 4.0 result
-
-let test_eval_empty_raises () =
-  let data = Kaun.Data.of_array [||] in
-  raises_invalid_arg "Metric.eval: empty dataset" (fun () ->
-      ignore (Metric.eval Fun.id data))
-
-let test_eval_many () =
-  let data = Kaun.Data.of_array [| 1.0; 3.0 |] in
-  let result =
-    Metric.eval_many
-      (fun x -> [ ("double", x *. 2.0); ("half", x /. 2.0) ])
-      data
-  in
-  equal ~msg:"double" (float 1e-10) 4.0 (List.assoc "double" result);
-  equal ~msg:"half" (float 1e-10) 1.0 (List.assoc "half" result)
-
-let test_eval_many_empty_raises () =
-  let data = Kaun.Data.of_array [||] in
-  raises_invalid_arg "Metric.eval_many: empty dataset" (fun () ->
-      ignore (Metric.eval_many (fun x -> [ ("v", x) ]) data))
+(* Predictions over [classes] classes whose argmax row [i] is [preds.(i)]. *)
+let predicting classes preds =
+  let n = Array.length preds in
+  let xs = Array.make (n * classes) 0.0 in
+  Array.iteri (fun i p -> xs.((i * classes) + p) <- 1.0) preds;
+  mat n classes xs
 
 (* Accuracy *)
 
-let test_accuracy_multiclass () =
-  (* logits: batch=4, classes=3 *)
-  let predictions =
-    Nx.create Nx.float32 [| 4; 3 |]
-      [|
-        (* predicted class 2 *) 0.1;
-        0.2;
-        0.7;
-        (* predicted class 0 *) 0.9;
-        0.05;
-        0.05;
-        (* predicted class 1 *) 0.1;
-        0.8;
-        0.1;
-        (* predicted class 0 *) 0.6;
-        0.2;
-        0.2;
-      |]
-  in
-  (* targets: class indices *)
-  let targets = Nx.create Nx.int32 [| 4 |] [| 2l; 0l; 0l; 0l |] in
-  (* correct: sample 0 (2=2), sample 1 (0=0), sample 3 (0=0) = 3/4 *)
-  equal ~msg:"multiclass accuracy" (float 1e-6) 0.75
-    (Metric.accuracy predictions targets)
+let accuracy_tests =
+  [
+    test "matches the hand-computed fraction" (fun () ->
+        (* Argmaxes 0, 1, 2, 0 against labels 0, 1, 2, 2. *)
+        close 0.75
+          (Metric.accuracy
+             (mat 4 3 [| 5.; 1.; 0.; 0.; 2.; 1.; 0.; 1.; 9.; 3.; 2.; 1. |])
+             (labels [| 0l; 1l; 2l; 2l |])));
+    test "is 1 when every argmax matches" (fun () ->
+        close 1.
+          (Metric.accuracy
+             (predicting 3 [| 2; 0; 1 |])
+             (labels [| 2l; 0l; 1l |])));
+    test "resolves argmax ties to the lowest class index" (fun () ->
+        let tied = mat 1 3 [| 1.; 1.; 0. |] in
+        close 1. (Metric.accuracy tied (labels [| 0l |]));
+        close 0. (Metric.accuracy tied (labels [| 1l |])));
+    test "accepts an unbatched example" (fun () ->
+        close 1.
+          (Metric.accuracy (vec [| 0.; 2.; 1. |]) (Nx.scalar Nx.int32 1l)));
+    test "rejects mismatched label shapes" (fun () ->
+        raises_invalid_arg
+          "Metric.accuracy: labels shape [2] does not match predictions batch \
+           shape [4]" (fun () ->
+            Metric.accuracy (mat 4 3 (Array.make 12 0.)) (labels [| 0l; 0l |])));
+    test "rejects an empty batch" (fun () ->
+        raises_invalid_arg "Metric.accuracy: there are no examples" (fun () ->
+            Metric.accuracy (mat 0 3 [||]) (labels [||])));
+    test "rejects out-of-range labels" (fun () ->
+        raises_invalid_arg "Metric.accuracy: label 3 is out of range [0;2]"
+          (fun () -> Metric.accuracy (predicting 3 [| 0 |]) (labels [| 3l |])));
+  ]
 
-let test_accuracy_binary () =
-  let predictions = Nx.create Nx.float32 [| 4 |] [| 0.8; 0.3; 0.6; 0.1 |] in
-  let targets = Nx.create Nx.int32 [| 4 |] [| 1l; 0l; 1l; 1l |] in
-  (* predicted: 1, 0, 1, 0; targets: 1, 0, 1, 1 => 3/4 correct *)
-  equal ~msg:"binary accuracy" (float 1e-6) 0.75
-    (Metric.accuracy predictions targets)
+(* Top-k accuracy *)
 
-let test_binary_accuracy_default_threshold () =
-  let predictions = Nx.create Nx.float32 [| 4 |] [| 0.8; 0.3; 0.6; 0.1 |] in
-  let targets = Nx.create Nx.float32 [| 4 |] [| 1.0; 0.0; 1.0; 1.0 |] in
-  equal ~msg:"binary_accuracy default" (float 1e-6) 0.75
-    (Metric.binary_accuracy predictions targets)
+let top_k_tests =
+  [
+    test "matches the hand-computed fraction" (fun () ->
+        (* Label ranks per row: 2nd, 4th, 1st. *)
+        let p = mat 3 4 [| 9.; 3.; 2.; 1.; 4.; 3.; 2.; 1.; 5.; 6.; 7.; 8. |] in
+        let l = labels [| 1l; 3l; 3l |] in
+        close (2. /. 3.) (Metric.top_k_accuracy ~k:2 p l);
+        close (1. /. 3.) (Metric.top_k_accuracy ~k:1 p l);
+        close 1. (Metric.top_k_accuracy ~k:4 p l));
+    test "agrees with accuracy at k = 1 on tie-free predictions" (fun () ->
+        let p = mat 2 3 [| 0.5; 0.1; 0.9; 3.; 2.; 1. |] in
+        let l = labels [| 2l; 1l |] in
+        close (Metric.accuracy p l) (Metric.top_k_accuracy ~k:1 p l));
+    test "gives the label the benefit of ties" (fun () ->
+        (* Classes 0 and 1 tie for the maximum; the label still counts. *)
+        let tied = mat 1 3 [| 2.; 2.; 1. |] in
+        close 1. (Metric.top_k_accuracy ~k:1 tied (labels [| 1l |]));
+        close 0. (Metric.accuracy tied (labels [| 1l |])));
+    test "rejects k below 1" (fun () ->
+        raises_invalid_arg "Metric.top_k_accuracy: k must be in [1;3] (got 0)"
+          (fun () ->
+            Metric.top_k_accuracy ~k:0 (predicting 3 [| 0 |]) (labels [| 0l |])));
+    test "rejects k above the class count" (fun () ->
+        raises_invalid_arg "Metric.top_k_accuracy: k must be in [1;3] (got 4)"
+          (fun () ->
+            Metric.top_k_accuracy ~k:4 (predicting 3 [| 0 |]) (labels [| 0l |])));
+  ]
 
-let test_binary_accuracy_custom_threshold () =
-  let predictions = Nx.create Nx.float32 [| 4 |] [| 0.8; 0.3; 0.6; 0.1 |] in
-  let targets = Nx.create Nx.float32 [| 4 |] [| 1.0; 1.0; 1.0; 0.0 |] in
-  (* threshold=0.25: predicted 1, 1, 1, 0; targets: 1, 1, 1, 0 => 4/4 *)
-  equal ~msg:"binary_accuracy threshold=0.25" (float 1e-6) 1.0
-    (Metric.binary_accuracy ~threshold:0.25 predictions targets)
+(* Confusion matrix.
 
-(* Precision / Recall / F1 *)
+   Shared example: predicted classes [0; 0; 2; 2; 0; 2] against labels [2; 0; 2;
+   2; 0; 1]. The confusion matrix rows (for labels 0, 1, 2) are [2 0 0], [0 0 1]
+   and [1 0 2], so tp = [2; 0; 2], true instances (row sums) = [2; 1; 3] and
+   predicted counts (column sums) = [3; 0; 3]. *)
 
-(* Test scenario: 3 classes, 6 samples. predictions (logits): argmax gives [0;
-   1; 0; 2; 1; 0] targets: [0; 1; 1; 2; 0; 0]
+let example_predictions = predicting 3 [| 0; 0; 2; 2; 0; 2 |]
+let example_labels = labels [| 2l; 0l; 2l; 2l; 0l; 1l |]
 
-   Confusion per class: class 0: TP=2, FP=1, FN=1, support=3 class 1: TP=1,
-   FP=1, FN=1, support=2 class 2: TP=1, FP=0, FN=0, support=1
+let confusion_tests =
+  [
+    test "matches the hand-computed matrix" (fun () ->
+        let m = Metric.confusion_matrix example_predictions example_labels in
+        equal (array int) [| 3; 3 |] (Nx.shape m);
+        equal (array int)
+          [| 2; 0; 0; 0; 0; 1; 1; 0; 2 |]
+          (Array.map Int32.to_int (Nx.to_array m)));
+    test "puts a single observed class on the diagonal" (fun () ->
+        let m =
+          Metric.confusion_matrix
+            (predicting 3 [| 0; 0 |])
+            (labels [| 0l; 0l |])
+        in
+        equal (array int)
+          [| 2; 0; 0; 0; 0; 0; 0; 0; 0 |]
+          (Array.map Int32.to_int (Nx.to_array m)));
+    test "rejects out-of-range labels" (fun () ->
+        raises_invalid_arg
+          "Metric.confusion_matrix: label 3 is out of range [0;2]" (fun () ->
+            Metric.confusion_matrix (predicting 3 [| 0 |]) (labels [| 3l |])));
+  ]
 
-   Per-class precision: [2/3; 1/2; 1/1] Per-class recall: [2/3; 1/2; 1/1]
-   Per-class f1: [2/3; 1/2; 1/1] *)
+(* Precision, recall, F1 *)
 
-let prf_predictions () =
-  Nx.create Nx.float32 [| 6; 3 |]
-    [|
-      (* pred 0 *) 0.8;
-      0.1;
-      0.1;
-      (* pred 1 *) 0.1;
-      0.7;
-      0.2;
-      (* pred 0 *) 0.6;
-      0.3;
-      0.1;
-      (* pred 2 *) 0.1;
-      0.2;
-      0.7;
-      (* pred 1 *) 0.2;
-      0.6;
-      0.2;
-      (* pred 0 *) 0.5;
-      0.3;
-      0.2;
-    |]
+let predictions_and_labels =
+  Testable.with_gen
+    Gen.(
+      pair
+        (list_size (pure 12) (float_range (-5.) 5.))
+        (list_size (pure 4) (int_range 0 2)))
+    (pair (list (float 1e-12)) (list int))
 
-let prf_targets () = Nx.create Nx.int32 [| 6 |] [| 0l; 1l; 1l; 2l; 0l; 0l |]
+let prf_tests =
+  [
+    test "averages per-class precision by default" (fun () ->
+        (* (2/3 + 0 + 2/3) / 3; class 1 is never predicted. *)
+        close (4. /. 9.) (Metric.precision example_predictions example_labels));
+    test "averages per-class recall under macro" (fun () ->
+        (* (1 + 0 + 2/3) / 3 *)
+        close (5. /. 9.)
+          (Metric.recall ~average:`Macro example_predictions example_labels));
+    test "averages per-class F1 by default" (fun () ->
+        (* (4/5 + 0 + 2/3) / 3 *)
+        close (22. /. 45.) (Metric.f1 example_predictions example_labels));
+    test "micro scores pool counts across classes" (fun () ->
+        (* 4 of 6 examples are correct. *)
+        close (2. /. 3.)
+          (Metric.precision ~average:`Micro example_predictions example_labels);
+        close (2. /. 3.)
+          (Metric.recall ~average:`Micro example_predictions example_labels);
+        close (2. /. 3.)
+          (Metric.f1 ~average:`Micro example_predictions example_labels));
+    test "counts absent classes as zero in the macro mean" (fun () ->
+        (* Only class 0 appears: class 1 scores 0 and still divides the mean. *)
+        let p = predicting 2 [| 0; 0; 0 |] and l = labels [| 0l; 0l; 0l |] in
+        close 0.5 (Metric.precision p l);
+        close 0.5 (Metric.recall p l);
+        close 0.5 (Metric.f1 p l));
+    prop' "micro F1 equals accuracy" predictions_and_labels (fun (xs, ls) ->
+        let p = mat 4 3 (Array.of_list xs) in
+        let l = labels (Array.of_list (List.map Int32.of_int ls)) in
+        close (Metric.accuracy p l) (Metric.f1 ~average:`Micro p l));
+  ]
 
-let test_precision_macro () =
-  let predictions = prf_predictions () in
-  let targets = prf_targets () in
-  (* macro = mean(2/3, 1/2, 1/1) = (2/3 + 1/2 + 1) / 3 *)
-  let expected = ((2.0 /. 3.0) +. (1.0 /. 2.0) +. 1.0) /. 3.0 in
-  equal ~msg:"precision macro" (float 1e-6) expected
-    (Metric.precision Macro predictions targets)
+(* AUC-ROC *)
 
-let test_precision_micro () =
-  let predictions = prf_predictions () in
-  let targets = prf_targets () in
-  (* micro = sum(TP) / (sum(TP) + sum(FP)) = 4 / (4 + 2) = 2/3 *)
-  equal ~msg:"precision micro" (float 1e-6) (4.0 /. 6.0)
-    (Metric.precision Micro predictions targets)
+(* Scores drawn from four integer values, so ties are frequent. *)
+let tied_scores =
+  Testable.with_gen Gen.(list_size (pure 6) (int_range 0 3)) (list int)
 
-let test_precision_weighted () =
-  let predictions = prf_predictions () in
-  let targets = prf_targets () in
-  (* weighted = (3 * 2/3 + 2 * 1/2 + 1 * 1) / 6 = (2 + 1 + 1) / 6 = 2/3 *)
-  let expected =
-    ((3.0 *. 2.0 /. 3.0) +. (2.0 *. 1.0 /. 2.0) +. (1.0 *. 1.0)) /. 6.0
-  in
-  equal ~msg:"precision weighted" (float 1e-6) expected
-    (Metric.precision Weighted predictions targets)
+let auc_tests =
+  [
+    test "matches the hand-computed value" (fun () ->
+        (* Positives 0.35 and 0.8 beat negatives 0.1 and 0.4 in 3 of 4 pairs. *)
+        close 0.75
+          (Metric.auc_roc
+             (vec [| 0.1; 0.4; 0.35; 0.8 |])
+             (labels [| 0l; 0l; 1l; 1l |])));
+    test "is 1 for a perfect ranking and 0 for a reversed one" (fun () ->
+        let s = vec [| 0.1; 0.9 |] in
+        close 1. (Metric.auc_roc s (labels [| 0l; 1l |]));
+        close 0. (Metric.auc_roc s (labels [| 1l; 0l |])));
+    test "gives tied pairs half credit" (fun () ->
+        (* The positive ties one negative (1/2) and beats the other (1). *)
+        close 0.75
+          (Metric.auc_roc (vec [| 1.; 1.; 0. |]) (labels [| 1l; 0l; 0l |])));
+    test "is a half when all scores tie" (fun () ->
+        close 0.5
+          (Metric.auc_roc
+             (vec [| 0.3; 0.3; 0.3; 0.3 |])
+             (labels [| 1l; 1l; 0l; 0l |])));
+    prop' "agrees with exhaustive pair counting" tied_scores (fun xs ->
+        let scores = Array.of_list (List.map float_of_int xs) in
+        let positive = [| true; false; true; false; true; false |] in
+        let wins = ref 0.0 and pairs = ref 0 in
+        Array.iteri
+          (fun i pi ->
+            if pi then
+              Array.iteri
+                (fun j pj ->
+                  if not pj then begin
+                    incr pairs;
+                    if scores.(i) > scores.(j) then wins := !wins +. 1.
+                    else if scores.(i) = scores.(j) then wins := !wins +. 0.5
+                  end)
+                positive)
+          positive;
+        close
+          (!wins /. float_of_int !pairs)
+          (Metric.auc_roc (vec scores) (labels [| 1l; 0l; 1l; 0l; 1l; 0l |])));
+    test "rejects labels other than 0 and 1" (fun () ->
+        raises_invalid_arg "Metric.auc_roc: label 2 is neither 0 nor 1"
+          (fun () -> Metric.auc_roc (vec [| 0.1; 0.9 |]) (labels [| 0l; 2l |])));
+    test "rejects a single-class batch" (fun () ->
+        raises_invalid_arg "Metric.auc_roc: labels must contain both classes"
+          (fun () -> Metric.auc_roc (vec [| 0.1; 0.9 |]) (labels [| 1l; 1l |])));
+    test "rejects mismatched shapes" (fun () ->
+        raises_invalid_arg
+          "Metric.auc_roc: labels shape [2] does not match scores shape [3]"
+          (fun () ->
+            Metric.auc_roc (vec [| 0.1; 0.5; 0.9 |]) (labels [| 0l; 1l |])));
+  ]
 
-let test_recall_macro () =
-  let predictions = prf_predictions () in
-  let targets = prf_targets () in
-  let expected = ((2.0 /. 3.0) +. (1.0 /. 2.0) +. 1.0) /. 3.0 in
-  equal ~msg:"recall macro" (float 1e-6) expected
-    (Metric.recall Macro predictions targets)
+let tests =
+  [
+    group "accuracy" accuracy_tests;
+    group "top_k_accuracy" top_k_tests;
+    group "confusion_matrix" confusion_tests;
+    group "precision, recall, f1" prf_tests;
+    group "auc_roc" auc_tests;
+  ]
 
-let test_recall_micro () =
-  let predictions = prf_predictions () in
-  let targets = prf_targets () in
-  (* micro recall = sum(TP) / (sum(TP) + sum(FN)) = 4 / (4 + 2) = 2/3 *)
-  equal ~msg:"recall micro" (float 1e-6) (4.0 /. 6.0)
-    (Metric.recall Micro predictions targets)
-
-let test_f1_macro () =
-  let predictions = prf_predictions () in
-  let targets = prf_targets () in
-  (* per-class f1 = [2/3; 1/2; 1] *)
-  let expected = ((2.0 /. 3.0) +. (1.0 /. 2.0) +. 1.0) /. 3.0 in
-  equal ~msg:"f1 macro" (float 1e-6) expected
-    (Metric.f1 Macro predictions targets)
-
-let test_f1_micro () =
-  let predictions = prf_predictions () in
-  let targets = prf_targets () in
-  (* micro f1 = 2*sum(TP) / (2*sum(TP) + sum(FP) + sum(FN)) = 2*4 / (2*4 + 2 +
-     2) = 8/12 = 2/3 *)
-  equal ~msg:"f1 micro" (float 1e-6) (8.0 /. 12.0)
-    (Metric.f1 Micro predictions targets)
-
-let test_micro_equals_accuracy () =
-  (* For multiclass single-label, micro P = micro R = micro F1 = accuracy *)
-  let predictions = prf_predictions () in
-  let targets = prf_targets () in
-  let acc = Metric.accuracy predictions targets in
-  equal ~msg:"micro precision = accuracy" (float 1e-6) acc
-    (Metric.precision Micro predictions targets);
-  equal ~msg:"micro recall = accuracy" (float 1e-6) acc
-    (Metric.recall Micro predictions targets);
-  equal ~msg:"micro f1 = accuracy" (float 1e-6) acc
-    (Metric.f1 Micro predictions targets)
-
-let test_precision_zero_predictions () =
-  (* class 2 has no predictions: pred=[0,1,0], targets=[0,1,2] *)
-  let predictions =
-    Nx.create Nx.float32 [| 3; 3 |]
-      [| 0.8; 0.2; 0.0; 0.1; 0.9; 0.0; 0.6; 0.4; 0.0 |]
-  in
-  let targets = Nx.create Nx.int32 [| 3 |] [| 0l; 1l; 2l |] in
-  (* class 0: TP=1, FP=1 => P=1/2 class 1: TP=1, FP=0 => P=1 class 2: TP=0, FP=0
-     => P=0.0 (zero-div) macro = (1/2 + 1 + 0) / 3 = 0.5 *)
-  equal ~msg:"precision with missing class" (float 1e-6) 0.5
-    (Metric.precision Macro predictions targets)
-
-let test_binary_f1 () =
-  (* 2-class problem *)
-  let predictions =
-    Nx.create Nx.float32 [| 4; 2 |]
-      [|
-        0.9;
-        0.1;
-        (* pred 0 *)
-        0.3;
-        0.7;
-        (* pred 1 *)
-        0.4;
-        0.6;
-        (* pred 1 *)
-        0.8;
-        0.2;
-        (* pred 0 *)
-      |]
-  in
-  let targets = Nx.create Nx.int32 [| 4 |] [| 0l; 1l; 0l; 0l |] in
-  (* class 0: TP=2, FP=0, FN=1 => P=1.0, R=2/3, F1=2*1*(2/3)/(1+2/3)=4/5 *)
-  (* class 1: TP=1, FP=1, FN=0 => P=1/2, R=1.0, F1=2*(1/2)*1/(1/2+1)=2/3 *)
-  let expected_macro = ((4.0 /. 5.0) +. (2.0 /. 3.0)) /. 2.0 in
-  equal ~msg:"binary f1 macro" (float 1e-6) expected_macro
-    (Metric.f1 Macro predictions targets)
-
-let () =
-  run "Kaun.Metric"
-    [
-      group "tracker"
-        [
-          test "observe and mean" test_tracker_observe_and_mean;
-          test "count" test_tracker_count;
-          test "not found raises" test_tracker_not_found;
-          test "reset" test_tracker_reset;
-          test "to_list sorted" test_tracker_to_list_sorted;
-          test "summary" test_tracker_summary;
-        ];
-      group "eval"
-        [
-          test "eval mean" test_eval_mean;
-          test "eval empty raises" test_eval_empty_raises;
-          test "eval_many" test_eval_many;
-          test "eval_many empty raises" test_eval_many_empty_raises;
-        ];
-      group "accuracy"
-        [
-          test "multiclass" test_accuracy_multiclass;
-          test "binary" test_accuracy_binary;
-          test "binary_accuracy default" test_binary_accuracy_default_threshold;
-          test "binary_accuracy custom threshold"
-            test_binary_accuracy_custom_threshold;
-        ];
-      group "precision/recall/f1"
-        [
-          test "precision macro" test_precision_macro;
-          test "precision micro" test_precision_micro;
-          test "precision weighted" test_precision_weighted;
-          test "recall macro" test_recall_macro;
-          test "recall micro" test_recall_micro;
-          test "f1 macro" test_f1_macro;
-          test "f1 micro" test_f1_micro;
-          test "micro = accuracy" test_micro_equals_accuracy;
-          test "precision zero predictions" test_precision_zero_predictions;
-          test "binary f1" test_binary_f1;
-        ];
-    ]
+let () = run "kaun metric" tests

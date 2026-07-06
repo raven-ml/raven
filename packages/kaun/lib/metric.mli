@@ -3,116 +3,98 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(** Training metrics.
+(** Classification metrics.
 
-    {!Metric} provides running scalar tracking and dataset evaluation.
+    A metric maps a batch of predictions and integer labels to a plain [float].
+    Metrics are evaluation summaries, never differentiated — train against
+    {!Loss} — so they return bare floats that drop straight into logs and
+    comparisons. The exception is {!confusion_matrix}, which returns a count
+    matrix.
 
-    A {!type:tracker} accumulates named running means during training. For
-    dataset evaluation, {!eval} and {!eval_many} fold user-supplied functions
-    over a {!Data.t} pipeline and return averaged results.
+    Metrics are pure and hold no state; running tracking belongs to the caller
+    (see munin) and aggregation across batches is the caller's fold. Batch means
+    of {!val-accuracy}, {!top_k_accuracy} and micro-averaged scores weighted by
+    batch size equal the dataset value, and {!confusion_matrix} sums over
+    batches. {b Warning.} {!auc_roc} and macro-averaged scores do not decompose
+    over batches: averaging per-batch values is not the dataset-level metric.
+    Compute them once over the full evaluation set.
 
-    Metric functions such as {!accuracy} are plain tensor-to-scalar functions
-    that compose freely with {!eval}. *)
+    Multiclass metrics share the sparse-label convention of
+    {!Loss.softmax_cross_entropy_sparse}: [predictions] is a float tensor of
+    shape [[...; classes]] holding logits or probabilities — only the order
+    within each row matters — and [labels] holds [int32] class indices in
+    \[[0];[classes - 1]\], shaped like [predictions] without the last axis. The
+    predicted class is the argmax over the last axis, ties resolving to the
+    lowest class index.
 
-(** {1:tracker Running Tracker} *)
+    All functions raise [Invalid_argument] — with messages prefixed by
+    [Metric.<function>:] — if shapes disagree, a label is out of range, or there
+    are no examples. *)
 
-type tracker
-(** A mutable set of named running-mean accumulators. *)
+(** {1:accuracy Accuracy} *)
 
-val tracker : unit -> tracker
-(** [tracker ()] is a fresh tracker with no observations. *)
+val accuracy : (float, 'a) Nx.t -> (int32, Nx.int32_elt) Nx.t -> float
+(** [accuracy predictions labels] is the fraction of examples whose predicted
+    class equals their label. *)
 
-val observe : tracker -> string -> float -> unit
-(** [observe t name value] records [value] under [name]. *)
+val top_k_accuracy :
+  k:int -> (float, 'a) Nx.t -> (int32, Nx.int32_elt) Nx.t -> float
+(** [top_k_accuracy ~k predictions labels] is the fraction of examples whose
+    label ranks among the [k] highest-scoring classes. An example counts as
+    correct when fewer than [k] classes score strictly higher than its label's
+    class, so score ties resolve in the label's favor and [top_k_accuracy ~k:1]
+    can exceed {!val-accuracy} on exact ties.
 
-val mean : tracker -> string -> float
-(** [mean t name] is the running mean of observations under [name].
+    Raises [Invalid_argument] if [k] is not in \[[1];[classes]\]. *)
 
-    Raises [Not_found] if [name] was never observed. *)
+(** {1:confusion Confusion-matrix metrics} *)
 
-val count : tracker -> string -> int
-(** [count t name] is the number of observations under [name].
+val confusion_matrix :
+  (float, 'a) Nx.t -> (int32, Nx.int32_elt) Nx.t -> (int32, Nx.int32_elt) Nx.t
+(** [confusion_matrix predictions labels] is the [[classes; classes]] matrix
+    whose row [i], column [j] entry counts the examples with label [i] and
+    predicted class [j]. Correct predictions lie on the diagonal. *)
 
-    Raises [Not_found] if [name] was never observed. *)
+type average = [ `Macro | `Micro ]
+(** The type for combining per-class scores. [`Macro] is the unweighted mean
+    over all [classes] classes, so rare classes weigh as much as common ones and
+    classes absent from the batch contribute [0]. [`Micro] pools true-positive,
+    false-positive and false-negative counts over all classes before scoring;
+    for single-label classification micro precision, recall and F1 all equal
+    {!val-accuracy}. *)
 
-val reset : tracker -> unit
-(** [reset t] clears all observations. *)
+val precision :
+  ?average:average -> (float, 'a) Nx.t -> (int32, Nx.int32_elt) Nx.t -> float
+(** [precision ?average predictions labels] is the fraction of each class's
+    predicted instances that are correct — [tp / (tp + fp)] — combined according
+    to [average], which defaults to [`Macro]. A class never predicted has
+    precision [0]. *)
 
-val to_list : tracker -> (string * float) list
-(** [to_list t] is the current means as [(name, mean)] pairs, sorted by name. *)
+val recall :
+  ?average:average -> (float, 'a) Nx.t -> (int32, Nx.int32_elt) Nx.t -> float
+(** [recall ?average predictions labels] is the fraction of each class's true
+    instances that are predicted — [tp / (tp + fn)] — combined according to
+    [average], which defaults to [`Macro]. A class with no true instances has
+    recall [0]. *)
 
-val summary : tracker -> string
-(** [summary t] is a human-readable one-liner of all current means, e.g.
-    ["accuracy: 0.9150  loss: 0.4231"]. *)
+val f1 :
+  ?average:average -> (float, 'a) Nx.t -> (int32, Nx.int32_elt) Nx.t -> float
+(** [f1 ?average predictions labels] is the harmonic mean of precision and
+    recall per class — [2 tp / (2 tp + fp + fn)] — combined according to
+    [average], which defaults to [`Macro]. A class with no true and no predicted
+    instances has F1 [0]. Macro F1 averages per-class F1 scores; it is not the
+    harmonic mean of macro {!precision} and macro {!recall}. *)
 
-(** {1:eval Dataset Evaluation} *)
+(** {1:ranking Ranking} *)
 
-val eval : ('a -> float) -> 'a Data.t -> float
-(** [eval f data] is the mean of [f batch] over all elements of [data].
+val auc_roc : (float, 'a) Nx.t -> (int32, Nx.int32_elt) Nx.t -> float
+(** [auc_roc scores labels] is the area under the ROC curve of a binary
+    classifier: the probability that a uniformly drawn positive example
+    outscores a uniformly drawn negative one, tied pairs counting half —
+    equivalently, trapezoidal integration of the ROC curve. [scores] ranks the
+    examples (logits or probabilities, higher meaning more positive; only their
+    order matters) and [labels], of [scores]' shape, marks each example [0]
+    (negative) or [1] (positive). Computed by sorting, in O(n log n).
 
-    Raises [Invalid_argument] if [data] yields no elements. *)
-
-val eval_many :
-  ('a -> (string * float) list) -> 'a Data.t -> (string * float) list
-(** [eval_many f data] is the per-name mean of [f batch] over all elements of
-    [data]. Returns [(name, mean)] pairs sorted by name.
-
-    Raises [Invalid_argument] if [data] yields no elements. *)
-
-(** {1:average Averaging} *)
-
-type average =
-  | Macro
-  | Micro
-  | Weighted
-      (** The type for multi-class averaging modes.
-          - [Macro] is the unweighted mean of per-class scores.
-          - [Micro] aggregates TP, FP, FN globally before computing.
-          - [Weighted] is the mean of per-class scores weighted by class support
-            (number of true instances). *)
-
-(** {1:compute Common Metric Functions} *)
-
-val accuracy : (float, 'a) Nx.t -> ('b, 'c) Nx.t -> float
-(** [accuracy predictions targets] is the fraction of correct predictions.
-
-    Multi-class: [predictions] has shape [[batch; num_classes]] (logits or
-    probabilities), [targets] has shape [[batch]] (integer class indices).
-    Predicted class is [argmax] along the last axis.
-
-    Binary: both tensors have shape [[batch]] or [[batch; 1]]. Predictions above
-    [0.5] count as class [1]. *)
-
-val binary_accuracy :
-  ?threshold:float -> (float, 'a) Nx.t -> (float, 'a) Nx.t -> float
-(** [binary_accuracy ?threshold predictions targets] is the fraction of correct
-    binary predictions.
-
-    [threshold] defaults to [0.5]. Predictions above [threshold] count as class
-    [1], targets are expected in \[[0];[1]\]. *)
-
-(** {1:classification Classification} *)
-
-val precision : average -> (float, 'a) Nx.t -> ('b, 'c) Nx.t -> float
-(** [precision avg predictions targets] is the precision score.
-
-    [predictions] has shape [[batch; num_classes]] (logits or probabilities).
-    [targets] has shape [[batch]] (integer class indices). Predicted class is
-    [argmax] along the last axis.
-
-    When a class has no predicted instances, its precision is [0.0]. *)
-
-val recall : average -> (float, 'a) Nx.t -> ('b, 'c) Nx.t -> float
-(** [recall avg predictions targets] is the recall score.
-
-    Input convention is the same as {!precision}.
-
-    When a class has no true instances, its recall is [0.0]. *)
-
-val f1 : average -> (float, 'a) Nx.t -> ('b, 'c) Nx.t -> float
-(** [f1 avg predictions targets] is the F1 score (harmonic mean of {!precision}
-    and {!recall}).
-
-    Input convention is the same as {!precision}.
-
-    When both precision and recall are [0.0] for a class, its F1 is [0.0]. *)
+    Raises [Invalid_argument] if the shapes differ, if a label is neither [0]
+    nor [1], or if either class is absent — the curve is then undefined. *)

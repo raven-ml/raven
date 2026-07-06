@@ -138,7 +138,7 @@ let part1 () =
 
   (* Gradient check *)
   let log_f_sky_init = scalar f64 0.0 in
-  let v0, g0 = Rune.value_and_grad objective log_f_sky_init in
+  let v0, g0 = Rune.value_and_grad' objective log_f_sky_init in
   let fd_eps = 1e-5 in
   let vp = item [] (objective (scalar f64 fd_eps)) in
   let vm = item [] (objective (scalar f64 (-.fd_eps))) in
@@ -160,7 +160,7 @@ let part1 () =
     "----------";
   let steps = 300 in
   for i = 0 to steps - 1 do
-    let sigma_val, grad = Rune.value_and_grad objective !log_f_sky in
+    let sigma_val, grad = Rune.value_and_grad' objective !log_f_sky in
     let p, s = Vega.step !state ~grad ~param:!log_f_sky in
     log_f_sky := p;
     state := s;
@@ -530,7 +530,7 @@ let part2 () =
     "--------" "----------";
   let steps = 500 in
   for i = 0 to steps - 1 do
-    let sigma_val, grad = Rune.value_and_grad objective !params in
+    let sigma_val, grad = Rune.value_and_grad' objective !params in
     let p, s = Vega.step !state ~grad ~param:!params in
     let z1 = Float.max 0.1 (Float.min 2.8 (item [ 1 ] p)) in
     let z2 = Float.max (z1 +. 0.1) (Float.min 2.9 (item [ 2 ] p)) in
