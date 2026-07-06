@@ -1,0 +1,41 @@
+# thumper baseline
+# version: 1
+# suite_name: rune_next
+# host: 7ddbc0675390e24
+# cpu: Intel(R) Xeon(R) Platinum 8468
+# ocaml: 5.5.0
+# command: /root/raven/_build/default/packages/rune-next/bench/bench_rune_next.exe
+
+deepchain/chain_fwd__nx_eager_	alloc_words	9.434000e+03	9.434000e+03	9.434000e+03	0.000000e+00	15	0
+deepchain/chain_fwd__nx_eager_	cpu_time	9.175769e-05	9.057432e-05	9.263053e-05	1.120456e-02	15	2
+deepchain/chain_fwd__nx_eager_	wall_time	9.169496e-05	9.040401e-05	9.259695e-05	1.195779e-02	15	3
+deepchain/chain_grad__rune-next_	alloc_words	4.215700e+04	4.215700e+04	4.215700e+04	0.000000e+00	15	0
+deepchain/chain_grad__rune-next_	cpu_time	3.708418e-04	3.677861e-04	3.794841e-04	1.577227e-02	15	0
+deepchain/chain_grad__rune-next_	wall_time	3.708339e-04	3.676813e-04	3.785420e-04	1.464350e-02	15	0
+deepchain/chain_grad__rune_	alloc_words	6.086800e+04	6.086800e+04	6.086800e+04	0.000000e+00	15	0
+deepchain/chain_grad__rune_	cpu_time	4.963684e-04	4.789690e-04	5.125268e-04	3.380332e-02	15	1
+deepchain/chain_grad__rune_	wall_time	4.963412e-04	4.789905e-04	5.124764e-04	3.373276e-02	15	1
+mlpgrad/mlp_forward__nx_eager_	alloc_words	2.757000e+03	2.757000e+03	2.757000e+03	0.000000e+00	22	2
+mlpgrad/mlp_forward__nx_eager_	cpu_time	4.960280e-01	4.722467e-01	5.131577e-01	4.123861e-02	22	0
+mlpgrad/mlp_forward__nx_eager_	wall_time	2.509351e-02	2.382891e-02	2.595515e-02	4.236644e-02	22	0
+mlpgrad/mlp_value_and_grad__rune-next_	alloc_words	8.988000e+03	8.988000e+03	8.988000e+03	0.000000e+00	14	1
+mlpgrad/mlp_value_and_grad__rune-next_	cpu_time	2.073744e+00	1.874415e+00	2.196026e+00	7.754360e-02	14	0
+mlpgrad/mlp_value_and_grad__rune-next_	wall_time	1.051338e-01	9.454972e-02	1.116521e-01	8.133612e-02	14	0
+mlpgrad/mlp_value_and_grad__rune_	alloc_words	1.609900e+04	1.609900e+04	1.609900e+04	0.000000e+00	9	1
+mlpgrad/mlp_value_and_grad__rune_	cpu_time	4.728071e+00	4.034996e+00	5.207669e+00	1.240117e-01	9	0
+mlpgrad/mlp_value_and_grad__rune_	wall_time	2.542099e-01	2.117338e-01	2.909080e-01	1.557260e-01	9	0
+mlpjvp/mlp_jvp__rune-next_	alloc_words	1.011300e+04	1.011300e+04	1.011300e+04	0.000000e+00	12	1
+mlpjvp/mlp_jvp__rune-next_	cpu_time	2.652569e+00	2.473835e+00	2.803930e+00	6.222172e-02	12	1
+mlpjvp/mlp_jvp__rune-next_	wall_time	1.349200e-01	1.261810e-01	1.413833e-01	5.633823e-02	12	1
+mlpjvp/mlp_jvp__rune_	alloc_words	9.770000e+03	9.770000e+03	9.770000e+03	0.000000e+00	11	1
+mlpjvp/mlp_jvp__rune_	cpu_time	2.731054e+00	2.563439e+00	2.913296e+00	6.405163e-02	11	1
+mlpjvp/mlp_jvp__rune_	wall_time	1.263621e-01	1.000119e-01	1.440616e-01	1.742994e-01	11	2
+persamplegrads/per-sample_grads_ew__rune-next_	alloc_words	5.845000e+03	5.845000e+03	5.845000e+03	0.000000e+00	28	1
+persamplegrads/per-sample_grads_ew__rune-next_	cpu_time	4.455470e-02	4.312722e-02	4.641733e-02	3.692213e-02	28	4
+persamplegrads/per-sample_grads_ew__rune-next_	wall_time	2.247501e-03	2.167325e-03	2.344569e-03	3.943141e-02	28	4
+persamplegrads/per-sample_grads_ew__rune_	alloc_words	3.452100e+04	3.452100e+04	3.452100e+04	0.000000e+00	25	3
+persamplegrads/per-sample_grads_ew__rune_	cpu_time	2.888400e-01	2.837923e-01	2.914523e-01	1.325995e-02	25	4
+persamplegrads/per-sample_grads_ew__rune_	wall_time	1.454896e-02	1.429498e-02	1.468949e-02	1.355801e-02	25	3
+persamplegrads/per-sample_mlp_w3_grads__rune-next_	alloc_words	1.156400e+04	1.156400e+04	1.156400e+04	0.000000e+00	28	1
+persamplegrads/per-sample_mlp_w3_grads__rune-next_	cpu_time	5.192792e-02	5.081880e-02	5.234658e-02	1.471061e-02	28	1
+persamplegrads/per-sample_mlp_w3_grads__rune-next_	wall_time	2.638845e-03	2.579352e-03	2.661489e-03	1.556312e-02	28	1

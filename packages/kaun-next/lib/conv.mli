@@ -10,8 +10,8 @@
     layout — [[| batch; channels; height; width |]] — computing the
     cross-correlation used by deep-learning frameworks (no kernel flip).
     Construct parameters with {!init} or {!make} and convolve with {!apply};
-    {!map}, {!map2}, {!iter} and {!names} supply the {!Rune_next.Differentiable}
-    and checkpoint plumbing, exactly as in {!Linear}.
+    {!map}, {!map2}, {!iter} and {!names} supply the {!Nx.Ptree.S} and
+    checkpoint plumbing, exactly as in {!Linear}.
 
     Pooling has no parameters and lives in {!Pool}. *)
 
@@ -91,7 +91,7 @@ val apply :
 (** {1:traversals Traversals}
 
     Plain traversals over the parameter leaves, in the order [w] then [b]. They
-    satisfy the {!Rune_next.Differentiable} contract at any fixed ['b]. *)
+    satisfy the {!Nx.Ptree.S} contract at any fixed ['b]. *)
 
 val map : ('a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) -> 'b params -> 'b params
 (** [map f p] is [p] with [f] applied to every parameter leaf. *)

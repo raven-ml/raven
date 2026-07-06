@@ -120,14 +120,20 @@
  (dir packages/rune-next)
  (synopsis "Functional transformations for Nx arrays (next-generation design)")
  (description
-  "Next-generation Rune built on OCaml 5.5 module-dependent functions. Autodiff transformations operate over any user-defined parameter structure through the Differentiable interface, with full static typing and mixed-dtype parameters in a single pass.")
+  "Next-generation Rune built on OCaml 5.5 module-dependent functions. Autodiff transformations operate over any user-defined parameter structure through the Nx.Ptree.S interface, with full static typing and mixed-dtype parameters in a single pass.")
  (depends
   (ocaml
    (>= 5.5.0))
   dune
   (nx
    (= :version))
-  (windtrap :with-test))
+  (windtrap :with-test)
+  ; benchmarks compare against the current rune
+  (rune
+   (and
+    (= :version)
+    :with-test))
+  (thumper :with-test))
  (tags
   (automatic-differentiation machine-learning deep-learning optimization)))
 
@@ -145,12 +151,22 @@
    (= :version))
   (rune-next
    (= :version))
+  ; vega is not a library dependency: kaun-next composes with it in user
+  ; code (tests and examples only).
   (vega
-   (= :version))
+   (and
+    (= :version)
+    :with-test))
   logs
   jsont
   bytesrw
-  (windtrap :with-test))
+  (windtrap :with-test)
+  ; benchmarks compare against the current kaun
+  (kaun
+   (and
+    (= :version)
+    :with-test))
+  (thumper :with-test))
  (tags
   (machine-learning deep-learning neural-networks)))
 

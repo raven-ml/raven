@@ -13,7 +13,7 @@
 
     Metrics are pure and hold no state; running tracking belongs to the caller
     (see munin) and aggregation across batches is the caller's fold. Batch means
-    of {!accuracy}, {!top_k_accuracy} and micro-averaged scores weighted by
+    of {!val-accuracy}, {!top_k_accuracy} and micro-averaged scores weighted by
     batch size equal the dataset value, and {!confusion_matrix} sums over
     batches. {b Warning.} {!auc_roc} and macro-averaged scores do not decompose
     over batches: averaging per-batch values is not the dataset-level metric.
@@ -43,7 +43,7 @@ val top_k_accuracy :
     label ranks among the [k] highest-scoring classes. An example counts as
     correct when fewer than [k] classes score strictly higher than its label's
     class, so score ties resolve in the label's favor and [top_k_accuracy ~k:1]
-    can exceed {!accuracy} on exact ties.
+    can exceed {!val-accuracy} on exact ties.
 
     Raises [Invalid_argument] if [k] is not in \[[1];[classes]\]. *)
 
@@ -61,7 +61,7 @@ type average = [ `Macro | `Micro ]
     classes absent from the batch contribute [0]. [`Micro] pools true-positive,
     false-positive and false-negative counts over all classes before scoring;
     for single-label classification micro precision, recall and F1 all equal
-    {!accuracy}. *)
+    {!val-accuracy}. *)
 
 val precision :
   ?average:average -> (float, 'a) Nx.t -> (int32, Nx.int32_elt) Nx.t -> float

@@ -9,8 +9,8 @@
     vectors: a plain record holding one [vocab × dim] parameter. Construct one
     with {!init} or {!make} and turn id tensors into vector tensors with
     {!apply}. Like the other layers, it composes into models through record
-    nesting; {!map}, {!map2}, {!iter} and {!names} supply the
-    {!Rune_next.Differentiable} and checkpoint plumbing. *)
+    nesting; {!map}, {!map2}, {!iter} and {!names} supply the {!Nx.Ptree.S} and
+    checkpoint plumbing. *)
 
 (** {1:types Types} *)
 
@@ -54,7 +54,7 @@ val apply : 'b params -> (int32, Nx.int32_elt) Nx.t -> (float, 'b) Nx.t
 (** {1:traversals Traversals}
 
     Plain traversals over the single parameter leaf. They satisfy the
-    {!Rune_next.Differentiable} contract at any fixed ['b]. *)
+    {!Nx.Ptree.S} contract at any fixed ['b]. *)
 
 val map : ('a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) -> 'b params -> 'b params
 (** [map f p] is [p] with [f] applied to the table. *)

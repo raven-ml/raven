@@ -17,10 +17,14 @@
     module Params = struct
       type t = params
 
-      let map f { w; b } = { w = f w; b = f b }
-      let map2 f a b = { w = f a.w b.w; b = f a.b b.b }
+      let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { w; b } =
+        { w = f w; b = f b }
 
-      let iter f { w; b } =
+      let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q
+          =
+        { w = f p.w q.w; b = f p.b q.b }
+
+      let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { w; b } =
         f w;
         f b
     end
@@ -87,8 +91,8 @@ val vjp_fun :
     the vector-Jacobian product of [f] at [params] against [ct]; it may be
     called any number of times with different cotangents, each call running one
     backward pass over the recorded computation without re-running [f]. Calling
-    the pullback under another transformation (for example {!vmap}) transforms
-    the backward pass. Pullbacks are not thread-safe.
+    the pullback under another transformation (for example {!val-vmap})
+    transforms the backward pass. Pullbacks are not thread-safe.
 
     Raises [Invalid_argument] if [ct]'s shape does not match the output's. *)
 
@@ -163,10 +167,10 @@ val vmap2 :
   ?in_axes:int option list ->
   ?out_axis:int ->
   (module P : Ptree.S) -> (module Q : Ptree.S) -> (P.t -> Q.t) -> P.t -> Q.t
-(** [vmap2 ?in_axes ?out_axis (module P) (module Q) f params] is like {!vmap}
-    for a mapped function returning a structured output: every output leaf gains
-    a batch axis at [out_axis], and output leaves that do not depend on the
-    mapped inputs are broadcast. *)
+(** [vmap2 ?in_axes ?out_axis (module P) (module Q) f params] is like
+    {!val-vmap} for a mapped function returning a structured output: every
+    output leaf gains a batch axis at [out_axis], and output leaves that do not
+    depend on the mapped inputs are broadcast. *)
 
 val vmap' :
   ?in_axis:int ->
@@ -174,9 +178,9 @@ val vmap' :
   (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
   ('a, 'b) Nx.t ->
   ('c, 'd) Nx.t
-(** [vmap' ?in_axis ?out_axis f x] is like {!vmap} for a function of a single
-    tensor, mapping over [x]'s axis [in_axis] and placing the batch axis of the
-    result at [out_axis]. Both default to [0]. *)
+(** [vmap' ?in_axis ?out_axis f x] is like {!val-vmap} for a function of a
+    single tensor, mapping over [x]'s axis [in_axis] and placing the batch axis
+    of the result at [out_axis]. Both default to [0]. *)
 
 (** {1:custom Custom differentiation rules} *)
 
@@ -192,7 +196,7 @@ val custom_vjp :
     [bwd residual cotangent] provides the parameter gradients, with each leaf
     matching its parameter leaf's shape and dtype. [residual] is whatever [fwd]
     returned alongside its result. Enclosing transformations (an outer {!grad},
-    {!vmap}) see the forward computation itself.
+    {!val-vmap}) see the forward computation itself.
 
     Raises [Invalid_argument] if the call is differentiated in forward mode;
     define a {!custom_jvp} rule for that. *)
@@ -317,15 +321,16 @@ val scan :
 val cond :
   (bool, Nx.bool_elt) Nx.t -> then_:(unit -> 'r) -> else_:(unit -> 'r) -> 'r
 (** [cond pred ~then_ ~else_] runs one branch according to the scalar [pred].
-    Reading [pred] concretizes it: inside {!vmap}, a predicate that depends on
-    the mapped inputs raises, since the lanes could diverge. *)
+    Reading [pred] concretizes it: inside {!val-vmap}, a predicate that depends
+    on the mapped inputs raises, since the lanes could diverge. *)
 
 val while_loop :
   (module C : Ptree.S) ->
   cond:(C.t -> (bool, Nx.bool_elt) Nx.t) -> body:(C.t -> C.t) -> C.t -> C.t
 (** [while_loop (module C) ~cond ~body init] iterates [body] on the carry while
-    [cond] holds. Reading the predicate concretizes it, with the same {!vmap}
-    caveat as {!cond}. Differentiating traces every iteration actually taken. *)
+    [cond] holds. Reading the predicate concretizes it, with the same
+    {!val-vmap} caveat as {!cond}. Differentiating traces every iteration
+    actually taken. *)
 
 (** {1:debug Debugging} *)
 

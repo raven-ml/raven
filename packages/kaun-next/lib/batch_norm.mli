@@ -9,9 +9,8 @@
     affine [gamma] and [beta], differentiated and optimized like any other
     parameters) and running statistics {!Stats.t} (per-feature mean and
     variance, never differentiated, updated by every training forward). Both are
-    plain records with structural traversals; this module is the
-    [Rune_next.Differentiable] instance of its parameters and {!Stats} that of
-    its statistics.
+    plain records with structural traversals; this module is the {!Nx.Ptree.S}
+    instance of its parameters and {!Stats} that of its statistics.
 
     {!apply} in training mode normalizes with the current batch's statistics and
     returns updated running statistics; in eval mode it normalizes with the

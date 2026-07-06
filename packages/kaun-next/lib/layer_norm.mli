@@ -10,8 +10,8 @@
     ([gamma]) and shift ([beta]). Unlike batch normalization it is stateless and
     independent of the batch: the same function at training and inference time.
     Construct parameters with {!init} or {!make} and normalize with {!apply};
-    {!map}, {!map2}, {!iter} and {!names} supply the {!Rune_next.Differentiable}
-    and checkpoint plumbing. *)
+    {!map}, {!map2}, {!iter} and {!names} supply the {!Nx.Ptree.S} and
+    checkpoint plumbing. *)
 
 (** {1:types Types} *)
 
@@ -52,8 +52,7 @@ val apply : ?eps:float -> 'b params -> (float, 'b) Nx.t -> (float, 'b) Nx.t
 (** {1:traversals Traversals}
 
     Plain traversals over the parameter leaves, in the order [gamma] then
-    [beta]. They satisfy the {!Rune_next.Differentiable} contract at any fixed
-    ['b]. *)
+    [beta]. They satisfy the {!Nx.Ptree.S} contract at any fixed ['b]. *)
 
 val map : ('a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) -> 'b params -> 'b params
 (** [map f p] is [p] with [f] applied to every parameter leaf. *)

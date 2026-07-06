@@ -12,7 +12,7 @@
     {!scaled_dot_product_attention} on each head and merges the results through
     the output projection. Like the other layers, it composes into models
     through record nesting; {!map}, {!map2}, {!iter} and {!names} supply the
-    {!Rune_next.Differentiable} and checkpoint plumbing.
+    {!Nx.Ptree.S} and checkpoint plumbing.
 
     The head count is not a parameter: the projections are
     [embed_dim × embed_dim] whatever the head count, so [num_heads] is an
@@ -118,8 +118,8 @@ val scaled_dot_product_attention :
 (** {1:traversals Traversals}
 
     Plain traversals over the parameter leaves, in the order [q], [k], [v],
-    [out], each traversed as by {!Linear}. They satisfy the
-    {!Rune_next.Differentiable} contract at any fixed ['b]. *)
+    [out], each traversed as by {!Linear}. They satisfy the {!Nx.Ptree.S}
+    contract at any fixed ['b]. *)
 
 val map : ('a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) -> 'b params -> 'b params
 (** [map f p] is [p] with [f] applied to every parameter leaf. *)

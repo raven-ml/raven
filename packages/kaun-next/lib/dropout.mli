@@ -32,8 +32,8 @@ val apply : rate:float -> training:bool -> (float, 'b) Nx.t -> (float, 'b) Nx.t
 
     With [training = false] (or [rate = 0.]), the result is [x], unchanged.
 
-    {b Note.} Under {!Rune_next.vmap} the implicit RNG draws an identical mask
-    for every lane (see the note there); vectorize over a batch axis of [x]
+    {b Note.} Under {!Rune_next.val-vmap} the implicit RNG draws an identical
+    mask for every lane (see the note there); vectorize over a batch axis of [x]
     directly rather than [vmap]ing a dropout forward when the lanes must drop
     independently.
 

@@ -1,0 +1,16 @@
+(executable
+ (name bench_rune_next)
+ (libraries nx rune rune-next thumper))
+
+; Not attached to runtest on purpose: run with `dune build @bench`
+; (or `dune exec packages/rune-next/bench/bench_rune_next.exe -- --explore`).
+
+(rule
+ (alias bench)
+ ; Serialize bench rules across the workspace: concurrent suites contend
+ ; for cores and distort measurements.
+ (locks %{project_root}/bench)
+ (action
+  (progn
+   (run %{exe:bench_rune_next.exe} -q)
+   (diff? rune_next.thumper rune_next.thumper.corrected))))

@@ -9,13 +9,14 @@
     optional bias. Construct one with {!init} or {!make}, transform inputs with
     {!apply}, and compose layers into models by putting records inside records —
     the {!map}, {!map2}, {!iter} traversals and {!names} give any such model a
-    one-line {!Rune_next.Differentiable} (and checkpoint-ready) instance:
+    one-line {!Nx.Ptree.S} (and checkpoint-ready) instance:
 
     {[
     module Mlp = struct
       type t = { l1 : Linear.t; l2 : Linear.t }
 
-      let map f { l1; l2 } = { l1 = Linear.map f l1; l2 = Linear.map f l2 }
+      let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { l1; l2 } =
+        { l1 = Linear.map f l1; l2 = Linear.map f l2 }
       (* map2, iter, names: same one-liners over the fields. *)
 
       let apply p x = Linear.apply p.l2 (Fn.relu (Linear.apply p.l1 x))
@@ -76,7 +77,7 @@ val apply : 'b params -> (float, 'b) Nx.t -> (float, 'b) Nx.t
 (** {1:traversals Traversals}
 
     Plain traversals over the parameter leaves, in the order [w] then [b]. They
-    satisfy the {!Rune_next.Differentiable} contract at any fixed ['b]. *)
+    satisfy the {!Nx.Ptree.S} contract at any fixed ['b]. *)
 
 val map : ('a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) -> 'b params -> 'b params
 (** [map f p] is [p] with [f] applied to every parameter leaf. *)

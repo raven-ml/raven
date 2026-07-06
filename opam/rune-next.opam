@@ -3,7 +3,7 @@ opam-version: "2.0"
 version: "1.0.0~alpha3"
 synopsis: "Functional transformations for Nx arrays (next-generation design)"
 description:
-  "Next-generation Rune built on OCaml 5.5 module-dependent functions. Autodiff transformations operate over any user-defined parameter structure through the Differentiable interface, with full static typing and mixed-dtype parameters in a single pass."
+  "Next-generation Rune built on OCaml 5.5 module-dependent functions. Autodiff transformations operate over any user-defined parameter structure through the Nx.Ptree.S interface, with full static typing and mixed-dtype parameters in a single pass."
 maintainer: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 authors: ["Thibaut Mattio <thibaut.mattio@gmail.com>"]
 license: "ISC"
@@ -21,6 +21,8 @@ depends: [
   "dune" {>= "3.21"}
   "nx" {= version}
   "windtrap" {with-test}
+  "rune" {= version & with-test}
+  "thumper" {with-test}
   "odoc" {with-doc}
 ]
 build: [
