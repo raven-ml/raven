@@ -320,10 +320,22 @@ module Buffers = struct
   type t = {
     device : Device.t;
     tbl : (int, Device.Buffer.t) Hashtbl.t;
+    seeded : (int, unit) Hashtbl.t;
+        (* Tags ever bound through [seed]: their resolution may change between
+           runs, unlike lazily allocated intermediates. Sticky across
+           [remove], so graph replay keeps repatching a node that is reseeded
+           per call. *)
   }
 
-  let create ~device = { device; tbl = Hashtbl.create 64 }
-  let seed t node buf = Hashtbl.replace t.tbl (Tolk_uop.Uop.tag node) buf
+  let create ~device =
+    { device; tbl = Hashtbl.create 64; seeded = Hashtbl.create 16 }
+
+  let seed t node buf =
+    let tag = Tolk_uop.Uop.tag node in
+    Hashtbl.replace t.tbl tag buf;
+    Hashtbl.replace t.seeded tag ()
+
+  let seeded t node = Hashtbl.mem t.seeded (Tolk_uop.Uop.tag node)
   let remove t node = Hashtbl.remove t.tbl (Tolk_uop.Uop.tag node)
   let mem t node = Hashtbl.mem t.tbl (Tolk_uop.Uop.tag node)
   let find_opt t node = Hashtbl.find_opt t.tbl (Tolk_uop.Uop.tag node)
@@ -532,9 +544,13 @@ let exec_copy binding ctx ~device call =
    Batched replay of a compiled call sequence through the device's
    {!Device.Graph} capability. The runner resolves every buffer argument once
    when the graph is recorded; each replay patches only the state that can
-   change between calls — buffer arguments bound to input PARAM slots,
-   symbolic variable values, and launch dimensions of kernels with symbolic
-   global sizes — into the affected nodes before launching. *)
+   change between calls — buffer arguments whose resolution goes through an
+   input PARAM slot or an explicitly seeded binding (callers reseed input and
+   output nodes with different buffers per call), symbolic variable values,
+   and launch dimensions of kernels with symbolic global sizes — into the
+   affected nodes before launching. Dynamic buffer arguments are re-resolved
+   on every replay and patched only when their address changed, so stable
+   bindings cost one lookup and no graph update. *)
 
 module Graph_runner = struct
   module U = Tolk_uop.Uop
@@ -620,8 +636,16 @@ module Graph_runner = struct
     bufs : Device.Buffer.t list;
         (* Resolved once at record time; kept so the addresses captured in
            the graph stay backed by live allocations. *)
-    uop_replace : (int * int) list;
-        (* Buffer argument position -> input slot patched on replay. *)
+    dyn : (int * U.t) array;
+        (* Buffer argument position -> argument node, for arguments whose
+           resolution can change between replays: those reaching an input
+           PARAM slot or a seeded binding. Re-resolved and diff-patched on
+           every replay. *)
+    dyn_bufs : Device.Buffer.t array;
+        (* Last resolution of each dynamic argument, parallel to [dyn]; keeps
+           the addresses committed in the graph backed by live buffers. *)
+    dyn_addrs : nativeint array;
+        (* Committed address of each dynamic argument, parallel to [dyn]. *)
   }
 
   type t = {
@@ -683,18 +707,28 @@ module Graph_runner = struct
         match U.as_call call with
         | Some { body; args; _ } -> (
             let args = call_arg_uops args in
-            let uop_replace =
+            let dyn =
               List.mapi
                 (fun pos arg ->
-                  match U.as_param arg with
-                  | Some { param = { slot; _ }; _ } when slot >= 0 ->
-                      Some (pos, slot)
-                  | _ -> None)
+                  let dynamic =
+                    List.exists
+                      (fun u ->
+                        (match U.as_param u with
+                        | Some { param = { slot; addrspace; _ }; _ } ->
+                            slot >= 0 && addrspace <> Tolk_uop.Dtype.Alu
+                        | None -> false)
+                        || Buffers.seeded binding u)
+                      (U.toposort arg)
+                  in
+                  if dynamic then Some (pos, arg) else None)
                 args
-              |> List.filter_map Fun.id
+              |> List.filter_map Fun.id |> Array.of_list
             in
             let bufs = List.map (resolve binding ctx) args in
             List.iter Device.Buffer.ensure_allocated bufs;
+            let bufs_arr = Array.of_list bufs in
+            let dyn_bufs = Array.map (fun (pos, _) -> bufs_arr.(pos)) dyn in
+            let dyn_addrs = Array.map Device.Buffer.addr dyn_bufs in
             match U.op body with
             | Tolk_uop.Ops.Program ->
                 let info =
@@ -746,7 +780,9 @@ module Graph_runner = struct
                           symbolic = is_symbolic info;
                         };
                     bufs;
-                    uop_replace;
+                    dyn;
+                    dyn_bufs;
+                    dyn_addrs;
                   }
                   :: !calls;
                 incr n
@@ -767,7 +803,8 @@ module Graph_runner = struct
                           deps = Array.of_list node_deps;
                         }
                       :: !nodes;
-                    calls := { kind = Copy; bufs; uop_replace } :: !calls;
+                    calls :=
+                      { kind = Copy; bufs; dyn; dyn_bufs; dyn_addrs } :: !calls;
                     incr n
                 | _ -> invalid_arg "graph: malformed COPY call")
             | _ ->
@@ -782,7 +819,7 @@ module Graph_runner = struct
       List.init (Array.length calls) Fun.id
       |> List.filter (fun j ->
              let c = calls.(j) in
-             c.uop_replace <> []
+             c.dyn <> [||]
              ||
              match c.kind with
              | Kernel k -> k.var_replace <> [] || k.symbolic
@@ -792,43 +829,53 @@ module Graph_runner = struct
 
   let call t binding ctx =
     let var_vals = ctx.var_vals in
-    let patched = ref [] in
     List.iter
       (fun j ->
         let c = t.calls.(j) in
-        List.iter
-          (fun (pos, slot) ->
-            if slot >= Array.length ctx.input_uops then
-              invalid_arg "graph: input slot out of range";
-            let buf = resolve binding ctx ctx.input_uops.(slot) in
-            Device.Buffer.ensure_allocated buf;
-            patched := buf :: !patched;
-            t.exec.Device.Graph.set_buf j pos (Device.Buffer.addr buf))
-          c.uop_replace;
+        let dirty = ref false in
+        Array.iteri
+          (fun i (pos, arg) ->
+            let buf = resolve binding ctx arg in
+            (* [addr] allocates on first use, so a fresh buffer seeded for
+               this run is live before its address enters the graph. *)
+            let addr = Device.Buffer.addr buf in
+            c.dyn_bufs.(i) <- buf;
+            if addr <> c.dyn_addrs.(i) then begin
+              c.dyn_addrs.(i) <- addr;
+              t.exec.Device.Graph.set_buf j pos addr;
+              dirty := true
+            end)
+          c.dyn;
         (match c.kind with
         | Kernel k ->
             List.iter
               (fun (i, name) ->
                 match List.assoc_opt name var_vals with
-                | Some v -> t.exec.Device.Graph.set_val j i v
+                | Some v ->
+                    t.exec.Device.Graph.set_val j i v;
+                    dirty := true
                 | None ->
                     invalid_arg
                       (strf "graph: missing variable %S on replay" name))
               k.var_replace;
-            if k.symbolic then
+            if k.symbolic then begin
               t.exec.Device.Graph.set_launch_dims j
-                ~global:(updated_global k ~var_vals) ~local:k.local
+                ~global:(updated_global k ~var_vals) ~local:k.local;
+              dirty := true
+            end
         | Copy -> ());
-        t.exec.Device.Graph.set_params j)
+        if !dirty then t.exec.Device.Graph.set_params j)
       t.updatable;
-    let ret = t.exec.Device.Graph.launch ~wait:ctx.wait in
-    List.iter keep_alive !patched;
-    ret
+    t.exec.Device.Graph.launch ~wait:ctx.wait
 end
 
 (* Graph runners are recorded on first execution of their graph call node and
    replayed on every subsequent execution of the captured linear. *)
 let graph_cache : (int, Graph_runner.t) Hashtbl.t = Hashtbl.create 8
+
+(* Cumulative count of batched graph launches, including recording launches.
+   Observability hook for tests and debugging. *)
+let graph_launches = ref 0
 
 let exec_graph binding ctx ~device call =
   let module U = Tolk_uop.Uop in
@@ -842,6 +889,7 @@ let exec_graph binding ctx ~device call =
             Hashtbl.replace graph_cache (U.tag ast) rt;
             rt
       in
+      incr graph_launches;
       ignore (Graph_runner.call rt binding ctx : float option)
   | None -> invalid_arg "exec_graph: expected CALL"
 

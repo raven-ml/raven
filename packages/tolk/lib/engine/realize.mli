@@ -270,9 +270,15 @@ val run_linear :
     resolved source into [binding]; a {!Tolk_uop.Ops.Copy} transfers between its
     resolved buffers; a {!Tolk_uop.Ops.Custom_function} named ["graph"] records
     its LINEAR body into the device's {!Device.Graph} on first execution and
-    replays that graph afterwards, patching rebound input parameters, variable
-    values, and symbolic launch dimensions per run. Buffer arguments are
-    resolved with {!resolve}, so {!Tolk_uop.Ops.Param} slots index into
-    [input_uops].
+    replays that graph afterwards, patching per run every buffer argument
+    whose resolution changed (arguments reaching a {!Tolk_uop.Ops.Param} slot
+    or a binding reseeded through {!Buffers.seed}), variable values, and
+    symbolic launch dimensions. Buffer arguments are resolved with {!resolve},
+    so {!Tolk_uop.Ops.Param} slots index into [input_uops].
 
     [wait] is forced to [true] when [DEBUG >= 2]. *)
+
+val graph_launches : int ref
+(** [graph_launches] counts batched graph launches dispatched through
+    {!Device.Graph} execs, including each graph's recording launch. A
+    cumulative observability counter for tests and debugging. *)

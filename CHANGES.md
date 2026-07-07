@@ -33,6 +33,11 @@ thread.
 
 ### Tolk (new)
 
+- Graph replay now repatches buffer arguments whose binding was reseeded
+  between runs, not just input `PARAM` slots; previously such replays used
+  stale device addresses. Changed arguments are diff-patched, so stable
+  bindings cost one lookup. New `Jit.batch_graphs` exposes the JIT's graph
+  batching to callers driving `Realize` directly.
 - JIT replay now batches consecutive CUDA kernels and device copies into
   CUDA execution graphs, replaying each batch as a single `cuGraphLaunch`
   instead of per-kernel launches. Symbolic variable values, launch

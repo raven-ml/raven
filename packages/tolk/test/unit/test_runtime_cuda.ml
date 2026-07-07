@@ -443,5 +443,52 @@ let () =
               let node2 = f32_buffer_node "CUDA" n in
               check node1 data1;
               check node2 data2);
+          (* Buffer nodes reseeded in the binding between replays (no PARAM
+             slots): rune's jit reseeds its input nodes and binds a fresh
+             output buffer on every call, so the graph must repatch both. *)
+          test "graph call replays with reseeded buffer nodes" (fun () ->
+              let device = cuda_device () in
+              let to_program body =
+                Codegen.to_program device (Device.renderer device) body
+              in
+              let data1 = [| 1.0; 2.0; 3.0; 4.0 |] in
+              let data2 = [| 10.0; 20.0; 30.0; 40.0 |] in
+              let n = Array.length data1 in
+              let in_node = f32_buffer_node "CUDA" n in
+              let out =
+                U.contiguous ~src:(U.alu_unary ~op:Ops.Neg ~src:in_node) ()
+              in
+              let linear, _var_vals, buffer_map =
+                schedule_graph_linear device ~to_program (U.sink [ out ])
+              in
+              let linear = wrap_graph linear in
+              let out_node =
+                match Hashtbl.find_opt buffer_map (U.tag out) with
+                | Some node -> U.buf_uop node
+                | None -> fail "output was not scheduled to a buffer"
+              in
+              let binding = Realize.Buffers.create ~device in
+              let run in_buf out_buf =
+                Realize.Buffers.seed binding in_node in_buf;
+                Realize.Buffers.seed binding out_node out_buf;
+                Realize.run_linear ~device ~to_program binding ~jit:true linear;
+                Device.synchronize device
+              in
+              let neg = Array.map (fun x -> -.x) in
+              let in1 = f32_buf device data1 in
+              let out1 = f32_buf device (Array.make n 0.0) in
+              (* First run records the graph against [in1]/[out1]. *)
+              run in1 out1;
+              equal (array (float 1e-6)) (neg data1) (read_f32 out1);
+              (* Reseeding both nodes must repatch the recorded addresses:
+                 the second run reads [in2] and writes [out2], leaving [out1]
+                 untouched. *)
+              let in2 = f32_buf device data2 in
+              let out2 = f32_buf device (Array.make n 0.0) in
+              run in2 out2;
+              equal (array (float 1e-6)) (neg data2) (read_f32 out2);
+              equal ~msg:"first output buffer is untouched"
+                (array (float 1e-6))
+                (neg data1) (read_f32 out1));
         ];
     ]
