@@ -19,11 +19,14 @@
    Replaying: every call binds the current input leaves to the compiled
    program's buffers and runs the schedule. On the CPU device, contiguous inputs
    and captured constants are wrapped in place — kernels read the tensors' own
-   memory — and outputs are computed straight into the returned tensors'
-   storage; other devices and non-contiguous tensors go through byte copies.
-   Closure-captured tensors are re-read on every call, so mutations between
-   calls are observed like in eager execution. Whole-tensor [assign]s are
-   replayed by writing the computed value back into the destination.
+   memory, so mutations between calls are observed like in eager execution — and
+   outputs are computed straight into the returned tensors' storage. Other
+   devices and non-contiguous tensors go through byte copies: inputs are
+   re-copied on every call, captured tensors are uploaded once when the trace
+   compiles and stay resident on the device. Whole-tensor [assign]s are replayed
+   by writing the computed value back into the destination; assigned captures
+   are re-uploaded on every call so the written-back state (and any eager
+   mutation of it) carries into the next call on every device.
 
    Reading the value of a traced tensor (for example [Nx.item] on a value that
    depends on the inputs) raises [Jit_error]: a compiled trace cannot branch on
@@ -795,11 +798,14 @@ type wb_target = Wb_input of int | Wb_const of packed
 
 (* How a captured constant is bound: [Const_wrapped] buffers alias the tensor's
    memory, so its current value is read directly on every call (the packed
-   tensor and host view keep the memory reachable); [Const_copy] re-copies the
-   tensor's bytes on every call. *)
+   tensor and host view keep the memory reachable); [Const_copy] buffers hold a
+   copy of the tensor's bytes, uploaded once at compile time. [refresh] marks
+   captures the traced function assigns to: the writeback keeps their host value
+   current between calls, so their bytes are re-uploaded on every call and later
+   mutations stay observed. *)
 type const_binding =
   | Const_wrapped of packed * Obj.t
-  | Const_copy of Tolk.Device.Buffer.t * packed
+  | Const_copy of { buf : Tolk.Device.Buffer.t; src : packed; refresh : bool }
 
 type 'q compiled = {
   cp_device : Tolk.Device.t;
@@ -916,8 +922,8 @@ let trace_compile ~device:dev ~zero_copy (module P : Nx.Ptree.S)
   in
   let call, buffer_map = Tolk.Allocations.transform_to_call sink in
   (* Schedule under a capture hook: the captured linear is unplanned, which
-     keeps buffer nodes stable so the seeded input and constant bindings
-     survive across replays. *)
+     keeps buffer nodes stable so the seeded input and constant bindings survive
+     across replays. *)
   let linear, var_vals =
     let captured = ref None in
     Tolk.Realize.capturing :=
@@ -943,7 +949,9 @@ let trace_compile ~device:dev ~zero_copy (module P : Nx.Ptree.S)
       Tolk.Realize.Buffers.seed binding inp.i_node inp.i_buf)
     !assoc;
   (* Bind each constant: alias its memory when the device shares host memory and
-     the tensor is contiguous, copy its bytes on every call otherwise. *)
+     the tensor is contiguous, copy its bytes once otherwise. Captures the
+     function assigns to are refreshed from the host on every call. *)
+  let wb_keys = List.map (fun (Packed (_, dst)) -> Obj.repr dst) wbs in
   let consts =
     List.rev_map
       (fun (node, (Packed (cdt, src) as pk)) ->
@@ -958,7 +966,9 @@ let trace_compile ~device:dev ~zero_copy (module P : Nx.Ptree.S)
               Tolk.Device.create_buffer ~size:n ~dtype:(tolk_dtype cdt) dev
             in
             Tolk.Realize.Buffers.seed binding node buf;
-            Const_copy (buf, pk))
+            copyin_tensor buf src;
+            Const_copy
+              { buf; src = pk; refresh = List.memq (Obj.repr src) wb_keys })
       st.consts
   in
   (* Resolve each output to the buffer node realization assigned it. An output
@@ -1027,8 +1037,9 @@ let replay (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S) (c : Q.t compiled)
     params;
   Array.iter
     (function
-      | Const_wrapped _ -> ()
-      | Const_copy (buf, Packed (_, src)) -> copyin_tensor buf src)
+      | Const_wrapped _ | Const_copy { refresh = false; _ } -> ()
+      | Const_copy { buf; src = Packed (_, src); refresh = true } ->
+          copyin_tensor buf src)
     c.cp_consts;
   (* Wire fresh host buffers as the kernels' output storage, so results are
      written straight into the tensors returned to the caller. Nodes backed by

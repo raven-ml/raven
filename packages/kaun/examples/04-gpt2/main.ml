@@ -7,8 +7,8 @@
 
    Loads the 124M-parameter GPT-2 checkpoint — from a local safetensors file
    when one is cached, downloading from the HuggingFace Hub otherwise (~548MB,
-   cached afterwards) — and greedily generates continuations of a prompt.
-   [--jit DEVICE] compiles the forward pass with [Rune.jit]. *)
+   cached afterwards) — and greedily generates continuations of a prompt. [--jit
+   DEVICE] compiles the forward pass with [Rune.jit]. *)
 
 let default_prompt = "What is the answer to life, the universe, and everything?"
 
@@ -49,29 +49,87 @@ let load_tokenizer () =
   | Ok t -> t
   | Error e -> failwith ("tokenizer: " ^ e)
 
-(* Jitted greedy decoding. The input window is fixed at [prompt + count]
-   tokens so that a single compilation serves every step: with the causal
-   mask, the logits at position n-1 are unaffected by the padding that
-   follows, so each step reads them from a full-window forward pass. *)
+(* Jitted greedy decoding with a key-value cache. One jitted function serves the
+   whole generation: it consumes tokens at position [pos], fills the caches, and
+   returns the next token, the advanced position and the updated caches — its
+   output feeds the next call directly. The position enters the graph as a
+   tensor, so [Rune.jit2] compiles exactly two variants: a prefill over the
+   whole prompt, and a single-token step replayed for every generated token. *)
+
+type step = {
+  token : Nx.int32_t; (* [| 1; seq |]: the prompt, then one token at a time *)
+  pos : Nx.int32_t; (* [| 1 |], the position of [token]'s first entry *)
+  caches : Gpt2.cache;
+}
+
+module Step = struct
+  type t = step
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { token; pos; caches } =
+    {
+      token = f token;
+      pos = f pos;
+      caches = List.map (Kaun.Attention.map_cache f) caches;
+    }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
+    {
+      token = f a.token b.token;
+      pos = f a.pos b.pos;
+      caches = List.map2 (Kaun.Attention.map2_cache f) a.caches b.caches;
+    }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { token; pos; caches } =
+    f token;
+    f pos;
+    List.iter (Kaun.Attention.iter_cache f) caches
+end
 
 let generate_jit ~device cfg params ~max_tokens prompt =
   let n0 = Array.length prompt in
-  let window = n0 + max_tokens in
-  let tokens = Array.make window 0l in
+  let len = n0 + max_tokens in
+  let tokens = Array.make len 0l in
   Array.blit prompt 0 tokens 0 n0;
-  let step = Rune.jit' ~device (Gpt2.logits cfg params) in
-  let times = Array.make max_tokens 0. in
-  for n = n0 to window - 1 do
+  let step_fn =
+    Rune.jit2 ~device
+      (module Step)
+      (module Step)
+      (fun { token; pos; caches } ->
+        let seq = (Nx.shape token).(1) in
+        let logits, caches = Gpt2.logits_cached cfg params ~pos caches token in
+        {
+          token = Nx.reshape [| 1; 1 |] (Nx.argmax ~axis:1 logits);
+          pos = Nx.add_s pos (Int32.of_int seq);
+          caches;
+        })
+  in
+  let t0 = Unix.gettimeofday () in
+  let state =
+    ref
+      (step_fn
+         {
+           token = Nx.create Nx.int32 [| 1; n0 |] prompt;
+           pos = Nx.zeros Nx.int32 [| 1 |];
+           caches = Gpt2.cache cfg ~len;
+         })
+  in
+  tokens.(n0) <- Nx.item [ 0; 0 ] !state.token;
+  let prefill = Unix.gettimeofday () -. t0 in
+  let times = Array.make (max 1 (max_tokens - 1)) 0. in
+  for n = n0 + 1 to len - 1 do
     let t0 = Unix.gettimeofday () in
-    let input = Nx.create Nx.int32 [| 1; window |] tokens in
-    let last = Nx.slice [ I 0; I (n - 1) ] (step input) in
-    tokens.(n) <- Nx.item [] (Nx.argmax ~axis:0 last);
-    times.(n - n0) <- Unix.gettimeofday () -. t0
+    let s = step_fn !state in
+    tokens.(n) <- Nx.item [ 0; 0 ] s.token;
+    state := s;
+    times.(n - n0 - 1) <- Unix.gettimeofday () -. t0
   done;
-  if max_tokens > 1 then begin
+  if max_tokens > 2 then begin
     let rest = Array.fold_left ( +. ) (-.times.(0)) times in
-    Printf.printf "first token %.2f s (compile), then %.2f tok/s\n%!" times.(0)
-      (float_of_int (max_tokens - 1) /. rest)
+    Printf.printf
+      "prefill %.2f s (compile), first step %.2f s (compile), then %.2f tok/s\n\
+       %!"
+      prefill times.(0)
+      (float_of_int (max_tokens - 2) /. rest)
   end;
   tokens
 

@@ -89,6 +89,85 @@ val apply :
     not have size [embed_dim], [num_heads] is not positive, or [num_heads] does
     not divide [embed_dim]. *)
 
+(** {1:cache Decoding with a key-value cache}
+
+    Autoregressive decoding runs the same causal self-attention one query at a
+    time: the keys and values of earlier positions never change, so they are
+    computed once and cached. A {!type-cache} holds them in fixed-shape tensors
+    of [len] slots and the current position enters {!apply_cached} as a
+    one-element tensor, so shapes are independent of the position: a decode step
+    compiled once (with {!Rune.jit}) serves the whole generation loop.
+
+    The cache is functional: {!apply_cached} returns the updated cache and never
+    mutates its argument. Thread it through the decode loop like any other
+    state. *)
+
+type 'b cache = { keys : (float, 'b) Nx.t; values : (float, 'b) Nx.t }
+(** The type for key-value caches with float dtype layout ['b]: the projected
+    keys and values of the positions seen so far, each of shape
+    [[| batch; num_heads; len; head_dim |]]. Slots at positions not yet seen
+    hold zeros and are never attended to. *)
+
+val cache :
+  ?batch:int ->
+  num_heads:int ->
+  head_dim:int ->
+  len:int ->
+  (float, 'b) Nx.dtype ->
+  'b cache
+(** [cache ~num_heads ~head_dim ~len dtype] is an empty cache of [len] slots:
+    zero tensors of shape [[| batch; num_heads; len; head_dim |]]. [batch]
+    defaults to [1]. [len] bounds the total sequence length (prompt plus
+    generated positions).
+
+    Raises [Invalid_argument] if any dimension is not positive. *)
+
+val apply_cached :
+  ?num_heads:int ->
+  pos:(int32, Nx.int32_elt) Nx.t ->
+  cache:'b cache ->
+  'b params ->
+  (float, 'b) Nx.t ->
+  (float, 'b) Nx.t * 'b cache
+(** [apply_cached ~pos ~cache p x] is causal multi-head self-attention of [x]
+    over the cached sequence: the result, of [x]'s shape, and the cache with
+    [x]'s keys and values written at slots [pos] to [pos + seq - 1].
+
+    [x] has shape [[| batch; seq; embed |]] — the positions [pos] to
+    [pos + seq - 1] of the sequence — and [pos] is a one-element int32 tensor.
+    The query at input position [i] attends to cache slots [j <= pos + i], so a
+    full-prompt prefill at [pos = 0] matches [apply ~causal:true] and a
+    single-token step ([seq = 1]) attends to every position seen so far.
+    [num_heads] is as in {!apply}.
+
+    Slots are addressed with tensor arithmetic on [pos] (a one-hot scatter and a
+    position mask), never its value, so the step traces once under {!Rune.jit}
+    whatever the position. Differentiable through Rune.
+
+    The caller steps [pos] itself and must keep [pos + seq <= len]: writes past
+    the last slot are silently dropped.
+
+    Raises [Invalid_argument] if [x] is not of rank 3 or its last axis is not
+    [embed], [num_heads] is invalid, the cache's batch, heads or head dimension
+    disagree with [x] and [num_heads], [seq] exceeds the cache length, or [pos]
+    has more than one element. *)
+
+val map_cache : ('a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) -> 'b cache -> 'b cache
+(** [map_cache f c] is [c] with [f] applied to [c.keys] and [c.values], in that
+    order. With {!map2_cache} and {!iter_cache} it satisfies the {!Nx.Ptree.S}
+    contract at any fixed ['b], so caches can be leaves of a jitted step's
+    parameter tree. *)
+
+val map2_cache :
+  ('a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) ->
+  'b cache ->
+  'b cache ->
+  'b cache
+(** [map2_cache f c c'] combines [c] and [c'] leafwise with [f]. *)
+
+val iter_cache : ('a 'c. ('a, 'c) Nx.t -> unit) -> 'b cache -> unit
+(** [iter_cache f c] applies [f] to [c.keys] and [c.values], in that order. *)
+
 (** {1:core The attention core} *)
 
 val scaled_dot_product_attention :

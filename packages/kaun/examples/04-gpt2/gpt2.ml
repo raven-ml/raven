@@ -155,6 +155,56 @@ let logits cfg p ids =
   (* Tied LM head: logits = h @ wteᵀ. *)
   Nx.matmul h (Nx.transpose p.wte.table)
 
+(* Cached forward pass: the per-layer key-value caches make one decode step cost
+   a single-position forward instead of a whole-sequence one. Shapes depend only
+   on the input length and the cache length — the position is a tensor — so a
+   single-token step traces once under [Rune.jit]. *)
+
+type cache = Nx.float32_elt Attention.cache list
+
+let cache cfg ~len =
+  List.init cfg.n_layer (fun _ ->
+      Attention.cache ~num_heads:cfg.n_head ~head_dim:(cfg.n_embd / cfg.n_head)
+        ~len Nx.float32)
+
+let block_apply_cached cfg b c ~pos x =
+  let eps = cfg.layer_norm_eps in
+  let attn, c =
+    Attention.apply_cached ~num_heads:cfg.n_head ~pos ~cache:c b.attn
+      (Layer_norm.apply ~eps b.ln1 x)
+  in
+  let x = Nx.add x attn in
+  ( Nx.add x
+      (Linear.apply b.proj
+         (Fn.gelu_approx (Linear.apply b.fc (Layer_norm.apply ~eps b.ln2 x)))),
+    c )
+
+let logits_cached cfg p ~pos caches ids =
+  let seq = (Nx.shape ids).(1) in
+  let positions =
+    Nx.add
+      (Nx.reshape [| 1; 1 |] pos)
+      (Nx.reshape [| 1; seq |] (Nx.arange Nx.int32 0 seq 1))
+  in
+  let x =
+    Nx.add (Embedding.apply p.wte ids) (Embedding.apply p.wpe positions)
+  in
+  let x, rev_caches =
+    List.fold_left2
+      (fun (x, cs) b c ->
+        let x, c = block_apply_cached cfg b c ~pos x in
+        (x, c :: cs))
+      (x, []) p.blocks caches
+  in
+  (* Only the last position's logits matter for decoding. *)
+  let x = Nx.slice [ A; R (seq - 1, seq) ] x in
+  let h = Layer_norm.apply ~eps:cfg.layer_norm_eps p.ln_f x in
+  let vocab = (Nx.shape p.wte.table).(0) in
+  ( Nx.reshape
+      [| (Nx.shape ids).(0); vocab |]
+      (Nx.matmul h (Nx.transpose p.wte.table)),
+    List.rev rev_caches )
+
 (* Greedy decoding: append the argmax of the last position's logits, re-running
    the model on the grown sequence each step (no key-value cache). *)
 

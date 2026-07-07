@@ -239,6 +239,11 @@ thread.
 
 ### Rune
 
+- `jit` uploads closure-captured tensors to non-CPU devices once per
+  compilation instead of on every call (captures the function assigns to are
+  still re-read each call, so in-place state carries across calls). Jitted
+  functions capturing large weights no longer pay a full re-upload per call.
+  CPU behavior is unchanged.
 - `jit` accepts `~device:"CUDA"`: jitted programs compile through NVRTC and
   run on NVIDIA GPUs.
 - `jit` takes a `?device` argument selecting where kernels compile and run:
@@ -282,6 +287,11 @@ thread.
 
 ### Kaun
 
+- Add key-value cache decoding to `Attention`: `cache`, `apply_cached`, and
+  `map_cache`/`map2_cache`/`iter_cache`. The cache is functional and
+  addresses slots with tensor arithmetic on the position, so a single-token
+  decode step compiles once under `Rune.jit`; the GPT-2 example decodes
+  through it (~85x faster jitted CUDA decode).
 - The GPT-2 example loads a local safetensors checkpoint when one is cached
   (`Gpt2.from_file`, `Gpt2.of_checkpoint`), tokenizes via `tokenizer.json`,
   and can compile its forward pass with `Rune.jit` on CPU or CUDA

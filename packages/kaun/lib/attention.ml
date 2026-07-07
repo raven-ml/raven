@@ -76,6 +76,103 @@ let scaled_dot_product_attention ?mask q k v =
   in
   Nx.matmul (Fn.softmax scores) v
 
+(* Key-value cache *)
+
+type 'b cache = { keys : (float, 'b) Nx.t; values : (float, 'b) Nx.t }
+
+let cache ?(batch = 1) ~num_heads ~head_dim ~len dtype =
+  if batch <= 0 || num_heads <= 0 || head_dim <= 0 || len <= 0 then
+    Printf.ksprintf invalid_arg
+      "Attention.cache: batch, num_heads, head_dim and len must be positive, \
+       got batch=%d num_heads=%d head_dim=%d len=%d"
+      batch num_heads head_dim len;
+  let shape = [| batch; num_heads; len; head_dim |] in
+  { keys = Nx.zeros dtype shape; values = Nx.zeros dtype shape }
+
+let map_cache (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { keys; values } =
+  { keys = f keys; values = f values }
+
+let map2_cache (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) c c'
+    =
+  { keys = f c.keys c'.keys; values = f c.values c'.values }
+
+let iter_cache (f : 'a 'c. ('a, 'c) Nx.t -> unit) { keys; values } =
+  f keys;
+  f values
+
+let apply_cached ?(num_heads = 1) ~pos ~cache p x =
+  let shape = Nx.shape x in
+  if Array.length shape <> 3 then
+    invalid_arg
+      "Attention.apply_cached: input must have shape [batch; seq; embed]";
+  let embed = (Nx.shape p.q.Linear.w).(0) in
+  if shape.(2) <> embed then
+    Printf.ksprintf invalid_arg
+      "Attention.apply_cached: last axis has size %d but the layer attends \
+       over %d features"
+      shape.(2) embed;
+  if num_heads <= 0 then
+    Printf.ksprintf invalid_arg
+      "Attention.apply_cached: num_heads must be positive, got %d" num_heads;
+  if embed mod num_heads <> 0 then
+    Printf.ksprintf invalid_arg
+      "Attention.apply_cached: num_heads (%d) must divide the embedding \
+       dimension (%d)"
+      num_heads embed;
+  let batch = shape.(0) and seq = shape.(1) in
+  let head_dim = embed / num_heads in
+  let cshape = Nx.shape cache.keys in
+  if cshape.(0) <> batch || cshape.(1) <> num_heads || cshape.(3) <> head_dim
+  then
+    Printf.ksprintf invalid_arg
+      "Attention.apply_cached: cache has shape [%d; %d; _; %d] but the input \
+       needs [%d; %d; _; %d]"
+      cshape.(0) cshape.(1) cshape.(3) batch num_heads head_dim;
+  let len = cshape.(2) in
+  if seq > len then
+    Printf.ksprintf invalid_arg
+      "Attention.apply_cached: seq %d exceeds the cache length %d" seq len;
+  if Array.fold_left ( * ) 1 (Nx.shape pos) <> 1 then
+    invalid_arg "Attention.apply_cached: pos must have a single element";
+  let split t =
+    Nx.swapaxes 1 2 (Nx.reshape [| batch; seq; num_heads; head_dim |] t)
+  in
+  let q = split (Linear.apply p.q x) in
+  let k = split (Linear.apply p.k x) in
+  let v = split (Linear.apply p.v x) in
+  let pos = Nx.reshape [| 1; 1 |] pos in
+  let slots = Nx.reshape [| len; 1 |] (Nx.arange Nx.int32 0 len 1) in
+  (* [positions.(0).(i) = pos + i]: the cache slot input position [i] fills. *)
+  let positions =
+    Nx.add pos (Nx.reshape [| 1; seq |] (Nx.arange Nx.int32 0 seq 1))
+  in
+  (* One-hot scatter: row [c] of [sel] selects the input position filling slot
+     [c], so [sel @ fresh] lays the fresh rows out at their slots (exactly: each
+     row is 1 * fresh plus zeros). Slots outside [pos, pos + seq) keep their
+     cached rows. Everything is expressed on fixed shapes with [pos] a plain
+     tensor, so one jitted decode step serves every position. *)
+  let sel = Nx.cast (Nx.dtype x) (Nx.equal slots positions) in
+  let written =
+    Nx.reshape [| 1; 1; len; 1 |]
+      (Nx.logical_and
+         (Nx.greater_equal slots pos)
+         (Nx.less slots (Nx.add_s pos (Int32.of_int seq))))
+  in
+  let update cached fresh = Nx.where written (Nx.matmul sel fresh) cached in
+  let keys = update cache.keys k and values = update cache.values v in
+  (* Causality over slots: the query at input position [i] sees slots [j <= pos
+     + i]; unfilled slots are always masked out. *)
+  let mask =
+    Nx.less_equal
+      (Nx.reshape [| 1; 1; 1; len |] (Nx.arange Nx.int32 0 len 1))
+      (Nx.reshape [| 1; 1; seq; 1 |] positions)
+  in
+  let out = scaled_dot_product_attention ~mask q keys values in
+  let out =
+    Nx.reshape [| batch; seq; embed |] (Nx.contiguous (Nx.swapaxes 1 2 out))
+  in
+  (Linear.apply p.out out, { keys; values })
+
 let apply ?(num_heads = 1) ?(causal = false) p x =
   let shape = Nx.shape x in
   let rank = Array.length shape in

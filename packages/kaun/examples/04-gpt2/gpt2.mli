@@ -55,6 +55,36 @@ val logits : config -> t -> (int32, Nx.int32_elt) Nx.t -> Nx.float32_t
     Raises [Invalid_argument] if [ids] has more than [cfg.n_positions]
     positions. *)
 
+type cache = Nx.float32_elt Kaun.Attention.cache list
+(** The type for decoding state: one key-value cache per block, in block order.
+*)
+
+val cache : config -> len:int -> cache
+(** [cache cfg ~len] is an empty decoding state whose caches hold [len]
+    positions: the total sequence length (prompt plus generated tokens) must not
+    exceed [len]. *)
+
+val logits_cached :
+  config ->
+  t ->
+  pos:(int32, Nx.int32_elt) Nx.t ->
+  cache ->
+  (int32, Nx.int32_elt) Nx.t ->
+  Nx.float32_t * cache
+(** [logits_cached cfg p ~pos caches ids] is the next-token logits at the last
+    position of [ids] — shape [[| batch; vocab_size |]] — and the updated
+    caches, where [ids] holds the positions [pos] to [pos + seq - 1] of the
+    sequence and [pos] is a one-element int32 tensor. A whole-prompt call at
+    [pos = 0] prefills the caches; a single-token call advances decoding by one
+    step. Since [pos] is a tensor, both trace under {!Rune.jit} — one compiled
+    single-token step serves the whole decode loop.
+
+    The caller steps [pos] and must keep [pos + seq] at most the cache length
+    (see {!Kaun.Attention.apply_cached}) and [cfg.n_positions].
+
+    Raises [Invalid_argument] on the geometry errors of
+    {!Kaun.Attention.apply_cached}. *)
+
 val generate : config -> t -> max_tokens:int -> int32 array -> int32 array
 (** [generate cfg p ~max_tokens prompt] is [prompt] extended with [max_tokens]
     greedily decoded token ids: each step re-runs {!logits} on the whole

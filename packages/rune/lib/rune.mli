@@ -321,13 +321,17 @@ val jit :
     ["CUDA"] (NVIDIA GPUs), or ["METAL"] (macOS only). On the CPU device,
     contiguous inputs and captured tensors are read in place and outputs are
     computed directly into the returned tensors' storage; on other devices, and
-    for non-contiguous tensors, data is copied to and from the device on every
-    call.
+    for non-contiguous tensors, inputs and outputs are copied to and from the
+    device on every call.
 
     The compilation cache lives in the partial application [jit (module P) f]:
     apply [jit] once and reuse the returned function. Tensors [f] closes over
-    are inputs of the compiled program too, read afresh on every call, so
-    mutations between calls behave as they do eagerly.
+    are inputs of the compiled program too. On the CPU device they are read in
+    place, so mutations between calls behave as they do eagerly; on other
+    devices they are uploaded once when the trace compiles and stay resident on
+    the device, so pass values that change between calls as leaves of [P] rather
+    than capturing them. Captures that [f] itself assigns to are the exception:
+    they are re-read on every call (see below).
 
     Under an enclosing transformation ({!grad}, {!val-vmap}, {!with_debug}, an
     outer [jit]), the wrapped function runs directly so the transformation
@@ -346,10 +350,11 @@ val jit :
     ]}
 
     Whole-tensor in-place updates ([Nx.assign] on a leaf or a captured tensor)
-    are replayed by writing the computed value back into the destination.
-    Structured values read during tracing must not depend on traced tensors: a
-    data-dependent {!cond} or {!while_loop} predicate raises {!Jit_error}.
-    Compiled functions are not thread-safe.
+    are replayed by writing the computed value back into the destination, and
+    assigned captures are re-read on every call, so in-place state carries
+    across calls on every device. Structured values read during tracing must not
+    depend on traced tensors: a data-dependent {!cond} or {!while_loop}
+    predicate raises {!Jit_error}. Compiled functions are not thread-safe.
 
     Raises {!Jit_error} when tracing fails ({!exception-Jit_error}), and
     [Invalid_argument] for an unknown or unavailable [device]. *)

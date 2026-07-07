@@ -265,6 +265,178 @@ let test_gradients () =
   grads_ok (Rune.check_grads (module Attention64) (loss ?causal:None) p);
   grads_ok (Rune.check_grads (module Attention64) (loss ~causal:true) p)
 
+(* Key-value cache decoding *)
+
+let pos_at i = Nx.create Nx.int32 [| 1 |] [| Int32.of_int i |]
+let flat t = Nx.to_array (Nx.reshape [| -1 |] (Nx.contiguous t))
+
+let test_cached_prefill_matches_causal () =
+  Nx.Rng.run ~seed:20 @@ fun () ->
+  let p = Attention.init ~embed_dim:8 in
+  let x = Nx.randn Nx.float32 [| 1; 5; 8 |] in
+  let full = Attention.apply ~num_heads:2 ~causal:true p x in
+  let cache = Attention.cache ~num_heads:2 ~head_dim:4 ~len:7 Nx.float32 in
+  let y, _ = Attention.apply_cached ~num_heads:2 ~pos:(pos_at 0) ~cache p x in
+  equal ~msg:"prefill output = causal apply"
+    (array (float 1e-5))
+    (flat full) (flat y)
+
+let test_cached_decode_matches_causal () =
+  Nx.Rng.run ~seed:21 @@ fun () ->
+  let p = Attention.init ~embed_dim:8 in
+  let x = Nx.randn Nx.float32 [| 1; 5; 8 |] in
+  let full = Attention.apply ~num_heads:2 ~causal:true p x in
+  (* Prefill the first three positions, then decode the last two one by one. *)
+  let cache = Attention.cache ~num_heads:2 ~head_dim:4 ~len:5 Nx.float32 in
+  let y0, cache =
+    Attention.apply_cached ~num_heads:2 ~pos:(pos_at 0) ~cache p
+      (Nx.slice [ A; R (0, 3) ] x)
+  in
+  let ys, _ =
+    List.fold_left
+      (fun (ys, cache) i ->
+        let y, cache =
+          Attention.apply_cached ~num_heads:2 ~pos:(pos_at i) ~cache p
+            (Nx.slice [ A; R (i, i + 1) ] x)
+        in
+        (y :: ys, cache))
+      ([ y0 ], cache) [ 3; 4 ]
+  in
+  let y = Nx.concatenate ~axis:1 (List.rev ys) in
+  equal ~msg:"prefill + steps = causal apply"
+    (array (float 1e-5))
+    (flat full) (flat y)
+
+let test_cached_update_is_functional () =
+  Nx.Rng.run ~seed:22 @@ fun () ->
+  let p = Attention.init ~embed_dim:4 in
+  let x = Nx.randn Nx.float32 [| 1; 2; 4 |] in
+  let cache = Attention.cache ~num_heads:2 ~head_dim:2 ~len:4 Nx.float32 in
+  let _, cache' =
+    Attention.apply_cached ~num_heads:2 ~pos:(pos_at 0) ~cache p x
+  in
+  equal ~msg:"argument cache still empty"
+    (array (float 0.0))
+    (Array.make 16 0.0)
+    (flat cache.Attention.keys);
+  is_true ~msg:"returned cache holds the written keys"
+    (Array.exists (fun v -> Float.abs v > 1e-6) (flat cache'.Attention.keys))
+
+let test_cached_write_past_len_is_dropped () =
+  Nx.Rng.run ~seed:23 @@ fun () ->
+  let p = Attention.init ~embed_dim:4 in
+  let x = Nx.randn Nx.float32 [| 1; 2; 4 |] in
+  let cache = Attention.cache ~num_heads:2 ~head_dim:2 ~len:2 Nx.float32 in
+  let _, cache =
+    Attention.apply_cached ~num_heads:2 ~pos:(pos_at 0) ~cache p x
+  in
+  let _, cache' =
+    Attention.apply_cached ~num_heads:2 ~pos:(pos_at 2) ~cache p
+      (Nx.slice [ A; R (0, 1) ] x)
+  in
+  equal ~msg:"a write at pos = len leaves the cache unchanged"
+    (array (float 0.0))
+    (flat cache.Attention.keys)
+    (flat cache'.Attention.keys)
+
+(* The decode step as a jittable function: position and cache enter as tensors,
+   so one compilation serves every step. *)
+
+type step = {
+  pos : Nx.int32_t;
+  x : Nx.float32_t;
+  cache : Nx.float32_elt Attention.cache;
+}
+
+module Step = struct
+  type t = step
+
+  let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { pos; x; cache } =
+    { pos = f pos; x = f x; cache = Attention.map_cache f cache }
+
+  let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) a b =
+    {
+      pos = f a.pos b.pos;
+      x = f a.x b.x;
+      cache = Attention.map2_cache f a.cache b.cache;
+    }
+
+  let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { pos; x; cache } =
+    f pos;
+    f x;
+    Attention.iter_cache f cache
+end
+
+let test_cached_step_jits_once () =
+  Nx.Rng.run ~seed:24 @@ fun () ->
+  let p = Attention.init ~embed_dim:8 in
+  let x = Nx.randn Nx.float32 [| 1; 4; 8 |] in
+  let decode step_fn =
+    let cache = Attention.cache ~num_heads:2 ~head_dim:4 ~len:4 Nx.float32 in
+    let ys, _ =
+      List.fold_left
+        (fun (ys, cache) i ->
+          let xi = Nx.slice [ A; R (i, i + 1) ] x in
+          let { x = y; cache; _ } = step_fn { pos = pos_at i; x = xi; cache } in
+          (y :: ys, cache))
+        ([], cache) [ 0; 1; 2; 3 ]
+    in
+    Nx.concatenate ~axis:1 (List.rev ys)
+  in
+  let step { pos; x; cache } =
+    let y, cache = Attention.apply_cached ~num_heads:2 ~pos ~cache p x in
+    { pos; x = y; cache }
+  in
+  let jitted = Rune.jit2 (module Step) (module Step) step in
+  equal ~msg:"jitted decode = eager decode"
+    (array (float 1e-5))
+    (flat (decode step))
+    (flat (decode jitted))
+
+let test_cached_gradients () =
+  Nx.Rng.run ~seed:25 @@ fun () ->
+  let x = Nx.randn Nx.float64 [| 1; 3; 4 |] in
+  let p = Attention.make ~embed_dim:4 Nx.float64 in
+  let loss p =
+    (* Gradients must flow through the cache from prefill into the step. *)
+    let cache = Attention.cache ~num_heads:2 ~head_dim:2 ~len:3 Nx.float64 in
+    let y1, cache =
+      Attention.apply_cached ~num_heads:2 ~pos:(pos_at 0) ~cache p
+        (Nx.slice [ A; R (0, 2) ] x)
+    in
+    let y2, _ =
+      Attention.apply_cached ~num_heads:2 ~pos:(pos_at 2) ~cache p
+        (Nx.slice [ A; R (2, 3) ] x)
+    in
+    Nx.add (Nx.sum (Nx.mul y1 y1)) (Nx.sum (Nx.mul y2 y2))
+  in
+  grads_ok (Rune.check_grads (module Attention64) loss p)
+
+let test_cached_rejects_bad_geometry () =
+  Nx.Rng.run ~seed:26 @@ fun () ->
+  let p = Attention.init ~embed_dim:4 in
+  let cache = Attention.cache ~num_heads:2 ~head_dim:2 ~len:4 Nx.float32 in
+  let apply ?(pos = pos_at 0) x =
+    Attention.apply_cached ~num_heads:2 ~pos ~cache p x
+  in
+  raises_invalid_arg
+    "Attention.cache: batch, num_heads, head_dim and len must be positive, got \
+     batch=1 num_heads=2 head_dim=2 len=0" (fun () ->
+      Attention.cache ~num_heads:2 ~head_dim:2 ~len:0 Nx.float32);
+  raises_invalid_arg
+    "Attention.apply_cached: input must have shape [batch; seq; embed]"
+    (fun () -> apply (Nx.zeros Nx.float32 [| 2; 4 |]));
+  raises_invalid_arg
+    "Attention.apply_cached: cache has shape [1; 2; _; 2] but the input needs \
+     [2; 2; _; 2]" (fun () -> apply (Nx.zeros Nx.float32 [| 2; 1; 4 |]));
+  raises_invalid_arg "Attention.apply_cached: seq 5 exceeds the cache length 4"
+    (fun () -> apply (Nx.zeros Nx.float32 [| 1; 5; 4 |]));
+  raises_invalid_arg "Attention.apply_cached: pos must have a single element"
+    (fun () ->
+      apply
+        ~pos:(Nx.create Nx.int32 [| 2 |] [| 0l; 1l |])
+        (Nx.zeros Nx.float32 [| 1; 1; 4 |]))
+
 let test_rejects_bad_geometry () =
   Nx.Rng.run ~seed:9 @@ fun () ->
   raises_invalid_arg "Attention.make: embed_dim must be positive, got 0"
@@ -315,5 +487,18 @@ let () =
             test_permutation_equivariance;
           test "gradients agree with finite differences" test_gradients;
           test "invalid geometry is rejected" test_rejects_bad_geometry;
+        ];
+      group "key-value cache"
+        [
+          test "prefill matches causal apply" test_cached_prefill_matches_causal;
+          test "incremental decode matches causal apply"
+            test_cached_decode_matches_causal;
+          test "the update is functional" test_cached_update_is_functional;
+          test "writes past the cache length are dropped"
+            test_cached_write_past_len_is_dropped;
+          test "one jitted step serves every position"
+            test_cached_step_jits_once;
+          test "gradients flow through the cache" test_cached_gradients;
+          test "invalid geometry is rejected" test_cached_rejects_bad_geometry;
         ];
     ]
