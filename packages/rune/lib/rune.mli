@@ -320,19 +320,35 @@ val jit :
     [device] selects where the kernels compile and run: ["CPU"] (the default),
     ["CUDA"] (NVIDIA GPUs), or ["METAL"] (macOS only). On the CPU device,
     contiguous inputs and captured tensors are read in place and outputs are
-    computed directly into the returned tensors' storage; on other devices, and
-    for non-contiguous tensors, inputs and outputs are copied to and from the
-    device on every call.
+    computed directly into the returned tensors' storage; non-contiguous
+    tensors are copied.
+
+    On other devices, results are bit-identical but data moves lazily. Inputs
+    are copied to the device on every call; outputs stay resident on the
+    device and materialize on the host the first time their data is read
+    (metadata such as shape and dtype never transfers). An unread output fed
+    back as an input leaf of any jit call on the same device seeds the
+    compiled program's input directly — no transfer — which makes iterated
+    calls (training steps, decode loops with a cache) run without per-call
+    traffic. Reading an output moves it to the host for good: it becomes an
+    ordinary tensor, later mutations are honored, and feeding it back uploads
+    its current bytes. Device memory backing an output is held until the
+    output is read or garbage-collected; past a budget (the
+    [RUNE_JIT_RESIDENT_BUDGET] environment variable, in bytes, a few GiB by
+    default) a collection is triggered before allocating more. A transfer
+    failure surfaces as an exception at the first read of the affected
+    output.
 
     The compilation cache lives in the partial application [jit (module P) f]:
     apply [jit] once and reuse the returned function. Tensors [f] closes over
     are inputs of the compiled program too. On the CPU device, contiguous
     captures are read in place, so mutations between calls behave as they do
     eagerly; non-contiguous captures, and all captures on other devices, are
-    copied once when the trace compiles and keep that compile-time value, so
-    pass values that change between calls as leaves of [P] rather than
-    capturing them. Captures that [f] itself assigns to are the exception: they
-    are re-read on every call (see below).
+    copied to the device once per closure — signatures share the copy — when
+    first compiled and keep that value, so pass values that change between
+    calls as leaves of [P] rather than capturing them. Captures that [f]
+    itself assigns to are the exception: they are re-read on every call (see
+    below).
 
     Under an enclosing transformation ({!grad}, {!val-vmap}, {!with_debug}, an
     outer [jit]), the wrapped function runs directly so the transformation
