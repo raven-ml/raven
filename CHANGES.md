@@ -33,6 +33,16 @@ thread.
 
 ### Tolk (new)
 
+- Add a CUDA runtime: tensor programs now compile through NVRTC and execute
+  on NVIDIA GPUs. The driver and NVRTC libraries are loaded dynamically at
+  run time, so builds do not require a CUDA toolkit and fail cleanly at
+  device creation when no GPU is present.
+- The default device is now chosen by scanning available backends in
+  priority order (`METAL`, `CUDA`, `CPU`); set the `DEV` environment
+  variable (e.g. `DEV=CUDA`, `DEV=cpu`) to force one.
+- Fix gated vectorized loads: the masked fallback rendered a scalar zero
+  for a vector access, which the CUDA compiler rejects; the zero is now
+  stacked to the access width.
 - Add in-place assignment: `Op.assign` records a buffer write in the graph,
   including writes through sliced views (e.g. a transformer kv-cache update),
   and repoints every live tensor aliasing the buffer so later reads observe

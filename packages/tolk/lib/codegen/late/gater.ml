@@ -10,6 +10,23 @@
 open Tolk_uop
 module U = Uop
 
+(* Zero alternative for a gated load: a scalar zero constant, stacked to the
+   access width when the load reads through a coalesced [Shrink]. Vector
+   values must be [Stack]s of scalars so C-style renderers emit a vector
+   constructor. The width is the [Shrink] length, which is what the load's
+   rank-1 shape evaluates to. *)
+let vzero_like node mop =
+  match U.dtype node with
+  | Dtype.Val v ->
+      let zero = U.const (Const.zero (Dtype.Val.scalarize v)) in
+      let lanes =
+        match U.op mop, U.src mop with
+        | Ops.Shrink, [| _; _; len |] -> U.vmax len
+        | _ -> 1
+      in
+      U.broadcast zero lanes
+  | Dtype.Ptr _ -> invalid_arg "Gater.vzero_like: pointer has no zero"
+
 let is_invalid_const u =
   match U.op u, U.arg u with
   | Ops.Const, U.Arg.Value c -> Const.view c = Const.Invalid
@@ -98,14 +115,14 @@ let move_gates_from_index_rule node =
       | Some (gate, gated_src) ->
           Some
             (U.replace node
-               ~src:[| gated_src; U.zero_like node; gate |] ())
+               ~src:[| gated_src; vzero_like node gated_src; gate |] ())
       | None -> (
       match indexed_invalid_gate src with
       | None -> None
       | Some (gate, idx) ->
+          let mop = gated_mop src idx in
           Some
-            (U.replace node
-               ~src:[| gated_mop src idx; U.zero_like node; gate |] ())))
+            (U.replace node ~src:[| mop; vzero_like node mop; gate |] ())))
   | Some _, _ -> None
   | None, Some { dst; value; gate = None } -> (
       match indexed_two_invalid_gate dst with

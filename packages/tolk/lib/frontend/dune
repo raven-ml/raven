@@ -3,4 +3,13 @@
 (library
  (name tolk_frontend)
  (public_name tolk.frontend)
- (libraries tolk_uop tolk tolk_cpu))
+ (libraries
+  tolk_uop
+  tolk
+  tolk_cpu
+  tolk_cuda
+  (select
+   device_metal.ml
+   from
+   (tolk_metal -> device_metal.available.ml)
+   (-> device_metal.unavailable.ml))))

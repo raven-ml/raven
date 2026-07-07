@@ -1,0 +1,10 @@
+(include_subdirs no)
+
+(library
+ (name tolk_cuda)
+ (public_name tolk.cuda)
+ (libraries tolk)
+ (foreign_stubs
+  (language c)
+  (names tolk_cuda_stubs))
+ (c_library_flags (-ldl)))

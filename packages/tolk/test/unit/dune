@@ -26,6 +26,12 @@
  (names test_runtime_metal)
  (modules test_runtime_metal)
  (package tolk)
- (enabled_if
+ (build_if
   (= %{system} macosx))
  (libraries tolk tolk.uop tolk.metal windtrap))
+
+(tests
+ (names test_runtime_cuda)
+ (modules test_runtime_cuda)
+ (package tolk)
+ (libraries tolk tolk.uop tolk.cuda windtrap))

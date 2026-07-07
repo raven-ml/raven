@@ -57,9 +57,14 @@ for group in groups:
   print(group + "=" + names(getattr(GroupOp, group)))
 |}
   in
+  (* Prefer the vendored checkout's virtualenv when present; tinygrad needs a
+     newer Python than the system default on some machines. *)
+  let python =
+    let venv = Filename.concat root "_tinygrad/.venv/bin/python3" in
+    if Sys.file_exists venv then Filename.quote venv else "python3"
+  in
   let command =
-    String.concat " "
-      [ "python3"; "-c"; Filename.quote code; Filename.quote root ]
+    String.concat " " [ python; "-c"; Filename.quote code; Filename.quote root ]
   in
   let ic, oc, ec = Unix.open_process_full command (Unix.environment ()) in
   close_out oc;
