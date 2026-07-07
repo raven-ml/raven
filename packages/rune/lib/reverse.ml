@@ -674,16 +674,14 @@ let handler (tape : Tape.t) =
           Some (fun k -> pull1 k (fft t ~axes) t (fun g -> ifft g ~axes))
       | E_ifft { t; axes } ->
           Some (fun k -> pull1 k (ifft t ~axes) t (fun g -> fft g ~axes))
-      | E_rfft { t; axes } ->
+      | E_rfft { t; dtype; axes } ->
           Some
             (fun k ->
-              no_rule k "rfft" (tracked t) (fun () ->
-                  rfft t ~dtype:Nx_core.Dtype.complex128 ~axes))
-      | E_irfft { t; axes; s } ->
+              no_rule k "rfft" (tracked t) (fun () -> rfft t ~dtype ~axes))
+      | E_irfft { t; dtype; axes; s } ->
           Some
             (fun k ->
-              no_rule k "irfft" (tracked t) (fun () ->
-                  irfft t ~axes ?s ~dtype:Nx_core.Dtype.float64))
+              no_rule k "irfft" (tracked t) (fun () -> irfft t ~axes ?s ~dtype))
       | E_psum { t_in } ->
           Some
             (fun k -> no_rule k "psum" (tracked t_in) (fun () -> op_psum t_in))

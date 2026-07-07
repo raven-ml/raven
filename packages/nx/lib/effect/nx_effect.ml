@@ -252,15 +252,17 @@ type _ Effect.t +=
       -> (Complex.t, 'b) t Effect.t
   | E_rfft : {
       t : (float, 'b) t;
+      dtype : (Complex.t, 'c) Dtype.t;
       axes : int array;
     }
-      -> (Complex.t, Dtype.complex64_elt) t Effect.t
+      -> (Complex.t, 'c) t Effect.t
   | E_irfft : {
       t : (Complex.t, 'b) t;
+      dtype : (float, 'c) Dtype.t;
       axes : int array;
       s : int array option;
     }
-      -> (float, Dtype.float64_elt) t Effect.t
+      -> (float, 'c) t Effect.t
   | E_psum : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
   | E_cholesky : { t_in : ('a, 'b) t; upper : bool } -> ('a, 'b) t Effect.t
   | E_qr : {
@@ -599,17 +601,15 @@ let ifft ?out t ~axes =
 
 let rfft (type a c) ?out (t : (float, a) t) ~(dtype : (Complex.t, c) Dtype.t)
     ~axes : (Complex.t, c) t =
-  let result =
-    Nx_backend.rfft ?out:(Option.map unwrap out) (unwrap t) ~dtype ~axes
-  in
-  (T result : (Complex.t, c) t)
+  try Effect.perform (E_rfft { t; dtype; axes })
+  with Effect.Unhandled _ ->
+    T (Nx_backend.rfft ?out:(Option.map unwrap out) (unwrap t) ~dtype ~axes)
 
 let irfft (type a c) ?out ?s (t : (Complex.t, a) t)
     ~(dtype : (float, c) Dtype.t) ~axes : (float, c) t =
-  let result =
-    Nx_backend.irfft ?out:(Option.map unwrap out) ?s (unwrap t) ~dtype ~axes
-  in
-  (T result : (float, c) t)
+  try Effect.perform (E_irfft { t; dtype; axes; s })
+  with Effect.Unhandled _ ->
+    T (Nx_backend.irfft ?out:(Option.map unwrap out) ?s (unwrap t) ~dtype ~axes)
 
 (* Linear algebra *)
 

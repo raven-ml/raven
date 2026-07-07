@@ -456,16 +456,14 @@ let handler (tangents : Tensor_map.t) =
           Some (fun k -> lift1 k (fft t ~axes) t (fun dx -> fft dx ~axes))
       | E_ifft { t; axes } ->
           Some (fun k -> lift1 k (ifft t ~axes) t (fun dx -> ifft dx ~axes))
-      | E_rfft { t; axes } ->
+      | E_rfft { t; dtype; axes } ->
           Some
             (fun k ->
-              no_rule k "rfft" (active t) (fun () ->
-                  rfft t ~dtype:Nx_core.Dtype.complex128 ~axes))
-      | E_irfft { t; axes; s } ->
+              no_rule k "rfft" (active t) (fun () -> rfft t ~dtype ~axes))
+      | E_irfft { t; dtype; axes; s } ->
           Some
             (fun k ->
-              no_rule k "irfft" (active t) (fun () ->
-                  irfft t ~axes ?s ~dtype:Nx_core.Dtype.float64))
+              no_rule k "irfft" (active t) (fun () -> irfft t ~axes ?s ~dtype))
       | E_psum { t_in } ->
           Some
             (fun k -> no_rule k "psum" (active t_in) (fun () -> op_psum t_in))

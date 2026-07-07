@@ -72,6 +72,10 @@ thread.
 
 ### Nx
 
+- Fix `rfft` and `irfft` bypassing the effect-based backend dispatch: they
+  called the C backend directly, making them invisible to every effect
+  handler (autodiff, vmap, jit). They now perform `E_rfft`/`E_irfft` like
+  the other FFT operations, with the target `dtype` carried in the effect.
 - Add `Nx.Ptree`: parameter trees. The `Ptree.S` module type is the traversal
   interface shared across the ecosystem — autodiff transformations (Rune),
   structural optimizers (Vega), and checkpointing (Kaun) all operate on any
