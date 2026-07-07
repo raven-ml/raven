@@ -387,15 +387,22 @@ let test_cached_step_jits_once () =
     in
     Nx.concatenate ~axis:1 (List.rev ys)
   in
+  (* [Rune.jit2] runs the traced function itself only when it (re)traces, so
+     the counter observes compilations: every step has the same signature and
+     must replay the single trace. *)
+  let traces = ref 0 in
   let step { pos; x; cache } =
+    incr traces;
     let y, cache = Attention.apply_cached ~num_heads:2 ~pos ~cache p x in
     { pos; x = y; cache }
   in
-  let jitted = Rune.jit2 (module Step) (module Step) step in
+  let eager = decode step in
+  traces := 0;
+  let jitted = decode (Rune.jit2 (module Step) (module Step) step) in
   equal ~msg:"jitted decode = eager decode"
     (array (float 1e-5))
-    (flat (decode step))
-    (flat (decode jitted))
+    (flat eager) (flat jitted);
+  equal ~msg:"all four steps share one trace" int 1 !traces
 
 let test_cached_gradients () =
   Nx.Rng.run ~seed:25 @@ fun () ->
