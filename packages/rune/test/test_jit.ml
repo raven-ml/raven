@@ -506,6 +506,124 @@ let test_dropped_handles_are_reclaimed () =
       is_true ~msg:"resident bytes are bounded after gc"
         (s.resident_bytes - base <= 3 * n * 4))
 
+(* Donation. [donate:true] consumes resident input handles: their device
+   buffers return to the allocator once the call completes, so a
+   state-to-state loop holds ~2 generations of device memory instead of one
+   per call, without any GC. A donated handle raises on read; host tensors,
+   already-read handles, and written-back leaves are unaffected. *)
+
+let raises_donated f =
+  raises_match
+    (fun exn ->
+      match exn with
+      | Invalid_argument msg ->
+          msg
+          = "Rune.jit: this tensor was donated to a jitted call; read or copy \
+             it before the call"
+      | _ -> false)
+    (fun () -> ignore (f ()))
+
+let test_donate_bounds_resident_memory () =
+  with_force_copy (fun () ->
+      let n = 4096 in
+      let step d = Rune.jit' ~donate:d (fun x -> Nx.add_s x 1.0) in
+      let x = vec32 (Array.make n 0.0) in
+      (* Every handle stays reachable, so nothing here depends on the GC. *)
+      let hold = Array.make 10 x in
+      let run g =
+        let base = (Rune.jit_stats ()).resident_bytes in
+        let h = ref (g x) in
+        for i = 0 to 9 do
+          hold.(i) <- !h;
+          h := g !h
+        done;
+        let r = (Rune.jit_stats ()).resident_bytes - base in
+        (!h, r)
+      in
+      let h, grew = run (step true) in
+      is_true ~msg:"donate holds at most two generations" (grew <= 2 * n * 4);
+      check_arr ~msg:"donated chain computes the right value"
+        (Array.make n 11.0) h;
+      let h', grew' = run (step false) in
+      is_true ~msg:"without donate every generation stays resident"
+        (grew' >= 10 * n * 4);
+      check_arr ~msg:"undonated chain still correct" (Array.make n 11.0) h')
+
+let test_donated_handle_raises_on_read () =
+  with_force_copy (fun () ->
+      let g = Rune.jit' ~donate:true (fun x -> Nx.mul_s x 2.0) in
+      let h1 = g (vec32 [| 1.0; 2.0 |]) in
+      let h2 = g h1 in
+      (* h1 was donated to the second call: its storage is gone. *)
+      raises_donated (fun () -> to_arr h1);
+      check_arr ~msg:"the consuming call's output is fine" [| 4.0; 8.0 |] h2)
+
+let test_donated_handle_refeed_raises () =
+  with_force_copy (fun () ->
+      let g = Rune.jit' ~donate:true (fun x -> Nx.mul_s x 2.0) in
+      let h1 = g (vec32 [| 1.0; 2.0 |]) in
+      ignore (g h1);
+      (* Seeding a donated handle forces it, which raises the same error. *)
+      raises_donated (fun () -> g h1))
+
+let test_donate_duplicate_leaves_once () =
+  with_force_copy (fun () ->
+      let g =
+        Rune.jit2 ~donate:true
+          (module Pair)
+          (module Pair)
+          (fun p -> { u = Nx.add p.u p.v; v = Nx.mul p.u p.v })
+      in
+      let h = Rune.jit' (fun x -> Nx.mul_s x 3.0) (vec32 [| 1.0; 2.0 |]) in
+      let base = (Rune.jit_stats ()).resident_bytes in
+      let r = g { u = h; v = h } in
+      (* One handle behind two leaves donates once; only the two fresh
+         outputs remain resident. *)
+      is_true ~msg:"the duplicate handle was released once"
+        ((Rune.jit_stats ()).resident_bytes - base <= 2 * 2 * 4);
+      check_arr ~msg:"u" [| 6.0; 12.0 |] r.u;
+      check_arr ~msg:"v" [| 9.0; 36.0 |] r.v;
+      raises_donated (fun () -> to_arr h))
+
+let test_forced_handle_unaffected_by_donate () =
+  with_force_copy (fun () ->
+      let g = Rune.jit' ~donate:true (fun x -> Nx.mul_s x 2.0) in
+      let h = g (vec32 [| 1.0; 2.0 |]) in
+      check_arr ~msg:"read before the call forces to host" [| 2.0; 4.0 |] h;
+      ignore (g h);
+      (* Already on the host: donation does not touch its bytes. *)
+      check_arr ~msg:"host bytes survive the donating call" [| 2.0; 4.0 |] h)
+
+let test_host_input_unaffected_by_donate () =
+  with_force_copy (fun () ->
+      let g = Rune.jit' ~donate:true (fun x -> Nx.mul_s x 2.0) in
+      let x = vec32 [| 1.0; 2.0 |] in
+      ignore (g x);
+      check_arr ~msg:"a host tensor is never consumed" [| 1.0; 2.0 |] x)
+
+let test_donate_false_leaves_handle_readable () =
+  with_force_copy (fun () ->
+      let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
+      let h1 = g (vec32 [| 1.0; 2.0 |]) in
+      ignore (g h1);
+      check_arr ~msg:"default keeps the input handle alive" [| 2.0; 4.0 |] h1)
+
+let test_donated_writeback_leaf_survives () =
+  with_force_copy (fun () ->
+      let producer = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
+      let h = producer (vec32 [| 1.0; 2.0 |]) in
+      let step =
+        Rune.jit' ~donate:true (fun x ->
+            Nx.blit (Nx.mul_s x 2.0) x;
+            Nx.sum x)
+      in
+      let s = step h in
+      (* The writeback forces the leaf before donation applies: the handle
+         holds the updated host value, and its device storage is released by
+         the force rather than the donation. *)
+      check_arr ~msg:"sum of the updated leaf" [| 12.0 |] s;
+      check_arr ~msg:"the written-back leaf is not consumed" [| 4.0; 8.0 |] h)
+
 (* Failure modes *)
 
 let test_data_dependent_read_raises () =
@@ -585,6 +703,23 @@ let tests =
         test "captures upload once across signatures"
           test_capture_uploaded_once_across_signatures;
         test "dropped handles are reclaimed" test_dropped_handles_are_reclaimed;
+      ];
+    group "donation"
+      [
+        test "donate bounds resident memory at two generations"
+          test_donate_bounds_resident_memory;
+        test "a donated handle raises on read"
+          test_donated_handle_raises_on_read;
+        test "re-feeding a donated handle raises"
+          test_donated_handle_refeed_raises;
+        test "duplicate leaves donate once" test_donate_duplicate_leaves_once;
+        test "a handle read before the call is unaffected"
+          test_forced_handle_unaffected_by_donate;
+        test "host inputs are unaffected" test_host_input_unaffected_by_donate;
+        test "donate:false is the unchanged default"
+          test_donate_false_leaves_handle_readable;
+        test "a written-back leaf survives donation"
+          test_donated_writeback_leaf_survives;
       ];
     group "errors"
       [

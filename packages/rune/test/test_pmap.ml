@@ -192,6 +192,80 @@ let test_pass_through_output () =
   let x = m46 () in
   check_arr ~eps:0.0 ~msg:"pass-through gathers the input" (to_arr x) (g x)
 
+(* Donation: [donate:true] consumes a resident multi-device handle — every
+   per-device shard buffer is released once the call completes — and the
+   donated handle raises on read. A handle whose placement mismatches is
+   forced to the host first, so donation does not apply to it. *)
+
+let raises_donated f =
+  raises_match
+    (fun exn ->
+      match exn with
+      | Invalid_argument msg ->
+          msg
+          = "Rune.jit: this tensor was donated to a jitted call; read or copy \
+             it before the call"
+      | _ -> false)
+    (fun () -> ignore (f ()))
+
+let test_donate_sharded_state () =
+  let n = 1024 in
+  let g =
+    Rune.pmap ~devices:devs2 ~donate:true
+      (module Single_f32)
+      (fun x -> Nx.add_s x 1.0)
+  in
+  let x = vec32 (Array.make n 0.0) in
+  let base = (Rune.jit_stats ()).resident_bytes in
+  let h1 = g x in
+  let h2 = g h1 in
+  let h3 = g h2 in
+  (* Donation bounds the loop at two generations even though h1 and h2 stay
+     reachable; only h3's shards remain resident. *)
+  is_true ~msg:"sharded state loop holds at most two generations"
+    ((Rune.jit_stats ()).resident_bytes - base <= 2 * n * 4);
+  raises_donated (fun () -> to_arr h1);
+  raises_donated (fun () -> to_arr h2);
+  check_arr ~eps:0.0 ~msg:"the live generation reads correctly"
+    (Array.make n 3.0) h3
+
+let test_donate_replicated_releases_all_shards () =
+  let n = 512 in
+  let g =
+    Rune.pmap ~devices:devs2 ~in_axes:[ None ] ~donate:true
+      (module Single_f32)
+      (fun w -> Nx.mul_s w 2.0)
+  in
+  let base = (Rune.jit_stats ()).resident_bytes in
+  let w1 = g (vec32 (Array.make n 1.0)) in
+  (* A replicated handle owns one full-size buffer per device. *)
+  is_true ~msg:"one replicated generation is resident"
+    ((Rune.jit_stats ()).resident_bytes - base >= 2 * n * 4);
+  let w2 = g w1 in
+  is_true ~msg:"donating releases every replica"
+    ((Rune.jit_stats ()).resident_bytes - base <= 2 * n * 4);
+  raises_donated (fun () -> to_arr w1);
+  check_arr ~eps:0.0 ~msg:"value" (Array.make n 4.0) w2
+
+let test_donate_mismatched_placement_not_consumed () =
+  let f x = Nx.add x x in
+  let g0 = Rune.pmap ~devices:devs2 ~in_axes:[ Some 0 ] (module Single_f32) f in
+  let g1 =
+    Rune.pmap ~devices:devs2 ~in_axes:[ Some 1 ] ~donate:true
+      (module Single_f32)
+      f
+  in
+  let x = m46 () in
+  let y = g0 x in
+  (* The axis-1 call forces y to the host to re-split it: y is a plain host
+     tensor afterwards, not donated. *)
+  check_arr ~eps:0.0 ~msg:"re-split result matches"
+    (to_arr (Nx.add (Nx.add x x) (Nx.add x x)))
+    (g1 y);
+  check_arr ~eps:0.0 ~msg:"the mismatched handle survives as a host tensor"
+    (to_arr (Nx.add x x))
+    y
+
 (* Writebacks: replicated destinations are honored, sharded values are
    rejected at trace time. *)
 
@@ -410,6 +484,15 @@ let tests =
         test "mismatched placement forces and re-splits"
           test_mismatched_placement_forces;
         test "pass-through outputs gather on read" test_pass_through_output;
+      ];
+    group "donation"
+      [
+        test "sharded state loop is bounded at two generations"
+          test_donate_sharded_state;
+        test "replicated donation releases every replica"
+          test_donate_replicated_releases_all_shards;
+        test "mismatched placement forces instead of donating"
+          test_donate_mismatched_placement_not_consumed;
       ];
     group "state"
       [

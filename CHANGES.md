@@ -303,6 +303,13 @@ thread.
 
 ### Rune
 
+- `jit`, `jit2`, `jit'`, `pmap`, and `pmap2` gain `?donate` (default
+  `false`): the call consumes device-resident input handles, releasing
+  their buffers to the allocator once it completes, so a state-to-state
+  loop holds ~2 generations of device memory instead of one per call
+  awaiting GC (9x lower peak on a 512 MB synthetic state loop). Reading a
+  donated handle raises `Invalid_argument`; host tensors and handles
+  already read are unaffected.
 - Add `pmap` and `pmap2`: compile a function to run in parallel across a
   device tuple. `in_axes` shards or replicates each input leaf; the function
   observes global shapes and reductions over a sharded axis become

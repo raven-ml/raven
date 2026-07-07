@@ -230,7 +230,15 @@ type resident_entry = {
   r_axis : int option; (* [Some a]: sharded along [a]; [None]: whole value *)
   r_nbytes : int; (* summed across shards *)
   mutable r_bufs : Tolk.Device.Buffer.t list; (* [[]] once released *)
+  mutable r_donated : bool; (* released by a [~donate:true] call *)
 }
+
+(* Forcing a handle whose storage a donated call released cannot produce the
+   bytes; the value only ever existed on the device. *)
+let donated_error () =
+  invalid_arg
+    "Rune.jit: this tensor was donated to a jitted call; read or copy it \
+     before the call"
 
 let resident : (int, resident_entry) Hashtbl.t = Hashtbl.create 64
 
@@ -1049,12 +1057,14 @@ let make_handle : type a b.
       r_axis = axis;
       r_nbytes = nbytes;
       r_bufs = bufs;
+      r_donated = false;
     }
   in
   let n = numel shape in
   let fill () =
     let bufs =
       match entry.r_bufs with
+      | [] when entry.r_donated -> donated_error ()
       | [] -> assert false (* released only by this fill or the finalizer *)
       | bufs -> bufs
     in
@@ -1499,8 +1509,8 @@ let trace_compile ~device:dev ~zero_copy ~const_cache ?multi
     cp_scratch = scratch;
   }
 
-let replay (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S) (c : Q.t compiled)
-    (params : P.t) : Q.t =
+let replay ~donate (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S)
+    (c : Q.t compiled) (params : P.t) : Q.t =
   drain_releases ();
   let in0 = !bytes_to_device and out0 = !bytes_from_device in
   (* Seed the inputs. A leaf that is an unread output of an earlier call on
@@ -1519,21 +1529,30 @@ let replay (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S) (c : Q.t compiled)
      matches the input's: the same single device, or the same device tuple
      with the same shard axis. Any other handle is forced by the copy path
      (reading it materializes the host bytes) and re-split. *)
-  let resident_buffer leaf =
+  let resident_single leaf =
     match resident_of leaf with
-    | Some ({ r_bufs = [ buf ]; r_axis = None; _ } as e)
+    | Some ({ r_bufs = [ _ ]; r_axis = None; _ } as e)
       when e.r_device == c.cp_device ->
-        Some buf
+        Some e
     | _ -> None
   in
-  let resident_bufs spec place leaf =
+  let resident_multi spec place leaf =
     match resident_of leaf with
     | Some e
       when e.r_bufs <> []
            && e.r_names = spec.md_names
            && e.r_axis = place_axis place ->
-        Some e.r_bufs
+        Some e
     | _ -> None
+  in
+  (* Entries that seeded this call. With [donate] their buffers are released
+     back to the allocator once the call completes — never during it: the
+     schedule has no aliasing knowledge, so a donated buffer must stay intact
+     until every kernel and writeback has read it. A handle whose placement
+     mismatched is forced by the copy path instead and is never donated. *)
+  let seeded = ref [] in
+  let note e =
+    if donate && not (List.memq e !seeded) then seeded := e :: !seeded
   in
   let keep = ref [] in
   let i = ref 0 in
@@ -1542,20 +1561,23 @@ let replay (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S) (c : Q.t compiled)
       let inp = c.cp_inputs.(!i) in
       (match c.cp_multi with
       | Some spec -> (
-          match resident_bufs spec inp.i_place leaf with
-          | Some bufs ->
+          match resident_multi spec inp.i_place leaf with
+          | Some e ->
               keep := Obj.repr leaf :: !keep;
+              note e;
               Tolk.Realize.Buffers.seed_multi c.cp_binding inp.i_node
-                (Tolk.Device.Multi_buffer.of_bufs bufs)
+                (Tolk.Device.Multi_buffer.of_bufs e.r_bufs)
           | None ->
               Tolk.Realize.Buffers.seed_multi c.cp_binding inp.i_node
                 (Tolk.Device.Multi_buffer.of_bufs inp.i_bufs);
               upload_multi c.cp_scratch inp.i_place inp.i_bufs leaf)
       | None -> (
-          match resident_buffer leaf with
-          | Some buf ->
+          match resident_single leaf with
+          | Some e ->
               keep := Obj.repr leaf :: !keep;
-              Tolk.Realize.Buffers.seed c.cp_binding inp.i_node buf
+              note e;
+              Tolk.Realize.Buffers.seed c.cp_binding inp.i_node
+                (List.hd e.r_bufs)
           | None -> (
               match
                 if c.cp_zero_copy then wrap_tensor c.cp_device leaf else None
@@ -1753,6 +1775,21 @@ let replay (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S) (c : Q.t compiled)
           incr j)
         params)
     c.cp_writebacks;
+  (* Donation. The devices have synchronized and every writeback has read its
+     buffer, so the storage of each input that seeded from a resident entry
+     can be returned to the allocator: the next call's fresh outputs reuse it,
+     bounding a state-to-state loop at about two generations of device memory.
+     The handle becomes Donated — forcing it now raises. A donated leaf that
+     was also written back was already forced by the writeback (its entry
+     released, the handle holding the updated host value) and is skipped. *)
+  if donate then
+    List.iter
+      (fun e ->
+        if e.r_bufs <> [] then begin
+          e.r_donated <- true;
+          release_entry e
+        end)
+      !seeded;
   if Lazy.force jit_debug >= 1 then
     Printf.eprintf
       "rune.jit: replay on %s: %d bytes to device, %d bytes from device, %d \
@@ -1766,8 +1803,8 @@ let replay (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S) (c : Q.t compiled)
 
 (* Public entry points *)
 
-let jit2 ?(device = "CPU") (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S)
-    (f : P.t -> Q.t) : P.t -> Q.t =
+let jit2 ?(device = "CPU") ?(donate = false) (module P : Nx.Ptree.S)
+    (module Q : Nx.Ptree.S) (f : P.t -> Q.t) : P.t -> Q.t =
   let dev = get_device device in
   let zero_copy = is_cpu device && not (force_copy ()) in
   let cache : (_, Q.t compiled) Hashtbl.t = Hashtbl.create 4 in
@@ -1791,9 +1828,9 @@ let jit2 ?(device = "CPU") (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S)
             Hashtbl.add cache sg c;
             c
       in
-      replay (module P) (module Q) c params
+      replay ~donate (module P) (module Q) c params
 
-let jit (type c d) ?device (module P : Nx.Ptree.S)
+let jit (type c d) ?device ?donate (module P : Nx.Ptree.S)
     (f : P.t -> (c, d) Nx_effect.t) : P.t -> (c, d) Nx_effect.t =
   let module Q = struct
     type t = (c, d) Nx_effect.t
@@ -1809,9 +1846,10 @@ let jit (type c d) ?device (module P : Nx.Ptree.S)
 
     let iter (f : 'a 'b. ('a, 'b) Nx_effect.t -> unit) t = f t
   end in
-  jit2 ?device (module P) (module Q) f
+  jit2 ?device ?donate (module P) (module Q) f
 
-let jit' (type a b c d) ?device (f : (a, b) Nx_effect.t -> (c, d) Nx_effect.t) :
+let jit' (type a b c d) ?device ?donate
+    (f : (a, b) Nx_effect.t -> (c, d) Nx_effect.t) :
     (a, b) Nx_effect.t -> (c, d) Nx_effect.t =
   let module L = struct
     type t = (a, b) Nx_effect.t
@@ -1827,7 +1865,7 @@ let jit' (type a b c d) ?device (f : (a, b) Nx_effect.t -> (c, d) Nx_effect.t) :
 
     let iter (f : 'a 'b. ('a, 'b) Nx_effect.t -> unit) t = f t
   end in
-  jit ?device (module L) f
+  jit ?device ?donate (module L) f
 
 (* pmap: multi-device parallel jit. The compiled core is [trace_compile] /
    [replay] with a multi-device placement; pmap only derives the placement
@@ -1853,8 +1891,8 @@ let pmap_names devices =
     names;
   names
 
-let pmap2 ~devices ?in_axes (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S)
-    (f : P.t -> Q.t) : P.t -> Q.t =
+let pmap2 ~devices ?in_axes ?(donate = false) (module P : Nx.Ptree.S)
+    (module Q : Nx.Ptree.S) (f : P.t -> Q.t) : P.t -> Q.t =
   let names = pmap_names devices in
   (* Multi-device buffers resolve through the tolk device registry; route it
      to the same factory the single-device jit uses. *)
@@ -1923,10 +1961,10 @@ let pmap2 ~devices ?in_axes (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S)
             Hashtbl.add cache sg c;
             c
       in
-      replay (module P) (module Q) c params
+      replay ~donate (module P) (module Q) c params
     end
 
-let pmap (type c d) ~devices ?in_axes (module P : Nx.Ptree.S)
+let pmap (type c d) ~devices ?in_axes ?donate (module P : Nx.Ptree.S)
     (f : P.t -> (c, d) Nx_effect.t) : P.t -> (c, d) Nx_effect.t =
   let module Q = struct
     type t = (c, d) Nx_effect.t
@@ -1942,4 +1980,4 @@ let pmap (type c d) ~devices ?in_axes (module P : Nx.Ptree.S)
 
     let iter (f : 'a 'b. ('a, 'b) Nx_effect.t -> unit) t = f t
   end in
-  pmap2 ~devices ?in_axes (module P) (module Q) f
+  pmap2 ~devices ?in_axes ?donate (module P) (module Q) f

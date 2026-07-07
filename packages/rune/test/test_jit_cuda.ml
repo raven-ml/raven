@@ -252,6 +252,78 @@ let test_pmap_feedback_on_cuda () =
     (Array.init 8 (fun i -> 4.0 *. float_of_int i))
     y2
 
+(* Donation on the GPU: a state-to-state loop with [donate:true] releases each
+   consumed generation's device buffer once its call completes, so resident
+   bytes stay bounded at two generations with every handle still reachable and
+   no GC; the donated handles raise on read. *)
+
+let raises_donated f =
+  raises_match
+    (fun exn ->
+      match exn with
+      | Invalid_argument msg ->
+          msg
+          = "Rune.jit: this tensor was donated to a jitted call; read or copy \
+             it before the call"
+      | _ -> false)
+    (fun () -> ignore (f ()))
+
+let test_donate_bounds_resident_memory_on_cuda () =
+  require_cuda ();
+  let n = 4096 in
+  let x = vec32 (Array.make n 0.0) in
+  let hold = Array.make 10 x in
+  let run g =
+    let base = (Rune.jit_stats ()).resident_bytes in
+    let h = ref (g x) in
+    for i = 0 to 9 do
+      hold.(i) <- !h;
+      h := g !h
+    done;
+    ((Rune.jit_stats ()).resident_bytes - base, !h)
+  in
+  let step d = Rune.jit' ~device:"CUDA" ~donate:d (fun x -> Nx.add_s x 1.0) in
+  let grew, h = run (step true) in
+  is_true ~msg:"donate holds at most two generations" (grew <= 2 * n * 4);
+  check_arr ~msg:"donated chain computes the right value" (Array.make n 11.0) h;
+  let grew', h' = run (step false) in
+  is_true ~msg:"without donate every generation stays resident"
+    (grew' >= 10 * n * 4);
+  check_arr ~msg:"undonated chain still correct" (Array.make n 11.0) h'
+
+let test_donated_handle_raises_on_cuda () =
+  require_cuda ();
+  let g = Rune.jit' ~device:"CUDA" ~donate:true (fun x -> Nx.mul_s x 2.0) in
+  let h1 = g (vec32 [| 1.0; 2.0 |]) in
+  let h2 = g h1 in
+  raises_donated (fun () -> to_arr h1);
+  raises_donated (fun () -> g h1);
+  check_arr ~msg:"the consuming call's output is fine" [| 4.0; 8.0 |] h2
+
+let test_forced_handle_unaffected_by_donate_on_cuda () =
+  require_cuda ();
+  let g = Rune.jit' ~device:"CUDA" ~donate:true (fun x -> Nx.mul_s x 2.0) in
+  let h = g (vec32 [| 1.0; 2.0 |]) in
+  check_arr ~msg:"read before the call forces to host" [| 2.0; 4.0 |] h;
+  ignore (g h);
+  check_arr ~msg:"host bytes survive the donating call" [| 2.0; 4.0 |] h
+
+let test_pmap_donate_on_cuda () =
+  require_cuda ();
+  let g =
+    Rune.pmap ~devices:cuda2 ~donate:true
+      (module Single_f32)
+      (fun x -> Nx.add x x)
+  in
+  let x = vec32 (Array.init 8 float_of_int) in
+  let y1 = g x in
+  let y2, up, _ = delta (fun () -> g y1) in
+  equal ~msg:"donated feedback still moves no bytes to device" int 0 up;
+  raises_donated (fun () -> to_arr y1);
+  check_arr ~msg:"gathered result"
+    (Array.init 8 (fun i -> 4.0 *. float_of_int i))
+    y2
+
 let tests =
   [
     group "cuda device"
@@ -283,6 +355,17 @@ let tests =
         test "grad inside pmap allreduces on one gpu"
           test_pmap_grad_allreduce_on_cuda;
         test "feedback moves no bytes" test_pmap_feedback_on_cuda;
+      ];
+    group "cuda donation"
+      [
+        test "donate bounds resident memory at two generations"
+          test_donate_bounds_resident_memory_on_cuda;
+        test "a donated handle raises on read and re-feed"
+          test_donated_handle_raises_on_cuda;
+        test "a handle read before the call is unaffected"
+          test_forced_handle_unaffected_by_donate_on_cuda;
+        test "pmap donation consumes the sharded state"
+          test_pmap_donate_on_cuda;
       ];
   ]
 

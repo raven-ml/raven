@@ -311,6 +311,7 @@ exception Jit_error of string
 
 val jit :
   ?device:string ->
+  ?donate:bool ->
   (module P : Ptree.S) -> (P.t -> ('c, 'd) Nx.t) -> P.t -> ('c, 'd) Nx.t
 (** [jit (module P) f] is [f] compiled. The first application traces [f],
     compiles the traced computation into fused kernels, and runs them; later
@@ -339,6 +340,20 @@ val jit :
     default) a collection is triggered before allocating more. A transfer
     failure surfaces as an exception at the first read of the affected
     output.
+
+    [donate] (default [false]) consumes the resident inputs: once a call
+    completes — never during it — the device buffers of every input leaf that
+    was an unread resident output of an earlier call are released to the
+    allocator, and the donated handle becomes unusable — reading it, or
+    feeding it to a later call (which reads it), raises [Invalid_argument];
+    read or copy the value before the call if it is still needed. The next
+    call's fresh outputs reuse the released storage, so a state-to-state loop
+    ([state <- step state] with [step] jitted [~donate:true]) holds about two
+    generations of state on the device instead of one per call awaiting
+    collection. Only resident handles are consumed: host tensors and handles
+    already read are unaffected. A handle appearing as several input leaves
+    is donated once, and a leaf the function updates in place is materialized
+    on the host by the writeback rather than donated.
 
     The compilation cache lives in the partial application [jit (module P) f]:
     apply [jit] once and reuse the returned function. Tensors [f] closes over
@@ -380,12 +395,14 @@ val jit :
 
 val jit2 :
   ?device:string ->
+  ?donate:bool ->
   (module P : Ptree.S) -> (module Q : Ptree.S) -> (P.t -> Q.t) -> P.t -> Q.t
 (** [jit2 (module P) (module Q) f] is like {!val-jit} for a function returning a
     structured output. *)
 
 val jit' :
   ?device:string ->
+  ?donate:bool ->
   (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
   ('a, 'b) Nx.t ->
   ('c, 'd) Nx.t
@@ -394,6 +411,7 @@ val jit' :
 val pmap :
   devices:string list ->
   ?in_axes:int option list ->
+  ?donate:bool ->
   (module P : Ptree.S) -> (P.t -> ('c, 'd) Nx.t) -> P.t -> ('c, 'd) Nx.t
 (** [pmap ~devices (module P) f] is [f] compiled to run in parallel across
     [devices] — {!val-jit} whose inputs are placed on a device tuple instead
@@ -419,7 +437,10 @@ val pmap :
     input leaf whose placement matches — same devices, same axis or
     replication — seeds the compiled program's buffers directly with no
     transfer, so iterated calls (a data-parallel training step) move only the
-    freshly sharded batch. Assigning a sharded value to an input leaf raises
+    freshly sharded batch. [donate] consumes resident inputs as in {!val-jit},
+    releasing every per-device buffer of the donated handle; a handle whose
+    placement mismatches is forced to the host first and is not donated.
+    Assigning a sharded value to an input leaf raises
     {!Jit_error} at trace time (it would gather on every call); replicated
     writebacks are honored.
 
@@ -434,6 +455,7 @@ val pmap :
 val pmap2 :
   devices:string list ->
   ?in_axes:int option list ->
+  ?donate:bool ->
   (module P : Ptree.S) -> (module Q : Ptree.S) -> (P.t -> Q.t) -> P.t -> Q.t
 (** [pmap2 (module P) (module Q) f] is like {!val-pmap} for a function
     returning a structured output. *)
