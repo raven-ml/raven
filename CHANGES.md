@@ -33,6 +33,18 @@ thread.
 
 ### Tolk (new)
 
+- JIT replay is now parameter-substitution based: capture substitutes input
+  buffer nodes with slotted `Param`s, memory-plans the combined schedule
+  once, and replays with per-call `input_uops` and `var_vals`, so replays
+  with different variable bindings get correct kernel `vals` and launch
+  dimensions. `Jit.call` takes input buffer nodes, and its `held_buffers`
+  argument is honored: buffers that outlive the jitted computation (e.g.
+  in-place caches) keep their allocation instead of being folded into
+  arenas.
+- The schedule capture hook moved to `Realize.capturing`;
+  `Schedule.create_linear_with_vars` hands captured schedules over unplanned
+  and its `?memory_plan` flag is removed (`Schedule.memory_plan_rewrite` is
+  now exported). Capture can be disabled with `CAPTURING=0`.
 - Add a CUDA runtime: tensor programs now compile through NVRTC and execute
   on NVIDIA GPUs. The driver and NVRTC libraries are loaded dynamically at
   run time, so builds do not require a CUDA toolkit and fail cleanly at

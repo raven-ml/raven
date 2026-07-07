@@ -42,12 +42,22 @@ val lower_sink_to_linear :
     already carries [kernel_info]). Results are cached by
     {!Tolk_uop.Uop.semantic_key} when [SCACHE] is enabled. *)
 
+val memory_plan_rewrite :
+  Tolk_uop.Uop.t -> Tolk_uop.Uop.t list -> Tolk_uop.Uop.t
+(** [memory_plan_rewrite linear held_bufs] replaces the internal
+    {!Tolk_uop.Ops.Buffer} nodes of the {!Tolk_uop.Ops.Linear} [linear] with
+    {!Tolk_uop.Ops.Slice} views into per-device arena buffers sized by
+    liveness analysis. Buffers in [held_bufs] (compared by physical identity)
+    keep their identity and their own allocation: hold any buffer that
+    outlives the schedule, such as external inputs and outputs.
+
+    Disabled when the [NO_MEMORY_PLANNER] environment variable is set. *)
+
 val create_linear_with_vars :
-  ?memory_plan:bool ->
   get_kernel_graph:(Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
   Tolk_uop.Uop.t ->
   Tolk_uop.Uop.t * (string * int) list
-(** [create_linear_with_vars ?memory_plan ~get_kernel_graph big_sink] runs the
+(** [create_linear_with_vars ~get_kernel_graph big_sink] runs the
     schedule creation pipeline on [big_sink] and returns the
     linearized schedule plus the values bound to runtime variables.
 
@@ -57,9 +67,12 @@ val create_linear_with_vars :
     and flattening the resulting linear schedule. Only binds for variables
     referenced by scheduled kernel bodies are returned.
 
-    [memory_plan] defaults to [true]. JIT capture may pass [false] when it must
-    keep the captured UOp schedule unplanned and defer allocation decisions to
-    the captured replay path.
+    When {!Realize.capturing} is non-empty (and the [CAPTURING] environment
+    variable is not [0]), the schedule is handed to the head capturer
+    unplanned and an empty {!Tolk_uop.Ops.Linear} is returned: there is
+    nothing to execute, and the capturer runs {!memory_plan_rewrite} once
+    over the combined captured schedule. Otherwise the schedule is
+    memory-planned with the graph's own buffer arguments held.
 
     Raises [Invalid_argument] if duplicate binds disagree or if the resolved
     result is not a {!Tolk_uop.Ops.Linear} node. *)

@@ -10,6 +10,7 @@ module U = Uop
 
 let debug = Helpers.getenv "DEBUG" 0
 let scache_enabled = Helpers.getenv "SCACHE" 1
+let capturing_enabled = Helpers.getenv "CAPTURING" 1 <> 0
 let no_memory_planner = Helpers.getenv "NO_MEMORY_PLANNER" 0 <> 0
 let next_post_sched_buffer_slot = ref (-1)
 
@@ -571,30 +572,22 @@ let variables_of_kernel_body body =
   |> List.sort_uniq String.compare
 
 (* Full schedule pipeline: tensor graph -> Linear + var_vals. *)
-let create_linear_with_vars ?(memory_plan = true) ~get_kernel_graph
-    (big_sink : U.t)
-    : U.t * (string * int) list =
+let create_linear_with_vars ~get_kernel_graph (big_sink : U.t) :
+    U.t * (string * int) list =
   (* Step 1: lower SINKs to LINEARs *)
   let graph =
     U.graph_rewrite ~enter_calls:true
       (fun node -> lower_sink_to_linear ~get_kernel_graph node)
       big_sink
   in
-  let held_bufs =
-    match U.as_call graph with
-    | Some { args; _ } ->
-        List.filter (fun arg -> is_op Ops.Buffer arg) args
-    | None -> []
-  in
   (* Step 2: resolve CALL(LINEAR, ...) into the LINEAR result *)
   let linear = U.graph_rewrite resolve_linear_call_rule graph in
-  let linear = if memory_plan then memory_plan_rewrite linear held_bufs else linear in
   let linear_srcs =
     match linear_srcs linear with
     | Some srcs -> srcs
     | None -> invalid_arg "create_linear_with_vars: expected Linear node"
   in
-  (* Step 4: extract var_vals from used BIND nodes. *)
+  (* Step 3: extract var_vals from used BIND nodes. *)
   let used_vars =
     List.concat_map
       (fun si ->
@@ -631,4 +624,20 @@ let create_linear_with_vars ?(memory_plan = true) ~get_kernel_graph
    | Ops.Sink, _ -> extract_binds (U.children big_sink)
    | _, Some { args; _ } -> extract_binds args
    | _ -> ());
-  (linear, !var_vals)
+  let var_vals = !var_vals in
+  (* Step 4: a capturer records this schedule instead of executing it, so hand
+     it over unplanned — the capturer memory-plans the combined schedule once,
+     after capture completes. *)
+  match !Realize.capturing with
+  | add_linear :: _ when capturing_enabled ->
+      add_linear linear var_vals;
+      (U.linear [], var_vals)
+  | _ ->
+      (* Step 5: plan intermediate buffer memory, keeping the graph's own
+         buffer arguments intact. *)
+      let held_bufs =
+        match U.as_call graph with
+        | Some { args; _ } -> List.filter (fun arg -> is_op Ops.Buffer arg) args
+        | None -> []
+      in
+      (memory_plan_rewrite linear held_bufs, var_vals)

@@ -4,10 +4,13 @@
   ---------------------------------------------------------------------------*)
 
 (* End-to-end JIT capture/replay over the real CPU (clang) backend, asserting
-   numeric results. Each test warms up, captures the kernel graph on the second
-   call, and replays it on the third with fresh inputs — the same three-phase
-   path the engine uses at runtime. Kernels are built directly at the scheduled
-   sink level and compiled through [Codegen.to_program]. *)
+   numeric results. The jitted function schedules its kernels through
+   [Schedule.create_linear_with_vars] and executes the returned linear, the
+   same path the frontend uses; during capture the schedule flows to the JIT
+   through the capture registry and the returned linear is empty. Each test
+   warms up, captures on the second call, and replays on the third with fresh
+   inputs. Kernels are built directly at the scheduled sink level and compiled
+   through [Codegen.to_program]. *)
 
 open Windtrap
 open Tolk
@@ -88,8 +91,8 @@ let call_info name : U.call_info =
     aux = None;
   }
 
-let buffer_node ~slot ~size () =
-  U.buffer ~slot ~dtype:Dtype.int32 ~shape:(idx size)
+let buffer_node ~size () =
+  U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:Dtype.int32 ~shape:(idx size)
     ~device:(U.Single device_name) ()
 
 (* out[i] = in[i] + in[i] over a Global range of [size] elements. *)
@@ -140,28 +143,56 @@ let sum_to_scalar_kernel name ~size =
   let st = U.store ~dst:(U.index ~ptr:p_out ~idxs:[ idx 0 ] ~as_ptr:true ()) ~value:red () in
   U.sink ~kernel_info:(kernel_info name [ Axis_type.Reduce ]) [ st ]
 
-(* A single-kernel JIT: one output, one external input. [buffers] resolves the
-   argument nodes; the input node is mapped to the same buffer passed in
-   [input_bufs], so replay re-seeds it. *)
-let single_kernel_jit ~sink ~out_buf ~out_node ~in_node =
-  let resolver = ref (fun _ -> None) in
-  let fxn input_bufs _ =
-    if Jit.is_capturing () then begin
-      let cap_in = input_bufs.(0) in
-      Jit.add_linear
-        (U.linear
-           [ U.call ~body:sink ~args:[ out_node; in_node ]
-               ~info:(call_info "k") ]);
-      resolver :=
-        (fun node ->
-          if U.tag node = U.tag out_node then Some out_buf
-          else if U.tag node = U.tag in_node then Some cap_in
-          else None)
-    end
+(* JIT driver. The function builds the CALL(LINEAR) form allocations emits —
+   scheduled kernels whose call-level PARAM slots index the outer buffer
+   arguments — schedules it, seeds every registered buffer argument, and
+   executes. [body_calls] builds the per-kernel calls; the outer arguments are
+   the output node followed by the current input node. Returns a driver that
+   registers a fresh input buffer and runs the JIT on it. *)
+let schedule_jit ~registry ~out_node ~body_calls =
+  let buffers node = Hashtbl.find_opt registry (U.tag node) in
+  let fxn input_uops _var_vals =
+    let big =
+      U.call
+        ~body:(U.linear body_calls)
+        ~args:[ out_node; input_uops.(0) ]
+        ~info:(call_info "jit")
+    in
+    let linear, var_vals =
+      Schedule.create_linear_with_vars ~get_kernel_graph:Fun.id big
+    in
+    let binding = Realize.Buffers.create ~device in
+    List.iter
+      (fun call ->
+        match U.as_call call with
+        | Some { args; _ } ->
+            List.iter
+              (fun arg ->
+                match buffers arg with
+                | Some buf -> Realize.Buffers.seed binding arg buf
+                | None -> ())
+              args
+        | None -> ())
+      (U.children linear);
+    Realize.run_linear ~device ~to_program binding ~var_vals ~wait:true linear
   in
   let tjit = Jit.create ~device ~to_program ~fxn () in
-  fun input ->
-    Jit.call tjit [| input |] [] ~buffers:(fun n -> !resolver n) ~wait:true
+  fun values ->
+    let node = buffer_node ~size:(List.length values) () in
+    Hashtbl.replace registry (U.tag node) (make_buffer values);
+    Jit.call tjit [| node |] [] ~wait:true
+      ~held_buffers:(fun () -> [ out_node ])
+      ~buffers
+
+(* A single-kernel JIT: one output, one external input. *)
+let single_kernel_jit ~sink ~out_buf ~out_node =
+  let registry : (int, Device.Buffer.t) Hashtbl.t = Hashtbl.create 8 in
+  Hashtbl.replace registry (U.tag out_node) out_buf;
+  let cp_out = U.param ~slot:0 ~dtype:Dtype.int32 () in
+  let cp_in = U.param ~slot:1 ~dtype:Dtype.int32 () in
+  schedule_jit ~registry ~out_node
+    ~body_calls:
+      [ U.call ~body:sink ~args:[ cp_out; cp_in ] ~info:(call_info "k") ]
 
 let () =
   run "Engine_jit_capture"
@@ -176,17 +207,18 @@ let () =
                 single_kernel_jit
                   ~sink:(double_kernel "mul_two" ~size)
                   ~out_buf
-                  ~out_node:(buffer_node ~slot:0 ~size ())
-                  ~in_node:(buffer_node ~slot:1 ~size ())
+                  ~out_node:(buffer_node ~size ())
               in
-              (* warmup: eager, no execution yet *)
-              run (make_buffer [ 1; 2; 3; 4; 5; 6; 7; 8 ]);
-              (* capture: runs the kernel on the current input *)
-              run (make_buffer [ 1; 2; 3; 4; 5; 6; 7; 8 ]);
+              (* warmup executes eagerly *)
+              run [ 1; 2; 3; 4; 5; 6; 7; 8 ];
+              equal (list int) [ 2; 4; 6; 8; 10; 12; 14; 16 ]
+                (read_buffer out_buf);
+              (* capture: runs the recorded schedule on the current input *)
+              run [ 1; 2; 3; 4; 5; 6; 7; 8 ];
               equal (list int) [ 2; 4; 6; 8; 10; 12; 14; 16 ]
                 (read_buffer out_buf);
               (* replay with fresh values recomputes into the same output *)
-              run (make_buffer [ 10; 20; 30; 40; 50; 60; 70; 80 ]);
+              run [ 10; 20; 30; 40; 50; 60; 70; 80 ];
               equal (list int) [ 20; 40; 60; 80; 100; 120; 140; 160 ]
                 (read_buffer out_buf));
           test "running sum (cumsum) reduces a triangular window" (fun () ->
@@ -196,14 +228,13 @@ let () =
               single_kernel_jit
                 ~sink:(running_sum_kernel "running_sum" ~size)
                 ~out_buf
-                ~out_node:(buffer_node ~slot:0 ~size ())
-                ~in_node:(buffer_node ~slot:1 ~size ())
+                ~out_node:(buffer_node ~size ())
             in
-            run (make_buffer [ 1; 2; 3; 4; 5; 6; 7; 8 ]);
-            run (make_buffer [ 1; 2; 3; 4; 5; 6; 7; 8 ]);
+            run [ 1; 2; 3; 4; 5; 6; 7; 8 ];
+            run [ 1; 2; 3; 4; 5; 6; 7; 8 ];
             equal (list int) [ 1; 3; 6; 10; 15; 21; 28; 36 ]
               (read_buffer out_buf);
-            run (make_buffer [ 2; 0; 4; 0; 6; 0; 8; 0 ]);
+            run [ 2; 0; 4; 0; 6; 0; 8; 0 ];
             equal (list int) [ 2; 2; 6; 6; 12; 12; 20; 20 ]
               (read_buffer out_buf));
           test "sum to scalar hits the shape () output path" (fun () ->
@@ -213,56 +244,46 @@ let () =
               single_kernel_jit
                 ~sink:(sum_to_scalar_kernel "sum_scalar" ~size)
                 ~out_buf
-                ~out_node:(buffer_node ~slot:0 ~size:1 ())
-                ~in_node:(buffer_node ~slot:1 ~size ())
+                ~out_node:(buffer_node ~size:1 ())
             in
-            run (make_buffer [ 1; 2; 3; 4; 5; 6; 7; 8 ]);
-            run (make_buffer [ 1; 2; 3; 4; 5; 6; 7; 8 ]);
+            run [ 1; 2; 3; 4; 5; 6; 7; 8 ];
+            run [ 1; 2; 3; 4; 5; 6; 7; 8 ];
             equal (list int) [ 36 ] (read_buffer out_buf);
-            run (make_buffer [ 10; 10; 10; 10; 10; 10; 10; 10 ]);
+            run [ 10; 10; 10; 10; 10; 10; 10; 10 ];
             equal (list int) [ 80 ] (read_buffer out_buf));
         ];
       group "Multi-kernel program"
         [
-          test "two chained kernels: double then add-ten" (fun () ->
+          test "two chained kernels: double then add-ten through a planned \
+                intermediate" (fun () ->
             let size = 4 in
-            let in_node = buffer_node ~slot:1 ~size () in
-            let tmp_node = buffer_node ~slot:2 ~size () in
-            let out_node = buffer_node ~slot:3 ~size () in
-            let tmp_buf = zero_buffer size in
+            let out_node = buffer_node ~size () in
+            let tmp_node = buffer_node ~size () in
             let out_buf = zero_buffer size in
+            let registry : (int, Device.Buffer.t) Hashtbl.t =
+              Hashtbl.create 8
+            in
+            Hashtbl.replace registry (U.tag out_node) out_buf;
             let k1 = double_kernel "mul_two" ~size in
             let k2 = add_const_kernel "add_ten" ~size ~addend:10 in
-            let resolver = ref (fun _ -> None) in
-            let fxn input_bufs _ =
-              if Jit.is_capturing () then begin
-                let cap_in = input_bufs.(0) in
-                Jit.add_linear
-                  (U.linear
-                     [
-                       U.call ~body:k1 ~args:[ tmp_node; in_node ]
-                         ~info:(call_info "k1");
-                       U.call ~body:k2 ~args:[ out_node; tmp_node ]
-                         ~info:(call_info "k2");
-                     ]);
-                resolver :=
-                  (fun node ->
-                    if U.tag node = U.tag out_node then Some out_buf
-                    else if U.tag node = U.tag tmp_node then Some tmp_buf
-                    else if U.tag node = U.tag in_node then Some cap_in
-                    else None)
-              end
+            let cp_out = U.param ~slot:0 ~dtype:Dtype.int32 () in
+            let cp_in = U.param ~slot:1 ~dtype:Dtype.int32 () in
+            (* [tmp_node] is internal to the schedule: it is never registered
+               nor held, so the capture folds it into an arena. *)
+            let run =
+              schedule_jit ~registry ~out_node
+                ~body_calls:
+                  [
+                    U.call ~body:k1 ~args:[ tmp_node; cp_in ]
+                      ~info:(call_info "k1");
+                    U.call ~body:k2 ~args:[ cp_out; tmp_node ]
+                      ~info:(call_info "k2");
+                  ]
             in
-            let tjit = Jit.create ~device ~to_program ~fxn () in
-            let run input =
-              Jit.call tjit [| input |] []
-                ~buffers:(fun n -> !resolver n) ~wait:true
-            in
-            run (make_buffer [ 1; 2; 3; 4 ]);
-            run (make_buffer [ 1; 2; 3; 4 ]);
-            equal (list int) [ 2; 4; 6; 8 ] (read_buffer tmp_buf);
+            run [ 1; 2; 3; 4 ];
+            run [ 1; 2; 3; 4 ];
             equal (list int) [ 12; 14; 16; 18 ] (read_buffer out_buf);
-            run (make_buffer [ 5; 6; 7; 8 ]);
+            run [ 5; 6; 7; 8 ];
             equal (list int) [ 20; 22; 24; 26 ] (read_buffer out_buf));
         ];
     ]

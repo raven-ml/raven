@@ -298,6 +298,16 @@ let get_runtime ~device program (info : Tolk_uop.Uop.program_info) =
       Hashtbl.replace runtime_cache ckey prg;
       prg
 
+(* Capture registry
+
+   While non-empty, [Schedule.create_linear_with_vars] hands each linearized
+   schedule and its variable bindings to the head capturer instead of planning
+   it for execution. Owned here so the schedule can consult it without
+   depending on the JIT. *)
+
+let capturing : (Tolk_uop.Uop.t -> (string * int) list -> unit) list ref =
+  ref []
+
 (* Buffer binding
 
    Resolves buffer UOps to concrete device buffers. A BUFFER node backs a
@@ -313,6 +323,7 @@ module Buffers = struct
 
   let create ~device = { device; tbl = Hashtbl.create 64 }
   let seed t node buf = Hashtbl.replace t.tbl (Tolk_uop.Uop.tag node) buf
+  let remove t node = Hashtbl.remove t.tbl (Tolk_uop.Uop.tag node)
   let mem t node = Hashtbl.mem t.tbl (Tolk_uop.Uop.tag node)
   let find_opt t node = Hashtbl.find_opt t.tbl (Tolk_uop.Uop.tag node)
   let numel node = List.fold_left ( * ) 1 (Tolk_uop.Uop.max_shape node)

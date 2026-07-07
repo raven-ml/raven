@@ -168,6 +168,16 @@ val pm_compile :
     Compiled programs are cached by the kernel's semantic key and the device,
     so kernels that differ only by diagnostic tags share one compilation. *)
 
+(** {1:capture Capture registry} *)
+
+val capturing : (Tolk_uop.Uop.t -> (string * int) list -> unit) list ref
+(** [capturing] is the schedule-capture registry. While non-empty,
+    {!Schedule.create_linear_with_vars} hands each linearized schedule and its
+    variable bindings to the head entry and returns an empty
+    {!Tolk_uop.Ops.Linear} instead of planning the schedule for execution.
+    {!Jit.call} installs its capturer here for the duration of the capture
+    run. *)
+
 (** {1:binding Buffer binding} *)
 
 (** Maps buffer UOps to concrete device buffers.
@@ -184,6 +194,9 @@ module Buffers : sig
 
   val seed : t -> Tolk_uop.Uop.t -> Device.Buffer.t -> unit
   (** [seed t node buf] binds [node] to [buf], overriding lazy allocation. *)
+
+  val remove : t -> Tolk_uop.Uop.t -> unit
+  (** [remove t node] drops [node]'s binding, if any. *)
 
   val mem : t -> Tolk_uop.Uop.t -> bool
   (** [mem t node] is [true] iff [node] is bound. *)

@@ -11,10 +11,15 @@
    records the computation as a LINEAR, exec (cnt>=2) replays that LINEAR
    with fresh input buffers.
 
-   Replay executes the captured LINEAR directly through {!Realize.run_linear}:
-   buffer arguments are resolved through a persistent binding that is seeded
-   once from the capture-time buffer resolver, then re-seeded with the current
-   input buffers on every call. *)
+   Capture installs itself in {!Realize.capturing}, so every schedule the
+   function creates is recorded instead of executed. The recorded schedules
+   are combined and lowered for replay: each input buffer node is substituted
+   with a slotted PARAM, intermediate buffer memory is planned once over the
+   combined LINEAR (buffers the caller holds keep their identity), and every
+   kernel is compiled. Replay passes the current input buffer nodes to
+   {!Realize.run_linear} as [input_uops], so PARAM slots resolve to the
+   buffers backing the current inputs, and threads the per-call [var_vals]
+   through to kernel launches. *)
 
 open Tolk_uop
 module U = Uop
@@ -45,40 +50,48 @@ let is_op op n = Ops.equal (U.op n) op
 
 exception Jit_error of string
 
-(* Capture state *)
-
-(* Non-empty during JIT capture. The schedule machinery calls [add_linear] to
-   record each linear produced while the capture handler is active. *)
-let capturing : U.t list ref option ref = ref None
-let is_capturing () = Option.is_some !capturing
-
-let add_linear linear =
-  match !capturing with
-  | None -> failwith "add_linear: not inside a JIT capture"
-  | Some linears -> linears := linear :: !linears
-
 (* Buffer arguments of a scheduled call, dropping symbolic binds. *)
 let call_arg_uops args = List.filter (fun s -> not (is_op Ops.Bind s)) args
 
 let call_args call =
   match U.as_call call with Some { args; _ } -> args | None -> []
 
-(* Follow src[0] chains through movement ops to the underlying buffer state,
-   then take its buffer node, matching how the schedule keys buffer arguments. *)
-let rec unwrap_src node =
-  match U.op node with
-  | Ops.After | Ops.Buffer | Ops.Param | Ops.Mselect | Ops.Mstack | Ops.Bind ->
-      node
-  | _ -> ( match U.children node with s :: _ -> unwrap_src s | [] -> node)
-
-let call_arg_buffer_node node = U.buf_uop (unwrap_src node)
-
-(* Validation token: inputs must keep their shape, dtype, and device across
+(* Validation token: inputs must keep their size, dtype, and device across
    replays. *)
-type input_info = { ii_size : int; ii_dtype : Dtype.t; ii_device : string }
+type input_info = {
+  ii_size : int;
+  ii_dtype : Dtype.t;
+  ii_device : U.device option;
+}
 
-let input_info_of_buffer b =
-  { ii_size = B.size b; ii_dtype = B.dtype b; ii_device = B.device b }
+let input_info_of_uop u =
+  {
+    ii_size = List.fold_left ( * ) 1 (U.max_shape u);
+    ii_dtype = U.dtype u;
+    ii_device = U.device_of u;
+  }
+
+(* Lower a captured LINEAR for replay: substitute each input buffer node with
+   a PARAM carrying its slot index, plan intermediate buffer memory once over
+   the combined schedule with [held_bufs] kept intact, and compile every
+   kernel. *)
+let jit_lower ~device ~to_program linear held_bufs (input_uops : U.t array) =
+  let mappings =
+    List.mapi
+      (fun i u ->
+        let shape =
+          match U.as_buffer u with
+          | Some { shape; _ } -> Some shape
+          | None -> None
+        in
+        ( u,
+          U.param ~slot:i ~dtype:(U.dtype u) ?shape ?device:(U.device_of u) ()
+        ))
+      (Array.to_list input_uops)
+  in
+  let linear = U.substitute ~walk:true mappings linear in
+  let linear = Schedule.memory_plan_rewrite linear held_bufs in
+  Realize.pm_compile ~device ~to_program linear
 
 (* Captured schedule *)
 
@@ -87,81 +100,76 @@ type 'a captured_jit = {
   linear : U.t;
   device : Device.t;
   to_program : U.t -> U.t;
-  buffers : U.t -> B.t option;
   binding : Realize.Buffers.t;
   expected_input_info : input_info array;
-  mutable input_nodes : (U.t * int) list;
-  mutable first_run : bool;
 }
 
-(* Seed the binding from the capture-time buffer resolver, recording which
-   argument nodes are external inputs so they can be re-seeded per call. Each
-   call argument is bound to the buffer its underlying node resolves to; view
-   and copy calls re-derive their outputs at run time. Runs once, on the first
-   replay. *)
-let seed_from_resolver t (input_bufs : B.t array) =
-  let id_of_input = Hashtbl.create 16 in
-  Array.iteri (fun i b -> Hashtbl.replace id_of_input (B.id b) i) input_bufs;
-  let inputs = ref [] in
+(* Bind every non-input buffer argument the resolver knows to its concrete
+   buffer, once at capture: weights, outputs, and held buffers keep their
+   storage across replays. Planned intermediates are slices of arena buffers
+   the binding allocates lazily; input PARAMs resolve per call. *)
+let seed_known_buffers binding ~buffers linear =
   List.iter
     (fun call ->
       List.iter
         (fun arg ->
-          match t.buffers (call_arg_buffer_node arg) with
-          | None -> ()
-          | Some buf -> (
-              match Hashtbl.find_opt id_of_input (B.id buf) with
-              | Some slot -> inputs := (arg, slot) :: !inputs
-              | None -> Realize.Buffers.seed t.binding arg buf))
+          let node = U.buf_uop arg in
+          if not (Realize.Buffers.mem binding node) then
+            match buffers node with
+            | Some buf -> Realize.Buffers.seed binding node buf
+            | None -> ())
         (call_arg_uops (call_args call)))
-    (U.children t.linear);
-  t.input_nodes <- !inputs
+    (U.children linear)
 
-let seed_inputs t (input_bufs : B.t array) =
-  List.iter
-    (fun (node, slot) -> Realize.Buffers.seed t.binding node input_bufs.(slot))
-    t.input_nodes
-
-let validate_inputs t (input_bufs : B.t array) =
+let validate_inputs t (input_uops : U.t array) =
   let n = Array.length t.expected_input_info in
-  if Array.length input_bufs <> n then
+  if Array.length input_uops <> n then
     raise
       (Jit_error
          (Printf.sprintf "input count mismatch: expected %d, got %d" n
-            (Array.length input_bufs)));
+            (Array.length input_uops)));
   Array.iteri
     (fun i info ->
-      let b = input_bufs.(i) in
+      let got = input_info_of_uop input_uops.(i) in
       if
-        B.size b <> info.ii_size
-        || not (Dtype.equal (B.dtype b) info.ii_dtype)
-        || B.device b <> info.ii_device
+        got.ii_size <> info.ii_size
+        || not (Dtype.equal got.ii_dtype info.ii_dtype)
+        || got.ii_device <> info.ii_device
       then
         raise
           (Jit_error
-             (Printf.sprintf "input %d mismatch: expected (%d, %s, %s)" i
+             (Printf.sprintf "input %d mismatch: expected (%d, %s)" i
                 info.ii_size
-                (Dtype.to_string info.ii_dtype)
-                info.ii_device)))
+                (Dtype.to_string info.ii_dtype))))
     t.expected_input_info
 
-(* Replay the captured LINEAR with fresh input buffers. *)
-let exec_captured ?wait t (input_bufs : B.t array) var_vals =
-  validate_inputs t input_bufs;
-  if t.first_run then begin
-    seed_from_resolver t input_bufs;
-    t.first_run <- false
-  end;
-  seed_inputs t input_bufs;
-  let wait = match wait with Some w -> w | None -> false in
-  Realize.run_linear ~device:t.device ~to_program:t.to_program t.binding
-    ~var_vals ~jit:true ~wait t.linear;
+(* Replay the captured LINEAR: bind the current inputs, run with PARAM slots
+   resolving through them, then release the input bindings so stale input
+   buffers do not stay reachable. *)
+let exec_captured ?(wait = false) t (input_uops : U.t array) var_vals ~buffers
+    =
+  validate_inputs t input_uops;
+  Array.iter
+    (fun u ->
+      match buffers u with
+      | Some buf -> Realize.Buffers.seed t.binding u buf
+      | None ->
+          raise
+            (Jit_error
+               (Format.asprintf "input %a has no backing buffer" U.pp u)))
+    input_uops;
+  Fun.protect
+    ~finally:(fun () ->
+      Array.iter (fun u -> Realize.Buffers.remove t.binding u) input_uops)
+    (fun () ->
+      Realize.run_linear ~device:t.device ~to_program:t.to_program t.binding
+        ~var_vals ~input_uops ~jit:true ~wait t.linear);
   t.ret
 
 (* TinyJit *)
 
 type 'a tiny_jit = {
-  fxn : (B.t array -> (string * int) list -> 'a) option;
+  fxn : (U.t array -> (string * int) list -> 'a) option;
   device : Device.t;
   to_program : U.t -> U.t;
   mutable captured : 'a captured_jit option;
@@ -188,49 +196,53 @@ let combine_linears linears =
        (fun l -> if is_op Ops.Linear l then U.children l else [ l ])
        linears)
 
-let call ?wait ?held_buffers:_ t (input_bufs : B.t array)
+let call ?wait ?held_buffers t (input_uops : U.t array)
     (var_vals : (string * int) list) ~(buffers : U.t -> B.t option) =
   let ret =
     if jit_level = 0 || t.cnt = 0 then
       (* Warmup: execute eagerly. *)
-      (Option.get t.fxn) input_bufs var_vals
+      (Option.get t.fxn) input_uops var_vals
     else if t.cnt = 1 then begin
       (* Capture: record the linears the function schedules. *)
       let fxn = Option.get t.fxn in
-      if is_capturing () then raise (Jit_error "nested TinyJit is not supported");
+      if !Realize.capturing <> [] then
+        raise (Jit_error "nested TinyJit is not supported");
       let linears = ref [] in
-      capturing := Some linears;
+      Realize.capturing :=
+        [ (fun linear _var_vals -> linears := linear :: !linears) ];
       let ret =
         Fun.protect
-          ~finally:(fun () -> capturing := None)
-          (fun () -> fxn input_bufs var_vals)
+          ~finally:(fun () -> Realize.capturing := [])
+          (fun () -> fxn input_uops var_vals)
       in
       let linears = List.rev !linears in
       if linears = [] then raise (Jit_error "didn't JIT anything!");
       if debug >= 1 then
         Printf.eprintf "JIT captured %d linears with %d inputs\n%!"
-          (List.length linears) (Array.length input_bufs);
+          (List.length linears) (Array.length input_uops);
+      let held_bufs = match held_buffers with Some f -> f () | None -> [] in
+      let linear =
+        jit_lower ~device:t.device ~to_program:t.to_program
+          (combine_linears linears) held_bufs input_uops
+      in
+      let binding = Realize.Buffers.create ~device:t.device in
+      seed_known_buffers binding ~buffers linear;
       let captured =
         {
           ret;
-          linear =
-            Realize.pm_compile ~device:t.device ~to_program:t.to_program
-              (combine_linears linears);
+          linear;
           device = t.device;
           to_program = t.to_program;
-          buffers;
-          binding = Realize.Buffers.create ~device:t.device;
-          expected_input_info = Array.map input_info_of_buffer input_bufs;
-          input_nodes = [];
-          first_run = true;
+          binding;
+          expected_input_info = Array.map input_info_of_uop input_uops;
         }
       in
       t.captured <- Some captured;
-      exec_captured ?wait captured input_bufs var_vals
+      exec_captured ?wait captured input_uops var_vals ~buffers
     end
     else
       (* Exec: replay the captured schedule. *)
-      exec_captured ?wait (Option.get t.captured) input_bufs var_vals
+      exec_captured ?wait (Option.get t.captured) input_uops var_vals ~buffers
   in
   t.cnt <- t.cnt + 1;
   ret

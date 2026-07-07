@@ -188,6 +188,58 @@ let create_linear_with_vars_returns_only_used_binds () =
   in
   equal (list (pair string int)) [ "n", 7 ] var_vals
 
+(* A CALL(LINEAR) whose kernel writes through an internal device buffer: the
+   memory planner folds that buffer into an arena on the execution path, and
+   must leave it intact on the capture path. *)
+let internal_buffer_sink () =
+  let shape = U.const_int 4 in
+  let formal = U.param ~slot:0 ~dtype:(ptr_i32 4) ~shape () in
+  let tmp =
+    U.buffer ~slot:77 ~dtype:Dtype.int32 ~shape
+      ~device:(U.Single "TEST:0") ()
+  in
+  let actual = U.buffer ~slot:10 ~dtype:(ptr_i32 4) ~shape () in
+  let body_call = call "kernel" [ formal; tmp ] in
+  U.call ~body:(U.linear [ body_call ]) ~args:[ actual ]
+    ~info:(call_info "linear")
+
+let internal_buffer_arg linear =
+  match U.children linear with
+  | [ si ] -> (
+      match U.as_call si with
+      | Some { args = [ _; arg1 ]; _ } -> arg1
+      | _ -> failwith "expected single CALL with two args")
+  | _ -> failwith "expected single scheduled item"
+
+let memory_plans_internal_buffers_when_not_capturing () =
+  let linear, _ =
+    Schedule.create_linear_with_vars ~get_kernel_graph:Fun.id
+      (internal_buffer_sink ())
+  in
+  is_true ~msg:"internal buffer folded into an arena slice"
+    (Ops.equal (U.op (internal_buffer_arg linear)) Ops.Slice)
+
+let capture_hands_unplanned_schedule_to_capturer () =
+  let received = ref None in
+  Realize.capturing :=
+    [ (fun linear var_vals -> received := Some (linear, var_vals)) ];
+  let linear, var_vals =
+    Fun.protect
+      ~finally:(fun () -> Realize.capturing := [])
+      (fun () ->
+        Schedule.create_linear_with_vars ~get_kernel_graph:Fun.id
+          (internal_buffer_sink ()))
+  in
+  equal (list (pair string int)) [] var_vals;
+  equal int 0 (List.length (U.children linear));
+  match !received with
+  | Some (captured, captured_vars) ->
+      equal (list (pair string int)) [] captured_vars;
+      equal int 1 (List.length (U.children captured));
+      is_true ~msg:"captured schedule is not memory-planned"
+        (Ops.equal (U.op (internal_buffer_arg captured)) Ops.Buffer)
+  | None -> failwith "expected the capturer to receive the schedule"
+
 let () =
   run "Engine_schedule"
     [
@@ -206,5 +258,9 @@ let () =
             create_linear_call_ignores_binds_for_param_slots;
           test "returns only binds used by scheduled kernels"
             create_linear_with_vars_returns_only_used_binds;
+          test "memory-plans internal buffers when not capturing"
+            memory_plans_internal_buffers_when_not_capturing;
+          test "hands the unplanned schedule to an active capturer"
+            capture_hands_unplanned_schedule_to_capturer;
         ];
     ]
