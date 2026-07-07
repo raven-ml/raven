@@ -47,6 +47,12 @@ val make :
 val name : t -> string
 (** [name c] is [c]'s name. *)
 
+val cachekey : t -> string option
+(** [cachekey c] is [c]'s disk cache table name, or [None] when [c] was
+    created without one. The key identifies the exact compilation target
+    (e.g. ["compile_cuda_sm_90"]), so it doubles as a compiler and
+    architecture fingerprint for callers keying their own caches. *)
+
 (** {1:compiling Compiling} *)
 
 val compile : t -> string -> bytes

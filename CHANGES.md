@@ -33,6 +33,8 @@ thread.
 
 ### Tolk (new)
 
+- Add `Compiler.cachekey`, exposing a compiler's disk-cache table name as a
+  compiler/architecture fingerprint for callers keying their own caches.
 - `Uop.export`/`Uop.import` serialize hash-consed graphs across processes;
   import re-interns every node so structurally-equal live nodes are reused
   physically. Export raises on graphs carrying gradient functions; import

@@ -15,16 +15,16 @@ exception Compile_error of string
 
 let ccache = Helpers.getenv "CCACHE" 1
 
-let make ~name ?cachekey ~compile () =
-  let cachekey = if ccache <> 0 then cachekey else None in
-  { name; cachekey; compile }
+let make ~name ?cachekey ~compile () = { name; cachekey; compile }
 
 let name t = t.name
+
+let cachekey t = t.cachekey
 
 let compile t src = t.compile src
 
 let compile_cached t src =
-  match t.cachekey with
+  match (if ccache <> 0 then t.cachekey else None) with
   | None -> t.compile src
   | Some table ->
       match Diskcache.get ~table ~key:src with
