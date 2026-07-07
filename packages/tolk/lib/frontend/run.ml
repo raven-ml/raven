@@ -181,14 +181,12 @@ let realize_buffers ts =
           in
           T.set_uop t node;
           register node buf;
-          buf
-      | None -> (
-          (* Nothing was scheduled: the tensor is already materialised (its
-             node has buffer identity), so resolve its backing buffer. *)
-          match buffer_of_node (U.buf_uop out) with
-          | Some buf -> buf
-          | None ->
-              failwith "Run.realize: tensor was not scheduled to a buffer"))
+          Some buf
+      | None ->
+          (* Nothing was scheduled: either the tensor is already materialised
+             (its node has buffer identity), or its graph folded to a constant
+             expression that needs no storage and stays lazy. *)
+          buffer_of_node (U.buf_uop out))
     ts outs
 
 let realize_many ts = ignore (realize_buffers ts)
@@ -200,7 +198,13 @@ let realize t =
 let buffer_of t =
   match buffer_of_node (T.uop t) with
   | Some buf -> buf
-  | None -> List.hd (realize_buffers [ t ])
+  | None -> (
+      match List.hd (realize_buffers [ t ]) with
+      | Some buf -> buf
+      | None ->
+          failwith
+            "Run.buffer_of: tensor folded to a constant expression with no \
+             storage")
 
 let data t = Tolk.Device.Buffer.as_bytes (buffer_of t)
 

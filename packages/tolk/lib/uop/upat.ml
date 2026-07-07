@@ -105,7 +105,14 @@ let const ?loc ?dtype ?name c =
 
 let const_int n = const (Const.int Dtype.Val.weakint n)
 let const_float x = const (Const.float Dtype.Val.float32 x)
-let const_bool b = const (Const.bool b)
+
+(* Bool literals keep a bool dtype constraint (the reference writes them as
+   [UPat.const(dtypes.bool, ...)]); numeric literals match by value across
+   dtypes. *)
+let const_bool b =
+  with_loc
+    (mk ~ops:[ Ops.Const ] ~dtype:(Scalar_dtype Dtype.Bool)
+       ~arg:(Has_const (Const.bool b)) ())
 
 let cvar ?loc ?name ?dtype ?arg () =
   let dtype = Option.map (fun d -> Dtype d) dtype in
@@ -227,6 +234,26 @@ let pp_bindings fmt (b : bindings) =
 
 (* Matching *)
 
+(* Literal patterns compare by numeric value across dtypes, mirroring the
+   reference's Python [pat.arg == uop.arg] (where [-1 == -1.0] and
+   [True == 1]). Two values of the same class compare exactly; mixed
+   classes compare through float, which is lossless for the small literals
+   patterns use. *)
+let const_value_equal a b =
+  let to_float = function
+    | Const.Bool b -> Some (if b then 1.0 else 0.0)
+    | Const.Int n -> Some (Int64.to_float n)
+    | Const.Float f -> Some f
+    | Const.Invalid -> None
+  in
+  match Const.view a, Const.view b with
+  | Const.Invalid, Const.Invalid -> true
+  | Const.Int x, Const.Int y -> Int64.equal x y
+  | va, vb -> (
+      match to_float va, to_float vb with
+      | Some x, Some y -> Int64.equal (Int64.bits_of_float x) (Int64.bits_of_float y)
+      | _ -> false)
+
 let match_arg pat uop_arg =
   match pat with
   | Any_arg -> true
@@ -235,7 +262,7 @@ let match_arg pat uop_arg =
       (match uop_arg with Uop.Arg.Int m -> n = m | _ -> false)
   | Has_const c ->
       (match uop_arg with
-       | Uop.Arg.Value v -> Const.equal c v
+       | Uop.Arg.Value v -> const_value_equal c v
        | _ -> false)
   | Has_op o ->
       (match uop_arg with

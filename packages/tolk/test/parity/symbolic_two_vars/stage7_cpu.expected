@@ -1,0 +1,5 @@
+void En1(float* restrict data0_1, float* restrict data1_128, float* restrict data2_128, const int data3_, const int data4_) {
+  float val0 = (*(data1_128+data3_));
+  float val1 = (*(data2_128+data4_));
+  *(data0_1+0) = (val0+val1);
+}

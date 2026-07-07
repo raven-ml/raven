@@ -1150,6 +1150,40 @@ let reg_placeholder_like node ~slot =
     U.reshape ~src:buf ~shape:(shape_arg_of_ints view_shape)
   else buf
 
+(* A Stage reaching codegen becomes a local (or reg) placeholder written by
+   an ended, barriered store; readers keep their multi-range INDEX into the
+   shaped view of the flat buffer. Mirrors [add_local_buffer]. *)
+let add_local_buffer_rule counter node =
+  match U.as_stage node with
+  | None -> None
+  | Some { src; ranges; opts } ->
+      let dtype =
+        match U.dtype node with
+        | Dtype.Val dtype -> dtype
+        | Dtype.Ptr _ -> invalid_arg "add_local_buffer: expected value dtype"
+      in
+      let shape = U.max_shape node in
+      let count = Dtype.Val.count dtype in
+      let vec_tail = if count > 1 then [ count ] else [] in
+      let slot = !counter in
+      incr counter;
+      let buf =
+        U.buffer ~slot ~dtype:(Dtype.Val dtype)
+          ~shape:(shape_arg_of_ints ([ prod shape ] @ vec_tail))
+          ~addrspace:opts.addrspace ()
+      in
+      let buf =
+        if List.length shape > 1 then
+          U.reshape ~src:buf ~shape:(shape_arg_of_ints (shape @ vec_tail))
+        else buf
+      in
+      let store =
+        U.store ~dst:(U.index ~ptr:buf ~idxs:ranges ()) ~value:src ()
+      in
+      Some
+        (U.after ~src:buf
+           ~deps:[ U.barrier ~srcs:[ U.end_ ~value:store ~ranges ] () ])
+
 let reduce_to_acc_rule (ctx : reduce_ctx) node =
   match U.as_reduce node with
   | None -> None
@@ -1946,8 +1980,14 @@ let lower (ren : Renderer.t) (sink : U.t) : U.t =
   (* group for reduce: [pm_group_for_reduce]. *)
   let sink = rewrite ~name:"group for reduce" (pm pm_group_for_reduce) sink in
 
-  (* add local buffers: [pm_add_buffers_local + rangeify_codegen]. *)
-  let sink = Rangeify.add_local_buffers sink in
+  (* add locals: [pm_add_local_buffers = add_local_buffer + pm_mops]. *)
+  let local_slots = ref 0 in
+  let sink =
+    rewrite ~name:"add local buffers"
+      (U.first_match
+         [ add_local_buffer_rule local_slots; Rangeify.movement_ops ])
+      sink
+  in
 
   (* remove reduce: [mop_cleanup + pm_reduce_local]. *)
   let sink = pm_reduce sink in

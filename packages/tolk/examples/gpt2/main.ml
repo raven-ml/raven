@@ -6,18 +6,30 @@
 (* GPT-2 text generation.
 
    Builds the 124M-parameter GPT-2 model from HuggingFace safetensors weights
-   and greedily generates tokens from a prompt. Every step reruns the full
-   forward pass over all tokens so far (prompt mode: concrete shapes, no
-   key-value cache), so generation is quadratic in sequence length but needs
-   no symbolic shapes. *)
+   and greedily generates tokens from a prompt. The prompt is consumed in one
+   eager forward pass with concrete shapes; every later step processes a
+   single token against a persistent key-value cache, with the position (and
+   the token id) entering the graph as bound symbolic variables so that one
+   JIT capture serves the whole decode loop. *)
 
 open Tolk_frontend
+module U = Tolk_uop.Uop
 module Embedding = Tolk_nn.Embedding
 module Linear = Tolk_nn.Linear
 module Layer_norm = Tolk_nn.Layer_norm
 module State = Tolk_nn.State
 
 let max_context = 128
+let vocab_size = 50257
+
+(* [start_pos] flows through the model as a dimension node: a plain constant
+   while consuming the prompt, a bound symbolic variable while decoding. *)
+let pos_value pos =
+  match U.const_int_value pos with
+  | Some v -> v
+  | None -> snd (U.unbind pos)
+
+let plus u n = U.O.(u + U.const_int n)
 
 (* Model *)
 
@@ -27,6 +39,7 @@ type attention = {
   n_heads : int;
   dim : int;
   head_dim : int;
+  mutable cache_kv : Tensor.t option;
 }
 
 let attention dim n_heads =
@@ -36,9 +49,16 @@ let attention dim n_heads =
     n_heads;
     dim;
     head_dim = dim / n_heads;
+    cache_kv = None;
   }
 
-let attention_apply a x mask =
+let attention_apply a x start_pos mask =
+  (* No symbolic positions while consuming the prompt. *)
+  let start_pos =
+    if mask <> None || pos_value start_pos = 0 then
+      U.const_int (pos_value start_pos)
+    else start_pos
+  in
   let bsz, seqlen =
     match Tensor.shape x with
     | [ b; s; _ ] -> (b, s)
@@ -48,11 +68,41 @@ let attention_apply a x mask =
     Movement.reshape (Linear.apply a.c_attn x)
       [ bsz; seqlen; 3; a.n_heads; a.head_dim ]
   in
-  let sel i =
-    Op.getitem xqkv Movement.[ All; All; I i; All; All ]
+  let sel i = Op.getitem xqkv Movement.[ All; All; I i; All; All ] in
+  let xq, xk, xv = (sel 0, sel 1, sel 2) in
+  let cache_kv =
+    match a.cache_kv with
+    | Some c -> c
+    | None ->
+        let c =
+          Run.realize
+            (Elementwise.contiguous
+               (Creation.zeros
+                  ~dtype:(Tensor.val_dtype x)
+                  [ 2; bsz; max_context; a.n_heads; a.head_dim ]))
+        in
+        a.cache_kv <- Some c;
+        c
+  in
+  (* Update the cache at [start_pos, start_pos+seqlen). *)
+  ignore
+    (Run.realize
+       (Op.assign
+          (Movement.symbolic_shrink cache_kv
+             [ None; None; Some (start_pos, plus start_pos seqlen); None; None ])
+          (Op.stack xk [ xv ])));
+  let keys, values =
+    if pos_value start_pos > 0 then
+      let layer i =
+        Movement.symbolic_shrink
+          (Op.getitem cache_kv Movement.[ I i ])
+          [ None; Some (U.const_int 0, plus start_pos seqlen); None; None ]
+      in
+      (layer 0, layer 1)
+    else (xk, xv)
   in
   let tr t = Movement.transpose ~dim0:1 ~dim1:2 t in
-  let xq, keys, values = (tr (sel 0), tr (sel 1), tr (sel 2)) in
+  let xq, keys, values = (tr xq, tr keys, tr values) in
   let out = Op.scaled_dot_product_attention ?attn_mask:mask xq keys values in
   Linear.apply a.c_proj (Movement.reshape (tr out) [ bsz; seqlen; a.dim ])
 
@@ -79,10 +129,11 @@ let block dim n_heads norm_eps =
     ln_2 = Layer_norm.create ~eps:norm_eps dim;
   }
 
-let block_apply b x mask =
+let block_apply b x start_pos mask =
   let h =
     Elementwise.add x
-      (Dtype_ops.float (attention_apply b.attn (Layer_norm.apply b.ln_1 x) mask))
+      (Dtype_ops.float
+         (attention_apply b.attn (Layer_norm.apply b.ln_1 x) start_pos mask))
   in
   Elementwise.contiguous
     (Elementwise.add h (feed_forward_apply b.mlp (Layer_norm.apply b.ln_2 h)))
@@ -93,7 +144,7 @@ type transformer = {
   h : block list;
   ln_f : Layer_norm.t;
   lm_head : Linear.t;
-  allpos : Tensor.t;
+  mutable allpos : Tensor.t option;
 }
 
 let transformer ~dim ~n_heads ~n_layers ~norm_eps ~vocab_size ~max_seq_len =
@@ -103,27 +154,55 @@ let transformer ~dim ~n_heads ~n_layers ~norm_eps ~vocab_size ~max_seq_len =
     h = List.init n_layers (fun _ -> block dim n_heads norm_eps);
     ln_f = Layer_norm.create ~eps:norm_eps dim;
     lm_head = Linear.create ~bias:false dim vocab_size;
-    allpos = Movement.reshape (Op.arange max_context) [ 1; -1 ];
+    allpos = None;
   }
 
+(* The token(s) to feed: a concrete tensor of ids for the prompt, or a single
+   id bound to a symbolic variable for a decode step. *)
+type tokens_input = Toks of Tensor.t | Tok of U.t
+
 (* Greedy forward: the argmax of the logits of the last position. *)
-let forward m tokens =
-  let seqlen = List.nth (Tensor.shape tokens) 1 in
-  let tok_emb = Embedding.apply m.wte tokens in
+let forward m tokens start_pos =
+  let allpos =
+    match m.allpos with
+    | Some t -> t
+    | None ->
+        let t =
+          Run.realize (Movement.reshape (Op.arange max_context) [ 1; -1 ])
+        in
+        m.allpos <- Some t;
+        t
+  in
+  let seqlen, tok_emb =
+    match tokens with
+    | Tok tok ->
+        (1, Movement.symbolic_shrink m.wte.weight [ Some (tok, plus tok 1); None ])
+    | Toks tokens -> (List.nth (Tensor.shape tokens) 1, Embedding.apply m.wte tokens)
+  in
+  (* Not symbolic when consuming the prompt. *)
+  let selected_pos =
+    if pos_value start_pos = 0 then (U.const_int 0, U.const_int seqlen)
+    else (start_pos, plus start_pos 1)
+  in
   let pos_emb =
-    Embedding.apply m.wpe (Movement.shrink m.allpos [ (0, 1); (0, seqlen) ])
+    Embedding.apply m.wpe
+      (Movement.symbolic_shrink allpos [ None; Some selected_pos ])
   in
   let h = Elementwise.add tok_emb pos_emb in
   let mask =
     if seqlen > 1 then
+      let start = pos_value start_pos in
       Some
-        (Op.triu ~diagonal:1
-           (Creation.full [ 1; 1; seqlen; seqlen ] (Tensor.Sfloat neg_infinity)))
+        (Op.triu ~diagonal:(start + 1)
+           (Creation.full
+              [ 1; 1; seqlen; start + seqlen ]
+              (Tensor.Sfloat neg_infinity)))
     else None
   in
-  let h = List.fold_left (fun h b -> block_apply b h mask) h m.h in
+  let h = List.fold_left (fun h b -> block_apply b h start_pos mask) h m.h in
   let logits = Linear.apply m.lm_head (Layer_norm.apply m.ln_f h) in
-  Op.argmax ~axis:(-1) (Op.getitem logits Movement.[ All; I (-1); All ])
+  let logits = Op.getitem logits Movement.[ All; I (-1); All ] in
+  Run.realize (Movement.flatten (Op.argmax ~axis:(-1) logits))
 
 (* State dict *)
 
@@ -176,8 +255,8 @@ let fetch url file =
 
 let build () =
   let model =
-    transformer ~dim:768 ~n_heads:12 ~n_layers:12 ~norm_eps:1e-5
-      ~vocab_size:50257 ~max_seq_len:1024
+    transformer ~dim:768 ~n_heads:12 ~n_layers:12 ~norm_eps:1e-5 ~vocab_size
+      ~max_seq_len:1024
   in
   let weights =
     State.safe_load
@@ -213,13 +292,40 @@ let build () =
 
 let generate model tokenizer prompt count =
   let toks = ref (Array.to_list (Brot.encode_ids tokenizer prompt)) in
+  let start_pos = ref 0 in
+  let jit =
+    Jit.create (fun _inputs ~vars -> forward model (Tok vars.(0)) vars.(1))
+  in
   let times = ref [] in
   for _ = 1 to count do
-    let arr = Array.of_list !toks in
-    let tokens = Run.of_int_array ~shape:[ 1; Array.length arr ] arr in
+    let remaining = List.filteri (fun i _ -> i >= !start_pos) !toks in
     let t0 = Unix.gettimeofday () in
-    let tok = Run.item_int (forward model tokens) in
+    let tok =
+      let start_pos_var =
+        U.bind
+          ~var:
+            (U.variable ~name:"start_pos"
+               ~min_val:(if !start_pos > 0 then 1 else 0)
+               ~max_val:(max_context - 1) ())
+          ~value:(U.const_int !start_pos)
+      in
+      match remaining with
+      | [ tok ] ->
+          let tokens_var =
+            U.bind
+              ~var:
+                (U.variable ~name:"tokens" ~min_val:0 ~max_val:(vocab_size - 1)
+                   ())
+              ~value:(U.const_int tok)
+          in
+          Run.item_int (Jit.call jit ~vars:[| tokens_var; start_pos_var |] [||])
+      | _ ->
+          let arr = Array.of_list remaining in
+          let tokens = Run.of_int_array ~shape:[ 1; Array.length arr ] arr in
+          Run.item_int (forward model (Toks tokens) start_pos_var)
+    in
     times := (Unix.gettimeofday () -. t0) :: !times;
+    start_pos := List.length !toks;
     toks := !toks @ [ tok ]
   done;
   let total = List.fold_left ( +. ) 0. !times in

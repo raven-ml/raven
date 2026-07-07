@@ -278,9 +278,9 @@ let arange ?stop ?(step = 1) ?dtype start =
   let start, stop = match stop with None -> (0, start) | Some s -> (start, s) in
   let dt = match dtype with Some d -> d | None -> D.Val.default_int in
   let output_len = iceildiv (stop - start) step in
-  if output_len <= 0 then Creation.full ~dtype:dt [ 0 ] (T.Sint 0)
+  if output_len <= 0 then Creation.full ~dtype:dt ~buffer:false [ 0 ] (T.Sint 0)
   else
-    let base = Creation.full ~dtype:dt [ output_len ] (T.Sint step) in
+    let base = Creation.full ~dtype:dt ~buffer:false [ output_len ] (T.Sint step) in
     let scan = cumalu base 0 Ops.Add in
     Dtype_ops.cast (Elementwise.add scan (T.i (start - step))) (D.Val dt)
 
@@ -288,7 +288,7 @@ let linspace ?dtype start stop steps =
   if steps < 0 then invalid_arg "Op.linspace: steps must be non-negative";
   let dt = match dtype with Some d -> d | None -> D.Val.default_float in
   if D.Val.is_bool dt then invalid_arg "Op.linspace: bool dtype is not supported";
-  if steps = 1 then Creation.full ~dtype:dt [ 1 ] (T.Sfloat start)
+  if steps = 1 then Creation.full ~dtype:dt ~buffer:false [ 1 ] (T.Sfloat start)
   else
     Dtype_ops.cast
       (Elementwise.add (T.f start)
@@ -331,7 +331,7 @@ let tril ?(diagonal = 0) t =
 (* Cumulative extrema *)
 
 let cummax ?(axis = 0) t =
-  if T.ndim t = 0 then (t, Creation.zeros ~dtype:D.Val.int32 [])
+  if T.ndim t = 0 then (t, Creation.zeros ~dtype:D.Val.int32 ~buffer:false [])
   else
     let axis = T.resolve_dim t axis in
     let values = cumalu t axis Ops.Max in
@@ -342,7 +342,7 @@ let cummax ?(axis = 0) t =
       Elementwise.mul
         (Elementwise.eq (Movement.unsqueeze x (-1))
            (Movement.unsqueeze values_t (-2)))
-        (triu (Creation.ones [ n; n ]))
+        (triu (Creation.ones ~buffer:false [ n; n ]))
     in
     let counts =
       Reduce.max ~axis:[ -2 ]
@@ -642,9 +642,9 @@ let masked_select ?(fill_value = T.Sint 0) t mask ~size =
   let mask_cumsum = cumsum mask in
   let counts =
     scatter_reduce
-      (Creation.zeros ~dtype:D.Val.int32 [ size ])
+      (Creation.zeros ~dtype:D.Val.int32 ~buffer:false [ size ])
       ~dim:0 mask_cumsum
-      (Creation.ones ~dtype:D.Val.int32 [ T.numel t ])
+      (Creation.ones ~dtype:D.Val.int32 ~buffer:false [ T.numel t ])
       ~reduce:`Sum ()
   in
   let gathered = getitem x [ Movement.T (cumsum counts) ] in
@@ -655,7 +655,7 @@ let masked_select ?(fill_value = T.Sint 0) t mask ~size =
 
 let nonzero ?(fill_value = T.Sint 0) t ~size =
   let ndim = T.ndim t in
-  if ndim = 0 then Creation.zeros ~dtype:D.Val.int32 [ size; 0 ]
+  if ndim = 0 then Creation.zeros ~dtype:D.Val.int32 ~buffer:false [ size; 0 ]
   else
     let sh = T.shape t in
     let mask = Movement.flatten (Elementwise.ne t (T.i 0)) in
@@ -713,7 +713,7 @@ let sort ?(dim = -1) ?(descending = false) t =
   let dim = T.resolve_dim t dim in
   let orig_len = List.nth (T.shape t) dim in
   if orig_len <= 1 then
-    (t, Creation.full ~dtype:D.Val.default_int (T.shape t) (T.Sint 0))
+    (t, Creation.full ~dtype:D.Val.default_int ~buffer:false (T.shape t) (T.Sint 0))
   else begin
     let ndim = T.ndim t in
     let n_stages = bit_length (orig_len - 1) in
@@ -759,7 +759,7 @@ let sort ?(dim = -1) ?(descending = false) t =
     in
     let mask =
       Movement.reshape
-        (tril (Creation.ones ~dtype:D.Val.bool [ orig_len; orig_len ]))
+        (tril (Creation.ones ~dtype:D.Val.bool ~buffer:false [ orig_len; orig_len ]))
         ([ orig_len; orig_len ] @ List.init (ndim - dim - 1) (fun _ -> 1))
     in
     let counts u =
@@ -976,7 +976,7 @@ let logcumsumexp ?(axis = 0) t =
         (List.init (T.ndim t - 1) (fun _ -> -1) @ [ last; -1 ])
     in
     let x_cummax, _ = cummax ~axis:(-1) x in
-    let mask = tril (Creation.ones [ last; last ]) in
+    let mask = tril (Creation.ones ~buffer:false [ last; last ]) in
     let diff = Elementwise.sub x_unsqueezed (Movement.unsqueeze x_cummax (-1)) in
     let filled =
       Elementwise.where mask diff (Creation.const_like diff (dtype_min_scalar t))

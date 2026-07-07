@@ -1201,37 +1201,6 @@ let refresh_index_ptr_dtype n =
        | _ -> None)
   | None -> None
 
-let local_buffer_ptr_dtype ptr =
-  let base = U.buf_uop ptr in
-  match U.op base, U.dtype base, U.addrspace base with
-  | (Ops.Buffer | Ops.Param), Dtype.Val base_dt, Some Dtype.Local ->
-      let size =
-        match shape_of base with
-        | Some shape when shape <> [] -> prod shape
-        | _ -> Dtype.count (U.dtype ptr)
-      in
-      Some (Dtype.Ptr (Dtype.Ptr.create base_dt ~addrspace:Dtype.Local ~size))
-  | _ -> None
-
-let load_local_buffer_index n =
-  match U.as_index n with
-  | Some { ptr; _ } when not (Dtype.is_ptr (U.dtype n)) ->
-      (match local_buffer_ptr_dtype ptr with
-       | None -> None
-       | Some ptr_dtype ->
-           let ptr_index = U.replace n ~dtype:ptr_dtype () in
-           Some (U.load ~src:ptr_index ()))
-  | _ -> None
-
-let rangeify_codegen_rules =
-  U.first_match [
-    (fun n -> match U.op n with
-       | Ops.Contiguous -> Some (src0 n)
-       | Ops.Noop when Array.length (U.src n) > 0 -> Some (src0 n)
-       | _ -> None);
-    load_local_buffer_index;
-  ]
-
 (* Split kernels *)
 
 type split_context = {
@@ -1879,14 +1848,6 @@ let add_buffers_rules ?(allow_locals = true) counter =
            else None
       | _ -> None);
   ]
-
-let add_local_buffers root =
-  let counter = ref 0 in
-  let root =
-    U.graph_rewrite ~name:"add local buffers" ~bottom_up:true
-      (add_buffers_rules counter) root
-  in
-  U.graph_rewrite ~name:"rangeify codegen" rangeify_codegen_rules root
 
 let get_kernel_graph root =
   let root =

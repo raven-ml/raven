@@ -1,0 +1,17 @@
+   0 Ops.CONST           :            dtypes.int                               []                               1
+   1 Ops.PARAM           :            dtypes.float                             ['1']                            ParamArg(0, device='CPU')
+   2 Ops.CONST           :            dtypes.int                               []                               0
+   3 Ops.INDEX           :            dtypes.float                             [1, '0']                         None
+   4 Ops.CONST           :            dtypes.int                               []                               128
+   5 Ops.PARAM           :            dtypes.float                             ['128']                          ParamArg(1, device='CPU')
+   6 Ops.STACK           :            dtypes.void                              []                               None
+   7 Ops.PARAM           :            dtypes.int                               [6]                              ParamArg(3, vmin_vmax=(0, 127), name='tokens', addrspace=AddrSpace.ALU)
+   8 Ops.INDEX           :            dtypes.float                             [5, 7]                           None
+   9 Ops.LOAD            :            dtypes.float                             [8]                              None
+  10 Ops.PARAM           :            dtypes.float                             ['128']                          ParamArg(2, device='CPU')
+  11 Ops.PARAM           :            dtypes.int                               [6]                              ParamArg(4, vmin_vmax=(1, 127), name='start_pos', addrspace=AddrSpace.ALU)
+  12 Ops.INDEX           :            dtypes.float                             [10, 11]                         None
+  13 Ops.LOAD            :            dtypes.float                             [12]                             None
+  14 Ops.ADD             :            dtypes.float                             [9, 13]                          None
+  15 Ops.STORE           :            dtypes.void                              [3, 14]                          None
+  16 Ops.SINK            :            dtypes.void                              [15]                             KernelInfo(name='En2', axis_types=(), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None, beam=0)

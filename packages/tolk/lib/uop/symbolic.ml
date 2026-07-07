@@ -452,9 +452,12 @@ let rec contains_param_slot slot u =
 (* {1 exec_alu}
 
    Constant folding for scalar ALU ops. Promotes bool operands to int
-   where the op is arithmetic, dispatches on int-vs-float, truncates the
-   result to the target dtype. [weakint] binaries with any [Invalid]
-   operand fold to [Invalid]. *)
+   where the op is arithmetic and dispatches on int-vs-float. The result
+   is NOT truncated to the target dtype: like the reference's
+   [exec_alu(..., truncate_output=False)] at its symbolic fold site, the
+   folded constant keeps full host precision and only the renderer or
+   runtime narrows it. [weakint] binaries with any [Invalid] operand fold
+   to [Invalid]. *)
 
 let const_as_float c =
   match Const.view c with
@@ -479,16 +482,13 @@ let const_of_target ~(target : Dtype.Val.t) v =
   else if Dtype.Val.is_int target then
     (match v with
      | `Bool b -> Some (of_scalar target (`Bool b))
-     | `Int n ->
-         Some (of_scalar target (`Int (Int64.of_int (Dtype.truncate_int target n))))
+     | `Int n -> Some (of_scalar target (`Int (Int64.of_int n)))
      | `Float f -> Some (of_scalar target (`Float f)))
   else if Dtype.Val.is_float target then
     (match v with
      | `Bool b -> Some (of_scalar target (`Bool b))
-     | `Int n ->
-         Some (of_scalar target (`Float (Dtype.truncate_float target (float_of_int n))))
-     | `Float f ->
-         Some (of_scalar target (`Float (Dtype.truncate_float target f))))
+     | `Int n -> Some (of_scalar target (`Float (float_of_int n)))
+     | `Float f -> Some (of_scalar target (`Float f)))
   else None
 
 let any_invalid args = List.exists (fun c -> Const.view c = Const.Invalid) args

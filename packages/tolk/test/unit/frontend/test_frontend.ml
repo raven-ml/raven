@@ -43,8 +43,13 @@ let creation_tests =
           let t = ones_i [ 4 ] in
           equal (list int) [ 4 ] (shape t);
           is_true (is_dtype t D.int32));
-      test "full is broadcast const" (fun () ->
+      test "full materializes a buffer by default" (fun () ->
           let t = Cr.full [ 2; 2 ] (T.Sint 7) in
+          (* After(Reshape(Buffer), Store(...)) *)
+          is_true (has_op t Ops.After);
+          is_true (Ops.equal (U.op (src t 0)) Ops.Reshape));
+      test "full ~buffer:false is a broadcast const" (fun () ->
+          let t = Cr.full ~buffer:false [ 2; 2 ] (T.Sint 7) in
           (* Expand(Reshape(Const)) *)
           is_true (has_op t Ops.Expand);
           is_true (Ops.equal (U.op (src t 0)) Ops.Reshape));

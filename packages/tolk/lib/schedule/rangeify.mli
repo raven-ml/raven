@@ -56,7 +56,3 @@ val mop_cleanup : Tolk_uop.Uop.t -> Tolk_uop.Uop.t option
 (** [mop_cleanup u] performs the movement-op cleanup shared with codegen's
     remove-reduce pass. *)
 
-val add_local_buffers : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
-(** [add_local_buffers sink] materializes local {!Tolk_uop.Ops.Stage}
-    nodes inside a codegen kernel body, matching tinygrad's
-    [pm_add_buffers_local + rangeify_codegen] pass. *)

@@ -1,0 +1,53 @@
+__kernel void group_reduce_matvec(__global float* data0_-1, __global float* data1_-1, __global float* data2_-1) {
+  float buf0[4];
+  float buf1[4];
+  __attribute__ ((aligned (16))) __local float buf2[128];
+  int gidx0 = get_group_id(0); /* 16 */
+  int lidx0 = get_local_id(0); /* 8 */
+  int lidx1 = get_local_id(1); /* 4 */
+  *(buf0+0) = 0.0f;
+  *(buf0+1) = 0.0f;
+  *(buf0+2) = 0.0f;
+  *(buf0+3) = 0.0f;
+  for (int Ridx1 = 0; Ridx1 < 8; Ridx1++) {
+    int alu4 = (lidx0+(Ridx1<<3));
+    int alu5 = (alu4+(gidx0<<10)+(lidx1<<6));
+    float val0 = (*(data0_-1+alu5));
+    float val1 = (*(data0_-1+(alu5+256)));
+    float val2 = (*(data0_-1+(alu5+512)));
+    float val3 = (*(data0_-1+(alu5+768)));
+    float val4 = (*(data1_-1+alu4));
+    *(buf0+0) = ((*(buf0+0))+(val0*val4));
+    *(buf0+1) = ((*(buf0+1))+(val1*val4));
+    *(buf0+2) = ((*(buf0+2))+(val2*val4));
+    *(buf0+3) = ((*(buf0+3))+(val3*val4));
+  }
+  int alu11 = (lidx1<<5);
+  *((__local float4*)((buf2+((lidx0<<2)+alu11)))) = (float4)((*(buf0+0)),(*(buf0+1)),(*(buf0+2)),(*(buf0+3)));
+  barrier(CLK_LOCAL_MEM_FENCE);
+  *(buf1+0) = 0.0f;
+  *(buf1+1) = 0.0f;
+  *(buf1+2) = 0.0f;
+  *(buf1+3) = 0.0f;
+  for (int Ridx102 = 0; Ridx102 < 8; Ridx102++) {
+    float4 val5 = (*((__local float4*)((buf2+(alu11+(Ridx102<<2))))));
+    *(buf1+0) = ((*(buf1+0))+val5.x);
+    *(buf1+1) = ((*(buf1+1))+val5.y);
+    *(buf1+2) = ((*(buf1+2))+val5.z);
+    *(buf1+3) = ((*(buf1+3))+val5.w);
+  }
+  int alu23 = (lidx1+(gidx0<<4));
+  bool alu24 = (lidx0==0);
+  if (alu24) {
+    *(data2_-1+alu23) = (*(buf1+0));
+  }
+  if (alu24) {
+    *(data2_-1+(alu23+4)) = (*(buf1+1));
+  }
+  if (alu24) {
+    *(data2_-1+(alu23+8)) = (*(buf1+2));
+  }
+  if (alu24) {
+    *(data2_-1+(alu23+12)) = (*(buf1+3));
+  }
+}

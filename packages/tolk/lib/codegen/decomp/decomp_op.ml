@@ -325,15 +325,19 @@ let const_int64_value_signed n =
        | None -> None)
   | _ -> None
 
+let is_neg_one node =
+  match Uop.op node, Uop.arg node with
+  | Ops.Const, Uop.Arg.Value v -> (
+      match Const.view v with
+      | Const.Int n -> Int64.equal n (-1L)
+      | Const.Float f -> Float.equal f (-1.0)
+      | _ -> false)
+  | _ -> false
+
 let as_mul_neg_one n =
   match Uop.op n, Uop.src n with
   | Ops.Mul, [| a; b |] ->
-      (match const_int64_value b with
-       | Some v when Int64.equal v (-1L) -> Some a
-       | _ ->
-           (match const_int64_value a with
-            | Some v when Int64.equal v (-1L) -> Some b
-            | _ -> None))
+      if is_neg_one b then Some a else if is_neg_one a then Some b else None
   | _ -> None
 
 let as_mul_const_signed n =

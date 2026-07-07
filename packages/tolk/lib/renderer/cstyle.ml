@@ -1433,6 +1433,12 @@ let render_uops (ctx : ctx) (uops : U.t list) : render_result =
     (fun u ->
       match U.op u with
       | Ops.Noop | Ops.Group -> ()
+      (* An empty void Stack is the rank-0 shape marker carried by scalar
+         Param sources: structural, nothing to render. *)
+      | Ops.Stack
+        when Array.length (U.src u) = 0
+             && Dtype.equal (U.dtype u) (Dtype.Val Dtype.Val.void) ->
+          ()
       | Ops.After ->
           let srcs = U.src u in
           if Array.length srcs > 0 then

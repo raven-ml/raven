@@ -325,7 +325,13 @@ let make_kernel_name t =
     List.map (fun s -> string_of_int (U.vmax s + 1)) specials
   in
   let rng_strs = List.map (fun r -> render_size (range_size r)) (rngs t) in
-  let raw = k_type ^ "_" ^ String.concat "_" (special_strs @ rng_strs) in
+  (* Reference builds ['_'.join([''] + parts)]: no separator at all when the
+     kernel has no dims, so a dimensionless kernel is named plain "E"/"r". *)
+  let raw =
+    k_type
+    ^ String.concat ""
+        (List.map (fun s -> "_" ^ s) (special_strs @ rng_strs))
+  in
   let fn = to_function_name raw in
   let cnt = 1 + Option.value ~default:0 (Hashtbl.find_opt kernel_cnt fn) in
   Hashtbl.replace kernel_cnt fn cnt;

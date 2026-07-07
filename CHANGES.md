@@ -33,6 +33,23 @@ thread.
 
 ### Tolk (new)
 
+- `examples/gpt2` now decodes through a per-layer key-value cache with
+  symbolic positions and a captured JIT: one kernel set serves every decode
+  step, taking greedy generation from ~2 tok/s to ~19 tok/s on CUDA
+  (`--validate` reproduces the reference texts on CUDA and CPU).
+- `Creation.full`/`zeros`/`ones` (and `_like` variants) now materialize a
+  fresh buffer by default so in-place `Op.assign` has storage to write to;
+  pass `~buffer:false` for the previous fold-into-consumers broadcast
+  constant.
+- `Run.realize` no longer fails on tensors whose graph folds to a constant
+  expression (e.g. a realized `arange`); they stay lazy.
+- Fix a shared-memory sizing miscompile in grouped reductions (the
+  `GROUP`+`LOCAL`+`UPCAST` matvec path raised "invalid RESHAPE"); local
+  staging buffers are now materialized by codegen.
+- Kernel-source fidelity fixes: float `x + y*-1` renders as `x - y`; folded
+  float constants keep full precision; kernels with two symbolic variables
+  no longer emit invalid `make_void()`; dimensionless kernels are named
+  `E`/`r` without a trailing underscore.
 - Add `tolk.nn`: `Embedding`, `Linear`, and `Layer_norm` layers plus
   `State.safe_load`/`State.load_state_dict` for loading safetensors
   checkpoints into layer parameters.
