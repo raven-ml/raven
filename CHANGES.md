@@ -271,6 +271,10 @@ thread.
 
 ### Rune
 
+- `jit` compiled programs now replay through device execution graphs (CUDA
+  graphs): consecutive kernels batch into single graph launches, honoring
+  `JIT` (>= 2 disables) and `JIT_BATCH_SIZE`. GPT-2 training drops ~116 to
+  ~110 ms/step and decode rises ~320 to ~380 tok/s on an H100.
 - **Breaking.** `jit` closure captures are now compile-time constants on
   every device: they are bound once when the trace compiles and never
   refreshed, and a jitted function that assigns to a capture (`assign`,

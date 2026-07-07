@@ -37,6 +37,25 @@ exception Jit_error of string
 (** Raised for JIT-specific errors: nested capture, empty capture, or an
     input mismatch on replay. *)
 
+(** {1:batching Graph batching} *)
+
+val batch_graphs : device:Device.t -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t
+(** [batch_graphs ~device linear] groups consecutive graph-compatible calls
+    of a compiled {!Tolk_uop.Ops.Linear} into {!Tolk_uop.Ops.Custom_function}
+    ["graph"] calls, each replayed as a single batched dispatch through the
+    device's {!Device.Graph} capability by {!Realize.run_linear}. A call is
+    compatible when its body is a compiled {!Tolk_uop.Ops.Program} (or a
+    {!Tolk_uop.Ops.Copy}, if the capability supports copies) and every buffer
+    argument lives on [device]; incompatible calls break the batch and
+    {!Tolk_uop.Ops.Slice} calls are dropped (argument resolution derives
+    offset views structurally). [JIT_BATCH_SIZE] caps the first batch and the
+    cap doubles per emitted batch. The identity when [JIT >= 2] or the device
+    has no graph capability.
+
+    {!call} applies this to its captured linear at lowering; it is exposed
+    for callers that compile with {!Realize.pm_compile} and replay through
+    {!Realize.run_linear} directly. *)
+
 (** {1:captured Captured schedule} *)
 
 type 'a captured_jit

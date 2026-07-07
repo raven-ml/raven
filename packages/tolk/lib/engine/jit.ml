@@ -202,6 +202,14 @@ let graph_split_rewrite ~device linear ~max_batch_size =
   if !batch <> [] then flush_batch ();
   U.linear (List.rev !new_src)
 
+(* Graph batching for a compiled LINEAR, honoring the JIT level: the identity
+   when batching is disabled (JIT >= 2). Also the entry point for callers that
+   drive Realize directly (rune's jit) instead of going through [call]. *)
+let batch_graphs ~device linear =
+  if jit_level < 2 then
+    graph_split_rewrite ~device linear ~max_batch_size:jit_batch_size
+  else linear
+
 (* Lower a captured LINEAR for replay: substitute each input buffer node with
    a PARAM carrying its slot index, plan intermediate buffer memory once over
    the combined schedule with [held_bufs] kept intact, compile every kernel,
@@ -223,9 +231,7 @@ let jit_lower ~device ~to_program linear held_bufs (input_uops : U.t array) =
   let linear = U.substitute ~walk:true mappings linear in
   let linear = Schedule.memory_plan_rewrite linear held_bufs in
   let linear = Realize.pm_compile ~device ~to_program linear in
-  if jit_level < 2 then
-    graph_split_rewrite ~device linear ~max_batch_size:jit_batch_size
-  else linear
+  batch_graphs ~device linear
 
 (* Captured schedule *)
 

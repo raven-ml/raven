@@ -1141,6 +1141,13 @@ let trace_compile ~device:dev ~zero_copy ~const_cache (module P : Nx.Ptree.S)
   let linear =
     Tolk.Realize.pm_compile ~device:dev ~to_program:(to_program dev) linear
   in
+  (* Batch consecutive graph-compatible kernels into device execution graphs
+     (CUDA graphs), so replay dispatches each batch as one launch instead of
+     one launch per kernel. Buffers rebound between replays (inputs, fresh
+     per-call outputs) are diff-patched into the recorded graph by
+     [Realize.run_linear]'s graph runner. Honors JIT (>= 2 disables) and
+     JIT_BATCH_SIZE. *)
+  let linear = Tolk.Jit.batch_graphs ~device:dev linear in
   let binding = Tolk.Realize.Buffers.create ~device:dev in
   let reserved = Hashtbl.create 16 in
   List.iter
