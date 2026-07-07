@@ -423,6 +423,119 @@ let uops_list_to_string uops =
 
 let pp_uops fmt uops = Format.pp_print_string fmt (uops_list_to_string uops)
 
+(* Compact scalar-expression rendering (kernel names, debug shapes). *)
+
+let strip_parens s =
+  let n = String.length s in
+  if n < 2 || s.[0] <> '(' || s.[n - 1] <> ')' then s
+  else
+    let d = ref 0 in
+    try
+      for i = 1 to n - 2 do
+        if s.[i] = '(' then incr d
+        else if s.[i] = ')' then (
+          decr d;
+          if !d < 0 then raise_notrace Exit)
+      done;
+      if !d = 0 then String.sub s 1 (n - 2) else s
+    with Exit -> s
+
+let binary_sym = function
+  | Ops.Add -> Some "+"
+  | Ops.Sub -> Some "-"
+  | Ops.Floordiv -> Some "//"
+  | Ops.Floormod -> Some "%"
+  | Ops.Shl -> Some "<<"
+  | Ops.Shr -> Some ">>"
+  | Ops.Mul -> Some "*"
+  | Ops.Cmplt -> Some "<"
+  | Ops.Cmpne -> Some "!="
+  | Ops.And -> Some "&"
+  | Ops.Or -> Some "|"
+  | Ops.Xor -> Some "^"
+  | _ -> None
+
+(* Comparisons have no precedence entry: they always keep their parens. *)
+let precedence = function
+  | Ops.Mul | Ops.Floordiv | Ops.Floormod -> Some 1
+  | Ops.Add | Ops.Sub -> Some 2
+  | Ops.Shl | Ops.Shr -> Some 3
+  | Ops.And -> Some 4
+  | Ops.Xor -> Some 5
+  | Ops.Or -> Some 6
+  | _ -> None
+
+let expr_to_string ?(simplify = true) u =
+  let u = if simplify then Uop.simplify u else u in
+  let memo = Ref_tbl.create 16 in
+  let rec go u =
+    match Ref_tbl.find_opt memo u with
+    | Some s -> s
+    | None ->
+        let s = render u in
+        Ref_tbl.replace memo u s;
+        s
+  and s0 u = go (src u).(0)
+  and s1 u = go (src u).(1)
+  and s2 u = go (src u).(2)
+  and render u =
+    match op u with
+    | Ops.Param -> (
+        match as_param u with
+        | Some { param = { name = Some name; _ }; _ } -> name
+        | Some { param = { slot; _ }; _ } -> "p" ^ string_of_int slot
+        | None -> uop_repr_debug_string u)
+    | Ops.Special -> (
+        match as_special u with
+        | Some { name; _ } -> name
+        | None -> uop_repr_debug_string u)
+    | Ops.Range -> "r" ^ range_debug_string u
+    | Ops.Const -> (
+        match arg u with
+        | Arg.Value c -> const_debug_string c
+        | _ -> uop_repr_debug_string u)
+    | Ops.Cast ->
+        let dt = dtype_debug_string (dtype u) in
+        let dt =
+          if String.length dt > 7 then String.sub dt 7 (String.length dt - 7)
+          else dt
+        in
+        Printf.sprintf "(%s)(%s)" dt (s0 u)
+    | Ops.Bind -> s0 u
+    | Ops.Neg -> Printf.sprintf "(-%s)" (s0 u)
+    | Ops.Reciprocal -> Printf.sprintf "(1/%s)" (s0 u)
+    | Ops.Max -> Printf.sprintf "max(%s, %s)" (s0 u) (s1 u)
+    | Ops.Mulacc -> Printf.sprintf "(%s*%s+%s)" (s0 u) (s1 u) (s2 u)
+    | Ops.Where -> Printf.sprintf "(%s if %s else %s)" (s1 u) (s0 u) (s2 u)
+    | Ops.Cdiv -> Printf.sprintf "cdiv(%s, %s)" (s0 u) (s1 u)
+    | Ops.Cmod -> Printf.sprintf "cmod(%s, %s)" (s0 u) (s1 u)
+    | o when Option.is_some (binary_sym o) ->
+        let sym = Option.get (binary_sym o) in
+        let left = s0 u and right = s1 u in
+        let prec op' = match precedence op' with Some p -> p | None -> 99 in
+        let left, right =
+          match precedence o with
+          | None -> left, right
+          | Some p ->
+              ( (if prec (op (src u).(0)) <= p then strip_parens left else left),
+                if prec (op (src u).(1)) < p then strip_parens right else right
+              )
+        in
+        Printf.sprintf "(%s%s%s)" left sym right
+    | Ops.Index | Ops.Stage ->
+        let srcs = src u in
+        let parts = ref [] in
+        for i = Array.length srcs - 1 downto 1 do
+          parts := Printf.sprintf "[%s]" (strip_parens (go srcs.(i))) :: !parts
+        done;
+        String.concat "" !parts
+    | Ops.Stack ->
+        let srcs = src u |> Array.to_list |> List.map go in
+        "{" ^ String.concat "," srcs ^ "}"
+    | _ -> uop_repr_debug_string u
+  in
+  go u
+
 let uops_to_string ?label root =
   let buf = Buffer.create 256 in
   let nodes = toposort root in

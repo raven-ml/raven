@@ -244,7 +244,9 @@ let colors t =
     (axis_types t) (rngs t)
 
 let render_size sz =
-  match U.const_int_value sz with Some n -> string_of_int n | None -> "s"
+  match U.const_int_value sz with
+  | Some n -> string_of_int n
+  | None -> Render.expr_to_string sz
 
 let colored_shape t =
   String.concat " "
@@ -318,11 +320,9 @@ let make_kernel_name t =
     List.filter (fun n -> U.op n = Ops.Special) (U.toposort t.ast)
     |> List.sort special_cmp
   in
+  (* Special sizes always print their upper bound, even when symbolic. *)
   let special_strs =
-    List.map
-      (fun s ->
-        match U.as_special s with Some v -> render_size v.size | None -> "?")
-      specials
+    List.map (fun s -> string_of_int (U.vmax s + 1)) specials
   in
   let rng_strs = List.map (fun r -> render_size (range_size r)) (rngs t) in
   let raw = k_type ^ "_" ^ String.concat "_" (special_strs @ rng_strs) in

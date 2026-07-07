@@ -261,6 +261,11 @@ type program_info = {
 }
 (** Tinygrad-shaped program metadata attached to {!Ops.Program}. *)
 
+val sanitize_function_name : string -> string
+(** [sanitize_function_name name] rewrites [name] to a valid C identifier:
+    characters outside [[A-Za-z0-9_]] are replaced by the uppercase
+    hexadecimal of their code point. *)
+
 val kernel_function_name : kernel_info -> string
 (** [kernel_function_name info] is [info.name] sanitized for backend
     function emission. *)

@@ -50,16 +50,10 @@ let ptr_size_shape n =
       if size >= 0 then Some [ size ] else None
   | D.Val _ -> None
 
-let replacement_addrspace node dtype =
-  match U.as_bind node with
-  | Some { var; _ } ->
-      (match U.as_param var with
-       | Some { param; _ } -> param.addrspace
-       | None -> D.Alu)
-  | None ->
-      (match dtype with
-       | D.Ptr p -> D.Ptr.addrspace p
-       | D.Val _ -> D.Global)
+let replacement_addrspace dtype =
+  match dtype with
+  | D.Ptr p -> D.Ptr.addrspace p
+  | D.Val _ -> D.Global
 
 let is_op op n = Ops.equal (U.op n) op
 
@@ -324,9 +318,25 @@ let add_tags ctx node =
    For multi-device tensors the buffer covers one shard and is wrapped
    in MULTI. *)
 let buffer_like ctx src dtype =
-  let shape = match ctx.shapes src with
-    | Some s -> s
-    | None -> failwith "buffer_like: unknown shape" in
+  match ctx.shapes src with
+  | None ->
+      (* Symbolic shape: allocate at the maximum size and shrink the view
+         down to the symbolic shape. *)
+      let dims =
+        try U.shape src
+        with Invalid_argument _ -> failwith "buffer_like: unknown shape"
+      in
+      let dev = match ctx.devices src with
+        | Some d -> d | None -> failwith "buffer_like: unknown device" in
+      let max_shape = List.map U.vmax dims in
+      let buf =
+        U.buffer ~slot:(U.fresh_buffer_slot ()) ~device:dev
+          ~shape:(shape_node max_shape) ~addrspace:D.Global ~dtype ()
+      in
+      U.shrink ~src:buf
+        ~offset:(shape_node (List.map (fun _ -> 0) dims))
+        ~size:(match dims with [ d ] -> d | ds -> U.stack ds)
+  | Some shape ->
   let dev = match ctx.devices src with
     | Some d -> d | None -> failwith "buffer_like: unknown device" in
   let axis =
@@ -555,35 +565,31 @@ let pm_replace_buf ctx node =
       | Some sh -> shape_node sh
       | None -> U.shape_to_shape_arg None
     in
-    (* A replaced BIND keeps the variable's name and bounds so the kernel
-       graph can recover the symbolic variable, while different bound values
-       normalise to the same cache key. *)
-    let name, vmin_vmax =
-      match U.as_bind b with
-      | Some { var; _ } ->
-          ((match U.as_param var with
-            | Some { param = { name; _ }; _ } -> name
-            | None -> None),
-           Some (U.vmin b, U.vmax b))
-      | None -> (None, None)
-    in
-    let addrspace = replacement_addrspace b dtype in
-    (* A buffer is always numel-shaped: a scalar output is a size-1 buffer
-       viewed as a scalar. Emitting a bare scalar PARAM loses the size-1
-       dimension that scheduling needs to index the store at offset 0, so
-       give it shape [1] and reshape to the scalar shape. A replaced BIND is
-       a scalar symbolic value, not a buffer, and keeps its scalar shape. *)
-    match ctx.shapes b with
-    | Some [] when U.op b <> Ops.Bind ->
-        let param =
-          U.param ~slot:idx ~dtype ~shape:(shape_node [ 1 ]) ?device
-            ?vmin_vmax ?name ~addrspace ()
+    let addrspace = replacement_addrspace dtype in
+    match U.as_bind b, ctx.shapes b with
+    | Some { var; _ }, _ ->
+        (* A bound variable keeps its name and range so the kernel graph can
+           recover the canonical variable; the value is stripped so different
+           bind values hit the same schedule cache. *)
+        let vmin_vmax, name =
+          match U.as_param var with
+          | Some { param = { vmin_vmax; name; _ }; _ } -> vmin_vmax, name
+          | None -> None, None
         in
-        Some (U.reshape ~src:param ~shape:(shape_node []))
-    | _ ->
         Some
           (U.param ~slot:idx ~dtype ~shape ?device ?vmin_vmax ?name ~addrspace
              ())
+    (* A buffer is always numel-shaped: a scalar output is a size-1 buffer
+       viewed as a scalar. Emitting a bare scalar PARAM loses the size-1
+       dimension that scheduling needs to index the store at offset 0, so
+       give it shape [1] and reshape to the scalar shape. *)
+    | None, Some [] ->
+        let param =
+          U.param ~slot:idx ~dtype ~shape:(shape_node [ 1 ]) ?device
+            ~addrspace ()
+        in
+        Some (U.reshape ~src:param ~shape:(shape_node []))
+    | None, _ -> Some (U.param ~slot:idx ~dtype ~shape ?device ~addrspace ())
   in
   match U.op node, U.children node with
   | Ops.Buffer, _ ->

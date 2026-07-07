@@ -982,6 +982,69 @@ let split_reduce_tests =
           is_true has_split_range);
     ]
 
+(* Symbolic variables through the kernel split *)
+
+let symbolic_variable_tests =
+  (* The tensor graph a bound variable produces after callify: a named,
+     ranged scalar PARAM sizing a SHRINK. *)
+  let named_param () =
+    U.param ~slot:1 ~dtype:D.weakint ~shape:(U.stack [])
+      ~vmin_vmax:(1, 7) ~name:"start_pos" ()
+  in
+  let symbolic_shrink_sink () =
+    let buf = mk_param ~idx:0 [ 8 ] in
+    let size =
+      U.alu_binary ~op:Ops.Add ~lhs:(named_param ()) ~rhs:(weak_int 1)
+    in
+    let shr = U.shrink ~src:buf ~offset:(weak_int 0) ~size in
+    let red = U.reduce_axis ~src:shr ~op:Ops.Add ~axes:[ 0 ] in
+    wrap_sink red
+  in
+  let kernel_body graph =
+    match
+      List.find_opt (fun u -> op_is Ops.Call u) (U.toposort graph)
+    with
+    | Some call ->
+        (match U.as_call call with
+         | Some { body; _ } -> body
+         | None -> fail "expected CALL view")
+    | None -> fail "expected a kernel CALL"
+  in
+  let canonical_variable body =
+    List.find_opt
+      (fun u ->
+        match U.as_param u with
+        | Some
+            { param =
+                { slot = -1; addrspace = D.Alu; name = Some "start_pos";
+                  vmin_vmax = Some (1, 7); _ };
+              _ } ->
+            true
+        | _ -> false)
+      (U.toposort ~enter_calls:true body)
+  in
+  group "symbolic variables"
+    [
+      test "named PARAM normalises to the canonical variable" (fun () ->
+          let graph = Rangeify.get_kernel_graph (symbolic_shrink_sink ()) in
+          let body = kernel_body graph in
+          is_true ~msg:"kernel body contains the canonical variable"
+            (Option.is_some (canonical_variable body)));
+      test "program_info_from_sink collects the variable" (fun () ->
+          let graph = Rangeify.get_kernel_graph (symbolic_shrink_sink ()) in
+          let body = kernel_body graph in
+          let info = U.program_info_from_sink body in
+          let var_names =
+            List.filter_map
+              (fun v ->
+                match U.as_param v with
+                | Some { param = { name; _ }; _ } -> name
+                | None -> None)
+              info.vars
+          in
+          equal (list string) [ "start_pos" ] var_names);
+    ]
+
 (* Main *)
 
 let () =
@@ -997,4 +1060,5 @@ let () =
       get_kernel_graph_tests;
       reshape_merge_tests;
       split_reduce_tests;
+      symbolic_variable_tests;
     ]

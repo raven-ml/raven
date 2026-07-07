@@ -26,3 +26,10 @@ val uops_to_string : ?label:string -> Uop.t -> string
 (** [uops_to_string ?label root] is {!uops_list_to_string} over
     {!Uop.toposort}[ root]. When supplied, [label] is printed as a
     ["=== label ==="] header before the rows. *)
+
+val expr_to_string : ?simplify:bool -> Uop.t -> string
+(** [expr_to_string ?simplify u] is a compact one-line rendering of the
+    scalar expression [u]: named parameters print as their name, constants
+    as their value, and arithmetic with the usual infix operators (redundant
+    parentheses stripped by precedence). Used for kernel names and debug
+    shape displays. [simplify] (default [true]) canonicalises [u] first. *)

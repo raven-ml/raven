@@ -159,8 +159,9 @@ module Compiled_runner = struct
     let prg = match prg with
       | Some h -> h
       | None ->
-          Device.runtime device (Program_spec.name p) lib
-            ~runtimevars:(runtimevars_of_spec p)
+          Device.runtime device
+            (Tolk_uop.Uop.sanitize_function_name (Program_spec.name p))
+            lib ~runtimevars:(runtimevars_of_spec p)
     in
     let call bufs var_vals ~wait ~timeout =
       let global, local = Program_spec.launch_dims p var_vals in
@@ -292,7 +293,7 @@ let get_runtime ~device program (info : Tolk_uop.Uop.program_info) =
   | None ->
       let lib = Bytes.of_string (program_binary program) in
       let prg =
-        Device.runtime device info.name lib
+        Device.runtime device (U.program_function_name info) lib
           ~runtimevars:(U.program_runtimevars info)
       in
       Hashtbl.replace runtime_cache ckey prg;

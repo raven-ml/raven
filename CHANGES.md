@@ -33,6 +33,12 @@ thread.
 
 ### Tolk (new)
 
+- Kernels with symbolic sizes now render with reference-parity kernel names
+  (e.g. `r_28start_pos2B129`), symbolic loop bounds, and symbolic GPU launch
+  dimensions; new `Render.expr_to_string` renders scalar expressions
+  compactly.
+- Fix reductions over symbolically-sized axes silently collapsing: range
+  creation now consults expression-level shapes.
 - Support symbolic shapes in the tensor frontend: new `Movement.symbolic_shrink`,
   `symbolic_reshape`, and `symbolic_broadcast_to` entry points, and
   symbolic-shape handling through broadcasting, `dot`, `softmax`, reductions,

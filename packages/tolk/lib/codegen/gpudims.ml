@@ -151,7 +151,12 @@ let rec get_grouped_dims kind dims max_sizes ~reverse =
            | Some limited when not (same_uop_array limited dims) ->
                limited
            | Some _ | None ->
-               split_dims idims max_sizes |> Array.map U.O.int_)
+               (* [split_dims] returns its argument physically unchanged when
+                  every dim fits; keep the original (possibly symbolic) dims
+                  in that case. *)
+               let split = split_dims idims max_sizes in
+               if split == idims then dims
+               else Array.map U.O.int_ split)
     in
     let raw =
       Array.mapi (fun i s ->

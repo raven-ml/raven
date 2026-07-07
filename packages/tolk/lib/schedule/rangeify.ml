@@ -204,7 +204,14 @@ let rec shape_expr_of n =
       if Array.length (U.src n) = 0 then None else shape_expr_of (src0 n)
   | op when Ops.Group.is_elementwise op ->
       U.children n |> List.filter_map shape_expr_of |> broadcast_shape_expr
-  | _ -> Option.map (List.map int_) (shape_of n)
+  | _ -> (
+      match shape_of n with
+      | Some sh -> Some (List.map int_ sh)
+      | None -> (
+          (* Symbolic dimensions (e.g. a SHRINK sized by a variable) are
+             invisible to the concrete [shape_of]; fall back to the
+             expression-level shape. *)
+          try Some (U.shape n) with Invalid_argument _ -> None))
 
 let argsort order =
   List.map snd (List.sort compare (List.mapi (fun i o -> (o, i)) order))
@@ -1231,7 +1238,8 @@ type split_context = {
   mutable slot : int;
   buf_map : U.t U.Ref_tbl.t;
   mutable formals : (int * U.t) list;
-  vars : U.t U.Ref_tbl.t;
+  (* BINDs unbound inside the kernel, most recent first. *)
+  mutable vars : U.t list;
   mutable range_ctr : int;
   mutable opts : U.Opt.t list option;
   buf_shapes : int list U.Ref_tbl.t;
@@ -1239,7 +1247,7 @@ type split_context = {
 
 let create_split_context () =
   { slot = 0; buf_map = U.Ref_tbl.create 16; formals = [];
-    vars = U.Ref_tbl.create 4;
+    vars = [];
     range_ctr = 0;
     opts = None; buf_shapes = U.Ref_tbl.create 16 }
 
@@ -1344,7 +1352,7 @@ let handle_after ctx n =
     Some buf
 
 let unbind_kernel ctx n =
-  U.Ref_tbl.replace ctx.vars n n;
+  if not (List.exists (( == ) n) ctx.vars) then ctx.vars <- n :: ctx.vars;
   Option.map (fun (v : U.bind_view) -> v.var) (U.as_bind n)
 
 let renumber_range ctx n =
@@ -1430,29 +1438,27 @@ let to_define_global ctx n =
   match U.op n with
   | Ops.Store -> find_bufs n
   | Ops.Buffer | Ops.Mstack | Ops.Mselect -> debuf ctx n
-  (* A named, bounded PARAM is a symbolic variable in disguise (the callified
-     form of a BIND input): normalise it back to the canonical variable. *)
-  | Ops.Param
-    when (match U.as_param n with
-        | Some { param = { name = Some _; vmin_vmax = Some _; _ }; _ } -> true
-        | _ -> false) ->
-      (match U.as_param n, U.dtype n with
-       | Some { param = { name = Some name; vmin_vmax = Some (lo, hi); _ }; _ },
-         Dtype.Val dt ->
-           let v = U.variable ~name ~min_val:lo ~max_val:hi ~dtype:dt () in
-           if U.equal v n then None else Some v
-       | _ -> None)
-  | Ops.Param
-    when (match U.as_param n, U.dtype n with
-        | Some { param = { name = None; _ }; shape }, Dtype.Val _
-          when U.op shape <> Ops.Noop -> true
-        | _ -> false) ->
-      debuf ctx n
+  | Ops.Param -> (
+      match U.as_param n, U.dtype n with
+      (* A named, ranged PARAM normalises to the canonical variable so
+         binding identity survives the kernel split. *)
+      | Some { param = { name = Some name; vmin_vmax = Some (lo, hi); _ }; _ },
+        dtype ->
+          Some
+            (U.variable ~name ~min_val:lo ~max_val:hi
+               ~dtype:(Dtype.val_of dtype) ())
+      | Some { param = { name = None; _ }; shape }, Dtype.Val _
+        when U.op shape <> Ops.Noop ->
+          debuf ctx n
+      | _ -> None)
   | Ops.Bind -> unbind_kernel ctx n
   | Ops.After -> handle_after ctx n
-  | Ops.Index when Array.length (U.src n) = 1
-                   && U.op (src0 n) = Ops.Param
-                   && U.addrspace (src0 n) = Some Dtype.Alu ->
+  (* ALU params are scalar symbolic values, not buffers. *)
+  | Ops.Index
+    when Array.length (U.src n) = 1
+         && (match U.as_param (src0 n) with
+            | Some { param = { addrspace = Dtype.Alu; _ }; _ } -> true
+            | _ -> false) ->
       Some (src0 n)
   | Ops.Stage ->
       (match U.as_stage n with
@@ -1481,42 +1487,18 @@ let compact_kernel_params ctx body =
          | _ -> acc)
       [] topo
   in
-  let vars =
-    List.fold_left
-      (fun acc n ->
-         match U.as_param n with
-         | Some { param = { addrspace = Dtype.Alu; _ }; _ } -> add_unique acc n
-         | _ -> acc)
-      [] topo
-  in
-  let buffer_slot_count = List.length params in
   let buffer_slot_map = List.mapi (fun slot param -> param, slot) params in
-  let var_slot_map =
-    List.mapi (fun i n -> n, buffer_slot_count + i) vars
-  in
   let find_buffer_slot old =
     List.find_map
       (fun (param, slot) -> if param == old then Some slot else None)
       buffer_slot_map
   in
-  let find_var_slot n =
-    List.find_map
-      (fun (var, slot) -> if var == n then Some slot else None)
-      var_slot_map
-  in
   let body =
     U.graph_rewrite ~name:"compact kernel params" ~walk:true
       (fun n ->
          match U.as_param n with
-         | Some { param; _ } when param.addrspace = Dtype.Alu -> (
-             match find_var_slot n with
-             | Some slot when slot <> param.slot ->
-                 Some
-                   (U.replace n
-                      ~arg:(U.Arg.Param_arg { param with slot })
-                      ())
-             | _ -> None)
-         | Some { param; _ } when param.slot >= 0 -> (
+         | Some { param; _ }
+           when param.slot >= 0 && param.addrspace <> Dtype.Alu -> (
              match find_buffer_slot n with
              | Some slot when slot <> param.slot ->
                  Some
@@ -1544,7 +1526,7 @@ let compact_kernel_params ctx body =
          | None -> param_node)
       params
   in
-  body, bufs @ vars
+  body, bufs @ List.rev ctx.vars
 
 let split_store n =
   match U.op n with

@@ -1,4 +1,11 @@
 (tests
  (names test_realize test_jit test_jit_capture test_schedule)
+ (modules test_realize test_jit test_jit_capture test_schedule)
  (package tolk)
  (libraries unix tolk tolk.uop tolk.cpu windtrap))
+
+(test
+ (name test_symbolic)
+ (modules test_symbolic)
+ (package tolk)
+ (libraries tolk tolk.uop tolk.cpu tolk.cuda windtrap))

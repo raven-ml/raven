@@ -1,0 +1,6 @@
+void E_28start_pos2B129n1(float* restrict data0_128, float* restrict data1_128, const int data2_) {
+  for (int Lidx0 = 0; Lidx0 < (data2_+1); Lidx0++) {
+    float val0 = (*(data1_128+Lidx0));
+    *(data0_128+Lidx0) = -val0;
+  }
+}

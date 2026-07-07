@@ -893,7 +893,7 @@ let base_rewrite : ctx rule list =
             Some
               (strf "%s; /* %s */"
                  (ctx.lang.code_for_workitem v.name)
-                 (lookup ctx v.size))
+                 (Render.expr_to_string v.size))
         | None -> None );
     (* CONST rules *)
     ( op ~name:"x" Ops.Const,
@@ -1657,7 +1657,9 @@ let render (lang : language) ?name:name_override (uops : U.t list) : string =
   let name = Option.value ~default:name name_override in
   let prefix = lang.preamble lang uops in
   let prefix = if prefix = [] then None else Some prefix in
-  lang.render_kernel ctx ~function_name:name ~kernel ~bufs ~uops ~prefix
+  lang.render_kernel ctx
+    ~function_name:(U.sanitize_function_name name)
+    ~kernel ~bufs ~uops ~prefix
 
 (* Default C-style renderer.  Mirrors CStyleLanguage defaults. *)
 let default_type_map scalar = Some (c_scalar_to_string scalar)

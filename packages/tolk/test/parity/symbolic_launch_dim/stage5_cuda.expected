@@ -1,0 +1,14 @@
+   0 Ops.CONST           :            dtypes.int                               []                               128
+   1 Ops.PARAM           :            dtypes.float                             ['128']                          ParamArg(0, device='CPU')
+   2 Ops.STACK           :            dtypes.void                              []                               None
+   3 Ops.PARAM           :            dtypes.int                               [2]                              ParamArg(2, vmin_vmax=(1, 127), name='start_pos', addrspace=AddrSpace.ALU)
+   4 Ops.CONST           :            dtypes.int                               []                               1
+   5 Ops.ADD             :            dtypes.int                               [3, '1']                         None
+   6 Ops.SPECIAL         :            dtypes.int                               [5]                              gidx0
+   7 Ops.INDEX           :            dtypes.float                             [1, 6]                           None
+   8 Ops.PARAM           :            dtypes.float                             ['128']                          ParamArg(1, device='CPU')
+   9 Ops.INDEX           :            dtypes.float                             [8, 6]                           None
+  10 Ops.LOAD            :            dtypes.float                             [9]                              None
+  11 Ops.NEG             :            dtypes.float                             [10]                             None
+  12 Ops.STORE           :            dtypes.void                              [7, 11]                          None
+  13 Ops.SINK            :            dtypes.void                              [12]                             KernelInfo(name='E_(start_pos+1)n2', axis_types=(), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None, beam=0)
