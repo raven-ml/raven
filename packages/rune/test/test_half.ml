@@ -14,26 +14,6 @@ open Rune_test_support.Support
 let f16 = Nx.float16
 let bf16 = Nx.bfloat16
 
-(* tolk's CPU renderer assumes clang handles [__bf16] on x86-64, but clang
-   < 15 rejects it, so bfloat16 kernels fail to compile on such hosts (tolk
-   bug: the renderer should probe the compiler and fall back to its float32
-   emulation path, as it already does on riscv64). Probe once and skip the
-   bfloat16 jit/pmap tests when the host compiler is affected; float16 and
-   the eager path are unaffected. *)
-let bf16_jit_probe =
-  lazy
-    (match
-       to_arr
-         (Rune.jit' (fun x -> Nx.add x x) (Nx.cast bf16 (vec32 [| 1.0; 2.0 |])))
-     with
-    | _ -> Ok ()
-    | exception _ -> Error "host clang cannot compile __bf16 kernels")
-
-let require_bf16_jit () =
-  match Lazy.force bf16_jit_probe with
-  | Ok () -> ()
-  | Error msg -> skip ~reason:msg ()
-
 (* Deterministic inputs in [-1, 1]. *)
 let sin_data n = Array.init n (fun i -> sin (float_of_int (i + 1)))
 let cos_data n = Array.init n (fun i -> 0.5 *. cos (float_of_int (i + 1)))
@@ -69,11 +49,7 @@ let test_sandwich_grad (type b) name (dt : (float, b) Nx.dtype) ~tol () =
   check_arr ~eps:tol ~msg:(name ^ " loss vs fp32 reference") (to_arr v_ref) v;
   check_arr ~eps:tol ~msg:(name ^ " grad vs fp32 reference") (to_arr g_ref) g
 
-let no_require () = ()
-
-let test_sandwich_grad_jit (type b) name (dt : (float, b) Nx.dtype) ~require
-    ~tol () =
-  require ();
+let test_sandwich_grad_jit (type b) name (dt : (float, b) Nx.dtype) ~tol () =
   let x, w = sandwich_inputs () in
   let eager = Rune.grad' (sandwich_loss dt x) w in
   let jitted = Rune.jit' (fun w -> Rune.grad' (sandwich_loss dt x) w) in
@@ -93,8 +69,7 @@ let check_eager_vs_jit ~eps ~msg f x =
   check_arr ~eps ~msg:(msg ^ " first call") (to_arr (f x)) (g x);
   check_arr ~eps ~msg:(msg ^ " replay") (to_arr (f x)) (g x)
 
-let test_jit_matmul (type b) name (dt : (float, b) Nx.dtype) ~require ~eps () =
-  require ();
+let test_jit_matmul (type b) name (dt : (float, b) Nx.dtype) ~eps () =
   let b = half_mat dt 8 3 cos_data in
   let f a = Nx.matmul a b in
   check_eager_vs_jit ~eps ~msg:(name ^ " matmul") f (half_mat dt 4 8 sin_data)
@@ -103,9 +78,7 @@ let softmax_graph x =
   let e = Nx.exp x in
   Nx.div e (Nx.sum e ~axes:[ 1 ] ~keepdims:true)
 
-let test_jit_softmax (type b) name (dt : (float, b) Nx.dtype) ~require ~eps ()
-    =
-  require ();
+let test_jit_softmax (type b) name (dt : (float, b) Nx.dtype) ~eps () =
   check_eager_vs_jit ~eps
     ~msg:(name ^ " softmax")
     softmax_graph (half_mat dt 3 5 sin_data)
@@ -116,9 +89,7 @@ let layernorm_graph (type b) (dt : (float, b) Nx.dtype) x =
   let v = Nx.mean (Nx.mul d d) ~axes:[ 1 ] ~keepdims:true in
   Nx.mul d (Nx.rsqrt (Nx.add v (Nx.scalar dt 1e-3)))
 
-let test_jit_layernorm (type b) name (dt : (float, b) Nx.dtype) ~require ~eps
-    () =
-  require ();
+let test_jit_layernorm (type b) name (dt : (float, b) Nx.dtype) ~eps () =
   check_eager_vs_jit ~eps
     ~msg:(name ^ " layernorm")
     (layernorm_graph dt) (half_mat dt 3 6 sin_data)
@@ -142,7 +113,6 @@ let devs2 = [ "CPU:1"; "CPU:2" ]
    bfloat16. Each device rounds its partial sum to bfloat16 before the
    combine, so allow a couple of ulps against the single-device result. *)
 let test_pmap_bf16_allreduce () =
-  require_bf16_jit ();
   let f x = Nx.sum x ~axes:[ 0 ] in
   let x = half_mat bf16 4 6 sin_data in
   let expect = Rune.jit' f x in
@@ -154,7 +124,6 @@ let test_pmap_bf16_allreduce () =
 (* No cross-device reduce: shards are independent, so the pmap result is
    bit-equal to the single-device one. *)
 let test_pmap_bf16_elementwise () =
-  require_bf16_jit ();
   let f x = Nx.mul x x in
   let x = half_mat bf16 4 6 sin_data in
   let expect = Rune.jit' f x in
@@ -162,7 +131,6 @@ let test_pmap_bf16_elementwise () =
   check_arr ~eps:0.0 ~msg:"bf16 elementwise byte-equal" (to_arr expect) (g x)
 
 let test_pmap_bf16_mean_grad () =
-  require_bf16_jit ();
   let loss x = Nx.mean (Nx.mul x x) in
   let grads x = Rune.grad' loss x in
   let x = half_mat bf16 4 6 sin_data in
@@ -191,27 +159,20 @@ let tests =
         test "float16 grad is fp32 and matches the fp32 reference"
           (test_sandwich_grad "float16" f16 ~tol:0.005);
         test "bfloat16 sandwich grad under jit"
-          (test_sandwich_grad_jit "bfloat16" bf16 ~require:require_bf16_jit
-             ~tol:0.02);
+          (test_sandwich_grad_jit "bfloat16" bf16 ~tol:0.02);
         test "float16 sandwich grad under jit"
-          (test_sandwich_grad_jit "float16" f16 ~require:no_require ~tol:0.005);
+          (test_sandwich_grad_jit "float16" f16 ~tol:0.005);
       ];
     group "eager vs jit"
       [
-        test "float16 matmul"
-          (test_jit_matmul "float16" f16 ~require:no_require ~eps:0.01);
-        test "bfloat16 matmul"
-          (test_jit_matmul "bfloat16" bf16 ~require:require_bf16_jit ~eps:0.07);
-        test "float16 softmax"
-          (test_jit_softmax "float16" f16 ~require:no_require ~eps:0.002);
-        test "bfloat16 softmax"
-          (test_jit_softmax "bfloat16" bf16 ~require:require_bf16_jit
-             ~eps:0.016);
+        test "float16 matmul" (test_jit_matmul "float16" f16 ~eps:0.01);
+        test "bfloat16 matmul" (test_jit_matmul "bfloat16" bf16 ~eps:0.07);
+        test "float16 softmax" (test_jit_softmax "float16" f16 ~eps:0.002);
+        test "bfloat16 softmax" (test_jit_softmax "bfloat16" bf16 ~eps:0.016);
         test "float16 layernorm"
-          (test_jit_layernorm "float16" f16 ~require:no_require ~eps:0.008);
+          (test_jit_layernorm "float16" f16 ~eps:0.008);
         test "bfloat16 layernorm"
-          (test_jit_layernorm "bfloat16" bf16 ~require:require_bf16_jit
-             ~eps:0.06);
+          (test_jit_layernorm "bfloat16" bf16 ~eps:0.06);
       ];
     group "pmap"
       [

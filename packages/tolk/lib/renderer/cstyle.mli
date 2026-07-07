@@ -20,7 +20,7 @@
 
 (** {1:cpu CPU} *)
 
-val clang : Gpu_target.cpu -> Renderer.t
+val clang : ?native_bf16:bool -> Gpu_target.cpu -> Renderer.t
 (** [clang arch] is a Clang/CPU renderer with SIMD support.
 
     Generates C code for host CPU execution using Clang extensions:
@@ -36,6 +36,12 @@ val clang : Gpu_target.cpu -> Renderer.t
     x86_64 and arm64 targets and storage-emulated on riscv64, matching
     tinygrad's Clang renderer policy.
 
+    [native_bf16] (default [true]) states whether the host C compiler accepts
+    the [__bf16] storage type (Clang gained it on x86-64 in version 15). When
+    [false], bfloat16 is storage-emulated through float32 on every target,
+    like riscv64. Runtimes should pass the result of a compiler probe such as
+    [Compiler_cpu.supports_bf16].
+
     {b Note.} Reads environment variables at module initialization:
     - [THREADS]: set to [0] to disable host-side threading (default: enabled).
     - [CPU_COUNT]: override logical CPU count for thread pool size.
@@ -43,7 +49,7 @@ val clang : Gpu_target.cpu -> Renderer.t
     See also {!clang_no_abi} for tests and runtimes that intentionally bypass
     the fixed ABI wrapper. *)
 
-val clang_no_abi : Gpu_target.cpu -> Renderer.t
+val clang_no_abi : ?native_bf16:bool -> Gpu_target.cpu -> Renderer.t
 (** [clang_no_abi arch] is {!clang} without the fixed-ABI wrapper.
 
     Generates a plain [void name(...)] signature with individual typed

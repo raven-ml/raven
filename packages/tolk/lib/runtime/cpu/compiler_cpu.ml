@@ -182,3 +182,15 @@ let compile_clang src =
         else Printf.sprintf "%s failed:\n%s" label err
       in
       raise (Compiler.Compile_error msg)
+
+(* Clang only gained __bf16 on x86-64 in version 15, so older toolchains
+   reject bfloat16 kernel source. Probe the actual compiler once per process
+   instead of parsing version strings. *)
+let supports_bf16 =
+  let probe =
+    lazy
+      (match compile_clang "__bf16 f(__bf16 *x) { return x[0]; }" with
+      | (_ : bytes) -> true
+      | exception Compiler.Compile_error _ -> false)
+  in
+  fun () -> Lazy.force probe

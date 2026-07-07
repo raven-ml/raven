@@ -2765,19 +2765,19 @@ let supports_qcom_dtype dt =
       false
   | _ -> true
 
-let supports_clang_dtype arch dt =
+let supports_clang_dtype ~native_bf16 arch dt =
   match Dtype.scalar dt with
   | Dtype.Bfloat16 -> (
       match arch with
-      | Gpu_target.X86_64 | Gpu_target.Arm64 -> true
+      | Gpu_target.X86_64 | Gpu_target.Arm64 -> native_bf16
       | Gpu_target.Riscv64 -> false)
   | Dtype.Fp8e4m3 | Dtype.Fp8e5m2 | Dtype.Fp8e4m3fnuz
   | Dtype.Fp8e5m2fnuz ->
       false
   | _ -> true
 
-let clang_emulated_floats arch =
-  if supports_clang_dtype arch Dtype.bfloat16 then []
+let clang_emulated_floats ~native_bf16 arch =
+  if supports_clang_dtype ~native_bf16 arch Dtype.bfloat16 then []
   else [ (Dtype.Bfloat16, Dtype.Float32) ]
 
 let supports_metal_dtype arch dt =
@@ -2813,25 +2813,25 @@ let supports_amd_dtype arch dt =
   | Dtype.Fp8e4m3fnuz | Dtype.Fp8e5m2fnuz -> false
   | _ -> true
 
-let clang_no_abi arch =
+let clang_no_abi ?(native_bf16 = true) arch =
   Renderer.make ~name:"clang" ~device:"CPU" ~has_local:false
     ~has_threads:(getenv "THREADS" 1 <> 0) ~has_shared:false
     ~shared_max:0 ~global_max:[ host_cpu_count (); 0; 0 ]
     ~local_max:[ 0; 0; 0 ]
     ~code_for_op:code_ops_clang ~extra_matcher:clang_language.extra_matcher
-    ~supports_dtype:(supports_clang_dtype arch)
-    ~emulated_floats:(clang_emulated_floats arch)
+    ~supports_dtype:(supports_clang_dtype ~native_bf16 arch)
+    ~emulated_floats:(clang_emulated_floats ~native_bf16 arch)
     ~render:(render clang_language) ()
 
-let clang arch =
+let clang ?(native_bf16 = true) arch =
   Renderer.make ~name:"clang" ~device:"CPU" ~has_local:false
     ~has_threads:(getenv "THREADS" 1 <> 0) ~has_shared:false
     ~shared_max:0 ~global_max:[ host_cpu_count (); 0; 0 ]
     ~local_max:[ 0; 0; 0 ]
     ~code_for_op:code_ops_clang
     ~extra_matcher:clang_fixed_abi_language.extra_matcher
-    ~supports_dtype:(supports_clang_dtype arch)
-    ~emulated_floats:(clang_emulated_floats arch)
+    ~supports_dtype:(supports_clang_dtype ~native_bf16 arch)
+    ~emulated_floats:(clang_emulated_floats ~native_bf16 arch)
     ~render:(render clang_fixed_abi_language) ()
 
 let opencl arch =

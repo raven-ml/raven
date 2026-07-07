@@ -33,6 +33,11 @@ thread.
 
 ### Tolk (new)
 
+- CPU jit: bfloat16 kernels no longer fail with `Compiler.Compile_error` on
+  hosts whose clang predates `__bf16` support (clang < 15 on x86-64). The
+  CPU device now probes the compiler once and falls back to the float32
+  storage-emulation path already used on riscv64; `Cstyle.clang`/
+  `clang_no_abi` gained an optional `?native_bf16` flag.
 - `Tolk_nn.Linear.create` and `Embedding.create` now randomly initialise
   their parameters (uniform `±1/sqrt in_features`, Glorot uniform) instead
   of zeros.

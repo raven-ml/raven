@@ -343,7 +343,10 @@ let create name =
   in
   let synchronize () = Cpu_queue.synchronize state in
   let renderer =
-    Renderer.with_compiler clang (Cstyle.clang (Gpu_target.host_cpu ()))
+    Renderer.with_compiler clang
+      (Cstyle.clang
+         ~native_bf16:(Compiler_cpu.supports_bf16 ())
+         (Gpu_target.host_cpu ()))
   in
   let renderer_set = Device.Renderer_set.make [renderer, None] in
   let allocator =

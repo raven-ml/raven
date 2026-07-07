@@ -984,6 +984,18 @@ let () =
             then
               failwith "riscv64 clang should storage-emulate bfloat16";
             if
+              Renderer.supports_dtype
+                (Cstyle.clang ~native_bf16:false Gpu_target.X86_64)
+                Dtype.bfloat16
+            then
+              failwith "clang without native __bf16 should not advertise bfloat16";
+            if
+              Renderer.emulated_float_dtypes
+                (Cstyle.clang ~native_bf16:false Gpu_target.X86_64)
+              <> [ (Dtype.Bfloat16, Dtype.Float32) ]
+            then
+              failwith "clang without native __bf16 should storage-emulate bfloat16";
+            if
               Renderer.emulated_float_dtypes (Cstyle.opencl "cl_khr_fp16")
               <> []
             then

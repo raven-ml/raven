@@ -40,3 +40,15 @@ val compile_clang : string -> bytes
     Raises {!Compiler.Compile_error} if clang cannot be started or exits with a
     non-zero status, or if the host architecture is unsupported. The error
     message includes clang's stderr output when available. *)
+
+val supports_bf16 : unit -> bool
+(** [supports_bf16 ()] is [true] iff the host C compiler accepts the [__bf16]
+    type when targeting the host architecture.
+
+    Clang only gained [__bf16] on x86-64 in version 15, so older toolchains
+    reject bfloat16 kernel source. The result is determined by compiling a
+    one-line probe with the same flags as {!compile_clang} and is computed at
+    most once per process.
+
+    Pass the result as [native_bf16] when constructing a CPU renderer so that
+    bfloat16 kernels fall back to storage emulation on affected hosts. *)
