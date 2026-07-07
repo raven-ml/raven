@@ -1,4 +1,4 @@
-(executable
- (name main)
- (modules gpt2 main)
- (libraries kaun kaun.hf jsont brot nx rune unix))
+(executables
+ (names main train)
+ (modules gpt2 main train)
+ (libraries kaun kaun.hf vega jsont jsont.bytesrw brot nx rune unix))

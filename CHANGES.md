@@ -174,6 +174,9 @@ thread.
 
 ### Vega (new)
 
+- `sgd_step` with `momentum = 0.` (the default) no longer reads or updates
+  the velocity state; under `Rune.jit` this stops parameter-sized zero
+  velocities from being captured and transferred every step.
 - New package: gradient-based optimizers and learning-rate schedules. Built
   on Nx with no autodiff dependency. Equivalent to Optax in JAX.
 - The primary surface is structural: `sgd_init`/`sgd_step`,
@@ -239,6 +242,11 @@ thread.
 
 ### Rune
 
+- Inside `jit`, `Nx.full`/`Nx.zeros`/`Nx.ones` (and `*_like`) now trace as
+  broadcast scalar constants instead of captured host tensors re-uploaded on
+  every call, scalar constants fold into kernels as immediates, and replay
+  reuses its transfer staging buffers — a jitted GPT-2 124M train step on
+  CUDA drops from ~2.1 s to ~0.35 s.
 - `jit` uploads closure-captured tensors to non-CPU devices once per
   compilation instead of on every call (captures the function assigns to are
   still re-read each call, so in-place state carries across calls). Jitted
@@ -287,6 +295,10 @@ thread.
 
 ### Kaun
 
+- New GPT-2 training example (`examples/04-gpt2/train.ml`): jitted
+  forward+backward+SGD via `Rune.jit2` and `Vega.sgd_step` with the tied
+  `wte` LM head, exporting per-step metrics and final weights as
+  safetensors.
 - Add key-value cache decoding to `Attention`: `cache`, `apply_cached`, and
   `map_cache`/`map2_cache`/`iter_cache`. The cache is functional and
   addresses slots with tensor arithmetic on the position, so a single-token

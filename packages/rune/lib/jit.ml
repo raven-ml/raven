@@ -411,9 +411,13 @@ let handler st =
     | E_const_scalar { value; dtype; _ } ->
         Some
           (fun k ->
+            (* [buffer:false] keeps the scalar an immediate constant: it
+               folds into consuming kernels instead of being stored into a
+               one-element buffer by a kernel of its own. *)
             let tt =
-              F.Creation.full ~dtype:(tolk_val_dtype dtype) []
-                (scalar_of dtype value)
+              F.Creation.full ~buffer:false
+                ~dtype:(tolk_val_dtype dtype)
+                [] (scalar_of dtype value)
             in
             let ph = Nx_effect.const_scalar st.st_ctx value dtype in
             Tbl.replace st.table (Obj.repr ph) tt;
@@ -760,37 +764,57 @@ let wrap_tensor : type a b.
    directly. *)
 type host_out = Host : ('a, 'b) ND.t * ('a, 'b) Nx_buffer.t -> host_out
 
+(* Byte staging for device transfers, reused across calls and keyed by size so
+   a compiled program does not repopulate the page tables with fresh
+   multi-megabyte [Bytes] on every replay. Compiled functions are not
+   thread-safe, and each scratch use completes before the next lookup. *)
+type scratch = (int, Bytes.t) Hashtbl.t
+
+let scratch_bytes tbl size =
+  match Hashtbl.find_opt tbl size with
+  | Some b -> b
+  | None ->
+      let b = Bytes.create size in
+      Hashtbl.add tbl size b;
+      b
+
 (* Copy a tensor's logical contents into a device buffer. *)
-let copyin_tensor : type a b. Tolk.Device.Buffer.t -> (a, b) Nx_effect.t -> unit
-    =
- fun buf x ->
+let copyin_tensor : type a b.
+    scratch -> Tolk.Device.Buffer.t -> (a, b) Nx_effect.t -> unit =
+ fun sc buf x ->
   let xc = Nx_effect.contiguous x in
   let host = Nx_effect.to_host xc in
   let v = Nx_effect.view xc in
   let n = numel (NV.shape v) in
-  let bytes = Bytes.create (n * itemsize (Nx_effect.dtype x)) in
+  let bytes = scratch_bytes sc (n * itemsize (Nx_effect.dtype x)) in
   Nx_buffer.blit_to_bytes ~src_off:(NV.offset v) ~len:n host bytes;
   Tolk.Device.Buffer.ensure_allocated buf;
   Tolk.Device.Buffer.copyin buf bytes
 
 (* Build a fresh tensor of [dt]/[shape] from a device buffer's contents. *)
 let read_out : type a b.
+    scratch ->
     Nx_effect.context ->
     (a, b) ND.t ->
     int array ->
     Tolk.Device.Buffer.t ->
     (a, b) Nx_effect.t =
- fun ctx dtv shape buf ->
+ fun sc ctx dtv shape buf ->
   let n = numel shape in
-  let bytes = Tolk.Device.Buffer.as_bytes buf in
+  let bytes = scratch_bytes sc (Tolk.Device.Buffer.nbytes buf) in
+  Tolk.Device.Buffer.copyout buf bytes;
   let host = Nx_buffer.create (ND.to_buffer_kind dtv) n in
   Nx_buffer.blit_from_bytes ~len:n bytes host;
   Nx_effect.reshape (Nx_effect.from_host ctx host) shape
 
 let write_into : type a b.
-    Nx_effect.context -> (a, b) Nx_effect.t -> Tolk.Device.Buffer.t -> unit =
- fun ctx x buf ->
-  Nx_effect.assign x (read_out ctx (Nx_effect.dtype x) (shape_of x) buf)
+    scratch ->
+    Nx_effect.context ->
+    (a, b) Nx_effect.t ->
+    Tolk.Device.Buffer.t ->
+    unit =
+ fun sc ctx x buf ->
+  Nx_effect.assign x (read_out sc ctx (Nx_effect.dtype x) (shape_of x) buf)
 
 (* Compiled traces *)
 
@@ -823,6 +847,7 @@ type 'q compiled = {
          them *)
   cp_skeleton : 'q; (* trace-time output structure *)
   cp_writebacks : (wb_target * U.t) array;
+  cp_scratch : scratch; (* staging bytes reused across replays *)
 }
 
 let signature_of (module P : Nx.Ptree.S) (params : P.t) =
@@ -906,12 +931,30 @@ let trace_compile ~device:dev ~zero_copy (module P : Nx.Ptree.S)
     y;
   let outs = List.rev !out_assoc in
   let wbs = List.rev st.writebacks in
+  (* A result computed purely from trace-time constants (say, the zero
+     gradient of an unused parameter) has no device anywhere in its graph, so
+     the scheduler would materialize nothing for it. Anchor such results with
+     a bitwise-identity multiply by a device-resident scalar one. *)
+  let anchor : type a b. (a, b) ND.t -> F.Tensor.t -> F.Tensor.t =
+   fun dt tt ->
+    match U.device_of (F.Tensor.uop tt) with
+    | Some _ -> tt
+    | None ->
+        let one = Nx_effect.const_scalar st.st_ctx (ND.one dt) dt in
+        F.Elementwise.mul tt (tolk_of st one)
+  in
   let cont tt = U.contiguous ~src:(F.Tensor.uop tt) () in
-  let out_conts = List.map (fun (key, pk, tt) -> (key, pk, tt, cont tt)) outs in
+  let out_conts =
+    List.map
+      (fun (key, (Packed (dt, _) as pk), tt) ->
+        let tt = anchor dt tt in
+        (key, pk, tt, cont tt))
+      outs
+  in
   let wb_conts =
     List.map
-      (fun (Packed (_, dst) as pk) ->
-        let tt = tolk_of st dst in
+      (fun (Packed (dt, dst) as pk) ->
+        let tt = anchor dt (tolk_of st dst) in
         (pk, tt, cont tt))
       wbs
   in
@@ -951,6 +994,7 @@ let trace_compile ~device:dev ~zero_copy (module P : Nx.Ptree.S)
   (* Bind each constant: alias its memory when the device shares host memory and
      the tensor is contiguous, copy its bytes once otherwise. Captures the
      function assigns to are refreshed from the host on every call. *)
+  let scratch = Hashtbl.create 8 in
   let wb_keys = List.map (fun (Packed (_, dst)) -> Obj.repr dst) wbs in
   let consts =
     List.rev_map
@@ -966,7 +1010,7 @@ let trace_compile ~device:dev ~zero_copy (module P : Nx.Ptree.S)
               Tolk.Device.create_buffer ~size:n ~dtype:(tolk_dtype cdt) dev
             in
             Tolk.Realize.Buffers.seed binding node buf;
-            copyin_tensor buf src;
+            copyin_tensor scratch buf src;
             Const_copy
               { buf; src = pk; refresh = List.memq (Obj.repr src) wb_keys })
       st.consts
@@ -1014,6 +1058,7 @@ let trace_compile ~device:dev ~zero_copy (module P : Nx.Ptree.S)
     cp_reserved = reserved;
     cp_skeleton = y;
     cp_writebacks = Array.of_list cp_writebacks;
+    cp_scratch = scratch;
   }
 
 let replay (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S) (c : Q.t compiled)
@@ -1032,14 +1077,14 @@ let replay (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S) (c : Q.t compiled)
           Tolk.Realize.Buffers.seed c.cp_binding inp.i_node buf
       | None ->
           Tolk.Realize.Buffers.seed c.cp_binding inp.i_node inp.i_buf;
-          copyin_tensor inp.i_buf leaf);
+          copyin_tensor c.cp_scratch inp.i_buf leaf);
       incr i)
     params;
   Array.iter
     (function
       | Const_wrapped _ | Const_copy { refresh = false; _ } -> ()
       | Const_copy { buf; src = Packed (_, src); refresh = true } ->
-          copyin_tensor buf src)
+          copyin_tensor c.cp_scratch buf src)
     c.cp_consts;
   (* Wire fresh host buffers as the kernels' output storage, so results are
      written straight into the tensors returned to the caller. Nodes backed by
@@ -1091,7 +1136,8 @@ let replay (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S) (c : Q.t compiled)
                 let buf =
                   Tolk.Realize.Buffers.of_buffer_node c.cp_binding node
                 in
-                read_out c.cp_ctx (Nx_effect.dtype leaf) (shape_of leaf) buf)
+                read_out c.cp_scratch c.cp_ctx (Nx_effect.dtype leaf)
+                  (shape_of leaf) buf)
         | None -> assert false)
       c.cp_skeleton
   in
@@ -1099,12 +1145,12 @@ let replay (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S) (c : Q.t compiled)
     (fun (target, node) ->
       let buf = Tolk.Realize.Buffers.of_buffer_node c.cp_binding node in
       match target with
-      | Wb_const (Packed (_, dst)) -> write_into c.cp_ctx dst buf
+      | Wb_const (Packed (_, dst)) -> write_into c.cp_scratch c.cp_ctx dst buf
       | Wb_input idx ->
           let j = ref 0 in
           P.iter
             (fun leaf ->
-              if !j = idx then write_into c.cp_ctx leaf buf;
+              if !j = idx then write_into c.cp_scratch c.cp_ctx leaf buf;
               incr j)
             params)
     c.cp_writebacks;

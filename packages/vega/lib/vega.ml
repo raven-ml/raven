@@ -750,9 +750,14 @@ let sgd_init (module P : Nx.Ptree.S) (params : P.t) : P.t sgd_state =
 let sgd_step (module P : Nx.Ptree.S) ~lr ?(momentum = 0.0) (st : P.t sgd_state)
     ~(params : P.t) ~(grads : P.t) : P.t * P.t sgd_state =
   let velocity =
-    P.map2
-      (fun v g -> Nx.add (Nx.mul v (scalar (Nx.dtype v) momentum)) g)
-      st.velocity grads
+    (* Plain gradient descent: the velocity is exactly the gradient. Skipping
+       the [momentum * v + g] arithmetic avoids touching (and, under [jit],
+       capturing) the state tensors at all. *)
+    if momentum = 0.0 then grads
+    else
+      P.map2
+        (fun v g -> Nx.add (Nx.mul v (scalar (Nx.dtype v) momentum)) g)
+        st.velocity grads
   in
   let params =
     P.map2

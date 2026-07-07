@@ -505,7 +505,15 @@ let const_scalar ctx value dtype =
   with Effect.Unhandled _ -> T (Nx_backend.full ctx dtype [||] value)
 
 let full ctx dtype shape_arr value =
-  T (Nx_backend.full ctx dtype shape_arr value)
+  (* Under an effect handler (jit tracing), a filled tensor is a broadcast
+     scalar constant: no bytes are materialized and none enter the trace.
+     Without a handler it stays a concrete, mutable backend tensor. *)
+  match Effect.perform (E_const_scalar { context = ctx; value; dtype }) with
+  | scalar ->
+      if Array.length shape_arr = 0 then scalar
+      else expand (reshape scalar (Array.map (fun _ -> 1) shape_arr)) shape_arr
+  | exception Effect.Unhandled _ ->
+      T (Nx_backend.full ctx dtype shape_arr value)
 
 let from_host ctx array =
   try Effect.perform (E_from_host { context = ctx; array })
