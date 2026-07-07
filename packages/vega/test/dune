@@ -1,4 +1,4 @@
 (tests
- (names test_vega test_vega_structural)
+ (names test_vega test_vega_structural test_loss_scale)
  (package vega)
  (libraries vega nx nx.core windtrap))

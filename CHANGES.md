@@ -269,6 +269,10 @@ thread.
 
 ### Vega (new)
 
+- Add `Loss_scale` for float16 training: static and dynamic loss scales
+  with `scale`/`unscale`/`grads_finite`/`adjust`; all state is scalar
+  tensors updated by `Nx.where` arithmetic, so it threads through
+  `Rune.jit`/`pmap` steps and adapts across compiled calls.
 - `sgd_step` with `momentum = 0.` (the default) no longer reads or updates
   the velocity state; under `Rune.jit` this stops parameter-sized zero
   velocities from being captured and transferred every step.

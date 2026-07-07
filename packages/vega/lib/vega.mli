@@ -73,6 +73,107 @@ val clip_by_value : (module P : Nx.Ptree.S) -> max:float -> P.t -> P.t
 
     Raises [Invalid_argument] if [max <= 0.]. *)
 
+(** {1:loss_scaling Loss Scaling}
+
+    Float16 gradients underflow: activations and gradients that fit float16
+    still produce per-element gradient contributions below [2^-24], which round
+    to zero. Loss scaling multiplies the loss by a large factor before the
+    backward pass — scaling every gradient with it — and divides the gradients
+    back down before the optimizer step. A {!Loss_scale.dynamic} scale also
+    adapts itself: overflowed steps (non-finite gradients) are skipped and the
+    scale backs off; long runs of finite steps grow it back.
+
+    {[
+      let step (params, ls) =
+        let objective p = Vega.Loss_scale.scale ls (loss p) in
+        let sloss, grads = value_and_grad (module Model) objective params in
+        let grads = Vega.Loss_scale.unscale (module Model) ls grads in
+        let finite = Vega.Loss_scale.grads_finite (module Model) grads in
+        let params' = (* optimizer step on [grads] *) in
+        let params =
+          Model.map2 (fun p p' -> Nx.where finite p' p) params params'
+        in
+        ((params, Vega.Loss_scale.adjust ls ~finite), sloss)
+    ]}
+
+    Bfloat16 shares float32's exponent range and needs none of this — loss
+    scaling is for float16 training. *)
+
+(** Loss scales for float16 training, after JAX's [jmp]. *)
+module Loss_scale : sig
+  type t = { scale : Nx.float32_t; good_steps : Nx.int32_t }
+  (** The type for loss scales: the current scale factor and the number of
+      consecutive finite steps since it last changed, both scalar tensors.
+      Tensors, not floats — threaded through a {!Rune.jit2} (or pmap) step as
+      ordinary input and output leaves, the state updates across compiled calls,
+      whereas a captured float would be burned into the trace as a constant.
+      [good_steps] is [-1] for a {!static} scale. *)
+
+  val static : float -> t
+  (** [static s] is the fixed scale [s]: {!adjust} returns it unchanged.
+      [static 1.0] makes the loss-scaling plumbing the identity.
+
+      Raises [Invalid_argument] if [s] is not positive. *)
+
+  val dynamic : ?init:float -> unit -> t
+  (** [dynamic ()] is a fresh adaptive scale, adjusted by {!adjust}. [init]
+      defaults to [32768.] ([2^15]).
+
+      Raises [Invalid_argument] if [init] is not positive. *)
+
+  val scale : t -> (float, 'b) Nx.t -> (float, 'b) Nx.t
+  (** [scale ls x] is [x] times the current scale, at [x]'s dtype. Apply it to
+      the loss, inside the differentiated objective. *)
+
+  val unscale : (module P : Nx.Ptree.S) -> t -> P.t -> P.t
+  (** [unscale (module P) ls grads] divides every leaf of [grads] by the current
+      scale, at the leaf's dtype. Apply it to the gradients before any gradient
+      transformation or optimizer step. *)
+
+  val grads_finite : (module P : Nx.Ptree.S) -> P.t -> (bool, Nx.bool_elt) Nx.t
+  (** [grads_finite (module P) grads] is a scalar boolean tensor: [true] iff
+      every element of every leaf of [grads] is finite (no NaN or infinity).
+      Feed it to {!adjust} and use it to skip the parameter update of an
+      overflowed step (select between updated and previous parameters with
+      {!Nx.where}, as in the module preamble — tensor arithmetic, so the step
+      still traces under jit). *)
+
+  val adjust :
+    ?growth_interval:int ->
+    ?growth_factor:float ->
+    ?backoff_factor:float ->
+    t ->
+    finite:(bool, Nx.bool_elt) Nx.t ->
+    t
+  (** [adjust ls ~finite] is the scale for the next step. For a {!dynamic}
+      scale: if [finite] is [false] the scale is multiplied by [backoff_factor]
+      (default [0.5]) and the finite-step counter resets; if [finite] is [true]
+      the counter advances, and on reaching [growth_interval] (default [2000])
+      the scale is multiplied by [growth_factor] (default [2.]) and the counter
+      resets. For a {!static} scale, [adjust] is the identity. Pure [Nx.where]
+      arithmetic on the state tensors — safe inside a jitted step.
+
+      Raises [Invalid_argument] if [growth_interval], [growth_factor] or
+      [backoff_factor] is not positive. *)
+
+  (** {2:traversals Traversals}
+
+      Plain traversals over the two state tensors, in the order [scale] then
+      [good_steps]; with them a training step's input and output structures can
+      carry the loss scale as leaves. They satisfy the {!Nx.Ptree.S} contract.
+  *)
+
+  val map : ('a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) -> t -> t
+  (** [map f ls] is [ls] with [f] applied to both state tensors. *)
+
+  val map2 :
+    ('a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) -> t -> t -> t
+  (** [map2 f ls ls'] combines [ls] and [ls'] leafwise with [f]. *)
+
+  val iter : ('a 'b. ('a, 'b) Nx.t -> unit) -> t -> unit
+  (** [iter f ls] applies [f] to both state tensors. *)
+end
+
 (** {1:sgd Stochastic Gradient Descent} *)
 
 type 'p sgd_state = { velocity : 'p }

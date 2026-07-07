@@ -740,6 +740,65 @@ let clip_by_value (module P : Nx.Ptree.S) ~max (grads : P.t) : P.t =
       Nx.clip ~min:(of_float (-.max)) ~max:(of_float max) g)
     grads
 
+(* Loss scaling *)
+
+module Loss_scale = struct
+  type t = { scale : Nx.float32_t; good_steps : Nx.int32_t }
+
+  (* Static scales are marked by [good_steps = -1]: the mark is itself a tensor,
+     so [adjust] can pass them through with [Nx.where] arithmetic instead of
+     control flow — under [jit] the state is an ordinary input, not a trace-time
+     constant. *)
+
+  let static v =
+    validate_positive "Vega.Loss_scale.static" "scale" v;
+    { scale = Nx.scalar Nx.float32 v; good_steps = Nx.scalar Nx.int32 (-1l) }
+
+  let dynamic ?(init = 32768.0) () =
+    validate_positive "Vega.Loss_scale.dynamic" "init" init;
+    { scale = Nx.scalar Nx.float32 init; good_steps = Nx.scalar Nx.int32 0l }
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { scale; good_steps } =
+    { scale = f scale; good_steps = f good_steps }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t t' =
+    { scale = f t.scale t'.scale; good_steps = f t.good_steps t'.good_steps }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { scale; good_steps } =
+    f scale;
+    f good_steps
+
+  let scale t x = Nx.mul x (Nx.cast (Nx.dtype x) t.scale)
+
+  let unscale (module P : Nx.Ptree.S) t (grads : P.t) : P.t =
+    P.map (fun g -> Nx.div g (Nx.cast (Nx.dtype g) t.scale)) grads
+
+  let grads_finite (module P : Nx.Ptree.S) (grads : P.t) =
+    let acc = ref (Nx.scalar Nx.bool true) in
+    P.iter (fun g -> acc := Nx.logical_and !acc (Nx.all (Nx.isfinite g))) grads;
+    !acc
+
+  let adjust ?(growth_interval = 2000) ?(growth_factor = 2.0)
+      ?(backoff_factor = 0.5) t ~finite =
+    if growth_interval <= 0 then
+      invalid_argf
+        "Vega.Loss_scale.adjust: expected growth_interval > 0, got %d"
+        growth_interval;
+    validate_positive "Vega.Loss_scale.adjust" "growth_factor" growth_factor;
+    validate_positive "Vega.Loss_scale.adjust" "backoff_factor" backoff_factor;
+    let dynamic = Nx.greater_equal_s t.good_steps 0l in
+    let good = Nx.add_s t.good_steps 1l in
+    let grow = Nx.greater_equal_s good (Int32.of_int growth_interval) in
+    let scale_fin = Nx.where grow (Nx.mul_s t.scale growth_factor) t.scale in
+    let good_fin = Nx.where grow (Nx.zeros_like good) good in
+    let scale' = Nx.where finite scale_fin (Nx.mul_s t.scale backoff_factor) in
+    let good' = Nx.where finite good_fin (Nx.zeros_like good) in
+    {
+      scale = Nx.where dynamic scale' t.scale;
+      good_steps = Nx.where dynamic good' t.good_steps;
+    }
+end
+
 (* SGD *)
 
 type 'p sgd_state = { velocity : 'p }
