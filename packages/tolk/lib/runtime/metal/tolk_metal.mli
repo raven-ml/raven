@@ -34,9 +34,10 @@ val create : string -> Tolk.Device.t
 (** [create name] is a Metal device identified by [name].
 
     The device uses the system default Metal GPU, an LRU-cached shared-memory
-    allocator with blit-based buffer transfers, and the {!Tolk.Cstyle.metal}
-    renderer. An {!Stdlib.at_exit} handler synchronizes in-flight work and
-    releases the underlying Metal device and command queue.
+    allocator with blit-based buffer transfers, and a {!Tolk.Cstyle.metal}
+    renderer built from the device's Metal GPU family. An {!Stdlib.at_exit}
+    handler synchronizes in-flight work and releases the underlying Metal
+    device, command queue, and shared event.
 
     Raises [Failure] if no Metal GPU is available (e.g. running in a VM or on
     unsupported hardware). *)
@@ -107,7 +108,7 @@ module Icb : sig
     unit
   (** [encode t ~index ~program ~buffers ~arg_buf ~arg_offsets ~global ~local]
       encodes a compute dispatch at command [index] with:
-      - [program] — pipeline handle from {!Tolk.Device.Program.entry_addr}.
+      - [program] — opaque Metal program handle for the kernel pipeline.
       - [buffers] — kernel buffer bindings (array of Metal buffer addresses).
       - [arg_buf] — Metal buffer holding packed [int32] variable parameters, or
         [0n] if there are none.
@@ -146,7 +147,8 @@ module Icb : sig
       [kIOGPUCommandBufferCallbackErrorInvalidResource] crashes. On M3+ the
       array is ignored.
 
-      The resulting command buffer is appended to the in-flight list. *)
+      The resulting command buffer is appended to the in-flight list and is
+      waited by {!State.synchronize}. *)
 
   val release : t -> unit
   (** [release t] frees the underlying Metal ICB. *)

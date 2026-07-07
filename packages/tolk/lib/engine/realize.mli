@@ -5,14 +5,13 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(** Schedule execution and kernel dispatch.
+(** Linear execution and kernel dispatch.
 
     A {e runner} ({!Runner.t}) is the common dispatch interface for
-    all executable operations: compiled kernels, buffer copies, and
-    views. {!Compiled_runner} compiles kernel programs and creates
-    runners. {!Exec_item} pairs a runner with its buffers for
-    scheduled execution. {!run_schedule} executes a list of items
-    in order.
+    executable operations: compiled kernels and buffer copies.
+    {!Compiled_runner} compiles kernel programs and creates runners.
+    {!run_linear} executes a {!Tolk_uop.Ops.Linear} node, resolving each
+    call's buffer arguments through a {!Buffers.t} binding.
 
     See also {!Device.prog} for the low-level device dispatch
     handle. *)
@@ -135,15 +134,6 @@ module Compiled_runner : sig
       See {!Runner.call} for the return value semantics. *)
 end
 
-(** {1:view_op View operation} *)
-
-val view_op : device:Device.t -> Device.Buffer.t -> Runner.t
-(** [view_op ~device buf] is a runner that asserts [dst] and [src]
-    share the same base buffer. No data is copied.
-
-    Raises [Invalid_argument] if the buffers do not share a base
-    or if the argument list does not contain exactly two buffers. *)
-
 (** {1:buffer_copy Buffer copy} *)
 
 val buffer_copy :
@@ -153,103 +143,119 @@ val buffer_copy :
   src_device:string ->
   Runner.t
 (** [buffer_copy ~device ~total_sz ~dest_device ~src_device] is a
-    runner that copies data between buffers via a host-memory
-    bounce. [dest_device] and [src_device] are device names used
-    in the display string.
+    runner that copies data between buffers. It uses the destination
+    allocator's native transfer hook when {!Device.Buffer.supports_transfer}
+    holds, otherwise it falls back to a host-memory bounce. [dest_device]
+    and [src_device] are device names used in the display string.
 
     Raises [Invalid_argument] if the two buffers differ in size or
     dtype, or if the argument list does not contain exactly two
     buffers. *)
 
-(** {1:method_cache Method cache} *)
+(** {1:compile Kernel compilation} *)
 
-val get_runner :
+val pm_compile :
   device:Device.t ->
-  get_program:(Tolk_ir.Kernel.t -> Program_spec.t) ->
-  Tolk_ir.Kernel.t ->
-  Compiled_runner.t
-(** [get_runner ~device ~get_program ast] is a compiled runner for
-    [ast] on [device]. Returns a cached runner when available;
-    on a miss, calls [get_program ast] to compile the kernel and
-    caches the result. A base-device entry is shared across
-    device instances with the same compiler and renderer. *)
+  to_program:(Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
+  Tolk_uop.Uop.t ->
+  Tolk_uop.Uop.t
+(** [pm_compile ~device ~to_program linear] rewrites every kernel
+    {!Tolk_uop.Ops.Call} in [linear] whose body is a {!Tolk_uop.Ops.Sink}
+    into a call whose body is the compiled {!Tolk_uop.Ops.Program} returned by
+    [to_program]. {!Tolk_uop.Ops.Slice} and {!Tolk_uop.Ops.Copy} calls are left
+    unchanged.
 
-(** {1:exec_item Execution items} *)
+    Compiled programs are cached by the kernel's semantic key and the device,
+    so kernels that differ only by diagnostic tags share one compilation. *)
 
-(** A scheduled execution step.
+(** {1:binding Buffer binding} *)
 
-    An exec item pairs an AST reference with buffer arguments and
-    fixed variable bindings. {!lower} resolves the AST to a
-    {!Runner.t}; {!run} dispatches it. *)
-module Exec_item : sig
+(** Maps buffer UOps to concrete device buffers.
+
+    A {!Tolk_uop.Ops.Buffer} node is backed by a fresh device allocation the
+    first time it is resolved, then cached by node identity; seeding a node
+    with {!seed} overrides that allocation. *)
+module Buffers : sig
   type t
-  (** The type for execution items. *)
+  (** The type for buffer bindings. *)
 
-  val make :
-    ast:Tolk_ir.Tensor.t ->
-    bufs:Device.Buffer.t option list ->
-    ?var_vals:(string * int) list ->
-    ?prg:Runner.t ->
-    unit ->
-    t
-  (** [make ~ast ~bufs ?var_vals ?prg ()] is an exec item.
+  val create : device:Device.t -> t
+  (** [create ~device] is an empty binding allocating on [device]. *)
 
-      [ast] is the tensor graph node that describes the operation
-      (kernel SINK, BUFFER_VIEW, COPY, etc.).
+  val seed : t -> Tolk_uop.Uop.t -> Device.Buffer.t -> unit
+  (** [seed t node buf] binds [node] to [buf], overriding lazy allocation. *)
 
-      [var_vals] defaults to [[]]. [prg] defaults to [None]. *)
+  val mem : t -> Tolk_uop.Uop.t -> bool
+  (** [mem t node] is [true] iff [node] is bound. *)
 
-  val ast : t -> Tolk_ir.Tensor.t
-  (** [ast t] is the tensor graph node. *)
+  val find_opt : t -> Tolk_uop.Uop.t -> Device.Buffer.t option
+  (** [find_opt t node] is the buffer bound to [node], if any. *)
 
-  val bufs : t -> Device.Buffer.t option list
-  (** [bufs t] is the buffer argument list. *)
+  val of_buffer_node : t -> Tolk_uop.Uop.t -> Device.Buffer.t
+  (** [of_buffer_node t node] is the buffer backing the {!Tolk_uop.Ops.Buffer}
+      [node], allocating and caching it on first use. *)
 
-  val var_vals : t -> (string * int) list
-  (** [var_vals t] is the fixed variable bindings. *)
+  val iter : t -> (Device.Buffer.t -> unit) -> unit
+  (** [iter t f] applies [f] to every bound buffer. *)
 
-  val lower :
-    device:Device.t ->
-    get_program:(Tolk_ir.Kernel.t -> Program_spec.t) ->
-    t -> t
-  (** [lower ~device ~get_program t] resolves [t]'s AST to a
-      runner if not already set. Kernel SINKs are compiled via
-      {!get_runner}; BUFFER_VIEWs become {!view_op}; COPYs become
-      {!buffer_copy}.
-
-      Returns [t] unchanged if the runner is already set. *)
-
-  val run :
-    t ->
-    ?var_vals:(string * int) list ->
-    ?wait:bool ->
-    ?do_update_stats:bool ->
-    unit ->
-    float option
-  (** [run t ?var_vals ?wait ?do_update_stats ()] dispatches [t]'s
-      runner. Variable bindings are [t]'s fixed bindings merged
-      with [var_vals]. [None] buffer slots are skipped; remaining
-      buffers are allocated if needed.
-
-      [var_vals] defaults to [[]]. [wait] defaults to [false]
-      (forced to [true] when [DEBUG >= 2]). [do_update_stats]
-      defaults to [true].
-
-      Raises [Invalid_argument] if the runner has not been set. *)
+  val clear : t -> unit
+  (** [clear t] drops all bindings. *)
 end
 
-(** {1:run_schedule Schedule execution} *)
+type exec_context = {
+  var_vals : (string * int) list;
+  input_uops : Tolk_uop.Uop.t array;
+  jit : bool;
+  wait : bool;
+}
+(** Execution context threaded through a LINEAR run: symbolic variable values,
+    the input buffer nodes that {!Tolk_uop.Ops.Param} slots index into, and the
+    JIT and wait flags. *)
 
-val run_schedule :
-  device:Device.t ->
-  get_program:(Tolk_ir.Kernel.t -> Program_spec.t) ->
-  Exec_item.t list ->
+val exec_context :
   ?var_vals:(string * int) list ->
-  ?do_update_stats:bool ->
+  ?input_uops:Tolk_uop.Uop.t array ->
+  ?jit:bool ->
+  ?wait:bool ->
   unit ->
-  unit
-(** [run_schedule ~device ~get_program items ?var_vals
-    ?do_update_stats ()] lowers and executes each item in order.
+  exec_context
+(** [exec_context ?var_vals ?input_uops ?jit ?wait ()] builds a context. All
+    fields default to empty or [false]. *)
 
-    [var_vals] defaults to [[]]. [do_update_stats] defaults to
-    [true]. *)
+val resolve : Buffers.t -> exec_context -> Tolk_uop.Uop.t -> Device.Buffer.t
+(** [resolve binding ctx node] is the concrete buffer named by call argument
+    [node]: a {!Tolk_uop.Ops.Param} resolves through [ctx.input_uops]; a
+    {!Tolk_uop.Ops.Slice} is an offset view of its resolved source; a
+    {!Tolk_uop.Ops.Buffer} is resolved through [binding].
+
+    Raises [Invalid_argument] on an unbound parameter, a symbolic slice offset,
+    or a node that does not name a buffer. *)
+
+(** {1:run_linear Linear execution} *)
+
+val run_linear :
+  device:Device.t ->
+  to_program:(Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
+  Buffers.t ->
+  ?var_vals:(string * int) list ->
+  ?input_uops:Tolk_uop.Uop.t array ->
+  ?jit:bool ->
+  ?wait:bool ->
+  Tolk_uop.Uop.t ->
+  unit
+(** [run_linear ~device ~to_program binding ?var_vals ?input_uops ?jit ?wait
+    linear] executes each {!Tolk_uop.Ops.Call} in the {!Tolk_uop.Ops.Linear}
+    [linear] in order.
+
+    When [jit] is [false] (default), [linear] is first compiled with
+    {!pm_compile}, turning each kernel {!Tolk_uop.Ops.Sink} body into a
+    {!Tolk_uop.Ops.Program}; when [jit] is [true], [linear] is assumed already
+    compiled. Each call is then dispatched on its body: a
+    {!Tolk_uop.Ops.Program} is launched with launch dimensions and scalar
+    arguments read from its {!Tolk_uop.Uop.program_info} and a device handle
+    built from its compiled binary; a {!Tolk_uop.Ops.Slice} binds a view of its
+    resolved source into [binding]; a {!Tolk_uop.Ops.Copy} transfers between its
+    resolved buffers. Buffer arguments are resolved with {!resolve}, so
+    {!Tolk_uop.Ops.Param} slots index into [input_uops].
+
+    [wait] is forced to [true] when [DEBUG >= 2]. *)

@@ -1,0 +1,18 @@
+   0 Ops.CONST           :            dtypes.int                               []                               10
+   1 Ops.PARAM           :            dtypes.float                             ['10']                           ParamArg(0, device='CPU')
+   2 Ops.RANGE           : 0          dtypes.int                               ['10']                           (0, AxisType.LOOP)
+   3 Ops.INDEX           : 0          dtypes.float                             [1, 2]                           None
+   4 Ops.PARAM           :            dtypes.float                             ['10']                           ParamArg(1, device='CPU')
+   5 Ops.INDEX           : 0          dtypes.float                             [4, 2]                           None
+   6 Ops.LOAD            : 0          dtypes.float                             [5]                              None
+   7 Ops.PARAM           :            dtypes.float                             ['10']                           ParamArg(2, device='CPU')
+   8 Ops.INDEX           : 0          dtypes.float                             [7, 2]                           None
+   9 Ops.LOAD            : 0          dtypes.float                             [8]                              None
+  10 Ops.ADD             : 0          dtypes.float                             [6, 9]                           None
+  11 Ops.PARAM           :            dtypes.float                             ['10']                           ParamArg(3, device='CPU')
+  12 Ops.INDEX           : 0          dtypes.float                             [11, 2]                          None
+  13 Ops.LOAD            : 0          dtypes.float                             [12]                             None
+  14 Ops.ADD             : 0          dtypes.float                             [10, 13]                         None
+  15 Ops.STORE           : 0          dtypes.void                              [3, 14]                          None
+  16 Ops.END             :            dtypes.void                              [15, 2]                          None
+  17 Ops.SINK            :            dtypes.void                              [16]                             KernelInfo(name='E_10', axis_types=(), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None, beam=0)

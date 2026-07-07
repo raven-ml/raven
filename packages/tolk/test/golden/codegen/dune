@@ -1,6 +1,6 @@
 (executable
  (name generate_actual)
- (libraries tolk tolk.ir))
+ (libraries tolk tolk.uop))
 
 (rule
  (package tolk)
@@ -12,6 +12,12 @@
   clang_elementwise_sqrt.actual
   clang_elementwise_where.actual
   clang_gated_store.actual
+  clang_llama_embedding.actual
+  clang_llama_ffn_gate.actual
+  clang_llama_output_projection.actual
+  clang_llama_rmsnorm.actual
+  clang_llama_vector_scale.actual
+  clang_max_reduce.actual
   clang_multi_output.actual
   clang_no_optimize.actual
   clang_parallel_reduce.actual
@@ -25,7 +31,13 @@
   cuda_elementwise_sqrt.actual
   cuda_elementwise_where.actual
   cuda_gated_store.actual
+  cuda_llama_embedding.actual
+  cuda_llama_ffn_gate.actual
+  cuda_llama_output_projection.actual
+  cuda_llama_rmsnorm.actual
+  cuda_llama_vector_scale.actual
   cuda_matmul_small.actual
+  cuda_max_reduce.actual
   cuda_multi_output.actual
   cuda_no_optimize.actual
   cuda_parallel_reduce.actual
@@ -39,7 +51,13 @@
   metal_elementwise_sqrt.actual
   metal_elementwise_where.actual
   metal_gated_store.actual
+  metal_llama_embedding.actual
+  metal_llama_ffn_gate.actual
+  metal_llama_output_projection.actual
+  metal_llama_rmsnorm.actual
+  metal_llama_vector_scale.actual
   metal_matmul_small.actual
+  metal_max_reduce.actual
   metal_multi_output.actual
   metal_no_optimize.actual
   metal_parallel_reduce.actual
@@ -53,7 +71,13 @@
   opencl_elementwise_sqrt.actual
   opencl_elementwise_where.actual
   opencl_gated_store.actual
+  opencl_llama_embedding.actual
+  opencl_llama_ffn_gate.actual
+  opencl_llama_output_projection.actual
+  opencl_llama_rmsnorm.actual
+  opencl_llama_vector_scale.actual
   opencl_matmul_small.actual
+  opencl_max_reduce.actual
   opencl_multi_output.actual
   opencl_no_optimize.actual
   opencl_parallel_reduce.actual
@@ -61,9 +85,6 @@
   opencl_sum_reduce.actual)
  (action
   (run ./generate_actual.exe .)))
-
-; max_reduce .expected files are kept as reference for when decomposition
-; steps (18-21) are ported. No .actual is generated yet so no diff rules.
 
 (rule
  (alias runtest)
@@ -79,6 +100,14 @@
    (diff clang_elementwise_sqrt.expected clang_elementwise_sqrt.actual)
    (diff clang_elementwise_where.expected clang_elementwise_where.actual)
    (diff clang_gated_store.expected clang_gated_store.actual)
+   (diff clang_llama_embedding.expected clang_llama_embedding.actual)
+   (diff clang_llama_ffn_gate.expected clang_llama_ffn_gate.actual)
+   (diff
+    clang_llama_output_projection.expected
+    clang_llama_output_projection.actual)
+   (diff clang_llama_rmsnorm.expected clang_llama_rmsnorm.actual)
+   (diff clang_llama_vector_scale.expected clang_llama_vector_scale.actual)
+   (diff clang_max_reduce.expected clang_max_reduce.actual)
    (diff clang_multi_output.expected clang_multi_output.actual)
    (diff clang_no_optimize.expected clang_no_optimize.actual)
    (diff clang_parallel_reduce.expected clang_parallel_reduce.actual)
@@ -92,7 +121,15 @@
    (diff cuda_elementwise_sqrt.expected cuda_elementwise_sqrt.actual)
    (diff cuda_elementwise_where.expected cuda_elementwise_where.actual)
    (diff cuda_gated_store.expected cuda_gated_store.actual)
+   (diff cuda_llama_embedding.expected cuda_llama_embedding.actual)
+   (diff cuda_llama_ffn_gate.expected cuda_llama_ffn_gate.actual)
+   (diff
+    cuda_llama_output_projection.expected
+    cuda_llama_output_projection.actual)
+   (diff cuda_llama_rmsnorm.expected cuda_llama_rmsnorm.actual)
+   (diff cuda_llama_vector_scale.expected cuda_llama_vector_scale.actual)
    (diff cuda_matmul_small.expected cuda_matmul_small.actual)
+   (diff cuda_max_reduce.expected cuda_max_reduce.actual)
    (diff cuda_multi_output.expected cuda_multi_output.actual)
    (diff cuda_no_optimize.expected cuda_no_optimize.actual)
    (diff cuda_parallel_reduce.expected cuda_parallel_reduce.actual)
@@ -108,7 +145,15 @@
    (diff metal_elementwise_sqrt.expected metal_elementwise_sqrt.actual)
    (diff metal_elementwise_where.expected metal_elementwise_where.actual)
    (diff metal_gated_store.expected metal_gated_store.actual)
+   (diff metal_llama_embedding.expected metal_llama_embedding.actual)
+   (diff metal_llama_ffn_gate.expected metal_llama_ffn_gate.actual)
+   (diff
+    metal_llama_output_projection.expected
+    metal_llama_output_projection.actual)
+   (diff metal_llama_rmsnorm.expected metal_llama_rmsnorm.actual)
+   (diff metal_llama_vector_scale.expected metal_llama_vector_scale.actual)
    (diff metal_matmul_small.expected metal_matmul_small.actual)
+   (diff metal_max_reduce.expected metal_max_reduce.actual)
    (diff metal_multi_output.expected metal_multi_output.actual)
    (diff metal_no_optimize.expected metal_no_optimize.actual)
    (diff metal_parallel_reduce.expected metal_parallel_reduce.actual)
@@ -124,7 +169,15 @@
    (diff opencl_elementwise_sqrt.expected opencl_elementwise_sqrt.actual)
    (diff opencl_elementwise_where.expected opencl_elementwise_where.actual)
    (diff opencl_gated_store.expected opencl_gated_store.actual)
+   (diff opencl_llama_embedding.expected opencl_llama_embedding.actual)
+   (diff opencl_llama_ffn_gate.expected opencl_llama_ffn_gate.actual)
+   (diff
+    opencl_llama_output_projection.expected
+    opencl_llama_output_projection.actual)
+   (diff opencl_llama_rmsnorm.expected opencl_llama_rmsnorm.actual)
+   (diff opencl_llama_vector_scale.expected opencl_llama_vector_scale.actual)
    (diff opencl_matmul_small.expected opencl_matmul_small.actual)
+   (diff opencl_max_reduce.expected opencl_max_reduce.actual)
    (diff opencl_multi_output.expected opencl_multi_output.actual)
    (diff opencl_no_optimize.expected opencl_no_optimize.actual)
    (diff opencl_parallel_reduce.expected opencl_parallel_reduce.actual)

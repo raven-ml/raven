@@ -1,0 +1,10 @@
+void E_8_2n1(float* restrict data0_16, int* restrict data1_2, float* restrict data2_256) {
+  int val0 = (*(data1_2+0));
+  int val1 = (*(data1_2+1));
+  for (int Lidx2 = 0; Lidx2 < 8; Lidx2++) {
+    float val2 = (((-1<val0)&(val0<32))?*(data2_256+((val0<<3)+Lidx2)):0.0f);
+    float val3 = (((-1<val1)&(val1<32))?*(data2_256+((val1<<3)+Lidx2)):0.0f);
+    *(data0_16+(Lidx2+8)) = val3;
+    *(data0_16+Lidx2) = val2;
+  }
+}

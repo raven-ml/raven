@@ -1,0 +1,7 @@
+__kernel void r_2_8n3(__global float* data0_2, __global float* data1_16) {
+  int lidx0 = get_local_id(0); /* 2 */
+  int alu0 = (lidx0<<3);
+  float4 val0 = (*((__global float4*)((data1_16+(alu0+4)))));
+  float4 val1 = (*((__global float4*)((data1_16+alu0))));
+  *(data0_2+lidx0) = (1/sqrt(((((val1.x*val1.x)+(val1.y*val1.y)+(val1.z*val1.z)+(val1.w*val1.w)+(val0.x*val0.x)+(val0.y*val0.y)+(val0.z*val0.z)+(val0.w*val0.w))*0.125f)+1e-05f)));
+}

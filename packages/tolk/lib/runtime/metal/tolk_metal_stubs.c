@@ -124,19 +124,23 @@ CAMLprim value caml_tolk_metal_buffer_free(value v_buf) {
   }
 }
 
-CAMLprim value caml_tolk_metal_buffer_copyin(value v_buf, value v_bytes) {
-  CAMLparam2(v_buf, v_bytes);
+CAMLprim value caml_tolk_metal_buffer_copyin(value v_buf, value v_offset,
+                                             value v_bytes) {
+  CAMLparam3(v_buf, v_offset, v_bytes);
   id<MTLBuffer> buf = (id<MTLBuffer>)Nativeint_val(v_buf);
-  void* dst = [buf contents];
+  NSUInteger offset = (NSUInteger)Long_val(v_offset);
+  void* dst = (uint8_t*)[buf contents] + offset;
   size_t len = (size_t)caml_string_length(v_bytes);
   memcpy(dst, Bytes_val(v_bytes), len);
   CAMLreturn(Val_unit);
 }
 
-CAMLprim value caml_tolk_metal_buffer_copyout(value v_bytes, value v_buf) {
-  CAMLparam2(v_bytes, v_buf);
+CAMLprim value caml_tolk_metal_buffer_copyout(value v_bytes, value v_buf,
+                                              value v_offset) {
+  CAMLparam3(v_bytes, v_buf, v_offset);
   id<MTLBuffer> buf = (id<MTLBuffer>)Nativeint_val(v_buf);
-  void* src = [buf contents];
+  NSUInteger offset = (NSUInteger)Long_val(v_offset);
+  void* src = (uint8_t*)[buf contents] + offset;
   size_t len = (size_t)caml_string_length(v_bytes);
   memcpy(Bytes_val(v_bytes), src, len);
   CAMLreturn(Val_unit);
@@ -283,7 +287,7 @@ CAMLprim value caml_tolk_metal_program_dispatch(value v_queue, value v_prog,
 
     for (mlsize_t i = 0; i < buf_count; ++i) {
       id<MTLBuffer> buf = (id<MTLBuffer>)Nativeint_val(Field(v_buffers, i));
-      NSUInteger offset = (NSUInteger)Int_val(Field(v_offsets, i));
+      NSUInteger offset = (NSUInteger)Long_val(Field(v_offsets, i));
       [encoder setBuffer:buf offset:offset atIndex:i];
     }
     for (mlsize_t i = 0; i < arg_count; ++i) {
@@ -336,11 +340,11 @@ CAMLprim value caml_tolk_metal_icb_create(value v_device, value v_count) {
 }
 
 CAMLprim value caml_tolk_metal_icb_encode(value v_icb, value v_index, value v_prog,
-                                     value v_buffers, value v_arg_buf,
-                                     value v_arg_offsets, value v_global,
-                                     value v_local) {
-  CAMLparam5(v_icb, v_index, v_prog, v_buffers, v_arg_buf);
-  CAMLxparam3(v_arg_offsets, v_global, v_local);
+                                     value v_buffers, value v_buffer_offsets,
+                                     value v_arg_buf, value v_arg_offsets,
+                                     value v_global, value v_local) {
+  CAMLparam5(v_icb, v_index, v_prog, v_buffers, v_buffer_offsets);
+  CAMLxparam4(v_arg_buf, v_arg_offsets, v_global, v_local);
   @autoreleasepool {
     id<MTLIndirectCommandBuffer> icb =
         (id<MTLIndirectCommandBuffer>)Nativeint_val(v_icb);
@@ -348,6 +352,9 @@ CAMLprim value caml_tolk_metal_icb_encode(value v_icb, value v_index, value v_pr
     tolk_metal_program* prog = (tolk_metal_program*)Nativeint_val(v_prog);
     mlsize_t buf_count = Wosize_val(v_buffers);
     mlsize_t arg_count = Wosize_val(v_arg_offsets);
+    if (Wosize_val(v_buffer_offsets) != buf_count) {
+      caml_failwith("Metal ICB: buffer and offset array length mismatch");
+    }
     if (Wosize_val(v_global) != 3 || Wosize_val(v_local) != 3) {
       caml_failwith("Metal ICB expects 3D sizes");
     }
@@ -368,7 +375,8 @@ CAMLprim value caml_tolk_metal_icb_encode(value v_icb, value v_index, value v_pr
 
     for (mlsize_t i = 0; i < buf_count; ++i) {
       id<MTLBuffer> buf = (id<MTLBuffer>)Nativeint_val(Field(v_buffers, i));
-      [cmd setKernelBuffer:buf offset:0 atIndex:i];
+      NSUInteger offset = (NSUInteger)Long_val(Field(v_buffer_offsets, i));
+      [cmd setKernelBuffer:buf offset:offset atIndex:i];
     }
     if (Nativeint_val(v_arg_buf) != 0 && arg_count > 0) {
       id<MTLBuffer> arg_buf = (id<MTLBuffer>)Nativeint_val(v_arg_buf);
@@ -392,21 +400,23 @@ CAMLprim value caml_tolk_metal_icb_encode(value v_icb, value v_index, value v_pr
 CAMLprim value caml_tolk_metal_icb_encode_bc(value* argv, int argc) {
   (void)argc;
   return caml_tolk_metal_icb_encode(argv[0], argv[1], argv[2], argv[3], argv[4],
-                              argv[5], argv[6], argv[7]);
+                              argv[5], argv[6], argv[7], argv[8]);
 }
 
 CAMLprim value caml_tolk_metal_icb_update_buffer(value v_icb, value v_index,
-                                           value v_buf_index, value v_buf) {
-  CAMLparam4(v_icb, v_index, v_buf_index, v_buf);
+                                           value v_buf_index, value v_buf,
+                                           value v_offset) {
+  CAMLparam5(v_icb, v_index, v_buf_index, v_buf, v_offset);
   @autoreleasepool {
     id<MTLIndirectCommandBuffer> icb =
         (id<MTLIndirectCommandBuffer>)Nativeint_val(v_icb);
     NSUInteger index = (NSUInteger)Int_val(v_index);
     NSUInteger buf_index = (NSUInteger)Int_val(v_buf_index);
     id<MTLBuffer> buf = (id<MTLBuffer>)Nativeint_val(v_buf);
+    NSUInteger offset = (NSUInteger)Long_val(v_offset);
     id<MTLIndirectComputeCommand> cmd =
         [icb indirectComputeCommandAtIndex:index];
-    [cmd setKernelBuffer:buf offset:0 atIndex:buf_index];
+    [cmd setKernelBuffer:buf offset:offset atIndex:buf_index];
     CAMLreturn(Val_unit);
   }
 }
@@ -611,6 +621,31 @@ CAMLprim value caml_tolk_metal_command_buffer_gpu_time(value v_cmd) {
   CAMLreturn(v_pair);
 }
 
+CAMLprim value caml_tolk_metal_command_buffer_wait_time(value v_cmd) {
+  CAMLparam1(v_cmd);
+  id<MTLCommandBuffer> cmd = (id<MTLCommandBuffer>)Nativeint_val(v_cmd);
+
+  caml_release_runtime_system();
+  [cmd waitUntilCompleted];
+  caml_acquire_runtime_system();
+
+  @autoreleasepool {
+    NSError* error = [cmd error];
+    if (error != nil) {
+      NSString* desc = [error localizedDescription];
+      const char* msg =
+          desc != nil ? [desc UTF8String] : "Metal command buffer failed";
+      char buf[512];
+      snprintf(buf, sizeof(buf), "%s", msg);
+      [cmd release];
+      caml_failwith(buf);
+    }
+    double elapsed = [cmd GPUEndTime] - [cmd GPUStartTime];
+    [cmd release];
+    CAMLreturn(caml_copy_double(elapsed));
+  }
+}
+
 CAMLprim value caml_tolk_metal_device_name(value v_device) {
   CAMLparam1(v_device);
   @autoreleasepool {
@@ -618,6 +653,27 @@ CAMLprim value caml_tolk_metal_device_name(value v_device) {
     NSString* name = [device name];
     const char* str = name != nil ? [name UTF8String] : "unknown";
     CAMLreturn(caml_copy_string(str));
+  }
+}
+
+CAMLprim value caml_tolk_metal_device_arch(value v_device) {
+  CAMLparam1(v_device);
+  @autoreleasepool {
+    id<MTLDevice> device = (id<MTLDevice>)Nativeint_val(v_device);
+    char arch[16];
+    for (int family = 9; family >= 1; family--) {
+      if ([device supportsFamily:(MTLGPUFamily)(1000 + family)]) {
+        snprintf(arch, sizeof(arch), "Apple%d", family);
+        CAMLreturn(caml_copy_string(arch));
+      }
+    }
+    for (int family = 2; family >= 1; family--) {
+      if ([device supportsFamily:(MTLGPUFamily)(2000 + family)]) {
+        snprintf(arch, sizeof(arch), "Mac%d", family);
+        CAMLreturn(caml_copy_string(arch));
+      }
+    }
+    caml_failwith("Metal device has no supported GPU family");
   }
 }
 
@@ -716,7 +772,9 @@ CAMLprim value caml_tolk_metal_compile(value v_src) {
         [[NSProcessInfo processInfo] operatingSystemVersion];
     int major = (int)ver.majorVersion;
     const char* metal_version = "macos-metal2.0";
-    if (major >= 14)
+    if (major >= 26)
+      metal_version = "metal4.0";
+    else if (major >= 14)
       metal_version = "metal3.1";
     else if (major >= 13)
       metal_version = "metal3.0";
@@ -753,9 +811,8 @@ CAMLprim value caml_tolk_metal_compile(value v_src) {
     // MTLCodeGenServiceBuildRequest expects a block (Apple's C extension).
     // We use a stack block here to mirror tinygrad's callback behavior.
     mtl_build(service, NULL, REQUEST_TYPE_COMPILE, request, request_len,
-              ^(void* blockptr, int32_t error, void* dataPtr, size_t dataLen,
+              ^(int32_t error, void* dataPtr, size_t dataLen,
                 const char* errorMessage) {
-                (void)blockptr;
                 if (error == 0 && dataPtr != NULL && dataLen > 0) {
                   res.data = (uint8_t*)malloc(dataLen);
                   if (res.data != NULL) {

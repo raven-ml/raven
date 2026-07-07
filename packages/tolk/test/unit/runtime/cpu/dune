@@ -1,0 +1,4 @@
+(tests
+ (names test_compiler)
+ (package tolk)
+ (libraries unix tolk tolk.cpu windtrap))

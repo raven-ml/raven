@@ -1,0 +1,9 @@
+#include <metal_stdlib>
+using namespace metal;
+kernel void r_2_8n3(device float* data0_2, device float* data1_16, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  int lidx0 = lid.x; /* 2 */
+  int alu0 = (lidx0<<3);
+  float4 val0 = (*((device float4*)((data1_16+(alu0+4)))));
+  float4 val1 = (*((device float4*)((data1_16+alu0))));
+  *(data0_2+lidx0) = (1/sqrt(((((val1.x*val1.x)+(val1.y*val1.y)+(val1.z*val1.z)+(val1.w*val1.w)+(val0.x*val0.x)+(val0.y*val0.y)+(val0.z*val0.z)+(val0.w*val0.w))*0.125f)+1e-05f)));
+}

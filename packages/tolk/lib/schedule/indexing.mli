@@ -7,9 +7,9 @@
 
 (** Rangeify: tensor graph to indexed representation.
 
-    Converts the high-level tensor graph (movement ops, REDUCE_AXIS,
-    etc.) into an indexed representation with explicit RANGE loops,
-    BUFFERIZE nodes, and INDEX operations.
+    Converts the high-level graph (movement ops, REDUCE, etc.)
+    into an indexed representation with explicit RANGE loops,
+    STAGE nodes, and INDEX operations.
 
     The algorithm runs in three phases:
 
@@ -21,19 +21,19 @@
        fresh ranges; others inherit or merge from consumers.  Movement
        ops transform ranges instead of persisting as nodes.
        See {!run_rangeify}.}
-    {- {b Apply.}  Bottom-up graph rewrite: REDUCE_AXIS becomes REDUCE,
+    {- {b Apply.}  Bottom-up graph rewrite: REDUCE keeps explicit ranges,
        PAD becomes WHERE, realized sources are wrapped in
-       BUFFERIZE + INDEX or END, and movement ops are removed.
+       STAGE + INDEX or END, and movement ops are removed.
        See {!apply_rangeify_pass}.}} *)
 
 (** {1:predicates Predicates} *)
 
-val is_always_contiguous : Tolk_ir.Tensor.view -> bool
-(** [is_always_contiguous v] is [true] for ops whose output is
+val always_contiguous : Tolk_uop.Ops.t -> bool
+(** [always_contiguous op] is [true] for ops whose output is
     contiguous by definition (Contiguous, After, Copy, Buffer,
-    Buffer_view, Const, Bind, Device, Mselect, Mstack, Param,
-    Define_local, Call).  Their consumers can index directly
-    without realization. *)
+    Slice, Const, Bind, Device, Mselect, Mstack, Param,
+    Load, Call).  Their consumers can
+    index directly without realization. *)
 
 (** {1:context Indexing context} *)
 
@@ -47,78 +47,98 @@ type realize_state =
 
 type indexing_context = {
   realize_map : (int, realize_state) Hashtbl.t;
-  range_map : (int, Tolk_ir.Tensor.t list * Tolk_ir.Tensor.t list) Hashtbl.t;
-      (** Maps {!Tolk_ir.Tensor.tag} to [(input_ranges, output_ranges)]. *)
+  range_map : (int, Tolk_uop.Uop.t list * Tolk_uop.Uop.t list) Hashtbl.t;
+      (** Maps {!Tolk_uop.Uop.tag} to [(input_ranges, output_ranges)]. *)
+  nodes : (int, Tolk_uop.Uop.t) Hashtbl.t;
   mutable range_idx : int;
       (** Monotonic counter for fresh range axis indices. *)
 }
 (** Per-node state populated by {!run_rangeify}.  All maps are keyed
-    by {!Tolk_ir.Tensor.tag}. *)
+    by {!Tolk_uop.Uop.tag}. *)
 
 val create_context : unit -> indexing_context
 (** [create_context ()] is a fresh, empty context. *)
 
 val new_range :
-  indexing_context -> int -> ?kind:Tolk_ir.Axis_kind.t -> unit ->
-  Tolk_ir.Tensor.t
+  indexing_context -> int -> ?kind:Tolk_uop.Axis_type.t -> unit ->
+  Tolk_uop.Uop.t
 (** [new_range ctx size ?kind ()] is a fresh RANGE node over
-    \[[0];[size-1]\] with axis kind [kind] (default {!Tolk_ir.Axis_kind.Loop}).
+    \[[0];[size-1]\] with axis kind [kind] (default {!Tolk_uop.Axis_type.Loop}).
     Returns a constant [0] when [size] is [1]. *)
+
+val new_range_expr :
+  indexing_context ->
+  Tolk_uop.Uop.t ->
+  ?kind:Tolk_uop.Axis_type.t ->
+  unit ->
+  Tolk_uop.Uop.t
+(** [new_range_expr ctx size ?kind ()] is like {!new_range}, but [size]
+    is a symbolic integer expression. Returns [size] unchanged if it is
+    already a {!Tolk_uop.Ops.Range}, and returns a constant [0] when [size]
+    simplifies to the constant [1]. *)
 
 (** {1:simplify Symbolic simplification} *)
 
-val simplify_tensor_expr : Tolk_ir.Tensor.t -> Tolk_ir.Tensor.t
-(** [simplify_tensor_expr e] round-trips [e] through the Kernel IR,
-    applies {!Tolk_ir.Symbolic.sym}, and converts back.  Only handles
-    index-arithmetic nodes (Const, Range, Binary, Unary, Ternary,
-    Invalid_index). *)
+val simplify_expr : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
+(** [simplify_expr e] applies {!Tolk_uop.Symbolic.sym} to [e] through a
+    graph rewrite. *)
 
 (** {1:movement Movement ops} *)
 
 val apply_movement_op :
-  shapes:(Tolk_ir.Tensor.t -> int list option) ->
-  Tolk_ir.Tensor.view ->
-  Tolk_ir.Tensor.t list ->
-  Tolk_ir.Tensor.t list
-(** [apply_movement_op ~shapes view rngs] transforms [rngs] (output
-    ranges) through a movement op, producing the corresponding input
-    ranges.  Handles Shrink, Permute, Flip, Expand, Pad, and Reshape.
+  ?shape_exprs:(Tolk_uop.Uop.t -> Tolk_uop.Uop.t list option) ->
+  shapes:(Tolk_uop.Uop.t -> int list option) ->
+  Tolk_uop.Uop.t ->
+  Tolk_uop.Uop.t list ->
+  Tolk_uop.Uop.t list
+(** [apply_movement_op ?shape_exprs ~shapes node rngs] transforms [rngs]
+    (output ranges) through a movement op, producing the corresponding input
+    ranges. [shape_exprs], when supplied, preserves symbolic dimensions;
+    otherwise concrete [shapes] are lifted to integer constants before
+    trying the node's own symbolic shape. Handles Shrink, Permute, Flip,
+    Expand, Pad, and Reshape.
 
     Raises [Assert_failure] if [view] is not a movement op. *)
 
 (** {1:rangeify Rangeify passes} *)
 
 val run_rangeify :
-  Tolk_ir.Tensor.t ->
-  shapes:(Tolk_ir.Tensor.t -> int list option) ->
+  ?shape_exprs:(Tolk_uop.Uop.t -> Tolk_uop.Uop.t list option) ->
+  Tolk_uop.Uop.t ->
+  shapes:(Tolk_uop.Uop.t -> int list option) ->
   indexing_context
-(** [run_rangeify root ~shapes] builds the realize map, then walks
-    the graph from roots to leaves assigning per-node ranges.
+(** [run_rangeify ?shape_exprs root ~shapes] builds the realize map, then
+    walks the graph from roots to leaves assigning per-node ranges.
+    [shape_exprs], if given, supplies symbolic axis sizes for range bounds.
     Returns a populated {!indexing_context} ready for
     {!apply_rangeify_pass}. *)
 
 val apply_rangeify_pass :
+  ?shape_exprs:(Tolk_uop.Uop.t -> Tolk_uop.Uop.t list option) ->
   indexing_context ->
-  devices:(Tolk_ir.Tensor.t -> Tolk_ir.Tensor.device option) ->
-  Tolk_ir.Tensor.t ->
-  Tolk_ir.Tensor.t
-(** [apply_rangeify_pass ctx ~devices root] rewrites [root] bottom-up:
+  shapes:(Tolk_uop.Uop.t -> int list option) ->
+  Tolk_uop.Uop.t ->
+  Tolk_uop.Uop.t
+(** [apply_rangeify_pass ?shape_exprs ctx ~shapes root] rewrites [root]
+    bottom-up:
 
     {ul
-    {- REDUCE_AXIS → REDUCE with explicit range children.}
+    {- REDUCE keeps explicit range children.}
     {- PAD → WHERE guarded by the input ranges' validity.}
-    {- Realized sources → BUFFERIZE + INDEX (or END for stores).}
-    {- Direct buffer sources (Param, Buffer_view, …) → INDEX.}
+    {- Realized sources → STAGE + INDEX (or END for stores).}
+    {- Direct buffer sources (Param, Buffer, Slice, …) → INDEX.}
     {- Movement ops → removed (their effect is in the range map).}} *)
 
 (** {1:helpers Range helpers} *)
 
-val get_idx : Tolk_ir.Tensor.t -> Tolk_ir.Tensor.t
+val get_idx : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
 (** [get_idx r] extracts the index value from a possibly-gated range.
-    [where(valid, index, invalid)] yields [index]; anything else
-    yields [r] unchanged. *)
+    [where(valid, index, invalid)] yields [index]; [stack [r0; ...]]
+    yields [stack [get_idx r0; ...]]; anything else yields [r]
+    unchanged. *)
 
-val get_valid : Tolk_ir.Tensor.t -> Tolk_ir.Tensor.t
+val get_valid : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
 (** [get_valid r] extracts the validity condition from a
     possibly-gated range.  [where(valid, _, invalid)] yields [valid];
-    [invalid] yields [false]; anything else yields [true]. *)
+    [stack [r0; ...]] yields [stack [get_valid r0; ...]]; [invalid]
+    yields [false]; anything else yields [true]. *)

@@ -1,0 +1,58 @@
+   0 Ops.CONST           :            dtypes.int                               []                               16
+   1 Ops.PARAM           :            dtypes.float                             ['16']                           ParamArg(0, device='CPU')
+   2 Ops.SPECIAL         :            dtypes.int                               ['16']                           gidx0
+   3 Ops.INDEX           :            dtypes.float                             [1, 2]                           None
+   4 Ops.CONST           :            dtypes.int                               []                               1
+   5 Ops.BUFFER          :            dtypes.float                             ['1']                            ParamArg(1, addrspace=AddrSpace.REG)
+   6 Ops.CONST           :            dtypes.int                               []                               0
+   7 Ops.INDEX           :            dtypes.float                             [5, '0']                         None
+   8 Ops.CONST           :            dtypes.float                             []                               0.0
+   9 Ops.STORE           :            dtypes.void                              [7, '0.0']                       None
+  10 Ops.BUFFER          :            dtypes.float                             ['1']                            ParamArg(0, addrspace=AddrSpace.REG)
+  11 Ops.INDEX           :            dtypes.float                             [10, '0']                        None
+  12 Ops.STORE           :            dtypes.void                              [11, '0.0']                      None
+  13 Ops.CONST           :            dtypes.int                               []                               2
+  14 Ops.RANGE           : 0          dtypes.int                               ['2']                            (0, AxisType.REDUCE)
+  15 Ops.AFTER           : 0          dtypes.float                             [10, 12, 14]                     None
+  16 Ops.INDEX           : 0          dtypes.float                             [15, '0']                        None
+  17 Ops.LOAD            : 0          dtypes.float                             [16]                             None
+  18 Ops.CONST           :            dtypes.int                               []                               1024
+  19 Ops.PARAM           :            dtypes.float                             ['1024']                         ParamArg(1, device='CPU')
+  20 Ops.SPECIAL         :            dtypes.int                               ['16']                           lidx0
+  21 Ops.SHL             :            dtypes.int                               [20, '1']                        None
+  22 Ops.ADD             : 0          dtypes.int                               [21, 14]                         None
+  23 Ops.CONST           :            dtypes.int                               []                               5
+  24 Ops.SHL             :            dtypes.int                               [2, '5']                         None
+  25 Ops.ADD             : 0          dtypes.int                               [22, 24]                         None
+  26 Ops.INDEX           : 0          dtypes.float                             [19, 25]                         None
+  27 Ops.LOAD            : 0          dtypes.float                             [26]                             None
+  28 Ops.ADD             : 0          dtypes.float                             [17, 27]                         None
+  29 Ops.STORE           : 0          dtypes.void                              [16, 28]                         None
+  30 Ops.END             :            dtypes.void                              [29, 14]                         None
+  31 Ops.RANGE           : 102        dtypes.int                               ['16', 30]                       (102, AxisType.REDUCE)
+  32 Ops.AFTER           : 102        dtypes.float                             [5, 9, 31]                       None
+  33 Ops.INDEX           : 102        dtypes.float                             [32, '0']                        None
+  34 Ops.LOAD            : 102        dtypes.float                             [33]                             None
+  35 Ops.BUFFER          :            dtypes.float                             ['16']                           ParamArg(0, addrspace=AddrSpace.LOCAL)
+  36 Ops.INDEX           :            dtypes.float                             [35, 20]                         None
+  37 Ops.AFTER           :            dtypes.float                             [10, 30]                         None
+  38 Ops.INDEX           :            dtypes.float                             [37, '0']                        None
+  39 Ops.LOAD            :            dtypes.float                             [38]                             None
+  40 Ops.STORE           :            dtypes.void                              [36, 39]                         None
+  41 Ops.BARRIER         :            dtypes.void                              [40]                             None
+  42 Ops.AFTER           :            dtypes.float                             [35, 41]                         None
+  43 Ops.INDEX           : 102        dtypes.float                             [42, 31]                         None
+  44 Ops.LOAD            : 102        dtypes.float                             [43]                             None
+  45 Ops.ADD             : 102        dtypes.float                             [34, 44]                         None
+  46 Ops.STORE           : 102        dtypes.void                              [33, 45]                         None
+  47 Ops.END             :            dtypes.void                              [46, 31]                         None
+  48 Ops.AFTER           :            dtypes.float                             [5, 47]                          None
+  49 Ops.INDEX           :            dtypes.float                             [48, '0']                        None
+  50 Ops.LOAD            :            dtypes.float                             [49]                             None
+  51 Ops.PARAM           :            dtypes.float                             ['16']                           ParamArg(2, device='CPU')
+  52 Ops.INDEX           :            dtypes.float                             [51, 2]                          None
+  53 Ops.LOAD            :            dtypes.float                             [52]                             None
+  54 Ops.ADD             :            dtypes.float                             [50, 53]                         None
+  55 Ops.CMPEQ           :            dtypes.bool                              [20, '0']                        None
+  56 Ops.STORE           :            dtypes.void                              [3, 54, 55]                      None
+  57 Ops.SINK            :            dtypes.void                              [56]                             KernelInfo(name='r_16_16_2n4', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.GROUPTOP, axis=0, arg=16),), opts_to_apply=None, estimates=None, beam=0)

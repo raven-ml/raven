@@ -1,0 +1,4 @@
+(tests
+ (names test_realize test_jit test_jit_capture test_schedule)
+ (package tolk)
+ (libraries unix tolk tolk.uop tolk.cpu windtrap))

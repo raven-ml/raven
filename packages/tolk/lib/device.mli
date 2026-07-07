@@ -140,7 +140,7 @@ module Buffer : sig
   val create :
     device:string ->
     size:int ->
-    dtype:Tolk_ir.Dtype.t ->
+    dtype:Tolk_uop.Dtype.t ->
     ?spec:Buffer_spec.t ->
     Allocator.packed ->
     t
@@ -149,12 +149,13 @@ module Buffer : sig
 
       [spec] defaults to {!Buffer_spec.default}. *)
 
-  val view : t -> size:int -> dtype:Tolk_ir.Dtype.t -> offset:int -> t
+  val view : t -> size:int -> dtype:Tolk_uop.Dtype.t -> offset:int -> t
   (** [view b ~size ~dtype ~offset] is a view into [b] starting at byte [offset]
       and spanning [size] elements of [dtype]. The view shares the base buffer's
       allocator and spec.
 
-      Raises [Invalid_argument] if [offset] is negative or [>= nbytes b]. *)
+      Raises [Invalid_argument] if [offset] is negative, [>= nbytes b], or if
+      the resulting view extends past the root base buffer. *)
 
   (** {1:identity Identity and metadata} *)
 
@@ -171,7 +172,7 @@ module Buffer : sig
   val size : t -> int
   (** [size b] is the element count. *)
 
-  val dtype : t -> Tolk_ir.Dtype.t
+  val dtype : t -> Tolk_uop.Dtype.t
   (** [dtype b] is the element dtype. *)
 
   val spec : t -> Buffer_spec.t
@@ -223,6 +224,11 @@ module Buffer : sig
   (** [supports_offset b] is [true] iff [b]'s allocator provides offset views.
   *)
 
+  val supports_transfer : t -> t -> bool
+  (** [supports_transfer dst src] is [true] iff [dst]'s allocator provides
+      native transfer and [dst] and [src] are on the same backend prefix
+      (for example ["METAL"] for ["METAL:0"] and ["METAL:1"]). *)
+
   val allocator : t -> Allocator.packed
   (** [allocator b] is the allocator of [b]'s base buffer. *)
 
@@ -253,6 +259,14 @@ module Buffer : sig
   (** [as_bytes b] is a fresh [bytes] value containing the contents of [b].
       Equivalent to allocating [Bytes.create (nbytes b)] and calling {!copyout}.
   *)
+
+  val transfer : dst:t -> src:t -> bool
+  (** [transfer ~dst ~src] copies [src] into [dst] via [dst]'s allocator
+      transfer hook when {!supports_transfer} is [true]. Returns [true] when
+      native transfer was used and [false] when no transfer hook is available.
+      Both buffers are allocated if transfer is used.
+
+      Raises [Invalid_argument] if [dst] and [src] differ in size or dtype. *)
 
   val copy_between : dst:t -> src:t -> unit
   (** [copy_between ~dst ~src] copies the contents of [src] into [dst] via a
@@ -335,9 +349,9 @@ val synchronize : t -> unit
 val compile_program :
   t ->
   ?name:string ->
-  ?applied_opts:Tolk_ir.Kernel.Opt.t list ->
+  ?applied_opts:Tolk_uop.Uop.Opt.t list ->
   ?estimates:Program_spec.Estimates.t ->
-  Tolk_ir.Program.t ->
+  Program_spec.program ->
   Program_spec.t
 (** [compile_program d ?name ?estimates program] renders and compiles [program]
     for [d], returning a prepared {!Program.t}.
@@ -350,7 +364,7 @@ val compile_program :
     {!Program_spec.Estimates.zero}. *)
 
 val create_buffer :
-  size:int -> dtype:Tolk_ir.Dtype.t -> ?spec:Buffer_spec.t -> t -> Buffer.t
+  size:int -> dtype:Tolk_uop.Dtype.t -> ?spec:Buffer_spec.t -> t -> Buffer.t
 (** [create_buffer ~size ~dtype ?spec d] is an unallocated buffer for [size]
     elements of [dtype] on [d].
 
@@ -379,7 +393,7 @@ module Multi_buffer : sig
   val create :
     devices:device list ->
     size:int ->
-    dtype:Tolk_ir.Dtype.t ->
+    dtype:Tolk_uop.Dtype.t ->
     ?spec:Buffer_spec.t ->
     unit ->
     t
@@ -400,7 +414,7 @@ module Multi_buffer : sig
   val size : t -> int
   (** [size t] is the element count (same across all buffers). *)
 
-  val dtype : t -> Tolk_ir.Dtype.t
+  val dtype : t -> Tolk_uop.Dtype.t
   (** [dtype t] is the element dtype (same across all buffers). *)
 
   val is_allocated : t -> bool

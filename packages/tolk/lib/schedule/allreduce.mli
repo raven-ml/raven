@@ -13,24 +13,25 @@
 
 (** {1:encoding Shape encoding} *)
 
-val emit_shape : int list -> Tolk_ir.Tensor.t
-(** [emit_shape dims] encodes [dims] as a tensor shape node. A single
-    dimension becomes a scalar constant; multiple dimensions become a
-    {!Tolk_ir.Tensor.vectorize} of scalar constants. *)
+val emit_shape : int list -> Tolk_uop.Uop.t
+(** [emit_shape dims] encodes [dims] as a shape node. A single dimension
+    becomes a scalar constant; multiple dimensions become a
+    {!Tolk_uop.Uop.stack} of scalar constants. *)
 
 val emit_pairs :
-  (int * int) list -> Tolk_ir.Tensor.t * Tolk_ir.Tensor.t
-(** [emit_pairs pairs] splits [(lo, hi)] int pairs into two shape
-    nodes [(emit_shape los, emit_shape his)]. *)
+  (int * int) list -> Tolk_uop.Uop.t * Tolk_uop.Uop.t
+(** [emit_pairs pairs] splits [(lo, hi)] int pairs into two shape nodes
+    [(emit_shape los, emit_shape his)]. *)
 
 (** {1:allreduce Allreduce} *)
 
 val handle_allreduce :
-  Tolk_ir.Tensor.t ->
-  op:Tolk_ir.Op.reduce ->
-  device:Tolk_ir.Tensor.t ->
-  Tolk_ir.Tensor.t option
-(** [handle_allreduce buf ~op ~device] builds a reduction graph that
+  Tolk_uop.Uop.t ->
+  op:Tolk_uop.Ops.t ->
+  device:Tolk_uop.Uop.device ->
+  shape:int list ->
+  Tolk_uop.Uop.t option
+(** [handle_allreduce buf ~op ~device ~shape] builds a reduction graph that
     combines every shard of [buf] with [op] and places the result
     on [device].
 
@@ -47,14 +48,14 @@ val handle_allreduce :
        exceeds the threshold with [> 2] devices.}} *)
 
 val create_allreduce_function :
-  Tolk_ir.Tensor.t ->
-  op:Tolk_ir.Op.reduce ->
-  device:Tolk_ir.Tensor.t ->
-  dtype:Tolk_ir.Dtype.t ->
+  Tolk_uop.Uop.t ->
+  op:Tolk_uop.Ops.t ->
+  device:Tolk_uop.Uop.device ->
+  dtype:Tolk_uop.Dtype.t ->
   shape:int list ->
-  ?output:Tolk_ir.Tensor.t ->
+  ?output:Tolk_uop.Uop.t ->
   unit ->
-  Tolk_ir.Tensor.t option
+  Tolk_uop.Uop.t option
 (** [create_allreduce_function buf ~op ~device ~dtype ~shape ()]
     wraps {!handle_allreduce} into a precompiled [CALL] kernel with
     parameter and buffer setup.

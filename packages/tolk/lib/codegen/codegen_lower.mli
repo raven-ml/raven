@@ -5,15 +5,17 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(** Codegen lowering — all passes after optimization, up to linearization.
+(** Codegen lowering after optimization.
 
     {!lower} runs expansion, devectorization, GPU dimension mapping, image
     lowering, index dtype concretization, decompositions, and renderer-specific
     rewrites.
 
-    This module has no dependency on Search, Postrange, or Heuristic,
-    so beam search can safely call {!lower_and_linearize} without cycles. *)
+    This module is the post-optimization half of tinygrad's
+    [codegen/__init__.py] pipeline. It intentionally has no dependency on
+    {!Search}, {!Postrange}, or {!Heuristic}, so beam search can lower and
+    linearize candidate schedules without depending on {!Codegen}. *)
 
-val lower : Renderer.t -> Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t
-(** [lower renderer sink] runs all non-optimization codegen passes on an
-    optimized kernel AST. Returns a linearizer-ready {!Tolk_ir.Kernel.t}. *)
+val lower : Renderer.t -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t
+(** [lower renderer sink] is [sink] after the non-optimization codegen
+    passes. The result is ready for {!Linearizer.linearize}. *)

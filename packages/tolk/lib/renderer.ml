@@ -23,8 +23,8 @@ type code_op =
   | Add
   | Sub
   | Mul
-  | Mod
-  | Idiv
+  | Cmod
+  | Cdiv
   | Cmpne
   | Shr
   | Shl
@@ -36,26 +36,29 @@ type code_op =
   | Mulacc
   | Threefry
 
-let all_supported_ops : Tolk_ir.Decompositions.supported_ops =
+let all_supported_ops : Decomp_op.supported_ops =
   {
     has_exp2 = true; has_log2 = true; has_sin = true; has_sqrt = true;
-    has_recip = true; has_neg = true; has_sub = true; has_max = true;
-    has_shl = true; has_shr = true; has_and = true; has_or = true;
-    has_cmplt = true; has_cmpeq = true; has_fdiv = true;
+    has_neg = true; has_sub = true; has_max = true; has_shl = true;
+    has_shr = true; has_and = true; has_or = true; has_cmplt = true;
+    has_cmpeq = true; has_fdiv = true;
     has_threefry = true; has_mulacc = true;
+    is_metal = false; supports_dtype = (fun _ -> true);
     disable_fast_idiv = false; force_transcendental = false;
   }
 
-let supported_ops_of_code_for_op (ops : code_op list) : Tolk_ir.Decompositions.supported_ops =
+let supported_ops_of_code_for_op (ops : code_op list) : Decomp_op.supported_ops =
   let has op = List.mem op ops in
   {
     has_exp2 = has Exp2; has_log2 = has Log2; has_sin = has Sin;
-    has_sqrt = has Sqrt; has_recip = has Recip; has_neg = has Neg;
+    has_sqrt = has Sqrt; has_neg = has Neg;
     has_sub = has Sub; has_max = has Max; has_shl = has Shl;
     has_shr = has Shr; has_and = has And; has_or = has Or;
     has_cmplt = has Cmplt; has_cmpeq = has Cmpeq; has_fdiv = has Fdiv;
     has_threefry = has Threefry;
     has_mulacc = has Mulacc;
+    is_metal = false;
+    supports_dtype = (fun _ -> true);
     disable_fast_idiv = false;
     force_transcendental = false;
   }
@@ -73,11 +76,15 @@ type t = {
   shared_max : int;
   tensor_cores : Tc.t list;
   supports_float4 : bool;
-  render : ?name:string -> Tolk_ir.Program.t -> string;
+  image_pitch_alignment : int option;
+  render : ?name:string -> Tolk_uop.Uop.t list -> string;
+  aux : Tolk_uop.Uop.t list -> string list;
   code_for_op : code_op list;
-  supported_ops : Tolk_ir.Decompositions.supported_ops;
-  pre_matcher : (Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option) option;
-  extra_matcher : (Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option) option;
+  supported_ops : Decomp_op.supported_ops;
+  pre_matcher : (Tolk_uop.Uop.t -> Tolk_uop.Uop.t option) option;
+  extra_matcher : (Tolk_uop.Uop.t -> Tolk_uop.Uop.t option) option;
+  supports_dtype : Tolk_uop.Dtype.t -> bool;
+  emulated_floats : (Tolk_uop.Dtype.scalar * Tolk_uop.Dtype.scalar) list;
 }
 
 (* Accessors *)
@@ -94,7 +101,9 @@ let local_max t = t.local_max
 let shared_max t = t.shared_max
 let tensor_cores t = t.tensor_cores
 let supports_float4 t = t.supports_float4
+let image_pitch_alignment t = t.image_pitch_alignment
 let render t = t.render
+let aux t = t.aux
 let code_for_op t = t.code_for_op
 let supported_ops t = t.supported_ops
 let pre_matcher t = t.pre_matcher
@@ -102,8 +111,9 @@ let extra_matcher t = t.extra_matcher
 
 (* dtype support — checks whether the backend natively supports a given dtype
    and lists float types that need emulation (promoted to a wider float). *)
-let supports_dtype _t _dt = true
-let emulated_float_dtypes _t : (Tolk_ir.Dtype.scalar * Tolk_ir.Dtype.scalar) list = []
+let supports_dtype t dt = t.supports_dtype dt
+let emulated_float_dtypes t : (Tolk_uop.Dtype.scalar * Tolk_uop.Dtype.scalar) list =
+  t.emulated_floats
 
 (* Construction *)
 
@@ -113,11 +123,14 @@ let emulated_float_dtypes _t : (Tolk_ir.Dtype.scalar * Tolk_ir.Dtype.scalar) lis
 let with_compiler compiler t = { t with compiler = Some compiler }
 
 let make ?(tensor_cores = []) ?(supports_float4 = true)
+    ?image_pitch_alignment
     ?(has_threads = false)
     ?(global_max = [ 0x8FFFFFFF; 0x8FFFFFFF; 0x8FFFFFFF ])
     ?global_prod_max
     ?(local_max = [ 0x8FFFFFFF; 0x8FFFFFFF; 0x8FFFFFFF ])
     ?(code_for_op = []) ?supported_ops ?compiler ?pre_matcher ?extra_matcher
+    ?(supports_dtype = fun _ -> true) ?(aux = fun _ -> [])
+    ?(emulated_floats = [])
     ~name ~device ~has_local ~has_shared ~shared_max ~render () =
   let supported_ops =
     match supported_ops with
@@ -126,6 +139,7 @@ let make ?(tensor_cores = []) ?(supports_float4 = true)
         if code_for_op = [] then all_supported_ops
         else supported_ops_of_code_for_op code_for_op
   in
+  let supported_ops = { supported_ops with is_metal = name = "metal"; supports_dtype } in
   {
     name;
     device;
@@ -139,9 +153,13 @@ let make ?(tensor_cores = []) ?(supports_float4 = true)
     shared_max;
     tensor_cores;
     supports_float4;
+    image_pitch_alignment;
     render;
+    aux;
     code_for_op;
     supported_ops;
     pre_matcher;
     extra_matcher;
+    supports_dtype;
+    emulated_floats;
   }

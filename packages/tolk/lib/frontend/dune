@@ -1,0 +1,6 @@
+(include_subdirs no)
+
+(library
+ (name tolk_frontend)
+ (public_name tolk.frontend)
+ (libraries tolk_uop tolk tolk_cpu))

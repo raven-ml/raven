@@ -1,0 +1,14 @@
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+void r_2_32_8n1(float* restrict data0_64, float* restrict data1_16, float* restrict data2_256) {
+  for (int Lidx1 = 0; Lidx1 < 2; Lidx1++) {
+    int alu0 = (Lidx1<<3);
+    float4 val0 = (*((float4*)((data1_16+(alu0+4)))));
+    float4 val1 = (*((float4*)((data1_16+alu0))));
+    for (int Lidx2 = 0; Lidx2 < 32; Lidx2++) {
+      int alu1 = (Lidx2<<3);
+      float4 val2 = (*((float4*)((data2_256+(alu1+4)))));
+      float4 val3 = (*((float4*)((data2_256+alu1))));
+      *(data0_64+((Lidx1<<5)+Lidx2)) = ((val1[0]*val3[0])+(val1[1]*val3[1])+(val1[2]*val3[2])+(val1[3]*val3[3])+(val0[0]*val2[0])+(val0[1]*val2[1])+(val0[2]*val2[2])+(val0[3]*val2[3]));
+    }
+  }
+}

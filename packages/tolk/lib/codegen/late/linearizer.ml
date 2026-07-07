@@ -5,362 +5,311 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-open Tolk_ir
-module K = Kernel
+(* Port of tinygrad/codegen/late/linearizer.py to the tolk_uop IR. *)
 
-(* Priority-based topological sort.
+open Tolk_uop
+module U = Uop
 
-   Assigns each node a priority (run_count, op_priority, extra) and produces
-   a linear order that respects dependencies while keeping nodes with similar
-   priorities adjacent.  Lower priority numbers appear earlier in output. *)
+(* Priority *)
 
-(* Run count for a range node: the product of its extent. *)
-let range_extent node = match K.view node with
-  | Range { size; _ } -> (
-      match K.const_arg size with Some (Int n) -> Int64.to_int n | _ -> 1)
-  | _ -> 1
+(* Priority triple [(run_count, op_priority, extra)], lexicographic, lower
+   first.  High [run_count] nodes land later; within a run count, the op tag
+   tunes placement (LOADs early, STOREs late, RANGE late, END early). *)
 
-(* Priority triple: (run_count, op_priority, extra).
-   Constructor order matters: OCaml's generic [compare] on this type gives
-   the same lexicographic ordering as tinygrad's Python tuple comparison. *)
-type extra = No_extra | Idx of int | Name of string
+type extra = No_extra | Idx of int
 
-let priority_of live node =
-  let run_count = List.fold_left (fun acc r -> acc * range_extent r) 1
-    (match K.Ref_tbl.find_opt live node with Some rs -> rs | None -> []) in
-  let op_pri, extra = match K.view node with
-    | Param { idx; _ }       -> -20, Idx idx
-    | Define_var { name; _ } -> -19, Name name
-    | Define_local _         -> -18, No_extra
-    | Define_reg _           -> -17, No_extra
-    | Load _                 ->  -1, No_extra
-    | Store _                ->   1, No_extra
-    | Range _                ->   5, No_extra
-    | End _                  ->  -5, No_extra
-    | _                      ->   0, No_extra
+let range_size r =
+  match U.as_range r with Some _ -> U.vmax r + 1 | None -> 1
+
+let run_count u = List.fold_left (fun acc r -> acc * range_size r) 1 (U.ranges u)
+
+let priority_of u =
+  let op_pri, extra = match U.op u with
+  | Ops.Param ->
+      let idx =
+        match U.as_param u with
+        | Some { param; _ } -> param.slot
+        | None -> 0
+      in
+      -20, Idx idx
+  | Ops.Buffer ->
+      let pri =
+        match U.addrspace u with
+        | Some Dtype.Local -> -17
+        | _ -> -18
+      in
+      pri, No_extra
+  | Ops.Load         ->  -1, No_extra
+  | Ops.Store        ->   1, No_extra
+  | Ops.Range        ->   5, No_extra
+  | Ops.End          ->  -5, No_extra
+  | _                ->   0, No_extra
   in
-  (run_count, op_pri, extra)
+  run_count u, op_pri, extra
 
-(* Heap for priority extraction during toposort.
-   Keys are unique (assigned by List.iteri), so int comparison suffices. *)
+(* Heap *)
+
+(* Min-heap of [(-nkey, node)]: extracting the minimum picks the node with
+   the highest ideal-order index, matching tinygrad's [-nkey] trick. *)
 module Heap = Set.Make (struct
-  type t = int * K.t
-  let compare (a, _) (b, _) = compare a b
+  type t = int * U.t
+  let compare (a, ua) (b, ub) =
+    let c = Int.compare a b in
+    if c <> 0 then c else U.compare ua ub
 end)
 
-let linearize_order topo =
-  let n = List.length topo in
-  let sink = match List.rev topo with
-    | x :: _ -> x | [] -> failwith "Linearizer: empty topo" in
-  let live = K.live_ranges_tbl sink in
-  (* Assign priorities and compute ideal ordering *)
-  let priorities = K.Ref_tbl.create n in
+(* Linearize *)
+
+let out_degree_of tbl u =
+  match U.Ref_tbl.find_opt tbl u with Some n -> n | None -> 0
+
+let remap_sources replacements u =
+  let src = U.src u in
+  let changed = ref false in
+  let src =
+    Array.map
+      (fun s ->
+        match U.Ref_tbl.find_opt replacements s with
+        | None -> s
+        | Some s' ->
+            changed := true;
+            s')
+      src
+  in
+  if !changed then U.replace u ~src () else u
+
+let gated_store_dst u =
+  match U.op u, U.src u with
+  | (Ops.Index | Ops.Shrink), _ -> true
+  | Ops.Cast, [| inner |] -> U.op inner = Ops.Index || U.op inner = Ops.Shrink
+  | _ -> false
+
+let linearize_cleanups (program : U.t list) : U.t list =
+  let replacements = U.Ref_tbl.create 16 in
+  let rec loop acc = function
+    | [] -> List.rev acc
+    | u :: rest ->
+        let original = u in
+        let u = remap_sources replacements original in
+        if not (U.equal original u) then U.Ref_tbl.replace replacements original u;
+        (match U.op u with
+        | Ops.If | Ops.Endif ->
+            failwith "IF/ENDIF must be inserted by linearize cleanups"
+        | Ops.Store -> (
+            match U.as_store u with
+            | Some { dst; value; gate = Some gate }
+              when Dtype.equal (U.dtype gate) Dtype.bool
+                   && gated_store_dst dst ->
+                let if_ = U.if_ ~cond:gate ~idx_for_dedup:dst in
+                let store = U.store ~dst ~value () in
+                let endif = U.endif ~if_ in
+                U.Ref_tbl.replace replacements original store;
+                U.Ref_tbl.replace replacements u store;
+                loop (endif :: store :: if_ :: acc) rest
+            | _ -> loop (u :: acc) rest)
+        | Ops.After -> loop (u :: acc) rest
+        | _ -> loop (u :: acc) rest)
+  in
+  loop [] program
+
+let validate_linearize_ready sink =
+  U.toposort sink
+  |> List.iter (fun u ->
+         match U.op u with
+         | Ops.Reduce -> failwith "Reduce must be lowered before linearize"
+         | Ops.Stage -> failwith "Stage must be lowered before linearize"
+         | Ops.If | Ops.Endif ->
+             failwith "IF/ENDIF must be inserted by linearize cleanups"
+         | Ops.Group when Array.length (U.src u) = 0 ->
+             failwith "empty Group"
+         | Ops.Load when Array.length (U.src u) = 2 ->
+             failwith "gated loads require an alt value before linearize"
+         | _ -> ())
+
+let linearize_raw (sink : U.t) : U.t list =
+  let lst = U.toposort sink in
+  let n = List.length lst in
+
+  (* Out-degrees and priorities. *)
+  let out_degree = U.Ref_tbl.create n in
+  let priorities = U.Ref_tbl.create n in
   List.iter (fun u ->
-    K.Ref_tbl.replace priorities u (priority_of live u)) topo;
-  let nkey = K.Ref_tbl.create n in
-  List.iteri (fun i u -> K.Ref_tbl.replace nkey u i)
-    (List.stable_sort (fun a b ->
-       compare (K.Ref_tbl.find priorities a) (K.Ref_tbl.find priorities b))
-       topo);
-  (* Compute out-degrees *)
-  let out_degree = K.Ref_tbl.create n in
-  List.iter (fun u ->
-    List.iter (fun s ->
-      let d = match K.Ref_tbl.find_opt out_degree s with
-        | Some d -> d | None -> 0 in
-      K.Ref_tbl.replace out_degree s (d + 1))
-      (K.children u)) topo;
-  (* Heap-based toposort: work backwards from sink, release nodes when
-     all consumers are placed, prefer nodes closest to ideal position. *)
-  let get_nkey u = match K.Ref_tbl.find_opt nkey u with
-    | Some k -> k | None -> 0 in
-  let heap = ref (Heap.singleton (- get_nkey sink, sink)) in
-  let result = ref [] in
+    Array.iter (fun s ->
+      U.Ref_tbl.replace out_degree s (out_degree_of out_degree s + 1))
+      (U.src u);
+    U.Ref_tbl.replace priorities u (priority_of u))
+    lst;
+
+  (* Assign ideal order by sorting on (priority, structure). *)
+  let nkey = U.Ref_tbl.create n in
+  let order_cmp a b =
+    let c =
+      compare (U.Ref_tbl.find priorities a) (U.Ref_tbl.find priorities b)
+    in
+    if c <> 0 then c else U.compare_structure a b
+  in
+  List.iteri (fun i u -> U.Ref_tbl.replace nkey u i)
+    (List.stable_sort order_cmp lst);
+  let nkey_of u = U.Ref_tbl.find nkey u in
+  (* Heap-driven toposort: release a node when all its consumers are placed,
+     preferring nodes closest to their ideal position. *)
+  let heap = ref (Heap.singleton (-nkey_of sink, sink)) in
+  let ret = ref [] in
   while not (Heap.is_empty !heap) do
     let ((_, u) as elt) = Heap.min_elt !heap in
     heap := Heap.remove elt !heap;
-    result := u :: !result;
-    List.iter (fun v ->
-      let d = (match K.Ref_tbl.find_opt out_degree v with
-        | Some d -> d | None -> 0) - 1 in
-      K.Ref_tbl.replace out_degree v d;
-      if d = 0 then heap := Heap.add (- get_nkey v, v) !heap)
-      (K.children u)
+    ret := u :: !ret;
+    Array.iter (fun v ->
+      let d = out_degree_of out_degree v - 1 in
+      U.Ref_tbl.replace out_degree v d;
+      if d = 0 then heap := Heap.add (-nkey_of v, v) !heap)
+      (U.src u)
   done;
-  !result
+  !ret
 
-(* Control-flow context: ordering edges between sibling loops.
+let linearize (sink : U.t) : U.t list =
+  validate_linearize_ready sink;
+  linearize_cleanups (linearize_raw sink)
 
-   For each pair of sibling END nodes (loops nested under the same parent),
-   adds an edge from the later loop's RANGE to the earlier loop's END,
-   ensuring sequential emission of loops that must not interleave. *)
+(* CFGContext
 
-let end_range node = match K.view node with
-  | End { ranges = [r]; _ } when K.is_range r -> Some r
+   Three relationships between ranges: nested, dependent, independent.
+   Everything is nested inside the sink.  Build a parent map for END nodes
+   from their enclosing END/SINK, then for each sibling set emit ordering
+   edges that sequence them. *)
+
+type cfg_context = { edges : U.t U.Ref_tbl.t }
+
+(* [end_range e] is the single range closed by [e].  After [pm_split_ends],
+   every END has exactly one range. *)
+let end_range e =
+  match U.as_end e with
+  | Some { ranges = [ r ]; _ } when U.op r = Ops.Range -> Some r
   | _ -> None
 
-type cfg_context = { edges : K.t K.Ref_tbl.t }
-
-let build_cfg_context topo =
+let build_cfg_context (sink : U.t) : cfg_context =
+  let topo = U.toposort sink in
   let n = List.length topo in
-  (* Phase 1: compute transitive deps and find nesting relationships. *)
-  let deps = K.Ref_tbl.create n in
-  let nesting = K.Ref_tbl.create 32 in
-  List.iter (fun node ->
-    let cdeps = K.Ref_tbl.create 16 in
-    List.iter (fun child ->
-      match K.Ref_tbl.find_opt deps child with
-      | Some s -> K.Ref_tbl.iter (fun k () -> K.Ref_tbl.replace cdeps k ()) s
+  let topo_index = U.Ref_tbl.create n in
+  List.iteri (fun i u -> U.Ref_tbl.replace topo_index u i) topo;
+
+  (* Phase 1: transitive deps per node, and nesting parent for each END. *)
+  let deps = U.Ref_tbl.create n in
+  let nesting = U.Ref_tbl.create 32 in
+  let record_nesting u d =
+    U.Ref_tbl.iter (fun x () ->
+      match U.op x with
+      | Ops.End when not (U.Ref_tbl.mem nesting x) ->
+          let is_nested = match U.op u with
+          | Ops.Sink -> true
+          | _ ->
+              (match end_range u, U.Ref_tbl.find_opt deps x with
+               | Some rr, Some xd -> U.Ref_tbl.mem xd rr
+               | _ -> false)
+          in
+          if is_nested then U.Ref_tbl.replace nesting x u
+      | _ -> ())
+      d
+  in
+  List.iter (fun u ->
+    let d = U.Ref_tbl.create 8 in
+    Array.iter (fun s ->
+      match U.Ref_tbl.find_opt deps s with
+      | Some sd -> U.Ref_tbl.iter (fun k () -> U.Ref_tbl.replace d k ()) sd
       | None -> ())
-      (K.children node);
-    (match K.view node with
-     | End _ | Sink _ ->
-         K.Ref_tbl.iter (fun x () ->
-           match K.view x with
-           | End _ when not (K.Ref_tbl.mem nesting x) ->
-               let is_nested = match K.view node with
-                 | Sink _ -> true
-                 | _ -> (match end_range node, K.Ref_tbl.find_opt deps x with
-                   | Some rr, Some xd -> K.Ref_tbl.mem xd rr
-                   | _ -> false) in
-               if is_nested then K.Ref_tbl.replace nesting x node
-           | _ -> ()) cdeps
+      (U.src u);
+    (match U.op u with Ops.End | Ops.Sink -> record_nesting u d | _ -> ());
+    (match U.op u with
+     | Ops.Range | Ops.End -> U.Ref_tbl.replace d u ()
      | _ -> ());
-    (match K.view node with
-     | Range _ | End _ -> K.Ref_tbl.replace cdeps node ()
-     | _ -> ());
-    K.Ref_tbl.replace deps node cdeps) topo;
-  (* Phase 2: group siblings and build ordering edges. *)
-  let siblings = K.Ref_tbl.create 32 in
-  K.Ref_tbl.iter (fun child parent ->
-    let cur = match K.Ref_tbl.find_opt siblings parent with
-      | Some l -> l | None -> [] in
-    K.Ref_tbl.replace siblings parent (child :: cur)) nesting;
-  let edges = K.Ref_tbl.create 16 in
-  K.Ref_tbl.iter (fun parent ends ->
+    U.Ref_tbl.replace deps u d)
+    topo;
+
+  (* Phase 2: group siblings by parent and emit ordering edges. *)
+  let siblings = U.Ref_tbl.create 32 in
+  U.Ref_tbl.iter (fun child parent ->
+    let cur = match U.Ref_tbl.find_opt siblings parent with
+    | Some l -> l | None -> []
+    in
+    U.Ref_tbl.replace siblings parent (child :: cur))
+    nesting;
+
+  let edges = U.Ref_tbl.create 16 in
+  let add_edge rn pred =
+    if pred == rn || U.in_backward_slice rn pred then
+      failwith "linearizer control-flow cycle";
+    U.Ref_tbl.replace edges rn pred
+  in
+  let rec chain prev = function
+  | [] -> ()
+  | y :: ys ->
+      (match end_range y with
+       | Some rr -> add_edge rr prev; chain y ys
+       | None -> chain prev ys)
+  in
+  U.Ref_tbl.iter (fun parent ends ->
     let dep_count node =
-      match K.Ref_tbl.find_opt deps node with
+      match U.Ref_tbl.find_opt deps node with
       | Some nd ->
           List.fold_left (fun acc u ->
-            if K.Ref_tbl.mem nd u then acc + 1 else acc) 0 ends
-      | None -> 0 in
-    let order = List.sort (fun a b -> compare (dep_count a) (dep_count b)) ends in
-    let add_edge rn pred =
-      assert (not (K.in_backward_slice rn pred));
-      K.Ref_tbl.replace edges rn pred in
-    let rec chain prev = function
-      | y :: ys ->
-          (match end_range y with
-           | Some rr -> add_edge rr prev; chain y ys
-           | None -> chain prev ys)
-      | [] -> () in
-    (match K.view parent with
-     | Sink _ -> (match order with x :: rest -> chain x rest | [] -> ())
-     | _ -> (match end_range parent with
-       | Some rr -> chain rr order | None -> ())))
+            if U.Ref_tbl.mem nd u then acc + 1 else acc) 0 ends
+      | None -> 0
+    in
+    let order =
+      List.stable_sort
+        (fun a b ->
+          let c = compare (dep_count a) (dep_count b) in
+          if c <> 0 then c
+          else
+            compare (U.Ref_tbl.find topo_index a) (U.Ref_tbl.find topo_index b))
+        ends
+    in
+    match U.op parent, order with
+    | Ops.Sink, x :: rest -> chain x rest
+    | Ops.Sink, [] -> ()
+    | _, _ ->
+        (match end_range parent with
+         | Some rr -> chain rr order
+         | None -> ()))
     siblings;
   { edges }
 
-(* Split multi-range END into nested single-range ENDs.
-   Extracts actual RANGE nodes from the ranges' dependency graph, sorts
-   by axis (descending), and nests innermost-first. *)
-let do_split_ends node = match K.view node with
-  | End { value; ranges } ->
+(* Split multi-range END into nested single-range ENDs, innermost first
+   by full range argument (descending). *)
+
+(* Raven encodes tinygrad RANGE.arg as [(axis, sub, kind)] for split-end
+   ordering. *)
+let range_key r =
+  match U.as_range r with
+  | Some v -> (v.axis, v.sub, v.kind)
+  | None -> (0, [], Axis_type.Loop)
+
+let do_split_ends (e : U.t) : U.t option =
+  match U.as_end e with
+  | None -> None
+  | Some { value; ranges } ->
+      let nested =
+        U.ranges (U.sink ranges)
+        |> List.stable_sort (fun a b -> compare (range_key b) (range_key a))
+      in
       let result =
-        K.toposort (K.sink ranges)
-        |> List.filter K.is_range
-        |> List.sort (fun a b -> compare (K.range_axis b) (K.range_axis a))
-        |> List.fold_left (fun v r -> K.end_ ~value:v ~ranges:[r] ()) value in
-      if result == node then None else Some result
-  | _ -> None
+        List.fold_left (fun v r -> U.end_ ~value:v ~ranges:[ r ]) value nested
+      in
+      if result == e then None else Some result
 
-let pm_split_ends root = K.graph_rewrite do_split_ends root
+let pm_split_ends (root : U.t) : U.t = U.graph_rewrite do_split_ends root
 
-(* Kernel -> Program emission *)
-
-module P = Program
-
-(* Resolve the dtype of an After/Group/End chain (transparent wrappers). *)
-let rec after_dtype node = match K.view node with
-  | Barrier | Store _ -> Some Dtype.void
-  | End { value; _ } | After { src = value; _ } -> after_dtype value
-  | Group { srcs = src :: _ } -> after_dtype src
-  | Group { srcs = [] } -> None
-  | _ -> K.dtype_opt node
-
-(* Walk through Cast/Bitcast/After to find a gated Index. *)
-let rec find_gate node = match K.view node with
-  | Index { gate = Some g; _ } -> Some g
-  | After { src; _ } | Cast { src; _ } | Bitcast { src; _ } -> find_gate src
-  | _ -> None
-
-type emitter = {
-  builder : P.builder;
-  k2p : P.id K.Ref_tbl.t;           (* kernel node -> program id *)
-  mutable open_ranges : K.t list;    (* ranges opened but not yet closed *)
-}
-
-let lookup em node =
-  match K.Ref_tbl.find_opt em.k2p node with
-  | Some id -> id
-  | None -> failwith "Linearizer: missing kernel ref mapping"
-
-let emit_instr em node instr =
-  let id = P.emit em.builder instr in
-  K.Ref_tbl.replace em.k2p node id
-
-let maps em = List.map (lookup em)
-
-(* Alias: transparent node maps to another node's program id. *)
-let alias em node target =
-  K.Ref_tbl.replace em.k2p node (lookup em target)
-
-(* Open a range: emit if not yet emitted, track as open. *)
-let ensure_range em node =
-  match K.Ref_tbl.find_opt em.k2p node with
-  | Some id -> id
-  | None -> match K.view node with
-    | Range { size; dtype; axis; sub; kind } ->
-        em.open_ranges <- node :: em.open_ranges;
-        emit_instr em node
-          (Range { size = lookup em size; dtype; axis; sub; kind });
-        lookup em node
-    | _ -> failwith "Linearizer: expected Range node"
-
-(* Resolve a child: ranges are opened lazily, everything else is looked up. *)
-let resolve em node = match K.view node with
-  | Range _ -> ensure_range em node
-  | _ -> lookup em node
-
-let emit em node =
-  let m = lookup em and ms = maps em in
-  match K.view node with
-  (* Transparent: alias to source, produce no instruction. *)
-  | Sink _ -> ()
-  | Group { srcs = src :: _ } -> alias em node src
-  | Group { srcs = [] } -> failwith "Linearizer: empty Group"
-  | After { src; _ } when K.is_ptr src -> alias em node src
-  | After { src; deps } ->
-      let dtype = match after_dtype src with
-        | Some dt -> Dtype.val_of dt | None -> failwith "Linearizer: After src has no dtype" in
-      emit_instr em node (After { src = m src; deps = ms deps; dtype })
-
-  (* Range lifecycle *)
-  | Range _ -> ignore (ensure_range em node)
-  | End { value; ranges = [] } -> alias em node value
-  | End { value; ranges = [range] } ->
-      let dep = resolve em value in
-      let range_id = ensure_range em range in
-      ignore (P.emit em.builder (End_range { dep; range = range_id }));
-      em.open_ranges <-
-        List.filter (fun r -> not (r == range)) em.open_ranges;
-      K.Ref_tbl.replace em.k2p node dep
-  | End _ -> failwith "Linearizer: End must have 0 or 1 range after split"
-
-  (* Gated store: wrap in If/Endif *)
-  | Store { dst; value; _ } -> (
-      match find_gate dst with
-      | Some gate ->
-          let gate_id = m gate and dst_id = m dst in
-          let if_id = P.emit em.builder
-            (If { cond = gate_id; idx_for_dedup = dst_id }) in
-          emit_instr em node (Store { dst = dst_id; value = m value });
-          ignore (P.emit em.builder (Endif { if_ = if_id }))
-      | None ->
-          emit_instr em node (Store { dst = m dst; value = m value }))
-
-  (* 1:1 translations *)
-  | Param { idx; dtype } ->
-      emit_instr em node (Param { idx; dtype })
-  | Param_image { idx; dtype; width; height } ->
-      emit_instr em node (Param_image { idx; dtype; width; height })
-  | Define_local { size; dtype } ->
-      emit_instr em node (Define_local { size; dtype })
-  | Define_reg { size; dtype; _ } ->
-      emit_instr em node (Define_reg { size; dtype })
-  | Define_var { name; lo; hi; dtype } ->
-      emit_instr em node (Define_var { name; lo; hi; dtype })
-  | Const { value; dtype } ->
-      emit_instr em node (Const { value; dtype })
-  | Index { ptr; idxs; gate; dtype = Dtype.Ptr pty } ->
-      emit_instr em node
-        (Index { ptr = m ptr; idxs = ms idxs;
-                 gate = Option.map m gate; dtype = pty })
-  | Index { dtype = Dtype.Val _; _ } ->
-      failwith "Linearizer: Index must be ptr-typed after pm_add_loads"
-  | Load { src; alt; dtype } ->
-      let has_gate = find_gate src <> None in
-      if has_gate && alt = None then
-        failwith "Linearizer: gated loads require an alt value before linearize";
-      if (not has_gate) && alt <> None then
-        failwith "Linearizer: Load alt requires gated Index";
-      emit_instr em node
-        (Load { src = m src; alt = Option.map m alt; dtype })
-  | Unary { op; src; dtype } ->
-      emit_instr em node (Unary { op; src = m src; dtype })
-  | Binary { op; lhs; rhs; dtype } ->
-      emit_instr em node
-        (Binary { op; lhs = m lhs; rhs = m rhs; dtype })
-  | Ternary { op; a; b; c; dtype } ->
-      emit_instr em node
-        (Ternary { op; a = m a; b = m b; c = m c; dtype })
-  | Cast { src; dtype } ->
-      emit_instr em node
-        (Cast { src = m src; dtype = Dtype.val_of dtype })
-  | Bitcast { src; dtype } ->
-      emit_instr em node (Bitcast { src = m src; dtype })
-  | Vectorize { srcs; dtype } ->
-      emit_instr em node
-        (Vectorize { srcs = ms srcs; dtype = Dtype.val_of dtype })
-  | Gep { src; idxs; dtype } ->
-      emit_instr em node (Gep { src = m src; idxs; dtype })
-  | Barrier -> emit_instr em node Barrier
-  | Special { dim; size; dtype } ->
-      emit_instr em node (Special { dim; size = m size; dtype })
-  | Wmma { name; a; b; c; dtype; dims; dtype_in; dtype_out;
-           device; threads; upcast_axes; reduce_axes } ->
-      emit_instr em node
-        (Wmma { name; a = m a; b = m b; c = m c; dtype;
-                dims; dtype_in; dtype_out; device; threads;
-                upcast_axes; reduce_axes })
-  | Custom { fmt; args } ->
-      emit_instr em node (Custom { fmt; args = ms args })
-  | Custom_inline { fmt; args; dtype } ->
-      emit_instr em node (Custom_inline { fmt; args = ms args; dtype })
-
-  (* Must be lowered before linearization *)
-  | Invalid_index _ | Vconst _ | Ptrcat _ | Vcat _
-  | Reduce _ | Unroll _ | Contract _ | Bufferize _ ->
-      failwith ("Linearizer: " ^ K.view_op_name (K.view node)
-                ^ " must be lowered before linearize")
-
-(* Add control-flow edges: RANGE nodes gain a dependency on the
-   predecessor END/RANGE determined by build_cfg_context. *)
-let add_control_flow cfg node = match K.view node with
-  | Range _ -> (
-      match K.Ref_tbl.find_opt cfg.edges node with
-      | Some pred ->
-          let children = K.children node in
-          Some (K.replace node ~children:(children @ [pred]) ())
-      | None -> None)
-  | _ -> None
-
-let pm_add_control_flow sink =
-  let cfg = build_cfg_context (K.toposort sink) in
-  K.graph_rewrite ~name:"add control flow" (add_control_flow cfg) sink
-
-(* Priority-based topological ordering followed by Kernel → Program emission.
-   The input must already have split Ends and control-flow edges applied. *)
-
-let linearize sink =
-  let topo = K.toposort sink in
-  let order = linearize_order topo in
-  let em = {
-    builder = P.create ();
-    k2p = K.Ref_tbl.create (List.length topo);
-    open_ranges = [];
-  } in
-  List.iter (emit em) order;
-  if em.open_ranges <> [] then
-    failwith "Linearizer: unclosed ranges after emission (missing End?)";
-  P.finish em.builder
+(* Rewrite pass: attach each RANGE to its predecessor END/RANGE. *)
+let pm_add_control_flow (sink : U.t) : U.t =
+  let cfg = build_cfg_context sink in
+  let rule node =
+    match U.op node with
+    | Ops.Range -> (
+        match U.Ref_tbl.find_opt cfg.edges node with
+        | Some pred ->
+            let srcs = Array.to_list (U.src node) in
+            Some (U.replace node ~src:(Array.of_list (srcs @ [ pred ])) ())
+        | None -> None)
+    | _ -> None
+  in
+  U.graph_rewrite ~name:"add control flow" ~bottom_up:true rule sink

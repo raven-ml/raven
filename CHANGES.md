@@ -31,6 +31,24 @@ thread.
   (unit, diagonal, dense), and convergence diagnostics (ESS, split R-hat).
   Equivalent to BlackJAX/PyMC in Python.
 
+### Tolk (new)
+
+- New package: a minimal ML compiler for tensor computation. A tensor program
+  is a graph of micro-operations; Tolk schedules it into kernels, lowers and
+  optimizes them, renders C-style source, compiles, and executes the result —
+  entirely from OCaml. Equivalent to tinygrad in Python.
+- The `Tolk_frontend` library builds these graphs through a NumPy-style tensor
+  surface: broadcasting and dtype promotion, movement ops, reductions,
+  `matmul`, `conv2d` and pooling, cumulative scans, `sort`/`argsort`/`topk`,
+  `gather`/`scatter`, `masked_select`/`nonzero`, `softmax` and friends, and
+  NumPy-style advanced indexing — and executes them end to end
+  (`Run.realize`) with host-data round-tripping.
+- A capture/replay JIT (`Tolk.Jit`) records a traced program once and
+  re-executes it against new inputs. Compiled kernels are first-class graph
+  nodes carrying their rendered source and compiled binary.
+- Runtimes: CPU (via Clang) and Metal. Renderers additionally target CUDA,
+  AMD/HIP, and OpenCL for GPU code generation.
+
 ### Vega (new)
 
 - New package: gradient-based optimizers and learning-rate schedules. Built

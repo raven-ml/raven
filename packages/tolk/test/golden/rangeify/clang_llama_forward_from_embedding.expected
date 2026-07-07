@@ -1,0 +1,290 @@
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+void r_2_8n4(float* restrict data0_2, float* restrict data1_16) {
+  for (int Lidx1 = 0; Lidx1 < 2; Lidx1++) {
+    int alu0 = (Lidx1<<3);
+    float4 val0 = (*((float4*)((data1_16+(alu0+4)))));
+    float4 val1 = (*((float4*)((data1_16+alu0))));
+    *(data0_2+Lidx1) = (1.0f/__builtin_sqrtf(((((val1[0]*val1[0])+(val1[1]*val1[1])+(val1[2]*val1[2])+(val1[3]*val1[3])+(val0[0]*val0[0])+(val0[1]*val0[1])+(val0[2]*val0[2])+(val0[3]*val0[3]))*0.125f)+1e-05f)));
+  }
+}
+---
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+void r_2_8_8n4(float* restrict data0_16, float* restrict data1_16, float* restrict data2_2, float* restrict data3_8, float* restrict data4_64) {
+  float4 val0 = (*((float4*)((data3_8+0))));
+  float4 val1 = (*((float4*)((data3_8+4))));
+  for (int Lidx1 = 0; Lidx1 < 2; Lidx1++) {
+    float val2 = (*(data2_2+Lidx1));
+    int alu0 = (Lidx1<<3);
+    float4 val3 = (*((float4*)((data1_16+(alu0+4)))));
+    float4 val4 = (*((float4*)((data1_16+alu0))));
+    for (int Lidx2 = 0; Lidx2 < 8; Lidx2++) {
+      int alu1 = (Lidx2<<3);
+      float4 val5 = (*((float4*)((data4_64+(alu1+4)))));
+      float4 val6 = (*((float4*)((data4_64+alu1))));
+      *(data0_16+(alu0+Lidx2)) = (((val4[0]*val0[0]*val6[0])+(val4[1]*val0[1]*val6[1])+(val4[2]*val0[2]*val6[2])+(val4[3]*val0[3]*val6[3])+(val3[0]*val1[0]*val5[0])+(val3[1]*val1[1]*val5[1])+(val3[2]*val1[2]*val5[2])+(val3[3]*val1[3]*val5[3]))*val2);
+    }
+  }
+}
+---
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+void r_2_4_8(float* restrict data0_8, float* restrict data1_16, float* restrict data2_2, float* restrict data3_8, float* restrict data4_32) {
+  float4 val0 = (*((float4*)((data3_8+0))));
+  float4 val1 = (*((float4*)((data3_8+4))));
+  for (int Lidx1 = 0; Lidx1 < 2; Lidx1++) {
+    float val2 = (*(data2_2+Lidx1));
+    int alu0 = (Lidx1<<3);
+    float4 val3 = (*((float4*)((data1_16+(alu0+4)))));
+    float4 val4 = (*((float4*)((data1_16+alu0))));
+    for (int Lidx2 = 0; Lidx2 < 4; Lidx2++) {
+      int alu1 = (Lidx2<<3);
+      float4 val5 = (*((float4*)((data4_32+(alu1+4)))));
+      float4 val6 = (*((float4*)((data4_32+alu1))));
+      *(data0_8+((Lidx1<<2)+Lidx2)) = (((val4[0]*val0[0]*val6[0])+(val4[1]*val0[1]*val6[1])+(val4[2]*val0[2]*val6[2])+(val4[3]*val0[3]*val6[3])+(val3[0]*val1[0]*val5[0])+(val3[1]*val1[1]*val5[1])+(val3[2]*val1[2]*val5[2])+(val3[3]*val1[3]*val5[3]))*val2);
+    }
+  }
+}
+---
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+void r_2_4_8n1(float* restrict data0_8, float* restrict data1_16, float* restrict data2_2, float* restrict data3_8, float* restrict data4_32) {
+  float4 val0 = (*((float4*)((data3_8+0))));
+  float4 val1 = (*((float4*)((data3_8+4))));
+  for (int Lidx1 = 0; Lidx1 < 2; Lidx1++) {
+    float val2 = (*(data2_2+Lidx1));
+    int alu0 = (Lidx1<<3);
+    float4 val3 = (*((float4*)((data1_16+(alu0+4)))));
+    float4 val4 = (*((float4*)((data1_16+alu0))));
+    for (int Lidx2 = 0; Lidx2 < 4; Lidx2++) {
+      int alu1 = (Lidx2<<3);
+      float4 val5 = (*((float4*)((data4_32+(alu1+4)))));
+      float4 val6 = (*((float4*)((data4_32+alu1))));
+      *(data0_8+((Lidx1<<2)+Lidx2)) = (((val4[0]*val0[0]*val6[0])+(val4[1]*val0[1]*val6[1])+(val4[2]*val0[2]*val6[2])+(val4[3]*val0[3]*val6[3])+(val3[0]*val1[0]*val5[0])+(val3[1]*val1[1]*val5[1])+(val3[2]*val1[2]*val5[2])+(val3[3]*val1[3]*val5[3]))*val2);
+    }
+  }
+}
+---
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+void r_2_2_2_2_2(float* restrict data0_8, float* restrict data1_16, float* restrict data2_64, float* restrict data3_8) {
+  float4 val0 = (*((float4*)((data2_64+0))));
+  float4 val1 = (*((float4*)((data2_64+4))));
+  float4 val2 = (*((float4*)((data3_8+0))));
+  float4 val3 = (*((float4*)((data3_8+4))));
+  float alu0 = ((val2[0]*val0[1])+(val2[1]*val0[0]));
+  float alu1 = ((val2[2]*val0[3])+(val2[3]*val0[2]));
+  float alu2 = ((val3[0]*val1[1])+(val3[1]*val1[0]));
+  float alu3 = ((val3[2]*val1[3])+(val3[3]*val1[2]));
+  float alu4 = ((val2[0]*val0[0])-(val2[1]*val0[1]));
+  float alu5 = ((val2[2]*val0[2])-(val2[3]*val0[3]));
+  float alu6 = ((val3[0]*val1[0])-(val3[1]*val1[1]));
+  float alu7 = ((val3[2]*val1[2])-(val3[3]*val1[3]));
+  for (int Lidx1 = 0; Lidx1 < 2; Lidx1++) {
+    int alu8 = (Lidx1<<2);
+    float4 val4 = (*((float4*)((data1_16+(alu8+8)))));
+    float4 val5 = (*((float4*)((data1_16+alu8))));
+    float alu9 = ((val4[0]*val1[1])+(val4[1]*val1[0]));
+    float alu10 = ((val4[0]*val1[0])-(val4[1]*val1[1]));
+    float alu11 = ((val4[2]*val1[2])-(val4[3]*val1[3]));
+    float alu12 = ((val4[2]*val1[3])+(val4[3]*val1[2]));
+    float alu13 = ((val5[0]*val0[1])+(val5[1]*val0[0]));
+    float alu14 = ((val5[0]*val0[0])-(val5[1]*val0[1]));
+    float alu15 = ((val5[2]*val0[2])-(val5[3]*val0[3]));
+    float alu16 = ((val5[2]*val0[3])+(val5[3]*val0[2]));
+    *((float4*)((data0_8+alu8))) = (float4){(((alu14*alu4)+(alu15*alu5)+(alu13*alu0)+(alu16*alu1))*0.5f),((((alu14*alu6)+(alu15*alu7)+(alu13*alu2)+(alu16*alu3))*0.5f)+((float)(-__builtin_inff()))),(((alu10*alu4)+(alu11*alu5)+(alu9*alu0)+(alu12*alu1))*0.5f),(((alu10*alu6)+(alu11*alu7)+(alu9*alu2)+(alu12*alu3))*0.5f)};
+  }
+}
+---
+typedef float float2 __attribute__((aligned(8),ext_vector_type(2)));
+void r_4_2(float* restrict data0_4, float* restrict data1_8) {
+  for (int Lidx1 = 0; Lidx1 < 4; Lidx1++) {
+    float2 val0 = (*((float2*)((data1_8+(Lidx1<<1)))));
+    float alu0 = ((val0[0]<val0[1])?val0[1]:val0[0]);
+    *(data0_4+Lidx1) = alu0;
+  }
+}
+---
+typedef float float2 __attribute__((aligned(8),ext_vector_type(2)));
+void r_4_2n1(float* restrict data0_4, float* restrict data1_8, float* restrict data2_4) {
+  for (int Lidx1 = 0; Lidx1 < 4; Lidx1++) {
+    float val0 = (*(data2_4+Lidx1));
+    float2 val1 = (*((float2*)((data1_8+(Lidx1<<1)))));
+    float alu0 = ((val1[0]-val0)*1.4426950408889634f);
+    _Bool alu1 = (alu0!=alu0);
+    float alu2 = ((alu0!=((float)(-__builtin_inff())))?alu0:0.0f);
+    float alu3 = (alu1?0.0f:alu2);
+    float alu4 = ((alu0!=((float)(__builtin_inff())))?alu3:0.0f);
+    float alu5 = ((alu4<0.0f)?-0.5f:0.5f);
+    int cast0 = ((int)((alu4+alu5)));
+    float alu6 = ((val1[1]-val0)*1.4426950408889634f);
+    _Bool alu7 = (alu6!=alu6);
+    float alu8 = ((alu6!=((float)(-__builtin_inff())))?alu6:0.0f);
+    float alu9 = (alu7?0.0f:alu8);
+    float alu10 = ((alu6!=((float)(__builtin_inff())))?alu9:0.0f);
+    float alu11 = ((alu10<0.0f)?-0.5f:0.5f);
+    int cast1 = ((int)((alu10+alu11)));
+    _Bool alu12 = (cast0<0);
+    _Bool alu13 = (cast1<0);
+    int alu14 = (alu12?1:0);
+    int alu15 = (((cast0+alu14)>>1)-((int)((((cast0%2)!=0)&(alu12!=0)))));
+    int alu16 = (alu13?1:0);
+    int alu17 = (((cast1+alu16)>>1)-((int)((((cast1%2)!=0)&(alu13!=0)))));
+    float alu18 = (alu4-((float)(cast0)));
+    float alu19 = (alu10-((float)(cast1)));
+    float alu20 = (((alu0<128.0f)!=1)?((float)(__builtin_inff())):(((((((((((((0.0001535920892f*alu18)+0.001339262701f)*alu18)+0.009618384764f)*alu18)+0.05550347269f)*alu18)+0.2402264476f)*alu18)+0.6931471825f)*alu18)+1.0f)*__builtin_bit_cast(float, (int)(((alu15+127)<<23)))*__builtin_bit_cast(float, (int)((((cast0-alu15)+127)<<23)))));
+    float alu21 = ((alu0<-150.0f)?0.0f:alu20);
+    float alu22 = (((alu6<128.0f)!=1)?((float)(__builtin_inff())):(((((((((((((0.0001535920892f*alu19)+0.001339262701f)*alu19)+0.009618384764f)*alu19)+0.05550347269f)*alu19)+0.2402264476f)*alu19)+0.6931471825f)*alu19)+1.0f)*__builtin_bit_cast(float, (int)(((alu17+127)<<23)))*__builtin_bit_cast(float, (int)((((cast1-alu17)+127)<<23)))));
+    float alu23 = ((alu6<-150.0f)?0.0f:alu22);
+    float alu24 = (alu1?((float)(__builtin_nanf(""))):alu21);
+    float alu25 = (alu7?((float)(__builtin_nanf(""))):alu23);
+    *(data0_4+Lidx1) = (1.0f/(alu24+alu25));
+  }
+}
+---
+typedef float float2 __attribute__((aligned(8),ext_vector_type(2)));
+void r_4_4_2(float* restrict data0_16, float* restrict data1_8, float* restrict data2_4, float* restrict data3_4, float* restrict data4_8) {
+  for (int Lidx1 = 0; Lidx1 < 4; Lidx1++) {
+    float val0 = (*(data2_4+Lidx1));
+    float val1 = (*(data3_4+Lidx1));
+    float2 val2 = (*((float2*)((data1_8+(Lidx1<<1)))));
+    float alu0 = ((val2[0]-val0)*1.4426950408889634f);
+    _Bool alu1 = (alu0!=alu0);
+    float alu2 = ((alu0!=((float)(-__builtin_inff())))?alu0:0.0f);
+    float alu3 = (alu1?0.0f:alu2);
+    float alu4 = ((alu0!=((float)(__builtin_inff())))?alu3:0.0f);
+    float alu5 = ((alu4<0.0f)?-0.5f:0.5f);
+    int cast0 = ((int)((alu4+alu5)));
+    float alu6 = ((val2[1]-val0)*1.4426950408889634f);
+    _Bool alu7 = (alu6!=alu6);
+    float alu8 = ((alu6!=((float)(-__builtin_inff())))?alu6:0.0f);
+    float alu9 = (alu7?0.0f:alu8);
+    float alu10 = ((alu6!=((float)(__builtin_inff())))?alu9:0.0f);
+    float alu11 = ((alu10<0.0f)?-0.5f:0.5f);
+    int cast1 = ((int)((alu10+alu11)));
+    _Bool alu12 = (cast0<0);
+    _Bool alu13 = (cast1<0);
+    int alu14 = (alu12?1:0);
+    int alu15 = (((cast0+alu14)>>1)-((int)((((cast0%2)!=0)&(alu12!=0)))));
+    int alu16 = (alu13?1:0);
+    int alu17 = (((cast1+alu16)>>1)-((int)((((cast1%2)!=0)&(alu13!=0)))));
+    float alu18 = (alu4-((float)(cast0)));
+    float alu19 = (alu10-((float)(cast1)));
+    float alu20 = (((alu0<128.0f)!=1)?((float)(__builtin_inff())):(((((((((((((0.0001535920892f*alu18)+0.001339262701f)*alu18)+0.009618384764f)*alu18)+0.05550347269f)*alu18)+0.2402264476f)*alu18)+0.6931471825f)*alu18)+1.0f)*__builtin_bit_cast(float, (int)(((alu15+127)<<23)))*__builtin_bit_cast(float, (int)((((cast0-alu15)+127)<<23)))));
+    float alu21 = ((alu0<-150.0f)?0.0f:alu20);
+    float alu22 = (((alu6<128.0f)!=1)?((float)(__builtin_inff())):(((((((((((((0.0001535920892f*alu19)+0.001339262701f)*alu19)+0.009618384764f)*alu19)+0.05550347269f)*alu19)+0.2402264476f)*alu19)+0.6931471825f)*alu19)+1.0f)*__builtin_bit_cast(float, (int)(((alu17+127)<<23)))*__builtin_bit_cast(float, (int)((((cast1-alu17)+127)<<23)))));
+    float alu23 = ((alu6<-150.0f)?0.0f:alu22);
+    float alu24 = (alu1?((float)(__builtin_nanf(""))):alu21);
+    float alu25 = (alu7?((float)(__builtin_nanf(""))):alu23);
+    for (int Lidx3 = 0; Lidx3 < 4; Lidx3++) {
+      float val3 = (*(data4_8+(Lidx3+4)));
+      float val4 = (*(data4_8+Lidx3));
+      *(data0_16+((Lidx1<<2)+Lidx3)) = (((alu24*val4)+(alu25*val3))*val1);
+    }
+  }
+}
+---
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+void r_2_8_2_4(float* restrict data0_16, float* restrict data1_16, float* restrict data2_16, float* restrict data3_64) {
+  float buf0[1];
+  for (int Lidx1 = 0; Lidx1 < 2; Lidx1++) {
+    for (int Lidx2 = 0; Lidx2 < 8; Lidx2++) {
+      *(buf0+0) = 0.0f;
+      for (int Ridx0_0 = 0; Ridx0_0 < 2; Ridx0_0++) {
+        float4 val0 = (*((float4*)((data2_16+((Ridx0_0<<3)+(Lidx1<<2))))));
+        float4 val1 = (*((float4*)((data3_64+((Ridx0_0<<2)+(Lidx2<<3))))));
+        *(buf0+0) = ((*(buf0+0))+(val0[0]*val1[0])+(val0[1]*val1[1])+(val0[2]*val1[2])+(val0[3]*val1[3]));
+      }
+      int alu3 = ((Lidx1<<3)+Lidx2);
+      float val2 = (*(data1_16+alu3));
+      *(data0_16+alu3) = (val2+(*(buf0+0)));
+    }
+  }
+}
+---
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+void r_2_16_8_8(float* restrict data0_32, float* restrict data1_16, float* restrict data2_2, float* restrict data3_8, float* restrict data4_128, float* restrict data5_128) {
+  float buf0[1];
+  float4 val0 = (*((float4*)((data3_8+0))));
+  float4 val1 = (*((float4*)((data3_8+4))));
+  for (int Lidx2 = 0; Lidx2 < 2; Lidx2++) {
+    float val2 = (*(data2_2+Lidx2));
+    int alu0 = (Lidx2<<3);
+    float4 val3 = (*((float4*)((data1_16+(alu0+4)))));
+    float4 val4 = (*((float4*)((data1_16+alu0))));
+    for (int Lidx3 = 0; Lidx3 < 16; Lidx3++) {
+      int alu1 = (Lidx3<<3);
+      *(buf0+0) = 0.0f;
+      for (int Ridx0 = 0; Ridx0 < 8; Ridx0++) {
+        float val5 = (*(data1_16+(alu0+Ridx0)));
+        float val6 = (*(data3_8+Ridx0));
+        float val7 = (*(data4_128+(alu1+Ridx0)));
+        *(buf0+0) = ((*(buf0+0))+(val5*val6*val7));
+      }
+      float4 val8 = (*((float4*)((data5_128+(alu1+4)))));
+      float4 val9 = (*((float4*)((data5_128+alu1))));
+      float alu5 = ((*(buf0+0))*val2);
+      float alu6 = (alu5*-1.4426950408889634f);
+      _Bool alu7 = (alu6!=alu6);
+      float alu8 = ((alu6!=((float)(-__builtin_inff())))?alu6:0.0f);
+      float alu9 = (alu7?0.0f:alu8);
+      float alu10 = ((alu6!=((float)(__builtin_inff())))?alu9:0.0f);
+      float alu11 = ((alu10<0.0f)?-0.5f:0.5f);
+      int cast0 = ((int)((alu10+alu11)));
+      _Bool alu12 = (cast0<0);
+      int alu13 = (alu12?1:0);
+      int alu14 = (((cast0+alu13)>>1)-((int)((((cast0%2)!=0)&(alu12!=0)))));
+      float alu15 = (alu10-((float)(cast0)));
+      float alu16 = (((alu6<128.0f)!=1)?((float)(__builtin_inff())):(((((((((((((0.0001535920892f*alu15)+0.001339262701f)*alu15)+0.009618384764f)*alu15)+0.05550347269f)*alu15)+0.2402264476f)*alu15)+0.6931471825f)*alu15)+1.0f)*__builtin_bit_cast(float, (int)(((alu14+127)<<23)))*__builtin_bit_cast(float, (int)((((cast0-alu14)+127)<<23)))));
+      float alu17 = ((alu6<-150.0f)?0.0f:alu16);
+      float alu18 = (alu7?((float)(__builtin_nanf(""))):alu17);
+      *(data0_32+((Lidx2<<4)+Lidx3)) = ((alu5/(1.0f+alu18))*((val4[0]*val0[0]*val9[0])+(val4[1]*val0[1]*val9[1])+(val4[2]*val0[2]*val9[2])+(val4[3]*val0[3]*val9[3])+(val3[0]*val1[0]*val8[0])+(val3[1]*val1[1]*val8[1])+(val3[2]*val1[2]*val8[2])+(val3[3]*val1[3]*val8[3]))*val2);
+    }
+  }
+}
+---
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+void r_2_8_16(float* restrict data0_16, float* restrict data1_16, float* restrict data2_32, float* restrict data3_128) {
+  for (int Lidx1 = 0; Lidx1 < 2; Lidx1++) {
+    int alu0 = (Lidx1<<4);
+    float4 val0 = (*((float4*)((data2_32+(alu0+4)))));
+    float4 val1 = (*((float4*)((data2_32+(alu0+8)))));
+    float4 val2 = (*((float4*)((data2_32+(alu0+12)))));
+    float4 val3 = (*((float4*)((data2_32+alu0))));
+    for (int Lidx2 = 0; Lidx2 < 8; Lidx2++) {
+      int alu1 = ((Lidx1<<3)+Lidx2);
+      float val4 = (*(data1_16+alu1));
+      int alu2 = (Lidx2<<4);
+      float4 val5 = (*((float4*)((data3_128+(alu2+4)))));
+      float4 val6 = (*((float4*)((data3_128+(alu2+8)))));
+      float4 val7 = (*((float4*)((data3_128+(alu2+12)))));
+      float4 val8 = (*((float4*)((data3_128+alu2))));
+      *(data0_16+alu1) = (val4+(val3[0]*val8[0])+(val3[1]*val8[1])+(val3[2]*val8[2])+(val3[3]*val8[3])+(val0[0]*val5[0])+(val0[1]*val5[1])+(val0[2]*val5[2])+(val0[3]*val5[3])+(val1[0]*val6[0])+(val1[1]*val6[1])+(val1[2]*val6[2])+(val1[3]*val6[3])+(val2[0]*val7[0])+(val2[1]*val7[1])+(val2[2]*val7[2])+(val2[3]*val7[3]));
+    }
+  }
+}
+---
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+void E_2_2_4n4(float* restrict data0_16, float* restrict data1_16, float* restrict data2_2, float* restrict data3_8) {
+  for (int Lidx0 = 0; Lidx0 < 2; Lidx0++) {
+    float val0 = (*(data2_2+Lidx0));
+    for (int Lidx1 = 0; Lidx1 < 2; Lidx1++) {
+      int alu0 = (Lidx1<<2);
+      int alu1 = ((Lidx0<<3)+alu0);
+      float4 val1 = (*((float4*)((data1_16+alu1))));
+      float4 val2 = (*((float4*)((data3_8+alu0))));
+      *((float4*)((data0_16+alu1))) = (float4){(val1[0]*val0*val2[0]),(val1[1]*val0*val2[1]),(val1[2]*val0*val2[2]),(val1[3]*val0*val2[3])};
+    }
+  }
+}
+---
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+void r_2_32_8n1(float* restrict data0_64, float* restrict data1_16, float* restrict data2_256) {
+  for (int Lidx1 = 0; Lidx1 < 2; Lidx1++) {
+    int alu0 = (Lidx1<<3);
+    float4 val0 = (*((float4*)((data1_16+(alu0+4)))));
+    float4 val1 = (*((float4*)((data1_16+alu0))));
+    for (int Lidx2 = 0; Lidx2 < 32; Lidx2++) {
+      int alu1 = (Lidx2<<3);
+      float4 val2 = (*((float4*)((data2_256+(alu1+4)))));
+      float4 val3 = (*((float4*)((data2_256+alu1))));
+      *(data0_64+((Lidx1<<5)+Lidx2)) = ((val1[0]*val3[0])+(val1[1]*val3[1])+(val1[2]*val3[2])+(val1[3]*val3[3])+(val0[0]*val2[0])+(val0[1]*val2[1])+(val0[2]*val2[2])+(val0[3]*val2[3]));
+    }
+  }
+}

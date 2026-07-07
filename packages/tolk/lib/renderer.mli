@@ -7,7 +7,7 @@
 
 (** GPU kernel renderer.
 
-    A renderer converts {!Ir.Program.t} programs to backend-specific source
+    A renderer converts {!Program_spec.program} values to backend-specific source
     code and owns its {!Compiler.t}. The abstract type {!type-t} encapsulates
     target capabilities (memory hierarchy, grid limits, supported operations),
     a rendering function, and an optional compiler.
@@ -29,8 +29,9 @@
     handles natively.
 
     Operations without a corresponding flag in {!type-supported_ops} ([Add],
-    [Sub], [Mul], [Mod], [Idiv], [Cmpne], [Xor], [Where], [Trunc]) are always
-    required and never decomposed. *)
+    [Sub], [Mul], [Cmod], [Cdiv], [Cmpne], [Xor], [Where], [Trunc]) are always
+    required. Floor division and modulo are lowered before rendering, matching
+    tinygrad's C-style renderers. *)
 type code_op =
   | Sqrt  (** Square root. *)
   | Recip  (** Reciprocal ([1/x]). *)
@@ -45,8 +46,8 @@ type code_op =
   | Add  (** Addition. *)
   | Sub  (** Subtraction. *)
   | Mul  (** Multiplication. *)
-  | Mod  (** Modulo. *)
-  | Idiv  (** Integer division. *)
+  | Cmod  (** C-style integer remainder. *)
+  | Cdiv  (** C-style truncating integer division. *)
   | Cmpne  (** Not-equal comparison. *)
   | Shr  (** Bitwise right shift. *)
   | Shl  (** Bitwise left shift. *)
@@ -60,11 +61,11 @@ type code_op =
 
 (** {2:supported_ops Supported operations} *)
 
-val all_supported_ops : Tolk_ir.Decompositions.supported_ops
+val all_supported_ops : Decomp_op.supported_ops
 (** [all_supported_ops] marks every decomposable operation as natively
     supported. *)
 
-val supported_ops_of_code_for_op : code_op list -> Tolk_ir.Decompositions.supported_ops
+val supported_ops_of_code_for_op : code_op list -> Decomp_op.supported_ops
 (** [supported_ops_of_code_for_op ops] derives capability flags from a list of
     natively rendered operations. An operation absent from [ops] is marked
     unsupported. *)
@@ -131,25 +132,25 @@ val code_for_op : t -> code_op list
 
     See also {!val-supported_ops}. *)
 
-val supported_ops : t -> Tolk_ir.Decompositions.supported_ops
+val supported_ops : t -> Decomp_op.supported_ops
 (** [supported_ops r] is the backend capability flags for the decomposition
     pass, derived from {!val-code_for_op} unless explicitly overridden via
     {!make}. *)
 
-val supports_dtype : t -> Tolk_ir.Dtype.t -> bool
+val supports_dtype : t -> Tolk_uop.Dtype.t -> bool
 (** [supports_dtype r dt] is [true] iff the backend natively supports [dt].
     When [false], the decomposition pass emulates [dt] using supported types. *)
 
-val emulated_float_dtypes : t -> (Tolk_ir.Dtype.scalar * Tolk_ir.Dtype.scalar) list
+val emulated_float_dtypes : t -> (Tolk_uop.Dtype.scalar * Tolk_uop.Dtype.scalar) list
 (** [emulated_float_dtypes r] is the list of [(from, to)] dtype pairs for
     float emulation. Each [from] float is promoted to [to] (typically f32).
     Empty for backends that natively support all float types. *)
 
-val pre_matcher : t -> (Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option) option
+val pre_matcher : t -> (Tolk_uop.Uop.t -> Tolk_uop.Uop.t option) option
 (** [pre_matcher r] is an optional device-specific rewrite rule applied
     before decompositions. *)
 
-val extra_matcher : t -> (Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option) option
+val extra_matcher : t -> (Tolk_uop.Uop.t -> Tolk_uop.Uop.t option) option
 (** [extra_matcher r] is an optional device-specific rewrite rule composed
     into the final rewrite fixpoint. *)
 
@@ -157,36 +158,48 @@ val extra_matcher : t -> (Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option) option
 
 val supports_float4 : t -> bool
 (** [supports_float4 r] is [true] iff [r] supports vectorized (float4/float2)
-    load and store operations.  The devectorizer uses this to decide whether
-    wide accesses can be folded.  Defaults to [true]. *)
+    load and store operations. Codegen lowering uses this to decide whether
+    wide accesses can be folded. Defaults to [true]. *)
+
+val image_pitch_alignment : t -> int option
+(** [image_pitch_alignment r] is the image row pitch alignment in scalar pixels
+    used by late image selection, when the target exposes one. *)
 
 (** {1:rendering Rendering} *)
 
-val render : t -> ?name:string -> Tolk_ir.Program.t -> string
+val render : t -> ?name:string -> Tolk_uop.Uop.t list -> string
 (** [render r ~name program] converts [program] to backend-specific source code.
 
     [name] defaults to ["kernel"]. *)
+
+val aux : t -> Tolk_uop.Uop.t list -> string list
+(** [aux r program] is backend-specific program metadata derived from
+    [program]. Empty when the backend has no auxiliary runtime payload. *)
 
 (** {1:construction Construction} *)
 
 val make :
   ?tensor_cores:Tc.t list ->
   ?supports_float4:bool ->
+  ?image_pitch_alignment:int ->
   ?has_threads:bool ->
   ?global_max:int list ->
   ?global_prod_max:int list ->
   ?local_max:int list ->
   ?code_for_op:code_op list ->
-  ?supported_ops:Tolk_ir.Decompositions.supported_ops ->
+  ?supported_ops:Decomp_op.supported_ops ->
   ?compiler:Compiler.t ->
-  ?pre_matcher:(Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option) ->
-  ?extra_matcher:(Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t option) ->
+  ?pre_matcher:(Tolk_uop.Uop.t -> Tolk_uop.Uop.t option) ->
+  ?extra_matcher:(Tolk_uop.Uop.t -> Tolk_uop.Uop.t option) ->
+  ?supports_dtype:(Tolk_uop.Dtype.t -> bool) ->
+  ?aux:(Tolk_uop.Uop.t list -> string list) ->
+  ?emulated_floats:(Tolk_uop.Dtype.scalar * Tolk_uop.Dtype.scalar) list ->
   name:string ->
   device:string ->
   has_local:bool ->
   has_shared:bool ->
   shared_max:int ->
-  render:(?name:string -> Tolk_ir.Program.t -> string) ->
+  render:(?name:string -> Tolk_uop.Uop.t list -> string) ->
   unit ->
   t
 (** [make ~name ~device ~has_local ~has_shared ~shared_max ~render ()] is a
@@ -195,6 +208,7 @@ val make :
     Optional parameters and their defaults:
     - [tensor_cores]: [[]] (none).
     - [supports_float4]: [true].
+    - [image_pitch_alignment]: [None].
     - [has_threads]: [false].
     - [global_max]: [Some [0x8FFFFFFF; 0x8FFFFFFF; 0x8FFFFFFF]].
     - [global_prod_max]: [None].
@@ -203,6 +217,7 @@ val make :
     - [supported_ops]: derived from [code_for_op] via
       {!supported_ops_of_code_for_op}. When [code_for_op] is [[]], defaults to
       {!all_supported_ops}.
+    - [supports_dtype]: [fun _ -> true].
     - [compiler]: [None]. *)
 
 val with_compiler : Compiler.t -> t -> t

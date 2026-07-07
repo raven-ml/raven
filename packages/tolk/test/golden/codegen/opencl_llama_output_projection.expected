@@ -1,0 +1,12 @@
+__kernel void r_2_2_16_8n2(__global float* data0_64, __global float* data1_16, __global float* data2_256) {
+  int lidx0 = get_local_id(0); /* 2 */
+  int alu0 = (lidx0<<3);
+  float4 val0 = (*((__global float4*)((data1_16+(alu0+4)))));
+  float4 val1 = (*((__global float4*)((data1_16+alu0))));
+  int gidx0 = get_group_id(0); /* 2 */
+  int lidx1 = get_local_id(1); /* 16 */
+  int alu1 = ((gidx0<<7)+(lidx1<<3));
+  float4 val2 = (*((__global float4*)((data2_256+(alu1+4)))));
+  float4 val3 = (*((__global float4*)((data2_256+alu1))));
+  *(data0_64+(lidx1+(gidx0<<4)+(lidx0<<5))) = ((val1.x*val3.x)+(val1.y*val3.y)+(val1.z*val3.z)+(val1.w*val3.w)+(val0.x*val2.x)+(val0.y*val2.y)+(val0.z*val2.z)+(val0.w*val2.w));
+}

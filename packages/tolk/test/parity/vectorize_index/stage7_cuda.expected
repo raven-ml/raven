@@ -1,0 +1,10 @@
+#define INFINITY (__int_as_float(0x7f800000))
+#define NAN (__int_as_float(0x7fffffff))
+template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
+extern "C" __global__ void __launch_bounds__(1) test(float* data0_-1, float* data1_-1) {
+  float val0 = (*(data0_-1+0));
+  float val1 = (*(data0_-1+1));
+  float val2 = (*(data0_-1+2));
+  float val3 = (*(data0_-1+3));
+  *(data1_-1+0) = val2;
+}

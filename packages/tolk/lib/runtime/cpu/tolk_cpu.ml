@@ -23,7 +23,12 @@ external exec_call : nativeint -> nativeint array -> int64 array -> unit
 external link_symbol_raw : string array -> string -> nativeint
   = "caml_tolk_cpu_jit_link_symbol"
 
-type loaded_program = { base : nativeint; entry : nativeint; size : int }
+type loaded_program = {
+  base : nativeint;
+  entry : nativeint;
+  size : int;
+  mutable unloaded : bool;
+}
 
 let link_symbol ?(libs = []) name =
   let libs = Array.of_list libs in
@@ -42,19 +47,20 @@ let load_program ~name ~lib =
       Nativeint.add base
         (Nativeint.of_int (Elf_cpu_loader.entry_offset prepared))
     in
-    { base; entry; size }
+    { base; entry; size; unloaded = false }
   with exn ->
     exec_free base size;
     raise exn
 
-let unload_program loaded = exec_free loaded.base loaded.size
+let unload_program loaded =
+  if not loaded.unloaded then begin
+    loaded.unloaded <- true;
+    exec_free loaded.base loaded.size
+  end
 
 (* Allocator *)
 
-(* Tinygrad uses mmap (MAP_ANON | MAP_SHARED) for CPU buffers. Tolk uses
-   calloc/free for simplicity. Mmap becomes relevant for shared-memory IPC or
-   very large allocations; calloc suffices for single-process CPU execution. *)
-let raw_allocator =
+let raw_allocator ~synchronize =
   let alloc size spec =
     match spec.Device.Buffer_spec.external_ptr with
     | Some ptr -> ptr
@@ -65,13 +71,25 @@ let raw_allocator =
     | Some _ -> ()
     | None -> cpu_free buf
   in
+  let copyin buf bytes =
+    synchronize ();
+    cpu_copyin buf bytes
+  in
+  let copyout bytes buf =
+    synchronize ();
+    cpu_copyout bytes buf
+  in
+  let offset buf _size byte_offset =
+    if byte_offset < 0 then invalid_arg "CPU buffer offset must be non-negative";
+    Nativeint.add buf (Nativeint.of_int byte_offset)
+  in
   {
     Device.Allocator.alloc;
     free;
-    copyin = cpu_copyin;
-    copyout = cpu_copyout;
+    copyin;
+    copyout;
     addr = Fun.id;
-    offset = None;
+    offset = Some offset;
     transfer = None;
     supports_transfer = false;
     copy_from_disk = None;
@@ -80,13 +98,6 @@ let raw_allocator =
 
 (* Execution Queue *)
 
-(* Tinygrad uses recursive CPUWorker threads: each worker can spawn sub-workers
-   for parallel kernel execution. Tolk uses a flat two-tier model: a single
-   Thread dispatches tasks from the queue, and a shared Domain pool provides
-   true parallelism for multi-threaded kernels. Domains (not Threads) are used
-   for the pool because OCaml 5 Domains run on separate OS threads with
-   independent minor heaps, giving actual CPU parallelism for kernel
-   execution. *)
 module Cpu_queue = struct
   type pool_job = Run of (unit -> unit) | Stop
 
@@ -120,7 +131,7 @@ module Cpu_queue = struct
 
   let pool_start_worker pool = Domain.spawn (fun () -> pool_worker_loop pool)
 
-  (* Only called from the single dispatch thread (worker), so no lock needed. *)
+  (* Only called from the single dispatch domain, so no lock needed. *)
   let pool_ensure pool count =
     let existing = List.length pool.workers in
     if count > existing then
@@ -262,10 +273,16 @@ module Cpu_queue = struct
   let exec t ~entry ~bufs ~vals ~threads ~core_id_index =
     let task = Work { entry; bufs; vals; threads; core_id_index } in
     Mutex.lock t.mutex;
-    Queue.add task t.tasks;
-    t.pending <- t.pending + 1;
-    Condition.signal t.cond;
-    Mutex.unlock t.mutex
+    let error = t.error in
+    (match error with
+    | None ->
+        Queue.add task t.tasks;
+        t.pending <- t.pending + 1;
+        Condition.signal t.cond;
+        Mutex.unlock t.mutex
+    | Some exn ->
+        Mutex.unlock t.mutex;
+        raise exn)
 
   let synchronize t =
     Mutex.lock t.mutex;
@@ -273,7 +290,6 @@ module Cpu_queue = struct
       Condition.wait t.cond t.mutex
     done;
     let error = t.error in
-    t.error <- None;
     Mutex.unlock t.mutex;
     match error with None -> () | Some exn -> raise exn
 
@@ -301,27 +317,37 @@ let create name =
   at_exit (fun () -> Cpu_queue.shutdown state);
   let runtime entry_name lib ~runtimevars =
     let loaded = load_program ~name:entry_name ~lib in
-    let entry = loaded.entry in
     let core_id_index = List.assoc_opt "core_id" runtimevars in
+    let global_threads global =
+      if Array.length global = 0 then 1 else max 1 global.(0)
+    in
     let call bufs ~global ~local:_ ~vals ~wait ~timeout:_ =
       let threads = match core_id_index with
-        | Some _ -> max 1 global.(0)
+        | Some _ -> global_threads global
         | None -> 1
       in
-      Cpu_queue.exec state ~entry ~bufs ~vals ~threads ~core_id_index;
+      if loaded.unloaded then invalid_arg "CPU program has been unloaded";
+      Cpu_queue.exec state ~entry:loaded.entry ~bufs ~vals ~threads
+        ~core_id_index;
       if wait then begin
         Cpu_queue.synchronize state;
         None
       end else
         None
     in
-    let free () = unload_program loaded in
+    let free () =
+      Fun.protect ~finally:(fun () -> unload_program loaded) (fun () ->
+        Cpu_queue.synchronize state)
+    in
     Device.{ call; free }
   in
   let synchronize () = Cpu_queue.synchronize state in
-  let renderer = Renderer.with_compiler clang Cstyle.clang in
+  let renderer =
+    Renderer.with_compiler clang (Cstyle.clang (Gpu_target.host_cpu ()))
+  in
   let renderer_set = Device.Renderer_set.make [renderer, None] in
   let allocator =
-    Device.Allocator.Pack (Device.Lru_allocator.wrap raw_allocator)
+    Device.Allocator.Pack
+      (Device.Lru_allocator.wrap (raw_allocator ~synchronize))
   in
   Device.make ~name ~allocator ~renderer_set ~runtime ~synchronize ()

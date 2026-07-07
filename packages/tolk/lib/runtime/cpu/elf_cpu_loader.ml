@@ -48,6 +48,13 @@ module Image = struct
     Bytes.set t.data (off + 2) (byte 16);
     Bytes.set t.data (off + 3) (byte 24)
 
+  let set_i64 t off v =
+    let open Int64 in
+    for i = 0 to 7 do
+      Bytes.set t.data (off + i)
+        (Char.chr (to_int (logand (shift_right_logical v (i * 8)) 0xFFL)))
+    done
+
   let to_bytes t = Bytes.sub t.data 0 t.len
 end
 
@@ -80,19 +87,26 @@ let getbits x lo hi =
 
 let i2u32 x = Int64.to_int (Int64.logand x 0xFFFFFFFFL)
 
+let append_trampoline image target =
+  let off = Image.append_bytes image (Bytes.make 16 '\000') in
+  Image.set_u32 image off 0x58000051;
+  Image.set_u32 image (off + 4) 0xD61F0220;
+  Image.set_i64 image (off + 8) target;
+  off
+
 let resolve_reloc ~link_symbol sections reloc =
   let symbol = reloc.Elf.symbol in
   let target =
-    if symbol.shndx = 0 then link_symbol symbol.name
+    if symbol.Elf.shndx = 0 then link_symbol symbol.Elf.name
     else
-      let section = sections.(symbol.shndx) in
-      Nativeint.of_int (section.Elf.addr + symbol.value)
+      let section = sections.(symbol.Elf.shndx) in
+      Nativeint.of_int (section.Elf.addr + symbol.Elf.value)
   in
   {
-    offset = reloc.offset;
+    offset = reloc.Elf.offset;
     target;
-    r_type = reloc.r_type;
-    addend = reloc.addend;
+    r_type = reloc.Elf.r_type;
+    addend = reloc.Elf.addend;
   }
 
 let prepare ~link_symbol ~entry elf =
@@ -126,26 +140,29 @@ let load ~link_symbol ~entry obj =
    beyond the +/-128 MiB direct-branch range, emits a trampoline stub (LDR X17
    + BR X17 + 8-byte absolute address) appended to the image. *)
 let apply_reloc image ~base reloc =
-  let open Int64 in
   let ploc = reloc.offset in
-  let base_i64 = of_nativeint base in
-  let ploc_i64 = of_int ploc in
-  let tgt = add (of_nativeint reloc.target) (of_int reloc.addend) in
+  let base_i64 = Int64.of_nativeint base in
+  let ploc_i64 = Int64.of_int ploc in
+  let tgt =
+    Int64.add (Int64.of_nativeint reloc.target) (Int64.of_int reloc.addend)
+  in
   let patch_lo12 ~shift =
     let instr = Image.get_u32 image ploc in
     let patched = instr lor (getbits tgt shift 11 lsl 10) in
     Image.set_u32 image ploc patched
   in
   let rt = reloc.r_type in
-  if rt = r_x86_64_pc32 then Image.set_u32 image ploc (i2u32 (sub tgt ploc_i64))
+  if rt = r_x86_64_pc32 then
+    Image.set_u32 image ploc (i2u32 (Int64.sub tgt ploc_i64))
   else if rt = r_x86_64_plt32 then
-    Image.set_u32 image ploc (i2u32 (sub tgt (add ploc_i64 base_i64)))
+    Image.set_u32 image ploc
+      (i2u32 (Int64.sub tgt (Int64.add ploc_i64 base_i64)))
   else if rt = r_aarch64_adr_prel_pg_hi21 then begin
     let instr = Image.get_u32 image ploc in
     let rel_pg =
-      sub
-        (logand tgt (lognot 0xFFFL))
-        (logand (add base_i64 ploc_i64) (lognot 0xFFFL))
+      Int64.sub
+        (Int64.logand tgt (Int64.lognot 0xFFFL))
+        (Int64.logand ploc_i64 (Int64.lognot 0xFFFL))
     in
     let patched =
       instr lor (getbits rel_pg 12 13 lsl 29) lor (getbits rel_pg 14 32 lsl 5)
@@ -158,29 +175,22 @@ let apply_reloc image ~base reloc =
   else if rt = r_aarch64_ldst64_abs_lo12_nc then patch_lo12 ~shift:3
   else if rt = r_aarch64_ldst128_abs_lo12_nc then patch_lo12 ~shift:4
   else if rt = r_aarch64_call26 || rt = r_aarch64_jump26 then begin
-    let delta = sub tgt (add base_i64 ploc_i64) in
-    let lo = of_int (-((1 lsl 25) * 4)) in
-    let hi = of_int (((1 lsl 25) - 1) * 4) in
-    if compare delta lo >= 0 && compare delta hi <= 0 then
+    let delta = Int64.sub tgt (Int64.add base_i64 ploc_i64) in
+    let lo = Int64.of_int (-((1 lsl 25) * 4)) in
+    let hi = Int64.of_int (((1 lsl 25) - 1) * 4) in
+    if Int64.compare delta lo >= 0 && Int64.compare delta hi <= 0 then
       let instr = Image.get_u32 image ploc in
       let patched = instr lor getbits delta 2 27 in
       Image.set_u32 image ploc patched
     else
-      let tramp = Bytes.make 16 '\000' in
-      let tramp_img = Image.of_bytes tramp in
-      Image.set_u32 tramp_img 0 0x58000051;
-      Image.set_u32 tramp_img 4 0xD61F0220;
-      let bytes =
-        Bytes.init 8 (fun i ->
-            Char.chr (to_int (logand (shift_right_logical tgt (i * 8)) 0xFFL)))
-      in
-      Bytes.blit bytes 0 tramp 8 8;
-      let tramp_off = Image.append_bytes image tramp in
+      let tramp_off = append_trampoline image tgt in
       let instr = Image.get_u32 image ploc in
-      let patched = instr lor getbits (of_int (tramp_off - ploc)) 2 27 in
+      let patched =
+        instr lor getbits (Int64.of_int (tramp_off - ploc)) 2 27
+      in
       Image.set_u32 image ploc patched
   end
-  else invalid_arg "unknown relocation type"
+  else invalid_arg (Printf.sprintf "unsupported relocation type: %d" rt)
 
 let link ~base t =
   let image = Image.of_bytes ~extra_capacity:t.extra_capacity t.image in

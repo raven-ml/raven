@@ -52,17 +52,30 @@ static void *jit_alloc_executable(size_t size) {
 CAMLprim value caml_tolk_cpu_alloc(value v_size) {
   CAMLparam1(v_size);
   size_t size = (size_t)Long_val(v_size);
-  void *ptr = calloc(1, size);
+#if defined(_WIN32)
+  void *ptr = _aligned_malloc(size, 64);
   if (ptr == NULL) {
     caml_failwith("cpu_alloc failed");
   }
+  memset(ptr, 0, size);
+#else
+  void *ptr = NULL;
+  if (posix_memalign(&ptr, 64, size == 0 ? 64 : size) != 0) {
+    caml_failwith("cpu_alloc failed");
+  }
+  memset(ptr, 0, size);
+#endif
   CAMLreturn(caml_copy_nativeint((intnat)ptr));
 }
 
 CAMLprim value caml_tolk_cpu_free(value v_ptr) {
   CAMLparam1(v_ptr);
   void *ptr = (void *)Nativeint_val(v_ptr);
+#if defined(_WIN32)
+  _aligned_free(ptr);
+#else
   free(ptr);
+#endif
   CAMLreturn(Val_unit);
 }
 

@@ -1,0 +1,11 @@
+#include <metal_stdlib>
+using namespace metal;
+kernel void E_8_2n3(device float* data0_16, device int* data1_2, device float* data2_256, uint3 gid [[threadgroup_position_in_grid]], uint3 lid [[thread_position_in_threadgroup]]) {
+  int val0 = (*(data1_2+0));
+  int val1 = (*(data1_2+1));
+  int lidx0 = lid.x; /* 8 */
+  float val2 = (((-1<val0)&(val0<32))?*(data2_256+(lidx0+(val0<<3))):0.0f);
+  float val3 = (((-1<val1)&(val1<32))?*(data2_256+(lidx0+(val1<<3))):0.0f);
+  *(data0_16+lidx0) = val2;
+  *(data0_16+(lidx0+8)) = val3;
+}

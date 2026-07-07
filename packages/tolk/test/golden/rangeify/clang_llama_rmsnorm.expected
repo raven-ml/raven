@@ -1,0 +1,9 @@
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+void r_2_8(float* restrict data0_2, float* restrict data1_16) {
+  for (int Lidx1 = 0; Lidx1 < 2; Lidx1++) {
+    int alu0 = (Lidx1<<3);
+    float4 val0 = (*((float4*)((data1_16+(alu0+4)))));
+    float4 val1 = (*((float4*)((data1_16+alu0))));
+    *(data0_2+Lidx1) = (1.0f/__builtin_sqrtf(((((val1[0]*val1[0])+(val1[1]*val1[1])+(val1[2]*val1[2])+(val1[3]*val1[3])+(val0[0]*val0[0])+(val0[1]*val0[1])+(val0[2]*val0[2])+(val0[3]*val0[3]))*0.125f)+1e-05f)));
+  }
+}

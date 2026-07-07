@@ -22,10 +22,10 @@ module Ffi = struct
 
   external buffer_free : nativeint -> unit = "caml_tolk_metal_buffer_free"
 
-  external buffer_copyin : nativeint -> bytes -> unit
+  external buffer_copyin : nativeint -> int -> bytes -> unit
     = "caml_tolk_metal_buffer_copyin"
 
-  external buffer_copyout : bytes -> nativeint -> unit
+  external buffer_copyout : bytes -> nativeint -> int -> unit
     = "caml_tolk_metal_buffer_copyout"
 
   external program_create : nativeint -> string -> bytes -> nativeint
@@ -57,13 +57,15 @@ module Ffi = struct
     int ->
     nativeint ->
     nativeint array ->
+    int array ->
     nativeint ->
     int array ->
     int array ->
     int array ->
     unit = "caml_tolk_metal_icb_encode_bc" "caml_tolk_metal_icb_encode"
 
-  external icb_update_buffer : nativeint -> int -> int -> nativeint -> unit
+  external icb_update_buffer :
+    nativeint -> int -> int -> nativeint -> int -> unit
     = "caml_tolk_metal_icb_update_buffer"
 
   external icb_update_dispatch :
@@ -101,7 +103,82 @@ module Ffi = struct
   external command_buffer_gpu_time : nativeint -> float * float
     = "caml_tolk_metal_command_buffer_gpu_time"
 
+  external command_buffer_wait_time : nativeint -> float
+    = "caml_tolk_metal_command_buffer_wait_time"
+
   external device_name : nativeint -> string = "caml_tolk_metal_device_name"
+  external device_arch : nativeint -> string = "caml_tolk_metal_device_arch"
+end
+
+module Buffer_token = struct
+  type buffer = {
+    token : nativeint;
+    handle : nativeint;
+    size : int;
+    offset : int;
+  }
+
+  let next = Atomic.make (-1)
+  let mutex = Mutex.create ()
+  let strong_table : (nativeint, buffer) Hashtbl.t = Hashtbl.create 1024
+  let weak_table : (nativeint, buffer Weak.t) Hashtbl.t = Hashtbl.create 1024
+
+  let unregister_token token =
+    Mutex.lock mutex;
+    Hashtbl.remove strong_table token;
+    Hashtbl.remove weak_table token;
+    Mutex.unlock mutex
+
+  let register ?(strong = false) handle ~size ~offset =
+    let token = Nativeint.of_int (Atomic.fetch_and_add next (-1)) in
+    let buffer = { token; handle; size; offset } in
+    Mutex.lock mutex;
+    if strong then Hashtbl.add strong_table token buffer
+    else begin
+      let weak = Weak.create 1 in
+      Weak.set weak 0 (Some buffer);
+      Hashtbl.add weak_table token weak
+    end;
+    Mutex.unlock mutex;
+    if not strong then Gc.finalise (fun b -> unregister_token b.token) buffer;
+    buffer
+
+  let unregister buffer = unregister_token buffer.token
+
+  let resolve token =
+    Mutex.lock mutex;
+    let buffer =
+      match Hashtbl.find_opt strong_table token with
+      | Some buffer -> Some buffer
+      | None -> (
+          match Hashtbl.find_opt weak_table token with
+          | None -> None
+          | Some weak -> (
+              match Weak.get weak 0 with
+              | Some buffer -> Some buffer
+              | None ->
+                  Hashtbl.remove weak_table token;
+                  None))
+    in
+    Mutex.unlock mutex;
+    match buffer with
+    | Some buffer -> buffer
+    | None when Nativeint.compare token Nativeint.zero >= 0 ->
+        { token; handle = token; size = 0; offset = 0 }
+    | None ->
+        invalid_arg
+          (Printf.sprintf "unknown Metal buffer token %nd" token)
+
+  let resolve_array tokens =
+    let len = Array.length tokens in
+    let handles = Array.make len Nativeint.zero in
+    let offsets = Array.make len 0 in
+    for i = 0 to len - 1 do
+      let buffer = resolve tokens.(i) in
+      handles.(i) <- buffer.handle;
+      offsets.(i) <- buffer.offset
+    done;
+    (handles, offsets)
 end
 
 module State = struct
@@ -114,28 +191,53 @@ module State = struct
     mutable closed : bool;
     needs_icb_fix : bool;
     device_name : string;
+    arch : Gpu_target.metal;
   }
 
   let create () =
     let device = Ffi.create_device () in
-    let queue = Ffi.create_command_queue device in
-    let shared_event = Ffi.create_shared_event device in
-    let needs_icb_fix = Ffi.needs_icb_fix device in
-    let device_name = Ffi.device_name device in
-    {
-      device;
-      queue;
-      shared_event;
-      timeline_value = 0;
-      in_flight = [];
-      closed = false;
-      needs_icb_fix;
-      device_name;
-    }
+    try
+      let queue = Ffi.create_command_queue device in
+      try
+        let shared_event = Ffi.create_shared_event device in
+        try
+          let needs_icb_fix = Ffi.needs_icb_fix device in
+          let device_name = Ffi.device_name device in
+          let arch =
+            match Gpu_target.parse_metal_arch (Ffi.device_arch device) with
+            | Some arch -> arch
+            | None -> failwith "invalid Metal device architecture"
+          in
+          {
+            device;
+            queue;
+            shared_event;
+            timeline_value = 0;
+            in_flight = [];
+            closed = false;
+            needs_icb_fix;
+            device_name;
+            arch;
+          }
+        with exn ->
+          Ffi.release_shared_event shared_event;
+          raise exn
+      with exn ->
+        Ffi.release_command_queue queue;
+        raise exn
+    with exn ->
+      Ffi.release_device device;
+      raise exn
 
   let synchronize t =
-    List.iter Ffi.command_buffer_wait t.in_flight;
-    t.in_flight <- []
+    let rec drain = function
+      | [] -> ()
+      | cmd :: rest ->
+          t.in_flight <- rest;
+          Ffi.command_buffer_wait cmd;
+          drain rest
+    in
+    drain t.in_flight
 
   let shutdown t =
     if not t.closed then (
@@ -158,37 +260,52 @@ end
 module Allocator = struct
   let raw state =
     let alloc size spec =
-      match spec.Device.Buffer_spec.external_ptr with
-      | Some ptr -> ptr
-      | None -> Ffi.buffer_alloc state.State.device size
+      let handle =
+        match spec.Device.Buffer_spec.external_ptr with
+        | Some ptr -> ptr
+        | None -> Ffi.buffer_alloc state.State.device size
+      in
+      Buffer_token.register ~strong:true handle ~size ~offset:0
     in
     let free buf _size spec =
+      Buffer_token.unregister buf;
       match spec.Device.Buffer_spec.external_ptr with
       | Some _ -> ()
-      | None -> Ffi.buffer_free buf
+      | None -> Ffi.buffer_free buf.Buffer_token.handle
     in
     let copyin buf bytes =
       State.synchronize state;
-      Ffi.buffer_copyin buf bytes
+      Ffi.buffer_copyin buf.Buffer_token.handle buf.offset bytes
     in
     let copyout bytes buf =
       State.synchronize state;
-      Ffi.buffer_copyout bytes buf
+      Ffi.buffer_copyout bytes buf.Buffer_token.handle buf.offset
     in
     let transfer ~dest ~src nbytes =
       State.synchronize state;
-      let cmd = Ffi.blit_copy state.State.queue src 0 dest 0 nbytes in
+      let cmd =
+        Ffi.blit_copy state.State.queue src.Buffer_token.handle src.offset
+          dest.Buffer_token.handle dest.offset nbytes
+      in
       state.State.in_flight <- cmd :: state.State.in_flight;
       State.synchronize state
     in
-    let addr buf = buf in
+    let addr buf = buf.Buffer_token.token in
+    let offset buf size byte_offset =
+      if byte_offset < 0 then
+        invalid_arg "Metal buffer offset must be non-negative";
+      if byte_offset + size > buf.Buffer_token.size then
+        invalid_arg "Metal buffer view exceeds base buffer";
+      Buffer_token.register buf.handle ~size
+        ~offset:(buf.offset + byte_offset)
+    in
     {
       Device.Allocator.alloc;
       free;
       copyin;
       copyout;
       addr;
-      offset = Some (fun buf _size _offset -> buf);
+      offset = Some offset;
       transfer = Some transfer;
       supports_transfer = true;
       copy_from_disk = None;
@@ -206,26 +323,27 @@ module Compiler = struct
     | None -> Bytes.of_string src
     | exception Failure _ -> Bytes.of_string src
 
-  let create () = Compiler.make ~name:"METAL" ~cachekey:"compile_metal" ~compile ()
+  let create () =
+    Compiler.make ~name:"METAL" ~cachekey:"compile_metal_direct" ~compile ()
 end
 
 module Program = struct
   let runtime state entry_name lib ~runtimevars:_ =
     let handle = Ffi.program_create state.State.device entry_name lib in
     let local_dims = [| 1; 1; 1 |] in
-    let call bufs ~global ~local ~vals:_ ~wait ~timeout:_ =
+    let call bufs ~global ~local ~vals ~wait ~timeout:_ =
       let local = Option.value local ~default:local_dims in
-      let buf_offsets = Array.make (Array.length bufs) 0 in
+      let bufs, buf_offsets = Buffer_token.resolve_array bufs in
+      let args = Array.map Int64.to_int vals in
       let cmd =
         Ffi.program_dispatch state.State.queue handle bufs buf_offsets
-          [||] global local
+          args global local
       in
-      state.State.in_flight <- cmd :: state.State.in_flight;
-      if wait then begin
-        State.synchronize state;
+      if wait then Some (Ffi.command_buffer_wait_time cmd)
+      else begin
+        state.State.in_flight <- cmd :: state.State.in_flight;
         None
-      end else
-        None
+      end
     in
     let free () = Ffi.program_free handle in
     Device.{ call; free }
@@ -239,16 +357,19 @@ module Icb = struct
     { handle; count }
 
   let encode t ~index ~program ~buffers ~arg_buf ~arg_offsets ~global ~local =
-    Ffi.icb_encode t.handle index program buffers arg_buf arg_offsets global
-      local
+    let buffers, buffer_offsets = Buffer_token.resolve_array buffers in
+    Ffi.icb_encode t.handle index program buffers buffer_offsets arg_buf
+      arg_offsets global local
 
   let update_buffer t ~index ~buf_index ~buf =
-    Ffi.icb_update_buffer t.handle index buf_index buf
+    let buffer = Buffer_token.resolve buf in
+    Ffi.icb_update_buffer t.handle index buf_index buffer.handle buffer.offset
 
   let update_dispatch t ~index ~global ~local =
     Ffi.icb_update_dispatch t.handle index global local
 
   let execute state t ~resources ~pipelines =
+    let resources, _offsets = Buffer_token.resolve_array resources in
     let fix_pipelines = if state.State.needs_icb_fix then pipelines else [||] in
     let cmd =
       Ffi.icb_execute state.State.queue t.handle t.count resources fix_pipelines
@@ -263,7 +384,7 @@ let create name =
   at_exit (fun () -> State.shutdown state);
   let allocator = Allocator.create state in
   let renderer =
-    Renderer.with_compiler (Compiler.create ()) Cstyle.metal
+    Renderer.with_compiler (Compiler.create ()) (Cstyle.metal state.State.arch)
   in
   let renderer_set = Device.Renderer_set.make [renderer, None] in
   let runtime = Program.runtime state in

@@ -9,8 +9,9 @@
 
     [Tolk_cpu] provides a CPU execution backend for tolk. It compiles kernels to
     native object code via an external C compiler, loads them into executable
-    memory, and dispatches execution across multiple CPU cores using a domain
-    pool.
+    memory, and dispatches execution through an asynchronous CPU queue. Kernels
+    that carry a runtime-managed [core_id] value can fan out across multiple
+    OCaml domains.
 
     The single entry point is {!val-create}, which returns a {!Tolk.Device.t}
     ready for use with the tolk runtime. *)
@@ -24,11 +25,11 @@ val create : string -> Tolk.Device.t
     variable) to compile kernel source to native object code. Compiled objects
     are loaded into executable memory via an ELF loader and JIT stubs.
 
-    Kernel execution is dispatched through a background worker thread.
-    Multi-threaded kernels fan out across a shared domain pool, providing true
-    OS-level parallelism via OCaml 5 domains.
+    Kernel execution is dispatched through a background worker domain.
+    Multi-threaded kernels fan out across a shared domain pool.
 
-    Memory allocation uses [calloc]/[free]. An LRU cache wraps the raw allocator
-    to reuse recently freed buffers.
+    Memory allocation uses [calloc]/[free]. The allocator supports byte-offset
+    views, synchronizes queued work before host copies, and is wrapped in an LRU
+    cache to reuse recently freed buffers.
 
     [CC] defaults to ["clang"] when unset. *)

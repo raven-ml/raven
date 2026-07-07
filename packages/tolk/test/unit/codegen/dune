@@ -1,0 +1,14 @@
+(tests
+ (names
+  test_decompositions
+  test_divandmod
+  test_gpudims
+  test_heuristic
+  test_images
+  test_linearizer
+  test_lower
+  test_postrange
+  test_simplify
+  test_tc)
+ (package tolk)
+ (libraries unix tolk tolk.uop windtrap))

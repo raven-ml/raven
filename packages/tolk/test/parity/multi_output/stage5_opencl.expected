@@ -1,0 +1,17 @@
+   0 Ops.CONST           :            dtypes.int                               []                               -1
+   1 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(1)
+   2 Ops.CONST           :            dtypes.int                               []                               256
+   3 Ops.SPECIAL         :            dtypes.int                               ['256']                          gidx0
+   4 Ops.INDEX           :            dtypes.float                             [1, 3]                           None
+   5 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(0)
+   6 Ops.INDEX           :            dtypes.float                             [5, 3]                           None
+   7 Ops.LOAD            :            dtypes.float                             [6]                              None
+   8 Ops.CONST           :            dtypes.float                             []                               1.0
+   9 Ops.ADD             :            dtypes.float                             [7, '1.0']                       None
+  10 Ops.STORE           :            dtypes.void                              [4, 9]                           None
+  11 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(2)
+  12 Ops.INDEX           :            dtypes.float                             [11, 3]                          None
+  13 Ops.CONST           :            dtypes.float                             []                               2.0
+  14 Ops.MUL             :            dtypes.float                             [7, '2.0']                       None
+  15 Ops.STORE           :            dtypes.void                              [12, 14]                         None
+  16 Ops.SINK            :            dtypes.void                              [10, 15]                         KernelInfo(name='multi_output', axis_types=(), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None, beam=0)

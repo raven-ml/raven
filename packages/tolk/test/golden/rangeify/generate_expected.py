@@ -22,10 +22,12 @@ sys.path.insert(
     ),
 )
 
-from tinygrad.uop.ops import UOp, Ops, KernelInfo, AxisType
+from tinygrad.uop.ops import UOp, Ops, KernelInfo, AxisType, ParamArg
 from tinygrad.dtype import dtypes
+from tinygrad.helpers import Target
 from tinygrad.schedule.rangeify import get_kernel_graph
 from tinygrad.codegen import full_rewrite_to_sink, line_rewrite, pm_linearize_cleanups
+from tinygrad.codegen.opt.postrange import Scheduler
 from tinygrad.codegen.late.linearizer import linearize
 from tinygrad.renderer.cstyle import (
     ClangRenderer,
@@ -34,6 +36,8 @@ from tinygrad.renderer.cstyle import (
     OpenCLRenderer,
 )
 import tinygrad.renderer.cstyle as _cstyle_mod
+from tinygrad import Tensor, nn
+from extra.models.llama import Transformer
 
 OUT_DIR = os.path.dirname(__file__)
 
@@ -41,9 +45,9 @@ OUT_DIR = os.path.dirname(__file__)
 class _RenderOnlyCUDARenderer(CUDARenderer):
     """CUDARenderer that skips compiler init (nvrtc not needed for rendering)."""
 
-    def __init__(self, arch):
-        self.device, self.arch, self.use_nvcc = "NV", arch, False
-        self.compiler = None
+    def __init__(self, target):
+        self.target, self.compiler = target, None
+        arch = target.arch
         ver = int(arch[3:])
         tc = _cstyle_mod.tc
         self.tensor_cores = (
@@ -56,10 +60,10 @@ class _RenderOnlyCUDARenderer(CUDARenderer):
 
 RENDERERS = {}
 for _name, _ctor in [
-    ("clang", lambda: ClangRenderer()),
-    ("cuda", lambda: _RenderOnlyCUDARenderer(arch="sm_80")),
-    ("metal", lambda: MetalRenderer()),
-    ("opencl", lambda: OpenCLRenderer()),
+    ("clang", lambda: ClangRenderer(Target("CPU", arch="x86_64,znver2"))),
+    ("cuda", lambda: _RenderOnlyCUDARenderer(Target("CUDA", arch="sm_80"))),
+    ("metal", lambda: MetalRenderer(Target("METAL"))),
+    ("opencl", lambda: OpenCLRenderer(Target("CL"))),
 ]:
     try:
         RENDERERS[_name] = _ctor()
@@ -98,18 +102,13 @@ def get_source(sink, renderer, optimize=True):
 def mk_shape(*dims):
     """Encode a shape as a VECTORIZE of index consts (or single const for 1-D)."""
     if len(dims) == 1:
-        return UOp.const(dtypes.index, dims[0])
-    return UOp(
-        Ops.VECTORIZE,
-        dtypes.index.vec(len(dims)),
-        tuple(UOp.const(dtypes.index, d) for d in dims),
-    )
+        return UOp.const(dtypes.int, dims[0])
+    return UOp.vectorize(*(UOp.const(dtypes.int, d) for d in dims))
 
 
 def mk_param(slot, *shape, dtype=dtypes.float32):
     """Build a PARAM with a known shape and CPU device."""
-    dev = UOp(Ops.DEVICE, arg="CPU")
-    return UOp(Ops.PARAM, dtype, (mk_shape(*shape), dev), slot)
+    return UOp.param(slot, dtype, shape=shape, device="CPU")
 
 
 def wrap_sink(*srcs):
@@ -143,7 +142,7 @@ def build_mulacc():
     a = mk_param(0, 256)
     b = mk_param(1, 256)
     mul = a * b
-    red = UOp(Ops.REDUCE_AXIS, dtypes.float32, (mul,), (Ops.ADD, (0,)))
+    red = UOp(Ops.REDUCE, dtypes.float32, (mul,), (Ops.ADD, (0,)))
     return wrap_sink(red)
 
 
@@ -180,7 +179,7 @@ def build_diamond():
 def build_reduce_unary():
     """c = neg(sqrt(sum(a))), shape [16] -> scalar."""
     a = mk_param(0, 16)
-    red = UOp(Ops.REDUCE_AXIS, dtypes.float32, (a,), (Ops.ADD, (0,)))
+    red = UOp(Ops.REDUCE, dtypes.float32, (a,), (Ops.ADD, (0,)))
     sq = UOp(Ops.SQRT, dtypes.float32, (red,))
     neg = UOp(Ops.NEG, dtypes.float32, (sq,))
     return wrap_sink(neg)
@@ -190,17 +189,17 @@ def build_reduce_reshape_binop():
     """c = a.sum(0).reshape(10) + b, shape [10, 10] -> [10]."""
     a = mk_param(0, 10, 10)
     b = mk_param(1, 10)
-    red = UOp(Ops.REDUCE_AXIS, dtypes.float32, (a,), (Ops.ADD, (0,)))
+    red = UOp(Ops.REDUCE, dtypes.float32, (a,), (Ops.ADD, (0,)))
     reshaped = UOp(Ops.RESHAPE, dtypes.float32, (red, mk_shape(10)))
     return wrap_sink(reshaped + b)
 
 
 def build_reduce_permute_binop():
-    """c = a.sum(0, keepdim=True).permute(2,1,0) + b, shape [10,10,10]."""
+    """c = a.sum(0).permute(1,0) + b, shape [10,10,10]."""
     a = mk_param(0, 10, 10, 10)
-    b = mk_param(1, 10, 10, 1)
-    red = UOp(Ops.REDUCE_AXIS, dtypes.float32, (a,), (Ops.ADD, (0,)))
-    permed = UOp(Ops.PERMUTE, dtypes.float32, (red,), (2, 1, 0))
+    b = mk_param(1, 10, 10)
+    red = UOp(Ops.REDUCE, dtypes.float32, (a,), (Ops.ADD, (0,)))
+    permed = UOp(Ops.PERMUTE, dtypes.float32, (red,), (1, 0))
     return wrap_sink(permed + b)
 
 
@@ -219,9 +218,9 @@ def build_expand_permute():
     a = mk_param(0, 10, 10, 1)
     b = mk_param(1, 10, 10, 1)
     ab = a + b
-    expanded = UOp(Ops.EXPAND, dtypes.float32, (ab, mk_shape(10, 10, 10)))
-    permed = UOp(Ops.PERMUTE, dtypes.float32, (ab,), (2, 1, 0))
-    permed_expanded = UOp(Ops.EXPAND, dtypes.float32, (permed, mk_shape(10, 10, 10)))
+    expanded = ab.expand((10, 10, 10))
+    permed = ab.permute((2, 1, 0))
+    permed_expanded = permed.expand((10, 10, 10))
     return wrap_sink(expanded + permed_expanded)
 
 
@@ -238,25 +237,20 @@ def build_shrink_fuse():
 def build_multistage_reduce():
     """c = a.sum(2).relu().sum(1), shape [32,32,32]."""
     a = mk_param(0, 32, 32, 32)
-    red1 = UOp(Ops.REDUCE_AXIS, dtypes.float32, (a,), (Ops.ADD, (2,)))
-    # relu: max(red1, 0) — zero must match red1 shape [32,32,1]
-    zero = UOp.const(dtypes.float32, 0.0)
-    zero_bc = UOp(Ops.EXPAND, dtypes.float32,
-                  (zero.reshape((1, 1, 1)), mk_shape(32, 32, 1)))
-    relu = red1.alu(Ops.MAX, zero_bc)
-    reshaped = UOp(Ops.RESHAPE, dtypes.float32, (relu, mk_shape(32, 32)))
-    red2 = UOp(Ops.REDUCE_AXIS, dtypes.float32, (reshaped,), (Ops.ADD, (1,)))
+    red1 = a._rop(Ops.ADD, (2,))
+    relu = red1.alu(Ops.MAX, red1.const_like(0.0))
+    reshaped = relu.reshape((32, 32))
+    red2 = reshaped._rop(Ops.ADD, (1,))
     return wrap_sink(red2)
 
 
 def build_two_sum():
     """c = a.sum(0) + a.sum(1), shape [64,64]."""
     a = mk_param(0, 64, 64)
-    y = mk_param(1, 64, 64)
-    red0 = UOp(Ops.REDUCE_AXIS, dtypes.float32, (a,), (Ops.ADD, (0,)))
-    red1 = UOp(Ops.REDUCE_AXIS, dtypes.float32, (a,), (Ops.ADD, (1,)))
-    reshaped0 = UOp(Ops.RESHAPE, dtypes.float32, (red0, mk_shape(64)))
-    reshaped1 = UOp(Ops.RESHAPE, dtypes.float32, (red1, mk_shape(64)))
+    red0 = a._rop(Ops.ADD, (0,))
+    red1 = a._rop(Ops.ADD, (1,))
+    reshaped0 = red0.reshape((64,))
+    reshaped1 = red1.reshape((64,))
     return wrap_sink(reshaped0 + reshaped1)
 
 
@@ -264,7 +258,7 @@ def build_reduce_shrink():
     """c = a.sum(1)[:16] + b, shape [32,32], b=[16]."""
     a = mk_param(0, 32, 32)
     b = mk_param(1, 16)
-    red = UOp(Ops.REDUCE_AXIS, dtypes.float32, (a,), (Ops.ADD, (1,)))
+    red = UOp(Ops.REDUCE, dtypes.float32, (a,), (Ops.ADD, (1,)))
     reshaped = UOp(Ops.RESHAPE, dtypes.float32, (red, mk_shape(32)))
     shrunk = reshaped.shrink(((0, 16),))
     return wrap_sink(shrunk + b)
@@ -287,6 +281,108 @@ def build_reshape_chain():
     r1 = UOp(Ops.RESHAPE, dtypes.float32, (a, mk_shape(16)))
     r2 = UOp(Ops.RESHAPE, dtypes.float32, (r1, mk_shape(2, 8)))
     return wrap_sink(r2 + b)
+
+
+_LLAMA_MODEL_SINKS = None
+
+
+def llama_model_sinks():
+    """Kernels scheduled from tinygrad's own LLaMA/Qwen-family model code."""
+    global _LLAMA_MODEL_SINKS
+    if _LLAMA_MODEL_SINKS is not None:
+        return _LLAMA_MODEL_SINKS
+
+    model = Transformer(
+        dim=8,
+        hidden_dim=16,
+        n_heads=2,
+        n_kv_heads=1,
+        n_layers=1,
+        norm_eps=1e-5,
+        vocab_size=32,
+        max_context=8,
+        jit=False,
+        disable_kv_cache=True,
+    )
+    for param in nn.state.get_parameters(model):
+        param.replace(Tensor.empty(param.shape, dtype=param.dtype))
+
+    tokens = Tensor.empty(1, 2, dtype=dtypes.int)
+    logits = model.forward(tokens, 0, float("nan"), 0, 1.0, 0.0, 0.0)
+    linear = logits.schedule_linear(*nn.state.get_parameters(model))
+    sinks = []
+    seen = set()
+    for call in linear.src:
+        if call.op is not Ops.CALL or call.src[0].op is not Ops.SINK:
+            continue
+        sink = call.src[0]
+        if sink.key not in seen:
+            sinks.append(sink)
+            seen.add(sink.key)
+
+    targets = {
+        "r_2_8": "llama_rmsnorm",
+        "r_2_8_8": "llama_ffn_gate",
+        "E_2_2_4": "llama_vector_scale",
+        "r_2_32_8": "llama_output_projection",
+    }
+    _LLAMA_MODEL_SINKS = {}
+    for sink in sinks:
+        name_counts = Scheduler.kernel_cnt.copy()
+        rewritten = full_rewrite_to_sink(sink, RENDERERS["clang"], optimize=True)
+        Scheduler.kernel_cnt.clear()
+        Scheduler.kernel_cnt.update(name_counts)
+        case_name = targets.get(rewritten.arg.name)
+        if case_name is not None:
+            _LLAMA_MODEL_SINKS[case_name] = sink
+
+    missing = sorted(set(targets.values()) - set(_LLAMA_MODEL_SINKS))
+    if missing:
+        raise RuntimeError(f"tinygrad LLaMA kernels not found: {missing}")
+    return _LLAMA_MODEL_SINKS
+
+
+def get_llama_source(case_name, renderer, optimize=True):
+    return render_kernel(llama_model_sinks()[case_name], renderer, optimize)
+
+
+def get_llama_forward_from_embedding_source(renderer, optimize=True):
+    """Tinygrad LLaMA forward from post-token-embedding activations to logits."""
+    model = Transformer(
+        dim=8,
+        hidden_dim=16,
+        n_heads=2,
+        n_kv_heads=1,
+        n_layers=1,
+        norm_eps=1e-5,
+        vocab_size=32,
+        max_context=8,
+        jit=False,
+        disable_kv_cache=True,
+    )
+    for param in nn.state.get_parameters(model):
+        param.replace(Tensor.empty(param.shape, dtype=param.dtype))
+
+    h = Tensor.empty(1, 2, 8, dtype=dtypes.float)
+    freqs_cis = model.freqs_cis.cast(h.dtype)[:, 0:2, :, :, :]
+    for layer in model.layers:
+        h = layer(h, 0, freqs_cis, None)
+    logits = model.output(model.norm(h).contiguous().contiguous_backward())
+    linear = logits.contiguous_backward().schedule_linear(
+        h, *nn.state.get_parameters(model)
+    )
+
+    sources = []
+    seen = set()
+    for call in linear.src:
+        if call.op is not Ops.CALL or call.src[0].op is not Ops.SINK:
+            continue
+        sink = call.src[0]
+        if sink.key in seen:
+            continue
+        seen.add(sink.key)
+        sources.append(render_kernel(sink, renderer, optimize))
+    return "\n---\n".join(sources)
 
 
 # ── Test cases ──
@@ -316,6 +412,11 @@ TEST_CASES = [
     # Tier 4: Edge cases
     ("contiguous_add", build_contiguous_add, None, True),
     ("reshape_chain", build_reshape_chain, None, True),
+    ("llama_rmsnorm", lambda: "llama_rmsnorm", None, True),
+    ("llama_ffn_gate", lambda: "llama_ffn_gate", None, True),
+    ("llama_vector_scale", lambda: "llama_vector_scale", None, True),
+    ("llama_output_projection", lambda: "llama_output_projection", None, True),
+    ("llama_forward_from_embedding", lambda: "llama_forward_from_embedding", None, True),
 ]
 
 
@@ -332,7 +433,15 @@ def main():
             renderer = RENDERERS[backend_name]
             snap_name = f"{backend_name}_{case_name}"
             try:
-                src = get_source(sink, renderer, optimize=optimize)
+                if isinstance(sink, str) and sink.startswith("llama_"):
+                    if sink == "llama_forward_from_embedding":
+                        src = get_llama_forward_from_embedding_source(
+                            renderer, optimize=optimize
+                        )
+                    else:
+                        src = get_llama_source(sink, renderer, optimize=optimize)
+                else:
+                    src = get_source(sink, renderer, optimize=optimize)
                 write_expected(snap_name, src)
                 total += 1
             except Exception as e:

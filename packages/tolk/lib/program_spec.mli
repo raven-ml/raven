@@ -5,129 +5,88 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(** Compile-time kernel descriptions extracted from {!Ir.Program.t}.
+(** Compile-time kernel descriptions extracted from a linearized uop
+    program.
 
     A {!t} is the runtime-facing description of a lowered kernel before
-    device-specific preparation. It captures the lowered program, kernel name,
-    launch metadata, scalar variables, buffer reads and writes, and cost
-    estimates.
-
-    Scalar {e variables} are runtime parameters defined by
-    {!Ir.Program.instr.Define_var} instructions. Buffer {e reads} and {e writes}
-    are parameter indices traced from {!Ir.Program.instr.Load} and
-    {!Ir.Program.instr.Store} instructions respectively. *)
+    device-specific preparation. It captures the lowered program, kernel
+    name, launch metadata, scalar variables, buffer reads and writes,
+    and cost estimates. *)
 
 (** {1:types Types} *)
+
+type program = Tolk_uop.Uop.t list
+(** The linearized uop program produced by the linearizer. *)
 
 type var = {
   name : string;  (** Variable name matching the IR definition. *)
   lo : int;  (** Inclusive lower bound. *)
   hi : int;  (** Inclusive upper bound. *)
-  dtype : Tolk_ir.Dtype.t;  (** Scalar data type. *)
+  dtype : Tolk_uop.Dtype.t;  (** Scalar data type. *)
 }
-(** The type for scalar kernel parameters with runtime bounds.
-
-    Each [var] corresponds to one {!Ir.Program.instr.Define_var} instruction in
-    the lowered program. *)
+(** Bounded scalar {!Tolk_uop.Uop.Param_arg} kernel parameter. *)
 
 type core_id = {
-  var_index : int;  (** Index into {!vars} identifying this variable. *)
-  lo : int;  (** Inclusive lower bound. Always [0]. *)
-  hi : int;  (** Inclusive upper bound. *)
+  var_index : int;
+  lo : int;
+  hi : int;
 }
-(** The type for the runtime-managed ["core_id"] variable.
-
-    When present, ["core_id"] enables multi-core dispatch. The runtime assigns
-    each core a value in \[[lo];[hi]\]. *)
+(** Runtime-managed ["core_id"] variable for multi-core dispatch. *)
 
 val thread_count : core_id -> int
 (** [thread_count cid] is [cid.hi - cid.lo + 1]. *)
 
-(** The type for kernel launch models. A kernel uses exactly one model. *)
 type launch_kind =
-  | Serial  (** No parallelism. Global and local sizes are all [1]. *)
+  | Serial
   | Thread_groups
-      (** Thread-group model (e.g. Metal, CUDA blocks). Both global and local
-          dimensions are meaningful. *)
   | Threads
-      (** Flat-thread model (e.g. OpenCL global work). Only global dimensions
-          are meaningful; local size is [None]. *)
+(** Kernel launch model. *)
 
 (** {1:estimates Cost estimates} *)
 
 module Estimates : sig
-  (** Estimated kernel costs for scheduling and profiling.
-
-      Each cost component is either an exact integer or a symbolic expression
-      preserved from the upstream {!Ir.Kernel.estimates}. *)
-
-  (** The type for a single cost component. *)
   type estimate =
-    | Int of int  (** Exact integer count. *)
-    | Symbolic of Tolk_ir.Kernel.t  (** Symbolic expression depending on runtime variables. *)
+    | Int of int
+    | Symbolic of Tolk_uop.Uop.t
 
   type t = {
-    ops : estimate;  (** Arithmetic operation count. *)
-    lds : estimate;  (** Local data share (shared memory) access count. *)
-    mem : estimate;  (** Global memory access count. *)
+    ops : estimate;
+    lds : estimate;
+    mem : estimate;
   }
-  (** The type for kernel cost estimates. *)
 
   val zero : t
   (** [zero] is [{ops = Int 0; lds = Int 0; mem = Int 0}]. *)
 
   val ( + ) : t -> t -> t
-  (** [a + b] is the component-wise sum of [a] and [b]. Two [Int] values produce
-      an [Int]. When either side is [Symbolic], the result is [Symbolic] with
-      the expressions concatenated. *)
+  (** [a + b] is the component-wise sum of [a] and [b]. *)
 
-  val of_kernel : Tolk_ir.Kernel.estimates -> t
-  (** [of_kernel e] is the lossless conversion of {!Tolk_ir.Kernel.estimates} [e]. *)
+  val of_uop : Tolk_uop.Uop.estimates -> t
+  (** [of_uop e] converts a uop estimates record. *)
 
-  val of_program : Tolk_ir.Program.t -> t
-  (** [of_program p] computes estimates by walking [p]. Counts FLOPs (excluding
-      index arithmetic), load/store bytes, and total memory accessed (capped at
-      buffer size for re-reads). Loop multipliers are stacked through
-      {!Tolk_ir.Program.view.Range}/{!Tolk_ir.Program.view.End_range} and
-      {!Tolk_ir.Program.view.Special} nodes. *)
+  val of_program : program -> t
+  (** [of_program p] computes estimates by walking [p]. *)
 end
 
 (** {1:spec Kernel specifications} *)
 
 type t
-(** The type for compile-time kernel descriptions.
-
-    Invariants:
-    - Variable order is stable and sorted by [(name, lo, hi)].
-    - Read and write parameter indices are sorted and deduplicated.
-    - Launch metadata uses exactly one model: {!Serial}, {!Thread_groups}, or
-      {!Threads}.
-    - ["core_id"], when present, is unique and has [lo = 0]. *)
-
-(** {2:constructors Constructors} *)
+(** Compile-time kernel description. *)
 
 val of_program :
   name:string ->
   src:string ->
   device:string ->
   ?lib:bytes ->
-  ?applied_opts:Tolk_ir.Kernel.Opt.t list ->
+  ?applied_opts:Tolk_uop.Uop.Opt.t list ->
   ?estimates:Estimates.t ->
-  Tolk_ir.Program.t ->
+  ?aux:string list ->
+  program ->
   t
-(** [of_program ~name ~src ~device ?lib ?applied_opts ?estimates program]
-    extracts a kernel description from [program].
-
-    [lib] defaults to [None] (not yet compiled). [applied_opts] defaults
-    to [[]]. [estimates] defaults to {!Estimates.zero}.
-
-    Raises [Invalid_argument] if:
-    - launch metadata depends on an unsupported scalar instruction,
-    - a launch axis is outside [0..2],
-    - a launch axis is repeated,
-    - launch metadata mixes flat-thread and thread-group models,
-    - ["core_id"] is defined more than once, or
-    - ["core_id"] has a lower bound different from [0]. *)
+(** [of_program ~name ~src ~device ?lib ?applied_opts ?estimates ?aux program]
+    extracts a kernel description from [program]. If [estimates] is omitted,
+    estimates are computed from [program]. [aux] is copied to
+    {!Tolk_uop.Uop.program_info}. *)
 
 val with_lib : bytes -> t -> t
 (** [with_lib lib spec] is [spec] with [lib] set to [Some lib]. *)
@@ -136,67 +95,30 @@ val with_estimates : Estimates.t -> t -> t
 (** [with_estimates e spec] is [spec] with estimates replaced by [e]. *)
 
 val with_global_dims : int array -> t -> t
-(** [with_global_dims dims spec] is [spec] with the global launch dimensions
-    replaced by constant values [dims]. *)
-
-(** {2:accessors Accessors} *)
+(** [with_global_dims dims spec] is [spec] with the global launch
+    dimensions replaced by constant values [dims]. *)
 
 val name : t -> string
-(** [name spec] is the kernel entry-point name. *)
-
 val src : t -> string
-(** [src spec] is the rendered source code. *)
-
 val device : t -> string
-(** [device spec] is the target device name. *)
-
-val program : t -> Tolk_ir.Program.t
-(** [program spec] is the lowered IR program. *)
-
+val program : t -> program
 val lib : t -> bytes option
-(** [lib spec] is the compiled binary, or [None] if not yet compiled. *)
-
-val applied_opts : t -> Tolk_ir.Kernel.Opt.t list
-(** [applied_opts spec] is the optimization options applied during codegen. *)
-
+val applied_opts : t -> Tolk_uop.Uop.Opt.t list
 val vars : t -> var list
-(** [vars spec] is the scalar variable definitions in stable argument order. *)
-
 val outs : t -> int list
-(** [outs spec] is the sorted, deduplicated parameter indices written by the
-    kernel. *)
-
 val ins : t -> int list
-(** [ins spec] is the sorted, deduplicated parameter indices read by the kernel.
-*)
-
 val globals : t -> int list
-(** [globals spec] is the sorted, deduplicated union of {!outs} and {!ins}. *)
-
 val core_id : t -> core_id option
-(** [core_id spec] is the runtime-managed ["core_id"] variable, if any. *)
-
 val launch_kind : t -> launch_kind
-(** [launch_kind spec] is the kernel launch model. *)
-
 val estimates : t -> Estimates.t
-(** [estimates spec] is the kernel cost estimates. *)
-
-(** {2:launch Launch dimensions} *)
-
-val global_size : t -> Tolk_ir.Kernel.t array
-(** [global_size spec] is the symbolic global launch dimensions (length [3]).
-    Use {!launch_dims} to evaluate them to concrete integers. *)
-
-val local_size : t -> Tolk_ir.Kernel.t array option
-(** [local_size spec] is the symbolic local launch dimensions, or [None]
-    for flat-thread ({!Threads}) kernels. *)
+val global_size : t -> Tolk_uop.Uop.t array
+val local_size : t -> Tolk_uop.Uop.t array option
+val program_info : t -> Tolk_uop.Uop.program_info
+(** [program_info spec] is the tinygrad-shaped program metadata carried by
+    [spec]. Symbolic global dimensions are preserved as launch expressions;
+    local dimensions are present only when all local dimensions are fixed
+    integers, and backend auxiliary metadata is preserved. *)
 
 val launch_dims : t -> (string * int) list -> int array * int array option
-(** [launch_dims spec var_vals] evaluates the launch dimensions of [spec]
-    using name-keyed variable bindings [var_vals].
-
-    Returns [(global, local)] where [global] has length [3] and [local] is:
-    - [Some [|1; 1; 1|]] for {!Serial}.
-    - [Some local] for {!Thread_groups}.
-    - [None] for {!Threads}. *)
+(** [launch_dims spec var_vals] evaluates launch dimensions by replacing
+    symbolic variables with the values in [var_vals]. *)

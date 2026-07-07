@@ -1,0 +1,9 @@
+__kernel void test(__global float* data0_-1, __global float* data1_-1) {
+  float val0 = (*(data0_-1+0));
+  float val1 = (*(data0_-1+1));
+  float val2 = (*(data0_-1+2));
+  float val3 = (*(data0_-1+3));
+  float4 cast0 = (float4)(val0,val1,val2,val3);
+  float val4 = (*(data0_-1+2));
+  *(data1_-1+0) = val4;
+}

@@ -1,6 +1,6 @@
 (executable
  (name generate_actual)
- (libraries tolk tolk.ir))
+ (libraries tolk tolk.uop tolk_parity_helpers))
 
 (rule
  (package tolk)
@@ -17,7 +17,7 @@
   clang_simple_mul_i32.actual
   clang_unary_sqrt_f16.actual
   clang_unary_sqrt_f32.actual
-  clang_vectorize_gep.actual
+  clang_vectorize_index.actual
   clang_where_select.actual
   cuda_bitcast_f32_to_i32.actual
   cuda_cast_f16_to_f32.actual
@@ -33,7 +33,7 @@
   cuda_special_dims.actual
   cuda_unary_sqrt_f16.actual
   cuda_unary_sqrt_f32.actual
-  cuda_vectorize_gep.actual
+  cuda_vectorize_index.actual
   cuda_where_select.actual
   metal_bitcast_f32_to_i32.actual
   metal_cast_f16_to_f32.actual
@@ -49,7 +49,7 @@
   metal_special_dims.actual
   metal_unary_sqrt_f16.actual
   metal_unary_sqrt_f32.actual
-  metal_vectorize_gep.actual
+  metal_vectorize_index.actual
   metal_where_select.actual
   opencl_bitcast_f32_to_i32.actual
   opencl_cast_f16_to_f32.actual
@@ -65,7 +65,7 @@
   opencl_special_dims.actual
   opencl_unary_sqrt_f16.actual
   opencl_unary_sqrt_f32.actual
-  opencl_vectorize_gep.actual
+  opencl_vectorize_index.actual
   opencl_where_select.actual)
  (action
   (run ./generate_actual.exe .)))
@@ -87,7 +87,7 @@
    (diff clang_simple_mul_i32.expected clang_simple_mul_i32.actual)
    (diff clang_unary_sqrt_f16.expected clang_unary_sqrt_f16.actual)
    (diff clang_unary_sqrt_f32.expected clang_unary_sqrt_f32.actual)
-   (diff clang_vectorize_gep.expected clang_vectorize_gep.actual)
+   (diff clang_vectorize_index.expected clang_vectorize_index.actual)
    (diff clang_where_select.expected clang_where_select.actual)
    (diff cuda_bitcast_f32_to_i32.expected cuda_bitcast_f32_to_i32.actual)
    (diff cuda_cast_f16_to_f32.expected cuda_cast_f16_to_f32.actual)
@@ -103,7 +103,7 @@
    (diff cuda_special_dims.expected cuda_special_dims.actual)
    (diff cuda_unary_sqrt_f16.expected cuda_unary_sqrt_f16.actual)
    (diff cuda_unary_sqrt_f32.expected cuda_unary_sqrt_f32.actual)
-   (diff cuda_vectorize_gep.expected cuda_vectorize_gep.actual)
+   (diff cuda_vectorize_index.expected cuda_vectorize_index.actual)
    (diff cuda_where_select.expected cuda_where_select.actual)
    (diff metal_bitcast_f32_to_i32.expected metal_bitcast_f32_to_i32.actual)
    (diff metal_cast_f16_to_f32.expected metal_cast_f16_to_f32.actual)
@@ -119,7 +119,7 @@
    (diff metal_special_dims.expected metal_special_dims.actual)
    (diff metal_unary_sqrt_f16.expected metal_unary_sqrt_f16.actual)
    (diff metal_unary_sqrt_f32.expected metal_unary_sqrt_f32.actual)
-   (diff metal_vectorize_gep.expected metal_vectorize_gep.actual)
+   (diff metal_vectorize_index.expected metal_vectorize_index.actual)
    (diff metal_where_select.expected metal_where_select.actual)
    (diff opencl_bitcast_f32_to_i32.expected opencl_bitcast_f32_to_i32.actual)
    (diff opencl_cast_f16_to_f32.expected opencl_cast_f16_to_f32.actual)
@@ -135,5 +135,5 @@
    (diff opencl_special_dims.expected opencl_special_dims.actual)
    (diff opencl_unary_sqrt_f16.expected opencl_unary_sqrt_f16.actual)
    (diff opencl_unary_sqrt_f32.expected opencl_unary_sqrt_f32.actual)
-   (diff opencl_vectorize_gep.expected opencl_vectorize_gep.actual)
+   (diff opencl_vectorize_index.expected opencl_vectorize_index.actual)
    (diff opencl_where_select.expected opencl_where_select.actual))))

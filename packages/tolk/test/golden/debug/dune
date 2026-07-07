@@ -1,6 +1,6 @@
 (executable
  (name generate_actual)
- (libraries tolk tolk.ir unix))
+ (libraries tolk tolk.uop unix))
 
 (rule
  (package tolk)

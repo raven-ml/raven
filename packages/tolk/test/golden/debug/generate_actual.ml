@@ -8,45 +8,47 @@
    stage. Stderr is redirected to the output file. *)
 
 open Tolk
-open Tolk_ir
-module K = Kernel
+open Tolk_uop
+module U = Uop
 
-let global_fptr = Dtype.Ptr.create (Dtype.val_of Dtype.float32) ~addrspace:Global ~size:(-1)
-let idx n = K.const (Const.int Dtype.Val.index n)
+let global_fptr size =
+  Dtype.Ptr.create (Dtype.val_of Dtype.float32) ~addrspace:Global ~size
+let idx n = U.const (Const.int Dtype.Val.weakint n)
 
-let make_kernel ~name ~opts_to_apply =
-  let p0 = K.param ~idx:0 ~dtype:global_fptr in
-  let p1 = K.param ~idx:1 ~dtype:global_fptr in
-  let p2 = K.param ~idx:2 ~dtype:global_fptr in
-  let r0 = K.range ~size:(idx 256) ~axis:0 ~kind:Axis_kind.Global () in
-  let ld_a = K.load ~src:(K.index ~ptr:p0 ~idxs:[ r0 ] ()) () in
-  let ld_b = K.load ~src:(K.index ~ptr:p1 ~idxs:[ r0 ] ()) () in
-  let add = K.binary ~op:`Add ~lhs:ld_a ~rhs:ld_b in
-  let st = K.store ~dst:(K.index ~ptr:p2 ~idxs:[ r0 ] ()) ~value:add ~ranges:[] in
-  let e = K.end_ ~value:st ~ranges:[ r0 ] () in
-  K.sink
-    ~kernel_info:{ K.name = name;
-      axis_kinds = [ Axis_kind.Global ]; dont_use_locals = false;
-      applied_opts = []; opts_to_apply; estimates = None }
+let make_kernel ~name ~opts_to_apply ~ptr_size =
+  let ptr = Dtype.Ptr (global_fptr ptr_size) in
+  let p0 = U.param ~slot:0 ~dtype:ptr () in
+  let p1 = U.param ~slot:1 ~dtype:ptr () in
+  let p2 = U.param ~slot:2 ~dtype:ptr () in
+  let r0 = U.range ~size:(idx 256) ~axis:0 ~kind:Axis_type.Global () in
+  let ld_a = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ~as_ptr:true ()) () in
+  let ld_b = U.load ~src:(U.index ~ptr:p1 ~idxs:[r0] ~as_ptr:true ()) () in
+  let add = U.alu_binary ~op:Ops.Add ~lhs:ld_a ~rhs:ld_b in
+  let st = U.store ~dst:(U.index ~ptr:p2 ~idxs:[r0] ~as_ptr:true ()) ~value:add () in
+  let e = U.end_ ~value:st ~ranges:[ r0 ] in
+  U.sink
+    ~kernel_info:{ U.name = name;
+      axis_types = [ Axis_type.Global ]; dont_use_locals = false;
+      applied_opts = []; opts_to_apply; estimates = None; beam = 0 }
     [ e ]
 
-let ren = Cstyle.clang_no_abi
+let ren = Cstyle.clang_no_abi Gpu_target.X86_64
 
-let saved_stderr = Unix.dup Unix.stderr
+let saved_stdout = Unix.dup Unix.stdout
 
 let run_test ~name ~sink =
   let path = Filename.concat Sys.argv.(1) (name ^ ".actual") in
   let fd = Unix.openfile path [ O_WRONLY; O_CREAT; O_TRUNC ] 0o644 in
-  Unix.dup2 fd Unix.stderr;
+  Unix.dup2 fd Unix.stdout;
   Unix.close fd;
   ignore (Codegen.full_rewrite_to_sink ~optimize:true ren sink);
-  flush stderr;
-  Unix.dup2 saved_stderr Unix.stderr
+  flush stdout;
+  Unix.dup2 saved_stdout Unix.stdout
 
 let () =
-  (* Test 1: no optimization (scalar) *)
   run_test ~name:"elementwise_add"
-    ~sink:(make_kernel ~name:"elementwise_add" ~opts_to_apply:(Some []));
-  (* Test 2: auto-optimized (float4 upcast) *)
+    ~sink:(make_kernel ~name:"elementwise_add" ~opts_to_apply:(Some [])
+             ~ptr_size:(-1));
   run_test ~name:"elementwise_add_opt"
-    ~sink:(make_kernel ~name:"elementwise_add_opt" ~opts_to_apply:None)
+    ~sink:(make_kernel ~name:"elementwise_add_opt" ~opts_to_apply:None
+             ~ptr_size:256)

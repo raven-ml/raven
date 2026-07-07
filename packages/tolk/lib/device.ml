@@ -5,7 +5,7 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-open Tolk_ir
+open Tolk_uop
 
 (* Buffer + Allocators *)
 
@@ -182,6 +182,19 @@ module Buffer = struct
   let dtype (Pack b) = b.dtype
   let spec (Pack b) = b.spec
   let supports_offset (Pack b) = Option.is_some b.allocator.offset
+  let device_prefix device =
+    match String.split_on_char ':' device with
+    | prefix :: _ -> prefix
+    | [] -> device
+
+  let same_backend a b =
+    String.equal (device_prefix a) (device_prefix b)
+
+  let supports_transfer (Pack dst) (Pack src) =
+    dst.allocator.supports_transfer
+    && Option.is_some dst.allocator.transfer
+    && same_backend dst.device src.device
+
   let allocator (Pack b) = Allocator.Pack (base_raw b).allocator
 
   let ensure_size t bytes =
@@ -203,6 +216,30 @@ module Buffer = struct
     | None -> invalid_arg "buffer is not allocated"
     | Some raw -> b.allocator.copyout bytes raw
 
+  let transfer ~dst:((Pack dst_raw) as dst) ~src:((Pack src_raw) as src) =
+    if size dst <> size src then invalid_arg "buffer transfer size mismatch";
+    if not (Dtype.equal (dtype dst) (dtype src)) then
+      invalid_arg "buffer transfer dtype mismatch";
+    match dst_raw.allocator.transfer with
+    | Some transfer
+      when dst_raw.allocator.supports_transfer
+           && same_backend dst_raw.device src_raw.device ->
+        ensure_allocated dst;
+        ensure_allocated src;
+        let dest =
+          match dst_raw.buf with Some raw -> raw | None -> assert false
+        in
+        let src =
+          match src_raw.buf with Some raw -> raw | None -> assert false
+        in
+        (* Allocator raw buffer types are hidden by [Buffer.t].  tinygrad's
+           transfer fast path is selected by backend prefix; Tolk keeps the
+           same contract here, so same-prefix buffers must come from one
+           backend representation. *)
+        transfer ~dest ~src:(Obj.magic src) (nbytes dst);
+        true
+    | Some _ | None -> false
+
   let as_bytes t =
     let buf = Bytes.create (nbytes t) in
     copyout t buf;
@@ -212,7 +249,11 @@ module Buffer = struct
     if offset < 0 then invalid_arg "buffer view offset must be non-negative";
     if offset >= nbytes t then
       invalid_arg "buffer view offset must be less than nbytes";
+    let view_nbytes = size * Dtype.itemsize dtype in
     let base = base_raw b in
+    let absolute_offset = b.offset + offset in
+    if absolute_offset + view_nbytes > base.size * Dtype.itemsize base.dtype
+    then invalid_arg "buffer view exceeds base buffer";
     let raw =
       {
         id = fresh_id ();
@@ -223,7 +264,7 @@ module Buffer = struct
         allocator = base.allocator;
         buf = None;
         base = Some base;
-        offset = base.offset + offset;
+        offset = absolute_offset;
         uop_refcount = 0;
         allocated_views = 0;
       }
@@ -357,8 +398,225 @@ module Program_cache = struct
       Renderer.local_max renderer,
       Renderer.shared_max renderer )
 
-  let kernel_key (program : Tolk_ir.Program.t) =
-    Digest.to_hex (Digest.string (Marshal.to_string program []))
+  module Sbuf = Stdlib.Buffer
+
+  let add_atom b s =
+    Sbuf.add_string b (string_of_int (String.length s));
+    Sbuf.add_char b ':';
+    Sbuf.add_string b s
+
+  let add_int b i = add_atom b (string_of_int i)
+  let add_bool b v = add_atom b (if v then "true" else "false")
+  let add_float b f = add_atom b (Printf.sprintf "%.17g" f)
+
+  let add_option add b = function
+    | None -> add_atom b "none"
+    | Some v ->
+        add_atom b "some";
+        add b v
+
+  let add_list add b xs =
+    add_int b (List.length xs);
+    List.iter (add b) xs
+
+  let add_pair add_a add_b b (a, c) =
+    add_a b a;
+    add_b b c
+
+  let add_triple add_a add_b add_c b (a, c, d) =
+    add_a b a;
+    add_b b c;
+    add_c b d
+
+  let add_device b = function
+    | Uop.Single name ->
+        add_atom b "single";
+        add_atom b name
+    | Uop.Multi names ->
+        add_atom b "multi";
+        add_list add_atom b names
+    | Uop.Index index ->
+        add_atom b "index";
+        add_int b index
+
+  let add_addrspace b a = add_atom b (Dtype.addr_space_to_string a)
+  let add_axis_type b a = add_atom b (Axis_type.to_string a)
+  let add_op b op = add_atom b (Ops.name op)
+  let add_dtype b dtype = add_atom b (Dtype.to_string dtype)
+  let add_const b c = add_atom b (Const.to_string c)
+  let add_opt b opt = add_atom b (Uop.Opt.to_string opt)
+
+  let add_metadata b (md : Uop.metadata) =
+    add_atom b md.name;
+    add_atom b md.caller;
+    add_bool b md.backward
+
+  let add_param_arg b (p : Uop.param_arg) =
+    add_int b p.slot;
+    add_option (add_pair add_int add_int) b p.vmin_vmax;
+    add_option add_atom b p.name;
+    add_addrspace b p.addrspace;
+    add_option add_int b p.axis
+
+  let rec add_estimate add_uop b = function
+    | Uop.Int n ->
+        add_atom b "int";
+        add_int b n
+    | Uop.Sym u ->
+        add_atom b "sym";
+        add_uop b u
+
+  and add_estimates add_uop b (e : Uop.estimates) =
+    add_estimate add_uop b e.ops;
+    add_estimate add_uop b e.lds;
+    add_estimate add_uop b e.mem
+
+  let add_stage_info b (info : Uop.stage_opts) =
+    add_option add_device b info.device;
+    add_addrspace b info.addrspace;
+    add_bool b info.removable
+
+  let add_kernel_info add_uop b (info : Uop.kernel_info) =
+    add_atom b info.name;
+    add_list add_axis_type b info.axis_types;
+    add_bool b info.dont_use_locals;
+    add_list add_opt b info.applied_opts;
+    add_option (add_list add_opt) b info.opts_to_apply;
+    add_option (add_estimates add_uop) b info.estimates;
+    add_int b info.beam
+
+  let add_call_info b (info : Uop.call_info) =
+    add_bool b (Option.is_some info.grad_fxn);
+    add_list add_metadata b info.metadata;
+    add_option add_atom b info.name;
+    add_bool b info.precompile;
+    add_bool b info.precompile_backward;
+    add_option add_atom b info.aux
+
+  let add_launch_dim add_uop b = function
+    | Uop.Launch_int n ->
+        add_atom b "int";
+        add_int b n
+    | Uop.Launch_float f ->
+        add_atom b "float";
+        add_float b f
+    | Uop.Launch_sym u ->
+        add_atom b "sym";
+        add_uop b u
+
+  let add_program_info add_uop b (info : Uop.program_info) =
+    add_atom b info.name;
+    add_list (add_launch_dim add_uop) b info.global_size;
+    add_option (add_list add_int) b info.local_size;
+    add_list add_uop b info.vars;
+    add_list add_int b info.globals;
+    add_list add_int b info.outs;
+    add_list add_int b info.ins;
+    add_list add_atom b info.aux
+
+  let add_wmma_info b (info : Uop.wmma_info) =
+    add_atom b info.name;
+    add_triple add_int add_int add_int b info.dims;
+    add_atom b (Dtype.scalar_to_string info.dtype_in);
+    add_atom b (Dtype.scalar_to_string info.dtype_out);
+    add_atom b info.device;
+    add_int b info.threads;
+    add_triple
+      (add_list (add_pair add_int add_int))
+      (add_list (add_pair add_int add_int))
+      (add_list (add_pair add_int add_int))
+      b info.upcast_axes;
+    add_list add_int b info.reduce_axes
+
+  let add_shaped_wmma_info b (info : Uop.shaped_wmma_info) =
+    add_triple add_int add_int add_int b info.dims;
+    add_atom b info.device;
+    add_int b info.threads
+
+  let rec add_arg add_uop b = function
+    | Uop.Arg.Empty -> add_atom b "empty"
+    | Uop.Arg.Int n ->
+        add_atom b "int";
+        add_int b n
+    | Uop.Arg.Ints xs ->
+        add_atom b "ints";
+        add_list add_int b xs
+    | Uop.Arg.Bools xs ->
+        add_atom b "bools";
+        add_list add_bool b xs
+    | Uop.Arg.String s ->
+        add_atom b "string";
+        add_atom b s
+    | Uop.Arg.Value c ->
+        add_atom b "value";
+        add_const b c
+    | Uop.Arg.Op op ->
+        add_atom b "op";
+        add_op b op
+    | Uop.Arg.Range_info { axis; sub; kind } ->
+        add_atom b "range";
+        add_int b axis;
+        add_list add_int b sub;
+        add_axis_type b kind
+    | Uop.Arg.Param_arg p ->
+        add_atom b "param";
+        add_param_arg b p
+    | Uop.Arg.Reduce_arg { op; axes } ->
+        add_atom b "reduce";
+        add_op b op;
+        add_list add_int b axes
+    | Uop.Arg.Device device ->
+        add_atom b "device";
+        add_device b device
+    | Uop.Arg.Op_device (op, device) ->
+        add_atom b "op_device";
+        add_op b op;
+        add_device b device
+    | Uop.Arg.Stage_info info ->
+        add_atom b "stage";
+        add_stage_info b info
+    | Uop.Arg.Opts opts ->
+        add_atom b "opts";
+        add_list add_opt b opts
+    | Uop.Arg.Kernel_info info ->
+        add_atom b "kernel";
+        add_kernel_info add_uop b info
+    | Uop.Arg.Call_info info ->
+        add_atom b "call";
+        add_call_info b info
+    | Uop.Arg.Program_info info ->
+        add_atom b "program";
+        add_program_info add_uop b info
+    | Uop.Arg.Wmma_info info ->
+        add_atom b "wmma";
+        add_wmma_info b info
+    | Uop.Arg.Shaped_wmma_info info ->
+        add_atom b "shaped_wmma";
+        add_shaped_wmma_info b info
+
+  let uop_tree_key u =
+    let rec key memo u =
+      match Uop.Ref_tbl.find_opt memo u with
+      | Some key -> key
+      | None ->
+          let b = Sbuf.create 128 in
+          let add_uop b u = add_atom b (key memo u) in
+          add_op b (Uop.op u);
+          add_dtype b (Uop.dtype u);
+          add_arg add_uop b (Uop.arg u);
+          Array.iter (fun child -> add_uop b child) (Uop.src u);
+          let key = Digest.to_hex (Digest.string (Sbuf.contents b)) in
+          Uop.Ref_tbl.add memo u key;
+          key
+    in
+    key (Uop.Ref_tbl.create 256) u
+
+  let kernel_key (program : Program_spec.program) =
+    let b = Sbuf.create 256 in
+    add_atom b "tolk-program-key-v1";
+    add_int b (List.length program);
+    List.iter (fun u -> add_atom b (uop_tree_key u)) program;
+    Digest.to_hex (Digest.string (Sbuf.contents b))
 
   let mutex = Mutex.create ()
 end
@@ -411,8 +669,9 @@ let compile_program d ?name ?(applied_opts = []) ?(estimates = Program_spec.Esti
           let build_spec () =
             let src = Renderer.render ren ~name:kernel_name program in
             let lib = Compiler.compile_cached comp src in
+            let aux = Renderer.aux ren program in
             Program_spec.of_program ~name:kernel_name ~src ~device:d.name
-              ~lib ~applied_opts ~estimates program
+              ~lib ~applied_opts ~estimates ~aux program
           in
           let spec =
             match Program_cache.Cache.find_opt Program_cache.cache bkey with

@@ -1,4 +1,4 @@
 (mdx
  (files *.md)
  (package tolk)
- (libraries tolk tolk_ir))
+ (libraries tolk))

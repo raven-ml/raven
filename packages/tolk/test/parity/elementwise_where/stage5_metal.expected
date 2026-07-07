@@ -1,0 +1,13 @@
+   0 Ops.CONST           :            dtypes.int                               []                               -1
+   1 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(1)
+   2 Ops.CONST           :            dtypes.int                               []                               256
+   3 Ops.SPECIAL         :            dtypes.int                               ['256']                          gidx0
+   4 Ops.INDEX           :            dtypes.float                             [1, 3]                           None
+   5 Ops.CONST           :            dtypes.float                             []                               0.0
+   6 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(0)
+   7 Ops.INDEX           :            dtypes.float                             [6, 3]                           None
+   8 Ops.LOAD            :            dtypes.float                             [7]                              None
+   9 Ops.CMPLT           :            dtypes.bool                              ['0.0', 8]                       None
+  10 Ops.WHERE           :            dtypes.float                             [9, 8, '0.0']                    None
+  11 Ops.STORE           :            dtypes.void                              [4, 10]                          None
+  12 Ops.SINK            :            dtypes.void                              [11]                             KernelInfo(name='elementwise_where', axis_types=(), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None, beam=0)

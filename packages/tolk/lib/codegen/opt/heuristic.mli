@@ -9,9 +9,7 @@
 
     Applies a sequence of hand-coded optimization steps to a kernel scheduler:
     tensor cores, image upcasts, matvec detection, grouping, masked upcasts,
-    broadcast-based upcasts, reduce unrolling, local groups, and threading.
-
-    *)
+    broadcast-based upcasts, reduce unrolling, local groups, and threading. *)
 
 val nolocals_var : int Helpers.Context_var.t
 (** Runtime override for [NOLOCALS] environment variable. *)

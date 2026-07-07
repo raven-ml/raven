@@ -1,0 +1,65 @@
+(*---------------------------------------------------------------------------
+  Copyright (c) 2024 the tiny corp. MIT License (see LICENSE-tinygrad).
+  Copyright (c) 2026 The Raven authors. ISC License.
+
+  SPDX-License-Identifier: MIT AND ISC
+  ---------------------------------------------------------------------------*)
+
+(** Tensor schedule linearization.
+
+    This module mirrors [tinygrad.schedule]: it turns tensor-level
+    {!Tolk_uop.Ops.Sink} graphs into program-level {!Tolk_uop.Ops.Linear}
+    schedules and extracts the runtime variable values used by those
+    schedules.
+
+    The linearized schedule is executed by {!Realize.run_linear}; the buffer
+    memory planner is embedded here as {!create_linear_with_vars}'s optional
+    UOp rewrite. *)
+
+val create_schedule : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
+(** [create_schedule sched_sink] builds the kernel dependency graph and
+    topologically sorts it into a {!Tolk_uop.Ops.Linear} node.
+
+    [sched_sink] is the output of {!Rangeify.get_kernel_graph}. For each
+    reachable {!Tolk_uop.Ops.After}, children after [src.(0)] are partitioned
+    like tinygrad: {!Tolk_uop.Ops.Call} and {!Tolk_uop.Ops.End} children are
+    kernels, {!Tolk_uop.Ops.After} children are dependencies, and
+    {!Tolk_uop.Ops.Store} children are ignored.
+
+    Raises [Invalid_argument] if a kernel dependency is not an [After],
+    [Buffer], [Param], [Mselect], [Mstack], or [Bind] after source
+    unwrapping. *)
+
+val lower_sink_to_linear :
+  get_kernel_graph:(Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
+  Tolk_uop.Uop.t ->
+  Tolk_uop.Uop.t option
+(** [lower_sink_to_linear ~get_kernel_graph sink] lowers a tensor-level
+    [Sink] into a [Linear] node via [get_kernel_graph] and
+    {!create_schedule}.
+
+    Returns [None] if [sink] is not a tensor-level sink (e.g. it
+    already carries [kernel_info]). Results are cached by
+    {!Tolk_uop.Uop.semantic_key} when [SCACHE] is enabled. *)
+
+val create_linear_with_vars :
+  ?memory_plan:bool ->
+  get_kernel_graph:(Tolk_uop.Uop.t -> Tolk_uop.Uop.t) ->
+  Tolk_uop.Uop.t ->
+  Tolk_uop.Uop.t * (string * int) list
+(** [create_linear_with_vars ?memory_plan ~get_kernel_graph big_sink] runs the
+    schedule creation pipeline on [big_sink] and returns the
+    linearized schedule plus the values bound to runtime variables.
+
+    [big_sink] is a raw {!Tolk_uop.Ops.Sink} or a {!Tolk_uop.Ops.Call}
+    from allocations. Nested calls whose body is a {!Tolk_uop.Ops.Linear}
+    are resolved by substituting parameter slots with call arguments
+    and flattening the resulting linear schedule. Only binds for variables
+    referenced by scheduled kernel bodies are returned.
+
+    [memory_plan] defaults to [true]. JIT capture may pass [false] when it must
+    keep the captured UOp schedule unplanned and defer allocation decisions to
+    the captured replay path.
+
+    Raises [Invalid_argument] if duplicate binds disagree or if the resolved
+    result is not a {!Tolk_uop.Ops.Linear} node. *)

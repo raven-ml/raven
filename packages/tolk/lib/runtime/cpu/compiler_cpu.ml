@@ -7,8 +7,6 @@
 
 open Tolk
 
-(* Host Detection *)
-
 let uname flag =
   try
     let ic = Unix.open_process_in ("uname " ^ flag) in
@@ -21,17 +19,58 @@ let cc =
   let var = Helpers.Context_var.string ~key:"CC" ~default:"clang" in
   fun () -> Helpers.Context_var.get var
 
-let host_arch = uname "-m"
 let is_windows = String.equal Sys.os_type "Win32"
 
+(* Host Target *)
+
+type arch = X86_64 | Arm64 | Riscv64
+
+let windows_machine () =
+  match Sys.getenv_opt "PROCESSOR_ARCHITECTURE" with
+  | Some arch when String.trim arch <> "" -> arch
+  | _ -> "amd64"
+
+let host_machine () =
+  let machine = if is_windows then windows_machine () else uname "-m" in
+  String.lowercase_ascii machine
+
+let arch_of_machine machine =
+  match String.lowercase_ascii machine with
+  | "x86_64" | "amd64" -> X86_64
+  | "arm64" | "aarch64" -> Arm64
+  | "riscv64" -> Riscv64
+  | arch ->
+      raise
+        (Compiler.Compile_error
+           (Printf.sprintf "unsupported arch: %S" arch))
+
+let target = function
+  | X86_64 -> "x86_64"
+  | Arm64 -> "arm64"
+  | Riscv64 -> "riscv64"
+
+let arch_args = function
+  | X86_64 -> [ "-march=native" ]
+  | Arm64 -> [ "-ffixed-x18"; "-mcpu=native" ]
+  | Riscv64 -> [ "-march=rv64g" ]
+
 (* Subprocess Helpers *)
+
+let close_noerr fd = try Unix.close fd with Unix.Unix_error _ -> ()
+
+let rec waitpid pid =
+  try Unix.waitpid [] pid
+  with Unix.Unix_error (Unix.EINTR, _, _) -> waitpid pid
 
 let write_all_fd fd bytes =
   let len = Bytes.length bytes in
   let rec loop off =
-    if off < len then
-      let wrote = Unix.write fd bytes off (len - off) in
-      loop (off + wrote)
+    if off < len then begin
+      match Unix.write fd bytes off (len - off) with
+      | 0 -> raise (Unix.Unix_error (Unix.EPIPE, "write", ""))
+      | wrote -> loop (off + wrote)
+      | exception Unix.Unix_error (Unix.EINTR, _, _) -> loop off
+    end
   in
   loop 0
 
@@ -41,20 +80,28 @@ let read_pipes stdout_fd stderr_fd =
   let stderr_buf = Buffer.create 4096 in
   Fun.protect
     ~finally:(fun () ->
-      (try Unix.close stdout_fd with Unix.Unix_error _ -> ());
-      try Unix.close stderr_fd with Unix.Unix_error _ -> ())
+      close_noerr stdout_fd;
+      close_noerr stderr_fd)
     (fun () ->
+      let rec select fds =
+        try Unix.select fds [] [] (-1.)
+        with Unix.Unix_error (Unix.EINTR, _, _) -> select fds
+      in
+      let rec read fd =
+        try Unix.read fd buf 0 (Bytes.length buf)
+        with Unix.Unix_error (Unix.EINTR, _, _) -> read fd
+      in
       let rec loop fds =
         match fds with
         | [] -> ()
         | _ ->
-            let ready, _, _ = Unix.select fds [] [] (-1.) in
+            let ready, _, _ = select fds in
             let fds' =
               List.fold_left
                 (fun acc fd ->
                   if not (List.mem fd ready) then fd :: acc
                   else
-                    match Unix.read fd buf 0 (Bytes.length buf) with
+                    match read fd with
                     | 0 -> acc
                     | n ->
                         let target =
@@ -71,34 +118,20 @@ let read_pipes stdout_fd stderr_fd =
 
 (* Compilation *)
 
-(* Spawns a C compiler subprocess (clang by default) with stdin/stdout/stderr
-   pipes, feeding source on stdin and collecting object code from stdout via
-   select-based multiplexing. Key flags: -fno-math-errno ensures sqrt becomes a
-   single instruction; -ffixed-x18 avoids ARM's platform-reserved register
-   (macOS context switch / Windows TEB); --target=<arch>-none-unknown-elf
-   produces a relocatable ELF regardless of host triple. *)
-let compile ~lang src =
-  let arch = if is_windows then "AMD64" else host_arch in
-  let target = if is_windows then "x86_64" else arch in
-  let arch_flag =
-    match arch with
-    | "x86_64" | "AMD64" -> "-march=native"
-    | "riscv64" -> "-march=rv64g"
-    | _ -> "-mcpu=native"
-  in
-  let extra_args =
-    if String.equal target "arm64" then [ "-ffixed-x18" ] else []
-  in
+(* Mirrors tinygrad's ClangCompiler for CPU: compile C source to a relocatable
+   ELF object for the normalized host architecture. *)
+let compile_clang src =
+  let compiler = cc () in
+  let arch = arch_of_machine (host_machine ()) in
   let base_args =
     [
-      Printf.sprintf "--target=%s-none-unknown-elf" target;
-      arch_flag;
       "-O2";
       "-fPIC";
       "-ffreestanding";
       "-fno-math-errno";
       "-nostdlib";
       "-fno-ident";
+      Printf.sprintf "--target=%s-none-unknown-elf" (target arch);
     ]
   in
   let stdin_r, stdin_w = Unix.pipe () in
@@ -109,30 +142,43 @@ let compile ~lang src =
   Unix.set_close_on_exec stderr_r;
   let argv =
     Array.of_list
-      ((cc () :: "-c" :: "-x" :: lang :: base_args)
-      @ extra_args @ [ "-"; "-o"; "-" ])
+      ((compiler :: "-c" :: "-x" :: "c" :: base_args)
+      @ arch_args arch @ [ "-"; "-o"; "-" ])
   in
-  let pid = Unix.create_process (cc ()) argv stdin_r stdout_w stderr_w in
-  Unix.close stdin_r;
-  Unix.close stdout_w;
-  Unix.close stderr_w;
-  write_all_fd stdin_w (Bytes.of_string src);
-  Unix.close stdin_w;
-  let obj, err = read_pipes stdout_r stderr_r in
-  let _, status = Unix.waitpid [] pid in
+  let pid =
+    try Unix.create_process compiler argv stdin_r stdout_w stderr_w
+    with Unix.Unix_error (err, fn, arg) ->
+      List.iter close_noerr
+        [ stdin_r; stdin_w; stdout_r; stdout_w; stderr_r; stderr_w ];
+      let msg =
+        Printf.sprintf "%s: %s%s" fn (Unix.error_message err)
+          (if String.equal arg "" then "" else " (" ^ arg ^ ")")
+      in
+      raise (Compiler.Compile_error msg)
+  in
+  close_noerr stdin_r;
+  close_noerr stdout_w;
+  close_noerr stderr_w;
+  let obj, err, status =
+    try
+      write_all_fd stdin_w (Bytes.of_string src);
+      close_noerr stdin_w;
+      let obj, err = read_pipes stdout_r stderr_r in
+      let _, status = waitpid pid in
+      (obj, err, status)
+    with exn ->
+      close_noerr stdin_w;
+      close_noerr stdout_r;
+      close_noerr stderr_r;
+      ignore (waitpid pid);
+      raise exn
+  in
   match status with
   | Unix.WEXITED 0 -> Bytes.of_string obj
   | _ ->
-      let label = Printf.sprintf "clang -x %s" lang in
+      let label = "clang -x c" in
       let msg =
         if String.equal err "" then label ^ " failed (no stderr output)"
         else Printf.sprintf "%s failed:\n%s" label err
       in
       raise (Compiler.Compile_error msg)
-
-let compile_clang src = compile ~lang:"c" src
-
-(* Compiles LLVM IR to object code by invoking clang with -x ir.
-   This avoids a library dependency on LLVM at the cost of per-compilation
-   subprocess overhead. *)
-let compile_llvmir src = compile ~lang:"ir" src

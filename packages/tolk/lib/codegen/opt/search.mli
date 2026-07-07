@@ -23,7 +23,8 @@ val beam_search :
 
     - [allow_test_size] (default [true]) scales down global dimensions
       during timing to stay within hardware limits.
-    - [disable_cache] (default from [IGNORE_BEAM_CACHE] env) skips the
-      on-disk result cache.
+    - [disable_cache] (default from [IGNORE_BEAM_CACHE] env) bypasses
+      on-disk cache reads. Successful searches still update the cache when
+      caching is enabled.
 
     Returns the best scheduler found. *)

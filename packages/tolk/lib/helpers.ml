@@ -17,7 +17,6 @@ let getenv_str name default =
   | Some s when s <> "" -> s
   | _ -> default
 
-let amx = getenv "AMX" 0 <> 0
 let allow_half8 = getenv "ALLOW_HALF8" 0 <> 0
 
 (* Context variables *)

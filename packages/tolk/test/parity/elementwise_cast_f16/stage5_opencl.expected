@@ -1,0 +1,38 @@
+   0 Ops.CONST           :            dtypes.int                               []                               -1
+   1 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(2)
+   2 Ops.CONST           :            dtypes.int                               []                               256
+   3 Ops.SPECIAL         :            dtypes.int                               ['256']                          gidx0
+   4 Ops.INDEX           :            dtypes.float                             [1, 3]                           None
+   5 Ops.PARAM           :            dtypes.ushort                            ['-1']                           ParamArg(0)
+   6 Ops.INDEX           :            dtypes.ushort                            [5, 3]                           None
+   7 Ops.LOAD            :            dtypes.ushort                            [6]                              None
+   8 Ops.CONST           :            dtypes.ushort                            []                               32768
+   9 Ops.AND             :            dtypes.ushort                            [7, '32768']                     None
+  10 Ops.CAST            :            dtypes.uint                              [9]                              None
+  11 Ops.CONST           :            dtypes.uint                              []                               16
+  12 Ops.SHL             :            dtypes.uint                              [10, '16']                       None
+  13 Ops.CONST           :            dtypes.ushort                            []                               32767
+  14 Ops.AND             :            dtypes.ushort                            [7, '32767']                     None
+  15 Ops.CAST            :            dtypes.uint                              [14]                             None
+  16 Ops.CONST           :            dtypes.uint                              []                               10
+  17 Ops.SHR             :            dtypes.uint                              [15, '10']                       None
+  18 Ops.CONST           :            dtypes.uint                              []                               0
+  19 Ops.CMPEQ           :            dtypes.bool                              [17, '0']                        None
+  20 Ops.CONST           :            dtypes.uint                              []                               31
+  21 Ops.CMPEQ           :            dtypes.bool                              [17, '31']                       None
+  22 Ops.CONST           :            dtypes.uint                              []                               13
+  23 Ops.SHL             :            dtypes.uint                              [15, '13']                       None
+  24 Ops.CONST           :            dtypes.uint                              []                               2139095040
+  25 Ops.OR              :            dtypes.uint                              [23, '2139095040']               None
+  26 Ops.CONST           :            dtypes.uint                              []                               939524096
+  27 Ops.ADD             :            dtypes.uint                              [23, '939524096']                None
+  28 Ops.WHERE           :            dtypes.uint                              [21, 25, 27]                     None
+  29 Ops.WHERE           :            dtypes.uint                              [19, '0', 28]                    None
+  30 Ops.OR              :            dtypes.uint                              [12, 29]                         None
+  31 Ops.BITCAST         :            dtypes.float                             [30]                             None
+  32 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(1)
+  33 Ops.INDEX           :            dtypes.float                             [32, 3]                          None
+  34 Ops.LOAD            :            dtypes.float                             [33]                             None
+  35 Ops.ADD             :            dtypes.float                             [31, 34]                         None
+  36 Ops.STORE           :            dtypes.void                              [4, 35]                          None
+  37 Ops.SINK            :            dtypes.void                              [36]                             KernelInfo(name='elementwise_cast_f16', axis_types=(), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None, beam=0)

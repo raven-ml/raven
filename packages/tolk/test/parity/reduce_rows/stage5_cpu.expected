@@ -1,0 +1,30 @@
+   0 Ops.CONST           :            dtypes.int                               []                               -1
+   1 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(1)
+   2 Ops.STACK           :            dtypes.void                              []                               None
+   3 Ops.PARAM           :            dtypes.int                               [2]                              ParamArg(2, vmin_vmax=(0, 7), name='core_id', addrspace=AddrSpace.ALU)
+   4 Ops.INDEX           :            dtypes.float                             [1, 3]                           None
+   5 Ops.CONST           :            dtypes.int                               []                               1
+   6 Ops.BUFFER          :            dtypes.float                             ['1']                            ParamArg(0, addrspace=AddrSpace.REG)
+   7 Ops.CONST           :            dtypes.int                               []                               0
+   8 Ops.INDEX           :            dtypes.float                             [6, '0']                         None
+   9 Ops.CONST           :            dtypes.float                             []                               0.0
+  10 Ops.STORE           :            dtypes.void                              [8, '0.0']                       None
+  11 Ops.CONST           :            dtypes.int                               []                               32
+  12 Ops.RANGE           : 1          dtypes.int                               ['32']                           (1, AxisType.REDUCE)
+  13 Ops.AFTER           : 1          dtypes.float                             [6, 10, 12]                      None
+  14 Ops.INDEX           : 1          dtypes.float                             [13, '0']                        None
+  15 Ops.LOAD            : 1          dtypes.float                             [14]                             None
+  16 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(0)
+  17 Ops.CONST           :            dtypes.int                               []                               5
+  18 Ops.SHL             :            dtypes.int                               [3, '5']                         None
+  19 Ops.ADD             : 1          dtypes.int                               [18, 12]                         None
+  20 Ops.INDEX           : 1          dtypes.float                             [16, 19]                         None
+  21 Ops.LOAD            : 1          dtypes.float                             [20]                             None
+  22 Ops.ADD             : 1          dtypes.float                             [15, 21]                         None
+  23 Ops.STORE           : 1          dtypes.void                              [14, 22]                         None
+  24 Ops.END             :            dtypes.void                              [23, 12]                         None
+  25 Ops.AFTER           :            dtypes.float                             [6, 24]                          None
+  26 Ops.INDEX           :            dtypes.float                             [25, '0']                        None
+  27 Ops.LOAD            :            dtypes.float                             [26]                             None
+  28 Ops.STORE           :            dtypes.void                              [4, 27]                          None
+  29 Ops.SINK            :            dtypes.void                              [28]                             KernelInfo(name='reduce_rows', axis_types=(), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None, beam=0)

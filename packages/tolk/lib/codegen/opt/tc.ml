@@ -5,12 +5,30 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-open Tolk_ir
+(* Port of tinygrad/codegen/opt/tc.py to the tolk_uop IR. *)
+
+open Tolk_uop
 
 let strf = Printf.sprintf
 let pow2 n = 1 lsl n
 let log2 n = int_of_float (log (float_of_int n) /. log 2.0)
 let labels prefix n = List.init n (fun i -> strf "%s%d" prefix i)
+let is_power_of_two n = n > 0 && n land (n - 1) = 0
+
+let rec take n = function
+  | _ when n <= 0 -> []
+  | [] -> []
+  | x :: xs -> x :: take (n - 1) xs
+
+(* Numbered labels for opts: each "u" becomes u0,u1,... and each "l"
+   becomes l0,l1,... in occurrence order. *)
+let numbered_opts opts =
+  let u = ref 0 and l = ref 0 in
+  List.map (fun o ->
+    let c = o.[0] in
+    let cnt = if c = 'u' then u else l in
+    let s = strf "%c%d" c !cnt in
+    incr cnt; s) opts
 
 (* D = A * B + C.  A is (M x K), B is (K x N), C and D are (M x N).
    dims = (N, M, K).  All axes have size 2. *)
@@ -31,27 +49,22 @@ let get_reduce_axes (tc : t) =
   List.init (log2 k) (fun i -> (i, 2))
 
 let get_upcast_axes (tc : t) =
-  List.filter (fun o -> o.[0] = 'u') tc.opts
+  List.filter (fun o -> String.length o > 0 && o.[0] = 'u') tc.opts
 
 let get_local_axes (tc : t) =
-  List.filter (fun o -> o.[0] = 'l') tc.opts
+  List.filter (fun o -> String.length o > 0 && o.[0] = 'l') tc.opts
 
 (* Shape string before the reduce UNROLL: numbered local/upcast labels
    from opts, then reduce labels. *)
 let base_shape_str (tc : t) =
-  let u = ref 0 and l = ref 0 in
-  let opts_labels = List.map (fun o ->
-    let c = o.[0] in
-    let cnt = if c = 'u' then u else l in
-    let s = strf "%c%d" c !cnt in
-    incr cnt; s) tc.opts in
-  opts_labels @ labels "r" (List.length (get_reduce_axes tc))
+  numbered_opts tc.opts @ labels "r" (List.length (get_reduce_axes tc))
 
 (* Upcast + reduce axis names in reverse order, used to define the UNROLL
    axes after the opts are applied. *)
 let base_upcast_axes (tc : t) =
-  List.rev (labels "r" (List.length (get_reduce_axes tc))
-            @ labels "u" (List.length (get_upcast_axes tc)))
+  List.rev
+    (labels "r" (List.length (get_reduce_axes tc))
+     @ labels "u" (List.length (get_upcast_axes tc)))
 
 (* Build remap tables from the canonical axis order (l0..lN, u0..uN, r0..rN)
    to the swizzled order for operands A and B. *)
@@ -64,7 +77,8 @@ let remaps (tc : t) =
   let make flat =
     let tbl = Hashtbl.create (List.length fwd) in
     List.iter2 (Hashtbl.replace tbl) fwd flat;
-    tbl in
+    tbl
+  in
   (make (s0_l @ s0_u @ s0_r), make (s1_l @ s1_u @ s1_r))
 
 (* Compute the two permutation vectors (for A and B) that reorder
@@ -78,23 +92,47 @@ let permutes_for_shape_str (tc : t) shape_str =
           let rec find j = function
             | [] -> failwith (strf "permutes_for_shape_str: %S not found" mapped)
             | x :: _ when x = mapped -> j
-            | _ :: rest -> find (j + 1) rest in
+            | _ :: rest -> find (j + 1) rest
+          in
           find 0 shape_str
-      | None -> i) shape_str in
+      | None -> i) shape_str
+  in
   (perm r0, perm r1)
+
+let dtype_name = function
+  | Dtype.Float16 -> "half"
+  | Dtype.Bfloat16 -> "__bf16"
+  | Dtype.Float32 -> "float"
+  | Dtype.Float64 -> "double"
+  | Dtype.Fp8e4m3 -> "float8_e4m3"
+  | Dtype.Fp8e5m2 -> "float8_e5m2"
+  | Dtype.Fp8e4m3fnuz -> "float8_e4m3fnuz"
+  | Dtype.Fp8e5m2fnuz -> "float8_e5m2fnuz"
+  | scalar -> Dtype.scalar_to_string scalar
 
 let to_string (tc : t) =
   let n, m, k = tc.dims in
-  strf "WMMA_%d_%d_%d_%s_%s" n m k
-    (Dtype.scalar_cname tc.dtype_in) (Dtype.scalar_cname tc.dtype_out)
+  strf "WMMA_%d_%d_%d_%s_%s" n m k (dtype_name tc.dtype_in)
+    (dtype_name tc.dtype_out)
 
 let validate (tc : t) =
+  let n, m, k = tc.dims in
+  let check cond msg = if not cond then failwith msg in
+  check (is_power_of_two k) (strf "K dimension must be a positive power of two: %d" k);
+  List.iter
+    (fun opt ->
+      check
+        (String.length opt = 2
+        && (opt.[0] = 'u' || opt.[0] = 'l')
+        && opt.[1] >= '0' && opt.[1] <= '2')
+        (strf "malformed tensor-core opt: %S" opt))
+    tc.opts;
   let n_local = List.length (get_local_axes tc) in
   let n_upcast = List.length (get_upcast_axes tc) in
   let n_reduce = List.length (get_reduce_axes tc) in
-  let n, m, _ = tc.dims in
   let a_ept, b_ept, c_ept = tc.elements_per_thread in
-  let check cond msg = if not cond then failwith msg in
+  check (is_power_of_two a_ept && is_power_of_two b_ept && is_power_of_two c_ept)
+    "elements_per_thread entries must be positive powers of two";
   check (n * m = pow2 (n_local + n_upcast))
     (strf "N(%d) x M(%d) != local(%d) x upcast(%d)"
        n m (pow2 n_local) (pow2 n_upcast));
@@ -109,33 +147,59 @@ let validate (tc : t) =
     (strf "opts wrong on dims[1]: %d vs %d" m (pow2 (count_dim '1')));
   let (s0_l, s0_u, s0_r), (s1_l, s1_u, s1_r) = tc.swizzle in
   let len = List.length in
+  let canonical =
+    labels "l" n_local @ labels "u" n_upcast @ labels "r" n_reduce
+  in
+  List.iter
+    (fun label ->
+      check (List.mem label canonical)
+        (strf "unknown tensor-core swizzle label: %S" label))
+    (s0_l @ s0_u @ s0_r @ s1_l @ s1_u @ s1_r);
   check (len s0_l = n_local && len s1_l = n_local) "local swizzle size wrong";
   check (len s0_u = n_upcast && len s1_u = n_upcast) "upcast swizzle size wrong";
   check (len s0_r = n_reduce && len s1_r = n_reduce) "reduce swizzle size wrong";
+  let sorted_labels = List.sort String.compare in
+  let check_bijection name flat =
+    check (sorted_labels flat = sorted_labels canonical)
+      (strf "%s swizzle is not a bijection" name)
+  in
+  check_bijection "operand A" (s0_l @ s0_u @ s0_r);
+  check_bijection "operand B" (s1_l @ s1_u @ s1_r);
   let total = n_local + n_upcast + n_reduce in
   let r0, r1 = remaps tc in
-  check (Hashtbl.length r0 = total && Hashtbl.length r1 = total) "remaps wrong size";
-  let u = ref 0 and l = ref 0 in
-  let zs0 = ref [] and zs1 = ref [] in
-  List.iter (fun o ->
-    let label = strf "%c%d" o.[0] (if o.[0] = 'u' then !u else !l) in
-    if o.[1] = '0' then zs0 := label :: !zs0;
-    if o.[1] = '1' then zs1 := label :: !zs1;
-    if o.[0] = 'u' then incr u else incr l) tc.opts;
-  let non_local_non_zero zs x = not (List.mem x zs) && x.[0] <> 'l' in
-  let upcasted_0 = List.filter (non_local_non_zero !zs0) (s0_u @ s0_r) in
-  let upcasted_1 = List.filter (non_local_non_zero !zs1) (s1_u @ s1_r) in
+  check (Hashtbl.length r0 = total && Hashtbl.length r1 = total)
+    "remaps wrong size";
+  let zs0, zs1 =
+    List.fold_left2 (fun (z0, z1) o label ->
+      let z0 = if o.[1] = '0' then label :: z0 else z0 in
+      let z1 = if o.[1] = '1' then label :: z1 else z1 in
+      (z0, z1))
+      ([], []) tc.opts (numbered_opts tc.opts)
+  in
+  let keep zs x = not (List.mem x zs) && x.[0] <> 'l' in
+  let upcasted_0 = List.filter (keep zs0) (s0_u @ s0_r) in
+  let upcasted_1 = List.filter (keep zs1) (s1_u @ s1_r) in
   check (pow2 (len upcasted_0) = a_ept)
-    (strf "elements_per_thread[0] mismatch: %d vs %d" (pow2 (len upcasted_0)) a_ept);
+    (strf "elements_per_thread[0] mismatch: %d vs %d"
+       (pow2 (len upcasted_0)) a_ept);
   check (pow2 (len upcasted_1) = b_ept)
-    (strf "elements_per_thread[1] mismatch: %d vs %d" (pow2 (len upcasted_1)) b_ept)
+    (strf "elements_per_thread[1] mismatch: %d vs %d"
+       (pow2 (len upcasted_1)) b_ept)
+
+let create ~dims ~threads ~elements_per_thread ~dtype_in ~dtype_out ~opts
+    ~swizzle =
+  let tc =
+    { dims; threads; elements_per_thread; dtype_in; dtype_out; opts; swizzle }
+  in
+  validate tc;
+  tc
 
 (* Tensor core definitions *)
 
 let mk ~dims ~threads ~ept ~opts ~swizzle dtypes =
   List.map (fun (dtype_in, dtype_out) ->
-    { dims; threads; elements_per_thread = ept;
-      dtype_in; dtype_out; opts; swizzle }) dtypes
+    create ~dims ~threads ~elements_per_thread:ept ~dtype_in ~dtype_out ~opts
+      ~swizzle) dtypes
 
 (* NVIDIA *)
 
@@ -197,7 +261,7 @@ let amd_cdna_1616128 = mk ~dims:(16,16,128) ~threads:64 ~ept:(32,32,4)
             (["l0";"l1";"l2";"l3";"r5";"r6"], ["r0";"r1"], ["l4";"l5";"u0";"u1";"r2";"r3";"r4"]))
   Dtype.[(Fp8e5m2, Float32); (Fp8e4m3, Float32)]
 
-let amd_cdna3 = List.filteri (fun i _ -> i < 2) amd_cdna_161632 @ amd_cdna_161616
+let amd_cdna3 = take 2 amd_cdna_161632 @ amd_cdna_161616
 let amd_cdna4 = amd_cdna_1616128 @ amd_cdna_161632 @ amd_cdna_161616
 
 (* Apple Metal *)
@@ -209,27 +273,9 @@ let metal = mk ~dims:(8,8,8) ~threads:32 ~ept:(2,2,2)
   Dtype.[(Float32, Float32); (Float16, Float32); (Float16, Float16);
          (Bfloat16, Float32); (Bfloat16, Bfloat16)]
 
-(* Apple AMX *)
-
-let amx =
-  let sz = 64 / Dtype.itemsize Dtype.float32 in
-  mk ~dims:(sz,sz,1) ~threads:1 ~ept:(sz, sz, sz*sz)
-    ~opts:["u0";"u0";"u0";"u0";"u1";"u1";"u1";"u1"]
-    ~swizzle:(([], ["u0";"u1";"u2";"u3";"u4";"u5";"u6";"u7"], []),
-              ([], ["u4";"u5";"u6";"u7";"u0";"u1";"u2";"u3"], []))
-    Dtype.[(Float32, Float32)]
-
-(* Intel *)
-
-let intel = mk ~dims:(8,8,16) ~threads:8 ~ept:(16,16,8)
-  ~opts:["l0";"l0";"l0";"u1";"u1";"u1"]
-  ~swizzle:((["r1";"r2";"r3"], ["u0";"u1";"u2"], ["l0";"l1";"l2";"r0"]),
-            (["l0";"l1";"l2"], ["r1";"r2";"r3"], ["u0";"u1";"u2";"r0"]))
-  Dtype.[(Float16, Float32)]
-
 (* Validate all definitions at load time. *)
 let () =
   List.iter (List.iter validate)
     [cuda_sm75; cuda_sm80; cuda_sm89;
      amd_rdna3; amd_rdna4; amd_cdna3; amd_cdna4;
-     metal; amx; intel]
+     metal]

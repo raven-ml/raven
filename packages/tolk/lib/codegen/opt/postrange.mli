@@ -7,9 +7,10 @@
 
 (** Post-range kernel optimisation scheduler.
 
-    Wraps a late {!Tolk_ir.Kernel.t} AST and applies optimisation passes
-    (upcast, local, unroll, group, tensor core, padding, swap) that
-    reshape the iteration space before expansion and devectorisation.
+    Wraps a kernel-stage {!Tolk_uop.Uop.t} AST and applies optimisation
+    passes (upcast, local, unroll, group, tensor core, padding, swap)
+    that reshape the iteration space before expansion and
+    devectorisation.
 
     See also {!Tc}, {!Heuristic}, {!Search}. *)
 
@@ -24,7 +25,7 @@ exception Opt_error of string
 
 (** {1:lifecycle Lifecycle} *)
 
-val create : Tolk_ir.Kernel.t -> Renderer.t -> t
+val create : Tolk_uop.Uop.t -> Renderer.t -> t
 (** [create ast ren] is a fresh scheduler for [ast] with renderer
     [ren]. *)
 
@@ -32,8 +33,8 @@ val copy : t -> t
 (** [copy t] is a shallow copy with independent mutable state. *)
 
 val apply_opt :
-  ?append_opt:bool -> t -> Tolk_ir.Kernel.Opt.t ->
-  (Tolk_ir.Kernel.t * Tolk_ir.Kernel.t) option
+  ?append_opt:bool -> t -> Tolk_uop.Uop.Opt.t ->
+  (Tolk_uop.Uop.t * Tolk_uop.Uop.t) option
 (** [apply_opt t opt] applies [opt] to [t] and returns
     [Some (replaced_rng, new_rng)] for shift_to opts, the first two
     TC axes as a pair for TC opts, or [None] otherwise.
@@ -42,7 +43,7 @@ val apply_opt :
     Raises {!Opt_error} on precondition failure. *)
 
 val get_optimized_ast :
-  ?name_override:string -> t -> Tolk_ir.Kernel.t
+  ?name_override:string -> t -> Tolk_uop.Uop.t
 (** [get_optimized_ast t] finalises [t]: flattens ranges, generates a
     debug name, and returns the AST with updated kernel info. *)
 
@@ -51,23 +52,23 @@ val get_optimized_ast :
 val apply_opts :
   ?beam_search:(t -> t) ->
   ?hand_coded_optimizations:(t -> t) ->
-  Tolk_ir.Kernel.t -> Renderer.t -> Tolk_ir.Kernel.t
+  Tolk_uop.Uop.t -> Renderer.t -> Tolk_uop.Uop.t
 (** [apply_opts ast ren] optimises [ast] for [ren].  Returns [ast]
     unchanged if already tagged.  Strategy callbacks break circular
     dependencies with {!Search} and {!Heuristic}. *)
 
-val bufs_from_ast : Tolk_ir.Kernel.t -> Tolk_ir.Kernel.t list
+val bufs_from_ast : Tolk_uop.Uop.t -> Tolk_uop.Uop.t list
 (** [bufs_from_ast ast] is the Param nodes of [ast] sorted by index. *)
 
 (** {1:accessors Accessors} *)
 
-val ast : t -> Tolk_ir.Kernel.t
+val ast : t -> Tolk_uop.Uop.t
 (** [ast t] is [t]'s current kernel AST. *)
 
 val ren : t -> Renderer.t
 (** [ren t] is [t]'s renderer. *)
 
-val applied_opts : t -> Tolk_ir.Kernel.Opt.t list
+val applied_opts : t -> Tolk_uop.Uop.Opt.t list
 (** [applied_opts t] is the opts applied so far. *)
 
 val tensor_core : t -> Tc.t option
@@ -75,28 +76,28 @@ val tensor_core : t -> Tc.t option
 
 (** {1:shape Shape queries} *)
 
-val rngs : t -> Tolk_ir.Kernel.t list
+val rngs : t -> Tolk_uop.Uop.t list
 (** Active ranges sorted by (axis kind, axis number). *)
 
 val shape_len : t -> int
 (** Number of active ranges. *)
 
-val full_shape : t -> Tolk_ir.Kernel.t list
+val full_shape : t -> Tolk_uop.Uop.t list
 (** Size node of each active range. *)
 
-val axis_types : t -> Tolk_ir.Axis_kind.t list
+val axis_types : t -> Tolk_uop.Axis_type.t list
 (** Axis kind of each active range. *)
 
 val shape_str : t -> string list
 (** Labelled axis names (["g0"; "l0"; "r0"; …]). *)
 
 val shape_str_to_axis : t -> string list -> int list
-(** Map axis label names to indices.  Raises [Failure] if not found. *)
+(** Map axis label names to indices.  Raises {!Opt_error} if not found. *)
 
-val axes_of : t -> Tolk_ir.Axis_kind.t list -> int list
+val axes_of : t -> Tolk_uop.Axis_type.t list -> int list
 (** Indices of ranges whose kind is in the given list. *)
 
-val ranges_of : t -> Tolk_ir.Axis_kind.t list -> Tolk_ir.Kernel.t list
+val ranges_of : t -> Tolk_uop.Axis_type.t list -> Tolk_uop.Uop.t list
 (** Ranges whose kind is in the given list. *)
 
 val upcastable_dims : t -> int list
@@ -108,7 +109,7 @@ val unrollable_dims : t -> int list
 val upcast_size : t -> int
 (** Product of Upcast and Unroll shape sizes. *)
 
-val output_shape : t -> Tolk_ir.Kernel.t list
+val output_shape : t -> Tolk_uop.Uop.t list
 (** {!full_shape} with reduce/unroll/group axes replaced by [1]. *)
 
 val upcasted : t -> int
@@ -119,20 +120,20 @@ val group_for_reduces : t -> int
 
 (** {1:queries Queries} *)
 
-val reduceop : t -> Tolk_ir.Kernel.t option
+val reduceop : t -> Tolk_uop.Uop.t option
 (** First Reduce node in the AST, if any. *)
 
-val bufs : t -> Tolk_ir.Kernel.t list
+val bufs : t -> Tolk_uop.Uop.t list
 (** Index nodes in the AST, reversed. *)
 
 val colored_shape : t -> string
 (** Debug string of range sizes with axis-kind labels. *)
 
-val range_int_size : Tolk_ir.Kernel.t -> int
+val range_int_size : Tolk_uop.Uop.t -> int
 (** Constant integer size of a range node, or [0]. *)
 
 val real_axis :
-  t -> Tolk_ir.Kernel.Opt.t -> int option -> int
+  t -> Tolk_uop.Uop.Opt.t -> int option -> int
 (** [real_axis t op axis] resolves [axis] for [op] to a range index.
     Returns [-1] when [axis] is [None] or [op] is TC.
 
@@ -144,9 +145,9 @@ val convert_loop_to_global : t -> unit
 (** Promote eligible Loop ranges to Global. *)
 
 val shift_to :
-  ?top:bool -> ?input_new_rng:Tolk_ir.Kernel.t ->
-  t -> Tolk_ir.Kernel.t -> int -> Tolk_ir.Axis_kind.t ->
-  Tolk_ir.Kernel.t * Tolk_ir.Kernel.t
+  ?top:bool -> ?input_new_rng:Tolk_uop.Uop.t ->
+  t -> Tolk_uop.Uop.t -> int -> Tolk_uop.Axis_type.t ->
+  Tolk_uop.Uop.t * Tolk_uop.Uop.t
 (** [shift_to t rng amount kind] splits [rng] by [amount].  Returns
     [(replaced_rng, new_rng)].  [top] defaults to [false].
-    Raises [Failure] if [amount] does not divide the range. *)
+    Raises {!Opt_error} if [amount] does not divide the range. *)

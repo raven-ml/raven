@@ -5,11 +5,11 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-(** Tensor core definitions and swizzle helpers.
+(** Tinygrad tensor core definitions and swizzle helpers.
 
-    Defines hardware WMMA configurations for NVIDIA, AMD, Apple, and Intel
-    and provides the axis-remapping logic needed by {!Postrange} to lower
-    matmuls into tensor core instructions.
+    Defines tinygrad-backed hardware WMMA/MFMA configurations for NVIDIA, AMD,
+    and Apple Metal, and provides the axis-remapping logic needed by
+    {!Postrange} to lower matmuls into tensor core instructions.
 
     See also {!Renderer.tensor_core}, {!Postrange}. *)
 
@@ -22,7 +22,7 @@
     (M x N).  The configuration specifies tile geometry, thread mapping,
     dtype requirements, and the dimension swizzle needed to lay data out
     for the instruction. *)
-type t = {
+type t = private {
   dims : int * int * int;
       (** [(n, m, k)] matrix-multiply tile dimensions. *)
   threads : int;
@@ -30,9 +30,9 @@ type t = {
   elements_per_thread : int * int * int;
       (** [(a, b, c)] elements each thread contributes for operands A, B,
           and accumulator C. *)
-  dtype_in : Tolk_ir.Dtype.scalar;
+  dtype_in : Tolk_uop.Dtype.scalar;
       (** Element type of the A and B input operands. *)
-  dtype_out : Tolk_ir.Dtype.scalar;
+  dtype_out : Tolk_uop.Dtype.scalar;
       (** Element type of the C accumulator operand. *)
   opts : string list;
       (** Scheduling option strings (["u0"], ["l1"], …) applied when this
@@ -48,7 +48,27 @@ type t = {
           instruction. *)
 }
 
+(** [create ~dims ~threads ~elements_per_thread ~dtype_in ~dtype_out ~opts
+     ~swizzle] is a validated tensor core configuration.
+
+    Raises [Failure] if the configuration violates the tensor-core invariants.
+    This mirrors tinygrad's dataclass construction boundary. *)
+val create :
+  dims:int * int * int ->
+  threads:int ->
+  elements_per_thread:int * int * int ->
+  dtype_in:Tolk_uop.Dtype.scalar ->
+  dtype_out:Tolk_uop.Dtype.scalar ->
+  opts:string list ->
+  swizzle:
+    (string list * string list * string list)
+    * (string list * string list * string list) ->
+  t
+
 (** {1:helpers Helpers} *)
+
+(** These helpers are exposed for the tensor-core lowering pipeline. They are
+    not a renderer-selection API; renderer setup owns target selection. *)
 
 val get_reduce_axes : t -> (int * int) list
 (** [get_reduce_axes tc] is the reduce axes for [tc]: one [(i, 2)] pair
@@ -70,16 +90,10 @@ val permutes_for_shape_str : t -> string list -> int list * int list
 val to_string : t -> string
 (** [to_string tc] is ["WMMA_N_M_K_in_out"]. *)
 
-val validate : t -> unit
-(** [validate tc] checks all invariants of [tc].
-
-    Raises [Failure] on mismatch. Called at module load time for all
-    built-in definitions. *)
-
 (** {1:definitions Definitions}
 
     Each list contains one {!t} per supported dtype pair.  All entries
-    are validated at module load time. *)
+    are validated when constructed. *)
 
 val cuda_sm75 : t list
 (** NVIDIA SM 7.5 (Turing). *)
@@ -104,9 +118,3 @@ val amd_cdna4 : t list
 
 val metal : t list
 (** Apple Metal simdgroup_matrix. *)
-
-val amx : t list
-(** Apple AMX. *)
-
-val intel : t list
-(** Intel Xe DPAS. *)

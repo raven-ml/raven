@@ -1,0 +1,9 @@
+__kernel void E_2_32_4n5(__global float* data0_256, __global float* data1_256, __global float* data2_256, __global float* data3_256) {
+  int gidx0 = get_group_id(0); /* 2 */
+  int lidx0 = get_local_id(0); /* 32 */
+  int alu0 = ((gidx0<<7)+(lidx0<<2));
+  float4 val0 = (*((__global float4*)((data1_256+alu0))));
+  float4 val1 = (*((__global float4*)((data2_256+alu0))));
+  float4 val2 = (*((__global float4*)((data3_256+alu0))));
+  *((__global float4*)((data0_256+alu0))) = (float4)((val0.x+val1.x+val2.x),(val0.y+val1.y+val2.y),(val0.z+val1.z+val2.z),(val0.w+val1.w+val2.w));
+}

@@ -7,25 +7,25 @@
 
 (** Multi-device sharding transformations.
 
-    Rewrites operations on {!Tolk_ir.Tensor.Multi}-wrapped (sharded)
-    tensors into per-shard operations. Each rule strips the MULTI
-    wrapper, applies the operation to the inner per-shard tensor, and
+    Rewrites operations on {!Tolk_uop.Ops.Multi}-wrapped (sharded)
+    nodes into per-shard operations. Each rule strips the MULTI
+    wrapper, applies the operation to the inner per-shard value, and
     re-wraps the result.
 
     Covers ALU, movement, reduction, copy, allreduce, store, and
     passthrough ops. CALL bodies are resolved recursively. *)
 
 val multi_pm :
-  shapes:(Tolk_ir.Tensor.t -> int list option) ->
-  devices:(Tolk_ir.Tensor.t -> Tolk_ir.Tensor.device option) ->
-  Tolk_ir.Tensor.t ->
-  Tolk_ir.Tensor.t option
+  shapes:(Tolk_uop.Uop.t -> int list option) ->
+  devices:(Tolk_uop.Uop.t -> Tolk_uop.Uop.device option) ->
+  Tolk_uop.Uop.t ->
+  Tolk_uop.Uop.t option
 (** [multi_pm ~shapes ~devices node] rewrites [node] if it involves
     multi-device sharding.
 
-    [shapes] maps a tensor node to its concrete shape, if known.
-    [devices] maps a tensor node to its device placement, if known.
+    [shapes] maps a node to its concrete shape, if known.
+    [devices] maps a node to its device placement, if known.
 
     Returns [Some node'] when the node is rewritten, [None] when no
     rule applies. Intended as the rewrite function for
-    {!Tolk_ir.Tensor.graph_rewrite}. *)
+    {!Tolk_uop.Uop.graph_rewrite}. *)

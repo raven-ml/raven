@@ -16,6 +16,28 @@ type cuda = SM75 | SM80 | SM89
 (** AMD GPU architecture families used by source generation. *)
 type amd = RDNA3 | RDNA4 | CDNA3 | CDNA4
 
+(** Metal GPU family used by source generation. Mirrors tinygrad's Metal
+    target architecture string, e.g. ["Apple7"] or ["Mac2"]. *)
+type metal = Apple of int | Mac of int
+
+(** OpenCL target architecture string used by source generation. Mirrors
+    tinygrad's comma-separated [Target.arch], normally the device extension
+    list such as ["cl_khr_fp16,cl_khr_fp64"]. *)
+type opencl = string
+
+(** CPU architecture family used by source generation. Mirrors tinygrad's
+    normalized CPU target architecture prefix. *)
+type cpu = X86_64 | Arm64 | Riscv64
+
+val cpu_of_machine : string -> cpu option
+(** [cpu_of_machine s] normalizes host machine names such as ["amd64"] or
+    ["aarch64"] to CPU renderer targets. *)
+
+val host_cpu : unit -> cpu
+(** [host_cpu ()] is the CPU renderer target for the current host.
+
+    Raises [Invalid_argument] if the host architecture is unsupported. *)
+
 val cuda_of_env : unit -> cuda option
 (** [cuda_of_env ()] resolves [CUDA_ARCH] or [CUDA_SM] to the nearest supported
     CUDA SM tier. Returns [None] when no supported tier is configured. *)
@@ -24,3 +46,7 @@ val amd_of_env : unit -> amd option
 (** [amd_of_env ()] resolves common AMD arch environment variables such as
     [AMD_ARCH], [HIP_ARCH], [HCC_AMDGPU_TARGET], or [HSA_OVERRIDE_GFX_VERSION].
     Returns [None] when no supported arch family is configured. *)
+
+val parse_metal_arch : string -> metal option
+(** [parse_metal_arch s] parses tinygrad-style Metal architecture names such as
+    ["Apple7"] and ["Mac2"]. *)
