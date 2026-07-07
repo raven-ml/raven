@@ -60,10 +60,23 @@ val astype : (float, 'c) Nx.dtype -> 'b params -> 'c params
 *)
 
 val logits :
-  config -> 'b params -> (int32, Nx.int32_elt) Nx.t -> (float, 'b) Nx.t
-(** [logits cfg p ids] is the next-token logits for the [[| batch; seq |]] id
-    tensor [ids], of shape [[| batch; seq; vocab_size |]], at the parameters'
-    dtype. The LM head is tied to [p.wte].
+  config ->
+  ?dropout:float * Rune.Rng.key ->
+  'b params ->
+  (int32, Nx.int32_elt) Nx.t ->
+  (float, 'b) Nx.t
+(** [logits cfg ?dropout p ids] is the next-token logits for the
+    [[| batch; seq |]] id tensor [ids], of shape
+    [[| batch; seq; vocab_size |]], at the parameters' dtype. The LM head is
+    tied to [p.wte].
+
+    [?dropout:(rate, key)] enables training-time dropout at the canonical GPT-2
+    sites — the embedding sum and each block's post-attention and post-MLP
+    projections — with masks applied at the activations' dtype and derived from
+    [key] by {!Rune.Rng.fold_in}, one subkey per site. The same key gives the
+    same masks; derive a fresh key per training step ({!Rune.Rng.fold_in} a
+    step counter into a root key), and under {!Rune.jit} pass it as an input
+    leaf of the step. Inference (the default) applies no dropout.
 
     Raises [Invalid_argument] if [ids] has more than [cfg.n_positions]
     positions. *)

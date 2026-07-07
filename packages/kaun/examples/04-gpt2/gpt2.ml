@@ -149,27 +149,52 @@ let make cfg =
     ln_f = Layer_norm.init ~dim:cfg.n_embd;
   }
 
-(* Forward pass (inference: dropout omitted) *)
+(* Forward pass. Training passes [?dropout] — a rate and a [Rune.Rng] key — to
+   enable the canonical GPT-2 dropout sites: the embedding sum and each block's
+   post-attention and post-MLP projections. Every site's mask derives from the
+   one key by [Rune.Rng.fold_in], so a single per-step key drives them all;
+   under [Rune.jit] that key must be an input leaf of the step. Inference (the
+   default) applies none. *)
 
-let block_apply cfg b x =
+let drop dropout i x =
+  match dropout with
+  | None -> x
+  | Some (rate, key) ->
+      Dropout.apply ~rate ~training:true ~key:(Rune.Rng.fold_in key i) x
+
+let block_apply cfg ?dropout b x =
   let eps = cfg.layer_norm_eps in
   let x =
     Nx.add x
-      (Attention.apply ~num_heads:cfg.n_head ~causal:true b.attn
-         (Layer_norm.apply ~eps b.ln1 x))
+      (drop dropout 0
+         (Attention.apply ~num_heads:cfg.n_head ~causal:true b.attn
+            (Layer_norm.apply ~eps b.ln1 x)))
   in
   Nx.add x
-    (Linear.apply b.proj
-       (Fn.gelu_approx (Linear.apply b.fc (Layer_norm.apply ~eps b.ln2 x))))
+    (drop dropout 1
+       (Linear.apply b.proj
+          (Fn.gelu_approx (Linear.apply b.fc (Layer_norm.apply ~eps b.ln2 x)))))
 
-let logits cfg p ids =
+let logits cfg ?dropout p ids =
   let seq = (Nx.shape ids).(1) in
   if seq > cfg.n_positions then
     invalid_argf "Gpt2.logits: seq %d exceeds n_positions %d" seq
       cfg.n_positions;
+  (* Per-consumer subkeys: index 0 feeds the embedding dropout, index i + 1
+     block i (which folds again per site). *)
+  let sub i =
+    Option.map (fun (rate, key) -> (rate, Rune.Rng.fold_in key i)) dropout
+  in
   let pos = Nx.reshape [| 1; seq |] (Nx.arange Nx.int32 0 seq 1) in
-  let x = Nx.add (Embedding.apply p.wte ids) (Embedding.apply p.wpe pos) in
-  let x = List.fold_left (fun x b -> block_apply cfg b x) x p.blocks in
+  let x =
+    drop dropout 0
+      (Nx.add (Embedding.apply p.wte ids) (Embedding.apply p.wpe pos))
+  in
+  let _, x =
+    List.fold_left
+      (fun (i, x) b -> (i + 1, block_apply cfg ?dropout:(sub i) b x))
+      (1, x) p.blocks
+  in
   let h = Layer_norm.apply ~eps:cfg.layer_norm_eps p.ln_f x in
   (* Tied LM head: logits = h @ wteᵀ. *)
   Nx.matmul h (Nx.transpose p.wte.table)

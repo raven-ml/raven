@@ -473,6 +473,14 @@ thread.
 
 ### Kaun
 
+- `Dropout.apply` takes an optional `?key:Rune.Rng.key`: the mask becomes a
+  pure function of the key and the input's shape, so dropout composes with
+  `Rune.jit` (pass the key as an input leaf; keyless dropout under jit
+  raises `Jit_error`) and with `vmap` via per-lane keys.
+- The gpt2 example trains stochastically: `Gpt2.logits` takes
+  `?dropout:(rate, key)` enabling the canonical dropout sites, and
+  `train.exe` gains `--dropout` and `--seed`, deriving per-step mask keys
+  with `Rune.Rng.fold_in` for seed-reproducible runs.
 - The gpt2 example is dtype-generic: `main.exe --dtype float16|bfloat16`
   for half-precision generation (float16 greedy tokens match float32 at
   half the weight memory), `train.exe --compute-dtype bfloat16|float16` for
