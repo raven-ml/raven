@@ -33,6 +33,9 @@ thread.
 
 ### Tolk (new)
 
+- The gpt2 example supports `HALF=1`, storing weights and attention
+  activations in float16; generated text matches the reference and every
+  compiled kernel is byte-identical to it.
 - Fix `layernorm` computing the epsilon add in float32 for reduced-precision
   inputs: the constant now follows the operand's dtype, so `float16`/
   `bfloat16` layer norms keep their variance and rsqrt in half precision

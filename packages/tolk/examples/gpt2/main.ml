@@ -22,6 +22,11 @@ module State = Tolk_nn.State
 let max_context = 128
 let vocab_size = 50257
 
+(* With HALF set, weights and activations are stored in float16: the residual
+   stream is widened back to float32 at each block's attention output and
+   re-halved on entry to the next attention. *)
+let half_mode = Tolk.Helpers.getenv "HALF" 0 <> 0
+
 (* [start_pos] flows through the model as a dimension node: a plain constant
    while consuming the prompt, a bound symbolic variable while decoding. *)
 let pos_value pos =
@@ -59,6 +64,7 @@ let attention_apply a x start_pos mask =
       U.const_int (pos_value start_pos)
     else start_pos
   in
+  let x = if half_mode then Dtype_ops.half x else x in
   let bsz, seqlen =
     match Tensor.shape x with
     | [ b; s; _ ] -> (b, s)
@@ -189,12 +195,14 @@ let forward m tokens start_pos =
       (Movement.symbolic_shrink allpos [ None; Some selected_pos ])
   in
   let h = Elementwise.add tok_emb pos_emb in
+  let h = if half_mode then Dtype_ops.half h else h in
   let mask =
     if seqlen > 1 then
       let start = pos_value start_pos in
       Some
         (Op.triu ~diagonal:(start + 1)
            (Creation.full
+              ~dtype:(Tensor.val_dtype h)
               [ 1; 1; seqlen; start + seqlen ]
               (Tensor.Sfloat neg_infinity)))
     else None
@@ -286,6 +294,11 @@ let build () =
   (* lm_head and wte are tied. *)
   let weights = ("lm_head.weight", List.assoc "wte.weight" weights) :: weights in
   State.load_state_dict (state_dict model) weights;
+  if half_mode then
+    List.iter
+      (fun (_, t) ->
+        Tensor.set_uop t (Tensor.uop (Run.realize (Dtype_ops.half t))))
+      (state_dict model);
   model
 
 (* Generation *)
