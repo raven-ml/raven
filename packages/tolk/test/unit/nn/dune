@@ -1,0 +1,5 @@
+(tests
+ (names test_nn)
+ (modules test_nn)
+ (package tolk)
+ (libraries tolk.uop tolk.frontend tolk.nn windtrap))

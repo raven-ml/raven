@@ -33,6 +33,18 @@ thread.
 
 ### Tolk (new)
 
+- Add `tolk.nn`: `Embedding`, `Linear`, and `Layer_norm` layers plus
+  `State.safe_load`/`State.load_state_dict` for loading safetensors
+  checkpoints into layer parameters.
+- Add a GPT-2 (124M) text-generation example
+  (`packages/tolk/examples/gpt2`) that reproduces reference greedy
+  generations on CPU and CUDA.
+- Add `Run.of_bytes` to create tensors from raw little-endian bytes and
+  `Run.device_name` to inspect the realization device.
+- Fix exponential graph walks in `Uop.ranges`, `Uop.addrspace`,
+  `Uop.semantic_key`, symbolic lane counting, and the C-style renderer by
+  memoizing them; realizing deep transformer graphs and reducing over
+  prime-sized axes now takes milliseconds instead of minutes.
 - Add `Jit`, a capture-and-replay JIT for tensor functions: the first call
   runs eagerly, the second records and compiles every kernel the function
   realizes, and later calls replay the compiled program on fresh inputs and

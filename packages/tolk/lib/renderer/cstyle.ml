@@ -300,7 +300,19 @@ let max_numel u =
   try List.fold_left (fun acc d -> acc * U.vmax d) 1 (U.shape u)
   with Invalid_argument _ -> Dtype.count (stack_dtype u)
 
+(* Memoized: an unmemoized walk revisits shared subgraphs and goes
+   exponential on wide unrolled ALU chains. *)
+let expr_numel_cache : int U.Ref_tbl.t = U.Ref_tbl.create 256
+
 let rec expr_numel u =
+  match U.Ref_tbl.find_opt expr_numel_cache u with
+  | Some n -> n
+  | None ->
+      let n = compute_expr_numel u in
+      U.Ref_tbl.add expr_numel_cache u n;
+      n
+
+and compute_expr_numel u =
   let dtype_count = Dtype.count (stack_dtype u) in
   match U.op u with
   | Ops.Stack ->

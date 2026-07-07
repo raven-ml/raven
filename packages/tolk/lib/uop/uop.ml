@@ -980,7 +980,19 @@ let rec base u =
       if Array.length srcs = 0 then u else base srcs.(0)
   | _ -> u
 
+(* Memoized: an unmemoized walk revisits shared subgraphs and goes
+   exponential on wide unrolled ALU chains. *)
+let addrspace_cache : Dtype.addr_space option Ref_tbl.t = Ref_tbl.create 256
+
 let rec addrspace u =
+  match Ref_tbl.find_opt addrspace_cache u with
+  | Some a -> a
+  | None ->
+      let a = compute_addrspace u in
+      Ref_tbl.add addrspace_cache u a;
+      a
+
+and compute_addrspace u =
   let srcs = src u in
   match op u with
   | Ops.Param ->
@@ -1309,6 +1321,10 @@ and ended_ranges u =
        | Option.Some k ->
            Array.to_list (Array.sub children k (Array.length children - k)))
 
+(* Ordered variant of [ranges_set]; memoized like it, since an unmemoized
+   walk revisits shared subgraphs and goes exponential on unrolled kernels. *)
+let ranges_list_cache : t list Ref_tbl.t = Ref_tbl.create 64
+
 let ranges u =
   let mem_ref x xs = List.exists (fun y -> y == x) xs in
   let add_unique_rev acc r = if mem_ref r acc then acc else r :: acc in
@@ -1316,6 +1332,13 @@ let ranges u =
     List.filter (fun r -> not (mem_ref r rs)) acc
   in
   let rec ranges_list u =
+    match Ref_tbl.find_opt ranges_list_cache u with
+    | Some l -> l
+    | None ->
+        let l = compute_ranges_list u in
+        Ref_tbl.add ranges_list_cache u l;
+        l
+  and compute_ranges_list u =
     let children = src u in
     let acc = ref [] in
     Array.iter
@@ -3005,7 +3028,17 @@ let semantic_key root =
     | Arg.Call_info info -> Arg.Call_info { info with aux = None }
     | arg -> arg
   in
+  (* Memoized per call: an unmemoized walk re-digests shared subgraphs and
+     goes exponential on graphs with heavy sharing. *)
+  let memo : string Ref_tbl.t = Ref_tbl.create 256 in
   let rec key u =
+    match Ref_tbl.find_opt memo u with
+    | Some k -> k
+    | None ->
+        let k = compute_key u in
+        Ref_tbl.add memo u k;
+        k
+  and compute_key u =
     (* The header must separate any two nodes whose own payload differs. The
        polymorphic hash is unreliable here: [Hashtbl.hash] stops after 10
        meaningful words (too few to reach a payload buried behind the dtype),

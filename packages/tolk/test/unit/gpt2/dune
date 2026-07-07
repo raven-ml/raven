@@ -1,0 +1,5 @@
+(tests
+ (names test_gpt2)
+ (modules test_gpt2)
+ (package tolk)
+ (libraries tolk.uop tolk.frontend tolk.nn brot windtrap))

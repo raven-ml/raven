@@ -1827,7 +1827,19 @@ let canonicalize_simplex x =
     if !changed then Some (Uop.usum ret) else None
   with Reject -> None
 
+(* Memoized: an unmemoized walk revisits shared subgraphs and goes
+   exponential on wide unrolled ALU chains. *)
+let structural_lane_count_cache : int Uop.Ref_tbl.t = Uop.Ref_tbl.create 256
+
 let rec structural_lane_count u =
+  match Uop.Ref_tbl.find_opt structural_lane_count_cache u with
+  | Some n -> n
+  | None ->
+      let n = compute_structural_lane_count u in
+      Uop.Ref_tbl.add structural_lane_count_cache u n;
+      n
+
+and compute_structural_lane_count u =
   let count = Dtype.count (Uop.dtype u) in
   if count > 1 then count
   else

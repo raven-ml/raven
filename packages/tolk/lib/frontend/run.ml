@@ -115,6 +115,15 @@ let of_int_array ~shape data =
         (fun i x -> Bytes.set_int32_le bytes (i * 4) (Int32.of_int x))
         data)
 
+let of_bytes ~dtype ~shape data =
+  let n = List.fold_left ( * ) 1 shape in
+  let nbytes = n * D.itemsize dtype in
+  if Bytes.length data <> nbytes then
+    invalid_arg
+      (Printf.sprintf "Run.of_bytes: expected %d bytes for shape, got %d"
+         nbytes (Bytes.length data));
+  make_input ~dtype ~shape n (fun bytes -> Bytes.blit data 0 bytes 0 nbytes)
+
 (* Realize a batch of tensors: lower the shared graph to a linear schedule,
    seed the host inputs and previously realized buffers, execute, then rebind
    each tensor onto its output buffer. Scheduled nodes appearing in other live

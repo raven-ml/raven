@@ -23,6 +23,9 @@
 val device : unit -> Tolk.Device.t
 (** [device ()] is the process-wide execution device, opened on first use. *)
 
+val device_name : unit -> string
+(** [device_name ()] is the name of the process-wide execution device. *)
+
 val buffer_of_node : Tolk_uop.Uop.t -> Tolk.Device.Buffer.t option
 (** [buffer_of_node node] is the concrete device buffer backing [node], if
     [node] has been given storage by a previous realization or host upload. *)
@@ -42,6 +45,16 @@ val of_int_array : shape:int list -> int array -> Tensor.t
 (** [of_int_array ~shape data] is an [int32] tensor of shape [shape] holding
     [data] in row-major order. The element count of [shape] must equal the
     length of [data]. *)
+
+val of_bytes :
+  dtype:Tolk_uop.Dtype.t -> shape:int list -> bytes -> Tensor.t
+(** [of_bytes ~dtype ~shape data] is a tensor of element type [dtype] and shape
+    [shape] holding the raw little-endian element bytes [data] in row-major
+    order.
+
+    @raise Invalid_argument
+      if the length of [data] does not equal the element count of [shape]
+      times the element size of [dtype]. *)
 
 (** {1 Realization} *)
 
