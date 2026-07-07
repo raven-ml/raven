@@ -334,6 +334,12 @@ thread.
 
 ### Rune
 
+- `jit` compilations now persist across processes: compiled kernels are
+  stored on disk (`$XDG_CACHE_HOME/tolk/rune_jit`) keyed on the traced
+  computation and compile environment, so a warm process skips scheduling,
+  lowering, and kernel compilation (gpt2 train first step ~17 s -> ~4.4 s,
+  results bit-identical). Set `JITCACHE=0` to disable; `pmap` compilations
+  are not persisted.
 - `pmap` now differentiates through `~keepdims:true` reductions
   (`max`/`sum`/`mean`), unblocking softmax, layer norm, attention, and the
   stock losses in data-parallel training.

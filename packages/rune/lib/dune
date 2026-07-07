@@ -12,6 +12,7 @@
   gate
   derivs
   jit
+  jit_cache
   jit_device)
  (libraries
   nx.core

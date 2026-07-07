@@ -365,6 +365,18 @@ val jit :
     its in-place binding; other devices never do): pass values that change
     between calls as leaves of [P] rather than capturing them.
 
+    Compiled programs also persist across processes: the first compilation of
+    a trace writes the scheduled and compiled kernels to a disk cache under
+    the platform cache directory ([$XDG_CACHE_HOME/tolk/rune_jit], with
+    [XDG_CACHE_HOME] defaulting to [~/.cache] on Linux and [~/Library/Caches]
+    on macOS), and a later process compiling the same trace loads them
+    instead of scheduling and compiling again, leaving tracing as the bulk of
+    warm start-up time. Entries are invalidated automatically when the
+    executable, the device or its compiler, or the codegen options change.
+    Set the [JITCACHE] environment variable to [0] to disable the persistent
+    cache; {!pmap} compilations are never persisted. Results are identical
+    either way.
+
     Under an enclosing transformation ({!grad}, {!val-vmap}, {!with_debug}, an
     outer [jit]), the wrapped function runs directly so the transformation
     observes its operations: [jit] never changes results, only speed. Compose

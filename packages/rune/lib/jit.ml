@@ -1362,25 +1362,43 @@ let trace_compile ~device:dev ~zero_copy ~const_cache ?multi
       @ List.map (fun (_, _, _, c) -> c) wb_conts)
   in
   let call, buffer_map = Tolk.Allocations.transform_to_call sink in
-  (* Schedule under a capture hook: the captured linear is unplanned, which
-     keeps buffer nodes stable so the seeded input and constant bindings survive
-     across replays. *)
-  let linear, var_vals =
-    let captured = ref None in
-    Tolk.Realize.capturing :=
-      [ (fun linear var_vals -> captured := Some (linear, var_vals)) ];
-    Fun.protect
-      ~finally:(fun () -> Tolk.Realize.capturing := [])
-      (fun () ->
-        ignore
-          (Tolk.Schedule.create_linear_with_vars
-             ~get_kernel_graph:Tolk.Rangeify.get_kernel_graph call));
-    match !captured with
-    | Some lv -> lv
-    | None -> err "Rune.jit: scheduling captured no computation"
+  (* Persistent compile cache: a hit replaces scheduling and kernel
+     compilation with an import of the stored compiled linear, rebound to
+     this trace's fresh buffer nodes. Multi-device placements are not
+     cached. *)
+  let cache_key =
+    match multi with Some _ -> None | None -> Jit_cache.key ~device:dev call
   in
-  let linear =
-    Tolk.Realize.pm_compile ~device:dev ~to_program:(to_program dev) linear
+  let cached = Option.bind cache_key (fun key -> Jit_cache.load ~key call) in
+  let linear, var_vals =
+    match cached with
+    | Some hit -> hit
+    | None ->
+        (* Schedule under a capture hook: the captured linear is unplanned,
+           which keeps buffer nodes stable so the seeded input and constant
+           bindings survive across replays. *)
+        let linear, var_vals =
+          let captured = ref None in
+          Tolk.Realize.capturing :=
+            [ (fun linear var_vals -> captured := Some (linear, var_vals)) ];
+          Fun.protect
+            ~finally:(fun () -> Tolk.Realize.capturing := [])
+            (fun () ->
+              ignore
+                (Tolk.Schedule.create_linear_with_vars
+                   ~get_kernel_graph:Tolk.Rangeify.get_kernel_graph call));
+          match !captured with
+          | Some lv -> lv
+          | None -> err "Rune.jit: scheduling captured no computation"
+        in
+        let linear =
+          Tolk.Realize.pm_compile ~device:dev ~to_program:(to_program dev)
+            linear
+        in
+        Option.iter
+          (fun key -> Jit_cache.store ~key call linear var_vals)
+          cache_key;
+        (linear, var_vals)
   in
   (* Batch consecutive graph-compatible kernels into device execution graphs
      (CUDA graphs), so replay dispatches each batch as one launch instead of

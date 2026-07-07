@@ -29,6 +29,12 @@
  (libraries rune nx nx.core unix windtrap rune_test_support))
 
 (tests
+ (names test_jit_cache)
+ (modules test_jit_cache)
+ (package rune)
+ (libraries rune nx nx.core unix windtrap rune_test_support))
+
+(tests
  (names test_jit_metal)
  (modules test_jit_metal)
  (package rune)
