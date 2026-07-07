@@ -13,6 +13,13 @@
     Classification losses take raw logits, not probabilities, and evaluate in
     log space: they are finite and accurate at any logit magnitude.
 
+    Losses are dtype-generic and compute in the dtype of their predictions —
+    they carve out no float32 island of their own. In mixed-precision training,
+    cast logits (or predictions) to float32 before the loss: the objective and
+    its reductions then run at full precision, and since parameters upcast by
+    {!Nx.cast} receive gradients at their own dtype, the loss still
+    differentiates to float32 gradients.
+
     [Invalid_argument] messages are prefixed with [Loss.<function>:]. *)
 
 (** {1:reduction Reduction} *)

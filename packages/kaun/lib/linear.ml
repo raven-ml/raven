@@ -22,6 +22,12 @@ let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { w; b } =
   f w;
   match b with None -> () | Some b -> f b
 
+let astype dt { w; b } =
+  {
+    w = Nx.cast dt w;
+    b = (match b with None -> None | Some b -> Some (Nx.cast dt b));
+  }
+
 let names p = match p.b with None -> [ "w" ] | Some _ -> [ "w"; "b" ]
 
 let make ?(w_init = Init.glorot_uniform) ?(bias_init = Init.zeros)

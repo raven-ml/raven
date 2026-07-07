@@ -5,9 +5,9 @@
 
 (** Batch normalization layers (Ioffe and Szegedy, 2015).
 
-    A batch-norm layer is two structures: trainable parameters {!type:t} (the
-    affine [gamma] and [beta], differentiated and optimized like any other
-    parameters) and running statistics {!Stats.t} (per-feature mean and
+    A batch-norm layer is two structures: trainable parameters {!type:params}
+    (the affine [gamma] and [beta], differentiated and optimized like any other
+    parameters) and running statistics {!Stats.stats} (per-feature mean and
     variance, never differentiated, updated by every training forward). Both are
     plain records with structural traversals; this module is the {!Nx.Ptree.S}
     instance of its parameters and {!Stats} that of its statistics.
@@ -47,21 +47,33 @@
 
 (** {1:params Parameters} *)
 
-type t = { gamma : Nx.float32_t; beta : Nx.float32_t }
-(** The type for batch-norm parameters: per-feature scale [gamma] and shift
-    [beta], each of shape [[| features |]]. *)
+type 'b params = { gamma : (float, 'b) Nx.t; beta : (float, 'b) Nx.t }
+(** The type for batch-norm parameters with float dtype layout ['b]: per-feature
+    scale [gamma] and shift [beta], each of shape [[| features |]]. *)
 
-val map : ('a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) -> t -> t
+type t = Nx.float32_elt params
+(** The type for single-precision batch-norm parameters, the common case. *)
+
+val map : ('a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) -> 'b params -> 'b params
 (** [map f p] is [p] with [f] applied to [gamma] and [beta]. *)
 
 val map2 :
-  ('a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) -> t -> t -> t
+  ('a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) ->
+  'b params ->
+  'b params ->
+  'b params
 (** [map2 f p q] combines [p] and [q] leafwise with [f]. *)
 
-val iter : ('a 'b. ('a, 'b) Nx.t -> unit) -> t -> unit
+val iter : ('a 'c. ('a, 'c) Nx.t -> unit) -> 'b params -> unit
 (** [iter f p] applies [f] to [gamma] and [beta], in that order. *)
 
-val names : t -> string list
+val astype : (float, 'c) Nx.dtype -> 'b params -> 'c params
+(** [astype dt p] is [p] with every parameter leaf cast to [dt]. Differentiable
+    through Rune: gradients flow back at each original leaf's dtype, so an
+    astype of float32 parameters inside a loss function yields float32
+    gradients. *)
+
+val names : 'b params -> string list
 (** [names p] is [["gamma"; "beta"]], pairing leaves in traversal order (see
     {!Checkpoint.Named}). *)
 
@@ -72,20 +84,32 @@ val names : t -> string list
     consumed by eval-mode {!apply}. Not parameters — never differentiate or
     optimize them; thread them through the training loop as auxiliary state. *)
 module Stats : sig
-  type t = { mean : Nx.float32_t; var : Nx.float32_t }
-  (** The type for running statistics, each of shape [[| features |]]. *)
+  type 'b stats = { mean : (float, 'b) Nx.t; var : (float, 'b) Nx.t }
+  (** The type for running statistics with float dtype layout ['b], each of
+      shape [[| features |]]. *)
 
-  val map : ('a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) -> t -> t
+  type t = Nx.float32_elt stats
+  (** The type for single-precision running statistics, the common case. The
+      exponential moving average accumulates small increments, so keep
+      statistics at float32 even when the parameters are half precision. *)
+
+  val map : ('a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) -> 'b stats -> 'b stats
   (** [map f s] is [s] with [f] applied to [mean] and [var]. *)
 
   val map2 :
-    ('a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) -> t -> t -> t
+    ('a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) ->
+    'b stats ->
+    'b stats ->
+    'b stats
   (** [map2 f s s'] combines [s] and [s'] leafwise with [f]. *)
 
-  val iter : ('a 'b. ('a, 'b) Nx.t -> unit) -> t -> unit
+  val iter : ('a 'c. ('a, 'c) Nx.t -> unit) -> 'b stats -> unit
   (** [iter f s] applies [f] to [mean] and [var], in that order. *)
 
-  val names : t -> string list
+  val astype : (float, 'c) Nx.dtype -> 'b stats -> 'c stats
+  (** [astype dt s] is [s] with [mean] and [var] cast to [dt]. *)
+
+  val names : 'b stats -> string list
   (** [names s] is [["mean"; "var"]], pairing leaves in traversal order (see
       {!Checkpoint.Named}). *)
 end
@@ -106,11 +130,11 @@ val apply :
   ?axis:int ->
   ?momentum:float ->
   ?eps:float ->
-  t ->
-  Stats.t ->
+  'b params ->
+  'b Stats.stats ->
   training:bool ->
-  Nx.float32_t ->
-  Nx.float32_t * Stats.t
+  (float, 'b) Nx.t ->
+  (float, 'b) Nx.t * 'b Stats.stats
 (** [apply p stats ~training x] is [(y, stats')] where [y] normalizes [x] per
     feature and applies the affine transform:
     [y = gamma * (x - mean) / sqrt (var + eps) + beta].
@@ -127,6 +151,13 @@ val apply :
     preamble).
 
     With [training = false], [mean] and [var] are [stats] and [stats' == stats].
+
+    For half and quarter precision inputs (float16, bfloat16, float8) the
+    statistics and normalization are computed in a float32 island: [x] (and, in
+    eval mode, [stats]) are upcast, normalized at float32, and the normalized
+    values are cast back to [x]'s dtype before the [gamma]/[beta] affine
+    transform. Float32 and float64 inputs use their own dtype throughout,
+    exactly as if the island were absent.
 
     [momentum] defaults to [0.99] (per training step; unused in eval mode) and
     [eps] to [1e-5].

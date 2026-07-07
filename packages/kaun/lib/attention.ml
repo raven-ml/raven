@@ -34,6 +34,14 @@ let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { q; k; v; out } =
   Linear.iter f v;
   Linear.iter f out
 
+let astype dt { q; k; v; out } =
+  {
+    q = Linear.astype dt q;
+    k = Linear.astype dt k;
+    v = Linear.astype dt v;
+    out = Linear.astype dt out;
+  }
+
 let names p =
   let sub prefix l = List.map (fun n -> prefix ^ "." ^ n) (Linear.names l) in
   sub "q" p.q @ sub "k" p.k @ sub "v" p.v @ sub "out" p.out
@@ -49,6 +57,12 @@ let make ?w_init ?bias_init ?bias ~embed_dim dtype =
   { q = proj (); k = proj (); v = proj (); out = proj () }
 
 let init ~embed_dim = make ~embed_dim Nx.float32
+
+(* Half and quarter precision floats are too coarse for the attention scores:
+   see [scaled_dot_product_attention]. *)
+let low_precision : type b. (float, b) Nx.dtype -> bool = function
+  | Nx.Float16 | Nx.BFloat16 | Nx.Float8_e4m3 | Nx.Float8_e5m2 -> true
+  | Nx.Float32 | Nx.Float64 -> false
 
 let scaled_dot_product_attention ?mask q k v =
   let qs = Nx.shape q and ks = Nx.shape k and vs = Nx.shape v in
@@ -68,13 +82,30 @@ let scaled_dot_product_attention ?mask q k v =
       ks.(kr - 2)
       vs.(vr - 2);
   let scale = 1.0 /. sqrt (float_of_int qs.(qr - 1)) in
-  let scores = Nx.mul_s (Nx.matmul q (Nx.swapaxes (kr - 2) (kr - 1) k)) scale in
-  let scores =
-    match mask with
-    | None -> scores
-    | Some m -> Nx.where m scores (Nx.scalar_like scores Float.neg_infinity)
+  (* Scores, masking and softmax, generically in the dtype of [q] and [k]. *)
+  let weights q k =
+    let scores =
+      Nx.mul_s (Nx.matmul q (Nx.swapaxes (kr - 2) (kr - 1) k)) scale
+    in
+    let scores =
+      match mask with
+      | None -> scores
+      | Some m -> Nx.where m scores (Nx.scalar_like scores Float.neg_infinity)
+    in
+    Fn.softmax scores
   in
-  Nx.matmul (Fn.softmax scores) v
+  let dt = Nx.dtype q in
+  (* Half and quarter precision floats overflow the scores and starve the
+     softmax: the score contraction, masking and softmax run in a float32 island
+     and only the probabilities come back down for the value matmul. Wider
+     dtypes keep their own arithmetic, so the float32 and float64 graphs are
+     exactly the pre-island ones. *)
+  let probs =
+    if low_precision dt then
+      Nx.cast dt (weights (Nx.cast Nx.float32 q) (Nx.cast Nx.float32 k))
+    else weights q k
+  in
+  Nx.matmul probs v
 
 (* Key-value cache *)
 
@@ -99,6 +130,9 @@ module Cache = struct
   let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { keys; values } =
     f keys;
     f values
+
+  let astype dt { keys; values } =
+    { keys = Nx.cast dt keys; values = Nx.cast dt values }
 end
 
 let apply_cached ?(num_heads = 1) ~pos ~cache p x =
@@ -155,9 +189,7 @@ let apply_cached ?(num_heads = 1) ~pos ~cache p x =
     Nx.broadcast_to
       [| batch; num_heads; len; head_dim |]
       (Nx.reshape [| 1; 1; len; 1 |]
-         (Nx.clamp ~min:0l
-            ~max:(Int32.of_int (seq - 1))
-            (Nx.sub slots pos)))
+         (Nx.clamp ~min:0l ~max:(Int32.of_int (seq - 1)) (Nx.sub slots pos)))
   in
   let written =
     Nx.reshape [| 1; 1; len; 1 |]

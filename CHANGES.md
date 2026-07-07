@@ -469,6 +469,16 @@ thread.
 
 ### Kaun
 
+- Add `astype` to every layer (`Linear`, `Embedding`, `Conv`, `Layer_norm`,
+  `Attention` and its `Cache`, `Batch_norm` and its `Stats`): cast parameter
+  trees to another float dtype; gradients flow back at each leaf's original
+  dtype, so casting float32 parameters inside a loss yields float32
+  gradients.
+- Half-precision inputs now compute attention scores/softmax and
+  layer/batch-norm statistics in float32 islands; float32 and float64
+  graphs are unchanged.
+- `Batch_norm` is now dtype-generic (`'b params`, `'b Stats.stats`) like the
+  other layers; `Batch_norm.t` and `Stats.t` remain the float32 aliases.
 - The GPT-2 training example gains `--devices` for data-parallel training
   through `Rune.pmap2` — a CPU device count (`--devices 4`) or an explicit
   tuple (`--devices CUDA:0,CUDA:1`). Parameters replicate, the batch shards

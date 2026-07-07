@@ -69,6 +69,11 @@ val map2 :
 val iter : ('a 'c. ('a, 'c) Nx.t -> unit) -> 'b params -> unit
 (** [iter f p] applies [f] to the table. *)
 
+val astype : (float, 'c) Nx.dtype -> 'b params -> 'c params
+(** [astype dt p] is [p] with the table cast to [dt]. Differentiable through
+    Rune: gradients flow back at each original leaf's dtype, so an astype of
+    float32 parameters inside a loss function yields float32 gradients. *)
+
 val names : 'b params -> string list
 (** [names p] is [["table"]], the checkpoint name of the single parameter leaf.
     See {!Checkpoint.Named}. *)

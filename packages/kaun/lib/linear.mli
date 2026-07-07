@@ -95,6 +95,12 @@ val map2 :
 val iter : ('a 'c. ('a, 'c) Nx.t -> unit) -> 'b params -> unit
 (** [iter f p] applies [f] to every parameter leaf of [p]. *)
 
+val astype : (float, 'c) Nx.dtype -> 'b params -> 'c params
+(** [astype dt p] is [p] with every parameter leaf cast to [dt]. Differentiable
+    through Rune: gradients flow back at each original leaf's dtype, so an
+    astype of float32 parameters inside a loss function yields float32
+    gradients. *)
+
 val names : 'b params -> string list
 (** [names p] is the checkpoint name of each parameter leaf of [p], in traversal
     order: [["w"; "b"]], or [["w"]] when [p] has no bias. See

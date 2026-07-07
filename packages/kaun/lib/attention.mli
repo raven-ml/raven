@@ -94,9 +94,9 @@ val apply :
     Autoregressive decoding runs the same causal self-attention one query at a
     time: the keys and values of earlier positions never change, so they are
     computed once and cached. A {!Cache.t} holds them in fixed-shape tensors of
-    [len] slots and the current position enters {!apply_cached} as a
-    one-element tensor, so shapes are independent of the position: a decode step
-    compiled once (with {!Rune.jit}) serves the whole generation loop.
+    [len] slots and the current position enters {!apply_cached} as a one-element
+    tensor, so shapes are independent of the position: a decode step compiled
+    once (with {!Rune.jit}) serves the whole generation loop.
 
     The cache is functional: {!apply_cached} returns the updated cache and never
     mutates its argument. Thread it through the decode loop like any other
@@ -126,9 +126,9 @@ module Cache : sig
 
   val map : ('a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) -> 'b t -> 'b t
   (** [map f c] is [c] with [f] applied to [c.keys] and [c.values], in that
-      order. With {!map2} and {!iter} it satisfies the {!Nx.Ptree.S} contract
-      at any fixed ['b], so caches can be leaves of a jitted step's parameter
-      tree. *)
+      order. With {!map2} and {!iter} it satisfies the {!Nx.Ptree.S} contract at
+      any fixed ['b], so caches can be leaves of a jitted step's parameter tree.
+  *)
 
   val map2 :
     ('a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) ->
@@ -139,6 +139,12 @@ module Cache : sig
 
   val iter : ('a 'c. ('a, 'c) Nx.t -> unit) -> 'b t -> unit
   (** [iter f c] applies [f] to [c.keys] and [c.values], in that order. *)
+
+  val astype : (float, 'c) Nx.dtype -> 'b t -> 'c t
+  (** [astype dt c] is [c] with [c.keys] and [c.values] cast to [dt].
+      Differentiable through Rune: gradients flow back at each original leaf's
+      dtype, so an astype of float32 parameters inside a loss function yields
+      float32 gradients. *)
 end
 
 val apply_cached :
@@ -159,9 +165,9 @@ val apply_cached :
     single-token step ([seq = 1]) attends to every position seen so far.
     [num_heads] is as in {!apply}.
 
-    Slots are addressed with tensor arithmetic on [pos] (a gather and a
-    position mask), never its value, so the step traces once under {!Rune.jit}
-    whatever the position. Differentiable through Rune.
+    Slots are addressed with tensor arithmetic on [pos] (a gather and a position
+    mask), never its value, so the step traces once under {!Rune.jit} whatever
+    the position. Differentiable through Rune.
 
     The caller steps [pos] itself and must keep [pos + seq <= len]: writes past
     the last slot are silently dropped.
@@ -193,6 +199,13 @@ val scaled_dot_product_attention :
     (masked scores are set to negative infinity before the softmax). Every query
     row must keep at least one unmasked key, otherwise its output is [nan].
 
+    For half and quarter precision inputs (float16, bfloat16, float8) the
+    scores, masking and softmax are computed in a float32 island: [q] and [k]
+    are upcast, the probabilities are cast back to the input dtype, and the
+    value matmul runs at the input dtype. Float32 and float64 inputs use their
+    own dtype throughout, exactly as if the island were absent. {!apply} and
+    {!apply_cached} inherit this contract.
+
     Raises [Invalid_argument] if [q], [k] or [v] has fewer than 2 axes, [q] and
     [k] differ in their last axis, or [k] and [v] differ in their second-to-last
     axis. *)
@@ -218,6 +231,12 @@ val map2 :
 
 val iter : ('a 'c. ('a, 'c) Nx.t -> unit) -> 'b params -> unit
 (** [iter f p] applies [f] to every parameter leaf of [p]. *)
+
+val astype : (float, 'c) Nx.dtype -> 'b params -> 'c params
+(** [astype dt p] is [p] with every parameter leaf cast to [dt]. Differentiable
+    through Rune: gradients flow back at each original leaf's dtype, so an
+    astype of float32 parameters inside a loss function yields float32
+    gradients. *)
 
 val names : 'b params -> string list
 (** [names p] is the checkpoint name of each parameter leaf of [p], in traversal

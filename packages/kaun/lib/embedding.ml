@@ -13,6 +13,7 @@ let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) p q =
   { table = f p.table q.table }
 
 let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { table } = f table
+let astype dt { table } = { table = Nx.cast dt table }
 let names _ = [ "table" ]
 
 let make ?init ~vocab ~dim dtype =

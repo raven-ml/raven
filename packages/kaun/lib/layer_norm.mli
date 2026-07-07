@@ -46,6 +46,12 @@ val apply : ?eps:float -> 'b params -> (float, 'b) Nx.t -> (float, 'b) Nx.t
     for constant vectors — a constant vector maps to [beta] — and defaults to
     [1e-5]. The result has [x]'s shape. Differentiable through Rune.
 
+    For half and quarter precision inputs (float16, bfloat16, float8) the
+    statistics and normalization are computed in a float32 island: [x] is
+    upcast, normalized at float32, and the normalized values are cast back to
+    [x]'s dtype before the [gamma]/[beta] affine transform. Float32 and float64
+    inputs use their own dtype throughout, exactly as if the island were absent.
+
     Raises [Invalid_argument] if [x] is a scalar, if [x]'s last axis does not
     have size [dim], or if [eps] is negative. *)
 
@@ -66,6 +72,12 @@ val map2 :
 
 val iter : ('a 'c. ('a, 'c) Nx.t -> unit) -> 'b params -> unit
 (** [iter f p] applies [f] to every parameter leaf of [p]. *)
+
+val astype : (float, 'c) Nx.dtype -> 'b params -> 'c params
+(** [astype dt p] is [p] with every parameter leaf cast to [dt]. Differentiable
+    through Rune: gradients flow back at each original leaf's dtype, so an
+    astype of float32 parameters inside a loss function yields float32
+    gradients. *)
 
 val names : 'b params -> string list
 (** [names p] is [["gamma"; "beta"]], the checkpoint names of the parameter
