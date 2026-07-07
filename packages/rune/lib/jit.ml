@@ -153,6 +153,45 @@ let get_device name =
 let is_cpu name = String.starts_with ~prefix:"CPU" (canonical name)
 let to_program dev = Tolk.Codegen.to_program dev (Tolk.Device.renderer dev)
 
+(* Environment knobs, read when a jit closure is created (not at module
+   initialization) so tests can toggle them with [Unix.putenv]. *)
+
+let env_int name default =
+  match Sys.getenv_opt name with
+  | Some s -> ( match int_of_string_opt s with Some v -> v | None -> default)
+  | None -> default
+
+(* Forces the copy path on the CPU device, so the device-residency machinery
+   (staged transfers, deferred outputs, resident feedback) is exercised without
+   a GPU. *)
+let force_copy () = env_int "RUNE_JIT_FORCE_COPY" 0 <> 0
+let jit_debug = lazy (env_int "RUNE_JIT_DEBUG" 0)
+
+(* Transfer accounting. Cumulative byte counters for host-to-device and
+   device-to-host copies made by compiled traces; the zero-copy CPU path moves
+   no bytes and counts nothing. *)
+
+type stats = {
+  bytes_to_device : int;
+  bytes_from_device : int;
+  resident_bytes : int;
+}
+
+let bytes_to_device = ref 0
+let bytes_from_device = ref 0
+let resident_bytes = ref 0
+
+let stats () =
+  {
+    bytes_to_device = !bytes_to_device;
+    bytes_from_device = !bytes_from_device;
+    resident_bytes = !resident_bytes;
+  }
+
+let reset_stats () =
+  bytes_to_device := 0;
+  bytes_from_device := 0
+
 (* Buffer slots are process-global so hash-consed buffer nodes from distinct
    traces never collide. *)
 let next_slot = ref 0
@@ -789,6 +828,7 @@ let copyin_tensor : type a b.
   let bytes = scratch_bytes sc (n * itemsize (Nx_effect.dtype x)) in
   Nx_buffer.blit_to_bytes ~src_off:(NV.offset v) ~len:n host bytes;
   Tolk.Device.Buffer.ensure_allocated buf;
+  bytes_to_device := !bytes_to_device + Bytes.length bytes;
   Tolk.Device.Buffer.copyin buf bytes
 
 (* Build a fresh tensor of [dt]/[shape] from a device buffer's contents. *)
@@ -802,6 +842,7 @@ let read_out : type a b.
  fun sc ctx dtv shape buf ->
   let n = numel shape in
   let bytes = scratch_bytes sc (Tolk.Device.Buffer.nbytes buf) in
+  bytes_from_device := !bytes_from_device + Bytes.length bytes;
   Tolk.Device.Buffer.copyout buf bytes;
   let host = Nx_buffer.create (ND.to_buffer_kind dtv) n in
   Nx_buffer.blit_from_bytes ~len:n bytes host;
@@ -1063,6 +1104,7 @@ let trace_compile ~device:dev ~zero_copy (module P : Nx.Ptree.S)
 
 let replay (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S) (c : Q.t compiled)
     (params : P.t) : Q.t =
+  let in0 = !bytes_to_device and out0 = !bytes_from_device in
   (* Seed the inputs: wrap the current leaf's memory when the device shares host
      memory and the leaf is contiguous, copy its bytes otherwise. The wrapped
      hosts are kept reachable until the run completes. *)
@@ -1154,6 +1196,15 @@ let replay (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S) (c : Q.t compiled)
               incr j)
             params)
     c.cp_writebacks;
+  if Lazy.force jit_debug >= 1 then
+    Printf.eprintf
+      "rune.jit: replay on %s: %d bytes to device, %d bytes from device, %d \
+       bytes resident\n\
+       %!"
+      (Tolk.Device.name c.cp_device)
+      (!bytes_to_device - in0)
+      (!bytes_from_device - out0)
+      !resident_bytes;
   y
 
 (* Public entry points *)
@@ -1161,7 +1212,7 @@ let replay (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S) (c : Q.t compiled)
 let jit2 ?(device = "CPU") (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S)
     (f : P.t -> Q.t) : P.t -> Q.t =
   let dev = get_device device in
-  let zero_copy = is_cpu device in
+  let zero_copy = is_cpu device && not (force_copy ()) in
   let cache : (_, Q.t compiled) Hashtbl.t = Hashtbl.create 4 in
   fun params ->
     if Gate.transforming () then f params

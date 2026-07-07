@@ -462,6 +462,15 @@ let jit = Jit.jit
 let jit2 = Jit.jit2
 let jit' = Jit.jit'
 
+type jit_stats = Jit.stats = {
+  bytes_to_device : int;
+  bytes_from_device : int;
+  resident_bytes : int;
+}
+
+let jit_stats = Jit.stats
+let reset_jit_stats = Jit.reset_stats
+
 (* Debugging *)
 
 let with_debug = Debug.with_debug

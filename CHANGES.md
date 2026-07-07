@@ -261,6 +261,9 @@ thread.
 
 ### Rune
 
+- Add `Rune.jit_stats`/`Rune.reset_jit_stats` transfer counters, a
+  `RUNE_JIT_DEBUG=1` per-call transfer log, and `RUNE_JIT_FORCE_COPY=1` to
+  exercise the device copy path on the CPU device.
 - Inside `jit`, `Nx.full`/`Nx.zeros`/`Nx.ones` (and `*_like`) now trace as
   broadcast scalar constants instead of captured host tensors re-uploaded on
   every call, scalar constants fold into kernels as immediates, and replay

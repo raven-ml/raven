@@ -373,6 +373,23 @@ val jit' :
   ('c, 'd) Nx.t
 (** [jit' f] is like {!val-jit} for a function of a single tensor. *)
 
+type jit_stats = {
+  bytes_to_device : int;  (** Cumulative bytes copied host to device. *)
+  bytes_from_device : int;  (** Cumulative bytes copied device to host. *)
+  resident_bytes : int;  (** Device bytes currently held by unread outputs. *)
+}
+(** Transfer accounting for compiled functions. The zero-copy CPU path moves no
+    bytes and counts nothing. *)
+
+val jit_stats : unit -> jit_stats
+(** [jit_stats ()] is the current transfer counters, cumulative over the whole
+    program. Set the [RUNE_JIT_DEBUG] environment variable to [1] to also log a
+    per-call summary to stderr. *)
+
+val reset_jit_stats : unit -> unit
+(** [reset_jit_stats ()] zeroes the cumulative transfer counters.
+    [resident_bytes] tracks live state and is not reset. *)
+
 (** {1:flow Control flow}
 
     Eager combinators with staging-ready signatures: code written with them
