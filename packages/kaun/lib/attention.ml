@@ -78,27 +78,28 @@ let scaled_dot_product_attention ?mask q k v =
 
 (* Key-value cache *)
 
-type 'b cache = { keys : (float, 'b) Nx.t; values : (float, 'b) Nx.t }
+module Cache = struct
+  type 'b t = { keys : (float, 'b) Nx.t; values : (float, 'b) Nx.t }
 
-let cache ?(batch = 1) ~num_heads ~head_dim ~len dtype =
-  if batch <= 0 || num_heads <= 0 || head_dim <= 0 || len <= 0 then
-    Printf.ksprintf invalid_arg
-      "Attention.cache: batch, num_heads, head_dim and len must be positive, \
-       got batch=%d num_heads=%d head_dim=%d len=%d"
-      batch num_heads head_dim len;
-  let shape = [| batch; num_heads; len; head_dim |] in
-  { keys = Nx.zeros dtype shape; values = Nx.zeros dtype shape }
+  let make ?(batch = 1) ~num_heads ~head_dim ~len dtype =
+    if batch <= 0 || num_heads <= 0 || head_dim <= 0 || len <= 0 then
+      Printf.ksprintf invalid_arg
+        "Attention.Cache.make: batch, num_heads, head_dim and len must be \
+         positive, got batch=%d num_heads=%d head_dim=%d len=%d"
+        batch num_heads head_dim len;
+    let shape = [| batch; num_heads; len; head_dim |] in
+    { keys = Nx.zeros dtype shape; values = Nx.zeros dtype shape }
 
-let map_cache (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { keys; values } =
-  { keys = f keys; values = f values }
+  let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { keys; values } =
+    { keys = f keys; values = f values }
 
-let map2_cache (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) c c'
-    =
-  { keys = f c.keys c'.keys; values = f c.values c'.values }
+  let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) c c' =
+    { keys = f c.keys c'.keys; values = f c.values c'.values }
 
-let iter_cache (f : 'a 'c. ('a, 'c) Nx.t -> unit) { keys; values } =
-  f keys;
-  f values
+  let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { keys; values } =
+    f keys;
+    f values
+end
 
 let apply_cached ?(num_heads = 1) ~pos ~cache p x =
   let shape = Nx.shape x in
@@ -121,7 +122,7 @@ let apply_cached ?(num_heads = 1) ~pos ~cache p x =
       num_heads embed;
   let batch = shape.(0) and seq = shape.(1) in
   let head_dim = embed / num_heads in
-  let cshape = Nx.shape cache.keys in
+  let cshape = Nx.shape cache.Cache.keys in
   if cshape.(0) <> batch || cshape.(1) <> num_heads || cshape.(3) <> head_dim
   then
     Printf.ksprintf invalid_arg
@@ -159,7 +160,8 @@ let apply_cached ?(num_heads = 1) ~pos ~cache p x =
          (Nx.less slots (Nx.add_s pos (Int32.of_int seq))))
   in
   let update cached fresh = Nx.where written (Nx.matmul sel fresh) cached in
-  let keys = update cache.keys k and values = update cache.values v in
+  let keys = update cache.Cache.keys k
+  and values = update cache.Cache.values v in
   (* Causality over slots: the query at input position [i] sees slots [j <= pos
      + i]; unfilled slots are always masked out. *)
   let mask =
@@ -171,7 +173,7 @@ let apply_cached ?(num_heads = 1) ~pos ~cache p x =
   let out =
     Nx.reshape [| batch; seq; embed |] (Nx.contiguous (Nx.swapaxes 1 2 out))
   in
-  (Linear.apply p.out out, { keys; values })
+  (Linear.apply p.out out, { Cache.keys; values })
 
 let apply ?(num_heads = 1) ?(causal = false) p x =
   let shape = Nx.shape x in

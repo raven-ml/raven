@@ -69,20 +69,20 @@ module Step = struct
     {
       token = f token;
       pos = f pos;
-      caches = List.map (Kaun.Attention.map_cache f) caches;
+      caches = List.map (Kaun.Attention.Cache.map f) caches;
     }
 
   let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
     {
       token = f a.token b.token;
       pos = f a.pos b.pos;
-      caches = List.map2 (Kaun.Attention.map2_cache f) a.caches b.caches;
+      caches = List.map2 (Kaun.Attention.Cache.map2 f) a.caches b.caches;
     }
 
   let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { token; pos; caches } =
     f token;
     f pos;
-    List.iter (Kaun.Attention.iter_cache f) caches
+    List.iter (Kaun.Attention.Cache.iter f) caches
 end
 
 let generate_jit ~device cfg params ~max_tokens prompt =

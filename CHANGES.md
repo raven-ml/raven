@@ -302,6 +302,9 @@ thread.
 
 ### Kaun
 
+- **Breaking.** The attention KV cache moved into an `Attention.Cache`
+  submodule: `Attention.cache`/`map_cache`/`map2_cache`/`iter_cache` are now
+  `Attention.Cache.make`/`map`/`map2`/`iter` on `'b Attention.Cache.t`.
 - New GPT-2 training example (`examples/04-gpt2/train.ml`): jitted
   forward+backward+SGD via `Rune.jit2` and `Vega.sgd_step` with the tied
   `wte` LM head, exporting per-step metrics and final weights as

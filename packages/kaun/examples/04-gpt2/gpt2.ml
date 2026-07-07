@@ -160,12 +160,12 @@ let logits cfg p ids =
    on the input length and the cache length — the position is a tensor — so a
    single-token step traces once under [Rune.jit]. *)
 
-type cache = Nx.float32_elt Attention.cache list
+type cache = Nx.float32_elt Attention.Cache.t list
 
 let cache cfg ~len =
   List.init cfg.n_layer (fun _ ->
-      Attention.cache ~num_heads:cfg.n_head ~head_dim:(cfg.n_embd / cfg.n_head)
-        ~len Nx.float32)
+      Attention.Cache.make ~num_heads:cfg.n_head
+        ~head_dim:(cfg.n_embd / cfg.n_head) ~len Nx.float32)
 
 let block_apply_cached cfg b c ~pos x =
   let eps = cfg.layer_norm_eps in

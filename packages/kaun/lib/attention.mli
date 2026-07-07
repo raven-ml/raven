@@ -93,8 +93,8 @@ val apply :
 
     Autoregressive decoding runs the same causal self-attention one query at a
     time: the keys and values of earlier positions never change, so they are
-    computed once and cached. A {!type-cache} holds them in fixed-shape tensors
-    of [len] slots and the current position enters {!apply_cached} as a
+    computed once and cached. A {!Cache.t} holds them in fixed-shape tensors of
+    [len] slots and the current position enters {!apply_cached} as a
     one-element tensor, so shapes are independent of the position: a decode step
     compiled once (with {!Rune.jit}) serves the whole generation loop.
 
@@ -102,33 +102,52 @@ val apply :
     mutates its argument. Thread it through the decode loop like any other
     state. *)
 
-type 'b cache = { keys : (float, 'b) Nx.t; values : (float, 'b) Nx.t }
-(** The type for key-value caches with float dtype layout ['b]: the projected
-    keys and values of the positions seen so far, each of shape
-    [[| batch; num_heads; len; head_dim |]]. Slots at positions not yet seen
-    hold zeros and are never attended to. *)
+(** Key-value caches. *)
+module Cache : sig
+  type 'b t = { keys : (float, 'b) Nx.t; values : (float, 'b) Nx.t }
+  (** The type for key-value caches with float dtype layout ['b]: the projected
+      keys and values of the positions seen so far, each of shape
+      [[| batch; num_heads; len; head_dim |]]. Slots at positions not yet seen
+      hold zeros and are never attended to. *)
 
-val cache :
-  ?batch:int ->
-  num_heads:int ->
-  head_dim:int ->
-  len:int ->
-  (float, 'b) Nx.dtype ->
-  'b cache
-(** [cache ~num_heads ~head_dim ~len dtype] is an empty cache of [len] slots:
-    zero tensors of shape [[| batch; num_heads; len; head_dim |]]. [batch]
-    defaults to [1]. [len] bounds the total sequence length (prompt plus
-    generated positions).
+  val make :
+    ?batch:int ->
+    num_heads:int ->
+    head_dim:int ->
+    len:int ->
+    (float, 'b) Nx.dtype ->
+    'b t
+  (** [make ~num_heads ~head_dim ~len dtype] is an empty cache of [len] slots:
+      zero tensors of shape [[| batch; num_heads; len; head_dim |]]. [batch]
+      defaults to [1]. [len] bounds the total sequence length (prompt plus
+      generated positions).
 
-    Raises [Invalid_argument] if any dimension is not positive. *)
+      Raises [Invalid_argument] if any dimension is not positive. *)
+
+  val map : ('a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) -> 'b t -> 'b t
+  (** [map f c] is [c] with [f] applied to [c.keys] and [c.values], in that
+      order. With {!map2} and {!iter} it satisfies the {!Nx.Ptree.S} contract
+      at any fixed ['b], so caches can be leaves of a jitted step's parameter
+      tree. *)
+
+  val map2 :
+    ('a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) ->
+    'b t ->
+    'b t ->
+    'b t
+  (** [map2 f c c'] combines [c] and [c'] leafwise with [f]. *)
+
+  val iter : ('a 'c. ('a, 'c) Nx.t -> unit) -> 'b t -> unit
+  (** [iter f c] applies [f] to [c.keys] and [c.values], in that order. *)
+end
 
 val apply_cached :
   ?num_heads:int ->
   pos:(int32, Nx.int32_elt) Nx.t ->
-  cache:'b cache ->
+  cache:'b Cache.t ->
   'b params ->
   (float, 'b) Nx.t ->
-  (float, 'b) Nx.t * 'b cache
+  (float, 'b) Nx.t * 'b Cache.t
 (** [apply_cached ~pos ~cache p x] is causal multi-head self-attention of [x]
     over the cached sequence: the result, of [x]'s shape, and the cache with
     [x]'s keys and values written at slots [pos] to [pos + seq - 1].
@@ -151,22 +170,6 @@ val apply_cached :
     [embed], [num_heads] is invalid, the cache's batch, heads or head dimension
     disagree with [x] and [num_heads], [seq] exceeds the cache length, or [pos]
     has more than one element. *)
-
-val map_cache : ('a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) -> 'b cache -> 'b cache
-(** [map_cache f c] is [c] with [f] applied to [c.keys] and [c.values], in that
-    order. With {!map2_cache} and {!iter_cache} it satisfies the {!Nx.Ptree.S}
-    contract at any fixed ['b], so caches can be leaves of a jitted step's
-    parameter tree. *)
-
-val map2_cache :
-  ('a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) ->
-  'b cache ->
-  'b cache ->
-  'b cache
-(** [map2_cache f c c'] combines [c] and [c'] leafwise with [f]. *)
-
-val iter_cache : ('a 'c. ('a, 'c) Nx.t -> unit) -> 'b cache -> unit
-(** [iter_cache f c] applies [f] to [c.keys] and [c.values], in that order. *)
 
 (** {1:core The attention core} *)
 

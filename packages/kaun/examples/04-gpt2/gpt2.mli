@@ -55,7 +55,7 @@ val logits : config -> t -> (int32, Nx.int32_elt) Nx.t -> Nx.float32_t
     Raises [Invalid_argument] if [ids] has more than [cfg.n_positions]
     positions. *)
 
-type cache = Nx.float32_elt Kaun.Attention.cache list
+type cache = Nx.float32_elt Kaun.Attention.Cache.t list
 (** The type for decoding state: one key-value cache per block, in block order.
 *)
 

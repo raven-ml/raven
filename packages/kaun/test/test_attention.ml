@@ -275,7 +275,7 @@ let test_cached_prefill_matches_causal () =
   let p = Attention.init ~embed_dim:8 in
   let x = Nx.randn Nx.float32 [| 1; 5; 8 |] in
   let full = Attention.apply ~num_heads:2 ~causal:true p x in
-  let cache = Attention.cache ~num_heads:2 ~head_dim:4 ~len:7 Nx.float32 in
+  let cache = Attention.Cache.make ~num_heads:2 ~head_dim:4 ~len:7 Nx.float32 in
   let y, _ = Attention.apply_cached ~num_heads:2 ~pos:(pos_at 0) ~cache p x in
   equal ~msg:"prefill output = causal apply"
     (array (float 1e-5))
@@ -287,7 +287,7 @@ let test_cached_decode_matches_causal () =
   let x = Nx.randn Nx.float32 [| 1; 5; 8 |] in
   let full = Attention.apply ~num_heads:2 ~causal:true p x in
   (* Prefill the first three positions, then decode the last two one by one. *)
-  let cache = Attention.cache ~num_heads:2 ~head_dim:4 ~len:5 Nx.float32 in
+  let cache = Attention.Cache.make ~num_heads:2 ~head_dim:4 ~len:5 Nx.float32 in
   let y0, cache =
     Attention.apply_cached ~num_heads:2 ~pos:(pos_at 0) ~cache p
       (Nx.slice [ A; R (0, 3) ] x)
@@ -311,22 +311,24 @@ let test_cached_update_is_functional () =
   Nx.Rng.run ~seed:22 @@ fun () ->
   let p = Attention.init ~embed_dim:4 in
   let x = Nx.randn Nx.float32 [| 1; 2; 4 |] in
-  let cache = Attention.cache ~num_heads:2 ~head_dim:2 ~len:4 Nx.float32 in
+  let cache = Attention.Cache.make ~num_heads:2 ~head_dim:2 ~len:4 Nx.float32 in
   let _, cache' =
     Attention.apply_cached ~num_heads:2 ~pos:(pos_at 0) ~cache p x
   in
   equal ~msg:"argument cache still empty"
     (array (float 0.0))
     (Array.make 16 0.0)
-    (flat cache.Attention.keys);
+    (flat cache.Attention.Cache.keys);
   is_true ~msg:"returned cache holds the written keys"
-    (Array.exists (fun v -> Float.abs v > 1e-6) (flat cache'.Attention.keys))
+    (Array.exists
+       (fun v -> Float.abs v > 1e-6)
+       (flat cache'.Attention.Cache.keys))
 
 let test_cached_write_past_len_is_dropped () =
   Nx.Rng.run ~seed:23 @@ fun () ->
   let p = Attention.init ~embed_dim:4 in
   let x = Nx.randn Nx.float32 [| 1; 2; 4 |] in
-  let cache = Attention.cache ~num_heads:2 ~head_dim:2 ~len:2 Nx.float32 in
+  let cache = Attention.Cache.make ~num_heads:2 ~head_dim:2 ~len:2 Nx.float32 in
   let _, cache =
     Attention.apply_cached ~num_heads:2 ~pos:(pos_at 0) ~cache p x
   in
@@ -336,8 +338,8 @@ let test_cached_write_past_len_is_dropped () =
   in
   equal ~msg:"a write at pos = len leaves the cache unchanged"
     (array (float 0.0))
-    (flat cache.Attention.keys)
-    (flat cache'.Attention.keys)
+    (flat cache.Attention.Cache.keys)
+    (flat cache'.Attention.Cache.keys)
 
 (* The decode step as a jittable function: position and cache enter as tensors,
    so one compilation serves every step. *)
@@ -345,26 +347,26 @@ let test_cached_write_past_len_is_dropped () =
 type step = {
   pos : Nx.int32_t;
   x : Nx.float32_t;
-  cache : Nx.float32_elt Attention.cache;
+  cache : Nx.float32_elt Attention.Cache.t;
 }
 
 module Step = struct
   type t = step
 
   let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { pos; x; cache } =
-    { pos = f pos; x = f x; cache = Attention.map_cache f cache }
+    { pos = f pos; x = f x; cache = Attention.Cache.map f cache }
 
   let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) a b =
     {
       pos = f a.pos b.pos;
       x = f a.x b.x;
-      cache = Attention.map2_cache f a.cache b.cache;
+      cache = Attention.Cache.map2 f a.cache b.cache;
     }
 
   let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { pos; x; cache } =
     f pos;
     f x;
-    Attention.iter_cache f cache
+    Attention.Cache.iter f cache
 end
 
 let test_cached_step_jits_once () =
@@ -372,7 +374,9 @@ let test_cached_step_jits_once () =
   let p = Attention.init ~embed_dim:8 in
   let x = Nx.randn Nx.float32 [| 1; 4; 8 |] in
   let decode step_fn =
-    let cache = Attention.cache ~num_heads:2 ~head_dim:4 ~len:4 Nx.float32 in
+    let cache =
+      Attention.Cache.make ~num_heads:2 ~head_dim:4 ~len:4 Nx.float32
+    in
     let ys, _ =
       List.fold_left
         (fun (ys, cache) i ->
@@ -399,7 +403,7 @@ let test_cached_gradients () =
   let p = Attention.make ~embed_dim:4 Nx.float64 in
   let loss p =
     (* Gradients must flow through the cache from prefill into the step. *)
-    let cache = Attention.cache ~num_heads:2 ~head_dim:2 ~len:3 Nx.float64 in
+    let cache = Attention.Cache.make ~num_heads:2 ~head_dim:2 ~len:3 Nx.float64 in
     let y1, cache =
       Attention.apply_cached ~num_heads:2 ~pos:(pos_at 0) ~cache p
         (Nx.slice [ A; R (0, 2) ] x)
@@ -415,14 +419,14 @@ let test_cached_gradients () =
 let test_cached_rejects_bad_geometry () =
   Nx.Rng.run ~seed:26 @@ fun () ->
   let p = Attention.init ~embed_dim:4 in
-  let cache = Attention.cache ~num_heads:2 ~head_dim:2 ~len:4 Nx.float32 in
+  let cache = Attention.Cache.make ~num_heads:2 ~head_dim:2 ~len:4 Nx.float32 in
   let apply ?(pos = pos_at 0) x =
     Attention.apply_cached ~num_heads:2 ~pos ~cache p x
   in
   raises_invalid_arg
-    "Attention.cache: batch, num_heads, head_dim and len must be positive, got \
-     batch=1 num_heads=2 head_dim=2 len=0" (fun () ->
-      Attention.cache ~num_heads:2 ~head_dim:2 ~len:0 Nx.float32);
+    "Attention.Cache.make: batch, num_heads, head_dim and len must be \
+     positive, got batch=1 num_heads=2 head_dim=2 len=0" (fun () ->
+      Attention.Cache.make ~num_heads:2 ~head_dim:2 ~len:0 Nx.float32);
   raises_invalid_arg
     "Attention.apply_cached: input must have shape [batch; seq; embed]"
     (fun () -> apply (Nx.zeros Nx.float32 [| 2; 4 |]));
