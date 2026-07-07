@@ -1242,7 +1242,48 @@ val put_along_axis :
 
     Raises [Invalid_argument] if shapes are incompatible.
 
-    See also {!take_along_axis}, {!put}. *)
+    See also {!take_along_axis}, {!put}, {!scatter}. *)
+
+val scatter :
+  ?mode:[ `Set | `Add ] ->
+  ?unique_indices:bool ->
+  axis:int ->
+  indices:(int32, int32_elt) t ->
+  values:('a, 'b) t ->
+  ('a, 'b) t ->
+  ('a, 'b) t
+(** [scatter ?mode ?unique_indices ~axis ~indices ~values t] is [t] with
+    [values] placed at the positions selected by [indices] along [axis]: the
+    pure counterpart of {!put_along_axis}. [indices] must match [t]'s shape
+    except along [axis], and [values] is broadcast to [indices]' shape. Index
+    values must be in range for [t]'s size along [axis].
+
+    [mode] controls how updates combine with [t]: [`Set] (default) overwrites,
+    the last update winning at duplicate positions; [`Add] accumulates every
+    update into [t]'s value. [unique_indices = true] promises that no position
+    is selected twice, letting backends skip duplicate handling; the result is
+    undefined if the promise is broken.
+
+    Unlike the in-place writes, [scatter] stays a pure tensor expression, so it
+    traces under {!Rune.jit} and differentiates with respect to both [t] and
+    [values].
+
+    {@ocaml[
+      # let x = zeros float32 [| 2; 3 |] in
+        let idx =
+          create int32 [| 2; 1 |] [| 1l; 0l |]
+        in
+        scatter ~axis:1 ~indices:idx
+          ~values:(create float32 [| 2; 1 |]
+                     [| 10.; 20. |])
+          x
+      - : (float, float32_elt) t = float32 [2; 3] [[0, 10, 0],
+                                                   [20, 0, 0]]
+    ]}
+
+    Raises [Invalid_argument] if shapes are incompatible.
+
+    See also {!put_along_axis}, {!take_along_axis}. *)
 
 val compress :
   ?axis:int -> condition:(bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t

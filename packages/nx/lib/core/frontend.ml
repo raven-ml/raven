@@ -1873,21 +1873,28 @@ module Make (B : Backend_intf.S) = struct
       in
       put ~indices:flat_indices ~values ~mode:`raise t
 
-  let put_along_axis ~axis ~indices ~values t =
+  let scatter ?(mode = `Set) ?(unique_indices = false) ~axis ~indices ~values t
+      =
     let axis = resolve_single_axis t axis in
     let t_shape = shape t in
     let idx_shape = shape indices in
     if Array.length t_shape <> Array.length idx_shape then
-      err "put_along_axis" "cannot reshape %s to %s"
+      err "scatter" "cannot reshape %s to %s"
         (Shape.to_string idx_shape)
         (Shape.to_string t_shape);
+    Array.iteri
+      (fun i dim ->
+        if i <> axis && dim <> idx_shape.(i) then
+          err "scatter" "shape, dimension %d: indices has %d but tensor has %d"
+            i idx_shape.(i) dim)
+      t_shape;
     let values =
       if shape values = idx_shape then values else broadcast_to idx_shape values
     in
-    blit
-      (B.scatter ~mode:`Set ~unique_indices:false t ~indices ~updates:values
-         ~axis)
-      t
+    B.scatter ~mode ~unique_indices t ~indices ~updates:values ~axis
+
+  let put_along_axis ~axis ~indices ~values t =
+    blit (scatter ~axis ~indices ~values t) t
 
   (* Data-dependent output shapes — not differentiable *)
 

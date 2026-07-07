@@ -155,6 +155,19 @@ let selection_tests =
         check_grad ~msg:"take_along_axis"
           (fun x -> Nx.take_along_axis ~axis:1 idx x)
           (m23 ()));
+    test "scatter (set)" (fun () ->
+        let idx = Nx.create Nx.int32 [| 2; 2 |] [| 2l; 0l; 1l; 2l |] in
+        check_grad2 ~msg:"scatter set"
+          (fun t v -> Nx.scatter ~axis:1 ~indices:idx ~values:v t)
+          (m23 ())
+          (mat64 2 2 [| 0.3; 0.9; -1.1; 0.2 |]));
+    test "scatter (add)" (fun () ->
+        (* Row 1 repeats an index: both updates take the full cotangent. *)
+        let idx = Nx.create Nx.int32 [| 2; 2 |] [| 2l; 0l; 1l; 1l |] in
+        check_grad2 ~msg:"scatter add"
+          (fun t v -> Nx.scatter ~mode:`Add ~axis:1 ~indices:idx ~values:v t)
+          (m23 ())
+          (mat64 2 2 [| 0.3; 0.9; -1.1; 0.2 |]));
     test "sort" (fun () ->
         check_grad ~msg:"sort" (fun x -> fst (Nx.sort ~axis:1 x)) (m23 ()));
   ]

@@ -248,6 +248,54 @@ let test_put_along_axis () =
   Nx.put_along_axis ~axis:1 ~indices ~values t;
   check_t "put_along_axis" [| 2; 3 |] [| 0.; 10.; 0.; 20.; 0.; 0. |] t
 
+(* ───── Scatter Tests ───── *)
+
+let test_scatter_set () =
+  let t = Nx.zeros Nx.float32 [| 2; 3 |] in
+  let indices = Nx.create Nx.int32 [| 2; 1 |] [| 1l; 0l |] in
+  let values = Nx.create Nx.float32 [| 2; 1 |] [| 10.; 20. |] in
+  let r = Nx.scatter ~axis:1 ~indices ~values t in
+  check_t "scatter set" [| 2; 3 |] [| 0.; 10.; 0.; 20.; 0.; 0. |] r;
+  check_t "scatter is pure" [| 2; 3 |] (Array.make 6 0.) t
+
+let test_scatter_set_duplicates_last_wins () =
+  let t = Nx.zeros Nx.float32 [| 4 |] in
+  let indices = Nx.create Nx.int32 [| 3 |] [| 1l; 1l; 2l |] in
+  let values = Nx.create Nx.float32 [| 3 |] [| 10.; 20.; 30. |] in
+  let r = Nx.scatter ~axis:0 ~indices ~values t in
+  check_t "scatter duplicate set" [| 4 |] [| 0.; 20.; 30.; 0. |] r
+
+let test_scatter_add_accumulates () =
+  let t = Nx.create Nx.float32 [| 4 |] [| 1.; 1.; 1.; 1. |] in
+  let indices = Nx.create Nx.int32 [| 3 |] [| 1l; 1l; 3l |] in
+  let values = Nx.create Nx.float32 [| 3 |] [| 10.; 20.; 30. |] in
+  let r = Nx.scatter ~mode:`Add ~axis:0 ~indices ~values t in
+  (* Duplicates accumulate; every slot keeps [t]'s value underneath. *)
+  check_t "scatter add" [| 4 |] [| 1.; 31.; 1.; 31. |] r
+
+let test_scatter_broadcast_values () =
+  let t = Nx.zeros Nx.float32 [| 2; 3 |] in
+  let indices = Nx.create Nx.int32 [| 2; 1 |] [| 2l; 0l |] in
+  let values = Nx.scalar Nx.float32 5. in
+  let r = Nx.scatter ~axis:(-1) ~indices ~values t in
+  check_t "scatter broadcast" [| 2; 3 |] [| 0.; 0.; 5.; 5.; 0.; 0. |] r
+
+let test_scatter_int_dtype () =
+  let t = Nx.zeros Nx.int32 [| 3 |] in
+  let indices = Nx.create Nx.int32 [| 2 |] [| 0l; 2l |] in
+  let values = Nx.create Nx.int32 [| 2 |] [| 7l; 8l |] in
+  let r = Nx.scatter ~axis:0 ~indices ~values t in
+  check_t "scatter int32" [| 3 |] [| 7l; 0l; 8l |] r
+
+let test_scatter_shape_mismatch () =
+  let t = Nx.zeros Nx.float32 [| 2; 3 |] in
+  let indices = Nx.create Nx.int32 [| 3; 1 |] [| 0l; 1l; 0l |] in
+  let values = Nx.zeros Nx.float32 [| 3; 1 |] in
+  raises ~msg:"scatter shape mismatch"
+    (Invalid_argument
+       "scatter: shape, dimension 0: indices has 3 but tensor has 2")
+    (fun () -> ignore (Nx.scatter ~axis:1 ~indices ~values t))
+
 (* ───── Compress Tests ───── *)
 
 let test_compress_no_axis () =
@@ -446,6 +494,17 @@ let put_tests =
     test "put_along_axis" test_put_along_axis;
   ]
 
+let scatter_tests =
+  [
+    test "scatter set" test_scatter_set;
+    test "scatter set duplicates last wins"
+      test_scatter_set_duplicates_last_wins;
+    test "scatter add accumulates" test_scatter_add_accumulates;
+    test "scatter broadcasts values" test_scatter_broadcast_values;
+    test "scatter int dtype" test_scatter_int_dtype;
+    test "scatter shape mismatch" test_scatter_shape_mismatch;
+  ]
+
 let compress_extract_tests =
   [
     test "compress no axis" test_compress_no_axis;
@@ -480,6 +539,7 @@ let suite =
     group "item" item_tests;
     group "take" take_tests;
     group "put" put_tests;
+    group "scatter" scatter_tests;
     group "compress/extract" compress_extract_tests;
     group "nonzero/argwhere" nonzero_argwhere_tests;
     group "edge cases" edge_case_tests;

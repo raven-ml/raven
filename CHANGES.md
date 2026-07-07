@@ -198,6 +198,13 @@ thread.
 
 ### Nx
 
+- Add `scatter`, the pure counterpart of `put_along_axis`: returns a new
+  tensor with `values` placed along `axis`, with `` `Set``/`` `Add`` modes
+  and a `unique_indices` hint. Works under `Rune.jit` and differentiates
+  with respect to both inputs.
+- Fix `` `Add``-mode scatter on the C backend to accumulate updates into the
+  template's values instead of a zeroed buffer, matching the jit lowering
+  and the autodiff rule.
 - Add `Nx_buffer.unsafe_data_ptr`: the address of a buffer's first element,
   for wrapping tensor memory in external systems without copying. The caller
   must keep the buffer reachable while the pointer is in use.

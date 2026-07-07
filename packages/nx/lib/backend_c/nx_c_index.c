@@ -22,15 +22,6 @@ static bool shape_equal(const int *shape1, const int *shape2, int ndim) {
   return true;
 }
 
-// Helper to check if two ndarrays have the same shape
-static bool same_shape(const ndarray_t *a, const ndarray_t *b) {
-  if (a->ndim != b->ndim) return false;
-  return shape_equal(a->shape, b->shape, a->ndim);
-}
-
-// Forward declaration - implementation after multi_iterator definition
-static void copy_ndarray(const ndarray_t *src, ndarray_t *dst, int kind);
-
 // Type definitions for element-wise in-place operations (for scatter modes)
 typedef void (*elem_op_fn)(void *, long, void *, long);
 
@@ -223,44 +214,6 @@ static long compute_offset(const ndarray_t *nd, const long *coords) {
   return off;
 }
 
-// Helper to get element byte size for memset (returns bytes per element, 0.5
-// approximated as special case)
-static double get_elem_byte_size(int kind) {
-  switch (kind) {
-    case CAML_BA_SINT8:
-    case CAML_BA_UINT8:
-    case NX_BA_BOOL:
-    case NX_BA_FP8_E4M3:
-    case NX_BA_FP8_E5M2:
-      return 1.0;
-    case CAML_BA_SINT16:
-    case CAML_BA_UINT16:
-    case CAML_BA_FLOAT16:
-    case NX_BA_BFLOAT16:
-      return 2.0;
-    case CAML_BA_INT32:
-    case CAML_BA_FLOAT32:
-    case NX_BA_UINT32:
-      return 4.0;
-    case CAML_BA_INT64:
-    case CAML_BA_NATIVE_INT:
-    case CAML_BA_CAML_INT:
-    case CAML_BA_FLOAT64:
-    case NX_BA_UINT64:
-      return 8.0;
-    case CAML_BA_COMPLEX32:
-      return 8.0;
-    case CAML_BA_COMPLEX64:
-      return 16.0;
-    case NX_BA_INT4:
-    case NX_BA_UINT4:
-      return 0.5;
-    default:
-      caml_failwith("unsupported kind");
-      return 0;
-  }
-}
-
 // Integer element size in bytes for common kinds. Returns 0 if unsupported
 static inline size_t elem_size_from_kind(int kind) {
   switch (kind) {
@@ -292,82 +245,6 @@ static inline size_t elem_size_from_kind(int kind) {
     default:
       return 0;
   }
-}
-
-// Zero the output array - requires passing the value to access bigarray
-static void zero_ndarray(ndarray_t *nd, void *data, int kind) {
-  long total_elems = total_elements_safe(nd);
-  double bytes_per_elem = get_elem_byte_size(kind);
-  long total_bytes;
-  if (kind == NX_BA_INT4 || kind == NX_BA_UINT4) {
-    total_bytes = total_elems / 2;
-  } else {
-    total_bytes = (long)(total_elems * bytes_per_elem);
-  }
-  memset(data, 0, total_bytes);
-}
-
-// Helper to copy data from one ndarray to another (assuming same shape)
-static void copy_ndarray(const ndarray_t *src, ndarray_t *dst, int kind) {
-  if (!src || !dst) return;
-  if (!same_shape(src, dst)) return;
-  
-  // Get element size based on kind
-  size_t elem_size = 1;
-  switch (kind) {
-    case CAML_BA_SINT8:
-    case CAML_BA_UINT8:
-    case NX_BA_BOOL:
-    case NX_BA_FP8_E4M3:
-    case NX_BA_FP8_E5M2:
-      elem_size = 1;
-      break;
-    case CAML_BA_SINT16:
-    case CAML_BA_UINT16:
-    case CAML_BA_FLOAT16:
-    case NX_BA_BFLOAT16:
-      elem_size = 2;
-      break;
-    case CAML_BA_INT32:
-    case CAML_BA_FLOAT32:
-    case NX_BA_UINT32:
-      elem_size = 4;
-      break;
-    case CAML_BA_INT64:
-    case CAML_BA_FLOAT64:
-    case NX_BA_UINT64:
-      elem_size = 8;
-      break;
-    case CAML_BA_NATIVE_INT:
-    case CAML_BA_CAML_INT:
-      elem_size = sizeof(intnat);
-      break;
-    case CAML_BA_COMPLEX32:
-      elem_size = 8;  // 2 * float32
-      break;
-    case CAML_BA_COMPLEX64:
-      elem_size = 16;  // 2 * float64
-      break;
-    default:
-      return;  // Unsupported type
-  }
-  
-  // Use multi-iterator to copy elements
-  multi_iterator_t it;
-  multi_iterator_init(&it, src);
-
-  if (it.has_elements) {
-    do {
-      long src_off = compute_offset(src, it.coords);
-      long dst_off = compute_offset(dst, it.coords);
-
-      memcpy(dst->data + (dst->offset + dst_off) * elem_size,
-             src->data + (src->offset + src_off) * elem_size,
-             elem_size);
-    } while (multi_iterator_next(&it));
-  }
-
-  multi_iterator_destroy(&it);
 }
 
 // Generic gather implementation
@@ -432,12 +309,13 @@ static const char *generic_gather(const ndarray_t *data,
   return error_msg;
 }
 
-// Generic scatter implementation
+// Generic scatter implementation. [out] must be pre-initialized with the
+// template's values: [op] overwrites (`Set`) or accumulates (`Add`) at the
+// scattered coordinates and every other element keeps the template's value.
 static const char *generic_scatter(const ndarray_t *template,
                                    const ndarray_t *indices,
                                    const ndarray_t *updates, ndarray_t *out,
-                                   void *out_raw_data, int axis, elem_op_fn op,
-                                   int unique, int kind, int mode) {
+                                   int axis, elem_op_fn op, int unique) {
   const char *error_msg = NULL;
 
   // NULL checks
@@ -472,16 +350,6 @@ static const char *generic_scatter(const ndarray_t *template,
   if (!shape_equal(template->shape, out->shape, template->ndim)) {
     error_msg = "output shape must match template";
     return error_msg;
-  }
-
-  // For Set mode (0), copy template to output first
-  // For Add mode (1), zero the output
-  if (mode == 0) {
-    // Set mode - copy template data to output to preserve existing values
-    copy_ndarray(template, out, kind);
-  } else {
-    // Add mode - zero the output
-    zero_ndarray(out, out_raw_data, kind);
   }
 
   multi_iterator_t it;
@@ -766,16 +634,10 @@ static void dispatch_scatter(value v_template, value v_indices, value v_updates,
   if (!op) caml_failwith("scatter not supported for dtype");
 
   int unique = Bool_val(v_unique);
-  int mode = Int_val(v_mode);
-
-  // Derive the raw data pointer for zeroing BEFORE releasing the runtime lock.
-  value actual_v_out = (v_out == Val_int(0)) ? v_template : v_out;
-  value v_actual_data = Field(actual_v_out, FFI_TENSOR_DATA);
-  void *out_raw_data = Caml_ba_data_val(v_actual_data);
 
   caml_enter_blocking_section();
-  const char *error = generic_scatter(&templ, &indices, &updates, &out,
-                                      out_raw_data, axis, op, unique, kind, mode);
+  const char *error =
+      generic_scatter(&templ, &indices, &updates, &out, axis, op, unique);
   caml_leave_blocking_section();
 
   cleanup_ndarray(&indices);

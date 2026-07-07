@@ -442,7 +442,8 @@ module type S = sig
       [updates] into a tensor shaped like [template] along [axis].
 
       [`Set] (default) uses the last update for duplicate indices. [`Add]
-      accumulates. [unique_indices = true] hints that indices are unique.
+      accumulates every update into the template's value. [unique_indices =
+      true] hints that indices are unique.
 
       {b Frontend guarantees:} [rank indices = rank updates]. [axis] is valid.
       [template] has the desired output shape.

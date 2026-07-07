@@ -732,13 +732,9 @@ let scatter ?(mode = `Set) ?(unique_indices = false) data_template ~indices
   let indices' = ensure_materializable indices in
   let updates' = ensure_materializable updates in
 
-  (* Create output tensor - for Set mode, start with a copy of template *)
-  let out =
-    if mode = `Set then copy data_template (* Start with copy of template *)
-    else
-      create_tensor data_template.context data_template.dtype
-        (shape data_template)
-  in
+  (* Both modes update on top of the template's values: [`Set] overwrites at
+     the scattered coordinates, [`Add] accumulates into them. *)
+  let out = copy data_template in
 
   (* Convert to FFI tensors *)
   let template_ffi = to_ffi_tensor template' in

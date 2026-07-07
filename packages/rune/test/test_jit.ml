@@ -206,6 +206,23 @@ let test_correlate_matches_eager () =
   let x = Nx.create f32 [| 6; 7 |] (Array.init 42 (fun i -> float_of_int i)) in
   check_arr ~msg:"correlate same" (to_arr (f x)) (g x)
 
+(* Indexed access *)
+
+(* Row 1 repeats an index so duplicate handling is pinned under jit: [`Set]
+   keeps the last update, [`Add] accumulates both on top of [x]'s value. *)
+let test_scatter_matches_eager () =
+  let idx = Nx.create Nx.int32 [| 2; 2 |] [| 2l; 0l; 1l; 1l |] in
+  let f mode x =
+    Nx.scatter ~mode ~axis:1 ~indices:idx
+      ~values:(Nx.slice [ Nx.A; Nx.R (0, 2) ] x)
+      x
+  in
+  let x = Nx.create f32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
+  let g_set = Rune.jit' (f `Set) and g_add = Rune.jit' (f `Add) in
+  check_arr ~msg:"set" (to_arr (f `Set x)) (g_set x);
+  check_arr ~msg:"set replay" (to_arr (f `Set x)) (g_set x);
+  check_arr ~msg:"add" (to_arr (f `Add x)) (g_add x)
+
 (* Training-step integration: a two-layer MLP trained by a jitted step must
    follow the eager trajectory exactly. *)
 
@@ -299,6 +316,8 @@ let tests =
         test "fold of unfold matches eager" test_fold_matches_eager;
         test "correlate matches eager" test_correlate_matches_eager;
       ];
+    group "indexed access"
+      [ test "scatter matches eager" test_scatter_matches_eager ];
     group "training"
       [
         test "jitted training follows the eager trajectory"
