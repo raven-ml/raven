@@ -82,10 +82,9 @@ let mk_shape dims =
   in
   match ids with [ d ] -> d | ds -> U.stack ds
 
-let mk_param ~idx ?(device = "CPU") shape =
+let mk_param ~idx ?(dtype = Dtype.float32) ?(device = "CPU") shape =
   let shape_id = if shape = [] then None else Some (mk_shape shape) in
-  U.param ~slot:idx ~dtype:Dtype.float32 ?shape:shape_id
-    ~device:(Single device) ()
+  U.param ~slot:idx ~dtype ?shape:shape_id ~device:(Single device) ()
 
 let wrap_sink srcs =
   let contigs = List.map (fun src -> U.contiguous ~src ()) srcs in

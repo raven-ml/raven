@@ -125,7 +125,8 @@ val cuda : Gpu_target.cuda -> Renderer.t
     [arch] selects tensor core and dtype capabilities:
     - {!Gpu_target.SM75}: 8x16x8 tiles, f16 input.
     - {!Gpu_target.SM80}: 8x16x16 tiles (f16, bf16) + 8x16x8 (f16, tf32).
-    - {!Gpu_target.SM89}: {!Gpu_target.SM80} + 8x16x32 tiles for fp8. *)
+    - {!Gpu_target.SM89}: {!Gpu_target.SM80} + 8x16x32 tiles for fp8.
+    - {!Gpu_target.SM90}: same tiles as {!Gpu_target.SM89}. *)
 
 (** {1:amd AMD} *)
 

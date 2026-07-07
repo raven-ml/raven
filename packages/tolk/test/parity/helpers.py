@@ -49,12 +49,17 @@ class _CudaNoNvrtc(CUDARenderer):
         )
 
 
-ALL_BACKENDS = {
-    "cpu": ClangRenderer(Target("CPU", arch="x86_64,znver2")),
-    "cuda": _CudaNoNvrtc(Target("CUDA", arch="sm_80")),
-    "metal": MetalRenderer(Target("METAL")),
-    "opencl": OpenCLRenderer(Target("CL")),
-}
+ALL_BACKENDS = {}
+for _name, _ctor in [
+    ("cpu", lambda: ClangRenderer(Target("CPU", arch="x86_64,znver2"))),
+    ("cuda", lambda: _CudaNoNvrtc(Target("CUDA", arch="sm_80"))),
+    ("metal", lambda: MetalRenderer(Target("METAL"))),
+    ("opencl", lambda: OpenCLRenderer(Target("CL"))),
+]:
+    try:
+        ALL_BACKENDS[_name] = _ctor()
+    except Exception as e:  # noqa: BLE001 - platform-dependent runtime deps
+        print(f"WARNING: skipping {_name} renderer: {e}", file=sys.stderr)
 
 GPU_BACKENDS = {k: v for k, v in ALL_BACKENDS.items() if k != "cpu"}
 

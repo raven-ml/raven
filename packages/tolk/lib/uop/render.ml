@@ -319,18 +319,18 @@ let wmma_info_debug_string (w : wmma_info) =
   let pair (a, b) = tuple_string [ string_of_int a; string_of_int b ] in
   let pairs xs = tuple_string (List.map pair xs) in
   let a, b, c = w.upcast_axes in
-  Printf.sprintf
-    "WMMAInfo(%s, %s, %s, %s, %s, threads=%d, upcast_axes=%s, reduce_axes=%s)"
-    (python_quote w.name)
-    (tuple_string
-       (List.map string_of_int
-          (let x, y, z = w.dims in [ x; y; z ])))
-    (Dtype.Val.repr (Dtype.Val.of_scalar w.dtype_in))
-    (Dtype.Val.repr (Dtype.Val.of_scalar w.dtype_out))
-    (python_quote w.device)
-    w.threads
-    (tuple_string [ pairs a; pairs b; pairs c ])
-    (tuple_string (List.map string_of_int w.reduce_axes))
+  tuple_string
+    [
+      python_quote w.name;
+      tuple_string
+        (List.map string_of_int (let x, y, z = w.dims in [ x; y; z ]));
+      Dtype.Val.repr (Dtype.Val.of_scalar w.dtype_in);
+      Dtype.Val.repr (Dtype.Val.of_scalar w.dtype_out);
+      python_quote w.device;
+      string_of_int w.threads;
+      tuple_string [ pairs a; pairs b; pairs c ];
+      tuple_string (List.map string_of_int w.reduce_axes);
+    ]
 
 let shaped_wmma_info_debug_string (w : shaped_wmma_info) =
   Printf.sprintf "ShapeWMMAInfo(%s, %s, threads=%d)"

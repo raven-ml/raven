@@ -464,11 +464,11 @@ let apply_tc_shifts t axes (tc : Tc.t) =
     match opt_str.[0] with
     | 'l' ->
         let lane =
-          U.alu_binary ~op:Ops.Cmod ~lhs:!warp ~rhs:(U.const_int 2)
+          U.alu_binary ~op:Ops.Floormod ~lhs:!warp ~rhs:(U.const_int 2)
         in
         split dim 2 Axis_type.Local ~input_new_rng:lane ();
         warp :=
-          U.alu_binary ~op:Ops.Cdiv ~lhs:!warp ~rhs:(U.const_int 2)
+          U.alu_binary ~op:Ops.Floordiv ~lhs:!warp ~rhs:(U.const_int 2)
     | 'u' -> split dim 2 Axis_type.Upcast ()
     | c -> raise (Opt_error (strf "unsupported tc opt: %c" c))
   in
@@ -548,10 +548,9 @@ let build_wmma_node t (tc : Tc.t) ne =
     | _ -> raise (Opt_error "tensor-core upcast axes missing")
   in
   let with_missing_tc_axes axes =
-    let present = List.map fst axes in
     List.fold_left
       (fun acc (rn, _) ->
-        if List.mem rn present then acc else acc @ [ (rn, 1) ])
+        if List.mem_assoc rn acc then acc else acc @ [ (rn, 1) ])
       axes (ua @ ub)
   in
   let ua, ub, uc =

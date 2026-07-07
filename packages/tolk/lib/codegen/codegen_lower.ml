@@ -185,42 +185,25 @@ let load_store_folding : Upat.Pattern_matcher.t =
 
 (* expander: devectorize *)
 
-(* Break a wide WMMA into multiple smaller WMMAs matching the upcast
-   output size. *)
-let no_vectorized_wmma =
+(* Unpack WMMA: replace each non-Stack source with an explicit Stack of its
+   scalar elements. *)
+let do_stack_wmma =
   let open Upat in
   op ~name:"wmma" Ops.Wmma
   => fun bs ->
        let wmma = bs $ "wmma" in
-       match U.as_wmma wmma with
-       | None -> None
-       | Some v ->
-           let ax_a, ax_b, ax_c = v.info.upcast_axes in
-           let out_sz = prod (List.map snd ax_c) in
-           if Dtype.count (U.dtype wmma) = out_sz then None
-           else
-             let chunk src axes =
-               let ssz = prod (List.map snd axes) in
-               let cnt = Dtype.count (U.dtype src) in
-               List.init (cnt / ssz) (fun g ->
-                   lanes src (List.init ssz (fun j -> (g * ssz) + j)))
-             in
-             let wmma_dt =
-               Dtype.vec out_sz (Dtype.scalarize (U.dtype wmma))
-             in
-             let wmmas =
-               List.map2
-                 (fun (a, b) c ->
-                   U.replace wmma ~src:[| a; b; c |] ~dtype:wmma_dt ())
-                 (List.combine (chunk v.a ax_a) (chunk v.b ax_b))
-                 (chunk v.c ax_c)
-             in
-             let lanes =
-               List.concat_map
-                 (fun w -> List.init out_sz (lane w))
-                 wmmas
-             in
-             Some (U.stack lanes)
+       let srcs = U.src wmma in
+       if
+         Array.for_all (fun x -> U.op x = Ops.Stack || U.op x = Ops.Wmma) srcs
+       then None
+       else begin
+         assert (List.length (U.shape wmma) = 1);
+         let stacked b =
+           if U.op b = Ops.Stack then b
+           else U.stack (List.init (prod (U.max_shape b)) (lane b))
+         in
+         Some (U.replace wmma ~src:(Array.map stacked srcs) ())
+       end
 
 (* Scalarize vectorised ALU / Cast / Bitcast / Where by extracting each
    lane via value INDEX and re-vectorising. *)
@@ -879,7 +862,7 @@ let devectorize : Upat.Pattern_matcher.t =
         reshape_singleton_to_scalar;
         store_singleton_value;
         no_vectorized_alu;
-        no_vectorized_wmma;
+        do_stack_wmma;
       ]
     ++ devectorize_buf_and_index)
 
@@ -1826,11 +1809,14 @@ let contract_axis range_map u axes =
     |> List.filter (fun i -> not (List.mem i permute_tail))
   in
   let out = U.permute ~src:u ~order:(permute_head @ permute_tail) in
-  let out_shape = U.shape out in
+  let out_shape = U.max_shape out in
   let head_shape =
     List.filteri (fun i _ -> i < List.length permute_head) out_shape
   in
-  U.reshape ~src:out ~shape:(shape_arg (head_shape @ [ U.const_int (-1) ]))
+  (* Flatten the tail axes into one dimension (reshape [..., -1]). *)
+  let tail = prod out_shape / prod head_shape in
+  U.reshape ~src:out
+    ~shape:(shape_arg (List.map U.const_int (head_shape @ [ tail ])))
 
 let unroll_axis range_map u axes =
   let permute_tail =

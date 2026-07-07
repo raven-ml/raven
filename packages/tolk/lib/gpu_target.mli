@@ -11,7 +11,7 @@
     resolved targets and do not read environment variables themselves. *)
 
 (** CUDA SM architecture tiers used by source generation. *)
-type cuda = SM75 | SM80 | SM89
+type cuda = SM75 | SM80 | SM89 | SM90
 
 (** AMD GPU architecture families used by source generation. *)
 type amd = RDNA3 | RDNA4 | CDNA3 | CDNA4

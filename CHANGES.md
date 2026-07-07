@@ -33,6 +33,13 @@ thread.
 
 ### Tolk (new)
 
+- CUDA source generation gains an `SM90` (Hopper) target tier in
+  `Gpu_target.cuda`: `sm_90` uses the `sm_89` tensor-core table and fp8
+  dtype support, and `CUDA_ARCH`/`CUDA_SM` values of 90+ resolve to `SM90`.
+- Tensor-core (WMMA) kernels now lower end to end: fixed the WMMA output
+  shape rule, upcast-axis deduplication, warp-lane decomposition, and WMMA
+  devectorization, so tensor-core matmuls render byte-identical to the
+  reference (covered by an fp8 `mma.sync` parity golden).
 - New package: a minimal ML compiler for tensor computation. A tensor program
   is a graph of micro-operations; Tolk schedules it into kernels, lowers and
   optimizes them, renders C-style source, compiles, and executes the result —

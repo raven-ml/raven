@@ -1012,6 +1012,8 @@ let () =
               failwith "sm80 should not advertise fp8";
             if not (Renderer.supports_dtype (Cstyle.cuda Gpu_target.SM89) fp8) then
               failwith "sm89 should advertise ocp fp8";
+            if not (Renderer.supports_dtype (Cstyle.cuda Gpu_target.SM90) fp8) then
+              failwith "sm90 should advertise ocp fp8";
             if Renderer.supports_dtype (Cstyle.amd Gpu_target.CDNA3) fp8 then
               failwith "cdna3 should not advertise ocp fp8";
             if not (Renderer.supports_dtype (Cstyle.amd Gpu_target.CDNA4) fp8) then
@@ -1036,7 +1038,9 @@ let () =
             if Renderer.tensor_cores (Cstyle.metal (Gpu_target.Mac 2)) <> [] then
               failwith "Mac families should not advertise Metal tensor cores";
             if Renderer.tensor_cores (Cstyle.metal (Gpu_target.Apple 7)) = [] then
-              failwith "Apple7 should advertise Metal tensor cores");
+              failwith "Apple7 should advertise Metal tensor cores";
+            if Renderer.tensor_cores (Cstyle.cuda Gpu_target.SM90) <> Tc.cuda_sm89 then
+              failwith "sm90 should use the sm89 tensor-core table");
         ];
       group "Preamble"
         [

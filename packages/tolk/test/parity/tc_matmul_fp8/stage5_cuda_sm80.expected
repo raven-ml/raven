@@ -1,0 +1,110 @@
+   0 Ops.CONST           :            dtypes.int                               []                               128
+   1 Ops.PARAM           :            dtypes.float                             ['128']                          ParamArg(0, device='CPU')
+   2 Ops.CONST           :            dtypes.int                               []                               8
+   3 Ops.SPECIAL         :            dtypes.int                               ['8']                            gidx0
+   4 Ops.CONST           :            dtypes.int                               []                               16
+   5 Ops.SPECIAL         :            dtypes.int                               ['16']                           gidx1
+   6 Ops.CONST           :            dtypes.int                               []                               3
+   7 Ops.SHL             :            dtypes.int                               [5, '3']                         None
+   8 Ops.ADD             :            dtypes.int                               [3, 7]                           None
+   9 Ops.INDEX           :            dtypes.float                             [1, 8]                           None
+  10 Ops.CONST           :            dtypes.int                               []                               1
+  11 Ops.BUFFER          :            dtypes.float                             ['1']                            ParamArg(1, addrspace=AddrSpace.REG)
+  12 Ops.CONST           :            dtypes.int                               []                               0
+  13 Ops.INDEX           :            dtypes.float                             [11, '0']                        None
+  14 Ops.CONST           :            dtypes.float                             []                               0.0
+  15 Ops.STORE           :            dtypes.void                              [13, '0.0']                      None
+  16 Ops.BUFFER          :            dtypes.float                             ['1']                            ParamArg(0, addrspace=AddrSpace.REG)
+  17 Ops.INDEX           :            dtypes.float                             [16, '0']                        None
+  18 Ops.STORE           :            dtypes.void                              [17, '0.0']                      None
+  19 Ops.CONST           :            dtypes.int                               []                               2
+  20 Ops.RANGE           : 0          dtypes.int                               ['2']                            (0, AxisType.REDUCE)
+  21 Ops.AFTER           : 0          dtypes.float                             [16, 18, 20]                     None
+  22 Ops.INDEX           : 0          dtypes.float                             [21, '0']                        None
+  23 Ops.LOAD            : 0          dtypes.float                             [22]                             None
+  24 Ops.CONST           :            dtypes.int                               []                               512
+  25 Ops.PARAM           :            dtypes.uchar                             ['512']                          ParamArg(1, device='CPU')
+  26 Ops.SPECIAL         :            dtypes.int                               ['16']                           lidx0
+  27 Ops.SHL             :            dtypes.int                               [26, '1']                        None
+  28 Ops.ADD             : 0          dtypes.int                               [27, 20]                         None
+  29 Ops.CONST           :            dtypes.int                               []                               5
+  30 Ops.SHL             :            dtypes.int                               [5, '5']                         None
+  31 Ops.ADD             : 0          dtypes.int                               [28, 30]                         None
+  32 Ops.INDEX           : 0          dtypes.uchar                             [25, 31]                         None
+  33 Ops.LOAD            : 0          dtypes.uchar                             [32]                             None
+  34 Ops.CONST           :            dtypes.uchar                             []                               128
+  35 Ops.AND             : 0          dtypes.uchar                             [33, '128']                      None
+  36 Ops.CAST            : 0          dtypes.ushort                            [35]                             None
+  37 Ops.CONST           :            dtypes.ushort                            []                               8
+  38 Ops.SHL             : 0          dtypes.ushort                            [36, '8']                        None
+  39 Ops.CONST           :            dtypes.uchar                             []                               127
+  40 Ops.AND             : 0          dtypes.uchar                             [33, '127']                      None
+  41 Ops.CAST            : 0          dtypes.ushort                            [40]                             None
+  42 Ops.CONST           :            dtypes.ushort                            []                               3
+  43 Ops.SHR             : 0          dtypes.ushort                            [41, '3']                        None
+  44 Ops.CONST           :            dtypes.ushort                            []                               0
+  45 Ops.CMPEQ           : 0          dtypes.bool                              [43, '0']                        None
+  46 Ops.CONST           :            dtypes.ushort                            []                               127
+  47 Ops.CMPEQ           : 0          dtypes.bool                              [41, '127']                      None
+  48 Ops.CONST           :            dtypes.ushort                            []                               7
+  49 Ops.SHL             : 0          dtypes.ushort                            [41, '7']                        None
+  50 Ops.CONST           :            dtypes.ushort                            []                               31744
+  51 Ops.OR              : 0          dtypes.ushort                            [49, '31744']                    None
+  52 Ops.CONST           :            dtypes.ushort                            []                               8192
+  53 Ops.ADD             : 0          dtypes.ushort                            [49, '8192']                     None
+  54 Ops.WHERE           : 0          dtypes.ushort                            [47, 51, 53]                     None
+  55 Ops.WHERE           : 0          dtypes.ushort                            [45, '0', 54]                    None
+  56 Ops.OR              : 0          dtypes.ushort                            [38, 55]                         None
+  57 Ops.BITCAST         : 0          dtypes.half                              [56]                             None
+  58 Ops.CONST           :            dtypes.int                               []                               256
+  59 Ops.PARAM           :            dtypes.uchar                             ['256']                          ParamArg(2, device='CPU')
+  60 Ops.CONST           :            dtypes.int                               []                               4
+  61 Ops.SHL             :            dtypes.int                               [26, '4']                        None
+  62 Ops.SHL             : 0          dtypes.int                               [20, '3']                        None
+  63 Ops.ADD             : 0          dtypes.int                               [61, 62]                         None
+  64 Ops.ADD             : 0          dtypes.int                               [3, 63]                          None
+  65 Ops.INDEX           : 0          dtypes.uchar                             [59, 64]                         None
+  66 Ops.LOAD            : 0          dtypes.uchar                             [65]                             None
+  67 Ops.AND             : 0          dtypes.uchar                             [66, '128']                      None
+  68 Ops.CAST            : 0          dtypes.ushort                            [67]                             None
+  69 Ops.SHL             : 0          dtypes.ushort                            [68, '8']                        None
+  70 Ops.AND             : 0          dtypes.uchar                             [66, '127']                      None
+  71 Ops.CAST            : 0          dtypes.ushort                            [70]                             None
+  72 Ops.SHR             : 0          dtypes.ushort                            [71, '3']                        None
+  73 Ops.CMPEQ           : 0          dtypes.bool                              [72, '0']                        None
+  74 Ops.CMPEQ           : 0          dtypes.bool                              [71, '127']                      None
+  75 Ops.SHL             : 0          dtypes.ushort                            [71, '7']                        None
+  76 Ops.OR              : 0          dtypes.ushort                            [75, '31744']                    None
+  77 Ops.ADD             : 0          dtypes.ushort                            [75, '8192']                     None
+  78 Ops.WHERE           : 0          dtypes.ushort                            [74, 76, 77]                     None
+  79 Ops.WHERE           : 0          dtypes.ushort                            [73, '0', 78]                    None
+  80 Ops.OR              : 0          dtypes.ushort                            [69, 79]                         None
+  81 Ops.BITCAST         : 0          dtypes.half                              [80]                             None
+  82 Ops.MUL             : 0          dtypes.half                              [57, 81]                         None
+  83 Ops.CAST            : 0          dtypes.float                             [82]                             None
+  84 Ops.ADD             : 0          dtypes.float                             [23, 83]                         None
+  85 Ops.STORE           : 0          dtypes.void                              [22, 84]                         None
+  86 Ops.END             :            dtypes.void                              [85, 20]                         None
+  87 Ops.RANGE           : 103        dtypes.int                               ['16', 86]                       (103, AxisType.REDUCE)
+  88 Ops.AFTER           : 103        dtypes.float                             [11, 15, 87]                     None
+  89 Ops.INDEX           : 103        dtypes.float                             [88, '0']                        None
+  90 Ops.LOAD            : 103        dtypes.float                             [89]                             None
+  91 Ops.BUFFER          :            dtypes.float                             ['16']                           ParamArg(0, addrspace=AddrSpace.LOCAL)
+  92 Ops.INDEX           :            dtypes.float                             [91, 26]                         None
+  93 Ops.AFTER           :            dtypes.float                             [16, 86]                         None
+  94 Ops.INDEX           :            dtypes.float                             [93, '0']                        None
+  95 Ops.LOAD            :            dtypes.float                             [94]                             None
+  96 Ops.STORE           :            dtypes.void                              [92, 95]                         None
+  97 Ops.BARRIER         :            dtypes.void                              [96]                             None
+  98 Ops.AFTER           :            dtypes.float                             [91, 97]                         None
+  99 Ops.INDEX           : 103        dtypes.float                             [98, 87]                         None
+ 100 Ops.LOAD            : 103        dtypes.float                             [99]                             None
+ 101 Ops.ADD             : 103        dtypes.float                             [90, 100]                        None
+ 102 Ops.STORE           : 103        dtypes.void                              [89, 101]                        None
+ 103 Ops.END             :            dtypes.void                              [102, 87]                        None
+ 104 Ops.AFTER           :            dtypes.float                             [11, 103]                        None
+ 105 Ops.INDEX           :            dtypes.float                             [104, '0']                       None
+ 106 Ops.LOAD            :            dtypes.float                             [105]                            None
+ 107 Ops.CMPEQ           :            dtypes.bool                              [26, '0']                        None
+ 108 Ops.STORE           :            dtypes.void                              [9, 106, 107]                    None
+ 109 Ops.SINK            :            dtypes.void                              [108]                            KernelInfo(name='r_16_8_16_2', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.GROUPTOP, axis=0, arg=16),), opts_to_apply=None, estimates=None, beam=0)

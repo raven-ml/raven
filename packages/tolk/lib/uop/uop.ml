@@ -2018,7 +2018,30 @@ and compute_shape_opt u =
           ranges
       in
       if Array.length srcs = 0 then None else Some (range_shape @ shape srcs.(0))
-  | Ops.Wmma | Ops.Shaped_wmma ->
+  | Ops.Wmma ->
+      (* output shape = broadcast of the srcs' shapes minus the packed tail,
+         plus the upcast output tail *)
+      if Array.length srcs >= 3 then
+        match arg u with
+        | Arg.Wmma_info info -> (
+            let drop_last l =
+              match List.rev l with [] -> [] | _ :: rest -> List.rev rest
+            in
+            match
+              (shape_opt srcs.(0), shape_opt srcs.(1), shape_opt srcs.(2))
+            with
+            | Some s0, Some s1, Some s2 ->
+                let _, _, out0 = info.upcast_axes in
+                let out_sz =
+                  List.fold_left (fun acc (_, sz) -> acc * sz) 1 out0
+                in
+                Some
+                  (broadcast_shape [ drop_last s0; drop_last s1; drop_last s2 ]
+                  @ [ const_int out_sz ])
+            | _ -> None)
+        | _ -> None
+      else None
+  | Ops.Shaped_wmma ->
       if Array.length srcs >= 3 then shape_opt srcs.(2) else None
   | Ops.Mstack | Ops.Mselect | Ops.Detach | Ops.Contiguous
   | Ops.Contiguous_backward | Ops.After | Ops.Load | Ops.Copy

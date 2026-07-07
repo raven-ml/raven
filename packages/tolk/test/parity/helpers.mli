@@ -27,10 +27,11 @@ val mk_shape : int list -> Tolk_uop.Uop.t
     (rank 1) or a [STACK] of index consts. *)
 
 val mk_param :
-  idx:int -> ?device:string -> int list -> Tolk_uop.Uop.t
-(** [mk_param ~idx ?device shape] builds a tensor-level [Param] node with
-    dtype [float32], device [?device] (default ["CPU"]), and the given
-    concrete shape. *)
+  idx:int -> ?dtype:Tolk_uop.Dtype.t -> ?device:string -> int list ->
+  Tolk_uop.Uop.t
+(** [mk_param ~idx ?dtype ?device shape] builds a tensor-level [Param] node
+    with dtype [?dtype] (default [float32]), device [?device] (default
+    ["CPU"]), and the given concrete shape. *)
 
 val wrap_sink : Tolk_uop.Uop.t list -> Tolk_uop.Uop.t
 (** [wrap_sink srcs] wraps each [src] in [Contiguous] and groups them under

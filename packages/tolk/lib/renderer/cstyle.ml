@@ -2810,10 +2810,10 @@ let supports_cuda_dtype arch dt =
   | Dtype.Bfloat16 -> (
       match arch with
       | Gpu_target.SM75 -> false
-      | Gpu_target.SM80 | Gpu_target.SM89 -> true)
+      | Gpu_target.SM80 | Gpu_target.SM89 | Gpu_target.SM90 -> true)
   | Dtype.Fp8e4m3 | Dtype.Fp8e5m2 -> (
       match arch with
-      | Gpu_target.SM89 -> true
+      | Gpu_target.SM89 | Gpu_target.SM90 -> true
       | Gpu_target.SM75 | Gpu_target.SM80 -> false)
   | Dtype.Fp8e4m3fnuz | Dtype.Fp8e5m2fnuz -> false
   | _ -> true
@@ -2895,7 +2895,7 @@ let cuda arch =
     match arch with
     | Gpu_target.SM75 -> Tc.cuda_sm75
     | Gpu_target.SM80 -> Tc.cuda_sm80
-    | Gpu_target.SM89 -> Tc.cuda_sm89
+    | Gpu_target.SM89 | Gpu_target.SM90 -> Tc.cuda_sm89
   in
   Renderer.make ~name:"cuda" ~device:"CUDA" ~has_local:true
     ~has_shared:true

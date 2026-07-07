@@ -5,7 +5,7 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
-type cuda = SM75 | SM80 | SM89
+type cuda = SM75 | SM80 | SM89 | SM90
 type amd = RDNA3 | RDNA4 | CDNA3 | CDNA4
 type metal = Apple of int | Mac of int
 type opencl = string
@@ -56,6 +56,7 @@ let cuda_of_env () =
         | _ -> "")
   in
   match parse_cuda_arch raw with
+  | Some ver when ver >= 90 -> Some SM90
   | Some ver when ver >= 89 -> Some SM89
   | Some ver when ver >= 80 -> Some SM80
   | Some ver when ver >= 75 -> Some SM75
