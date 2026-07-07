@@ -10,6 +10,7 @@
   test_conv
   test_stateful
   test_attention
-  test_data)
+  test_data
+  test_pmap_dp)
  (package kaun)
  (libraries kaun rune vega nx nx.core windtrap))

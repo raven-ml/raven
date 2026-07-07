@@ -398,6 +398,11 @@ thread.
 
 ### Kaun
 
+- The GPT-2 training example gains `--devices` for data-parallel training
+  through `Rune.pmap2` — a CPU device count (`--devices 4`) or an explicit
+  tuple (`--devices CUDA:0,CUDA:1`). Parameters replicate, the batch shards
+  on axis 0, gradients allreduce automatically; per-step losses match the
+  single-device step within fp32 reduction order.
 - `Attention.apply_cached` updates the cache with a gather instead of a
   one-hot matmul, cutting the per-step update from O(len*seq*head_dim) to
   O(len*head_dim).

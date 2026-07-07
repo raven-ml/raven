@@ -14,6 +14,10 @@
      embedding's gradient accumulates from both of its uses
    - the whole step (forward, backward, update) compiles as one [Rune.jit2]
      program; the loss recorded at step i is computed before update i
+   - [--devices] switches the step to data-parallel [Rune.pmap2]: parameters
+     replicated on every device, the batch sharded on axis 0, gradients
+     allreduced by construction — same numbers as the single-device step up
+     to fp32 reduction order
 
    Per step it emits the loss (shortest round-trip float64 repr of the fp32
    value), wall-clock ms, and fingerprints of six designated weights in the
@@ -103,13 +107,31 @@ let batch_of_ids ids =
     Nx.create Nx.int32 [| batch_size * seq_len |] (take 1) )
 
 (* Loss: mean cross-entropy over all positions — log-softmax over the vocab
-   axis, NLL of the target id, mean. *)
+   axis, NLL of the target id, mean. Like the model forward (see gpt2.ml),
+   the log-softmax avoids [~keepdims:true] reductions, which Rune's
+   multi-device engine cannot yet differentiate through under [Rune.pmap];
+   reducing plainly and reshaping the axis back is the same arithmetic. *)
 let loss_fn inputs targets params =
   let logits = Gpt2.logits gpt2_124m params inputs in
   let logits =
     Nx.reshape [| batch_size * seq_len; gpt2_124m.vocab_size |] logits
   in
-  Loss.softmax_cross_entropy_sparse logits targets
+  let keep_last reduce x =
+    let s = Array.copy (Nx.shape x) in
+    s.(Array.length s - 1) <- 1;
+    Nx.reshape s (reduce x)
+  in
+  let shifted = Nx.sub logits (keep_last (Nx.max ~axes:[ -1 ]) logits) in
+  let log_den =
+    keep_last (fun x -> Nx.log (Nx.sum ~axes:[ -1 ] (Nx.exp x))) shifted
+  in
+  let log_probs = Nx.sub shifted log_den in
+  let picked =
+    Nx.take_along_axis ~axis:(-1)
+      (Nx.expand_dims [ -1 ] targets)
+      log_probs
+  in
+  Nx.mean (Nx.neg (Nx.squeeze ~axes:[ -1 ] picked))
 
 (* The jitted step returns the updated parameters and the pre-update loss. *)
 module Step_out = struct
@@ -137,6 +159,43 @@ let train_step inputs targets params =
     fst (Vega.sgd_step (module Gpt2.Params) ~lr state ~params ~grads)
   in
   { Step_out.params; loss }
+
+(* Data-parallel input: the batch joins the parameters as leaves so [pmap2]
+   can shard it (axis 0) while replicating the parameters. *)
+module Step_in = struct
+  type t = {
+    params : Gpt2.t;
+    inputs : (int32, Nx.int32_elt) Nx.t;
+    targets : (int32, Nx.int32_elt) Nx.t;
+  }
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
+    {
+      params = Gpt2.Params.map f t.params;
+      inputs = f t.inputs;
+      targets = f t.targets;
+    }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
+    {
+      params = Gpt2.Params.map2 f a.params b.params;
+      inputs = f a.inputs b.inputs;
+      targets = f a.targets b.targets;
+    }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t =
+    Gpt2.Params.iter f t.params;
+    f t.inputs;
+    f t.targets
+end
+
+(* [--devices] accepts a CPU device count ([--devices 2] means CPU:1,CPU:2) or
+   an explicit comma-separated tuple ([--devices CUDA:0,CUDA:1]). *)
+let parse_devices s =
+  match int_of_string_opt s with
+  | Some n when n > 0 -> List.init n (fun i -> Printf.sprintf "CPU:%d" (i + 1))
+  | Some _ -> failwith "--devices: the device count must be positive"
+  | None -> List.map String.trim (String.split_on_char ',' s)
 
 (* Fingerprints: [first8] is bitwise (fp32 printed as float64 repr); [sum] and
    [abs_sum] accumulate in float64 with pairwise summation, as the reference. *)
@@ -267,6 +326,7 @@ let emit_metrics buf ~device ~steps ~n_params ~initial_loss records =
 
 let () =
   let device = ref "CPU" in
+  let devices = ref "" in
   let steps = ref 20 in
   let here = Filename.dirname Sys.executable_name in
   let tokens = ref (Filename.concat here "tokens.json") in
@@ -281,6 +341,10 @@ let () =
   Arg.parse
     [
       ("--device", Arg.Set_string device, "Device to jit for (CPU or CUDA)");
+      ( "--devices",
+        Arg.Set_string devices,
+        "Data-parallel device tuple: a CPU count (2 = CPU:1,CPU:2) or a \
+         comma-separated list (CUDA:0,CUDA:1)" );
       ("--steps", Arg.Set_int steps, "Number of training steps");
       ("--tokens", Arg.Set_string tokens, "Path to the tokens.json grid");
       ("--model", Arg.Set_string model, "Path to the initial safetensors");
@@ -290,8 +354,8 @@ let () =
         "Save final weights (input-file layout) to this path" );
     ]
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
-    "train --device DEV [--steps N] [--tokens F] [--model F] [--metrics-out \
-     F] [--save-weights F]";
+    "train --device DEV [--devices TUPLE] [--steps N] [--tokens F] [--model \
+     F] [--metrics-out F] [--save-weights F]";
 
   let inputs, targets = batch_of_ids (load_ids !tokens) in
   let original = Checkpoint.load !model in
@@ -308,10 +372,28 @@ let () =
   Printf.printf "initial loss (before step 1): %s\n%!" initial_loss;
 
   let step =
-    Rune.jit2 ~device:!device
-      (module Gpt2.Params)
-      (module Step_out)
-      (train_step inputs targets)
+    if !devices = "" then
+      Rune.jit2 ~device:!device
+        (module Gpt2.Params)
+        (module Step_out)
+        (train_step inputs targets)
+    else begin
+      let devs = parse_devices !devices in
+      device := String.concat "," devs;
+      (* One [in_axes] entry per leaf in traversal order: every parameter
+         replicated, then the two batch leaves sharded on axis 0. *)
+      let in_axes =
+        List.init n_params (fun _ -> None) @ [ Some 0; Some 0 ]
+      in
+      let f =
+        Rune.pmap2 ~devices:devs ~in_axes
+          (module Step_in)
+          (module Step_out)
+          (fun { Step_in.params; inputs; targets } ->
+            train_step inputs targets params)
+      in
+      fun params -> f { Step_in.params; inputs; targets }
+    end
   in
   let records = ref [] in
   for i = 1 to !steps do
