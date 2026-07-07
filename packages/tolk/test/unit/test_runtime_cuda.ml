@@ -178,6 +178,45 @@ let f32_buffer_node device_name n =
   U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:Dtype.float32
     ~shape:(U.const_int n) ~device:(U.Single device_name) ()
 
+(* Half-precision helpers. [f16_bits] encodes a float that is exactly
+   representable as a normal (or zero) IEEE 754 binary16 value. *)
+
+let f16_bits x =
+  if x = 0.0 then 0
+  else
+    let bits = Int32.bits_of_float x in
+    let sign = Int32.to_int (Int32.shift_right_logical bits 31) lsl 15 in
+    let exp =
+      Int32.to_int (Int32.logand (Int32.shift_right_logical bits 23) 0xFFl)
+      - 127 + 15
+    in
+    let mant = Int32.to_int (Int32.logand bits 0x7FFFFFl) lsr 13 in
+    sign lor (exp lsl 10) lor mant
+
+let f16_to_bytes values =
+  let bytes = Bytes.create (Array.length values * 2) in
+  Array.iteri
+    (fun i v -> Bytes.set_uint16_le bytes (i * 2) (f16_bits v))
+    values;
+  bytes
+
+let f16_buf device data =
+  let buf =
+    Device.create_buffer ~size:(Array.length data) ~dtype:Dtype.float16 device
+  in
+  Device.Buffer.ensure_allocated buf;
+  Device.Buffer.copyin buf (f16_to_bytes data);
+  buf
+
+let f16_buffer_node device_name n =
+  U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype:Dtype.float16
+    ~shape:(U.const_int n) ~device:(U.Single device_name) ()
+
+let mk_shape dims =
+  match List.map (fun s -> U.const (Const.int Dtype.Val.weakint s)) dims with
+  | [ d ] -> d
+  | ds -> U.stack ds
+
 let output_buffer binding buffer_map out =
   match Hashtbl.find_opt buffer_map (U.tag out) with
   | Some node -> (
@@ -352,6 +391,93 @@ let () =
               ignore (exec.Device.Graph.launch ~wait:false : float option);
               Device.synchronize device;
               equal (list int) [ 8 ] (read_i32 dst));
+        ];
+      group "Tensor core"
+        [
+          (* C = A @ B with half inputs and float32 accumulate at the
+             16x8x16 shape the heuristic optimizer maps onto the half
+             tensor core: the compiled kernel must contain a WMMA
+             (mma.sync) call and produce exact results for inputs whose
+             products and partial sums are exactly representable. *)
+          test "f16 tensor-core matmul" (fun () ->
+              let device = cuda_device () in
+              let to_program body =
+                Codegen.to_program device (Device.renderer device) body
+              in
+              let m, n, k = (16, 8, 16) in
+              let a_data =
+                Array.init (m * k) (fun i ->
+                    let r, c = (i / k, i mod k) in
+                    float_of_int (((r + (2 * c)) mod 7) - 3) *. 0.25)
+              in
+              let b_data =
+                Array.init (k * n) (fun i ->
+                    let r, c = (i / n, i mod n) in
+                    float_of_int ((((3 * r) + c) mod 5) - 2) *. 0.5)
+              in
+              let a_node = f16_buffer_node "CUDA" (m * k) in
+              let b_node = f16_buffer_node "CUDA" (k * n) in
+              (* dot: a.reshape(M,1,K) * b.permute(1,0).reshape(1,N,K),
+                 summed over K. *)
+              let ae =
+                U.expand
+                  ~src:(U.reshape ~src:a_node ~shape:(mk_shape [ m; 1; k ]))
+                  ~shape:(mk_shape [ m; n; k ])
+              in
+              let be =
+                U.expand
+                  ~src:
+                    (U.reshape
+                       ~src:
+                         (U.permute
+                            ~src:
+                              (U.reshape ~src:b_node
+                                 ~shape:(mk_shape [ k; n ]))
+                            ~order:[ 1; 0 ])
+                       ~shape:(mk_shape [ 1; n; k ]))
+                  ~shape:(mk_shape [ m; n; k ])
+              in
+              let mul = U.alu_binary ~op:Ops.Mul ~lhs:ae ~rhs:be in
+              let mulf = U.cast ~src:mul ~dtype:Dtype.float32 in
+              let red = U.reduce_axis ~src:mulf ~op:Ops.Add ~axes:[ 2 ] in
+              let out = U.contiguous ~src:red () in
+              let linear, _var_vals, buffer_map =
+                schedule_graph_linear device ~to_program (U.sink [ out ])
+              in
+              let sources =
+                List.filter_map
+                  (fun node ->
+                    if U.op node = Ops.Source then U.Arg.as_string (U.arg node)
+                    else None)
+                  (U.toposort ~enter_calls:true linear)
+              in
+              let contains hay needle =
+                let nlen = String.length needle in
+                let rec at i =
+                  i + nlen <= String.length hay
+                  && (String.equal (String.sub hay i nlen) needle || at (i + 1))
+                in
+                at 0
+              in
+              is_true ~msg:"kernel uses the tensor core"
+                (List.exists (fun src -> contains src "__WMMA_") sources);
+              let binding = Realize.Buffers.create ~device in
+              Realize.Buffers.seed binding a_node (f16_buf device a_data);
+              Realize.Buffers.seed binding b_node (f16_buf device b_data);
+              Realize.run_linear ~device ~to_program binding linear;
+              Device.synchronize device;
+              let expected =
+                Array.init (m * n) (fun i ->
+                    let r, c = (i / n, i mod n) in
+                    let acc = ref 0.0 in
+                    for j = 0 to k - 1 do
+                      acc :=
+                        !acc +. (a_data.((r * k) + j) *. b_data.((j * n) + c))
+                    done;
+                    !acc)
+              in
+              let buf = output_buffer binding buffer_map out in
+              equal (array (float 1e-6)) expected (read_f32 buf));
         ];
       group "Graph engine"
         [

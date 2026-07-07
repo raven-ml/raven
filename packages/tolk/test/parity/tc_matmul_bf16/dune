@@ -1,0 +1,23 @@
+(executable
+ (name main)
+ (libraries tolk tolk.uop tolk_parity_helpers))
+
+(rule
+ (package tolk)
+ (targets
+  stage5_cuda_sm80.actual
+  stage5_cuda_sm90.actual
+  stage7_cuda_sm80.actual
+  stage7_cuda_sm90.actual)
+ (action
+  (run ./main.exe .)))
+
+(rule
+ (alias runtest)
+ (package tolk)
+ (action
+  (progn
+   (diff stage5_cuda_sm80.expected stage5_cuda_sm80.actual)
+   (diff stage5_cuda_sm90.expected stage5_cuda_sm90.actual)
+   (diff stage7_cuda_sm80.expected stage7_cuda_sm80.actual)
+   (diff stage7_cuda_sm90.expected stage7_cuda_sm90.actual))))

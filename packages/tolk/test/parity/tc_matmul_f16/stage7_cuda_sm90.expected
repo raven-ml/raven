@@ -1,0 +1,34 @@
+#define INFINITY (__int_as_float(0x7f800000))
+#define NAN (__int_as_float(0x7fffffff))
+template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
+#include <cuda_fp16.h>
+struct __align__(16) half8 { half x, y, z, w, a, b, c, d; }; __device__ half8 make_half8(half x, half y, half z, half w, half a, half b, half c, half d) { half8 r={x, y, z, w, a, b, c, d}; return r; }
+struct __align__(8) half4 { half x, y, z, w; }; __device__ half4 make_half4(half x, half y, half z, half w) { half4 r={x, y, z, w}; return r; }
+__device__ float4 __WMMA_8_16_16_half_float(half8 a, half4 b, float4 c){
+  int *a_pk = (int *)(&a), *b_pk = (int *)(&b), *c_pk = (int *)(&c);
+  asm("mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32"
+      "{%0, %1, %2, %3}, {%4, %5, %6, %7},"
+      "{%8, %9}, {%0, %1, %2, %3};"
+    : "+r"(c_pk[0]), "+r"(c_pk[1]), "+r"(c_pk[2]), "+r"(c_pk[3])
+    : "r"(a_pk[0]), "r"(a_pk[1]), "r"(a_pk[2]), "r"(a_pk[3]), "r"(b_pk[0]), "r"(b_pk[1]));
+  return c;
+}
+extern "C" __global__ void __launch_bounds__(32) r_32_2_2_2n3(float* data0_128, half* data1_256, half* data2_128) {
+  int lidx0 = threadIdx.x; /* 32 */
+  int alu0 = (lidx0&3);
+  int alu1 = (lidx0>>2);
+  int alu2 = ((alu0<<4)+alu1);
+  half val0 = (*(data2_128+(alu2+8)));
+  half val1 = (*(data2_128+(alu2+64)));
+  half val2 = (*(data2_128+(alu2+72)));
+  half val3 = (*(data2_128+alu2));
+  int alu3 = ((alu1<<4)+(alu0<<1));
+  half2 val4 = (*((half2*)((data1_256+(alu3+8)))));
+  half2 val5 = (*((half2*)((data1_256+(alu3+128)))));
+  half2 val6 = (*((half2*)((data1_256+(alu3+136)))));
+  half2 val7 = (*((half2*)((data1_256+alu3))));
+  float4 wmma0 = __WMMA_8_16_16_half_float(make_half8(val7.x,val7.y,val5.x,val5.y,val4.x,val4.y,val6.x,val6.y), make_half4(val3,val0,val1,val2), make_float4(0.0f,0.0f,0.0f,0.0f));
+  int alu4 = (lidx0<<1);
+  *((float2*)((data0_128+(alu4+64)))) = make_float2(wmma0.z,wmma0.w);
+  *((float2*)((data0_128+alu4))) = make_float2(wmma0.x,wmma0.y);
+}
