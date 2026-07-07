@@ -198,6 +198,57 @@ let test_pass_through_output_survives () =
   check_arr ~msg:"second call's pass-through" [| 5.0; 6.0 |] r2.u;
   check_arr ~msg:"second call's computed output" [| 14.0; 16.0 |] r2.v
 
+(* Half precision on the GPU: eager (nx C kernels) vs CUDA-jitted half
+   graphs, and the astype-sandwich gradient under a CUDA jit. *)
+
+let sin_data n = Array.init n (fun i -> sin (float_of_int (i + 1)))
+let cos_data n = Array.init n (fun i -> 0.5 *. cos (float_of_int (i + 1)))
+let half_mat dt r c f = Nx.cast dt (Nx.create f32 [| r; c |] (f (r * c)))
+
+let check_half_on_cuda name ~eps f x =
+  let g = Rune.jit' ~device:"CUDA" f in
+  check_arr ~eps ~msg:(name ^ " first call") (to_arr (f x)) (g x);
+  check_arr ~eps ~msg:(name ^ " replay") (to_arr (f x)) (g x)
+
+let test_half_matmul_on_cuda (type b) name (dt : (float, b) Nx.dtype) ~eps () =
+  require_cuda ();
+  let b = half_mat dt 8 3 cos_data in
+  check_half_on_cuda name ~eps
+    (fun a -> Nx.matmul a b)
+    (half_mat dt 4 8 sin_data)
+
+let test_half_softmax_on_cuda (type b) name (dt : (float, b) Nx.dtype) ~eps ()
+    =
+  require_cuda ();
+  check_half_on_cuda name ~eps
+    (fun x ->
+      let e = Nx.exp x in
+      Nx.div e (Nx.sum e ~axes:[ 1 ] ~keepdims:true))
+    (half_mat dt 3 5 sin_data)
+
+(* fp32 params, half compute, fp32 loss: the gradient of the sandwich must
+   come out fp32 and match the all-fp32 gradient within the half dtype's
+   tolerance, under a CUDA jit. *)
+let test_half_sandwich_grad_on_cuda (type b) name (dt : (float, b) Nx.dtype)
+    ~tol () =
+  require_cuda ();
+  let x = Nx.create f32 [| 4; 3 |] (sin_data 12) in
+  let w = Nx.create f32 [| 3; 2 |] (cos_data 6) in
+  let sandwich w =
+    let xh = Nx.cast dt x and wh = Nx.cast dt w in
+    Nx.cast f32 (Nx.mean (Nx.tanh (Nx.matmul xh wh)))
+  in
+  let jitted = Rune.jit' ~device:"CUDA" (fun w -> Rune.grad' sandwich w) in
+  check_arr ~eps:(tol /. 4.0)
+    ~msg:(name ^ " cuda grad vs eager sandwich grad")
+    (to_arr (Rune.grad' sandwich w))
+    (jitted w);
+  let reference w = Nx.mean (Nx.tanh (Nx.matmul x w)) in
+  check_arr ~eps:tol
+    ~msg:(name ^ " cuda grad vs fp32 reference")
+    (to_arr (Rune.grad' reference w))
+    (jitted w)
+
 (* pmap on a duplicated CUDA device tuple: both shards run on the one GPU, so
    the whole multi-device path (per-shard uploads, per-device launches with
    [_device_num] bound, allreduce, gather on read) is exercised without a
@@ -240,6 +291,30 @@ let test_pmap_grad_allreduce_on_cuda () =
   let expect = Rune.jit' ~device:"CUDA" grads x in
   let g = Rune.pmap ~devices:cuda2 (module Single_f32) grads in
   check_arr ~msg:"grad inside pmap on cuda" (to_arr expect) (g x)
+
+module Single_bf16 = struct
+  type t = Nx.bfloat16_t
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t = f t
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
+    f a b
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t = f t
+end
+
+(* Reducing over the sharded axis allreduces at bfloat16: each shard's
+   partial sum is rounded to bfloat16 before the combine, so allow a couple
+   of ulps against the single-device result. *)
+let test_pmap_bf16_allreduce_on_cuda () =
+  require_cuda ();
+  let f x = Nx.sum x ~axes:[ 0 ] in
+  let x = half_mat Nx.bfloat16 4 6 sin_data in
+  let expect = Rune.jit' ~device:"CUDA" f x in
+  let g = Rune.pmap ~devices:cuda2 (module Single_bf16) f in
+  check_arr ~eps:0.0625 ~msg:"bf16 allreduce vs single device" (to_arr expect)
+    (g x);
+  check_arr ~eps:0.0625 ~msg:"replay" (to_arr expect) (g x)
 
 let test_pmap_feedback_on_cuda () =
   require_cuda ();
@@ -349,11 +424,28 @@ let tests =
         test "captures upload once across signatures"
           test_capture_uploaded_once_across_signatures;
       ];
+    group "cuda half"
+      [
+        test "float16 matmul matches eager"
+          (test_half_matmul_on_cuda "float16" Nx.float16 ~eps:0.01);
+        test "bfloat16 matmul matches eager"
+          (test_half_matmul_on_cuda "bfloat16" Nx.bfloat16 ~eps:0.07);
+        test "float16 softmax matches eager"
+          (test_half_softmax_on_cuda "float16" Nx.float16 ~eps:0.002);
+        test "bfloat16 softmax matches eager"
+          (test_half_softmax_on_cuda "bfloat16" Nx.bfloat16 ~eps:0.016);
+        test "float16 sandwich grad is fp32"
+          (test_half_sandwich_grad_on_cuda "float16" Nx.float16 ~tol:0.005);
+        test "bfloat16 sandwich grad is fp32"
+          (test_half_sandwich_grad_on_cuda "bfloat16" Nx.bfloat16 ~tol:0.02);
+      ];
     group "cuda pmap"
       [
         test "duplicated device tuple matches jit" test_pmap_matches_jit_on_cuda;
         test "grad inside pmap allreduces on one gpu"
           test_pmap_grad_allreduce_on_cuda;
+        test "bf16 allreduce matches single device"
+          test_pmap_bf16_allreduce_on_cuda;
         test "feedback moves no bytes" test_pmap_feedback_on_cuda;
       ];
     group "cuda donation"

@@ -10,7 +10,8 @@
   test_jacobian
   test_control
   test_jit
-  test_pmap)
+  test_pmap
+  test_half)
  (modules
   test_grad
   test_ops
@@ -22,7 +23,8 @@
   test_jacobian
   test_control
   test_jit
-  test_pmap)
+  test_pmap
+  test_half)
  (package rune)
  (libraries rune nx nx.core unix windtrap rune_test_support))
 

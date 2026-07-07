@@ -588,6 +588,29 @@ let safetensors_roundtrip (type a b) (dt : (a, b) Nx.dtype) (t : (a, b) Nx.t) =
       let archive = Nx_io.load_safetensors path in
       Hashtbl.find archive "t" |> Nx_io.to_typed dt)
 
+let test_safetensors_half_values_roundtrip () =
+  (* Varied magnitudes, all exactly representable at both half dtypes, so the
+     round-trip must be exact. *)
+  let values = [| 0.0; -0.5; 1.5; -384.0; 0.00390625; 3.0 |] in
+  let f16_data = Nx.create Nx.float16 [| 2; 3 |] values in
+  let f16_loaded = safetensors_roundtrip Nx.float16 f16_data in
+  equal ~msg:"float16 values exact" (array (float 0.0)) values
+    (Nx.to_array f16_loaded);
+  let bf16_data = Nx.create Nx.bfloat16 [| 2; 3 |] values in
+  let bf16_loaded = safetensors_roundtrip Nx.bfloat16 bf16_data in
+  equal ~msg:"bfloat16 values exact" (array (float 0.0)) values
+    (Nx.to_array bf16_loaded)
+
+let test_safetensors_rank0_half () =
+  let f16_scalar = Nx.scalar Nx.float16 (-2.5) in
+  let f16_loaded = safetensors_roundtrip Nx.float16 f16_scalar in
+  equal ~msg:"rank-0 float16 shape" (array int) [||] (Nx.shape f16_loaded);
+  equal ~msg:"rank-0 float16 value" (float 0.0) (-2.5) (Nx.item [] f16_loaded);
+  let bf16_scalar = Nx.scalar Nx.bfloat16 1.5 in
+  let bf16_loaded = safetensors_roundtrip Nx.bfloat16 bf16_scalar in
+  equal ~msg:"rank-0 bfloat16 shape" (array int) [||] (Nx.shape bf16_loaded);
+  equal ~msg:"rank-0 bfloat16 value" (float 0.0) 1.5 (Nx.item [] bf16_loaded)
+
 let test_safetensors_rank0_roundtrip () =
   let scalar = Nx.scalar Nx.float32 42.5 in
   let loaded = safetensors_roundtrip Nx.float32 scalar in
@@ -706,6 +729,8 @@ let () =
           test "Float16 bit exact" test_safetensors_float16_bit_exact;
           test "Bfloat16 round-trip" test_safetensors_bfloat16_roundtrip;
           test "Bfloat16 bit exact" test_safetensors_bfloat16_bit_exact;
+          test "Half values round-trip" test_safetensors_half_values_roundtrip;
+          test "Rank-0 half round-trip" test_safetensors_rank0_half;
           test "Rank-0 float32 round-trip" test_safetensors_rank0_roundtrip;
           test "Rank-0 int64 round-trip" test_safetensors_rank0_int64;
           test "Int64 round-trip" test_safetensors_int64_roundtrip;
