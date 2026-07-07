@@ -130,72 +130,18 @@ let make cfg =
     ln_f = Layer_norm.init ~dim:cfg.n_embd;
   }
 
-(* Forward pass (inference: dropout omitted).
-
-   The whole-sequence path avoids [~keepdims:true] reductions: Rune's
-   multi-device engine currently cannot differentiate through them under
-   [Rune.pmap] (tolk fails with "buffer_like: unknown shape" while lowering
-   the backward graph), and this path is the one data-parallel training
-   compiles. [keep_last] — reduce without keepdims, reshape the axis back —
-   is the same arithmetic with explicit shape plumbing; [layer_norm] and
-   [attention] otherwise mirror [Kaun.Layer_norm.apply] and
-   [Kaun.Attention.apply] operation for operation. The cached decode path
-   below is never differentiated and keeps the stock kaun layers. *)
-
-let keep_last reduce x =
-  let s = Array.copy (Nx.shape x) in
-  s.(Array.length s - 1) <- 1;
-  Nx.reshape s (reduce x)
-
-let layer_norm ~eps (p : Layer_norm.t) x =
-  let mu = keep_last (Nx.mean ~axes:[ -1 ]) x in
-  let xc = Nx.sub x mu in
-  let var = keep_last (Nx.mean ~axes:[ -1 ]) (Nx.mul xc xc) in
-  let normalized = Nx.div xc (Nx.sqrt (Nx.add_s var eps)) in
-  Nx.add (Nx.mul normalized p.gamma) p.beta
-
-let softmax x =
-  let e = Nx.exp (Nx.sub x (keep_last (Nx.max ~axes:[ -1 ]) x)) in
-  Nx.div e (keep_last (Nx.sum ~axes:[ -1 ]) e)
-
-let attention ~num_heads (p : Attention.t) x =
-  let shape = Nx.shape x in
-  let rank = Array.length shape in
-  let embed = shape.(rank - 1) in
-  let head_dim = embed / num_heads in
-  let seq = shape.(rank - 2) in
-  let split t =
-    let s =
-      Array.append (Array.sub shape 0 (rank - 1)) [| num_heads; head_dim |]
-    in
-    Nx.swapaxes (rank - 2) (rank - 1) (Nx.reshape s t)
-  in
-  let merge t =
-    Nx.reshape shape (Nx.contiguous (Nx.swapaxes (rank - 2) (rank - 1) t))
-  in
-  let q = split (Linear.apply p.Attention.q x) in
-  let k = split (Linear.apply p.Attention.k x) in
-  let v = split (Linear.apply p.Attention.v x) in
-  (* [mask.(i).(j)] is [j <= i]: query [i] sees keys up to itself. *)
-  let idx = Nx.arange Nx.int32 0 seq 1 in
-  let mask =
-    Nx.less_equal (Nx.reshape [| 1; seq |] idx) (Nx.reshape [| seq; 1 |] idx)
-  in
-  let scale = 1.0 /. sqrt (float_of_int head_dim) in
-  let scores = Nx.mul_s (Nx.matmul q (Nx.swapaxes 2 3 k)) scale in
-  let scores =
-    Nx.where mask scores (Nx.scalar_like scores Float.neg_infinity)
-  in
-  Linear.apply p.Attention.out (merge (Nx.matmul (softmax scores) v))
+(* Forward pass (inference: dropout omitted) *)
 
 let block_apply cfg b x =
   let eps = cfg.layer_norm_eps in
   let x =
-    Nx.add x (attention ~num_heads:cfg.n_head b.attn (layer_norm ~eps b.ln1 x))
+    Nx.add x
+      (Attention.apply ~num_heads:cfg.n_head ~causal:true b.attn
+         (Layer_norm.apply ~eps b.ln1 x))
   in
   Nx.add x
     (Linear.apply b.proj
-       (Fn.gelu_approx (Linear.apply b.fc (layer_norm ~eps b.ln2 x))))
+       (Fn.gelu_approx (Linear.apply b.fc (Layer_norm.apply ~eps b.ln2 x))))
 
 let logits cfg p ids =
   let seq = (Nx.shape ids).(1) in
@@ -205,7 +151,7 @@ let logits cfg p ids =
   let pos = Nx.reshape [| 1; seq |] (Nx.arange Nx.int32 0 seq 1) in
   let x = Nx.add (Embedding.apply p.wte ids) (Embedding.apply p.wpe pos) in
   let x = List.fold_left (fun x b -> block_apply cfg b x) x p.blocks in
-  let h = layer_norm ~eps:cfg.layer_norm_eps p.ln_f x in
+  let h = Layer_norm.apply ~eps:cfg.layer_norm_eps p.ln_f x in
   (* Tied LM head: logits = h @ wteᵀ. *)
   Nx.matmul h (Nx.transpose p.wte.table)
 

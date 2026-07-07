@@ -107,31 +107,13 @@ let batch_of_ids ids =
     Nx.create Nx.int32 [| batch_size * seq_len |] (take 1) )
 
 (* Loss: mean cross-entropy over all positions — log-softmax over the vocab
-   axis, NLL of the target id, mean. Like the model forward (see gpt2.ml),
-   the log-softmax avoids [~keepdims:true] reductions, which Rune's
-   multi-device engine cannot yet differentiate through under [Rune.pmap];
-   reducing plainly and reshaping the axis back is the same arithmetic. *)
+   axis, NLL of the target id, mean. *)
 let loss_fn inputs targets params =
   let logits = Gpt2.logits gpt2_124m params inputs in
   let logits =
     Nx.reshape [| batch_size * seq_len; gpt2_124m.vocab_size |] logits
   in
-  let keep_last reduce x =
-    let s = Array.copy (Nx.shape x) in
-    s.(Array.length s - 1) <- 1;
-    Nx.reshape s (reduce x)
-  in
-  let shifted = Nx.sub logits (keep_last (Nx.max ~axes:[ -1 ]) logits) in
-  let log_den =
-    keep_last (fun x -> Nx.log (Nx.sum ~axes:[ -1 ] (Nx.exp x))) shifted
-  in
-  let log_probs = Nx.sub shifted log_den in
-  let picked =
-    Nx.take_along_axis ~axis:(-1)
-      (Nx.expand_dims [ -1 ] targets)
-      log_probs
-  in
-  Nx.mean (Nx.neg (Nx.squeeze ~axes:[ -1 ] picked))
+  Loss.softmax_cross_entropy_sparse logits targets
 
 (* The jitted step returns the updated parameters and the pre-update loss. *)
 module Step_out = struct

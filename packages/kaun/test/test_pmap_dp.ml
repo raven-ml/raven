@@ -10,15 +10,7 @@
    reduction order (the cross-device gradient allreduce reorders the batch
    sum). A momentum run checks that replicated optimizer state threaded
    through the pmapped step stays coherent across devices. Runs on CPU device
-   instances; no pretrained weights involved.
-
-   The attention softmax, layer norm and cross-entropy are written without
-   [~keepdims:true] reductions (reduce, then reshape the axis back — the same
-   arithmetic): Rune's multi-device engine currently fails to differentiate
-   through keepdims reductions under pmap (tolk raises "buffer_like: unknown
-   shape" while lowering the backward graph), which is also why this test
-   cannot call [Attention.apply], [Layer_norm.apply] or
-   [Loss.softmax_cross_entropy_sparse] directly yet. *)
+   instances; no pretrained weights involved. *)
 
 open Windtrap
 open Kaun
@@ -81,61 +73,13 @@ let tgt_init () =
   Nx.create Nx.int32 [| batch; seq |]
     (Array.init (batch * seq) (fun i -> Int32.of_int ((i * 5) mod vocab)))
 
-(* Keepdims-free layer norm, causal attention and sparse cross-entropy,
-   mirroring [Layer_norm.apply], [Attention.apply] and
-   [Loss.softmax_cross_entropy_sparse] operation for operation. *)
-
-let keep_last reduce x =
-  let s = Array.copy (Nx.shape x) in
-  s.(Array.length s - 1) <- 1;
-  Nx.reshape s (reduce x)
-
-let layer_norm (p : Layer_norm.t) x =
-  let mu = keep_last (Nx.mean ~axes:[ -1 ]) x in
-  let xc = Nx.sub x mu in
-  let var = keep_last (Nx.mean ~axes:[ -1 ]) (Nx.mul xc xc) in
-  Nx.add (Nx.mul (Nx.div xc (Nx.sqrt (Nx.add_s var 1e-5))) p.gamma) p.beta
-
-let softmax x =
-  let e = Nx.exp (Nx.sub x (keep_last (Nx.max ~axes:[ -1 ]) x)) in
-  Nx.div e (keep_last (Nx.sum ~axes:[ -1 ]) e)
-
-let attention ~num_heads (p : Attention.t) x =
-  let shape = Nx.shape x in
-  let head_dim = dim / num_heads in
-  let split t =
-    Nx.swapaxes 1 2 (Nx.reshape [| batch; seq; num_heads; head_dim |] t)
-  in
-  let merge t = Nx.reshape shape (Nx.contiguous (Nx.swapaxes 1 2 t)) in
-  let q = split (Linear.apply p.Attention.q x) in
-  let k = split (Linear.apply p.Attention.k x) in
-  let v = split (Linear.apply p.Attention.v x) in
-  let idx = Nx.arange Nx.int32 0 seq 1 in
-  let mask =
-    Nx.less_equal (Nx.reshape [| 1; seq |] idx) (Nx.reshape [| seq; 1 |] idx)
-  in
-  let scale = 1.0 /. sqrt (float_of_int head_dim) in
-  let scores = Nx.mul_s (Nx.matmul q (Nx.swapaxes 2 3 k)) scale in
-  let scores =
-    Nx.where mask scores (Nx.scalar_like scores Float.neg_infinity)
-  in
-  Linear.apply p.Attention.out (merge (Nx.matmul (softmax scores) v))
-
-let cross_entropy logits tgt =
-  let shifted = Nx.sub logits (keep_last (Nx.max ~axes:[ -1 ]) logits) in
-  let log_den =
-    keep_last (fun x -> Nx.log (Nx.sum ~axes:[ -1 ] (Nx.exp x))) shifted
-  in
-  let picked =
-    Nx.take_along_axis ~axis:(-1)
-      (Nx.expand_dims [ -1 ] tgt)
-      (Nx.sub shifted log_den)
-  in
-  Nx.mean (Nx.neg (Nx.squeeze ~axes:[ -1 ] picked))
-
 let loss_fn x tgt m =
-  let h = Nx.add x (attention ~num_heads:2 m.attn (layer_norm m.ln x)) in
-  cross_entropy (Linear.apply m.head h) tgt
+  let h =
+    Nx.add x
+      (Attention.apply ~num_heads:2 ~causal:true m.attn
+         (Layer_norm.apply m.ln x))
+  in
+  Loss.softmax_cross_entropy_sparse (Linear.apply m.head h) tgt
 
 (* Step structures for pmap2: the batch joins the parameters (and, for the
    momentum run, the velocity) as leaves so it can be sharded on axis 0 while
