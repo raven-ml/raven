@@ -37,6 +37,46 @@ let broadcasted ?(reverse = false) a b =
 
 let () = T.broadcasted_hook := fun ~reverse a b -> broadcasted ~reverse a b
 
+(* In-place assignment. The write is a STORE effect on the destination graph,
+   sequenced with AFTER so that reads of the destination depend on it. When
+   the destination is a view of a buffer, the AFTER is embedded at the
+   buffer-identity level of the view chain and every live tensor aliasing
+   that buffer is repointed, so they all observe the write. *)
+
+let assign t x =
+  if T.uop t == T.uop x then t
+  else begin
+    (* Broadcast the value's shape only; the dtype must already match. *)
+    let x = Movement.broadcast_to x (T.shape t) in
+    (match (T.device t, T.device x) with
+    | Some dt, Some dx when dt <> dx ->
+        invalid_arg "Op.assign: device mismatch"
+    | _ -> ());
+    if not (D.equal (T.dtype t) (T.dtype x)) then
+      invalid_arg "Op.assign: dtype mismatch";
+    let dst = T.uop t in
+    let assigned =
+      Uop.after ~src:dst ~deps:[ Uop.store ~dst ~value:(T.uop x) () ]
+    in
+    let base = Uop.base dst in
+    let is_view_of_buffer =
+      (match Uop.op base with Ops.Buffer | Ops.After -> true | _ -> false)
+      && dst != base
+      && not (Uop.has_buffer_identity dst)
+    in
+    if is_view_of_buffer then begin
+      (* Embed the write at the buffer-identity level so every alias of the
+         buffer sees it. *)
+      let ib = ref dst in
+      while (not (Uop.has_buffer_identity !ib)) && !ib != base do
+        ib := (Uop.src !ib).(0)
+      done;
+      T.apply_map [ (!ib, Uop.after ~src:!ib ~deps:[ assigned ]) ]
+    end
+    else T.set_uop t assigned;
+    t
+  end
+
 (* Composed reductions *)
 
 let reduced_count t ?axis () =
@@ -60,6 +100,14 @@ let var ?axis ?(keepdim = false) ?(correction = 1) t =
 
 let std ?axis ?keepdim ?correction t =
   Elementwise.sqrt (var ?axis ?keepdim ?correction t)
+
+let layernorm ?(axis = [ -1 ]) ?(eps = 1e-5) t =
+  let y = Elementwise.sub t (mean ~axis ~keepdim:true t) in
+  Elementwise.mul y
+    (Elementwise.rsqrt
+       (Elementwise.add
+          (mean ~axis ~keepdim:true (Elementwise.mul y y))
+          (T.f eps)))
 
 (* Concatenation *)
 
@@ -861,6 +909,43 @@ let softmax ?(axis = -1) ?dtype t =
 let log_softmax ?(axis = -1) ?dtype t =
   let m, _, ss = softmax_parts ?dtype axis t in
   Elementwise.sub m (Elementwise.log ss)
+
+(* Attention *)
+
+let scaled_dot_product_attention ?attn_mask ?(is_causal = false) q k v =
+  let d = List.nth (T.shape q) (T.ndim q - 1) in
+  let acc_dt =
+    D.Val.least_upper_dtype [ T.val_dtype q; T.val_dtype k; D.Val.float32 ]
+  in
+  let qk =
+    Elementwise.div
+      (matmul ~dtype:acc_dt q (Movement.transpose ~dim0:(-2) ~dim1:(-1) k))
+      (T.f (Float.sqrt (float_of_int d)))
+  in
+  let attn_mask =
+    if is_causal then begin
+      if attn_mask <> None then
+        invalid_arg
+          "Op.scaled_dot_product_attention: attn_mask cannot be combined \
+           with is_causal";
+      Some
+        (tril
+           (Dtype_ops.cast (Creation.const_like qk (T.Sint 1)) (D.Val D.Val.bool)))
+    end
+    else attn_mask
+  in
+  let qk =
+    match attn_mask with
+    | None -> qk
+    | Some m ->
+        let m =
+          if D.is_bool (T.dtype m) then
+            Elementwise.where m (T.f 0.) (T.f Float.neg_infinity)
+          else m
+        in
+        Elementwise.add qk m
+  in
+  matmul (softmax ~axis:(-1) (Dtype_ops.cast qk (T.dtype q))) v
 
 let logcumsumexp ?(axis = 0) t =
   if T.ndim t = 0 then t

@@ -26,13 +26,6 @@ let device_name = "CPU:0"
    buffer kept keyed by the [Ops.Buffer] node's tag so realization can bind it.
    Realized outputs are cached the same way so a second read does not recompute
    an already-materialised value. *)
-let next_slot = ref 0
-
-let fresh_slot () =
-  let s = !next_slot in
-  incr next_slot;
-  s
-
 let host_buffers : (int, Tolk.Device.Buffer.t) Hashtbl.t = Hashtbl.create 64
 let output_buffers : (int, Tolk.Device.Buffer.t) Hashtbl.t = Hashtbl.create 64
 
@@ -44,7 +37,7 @@ let make_input ~dtype ~shape n fill =
   fill bytes;
   Tolk.Device.Buffer.copyin buf bytes;
   let node =
-    U.buffer ~slot:(fresh_slot ()) ~dtype ~shape:(T.shape_uop [ n ])
+    U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype ~shape:(T.shape_uop [ n ])
       ~device:(U.Single device_name) ()
   in
   Hashtbl.replace host_buffers (U.tag node) buf;
@@ -63,9 +56,12 @@ let of_int_array ~shape data =
         data)
 
 (* Realize a batch of tensors: lower the shared graph to a linear schedule,
-   seed the host inputs, execute, then rebind each tensor onto its output
-   buffer. Only the passed tensors are rebound (shared subgraphs in other live
-   tensors will recompute on a later realize; see the deferral note in the
+   seed the host inputs and previously realized buffers, execute, then rebind
+   each tensor onto its output buffer. Scheduled nodes appearing in other live
+   tensors — in particular the write effects embedded by [Op.assign] — are
+   rebound onto their storage through [Tensor.apply_map], so an assignment
+   executes once and later reads reuse the written buffer. Other shared
+   subgraphs recompute on a later realize (see the deferral note in the
    frontend changelog). *)
 let realize_buffers ts =
   let dev = device () in
@@ -75,6 +71,17 @@ let realize_buffers ts =
   let outs = List.map (fun t -> U.contiguous ~src:(T.uop t) ()) ts in
   let sink = U.sink outs in
   let call, buffer_map = Tolk.Allocations.transform_to_call sink in
+  (* Rebind every scheduled node still referenced by a live tensor onto its
+     final storage before executing, as the reference frontend does. *)
+  let mappings =
+    List.filter_map
+      (fun n ->
+        match Hashtbl.find_opt buffer_map (U.tag n) with
+        | Some v when v != n -> Some (n, v)
+        | _ -> None)
+      (U.toposort sink)
+  in
+  T.apply_map mappings;
   let linear, var_vals =
     Tolk.Schedule.create_linear_with_vars
       ~get_kernel_graph:Tolk.Rangeify.get_kernel_graph call
@@ -82,20 +89,45 @@ let realize_buffers ts =
   let binding = Tolk.Realize.Buffers.create ~device:dev in
   List.iter
     (fun node ->
-      match Hashtbl.find_opt host_buffers (U.tag node) with
-      | Some buf -> Tolk.Realize.Buffers.seed binding node buf
-      | None -> ())
+      match
+        (Hashtbl.find_opt host_buffers (U.tag node),
+         Hashtbl.find_opt output_buffers (U.tag node))
+      with
+      | Some buf, _ | None, Some buf ->
+          Tolk.Realize.Buffers.seed binding node buf
+      | None, None -> ())
     (U.toposort sink);
   Tolk.Realize.run_linear ~device:dev ~to_program binding ~var_vals linear;
+  (* Persist the storage of every rebound node so the next realize seeds it
+     instead of recomputing (or, worse, reallocating it empty). *)
+  List.iter
+    (fun (_, v) ->
+      let b = U.buf_uop v in
+      match Tolk.Realize.Buffers.find_opt binding b with
+      | Some buf -> Hashtbl.replace output_buffers (U.tag b) buf
+      | None -> ())
+    mappings;
   List.map2
     (fun t out ->
       match Hashtbl.find_opt buffer_map (U.tag out) with
       | Some node ->
-          let buf = Tolk.Realize.Buffers.of_buffer_node binding node in
+          let buf =
+            Tolk.Realize.Buffers.of_buffer_node binding (U.buf_uop node)
+          in
           T.set_uop t node;
           Hashtbl.replace output_buffers (U.tag node) buf;
           buf
-      | None -> failwith "Run.realize: tensor was not scheduled to a buffer")
+      | None -> (
+          (* Nothing was scheduled: the tensor is already materialised (its
+             node has buffer identity), so resolve its backing buffer. *)
+          let b = U.buf_uop out in
+          match
+            (Hashtbl.find_opt output_buffers (U.tag b),
+             Hashtbl.find_opt host_buffers (U.tag b))
+          with
+          | Some buf, _ | None, Some buf -> buf
+          | None, None ->
+              failwith "Run.realize: tensor was not scheduled to a buffer"))
     ts outs
 
 let realize_many ts = ignore (realize_buffers ts)

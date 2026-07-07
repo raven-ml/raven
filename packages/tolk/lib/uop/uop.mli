@@ -680,6 +680,16 @@ val buffer :
     {!Ops.Buffer} carrying {!param_arg} and exactly one shape child. [shape]
     defaults to {!shape_to_shape_arg} [None]. Tensor. *)
 
+val fresh_buffer_slot : unit -> int
+(** [fresh_buffer_slot ()] draws the next process-unique buffer slot. Two
+    buffers with the same slot, dtype, shape, and device hash-cons to the same
+    node, so every distinct allocation must draw a fresh slot. *)
+
+val reserve_buffer_slots : int -> unit
+(** [reserve_buffer_slots n] raises the {!fresh_buffer_slot} counter so that
+    subsequent draws are at least [n]. Call it before allocating alongside a
+    graph whose buffers were numbered by hand. *)
+
 val stage : src:t -> ranges:t list -> opts:stage_opts -> t
 (** [stage ~src ~ranges ~opts] materialises [src] into a staged value
     indexed by loop [ranges]. Dtype is inherited from [src]. Kernel. *)
@@ -1254,12 +1264,14 @@ val remove_all_tags : t -> t
     operations, dtypes, payloads, side {!metadata}, and children modulo
     tag-stripped rebuilding. *)
 
-val substitute : (t * t) list -> t -> t
-(** [substitute mappings root] rewrites [root] replacing every
+val substitute : ?walk:bool -> (t * t) list -> t -> t
+(** [substitute ?walk mappings root] rewrites [root] replacing every
     occurrence of the first component of each pair with the second.
     Bottom-up; performed via {!graph_rewrite} with the default
     no-enter-calls traversal. Lookup in [mappings] uses physical
-    equality. *)
+    equality. [walk] defaults to [false]; when [true] replacement
+    values are final: they are not traversed by the same pass, so a
+    value may contain its own key without cycling. *)
 
 val first_match : (t -> t option) list -> t -> t option
 (** [first_match rules u] returns the first [Some _] result when

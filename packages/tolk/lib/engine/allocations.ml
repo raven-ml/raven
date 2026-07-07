@@ -266,7 +266,6 @@ type ctx = {
   tags : (int, int list) Hashtbl.t;
   shapes : U.t -> int list option;
   devices : U.t -> U.device option;
-  mutable uid : int;
 }
 
 (* Tag side-table *)
@@ -344,11 +343,9 @@ let buffer_like ctx src dtype =
     | Some ax when ndev > 1 ->
         List.mapi (fun i d -> if i = ax then d / ndev else d) shape
     | _ -> shape in
-  let uid = ctx.uid in
-  ctx.uid <- ctx.uid + 1;
   let buf =
-    U.buffer ~slot:uid ~device:dev ~shape:(shape_node shard_shape)
-      ~addrspace:D.Global ~dtype ()
+    U.buffer ~slot:(U.fresh_buffer_slot ()) ~device:dev
+      ~shape:(shape_node shard_shape) ~addrspace:D.Global ~dtype ()
   in
   (* Shrink to actual shard shape when it differs from max shard shape.
      For evenly divisible axes this is a no-op. *)
@@ -593,16 +590,18 @@ let transform_to_call (big_sink : U.t) : U.t * (int, U.t) Hashtbl.t =
            Hashtbl.replace bases (U.tag (multibase x)) ())
          (U.children big_sink)
    | _ -> ());
-  let uid_start =
-    List.fold_left (fun acc x ->
-        match U.as_buffer x, U.as_param x with
-        | Some { buffer = { slot; _ }; _ }, _
-        | None, Some { param = { slot; _ }; _ }
-          when slot >= 0 ->
-            max acc (slot + 1)
-        | _ -> acc)
-      0 (U.toposort big_sink)
-  in
+  (* Fresh allocations must not collide with buffers already numbered by
+     hand in this graph; the slot counter itself is process-global so node
+     identities stay unique across calls. *)
+  U.reserve_buffer_slots
+    (List.fold_left (fun acc x ->
+         match U.as_buffer x, U.as_param x with
+         | Some { buffer = { slot; _ }; _ }, _
+         | None, Some { param = { slot; _ }; _ }
+           when slot >= 0 ->
+             max acc (slot + 1)
+         | _ -> acc)
+       0 (U.toposort big_sink));
   let ctx = {
     uop_tbl = Hashtbl.create 64;
     uop_count = 0;
@@ -614,7 +613,6 @@ let transform_to_call (big_sink : U.t) : U.t * (int, U.t) Hashtbl.t =
     tags = Hashtbl.create 64;
     shapes;
     devices;
-    uid = uid_start;
   } in
   (* Phase 1: number the nodes that need realization. *)
   let big_sink =

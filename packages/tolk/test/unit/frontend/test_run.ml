@@ -14,6 +14,7 @@ module El = Tolk_frontend.Elementwise
 module Rd = Tolk_frontend.Reduce
 module Op = Tolk_frontend.Op
 module Dt = Tolk_frontend.Dtype_ops
+module Creation = Tolk_frontend.Creation
 module Run = Tolk_frontend.Run
 
 let fa ~shape data = Run.of_float_array ~shape data
@@ -265,6 +266,224 @@ let sort_tests =
           check_ints [| 0; 4 |] i);
     ]
 
+(* Values may be infinite; [close] is NaN on two infinities of the same
+   sign, so compare those for equality instead. *)
+let check_floats_inf expected t =
+  let got = Run.to_float_array t in
+  equal int (Array.length expected) (Array.length got);
+  Array.iteri
+    (fun i e ->
+      let ok =
+        if Float.is_finite e then close e got.(i) else e = got.(i)
+      in
+      if not ok then failf "element %d: expected %g, got %g" i e got.(i))
+    expected
+
+let stack_tests =
+  group "stack"
+    [
+      test "stack along new leading axis" (fun () ->
+          let a = fa ~shape:[ 2; 2 ] [| 1.; 2.; 3.; 4. |] in
+          let b = fa ~shape:[ 2; 2 ] [| 5.; 6.; 7.; 8. |] in
+          check_floats [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |] (Op.stack a [ b ]));
+      test "stack along inner axis" (fun () ->
+          let a = vec [| 1.; 2. |] and b = vec [| 3.; 4. |] in
+          check_floats [| 1.; 3.; 2.; 4. |] (Op.stack ~dim:1 a [ b ]));
+    ]
+
+let triu_tests =
+  group "triu"
+    [
+      test "triu main diagonal" (fun () ->
+          check_floats
+            [| 1.; 2.; 3.; 0.; 5.; 6.; 0.; 0.; 9. |]
+            (Op.triu (fa ~shape:[ 3; 3 ] (Array.init 9 (fun i -> float_of_int (i + 1))))));
+      test "triu positive diagonal" (fun () ->
+          check_floats
+            [| 0.; 2.; 3.; 0.; 0.; 6.; 0.; 0.; 0. |]
+            (Op.triu ~diagonal:1
+               (fa ~shape:[ 3; 3 ] (Array.init 9 (fun i -> float_of_int (i + 1))))));
+      test "triu negative diagonal" (fun () ->
+          check_floats
+            [| 1.; 2.; 3.; 4.; 5.; 6.; 0.; 8.; 9. |]
+            (Op.triu ~diagonal:(-1)
+               (fa ~shape:[ 3; 3 ] (Array.init 9 (fun i -> float_of_int (i + 1))))));
+      test "full neg-infinity causal mask" (fun () ->
+          let mask =
+            Op.triu ~diagonal:1
+              (Creation.full [ 2; 2 ] (T.Sfloat Float.neg_infinity))
+          in
+          check_floats_inf
+            [| 1.; Float.neg_infinity; 3.; 4. |]
+            (El.add (fa ~shape:[ 2; 2 ] [| 1.; 2.; 3.; 4. |]) mask));
+    ]
+
+let assign_tests =
+  group "assign"
+    [
+      test "assign whole tensor in place" (fun () ->
+          let t = vec [| 1.; 2.; 3. |] in
+          ignore (Run.realize t);
+          ignore (Run.realize (Op.assign t (vec [| 4.; 5.; 6. |])));
+          check_floats [| 4.; 5.; 6. |] t);
+      test "assign broadcasts the value" (fun () ->
+          let t = fa ~shape:[ 2; 3 ] (Array.make 6 0.) in
+          ignore (Run.realize (Op.assign t (vec [| 1.; 2.; 3. |])));
+          check_floats [| 1.; 2.; 3.; 1.; 2.; 3. |] t);
+      test "assign dtype mismatch raises" (fun () ->
+          raises_match
+            (function Invalid_argument _ -> true | _ -> false)
+            (fun () ->
+              Op.assign (vec [| 1. |]) (Run.of_int_array ~shape:[ 1 ] [| 1 |])));
+      test "assign to shrunk view then read back (kv cache)" (fun () ->
+          (* cache is (2, bsz=1, ctx=4, heads=2, head_dim=3); write positions
+             1..2 with the stack of xk and xv, as a transformer kv-cache
+             update does, then read the whole cache and a keys slice back. *)
+          let cache = fa ~shape:[ 2; 1; 4; 2; 3 ] (Array.make 48 0.) in
+          ignore (Run.realize cache);
+          let xk =
+            fa ~shape:[ 1; 2; 2; 3 ] (Array.init 12 (fun i -> float_of_int (i + 1)))
+          in
+          let xv =
+            fa ~shape:[ 1; 2; 2; 3 ]
+              (Array.init 12 (fun i -> float_of_int (i + 13)))
+          in
+          let view =
+            Op.getitem cache
+              [ Mv.All; Mv.All; Mv.R (Some 1, Some 3, None); Mv.All; Mv.All ]
+          in
+          ignore (Run.realize (Op.assign view (Op.stack xk [ xv ])));
+          let expected = Array.make 48 0. in
+          for pos = 0 to 1 do
+            for h = 0 to 1 do
+              for c = 0 to 2 do
+                let src = (((pos * 2) + h) * 3) + c in
+                expected.((((1 + pos) * 2 + h) * 3) + c) <-
+                  float_of_int (src + 1);
+                expected.((((4 + 1 + pos) * 2 + h) * 3) + c) <-
+                  float_of_int (src + 13)
+              done
+            done
+          done;
+          check_floats expected cache;
+          (* keys = cache[0][:, :3, :, :]: position 0 still zero, then xk. *)
+          let keys =
+            Op.getitem
+              (Op.getitem cache [ Mv.I 0 ])
+              [ Mv.All; Mv.R (None, Some 3, None); Mv.All; Mv.All ]
+          in
+          let expected_keys = Array.make 18 0. in
+          Array.blit expected 6 expected_keys 6 12;
+          check_floats expected_keys keys);
+      test "sequential view assigns accumulate" (fun () ->
+          let cache = fa ~shape:[ 2; 1; 4; 2; 3 ] (Array.make 48 0.) in
+          ignore (Run.realize cache);
+          let step start v =
+            let xk = fa ~shape:[ 1; 1; 2; 3 ] (Array.make 6 v) in
+            let xv = fa ~shape:[ 1; 1; 2; 3 ] (Array.make 6 (v +. 0.5)) in
+            let view =
+              Op.getitem cache
+                [
+                  Mv.All; Mv.All;
+                  Mv.R (Some start, Some (start + 1), None);
+                  Mv.All; Mv.All;
+                ]
+            in
+            ignore (Run.realize (Op.assign view (Op.stack xk [ xv ])))
+          in
+          step 0 1.;
+          step 1 2.;
+          let expected = Array.make 48 0. in
+          for h = 0 to 5 do
+            expected.(h) <- 1.;
+            expected.(6 + h) <- 2.;
+            expected.(24 + h) <- 1.5;
+            expected.(30 + h) <- 2.5
+          done;
+          check_floats expected cache);
+    ]
+
+let attention_tests =
+  let q () = fa ~shape:[ 2; 3 ] [| 0.1; 0.2; 0.3; -0.1; 0.4; 0.5 |] in
+  let k () = fa ~shape:[ 2; 3 ] [| 0.5; 0.1; -0.2; 0.3; 0.9; 0.4 |] in
+  let v () = fa ~shape:[ 2; 3 ] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  group "attention"
+    [
+      test "sdpa matches reference" (fun () ->
+          check_floats
+            [| 2.638171; 3.638171; 4.638171; 2.774017; 3.774017; 4.774017 |]
+            (Op.scaled_dot_product_attention (q ()) (k ()) (v ())));
+      test "sdpa causal matches reference" (fun () ->
+          check_floats
+            [| 1.; 2.; 3.; 2.774017; 3.774017; 4.774017 |]
+            (Op.scaled_dot_product_attention ~is_causal:true (q ()) (k ())
+               (v ())));
+      test "sdpa additive neg-infinity mask equals causal" (fun () ->
+          let mask =
+            Op.triu ~diagonal:1
+              (Creation.full [ 2; 2 ] (T.Sfloat Float.neg_infinity))
+          in
+          check_floats
+            (Run.to_float_array
+               (Op.scaled_dot_product_attention ~is_causal:true (q ()) (k ())
+                  (v ())))
+            (Op.scaled_dot_product_attention ~attn_mask:mask (q ()) (k ())
+               (v ())));
+      test "sdpa boolean mask equals causal" (fun () ->
+          let mask = Dt.bool (Run.of_int_array ~shape:[ 2; 2 ] [| 1; 0; 1; 1 |]) in
+          check_floats
+            (Run.to_float_array
+               (Op.scaled_dot_product_attention ~is_causal:true (q ()) (k ())
+                  (v ())))
+            (Op.scaled_dot_product_attention ~attn_mask:mask (q ()) (k ())
+               (v ())));
+      test "sdpa rejects mask with is_causal" (fun () ->
+          raises_match
+            (function Invalid_argument _ -> true | _ -> false)
+            (fun () ->
+              Op.scaled_dot_product_attention ~is_causal:true
+                ~attn_mask:(fa ~shape:[ 2; 2 ] (Array.make 4 0.))
+                (q ()) (k ()) (v ())));
+      test "layernorm matches reference" (fun () ->
+          check_floats
+            [| -1.341635; -0.447212; 0.447212; 1.341635 |]
+            (Op.layernorm (vec [| 1.; 2.; 3.; 4. |])));
+    ]
+
+let gpt2_getitem_tests =
+  group "gpt2_getitem"
+    [
+      test "integer index in the middle of the rank" (fun () ->
+          (* xqkv[:, :, i, :, :] on a (1, 2, 3, 2, 2) tensor. *)
+          let data = Array.init 24 float_of_int in
+          let t = fa ~shape:[ 1; 2; 3; 2; 2 ] data in
+          let expected i =
+            Array.init 8 (fun j ->
+                let s = j / 4 and h = j mod 4 / 2 and d = j mod 2 in
+                data.((((s * 3) + i) * 2 + h) * 2 + d))
+          in
+          check_floats (expected 1)
+            (Op.getitem t [ Mv.All; Mv.All; Mv.I 1; Mv.All; Mv.All ]);
+          check_floats (expected 2)
+            (Op.getitem t [ Mv.All; Mv.All; Mv.I 2; Mv.All; Mv.All ]));
+      test "negative integer index selects the last row" (fun () ->
+          (* logits[:, -1, :] on a (2, 3, 4) tensor. *)
+          let data = Array.init 24 float_of_int in
+          let t = fa ~shape:[ 2; 3; 4 ] data in
+          check_floats
+            (Array.init 8 (fun j -> data.((j / 4 * 3 + 2) * 4 + (j mod 4))))
+            (Op.getitem t [ Mv.All; Mv.I (-1); Mv.All ]));
+      test "leading index then open-ended slice" (fun () ->
+          (* cache_kv[0][:, :2, :, :] on a (2, 1, 3, 2, 2) tensor. *)
+          let data = Array.init 24 float_of_int in
+          let t = fa ~shape:[ 2; 1; 3; 2; 2 ] data in
+          check_floats
+            (Array.sub data 0 8)
+            (Op.getitem
+               (Op.getitem t [ Mv.I 0 ])
+               [ Mv.All; Mv.R (None, Some 2, None); Mv.All; Mv.All ]));
+    ]
+
 let () =
   run "Tolk_frontend_run"
     [
@@ -278,5 +497,10 @@ let () =
       scan_tests;
       logspace_tests;
       getitem_tests;
+      gpt2_getitem_tests;
       conv_tests;
+      stack_tests;
+      triu_tests;
+      assign_tests;
+      attention_tests;
     ]

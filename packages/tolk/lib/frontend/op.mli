@@ -18,6 +18,21 @@ val broadcasted : ?reverse:bool -> Tensor.t -> Tensor.t -> Tensor.t * Tensor.t
     this module installs it as {!Tensor.broadcasted}, which the element-wise
     operations use. *)
 
+(** {1 Assignment} *)
+
+val assign : Tensor.t -> Tensor.t -> Tensor.t
+(** [assign t x] writes the values of [x] into the storage of [t] and returns
+    [t]. The write is recorded in the graph as an effect on [t]'s buffer:
+    nothing executes until a realization, and every read of the buffer built
+    after the assignment observes the written values. When [t] is a view (a
+    slice of a larger tensor), the write lands in the viewed region and every
+    live tensor aliasing the underlying buffer is repointed to depend on it.
+    [x] is broadcast to the shape of [t]; assigning a tensor to itself is a
+    no-op.
+
+    @raise Invalid_argument
+      if the dtypes differ or the tensors live on different devices. *)
+
 (** {1 Statistics} *)
 
 val mean : ?axis:int list -> ?keepdim:bool -> Tensor.t -> Tensor.t
@@ -31,6 +46,11 @@ val var : ?axis:int list -> ?keepdim:bool -> ?correction:int -> Tensor.t -> Tens
 
 val std : ?axis:int list -> ?keepdim:bool -> ?correction:int -> Tensor.t -> Tensor.t
 (** [std t] is the standard deviation, the square root of {!var}. *)
+
+val layernorm : ?axis:int list -> ?eps:float -> Tensor.t -> Tensor.t
+(** [layernorm t] normalises [t] along [axis] (default [\[-1\]]) to zero mean
+    and unit variance, computed with the biased variance estimator and
+    stabilised by [eps] (default [1e-5]) inside the square root. *)
 
 (** {1 Joining} *)
 
@@ -215,6 +235,22 @@ val log_softmax : ?axis:int -> ?dtype:Tolk_uop.Dtype.Val.t -> Tensor.t -> Tensor
 val logcumsumexp : ?axis:int -> Tensor.t -> Tensor.t
 (** [logcumsumexp t] is the cumulative {!logsumexp} along [axis] (default [0]):
     output position [k] is [log (sum (exp t.(0..k)))]. *)
+
+(** {1 Attention} *)
+
+val scaled_dot_product_attention :
+  ?attn_mask:Tensor.t -> ?is_causal:bool -> Tensor.t -> Tensor.t -> Tensor.t ->
+  Tensor.t
+(** [scaled_dot_product_attention q k v] is
+    [softmax (q @ k^T / sqrt d) @ v] over the last two axes, where [d] is the
+    size of the last axis of [q]. The score product accumulates in at least
+    [float32] and the softmax is applied at [q]'s dtype. [attn_mask] is added
+    to the scores before the softmax; a boolean mask contributes [0] where
+    true and negative infinity where false. [is_causal] (default [false])
+    instead masks each query position from attending past its own, as if a
+    lower-triangular boolean mask were given.
+
+    @raise Invalid_argument if both [attn_mask] and [is_causal] are given. *)
 
 (** {1 Convolution and pooling}
 

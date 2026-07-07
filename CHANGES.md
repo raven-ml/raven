@@ -33,6 +33,23 @@ thread.
 
 ### Tolk (new)
 
+- Add in-place assignment: `Op.assign` records a buffer write in the graph,
+  including writes through sliced views (e.g. a transformer kv-cache update),
+  and repoints every live tensor aliasing the buffer so later reads observe
+  the write. `Run.realize` now also rebinds assigned and previously realized
+  nodes onto their computed buffers, so an assignment executes once and reads
+  of a realized tensor reuse its buffer instead of recomputing.
+- Add `Op.scaled_dot_product_attention` (optional additive or boolean
+  `attn_mask`, or `is_causal` masking) and `Op.layernorm`.
+- Fix a compilation- and schedule-cache collision: the cache key hashed node
+  payloads with the polymorphic hash, which cannot distinguish constants such
+  as `0` and `-1` (OCaml folds the halves of an `int64` with xor), so two
+  kernels differing only in such a constant could silently share one compiled
+  program. Constant payloads are now rendered exactly into the key.
+- Fix buffer identity reuse across realizations: allocation slots are now
+  drawn from one process-wide counter (`Uop.fresh_buffer_slot`), so two
+  distinct allocations can no longer hash-cons onto the same node and
+  read back each other's storage.
 - CUDA source generation gains an `SM90` (Hopper) target tier in
   `Gpu_target.cuda`: `sm_90` uses the `sm_89` tensor-core table and fp8
   dtype support, and `CUDA_ARCH`/`CUDA_SM` values of 90+ resolve to `SM90`.

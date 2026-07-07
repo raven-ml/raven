@@ -33,6 +33,15 @@ val set_uop : t -> Tolk_uop.Uop.t -> unit
     same in-place reassignment of a tensor's node that the reference frontend
     performs when it replaces a lazy graph with its realized buffer. *)
 
+val apply_map : (Tolk_uop.Uop.t * Tolk_uop.Uop.t) list -> unit
+(** [apply_map mappings] repoints every live tensor whose graph contains the
+    first component of a pair so that it refers to the second instead.
+    Replacement values are final: a value may mention its own key without the
+    rewrite recursing into it. Every tensor is tracked weakly from creation,
+    so this reaches all reachable handles. Used by in-place assignment to
+    embed a write into the graphs of the tensors that alias the written
+    buffer, and by realization to rebind computed nodes onto their buffers. *)
+
 (** {1 Shape and type} *)
 
 val dtype : t -> Tolk_uop.Dtype.t

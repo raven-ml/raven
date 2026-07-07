@@ -703,6 +703,19 @@ let buffer ~slot ~dtype ?shape ?name ?addrspace ?axis ?device () =
     ~arg:(Arg.Param_arg
             (default_param_arg ?name ?addrspace ?axis ?device slot))
 
+(* Buffer slots come from one process-wide counter: buffers hash-cons on
+   (slot, dtype, shape, device), so reusing a slot would collapse two distinct
+   allocations onto one node identity. *)
+let next_buffer_slot = ref 0
+
+let fresh_buffer_slot () =
+  let s = !next_buffer_slot in
+  incr next_buffer_slot;
+  s
+
+let reserve_buffer_slots n =
+  if n > !next_buffer_slot then next_buffer_slot := n
+
 let stage ~src ~ranges ~opts =
   mk ~op:Ops.Stage ~dtype:(dtype src)
     ~src:(Array.of_list (src :: ranges))
@@ -1478,9 +1491,9 @@ let remove_all_tags root =
           else Some (with_metadata md rebuilt))
     root
 
-let substitute mappings root =
+let substitute ?(walk = false) mappings root =
   let f u = List.assq_opt u mappings in
-  graph_rewrite ~bottom_up:true f root
+  graph_rewrite ~bottom_up:true ~walk f root
 
 let intern root =
   graph_rewrite (fun _ -> Option.None) root
@@ -2927,8 +2940,21 @@ let semantic_key root =
     | arg -> arg
   in
   let rec key u =
+    (* The header must separate any two nodes whose own payload differs. The
+       polymorphic hash is unreliable here: [Hashtbl.hash] stops after 10
+       meaningful words (too few to reach a payload buried behind the dtype),
+       and the built-in [int64] hash folds the two halves with xor, colliding
+       adjacent constants such as [0L] and [-1L]. Hash with a deep traversal
+       and render constant payloads exactly. *)
     let header =
-      Hashtbl.hash (op u, dtype u, semantic_arg (arg u)) |> string_of_int
+      let payload = (op u, dtype u, semantic_arg (arg u)) in
+      let value =
+        match arg u with Arg.Value c -> Const.to_string c | _ -> ""
+      in
+      Printf.sprintf "%d.%d.%s"
+        (Hashtbl.hash_param 1000 1000 payload)
+        (Hashtbl.seeded_hash_param 1000 1000 17 payload)
+        value
     in
     let children =
       Array.to_list (src u) |> List.map key |> String.concat ""
