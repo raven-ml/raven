@@ -1015,7 +1015,7 @@ let signature_of (module P : Nx.Ptree.S) (params : P.t) =
     params;
   List.rev !acc
 
-let trace_compile ~device:dev ~zero_copy (module P : Nx.Ptree.S)
+let trace_compile ~device:dev ~zero_copy ~const_cache (module P : Nx.Ptree.S)
     (module Q : Nx.Ptree.S) (f : P.t -> Q.t) (params : P.t) : Q.t compiled =
   let st =
     {
@@ -1162,12 +1162,25 @@ let trace_compile ~device:dev ~zero_copy (module P : Nx.Ptree.S)
             Tolk.Realize.Buffers.seed binding node buf;
             Const_wrapped (pk, keep)
         | None ->
-            let n = numel (shape_of src) in
+            (* One device copy of a capture serves every signature of the
+               closure: the bytes are uploaded when the capture is first
+               compiled and later compilations reuse the buffer. Assigned
+               (refresh) captures share it too — their re-upload happens on
+               every call, not here. *)
             let buf =
-              Tolk.Device.create_buffer ~size:n ~dtype:(tolk_dtype cdt) dev
+              match Tbl.find_opt const_cache (Obj.repr src) with
+              | Some buf -> buf
+              | None ->
+                  let n = numel (shape_of src) in
+                  let buf =
+                    Tolk.Device.create_buffer ~size:n ~dtype:(tolk_dtype cdt)
+                      dev
+                  in
+                  copyin_tensor scratch buf src;
+                  Tbl.replace const_cache (Obj.repr src) buf;
+                  buf
             in
             Tolk.Realize.Buffers.seed binding node buf;
-            copyin_tensor scratch buf src;
             Const_copy
               { buf; src = pk; refresh = List.memq (Obj.repr src) wb_keys })
       st.consts
@@ -1409,6 +1422,9 @@ let jit2 ?(device = "CPU") (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S)
   let dev = get_device device in
   let zero_copy = is_cpu device && not (force_copy ()) in
   let cache : (_, Q.t compiled) Hashtbl.t = Hashtbl.create 4 in
+  (* Device copies of captured tensors, shared by every signature of this
+     closure and keyed by capture identity. *)
+  let const_cache : Tolk.Device.Buffer.t Tbl.t = Tbl.create 4 in
   fun params ->
     if Gate.transforming () then f params
     else
@@ -1418,7 +1434,7 @@ let jit2 ?(device = "CPU") (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S)
         | Some c -> c
         | None ->
             let c =
-              trace_compile ~device:dev ~zero_copy
+              trace_compile ~device:dev ~zero_copy ~const_cache
                 (module P)
                 (module Q)
                 f params

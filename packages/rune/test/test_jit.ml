@@ -454,6 +454,20 @@ let test_dispatch_on_handle_reads_no_bytes () =
       let _h2, _, down = delta (fun () -> g h) in
       equal ~msg:"dispatching on a handle downloads nothing" int 0 down)
 
+let test_capture_uploaded_once_across_signatures () =
+  with_force_copy (fun () ->
+      let n = 256 in
+      let c = vec32 (Array.init n float_of_int) in
+      let g = Rune.jit' (fun x -> Nx.add x c) in
+      let _, up1, _ = delta (fun () -> g (vec32 (Array.make n 0.0))) in
+      (* A new input shape compiles a second signature; the capture's device
+         copy is shared, so only the input is uploaded. *)
+      let _, up2, _ =
+        delta (fun () -> g (Nx.create f32 [| 1; n |] (Array.make n 1.0)))
+      in
+      equal ~msg:"first compile uploads input and capture" int (2 * n * 4) up1;
+      equal ~msg:"second signature re-uploads only the input" int (n * 4) up2)
+
 let test_dropped_handles_are_reclaimed () =
   with_force_copy (fun () ->
       let n = 1024 in
@@ -551,6 +565,8 @@ let tests =
           test_vmap_over_jit_with_deferred_arg;
         test "signature dispatch never forces"
           test_dispatch_on_handle_reads_no_bytes;
+        test "captures upload once across signatures"
+          test_capture_uploaded_once_across_signatures;
         test "dropped handles are reclaimed" test_dropped_handles_are_reclaimed;
       ];
     group "errors"

@@ -266,6 +266,9 @@ thread.
 
 ### Rune
 
+- Tensors captured by a jitted closure are uploaded to the device once per
+  closure and shared by all compiled signatures, instead of once per
+  signature — halving resident weight memory for prefill+decode closures.
 - `jit` outputs on CUDA and Metal now stay resident on the device until
   read: metadata reads never transfer, and an unread output fed back as an
   input of a jit call on the same device seeds the compiled program directly

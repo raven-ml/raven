@@ -128,6 +128,18 @@ let test_assign_to_resident_leaf () =
   check_arr ~msg:"sum of the updated leaf" [| 12.0 |] s;
   check_arr ~msg:"the writeback forced h and updated it" [| 4.0; 8.0 |] h
 
+let test_capture_uploaded_once_across_signatures () =
+  require_cuda ();
+  let n = 256 in
+  let c = vec32 (Array.init n float_of_int) in
+  let g = Rune.jit' ~device:"CUDA" (fun x -> Nx.add x c) in
+  let _, up1, _ = delta (fun () -> g (vec32 (Array.make n 0.0))) in
+  let _, up2, _ =
+    delta (fun () -> g (Nx.create f32 [| 1; n |] (Array.make n 1.0)))
+  in
+  equal ~msg:"first compile uploads input and capture" int (2 * n * 4) up1;
+  equal ~msg:"second signature re-uploads only the input" int (n * 4) up2
+
 type pair = { u : Nx.float32_t; v : Nx.float32_t }
 
 module Pair = struct
@@ -178,6 +190,8 @@ let tests =
           test_assign_to_resident_leaf;
         test "pass-through outputs survive later calls"
           test_pass_through_output_survives;
+        test "captures upload once across signatures"
+          test_capture_uploaded_once_across_signatures;
       ];
   ]
 
