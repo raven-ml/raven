@@ -1,5 +1,11 @@
 (tests
- (names test_frontend test_run test_jit)
- (modules test_frontend test_run test_jit)
+ (names test_frontend test_run test_jit test_rand test_rand_cuda)
+ (modules
+  test_frontend
+  test_run
+  test_jit
+  test_rand
+  test_rand_cuda
+  rand_cases)
  (package tolk)
- (libraries tolk tolk.uop tolk.frontend windtrap))
+ (libraries unix tolk tolk.uop tolk.frontend windtrap))

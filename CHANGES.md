@@ -33,6 +33,16 @@ thread.
 
 ### Tolk (new)
 
+- Add `Rand`, a counter-based (Threefry) random number frontend:
+  `manual_seed`, `rand`, `randn`, `randint`, `uniform`, `normal`,
+  `scaled_uniform`/`glorot_uniform`/`kaiming_uniform`/`kaiming_normal`,
+  `randperm`, `multinomial`, and `dropout`. Values are deterministic per
+  seed, identical across devices, and keep advancing inside `Jit` captures.
+  `rand` is limited to 32-bit floats for now. Also adds
+  `Elementwise.threefry`, the Threefry-2x32 mixing primitive.
+- Fix `Elementwise.neg` (and therefore `sub`) on unsigned integer tensors:
+  negation now wraps at the operand's width instead of promoting to a wider
+  signed type.
 - Add `Compiler.cachekey`, exposing a compiler's disk-cache table name as a
   compiler/architecture fingerprint for callers keying their own caches.
 - `Uop.export`/`Uop.import` serialize hash-consed graphs across processes;

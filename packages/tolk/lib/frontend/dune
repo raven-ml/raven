@@ -4,6 +4,7 @@
  (name tolk_frontend)
  (public_name tolk.frontend)
  (libraries
+  unix
   tolk_uop
   tolk
   tolk_cpu

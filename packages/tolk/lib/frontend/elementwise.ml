@@ -30,8 +30,13 @@ let mul a b = binop Ops.Mul a b
 
 let logical_not t = binop Ops.Cmpne (Dtype_ops.bool t) (T.b true)
 
+(* Negation multiplies by -1 at [t]'s own dtype (matching a weakly typed
+   scalar): on an unsigned dtype the constant wraps and the product is the
+   two's-complement negation, with no promotion to a wider type. *)
 let neg t =
-  if D.is_bool (T.dtype t) then logical_not t else mul t (T.i (-1))
+  if D.is_bool (T.dtype t) then logical_not t
+  else
+    mul t (T.of_uop (Uop.const (T.scalar_const (T.val_dtype t) (T.Sint (-1)))))
 
 let sub a b =
   let x, y = T.broadcasted a b in
@@ -67,6 +72,7 @@ let where cond x y =
 
 let maximum a b = binop Ops.Max a b
 let masked_fill t mask value = where mask value t
+let threefry t seed = alu_binary Ops.Threefry t seed
 let inverse t = if Dtype_ops.is_floating_point t then neg t else bitwise_not t
 
 (* Variadic folds. On a boolean first operand these fold with logical or / and;

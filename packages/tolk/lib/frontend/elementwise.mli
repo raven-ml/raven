@@ -80,6 +80,12 @@ val bitwise_or : Tensor.t -> Tensor.t -> Tensor.t
 val bitwise_xor : Tensor.t -> Tensor.t -> Tensor.t
 val bitwise_not : Tensor.t -> Tensor.t
 
+val threefry : Tensor.t -> Tensor.t -> Tensor.t
+(** [threefry x key] mixes the 64-bit counters [x] with the 64-bit [key]
+    using the Threefry-2x32 block cipher, producing uniformly distributed
+    bits. Both operands must be [uint64] tensors of the same shape. This is
+    the primitive underlying the {!Rand} generators. *)
+
 (** {1 Selection} *)
 
 val where : Tensor.t -> Tensor.t -> Tensor.t -> Tensor.t
