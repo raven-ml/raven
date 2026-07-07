@@ -163,5 +163,4 @@ let () =
   Printf.printf "generated %d tokens in %.2f s (%.2f tok/s)\n%!" !count dt
     (float_of_int !count /. dt);
   let text = Brot.decode tokenizer (Array.map Int32.to_int toks) in
-  print_endline "Generating text...";
   print_endline text

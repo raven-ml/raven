@@ -326,12 +326,13 @@ val jit :
 
     The compilation cache lives in the partial application [jit (module P) f]:
     apply [jit] once and reuse the returned function. Tensors [f] closes over
-    are inputs of the compiled program too. On the CPU device they are read in
-    place, so mutations between calls behave as they do eagerly; on other
-    devices they are uploaded once when the trace compiles and stay resident on
-    the device, so pass values that change between calls as leaves of [P] rather
-    than capturing them. Captures that [f] itself assigns to are the exception:
-    they are re-read on every call (see below).
+    are inputs of the compiled program too. On the CPU device, contiguous
+    captures are read in place, so mutations between calls behave as they do
+    eagerly; non-contiguous captures, and all captures on other devices, are
+    copied once when the trace compiles and keep that compile-time value, so
+    pass values that change between calls as leaves of [P] rather than
+    capturing them. Captures that [f] itself assigns to are the exception: they
+    are re-read on every call (see below).
 
     Under an enclosing transformation ({!grad}, {!val-vmap}, {!with_debug}, an
     outer [jit]), the wrapped function runs directly so the transformation
