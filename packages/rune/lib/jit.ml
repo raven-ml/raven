@@ -1217,21 +1217,40 @@ let replay (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S) (c : Q.t compiled)
     (params : P.t) : Q.t =
   drain_releases ();
   let in0 = !bytes_to_device and out0 = !bytes_from_device in
-  (* Seed the inputs: wrap the current leaf's memory when the device shares host
-     memory and the leaf is contiguous, copy its bytes otherwise. The wrapped
-     hosts are kept reachable until the run completes. *)
+  (* Seed the inputs. A leaf that is an unread output of an earlier call on
+     this device seeds its input node with the resident buffer directly — no
+     transfer, and the handle stays resident (inputs are read-only). Otherwise
+     wrap the current leaf's memory when the device shares host memory and the
+     leaf is contiguous, and copy its bytes if not. Seeded leaves and wrapped
+     hosts are kept reachable until the run completes, so no finalizer can
+     release a buffer the kernels still read. *)
+  let resident_buffer leaf =
+    match Nx_effect.deferred_id leaf with
+    | None -> None
+    | Some id -> (
+        match Hashtbl.find_opt resident id with
+        | Some e when e.r_device == c.cp_device -> e.r_buf
+        | _ -> None)
+  in
   let keep = ref [] in
   let i = ref 0 in
   P.iter
     (fun leaf ->
       let inp = c.cp_inputs.(!i) in
-      (match if c.cp_zero_copy then wrap_tensor c.cp_device leaf else None with
-      | Some (buf, ka) ->
-          keep := ka :: !keep;
+      (match resident_buffer leaf with
+      | Some buf ->
+          keep := Obj.repr leaf :: !keep;
           Tolk.Realize.Buffers.seed c.cp_binding inp.i_node buf
-      | None ->
-          Tolk.Realize.Buffers.seed c.cp_binding inp.i_node inp.i_buf;
-          copyin_tensor c.cp_scratch inp.i_buf leaf);
+      | None -> (
+          match
+            if c.cp_zero_copy then wrap_tensor c.cp_device leaf else None
+          with
+          | Some (buf, ka) ->
+              keep := ka :: !keep;
+              Tolk.Realize.Buffers.seed c.cp_binding inp.i_node buf
+          | None ->
+              Tolk.Realize.Buffers.seed c.cp_binding inp.i_node inp.i_buf;
+              copyin_tensor c.cp_scratch inp.i_buf leaf));
       incr i)
     params;
   Array.iter

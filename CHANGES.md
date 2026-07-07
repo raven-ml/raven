@@ -266,6 +266,15 @@ thread.
 
 ### Rune
 
+- `jit` outputs on CUDA and Metal now stay resident on the device until
+  read: metadata reads never transfer, and an unread output fed back as an
+  input of a jit call on the same device seeds the compiled program directly
+  with its device buffer. Iterated jitted calls (training steps, decode
+  loops) no longer round-trip state through the host: GPT-2 decoding goes
+  from ~142 to ~320 tok/s at 100 tokens and training steps from ~380 to
+  ~117 ms on an H100, with bit-identical results. Device memory is reclaimed
+  when outputs are read or collected (budget via
+  `RUNE_JIT_RESIDENT_BUDGET`).
 - Add `Rune.jit_stats`/`Rune.reset_jit_stats` transfer counters, a
   `RUNE_JIT_DEBUG=1` per-call transfer log, and `RUNE_JIT_FORCE_COPY=1` to
   exercise the device copy path on the CPU device.
