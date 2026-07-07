@@ -60,14 +60,25 @@ let get ~table ~key =
             Some value)
     with _ -> None
 
+(* Write-then-rename keeps entries atomic: a concurrent reader or writer of
+   the same key never observes a partially written file, only the previous
+   complete entry or the new one. The temporary name is per-pid, so
+   concurrent writers in different processes cannot clobber each other's
+   in-progress writes. *)
 let put ~table ~key value =
   let path = cache_path ~table ~key in
   ensure_dir (Filename.dirname path);
+  let tmp = path ^ ".tmp." ^ string_of_int (Unix.getpid ()) in
   try
-    let oc = open_out_bin path in
-    Fun.protect
-      ~finally:(fun () -> close_out oc)
-      (fun () ->
-        Marshal.to_channel oc cache_version [];
-        Marshal.to_channel oc value [])
+    let oc = open_out_bin tmp in
+    (try
+       Fun.protect
+         ~finally:(fun () -> close_out oc)
+         (fun () ->
+           Marshal.to_channel oc cache_version [];
+           Marshal.to_channel oc value [])
+     with exn ->
+       (try Sys.remove tmp with Sys_error _ -> ());
+       raise exn);
+    Unix.rename tmp path
   with _ -> ()

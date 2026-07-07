@@ -33,6 +33,8 @@ thread.
 
 ### Tolk (new)
 
+- `Diskcache.put` writes atomically via rename; concurrent writers can no
+  longer tear a cache entry.
 - The gpt2 example supports `HALF=1`, storing weights and attention
   activations in float16; generated text matches the reference and every
   compiled kernel is byte-identical to it.

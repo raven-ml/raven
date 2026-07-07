@@ -18,4 +18,9 @@ val get : table:string -> key:string -> 'a option
 
 val put : table:string -> key:string -> 'a -> unit
 (** [put ~table ~key value] stores [value] in the cache. Creates the cache
-    directory if needed. *)
+    directory if needed.
+
+    The entry is written to a temporary file and atomically renamed into
+    place, so concurrent readers and writers of the same key always observe
+    a complete entry (the previous one or the new one), never a torn
+    write. Failures are silently ignored: the cache is best-effort. *)
