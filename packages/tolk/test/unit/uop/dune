@@ -1,4 +1,4 @@
 (tests
- (names test_uop test_spec test_symbolic test_dtype test_ops)
+ (names test_uop test_spec test_symbolic test_dtype test_ops test_serialize)
  (package tolk)
  (libraries tolk.uop windtrap unix))

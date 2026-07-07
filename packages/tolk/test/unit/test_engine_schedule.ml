@@ -205,6 +205,18 @@ let create_linear_with_vars_keeps_only_used_binds () =
   in
   equal (list (pair string int)) [ "used", 7 ] var_vals
 
+let fresh_internal_buffer_slots_stay_distinct () =
+  let a = Schedule.fresh_internal_buffer_slot () in
+  let b = Schedule.fresh_internal_buffer_slot () in
+  is_true ~msg:"slots are negative" (a < 0 && b < 0);
+  is_true ~msg:"slots strictly decrease" (b < a);
+  (* Buffer nodes hash-cons on their slot: reusing a slot collapses two
+     distinct buffers onto one node (the aliasing hazard for imported
+     graphs), while a fresh slot keeps them distinct. This is the
+     renumbering recipe for graphs restored via [Uop.import]. *)
+  is_true ~msg:"same slot aliases" (buffer a == buffer a);
+  is_true ~msg:"fresh slot stays distinct" (not (buffer a == buffer b))
+
 let () =
   run "Engine.Schedule"
     [
@@ -224,4 +236,6 @@ let () =
         schedule_cache_key_strips_bind_value;
       test "create_linear_with_vars extracts the binding from CALL args"
         create_linear_with_vars_extracts_bind_through_call;
+      test "fresh internal buffer slots keep buffers distinct"
+        fresh_internal_buffer_slots_stay_distinct;
     ]

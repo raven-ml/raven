@@ -86,7 +86,68 @@ let run_spec device spec bufs =
   ignore (Realize.Compiled_runner.call car bufs [] ~wait:true ~timeout:None);
   Device.synchronize device
 
-let () =
+(* Like [increment_program] but subtracting, so no other test builds this
+   graph: nodes exported by the forked child below are genuinely foreign to
+   the parent process until imported. *)
+let decrement_program () =
+  let dt = Dtype.Val.int32 in
+  let ptr = Dtype.Ptr (global_ptr dt) in
+  let p0 = U.param ~slot:0 ~dtype:ptr () in
+  let p1 = U.param ~slot:1 ~dtype:ptr () in
+  let c0 = U.const (Const.int Dtype.Val.int32 0) in
+  let idx_src = U.index ~ptr:p1 ~idxs:[ c0 ] ~as_ptr:true () in
+  let idx_dst = U.index ~ptr:p0 ~idxs:[ c0 ] ~as_ptr:true () in
+  let l0 = U.load ~src:idx_src () in
+  let c1 = U.const (Const.int dt 1) in
+  let diff = U.alu_binary ~op:Ops.Sub ~lhs:l0 ~rhs:c1 in
+  let store = U.store ~dst:idx_dst ~value:diff () in
+  [ p0; p1; c0; idx_src; idx_dst; l0; c1; diff; store ]
+
+let read_file path =
+  let ic = open_in_bin path in
+  Fun.protect
+    ~finally:(fun () -> close_in ic)
+    (fun () -> really_input_string ic (in_channel_length ic))
+
+(* Export the program in a child process (re-running this executable with
+   [TOLK_EXPORT_BLOB] set; the CPU runtime spawns domains, which forbids
+   forking), then import and execute it here. *)
+let export_blob_var = "TOLK_EXPORT_BLOB"
+
+let export_child path =
+  let oc = open_out_bin path in
+  output_string oc (U.export (U.sink (decrement_program ())));
+  close_out oc
+
+let imported_program_runs () =
+  let blob_file = Filename.temp_file "tolk-import-exec" ".blob" in
+  Fun.protect
+    ~finally:(fun () -> Sys.remove blob_file)
+    (fun () ->
+      let env =
+        Array.append (Unix.environment ())
+          [| export_blob_var ^ "=" ^ blob_file |]
+      in
+      let pid =
+        Unix.create_process_env Sys.executable_name
+          [| Sys.executable_name |]
+          env Unix.stdin Unix.stdout Unix.stderr
+      in
+      let _, status = Unix.waitpid [] pid in
+      (match status with
+       | Unix.WEXITED 0 -> ()
+       | _ -> fail "exporting child failed");
+      let imported = U.import (read_file blob_file) in
+      let device = cpu "imported" in
+      let spec =
+        Device.compile_program device ~name:"sub_one" (U.children imported)
+      in
+      let dst = create_i32_buffer device [ 0 ] in
+      let src = create_i32_buffer device [ 42 ] in
+      run_spec device spec [ dst; src ];
+      equal (list int) [ 41 ] (read_i32_buffer dst))
+
+let main () =
   run "Cpu_runtime"
     [
       group "Execution"
@@ -157,5 +218,12 @@ let () =
                 ignore
                   (Device.Buffer.view base ~size:2 ~dtype:Dtype.int32
                      ~offset:12)));
+          test "compile and run a cross-process imported kernel"
+            imported_program_runs;
         ];
     ]
+
+let () =
+  match Sys.getenv_opt export_blob_var with
+  | Some path -> export_child path
+  | None -> main ()

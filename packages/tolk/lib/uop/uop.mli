@@ -1283,10 +1283,39 @@ val first_match : (t -> t option) list -> t -> t option
 (** [first_match rules u] returns the first [Some _] result when
     applying each rule in order, or [None] if every rule fails. *)
 
-val intern : t -> t
-(** [intern u] is a no-op rewrite of [u] that re-interns the whole
-    DAG in the current hash-cons table. Useful after importing nodes
-    from an external source. *)
+(** {1:serial Serialization} *)
+
+val export : t -> string
+(** [export u] is a serialized form of the graph rooted at [u], suitable
+    for {!import} in another process. The traversal covers the [src] edges
+    and the uops embedded in node arguments: {!kernel_info} estimates
+    ({!Sym}), {!program_info} variables, and symbolic launch dimensions
+    ({!Launch_sym}). Node tags ({!node_tag}) are preserved; {!metadata}
+    side data is not.
+
+    Raises [Invalid_argument] if any node carries a gradient function
+    ([grad_fxn] in its {!call_info}): gradient functions are closures and
+    cannot be serialized. Compiled programs never carry them. *)
+
+val import : string -> t
+(** [import s] rebuilds a graph previously produced by {!export} in this
+    process's hash-cons universe. Every node is re-interned bottom-up:
+    a node structurally equal to a live node {b is} that node ([==]),
+    genuinely new nodes are assigned fresh {!tag}s, and uops embedded in
+    node arguments are remapped consistently with the [src] edges, so
+    sharing between arguments and sources survives the round-trip.
+
+    {b Warning.} {!Ops.Buffer} nodes hash-cons on their slot, so importing
+    a graph whose internal buffer slots were minted by another process can
+    make an imported buffer collide with a distinct local buffer that
+    reuses the same slot, silently aliasing their storage. Renumber
+    imported internal (negative) buffer slots before use.
+
+    Raises [Failure] on malformed or version-incompatible input. Inputs
+    are trusted: [import] rejects truncated data and unknown format
+    versions, but it does not defend against adversarially crafted
+    payloads — feed it only locally produced data, such as this machine's
+    compile cache. *)
 
 (** {1:tables Hash tables} *)
 

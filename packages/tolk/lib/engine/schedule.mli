@@ -16,6 +16,19 @@
     memory planner is embedded here as {!create_linear_with_vars}'s optional
     UOp rewrite. *)
 
+val fresh_internal_buffer_slot : unit -> int
+(** [fresh_internal_buffer_slot ()] draws the next slot for
+    schedule-internal buffers from this process's counter. Slots are
+    negative and strictly decreasing, disjoint from the non-negative
+    user-facing buffer slots.
+
+    Buffer nodes hash-cons on their slot, so a slot identifies a buffer:
+    reusing one collapses two distinct buffers onto a single node,
+    silently aliasing their storage. In particular, a graph imported from
+    another process (see {!Tolk_uop.Uop.import}) may carry internal slots
+    that collide with slots minted here; renumber each imported internal
+    buffer with a slot from this counter before executing the graph. *)
+
 val create_schedule : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
 (** [create_schedule sched_sink] builds the kernel dependency graph and
     topologically sorts it into a {!Tolk_uop.Ops.Linear} node.

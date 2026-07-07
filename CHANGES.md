@@ -33,6 +33,12 @@ thread.
 
 ### Tolk (new)
 
+- `Uop.export`/`Uop.import` serialize hash-consed graphs across processes;
+  import re-interns every node so structurally-equal live nodes are reused
+  physically. Export raises on graphs carrying gradient functions; import
+  raises `Failure` on malformed input. `Uop.intern` is removed (it was a
+  no-op on foreign graphs); `Schedule.fresh_internal_buffer_slot` is exposed
+  for renumbering imported internal buffer slots.
 - `Diskcache.put` writes atomically via rename; concurrent writers can no
   longer tear a cache entry.
 - The gpt2 example supports `HALF=1`, storing weights and attention

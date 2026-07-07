@@ -14,6 +14,11 @@ let capturing_enabled = Helpers.getenv "CAPTURING" 1 <> 0
 let no_memory_planner = Helpers.getenv "NO_MEMORY_PLANNER" 0 <> 0
 let next_post_sched_buffer_slot = ref (-1)
 
+let fresh_internal_buffer_slot () =
+  let slot = !next_post_sched_buffer_slot in
+  decr next_post_sched_buffer_slot;
+  slot
+
 let round_up n align = (n + align - 1) / align * align
 
 (* Schedule linearizer *)
@@ -266,8 +271,7 @@ let create_post_sched_buffer ctx b =
       let ret =
         match U.as_buffer b with
         | Some { buffer; shape } ->
-            let slot = !next_post_sched_buffer_slot in
-            decr next_post_sched_buffer_slot;
+            let slot = fresh_internal_buffer_slot () in
             U.buffer ~slot ~dtype:(U.dtype b)
               ~shape ?name:buffer.name ~addrspace:buffer.addrspace
               ?axis:buffer.axis ?device:buffer.device ()
@@ -388,8 +392,7 @@ let memory_lane copy_bufs b =
   | None -> invalid_arg "memory_plan_rewrite: buffer without device"
 
 let create_arena_buffer ~device ~nbytes =
-  let slot = !next_post_sched_buffer_slot in
-  decr next_post_sched_buffer_slot;
+  let slot = fresh_internal_buffer_slot () in
   U.buffer ~slot ~dtype:Dtype.int8
     ~shape:(U.const (Const.int Dtype.Val.weakint nbytes))
     ~device ()

@@ -1519,9 +1519,6 @@ let substitute ?(walk = false) mappings root =
   let f u = List.assq_opt u mappings in
   graph_rewrite ~bottom_up:true ~walk f root
 
-let intern root =
-  graph_rewrite (fun _ -> Option.None) root
-
 (* Analysis *)
 
 let min_max_cache : (int * int) Ref_tbl.t = Ref_tbl.create 1024
@@ -3074,6 +3071,151 @@ let semantic_key root =
     Digest.to_hex (Digest.string (header ^ children))
   in
   key root
+
+(* Serialization *)
+
+(* Uops embedded in node arguments are graph edges just like [src] entries:
+   serialization and re-interning must traverse them. The embedding points
+   are exactly [Kernel_info] estimates ([Sym]), [Program_info] variables,
+   and symbolic [Program_info] launch dimensions ([Launch_sym]); every
+   other argument payload is pure data. *)
+let arg_uops = function
+  | Arg.Kernel_info { estimates = Option.Some { ops; lds; mem }; _ } ->
+      let sym acc (e : estimate) =
+        match e with Sym u -> u :: acc | Int _ -> acc
+      in
+      sym (sym (sym [] ops) lds) mem
+  | Arg.Program_info { vars; global_size; _ } ->
+      List.fold_left
+        (fun acc (d : launch_dim) ->
+          match d with
+          | Launch_sym u -> u :: acc
+          | Launch_int _ | Launch_float _ -> acc)
+        vars global_size
+  | _ -> []
+
+let map_arg_uops f = function
+  | Arg.Kernel_info ({ estimates = Option.Some e; _ } as ki) ->
+      let est (x : estimate) : estimate =
+        match x with Sym u -> Sym (f u) | Int _ as x -> x
+      in
+      Arg.Kernel_info
+        { ki with
+          estimates =
+            Option.Some { ops = est e.ops; lds = est e.lds; mem = est e.mem } }
+  | Arg.Program_info pi ->
+      let dim (d : launch_dim) =
+        match d with
+        | Launch_sym u -> Launch_sym (f u)
+        | (Launch_int _ | Launch_float _) as d -> d
+      in
+      Arg.Program_info
+        { pi with
+          vars = List.map f pi.vars;
+          global_size = List.map dim pi.global_size }
+  | a -> a
+
+let export_magic = "TOLKUOP\x00"
+let export_version = 1
+
+let export root =
+  (* Reject gradient functions before marshalling: they are closures, and
+     silently dropping them would corrupt the graph's semantics. Explicit
+     worklist; lowered kernel bodies are too deep for recursion. *)
+  let visited = Ref_tbl.create 512 in
+  let stack = Stack.create () in
+  Stack.push root stack;
+  while not (Stack.is_empty stack) do
+    let u = Stack.pop stack in
+    if not (Ref_tbl.mem visited u) then begin
+      Ref_tbl.replace visited u ();
+      (match arg u with
+       | Arg.Call_info { grad_fxn = Option.Some _; _ } ->
+           invalid_arg "Uop.export: graph carries a gradient function"
+       | _ -> ());
+      Array.iter (fun c -> Stack.push c stack) (src u);
+      List.iter (fun c -> Stack.push c stack) (arg_uops (arg u))
+    end
+  done;
+  String.concat ""
+    [
+      export_magic;
+      Marshal.to_string export_version [];
+      Marshal.to_string root [];
+    ]
+
+(* Re-intern an unmarshalled graph bottom-up. Unmarshalled nodes are foreign:
+   their tags are stale and they are unknown to [global_table], so nothing may
+   escape this function without passing through [intern_node]. The memo table
+   keys on the foreign nodes' physical identity (Marshal preserves intra-blob
+   sharing, so a node reachable both through [src] and through an argument
+   embedding is one object); stale tags are used only as memo hash values,
+   where a collision is harmless. *)
+let reintern root =
+  let memo : t Ref_tbl.t = Ref_tbl.create 512 in
+  let stack = Stack.create () in
+  Stack.push (root, false) stack;
+  while not (Stack.is_empty stack) do
+    let u, expanded = Stack.pop stack in
+    if not (Ref_tbl.mem memo u) then
+      if expanded then begin
+        (* All extended children were pushed above [u] and are memoized. *)
+        let map c = Ref_tbl.find memo c in
+        let n = u.Hashcons.node in
+        let interned =
+          intern_node
+            {
+              op = n.op;
+              dtype = n.dtype;
+              src = Array.map map n.src;
+              arg = map_arg_uops map n.arg;
+              node_tag = n.node_tag;
+            }
+        in
+        Ref_tbl.replace memo u interned
+      end
+      else begin
+        Stack.push (u, true) stack;
+        let push c =
+          if not (Ref_tbl.mem memo c) then Stack.push (c, false) stack
+        in
+        Array.iter push (src u);
+        List.iter push (arg_uops (arg u))
+      end
+  done;
+  Ref_tbl.find memo root
+
+let import s =
+  let error () = failwith "Uop.import: malformed input" in
+  let magic_len = String.length export_magic in
+  let len = String.length s in
+  if len < magic_len
+     || not (String.equal (String.sub s 0 magic_len) export_magic)
+  then error ();
+  (* Validate each block's advertised size against the available bytes
+     before unmarshalling, so truncated input fails cleanly. *)
+  let bytes = Bytes.unsafe_of_string s in
+  let block_size ofs =
+    if len - ofs < Marshal.header_size then error ();
+    match Marshal.total_size bytes ofs with
+    | exception Failure _ -> error ()
+    | size ->
+        if size > len - ofs then error ();
+        size
+  in
+  let version_ofs = magic_len in
+  let version_size = block_size version_ofs in
+  let version : int =
+    try Marshal.from_string s version_ofs with Failure _ -> error ()
+  in
+  if version <> export_version then
+    failwith (Printf.sprintf "Uop.import: unsupported format version %d" version);
+  let graph_ofs = version_ofs + version_size in
+  ignore (block_size graph_ofs : int);
+  let root : t =
+    try Marshal.from_string s graph_ofs with Failure _ -> error ()
+  in
+  reintern root
 
 (* Operators *)
 
