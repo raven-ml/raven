@@ -22,7 +22,7 @@
   test_control
   test_jit)
  (package rune)
- (libraries rune nx nx.core windtrap rune_test_support))
+ (libraries rune nx nx.core unix windtrap rune_test_support))
 
 (tests
  (names test_jit_metal)

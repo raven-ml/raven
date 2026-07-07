@@ -28,12 +28,24 @@ let find (type a b) m (x : (a, b) Nx.t) : (a, b) Nx.t option =
       | Some Type.Equal -> Some v
       | None -> assert false)
 
-let set m x v = Tbl.replace m (Obj.repr x) (Entry (Nx.dtype x, v))
+(* A deferred tensor (an unread jit output) mutates when its bytes arrive,
+   which would change its structural hash. Forcing it before keying makes the
+   key stable — and a keyed tensor is being differentiated or mapped, so its
+   bytes are needed anyway. *)
+let stable x = ignore (Nx_effect.unwrap x)
+
+let set m x v =
+  stable x;
+  Tbl.replace m (Obj.repr x) (Entry (Nx.dtype x, v))
 
 module Ids = struct
   type t = unit Tbl.t
 
   let create () = Tbl.create 64
-  let add ids x = Tbl.replace ids (Obj.repr x) ()
+
+  let add ids x =
+    stable x;
+    Tbl.replace ids (Obj.repr x) ()
+
   let mem ids x = Tbl.mem ids (Obj.repr x)
 end

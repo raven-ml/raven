@@ -299,6 +299,11 @@ let make_node st dtolk n =
    share it, and re-read from the tensor on every call otherwise, so mutations
    between calls behave as they do eagerly. *)
 let lift_const (type a b) st (x : (a, b) Nx_effect.t) : F.Tensor.t =
+  (* The trace table hashes keys structurally, and a deferred capture would
+     mutate — changing its hash — if the traced function read it. Captures are
+     forced when the trace compiles anyway (their bytes are wrapped or
+     uploaded), so force now and keep the key stable. *)
+  ignore (Nx_effect.unwrap x);
   let dt = Nx_effect.dtype x in
   let shape = shape_of x in
   let node = make_node st (tolk_dtype dt) (numel shape) in

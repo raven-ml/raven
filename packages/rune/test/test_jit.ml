@@ -282,6 +282,200 @@ let test_jitted_training_matches_eager () =
   let l0 = scalar (loss (init ())) and l5 = scalar (loss jitted) in
   is_true ~msg:"loss decreased" (l5 < l0)
 
+(* Device residency. Under RUNE_JIT_FORCE_COPY=1 the CPU device takes the
+   staged-copy path used by CUDA and Metal: outputs become deferred handles
+   that stay on the device until read, and a handle fed back into a compiled
+   call seeds its input buffer directly. The transfer counters make the
+   no-copy claims observable. The knob is read when the jit closure is
+   created, so it is scoped to each test body. *)
+
+let with_force_copy f =
+  Unix.putenv "RUNE_JIT_FORCE_COPY" "1";
+  Fun.protect f ~finally:(fun () -> Unix.putenv "RUNE_JIT_FORCE_COPY" "0")
+
+(* Run [f] and return its result with the bytes moved to and from the device
+   during the run. *)
+let delta f =
+  let s0 = Rune.jit_stats () in
+  let r = f () in
+  let s1 = Rune.jit_stats () in
+  ( r,
+    s1.bytes_to_device - s0.bytes_to_device,
+    s1.bytes_from_device - s0.bytes_from_device )
+
+type pair = { u : Nx.float32_t; v : Nx.float32_t }
+
+module Pair = struct
+  type t = pair
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { u; v } =
+    { u = f u; v = f v }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) p q =
+    { u = f p.u q.u; v = f p.v q.v }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { u; v } =
+    f u;
+    f v
+end
+
+let test_feedback_chain_moves_no_bytes () =
+  with_force_copy (fun () ->
+      let f x = Nx.add_s (Nx.mul_s x 2.0) 1.0 in
+      let g = Rune.jit' f in
+      let x = vec32 [| 1.0; 2.0; 3.0 |] in
+      let h1 = g x in
+      let h2, up2, down2 = delta (fun () -> g h1) in
+      let h3, up3, down3 = delta (fun () -> g h2) in
+      equal ~msg:"feeding h1 back uploads nothing" int 0 up2;
+      equal ~msg:"producing h2 downloads nothing" int 0 down2;
+      equal ~msg:"feeding h2 back uploads nothing" int 0 up3;
+      equal ~msg:"producing h3 downloads nothing" int 0 down3;
+      check_arr ~msg:"h3 matches the eager composition" (to_arr (f (f (f x))))
+        h3;
+      (* Handles from earlier calls keep their own storage (R3). *)
+      check_arr ~msg:"h1 still readable" (to_arr (f x)) h1;
+      check_arr ~msg:"h2 still readable" (to_arr (f (f x))) h2)
+
+let test_forced_handle_feeds_current_bytes () =
+  with_force_copy (fun () ->
+      let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
+      let h = g (vec32 [| 1.0; 2.0; 3.0 |]) in
+      check_arr ~msg:"reading forces the handle" [| 2.0; 4.0; 6.0 |] h;
+      (* Once forced it is a plain host tensor: mutations are honored and
+         feeding it back re-uploads the current bytes. *)
+      Nx.set_item [ 0 ] 10.0 h;
+      let h2, up, _ = delta (fun () -> g h) in
+      is_true ~msg:"a forced handle re-uploads" (up > 0);
+      check_arr ~msg:"the mutation is observed" [| 20.0; 8.0; 12.0 |] h2)
+
+let test_same_handle_as_two_leaves () =
+  with_force_copy (fun () ->
+      let g =
+        Rune.jit2
+          (module Pair)
+          (module Pair)
+          (fun p -> { u = Nx.add p.u p.v; v = Nx.mul p.u p.v })
+      in
+      let h = Rune.jit' (fun x -> Nx.mul_s x 3.0) (vec32 [| 1.0; 2.0 |]) in
+      let r, up, _ = delta (fun () -> g { u = h; v = h }) in
+      equal ~msg:"resident duplicate leaves upload nothing" int 0 up;
+      check_arr ~msg:"u" [| 6.0; 12.0 |] r.u;
+      check_arr ~msg:"v" [| 9.0; 36.0 |] r.v)
+
+let test_duplicate_outputs_share_one_handle () =
+  with_force_copy (fun () ->
+      let g =
+        Rune.jit2
+          (module Pair)
+          (module Pair)
+          (fun p ->
+            let y = Nx.add p.u p.v in
+            { u = y; v = y })
+      in
+      let r = g { u = vec32 [| 1.0 |]; v = vec32 [| 2.0 |] } in
+      is_true ~msg:"both leaves are one handle" (r.u == r.v);
+      check_arr ~msg:"readable" [| 3.0 |] r.u;
+      check_arr ~msg:"readable through the other leaf" [| 3.0 |] r.v)
+
+let test_cross_jit_feedback () =
+  with_force_copy (fun () ->
+      let g1 = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
+      let g2 = Rune.jit' (fun x -> Nx.add_s x 1.0) in
+      let h = g1 (vec32 [| 1.0; 2.0 |]) in
+      let r, up, _ = delta (fun () -> g2 h) in
+      equal ~msg:"a distinct jitted closure seeds the handle too" int 0 up;
+      check_arr ~msg:"value" [| 3.0; 5.0 |] r)
+
+let test_cross_signature_feedback () =
+  with_force_copy (fun () ->
+      let g = Rune.jit' (fun x -> Nx.sum ~axes:[ 0 ] x) in
+      let h1 = g (Nx.create f32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |]) in
+      (* h1 has a new shape: feeding it back compiles a second signature,
+         still without forcing the handle. *)
+      let h2, up, down = delta (fun () -> g h1) in
+      equal ~msg:"the retrace uploads nothing" int 0 up;
+      equal ~msg:"the retrace downloads nothing" int 0 down;
+      check_arr ~msg:"value" [| 21.0 |] h2;
+      check_arr ~msg:"h1 still readable" [| 5.0; 7.0; 9.0 |] h1)
+
+let test_pass_through_output_survives () =
+  with_force_copy (fun () ->
+      let g =
+        Rune.jit2
+          (module Pair)
+          (module Pair)
+          (fun p -> { u = p.u; v = Nx.mul_s p.v 2.0 })
+      in
+      let r1 = g { u = vec32 [| 1.0; 2.0 |]; v = vec32 [| 3.0; 4.0 |] } in
+      let r2 = g { u = vec32 [| 5.0; 6.0 |]; v = vec32 [| 7.0; 8.0 |] } in
+      check_arr ~msg:"pass-through survives a later call" [| 1.0; 2.0 |] r1.u;
+      check_arr ~msg:"first call's computed output" [| 6.0; 8.0 |] r1.v;
+      check_arr ~msg:"second call's pass-through" [| 5.0; 6.0 |] r2.u;
+      check_arr ~msg:"second call's computed output" [| 14.0; 16.0 |] r2.v)
+
+let test_assign_to_resident_leaf () =
+  with_force_copy (fun () ->
+      let producer = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
+      let h = producer (vec32 [| 1.0; 2.0 |]) in
+      let step =
+        Rune.jit' (fun x ->
+            Nx.blit (Nx.mul_s x 2.0) x;
+            Nx.sum x)
+      in
+      let s = step h in
+      check_arr ~msg:"sum of the updated leaf" [| 12.0 |] s;
+      check_arr ~msg:"the writeback forced h and updated it" [| 4.0; 8.0 |] h)
+
+let test_grad_over_jit_with_deferred_arg () =
+  with_force_copy (fun () ->
+      let g = Rune.jit' (fun x -> Nx.mul x x) in
+      let h = g (vec32 [| 1.0; 2.0; 3.0 |]) in
+      (* Under grad the jitted function runs eagerly; the handle forces on its
+         first operation. *)
+      let dx = Rune.grad' (fun x -> Nx.sum (g x)) h in
+      check_arr ~msg:"gradient at the deferred point" [| 2.0; 8.0; 18.0 |] dx)
+
+let test_vmap_over_jit_with_deferred_arg () =
+  with_force_copy (fun () ->
+      let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
+      let h = g (Nx.create f32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |]) in
+      let y = Rune.vmap' g h in
+      check_arr ~msg:"vmap over jit at a deferred point"
+        [| 4.0; 8.0; 12.0; 16.0 |]
+        y)
+
+let test_dispatch_on_handle_reads_no_bytes () =
+  with_force_copy (fun () ->
+      let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
+      let h = g (vec32 [| 1.0; 2.0 |]) in
+      (* Signature dispatch uses only metadata: replaying on a handle must not
+         force it. *)
+      let _h2, _, down = delta (fun () -> g h) in
+      equal ~msg:"dispatching on a handle downloads nothing" int 0 down)
+
+let test_dropped_handles_are_reclaimed () =
+  with_force_copy (fun () ->
+      let n = 1024 in
+      let g = Rune.jit' (fun x -> Nx.mul_s x 2.0) in
+      let x = vec32 (Array.make n 1.0) in
+      let base = (Rune.jit_stats ()).resident_bytes in
+      let _, _, down =
+        delta (fun () ->
+            for _ = 1 to 50 do
+              ignore (g x)
+            done)
+      in
+      equal ~msg:"unread outputs download nothing" int 0 down;
+      (* Collect the dropped handles; the next calls drain their buffers. *)
+      Gc.full_major ();
+      ignore (g x);
+      Gc.full_major ();
+      ignore (g x);
+      let s = Rune.jit_stats () in
+      is_true ~msg:"resident bytes are bounded after gc"
+        (s.resident_bytes - base <= 3 * n * 4))
+
 (* Failure modes *)
 
 let test_data_dependent_read_raises () =
@@ -334,6 +528,30 @@ let tests =
           test_offset_view_input_matches_eager;
         test "outputs have their own storage"
           test_outputs_have_their_own_storage;
+      ];
+    group "residency"
+      [
+        test "feedback chain moves no bytes" test_feedback_chain_moves_no_bytes;
+        test "forced handles feed current bytes"
+          test_forced_handle_feeds_current_bytes;
+        test "the same handle can seed two leaves"
+          test_same_handle_as_two_leaves;
+        test "duplicate output leaves share one handle"
+          test_duplicate_outputs_share_one_handle;
+        test "handles feed other jitted closures" test_cross_jit_feedback;
+        test "handles feed new signatures without forcing"
+          test_cross_signature_feedback;
+        test "pass-through outputs survive later calls"
+          test_pass_through_output_survives;
+        test "assigning to a resident leaf forces then writes back"
+          test_assign_to_resident_leaf;
+        test "grad over jit forces deferred arguments"
+          test_grad_over_jit_with_deferred_arg;
+        test "vmap over jit forces deferred arguments"
+          test_vmap_over_jit_with_deferred_arg;
+        test "signature dispatch never forces"
+          test_dispatch_on_handle_reads_no_bytes;
+        test "dropped handles are reclaimed" test_dropped_handles_are_reclaimed;
       ];
     group "errors"
       [

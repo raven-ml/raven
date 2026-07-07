@@ -14,7 +14,9 @@
     This module is the single home of that pattern; the reverse tape and the
     forward tangent store both build on it. Maintainers must preserve the
     invariant that keyed tensors are never mutated in place while a map is live
-    — the differentiation handlers reject mutation. *)
+    — the differentiation handlers reject mutation, and insertion forces
+    deferred tensors (unread jit outputs) so a later read cannot change a key's
+    hash. *)
 
 type t
 (** A map from tensors to same-typed tensors. *)

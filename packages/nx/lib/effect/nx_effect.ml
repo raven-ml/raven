@@ -362,8 +362,10 @@ let deferred_id : type a b. (a, b) t -> int option = function
   | T _ -> None
   | Deferred d -> ( match d.d_forced with Some _ -> None | None -> Some d.d_id)
 
-(* Lenses. Metadata reads on a deferred tensor answer from its record — no fill
-   and, since a deferred tensor is never a trace placeholder, no effect. *)
+(* Lenses. Metadata reads on a deferred tensor answer from its record without
+   running the fill thunk. The [E_view] effect is still performed first: a
+   handler may present a transformed view (vmap shows batched tensors without
+   their batch axis); only the unhandled fallback answers from the record. *)
 
 let create_context () : context = Nx_backend.create_context ()
 
@@ -374,11 +376,12 @@ let context : type a b. (a, b) t -> context = function
 let to_device (_ctx : context) (t : ('a, 'b) t) : ('a, 'b) t = t
 
 let view (type a b) (x : (a, b) t) : View.t =
-  match x with
-  | Deferred d -> d.d_view
-  | T _ -> (
-      try Effect.perform (E_view x)
-      with Effect.Unhandled _ -> Nx_backend.view (unwrap x))
+  try Effect.perform (E_view x)
+  with Effect.Unhandled _ -> (
+    match x with
+    | T t -> Nx_backend.view t
+    | Deferred d -> (
+        match d.d_forced with Some t -> Nx_backend.view t | None -> d.d_view))
 
 let dtype : type a b. (a, b) t -> (a, b) Dtype.t = function
   | T t -> Nx_backend.dtype t
