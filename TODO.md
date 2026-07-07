@@ -2,11 +2,6 @@
 
 ## next (gpt2 parity + multi-device follow-ups)
 
-in flight:
-- fix grad-through-keepdims reductions under pmap (`buffer_like: unknown shape`),
-  then drop the keepdims-free workarounds in the gpt2 example and restore stock
-  kaun layers
-
 production leverage (independent of the multi-device wave, parallelizable):
 - mixed precision end-to-end: bf16 training + fp16 inference. the tensor-core
   wmma path is byte-parity-tested but no model has ever exercised it. needs
