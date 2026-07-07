@@ -11,6 +11,7 @@
   test_stateful
   test_attention
   test_data
-  test_pmap_dp)
+  test_pmap_dp
+  test_half)
  (package kaun)
  (libraries kaun rune vega nx nx.core windtrap))

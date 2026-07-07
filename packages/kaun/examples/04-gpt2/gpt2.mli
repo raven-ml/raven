@@ -22,22 +22,26 @@ type config = {
 }
 (** The type for GPT-2 hyperparameters, as in HuggingFace's [config.json]. *)
 
-type block = {
-  ln1 : Kaun.Layer_norm.t;
-  attn : Kaun.Attention.t;
-  ln2 : Kaun.Layer_norm.t;
-  fc : Kaun.Linear.t;  (** MLP up projection, [n_embd → n_inner]. *)
-  proj : Kaun.Linear.t;  (** MLP down projection, [n_inner → n_embd]. *)
+type 'b block = {
+  ln1 : 'b Kaun.Layer_norm.params;
+  attn : 'b Kaun.Attention.params;
+  ln2 : 'b Kaun.Layer_norm.params;
+  fc : 'b Kaun.Linear.params;  (** MLP up projection, [n_embd → n_inner]. *)
+  proj : 'b Kaun.Linear.params;  (** MLP down projection, [n_inner → n_embd]. *)
 }
-(** The type for one pre-norm transformer block. *)
+(** The type for one pre-norm transformer block with float dtype layout ['b]. *)
 
-type t = {
-  wte : Kaun.Embedding.t;  (** Token embeddings, also the tied LM head. *)
-  wpe : Kaun.Embedding.t;  (** Learned position embeddings. *)
-  blocks : block list;
-  ln_f : Kaun.Layer_norm.t;
+type 'b params = {
+  wte : 'b Kaun.Embedding.params;
+      (** Token embeddings, also the tied LM head. *)
+  wpe : 'b Kaun.Embedding.params;  (** Learned position embeddings. *)
+  blocks : 'b block list;
+  ln_f : 'b Kaun.Layer_norm.params;
 }
-(** The type for GPT-2 parameters. *)
+(** The type for GPT-2 parameters with float dtype layout ['b]. *)
+
+type t = Nx.float32_elt params
+(** The type for single-precision GPT-2 parameters, the checkpoint dtype. *)
 
 module Params : Kaun.Checkpoint.Named with type t = t
 (** Checkpoint plumbing for {!type:t}. Leaves are named [wte.table],
@@ -47,30 +51,39 @@ val make : config -> t
 (** [make cfg] is a zero-initialized model, the [~like] template for
     {!Kaun.Checkpoint.to_params}. *)
 
-val logits : config -> t -> (int32, Nx.int32_elt) Nx.t -> Nx.float32_t
+val astype : (float, 'c) Nx.dtype -> 'b params -> 'c params
+(** [astype dt p] is [p] with every parameter leaf cast to [dt] — for half
+    precision inference, cast a float32 checkpoint once; for mixed-precision
+    training, cast inside the loss function so the float32 parameters receive
+    float32 gradients (see {!Kaun.Linear.astype}). The kaun layers keep their
+    attention-score and layer-norm statistics in float32 islands whatever [dt].
+*)
+
+val logits :
+  config -> 'b params -> (int32, Nx.int32_elt) Nx.t -> (float, 'b) Nx.t
 (** [logits cfg p ids] is the next-token logits for the [[| batch; seq |]] id
-    tensor [ids], of shape [[| batch; seq; vocab_size |]]. The LM head is tied
-    to [p.wte].
+    tensor [ids], of shape [[| batch; seq; vocab_size |]], at the parameters'
+    dtype. The LM head is tied to [p.wte].
 
     Raises [Invalid_argument] if [ids] has more than [cfg.n_positions]
     positions. *)
 
-type cache = Nx.float32_elt Kaun.Attention.Cache.t list
-(** The type for decoding state: one key-value cache per block, in block order.
-*)
+type 'b cache = 'b Kaun.Attention.Cache.t list
+(** The type for decoding state with float dtype layout ['b]: one key-value
+    cache per block, in block order. *)
 
-val cache : config -> len:int -> cache
-(** [cache cfg ~len] is an empty decoding state whose caches hold [len]
+val cache : config -> len:int -> (float, 'b) Nx.dtype -> 'b cache
+(** [cache cfg ~len dtype] is an empty decoding state whose caches hold [len]
     positions: the total sequence length (prompt plus generated tokens) must not
-    exceed [len]. *)
+    exceed [len]. [dtype] is the parameters' dtype. *)
 
 val logits_cached :
   config ->
-  t ->
+  'b params ->
   pos:(int32, Nx.int32_elt) Nx.t ->
-  cache ->
+  'b cache ->
   (int32, Nx.int32_elt) Nx.t ->
-  Nx.float32_t * cache
+  (float, 'b) Nx.t * 'b cache
 (** [logits_cached cfg p ~pos caches ids] is the next-token logits at the last
     position of [ids] — shape [[| batch; vocab_size |]] — and the updated
     caches, where [ids] holds the positions [pos] to [pos + seq - 1] of the
@@ -85,7 +98,8 @@ val logits_cached :
     Raises [Invalid_argument] on the geometry errors of
     {!Kaun.Attention.apply_cached}. *)
 
-val generate : config -> t -> max_tokens:int -> int32 array -> int32 array
+val generate :
+  config -> 'b params -> max_tokens:int -> int32 array -> int32 array
 (** [generate cfg p ~max_tokens prompt] is [prompt] extended with [max_tokens]
     greedily decoded token ids: each step re-runs {!logits} on the whole
     sequence (the model keeps no key-value cache) and appends the argmax of the

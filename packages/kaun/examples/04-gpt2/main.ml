@@ -54,38 +54,40 @@ let load_tokenizer () =
    returns the next token, the advanced position and the updated caches — its
    output feeds the next call directly. The position enters the graph as a
    tensor, so [Rune.jit2] compiles exactly two variants: a prefill over the
-   whole prompt, and a single-token step replayed for every generated token. *)
+   whole prompt, and a single-token step replayed for every generated token.
 
-type step = {
-  token : Nx.int32_t; (* [| 1; seq |]: the prompt, then one token at a time *)
-  pos : Nx.int32_t; (* [| 1 |], the position of [token]'s first entry *)
-  caches : Gpt2.cache;
-}
+   The step is generic over the parameters' float dtype [b]: the key-value
+   caches carry the same dtype as the weights, so [--dtype float16] decodes with
+   half precision weights, activations and caches alike. *)
 
-module Step = struct
-  type t = step
-
-  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) { token; pos; caches } =
-    {
-      token = f token;
-      pos = f pos;
-      caches = List.map (Kaun.Attention.Cache.map f) caches;
+let generate_jit (type b) ~device cfg (params : b Gpt2.params)
+    (dt : (float, b) Nx.dtype) ~max_tokens prompt =
+  let module Step = struct
+    type t = {
+      token : Nx.int32_t; (* [| 1; seq |]: the prompt, then one token *)
+      pos : Nx.int32_t; (* [| 1 |], the position of [token]'s first entry *)
+      caches : b Gpt2.cache;
     }
 
-  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
-    {
-      token = f a.token b.token;
-      pos = f a.pos b.pos;
-      caches = List.map2 (Kaun.Attention.Cache.map2 f) a.caches b.caches;
-    }
+    let map (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t) { token; pos; caches } =
+      {
+        token = f token;
+        pos = f pos;
+        caches = List.map (Kaun.Attention.Cache.map f) caches;
+      }
 
-  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) { token; pos; caches } =
-    f token;
-    f pos;
-    List.iter (Kaun.Attention.Cache.iter f) caches
-end
+    let map2 (f : 'a 'c. ('a, 'c) Nx.t -> ('a, 'c) Nx.t -> ('a, 'c) Nx.t) a b =
+      {
+        token = f a.token b.token;
+        pos = f a.pos b.pos;
+        caches = List.map2 (Kaun.Attention.Cache.map2 f) a.caches b.caches;
+      }
 
-let generate_jit ~device cfg params ~max_tokens prompt =
+    let iter (f : 'a 'c. ('a, 'c) Nx.t -> unit) { token; pos; caches } =
+      f token;
+      f pos;
+      List.iter (Kaun.Attention.Cache.iter f) caches
+  end in
   let n0 = Array.length prompt in
   let len = n0 + max_tokens in
   let tokens = Array.make len 0l in
@@ -94,11 +96,11 @@ let generate_jit ~device cfg params ~max_tokens prompt =
     Rune.jit2 ~device
       (module Step)
       (module Step)
-      (fun { token; pos; caches } ->
+      (fun { Step.token; pos; caches } ->
         let seq = (Nx.shape token).(1) in
         let logits, caches = Gpt2.logits_cached cfg params ~pos caches token in
         {
-          token = Nx.reshape [| 1; 1 |] (Nx.argmax ~axis:1 logits);
+          Step.token = Nx.reshape [| 1; 1 |] (Nx.argmax ~axis:1 logits);
           pos = Nx.add_s pos (Int32.of_int seq);
           caches;
         })
@@ -108,18 +110,18 @@ let generate_jit ~device cfg params ~max_tokens prompt =
     ref
       (step_fn
          {
-           token = Nx.create Nx.int32 [| 1; n0 |] prompt;
+           Step.token = Nx.create Nx.int32 [| 1; n0 |] prompt;
            pos = Nx.zeros Nx.int32 [| 1 |];
-           caches = Gpt2.cache cfg ~len;
+           caches = Gpt2.cache cfg ~len dt;
          })
   in
-  tokens.(n0) <- Nx.item [ 0; 0 ] !state.token;
+  tokens.(n0) <- Nx.item [ 0; 0 ] !state.Step.token;
   let prefill = Unix.gettimeofday () -. t0 in
   let times = Array.make (max 1 (max_tokens - 1)) 0. in
   for n = n0 + 1 to len - 1 do
     let t0 = Unix.gettimeofday () in
     let s = step_fn !state in
-    tokens.(n) <- Nx.item [ 0; 0 ] s.token;
+    tokens.(n) <- Nx.item [ 0; 0 ] s.Step.token;
     state := s;
     times.(n - n0 - 1) <- Unix.gettimeofday () -. t0
   done;
@@ -137,6 +139,7 @@ let () =
   let prompt = ref default_prompt in
   let count = ref 10 in
   let jit = ref "" in
+  let dtype = ref "float32" in
   Arg.parse
     [
       ("--prompt", Arg.Set_string prompt, "Phrase to start with");
@@ -145,19 +148,48 @@ let () =
         Arg.Set_string jit,
         "Compile the forward pass for this device (CPU or CUDA); eager when \
          omitted" );
+      ( "--dtype",
+        Arg.Set_string dtype,
+        "Model dtype: float32 (default), float16 or bfloat16. Half dtypes cast \
+         the float32 checkpoint once and run weights, activations and caches \
+         at half precision" );
     ]
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
-    "gpt2 [--prompt P] [--count N] [--jit DEVICE]";
+    "gpt2 [--prompt P] [--count N] [--jit DEVICE] [--dtype DT]";
   let tokenizer = load_tokenizer () in
   let t0 = Unix.gettimeofday () in
   let cfg, params = load_model () in
   Printf.printf "loaded weights in %.2f s\n%!" (Unix.gettimeofday () -. t0);
   let ids = Array.map Int32.of_int (Brot.encode_ids tokenizer !prompt) in
-  let t0 = Unix.gettimeofday () in
-  let toks =
+  let run : type b. (float, b) Nx.dtype -> b Gpt2.params -> int32 array =
+   fun dt params ->
+    let bytes = ref 0 in
+    let count_t t = bytes := !bytes + Nx.nbytes t in
+    Kaun.Embedding.iter count_t params.wte;
+    Kaun.Embedding.iter count_t params.wpe;
+    List.iter
+      (fun (b : b Gpt2.block) ->
+        Kaun.Layer_norm.iter count_t b.ln1;
+        Kaun.Attention.iter count_t b.attn;
+        Kaun.Layer_norm.iter count_t b.ln2;
+        Kaun.Linear.iter count_t b.fc;
+        Kaun.Linear.iter count_t b.proj)
+      params.blocks;
+    Kaun.Layer_norm.iter count_t params.ln_f;
+    Printf.printf "weights: %.0f MB at %s\n%!"
+      (float_of_int !bytes /. 1e6)
+      !dtype;
     match !jit with
     | "" -> Gpt2.generate cfg params ~max_tokens:!count ids
-    | device -> generate_jit ~device cfg params ~max_tokens:!count ids
+    | device -> generate_jit ~device cfg params dt ~max_tokens:!count ids
+  in
+  let t0 = Unix.gettimeofday () in
+  let toks =
+    match !dtype with
+    | "float32" -> run Nx.float32 params
+    | "float16" -> run Nx.float16 (Gpt2.astype Nx.float16 params)
+    | "bfloat16" -> run Nx.bfloat16 (Gpt2.astype Nx.bfloat16 params)
+    | d -> failwith ("--dtype must be float32, float16 or bfloat16, got " ^ d)
   in
   let dt = Unix.gettimeofday () -. t0 in
   Printf.printf "generated %d tokens in %.2f s (%.2f tok/s)\n%!" !count dt

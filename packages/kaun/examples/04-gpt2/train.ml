@@ -3,21 +3,20 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
-(* GPT-2 124M training on a single fixed batch, matching the tinygrad
-   reference protocol (see /_gpt2_train_reference in the repository):
+(* GPT-2 124M training on a single fixed batch, matching the tinygrad reference
+   protocol (see /_gpt2_train_reference in the repository):
 
-   - fp32 weights from a local HuggingFace-layout safetensors file, no dropout
-   - a fixed 4x65 token grid from tokens.json; inputs are columns 0..63 and
-     targets columns 1..64, the same batch every step
-   - mean cross-entropy over all 4*64 positions
-   - plain SGD, lr 1e-4, no momentum; the LM head is tied to [wte] so the
-     embedding's gradient accumulates from both of its uses
-   - the whole step (forward, backward, update) compiles as one [Rune.jit2]
-     program; the loss recorded at step i is computed before update i
-   - [--devices] switches the step to data-parallel [Rune.pmap2]: parameters
-     replicated on every device, the batch sharded on axis 0, gradients
-     allreduced by construction — same numbers as the single-device step up
-     to fp32 reduction order
+   - fp32 weights from a local HuggingFace-layout safetensors file, no dropout -
+   a fixed 4x65 token grid from tokens.json; inputs are columns 0..63 and
+   targets columns 1..64, the same batch every step - mean cross-entropy over
+   all 4*64 positions - plain SGD, lr 1e-4, no momentum; the LM head is tied to
+   [wte] so the embedding's gradient accumulates from both of its uses - the
+   whole step (forward, backward, update) compiles as one [Rune.jit2] program;
+   the loss recorded at step i is computed before update i - [--devices]
+   switches the step to data-parallel [Rune.pmap2]: parameters replicated on
+   every device, the batch sharded on axis 0, gradients allreduced by
+   construction — same numbers as the single-device step up to fp32 reduction
+   order
 
    Per step it emits the loss (shortest round-trip float64 repr of the fp32
    value), wall-clock ms, and fingerprints of six designated weights in the
@@ -115,6 +114,28 @@ let loss_fn inputs targets params =
   in
   Loss.softmax_cross_entropy_sparse logits targets
 
+(* Mixed-precision loss ([--compute-dtype bfloat16] or [float16]): the astype
+   sandwich. [Gpt2.astype] casts the float32 master weights to the compute dtype
+   at the top of the objective and the logits come back up to float32 for the
+   loss, so the objective's reductions run at full precision. The cast VJP
+   returns cotangents at the pre-cast dtype, so the gradients — and the
+   parameters, the optimizer step and [Step_out] — stay float32 whatever the
+   compute dtype. The float32 path uses the cast-free [loss_fn] above and its
+   exact original graph.
+
+   The weight casts recompute every step inside the jitted graph: on CUDA they
+   neither block fusion nor tensor-core matching (the bfloat16 step's matmul
+   kernels lower to mma.sync bf16 instructions with float32 accumulators —
+   DEBUG=4 shows them), so the bf16 weights are never materialized as a second
+   tree. *)
+let loss_fn_half compute inputs targets params =
+  let params = Gpt2.astype compute params in
+  let logits = Gpt2.logits gpt2_124m params inputs in
+  let logits =
+    Nx.reshape [| batch_size * seq_len; gpt2_124m.vocab_size |] logits
+  in
+  Loss.softmax_cross_entropy_sparse (Nx.cast Nx.float32 logits) targets
+
 (* The jitted step returns the updated parameters and the pre-update loss. *)
 module Step_out = struct
   type t = { params : Gpt2.t; loss : Nx.float32_t }
@@ -130,10 +151,8 @@ module Step_out = struct
     f t.loss
 end
 
-let train_step inputs targets params =
-  let loss, grads =
-    Rune.value_and_grad (module Gpt2.Params) (loss_fn inputs targets) params
-  in
+let train_step objective params =
+  let loss, grads = Rune.value_and_grad (module Gpt2.Params) objective params in
   (* Plain SGD: momentum is 0, so the zero velocity from [sgd_init] leaves the
      update exactly [w - lr * g] and needs no threading across steps. *)
   let state = Vega.sgd_init (module Gpt2.Params) params in
@@ -142,8 +161,76 @@ let train_step inputs targets params =
   in
   { Step_out.params; loss }
 
-(* Data-parallel input: the batch joins the parameters as leaves so [pmap2]
-   can shard it (axis 0) while replicating the parameters. *)
+(* Float16 compute needs loss scaling: float16 gradients underflow below 2^-24.
+   The scale state rides the jitted step's input and output structures as tensor
+   leaves, so the dynamic scale really updates across compiled calls. Overflowed
+   steps keep the previous parameters (selected with [Nx.where] on the finite
+   flag, so the step still traces once). *)
+
+module Scaled_in = struct
+  type t = { params : Gpt2.t; ls : Vega.Loss_scale.t }
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
+    { params = Gpt2.Params.map f t.params; ls = Vega.Loss_scale.map f t.ls }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
+    {
+      params = Gpt2.Params.map2 f a.params b.params;
+      ls = Vega.Loss_scale.map2 f a.ls b.ls;
+    }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t =
+    Gpt2.Params.iter f t.params;
+    Vega.Loss_scale.iter f t.ls
+end
+
+module Scaled_out = struct
+  type t = { params : Gpt2.t; loss : Nx.float32_t; ls : Vega.Loss_scale.t }
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
+    {
+      params = Gpt2.Params.map f t.params;
+      loss = f t.loss;
+      ls = Vega.Loss_scale.map f t.ls;
+    }
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
+    {
+      params = Gpt2.Params.map2 f a.params b.params;
+      loss = f a.loss b.loss;
+      ls = Vega.Loss_scale.map2 f a.ls b.ls;
+    }
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t =
+    Gpt2.Params.iter f t.params;
+    f t.loss;
+    Vega.Loss_scale.iter f t.ls
+end
+
+let train_step_scaled objective { Scaled_in.params; ls } =
+  (* The scale enters as the backward seed: [vjp] against the scale cotangent is
+     exactly [grad (fun p -> Loss_scale.scale ls (objective p))] — every float16
+     cotangent downstream carries the scale, which is the underflow protection —
+     but the loss comes back unscaled for reporting. (It also sidesteps a tolk
+     CUDA codegen bug, 2026-07: with the loss-multiply form, one backward kernel
+     of this model renders a whole-vocab-axis vectorized store,
+     [make_float50257], which NVRTC rejects.) *)
+  let loss, grads =
+    Rune.vjp (module Gpt2.Params) objective params ls.Vega.Loss_scale.scale
+  in
+  let grads = Vega.Loss_scale.unscale (module Gpt2.Params) ls grads in
+  let finite = Vega.Loss_scale.grads_finite (module Gpt2.Params) grads in
+  let state = Vega.sgd_init (module Gpt2.Params) params in
+  let params' =
+    fst (Vega.sgd_step (module Gpt2.Params) ~lr state ~params ~grads)
+  in
+  let params =
+    Gpt2.Params.map2 (fun p p' -> Nx.where finite p' p) params params'
+  in
+  { Scaled_out.params; loss; ls = Vega.Loss_scale.adjust ls ~finite }
+
+(* Data-parallel input: the batch joins the parameters as leaves so [pmap2] can
+   shard it (axis 0) while replicating the parameters. *)
 module Step_in = struct
   type t = {
     params : Gpt2.t;
@@ -187,7 +274,7 @@ let rec pairwise ~abs a lo n =
     let s = ref 0.0 in
     for i = lo to lo + n - 1 do
       let x = Bigarray.Array1.unsafe_get a i in
-      s := !s +. (if abs then Float.abs x else x)
+      s := !s +. if abs then Float.abs x else x
     done;
     !s
   end
@@ -204,14 +291,14 @@ let fingerprint t =
   let first8 =
     List.init (min 8 n) (fun i -> repr_float (Bigarray.Array1.get a i))
   in
-  (repr_float (pairwise ~abs:false a 0 n),
-   repr_float (pairwise ~abs:true a 0 n),
-   first8)
+  ( repr_float (pairwise ~abs:false a 0 n),
+    repr_float (pairwise ~abs:true a 0 n),
+    first8 )
 
 (* The six designated tensors, in the reference's in-memory layout (tinygrad
-   Linear [out; in]): c_attn is the q/k/v weights re-fused into the HF
-   [768; 2304] matrix, then — like c_fc and c_proj — transposed from kaun's
-   [inputs; outputs] to [outputs; inputs]. *)
+   Linear [out; in]): c_attn is the q/k/v weights re-fused into the HF [768;
+   2304] matrix, then — like c_fc and c_proj — transposed from kaun's [inputs;
+   outputs] to [outputs; inputs]. *)
 let fingerprint_tensors (p : Gpt2.t) =
   let b0 = List.nth p.blocks 0 and b11 = List.nth p.blocks 11 in
   let c_attn =
@@ -235,7 +322,7 @@ let bias name = function
 
 let checkpoint_of_params original (p : Gpt2.t) =
   let tensor = Checkpoint.of_tensor in
-  let block i (b : Gpt2.block) =
+  let block i (b : Nx.float32_elt Gpt2.block) =
     let key leaf = Printf.sprintf "h.%d.%s" i leaf in
     let linear leaf (l : Linear.t) =
       [
@@ -246,11 +333,9 @@ let checkpoint_of_params original (p : Gpt2.t) =
     [
       tensor (key "ln_1.weight") b.ln1.gamma;
       tensor (key "ln_1.bias") b.ln1.beta;
-      tensor
-        (key "attn.c_attn.weight")
+      tensor (key "attn.c_attn.weight")
         (Nx.concatenate ~axis:1 [ b.attn.q.w; b.attn.k.w; b.attn.v.w ]);
-      tensor
-        (key "attn.c_attn.bias")
+      tensor (key "attn.c_attn.bias")
         (Nx.concatenate
            [
              bias (key "attn.q") b.attn.q.b;
@@ -264,8 +349,7 @@ let checkpoint_of_params original (p : Gpt2.t) =
       tensor (key "ln_2.bias") b.ln2.beta;
     ]
     @ linear "attn.c_proj" b.attn.out
-    @ linear "mlp.c_fc" b.fc
-    @ linear "mlp.c_proj" b.proj
+    @ linear "mlp.c_fc" b.fc @ linear "mlp.c_proj" b.proj
   in
   Checkpoint.concat
     ([
@@ -282,17 +366,25 @@ let emit_metrics buf ~device ~steps ~n_params ~initial_loss records =
   let str s = "\"" ^ s ^ "\"" in
   Buffer.add_string buf
     (Printf.sprintf
-       "{\n \"device\": %s,\n \"steps\": %d,\n \"batch_size\": %d,\n \
-        \"seq_len\": %d,\n \"lr\": %s,\n \"n_params\": %d,\n \
-        \"initial_loss\": %s,\n \"jit_calls\": null,\n \"records\": [\n"
+       "{\n\
+       \ \"device\": %s,\n\
+       \ \"steps\": %d,\n\
+       \ \"batch_size\": %d,\n\
+       \ \"seq_len\": %d,\n\
+       \ \"lr\": %s,\n\
+       \ \"n_params\": %d,\n\
+       \ \"initial_loss\": %s,\n\
+       \ \"jit_calls\": null,\n\
+       \ \"records\": [\n"
        (str device) steps batch_size seq_len (repr_float lr) n_params
        (str initial_loss));
   List.iteri
     (fun i (step, loss, ms, weights) ->
       if i > 0 then Buffer.add_string buf ",\n";
       Buffer.add_string buf
-        (Printf.sprintf "  {\"step\": %d, \"loss\": %s, \"ms\": %s,\n\
-                        \   \"weights\": {" step (str loss) (repr_float ms));
+        (Printf.sprintf
+           "  {\"step\": %d, \"loss\": %s, \"ms\": %s,\n   \"weights\": {" step
+           (str loss) (repr_float ms));
       List.iteri
         (fun j (name, (sum, abs_sum, first8)) ->
           if j > 0 then Buffer.add_string buf ",";
@@ -309,6 +401,7 @@ let emit_metrics buf ~device ~steps ~n_params ~initial_loss records =
 let () =
   let device = ref "CPU" in
   let devices = ref "" in
+  let compute_dtype = ref "float32" in
   let steps = ref 20 in
   let here = Filename.dirname Sys.executable_name in
   let tokens = ref (Filename.concat here "tokens.json") in
@@ -327,6 +420,11 @@ let () =
         Arg.Set_string devices,
         "Data-parallel device tuple: a CPU count (2 = CPU:1,CPU:2) or a \
          comma-separated list (CUDA:0,CUDA:1)" );
+      ( "--compute-dtype",
+        Arg.Set_string compute_dtype,
+        "Forward/backward dtype: float32 (default), bfloat16 or float16. \
+         Parameters, gradients and the optimizer step stay float32 (master \
+         weights); float16 adds dynamic loss scaling" );
       ("--steps", Arg.Set_int steps, "Number of training steps");
       ("--tokens", Arg.Set_string tokens, "Path to the tokens.json grid");
       ("--model", Arg.Set_string model, "Path to the initial safetensors");
@@ -336,8 +434,8 @@ let () =
         "Save final weights (input-file layout) to this path" );
     ]
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
-    "train --device DEV [--devices TUPLE] [--steps N] [--tokens F] [--model \
-     F] [--metrics-out F] [--save-weights F]";
+    "train --device DEV [--devices TUPLE] [--steps N] [--tokens F] [--model F] \
+     [--metrics-out F] [--save-weights F]";
 
   let inputs, targets = batch_of_ids (load_ids !tokens) in
   let original = Checkpoint.load !model in
@@ -348,42 +446,75 @@ let () =
     !n
   in
 
-  (* Untrained-loss probe, eagerly on the C backend: independent of the jit,
-     the optimizer and the backward pass. *)
+  (* Untrained-loss probe, eagerly on the C backend: independent of the jit, the
+     optimizer and the backward pass. *)
   let initial_loss = repr_float (Nx.item [] (loss_fn inputs targets !params)) in
   Printf.printf "initial loss (before step 1): %s\n%!" initial_loss;
 
-  let step =
+  (* The per-shard objective, from the compute dtype. *)
+  let objective =
+    match !compute_dtype with
+    | "float32" -> loss_fn
+    | "bfloat16" -> loss_fn_half Nx.bfloat16
+    | "float16" -> loss_fn_half Nx.float16
+    | d ->
+        failwith
+          ("--compute-dtype must be float32, bfloat16 or float16, got " ^ d)
+  in
+  (* [step] maps parameters to updated parameters and the pre-update loss; the
+     float16 variant additionally threads its loss-scale state, hidden in the
+     closure. *)
+  let step : Gpt2.t -> Gpt2.t * float =
     if !devices = "" then
-      Rune.jit2 ~device:!device
-        (module Gpt2.Params)
-        (module Step_out)
-        (train_step inputs targets)
+      if !compute_dtype = "float16" then begin
+        let f =
+          Rune.jit2 ~device:!device
+            (module Scaled_in)
+            (module Scaled_out)
+            (train_step_scaled (objective inputs targets))
+        in
+        let ls = ref (Vega.Loss_scale.dynamic ()) in
+        fun params ->
+          let out = f { Scaled_in.params; ls = !ls } in
+          ls := out.Scaled_out.ls;
+          (out.Scaled_out.params, Nx.item [] out.Scaled_out.loss)
+      end
+      else
+        let f =
+          Rune.jit2 ~device:!device
+            (module Gpt2.Params)
+            (module Step_out)
+            (train_step (objective inputs targets))
+        in
+        fun params ->
+          let out = f params in
+          (out.Step_out.params, Nx.item [] out.Step_out.loss)
     else begin
+      if !compute_dtype = "float16" then
+        failwith "--compute-dtype float16 does not support --devices";
       let devs = parse_devices !devices in
       device := String.concat "," devs;
       (* One [in_axes] entry per leaf in traversal order: every parameter
          replicated, then the two batch leaves sharded on axis 0. *)
-      let in_axes =
-        List.init n_params (fun _ -> None) @ [ Some 0; Some 0 ]
-      in
+      let in_axes = List.init n_params (fun _ -> None) @ [ Some 0; Some 0 ] in
       let f =
         Rune.pmap2 ~devices:devs ~in_axes
           (module Step_in)
           (module Step_out)
           (fun { Step_in.params; inputs; targets } ->
-            train_step inputs targets params)
+            train_step (objective inputs targets) params)
       in
-      fun params -> f { Step_in.params; inputs; targets }
+      fun params ->
+        let out = f { Step_in.params; inputs; targets } in
+        (out.Step_out.params, Nx.item [] out.Step_out.loss)
     end
   in
   let records = ref [] in
   for i = 1 to !steps do
     let t0 = Unix.gettimeofday () in
-    let out = step !params in
-    let loss = Nx.item [] out.Step_out.loss in
+    let params', loss = step !params in
     let ms = (Unix.gettimeofday () -. t0) *. 1e3 in
-    params := out.Step_out.params;
+    params := params';
     Printf.printf "step %3d  loss %s  %9.2f ms\n%!" i (repr_float loss) ms;
     let weights =
       List.map (fun (n, t) -> (n, fingerprint t)) (fingerprint_tensors !params)

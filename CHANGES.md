@@ -473,6 +473,11 @@ thread.
 
 ### Kaun
 
+- The gpt2 example is dtype-generic: `main.exe --dtype float16|bfloat16`
+  for half-precision generation (float16 greedy tokens match float32 at
+  half the weight memory), `train.exe --compute-dtype bfloat16|float16` for
+  mixed-precision training with float32 master weights (bfloat16 engages
+  tensor cores).
 - Add `astype` to every layer (`Linear`, `Embedding`, `Conv`, `Layer_norm`,
   `Attention` and its `Cache`, `Batch_norm` and its `Stats`): cast parameter
   trees to another float dtype; gradients flow back at each leaf's original

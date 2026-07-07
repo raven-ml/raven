@@ -20,22 +20,24 @@ type config = {
   layer_norm_eps : float;
 }
 
-(* Model: plain records of kaun layers *)
+(* Model: plain records of kaun layers, generic over the float dtype *)
 
-type block = {
-  ln1 : Layer_norm.t;
-  attn : Attention.t;
-  ln2 : Layer_norm.t;
-  fc : Linear.t;
-  proj : Linear.t;
+type 'b block = {
+  ln1 : 'b Layer_norm.params;
+  attn : 'b Attention.params;
+  ln2 : 'b Layer_norm.params;
+  fc : 'b Linear.params;
+  proj : 'b Linear.params;
 }
 
-type t = {
-  wte : Embedding.t;
-  wpe : Embedding.t;
-  blocks : block list;
-  ln_f : Layer_norm.t;
+type 'b params = {
+  wte : 'b Embedding.params;
+  wpe : 'b Embedding.params;
+  blocks : 'b block list;
+  ln_f : 'b Layer_norm.params;
 }
+
+type t = Nx.float32_elt params
 
 module Params = struct
   type nonrec t = t
@@ -106,6 +108,23 @@ module Params = struct
     @ pre "ln_f" (Layer_norm.names p.ln_f)
 end
 
+let astype dt p =
+  let block b =
+    {
+      ln1 = Layer_norm.astype dt b.ln1;
+      attn = Attention.astype dt b.attn;
+      ln2 = Layer_norm.astype dt b.ln2;
+      fc = Linear.astype dt b.fc;
+      proj = Linear.astype dt b.proj;
+    }
+  in
+  {
+    wte = Embedding.astype dt p.wte;
+    wpe = Embedding.astype dt p.wpe;
+    blocks = List.map block p.blocks;
+    ln_f = Layer_norm.astype dt p.ln_f;
+  }
+
 let make cfg =
   let zeros = Init.zeros in
   let linear ~inputs ~outputs =
@@ -160,12 +179,12 @@ let logits cfg p ids =
    on the input length and the cache length — the position is a tensor — so a
    single-token step traces once under [Rune.jit]. *)
 
-type cache = Nx.float32_elt Attention.Cache.t list
+type 'b cache = 'b Attention.Cache.t list
 
-let cache cfg ~len =
+let cache cfg ~len dtype =
   List.init cfg.n_layer (fun _ ->
       Attention.Cache.make ~num_heads:cfg.n_head
-        ~head_dim:(cfg.n_embd / cfg.n_head) ~len Nx.float32)
+        ~head_dim:(cfg.n_embd / cfg.n_head) ~len dtype)
 
 let block_apply_cached cfg b c ~pos x =
   let eps = cfg.layer_norm_eps in
