@@ -2,25 +2,38 @@
 
 ## next (gpt2 parity + multi-device follow-ups)
 
-production leverage (independent of the multi-device wave, parallelizable):
-- mixed precision end-to-end: bf16 training + fp16 inference. the tensor-core
-  wmma path is byte-parity-tested but no model has ever exercised it. needs
-  dtype plumbing through kaun/rune (loss scaling for fp16), bf16 safetensors
-  loading (currently f32-only), and a HALF gpt2 acceptance run against
-  tinygrad's `HALF=1` mode
-- rng + dropout: tolk has `Threefry` in the uop layer with codegen
-  decomposition, but the rng frontend is missing (`rand`/`manual_seed`/
-  `multinomial`, per-device seed scheme) and kaun's gpt2 omits dropout.
-  blocks stochastic training and temperature sampling; well-scoped parity work
+production leverage:
 - differential fuzzing: generate random small programs, cross-check nx-eager
   vs rune-jit vs tolk-cpu vs tolk-cuda (optionally the tinygrad reference).
-  the recurring bug class this cycle was silent wrongness (`Hashtbl.hash`
-  cache collision, scatter-`Add` zeroing, `Mselect` first-child stub, graph
-  stale addresses) — all caught incidentally; hunt it systematically
-- persistent compilation cache for rune: tolk disk-caches compiled kernels,
-  but rune re-schedules and re-lowers in-process every start (~16 s first
-  train step, 1-2 s per decode signature). cache the scheduled/lowered
-  program keyed by trace signature for near-zero warm starts
+  the recurring bug class is silent wrongness (`Hashtbl.hash` cache
+  collision, scatter-`Add` zeroing, `Mselect` first-child stub, graph stale
+  addresses, the f32->f16 conversion corrupting odd-exponent values) — all
+  caught incidentally; hunt it systematically
+
+known bugs (found during the mixed-precision/rng waves, repros recorded):
+- tolk cuda/cpu renderers emit vectorized stores through scalar pointers at
+  full-model scale: `make_float50257(...)` on the fp16 gpt2 loss-multiply
+  backward (repro in kaun train.ml comment), `(float3)` store in a pmapped
+  dropout backward on cpu. likely one owner in the devectorize/store path
+- rune: a tiny mlp pmap+dropout+grad repro fails with `Uop.shape: invalid
+  RESHAPE: element count changes from 1 to -128`
+- rune: tensors created lazily inside a jit trace can make two
+  identically-seeded compilations disagree (see kaun test_stateful comment)
+- tolk `Run.buffer_of` on a tensor whose graph folds to a pure constant
+  raises instead of materializing (worked around in the dropout p=1 test)
+
+perf follow-ups:
+- fp16 train step: per-leaf unscale/isfinite/where plumbing over 148 leaves
+  adds ~750 ms/step (compute itself is ~95 ms with TC engaged) — needs a
+  fused/tree-level formulation
+- rune warm start is now trace-dominated (~3.6 s effect replay +
+  transform_to_call); weight loading (safetensors, 2.8-9.4 s) dominates
+  example warm starts
+- pmap dropout: per-device mask decorrelation needs an axis-index-style
+  extension (`fold_in key (axis_index ())`); today a replicated key gives
+  identical masks per device (documented)
+- half `rand` in tolk needs the size-changing bitcast (pairs with any
+  further mixed-precision work)
 
 multi-device (single-gpu work):
 - tolk frontend `Tensor.shard`/`shard_`/`to_` on device tuples (schedule and
