@@ -255,6 +255,12 @@ thread.
 
 ### Nx
 
+- Fix `cast` and all float16 compute: the float32-to-float16 conversion
+  corrupted any value with an odd biased exponent that needed mantissa
+  rounding (e.g. casting `0.274` to float16 returned `0.5`), converted `inf`
+  to `nan`, and flushed subnormals to zero. Conversion is now IEEE
+  round-to-nearest-even with subnormal support, matching numpy. Casting a
+  signaling NaN to `bfloat16` no longer returns `inf`.
 - Add deferred host tensors to `nx.effect`: `Nx_effect.deferred` creates a
   tensor whose bytes arrive on first data access. Metadata reads (`shape`,
   `dtype`) answer without transfer; the first read runs a fill thunk once

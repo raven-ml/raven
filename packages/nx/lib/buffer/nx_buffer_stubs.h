@@ -75,6 +75,11 @@ static inline uint16_t float_to_bfloat16(float f) {
     float f;
     uint32_t i;
   } u = {.f = f};
+  /* NaN first: the rounding bias below could carry a small NaN significand
+     into the exponent and turn it into inf. */
+  if ((u.i & 0x7FFFFFFFu) > 0x7F800000u) {
+    return (uint16_t)((u.i >> 16) | 0x0040u); /* quiet, keep the sign */
+  }
   /* Round to nearest even */
   uint32_t rounding_bias = ((u.i >> 16) & 1) + 0x7FFF;
   return (u.i + rounding_bias) >> 16;
@@ -89,39 +94,57 @@ static inline float bfloat16_to_float(uint16_t bf16) {
   return u.f;
 }
 
-/* Float16 (IEEE 754 half-precision) conversions */
+/* Float16 (IEEE 754 half-precision) conversions.
+   Round to nearest, ties to even, with subnormal support. */
 static inline uint16_t float_to_half(float f) {
   union {
     float f;
     uint32_t i;
   } u = {.f = f};
-  uint32_t i = u.i;
-  uint16_t h_sgn = (uint16_t)((i & 0x80000000u) >> 16);
-  uint32_t f_m = i & 0x00FFFFFFu;
-  uint32_t f_e = (i & 0x7F800000u) >> 23;
+  uint32_t f_bits = u.i;
+  uint16_t h_sgn = (uint16_t)((f_bits & 0x80000000u) >> 16);
+  uint32_t f_exp = f_bits & 0x7F800000u;
+  uint32_t f_sig = f_bits & 0x007FFFFFu;
 
-  if (f_e == 0xFF) { /* Inf or NaN */
-    h_sgn |= 0x7C00u;
-    h_sgn |= (f_m != 0); /* NaN if mantissa != 0 */
-    return h_sgn;
-  }
-  if (f_e == 0) { /* Denormal or zero */
-    return h_sgn; /* Flush to zero */
-  }
-  int exp = (int)f_e - 127 + 15;
-  if (exp >= 31) return h_sgn | 0x7C00u; /* Inf */
-  if (exp <= 0) return h_sgn;            /* Underflow */
-
-  uint32_t mant = f_m >> 13;
-  uint32_t round = (f_m >> 12) & 1;
-  if (round) {
-    mant += 1;
-    if (mant >= (1u << 10)) {
-      mant = 0;
-      exp += 1;
+  /* Exponent overflow/NaN converts to signed inf/NaN. */
+  if (f_exp >= 0x47800000u) {
+    if (f_exp == 0x7F800000u && f_sig != 0) {
+      /* NaN: propagate the significand bits, keeping it a NaN. */
+      uint16_t ret = (uint16_t)(0x7C00u + (f_sig >> 13));
+      ret += (ret == 0x7C00u);
+      return h_sgn + ret;
     }
+    return h_sgn + 0x7C00u; /* inf, or finite overflow to inf */
   }
-  return h_sgn | (exp << 10) | (mant & 0x3FFu);
+
+  /* Exponent underflow converts to a subnormal half or signed zero. */
+  if (f_exp <= 0x38000000u) {
+    if (f_exp < 0x33000000u) return h_sgn; /* below 2^-25: signed zero */
+    /* Make the subnormal significand. */
+    f_exp >>= 23;
+    f_sig += 0x00800000u; /* implicit bit */
+    f_sig >>= (113 - f_exp);
+    /* Round to nearest, ties to even. The shift above can lose up to 11
+       bits, so the low bits of the original word break the apparent tie. */
+    if (((f_sig & 0x00003FFFu) != 0x00001000u) || (f_bits & 0x000007FFu)) {
+      f_sig += 0x00001000u;
+    }
+    /* A rounding carry into the exponent field yields the smallest normal:
+       the correct result. */
+    return h_sgn + (uint16_t)(f_sig >> 13);
+  }
+
+  /* Regular case. */
+  uint16_t h_exp = (uint16_t)((f_exp - 0x38000000u) >> 13);
+  /* Round to nearest, ties to even: add half an ulp except on a tie with
+     the even bit already clear. */
+  if ((f_sig & 0x00003FFFu) != 0x00001000u) {
+    f_sig += 0x00001000u;
+  }
+  uint16_t h_sig = (uint16_t)(f_sig >> 13);
+  /* A rounding carry increments the exponent, possibly to 31: overflow to
+     signed inf, the correct result. */
+  return h_sgn + h_exp + h_sig;
 }
 
 static inline float half_to_float(uint16_t h) {
