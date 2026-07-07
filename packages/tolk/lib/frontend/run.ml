@@ -15,53 +15,37 @@ module T = Tensor
    without the composed-op surface, so the execution entry pulls it in. *)
 let _op_linked = Sys.opaque_identity Op.broadcasted
 
-(* One process-wide device backs every realization. This mirrors tinygrad,
-   whose [Tensor.realize] resolves the device internally rather than taking it
-   as an argument. The backend is chosen the same way tinygrad selects
-   [Device.DEFAULT]: the [DEV] environment variable picks a backend by name,
-   otherwise backends are scanned in priority order and the first one that
-   opens wins, falling back to CPU. *)
-let all_devices : (string * (string -> Tolk.Device.t)) list =
+(* One process-wide default device backs every realization. This mirrors
+   tinygrad, whose [Tensor.realize] resolves the device internally rather than
+   taking it as an argument. Backend openers are installed in the shared
+   device registry so scheduled graphs can name any device instance; the
+   default is chosen the same way tinygrad selects [Device.DEFAULT]: the
+   [DEV] environment variable picks a backend by name, otherwise backends are
+   scanned in priority order and the first one that opens wins, falling back
+   to CPU. *)
+let all_backends : (string * (string -> Tolk.Device.t)) list =
   (match Device_metal.opener with
   | Some create -> [ ("METAL", create) ]
   | None -> [])
   @ [ ("CUDA", Tolk_cuda.create); ("CPU", Tolk_cpu.create) ]
 
-let canonicalize device =
-  let device =
-    match String.index_opt device ':' with
-    | Some i ->
-        String.uppercase_ascii (String.sub device 0 i)
-        ^ String.sub device i (String.length device - i)
-    | None -> String.uppercase_ascii device
-  in
-  let len = String.length device in
-  if len >= 2 && String.equal (String.sub device (len - 2) 2) ":0" then
-    String.sub device 0 (len - 2)
-  else device
-
-let open_device device =
-  let backend =
-    match String.index_opt device ':' with
-    | Some i -> String.sub device 0 i
-    | None -> device
-  in
-  match List.assoc_opt backend all_devices with
-  | Some create -> create device
-  | None -> failwith (Printf.sprintf "unknown device %S" device)
+let () =
+  List.iter
+    (fun (prefix, create) -> Tolk.Device.register prefix create)
+    all_backends
 
 let default_device =
   lazy
     (match Sys.getenv_opt "DEV" with
     | Some dev when String.trim dev <> "" ->
-        open_device (canonicalize (String.trim dev))
+        Tolk.Device.get (String.trim dev)
     | _ ->
         let rec first_available = function
           | [] -> failwith "no usable devices"
-          | (name, create) :: rest -> (
-              try create name with _ -> first_available rest)
+          | (name, _) :: rest -> (
+              try Tolk.Device.get name with _ -> first_available rest)
         in
-        first_available all_devices)
+        first_available all_backends)
 
 let device () = Lazy.force default_device
 let device_name () = Tolk.Device.name (device ())

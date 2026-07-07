@@ -9,3 +9,9 @@
  (modules test_symbolic)
  (package tolk)
  (libraries tolk tolk.uop tolk.cpu tolk.cuda windtrap))
+
+(test
+ (name test_multi)
+ (modules test_multi)
+ (package tolk)
+ (libraries tolk tolk.uop tolk.cpu tolk.cuda windtrap))

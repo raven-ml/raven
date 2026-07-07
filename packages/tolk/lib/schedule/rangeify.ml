@@ -216,7 +216,8 @@ let rec shape_expr_of n =
            Some (List.filteri (fun i _ -> not (List.mem i axes)) s)
        | _ -> None)
   | Ops.Contiguous | Ops.Contiguous_backward | Ops.Detach | Ops.Copy
-  | Ops.After | Ops.Noop | Ops.Bitcast | Ops.Cast | Ops.Store | Ops.End ->
+  | Ops.After | Ops.Noop | Ops.Bitcast | Ops.Cast | Ops.Store | Ops.End
+  | Ops.Mstack | Ops.Mselect | Ops.Allreduce ->
       if Array.length (U.src n) = 0 then None else shape_expr_of (src0 n)
   | op when Ops.Group.is_elementwise op ->
       U.children n |> List.filter_map shape_expr_of |> broadcast_shape_expr
@@ -613,7 +614,16 @@ let earliest_rewrites =
       pm_mop_past_after; pm_mop_past_end; mop_cleanup; resolve_function;
       (fun n -> match U.as_allreduce n with
          | Some { src; device; op } ->
-             (match shape_of n with
+             (* An unshard PAD below the allreduce carries symbolic
+                [_device_num] offsets that the concrete [shape_of] refuses;
+                the sizes are what matter, so max the symbolic shape. *)
+             let shape = match shape_of n with
+               | Some _ as s -> s
+               | None ->
+                   (try Some (List.map U.vmax (U.shape n))
+                    with Invalid_argument _ -> None)
+             in
+             (match shape with
               | Some shape ->
                   Allreduce.create_allreduce_function src ~device ~op
                     ~dtype:(U.dtype n) ~shape ()
@@ -1046,7 +1056,10 @@ let flat_index_of_ranges ?dims ranges =
 let flatten_stage n =
   match U.as_stage n with
   | Some { src; ranges; opts; _ }
-    when List.length ranges > 1
+    (* Every stage flattens to exactly one index: multiple ranges collapse
+       into a flat expression, and a rank-0 stage indexes its single element
+       at zero. *)
+    when List.length ranges <> 1
          && List.for_all
               (fun r -> match U.op r with Ops.Range | Ops.Const -> true | _ -> false)
               ranges ->
@@ -1264,21 +1277,34 @@ let replace_formal_arg ctx old_arg new_arg =
 
 let debuf ctx n =
   let dtype = U.dtype n in
+  (* A genuinely rank-0 buffer keeps its scalar view: the reshape to rank 0
+     is how a scalar access acquires its flat 0 index when the index moves
+     through it. *)
+  let rank0 =
+    shape_of n = Some []
+    && (match (try Some (U.max_shape n) with Invalid_argument _ -> None) with
+        | Some [] -> true
+        | _ -> false)
+  in
   let shape =
-    match shape_of n with
-    | Some sh when sh <> [] -> sh
-    | _ ->
-        (match U.Ref_tbl.find_opt ctx.buf_shapes n with
-         | Some sh when sh <> [] -> sh
-         | _ ->
-             match ptr_size_shape n with
-             | Some sh -> sh
-             | None -> [ 1 ])
+    if rank0 then []
+    else
+      match shape_of n with
+      | Some sh when sh <> [] -> sh
+      | _ ->
+          (match U.Ref_tbl.find_opt ctx.buf_shapes n with
+           | Some sh when sh <> [] -> sh
+           | _ ->
+               match ptr_size_shape n with
+               | Some sh -> sh
+               | None -> [ 1 ])
   in
   let max_shape =
-    match (try U.max_shape n with Invalid_argument _ -> []) with
-    | _ :: _ as sh -> sh
-    | [] -> shape
+    if rank0 then []
+    else
+      match (try U.max_shape n with Invalid_argument _ -> []) with
+      | _ :: _ as sh -> sh
+      | [] -> shape
   in
   let size = prod max_shape in
   let addrspace =
@@ -1683,20 +1709,33 @@ let split_store n =
                  aux = None;
                }
              in
-             let body = match U.op stored with
+             let body, args = match U.op stored with
                | Ops.Copy | Ops.Slice ->
                    let ended = match U.as_end ret with
                      | Some { ranges; _ } -> ranges | None -> []
                    in
-                   U.replace stored
-                     ~src:(Array.of_list (U.children stored @ ended)) ()
+                   let body =
+                     U.replace stored
+                       ~src:(Array.of_list (U.children stored @ ended)) ()
+                   in
+                   (* The executor addresses COPY and SLICE arguments by
+                      position — destination first, then sources — so keep
+                      every split buffer in slot order rather than compacting
+                      to the params the body still mentions (the destination
+                      lives in the dropped STORE). *)
+                   let formals =
+                     List.sort
+                       (fun (a, _) (b, _) -> Int.compare a b)
+                       ctx.formals
+                   in
+                   body, List.map snd formals @ List.rev ctx.vars
              | _ ->
-                 U.sink ~kernel_info:{
-                   name = ""; axis_types = []; dont_use_locals = false;
-                   applied_opts = []; opts_to_apply = ctx.opts;
-                   estimates = None; beam = 0 } [ ret ]
+                 compact_kernel_params ctx
+                   (U.sink ~kernel_info:{
+                      name = ""; axis_types = []; dont_use_locals = false;
+                      applied_opts = []; opts_to_apply = ctx.opts;
+                      estimates = None; beam = 0 } [ ret ])
              in
-             let body, args = compact_kernel_params ctx body in
              Some (U.call ~body ~args ~info))
   | _ -> None
 
@@ -1808,10 +1847,12 @@ let add_buffers_rules ?(allow_locals = true) counter =
            then
              let unwrapped = List.map (fun c -> base (src0 c)) children in
              let inner = U.replace n ~src:(Array.of_list unwrapped) () in
+             (* Always restore the shape view, including the rank-0 one: a
+                scalar read acquires its flat 0 index by moving through the
+                reshape. *)
              (match shape_of n with
-              | Some sh when sh <> [] ->
-                  Some (U.reshape ~src:inner ~shape:(shape_node sh))
-              | _ -> Some inner)
+              | Some sh -> Some (U.reshape ~src:inner ~shape:(shape_node sh))
+              | None -> Some inner)
            else None
        | _ -> None);
     (* Strip RESHAPE on CALL args *)
@@ -1876,9 +1917,17 @@ let add_buffers_rules ?(allow_locals = true) counter =
   ]
 
 let get_kernel_graph root =
+  (* Sharding rewrites see the graph's own (symbolic) shapes, maxed to ints:
+     a shard SHRINK has a symbolic [_device_num] offset but a concrete size,
+     which the stricter [shape_of] would refuse. *)
+  let multi_shapes n =
+    match U.max_shape n with
+    | s -> Some s
+    | exception Invalid_argument _ -> None
+  in
   let root =
     U.graph_rewrite ~name:"multi_pm"
-      (Multi.multi_pm ~shapes:shape_of ~devices:U.device_of)
+      (Multi.multi_pm ~shapes:multi_shapes ~devices:U.device_of)
       root
   in
   let root =

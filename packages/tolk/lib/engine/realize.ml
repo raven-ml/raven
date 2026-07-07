@@ -314,12 +314,17 @@ let capturing : (Tolk_uop.Uop.t -> (string * int) list -> unit) list ref =
    Resolves buffer UOps to concrete device buffers. A BUFFER node backs a
    fresh device allocation the first time it is resolved and is cached by node
    identity; a PARAM resolves through the caller-supplied [input_uops]; a SLICE
-   is an offset view of its resolved source. *)
+   is an offset view of its resolved source. A BUFFER placed on multiple
+   devices backs one allocation per device. *)
+
+type buffer =
+  | Single of Device.Buffer.t
+  | Multi of Device.Multi_buffer.t
 
 module Buffers = struct
   type t = {
     device : Device.t;
-    tbl : (int, Device.Buffer.t) Hashtbl.t;
+    tbl : (int, buffer) Hashtbl.t;
     seeded : (int, unit) Hashtbl.t;
         (* Tags ever bound through [seed]: their resolution may change between
            runs, unlike lazily allocated intermediates. Sticky across
@@ -332,27 +337,55 @@ module Buffers = struct
 
   let seed t node buf =
     let tag = Tolk_uop.Uop.tag node in
-    Hashtbl.replace t.tbl tag buf;
+    Hashtbl.replace t.tbl tag (Single buf);
     Hashtbl.replace t.seeded tag ()
 
   let seeded t node = Hashtbl.mem t.seeded (Tolk_uop.Uop.tag node)
   let remove t node = Hashtbl.remove t.tbl (Tolk_uop.Uop.tag node)
   let mem t node = Hashtbl.mem t.tbl (Tolk_uop.Uop.tag node)
-  let find_opt t node = Hashtbl.find_opt t.tbl (Tolk_uop.Uop.tag node)
+  let find_buffer t node = Hashtbl.find_opt t.tbl (Tolk_uop.Uop.tag node)
+
+  let find_opt t node =
+    match find_buffer t node with
+    | Some (Single buf) -> Some buf
+    | Some (Multi _) ->
+        invalid_arg "Buffers.find_opt: node is bound to a multi-device buffer"
+    | None -> None
+
   let numel node = List.fold_left ( * ) 1 (Tolk_uop.Uop.max_shape node)
 
   (* Concrete buffer backing a BUFFER node: the seeded buffer, or a fresh
-     allocation matching the node's element count and dtype. *)
-  let of_buffer_node t node =
+     allocation matching the node's element count and dtype, placed on the
+     node's device. A node on the binding's device (or without a placement)
+     allocates there; other placements resolve through the device registry. *)
+  let buffer_of_node t node =
     match Hashtbl.find_opt t.tbl (Tolk_uop.Uop.tag node) with
     | Some buf -> buf
     | None ->
+        let size = numel node and dtype = Tolk_uop.Uop.dtype node in
         let buf =
-          Device.create_buffer ~size:(numel node)
-            ~dtype:(Tolk_uop.Uop.dtype node) t.device
+          match Tolk_uop.Uop.device_of node with
+          | Some (Tolk_uop.Uop.Multi devices) ->
+              Multi (Device.Multi_buffer.create ~devices ~size ~dtype ())
+          | Some (Tolk_uop.Uop.Single name)
+            when not
+                   (String.equal (Device.canonicalize name)
+                      (Device.canonicalize (Device.name t.device))) ->
+              Single (Device.create_buffer ~size ~dtype (Device.get name))
+          | Some (Tolk_uop.Uop.Index _) ->
+              invalid_arg "Buffers: BUFFER node with Index device"
+          | Some (Tolk_uop.Uop.Single _) | None ->
+              Single (Device.create_buffer ~size ~dtype t.device)
         in
         Hashtbl.replace t.tbl (Tolk_uop.Uop.tag node) buf;
         buf
+
+  let of_buffer_node t node =
+    match buffer_of_node t node with
+    | Single buf -> buf
+    | Multi _ ->
+        invalid_arg
+          "Buffers.of_buffer_node: node is backed by a multi-device buffer"
 
   let iter t f = Hashtbl.iter (fun _ b -> f b) t.tbl
   let clear t = Hashtbl.clear t.tbl
@@ -372,10 +405,12 @@ let exec_context ?(var_vals = []) ?(input_uops = [||]) ?(jit = false)
   { var_vals; input_uops; jit; wait }
 
 (* Resolve a call argument UOp to the concrete buffer it names. A seeded node
-   resolves to its bound buffer directly; otherwise resolution is structural. *)
-let rec resolve binding ctx node =
+   resolves to its bound buffer directly; otherwise resolution is structural.
+   MSELECT indexes one shard out of a multi-device source; MSTACK joins
+   per-device sources into a multi-device buffer. *)
+let rec resolve_buffer binding ctx node =
   let module U = Tolk_uop.Uop in
-  match Buffers.find_opt binding node with
+  match Buffers.find_buffer binding node with
   | Some buf -> buf
   | None -> (
   match U.op node with
@@ -383,33 +418,96 @@ let rec resolve binding ctx node =
       match U.as_param node with
       | Some { param = { slot; _ }; _ }
         when slot >= 0 && slot < Array.length ctx.input_uops ->
-          resolve binding ctx ctx.input_uops.(slot)
+          resolve_buffer binding ctx ctx.input_uops.(slot)
       | _ ->
           invalid_arg
             (Format.asprintf "resolve: unbound PARAM %a" U.pp node))
   | Tolk_uop.Ops.Slice -> (
       match U.as_slice node with
       | Some { src; offset; size } ->
-          let base = resolve binding ctx src in
           let off =
             match U.const_int_value offset with
             | Some o -> o
             | None -> invalid_arg "resolve: symbolic SLICE offset"
           in
-          let byte_offset =
-            off * Tolk_uop.Dtype.itemsize (Device.Buffer.dtype base)
-          in
-          Device.Buffer.view base ~size ~dtype:(U.dtype node)
-            ~offset:byte_offset
+          (match resolve_buffer binding ctx src with
+          | Single base ->
+              let byte_offset =
+                off * Tolk_uop.Dtype.itemsize (Device.Buffer.dtype base)
+              in
+              Single
+                (Device.Buffer.view base ~size ~dtype:(U.dtype node)
+                   ~offset:byte_offset)
+          | Multi base ->
+              let byte_offset =
+                off * Tolk_uop.Dtype.itemsize (Device.Multi_buffer.dtype base)
+              in
+              Multi
+                (Device.Multi_buffer.view base ~size ~dtype:(U.dtype node)
+                   ~offset:byte_offset))
       | None -> invalid_arg "resolve: malformed SLICE")
-  | Tolk_uop.Ops.Buffer -> Buffers.of_buffer_node binding node
-  | Tolk_uop.Ops.Mselect | Tolk_uop.Ops.Mstack -> (
-      match U.children node with
-      | src :: _ -> resolve binding ctx src
-      | [] -> invalid_arg "resolve: empty MSELECT/MSTACK")
+  | Tolk_uop.Ops.Buffer -> Buffers.buffer_of_node binding node
+  | Tolk_uop.Ops.Mselect -> (
+      match U.children node, U.Arg.as_int (U.arg node) with
+      | [ src ], Some index -> (
+          match resolve_buffer binding ctx src with
+          | Multi m -> Single (List.nth (Device.Multi_buffer.bufs m) index)
+          | Single _ ->
+              invalid_arg "resolve: MSELECT of a single-device buffer")
+      | _ -> invalid_arg "resolve: malformed MSELECT")
+  | Tolk_uop.Ops.Mstack ->
+      let shard s =
+        match resolve_buffer binding ctx s with
+        | Single buf -> buf
+        | Multi _ ->
+            invalid_arg "resolve: MSTACK of a multi-device buffer"
+      in
+      Multi (Device.Multi_buffer.of_bufs (List.map shard (U.children node)))
   | _ ->
       invalid_arg
         (Format.asprintf "resolve: cannot resolve %a to a buffer" U.pp node))
+
+let resolve binding ctx node =
+  match resolve_buffer binding ctx node with
+  | Single buf -> buf
+  | Multi _ ->
+      invalid_arg
+        (Format.asprintf
+           "resolve: %a names a multi-device buffer in a single-device \
+            context"
+           Tolk_uop.Uop.pp node)
+
+(* Execution device for a resolved buffer: the ambient device when the names
+   agree, the registry's device for the buffer's placement otherwise. *)
+let device_for ~device buf =
+  let name = Device.Buffer.device buf in
+  if
+    String.equal (Device.canonicalize name)
+      (Device.canonicalize (Device.name device))
+  then device
+  else Device.get name
+
+(* Per-device buffer groups for a resolved argument list: the single group of
+   plain buffers when no argument is multi-device, otherwise one group per
+   device position, zipping the shards of every argument. *)
+let unwrap_multi bufs =
+  if List.for_all (function Single _ -> true | Multi _ -> false) bufs then
+    [ List.map (function Single b -> b | Multi _ -> assert false) bufs ]
+  else
+    let shards =
+      List.map
+        (function
+          | Multi m -> Device.Multi_buffer.bufs m
+          | Single _ ->
+              invalid_arg "unwrap_multi: mixed single and multi-device buffers")
+        bufs
+    in
+    let ndev =
+      match shards with s :: _ -> List.length s | [] -> 0
+    in
+    if List.exists (fun s -> List.length s <> ndev) shards then
+      invalid_arg "unwrap_multi: multi-device buffers disagree on device count";
+    List.init ndev (fun j -> List.map (fun s -> List.nth s j) shards)
 
 (* Run linear
 
@@ -471,27 +569,57 @@ let exec_kernel binding ctx ~device call =
         | Some info -> info
         | None -> invalid_arg "exec_kernel: expected CALL(PROGRAM)"
       in
-      let bufs = List.map (resolve binding ctx) (call_arg_uops args) in
-      List.iter Device.Buffer.ensure_allocated bufs;
-      let prg = get_runtime ~device program info in
-      let global, local =
-        launch_geometry ~device program info ~var_vals:ctx.var_vals prg bufs
+      let resolved =
+        List.map (resolve_buffer binding ctx) (call_arg_uops args)
       in
-      let vals =
-        Array.of_list
-          (List.map
-             (function Some n -> Int64.of_int n | None -> 0L)
-             (U.program_vals info ~var_vals:ctx.var_vals))
+      (* One compiled program; on a multi-device call, one launch per device
+         with the device index bound as the [_device_num] variable. *)
+      let launch ~device ~var_vals bufs =
+        List.iter Device.Buffer.ensure_allocated bufs;
+        let prg = get_runtime ~device program info in
+        let global, local =
+          launch_geometry ~device program info ~var_vals prg bufs
+        in
+        let vals =
+          Array.of_list
+            (List.map
+               (function Some n -> Int64.of_int n | None -> 0L)
+               (U.program_vals info ~var_vals))
+        in
+        let buf_addrs = Array.of_list (List.map Device.Buffer.addr bufs) in
+        let ret =
+          try prg.call buf_addrs ~global ~local ~vals ~wait:ctx.wait
+                ~timeout:None
+          with exn ->
+            List.iter keep_alive bufs;
+            raise exn
+        in
+        List.iter keep_alive bufs;
+        ignore (ret : float option)
       in
-      let buf_addrs = Array.of_list (List.map Device.Buffer.addr bufs) in
-      let ret =
-        try prg.call buf_addrs ~global ~local ~vals ~wait:ctx.wait ~timeout:None
-        with exn ->
-          List.iter keep_alive bufs;
-          raise exn
-      in
-      List.iter keep_alive bufs;
-      ignore (ret : float option)
+      (match unwrap_multi resolved with
+      | [ bufs ]
+        when List.for_all
+               (function Single _ -> true | Multi _ -> false)
+               resolved ->
+          let device =
+            match bufs with
+            | buf :: _ -> device_for ~device buf
+            | [] -> device
+          in
+          launch ~device ~var_vals:ctx.var_vals bufs
+      | groups ->
+          List.iteri
+            (fun j bufs ->
+              let device =
+                match bufs with
+                | buf :: _ -> device_for ~device buf
+                | [] -> device
+              in
+              launch ~device
+                ~var_vals:(("_device_num", j) :: ctx.var_vals)
+                bufs)
+            groups)
   | None -> invalid_arg "exec_kernel: expected CALL"
 
 let exec_view binding ctx call =
@@ -523,19 +651,32 @@ let exec_copy binding ctx ~device call =
   | Some { args; _ } -> (
       match call_arg_uops args with
       | dest_node :: src_node :: _ ->
-          let dest = resolve binding ctx dest_node in
-          let src = resolve binding ctx src_node in
-          Device.Buffer.ensure_allocated dest;
-          Device.Buffer.ensure_allocated src;
-          let runner =
-            buffer_copy ~device
-              ~total_sz:(Device.Buffer.nbytes dest)
-              ~dest_device:(Device.Buffer.device dest)
-              ~src_device:(Device.Buffer.device src)
+          let copy ~device dest src =
+            Device.Buffer.ensure_allocated dest;
+            Device.Buffer.ensure_allocated src;
+            let runner =
+              buffer_copy ~device
+                ~total_sz:(Device.Buffer.nbytes dest)
+                ~dest_device:(Device.Buffer.device dest)
+                ~src_device:(Device.Buffer.device src)
+            in
+            ignore
+              (Runner.call runner [ dest; src ] ctx.var_vals ~wait:ctx.wait
+                 ~timeout:None)
           in
-          ignore
-            (Runner.call runner [ dest; src ] ctx.var_vals ~wait:ctx.wait
-               ~timeout:None)
+          (match
+             ( resolve_buffer binding ctx dest_node,
+               resolve_buffer binding ctx src_node )
+           with
+          | Single dest, Single src ->
+              copy ~device:(device_for ~device dest) dest src
+          | dest_b, src_b ->
+              List.iter
+                (function
+                  | [ dest; src ] ->
+                      copy ~device:(device_for ~device dest) dest src
+                  | _ -> assert false)
+                (unwrap_multi [ dest_b; src_b ]))
       | _ -> invalid_arg "exec_copy: malformed COPY call")
   | None -> invalid_arg "exec_copy: expected CALL"
 

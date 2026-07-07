@@ -33,6 +33,20 @@ thread.
 
 ### Tolk (new)
 
+- Add a device registry: `Device.register` installs a backend opener per
+  name prefix and `Device.get` opens and caches devices by canonical name;
+  `Run` registers the CPU/CUDA/METAL backends there.
+- The engine now executes multi-device schedules: buffers placed on a
+  device tuple allocate one shard per device, kernels launch once per device
+  with the `_device_num` variable bound, and copies transfer per shard pair
+  (natively within a backend, via a host bounce across backends). Previously
+  `Realize.resolve` silently read only the first shard of
+  `MSELECT`/`MSTACK`.
+- The memory planner suballocates multi-device internal buffers into
+  per-placement arenas; single-device planning is unchanged.
+- Fix scheduled `COPY`/`SLICE` calls dropping their destination buffer, and
+  scalar (rank-0) values losing their flat index through staging and kernel
+  splitting.
 - Multi-device scheduling now matches the reference: `RING` defaults to 1
   (ring allreduce with >2 devices above the 256k-element threshold), and the
   `LATE_ALLREDUCE` toggle is supported (default 1 wraps allreduce into a

@@ -180,17 +180,26 @@ val capturing : (Tolk_uop.Uop.t -> (string * int) list -> unit) list ref
 
 (** {1:binding Buffer binding} *)
 
+type buffer =
+  | Single of Device.Buffer.t  (** A buffer on one device. *)
+  | Multi of Device.Multi_buffer.t
+      (** One buffer per device of a multi-device placement. *)
+(** The type for concrete buffers named by call arguments. *)
+
 (** Maps buffer UOps to concrete device buffers.
 
-    A {!Tolk_uop.Ops.Buffer} node is backed by a fresh device allocation the
-    first time it is resolved, then cached by node identity; seeding a node
-    with {!seed} overrides that allocation. *)
+    A {!Tolk_uop.Ops.Buffer} node is backed by a fresh allocation the first
+    time it is resolved — on the node's own device placement, resolved
+    through the device registry ({!Device.get}), with one allocation per
+    device for multi-device placements — then cached by node identity;
+    seeding a node with {!seed} overrides that allocation. *)
 module Buffers : sig
   type t
   (** The type for buffer bindings. *)
 
   val create : device:Device.t -> t
-  (** [create ~device] is an empty binding allocating on [device]. *)
+  (** [create ~device] is an empty binding allocating on [device] the nodes
+      that carry no device placement of their own. *)
 
   val seed : t -> Tolk_uop.Uop.t -> Device.Buffer.t -> unit
   (** [seed t node buf] binds [node] to [buf], overriding lazy allocation. *)
@@ -201,14 +210,27 @@ module Buffers : sig
   val mem : t -> Tolk_uop.Uop.t -> bool
   (** [mem t node] is [true] iff [node] is bound. *)
 
-  val find_opt : t -> Tolk_uop.Uop.t -> Device.Buffer.t option
-  (** [find_opt t node] is the buffer bound to [node], if any. *)
+  val find_buffer : t -> Tolk_uop.Uop.t -> buffer option
+  (** [find_buffer t node] is the buffer bound to [node], if any. *)
 
-  val of_buffer_node : t -> Tolk_uop.Uop.t -> Device.Buffer.t
-  (** [of_buffer_node t node] is the buffer backing the {!Tolk_uop.Ops.Buffer}
+  val find_opt : t -> Tolk_uop.Uop.t -> Device.Buffer.t option
+  (** [find_opt t node] is the single-device buffer bound to [node], if any.
+
+      Raises [Invalid_argument] if [node] is bound to a multi-device
+      buffer. *)
+
+  val buffer_of_node : t -> Tolk_uop.Uop.t -> buffer
+  (** [buffer_of_node t node] is the buffer backing the {!Tolk_uop.Ops.Buffer}
       [node], allocating and caching it on first use. *)
 
-  val iter : t -> (Device.Buffer.t -> unit) -> unit
+  val of_buffer_node : t -> Tolk_uop.Uop.t -> Device.Buffer.t
+  (** [of_buffer_node t node] is {!buffer_of_node} for a node backed by a
+      single-device buffer.
+
+      Raises [Invalid_argument] if [node] is backed by a multi-device
+      buffer. *)
+
+  val iter : t -> (buffer -> unit) -> unit
   (** [iter t f] applies [f] to every bound buffer. *)
 
   val clear : t -> unit
@@ -235,14 +257,25 @@ val exec_context :
 (** [exec_context ?var_vals ?input_uops ?jit ?wait ()] builds a context. All
     fields default to empty or [false]. *)
 
-val resolve : Buffers.t -> exec_context -> Tolk_uop.Uop.t -> Device.Buffer.t
-(** [resolve binding ctx node] is the concrete buffer named by call argument
-    [node]: a {!Tolk_uop.Ops.Param} resolves through [ctx.input_uops]; a
-    {!Tolk_uop.Ops.Slice} is an offset view of its resolved source; a
-    {!Tolk_uop.Ops.Buffer} is resolved through [binding].
+val resolve_buffer : Buffers.t -> exec_context -> Tolk_uop.Uop.t -> buffer
+(** [resolve_buffer binding ctx node] is the concrete buffer named by call
+    argument [node]: a {!Tolk_uop.Ops.Param} resolves through
+    [ctx.input_uops]; a {!Tolk_uop.Ops.Slice} is an offset view of its
+    resolved source (per underlying device when the source is multi-device);
+    a {!Tolk_uop.Ops.Buffer} is resolved through [binding]; a
+    {!Tolk_uop.Ops.Mselect} indexes one shard of its multi-device source; a
+    {!Tolk_uop.Ops.Mstack} joins its per-device sources into a multi-device
+    buffer.
 
     Raises [Invalid_argument] on an unbound parameter, a symbolic slice offset,
     or a node that does not name a buffer. *)
+
+val resolve : Buffers.t -> exec_context -> Tolk_uop.Uop.t -> Device.Buffer.t
+(** [resolve binding ctx node] is {!resolve_buffer} for a node that names a
+    single-device buffer.
+
+    Raises [Invalid_argument] if [node] names a multi-device buffer, and in
+    the {!resolve_buffer} failure cases. *)
 
 (** {1:run_linear Linear execution} *)
 
@@ -273,8 +306,15 @@ val run_linear :
     replays that graph afterwards, patching per run every buffer argument
     whose resolution changed (arguments reaching a {!Tolk_uop.Ops.Param} slot
     or a binding reseeded through {!Buffers.seed}), variable values, and
-    symbolic launch dimensions. Buffer arguments are resolved with {!resolve},
-    so {!Tolk_uop.Ops.Param} slots index into [input_uops].
+    symbolic launch dimensions. Buffer arguments are resolved with
+    {!resolve_buffer}, so {!Tolk_uop.Ops.Param} slots index into
+    [input_uops].
+
+    A call whose arguments resolve to multi-device buffers executes once per
+    device position: a kernel launches its one compiled program on each
+    device with the device index bound to the [_device_num] variable, and a
+    copy transfers each per-device pair (natively when the devices share a
+    backend, through a host bounce otherwise).
 
     [wait] is forced to [true] when [DEBUG >= 2]. *)
 

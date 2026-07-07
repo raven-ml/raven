@@ -338,20 +338,20 @@ let buffer_numel b =
 let buffer_nbytes b =
   buffer_numel b * Dtype.itemsize (U.dtype b)
 
-let buffer_device = function
-  | U.Single d -> Some d
-  | U.Multi _ | U.Index _ -> None
+let plannable_device_name dev =
+  not
+    (String.starts_with ~prefix:"DISK" dev
+    || String.starts_with ~prefix:"TINYFS" dev)
 
 let plannable_buffer held b =
   match U.as_buffer b, U.device_of b with
   | Some { buffer = { addrspace = Dtype.Global; _ }; _ }, Some device -> (
-      match buffer_device device with
-      | Some dev ->
-          (not (List.exists (( == ) b) held))
-          && not
-               (String.starts_with ~prefix:"DISK" dev
-               || String.starts_with ~prefix:"TINYFS" dev)
-      | None -> false)
+      (not (List.exists (( == ) b) held))
+      &&
+      match device with
+      | U.Single dev -> plannable_device_name dev
+      | U.Multi devs -> List.for_all plannable_device_name devs
+      | U.Index _ -> false)
   | _ -> false
 
 let rec call_buffers held call =
@@ -377,15 +377,14 @@ let rec call_is_copy call =
       | Some { body; _ } -> is_op Ops.Copy body
       | None -> false)
 
-type memory_lane = string * int
+(* Lane key: the buffer's full device placement (single- or multi-device)
+   paired with the copy/compute lane index, so buffers sharing a device set
+   suballocate into one arena per lane. *)
+type memory_lane = U.device * int
 
 let memory_lane copy_bufs b =
   match U.device_of b with
-  | Some device -> (
-      match buffer_device device with
-      | Some dev ->
-          (dev, if Hashtbl.mem copy_bufs (U.tag b) then 1 else 0)
-      | None -> invalid_arg "memory_plan_rewrite: multi-device buffer")
+  | Some device -> (device, if Hashtbl.mem copy_bufs (U.tag b) then 1 else 0)
   | None -> invalid_arg "memory_plan_rewrite: buffer without device"
 
 let create_arena_buffer ~device ~nbytes =
@@ -393,7 +392,7 @@ let create_arena_buffer ~device ~nbytes =
   decr next_post_sched_buffer_slot;
   U.buffer ~slot ~dtype:Dtype.int8
     ~shape:(U.const (Const.int Dtype.Val.weakint nbytes))
-    ~device:(U.Single device) ()
+    ~device ()
 
 let memory_plan_rewrite linear held_bufs =
   let substitute_memory_plan replacements linear =

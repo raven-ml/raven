@@ -441,6 +441,30 @@ val invalidate_caches : t -> unit
     supports it. No-op if [~invalidate_caches] was not provided to {!make}.
     Called by beam search between timing runs for consistent measurements. *)
 
+(** {1:registry Device registry}
+
+    The registry maps canonical device names to opened device runtimes.
+    Backends register an opener per name prefix (e.g. ["CPU"]); {!get} opens
+    a device on first lookup and caches it, so every consumer of a device
+    name shares one runtime instance per canonical name. *)
+
+val canonicalize : string -> string
+(** [canonicalize name] is [name] with its backend prefix uppercased and a
+    trailing [":0"] instance suffix removed, so ["cpu:0"], ["CPU:0"] and
+    ["CPU"] all name the same device. *)
+
+val register : string -> (string -> t) -> unit
+(** [register prefix opener] installs [opener] for device names whose backend
+    prefix is [prefix] (case-insensitive). [opener name] must return the
+    device runtime for the canonical [name]. *)
+
+val get : string -> t
+(** [get name] is the device runtime for the canonicalized [name], opened via
+    its registered opener on first lookup and cached afterwards.
+
+    Raises [Failure] if no opener is registered for [name]'s prefix or the
+    opener fails. *)
+
 (** {1:multi_buffer Multi-device buffers} *)
 
 (** Buffers spanning multiple devices.
@@ -457,19 +481,33 @@ module Multi_buffer : sig
   (** {1:constructors Constructors} *)
 
   val create :
-    devices:device list ->
+    devices:string list ->
     size:int ->
     dtype:Tolk_uop.Dtype.t ->
     ?spec:Buffer_spec.t ->
     unit ->
     t
   (** [create ~devices ~size ~dtype ?spec ()] is a multi-device buffer with one
-      underlying buffer per device in [devices].
+      underlying buffer per device name in [devices], each resolved through the
+      device registry ({!get}).
 
       [spec] defaults to {!Buffer_spec.default}. The trailing [unit] argument is
       needed because [spec] is optional.
 
-      Raises [Invalid_argument] if [devices] is empty. *)
+      Raises [Invalid_argument] if [devices] is empty and [Failure] if a device
+      name cannot be opened. *)
+
+  val of_bufs : Buffer.t list -> t
+  (** [of_bufs bufs] is a multi-device buffer stacking the per-device buffers
+      [bufs].
+
+      Raises [Invalid_argument] if [bufs] is empty or the buffers disagree in
+      size or dtype. *)
+
+  val view : t -> size:int -> dtype:Tolk_uop.Dtype.t -> offset:int -> t
+  (** [view t ~size ~dtype ~offset] is a multi-device buffer viewing each
+      underlying buffer at byte [offset] for [size] elements of [dtype]. See
+      {!Buffer.view}. *)
 
   (** {1:accessors Accessors} *)
 
@@ -491,10 +529,4 @@ module Multi_buffer : sig
   val add_ref : t -> int -> t
   (** [add_ref t cnt] increments the UOp reference count on all underlying
       buffers by [cnt] and returns [t]. *)
-
-  val copy_between : dst:t -> src:t -> unit
-  (** [copy_between ~dst ~src] copies pairwise across the underlying buffers.
-
-      Raises [Invalid_argument] if [dst] and [src] have different numbers of
-      devices. *)
 end

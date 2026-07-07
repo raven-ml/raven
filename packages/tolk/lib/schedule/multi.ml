@@ -64,7 +64,8 @@ let ndev_of devices node =
   | _ -> 1
 
 (* Partition [src] along [axis] using a symbolic device index. Each device
-   takes its slice: [dnum * sz .. dnum * sz + sz). *)
+   takes its slice: [dnum * sz .. dnum * sz + sz). Scalars broadcast, no
+   sharding needed. *)
 let shard shape ndev src axis =
   if shape = [] then src (* scalars broadcast, no sharding needed *)
   else

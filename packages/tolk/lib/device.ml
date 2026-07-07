@@ -725,25 +725,74 @@ let create_buffer ~size ~dtype ?spec d =
 
 let invalidate_caches d = Option.iter (fun f -> f ()) d.invalidate_caches_fn
 
+(* Device registry
+
+   Canonical-name lookup opening and caching device runtimes, with backend
+   openers registered by prefix. The engine resolves the device names carried
+   by a scheduled graph through [get], so multi-device schedules can span
+   device instances the caller never opened itself. *)
+
+let canonicalize device =
+  let device =
+    match String.index_opt device ':' with
+    | Some i ->
+        String.uppercase_ascii (String.sub device 0 i)
+        ^ String.sub device i (String.length device - i)
+    | None -> String.uppercase_ascii device
+  in
+  let len = String.length device in
+  if len >= 2 && String.equal (String.sub device (len - 2) 2) ":0" then
+    String.sub device 0 (len - 2)
+  else device
+
+let openers : (string, string -> t) Hashtbl.t = Hashtbl.create 8
+let opened : (string, t) Hashtbl.t = Hashtbl.create 8
+
+let register prefix opener =
+  Hashtbl.replace openers (String.uppercase_ascii prefix) opener
+
+let get device =
+  let device = canonicalize device in
+  match Hashtbl.find_opt opened device with
+  | Some d -> d
+  | None ->
+      let d =
+        match Hashtbl.find_opt openers (Buffer.device_prefix device) with
+        | Some create -> create device
+        | None -> failwith (Printf.sprintf "unknown device %S" device)
+      in
+      Hashtbl.replace opened device d;
+      d
+
 module Multi_buffer = struct
   type t = { bufs : Buffer.t list }
 
   let create ~devices ~size ~dtype ?spec () =
     if devices = [] then invalid_arg "multi buffer requires at least one device";
     let bufs =
-      List.map (fun device -> create_buffer ~size ~dtype ?spec device) devices
+      List.map
+        (fun device -> create_buffer ~size ~dtype ?spec (get device))
+        devices
     in
     { bufs }
 
+  let of_bufs bufs =
+    match bufs with
+    | [] -> invalid_arg "multi buffer requires at least one buffer"
+    | first :: rest ->
+        if
+          not
+            (List.for_all
+               (fun b ->
+                 Buffer.size b = Buffer.size first
+                 && Dtype.equal (Buffer.dtype b) (Buffer.dtype first))
+               rest)
+        then invalid_arg "multi buffer requires matching sizes and dtypes";
+        { bufs }
+
   let bufs t = t.bufs
-
-  let first t =
-    match t.bufs with
-    | [] -> invalid_arg "multi buffer is empty"
-    | buf :: _ -> buf
-
-  let size t = Buffer.size (first t)
-  let dtype t = Buffer.dtype (first t)
+  let size t = Buffer.size (List.hd t.bufs)
+  let dtype t = Buffer.dtype (List.hd t.bufs)
 
   let add_ref t cnt =
     List.iter (fun buf -> ignore (Buffer.add_ref buf cnt)) t.bufs;
@@ -751,10 +800,6 @@ module Multi_buffer = struct
 
   let is_allocated t = List.for_all Buffer.is_allocated t.bufs
 
-  let copy_between ~dst ~src =
-    let dst_bufs = dst.bufs in
-    let src_bufs = src.bufs in
-    if List.length dst_bufs <> List.length src_bufs then
-      invalid_arg "multi buffer copy device count mismatch";
-    List.iter2 (fun d s -> Buffer.copy_between ~dst:d ~src:s) dst_bufs src_bufs
+  let view t ~size ~dtype ~offset =
+    { bufs = List.map (fun b -> Buffer.view b ~size ~dtype ~offset) t.bufs }
 end
