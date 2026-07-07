@@ -33,6 +33,10 @@ thread.
 
 ### Tolk (new)
 
+- Fix C-style renderers duplicating upcast lane-0 load/store address
+  expressions: `render_index` no longer re-orders `ADD` index chains at
+  render time, so lane 0 reuses the shared named subexpression (`aluN`)
+  instead of re-deriving it with a different term order.
 - `examples/gpt2` now decodes through a per-layer key-value cache with
   symbolic positions and a captured JIT: one kernel set serves every decode
   step, taking greedy generation from ~2 tok/s to ~19 tok/s on CUDA

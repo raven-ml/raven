@@ -506,42 +506,8 @@ let render_index (ctx : ctx) ~ptr ~idxs =
   let idx_is_zero =
     match idxs with [ idx ] -> U.const_int_value idx = Some 0 | _ -> false
   in
-  let render_add_index idx =
-    let rendered = lookup ctx idx in
-    let src = U.src idx in
-    let has_named_child =
-      Array.exists
-        (fun child ->
-          let s = lookup ctx child in
-          String.length s > 0 && s.[0] <> '(')
-        src
-    in
-    if has_named_child then rendered
-    else
-      let rec has_param u =
-        U.op u = Ops.Param || Array.exists has_param (U.src u)
-      in
-      if not (has_param idx) then rendered
-      else
-        let rec terms acc u =
-          if U.op u = Ops.Add then
-            let src = U.src u in
-            terms (terms acc src.(1)) src.(0)
-          else u :: acc
-        in
-        let terms =
-          terms [] idx
-          |> List.stable_sort (fun a b -> Int.compare (U.vmax b) (U.vmax a))
-          |> List.map (lookup ctx)
-        in
-        match terms with
-        | [] -> rendered
-        | [ term ] -> term
-        | terms -> strf "(%s)" (String.concat "+" terms)
-  in
   let idx =
     match idxs with
-    | [ idx ] when U.op idx = Ops.Add -> render_add_index idx
     | [ idx ] -> lookup ctx idx
     | _ -> flat_index_string ()
   in
