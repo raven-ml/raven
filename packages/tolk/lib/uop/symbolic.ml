@@ -1898,6 +1898,52 @@ let index_pushing : Upat.Pattern_matcher.t =
              with Exit -> None);
   ]
 
+(* Fold a STACK whose sources are INDEX(src, 0), INDEX(src, 1), ... over the
+   same [src] back into [src], when the shapes agree. Concrete dims compare
+   by value: they are dtype-erased ints in the reference. Runs after memory
+   coalescing, where lane re-stacks of freshly vectorized loads appear. *)
+let pm_fold_lane_stack : Upat.Pattern_matcher.t =
+  let open Upat in
+  let dim_equal a b =
+    Uop.equal a b
+    || (match Uop.const_int_value a, Uop.const_int_value b with
+       | Some x, Some y -> x = y
+       | _ -> false)
+  in
+  Pattern_matcher.make [
+    (op ~name:"stk" Ops.Stack => fun bs ->
+       let stk = bs $ "stk" in
+       let srcs = Uop.src stk in
+       if Array.length srcs = 0 then None
+       else
+         let first_src =
+           match Uop.op srcs.(0), Uop.src srcs.(0) with
+           | Ops.Index, idx_src when Array.length idx_src = 2 ->
+               Some idx_src.(0)
+           | _ -> None
+         in
+         match first_src with
+         | None -> None
+         | Some first_src -> (
+             try
+               Array.iteri
+                 (fun i x ->
+                   match Uop.op x, Uop.src x with
+                   | Ops.Index, idx_src when Array.length idx_src = 2 ->
+                       if not (Uop.equal idx_src.(0) first_src) then
+                         raise Exit;
+                       if Uop.const_int_value idx_src.(1) <> Some i then
+                         raise Exit
+                   | _ -> raise Exit)
+                 srcs;
+               let sa = Uop.shape stk and sb = Uop.shape first_src in
+               if List.length sa = List.length sb
+                  && List.for_all2 dim_equal sa sb
+               then Some first_src
+               else None
+             with Exit -> None));
+  ]
+
 let symbolic : Upat.Pattern_matcher.t =
   let open Upat in
   let rec compare_tuplize a b =

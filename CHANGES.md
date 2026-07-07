@@ -33,6 +33,16 @@ thread.
 
 ### Tolk (new)
 
+- Multi-device scheduling now matches the reference: `RING` defaults to 1
+  (ring allreduce with >2 devices above the 256k-element threshold), and the
+  `LATE_ALLREDUCE` toggle is supported (default 1 wraps allreduce into a
+  precompiled function; 0 expands it inline during the multi rewrite).
+- Fix several multi-shard rewrite bugs: `SHRINK`-before-`MSTACK` computed
+  wrong sizes, pads/shrinks of sharded tensors were rejected or mis-shaped,
+  sharded `PARAM`s were never resolved, and unsharding padded to the
+  per-shard instead of the full size.
+- Each allreduce output now gets a fresh buffer; identical allreduces no
+  longer collapse onto one output allocation.
 - Graph replay now repatches buffer arguments whose binding was reseeded
   between runs, not just input `PARAM` slots; previously such replays used
   stale device addresses. Changed arguments are diff-patched, so stable

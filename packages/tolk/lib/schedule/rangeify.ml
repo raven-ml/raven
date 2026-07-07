@@ -168,8 +168,24 @@ let rec shape_of n =
            Some (List.filteri (fun i _ -> not (List.mem i axes)) s)
        | _ -> None)
   | Ops.Contiguous | Ops.Contiguous_backward | Ops.Detach | Ops.Copy
-  | Ops.After | Ops.Noop | Ops.Bitcast | Ops.Cast | Ops.Store | Ops.End ->
+  | Ops.After | Ops.Noop | Ops.Bitcast | Ops.Cast | Ops.Store | Ops.End
+  | Ops.Mselect | Ops.Mstack | Ops.Allreduce ->
       if Array.length (U.src n) = 0 then None else shape_of (src0 n)
+  | Ops.Multi ->
+      (* The sharding axis covers all devices: inner size times device
+         count. *)
+      let ndev =
+        match U.device_of n with
+        | Some (Multi ds) -> List.length ds
+        | _ -> 1
+      in
+      let axis = match U.arg n with U.Arg.Int a -> a | _ -> 0 in
+      Option.map
+        (List.mapi (fun i s -> if i = axis then s * ndev else s))
+        (shape_of (src0 n))
+  | Ops.Const ->
+      let count = Dtype.count (U.dtype n) in
+      Some (if count > 1 then [ count ] else [])
   | op when Ops.Group.is_elementwise op ->
       let child_shapes = List.filter_map shape_of (U.children n) in
       broadcast_shape child_shapes
@@ -615,6 +631,15 @@ let earliest_rewrites =
                sr.(0) <- U.contiguous ~src:s ();
                Some (U.replace n ~src:sr ())
              else None
+         | _ -> None);
+      (* Copying an MSELECT to its own device is just the MSELECT (no NOOP
+         kernel). *)
+      (fun n -> match U.op n with
+         | Ops.Copy when U.op (src0 n) = Ops.Mselect ->
+             let ms = src0 n in
+             (match U.device_of ms, U.device_of n with
+              | Some d1, Some d2 when d1 = d2 -> Some ms
+              | _ -> None)
          | _ -> None);
       (fun n -> match U.op n with
          | Ops.Copy ->
@@ -1818,7 +1843,19 @@ let add_buffers_rules ?(allow_locals = true) counter =
               && List.for_all2 ( == ) flat deps then None
            else Some (U.after ~src:(src0 n) ~deps:flat)
        | _ -> None);
-    (* Remove invalid writes *)
+    (* Remove invalid writes: a STORE of an Invalid constant (possibly
+       through CONTIGUOUS) is a NOOP. *)
+    (fun n -> match U.as_store n with
+       | Some { value; gate = None; _ } ->
+           let value =
+             match U.op value with
+             | Ops.Contiguous when Array.length (U.src value) > 0 ->
+                 src0 value
+             | _ -> value
+           in
+           if is_invalid value then Some (U.noop ~dtype:Dtype.void ())
+           else None
+       | _ -> None);
     (fun n -> match U.op n with
        | Ops.After ->
            let deps = src_tail n in

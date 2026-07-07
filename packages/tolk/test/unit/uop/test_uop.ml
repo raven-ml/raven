@@ -664,8 +664,8 @@ let property_helpers_parity () =
               | None -> fail "expected concrete reshape marg")
             dims)
    | _ -> fail "expected Marg_shape for Reshape");
-  is_true ~msg:"Base walks through movement and Multi"
-    (Uop.base reshaped == param);
+  is_true ~msg:"Base walks through movement and stops at Multi"
+    (Uop.base reshaped == multi);
   let permed = Uop.permute ~src:multi ~order:[ 1; 0 ] in
   is_true ~msg:"Permute remaps shard axis" (Uop.axis permed = Some 1);
   equal (list int) ~msg:"Permute shape follows order"

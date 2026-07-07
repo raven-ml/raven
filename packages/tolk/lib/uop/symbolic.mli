@@ -29,6 +29,11 @@ val symbolic_simple : Upat.Pattern_matcher.t
     logical connectives, and propagation of {!Const.Invalid} through
     unary and binary ALU ops. *)
 
+val pm_fold_lane_stack : Upat.Pattern_matcher.t
+(** [pm_fold_lane_stack] folds a [Stack] of per-lane [Index] extracts of a
+    single vector value back into that value when the shapes agree.
+    Applied after memory coalescing, where such lane re-stacks appear. *)
+
 val symbolic : Upat.Pattern_matcher.t
 (** [symbolic] extends {!symbolic_simple} with rewrites that reshape
     arithmetic trees:

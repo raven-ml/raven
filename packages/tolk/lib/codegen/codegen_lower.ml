@@ -2020,10 +2020,15 @@ let lower (ren : Renderer.t) (sink : U.t) : U.t =
   (* do memory coalesing (late). *)
   let sink = Coalese.memory_coalesing ren sink in
 
-  (* add images: [pm_simplify_add_image]. *)
+  (* add images: [pm_simplify_add_image]. Also folds per-lane re-stacks of
+     freshly coalesced vector loads back into the load. *)
   let sink =
     U.graph_rewrite ~name:"add images" ~bottom_up:true
-      (pm (Coalese.pm_simplify_add_image ren))
+      (U.first_match
+         [
+           pm (Coalese.pm_simplify_add_image ren);
+           pm Symbolic.pm_fold_lane_stack;
+         ])
       sink
   in
 

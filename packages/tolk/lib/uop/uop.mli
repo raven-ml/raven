@@ -1158,9 +1158,10 @@ val addrspace : t -> Dtype.addr_space option
     all address-spaced sources agree. *)
 
 val base : t -> t
-(** [base u] walks through movement ops, {!Ops.Multi}, and {!Ops.Detach} to
-    the underlying node. Other ops, including {!Ops.Stage}, {!Ops.Slice},
-    {!Ops.Bind}, {!Ops.Param}, and {!Ops.Buffer}, are their own base. *)
+(** [base u] walks through movement ops and {!Ops.Detach} to the
+    underlying node. Other ops, including {!Ops.Multi}, {!Ops.Stage},
+    {!Ops.Slice}, {!Ops.Bind}, {!Ops.Param}, and {!Ops.Buffer}, are their
+    own base. *)
 
 val buf_uop : t -> t
 (** [buf_uop u] is the buffer-identity node reached by following tinygrad's

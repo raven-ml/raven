@@ -1,0 +1,40 @@
+   0 Ops.CONST           :            dtypes.int                               []                               64
+   1 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(0, device=('CPU:0', 'CPU:1'))
+   2 Ops.CONST           :            dtypes.int                               []                               16
+   3 Ops.RANGE           : 0          dtypes.int                               ['16']                           (0, AxisType.LOOP)
+   4 Ops.CONST           :            dtypes.int                               []                               2
+   5 Ops.SHL             : 0          dtypes.int                               [3, '2']                         None
+   6 Ops.CONST           :            dtypes.int                               []                               4
+   7 Ops.SHRINK          : 0          dtypes.float                             [1, 5, '4']                      None
+   8 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(1, device=('CPU:0', 'CPU:1'))
+   9 Ops.SHRINK          : 0          dtypes.float                             [8, 5, '4']                      None
+  10 Ops.LOAD            : 0          dtypes.float                             [9]                              None
+  11 Ops.CONST           :            dtypes.int                               []                               0
+  12 Ops.INDEX           : 0          dtypes.float                             [10, '0']                        None
+  13 Ops.CONST           :            dtypes.int                               []                               128
+  14 Ops.PARAM           :            dtypes.float                             ['128']                          ParamArg(2, device=('CPU:0', 'CPU:1'))
+  15 Ops.STACK           :            dtypes.void                              []                               None
+  16 Ops.PARAM           :            dtypes.int                               [15]                             ParamArg(3, vmin_vmax=(0, 1), name='_device_num', addrspace=AddrSpace.ALU)
+  17 Ops.CONST           :            dtypes.int                               []                               6
+  18 Ops.SHL             :            dtypes.int                               [16, '6']                        None
+  19 Ops.ADD             : 0          dtypes.int                               [18, 5]                          None
+  20 Ops.SHRINK          : 0          dtypes.float                             [14, 19, '4']                    None
+  21 Ops.LOAD            : 0          dtypes.float                             [20]                             None
+  22 Ops.INDEX           : 0          dtypes.float                             [21, '0']                        None
+  23 Ops.ADD             : 0          dtypes.float                             [12, 22]                         None
+  24 Ops.CONST           :            dtypes.int                               []                               1
+  25 Ops.INDEX           : 0          dtypes.float                             [10, '1']                        None
+  26 Ops.INDEX           : 0          dtypes.float                             [21, '1']                        None
+  27 Ops.ADD             : 0          dtypes.float                             [25, 26]                         None
+  28 Ops.INDEX           : 0          dtypes.float                             [10, '2']                        None
+  29 Ops.INDEX           : 0          dtypes.float                             [21, '2']                        None
+  30 Ops.ADD             : 0          dtypes.float                             [28, 29]                         None
+  31 Ops.CONST           :            dtypes.int                               []                               3
+  32 Ops.INDEX           : 0          dtypes.float                             [10, '3']                        None
+  33 Ops.INDEX           : 0          dtypes.float                             [21, '3']                        None
+  34 Ops.ADD             : 0          dtypes.float                             [32, 33]                         None
+  35 Ops.STACK           : 0          dtypes.float                             [23, 27, 30, 34]                 None
+  36 Ops.STORE           : 0          dtypes.void                              [7, 35]                          None
+  37 Ops.GROUP           : 0          dtypes.void                              [36, 36, 36, 36]                 None
+  38 Ops.END             :            dtypes.void                              [37, 3]                          None
+  39 Ops.SINK            :            dtypes.void                              [38]                             KernelInfo(name='E_16_4', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None, beam=0)

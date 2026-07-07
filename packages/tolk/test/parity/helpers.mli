@@ -33,6 +33,14 @@ val mk_param :
     with dtype [?dtype] (default [float32]), device [?device] (default
     ["CPU"]), and the given concrete shape. *)
 
+val mk_param_multi :
+  idx:int -> ?dtype:Tolk_uop.Dtype.t -> devices:string list ->
+  ?axis:int -> int list -> Tolk_uop.Uop.t
+(** [mk_param_multi ~idx ~devices ?axis shape] builds a multi-device
+    tensor-level [Param]. [shape] is the per-shard shape; when [axis] is
+    given, the stored shape has that axis multiplied by the device count,
+    mirroring the reference param constructor. *)
+
 val wrap_sink : Tolk_uop.Uop.t list -> Tolk_uop.Uop.t
 (** [wrap_sink srcs] wraps each [src] in [Contiguous] and groups them under
     a tensor-level [Sink]. *)

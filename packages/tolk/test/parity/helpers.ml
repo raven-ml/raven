@@ -86,6 +86,21 @@ let mk_param ~idx ?(dtype = Dtype.float32) ?(device = "CPU") shape =
   let shape_id = if shape = [] then None else Some (mk_shape shape) in
   U.param ~slot:idx ~dtype ?shape:shape_id ~device:(Single device) ()
 
+(* Multi-device PARAM. [shape] is the per-shard shape; when [axis] is given
+   the stored shape multiplies that axis by the device count, mirroring the
+   reference [UOp.param]. *)
+let mk_param_multi ~idx ?(dtype = Dtype.float32) ~devices ?axis shape =
+  let shape =
+    match axis with
+    | Some a ->
+        List.mapi
+          (fun i s -> if i = a then s * List.length devices else s)
+          shape
+    | None -> shape
+  in
+  let shape_id = if shape = [] then None else Some (mk_shape shape) in
+  U.param ~slot:idx ~dtype ?shape:shape_id ~device:(Multi devices) ?axis ()
+
 let wrap_sink srcs =
   let contigs = List.map (fun src -> U.contiguous ~src ()) srcs in
   U.sink contigs
@@ -93,15 +108,16 @@ let wrap_sink srcs =
 (* Tensor-graph entry points: run rangeify to split into kernels, then per
    kernel run the codegen/render pipeline. *)
 
+(* Inline kernel AST roots: CALL srcs whose body carries kernel metadata.
+   Skips precompiled functions (e.g. allreduce), matching the reference. *)
 let extract_kernels root =
-  let kernels = ref [] in
-  List.iter
+  List.filter_map
     (fun node ->
-      match U.as_call node with
-      | Some { body; _ } -> kernels := body :: !kernels
-      | None -> ())
-    (U.toposort root);
-  List.rev !kernels
+      match U.op node, U.as_call node with
+      | Ops.Call, Some { body; _ } when U.as_kernel_info body <> None ->
+          Some body
+      | _ -> None)
+    (U.toposort root)
 
 let stage5_tensor ?(optimize = true) ren sink =
   let kg = Rangeify.get_kernel_graph sink in

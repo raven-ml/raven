@@ -15,7 +15,7 @@ module U = Uop
 
 (* Environment *)
 
-let ring_var = Helpers.Context_var.int ~key:"RING" ~default:0
+let ring_var = Helpers.Context_var.int ~key:"RING" ~default:1
 let all2all_var = Helpers.Context_var.int ~key:"ALL2ALL" ~default:0
 
 let ring_allreduce_threshold =
@@ -48,6 +48,15 @@ let pad_to_shape src ~offset ~shape =
   U.pad ~src ~offset:(emit_shape offset) ~size:(emit_shape shape)
 
 let copy_to_device src dev = U.copy ~src ~device:(Single dev) ()
+
+(* Canonical device placement: canonical per-device names, and a
+   single-element group collapses to that device. *)
+let canonicalize_device (device : U.device) : U.device =
+  match device with
+  | Single d -> Single (Helpers.canonicalize_device_name d)
+  | Multi [ d ] -> Single (Helpers.canonicalize_device_name d)
+  | Multi ds -> Multi (List.map Helpers.canonicalize_device_name ds)
+  | Index _ as d -> d
 
 (* Reduction *)
 
@@ -194,21 +203,22 @@ let create_allreduce_function buf ~op ~device ~dtype ~shape ?output () =
     match output with
     | Some o -> o
     | None ->
-        (* Mirror tinygrad's [const(dtype, Invalid, shape).clone(device)]: a
-           shaped Invalid placeholder cloned onto [device], i.e. a fresh
-           output buffer whose store of the (deviceless) Invalid const needs
-           no cross-device copy. *)
+        (* A shaped Invalid placeholder cloned onto [device]: a fresh flat
+           output buffer viewed at [shape], initialised by storing the
+           (deviceless) Invalid const, so no cross-device copy is needed. *)
         let shape_node = emit_shape shape in
+        let numel = List.fold_left ( * ) 1 shape in
         let invalid_shaped =
           U.const_of_dtype ~shape:shape_node (Dtype.val_of dtype)
             U.Const_invalid
         in
         let buffer =
-          U.buffer ~slot:(-1) ~device ~shape:shape_node
-            ~addrspace:Dtype.Global ~dtype ()
+          U.buffer ~slot:(U.fresh_buffer_slot ())
+            ~device:(canonicalize_device device)
+            ~shape:(emit_shape [ numel ]) ~addrspace:Dtype.Global ~dtype ()
         in
-        U.after ~src:buffer
-          ~deps:[ U.store ~dst:buffer ~value:invalid_shaped () ]
+        let view = U.reshape ~src:buffer ~shape:shape_node in
+        U.after ~src:view ~deps:[ U.store ~dst:view ~value:invalid_shaped () ]
   in
   (* Build params mirroring the output and source signatures. *)
   let to_ =

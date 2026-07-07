@@ -1,0 +1,26 @@
+(executable
+ (name main)
+ (libraries tolk tolk.uop tolk_parity_helpers))
+
+(rule
+ (package tolk)
+ (targets
+  stage5_cpu.actual
+  stage5_cuda.actual
+  stage7_cpu.actual
+  stage7_cuda.actual)
+ (action
+  (setenv
+   LATE_ALLREDUCE
+   0
+   (run ./main.exe .))))
+
+(rule
+ (alias runtest)
+ (package tolk)
+ (action
+  (progn
+   (diff stage5_cpu.expected stage5_cpu.actual)
+   (diff stage5_cuda.expected stage5_cuda.actual)
+   (diff stage7_cpu.expected stage7_cpu.actual)
+   (diff stage7_cuda.expected stage7_cuda.actual))))

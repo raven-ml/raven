@@ -1,0 +1,510 @@
+=== kernel 0 ===
+   0 Ops.CONST           :            dtypes.int                               []                               64
+   1 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(0, device=('CPU:0', 'CPU:1', 'CPU:2', 'CPU:3'))
+   2 Ops.RANGE           : 1          dtypes.int                               ['64']                           (1, AxisType.LOOP)
+   3 Ops.INDEX           : 1          dtypes.float                             [1, 2]                           None
+   4 Ops.CONST           :            dtypes.int                               []                               512
+   5 Ops.PARAM           :            dtypes.float                             ['512']                          ParamArg(1, device=('CPU:0', 'CPU:1', 'CPU:2', 'CPU:3'))
+   6 Ops.INDEX           : 1          dtypes.float                             [5, 2]                           None
+   7 Ops.LOAD            : 1          dtypes.float                             [6]                              None
+   8 Ops.ADD             : 1          dtypes.int                               [2, '64']                        None
+   9 Ops.INDEX           : 1          dtypes.float                             [5, 8]                           None
+  10 Ops.LOAD            : 1          dtypes.float                             [9]                              None
+  11 Ops.ADD             : 1          dtypes.float                             [7, 10]                          None
+  12 Ops.CONST           :            dtypes.int                               []                               128
+  13 Ops.ADD             : 1          dtypes.int                               [2, '128']                       None
+  14 Ops.INDEX           : 1          dtypes.float                             [5, 13]                          None
+  15 Ops.LOAD            : 1          dtypes.float                             [14]                             None
+  16 Ops.ADD             : 1          dtypes.float                             [11, 15]                         None
+  17 Ops.CONST           :            dtypes.int                               []                               192
+  18 Ops.ADD             : 1          dtypes.int                               [2, '192']                       None
+  19 Ops.INDEX           : 1          dtypes.float                             [5, 18]                          None
+  20 Ops.LOAD            : 1          dtypes.float                             [19]                             None
+  21 Ops.ADD             : 1          dtypes.float                             [16, 20]                         None
+  22 Ops.CONST           :            dtypes.int                               []                               256
+  23 Ops.ADD             : 1          dtypes.int                               [2, '256']                       None
+  24 Ops.INDEX           : 1          dtypes.float                             [5, 23]                          None
+  25 Ops.LOAD            : 1          dtypes.float                             [24]                             None
+  26 Ops.ADD             : 1          dtypes.float                             [21, 25]                         None
+  27 Ops.CONST           :            dtypes.int                               []                               320
+  28 Ops.ADD             : 1          dtypes.int                               [2, '320']                       None
+  29 Ops.INDEX           : 1          dtypes.float                             [5, 28]                          None
+  30 Ops.LOAD            : 1          dtypes.float                             [29]                             None
+  31 Ops.ADD             : 1          dtypes.float                             [26, 30]                         None
+  32 Ops.CONST           :            dtypes.int                               []                               384
+  33 Ops.ADD             : 1          dtypes.int                               [2, '384']                       None
+  34 Ops.INDEX           : 1          dtypes.float                             [5, 33]                          None
+  35 Ops.LOAD            : 1          dtypes.float                             [34]                             None
+  36 Ops.ADD             : 1          dtypes.float                             [31, 35]                         None
+  37 Ops.CONST           :            dtypes.int                               []                               448
+  38 Ops.ADD             : 1          dtypes.int                               [2, '448']                       None
+  39 Ops.INDEX           : 1          dtypes.float                             [5, 38]                          None
+  40 Ops.LOAD            : 1          dtypes.float                             [39]                             None
+  41 Ops.ADD             : 1          dtypes.float                             [36, 40]                         None
+  42 Ops.STORE           : 1          dtypes.void                              [3, 41]                          None
+  43 Ops.END             :            dtypes.void                              [42, 2]                          None
+  44 Ops.SINK            :            dtypes.void                              [43]                             KernelInfo(name='r_64_8', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UNROLL, axis=0, arg=0),), opts_to_apply=None, estimates=None, beam=0)
+=== kernel 1 ===
+   0 Ops.CONST           :            dtypes.int                               []                               32
+   1 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(0, device='CPU:0')
+   2 Ops.CONST           :            dtypes.int                               []                               8
+   3 Ops.RANGE           : 0          dtypes.int                               ['8']                            (0, AxisType.LOOP)
+   4 Ops.CONST           :            dtypes.int                               []                               2
+   5 Ops.SHL             : 0          dtypes.int                               [3, '2']                         None
+   6 Ops.CONST           :            dtypes.int                               []                               4
+   7 Ops.SHRINK          : 0          dtypes.float                             [1, 5, '4']                      None
+   8 Ops.CONST           :            dtypes.int                               []                               64
+   9 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(1, device='CPU:0')
+  10 Ops.SHRINK          : 0          dtypes.float                             [9, 5, '4']                      None
+  11 Ops.LOAD            : 0          dtypes.float                             [10]                             None
+  12 Ops.STORE           : 0          dtypes.void                              [7, 11]                          None
+  13 Ops.GROUP           : 0          dtypes.void                              [12, 12, 12, 12]                 None
+  14 Ops.END             :            dtypes.void                              [13, 3]                          None
+  15 Ops.SINK            :            dtypes.void                              [14]                             KernelInfo(name='E_8_4', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None, beam=0)
+=== kernel 2 ===
+   0 Ops.CONST           :            dtypes.int                               []                               32
+   1 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(0, device='CPU:1')
+   2 Ops.CONST           :            dtypes.int                               []                               8
+   3 Ops.RANGE           : 0          dtypes.int                               ['8']                            (0, AxisType.LOOP)
+   4 Ops.CONST           :            dtypes.int                               []                               2
+   5 Ops.SHL             : 0          dtypes.int                               [3, '2']                         None
+   6 Ops.CONST           :            dtypes.int                               []                               4
+   7 Ops.SHRINK          : 0          dtypes.float                             [1, 5, '4']                      None
+   8 Ops.CONST           :            dtypes.int                               []                               64
+   9 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(1, device='CPU:1')
+  10 Ops.SHRINK          : 0          dtypes.float                             [9, 5, '4']                      None
+  11 Ops.LOAD            : 0          dtypes.float                             [10]                             None
+  12 Ops.STORE           : 0          dtypes.void                              [7, 11]                          None
+  13 Ops.GROUP           : 0          dtypes.void                              [12, 12, 12, 12]                 None
+  14 Ops.END             :            dtypes.void                              [13, 3]                          None
+  15 Ops.SINK            :            dtypes.void                              [14]                             KernelInfo(name='E_8_4n1', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None, beam=0)
+=== kernel 3 ===
+   0 Ops.CONST           :            dtypes.int                               []                               32
+   1 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(0, device='CPU:1')
+   2 Ops.CONST           :            dtypes.int                               []                               8
+   3 Ops.RANGE           : 0          dtypes.int                               ['8']                            (0, AxisType.LOOP)
+   4 Ops.CONST           :            dtypes.int                               []                               2
+   5 Ops.SHL             : 0          dtypes.int                               [3, '2']                         None
+   6 Ops.CONST           :            dtypes.int                               []                               4
+   7 Ops.SHRINK          : 0          dtypes.float                             [1, 5, '4']                      None
+   8 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(1, device='CPU:1')
+   9 Ops.SHRINK          : 0          dtypes.float                             [8, 5, '4']                      None
+  10 Ops.LOAD            : 0          dtypes.float                             [9]                              None
+  11 Ops.CONST           :            dtypes.int                               []                               0
+  12 Ops.INDEX           : 0          dtypes.float                             [10, '0']                        None
+  13 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(2, device='CPU:1')
+  14 Ops.SHRINK          : 0          dtypes.float                             [13, 5, '4']                     None
+  15 Ops.LOAD            : 0          dtypes.float                             [14]                             None
+  16 Ops.INDEX           : 0          dtypes.float                             [15, '0']                        None
+  17 Ops.ADD             : 0          dtypes.float                             [12, 16]                         None
+  18 Ops.CONST           :            dtypes.int                               []                               1
+  19 Ops.INDEX           : 0          dtypes.float                             [10, '1']                        None
+  20 Ops.INDEX           : 0          dtypes.float                             [15, '1']                        None
+  21 Ops.ADD             : 0          dtypes.float                             [19, 20]                         None
+  22 Ops.INDEX           : 0          dtypes.float                             [10, '2']                        None
+  23 Ops.INDEX           : 0          dtypes.float                             [15, '2']                        None
+  24 Ops.ADD             : 0          dtypes.float                             [22, 23]                         None
+  25 Ops.CONST           :            dtypes.int                               []                               3
+  26 Ops.INDEX           : 0          dtypes.float                             [10, '3']                        None
+  27 Ops.INDEX           : 0          dtypes.float                             [15, '3']                        None
+  28 Ops.ADD             : 0          dtypes.float                             [26, 27]                         None
+  29 Ops.STACK           : 0          dtypes.float                             [17, 21, 24, 28]                 None
+  30 Ops.STORE           : 0          dtypes.void                              [7, 29]                          None
+  31 Ops.GROUP           : 0          dtypes.void                              [30, 30, 30, 30]                 None
+  32 Ops.END             :            dtypes.void                              [31, 3]                          None
+  33 Ops.SINK            :            dtypes.void                              [32]                             KernelInfo(name='E_8_4n2', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None, beam=0)
+=== kernel 4 ===
+   0 Ops.CONST           :            dtypes.int                               []                               32
+   1 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(0, device='CPU:2')
+   2 Ops.CONST           :            dtypes.int                               []                               8
+   3 Ops.RANGE           : 0          dtypes.int                               ['8']                            (0, AxisType.LOOP)
+   4 Ops.CONST           :            dtypes.int                               []                               2
+   5 Ops.SHL             : 0          dtypes.int                               [3, '2']                         None
+   6 Ops.CONST           :            dtypes.int                               []                               4
+   7 Ops.SHRINK          : 0          dtypes.float                             [1, 5, '4']                      None
+   8 Ops.CONST           :            dtypes.int                               []                               64
+   9 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(1, device='CPU:2')
+  10 Ops.SHRINK          : 0          dtypes.float                             [9, 5, '4']                      None
+  11 Ops.LOAD            : 0          dtypes.float                             [10]                             None
+  12 Ops.STORE           : 0          dtypes.void                              [7, 11]                          None
+  13 Ops.GROUP           : 0          dtypes.void                              [12, 12, 12, 12]                 None
+  14 Ops.END             :            dtypes.void                              [13, 3]                          None
+  15 Ops.SINK            :            dtypes.void                              [14]                             KernelInfo(name='E_8_4n3', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None, beam=0)
+=== kernel 5 ===
+   0 Ops.CONST           :            dtypes.int                               []                               32
+   1 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(0, device='CPU:2')
+   2 Ops.CONST           :            dtypes.int                               []                               8
+   3 Ops.RANGE           : 0          dtypes.int                               ['8']                            (0, AxisType.LOOP)
+   4 Ops.CONST           :            dtypes.int                               []                               2
+   5 Ops.SHL             : 0          dtypes.int                               [3, '2']                         None
+   6 Ops.CONST           :            dtypes.int                               []                               4
+   7 Ops.SHRINK          : 0          dtypes.float                             [1, 5, '4']                      None
+   8 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(1, device='CPU:2')
+   9 Ops.SHRINK          : 0          dtypes.float                             [8, 5, '4']                      None
+  10 Ops.LOAD            : 0          dtypes.float                             [9]                              None
+  11 Ops.CONST           :            dtypes.int                               []                               0
+  12 Ops.INDEX           : 0          dtypes.float                             [10, '0']                        None
+  13 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(2, device='CPU:2')
+  14 Ops.SHRINK          : 0          dtypes.float                             [13, 5, '4']                     None
+  15 Ops.LOAD            : 0          dtypes.float                             [14]                             None
+  16 Ops.INDEX           : 0          dtypes.float                             [15, '0']                        None
+  17 Ops.ADD             : 0          dtypes.float                             [12, 16]                         None
+  18 Ops.CONST           :            dtypes.int                               []                               1
+  19 Ops.INDEX           : 0          dtypes.float                             [10, '1']                        None
+  20 Ops.INDEX           : 0          dtypes.float                             [15, '1']                        None
+  21 Ops.ADD             : 0          dtypes.float                             [19, 20]                         None
+  22 Ops.INDEX           : 0          dtypes.float                             [10, '2']                        None
+  23 Ops.INDEX           : 0          dtypes.float                             [15, '2']                        None
+  24 Ops.ADD             : 0          dtypes.float                             [22, 23]                         None
+  25 Ops.CONST           :            dtypes.int                               []                               3
+  26 Ops.INDEX           : 0          dtypes.float                             [10, '3']                        None
+  27 Ops.INDEX           : 0          dtypes.float                             [15, '3']                        None
+  28 Ops.ADD             : 0          dtypes.float                             [26, 27]                         None
+  29 Ops.STACK           : 0          dtypes.float                             [17, 21, 24, 28]                 None
+  30 Ops.STORE           : 0          dtypes.void                              [7, 29]                          None
+  31 Ops.GROUP           : 0          dtypes.void                              [30, 30, 30, 30]                 None
+  32 Ops.END             :            dtypes.void                              [31, 3]                          None
+  33 Ops.SINK            :            dtypes.void                              [32]                             KernelInfo(name='E_8_4n4', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None, beam=0)
+=== kernel 6 ===
+   0 Ops.CONST           :            dtypes.int                               []                               32
+   1 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(0, device='CPU:3')
+   2 Ops.CONST           :            dtypes.int                               []                               8
+   3 Ops.RANGE           : 0          dtypes.int                               ['8']                            (0, AxisType.LOOP)
+   4 Ops.CONST           :            dtypes.int                               []                               2
+   5 Ops.SHL             : 0          dtypes.int                               [3, '2']                         None
+   6 Ops.CONST           :            dtypes.int                               []                               4
+   7 Ops.SHRINK          : 0          dtypes.float                             [1, 5, '4']                      None
+   8 Ops.CONST           :            dtypes.int                               []                               64
+   9 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(1, device='CPU:3')
+  10 Ops.SHRINK          : 0          dtypes.float                             [9, 5, '4']                      None
+  11 Ops.LOAD            : 0          dtypes.float                             [10]                             None
+  12 Ops.STORE           : 0          dtypes.void                              [7, 11]                          None
+  13 Ops.GROUP           : 0          dtypes.void                              [12, 12, 12, 12]                 None
+  14 Ops.END             :            dtypes.void                              [13, 3]                          None
+  15 Ops.SINK            :            dtypes.void                              [14]                             KernelInfo(name='E_8_4n5', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None, beam=0)
+=== kernel 7 ===
+   0 Ops.CONST           :            dtypes.int                               []                               32
+   1 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(0, device='CPU:3')
+   2 Ops.CONST           :            dtypes.int                               []                               8
+   3 Ops.RANGE           : 0          dtypes.int                               ['8']                            (0, AxisType.LOOP)
+   4 Ops.CONST           :            dtypes.int                               []                               2
+   5 Ops.SHL             : 0          dtypes.int                               [3, '2']                         None
+   6 Ops.CONST           :            dtypes.int                               []                               4
+   7 Ops.SHRINK          : 0          dtypes.float                             [1, 5, '4']                      None
+   8 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(1, device='CPU:3')
+   9 Ops.SHRINK          : 0          dtypes.float                             [8, 5, '4']                      None
+  10 Ops.LOAD            : 0          dtypes.float                             [9]                              None
+  11 Ops.CONST           :            dtypes.int                               []                               0
+  12 Ops.INDEX           : 0          dtypes.float                             [10, '0']                        None
+  13 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(2, device='CPU:3')
+  14 Ops.SHRINK          : 0          dtypes.float                             [13, 5, '4']                     None
+  15 Ops.LOAD            : 0          dtypes.float                             [14]                             None
+  16 Ops.INDEX           : 0          dtypes.float                             [15, '0']                        None
+  17 Ops.ADD             : 0          dtypes.float                             [12, 16]                         None
+  18 Ops.CONST           :            dtypes.int                               []                               1
+  19 Ops.INDEX           : 0          dtypes.float                             [10, '1']                        None
+  20 Ops.INDEX           : 0          dtypes.float                             [15, '1']                        None
+  21 Ops.ADD             : 0          dtypes.float                             [19, 20]                         None
+  22 Ops.INDEX           : 0          dtypes.float                             [10, '2']                        None
+  23 Ops.INDEX           : 0          dtypes.float                             [15, '2']                        None
+  24 Ops.ADD             : 0          dtypes.float                             [22, 23]                         None
+  25 Ops.CONST           :            dtypes.int                               []                               3
+  26 Ops.INDEX           : 0          dtypes.float                             [10, '3']                        None
+  27 Ops.INDEX           : 0          dtypes.float                             [15, '3']                        None
+  28 Ops.ADD             : 0          dtypes.float                             [26, 27]                         None
+  29 Ops.STACK           : 0          dtypes.float                             [17, 21, 24, 28]                 None
+  30 Ops.STORE           : 0          dtypes.void                              [7, 29]                          None
+  31 Ops.GROUP           : 0          dtypes.void                              [30, 30, 30, 30]                 None
+  32 Ops.END             :            dtypes.void                              [31, 3]                          None
+  33 Ops.SINK            :            dtypes.void                              [32]                             KernelInfo(name='E_8_4n6', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None, beam=0)
+=== kernel 8 ===
+   0 Ops.CONST           :            dtypes.int                               []                               32
+   1 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(0, device='CPU:3')
+   2 Ops.CONST           :            dtypes.int                               []                               8
+   3 Ops.RANGE           : 0          dtypes.int                               ['8']                            (0, AxisType.LOOP)
+   4 Ops.CONST           :            dtypes.int                               []                               2
+   5 Ops.SHL             : 0          dtypes.int                               [3, '2']                         None
+   6 Ops.CONST           :            dtypes.int                               []                               4
+   7 Ops.SHRINK          : 0          dtypes.float                             [1, 5, '4']                      None
+   8 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(1, device='CPU:3')
+   9 Ops.SHRINK          : 0          dtypes.float                             [8, 5, '4']                      None
+  10 Ops.LOAD            : 0          dtypes.float                             [9]                              None
+  11 Ops.CONST           :            dtypes.int                               []                               0
+  12 Ops.INDEX           : 0          dtypes.float                             [10, '0']                        None
+  13 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(2, device='CPU:3')
+  14 Ops.SHRINK          : 0          dtypes.float                             [13, 5, '4']                     None
+  15 Ops.LOAD            : 0          dtypes.float                             [14]                             None
+  16 Ops.INDEX           : 0          dtypes.float                             [15, '0']                        None
+  17 Ops.ADD             : 0          dtypes.float                             [12, 16]                         None
+  18 Ops.CONST           :            dtypes.int                               []                               1
+  19 Ops.INDEX           : 0          dtypes.float                             [10, '1']                        None
+  20 Ops.INDEX           : 0          dtypes.float                             [15, '1']                        None
+  21 Ops.ADD             : 0          dtypes.float                             [19, 20]                         None
+  22 Ops.INDEX           : 0          dtypes.float                             [10, '2']                        None
+  23 Ops.INDEX           : 0          dtypes.float                             [15, '2']                        None
+  24 Ops.ADD             : 0          dtypes.float                             [22, 23]                         None
+  25 Ops.CONST           :            dtypes.int                               []                               3
+  26 Ops.INDEX           : 0          dtypes.float                             [10, '3']                        None
+  27 Ops.INDEX           : 0          dtypes.float                             [15, '3']                        None
+  28 Ops.ADD             : 0          dtypes.float                             [26, 27]                         None
+  29 Ops.STACK           : 0          dtypes.float                             [17, 21, 24, 28]                 None
+  30 Ops.STORE           : 0          dtypes.void                              [7, 29]                          None
+  31 Ops.GROUP           : 0          dtypes.void                              [30, 30, 30, 30]                 None
+  32 Ops.END             :            dtypes.void                              [31, 3]                          None
+  33 Ops.SINK            :            dtypes.void                              [32]                             KernelInfo(name='E_8_4n7', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None, beam=0)
+=== kernel 9 ===
+   0 Ops.CONST           :            dtypes.int                               []                               32
+   1 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(0, device='CPU:1')
+   2 Ops.CONST           :            dtypes.int                               []                               8
+   3 Ops.RANGE           : 0          dtypes.int                               ['8']                            (0, AxisType.LOOP)
+   4 Ops.CONST           :            dtypes.int                               []                               2
+   5 Ops.SHL             : 0          dtypes.int                               [3, '2']                         None
+   6 Ops.CONST           :            dtypes.int                               []                               4
+   7 Ops.SHRINK          : 0          dtypes.float                             [1, 5, '4']                      None
+   8 Ops.CONST           :            dtypes.int                               []                               64
+   9 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(1, device='CPU:1')
+  10 Ops.ADD             : 0          dtypes.int                               [5, '32']                        None
+  11 Ops.SHRINK          : 0          dtypes.float                             [9, 10, '4']                     None
+  12 Ops.LOAD            : 0          dtypes.float                             [11]                             None
+  13 Ops.STORE           : 0          dtypes.void                              [7, 12]                          None
+  14 Ops.GROUP           : 0          dtypes.void                              [13, 13, 13, 13]                 None
+  15 Ops.END             :            dtypes.void                              [14, 3]                          None
+  16 Ops.SINK            :            dtypes.void                              [15]                             KernelInfo(name='E_8_4n8', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None, beam=0)
+=== kernel 10 ===
+   0 Ops.CONST           :            dtypes.int                               []                               32
+   1 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(0, device='CPU:2')
+   2 Ops.CONST           :            dtypes.int                               []                               8
+   3 Ops.RANGE           : 0          dtypes.int                               ['8']                            (0, AxisType.LOOP)
+   4 Ops.CONST           :            dtypes.int                               []                               2
+   5 Ops.SHL             : 0          dtypes.int                               [3, '2']                         None
+   6 Ops.CONST           :            dtypes.int                               []                               4
+   7 Ops.SHRINK          : 0          dtypes.float                             [1, 5, '4']                      None
+   8 Ops.CONST           :            dtypes.int                               []                               64
+   9 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(1, device='CPU:2')
+  10 Ops.ADD             : 0          dtypes.int                               [5, '32']                        None
+  11 Ops.SHRINK          : 0          dtypes.float                             [9, 10, '4']                     None
+  12 Ops.LOAD            : 0          dtypes.float                             [11]                             None
+  13 Ops.STORE           : 0          dtypes.void                              [7, 12]                          None
+  14 Ops.GROUP           : 0          dtypes.void                              [13, 13, 13, 13]                 None
+  15 Ops.END             :            dtypes.void                              [14, 3]                          None
+  16 Ops.SINK            :            dtypes.void                              [15]                             KernelInfo(name='E_8_4n9', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None, beam=0)
+=== kernel 11 ===
+   0 Ops.CONST           :            dtypes.int                               []                               32
+   1 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(0, device='CPU:2')
+   2 Ops.CONST           :            dtypes.int                               []                               8
+   3 Ops.RANGE           : 0          dtypes.int                               ['8']                            (0, AxisType.LOOP)
+   4 Ops.CONST           :            dtypes.int                               []                               2
+   5 Ops.SHL             : 0          dtypes.int                               [3, '2']                         None
+   6 Ops.CONST           :            dtypes.int                               []                               4
+   7 Ops.SHRINK          : 0          dtypes.float                             [1, 5, '4']                      None
+   8 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(1, device='CPU:2')
+   9 Ops.SHRINK          : 0          dtypes.float                             [8, 5, '4']                      None
+  10 Ops.LOAD            : 0          dtypes.float                             [9]                              None
+  11 Ops.CONST           :            dtypes.int                               []                               0
+  12 Ops.INDEX           : 0          dtypes.float                             [10, '0']                        None
+  13 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(2, device='CPU:2')
+  14 Ops.SHRINK          : 0          dtypes.float                             [13, 5, '4']                     None
+  15 Ops.LOAD            : 0          dtypes.float                             [14]                             None
+  16 Ops.INDEX           : 0          dtypes.float                             [15, '0']                        None
+  17 Ops.ADD             : 0          dtypes.float                             [12, 16]                         None
+  18 Ops.CONST           :            dtypes.int                               []                               1
+  19 Ops.INDEX           : 0          dtypes.float                             [10, '1']                        None
+  20 Ops.INDEX           : 0          dtypes.float                             [15, '1']                        None
+  21 Ops.ADD             : 0          dtypes.float                             [19, 20]                         None
+  22 Ops.INDEX           : 0          dtypes.float                             [10, '2']                        None
+  23 Ops.INDEX           : 0          dtypes.float                             [15, '2']                        None
+  24 Ops.ADD             : 0          dtypes.float                             [22, 23]                         None
+  25 Ops.CONST           :            dtypes.int                               []                               3
+  26 Ops.INDEX           : 0          dtypes.float                             [10, '3']                        None
+  27 Ops.INDEX           : 0          dtypes.float                             [15, '3']                        None
+  28 Ops.ADD             : 0          dtypes.float                             [26, 27]                         None
+  29 Ops.STACK           : 0          dtypes.float                             [17, 21, 24, 28]                 None
+  30 Ops.STORE           : 0          dtypes.void                              [7, 29]                          None
+  31 Ops.GROUP           : 0          dtypes.void                              [30, 30, 30, 30]                 None
+  32 Ops.END             :            dtypes.void                              [31, 3]                          None
+  33 Ops.SINK            :            dtypes.void                              [32]                             KernelInfo(name='E_8_4n10', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None, beam=0)
+=== kernel 12 ===
+   0 Ops.CONST           :            dtypes.int                               []                               32
+   1 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(0, device='CPU:3')
+   2 Ops.CONST           :            dtypes.int                               []                               8
+   3 Ops.RANGE           : 0          dtypes.int                               ['8']                            (0, AxisType.LOOP)
+   4 Ops.CONST           :            dtypes.int                               []                               2
+   5 Ops.SHL             : 0          dtypes.int                               [3, '2']                         None
+   6 Ops.CONST           :            dtypes.int                               []                               4
+   7 Ops.SHRINK          : 0          dtypes.float                             [1, 5, '4']                      None
+   8 Ops.CONST           :            dtypes.int                               []                               64
+   9 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(1, device='CPU:3')
+  10 Ops.ADD             : 0          dtypes.int                               [5, '32']                        None
+  11 Ops.SHRINK          : 0          dtypes.float                             [9, 10, '4']                     None
+  12 Ops.LOAD            : 0          dtypes.float                             [11]                             None
+  13 Ops.STORE           : 0          dtypes.void                              [7, 12]                          None
+  14 Ops.GROUP           : 0          dtypes.void                              [13, 13, 13, 13]                 None
+  15 Ops.END             :            dtypes.void                              [14, 3]                          None
+  16 Ops.SINK            :            dtypes.void                              [15]                             KernelInfo(name='E_8_4n11', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None, beam=0)
+=== kernel 13 ===
+   0 Ops.CONST           :            dtypes.int                               []                               32
+   1 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(0, device='CPU:3')
+   2 Ops.CONST           :            dtypes.int                               []                               8
+   3 Ops.RANGE           : 0          dtypes.int                               ['8']                            (0, AxisType.LOOP)
+   4 Ops.CONST           :            dtypes.int                               []                               2
+   5 Ops.SHL             : 0          dtypes.int                               [3, '2']                         None
+   6 Ops.CONST           :            dtypes.int                               []                               4
+   7 Ops.SHRINK          : 0          dtypes.float                             [1, 5, '4']                      None
+   8 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(1, device='CPU:3')
+   9 Ops.SHRINK          : 0          dtypes.float                             [8, 5, '4']                      None
+  10 Ops.LOAD            : 0          dtypes.float                             [9]                              None
+  11 Ops.CONST           :            dtypes.int                               []                               0
+  12 Ops.INDEX           : 0          dtypes.float                             [10, '0']                        None
+  13 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(2, device='CPU:3')
+  14 Ops.SHRINK          : 0          dtypes.float                             [13, 5, '4']                     None
+  15 Ops.LOAD            : 0          dtypes.float                             [14]                             None
+  16 Ops.INDEX           : 0          dtypes.float                             [15, '0']                        None
+  17 Ops.ADD             : 0          dtypes.float                             [12, 16]                         None
+  18 Ops.CONST           :            dtypes.int                               []                               1
+  19 Ops.INDEX           : 0          dtypes.float                             [10, '1']                        None
+  20 Ops.INDEX           : 0          dtypes.float                             [15, '1']                        None
+  21 Ops.ADD             : 0          dtypes.float                             [19, 20]                         None
+  22 Ops.INDEX           : 0          dtypes.float                             [10, '2']                        None
+  23 Ops.INDEX           : 0          dtypes.float                             [15, '2']                        None
+  24 Ops.ADD             : 0          dtypes.float                             [22, 23]                         None
+  25 Ops.CONST           :            dtypes.int                               []                               3
+  26 Ops.INDEX           : 0          dtypes.float                             [10, '3']                        None
+  27 Ops.INDEX           : 0          dtypes.float                             [15, '3']                        None
+  28 Ops.ADD             : 0          dtypes.float                             [26, 27]                         None
+  29 Ops.STACK           : 0          dtypes.float                             [17, 21, 24, 28]                 None
+  30 Ops.STORE           : 0          dtypes.void                              [7, 29]                          None
+  31 Ops.GROUP           : 0          dtypes.void                              [30, 30, 30, 30]                 None
+  32 Ops.END             :            dtypes.void                              [31, 3]                          None
+  33 Ops.SINK            :            dtypes.void                              [32]                             KernelInfo(name='E_8_4n12', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None, beam=0)
+=== kernel 14 ===
+   0 Ops.CONST           :            dtypes.int                               []                               32
+   1 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(0, device='CPU:0')
+   2 Ops.CONST           :            dtypes.int                               []                               8
+   3 Ops.RANGE           : 0          dtypes.int                               ['8']                            (0, AxisType.LOOP)
+   4 Ops.CONST           :            dtypes.int                               []                               2
+   5 Ops.SHL             : 0          dtypes.int                               [3, '2']                         None
+   6 Ops.CONST           :            dtypes.int                               []                               4
+   7 Ops.SHRINK          : 0          dtypes.float                             [1, 5, '4']                      None
+   8 Ops.CONST           :            dtypes.int                               []                               64
+   9 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(1, device='CPU:0')
+  10 Ops.ADD             : 0          dtypes.int                               [5, '32']                        None
+  11 Ops.SHRINK          : 0          dtypes.float                             [9, 10, '4']                     None
+  12 Ops.LOAD            : 0          dtypes.float                             [11]                             None
+  13 Ops.STORE           : 0          dtypes.void                              [7, 12]                          None
+  14 Ops.GROUP           : 0          dtypes.void                              [13, 13, 13, 13]                 None
+  15 Ops.END             :            dtypes.void                              [14, 3]                          None
+  16 Ops.SINK            :            dtypes.void                              [15]                             KernelInfo(name='E_8_4n13', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None, beam=0)
+=== kernel 15 ===
+   0 Ops.CONST           :            dtypes.int                               []                               32
+   1 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(0, device='CPU:0')
+   2 Ops.CONST           :            dtypes.int                               []                               8
+   3 Ops.RANGE           : 0          dtypes.int                               ['8']                            (0, AxisType.LOOP)
+   4 Ops.CONST           :            dtypes.int                               []                               2
+   5 Ops.SHL             : 0          dtypes.int                               [3, '2']                         None
+   6 Ops.CONST           :            dtypes.int                               []                               4
+   7 Ops.SHRINK          : 0          dtypes.float                             [1, 5, '4']                      None
+   8 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(1, device='CPU:0')
+   9 Ops.SHRINK          : 0          dtypes.float                             [8, 5, '4']                      None
+  10 Ops.LOAD            : 0          dtypes.float                             [9]                              None
+  11 Ops.CONST           :            dtypes.int                               []                               0
+  12 Ops.INDEX           : 0          dtypes.float                             [10, '0']                        None
+  13 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(2, device='CPU:0')
+  14 Ops.SHRINK          : 0          dtypes.float                             [13, 5, '4']                     None
+  15 Ops.LOAD            : 0          dtypes.float                             [14]                             None
+  16 Ops.INDEX           : 0          dtypes.float                             [15, '0']                        None
+  17 Ops.ADD             : 0          dtypes.float                             [12, 16]                         None
+  18 Ops.CONST           :            dtypes.int                               []                               1
+  19 Ops.INDEX           : 0          dtypes.float                             [10, '1']                        None
+  20 Ops.INDEX           : 0          dtypes.float                             [15, '1']                        None
+  21 Ops.ADD             : 0          dtypes.float                             [19, 20]                         None
+  22 Ops.INDEX           : 0          dtypes.float                             [10, '2']                        None
+  23 Ops.INDEX           : 0          dtypes.float                             [15, '2']                        None
+  24 Ops.ADD             : 0          dtypes.float                             [22, 23]                         None
+  25 Ops.CONST           :            dtypes.int                               []                               3
+  26 Ops.INDEX           : 0          dtypes.float                             [10, '3']                        None
+  27 Ops.INDEX           : 0          dtypes.float                             [15, '3']                        None
+  28 Ops.ADD             : 0          dtypes.float                             [26, 27]                         None
+  29 Ops.STACK           : 0          dtypes.float                             [17, 21, 24, 28]                 None
+  30 Ops.STORE           : 0          dtypes.void                              [7, 29]                          None
+  31 Ops.GROUP           : 0          dtypes.void                              [30, 30, 30, 30]                 None
+  32 Ops.END             :            dtypes.void                              [31, 3]                          None
+  33 Ops.SINK            :            dtypes.void                              [32]                             KernelInfo(name='E_8_4n14', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None, beam=0)
+=== kernel 16 ===
+   0 Ops.CONST           :            dtypes.int                               []                               32
+   1 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(0, device='CPU:0')
+   2 Ops.CONST           :            dtypes.int                               []                               8
+   3 Ops.RANGE           : 0          dtypes.int                               ['8']                            (0, AxisType.LOOP)
+   4 Ops.CONST           :            dtypes.int                               []                               2
+   5 Ops.SHL             : 0          dtypes.int                               [3, '2']                         None
+   6 Ops.CONST           :            dtypes.int                               []                               4
+   7 Ops.SHRINK          : 0          dtypes.float                             [1, 5, '4']                      None
+   8 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(1, device='CPU:0')
+   9 Ops.SHRINK          : 0          dtypes.float                             [8, 5, '4']                      None
+  10 Ops.LOAD            : 0          dtypes.float                             [9]                              None
+  11 Ops.CONST           :            dtypes.int                               []                               0
+  12 Ops.INDEX           : 0          dtypes.float                             [10, '0']                        None
+  13 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(2, device='CPU:0')
+  14 Ops.SHRINK          : 0          dtypes.float                             [13, 5, '4']                     None
+  15 Ops.LOAD            : 0          dtypes.float                             [14]                             None
+  16 Ops.INDEX           : 0          dtypes.float                             [15, '0']                        None
+  17 Ops.ADD             : 0          dtypes.float                             [12, 16]                         None
+  18 Ops.CONST           :            dtypes.int                               []                               1
+  19 Ops.INDEX           : 0          dtypes.float                             [10, '1']                        None
+  20 Ops.INDEX           : 0          dtypes.float                             [15, '1']                        None
+  21 Ops.ADD             : 0          dtypes.float                             [19, 20]                         None
+  22 Ops.INDEX           : 0          dtypes.float                             [10, '2']                        None
+  23 Ops.INDEX           : 0          dtypes.float                             [15, '2']                        None
+  24 Ops.ADD             : 0          dtypes.float                             [22, 23]                         None
+  25 Ops.CONST           :            dtypes.int                               []                               3
+  26 Ops.INDEX           : 0          dtypes.float                             [10, '3']                        None
+  27 Ops.INDEX           : 0          dtypes.float                             [15, '3']                        None
+  28 Ops.ADD             : 0          dtypes.float                             [26, 27]                         None
+  29 Ops.STACK           : 0          dtypes.float                             [17, 21, 24, 28]                 None
+  30 Ops.STORE           : 0          dtypes.void                              [7, 29]                          None
+  31 Ops.GROUP           : 0          dtypes.void                              [30, 30, 30, 30]                 None
+  32 Ops.END             :            dtypes.void                              [31, 3]                          None
+  33 Ops.SINK            :            dtypes.void                              [32]                             KernelInfo(name='E_8_4n15', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None, beam=0)
+=== kernel 17 ===
+   0 Ops.CONST           :            dtypes.int                               []                               64
+   1 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(0, device=('CPU:0', 'CPU:1', 'CPU:2', 'CPU:3'))
+   2 Ops.CONST           :            dtypes.int                               []                               16
+   3 Ops.RANGE           : 0          dtypes.int                               ['16']                           (0, AxisType.LOOP)
+   4 Ops.CONST           :            dtypes.int                               []                               2
+   5 Ops.SHL             : 0          dtypes.int                               [3, '2']                         None
+   6 Ops.CONST           :            dtypes.int                               []                               4
+   7 Ops.SHRINK          : 0          dtypes.float                             [1, 5, '4']                      None
+   8 Ops.CONST           :            dtypes.int                               []                               32
+   9 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(1, device=('CPU:0', 'CPU:1', 'CPU:2', 'CPU:3'))
+  10 Ops.SHRINK          : 0          dtypes.float                             [9, 5, '4']                      None
+  11 Ops.CONST           :            dtypes.float                             []                               0.0
+  12 Ops.STACK           :            dtypes.float                             ['0.0', '0.0', '0.0', '0.0']     None
+  13 Ops.CONST           :            dtypes.int                               []                               8
+  14 Ops.CMPLT           : 0          dtypes.bool                              [3, '8']                         None
+  15 Ops.LOAD            : 0          dtypes.float                             [10, 12, 14]                     None
+  16 Ops.CONST           :            dtypes.int                               []                               0
+  17 Ops.INDEX           : 0          dtypes.float                             [15, '0']                        None
+  18 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(2, device=('CPU:0', 'CPU:1', 'CPU:2', 'CPU:3'))
+  19 Ops.CONST           :            dtypes.int                               []                               -32
+  20 Ops.ADD             : 0          dtypes.int                               [5, '-32']                       None
+  21 Ops.SHRINK          : 0          dtypes.float                             [18, 20, '4']                    None
+  22 Ops.CONST           :            dtypes.int                               []                               7
+  23 Ops.CMPLT           : 0          dtypes.bool                              ['7', 3]                         None
+  24 Ops.LOAD            : 0          dtypes.float                             [21, 12, 23]                     None
+  25 Ops.INDEX           : 0          dtypes.float                             [24, '0']                        None
+  26 Ops.ADD             : 0          dtypes.float                             [17, 25]                         None
+  27 Ops.CONST           :            dtypes.int                               []                               1
+  28 Ops.INDEX           : 0          dtypes.float                             [15, '1']                        None
+  29 Ops.INDEX           : 0          dtypes.float                             [24, '1']                        None
+  30 Ops.ADD             : 0          dtypes.float                             [28, 29]                         None
+  31 Ops.INDEX           : 0          dtypes.float                             [15, '2']                        None
+  32 Ops.INDEX           : 0          dtypes.float                             [24, '2']                        None
+  33 Ops.ADD             : 0          dtypes.float                             [31, 32]                         None
+  34 Ops.CONST           :            dtypes.int                               []                               3
+  35 Ops.INDEX           : 0          dtypes.float                             [15, '3']                        None
+  36 Ops.INDEX           : 0          dtypes.float                             [24, '3']                        None
+  37 Ops.ADD             : 0          dtypes.float                             [35, 36]                         None
+  38 Ops.STACK           : 0          dtypes.float                             [26, 30, 33, 37]                 None
+  39 Ops.STORE           : 0          dtypes.void                              [7, 38]                          None
+  40 Ops.GROUP           : 0          dtypes.void                              [39, 39, 39, 39]                 None
+  41 Ops.END             :            dtypes.void                              [40, 3]                          None
+  42 Ops.SINK            :            dtypes.void                              [41]                             KernelInfo(name='E_16_4', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None, beam=0)

@@ -19,6 +19,21 @@ let getenv_str name default =
 
 let allow_half8 = getenv "ALLOW_HALF8" 0 <> 0
 
+(* Canonical device name: uppercase the backend part and strip a ":0"
+   suffix, e.g. "cpu:0" -> "CPU". *)
+let canonicalize_device_name device =
+  let device =
+    match String.index_opt device ':' with
+    | Some i ->
+        String.uppercase_ascii (String.sub device 0 i)
+        ^ String.sub device i (String.length device - i)
+    | None -> String.uppercase_ascii device
+  in
+  let len = String.length device in
+  if len >= 2 && String.equal (String.sub device (len - 2) 2) ":0" then
+    String.sub device 0 (len - 2)
+  else device
+
 (* Context variables *)
 
 module Context_var = struct

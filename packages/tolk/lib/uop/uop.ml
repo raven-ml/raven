@@ -976,7 +976,8 @@ let rec base u =
   match op u with
   | op when Ops.Group.is_movement op ->
       if Array.length srcs = 0 then u else base srcs.(0)
-  | Ops.Multi | Ops.Detach ->
+  | Ops.Detach ->
+      (* DETACH can't change base. MULTI is its own base. *)
       if Array.length srcs = 0 then u else base srcs.(0)
   | _ -> u
 
