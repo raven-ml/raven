@@ -1,0 +1,12 @@
+void token_gather_collapse(float* restrict data0_289536, int* restrict data1_13, float* restrict data2_38597376) {
+  for (int Lidx1 = 0; Lidx1 < 13; Lidx1++) {
+    int val0 = (*(data1_13+Lidx1));
+    for (int Lidx2 = 0; Lidx2 < 768; Lidx2++) {
+      for (int Lidx3 = 0; Lidx3 < 29; Lidx3++) {
+        int alu0 = (Lidx3*1733);
+        float val1 = ((((val0<alu0)!=1)&(val0<(alu0+1733)))?*(data2_38597376+((val0*768)+Lidx2)):0.0f);
+        *(data0_289536+((Lidx2*29)+Lidx3+(Lidx1*22272))) = val1;
+      }
+    }
+  }
+}

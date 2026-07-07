@@ -1,0 +1,8 @@
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+void E_13_4n1(float* restrict data0_52, float* restrict data1_128) {
+  for (int Lidx1 = 0; Lidx1 < 13; Lidx1++) {
+    int alu0 = (Lidx1<<2);
+    float4 val0 = (*((float4*)((data1_128+alu0))));
+    *((float4*)((data0_52+alu0))) = (float4){(val0[0]+1.0f),(val0[1]+1.0f),(val0[2]+1.0f),(val0[3]+1.0f)};
+  }
+}

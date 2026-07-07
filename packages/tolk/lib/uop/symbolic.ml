@@ -103,10 +103,19 @@ let weakint_binary_operand node =
 
 let lower_weakint_binary node =
   let src = U.src node in
+  (* Comparisons of weakint operands lower alongside weakint-valued
+     binaries: the reference matches any binary whose operands are
+     weakint casts and casts the result back to the node dtype (a no-op
+     for the bool result of a comparison). *)
+  let weakint_operands =
+    Array.length src = 2
+    && is_weakint_dtype (U.dtype src.(0))
+    && is_weakint_dtype (U.dtype src.(1))
+  in
   if
     not (Ops.Group.is_binary (U.op node))
     || Array.length src <> 2
-    || not (is_weakint_dtype (U.dtype node))
+    || not (is_weakint_dtype (U.dtype node) || weakint_operands)
   then None
   else
     match weakint_binary_operand src.(0), weakint_binary_operand src.(1) with
@@ -121,7 +130,8 @@ let lower_weakint_binary node =
             ~lhs:(U.cast ~src:lhs ~dtype)
             ~rhs:(U.cast ~src:rhs ~dtype)
         in
-        Some (U.cast ~src:value ~dtype:(U.dtype node))
+        if Dtype.equal (U.dtype value) (U.dtype node) then Some value
+        else Some (U.cast ~src:value ~dtype:(U.dtype node))
     | _ -> None
 
 let lower_weakint_const node =

@@ -26,7 +26,11 @@ let btrue = U.const_bool true
 let bfalse = U.const_bool false
 
 let ( +! ) a b = U.alu_binary ~op:Ops.Add ~lhs:a ~rhs:b
-let ( -! ) a b = U.alu_binary ~op:Ops.Sub ~lhs:a ~rhs:b
+(* The reference never builds SUB in the tensor/index graph: [a - b] is
+   [a + b * (-1)], the form its symbolic rules normalise. *)
+let ( -! ) a b =
+  U.alu_binary ~op:Ops.Add ~lhs:a
+    ~rhs:(U.alu_binary ~op:Ops.Mul ~lhs:b ~rhs:(U.const_like b (-1)))
 let ( *! ) a b = U.alu_binary ~op:Ops.Mul ~lhs:a ~rhs:b
 
 (* Reshape re-derives index arithmetic via mod/div and then simplifies;

@@ -1,0 +1,34 @@
+   0 Ops.CONST           :            dtypes.int                               []                               289536
+   1 Ops.PARAM           :            dtypes.float                             ['289536']                       ParamArg(0)
+   2 Ops.CONST           :            dtypes.int                               []                               29
+   3 Ops.SPECIAL         :            dtypes.int                               ['29']                           gidx0
+   4 Ops.CONST           :            dtypes.int                               []                               768
+   5 Ops.SPECIAL         :            dtypes.int                               ['768']                          gidx1
+   6 Ops.MUL             :            dtypes.int                               [5, '29']                        None
+   7 Ops.ADD             :            dtypes.int                               [3, 6]                           None
+   8 Ops.CONST           :            dtypes.int                               []                               13
+   9 Ops.SPECIAL         :            dtypes.int                               ['13']                           gidx2
+  10 Ops.CONST           :            dtypes.int                               []                               22272
+  11 Ops.MUL             :            dtypes.int                               [9, '22272']                     None
+  12 Ops.ADD             :            dtypes.int                               [7, 11]                          None
+  13 Ops.INDEX           :            dtypes.float                             [1, 12]                          None
+  14 Ops.CONST           :            dtypes.int                               []                               38597376
+  15 Ops.PARAM           :            dtypes.float                             ['38597376']                     ParamArg(2)
+  16 Ops.PARAM           :            dtypes.int                               ['13']                           ParamArg(1)
+  17 Ops.INDEX           :            dtypes.int                               [16, 9]                          None
+  18 Ops.LOAD            :            dtypes.int                               [17]                             None
+  19 Ops.MUL             :            dtypes.int                               [18, '768']                      None
+  20 Ops.ADD             :            dtypes.int                               [5, 19]                          None
+  21 Ops.INDEX           :            dtypes.float                             [15, 20]                         None
+  22 Ops.CONST           :            dtypes.float                             []                               0.0
+  23 Ops.CONST           :            dtypes.int                               []                               1733
+  24 Ops.MUL             :            dtypes.int                               [3, '1733']                      None
+  25 Ops.CMPLT           :            dtypes.bool                              [18, 24]                         None
+  26 Ops.CONST           :            dtypes.bool                              []                               True
+  27 Ops.CMPNE           :            dtypes.bool                              [25, 'True']                     None
+  28 Ops.ADD             :            dtypes.int                               [24, '1733']                     None
+  29 Ops.CMPLT           :            dtypes.bool                              [18, 28]                         None
+  30 Ops.AND             :            dtypes.bool                              [27, 29]                         None
+  31 Ops.LOAD            :            dtypes.float                             [21, '0.0', 30]                  None
+  32 Ops.STORE           :            dtypes.void                              [13, 31]                         None
+  33 Ops.SINK            :            dtypes.void                              [32]                             KernelInfo(name='token_gather_collapse', axis_types=(), dont_use_locals=False, applied_opts=(), opts_to_apply=None, estimates=None, beam=0)

@@ -33,6 +33,18 @@ thread.
 
 ### Tolk (new)
 
+- Schedule-time bufferize removal now mirrors the reference cost rule:
+  staged reads re-index through the producer regardless of range/index
+  sizes, so `arange` embedding gathers fold completely and constant-index
+  views of computed/assigned tensors (q/k/v selectors, KV-cache reads) no
+  longer emit whole-buffer copy kernels. GPT-2 no longer copies the full KV
+  cache per layer per decode step (~16% faster CUDA decode).
+- Index arithmetic builds `a - b` as `a + b * (-1)` in schedule indexing
+  and reduce-collapse rules, and collapsed range-sum clamps use the exact
+  reference `min`/`max` structure, so gather offsets cancel symbolically.
+- Weakint comparisons now lower with the index-dtype pass, keeping
+  valid-bounded gather indices in 32-bit arithmetic instead of widening to
+  int64.
 - Fix C-style renderers duplicating upcast lane-0 load/store address
   expressions: `render_index` no longer re-orders `ADD` index chains at
   render time, so lane 0 reuses the shared named subexpression (`aluN`)

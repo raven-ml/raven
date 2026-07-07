@@ -409,9 +409,25 @@ let as_lowered_add_reduce u =
   | Some ({ op = Ops.Add; axes = []; _ } as v) -> Some v
   | _ -> None
 
-let minimum a b =
-  U.alu_ternary ~op:Ops.Where
-    ~a:(U.alu_binary ~op:Ops.Cmplt ~lhs:a ~rhs:b) ~b:a ~c:b
+(* The reference builds [a - b] as [a + b * (-1)]; a raw SUB node would
+   block symbolic term collection (cancellation, comparison lifting). *)
+let sub_add_neg a b =
+  U.alu_binary ~op:Ops.Add ~lhs:a
+    ~rhs:(U.alu_binary ~op:Ops.Mul ~lhs:b ~rhs:(U.const_like b (-1)))
+
+(* [minimum] mirrors the reference: [~max(~a, ~b)] on ints, where [~x] is
+   [x lxor -1]. The XOR pair cancels under symbolic once the MAX folds. *)
+let bitnot x = U.alu_binary ~op:Ops.Xor ~lhs:x ~rhs:(U.const_like x (-1))
+let minimum a b = bitnot (maximum (bitnot a) (bitnot b))
+
+(* sum over r in [0,N) of [lower <= r < upper] * val collapses to
+   [clamp(min(upper,N) - max(lower,0), 0, N) * val]. *)
+let clamp_count ?lower ?upper r =
+  let n = range_size r in
+  let hi = match upper with Some u -> minimum u n | None -> n in
+  let zero = U.const_int 0 in
+  let lo = match lower with Some l -> maximum l zero | None -> zero in
+  minimum (maximum (sub_add_neg hi lo) zero) n
 
 (* [(x + y).or_casted < c -> x < (c.cast(y.dtype) - y)] when [y] and
    [c] carry no ranges. *)
@@ -423,7 +439,7 @@ let rule_lift_add_lt =
     let y = bs $ "y" and c = bs $ "c" in
     if no_range y && no_range c then
       let x = bs $ "x" in
-      Some U.O.(x < (U.cast ~src:c ~dtype:(U.dtype y) - y))
+      Some U.O.(x < sub_add_neg (U.cast ~src:c ~dtype:(U.dtype y)) y)
     else None
   in
   [ O.(add < c) => body; O.(cast add < c) => body ]
@@ -455,11 +471,7 @@ let rule_reduce_fold_lower =
     if Option.is_none (as_lowered_add_reduce red) || not (no_range v)
        || not (is_zero_const z) then None
     else
-      let open U.O in
-      let count =
-        minimum (maximum (range_size r - cut) (int_ 0)) (range_size r)
-      in
-      Some (fold_result count v)
+      Some (fold_result (clamp_count ~lower:cut r) v)
 
 (* [((r < lower).not & (r < upper)).where(val, 0)].reduce(r, Add) *)
 let rule_reduce_fold_between =
@@ -477,14 +489,7 @@ let rule_reduce_fold_between =
     if Option.is_none (as_lowered_add_reduce red) || not (no_range v)
        || not (is_zero_const z) then None
     else
-      let open U.O in
-      let rs = range_size r in
-      let count =
-        minimum
-          (maximum (minimum upper rs - maximum lower (int_ 0)) (int_ 0))
-          rs
-      in
-      Some (fold_result count v)
+      Some (fold_result (clamp_count ~lower ~upper r) v)
 
 (* [(r < cut).where(val, 0)].reduce(r, Add) *)
 let rule_reduce_fold_upper =
@@ -499,9 +504,7 @@ let rule_reduce_fold_upper =
     if Option.is_none (as_lowered_add_reduce red) || not (no_range v)
        || not (is_zero_const z) then None
     else
-      let open U.O in
-      let count = minimum (maximum cut (int_ 0)) (range_size r) in
-      Some (fold_result count v)
+      Some (fold_result (clamp_count ~upper:cut r) v)
 
 (* [(x + y).reduce(r, Add) -> x.reduce(r) + y.reduce(r)]. *)
 let rule_reduce_split_add =
@@ -582,7 +585,7 @@ let rule_lift_add_ne =
       let x = bs $ "x" in
       Some
         (U.alu_binary ~op:Ops.Cmpne ~lhs:x
-           ~rhs:U.O.(U.cast ~src:c ~dtype:(U.dtype y) - y))
+           ~rhs:(sub_add_neg (U.cast ~src:c ~dtype:(U.dtype y)) y))
     else None
   in
   [ O.(ne add c) => body; O.(ne (cast add) c) => body ]

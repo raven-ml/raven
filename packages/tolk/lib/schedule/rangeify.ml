@@ -752,19 +752,8 @@ let stage_index_sources buf idx =
     match U.op r with Ops.Range | Ops.Const -> true | _ -> false
   in
   let compatible ranges srcs =
-    let range_int_size r =
-      match U.as_range r with
-      | Some v -> Option.value (U.const_int_value v.size) ~default:(U.vmax r + 1)
-      | None -> 1
-    in
     List.length ranges = List.length srcs
     && List.for_all removable_range ranges
-    && List.for_all2
-         (fun range idx ->
-           let r_size = range_int_size range in
-           let i_size = U.vmax idx + 1 in
-           r_size = i_size || r_size = 1)
-         ranges srcs
   in
   if compatible ranges srcs then Some srcs
   else if not (List.for_all removable_range ranges) then None

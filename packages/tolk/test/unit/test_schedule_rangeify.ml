@@ -403,7 +403,8 @@ let apply_movement_op_tests =
               let result =
                 Indexing.apply_movement_op ~shapes v [ rng ]
               in
-              is_true (op_is Ops.Sub (List.nth result 0)));
+              (* (size-1) - r in the reference's a + b*(-1) form *)
+              is_true (op_is Ops.Add (List.nth result 0)));
           test "flip false passthrough" (fun () ->
               let param = mk_param ~idx:0 [ 4 ] in
               let ctx = Indexing.create_context () in
@@ -540,7 +541,8 @@ let apply_movement_op_tests =
               in
               let gated = List.hd result in
               is_true (op_is Ops.Where gated);
-              is_true (op_is Ops.Sub (Indexing.get_idx gated));
+              (* r - offset in the reference's a + b*(-1) form *)
+              is_true (op_is Ops.Add (Indexing.get_idx gated));
               is_false (op_is Ops.Const (Indexing.get_valid gated)));
         ];
       (* RESHAPE *)
