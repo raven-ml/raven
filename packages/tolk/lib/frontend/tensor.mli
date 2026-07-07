@@ -42,6 +42,12 @@ val apply_map : (Tolk_uop.Uop.t * Tolk_uop.Uop.t) list -> unit
     embed a write into the graphs of the tensors that alias the written
     buffer, and by realization to rebind computed nodes onto their buffers. *)
 
+val live_tensors : unit -> t list
+(** [live_tensors ()] is every tensor currently reachable by the program.
+    Tensors are tracked weakly from creation, so handles the GC has collected
+    do not appear. Used by JIT capture to decide which buffers outlive the
+    captured computation. *)
+
 (** {1 Shape and type} *)
 
 val dtype : t -> Tolk_uop.Dtype.t

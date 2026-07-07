@@ -33,6 +33,15 @@ thread.
 
 ### Tolk (new)
 
+- Add `Jit`, a capture-and-replay JIT for tensor functions: the first call
+  runs eagerly, the second records and compiles every kernel the function
+  realizes, and later calls replay the compiled program on fresh inputs and
+  symbolic variable values without rebuilding, rescheduling, or recompiling.
+  Buffers backing live tensors (weights, KV caches, outputs) keep their
+  storage across replays; other intermediates are folded into arena memory.
+- `Run` now exposes the execution device and buffer storage registry
+  (`device`, `buffer_of_node`, `buffer_nodes`), and `Tensor.live_tensors`
+  lists the tensors currently reachable by the program.
 - Kernels with symbolic sizes now render with reference-parity kernel names
   (e.g. `r_28start_pos2B129`), symbolic loop bounds, and symbolic GPU launch
   dimensions; new `Render.expr_to_string` renders scalar expressions

@@ -1,5 +1,5 @@
 (tests
- (names test_frontend test_run)
- (modules test_frontend test_run)
+ (names test_frontend test_run test_jit)
+ (modules test_frontend test_run test_jit)
  (package tolk)
  (libraries tolk tolk.uop tolk.frontend windtrap))

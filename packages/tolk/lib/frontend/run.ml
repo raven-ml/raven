@@ -66,12 +66,28 @@ let default_device =
 let device () = Lazy.force default_device
 let device_name () = Tolk.Device.name (device ())
 
-(* Host-data inputs: a fresh buffer slot per source tensor, its seeded device
-   buffer kept keyed by the [Ops.Buffer] node's tag so realization can bind it.
-   Realized outputs are cached the same way so a second read does not recompute
-   an already-materialised value. *)
-let host_buffers : (int, Tolk.Device.Buffer.t) Hashtbl.t = Hashtbl.create 64
-let output_buffers : (int, Tolk.Device.Buffer.t) Hashtbl.t = Hashtbl.create 64
+(* Storage registry: every node known to be backed by a concrete device
+   buffer — host inputs, realized outputs, assignment targets — keyed by node
+   tag and carrying the node itself so the backing buffers can be enumerated
+   (JIT capture holds them all). A node with buffer identity distinct from
+   itself is registered under both tags, so a lookup succeeds whether it
+   starts from the tensor's node or from the underlying [Ops.Buffer]. *)
+let storage : (int, U.t * Tolk.Device.Buffer.t) Hashtbl.t = Hashtbl.create 64
+
+let register node buf =
+  Hashtbl.replace storage (U.tag node) (node, buf);
+  let b = U.buf_uop node in
+  if b != node && Ops.equal (U.op b) Ops.Buffer then
+    Hashtbl.replace storage (U.tag b) (b, buf)
+
+let buffer_of_node node =
+  Option.map snd (Hashtbl.find_opt storage (U.tag node))
+
+let buffer_nodes () =
+  Hashtbl.fold
+    (fun _ (node, _) acc ->
+      if Ops.equal (U.op node) Ops.Buffer then node :: acc else acc)
+    storage []
 
 let make_input ~dtype ~shape n fill =
   let dev = device () in
@@ -84,7 +100,7 @@ let make_input ~dtype ~shape n fill =
     U.buffer ~slot:(U.fresh_buffer_slot ()) ~dtype ~shape:(T.shape_uop [ n ])
       ~device:(U.Single (device_name ())) ()
   in
-  Hashtbl.replace host_buffers (U.tag node) buf;
+  register node buf;
   Movement.reshape (T.of_uop node) shape
 
 let of_float_array ~shape data =
@@ -133,13 +149,9 @@ let realize_buffers ts =
   let binding = Tolk.Realize.Buffers.create ~device:dev in
   List.iter
     (fun node ->
-      match
-        (Hashtbl.find_opt host_buffers (U.tag node),
-         Hashtbl.find_opt output_buffers (U.tag node))
-      with
-      | Some buf, _ | None, Some buf ->
-          Tolk.Realize.Buffers.seed binding node buf
-      | None, None -> ())
+      match buffer_of_node node with
+      | Some buf -> Tolk.Realize.Buffers.seed binding node buf
+      | None -> ())
     (U.toposort sink);
   Tolk.Realize.run_linear ~device:dev ~to_program binding ~var_vals linear;
   (* Persist the storage of every rebound node so the next realize seeds it
@@ -148,7 +160,7 @@ let realize_buffers ts =
     (fun (_, v) ->
       let b = U.buf_uop v in
       match Tolk.Realize.Buffers.find_opt binding b with
-      | Some buf -> Hashtbl.replace output_buffers (U.tag b) buf
+      | Some buf -> register b buf
       | None -> ())
     mappings;
   List.map2
@@ -159,18 +171,14 @@ let realize_buffers ts =
             Tolk.Realize.Buffers.of_buffer_node binding (U.buf_uop node)
           in
           T.set_uop t node;
-          Hashtbl.replace output_buffers (U.tag node) buf;
+          register node buf;
           buf
       | None -> (
           (* Nothing was scheduled: the tensor is already materialised (its
              node has buffer identity), so resolve its backing buffer. *)
-          let b = U.buf_uop out in
-          match
-            (Hashtbl.find_opt output_buffers (U.tag b),
-             Hashtbl.find_opt host_buffers (U.tag b))
-          with
-          | Some buf, _ | None, Some buf -> buf
-          | None, None ->
+          match buffer_of_node (U.buf_uop out) with
+          | Some buf -> buf
+          | None ->
               failwith "Run.realize: tensor was not scheduled to a buffer"))
     ts outs
 
@@ -181,13 +189,9 @@ let realize t =
   t
 
 let buffer_of t =
-  let tag = U.tag (T.uop t) in
-  match Hashtbl.find_opt output_buffers tag with
+  match buffer_of_node (T.uop t) with
   | Some buf -> buf
-  | None -> (
-      match Hashtbl.find_opt host_buffers tag with
-      | Some buf -> buf
-      | None -> List.hd (realize_buffers [ t ]))
+  | None -> List.hd (realize_buffers [ t ])
 
 let data t = Tolk.Device.Buffer.as_bytes (buffer_of t)
 

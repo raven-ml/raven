@@ -12,6 +12,25 @@
     result back to the host. Building tensors stays pure; nothing executes until
     a value is requested. *)
 
+(** {1 Device and storage}
+
+    Realization runs on one process-wide device, chosen once: the [DEV]
+    environment variable picks a backend by name, otherwise backends are
+    scanned in priority order and the first one that opens wins. Every buffer
+    node backed by concrete device storage — host inputs, realized outputs,
+    in-place assignment targets — is recorded in a process-wide registry. *)
+
+val device : unit -> Tolk.Device.t
+(** [device ()] is the process-wide execution device, opened on first use. *)
+
+val buffer_of_node : Tolk_uop.Uop.t -> Tolk.Device.Buffer.t option
+(** [buffer_of_node node] is the concrete device buffer backing [node], if
+    [node] has been given storage by a previous realization or host upload. *)
+
+val buffer_nodes : unit -> Tolk_uop.Uop.t list
+(** [buffer_nodes ()] is every {!Tolk_uop.Ops.Buffer} node currently backed by
+    concrete device storage, in no particular order. *)
+
 (** {1 Host data} *)
 
 val of_float_array : shape:int list -> float array -> Tensor.t
