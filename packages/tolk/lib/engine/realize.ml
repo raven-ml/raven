@@ -527,6 +527,324 @@ let exec_copy binding ctx ~device call =
       | _ -> invalid_arg "exec_copy: malformed COPY call")
   | None -> invalid_arg "exec_copy: expected CALL"
 
+(* Graph runner
+
+   Batched replay of a compiled call sequence through the device's
+   {!Device.Graph} capability. The runner resolves every buffer argument once
+   when the graph is recorded; each replay patches only the state that can
+   change between calls — buffer arguments bound to input PARAM slots,
+   symbolic variable values, and launch dimensions of kernels with symbolic
+   global sizes — into the affected nodes before launching. *)
+
+module Graph_runner = struct
+  module U = Tolk_uop.Uop
+
+  (* Tracks (start, end, node) access ranges per base buffer so a new node
+     waits on every earlier node whose access overlaps: writes wait on reads
+     and writes, reads wait on writes. A write supersedes the overlapped part
+     of earlier ranges. *)
+  module Deps = struct
+    type t = {
+      w : (int, (int * int * int) list ref) Hashtbl.t;
+      r : (int, (int * int * int) list ref) Hashtbl.t;
+    }
+
+    let create () = { w = Hashtbl.create 16; r = Hashtbl.create 16 }
+
+    let ranges tbl key =
+      match Hashtbl.find_opt tbl key with
+      | Some l -> l
+      | None ->
+          let l = ref [] in
+          Hashtbl.replace tbl key l;
+          l
+
+    let key buf =
+      let s = Device.Buffer.offset buf in
+      (Device.Buffer.base_id buf, s, s + Device.Buffer.nbytes buf)
+
+    let access t bufs write node =
+      let wait = ref [] in
+      List.iteri
+        (fun i buf ->
+          let k, s, e = key buf in
+          let overlapping l =
+            List.iter
+              (fun (st, en, dep) -> if st < e && s < en then wait := dep :: !wait)
+              !l
+          in
+          overlapping (ranges t.w k);
+          if List.mem i write then overlapping (ranges t.r k))
+        bufs;
+      List.iteri
+        (fun i buf ->
+          let k, s, e = key buf in
+          if List.mem i write then begin
+            let split l =
+              l :=
+                List.concat_map
+                  (fun (st, en, dep) ->
+                    (if st < min s en then [ (st, min s en, dep) ] else [])
+                    @ if max e st < en then [ (max e st, en, dep) ] else [])
+                  !l
+            in
+            split (ranges t.w k);
+            split (ranges t.r k);
+            let l = ranges t.w k in
+            l := (s, e, node) :: !l
+          end
+          else begin
+            let l = ranges t.r k in
+            l := (s, e, node) :: !l
+          end)
+        bufs;
+      List.sort_uniq Int.compare !wait
+  end
+
+  type kernel = {
+    info : U.program_info;
+    local : int array;
+    divide_global : bool;
+        (* The local size was tuned, so the recorded global size is the
+           launch-dim global divided by it; symbolic updates redo the
+           division. *)
+    var_replace : (int * string) list;
+        (* Scalar argument index -> variable name patched on replay. *)
+    symbolic : bool;  (* Global launch dims depend on variables. *)
+  }
+
+  type kind = Kernel of kernel | Copy
+
+  type gcall = {
+    kind : kind;
+    bufs : Device.Buffer.t list;
+        (* Resolved once at record time; kept so the addresses captured in
+           the graph stay backed by live allocations. *)
+    uop_replace : (int * int) list;
+        (* Buffer argument position -> input slot patched on replay. *)
+  }
+
+  type t = {
+    calls : gcall array;
+    updatable : int list;
+    exec : Device.Graph.exec;
+  }
+
+  let pad3 a = Array.init 3 (fun i -> if i < Array.length a then a.(i) else 1)
+
+  let launch_values_to_ints values =
+    pad3
+      (Array.of_list
+         (List.map
+            (function
+              | U.Launch_value_int n -> n
+              | U.Launch_value_float f -> int_of_float f)
+            values))
+
+  let is_symbolic (info : U.program_info) =
+    List.exists
+      (function U.Launch_sym _ -> true | _ -> false)
+      info.global_size
+
+  (* Non-runtime variables of a kernel, as (scalar argument index, name). *)
+  let kernel_vars (info : U.program_info) =
+    let runtimevars = List.map fst (U.program_runtimevars info) in
+    List.mapi
+      (fun i var ->
+        match U.as_param var with
+        | Some { param = { name = Some name; _ }; _ }
+          when not (List.mem name runtimevars) ->
+            Some (i, name)
+        | _ -> None)
+      info.vars
+    |> List.filter_map Fun.id
+
+  let updated_global k ~var_vals =
+    let values, _ = U.program_launch_dims k.info ~var_vals in
+    let global = launch_values_to_ints values in
+    if k.divide_global then Array.mapi (fun i g -> g / k.local.(i)) global
+    else global
+
+  let create ~device binding ctx ast =
+    let build =
+      match Device.graph device with
+      | Some g -> g.Device.Graph.build
+      | None -> invalid_arg "graph: device has no graph capability"
+    in
+    let linear =
+      match U.children ast with
+      | [ linear ] -> linear
+      | _ -> invalid_arg "graph: expected a single LINEAR body"
+    in
+    let deps = Deps.create () in
+    let calls = ref [] and nodes = ref [] and n = ref 0 in
+    List.iter
+      (fun call ->
+        match U.as_call call with
+        | Some { body; args; _ } -> (
+            let args = call_arg_uops args in
+            let uop_replace =
+              List.mapi
+                (fun pos arg ->
+                  match U.as_param arg with
+                  | Some { param = { slot; _ }; _ } when slot >= 0 ->
+                      Some (pos, slot)
+                  | _ -> None)
+                args
+              |> List.filter_map Fun.id
+            in
+            let bufs = List.map (resolve binding ctx) args in
+            List.iter Device.Buffer.ensure_allocated bufs;
+            match U.op body with
+            | Tolk_uop.Ops.Program ->
+                let info =
+                  match U.as_program_info body with
+                  | Some info -> info
+                  | None -> invalid_arg "graph: PROGRAM without info"
+                in
+                let prg = get_runtime ~device body info in
+                let global, local =
+                  launch_geometry ~device body info ~var_vals:ctx.var_vals prg
+                    bufs
+                in
+                let divide_global = local <> None && info.local_size = None in
+                let global = pad3 global in
+                let local =
+                  match local with Some l -> pad3 l | None -> [| 1; 1; 1 |]
+                in
+                let vals =
+                  Array.of_list
+                    (List.map
+                       (function Some v -> v | None -> 0)
+                       (U.program_vals info ~var_vals:ctx.var_vals))
+                in
+                let node_deps =
+                  Deps.access deps
+                    (List.map Device.Buffer.base bufs)
+                    info.outs !n
+                in
+                nodes :=
+                  Device.Graph.Kernel
+                    {
+                      handle = prg.Device.handle;
+                      global;
+                      local;
+                      bufs = Array.of_list (List.map Device.Buffer.addr bufs);
+                      vals;
+                      deps = Array.of_list node_deps;
+                    }
+                  :: !nodes;
+                calls :=
+                  {
+                    kind =
+                      Kernel
+                        {
+                          info;
+                          local;
+                          divide_global;
+                          var_replace = kernel_vars info;
+                          symbolic = is_symbolic info;
+                        };
+                    bufs;
+                    uop_replace;
+                  }
+                  :: !calls;
+                incr n
+            | Tolk_uop.Ops.Copy -> (
+                match bufs with
+                | [ dest; src ] ->
+                    let node_deps =
+                      Deps.access deps
+                        (List.map Device.Buffer.base bufs)
+                        [ 0 ] !n
+                    in
+                    nodes :=
+                      Device.Graph.Copy
+                        {
+                          dest = Device.Buffer.addr dest;
+                          src = Device.Buffer.addr src;
+                          nbytes = Device.Buffer.nbytes dest;
+                          deps = Array.of_list node_deps;
+                        }
+                      :: !nodes;
+                    calls := { kind = Copy; bufs; uop_replace } :: !calls;
+                    incr n
+                | _ -> invalid_arg "graph: malformed COPY call")
+            | _ ->
+                invalid_arg
+                  (Format.asprintf "graph: unsupported call body %a" U.pp body)
+            )
+        | None -> invalid_arg "graph: expected CALL")
+      (U.children linear);
+    let calls = Array.of_list (List.rev !calls) in
+    let exec = build (Array.of_list (List.rev !nodes)) in
+    let updatable =
+      List.init (Array.length calls) Fun.id
+      |> List.filter (fun j ->
+             let c = calls.(j) in
+             c.uop_replace <> []
+             ||
+             match c.kind with
+             | Kernel k -> k.var_replace <> [] || k.symbolic
+             | Copy -> false)
+    in
+    { calls; updatable; exec }
+
+  let call t binding ctx =
+    let var_vals = ctx.var_vals in
+    let patched = ref [] in
+    List.iter
+      (fun j ->
+        let c = t.calls.(j) in
+        List.iter
+          (fun (pos, slot) ->
+            if slot >= Array.length ctx.input_uops then
+              invalid_arg "graph: input slot out of range";
+            let buf = resolve binding ctx ctx.input_uops.(slot) in
+            Device.Buffer.ensure_allocated buf;
+            patched := buf :: !patched;
+            t.exec.Device.Graph.set_buf j pos (Device.Buffer.addr buf))
+          c.uop_replace;
+        (match c.kind with
+        | Kernel k ->
+            List.iter
+              (fun (i, name) ->
+                match List.assoc_opt name var_vals with
+                | Some v -> t.exec.Device.Graph.set_val j i v
+                | None ->
+                    invalid_arg
+                      (strf "graph: missing variable %S on replay" name))
+              k.var_replace;
+            if k.symbolic then
+              t.exec.Device.Graph.set_launch_dims j
+                ~global:(updated_global k ~var_vals) ~local:k.local
+        | Copy -> ());
+        t.exec.Device.Graph.set_params j)
+      t.updatable;
+    let ret = t.exec.Device.Graph.launch ~wait:ctx.wait in
+    List.iter keep_alive !patched;
+    ret
+end
+
+(* Graph runners are recorded on first execution of their graph call node and
+   replayed on every subsequent execution of the captured linear. *)
+let graph_cache : (int, Graph_runner.t) Hashtbl.t = Hashtbl.create 8
+
+let exec_graph binding ctx ~device call =
+  let module U = Tolk_uop.Uop in
+  match U.as_call call with
+  | Some { body = ast; _ } ->
+      let rt =
+        match Hashtbl.find_opt graph_cache (U.tag ast) with
+        | Some rt -> rt
+        | None ->
+            let rt = Graph_runner.create ~device binding ctx ast in
+            Hashtbl.replace graph_cache (U.tag ast) rt;
+            rt
+      in
+      ignore (Graph_runner.call rt binding ctx : float option)
+  | None -> invalid_arg "exec_graph: expected CALL"
+
 let run_linear ~device ~to_program binding ?(var_vals = []) ?(input_uops = [||])
     ?(jit = false) ?(wait = false) (linear : Tolk_uop.Uop.t) =
   let module U = Tolk_uop.Uop in
@@ -542,6 +860,9 @@ let run_linear ~device ~to_program binding ?(var_vals = []) ?(input_uops = [||])
           | Tolk_uop.Ops.Slice -> exec_view binding ctx call
           | Tolk_uop.Ops.Copy -> exec_copy binding ctx ~device call
           | Tolk_uop.Ops.Program -> exec_kernel binding ctx ~device call
+          | Tolk_uop.Ops.Custom_function
+            when U.Arg.as_string (U.arg body) = Some "graph" ->
+              exec_graph binding ctx ~device call
           | _ ->
               invalid_arg
                 (Format.asprintf "run_linear: unexpected call body %a" U.pp

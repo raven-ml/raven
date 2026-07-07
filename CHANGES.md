@@ -33,6 +33,18 @@ thread.
 
 ### Tolk (new)
 
+- JIT replay now batches consecutive CUDA kernels and device copies into
+  CUDA execution graphs, replaying each batch as a single `cuGraphLaunch`
+  instead of per-kernel launches. Symbolic variable values, launch
+  dimensions, and rebound input buffers are patched into the instantiated
+  graph on every call. `JIT_BATCH_SIZE` controls the initial batch size;
+  `JIT=2` disables batching.
+- `Device.make` accepts a `?graph` batched-dispatch capability
+  (`Device.Graph`) and `Device.prog` carries the backend kernel `handle`;
+  the CUDA device provides both.
+- CUDA device-to-host copies (`Device.Buffer.copyout`) now stage through a
+  pinned host buffer, improving transfer bandwidth and releasing the OCaml
+  runtime lock during the copy.
 - Schedule-time bufferize removal now mirrors the reference cost rule:
   staged reads re-index through the producer regardless of range/index
   sizes, so `arange` embedding gathers fold completely and constant-index

@@ -339,7 +339,7 @@ let create name =
       Fun.protect ~finally:(fun () -> unload_program loaded) (fun () ->
         Cpu_queue.synchronize state)
     in
-    Device.{ call; free }
+    Device.{ call; free; handle = 0n }
   in
   let synchronize () = Cpu_queue.synchronize state in
   let renderer =

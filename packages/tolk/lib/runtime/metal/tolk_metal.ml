@@ -346,7 +346,7 @@ module Program = struct
       end
     in
     let free () = Ffi.program_free handle in
-    Device.{ call; free }
+    Device.{ call; free; handle }
 end
 
 module Icb = struct

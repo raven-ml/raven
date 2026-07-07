@@ -63,6 +63,7 @@ let make_device ?(name = "TEST:0") ?(state = runtime_state ()) () =
             state.vals <- Array.copy vals;
             None);
         free = (fun () -> ());
+        handle = 0n;
       })
     ~synchronize:(fun () -> ())
     ()

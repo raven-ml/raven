@@ -36,8 +36,10 @@ val create : string -> Tolk.Device.t
 
     The device ordinal is parsed from [name] (["CUDA:1"] opens device 1;
     ["CUDA"] defaults to device 0). The device uses an LRU-cached allocator
-    over CUDA device memory with pinned host staging for host-to-device
-    copies, and a {!Tolk.Cstyle.cuda} renderer compiled through NVRTC.
+    over CUDA device memory with pinned host staging for host-to-device and
+    device-to-host copies, a {!Tolk.Cstyle.cuda} renderer compiled through
+    NVRTC, and a {!Tolk.Device.Graph} capability that replays batched call
+    sequences as CUDA execution graphs.
 
     Raises [Failure] if no CUDA driver or GPU is available, and
     [Invalid_argument] if the suffix after [':'] is not an integer. *)

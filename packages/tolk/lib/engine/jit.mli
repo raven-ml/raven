@@ -17,8 +17,11 @@
        every schedule the function creates is recorded instead of executed,
        then lower the combined record for replay: substitute each input
        buffer node with a slotted {!Tolk_uop.Ops.Param}, plan intermediate
-       buffer memory once over the combined linear, and compile every
-       kernel.}
+       buffer memory once over the combined linear, compile every kernel,
+       and, when the device has a {!Device.Graph} capability, batch
+       consecutive compatible calls into graph calls that replay as a single
+       dispatch each ([JIT_BATCH_SIZE] caps the first batch and the cap
+       doubles per batch; [JIT >= 2] disables batching).}
     {- {e Exec} (cnt>=2): validate the inputs against the capture and replay
        the compiled linear through {!Realize.run_linear}, passing the current
        input buffer nodes as [input_uops] and the per-call variable values as

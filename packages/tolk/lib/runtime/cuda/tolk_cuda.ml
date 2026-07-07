@@ -31,8 +31,11 @@ module Ffi = struct
   external memcpy_htod_async : nativeint -> nativeint -> int -> unit
     = "caml_tolk_cuda_memcpy_htod_async"
 
-  external memcpy_dtoh : bytes -> nativeint -> unit
-    = "caml_tolk_cuda_memcpy_dtoh"
+  external memcpy_dtoh_ptr : nativeint -> nativeint -> int -> unit
+    = "caml_tolk_cuda_memcpy_dtoh_ptr"
+
+  external host_read : bytes -> nativeint -> unit
+    = "caml_tolk_cuda_host_read"
 
   external memcpy_dtod_async : nativeint -> nativeint -> int -> unit
     = "caml_tolk_cuda_memcpy_dtod_async"
@@ -52,6 +55,47 @@ module Ffi = struct
     int array ->
     bool ->
     float option = "caml_tolk_cuda_launch_kernel_bc" "caml_tolk_cuda_launch_kernel"
+
+  external graph_create : int -> nativeint = "caml_tolk_cuda_graph_create"
+
+  external graph_add_kernel :
+    nativeint ->
+    nativeint ->
+    int array ->
+    int array ->
+    nativeint array ->
+    int array ->
+    int array ->
+    int = "caml_tolk_cuda_graph_add_kernel_bc" "caml_tolk_cuda_graph_add_kernel"
+
+  external graph_add_copy :
+    nativeint ->
+    nativeint ->
+    nativeint ->
+    nativeint ->
+    int ->
+    int array ->
+    int = "caml_tolk_cuda_graph_add_copy_bc" "caml_tolk_cuda_graph_add_copy"
+
+  external graph_instantiate : nativeint -> unit
+    = "caml_tolk_cuda_graph_instantiate"
+
+  external graph_set_buf : nativeint -> int -> int -> nativeint -> unit
+    = "caml_tolk_cuda_graph_set_buf"
+
+  external graph_set_val : nativeint -> int -> int -> int -> unit
+    = "caml_tolk_cuda_graph_set_val"
+
+  external graph_set_launch : nativeint -> int -> int array -> int array -> unit
+    = "caml_tolk_cuda_graph_set_launch"
+
+  external graph_set_params : nativeint -> int -> unit
+    = "caml_tolk_cuda_graph_set_params"
+
+  external graph_launch : nativeint -> bool -> float option
+    = "caml_tolk_cuda_graph_launch"
+
+  external graph_destroy : nativeint -> unit = "caml_tolk_cuda_graph_destroy"
 
   external nvrtc_version : unit -> int * int = "caml_tolk_cuda_nvrtc_version"
 
@@ -149,10 +193,24 @@ module Allocator = struct
       Ffi.host_write host bytes;
       Ffi.memcpy_htod_async buf host size
     in
+    (* Device-to-host copies stage through a pinned host buffer drawn from
+       the same LRU cache as copyin staging: a synchronous copy into pinned
+       memory runs at full PCIe bandwidth where a pageable destination
+       throttles the driver, and the OCaml runtime lock can be released while
+       it blocks. The staging buffer is returned to the cache immediately —
+       the copy has completed by then. *)
     let copyout bytes buf =
       State.synchronize_system ();
       Ffi.ctx_set_current state.State.context;
-      Ffi.memcpy_dtoh bytes buf
+      let size = Bytes.length bytes in
+      let allocator = Option.get state.State.allocator in
+      let host = allocator.Device.Allocator.alloc size host_spec in
+      Fun.protect
+        ~finally:(fun () ->
+          allocator.Device.Allocator.free host size host_spec)
+        (fun () ->
+          Ffi.memcpy_dtoh_ptr host buf size;
+          Ffi.host_read bytes host)
     in
     let transfer ~dest ~src nbytes =
       Ffi.ctx_set_current state.State.context;
@@ -216,7 +274,45 @@ module Program = struct
         wait
     in
     let free () = Ffi.module_unload module_ in
-    Device.{ call; free }
+    Device.{ call; free; handle = func }
+end
+
+module Graph = struct
+  (* Batched replay through CUDA execution graphs: kernel launches become
+     kernel nodes and buffer copies become device-to-device memcpy nodes,
+     instantiated once and relaunched with a single driver call. *)
+  let build state (nodes : Device.Graph.node array) =
+    Ffi.ctx_set_current state.State.context;
+    let g = Ffi.graph_create (Array.length nodes) in
+    Array.iter
+      (function
+        | Device.Graph.Kernel { handle; global; local; bufs; vals; deps } ->
+            ignore (Ffi.graph_add_kernel g handle global local bufs vals deps
+                    : int)
+        | Device.Graph.Copy { dest; src; nbytes; deps } ->
+            ignore
+              (Ffi.graph_add_copy g state.State.context dest src nbytes deps
+                : int))
+      nodes;
+    Ffi.graph_instantiate g;
+    let exec =
+      {
+        Device.Graph.set_buf = (fun node pos addr ->
+          Ffi.graph_set_buf g node pos addr);
+        set_val = (fun node idx v -> Ffi.graph_set_val g node idx v);
+        set_launch_dims = (fun node ~global ~local ->
+          Ffi.graph_set_launch g node global local);
+        set_params = (fun node -> Ffi.graph_set_params g node);
+        launch = (fun ~wait ->
+          Ffi.ctx_set_current state.State.context;
+          Ffi.graph_launch g wait);
+      }
+    in
+    Gc.finalise (fun (_ : Device.Graph.exec) -> Ffi.graph_destroy g) exec;
+    exec
+
+  let create state =
+    { Device.Graph.supports_copy = true; build = build state }
 end
 
 let create name =
@@ -238,4 +334,5 @@ let create name =
   let renderer_set = Device.Renderer_set.make [ (renderer, None) ] in
   let runtime = Program.runtime state in
   let synchronize () = State.synchronize state in
-  Device.make ~name ~allocator ~renderer_set ~runtime ~synchronize ()
+  Device.make ~name ~allocator ~renderer_set ~runtime ~synchronize
+    ~graph:(Graph.create state) ()

@@ -286,6 +286,9 @@ type prog = {
     nativeint array -> global:int array -> local:int array option ->
     vals:int64 array -> wait:bool -> timeout:int option -> float option;
   free : unit -> unit;
+  handle : nativeint;
+      (** Backend kernel handle used to build {!Graph} nodes. [0n] when the
+          backend has no addressable kernel object. *)
 }
 (** A device-specific dispatch handle. *)
 
@@ -293,6 +296,62 @@ type runtime = string -> bytes -> runtimevars:(string * int) list -> prog
 (** [runtime name lib ~runtimevars] creates a dispatch handle for [lib]
     with entry point [name]. [runtimevars] maps variable names (e.g.
     ["core_id"]) to their index in the vals array. *)
+
+(** {1:graph Batched dispatch graphs} *)
+
+(** Backend interface for batched replay of a fixed call sequence.
+
+    A graph records a sequence of kernel launches and buffer copies once and
+    replays them with a single dispatch, eliminating per-call launch
+    overhead. The engine builds the node list, tracks node dependencies, and
+    patches per-replay state (rebound buffer arguments, variable values,
+    launch dimensions) through {!exec} before each launch. *)
+module Graph : sig
+  type node =
+    | Kernel of {
+        handle : nativeint;  (** Kernel handle from {!prog.handle}. *)
+        global : int array;  (** Global launch dimensions (3 entries). *)
+        local : int array;  (** Local launch dimensions (3 entries). *)
+        bufs : nativeint array;  (** Buffer argument addresses. *)
+        vals : int array;  (** Scalar arguments. *)
+        deps : int array;  (** Indices of nodes this node must wait on. *)
+      }
+    | Copy of {
+        dest : nativeint;  (** Destination address. *)
+        src : nativeint;  (** Source address. *)
+        nbytes : int;  (** Copied byte count. *)
+        deps : int array;  (** Indices of nodes this node must wait on. *)
+      }  (** One recorded call. Node indices follow build order. *)
+
+  type exec = {
+    set_buf : int -> int -> nativeint -> unit;
+        (** [set_buf node pos addr] stages buffer argument [pos] of [node] to
+            [addr]. For {!constructor-Copy} nodes position [0] is the
+            destination and position [1] the source. *)
+    set_val : int -> int -> int -> unit;
+        (** [set_val node idx v] stages scalar argument [idx] of [node]. *)
+    set_launch_dims : int -> global:int array -> local:int array -> unit;
+        (** [set_launch_dims node ~global ~local] stages new launch
+            dimensions for kernel [node]. *)
+    set_params : int -> unit;
+        (** [set_params node] commits the staged state of [node] into the
+            instantiated graph. *)
+    launch : wait:bool -> float option;
+        (** [launch ~wait] replays the graph. Returns the elapsed device time
+            in seconds when [wait] is [true] and the backend supports
+            timing. *)
+  }
+  (** An instantiated graph. *)
+
+  type t = {
+    supports_copy : bool;
+        (** [true] iff {!constructor-Copy} nodes are supported, allowing the
+            engine to batch buffer copies alongside kernels. *)
+    build : node array -> exec;
+        (** [build nodes] records and instantiates a graph over [nodes]. *)
+  }
+  (** The type for backend graph capabilities. *)
+end
 
 (** {1:renderer_set Renderer selection} *)
 
@@ -325,14 +384,18 @@ val make :
   runtime:runtime ->
   synchronize:(unit -> unit) ->
   ?invalidate_caches:(unit -> unit) ->
+  ?graph:Graph.t ->
   unit ->
   t
 (** [make ~name ~allocator ~renderer_set ~runtime ~synchronize
-    ?invalidate_caches ()] is a device runtime.
+    ?invalidate_caches ?graph ()] is a device runtime.
 
     [runtime name lib] loads a compiled binary and returns a dispatch handle.
 
-    [synchronize ()] blocks until all pending work on the device completes. *)
+    [synchronize ()] blocks until all pending work on the device completes.
+
+    [graph] is the batched-dispatch capability, or absent when the backend
+    cannot replay call sequences as a single dispatch. *)
 
 val name : t -> string
 (** [name d] is [d]'s device name. *)
@@ -345,6 +408,9 @@ val runtime : t -> runtime
 
 val synchronize : t -> unit
 (** [synchronize d] blocks until all pending work on [d] completes. *)
+
+val graph : t -> Graph.t option
+(** [graph d] is [d]'s batched-dispatch capability, if any. *)
 
 val compile_program :
   t ->

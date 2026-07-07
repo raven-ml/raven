@@ -81,6 +81,7 @@ let test_device =
     ~renderer_set:(Device.Renderer_set.make [ test_renderer, None ])
     ~runtime:(fun _ _ ~runtimevars:_ ->
       { Device.call = (fun _ ~global:_ ~local:_ ~vals:_ ~wait:_ ~timeout:_ -> None);
+        handle = 0n;
         free = (fun () -> ()) })
     ~synchronize:(fun () -> ()) ()
 

@@ -268,7 +268,11 @@ val run_linear :
     arguments read from its {!Tolk_uop.Uop.program_info} and a device handle
     built from its compiled binary; a {!Tolk_uop.Ops.Slice} binds a view of its
     resolved source into [binding]; a {!Tolk_uop.Ops.Copy} transfers between its
-    resolved buffers. Buffer arguments are resolved with {!resolve}, so
-    {!Tolk_uop.Ops.Param} slots index into [input_uops].
+    resolved buffers; a {!Tolk_uop.Ops.Custom_function} named ["graph"] records
+    its LINEAR body into the device's {!Device.Graph} on first execution and
+    replays that graph afterwards, patching rebound input parameters, variable
+    values, and symbolic launch dimensions per run. Buffer arguments are
+    resolved with {!resolve}, so {!Tolk_uop.Ops.Param} slots index into
+    [input_uops].
 
     [wait] is forced to [true] when [DEBUG >= 2]. *)

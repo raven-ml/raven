@@ -298,9 +298,43 @@ type prog = {
     nativeint array -> global:int array -> local:int array option ->
     vals:int64 array -> wait:bool -> timeout:int option -> float option;
   free : unit -> unit;
+  handle : nativeint;
 }
 
 type runtime = string -> bytes -> runtimevars:(string * int) list -> prog
+
+(* Batched dispatch graphs *)
+
+module Graph = struct
+  type node =
+    | Kernel of {
+        handle : nativeint;
+        global : int array;
+        local : int array;
+        bufs : nativeint array;
+        vals : int array;
+        deps : int array;
+      }
+    | Copy of {
+        dest : nativeint;
+        src : nativeint;
+        nbytes : int;
+        deps : int array;
+      }
+
+  type exec = {
+    set_buf : int -> int -> nativeint -> unit;
+    set_val : int -> int -> int -> unit;
+    set_launch_dims : int -> global:int array -> local:int array -> unit;
+    set_params : int -> unit;
+    launch : wait:bool -> float option;
+  }
+
+  type t = {
+    supports_copy : bool;
+    build : node array -> exec;
+  }
+end
 
 module Renderer_set = struct
   type entry = {
@@ -354,6 +388,7 @@ type t = {
   runtime : runtime;
   synchronize : unit -> unit;
   invalidate_caches_fn : (unit -> unit) option;
+  graph : Graph.t option;
 }
 
 type device = t
@@ -622,14 +657,15 @@ module Program_cache = struct
 end
 
 let make ~name ~allocator ~renderer_set ~runtime ~synchronize
-    ?invalidate_caches () =
+    ?invalidate_caches ?graph () =
   { name; allocator; renderer_set; runtime; synchronize;
-    invalidate_caches_fn = invalidate_caches }
+    invalidate_caches_fn = invalidate_caches; graph }
 
 let name d = d.name
 let renderer d = Renderer_set.select d.renderer_set
 let runtime d = d.runtime
 let synchronize d = d.synchronize ()
+let graph d = d.graph
 
 (* Two-level program cache: compiles the kernel once for a "base" device
    (e.g. the first GPU) and clones the template for other devices sharing

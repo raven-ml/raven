@@ -91,7 +91,7 @@ let test_device ?(name = "TEST:0") ?(stats = allocator_stats ())
       state.vals <- Array.copy vals;
       None
     in
-    Device.{ call; free = (fun () -> ()) }
+    Device.{ call; free = (fun () -> ()); handle = 0n }
   in
   let synchronize () =
     stats.synchronize_calls <- stats.synchronize_calls + 1
