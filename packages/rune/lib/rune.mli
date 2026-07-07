@@ -391,6 +391,53 @@ val jit' :
   ('c, 'd) Nx.t
 (** [jit' f] is like {!val-jit} for a function of a single tensor. *)
 
+val pmap :
+  devices:string list ->
+  ?in_axes:int option list ->
+  (module P : Ptree.S) -> (P.t -> ('c, 'd) Nx.t) -> P.t -> ('c, 'd) Nx.t
+(** [pmap ~devices (module P) f] is [f] compiled to run in parallel across
+    [devices] — {!val-jit} whose inputs are placed on a device tuple instead
+    of one device. Device names are as in {!val-jit}, with an instance suffix
+    to address several devices of one backend (["CUDA:0"], ["CUDA:1"], or
+    ["CPU:1"], ["CPU:2"], ...); all devices must share one backend.
+
+    [in_axes] gives one entry per leaf of [P], in traversal order: [Some a]
+    splits the leaf along axis [a] into [List.length devices] equal shards,
+    one per device; [None] replicates the leaf, a full copy on every device.
+    It defaults to [Some 0] for every leaf. [f] observes full (global) shapes
+    and needs no collective operations: an operation combining sharded and
+    replicated values runs on every device over its shard, and a reduction
+    over a sharded axis (say the mean loss over a sharded batch) becomes a
+    cross-device allreduce automatically — differentiating such a loss inside
+    [pmap] yields allreduced gradients, which makes data-parallel training a
+    matter of sharding the batch and replicating the parameters.
+
+    Compilation, caching, capture, and writeback semantics are {!val-jit}'s.
+    Outputs stay resident, one buffer per device, and gather to the host the
+    first time they are read (shards are reassembled along their axis;
+    replicated outputs read one replica). An unread output fed back as an
+    input leaf whose placement matches — same devices, same axis or
+    replication — seeds the compiled program's buffers directly with no
+    transfer, so iterated calls (a data-parallel training step) move only the
+    freshly sharded batch. Assigning a sharded value to an input leaf raises
+    {!Jit_error} at trace time (it would gather on every call); replicated
+    writebacks are honored.
+
+    Under an enclosing transformation, [f] runs directly on the host like
+    {!val-jit}: differentiate {e inside} the pmapped function.
+
+    Raises [Invalid_argument] if [devices] is empty, mixes backends, or a
+    device is unavailable; if [in_axes] has one entry per leaf missing or in
+    excess; or if a sharded leaf's dimension does not divide evenly across the
+    devices. Raises {!Jit_error} when tracing fails, as {!val-jit}. *)
+
+val pmap2 :
+  devices:string list ->
+  ?in_axes:int option list ->
+  (module P : Ptree.S) -> (module Q : Ptree.S) -> (P.t -> Q.t) -> P.t -> Q.t
+(** [pmap2 (module P) (module Q) f] is like {!val-pmap} for a function
+    returning a structured output. *)
+
 type jit_stats = {
   bytes_to_device : int;  (** Cumulative bytes copied host to device. *)
   bytes_from_device : int;  (** Cumulative bytes copied device to host. *)

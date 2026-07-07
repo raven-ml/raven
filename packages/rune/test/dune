@@ -9,7 +9,8 @@
   test_custom
   test_jacobian
   test_control
-  test_jit)
+  test_jit
+  test_pmap)
  (modules
   test_grad
   test_ops
@@ -20,7 +21,8 @@
   test_custom
   test_jacobian
   test_control
-  test_jit)
+  test_jit
+  test_pmap)
  (package rune)
  (libraries rune nx nx.core unix windtrap rune_test_support))
 

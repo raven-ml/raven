@@ -461,6 +461,8 @@ exception Jit_error = Jit.Jit_error
 let jit = Jit.jit
 let jit2 = Jit.jit2
 let jit' = Jit.jit'
+let pmap = Jit.pmap
+let pmap2 = Jit.pmap2
 
 type jit_stats = Jit.stats = {
   bytes_to_device : int;

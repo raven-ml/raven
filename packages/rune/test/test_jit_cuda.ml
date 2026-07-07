@@ -198,6 +198,60 @@ let test_pass_through_output_survives () =
   check_arr ~msg:"second call's pass-through" [| 5.0; 6.0 |] r2.u;
   check_arr ~msg:"second call's computed output" [| 14.0; 16.0 |] r2.v
 
+(* pmap on a duplicated CUDA device tuple: both shards run on the one GPU, so
+   the whole multi-device path (per-shard uploads, per-device launches with
+   [_device_num] bound, allreduce, gather on read) is exercised without a
+   second device. *)
+
+module Single_f32 = struct
+  type t = Nx.float32_t
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t = f t
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
+    f a b
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t = f t
+end
+
+let cuda2 = [ "CUDA:0"; "CUDA:0" ]
+
+let test_pmap_matches_jit_on_cuda () =
+  require_cuda ();
+  let chain x =
+    let y = Nx.tanh (Nx.add (Nx.mul x x) x) in
+    let z = Nx.matmul y (Nx.transpose y) in
+    Nx.sum z ~axes:[ 1 ]
+  in
+  let x =
+    Nx.create f32 [| 4; 6 |] (Array.init 24 (fun i -> float_of_int i /. 7.0))
+  in
+  let expect = Rune.jit' ~device:"CUDA" chain x in
+  let g = Rune.pmap ~devices:cuda2 (module Single_f32) chain in
+  check_arr ~msg:"first call" (to_arr expect) (g x);
+  check_arr ~msg:"replay" (to_arr expect) (g x)
+
+let test_pmap_grad_allreduce_on_cuda () =
+  require_cuda ();
+  let w = Nx.create f32 [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
+  let loss x = Nx.mean (Nx.matmul x w) in
+  let grads x = Rune.grad' loss x in
+  let x = Nx.create f32 [| 4; 3 |] (Array.init 12 (fun i -> float_of_int i)) in
+  let expect = Rune.jit' ~device:"CUDA" grads x in
+  let g = Rune.pmap ~devices:cuda2 (module Single_f32) grads in
+  check_arr ~msg:"grad inside pmap on cuda" (to_arr expect) (g x)
+
+let test_pmap_feedback_on_cuda () =
+  require_cuda ();
+  let g = Rune.pmap ~devices:cuda2 (module Single_f32) (fun x -> Nx.add x x) in
+  let x = vec32 (Array.init 8 float_of_int) in
+  let y1 = g x in
+  let y2, up, _ = delta (fun () -> g y1) in
+  equal ~msg:"feedback moves no bytes to device" int 0 up;
+  check_arr ~msg:"gathered result"
+    (Array.init 8 (fun i -> 4.0 *. float_of_int i))
+    y2
+
 let tests =
   [
     group "cuda device"
@@ -222,6 +276,13 @@ let tests =
           test_pass_through_output_survives;
         test "captures upload once across signatures"
           test_capture_uploaded_once_across_signatures;
+      ];
+    group "cuda pmap"
+      [
+        test "duplicated device tuple matches jit" test_pmap_matches_jit_on_cuda;
+        test "grad inside pmap allreduces on one gpu"
+          test_pmap_grad_allreduce_on_cuda;
+        test "feedback moves no bytes" test_pmap_feedback_on_cuda;
       ];
   ]
 

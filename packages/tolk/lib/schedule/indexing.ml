@@ -523,7 +523,14 @@ let run_rangeify ?shape_exprs root ~shapes =
 
 let direct_buffer_src u =
   match U.op u with
-  | Ops.Param | Ops.Buffer | Ops.Stage | Ops.Slice | Ops.Mstack | Ops.Mselect
+  | Ops.Param -> (
+      (* A symbolic variable (e.g. [_device_num] in a shard offset) is a
+         PARAM in the Alu address space, not a buffer: indexing it would
+         re-embed the index expression it appears in and cycle the rewrite. *)
+      match U.as_param u with
+      | Some { param = { addrspace = Dtype.Alu; _ }; _ } -> false
+      | _ -> true)
+  | Ops.Buffer | Ops.Stage | Ops.Slice | Ops.Mstack | Ops.Mselect
   | Ops.After -> true
   | _ -> false
 

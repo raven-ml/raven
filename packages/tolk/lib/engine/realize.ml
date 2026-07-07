@@ -340,6 +340,11 @@ module Buffers = struct
     Hashtbl.replace t.tbl tag (Single buf);
     Hashtbl.replace t.seeded tag ()
 
+  let seed_multi t node mbuf =
+    let tag = Tolk_uop.Uop.tag node in
+    Hashtbl.replace t.tbl tag (Multi mbuf);
+    Hashtbl.replace t.seeded tag ()
+
   let seeded t node = Hashtbl.mem t.seeded (Tolk_uop.Uop.tag node)
   let remove t node = Hashtbl.remove t.tbl (Tolk_uop.Uop.tag node)
   let mem t node = Hashtbl.mem t.tbl (Tolk_uop.Uop.tag node)

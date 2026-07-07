@@ -33,6 +33,14 @@ thread.
 
 ### Tolk (new)
 
+- `Realize.Buffers.seed_multi` binds a buffer node to a caller-provided
+  multi-device buffer, mirroring `seed`.
+- Fix multi-device scheduling of computed sharded outputs: buffer allocation
+  sized MULTI-wrapped values per shard twice, and the store-revert rule
+  cycled on multi-device store targets.
+- Fix a rewrite cycle in rangeify when shard axes are realigned across
+  devices (e.g. `x @ transpose x` on a sharded value): a symbolic variable
+  parameter in a shard offset was mistaken for a buffer and indexed.
 - Add a device registry: `Device.register` installs a backend opener per
   name prefix and `Device.get` opens and caches devices by canonical name;
   `Run` registers the CPU/CUDA/METAL backends there.
@@ -295,6 +303,14 @@ thread.
 
 ### Rune
 
+- Add `pmap` and `pmap2`: compile a function to run in parallel across a
+  device tuple. `in_axes` shards or replicates each input leaf; the function
+  observes global shapes and reductions over a sharded axis become
+  cross-device allreduces automatically, so differentiating a mean loss
+  inside `pmap` yields data-parallel gradients. Outputs stay resident per
+  device and feed back into matching placements with no transfer.
+- Fix `jit`/`jit2` raising `Jit_error` ("not scheduled to a buffer") when a
+  function returned an input leaf of rank 2 or higher unchanged.
 - `jit` compiled programs now replay through device execution graphs (CUDA
   graphs): consecutive kernels batch into single graph launches, honoring
   `JIT` (>= 2 disables) and `JIT_BATCH_SIZE`. GPT-2 training drops ~116 to

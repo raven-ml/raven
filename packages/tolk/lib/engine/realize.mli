@@ -204,6 +204,10 @@ module Buffers : sig
   val seed : t -> Tolk_uop.Uop.t -> Device.Buffer.t -> unit
   (** [seed t node buf] binds [node] to [buf], overriding lazy allocation. *)
 
+  val seed_multi : t -> Tolk_uop.Uop.t -> Device.Multi_buffer.t -> unit
+  (** [seed_multi t node mbuf] binds [node] to the multi-device buffer [mbuf],
+      overriding lazy allocation. *)
+
   val remove : t -> Tolk_uop.Uop.t -> unit
   (** [remove t node] drops [node]'s binding, if any. *)
 

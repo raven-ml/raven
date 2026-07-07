@@ -175,7 +175,13 @@ let compute_shapes root =
                 map_order s order)
           | Ops.Flip ->
               Option.bind (src0 n) shape
-          | Ops.Multi | Ops.Detach | Ops.Contiguous | Ops.Contiguous_backward
+          | Ops.Multi ->
+              (* A MULTI presents the global shape: [U.shape] multiplies the
+                 shard axis of its per-shard source back up by the device
+                 count, whatever form the source takes (a symbolic
+                 [_device_num] view or a per-shard buffer). *)
+              concrete_shape n
+          | Ops.Detach | Ops.Contiguous | Ops.Contiguous_backward
           | Ops.After ->
               Option.bind (src0 n) shape
           | _ -> concrete_shape n
@@ -476,6 +482,10 @@ let revert_store_to_contiguous ctx node =
            let rec find_target n =
              match U.op n, first_src n, after_parts n with
              | Ops.Bitcast, Some src, _ -> find_target (base src)
+             (* A multi-device store target wraps its per-shard buffer in
+                MULTI; look through it, or the AFTER just built for it
+                reverts and the rewrite cycles. *)
+             | Ops.Multi, Some src, _ -> find_target (base src)
              | _, _, Some (src, _) -> find_target (base src)
              | _ -> n
            in
