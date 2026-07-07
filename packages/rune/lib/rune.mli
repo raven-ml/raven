@@ -299,11 +299,80 @@ val check_grads :
     rather than exhaustively. Use float64 parameters for reliable results;
     float32 may need a looser [tol]. *)
 
+(** {1:jit Just-in-time compilation} *)
+
+exception Jit_error of string
+(** Raised when a function cannot be compiled: it read the value of a traced
+    tensor (for example [Nx.item] on a value that depends on the inputs, or a
+    data-dependent branch), or it used an operation the compiler does not
+    support (FFT, linear algebra, random number generation, complex, int4 and
+    uint4 tensors, assigning into a view). *)
+
+val jit :
+  ?device:string ->
+  (module P : Ptree.S) -> (P.t -> ('c, 'd) Nx.t) -> P.t -> ('c, 'd) Nx.t
+(** [jit (module P) f] is [f] compiled. The first application traces [f],
+    compiles the traced computation into fused kernels, and runs them; later
+    applications with the same leaf signature — dtypes and shapes, in traversal
+    order — replay the compiled program on the new leaf values. A new signature
+    triggers a fresh trace and compilation.
+
+    [device] selects where the kernels compile and run: ["CPU"] (the default) or
+    ["METAL"] (macOS only). On the CPU device, contiguous inputs and captured
+    tensors are read in place and outputs are computed directly into the
+    returned tensors' storage; on other devices, and for non-contiguous tensors,
+    data is copied to and from the device on every call.
+
+    The compilation cache lives in the partial application [jit (module P) f]:
+    apply [jit] once and reuse the returned function. Tensors [f] closes over
+    are inputs of the compiled program too, read afresh on every call, so
+    mutations between calls behave as they do eagerly.
+
+    Under an enclosing transformation ({!grad}, {!val-vmap}, {!with_debug}, an
+    outer [jit]), the wrapped function runs directly so the transformation
+    observes its operations: [jit] never changes results, only speed. Compose
+    the other way — differentiate {e inside} the jitted function — to compile
+    the forward and backward passes together:
+
+    {[
+    let train_step =
+      Rune.jit2
+        (module Params)
+        (module Params)
+        (fun p ->
+          let g = Rune.grad (module Params) loss p in
+          Params.map2 (fun w g -> Nx.sub w (Nx.mul_s g lr)) p g)
+    ]}
+
+    Whole-tensor in-place updates ([Nx.assign] on a leaf or a captured tensor)
+    are replayed by writing the computed value back into the destination.
+    Structured values read during tracing must not depend on traced tensors: a
+    data-dependent {!cond} or {!while_loop} predicate raises {!Jit_error}.
+    Compiled functions are not thread-safe.
+
+    Raises {!Jit_error} when tracing fails ({!exception-Jit_error}), and
+    [Invalid_argument] for an unknown or unavailable [device]. *)
+
+val jit2 :
+  ?device:string ->
+  (module P : Ptree.S) -> (module Q : Ptree.S) -> (P.t -> Q.t) -> P.t -> Q.t
+(** [jit2 (module P) (module Q) f] is like {!val-jit} for a function returning a
+    structured output. *)
+
+val jit' :
+  ?device:string ->
+  (('a, 'b) Nx.t -> ('c, 'd) Nx.t) ->
+  ('a, 'b) Nx.t ->
+  ('c, 'd) Nx.t
+(** [jit' f] is like {!val-jit} for a function of a single tensor. *)
+
 (** {1:flow Control flow}
 
     Eager combinators with staging-ready signatures: code written with them
-    differentiates and vectorizes today, and a future [jit] can stage them as
-    structured control flow instead of unrolled traces. *)
+    differentiates and vectorizes today, and a future staging [jit] can trace
+    them as structured control flow instead of unrolled traces. Today,
+    {!val-jit} unrolls {!scan} and rejects data-dependent {!cond} and
+    {!while_loop} predicates. *)
 
 val scan :
   (module C : Ptree.S) ->

@@ -227,6 +227,10 @@ external unsafe_set :
   ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> int -> 'a -> unit
   = "caml_nx_buffer_unsafe_set"
 
+external unsafe_data_ptr :
+  ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> nativeint
+  = "caml_nx_buffer_data_ptr"
+
 (* Byte count for a span of elements, accounting for int4 packing *)
 let elts_to_bytes : type a b. (a, b) kind -> int -> int =
  fun k n ->

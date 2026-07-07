@@ -611,3 +611,11 @@ CAMLprim value caml_nx_buffer_blit_to_bytes(value vsrc, value vsrc_off,
   memcpy(dst_ptr, src_ptr, len);
   return Val_unit;
 }
+
+/*---------------------------------------------------------------------------
+   Data pointer
+  ---------------------------------------------------------------------------*/
+
+CAMLprim value caml_nx_buffer_data_ptr(value vb) {
+  return caml_copy_nativeint((intnat)Caml_ba_data_val(vb));
+}

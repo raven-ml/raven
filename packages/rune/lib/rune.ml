@@ -17,13 +17,18 @@ let require_scalar name y =
          name
          (shape_string (Nx.shape y)))
 
+(* Install a transformation handler for the run of [f]. The recorded depth lets
+   [jit] step aside when a transformation is observing the operations. *)
+let run_transform f x handler =
+  Gate.with_transform (fun () -> Effect.Deep.match_with f x handler)
+
 (* Run [f params] under the reverse handler with the leaves of [params] tracked,
    seed the output cotangent, and pull gradients back to the leaves. *)
 let run_reverse (type c d) (module P : Ptree.S) (f : P.t -> (c, d) Nx.t)
     (params : P.t) ~(seed : (c, d) Nx.t -> (c, d) Nx.t) : (c, d) Nx.t * P.t =
   let tape = Tape.create () in
   P.iter (fun leaf -> Tape.track tape leaf) params;
-  let y = Effect.Deep.match_with f params (Reverse.handler tape) in
+  let y = run_transform f params (Reverse.handler tape) in
   Tape.accumulate tape y (seed y);
   Tape.backward tape;
   (y, P.map (fun leaf -> Tape.cotangent tape leaf) params)
@@ -85,7 +90,7 @@ let vjp2 (module P : Ptree.S) (module Q : Ptree.S) (f : P.t -> Q.t)
     (params : P.t) (cotangents : Q.t) : Q.t * P.t =
   let tape = Tape.create () in
   P.iter (fun leaf -> Tape.track tape leaf) params;
-  let y = Effect.Deep.match_with f params (Reverse.handler tape) in
+  let y = run_transform f params (Reverse.handler tape) in
   let (_ : Q.t) =
     Q.map2
       (fun yleaf ct ->
@@ -101,7 +106,7 @@ let vjp_fun (type c d) (module P : Ptree.S) (f : P.t -> (c, d) Nx.t)
     (params : P.t) : (c, d) Nx.t * ((c, d) Nx.t -> P.t) =
   let tape = Tape.create () in
   P.iter (fun leaf -> Tape.track tape leaf) params;
-  let y = Effect.Deep.match_with f params (Reverse.handler tape) in
+  let y = run_transform f params (Reverse.handler tape) in
   let pullback ct =
     if Nx.shape ct <> Nx.shape y then
       invalid_arg
@@ -120,7 +125,7 @@ let vjp_fun' (type a b c d) (f : (a, b) Nx.t -> (c, d) Nx.t) (x : (a, b) Nx.t) :
     (c, d) Nx.t * ((c, d) Nx.t -> (a, b) Nx.t) =
   let tape = Tape.create () in
   Tape.track tape x;
-  let y = Effect.Deep.match_with f x (Reverse.handler tape) in
+  let y = run_transform f x (Reverse.handler tape) in
   let pullback ct =
     Tape.reset_cotangents tape;
     Tape.accumulate tape y ct;
@@ -153,7 +158,7 @@ let jvp (type c d) (module P : Ptree.S) (f : P.t -> (c, d) Nx.t) (params : P.t)
         leaf)
       params tangents
   in
-  let y = Effect.Deep.match_with f params (Forward.handler store) in
+  let y = run_transform f params (Forward.handler store) in
   (y, output_tangent store y)
 
 let jvp_aux (type c d) (module P : Ptree.S) (f : P.t -> (c, d) Nx.t * 'aux)
@@ -181,7 +186,7 @@ let jvp2 (module P : Ptree.S) (module Q : Ptree.S) (f : P.t -> Q.t)
         leaf)
       params tangents
   in
-  let y = Effect.Deep.match_with f params (Forward.handler store) in
+  let y = run_transform f params (Forward.handler store) in
   (y, Q.map (fun yleaf -> output_tangent store yleaf) y)
 
 (* Custom differentiation rules *)
@@ -277,13 +282,13 @@ let finalize_vmap st out_axis y =
 let vmap (type c d) ?in_axes ?(out_axis = 0) (module P : Ptree.S)
     (f : P.t -> (c, d) Nx.t) (params : P.t) : (c, d) Nx.t =
   let st, params = prepare_vmap ?in_axes (module P) params in
-  let y = Effect.Deep.match_with f params (Vmap.handler st) in
+  let y = run_transform f params (Vmap.handler st) in
   finalize_vmap st out_axis y
 
 let vmap2 ?in_axes ?(out_axis = 0) (module P : Ptree.S) (module Q : Ptree.S)
     (f : P.t -> Q.t) (params : P.t) : Q.t =
   let st, params = prepare_vmap ?in_axes (module P) params in
-  let y = Effect.Deep.match_with f params (Vmap.handler st) in
+  let y = run_transform f params (Vmap.handler st) in
   Q.map (fun yleaf -> finalize_vmap st out_axis yleaf) y
 
 let vmap' (type a b c d) ?(in_axis = 0) ?(out_axis = 0)
@@ -293,7 +298,7 @@ let vmap' (type a b c d) ?(in_axis = 0) ?(out_axis = 0)
   let x = if in_axis = 0 then x else Nx.moveaxis in_axis 0 x in
   let st = Vmap.create ~batch_size:(Nx.shape x).(0) in
   Vmap.mark st x;
-  let y = Effect.Deep.match_with f x (Vmap.handler st) in
+  let y = run_transform f x (Vmap.handler st) in
   let y = broadcast_output st y in
   if out_axis = 0 then y else Nx.moveaxis 0 out_axis y
 
@@ -304,7 +309,7 @@ let run_reverse' (type a b c d) (f : (a, b) Nx.t -> (c, d) Nx.t)
     (c, d) Nx.t * (a, b) Nx.t =
   let tape = Tape.create () in
   Tape.track tape x;
-  let y = Effect.Deep.match_with f x (Reverse.handler tape) in
+  let y = run_transform f x (Reverse.handler tape) in
   Tape.accumulate tape y (seed y);
   Tape.backward tape;
   (y, Tape.cotangent tape x)
@@ -323,7 +328,7 @@ let jvp' (type a b c d) (f : (a, b) Nx.t -> (c, d) Nx.t) (x : (a, b) Nx.t)
   if Nx.shape x <> Nx.shape tangent then err_tangent_shape "Rune.jvp'" x tangent;
   let store = Tensor_map.create () in
   Tensor_map.set store x tangent;
-  let y = Effect.Deep.match_with f x (Forward.handler store) in
+  let y = run_transform f x (Forward.handler store) in
   (y, output_tangent store y)
 
 (* Gradient checkpointing *)
@@ -448,6 +453,14 @@ let while_loop (module C : Ptree.S) ~(cond : C.t -> (bool, Nx.bool_elt) Nx.t)
     ~(body : C.t -> C.t) (init : C.t) : C.t =
   let rec go c = if Nx.item [] (cond c) then go (body c) else c in
   go init
+
+(* Just-in-time compilation *)
+
+exception Jit_error = Jit.Jit_error
+
+let jit = Jit.jit
+let jit2 = Jit.jit2
+let jit' = Jit.jit'
 
 (* Debugging *)
 

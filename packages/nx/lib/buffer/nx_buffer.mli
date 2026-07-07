@@ -148,6 +148,13 @@ val unsafe_get : ('a, 'b) t -> int -> 'a
 val unsafe_set : ('a, 'b) t -> int -> 'a -> unit
 (** [unsafe_set buf i v] is like {!set} without bounds checking. *)
 
+val unsafe_data_ptr : ('a, 'b) t -> nativeint
+(** [unsafe_data_ptr buf] is the address of [buf]'s first element. The buffer's
+    storage lives outside the OCaml heap and is never moved, so the address
+    stays valid for as long as [buf] is reachable — keep a reference to [buf]
+    alive while the pointer is in use, and do not use it afterwards. Not
+    available on JavaScript. *)
+
 (** {2:bulk Bulk operations} *)
 
 val fill : ('a, 'b) t -> 'a -> unit

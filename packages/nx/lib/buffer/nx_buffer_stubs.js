@@ -551,3 +551,9 @@ function caml_nx_buffer_blit_to_bytes(src, src_off, bytes, dst_off, len) {
   }
   return 0;
 }
+
+//Provides: caml_nx_buffer_data_ptr
+//Requires: caml_failwith
+function caml_nx_buffer_data_ptr(ba) {
+  caml_failwith("Nx_buffer.unsafe_data_ptr: not supported on JavaScript");
+}

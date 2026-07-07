@@ -114,4 +114,4 @@ let handler ppf =
   { retc = Fun.id; exnc = raise; effc }
 
 let with_debug ?(ppf = Format.err_formatter) f =
-  Effect.Deep.match_with f () (handler ppf)
+  Gate.with_transform (fun () -> Effect.Deep.match_with f () (handler ppf))

@@ -10,5 +10,20 @@
   debug
   tensor_map
   gate
-  derivs)
- (libraries nx.core nx nx.effect))
+  derivs
+  jit
+  jit_device)
+ (libraries
+  nx.core
+  nx
+  nx.effect
+  nx.buffer
+  tolk.uop
+  tolk
+  tolk.frontend
+  tolk.cpu
+  (select
+   jit_device.ml
+   from
+   (tolk.metal -> jit_device.metal.ml)
+   (-> jit_device.cpu.ml))))

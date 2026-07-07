@@ -8,6 +8,26 @@
   test_vmap
   test_custom
   test_jacobian
-  test_control)
+  test_control
+  test_jit)
+ (modules
+  test_grad
+  test_ops
+  test_engine
+  test_ptree
+  test_jvp
+  test_vmap
+  test_custom
+  test_jacobian
+  test_control
+  test_jit)
  (package rune)
+ (libraries rune nx nx.core windtrap rune_test_support))
+
+(tests
+ (names test_jit_metal)
+ (modules test_jit_metal)
+ (package rune)
+ (enabled_if
+  (= %{system} macosx))
  (libraries rune nx nx.core windtrap rune_test_support))

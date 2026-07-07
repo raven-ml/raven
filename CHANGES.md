@@ -72,6 +72,9 @@ thread.
 
 ### Nx
 
+- Add `Nx_buffer.unsafe_data_ptr`: the address of a buffer's first element,
+  for wrapping tensor memory in external systems without copying. The caller
+  must keep the buffer reachable while the pointer is in use.
 - Fix `rfft` and `irfft` bypassing the effect-based backend dispatch: they
   called the C backend directly, making them invisible to every effect
   handler (autodiff, vmap, jit). They now perform `E_rfft`/`E_irfft` like
@@ -113,6 +116,25 @@ thread.
 
 ### Rune
 
+- `jit` takes a `?device` argument selecting where kernels compile and run:
+  `"CPU"` (the default) or `"METAL"` on macOS.
+- On the CPU device, jitted programs now run on the tensors' own memory:
+  contiguous inputs and captured tensors are read in place and outputs are
+  computed directly into the returned tensors' storage, removing the byte
+  copies previously made on every call. Non-contiguous tensors and other
+  devices still go through copies.
+- Add just-in-time compilation: `jit`, `jit2`, and `jit'` trace a function
+  once per input signature (leaf dtypes and shapes), compile the trace into
+  fused native kernels through the Tolk compiler, and replay the compiled
+  program on subsequent calls. Differentiating inside a jitted function
+  compiles the forward and backward passes together — a whole training step
+  (forward, backward, parameter update) compiles into one program; under an
+  enclosing transformation (`grad`, `vmap`, `with_debug`) the wrapped
+  function runs eagerly so results never change. Sliding-window operations
+  (`extract_patches`/`combine_patches`, and convolution built on them)
+  compile too. Reading a traced tensor's value or using an operation the
+  compiler cannot express (FFT, linear algebra, RNG, complex dtypes) raises
+  `Jit_error` at trace time instead of compiling a wrong program.
 - **Breaking.** Ground-up rewrite. Transformations now operate over typed
   parameter structures: `grad`, `value_and_grad`, `vjp`, `jvp`, `vmap`,
   `hvp`, and friends take a first-class module implementing `Nx.Ptree.S`
