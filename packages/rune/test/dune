@@ -31,3 +31,9 @@
  (enabled_if
   (= %{system} macosx))
  (libraries rune nx nx.core windtrap rune_test_support))
+
+(tests
+ (names test_jit_cuda)
+ (modules test_jit_cuda)
+ (package rune)
+ (libraries rune nx nx.core windtrap rune_test_support tolk.cuda))

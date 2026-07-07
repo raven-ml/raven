@@ -150,6 +150,8 @@ thread.
 
 ### Rune
 
+- `jit` accepts `~device:"CUDA"`: jitted programs compile through NVRTC and
+  run on NVIDIA GPUs.
 - `jit` takes a `?device` argument selecting where kernels compile and run:
   `"CPU"` (the default) or `"METAL"` on macOS.
 - On the CPU device, jitted programs now run on the tensors' own memory:

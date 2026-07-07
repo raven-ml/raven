@@ -317,11 +317,12 @@ val jit :
     order — replay the compiled program on the new leaf values. A new signature
     triggers a fresh trace and compilation.
 
-    [device] selects where the kernels compile and run: ["CPU"] (the default) or
-    ["METAL"] (macOS only). On the CPU device, contiguous inputs and captured
-    tensors are read in place and outputs are computed directly into the
-    returned tensors' storage; on other devices, and for non-contiguous tensors,
-    data is copied to and from the device on every call.
+    [device] selects where the kernels compile and run: ["CPU"] (the default),
+    ["CUDA"] (NVIDIA GPUs), or ["METAL"] (macOS only). On the CPU device,
+    contiguous inputs and captured tensors are read in place and outputs are
+    computed directly into the returned tensors' storage; on other devices, and
+    for non-contiguous tensors, data is copied to and from the device on every
+    call.
 
     The compilation cache lives in the partial application [jit (module P) f]:
     apply [jit] once and reuse the returned function. Tensors [f] closes over
