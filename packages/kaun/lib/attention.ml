@@ -147,19 +147,27 @@ let apply_cached ?(num_heads = 1) ~pos ~cache p x =
   let positions =
     Nx.add pos (Nx.reshape [| 1; seq |] (Nx.arange Nx.int32 0 seq 1))
   in
-  (* One-hot scatter: row [c] of [sel] selects the input position filling slot
-     [c], so [sel @ fresh] lays the fresh rows out at their slots (exactly: each
-     row is 1 * fresh plus zeros). Slots outside [pos, pos + seq) keep their
-     cached rows. Everything is expressed on fixed shapes with [pos] a plain
-     tensor, so one jitted decode step serves every position. *)
-  let sel = Nx.cast (Nx.dtype x) (Nx.equal slots positions) in
+  (* Slot [c] gathers the fresh row at input position [c - pos] (clamped into
+     range: [written] is false outside [pos, pos + seq), so those slots keep
+     their cached rows). Everything is expressed on fixed shapes with [pos] a
+     plain tensor, so one jitted decode step serves every position. *)
+  let src =
+    Nx.broadcast_to
+      [| batch; num_heads; len; head_dim |]
+      (Nx.reshape [| 1; 1; len; 1 |]
+         (Nx.clamp ~min:0l
+            ~max:(Int32.of_int (seq - 1))
+            (Nx.sub slots pos)))
+  in
   let written =
     Nx.reshape [| 1; 1; len; 1 |]
       (Nx.logical_and
          (Nx.greater_equal slots pos)
          (Nx.less slots (Nx.add_s pos (Int32.of_int seq))))
   in
-  let update cached fresh = Nx.where written (Nx.matmul sel fresh) cached in
+  let update cached fresh =
+    Nx.where written (Nx.take_along_axis ~axis:2 src fresh) cached
+  in
   let keys = update cache.Cache.keys k
   and values = update cache.Cache.values v in
   (* Causality over slots: the query at input position [i] sees slots [j <= pos

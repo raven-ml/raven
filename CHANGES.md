@@ -302,6 +302,9 @@ thread.
 
 ### Kaun
 
+- `Attention.apply_cached` updates the cache with a gather instead of a
+  one-hot matmul, cutting the per-step update from O(len*seq*head_dim) to
+  O(len*head_dim).
 - **Breaking.** The attention KV cache moved into an `Attention.Cache`
   submodule: `Attention.cache`/`map_cache`/`map2_cache`/`iter_cache` are now
   `Attention.Cache.make`/`map`/`map2`/`iter` on `'b Attention.Cache.t`.

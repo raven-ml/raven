@@ -159,7 +159,7 @@ val apply_cached :
     single-token step ([seq = 1]) attends to every position seen so far.
     [num_heads] is as in {!apply}.
 
-    Slots are addressed with tensor arithmetic on [pos] (a one-hot scatter and a
+    Slots are addressed with tensor arithmetic on [pos] (a gather and a
     position mask), never its value, so the step traces once under {!Rune.jit}
     whatever the position. Differentiable through Rune.
 
