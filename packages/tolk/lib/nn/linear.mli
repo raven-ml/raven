@@ -17,9 +17,11 @@ type t = {
 
 val create : ?bias:bool -> int -> int -> t
 (** [create in_features out_features] is a linear layer mapping the last axis
-    from [in_features] to [out_features], zero-initialised. [bias] (default
-    [true]) selects whether an additive bias is included. Load trained values
-    with {!State.load_state_dict}. *)
+    from [in_features] to [out_features]. The weight and bias are initialised
+    from a uniform distribution over [\[-b, b)] with
+    [b = 1 / sqrt in_features], drawing from the {!Rand} stream. [bias]
+    (default [true]) selects whether an additive bias is included. Load
+    trained values with {!State.load_state_dict}. *)
 
 val apply : t -> Tensor.t -> Tensor.t
 (** [apply l x] is [x @ weight^T + bias], contracting the last axis of [x]

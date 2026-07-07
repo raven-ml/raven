@@ -10,7 +10,7 @@ open Tolk_frontend
 type t = { weight : Tensor.t }
 
 let create vocab_size embed_size =
-  { weight = Creation.zeros [ vocab_size; embed_size ] }
+  { weight = Rand.glorot_uniform [ vocab_size; embed_size ] }
 
 let apply e idx =
   if not (Tolk_uop.Dtype.is_int (Tensor.dtype idx)) then

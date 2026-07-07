@@ -33,6 +33,12 @@ thread.
 
 ### Tolk (new)
 
+- `Tolk_nn.Linear.create` and `Embedding.create` now randomly initialise
+  their parameters (uniform `±1/sqrt in_features`, Glorot uniform) instead
+  of zeros.
+- The gpt2 example gains `--temperature` and `--seed`; at non-zero
+  temperature it samples from the temperature-scaled softmax and reproduces
+  the reference token stream at the same seed.
 - Add `Rand`, a counter-based (Threefry) random number frontend:
   `manual_seed`, `rand`, `randn`, `randint`, `uniform`, `normal`,
   `scaled_uniform`/`glorot_uniform`/`kaiming_uniform`/`kaiming_normal`,

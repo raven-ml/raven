@@ -126,7 +126,7 @@ let block_apply b x mask =
        (Linear.apply b.c_proj2
           (Elementwise.gelu (Linear.apply b.c_fc (Layer_norm.apply b.ln_2 h)))))
 
-let forward m tokens =
+let forward ?(temperature = 0.) m tokens =
   let seqlen = List.nth (Tensor.shape tokens) 1 in
   let pos =
     Movement.shrink
@@ -145,14 +145,18 @@ let forward m tokens =
   in
   let h = List.fold_left (fun h b -> block_apply b h mask) h m.h in
   let logits = Linear.apply m.lm_head (Layer_norm.apply m.ln_f h) in
-  Op.argmax ~axis:(-1) (Op.getitem logits Movement.[ All; I (-1); All ])
+  let logits = Op.getitem logits Movement.[ All; I (-1); All ] in
+  if temperature < 1e-6 then Op.argmax ~axis:(-1) logits
+  else
+    Rand.multinomial
+      (Op.softmax (Elementwise.div logits (Tensor.f temperature)))
 
-let generate m prompt count =
+let generate ?temperature m prompt count =
   let toks = ref prompt in
   for _ = 1 to count do
     let arr = Array.of_list !toks in
     let tokens = Run.of_int_array ~shape:[ 1; Array.length arr ] arr in
-    toks := !toks @ [ Run.item_int (forward m tokens) ]
+    toks := !toks @ [ Run.item_int (forward ?temperature m tokens) ]
   done;
   !toks
 
@@ -174,6 +178,18 @@ let model_tests =
           let b = generate m [ 10; 20; 30 ] 4 in
           equal (list int) a b;
           equal int 7 (List.length a));
+      test "seeded sampling is deterministic and seed-sensitive" (fun () ->
+          let m = build () in
+          State.load_state_dict (state_dict m) (random_state_dict m);
+          let sample seed =
+            Rand.manual_seed seed;
+            generate ~temperature:0.8 m [ 10; 20; 30 ] 4
+          in
+          let a = sample 42 in
+          List.iter (fun t -> is_true (t >= 0 && t < vocab_size)) a;
+          equal int 7 (List.length a);
+          equal (list int) a (sample 42);
+          is_true (sample 1337 <> a));
     ]
 
 (* Tokenizer: gpt2's byte-level BPE loaded through brot must agree with the

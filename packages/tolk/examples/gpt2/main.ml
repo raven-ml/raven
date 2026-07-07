@@ -6,7 +6,8 @@
 (* GPT-2 text generation.
 
    Builds the 124M-parameter GPT-2 model from HuggingFace safetensors weights
-   and greedily generates tokens from a prompt. The prompt is consumed in one
+   and generates tokens from a prompt, greedily by default or by sampling
+   from the temperature-scaled softmax. The prompt is consumed in one
    eager forward pass with concrete shapes; every later step processes a
    single token against a persistent key-value cache, with the position (and
    the token id) entering the graph as bound symbolic variables so that one
@@ -47,15 +48,13 @@ type attention = {
   mutable cache_kv : Tensor.t option;
 }
 
+(* Layer creation draws initial weights from the random stream, so it is
+   sequenced explicitly: the stream position after building the model must
+   not depend on evaluation order. *)
 let attention dim n_heads =
-  {
-    c_attn = Linear.create dim (3 * dim);
-    c_proj = Linear.create dim dim;
-    n_heads;
-    dim;
-    head_dim = dim / n_heads;
-    cache_kv = None;
-  }
+  let c_attn = Linear.create dim (3 * dim) in
+  let c_proj = Linear.create dim dim in
+  { c_attn; c_proj; n_heads; dim; head_dim = dim / n_heads; cache_kv = None }
 
 let attention_apply a x start_pos mask =
   (* No symbolic positions while consuming the prompt. *)
@@ -115,7 +114,9 @@ let attention_apply a x start_pos mask =
 type feed_forward = { c_fc : Linear.t; c_proj : Linear.t }
 
 let feed_forward dim hidden_dim =
-  { c_fc = Linear.create dim hidden_dim; c_proj = Linear.create hidden_dim dim }
+  let c_fc = Linear.create dim hidden_dim in
+  let c_proj = Linear.create hidden_dim dim in
+  { c_fc; c_proj }
 
 let feed_forward_apply f x =
   Linear.apply f.c_proj (Elementwise.gelu (Linear.apply f.c_fc x))
@@ -128,12 +129,11 @@ type block = {
 }
 
 let block dim n_heads norm_eps =
-  {
-    attn = attention dim n_heads;
-    mlp = feed_forward dim (4 * dim);
-    ln_1 = Layer_norm.create ~eps:norm_eps dim;
-    ln_2 = Layer_norm.create ~eps:norm_eps dim;
-  }
+  let attn = attention dim n_heads in
+  let mlp = feed_forward dim (4 * dim) in
+  let ln_1 = Layer_norm.create ~eps:norm_eps dim in
+  let ln_2 = Layer_norm.create ~eps:norm_eps dim in
+  { attn; mlp; ln_1; ln_2 }
 
 let block_apply b x start_pos mask =
   let h =
@@ -154,21 +154,27 @@ type transformer = {
 }
 
 let transformer ~dim ~n_heads ~n_layers ~norm_eps ~vocab_size ~max_seq_len =
-  {
-    wte = Embedding.create vocab_size dim;
-    wpe = Embedding.create max_seq_len dim;
-    h = List.init n_layers (fun _ -> block dim n_heads norm_eps);
-    ln_f = Layer_norm.create ~eps:norm_eps dim;
-    lm_head = Linear.create ~bias:false dim vocab_size;
-    allpos = None;
-  }
+  let wte = Embedding.create vocab_size dim in
+  let wpe = Embedding.create max_seq_len dim in
+  let rec blocks n =
+    if n = 0 then []
+    else
+      let b = block dim n_heads norm_eps in
+      b :: blocks (n - 1)
+  in
+  let h = blocks n_layers in
+  let ln_f = Layer_norm.create ~eps:norm_eps dim in
+  let lm_head = Linear.create ~bias:false dim vocab_size in
+  { wte; wpe; h; ln_f; lm_head; allpos = None }
 
 (* The token(s) to feed: a concrete tensor of ids for the prompt, or a single
    id bound to a symbolic variable for a decode step. *)
 type tokens_input = Toks of Tensor.t | Tok of U.t
 
-(* Greedy forward: the argmax of the logits of the last position. *)
-let forward m tokens start_pos =
+(* Forward pass returning the next token: the argmax of the logits of the
+   last position when [temperature] is (near) zero, otherwise a sample from
+   the temperature-scaled softmax. *)
+let forward m tokens start_pos temperature =
   let allpos =
     match m.allpos with
     | Some t -> t
@@ -210,7 +216,13 @@ let forward m tokens start_pos =
   let h = List.fold_left (fun h b -> block_apply b h start_pos mask) h m.h in
   let logits = Linear.apply m.lm_head (Layer_norm.apply m.ln_f h) in
   let logits = Op.getitem logits Movement.[ All; I (-1); All ] in
-  Run.realize (Movement.flatten (Op.argmax ~axis:(-1) logits))
+  let ret =
+    if temperature < 1e-6 then Op.argmax ~axis:(-1) logits
+    else
+      Rand.multinomial
+        (Op.softmax (Elementwise.div logits (Tensor.f temperature)))
+  in
+  Run.realize (Movement.flatten ret)
 
 (* State dict *)
 
@@ -303,11 +315,12 @@ let build () =
 
 (* Generation *)
 
-let generate model tokenizer prompt count =
+let generate model tokenizer prompt count temperature =
   let toks = ref (Array.to_list (Brot.encode_ids tokenizer prompt)) in
   let start_pos = ref 0 in
   let jit =
-    Jit.create (fun _inputs ~vars -> forward model (Tok vars.(0)) vars.(1))
+    Jit.create (fun _inputs ~vars ->
+        forward model (Tok vars.(0)) vars.(1) temperature)
   in
   let times = ref [] in
   for _ = 1 to count do
@@ -335,7 +348,7 @@ let generate model tokenizer prompt count =
       | _ ->
           let arr = Array.of_list remaining in
           let tokens = Run.of_int_array ~shape:[ 1; Array.length arr ] arr in
-          Run.item_int (forward model (Toks tokens) start_pos_var)
+          Run.item_int (forward model (Toks tokens) start_pos_var temperature)
     in
     times := (Unix.gettimeofday () -. t0) :: !times;
     start_pos := List.length !toks;
@@ -360,18 +373,25 @@ let expected =
 let () =
   let prompt = ref default_prompt in
   let count = ref 10 in
+  let temperature = ref 0.0 in
+  let seed = ref None in
   let validate = ref false in
   Arg.parse
     [
       ("--prompt", Arg.Set_string prompt, "Phrase to start with");
       ("--count", Arg.Set_int count, "Max number of tokens to generate");
+      ( "--temperature",
+        Arg.Set_float temperature,
+        "Temperature in the softmax (0 samples greedily)" );
+      ("--seed", Arg.Int (fun s -> seed := Some s), "Set the random seed");
       ( "--validate",
         Arg.Set validate,
         "Check the output against the reference generation (needs --count 10)"
       );
     ]
     (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
-    "gpt2 [--prompt P] [--count N] [--validate]";
+    "gpt2 [--prompt P] [--count N] [--temperature T] [--seed S] [--validate]";
+  (match !seed with Some s -> Rand.manual_seed s | None -> ());
   Printf.printf "using %s backend\n%!" (Run.device_name ());
   let tokenizer =
     Brot.from_file
@@ -390,7 +410,7 @@ let () =
   let t0 = Unix.gettimeofday () in
   let model = build () in
   Printf.printf "loaded weights in %.2f s\n%!" (Unix.gettimeofday () -. t0);
-  let text = generate model tokenizer !prompt !count in
+  let text = generate model tokenizer !prompt !count !temperature in
   print_endline "Generating text...";
   print_endline text;
   if !validate then

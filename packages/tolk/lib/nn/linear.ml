@@ -10,10 +10,16 @@ open Tolk_frontend
 type t = { weight : Tensor.t; bias : Tensor.t option }
 
 let create ?(bias = true) in_features out_features =
-  {
-    weight = Creation.zeros [ out_features; in_features ];
-    bias = (if bias then Some (Creation.zeros [ out_features ]) else None);
-  }
+  let bound = 1. /. Float.sqrt (float_of_int in_features) in
+  (* The weight draws from the random stream before the bias. *)
+  let weight =
+    Rand.uniform ~low:(-.bound) ~high:bound [ out_features; in_features ]
+  in
+  let bias =
+    if bias then Some (Rand.uniform ~low:(-.bound) ~high:bound [ out_features ])
+    else None
+  in
+  { weight; bias }
 
 let apply l x =
   let x = Op.dot x (Movement.transpose l.weight) in

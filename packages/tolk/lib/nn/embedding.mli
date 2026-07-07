@@ -14,8 +14,8 @@ type t = { weight : Tensor.t  (** Shape [(vocab_size, embed_size)]. *) }
 
 val create : int -> int -> t
 (** [create vocab_size embed_size] is an embedding table of [vocab_size] rows
-    of [embed_size] features, zero-initialised. Load trained values with
-    {!State.load_state_dict}. *)
+    of [embed_size] features, initialised with {!Rand.glorot_uniform}. Load
+    trained values with {!State.load_state_dict}. *)
 
 val apply : t -> Tensor.t -> Tensor.t
 (** [apply e idx] looks up the row of the table for every element of the
