@@ -2220,7 +2220,19 @@ and compute_shape_opt u =
 
 let max_shape u = List.map vmax (shape u)
 
+(* Memoized like [shape]: sources are shared DAGs, and an unmemoized walk is
+   exponential in residual depth. *)
+let axis_cache : int option Ref_tbl.t = Ref_tbl.create 1024
+
 let rec axis u =
+  match Ref_tbl.find_opt axis_cache u with
+  | Some cached -> cached
+  | None ->
+      let result = compute_axis u in
+      Ref_tbl.add axis_cache u result;
+      result
+
+and compute_axis u =
   let srcs = src u in
   match op u with
   | Ops.Copy -> None

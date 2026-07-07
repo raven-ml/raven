@@ -33,6 +33,9 @@ thread.
 
 ### Tolk (new)
 
+- Memoize `Uop.axis` like `Uop.shape`: the unmemoized walk was exponential
+  in residual depth, making multi-device compilation of deep networks
+  appear to hang.
 - `Realize.Buffers.seed_multi` binds a buffer node to a caller-provided
   multi-device buffer, mirroring `seed`.
 - Fix multi-device scheduling of computed sharded outputs: buffer allocation
