@@ -282,6 +282,10 @@ thread.
 
 ### Kaun
 
+- The GPT-2 example loads a local safetensors checkpoint when one is cached
+  (`Gpt2.from_file`, `Gpt2.of_checkpoint`), tokenizes via `tokenizer.json`,
+  and can compile its forward pass with `Rune.jit` on CPU or CUDA
+  (`--jit DEVICE`).
 - **Breaking.** Ground-up rewrite on typed parameter structures. There is
   no `Layer.t` and no `Train` driver anymore: a layer is a plain record of
   tensors with a pure `apply` function (`Linear`, `Conv`, `Embedding`,

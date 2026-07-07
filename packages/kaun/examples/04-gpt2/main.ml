@@ -5,85 +5,105 @@
 
 (* Text generation with pretrained GPT-2.
 
-   Downloads gpt2 from the HuggingFace Hub on first run (~548MB, cached
-   afterwards), adapts the checkpoint onto kaun layer records, and generates
-   continuations with greedy decoding. Skips gracefully when the files cannot be
-   downloaded. *)
+   Loads the 124M-parameter GPT-2 checkpoint — from a local safetensors file
+   when one is cached, downloading from the HuggingFace Hub otherwise (~548MB,
+   cached afterwards) — and greedily generates continuations of a prompt.
+   [--jit DEVICE] compiles the forward pass with [Rune.jit]. *)
 
-(* Tokenizer: GPT-2's byte-level BPE, from the repository's vocab and merges
-   files. *)
+let default_prompt = "What is the answer to life, the universe, and everything?"
 
-let load_tokenizer repo_id =
-  let vocab = Kaun_hf.download_file ~file:"vocab.json" repo_id in
-  let merges = Kaun_hf.download_file ~file:"merges.txt" repo_id in
-  Brot.from_model_file ~vocab ~merges
-    ~pre:
-      (Brot.Pre_tokenizer.byte_level ~add_prefix_space:false ~use_regex:true ())
-    ~decoder:(Brot.Decoder.byte_level ())
-    ()
+(* Loading: prefer local files for determinism (the same cache the tolk gpt2
+   example fills), fall back to the HuggingFace Hub. *)
 
-let encode tokenizer text =
-  Array.map Int32.of_int (Brot.encode_ids tokenizer text)
+let local_file file =
+  let cache =
+    try Sys.getenv "XDG_CACHE_HOME"
+    with Not_found -> Filename.concat (Sys.getenv "HOME") ".cache"
+  in
+  let path = List.fold_left Filename.concat cache [ "tolk-gpt2"; file ] in
+  if Sys.file_exists path then Some path else None
 
-let decode tokenizer ids = Brot.decode tokenizer (Array.map Int32.to_int ids)
+let gpt2_124m : Gpt2.config =
+  {
+    vocab_size = 50257;
+    n_positions = 1024;
+    n_embd = 768;
+    n_layer = 12;
+    n_head = 12;
+    n_inner = 3072;
+    layer_norm_eps = 1e-5;
+  }
 
-(* Greedy decoding: at each step append the highest-probability next token. *)
+let load_model () =
+  match local_file "model.safetensors" with
+  | Some path -> (gpt2_124m, Gpt2.from_file gpt2_124m path)
+  | None -> Gpt2.from_pretrained ()
 
-let generate cfg params ~max_tokens prompt =
-  let tokens = ref (Array.to_list prompt) in
-  for _ = 1 to max_tokens do
-    let ids = Array.of_list !tokens in
-    let n = Array.length ids in
-    let input = Nx.create Nx.int32 [| 1; n |] ids in
-    let logits = Gpt2.logits cfg params input in
-    let last = Nx.slice [ I 0; I (n - 1) ] logits in
-    let next : int32 = Nx.item [] (Nx.argmax ~axis:0 last) in
-    tokens := !tokens @ [ next ]
+let load_tokenizer () =
+  let path =
+    match local_file "tokenizer.json" with
+    | Some path -> path
+    | None -> Kaun_hf.download_file ~file:"tokenizer.json" "gpt2"
+  in
+  match Brot.from_file path with
+  | Ok t -> t
+  | Error e -> failwith ("tokenizer: " ^ e)
+
+(* Jitted greedy decoding. The input window is fixed at [prompt + count]
+   tokens so that a single compilation serves every step: with the causal
+   mask, the logits at position n-1 are unaffected by the padding that
+   follows, so each step reads them from a full-window forward pass. *)
+
+let generate_jit ~device cfg params ~max_tokens prompt =
+  let n0 = Array.length prompt in
+  let window = n0 + max_tokens in
+  let tokens = Array.make window 0l in
+  Array.blit prompt 0 tokens 0 n0;
+  let step = Rune.jit' ~device (Gpt2.logits cfg params) in
+  let times = Array.make max_tokens 0. in
+  for n = n0 to window - 1 do
+    let t0 = Unix.gettimeofday () in
+    let input = Nx.create Nx.int32 [| 1; window |] tokens in
+    let last = Nx.slice [ I 0; I (n - 1) ] (step input) in
+    tokens.(n) <- Nx.item [] (Nx.argmax ~axis:0 last);
+    times.(n - n0) <- Unix.gettimeofday () -. t0
   done;
-  Array.of_list !tokens
-
-(* The model's top-k next-token predictions after [prompt]. *)
-
-let print_top_k ~k cfg params tokenizer prompt =
-  let ids = encode tokenizer prompt in
-  let n = Array.length ids in
-  let input = Nx.create Nx.int32 [| 1; n |] ids in
-  let logits = Gpt2.logits cfg params input in
-  let row = Nx.slice [ I 0; I (n - 1) ] logits in
-  let sorted = Nx.argsort ~descending:true ~axis:0 row in
-  let probs = Kaun.Fn.softmax row in
-  Printf.printf "  %S ->\n" prompt;
-  for i = 0 to k - 1 do
-    let id = Int32.to_int (Nx.item [ i ] sorted) in
-    let prob : float = Nx.item [ id ] probs in
-    let token = decode tokenizer [| Int32.of_int id |] in
-    Printf.printf "    #%d  %-12S p=%.4f\n" (i + 1) token prob
-  done
-
-let run repo_id =
-  Printf.printf "Loading %s...\n%!" repo_id;
-  let tokenizer = load_tokenizer repo_id in
-  let cfg, params = Gpt2.from_pretrained ~repo_id () in
-  Printf.printf "  vocab=%d n_embd=%d layers=%d heads=%d\n\n" cfg.vocab_size
-    cfg.n_embd cfg.n_layer cfg.n_head;
-
-  Printf.printf "=== Top 5 next-token predictions ===\n";
-  print_top_k ~k:5 cfg params tokenizer "Hello world";
-
-  Printf.printf "\n=== Greedy generation (20 tokens each) ===\n\n";
-  [ "The meaning of life is"; "Once upon a time" ]
-  |> List.iter (fun text ->
-      let prompt = encode tokenizer text in
-      let generated = generate cfg params ~max_tokens:20 prompt in
-      let continuation =
-        Array.sub generated (Array.length prompt)
-          (Array.length generated - Array.length prompt)
-      in
-      Printf.printf "  %S ->\n    %s\n\n%!" text (decode tokenizer continuation))
+  if max_tokens > 1 then begin
+    let rest = Array.fold_left ( +. ) (-.times.(0)) times in
+    Printf.printf "first token %.2f s (compile), then %.2f tok/s\n%!" times.(0)
+      (float_of_int (max_tokens - 1) /. rest)
+  end;
+  tokens
 
 let () =
-  match run "gpt2" with
-  | () -> ()
-  | exception Failure msg ->
-      Printf.eprintf "Skipping gpt2 example: %s\n" msg;
-      Printf.eprintf "(Is the network available?)\n"
+  let prompt = ref default_prompt in
+  let count = ref 10 in
+  let jit = ref "" in
+  Arg.parse
+    [
+      ("--prompt", Arg.Set_string prompt, "Phrase to start with");
+      ("--count", Arg.Set_int count, "Max number of tokens to generate");
+      ( "--jit",
+        Arg.Set_string jit,
+        "Compile the forward pass for this device (CPU or CUDA); eager when \
+         omitted" );
+    ]
+    (fun a -> raise (Arg.Bad ("unexpected argument " ^ a)))
+    "gpt2 [--prompt P] [--count N] [--jit DEVICE]";
+  let tokenizer = load_tokenizer () in
+  let t0 = Unix.gettimeofday () in
+  let cfg, params = load_model () in
+  Printf.printf "loaded weights in %.2f s\n%!" (Unix.gettimeofday () -. t0);
+  let ids = Array.map Int32.of_int (Brot.encode_ids tokenizer !prompt) in
+  let t0 = Unix.gettimeofday () in
+  let toks =
+    match !jit with
+    | "" -> Gpt2.generate cfg params ~max_tokens:!count ids
+    | device -> generate_jit ~device cfg params ~max_tokens:!count ids
+  in
+  let dt = Unix.gettimeofday () -. t0 in
+  Printf.printf "generated %d tokens in %.2f s (%.2f tok/s)\n%!" !count dt
+    (float_of_int !count /. dt);
+  let text = Brot.decode tokenizer (Array.map Int32.to_int toks) in
+  print_endline "Generating text...";
+  print_endline text

@@ -1,3 +1,4 @@
 (executable
  (name main)
- (libraries kaun kaun.hf brot jsont nx))
+ (modules gpt2 main)
+ (libraries kaun kaun.hf jsont brot nx rune unix))

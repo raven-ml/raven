@@ -55,6 +55,15 @@ val logits : config -> t -> (int32, Nx.int32_elt) Nx.t -> Nx.float32_t
     Raises [Invalid_argument] if [ids] has more than [cfg.n_positions]
     positions. *)
 
+val generate : config -> t -> max_tokens:int -> int32 array -> int32 array
+(** [generate cfg p ~max_tokens prompt] is [prompt] extended with [max_tokens]
+    greedily decoded token ids: each step re-runs {!logits} on the whole
+    sequence (the model keeps no key-value cache) and appends the argmax of the
+    last position.
+
+    Raises [Invalid_argument] if [prompt] is empty or the sequence outgrows
+    [cfg.n_positions]. *)
+
 val of_hf : n_layer:int -> Kaun.Checkpoint.t -> Kaun.Checkpoint.t
 (** [of_hf ~n_layer ckpt] adapts the HuggingFace GPT-2 checkpoint [ckpt] to
     {!Params}' names: splits each block's fused [c_attn] weight and bias into
@@ -62,6 +71,22 @@ val of_hf : n_layer:int -> Kaun.Checkpoint.t -> Kaun.Checkpoint.t
     weights are already [inputs × outputs], so no transposes are needed. Entries
     the model does not use (attention mask buffers) are left in place and
     ignored by extraction. *)
+
+val of_checkpoint : config -> Kaun.Checkpoint.t -> t
+(** [of_checkpoint cfg ckpt] extracts pretrained parameters from the
+    HuggingFace-layout checkpoint [ckpt]: {!of_hf} adaptation followed by typed
+    extraction against [make cfg].
+
+    Raises [Invalid_argument] if [ckpt] does not match [cfg] (see
+    {!Kaun.Checkpoint.to_params}). *)
+
+val from_file : config -> string -> t
+(** [from_file cfg path] is [of_checkpoint cfg (Checkpoint.load path)]: the
+    parameters of a local HuggingFace-layout safetensors file, for checkpoints
+    already on disk.
+
+    Raises [Failure] on I/O or format errors, [Invalid_argument] as
+    {!of_checkpoint}. *)
 
 val from_pretrained : ?repo_id:string -> unit -> config * t
 (** [from_pretrained ()] downloads [repo_id] (defaults to ["gpt2"]) from the

@@ -155,6 +155,21 @@ let logits cfg p ids =
   (* Tied LM head: logits = h @ wteᵀ. *)
   Nx.matmul h (Nx.transpose p.wte.table)
 
+(* Greedy decoding: append the argmax of the last position's logits, re-running
+   the model on the grown sequence each step (no key-value cache). *)
+
+let generate cfg p ~max_tokens prompt =
+  let n0 = Array.length prompt in
+  if n0 = 0 then invalid_arg "Gpt2.generate: prompt must not be empty";
+  let tokens = Array.make (n0 + max_tokens) 0l in
+  Array.blit prompt 0 tokens 0 n0;
+  for n = n0 to n0 + max_tokens - 1 do
+    let input = Nx.create Nx.int32 [| 1; n |] (Array.sub tokens 0 n) in
+    let last = Nx.slice [ I 0; I (n - 1) ] (logits cfg p input) in
+    tokens.(n) <- Nx.item [] (Nx.argmax ~axis:0 last)
+  done;
+  tokens
+
 (* HuggingFace checkpoint adaptation.
 
    HF names tensors h.{i}.attn.c_attn.weight, h.{i}.mlp.c_fc.bias, ... and fuses
@@ -232,10 +247,12 @@ let config_of_json json =
       | _ -> 1e-5);
   }
 
+let of_checkpoint cfg ckpt =
+  of_hf ~n_layer:cfg.n_layer ckpt
+  |> Checkpoint.to_params (module Params) ~like:(make cfg) ~cast:true
+
+let from_file cfg path = of_checkpoint cfg (Checkpoint.load path)
+
 let from_pretrained ?(repo_id = "gpt2") () =
   let cfg = config_of_json (Hf.load_config repo_id) in
-  let params =
-    Hf.load_checkpoint repo_id |> of_hf ~n_layer:cfg.n_layer
-    |> Checkpoint.to_params (module Params) ~like:(make cfg) ~cast:true
-  in
-  (cfg, params)
+  (cfg, of_checkpoint cfg (Hf.load_checkpoint repo_id))
