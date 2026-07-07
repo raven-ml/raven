@@ -154,14 +154,30 @@ let test_outputs_have_their_own_storage () =
   check_arr ~msg:"first result unchanged by the second call" [| 2.0; 4.0; 6.0 |]
     y1
 
-let test_closure_mutation_is_observed () =
+(* Mutating a capture between calls has unspecified visibility. This pins the
+   CPU device's zero-copy binding, which happens to observe the mutation
+   because contiguous captures alias the tensor's memory; other devices keep
+   the compile-time value. Not a supported pattern — thread changing values
+   as input leaves. *)
+let test_cpu_aliasing_observes_closure_mutation () =
   let c = vec32 [| 10.0; 20.0; 30.0 |] in
   let g = Rune.jit' (fun x -> Nx.add x c) in
   check_arr ~msg:"initial capture" [| 11.0; 21.0; 31.0 |]
     (g (vec32 [| 1.0; 1.0; 1.0 |]));
   Nx.blit (vec32 [| 0.0; 0.0; 0.0 |]) c;
-  check_arr ~msg:"mutated capture is re-read" [| 1.0; 1.0; 1.0 |]
+  check_arr ~msg:"mutated capture is read through the alias" [| 1.0; 1.0; 1.0 |]
     (g (vec32 [| 1.0; 1.0; 1.0 |]))
+
+(* Captures are compile-time constants: a function that assigns to one fails
+   at trace time, on every device. *)
+let test_assign_to_capture_raises () =
+  let s = vec32 [| 1.0; 2.0 |] in
+  let g =
+    Rune.jit' (fun x ->
+        Nx.blit (Nx.add s x) s;
+        Nx.mul_s s 10.0)
+  in
+  raises_jit_error (fun () -> g (vec32 [| 1.0; 1.0 |]))
 
 (* Sliding windows *)
 
@@ -534,8 +550,9 @@ let tests =
     group "state"
       [
         test "assign writes back to a leaf" test_assign_writes_back_to_leaf;
-        test "closure mutation between calls is observed"
-          test_closure_mutation_is_observed;
+        test "cpu aliasing observes closure mutation (unspecified)"
+          test_cpu_aliasing_observes_closure_mutation;
+        test "assigning to a capture raises" test_assign_to_capture_raises;
         test "non-contiguous inputs fall back to copies"
           test_non_contiguous_input_matches_eager;
         test "offset views read the right span"

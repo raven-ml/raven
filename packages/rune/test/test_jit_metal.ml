@@ -36,23 +36,18 @@ let test_capture_is_uploaded_once () =
     [| 11.0; 21.0; 31.0 |]
     (g (vec32 [| 1.0; 1.0; 1.0 |]))
 
-(* Captures the function assigns to are the exception: the writeback keeps the
-   host value current and the buffer is re-uploaded on every call, so in-place
-   state compounds across calls and eager mutations of it are observed. *)
-let test_assigned_capture_carries_state () =
+(* Captures are compile-time constants: a function that assigns to one fails
+   at trace time. Mutable state belongs in the input structure. *)
+let test_assign_to_capture_raises () =
   let s = vec32 [| 1.0; 2.0 |] in
   let g =
     Rune.jit' ~device:"METAL" (fun x ->
         Nx.blit (Nx.add s x) s;
         Nx.mul_s s 10.0)
   in
-  check_arr ~msg:"first call" [| 20.0; 30.0 |] (g (vec32 [| 1.0; 1.0 |]));
-  check_arr ~msg:"state written back" [| 2.0; 3.0 |] s;
-  check_arr ~msg:"second call compounds" [| 30.0; 40.0 |]
-    (g (vec32 [| 1.0; 1.0 |]));
-  Nx.blit (vec32 [| 0.0; 0.0 |]) s;
-  check_arr ~msg:"eager mutation of assigned state is observed" [| 10.0; 10.0 |]
-    (g (vec32 [| 1.0; 1.0 |]))
+  raises_match
+    (fun exn -> match exn with Rune.Jit_error _ -> true | _ -> false)
+    (fun () -> ignore (g (vec32 [| 1.0; 1.0 |])))
 
 let tests =
   [
@@ -61,7 +56,7 @@ let tests =
         test "element-wise chain matches eager" test_elementwise_on_metal;
         test "grad inside jit matches eager" test_matmul_grad_on_metal;
         test "captures are uploaded once" test_capture_is_uploaded_once;
-        test "assigned captures carry state" test_assigned_capture_carries_state;
+        test "assigning to a capture raises" test_assign_to_capture_raises;
       ];
   ]
 

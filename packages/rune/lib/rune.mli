@@ -304,7 +304,8 @@ val check_grads :
 exception Jit_error of string
 (** Raised when a function cannot be compiled: it read the value of a traced
     tensor (for example [Nx.item] on a value that depends on the inputs, or a
-    data-dependent branch), or it used an operation the compiler does not
+    data-dependent branch), it assigned to a tensor it closes over (captures
+    are compile-time constants), or it used an operation the compiler does not
     support (FFT, linear algebra, random number generation, complex, int4 and
     uint4 tensors, assigning into a view). *)
 
@@ -341,14 +342,13 @@ val jit :
 
     The compilation cache lives in the partial application [jit (module P) f]:
     apply [jit] once and reuse the returned function. Tensors [f] closes over
-    are inputs of the compiled program too. On the CPU device, contiguous
-    captures are read in place, so mutations between calls behave as they do
-    eagerly; non-contiguous captures, and all captures on other devices, are
-    copied to the device once per closure — signatures share the copy — when
-    first compiled and keep that value, so pass values that change between
-    calls as leaves of [P] rather than capturing them. Captures that [f]
-    itself assigns to are the exception: they are re-read on every call (see
-    below).
+    are compile-time constants, bound once when the trace first compiles: on
+    the CPU device contiguous captures are read in place, and every other
+    capture is copied to the device once per closure — signatures share the
+    copy. Mutating a captured tensor between calls is not supported and has
+    unspecified visibility (the CPU device may observe the mutation through
+    its in-place binding; other devices never do): pass values that change
+    between calls as leaves of [P] rather than capturing them.
 
     Under an enclosing transformation ({!grad}, {!val-vmap}, {!with_debug}, an
     outer [jit]), the wrapped function runs directly so the transformation
@@ -366,12 +366,14 @@ val jit :
           Params.map2 (fun w g -> Nx.sub w (Nx.mul_s g lr)) p g)
     ]}
 
-    Whole-tensor in-place updates ([Nx.assign] on a leaf or a captured tensor)
-    are replayed by writing the computed value back into the destination, and
-    assigned captures are re-read on every call, so in-place state carries
-    across calls on every device. Structured values read during tracing must not
-    depend on traced tensors: a data-dependent {!cond} or {!while_loop}
-    predicate raises {!Jit_error}. Compiled functions are not thread-safe.
+    Whole-tensor in-place updates ([Nx.assign] or [Nx.blit] on an input leaf)
+    are replayed by writing the computed value back into the destination, so
+    in-place state threaded through [P] carries across calls on every device.
+    Assigning to a captured tensor raises {!Jit_error} at trace time — captures
+    are compile-time constants; thread mutable state through the input
+    structure instead. Structured values read during tracing must not depend on
+    traced tensors: a data-dependent {!cond} or {!while_loop} predicate raises
+    {!Jit_error}. Compiled functions are not thread-safe.
 
     Raises {!Jit_error} when tracing fails ({!exception-Jit_error}), and
     [Invalid_argument] for an unknown or unavailable [device]. *)

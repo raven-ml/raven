@@ -266,6 +266,14 @@ thread.
 
 ### Rune
 
+- **Breaking.** `jit` closure captures are now compile-time constants on
+  every device: they are bound once when the trace compiles and never
+  refreshed, and a jitted function that assigns to a capture (`assign`,
+  `blit`) raises `Jit_error` at trace time instead of writing state back.
+  Thread mutable state through the input structure instead; assigning to an
+  input leaf still writes back on every call. Mutating a captured tensor
+  between calls now has unspecified visibility (the CPU device may observe
+  it through zero-copy aliasing; other devices never do).
 - Tensors captured by a jitted closure are uploaded to the device once per
   closure and shared by all compiled signatures, instead of once per
   signature — halving resident weight memory for prefill+decode closures.

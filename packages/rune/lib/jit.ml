@@ -19,14 +19,15 @@
    Replaying: every call binds the current input leaves to the compiled
    program's buffers and runs the schedule. On the CPU device, contiguous inputs
    and captured constants are wrapped in place — kernels read the tensors' own
-   memory, so mutations between calls are observed like in eager execution — and
-   outputs are computed straight into the returned tensors' storage. Other
-   devices and non-contiguous tensors go through byte copies: inputs are
-   re-copied on every call, captured tensors are uploaded once when the trace
-   compiles and stay resident on the device. Whole-tensor [assign]s are replayed
-   by writing the computed value back into the destination; assigned captures
-   are re-uploaded on every call so the written-back state (and any eager
-   mutation of it) carries into the next call on every device.
+   memory — and outputs are computed straight into the returned tensors'
+   storage. Other devices and non-contiguous tensors go through byte copies:
+   inputs are re-copied on every call, captured tensors are uploaded once when
+   the trace compiles and stay resident on the device. Captures are compile-time
+   constants: mutating one between calls has unspecified visibility (the CPU
+   wrapping may observe it, device copies never do), and a whole-tensor [assign]
+   whose destination is a capture raises [Jit_error] at trace time. An [assign]
+   to an input leaf is replayed by writing the computed value back into the
+   destination on every call.
 
    Reading the value of a traced tensor (for example [Nx.item] on a value that
    depends on the inputs) raises [Jit_error]: a compiled trace cannot branch on
@@ -274,7 +275,7 @@ type state = {
   st_ctx : Nx_effect.context;
   table : F.Tensor.t Tbl.t; (* nx tensor -> tolk tensor *)
   traced : unit Tbl.t; (* placeholders whose bytes are not meaningful *)
-  externals : unit Tbl.t; (* inputs and lifted constants *)
+  captures : unit Tbl.t; (* closure captures lifted into the trace *)
   input_index : int Tbl.t; (* input placeholder -> traversal position *)
   wb_seen : unit Tbl.t;
   mutable consts : (U.t * packed) list; (* reverse order *)
@@ -294,10 +295,10 @@ let make_node st dtolk n =
     ~device:(U.Single (Tolk.Device.name st.st_device))
     ()
 
-(* A tensor entering the trace without a table entry is a closure capture: it
-   becomes a buffer input backed by the tensor's own memory when the device can
-   share it, and re-read from the tensor on every call otherwise, so mutations
-   between calls behave as they do eagerly. *)
+(* Bind a tensor whose bytes exist outside the traced computation (a closure
+   capture, or a host constant created while tracing) as a compile-time
+   constant: a buffer input aliasing the tensor's memory when the device can
+   share it, uploaded once when the trace compiles otherwise. *)
 let lift_const (type a b) st (x : (a, b) Nx_effect.t) : F.Tensor.t =
   (* The trace table hashes keys structurally, and a deferred capture would
      mutate — changing its hash — if the traced function read it. Captures are
@@ -310,14 +311,16 @@ let lift_const (type a b) st (x : (a, b) Nx_effect.t) : F.Tensor.t =
   st.consts <- (node, Packed (dt, x)) :: st.consts;
   let tt = buffer_tensor node shape in
   Tbl.replace st.table (Obj.repr x) tt;
-  Tbl.replace st.externals (Obj.repr x) ();
   tt
 
+(* A tensor entering the trace without a table entry is a closure capture. *)
 let tolk_of : type a b. state -> (a, b) Nx_effect.t -> F.Tensor.t =
  fun st x ->
   match Tbl.find_opt st.table (Obj.repr x) with
   | Some t -> t
-  | None -> lift_const st x
+  | None ->
+      Tbl.replace st.captures (Obj.repr x) ();
+      lift_const st x
 
 (* Composed operations Tolk has no primitive for. *)
 
@@ -754,25 +757,32 @@ let handler st =
     | E_copy { t_in } ->
         Some (fun k -> ret k (dt t_in) (F.Elementwise.contiguous (go t_in)))
     (* In-place assignment: rebind the destination to the assigned value.
-       Externally visible destinations (inputs, closure captures) are also
-       written back on every call. Assigning into a view would require aliasing
-       the destination's base tensor, which a trace cannot see. *)
+       Input leaves are also written back on every call. Captures are
+       compile-time constants, so assigning to one cannot be replayed and
+       fails at trace time. Assigning into a view would require aliasing the
+       destination's base tensor, which a trace cannot see. *)
     | E_assign { dst; src } ->
         Some
           (fun k ->
             let v = Nx_effect.view dst in
+            let key = Obj.repr dst in
             if not (NV.is_c_contiguous v && NV.offset v = 0) then
               discontinue k
                 (Jit_error
                    "Rune.jit: assigning into a view (set_item, set_slice, \
                     blit) is not supported inside jit; use scatter instead")
+            else if Tbl.mem st.captures key || not (Tbl.mem st.table key) then
+              discontinue k
+                (Jit_error
+                   "Rune.jit: assigning to a captured tensor is not supported \
+                    inside jit (captures are compile-time constants); thread \
+                    the state through the function's inputs and return the \
+                    updated value instead")
             else begin
               let sv = tolk_of st src in
-              if not (Tbl.mem st.table (Obj.repr dst)) then
-                ignore (lift_const st dst);
-              Tbl.replace st.table (Obj.repr dst) sv;
-              let key = Obj.repr dst in
-              if Tbl.mem st.externals key && not (Tbl.mem st.wb_seen key) then begin
+              Tbl.replace st.table key sv;
+              if Tbl.mem st.input_index key && not (Tbl.mem st.wb_seen key)
+              then begin
                 Tbl.replace st.wb_seen key ();
                 st.writebacks <-
                   Packed (Nx_effect.dtype dst, dst) :: st.writebacks
@@ -975,19 +985,6 @@ let write_into : type a b.
 
 (* Compiled traces *)
 
-type wb_target = Wb_input of int | Wb_const of packed
-
-(* How a captured constant is bound: [Const_wrapped] buffers alias the tensor's
-   memory, so its current value is read directly on every call (the packed
-   tensor and host view keep the memory reachable); [Const_copy] buffers hold a
-   copy of the tensor's bytes, uploaded once at compile time. [refresh] marks
-   captures the traced function assigns to: the writeback keeps their host value
-   current between calls, so their bytes are re-uploaded on every call and later
-   mutations stay observed. *)
-type const_binding =
-  | Const_wrapped of packed * Obj.t
-  | Const_copy of { buf : Tolk.Device.Buffer.t; src : packed; refresh : bool }
-
 type 'q compiled = {
   cp_device : Tolk.Device.t;
   cp_zero_copy : bool;
@@ -996,14 +993,18 @@ type 'q compiled = {
   cp_vars : (string * int) list;
   cp_binding : Tolk.Realize.Buffers.t;
   cp_inputs : input array; (* one per leaf visit, in traversal order *)
-  cp_consts : const_binding array;
+  cp_wrapped : (packed * Obj.t) array;
+      (* captures bound by aliasing host memory: kernels read that memory on
+         every call, so it must stay reachable while the trace can run *)
   cp_outputs : (Obj.t * packed * U.t) list;
       (* output leaf -> its placeholder (dtype and shape) and buffer node *)
   cp_reserved : (int, unit) Hashtbl.t;
       (* tags of input and constant buffer nodes: outputs must not reseed
          them *)
   cp_skeleton : 'q; (* trace-time output structure *)
-  cp_writebacks : (wb_target * U.t) array;
+  cp_writebacks : (int * U.t) array;
+      (* assigned input leaf's traversal position -> its computed buffer
+         node *)
   cp_scratch : scratch; (* staging bytes reused across replays *)
 }
 
@@ -1023,7 +1024,7 @@ let trace_compile ~device:dev ~zero_copy ~const_cache (module P : Nx.Ptree.S)
       st_ctx = Nx_effect.create_context ();
       table = Tbl.create 64;
       traced = Tbl.create 64;
-      externals = Tbl.create 16;
+      captures = Tbl.create 16;
       input_index = Tbl.create 16;
       wb_seen = Tbl.create 4;
       consts = [];
@@ -1053,7 +1054,6 @@ let trace_compile ~device:dev ~zero_copy ~const_cache (module P : Nx.Ptree.S)
           let ph = Nx_effect.buffer st.st_ctx ldt shape in
           Tbl.replace st.table (Obj.repr ph) (buffer_tensor node shape);
           Tbl.replace st.traced (Obj.repr ph) ();
-          Tbl.replace st.externals (Obj.repr ph) ();
           Tbl.replace st.input_index (Obj.repr ph) !pos;
           let inp = { i_node = node; i_buf = buf } in
           assoc := (key, (Packed (ldt, ph), inp)) :: !assoc;
@@ -1148,43 +1148,36 @@ let trace_compile ~device:dev ~zero_copy ~const_cache (module P : Nx.Ptree.S)
       Hashtbl.replace reserved (U.tag inp.i_node) ();
       Tolk.Realize.Buffers.seed binding inp.i_node inp.i_buf)
     !assoc;
-  (* Bind each constant: alias its memory when the device shares host memory and
-     the tensor is contiguous, copy its bytes once otherwise. Captures the
-     function assigns to are refreshed from the host on every call. *)
+  (* Bind each constant once, at compile time: alias its memory when the
+     device shares host memory and the tensor is contiguous, copy its bytes to
+     the device otherwise. *)
   let scratch = Hashtbl.create 8 in
-  let wb_keys = List.map (fun (Packed (_, dst)) -> Obj.repr dst) wbs in
-  let consts =
-    List.rev_map
-      (fun (node, (Packed (cdt, src) as pk)) ->
-        Hashtbl.replace reserved (U.tag node) ();
-        match if zero_copy then wrap_tensor dev src else None with
-        | Some (buf, keep) ->
-            Tolk.Realize.Buffers.seed binding node buf;
-            Const_wrapped (pk, keep)
-        | None ->
-            (* One device copy of a capture serves every signature of the
-               closure: the bytes are uploaded when the capture is first
-               compiled and later compilations reuse the buffer. Assigned
-               (refresh) captures share it too — their re-upload happens on
-               every call, not here. *)
-            let buf =
-              match Tbl.find_opt const_cache (Obj.repr src) with
-              | Some buf -> buf
-              | None ->
-                  let n = numel (shape_of src) in
-                  let buf =
-                    Tolk.Device.create_buffer ~size:n ~dtype:(tolk_dtype cdt)
-                      dev
-                  in
-                  copyin_tensor scratch buf src;
-                  Tbl.replace const_cache (Obj.repr src) buf;
-                  buf
-            in
-            Tolk.Realize.Buffers.seed binding node buf;
-            Const_copy
-              { buf; src = pk; refresh = List.memq (Obj.repr src) wb_keys })
-      st.consts
-  in
+  let wrapped = ref [] in
+  List.iter
+    (fun (node, (Packed (cdt, src) as pk)) ->
+      Hashtbl.replace reserved (U.tag node) ();
+      match if zero_copy then wrap_tensor dev src else None with
+      | Some (buf, keep) ->
+          Tolk.Realize.Buffers.seed binding node buf;
+          wrapped := (pk, keep) :: !wrapped
+      | None ->
+          (* One device copy of a capture serves every signature of the
+             closure: the bytes are uploaded when the capture is first
+             compiled and later compilations reuse the buffer. *)
+          let buf =
+            match Tbl.find_opt const_cache (Obj.repr src) with
+            | Some buf -> buf
+            | None ->
+                let n = numel (shape_of src) in
+                let buf =
+                  Tolk.Device.create_buffer ~size:n ~dtype:(tolk_dtype cdt) dev
+                in
+                copyin_tensor scratch buf src;
+                Tbl.replace const_cache (Obj.repr src) buf;
+                buf
+          in
+          Tolk.Realize.Buffers.seed binding node buf)
+    st.consts;
   (* Resolve each output to the buffer node realization assigned it. An output
      whose node is already a graph buffer (an input or constant returned
      unchanged) reads that buffer directly. *)
@@ -1205,14 +1198,11 @@ let trace_compile ~device:dev ~zero_copy ~const_cache (module P : Nx.Ptree.S)
   in
   let cp_writebacks =
     List.map
-      (fun ((Packed (_, dst) as pk), tt, c) ->
+      (fun (Packed (_, dst), tt, c) ->
         let node = resolve "an assigned tensor" tt c in
-        let target =
-          match Tbl.find_opt st.input_index (Obj.repr dst) with
-          | Some i -> Wb_input i
-          | None -> Wb_const pk
-        in
-        (target, node))
+        match Tbl.find_opt st.input_index (Obj.repr dst) with
+        | Some i -> (i, node)
+        | None -> assert false (* only input leaves are recorded *))
       wb_conts
   in
   {
@@ -1223,7 +1213,7 @@ let trace_compile ~device:dev ~zero_copy ~const_cache (module P : Nx.Ptree.S)
     cp_vars = var_vals;
     cp_binding = binding;
     cp_inputs = Array.of_list (List.rev !inputs);
-    cp_consts = Array.of_list consts;
+    cp_wrapped = Array.of_list !wrapped;
     cp_outputs;
     cp_reserved = reserved;
     cp_skeleton = y;
@@ -1271,12 +1261,6 @@ let replay (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S) (c : Q.t compiled)
               copyin_tensor c.cp_scratch inp.i_buf leaf));
       incr i)
     params;
-  Array.iter
-    (function
-      | Const_wrapped _ | Const_copy { refresh = false; _ } -> ()
-      | Const_copy { buf; src = Packed (_, src); refresh = true } ->
-          copyin_tensor c.cp_scratch buf src)
-    c.cp_consts;
   (* Wire the outputs' storage. On the zero-copy device, fresh host buffers
      become the kernels' output storage, so results are written straight into
      the tensors returned to the caller; nodes backed by an input or constant
@@ -1339,10 +1323,13 @@ let replay (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S) (c : Q.t compiled)
           Hashtbl.add out_bufs tag dst
         end)
       c.cp_outputs;
-  (* Wrapped buffers alias caller memory: wait for in-flight kernels before
-     reading results or letting the caller touch the inputs again. *)
+  (* Wrapped buffers alias caller memory (seeded inputs and wrapped captures):
+     wait for in-flight kernels before reading results or letting the caller
+     touch the inputs again, and keep the aliased memory reachable until
+     then. *)
   Tolk.Device.synchronize c.cp_device;
   ignore (Sys.opaque_identity !keep);
+  ignore (Sys.opaque_identity c.cp_wrapped);
   (* Output leaves resolving to the same buffer node share one handle, so
      each device buffer has a single owner. *)
   let handles : (int, packed) Hashtbl.t = Hashtbl.create 8 in
@@ -1392,17 +1379,14 @@ let replay (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S) (c : Q.t compiled)
       c.cp_skeleton
   in
   Array.iter
-    (fun (target, node) ->
+    (fun (idx, node) ->
       let buf = Tolk.Realize.Buffers.of_buffer_node c.cp_binding node in
-      match target with
-      | Wb_const (Packed (_, dst)) -> write_into c.cp_scratch c.cp_ctx dst buf
-      | Wb_input idx ->
-          let j = ref 0 in
-          P.iter
-            (fun leaf ->
-              if !j = idx then write_into c.cp_scratch c.cp_ctx leaf buf;
-              incr j)
-            params)
+      let j = ref 0 in
+      P.iter
+        (fun leaf ->
+          if !j = idx then write_into c.cp_scratch c.cp_ctx leaf buf;
+          incr j)
+        params)
     c.cp_writebacks;
   if Lazy.force jit_debug >= 1 then
     Printf.eprintf
