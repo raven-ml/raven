@@ -1887,6 +1887,115 @@ let linear_preserves_live_ranges () =
   is_true ~msg:"Linear does not close ranges"
     (List.exists (Uop.equal r) (Uop.ranges lin))
 
+(* Symbolic integers. [Uop.resolve]/[smax]/[smin]/[sprod]/[broadcast_shape]
+   lean on the symbolic simplifier, which installs itself into
+   [Uop.simplify_ref] when [Symbolic] is linked; force that linkage here. *)
+let () =
+  let (_ : Uop.t -> Uop.t) = Sys.opaque_identity Symbolic.simplify in
+  ()
+
+let resolve_decides_comparisons_from_bounds () =
+  let v = Uop.variable ~name:"sint_r" ~min_val:1 ~max_val:10 () in
+  is_true ~msg:"provably true comparison"
+    (Uop.resolve Uop.O.(v < Uop.const_int 20));
+  is_true ~msg:"provably false comparison"
+    (not (Uop.resolve Uop.O.(Uop.const_int 20 < v)));
+  let undecided = Uop.O.(v < Uop.const_int 5) in
+  is_true ~msg:"undecidable defaults to true" (Uop.resolve undecided);
+  is_true ~msg:"undecidable takes the given default"
+    (not (Uop.resolve ~default:false undecided));
+  let raises =
+    try
+      ignore (Uop.resolve (Uop.const_int 3));
+      false
+    with Invalid_argument _ -> true
+  in
+  is_true ~msg:"non-boolean input rejected" raises
+
+let smax_smin_fold_when_bounds_decide () =
+  let v = Uop.variable ~name:"sint_m" ~min_val:3 ~max_val:10 () in
+  is_true ~msg:"smax folds a dominated constant away"
+    (Uop.equal (Uop.smax [ Uop.const_int 2; v ]) v);
+  equal (option int) ~msg:"smax of constants folds" (Some 5)
+    (Uop.const_int_value (Uop.smax [ Uop.const_int 2; Uop.const_int 5 ]));
+  equal (option int) ~msg:"smin of constants folds" (Some 2)
+    (Uop.const_int_value (Uop.smin [ Uop.const_int 5; Uop.const_int 2 ]));
+  is_true ~msg:"smin folds a dominating constant away"
+    (Uop.equal (Uop.smin [ Uop.const_int 2; v ]) (Uop.const_int 2));
+  is_true ~msg:"smin keeps the dominated symbolic term"
+    (Uop.equal (Uop.smin [ v; Uop.const_int 20 ]) v)
+
+let sprod_simplifies () =
+  equal (option int) ~msg:"empty product is one" (Some 1)
+    (Uop.const_int_value (Uop.sprod []));
+  equal (option int) ~msg:"constant product folds" (Some 6)
+    (Uop.const_int_value (Uop.sprod [ Uop.const_int 2; Uop.const_int 3 ]));
+  let v = Uop.variable ~name:"sint_p" ~min_val:1 ~max_val:4 () in
+  is_true ~msg:"multiplication by one folds away"
+    (Uop.equal (Uop.sprod [ Uop.const_int 1; v ]) v)
+
+let broadcast_shape_symbolic_and_raising () =
+  let v = Uop.variable ~name:"sint_b" ~min_val:0 ~max_val:6 () in
+  let d = Uop.O.(v + Uop.const_int 1) in
+  (match Uop.broadcast_shape [ [ Uop.const_int 1 ]; [ d ] ] with
+   | [ out ] -> is_true ~msg:"one broadcasts against a symbolic dim"
+       (Uop.equal out d)
+   | _ -> fail "expected rank-1 broadcast");
+  (match
+     Uop.broadcast_shape
+       [ [ Uop.const_int 4; Uop.const_int 1 ]; [ Uop.const_int 1; d ] ]
+   with
+   | [ a; b ] ->
+       is_true ~msg:"aligned from the last axis"
+         (Uop.equal a (Uop.const_int 4) && Uop.equal b d)
+   | _ -> fail "expected rank-2 broadcast");
+  (match Uop.broadcast_shape [ [ Uop.const_int 0 ]; [ Uop.const_int 1 ] ] with
+   | [ z ] -> equal (option int) ~msg:"zero wins over one" (Some 0)
+       (Uop.const_int_value z)
+   | _ -> fail "expected rank-1 broadcast");
+  let raises =
+    try
+      ignore (Uop.broadcast_shape [ [ Uop.const_int 3 ]; [ Uop.const_int 2 ] ]);
+      false
+    with Invalid_argument _ -> true
+  in
+  is_true ~msg:"incompatible constants raise" raises;
+  let w = Uop.variable ~name:"sint_b2" ~min_val:0 ~max_val:6 () in
+  let raises_sym =
+    try
+      ignore (Uop.broadcast_shape [ [ d ]; [ Uop.O.(w + Uop.const_int 1) ] ]);
+      false
+    with Invalid_argument _ -> true
+  in
+  is_true ~msg:"distinct symbolic dims raise" raises_sym
+
+let unbind_splits_bound_variables () =
+  let v = Uop.variable ~name:"sint_u" ~min_val:0 ~max_val:10 () in
+  let bound = Uop.bind ~var:v ~value:(Uop.const_int 7) in
+  let var, value = Uop.unbind bound in
+  is_true ~msg:"unbind returns the variable" (Uop.equal var v);
+  equal int ~msg:"unbind returns the value" 7 value;
+  let raises =
+    try
+      ignore (Uop.unbind v);
+      false
+    with Invalid_argument _ -> true
+  in
+  is_true ~msg:"unbind of a plain variable raises" raises
+
+let bind_validates_range () =
+  let v = Uop.variable ~name:"sint_bd" ~min_val:2 ~max_val:5 () in
+  ignore (Uop.bind ~var:v ~value:(Uop.const_int 2));
+  ignore (Uop.bind ~var:v ~value:(Uop.const_int 5));
+  let rejects value =
+    try
+      ignore (Uop.bind ~var:v ~value:(Uop.const_int value));
+      false
+    with Invalid_argument _ -> true
+  in
+  is_true ~msg:"below-range bind value rejected" (rejects 1);
+  is_true ~msg:"above-range bind value rejected" (rejects 6)
+
 let () =
   run "tolk.uop"
     [
@@ -1993,5 +2102,18 @@ let () =
           test "After closes dependency ranges"
             after_closes_ranges_from_dependencies;
           test "Linear preserves live ranges" linear_preserves_live_ranges;
+        ];
+      group "Symbolic integers"
+        [
+          test "resolve decides comparisons from bounds"
+            resolve_decides_comparisons_from_bounds;
+          test "smax/smin fold when bounds decide"
+            smax_smin_fold_when_bounds_decide;
+          test "sprod simplifies" sprod_simplifies;
+          test "broadcast_shape handles symbolic dims and raises"
+            broadcast_shape_symbolic_and_raising;
+          test "unbind splits bound variables"
+            unbind_splits_bound_variables;
+          test "bind validates the variable range" bind_validates_range;
         ];
     ]

@@ -142,11 +142,13 @@ let create_linear_call_substitutes_params_and_new_buffers () =
        | _ -> failwith "expected single CALL with two args")
   | _ -> failwith "expected single scheduled item"
 
-let create_linear_call_ignores_binds_for_param_slots () =
+(* Replacement slots are assigned over every replaced input, BINDs included,
+   so a PARAM slot indexes the raw argument list. *)
+let create_linear_call_param_slots_count_binds () =
   let shape = U.const_int 4 in
   let n = U.variable ~name:"n" ~min_val:0 ~max_val:16 () in
   let bind_n = U.bind ~var:n ~value:(U.const_int 5) in
-  let formal = U.param ~slot:0 ~dtype:(ptr_i32 4) ~shape () in
+  let formal = U.param ~slot:1 ~dtype:(ptr_i32 4) ~shape () in
   let actual = U.buffer ~slot:10 ~dtype:(ptr_i32 4) ~shape () in
   let body_call =
     U.call ~body:(kernel_body "uses_n" [ n ]) ~args:[ formal ]
@@ -165,7 +167,7 @@ let create_linear_call_ignores_binds_for_param_slots () =
   | [ si ] ->
       (match U.as_call si with
        | Some { args = [ arg ]; _ } ->
-           is_true ~msg:"PARAM slot ignores BIND arguments"
+           is_true ~msg:"PARAM slot counts BIND arguments"
              (U.equal actual arg)
        | _ -> failwith "expected single CALL with one arg")
   | _ -> failwith "expected single scheduled item"
@@ -254,8 +256,8 @@ let () =
         [
           test "resolves LINEAR calls with params and fresh buffers"
             create_linear_call_substitutes_params_and_new_buffers;
-          test "ignores BIND nodes when substituting PARAM slots"
-            create_linear_call_ignores_binds_for_param_slots;
+          test "PARAM slots count BIND arguments"
+            create_linear_call_param_slots_count_binds;
           test "returns only binds used by scheduled kernels"
             create_linear_with_vars_returns_only_used_binds;
           test "memory-plans internal buffers when not capturing"

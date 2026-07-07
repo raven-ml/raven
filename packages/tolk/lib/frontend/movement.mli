@@ -12,8 +12,13 @@
     the requested shape equals the current shape.
 
     Axis arguments accept negative indices, counted from the last axis. Shape
-    arguments are concrete integers; symbolic shapes are not yet supported by
-    this module. *)
+    arguments on the plain entry points are concrete integers; the [symbolic_*]
+    entry points take dimension nodes instead and accept symbolic values.
+    {!reshape}, {!expand}, {!broadcast_to}, {!pad}, {!squeeze}, {!unsqueeze},
+    {!flatten}, {!transpose}, {!permute}, and {!flip} also operate on tensors
+    whose current shape is symbolic. The remaining operations ({!pool},
+    {!unfold}, {!split}, {!repeat}, {!unflatten}, and strided indexing) require
+    concrete shapes and raise [Invalid_argument] on a symbolic dimension. *)
 
 val reshape : Tensor.t -> int list -> Tensor.t
 (** [reshape t dims] returns a view of [t] with shape [dims], preserving the
@@ -22,6 +27,12 @@ val reshape : Tensor.t -> int list -> Tensor.t
 
     @raise Invalid_argument
       if more than one [-1] is given, or if the element counts do not match. *)
+
+val symbolic_reshape : Tensor.t -> Tolk_uop.Uop.t list -> Tensor.t
+(** [symbolic_reshape t dims] is {!reshape} over dimension nodes, with no [-1]
+    inference. The element count must be preserved provably.
+
+    @raise Invalid_argument if the element counts cannot be shown equal. *)
 
 val expand : Tensor.t -> int list -> Tensor.t
 (** [expand t dims] broadcasts [t] to shape [dims]. A [-1] entry keeps the
@@ -34,6 +45,11 @@ val broadcast_to : Tensor.t -> int list -> Tensor.t
 (** [broadcast_to t dims] is [expand] to an explicit target shape, with no
     [-1] handling: [t] is left-aligned with [1]s and every axis must already
     match [dims] or have size [1]. *)
+
+val symbolic_broadcast_to : Tensor.t -> Tolk_uop.Uop.t list -> Tensor.t
+(** [symbolic_broadcast_to t dims] is {!broadcast_to} over dimension nodes. A
+    symbolic axis matches when it carries the same expression in [t] and
+    [dims], or when [t] has size [1] there. *)
 
 val permute : Tensor.t -> int list -> Tensor.t
 (** [permute t order] reorders the axes of [t] so that output axis [k] is
@@ -57,6 +73,17 @@ val shrink : Tensor.t -> (int * int) list -> Tensor.t
     half-open [(start, stop)] range. Every axis must be listed.
 
     @raise Invalid_argument if [bounds] length differs from [ndim t]. *)
+
+val symbolic_shrink :
+  Tensor.t -> (Tolk_uop.Uop.t * Tolk_uop.Uop.t) option list -> Tensor.t
+(** [symbolic_shrink t bounds] is {!shrink} over dimension nodes: each bound is
+    a half-open [(start, stop)] pair of possibly symbolic values, whose axis
+    size becomes [stop - start], or [None] to leave the axis unchanged. The
+    upper bound of every slice must provably stay inside the input axis.
+
+    @raise Invalid_argument
+      if [bounds] length differs from [ndim t] or a slice can exceed its
+      axis. *)
 
 val squeeze : ?dim:int -> Tensor.t -> Tensor.t
 (** [squeeze t] removes all size-[1] axes. [squeeze ~dim t] removes only axis

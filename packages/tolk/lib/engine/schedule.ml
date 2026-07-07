@@ -291,8 +291,10 @@ let resolve_linear_call_rule (node : U.t) : U.t option =
   match U.as_call node with
   | Some { body; args; _ } ->
       if is_op Ops.Linear body then
+        (* Replacement slots were assigned over every replaced input,
+           including BINDs, so index the raw argument list. *)
         let ctx =
-          { param_bufs = call_arg_uops args;
+          { param_bufs = args;
             created_buffers = Hashtbl.create 16 }
         in
         Some (U.graph_rewrite ~walk:true (post_sched_cache_rule ctx) body)
@@ -563,11 +565,16 @@ let lower_sink_to_linear ~get_kernel_graph (sink : U.t) : U.t option =
       Some linear
   | _ -> None
 
+(* Kernel-body symbolic variables are ALU params; their slots may have been
+   renumbered by kernel-parameter compaction, so identify them by address
+   space and name. *)
 let variables_of_kernel_body body =
   U.toposort ~enter_calls:true body
   |> List.filter_map (fun node ->
          match U.as_param node with
-         | Some { param = { slot = -1; name = Some name; _ }; _ } -> Some name
+         | Some { param = { name = Some name; addrspace = Dtype.Alu; _ }; _ }
+           ->
+             Some name
          | _ -> None)
   |> List.sort_uniq String.compare
 

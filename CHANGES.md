@@ -33,6 +33,23 @@ thread.
 
 ### Tolk (new)
 
+- Support symbolic shapes in the tensor frontend: new `Movement.symbolic_shrink`,
+  `symbolic_reshape`, and `symbolic_broadcast_to` entry points, and
+  symbolic-shape handling through broadcasting, `dot`, `softmax`, reductions,
+  and `Op.assign` — enough for a KV-cache transformer decode step where the
+  sequence position is a bound variable. Operations that need concrete shapes
+  (`pool`, `split`, strided indexing, ...) keep raising `Invalid_argument`.
+- Add symbolic-integer helpers to `Uop`: `resolve`, `smax`, `smin`, `sprod`,
+  a checked `broadcast_shape`, and `unbind` for splitting a `Bind` into its
+  variable and value. `Uop.bind` now validates the value against the
+  variable's range.
+- Fix the engine so one schedule serves every bound value of a symbolic
+  variable: callified `Bind` inputs keep their variable name and range,
+  kernel graphs recover the canonical variable, and variable values are
+  passed to kernels at launch instead of being resolved as buffers.
+- Fix post-schedule parameter substitution to index call arguments including
+  `Bind`s; previously a buffer argument following a `Bind` was bound to the
+  wrong slot.
 - JIT replay is now parameter-substitution based: capture substitutes input
   buffer nodes with slotted `Param`s, memory-plans the combined schedule
   once, and replays with per-call `input_uops` and `var_vals`, so replays

@@ -23,8 +23,11 @@ let broadcasted ?(reverse = false) a b =
   let x, y = if reverse then (b, a) else (a, b) in
   let x, y =
     try
-      let out = T.broadcast_shape [ T.shape x; T.shape y ] in
-      (Movement.broadcast_to x out, Movement.broadcast_to y out)
+      let out =
+        Uop.broadcast_shape [ T.symbolic_shape x; T.symbolic_shape y ]
+      in
+      (Movement.symbolic_broadcast_to x out,
+       Movement.symbolic_broadcast_to y out)
     with Invalid_argument _ -> (x, y)
   in
   if
@@ -47,7 +50,7 @@ let assign t x =
   if T.uop t == T.uop x then t
   else begin
     (* Broadcast the value's shape only; the dtype must already match. *)
-    let x = Movement.broadcast_to x (T.shape t) in
+    let x = Movement.symbolic_broadcast_to x (T.symbolic_shape t) in
     (match (T.device t, T.device x) with
     | Some dt, Some dx when dt <> dx ->
         invalid_arg "Op.assign: device mismatch"
@@ -115,7 +118,16 @@ let cat ?(dim = 0) t args =
   let tensors = t :: args in
   let dim = T.resolve_dim t dim in
   let n = T.ndim t in
-  let sizes = List.map (fun x -> List.nth (T.shape x) dim) tensors in
+  (* Only the concatenated axis must be concrete; the other axes may stay
+     symbolic since they receive no padding. *)
+  let sizes =
+    List.map
+      (fun x ->
+        match Uop.const_int_value (List.nth (T.symbolic_shape x) dim) with
+        | Some s -> s
+        | None -> invalid_arg "Op.cat: symbolic dimension on the cat axis")
+      tensors
+  in
   let total = List.fold_left ( + ) 0 sizes in
   let combine =
     if D.is_bool (T.dtype t) then Elementwise.bitwise_or else Elementwise.add
@@ -145,16 +157,22 @@ let stack ?(dim = 0) t args =
 let dot ?dtype a w =
   let dx = T.ndim a and dw = T.ndim w in
   if dx = 0 || dw = 0 then invalid_arg "Op.dot: both tensors must be at least 1D";
-  let sa = T.shape a and sw = T.shape w in
+  let sa = T.symbolic_shape a and sw = T.symbolic_shape w in
   let axis_w = -min dw 2 in
   let contract_a = List.nth sa (dx - 1) in
   let contract_w = List.nth sw (dw + axis_w) in
-  if contract_a <> contract_w then invalid_arg "Op.dot: contracted dimensions differ";
+  (* The contracted dimensions must be provably equal; an undecidable
+     symbolic comparison is an error. *)
+  if Uop.resolve (Uop.O.ne contract_a contract_w) then
+    invalid_arg "Op.dot: contracted dimensions differ";
   let ones = min (min (dx - 1) (dw - 1)) 1 in
-  let ones_dims = List.init ones (fun _ -> 1) in
-  let a2 = Movement.reshape a (take (dx - 1) sa @ ones_dims @ [ contract_a ]) in
+  let ones_dims = List.init ones (fun _ -> Uop.const_int 1) in
+  let a2 =
+    Movement.symbolic_reshape a (take (dx - 1) sa @ ones_dims @ [ contract_a ])
+  in
   let w2 =
-    Movement.reshape w (take (dw - 2) sw @ ones_dims @ drop (dw + axis_w) sw)
+    Movement.symbolic_reshape w
+      (take (dw - 2) sw @ ones_dims @ drop (dw + axis_w) sw)
   in
   let w2 = Movement.transpose ~dim0:(-1) ~dim1:axis_w w2 in
   let summed = Reduce.sum ~axis:[ -1 ] ?dtype (Elementwise.mul a2 w2) in

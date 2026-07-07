@@ -2,4 +2,4 @@
  (names test_frontend test_run)
  (modules test_frontend test_run)
  (package tolk)
- (libraries tolk.uop tolk.frontend windtrap))
+ (libraries tolk tolk.uop tolk.frontend windtrap))

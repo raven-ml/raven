@@ -405,9 +405,18 @@ let rec resolve binding ctx node =
    and COPY bodies transfer between buffers. Buffer arguments are resolved
    through the binding and PARAM slots through [input_uops]. *)
 
+(* Keep only the buffer arguments: BIND values and ALU symbolic variables are
+   delivered through [var_vals], not as buffers. *)
 let call_arg_uops args =
   List.filter
-    (fun s -> not (Tolk_uop.Ops.equal (Tolk_uop.Uop.op s) Tolk_uop.Ops.Bind))
+    (fun s ->
+      match Tolk_uop.Uop.op s with
+      | Tolk_uop.Ops.Bind -> false
+      | Tolk_uop.Ops.Param -> (
+          match Tolk_uop.Uop.as_param s with
+          | Some { param = { addrspace = Tolk_uop.Dtype.Alu; _ }; _ } -> false
+          | _ -> true)
+      | _ -> true)
     args
 
 (* Resolve the launch geometry for a compiled PROGRAM. On backends with local

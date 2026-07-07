@@ -1376,6 +1376,51 @@ val simplify_ref : (t -> t) ref
     module initialisation to break the dependency cycle between [Uop]
     and the symbolic rewriter. *)
 
+(** {1:sint Symbolic integers}
+
+    A symbolic integer is a plain node: a concrete value is a
+    {!Ops.Const} and a symbolic value is any other integer-valued
+    expression, typically rooted in a {!variable} or a {!bind}. Tensor
+    shapes are lists of such dimensions. *)
+
+val resolve : ?default:bool -> t -> bool
+(** [resolve ?default u] decides the boolean expression [u]. [u] is
+    simplified first; when its value bounds agree the concrete truth
+    value is returned, and otherwise [default] (defaulting to [true]).
+
+    @raise Invalid_argument if [u] is not a boolean expression. *)
+
+val smax : t list -> t
+(** [smax xs] is the simplified maximum of [xs], staying symbolic when
+    the maximum cannot be decided.
+
+    @raise Invalid_argument if [xs] is empty. *)
+
+val smin : t list -> t
+(** [smin xs] is the simplified minimum of [xs], symmetric to {!smax}.
+
+    @raise Invalid_argument if [xs] is empty. *)
+
+val sprod : t list -> t
+(** [sprod dims] is the simplified product of [dims]. The empty product
+    is the constant one. *)
+
+val broadcast_shape : t list list -> t list
+(** [broadcast_shape shapes] is the common shape all of [shapes]
+    broadcast to: shapes are aligned from the last axis, size-one axes
+    stretch, and a zero along an axis makes the result zero there. A
+    symbolic dimension broadcasts when every shape carries the same
+    expression there or a constant one.
+
+    @raise Invalid_argument if the shapes are incompatible. *)
+
+val unbind : t -> t * int
+(** [unbind u] splits a {!bind} node into its symbolic variable and
+    bound integer value.
+
+    @raise Invalid_argument if [u] is not a {!bind} of a variable to an
+    integer constant. *)
+
 (** {1:compare Comparison} *)
 
 val compare_structure : t -> t -> int

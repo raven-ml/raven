@@ -80,7 +80,8 @@ let shape_expr_of_node n =
   | Ops.Const ->
       (match U.const_int_value n with Some _ -> Some [ n ] | None -> None)
   | Ops.Stack -> Some (U.children n)
-  | _ -> None
+  (* A symbolic integer expression is a rank-1 shape argument. *)
+  | _ -> if Dtype.is_int (U.dtype n) then Some [ n ] else None
 
 let map_order shape order =
   if List.length shape < List.length order then None
@@ -184,6 +185,20 @@ let rec shape_expr_of n =
             | None -> Option.map (List.map int_) (ptr_size_shape n))
        | [] -> Option.map (List.map int_) (ptr_size_shape n))
   | Ops.Reshape | Ops.Expand -> shape_expr_of_node (U.src n).(1)
+  | Ops.Pad | Ops.Shrink ->
+      (match shape_expr_of (src0 n), shape_expr_of_node (U.src n).(2) with
+       | Some _, (Some _ as size) -> size
+       | _ -> None)
+  | Ops.Permute ->
+      let order = match U.arg n with U.Arg.Ints i -> i | _ -> [] in
+      Option.bind (shape_expr_of (src0 n)) (fun s -> map_order s order)
+  | Ops.Flip -> shape_expr_of (src0 n)
+  | Ops.Reduce ->
+      (match U.as_reduce n, shape_expr_of (src0 n) with
+       | Some { axes = []; _ }, _ -> Option.map (List.map int_) (shape_of n)
+       | Some { axes; _ }, Some s ->
+           Some (List.filteri (fun i _ -> not (List.mem i axes)) s)
+       | _ -> None)
   | Ops.Contiguous | Ops.Contiguous_backward | Ops.Detach | Ops.Copy
   | Ops.After | Ops.Noop | Ops.Bitcast | Ops.Cast | Ops.Store | Ops.End ->
       if Array.length (U.src n) = 0 then None else shape_expr_of (src0 n)
@@ -1415,6 +1430,18 @@ let to_define_global ctx n =
   match U.op n with
   | Ops.Store -> find_bufs n
   | Ops.Buffer | Ops.Mstack | Ops.Mselect -> debuf ctx n
+  (* A named, bounded PARAM is a symbolic variable in disguise (the callified
+     form of a BIND input): normalise it back to the canonical variable. *)
+  | Ops.Param
+    when (match U.as_param n with
+        | Some { param = { name = Some _; vmin_vmax = Some _; _ }; _ } -> true
+        | _ -> false) ->
+      (match U.as_param n, U.dtype n with
+       | Some { param = { name = Some name; vmin_vmax = Some (lo, hi); _ }; _ },
+         Dtype.Val dt ->
+           let v = U.variable ~name ~min_val:lo ~max_val:hi ~dtype:dt () in
+           if U.equal v n then None else Some v
+       | _ -> None)
   | Ops.Param
     when (match U.as_param n, U.dtype n with
         | Some { param = { name = None; _ }; shape }, Dtype.Val _
@@ -1424,7 +1451,8 @@ let to_define_global ctx n =
   | Ops.Bind -> unbind_kernel ctx n
   | Ops.After -> handle_after ctx n
   | Ops.Index when Array.length (U.src n) = 1
-                   && U.op (src0 n) = Ops.Param ->
+                   && U.op (src0 n) = Ops.Param
+                   && U.addrspace (src0 n) = Some Dtype.Alu ->
       Some (src0 n)
   | Ops.Stage ->
       (match U.as_stage n with

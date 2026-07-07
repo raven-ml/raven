@@ -555,19 +555,35 @@ let pm_replace_buf ctx node =
       | Some sh -> shape_node sh
       | None -> U.shape_to_shape_arg None
     in
+    (* A replaced BIND keeps the variable's name and bounds so the kernel
+       graph can recover the symbolic variable, while different bound values
+       normalise to the same cache key. *)
+    let name, vmin_vmax =
+      match U.as_bind b with
+      | Some { var; _ } ->
+          ((match U.as_param var with
+            | Some { param = { name; _ }; _ } -> name
+            | None -> None),
+           Some (U.vmin b, U.vmax b))
+      | None -> (None, None)
+    in
     let addrspace = replacement_addrspace b dtype in
     (* A buffer is always numel-shaped: a scalar output is a size-1 buffer
        viewed as a scalar. Emitting a bare scalar PARAM loses the size-1
        dimension that scheduling needs to index the store at offset 0, so
-       give it shape [1] and reshape to the scalar shape. *)
+       give it shape [1] and reshape to the scalar shape. A replaced BIND is
+       a scalar symbolic value, not a buffer, and keeps its scalar shape. *)
     match ctx.shapes b with
-    | Some [] ->
+    | Some [] when U.op b <> Ops.Bind ->
         let param =
           U.param ~slot:idx ~dtype ~shape:(shape_node [ 1 ]) ?device
-            ~addrspace ()
+            ?vmin_vmax ?name ~addrspace ()
         in
         Some (U.reshape ~src:param ~shape:(shape_node []))
-    | _ -> Some (U.param ~slot:idx ~dtype ~shape ?device ~addrspace ())
+    | _ ->
+        Some
+          (U.param ~slot:idx ~dtype ~shape ?device ?vmin_vmax ?name ~addrspace
+             ())
   in
   match U.op node, U.children node with
   | Ops.Buffer, _ ->

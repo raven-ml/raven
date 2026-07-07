@@ -105,6 +105,10 @@ val b : bool -> t
 val shape_uop : int list -> Tolk_uop.Uop.t
 (** [shape_uop dims] encodes an integer shape as a shape argument node. *)
 
+val symbolic_shape_uop : Tolk_uop.Uop.t list -> Tolk_uop.Uop.t
+(** [symbolic_shape_uop dims] encodes a shape of (possibly symbolic) dimension
+    nodes as a shape argument node. *)
+
 val alu_unary : Tolk_uop.Ops.t -> t -> t
 (** [alu_unary op t] applies unary arithmetic [op] to [t]. *)
 
@@ -122,7 +126,8 @@ val alu_ternary : Tolk_uop.Ops.t -> t -> t -> t -> t
 val broadcast_shape : int list list -> int list
 (** [broadcast_shape shapes] is the common shape all of [shapes] broadcast to,
     aligning axes from the last and stretching size-[1] axes. A zero along any
-    axis makes the result zero there.
+    axis makes the result zero there. This is the concrete-integer view of
+    {!Tolk_uop.Uop.broadcast_shape}.
 
     @raise Invalid_argument if the shapes are incompatible. *)
 

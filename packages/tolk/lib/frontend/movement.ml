@@ -14,55 +14,86 @@ let take n l = List.filteri (fun idx _ -> idx < n) l
 let drop n l = List.filteri (fun idx _ -> idx >= n) l
 let sub_range lo hi l = List.filteri (fun idx _ -> idx >= lo && idx < hi) l
 
+(* Movement internals operate on symbolic dimensions: a dimension node is a
+   weakint [Const] when concrete, and the concrete [int] entry points wrap
+   their arguments in constants. *)
+
+let sdim = U.const_int
+let dim_is_one d = U.const_int_value d = Some 1
+let dims_equal a b = List.length a = List.length b && List.for_all2 U.equal a b
+let shape_arg dims = T.symbolic_shape_uop (List.map U.simplify dims)
+
+(* Integer negation as multiplication by -1: the simplifier gathers and
+   cancels multiplicative factors across sums, so [b + 1 - b] folds to [1] in
+   this form. *)
+let dim_neg d = U.O.(d * sdim (-1))
+let dim_sub a b = U.O.(a + dim_neg b)
+
+let symbolic_reshape t dims =
+  let cur = T.symbolic_shape t in
+  let dims = List.map U.simplify dims in
+  if not (U.equal (U.sprod cur) (U.sprod dims)) then
+    invalid_arg "Movement.reshape: size mismatch";
+  if dims_equal dims cur then t
+  else T.of_uop (U.reshape ~src:(T.uop t) ~shape:(T.symbolic_shape_uop dims))
+
 let reshape t dims =
-  let cur = T.shape t in
   let n_infer = List.length (List.filter (fun s -> s = -1) dims) in
   if n_infer > 1 then
     invalid_arg "Movement.reshape: only one dimension can be inferred";
-  let dims =
-    if n_infer = 1 then (
-      let known =
-        List.fold_left (fun a s -> if s = -1 then a else a * s) 1 dims
-      in
-      let total = prod cur in
-      if known = 0 || total mod known <> 0 then
+  let udims =
+    if n_infer = 1 then begin
+      let known = prod dims in
+      if known = 0 then
         invalid_arg "Movement.reshape: cannot infer -1 dimension";
-      List.map (fun s -> if s = -1 then total / known else s) dims)
-    else dims
+      (* [known] carries the -1 factor, so the inferred size is
+         [-total / known] with flooring division; any remainder is caught by
+         the element-count check. *)
+      let inferred =
+        U.simplify U.O.(dim_neg (U.sprod (T.symbolic_shape t)) // sdim known)
+      in
+      List.map (fun s -> if s = -1 then inferred else sdim s) dims
+    end
+    else List.map sdim dims
   in
-  if prod cur <> prod dims then invalid_arg "Movement.reshape: size mismatch";
-  if dims = cur then t
-  else T.of_uop (U.reshape ~src:(T.uop t) ~shape:(T.shape_uop dims))
+  symbolic_reshape t udims
 
-let broadcast_to t new_shape =
-  let cur = T.shape t in
-  if cur = new_shape then t
+let symbolic_broadcast_to t new_shape =
+  let cur = T.symbolic_shape t in
+  if dims_equal cur new_shape then t
   else begin
     if T.ndim t > List.length new_shape then
       invalid_arg "Movement.broadcast_to: cannot broadcast to fewer dimensions";
     let aligned =
-      List.init (List.length new_shape - List.length cur) (fun _ -> 1) @ cur
+      List.init (List.length new_shape - List.length cur) (fun _ -> sdim 1)
+      @ cur
     in
     List.iter2
       (fun s ns ->
-        if not (s = ns || s = 1) then
+        if not (U.equal s ns || dim_is_one s) then
           invalid_arg "Movement.broadcast_to: incompatible shapes")
       aligned new_shape;
-    let reshaped = reshape t aligned in
-    T.of_uop (U.expand ~src:(T.uop reshaped) ~shape:(T.shape_uop new_shape))
+    let reshaped = symbolic_reshape t aligned in
+    if dims_equal aligned new_shape then reshaped
+    else T.of_uop (U.expand ~src:(T.uop reshaped) ~shape:(shape_arg new_shape))
   end
 
+let broadcast_to t new_shape = symbolic_broadcast_to t (List.map sdim new_shape)
+
 let expand t dims =
-  let cur = T.shape t in
+  let cur = T.symbolic_shape t in
   let aligned =
-    List.init (max 0 (List.length dims - List.length cur)) (fun _ -> 1) @ cur
+    List.init (max 0 (List.length dims - List.length cur)) (fun _ -> sdim 1)
+    @ cur
   in
   if List.length aligned <> List.length dims then
     invalid_arg "Movement.expand: too few target dimensions";
   let new_shape =
-    List.map2 (fun from_ to_ -> if to_ = -1 then from_ else to_) aligned dims
+    List.map2
+      (fun from_ to_ -> if to_ = -1 then from_ else sdim to_)
+      aligned dims
   in
-  broadcast_to t new_shape
+  symbolic_broadcast_to t new_shape
 
 let permute t order =
   let order = List.map (T.resolve_dim t) order in
@@ -80,33 +111,62 @@ let flip t axes =
 let pad t padding =
   if T.ndim t <> List.length padding then
     invalid_arg "Movement.pad: padding length must match ndim";
-  let cur = T.shape t in
-  let offset = List.map fst padding in
-  let size = List.map2 (fun (before, after) s -> s + before + after) padding cur in
-  T.of_uop
-    (U.pad ~src:(T.uop t) ~offset:(T.shape_uop offset) ~size:(T.shape_uop size))
+  if List.for_all (fun (before, after) -> before = 0 && after = 0) padding then
+    t
+  else begin
+    let cur = T.symbolic_shape t in
+    let offset = List.map (fun (before, _) -> sdim before) padding in
+    let size =
+      List.map2
+        (fun (before, after) s ->
+          let extra = before + after in
+          U.O.(s + sdim extra))
+        padding cur
+    in
+    T.of_uop
+      (U.pad ~src:(T.uop t) ~offset:(shape_arg offset) ~size:(shape_arg size))
+  end
 
-let shrink t bounds =
+let symbolic_shrink t bounds =
   if T.ndim t <> List.length bounds then
     invalid_arg "Movement.shrink: bounds length must match ndim";
-  let offset = List.map fst bounds in
-  let size = List.map (fun (start, stop) -> stop - start) bounds in
-  T.of_uop
-    (U.shrink ~src:(T.uop t) ~offset:(T.shape_uop offset) ~size:(T.shape_uop size))
+  let cur = T.symbolic_shape t in
+  let offset =
+    List.map (function Some (start, _) -> start | None -> sdim 0) bounds
+  in
+  let size =
+    List.map2
+      (fun b s ->
+        match b with
+        | Some (start, stop) -> U.simplify (dim_sub stop start)
+        | None -> s)
+      bounds cur
+  in
+  if dims_equal size cur then t
+  else
+    T.of_uop
+      (U.shrink ~src:(T.uop t) ~offset:(shape_arg offset)
+         ~size:(T.symbolic_shape_uop size))
+
+let shrink t bounds =
+  symbolic_shrink t
+    (List.map (fun (start, stop) -> Some (sdim start, sdim stop)) bounds)
 
 let squeeze ?dim t =
   match dim with
-  | None -> reshape t (List.filter (fun d -> d <> 1) (T.shape t))
+  | None ->
+      symbolic_reshape t
+        (List.filter (fun d -> not (dim_is_one d)) (T.symbolic_shape t))
   | Some dim ->
       let dim = T.resolve_dim t dim in
-      let sh = T.shape t in
-      if T.ndim t = 0 || List.nth sh dim <> 1 then t
-      else reshape t (List.filteri (fun idx _ -> idx <> dim) sh)
+      let sh = T.symbolic_shape t in
+      if T.ndim t = 0 || not (dim_is_one (List.nth sh dim)) then t
+      else symbolic_reshape t (List.filteri (fun idx _ -> idx <> dim) sh)
 
 let unsqueeze t dim =
   let dim = T.resolve_dim ~extra:true t dim in
-  let sh = T.shape t in
-  reshape t (take dim sh @ [ 1 ] @ drop dim sh)
+  let sh = T.symbolic_shape t in
+  symbolic_reshape t (take dim sh @ [ sdim 1 ] @ drop dim sh)
 
 let transpose ?(dim0 = 1) ?(dim1 = 0) t =
   let d0 = T.resolve_dim t dim0 and d1 = T.resolve_dim t dim1 in
@@ -118,8 +178,9 @@ let transpose ?(dim0 = 1) ?(dim1 = 0) t =
 
 let flatten ?(start_dim = 0) ?(end_dim = -1) t =
   let s = T.resolve_dim t start_dim and e = T.resolve_dim t end_dim in
-  let sh = T.shape t in
-  reshape t (take s sh @ [ prod (sub_range s (e + 1) sh) ] @ drop (e + 1) sh)
+  let sh = T.symbolic_shape t in
+  symbolic_reshape t
+    (take s sh @ [ U.sprod (sub_range s (e + 1) sh) ] @ drop (e + 1) sh)
 
 let unflatten t dim sizes =
   let dim = T.resolve_dim t dim in
@@ -127,23 +188,27 @@ let unflatten t dim sizes =
   reshape t (take dim sh @ sizes @ drop (dim + 1) sh)
 
 let reshape_opt t dims =
-  let cur = T.shape t in
-  reshape t
+  let cur = T.symbolic_shape t in
+  symbolic_reshape t
     (List.mapi
-       (fun idx d -> match d with Some n -> n | None -> List.nth cur idx)
+       (fun idx d -> match d with Some n -> sdim n | None -> List.nth cur idx)
        dims)
 
 let shrink_to t dims =
-  let cur = T.shape t in
-  shrink t
-    (List.mapi
-       (fun idx d -> match d with None -> (0, List.nth cur idx) | Some n -> (0, n))
-       dims)
+  symbolic_shrink t
+    (List.map (function None -> None | Some n -> Some (sdim 0, sdim n)) dims)
 
 let pad_to t dims =
-  let cur = T.shape t in
-  pad t
-    (List.map2 (fun s ns -> match ns with None -> (0, 0) | Some n -> (0, n - s)) cur dims)
+  let cur = T.symbolic_shape t in
+  let size =
+    List.map2 (fun s ns -> match ns with None -> s | Some n -> sdim n) cur dims
+  in
+  if dims_equal size cur then t
+  else
+    let offset = List.map (fun _ -> sdim 0) cur in
+    T.of_uop
+      (U.pad ~src:(T.uop t) ~offset:(shape_arg offset)
+         ~size:(T.symbolic_shape_uop size))
 
 let repeat t repeats =
   let cur = T.shape t in

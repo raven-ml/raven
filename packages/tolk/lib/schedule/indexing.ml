@@ -478,12 +478,8 @@ let run_rangeify ?shape_exprs root ~shapes =
           let rngs =
             match U.as_reduce x with
             | Some { src; axes; _ } when axes <> [] ->
-                (match shapes src with
-                 | Some in_shape ->
-                     let in_shape_expr =
-                       Option.value ~default:(List.map idx in_shape)
-                         (shape_exprs src)
-                     in
+                (match shape_exprs src with
+                 | Some in_shape_expr ->
                      let rec build i outs = function
                      | [] -> []
                      | size :: sizes ->

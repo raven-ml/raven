@@ -1846,7 +1846,10 @@ let require_shrink op src_shape offsets sizes =
         invalid_shape op "slice extends past the input shape")
     src_shape (List.combine offsets sizes)
 
-let rec broadcast_shape shapes =
+(* Lenient variant used by shape inference on elementwise nodes: never raises
+   on incompatible dimensions, keeping the first candidate instead. The
+   checked, raising variant lives below as [broadcast_shape]. *)
+let rec lenient_broadcast_shape shapes =
   let rec last = function
   | [] -> None
   | [ x ] -> Some x
@@ -1873,7 +1876,8 @@ let rec broadcast_shape shapes =
     in
     let prefixes = List.map drop_last shapes in
     let prefix =
-      if List.for_all (( = ) []) prefixes then [] else broadcast_shape prefixes
+      if List.for_all (( = ) []) prefixes then []
+      else lenient_broadcast_shape prefixes
     in
     match dim with None -> prefix | Some d -> prefix @ [ d ]
 
@@ -2049,7 +2053,8 @@ and compute_shape_opt u =
                   List.fold_left (fun acc (_, sz) -> acc * sz) 1 out0
                 in
                 Some
-                  (broadcast_shape [ drop_last s0; drop_last s1; drop_last s2 ]
+                  (lenient_broadcast_shape
+                     [ drop_last s0; drop_last s1; drop_last s2 ]
                   @ [ const_int out_sz ])
             | _ -> None)
         | _ -> None
@@ -2186,7 +2191,7 @@ and compute_shape_opt u =
       first_shape ()
   | op when Ops.Group.is_broadcastable op ->
       let shapes = Array.to_list srcs |> List.filter_map shape_opt in
-      if shapes = [] then None else Some (broadcast_shape shapes)
+      if shapes = [] then None else Some (lenient_broadcast_shape shapes)
   | _ -> None
 
 let max_shape u = List.map vmax (shape u)
@@ -2698,6 +2703,67 @@ let gcd = function
 
 let simplify_ref : (t -> t) ref = ref (fun u -> u)
 let simplify u = !simplify_ref u
+
+(* Symbolic integer ("sint") helpers. A dimension or size is a plain node: a
+   concrete integer is a [Const] and a symbolic value is any other
+   integer-valued expression. *)
+
+let resolve ?(default = true) u =
+  if not (Dtype.is_bool (dtype u)) then
+    invalid_arg "Uop.resolve: expected a boolean expression";
+  let s = simplify u in
+  let lo = vmin s in
+  if lo = vmax s then lo <> 0 else default
+
+let smax = function
+  | [] -> invalid_arg "Uop.smax: empty list"
+  | x :: xs ->
+      simplify
+        (List.fold_left (fun a b -> alu_binary ~op:Ops.Max ~lhs:a ~rhs:b) x xs)
+
+let smin = function
+  | [] -> invalid_arg "Uop.smin: empty list"
+  | x :: xs ->
+      (* Negation as multiplication by -1 keeps the terms visible to the
+         value-bounds analysis, so the maximum of the negations folds. *)
+      let neg u = alu_binary ~op:Ops.Mul ~lhs:u ~rhs:(const_like u (-1)) in
+      simplify
+        (neg
+           (List.fold_left
+              (fun a b -> alu_binary ~op:Ops.Max ~lhs:a ~rhs:(neg b))
+              (neg x) xs))
+
+let sprod dims = simplify (dim_prod dims)
+
+let broadcast_shape shapes =
+  let max_dim = List.fold_left (fun a s -> max a (List.length s)) 0 shapes in
+  let aligned =
+    List.map
+      (fun s -> List.init (max_dim - List.length s) (fun _ -> dim_one) @ s)
+      shapes
+  in
+  List.init max_dim (fun idx ->
+      let col = List.map (fun s -> List.nth s idx) aligned in
+      let dim =
+        if List.exists (fun d -> const_int_value d = Some 0) col then
+          const_int 0
+        else smax col
+      in
+      List.iter
+        (fun s ->
+          if not (equal s dim || dim_is_one s) then
+            invalid_arg "Uop.broadcast_shape: shapes cannot be broadcast")
+        col;
+      dim)
+
+let unbind u =
+  match op u, src u with
+  | Ops.Bind, [| var; value |]
+    when op var = Ops.Param && op value = Ops.Const -> (
+      match const_int_value value with
+      | Some n -> (var, n)
+      | None -> invalid_arg "Uop.unbind: bound value is not an integer")
+  | _ -> invalid_arg "Uop.unbind: expected a bound variable"
 
 (* Structural compare *)
 

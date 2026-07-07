@@ -10,17 +10,25 @@ module U = Uop
 module D = Dtype
 module T = Tensor
 
+(* Reduction is not allowed over a provably size-one axis: those axes are
+   dropped by reshape instead. A symbolic axis whose size cannot be shown to
+   be one is reduced. *)
 let rop t op axis =
-  let sh = T.shape t in
+  let sh = T.symbolic_shape t in
   let axis = List.sort_uniq compare axis in
-  let reduce_axis = List.filter (fun x -> List.nth sh x <> 1) axis in
+  let reduce_axis =
+    List.filter
+      (fun x -> U.resolve (U.O.ne (List.nth sh x) (U.const_int 1)))
+      axis
+  in
   let ret =
     if reduce_axis <> [] then
       T.of_uop (U.reduce_axis ~src:(T.uop t) ~op ~axes:reduce_axis)
     else t
   in
   if axis <> reduce_axis then
-    Movement.reshape ret (List.filteri (fun idx _ -> not (List.mem idx axis)) sh)
+    Movement.symbolic_reshape ret
+      (List.filteri (fun idx _ -> not (List.mem idx axis)) sh)
   else ret
 
 let reduce t op ?axis ?(keepdim = false) () =
@@ -29,8 +37,10 @@ let reduce t op ?axis ?(keepdim = false) () =
   let axes = if T.ndim t = 0 then [] else axes in
   let ret = rop t op axes in
   if keepdim then
-    Movement.reshape ret
-      (List.mapi (fun idx s -> if List.mem idx axes then 1 else s) (T.shape t))
+    Movement.symbolic_reshape ret
+      (List.mapi
+         (fun idx s -> if List.mem idx axes then U.const_int 1 else s)
+         (T.symbolic_shape t))
   else ret
 
 let is_narrow_float dt =

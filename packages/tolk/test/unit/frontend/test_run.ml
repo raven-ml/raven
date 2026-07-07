@@ -484,6 +484,126 @@ let gpt2_getitem_tests =
                [ Mv.All; Mv.R (None, Some 2, None); Mv.All; Mv.All ]));
     ]
 
+(* Symbolic shapes: a shape dimension may be an expression over a bound
+   variable. One traced graph then serves every bound value; the value is
+   passed to the kernel at launch. *)
+
+module U = Tolk_uop.Uop
+
+let bound_var name ~max_val value =
+  let var = U.variable ~name ~min_val:0 ~max_val () in
+  U.bind ~var ~value:(U.const_int value)
+
+let plus1 u = U.O.(u + U.const_int 1)
+
+let symbolic_tests =
+  group "symbolic"
+    [
+      test "shrink + sum matches concrete for several bind values" (fun () ->
+          let data = Array.init 8 (fun i -> float_of_int (i + 1)) in
+          List.iter
+            (fun pos ->
+              let t = vec data in
+              let bound = bound_var "pos" ~max_val:6 pos in
+              let s =
+                Mv.symbolic_shrink t [ Some (U.const_int 0, plus1 bound) ]
+              in
+              let expected =
+                Array.fold_left ( +. ) 0. (Array.sub data 0 (pos + 1))
+              in
+              check_floats [| expected |] (Rd.sum s))
+            [ 2; 5; 0 ]);
+      test "attention with symbolic key/value length matches concrete"
+        (fun () ->
+          let qdata = [| 0.1; 0.2; 0.3; -0.1 |] in
+          let kdata = Array.init 24 (fun i -> float_of_int (i mod 5) /. 5.) in
+          let vdata = Array.init 24 (fun i -> float_of_int (i + 1)) in
+          List.iter
+            (fun pos ->
+              let bound = bound_var "apos" ~max_val:4 pos in
+              let sym_bounds = [ Some (U.const_int 0, plus1 bound); None ] in
+              let keys =
+                Mv.symbolic_shrink (fa ~shape:[ 6; 4 ] kdata) sym_bounds
+              in
+              let values =
+                Mv.symbolic_shrink (fa ~shape:[ 6; 4 ] vdata) sym_bounds
+              in
+              let attend q k v =
+                Op.matmul
+                  (Op.softmax ~axis:(-1)
+                     (Op.matmul q (Mv.transpose ~dim0:(-2) ~dim1:(-1) k)))
+                  v
+              in
+              let got =
+                attend (fa ~shape:[ 1; 4 ] qdata) keys values
+              in
+              let concrete_bounds = [ (0, pos + 1); (0, 4) ] in
+              let expected =
+                attend
+                  (fa ~shape:[ 1; 4 ] qdata)
+                  (Mv.shrink (fa ~shape:[ 6; 4 ] kdata) concrete_bounds)
+                  (Mv.shrink (fa ~shape:[ 6; 4 ] vdata) concrete_bounds)
+              in
+              check_floats (Run.to_float_array expected) got)
+            [ 1; 3 ]);
+      test "kv-cache: assign at symbolic position, read symbolic prefix"
+        (fun () ->
+          (* cache is (ctx=4, width=2); each decode step writes one row at a
+             symbolic position and reads back rows [0, pos+1). *)
+          let cache = fa ~shape:[ 4; 2 ] (Array.make 8 0.) in
+          ignore (Run.realize cache);
+          let step pos value expected_sum =
+            let bound = bound_var "cpos" ~max_val:3 pos in
+            let row =
+              fa ~shape:[ 1; 2 ] [| value; value +. 0.5 |]
+            in
+            let view =
+              Mv.symbolic_shrink cache [ Some (bound, plus1 bound); None ]
+            in
+            ignore (Run.realize (Op.assign view row));
+            let keys =
+              Mv.symbolic_shrink cache
+                [ Some (U.const_int 0, plus1 bound); None ]
+            in
+            check_floats [| expected_sum |] (Rd.sum keys)
+          in
+          step 0 1. 2.5;
+          step 1 2. 7.;
+          step 2 3. 13.5;
+          check_floats [| 1.; 1.5; 2.; 2.5; 3.; 3.5; 0.; 0. |] cache);
+      test "one schedule serves every bind value" (fun () ->
+          (* The bound value is stripped from the schedule cache key, so the
+             second value must reuse the first schedule instead of scheduling
+             (and later compiling) a new kernel. *)
+          let lowered = ref 0 in
+          let get_kernel_graph sink =
+            incr lowered;
+            Tolk.Rangeify.get_kernel_graph sink
+          in
+          let schedule pos =
+            let data = Array.init 8 (fun i -> float_of_int (i + 1)) in
+            let t = vec data in
+            let bound = bound_var "spos" ~max_val:6 pos in
+            let s =
+              Mv.symbolic_shrink t [ Some (U.const_int 0, plus1 bound) ]
+            in
+            let out = Rd.sum (El.mul s (T.f 2.5)) in
+            let sink =
+              U.sink [ U.contiguous ~src:(T.uop out) () ]
+            in
+            let call, _ = Tolk.Allocations.transform_to_call sink in
+            ignore
+              (U.graph_rewrite ~enter_calls:true
+                 (fun node ->
+                   Tolk.Schedule.lower_sink_to_linear ~get_kernel_graph node)
+                 call)
+          in
+          schedule 2;
+          equal int ~msg:"first value schedules" 1 !lowered;
+          schedule 5;
+          equal int ~msg:"second value hits the schedule cache" 1 !lowered);
+    ]
+
 let () =
   run "Tolk_frontend_run"
     [
@@ -503,4 +623,5 @@ let () =
       triu_tests;
       assign_tests;
       attention_tests;
+      symbolic_tests;
     ]

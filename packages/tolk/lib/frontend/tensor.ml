@@ -9,6 +9,11 @@ open Tolk_uop
 module U = Uop
 module D = Dtype
 
+(* Force the symbolic simplifier to be linked: shape logic throughout the
+   frontend calls [Uop.simplify], which stays the identity until [Symbolic]
+   installs itself into [Uop.simplify_ref] at initialisation. *)
+let _symbolic_linked = Sys.opaque_identity Symbolic.simplify
+
 type t = { mutable uop : U.t }
 
 (* Live-tensor registry. Every tensor is recorded in a weak array at
@@ -123,29 +128,23 @@ let f x = of_uop (U.const (Const.float D.Val.default_float x))
 let b v = of_uop (U.const (Const.bool v))
 let int_ n = U.const (Const.int D.Val.weakint n)
 
-let shape_uop dims =
-  match List.map int_ dims with [ d ] -> d | ds -> U.stack ds
+let symbolic_shape_uop dims = match dims with [ d ] -> d | ds -> U.stack ds
+let shape_uop dims = symbolic_shape_uop (List.map int_ dims)
 
 let alu_unary op t = of_uop (U.alu_unary ~op ~src:t.uop)
 let alu_binary op a b = of_uop (U.alu_binary ~op ~lhs:a.uop ~rhs:b.uop)
 let alu_ternary op a b c = of_uop (U.alu_ternary ~op ~a:a.uop ~b:b.uop ~c:c.uop)
 
+(* Broadcasting is owned by the IR ([Uop.broadcast_shape]); this wrapper keeps
+   the concrete-integer view of it, raising on symbolic dimensions like
+   [shape]. *)
 let broadcast_shape shapes =
-  let max_dim = List.fold_left (fun a s -> max a (List.length s)) 0 shapes in
-  let aligned =
-    List.map
-      (fun s -> List.init (max_dim - List.length s) (fun _ -> 1) @ s)
-      shapes
-  in
-  List.init max_dim (fun idx ->
-      let col = List.map (fun s -> List.nth s idx) aligned in
-      let dim = if List.mem 0 col then 0 else List.fold_left max 1 col in
-      List.iter
-        (fun s ->
-          if not (s = dim || s = 1) then
-            invalid_arg "Tensor.broadcast_shape: incompatible shapes")
-        col;
-      dim)
+  List.map
+    (fun d ->
+      match U.const_int_value d with
+      | Some n -> n
+      | None -> invalid_arg "Tensor.broadcast_shape: symbolic dimension")
+    (U.broadcast_shape (List.map (List.map int_) shapes))
 
 let broadcasted_hook : (reverse:bool -> t -> t -> t * t) ref =
   ref (fun ~reverse:_ _ _ ->
