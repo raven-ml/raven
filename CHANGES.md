@@ -33,6 +33,11 @@ thread.
 
 ### Tolk (new)
 
+- Fix multi-device scheduling of keepdims-style reductions: the multi
+  rewrite minted shape dimensions as `int32` constants while the rest of the
+  compiler uses weak integer constants, so broadcasting a realized reduce
+  buffer back against a sharded operand failed shape validation and jit
+  raised `Failure "buffer_like: unknown shape"`.
 - Memoize `Uop.axis` like `Uop.shape`: the unmemoized walk was exponential
   in residual depth, making multi-device compilation of deep networks
   appear to hang.
@@ -306,6 +311,9 @@ thread.
 
 ### Rune
 
+- `pmap` now differentiates through `~keepdims:true` reductions
+  (`max`/`sum`/`mean`), unblocking softmax, layer norm, attention, and the
+  stock losses in data-parallel training.
 - `jit`, `jit2`, `jit'`, `pmap`, and `pmap2` gain `?donate` (default
   `false`): the call consumes device-resident input handles, releasing
   their buffers to the allocator once it completes, so a state-to-state

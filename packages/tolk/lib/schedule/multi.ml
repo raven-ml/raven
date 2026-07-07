@@ -22,7 +22,10 @@ let index_of x l =
   in
   loop 0 l
 
-let int_ n = U.const (Const.int Dtype.Val.int32 n)
+(* Concrete shape dims are canonically weakint consts ([U.const_int]):
+   hash-consing then gives value equality against dims minted anywhere
+   else in the graph. *)
+let int_ = U.const_int
 
 let allreduce_cast = Helpers.Context_var.int ~key:"ALLREDUCE_CAST" ~default:1
 

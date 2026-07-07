@@ -1,0 +1,42 @@
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+void r_4_8n1(float* restrict data0_4, float* restrict data1_32, float* restrict data2_64, const int data3_) {
+  for (int Lidx1 = 0; Lidx1 < 4; Lidx1++) {
+    int alu0 = (Lidx1<<3);
+    float4 val0 = (*((float4*)((data1_32+(alu0+4)))));
+    float4 val1 = (*((float4*)((data1_32+alu0))));
+    int alu1 = ((data3_<<5)+alu0);
+    float4 val2 = (*((float4*)((data2_64+(alu1+4)))));
+    float4 val3 = (*((float4*)((data2_64+alu1))));
+    float alu2 = (val0[0]+val2[0]);
+    float alu3 = (val0[1]+val2[1]);
+    float alu4 = (val0[2]+val2[2]);
+    float alu5 = (val0[3]+val2[3]);
+    float alu6 = (val1[0]+val3[0]);
+    float alu7 = (val1[1]+val3[1]);
+    float alu8 = (val1[2]+val3[2]);
+    float alu9 = (val1[3]+val3[3]);
+    float alu10 = ((alu6<alu7)?alu7:alu6);
+    float alu11 = ((alu10<alu8)?alu8:alu10);
+    float alu12 = ((alu11<alu9)?alu9:alu11);
+    float alu13 = ((alu12<alu2)?alu2:alu12);
+    float alu14 = ((alu13<alu3)?alu3:alu13);
+    float alu15 = ((alu14<alu4)?alu4:alu14);
+    float alu16 = ((alu15<alu5)?alu5:alu15);
+    *(data0_4+Lidx1) = alu16;
+  }
+}
+---
+typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
+void E_4_2_4n1(float* restrict data0_32, float* restrict data1_32, float* restrict data2_64, float* restrict data3_4, const int data4_) {
+  for (int Lidx0 = 0; Lidx0 < 4; Lidx0++) {
+    float val0 = (*(data3_4+Lidx0));
+    int alu0 = (Lidx0<<3);
+    for (int Lidx1 = 0; Lidx1 < 2; Lidx1++) {
+      int alu1 = (Lidx1<<2);
+      int alu2 = (alu0+alu1);
+      float4 val1 = (*((float4*)((data1_32+alu2))));
+      float4 val2 = (*((float4*)((data2_64+((data4_<<5)+alu0+alu1)))));
+      *((float4*)((data0_32+alu2))) = (float4){((val1[0]+val2[0])-val0),((val1[1]+val2[1])-val0),((val1[2]+val2[2])-val0),((val1[3]+val2[3])-val0)};
+    }
+  }
+}

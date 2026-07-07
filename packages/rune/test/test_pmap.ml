@@ -136,6 +136,44 @@ let test_grad_inside_pmap () =
   check_arr ~msg:"dx (sharded)" (to_arr expect.x) got.x;
   check_arr ~msg:"dt (sharded)" (to_arr expect.t) got.t
 
+(* Gradients through keepdims reductions: reduce ~keepdims:true realizes a
+   per-shard buffer whose broadcast back against the sharded operand is the
+   softmax / layer-norm shape. Differentiated inside pmap, each gradient must
+   match the single-device jit gradient. *)
+
+let keepdims_input () =
+  {
+    w = Nx.create f32 [| 8; 8 |] (arange 64);
+    x = Nx.create f32 [| 8; 8 |] (Array.init 64 (fun i -> sin (float_of_int i)));
+    t = Nx.create f32 [| 8; 8 |] (arange 64);
+  }
+
+let check_keepdims_grad loss =
+  let grads p = snd (Rune.value_and_grad (module Dp) loss p) in
+  let p = keepdims_input () in
+  let expect = Rune.jit2 (module Dp) (module Dp) grads p in
+  let axes = [ None; Some 0; Some 0 ] in
+  let g = Rune.pmap2 ~devices:devs2 ~in_axes:axes (module Dp) (module Dp) grads in
+  let got = g p in
+  check_arr ~msg:"dw" (to_arr expect.w) got.w;
+  check_arr ~msg:"dx" (to_arr expect.x) got.x
+
+let test_grad_max_keepdims () =
+  check_keepdims_grad (fun s ->
+      let h = Nx.add s.x s.w in
+      Nx.mean (Nx.exp (Nx.sub h (Nx.max h ~axes:[ -1 ] ~keepdims:true))))
+
+let test_grad_sum_keepdims () =
+  check_keepdims_grad (fun s ->
+      let h = Nx.add s.x s.w in
+      Nx.mean (Nx.mul h (Nx.sum h ~axes:[ -1 ] ~keepdims:true)))
+
+let test_grad_mean_keepdims () =
+  check_keepdims_grad (fun s ->
+      let h = Nx.add s.x s.w in
+      let d = Nx.sub h (Nx.mean h ~axes:[ -1 ] ~keepdims:true) in
+      Nx.mean (Nx.mul d d))
+
 (* Residency: outputs stay per-device; feeding an unread output back into a
    matching placement moves no bytes; reading gathers shards correctly. *)
 
@@ -475,6 +513,9 @@ let tests =
         test "replicated params + sharded batch mean loss matches jit"
           test_dp_loss_matches_jit;
         test "grad inside pmap allreduces like jit" test_grad_inside_pmap;
+        test "grad through max keepdims matches jit" test_grad_max_keepdims;
+        test "grad through sum keepdims matches jit" test_grad_sum_keepdims;
+        test "grad through mean keepdims matches jit" test_grad_mean_keepdims;
       ];
     group "residency"
       [
