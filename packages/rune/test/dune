@@ -11,6 +11,7 @@
   test_control
   test_jit
   test_pmap
+  test_rng
   test_half)
  (modules
   test_grad
@@ -24,6 +25,7 @@
   test_control
   test_jit
   test_pmap
+  test_rng
   test_half)
  (package rune)
  (libraries rune nx nx.core unix windtrap rune_test_support))

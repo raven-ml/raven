@@ -11,6 +11,7 @@
   tensor_map
   gate
   derivs
+  rng
   jit
   jit_cache
   jit_device)

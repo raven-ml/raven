@@ -31,8 +31,11 @@
 
    Reading the value of a traced tensor (for example [Nx.item] on a value that
    depends on the inputs) raises [Jit_error]: a compiled trace cannot branch on
-   data. Operations Tolk cannot express (FFT, linear algebra, complex dtypes,
-   RNG) raise [Jit_error] as well. *)
+   data. Operations Tolk cannot express (FFT, linear algebra, complex dtypes)
+   raise [Jit_error] as well. Threefry (the RNG primitive) compiles, but only
+   when its key depends on the traced inputs: a constant key would burn one
+   draw into the program and silently replay it on every call, so it raises
+   [Jit_error] pointing at [Rune.Rng] key threading. *)
 
 open Nx_effect
 module F = Tolk_frontend
@@ -314,6 +317,7 @@ type state = {
   traced : unit Tbl.t; (* placeholders whose bytes are not meaningful *)
   captures : unit Tbl.t; (* closure captures lifted into the trace *)
   input_index : int Tbl.t; (* input placeholder -> traversal position *)
+  input_tags : (int, unit) Hashtbl.t; (* tags of input buffer nodes *)
   wb_seen : unit Tbl.t;
   mutable consts : (U.t * packed) list; (* reverse order *)
   mutable writebacks : packed list; (* reverse order *)
@@ -377,6 +381,60 @@ let atan2_graph y x =
   let z = atan (div y x) in
   let pi = F.Creation.const_like z (F.Tensor.Sfloat Float.pi) in
   add z (where (lt x (zero x)) (where (ge y (zero y)) pi (neg pi)) (zero z))
+
+(* Whether [u]'s graph reaches an input buffer node. Constants lifted during
+   the trace (captures, host arrays) are buffers too, but only input nodes are
+   in [st.input_tags]; a value that never touches one is a compile-time
+   constant of the trace. *)
+let depends_on_input st u =
+  let seen = Hashtbl.create 32 in
+  let rec go u =
+    let tag = U.tag u in
+    if Hashtbl.mem seen tag then false
+    else begin
+      Hashtbl.add seen tag ();
+      (match U.op u with
+      | Tolk_uop.Ops.Buffer -> Hashtbl.mem st.input_tags tag
+      | _ -> false)
+      || Array.exists go (U.src u)
+    end
+  in
+  go u
+
+(* Threefry lowering. The trace-level operation hashes int32 (key, counter)
+   pairs laid out as consecutive elements; Tolk's primitive mixes uint64
+   counters with a uint64 key. Pack each pair low word first (element 0 is the
+   low half, matching the C kernel's [v[0]]), apply the primitive, and unpack
+   the two result halves back into consecutive int32 lanes. Tolk's
+   decomposition (decomp_op.ml) computes the same 20-round Random123 function
+   as the eager C kernel, so compiled draws are bit-identical to eager
+   ones. *)
+let threefry_graph key ctr =
+  let open F.Elementwise in
+  let shape = F.Tensor.shape key in
+  let n = List.fold_left ( * ) 1 shape / 2 in
+  let col t i =
+    F.Movement.reshape
+      (F.Movement.shrink
+         (F.Movement.reshape t [ n; 2 ])
+         [ (0, n); (i, i + 1) ])
+      [ n ]
+  in
+  let sint t v = F.Creation.const_like t (F.Tensor.Sint v) in
+  let u64 t = F.Dtype_ops.cast (F.Dtype_ops.cast t TD.uint32) TD.uint64 in
+  let pack t =
+    let lo = u64 (col t 0) and hi = u64 (col t 1) in
+    bitwise_or (lshift hi (sint hi 32)) lo
+  in
+  let bits = threefry (pack ctr) (pack key) in
+  let i32 t =
+    F.Dtype_ops.cast
+      (F.Dtype_ops.cast (bitwise_and t (sint t 0xFFFFFFFF)) TD.uint32)
+      TD.int32
+  in
+  let lo = i32 bits and hi = i32 (rshift bits (sint bits 32)) in
+  let lane t = F.Movement.reshape t [ n; 1 ] in
+  F.Movement.reshape (F.Op.cat ~dim:1 (lane lo) [ lane hi ]) shape
 
 (* Sliding windows. [unfold] is pad -> pool -> permute -> reshape: pure
    movement, so the extracted patches fuse into their consumer. [fold]
@@ -853,9 +911,25 @@ let handler st =
         Some (fun k -> ret k (dt a) (F.Op.matmul (go a) (go b)))
     (* Device movement is the identity on the single jit device. *)
     | E_to_device { t_in; _ } -> Some (fun k -> Effect.Deep.continue k t_in)
-    (* Unsupported operations fail loudly rather than trace wrongly. *)
-    | E_threefry _ ->
-        Some (fun k -> refuse k "random number generation (threefry)")
+    (* Random bits compile only from a key that depends on the traced inputs.
+       A constant key (implicit RNG such as [Nx.rand], or a captured key)
+       would freeze one draw into the compiled program and silently replay it
+       on every call — the worst failure mode, wrong without erring. *)
+    | E_threefry { key; ctr } ->
+        Some
+          (fun k ->
+            let kt = go key in
+            if not (depends_on_input st (F.Tensor.uop kt)) then
+              discontinue k
+                (Jit_error
+                   "Rune.jit: random number generation from a constant key \
+                    inside jit: the key does not depend on the jitted \
+                    function's inputs, so every call would replay the same \
+                    values. Use Rune.Rng and pass the key as an input of the \
+                    jitted function (derive per-call keys with Rune.Rng.split \
+                    or Rune.Rng.fold_in); implicit RNG (Nx.rand and friends) \
+                    is not supported inside jit")
+            else ret k ND.int32 (threefry_graph kt (go ctr)))
     | E_unfold { t_in; kernel_size; stride; dilation; padding } ->
         Some
           (fun k ->
@@ -1172,6 +1246,7 @@ let trace_compile ~device:dev ~zero_copy ~const_cache ?multi
       traced = Tbl.create 64;
       captures = Tbl.create 16;
       input_index = Tbl.create 16;
+      input_tags = Hashtbl.create 16;
       wb_seen = Tbl.create 4;
       consts = [];
       writebacks = [];
@@ -1240,6 +1315,7 @@ let trace_compile ~device:dev ~zero_copy ~const_cache ?multi
           Tbl.replace st.table (Obj.repr ph) tt;
           Tbl.replace st.traced (Obj.repr ph) ();
           Tbl.replace st.input_index (Obj.repr ph) !pos;
+          Hashtbl.replace st.input_tags (U.tag node) ();
           let inp = { i_node = node; i_place = place; i_bufs = bufs } in
           assoc := (key, (Packed (ldt, ph), inp)) :: !assoc;
           inputs := inp :: !inputs);

@@ -154,10 +154,12 @@ val vmap :
     Composes with the other transformations: [vmap] of {!grad} computes
     per-example gradients, and {!grad} of [vmap] differentiates through the map.
 
-    {b Note.} Implicit random number generation ([Nx.rand] and friends) inside
-    the mapped function draws {e identical} values for every lane: the RNG key
-    is a constant of the map. Thread distinct randomness in as mapped inputs
-    instead. Reading a batched tensor's value inside the mapped function raises.
+    {b Note.} Randomness a lane closes over ([Nx.rand] and friends, or a
+    {!Rng} key used as a constant) draws {e identical} values for every lane:
+    it is a constant of the map. For decorrelated lanes, {!Rng.split} one key
+    into per-lane keys, stack them into an [[n; 2]] tensor, and map over it —
+    the sampler inside the map then sees one key per lane. Reading a batched
+    tensor's value inside the mapped function raises.
 
     Raises [Invalid_argument] if [in_axes] does not have one entry per leaf,
     maps no leaf, names an axis out of bounds, or if the mapped axis sizes
@@ -299,15 +301,84 @@ val check_grads :
     rather than exhaustively. Use float64 parameters for reliable results;
     float32 may need a looser [tol]. *)
 
+(** {1:rng Random number generation} *)
+
+(** Explicit splittable PRNG keys.
+
+    Randomness is a pure function of a key: a sampler applied to the same key,
+    dtype, and shape returns the same values — eagerly, under {!val-jit}, and
+    on every device. {!Rng.uniform}, {!Rng.randint} and {!Rng.bernoulli} are
+    bit-identical everywhere; {!Rng.normal} agrees up to the device's
+    transcendental rounding. A key is an ordinary [[|2|]] int32 tensor, so it
+    goes wherever tensors go: a leaf of a parameter structure, an input of a
+    jitted function, a mapped axis of {!val-vmap}.
+
+    Fresh randomness comes from fresh keys, never from calling a sampler
+    twice: {!Rng.split} a key into independent subkeys and hand one to each
+    consumer, or {!Rng.fold_in} a step counter to derive per-step keys from a
+    root.
+
+    {[
+    let root = Rune.Rng.key 42 in
+    let step = Rune.jit (module P) (fun p -> ... Rune.Rng.uniform p.key ...) in
+    for i = 0 to steps - 1 do
+      ignore (step { params with key = Rune.Rng.fold_in root i })
+    done
+    ]} *)
+module Rng : sig
+  type key = (int32, Nx.int32_elt) Nx.t
+  (** The type for PRNG keys: an [[|2|]] int32 tensor holding the generator's
+      state. Keys are values — thread them explicitly, and never reuse one for
+      two draws that must be independent. *)
+
+  val key : int -> key
+  (** [key seed] is the key for [seed]. Equal seeds give equal keys. *)
+
+  val split : ?n:int -> key -> key array
+  (** [split ?n k] is [n] independent subkeys derived from [k] (default [2]).
+      Deterministic: splitting the same key yields the same subkeys. The
+      subkeys are statistically independent of each other; derive one subkey
+      per consumer instead of reusing [k]. *)
+
+  val fold_in : key -> int -> key
+  (** [fold_in k data] is the subkey of [k] indexed by [data]: distinct [data]
+      values give independent keys. Use it to derive per-step keys from a root
+      key and a loop counter. *)
+
+  val uniform : key -> (float, 'b) Nx.dtype -> int array -> (float, 'b) Nx.t
+  (** [uniform k dtype shape] samples uniformly from [\[0, 1)]. Pure: the same
+      key, dtype and shape always produce the same values. *)
+
+  val normal : key -> (float, 'b) Nx.dtype -> int array -> (float, 'b) Nx.t
+  (** [normal k dtype shape] samples the standard normal distribution
+      (Box-Muller over two {!uniform} draws). *)
+
+  val randint :
+    key -> ?high:int -> int array -> int -> (int32, Nx.int32_elt) Nx.t
+  (** [randint k ?high shape low] samples integers uniformly from
+      [\[low, high)]. [high] defaults to [10].
+
+      Raises [Invalid_argument] if [low >= high]. *)
+
+  val bernoulli : key -> p:float -> int array -> (bool, Nx.bool_elt) Nx.t
+  (** [bernoulli k ~p shape] samples booleans that are [true] with probability
+      [p].
+
+      Raises [Invalid_argument] if [p] is outside [\[0, 1\]]. *)
+end
+
 (** {1:jit Just-in-time compilation} *)
 
 exception Jit_error of string
 (** Raised when a function cannot be compiled: it read the value of a traced
     tensor (for example [Nx.item] on a value that depends on the inputs, or a
     data-dependent branch), it assigned to a tensor it closes over (captures
-    are compile-time constants), or it used an operation the compiler does not
-    support (FFT, linear algebra, random number generation, complex, int4 and
-    uint4 tensors, assigning into a view). *)
+    are compile-time constants), it drew random values from a key that does
+    not depend on the inputs ([Nx.rand] and friends, or a captured {!Rng.key}
+    — the draw would be a compile-time constant replayed on every call; pass
+    the key as an input instead), or it used an operation the compiler does
+    not support (FFT, linear algebra, complex, int4 and uint4 tensors,
+    assigning into a view). *)
 
 val jit :
   ?device:string ->
@@ -401,6 +472,14 @@ val jit :
     structure instead. Structured values read during tracing must not depend on
     traced tensors: a data-dependent {!cond} or {!while_loop} predicate raises
     {!Jit_error}. Compiled functions are not thread-safe.
+
+    Randomness inside a jitted function comes from {!Rng} keys threaded
+    through the inputs: samplers are pure functions of their key, so the
+    compiled program recomputes each draw from the current key on every call
+    — feed a fresh key ({!Rng.split}, {!Rng.fold_in}) for fresh values. A key
+    that does not depend on the inputs (implicit RNG such as [Nx.rand], or a
+    captured key) raises {!Jit_error} at trace time rather than replay one
+    frozen draw.
 
     Raises {!Jit_error} when tracing fails ({!exception-Jit_error}), and
     [Invalid_argument] for an unknown or unavailable [device]. *)

@@ -355,6 +355,16 @@ thread.
 
 ### Rune
 
+- Add `Rune.Rng`: jax-style explicit splittable PRNG keys (`key`, `split`,
+  `fold_in`, `uniform`, `normal`, `randint`, `bernoulli`). Samplers are pure
+  functions of key, dtype, and shape — same values eagerly, under `jit`, and
+  on every device (bit-identical for `uniform`/`randint`/`bernoulli`).
+- `jit` now compiles random number generation: threefry lowers to the
+  compiler's primitive with bit-exact parity to eager execution. A key that
+  does not depend on the jitted function's inputs (`Nx.rand` and friends, or
+  a captured key) raises `Jit_error` at trace time instead of silently
+  replaying one frozen draw per call — thread a `Rune.Rng` key through the
+  inputs.
 - `jit` compilations now persist across processes: compiled kernels are
   stored on disk (`$XDG_CACHE_HOME/tolk/rune_jit`) keyed on the traced
   computation and compile environment, so a warm process skips scheduling,
