@@ -5,6 +5,7 @@
 
 (tests
  (names
+  test_nx_deferred
   test_nx_indexing
   test_nx_sanity
   test_nx_linalg
@@ -17,7 +18,7 @@
   test_nx_rng)
  (package nx)
  (modules :standard \ test_nx_support test_nx_io)
- (libraries nx.buffer nx nx.core windtrap test_nx_support))
+ (libraries nx.buffer nx nx.core nx.effect windtrap test_nx_support))
 
 (test
  (name test_nx_io)

@@ -17,8 +17,28 @@ type context = Nx_backend.context
    deduced". Wrapping in a single-constructor GADT restores injectivity: [T] is
    a fresh constructor whose parameters are, by definition, determined by the
    return type. At runtime this is a zero-cost box (single-field
-   constructor). *)
-type ('a, 'b) t = T : ('a, 'b) Nx_backend.t -> ('a, 'b) t
+   constructor).
+
+   [Deferred] is a host tensor whose bytes have not arrived yet: it carries its
+   metadata (context, dtype, shape) plus a fill thunk that produces the host
+   buffer on first data access. Rune's jit uses it to keep compiled outputs
+   resident on non-host-sharing devices (CUDA, Metal): metadata reads answer
+   from the record, and only a data access runs the thunk — which copies the
+   device buffer out — memoizing the resulting backend tensor. A deferred
+   tensor is never a trace placeholder, so its metadata never needs an
+   effect. *)
+type ('a, 'b) t =
+  | T : ('a, 'b) Nx_backend.t -> ('a, 'b) t
+  | Deferred : ('a, 'b) deferred -> ('a, 'b) t
+
+and ('a, 'b) deferred = {
+  d_id : int; (* fresh; lets creators key side tables by handle *)
+  d_context : Nx_backend.context;
+  d_dtype : ('a, 'b) Dtype.t;
+  d_view : View.t; (* C-contiguous over the tensor's shape *)
+  d_fill : unit -> ('a, 'b) Nx_buffer.t; (* runs at most once *)
+  mutable d_forced : ('a, 'b) Nx_backend.t option;
+}
 
 (* [Nx_buffer.t] is not injective in its parameters either (it abbreviates a
    bigarray), so a host buffer cannot be an effect's result directly; the same
@@ -297,29 +317,78 @@ type _ Effect.t +=
       -> ('a, 'b) t Effect.t
   | E_to_host : ('a, 'b) t -> ('a, 'b) host_buffer Effect.t
 
-(* Unwrap *)
+(* Unwrap. Forcing a deferred tensor runs its fill thunk once, wraps the
+   resulting host buffer as a backend tensor of the recorded shape, and
+   memoizes it: after that the handle behaves as a plain host tensor, and later
+   mutations of the memoized tensor are observed through the handle. *)
 
-let unwrap (T t) = t
+let force (type a b) (d : (a, b) deferred) : (a, b) Nx_backend.t =
+  match d.d_forced with
+  | Some t -> t
+  | None ->
+      let host = d.d_fill () in
+      let t =
+        Nx_backend.reshape
+          (Nx_backend.from_host d.d_context host)
+          (View.shape d.d_view)
+      in
+      d.d_forced <- Some t;
+      t
 
-(* Lenses *)
+let unwrap : type a b. (a, b) t -> (a, b) Nx_backend.t = function
+  | T t -> t
+  | Deferred d -> force d
+
+(* Deferred constructors *)
+
+let deferred_id_counter = ref 0
+
+let deferred (type a b) (ctx : context) (dtype : (a, b) Dtype.t)
+    (shape : int array) (fill : unit -> (a, b) Nx_buffer.t) : (a, b) t =
+  incr deferred_id_counter;
+  Deferred
+    {
+      d_id = !deferred_id_counter;
+      d_context = ctx;
+      d_dtype = dtype;
+      d_view = View.create shape;
+      d_fill = fill;
+      d_forced = None;
+    }
+
+(* [None] once forced: the handle is then a plain host tensor and its creator's
+   side state (for example a resident device buffer) is gone. *)
+let deferred_id : type a b. (a, b) t -> int option = function
+  | T _ -> None
+  | Deferred d -> ( match d.d_forced with Some _ -> None | None -> Some d.d_id)
+
+(* Lenses. Metadata reads on a deferred tensor answer from its record — no fill
+   and, since a deferred tensor is never a trace placeholder, no effect. *)
 
 let create_context () : context = Nx_backend.create_context ()
-let context (type a b) (T t : (a, b) t) = Nx_backend.context t
+
+let context : type a b. (a, b) t -> context = function
+  | T t -> Nx_backend.context t
+  | Deferred d -> d.d_context
+
 let to_device (_ctx : context) (t : ('a, 'b) t) : ('a, 'b) t = t
 
 let view (type a b) (x : (a, b) t) : View.t =
-  try Effect.perform (E_view x)
-  with Effect.Unhandled _ -> Nx_backend.view (unwrap x)
+  match x with
+  | Deferred d -> d.d_view
+  | T _ -> (
+      try Effect.perform (E_view x)
+      with Effect.Unhandled _ -> Nx_backend.view (unwrap x))
 
-let dtype (type a b) (T t : (a, b) t) = Nx_backend.dtype t
+let dtype : type a b. (a, b) t -> (a, b) Dtype.t = function
+  | T t -> Nx_backend.dtype t
+  | Deferred d -> d.d_dtype
 
 let to_host (type a b) (x : (a, b) t) : (a, b) Nx_buffer.t =
   try
     let (Host_buffer buf) = Effect.perform (E_to_host x) in
     buf
-  with Effect.Unhandled _ ->
-    let (T t) = x in
-    Nx_backend.to_host t
+  with Effect.Unhandled _ -> Nx_backend.to_host (unwrap x)
 
 (* Fallback dispatch helpers.
 

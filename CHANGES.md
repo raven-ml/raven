@@ -210,6 +210,11 @@ thread.
 
 ### Nx
 
+- Add deferred host tensors to `nx.effect`: `Nx_effect.deferred` creates a
+  tensor whose bytes arrive on first data access. Metadata reads (`shape`,
+  `dtype`) answer without transfer; the first read runs a fill thunk once
+  and memoizes the result. Rune uses them to keep jit outputs
+  device-resident.
 - Add `scatter`, the pure counterpart of `put_along_axis`: returns a new
   tensor with `values` placed along `axis`, with `` `Set``/`` `Add`` modes
   and a `unique_indices` hint. Works under `Rune.jit` and differentiates
