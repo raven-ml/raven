@@ -192,6 +192,70 @@ let reset_stats () =
   bytes_to_device := 0;
   bytes_from_device := 0
 
+(* Resident outputs
+
+   On devices that do not share host memory, a compiled call's outputs stay on
+   the device: each output leaf becomes a deferred host tensor (a handle)
+   owning a device buffer bound freshly for that call. Reading the handle
+   forces it — synchronize, copy the buffer out, release it to the allocator —
+   and a handle dropped unread is released by a GC finalizer. The registry
+   maps live handle ids to their buffers so replay can seed a compiled input
+   directly with a resident buffer (no transfer) when a handle is fed back
+   into a jit call on the same device. *)
+
+type resident_entry = {
+  mutable r_id : int;
+  r_device : Tolk.Device.t;
+  r_nbytes : int;
+  mutable r_buf : Tolk.Device.Buffer.t option; (* [None] once released *)
+}
+
+let resident : (int, resident_entry) Hashtbl.t = Hashtbl.create 64
+
+(* Finalizers only record the entry; buffers are released at the next safe
+   point (a force or a replay), not mid-GC inside arbitrary device code. *)
+let pending_release : resident_entry list ref = ref []
+
+let release_entry e =
+  match e.r_buf with
+  | None -> ()
+  | Some buf ->
+      e.r_buf <- None;
+      Hashtbl.remove resident e.r_id;
+      resident_bytes := !resident_bytes - e.r_nbytes;
+      (* Deallocation returns the buffer to the device's LRU pool. A base
+         buffer with a still-allocated transient view (a kernel-argument slice
+         not yet collected) cannot be deallocated; those are reclaimed by the
+         buffer's own GC finalizer instead. *)
+      (try Tolk.Device.Buffer.deallocate buf with Invalid_argument _ -> ())
+
+let drain_releases () =
+  match !pending_release with
+  | [] -> ()
+  | entries ->
+      pending_release := [];
+      List.iter release_entry entries
+
+let resident_budget () =
+  env_int "RUNE_JIT_RESIDENT_BUDGET" (4 * 1024 * 1024 * 1024)
+
+(* Fresh device buffer for a call's output. Past the resident budget, collect
+   dropped handles first; on allocation failure collect and retry once (the
+   LRU allocator has flushed its own cache by then). *)
+let create_fresh_buffer dev dtolk n =
+  drain_releases ();
+  if !resident_bytes > resident_budget () then begin
+    Gc.major ();
+    drain_releases ()
+  end;
+  let buf = Tolk.Device.create_buffer ~size:n ~dtype:dtolk dev in
+  (try Tolk.Device.Buffer.ensure_allocated buf
+   with _ ->
+     Gc.major ();
+     drain_releases ();
+     Tolk.Device.Buffer.ensure_allocated buf);
+  buf
+
 (* Buffer slots are process-global so hash-consed buffer nodes from distinct
    traces never collide. *)
 let next_slot = ref 0
@@ -848,6 +912,53 @@ let read_out : type a b.
   Nx_buffer.blit_from_bytes ~len:n bytes host;
   Nx_effect.reshape (Nx_effect.from_host ctx host) shape
 
+(* Wrap a device buffer as a deferred host tensor owning it. Metadata reads
+   answer from the handle; the first data access synchronizes the device,
+   copies the buffer out and releases it to the allocator. Copy-out failures
+   surface at that first read. *)
+let make_handle : type a b.
+    device:Tolk.Device.t ->
+    ctx:Nx_effect.context ->
+    scratch:scratch ->
+    (a, b) ND.t ->
+    int array ->
+    Tolk.Device.Buffer.t ->
+    (a, b) Nx_effect.t =
+ fun ~device ~ctx ~scratch dtv shape buf ->
+  let nbytes = Tolk.Device.Buffer.nbytes buf in
+  let entry = { r_id = -1; r_device = device; r_nbytes = nbytes; r_buf = Some buf } in
+  let n = numel shape in
+  let fill () =
+    let buf =
+      match entry.r_buf with
+      | Some buf -> buf
+      | None -> assert false (* released only by this fill or the finalizer *)
+    in
+    Tolk.Device.synchronize device;
+    let bytes = scratch_bytes scratch nbytes in
+    Tolk.Device.Buffer.copyout buf bytes;
+    bytes_from_device := !bytes_from_device + nbytes;
+    let host = Nx_buffer.create (ND.to_buffer_kind dtv) n in
+    Nx_buffer.blit_from_bytes ~len:n bytes host;
+    release_entry entry;
+    host
+  in
+  let handle = Nx_effect.deferred ctx dtv shape fill in
+  (match Nx_effect.deferred_id handle with
+  | Some id ->
+      entry.r_id <- id;
+      Hashtbl.replace resident id entry;
+      resident_bytes := !resident_bytes + nbytes
+  | None -> assert false);
+  (* The finalizer must not capture the handle (it would never die); the entry
+     alone decides whether the buffer is still owed a release. *)
+  Gc.finalise
+    (fun _ ->
+      if Option.is_some entry.r_buf then
+        pending_release := entry :: !pending_release)
+    handle;
+  handle
+
 let write_into : type a b.
     scratch ->
     Nx_effect.context ->
@@ -1104,6 +1215,7 @@ let trace_compile ~device:dev ~zero_copy (module P : Nx.Ptree.S)
 
 let replay (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S) (c : Q.t compiled)
     (params : P.t) : Q.t =
+  drain_releases ();
   let in0 = !bytes_to_device and out0 = !bytes_from_device in
   (* Seed the inputs: wrap the current leaf's memory when the device shares host
      memory and the leaf is contiguous, copy its bytes otherwise. The wrapped
@@ -1128,11 +1240,15 @@ let replay (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S) (c : Q.t compiled)
       | Const_copy { buf; src = Packed (_, src); refresh = true } ->
           copyin_tensor c.cp_scratch buf src)
     c.cp_consts;
-  (* Wire fresh host buffers as the kernels' output storage, so results are
-     written straight into the tensors returned to the caller. Nodes backed by
-     an input or constant buffer keep their binding and are read back through a
-     copy instead. *)
+  (* Wire the outputs' storage. On the zero-copy device, fresh host buffers
+     become the kernels' output storage, so results are written straight into
+     the tensors returned to the caller; nodes backed by an input or constant
+     buffer keep their binding and are read back through a copy instead. On
+     other devices, every distinct non-reserved output node is bound to a
+     fresh device buffer for this call, so handles from earlier calls keep
+     their own storage and never alias a later call's outputs. *)
   let out_hosts : (int, host_out) Hashtbl.t = Hashtbl.create 8 in
+  let out_bufs : (int, Tolk.Device.Buffer.t) Hashtbl.t = Hashtbl.create 8 in
   if c.cp_zero_copy then
     List.iter
       (fun (_, Packed (odt, ph), node) ->
@@ -1151,14 +1267,48 @@ let replay (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S) (c : Q.t compiled)
           Tolk.Realize.Buffers.seed c.cp_binding node buf;
           Hashtbl.add out_hosts tag (Host (odt, host))
         end)
+      c.cp_outputs
+  else
+    List.iter
+      (fun (_, Packed (odt, ph), node) ->
+        let tag = U.tag node in
+        if
+          (not (Hashtbl.mem c.cp_reserved tag))
+          && not (Hashtbl.mem out_bufs tag)
+        then begin
+          let n = numel (shape_of ph) in
+          let buf = create_fresh_buffer c.cp_device (tolk_dtype odt) n in
+          Tolk.Realize.Buffers.seed c.cp_binding node buf;
+          Hashtbl.add out_bufs tag buf
+        end)
       c.cp_outputs;
   Tolk.Realize.run_linear ~device:c.cp_device
     ~to_program:(to_program c.cp_device) c.cp_binding ~var_vals:c.cp_vars
     ~jit:true c.cp_linear;
+  (* An output that is an input or a capture returned unchanged keeps its
+     reserved binding; copy it into a fresh buffer on the device, so its
+     handle never aliases an input and survives later calls. *)
+  if not c.cp_zero_copy then
+    List.iter
+      (fun (_, Packed (odt, ph), node) ->
+        let tag = U.tag node in
+        if Hashtbl.mem c.cp_reserved tag && not (Hashtbl.mem out_bufs tag)
+        then begin
+          let src = Tolk.Realize.Buffers.of_buffer_node c.cp_binding node in
+          let n = numel (shape_of ph) in
+          let dst = create_fresh_buffer c.cp_device (tolk_dtype odt) n in
+          if not (Tolk.Device.Buffer.transfer ~dst ~src) then
+            Tolk.Device.Buffer.copy_between ~dst ~src;
+          Hashtbl.add out_bufs tag dst
+        end)
+      c.cp_outputs;
   (* Wrapped buffers alias caller memory: wait for in-flight kernels before
      reading results or letting the caller touch the inputs again. *)
   Tolk.Device.synchronize c.cp_device;
   ignore (Sys.opaque_identity !keep);
+  (* Output leaves resolving to the same buffer node share one handle, so
+     each device buffer has a single owner. *)
+  let handles : (int, packed) Hashtbl.t = Hashtbl.create 8 in
   let y =
     Q.map
       (fun (type a b) (leaf : (a, b) Nx_effect.t) : (a, b) Nx_effect.t ->
@@ -1166,7 +1316,8 @@ let replay (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S) (c : Q.t compiled)
           List.find_opt (fun (k, _, _) -> k == Obj.repr leaf) c.cp_outputs
         with
         | Some (_, _, node) -> (
-            match Hashtbl.find_opt out_hosts (U.tag node) with
+            let tag = U.tag node in
+            match Hashtbl.find_opt out_hosts tag with
             | Some (Host (hdt, host)) -> (
                 match ND.equal_witness hdt (Nx_effect.dtype leaf) with
                 | Some Type.Equal ->
@@ -1175,11 +1326,31 @@ let replay (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S) (c : Q.t compiled)
                       (shape_of leaf)
                 | None -> assert false)
             | None ->
-                let buf =
-                  Tolk.Realize.Buffers.of_buffer_node c.cp_binding node
-                in
-                read_out c.cp_scratch c.cp_ctx (Nx_effect.dtype leaf)
-                  (shape_of leaf) buf)
+                if c.cp_zero_copy then
+                  let buf =
+                    Tolk.Realize.Buffers.of_buffer_node c.cp_binding node
+                  in
+                  read_out c.cp_scratch c.cp_ctx (Nx_effect.dtype leaf)
+                    (shape_of leaf) buf
+                else (
+                  match Hashtbl.find_opt handles tag with
+                  | Some (Packed (hdt, h)) -> (
+                      match ND.equal_witness hdt (Nx_effect.dtype leaf) with
+                      | Some Type.Equal -> h
+                      | None -> assert false)
+                  | None ->
+                      let buf =
+                        match Hashtbl.find_opt out_bufs tag with
+                        | Some buf -> buf
+                        | None -> assert false (* every node was bound above *)
+                      in
+                      let dt = Nx_effect.dtype leaf in
+                      let h =
+                        make_handle ~device:c.cp_device ~ctx:c.cp_ctx
+                          ~scratch:c.cp_scratch dt (shape_of leaf) buf
+                      in
+                      Hashtbl.add handles tag (Packed (dt, h));
+                      h))
         | None -> assert false)
       c.cp_skeleton
   in
