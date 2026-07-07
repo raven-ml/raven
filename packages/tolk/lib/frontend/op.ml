@@ -106,11 +106,10 @@ let std ?axis ?keepdim ?correction t =
 
 let layernorm ?(axis = [ -1 ]) ?(eps = 1e-5) t =
   let y = Elementwise.sub t (mean ~axis ~keepdim:true t) in
+  let m = mean ~axis ~keepdim:true (Elementwise.mul y y) in
   Elementwise.mul y
     (Elementwise.rsqrt
-       (Elementwise.add
-          (mean ~axis ~keepdim:true (Elementwise.mul y y))
-          (T.f eps)))
+       (Elementwise.add m (Creation.const_like m (T.Sfloat eps))))
 
 (* Concatenation *)
 

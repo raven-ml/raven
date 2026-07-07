@@ -33,6 +33,10 @@ thread.
 
 ### Tolk (new)
 
+- Fix `layernorm` computing the epsilon add in float32 for reduced-precision
+  inputs: the constant now follows the operand's dtype, so `float16`/
+  `bfloat16` layer norms keep their variance and rsqrt in half precision
+  instead of silently widening.
 - Fix multi-device scheduling of keepdims-style reductions: the multi
   rewrite minted shape dimensions as `int32` constants while the rest of the
   compiler uses weak integer constants, so broadcasting a realized reduce
