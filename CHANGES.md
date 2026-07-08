@@ -22,6 +22,10 @@ commit, command line, and system info are captured automatically. The
 `munin.sys` sub-library adds opt-in CPU and memory monitoring in a background
 thread.
 
+- Add `x-kaun-mnist-jit`, an example tracking a `Rune.jit2`-compiled CNN
+  training run (forward, backward, and SGD update in one compiled program,
+  Metal by default) with live `munin watch` monitoring.
+
 ### Norn (new)
 
 - New package: Markov chain Monte Carlo sampling with automatic gradients via
