@@ -301,3 +301,20 @@ blockquote {
   color: var(--color-text-dim);
 }
 
+.content img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 6px;
+}
+
+.content figure {
+  margin: 24px 0;
+}
+
+.content figcaption {
+  margin-top: 10px;
+  font-size: 14px;
+  color: var(--color-text-dim);
+  text-align: center;
+}
+

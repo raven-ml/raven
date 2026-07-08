@@ -23,8 +23,11 @@ let libraries =
     ( "tolk",
       [
         ("tolk", "Tolk");
-        ("tolk.ir", "Tolk_ir");
+        ("tolk.uop", "Tolk_uop");
+        ("tolk.frontend", "Tolk_frontend");
+        ("tolk.nn", "Tolk_nn");
         ("tolk.cpu", "Tolk_cpu");
+        ("tolk.cuda", "Tolk_cuda");
         ("tolk.metal", "Tolk_metal");
       ] );
     ("rune", [ ("rune", "Rune") ]);
@@ -33,6 +36,14 @@ let libraries =
         ("kaun", "Kaun");
         ("kaun.datasets", "Kaun_datasets");
         ("kaun.hf", "Kaun_hf");
+      ] );
+    ("vega", [ ("vega", "Vega") ]);
+    ("norn", [ ("norn", "Norn") ]);
+    ( "munin",
+      [
+        ("munin", "Munin");
+        ("munin.sys", "Munin_sys");
+        ("munin.tui", "Munin_tui");
       ] );
     ("brot", [ ("brot", "Brot") ]);
     ("talon", [ ("talon", "Talon"); ("talon.csv", "Talon_csv") ]);
@@ -53,7 +64,7 @@ let rec walk_modules dir rel =
   let index = Filename.concat full "index.html" in
   let self = if Sys.file_exists index then [ (rel, index) ] else [] in
   let children =
-    if not (Sys.is_directory full) then []
+    if not (Sys.file_exists full && Sys.is_directory full) then []
     else
       Sys.readdir full |> Array.to_list
       |> List.filter (fun e -> Sys.is_directory (Filename.concat full e))
