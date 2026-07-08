@@ -27,5 +27,6 @@ Welcome to Raven's documentation. Raven is an ecosystem of OCaml libraries for n
 
 - [Installation](/docs/installation/) — system dependencies, opam setup, building from source
 - [Roadmap](/docs/roadmap/) — what works today and what's coming
+- [Updates](/docs/updates/) — progress reports on Raven's development
 - [Introduction](/docs/introduction/) — vision and philosophy
 - [Support Raven](/docs/support-raven/) — sponsorship and contributing
