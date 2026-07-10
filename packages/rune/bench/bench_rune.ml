@@ -78,7 +78,7 @@ let mlp_grad_benchmarks params x y =
   let f p = loss p x y in
   [
     Thumper.bench "mlp forward (nx eager)" (fun () -> loss params x y);
-    Thumper.bench "mlp value_and_grad" (fun () ->
+    Thumper.bench ~tags:[ "lab" ] "mlp value_and_grad" (fun () ->
         Rune.value_and_grad (module Mlp) f params);
   ]
 
@@ -122,7 +122,30 @@ let chain x =
 let chain_benchmarks x0 =
   [
     Thumper.bench "chain fwd (nx eager)" (fun () -> chain x0);
-    Thumper.bench "chain grad" (fun () -> Rune.grad' chain x0);
+    Thumper.bench ~tags:[ "lab" ] "chain grad" (fun () -> Rune.grad' chain x0);
+  ]
+
+(* Jit: compiled execution of the same computations. Compilation — tracing plus
+   kernel build — is hoisted into [setup], which builds the jitted closure and
+   calls it once, so the timed region replays the compiled program only.
+   [eager run mlp] is the same forward pass without jit, the no-jit baseline. *)
+let jit_benchmarks params x x0 =
+  [
+    Thumper.bench_with_setup ~tags:[ "lab" ]
+      ~setup:(fun () ->
+        let f = Rune.jit (module Mlp) (fun p -> forward p x) in
+        ignore (Sys.opaque_identity (f params));
+        f)
+      "jit run mlp"
+      (fun f -> f params);
+    Thumper.bench "eager run mlp" (fun () -> forward params x);
+    Thumper.bench_with_setup
+      ~setup:(fun () ->
+        let f = Rune.jit' chain in
+        ignore (Sys.opaque_identity (f x0));
+        f)
+      "jit run chain"
+      (fun f -> f x0);
   ]
 
 let () =
@@ -132,9 +155,15 @@ let () =
   let y = Nx.randn Nx.float32 [| batch; d_out |] in
   let x0 = Nx.randn Nx.float32 [| 64 |] in
   Thumper.run "rune"
+    ~budgets:
+      [
+        Thumper.Budget.no_slower_than ~metric:Thumper.Metric.wall_time 0.05;
+        Thumper.Budget.no_more_alloc_than 0.01;
+      ]
     [
       Thumper.group "MlpGrad" (mlp_grad_benchmarks params x y);
       Thumper.group "MlpJvp" (mlp_jvp_benchmarks params x y);
       Thumper.group "PerSampleGrads" (vmap_benchmarks params x);
       Thumper.group "DeepChain" (chain_benchmarks x0);
+      Thumper.group "Jit" (jit_benchmarks params x x0);
     ]

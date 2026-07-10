@@ -387,6 +387,9 @@ thread.
 
 ### Rune
 
+- The `rune` bench suite now covers `jit`: a `Jit` group times compiled
+  execution of the MLP forward pass and the deep elementwise chain against
+  their eager equivalents, with compilation hoisted out of the measured region.
 - Add `Rune.Rng`: jax-style explicit splittable PRNG keys (`key`, `split`,
   `fold_in`, `uniform`, `normal`, `randint`, `bernoulli`). Samplers are pure
   functions of key, dtype, and shape — same values eagerly, under `jit`, and
