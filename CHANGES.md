@@ -310,6 +310,8 @@ thread.
 
 ### Nx
 
+- Vectorize `sum` along the contiguous axis (`sum ~axes:[1]` on a C-contiguous
+  matrix): ~12.5× on 512×512.
 - Contiguous elementwise ops stay serial-SIMD below 16M elements instead of
   parallelizing at 32768: a single vectorized core saturates memory bandwidth,
   so `add`/`mul` on 1M floats are ~7× faster on Apple Silicon.

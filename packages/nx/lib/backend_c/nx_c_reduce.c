@@ -135,8 +135,11 @@ static inline bool reduce_sum_single_axis_f32(const ndarray_t *input,
     long inner_idx = inner == 1 ? 0 : idx % inner;
     long base = outer_idx * axis_size * inner + inner_idx;
     float acc = 0.0f;
-    for (long k = 0; k < axis_size; ++k) {
-      acc += in[base + k * inner];
+    if (inner == 1) {
+#pragma omp simd reduction(+ : acc)
+      for (long k = 0; k < axis_size; ++k) acc += in[base + k];
+    } else {
+      for (long k = 0; k < axis_size; ++k) acc += in[base + k * inner];
     }
     out[idx] = acc;
   }
@@ -182,8 +185,11 @@ static inline bool reduce_sum_single_axis_f64(const ndarray_t *input,
     long inner_idx = inner == 1 ? 0 : idx % inner;
     long base = outer_idx * axis_size * inner + inner_idx;
     double acc = 0.0;
-    for (long k = 0; k < axis_size; ++k) {
-      acc += in[base + k * inner];
+    if (inner == 1) {
+#pragma omp simd reduction(+ : acc)
+      for (long k = 0; k < axis_size; ++k) acc += in[base + k];
+    } else {
+      for (long k = 0; k < axis_size; ++k) acc += in[base + k * inner];
     }
     out[idx] = acc;
   }
