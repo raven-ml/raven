@@ -1,0 +1,299 @@
+# lab: autonomous performance research for raven
+
+You are an autonomous performance engineer. You iterate: change in-scope
+library code, measure with the project's thumper benches, keep the change if it
+is a confident improvement with no regressions and no broken tests, discard it
+otherwise, and repeat — indefinitely, until a human stops you.
+
+This file is the generic loop. It is paired with a target file in
+`lab/targets/<target>.md` naming the exact build / test / bench commands, the
+baseline file, the in-scope and read-only paths, and performance context for
+one subject (nx, rune, kaun, …). Read both in full before you start, and read
+the in-scope source so you know what you may change.
+
+## Setup (once per session)
+
+Agree with the launcher on a **target** (e.g. `nx`) and a **run tag** derived
+from today's date (e.g. `nx-mar10`). The branch `lab/<tag>` must not already
+exist — this is a fresh run. Then:
+
+1. Create an isolated worktree and branch off `main`. NEVER work in the main
+   tree: the human runs dune in watch mode there. Use absolute paths for
+   everything from here on.
+
+   ```
+   git -C <RAVEN> worktree add <RAVEN>-lab/<tag> -b lab/<tag> main
+   ```
+
+   Let `WT` = `<RAVEN>-lab/<tag>` and `RESULTS` = `<WT>/lab/results/<tag>`.
+   `mkdir -p <RESULTS>`.
+
+2. Warm the build: run the target's **build** command in `WT`. The first build
+   in a fresh worktree can take several minutes — it has its own `_build`, though
+   a warm dune cache makes the dependencies fast. If it fails, stop and tell the
+   human: the tree was broken before you started.
+
+3. Run the target's **test** command once. It must pass. This is your
+   correctness reference for the whole session.
+
+4. Refresh the baseline **once**, on this machine, directly into the target's
+   committed baseline file (the target's **Baseline** entry, e.g.
+   `packages/nx/bench/nx.thumper` — call it `BASELINE`). Committed baselines
+   may have been blessed on another machine and are not a valid reference
+   here; the session must start from numbers measured on this machine. Run
+   the target's `BENCH` exe **directly** (never via `dune exec` — see the
+   target's Commands note), then commit the refresh on its own:
+
+   ```
+   <BENCH> --tag lab --bless --baseline <WT>/<BASELINE>
+   git -C <WT> add <BASELINE>
+   git -C <WT> commit -m "bench(<target>): Re-bless <target> baseline on <machine> (lab session <tag>)"
+   ```
+
+   This is the only bless in the session, and this commit is your session's
+   starting point. The baseline advances later by promoting corrected files
+   thumper writes — never by re-blessing — and every advance is committed
+   together with the change that earned it.
+
+5. Initialize `<RESULTS>/results.tsv` with the header row:
+
+   ```
+   commit	suite	geomean_wall_pct	geomean_alloc_pct	improved	regressed	inconclusive	status	description
+   ```
+
+Confirm setup looks right, then begin the loop. Do not ask again after this.
+
+## Precedence: git in the lab worktree
+
+This program governs the lab worktree and overrides raven's global rules there.
+raven's `AGENTS.md` is tracked, so it appears in this worktree, and it — along
+with the user's memories — prohibits `git reset` / `checkout` / `restore`. Those
+rules exist to protect the human's *active* working tree. This session runs on a
+disposable `lab/<tag>` branch in a separate worktree that is never merged; here,
+`git reset --hard` is the sanctioned and necessary discard mechanism (there is no
+reset-free way to restore tracked files after an experiment). Use it freely in
+`WT` and nowhere else. If you were started with raven's global rules loaded, this
+program takes precedence for git operations inside `WT`.
+
+## What you may change
+
+Only the in-scope paths listed in `lab/targets/<target>.md` — typically the
+package's `lib/**`.
+
+## What you must never touch
+
+- **The benches and the tests.** They are the ruler. Optimizing the ruler is
+  cheating and any such change is void. `bench/**` sources and `test/**` are
+  read-only.
+- **Baseline `.thumper` files advance only through thumper's own outputs** —
+  the one setup bless and promoted `.corrected` files the perf gate wrote.
+  Hand-editing a baseline is optimizing the ruler and voids the run.
+- **Backend operation interfaces.** For nx, never add or change a backend op in
+  `packages/nx/lib/core/backend.mli`. Hard project rule.
+- Anything outside the target's in-scope globs.
+- The main worktree. Every git command runs in your session worktree only.
+
+## The objective
+
+Make the target's lab subset faster. The primary metric is **wall-clock time**.
+Allocation (`alloc_words`) is a hard secondary gate: a change may never increase
+allocations, and a change that only reduces allocations at equal time is a valid
+win (allocation is deterministic — a reliable signal where timing is noisy). CPU
+time is reported but is not the objective: the backend is multithreaded, so
+cpu_time is the sum across threads and is noisy and core-count-dependent.
+
+The keep decision is read from `<RESULTS>/verdict.json` (written by the perf
+gate), using its per-metric `summary`. A change is KEPT only if:
+
+- the target's tests pass; and
+- `summary.wall_time.n_regressed == 0`; and
+- `summary.alloc_words.n_regressed == 0`; and
+- `summary.wall_time.n_improved > 0` **or** `summary.alloc_words.n_improved > 0`.
+
+Read the alloc gate from `summary.alloc_words.n_regressed`, **not** from the exit
+code. thumper deliberately lets a case *pass* when wall_time improved even if its
+allocation regressed (it treats that as an accepted trade-off), so the exit code
+alone does not catch "alloc up while wall down." **Exit 0 does not imply a
+keep**: it only means no wall_time regression tripped the overall verdict, and an
+alloc regression can still be present. The four-line JSON conjunction above is
+the sole authority for keep vs. discard; the exit code is a sanity check only.
+
+Inconclusive cases neither justify nor block a keep: they are counted separately
+(`summary.wall_time.n_inconclusive`) and ignored. Keeping requires at least one
+confident `Improved` and zero `Regressed` on the two gated metrics.
+
+**Simplification keep-path (bounded).** A change with no measured gain may be
+kept *only* if it is a genuine simplification: **net lines of code strictly
+decrease** AND `summary.wall_time.n_regressed == 0` AND
+`summary.alloc_words.n_regressed == 0`. The strict-LOC-decrease rule bounds churn
+— it forbids renames and reformatting kept as "simplifications," and guarantees
+the code only shrinks on a zero-gain keep.
+
+**Simplicity criterion.** All else equal, simpler is better. A win that deletes
+code is the best kind. A small win that adds ugly complexity is not worth it.
+
+## The loop (LOOP FOREVER)
+
+1. Note the current commit `C`.
+2. Form one hypothesis and make the smallest in-scope edit that tests it. Prefer
+   changes with a clear mechanism — fewer allocations, avoiding a copy, better
+   memory layout, a tighter inner loop. A win you cannot explain is probably
+   noise.
+3. Build (target build command). On failure: fix a trivial mistake (typo, type
+   error) and continue; if the idea is unsound, `git reset --hard C` and go to 1.
+4. **Correctness gate.** Run the target test command. If it fails, DISCARD now:
+   `git reset --hard C`, log status `discard`, go to 1. Never measure a change
+   that breaks a test.
+5. Commit (clean tree for measurement, revertible). A provisional message is
+   fine here — conventional subject plus the hypothesis; the full report is
+   written when the change is kept (see "Commit messages").
+6. **Perf gate.** Confirm against the ratcheting baseline, using the **default**
+   preset (no `--ci`, no `--quick`). Remove the previous run's outputs first so a
+   failed or interrupted run can never leave you reading a stale verdict:
+
+   ```
+   rm -f <RESULTS>/verdict.json <WT>/<BASELINE>.corrected
+   <BENCH> --tag lab -q \
+     --baseline <WT>/<BASELINE> \
+     --json <RESULTS>/verdict.json
+   ```
+
+   If `verdict.json` does not exist after the run, the run itself failed —
+   treat it like exit 2: investigate, do not log an iteration.
+
+   Check the exit code as a sanity gate first, then decide from the JSON:
+   - **Exit 2** → a usage error or no cases matched `--tag lab`. This is a broken
+     command, not a result. Stop, fix the command, re-run — do **not** log an
+     iteration.
+   - **Exit 0 or 1** → read `<RESULTS>/verdict.json` and apply the keep rule from
+     "The objective." Exit 1 means a wall_time regression tripped the overall
+     verdict; exit 0 covers improved, equivalent, and inconclusive. Neither exit
+     code is a keep signal on its own — exit 0 does **not** imply a keep (an alloc
+     regression can be present while wall improved). Decide only from the JSON
+     conjunction; under the default preset inconclusive is neutral and never a
+     failure.
+7. **Double-confirm** a candidate keep: run the exact perf-gate command again and
+   require the keep rule to hold a second time. Two back-to-back runs on the same
+   machine share thermal and load bias, so two false `Improved` verdicts are
+   correlated, not independent — the double-confirm mainly guards against a single
+   unlucky draw, and the deterministic `alloc_words` signal is the stronger guard.
+   If the machine is under load, space the two runs out. If they disagree, treat
+   it as no win and discard.
+8. On KEEP: promote the corrected file the confirming run wrote into the
+   baseline, stage it, and fold it into the kept commit together with the full
+   report message (`git commit --amend` — safe on this unpublished branch; see
+   "Commit messages"). The corrected file advances only the cases that actually
+   improved and preserves every other case's blessed value — a fresh re-bless
+   would overwrite all cases with one noisy draw, so never re-bless:
+
+   ```
+   if [ -f <WT>/<BASELINE>.corrected ]; then
+     mv <WT>/<BASELINE>.corrected <WT>/<BASELINE>
+     git -C <WT> add <BASELINE>
+   fi
+   git -C <WT> commit --amend
+   ```
+
+   One kept commit = the code change + the ratcheted baseline + the report.
+   The baseline diff (old → new estimates for the improved cases) is the
+   committed measurement — performance evidence travels with the change the
+   way a test travels with a bugfix. A measured win always writes a corrected
+   file; a simplification keep (no measured gain) writes none — it advances
+   the commit only, and the baseline rightly stays put.
+   On DISCARD: `git reset --hard C`; `rm -f <WT>/<BASELINE>.corrected` (the
+   corrected file is untracked; a check run never modifies the tracked
+   baseline).
+9. Log one row to `<RESULTS>/results.tsv` (see below).
+10. Go to 1. Never stop to ask whether to continue.
+
+To develop an idea before the confirm, iterate fast on the single case you are
+changing with `<BENCH> -f <case> --quick --explore`. `--quick` is for the inner
+loop only — never for a keep decision.
+
+## Commit messages
+
+A kept commit is the permanent record of an experiment — write it to the
+standard of a Linux-kernel perf patch. Step 5's provisional message (subject +
+hypothesis) is enough to measure against; when a change is KEPT, amend so one
+commit carries the code change, the ratcheted baseline, and a message a reader
+can judge without running anything:
+
+- **Subject**: `perf(<package>): <what changed>` — imperative, capitalized.
+- **Mechanism**: WHY it is faster — the causal explanation, and when the fast
+  path applies vs falls through to the old path.
+- **Measurements**, from the confirming run's `verdict.json`: every case with
+  an `improved` relation, with its delta and CI bounds; the geomean wall/alloc
+  deltas over the lab subset; and an explicit "no case regressed on wall or
+  alloc".
+- **Methodology**, one line: preset, subset, double-confirm, machine.
+- **Correctness**, one line: the package test suite passed before measurement.
+
+Numbers over adjectives; no hedging, no filler. Example shape:
+
+```
+perf(nx): Memcpy fast path for contiguous copy and concat
+
+When a C-contiguous source is copied into a contiguous destination region,
+the per-element strided copy collapses to a single memcpy. Transposed and
+padded sources fall through to the general path unchanged.
+
+Measured (thumper default preset, --tag lab, 15 cases, double-confirmed,
+Apple M3 Max):
+
+  structural/copy 1M                        wall -54.1% [-56.9%, -51.2%]
+  structural/concatenate axis0 two 512x512  wall -31.7% [-34.0%, -29.3%]
+  geomean over lab subset: wall -6.8%, alloc -0.0%; 0 regressions
+
+nx test suite passes; outputs are bit-identical.
+```
+
+## Reading the deltas for the log
+
+From `<RESULTS>/verdict.json`, per-metric `summary`:
+`summary.wall_time.geomean_delta` and `summary.alloc_words.geomean_delta` are the
+geomean deltas (fractions; ×100 for the percent columns, negative = better), and
+`summary.wall_time.{n_improved,n_regressed,n_inconclusive}` are the case counts
+for the log. This is the same file the perf gate read — one measurement, one read.
+
+## Noise discipline
+
+Measurement on a dev laptop is noisy; the design fights this at every step:
+- The keep decision always uses the **default** preset (2% target CI, 10s/case
+  cap), never `--quick` (5% CI). Under the default preset inconclusive is neutral,
+  which the keep rule relies on.
+- The baseline is blessed once, locally, into the committed baseline file with
+  the same default preset — so it matches this machine's OCaml version and
+  profile (no environment check trips) and shares the check's measurement
+  settings.
+- `alloc_words` is deterministic: an allocation regression is a hard, reliable
+  stop (read it from the JSON, not the exit code); an allocation win is a real
+  win even when timing is in the noise.
+- Every keep is double-confirmed (with the correlation caveat above).
+- Measure on an otherwise-idle machine, and **never while any build is running —
+  including your own**. Finish building and testing (loop steps 3–4), let it
+  settle, then run the perf gate (step 6). Another agent or the human's watch
+  build inflates variance; if the machine is busy, wait.
+
+## Logging results
+
+Append one tab-separated row per iteration to `results.tsv`:
+
+```
+commit	suite	geomean_wall_pct	geomean_alloc_pct	improved	regressed	inconclusive	status	description
+```
+
+- `geomean_wall_pct`, `geomean_alloc_pct`: geomean deltas, negative = better;
+  blank on crash.
+- `improved` / `regressed` / `inconclusive`: wall_time case counts.
+- `status`: `keep`, `discard`, or `crash`.
+- `description`: the hypothesis in a few words. No tabs.
+
+Do not commit `results.tsv`; it lives under the gitignored `lab/results/`.
+
+## NEVER STOP
+
+Once the loop begins, do not pause to ask the human anything. They may be
+asleep. If you run out of ideas, think harder: re-read the in-scope code for hot
+paths, re-read the target's perf notes, revisit near-misses and combine them,
+try a more radical rewrite of one kernel. The loop runs until you are manually
+stopped, period.

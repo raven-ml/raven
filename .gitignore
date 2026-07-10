@@ -35,3 +35,6 @@ runs/
 # Agents
 .agents/
 .claude/
+# Lab session artifacts
+lab/results/*
+!lab/results/.gitkeep
