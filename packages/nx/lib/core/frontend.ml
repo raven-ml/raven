@@ -4301,7 +4301,7 @@ module Make (B : Backend_intf.S) = struct
     let ( <=$ ) a b = less_equal_s a b
     let ( >= ) a b = greater_equal a b
     let ( >=$ ) a b = greater_equal_s a b
-    let ( @@ ) a b = matmul a b
+    let ( *@ ) a b = matmul a b
     let ( /@ ) = solve
     let ( **@ ) = matrix_power
     let ( <.> ) = dot

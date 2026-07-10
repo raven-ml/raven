@@ -16,6 +16,14 @@ let test_matmul_1d_1d () =
   let result = Nx.matmul a b in
   check_t "matmul 1d x 1d" [||] [| 32.0 |] result
 
+let test_matmul_infix_precedence () =
+  let open Nx.Infix in
+  let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let b = Nx.eye Nx.float32 2 in
+  let c = Nx.ones Nx.float32 [| 2; 2 |] in
+  let result = a *@ b + c in
+  check_t "matmul infix precedence" [| 2; 2 |] [| 2.; 3.; 4.; 5. |] result
+
 let test_matmul_1d_2d () =
   let a = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
   let b = Nx.create Nx.float32 [| 3; 4 |] (Array.init 12 float_of_int) in
@@ -1488,6 +1496,7 @@ let test_tensorinv_ind () =
 let matmul_tests =
   [
     test "matmul 1d x 1d" test_matmul_1d_1d;
+    test "matmul infix precedence" test_matmul_infix_precedence;
     test "matmul 1d x 2d" test_matmul_1d_2d;
     test "matmul 2d x 1d" test_matmul_2d_1d;
     test "matmul batch" test_matmul_batch;

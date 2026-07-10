@@ -310,6 +310,8 @@ thread.
 
 ### Nx
 
+- **Breaking.** Rename the infix matrix-multiplication operator from `@@` to
+  `*@`, giving it multiplication precedence in mixed arithmetic expressions.
 - Fix `cast` and all float16 compute: the float32-to-float16 conversion
   corrupted any value with an odd biased exponent that needed mantissa
   rounding (e.g. casting `0.274` to float16 returned `0.5`), converted `inf`

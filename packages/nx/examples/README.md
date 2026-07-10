@@ -13,7 +13,7 @@ previous one, progressing from array creation to machine learning.
 | 04  | [Reshaping and Broadcasting](04-reshaping-and-broadcasting/) | `reshape`, `flatten`, `transpose`, `vstack`, broadcasting rules      |
 | 05  | [Reductions and Statistics](05-reductions-and-statistics/)   | `mean`, `std`, `argmax`, `cumsum`, `all`, `any`, axis parameter      |
 | 06  | [Random Numbers](06-random-numbers/)                         | `Rng.run`, `Rng.uniform`, `Rng.normal`, `Rng.shuffle`, Monte Carlo   |
-| 07  | [Linear Algebra](07-linear-algebra/)                         | `@@`, `/@`, `inv`, `det`, `lstsq`, `eigh`, `svd`                     |
+| 07  | [Linear Algebra](07-linear-algebra/)                         | `*@`, `/@`, `inv`, `det`, `lstsq`, `eigh`, `svd`                     |
 | 08  | [Signal Processing](08-signal-processing/)                   | `rfft`, `irfft`, `rfftfreq`, frequency filtering                     |
 | 09  | [Image Processing](09-image-processing/)                     | `correlate2d`, `max_pool2d`, Sobel edges, `Nx_io.save_image`         |
 | 10  | [Machine Learning](10-machine-learning/)                     | PCA, K-Means, DBSCAN, t-SNE from Nx primitives                       |

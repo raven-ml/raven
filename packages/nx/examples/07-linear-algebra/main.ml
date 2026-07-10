@@ -13,7 +13,7 @@ let () =
   let b = create float64 [| 3; 2 |] [| 7.0; 8.0; 9.0; 10.0; 11.0; 12.0 |] in
   Printf.printf "A (2×3):\n%s\n" (data_to_string a);
   Printf.printf "B (3×2):\n%s\n" (data_to_string b);
-  Printf.printf "A @@ B:\n%s\n\n" (data_to_string (a @@ b));
+  Printf.printf "A *@ B:\n%s\n\n" (data_to_string (a *@ b));
 
   (* --- Dot product --- *)
   let u = create float64 [| 3 |] [| 1.0; 2.0; 3.0 |] in
@@ -32,10 +32,10 @@ let () =
   Printf.printf "b: %s\n" (data_to_string (flatten rhs));
   Printf.printf "x: %s\n\n" (data_to_string (flatten x));
 
-  (* --- Inverse: verify A @@ inv(A) ≈ I --- *)
+  (* --- Inverse: verify A *@ inv(A) ≈ I --- *)
   let m = create float64 [| 2; 2 |] [| 4.0; 7.0; 2.0; 6.0 |] in
   let m_inv = inv m in
-  let product = m @@ m_inv in
+  let product = m *@ m_inv in
   Printf.printf "M:\n%s\n" (data_to_string m);
   Printf.printf "M⁻¹:\n%s\n" (data_to_string m_inv);
   Printf.printf "M × M⁻¹ ≈ I:\n%s\n\n" (data_to_string product);
@@ -73,7 +73,7 @@ let () =
   let u_mat, s_vec, vt = svd data in
   (* Reconstruct: U @ diag(S) @ Vt *)
   let s_diag = diag s_vec in
-  let reconstructed = u_mat.${[ A; R (0, 2) ]} @@ s_diag @@ vt in
+  let reconstructed = u_mat.${[ A; R (0, 2) ]} *@ s_diag *@ vt in
   Printf.printf "Original:\n%s\n" (data_to_string data);
   Printf.printf "Singular values: %s\n" (data_to_string s_vec);
   Printf.printf "Reconstructed (U·S·Vt):\n%s\n" (data_to_string reconstructed)

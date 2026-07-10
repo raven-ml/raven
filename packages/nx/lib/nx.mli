@@ -1851,8 +1851,8 @@ module Infix : sig
 
   (** {2:infix_linalg Linear algebra} *)
 
-  val ( @@ ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-  (** [a @@ b] is {!matmul} [a b]. *)
+  val ( *@ ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
+  (** [a *@ b] is {!matmul} [a b]. *)
 
   val ( /@ ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
   (** [a /@ b] is {!solve} [a b]. *)
@@ -2383,7 +2383,7 @@ val trace : ?offset:int -> ('a, 'b) t -> ('a, 'b) t
 (** {2:linalg_solve Solving} *)
 
 val solve : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-(** [solve a b] is [x] such that [a @@ x = b].
+(** [solve a b] is [x] such that [a *@ x = b].
 
     Raises [Invalid_argument] if [a] is singular or the dtype is not
     floating-point or complex.
@@ -2396,7 +2396,7 @@ val lstsq :
   ('a, 'b) t ->
   ('a, 'b) t * ('a, 'b) t * int * (float, float64_elt) t
 (** [lstsq ?rcond a b] is [(x, residuals, rank, sv)] — the least-squares
-    solution to [a @@ x ≈ b]. [rcond] defaults to machine precision.
+    solution to [a *@ x ≈ b]. [rcond] defaults to machine precision.
 
     Raises [Invalid_argument] if the dtype is not floating-point or complex.
 
