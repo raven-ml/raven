@@ -293,6 +293,14 @@ Measurement on a dev laptop is noisy; the design fights this at every step:
   cores, wait and retry. If a quiet window never comes, say so in the log
   rather than measuring — a measurement taken on a loaded machine is worse
   than none.
+- The pair rule is valid **only under the load precondition**. Under sustained
+  load, noise stops being independent per run: a sub-10µs case is
+  systematically inflated in every run, so a false regression *reproduces*
+  across the pair and looks real. A change whose gate cannot be run within
+  the load precondition stays PENDING — neither kept nor discarded, and never
+  decided on `--explore` evidence alone, however convincing the mechanism.
+  Wait for the machine, or end the session and note the pending change in the
+  log. Only one lab-style measurement session may run per machine at a time.
 
 ## Logging results
 
