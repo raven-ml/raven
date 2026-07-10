@@ -310,6 +310,9 @@ thread.
 
 ### Nx
 
+- Reductions along non-innermost axes stream rows instead of striding a cache
+  line per element: `sum ~axes:[0]` on 512×512 is ~9.6× faster (and `mean`
+  with it), with bit-for-bit identical results.
 - Vectorize `sum` along the contiguous axis (`sum ~axes:[1]` on a C-contiguous
   matrix): ~12.5× on 512×512.
 - Contiguous elementwise ops stay serial-SIMD below 16M elements instead of

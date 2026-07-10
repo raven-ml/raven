@@ -127,21 +127,34 @@ static inline bool reduce_sum_single_axis_f32(const ndarray_t *input,
   long total_out = total_elements_safe(output);
   if (total_out == 0) return true;
 
+  if (inner == 1) {
 #if defined(_OPENMP)
 #pragma omp parallel for schedule(static) if (total_out > 4096)
 #endif
-  for (long idx = 0; idx < total_out; ++idx) {
-    long outer_idx = inner == 1 ? idx : idx / inner;
-    long inner_idx = inner == 1 ? 0 : idx % inner;
-    long base = outer_idx * axis_size * inner + inner_idx;
-    float acc = 0.0f;
-    if (inner == 1) {
+    for (long idx = 0; idx < total_out; ++idx) {
+      const float *restrict row = in + idx * axis_size;
+      float acc = 0.0f;
 #pragma omp simd reduction(+ : acc)
-      for (long k = 0; k < axis_size; ++k) acc += in[base + k];
-    } else {
-      for (long k = 0; k < axis_size; ++k) acc += in[base + k * inner];
+      for (long k = 0; k < axis_size; ++k) acc += row[k];
+      out[idx] = acc;
     }
-    out[idx] = acc;
+  } else {
+    /* Reduce along a non-innermost axis: stream the reduced axis row by row
+       and accumulate into the contiguous output slice. Reads are sequential
+       and the accumulation vectorizes over the inner dimension, replacing the
+       stride-`inner` gather (one cache line per element). Summation order is
+       identical to the per-output loop, so results are unchanged. */
+    long outer = total_out / inner;
+    for (long o = 0; o < outer; ++o) {
+      float *restrict outs = out + o * inner;
+      const float *restrict inb = in + o * axis_size * inner;
+      for (long j = 0; j < inner; ++j) outs[j] = inb[j];
+      for (long k = 1; k < axis_size; ++k) {
+        const float *restrict row = inb + k * inner;
+#pragma omp simd
+        for (long j = 0; j < inner; ++j) outs[j] += row[j];
+      }
+    }
   }
 
   return true;
@@ -177,21 +190,34 @@ static inline bool reduce_sum_single_axis_f64(const ndarray_t *input,
   long total_out = total_elements_safe(output);
   if (total_out == 0) return true;
 
+  if (inner == 1) {
 #if defined(_OPENMP)
 #pragma omp parallel for schedule(static) if (total_out > 4096)
 #endif
-  for (long idx = 0; idx < total_out; ++idx) {
-    long outer_idx = inner == 1 ? idx : idx / inner;
-    long inner_idx = inner == 1 ? 0 : idx % inner;
-    long base = outer_idx * axis_size * inner + inner_idx;
-    double acc = 0.0;
-    if (inner == 1) {
+    for (long idx = 0; idx < total_out; ++idx) {
+      const double *restrict row = in + idx * axis_size;
+      double acc = 0.0;
 #pragma omp simd reduction(+ : acc)
-      for (long k = 0; k < axis_size; ++k) acc += in[base + k];
-    } else {
-      for (long k = 0; k < axis_size; ++k) acc += in[base + k * inner];
+      for (long k = 0; k < axis_size; ++k) acc += row[k];
+      out[idx] = acc;
     }
-    out[idx] = acc;
+  } else {
+    /* Reduce along a non-innermost axis: stream the reduced axis row by row
+       and accumulate into the contiguous output slice. Reads are sequential
+       and the accumulation vectorizes over the inner dimension, replacing the
+       stride-`inner` gather (one cache line per element). Summation order is
+       identical to the per-output loop, so results are unchanged. */
+    long outer = total_out / inner;
+    for (long o = 0; o < outer; ++o) {
+      double *restrict outs = out + o * inner;
+      const double *restrict inb = in + o * axis_size * inner;
+      for (long j = 0; j < inner; ++j) outs[j] = inb[j];
+      for (long k = 1; k < axis_size; ++k) {
+        const double *restrict row = inb + k * inner;
+#pragma omp simd
+        for (long j = 0; j < inner; ++j) outs[j] += row[j];
+      }
+    }
   }
 
   return true;
