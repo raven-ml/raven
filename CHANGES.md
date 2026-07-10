@@ -310,6 +310,9 @@ thread.
 
 ### Nx
 
+- `copy`, `contiguous`, and axis-aligned `concatenate` collapse to a single
+  `memcpy` when source and destination regions are contiguous (~31× on a
+  512×512 `concatenate`); results are bit-identical.
 - Speed up full-array `sum`: the reduction is now vectorized instead of
   parallelized (fork/join overhead dominated the bandwidth-bound sum) — up to
   125× at 128×128 and 20× at 1M elements on Apple Silicon.

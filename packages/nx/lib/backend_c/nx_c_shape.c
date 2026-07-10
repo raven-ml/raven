@@ -284,6 +284,31 @@ static inline void iterate_inner_dims_copy(const ndarray_t *src,
     long total = total_elements_safe(src);                                     \
     if (total == 0) return;                                                    \
                                                                                \
+    /* Fast path: a C-contiguous src copied into a contiguous dst region      \
+       (dst strides tile src's shape, so there is no interior padding) is a    \
+       single memcpy. Covers dense copy/contiguous and axis-aligned concat     \
+       slices; a transposed/strided src or a padded dst falls through. */      \
+    {                                                                          \
+      bool src_contig = is_contiguous(src);                                    \
+      bool dst_block = true;                                                    \
+      long expect_stride = 1;                                                  \
+      for (int d = src->ndim - 1; d >= 0; d--) {                               \
+        if (dst->strides[d] != expect_stride) {                               \
+          dst_block = false;                                                   \
+          break;                                                               \
+        }                                                                      \
+        expect_stride *= src->shape[d];                                        \
+      }                                                                        \
+      if (src_contig && dst_block) {                                           \
+        long dst_base = dst->offset;                                           \
+        for (int d = 0; d < src->ndim; d++)                                    \
+          dst_base += pad_before[d] * dst->strides[d];                         \
+        memcpy((T *)dst->data + dst_base, (T *)src->data + src->offset,        \
+               (size_t)total * sizeof(T));                                     \
+        return;                                                                \
+      }                                                                        \
+    }                                                                          \
+                                                                               \
     /* Even if both are contiguous, we can't do a simple linear copy          \
        because the destination has different dimensions due to padding */      \
     if (false) {                                                               \
