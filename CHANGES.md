@@ -504,6 +504,10 @@ thread.
 
 ### Kaun
 
+- The `kaun` bench suite is broader: alongside the MLP Adam train step and
+  forward pass it now covers an SGD train step, a small CNN train step
+  (conv + max-pool blocks with `Conv`/`Pool`), and a single `Linear` layer
+  forward and forward+backward in isolation.
 - `Dropout.apply` takes an optional `?key:Rune.Rng.key`: the mask becomes a
   pure function of the key and the input's shape, so dropout composes with
   `Rune.jit` (pass the key as an input leaf; keyless dropout under jit
