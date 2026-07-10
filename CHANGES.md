@@ -310,6 +310,12 @@ thread.
 
 ### Nx
 
+- Expand `bench_nx` to ~30 cases across `binary`, `unary`, `reduce`, and
+  `structural` groups — adding `sub`/`div`, unary elementwise, axis-wise
+  reductions, broadcasting, non-contiguous inputs (transposed-view operands,
+  strided-axis reductions, transpose materialization), and
+  `cast`/`copy`/`concatenate`. A `lab` tag marks a fast representative subset
+  (select with `--tag lab`).
 - Fix unary `-` from `Nx.Infix` to negate tensors with `neg`. It previously
   performed `logical_not`, unexpectedly turning zero into one and nonzero
   values into zero.

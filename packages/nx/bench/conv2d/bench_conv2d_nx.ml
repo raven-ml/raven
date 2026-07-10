@@ -35,8 +35,9 @@ let build_benchmarks () =
       let x = Nx.rand Nx.Float32 input_shape in
       let k = Nx.rand Nx.Float32 kernel_shape in
       let name = Printf.sprintf "correlate %s f32 (%s)" label backend_name in
+      let tags = if label = "2D 256x256" then [ "lab" ] else [] in
       benchmarks :=
-        Thumper.bench name (fun () -> Nx.correlate x k) :: !benchmarks)
+        Thumper.bench ~tags name (fun () -> Nx.correlate x k) :: !benchmarks)
     correlate_configs;
   List.iter
     (fun (label, input_shape, kernel_size, stride) ->
@@ -56,4 +57,10 @@ let build_benchmarks () =
 
 let () =
   let benchmarks = build_benchmarks () in
-  Thumper.run "nx_conv2d" benchmarks
+  Thumper.run "nx_conv2d"
+    ~budgets:
+      [
+        Thumper.Budget.no_slower_than ~metric:Thumper.Metric.wall_time 0.05;
+        Thumper.Budget.no_more_alloc_than 0.01;
+      ]
+    benchmarks
