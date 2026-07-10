@@ -36,24 +36,28 @@ exist — this is a fresh run. Then:
 3. Run the target's **test** command once. It must pass. This is your
    correctness reference for the whole session.
 
-4. Refresh the baseline **once**, on this machine, directly into the target's
-   committed baseline file (the target's **Baseline** entry, e.g.
-   `packages/nx/bench/nx.thumper` — call it `BASELINE`). Committed baselines
-   may have been blessed on another machine and are not a valid reference
-   here; the session must start from numbers measured on this machine. Run
-   the target's `BENCH` exe **directly** (never via `dune exec` — see the
-   target's Commands note), then commit the refresh on its own:
+4. Ensure the committed baseline has **this machine's section**. Baselines are
+   partitioned per machine (thumper keys sections by host fingerprint, so
+   machines never clobber each other, and a check binds automatically to the
+   running machine's section). The target's **Baseline** entry names the file,
+   e.g. `packages/nx/bench/nx.thumper` — call it `BASELINE`.
+
+   - If the baseline already contains this machine's section (look for a
+     `# machine:` header matching this host, or just run the perf gate once
+     and see whether cases resolve), it IS your session reference — no bless.
+   - Otherwise, bless **once** to add this machine's section, and commit the
+     refresh on its own. Run the target's `BENCH` exe **directly** (never via
+     `dune exec` — see the target's Commands note):
 
    ```
    <BENCH> --tag lab --bless --baseline <WT>/<BASELINE>
    git -C <WT> add <BASELINE>
-   git -C <WT> commit -m "bench(<target>): Re-bless <target> baseline on <machine> (lab session <tag>)"
+   git -C <WT> commit -m "bench(<target>): Bless <target> baseline for <machine> (lab session <tag>)"
    ```
 
-   This is the only bless in the session, and this commit is your session's
-   starting point. The baseline advances later by promoting corrected files
-   thumper writes — never by re-blessing — and every advance is committed
-   together with the change that earned it.
+   This is the only bless in the session. The baseline advances later by
+   promoting corrected files thumper writes — never by re-blessing — and every
+   advance is committed together with the change that earned it.
 
 5. Initialize `<RESULTS>/results.tsv` with the header row:
 
@@ -275,10 +279,10 @@ Measurement on a dev laptop is noisy; the design fights this at every step:
 - The keep decision always uses the **default** preset (2% target CI, 10s/case
   cap), never `--quick` (5% CI). Under the default preset inconclusive is neutral,
   which the keep rule relies on.
-- The baseline is blessed once, locally, into the committed baseline file with
-  the same default preset — so it matches this machine's OCaml version and
-  profile (no environment check trips) and shares the check's measurement
-  settings.
+- The session reference is this machine's own section of the committed
+  baseline — blessed on this machine, with the same default preset the checks
+  use, so no environment mismatch and no cross-machine comparison ever enters
+  a verdict.
 - `alloc_words` is deterministic: an allocation regression is a hard, reliable
   stop (read it from the JSON, not the exit code); an allocation win is a real
   win even when timing is in the noise.
