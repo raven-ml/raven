@@ -4285,7 +4285,6 @@ module Make (B : Backend_intf.S) = struct
     let ( lxor ) a b = bitwise_xor a b
     let ( lor ) a b = bitwise_or a b
     let ( land ) a b = bitwise_and a b
-    let ( ^ ) a b = logical_xor a b
     let ( && ) a b = logical_and a b
     let ( || ) a b = logical_or a b
     let ( ~- ) x = logical_not x

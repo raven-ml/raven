@@ -1837,9 +1837,6 @@ module Infix : sig
 
   (** {2:infix_logic Logical} *)
 
-  val ( ^ ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-  (** [a ^ b] is {!logical_xor} [a b]. *)
-
   val ( && ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
   (** [a && b] is {!logical_and} [a b]. *)
 

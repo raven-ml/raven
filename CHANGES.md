@@ -310,6 +310,8 @@ thread.
 
 ### Nx
 
+- **Breaking.** Remove the `^` logical-XOR operator; use `logical_xor`
+  directly. Its concatenation-level precedence misgrouped comparisons.
 - **Breaking.** Remove the `<.>` dot-product operator; use `dot` directly.
   Its comparison-level precedence grouped mixed arithmetic unexpectedly.
 - **Breaking.** Rename the infix matrix-multiplication operator from `@@` to
