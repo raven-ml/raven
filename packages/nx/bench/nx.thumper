@@ -4,8 +4,8 @@
 # host: 3b8ae6dbe74c4269
 # cpu: Apple M1 Max
 # ocaml: 5.5.0
-# git: 1faa3feb
-# command: ./_build/default/packages/nx/bench/bench_nx.exe --tag lab --bless --baseline packages/nx/bench/nx.thumper
+# git: 22d84e5e
+# command: ./_build/default/packages/nx/bench/bench_nx.exe --tag lab -q --baseline packages/nx/bench/nx.thumper --json lab/results/nx-jul10/verdict.json
 
 binary/add_100x100_f64	alloc_words	1.590000e+02	1.590000e+02	1.590000e+02	0.000000e+00	15	0
 binary/add_100x100_f64	cpu_time	9.507750e-06	9.410682e-06	9.625755e-06	1.131039e-02	15	0
@@ -32,23 +32,23 @@ reduce/sum_128x128	alloc_words	1.470000e+02	1.470000e+02	1.470000e+02	0.000000e+
 reduce/sum_128x128	cpu_time	1.566949e-06	1.524830e-06	1.587129e-06	1.987882e-02	15	0
 reduce/sum_128x128	wall_time	1.624296e-06	1.524982e-06	1.687173e-06	4.992653e-02	15	0
 reduce/sum_axis0_512x512	alloc_words	1.740000e+02	1.740000e+02	1.740000e+02	0.000000e+00	15	0
-reduce/sum_axis0_512x512	cpu_time	2.250004e-04	2.243105e-04	2.252828e-04	2.160506e-03	15	0
-reduce/sum_axis0_512x512	wall_time	2.258390e-04	2.249481e-04	2.261857e-04	2.739981e-03	15	0
+reduce/sum_axis0_512x512	cpu_time	2.221655e-05	2.201387e-05	2.239081e-05	8.483498e-03	15	0
+reduce/sum_axis0_512x512	wall_time	2.233141e-05	2.210315e-05	2.251470e-05	9.214625e-03	15	0
 reduce/sum_axis1_512x512	alloc_words	1.740000e+02	1.740000e+02	1.740000e+02	0.000000e+00	15	0
-reduce/sum_axis1_512x512	cpu_time	1.904335e-04	1.900817e-04	1.912910e-04	3.175124e-03	15	0
-reduce/sum_axis1_512x512	wall_time	1.910431e-04	1.905950e-04	1.921066e-04	3.956285e-03	15	0
+reduce/sum_axis1_512x512	cpu_time	1.479180e-05	1.460904e-05	1.485422e-05	8.287741e-03	15	0
+reduce/sum_axis1_512x512	wall_time	1.486613e-05	1.468233e-05	1.493649e-05	8.548223e-03	15	0
 reduce/sum_full_1m	alloc_words	1.340000e+02	1.340000e+02	1.340000e+02	0.000000e+00	24	1
 reduce/sum_full_1m	cpu_time	6.169322e-05	6.143079e-05	6.203258e-05	4.877307e-03	24	2
 reduce/sum_full_1m	wall_time	6.242050e-05	6.163662e-05	6.341402e-05	1.423731e-02	24	2
-structural/concatenate_axis0_two_512x512	alloc_words	2.230000e+02	2.230000e+02	2.230000e+02	0.000000e+00	26	2
-structural/concatenate_axis0_two_512x512	cpu_time	7.607082e-05	7.490861e-05	7.678893e-05	1.235896e-02	26	0
-structural/concatenate_axis0_two_512x512	wall_time	7.666433e-05	7.544016e-05	7.751542e-05	1.353470e-02	26	0
+structural/concatenate_axis0_two_512x512	alloc_words	2.230000e+02	2.230000e+02	2.230000e+02	0.000000e+00	15	0
+structural/concatenate_axis0_two_512x512	cpu_time	6.958012e-05	6.794305e-05	7.092935e-05	2.145939e-02	15	0
+structural/concatenate_axis0_two_512x512	wall_time	6.997144e-05	6.772372e-05	7.214628e-05	3.160263e-02	15	0
 structural/contiguous_of_transpose_512x512	alloc_words	9.700000e+01	9.700000e+01	9.700000e+01	0.000000e+00	15	0
 structural/contiguous_of_transpose_512x512	cpu_time	1.321448e-03	1.314003e-03	1.336844e-03	8.642244e-03	15	0
 structural/contiguous_of_transpose_512x512	wall_time	1.326858e-03	1.319369e-03	1.342015e-03	8.533746e-03	15	1
 unary/exp_1m	alloc_words	9.300000e+01	9.300000e+01	9.300000e+01	0.000000e+00	24	1
 unary/exp_1m	cpu_time	2.236100e-03	2.204510e-03	2.275739e-03	1.592709e-02	24	1
 unary/exp_1m	wall_time	1.000283e-03	8.077033e-04	1.182617e-03	1.874039e-01	24	0
-unary/relu_1m	alloc_words	2.350000e+02	2.350000e+02	2.350000e+02	0.000000e+00	30	3
-unary/relu_1m	cpu_time	2.584679e-04	2.544544e-04	2.693804e-04	2.887399e-02	30	0
-unary/relu_1m	wall_time	2.639164e-04	2.529990e-04	2.823477e-04	5.560222e-02	30	0
+unary/relu_1m	alloc_words	2.350000e+02	2.350000e+02	2.350000e+02	0.000000e+00	27	2
+unary/relu_1m	cpu_time	2.278748e-04	2.257864e-04	2.307606e-04	1.091437e-02	27	1
+unary/relu_1m	wall_time	2.271536e-04	2.238893e-04	2.310937e-04	1.585805e-02	27	2
