@@ -1860,9 +1860,6 @@ module Infix : sig
   val ( **@ ) : ('a, 'b) t -> int -> ('a, 'b) t
   (** [t **@ n] is {!matrix_power} [t n]. *)
 
-  val ( <.> ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-  (** [a <.> b] is {!dot} [a b]. *)
-
   (** {2:infix_concat Concatenation} *)
 
   val ( @= ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t

@@ -10,7 +10,7 @@ dune exec nx/examples/07-linear-algebra/main.exe
 
 ## What You'll Learn
 
-- Matrix multiplication with `*@` and dot products with `<.>`
+- Matrix multiplication with `*@` and dot products with `dot`
 - Solving linear systems with `/@`
 - Computing inverses, determinants, and norms
 - Fitting a line to data with least squares (`lstsq`)
@@ -22,7 +22,7 @@ dune exec nx/examples/07-linear-algebra/main.exe
 | Function    | Purpose                                            |
 | ----------- | -------------------------------------------------- |
 | `a *@ b`    | Matrix multiplication                              |
-| `u <.> v`   | Vector dot product                                 |
+| `dot u v`   | Vector dot product                                 |
 | `a /@ b`    | Solve linear system Ax = b                         |
 | `inv m`     | Matrix inverse                                     |
 | `det m`     | Determinant                                        |

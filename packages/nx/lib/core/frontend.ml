@@ -4304,7 +4304,6 @@ module Make (B : Backend_intf.S) = struct
     let ( *@ ) a b = matmul a b
     let ( /@ ) = solve
     let ( **@ ) = matrix_power
-    let ( <.> ) = dot
     let ( @= ) a b = concatenate ~axis:0 [ a; b ]
     let ( @|| ) a b = concatenate ~axis:1 [ a; b ]
     let ( .%{} ) x indices = get indices x

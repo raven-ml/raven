@@ -18,7 +18,7 @@ let () =
   (* --- Dot product --- *)
   let u = create float64 [| 3 |] [| 1.0; 2.0; 3.0 |] in
   let v = create float64 [| 3 |] [| 4.0; 5.0; 6.0 |] in
-  Printf.printf "u · v = %s\n\n" (data_to_string (u <.> v));
+  Printf.printf "u · v = %s\n\n" (data_to_string (dot u v));
 
   (* --- Solving linear systems: A x = b --- *)
   let coeff =

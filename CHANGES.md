@@ -310,6 +310,8 @@ thread.
 
 ### Nx
 
+- **Breaking.** Remove the `<.>` dot-product operator; use `dot` directly.
+  Its comparison-level precedence grouped mixed arithmetic unexpectedly.
 - **Breaking.** Rename the infix matrix-multiplication operator from `@@` to
   `*@`, giving it multiplication precedence in mixed arithmetic expressions.
 - Fix `cast` and all float16 compute: the float32-to-float16 conversion
