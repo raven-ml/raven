@@ -1747,6 +1747,9 @@ module Infix : sig
   val ( - ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
   (** [a - b] is {!sub} [a b]. *)
 
+  val ( ~- ) : ('a, 'b) t -> ('a, 'b) t
+  (** [-t] is {!neg} [t]. *)
+
   val ( * ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
   (** [a * b] is {!mul} [a b]. *)
 
@@ -1842,9 +1845,6 @@ module Infix : sig
 
   val ( || ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
   (** [a || b] is {!logical_or} [a b]. *)
-
-  val ( ~- ) : ('a, 'b) t -> ('a, 'b) t
-  (** [~-t] is {!logical_not} [t]. *)
 
   (** {2:infix_linalg Linear algebra} *)
 

@@ -310,6 +310,9 @@ thread.
 
 ### Nx
 
+- Fix unary `-` from `Nx.Infix` to negate tensors with `neg`. It previously
+  performed `logical_not`, unexpectedly turning zero into one and nonzero
+  values into zero.
 - **Breaking.** Remove the `^` logical-XOR operator; use `logical_xor`
   directly. Its concatenation-level precedence misgrouped comparisons.
 - **Breaking.** Remove the `<.>` dot-product operator; use `dot` directly.

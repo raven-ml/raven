@@ -287,6 +287,11 @@ let element_wise_unary_tests =
     test "neg" (fun () ->
         let a = Nx.create Nx.float32 [| 3 |] [| 1.; -2.; 3. |] in
         Nx.neg a |> check_t "neg" [| 3 |] [| -1.; 2.; -3. |]);
+    test "unary negation operator" (fun () ->
+        let open Nx.Infix in
+        let a = Nx.create Nx.float32 [| 3 |] [| 1.; -2.; 3. |] in
+        let negated = -a in
+        check_t "unary negation operator" [| 3 |] [| -1.; 2.; -3. |] negated);
     test "abs" (fun () ->
         let a = Nx.create Nx.float32 [| 3 |] [| -3.; 0.; 5. |] in
         Nx.abs a |> check_t "abs" [| 3 |] [| 3.; 0.; 5. |]);
