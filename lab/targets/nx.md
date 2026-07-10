@@ -29,7 +29,7 @@ session, same exe-path rule):
 
 ## In scope (may edit)
 
-- `packages/nx/lib/frontend.ml` — op composition, views, broadcasting,
+- `packages/nx/lib/core/frontend.ml` — op composition, views, broadcasting,
   contiguity decisions.
 - `packages/nx/lib/backend_c/**` — the C backend: OCaml dispatch and the C
   kernels. Most elementwise / reduction / matmul wins are here.

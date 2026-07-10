@@ -103,31 +103,41 @@ time is reported but is not the objective: the backend is multithreaded, so
 cpu_time is the sum across threads and is noisy and core-count-dependent.
 
 The keep decision is read from `<RESULTS>/verdict.json` (written by the perf
-gate), using its per-metric `summary`. A change is KEPT only if:
+gate). A candidate keep takes two gate runs (step 7), and the decision is taken
+on the PAIR, per case — single-run verdicts on micro-cases are too noisy to act
+on alone (a sub-10µs case can swing >5% run to run, so spurious regressions
+rotate across unrelated cases). A change is KEPT only if:
 
 - the target's tests pass; and
-- `summary.wall_time.n_regressed == 0`; and
-- `summary.alloc_words.n_regressed == 0`; and
-- `summary.wall_time.n_improved > 0` **or** `summary.alloc_words.n_improved > 0`.
+- no case has `wall_time` relation `"regressed"` in **both** runs — a real
+  regression reproduces on the same case; one that appears once, on a case
+  your change cannot affect, is what noise looks like; and
+- no case has `alloc_words` relation `"regressed"` in **either** run —
+  allocation is deterministic, one alloc regression is real: discard
+  immediately, no second run needed; and
+- at least one case has relation `"improved"` (`wall_time` or `alloc_words`)
+  in **both** runs — improvements must reproduce on the same case too; noise
+  fakes improvements exactly as easily as regressions.
 
-Read the alloc gate from `summary.alloc_words.n_regressed`, **not** from the exit
-code. thumper deliberately lets a case *pass* when wall_time improved even if its
-allocation regressed (it treats that as an accepted trade-off), so the exit code
-alone does not catch "alloc up while wall down." **Exit 0 does not imply a
-keep**: it only means no wall_time regression tripped the overall verdict, and an
-alloc regression can still be present. The four-line JSON conjunction above is
-the sole authority for keep vs. discard; the exit code is a sanity check only.
+Read per-case relations from the `cases` array; the per-metric `summary`
+counts are the quick screen (run 1 with `n_improved == 0` on both metrics and
+no simplification claim is already a discard — skip the second run).
 
-Inconclusive cases neither justify nor block a keep: they are counted separately
-(`summary.wall_time.n_inconclusive`) and ignored. Keeping requires at least one
-confident `Improved` and zero `Regressed` on the two gated metrics.
+Never decide from the exit code. thumper deliberately lets a case *pass* when
+wall_time improved even if its allocation regressed (an accepted trade-off),
+so exit 0 does not imply the alloc gate holds; and a spurious single-run wall
+regression exits 1 without being real. The pair rule above is the sole
+authority; exit codes are sanity checks only.
+
+Inconclusive cases neither justify nor block a keep: they are counted
+separately (`summary.wall_time.n_inconclusive`) and ignored.
 
 **Simplification keep-path (bounded).** A change with no measured gain may be
 kept *only* if it is a genuine simplification: **net lines of code strictly
-decrease** AND `summary.wall_time.n_regressed == 0` AND
-`summary.alloc_words.n_regressed == 0`. The strict-LOC-decrease rule bounds churn
-— it forbids renames and reformatting kept as "simplifications," and guarantees
-the code only shrinks on a zero-gain keep.
+decrease**, no reproduced `wall_time` regression across the pair, and no
+`alloc_words` regression in either run. The strict-LOC-decrease rule bounds
+churn — it forbids renames and reformatting kept as "simplifications," and
+guarantees the code only shrinks on a zero-gain keep.
 
 **Simplicity criterion.** All else equal, simpler is better. A win that deletes
 code is the best kind. A small win that adds ugly complexity is not worth it.
@@ -165,20 +175,21 @@ code is the best kind. A small win that adds ugly complexity is not worth it.
    - **Exit 2** → a usage error or no cases matched `--tag lab`. This is a broken
      command, not a result. Stop, fix the command, re-run — do **not** log an
      iteration.
-   - **Exit 0 or 1** → read `<RESULTS>/verdict.json` and apply the keep rule from
-     "The objective." Exit 1 means a wall_time regression tripped the overall
-     verdict; exit 0 covers improved, equivalent, and inconclusive. Neither exit
-     code is a keep signal on its own — exit 0 does **not** imply a keep (an alloc
-     regression can be present while wall improved). Decide only from the JSON
-     conjunction; under the default preset inconclusive is neutral and never a
-     failure.
-7. **Double-confirm** a candidate keep: run the exact perf-gate command again and
-   require the keep rule to hold a second time. Two back-to-back runs on the same
-   machine share thermal and load bias, so two false `Improved` verdicts are
-   correlated, not independent — the double-confirm mainly guards against a single
-   unlucky draw, and the deterministic `alloc_words` signal is the stronger guard.
-   If the machine is under load, space the two runs out. If they disagree, treat
-   it as no win and discard.
+   - **Exit 0 or 1** → read `<RESULTS>/verdict.json`. Screen run 1: an
+     `alloc_words` regression → DISCARD now; `n_improved == 0` on both metrics
+     (and no simplification claim) → DISCARD now. Otherwise this is a candidate
+     keep — save this verdict (e.g. `cp verdict.json verdict.1.json`) and go to
+     the double-confirm. Exit 1 here may be a single-run noise regression; do
+     not discard on it alone — the pair rule decides.
+7. **Double-confirm** a candidate keep: run the exact perf-gate command a second
+   time — it need not be back-to-back; under load, wait for a quiet window —
+   and apply the pair rule from "The objective" across BOTH saved verdicts:
+   regressions block only if the same case regresses in both runs, improvements
+   count only if the same case improves in both runs, and any alloc regression
+   in either run discards. Two back-to-back runs share thermal and load bias,
+   so two false verdicts are correlated, not independent — the pair rule and
+   the deterministic `alloc_words` signal are the real guards; spacing the runs
+   out weakens the correlation.
 8. On KEEP: promote the corrected file the confirming run wrote into the
    baseline, stage it, and fold it into the kept commit together with the full
    report message (`git commit --amend` — safe on this unpublished branch; see
@@ -197,9 +208,12 @@ code is the best kind. A small win that adds ugly complexity is not worth it.
    One kept commit = the code change + the ratcheted baseline + the report.
    The baseline diff (old → new estimates for the improved cases) is the
    committed measurement — performance evidence travels with the change the
-   way a test travels with a bugfix. A measured win always writes a corrected
-   file; a simplification keep (no measured gain) writes none — it advances
-   the commit only, and the baseline rightly stays put.
+   way a test travels with a bugfix. A run that exited 1 on a spurious
+   single-run regression still writes the corrected file when any case
+   improved, and promoting it is safe: corrected files never advance regressed
+   cases. A measured win always writes a corrected file; a simplification keep
+   (no measured gain) writes none — it advances the commit only, and the
+   baseline rightly stays put.
    On DISCARD: `git reset --hard C`; `rm -f <WT>/<BASELINE>.corrected` (the
    corrected file is untracked; a check run never modifies the tracked
    baseline).
@@ -268,11 +282,17 @@ Measurement on a dev laptop is noisy; the design fights this at every step:
 - `alloc_words` is deterministic: an allocation regression is a hard, reliable
   stop (read it from the JSON, not the exit code); an allocation win is a real
   win even when timing is in the noise.
-- Every keep is double-confirmed (with the correlation caveat above).
+- Every keep is decided on a pair of runs, per case (see "The objective") —
+  single-run verdicts on micro-cases (≲20µs) are not actionable either way.
 - Measure on an otherwise-idle machine, and **never while any build is running —
   including your own**. Finish building and testing (loop steps 3–4), let it
   settle, then run the perf gate (step 6). Another agent or the human's watch
-  build inflates variance; if the machine is busy, wait.
+  build inflates variance.
+- Check load before every gate run: compare `uptime`'s 1-minute load average
+  to the core count (`sysctl -n hw.ncpu`); while load exceeds about half the
+  cores, wait and retry. If a quiet window never comes, say so in the log
+  rather than measuring — a measurement taken on a loaded machine is worse
+  than none.
 
 ## Logging results
 
