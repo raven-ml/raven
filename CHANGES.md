@@ -310,6 +310,9 @@ thread.
 
 ### Nx
 
+- Contiguous elementwise ops stay serial-SIMD below 16M elements instead of
+  parallelizing at 32768: a single vectorized core saturates memory bandwidth,
+  so `add`/`mul` on 1M floats are ~7× faster on Apple Silicon.
 - `copy`, `contiguous`, and axis-aligned `concatenate` collapse to a single
   `memcpy` when source and destination regions are contiguous (~31× on a
   512×512 `concatenate`); results are bit-identical.

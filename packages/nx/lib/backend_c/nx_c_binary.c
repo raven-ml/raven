@@ -16,7 +16,13 @@
 #include "nx_c_shared.h"
 
 #if defined(_OPENMP)
-#define NX_PARALLEL_THRESHOLD 32768
+/* Contiguous elementwise ops are memory-bandwidth bound: a single core with
+   omp simd already saturates DRAM bandwidth, while an omp parallel-for region
+   adds fork/join and scheduling overhead that dominates. Only fan out for
+   arrays large enough (~16M elems) that the overhead is amortized; below that,
+   stay serial-SIMD. The previous 32768 threshold parallelized ~128KB adds,
+   making them several times slower than serial. */
+#define NX_PARALLEL_THRESHOLD 16777216
 #define NX_FOR_EACH_ELEM(total, BODY)                                           \
   do {                                                                          \
     if ((total) >= NX_PARALLEL_THRESHOLD) {                                     \
