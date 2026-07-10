@@ -13,15 +13,24 @@
  (modules bench_nx_oxcaml)
  (libraries bench_nx_common nx_oxcaml))
 
+; Not attached to runtest on purpose: run with `dune build @bench`
+; (or `dune exec packages/nx-oxcaml/bench/bench_nx_c.exe -- --explore`).
+
 (rule
- (alias runtest)
+ (alias bench)
+ ; Serialize bench rules across the workspace: concurrent suites contend
+ ; for cores and distort measurements.
+ (locks %{project_root}/bench)
  (action
   (progn
    (run %{exe:bench_nx_c.exe} -q)
    (diff? nx_c.thumper nx_c.thumper.corrected))))
 
 (rule
- (alias runtest)
+ (alias bench)
+ ; Serialize bench rules across the workspace: concurrent suites contend
+ ; for cores and distort measurements.
+ (locks %{project_root}/bench)
  (action
   (progn
    (run %{exe:bench_nx_oxcaml.exe} -q)

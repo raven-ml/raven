@@ -4,8 +4,14 @@
  (name bench_brot)
  (libraries brot thumper unix))
 
+; Not attached to runtest on purpose: run with `dune build @bench`
+; (or `dune exec packages/brot/bench/bench_brot.exe -- --explore`).
+
 (rule
- (alias runtest)
+ (alias bench)
+ ; Serialize bench rules across the workspace: concurrent suites contend
+ ; for cores and distort measurements.
+ (locks %{project_root}/bench)
  (action
   (progn
    (run %{exe:bench_brot.exe} -q)

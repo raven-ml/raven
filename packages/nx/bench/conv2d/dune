@@ -2,8 +2,14 @@
  (name bench_conv2d_nx)
  (libraries nx thumper))
 
+; Not attached to runtest on purpose: run with `dune build @bench`
+; (or `dune exec packages/nx/bench/conv2d/bench_conv2d_nx.exe -- --explore`).
+
 (rule
- (alias runtest)
+ (alias bench)
+ ; Serialize bench rules across the workspace: concurrent suites contend
+ ; for cores and distort measurements.
+ (locks %{project_root}/bench)
  (action
   (progn
    (run %{exe:bench_conv2d_nx.exe} -q)

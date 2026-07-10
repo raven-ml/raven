@@ -310,6 +310,13 @@ thread.
 
 ### Nx
 
+- Benchmark suites across the workspace now run under a dedicated `bench`
+  alias with a shared lock instead of `runtest` (`nx` and its
+  `matmul`/`conv2d`/`einsum` suites, `norn`, `talon`, `vega`, `fehu`,
+  `nx-oxcaml`, `brot`, `sowilo` — matching `rune` and `kaun`, which already
+  did this). `dune runtest` no longer runs perf regression checks (which could
+  fail an ordinary test run on measurement noise); run them with
+  `dune build @bench`.
 - Expand `bench_nx` to ~30 cases across `binary`, `unary`, `reduce`, and
   `structural` groups — adding `sub`/`div`, unary elementwise, axis-wise
   reductions, broadcasting, non-contiguous inputs (transposed-view operands,

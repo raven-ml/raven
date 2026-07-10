@@ -3,8 +3,14 @@
  (modules bench_matmul_nx)
  (libraries nx thumper))
 
+; Not attached to runtest on purpose: run with `dune build @bench`
+; (or `dune exec packages/nx/bench/matmul/bench_matmul_nx.exe -- --explore`).
+
 (rule
- (alias runtest)
+ (alias bench)
+ ; Serialize bench rules across the workspace: concurrent suites contend
+ ; for cores and distort measurements.
+ (locks %{project_root}/bench)
  (action
   (progn
    (run %{exe:bench_matmul_nx.exe} -q)
