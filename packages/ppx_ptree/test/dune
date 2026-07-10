@@ -1,0 +1,152 @@
+(tests
+ (names test_ptree test_signature test_integration)
+ (package ppx_ptree)
+ (flags
+  (:standard -warn-error +a))
+ (libraries nx nx.effect rune vega kaun windtrap)
+ (preprocess
+  (pps ppx_ptree)))
+
+(test
+ (name test_locations)
+ (package ppx_ptree)
+ (flags
+  (:standard -warn-error +a))
+ (libraries ppxlib ppx_ptree windtrap)
+ (link_flags -linkall)
+ (deps
+  (glob_files cases/*.ml))
+ (action
+  (setenv
+   PPX_PTREE_CASE
+   %{dep:cases/abstract.ml}
+   (run %{test}))))
+
+(executable
+ (name pp)
+ (modules pp)
+ (flags
+  (:standard -warn-error +a))
+ (libraries ppxlib ppx_ptree)
+ (link_flags -linkall))
+
+(cram
+ (package ppx_ptree)
+ (deps
+  %{exe:pp.exe}
+  (glob_files cases/*.ml)))
+
+(rule
+ (alias runtest)
+ (targets
+  compiler_leaf.actual
+  compiler_missing_delegate.actual
+  compiler_illtyped_delegate.actual
+  compiler_ppx_metadata.actual)
+ (deps
+  (:pp pp.exe))
+ (action
+  (progn
+   (with-stderr-to
+    compiler_leaf.actual
+    (with-accepted-exit-codes
+     2
+     (run
+      %{ocamlc}
+      -color
+      never
+      -w
+      +a
+      -warn-error
+      +a
+      -c
+      -ppx
+      "./%{pp} --as-ppx"
+      %{dep:compiler_cases/leaf_misuse.ml}
+      -o
+      leaf_misuse.cmo)))
+   (with-stderr-to
+    compiler_missing_delegate.actual
+    (with-accepted-exit-codes
+     2
+     (run
+      %{ocamlc}
+      -color
+      never
+      -w
+      +a
+      -warn-error
+      +a
+      -c
+      -ppx
+      "./%{pp} --as-ppx"
+      %{dep:compiler_cases/missing_delegate.ml}
+      -o
+      missing_delegate.cmo)))
+   (with-stderr-to
+    compiler_illtyped_delegate.actual
+    (with-accepted-exit-codes
+     2
+     (run
+      %{ocamlc}
+      -color
+      never
+      -w
+      +a
+      -warn-error
+      +a
+      -c
+      -ppx
+      "./%{pp} --as-ppx"
+      %{dep:compiler_cases/illtyped_delegate.ml}
+      -o
+      illtyped_delegate.cmo)))
+   (with-stderr-to
+    compiler_ppx_metadata.actual
+    (with-accepted-exit-codes
+     2
+     (run
+      %{ocamlc}
+      -color
+      never
+      -w
+      +a
+      -warn-error
+      +a
+      -c
+      -ppx
+      "./%{pp} --as-ppx"
+      %{dep:compiler_cases/ppx_metadata.ml}
+      -o
+      ppx_metadata.cmo)))
+   (diff compiler_cases/leaf_misuse.expected compiler_leaf.actual)
+   (diff
+    compiler_cases/missing_delegate.expected
+    compiler_missing_delegate.actual)
+   (diff
+    compiler_cases/illtyped_delegate.expected
+    compiler_illtyped_delegate.actual)
+   (diff compiler_cases/ppx_metadata.expected compiler_ppx_metadata.actual))))
+
+(rule
+ (alias runtest)
+ (targets
+  expansion_simple.actual
+  expansion_generic.actual
+  expansion_recursive.actual)
+ (deps
+  (:pp pp.exe))
+ (action
+  (progn
+   (with-stdout-to
+    expansion_simple.actual
+    (run ./%{pp} -impl %{dep:expansion_cases/simple.ml}))
+   (with-stdout-to
+    expansion_generic.actual
+    (run ./%{pp} -impl %{dep:expansion_cases/generic.ml}))
+   (with-stdout-to
+    expansion_recursive.actual
+    (run ./%{pp} -impl %{dep:expansion_cases/recursive.ml}))
+   (diff expansion_cases/simple.expected expansion_simple.actual)
+   (diff expansion_cases/generic.expected expansion_generic.actual)
+   (diff expansion_cases/recursive.expected expansion_recursive.actual))))

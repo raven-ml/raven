@@ -1,0 +1,6 @@
+File "compiler_cases/illtyped_delegate.ml", line 13, characters 20-27:
+13 | type t = { nested : Wrong.t [@ptree.using Wrong] } [@@deriving ptree]
+                         ^^^^^^^
+Error: The value f has type ('a, 'b) Nx.t -> ('a, 'b) Nx.t
+       but an expression was expected of type int -> int
+       Type ('a, 'b) Nx.t is not compatible with type int

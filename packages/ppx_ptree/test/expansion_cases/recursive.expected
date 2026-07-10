@@ -1,0 +1,67 @@
+type node = {
+  value: Nx.float32_t ;
+  next: node option }
+and t = {
+  root: node }[@@deriving ptree]
+include struct let _ = fun (_ : node) -> ()
+               let _ = fun (_ : t) -> () end[@@ocaml.doc "@inline"][@@merlin.hide
+                                                                    ]
+include
+  struct
+    let rec map_node
+      (f :
+        'ptree_a 'ptree_b .
+          ('ptree_a, 'ptree_b) Nx.t -> ('ptree_a, 'ptree_b) Nx.t)
+      (x : node) =
+      let ptree_value__001_ = f x.value in
+      let ptree_next__002_ =
+        match x.next with
+        | None -> None
+        | Some ptree_value__003_ -> Some (map_node f ptree_value__003_) in
+      { value = ptree_value__001_; next = ptree_next__002_ }
+    let _ = map_node
+    let map
+      (f :
+        'ptree_a 'ptree_b .
+          ('ptree_a, 'ptree_b) Nx.t -> ('ptree_a, 'ptree_b) Nx.t)
+      (x : t) =
+      let ptree_root__004_ = map_node f x.root in { root = ptree_root__004_ }
+    let _ = map
+    let rec map2_node
+      (f :
+        'ptree_a 'ptree_b .
+          ('ptree_a, 'ptree_b) Nx.t ->
+            ('ptree_a, 'ptree_b) Nx.t -> ('ptree_a, 'ptree_b) Nx.t)
+      (x : node) (y : node) =
+      let ptree_value__005_ = f x.value y.value in
+      let ptree_next__006_ =
+        match ((x.next), (y.next)) with
+        | (None, None) -> None
+        | (Some ptree_left__007_, Some ptree_right__008_) ->
+            Some (map2_node f ptree_left__007_ ptree_right__008_)
+        | _ ->
+            Stdlib.invalid_arg
+              "Recursive.map2_node: option constructor mismatch at next" in
+      { value = ptree_value__005_; next = ptree_next__006_ }
+    let _ = map2_node
+    let map2
+      (f :
+        'ptree_a 'ptree_b .
+          ('ptree_a, 'ptree_b) Nx.t ->
+            ('ptree_a, 'ptree_b) Nx.t -> ('ptree_a, 'ptree_b) Nx.t)
+      (x : t) (y : t) =
+      let ptree_root__009_ = map2_node f x.root y.root in
+      { root = ptree_root__009_ }
+    let _ = map2
+    let rec iter_node
+      (f : 'ptree_a 'ptree_b . ('ptree_a, 'ptree_b) Nx.t -> unit) (x : node)
+      =
+      f x.value;
+      (match x.next with
+       | None -> ()
+       | Some ptree_value__010_ -> iter_node f ptree_value__010_)
+    let _ = iter_node
+    let iter (f : 'ptree_a 'ptree_b . ('ptree_a, 'ptree_b) Nx.t -> unit)
+      (x : t) = iter_node f x.root
+    let _ = iter
+  end[@@ocaml.doc "@inline"][@@merlin.hide ]

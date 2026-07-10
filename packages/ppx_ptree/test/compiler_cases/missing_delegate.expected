@@ -1,0 +1,4 @@
+File "compiler_cases/missing_delegate.ml", line 9, characters 20-29:
+9 | type t = { nested : Missing.t } [@@deriving ptree]
+                        ^^^^^^^^^
+Error: Unbound value Missing.map

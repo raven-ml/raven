@@ -1,0 +1,28 @@
+type 'dtype params = {
+  weight: (float, 'dtype) Nx.t }[@@deriving ptree]
+include struct let _ = fun (_ : 'dtype params) -> () end[@@ocaml.doc
+                                                          "@inline"][@@merlin.hide
+                                                                    ]
+include
+  struct
+    let map
+      (f :
+        'ptree_a 'ptree_b .
+          ('ptree_a, 'ptree_b) Nx.t -> ('ptree_a, 'ptree_b) Nx.t)
+      (x : 'dtype params) =
+      let ptree_weight__001_ = f x.weight in { weight = ptree_weight__001_ }
+    let _ = map
+    let map2
+      (f :
+        'ptree_a 'ptree_b .
+          ('ptree_a, 'ptree_b) Nx.t ->
+            ('ptree_a, 'ptree_b) Nx.t -> ('ptree_a, 'ptree_b) Nx.t)
+      (x : 'dtype params) (y : 'dtype params) =
+      let ptree_weight__002_ = f x.weight y.weight in
+      { weight = ptree_weight__002_ }
+    let _ = map2
+    let iter (f : 'ptree_a 'ptree_b . ('ptree_a, 'ptree_b) Nx.t -> unit)
+      (x : 'dtype params) = f x.weight
+    let _ = iter
+  end[@@ocaml.doc "@inline"][@@merlin.hide ]
+type t = Nx.float32_elt params

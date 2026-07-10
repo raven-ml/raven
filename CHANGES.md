@@ -11,6 +11,15 @@ All notable changes to this project will be documented in this file.
 
 - Add compatibility with OCaml 5.5.
 
+### Ppx_ptree (new)
+
+- Add the `ppx_ptree` deriver, which generates the `map`, `map2`, and `iter`
+  operations required by `Nx.Ptree.S` for records, products, containers, and
+  recursive parameter types, with generated code and diagnostics located at the
+  originating source forms.
+- Add a runnable linear-regression example using a derived parameter module
+  directly with `Rune.grad` and `Rune.jit2`.
+
 ### Munin (new)
 
 Local experiment tracking for Raven. Evolves `kaun-board` into a full

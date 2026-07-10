@@ -1,0 +1,5 @@
+(executable
+ (name main)
+ (libraries nx rune)
+ (preprocess
+  (pps ppx_ptree)))

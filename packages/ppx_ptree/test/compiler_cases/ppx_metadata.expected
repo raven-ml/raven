@@ -1,0 +1,4 @@
+File "compiler_cases/ppx_metadata.ml", line 5, characters 22-28:
+5 | type t = { metadata : string } [@@deriving ptree]
+                          ^^^^^^
+Error: ppx_ptree: metadata type [string] must be annotated [@ptree.ignore]

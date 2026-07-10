@@ -1,0 +1,57 @@
+type t =
+  {
+  weight: Nx.float32_t ;
+  optional: Nx.float32_t option ;
+  label: string [@ptree.ignore ]}[@@deriving ptree]
+include struct let _ = fun (_ : t) -> () end[@@ocaml.doc "@inline"][@@merlin.hide
+                                                                    ]
+include
+  struct
+    let map
+      (f :
+        'ptree_a 'ptree_b .
+          ('ptree_a, 'ptree_b) Nx.t -> ('ptree_a, 'ptree_b) Nx.t)
+      (x : t) =
+      let ptree_weight__001_ = f x.weight in
+      let ptree_optional__002_ =
+        match x.optional with
+        | None -> None
+        | Some ptree_value__003_ -> Some (f ptree_value__003_) in
+      let ptree_label__004_ = x.label in
+      {
+        weight = ptree_weight__001_;
+        optional = ptree_optional__002_;
+        label = ptree_label__004_
+      }
+    let _ = map
+    let map2
+      (f :
+        'ptree_a 'ptree_b .
+          ('ptree_a, 'ptree_b) Nx.t ->
+            ('ptree_a, 'ptree_b) Nx.t -> ('ptree_a, 'ptree_b) Nx.t)
+      (x : t) (y : t) =
+      let ptree_weight__005_ = f x.weight y.weight in
+      let ptree_optional__006_ =
+        match ((x.optional), (y.optional)) with
+        | (None, None) -> None
+        | (Some ptree_left__007_, Some ptree_right__008_) ->
+            Some (f ptree_left__007_ ptree_right__008_)
+        | _ ->
+            Stdlib.invalid_arg
+              "Simple.map2: option constructor mismatch at optional" in
+      let ptree_label__009_ = x.label in
+      {
+        weight = ptree_weight__005_;
+        optional = ptree_optional__006_;
+        label = ptree_label__009_
+      }
+    let _ = map2
+    let iter (f : 'ptree_a 'ptree_b . ('ptree_a, 'ptree_b) Nx.t -> unit)
+      (x : t) =
+      f x.weight;
+      (match x.optional with
+       | None -> ()
+       | Some ptree_value__010_ -> f ptree_value__010_);
+      ()
+    let _ = iter
+  end[@@ocaml.doc "@inline"][@@merlin.hide ]

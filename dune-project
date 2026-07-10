@@ -112,6 +112,38 @@
   (automatic-differentiation machine-learning deep-learning optimization)))
 
 (package
+ (name ppx_ptree)
+ (dir packages/ppx_ptree)
+ (synopsis "Derive typed parameter-tree traversals for Raven")
+ (description
+  "Ppx_ptree derives the map, map2, and iter operations required by Nx.Ptree.S. It supports mixed-dtype tensor records, products, fixed-shape containers, recursion, explicit leaves, ignored metadata, and delegation to existing parameter-tree modules.")
+ (depends
+  (ocaml
+   (>= 5.5.0))
+  dune
+  (ppxlib
+   (>= 0.38.0))
+  (nx
+   (and
+    (= :version)
+    :with-test))
+  (rune
+   (and
+    (= :version)
+    :with-test))
+  (vega
+   (and
+    (= :version)
+    :with-test))
+  (kaun
+   (and
+    (= :version)
+    :with-test))
+  (windtrap :with-test))
+ (tags
+  (ppx parameter-tree automatic-differentiation machine-learning)))
+
+(package
  (name kaun)
  (dir packages/kaun)
  (synopsis "Neural networks for OCaml")

@@ -1,0 +1,5 @@
+File "compiler_cases/leaf_misuse.ml", line 5, characters 11-39:
+5 | type t = { value : string [@ptree.leaf] } [@@deriving ptree]
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Error: The field access x.value has type string
+       but an expression was expected of type ('a, 'b) Nx.t

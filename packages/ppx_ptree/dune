@@ -1,0 +1,9 @@
+(library
+ (name ppx_ptree)
+ (public_name ppx_ptree)
+ (kind ppx_deriver)
+ (flags
+  (:standard -warn-error +a))
+ (libraries ppxlib)
+ (preprocess
+  (pps ppxlib.metaquot)))
