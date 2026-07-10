@@ -628,7 +628,7 @@ static void nx_c_reduce_sum_f32(const ndarray_t *input, ndarray_t *output,
     float *in = (float *)input->data + input->offset;
     float result = 0.0f;
 #if defined(_OPENMP)
-#pragma omp parallel for reduction(+:result) if (total > 4096)
+#pragma omp simd reduction(+ : result)
 #endif
     for (long i = 0; i < total; ++i) {
       result += in[i];
@@ -695,7 +695,7 @@ static void nx_c_reduce_sum_f64(const ndarray_t *input, ndarray_t *output,
     double *in = (double *)input->data + input->offset;
     double result = 0.0;
 #if defined(_OPENMP)
-#pragma omp parallel for reduction(+:result) if (total > 4096)
+#pragma omp simd reduction(+ : result)
 #endif
     for (long i = 0; i < total; ++i) {
       result += in[i];

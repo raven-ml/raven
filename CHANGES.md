@@ -310,6 +310,9 @@ thread.
 
 ### Nx
 
+- Speed up full-array `sum`: the reduction is now vectorized instead of
+  parallelized (fork/join overhead dominated the bandwidth-bound sum) — up to
+  125× at 128×128 and 20× at 1M elements on Apple Silicon.
 - Benchmark suites across the workspace now run under a dedicated `bench`
   alias with a shared lock instead of `runtest` (`nx` and its
   `matmul`/`conv2d`/`einsum` suites, `norn`, `talon`, `vega`, `fehu`,
