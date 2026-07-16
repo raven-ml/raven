@@ -13,23 +13,11 @@
       bounds.
 
    2. [fold_divmod_general_rec]: multi-strategy folder for non-trivial cases.
-      Strategies are tried in order: [cancel_divmod], [nested_div_mod],
+      Strategies are tried in order: [cancel_divmod], [nested_div],
       [remove_nested_mod], [fold_divmod_congruence],
       [gcd_with_remainder], [nest_by_factor], [divide_by_gcd],
       [factor_remainder]. Some strategies that require the [simplify]
       hook to make progress fall back to partial results. *)
-
-let const_int_v u =
-  match Uop.op u, Uop.arg u with
-  | Ops.Const, Uop.Arg.Value c ->
-      (match Const.view c with
-       | Const.Int n
-         when Int64.compare n (Int64.of_int min_int) >= 0
-              && Int64.compare n (Int64.of_int max_int) <= 0 ->
-           Some (Int64.to_int n)
-       | Const.Int _ -> None
-       | _ -> None)
-  | _ -> None
 
 let int64_min_int = Int64.of_int min_int
 let int64_max_int = Int64.of_int max_int
@@ -118,13 +106,13 @@ let rule_nested_div =
 (* Rule 1b: (x+c)//d  ->  ((x+c%d)//d + c//d) when c%d != c and d > 0. *)
 let rule_add_const_div =
   let open Upat in
-  let x = var_dtype "x" (exact_dtype Dtype.weakint)
+  let x = var_dtype "x" (exact_dtype Dtype.index)
   and c = cvar ~name:"c" ()
   and d = cvar ~name:"d" () in
   let n = alu ~name:"n" [ x; c ] Ops.Add in
   floordiv_pat n d => fun bs ->
     let x = bs $ "x" and c = bs $ "c" and d = bs $ "d" in
-    match const_int_v c, const_int_v d with
+    match Uop.const_int_value c, Uop.const_int_value d with
     | Some cv, Some dv when dv > 0 ->
         (match floor_mod_checked cv dv, floor_div_checked cv dv with
          | Some c_mod_v, Some c_div_v when c_mod_v <> cv ->
@@ -141,29 +129,16 @@ let rule_add_const_div =
    is installed to reach a fixed point; without it the results are
    under-simplified but still correct. *)
 
-(* cancel_divmod: [x_min..x_max] lies in a single [y_min..y_max] period. *)
+(* cancel_divmod: [x // y] takes a single value over the whole range.
+   The quotient bound is read from the constructed [x // y] node so the
+   check uses the same reasoning as everywhere else, including divisors
+   that are only bounded on one side. *)
 let try_cancel_divmod d_op x y =
-  let x_min = Uop.vmin x and x_max = Uop.vmax x in
-  let y_min = Uop.vmin y and y_max = Uop.vmax y in
-  if x_min = min_int || x_max = max_int
-     || y_min = min_int || y_max = max_int then None
-  else if y_min = 0 && y_max = 0 then raise Division_by_zero
-  else if y_min <= 0 && y_max >= 0 then None
-  else
-    match
-      option_all [
-        floor_div_checked x_min y_min;
-        floor_div_checked x_min y_max;
-        floor_div_checked x_max y_min;
-        floor_div_checked x_max y_max;
-      ]
-    with
-    | Some (qv :: qs) when List.for_all (( = ) qv) qs ->
-        if d_op = Ops.Floormod then
-          Some Uop.O.(x - (Uop.const_like x qv * y))
-        else
-          Some (Uop.const_like x qv)
-    | _ -> None
+  let xdiv = floordiv x y in
+  let q = Uop.vmin xdiv in
+  if q <> Uop.vmax xdiv then None
+  else if d_op = Ops.Floormod then Some Uop.O.(x - (Uop.const_like x q * y))
+  else Some (Uop.const_like xdiv q)
 
 (* remove_nested_mod for ADD: (a%4 + b) % 2 -> (a+b) % 2 when the inner
    mod divisor divides [c]. *)
@@ -300,19 +275,16 @@ let try_fold_divmod_congruence d_op x y c =
           combos;
         !result
 
-(* nested_div_mod: (x % (k*c)) [op] c. *)
-let try_nested_div_mod d_op x y c =
-  if Uop.op x <> Ops.Floormod then None
-  else if Array.length (Uop.src x) <> 2 then None
+(* nested_div: (x % (k*c)) // c -> (x // c) % k when k > 0. The modulo
+   counterpart is handled by remove_nested_mod. *)
+let try_nested_div d_op x y c =
+  if d_op <> Ops.Floordiv then None
+  else if Uop.op x <> Ops.Floormod || Array.length (Uop.src x) <> 2 then None
   else
     let inner_x = (Uop.src x).(0) and inner_d = (Uop.src x).(1) in
     match Uop.divides inner_d c with
-    | None -> None
-    | Some k when Uop.vmin k > 0 ->
-        if d_op = Ops.Floordiv
-        then Some (floormod (floordiv inner_x y) k)
-        else Some (floormod inner_x y)
-    | Some _ -> None
+    | Some k when Uop.vmin k > 0 -> Some (floormod (floordiv inner_x y) k)
+    | _ -> None
 
 (* gcd_with_remainder: factor a common GCD out of numerator. *)
 let try_gcd_remainder d_op x y c =
@@ -365,7 +337,7 @@ let try_gcd_remainder d_op x y c =
 let try_divide_by_gcd d_op x y =
   let all_uops = Uop.split_uop x Ops.Add in
   let gcd_all = Uop.gcd (all_uops @ [ y ]) |> Uop.simplify in
-  match const_int_v gcd_all with
+  match Uop.const_int_value gcd_all with
   | Some 1 -> None
   | _ ->
       (match Uop.divide_exact x gcd_all, Uop.divide_exact y gcd_all with
@@ -388,7 +360,7 @@ let try_factor_remainder d_op x y =
       else match Uop.divide_exact u y with
       | Some q -> quo := q :: !quo
       | None ->
-          (match const_int_v y, Uop.const_factor u with
+          (match Uop.const_int_value y, Uop.const_factor u with
            | Some y_c, c when y_c > 0 ->
                (match floor_mod_checked c y_c with
                 | Some c_mod when c_mod <> c ->
@@ -517,10 +489,10 @@ and fold_divmod_general_rec (d : Uop.t) : Uop.t option =
       match try_cancel_divmod d_op x y with
       | Some r -> Some r
       | None ->
-          (match const_int_v y with
+          (match Uop.const_int_value y with
            | Some c when c > 0 ->
                first_some [
-                 (fun () -> try_nested_div_mod d_op x y c);
+                 (fun () -> try_nested_div d_op x y c);
                  (fun () -> try_remove_nested_mod d_op x y c);
                  (fun () -> try_fold_divmod_congruence d_op x y c);
                  (fun () -> try_gcd_remainder d_op x y c);
@@ -531,7 +503,7 @@ and fold_divmod_general_rec (d : Uop.t) : Uop.t option =
 
 let rule_fold_divmod_general =
   let open Upat in
-  ops ~dtype:Dtype.weakint ~name:"d" [ Ops.Floordiv; Ops.Floormod ]
+  ops ~dtype:Dtype.index ~name:"d" [ Ops.Floordiv; Ops.Floormod ]
   => fun bs -> fold_divmod_general_rec (bs $ "d")
 
 let div_and_mod_symbolic : Upat.Pattern_matcher.t =
