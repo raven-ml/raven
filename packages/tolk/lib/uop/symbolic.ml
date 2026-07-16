@@ -13,8 +13,6 @@
 
 module U = Uop
 
-let dtype_v u = Dtype.val_of (Uop.dtype u)
-
 let const_int_v u =
   match Uop.op u, Uop.arg u with
   | Ops.Const, Uop.Arg.Value c ->
@@ -43,12 +41,12 @@ let pm_remove_invalid : Upat.Pattern_matcher.t =
     => fun bs ->
          let i = bs $ "i" in
          match U.dtype i, U.arg i with
-         | Dtype.Val dtype, U.Arg.Value c when Const.view c = Const.Invalid ->
+         | dtype, U.Arg.Value c when Const.view c = Const.Invalid ->
              Some (U.const (Const.zero dtype))
          | _ -> None;
   ]
 
-let is_index_dtype dtype = Dtype.scalar dtype = Dtype.Index
+let is_index_dtype dtype = dtype = Dtype.Index
 
 let cast_to_index node =
   match U.op node, U.src node with
@@ -61,18 +59,14 @@ let cast_from_int node =
   | _ -> None
 
 let select_index_dtype node =
-  let scalar =
-    if U.vmin node < -0x8000_0000 || U.vmax node > 0x7fff_ffff
-    then Dtype.Val.int64
-    else Dtype.Val.int32
-  in
-  let count = Dtype.count (U.dtype node) in
-  Dtype.Val (if count <= 1 then scalar else Dtype.Val.vec count scalar)
+  if U.vmin node < -0x8000_0000 || U.vmax node > 0x7fff_ffff
+  then Dtype.int64
+  else Dtype.int32
 
 let retype_const node dtype =
-  match U.op node, U.arg node, dtype with
-  | Ops.Const, U.Arg.Value c, Dtype.Val dtype ->
-      Some (U.const (Const.of_view (Dtype.Val.scalarize dtype) (Const.view c)))
+  match U.op node, U.arg node with
+  | Ops.Const, U.Arg.Value c ->
+      Some (U.const (Const.of_view dtype (Const.view c)))
   | _ -> None
 
 let index_range_value node (r : U.range_view) =
@@ -169,7 +163,7 @@ let lower_index_stack node =
       if Array.exists Option.is_none inners then None
       else
         let dtype = select_index_dtype node in
-        let scalar_dtype = Dtype.scalarize dtype in
+        let scalar_dtype = dtype in
         let srcs =
           Array.to_list inners
           |> List.map (function
@@ -178,7 +172,7 @@ let lower_index_stack node =
         in
         Some
           (U.cast
-             ~src:(U.stack ~dtype:(Dtype.Val.scalarize (Dtype.val_of dtype)) srcs)
+             ~src:(U.stack ~dtype:((dtype)) srcs)
              ~dtype:(U.dtype node))
   | _ -> None
 
@@ -203,11 +197,15 @@ let lower_index_special node =
   | _ -> None
 
 let lower_index_param node =
-  match U.op node, U.addrspace node with
-  | Ops.Param, Some Dtype.Alu when is_index_dtype (U.dtype node) ->
+  match U.as_param node with
+  | Some { param; _ }
+    when U.addrspace node = Some Dtype.Alu && is_index_dtype (U.dtype node) ->
+      (* Round-trip the dtype through the arg so the node and its param arg do
+         not desync when the index dtype is lowered to concrete int. *)
+      let arg = U.Arg.Param_arg { param with dtype = Dtype.int32 } in
       Some
         (U.cast
-           ~src:(U.replace node ~dtype:Dtype.int32 ())
+           ~src:(U.replace node ~dtype:Dtype.int32 ~arg ())
            ~dtype:(U.dtype node))
   | _ -> None
 
@@ -220,6 +218,20 @@ let lower_index_bind node =
       | _ -> None)
   | _ -> None
 
+(* Strip a hanging int->index cast off an index operand: a bare cast, or a cast
+   nested inside a validity gate [where(gate, idx.cast, Invalid)], which becomes
+   [idx.valid(gate)] carrying the gate without the cast. *)
+let strip_index_cast idx =
+  match cast_from_int idx with
+  | Some inner -> Some inner
+  | None -> (
+      match U.op idx, U.src idx with
+      | Ops.Where, [| gate; inner; invalid |] when is_invalid_const invalid -> (
+          match cast_from_int inner with
+          | Some inner -> Some (U.valid ~src:inner ~cond:gate)
+          | None -> None)
+      | _ -> None)
+
 let lower_index_casts node =
   match U.as_index node with
   | Some { ptr; idxs } ->
@@ -227,7 +239,7 @@ let lower_index_casts node =
       let idxs =
         List.map
           (fun idx ->
-            match cast_from_int idx with
+            match strip_index_cast idx with
             | None -> idx
             | Some idx ->
                 changed := true;
@@ -397,15 +409,11 @@ let const_float_v u =
   | _ -> None
 
 let const_nan_like u =
-  match Uop.dtype u with
-  | Dtype.Val v when Dtype.Val.is_float v ->
-      Some (Uop.const (Const.of_scalar v (`Float Float.nan)))
-  | _ -> None
+  let v = Uop.dtype u in
+  if Dtype.is_float v then Some (Uop.const (Const.of_scalar v (`Float Float.nan)))
+  else None
 
-let is_int_uop u =
-  match Uop.dtype u with
-  | Dtype.Val v -> Dtype.Val.is_int v
-  | Dtype.Ptr _ -> false
+let is_int_uop u = Dtype.is_int (Uop.dtype u)
 
 let range_kind_is_reduce r =
   match Uop.as_range r with
@@ -423,11 +431,6 @@ let depends_on_nonreduce_range u =
     (fun r -> not (range_kind_is_reduce r))
     (Uop.ranges u)
 
-let same_shape a b =
-  try
-    let a = Uop.shape a and b = Uop.shape b in
-    List.length a = List.length b && List.for_all2 Uop.equal a b
-  with Invalid_argument _ -> false
 
 let rec gcd_int a b =
   if b = 0 then abs a else gcd_int b (a mod b)
@@ -440,13 +443,13 @@ let floor_div x y =
 
 let floor_mod x y = x - (floor_div x y * y)
 
-let int_bounds (v : Dtype.Val.t) =
-  match Dtype.min (Dtype.Val v), Dtype.max (Dtype.Val v) with
+let int_bounds (v : Dtype.t) =
+  match Dtype.min v, Dtype.max v with
   | `SInt lo, `SInt hi -> Some (Int64.to_int lo, Int64.to_int hi)
   | `UInt lo, `UInt hi -> Some (Int64.to_int lo, Int64.to_int hi)
   | _ -> None
 
-let overflows u (v : Dtype.Val.t) =
+let overflows u (v : Dtype.t) =
   match int_bounds v with
   | Some (lo, hi) -> Uop.vmin u < lo || Uop.vmax u > hi
   | None -> true
@@ -457,219 +460,30 @@ let rec contains_param_slot slot u =
    | None -> false)
   || Array.exists (contains_param_slot slot) (Uop.src u)
 
-(* {1 exec_alu}
-
-   Constant folding for scalar ALU ops. Promotes bool operands to int
-   where the op is arithmetic and dispatches on int-vs-float. The result
-   is NOT truncated to the target dtype: like the reference's
-   [exec_alu(..., truncate_output=False)] at its symbolic fold site, the
-   folded constant keeps full host precision and only the renderer or
-   runtime narrows it. Any binary op with an [Invalid] operand folds to
-   [Invalid], regardless of dtype. *)
-
-let const_as_float c =
-  match Const.view c with
-  | Const.Float f -> Some f
-  | Const.Int n -> Some (Int64.to_float n)
-  | Const.Bool b -> Some (if b then 1.0 else 0.0)
-  | Const.Invalid -> None
-
 let const_as_int c =
   match Const.view c with
   | Const.Int n -> Some (Int64.to_int n)
   | Const.Bool b -> Some (if b then 1 else 0)
   | Const.Float _ | Const.Invalid -> None
 
-let const_of_target ~(target : Dtype.Val.t) v =
+let const_of_target ~(target : Dtype.t) v =
   let open Const in
-  if Dtype.Val.is_bool target then
+  if Dtype.is_bool target then
     (match v with
      | `Bool b -> Some (of_scalar target (`Bool b))
      | `Int n -> Some (of_scalar target (`Int (Int64.of_int n)))
      | `Float f -> Some (of_scalar target (`Float f)))
-  else if Dtype.Val.is_int target then
+  else if Dtype.is_int target then
     (match v with
      | `Bool b -> Some (of_scalar target (`Bool b))
      | `Int n -> Some (of_scalar target (`Int (Int64.of_int n)))
      | `Float f -> Some (of_scalar target (`Float f)))
-  else if Dtype.Val.is_float target then
+  else if Dtype.is_float target then
     (match v with
      | `Bool b -> Some (of_scalar target (`Bool b))
      | `Int n -> Some (of_scalar target (`Float (float_of_int n)))
      | `Float f -> Some (of_scalar target (`Float f)))
   else None
-
-let any_invalid args = List.exists (fun c -> Const.view c = Const.Invalid) args
-
-let exec_unary op (target : Dtype.Val.t) c =
-  let is_float_target = Dtype.Val.is_float target in
-  if is_float_target then
-    match const_as_float c with
-    | None -> None
-    | Some x ->
-        let r = match op with
-          | Ops.Neg -> Some (-. x)
-          | Ops.Exp2 ->
-              Some (try 2.0 ** x with _ -> Float.infinity)
-          | Ops.Log2 ->
-              Some
-                (if x > 0.0 then log x /. log 2.0
-                 else if x = 0.0 then Float.neg_infinity
-                 else Float.nan)
-          | Ops.Sqrt ->
-              Some (if x >= 0.0 then sqrt x else Float.nan)
-          | Ops.Reciprocal ->
-              Some
-                (if x <> 0.0 then 1.0 /. x
-                 else Float.copy_sign Float.infinity x)
-          | Ops.Sin ->
-              Some
-                (if not (Float.is_finite x) then Float.nan else sin x)
-          | Ops.Trunc -> Some (Float.trunc x)
-          | _ -> None
-        in
-        (match r with
-         | None -> None
-         | Some f -> const_of_target ~target (`Float f))
-  else
-    match const_as_int c with
-    | None -> None
-    | Some x ->
-        let r = match op with
-          | Ops.Neg -> Some (-x)
-          | Ops.Trunc -> Some x
-          | _ -> None
-        in
-        (match r with
-         | None -> None
-         | Some n -> const_of_target ~target (`Int n))
-
-let exec_binary op (target : Dtype.Val.t) a b =
-  let result_is_bool = Dtype.Val.is_bool target in
-  if result_is_bool then
-    match op with
-    | Ops.Cmplt | Ops.Cmpne | Ops.Cmpeq ->
-        (match op with
-         (* CMPEQ/CMPNE follow IEEE for floats (nan <> nan, 0.0 = -0.0);
-            for ints/bool the structural [Const.equal] is value equality. *)
-         | Ops.Cmpeq ->
-             (match Const.view a, Const.view b with
-              | Const.Float x, Const.Float y -> Some (Const.bool (x = y))
-              | _ -> Some (Const.bool (Const.equal a b)))
-         | Ops.Cmpne ->
-             (match Const.view a, Const.view b with
-              | Const.Float x, Const.Float y -> Some (Const.bool (x <> y))
-              | _ -> Some (Const.bool (not (Const.equal a b))))
-         (* CMPLT compares ints exactly; floats compare under IEEE. *)
-         | Ops.Cmplt ->
-             (match const_as_int a, const_as_int b with
-              | Some x, Some y -> Some (Const.bool (x < y))
-              | _ ->
-                  (match const_as_float a, const_as_float b with
-                   | Some x, Some y -> Some (Const.bool (x < y))
-                   | _ -> None))
-         | _ -> None)
-    | Ops.And | Ops.Or | Ops.Xor ->
-        (match const_as_int a, const_as_int b with
-         | Some x, Some y ->
-             let r = match op with
-               | Ops.And -> x land y
-               | Ops.Or -> x lor y
-               | Ops.Xor -> x lxor y
-               | _ -> 0
-             in
-             Some (Const.bool (r <> 0))
-         | _ -> None)
-    | _ -> None
-  else if Dtype.Val.is_float target then
-    match const_as_float a, const_as_float b with
-    | Some x, Some y ->
-        let r = match op with
-          | Ops.Add -> Some (x +. y)
-          | Ops.Sub -> Some (x -. y)
-          | Ops.Mul -> Some (x *. y)
-          | Ops.Fdiv ->
-              Some
-                (if y = 0.0 then Float.copy_sign Float.infinity x
-                 else x /. y)
-          | Ops.Max -> Some (max x y)
-          | Ops.Pow ->
-              (try
-                 let p = x ** y in
-                 if Float.is_nan p || not (Float.is_finite p) then
-                   if x > 0.0 && not (Float.is_finite y) then
-                     if abs_float x > 1.0 = (y > 0.0)
-                     then Some Float.infinity
-                     else Some 0.0
-                   else Some Float.nan
-                 else Some p
-               with _ -> Some Float.nan)
-          | _ -> None
-        in
-        (match r with
-         | None -> None
-         | Some f -> const_of_target ~target (`Float f))
-    | _ -> None
-  else
-    match const_as_int a, const_as_int b with
-    | Some x, Some y ->
-        let r = match op with
-          | Ops.Add -> Some (x + y)
-          | Ops.Sub -> Some (x - y)
-          | Ops.Mul -> Some (x * y)
-          | Ops.Cdiv ->
-              Some (if y = 0 then 0 else x / y)
-          | Ops.Cmod ->
-              Some (if y = 0 then x else x - (x / y) * y)
-          | Ops.Floordiv ->
-              Some (floor_div x y)
-          | Ops.Floormod ->
-              Some (floor_mod x y)
-          | Ops.Max -> Some (max x y)
-          | Ops.Xor -> Some (x lxor y)
-          | Ops.Or -> Some (x lor y)
-          | Ops.And -> Some (x land y)
-          | Ops.Shl -> Some (x lsl y)
-          | Ops.Shr -> Some (x asr y)
-          | _ -> None
-        in
-        (match r with
-         | None -> None
-         | Some n -> const_of_target ~target (`Int n))
-    | _ -> None
-
-let exec_ternary op (target : Dtype.Val.t) a b c =
-  match op with
-  | Ops.Where ->
-      (match Const.view a with
-       | Const.Bool true -> Some b
-       | Const.Bool false -> Some c
-       | Const.Int n -> Some (if n <> 0L then b else c)
-       | _ -> None)
-  | Ops.Mulacc ->
-      if Dtype.Val.is_float target then
-        (match const_as_float a, const_as_float b, const_as_float c with
-         | Some x, Some y, Some z ->
-             const_of_target ~target (`Float ((x *. y) +. z))
-         | _ -> None)
-      else
-        (match const_as_int a, const_as_int b, const_as_int c with
-         | Some x, Some y, Some z ->
-             const_of_target ~target (`Int ((x * y) + z))
-         | _ -> None)
-  | _ -> None
-
-let exec_alu op (target : Dtype.Val.t) args =
-  let is_binary = Ops.Group.is_binary op in
-  if is_binary && any_invalid args
-  then Some (Const.invalid ~dtype:target ())
-  else
-    match args with
-    | [ a ] when Ops.Group.is_unary op -> exec_unary op target a
-    | [ a; b ] when is_binary -> exec_binary op target a b
-    | [ a; b; c ] when Ops.Group.is_ternary op ->
-        exec_ternary op target a b c
-    | _ -> None
 
 (* phase 1: the most generic folding rules *)
 
@@ -683,10 +497,9 @@ let const_of_uop u =
   | _ -> None
 
 let is_max_identity u =
-  match Uop.dtype u, const_of_uop u with
-  | Dtype.Val dtype, Some c ->
-      Const.equal c (Const.min_value (Dtype.Val.scalarize dtype))
-  | _ -> false
+  match const_of_uop u with
+  | Some c -> Const.equal c (Const.min_value (Uop.dtype u))
+  | None -> false
 
 let scalar_const_as_int u =
   match const_of_uop u with
@@ -709,7 +522,7 @@ let cast_const target c =
 
 let const_node_from_lanes dtype lanes =
   match lanes with
-  | [ c ] when Dtype.Val.count dtype = 1 -> Uop.const c
+  | [ c ] -> Uop.const c
   | _ ->
       Uop.const_of_dtype dtype
         (Uop.Const_tuple (List.map const_value_of_const lanes))
@@ -733,13 +546,13 @@ let sign_extend bytes raw =
     else Int64.logor raw (Int64.lognot (raw_mask bytes))
 
 let raw_bits_of_const src c =
-  let bytes = Dtype.Val.itemsize src in
+  let bytes = Dtype.itemsize src in
   match Const.view c with
   | Const.Bool b -> Some (if b then 1L else 0L)
-  | Const.Int n when Dtype.Val.is_int src || Dtype.Val.is_bool src ->
+  | Const.Int n when Dtype.is_int src || Dtype.is_bool src ->
       Some (low_bits bytes n)
   | Const.Float f ->
-      (match Dtype.Val.scalar src with
+      (match src with
        | Dtype.Float32 ->
            Some (low_bits bytes (Int64.of_int32 (Int32.bits_of_float f)))
        | Dtype.Float64 -> Some (Int64.bits_of_float f)
@@ -747,35 +560,32 @@ let raw_bits_of_const src c =
   | Const.Int _ | Const.Invalid -> None
 
 let storage_of_raw_bits dst raw =
-  let bytes = Dtype.Val.itemsize dst in
+  let bytes = Dtype.itemsize dst in
   let raw = low_bits bytes raw in
-  if Dtype.Val.is_bool dst then Some (`Bool (raw <> 0L))
-  else if Dtype.Val.is_int dst then
+  if Dtype.is_bool dst then Some (`Bool (raw <> 0L))
+  else if Dtype.is_int dst then
     let n =
-      if is_signed_int_scalar (Dtype.Val.scalar dst)
+      if is_signed_int_scalar (dst)
       then sign_extend bytes raw
       else raw
     in
     Some (`Int n)
   else
-    match Dtype.Val.scalar dst with
+    match dst with
     | Dtype.Float32 -> Some (`Float (Int32.float_of_bits (Int64.to_int32 raw)))
     | Dtype.Float64 -> Some (`Float (Int64.float_of_bits raw))
     | _ -> None
 
 let bitcast_const_storage ~src ~dst c =
-  let src = Dtype.Val.scalarize src and dst = Dtype.Val.scalarize dst in
+  let src = src and dst = dst in
   match Dtype.storage_fmt_for_dtype src, Dtype.storage_fmt_for_dtype dst with
-  | Some _, Some _ when Dtype.Val.itemsize src = Dtype.Val.itemsize dst ->
+  | Some _, Some _ when Dtype.itemsize src = Dtype.itemsize dst ->
       Option.bind (raw_bits_of_const src c) (storage_of_raw_bits dst)
   | _ -> None
 
 let const_lanes count u =
   match Uop.op u, Uop.arg u with
-  | Ops.Const, Uop.Arg.Value c ->
-      let n = Dtype.Val.count (Const.dtype c) in
-      if n = 1 || n = count then Some (List.init count (fun _ -> c))
-      else None
+  | Ops.Const, Uop.Arg.Value c -> Some (List.init count (fun _ -> c))
   | Ops.Stack, _ ->
       let srcs = Uop.src u in
       if Array.length srcs <> count then None
@@ -791,40 +601,47 @@ let const_lanes count u =
   | _ -> None
 
 let fold_const_alu root =
-  match Uop.dtype root with
-  | Dtype.Ptr _ -> None
-  | Dtype.Val dtype ->
-      let count = Dtype.Val.count dtype in
-      let scalar_dtype = Dtype.Val.scalarize dtype in
-      let srcs = Array.to_list (Uop.src root) in
-      let lanes = List.map (const_lanes count) srcs in
-      if List.exists Option.is_none lanes then None
+  let dtype = Uop.dtype root in
+  let srcs = Array.to_list (Uop.src root) in
+  (* Lane count is structural: the width of a stacked operand, or 1 when every
+     operand is a scalar const. *)
+  let count =
+    List.fold_left
+      (fun acc s ->
+        match Uop.op s with
+        | Ops.Stack -> max acc (Array.length (Uop.src s))
+        | _ -> acc)
+      1 srcs
+  in
+  let lanes = List.map (const_lanes count) srcs in
+  if List.exists Option.is_none lanes then None
+  else
+    let lanes = List.map Option.get lanes in
+    let lane i = List.map (fun lane_consts -> List.nth lane_consts i) lanes in
+    let rec fold i acc =
+      if i = count then Some (List.rev acc)
       else
-        let lanes = List.map Option.get lanes in
-        let lane i = List.map (fun lane_consts -> List.nth lane_consts i) lanes in
-        let rec fold i acc =
-          if i = count then Some (List.rev acc)
-          else
-            match exec_alu (Uop.op root) scalar_dtype (lane i) with
-            | Some c -> fold (i + 1) (c :: acc)
-            | None -> None
-        in
-        match fold 0 [] with
+        match
+          Uop.exec_alu ~truncate_output:false (Uop.op root) dtype (lane i)
+        with
+        | Some c -> fold (i + 1) (c :: acc)
         | None -> None
-        | Some [ c ] -> Some (Uop.const c)
-        | Some cs ->
-            Some
-              (Uop.const_of_dtype dtype
-                 (Uop.Const_tuple (List.map const_value_of_const cs)))
+    in
+    match fold 0 [] with
+    | None -> None
+    | Some [ c ] -> Some (Uop.const c)
+    | Some cs ->
+        Some
+          (Uop.const_of_dtype dtype
+             (Uop.Const_tuple (List.map const_value_of_const cs)))
 
 (* Build a numeric const matching [c]'s dtype with value [v]. *)
 let const_numeric_like c v =
-  match Uop.dtype c with
-  | Dtype.Val dtv when Dtype.Val.is_float dtv ->
-      Uop.const (Const.of_scalar dtv (`Float v))
-  | Dtype.Val dtv when Dtype.Val.is_int dtv ->
-      Uop.const (Const.of_scalar dtv (`Int (Int64.of_int (int_of_float v))))
-  | _ -> Uop.const_like c (int_of_float v)
+  let dtv = Uop.dtype c in
+  if Dtype.is_float dtv then Uop.const (Const.of_scalar dtv (`Float v))
+  else if Dtype.is_int dtv then
+    Uop.const (Const.of_scalar dtv (`Int (Int64.of_int (int_of_float v))))
+  else Uop.const_like c (int_of_float v)
 
 (* Read [c]'s numeric value as a float. Returns [None] for non-numeric
    (e.g. Invalid). *)
@@ -837,10 +654,8 @@ let const_numeric_v c =
        | None -> None)
 
 let const_bound_like u n =
-  match Uop.dtype u with
-  | Dtype.Val v when Dtype.Val.is_bool v ->
-      Uop.broadcast (Uop.const_bool (n <> 0)) (Dtype.Val.count v)
-  | _ -> Uop.const_like u n
+  if Dtype.is_bool (Uop.dtype u) then Uop.const_bool (n <> 0)
+  else Uop.const_like u n
 
 let simplify_pow x c =
   match const_numeric_v c with
@@ -1007,28 +822,12 @@ let fold_add_divmod_recombine root =
 let is_const_int_eq u v =
   match const_int_v u with Some n -> n = v | None -> false
 
-let index_stack_const u stk c =
-  match const_int_v c with
-  | None -> None
-  | Some i ->
-      let srcs = Uop.src stk in
-      if i < 0 || i >= Array.length srcs then None
-      else
-        let selected = srcs.(i) in
-        if Dtype.equal (Uop.dtype u) (Uop.dtype selected)
-        then Some selected
-        else None
-
 let non_cmp_binary =
   List.filter (fun o -> not (Ops.Group.is_comparison o)) Ops.Group.binary
 
-let invalid_is_index i =
-  match Uop.dtype i with
-  | Dtype.Val v -> Dtype.Val.scalar v = Dtype.Index
-  | Dtype.Ptr _ -> false
+let invalid_is_index i = Uop.dtype i = Dtype.Index
 
-let invalid_for_result u =
-  Uop.invalid ~dtype:(Dtype.val_of (Uop.dtype u)) ()
+let invalid_for_result u = Uop.invalid ~dtype:(Uop.dtype u) ()
 
 let propagate_invalid_comparison ~op ~cond ~valid_lhs ~valid_rhs ~invalid =
   let cmp = Uop.alu_binary ~op ~lhs:valid_lhs ~rhs:valid_rhs in
@@ -1049,14 +848,13 @@ let invalid_index_or_casted =
   let open Upat in
   [ invalid_index; cast invalid_index ]
 
-let noop_void () = Uop.noop ~dtype:(Dtype.Val Dtype.Val.void) ()
+let noop_void () = Uop.noop ~dtype:Dtype.void ()
 
 let zero_of_dtype dt =
-  match dt with
-  | Dtype.Val v when Dtype.Val.is_bool v -> Uop.const (Const.bool false)
-  | Dtype.Val v when Dtype.Val.is_int v -> Uop.const (Const.int v 0)
-  | Dtype.Val v when Dtype.Val.is_float v -> Uop.const (Const.float v 0.0)
-  | _ -> Uop.const (Const.int Dtype.Val.weakint 0)
+  if Dtype.is_bool dt then Uop.const (Const.bool false)
+  else if Dtype.is_int dt then Uop.const (Const.int dt 0)
+  else if Dtype.is_float dt then Uop.const (Const.float dt 0.0)
+  else Uop.const (Const.int Dtype.weakint 0)
 
 let make_rule_invalid_load inner =
   let open Upat in
@@ -1184,7 +982,10 @@ let pm_data_invalid : Upat.Pattern_matcher.t =
                  (Uop.alu_binary ~op:(Uop.op alu) ~lhs:y ~rhs:x)
                  (invalid_for_result alu)));
 
-    (* Bare Invalid poisons a non-comparison binary. *)
+    (* Bare Invalid poisons a non-comparison binary. Both operand positions
+       need their own rule: pattern src only permutes for commutative ops, so
+       Invalid on the right of a non-commutative binary (e.g. [y - Invalid],
+       [y >> Invalid]) is caught only by the second rule. *)
     (ops ~src:[ invalid_pat; any ] non_cmp_binary => fun bs ->
        let i = bs $ "i" in if is_invalid_const i then Some i else None);
 
@@ -1279,10 +1080,7 @@ let symbolic_simple : Upat.Pattern_matcher.t =
      O.((x + c0) + c1) => fun bs ->
        let x = bs $ "x" in
        match const_int_v (bs $ "c0"), const_int_v (bs $ "c1") with
-       | Some a, Some b
-         when (match Uop.dtype x with
-               | Dtype.Val dtype -> not (Dtype.Val.is_unsigned dtype)
-               | Dtype.Ptr _ -> false) ->
+       | Some a, Some b when not (Dtype.is_unsigned (Uop.dtype x)) ->
            let c = Uop.const_like x (a + b) in
            Some Uop.O.(x + c)
        | _ -> None);
@@ -1295,18 +1093,14 @@ let symbolic_simple : Upat.Pattern_matcher.t =
        match const_int_v c, const_float_v c with
        | Some 0, _ -> Some (bs $ "x")
        | _, Some f when f = 0.0 -> Some (bs $ "x")
-       | Some n, _ -> (
-           match Uop.dtype x with
-           | Dtype.Val target when not (Dtype.Val.is_unsigned target) ->
-               Some Uop.O.(x + Uop.const_like x (-n))
-           | _ -> None)
-       | _, Some f -> (
-           match Uop.dtype x with
-           | Dtype.Val target ->
-               Option.map
-                 (fun c -> Uop.alu_binary ~op:Ops.Add ~lhs:x ~rhs:(Uop.const c))
-                 (const_of_target ~target (`Float (-. f)))
-           | Dtype.Ptr _ -> None)
+       | Some n, _ ->
+           if not (Dtype.is_unsigned (Uop.dtype x))
+           then Some Uop.O.(x + Uop.const_like x (-n))
+           else None
+       | _, Some f ->
+           Option.map
+             (fun c -> Uop.alu_binary ~op:Ops.Add ~lhs:x ~rhs:(Uop.const c))
+             (const_of_target ~target:(Uop.dtype x) (`Float (-. f)))
        | _ -> None);
 
     (* x * 1 -> x *)
@@ -1347,7 +1141,8 @@ let symbolic_simple : Upat.Pattern_matcher.t =
 
     (* x < x -> false (or a vector of falses matching x's lane count). *)
     (rewrite1 (fun x -> O.(x < x)) (fun x ->
-       let n = Dtype.count (Uop.dtype x) in
+       let n = match Uop.op x with
+         | Ops.Stack -> Array.length (Uop.src x) | _ -> 1 in
        Some (Uop.broadcast (Uop.const_bool false) n)));
 
     (* x ^ x -> 0 (on ints/bool) *)
@@ -1397,7 +1192,8 @@ let symbolic_simple : Upat.Pattern_matcher.t =
     (rewrite1 (fun x -> alu [ x; x ] Ops.Cmpne) (fun x ->
        if Dtype.is_int (Uop.dtype x) || Dtype.is_bool (Uop.dtype x)
        then
-         let n = Dtype.count (Uop.dtype x) in
+         let n = match Uop.op x with
+           | Ops.Stack -> Array.length (Uop.src x) | _ -> 1 in
          Some (Uop.broadcast (Uop.const_bool false) n)
        else None));
 
@@ -1564,18 +1360,6 @@ let symbolic_simple : Upat.Pattern_matcher.t =
        | Some false -> Some (bs $ "c1")
        | None -> None);
 
-    (* INDEX(STACK(...), const) selects the indexed stack source when the
-       current typed representation already agrees on the result dtype. *)
-    (op ~src:[ op ~name:"stk" Ops.Stack; cvar ~name:"c" () ]
-       ~name:"idx" Ops.Index
-     => fun bs -> index_stack_const (bs $ "idx") (bs $ "stk") (bs $ "c"));
-
-    (* RESHAPE to the same shape is a no-op. *)
-    (op ~name:"root" Ops.Reshape => fun bs ->
-       let root = bs $ "root" in
-       match Uop.src root with
-       | [| src; _ |] when same_shape root src -> Some src
-       | _ -> None);
 
     (* trunc on int-typed input -> input *)
     (rewrite1 (fun x -> op ~src:[ x ] Ops.Trunc) (fun x ->
@@ -1590,34 +1374,26 @@ let symbolic_simple : Upat.Pattern_matcher.t =
 
     (* Cast of a constant -> same const with root dtype. *)
     (cast ~name:"root" (cvar ~name:"c" ()) => fun bs ->
-       let root = bs $ "root" in
-       match Uop.dtype root, const_of_uop (bs $ "c") with
-       | Dtype.Val target, Some c ->
-           Option.map Uop.const (cast_const target c)
-       | _ -> None);
+       match const_of_uop (bs $ "c") with
+       | Some c -> Option.map Uop.const (cast_const (Uop.dtype (bs $ "root")) c)
+       | None -> None);
 
     (* Cast of STACK constants -> lane-wise cast. Tolk represents tinygrad tuple
        vector constants structurally as STACK. *)
     (cast ~name:"root" (op ~name:"stk" Ops.Stack) => fun bs ->
-       let root = bs $ "root" and stk = bs $ "stk" in
-       match Uop.dtype root with
-       | Dtype.Ptr _ -> None
-       | Dtype.Val target ->
-           let scalar_target = Dtype.Val.scalarize target in
-           let srcs = Array.to_list (Uop.src stk) in
-           if List.length srcs <> Dtype.Val.count target then None
-           else
-             let rec loop acc = function
-             | [] -> Some (const_node_from_lanes target (List.rev acc))
-             | u :: us ->
-                 (match const_of_uop u with
-                  | Some c ->
-                      (match cast_const scalar_target c with
-                       | Some c -> loop (c :: acc) us
-                       | None -> None)
-                  | None -> None)
-             in
-             loop [] srcs);
+       let scalar_target = Uop.dtype (bs $ "root") in
+       let srcs = Array.to_list (Uop.src (bs $ "stk")) in
+       let rec loop acc = function
+         | [] -> Some (const_node_from_lanes scalar_target (List.rev acc))
+         | u :: us ->
+             (match const_of_uop u with
+              | Some c ->
+                  (match cast_const scalar_target c with
+                   | Some c -> loop (c :: acc) us
+                   | None -> None)
+              | None -> None)
+       in
+       loop [] srcs);
 
     (* Same-dtype cast / bitcast -> input. *)
     (ops ~name:"root" [ Ops.Cast; Ops.Bitcast ] => fun bs ->
@@ -1632,59 +1408,46 @@ let symbolic_simple : Upat.Pattern_matcher.t =
     (let x = var "x" in
      cast ~name:"b" (cast ~name:"a" x) => fun bs ->
        let x = bs $ "x" and a = bs $ "a" and b = bs $ "b" in
-       match Uop.dtype x, Uop.dtype a, Uop.dtype b with
-       | Dtype.Val vx, Dtype.Val va, Dtype.Val vb
-         when Dtype.Val.equal vx vb && Dtype.Val.can_lossless_cast vb va ->
-           Some x
-       | _ -> None);
+       if Dtype.equal (Uop.dtype x) (Uop.dtype b)
+          && Dtype.can_lossless_cast (Uop.dtype b) (Uop.dtype a)
+       then Some x
+       else None);
 
-    (* Bitcast of scalar-broadcast CONST -> reinterpret each lane. *)
+    (* Bitcast of scalar CONST -> reinterpret the const. *)
     (bitcast ~name:"root" (cvar ~name:"c" ()) => fun bs ->
        let root = bs $ "root" and c = bs $ "c" in
-       match Uop.dtype root, Uop.dtype c, const_of_uop c with
-       | Dtype.Val target, Dtype.Val source, Some value
-         when Dtype.Val.count target = Dtype.Val.count source ->
+       match const_of_uop c with
+       | Some value ->
            Option.map
-             (fun storage -> Uop.const (Const.of_scalar target storage))
-             (bitcast_const_storage ~src:source ~dst:target value)
-       | _ -> None);
+             (fun storage ->
+               Uop.const (Const.of_scalar (Uop.dtype root) storage))
+             (bitcast_const_storage ~src:(Uop.dtype c) ~dst:(Uop.dtype root)
+                value)
+       | None -> None);
 
     (* Bitcast of STACK constants -> lane-wise bitcast. This covers Tolk's
        structural representation of tinygrad tuple vector constants. *)
     (bitcast ~name:"root" (op ~name:"stk" Ops.Stack) => fun bs ->
-       let root = bs $ "root" and stk = bs $ "stk" in
-       match Uop.dtype root with
-       | Dtype.Val target ->
-           let srcs = Array.to_list (Uop.src stk) in
-           if List.length srcs <> Dtype.Val.count target then None
-           else
-             let scalar_target = Dtype.Val.scalarize target in
-             let rec loop source acc = function
-             | [] -> Some (const_node_from_lanes target (List.rev acc))
-             | u :: us -> (
-                 match Uop.dtype u, const_of_uop u with
-                 | Dtype.Val dtype, Some c ->
-                     let scalar_source = Dtype.Val.scalarize dtype in
-                     if not (Dtype.Val.equal scalar_source source) then None
-                     else
-                       (match
-                          bitcast_const_storage ~src:source ~dst:scalar_target c
-                        with
-                        | Some storage ->
-                            loop source
-                              (Const.of_scalar scalar_target storage :: acc)
-                              us
-                        | None -> None)
-                 | _ -> None)
-             in
-             (match srcs with
-              | [] -> None
-              | u :: _ -> (
-                  match Uop.dtype u with
-                  | Dtype.Val source ->
-                      loop (Dtype.Val.scalarize source) [] srcs
-                  | _ -> None))
-       | _ -> None);
+       let scalar_target = Uop.dtype (bs $ "root") in
+       let srcs = Array.to_list (Uop.src (bs $ "stk")) in
+       let rec loop source acc = function
+         | [] -> Some (const_node_from_lanes scalar_target (List.rev acc))
+         | u :: us -> (
+             match const_of_uop u with
+             | Some c ->
+                 let scalar_source = Uop.dtype u in
+                 if not (Dtype.equal scalar_source source) then None
+                 else (
+                   match
+                     bitcast_const_storage ~src:source ~dst:scalar_target c
+                   with
+                   | Some storage ->
+                       loop source
+                         (Const.of_scalar scalar_target storage :: acc) us
+                   | None -> None)
+             | None -> None)
+       in
+       match srcs with [] -> None | u :: _ -> loop (Uop.dtype u) [] srcs);
 
     (* x.cast(bool) -> x != 0 *)
     (rewrite1 (fun x -> cast ~dtype:Dtype.bool x) (fun x ->
@@ -1753,7 +1516,7 @@ let symbolic_simple : Upat.Pattern_matcher.t =
     (let x = var_scalar "x" Dtype.Bool and y = var_scalar "y" Dtype.Bool in
      alu [ x; y ] Ops.Max => fun bs ->
        Some (Uop.alu_binary ~op:Ops.Or ~lhs:(bs $ "x") ~rhs:(bs $ "y")));
-  ])
+  ] ++ Movement.mop_cleanup)
 
 (* phase 2 *)
 
@@ -1766,10 +1529,7 @@ let rule_two_stage_associative_for assoc_op =
     let x = bs $ "x" and c1 = bs $ "c1" and c2 = bs $ "c2" in
     if
       assoc_op = Ops.Add
-      &&
-      match Uop.dtype x with
-      | Dtype.Val dtype -> Dtype.Val.is_unsigned dtype
-      | Dtype.Ptr _ -> false
+      && Dtype.is_unsigned (Uop.dtype x)
     then None
     else
       let combined = Uop.alu_binary ~op:assoc_op ~lhs:c1 ~rhs:c2 in
@@ -1823,32 +1583,6 @@ let canonicalize_simplex x =
       u') terms in
     if !changed then Some (Uop.usum ret) else None
   with Reject -> None
-
-(* Memoized: an unmemoized walk revisits shared subgraphs and goes
-   exponential on wide unrolled ALU chains. *)
-let structural_lane_count_cache : int Uop.Ref_tbl.t = Uop.Ref_tbl.create 256
-
-let rec structural_lane_count u =
-  match Uop.Ref_tbl.find_opt structural_lane_count_cache u with
-  | Some n -> n
-  | None ->
-      let n = compute_structural_lane_count u in
-      Uop.Ref_tbl.add structural_lane_count_cache u n;
-      n
-
-and compute_structural_lane_count u =
-  let count = Dtype.count (Uop.dtype u) in
-  if count > 1 then count
-  else
-    match Uop.op u with
-    | Ops.Stack -> Array.length (Uop.src u)
-    | Ops.Index -> 1
-    | op when Ops.Group.is_alu op || op = Ops.Cast || op = Ops.Bitcast ->
-        Uop.src u
-        |> Array.fold_left
-             (fun acc child -> max acc (structural_lane_count child))
-             count
-    | _ -> count
 
 let index_pushing : Upat.Pattern_matcher.t =
   let open Upat in
@@ -2197,7 +1931,7 @@ let symbolic : Upat.Pattern_matcher.t =
     (let x = var_scalar "x" Dtype.Int64 and y = var_scalar "y" Dtype.Int64 in
      ops ~src:[ x; y ] ~name:"u" Ops.Group.binary => fun bs ->
        let u = bs $ "u" and x = bs $ "x" and y = bs $ "y" in
-       let i32 = Dtype.Val.int32 in
+       let i32 = Dtype.int32 in
        if overflows u i32 || overflows x i32 || overflows y i32 then None
        else
          let xc = Uop.cast ~src:x ~dtype:Dtype.int32 in
@@ -2213,14 +1947,11 @@ let symbolic : Upat.Pattern_matcher.t =
        let x = bs $ "x" and a = bs $ "a" and b = bs $ "b" in
        if not (Dtype.is_int (Uop.dtype x) && Dtype.is_int (Uop.dtype a))
        then None
-       else
-         match Uop.dtype a with
-         | Dtype.Val av ->
-             (match int_bounds av with
-              | Some (lo, hi) when lo <= Uop.vmin x && Uop.vmax x <= hi ->
-                  Some (Uop.cast ~src:x ~dtype:(Uop.dtype b))
-              | _ -> None)
-         | _ -> None);
+       else (
+         match int_bounds (Uop.dtype a) with
+         | Some (lo, hi) when lo <= Uop.vmin x && Uop.vmax x <= hi ->
+             Some (Uop.cast ~src:x ~dtype:(Uop.dtype b))
+         | _ -> None));
 
     (* -1 * (x + c) -> -x + -c. *)
     (let x = var "x" and c = cvar ~name:"c" () in
@@ -2341,10 +2072,9 @@ let symbolic : Upat.Pattern_matcher.t =
     (let x = var "x" in
      cast ~name:"b" (cast ~name:"a" x) => fun bs ->
        let x = bs $ "x" and a = bs $ "a" and b = bs $ "b" in
-       match Uop.dtype x, Uop.dtype a with
-       | Dtype.Val vx, Dtype.Val va when Dtype.Val.can_lossless_cast vx va ->
-           Some (Uop.cast ~src:x ~dtype:(Uop.dtype b))
-       | _ -> None);
+       if Dtype.can_lossless_cast (Uop.dtype x) (Uop.dtype a)
+       then Some (Uop.cast ~src:x ~dtype:(Uop.dtype b))
+       else None);
   ] in
   let base =
     Pattern_matcher.(symbolic_simple ++ make phase_2_rules)
@@ -2391,7 +2121,7 @@ let parse_valid v =
       Some (lhs, true, Uop.vmax rhs - 1)
   | _ -> None
 
-let fake_var ~index ~lo ~hi ~(dtype : Dtype.Val.t) () =
+let fake_var ~index ~lo ~hi ~(dtype : Dtype.t) () =
   let name = Printf.sprintf "fake%d" index in
   Uop.variable ~name ~min_val:lo ~max_val:hi ~dtype ()
 
@@ -2491,10 +2221,7 @@ let uop_given_valid ?(try_simplex = true) valid u =
     let hi = Option.value !hi_r ~default:default_hi in
     if lo = min_int || hi = max_int then ()
     else
-      let dt = match Uop.dtype expr with
-        | Dtype.Val v -> v
-        | _ -> Dtype.Val.weakint
-      in
+      let dt = Uop.dtype expr in
       let fake = fake_var ~index:i ~lo ~hi ~dtype:dt () in
       all_candidates := (expr, fake) :: !all_candidates;
       if try_simplex then begin
@@ -2507,10 +2234,7 @@ let uop_given_valid ?(try_simplex = true) valid u =
         in
         if is_simplex then
           let simplex_cands = List.map (fun xi ->
-            let xi_dt = match Uop.dtype xi with
-              | Dtype.Val v -> v
-              | _ -> Dtype.Val.weakint
-            in
+            let xi_dt = Uop.dtype xi in
             let hi_xi = Uop.vmax xi in
             (xi, fake_var ~index:i ~lo:1 ~hi:hi_xi ~dtype:xi_dt ())
           ) (Uop.split_uop expr Ops.Add) in
@@ -2591,12 +2315,10 @@ let pm_simplify_valid =
        if not (is_invalid_const i) then None
        else
          let cond = bs $ "cond" and x = bs $ "x" in
-         match Uop.dtype x with
-         | Dtype.Val v when Dtype.Val.scalar v = Dtype.Index ->
-             let x' = uop_given_valid cond x in
-             if Uop.equal x x' then None
-             else Some (Uop.O.where cond x' i)
-         | _ -> None);
+         if Uop.dtype x = Dtype.Index then
+           let x' = uop_given_valid cond x in
+           if Uop.equal x x' then None else Some (Uop.O.where cond x' i)
+         else None);
 
   ]
 
@@ -2631,24 +2353,14 @@ let sym : Upat.Pattern_matcher.t =
   Pattern_matcher.(symbolic ++ pm_simplify_valid
                   ++ make rules_invalid_load_store
                   ++ make [
-    (* ALU(STACK(x), STACK(y)) -> STACK(ALU(x,y), ..., ALU(x,y)). *)
+    (* ALU(STACK(x), STACK(y)) -> STACK(ALU(x, y)). *)
     (let x = var "x" and y = var "y" in
      ops ~name:"alu"
        ~src:[ op ~src:[ x ] Ops.Stack; op ~src:[ y ] Ops.Stack ]
        Ops.Group.alu
      => fun bs ->
        let alu = bs $ "alu" and x = bs $ "x" and y = bs $ "y" in
-       let alu_dt = Uop.dtype alu in
-       match alu_dt with
-       | Dtype.Val dtv ->
-           let scalar_dt = Dtype.Val (Dtype.Val.scalarize dtv) in
-           let count = Dtype.count alu_dt in
-           let inner = Uop.alu_binary ~op:(Uop.op alu) ~lhs:x ~rhs:y in
-           let inner = Uop.cast ~src:inner ~dtype:scalar_dt in
-           Some
-             (Uop.stack ~dtype:(Dtype.Val.scalarize dtv)
-                (List.init count (fun _ -> inner)))
-       | _ -> None);
+       Some (Uop.stack [ Uop.alu_binary ~op:(Uop.op alu) ~lhs:x ~rhs:y ]));
 
     (* where(s, a, b).cast(d) -> where(s, a.cast(d), b.cast(d)). *)
     (let s = var "s" and a = var "a" and b = var "b" in
@@ -2662,7 +2374,7 @@ let sym : Upat.Pattern_matcher.t =
     (* store(index, load(index)) -> Noop  (self-store elimination). *)
     (let i = op ~name:"index" Ops.Index in
      store i (load i) => fun _ ->
-       Some (Uop.noop ~dtype:(Dtype.Val Dtype.Val.void) ()));
+       Some (Uop.noop ~dtype:Dtype.void ()));
 
     (* store(index, gate.where(alt, load(index))) -> gated store of alt. *)
     (let index = op ~name:"index" Ops.Index in
@@ -2676,14 +2388,14 @@ let sym : Upat.Pattern_matcher.t =
         let idxs = Array.to_list index_src |> List.tl in
         let idxs = List.map (fun idx -> Uop.valid ~src:idx ~cond:gate) idxs in
         let dst =
-          Uop.index ~ptr:buf ~idxs ~as_ptr:(Dtype.is_ptr (Uop.dtype index)) ()
+          Uop.index ~ptr:buf ~idxs ()
         in
         Some (Uop.store ~dst ~value:alt ()));
 
     (* Store of Invalid -> Noop. *)
     (store ~name:"st" any invalid_pat => fun bs ->
        if is_invalid_const (bs $ "i")
-       then Some (Uop.noop ~dtype:(Dtype.Val Dtype.Val.void) ())
+       then Some (Uop.noop ~dtype:Dtype.void ())
        else None);
 
     (* store(buf.index(idx), cond.where(val, Invalid), ...ranges)
@@ -2707,10 +2419,7 @@ let sym : Upat.Pattern_matcher.t =
               let idxs =
                 List.map (fun idx -> Uop.valid ~src:idx ~cond) idxs
               in
-              let new_index =
-                Uop.index ~ptr:buf ~idxs
-                  ~as_ptr:(Dtype.is_ptr (Uop.dtype index)) ()
-              in
+              let new_index = Uop.index ~ptr:buf ~idxs () in
               let gate =
                 let src = Uop.src store in
                 if Array.length src = 3 then Some src.(2) else None
@@ -2742,7 +2451,7 @@ let sym : Upat.Pattern_matcher.t =
      => fun bs ->
           let r = bs $ "r" in
           match Uop.Arg.as_reduce_arg (Uop.arg r) with
-          | Some { op; axes = [] } when op = Ops.Add || op = Ops.Max ->
+          | Some { op; _ } when op = Ops.Add || op = Ops.Max ->
               if not (Dtype.equal (Uop.dtype r) (Uop.dtype (Uop.src r).(0)))
               then None
               else
