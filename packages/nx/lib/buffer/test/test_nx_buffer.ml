@@ -174,10 +174,15 @@ let test_float8_e4m3_semantics () =
   equal ~msg:"e4m3 256" (float 0.0) 256.0 (rt 256.0);
   equal ~msg:"e4m3 max finite" (float 0.0) 448.0 (rt 448.0);
   equal ~msg:"e4m3 300 rounds to 288" (float 0.0) 288.0 (rt 300.0);
-  (* No infinities: finite overflow and infinities saturate to 448. *)
-  equal ~msg:"e4m3 overflow saturates" (float 0.0) 448.0 (rt 512.0);
-  equal ~msg:"e4m3 inf saturates" (float 0.0) 448.0 (rt Float.infinity);
-  equal ~msg:"e4m3 -inf saturates" (float 0.0) (-448.0) (rt Float.neg_infinity);
+  (* No infinities: overflow and infinities convert to NaN, matching the
+     ml_dtypes and PyTorch e4m3fn casts. 464 is the round-to-nearest boundary
+     past 448 and ties to the even finite value. *)
+  equal ~msg:"e4m3 460 rounds back to 448" (float 0.0) 448.0 (rt 460.0);
+  equal ~msg:"e4m3 tie at 464 stays finite" (float 0.0) 448.0 (rt 464.0);
+  equal ~msg:"e4m3 overflow is nan" bool true (Float.is_nan (rt 465.0));
+  equal ~msg:"e4m3 512 is nan" bool true (Float.is_nan (rt 512.0));
+  equal ~msg:"e4m3 inf is nan" bool true (Float.is_nan (rt Float.infinity));
+  equal ~msg:"e4m3 -inf is nan" bool true (Float.is_nan (rt Float.neg_infinity));
   (* Subnormals: min subnormal is 2^-9. *)
   equal ~msg:"e4m3 min subnormal" (float 0.0) 0x1p-9 (rt 0x1p-9);
   equal ~msg:"e4m3 subnormal rounds up" (float 0.0) 0x1p-9 (rt 0x1.8p-10);

@@ -313,9 +313,12 @@ thread.
 - Fix `float8_e4m3` conversions: the top binade was broken (256–448 saturated
   to 448 on write and decoded as 240 or NaN on read) and values below `2^-6`
   underflowed to zero instead of using the format's subnormals down to
-  `2^-9`. `float8_e5m2` subnormal rounding now keeps the sticky bits, so
-  round-to-nearest-even resolves ties correctly. Both conversions apply to
-  buffer element access and every C kernel operating on float8 tensors.
+  `2^-9`. Out-of-range values and infinities now convert to NaN instead of
+  saturating to ±448, matching `ml_dtypes` and PyTorch `float8_e4m3fn` casts;
+  clamp before casting if saturation is wanted. `float8_e5m2` subnormal
+  rounding now keeps the sticky bits, so round-to-nearest-even resolves ties
+  correctly. Both conversions apply to buffer element access and every C
+  kernel operating on float8 tensors.
 - The js_of_ocaml stubs for extended dtypes now compute the same values as
   the C implementation. Previously on JavaScript, `Nx_buffer.kind` returned
   the wrong dtype for every buffer, creating a bfloat16/float8/bool buffer

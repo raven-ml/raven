@@ -50,10 +50,11 @@ function caml_packBfloat16(num) {
 function caml_packFp8_e4m3(num) {
   /* OCP "fn" variant: no infinities, S.1111.111 is NaN, exponent 15 is
      otherwise normal up to the max finite 448, subnormals scale by 2^-6.
-     Finite overflow and infinities saturate to the max finite. */
+     Finite overflow and infinities convert to NaN, matching the ml_dtypes
+     and PyTorch e4m3fn casts. */
   if (num !== num) return 0x7f;
-  if (num === Infinity) return 0x7e;
-  if (num === -Infinity) return 0xfe;
+  if (num === Infinity) return 0x7f;
+  if (num === -Infinity) return 0xff;
 
   var buffer = new ArrayBuffer(4);
   var view = new DataView(buffer);
@@ -70,7 +71,7 @@ function caml_packFp8_e4m3(num) {
     if (rem > 0x80000 || (rem === 0x80000 && (q & 1))) q++;
     /* A rounding carry propagates into the exponent field. */
     var out = ((exp + 7) << 3) + q;
-    if (out >= 0x7f) return sign | 0x7e; /* Saturate past 448 */
+    if (out >= 0x7f) return sign | 0x7f; /* Overflow past 448 to NaN */
     return sign | out;
   }
 

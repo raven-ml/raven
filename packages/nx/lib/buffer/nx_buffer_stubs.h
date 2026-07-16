@@ -183,10 +183,12 @@ static inline float half_to_float(uint16_t h) {
 
 /* FP8 E4M3 conversions (OCP "fn" variant: no infinities, S.1111.111 is NaN,
    exponent 15 is otherwise normal up to the max finite 448, subnormals scale
-   by 2^-6). Finite overflow and infinities saturate to the max finite. */
+   by 2^-6). Finite overflow and infinities convert to NaN, matching the
+   ml_dtypes and PyTorch e4m3fn casts; saturate before casting if clamping is
+   wanted. */
 static inline uint8_t float_to_fp8_e4m3(float f) {
   if (isnan(f)) return 0x7F;
-  if (isinf(f)) return signbit(f) ? 0xFE : 0x7E;
+  if (isinf(f)) return signbit(f) ? 0xFF : 0x7F;
 
   union {
     float f;
@@ -203,7 +205,7 @@ static inline uint8_t float_to_fp8_e4m3(float f) {
     if (rem > 0x80000 || (rem == 0x80000 && (q & 1))) q++;
     /* A rounding carry propagates into the exponent field. */
     uint32_t bits = ((uint32_t)(exp + 7) << 3) + q;
-    if (bits >= 0x7F) return sign | 0x7E; /* Saturate past 448 */
+    if (bits >= 0x7F) return sign | 0x7F; /* Overflow past 448 to NaN */
     return sign | bits;
   }
 
