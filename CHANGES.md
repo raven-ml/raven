@@ -310,6 +310,13 @@ thread.
 
 ### Nx
 
+- Fix int4/uint4 offset arithmetic in `Nx_buffer.blit_from_bytes` and
+  `blit_to_bytes`: source and destination offsets disagreed about nibble
+  packing (one side counted a byte per element, the other rounded the byte
+  offset up), silently corrupting any copy with a nonzero offset. Offsets are
+  element offsets mapping to byte `off / 2` on both sides; odd offsets now
+  raise `Invalid_argument`, as does an odd length that does not reach the end
+  of the destination buffer.
 - `Nx_buffer.to_bigarray1` now raises `Invalid_argument` for extended kinds
   (bfloat16, float8, int4, uint32/64, bool) instead of returning a bigarray
   that standard operations silently misread — `Bigarray.Array1.get` decoded

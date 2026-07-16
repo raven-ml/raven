@@ -6,6 +6,8 @@
 open Nx_buffer
 open Windtrap
 
+let invalid_argument = function Invalid_argument _ -> true | _ -> false
+
 (* Test creation of different buffer types *)
 let test_create_bfloat16 () =
   let buf = create bfloat16 10 in
@@ -145,6 +147,51 @@ let test_fill () =
   equal ~msg:"fill[0]" (float 1e-6) 7.0 (get buf 0);
   equal ~msg:"fill[3]" (float 1e-6) 7.0 (get buf 3)
 
+(* Int4 packs two elements per byte: the bytes blits move whole bytes, so
+   element offsets must be even and map to byte offset [off / 2]. *)
+let test_int4_bytes_blit_roundtrip () =
+  let src = create int4 8 in
+  for i = 0 to 7 do
+    set src i (i - 4)
+  done;
+  let bytes = Bytes.create 4 in
+  blit_to_bytes src bytes;
+  let dst = create int4 8 in
+  blit_from_bytes bytes dst;
+  for i = 0 to 7 do
+    equal ~msg:(Printf.sprintf "int4 roundtrip[%d]" i) int (i - 4) (get dst i)
+  done
+
+let test_int4_bytes_blit_offsets () =
+  let src = create int4 8 in
+  for i = 0 to 7 do
+    set src i (i mod 8)
+  done;
+  (* Elements 4..7 of [src], packed into two bytes. *)
+  let bytes = Bytes.create 2 in
+  blit_to_bytes ~src_off:4 ~len:4 src bytes;
+  (* Into elements 2..5 of [dst]. *)
+  let dst = create int4 8 in
+  blit_from_bytes ~dst_off:2 ~len:4 bytes dst;
+  equal ~msg:"int4 offset dst[1]" int 0 (get dst 1);
+  equal ~msg:"int4 offset dst[2]" int 4 (get dst 2);
+  equal ~msg:"int4 offset dst[5]" int 7 (get dst 5);
+  equal ~msg:"int4 offset dst[6]" int 0 (get dst 6)
+
+let test_int4_bytes_blit_odd_raises () =
+  let buf = create int4 8 in
+  let bytes = Bytes.create 4 in
+  raises_match ~msg:"odd src_off to bytes" invalid_argument (fun () ->
+      blit_to_bytes ~src_off:1 ~len:2 buf bytes);
+  raises_match ~msg:"odd dst_off from bytes" invalid_argument (fun () ->
+      blit_from_bytes ~dst_off:1 ~len:2 bytes buf);
+  raises_match ~msg:"odd len not reaching the end" invalid_argument (fun () ->
+      blit_from_bytes ~len:3 bytes buf);
+  (* An odd length is fine when the copy reaches the end of the buffer: the
+     trailing nibble is padding. *)
+  let tail = create int4 5 in
+  blit_from_bytes ~dst_off:2 ~len:3 bytes tail
+
 (* Test bigarray conversions *)
 let test_bigarray_roundtrip () =
   let buf = create float32 3 in
@@ -168,8 +215,6 @@ let test_genarray_roundtrip () =
   equal ~msg:"genarray roundtrip length" int 6 (length buf2);
   equal ~msg:"genarray roundtrip[0]" (float 1e-6) 0.0 (get buf2 0);
   equal ~msg:"genarray roundtrip[5]" (float 1e-6) 5.0 (get buf2 5)
-
-let invalid_argument = function Invalid_argument _ -> true | _ -> false
 
 (* Extended kinds have no faithful Bigarray.kind: viewing one as a bigarray
    would let stdlib operations misread it. *)
@@ -219,7 +264,15 @@ let () =
           test "kind round-trip" test_kind_roundtrip;
           test "kind sizes" test_kind_sizes;
         ];
-      group "operations" [ test "blit" test_blit; test "fill" test_fill ];
+      group "operations"
+        [
+          test "blit" test_blit;
+          test "fill" test_fill;
+          test "int4 bytes blit roundtrip" test_int4_bytes_blit_roundtrip;
+          test "int4 bytes blit offsets" test_int4_bytes_blit_offsets;
+          test "int4 bytes blit odd offsets raise"
+            test_int4_bytes_blit_odd_raises;
+        ];
       group "conversions"
         [
           test "bigarray roundtrip" test_bigarray_roundtrip;

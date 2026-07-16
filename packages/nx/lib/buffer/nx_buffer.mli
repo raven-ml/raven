@@ -178,14 +178,24 @@ val blit : src:('a, 'b) t -> dst:('a, 'b) t -> unit
 val blit_from_bytes :
   ?src_off:int -> ?dst_off:int -> ?len:int -> bytes -> ('a, 'b) t -> unit
 (** [blit_from_bytes ?src_off ?dst_off ?len bytes buf] copies [len] elements
-    from [bytes] into [buf]. Offsets and length are in elements. [src_off] and
-    [dst_off] default to [0]. [len] defaults to [length buf - dst_off]. *)
+    from [bytes] into [buf]. Offsets and length are in elements; [bytes] holds
+    the elements in their storage representation. [src_off] and [dst_off]
+    default to [0]. [len] defaults to [length buf - dst_off].
+
+    For [Int4] and [UInt4], [bytes] holds two elements packed per byte;
+    [src_off] and [dst_off] must be even, and [len] must be even unless the copy
+    reaches the end of [buf]. Raises [Invalid_argument] otherwise. *)
 
 val blit_to_bytes :
   ?src_off:int -> ?dst_off:int -> ?len:int -> ('a, 'b) t -> bytes -> unit
 (** [blit_to_bytes ?src_off ?dst_off ?len buf bytes] copies [len] elements from
-    [buf] into [bytes]. Offsets and length are in elements. [src_off] and
-    [dst_off] default to [0]. [len] defaults to [length buf - src_off]. *)
+    [buf] into [bytes]. Offsets and length are in elements; [bytes] receives the
+    elements in their storage representation. [src_off] and [dst_off] default to
+    [0]. [len] defaults to [length buf - src_off].
+
+    For [Int4] and [UInt4], [bytes] holds two elements packed per byte, and
+    [src_off] and [dst_off] must be even; if [len] is odd the last byte written
+    carries a padding upper nibble. Raises [Invalid_argument] on odd offsets. *)
 
 (** {1:ba Bigarray conversions}
 
