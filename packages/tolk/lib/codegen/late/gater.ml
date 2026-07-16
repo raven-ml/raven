@@ -16,16 +16,13 @@ module U = Uop
    constructor. The width is the [Shrink] length, which is what the load's
    rank-1 shape evaluates to. *)
 let vzero_like node mop =
-  match U.dtype node with
-  | Dtype.Val v ->
-      let zero = U.const (Const.zero (Dtype.Val.scalarize v)) in
-      let lanes =
-        match U.op mop, U.src mop with
-        | Ops.Shrink, [| _; _; len |] -> U.vmax len
-        | _ -> 1
-      in
-      U.broadcast zero lanes
-  | Dtype.Ptr _ -> invalid_arg "Gater.vzero_like: pointer has no zero"
+  let zero = U.const (Const.zero (U.dtype node)) in
+  let lanes =
+    match U.op mop, U.src mop with
+    | Ops.Shrink, [| _; _; len |] -> U.vmax len
+    | _ -> 1
+  in
+  U.broadcast zero lanes
 
 let is_invalid_const u =
   match U.op u, U.arg u with
@@ -38,6 +35,9 @@ let invalid_where u =
       Some (gate, idx)
   | _ -> None
 
+(* Image load/store indexes are always float-typed; ungating the coordinates
+   must keep the index float so the image-float rules and the renderer treat
+   it as an image access. *)
 let indexed_two_invalid_gate mop =
   match U.op mop, U.src mop with
   | Ops.Index, [| _; y; x |] -> (
@@ -46,7 +46,7 @@ let indexed_two_invalid_gate mop =
           let src = Array.copy (U.src mop) in
           src.(1) <- yi;
           src.(2) <- xi;
-          Some (yg, U.replace mop ~src ())
+          Some (yg, U.replace mop ~src ~dtype:Dtype.float32 ())
       | _ -> None)
   | Ops.Index, [| _; coord |] when U.op coord = Ops.Stack -> (
       match U.src coord with
@@ -56,7 +56,7 @@ let indexed_two_invalid_gate mop =
               let coord = U.replace coord ~src:[| yi; xi |] () in
               let src = Array.copy (U.src mop) in
               src.(1) <- coord;
-              Some (yg, U.replace mop ~src ())
+              Some (yg, U.replace mop ~src ~dtype:Dtype.float32 ())
           | _ -> None)
       | _ -> None)
   | _ -> None

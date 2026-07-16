@@ -18,7 +18,7 @@
 val image_valid_dims :
   ?osx:bool ->
   image_pitch_alignment:int option ->
-  base:Tolk_uop.Dtype.Val.t ->
+  base:Tolk_uop.Dtype.t ->
   size:int ->
   unit ->
   (int * int) list

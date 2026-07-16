@@ -12,6 +12,13 @@ module U = Uop
 let ceil_div a b = (a + b - 1) / b
 let lane src i = U.index ~ptr:src ~idxs:[ U.const_int i ] ()
 
+(* An image buffer is a param/buffer whose shape is [(height, width, 4)].
+   Pointer-ness and image-ness are structural now: there is no image dtype. *)
+let is_image_shape u =
+  match (try U.max_shape u with Invalid_argument _ -> []) with
+  | [ _; _; 4 ] -> true
+  | _ -> false
+
 let image_valid_dims ?(osx = false) ~image_pitch_alignment ~base ~size () =
   match image_pitch_alignment with
   | None | Some 0 -> []
@@ -19,13 +26,12 @@ let image_valid_dims ?(osx = false) ~image_pitch_alignment ~base ~size () =
       let max_width = 16384 in
       let pxls = size / 4 in
       let supported_base =
-        Dtype.Val.equal base Dtype.Val.float16
-        || Dtype.Val.equal base Dtype.Val.float32
+        Dtype.equal base Dtype.float16 || Dtype.equal base Dtype.float32
       in
       if (not supported_base) || size > (4 * max_width * max_width) then []
       else if size mod (align * 4) <> 0 then
         let byte_align = if osx then 64 else align in
-        if (Dtype.Val.itemsize base * size) mod byte_align <> 0
+        if (Dtype.itemsize base * size) mod byte_align <> 0
            || pxls > max_width
         then []
         else [ (1, pxls) ]
@@ -55,13 +61,7 @@ let invalid_where_index idx =
       Some (valid, value)
   | _ -> None
 
-let invalid_where_index_full idx =
-  match U.op idx, U.src idx with
-  | Ops.Where, [| valid; value; invalid |] when is_invalid_const invalid ->
-      Some (valid, value, invalid)
-  | _ -> None
-
-let fake_var ~index ~lo ~hi ~(dtype : Dtype.Val.t) () =
+let fake_var ~index ~lo ~hi ~(dtype : Dtype.t) () =
   U.variable ~name:(Printf.sprintf "fake%d" index) ~min_val:lo
     ~max_val:hi ~dtype ()
 
@@ -96,7 +96,6 @@ let drop_valid_stmts valid idx height width =
                 (fun nowidx u ->
                   U.substitute [ (u, U.const_like u 0) ] nowidx)
                 idx terms
-              |> U.simplify
             in
             let xcoord = lane testidx 0 in
             let ycoord = lane testidx 1 in
@@ -109,12 +108,7 @@ let drop_valid_stmts valid idx height width =
               else (U.vmin x, c - 1)
             in
             if lo <= hi then begin
-              let dtype =
-                match U.dtype x with
-                | Dtype.Val dtype -> dtype
-                | Dtype.Ptr _ -> Dtype.Val.weakint
-              in
-              let fake = fake_var ~index:i ~lo ~hi ~dtype () in
+              let fake = fake_var ~index:i ~lo ~hi ~dtype:(U.dtype x) () in
               let coord_out_of_bounds coord bound =
                 let rw = U.substitute [ (x, fake) ] coord |> U.simplify in
                 coord_after_bound rw bound || coord_before_zero rw
@@ -129,21 +123,30 @@ let drop_valid_stmts valid idx height width =
     (U.split_uop valid Ops.And);
   List.rev !dropped
 
-let simplify_valid_load ptr start_idx valid invalid =
+let simplify_valid_load ptr start_idx valid =
   let idx = Symbolic.uop_given_valid valid start_idx in
-  if U.equal idx start_idx then None
-  else Some (U.index ~ptr ~idxs:[(U.O.where valid idx invalid)] ~as_ptr:true ())
+  if U.equal idx start_idx || U.equal idx (U.simplify start_idx) then None
+  else Some (U.index ~ptr ~idxs:[ U.valid ~src:idx ~cond:valid ] ())
 
-let simplify_valid_image_coords ptr idx_dtype y x =
-  match U.dtype ptr, invalid_where_index_full y, invalid_where_index_full x with
-  | ( Dtype.Ptr p,
-      Some (valid_y, y_value, y_invalid),
-      Some (valid_x, x_value, x_invalid) )
-    when Dtype.Ptr.is_image p && U.equal valid_y valid_x -> (
-      match Dtype.Ptr.image_shape p with
-      | Some (height :: width :: _) ->
+(* Image load/store is always float-typed regardless of the buffer's scalar
+   dtype; the half conversion is handled by the image-float rules. *)
+let image_index ptr idxs = U.replace (U.index ~ptr ~idxs ()) ~dtype:Dtype.float32 ()
+
+let simplify_valid_image_coords buf y x =
+  match invalid_where_index y, invalid_where_index x with
+  | Some (valid_y, y_value), Some (valid_x, x_value)
+    when U.equal valid_y valid_x -> (
+      match (try U.max_shape buf with Invalid_argument _ -> []) with
+      | [ height; width; 4 ] ->
+          let y_value, x_value =
+            if Dtype.equal (U.dtype x_value) (U.dtype y_value) then
+              (y_value, x_value)
+            else
+              ( U.cast ~src:y_value ~dtype:Dtype.int32,
+                U.cast ~src:x_value ~dtype:Dtype.int32 )
+          in
           let start_idx =
-            U.stack ~dtype:(Dtype.Val.scalarize idx_dtype) [ x_value; y_value ]
+            U.stack ~dtype:(U.dtype x_value) [ x_value; y_value ]
           in
           let idx = Symbolic.uop_given_valid valid_y start_idx in
           let drop_stmt = drop_valid_stmts valid_y idx height width in
@@ -154,47 +157,36 @@ let simplify_valid_image_coords ptr idx_dtype y x =
               |> List.filter (fun stmt ->
                      not (List.exists (fun d -> U.equal d stmt) drop_stmt))
             in
-            let x' = lane idx 0 in
             let y' = lane idx 1 in
-            let y, x =
-              match kept with
-              | [] -> (y', x')
-              | _ ->
-                  let new_valid = U.uprod kept in
-                  ( U.O.where new_valid y' y_invalid,
-                    U.O.where new_valid x' x_invalid )
-            in
-            Some (y, x)
+            let x' = lane idx 0 in
+            (match kept with
+             | [] -> Some (y', x')
+             | _ ->
+                 let new_valid = U.uprod kept in
+                 Some
+                   ( U.valid ~src:y' ~cond:new_valid,
+                     U.valid ~src:x' ~cond:new_valid ))
       | _ -> None)
   | _ -> None
 
 let simplify_valid_image_load ptr idx =
   match U.op idx, U.src idx with
   | Ops.Stack, [| y; x |] -> (
-      let idx_dtype = Dtype.val_of (U.dtype idx) in
-      match simplify_valid_image_coords ptr idx_dtype y x with
+      match simplify_valid_image_coords ptr y x with
       | Some (y, x) ->
-          Some
-            (U.index ~ptr
-               ~idxs:[ U.stack ~dtype:(Dtype.Val.scalarize idx_dtype) [ y; x ] ]
-               ~as_ptr:true ())
+          Some (image_index ptr [ U.stack ~dtype:(U.dtype y) [ y; x ] ])
       | None -> None)
   | _ -> None
 
 let indexing_simplify_rule node =
   match U.as_index node with
   | Some { ptr; idxs = [ idx ] } -> (
-      match invalid_where_index_full idx with
-      | Some (valid, value, invalid) ->
-          simplify_valid_load ptr value valid invalid
+      match invalid_where_index idx with
+      | Some (valid, value) -> simplify_valid_load ptr value valid
       | None -> simplify_valid_image_load ptr idx)
   | Some { ptr; idxs = [ y; x ] } -> (
-      match
-        simplify_valid_image_coords ptr
-          (Dtype.Val.vec 2 Dtype.Val.weakint)
-          y x
-      with
-      | Some (y, x) -> Some (U.index ~ptr ~idxs:[ y; x ] ~as_ptr:true ())
+      match simplify_valid_image_coords ptr y x with
+      | Some (y, x) -> Some (image_index ptr [ y; x ])
       | None -> None)
   | Some _ | None -> None
 
@@ -204,12 +196,6 @@ let indexing_simplify : Upat.Pattern_matcher.t =
     op ~name:"idx" Ops.Index
     => fun bs -> indexing_simplify_rule (bs $ "idx");
   ]
-
-let int32_const n = U.const (Const.int Dtype.Val.int32 n)
-
-let shape_numel u =
-  try Some (List.fold_left (fun acc d -> acc * U.vmax d) 1 (U.shape u))
-  with Invalid_argument _ -> None
 
 let host_is_osx () =
   try
@@ -222,46 +208,6 @@ let host_is_osx () =
 let image_target ren =
   List.mem (Renderer.device ren) [ "QCOM"; "CL"; "PYTHON"; "NULL" ]
 
-let image_dtype_of buf height width =
-  let itemsize =
-    match U.dtype buf with
-    | Dtype.Val dtype -> Dtype.Val.itemsize dtype
-    | Dtype.Ptr ptr -> Dtype.Ptr.itemsize ptr
-  in
-  if itemsize = 2 then Dtype.imageh [ height; width; 4 ]
-  else Dtype.imagef [ height; width; 4 ]
-
-let image_base_and_size buf =
-  match U.dtype buf with
-  | Dtype.Val base -> Option.map (fun size -> (base, size)) (shape_numel buf)
-  | Dtype.Ptr ptr ->
-      let size =
-        match shape_numel buf with
-        | Some size -> size
-        | None -> Dtype.Ptr.size ptr
-      in
-      Some (Dtype.Ptr.base ptr, size)
-
-let image_index buf valid idx =
-  let invalid_like coord =
-    match U.dtype coord with
-    | Dtype.Val dtype -> U.invalid ~dtype ()
-    | Dtype.Ptr _ -> U.invalid ()
-  in
-  let x = lane idx 0 in
-  let y = lane idx 1 in
-  let coord =
-    match valid with
-    | None -> U.stack ~dtype:Dtype.Val.weakint [ y; x ]
-    | Some valid ->
-        U.stack ~dtype:Dtype.Val.weakint
-          [
-            U.O.where valid y (invalid_like y);
-            U.O.where valid x (invalid_like x);
-          ]
-  in
-  U.index ~ptr:buf ~idxs:[coord] ~as_ptr:true ()
-
 let transform_to_image shapes ren buf offset =
   if (not (Helpers.getenv "IMAGE" 0 <> 0)) || not (image_target ren) then None
   else
@@ -270,8 +216,13 @@ let transform_to_image shapes ren buf offset =
       | None -> (None, offset)
       | Some (valid, offset) -> (Some valid, offset)
     in
-    match U.as_param buf, image_base_and_size buf with
-    | Some { param; _ }, Some (base, size) ->
+    match U.as_param buf with
+    | Some { param; _ } ->
+        let base = U.dtype buf in
+        let size =
+          List.fold_left ( * ) 1
+            (try U.max_shape buf with Invalid_argument _ -> [])
+        in
         let candidates =
           match Hashtbl.find_opt shapes param.slot with
           | Some dims -> [ dims ]
@@ -292,9 +243,11 @@ let transform_to_image shapes ren buf offset =
               let y = U.O.(offset // row_stride) in
               let cidx =
                 Symbolic.uop_given_valid valid_u
-                  (U.stack ~dtype:Dtype.Val.weakint [ x; y ])
+                  (U.stack ~dtype:(U.dtype x) [ x; y ])
               in
-              let dropped = drop_valid_stmts valid_u cidx height width |> List.length in
+              let dropped =
+                drop_valid_stmts valid_u cidx height width |> List.length
+              in
               (dropped, height, width, cidx))
             candidates
         in
@@ -310,8 +263,7 @@ let transform_to_image shapes ren buf offset =
           | [ cand ] -> Some cand
           | cand :: cands ->
               let score (_, _, _, idx) =
-                lane idx 1
-                |> U.simplify |> U.backward_slice |> List.length
+                lane idx 1 |> U.simplify |> U.backward_slice |> List.length
               in
               Some
                 (List.fold_left
@@ -322,12 +274,23 @@ let transform_to_image shapes ren buf offset =
         (match pick with
          | None -> None
          | Some (_, height, width, cidx) ->
-             let buf =
-               U.replace buf ~dtype:(image_dtype_of buf height width) ()
+             let shape_arg =
+               U.stack
+                 [ U.const_int height; U.const_int width; U.const_int 4 ]
              in
+             let buf = U.replace buf ~src:[| shape_arg |] () in
              Hashtbl.replace shapes param.slot (height, width);
-             Some (image_index buf valid cidx))
-    | _ -> None
+             let x = lane cidx 0 in
+             let y = lane cidx 1 in
+             let coord =
+               match valid with
+               | None -> U.stack ~dtype:(U.dtype x) [ y; x ]
+               | Some valid ->
+                   U.stack ~dtype:(U.dtype x)
+                     [ U.valid ~src:y ~cond:valid; U.valid ~src:x ~cond:valid ]
+             in
+             Some (image_index buf [ coord ]))
+    | None -> None
 
 let transform_to_image_rule shapes ren node =
   match U.op node, U.src node with
@@ -337,104 +300,12 @@ let transform_to_image_rule shapes ren node =
       | _ -> None)
   | _ -> None
 
-let all_same_shape src =
-  match Array.to_list src with
-  | [] -> true
-  | first :: rest ->
-      let shape = U.shape first in
-      List.for_all
-        (fun u ->
-          let shape' = U.shape u in
-          List.length shape = List.length shape'
-          && List.for_all2 U.equal shape shape')
-        rest
-
-let shape_ints u =
-  let rec loop acc = function
-  | [] -> Some (List.rev acc)
-  | d :: ds -> (
-      match U.const_int_value d with
-      | Some d -> loop (d :: acc) ds
-      | None -> None)
-  in
-  try loop [] (U.shape u) with Invalid_argument _ -> None
-
-let index_for_shape src idxs =
-  match U.dtype src, idxs with
-  | Dtype.Ptr _, _ ->
-      Some
-        (U.index ~ptr:src ~idxs:(List.map U.const_int idxs) ~as_ptr:true ())
-  | Dtype.Val _, _ ->
-      let shape = shape_ints src in
-      if Option.is_none shape then None
-      else
-        let shape = Option.get shape in
-        if List.length shape <> List.length idxs then None
-        else
-        let rec flat acc = function
-        | [], [] -> Some acc
-        | dim :: dims, idx :: idxs ->
-            let acc = (acc * dim) + idx in
-            flat acc (dims, idxs)
-        | _ -> None
-        in
-        (match flat 0 (shape, idxs) with
-         | Some idx when Dtype.vcount (U.dtype src) > idx ->
-             Some (lane src idx)
-         | _ -> None)
-
-let do_devectorize node =
-  match shape_ints node with
-  | None | Some [] -> None
-  | Some _ when not (all_same_shape (U.src node)) -> None
-  | Some shape ->
-      let rec product = function
-      | [] -> [ [] ]
-      | n :: ns ->
-         List.concat_map
-            (fun i -> List.map (fun tail -> i :: tail) (product ns))
-            (List.init n Fun.id)
-      in
-      let lanes =
-        product shape
-        |> List.map (fun idxs ->
-               let src =
-                 Array.to_list (U.src node)
-                 |> List.map (fun src -> index_for_shape src idxs)
-               in
-               if List.exists Option.is_none src then None
-               else
-                 Some
-                   (U.replace node
-                      ~src:
-                        (Array.of_list
-                           (List.map
-                              (function Some u -> u | None -> assert false)
-                              src))
-                      ()))
-      in
-      if List.exists Option.is_none lanes then None
-      else
-        let lanes =
-          List.map (function Some u -> u | None -> assert false) lanes
-        in
-        if U.op node = Ops.Store then Some (U.group lanes)
-        else
-          Some
-            (U.reshape ~src:(U.stack lanes)
-               ~shape:(U.stack (List.map U.const_int shape)))
-
-let ew_devectorizer_rule node =
-  let op = U.op node in
-  if Ops.Group.is_elementwise op then do_devectorize node else None
-
 let strip_float_half_float node =
   match U.op node, U.src node, U.dtype node with
-  | Ops.Cast, [| half |], Dtype.Val dst
-    when Dtype.Val.equal dst Dtype.Val.float32 -> (
+  | Ops.Cast, [| half |], dst when Dtype.equal dst Dtype.float32 -> (
       match U.op half, U.src half, U.dtype half with
-      | Ops.Cast, [| src |], Dtype.Val mid
-        when Dtype.Val.equal mid Dtype.Val.float16
+      | Ops.Cast, [| src |], mid
+        when Dtype.equal mid Dtype.float16
              && Dtype.equal (U.dtype src) Dtype.float32 ->
           Some src
       | _ -> None)
@@ -444,25 +315,21 @@ let image_float_rule node =
   match strip_float_half_float node with
   | Some _ as r -> r
   | None -> (
-      match U.as_load node, U.as_store node with
-      | Some { src; alt = None; gate = None }, _ -> (
-          match U.dtype node, U.dtype src with
-          | Dtype.Val load_dtype, Dtype.Ptr ptr
-            when Dtype.Val.equal load_dtype Dtype.Val.float16
-                 && Dtype.Val.equal (Dtype.Ptr.base ptr) Dtype.Val.float32 ->
-              Some (U.cast ~src:(U.load ~src ()) ~dtype:Dtype.float16)
-          | _ -> None)
-      | None, Some { dst; value; gate = None } -> (
-          match U.dtype value, U.dtype dst with
-          | Dtype.Val value_dtype, Dtype.Ptr ptr
-            when Dtype.Val.equal value_dtype Dtype.Val.float16
-                 && Dtype.Ptr.is_image ptr ->
+      match U.as_load node with
+      | Some { src; alt = None; gate = None }
+        when U.op src = Ops.Index
+             && Dtype.equal (U.dtype src) Dtype.float32
+             && Dtype.equal (U.dtype node) Dtype.float16 ->
+          Some (U.cast ~src:(U.load ~src ()) ~dtype:Dtype.float16)
+      | _ -> (
+          match U.as_store node with
+          | Some { dst; value; gate = None }
+            when U.op dst = Ops.Index
+                 && Dtype.equal (U.dtype dst) Dtype.float32
+                 && Dtype.equal (U.dtype value) Dtype.float16 ->
               Some
-                (U.store ~dst
-                   ~value:(U.cast ~src:value ~dtype:Dtype.float32)
-                   ())
-          | _ -> None)
-      | _ -> None)
+                (U.store ~dst ~value:(U.cast ~src:value ~dtype:Dtype.float32) ())
+          | _ -> None))
 
 let pm_simplify_add_image ren =
   let shapes = Hashtbl.create 8 in
@@ -472,17 +339,9 @@ let pm_simplify_add_image ren =
       ops ~name:"node" Ops.Group.all
       => fun bs ->
            let node = bs $ "node" in
-           match transform_to_image_rule shapes ren node with
-           | Some _ as r -> r
-           | None -> (
-               match image_float_rule node with
-               | Some _ as r -> r
-               | None -> (
-                   match ew_devectorizer_rule node with
-                   | Some _ as r -> r
-                   | None ->
-                       Upat.Pattern_matcher.rewrite
-                         Symbolic.symbolic_simple node));
+           (match transform_to_image_rule shapes ren node with
+            | Some _ as r -> r
+            | None -> image_float_rule node);
     ]
 
 type memory_op = Mem_load | Mem_store
@@ -602,18 +461,15 @@ let is_foldable_scalar = function
 
 let fold_widths_for_value ren buf =
   if Renderer.device ren = "DSP" then [ 128; 64; 32; 16; 8; 4 ]
+  else if U.addrspace buf = Some Dtype.Reg then []
+  else if is_image_shape buf then [ 4 ]
   else
-    match U.addrspace buf, U.dtype buf with
-    | Some Dtype.Reg, _ -> []
-    | _, Dtype.Ptr ptr when Dtype.Ptr.is_image ptr -> [ 4 ]
-    | _, Dtype.Val dtype ->
-        let scalar = Dtype.Val.scalar (Dtype.Val.scalarize dtype) in
-        if not (is_foldable_scalar scalar) then []
-        else if Renderer.supports_float4 ren then
-          if scalar = Dtype.Float16 && Helpers.allow_half8 then [ 8; 4; 2 ]
-          else [ 4; 2 ]
-        else []
-    | _, Dtype.Ptr _ -> []
+    let scalar = U.dtype buf in
+    if not (is_foldable_scalar scalar) then []
+    else if Renderer.supports_float4 ren then
+      if Dtype.equal scalar Dtype.float16 && Helpers.allow_half8 then [ 8; 4; 2 ]
+      else [ 4; 2 ]
+    else []
 
 let must_divide ren = Renderer.device ren <> "DSP"
 
@@ -629,8 +485,7 @@ let take n xs =
 let gated_offset valid base =
   match valid with
   | None -> base
-  | Some valid ->
-      U.O.where valid base (U.invalid ~dtype:(Dtype.val_of (U.dtype base)) ())
+  | Some valid -> U.valid ~src:base ~cond:valid
 
 let coalesce_load_group ren entries offsets =
   let first = List.hd entries in
@@ -652,8 +507,8 @@ let coalesce_load_group ren entries offsets =
       let offset = gated_offset first.valid base in
       let idx =
         if width > 1 then
-          U.shrink ~src:first.buf ~offset ~size:(int32_const width)
-        else U.index ~ptr:first.buf ~idxs:[offset] ~as_ptr:true ()
+          U.shrink ~src:first.buf ~offset ~size:(U.const_int width)
+        else U.index ~ptr:first.buf ~idxs:[ offset ] ()
       in
       let template = List.hd (entries_at entries group_offset) in
       let load =
@@ -667,7 +522,7 @@ let coalesce_load_group ren entries offsets =
                    let value =
                      if width > 1 then
                        U.replace entry.index
-                         ~src:[| load; int32_const lane |]
+                         ~src:[| load; U.const_int lane |]
                          ~dtype:(U.dtype entry.node) ()
                      else load
                    in
@@ -704,8 +559,8 @@ let coalesce_store_group ren entries offsets =
             let offset = gated_offset first.valid base in
             let idx =
               if width > 1 then
-                U.shrink ~src:first.buf ~offset ~size:(int32_const width)
-              else U.index ~ptr:first.buf ~idxs:[offset] ~as_ptr:true ()
+                U.shrink ~src:first.buf ~offset ~size:(U.const_int width)
+              else U.index ~ptr:first.buf ~idxs:[ offset ] ()
             in
             let stores = List.map List.hd grouped_entries in
             let values =

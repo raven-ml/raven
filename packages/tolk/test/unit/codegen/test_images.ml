@@ -9,8 +9,6 @@ open Tolk_uop
 
 module U = Uop
 
-let int2 = Dtype.Val.vec 2 Dtype.Val.weakint
-
 let count pred root = List.length (U.find_nodes pred root)
 
 let custom_fmt n =
@@ -19,60 +17,32 @@ let custom_fmt n =
   | _ -> None
 
 let coord ?(cast = false) x y =
-  let maybe_cast u =
-    if cast then U.cast ~src:u ~dtype:(Dtype.Val Dtype.Val.weakint) else u
-  in
-  U.stack ~dtype:int2 [ maybe_cast x; maybe_cast y ]
+  let maybe_cast u = if cast then U.cast ~src:u ~dtype:Dtype.weakint else u in
+  let x = maybe_cast x and y = maybe_cast y in
+  U.stack ~dtype:(U.dtype x) [ x; y ]
 
-let image_param ?(slot = 0) image =
-  U.param ~slot ~dtype:(Dtype.Ptr image) ()
+(* An image is a float parameter whose shape is [(height, width, 4)]. *)
+let image_param ?(slot = 0) shape =
+  U.param ~slot ~dtype:Dtype.float32
+    ~shape:(U.stack (List.map U.const_int shape)) ()
 
 let buffer_param ?(slot = 1) dtype =
-  let ptr = Dtype.Ptr.create dtype ~addrspace:Global ~size:(-1) in
-  U.param ~slot ~dtype:(Dtype.Ptr ptr) ()
+  U.param ~slot ~dtype ~shape:(U.const_int 1) ()
 
-let scalar_zero () = U.const (Const.float Dtype.Val.float32 0.0)
+let scalar_zero () = U.const (Const.float Dtype.float32 0.0)
 
 let lowered_float_buffer ?(slot = 0) size =
-  let ptr =
-    Dtype.Ptr.create Dtype.Val.float32 ~addrspace:Dtype.Global ~size
-  in
-  let raw =
-    U.param ~slot ~dtype:(Dtype.Ptr ptr) ~shape:(U.const_int size) ()
-  in
-  U.replace raw ~dtype:Dtype.float32 ()
+  U.param ~slot ~dtype:Dtype.float32 ~shape:(U.const_int size) ()
 
 let lowered_load buf offset =
-  let raw_ptr =
-    let ptr =
-      Dtype.Ptr.create Dtype.Val.float32 ~addrspace:Dtype.Global ~size:16
-    in
-    U.param ~slot:99 ~dtype:(Dtype.Ptr ptr) ~shape:(U.const_int 16) ()
-  in
-  let raw_index =
-    U.index ~ptr:raw_ptr ~idxs:[ U.const_int offset ] ~as_ptr:true ()
-  in
-  let index =
-    U.replace raw_index ~src:[| buf; U.const_int offset |]
-      ~dtype:(U.dtype raw_index) ()
-  in
-  U.load ~src:index ~dtype:Dtype.float32 ()
+  U.load
+    ~src:(U.index ~ptr:buf ~idxs:[ U.const_int offset ] ())
+    ~dtype:Dtype.float32 ()
 
 let lowered_store buf offset value =
-  let raw_ptr =
-    let ptr =
-      Dtype.Ptr.create Dtype.Val.float32 ~addrspace:Dtype.Global ~size:16
-    in
-    U.param ~slot:98 ~dtype:(Dtype.Ptr ptr) ~shape:(U.const_int 16) ()
-  in
-  let raw_index =
-    U.index ~ptr:raw_ptr ~idxs:[ U.const_int offset ] ~as_ptr:true ()
-  in
-  let index =
-    U.replace raw_index ~src:[| buf; U.const_int offset |]
-      ~dtype:(U.dtype raw_index) ()
-  in
-  U.store ~dst:index ~value:(U.const (Const.float Dtype.Val.float32 value)) ()
+  U.store
+    ~dst:(U.index ~ptr:buf ~idxs:[ U.const_int offset ] ())
+    ~value:(U.const (Const.float Dtype.float32 value)) ()
 
 let run_matcher pm root =
   U.graph_rewrite ~name:"test"
@@ -105,32 +75,32 @@ let () =
           test "missing pitch alignment yields no candidates" (fun () ->
             equal (list (pair int int)) []
               (Coalese.image_valid_dims ~image_pitch_alignment:None
-                 ~base:Dtype.Val.float32 ~size:1024 ()));
+                 ~base:Dtype.float32 ~size:1024 ()));
           test "rejects non-float image bases" (fun () ->
             equal (list (pair int int)) []
               (Coalese.image_valid_dims ~image_pitch_alignment:(Some 64)
-                 ~base:Dtype.Val.int32 ~size:1024 ()));
+                 ~base:Dtype.int32 ~size:1024 ()));
           test "aligned sizes enumerate height-width candidates" (fun () ->
             equal (list (pair int int)) [ (4, 64); (2, 128); (1, 256) ]
               (Coalese.image_valid_dims ~image_pitch_alignment:(Some 64)
-                 ~base:Dtype.Val.float32 ~size:1024 ()));
+                 ~base:Dtype.float32 ~size:1024 ()));
           test "one-row fallback uses byte alignment" (fun () ->
             equal (list (pair int int)) [ (1, 4) ]
               (Coalese.image_valid_dims ~image_pitch_alignment:(Some 64)
-                 ~base:Dtype.Val.float32 ~size:16 ());
+                 ~base:Dtype.float32 ~size:16 ());
             equal (list (pair int int)) [ (1, 10) ]
               (Coalese.image_valid_dims ~image_pitch_alignment:(Some 20)
-                 ~base:Dtype.Val.float32 ~size:40 ());
+                 ~base:Dtype.float32 ~size:40 ());
             equal (list (pair int int)) []
               (Coalese.image_valid_dims ~image_pitch_alignment:(Some 64)
-                 ~base:Dtype.Val.float32 ~size:40 ());
+                 ~base:Dtype.float32 ~size:40 ());
             equal (list (pair int int)) []
               (Coalese.image_valid_dims ~image_pitch_alignment:(Some 64)
-                 ~base:Dtype.Val.float16 ~size:40 ());
+                 ~base:Dtype.float16 ~size:40 ());
             equal (list (pair int int)) [ (1, 8) ]
               (Coalese.image_valid_dims ~osx:true
                  ~image_pitch_alignment:(Some 256)
-                 ~base:Dtype.Val.float16 ~size:32 ()));
+                 ~base:Dtype.float16 ~size:32 ()));
         ];
       group "coalese image selection"
         [
@@ -153,12 +123,8 @@ let () =
                     shrink)
             in
             match U.as_index root with
-            | Some { ptr; _ } -> (
-                match U.dtype ptr with
-                | Dtype.Ptr p ->
-                    equal (option (list int)) (Some [ 1; 4; 4 ])
-                      (Dtype.Ptr.image_shape p)
-                | Dtype.Val _ -> failwith "expected image pointer")
+            | Some { ptr; _ } ->
+                equal (list int) [ 1; 4; 4 ] (U.max_shape ptr)
             | None -> failwith "expected image index");
           test "opencl target pitch enables image index" (fun () ->
             let param =
@@ -180,12 +146,8 @@ let () =
                     shrink)
             in
             match U.as_index root with
-            | Some { ptr; _ } -> (
-                match U.dtype ptr with
-                | Dtype.Ptr p ->
-                    equal (option (list int)) (Some [ 1; 4; 4 ])
-                      (Dtype.Ptr.image_shape p)
-                | Dtype.Val _ -> failwith "expected image pointer")
+            | Some { ptr; _ } ->
+                equal (list int) [ 1; 4; 4 ] (U.max_shape ptr)
             | None -> failwith "expected image index");
         ];
       group "memory coalesing"
@@ -259,11 +221,11 @@ let () =
           test "gated memory ops are rejected" (fun () ->
             let buf = lowered_float_buffer 16 in
             let idx =
-              U.index ~ptr:buf ~idxs:[ U.const_int 0 ] ~as_ptr:true ()
+              U.index ~ptr:buf ~idxs:[ U.const_int 0 ] ()
             in
             let store =
               U.store ~dst:idx
-                ~value:(U.const (Const.float Dtype.Val.float32 1.0))
+                ~value:(U.const (Const.float Dtype.float32 1.0))
                 ~gate:(U.const_bool true) ()
             in
             raises_match
@@ -292,9 +254,9 @@ let () =
         ];
       group "late cleanup"
         [
-          test "remove invalid keeps weak index sentinels" (fun () ->
+          test "remove invalid keeps index sentinels" (fun () ->
             let root =
-              U.sink [ U.invalid (); U.invalid ~dtype:Dtype.Val.float32 () ]
+              U.sink [ U.invalid (); U.invalid ~dtype:Dtype.float32 () ]
             in
             let root =
               U.graph_rewrite ~name:"remove invalids"
@@ -305,27 +267,27 @@ let () =
             equal int 1
               (count
                  (fun n ->
-                   match U.op n, U.arg n, U.dtype n with
-                   | Ops.Const, U.Arg.Value c, Dtype.Val dtype ->
+                   match U.op n, U.arg n with
+                   | Ops.Const, U.Arg.Value c ->
                        Const.view c = Const.Invalid
-                       && Dtype.Val.scalar dtype = Dtype.Weakint
+                       && Dtype.equal (U.dtype n) Dtype.index
                    | _ -> false)
                  root);
             equal int 1
               (count
                  (fun n ->
-                   match U.op n, U.arg n, U.dtype n with
-                   | Ops.Const, U.Arg.Value c, Dtype.Val dtype ->
+                   match U.op n, U.arg n with
+                   | Ops.Const, U.Arg.Value c ->
                        Const.view c = Const.Float 0.0
-                       && Dtype.Val.equal dtype Dtype.Val.float32
+                       && Dtype.equal (U.dtype n) Dtype.float32
                    | _ -> false)
                  root));
           test "load-store indexing strips coordinate casts" (fun () ->
-            let img = image_param (Dtype.Image.imagef [ 4; 4; 4 ]) in
-            let x = U.const (Const.int Dtype.Val.int32 0) in
-            let y = U.const (Const.int Dtype.Val.int32 1) in
+            let img = image_param [ 4; 4; 4 ] in
+            let x = U.const (Const.int Dtype.int32 0) in
+            let y = U.const (Const.int Dtype.int32 1) in
             let idx = coord ~cast:true x y in
-            let node = U.index ~ptr:img ~idxs:[ idx ] ~as_ptr:true () in
+            let node = U.index ~ptr:img ~idxs:[ idx ] () in
             let root =
               run_matcher
                 Upat.Pattern_matcher.(
@@ -342,12 +304,12 @@ let () =
           test "lower index dtype concretizes weak binary math" (fun () ->
             let x =
               U.cast
-                ~src:(U.const (Const.int Dtype.Val.int32 1))
+                ~src:(U.const (Const.int Dtype.int32 1))
                 ~dtype:Dtype.weakint
             in
             let y =
               U.cast
-                ~src:(U.const (Const.int Dtype.Val.int32 2))
+                ~src:(U.const (Const.int Dtype.int32 2))
                 ~dtype:Dtype.weakint
             in
             let root = run_matcher Symbolic.pm_lower_index_dtype U.O.(x + y) in
@@ -357,14 +319,14 @@ let () =
                 equal bool true (Dtype.equal (U.dtype add) Dtype.int32)
             | _ -> failwith "expected weakint cast around concrete add");
           test "move where on value index keeps loads late" (fun () ->
-            let buf = buffer_param Dtype.Val.float32 in
+            let buf = buffer_param Dtype.float32 in
             let axis =
               U.range ~axis:0 ~kind:Axis_type.Loop ~size:(U.const_int 2) ()
             in
             let gate = U.O.(axis < U.const_int 1) in
             let zero = scalar_zero () in
             let value =
-              U.index ~ptr:buf ~idxs:[(U.const_int 0)] ~as_ptr:false ()
+              U.index ~ptr:buf ~idxs:[(U.const_int 0)] ()
             in
             let root =
               run_matcher Symbolic.pm_move_where_on_load
@@ -399,7 +361,7 @@ let () =
                   Some
                     (U.custom_inline ~fmt:"pre_done({0})"
                        ~args:(Array.to_list (U.src node))
-                       ~dtype:(Dtype.val_of (U.dtype node)))
+                       ~dtype:(U.dtype node))
               | _ -> None
             in
             let extra_matcher node =
@@ -408,16 +370,16 @@ let () =
                   Some
                     (U.custom_inline ~fmt:"extra_done({0})"
                        ~args:(Array.to_list (U.src node))
-                       ~dtype:(Dtype.val_of (U.dtype node)))
+                       ~dtype:(U.dtype node))
               | _ -> None
             in
             let arg = U.const_float 1.0 in
             let root =
               U.sink
                 [ U.custom_inline ~fmt:"pre({0})" ~args:[ arg ]
-                    ~dtype:Dtype.Val.float32;
+                    ~dtype:Dtype.float32;
                   U.custom_inline ~fmt:"extra({0})" ~args:[ arg ]
-                    ~dtype:Dtype.Val.float32 ]
+                    ~dtype:Dtype.float32 ]
             in
             let lowered =
               Codegen_lower.lower
