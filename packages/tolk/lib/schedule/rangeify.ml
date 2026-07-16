@@ -30,7 +30,7 @@ let getv = Helpers.Context_var.get
 (* Helpers *)
 
 let prod l = List.fold_left ( * ) 1 l
-let int_ n = U.const (Const.int Dtype.Val.int32 n)
+let int_ n = U.const_int n
 
 let src0 u = (U.src u).(0)
 let src_list u = Array.to_list (U.src u)
@@ -39,13 +39,6 @@ let src_tail u =
   Array.to_list (Array.sub s 1 (Array.length s - 1))
 
 let shape_node = function [ d ] -> int_ d | ds -> U.stack (List.map int_ ds)
-
-let ptr_size_shape n =
-  match U.dtype n with
-  | Dtype.Ptr p ->
-      let size = Dtype.Ptr.size p in
-      if size >= 0 then Some [ size ] else None
-  | Dtype.Val _ -> None
 
 let movement_src u =
   match U.op u with
@@ -141,12 +134,7 @@ let broadcast_shape_expr shapes =
 let rec shape_of n =
   match U.op n with
   | Ops.Param | Ops.Buffer ->
-      (match U.children n with
-       | shape :: _ ->
-           (match shape_of_node shape with
-            | Some _ as s -> s
-            | None -> ptr_size_shape n)
-       | [] -> ptr_size_shape n)
+      (match U.children n with shape :: _ -> shape_of_node shape | [] -> None)
   | Ops.Reshape | Ops.Expand -> shape_of_node (U.src n).(1)
   | Ops.Pad | Ops.Shrink ->
       (match
@@ -160,12 +148,11 @@ let rec shape_of n =
       Option.bind (shape_of (src0 n)) (fun s -> map_order s order)
   | Ops.Flip -> shape_of (src0 n)
   | Ops.Reduce ->
+      (* Reduced axes are permuted to the front, so the output shape drops
+         the leading [num_axes]. *)
       (match U.as_reduce n, shape_of (src0 n) with
-       | Some { axes = []; _ }, _ ->
-           let count = Dtype.count (U.dtype n) in
-           Some (if count > 1 then [ count ] else [])
-       | Some { axes; _ }, Some s ->
-           Some (List.filteri (fun i _ -> not (List.mem i axes)) s)
+       | Some { num_axes; _ }, Some s ->
+           Some (List.filteri (fun i _ -> i >= num_axes) s)
        | _ -> None)
   | Ops.Contiguous | Ops.Contiguous_backward | Ops.Detach | Ops.Copy
   | Ops.After | Ops.Noop | Ops.Bitcast | Ops.Cast | Ops.Store | Ops.End
@@ -183,9 +170,7 @@ let rec shape_of n =
       Option.map
         (List.mapi (fun i s -> if i = axis then s * ndev else s))
         (shape_of (src0 n))
-  | Ops.Const ->
-      let count = Dtype.count (U.dtype n) in
-      Some (if count > 1 then [ count ] else [])
+  | Ops.Const -> Some []
   | op when Ops.Group.is_elementwise op ->
       let child_shapes = List.filter_map shape_of (U.children n) in
       broadcast_shape child_shapes
@@ -195,11 +180,8 @@ let rec shape_expr_of n =
   match U.op n with
   | Ops.Param | Ops.Buffer ->
       (match U.children n with
-       | shape :: _ ->
-           (match shape_expr_of_node shape with
-            | Some _ as s -> s
-            | None -> Option.map (List.map int_) (ptr_size_shape n))
-       | [] -> Option.map (List.map int_) (ptr_size_shape n))
+       | shape :: _ -> shape_expr_of_node shape
+       | [] -> None)
   | Ops.Reshape | Ops.Expand -> shape_expr_of_node (U.src n).(1)
   | Ops.Pad | Ops.Shrink ->
       (match shape_expr_of (src0 n), shape_expr_of_node (U.src n).(2) with
@@ -211,9 +193,8 @@ let rec shape_expr_of n =
   | Ops.Flip -> shape_expr_of (src0 n)
   | Ops.Reduce ->
       (match U.as_reduce n, shape_expr_of (src0 n) with
-       | Some { axes = []; _ }, _ -> Option.map (List.map int_) (shape_of n)
-       | Some { axes; _ }, Some s ->
-           Some (List.filteri (fun i _ -> not (List.mem i axes)) s)
+       | Some { num_axes; _ }, Some s ->
+           Some (List.filteri (fun i _ -> i >= num_axes) s)
        | _ -> None)
   | Ops.Contiguous | Ops.Contiguous_backward | Ops.Detach | Ops.Copy
   | Ops.After | Ops.Noop | Ops.Bitcast | Ops.Cast | Ops.Store | Ops.End
@@ -234,8 +215,6 @@ let argsort order =
   List.map snd (List.sort compare (List.mapi (fun i o -> (o, i)) order))
 
 let device_max_bufs = function "METAL" -> 31 | "WEBGPU" -> 8 | _ -> 0
-
-let is_ptr_dtype = function Dtype.Ptr _ -> true | _ -> false
 
 let base n = U.base n
 
@@ -310,15 +289,6 @@ let pm_mop_past_end n =
       Some (U.end_ ~value:(Option.get (movement_src value)) ~ranges)
   | _ -> None
 
-let pm_index_concat n =
-  match U.as_index n with
-  | Some { ptr; _ }
-    when U.op ptr = Ops.Index
-      && is_ptr_dtype (U.dtype ptr) && not (is_ptr_dtype (U.dtype n)) ->
-      Some
-        (U.replace n ~src:(Array.append (U.src ptr) (Array.of_list (src_tail n))) ())
-  | _ -> None
-
 let movement_ops n =
   match
     U.first_match [ pm_mop_through_index; pm_mop_past_after; pm_mop_past_end ] n
@@ -363,7 +333,7 @@ let pm_add_ranges_to_store ctr n =
                  U.range ~size ~axis ~kind:Axis_type.Loop ())
                d_sh
            in
-           let mk s = U.index ~ptr:s ~idxs ~as_ptr:true () in
+           let mk s = U.index ~ptr:s ~idxs () in
            Some (U.end_
                    ~value:(U.store ~dst:(mk dst) ~value:(mk value) ())
                    ~ranges:idxs)
@@ -377,7 +347,6 @@ let early_movement_pass sink =
       pm_mop_through_index;
       pm_mop_past_after;
       pm_mop_past_end;
-      pm_index_concat;
       pm_early_rangeify;
       pm_add_ranges_to_store ctr;
     ]
@@ -388,7 +357,7 @@ let early_movement_pass sink =
 
 let rewrite_movement_ops sink =
   U.graph_rewrite ~bottom_up:true ~name:"early movement ops"
-    (U.first_match [ movement_ops; pm_index_concat ])
+    (U.first_match [ movement_ops ])
     sink
 
 (* Fold moved AFTERs (openpilot hack) *)
@@ -541,7 +510,7 @@ let range_down from_ until =
 
 let split_reduceop_rule n =
   match U.as_reduce n with
-  | Some { src; op; axes; _ } when axes <> [] ->
+  | Some { src; op; num_axes; _ } when num_axes > 0 ->
       (match shape_of src, shape_of n with
        | Some in_shape, Some out_shape
          when prod out_shape <> 0
@@ -549,6 +518,8 @@ let split_reduceop_rule n =
               && prod in_shape / max 1 (prod out_shape) >= getv v_split_thr ->
            let expanded = detect_expanded src in
            let cap = min 256 (pow2 (getv v_split_sz) / max 1 (prod out_shape)) in
+           (* Reduced axes are permuted to the front, so they are exactly the
+              first [num_axes] axes of [src]. *)
            let candidates =
              List.concat_map
                (fun axis ->
@@ -561,7 +532,7 @@ let split_reduceop_rule n =
                           && not (List.nth expanded axis)
                        then Some (axis, divisor)
                        else None))
-               axes
+               (List.init num_axes Fun.id)
            in
            (match candidates with
             | [] -> None
@@ -585,7 +556,9 @@ let split_reduceop_rule n =
                 in
                 let first =
                   U.contiguous
-                    ~src:(U.reduce_axis ~src:splitted ~op ~axes)
+                    ~src:
+                      (U.reduce_axis ~src:splitted ~op
+                         ~axes:(List.init num_axes Fun.id))
                     ()
                 in
                 let second_axis = List.length out_shape in
@@ -596,12 +569,6 @@ let split_reduceop_rule n =
        | _ -> None)
   | _ -> None
 
-let mop_cleanup n =
-  match U.op n with
-  | Ops.Reshape when U.op (src0 n) = Ops.Reshape ->
-      Some (U.replace n ~src:[| src0 (src0 n); (U.src n).(1) |] ())
-  | _ -> None
-
 let identity_of op dtv = match op with
   | Ops.Add -> Const.zero dtv
   | Ops.Mul -> Const.one dtv
@@ -610,8 +577,20 @@ let identity_of op dtv = match op with
 
 let earliest_rewrites =
   U.first_match
-    [ pm_index_concat; pm_early_rangeify; pm_mop_through_index;
-      pm_mop_past_after; pm_mop_past_end; mop_cleanup; resolve_function;
+    [ pm_mop_through_index;
+      pm_mop_past_after; pm_mop_past_end;
+      Upat.Pattern_matcher.rewrite Movement.mop_cleanup; resolve_function;
+      (* Resolve TUPLE + GETTUPLE. *)
+      (fun n -> match U.op n with
+         | Ops.Gettuple ->
+             let t = src0 n in
+             if U.op t <> Ops.Tuple then None
+             else
+               (match U.Arg.as_int (U.arg n) with
+                | Some i when i >= 0 && i < Array.length (U.src t) ->
+                    Some (U.src t).(i)
+                | _ -> None)
+         | _ -> None);
       (fun n -> match U.as_allreduce n with
          | Some { src; device; op } ->
              (* An unshard PAD below the allreduce carries symbolic
@@ -676,26 +655,54 @@ let earliest_rewrites =
       (fun n -> match U.as_store n with
          | Some { dst = target; value; _ } -> fix_store_hazard ~target ~value
          | _ -> None);
+      (* Two STOREs of the same value into the same buffer: keep the first. *)
+      (fun n -> match U.op n, src_tail n with
+         | Ops.After, [ store2 ] ->
+             let a1 = src0 n in
+             if U.op a1 <> Ops.After then None
+             else
+               (match U.as_store store2, src_tail a1 with
+                | Some { dst = d2; value = v2; _ }, [ store1 ] when d2 == a1 ->
+                    (match U.as_store store1 with
+                     | Some { dst = d1; value = v1; _ }
+                       when d1 == src0 a1 && v1 == v2 -> Some a1
+                     | _ -> None)
+                | _ -> None)
+         | _ -> None);
+      (* A buffer storing its own already-stored contents back into itself. *)
+      (fun n -> match U.op n, src_tail n with
+         | Ops.After, [ store ] ->
+             let buf = src0 n in
+             (match U.as_store store with
+              | Some { dst; value = a1; _ }
+                when dst == buf && U.op a1 = Ops.After && src0 a1 == buf ->
+                  (match src_tail a1 with
+                   | [ store1 ] ->
+                       (match U.as_store store1 with
+                        | Some { dst = d1; _ } when d1 == buf -> Some a1
+                        | _ -> None)
+                   | _ -> None)
+              | _ -> None)
+         | _ -> None);
       (fun n -> match U.as_store n with
          | Some { dst; value; _ } when U.op dst = Ops.Bitcast ->
              let inner = src0 dst in
              Some (U.store ~dst:inner
-                     ~value:(U.bitcast ~src:value
-                               ~dtype:(Dtype.Val (Dtype.val_of (U.dtype inner))))
+                     ~value:(U.bitcast ~src:value ~dtype:(U.dtype inner))
                      ())
          | _ -> None);
       (fun n -> match U.as_reduce n with
          | Some { src; op; _ } ->
              (match shape_of src, shape_of n with
               | Some s, Some t when List.mem 0 s && not (List.mem 0 t) ->
-                  Some (U.const (identity_of op (Dtype.val_of (U.dtype n))))
+                  Some (U.const (identity_of op (U.dtype n)))
               | _ -> None)
          | None -> None);
       (fun n ->
         if U.op n = Ops.Sink then None
         else match shape_of n with
           | Some s when List.mem 0 s ->
-              Some (U.const (Const.zero (Dtype.val_of (U.dtype n))))
+              Some (U.const (Const.zero (U.dtype n)))
           | _ -> None);
     ]
 
@@ -712,13 +719,11 @@ let remove_noop_stage n =
            if not (List.equal ( == ) idxs ranges) then None
            else
              let ptr = src0 src in
-            if U.op ptr = Ops.Slice then None
-             else
-               (match shape_of n with
-                | Some sh when sh <> [] ->
-                    let zeros = shape_node (List.map (fun _ -> 0) sh) in
-                    Some (U.shrink ~src:ptr ~offset:zeros ~size:(shape_node sh))
-                | _ -> Some ptr)
+             (match shape_of n with
+              | Some sh when sh <> [] ->
+                  let zeros = shape_node (List.map (fun _ -> 0) sh) in
+                  Some (U.shrink ~src:ptr ~offset:zeros ~size:(shape_node sh))
+              | _ -> Some ptr)
        | _ -> None)
   | _ -> None
 
@@ -751,7 +756,7 @@ let cleanup_dead_axes n =
           let new_sh = List.rev !new_sh in
           let b = U.stage ~src ~ranges:new_ranges ~opts in
           let r = U.reshape ~src:b ~shape:(shape_node new_sh) in
-          Some (U.expand ~src:r ~shape:(shape_node sh))
+          Some (U.broadcast_to ~src:r ~shape:(shape_node sh))
   | _ -> None
 
 let is_reduce_range r =
@@ -915,52 +920,44 @@ let remove_stage_index n =
       | None -> None)
   | None -> None
 
-let starts_with ~prefix s =
-  String.length s >= String.length prefix
-  && String.sub s 0 (String.length prefix) = prefix
+let is_buf_boundary u =
+  match U.op u with
+  | Ops.Stage | Ops.After | Ops.Param | Ops.Mselect | Ops.Mstack -> true
+  | _ -> false
 
-let late_buffer_slice n =
-  match U.as_stage n with
-  | Some { src; ranges; _ }
-    when U.op src = Ops.Bitcast || U.op src = Ops.Contiguous ->
-      let is_disk = match U.device_of n with
-        | Some (Single d) -> starts_with ~prefix:"DISK" d || starts_with ~prefix:"TINYFS" d
-        | _ -> false
-      in
-      if not is_disk then None
-      else
-        let range_size r = match U.as_range r with
-          | Some v -> Option.value (U.const_int_value v.size) ~default:(U.vmax r + 1)
-          | None -> 1
-        in
-        let size = prod (List.map range_size ranges) in
-        let rec find_idx x = match List.find_opt (fun u -> U.op u = Ops.Index)
-                                     (U.children x) with
-          | Some i -> i
-          | None -> (match U.children x with
-                     | c :: _ -> find_idx c | [] -> x)
-        in
-        let idx = find_idx src in
-        let offset =
-          match U.as_index idx with
-          | Some _ when Array.length (U.src idx) = 2 ->
-              (U.src idx).(1)
-          | Some _ ->
-              let terms = src_tail idx in
-              (match terms with
-               | [] -> int_ 0
-               | t :: rest -> List.fold_left (fun acc i ->
-                   U.alu_binary ~op:Ops.Add ~lhs:acc ~rhs:i) t rest)
-          | None -> int_ 0
-        in
-        let src_base = match U.as_index idx with
-          | Some v -> v.ptr | None -> idx
-        in
-        let slice =
-          U.slice ~src:src_base ~offset ~size ~dtype:(U.dtype src)
-        in
-        Some (U.replace n ~src:[| slice; List.hd ranges |] ())
-  | _ -> None
+(* Buffer-boundary nodes reachable from [root], stopping at the first boundary
+   on each path. A boundary is itself; any other node is the deduped union of
+   its sources' sets. Memoised into [ctx.buf_cache] (persistent across matches,
+   keyed by tag) so each subtree is walked once rather than re-toposorted per
+   match. *)
+let reachable_bufs (ctx : Indexing.indexing_context) root =
+  let visitor u =
+    if is_buf_boundary u then [ u ]
+    else
+      let srcs = U.src u in
+      if Array.length srcs = 1 then
+        Option.value (Hashtbl.find_opt ctx.buf_cache (U.tag srcs.(0)))
+          ~default:[]
+      else begin
+        let seen = U.Ref_tbl.create 16 in
+        let acc = ref [] in
+        Array.iter
+          (fun s ->
+            match Hashtbl.find_opt ctx.buf_cache (U.tag s) with
+            | Some lst ->
+                List.iter
+                  (fun b ->
+                    if not (U.Ref_tbl.mem seen b) then begin
+                      U.Ref_tbl.replace seen b ();
+                      acc := b :: !acc
+                    end)
+                  lst
+            | None -> ())
+          srcs;
+        List.rev !acc
+      end
+  in
+  U.topovisit visitor ctx.buf_cache root
 
 let limit_bufs (ctx : Indexing.indexing_context) n =
   match U.op n with
@@ -976,15 +973,8 @@ let limit_bufs (ctx : Indexing.indexing_context) n =
           in
           if max_bufs = 0 then None
           else
-            let bufs = U.Ref_tbl.create 16 in
-            ignore
-              (U.toposort n ~gate:(fun u ->
-                   match U.op u with
-                   | Ops.Stage | Ops.After | Ops.Param
-                   | Ops.Mselect | Ops.Mstack ->
-                       U.Ref_tbl.replace bufs u (); false
-                   | _ -> true));
-            if U.Ref_tbl.length bufs <= max_bufs - 1 then None
+            let bufs = reachable_bufs ctx n in
+            if List.length bufs <= max_bufs - 1 then None
             else
               let children = U.children n in
               let new_children =
@@ -999,7 +989,7 @@ let limit_bufs (ctx : Indexing.indexing_context) n =
                                 ctx.range_idx <- ctx.range_idx + 1;
                                 U.range ~size:v.size ~axis ~sub:v.sub
                                   ~kind:Axis_type.Loop
-                                  ~dtype:(Dtype.val_of (U.dtype x))
+                                  ~dtype:(U.dtype x)
                                   ~parents:v.parents ()
                             | None -> x) orig
                       in
@@ -1134,12 +1124,6 @@ let stage_to_store ?(allow_locals = true) counter n =
       in
       if size <= 0 then None
       else
-        let base_dt = Dtype.val_of (U.dtype n) in
-        let val_dt = Dtype.Val base_dt in
-        let ptr_dt =
-          Dtype.Ptr.create base_dt ~addrspace:opts.addrspace ~size
-        in
-        let idx_dt = Dtype.Ptr ptr_dt in
         (match U.op src with
         | Ops.After ->
             let stores =
@@ -1172,7 +1156,6 @@ let stage_to_store ?(allow_locals = true) counter n =
                      let ranges =
                        List.sort_uniq cmp (U.ranges target @ idx_ranges)
                      in
-                     let target = U.replace target ~dtype:idx_dt () in
                      Some
                        (U.end_
                           ~value:(U.store ~dst:target ~value ?gate ())
@@ -1186,13 +1169,9 @@ let stage_to_store ?(allow_locals = true) counter n =
             incr counter;
             let buf =
               U.buffer ~slot:id ?device:opts.device ~shape:(shape_node [ size ])
-                ~addrspace:Dtype.Global ~dtype:val_dt ()
+                ~addrspace:Dtype.Global ~dtype:(U.dtype n) ()
             in
-            let idx =
-              U.replace
-                (U.index ~ptr:buf ~idxs:[idx_expr] ~as_ptr:true ())
-                ~dtype:idx_dt ()
-            in
+            let idx = U.index ~ptr:buf ~idxs:[ idx_expr ] () in
             let ended =
               U.end_ ~value:(U.store ~dst:idx ~value:src ()) ~ranges:idx_ranges
             in
@@ -1201,31 +1180,15 @@ let stage_to_store ?(allow_locals = true) counter n =
             let id = !counter in
             incr counter;
             let buf =
-              U.buffer ~slot:id ~shape:(shape_node [ size ]) ~dtype:val_dt
+              U.buffer ~slot:id ~shape:(shape_node [ size ]) ~dtype:(U.dtype n)
                 ~addrspace:Dtype.Local ()
             in
-            let idx =
-              U.replace
-                (U.index ~ptr:buf ~idxs:[idx_expr] ~as_ptr:true ())
-                ~dtype:idx_dt ()
-            in
+            let idx = U.index ~ptr:buf ~idxs:[ idx_expr ] () in
             let st =
               U.end_ ~value:(U.store ~dst:idx ~value:src ()) ~ranges:idx_ranges
             in
             Some (U.after ~src:buf ~deps:[ U.barrier ~srcs:[ st ] () ])
         | _ -> None)
-  | None -> None
-
-let refresh_index_ptr_dtype n =
-  match U.as_index n with
-  | Some { ptr; _ } ->
-      (match U.dtype n, U.dtype ptr with
-       | Dtype.Ptr pdt, Dtype.Ptr fresh when not (Dtype.Ptr.equal pdt fresh) ->
-           Some (U.replace n ~dtype:(Dtype.Ptr fresh) ())
-       | Dtype.Val vdt, Dtype.Ptr fresh
-         when not (Dtype.Val.equal vdt (Dtype.Ptr.value fresh)) ->
-           Some (U.replace n ~dtype:(Dtype.Val (Dtype.Ptr.value fresh)) ())
-       | _ -> None)
   | None -> None
 
 (* Split kernels *)
@@ -1294,10 +1257,7 @@ let debuf ctx n =
       | _ ->
           (match U.Ref_tbl.find_opt ctx.buf_shapes n with
            | Some sh when sh <> [] -> sh
-           | _ ->
-               match ptr_size_shape n with
-               | Some sh -> sh
-               | None -> [ 1 ])
+           | _ -> [ 1 ])
   in
   let max_shape =
     if rank0 then []
@@ -1310,19 +1270,15 @@ let debuf ctx n =
   let addrspace =
     match U.addrspace n with Some a -> a | None -> Dtype.Global
   in
-  let ptr_dt =
-    Dtype.Ptr.create (Dtype.val_of dtype) ~addrspace ~size
-  in
   let slot = ctx.slot in
   ctx.slot <- ctx.slot + 1;
   let ret =
     let device = U.device_of n in
     let param =
-      U.param ~slot ~dtype:(Dtype.Ptr ptr_dt) ~shape:(shape_node [ size ]) ?device
-        ~addrspace ()
+      U.param ~slot ~dtype ~shape:(shape_node [ size ]) ?device ~addrspace ()
     in
     let reshaped = U.reshape ~src:param ~shape:(shape_node max_shape) in
-    (* Symbolic buffers: the ptr is sized for [max_shape]; shrink the
+    (* Symbolic buffers: the param is sized for [max_shape]; shrink the
        max-sized view down to the actual [shape] when they differ. *)
     if max_shape <> shape then
       U.shrink ~src:reshaped
@@ -1341,10 +1297,7 @@ let debuf ctx n =
 
 let handle_after ctx n =
   let op = U.op n in
-  let is_local = match U.dtype n with
-    | Dtype.Ptr p -> Dtype.Ptr.addrspace p = Dtype.Local && op = Ops.After
-    | _ -> false
-  in
+  let is_local = U.addrspace n = Some Dtype.Local in
   if is_local then None
   else
     let buf = match op with
@@ -1371,7 +1324,7 @@ let renumber_range ctx n =
       ctx.range_ctr <- ctx.range_ctr + 1;
       Some
         (U.range ~size:v.size ~axis ~sub:v.sub ~kind:v.kind
-           ~dtype:(Dtype.val_of (U.dtype n)) ~parents:v.parents ())
+           ~dtype:(U.dtype n) ~parents:v.parents ())
   | _ -> None
 
 let renumber_kernel_ranges root =
@@ -1407,7 +1360,7 @@ let renumber_kernel_ranges root =
         | Some v ->
             let r' =
               U.range ~size:v.size ~axis ~sub:v.sub ~kind:v.kind
-                ~dtype:(Dtype.val_of (U.dtype r)) ~parents:v.parents ()
+                ~dtype:(U.dtype r) ~parents:v.parents ()
             in
             (r, r')
         | None -> assert false)
@@ -1448,16 +1401,17 @@ let to_define_global ctx n =
   | Ops.Store -> find_bufs n
   | Ops.Buffer | Ops.Mstack | Ops.Mselect -> debuf ctx n
   | Ops.Param -> (
-      match U.as_param n, U.dtype n with
+      match U.as_param n with
       (* A named, ranged PARAM normalises to the canonical variable so
          binding identity survives the kernel split. *)
-      | Some { param = { name = Some name; vmin_vmax = Some (lo, hi); _ }; _ },
-        dtype ->
+      | Some { param = { name = Some name; vmin_vmax = Some (lo, hi); _ }; _ } ->
           Some
-            (U.variable ~name ~min_val:lo ~max_val:hi
-               ~dtype:(Dtype.val_of dtype) ())
-      | Some { param = { name = None; _ }; shape }, Dtype.Val _
-        when U.op shape <> Ops.Noop ->
+            (U.variable ~name ~min_val:lo ~max_val:hi ~dtype:(U.dtype n) ())
+      (* Renumber only an already-tagged, shaped, unnamed PARAM. The tag is
+         set by the param/range tagging rule so a PARAM freshly created here
+         is not debuffed again. *)
+      | Some { param = { name = None; _ }; shape }
+        when U.op shape <> Ops.Noop && U.node_tag n = Some "" ->
           debuf ctx n
       | _ -> None)
   | Ops.Bind -> unbind_kernel ctx n
@@ -1655,18 +1609,12 @@ let split_store n =
                            match rewrite_flat_idx idx with
                            | Some (`Substitute subs) ->
                            let idxs = List.map (U.substitute subs) idxs in
-                           let dst =
-                             U.index ~ptr ~idxs
-                               ~as_ptr:(Dtype.is_ptr (U.dtype dst)) ()
-                           in
+                           let dst = U.index ~ptr ~idxs () in
                            let ranges = List.map (U.substitute subs) ranges in
                            U.end_ ~value:(U.store ~dst ~value:stored ?gate ())
                              ~ranges
                            | Some (`Replace (idx, dst_ranges)) ->
-                               let dst =
-                                 U.index ~ptr ~idxs:[ idx ]
-                                   ~as_ptr:(Dtype.is_ptr (U.dtype dst)) ()
-                               in
+                               let dst = U.index ~ptr ~idxs:[ idx ] () in
                                let ranges =
                                  ranges
                                  |> List.filter
@@ -1702,7 +1650,6 @@ let split_store n =
              let info : U.call_info =
                {
                  grad_fxn = None;
-                 metadata = [];
                  name = None;
                  precompile = false;
                  precompile_backward = false;
@@ -1710,7 +1657,7 @@ let split_store n =
                }
              in
              let body, args = match U.op stored with
-               | Ops.Copy | Ops.Slice ->
+               | Ops.Copy ->
                    let ended = match U.as_end ret with
                      | Some { ranges; _ } -> ranges | None -> []
                    in
@@ -1718,11 +1665,11 @@ let split_store n =
                      U.replace stored
                        ~src:(Array.of_list (U.children stored @ ended)) ()
                    in
-                   (* The executor addresses COPY and SLICE arguments by
-                      position — destination first, then sources — so keep
-                      every split buffer in slot order rather than compacting
-                      to the params the body still mentions (the destination
-                      lives in the dropped STORE). *)
+                   (* The executor addresses COPY arguments by position —
+                      destination first, then sources — so keep every split
+                      buffer in slot order rather than compacting to the
+                      params the body still mentions (the destination lives
+                      in the dropped STORE). *)
                    let formals =
                      List.sort
                        (fun (a, _) (b, _) -> Int.compare a b)
@@ -1832,11 +1779,11 @@ let add_buffers_rules ?(allow_locals = true) counter =
   U.first_match [
     pm_mop_through_index; pm_mop_past_after; pm_mop_past_end;
     flatten_stage;
-    late_buffer_slice;
     stage_to_store ~allow_locals counter;
-    refresh_index_ptr_dtype;
-    (fun n -> match U.as_range n, U.node_tag n with
-       | Some _, None -> Some (U.with_tag "" n)
+    (* Tag PARAMs and RANGEs so later passes can tell an original node from
+       one freshly created during the kernel split. *)
+    (fun n -> match U.op n, U.node_tag n with
+       | (Ops.Param | Ops.Range), None -> Some (U.with_tag "" n)
        | _ -> None);
     (* RESHAPEs through MSELECT/MSTACK *)
     (fun n -> match U.op n with
@@ -1943,10 +1890,7 @@ let get_kernel_graph root =
   let rctx =
     Indexing.run_rangeify root ~shapes:shape_of ~shape_exprs:shape_expr_of
   in
-  let root =
-    Indexing.apply_rangeify_pass rctx ~shapes:shape_of
-      ~shape_exprs:shape_expr_of root
-  in
+  let root = Indexing.apply_rangeify_pass rctx root in
   let root =
     U.graph_rewrite ~name:"post_rangeify" post_rangeify_rules root
   in

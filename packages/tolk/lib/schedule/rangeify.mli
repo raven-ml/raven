@@ -46,13 +46,9 @@ val early_movement_pass : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
 
 val rewrite_movement_ops : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
 (** [rewrite_movement_ops sink] pushes movement ops through [INDEX],
-    [AFTER], and [END], and merges nested [INDEX] nodes. *)
+    [AFTER], and [END]. *)
 
 val movement_ops : Tolk_uop.Uop.t -> Tolk_uop.Uop.t option
-(** [movement_ops u] is the movement/index part of tinygrad's [pm_mops]:
-    push movement ops through [INDEX], [AFTER], and [END]. *)
-
-val mop_cleanup : Tolk_uop.Uop.t -> Tolk_uop.Uop.t option
-(** [mop_cleanup u] performs the movement-op cleanup shared with codegen's
-    remove-reduce pass. *)
+(** [movement_ops u] pushes movement ops through [INDEX], [AFTER], and
+    [END]. *)
 

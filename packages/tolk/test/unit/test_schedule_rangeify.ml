@@ -76,10 +76,18 @@ let rec shape_of u =
       shape_of (first_src u)
   | op when Ops.Group.is_elementwise op -> shape_of (first_src u)
   | Ops.Reduce ->
+      (* Reduced axes are permuted to the front, so the output shape drops the
+         leading [num_axes] dimensions of the source. *)
       (match U.as_reduce u with
-      | Some { src; axes = _; _ } -> shape_of src
+      | Some { src; num_axes; _ } ->
+          Option.map (List.filteri (fun i _ -> i >= num_axes)) (shape_of src)
       | None -> None)
-  | Ops.Reshape | Ops.Expand -> shape_node (U.src u).(1)
+  | Ops.Reshape -> shape_node (U.src u).(1)
+  | Ops.Expand ->
+      (* Expand prepends its dims to the source shape. *)
+      (match shape_node (U.src u).(1), shape_of (first_src u) with
+      | Some dims, Some inner -> Some (dims @ inner)
+      | _ -> None)
   | Ops.Pad | Ops.Shrink ->
       let combine = if op_is Ops.Pad u then ( + ) else ( - ) in
       (match shape_of (first_src u), shape_node (U.src u).(1), shape_node (U.src u).(2) with
@@ -103,7 +111,7 @@ let is_always_contiguous u = Indexing.always_contiguous (U.op u)
    For 1-D: emits a single Const index.
    For N-D: emits a Vectorize of Const index nodes. *)
 let mk_shape (dims : int list) : U.t =
-  let ids = List.map (fun s -> U.const (C.int D.Val.weakint s)) dims in
+  let ids = List.map (fun s -> U.const (C.int D.weakint s)) dims in
   match ids with
   | [ d ] -> d
   | ds ->
@@ -114,6 +122,55 @@ let mk_param ~idx (shape : int list) : U.t =
   let shape_id = if shape = [] then None else Some (mk_shape shape) in
   let dev = U.Single "CPU" in
   U.param ~slot:idx ~dtype:D.float32 ?shape:shape_id ~device:dev ()
+
+let index_of x l =
+  let rec go i = function
+    | [] -> raise Not_found
+    | y :: _ when y = x -> i
+    | _ :: t -> go (i + 1) t
+  in
+  go 0 l
+
+(* Broadcast [src] (concrete shape [from_shape]) to [to_shape] using the
+   primitive expand, which only prepends dims: squeeze the size-1 axes that
+   grow, EXPAND them onto the front, then permute back into position. *)
+let broadcast_to src ~from_shape ~to_shape =
+  if from_shape = to_shape then src
+  else begin
+    let nd = List.length from_shape in
+    let n_left = List.length to_shape - nd in
+    let all = List.init nd Fun.id in
+    let expand_at =
+      List.filter
+        (fun i ->
+          List.nth from_shape i = 1 && List.nth to_shape (n_left + i) <> 1)
+        all
+    in
+    let kept = List.filter (fun i -> not (List.mem i expand_at)) all in
+    let squeezed_shape = List.map (List.nth from_shape) kept in
+    let squeezed =
+      if squeezed_shape = from_shape then src
+      else U.reshape ~src ~shape:(mk_shape squeezed_shape)
+    in
+    let expand_dims =
+      List.filteri (fun i _ -> i < n_left) to_shape
+      @ List.map (fun i -> List.nth to_shape (n_left + i)) expand_at
+    in
+    let expanded =
+      if expand_dims = [] then squeezed
+      else U.expand ~src:squeezed ~dims:(mk_shape expand_dims)
+    in
+    let ne = List.length expand_at in
+    let perm =
+      List.init n_left Fun.id
+      @ List.init nd (fun i ->
+            n_left
+            + (if List.mem i expand_at then index_of i expand_at
+               else ne + index_of i kept))
+    in
+    if perm = List.init (List.length to_shape) Fun.id then expanded
+    else U.permute ~src:expanded ~order:perm
+  end
 
 (* Count CALL nodes in a program. *)
 let count_calls (root : U.t) : int =
@@ -148,23 +205,23 @@ let run_pipeline (build_fn : unit -> U.t) : U.t * int =
 
 (* is_always_contiguous tests *)
 
-let dummy = U.const (C.int D.Val.weakint 0)
-let dummy2 = U.const (C.int D.Val.weakint 1)
-let weak_int n = U.const (C.int D.Val.weakint n)
+let dummy = U.const (C.int D.weakint 0)
+let dummy2 = U.const (C.int D.weakint 1)
+let weak_int n = U.const (C.int D.weakint n)
 
 let is_always_contiguous_tests =
   group "is_always_contiguous"
     [
       test "contiguous" (fun () ->
-          let dummy = U.const (C.int D.Val.weakint 0) in
+          let dummy = U.const (C.int D.weakint 0) in
           is_true (is_always_contiguous (U.contiguous ~src:dummy ())));
       test "after with store (assign pattern)" (fun () ->
-          let dummy = U.const (C.int D.Val.weakint 0) in
-          let dummy2 = U.const (C.int D.Val.weakint 1) in
+          let dummy = U.const (C.int D.weakint 0) in
+          let dummy2 = U.const (C.int D.weakint 1) in
           (* AFTER is a buffer identity — always contiguous *)
           is_true (is_always_contiguous (U.after ~src:dummy ~deps:[ dummy2 ])));
       test "copy" (fun () ->
-          let dummy = U.const (C.int D.Val.weakint 0) in
+          let dummy = U.const (C.int D.weakint 0) in
           is_true
             (is_always_contiguous
                (U.copy ~src:dummy ~device:(U.Single "CPU") ())));
@@ -174,20 +231,19 @@ let is_always_contiguous_tests =
                (U.buffer ~slot:0 ~device:(U.Single "CPU")
                   ~shape:(mk_shape [ 4 ]) ~dtype:D.float32 ())));
       test "const" (fun () ->
-          is_true (is_always_contiguous (U.const (C.int D.Val.int32 0))));
+          is_true (is_always_contiguous (U.const (C.int D.int32 0))));
       test "param" (fun () ->
           is_true (is_always_contiguous (U.param ~slot:0 ~dtype:D.float32 ())));
       test "call" (fun () ->
           is_true
             (is_always_contiguous
                (U.call
-                  ~body:(U.const (C.int D.Val.int32 0))
+                  ~body:(U.const (C.int D.int32 0))
                   ~args:[]
                   ~info:
                     {
                       aux = None;
                       grad_fxn = None;
-                      metadata = [];
                       name = None;
                       precompile = false;
                       precompile_backward = false;
@@ -195,7 +251,7 @@ let is_always_contiguous_tests =
       test "reshape not contiguous" (fun () ->
           is_false (is_always_contiguous (U.reshape ~src:dummy ~shape:dummy2)));
       test "expand not contiguous" (fun () ->
-          is_false (is_always_contiguous (U.expand ~src:dummy ~shape:dummy2)));
+          is_false (is_always_contiguous (U.expand ~src:dummy ~dims:dummy2)));
       test "reduce_axis not contiguous" (fun () ->
           is_false
             (is_always_contiguous
@@ -220,8 +276,8 @@ let new_range_tests =
           equal int 0 (const_int_uop id));
       test "symbolic size resolving to 1 gives const 0" (fun () ->
           let ctx = Indexing.create_context () in
-          let two = U.const (C.int D.Val.weakint 2) in
-          let one = U.const (C.int D.Val.weakint 1) in
+          let two = U.const (C.int D.weakint 2) in
+          let one = U.const (C.int D.weakint 1) in
           let size = U.alu_binary ~op:Ops.Sub ~lhs:two ~rhs:one in
           let id = Indexing.new_range_expr ctx size ~kind:Ak.Loop () in
           equal int 0 (const_int_uop id));
@@ -272,7 +328,7 @@ let new_range_tests =
       test "range size returns existing range" (fun () ->
           let ctx = Indexing.create_context () in
           let existing =
-            U.range ~size:(U.const (C.int D.Val.weakint 4)) ~axis:7
+            U.range ~size:(U.const (C.int D.weakint 4)) ~axis:7
               ~kind:Ak.Loop ()
           in
           let result = Indexing.new_range_expr ctx existing ~kind:Ak.Reduce () in
@@ -416,62 +472,50 @@ let apply_movement_op_tests =
               in
               equal int (U.tag rng) (U.tag (List.nth result 0)));
         ];
-      (* EXPAND *)
+      (* EXPAND: prepends dims, so input ranges drop the leading dims *)
       group "expand"
         [
-          test "same shape passthrough" (fun () ->
-              let param = mk_param ~idx:0 [ 4; 4 ] in
+          test "one prepended dim drops leading range" (fun () ->
+              let param = mk_param ~idx:0 [ 4 ] in
               let ctx = Indexing.create_context () in
-              let rng0 = Indexing.new_range ctx 4 ~kind:Ak.Loop () in
-              let rng1 = Indexing.new_range ctx 4 ~kind:Ak.Loop () in
-              let out_shape = mk_shape [ 4; 4 ] in
+              let r0 = Indexing.new_range ctx 3 ~kind:Ak.Loop () in
+              let r1 = Indexing.new_range ctx 4 ~kind:Ak.Loop () in
               let shapes = shape_of in
-              let v = U.expand ~src:param ~shape:out_shape in
+              let v = U.expand ~src:param ~dims:(mk_shape [ 3 ]) in
               let result =
-                Indexing.apply_movement_op ~shapes v
-                  [ rng0; rng1 ]
+                Indexing.apply_movement_op ~shapes v [ r0; r1 ]
               in
-              equal int (U.tag rng0) (U.tag (List.nth result 0));
-              equal int (U.tag rng1) (U.tag (List.nth result 1)));
-          test "broadcast 1->N gives const 0" (fun () ->
-              let param = mk_param ~idx:0 [ 1; 4 ] in
+              equal int 1 (List.length result);
+              is_true (List.nth result 0 == r1));
+          test "two prepended dims drop two leading ranges" (fun () ->
+              let param = mk_param ~idx:0 [ 4 ] in
               let ctx = Indexing.create_context () in
-              let rng0 = Indexing.new_range ctx 4 ~kind:Ak.Loop () in
-              let rng1 = Indexing.new_range ctx 4 ~kind:Ak.Loop () in
-              let out_shape = mk_shape [ 4; 4 ] in
+              let r0 = Indexing.new_range ctx 2 ~kind:Ak.Loop () in
+              let r1 = Indexing.new_range ctx 3 ~kind:Ak.Loop () in
+              let r2 = Indexing.new_range ctx 4 ~kind:Ak.Loop () in
               let shapes = shape_of in
-              let v = U.expand ~src:param ~shape:out_shape in
+              let v = U.expand ~src:param ~dims:(mk_shape [ 2; 3 ]) in
               let result =
-                Indexing.apply_movement_op ~shapes v
-                  [ rng0; rng1 ]
+                Indexing.apply_movement_op ~shapes v [ r0; r1; r2 ]
               in
-              (* axis 0: in_shape=1, out_shape=4 -> const 0 *)
-              equal int 0 (const_int_uop (List.nth result 0));
-              (* axis 1: in_shape=4, out_shape=4 -> passthrough *)
-              equal int (U.tag rng1) (U.tag (List.nth result 1)));
-          test "symbolic broadcast uses Uop.shape fallback" (fun () ->
+              equal int 1 (List.length result);
+              is_true (List.nth result 0 == r2));
+          test "symbolic prepended dim drops leading range" (fun () ->
               let n = U.variable ~name:"n" ~min_val:1 ~max_val:1024 () in
               let m = U.variable ~name:"m" ~min_val:1 ~max_val:1024 () in
               let param =
-                U.param ~slot:0 ~dtype:D.float32
-                  ~shape:(U.stack [ weak_int 1; n ])
+                U.param ~slot:0 ~dtype:D.float32 ~shape:n
                   ~device:(U.Single "CPU") ()
               in
-              let expanded =
-                U.expand ~src:param ~shape:(U.stack [ m; n ])
-              in
-              let rng0 =
-                U.range ~size:m ~axis:0 ~kind:Ak.Loop ()
-              in
-              let rng1 =
-                U.range ~size:n ~axis:1 ~kind:Ak.Loop ()
-              in
+              let expanded = U.expand ~src:param ~dims:m in
+              let rng0 = U.range ~size:m ~axis:0 ~kind:Ak.Loop () in
+              let rng1 = U.range ~size:n ~axis:1 ~kind:Ak.Loop () in
               let result =
                 Indexing.apply_movement_op ~shapes:(fun _ -> None)
                   expanded [ rng0; rng1 ]
               in
-              equal int 0 (const_int_uop (List.nth result 0));
-              is_true (List.nth result 1 == rng1));
+              equal int 1 (List.length result);
+              is_true (List.nth result 0 == rng1));
         ];
       (* PAD *)
       group "pad"
@@ -650,9 +694,10 @@ let run_rangeify_tests =
           (match Hashtbl.find_opt ctx.range_map (U.tag red) with
           | Some (in_rngs, _out_rngs) ->
               equal int 2 (List.length in_rngs);
-              (match U.as_range (List.nth in_rngs 1) with
+              (* The reduced axis is permuted to the front. *)
+              (match U.as_range (List.nth in_rngs 0) with
               | Some { kind; _ } -> is_true (kind = Ak.Reduce)
-              | None when op_is Ops.Const (List.nth in_rngs 1) ->
+              | None when op_is Ops.Const (List.nth in_rngs 0) ->
                   fail "expected Range for reduce axis, got Const"
               | _ -> fail "expected Range for reduce axis")
           | None -> fail "expected range_map entry for reduce"));
@@ -714,12 +759,12 @@ let apply_rangeify_pass_tests =
           let red = U.reduce_axis ~src:param ~op:Ops.Add ~axes:[ 1 ] in
           let root = wrap_sink red in
           let ctx = Indexing.run_rangeify root ~shapes:shape_of in
-          let lowered = Indexing.apply_rangeify_pass ctx ~shapes:shape_of root in
+          let lowered = Indexing.apply_rangeify_pass ctx root in
           let red =
             find_node
               (fun u ->
                 match U.as_reduce u with
-                | Some { axes = []; ranges; _ } -> ranges <> []
+                | Some { num_axes = 0; ranges; _ } -> ranges <> []
                 | _ -> false)
               lowered
           in
@@ -736,7 +781,7 @@ let apply_rangeify_pass_tests =
           in
           let root = wrap_sink pad in
           let ctx = Indexing.run_rangeify root ~shapes:shape_of in
-          let lowered = Indexing.apply_rangeify_pass ctx ~shapes:shape_of root in
+          let lowered = Indexing.apply_rangeify_pass ctx root in
           let where =
             find_node
               (fun u ->
@@ -758,7 +803,7 @@ let apply_rangeify_pass_tests =
           let copied = U.copy ~src:sum ~device:(U.Single "GPU") () in
           let root = U.sink [ copied ] in
           let ctx = Indexing.run_rangeify root ~shapes:shape_of in
-          let lowered = Indexing.apply_rangeify_pass ctx ~shapes:shape_of root in
+          let lowered = Indexing.apply_rangeify_pass ctx root in
           let stage =
             find_node (fun u -> Option.is_some (U.as_stage u)) lowered
           in
@@ -774,10 +819,10 @@ let early_movement_tests =
           let param = mk_param ~idx:0 [ 2; 3; 4 ] in
           let reshaped = U.reshape ~src:param ~shape:(mk_shape [ 6; 4 ]) in
           let rng =
-            U.range ~size:(U.const (C.int D.Val.weakint 6)) ~axis:0
+            U.range ~size:(U.const (C.int D.weakint 6)) ~axis:0
               ~kind:Ak.Loop ()
           in
-          let indexed = U.index ~ptr:reshaped ~idxs:[rng] ~as_ptr:true () in
+          let indexed = U.index ~ptr:reshaped ~idxs:[rng] () in
           let result = Rangeify.early_movement_pass indexed in
           is_true (op_is Ops.Index result);
           is_true ((U.src result).(0) == param);
@@ -905,7 +950,7 @@ let get_kernel_graph_tests =
           in
           let relu =
             U.alu_binary ~op:Ops.Max ~lhs:red1
-              ~rhs:(U.const (C.float D.Val.float32 0.0))
+              ~rhs:(U.const (C.float D.float32 0.0))
           in
           let new_shape = mk_shape [ 32; 32 ] in
           let reshaped = U.reshape ~src:relu ~shape:new_shape in
@@ -918,8 +963,9 @@ let get_kernel_graph_tests =
           let a = mk_param ~idx:0 [ 10; 10; 1 ] in
           let bp = mk_param ~idx:1 [ 10; 10; 1 ] in
           let ab = U.alu_binary ~op:Ops.Add ~lhs:a ~rhs:bp in
-          let exp_shape = mk_shape [ 10; 10; 10 ] in
-          let expanded = U.expand ~src:ab ~shape:exp_shape in
+          let expanded =
+            broadcast_to ab ~from_shape:[ 10; 10; 1 ] ~to_shape:[ 10; 10; 10 ]
+          in
           let permed = U.permute ~src:ab ~order:[ 2; 1; 0 ] in
           let result = U.alu_binary ~op:Ops.Add ~lhs:expanded ~rhs:permed in
           wrap_sink result);
