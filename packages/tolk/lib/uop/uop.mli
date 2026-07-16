@@ -514,9 +514,8 @@ type slice_view = { src : t; offset : t; size : int }
 (** View of an {!Ops.Slice} node: underlying buffer, symbolic offset,
     and element count. *)
 
-type wait_view = { src : t; wait_for : t }
-(** View of an {!Ops.Wait} node: source being sequenced and the event
-    or value it waits on. *)
+type wait_view = { src : t }
+(** View of an {!Ops.Wait} node: the boolean condition being waited on. *)
 
 type param_view = { param : param_arg; shape : t }
 (** View of an {!Ops.Param} node: tinygrad-style payload plus shape child.
@@ -840,7 +839,7 @@ val broadcast : t -> int -> t
 
     {!Ops.Endif}: [src = \[| if_ |\]].
 
-    {!Ops.Wait}: [src = \[| src; wait_for |\]]. *)
+    {!Ops.Wait}: [src = \[| cond |\]]. *)
 
 val range :
   size:t -> axis:int -> kind:Axis_type.t -> ?sub:int list ->
@@ -853,9 +852,9 @@ val range :
     control-flow ordering dependencies. Shared. *)
 
 val end_ : value:t -> ranges:t list -> t
-(** [end_ ~value ~ranges] closes loop [ranges] around [value]. Dtype is
-    inherited from [value]. Returns [value] unchanged when [ranges] is
-    empty. Kernel. *)
+(** [end_ ~value ~ranges] closes loop [ranges] around [value]. Void dtype;
+    the value flows through [value] ([src.(0)]), whose shape it keeps.
+    Returns [value] unchanged when [ranges] is empty. Kernel. *)
 
 val if_ : cond:t -> idx_for_dedup:t -> t
 (** [if_ ~cond ~idx_for_dedup] is a predicated control-flow gate.
@@ -869,9 +868,9 @@ val barrier : ?srcs:t list -> unit -> t
 (** [barrier ?srcs ()] is a workgroup barrier. [srcs] defaults to [[]]
     and carries ordering dependencies. Void dtype. Kernel. *)
 
-val wait : src:t -> wait_for:t -> t
-(** [wait ~src ~wait_for] sequences [src] on [wait_for] with
-    [src = \[| src; wait_for |\]]. Void dtype. Kernel. *)
+val wait : src:t -> t
+(** [wait ~src] waits on the boolean condition [src], with
+    [src = \[| src |\]]. Void dtype. Kernel. *)
 
 val special : name:string -> size:t -> ?dtype:Dtype.t -> unit -> t
 (** [special ~name ~size ?dtype ()] is a backend-provided hardware index

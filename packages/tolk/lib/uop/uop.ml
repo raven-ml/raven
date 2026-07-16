@@ -450,7 +450,7 @@ type reduce_view = { src : t; ranges : t list; op : Ops.t; num_axes : int }
 type allreduce_view = { src : t; device : device; op : Ops.t }
 type stage_view = { src : t; ranges : t list; opts : stage_opts }
 type slice_view = { src : t; offset : t; size : int }
-type wait_view = { src : t; wait_for : t }
+type wait_view = { src : t }
 type param_view = { param : param_arg; shape : t }
 type buffer_view = { buffer : param_arg; shape : t }
 type wmma_view = { a : t; b : t; c : t; info : wmma_info }
@@ -528,7 +528,7 @@ let as_slice u =
 
 let as_wait u =
   match op u, Array.to_list (src u) with
-  | Ops.Wait, [ src; wait_for ] -> Option.Some { src; wait_for }
+  | Ops.Wait, [ src ] -> Option.Some { src }
   | _ -> Option.None
 
 let as_param u =
@@ -868,7 +868,7 @@ let range ~size ~axis ~kind ?(sub = []) ?(dtype = Dtype.index)
 let end_ ~value ~ranges =
   if ranges = [] then value
   else
-    mk ~op:Ops.End ~dtype:(dtype value)
+    mk ~op:Ops.End ~dtype:void_dtype
       ~src:(Array.of_list (value :: ranges)) ~arg:Arg.Empty
 
 let if_ ~cond ~idx_for_dedup =
@@ -882,9 +882,8 @@ let barrier ?(srcs = []) () =
   mk ~op:Ops.Barrier ~dtype:void_dtype
     ~src:(Array.of_list srcs) ~arg:Arg.Empty
 
-let wait ~src ~wait_for =
-  mk ~op:Ops.Wait ~dtype:void_dtype
-    ~src:[| src; wait_for |] ~arg:Arg.Empty
+let wait ~src =
+  mk ~op:Ops.Wait ~dtype:void_dtype ~src:[| src |] ~arg:Arg.Empty
 
 let special ~name ~size ?(dtype = Dtype.index) () =
   mk ~op:Ops.Special ~dtype
