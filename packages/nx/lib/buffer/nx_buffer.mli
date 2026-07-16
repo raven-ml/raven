@@ -11,7 +11,11 @@
 
     The buffer type {!t} is abstract in this interface. Conversions to and from
     {!Bigarray} are explicit via {!of_bigarray1}, {!to_bigarray1},
-    {!of_genarray}, and {!to_genarray}. *)
+    {!of_genarray}, and {!to_genarray}.
+
+    {b Warning.} Buffers must not be marshalled. Marshalling silently loses the
+    extended kind (a bfloat16 buffer round-trips as float16) and reads out of
+    bounds for int4 kinds. *)
 
 (** {1:elt Element types}
 
@@ -183,28 +187,48 @@ val blit_to_bytes :
     [buf] into [bytes]. Offsets and length are in elements. [src_off] and
     [dst_off] default to [0]. [len] defaults to [length buf - src_off]. *)
 
-(** {1:ba Bigarray conversions} *)
+(** {1:ba Bigarray conversions}
+
+    Only standard kinds can be viewed as one-dimensional bigarrays: an
+    extended-kind buffer has no faithful {!Bigarray.kind}, so exposing one would
+    let standard bigarray operations misread its contents. *)
 
 val of_bigarray1 : ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t -> ('a, 'b) t
-(** [of_bigarray1 ba] is [ba] viewed as a buffer. Zero-copy for standard kinds.
-*)
+(** [of_bigarray1 ba] is [ba] viewed as a buffer. Zero-copy.
+
+    Raises [Invalid_argument] if [ba]'s kind is [Char], [Int] or [Nativeint],
+    which buffers do not support. *)
 
 val to_bigarray1 : ('a, 'b) t -> ('a, 'b, Bigarray.c_layout) Bigarray.Array1.t
 (** [to_bigarray1 buf] is [buf] viewed as a one-dimensional bigarray. Zero-copy.
-*)
+
+    Raises [Invalid_argument] if [buf]'s kind is an extended type
+    ([to_stdlib_kind (kind buf) = None]). *)
 
 val to_genarray :
   ('a, 'b) t -> int array -> ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t
 (** [to_genarray buf shape] reshapes [buf] into a genarray with [shape]. The
-    product of [shape] must equal [length buf]. *)
+    product of [shape] must equal [length buf]. Zero-copy.
+
+    For an extended-kind buffer, the resulting genarray carries [buf]'s kind in
+    storage flags that only the functions of this module understand; see the
+    {{!section:ga}genarray bridge}. *)
 
 val of_genarray : ('a, 'b, Bigarray.c_layout) Bigarray.Genarray.t -> ('a, 'b) t
-(** [of_genarray ga] flattens [ga] into a one-dimensional buffer. *)
+(** [of_genarray ga] flattens [ga] into a one-dimensional buffer.
 
-(** {1:ga Genarray utilities}
+    Raises [Invalid_argument] if [ga]'s kind is [Char], [Int] or [Nativeint],
+    which buffers do not support. *)
+
+(** {1:ga Genarray bridge}
 
     Operations on {!Bigarray.Genarray.t} that handle extended kinds. Used by I/O
-    modules (npy, safetensors, images). *)
+    modules (npy, safetensors, images).
+
+    A genarray obtained from {!to_genarray} or {!genarray_create} with an
+    extended kind is only meaningful to the functions below and to
+    {!of_genarray}; standard {!Bigarray} operations misread its contents (and
+    read out of bounds for int4 kinds). Keep such values inside I/O plumbing. *)
 
 val genarray_create :
   ('a, 'b) kind ->

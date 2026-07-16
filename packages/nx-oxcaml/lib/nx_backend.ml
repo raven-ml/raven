@@ -1048,25 +1048,38 @@ let from_host (type a b) ctx (array : (a, b) Nx_buffer.t) :
   let dtype = Nx_buffer.kind array in
   let size = Nx_buffer.length array in
   let view = View.create [| size |] in
-  let ba = Nx_buffer.to_bigarray1 array in
+  (* [to_bigarray1] raises for extended kinds, so view lazily inside the
+     standard-kind arms. *)
   match dtype with
   | Dtype.Float64 ->
-    let unboxed_array = Array.ba_to_unboxed_float_array ba in
+    let unboxed_array =
+      Array.ba_to_unboxed_float_array (Nx_buffer.to_bigarray1 array)
+    in
     { context = ctx; dtype; buffer = Float64 unboxed_array; view }
   | Dtype.Float32 ->
-    let unboxed_array = Array.ba_to_unboxed_float32_array ba in
+    let unboxed_array =
+      Array.ba_to_unboxed_float32_array (Nx_buffer.to_bigarray1 array)
+    in
     { context = ctx; dtype; buffer = Float32 unboxed_array; view }
   | Dtype.Int64 ->
-    let unboxed_array = Array.ba_to_unboxed_int64_array ba in
+    let unboxed_array =
+      Array.ba_to_unboxed_int64_array (Nx_buffer.to_bigarray1 array)
+    in
     { context = ctx; dtype; buffer = Int64 unboxed_array; view }
   | Dtype.Int32 ->
-    let unboxed_array = Array.ba_to_unboxed_int32_array ba in
+    let unboxed_array =
+      Array.ba_to_unboxed_int32_array (Nx_buffer.to_bigarray1 array)
+    in
     { context = ctx; dtype; buffer = Int32 unboxed_array; view }
   | Dtype.Int8 ->
-    let unboxed_array = Array.ba_to_unboxed_int8_array ba in
+    let unboxed_array =
+      Array.ba_to_unboxed_int8_array (Nx_buffer.to_bigarray1 array)
+    in
     { context = ctx; dtype; buffer = Int8 unboxed_array; view }
   | Dtype.Int16 ->
-    let unboxed_array = Array.ba_to_unboxed_int16_array ba in
+    let unboxed_array =
+      Array.ba_to_unboxed_int16_array (Nx_buffer.to_bigarray1 array)
+    in
     { context = ctx; dtype; buffer = Int16 unboxed_array; view }
   | Dtype.Bool ->
     let unboxed_array = Array.make size false in

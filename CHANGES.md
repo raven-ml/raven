@@ -310,6 +310,13 @@ thread.
 
 ### Nx
 
+- `Nx_buffer.to_bigarray1` now raises `Invalid_argument` for extended kinds
+  (bfloat16, float8, int4, uint32/64, bool) instead of returning a bigarray
+  that standard operations silently misread — `Bigarray.Array1.get` decoded
+  bfloat16 bits as float16, and int4 buffers read out of bounds.
+  `of_bigarray1` and `of_genarray` likewise reject `Char`, `Int` and
+  `Nativeint` bigarrays, which buffers never supported. Marshalling buffers is
+  now documented as unsupported (it silently dropped the extended kind).
 - Merge `Nx_buffer.kind` and `Dtype.t` into a single GADT: a dtype now *is*
   the buffer kind (`('a, 'b) Dtype.t = ('a, 'b) Nx_buffer.kind`).
   `Dtype.of_buffer_kind` and `Dtype.to_buffer_kind` are gone — pass the dtype

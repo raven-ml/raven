@@ -206,9 +206,10 @@ external genarray_set :
   ('a, 'b, 'c) Bigarray.Genarray.t -> int array -> 'a -> unit
   = "caml_nx_buffer_set"
 
+(* Not [@@noalloc]: the stub raises on kinds buffers do not support (char, int,
+   nativeint). *)
 external genarray_kind_ext : ('a, 'b, 'c) Bigarray.Genarray.t -> ('a, 'b) kind
   = "caml_nx_buffer_kind"
-[@@noalloc]
 
 external genarray_blit_ext :
   ('a, 'b, 'c) Bigarray.Genarray.t -> ('a, 'b, 'c) Bigarray.Genarray.t -> unit
@@ -308,13 +309,34 @@ let blit_to_bytes ?(src_off = 0) ?(dst_off = 0) ?len buf bytes =
 
 (* Bigarray conversions *)
 
-let of_bigarray1 buf = buf
-let to_bigarray1 buf = buf
+(* Kinds whose values buffers cannot represent. *)
+let unsupported_stdlib_kind : type a b. (a, b) Bigarray.kind -> string option =
+  function
+  | Bigarray.Char -> Some "char"
+  | Bigarray.Int -> Some "int"
+  | Bigarray.Nativeint -> Some "nativeint"
+  | _ -> None
+
+let of_bigarray1 buf =
+  (match unsupported_stdlib_kind (Bigarray.Array1.kind buf) with
+  | Some name -> invalid_arg ("Nx_buffer.of_bigarray1: unsupported kind " ^ name)
+  | None -> ());
+  buf
+
+let to_bigarray1 buf =
+  match to_stdlib_kind (kind buf) with
+  | Some _ -> buf
+  | None ->
+      invalid_arg
+        ("Nx_buffer.to_bigarray1: no bigarray kind for " ^ kind_name (kind buf))
 
 let to_genarray buf shape =
   Bigarray.reshape (Bigarray.genarray_of_array1 buf) shape
 
 let of_genarray ga =
+  (match unsupported_stdlib_kind (Bigarray.Genarray.kind ga) with
+  | Some name -> invalid_arg ("Nx_buffer.of_genarray: unsupported kind " ^ name)
+  | None -> ());
   let size = Array.fold_left ( * ) 1 (Bigarray.Genarray.dims ga) in
   Bigarray.array1_of_genarray (Bigarray.reshape ga [| size |])
 

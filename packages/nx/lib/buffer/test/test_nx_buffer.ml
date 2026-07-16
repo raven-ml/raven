@@ -169,6 +169,37 @@ let test_genarray_roundtrip () =
   equal ~msg:"genarray roundtrip[0]" (float 1e-6) 0.0 (get buf2 0);
   equal ~msg:"genarray roundtrip[5]" (float 1e-6) 5.0 (get buf2 5)
 
+let invalid_argument = function Invalid_argument _ -> true | _ -> false
+
+(* Extended kinds have no faithful Bigarray.kind: viewing one as a bigarray
+   would let stdlib operations misread it. *)
+let test_to_bigarray1_extended_raises () =
+  let buf = create bfloat16 4 in
+  raises_match ~msg:"to_bigarray1 on bfloat16" invalid_argument (fun () ->
+      to_bigarray1 buf)
+
+(* Extended-kind genarrays stay usable through the genarray bridge. *)
+let test_genarray_extended_roundtrip () =
+  let buf = create bfloat16 6 in
+  for i = 0 to 5 do
+    set buf i (float_of_int i)
+  done;
+  let ga = to_genarray buf [| 2; 3 |] in
+  equal ~msg:"extended genarray kind" bool true (genarray_kind ga = BFloat16);
+  let buf2 = of_genarray ga in
+  equal ~msg:"extended genarray roundtrip[5]" (float 1e-6) 5.0 (get buf2 5)
+
+let test_of_bigarray1_unsupported_raises () =
+  let ba_int = Bigarray.Array1.create Bigarray.int Bigarray.c_layout 4 in
+  raises_match ~msg:"of_bigarray1 on int" invalid_argument (fun () ->
+      of_bigarray1 ba_int);
+  let ba_char = Bigarray.Array1.create Bigarray.char Bigarray.c_layout 4 in
+  raises_match ~msg:"of_bigarray1 on char" invalid_argument (fun () ->
+      of_bigarray1 ba_char);
+  let ba_nat = Bigarray.Array1.create Bigarray.nativeint Bigarray.c_layout 4 in
+  raises_match ~msg:"of_bigarray1 on nativeint" invalid_argument (fun () ->
+      of_bigarray1 ba_nat)
+
 (* Test suite *)
 let () =
   run "Nx_buffer tests"
@@ -193,5 +224,10 @@ let () =
         [
           test "bigarray roundtrip" test_bigarray_roundtrip;
           test "genarray roundtrip" test_genarray_roundtrip;
+          test "to_bigarray1 rejects extended kinds"
+            test_to_bigarray1_extended_raises;
+          test "extended genarray bridge" test_genarray_extended_roundtrip;
+          test "of_bigarray1 rejects unsupported kinds"
+            test_of_bigarray1_unsupported_raises;
         ];
     ]
