@@ -18,10 +18,10 @@ val pm_long_decomp : Upat.Pattern_matcher.t
     values. *)
 
 type float_decomp_ctx = {
-  from_dtype : Tolk_uop.Dtype.scalar;
+  from_dtype : Tolk_uop.Dtype.t;
   (** Source storage dtype to emulate. *)
 
-  to_dtype : Tolk_uop.Dtype.scalar;
+  to_dtype : Tolk_uop.Dtype.t;
   (** Arithmetic dtype used for emulation. *)
 }
 (** The type for one float decomposition direction. *)

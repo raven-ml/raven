@@ -24,9 +24,9 @@ let threefry2x32 x key =
   let u32 = Dtype.uint32 in
   let u64 = Dtype.uint64 in
   let two32 = Int64.shift_left 1L 32 in
-  let mask32 = Uop.const (Const.int64 Dtype.Val.uint64 0xFFFFFFFFL) in
-  let c_two32 = Uop.const (Const.int64 Dtype.Val.uint64 two32) in
-  let u32c n = Uop.const (Const.int Dtype.Val.uint32 n) in
+  let mask32 = Uop.const (Const.int64 Dtype.uint64 0xFFFFFFFFL) in
+  let c_two32 = Uop.const (Const.int64 Dtype.uint64 two32) in
+  let u32c n = Uop.const (Const.int Dtype.uint32 n) in
   let low32 u =
     Uop.cast ~dtype:u32
       ~src:(Uop.alu_binary ~op:Ops.And ~lhs:u ~rhs:mask32)
@@ -103,8 +103,8 @@ let int64_to_int_checked n =
   then None
   else Some (Int64.to_int n)
 
-let dtype_int_bounds (dt : Dtype.Val.t) =
-  match Dtype.min (Dtype.Val dt), Dtype.max (Dtype.Val dt) with
+let dtype_int_bounds (dt : Dtype.t) =
+  match Dtype.min dt, Dtype.max dt with
   | `SInt lo, `SInt hi -> Some (lo, hi)
   | `UInt lo, `UInt hi when Int64.compare hi 0L >= 0 -> Some (lo, hi)
   | _ -> None
@@ -116,10 +116,9 @@ let safe_mul_int64 a b =
 let abs_int64_checked n =
   if Int64.equal n Int64.min_int then None else Some (Int64.abs n)
 
-let next_integer_dtype (dt : Dtype.Val.t) =
-  let scalar = Dtype.Val.scalar dt in
+let next_integer_dtype (dt : Dtype.t) =
   let next_scalar =
-    match scalar with
+    match dt with
     | Dtype.Weakint -> Some Dtype.Uint8
     | Dtype.Int8 -> Some Dtype.Int16
     | Dtype.Int16 -> Some Dtype.Int32
@@ -131,13 +130,12 @@ let next_integer_dtype (dt : Dtype.Val.t) =
     | Dtype.Uint64 | Dtype.Uint128 | Dtype.Uint256
     | Dtype.Fp8e4m3 | Dtype.Fp8e5m2
     | Dtype.Fp8e4m3fnuz | Dtype.Fp8e5m2fnuz | Dtype.Float16
-    | Dtype.Bfloat16 | Dtype.Float32 | Dtype.Float64 | Dtype.Bool | Dtype.Void ->
+    | Dtype.Bfloat16 | Dtype.Float32 | Dtype.Float64 | Dtype.Bool | Dtype.Void
+    | Dtype.Index | Dtype.Weakfloat ->
         None
   in
   match next_scalar with
-  | Some scalar ->
-      let next = Dtype.Val.with_scalar scalar dt in
-      if Dtype.Val.is_int next then Some next else None
+  | Some next -> if Dtype.is_int next then Some next else None
   | None -> None
 
 let shifted_div ~is_unsigned x x_for_mul m s =
@@ -161,17 +159,15 @@ let shifted_div ~is_unsigned x x_for_mul m s =
 let rec fast_idiv ?(dont_cast = false) ~is_metal ~supports_dtype x d =
   if d <= 0 || is_metal then None
   else
-    let dt =
-      match Uop.dtype x with Dtype.Val v -> Some v | _ -> None
-    in
+    let dt = Some (Uop.dtype x) in
     match dt with
     | None -> None
     | Some v ->
-        let is_int = Dtype.Val.is_int v in
+        let is_int = Dtype.is_int v in
         if not is_int then None
         else
           let is_unsigned =
-            Uop.vmin x >= 0 || Dtype.Val.is_unsigned v
+            Uop.vmin x >= 0 || Dtype.is_unsigned v
           in
           let vmin = Uop.vmin x and vmax = Uop.vmax x in
           if vmin = min_int || vmax = max_int then None
@@ -208,7 +204,7 @@ let rec fast_idiv ?(dont_cast = false) ~is_metal ~supports_dtype x d =
                            else
                              match next_integer_dtype v with
                              | Some next_dt
-                               when supports_dtype (Dtype.Val next_dt) ->
+                               when supports_dtype next_dt ->
                                  let next_lo, next_hi =
                                    match dtype_int_bounds next_dt with
                                    | Some bounds -> bounds
@@ -223,7 +219,7 @@ let rec fast_idiv ?(dont_cast = false) ~is_metal ~supports_dtype x d =
                                          && Int64.compare hi next_hi <= 0 ->
                                       let x' =
                                         Uop.cast ~src:x
-                                          ~dtype:(Dtype.Val next_dt)
+                                          ~dtype:next_dt
                                       in
                                       Some (shifted_div ~is_unsigned x x' m s)
                                   | _ -> None)
@@ -305,25 +301,22 @@ let as_logical_not n =
   | _ -> None
 
 let is_signed_int_node n =
-  match Uop.dtype n with
-  | Dtype.Val dt -> Dtype.Val.is_int dt && not (Dtype.Val.is_unsigned dt)
-  | _ -> false
+  let dt = Uop.dtype n in
+  Dtype.is_int dt && not (Dtype.is_unsigned dt)
 
 let signed_int_dtype n =
-  match Uop.dtype n with
-  | Dtype.Val dt when Dtype.Val.is_int dt && not (Dtype.Val.is_unsigned dt) ->
-      Some dt
-  | _ -> None
+  let dt = Uop.dtype n in
+  if Dtype.is_int dt && not (Dtype.is_unsigned dt) then Some dt else None
 
 let const_int64_for dt n = Uop.const (Const.int64 dt n)
 
 let const_int64_value_signed n =
-  match Uop.dtype n with
-  | Dtype.Val dt when Dtype.Val.is_int dt && not (Dtype.Val.is_unsigned dt) ->
-      (match const_int64_value n with
-       | Some v -> Some (dt, v)
-       | None -> None)
-  | _ -> None
+  let dt = Uop.dtype n in
+  if Dtype.is_int dt && not (Dtype.is_unsigned dt) then
+    (match const_int64_value n with
+     | Some v -> Some (dt, v)
+     | None -> None)
+  else None
 
 let is_neg_one node =
   match Uop.op node, Uop.arg node with
@@ -378,7 +371,7 @@ let floor_fixup_condition a b r =
    truncating division differ. *)
 let rule_floordiv_to_idiv _ops node =
   match Uop.op node, Uop.dtype node, Uop.src node with
-  | Ops.Floordiv, Dtype.Val dt, [| a; b |] when Dtype.Val.is_int dt ->
+  | Ops.Floordiv, dt, [| a; b |] when Dtype.is_int dt ->
       let q = Uop.alu_binary ~op:Ops.Cdiv ~lhs:a ~rhs:b in
       if floor_same_as_trunc a b then Some q
       else
@@ -394,7 +387,7 @@ let rule_floordiv_to_idiv _ops node =
 let rule_floormod_and (ops : supported_ops) node =
   if not ops.has_and then None
   else match Uop.op node, Uop.dtype node, Uop.src node with
-    | Ops.Floormod, Dtype.Val dt, [| x; c |] when Dtype.Val.is_int dt ->
+    | Ops.Floormod, dt, [| x; c |] when Dtype.is_int dt ->
         (match const_int64_value c with
          | Some cv when is_power_of_two cv ->
              Some
@@ -407,7 +400,7 @@ let rule_floormod_and (ops : supported_ops) node =
    truncating remainder has the wrong sign. *)
 let rule_floormod_to_mod _ops node =
   match Uop.op node, Uop.dtype node, Uop.src node with
-  | Ops.Floormod, Dtype.Val dt, [| a; b |] when Dtype.Val.is_int dt ->
+  | Ops.Floormod, dt, [| a; b |] when Dtype.is_int dt ->
       let r = Uop.alu_binary ~op:Ops.Cmod ~lhs:a ~rhs:b in
       if floor_same_as_trunc a b then Some r
       else
@@ -455,7 +448,7 @@ let rule_de_morgan (ops : supported_ops) node =
     | Ops.And ->
         let s = Uop.src node in
         (match Uop.dtype node, s with
-         | Dtype.Val dt, [| a; b |] when Dtype.Val.is_bool dt ->
+         | dt, [| a; b |] when Dtype.is_bool dt ->
              (match as_logical_not a, as_logical_not b with
               | Some x, Some y ->
                   let or_ = Uop.alu_binary ~op:Ops.Or ~lhs:x ~rhs:y in
@@ -476,7 +469,7 @@ let rule_mul_to_shl (ops : supported_ops) node =
               (match log2_of_power cv with
                | Some n when n > 0 ->
                    (match Uop.dtype node with
-                    | Dtype.Val dt when Dtype.Val.is_int dt ->
+                    | dt when Dtype.is_int dt ->
                         Some (Uop.alu_binary ~op:Ops.Shl ~lhs:base
                                 ~rhs:(Uop.const (Const.int dt n)))
                     | _ -> None)
@@ -498,8 +491,8 @@ let rule_udiv_to_shr (ops : supported_ops) node =
     | Ops.Cdiv ->
         let s = Uop.src node in
         (match Uop.dtype node, s with
-         | Dtype.Val dt, [| x; c |]
-           when Dtype.Val.is_int dt && Dtype.Val.is_unsigned dt ->
+         | dt, [| x; c |]
+           when Dtype.is_int dt && Dtype.is_unsigned dt ->
              (match const_int64_value c with
               | Some cv ->
                   (match log2_of_power cv with
@@ -518,8 +511,8 @@ let rule_sdiv_to_shr (ops : supported_ops) node =
     | Ops.Cdiv ->
         let s = Uop.src node in
         (match Uop.dtype node, s with
-         | Dtype.Val dt, [| x; c |]
-           when Dtype.Val.is_int dt && not (Dtype.Val.is_unsigned dt) ->
+         | dt, [| x; c |]
+           when Dtype.is_int dt && not (Dtype.is_unsigned dt) ->
              (match const_int64_value c with
               | Some cv ->
                   (match log2_of_power cv with
@@ -553,9 +546,9 @@ let rule_fast_idiv_late (ops : supported_ops) node =
     | Ops.Cdiv ->
         let s = Uop.src node in
         (match Uop.dtype node, s with
-         | Dtype.Val dt, [| x; d |]
-           when Dtype.Val.is_int dt
-                && (Uop.vmin x >= 0 || Dtype.Val.is_unsigned dt) ->
+         | dt, [| x; d |]
+           when Dtype.is_int dt
+                && (Uop.vmin x >= 0 || Dtype.is_unsigned dt) ->
              (match const_int64_value d with
               | Some dv when Int64.compare dv 0L > 0 ->
                   (match log2_of_power dv with
@@ -577,9 +570,9 @@ let rule_mod_from_idiv (ops : supported_ops) node =
     | Ops.Cmod ->
         let s = Uop.src node in
         (match Uop.dtype node, s with
-         | Dtype.Val dt, [| x; d |]
-           when Dtype.Val.is_int dt
-                && (Uop.vmin x >= 0 || Dtype.Val.is_unsigned dt) ->
+         | dt, [| x; d |]
+           when Dtype.is_int dt
+                && (Uop.vmin x >= 0 || Dtype.is_unsigned dt) ->
              (match const_int64_value d with
               | Some dv when ops.has_and && is_power_of_two dv -> None
               | _ ->
@@ -736,7 +729,7 @@ let rule_mulacc_fuse (ops : supported_ops) node =
                 | Some n ->
                     (match int64_to_int_checked n with
                      | Some shift ->
-                         let dt = Dtype.val_of (Uop.dtype l) in
+                         let dt = Uop.dtype l in
                          let two_n = Int64.shift_left 1L shift in
                          let two_c = Uop.const (Const.int64 dt two_n) in
                          Some (Uop.alu_ternary ~op:Ops.Mulacc
@@ -762,7 +755,7 @@ let rule_recip_to_fdiv (ops : supported_ops) node =
         let s = Uop.src node in
         (match s with
          | [| x |] ->
-             let v = Dtype.val_of (Uop.dtype x) in
+             let v = Uop.dtype x in
              Some (Uop.alu_binary ~op:Ops.Fdiv ~lhs:(const_float_v v 1.0) ~rhs:x)
          | _ -> None)
     | _ -> None
@@ -775,7 +768,7 @@ let rule_mul_recip_to_fdiv (ops : supported_ops) node =
         let s = Uop.src node in
         let try_fdiv a d =
           match Uop.dtype node with
-          | Dtype.Val dt when Dtype.Val.is_float dt && Uop.op d = Ops.Fdiv ->
+          | dt when Dtype.is_float dt && Uop.op d = Ops.Fdiv ->
              let sd = Uop.src d in
              if Array.length sd = 2 then
                (match Uop.op sd.(0), Uop.arg sd.(0) with

@@ -13,10 +13,10 @@ let int64_to_int_checked n =
   then None
   else Some (Int64.to_int n)
 
-let const_float_dt dt x = Uop.const (Const.float (Dtype.val_of dt) x)
+let const_float_dt dt x = Uop.const (Const.float dt x)
 
 let fconst_like node x =
-  let v = Dtype.val_of (Uop.dtype node) in
+  let v = Uop.dtype node in
   Uop.const (Const.float v x)
 
 let float_div lhs rhs =
@@ -29,29 +29,28 @@ let float_div lhs rhs =
    "1" (high). Rewrites arithmetic, comparisons, bit operations, shifts,
    casts, loads/stores, and constants over the pair representation. *)
 
-let is_long_dtype (dt : Dtype.Val.t) =
-  let s = Dtype.Val.scalar dt in
-  s = Dtype.Int64 || s = Dtype.Uint64
+let is_long_dtype (dt : Dtype.t) =
+  dt = Dtype.int64 || dt = Dtype.uint64
 
-let long_to_int_dtype (dt : Dtype.Val.t) =
-  match Dtype.Val.scalar dt with
-  | Dtype.Int64 -> Dtype.Val.int32
-  | Dtype.Uint64 -> Dtype.Val.uint32
+let long_to_int_dtype (dt : Dtype.t) =
+  match dt with
+  | Dtype.Int64 -> Dtype.int32
+  | Dtype.Uint64 -> Dtype.uint32
   | _ -> dt
 
 (* Shift by a constant amount expressed as mul/div by a power of two on
    [x]'s own integer dtype. *)
 let shr_i x n =
-  let v = Dtype.val_of (Uop.dtype x) in
+  let v = Uop.dtype x in
   let op =
-    if Dtype.Val.is_int v && not (Dtype.Val.is_unsigned v) then Ops.Floordiv
+    if Dtype.is_int v && not (Dtype.is_unsigned v) then Ops.Floordiv
     else Ops.Cdiv
   in
   Uop.alu_binary ~op ~lhs:x
     ~rhs:(Uop.const (Const.int64 v (Int64.shift_left 1L n)))
 
 let shl_i x n =
-  let v = Dtype.val_of (Uop.dtype x) in
+  let v = Uop.dtype x in
   Uop.alu_binary ~op:Ops.Mul ~lhs:x
     ~rhs:(Uop.const (Const.int64 v (Int64.shift_left 1L n)))
 
@@ -81,25 +80,21 @@ let reindex (idx : Uop.t) off mul =
   | Ops.Shrink, [| ptr; offset; _size |] ->
       if mul <> 1 then invalid_arg "Decomp_dtype.reindex: SHRINK with mul <> 1";
       let open Uop.O in
-      let as_ptr = match Uop.dtype idx with Dtype.Ptr _ -> true | _ -> false in
-      Uop.index ~ptr ~idxs:[(offset + int_ off)] ~as_ptr ()
-  | _ ->
+      Uop.index ~ptr ~idxs:[ offset + int_ off ] ()
+  | _ -> (
       match Uop.as_index idx with
       | Some { ptr; idxs = i :: idxs } ->
           let open Uop.O in
-          let as_ptr =
-            match Uop.dtype idx with Dtype.Ptr _ -> true | _ -> false
-          in
-          Uop.index ~ptr ~idxs:((i * int_ mul + int_ off) :: idxs) ~as_ptr ()
+          Uop.index ~ptr ~idxs:((i * int_ mul + int_ off) :: idxs) ()
       | Some { idxs = []; _ } -> idx
-      | None -> idx
+      | None -> idx)
 
 (* [unpack32 v]: split a 32-bit value into its low and high 16-bit halves
    as uint32 values. Used for 32x32 partial-product expansion in l2i MUL. *)
 let unpack32 (v : Uop.t) : Uop.t * Uop.t =
   let u = Uop.bitcast ~src:v ~dtype:Dtype.uint32 in
   let lo = Uop.alu_binary ~op:Ops.And ~lhs:u
-    ~rhs:(Uop.const (Const.int Dtype.Val.uint32 0xFFFF)) in
+    ~rhs:(Uop.const (Const.int Dtype.uint32 0xFFFF)) in
   let hi = shr_i u 16 in
   (lo, hi)
 
@@ -110,7 +105,7 @@ type l2i_op =
   | L2i_xor | L2i_or | L2i_and
   | L2i_where | L2i_max | L2i_bitcast
 
-let rec l2i (op : l2i_op) (dt : Dtype.Val.t) (uops : Uop.t list) : Uop.t * Uop.t =
+let rec l2i (op : l2i_op) (dt : Dtype.t) (uops : Uop.t list) : Uop.t * Uop.t =
   let zero = Uop.const (Const.int dt 0) in
   let a0, a1 = match uops with
     | [a0; a1] -> (a0, a1)
@@ -156,7 +151,7 @@ let rec l2i (op : l2i_op) (dt : Dtype.Val.t) (uops : Uop.t list) : Uop.t * Uop.t
   | L2i_add ->
       let low = Uop.alu_binary ~op:Ops.Add ~lhs:a0 ~rhs:b0 in
       let carry =
-        Uop.cast ~dtype:(Dtype.Val dt)
+        Uop.cast ~dtype:dt
           ~src:(Uop.alu_binary ~op:Ops.Cmplt
                   ~lhs:(Uop.bitcast ~src:low ~dtype:Dtype.uint32)
                   ~rhs:(Uop.bitcast ~src:a0 ~dtype:Dtype.uint32))
@@ -165,7 +160,7 @@ let rec l2i (op : l2i_op) (dt : Dtype.Val.t) (uops : Uop.t list) : Uop.t * Uop.t
       (low, Uop.alu_binary ~op:Ops.Add ~lhs:sum_hi ~rhs:carry)
   | L2i_sub ->
       let borrow =
-        Uop.cast ~dtype:(Dtype.Val dt)
+        Uop.cast ~dtype:dt
           ~src:(Uop.alu_binary ~op:Ops.Cmplt
                   ~lhs:(Uop.bitcast ~src:a0 ~dtype:Dtype.uint32)
                   ~rhs:(Uop.bitcast ~src:b0 ~dtype:Dtype.uint32))
@@ -213,7 +208,7 @@ let rec l2i (op : l2i_op) (dt : Dtype.Val.t) (uops : Uop.t list) : Uop.t * Uop.t
   | L2i_mul ->
       (* 32x32 partial product expansion: split a0,b0 into 16-bit halves
          and sum via recursive ADD carries. *)
-      let dt_val = Dtype.Val dt in
+      let dt_val = dt in
       let (a00, a01) = unpack32 a0 in
       let (b00, b01) = unpack32 b0 in
       let p_a00_b01 = Uop.alu_binary ~op:Ops.Mul ~lhs:a00 ~rhs:b01 in
@@ -240,18 +235,18 @@ let rec l2i (op : l2i_op) (dt : Dtype.Val.t) (uops : Uop.t list) : Uop.t * Uop.t
       (* Pure reinterpretation: each half is bitcast to the narrow dtype.
          For long->double, recombination happens in the caller (via the
          bitcast rule). *)
-      let dt_val = Dtype.Val dt in
+      let dt_val = dt in
       (Uop.bitcast ~src:a0 ~dtype:dt_val, Uop.bitcast ~src:a1 ~dtype:dt_val)
   | L2i_idiv | L2i_mod ->
       (* TAOCP 4.3.1 shift-subtract long division over 64-bit operands.
          For signed [dt], takes absolute values first, then applies
          C-style sign adjustment afterwards. *)
-      let uint = Dtype.Val.uint32 in
+      let uint = Dtype.uint32 in
       let zero_u = Uop.const (Const.int uint 0) in
       let one_u = Uop.const (Const.int uint 1) in
-      let dt_val = Dtype.Val dt in
-      let uint_val = Dtype.Val uint in
-      let signed = (Dtype.Val.scalar dt = Dtype.Int32) in
+      let dt_val = dt in
+      let uint_val = uint in
+      let signed = (dt = Dtype.int32) in
       let zero_sign = Uop.const (Const.int dt 0) in
       let (a0u, a1u, b0u, b1u, a_neg_opt, b_neg_opt) =
         if signed then
@@ -339,14 +334,6 @@ let rec l2i (op : l2i_op) (dt : Dtype.Val.t) (uops : Uop.t list) : Uop.t * Uop.t
              (Uop.bitcast ~src:q0 ~dtype:dt_val,
               Uop.bitcast ~src:q1 ~dtype:dt_val))
 
-(* Pointer widen: base dtype becomes its long->int counterpart, element
-   count doubles since each long occupies two int32 slots. *)
-let widen_long_ptr (dtype : Dtype.Ptr.t) size =
-  let new_base = long_to_int_dtype (Dtype.Ptr.base dtype) in
-  Dtype.Ptr.create new_base
-    ~addrspace:(Dtype.Ptr.addrspace dtype)
-    ~size:(if size < 0 then size else size * 2)
-
 (* Classify an op into an l2i dispatch tag for the generic ALU fanout. *)
 let classify_alu_op op =
   match op with
@@ -360,20 +347,32 @@ let classify_alu_op op =
   | Ops.Cdiv -> Some L2i_idiv | Ops.Cmod -> Some L2i_mod
   | _ -> None
 
-(* [rule_long_defines] narrows definitions with long storage and doubles
-   explicit storage size, matching tinygrad's GroupOp.Defines rule. *)
+(* [rule_long_defines] narrows a long buffer or parameter to its 32-bit
+   element dtype in both the node dtype and the carried argument, doubling
+   the element count since each long occupies two int32 slots. *)
 let rule_long_defines =
   let open Upat in
   ops ~name:"n" Ops.Group.defines => fun bs ->
     let n = bs $ "n" in
-    match Uop.dtype n with
-    | Dtype.Ptr pty when is_long_dtype (Dtype.Ptr.base pty) ->
-        let size = Dtype.Ptr.size pty in
-        let new_pty = widen_long_ptr pty size in
-        Some (Uop.replace n ~dtype:(Dtype.Ptr new_pty) ())
-    | Dtype.Val dv when is_long_dtype dv ->
-        Some (Uop.replace n ~dtype:(Dtype.Val (long_to_int_dtype dv)) ())
-    | _ -> None
+    let dt = Uop.dtype n in
+    if not (is_long_dtype dt) then None
+    else
+      let narrow = long_to_int_dtype dt in
+      let arg =
+        match Uop.arg n with
+        | Uop.Arg.Param_arg pa -> Uop.Arg.Param_arg { pa with dtype = narrow }
+        | other -> other
+      in
+      let src = Uop.src n in
+      let src =
+        (* A concrete element count doubles; an unknown shape (void sentinel)
+           is left untouched. *)
+        if Array.length src >= 1 && Dtype.is_int (Uop.dtype src.(0)) then
+          [| Uop.alu_binary ~op:Ops.Mul ~lhs:src.(0)
+               ~rhs:(Uop.const_like src.(0) 2) |]
+        else src
+      in
+      Some (Uop.replace n ~dtype:narrow ~arg ~src ())
 
 (* Tagged INDEX that produces a long value (i.e. the dtype-narrowed
    [Uop.index ~as_ptr:false ...]) -> stride by two and narrow to int32. *)
@@ -382,10 +381,10 @@ let rule_long_index_tagged =
   op ~name:"ix" Ops.Index => fun bs ->
     let n = bs $ "ix" in
     match Uop.dtype n, Uop.node_tag n with
-    | Dtype.Val dv, Some tag when is_long_dtype dv ->
+    | dv, Some tag when is_long_dtype dv ->
         let off = if String.equal tag "1" then 1 else 0 in
         let narrow = long_to_int_dtype dv in
-        Some (Uop.replace (reindex n off 2) ~dtype:(Dtype.Val narrow) ())
+        Some (Uop.replace (reindex n off 2) ~dtype:narrow ())
     | _ -> None
 
 (* Untagged STORE of a long value -> two tagged stores (low, high). *)
@@ -399,7 +398,7 @@ let rule_long_store =
       | None -> None
       | Some { dst; value; gate } ->
         (match Uop.dtype value with
-         | Dtype.Val dv when is_long_dtype dv ->
+         | dv when is_long_dtype dv ->
              let store_lo =
                Uop.with_tag "0"
                  (Uop.store ~dst:(reindex dst 0 2)
@@ -420,7 +419,7 @@ let rule_long_load =
   op ~name:"ld" Ops.Load => fun bs ->
     let n = bs $ "ld" in
     match Uop.dtype n with
-    | Dtype.Val dv when is_long_dtype dv ->
+    | dv when is_long_dtype dv ->
         (match Uop.node_tag n with
          | Some tag ->
              (match Uop.as_load n with
@@ -438,7 +437,7 @@ let rule_long_const =
   op ~name:"c" Ops.Const => fun bs ->
     let n = bs $ "c" in
     match Uop.dtype n, Uop.arg n with
-    | Dtype.Val dv, Uop.Arg.Value v when is_long_dtype dv ->
+    | dv, Uop.Arg.Value v when is_long_dtype dv ->
         let narrow = long_to_int_dtype dv in
         (match Uop.node_tag n, Const.view v with
          | Some "1", Const.Int bits ->
@@ -470,19 +469,19 @@ let rule_long_cast_long_to_long =
     if tag = None then None
     else
       match Uop.dtype n with
-      | Dtype.Val dv when is_long_dtype dv ->
+      | dv when is_long_dtype dv ->
           let srcs = Uop.src n in
           if Array.length srcs <> 1 then None
           else
             let a = srcs.(0) in
             (match Uop.dtype a with
-             | Dtype.Val adv when is_long_dtype adv ->
+             | adv when is_long_dtype adv ->
                  let src_narrow = long_to_int_dtype adv in
                  let dst_narrow = long_to_int_dtype dv in
                  let half t =
                    let h = Uop.cast ~src:(Uop.with_tag t a)
-                     ~dtype:(Dtype.Val src_narrow) in
-                   Uop.bitcast ~src:h ~dtype:(Dtype.Val dst_narrow)
+                     ~dtype:src_narrow in
+                   Uop.bitcast ~src:h ~dtype:dst_narrow
                  in
                  (match tag with
                   | Some "0" -> Some (half "0")
@@ -502,21 +501,19 @@ let rule_long_cast_to_long =
     if tag = None then None
     else
       match Uop.dtype n with
-      | Dtype.Val dv when is_long_dtype dv ->
+      | dv when is_long_dtype dv ->
           let srcs = Uop.src n in
           if Array.length srcs <> 1 then None
           else
             let a = srcs.(0) in
-            let adv_opt =
-              match Uop.dtype a with Dtype.Val x -> Some x | _ -> None
-            in
+            let adv_opt = Some (Uop.dtype a) in
             (match adv_opt with
              | None -> None
              | Some adv when is_long_dtype adv -> let _ = adv in None
              | Some adv ->
                  let narrow = long_to_int_dtype dv in
-                 let narrow_val = Dtype.Val narrow in
-                 if Dtype.Val.is_float adv then begin
+                 let narrow_val = narrow in
+                 if Dtype.is_float adv then begin
                    (* float -> long (truncate toward zero).
                       lo = cast(src, narrow);
                       hi = cast(src / 2^32, narrow)
@@ -573,24 +570,24 @@ let rule_long_cast_from_long =
   op ~name:"c" Ops.Cast => fun bs ->
     let n = bs $ "c" in
     match Uop.dtype n with
-    | Dtype.Val dv when is_long_dtype dv -> let _ = dv in None
+    | dv when is_long_dtype dv -> let _ = dv in None
     | _ ->
         let srcs = Uop.src n in
         if Array.length srcs <> 1 then None
         else
           let a = srcs.(0) in
           (match Uop.dtype a, Uop.dtype n with
-           | Dtype.Val adv, Dtype.Val tdv when is_long_dtype adv ->
+           | adv, tdv when is_long_dtype adv ->
                let narrow = long_to_int_dtype adv in
-               let narrow_val = Dtype.Val narrow in
+               let narrow_val = narrow in
                let a0 =
                  Uop.cast ~src:(Uop.with_tag "0" a) ~dtype:narrow_val in
                let a1 =
                  Uop.cast ~src:(Uop.with_tag "1" a) ~dtype:narrow_val in
-               if Dtype.Val.is_float tdv then begin
+               if Dtype.is_float tdv then begin
                  (* long -> float: small-value fast path + two-half
                     reconstruction in float32. *)
-                 let tdv_val = Dtype.Val tdv in
+                 let tdv_val = tdv in
                  let zero_a1 = Uop.const_like a1 0 in
                  let minus_one_a1 = Uop.const (Const.int narrow (-1)) in
                  let zero_a0 = Uop.const_like a0 0 in
@@ -608,11 +605,11 @@ let rule_long_cast_from_long =
                      ~rhs:(Uop.alu_binary ~op:Ops.And
                              ~lhs:hi_m1 ~rhs:lo_neg)
                  in
-                 let f32 = Dtype.Val Dtype.Val.float32 in
+                 let f32 = Dtype.float32 in
                  let small_branch = Uop.cast ~src:a0 ~dtype:tdv_val in
                  let hi_f32 = Uop.cast ~src:a1 ~dtype:f32 in
                  let two_pow_32 =
-                   Uop.const (Const.float Dtype.Val.float32 4294967296.0) in
+                   Uop.const (Const.float Dtype.float32 4294967296.0) in
                  let hi_scaled = Uop.alu_binary ~op:Ops.Mul
                    ~lhs:hi_f32 ~rhs:two_pow_32 in
                  let lo_u = Uop.bitcast ~src:a0 ~dtype:Dtype.uint32 in
@@ -626,7 +623,7 @@ let rule_long_cast_from_long =
                else begin
                  (* long -> int (narrow the low half). *)
                  let lo_u = Uop.bitcast ~src:a0 ~dtype:Dtype.uint32 in
-                 Some (Uop.cast ~src:lo_u ~dtype:(Dtype.Val tdv))
+                 Some (Uop.cast ~src:lo_u ~dtype:tdv)
                end
            | _ -> None)
 
@@ -641,19 +638,19 @@ let rule_long_bitcast =
     if tag = None then None
     else
       match Uop.dtype n with
-      | Dtype.Val dv when is_long_dtype dv ->
+      | dv when is_long_dtype dv ->
           let srcs = Uop.src n in
           if Array.length srcs <> 1 then None
           else
             let a = srcs.(0) in
             (match Uop.dtype a with
-             | Dtype.Val adv when is_long_dtype adv ->
+             | adv when is_long_dtype adv ->
                  let src_narrow = long_to_int_dtype adv in
                  let dst_narrow = long_to_int_dtype dv in
                  let a0 = Uop.cast
-                     ~src:(Uop.with_tag "0" a) ~dtype:(Dtype.Val src_narrow) in
+                     ~src:(Uop.with_tag "0" a) ~dtype:src_narrow in
                  let a1 = Uop.cast
-                     ~src:(Uop.with_tag "1" a) ~dtype:(Dtype.Val src_narrow) in
+                     ~src:(Uop.with_tag "1" a) ~dtype:src_narrow in
                  let lo, hi = l2i L2i_bitcast dst_narrow [a0; a1] in
                  (match tag with
                   | Some "0" -> Some lo
@@ -673,7 +670,7 @@ let rule_long_cmp =
     else
       let lhs = srcs.(0) and rhs = srcs.(1) in
       match Uop.dtype lhs with
-      | Dtype.Val dv when is_long_dtype dv ->
+      | dv when is_long_dtype dv ->
           let dt = long_to_int_dtype dv in
           let l2i_op =
             match Uop.op n with
@@ -702,16 +699,16 @@ let rule_long_alu =
       if not (Ops.Group.is_alu op) then None
       else
         match Uop.dtype n with
-        | Dtype.Val dv when is_long_dtype dv ->
+        | dv when is_long_dtype dv ->
             (match classify_alu_op op with
              | None -> None
              | Some l2i_op ->
                  let dt = long_to_int_dtype dv in
-                 let narrow = Dtype.Val dt in
+                 let narrow = dt in
                  let expanded =
                    Array.fold_right (fun c acc ->
                      match Uop.dtype c with
-                     | Dtype.Val cdv when is_long_dtype cdv ->
+                     | cdv when is_long_dtype cdv ->
                          Uop.cast ~src:(Uop.with_tag "0" c) ~dtype:narrow ::
                          Uop.cast ~src:(Uop.with_tag "1" c) ~dtype:narrow ::
                          acc
@@ -741,20 +738,17 @@ let pm_long_decomp : Upat.Pattern_matcher.t =
   ]
 
 type float_decomp_ctx = {
-  from_dtype : Dtype.scalar;
-  to_dtype : Dtype.scalar;
+  from_dtype : Dtype.t;
+  to_dtype : Dtype.t;
 }
 
 (* Float decomposition: emulated float storage <-> promoted float arithmetic. *)
 
-let float_tag s = Dtype.scalar_to_string s
+let float_tag s = Dtype.to_string s
 
-let scalar_bits s = Dtype.Val.bitsize (Dtype.Val.of_scalar s)
+let scalar_bits s = Dtype.bitsize s
 
-let scalar_val ?(count = 1) s =
-  Dtype.Val.vec count (Dtype.Val.of_scalar s)
-
-let float_value_dtype ?(count = 1) s = Dtype.Val (scalar_val ~count s)
+let float_value_dtype s = s
 
 let f2f_dt_scalar = function
   | Dtype.Float64 -> Dtype.Uint64
@@ -764,7 +758,7 @@ let f2f_dt_scalar = function
   | Dtype.Fp8e4m3fnuz | Dtype.Fp8e5m2fnuz -> Dtype.Uint8
   | _ -> invalid_arg "Dtype.f2f_dt: not a float dtype"
 
-let f2f_dt ?(count = 1) s = scalar_val ~count (f2f_dt_scalar s)
+let f2f_dt s = f2f_dt_scalar s
 
 let is_fp8_scalar = function
   | Dtype.Fp8e4m3 | Dtype.Fp8e5m2
@@ -781,7 +775,7 @@ let mask_bits n =
   if n >= 64 then -1L else Int64.sub (pow2_bits n) 1L
 
 let int_const_like_uop u n =
-  Uop.const (Const.int64 (Dtype.val_of (Uop.dtype u)) n)
+  Uop.const (Const.int64 (Uop.dtype u) n)
 
 let int_const_val dt n = Uop.const (Const.int64 dt n)
 
@@ -802,8 +796,8 @@ let shr_const x n =
   if n = 0 then x else
     Uop.alu_binary ~op:Ops.Cdiv ~lhs:x ~rhs:(int_const_like_uop x (pow2_bits n))
 
-let cast_to_val dt x = Uop.cast ~src:x ~dtype:(Dtype.Val dt)
-let bitcast_to_val dt x = Uop.bitcast ~src:x ~dtype:(Dtype.Val dt)
+let cast_to_val dt x = Uop.cast ~src:x ~dtype:dt
+let bitcast_to_val dt x = Uop.bitcast ~src:x ~dtype:dt
 
 let rne v s =
   let one = int_const_like_uop v 1L in
@@ -820,15 +814,14 @@ let rne v s =
 
 let rec f2f v fr to_ =
   let fs = scalar_bits fr in
-  let fb = Decomp_transcendental.exponent_bias (Dtype.Val (Dtype.Val.of_scalar fr)) in
-  let fe, fm = Dtype.finfo (Dtype.Val (Dtype.Val.of_scalar fr)) in
+  let fb = Decomp_transcendental.exponent_bias fr in
+  let fe, fm = Dtype.finfo fr in
   let ts = scalar_bits to_ in
-  let tb = Decomp_transcendental.exponent_bias (Dtype.Val (Dtype.Val.of_scalar to_)) in
-  let te, tm = Dtype.finfo (Dtype.Val (Dtype.Val.of_scalar to_)) in
-  let count = Dtype.count (Uop.dtype v) in
-  let fr_uint = f2f_dt ~count fr in
-  let to_uint = f2f_dt ~count to_ in
-  let to_float = float_value_dtype ~count to_ in
+  let tb = Decomp_transcendental.exponent_bias to_ in
+  let te, tm = Dtype.finfo to_ in
+  let fr_uint = f2f_dt fr in
+  let to_uint = f2f_dt to_ in
+  let to_float = float_value_dtype to_ in
   if fe <= te && fm < tm then begin
     let sign =
       shl_const
@@ -881,7 +874,7 @@ let rec f2f v fr to_ =
   end else if fe >= te && fm > tm then begin
     let v =
       bitcast_to_val fr_uint
-        (f2f_clamp (Uop.bitcast ~src:v ~dtype:(float_value_dtype ~count fr)) to_)
+        (f2f_clamp (Uop.bitcast ~src:v ~dtype:(float_value_dtype fr)) to_)
     in
     let sign =
       iand (shr_const v (fs - ts))
@@ -934,14 +927,14 @@ let rec f2f v fr to_ =
     invalid_arg "Dtype.f2f: unsupported float decomposition"
 
 and f2f_clamp ?(sat = true) val_ dt =
-  let e, m = Dtype.finfo (Dtype.Val (Dtype.Val.of_scalar dt)) in
+  let e, m = Dtype.finfo dt in
   let max_exp, max_man =
     if is_fp8_fnuz_scalar dt then ((1 lsl e) - 1, (1 lsl m) - 1)
     else if dt = Dtype.Fp8e4m3 then ((1 lsl e) - 1, (1 lsl m) - 2)
     else ((1 lsl e) - 2, (1 lsl m) - 1)
   in
   let mx_value =
-    (2.0 ** Float.of_int (max_exp - Decomp_transcendental.exponent_bias (Dtype.Val (Dtype.Val.of_scalar dt))))
+    (2.0 ** Float.of_int (max_exp - Decomp_transcendental.exponent_bias dt))
     *. (1.0 +. (Float.of_int max_man /. Float.of_int (1 lsl m)))
   in
   let mx = const_float_dt (Uop.dtype val_) mx_value in
@@ -955,73 +948,64 @@ and f2f_clamp ?(sat = true) val_ dt =
     (iwhere (icmplt val_ neg_mx) neg_sat
        (iwhere (icmplt mx val_) sat_value val_))
 
+(* Number of scalar lanes in [u], read from its shape now that dtypes are
+   scalar. *)
+let max_numel u = List.fold_left ( * ) 1 (Uop.max_shape u)
+
 let f2f_load x fr to_ =
-  let count = Dtype.count (Uop.dtype x) in
-  let uint_fr = f2f_dt ~count fr in
-  if count = 1 then f2f (Uop.replace x ~dtype:(Dtype.Val uint_fr) ()) fr to_
+  let n = max_numel x in
+  let uint_fr = f2f_dt fr in
+  if n = 1 then f2f (Uop.replace x ~dtype:uint_fr ()) fr to_
   else
     match Uop.as_load x with
     | None -> invalid_arg "Dtype.f2f_load: expected load"
     | Some { src; _ } ->
-        let scalar_uint_fr = f2f_dt fr in
         Uop.stack
-          (List.init count (fun i ->
+          (List.init n (fun i ->
              let ld =
-               Uop.replace x
-                 ~src:[| reindex src i 1 |]
-                 ~dtype:(Dtype.Val scalar_uint_fr) ()
+               Uop.replace x ~src:[| reindex src i 1 |] ~dtype:uint_fr ()
              in
              f2f ld fr to_))
 
 let f2f_store st idx val_ fr to_ =
-  let count = Dtype.count (Uop.dtype val_) in
-  if count = 1 then
+  let n = max_numel val_ in
+  if n = 1 then
     Uop.replace st
-      ~src:[| idx; f2f (Uop.bitcast ~src:val_ ~dtype:(Dtype.Val (f2f_dt to_))) to_ fr |]
+      ~src:[| idx; f2f (Uop.bitcast ~src:val_ ~dtype:(f2f_dt to_)) to_ fr |]
       ()
   else
     Uop.group
-      (List.init count (fun i ->
+      (List.init n (fun i ->
          let value =
            f2f
              (Uop.bitcast
                 ~src:(Uop.index ~ptr:val_ ~idxs:[ Uop.const_int i ] ())
-                ~dtype:(Dtype.Val (f2f_dt to_)))
+                ~dtype:(f2f_dt to_))
              to_ fr
          in
          Uop.replace st ~src:[| reindex idx i 1; value |] ()))
 
-let dtype_scalar_count = function
-  | Dtype.Val dt -> Some (Dtype.Val.scalar dt, Dtype.Val.count dt)
-  | _ -> None
-
-let same_scalar s = function
-  | Dtype.Val dt -> Dtype.Val.scalar dt = s
-  | _ -> false
+let same_scalar s dt = Dtype.equal dt s
 
 let rule_float_defines_index_shrink ctx =
   let open Upat in
   ops ~name:"x" (Ops.Group.defines @ [ Ops.Index; Ops.Shrink ]) => fun bs ->
     let x = bs $ "x" in
     let tag = Some (float_tag ctx.from_dtype) in
-    match Uop.dtype x with
-    | Dtype.Ptr p when Dtype.Val.scalar (Dtype.Ptr.base p) = ctx.from_dtype ->
-        let count = Dtype.Val.count (Dtype.Ptr.base p) in
-        let base = f2f_dt ~count ctx.from_dtype in
-        Some (Uop.replace x ~dtype:(Dtype.Ptr (Dtype.Ptr.with_base base p))
-                ~node_tag:tag ())
-    | Dtype.Val dt when Dtype.Val.scalar dt = ctx.from_dtype ->
-        let src = Uop.src x in
-        if Uop.op x = Ops.Index && Array.length src > 0
-           && (Uop.op src.(0) = Ops.Load || Uop.op src.(0) = Ops.Stack)
-        then None
-        else
-          let count = Dtype.Val.count dt in
-          Some
-            (Uop.replace x
-               ~dtype:(Dtype.Val (f2f_dt ~count ctx.from_dtype))
-               ~node_tag:tag ())
-    | _ -> None
+    if not (Dtype.equal (Uop.dtype x) ctx.from_dtype) then None
+    else
+      let src = Uop.src x in
+      if Uop.op x = Ops.Index && Array.length src > 0
+         && (Uop.op src.(0) = Ops.Load || Uop.op src.(0) = Ops.Stack)
+      then None
+      else
+        let base = f2f_dt ctx.from_dtype in
+        let arg =
+          match Uop.arg x with
+          | Uop.Arg.Param_arg pa -> Uop.Arg.Param_arg { pa with dtype = base }
+          | other -> other
+        in
+        Some (Uop.replace x ~dtype:base ~arg ~node_tag:tag ())
 
 let rule_float_load ctx =
   let open Upat in
@@ -1038,11 +1022,9 @@ let rule_float_bitcast_load ctx =
     match Uop.src bc with
     | [| ld |] when Uop.op ld = Ops.Load
                   && same_scalar ctx.from_dtype (Uop.dtype ld) ->
-        let count = Dtype.count (Uop.dtype ld) in
         Some
           (Uop.bitcast
-             ~src:(Uop.replace ld
-                     ~dtype:(Dtype.Val (f2f_dt ~count ctx.from_dtype)) ())
+             ~src:(Uop.replace ld ~dtype:(f2f_dt ctx.from_dtype) ())
              ~dtype:(Uop.dtype bc))
     | _ -> None
 
@@ -1051,16 +1033,13 @@ let rule_float_bitcast_from ctx =
   op ~name:"bc" Ops.Bitcast => fun bs ->
     let bc = bs $ "bc" in
     match Uop.src bc, Uop.dtype bc with
-    | [| x |], Dtype.Val bdt
+    | [| x |], bdt
       when same_scalar ctx.to_dtype (Uop.dtype x)
-           && Dtype.Val.bitsize bdt = scalar_bits ctx.from_dtype ->
+           && Dtype.bitsize bdt = scalar_bits ctx.from_dtype ->
         Some
           (Uop.replace bc
              ~src:[| f2f
-                       (Uop.bitcast ~src:x
-                          ~dtype:(Dtype.Val
-                                    (f2f_dt ~count:(Dtype.Val.count bdt)
-                                       ctx.to_dtype)))
+                       (Uop.bitcast ~src:x ~dtype:(f2f_dt ctx.to_dtype))
                        ctx.to_dtype ctx.from_dtype |]
              ())
     | _ -> None
@@ -1071,11 +1050,9 @@ let rule_float_bitcast_to ctx =
     let bc = bs $ "bc" in
     match Uop.src bc with
     | [| x |] when same_scalar ctx.from_dtype (Uop.dtype bc) ->
-        let count = Dtype.count (Uop.dtype bc) in
         Some
           (f2f
-             (Uop.bitcast ~src:x
-                ~dtype:(Dtype.Val (f2f_dt ~count ctx.from_dtype)))
+             (Uop.bitcast ~src:x ~dtype:(f2f_dt ctx.from_dtype))
              ctx.from_dtype ctx.to_dtype)
     | _ -> None
 
@@ -1085,11 +1062,9 @@ let rule_float_cast ctx =
     let x = bs $ "x" in
     match Uop.src x with
     | [| val_ |] when same_scalar ctx.from_dtype (Uop.dtype x) ->
-        let count = Dtype.count (Uop.dtype x) in
         Some
           (f2f_clamp
-             (Uop.cast ~src:val_
-                ~dtype:(float_value_dtype ~count ctx.to_dtype))
+             (Uop.cast ~src:val_ ~dtype:(float_value_dtype ctx.to_dtype))
              ctx.from_dtype)
     | _ -> None
 
@@ -1097,19 +1072,18 @@ let rule_float_all ctx =
   let open Upat in
   ops ~name:"x" (List.filter (fun op -> op <> Ops.Bitcast) Ops.Group.all) => fun bs ->
     let x = bs $ "x" in
-    match dtype_scalar_count (Uop.dtype x) with
-    | Some (s, count) when s = ctx.from_dtype ->
-        let to_dt = float_value_dtype ~count ctx.to_dtype in
-        let src =
-          Array.map
-            (fun child ->
-               if same_scalar ctx.from_dtype (Uop.dtype child) then
-                 Uop.cast ~src:child ~dtype:to_dt
-               else child)
-            (Uop.src x)
-        in
-        Some (Uop.replace x ~dtype:to_dt ~src ())
-    | _ -> None
+    if same_scalar ctx.from_dtype (Uop.dtype x) then
+      let to_dt = ctx.to_dtype in
+      let src =
+        Array.map
+          (fun child ->
+             if same_scalar ctx.from_dtype (Uop.dtype child) then
+               Uop.cast ~src:child ~dtype:to_dt
+             else child)
+          (Uop.src x)
+      in
+      Some (Uop.replace x ~dtype:to_dt ~src ())
+    else None
 
 let rule_float_store_bitcast ctx =
   let open Upat in
@@ -1120,12 +1094,10 @@ let rule_float_store_bitcast ctx =
       when Uop.op value = Ops.Bitcast
            && same_scalar ctx.from_dtype (Uop.dtype value)
            && Uop.node_tag dst = Some (float_tag ctx.from_dtype) ->
-        let count = Dtype.count (Uop.dtype value) in
         Some
           (Uop.replace st
              ~src:[| dst;
-                     Uop.replace value
-                       ~dtype:(Dtype.Val (f2f_dt ~count ctx.from_dtype)) () |]
+                     Uop.replace value ~dtype:(f2f_dt ctx.from_dtype) () |]
              ())
     | Some _ | None -> None
 
@@ -1160,7 +1132,7 @@ let pm_float_decomp (ctx : float_decomp_ctx) : Upat.Pattern_matcher.t =
   ]
 
 type dtype_decomp_ctx = {
-  detected : (Dtype.scalar, unit) Hashtbl.t;
+  detected : (Dtype.t, unit) Hashtbl.t;
 }
 
 let decomposable_scalar = function
@@ -1179,22 +1151,16 @@ let detect_decomp_dtype ctx node =
     if decomposable_scalar scalar then
       Hashtbl.replace ctx.detected (canonical_decomp_scalar scalar) ()
   in
-  (match Uop.dtype node with
-   | Dtype.Val dt -> add (Dtype.Val.scalar dt)
-   | Dtype.Ptr ptr -> add (Dtype.Val.scalar (Dtype.Ptr.base ptr)));
+  add (Uop.dtype node);
   None
 
 let pm_dtype_decomps = detect_decomp_dtype
 
-let dtype_of_scalar scalar =
-  Dtype.Val (Dtype.Val.of_scalar scalar)
-
 let should_emulate renderer scalar =
-  (not (Renderer.supports_dtype renderer (dtype_of_scalar scalar)))
-  ||
-  List.exists
-    (fun (from_dtype, _) -> from_dtype = scalar)
-    (Renderer.emulated_float_dtypes renderer)
+  (not (Renderer.supports_dtype renderer scalar))
+  || List.exists
+       (fun (from_dtype, _) -> Dtype.equal from_dtype scalar)
+       (Renderer.emulated_float_dtypes renderer)
 
 let float_decomp_target renderer scalar =
   if is_fp8_scalar scalar
@@ -1231,8 +1197,8 @@ let do_dtype_decomps (renderer : Renderer.t) (sink : Uop.t) : Uop.t =
            in
            rewrite (pm_float_decomp ctx)
              (Printf.sprintf "decomp %s -> %s"
-                (Dtype.scalar_to_string dtype)
-                (Dtype.scalar_to_string ctx.to_dtype))
+                (Dtype.to_string dtype)
+                (Dtype.to_string ctx.to_dtype))
              sink
        | _ -> sink)
     sink dtypes
