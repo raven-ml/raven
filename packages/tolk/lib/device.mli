@@ -66,7 +66,13 @@ module Allocator : sig
   type 'buf transfer = dest:'buf -> src:'buf -> int -> unit
   (** The type for device-to-device transfers. [transfer ~dest ~src nbytes]
       copies [nbytes] from [src] to [dest]. Both buffers belong to the same
-      backend. *)
+      backend.
+
+      The transfer carries no device identities, so it can only express copies
+      a single execution context can order. Backends whose instances hold
+      independent command queues (for example separate GPUs of one vendor)
+      cannot serialise a cross-instance copy through this hook and must fall
+      back to a host bounce. *)
 
   type 'buf t = {
     alloc : int -> Buffer_spec.t -> 'buf;
