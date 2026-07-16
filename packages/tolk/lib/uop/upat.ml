@@ -458,11 +458,6 @@ let inferred_early_reject pat =
           | Some op -> add_op op acc)
         [] (src_patterns src)
 
-let source_ops u =
-  Array.fold_left
-    (fun acc src -> add_op (Uop.op src) acc)
-    [] (Uop.src u)
-
 let early_reject_matches reject src_ops =
   List.for_all (fun op -> List.exists (Ops.equal op) src_ops) reject
 
@@ -523,7 +518,7 @@ module Pattern_matcher = struct
     match Hashtbl.find_opt pm.dispatch (Uop.op u) with
     | None -> None
     | Some entries ->
-        let src_ops = source_ops u in
+        let src_ops = Uop.child_ops u in
         let rec try_rules = function
           | [] -> None
           | entry :: rest ->
