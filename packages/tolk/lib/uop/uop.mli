@@ -829,6 +829,25 @@ val broadcast : t -> int -> t
 (** [broadcast u n] repeats [u] into an [n]-wide {!Ops.Stack}. Returns
     [u] unchanged when [n <= 1]. Shared. *)
 
+val is_invalid_const : t -> bool
+(** [is_invalid_const u] is [true] iff [u] is an {!Ops.Const} carrying the
+    {!Const.invalid} sentinel. *)
+
+val get_idx : t -> t
+(** [get_idx u] recovers the index expression from a possibly-gated index. A
+    gate is a [where cond idx invalid]; [get_idx] returns [idx] there, recurses
+    lane-wise through an {!Ops.Stack}, and is the identity otherwise.
+
+    @raise Invalid_argument if [u] is not an integer index expression. *)
+
+val get_valid : t -> t
+(** [get_valid u] recovers the boolean guard of a possibly-gated index: [cond]
+    for a [where cond idx invalid], recursed lane-wise through an
+    {!Ops.Stack}; a bare {!Const.invalid} yields false and any other
+    expression yields true.
+
+    @raise Invalid_argument if [u] is not an integer index expression. *)
+
 (** {2:ctors_control Control flow}
 
     {!Ops.Range}: [src = \[| size; parent0; parent1; ... |\]].
@@ -940,9 +959,22 @@ val reshape : src:t -> shape:t -> t
 val expand : src:t -> dims:t -> t
 (** [expand ~src ~dims] prepends [dims] as new leading axes of [src]: the
     result shape is [dims] followed by [src]'s shape. This is the primitive
-    add-leading-dims op; whole-shape broadcasting is composed at the tensor
-    level from reshape, expand, and permute. Returns [src] unchanged when
-    [dims] is the empty shape. Dtype is inherited from [src]. Tensor. *)
+    add-leading-dims op; whole-shape broadcasting is composed from it by
+    {!broadcast_to}. Returns [src] unchanged when [dims] is the empty shape.
+    Dtype is inherited from [src]. Tensor. *)
+
+val broadcast_to : src:t -> shape:t -> t
+(** [broadcast_to ~src ~shape] broadcasts [src] to [shape] by the array
+    broadcasting rules: [src]'s shape is right-aligned under [shape] (missing
+    leading axes are treated as size one), and each existing axis must either
+    match its target or be size one (in which case it stretches). Built from
+    the primitives: the size-one axes that must grow are squeezed out with
+    {!reshape}, prepended at their target sizes with {!expand}, and permuted
+    back into [shape]'s order. Returns [src] unchanged when its shape already
+    equals [shape]. Dtype is inherited from [src].
+
+    @raise Invalid_argument if [src] has more axes than [shape], or if an axis
+    neither matches nor is size one. Tensor. *)
 
 val pad : src:t -> offset:t -> size:t -> t
 (** [pad ~src ~offset ~size] pads [src] with zeros to the per-axis output
@@ -1480,9 +1512,11 @@ val unbind : t -> t * int
 
 val compare_structure : t -> t -> int
 (** [compare_structure a b] orders [a] and [b] by recursive structural
-    comparison of op, dtype, arg, and children. Unlike {!compare}, the
-    result is independent of hash-cons tags and therefore stable
-    across runs, at the cost of worst-case traversal of the DAG. *)
+    comparison of op, then arg, then dtype, then children — the
+    comparison order is load-bearing for schedulers that break ties
+    structurally. Unlike {!compare}, the result is independent of
+    hash-cons tags and therefore stable across runs, at the cost of
+    worst-case traversal of the DAG. *)
 
 val semantic_key : t -> string
 (** [semantic_key u] is a digest of [u]'s op, dtype, payload, and child

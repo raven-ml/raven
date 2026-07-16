@@ -856,6 +856,36 @@ let broadcast u n =
     let srcs = List.init n (fun _ -> u) in
     stack srcs
 
+let is_invalid_const u =
+  match op u, arg u with
+  | Ops.Const, Arg.Value c -> (
+      match Const.view c with Const.Invalid -> true | _ -> false)
+  | _ -> false
+
+(* An index expression may be gated as [where cond idx invalid]; get_idx
+   recovers the index and get_valid the guard. Both recurse through stacked
+   lanes and require an integer index. *)
+let rec get_idx u =
+  if not (Dtype.is_int (dtype u)) then
+    invalid_arg "Uop.get_idx: expected an integer index expression";
+  match op u with
+  | Ops.Stack -> stack (List.map get_idx (children u))
+  | Ops.Where
+    when Array.length (src u) = 3 && is_invalid_const (src u).(2) ->
+      (src u).(1)
+  | _ -> u
+
+let rec get_valid u =
+  if not (Dtype.is_int (dtype u)) then
+    invalid_arg "Uop.get_valid: expected an integer index expression";
+  match op u with
+  | Ops.Stack -> stack (List.map get_valid (children u))
+  | Ops.Where
+    when Array.length (src u) = 3 && is_invalid_const (src u).(2) ->
+      (src u).(0)
+  | Ops.Const when is_invalid_const u -> const_bool false
+  | _ -> const_bool true
+
 let range ~size ~axis ~kind ?(sub = []) ?(dtype = Dtype.index)
     ?(parents = []) () =
   mk ~op:Ops.Range ~dtype
@@ -2446,6 +2476,56 @@ let reduce_axis ~src ~op ~axes =
            in
            if axes = reduce_axes then red
            else reshape ~src:red ~shape:(shape_arg out_shape))
+
+let broadcast_to ~src ~shape:target_shape =
+  let cur = shape src in
+  let target = as_shape target_shape in
+  if dims_equal cur target then src
+  else begin
+    let cur = Array.of_list cur and target = Array.of_list target in
+    let cur_rank = Array.length cur and new_rank = Array.length target in
+    if cur_rank > new_rank then
+      invalid_arg "Uop.broadcast_to: cannot broadcast to fewer dimensions";
+    (* Align right by prepending [n_left] new leading axes, then check each
+       existing axis is either unchanged or broadcast from size one. *)
+    let n_left = new_rank - cur_rank in
+    for i = 0 to cur_rank - 1 do
+      if not (equal cur.(i) target.(n_left + i) || dim_is_one cur.(i)) then
+        invalid_arg "Uop.broadcast_to: shapes are not broadcast-compatible"
+    done;
+    (* EXPAND only adds leading axes, so squeeze the size-one axes that must
+       grow, prepend them (and the new leading axes) via EXPAND, then permute
+       everything back into the target order. *)
+    let is_expand i =
+      dim_is_one cur.(i) && not (dim_is_one target.(n_left + i))
+    in
+    let axes = List.init cur_rank Fun.id in
+    let expand_at = List.filter is_expand axes in
+    let kept = List.filter (fun i -> not (is_expand i)) axes in
+    let squeezed =
+      reshape ~src ~shape:(shape_arg (List.map (fun i -> cur.(i)) kept))
+    in
+    let prepend =
+      Array.to_list (Array.sub target 0 n_left)
+      @ List.map (fun i -> target.(n_left + i)) expand_at
+    in
+    let expanded = expand ~src:squeezed ~dims:(shape_arg prepend) in
+    let n_expand = List.length expand_at in
+    let position_in lst x =
+      let rec go i = function
+        | [] -> raise Not_found
+        | y :: ys -> if y = x then i else go (i + 1) ys
+      in
+      go 0 lst
+    in
+    let order =
+      List.init n_left Fun.id
+      @ List.init cur_rank (fun i ->
+            if is_expand i then n_left + position_in expand_at i
+            else n_left + n_expand + position_in kept i)
+    in
+    permute ~src:expanded ~order
+  end
 
 let rec const_of_dtype ?shape:target_shape dtype value =
   let ret =
