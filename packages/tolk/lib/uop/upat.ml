@@ -350,49 +350,43 @@ let rec match_one pat uop bs =
   match pat.src with
   | None -> bs_list
   | Some src ->
-      let uop_srcs = Array.to_list (Uop.src uop) in
+      let uop_srcs = Uop.src uop in
       List.concat_map (fun bs -> match_src src uop_srcs bs pat.allow_any_len)
         bs_list
 
 and match_src src_pat uop_srcs bs allow_any_len =
+  let n_srcs = Array.length uop_srcs in
   match src_pat with
   | Fixed pats ->
       let n_pats = List.length pats in
-      let n_srcs = List.length uop_srcs in
       if n_pats > n_srcs then []
-      else if not allow_any_len && n_pats < n_srcs then []
-      else
-        let head = List.filteri (fun i _ -> i < n_pats) uop_srcs in
-        match_sequence pats head [ bs ]
+      else if (not allow_any_len) && n_pats < n_srcs then []
+      else match_sequence pats uop_srcs 0 [ bs ]
   | Prefix pats ->
-      let n_pats = List.length pats in
-      let n_srcs = List.length uop_srcs in
-      if n_pats > n_srcs then []
-      else
-        let head = List.filteri (fun i _ -> i < n_pats) uop_srcs in
-        match_sequence pats head [ bs ]
+      if List.length pats > n_srcs then []
+      else match_sequence pats uop_srcs 0 [ bs ]
   | Perms pats ->
-      let n_pats = List.length pats in
-      let n_srcs = List.length uop_srcs in
-      if n_pats <> n_srcs && not allow_any_len then []
+      if List.length pats <> n_srcs && not allow_any_len then []
       else
-        let perms = permutations pats in
-        List.concat_map
-          (fun perm -> match_sequence perm uop_srcs [ bs ])
-          perms
+        permutations pats
+        |> List.concat_map (fun perm -> match_sequence perm uop_srcs 0 [ bs ])
         |> dedup_bindings
   | Rep pat ->
-      List.fold_left (fun acc uop_src ->
-        List.concat_map (fun bs -> match_one pat uop_src bs) acc
-      ) [ bs ] uop_srcs
+      Array.fold_left
+        (fun acc uop_src ->
+          List.concat_map (fun bs -> match_one pat uop_src bs) acc)
+        [ bs ] uop_srcs
 
-and match_sequence pats uops bs_list =
-  match pats, uops with
-  | [], _ -> bs_list
-  | p :: ps', u :: us' ->
-      let bs_list' = List.concat_map (fun bs -> match_one p u bs) bs_list in
-      match_sequence ps' us' bs_list'
-  | _ :: _, [] -> []
+and match_sequence pats uop_srcs i bs_list =
+  match pats with
+  | [] -> bs_list
+  | p :: ps' ->
+      if i >= Array.length uop_srcs then []
+      else
+        let bs_list' =
+          List.concat_map (fun bs -> match_one p uop_srcs.(i) bs) bs_list
+        in
+        match_sequence ps' uop_srcs (i + 1) bs_list'
 
 let match_ pat uop = match_one pat uop empty_bindings
 
@@ -438,24 +432,13 @@ let rewrite4 p k =
 let add_op op ops =
   if List.exists (Ops.equal op) ops then ops else op :: ops
 
-let merge_ops acc ops = List.fold_right add_op ops acc
-
-let rec root_ops pat =
-  match pat.ops, pat.alts with
-  | Some ops, _ when ops <> [] -> Some ops
-  | None, Some alts ->
-      let rec collect acc = function
-        | [] -> Some acc
-        | alt :: rest ->
-            (match root_ops alt with
-             | None -> None
-             | Some ops -> collect (merge_ops acc ops) rest)
-      in
-      collect [] alts
+let root_ops pat =
+  match pat.ops with
+  | Some (_ :: _ as ops) -> Some ops
   | _ -> None
 
 let single_root_op pat =
-  match root_ops pat with
+  match pat.ops with
   | Some [ op ] -> Some op
   | _ -> None
 
@@ -480,14 +463,8 @@ let source_ops u =
     (fun acc src -> add_op (Uop.op src) acc)
     [] (Uop.src u)
 
-let early_reject_matches reject u =
-  match reject with
-  | [] -> true
-  | ops ->
-      let src_ops = source_ops u in
-      List.for_all
-        (fun op -> List.exists (Ops.equal op) src_ops)
-        ops
+let early_reject_matches reject src_ops =
+  List.for_all (fun op -> List.exists (Ops.equal op) src_ops) reject
 
 let rootless_message pat =
   match pat.location with
@@ -506,7 +483,7 @@ module Pattern_matcher = struct
 
   type 'ctx with_ctx = {
     rules : 'ctx entry list;
-    dispatch : (Ops.t, 'ctx entry list) Hashtbl.t option;
+    dispatch : (Ops.t, 'ctx entry list) Hashtbl.t;
   }
 
   type t = unit with_ctx
@@ -523,7 +500,7 @@ module Pattern_matcher = struct
     List.iter
       (fun entry ->
         match root_ops entry.pat with
-        | None | Some [] -> invalid_arg (rootless_message entry.pat)
+        | None -> invalid_arg (rootless_message entry.pat)
         | Some ops ->
             List.iter
               (fun op ->
@@ -535,35 +512,39 @@ module Pattern_matcher = struct
                 Hashtbl.replace dispatch op (entry :: old))
               ops)
       entries;
-    { rules = entries; dispatch = Some dispatch }
+    (* Buckets accumulate in reverse rule order; restore it so dispatch keeps
+       first-match-wins without reversing on every rewrite. *)
+    Hashtbl.filter_map_inplace (fun _ es -> Some (List.rev es)) dispatch;
+    { rules = entries; dispatch }
 
   let make rules = make_with_ctx rules
 
   let rewrite_with_ctx pm ~ctx u =
-    let rec try_rules = function
-      | [] -> None
-      | entry :: rest ->
-          if not (early_reject_matches entry.reject u) then try_rules rest
-          else
-          let rec try_bindings = function
-            | [] -> try_rules rest
-            | bs :: more ->
-                match entry.cb ctx bs with
-                | Some r ->
-                    (* The callback commits the pattern on its first non-None
-                       result: a rewrite to the same uop counts as a no-op and
-                       falls through to the next rule, not the next binding. *)
-                    if Uop.equal r u then try_rules rest else Some r
-                | None -> try_bindings more
-          in
-          try_bindings (match_ entry.pat u)
-    in
-    match pm.dispatch with
-    | None -> try_rules pm.rules
-    | Some dispatch ->
-        (match Hashtbl.find_opt dispatch (Uop.op u) with
-         | None -> None
-         | Some entries -> try_rules (List.rev entries))
+    match Hashtbl.find_opt pm.dispatch (Uop.op u) with
+    | None -> None
+    | Some entries ->
+        let src_ops = source_ops u in
+        let rec try_rules = function
+          | [] -> None
+          | entry :: rest ->
+              if not (early_reject_matches entry.reject src_ops) then
+                try_rules rest
+              else
+                let rec try_bindings = function
+                  | [] -> try_rules rest
+                  | bs :: more -> (
+                      match entry.cb ctx bs with
+                      | Some r ->
+                          (* The callback commits the pattern on its first
+                             non-None result: a rewrite to the same uop counts
+                             as a no-op and falls through to the next rule, not
+                             the next binding. *)
+                          if Uop.equal r u then try_rules rest else Some r
+                      | None -> try_bindings more)
+                in
+                try_bindings (match_ entry.pat u)
+        in
+        try_rules entries
 
   let rewrite pm u = rewrite_with_ctx pm ~ctx:() u
 
