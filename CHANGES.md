@@ -310,6 +310,10 @@ thread.
 
 ### Nx
 
+- Declare the licenses of the vendored components in `nx.opam`: the package
+  now advertises `ISC AND LGPL-2.1-or-later WITH OCaml-LGPL-linking-exception
+  AND BSD-3-Clause AND (MIT OR Unlicense)` covering camlzip, pocketfft, and
+  stb_image, instead of claiming plain ISC.
 - Remove the `?out` parameter from the backend `fft`/`ifft`/`rfft`/`irfft`
   operations. It was the only destination-passing parameter in the backend
   interface and the frontend never passed it; the FFT ops now allocate their
