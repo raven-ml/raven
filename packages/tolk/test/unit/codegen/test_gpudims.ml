@@ -18,8 +18,7 @@ module Ak = Axis_type
 
 (* Helpers *)
 
-let idx n = U.const (C.int D.Val.weakint n)
-let global_fptr = D.Ptr.create D.Val.float32 ~addrspace:Global ~size:(-1)
+let idx n = U.const (C.int D.index n)
 
 let kernel_info ?(dont_use_locals = false) () =
   {
@@ -285,11 +284,11 @@ let grouping_preferred_tests =
       test "symbolic contraction keeps grouped SPECIAL size symbolic" (fun () ->
           let n =
             U.variable ~name:"n" ~min_val:1 ~max_val:4
-              ~dtype:D.Val.weakint ()
+              ~dtype:D.index ()
           in
           let m =
             U.variable ~name:"m" ~min_val:1 ~max_val:8
-              ~dtype:D.Val.weakint ()
+              ~dtype:D.index ()
           in
           let idxs =
             Gpudims.get_grouped_dims Gpudims.Group_id [| n; m |]
@@ -397,7 +396,7 @@ let none_passthrough_tests =
       test "symbolic passthrough keeps SPECIAL size symbolic" (fun () ->
           let n =
             U.variable ~name:"n" ~min_val:1 ~max_val:10
-              ~dtype:D.Val.weakint ()
+              ~dtype:D.index ()
           in
           let idxs =
             Gpudims.get_grouped_dims Gpudims.Group_id [| n |] None
@@ -424,14 +423,14 @@ let thread_renderer () =
 
 (* Build a simple kernel: load from data0[range_sum], store to data0[range_sum]. *)
 let make_global_kernel ?(ki = kernel_info ()) ranges =
-  let p = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
+  let p = U.param ~slot:0 ~dtype:D.float32 ~addrspace:D.Global () in
   let open U.O in
   let combined =
     List.fold_left (fun acc r -> acc + r) (List.hd ranges) (List.tl ranges)
   in
-  let index_node = U.index ~ptr:p ~idxs:[combined] ~as_ptr:true () in
+  let index_node = U.index ~ptr:p ~idxs:[combined] () in
   let ld = U.load ~src:index_node () in
-  let store_idx = U.index ~ptr:p ~idxs:[combined] ~as_ptr:true () in
+  let store_idx = U.index ~ptr:p ~idxs:[combined] () in
   let st = U.store ~dst:store_idx ~value:ld () in
   U.sink ~kernel_info:ki [ st ]
 
@@ -456,10 +455,10 @@ let integration_tests =
     [
       test "replaces global ranges with SPECIAL" (fun () ->
           let r0 =
-            U.range ~size:(idx 32) ~axis:0 ~kind:Ak.Global ~dtype:D.Val.weakint ()
+            U.range ~size:(idx 32) ~axis:0 ~kind:Ak.Global ~dtype:D.index ()
           in
           let r1 =
-            U.range ~size:(idx 16) ~axis:1 ~kind:Ak.Global ~dtype:D.Val.weakint ()
+            U.range ~size:(idx 16) ~axis:1 ~kind:Ak.Global ~dtype:D.index ()
           in
           let sink = make_global_kernel [ r0; r1 ] in
           let ren = gpu_renderer () in
@@ -470,10 +469,10 @@ let integration_tests =
             ~msg:"SPECIAL nodes present");
       test "replaces global+local ranges" (fun () ->
           let g0 =
-            U.range ~size:(idx 32) ~axis:0 ~kind:Ak.Global ~dtype:D.Val.weakint ()
+            U.range ~size:(idx 32) ~axis:0 ~kind:Ak.Global ~dtype:D.index ()
           in
           let l0 =
-            U.range ~size:(idx 8) ~axis:1 ~kind:Ak.Local ~dtype:D.Val.weakint ()
+            U.range ~size:(idx 8) ~axis:1 ~kind:Ak.Local ~dtype:D.index ()
           in
           let sink = make_global_kernel [ g0; l0 ] in
           let ren = gpu_renderer () in
@@ -505,10 +504,10 @@ let integration_tests =
           is_true has_lid ~msg:"has Local_id SPECIAL");
       test "no-op when no GPU ranges" (fun () ->
           let r =
-            U.range ~size:(idx 4) ~axis:0 ~kind:Ak.Reduce ~dtype:D.Val.weakint ()
+            U.range ~size:(idx 4) ~axis:0 ~kind:Ak.Reduce ~dtype:D.index ()
           in
-          let p = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-          let index_node = U.index ~ptr:p ~idxs:[r] ~as_ptr:true () in
+          let p = U.param ~slot:0 ~dtype:D.float32 ~addrspace:D.Global () in
+          let index_node = U.index ~ptr:p ~idxs:[r] () in
           let ld = U.load ~src:index_node () in
           let end_node = U.end_ ~value:ld ~ranges:[ r ] in
           let sink = wrap_sink [ end_node ] in
@@ -519,12 +518,12 @@ let integration_tests =
       test "no-op when SPECIAL already present" (fun () ->
           let s =
             U.special ~name:(Gpu_dim.to_special_name (Gpu_dim.Group_id 0)) ~size:(idx 32)
-              ~dtype:D.Val.int32 ()
+              ~dtype:D.index ()
           in
-          let p = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-          let index_node = U.index ~ptr:p ~idxs:[s] ~as_ptr:true () in
+          let p = U.param ~slot:0 ~dtype:D.float32 ~addrspace:D.Global () in
+          let index_node = U.index ~ptr:p ~idxs:[s] () in
           let ld = U.load ~src:index_node () in
-          let store_idx = U.index ~ptr:p ~idxs:[s] ~as_ptr:true () in
+          let store_idx = U.index ~ptr:p ~idxs:[s] () in
           let st = U.store ~dst:store_idx ~value:ld () in
           let sink = wrap_sink [ st ] in
           let ren = gpu_renderer () in
@@ -535,7 +534,7 @@ let integration_tests =
             ~msg:"same SPECIAL count (idempotent)");
       test "threaded renderer uses core_id" (fun () ->
           let r0 =
-            U.range ~size:(idx 4) ~axis:0 ~kind:Ak.Global ~dtype:D.Val.weakint ()
+            U.range ~size:(idx 4) ~axis:0 ~kind:Ak.Global ~dtype:D.index ()
           in
           let sink = make_global_kernel [ r0 ] in
           let ren = thread_renderer () in
@@ -545,11 +544,11 @@ let integration_tests =
       test "global_prod_max caps global size by local hardware size" (fun () ->
           let g0 =
             U.range ~size:(idx 1024) ~axis:0 ~kind:Ak.Global
-              ~dtype:D.Val.weakint ()
+              ~dtype:D.index ()
           in
           let l0 =
             U.range ~size:(idx 16) ~axis:1 ~kind:Ak.Local
-              ~dtype:D.Val.weakint ()
+              ~dtype:D.index ()
           in
           let sink = make_global_kernel [ g0; l0 ] in
           let ren =
@@ -564,10 +563,10 @@ let integration_tests =
             16);
       test "threaded renderer rejects multiple global ranges" (fun () ->
           let r0 =
-            U.range ~size:(idx 4) ~axis:0 ~kind:Ak.Global ~dtype:D.Val.weakint ()
+            U.range ~size:(idx 4) ~axis:0 ~kind:Ak.Global ~dtype:D.index ()
           in
           let r1 =
-            U.range ~size:(idx 4) ~axis:1 ~kind:Ak.Global ~dtype:D.Val.weakint ()
+            U.range ~size:(idx 4) ~axis:1 ~kind:Ak.Global ~dtype:D.index ()
           in
           let sink = make_global_kernel [ r0; r1 ] in
           raises_match
@@ -575,7 +574,7 @@ let integration_tests =
             (fun () -> ignore (Gpudims.pm_add_gpudims (thread_renderer ()) sink)));
       test "threaded renderer rejects local-only ranges" (fun () ->
           let l0 =
-            U.range ~size:(idx 4) ~axis:0 ~kind:Ak.Local ~dtype:D.Val.weakint ()
+            U.range ~size:(idx 4) ~axis:0 ~kind:Ak.Local ~dtype:D.index ()
           in
           let sink = make_global_kernel [ l0 ] in
           raises_match
@@ -594,19 +593,19 @@ let missing_locals_tests =
     [
       test "missing local range gets gated with Invalid" (fun () ->
           let g0 =
-            U.range ~size:(idx 32) ~axis:0 ~kind:Ak.Global ~dtype:D.Val.weakint ()
+            U.range ~size:(idx 32) ~axis:0 ~kind:Ak.Global ~dtype:D.index ()
           in
           let l0 =
-            U.range ~size:(idx 8) ~axis:1 ~kind:Ak.Local ~dtype:D.Val.weakint ()
+            U.range ~size:(idx 8) ~axis:1 ~kind:Ak.Local ~dtype:D.index ()
           in
-          let p = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
+          let p = U.param ~slot:0 ~dtype:D.float32 ~addrspace:D.Global () in
           (* Load using both ranges *)
-          let load_idx = U.index ~ptr:p ~idxs:[U.O.(g0 + l0)] ~as_ptr:true () in
+          let load_idx = U.index ~ptr:p ~idxs:[U.O.(g0 + l0)] () in
           let loaded = U.load ~src:load_idx () in
           (* End local loop (local reduction) *)
           let reduced = U.end_ ~value:loaded ~ranges:[ l0 ] in
           (* Store using ONLY the global range in the index *)
-          let store_idx = U.index ~ptr:p ~idxs:[g0] ~as_ptr:true () in
+          let store_idx = U.index ~ptr:p ~idxs:[g0] () in
           let st = U.store ~dst:store_idx ~value:reduced () in
           let ki = kernel_info () in
           let sink = U.sink ~kernel_info:ki [ st ] in
@@ -633,17 +632,17 @@ let missing_locals_tests =
           is_true has_where ~msg:"has Where node for gating");
       test "missing local range rejects multi-index global store" (fun () ->
           let g0 =
-            U.range ~size:(idx 32) ~axis:0 ~kind:Ak.Global ~dtype:D.Val.weakint ()
+            U.range ~size:(idx 32) ~axis:0 ~kind:Ak.Global ~dtype:D.index ()
           in
           let l0 =
-            U.range ~size:(idx 8) ~axis:1 ~kind:Ak.Local ~dtype:D.Val.weakint ()
+            U.range ~size:(idx 8) ~axis:1 ~kind:Ak.Local ~dtype:D.index ()
           in
-          let p = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-          let load_idx = U.index ~ptr:p ~idxs:[ U.O.(g0 + l0) ] ~as_ptr:true () in
+          let p = U.param ~slot:0 ~dtype:D.float32 ~addrspace:D.Global () in
+          let load_idx = U.index ~ptr:p ~idxs:[ U.O.(g0 + l0) ] () in
           let loaded = U.load ~src:load_idx () in
           let reduced = U.end_ ~value:loaded ~ranges:[ l0 ] in
           let store_idx =
-            U.index ~ptr:p ~idxs:[ g0; U.const_int 0 ] ~as_ptr:true ()
+            U.index ~ptr:p ~idxs:[ g0; U.const_int 0 ] ()
           in
           let st = U.store ~dst:store_idx ~value:reduced () in
           let sink = U.sink ~kernel_info:(kernel_info ()) [ st ] in
@@ -661,10 +660,10 @@ let dont_use_locals_tests =
     [
       test "uses idx prefix with no local SPECIALs" (fun () ->
           let g0 =
-            U.range ~size:(idx 32) ~axis:0 ~kind:Ak.Global ~dtype:D.Val.weakint ()
+            U.range ~size:(idx 32) ~axis:0 ~kind:Ak.Global ~dtype:D.index ()
           in
           let g1 =
-            U.range ~size:(idx 16) ~axis:1 ~kind:Ak.Global ~dtype:D.Val.weakint ()
+            U.range ~size:(idx 16) ~axis:1 ~kind:Ak.Global ~dtype:D.index ()
           in
           let ki = kernel_info ~dont_use_locals:true () in
           let sink = make_global_kernel ~ki [ g0; g1 ] in
@@ -700,10 +699,10 @@ let dont_use_locals_tests =
           is_true (not has_local) ~msg:"no Local_id SPECIALs");
       test "rejects local ranges" (fun () ->
           let g0 =
-            U.range ~size:(idx 32) ~axis:0 ~kind:Ak.Global ~dtype:D.Val.weakint ()
+            U.range ~size:(idx 32) ~axis:0 ~kind:Ak.Global ~dtype:D.index ()
           in
           let l0 =
-            U.range ~size:(idx 8) ~axis:1 ~kind:Ak.Local ~dtype:D.Val.weakint ()
+            U.range ~size:(idx 8) ~axis:1 ~kind:Ak.Local ~dtype:D.index ()
           in
           let ki = kernel_info ~dont_use_locals:true () in
           let sink = make_global_kernel ~ki [ g0; l0 ] in

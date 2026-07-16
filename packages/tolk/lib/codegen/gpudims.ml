@@ -192,13 +192,11 @@ let gate_missing_locals (idx : U.t) (idx_view : U.index_view)
       (eq (List.hd missing) (int_ 0))
       (List.tl missing)
   in
-  let gate_idx value =
-    let dt = U.dtype value in
-    let invalid = U.const (Const.invalid ~dtype:(Dtype.val_of dt) ()) in
-    where (U.broadcast mask (Dtype.count dt)) value invalid
-  in
   U.replace idx
-    ~src:(Array.of_list (idx_view.ptr :: List.map gate_idx idx_view.idxs))
+    ~src:
+      (Array.of_list
+         (idx_view.ptr
+         :: List.map (fun v -> U.valid ~src:v ~cond:mask) idx_view.idxs))
     ()
 
 (* Per-device compute grid for a kernel. *)
@@ -209,10 +207,9 @@ let compute_idxs (ctx : Renderer.t) ki ~global_shape ~local_shape ~local_dims =
         "threaded renderer expects exactly one global range and no local ranges";
     let hi = dim_max global_shape.(0) - 1 in
     let core =
-      U.variable ~name:"core_id" ~min_val:0 ~max_val:hi
-        ~dtype:Dtype.Val.int32 ()
+      U.variable ~name:"core_id" ~min_val:0 ~max_val:hi ~dtype:Dtype.int32 ()
     in
-    [ U.cast ~src:core ~dtype:(Dtype.Val Dtype.Val.weakint) ]
+    [ U.cast ~src:core ~dtype:Dtype.index ]
   end
   else if ki.U.dont_use_locals then begin
     assert (local_dims = []);
