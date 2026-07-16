@@ -653,9 +653,6 @@ let as_program_info u =
 let mk ~op ~dtype ~src ~arg =
   intern_node { op; dtype; src; arg; node_tag = Option.None }
 
-let mk_tagged ~op ~dtype ~src ~arg ~node_tag =
-  intern_node { op; dtype; src; arg; node_tag }
-
 (* Smart constructors *)
 
 let void_dtype = Dtype.void
@@ -1022,7 +1019,7 @@ let reshape ~src ~shape =
 let expand ~src ~dims =
   (* EXPAND prepends [dims] as new leading axes; expanding by an empty shape
      (an empty stack) is a no-op. *)
-  if op dims = Ops.Stack && Array.length (src dims) = 0 then src
+  if op dims = Ops.Stack && children dims = [] then src
   else mk ~op:Ops.Expand ~dtype:(dtype src) ~src:[| src; dims |] ~arg:Arg.Empty
 
 let pad ~src ~offset ~size =
@@ -1721,7 +1718,6 @@ let dim_binary op a b =
   | _ -> alu_binary ~op ~lhs:a ~rhs:b
 
 let dim_add a b = dim_binary Ops.Add a b
-let dim_sub a b = dim_binary Ops.Sub a b
 let dim_mul a b = dim_binary Ops.Mul a b
 let dim_div a b = dim_binary Ops.Floordiv a b
 
@@ -1824,7 +1820,7 @@ let rec lenient_broadcast_shape shapes =
     in
     match dim with None -> prefix | Some d -> prefix @ [ d ]
 
-let rec as_shape u =
+let as_shape u =
   match op u with
   | Ops.Stack -> Array.to_list (src u)
   | Ops.Const -> [ u ]

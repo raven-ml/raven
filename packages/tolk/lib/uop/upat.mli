@@ -79,12 +79,11 @@ val var : string -> t
     rewrite callback context. *)
 
 val exact_dtype : Dtype.t -> dtype_pat
-(** [exact_dtype dt] matches exactly [dt], including vector width and pointer
-    metadata. *)
+(** [exact_dtype dt] matches exactly [dt]. *)
 
-val scalar_dtype : Dtype.scalar -> dtype_pat
-(** [scalar_dtype s] matches any dtype whose scalar identity is [s],
-    regardless of vector width. *)
+val scalar_dtype : Dtype.t -> dtype_pat
+(** [scalar_dtype s] matches exactly [s]. Dtypes are scalar, so this is
+    equivalent to {!exact_dtype}. *)
 
 val any_dtype : dtype_pat list -> dtype_pat
 (** [any_dtype ps] matches when any dtype pattern in [ps] matches. *)
@@ -110,7 +109,7 @@ val var_dtype : string -> dtype_pat -> t
 (** [var_dtype name dt] is {!var} restricted by the explicit dtype pattern
     [dt]. *)
 
-val var_scalar : string -> Dtype.scalar -> t
+val var_scalar : string -> Dtype.t -> t
 (** [var_scalar name s] is [var_dtype name (scalar_dtype s)]. *)
 
 val op :
@@ -180,11 +179,11 @@ val const :
 
 val const_int : int -> t
 (** [const_int n] matches a {!Ops.Const} of value [n] with dtype
-    {!Dtype.Val.weakint}. *)
+    {!Dtype.index} (the dtype {!Uop.const_int} builds). *)
 
 val const_float : float -> t
 (** [const_float x] matches a {!Ops.Const} of value [x] with dtype
-    {!Dtype.Val.float32}. *)
+    {!Dtype.weakfloat} (the dtype {!Uop.const_float} builds). *)
 
 val const_bool : bool -> t
 (** [const_bool b] matches a boolean {!Ops.Const} of value [b]. *)

@@ -8,7 +8,7 @@
 type dtype_pat =
   | Dtype of Dtype.t
   | Exact_dtype of Dtype.t
-  | Scalar_dtype of Dtype.scalar
+  | Scalar_dtype of Dtype.t
   | Any_dtype of dtype_pat list
 
 type pos = string * int * int * int
@@ -103,8 +103,8 @@ let const ?loc ?dtype ?name c =
   let dtype = Option.map (fun d -> Dtype d) dtype in
   with_loc ?loc (mk ~ops:[ Ops.Const ] ?dtype ~arg:(Has_const c) ?name ())
 
-let const_int n = const (Const.int Dtype.Val.weakint n)
-let const_float x = const (Const.float Dtype.Val.float32 x)
+let const_int n = const (Const.int Dtype.index n)
+let const_float x = const (Const.float Dtype.weakfloat x)
 
 (* Bool literals keep a bool dtype constraint (the reference writes them as
    [UPat.const(dtypes.bool, ...)]); numeric literals match by value across
@@ -283,11 +283,9 @@ let match_arg pat uop_arg =
 
 let rec match_dtype pat uop_dtype =
   match pat with
-  | Dtype d ->
-      Dtype.equal d uop_dtype
-      || (Dtype.count d = 1 && Dtype.scalar d = Dtype.scalar uop_dtype)
+  | Dtype d -> Dtype.equal d uop_dtype
   | Exact_dtype d -> Dtype.equal d uop_dtype
-  | Scalar_dtype s -> Dtype.scalar uop_dtype = s
+  | Scalar_dtype s -> Dtype.equal uop_dtype s
   | Any_dtype dtypes -> List.exists (fun dtype -> match_dtype dtype uop_dtype) dtypes
 
 let permutations l =
