@@ -15,9 +15,10 @@
     {!flatten_range}, {!simplify_ranges}. *)
 
 val flatten_range : Tolk_uop.Uop.t -> Tolk_uop.Uop.t option
-(** [flatten_range node] toposorts the range children of a Reduce or End
-    node and reattaches them in sorted order. Returns [None] for
-    other nodes or when already sorted. *)
+(** [flatten_range node] rebuilds a Reduce or End node with its range
+    children replaced by the deduplicated set of ranges the children are
+    nested within, in scope order. Returns [None] for other nodes or when
+    the children are already in that order. *)
 
 val split_ranges : Tolk_uop.Uop.t -> Tolk_uop.Uop.t
 (** [split_ranges root] splits ranges where [range floormod C] appears

@@ -17,9 +17,8 @@ module Ak = Axis_type
 
 (* Helpers *)
 
-let idx n = U.const (C.int D.Val.weakint n)
-let f32 x = U.const (C.float D.Val.float32 x)
-let global_fptr = D.Ptr.create D.Val.float32 ~addrspace:Global ~size:(-1)
+let idx n = U.const (C.int D.index n)
+let f32 x = U.const (C.float D.float32 x)
 
 let kernel_info () =
   {
@@ -36,25 +35,25 @@ let wrap_sink srcs = U.sink ~kernel_info:(kernel_info ()) srcs
 
 (* Build a loop range on [axis] with int [size]. *)
 let loop_range ~axis size =
-  U.range ~size:(idx size) ~axis ~kind:Ak.Loop ~dtype:D.Val.weakint ()
+  U.range ~size:(idx size) ~axis ~kind:Ak.Loop ~dtype:D.index ()
 
 (* Build a reduce range on [axis] with int [size]. *)
 let reduce_range ~axis size =
-  U.range ~size:(idx size) ~axis ~kind:Ak.Reduce ~dtype:D.Val.weakint ()
+  U.range ~size:(idx size) ~axis ~kind:Ak.Reduce ~dtype:D.index ()
 
 (* Build a gated load: LOAD(INDEX(param, WHERE(valid, idx, invalid)), alt=0). *)
 let gated_load ?(param_idx = 0) valid index_val =
-  let p = U.param ~slot:param_idx ~dtype:(Dtype.Ptr global_fptr) () in
+  let p = U.param ~slot:param_idx ~dtype:D.float32 ~addrspace:D.Global () in
   let gated =
     U.alu_ternary ~op:Ops.Where ~a:valid ~b:index_val ~c:(U.invalid ())
   in
-  let index_node = U.index ~ptr:p ~idxs:[gated] ~as_ptr:true () in
+  let index_node = U.index ~ptr:p ~idxs:[gated] () in
   U.load ~src:index_node ~alt:(f32 0.0) ~gate:valid ()
 
 (* Build a plain (ungated) load. *)
 let plain_load ?(param_idx = 0) index_val =
-  let p = U.param ~slot:param_idx ~dtype:(Dtype.Ptr global_fptr) () in
-  let index_node = U.index ~ptr:p ~idxs:[index_val] ~as_ptr:true () in
+  let p = U.param ~slot:param_idx ~dtype:D.float32 ~addrspace:D.Global () in
+  let index_node = U.index ~ptr:p ~idxs:[index_val] () in
   U.load ~src:index_node ()
 
 (* Collect all Range nodes from a rooted DAG. *)
@@ -106,7 +105,7 @@ let flatten_range_tests =
           let r0 = loop_range ~axis:0 4 in
           let open U.O in
           let r1 =
-            U.range ~size:(r0 + idx 1) ~axis:1 ~kind:Ak.Loop ~dtype:D.Val.weakint ()
+            U.range ~size:(r0 + idx 1) ~axis:1 ~kind:Ak.Loop ~dtype:D.index ()
           in
           let value = r0 + r1 in
           (* Build End with intentionally wrong order: [r1, r0] *)
@@ -147,8 +146,8 @@ let flatten_range_tests =
       test "does not rewrite gated store gate as ranges" (fun () ->
           let r = loop_range ~axis:0 8 in
           let open U.O in
-          let p = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-          let dst = U.index ~ptr:p ~idxs:[r] ~as_ptr:true () in
+          let p = U.param ~slot:0 ~dtype:D.float32 ~addrspace:D.Global () in
+          let dst = U.index ~ptr:p ~idxs:[r] () in
           let gate = r < idx 4 in
           let store = U.store ~dst ~value:(f32 1.0) ~gate () in
           let result = flatten_range_all (wrap_sink [ store ]) in
@@ -246,7 +245,7 @@ let simplify_merge_tests =
           let r1 = reduce_range ~axis:1 4 in
           let open U.O in
           let value = (r0 * idx 4) + r1 in
-          let red = U.reduce ~op:Ops.Add ~src:value ~ranges:[ r0; r1 ] ~dtype:D.Val.weakint in
+          let red = U.reduce ~op:Ops.Add ~src:value ~ranges:[ r0; r1 ] ~dtype:D.index in
           let sink = wrap_sink [ U.end_ ~value:red ~ranges:[] ] in
           let result = Simplify.simplify_ranges sink in
           (* Different kinds: should not merge *)
@@ -299,9 +298,9 @@ let range_shrink_tests =
           let lane valid =
             U.alu_ternary ~op:Ops.Where ~a:valid ~b:r ~c:(U.invalid ())
           in
-          let p = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
+          let p = U.param ~slot:0 ~dtype:D.float32 ~addrspace:D.Global () in
           let index_node =
-            U.index ~ptr:p ~idxs:[(U.stack [ lane valid1; lane valid2 ])] ~as_ptr:true ()
+            U.index ~ptr:p ~idxs:[(U.stack [ lane valid1; lane valid2 ])] ()
           in
           let load =
             U.load ~src:index_node ~alt:(f32 0.0)
@@ -319,9 +318,9 @@ let range_shrink_tests =
           let gated =
             U.alu_ternary ~op:Ops.Where ~a:valid ~b:r ~c:(U.invalid ())
           in
-          let p = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
+          let p = U.param ~slot:0 ~dtype:D.float32 ~addrspace:D.Global () in
           let index_node =
-            U.index ~ptr:p ~idxs:[ U.const_int 0; gated ] ~as_ptr:true ()
+            U.index ~ptr:p ~idxs:[ U.const_int 0; gated ] ()
           in
           let load =
             U.load ~src:index_node ~alt:(f32 0.0)
@@ -369,7 +368,7 @@ let range_shrink_tests =
           let load = gated_load (r < idx 4) r in
           let src = U.cast ~src:r ~dtype:(D.float32) + load in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.Val.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
           in
           let sink = wrap_sink [ U.end_ ~value:red ~ranges:[] ] in
           let result = Simplify.simplify_ranges sink in
@@ -401,11 +400,11 @@ let range_shrink_tests =
             U.alu_ternary ~op:Ops.Where ~a:valid ~b:(f32 1.0)
               ~c:(U.invalid ())
           in
-          let p = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
+          let p = U.param ~slot:0 ~dtype:D.float32 ~addrspace:D.Global () in
           let gated_idx =
             U.alu_ternary ~op:Ops.Where ~a:valid ~b:r ~c:(U.invalid ())
           in
-          let dst = U.index ~ptr:p ~idxs:[gated_idx] ~as_ptr:true () in
+          let dst = U.index ~ptr:p ~idxs:[gated_idx] () in
           let value =
             U.alu_ternary ~op:Ops.Where ~a:valid ~b:x ~c:(f32 0.0)
           in
@@ -424,11 +423,11 @@ let range_shrink_tests =
             U.alu_ternary ~op:Ops.Where ~a:valid ~b:(f32 1.0)
               ~c:(U.invalid ())
           in
-          let p = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
+          let p = U.param ~slot:0 ~dtype:D.float32 ~addrspace:D.Global () in
           let gated_idx =
             U.alu_ternary ~op:Ops.Where ~a:valid ~b:r ~c:(U.invalid ())
           in
-          let dst = U.index ~ptr:p ~idxs:[gated_idx] ~as_ptr:true () in
+          let dst = U.index ~ptr:p ~idxs:[gated_idx] () in
           let value =
             U.alu_ternary ~op:Ops.Where ~a:valid ~b:(f32 0.0) ~c:x
           in
@@ -441,8 +440,8 @@ let range_shrink_tests =
       test "separate store gate is preserved" (fun () ->
           let r = loop_range ~axis:0 256 in
           let open U.O in
-          let p = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-          let dst = U.index ~ptr:p ~idxs:[r] ~as_ptr:true () in
+          let p = U.param ~slot:0 ~dtype:D.float32 ~addrspace:D.Global () in
+          let dst = U.index ~ptr:p ~idxs:[r] () in
           let gate = r < idx 200 in
           let store = U.store ~dst ~value:(f32 1.0) ~gate () in
           let sink = wrap_sink [ U.end_ ~value:store ~ranges:[ r ] ] in
@@ -469,7 +468,7 @@ let reduce_unparented_tests =
           let r1 = loop_range ~axis:1 5 in
           let src = U.cast ~src:r0 ~dtype:(D.float32) in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r0; r1 ] ~dtype:D.Val.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r0; r1 ] ~dtype:D.float32
           in
           let result = Simplify.reduce_unparented_all red in
           (* r1 should be eliminated; result should have a Mul by 5 *)
@@ -482,7 +481,7 @@ let reduce_unparented_tests =
           let r1 = loop_range ~axis:1 3 in
           let src = U.cast ~src:r0 ~dtype:(D.float32) in
           let red =
-            U.reduce ~op:Ops.Mul ~src ~ranges:[ r0; r1 ] ~dtype:D.Val.float32
+            U.reduce ~op:Ops.Mul ~src ~ranges:[ r0; r1 ] ~dtype:D.float32
           in
           let result = Simplify.reduce_unparented_all red in
           let ranges = find_ranges result in
@@ -494,7 +493,7 @@ let reduce_unparented_tests =
           let r1 = loop_range ~axis:1 3 in
           let src = U.cast ~src:r0 ~dtype:(D.float32) in
           let red =
-            U.reduce ~op:Ops.Max ~src ~ranges:[ r0; r1 ] ~dtype:D.Val.float32
+            U.reduce ~op:Ops.Max ~src ~ranges:[ r0; r1 ] ~dtype:D.float32
           in
           let result = Simplify.reduce_unparented_all red in
           let ranges = find_ranges result in
@@ -509,7 +508,7 @@ let reduce_unparented_tests =
           let src = U.cast ~src:r0 ~dtype:(D.float32)
                     + U.cast ~src:r1 ~dtype:(D.float32) in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r0; r1 ] ~dtype:D.Val.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r0; r1 ] ~dtype:D.float32
           in
           let result = Simplify.reduce_unparented_all red in
           (* Both ranges referenced, no change *)
@@ -530,7 +529,7 @@ let reduce_simplify_tests =
           let open U.O in
           let src = x + y in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.Val.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
           in
           let result = Simplify.reduce_simplify_all red in
           (* After distribution + unparented removal, the constant term
@@ -561,7 +560,7 @@ let reduce_simplify_tests =
             U.alu_ternary ~op:Ops.Where ~a:cond ~b:val_ ~c:(f32 0.0)
           in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.Val.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
           in
           let result = Simplify.reduce_simplify_all red in
           (* Range should be eliminated *)
@@ -575,7 +574,7 @@ let reduce_simplify_tests =
             U.alu_ternary ~op:Ops.Where ~a:cond ~b:(f32 0.0) ~c:val_
           in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.Val.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
           in
           let result = Simplify.reduce_simplify_all red in
           (* Range should be eliminated: result is (10-3)*2 = 14 *)
@@ -586,7 +585,7 @@ let reduce_simplify_tests =
           let r = loop_range ~axis:0 5 in
           let src = f32 3.0 in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.Val.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
           in
           let result = Simplify.reduce_simplify_all red in
           equal int (count_ranges result) 0;
@@ -599,7 +598,7 @@ let reduce_simplify_tests =
           let x = f32 5.0 in
           let src = x * gate_cast in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.Val.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
           in
           let result = Simplify.reduce_simplify_all red in
           (* x * gate.cast() -> gate.where(x, 0) inside the reduce,
@@ -616,7 +615,7 @@ let reduce_simplify_tests =
             U.alu_ternary ~op:Ops.Where ~a:cond ~b:(f32 1.0) ~c:(f32 0.0)
           in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r1; r2 ] ~dtype:D.Val.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r1; r2 ] ~dtype:D.float32
           in
           let result = Simplify.reduce_simplify_all red in
           (* r2 is unparented -> removed with *4 multiplier.
@@ -643,7 +642,7 @@ let reduce_simplify_tests =
             U.alu_ternary ~op:Ops.Where ~a:cond ~b:val_ ~c:(f32 0.0)
           in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.Val.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
           in
           let result = Simplify.reduce_simplify_all red in
           (* Range should be eliminated: count = min(max(min(7,10)-max(2,0),0),10) = 5 *)
@@ -662,7 +661,7 @@ let reduce_simplify_tests =
             U.alu_ternary ~op:Ops.Where ~a:cond ~b:val_ ~c:(f32 0.0)
           in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.Val.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
           in
           let result = Simplify.reduce_simplify_all red in
           equal int (count_ranges result) 0);
@@ -678,7 +677,7 @@ let reduce_simplify_tests =
             U.alu_ternary ~op:Ops.Where ~a:cond ~b:(idx 1) ~c:(idx 0)
           in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.Val.weakint
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.index
           in
           let result = Simplify.reduce_simplify_all red in
           equal int (count_ranges result) 0);
@@ -695,7 +694,7 @@ let reduce_simplify_tests =
             U.alu_ternary ~op:Ops.Where ~a:cond ~b:val_ ~c:(f32 0.0)
           in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.Val.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
           in
           let result = Simplify.reduce_simplify_all red in
           (* DEFINE_VAR should be factored out as a Mul *)
@@ -720,7 +719,7 @@ let load_collapse_tests =
             U.alu_ternary ~op:Ops.Where ~a:cond ~b:(f32 0.0) ~c:expr
           in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.Val.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
           in
           let result = Simplify.load_collapse_all red in
           (* The range should be eliminated *)
@@ -734,23 +733,18 @@ let load_collapse_tests =
           let expr = plain_load r in
           let src = expr * U.cast ~src:gate ~dtype:D.float32 in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.Val.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
           in
           let result = Simplify.load_collapse_all red in
           equal int (count_ranges result) 0);
-      test "undo rule: no math on loaded weakint index" (fun () ->
+      test "undo rule: no math on loaded index" (fun () ->
           (* (x:index + y) < c where x has a load -> x < (c - y) *)
           let p =
-            U.param ~slot:0
-              ~dtype:
-                (D.Ptr
-                   (D.Ptr.create (D.val_of D.int32) ~addrspace:Global
-                      ~size:(-1)))
-              ()
+            U.param ~slot:0 ~dtype:D.int32 ~addrspace:D.Global ()
           in
-          let index_node = U.index ~ptr:p ~idxs:[(idx 0)] ~as_ptr:true () in
+          let index_node = U.index ~ptr:p ~idxs:[(idx 0)] () in
           let loaded_idx =
-            U.cast ~src:(U.load ~src:index_node ()) ~dtype:D.weakint
+            U.cast ~src:(U.load ~src:index_node ()) ~dtype:D.index
           in
           let open U.O in
           let y = idx 5 in
@@ -772,14 +766,9 @@ let load_collapse_tests =
           | _ -> ()));
       test "undo rule ignores concrete loaded index" (fun () ->
           let p =
-            U.param ~slot:0
-              ~dtype:
-                (D.Ptr
-                   (D.Ptr.create (D.val_of D.int32) ~addrspace:Global
-                      ~size:(-1)))
-              ()
+            U.param ~slot:0 ~dtype:D.int32 ~addrspace:D.Global ()
           in
-          let index_node = U.index ~ptr:p ~idxs:[(idx 0)] ~as_ptr:true () in
+          let index_node = U.index ~ptr:p ~idxs:[(idx 0)] () in
           let loaded_idx = U.load ~src:index_node () in
           let open U.O in
           let y = idx 5 in
@@ -933,7 +922,7 @@ let load_collapse_extra_tests =
             U.alu_ternary ~op:Ops.Where ~a:cond ~b:(f32 0.0) ~c:expr
           in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.Val.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
           in
           let result = Simplify.load_collapse_all red in
           (* The expression should be simplified — at minimum the
@@ -951,7 +940,7 @@ let load_collapse_extra_tests =
             U.alu_ternary ~op:Ops.Where ~a:cond ~b:(f32 0.0) ~c:expr
           in
           let red =
-            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.Val.float32
+            U.reduce ~op:Ops.Add ~src ~ranges:[ r ] ~dtype:D.float32
           in
           let result = Simplify.load_collapse_all red in
           equal int (count_ranges result) 0);

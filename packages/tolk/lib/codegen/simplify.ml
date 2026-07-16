@@ -55,8 +55,7 @@ let no_range u =
 let no_load u =
   not (is_load u || List.exists is_load (U.backward_slice u))
 
-let symbolic =
-  Upat.Pattern_matcher.(Symbolic.symbolic ++ Symbolic.index_pushing)
+let symbolic = Symbolic.symbolic
 
 (* [ended_ranges u] are the children [u] closes around its body. *)
 let ended_ranges u =
@@ -109,7 +108,7 @@ let flatten_range r =
       in
       if rngs = [] then None
       else
-        let new_rngs = List.filter is_range (U.toposort (U.sink rngs)) in
+        let new_rngs = U.ranges (U.sink rngs) in
         let head = Array.sub s 0 off in
         let src = Array.append head (Array.of_list new_rngs) in
         let r' = U.replace r ~src () in
@@ -131,8 +130,8 @@ let simplify_merge_adjacent u =
   if u_ended = [] then None
   else
     let reduce_ranges =
-      List.filter_map (fun x ->
-        Option.map (fun (v : U.reduce_view) -> v.ranges) (U.as_reduce x))
+      List.filter_map
+        (fun x -> if U.op x = Ops.Reduce then Some (U.ranges x) else None)
         (u :: U.backward_slice u)
     in
     let pairs = match U.op u with
@@ -345,7 +344,7 @@ let split_ranges root =
    MUL: compensate by exponentiating. MAX: no compensation. *)
 let reduce_unparented node =
   match U.as_reduce node with
-  | Some { op; src; ranges }
+  | Some { op; src; ranges; _ }
     when (op = Ops.Add || op = Ops.Max || op = Ops.Mul)
          && List.for_all is_range ranges ->
       let src_ranges = U.ranges src in
@@ -354,19 +353,15 @@ let reduce_unparented node =
       in
       if unparented = [] then None
       else
-        let dtype = Dtype.val_of (U.dtype node) in
+        let dtype = U.dtype node in
         let ret =
           if parented <> [] || not (Dtype.equal (U.dtype node) (U.dtype src))
           then U.reduce ~op ~src ~ranges:parented ~dtype
           else src
         in
         let compensate binop acc r =
-          let s =
-            U.cast ~src:(range_size r)
-              ~dtype:(Dtype.Val (Dtype.Val.scalarize dtype))
-          in
-          let b = U.broadcast s (Dtype.Val.count dtype) in
-          U.alu_binary ~op:binop ~lhs:acc ~rhs:b
+          U.alu_binary ~op:binop ~lhs:acc
+            ~rhs:(U.cast ~src:(range_size r) ~dtype)
         in
         let ret = match op with
           | Ops.Add -> List.fold_left (compensate Ops.Mul) ret unparented
@@ -406,7 +401,7 @@ let maximum a b = U.alu_binary ~op:Ops.Max ~lhs:a ~rhs:b
 
 let as_lowered_add_reduce u =
   match U.as_reduce u with
-  | Some ({ op = Ops.Add; axes = []; _ } as v) -> Some v
+  | Some ({ op = Ops.Add; num_axes = 0; _ } as v) -> Some v
   | _ -> None
 
 (* The reference builds [a - b] as [a + b * (-1)]; a raw SUB node would
@@ -516,7 +511,7 @@ let rule_reduce_split_add =
     match as_lowered_add_reduce red with
     | None -> None
     | Some { ranges; _ } ->
-        let dtype = Dtype.val_of (U.dtype red) in
+        let dtype = U.dtype red in
         Some
           (U.alu_binary ~op:Ops.Add
              ~lhs:(U.reduce ~op:Ops.Add ~src:x ~ranges ~dtype)
@@ -537,7 +532,7 @@ let rule_reduce_and_where =
     | Some { ranges; _ } ->
         if not (is_zero_const z) then None
         else
-          let dtype = Dtype.val_of (U.dtype red) in
+          let dtype = U.dtype red in
           let body =
             U.alu_ternary ~op:Ops.Where ~a:y ~b:c ~c:(U.zero_like c)
           in
@@ -676,7 +671,7 @@ let collect_proxies ~included ~in_set =
         let dv =
           U.variable ~name:(Printf.sprintf "in%d" !n)
             ~min_val:(U.vmin s) ~max_val:(U.vmax s)
-            ~dtype:(Dtype.val_of (U.dtype s)) ()
+            ~dtype:(U.dtype s) ()
         in
         U.Ref_tbl.replace proxies s dv;
         incr n
@@ -716,7 +711,7 @@ let reduce_collapse_inner ~pm red u =
             let collapse_fxn =
               U.reduce ~op:Ops.Add ~ranges:[ r ]
                 ~src:(U.substitute fwd !result)
-                ~dtype:(Dtype.val_of (U.dtype !result))
+                ~dtype:(U.dtype !result)
             in
             let sink =
               rewrite_fixpoint ~name:"reduce_collapse" pm collapse_fxn
@@ -754,20 +749,17 @@ let pm_reduce_simplify =
 
 (* Load collapse *)
 
-let is_weakint_dtype dtype = Dtype.scalar dtype = Dtype.Weakint
-
-(* Undo the inner-lift rule on weakint expressions that carry a load:
+(* Undo the inner-lift rule on index expressions that carry a load:
    math on a loaded index can overflow. *)
 let rule_undo_add_lt_on_load =
   let open Upat in
-  let x = var "x" and y = var "y" and c = var "c" in
+  let x = var_dtype "x" (exact_dtype Dtype.index)
+  and y = var "y"
+  and c = var "c" in
   O.(x + y < c) => fun bs ->
     let x = bs $ "x" and y = bs $ "y" and c = bs $ "c" in
-    if is_weakint_dtype (U.dtype x) && no_load y && no_load c
-       && not (no_load x)
-    then
-      let open U.O in
-      Some (x < c - y)
+    if no_load y && no_load c && not (no_load x) then
+      Some U.O.(x < sub_add_neg c y)
     else None
 
 let pm_load_collapse =
