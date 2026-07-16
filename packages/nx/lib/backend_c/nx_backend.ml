@@ -372,15 +372,13 @@ let to_ffi_tensor t =
 (* Create a new tensor with given shape *)
 let create_tensor ctx dtype shape_arr =
   let size = Array.fold_left ( * ) 1 shape_arr in
-  let kind = Dtype.to_buffer_kind dtype in
-  let buffer = Nx_buffer.create kind size in
+  let buffer = Nx_buffer.create dtype size in
   let view = View.create shape_arr in
   { context = ctx; dtype; buffer; view }
 
 let buffer ctx dtype shape_arr =
-  let kind = Dtype.to_buffer_kind dtype in
   let size = Array.fold_left ( * ) 1 shape_arr in
-  let buffer = Nx_buffer.create kind size in
+  let buffer = Nx_buffer.create dtype size in
   let view = View.create shape_arr in
   { context = ctx; dtype; buffer; view }
 
@@ -455,7 +453,7 @@ let comparison_op op_name ffi_op x y =
 (* ───── Buffer Allocation ───── *)
 
 let from_host ctx array =
-  let dtype = Dtype.of_buffer_kind (Nx_buffer.kind array) in
+  let dtype = Nx_buffer.kind array in
   let size = Nx_buffer.length array in
   (* Create a view for the 1D array *)
   let view = View.create [| size |] in
@@ -732,8 +730,8 @@ let scatter ?(mode = `Set) ?(unique_indices = false) data_template ~indices
   let indices' = ensure_materializable indices in
   let updates' = ensure_materializable updates in
 
-  (* Both modes update on top of the template's values: [`Set] overwrites at
-     the scattered coordinates, [`Add] accumulates into them. *)
+  (* Both modes update on top of the template's values: [`Set] overwrites at the
+     scattered coordinates, [`Add] accumulates into them. *)
   let out = copy data_template in
 
   (* Convert to FFI tensors *)

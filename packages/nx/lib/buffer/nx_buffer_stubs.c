@@ -448,7 +448,9 @@ CAMLprim value caml_nx_buffer_kind(value vb) {
   struct caml_ba_array *b = Caml_ba_array_val(vb);
   int kind = nx_buffer_get_kind(b);
 
-  /* Map to GADT constructor index (19 constructors) */
+  /* Map to GADT constructor index. Pinned to the declaration order of
+     [Nx_buffer.kind] (19 constructors) and mirrored by the JavaScript stub;
+     the OCaml test suite checks the round-trip for every constructor. */
   switch (kind) {
     case CAML_BA_FLOAT16:    return Val_int(0);
     case CAML_BA_FLOAT32:    return Val_int(1);
@@ -456,16 +458,16 @@ CAMLprim value caml_nx_buffer_kind(value vb) {
     case NX_BA_BFLOAT16:     return Val_int(3);
     case NX_BA_FP8_E4M3:    return Val_int(4);
     case NX_BA_FP8_E5M2:    return Val_int(5);
-    case CAML_BA_SINT8:      return Val_int(6);
-    case CAML_BA_UINT8:      return Val_int(7);
-    case CAML_BA_SINT16:     return Val_int(8);
-    case CAML_BA_UINT16:     return Val_int(9);
-    case CAML_BA_INT32:      return Val_int(10);
-    case NX_BA_UINT32:       return Val_int(11);
-    case CAML_BA_INT64:      return Val_int(12);
-    case NX_BA_UINT64:       return Val_int(13);
-    case NX_BA_INT4:         return Val_int(14);
-    case NX_BA_UINT4:        return Val_int(15);
+    case NX_BA_INT4:         return Val_int(6);
+    case NX_BA_UINT4:        return Val_int(7);
+    case CAML_BA_SINT8:      return Val_int(8);
+    case CAML_BA_UINT8:      return Val_int(9);
+    case CAML_BA_SINT16:     return Val_int(10);
+    case CAML_BA_UINT16:     return Val_int(11);
+    case CAML_BA_INT32:      return Val_int(12);
+    case NX_BA_UINT32:       return Val_int(13);
+    case CAML_BA_INT64:      return Val_int(14);
+    case NX_BA_UINT64:       return Val_int(15);
     case CAML_BA_COMPLEX32:  return Val_int(16);
     case CAML_BA_COMPLEX64:  return Val_int(17);
     case NX_BA_BOOL:         return Val_int(18);

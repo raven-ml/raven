@@ -17,8 +17,8 @@ end
 (* Re-export extended type aliases *)
 type bfloat16_t = (float, Nx_buffer.bfloat16_elt) t
 type bool_t = (bool, Nx_buffer.bool_elt) t
-type int4_t = (int, Nx_buffer.int4_signed_elt) t
-type uint4_t = (int, Nx_buffer.int4_unsigned_elt) t
+type int4_t = (int, Nx_buffer.int4_elt) t
+type uint4_t = (int, Nx_buffer.uint4_elt) t
 type float8_e4m3_t = (float, Nx_buffer.float8_e4m3_elt) t
 type float8_e5m2_t = (float, Nx_buffer.float8_e5m2_elt) t
 

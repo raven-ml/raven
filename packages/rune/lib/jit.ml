@@ -33,8 +33,8 @@
    depends on the inputs) raises [Jit_error]: a compiled trace cannot branch on
    data. Operations Tolk cannot express (FFT, linear algebra, complex dtypes)
    raise [Jit_error] as well. Threefry (the RNG primitive) compiles, but only
-   when its key depends on the traced inputs: a constant key would burn one
-   draw into the program and silently replay it on every call, so it raises
+   when its key depends on the traced inputs: a constant key would burn one draw
+   into the program and silently replay it on every call, so it raises
    [Jit_error] pointing at [Rune.Rng] key threading. *)
 
 open Nx_effect
@@ -198,11 +198,11 @@ let reset_stats () =
 
 (* Placements
 
-   A compiled trace binds each input and output leaf to a placement: the
-   trace's single device, or — under [pmap] — every device of a tuple, either
-   replicated (a full copy per device) or sharded (split along one axis into
-   equal per-device slices). The traced function always observes global
-   shapes; placement is a property of the compiled signature. *)
+   A compiled trace binds each input and output leaf to a placement: the trace's
+   single device, or — under [pmap] — every device of a tuple, either replicated
+   (a full copy per device) or sharded (split along one axis into equal
+   per-device slices). The traced function always observes global shapes;
+   placement is a property of the compiled signature. *)
 
 type leaf_place = P_single | P_replicated | P_sharded of int
 
@@ -216,14 +216,13 @@ type multi_spec = { md_names : string list; md_devs : Tolk.Device.t list }
 (* Resident outputs
 
    On devices that do not share host memory, a compiled call's outputs stay on
-   the device: each output leaf becomes a deferred host tensor (a handle)
-   owning the device buffers (one per device of its placement) bound freshly
-   for that call. Reading the handle forces it — synchronize, gather the
-   buffers out, release them to the allocator — and a handle dropped unread is
-   released by a GC finalizer. The registry maps live handle ids to their
-   buffers so replay can seed a compiled input directly with resident buffers
-   (no transfer) when a handle is fed back into a jit or pmap call with the
-   same placement. *)
+   the device: each output leaf becomes a deferred host tensor (a handle) owning
+   the device buffers (one per device of its placement) bound freshly for that
+   call. Reading the handle forces it — synchronize, gather the buffers out,
+   release them to the allocator — and a handle dropped unread is released by a
+   GC finalizer. The registry maps live handle ids to their buffers so replay
+   can seed a compiled input directly with resident buffers (no transfer) when a
+   handle is fed back into a jit or pmap call with the same placement. *)
 
 type resident_entry = {
   mutable r_id : int;
@@ -245,8 +244,8 @@ let donated_error () =
 
 let resident : (int, resident_entry) Hashtbl.t = Hashtbl.create 64
 
-(* Finalizers only record the entry; buffers are released at the next safe
-   point (a force or a replay), not mid-GC inside arbitrary device code. *)
+(* Finalizers only record the entry; buffers are released at the next safe point
+   (a force or a replay), not mid-GC inside arbitrary device code. *)
 let pending_release : resident_entry list ref = ref []
 
 let release_entry e =
@@ -276,8 +275,8 @@ let resident_budget () =
   env_int "RUNE_JIT_RESIDENT_BUDGET" (4 * 1024 * 1024 * 1024)
 
 (* Fresh device buffer for a call's output. Past the resident budget, collect
-   dropped handles first; on allocation failure collect and retry once (the
-   LRU allocator has flushed its own cache by then). *)
+   dropped handles first; on allocation failure collect and retry once (the LRU
+   allocator has flushed its own cache by then). *)
 let create_fresh_buffer dev dtolk n =
   drain_releases ();
   if !resident_bytes > resident_budget () then begin
@@ -382,10 +381,10 @@ let atan2_graph y x =
   let pi = F.Creation.const_like z (F.Tensor.Sfloat Float.pi) in
   add z (where (lt x (zero x)) (where (ge y (zero y)) pi (neg pi)) (zero z))
 
-(* Whether [u]'s graph reaches an input buffer node. Constants lifted during
-   the trace (captures, host arrays) are buffers too, but only input nodes are
-   in [st.input_tags]; a value that never touches one is a compile-time
-   constant of the trace. *)
+(* Whether [u]'s graph reaches an input buffer node. Constants lifted during the
+   trace (captures, host arrays) are buffers too, but only input nodes are in
+   [st.input_tags]; a value that never touches one is a compile-time constant of
+   the trace. *)
 let depends_on_input st u =
   let seen = Hashtbl.create 32 in
   let rec go u =
@@ -394,8 +393,8 @@ let depends_on_input st u =
     else begin
       Hashtbl.add seen tag ();
       (match U.op u with
-      | Tolk_uop.Ops.Buffer -> Hashtbl.mem st.input_tags tag
-      | _ -> false)
+        | Tolk_uop.Ops.Buffer -> Hashtbl.mem st.input_tags tag
+        | _ -> false)
       || Array.exists go (U.src u)
     end
   in
@@ -405,19 +404,16 @@ let depends_on_input st u =
    pairs laid out as consecutive elements; Tolk's primitive mixes uint64
    counters with a uint64 key. Pack each pair low word first (element 0 is the
    low half, matching the C kernel's [v[0]]), apply the primitive, and unpack
-   the two result halves back into consecutive int32 lanes. Tolk's
-   decomposition (decomp_op.ml) computes the same 20-round Random123 function
-   as the eager C kernel, so compiled draws are bit-identical to eager
-   ones. *)
+   the two result halves back into consecutive int32 lanes. Tolk's decomposition
+   (decomp_op.ml) computes the same 20-round Random123 function as the eager C
+   kernel, so compiled draws are bit-identical to eager ones. *)
 let threefry_graph key ctr =
   let open F.Elementwise in
   let shape = F.Tensor.shape key in
   let n = List.fold_left ( * ) 1 shape / 2 in
   let col t i =
     F.Movement.reshape
-      (F.Movement.shrink
-         (F.Movement.reshape t [ n; 2 ])
-         [ (0, n); (i, i + 1) ])
+      (F.Movement.shrink (F.Movement.reshape t [ n; 2 ]) [ (0, n); (i, i + 1) ])
       [ n ]
   in
   let sint t v = F.Creation.const_like t (F.Tensor.Sint v) in
@@ -621,13 +617,12 @@ let handler st =
     | E_const_scalar { value; dtype; _ } ->
         Some
           (fun k ->
-            (* [buffer:false] keeps the scalar an immediate constant: it
-               folds into consuming kernels instead of being stored into a
-               one-element buffer by a kernel of its own. *)
+            (* [buffer:false] keeps the scalar an immediate constant: it folds
+               into consuming kernels instead of being stored into a one-element
+               buffer by a kernel of its own. *)
             let tt =
-              F.Creation.full ~buffer:false
-                ~dtype:(tolk_val_dtype dtype)
-                [] (scalar_of dtype value)
+              F.Creation.full ~buffer:false ~dtype:(tolk_val_dtype dtype) []
+                (scalar_of dtype value)
             in
             let ph = Nx_effect.const_scalar st.st_ctx value dtype in
             Tbl.replace st.table (Obj.repr ph) tt;
@@ -855,11 +850,11 @@ let handler st =
         Some (fun k -> ret k (dt t_in) (F.Elementwise.contiguous (go t_in)))
     | E_copy { t_in } ->
         Some (fun k -> ret k (dt t_in) (F.Elementwise.contiguous (go t_in)))
-    (* In-place assignment: rebind the destination to the assigned value.
-       Input leaves are also written back on every call. Captures are
-       compile-time constants, so assigning to one cannot be replayed and
-       fails at trace time. Assigning into a view would require aliasing the
-       destination's base tensor, which a trace cannot see. *)
+    (* In-place assignment: rebind the destination to the assigned value. Input
+       leaves are also written back on every call. Captures are compile-time
+       constants, so assigning to one cannot be replayed and fails at trace
+       time. Assigning into a view would require aliasing the destination's base
+       tensor, which a trace cannot see. *)
     | E_assign { dst; src } ->
         Some
           (fun k ->
@@ -880,8 +875,7 @@ let handler st =
             else begin
               let sv = tolk_of st src in
               Tbl.replace st.table key sv;
-              if Tbl.mem st.input_index key && not (Tbl.mem st.wb_seen key)
-              then begin
+              if Tbl.mem st.input_index key && not (Tbl.mem st.wb_seen key) then begin
                 Tbl.replace st.wb_seen key ();
                 st.writebacks <-
                   Packed (Nx_effect.dtype dst, dst) :: st.writebacks
@@ -911,10 +905,10 @@ let handler st =
         Some (fun k -> ret k (dt a) (F.Op.matmul (go a) (go b)))
     (* Device movement is the identity on the single jit device. *)
     | E_to_device { t_in; _ } -> Some (fun k -> Effect.Deep.continue k t_in)
-    (* Random bits compile only from a key that depends on the traced inputs.
-       A constant key (implicit RNG such as [Nx.rand], or a captured key)
-       would freeze one draw into the compiled program and silently replay it
-       on every call — the worst failure mode, wrong without erring. *)
+    (* Random bits compile only from a key that depends on the traced inputs. A
+       constant key (implicit RNG such as [Nx.rand], or a captured key) would
+       freeze one draw into the compiled program and silently replay it on every
+       call — the worst failure mode, wrong without erring. *)
     | E_threefry { key; ctr } ->
         Some
           (fun k ->
@@ -962,7 +956,7 @@ let handler st =
 
 (* Host transfers *)
 
-let itemsize dt = Nx_buffer.kind_size_in_bytes (ND.to_buffer_kind dt)
+let itemsize dt = Nx_buffer.kind_size_in_bytes dt
 
 (* Wrap host memory as a device buffer without copying. The caller must keep the
    memory's owner reachable while the buffer can still be read or written. *)
@@ -997,8 +991,8 @@ let wrap_tensor : type a b.
    directly. *)
 type host_out = Host : ('a, 'b) ND.t * ('a, 'b) Nx_buffer.t -> host_out
 
-(* Byte staging for device transfers, reused across calls and keyed by size so
-   a compiled program does not repopulate the page tables with fresh
+(* Byte staging for device transfers, reused across calls and keyed by size so a
+   compiled program does not repopulate the page tables with fresh
    multi-megabyte [Bytes] on every replay. Compiled functions are not
    thread-safe, and each scratch use completes before the next lookup. *)
 type scratch = (int, Bytes.t) Hashtbl.t
@@ -1025,10 +1019,10 @@ let copyin_tensor : type a b.
   bytes_to_device := !bytes_to_device + Bytes.length bytes;
   Tolk.Device.Buffer.copyin buf bytes
 
-(* Byte geometry of an even split of [shape] along [axis] into [parts]:
-   [outer] host rows, [shard_row] bytes of each row per shard, [full_row]
-   bytes per row in total. Axis 0 degenerates to one contiguous block per
-   shard ([outer] = 1). *)
+(* Byte geometry of an even split of [shape] along [axis] into [parts]: [outer]
+   host rows, [shard_row] bytes of each row per shard, [full_row] bytes per row
+   in total. Axis 0 degenerates to one contiguous block per shard ([outer] =
+   1). *)
 let shard_rows shape axis parts elt =
   let outer = ref 1 in
   for d = 0 to axis - 1 do
@@ -1052,10 +1046,13 @@ let tensor_bytes : type a b. scratch -> (a, b) Nx_effect.t -> Bytes.t =
   Nx_buffer.blit_to_bytes ~src_off:(NV.offset v) ~len:n host bytes;
   bytes
 
-(* Upload a host tensor to a device tuple: copy the full bytes to every
-   device (replication), or cut the per-device slices of the shard axis. *)
+(* Upload a host tensor to a device tuple: copy the full bytes to every device
+   (replication), or cut the per-device slices of the shard axis. *)
 let upload_multi : type a b.
-    scratch -> leaf_place -> Tolk.Device.Buffer.t list -> (a, b) Nx_effect.t ->
+    scratch ->
+    leaf_place ->
+    Tolk.Device.Buffer.t list ->
+    (a, b) Nx_effect.t ->
     unit =
  fun sc place bufs x ->
   let bytes = tensor_bytes sc x in
@@ -1079,8 +1076,9 @@ let upload_multi : type a b.
           else begin
             let sb = scratch_bytes sc shard_bytes in
             for o = 0 to outer - 1 do
-              Bytes.blit bytes ((o * full_row) + (k * shard_row)) sb
-                (o * shard_row) shard_row
+              Bytes.blit bytes
+                ((o * full_row) + (k * shard_row))
+                sb (o * shard_row) shard_row
             done;
             copyin buf sb
           end)
@@ -1099,15 +1097,15 @@ let read_out : type a b.
   let bytes = scratch_bytes sc (Tolk.Device.Buffer.nbytes buf) in
   bytes_from_device := !bytes_from_device + Bytes.length bytes;
   Tolk.Device.Buffer.copyout buf bytes;
-  let host = Nx_buffer.create (ND.to_buffer_kind dtv) n in
+  let host = Nx_buffer.create dtv n in
   Nx_buffer.blit_from_bytes ~len:n bytes host;
   Nx_effect.reshape (Nx_effect.from_host ctx host) shape
 
 (* Wrap the device buffers of one placement as a deferred host tensor owning
    them. Metadata reads answer from the handle; the first data access
-   synchronizes the devices, copies the buffers out (gathering shards into
-   their host slices) and releases them to the allocator. Copy-out failures
-   surface at that first read. *)
+   synchronizes the devices, copies the buffers out (gathering shards into their
+   host slices) and releases them to the allocator. Copy-out failures surface at
+   that first read. *)
 let make_handle : type a b.
     devices:Tolk.Device.t list ->
     names:string list ->
@@ -1150,11 +1148,10 @@ let make_handle : type a b.
       bytes_from_device := !bytes_from_device + nb;
       bytes
     in
-    let host = Nx_buffer.create (ND.to_buffer_kind dtv) n in
+    let host = Nx_buffer.create dtv n in
     (match (axis, bufs) with
     (* Single or replicated: the first device holds the whole value. *)
-    | None, buf :: _ ->
-        Nx_buffer.blit_from_bytes ~len:n (copyout buf) host
+    | None, buf :: _ -> Nx_buffer.blit_from_bytes ~len:n (copyout buf) host
     | Some ax, bufs ->
         let parts = List.length bufs in
         let outer, shard_row, full_row =
@@ -1349,10 +1346,10 @@ let trace_compile ~device:dev ~zero_copy ~const_cache ?multi
     y;
   let outs = List.rev !out_assoc in
   let wbs = List.rev st.writebacks in
-  (* A result computed purely from trace-time constants (say, the zero
-     gradient of an unused parameter) has no device anywhere in its graph, so
-     the scheduler would materialize nothing for it. Anchor such results with
-     a bitwise-identity multiply by a device-resident scalar one. *)
+  (* A result computed purely from trace-time constants (say, the zero gradient
+     of an unused parameter) has no device anywhere in its graph, so the
+     scheduler would materialize nothing for it. Anchor such results with a
+     bitwise-identity multiply by a device-resident scalar one. *)
   let anchor : type a b. (a, b) ND.t -> F.Tensor.t -> F.Tensor.t =
    fun dt tt ->
     match U.device_of (F.Tensor.uop tt) with
@@ -1372,8 +1369,8 @@ let trace_compile ~device:dev ~zero_copy ~const_cache ?multi
       wbs
   in
   (* Canonicalize sharding before allocation: rewrite the multi-device rules
-     over the whole output graph now, so every sharded value reaching a sink
-     is a syntactic MULTI and buffer allocation sizes its output per shard
+     over the whole output graph now, so every sharded value reaching a sink is
+     a syntactic MULTI and buffer allocation sizes its output per shard
      (replicated values allocate full-size on every device). Scheduling
      reapplies the same rules; the rewrite is idempotent. *)
   let out_uops, wb_uops =
@@ -1389,8 +1386,7 @@ let trace_compile ~device:dev ~zero_copy ~const_cache ?multi
         in
         let pre = U.sink (outs_u @ wbs_u) in
         let pre =
-          U.graph_rewrite (Tolk.Multi.multi_pm ~shapes ~devices:U.device_of)
-            pre
+          U.graph_rewrite (Tolk.Multi.multi_pm ~shapes ~devices:U.device_of) pre
         in
         let children = U.children pre in
         let rec split n = function
@@ -1412,8 +1408,7 @@ let trace_compile ~device:dev ~zero_copy ~const_cache ?multi
   in
   let out_conts =
     List.map2
-      (fun (key, pk, _) u ->
-        (key, pk, u, place_of u, U.contiguous ~src:u ()))
+      (fun (key, pk, _) u -> (key, pk, u, place_of u, U.contiguous ~src:u ()))
       out_anch out_uops
   in
   let wb_conts =
@@ -1438,10 +1433,9 @@ let trace_compile ~device:dev ~zero_copy ~const_cache ?multi
       @ List.map (fun (_, _, _, c) -> c) wb_conts)
   in
   let call, buffer_map = Tolk.Allocations.transform_to_call sink in
-  (* Persistent compile cache: a hit replaces scheduling and kernel
-     compilation with an import of the stored compiled linear, rebound to
-     this trace's fresh buffer nodes. Multi-device placements are not
-     cached. *)
+  (* Persistent compile cache: a hit replaces scheduling and kernel compilation
+     with an import of the stored compiled linear, rebound to this trace's fresh
+     buffer nodes. Multi-device placements are not cached. *)
   let cache_key =
     match multi with Some _ -> None | None -> Jit_cache.key ~device:dev call
   in
@@ -1477,11 +1471,10 @@ let trace_compile ~device:dev ~zero_copy ~const_cache ?multi
         (linear, var_vals)
   in
   (* Batch consecutive graph-compatible kernels into device execution graphs
-     (CUDA graphs), so replay dispatches each batch as one launch instead of
-     one launch per kernel. Buffers rebound between replays (inputs, fresh
-     per-call outputs) are diff-patched into the recorded graph by
-     [Realize.run_linear]'s graph runner. Honors JIT (>= 2 disables) and
-     JIT_BATCH_SIZE. *)
+     (CUDA graphs), so replay dispatches each batch as one launch instead of one
+     launch per kernel. Buffers rebound between replays (inputs, fresh per-call
+     outputs) are diff-patched into the recorded graph by [Realize.run_linear]'s
+     graph runner. Honors JIT (>= 2 disables) and JIT_BATCH_SIZE. *)
   let linear = Tolk.Jit.batch_graphs ~device:dev linear in
   let binding = Tolk.Realize.Buffers.create ~device:dev in
   let reserved = Hashtbl.create 16 in
@@ -1495,9 +1488,9 @@ let trace_compile ~device:dev ~zero_copy ~const_cache ?multi
           Tolk.Realize.Buffers.seed_multi binding inp.i_node
             (Tolk.Device.Multi_buffer.of_bufs bufs))
     !assoc;
-  (* Bind each constant once, at compile time: alias its memory when the
-     device shares host memory and the tensor is contiguous, copy its bytes to
-     the device otherwise (to every device of a pmap tuple). *)
+  (* Bind each constant once, at compile time: alias its memory when the device
+     shares host memory and the tensor is contiguous, copy its bytes to the
+     device otherwise (to every device of a pmap tuple). *)
   let scratch = Hashtbl.create 8 in
   let wrapped = ref [] in
   List.iter
@@ -1508,9 +1501,9 @@ let trace_compile ~device:dev ~zero_copy ~const_cache ?multi
           Tolk.Realize.Buffers.seed binding node buf;
           wrapped := (pk, keep) :: !wrapped
       | None -> (
-          (* One device copy of a capture serves every signature of the
-             closure: the bytes are uploaded when the capture is first
-             compiled and later compilations reuse the buffer. *)
+          (* One device copy of a capture serves every signature of the closure:
+             the bytes are uploaded when the capture is first compiled and later
+             compilations reuse the buffer. *)
           let buf =
             match Tbl.find_opt const_cache (Obj.repr src) with
             | Some buf -> buf
@@ -1536,8 +1529,7 @@ let trace_compile ~device:dev ~zero_copy ~const_cache ?multi
                             buf)
                           spec.md_devs
                       in
-                      Tolk.Realize.Multi
-                        (Tolk.Device.Multi_buffer.of_bufs bufs)
+                      Tolk.Realize.Multi (Tolk.Device.Multi_buffer.of_bufs bufs)
                 in
                 Tbl.replace const_cache (Obj.repr src) buf;
                 buf
@@ -1549,11 +1541,11 @@ let trace_compile ~device:dev ~zero_copy ~const_cache ?multi
               Tolk.Realize.Buffers.seed_multi binding node mbuf))
     st.consts;
   (* Resolve each output to the buffer node realization assigned it. An output
-     whose node is a graph buffer under identity wrappers (an input or
-     constant returned unchanged: [U.contiguous] elides itself on
-     buffer-identity sources, so such outputs are never scheduled) reads that
-     buffer directly. In multi mode the mapped node may wrap the buffer in
-     MULTI; follow it down. *)
+     whose node is a graph buffer under identity wrappers (an input or constant
+     returned unchanged: [U.contiguous] elides itself on buffer-identity
+     sources, so such outputs are never scheduled) reads that buffer directly.
+     In multi mode the mapped node may wrap the buffer in MULTI; follow it
+     down. *)
   let rec strip_identity u =
     match U.op u with
     | Tolk_uop.Ops.Buffer -> Some u
@@ -1607,8 +1599,8 @@ let replay ~donate (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S)
     (c : Q.t compiled) (params : P.t) : Q.t =
   drain_releases ();
   let in0 = !bytes_to_device and out0 = !bytes_from_device in
-  (* Seed the inputs. A leaf that is an unread output of an earlier call on
-     this device seeds its input node with the resident buffer directly — no
+  (* Seed the inputs. A leaf that is an unread output of an earlier call on this
+     device seeds its input node with the resident buffer directly — no
      transfer, and the handle stays resident (inputs are read-only). Otherwise
      wrap the current leaf's memory when the device shares host memory and the
      leaf is contiguous, and copy its bytes if not. Seeded leaves and wrapped
@@ -1619,10 +1611,10 @@ let replay ~donate (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S)
     | None -> None
     | Some id -> Hashtbl.find_opt resident id
   in
-  (* A resident handle seeds the compiled input only when its placement
-     matches the input's: the same single device, or the same device tuple
-     with the same shard axis. Any other handle is forced by the copy path
-     (reading it materializes the host bytes) and re-split. *)
+  (* A resident handle seeds the compiled input only when its placement matches
+     the input's: the same single device, or the same device tuple with the same
+     shard axis. Any other handle is forced by the copy path (reading it
+     materializes the host bytes) and re-split. *)
   let resident_single leaf =
     match resident_of leaf with
     | Some ({ r_bufs = [ _ ]; r_axis = None; _ } as e)
@@ -1633,8 +1625,7 @@ let replay ~donate (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S)
   let resident_multi spec place leaf =
     match resident_of leaf with
     | Some e
-      when e.r_bufs <> []
-           && e.r_names = spec.md_names
+      when e.r_bufs <> [] && e.r_names = spec.md_names
            && e.r_axis = place_axis place ->
         Some e
     | _ -> None
@@ -1691,9 +1682,9 @@ let replay ~donate (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S)
      become the kernels' output storage, so results are written straight into
      the tensors returned to the caller; nodes backed by an input or constant
      buffer keep their binding and are read back through a copy instead. On
-     other devices, every distinct non-reserved output node is bound to a
-     fresh device buffer for this call, so handles from earlier calls keep
-     their own storage and never alias a later call's outputs. *)
+     other devices, every distinct non-reserved output node is bound to a fresh
+     device buffer for this call, so handles from earlier calls keep their own
+     storage and never alias a later call's outputs. *)
   let out_hosts : (int, host_out) Hashtbl.t = Hashtbl.create 8 in
   let out_bufs : (int, Tolk.Device.Buffer.t list) Hashtbl.t =
     Hashtbl.create 8
@@ -1708,7 +1699,7 @@ let replay ~donate (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S)
         then begin
           let shape = shape_of ph in
           let n = numel shape in
-          let host = Nx_buffer.create (ND.to_buffer_kind odt) n in
+          let host = Nx_buffer.create odt n in
           let buf =
             wrap_ptr c.cp_device (tolk_dtype odt) n
               (Nx_buffer.unsafe_data_ptr host)
@@ -1724,8 +1715,8 @@ let replay ~donate (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S)
         if
           (not (Hashtbl.mem c.cp_reserved tag))
           && not (Hashtbl.mem out_bufs tag)
-        then begin
-          match (place, c.cp_multi) with
+        then
+          begin match (place, c.cp_multi) with
           | P_single, _ ->
               let n = numel (shape_of ph) in
               let buf = create_fresh_buffer c.cp_device (tolk_dtype odt) n in
@@ -1744,20 +1735,19 @@ let replay ~donate (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S)
                 (Tolk.Device.Multi_buffer.of_bufs bufs);
               Hashtbl.add out_bufs tag bufs
           | (P_replicated | P_sharded _), None -> assert false
-        end)
+          end)
       c.cp_outputs;
   Tolk.Realize.run_linear ~device:c.cp_device
     ~to_program:(to_program c.cp_device) c.cp_binding ~var_vals:c.cp_vars
     ~jit:true c.cp_linear;
   (* An output that is an input or a capture returned unchanged keeps its
-     reserved binding; copy it into a fresh buffer on the device, so its
-     handle never aliases an input and survives later calls. *)
+     reserved binding; copy it into a fresh buffer on the device, so its handle
+     never aliases an input and survives later calls. *)
   if not c.cp_zero_copy then
     List.iter
       (fun (_, Packed (odt, ph), node, _) ->
         let tag = U.tag node in
-        if Hashtbl.mem c.cp_reserved tag && not (Hashtbl.mem out_bufs tag)
-        then begin
+        if Hashtbl.mem c.cp_reserved tag && not (Hashtbl.mem out_bufs tag) then begin
           let copy_to dev n src =
             let dst = create_fresh_buffer dev (tolk_dtype odt) n in
             if not (Tolk.Device.Buffer.transfer ~dst ~src) then
@@ -1791,8 +1781,8 @@ let replay ~donate (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S)
   | None -> Tolk.Device.synchronize c.cp_device);
   ignore (Sys.opaque_identity !keep);
   ignore (Sys.opaque_identity c.cp_wrapped);
-  (* Output leaves resolving to the same buffer node share one handle, so
-     each device buffer has a single owner. *)
+  (* Output leaves resolving to the same buffer node share one handle, so each
+     device buffer has a single owner. *)
   let handles : (int, packed) Hashtbl.t = Hashtbl.create 8 in
   let y =
     Q.map
@@ -1810,14 +1800,14 @@ let replay ~donate (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S)
                       (Nx_effect.from_host c.cp_ctx host)
                       (shape_of leaf)
                 | None -> assert false)
-            | None ->
+            | None -> (
                 if c.cp_zero_copy then
                   let buf =
                     Tolk.Realize.Buffers.of_buffer_node c.cp_binding node
                   in
                   read_out c.cp_scratch c.cp_ctx (Nx_effect.dtype leaf)
                     (shape_of leaf) buf
-                else (
+                else
                   match Hashtbl.find_opt handles tag with
                   | Some (Packed (hdt, h)) -> (
                       match ND.equal_witness hdt (Nx_effect.dtype leaf) with
@@ -1833,14 +1823,13 @@ let replay ~donate (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S)
                         match c.cp_multi with
                         | Some spec -> (spec.md_devs, spec.md_names)
                         | None ->
-                            ( [ c.cp_device ],
-                              [ Tolk.Device.name c.cp_device ] )
+                            ([ c.cp_device ], [ Tolk.Device.name c.cp_device ])
                       in
                       let dt = Nx_effect.dtype leaf in
                       let h =
                         make_handle ~devices ~names ~axis:(place_axis place)
-                          ~ctx:c.cp_ctx ~scratch:c.cp_scratch dt
-                          (shape_of leaf) bufs
+                          ~ctx:c.cp_ctx ~scratch:c.cp_scratch dt (shape_of leaf)
+                          bufs
                       in
                       Hashtbl.add handles tag (Packed (dt, h));
                       h))
@@ -1849,8 +1838,8 @@ let replay ~donate (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S)
   in
   Array.iter
     (fun (idx, node, place) ->
-      (* A sharded writeback is rejected at compile time; a replicated one
-         reads its first replica. *)
+      (* A sharded writeback is rejected at compile time; a replicated one reads
+         its first replica. *)
       let buf =
         match
           (place, Tolk.Realize.Buffers.buffer_of_node c.cp_binding node)
@@ -1858,8 +1847,7 @@ let replay ~donate (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S)
         | (P_single | P_replicated), Tolk.Realize.Single buf -> buf
         | (P_replicated | P_sharded _), Tolk.Realize.Multi m ->
             List.hd (Tolk.Device.Multi_buffer.bufs m)
-        | P_single, Tolk.Realize.Multi _ | P_sharded _, Tolk.Realize.Single _
-          ->
+        | P_single, Tolk.Realize.Multi _ | P_sharded _, Tolk.Realize.Single _ ->
             assert false
       in
       let j = ref 0 in
@@ -1870,12 +1858,12 @@ let replay ~donate (module P : Nx.Ptree.S) (module Q : Nx.Ptree.S)
         params)
     c.cp_writebacks;
   (* Donation. The devices have synchronized and every writeback has read its
-     buffer, so the storage of each input that seeded from a resident entry
-     can be returned to the allocator: the next call's fresh outputs reuse it,
+     buffer, so the storage of each input that seeded from a resident entry can
+     be returned to the allocator: the next call's fresh outputs reuse it,
      bounding a state-to-state loop at about two generations of device memory.
-     The handle becomes Donated — forcing it now raises. A donated leaf that
-     was also written back was already forced by the writeback (its entry
-     released, the handle holding the updated host value) and is skipped. *)
+     The handle becomes Donated — forcing it now raises. A donated leaf that was
+     also written back was already forced by the writeback (its entry released,
+     the handle holding the updated host value) and is skipped. *)
   if donate then
     List.iter
       (fun e ->
@@ -1962,8 +1950,8 @@ let jit' (type a b c d) ?device ?donate
   jit ?device ?donate (module L) f
 
 (* pmap: multi-device parallel jit. The compiled core is [trace_compile] /
-   [replay] with a multi-device placement; pmap only derives the placement
-   from [devices] and [in_axes] and validates it against the leaves. *)
+   [replay] with a multi-device placement; pmap only derives the placement from
+   [devices] and [in_axes] and validates it against the leaves. *)
 
 let device_prefix name =
   match String.index_opt name ':' with
@@ -1988,8 +1976,8 @@ let pmap_names devices =
 let pmap2 ~devices ?in_axes ?(donate = false) (module P : Nx.Ptree.S)
     (module Q : Nx.Ptree.S) (f : P.t -> Q.t) : P.t -> Q.t =
   let names = pmap_names devices in
-  (* Multi-device buffers resolve through the tolk device registry; route it
-     to the same factory the single-device jit uses. *)
+  (* Multi-device buffers resolve through the tolk device registry; route it to
+     the same factory the single-device jit uses. *)
   List.iter
     (fun n -> Tolk.Device.register (device_prefix n) Jit_device.create)
     names;

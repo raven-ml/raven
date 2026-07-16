@@ -11,12 +11,12 @@ type float64_elt = Nx_buffer.float64_elt
 type bfloat16_elt = Nx_buffer.bfloat16_elt
 type float8_e4m3_elt = Nx_buffer.float8_e4m3_elt
 type float8_e5m2_elt = Nx_buffer.float8_e5m2_elt
-type int4_elt = Nx_buffer.int4_signed_elt
-type uint4_elt = Nx_buffer.int4_unsigned_elt
-type int8_elt = Nx_buffer.int8_signed_elt
-type uint8_elt = Nx_buffer.int8_unsigned_elt
-type int16_elt = Nx_buffer.int16_signed_elt
-type uint16_elt = Nx_buffer.int16_unsigned_elt
+type int4_elt = Nx_buffer.int4_elt
+type uint4_elt = Nx_buffer.uint4_elt
+type int8_elt = Nx_buffer.int8_elt
+type uint8_elt = Nx_buffer.uint8_elt
+type int16_elt = Nx_buffer.int16_elt
+type uint16_elt = Nx_buffer.uint16_elt
 type int32_elt = Nx_buffer.int32_elt
 type uint32_elt = Nx_buffer.uint32_elt
 type int64_elt = Nx_buffer.int64_elt
@@ -27,7 +27,7 @@ type bool_elt = Nx_buffer.bool_elt
 
 (* ───── Dtype GADT ───── *)
 
-type ('a, 'b) t =
+type ('a, 'b) t = ('a, 'b) Nx_buffer.kind =
   | Float16 : (float, float16_elt) t
   | Float32 : (float, float32_elt) t
   | Float64 : (float, float64_elt) t
@@ -72,51 +72,12 @@ let bool = Bool
 
 (* ───── String Conversion ───── *)
 
-let to_string : type a b. (a, b) t -> string = function
-  | Float16 -> "float16"
-  | Float32 -> "float32"
-  | Float64 -> "float64"
-  | BFloat16 -> "bfloat16"
-  | Float8_e4m3 -> "float8_e4m3"
-  | Float8_e5m2 -> "float8_e5m2"
-  | Int4 -> "int4"
-  | UInt4 -> "uint4"
-  | Int8 -> "int8"
-  | UInt8 -> "uint8"
-  | Int16 -> "int16"
-  | UInt16 -> "uint16"
-  | Int32 -> "int32"
-  | UInt32 -> "uint32"
-  | Int64 -> "int64"
-  | UInt64 -> "uint64"
-  | Complex64 -> "complex64"
-  | Complex128 -> "complex128"
-  | Bool -> "bool"
-
+let to_string = Nx_buffer.kind_name
 let pp fmt dtype = Format.fprintf fmt "%s" (to_string dtype)
 
 (* ───── Properties ───── *)
 
-let itemsize : type a b. (a, b) t -> int = function
-  | Float16 -> 2
-  | Float32 -> 4
-  | Float64 -> 8
-  | BFloat16 -> 2
-  | Float8_e4m3 -> 1
-  | Float8_e5m2 -> 1
-  | Int4 -> 1 (* stored as 1 byte; packing is caller's responsibility *)
-  | UInt4 -> 1 (* stored as 1 byte; packing is caller's responsibility *)
-  | Int8 -> 1
-  | UInt8 -> 1
-  | Int16 -> 2
-  | UInt16 -> 2
-  | Int32 -> 4
-  | UInt32 -> 4
-  | Int64 -> 8
-  | UInt64 -> 8
-  | Complex64 -> 8
-  | Complex128 -> 16
-  | Bool -> 1
+let itemsize = Nx_buffer.kind_size_in_bytes
 
 let bits : type a b. (a, b) t -> int = function
   | Float16 -> 16
@@ -328,49 +289,7 @@ let of_float (type a b) (dtype : (a, b) t) (v : float) : a =
   | Complex128 -> Complex.{ re = v; im = 0. }
   | Bool -> v <> 0.0
 
-(* ───── Buffer/Bigarray Conversions ───── *)
-
-let of_buffer_kind : type a b. (a, b) Nx_buffer.kind -> (a, b) t = function
-  | Nx_buffer.Float16 -> Float16
-  | Nx_buffer.Float32 -> Float32
-  | Nx_buffer.Float64 -> Float64
-  | Nx_buffer.Bfloat16 -> BFloat16
-  | Nx_buffer.Float8_e4m3 -> Float8_e4m3
-  | Nx_buffer.Float8_e5m2 -> Float8_e5m2
-  | Nx_buffer.Int4_signed -> Int4
-  | Nx_buffer.Int4_unsigned -> UInt4
-  | Nx_buffer.Int8_signed -> Int8
-  | Nx_buffer.Int8_unsigned -> UInt8
-  | Nx_buffer.Int16_signed -> Int16
-  | Nx_buffer.Int16_unsigned -> UInt16
-  | Nx_buffer.Int32 -> Int32
-  | Nx_buffer.Uint32 -> UInt32
-  | Nx_buffer.Int64 -> Int64
-  | Nx_buffer.Uint64 -> UInt64
-  | Nx_buffer.Complex32 -> Complex64
-  | Nx_buffer.Complex64 -> Complex128
-  | Nx_buffer.Bool -> Bool
-
-let to_buffer_kind : type a b. (a, b) t -> (a, b) Nx_buffer.kind = function
-  | Float16 -> Nx_buffer.Float16
-  | Float32 -> Nx_buffer.Float32
-  | Float64 -> Nx_buffer.Float64
-  | BFloat16 -> Nx_buffer.Bfloat16
-  | Float8_e4m3 -> Nx_buffer.Float8_e4m3
-  | Float8_e5m2 -> Nx_buffer.Float8_e5m2
-  | Int4 -> Nx_buffer.Int4_signed
-  | UInt4 -> Nx_buffer.Int4_unsigned
-  | Int8 -> Nx_buffer.Int8_signed
-  | UInt8 -> Nx_buffer.Int8_unsigned
-  | Int16 -> Nx_buffer.Int16_signed
-  | UInt16 -> Nx_buffer.Int16_unsigned
-  | Int32 -> Nx_buffer.Int32
-  | UInt32 -> Nx_buffer.Uint32
-  | Int64 -> Nx_buffer.Int64
-  | UInt64 -> Nx_buffer.Uint64
-  | Complex64 -> Nx_buffer.Complex32
-  | Complex128 -> Nx_buffer.Complex64
-  | Bool -> Nx_buffer.Bool
+(* ───── Bigarray Conversions ───── *)
 
 let of_bigarray_kind : type a b. (a, b) Bigarray.kind -> (a, b) t = function
   | Bigarray.Float16 -> Float16
@@ -386,20 +305,10 @@ let of_bigarray_kind : type a b. (a, b) Bigarray.kind -> (a, b) t = function
   | Bigarray.Complex64 -> Complex128
   | _ -> invalid_arg "Dtype.of_bigarray_kind: unsupported bigarray kind"
 
-let to_bigarray_kind : type a b. (a, b) t -> (a, b) Bigarray.kind = function
-  | Float16 -> Bigarray.Float16
-  | Float32 -> Bigarray.Float32
-  | Float64 -> Bigarray.Float64
-  | Int8 -> Bigarray.Int8_signed
-  | UInt8 -> Bigarray.Int8_unsigned
-  | Int16 -> Bigarray.Int16_signed
-  | UInt16 -> Bigarray.Int16_unsigned
-  | Int32 -> Bigarray.Int32
-  | Int64 -> Bigarray.Int64
-  | Complex64 -> Bigarray.Complex32
-  | Complex128 -> Bigarray.Complex64
-  | BFloat16 | Float8_e4m3 | Float8_e5m2 | Int4 | UInt4 | UInt32 | UInt64 | Bool
-    ->
+let to_bigarray_kind (type a b) (dtype : (a, b) t) : (a, b) Bigarray.kind =
+  match Nx_buffer.to_stdlib_kind dtype with
+  | Some kind -> kind
+  | None ->
       invalid_arg
         "Dtype.to_bigarray_kind: extended type not supported by Bigarray"
 

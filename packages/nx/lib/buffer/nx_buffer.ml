@@ -8,44 +8,45 @@
 type float16_elt = Bigarray.float16_elt
 type float32_elt = Bigarray.float32_elt
 type float64_elt = Bigarray.float64_elt
-type int8_signed_elt = Bigarray.int8_signed_elt
-type int8_unsigned_elt = Bigarray.int8_unsigned_elt
-type int16_signed_elt = Bigarray.int16_signed_elt
-type int16_unsigned_elt = Bigarray.int16_unsigned_elt
+type int8_elt = Bigarray.int8_signed_elt
+type uint8_elt = Bigarray.int8_unsigned_elt
+type int16_elt = Bigarray.int16_signed_elt
+type uint16_elt = Bigarray.int16_unsigned_elt
 type int32_elt = Bigarray.int32_elt
 type int64_elt = Bigarray.int64_elt
 type complex32_elt = Bigarray.complex32_elt
 type complex64_elt = Bigarray.complex64_elt
 type bfloat16_elt = |
 type bool_elt = |
-type int4_signed_elt = |
-type int4_unsigned_elt = |
+type int4_elt = |
+type uint4_elt = |
 type float8_e4m3_elt = |
 type float8_e5m2_elt = |
 type uint32_elt = |
 type uint64_elt = |
 
-(* Kind GADT *)
+(* Kind GADT. The constructor order is pinned by [caml_nx_buffer_kind] in the C
+   and JavaScript stubs; keep the three in sync. *)
 
 type ('a, 'b) kind =
   | Float16 : (float, float16_elt) kind
   | Float32 : (float, float32_elt) kind
   | Float64 : (float, float64_elt) kind
-  | Bfloat16 : (float, bfloat16_elt) kind
+  | BFloat16 : (float, bfloat16_elt) kind
   | Float8_e4m3 : (float, float8_e4m3_elt) kind
   | Float8_e5m2 : (float, float8_e5m2_elt) kind
-  | Int8_signed : (int, int8_signed_elt) kind
-  | Int8_unsigned : (int, int8_unsigned_elt) kind
-  | Int16_signed : (int, int16_signed_elt) kind
-  | Int16_unsigned : (int, int16_unsigned_elt) kind
+  | Int4 : (int, int4_elt) kind
+  | UInt4 : (int, uint4_elt) kind
+  | Int8 : (int, int8_elt) kind
+  | UInt8 : (int, uint8_elt) kind
+  | Int16 : (int, int16_elt) kind
+  | UInt16 : (int, uint16_elt) kind
   | Int32 : (int32, int32_elt) kind
-  | Uint32 : (int32, uint32_elt) kind
+  | UInt32 : (int32, uint32_elt) kind
   | Int64 : (int64, int64_elt) kind
-  | Uint64 : (int64, uint64_elt) kind
-  | Int4_signed : (int, int4_signed_elt) kind
-  | Int4_unsigned : (int, int4_unsigned_elt) kind
-  | Complex32 : (Complex.t, complex32_elt) kind
-  | Complex64 : (Complex.t, complex64_elt) kind
+  | UInt64 : (int64, uint64_elt) kind
+  | Complex64 : (Complex.t, complex32_elt) kind
+  | Complex128 : (Complex.t, complex64_elt) kind
   | Bool : (bool, bool_elt) kind
 
 (* Kind values *)
@@ -53,44 +54,65 @@ type ('a, 'b) kind =
 let float16 = Float16
 let float32 = Float32
 let float64 = Float64
-let bfloat16 = Bfloat16
+let bfloat16 = BFloat16
 let float8_e4m3 = Float8_e4m3
 let float8_e5m2 = Float8_e5m2
-let int8_signed = Int8_signed
-let int8_unsigned = Int8_unsigned
-let int16_signed = Int16_signed
-let int16_unsigned = Int16_unsigned
+let int4 = Int4
+let uint4 = UInt4
+let int8 = Int8
+let uint8 = UInt8
+let int16 = Int16
+let uint16 = UInt16
 let int32 = Int32
-let uint32 = Uint32
+let uint32 = UInt32
 let int64 = Int64
-let uint64 = Uint64
-let int4_signed = Int4_signed
-let int4_unsigned = Int4_unsigned
-let complex32 = Complex32
+let uint64 = UInt64
 let complex64 = Complex64
+let complex128 = Complex128
 let bool = Bool
 
 (* Kind properties *)
+
+let kind_name : type a b. (a, b) kind -> string = function
+  | Float16 -> "float16"
+  | Float32 -> "float32"
+  | Float64 -> "float64"
+  | BFloat16 -> "bfloat16"
+  | Float8_e4m3 -> "float8_e4m3"
+  | Float8_e5m2 -> "float8_e5m2"
+  | Int4 -> "int4"
+  | UInt4 -> "uint4"
+  | Int8 -> "int8"
+  | UInt8 -> "uint8"
+  | Int16 -> "int16"
+  | UInt16 -> "uint16"
+  | Int32 -> "int32"
+  | UInt32 -> "uint32"
+  | Int64 -> "int64"
+  | UInt64 -> "uint64"
+  | Complex64 -> "complex64"
+  | Complex128 -> "complex128"
+  | Bool -> "bool"
 
 let kind_size_in_bytes : type a b. (a, b) kind -> int = function
   | Float16 -> 2
   | Float32 -> 4
   | Float64 -> 8
-  | Bfloat16 -> 2
+  | BFloat16 -> 2
   | Float8_e4m3 -> 1
   | Float8_e5m2 -> 1
-  | Int8_signed -> 1
-  | Int8_unsigned -> 1
-  | Int16_signed -> 2
-  | Int16_unsigned -> 2
+  | Int4 -> 1
+  | UInt4 -> 1
+  | Int8 -> 1
+  | UInt8 -> 1
+  | Int16 -> 2
+  | UInt16 -> 2
   | Int32 -> 4
-  | Uint32 -> 4
+  | UInt32 -> 4
   | Int64 -> 8
-  | Uint64 -> 8
-  | Int4_signed -> 1
-  | Int4_unsigned -> 1
-  | Complex32 -> 8
-  | Complex64 -> 16
+  | UInt64 -> 8
+  | Complex64 -> 8
+  | Complex128 -> 16
   | Bool -> 1
 
 let to_stdlib_kind : type a b. (a, b) kind -> (a, b) Bigarray.kind option =
@@ -98,22 +120,22 @@ let to_stdlib_kind : type a b. (a, b) kind -> (a, b) Bigarray.kind option =
   | Float16 -> Some Bigarray.Float16
   | Float32 -> Some Bigarray.Float32
   | Float64 -> Some Bigarray.Float64
-  | Int8_signed -> Some Bigarray.Int8_signed
-  | Int8_unsigned -> Some Bigarray.Int8_unsigned
-  | Int16_signed -> Some Bigarray.Int16_signed
-  | Int16_unsigned -> Some Bigarray.Int16_unsigned
+  | Int8 -> Some Bigarray.Int8_signed
+  | UInt8 -> Some Bigarray.Int8_unsigned
+  | Int16 -> Some Bigarray.Int16_signed
+  | UInt16 -> Some Bigarray.Int16_unsigned
   | Int32 -> Some Bigarray.Int32
   | Int64 -> Some Bigarray.Int64
-  | Complex32 -> Some Bigarray.Complex32
-  | Complex64 -> Some Bigarray.Complex64
-  | Bfloat16 -> None
+  | Complex64 -> Some Bigarray.Complex32
+  | Complex128 -> Some Bigarray.Complex64
+  | BFloat16 -> None
   | Bool -> None
-  | Int4_signed -> None
-  | Int4_unsigned -> None
+  | Int4 -> None
+  | UInt4 -> None
   | Float8_e4m3 -> None
   | Float8_e5m2 -> None
-  | Uint32 -> None
-  | Uint64 -> None
+  | UInt32 -> None
+  | UInt64 -> None
 
 (* Buffer type *)
 
@@ -162,14 +184,14 @@ let genarray_create : type a b c.
     (a, b, c) Bigarray.Genarray.t =
  fun kind layout dims ->
   match kind with
-  | Bfloat16 -> create_bfloat16_genarray layout dims
+  | BFloat16 -> create_bfloat16_genarray layout dims
   | Bool -> create_bool_genarray layout dims
-  | Int4_signed -> create_int4_signed_genarray layout dims
-  | Int4_unsigned -> create_int4_unsigned_genarray layout dims
+  | Int4 -> create_int4_signed_genarray layout dims
+  | UInt4 -> create_int4_unsigned_genarray layout dims
   | Float8_e4m3 -> create_float8_e4m3_genarray layout dims
   | Float8_e5m2 -> create_float8_e5m2_genarray layout dims
-  | Uint32 -> create_uint32_genarray layout dims
-  | Uint64 -> create_uint64_genarray layout dims
+  | UInt32 -> create_uint32_genarray layout dims
+  | UInt64 -> create_uint64_genarray layout dims
   | _ -> (
       match to_stdlib_kind kind with
       | Some k -> Bigarray.Genarray.create k layout dims
@@ -235,8 +257,8 @@ external unsafe_data_ptr :
 let elts_to_bytes : type a b. (a, b) kind -> int -> int =
  fun k n ->
   match k with
-  | Int4_signed -> (n + 1) / 2
-  | Int4_unsigned -> (n + 1) / 2
+  | Int4 -> (n + 1) / 2
+  | UInt4 -> (n + 1) / 2
   | _ -> n * kind_size_in_bytes k
 
 (* Bulk operations *)

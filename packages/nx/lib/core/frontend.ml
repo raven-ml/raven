@@ -19,12 +19,12 @@ module Make (B : Backend_intf.S) = struct
   type bfloat16_elt = Nx_buffer.bfloat16_elt
   type float8_e4m3_elt = Nx_buffer.float8_e4m3_elt
   type float8_e5m2_elt = Nx_buffer.float8_e5m2_elt
-  type int4_elt = Nx_buffer.int4_signed_elt
-  type uint4_elt = Nx_buffer.int4_unsigned_elt
-  type int8_elt = Nx_buffer.int8_signed_elt
-  type uint8_elt = Nx_buffer.int8_unsigned_elt
-  type int16_elt = Nx_buffer.int16_signed_elt
-  type uint16_elt = Nx_buffer.int16_unsigned_elt
+  type int4_elt = Nx_buffer.int4_elt
+  type uint4_elt = Nx_buffer.uint4_elt
+  type int8_elt = Nx_buffer.int8_elt
+  type uint8_elt = Nx_buffer.uint8_elt
+  type int16_elt = Nx_buffer.int16_elt
+  type uint16_elt = Nx_buffer.uint16_elt
   type int32_elt = Nx_buffer.int32_elt
   type uint32_elt = Nx_buffer.uint32_elt
   type int64_elt = Nx_buffer.int64_elt
@@ -369,8 +369,7 @@ module Make (B : Backend_intf.S) = struct
     if Array.length arr <> n then
       err "create" "array size, got %d elements, expected %d" (Array.length arr)
         n;
-    let kind = Dtype.to_buffer_kind dtype in
-    let bigarray = Nx_buffer.create kind n in
+    let bigarray = Nx_buffer.create dtype n in
     for i = 0 to n - 1 do
       Nx_buffer.unsafe_set bigarray i arr.(i)
     done;

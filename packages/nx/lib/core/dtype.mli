@@ -28,22 +28,22 @@ type float8_e4m3_elt = Nx_buffer.float8_e4m3_elt
 type float8_e5m2_elt = Nx_buffer.float8_e5m2_elt
 (** The element kind for float8 e5m2 values. *)
 
-type int4_elt = Nx_buffer.int4_signed_elt
+type int4_elt = Nx_buffer.int4_elt
 (** The element kind for signed 4-bit integers. *)
 
-type uint4_elt = Nx_buffer.int4_unsigned_elt
+type uint4_elt = Nx_buffer.uint4_elt
 (** The element kind for unsigned 4-bit integers. *)
 
-type int8_elt = Nx_buffer.int8_signed_elt
+type int8_elt = Nx_buffer.int8_elt
 (** The element kind for signed 8-bit integers. *)
 
-type uint8_elt = Nx_buffer.int8_unsigned_elt
+type uint8_elt = Nx_buffer.uint8_elt
 (** The element kind for unsigned 8-bit integers. *)
 
-type int16_elt = Nx_buffer.int16_signed_elt
+type int16_elt = Nx_buffer.int16_elt
 (** The element kind for signed 16-bit integers. *)
 
-type uint16_elt = Nx_buffer.int16_unsigned_elt
+type uint16_elt = Nx_buffer.uint16_elt
 (** The element kind for unsigned 16-bit integers. *)
 
 type int32_elt = Nx_buffer.int32_elt
@@ -72,8 +72,9 @@ type bool_elt = Nx_buffer.bool_elt
 (** The type for dtypes.
 
     The first parameter is the OCaml value type and the second parameter is the
-    buffer element kind. *)
-type ('a, 'b) t =
+    buffer element kind. A dtype is the buffer kind itself, re-exported:
+    [('a, 'b) t = ('a, 'b) Nx_buffer.kind]. *)
+type ('a, 'b) t = ('a, 'b) Nx_buffer.kind =
   | Float16 : (float, float16_elt) t  (** 16-bit float. *)
   | Float32 : (float, float32_elt) t  (** 32-bit float. *)
   | Float64 : (float, float64_elt) t  (** 64-bit float. *)
@@ -225,14 +226,6 @@ val of_float : ('a, 'b) t -> float -> 'a
 (** [of_float d x] converts [x] to dtype [d].
 
     Unsigned integer conversions clamp to their representable range. *)
-
-val of_buffer_kind : ('a, 'b) Nx_buffer.kind -> ('a, 'b) t
-(** [of_buffer_kind k] is the dtype corresponding to [k].
-
-    Raises [Invalid_argument] if [k] is unsupported. *)
-
-val to_buffer_kind : ('a, 'b) t -> ('a, 'b) Nx_buffer.kind
-(** [to_buffer_kind d] is the [Nx_buffer] kind corresponding to [d]. *)
 
 val of_bigarray_kind : ('a, 'b) Bigarray.kind -> ('a, 'b) t
 (** [of_bigarray_kind k] is the dtype corresponding to [k].

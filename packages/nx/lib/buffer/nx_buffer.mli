@@ -21,10 +21,10 @@
 type float16_elt = Bigarray.float16_elt
 type float32_elt = Bigarray.float32_elt
 type float64_elt = Bigarray.float64_elt
-type int8_signed_elt = Bigarray.int8_signed_elt
-type int8_unsigned_elt = Bigarray.int8_unsigned_elt
-type int16_signed_elt = Bigarray.int16_signed_elt
-type int16_unsigned_elt = Bigarray.int16_unsigned_elt
+type int8_elt = Bigarray.int8_signed_elt
+type uint8_elt = Bigarray.int8_unsigned_elt
+type int16_elt = Bigarray.int16_signed_elt
+type uint16_elt = Bigarray.int16_unsigned_elt
 type int32_elt = Bigarray.int32_elt
 type int64_elt = Bigarray.int64_elt
 type complex32_elt = Bigarray.complex32_elt
@@ -36,10 +36,10 @@ type bfloat16_elt
 type bool_elt
 (** Boolean stored as a byte. *)
 
-type int4_signed_elt
+type int4_elt
 (** Signed 4-bit integer (two values packed per byte). *)
 
-type int4_unsigned_elt
+type uint4_elt
 (** Unsigned 4-bit integer (two values packed per byte). *)
 
 type float8_e4m3_elt
@@ -56,28 +56,32 @@ type uint64_elt
 
 (** {1:kind Kind GADT} *)
 
+(** The type for element kinds. Nineteen constructors covering standard Bigarray
+    kinds and extended types.
+
+    The first parameter is the OCaml value type and the second parameter is the
+    element type. The constructor order is pinned by the C and JavaScript stubs
+    ([caml_nx_buffer_kind]); reordering constructors requires updating both. *)
 type ('a, 'b) kind =
   | Float16 : (float, float16_elt) kind
   | Float32 : (float, float32_elt) kind
   | Float64 : (float, float64_elt) kind
-  | Bfloat16 : (float, bfloat16_elt) kind
+  | BFloat16 : (float, bfloat16_elt) kind
   | Float8_e4m3 : (float, float8_e4m3_elt) kind
   | Float8_e5m2 : (float, float8_e5m2_elt) kind
-  | Int8_signed : (int, int8_signed_elt) kind
-  | Int8_unsigned : (int, int8_unsigned_elt) kind
-  | Int16_signed : (int, int16_signed_elt) kind
-  | Int16_unsigned : (int, int16_unsigned_elt) kind
+  | Int4 : (int, int4_elt) kind
+  | UInt4 : (int, uint4_elt) kind
+  | Int8 : (int, int8_elt) kind
+  | UInt8 : (int, uint8_elt) kind
+  | Int16 : (int, int16_elt) kind
+  | UInt16 : (int, uint16_elt) kind
   | Int32 : (int32, int32_elt) kind
-  | Uint32 : (int32, uint32_elt) kind
+  | UInt32 : (int32, uint32_elt) kind
   | Int64 : (int64, int64_elt) kind
-  | Uint64 : (int64, uint64_elt) kind
-  | Int4_signed : (int, int4_signed_elt) kind
-  | Int4_unsigned : (int, int4_unsigned_elt) kind
-  | Complex32 : (Complex.t, complex32_elt) kind
-  | Complex64 : (Complex.t, complex64_elt) kind
+  | UInt64 : (int64, uint64_elt) kind
+  | Complex64 : (Complex.t, complex32_elt) kind
+  | Complex128 : (Complex.t, complex64_elt) kind
   | Bool : (bool, bool_elt) kind
-      (** The type for element kinds. Nineteen constructors covering standard
-          Bigarray kinds and extended types. *)
 
 (** {2:kind_values Kind values} *)
 
@@ -87,26 +91,28 @@ val float64 : (float, float64_elt) kind
 val bfloat16 : (float, bfloat16_elt) kind
 val float8_e4m3 : (float, float8_e4m3_elt) kind
 val float8_e5m2 : (float, float8_e5m2_elt) kind
-val int8_signed : (int, int8_signed_elt) kind
-val int8_unsigned : (int, int8_unsigned_elt) kind
-val int16_signed : (int, int16_signed_elt) kind
-val int16_unsigned : (int, int16_unsigned_elt) kind
+val int4 : (int, int4_elt) kind
+val uint4 : (int, uint4_elt) kind
+val int8 : (int, int8_elt) kind
+val uint8 : (int, uint8_elt) kind
+val int16 : (int, int16_elt) kind
+val uint16 : (int, uint16_elt) kind
 val int32 : (int32, int32_elt) kind
 val uint32 : (int32, uint32_elt) kind
 val int64 : (int64, int64_elt) kind
 val uint64 : (int64, uint64_elt) kind
-val int4_signed : (int, int4_signed_elt) kind
-val int4_unsigned : (int, int4_unsigned_elt) kind
-val complex32 : (Complex.t, complex32_elt) kind
-val complex64 : (Complex.t, complex64_elt) kind
+val complex64 : (Complex.t, complex32_elt) kind
+val complex128 : (Complex.t, complex64_elt) kind
 val bool : (bool, bool_elt) kind
 
 (** {2:kind_props Kind properties} *)
 
+val kind_name : ('a, 'b) kind -> string
+(** [kind_name k] is the stable lowercase name of [k], e.g. ["float32"]. *)
+
 val kind_size_in_bytes : ('a, 'b) kind -> int
 (** [kind_size_in_bytes k] is the storage size in bytes per element for kind
-    [k]. For [Int4_signed] and [Int4_unsigned] this is [1] (two values packed
-    per byte). *)
+    [k]. For [Int4] and [UInt4] this is [1] (two values packed per byte). *)
 
 val to_stdlib_kind : ('a, 'b) kind -> ('a, 'b) Bigarray.kind option
 (** [to_stdlib_kind k] is the standard {!Bigarray.kind} for [k], or [None] for

@@ -310,6 +310,15 @@ thread.
 
 ### Nx
 
+- Merge `Nx_buffer.kind` and `Dtype.t` into a single GADT: a dtype now *is*
+  the buffer kind (`('a, 'b) Dtype.t = ('a, 'b) Nx_buffer.kind`).
+  `Dtype.of_buffer_kind` and `Dtype.to_buffer_kind` are gone — pass the dtype
+  directly. `Nx_buffer` constructors and values now use the dtype spellings
+  (`Int8`/`int8` instead of `Int8_signed`/`int8_signed`, `Complex64` for the
+  8-byte complex, `Complex128` for the 16-byte one), and the extended element
+  types are renamed accordingly (`int4_elt`, `uint4_elt`, `int8_elt`,
+  `uint8_elt`, `int16_elt`, `uint16_elt`). New `Nx_buffer.kind_name` names a
+  kind; `Dtype.to_string` is now an alias for it.
 - Reductions along non-innermost axes stream rows instead of striding a cache
   line per element: `sum ~axes:[0]` on 512×512 is ~9.6× faster (and `mean`
   with it), with bit-for-bit identical results.

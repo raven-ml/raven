@@ -25,25 +25,25 @@ let test_create_bool () =
   equal ~msg:"bool get" bool false (get buf 1);
   equal ~msg:"bool get" bool true (get buf 7)
 
-let test_create_int4_signed () =
-  let buf = create int4_signed 16 in
-  equal ~msg:"int4_signed buffer size" int 16 (length buf);
+let test_create_int4 () =
+  let buf = create int4 16 in
+  equal ~msg:"int4 buffer size" int 16 (length buf);
   set buf 0 (-8);
   set buf 1 7;
   set buf 2 0;
-  equal ~msg:"int4_signed get" int (-8) (get buf 0);
-  equal ~msg:"int4_signed get" int 7 (get buf 1);
-  equal ~msg:"int4_signed get" int 0 (get buf 2)
+  equal ~msg:"int4 get" int (-8) (get buf 0);
+  equal ~msg:"int4 get" int 7 (get buf 1);
+  equal ~msg:"int4 get" int 0 (get buf 2)
 
-let test_create_int4_unsigned () =
-  let buf = create int4_unsigned 16 in
-  equal ~msg:"int4_unsigned buffer size" int 16 (length buf);
+let test_create_uint4 () =
+  let buf = create uint4 16 in
+  equal ~msg:"uint4 buffer size" int 16 (length buf);
   set buf 0 0;
   set buf 1 15;
   set buf 2 8;
-  equal ~msg:"int4_unsigned get" int 0 (get buf 0);
-  equal ~msg:"int4_unsigned get" int 15 (get buf 1);
-  equal ~msg:"int4_unsigned get" int 8 (get buf 2)
+  equal ~msg:"uint4 get" int 0 (get buf 0);
+  equal ~msg:"uint4 get" int 15 (get buf 1);
+  equal ~msg:"uint4 get" int 8 (get buf 2)
 
 let test_create_float8_e4m3 () =
   let buf = create float8_e4m3 10 in
@@ -81,12 +81,43 @@ let test_genarray_creation () =
   equal ~msg:"Genarray dim 1" int 3 (Bigarray.Genarray.nth_dim ga_bf16 1);
   equal ~msg:"Genarray dim 2" int 4 (Bigarray.Genarray.nth_dim ga_bf16 2)
 
+(* The C stub maps storage flag bits back to GADT constructor indices by
+   declaration order; a mismatch shows up as [kind] returning the wrong
+   constructor. Check the round-trip for every constructor. *)
+let test_kind_roundtrip () =
+  let check : type a b. (a, b) kind -> unit =
+   fun k ->
+    equal
+      ~msg:(kind_name k ^ " kind round-trip")
+      bool true
+      (kind (create k 2) = k)
+  in
+  check Nx_buffer.float16;
+  check Nx_buffer.float32;
+  check Nx_buffer.float64;
+  check Nx_buffer.bfloat16;
+  check Nx_buffer.float8_e4m3;
+  check Nx_buffer.float8_e5m2;
+  check Nx_buffer.int4;
+  check Nx_buffer.uint4;
+  check Nx_buffer.int8;
+  check Nx_buffer.uint8;
+  check Nx_buffer.int16;
+  check Nx_buffer.uint16;
+  check Nx_buffer.int32;
+  check Nx_buffer.uint32;
+  check Nx_buffer.int64;
+  check Nx_buffer.uint64;
+  check Nx_buffer.complex64;
+  check Nx_buffer.complex128;
+  check Nx_buffer.bool
+
 (* Test kind_size_in_bytes *)
 let test_kind_sizes () =
   equal ~msg:"bfloat16 size" int 2 (kind_size_in_bytes bfloat16);
   equal ~msg:"bool size" int 1 (kind_size_in_bytes Nx_buffer.bool);
-  equal ~msg:"int4_signed size" int 1 (kind_size_in_bytes int4_signed);
-  equal ~msg:"int4_unsigned size" int 1 (kind_size_in_bytes int4_unsigned);
+  equal ~msg:"int4 size" int 1 (kind_size_in_bytes int4);
+  equal ~msg:"uint4 size" int 1 (kind_size_in_bytes uint4);
   equal ~msg:"float8_e4m3 size" int 1 (kind_size_in_bytes float8_e4m3);
   equal ~msg:"float8_e5m2 size" int 1 (kind_size_in_bytes float8_e5m2);
   equal ~msg:"uint32 size" int 4 (kind_size_in_bytes uint32);
@@ -146,13 +177,17 @@ let () =
         [
           test "create bfloat16" test_create_bfloat16;
           test "create bool" test_create_bool;
-          test "create int4_signed" test_create_int4_signed;
-          test "create int4_unsigned" test_create_int4_unsigned;
+          test "create int4" test_create_int4;
+          test "create uint4" test_create_uint4;
           test "create float8_e4m3" test_create_float8_e4m3;
           test "create float8_e5m2" test_create_float8_e5m2;
         ];
       group "genarray" [ test "genarray creation" test_genarray_creation ];
-      group "properties" [ test "kind sizes" test_kind_sizes ];
+      group "properties"
+        [
+          test "kind round-trip" test_kind_roundtrip;
+          test "kind sizes" test_kind_sizes;
+        ];
       group "operations" [ test "blit" test_blit; test "fill" test_fill ];
       group "conversions"
         [

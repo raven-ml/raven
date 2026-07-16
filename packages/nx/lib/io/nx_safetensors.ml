@@ -109,31 +109,31 @@ let load_tensor (view : Safetensors.tensor_view) =
       Some (P (make_tensor Int32 shape n f))
   | U32 ->
       let f i = read_i32_le view.data (view.offset + (i * 4)) in
-      Some (P (make_tensor Uint32 shape n f))
+      Some (P (make_tensor UInt32 shape n f))
   | I64 ->
       let f i = Safetensors.read_u64_le view.data (view.offset + (i * 8)) in
       Some (P (make_tensor Int64 shape n f))
   | U64 ->
       let f i = Safetensors.read_u64_le view.data (view.offset + (i * 8)) in
-      Some (P (make_tensor Uint64 shape n f))
+      Some (P (make_tensor UInt64 shape n f))
   | I16 ->
       let f i =
         let v = read_u16_le view.data (view.offset + (i * 2)) in
         if v >= 0x8000 then v - 0x10000 else v
       in
-      Some (P (make_tensor Int16_signed shape n f))
+      Some (P (make_tensor Int16 shape n f))
   | U16 ->
       let f i = read_u16_le view.data (view.offset + (i * 2)) in
-      Some (P (make_tensor Int16_unsigned shape n f))
+      Some (P (make_tensor UInt16 shape n f))
   | I8 ->
       let f i =
         let v = Char.code view.data.[view.offset + i] in
         if v >= 0x80 then v - 0x100 else v
       in
-      Some (P (make_tensor Int8_signed shape n f))
+      Some (P (make_tensor Int8 shape n f))
   | U8 ->
       let f i = Char.code view.data.[view.offset + i] in
-      Some (P (make_tensor Int8_unsigned shape n f))
+      Some (P (make_tensor UInt8 shape n f))
   | BOOL ->
       let f i = Char.code view.data.[view.offset + i] <> 0 in
       Some (P (make_tensor Bool shape n f))
@@ -148,7 +148,7 @@ let load_tensor (view : Safetensors.tensor_view) =
   | BF16 ->
       if view.offset land 1 <> 0 then
         fail_msg "unaligned bfloat16 tensor offset: %d" view.offset;
-      Some (P (blit_tensor_16le Bfloat16 shape n view.data view.offset))
+      Some (P (blit_tensor_16le BFloat16 shape n view.data view.offset))
   | _ -> None
 
 let load_safetensors path =
@@ -221,15 +221,15 @@ let tensor_to_bytes (type a b) (arr : (a, b) Nx.t) =
       let get i = Int64.bits_of_float (Nx_buffer.unsafe_get buf i) in
       (Safetensors.F64, le64 get)
   | Int32 -> (Safetensors.I32, le32 (Nx_buffer.unsafe_get buf))
-  | Uint32 -> (Safetensors.U32, le32 (Nx_buffer.unsafe_get buf))
+  | UInt32 -> (Safetensors.U32, le32 (Nx_buffer.unsafe_get buf))
   | Int64 -> (Safetensors.I64, le64 (Nx_buffer.unsafe_get buf))
-  | Uint64 -> (Safetensors.U64, le64 (Nx_buffer.unsafe_get buf))
-  | Int16_signed -> (Safetensors.I16, le16 (Nx_buffer.unsafe_get buf))
-  | Int16_unsigned -> (Safetensors.U16, le16 (Nx_buffer.unsafe_get buf))
-  | Int8_signed ->
+  | UInt64 -> (Safetensors.U64, le64 (Nx_buffer.unsafe_get buf))
+  | Int16 -> (Safetensors.I16, le16 (Nx_buffer.unsafe_get buf))
+  | UInt16 -> (Safetensors.U16, le16 (Nx_buffer.unsafe_get buf))
+  | Int8 ->
       let get i = Char.chr (Nx_buffer.unsafe_get buf i land 0xff) in
       (Safetensors.I8, le8 get)
-  | Int8_unsigned ->
+  | UInt8 ->
       let get i = Char.chr (Nx_buffer.unsafe_get buf i land 0xff) in
       (Safetensors.U8, le8 get)
   | Bool ->
@@ -244,7 +244,7 @@ let tensor_to_bytes (type a b) (arr : (a, b) Nx.t) =
       let bytes = Bytes.create n in
       Nx_buffer.blit_to_bytes ~src_off:0 ~dst_off:0 ~len:n buf bytes;
       (tag, Bytes.unsafe_to_string bytes)
-  | Float16 | Bfloat16 ->
+  | Float16 | BFloat16 ->
       let tag =
         match Nx_buffer.kind buf with
         | Float16 -> Safetensors.F16
@@ -256,8 +256,7 @@ let tensor_to_bytes (type a b) (arr : (a, b) Nx.t) =
       (tag, Bytes.unsafe_to_string bytes)
   | _ ->
       fail_msg "unsupported dtype for safetensors: %s"
-        (Nx_core.Dtype.of_buffer_kind (Nx_buffer.kind buf)
-        |> Nx_core.Dtype.to_string)
+        (Nx_buffer.kind_name (Nx_buffer.kind buf))
 
 let save_safetensors ?(overwrite = true) path items =
   wrap_exn @@ fun () ->

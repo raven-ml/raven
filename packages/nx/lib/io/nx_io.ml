@@ -57,7 +57,7 @@ let save_image ?(overwrite = true) path img =
   let buf = Nx.to_buffer img in
   let data =
     match Nx_buffer.kind buf with
-    | Int8_unsigned -> Nx_buffer.to_bigarray1 buf
+    | UInt8 -> Nx_buffer.to_bigarray1 buf
     | _ -> failwith "save_image: expected uint8 tensor"
   in
   let ext = String.lowercase_ascii (Filename.extension path) in

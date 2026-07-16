@@ -94,7 +94,7 @@ let parse_i64 name token =
 let spec_of_dtype (type a b) (dtype : (a, b) Nx.dtype) :
     (module SPEC with type elt = a and type kind = b) option =
   let name = Nx_core.Dtype.to_string dtype in
-  let kind = Nx_core.Dtype.to_buffer_kind dtype in
+  let kind = dtype in
   let open Nx_core.Dtype in
   match dtype with
   | Float16 ->

@@ -66,7 +66,7 @@ type packed_kind = K : (_, _) Nx_buffer.kind -> packed_kind
 let dtype_string (K kind) =
   let endian =
     match kind with
-    | Nx_buffer.Int8_signed | Int8_unsigned | Bool -> "|"
+    | Nx_buffer.Int8 | UInt8 | Bool -> "|"
     | _ -> if Sys.big_endian then ">" else "<"
   in
   let descr =
@@ -74,21 +74,21 @@ let dtype_string (K kind) =
     | Nx_buffer.Float16 -> "f2"
     | Float32 -> "f4"
     | Float64 -> "f8"
-    | Bfloat16 -> "f2"
+    | BFloat16 -> "f2"
     | Float8_e4m3 -> "f1"
     | Float8_e5m2 -> "f1"
-    | Int8_signed -> "i1"
-    | Int8_unsigned -> "u1"
-    | Int16_signed -> "i2"
-    | Int16_unsigned -> "u2"
+    | Int8 -> "i1"
+    | UInt8 -> "u1"
+    | Int16 -> "i2"
+    | UInt16 -> "u2"
     | Int32 -> "i4"
     | Int64 -> "i8"
-    | Uint32 -> "u4"
-    | Uint64 -> "u8"
-    | Int4_signed -> "i1"
-    | Int4_unsigned -> "u1"
-    | Complex32 -> "c8"
-    | Complex64 -> "c16"
+    | UInt32 -> "u4"
+    | UInt64 -> "u8"
+    | Int4 -> "i1"
+    | UInt4 -> "u1"
+    | Complex64 -> "c8"
+    | Complex128 -> "c16"
     | Bool -> "b1"
   in
   endian ^ descr
@@ -98,14 +98,14 @@ let kind_of_descr = function
   | "f8" -> K Float64
   | "i4" -> K Int32
   | "i8" -> K Int64
-  | "u4" -> K Uint32
-  | "u8" -> K Uint64
-  | "u1" -> K Int8_unsigned
-  | "i1" -> K Int8_signed
-  | "u2" -> K Int16_unsigned
-  | "i2" -> K Int16_signed
-  | "c8" -> K Complex32
-  | "c16" -> K Complex64
+  | "u4" -> K UInt32
+  | "u8" -> K UInt64
+  | "u1" -> K UInt8
+  | "i1" -> K Int8
+  | "u2" -> K UInt16
+  | "i2" -> K Int16
+  | "c8" -> K Complex64
+  | "c16" -> K Complex128
   | "b1" -> K Bool
   | s -> read_error "unsupported dtype descriptor %s" s
 

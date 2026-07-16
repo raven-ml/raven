@@ -480,36 +480,36 @@ function caml_nx_buffer_unsafe_set(ba, i, v) {
 }
 
 //Provides: caml_nx_buffer_kind
-//Requires: Ml_Nx_buffer
+//Requires: caml_failwith
 function caml_nx_buffer_kind(ba) {
-  /* Map bigarray kind to our extended kind enum values.
-     These must match the OCaml type constructor order. */
+  /* Map runtime bigarray kind to the GADT constructor index. Pinned to the
+     declaration order of [Nx_buffer.kind] (19 constructors) and mirrored by
+     the C stub. The js_of_ocaml runtime numbers kinds like the C runtime:
+     0=Float32, 1=Float64, 2=Int8s, 3=Uint8, 4=Int16s, 5=Uint16, 6=Int32,
+     7=Int64, 8=Int, 9=Nativeint, 10=Complex32, 11=Complex64, 12=Char,
+     13=Float16, then our extended kinds 14-21. */
   switch (ba.kind) {
-    case 1: return 0;   /* Float32 */
-    case 0: return 1;   /* Float64 */
-    case 2: return 2;   /* Int8_signed */
-    case 3: return 3;   /* Int8_unsigned */
-    case 4: return 4;   /* Int16_signed */
-    case 5: return 5;   /* Int16_unsigned */
-    case 8: return 6;   /* Int32 */
-    case 9: return 7;   /* Int64 */
-    case 10: return 8;  /* Int */
-    case 11: return 9;  /* Nativeint */
-    case 6: return 10;  /* Complex32 */
-    case 7: return 11;  /* Complex64 */
-    case 12: return 12; /* Char */
-    case 13: return 13; /* Float16 */
-    /* Extended types */
-    case 14: return 14; /* Bfloat16 */
-    case 15: return 15; /* Bool */
-    case 16: return 16; /* Int4_signed */
-    case 17: return 17; /* Int4_unsigned */
-    case 18: return 18; /* Float8_e4m3 */
-    case 19: return 19; /* Float8_e5m2 */
-    case 20: return 20; /* Uint32 */
-    case 21: return 21; /* Uint64 */
+    case 13: return 0;  /* Float16 */
+    case 0: return 1;   /* Float32 */
+    case 1: return 2;   /* Float64 */
+    case 14: return 3;  /* BFloat16 */
+    case 18: return 4;  /* Float8_e4m3 */
+    case 19: return 5;  /* Float8_e5m2 */
+    case 16: return 6;  /* Int4 */
+    case 17: return 7;  /* UInt4 */
+    case 2: return 8;   /* Int8 */
+    case 3: return 9;   /* UInt8 */
+    case 4: return 10;  /* Int16 */
+    case 5: return 11;  /* UInt16 */
+    case 6: return 12;  /* Int32 */
+    case 20: return 13; /* UInt32 */
+    case 7: return 14;  /* Int64 */
+    case 21: return 15; /* UInt64 */
+    case 10: return 16; /* Complex64 */
+    case 11: return 17; /* Complex128 */
+    case 15: return 18; /* Bool */
     default:
-      throw new Error("Unknown bigarray kind: " + ba.kind);
+      caml_failwith("Unknown bigarray kind: " + ba.kind);
   }
 }
 

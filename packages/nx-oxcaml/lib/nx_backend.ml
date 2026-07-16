@@ -1045,7 +1045,7 @@ let argsort (type a b) ~axis ~descending (x : (a, b) t) : (int32, Dtype.int32_el
 
 let from_host (type a b) ctx (array : (a, b) Nx_buffer.t) :
     (a, b) t =
-  let dtype = Dtype.of_buffer_kind (Nx_buffer.kind array) in
+  let dtype = Nx_buffer.kind array in
   let size = Nx_buffer.length array in
   let view = View.create [| size |] in
   let ba = Nx_buffer.to_bigarray1 array in
