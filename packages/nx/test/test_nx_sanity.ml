@@ -164,10 +164,6 @@ let element_wise_binary_tests =
     test "add_s" (fun () ->
         let a = Nx.full Nx.float32 shape_2x3 3.0 in
         Nx.add_s a 5.0 |> check_t "add_s" shape_2x3 [| 8.; 8.; 8.; 8.; 8.; 8. |]);
-    test "radd_s" (fun () ->
-        let a = Nx.full Nx.float32 shape_2x3 3.0 in
-        Nx.add_s a 5.0
-        |> check_t "radd_s" shape_2x3 [| 8.; 8.; 8.; 8.; 8.; 8. |]);
     test "sub" (fun () ->
         let a = Nx.full Nx.float32 shape_2x3 5.0 in
         let b = Nx.full Nx.float32 shape_2x3 2.0 in
@@ -187,10 +183,6 @@ let element_wise_binary_tests =
         let a = Nx.full Nx.float32 shape_2x3 4.0 in
         Nx.mul_s a 3.0
         |> check_t "mul_s" shape_2x3 [| 12.; 12.; 12.; 12.; 12.; 12. |]);
-    test "rmul_s" (fun () ->
-        let a = Nx.full Nx.float32 shape_2x3 4.0 in
-        Nx.mul_s a 3.0
-        |> check_t "rmul_s" shape_2x3 [| 12.; 12.; 12.; 12.; 12.; 12. |]);
     test "div" (fun () ->
         let a = Nx.full Nx.float32 shape_2x3 6.0 in
         let b = Nx.full Nx.float32 shape_2x3 2.0 in
@@ -233,10 +225,6 @@ let element_wise_binary_tests =
         let a = Nx.full Nx.float32 shape_2x3 3.0 in
         Nx.maximum_s a 5.0
         |> check_t "maximum_s" shape_2x3 [| 5.; 5.; 5.; 5.; 5.; 5. |]);
-    test "rmaximum_s" (fun () ->
-        let a = Nx.full Nx.float32 shape_2x3 3.0 in
-        Nx.maximum_s a 5.0
-        |> check_t "rmaximum_s" shape_2x3 [| 5.; 5.; 5.; 5.; 5.; 5. |]);
     test "minimum" (fun () ->
         let a = Nx.full Nx.float32 shape_2x3 3.0 in
         let b = Nx.full Nx.float32 shape_2x3 5.0 in
@@ -246,10 +234,6 @@ let element_wise_binary_tests =
         let a = Nx.full Nx.float32 shape_2x3 5.0 in
         Nx.minimum_s a 3.0
         |> check_t "minimum_s" shape_2x3 [| 3.; 3.; 3.; 3.; 3.; 3. |]);
-    test "rminimum_s" (fun () ->
-        let a = Nx.full Nx.float32 shape_2x3 5.0 in
-        Nx.minimum_s a 3.0
-        |> check_t "rminimum_s" shape_2x3 [| 3.; 3.; 3.; 3.; 3.; 3. |]);
   ]
 
 let comparison_tests =
@@ -685,24 +669,24 @@ let array_combination_tests =
         let b = Nx.create Nx.float32 [| 2 |] [| 3.; 4. |] in
         let c = Nx.stack ~axis:0 [ a; b ] in
         check_t "stack values" [| 2; 2 |] [| 1.; 2.; 3.; 4. |] c);
-    test "vstack" (fun () ->
+    test "concatenate rows" (fun () ->
         let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
         let b = Nx.create Nx.float32 [| 1; 2 |] [| 5.; 6. |] in
         let c = Nx.concatenate ~axis:0 [ a; b ] in
-        check_t "vstack values" [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] c);
-    test "hstack" (fun () ->
+        check_t "concatenate rows" [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] c);
+    test "concatenate columns" (fun () ->
         let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
         let b = Nx.create Nx.float32 [| 2; 1 |] [| 5.; 6. |] in
         let c = Nx.concatenate ~axis:1 [ a; b ] in
-        check_t "hstack values" [| 2; 3 |] [| 1.; 2.; 5.; 3.; 4.; 6. |] c);
-    test "dstack" (fun () ->
+        check_t "concatenate columns" [| 2; 3 |] [| 1.; 2.; 5.; 3.; 4.; 6. |] c);
+    test "concatenate depth" (fun () ->
         let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
         let b = Nx.create Nx.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
         let c =
           Nx.concatenate ~axis:2
             [ Nx.reshape [| 2; 2; 1 |] a; Nx.reshape [| 2; 2; 1 |] b ]
         in
-        check_t "dstack values" [| 2; 2; 2 |]
+        check_t "concatenate depth" [| 2; 2; 2 |]
           [| 1.; 5.; 2.; 6.; 3.; 7.; 4.; 8. |]
           c);
     test "array_split" (fun () ->
@@ -888,37 +872,22 @@ let display_formatting_tests =
 
 let higher_order_tests =
   [
-    test "map" (fun () ->
-        let a = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-        let b = Nx.map_item (fun v -> v *. 2.0) a in
-        check_t "map double" [| 2; 3 |] [| 2.; 4.; 6.; 8.; 10.; 12. |] b);
-    test "map preserves shape" (fun () ->
+    test "map_item preserves 3d shape" (fun () ->
         let a =
           Nx.create Nx.float32 [| 3; 2; 2 |]
             [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9.; 10.; 11.; 12. |]
         in
         let b = Nx.map_item (fun v -> v +. 1.0) a in
-        check_t "map values" [| 3; 2; 2 |]
+        check_t "map_item 3d values" [| 3; 2; 2 |]
           [| 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9.; 10.; 11.; 12.; 13. |]
           b);
-    test "iter" (fun () ->
-        let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
-        let sum = ref (Nx.scalar Nx.float32 0.0) in
-        Nx.iter_item (fun v -> sum := Nx.add_s !sum v) a;
-        equal ~msg:"iter sum" (float 0.01) 10.0 (Nx.item [] !sum));
-    test "fold" (fun () ->
-        let a = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-        let sum =
-          Nx.fold_item (fun acc v -> Nx.add_s acc v) (Nx.scalar Nx.float32 0.0) a
-        in
-        equal ~msg:"fold sum" (float 0.01) 21.0 (Nx.item [] sum));
-    test "fold product" (fun () ->
+    test "fold_item product" (fun () ->
         let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
         let prod =
           Nx.fold_item (fun acc v -> Nx.mul_s acc v) (Nx.scalar Nx.float32 1.0) a
         in
-        equal ~msg:"fold product" (float 0.01) 24.0 (Nx.item [] prod));
-    test "fold max" (fun () ->
+        equal ~msg:"fold_item product" (float 0.01) 24.0 (Nx.item [] prod));
+    test "fold_item max" (fun () ->
         let a = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 5.; 3.; 2.; 6.; 4. |] in
         let max_val =
           Nx.fold_item
@@ -926,7 +895,7 @@ let higher_order_tests =
             (Nx.scalar Nx.float32 neg_infinity)
             a
         in
-        equal ~msg:"fold max" (float 0.01) 6.0 (Nx.item [] max_val));
+        equal ~msg:"fold_item max" (float 0.01) 6.0 (Nx.item [] max_val));
     test "map_item" (fun () ->
         let a = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
         let b = Nx.map_item (fun x -> x *. 2.0) a in
