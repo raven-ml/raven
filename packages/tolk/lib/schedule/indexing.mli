@@ -31,9 +31,9 @@
 val always_contiguous : Tolk_uop.Ops.t -> bool
 (** [always_contiguous op] is [true] for ops whose output is
     contiguous by definition (Contiguous, After, Copy, Buffer,
-    Slice, Const, Bind, Device, Mselect, Mstack, Param,
-    Load, Call).  Their consumers can
-    index directly without realization. *)
+    Slice, Const, Bind, Mselect, Mstack, Param, Load, Call,
+    Function).  Their consumers can index directly without
+    realization. *)
 
 (** {1:context Indexing context} *)
 
@@ -49,7 +49,10 @@ type indexing_context = {
   realize_map : (int, realize_state) Hashtbl.t;
   range_map : (int, Tolk_uop.Uop.t list * Tolk_uop.Uop.t list) Hashtbl.t;
       (** Maps {!Tolk_uop.Uop.tag} to [(input_ranges, output_ranges)]. *)
-  nodes : (int, Tolk_uop.Uop.t) Hashtbl.t;
+  buf_cache : (int, Tolk_uop.Uop.t list) Hashtbl.t;
+      (** Memoised reachable buffer-boundary nodes per node tag.  Shared
+          across buffer-limiting rewrites so a subtree's reachable set is
+          computed once. *)
   mutable range_idx : int;
       (** Monotonic counter for fresh range axis indices. *)
 }
@@ -114,17 +117,14 @@ val run_rangeify :
     {!apply_rangeify_pass}. *)
 
 val apply_rangeify_pass :
-  ?shape_exprs:(Tolk_uop.Uop.t -> Tolk_uop.Uop.t list option) ->
-  indexing_context ->
-  shapes:(Tolk_uop.Uop.t -> int list option) ->
-  Tolk_uop.Uop.t ->
-  Tolk_uop.Uop.t
-(** [apply_rangeify_pass ?shape_exprs ctx ~shapes root] rewrites [root]
-    bottom-up:
+  indexing_context -> Tolk_uop.Uop.t -> Tolk_uop.Uop.t
+(** [apply_rangeify_pass ctx root] rewrites [root] bottom-up using the ranges
+    recorded in [ctx] by {!run_rangeify}:
 
     {ul
     {- REDUCE keeps explicit range children.}
     {- PAD → WHERE guarded by the input ranges' validity.}
+    {- STACK → nested WHERE selecting a source on the leading range.}
     {- Realized sources → STAGE + INDEX (or END for stores).}
     {- Direct buffer sources (Param, Buffer, Slice, …) → INDEX.}
     {- Movement ops → removed (their effect is in the range map).}} *)
