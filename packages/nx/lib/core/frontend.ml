@@ -208,8 +208,6 @@ module Make (B : Backend_intf.S) = struct
     if Array.length axes_arr = 0 then 1
     else array_prod (Array.map (fun ax -> input_shape.(ax)) axes_arr)
 
-  (* Write [result] into [?out] if provided, otherwise return [result]. *)
-  let copy_to_out result = result
 
   (* ───── Shape Manipulation Helpers ───── *)
 
@@ -572,7 +570,7 @@ module Make (B : Backend_intf.S) = struct
 
   let isinf x =
     if not (Dtype.is_float (dtype x)) then
-      copy_to_out (zeros (B.context x) Dtype.bool (shape x))
+      zeros (B.context x) Dtype.bool (shape x)
     else
       let dt = dtype x in
       let pos_inf =
@@ -587,12 +585,12 @@ module Make (B : Backend_intf.S) = struct
 
   let isnan x =
     if not (Dtype.is_float (dtype x)) then
-      copy_to_out (zeros (B.context x) Dtype.bool (shape x))
+      zeros (B.context x) Dtype.bool (shape x)
     else cmpne x x
 
   let isfinite x =
     if not (Dtype.is_float (dtype x)) then
-      copy_to_out (ones (B.context x) Dtype.bool (shape x))
+      ones (B.context x) Dtype.bool (shape x)
     else logical_not (logical_or (isinf x) (isnan x))
 
   let lerp start_tensor end_tensor weight =
@@ -608,7 +606,7 @@ module Make (B : Backend_intf.S) = struct
     if not (Dtype.is_int dt) then
       err op "dtype %s, expected integer type" (Dtype.to_string dt);
     if shift_val < 0 then err op "shift_val must be >= 0, got %d" shift_val;
-    if shift_val = 0 then copy_to_out x
+    if shift_val = 0 then x
     else
       apply x
         (broadcast_to (shape x)
@@ -624,7 +622,7 @@ module Make (B : Backend_intf.S) = struct
       match min with None -> x | Some min_v -> maximum x (full_like x min_v)
     in
     match max with
-    | None -> copy_to_out x
+    | None -> x
     | Some max_v -> minimum x (full_like x max_v)
 
   let clip = clamp
@@ -2236,10 +2234,10 @@ module Make (B : Backend_intf.S) = struct
     | 1, 1 -> sum (mul x w)
     | 1, _ ->
         let r = matmul_with_alloc (unsqueeze ~axes:[ 0 ] x) w in
-        copy_to_out (squeeze ~axes:[ ndim r - 2 ] r)
+        squeeze ~axes:[ ndim r - 2 ] r
     | _, 1 ->
         let r = matmul_with_alloc x (unsqueeze ~axes:[ 1 ] w) in
-        copy_to_out (squeeze ~axes:[ ndim r - 1 ] r)
+        squeeze ~axes:[ ndim r - 1 ] r
     | _ -> matmul_with_alloc x w
 
   let matmul a_orig b_orig =
@@ -2647,7 +2645,7 @@ module Make (B : Backend_intf.S) = struct
         in
         iter_pairs items;
         match !best with
-        | None -> failwith "einsum: could not find valid contraction"
+        | None -> err "einsum" "could not find valid contraction"
         | Some (i1, i2, new_path, new_info) ->
             workset :=
               (new_path, new_info)
@@ -2655,7 +2653,7 @@ module Make (B : Backend_intf.S) = struct
       done;
       match !workset with
       | [ (p, _) ] -> p
-      | _ -> failwith "einsum: optimization failed"
+      | _ -> err "einsum" "optimization failed"
 
     let contract_pair op_a str_a op_b str_b result_str =
       let sa = shape op_a in
@@ -2679,7 +2677,7 @@ module Make (B : Backend_intf.S) = struct
         List.map
           (fun c ->
             let rec find i = function
-              | [] -> failwith "char not found"
+              | [] -> err "einsum" "index %c not found in operand subscripts" c
               | x :: _ when x = c -> i
               | _ :: xs -> find (i + 1) xs
             in
@@ -3636,7 +3634,7 @@ module Make (B : Backend_intf.S) = struct
         | Complex64 | Complex128 -> Complex.{ re = scale; im = 0.0 }
       in
       mul result (scalar (B.context result) (B.dtype result) sv)
-    else copy_to_out result
+    else result
 
   let fftn (type a) ?axes ?s ?(norm = `Backward) (x : (Complex.t, a) t) :
       (Complex.t, a) t =
@@ -3710,7 +3708,7 @@ module Make (B : Backend_intf.S) = struct
     in
     if norm_scale <> 1.0 then
       mul r (scalar (B.context r) (B.dtype r) norm_scale)
-    else copy_to_out r
+    else r
 
   (* 1D FFT convenience *)
   let fft ?(axis = -1) ?n ?(norm = `Backward) x =
@@ -3859,7 +3857,7 @@ module Make (B : Backend_intf.S) = struct
 
   let log_softmax ?(axes = [ -1 ]) ?(scale = 1.0) x =
     let axes_norm = normalize_and_dedup_axes ~op:"log_softmax" (ndim x) axes in
-    if axes_norm = [] then copy_to_out (zeros_like x)
+    if axes_norm = [] then zeros_like x
     else
       let max_x = max x ~axes:axes_norm ~keepdims:true in
       let shifted = sub x max_x in
@@ -3877,14 +3875,14 @@ module Make (B : Backend_intf.S) = struct
       | None -> List.init (ndim x) Fun.id
       | Some lst -> normalize_and_dedup_axes ~op:"logsumexp" (ndim x) lst
     in
-    if axes_norm = [] then copy_to_out x
+    if axes_norm = [] then x
     else
       let max_x = max x ~axes:axes_norm ~keepdims:true in
       let log_sum =
         add (log (sum (exp (sub x max_x)) ~axes:axes_norm ~keepdims:true)) max_x
       in
-      if keepdims then copy_to_out log_sum
-      else copy_to_out (squeeze ~axes:(List.rev axes_norm) log_sum)
+      if keepdims then log_sum
+      else squeeze ~axes:(List.rev axes_norm) log_sum
 
   let logmeanexp ?axes ?(keepdims = false) x =
     let axes_norm =
@@ -3892,7 +3890,7 @@ module Make (B : Backend_intf.S) = struct
       | None -> List.init (ndim x) Fun.id
       | Some lst -> normalize_and_dedup_axes ~op:"logmeanexp" (ndim x) lst
     in
-    if axes_norm = [] then copy_to_out x
+    if axes_norm = [] then x
     else
       let log_sum = logsumexp ~axes:axes_norm ~keepdims:true x in
       let count = List.fold_left (fun acc ax -> acc * dim ax x) 1 axes_norm in
@@ -3902,8 +3900,8 @@ module Make (B : Backend_intf.S) = struct
              (scalar_like log_sum
                 (Dtype.of_float (dtype x) (float_of_int count))))
       in
-      if keepdims then copy_to_out log_mean
-      else copy_to_out (squeeze ~axes:(List.rev axes_norm) log_mean)
+      if keepdims then log_mean
+      else squeeze ~axes:(List.rev axes_norm) log_mean
 
   let standardize ?axes ?mean:mean_param ?variance:variance_param
       ?(epsilon = 1e-5) x =

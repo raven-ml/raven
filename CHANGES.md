@@ -310,6 +310,8 @@ thread.
 
 ### Nx
 
+- `einsum` failures now raise `Invalid_argument` with an `einsum:`-prefixed
+  message like every other frontend error, instead of bare `Failure`.
 - Remove the unused scalar-arithmetic surface from `Nx_core.Dtype`: `add`,
   `sub`, `mul`, `div`, and `bits`. Element arithmetic is performed by the
   backend kernels; these host-side helpers had no callers.
