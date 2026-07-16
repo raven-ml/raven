@@ -152,12 +152,6 @@ let bitcast ?loc ?dtype ?name p =
   let dtype = Option.map (fun d -> Dtype d) dtype in
   with_loc ?loc (mk ~ops:[ Ops.Bitcast ] ?dtype ~src:(Fixed [ p ]) ?name ())
 
-let gep ?loc ?idx ?name p =
-  let idx =
-    match idx with None -> cvar ~name:"i" () | Some i -> const_int i
-  in
-  with_loc ?loc (mk ~ops:[ Ops.Index ] ~src:(Fixed [ p; idx ]) ?name ())
-
 let sink ?loc ?name srcs =
   with_loc ?loc
     (mk ~ops:[ Ops.Sink ] ~src:(Fixed srcs) ~allow_any_len:true ?name ())

@@ -261,12 +261,6 @@ val bitcast :
 (** [bitcast p] matches {!Ops.Bitcast} of the child [p], optionally pinning
     the result dtype. *)
 
-val gep :
-  ?loc:pos -> ?idx:int -> ?name:string -> t -> t
-(** [gep ?idx p] matches value-lane {!Ops.Index} on [p]. When [idx] is
-    given the index child is constrained to the weak-int constant [idx];
-    without [idx] any constant index is accepted. *)
-
 val sink :
   ?loc:pos -> ?name:string -> t list -> t
 (** [sink srcs] matches {!Ops.Sink} whose first children start with [srcs].
