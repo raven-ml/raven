@@ -20,30 +20,11 @@ type t = {
 
 let prod arr = Array.fold_left ( * ) 1 arr
 
-(* compute C-contiguous strides for concrete shape *)
-let compute_strides shape_array =
-  let n = Array.length shape_array in
-  if n = 0 then [||]
-  else
-    let strides = Array.make n 0 in
-    strides.(n - 1) <- (if shape_array.(n - 1) = 0 then 0 else 1);
-    for i = n - 2 downto 0 do
-      strides.(i) <-
-        (if shape_array.(i) = 0 then 0
-         else strides.(i + 1) * max 1 shape_array.(i + 1))
-    done;
-    strides
-
-(* canonicalize strides - keep original strides, don't force stride 0 for size
-   1 *)
-let canonicalize_strides _shape_array strides = strides
-
 (* Check if strides represent a contiguous layout *)
 let is_c_contiguous_strides shape_arr strides =
-  let expected = compute_strides shape_arr in
-  let expected_canonical = canonicalize_strides shape_arr expected in
-  Array.length strides = Array.length expected_canonical
-  && Array.for_all2 ( = ) strides expected_canonical
+  let expected = Shape.c_contiguous_strides shape_arr in
+  Array.length strides = Array.length expected
+  && Array.for_all2 ( = ) strides expected
 
 (* ───── Accessors ───── *)
 
@@ -81,8 +62,8 @@ let create ?(offset = 0) ?strides shape =
         if Array.length s <> Array.length current_shape then
           err "create" "strides length %d != shape length %d" (Array.length s)
             (Array.length current_shape);
-        canonicalize_strides current_shape s
-    | None -> compute_strides current_shape
+        s
+    | None -> Shape.c_contiguous_strides current_shape
   in
   let current_offset = if is_zero_size then 0 else offset in
   let new_layout =
@@ -280,7 +261,7 @@ let reshape view new_shape =
           | Some new_strides ->
               create ~offset:view.offset ~strides:new_strides new_shape
           | None ->
-              let expected_strides = compute_strides new_arr in
+              let expected_strides = Shape.c_contiguous_strides new_arr in
               let stride_str =
                 "["
                 ^ String.concat ","
