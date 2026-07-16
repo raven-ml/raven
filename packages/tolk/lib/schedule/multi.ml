@@ -22,7 +22,12 @@ let index_of x l =
   in
   loop 0 l
 
-(* Concrete shape dims are canonically weakint consts ([U.const_int]):
+(* Deduplicate a list, preserving first-occurrence order. *)
+let dedup l =
+  List.fold_left (fun acc x -> if List.mem x acc then acc else x :: acc) [] l
+  |> List.rev
+
+(* Concrete shape dims are canonically index consts ([U.const_int]):
    hash-consing then gives value equality against dims minted anywhere
    else in the graph. *)
 let int_ = U.const_int
@@ -34,15 +39,10 @@ let allreduce_cast = Helpers.Context_var.int ~key:"ALLREDUCE_CAST" ~default:1
    allreduce inline while resolving MULTI. *)
 let late_allreduce = Helpers.getenv "LATE_ALLREDUCE" 1
 
-(* True iff [dt]'s scalar is bf16 or half — the dtypes tinygrad allreduces
-   in their pre-cast (narrow) form to avoid precision loss. *)
+(* True iff [dt] is bf16 or half — the dtypes allreduced in their pre-cast
+   (narrow) form to avoid losing precision in the widened accumulator. *)
 let is_bf16_or_half dt =
-  match dt with
-  | Dtype.Val v -> (
-      match Dtype.Val.scalar v with
-      | Dtype.Float16 | Dtype.Bfloat16 -> true
-      | _ -> false)
-  | _ -> false
+  Dtype.equal dt Dtype.float16 || Dtype.equal dt Dtype.bfloat16
 
 (* Shape encoding *)
 
@@ -135,7 +135,7 @@ let subst_device_num node i =
       let mappings =
         List.map
           (fun dv ->
-            let dt = Dtype.val_of (U.dtype dv) in
+            let dt = U.dtype dv in
             (dv, U.const (Const.int dt i)))
           dvars
       in
@@ -154,6 +154,19 @@ let unwrap_multi x = if is_multi x then (U.src x).(0) else x
 
 (* For a MULTI node, return (inner, axis). *)
 let inner_axis m = (U.src m).(0), multi_axis m
+
+(* The result shard axis of an elementwise or stack node: the last distinct
+   axis among its MULTI sources. [None] when no source is sharded. *)
+let last_multi_axis children =
+  match
+    List.rev
+      (dedup
+         (List.filter_map
+            (fun s -> if is_multi s then Some (multi_axis s) else None)
+            children))
+  with
+  | axis :: _ -> Some axis
+  | [] -> None
 
 (* MSELECT/MSTACK rewrite *)
 
@@ -224,23 +237,16 @@ let mselect_mstack node =
       Some (U.src mstack).(index)
   | _ -> None
 
-(* MSELECT(movement(s)) -> movement(MSELECT(s)): push select inside. *)
+(* MSELECT(movement(s)) -> movement(MSELECT(s)): push select inside, keeping
+   the movement op's shape/offset/order arguments unchanged. *)
 let mselect_before_movement node =
   match U.op node with
   | Ops.Mselect when Ops.Group.is_movement (U.op (U.src node).(0)) ->
-      let src = (U.src node).(0) in
+      let mv = (U.src node).(0) in
       let index = match U.arg node with U.Arg.Int i -> i | _ -> 0 in
-      let c = U.src src in
-      let inner = U.mselect ~src:c.(0) ~index in
-      (match U.op src, U.arg src with
-      | Ops.Reshape, _ -> Some (U.reshape ~src:inner ~shape:c.(1))
-      | Ops.Expand, _ -> Some (U.expand ~src:inner ~shape:c.(1))
-      | Ops.Permute, U.Arg.Ints order ->
-          Some (U.permute ~src:inner ~order)
-      | Ops.Flip, U.Arg.Bools dims -> Some (U.flip ~src:inner ~dims)
-      | Ops.Pad, _ -> Some (U.pad ~src:inner ~offset:c.(1) ~size:c.(2))
-      | Ops.Shrink, _ -> Some (U.shrink ~src:inner ~offset:c.(1) ~size:c.(2))
-      | _ -> None)
+      let srcs = Array.copy (U.src mv) in
+      srcs.(0) <- U.mselect ~src:srcs.(0) ~index;
+      Some (U.replace mv ~src:srcs ())
   | _ -> None
 
 (* Multi functions *)
@@ -278,54 +284,45 @@ let copy_multi ~shapes ~devices multi device =
       let unsharded = unshard inner_shape ndev inner axis in
       U.allreduce ~src:unsharded ~device ~op:Ops.Add
 
+(* Normalise every source to a local shard on [axis]: unwrap MULTIs already on
+   [axis], shard non-sharded sources, and gather-then-reshard MULTIs sharded on
+   a different axis. *)
+let shard_srcs ~shapes ~devices children axis =
+  let multi_len s =
+    match (devices s : U.device option) with
+    | Some (Multi ds) -> Some (List.length ds)
+    | _ -> None
+  in
+  let ndev =
+    match List.find_map multi_len children with
+    | Some n -> n
+    | None -> failwith "shard_srcs: no multi device"
+  in
+  let shape_exn s =
+    match shapes s with
+    | Some sh -> sh
+    | None -> failwith "shard_srcs: unknown shape"
+  in
+  List.map
+    (fun s ->
+      if is_multi s then
+        if multi_axis s = axis then (U.src s).(0)
+        else
+          let dev =
+            match devices s with
+            | Some d -> d
+            | None -> failwith "shard_srcs: no device"
+          in
+          shard (shape_exn s) ndev (copy_multi ~shapes ~devices s dev) axis
+      else shard (shape_exn s) ndev s axis)
+    children
+
 let alu_multi ~shapes ~devices root =
   let children = Array.to_list (U.src root) in
-  (* Result shard axis: last deduped axis among MULTI sources. *)
-  let dedup l =
-    List.fold_left (fun acc x -> if List.mem x acc then acc else x :: acc) [] l
-    |> List.rev
-  in
-  let axes =
-    children
-    |> List.filter_map (fun s -> if is_multi s then Some (multi_axis s) else None)
-    |> dedup
-  in
-  match List.rev axes with
-  | [] -> None
-  | axis :: _ ->
-      let multi_len s =
-        match (devices s : U.device option) with
-        | Some (Multi ds) -> Some (List.length ds)
-        | _ -> None
-      in
-      let ndev =
-        match List.find_map multi_len children with
-        | Some n -> n
-        | None -> failwith "alu_multi: no multi device"
-      in
-      let shape_exn s =
-        match shapes s with
-        | Some sh -> sh
-        | None -> failwith "alu_multi: unknown shape"
-      in
-      (* Align each source to [axis]: unwrap matching MULTIs, shard
-         non-sharded sources, gather-then-reshard mismatched ones. *)
-      let aligned =
-        List.map
-          (fun s ->
-            if is_multi s then
-              let a = multi_axis s in
-              if a = axis then (U.src s).(0)
-              else
-                let dev =
-                  match devices s with
-                  | Some d -> d
-                  | None -> failwith "alu_multi: no device"
-                in
-                shard (shape_exn s) ndev (copy_multi ~shapes ~devices s dev) axis
-            else shard (shape_exn s) ndev s axis)
-          children
-      in
+  match last_multi_axis children with
+  | None -> None
+  | Some axis ->
+      let aligned = shard_srcs ~shapes ~devices children axis in
       let result =
         match U.op root, aligned with
         | op, [ s ] when Ops.Group.is_unary op -> U.alu_unary ~op ~src:s
@@ -337,22 +334,29 @@ let alu_multi ~shapes ~devices root =
       in
       Some (U.multi ~src:result ~axis)
 
-let reduce_multi ~devices op axes ranges dtype src axis multi =
-  let reduced =
-    match ranges with
-    | [] -> U.reduce_axis ~src ~op ~axes
-    | _ -> U.reduce ~src ~op ~ranges ~dtype
-  in
-  if List.mem axis axes then
-    (* Shard axis is being reduced — allreduce across devices. *)
+(* STACK adds a leading axis: the sources are sharded one axis below the
+   stacked result. *)
+let stack_multi ~shapes ~devices root =
+  let children = Array.to_list (U.src root) in
+  match last_multi_axis children with
+  | None -> None
+  | Some below ->
+      let sharded = shard_srcs ~shapes ~devices children below in
+      Some (U.multi ~src:(U.stack sharded) ~axis:(below + 1))
+
+let reduce_multi ~devices op num_axes src axis multi =
+  let reduced = U.reduce_axis ~src ~op ~axes:(List.init num_axes Fun.id) in
+  if axis < num_axes then
+    (* The shard axis is one of the reduced leading axes — allreduce across
+       devices. *)
     let dev =
       match devices multi with
       | Some d -> d
       | None -> failwith "reduce_multi: no device"
     in
     (* ALLREDUCE_CAST: when the sharded input is a CAST up from bf16/half,
-       allreduce in the original (narrow) dtype and cast back, to keep the
-       reduction in the accumulation precision tinygrad chose. *)
+       allreduce in the original (narrow) dtype and cast back, keeping the
+       reduction in the widened accumulation precision. *)
     let cast_from_narrow =
       U.op src = Ops.Cast
       && Array.length (U.src src) = 1
@@ -360,20 +364,15 @@ let reduce_multi ~devices op axes ranges dtype src axis multi =
     in
     if Helpers.Context_var.get allreduce_cast <> 0 && cast_from_narrow then
       let cast_src = (U.src src).(0) in
-      let reduced_in_narrow =
-        U.cast ~src:reduced ~dtype:(U.dtype cast_src)
-      in
+      let reduced_in_narrow = U.cast ~src:reduced ~dtype:(U.dtype cast_src) in
       U.cast
         ~src:(U.allreduce ~src:reduced_in_narrow ~device:dev ~op)
         ~dtype:(U.dtype reduced)
     else U.allreduce ~src:reduced ~device:dev ~op
   else
-    (* Reducing axes below the shard axis removes them, so the shard axis
-       shifts down by the number of reduced axes that precede it. *)
-    let new_axis =
-      axis - List.length (List.filter (fun a -> a < axis) axes)
-    in
-    U.multi ~src:reduced ~axis:new_axis
+    (* The reduced leading block precedes the shard axis, so the shard axis
+       shifts down by [num_axes]. *)
+    U.multi ~src:reduced ~axis:(axis - num_axes)
 
 (* Find the last position in [new_shape] where the cumulative product of
    all preceding dimensions equals [prior_prod]. Returns [None] when the
@@ -409,21 +408,11 @@ let reshape_multi ~shapes ~devices shape src axis multi =
                ~src:(U.reshape ~src ~shape:(emit_shape adjusted))
                ~axis:new_axis))
 
-(* The expand target shape uses the full multi-device size at the shard
-   axis, but the inner source has the per-shard size — keep it. *)
-let expand_multi ~shapes shape src axis =
-  match extract_int_shape shape with
-  | None -> None
-  | Some target ->
-      let adjusted =
-        match shapes src with
-        | Some src_shape ->
-            List.mapi
-              (fun i s -> if i = axis then List.nth src_shape axis else s)
-              target
-        | None -> target
-      in
-      Some (U.multi ~src:(U.expand ~src ~shape:(emit_shape adjusted)) ~axis)
+(* EXPAND prepends [dims] as new leading axes, so the shard axis shifts up by
+   the number of prepended dims. The inner source keeps its per-shard sizes. *)
+let expand_multi dims src axis =
+  let ndims = List.length (U.as_shape dims) in
+  Some (U.multi ~src:(U.expand ~src ~dims) ~axis:(axis + ndims))
 
 (* No padding is allowed on the shard axis: the pad's (offset, size) pair
    there must be (0, full size). The per-shard pad keeps the inner size at
@@ -539,33 +528,26 @@ let rec multi_pm ~shapes ~devices node =
     when Ops.Group.is_alu op && List.exists is_multi (U.children node) ->
       alu_multi ~shapes ~devices node
 
+  (* STACK of sharded sources: shard one axis below, then stack. *)
+  | Ops.Stack when List.exists is_multi (U.children node) ->
+      stack_multi ~shapes ~devices node
+
   (* Movement/reduction ops with MULTI source. *)
   | Ops.Reduce when is_multi (U.src node).(0) ->
       let m = (U.src node).(0) in
       let inner, axis = inner_axis m in
-      let { U.ranges; op; axes; _ } =
+      let { U.op; num_axes; _ } =
         match U.as_reduce node with Some r -> r | None -> assert false
       in
-      let axes =
-        match axes with
-        | [] ->
-            List.filter_map
-              (fun r ->
-                match U.as_range r with Some v -> Some v.axis | None -> None)
-              ranges
-        | axes -> axes
-      in
-      Some
-        (reduce_multi ~devices op axes ranges (Dtype.val_of (U.dtype node)) inner
-           axis m)
+      Some (reduce_multi ~devices op num_axes inner axis m)
   | Ops.Reshape when is_multi (U.src node).(0) ->
       let m = (U.src node).(0) and shape = (U.src node).(1) in
       let inner, axis = inner_axis m in
       reshape_multi ~shapes ~devices shape inner axis m
   | Ops.Expand when is_multi (U.src node).(0) ->
-      let m = (U.src node).(0) and shape = (U.src node).(1) in
+      let m = (U.src node).(0) and dims = (U.src node).(1) in
       let inner, axis = inner_axis m in
-      expand_multi ~shapes shape inner axis
+      expand_multi dims inner axis
   | Ops.Pad when is_multi (U.src node).(0) ->
       let m = (U.src node).(0) in
       let offset = (U.src node).(1) and size = (U.src node).(2) in

@@ -26,7 +26,7 @@ let ring_allreduce_threshold =
    Shapes and bounds are Uop nodes: a single dim is a scalar const,
    multiple dims become a stack of scalar consts. *)
 
-let dim d = U.const (Const.int Dtype.Val.weakint d)
+let dim = U.const_int
 
 let emit_shape = function
   | [ d ] -> dim d
@@ -209,8 +209,7 @@ let create_allreduce_function buf ~op ~device ~dtype ~shape ?output () =
         let shape_node = emit_shape shape in
         let numel = List.fold_left ( * ) 1 shape in
         let invalid_shaped =
-          U.const_of_dtype ~shape:shape_node (Dtype.val_of dtype)
-            U.Const_invalid
+          U.const_of_dtype ~shape:shape_node dtype U.Const_invalid
         in
         let buffer =
           U.buffer ~slot:(U.fresh_buffer_slot ())
@@ -241,7 +240,6 @@ let create_allreduce_function buf ~op ~device ~dtype ~shape ?output () =
       let info : U.call_info =
         {
           grad_fxn = None;
-          metadata = [];
           name = Some "allreduce";
           precompile = true;
           precompile_backward = false;

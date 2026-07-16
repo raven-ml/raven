@@ -12,8 +12,8 @@
     wrapper, applies the operation to the inner per-shard value, and
     re-wraps the result.
 
-    Covers ALU, movement, reduction, copy, allreduce, store, and
-    passthrough ops. CALL bodies are resolved recursively. *)
+    Covers ALU, stack, movement, reduction, copy, allreduce, store,
+    and passthrough ops. CALL bodies are resolved recursively. *)
 
 val multi_pm :
   shapes:(Tolk_uop.Uop.t -> int list option) ->

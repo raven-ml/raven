@@ -55,15 +55,14 @@ let f32_buffer_node device_name dims =
    shard axis through the symbolic [_device_num] variable. The frontend shard
    API builds the same graph. *)
 
-let int_ n = U.const (Const.int Dtype.Val.int32 n)
+let int_ = U.const_int
 let emit = function [ d ] -> d | ds -> U.stack ds
 
 let shard_shrink shape ndev src axis =
   let dim = List.nth shape axis in
   let sz = dim / ndev in
   let dnum =
-    U.variable ~name:"_device_num" ~min_val:0 ~max_val:(ndev - 1)
-      ~dtype:Dtype.Val.int32 ()
+    U.variable ~name:"_device_num" ~min_val:0 ~max_val:(ndev - 1) ()
   in
   let off = U.alu_binary ~op:Ops.Mul ~lhs:dnum ~rhs:(int_ sz) in
   let before =
@@ -243,11 +242,8 @@ let () =
               let data = iota 8 in
               let ones =
                 U.expand
-                  ~src:
-                    (U.reshape
-                       ~src:(U.const (Const.float Dtype.Val.float32 1.0))
-                       ~shape:(shape_node [ 1 ]))
-                  ~shape:(shape_node [ 8 ])
+                  ~src:(U.const (Const.float Dtype.float32 1.0))
+                  ~dims:(shape_node [ 8 ])
               in
               let got =
                 run_sharded ~devices:devs2 ~shape:[ 8 ] ~axis:0 data (fun xs ->
