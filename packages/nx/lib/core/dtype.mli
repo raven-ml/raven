@@ -170,11 +170,7 @@ val pp : Format.formatter -> ('a, 'b) t -> unit
 val itemsize : ('a, 'b) t -> int
 (** [itemsize d] is the storage quantum in bytes for [d].
 
-    For [Int4] and [UInt4], this is [1] even though values are 4-bit. Use
-    {!bits} to get logical bit width. *)
-
-val bits : ('a, 'b) t -> int
-(** [bits d] is the logical bit width of elements of [d]. *)
+    For [Int4] and [UInt4], this is [1] even though values are 4-bit. *)
 
 val is_float : ('a, 'b) t -> bool
 (** [is_float d] is [true] iff [d] is one of the float dtypes. *)
@@ -288,32 +284,3 @@ module Packed : sig
   val tag : t -> int
   (** [tag t] is the stable integer tag used by [compare] and [hash]. *)
 end
-
-(** {1:ops Scalar operations} *)
-
-val add : ('a, 'b) t -> 'a -> 'a -> 'a
-(** [add d x y] adds [x] and [y] with dtype semantics of [d].
-
-    Narrow integer dtypes wrap to their bit width. For [Bool], this is boolean
-    disjunction. *)
-
-val sub : ('a, 'b) t -> 'a -> 'a -> 'a
-(** [sub d x y] subtracts [y] from [x] with dtype semantics of [d].
-
-    Narrow integer dtypes wrap to their bit width.
-
-    Raises [Invalid_argument] for [Bool]. *)
-
-val mul : ('a, 'b) t -> 'a -> 'a -> 'a
-(** [mul d x y] multiplies [x] and [y] with dtype semantics of [d].
-
-    Narrow integer dtypes wrap to their bit width. For [Bool], this is boolean
-    conjunction. *)
-
-val div : ('a, 'b) t -> 'a -> 'a -> 'a
-(** [div d x y] divides [x] by [y] with dtype semantics of [d].
-
-    Narrow integer dtypes wrap to their bit width.
-
-    Raises [Division_by_zero] for integer division by zero. Raises
-    [Invalid_argument] for [Bool]. *)

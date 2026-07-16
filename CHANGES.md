@@ -310,6 +310,9 @@ thread.
 
 ### Nx
 
+- Remove the unused scalar-arithmetic surface from `Nx_core.Dtype`: `add`,
+  `sub`, `mul`, `div`, and `bits`. Element arithmetic is performed by the
+  backend kernels; these host-side helpers had no callers.
 - Remove the unused validity-mask machinery from `Nx_core.View`: the `?mask`
   argument of `View.create` and the `mask`, `is_valid`, `linear_index`,
   `pad`, `strides_opt`, `can_get_strides`, and `is_materializable` functions.
