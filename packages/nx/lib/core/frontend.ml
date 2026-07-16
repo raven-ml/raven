@@ -1444,7 +1444,7 @@ module Make (B : Backend_intf.S) = struct
     | Gather of int array
     | New_axis
 
-  let normalize_slice_spec dim_size = function
+  let normalize_slice_spec ~axis dim_size = function
     | I idx ->
         Squeeze { idx = normalize_and_check_index ~op:"slice" dim_size idx }
     | A -> View { start = 0; stop = dim_size; step = 1; dim_len = dim_size }
@@ -1476,7 +1476,20 @@ module Make (B : Backend_intf.S) = struct
              (normalize_and_check_index ~op:"slice" dim_size)
              (Array.of_list indices))
     | N -> New_axis
-    | M _ -> invalid_arg "slice: mask slicing not supported"
+    | M mask ->
+        if ndim mask <> 1 then
+          err "slice" "axis %d, boolean mask must be rank 1 but has rank %d"
+            axis (ndim mask);
+        let mask_len = numel mask in
+        if mask_len <> dim_size then
+          err "slice" "axis %d, boolean mask length %d, expected %d" axis
+            mask_len dim_size;
+        let bits = to_array mask in
+        let positions = ref [] in
+        for i = mask_len - 1 downto 0 do
+          if bits.(i) then positions := i :: !positions
+        done;
+        Gather (Array.of_list !positions)
 
   let slice_internal specs x =
     let input_shape = shape x in
@@ -1489,13 +1502,16 @@ module Make (B : Backend_intf.S) = struct
           | N -> (New_axis :: acc, dim)
           | _ ->
               if dim >= ndim_in then invalid_arg "slice: too many indices";
-              (normalize_slice_spec input_shape.(dim) spec :: acc, dim + 1))
+              ( normalize_slice_spec ~axis:dim input_shape.(dim) spec :: acc,
+                dim + 1 ))
         ([], 0) specs
     in
     let rec pad_trailing acc dim =
       if dim >= ndim_in then List.rev acc
       else
-        pad_trailing (normalize_slice_spec input_shape.(dim) A :: acc) (dim + 1)
+        pad_trailing
+          (normalize_slice_spec ~axis:dim input_shape.(dim) A :: acc)
+          (dim + 1)
     in
     let ops = pad_trailing ops consumed in
     let gather_axis axis indices t =
@@ -1576,7 +1592,7 @@ module Make (B : Backend_intf.S) = struct
       let dims_info =
         List.mapi
           (fun i spec ->
-            match normalize_slice_spec x_shape.(i) spec with
+            match normalize_slice_spec ~axis:i x_shape.(i) spec with
             | Squeeze { idx } ->
                 (true, scalar ctx Dtype.int32 (Int32.of_int idx))
             | View { start; stop; step; _ } ->
@@ -1614,11 +1630,8 @@ module Make (B : Backend_intf.S) = struct
           end)
         dims_info;
       let x_flat = reshape [| numel x |] x in
-      let y_flat =
-        reshape
-          [| numel (broadcast_to target_shape y) |]
-          (broadcast_to target_shape y)
-      in
+      let y_broadcast = contiguous (broadcast_to target_shape y) in
+      let y_flat = reshape [| numel y_broadcast |] y_broadcast in
       let result =
         B.scatter ~mode:`Set ~unique_indices:false x_flat
           ~indices:(reshape [| numel !flat_idx |] !flat_idx)

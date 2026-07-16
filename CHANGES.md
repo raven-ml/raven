@@ -310,6 +310,9 @@ thread.
 
 ### Nx
 
+- Support boolean-mask indexing in `slice` and `set_slice`: an `M mask` spec
+  selects (or writes at) the positions where the rank-1 boolean `mask` is true
+  along the axis it addresses. The mask length must equal that axis.
 - Require the labeled argument `~indices` in `take` and `take_along_axis`, for
   consistency with `put`, `scatter`, and the other indexing functions.
 - Require `~axis` in `concatenate`. The old axis-less form silently flattened

@@ -91,17 +91,74 @@ let test_index_mixed () =
     [| 20.; 21.; 22.; 23.; 24.; 30.; 31.; 32.; 33.; 34. |]
     indexed
 
-(* Note: `new_ and `mask require implementation *)
-(* let test_index_new_axis  () =
-    let t = Nx.create  Nx.float32 [| 3; 4 |] (Array.init 12 float_of_int) in
-    let indexed = Nx.slice [ Nx.A; Nx.N; Nx.A ] t in
-    check_shape "index new axis" [| 3; 1; 4 |] indexed
+let test_index_new_axis () =
+  let t = Nx.create Nx.float32 [| 3; 4 |] (Array.init 12 float_of_int) in
+  let indexed = Nx.slice [ Nx.A; Nx.N; Nx.A ] t in
+  check_shape "index new axis" [| 3; 1; 4 |] indexed
 
-  let test_index_mask  () =
-    let t = Nx.create  Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
-    let mask = Nx.greater_s t 2.5 in
-    let indexed = Nx.slice [ Nx.M mask ] t in
-    check_t "index mask" [| 3 |] [| 3.; 4.; 5. |] indexed *)
+let test_index_mask () =
+  let t = Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
+  let mask = Nx.greater_s t 2.5 in
+  let indexed = Nx.slice [ Nx.M mask ] t in
+  check_t "index mask" [| 3 |] [| 3.; 4.; 5. |] indexed
+
+let test_index_mask_rows () =
+  let t =
+    Nx.create Nx.float32 [| 4; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8. |]
+  in
+  let mask = Nx.create Nx.bool [| 4 |] [| true; false; true; false |] in
+  let indexed = Nx.slice [ Nx.M mask ] t in
+  check_t "index mask rows" [| 2; 2 |] [| 1.; 2.; 5.; 6. |] indexed
+
+let test_index_mask_axis1 () =
+  let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  let mask = Nx.create Nx.bool [| 3 |] [| true; false; true |] in
+  let indexed = Nx.slice [ Nx.A; Nx.M mask ] t in
+  check_t "index mask axis 1" [| 2; 2 |] [| 1.; 3.; 4.; 6. |] indexed
+
+let test_index_mask_all_false () =
+  let t = Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
+  let mask = Nx.create Nx.bool [| 4 |] [| false; false; false; false |] in
+  let indexed = Nx.slice [ Nx.M mask ] t in
+  check_shape "index mask all false" [| 0 |] indexed
+
+let test_index_mask_length_mismatch () =
+  let t = Nx.create Nx.float32 [| 4 |] [| 1.; 2.; 3.; 4. |] in
+  let mask = Nx.create Nx.bool [| 3 |] [| true; false; true |] in
+  raises ~msg:"mask length mismatch"
+    (Invalid_argument "slice: axis 0, boolean mask length 3, expected 4")
+    (fun () -> ignore (Nx.slice [ Nx.M mask ] t))
+
+let test_index_mask_rank () =
+  let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
+  let mask = Nx.create Nx.bool [| 2; 2 |] [| true; false; true; false |] in
+  raises ~msg:"mask rank"
+    (Invalid_argument
+       "slice: axis 0, boolean mask must be rank 1 but has rank 2") (fun () ->
+      ignore (Nx.slice [ Nx.M mask ] t))
+
+let test_set_slice_mask () =
+  let t = Nx.zeros Nx.float32 [| 4 |] in
+  let mask = Nx.create Nx.bool [| 4 |] [| true; false; true; true |] in
+  let value = Nx.create Nx.float32 [| 3 |] [| 10.; 20.; 30. |] in
+  Nx.set_slice [ Nx.M mask ] t value;
+  check_t "set_slice mask" [| 4 |] [| 10.; 0.; 20.; 30. |] t
+
+let test_set_slice_mask_broadcast () =
+  let t = Nx.zeros Nx.float32 [| 4; 2 |] in
+  let mask = Nx.create Nx.bool [| 4 |] [| true; false; true; false |] in
+  let value = Nx.create Nx.float32 [| 2 |] [| 7.; 8. |] in
+  Nx.set_slice [ Nx.M mask ] t value;
+  check_t "set_slice mask broadcast" [| 4; 2 |]
+    [| 7.; 8.; 0.; 0.; 7.; 8.; 0.; 0. |]
+    t
+
+let test_set_slice_new_axis_unsupported () =
+  let t = Nx.zeros Nx.float32 [| 3; 2 |] in
+  let value = Nx.ones Nx.float32 [| 2 |] in
+  raises ~msg:"set_slice new axis with fancy indexing"
+    (Invalid_argument "set_slice: New_axis not supported") (fun () ->
+      Nx.set_slice [ Nx.L [ 0; 2 ]; Nx.N ] t value)
 
 (* ───── Set_slice Tests ───── *)
 
@@ -526,6 +583,20 @@ let nonzero_argwhere_tests =
     test "argwhere 1d" test_argwhere_1d;
   ]
 
+let mask_tests =
+  [
+    test "index new axis" test_index_new_axis;
+    test "index mask" test_index_mask;
+    test "index mask rows" test_index_mask_rows;
+    test "index mask axis 1" test_index_mask_axis1;
+    test "index mask all false" test_index_mask_all_false;
+    test "index mask length mismatch" test_index_mask_length_mismatch;
+    test "index mask rank" test_index_mask_rank;
+    test "set_slice mask" test_set_slice_mask;
+    test "set_slice mask broadcast" test_set_slice_mask_broadcast;
+    test "set_slice new axis unsupported" test_set_slice_new_axis_unsupported;
+  ]
+
 let edge_case_tests =
   [
     test "set_slice broadcast" test_set_slice_broadcast;
@@ -542,6 +613,7 @@ let suite =
     group "scatter" scatter_tests;
     group "compress/extract" compress_extract_tests;
     group "nonzero/argwhere" nonzero_argwhere_tests;
+    group "mask/new-axis" mask_tests;
     group "edge cases" edge_case_tests;
   ]
 

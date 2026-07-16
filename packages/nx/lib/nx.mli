@@ -136,7 +136,9 @@ type index =
       (** [A] selects the entire axis. This is the default for axes not covered
           by a {!val-slice} specification. *)
   | M of (bool, bool_elt) t
-      (** [M mask] selects positions where [mask] is [true]. *)
+      (** [M mask] selects, along the axis it addresses, the positions where the
+          rank-1 boolean tensor [mask] is [true]. [mask] must have length equal
+          to that axis. Equivalent to an [L] gather of the true positions. *)
   | N  (** [N] inserts a new axis of size 1 (does not consume an input axis). *)
 
 (** {1:properties Properties} *)
@@ -1003,13 +1005,14 @@ val slice : index list -> ('a, 'b) t -> ('a, 'b) t
     - [R (start, stop)] — half-open range \[[start], [stop]).
     - [Rs (start, stop, step)] — strided range.
     - [A] — full axis (default for trailing axes).
-    - [M mask] — boolean mask selecting positions where [mask] is [true].
+    - [M mask] — rank-1 boolean mask selecting the true positions along the
+      axis; [mask]'s length must equal that axis.
     - [N] — insert a new axis of size 1.
 
     Returns a view when possible.
 
     Raises [Invalid_argument] if specs are out of bounds, if step is zero, or if
-    a mask spec is used (not yet supported).
+    a mask is not rank 1 or its length does not match the axis.
 
     {@ocaml[
       # let x =
@@ -1025,10 +1028,11 @@ val slice : index list -> ('a, 'b) t -> ('a, 'b) t
 
 val set_slice : index list -> ('a, 'b) t -> ('a, 'b) t -> unit
 (** [set_slice specs t v] writes [v] into the region of [t] selected by [specs].
-    [v] is broadcast if needed.
+    [specs] uses the same index forms as {!val-slice}; [v] is broadcast to the
+    selected shape. An [M mask] spec writes at the masked positions.
 
-    Raises [Invalid_argument] if [N] (new-axis) specs are used (not supported
-    for writes).
+    Raises [Invalid_argument] if an [N] (new-axis) spec is combined with a gather
+    ([L] or [M]) or a strided range of step other than ±1.
 
     See also {!val-slice}. *)
 
