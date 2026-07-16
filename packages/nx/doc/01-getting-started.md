@@ -91,7 +91,8 @@ let () =
   Printf.printf "shape: [|%s|]\n"
     (Array.to_list (shape x) |> List.map string_of_int |> String.concat "; ");
   Printf.printf "ndim: %d\n" (ndim x);         (* 3 *)
-  Printf.printf "size: %d\n" (numel x)          (* 24 *)
+  Printf.printf "size: %d\n" (numel x);          (* 24 *)
+  Printf.printf "dtype: %s\n" (Format.asprintf "%a" pp_dtype (dtype x))
 ```
 
 ## Element-wise Operations

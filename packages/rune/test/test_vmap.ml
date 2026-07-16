@@ -79,7 +79,7 @@ let oracle_tests =
     test "take_along_axis with constant indices" (fun () ->
         let idx = Nx.create Nx.int32 [| 2 |] [| 2l; 0l |] in
         check_vmap ~msg:"gather"
-          (fun r -> Nx.take_along_axis ~axis:0 idx r)
+          (fun r -> Nx.take_along_axis ~axis:0 ~indices:idx r)
           (xs ()));
     test "softmax composite" (fun () ->
         check_vmap ~msg:"softmax"
@@ -312,7 +312,7 @@ let test_per_sample_gradients_of_gather () =
      Set-mode scatter. *)
   let idx = Nx.create Nx.int32 [| 2 |] [| 1l; 1l |] in
   let f x =
-    let gathered = Nx.take_along_axis ~axis:0 idx x in
+    let gathered = Nx.take_along_axis ~axis:0 ~indices:idx x in
     Nx.sum (Nx.mul gathered gathered)
   in
   let g = Rune.vmap' (fun x -> Rune.grad' f x) (xs ()) in

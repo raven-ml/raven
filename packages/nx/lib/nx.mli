@@ -493,8 +493,9 @@ module Rng : sig
 
   (** {1:keys Keys} *)
 
-  type key = int
-  (** The type for RNG keys. *)
+  type key
+  (** The type for RNG keys. Construct with {!key} and read back with
+      {!to_int}. *)
 
   val key : int -> key
   (** [key seed] is a normalized 31-bit non-negative key derived from [seed]. *)
@@ -727,18 +728,6 @@ val unsqueeze : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t
 
     See also {!squeeze}. *)
 
-val squeeze_axis : int -> ('a, 'b) t -> ('a, 'b) t
-(** [squeeze_axis i t] removes dimension [i] if its size is 1.
-
-    Raises [Invalid_argument] if dimension [i] is not 1.
-
-    See also {!squeeze}. *)
-
-val unsqueeze_axis : int -> ('a, 'b) t -> ('a, 'b) t
-(** [unsqueeze_axis i t] inserts a dimension of size 1 at position [i].
-
-    See also {!unsqueeze}. *)
-
 val transpose : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t
 (** [transpose ?axes t] permutes the dimensions of [t].
 
@@ -858,10 +847,10 @@ val repeat : ?axis:int -> int -> ('a, 'b) t -> ('a, 'b) t
 
 (** {1:combine Combining and splitting} *)
 
-val concatenate : ?axis:int -> ('a, 'b) t list -> ('a, 'b) t
-(** [concatenate ?axis ts] joins tensors along an existing axis. All tensors
-    must have the same shape except on the concatenation axis. When [axis] is
-    omitted, every tensor is flattened first. Always copies.
+val concatenate : axis:int -> ('a, 'b) t list -> ('a, 'b) t
+(** [concatenate ~axis ts] joins tensors along the existing axis [axis]. All
+    tensors must have the same shape except on the concatenation axis. To join
+    along a flattened view, ravel each tensor first. Always copies.
 
     Raises [Invalid_argument] if the list is empty or shapes are incompatible.
 
@@ -1064,10 +1053,10 @@ val set_item : int list -> 'a -> ('a, 'b) t -> unit
 val take :
   ?axis:int ->
   ?mode:[ `raise | `wrap | `clip ] ->
-  (int32, int32_elt) t ->
+  indices:(int32, int32_elt) t ->
   ('a, 'b) t ->
   ('a, 'b) t
-(** [take ?axis ?mode indices t] gathers elements from [t] at [indices] along
+(** [take ?axis ?mode ~indices t] gathers elements from [t] at [indices] along
     [axis]. When [axis] is omitted, [t] is flattened first. [mode] controls
     out-of-bounds indices: [`raise] (default) raises, [`wrap] uses modular
     indexing, [`clip] clamps to bounds.
@@ -1081,7 +1070,7 @@ val take :
             [| 0l; 1l; 2l; 3l; 4l |]
         in
         take
-          (create int32 [| 3 |] [| 1l; 3l; 0l |])
+          ~indices:(create int32 [| 3 |] [| 1l; 3l; 0l |])
           x
       - : (int32, int32_elt) t = [1, 3, 0]
     ]}
@@ -1089,8 +1078,8 @@ val take :
     See also {!put}, {!take_along_axis}. *)
 
 val take_along_axis :
-  axis:int -> (int32, int32_elt) t -> ('a, 'b) t -> ('a, 'b) t
-(** [take_along_axis ~axis indices t] gathers values from [t] along [axis] using
+  axis:int -> indices:(int32, int32_elt) t -> ('a, 'b) t -> ('a, 'b) t
+(** [take_along_axis ~axis ~indices t] gathers values from [t] along [axis] using
     [indices]. [indices] must match [t]'s shape except along [axis]. Useful for
     gathering from {!argmax}/{!argmin} results.
 
@@ -1104,7 +1093,7 @@ val take_along_axis :
         let idx =
           create int32 [| 2; 1 |] [| 1l; 0l |]
         in
-        take_along_axis ~axis:1 idx x
+        take_along_axis ~axis:1 ~indices:idx x
       - : (float, float32_elt) t = float32 [2; 1] [[1],
                                                    [3]]
     ]}
@@ -2678,3 +2667,6 @@ val print : ('a, 'b) t -> unit
 
 val to_string : ('a, 'b) t -> string
 (** [to_string t] is [t] formatted as a string (dtype, shape, and data). *)
+
+val pp_dtype : Format.formatter -> ('a, 'b) dtype -> unit
+(** [pp_dtype fmt dtype] formats [dtype] by name (e.g. [float32]). *)

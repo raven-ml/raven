@@ -145,7 +145,7 @@ let test_set_item () =
 let test_take_basic () =
   let t = Nx.create Nx.float32 [| 5 |] [| 10.; 20.; 30.; 40.; 50. |] in
   let indices = Nx.create Nx.int32 [| 3 |] [| 0l; 2l; 4l |] in
-  let result = Nx.take indices t in
+  let result = Nx.take ~indices t in
   check_t "take basic" [| 3 |] [| 10.; 30.; 50. |] result
 
 let test_take_with_axis () =
@@ -154,25 +154,25 @@ let test_take_with_axis () =
       [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9.; 10.; 11.; 12. |]
   in
   let indices = Nx.create Nx.int32 [| 2 |] [| 0l; 2l |] in
-  let result = Nx.take ~axis:1 indices t in
+  let result = Nx.take ~axis:1 ~indices t in
   check_t "take with axis" [| 3; 2 |] [| 1.; 3.; 5.; 7.; 9.; 11. |] result
 
 let test_take_mode_wrap () =
   let t = Nx.create Nx.float32 [| 3 |] [| 10.; 20.; 30. |] in
   let indices = Nx.create Nx.int32 [| 4 |] [| 0l; 1l; 2l; 3l |] in
-  let result = Nx.take ~mode:`wrap indices t in
+  let result = Nx.take ~mode:`wrap ~indices t in
   check_t "take mode wrap" [| 4 |] [| 10.; 20.; 30.; 10. |] result
 
 let test_take_mode_clip () =
   let t = Nx.create Nx.float32 [| 3 |] [| 10.; 20.; 30. |] in
   let indices = Nx.create Nx.int32 [| 4 |] [| -1l; 0l; 2l; 5l |] in
-  let result = Nx.take ~mode:`clip indices t in
+  let result = Nx.take ~mode:`clip ~indices t in
   check_t "take mode clip" [| 4 |] [| 10.; 10.; 30.; 30. |] result
 
 let test_take_negative_indices () =
   let t = Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
   let indices = Nx.create Nx.int32 [| 2 |] [| -1l; -2l |] in
-  let result = Nx.take ~mode:`wrap indices t in
+  let result = Nx.take ~mode:`wrap ~indices t in
   check_t "take negative indices" [| 2 |] [| 5.; 4. |] result
 
 (* ───── Take_along_axis Tests ───── *)
@@ -180,14 +180,14 @@ let test_take_negative_indices () =
 let test_take_along_axis_1d () =
   let t = Nx.create Nx.float32 [| 5 |] [| 3.; 1.; 4.; 1.; 5. |] in
   let indices = Nx.argsort ~axis:0 t in
-  let sorted = Nx.take_along_axis ~axis:0 indices t in
+  let sorted = Nx.take_along_axis ~axis:0 ~indices t in
   check_t "take_along_axis 1d" [| 5 |] [| 1.; 1.; 3.; 4.; 5. |] sorted
 
 let test_take_along_axis_2d () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 4.; 1.; 2.; 3.; 5.; 6. |] in
   (* Get argmax along axis 1 *)
   let indices = Nx.argmax ~axis:1 ~keepdims:true t in
-  let maxvals = Nx.take_along_axis ~axis:1 indices t in
+  let maxvals = Nx.take_along_axis ~axis:1 ~indices t in
   check_t "take_along_axis 2d" [| 2; 1 |] [| 4.; 6. |] maxvals
 
 (* ───── Put Tests ───── *)
@@ -419,7 +419,7 @@ let test_index_chained () =
 let test_take_empty_indices () =
   let t = Nx.create Nx.float32 [| 5 |] [| 1.; 2.; 3.; 4.; 5. |] in
   let indices = Nx.create Nx.int32 [| 0 |] [||] in
-  let result = Nx.take indices t in
+  let result = Nx.take ~indices t in
   check_shape "take empty indices" [| 0 |] result
 
 let test_compress_condition_mismatch () =

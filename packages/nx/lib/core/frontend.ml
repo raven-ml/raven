@@ -892,8 +892,6 @@ module Make (B : Backend_intf.S) = struct
       done;
       reshape (Array.of_list (List.rev !new_shape)) x
 
-  let squeeze_axis axis x = squeeze ~axes:[ axis ] x
-  let unsqueeze_axis axis x = unsqueeze ~axes:[ axis ] x
   let expand_dims axes x = unsqueeze ~axes x
 
   let transpose ?axes x =
@@ -1105,36 +1103,32 @@ module Make (B : Backend_intf.S) = struct
             (Dtype.to_string d))
       (List.tl ts)
 
-  let concatenate ?axis ts =
+  let concatenate ~axis ts =
     match ts with
     | [] ->
         invalid_arg
           "concatenate: tensor list cannot be empty, provide at least one \
            tensor"
     | [ x ] -> copy x
-    | _ -> (
+    | _ ->
         check_dtypes_match ~op:"concatenate" ts;
-        match axis with
-        | None -> cat_tensors ~axis:0 (List.map flatten ts)
-        | Some a ->
-            let first = List.hd ts in
-            let first_ndim = ndim first in
-            let axis = resolve_single_axis ~ndim_opt:first_ndim first a in
-            if not (List.for_all (fun x -> ndim x = first_ndim) ts) then
-              invalid_arg
-                "concatenate: arrays must have same number of dimensions";
-            let first_shape = shape first in
-            List.iter
-              (fun x ->
-                let s = shape x in
-                Array.iteri
-                  (fun i d ->
-                    if i <> axis && d <> first_shape.(i) then
-                      err "concatenate" "dimension %d, size %d≠%d" i d
-                        first_shape.(i))
-                  s)
-              (List.tl ts);
-            cat_tensors ~axis ts)
+        let first = List.hd ts in
+        let first_ndim = ndim first in
+        let axis = resolve_single_axis ~ndim_opt:first_ndim first axis in
+        if not (List.for_all (fun x -> ndim x = first_ndim) ts) then
+          invalid_arg "concatenate: arrays must have same number of dimensions";
+        let first_shape = shape first in
+        List.iter
+          (fun x ->
+            let s = shape x in
+            Array.iteri
+              (fun i d ->
+                if i <> axis && d <> first_shape.(i) then
+                  err "concatenate" "dimension %d, size %d≠%d" i d
+                    first_shape.(i))
+              s)
+          (List.tl ts);
+        cat_tensors ~axis ts
 
   let stack ?axis ts =
     match ts with
@@ -1390,7 +1384,7 @@ module Make (B : Backend_intf.S) = struct
           (maximum indices (zeros ctx Int32 s))
           (full ctx Int32 s (Int32.of_int (n - 1)))
 
-  let take ?axis ?(mode = `raise) indices t =
+  let take ?axis ?(mode = `raise) ~indices t =
     let ctx = B.context t in
     match axis with
     | None ->
@@ -1417,7 +1411,7 @@ module Make (B : Backend_intf.S) = struct
         out_shape.(axis) <- n_idx;
         reshape out_shape out
 
-  let take_along_axis ~axis indices t =
+  let take_along_axis ~axis ~indices t =
     let axis = resolve_single_axis t axis in
     let t_shape = shape t in
     let idx_shape = shape indices in
@@ -1510,7 +1504,7 @@ module Make (B : Backend_intf.S) = struct
           [| Array.length indices |]
           (fun i -> Int32.of_int indices.(i.(0)))
       in
-      take ~axis idx_t t
+      take ~axis ~indices:idx_t t
     in
     let shrink_axis axis start stop t =
       if start < stop then
@@ -1518,7 +1512,7 @@ module Make (B : Backend_intf.S) = struct
           (Array.mapi
              (fun i dim -> if i = axis then (start, stop) else (0, dim))
              (shape t))
-      else take ~axis (empty (B.context t) Dtype.int32 [| 0 |]) t
+      else take ~axis ~indices:(empty (B.context t) Dtype.int32 [| 0 |]) t
     in
     let rec apply current axis sq_axes = function
       | [] -> (current, sq_axes)
@@ -1842,7 +1836,7 @@ module Make (B : Backend_intf.S) = struct
           |> squeeze |> unsafe_get [] |> Int32.to_int
         in
         if n = 0 then empty (B.context t) (dtype t) [| 0 |]
-        else take (nonzero_indices_only cond_flat).(0) t_flat
+        else take ~indices:(nonzero_indices_only cond_flat).(0) t_flat
     | Some axis ->
         let axis = resolve_single_axis t axis in
         let axis_size = dim axis t in
@@ -1857,7 +1851,7 @@ module Make (B : Backend_intf.S) = struct
           s.(axis) <- 0;
           empty (B.context t) (dtype t) s
         end
-        else take ~axis true_idx.(0) t
+        else take ~axis ~indices:true_idx.(0) t
 
   let extract ~condition t =
     if shape condition <> shape t then invalid_arg "extract: shape mismatch";
@@ -2027,7 +2021,8 @@ module Make (B : Backend_intf.S) = struct
       (* Threefry: each value needs 2 int32s for key and counter *)
       let key_t =
         create ctx Dtype.int32 [| n; 2 |]
-          (Array.init (n * 2) (fun i -> Int32.of_int (Rng.fold_in key i)))
+          (Array.init (n * 2) (fun i ->
+               Int32.of_int (Rng.to_int (Rng.fold_in key i))))
       in
       let counter =
         create ctx Dtype.int32 [| n; 2 |]
@@ -2087,7 +2082,8 @@ module Make (B : Backend_intf.S) = struct
 
   let shuffle ctx x =
     let s = shape x in
-    if Array.length s = 0 then x else take ~axis:0 (permutation ctx s.(0)) x
+    if Array.length s = 0 then x
+    else take ~axis:0 ~indices:(permutation ctx s.(0)) x
 
   let categorical (type a b) ctx ?(axis = -1) ?shape:(batch_shape = [||])
       (logits : (a, b) t) =
@@ -2232,7 +2228,7 @@ module Make (B : Backend_intf.S) = struct
              (scalar ctx Dtype.int32 (Int32.of_int step)))
           (scalar ctx Dtype.int32 (Int32.of_int start))
       in
-      take ~axis:(nd - 2) idx x_flat
+      take ~axis:(nd - 2) ~indices:idx x_flat
 
   let matrix_transpose x =
     let nd = ndim x in

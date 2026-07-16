@@ -32,5 +32,5 @@ let apply p indices =
   let dim = (Nx.shape p.table).(1) in
   (* [take] flattens the indices along the gathered axis; restore their shape in
      front of the row dimension. *)
-  let rows = Nx.take ~axis:0 indices p.table in
+  let rows = Nx.take ~axis:0 ~indices p.table in
   Nx.reshape (Array.append (Nx.shape indices) [| dim |]) rows

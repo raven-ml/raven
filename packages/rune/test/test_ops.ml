@@ -153,7 +153,7 @@ let selection_tests =
     test "take_along_axis" (fun () ->
         let idx = Nx.create Nx.int32 [| 2; 2 |] [| 2l; 0l; 1l; 2l |] in
         check_grad ~msg:"take_along_axis"
-          (fun x -> Nx.take_along_axis ~axis:1 idx x)
+          (fun x -> Nx.take_along_axis ~axis:1 ~indices:idx x)
           (m23 ()));
     test "scatter (set)" (fun () ->
         let idx = Nx.create Nx.int32 [| 2; 2 |] [| 2l; 0l; 1l; 2l |] in

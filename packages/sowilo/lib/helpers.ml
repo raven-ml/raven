@@ -9,17 +9,17 @@ let err_rank n =
 let with_batch f img =
   match Array.length (Nx.shape img) with
   | 3 ->
-      let batched = Nx.unsqueeze_axis 0 img in
-      Nx.squeeze_axis 0 (f batched)
+      let batched = Nx.unsqueeze ~axes:[ 0 ] img in
+      Nx.squeeze ~axes:[ 0 ] (f batched)
   | 4 -> f img
   | n -> invalid_arg (err_rank n)
 
 let with_batch_pair f img =
   match Array.length (Nx.shape img) with
   | 3 ->
-      let batched = Nx.unsqueeze_axis 0 img in
+      let batched = Nx.unsqueeze ~axes:[ 0 ] img in
       let a, b = f batched in
-      (Nx.squeeze_axis 0 a, Nx.squeeze_axis 0 b)
+      (Nx.squeeze ~axes:[ 0 ] a, Nx.squeeze ~axes:[ 0 ] b)
   | 4 -> f img
   | n -> invalid_arg (err_rank n)
 

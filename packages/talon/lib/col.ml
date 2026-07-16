@@ -284,7 +284,7 @@ let reindex col indices =
         let idx_tensor =
           Nx.create Nx.int32 [| n |] (Array.map Int32.of_int indices)
         in
-        let gathered = Nx.take ~axis:0 idx_tensor tensor in
+        let gathered = Nx.take ~axis:0 ~indices:idx_tensor tensor in
         let mask =
           match mask_opt with
           | Some m ->

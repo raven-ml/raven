@@ -198,7 +198,7 @@ let apply_cached ?(num_heads = 1) ~pos ~cache p x =
          (Nx.less slots (Nx.add_s pos (Int32.of_int seq))))
   in
   let update cached fresh =
-    Nx.where written (Nx.take_along_axis ~axis:2 src fresh) cached
+    Nx.where written (Nx.take_along_axis ~axis:2 ~indices:src fresh) cached
   in
   let keys = update cache.Cache.keys k
   and values = update cache.Cache.values v in

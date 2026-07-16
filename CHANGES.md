@@ -310,13 +310,20 @@ thread.
 
 ### Nx
 
+- Require the labeled argument `~indices` in `take` and `take_along_axis`, for
+  consistency with `put`, `scatter`, and the other indexing functions.
+- Require `~axis` in `concatenate`. The old axis-less form silently flattened
+  every input; ravel the inputs first to recover it.
+- Remove `squeeze_axis` and `unsqueeze_axis`; use `squeeze ~axes:[ i ]` and
+  `unsqueeze ~axes:[ i ]`.
+- Make `Rng.key` abstract. Construct keys with `Rng.key` and read them back with
+  `Rng.to_int`.
 - Remove the per-element tensor-form `map`, `iter`, and `fold` (each scalar
   presented as a scalar tensor); use the faster `map_item`, `iter_item`, and
   `fold_item`, which pass raw scalars.
 - Remove the formatting helpers `format_to_string`, `print_with_formatter`,
-  `print_data`, `pp_dtype`, `dtype_to_string`, `shape_to_string`, and
-  `pp_shape`. `pp`, `pp_data`, `print`, `to_string`, and `data_to_string`
-  remain.
+  `print_data`, `dtype_to_string`, `shape_to_string`, and `pp_shape`. `pp`,
+  `pp_data`, `print`, `to_string`, `data_to_string`, and `pp_dtype` remain.
 - Remove the numpy stack shorthands `vstack`, `hstack`, and `dstack`, along
   with the `Nx.Infix` concatenation operators `( @= )` and `( @|| )`. Use
   `concatenate`/`stack` directly, reshaping 1-D inputs as needed.

@@ -108,7 +108,7 @@ let () =
     let action = Nx.reshape [||] action_idx in
     let log_probs = Nx.log_softmax logits in
     let action_1 = Nx.reshape [| 1; 1 |] action_idx in
-    let log_prob = Nx.take_along_axis ~axis:1 action_1 log_probs in
+    let log_prob = Nx.take_along_axis ~axis:1 ~indices:action_1 log_probs in
     let lp = Nx.item [ 0; 0 ] log_prob in
     (action, Some lp, None)
   in
@@ -155,7 +155,7 @@ let () =
       let logits = Policy.apply p obs_batch in
       let log_probs = Nx.log_softmax logits in
       let action_log_probs =
-        Nx.take_along_axis ~axis:1 actions_batch log_probs
+        Nx.take_along_axis ~axis:1 ~indices:actions_batch log_probs
       in
       let action_log_probs = Nx.reshape [| n |] action_log_probs in
       let weighted = Nx.mul action_log_probs returns_t in

@@ -56,17 +56,19 @@ let resize : type a b.
   | Nearest ->
       let y_idx = compute_nearest_indices ~size_in:in_h ~size_out:out_h in
       let x_idx = compute_nearest_indices ~size_in:in_w ~size_out:out_w in
-      img |> Nx.take ~axis:h_ax y_idx |> Nx.take ~axis:w_ax x_idx
+      img
+      |> Nx.take ~axis:h_ax ~indices:y_idx
+      |> Nx.take ~axis:w_ax ~indices:x_idx
   | Bilinear ->
       let img_f = Nx.cast Nx.float32 img in
       let y0, y1, dy = compute_linear_axis ~size_in:in_h ~size_out:out_h in
       let x0, x1, dx = compute_linear_axis ~size_in:in_w ~size_out:out_w in
-      let top = Nx.take ~axis:h_ax y0 img_f in
-      let bottom = Nx.take ~axis:h_ax y1 img_f in
-      let top_left = Nx.take ~axis:w_ax x0 top in
-      let top_right = Nx.take ~axis:w_ax x1 top in
-      let bottom_left = Nx.take ~axis:w_ax x0 bottom in
-      let bottom_right = Nx.take ~axis:w_ax x1 bottom in
+      let top = Nx.take ~axis:h_ax ~indices:y0 img_f in
+      let bottom = Nx.take ~axis:h_ax ~indices:y1 img_f in
+      let top_left = Nx.take ~axis:w_ax ~indices:x0 top in
+      let top_right = Nx.take ~axis:w_ax ~indices:x1 top in
+      let bottom_left = Nx.take ~axis:w_ax ~indices:x0 bottom in
+      let bottom_right = Nx.take ~axis:w_ax ~indices:x1 bottom in
       (* Reshape dx and dy for broadcasting *)
       let make_broadcastable ax size =
         let s = Array.make rank 1 in

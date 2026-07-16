@@ -19,7 +19,8 @@ let examples op t =
 let cut perm t start stop =
   match perm with
   | None -> Nx.slice [ Nx.R (start, stop) ] t
-  | Some perm -> Nx.take ~axis:0 (Nx.slice [ Nx.R (start, stop) ] perm) t
+  | Some perm ->
+      Nx.take ~axis:0 ~indices:(Nx.slice [ Nx.R (start, stop) ] perm) t
 
 (* Each traversal forces the outer thunk once, drawing one permutation per epoch
    from the ambient RNG scope; the recursion threads it along. *)

@@ -410,10 +410,10 @@ let indexing_props =
     prop "take all indices = identity (f32 1d)" f32_1d (fun t ->
         let n = Nx.numel t in
         let indices = Nx.arange Nx.int32 0 n 1 in
-        approx_equal (Nx.take indices t) t);
+        approx_equal (Nx.take ~indices t) t);
     prop "take indices valid (f32 1d)" f32_1d_with_take_indices
       (fun (t, indices) ->
-        let taken = Nx.take indices t in
+        let taken = Nx.take ~indices t in
         let n_idx = Nx.numel indices in
         let ok = ref true in
         for i = 0 to n_idx - 1 do
@@ -427,7 +427,7 @@ let indexing_props =
         assume (no_nan t);
         let sorted, _ = Nx.sort t in
         let arg_indices = Nx.argsort t in
-        let gathered = Nx.take_along_axis ~axis:0 arg_indices t in
+        let gathered = Nx.take_along_axis ~axis:0 ~indices:arg_indices t in
         approx_equal gathered sorted);
     prop "extract preserves count (f32)" f32_with_mask (fun (t, mask) ->
         let extracted = Nx.extract ~condition:mask t in

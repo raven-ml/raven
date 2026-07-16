@@ -122,7 +122,7 @@ let test_concat_axis_1 () =
 let test_concat_empty_list () =
   check_invalid_arg "concat empty list"
     "concatenate: tensor list cannot be empty, provide at least one tensor"
-    (fun () -> Nx.concatenate [])
+    (fun () -> Nx.concatenate ~axis:0 [])
 
 let test_concat_different_dtypes () =
   (* For now, assuming concatenate requires same dtype - adjust if it
@@ -131,7 +131,7 @@ let test_concat_different_dtypes () =
   let t2 = Nx.create Nx.int32 [| 2 |] [| 3l; 4l |] in
   check_invalid_arg "concat different dtypes"
     "concatenate: expected dtype float32, got int32" (fun () ->
-      ignore (Nx.concatenate [ t1; Obj.magic t2 ]))
+      ignore (Nx.concatenate ~axis:0 [ t1; Obj.magic t2 ]))
 
 let test_concat_with_empty () =
   let t1 = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
@@ -151,7 +151,7 @@ let test_concat_shape_mismatch () =
 let test_concat_new_array () =
   let t1 = Nx.create Nx.float32 [| 2 |] [| 1.0; 2.0 |] in
   let t2 = Nx.create Nx.float32 [| 2 |] [| 3.0; 4.0 |] in
-  let c = Nx.concatenate [ t1; t2 ] in
+  let c = Nx.concatenate ~axis:0 [ t1; t2 ] in
   Nx.set_item [ 0 ] 99.0 t1;
   equal ~msg:"concat is new array" (float 1e-6) 1.0 (Nx.item [ 0 ] c)
 

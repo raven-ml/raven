@@ -12,8 +12,9 @@
 
 (** {1:keys Keys} *)
 
-type key = int
-(** The type for RNG keys. *)
+type key
+(** The type for RNG keys. Construct with {!key} and read back with {!to_int}.
+*)
 
 val key : int -> key
 (** [key seed] is a normalized 31-bit non-negative key derived from [seed]. *)

@@ -197,7 +197,9 @@ let () =
     (* Loss: MSE between predicted Q and TD target *)
     let loss_fn p =
       let q_values = Q.apply p obs_batch in
-      let q_selected = Nx.take_along_axis ~axis:1 actions_batch q_values in
+      let q_selected =
+        Nx.take_along_axis ~axis:1 ~indices:actions_batch q_values
+      in
       let q_selected = Nx.reshape [| n |] q_selected in
       let diff = Nx.sub q_selected td_target in
       Nx.mean (Nx.mul diff diff)

@@ -73,5 +73,7 @@ let () =
   Printf.printf "After floor at 60:\n%s\n\n" (data_to_string passing);
 
   (* take: select specific students by index. *)
-  let picks = take ~axis:0 (create int32 [| 3 |] [| 0l; 2l; 4l |]) grades in
+  let picks =
+    take ~axis:0 ~indices:(create int32 [| 3 |] [| 0l; 2l; 4l |]) grades
+  in
   Printf.printf "Students 0, 2, 4:\n%s\n" (data_to_string picks)

@@ -71,6 +71,8 @@ let softmax_cross_entropy_sparse ?(reduction = `Mean) logits labels =
       (shape_str labels_shape) (shape_str batch_shape);
   let log_probs = Nx.log_softmax logits in
   let picked =
-    Nx.take_along_axis ~axis:(-1) (Nx.unsqueeze ~axes:[ -1 ] labels) log_probs
+    Nx.take_along_axis ~axis:(-1)
+      ~indices:(Nx.unsqueeze ~axes:[ -1 ] labels)
+      log_probs
   in
   reduce reduction (Nx.neg (Nx.squeeze ~axes:[ -1 ] picked))

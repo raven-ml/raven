@@ -52,7 +52,9 @@ let top_k_accuracy ~k predictions labels =
   (* The label is in the top k iff fewer than [k] classes score strictly higher,
      which needs no sort and resolves ties in the label's favor. *)
   let label_score =
-    Nx.take_along_axis ~axis:(-1) (Nx.unsqueeze ~axes:[ -1 ] labels) predictions
+    Nx.take_along_axis ~axis:(-1)
+      ~indices:(Nx.unsqueeze ~axes:[ -1 ] labels)
+      predictions
   in
   let higher =
     Nx.sum ~axes:[ -1 ] (Nx.cast Nx.int32 (Nx.greater predictions label_score))

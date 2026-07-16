@@ -534,18 +534,14 @@ let shape_manipulation_tests =
     test "squeeze" (fun () ->
         let a = Nx.ones Nx.float32 [| 1; 3; 1 |] in
         Nx.squeeze a |> check_t "squeeze" [| 3 |] [| 1.; 1.; 1. |]);
-    test "squeeze_axis" (fun () ->
+    test "squeeze axes" (fun () ->
         let a = Nx.ones Nx.float32 [| 1; 3; 1 |] in
-        Nx.squeeze_axis 0 a
-        |> check_t "squeeze_axis" [| 3; 1 |] [| 1.; 1.; 1. |]);
+        Nx.squeeze ~axes:[ 0 ] a
+        |> check_t "squeeze axes" [| 3; 1 |] [| 1.; 1.; 1. |]);
     test "unsqueeze" (fun () ->
         let a = Nx.ones Nx.float32 [| 3 |] in
         Nx.unsqueeze ~axes:[ 0; 2 ] a
         |> check_t "unsqueeze" [| 1; 3; 1 |] [| 1.; 1.; 1. |]);
-    test "unsqueeze_axis" (fun () ->
-        let a = Nx.ones Nx.float32 [| 3 |] in
-        Nx.unsqueeze_axis 0 a
-        |> check_t "unsqueeze_axis" [| 1; 3 |] [| 1.; 1.; 1. |]);
     test "expand_dims" (fun () ->
         let a = Nx.ones Nx.float32 [| 3 |] in
         Nx.unsqueeze ~axes:[ 0 ] a
