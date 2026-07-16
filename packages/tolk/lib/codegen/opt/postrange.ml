@@ -32,9 +32,9 @@ let err_tc_first = "tensor core opts must be first"
 let err_no_tc_available = "no tensor core available"
 let err_range_missing = "range not found"
 
-let scalar_eq (a : Dtype.scalar) (b : Dtype.scalar) = a = b
+let scalar_eq (a : Dtype.t) (b : Dtype.t) = Dtype.equal a b
 
-let scalar_is_float32 s = s = Dtype.Float32
+let scalar_is_float32 s = Dtype.equal s Dtype.float32
 
 (* Range-view helpers *)
 
@@ -204,7 +204,7 @@ let convert_loop_to_global t =
               ( r,
                 U.range ~size:v.size ~axis:v.axis ~sub:v.sub
                   ~kind:Axis_type.Global
-                  ~dtype:(Dtype.val_of (U.dtype r))
+                  ~dtype:(U.dtype r)
                   ~parents:v.parents
                   () )
           else None)
@@ -542,7 +542,6 @@ let build_wmma_node t (tc : Tc.t) ne =
     List.map (fun a -> range_axis (List.nth rngs_now a)) tc_reduce_axes
   in
   (* Build the WMMA node *)
-  let out_dt_val = Dtype.Val.of_scalar tc.dtype_out in
   let src0, src1 =
     match srcs with
     | a :: b :: _ -> a, b
@@ -579,11 +578,11 @@ let build_wmma_node t (tc : Tc.t) ne =
       (U.wmma
          ~a:src0 ~b:src1
          ~c:
-           (U.const
-              (Const.of_view (Dtype.Val.vec c_ept out_dt_val)
-                 (Const.Float 0.0)))
+           (U.const_of_dtype tc.dtype_out
+              (U.Const_tuple
+                 (List.init c_ept (fun _ -> U.Const_scalar (`Float 0.0)))))
          ~info:wmma_info
-         ~dtype:out_dt_val)
+         ~dtype:tc.dtype_out)
   in
   (* Preserve extra reduces *)
   let red_ranges =
@@ -600,7 +599,7 @@ let build_wmma_node t (tc : Tc.t) ne =
   let tc_uop =
     if extra_reduces <> [] then
       U.reduce ~op:Ops.Add ~src:wmma ~ranges:extra_reduces
-        ~dtype:(Dtype.val_of (U.dtype wmma))
+        ~dtype:(U.dtype wmma)
     else wmma
   in
   t.ast <- U.substitute [ (tagged_red, tc_uop) ] t.ast;
@@ -731,10 +730,7 @@ let rec get_idx_valid u =
       U.stack idxs, U.stack valids
   | _ -> u, U.const_bool true
 
-let invalid_for_dtype dtype =
-  match dtype with
-  | Dtype.Val dt -> U.invalid ~dtype:dt ()
-  | Dtype.Ptr _ -> U.invalid ()
+let invalid_for_dtype dtype = U.invalid ~dtype ()
 
 (* Pad a range to a multiple of [amount]. *)
 let apply_padto t r amount _red_opt =
@@ -751,7 +747,7 @@ let apply_padto t r amount _red_opt =
   let v = range_view r in
   let replaced_rng =
     U.range ~size:(U.const_int new_sz) ~axis:v.axis ~sub:v.sub ~kind:v.kind
-      ~dtype:(Dtype.val_of (U.dtype r))
+      ~dtype:(U.dtype r)
       ()
   in
   let valid =
@@ -768,20 +764,11 @@ let apply_padto t r amount _red_opt =
         match U.as_index b with
         | Some { ptr; idxs = [ idx ] } ->
             let idx, idx_valid = get_idx_valid idx in
-            if not (U.in_backward_slice r idx) then acc
+            if not (U.equal r idx || U.in_backward_slice r idx) then acc
             else
-            let idx_dtype = Dtype.val_of (U.dtype idx) in
-            let valid_idx =
-              U.alu_binary ~op:Ops.And ~lhs:valid ~rhs:idx_valid
-            in
-            let guarded_idx =
-              U.alu_ternary ~op:Ops.Where ~a:valid_idx ~b:idx
-                ~c:(U.invalid ~dtype:idx_dtype ())
-            in
-            let guarded =
-              U.index ~ptr ~idxs:[guarded_idx] ~as_ptr:(Dtype.is_ptr (U.dtype b))
-                ()
-            in
+            let cond = U.alu_binary ~op:Ops.And ~lhs:valid ~rhs:idx_valid in
+            let guarded_idx = U.valid ~src:idx ~cond in
+            let guarded = U.index ~ptr ~idxs:[ guarded_idx ] () in
             let replacement =
               if List.exists (fun target -> target == b) store_targets then
                 guarded
@@ -807,14 +794,14 @@ let apply_swap t r with_axis =
   let r' =
     U.with_tag "1"
       (U.range ~size:rv.size ~sub:av.sub ~axis:av.axis ~kind:rv.kind
-         ~dtype:(Dtype.val_of (U.dtype r))
+         ~dtype:(U.dtype r)
          ~parents:rv.parents
          ())
   in
   let alt' =
     U.with_tag "1"
       (U.range ~size:av.size ~sub:rv.sub ~axis:rv.axis ~kind:av.kind
-         ~dtype:(Dtype.val_of (U.dtype altrng))
+         ~dtype:(U.dtype altrng)
          ~parents:av.parents
          ())
   in
@@ -884,9 +871,9 @@ and apply_tc_opt t use_tc axis tc_select tc_opt =
             | Some tc -> [ tc ]
             | None -> raise (Opt_error err_invalid_tc_choice)
         in
-        let in0_sc = Dtype.scalar (U.dtype in0) in
-        let in1_sc = Dtype.scalar (U.dtype in1) in
-        let red_sc = Dtype.scalar (U.dtype red) in
+        let in0_sc = U.dtype in0 in
+        let in1_sc = U.dtype in1 in
+        let red_sc = U.dtype red in
         let in0_ranges = U.ranges in0 in
         let in1_ranges = U.ranges in1 in
         let red_ranges = red_view.ranges in

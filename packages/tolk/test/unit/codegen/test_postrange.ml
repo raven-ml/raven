@@ -13,14 +13,13 @@ open Tolk
 open Tolk_uop
 module U = Uop
 module D = Dtype
-module C = Const
 module Ak = Axis_type
 module P = Postrange
 
 (* Helpers *)
 
-let idx n = U.const (C.int D.Val.weakint n)
-let global_fptr = D.Ptr.create D.Val.float32 ~addrspace:Global ~size:(-1)
+let idx n = U.const_int n
+let global_fptr = D.float32
 
 let kernel_info ?(opts_to_apply = None) ?(dont_use_locals = false) () =
   {
@@ -37,13 +36,13 @@ let wrap_sink ?opts_to_apply ?dont_use_locals srcs =
   U.sink ~kernel_info:(kernel_info ?opts_to_apply ?dont_use_locals ()) srcs
 
 let loop_range ~axis size =
-  U.range ~size:(idx size) ~axis ~kind:Ak.Loop ~dtype:D.Val.weakint ()
+  U.range ~size:(idx size) ~axis ~kind:Ak.Loop ~dtype:D.index ()
 
 let reduce_range ~axis size =
-  U.range ~size:(idx size) ~axis ~kind:Ak.Reduce ~dtype:D.Val.weakint ()
+  U.range ~size:(idx size) ~axis ~kind:Ak.Reduce ~dtype:D.index ()
 
 let global_range ~axis size =
-  U.range ~size:(idx size) ~axis ~kind:Ak.Global ~dtype:D.Val.weakint ()
+  U.range ~size:(idx size) ~axis ~kind:Ak.Global ~dtype:D.index ()
 
 (* Renderers *)
 
@@ -70,16 +69,16 @@ let small_smem_renderer () =
 (* Elementwise kernel: output[r0, r1] = exp2(input[r0, r1])
    Two LOOP ranges, load → unary → store → end. *)
 let elementwise_ast ~s0 ~s1 =
-  let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p1 = U.param ~slot:1 ~dtype:(Dtype.Ptr global_fptr) () in
+  let p0 = U.param ~slot:0 ~dtype:(global_fptr) () in
+  let p1 = U.param ~slot:1 ~dtype:(global_fptr) () in
   let r0 = loop_range ~axis:0 s0 in
   let r1 = loop_range ~axis:1 s1 in
   let open U.O in
-  let in_idx = U.index ~ptr:p1 ~idxs:[((r0 * idx s1) + r1)] ~as_ptr:true () in
+  let in_idx = U.index ~ptr:p1 ~idxs:[((r0 * idx s1) + r1)] () in
   let ld = U.load ~src:in_idx () in
   let value = U.alu_unary ~op:Ops.Exp2 ~src:ld in
   let out_idx =
-    U.index ~ptr:p0 ~idxs:[((r0 * idx s1) + r1)] ~as_ptr:true ()
+    U.index ~ptr:p0 ~idxs:[((r0 * idx s1) + r1)] ()
   in
   let st = U.store ~dst:out_idx ~value () in
   let e = U.end_ ~value:st ~ranges:[ r0; r1 ] in
@@ -88,21 +87,21 @@ let elementwise_ast ~s0 ~s1 =
 (* Reduce kernel: output[r0, r1] = sum_rr(input[r0, rr, r1])
    Two LOOP ranges + one REDUCE range. *)
 let reduce_ast ~s0 ~s1 ~sr =
-  let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p1 = U.param ~slot:1 ~dtype:(Dtype.Ptr global_fptr) () in
+  let p0 = U.param ~slot:0 ~dtype:(global_fptr) () in
+  let p1 = U.param ~slot:1 ~dtype:(global_fptr) () in
   let r0 = loop_range ~axis:0 s0 in
   let r1 = loop_range ~axis:1 s1 in
   let rr = reduce_range ~axis:2 sr in
   let open U.O in
   let in_idx =
     U.index ~ptr:p1
-      ~idxs:[(((r0 * idx sr) * idx s1) + (rr * idx s1) + r1)] ~as_ptr:true
+      ~idxs:[(((r0 * idx sr) * idx s1) + (rr * idx s1) + r1)]
       ()
   in
   let ld = U.load ~src:in_idx () in
-  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rr ] ~dtype:D.Val.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rr ] ~dtype:D.float32 in
   let out_idx =
-    U.index ~ptr:p0 ~idxs:[((r0 * idx s1) + r1)] ~as_ptr:true ()
+    U.index ~ptr:p0 ~idxs:[((r0 * idx s1) + r1)] ()
   in
   let st = U.store ~dst:out_idx ~value:red () in
   let e = U.end_ ~value:st ~ranges:[ r0; r1 ] in
@@ -110,57 +109,57 @@ let reduce_ast ~s0 ~s1 ~sr =
 
 (* Reduce kernel with unsafe pad op (exp2 before reduce) *)
 let reduce_unsafe_pad_ast ~s0 ~sr =
-  let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p1 = U.param ~slot:1 ~dtype:(Dtype.Ptr global_fptr) () in
+  let p0 = U.param ~slot:0 ~dtype:(global_fptr) () in
+  let p1 = U.param ~slot:1 ~dtype:(global_fptr) () in
   let r0 = loop_range ~axis:0 s0 in
   let rr = reduce_range ~axis:1 sr in
   let open U.O in
-  let in_idx = U.index ~ptr:p1 ~idxs:[((r0 * idx sr) + rr)] ~as_ptr:true () in
+  let in_idx = U.index ~ptr:p1 ~idxs:[((r0 * idx sr) + rr)] () in
   let ld = U.load ~src:in_idx () in
   let exp_ld = U.alu_unary ~op:Ops.Exp2 ~src:ld in
   let red =
-    U.reduce ~op:Ops.Add ~src:exp_ld ~ranges:[ rr ] ~dtype:D.Val.float32
+    U.reduce ~op:Ops.Add ~src:exp_ld ~ranges:[ rr ] ~dtype:D.float32
   in
-  let out_idx = U.index ~ptr:p0 ~idxs:[r0] ~as_ptr:true () in
+  let out_idx = U.index ~ptr:p0 ~idxs:[r0] () in
   let st = U.store ~dst:out_idx ~value:red () in
   let e = U.end_ ~value:st ~ranges:[ r0 ] in
   wrap_sink [ e ]
 
 (* Max reduce kernel: output[r0] = max_rr(input[r0, rr]) *)
 let max_reduce_ast ~s0 ~sr =
-  let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p1 = U.param ~slot:1 ~dtype:(Dtype.Ptr global_fptr) () in
+  let p0 = U.param ~slot:0 ~dtype:(global_fptr) () in
+  let p1 = U.param ~slot:1 ~dtype:(global_fptr) () in
   let r0 = loop_range ~axis:0 s0 in
   let rr = reduce_range ~axis:1 sr in
   let open U.O in
-  let in_idx = U.index ~ptr:p1 ~idxs:[((r0 * idx sr) + rr)] ~as_ptr:true () in
+  let in_idx = U.index ~ptr:p1 ~idxs:[((r0 * idx sr) + rr)] () in
   let ld = U.load ~src:in_idx () in
-  let red = U.reduce ~op:Ops.Max ~src:ld ~ranges:[ rr ] ~dtype:D.Val.float32 in
-  let out_idx = U.index ~ptr:p0 ~idxs:[r0] ~as_ptr:true () in
+  let red = U.reduce ~op:Ops.Max ~src:ld ~ranges:[ rr ] ~dtype:D.float32 in
+  let out_idx = U.index ~ptr:p0 ~idxs:[r0] () in
   let st = U.store ~dst:out_idx ~value:red () in
   let e = U.end_ ~value:st ~ranges:[ r0 ] in
   wrap_sink [ e ]
 
 (* Elementwise kernel with pre-assigned Global ranges *)
 let elementwise_global_ast ~s0 ~s1 =
-  let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p1 = U.param ~slot:1 ~dtype:(Dtype.Ptr global_fptr) () in
+  let p0 = U.param ~slot:0 ~dtype:(global_fptr) () in
+  let p1 = U.param ~slot:1 ~dtype:(global_fptr) () in
   let r0 = global_range ~axis:0 s0 in
   let r1 = global_range ~axis:1 s1 in
   let open U.O in
-  let in_idx = U.index ~ptr:p1 ~idxs:[((r0 * idx s1) + r1)] ~as_ptr:true () in
+  let in_idx = U.index ~ptr:p1 ~idxs:[((r0 * idx s1) + r1)] () in
   let ld = U.load ~src:in_idx () in
   let value = U.alu_unary ~op:Ops.Exp2 ~src:ld in
   let out_idx =
-    U.index ~ptr:p0 ~idxs:[((r0 * idx s1) + r1)] ~as_ptr:true ()
+    U.index ~ptr:p0 ~idxs:[((r0 * idx s1) + r1)] ()
   in
   let st = U.store ~dst:out_idx ~value () in
   let e = U.end_ ~value:st ~ranges:[ r0; r1 ] in
   wrap_sink [ e ]
 
 let guarded_index_global_ast ~s0 ~s1 =
-  let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p1 = U.param ~slot:1 ~dtype:(Dtype.Ptr global_fptr) () in
+  let p0 = U.param ~slot:0 ~dtype:(global_fptr) () in
+  let p1 = U.param ~slot:1 ~dtype:(global_fptr) () in
   let r0 = global_range ~axis:0 s0 in
   let r1 = global_range ~axis:1 s1 in
   let open U.O in
@@ -170,46 +169,43 @@ let guarded_index_global_ast ~s0 ~s1 =
     U.alu_ternary ~op:Ops.Where ~a:original_valid ~b:raw_idx
       ~c:(U.invalid ())
   in
-  let in_idx = U.index ~ptr:p1 ~idxs:[guarded_raw] ~as_ptr:true () in
+  let in_idx = U.index ~ptr:p1 ~idxs:[guarded_raw] () in
   let ld = U.load ~src:in_idx () in
-  let out_idx = U.index ~ptr:p0 ~idxs:[raw_idx] ~as_ptr:true () in
+  let out_idx = U.index ~ptr:p0 ~idxs:[raw_idx] () in
   let st = U.store ~dst:out_idx ~value:ld () in
   let e = U.end_ ~value:st ~ranges:[ r0; r1 ] in
   wrap_sink [ e ]
 
 let symbolic_extent_global_ast () =
-  let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p1 = U.param ~slot:1 ~dtype:(Dtype.Ptr global_fptr) () in
-  let n =
-    U.param ~slot:(-1) ~dtype:(Dtype.Val D.Val.weakint)
-      ~vmin_vmax:(1, 1) ()
-  in
+  let p0 = U.param ~slot:0 ~dtype:(global_fptr) () in
+  let p1 = U.param ~slot:1 ~dtype:(global_fptr) () in
+  let n = U.variable ~name:"n" ~min_val:1 ~max_val:1 () in
   let size = U.O.(n * idx 8) in
-  let r0 = U.range ~size ~axis:0 ~kind:Ak.Global ~dtype:D.Val.weakint () in
-  let in_idx = U.index ~ptr:p1 ~idxs:[r0] ~as_ptr:true () in
+  let r0 = U.range ~size ~axis:0 ~kind:Ak.Global ~dtype:D.index () in
+  let in_idx = U.index ~ptr:p1 ~idxs:[r0] () in
   let ld = U.load ~src:in_idx () in
-  let out_idx = U.index ~ptr:p0 ~idxs:[r0] ~as_ptr:true () in
+  let out_idx = U.index ~ptr:p0 ~idxs:[r0] () in
   let st = U.store ~dst:out_idx ~value:ld () in
   let e = U.end_ ~value:st ~ranges:[ r0 ] in
   wrap_sink [ e ]
 
 (* Reduce kernel with Global ranges *)
 let reduce_global_ast ~s0 ~s1 ~sr =
-  let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p1 = U.param ~slot:1 ~dtype:(Dtype.Ptr global_fptr) () in
+  let p0 = U.param ~slot:0 ~dtype:(global_fptr) () in
+  let p1 = U.param ~slot:1 ~dtype:(global_fptr) () in
   let r0 = global_range ~axis:0 s0 in
   let r1 = global_range ~axis:1 s1 in
   let rr = reduce_range ~axis:2 sr in
   let open U.O in
   let in_idx =
     U.index ~ptr:p1
-      ~idxs:[(((r0 * idx sr) * idx s1) + (rr * idx s1) + r1)] ~as_ptr:true
+      ~idxs:[(((r0 * idx sr) * idx s1) + (rr * idx s1) + r1)]
       ()
   in
   let ld = U.load ~src:in_idx () in
-  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rr ] ~dtype:D.Val.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rr ] ~dtype:D.float32 in
   let out_idx =
-    U.index ~ptr:p0 ~idxs:[((r0 * idx s1) + r1)] ~as_ptr:true ()
+    U.index ~ptr:p0 ~idxs:[((r0 * idx s1) + r1)] ()
   in
   let st = U.store ~dst:out_idx ~value:red () in
   let e = U.end_ ~value:st ~ranges:[ r0; r1 ] in
@@ -312,7 +308,7 @@ let shift_to_tests =
         let rngs = P.rngs t in
         let rng = List.hd rngs in
         let custom_rng =
-          U.range ~size:(idx 4) ~axis:99 ~kind:Ak.Warp ~dtype:D.Val.weakint ()
+          U.range ~size:(idx 4) ~axis:99 ~kind:Ak.Warp ~dtype:D.index ()
         in
         let _replaced, new_rng =
           P.shift_to ~input_new_rng:custom_rng t rng 4 Ak.Warp
@@ -322,7 +318,7 @@ let shift_to_tests =
         let parent = global_range ~axis:0 2 in
         let child =
           U.range ~size:(idx 16) ~axis:1 ~kind:Ak.Global
-            ~dtype:D.Val.weakint ~parents:[ parent ] ()
+            ~dtype:D.index ~parents:[ parent ] ()
         in
         let ast = wrap_sink [ U.end_ ~value:child ~ranges:[ parent; child ] ] in
         let t = P.create ast (gpu_renderer ()) in
@@ -607,16 +603,16 @@ let swap_nolocals_tests =
         equal int sz1_before sz0_after;
         equal int sz0_before sz1_after);
       test "SWAP exchanges full range identity arguments" (fun () ->
-        let ptr = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
+        let ptr = U.param ~slot:0 ~dtype:(global_fptr) () in
         let r0 =
           U.range ~size:(idx 8) ~axis:0 ~sub:[ 1 ] ~kind:Ak.Global
-            ~dtype:D.Val.weakint ()
+            ~dtype:D.index ()
         in
         let r1 =
           U.range ~size:(idx 16) ~axis:1 ~sub:[ 2 ] ~kind:Ak.Global
-            ~dtype:D.Val.weakint ()
+            ~dtype:D.index ()
         in
-        let out = U.index ~ptr ~idxs:[ U.O.(r0 + r1) ] ~as_ptr:true () in
+        let out = U.index ~ptr ~idxs:[ U.O.(r0 + r1) ] () in
         let ast = wrap_sink [ U.end_ ~value:(U.store ~dst:out ~value:r0 ()) ~ranges:[ r0; r1 ] ] in
         let t = P.create ast (gpu_renderer ()) in
         ignore (P.apply_opt t (U.Opt.Swap { axis = 0; with_axis = 1 }));
@@ -766,13 +762,13 @@ let bufs_from_ast_tests =
   group "bufs_from_ast"
     [
       test "filters symbolic params and sorts by slot" (fun () ->
-        let p2 = U.param ~slot:2 ~dtype:(Dtype.Ptr global_fptr) () in
-        let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
+        let p2 = U.param ~slot:2 ~dtype:(global_fptr) () in
+        let p0 = U.param ~slot:0 ~dtype:(global_fptr) () in
         let var = U.variable ~name:"n" ~min_val:1 ~max_val:8 () in
         let r0 = global_range ~axis:0 4 in
-        let in_idx = U.index ~ptr:p2 ~idxs:[(U.O.(r0 + var))] ~as_ptr:true () in
+        let in_idx = U.index ~ptr:p2 ~idxs:[(U.O.(r0 + var))] () in
         let ld = U.load ~src:in_idx () in
-        let out_idx = U.index ~ptr:p0 ~idxs:[r0] ~as_ptr:true () in
+        let out_idx = U.index ~ptr:p0 ~idxs:[r0] () in
         let st = U.store ~dst:out_idx ~value:ld () in
         let e = U.end_ ~value:st ~ranges:[ r0 ] in
         let ast = wrap_sink [ e ] in
@@ -819,18 +815,18 @@ let integration_tests =
         is_true (ki.name.[0] = 'E'));
       (* apply_opts respects opts_to_apply *)
       test "apply_opts respects opts_to_apply" (fun () ->
-        let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-        let p1 = U.param ~slot:1 ~dtype:(Dtype.Ptr global_fptr) () in
+        let p0 = U.param ~slot:0 ~dtype:(global_fptr) () in
+        let p1 = U.param ~slot:1 ~dtype:(global_fptr) () in
         let r0 = global_range ~axis:0 16 in
         let r1 = global_range ~axis:1 16 in
         let open U.O in
         let in_idx =
-          U.index ~ptr:p1 ~idxs:[((r0 * idx 16) + r1)] ~as_ptr:true ()
+          U.index ~ptr:p1 ~idxs:[((r0 * idx 16) + r1)] ()
         in
         let ld = U.load ~src:in_idx () in
         let value = U.alu_unary ~op:Ops.Exp2 ~src:ld in
         let out_idx =
-          U.index ~ptr:p0 ~idxs:[((r0 * idx 16) + r1)] ~as_ptr:true ()
+          U.index ~ptr:p0 ~idxs:[((r0 * idx 16) + r1)] ()
         in
         let st = U.store ~dst:out_idx ~value () in
         let e = U.end_ ~value:st ~ranges:[ r0; r1 ] in
@@ -956,24 +952,24 @@ let dispatch_tests =
 
 (* Matmul-pattern AST:  output[i,j] = sum_k(a[i,k] * b[k,j])
    Two GLOBAL ranges + one REDUCE range, MUL inside REDUCE ADD. *)
-let global_f16ptr = D.Ptr.create D.Val.float16 ~addrspace:Global ~size:(-1)
+let global_f16ptr = D.float16
 
 let matmul_ast ~si ~sj ~sk =
-  let p_out = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p_a = U.param ~slot:1 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p_b = U.param ~slot:2 ~dtype:(Dtype.Ptr global_fptr) () in
+  let p_out = U.param ~slot:0 ~dtype:(global_fptr) () in
+  let p_a = U.param ~slot:1 ~dtype:(global_fptr) () in
+  let p_b = U.param ~slot:2 ~dtype:(global_fptr) () in
   let ri = global_range ~axis:0 si in
   let rj = global_range ~axis:1 sj in
   let rk = reduce_range ~axis:2 sk in
   let open U.O in
-  let idx_a = U.index ~ptr:p_a ~idxs:[((ri * idx sk) + rk)] ~as_ptr:true () in
+  let idx_a = U.index ~ptr:p_a ~idxs:[((ri * idx sk) + rk)] () in
   let ld_a = U.load ~src:idx_a () in
-  let idx_b = U.index ~ptr:p_b ~idxs:[((rk * idx sj) + rj)] ~as_ptr:true () in
+  let idx_b = U.index ~ptr:p_b ~idxs:[((rk * idx sj) + rj)] () in
   let ld_b = U.load ~src:idx_b () in
   let mul = ld_a * ld_b in
-  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ rk ] ~dtype:D.Val.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ rk ] ~dtype:D.float32 in
   let out_idx =
-    U.index ~ptr:p_out ~idxs:[((ri * idx sj) + rj)] ~as_ptr:true ()
+    U.index ~ptr:p_out ~idxs:[((ri * idx sj) + rj)] ()
   in
   let st = U.store ~dst:out_idx ~value:red () in
   let e = U.end_ ~value:st ~ranges:[ ri; rj ] in

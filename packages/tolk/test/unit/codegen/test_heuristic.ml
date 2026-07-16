@@ -20,8 +20,8 @@ module P = Postrange
 
 (* Helpers *)
 
-let idx n = U.const (C.int D.Val.weakint n)
-let global_fptr = D.Ptr.create D.Val.float32 ~addrspace:Global ~size:(-1)
+let idx n = U.const_int n
+let global_fptr = D.float32
 
 let kernel_info () =
   { U.name = "test";
@@ -36,13 +36,13 @@ let kernel_info () =
 let wrap_sink srcs = U.sink ~kernel_info:(kernel_info ()) srcs
 
 let loop_range ~axis size =
-  U.range ~size:(idx size) ~axis ~kind:Ak.Loop ~dtype:D.Val.weakint ()
+  U.range ~size:(idx size) ~axis ~kind:Ak.Loop ~dtype:D.index ()
 
 let reduce_range ~axis size =
-  U.range ~size:(idx size) ~axis ~kind:Ak.Reduce ~dtype:D.Val.weakint ()
+  U.range ~size:(idx size) ~axis ~kind:Ak.Reduce ~dtype:D.index ()
 
 let global_range ~axis size =
-  U.range ~size:(idx size) ~axis ~kind:Ak.Global ~dtype:D.Val.weakint ()
+  U.range ~size:(idx size) ~axis ~kind:Ak.Global ~dtype:D.index ()
 
 (* Renderers *)
 
@@ -115,16 +115,16 @@ let with_env name value f =
 
 (* Elementwise: out[i,j] = exp2(in[i,j]) — Global ranges for GPU tests *)
 let elementwise_global_ast ~s0 ~s1 =
-  let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p1 = U.param ~slot:1 ~dtype:(Dtype.Ptr global_fptr) () in
+  let p0 = U.param ~slot:0 ~dtype:(global_fptr) () in
+  let p1 = U.param ~slot:1 ~dtype:(global_fptr) () in
   let r0 = global_range ~axis:0 s0 in
   let r1 = global_range ~axis:1 s1 in
   let open U.O in
-  let in_idx = U.index ~ptr:p1 ~idxs:[((r0 * idx s1) + r1)] ~as_ptr:true () in
+  let in_idx = U.index ~ptr:p1 ~idxs:[((r0 * idx s1) + r1)] () in
   let ld = U.load ~src:in_idx () in
   let value = U.alu_unary ~op:Ops.Exp2 ~src:ld in
   let out_idx =
-    U.index ~ptr:p0 ~idxs:[((r0 * idx s1) + r1)] ~as_ptr:true ()
+    U.index ~ptr:p0 ~idxs:[((r0 * idx s1) + r1)] ()
   in
   let st = U.store ~dst:out_idx ~value () in
   let e = U.end_ ~value:st ~ranges:[ r0; r1 ] in
@@ -132,16 +132,16 @@ let elementwise_global_ast ~s0 ~s1 =
 
 (* Elementwise with Loop ranges — for thread renderer tests *)
 let elementwise_loop_ast ~s0 ~s1 =
-  let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p1 = U.param ~slot:1 ~dtype:(Dtype.Ptr global_fptr) () in
+  let p0 = U.param ~slot:0 ~dtype:(global_fptr) () in
+  let p1 = U.param ~slot:1 ~dtype:(global_fptr) () in
   let r0 = loop_range ~axis:0 s0 in
   let r1 = loop_range ~axis:1 s1 in
   let open U.O in
-  let in_idx = U.index ~ptr:p1 ~idxs:[((r0 * idx s1) + r1)] ~as_ptr:true () in
+  let in_idx = U.index ~ptr:p1 ~idxs:[((r0 * idx s1) + r1)] () in
   let ld = U.load ~src:in_idx () in
   let value = U.alu_unary ~op:Ops.Exp2 ~src:ld in
   let out_idx =
-    U.index ~ptr:p0 ~idxs:[((r0 * idx s1) + r1)] ~as_ptr:true ()
+    U.index ~ptr:p0 ~idxs:[((r0 * idx s1) + r1)] ()
   in
   let st = U.store ~dst:out_idx ~value () in
   let e = U.end_ ~value:st ~ranges:[ r0; r1 ] in
@@ -149,21 +149,21 @@ let elementwise_loop_ast ~s0 ~s1 =
 
 (* Reduce: out[i,j] = sum_k(in[i,k,j]) — Global output + Reduce *)
 let reduce_global_ast ~s0 ~s1 ~sr =
-  let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p1 = U.param ~slot:1 ~dtype:(Dtype.Ptr global_fptr) () in
+  let p0 = U.param ~slot:0 ~dtype:(global_fptr) () in
+  let p1 = U.param ~slot:1 ~dtype:(global_fptr) () in
   let r0 = global_range ~axis:0 s0 in
   let r1 = global_range ~axis:1 s1 in
   let rr = reduce_range ~axis:2 sr in
   let open U.O in
   let in_idx =
     U.index ~ptr:p1
-      ~idxs:[(((r0 * idx sr) * idx s1) + (rr * idx s1) + r1)] ~as_ptr:true
+      ~idxs:[(((r0 * idx sr) * idx s1) + (rr * idx s1) + r1)]
       ()
   in
   let ld = U.load ~src:in_idx () in
-  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rr ] ~dtype:D.Val.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rr ] ~dtype:D.float32 in
   let out_idx =
-    U.index ~ptr:p0 ~idxs:[((r0 * idx s1) + r1)] ~as_ptr:true ()
+    U.index ~ptr:p0 ~idxs:[((r0 * idx s1) + r1)] ()
   in
   let st = U.store ~dst:out_idx ~value:red () in
   let e = U.end_ ~value:st ~ranges:[ r0; r1 ] in
@@ -172,8 +172,8 @@ let reduce_global_ast ~s0 ~s1 ~sr =
 (* Double reduce: out[i,j] = sum_{k1,k2}(in[i,j,k1,k2])
    Two reduce ranges for testing double unroll. *)
 let double_reduce_global_ast ~s0 ~s1 ~sr1 ~sr2 =
-  let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p1 = U.param ~slot:1 ~dtype:(Dtype.Ptr global_fptr) () in
+  let p0 = U.param ~slot:0 ~dtype:(global_fptr) () in
+  let p1 = U.param ~slot:1 ~dtype:(global_fptr) () in
   let r0 = global_range ~axis:0 s0 in
   let r1 = global_range ~axis:1 s1 in
   let rr1 = reduce_range ~axis:2 sr1 in
@@ -188,15 +188,15 @@ let double_reduce_global_ast ~s0 ~s1 ~sr1 ~sr2 =
           + (rr1 * idx sr2)
           + rr2;
         ]
-      ~as_ptr:true
+     
       ()
   in
   let ld = U.load ~src:in_idx () in
   let red =
-    U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rr1; rr2 ] ~dtype:D.Val.float32
+    U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rr1; rr2 ] ~dtype:D.float32
   in
   let out_idx =
-    U.index ~ptr:p0 ~idxs:[((r0 * idx s1) + r1)] ~as_ptr:true ()
+    U.index ~ptr:p0 ~idxs:[((r0 * idx s1) + r1)] ()
   in
   let st = U.store ~dst:out_idx ~value:red () in
   let e = U.end_ ~value:st ~ranges:[ r0; r1 ] in
@@ -204,21 +204,21 @@ let double_reduce_global_ast ~s0 ~s1 ~sr1 ~sr2 =
 
 (* Matmul: out[m,n] = sum_k(a[m,k] * b[k,n]) *)
 let matmul_global_ast ~m ~n ~k =
-  let p_out = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p_a = U.param ~slot:1 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p_b = U.param ~slot:2 ~dtype:(Dtype.Ptr global_fptr) () in
+  let p_out = U.param ~slot:0 ~dtype:(global_fptr) () in
+  let p_a = U.param ~slot:1 ~dtype:(global_fptr) () in
+  let p_b = U.param ~slot:2 ~dtype:(global_fptr) () in
   let r_m = global_range ~axis:0 m in
   let r_n = global_range ~axis:1 n in
   let r_k = reduce_range ~axis:2 k in
   let open U.O in
-  let idx_a = U.index ~ptr:p_a ~idxs:[((r_m * idx k) + r_k)] ~as_ptr:true () in
-  let idx_b = U.index ~ptr:p_b ~idxs:[((r_k * idx n) + r_n)] ~as_ptr:true () in
+  let idx_a = U.index ~ptr:p_a ~idxs:[((r_m * idx k) + r_k)] () in
+  let idx_b = U.index ~ptr:p_b ~idxs:[((r_k * idx n) + r_n)] () in
   let ld_a = U.load ~src:idx_a () in
   let ld_b = U.load ~src:idx_b () in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:ld_a ~rhs:ld_b in
-  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_k ] ~dtype:D.Val.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_k ] ~dtype:D.float32 in
   let out_idx =
-    U.index ~ptr:p_out ~idxs:[((r_m * idx n) + r_n)] ~as_ptr:true ()
+    U.index ~ptr:p_out ~idxs:[((r_m * idx n) + r_n)] ()
   in
   let st = U.store ~dst:out_idx ~value:red () in
   let e = U.end_ ~value:st ~ranges:[ r_m; r_n ] in
@@ -228,82 +228,85 @@ let matmul_global_ast ~m ~n ~k =
 
    NOTE: tinygrad's matvec heuristic matches INDEX operands directly. *)
 let matvec_global_ast ~rows ~cols =
-  let p_out = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p_x = U.param ~slot:1 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p_a = U.param ~slot:2 ~dtype:(Dtype.Ptr global_fptr) () in
+  let p_out = U.param ~slot:0 ~dtype:(global_fptr) () in
+  let p_x = U.param ~slot:1 ~dtype:(global_fptr) () in
+  let p_a = U.param ~slot:2 ~dtype:(global_fptr) () in
   let r_i = global_range ~axis:0 rows in
   let r_j = reduce_range ~axis:1 cols in
   let open U.O in
   let idx_x = U.index ~ptr:p_x ~idxs:[r_j] () in
   let idx_a = U.index ~ptr:p_a ~idxs:[((r_i * idx cols) + r_j)] () in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:idx_x ~rhs:idx_a in
-  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_j ] ~dtype:D.Val.float32 in
-  let out_idx = U.index ~ptr:p_out ~idxs:[r_i] ~as_ptr:true () in
+  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_j ] ~dtype:D.float32 in
+  let out_idx = U.index ~ptr:p_out ~idxs:[r_i] () in
   let st = U.store ~dst:out_idx ~value:red () in
   let e = U.end_ ~value:st ~ranges:[ r_i ] in
   wrap_sink [ e ]
 
 (* Non-matching shape: MUL operands are LOAD(INDEX), not INDEX. *)
 let matvec_load_global_ast ~rows ~cols =
-  let p_out = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p_x = U.param ~slot:1 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p_a = U.param ~slot:2 ~dtype:(Dtype.Ptr global_fptr) () in
+  let p_out = U.param ~slot:0 ~dtype:(global_fptr) () in
+  let p_x = U.param ~slot:1 ~dtype:(global_fptr) () in
+  let p_a = U.param ~slot:2 ~dtype:(global_fptr) () in
   let r_i = global_range ~axis:0 rows in
   let r_j = reduce_range ~axis:1 cols in
   let open U.O in
-  let idx_x = U.index ~ptr:p_x ~idxs:[r_j] ~as_ptr:true () in
+  let idx_x = U.index ~ptr:p_x ~idxs:[r_j] () in
   let idx_a =
-    U.index ~ptr:p_a ~idxs:[((r_i * idx cols) + r_j)] ~as_ptr:true ()
+    U.index ~ptr:p_a ~idxs:[((r_i * idx cols) + r_j)] ()
   in
   let ld_x = U.load ~src:idx_x () in
   let ld_a = U.load ~src:idx_a () in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:ld_x ~rhs:ld_a in
-  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_j ] ~dtype:D.Val.float32 in
-  let out_idx = U.index ~ptr:p_out ~idxs:[r_i] ~as_ptr:true () in
+  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_j ] ~dtype:D.float32 in
+  let out_idx = U.index ~ptr:p_out ~idxs:[r_i] () in
   let st = U.store ~dst:out_idx ~value:red () in
   let e = U.end_ ~value:st ~ranges:[ r_i ] in
   wrap_sink [ e ]
 
 let image_global_ast ~s0 ~s1 =
-  let image = Dtype.Image.imagef [ s0; s1; 4 ] in
-  let p_out = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p_img = U.param ~slot:1 ~dtype:(Dtype.Ptr image) () in
+  let p_out =
+    U.param ~slot:0 ~dtype:global_fptr ~shape:(idx (s0 * s1)) ()
+  in
+  let p_img =
+    U.param ~slot:1 ~dtype:D.float32 ~shape:(idx (s0 * s1 * 4)) ()
+  in
   let r0 = global_range ~axis:0 s0 in
   let r1 = global_range ~axis:1 s1 in
   let open U.O in
-  let src = U.index ~ptr:p_img ~idxs:[r0] ~as_ptr:true () in
+  let src = U.index ~ptr:p_img ~idxs:[r0] () in
   let ld = U.load ~src () in
   let out_idx =
-    U.index ~ptr:p_out ~idxs:[((r0 * idx s1) + r1)] ~as_ptr:true ()
+    U.index ~ptr:p_out ~idxs:[((r0 * idx s1) + r1)] ()
   in
   let st = U.store ~dst:out_idx ~value:ld () in
   let e = U.end_ ~value:st ~ranges:[ r0; r1 ] in
   wrap_sink [ e ]
 
 let image_reduce_ast ~s0 ~sr =
-  let image = Dtype.Image.imagef [ sr; 1; 4 ] in
-  let p_out = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p_img = U.param ~slot:1 ~dtype:(Dtype.Ptr image) () in
+  let p_out = U.param ~slot:0 ~dtype:global_fptr ~shape:(idx s0) () in
+  let p_img = U.param ~slot:1 ~dtype:D.float32 ~shape:(idx (sr * 4)) () in
   let r0 = global_range ~axis:0 s0 in
   let rr = reduce_range ~axis:1 sr in
-  let src = U.index ~ptr:p_img ~idxs:[rr] ~as_ptr:true () in
+  let src = U.index ~ptr:p_img ~idxs:[rr] () in
   let ld = U.load ~src () in
-  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rr ] ~dtype:D.Val.float32 in
-  let out_idx = U.index ~ptr:p_out ~idxs:[r0] ~as_ptr:true () in
+  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rr ] ~dtype:D.float32 in
+  let out_idx = U.index ~ptr:p_out ~idxs:[r0] () in
   let st = U.store ~dst:out_idx ~value:red () in
   let e = U.end_ ~value:st ~ranges:[ r0 ] in
   wrap_sink [ e ]
 
 let image_reduce_invalid_dims_ast ~s0 ~sr =
-  let image = Dtype.Image.imagef [ sr; 67108865; 4 ] in
-  let p_out = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p_img = U.param ~slot:1 ~dtype:(Dtype.Ptr image) () in
+  let p_out = U.param ~slot:0 ~dtype:global_fptr ~shape:(idx s0) () in
+  let p_img =
+    U.param ~slot:1 ~dtype:D.float32 ~shape:(idx (sr * 67108865 * 4)) ()
+  in
   let r0 = global_range ~axis:0 s0 in
   let rr = reduce_range ~axis:1 sr in
-  let src = U.index ~ptr:p_img ~idxs:[rr] ~as_ptr:true () in
+  let src = U.index ~ptr:p_img ~idxs:[rr] () in
   let ld = U.load ~src () in
-  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rr ] ~dtype:D.Val.float32 in
-  let out_idx = U.index ~ptr:p_out ~idxs:[r0] ~as_ptr:true () in
+  let red = U.reduce ~op:Ops.Add ~src:ld ~ranges:[ rr ] ~dtype:D.float32 in
+  let out_idx = U.index ~ptr:p_out ~idxs:[r0] () in
   let st = U.store ~dst:out_idx ~value:red () in
   let e = U.end_ ~value:st ~ranges:[ r0 ] in
   wrap_sink [ e ]
@@ -312,19 +315,19 @@ let image_reduce_invalid_dims_ast ~s0 ~sr =
    Buffer a indexed by j only (broadcast on i), b indexed by i only
    (broadcast on j). Triggers heuristic upcast stride analysis. *)
 let broadcast_ewise_global_ast ~s0 ~s1 =
-  let p_out = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p_a = U.param ~slot:1 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p_b = U.param ~slot:2 ~dtype:(Dtype.Ptr global_fptr) () in
+  let p_out = U.param ~slot:0 ~dtype:(global_fptr) () in
+  let p_a = U.param ~slot:1 ~dtype:(global_fptr) () in
+  let p_b = U.param ~slot:2 ~dtype:(global_fptr) () in
   let r0 = global_range ~axis:0 s0 in
   let r1 = global_range ~axis:1 s1 in
   let open U.O in
-  let idx_a = U.index ~ptr:p_a ~idxs:[r1] ~as_ptr:true () in
+  let idx_a = U.index ~ptr:p_a ~idxs:[r1] () in
   let ld_a = U.load ~src:idx_a () in
-  let idx_b = U.index ~ptr:p_b ~idxs:[r0] ~as_ptr:true () in
+  let idx_b = U.index ~ptr:p_b ~idxs:[r0] () in
   let ld_b = U.load ~src:idx_b () in
   let value = U.alu_binary ~op:Ops.Add ~lhs:ld_a ~rhs:ld_b in
   let out_idx =
-    U.index ~ptr:p_out ~idxs:[((r0 * idx s1) + r1)] ~as_ptr:true ()
+    U.index ~ptr:p_out ~idxs:[((r0 * idx s1) + r1)] ()
   in
   let st = U.store ~dst:out_idx ~value () in
   let e = U.end_ ~value:st ~ranges:[ r0; r1 ] in
@@ -333,34 +336,34 @@ let broadcast_ewise_global_ast ~s0 ~s1 =
 (* Masked elementwise: out[i,j] = where(j < (s1-1), in[i,j], 0.0)
    Range j appears in WHERE condition → triggers masked upcast (step 6). *)
 let masked_ewise_global_ast ~s0 ~s1 =
-  let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p1 = U.param ~slot:1 ~dtype:(Dtype.Ptr global_fptr) () in
+  let p0 = U.param ~slot:0 ~dtype:(global_fptr) () in
+  let p1 = U.param ~slot:1 ~dtype:(global_fptr) () in
   let r0 = global_range ~axis:0 s0 in
   let r1 = global_range ~axis:1 s1 in
   let open U.O in
-  let in_idx = U.index ~ptr:p1 ~idxs:[((r0 * idx s1) + r1)] ~as_ptr:true () in
+  let in_idx = U.index ~ptr:p1 ~idxs:[((r0 * idx s1) + r1)] () in
   let ld = U.load ~src:in_idx () in
   let cond =
     U.alu_binary ~op:Ops.Cmplt ~lhs:r1 ~rhs:(U.const_int Stdlib.(s1 - 1))
   in
-  let zero = U.const (C.float D.Val.float32 0.0) in
+  let zero = U.const (C.float D.float32 0.0) in
   let value = U.alu_ternary ~op:Ops.Where ~a:cond ~b:ld ~c:zero in
   let out_idx =
-    U.index ~ptr:p0 ~idxs:[((r0 * idx s1) + r1)] ~as_ptr:true ()
+    U.index ~ptr:p0 ~idxs:[((r0 * idx s1) + r1)] ()
   in
   let st = U.store ~dst:out_idx ~value () in
   let e = U.end_ ~value:st ~ranges:[ r0; r1 ] in
   wrap_sink [ e ]
 
 let masked_ewise_3d_global_ast ~s0 ~s1 ~s2 =
-  let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p1 = U.param ~slot:1 ~dtype:(Dtype.Ptr global_fptr) () in
+  let p0 = U.param ~slot:0 ~dtype:(global_fptr) () in
+  let p1 = U.param ~slot:1 ~dtype:(global_fptr) () in
   let r0 = global_range ~axis:0 s0 in
   let r1 = global_range ~axis:1 s1 in
   let r2 = global_range ~axis:2 s2 in
   let open U.O in
   let flat = (r0 * idx (Stdlib.( * ) s1 s2)) + (r1 * idx s2) + r2 in
-  let in_idx = U.index ~ptr:p1 ~idxs:[flat] ~as_ptr:true () in
+  let in_idx = U.index ~ptr:p1 ~idxs:[flat] () in
   let ld = U.load ~src:in_idx () in
   let cond1 =
     U.alu_binary ~op:Ops.Cmplt ~lhs:r1 ~rhs:(U.const_int Stdlib.(s1 - 1))
@@ -369,9 +372,9 @@ let masked_ewise_3d_global_ast ~s0 ~s1 ~s2 =
     U.alu_binary ~op:Ops.Cmplt ~lhs:r2 ~rhs:(U.const_int Stdlib.(s2 - 1))
   in
   let cond = U.alu_binary ~op:Ops.And ~lhs:cond1 ~rhs:cond2 in
-  let zero = U.const (C.float D.Val.float32 0.0) in
+  let zero = U.const (C.float D.float32 0.0) in
   let value = U.alu_ternary ~op:Ops.Where ~a:cond ~b:ld ~c:zero in
-  let out_idx = U.index ~ptr:p0 ~idxs:[flat] ~as_ptr:true () in
+  let out_idx = U.index ~ptr:p0 ~idxs:[flat] () in
   let st = U.store ~dst:out_idx ~value () in
   let e = U.end_ ~value:st ~ranges:[ r0; r1; r2 ] in
   wrap_sink [ e ]
@@ -380,19 +383,19 @@ let masked_ewise_3d_global_ast ~s0 ~s1 ~s2 =
    Buffer b indexed by r0 only → axis 1 is expand for b.
    Axis 0 is NOT expand (all bufs use r0). Tests local expand priority. *)
 let partial_broadcast_global_ast ~s0 ~s1 =
-  let p_out = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p_a = U.param ~slot:1 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p_b = U.param ~slot:2 ~dtype:(Dtype.Ptr global_fptr) () in
+  let p_out = U.param ~slot:0 ~dtype:(global_fptr) () in
+  let p_a = U.param ~slot:1 ~dtype:(global_fptr) () in
+  let p_b = U.param ~slot:2 ~dtype:(global_fptr) () in
   let r0 = global_range ~axis:0 s0 in
   let r1 = global_range ~axis:1 s1 in
   let open U.O in
-  let idx_a = U.index ~ptr:p_a ~idxs:[((r0 * idx s1) + r1)] ~as_ptr:true () in
+  let idx_a = U.index ~ptr:p_a ~idxs:[((r0 * idx s1) + r1)] () in
   let ld_a = U.load ~src:idx_a () in
-  let idx_b = U.index ~ptr:p_b ~idxs:[r0] ~as_ptr:true () in
+  let idx_b = U.index ~ptr:p_b ~idxs:[r0] () in
   let ld_b = U.load ~src:idx_b () in
   let value = U.alu_binary ~op:Ops.Add ~lhs:ld_a ~rhs:ld_b in
   let out_idx =
-    U.index ~ptr:p_out ~idxs:[((r0 * idx s1) + r1)] ~as_ptr:true ()
+    U.index ~ptr:p_out ~idxs:[((r0 * idx s1) + r1)] ()
   in
   let st = U.store ~dst:out_idx ~value () in
   let e = U.end_ ~value:st ~ranges:[ r0; r1 ] in
@@ -638,8 +641,8 @@ let local_groups_tests =
           is_true (has is_local opts));
       (* At most 3 LOCAL opts applied (take_n 3 in heuristic). *)
       test "at most 3 locals" (fun () ->
-          let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-          let p1 = U.param ~slot:1 ~dtype:(Dtype.Ptr global_fptr) () in
+          let p0 = U.param ~slot:0 ~dtype:(global_fptr) () in
+          let p1 = U.param ~slot:1 ~dtype:(global_fptr) () in
           let r0 = global_range ~axis:0 8 in
           let r1 = global_range ~axis:1 8 in
           let r2 = global_range ~axis:2 8 in
@@ -653,10 +656,10 @@ let local_groups_tests =
             + r3 * idx 8
             + r4
           in
-          let in_idx = U.index ~ptr:p1 ~idxs:[flat] ~as_ptr:true () in
+          let in_idx = U.index ~ptr:p1 ~idxs:[flat] () in
           let ld = U.load ~src:in_idx () in
           let value = U.alu_unary ~op:Ops.Exp2 ~src:ld in
-          let out_idx = U.index ~ptr:p0 ~idxs:[flat] ~as_ptr:true () in
+          let out_idx = U.index ~ptr:p0 ~idxs:[flat] () in
           let st = U.store ~dst:out_idx ~value () in
           let e = U.end_ ~value:st ~ranges:[ r0; r1; r2; r3; r4 ] in
           let ast = wrap_sink [ e ] in

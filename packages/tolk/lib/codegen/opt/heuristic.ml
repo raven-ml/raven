@@ -123,14 +123,12 @@ let try_tensor_cores k =
 
 let is_valid_image_buf k buf = match U.as_index buf with
   | Some { ptr; _ } ->
-      (match U.dtype ptr with
-       | Dtype.Ptr p when Dtype.Ptr.is_image p ->
-           Coalese.image_valid_dims
-             ~image_pitch_alignment:(Renderer.image_pitch_alignment (P.ren k))
-             ~base:(Dtype.Ptr.base p) ~size:(Dtype.Ptr.size p) ()
-           <> []
-       | Dtype.Ptr _ -> false
-       | Dtype.Val _ -> false)
+      Coalese.image_valid_dims
+        ~image_pitch_alignment:(Renderer.image_pitch_alignment (P.ren k))
+        ~base:(U.dtype ptr)
+        ~size:(List.fold_left ( * ) 1 (U.max_shape ptr))
+        ()
+      <> []
   | None -> false
 
 let upcast_image_buf k buf =
@@ -152,7 +150,7 @@ let upcast_image_buf k buf =
           | None -> ()
 
 let upcast_images k =
-  if image () && Renderer.supports_float4 (P.ren k) then
+  if image () then
     List.iter (fun b -> if is_valid_image_buf k b then upcast_image_buf k b)
       (P.bufs k)
 

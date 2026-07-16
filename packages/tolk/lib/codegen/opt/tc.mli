@@ -30,9 +30,9 @@ type t = private {
   elements_per_thread : int * int * int;
       (** [(a, b, c)] elements each thread contributes for operands A, B,
           and accumulator C. *)
-  dtype_in : Tolk_uop.Dtype.scalar;
+  dtype_in : Tolk_uop.Dtype.t;
       (** Element type of the A and B input operands. *)
-  dtype_out : Tolk_uop.Dtype.scalar;
+  dtype_out : Tolk_uop.Dtype.t;
       (** Element type of the C accumulator operand. *)
   opts : string list;
       (** Scheduling option strings (["u0"], ["l1"], …) applied when this
@@ -57,8 +57,8 @@ val create :
   dims:int * int * int ->
   threads:int ->
   elements_per_thread:int * int * int ->
-  dtype_in:Tolk_uop.Dtype.scalar ->
-  dtype_out:Tolk_uop.Dtype.scalar ->
+  dtype_in:Tolk_uop.Dtype.t ->
+  dtype_out:Tolk_uop.Dtype.t ->
   opts:string list ->
   swizzle:
     (string list * string list * string list)

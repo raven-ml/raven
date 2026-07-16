@@ -264,27 +264,13 @@ let shape_arg_max_numel u =
       Some (List.fold_left ( * ) 1 (List.map U.vmax (U.as_shape shape)))
   | _ -> None
 
-let param_max_numel u =
-  match U.dtype u with
-  | Dtype.Ptr p when Dtype.Ptr.is_image p -> None
-  | Dtype.Ptr p ->
-      (match shape_arg_max_numel u with
-       | Some _ as n -> n
-       | None -> Some (Dtype.Ptr.size p))
-  | Dtype.Val _ -> None
-
 let buffer_reqs ast =
   let req_of_param u =
-    match U.as_param u, U.dtype u with
-    | Some { param; _ }, Dtype.Ptr p when param.slot >= 0 ->
-        (match param_max_numel u with
+    match U.as_param u with
+    | Some { param; _ } when param.slot >= 0 ->
+        (match shape_arg_max_numel u with
          | Some size when size >= 0 ->
-             Some
-               {
-                 slot = param.slot;
-                 size;
-                 dtype = Dtype.Val (Dtype.Ptr.base p);
-               }
+             Some { slot = param.slot; size; dtype = U.dtype u }
          | Some _ | None ->
              invalid_arg
                (Printf.sprintf

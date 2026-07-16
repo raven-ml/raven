@@ -36,8 +36,8 @@ type t = {
   dims : int * int * int;
   threads : int;
   elements_per_thread : int * int * int;
-  dtype_in : Dtype.scalar;
-  dtype_out : Dtype.scalar;
+  dtype_in : Dtype.t;
+  dtype_out : Dtype.t;
   opts : string list;
   swizzle :
     (string list * string list * string list)
@@ -108,7 +108,7 @@ let dtype_name = function
   | Dtype.Fp8e5m2 -> "float8_e5m2"
   | Dtype.Fp8e4m3fnuz -> "float8_e4m3fnuz"
   | Dtype.Fp8e5m2fnuz -> "float8_e5m2fnuz"
-  | scalar -> Dtype.scalar_to_string scalar
+  | dt -> Dtype.to_string dt
 
 let to_string (tc : t) =
   let n, m, k = tc.dims in

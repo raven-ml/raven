@@ -13,7 +13,6 @@ open Tolk
 open Tolk_uop
 module U = Uop
 module D = Dtype
-module C = Const
 module Ak = Axis_type
 module P = Postrange
 
@@ -29,11 +28,10 @@ let all_tables =
     ("amd_cdna4", Tc.amd_cdna4);
     ("metal", Tc.metal) ]
 
-let idx n = U.const (C.int D.Val.weakint n)
+let idx n = U.const_int n
 
-let global_ptr dt = D.Ptr.create (D.val_of dt) ~addrspace:Global ~size:(-1)
-let global_fptr = global_ptr D.float32
-let global_f16ptr = global_ptr D.float16
+let global_fptr = D.float32
+let global_f16ptr = D.float16
 
 let kernel_info ?(opts_to_apply = None) () =
   { U.name = "test";
@@ -48,13 +46,13 @@ let wrap_sink ?opts_to_apply srcs =
   U.sink ~kernel_info:(kernel_info ?opts_to_apply ()) srcs
 
 let loop_range ~axis size =
-  U.range ~size:(idx size) ~axis ~kind:Ak.Loop ~dtype:D.Val.weakint ()
+  U.range ~size:(idx size) ~axis ~kind:Ak.Loop ~dtype:D.index ()
 
 let reduce_range ~axis size =
-  U.range ~size:(idx size) ~axis ~kind:Ak.Reduce ~dtype:D.Val.weakint ()
+  U.range ~size:(idx size) ~axis ~kind:Ak.Reduce ~dtype:D.index ()
 
 let global_range ~axis size =
-  U.range ~size:(idx size) ~axis ~kind:Ak.Global ~dtype:D.Val.weakint ()
+  U.range ~size:(idx size) ~axis ~kind:Ak.Global ~dtype:D.index ()
 
 (* Renderers *)
 
@@ -72,21 +70,21 @@ let tc_renderer tcs =
    Ranges: r_m (loop, axis 0), r_n (loop, axis 1), r_k (reduce, axis 2).
    Both loads are f32.  Suitable for metal (f32/f32) TCs. *)
 let matmul_f32_ast ~m ~n ~k =
-  let p_out = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p_a = U.param ~slot:1 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p_b = U.param ~slot:2 ~dtype:(Dtype.Ptr global_fptr) () in
+  let p_out = U.param ~slot:0 ~dtype:(global_fptr) () in
+  let p_a = U.param ~slot:1 ~dtype:(global_fptr) () in
+  let p_b = U.param ~slot:2 ~dtype:(global_fptr) () in
   let r_m = loop_range ~axis:0 m in
   let r_n = loop_range ~axis:1 n in
   let r_k = reduce_range ~axis:2 k in
   let open U.O in
-  let idx_a = U.index ~ptr:p_a ~idxs:[((r_m * idx k) + r_k)] ~as_ptr:true () in
-  let idx_b = U.index ~ptr:p_b ~idxs:[((r_k * idx n) + r_n)] ~as_ptr:true () in
+  let idx_a = U.index ~ptr:p_a ~idxs:[((r_m * idx k) + r_k)] () in
+  let idx_b = U.index ~ptr:p_b ~idxs:[((r_k * idx n) + r_n)] () in
   let ld_a = U.load ~src:idx_a () in
   let ld_b = U.load ~src:idx_b () in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:ld_a ~rhs:ld_b in
-  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_k ] ~dtype:D.Val.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_k ] ~dtype:D.float32 in
   let out_idx =
-    U.index ~ptr:p_out ~idxs:[((r_m * idx n) + r_n)] ~as_ptr:true ()
+    U.index ~ptr:p_out ~idxs:[((r_m * idx n) + r_n)] ()
   in
   let st = U.store ~dst:out_idx ~value:red () in
   let e = U.end_ ~value:st ~ranges:[ r_m; r_n ] in
@@ -94,21 +92,21 @@ let matmul_f32_ast ~m ~n ~k =
 
 (* Matmul with global ranges (for TC which needs loop-to-global conversion) *)
 let matmul_f32_global_ast ~m ~n ~k =
-  let p_out = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p_a = U.param ~slot:1 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p_b = U.param ~slot:2 ~dtype:(Dtype.Ptr global_fptr) () in
+  let p_out = U.param ~slot:0 ~dtype:(global_fptr) () in
+  let p_a = U.param ~slot:1 ~dtype:(global_fptr) () in
+  let p_b = U.param ~slot:2 ~dtype:(global_fptr) () in
   let r_m = global_range ~axis:0 m in
   let r_n = global_range ~axis:1 n in
   let r_k = reduce_range ~axis:2 k in
   let open U.O in
-  let idx_a = U.index ~ptr:p_a ~idxs:[((r_m * idx k) + r_k)] ~as_ptr:true () in
-  let idx_b = U.index ~ptr:p_b ~idxs:[((r_k * idx n) + r_n)] ~as_ptr:true () in
+  let idx_a = U.index ~ptr:p_a ~idxs:[((r_m * idx k) + r_k)] () in
+  let idx_b = U.index ~ptr:p_b ~idxs:[((r_k * idx n) + r_n)] () in
   let ld_a = U.load ~src:idx_a () in
   let ld_b = U.load ~src:idx_b () in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:ld_a ~rhs:ld_b in
-  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_k ] ~dtype:D.Val.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_k ] ~dtype:D.float32 in
   let out_idx =
-    U.index ~ptr:p_out ~idxs:[((r_m * idx n) + r_n)] ~as_ptr:true ()
+    U.index ~ptr:p_out ~idxs:[((r_m * idx n) + r_n)] ()
   in
   let st = U.store ~dst:out_idx ~value:red () in
   let e = U.end_ ~value:st ~ranges:[ r_m; r_n ] in
@@ -116,21 +114,21 @@ let matmul_f32_global_ast ~m ~n ~k =
 
 (* Matmul with f16 inputs and f32 accumulation *)
 let matmul_f16_global_ast ~m ~n ~k =
-  let p_out = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p_a = U.param ~slot:1 ~dtype:(Dtype.Ptr global_f16ptr) () in
-  let p_b = U.param ~slot:2 ~dtype:(Dtype.Ptr global_f16ptr) () in
+  let p_out = U.param ~slot:0 ~dtype:(global_fptr) () in
+  let p_a = U.param ~slot:1 ~dtype:(global_f16ptr) () in
+  let p_b = U.param ~slot:2 ~dtype:(global_f16ptr) () in
   let r_m = global_range ~axis:0 m in
   let r_n = global_range ~axis:1 n in
   let r_k = reduce_range ~axis:2 k in
   let open U.O in
-  let idx_a = U.index ~ptr:p_a ~idxs:[((r_m * idx k) + r_k)] ~as_ptr:true () in
-  let idx_b = U.index ~ptr:p_b ~idxs:[((r_k * idx n) + r_n)] ~as_ptr:true () in
+  let idx_a = U.index ~ptr:p_a ~idxs:[((r_m * idx k) + r_k)] () in
+  let idx_b = U.index ~ptr:p_b ~idxs:[((r_k * idx n) + r_n)] () in
   let ld_a = U.load ~src:idx_a () in
   let ld_b = U.load ~src:idx_b () in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:ld_a ~rhs:ld_b in
-  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_k ] ~dtype:D.Val.float32 in
+  let red = U.reduce ~op:Ops.Add ~src:mul ~ranges:[ r_k ] ~dtype:D.float32 in
   let out_idx =
-    U.index ~ptr:p_out ~idxs:[((r_m * idx n) + r_n)] ~as_ptr:true ()
+    U.index ~ptr:p_out ~idxs:[((r_m * idx n) + r_n)] ()
   in
   let st = U.store ~dst:out_idx ~value:red () in
   let e = U.end_ ~value:st ~ranges:[ r_m; r_n ] in
@@ -138,16 +136,16 @@ let matmul_f16_global_ast ~m ~n ~k =
 
 (* Simple elementwise kernel (no reduce — for testing TC rejection) *)
 let elementwise_global_ast ~s0 ~s1 =
-  let p0 = U.param ~slot:0 ~dtype:(Dtype.Ptr global_fptr) () in
-  let p1 = U.param ~slot:1 ~dtype:(Dtype.Ptr global_fptr) () in
+  let p0 = U.param ~slot:0 ~dtype:(global_fptr) () in
+  let p1 = U.param ~slot:1 ~dtype:(global_fptr) () in
   let r0 = global_range ~axis:0 s0 in
   let r1 = global_range ~axis:1 s1 in
   let open U.O in
-  let in_idx = U.index ~ptr:p1 ~idxs:[((r0 * idx s1) + r1)] ~as_ptr:true () in
+  let in_idx = U.index ~ptr:p1 ~idxs:[((r0 * idx s1) + r1)] () in
   let ld = U.load ~src:in_idx () in
   let value = U.alu_unary ~op:Ops.Exp2 ~src:ld in
   let out_idx =
-    U.index ~ptr:p0 ~idxs:[((r0 * idx s1) + r1)] ~as_ptr:true ()
+    U.index ~ptr:p0 ~idxs:[((r0 * idx s1) + r1)] ()
   in
   let st = U.store ~dst:out_idx ~value () in
   let e = U.end_ ~value:st ~ranges:[ r0; r1 ] in
