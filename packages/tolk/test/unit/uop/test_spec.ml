@@ -253,6 +253,14 @@ let barrier_boundaries () =
   is_true ~msg:"Barrier must be void"
     (rejected Spec.shared_spec bad_barrier)
 
+let wait_requires_bool_source () =
+  let ok = Uop.wait ~src:(Uop.const_bool true) in
+  is_true ~msg:"Wait with bool condition accepted"
+    (accepts Spec.shared_spec ok);
+  let bad = Uop.wait ~src:(i32 1) in
+  is_true ~msg:"Wait with non-bool condition rejected"
+    (rejected Spec.shared_spec bad)
+
 let group_after_bad_layouts () =
   let grouped =
     Uop.group [ Uop.noop ~dtype:Dtype.void (); Uop.noop ~dtype:Dtype.void () ]
@@ -1174,6 +1182,7 @@ let () =
           test "End non-range tail rejected" end_rejects_non_range_tail;
           test "Range bad layouts rejected" range_rejects_bad_layouts;
           test "Barrier boundaries" barrier_boundaries;
+          test "Wait requires bool source" wait_requires_bool_source;
           test "Group/After bad layouts rejected" group_after_bad_layouts;
         ];
       group "tensor_spec"
