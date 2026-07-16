@@ -136,8 +136,7 @@ let param_arg_debug_string (p : param_arg) =
   "ParamArg(" ^ String.concat ", " !fields ^ ")"
 
 let reduce_arg_debug_string (r : reduce_arg) =
-  tuple_string
-    [ "Ops." ^ Ops.name r.op; tuple_string (List.map string_of_int r.axes) ]
+  tuple_string [ "Ops." ^ Ops.name r.op; string_of_int r.num_axes ]
 
 let rec estimate_debug_string = function
   | Int n -> string_of_int n
