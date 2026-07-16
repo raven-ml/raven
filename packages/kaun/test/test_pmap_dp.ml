@@ -227,7 +227,7 @@ let test_dp_matches_jit () =
        (fun (type a b) (a : (a, b) Nx.t) (b : (a, b) Nx.t) : (a, b) Nx.t ->
          incr leaf;
          let d =
-           Nx.item [] (Nx.astype Nx.float64 (Nx.max (Nx.abs (Nx.sub a b))))
+           Nx.item [] (Nx.cast Nx.float64 (Nx.max (Nx.abs (Nx.sub a b))))
          in
          is_true
            ~msg:(Printf.sprintf "weight leaf %d: max |jit - pmap| = %g" !leaf d)

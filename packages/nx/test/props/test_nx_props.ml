@@ -304,7 +304,7 @@ let linalg_props =
   [
     prop "matmul identity (f64)" square_f64 (fun a ->
         let n = (Nx.shape a).(0) in
-        let eye = Nx.identity Nx.float64 n in
+        let eye = Nx.eye Nx.float64 n in
         approx_equal ~epsilon:1e-10 (Nx.matmul a eye) a);
     prop "transpose matmul (f64)"
       (let gen =
@@ -333,7 +333,7 @@ let linalg_props =
         Float.abs (tr -. diag_sum) < 1e-10);
     prop "inv roundtrip (f64 posdef)" posdef_f64 (fun a ->
         let n = (Nx.shape a).(0) in
-        let eye = Nx.identity Nx.float64 n in
+        let eye = Nx.eye Nx.float64 n in
         let inv_a = Nx.inv a in
         allclose ~atol:1e-6 ~rtol:1e-6 (Nx.matmul inv_a a) eye);
     prop "qr reconstruction (f64)" square_f64 (fun a ->
@@ -343,7 +343,7 @@ let linalg_props =
         let u, s, vh = Nx.svd a in
         let n = (Nx.shape a).(0) in
         let s_diag =
-          Nx.mul (Nx.identity Nx.float64 n) (Nx.reshape [| 1; n |] s)
+          Nx.mul (Nx.eye Nx.float64 n) (Nx.reshape [| 1; n |] s)
         in
         let reconstructed = Nx.matmul (Nx.matmul u s_diag) vh in
         allclose ~atol:1e-6 ~rtol:1e-6 reconstructed a);
@@ -355,7 +355,7 @@ let linalg_props =
       (Testable.make ~pp:Format.pp_print_int ~equal:Int.equal
          ~gen:(Gen.int_range 1 6) ())
       (fun n ->
-        let eye = Nx.identity Nx.float64 n in
+        let eye = Nx.eye Nx.float64 n in
         Float.abs (Nx.item [] (Nx.det eye) -. 1.0) < 1e-10);
   ]
 
@@ -497,7 +497,7 @@ let broadcasting_props =
         let result2 = Nx.add a' b' in
         approx_equal result result2);
     prop "expand_dims/squeeze roundtrip (f32)" f32_any (fun t ->
-        let expanded = Nx.expand_dims [ 0 ] t in
+        let expanded = Nx.unsqueeze ~axes:[ 0 ] t in
         let squeezed = Nx.squeeze ~axes:[ 0 ] expanded in
         approx_equal squeezed t);
     prop "broadcast_arrays consistent with broadcasted (f32)"

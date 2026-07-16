@@ -49,7 +49,7 @@ let test_jvp_mixed_dtype () =
   in
   let f p =
     Nx.add
-      (Nx.astype f64 (Nx.sum (Nx.mul p.w p.w)))
+      (Nx.cast f64 (Nx.sum (Nx.mul p.w p.w)))
       (Nx.sum (Nx.mul p.scale p.scale))
   in
   (* df = 2*w0*t_w0 + 2*scale*t_scale = 2*1 + 2*2 = 6 *)

@@ -24,7 +24,7 @@ Nx is a numerical computing library for OCaml. It takes heavy inspiration from N
 
 - **Pure OCaml Implementation:** Nx is fully native OCaml without C bindings. For that reason, it typically doesn't match NumPy's raw performances. But it is not trying to: while we care about performance, we prioritize the local development experience, where performance is not critical. That said, Nx uses a backend architecture under the hood, so it can easily be extended to use C or CUDA backends. This is what libraries like Rune are doing, implementing custom backends for Nx, making them suitable for production use cases.
 - **Portable Compilation:** In return for a pure OCaml implementation, you get to compile Nx to JavaScript, WebAssembly, or even unikernels. Making it suitable for a wide range of application.
-- **Type Safety First:** Nx leverages OCaml's strong type system and doesn't perform automatic type casting between array types. You can still use the `astype` function for explicit type conversions.
+- **Type Safety First:** Nx leverages OCaml's strong type system and doesn't perform automatic type casting between array types. You can still use the `cast` function for explicit type conversions.
 - **Bigarray Foundation:** Built on OCaml's Bigarray, Nx uses uint8 instead of boolean arrays and doesn't support string arrays.
 
 Apart from the above, Nx is designed to be as close to NumPy as possible. The broadcasting rules are the same, and most functions behave similarly. If you notice an undocumented difference, please open an issue; it's probably a bug.
@@ -48,7 +48,7 @@ let full = Nx.full Nx.float64 [|3; 3|] 5.0
 let range = Nx.arange Nx.int32 0 10 1
 
 (* Creating an identity matrix *)
-let identity = Nx.identity Nx.float64 3
+let identity = Nx.eye Nx.float64 3
 ```
 
 **NumPy:**

@@ -19,7 +19,7 @@ let () =
     min_samples;
 
   (* Pairwise Euclidean distance matrix [n, n] *)
-  let diff = sub (expand_dims [ 1 ] data) (expand_dims [ 0 ] data) in
+  let diff = sub (unsqueeze ~axes:[ 1 ] data) (unsqueeze ~axes:[ 0 ] data) in
   let dist = sqrt (sum ~axes:[ 2 ] (square diff)) in
 
   (* Neighbour adjacency and core-point mask *)

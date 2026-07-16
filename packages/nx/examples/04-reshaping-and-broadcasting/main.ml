@@ -65,10 +65,10 @@ let () =
   Printf.printf "y = %s\n" (data_to_string y);
   Printf.printf "Outer product (x × y):\n%s\n\n" (data_to_string outer);
 
-  (* --- expand_dims / squeeze --- *)
+  (* --- unsqueeze / squeeze --- *)
   let v = arange float64 0 4 1 in
-  let row = expand_dims [ 0 ] v in
-  let col = expand_dims [ 1 ] v in
+  let row = unsqueeze ~axes:[ 0 ] v in
+  let col = unsqueeze ~axes:[ 1 ] v in
   Printf.printf "Vector:     shape %s → %s\n"
     (shape_to_string (shape v))
     (data_to_string v);

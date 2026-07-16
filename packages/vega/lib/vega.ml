@@ -513,7 +513,7 @@ let clip delta =
           let dt = Nx.dtype updates in
           let min_v = Dtype.of_float dt (-.delta) in
           let max_v = Dtype.of_float dt delta in
-          (Nx.clip updates ~min:min_v ~max:max_v, [||]));
+          (Nx.clamp updates ~min:min_v ~max:max_v, [||]));
     };
   ]
 
@@ -737,7 +737,7 @@ let clip_by_value (module P : Nx.Ptree.S) ~max (grads : P.t) : P.t =
   P.map
     (fun g ->
       let of_float = Dtype.of_float (Nx.dtype g) in
-      Nx.clip ~min:(of_float (-.max)) ~max:(of_float max) g)
+      Nx.clamp ~min:(of_float (-.max)) ~max:(of_float max) g)
     grads
 
 (* Loss scaling *)

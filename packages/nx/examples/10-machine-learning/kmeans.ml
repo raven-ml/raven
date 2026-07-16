@@ -7,7 +7,7 @@ open Nx
 
 (* Pairwise squared L2 distances: [n, d] x [k, d] -> [n, k] *)
 let sq_distances a b =
-  sum ~axes:[ 2 ] (square (sub (expand_dims [ 1 ] a) (expand_dims [ 0 ] b)))
+  sum ~axes:[ 2 ] (square (sub (unsqueeze ~axes:[ 1 ] a) (unsqueeze ~axes:[ 0 ] b)))
 
 (* Isotropic Gaussian blobs around given centres. *)
 let make_blobs ~samples_per_cluster centers =
@@ -61,7 +61,7 @@ let () =
       let mask = cast Float64 (equal !labels (scalar Int32 (Int32.of_int c))) in
       let count = item [] (sum mask) in
       if count > 0.0 then begin
-        let total = sum ~axes:[ 0 ] (mul data (expand_dims [ 1 ] mask)) in
+        let total = sum ~axes:[ 0 ] (mul data (unsqueeze ~axes:[ 1 ] mask)) in
         set [ c ] centroids (div_s total count)
       end
     done;

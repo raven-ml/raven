@@ -197,7 +197,7 @@ let reorder_columns t names =
 let cast_column t name dtype =
   match get_column t name with
   | Some (Col.P (_, tensor, mask)) ->
-      let casted = Nx.astype dtype tensor in
+      let casted = Nx.cast dtype tensor in
       add_column t name (Col.P (dtype, casted, mask))
   | _ -> invalid_arg "cast_column: conversion not possible"
 
@@ -1356,7 +1356,7 @@ let to_nx t =
     List.filter_map
       (fun (_name, col) ->
         match col with
-        | Col.P (_, tensor, _) -> Some (Nx.astype Nx.float32 tensor)
+        | Col.P (_, tensor, _) -> Some (Nx.cast Nx.float32 tensor)
         | _ -> None)
       t.columns
   in

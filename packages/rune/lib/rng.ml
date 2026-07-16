@@ -102,7 +102,7 @@ let randint k ?(high = 10) shape low =
       (Printf.sprintf "Rune.Rng.randint: invalid range, low=%d >= high=%d" low
          high);
   let u = uniform k Nx.float32 shape in
-  Nx.astype Nx.int32
+  Nx.cast Nx.int32
     (Nx.add
        (Nx.mul u (Nx.scalar Nx.float32 (float_of_int (high - low))))
        (Nx.scalar Nx.float32 (float_of_int low)))

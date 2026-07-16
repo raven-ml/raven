@@ -347,7 +347,7 @@ let test_nonzero_1d () =
   equal ~msg:"nonzero 1d length" int 1 (Array.length indices);
   let expected = [| 1.; 3. |] in
   check_t "nonzero 1d indices" [| 2 |] expected
-    (Nx.astype Nx.float32 indices.(0))
+    (Nx.cast Nx.float32 indices.(0))
 
 let test_nonzero_2d () =
   let t =
@@ -358,11 +358,11 @@ let test_nonzero_2d () =
   (* Row indices *)
   let expected_rows = [| 0.; 1.; 1.; 2. |] in
   check_t "nonzero 2d rows" [| 4 |] expected_rows
-    (Nx.astype Nx.float32 indices.(0));
+    (Nx.cast Nx.float32 indices.(0));
   (* Column indices *)
   let expected_cols = [| 1.; 0.; 2.; 2. |] in
   check_t "nonzero 2d cols" [| 4 |] expected_cols
-    (Nx.astype Nx.float32 indices.(1))
+    (Nx.cast Nx.float32 indices.(1))
 
 let test_nonzero_empty () =
   let t = Nx.zeros Nx.float32 [| 3; 3 |] in
@@ -379,7 +379,7 @@ let test_argwhere_basic () =
   let coords = Nx.argwhere t in
   check_shape "argwhere shape" [| 4; 2 |] coords;
   let expected = [| 0.; 1.; 1.; 0.; 1.; 2.; 2.; 2. |] in
-  check_t "argwhere coords" [| 4; 2 |] expected (Nx.astype Nx.float32 coords)
+  check_t "argwhere coords" [| 4; 2 |] expected (Nx.cast Nx.float32 coords)
 
 let test_argwhere_empty () =
   let t = Nx.zeros Nx.float32 [| 3; 3 |] in
@@ -391,7 +391,7 @@ let test_argwhere_1d () =
   let coords = Nx.argwhere t in
   check_shape "argwhere 1d shape" [| 2; 1 |] coords;
   let expected = [| 1.; 3. |] in
-  check_t "argwhere 1d coords" [| 2; 1 |] expected (Nx.astype Nx.float32 coords)
+  check_t "argwhere 1d coords" [| 2; 1 |] expected (Nx.cast Nx.float32 coords)
 
 (* ───── Edge Cases and Error Tests ───── *)
 

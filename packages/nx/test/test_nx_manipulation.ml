@@ -270,23 +270,23 @@ let test_expand_dims_various () =
   let t = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in
 
   (* Add dim at position 0 *)
-  let e0 = Nx.expand_dims [ 0 ] t in
+  let e0 = Nx.unsqueeze ~axes:[ 0 ] t in
   check_shape "expand_dims at 0" [| 1; 3 |] e0;
 
   (* Add dim at position -1 (end) *)
-  let e_end = Nx.expand_dims [ -1 ] t in
+  let e_end = Nx.unsqueeze ~axes:[ -1 ] t in
   check_shape "expand_dims at -1" [| 3; 1 |] e_end;
 
   (* Add dim in middle *)
   let t2 = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-  let e_mid = Nx.expand_dims [ 1 ] t2 in
+  let e_mid = Nx.unsqueeze ~axes:[ 1 ] t2 in
   check_shape "expand_dims in middle" [| 2; 1; 3 |] e_mid
 
 let test_expand_dims_invalid_axis () =
   let t = Nx.create Nx.float32 [| 3 |] [| 1.0; 2.0; 3.0 |] in
   check_invalid_arg "expand_dims invalid axis"
     "unsqueeze: axis 2, out of bounds for output rank 2, valid range is [-2, 2)"
-    (fun () -> Nx.expand_dims [ 2 ] t)
+    (fun () -> Nx.unsqueeze ~axes:[ 2 ] t)
 
 (* ───── Broadcasting Tests ───── *)
 

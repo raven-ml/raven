@@ -39,7 +39,7 @@ let () =
   Printf.printf "5×5 multiplication table:\n%s\n\n" (data_to_string mul_table);
 
   (* Identity and eye: diagonal matrices. *)
-  let id = identity float64 3 in
+  let id = eye float64 3 in
   Printf.printf "identity 3×3:\n%s\n\n" (data_to_string id);
 
   let e = eye ~k:1 float64 3 in

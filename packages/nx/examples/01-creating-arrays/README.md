@@ -13,7 +13,7 @@ dune exec nx/examples/01-creating-arrays/main.exe
 - Filling arrays with constants: `zeros`, `ones`, `full`
 - Generating ranges: `arange`, `linspace`, `logspace`
 - Building arrays from OCaml data: `create`, `init`
-- Diagonal and special matrices: `identity`, `eye`, `tril`, `triu`
+- Diagonal and special matrices: `eye`, `tril`, `triu`
 - Coordinate grids with `meshgrid`
 
 ## Key Functions
@@ -28,7 +28,6 @@ dune exec nx/examples/01-creating-arrays/main.exe
 | `logspace dtype start stop n`  | Logarithmically spaced values          |
 | `create dtype shape data`      | Array from an OCaml array              |
 | `init dtype shape f`           | Array from a function of indices       |
-| `identity dtype n`             | n×n identity matrix                    |
 | `eye ?k dtype n`               | Ones on the k-th diagonal              |
 | `meshgrid x y`                 | Coordinate grids from 1D arrays        |
 | `tril m` / `triu m`            | Lower / upper triangular part          |

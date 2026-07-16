@@ -70,14 +70,14 @@ Every array has a `dtype` that determines its element type. Common dtypes:
 | `Bool` | `bool` | Masks, conditions |
 | `Complex128` | `Complex.t` | Signal processing |
 
-Nx does not automatically cast between types. Convert explicitly with `astype`:
+Nx does not automatically cast between types. Convert explicitly with `cast`:
 
 ```ocaml
 open Nx
 
 let () =
   let x = create Int32 [|3|] [|1l; 2l; 3l|] in
-  let y = astype Float32 x in
+  let y = cast Float32 x in
   print_data y   (* [1. 2. 3.] as float32 *)
 ```
 
@@ -91,7 +91,7 @@ let () =
   Printf.printf "shape: [|%s|]\n"
     (Array.to_list (shape x) |> List.map string_of_int |> String.concat "; ");
   Printf.printf "ndim: %d\n" (ndim x);         (* 3 *)
-  Printf.printf "size: %d\n" (size x);          (* 24 *)
+  Printf.printf "size: %d\n" (numel x);          (* 24 *)
   Printf.printf "dtype: %s\n" (dtype_to_string (dtype x))
 ```
 

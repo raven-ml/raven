@@ -82,7 +82,7 @@ let of_tensor (type a b) (t : (a, b) Nx.t) =
 (* Properties *)
 
 let length = function
-  | P (_, t, _) -> Nx.size t
+  | P (_, t, _) -> Nx.numel t
   | S arr -> Array.length arr
   | B arr -> Array.length arr
 

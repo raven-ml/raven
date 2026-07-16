@@ -40,7 +40,6 @@ let ones dtype shape = F.ones (Lazy.force context) dtype shape
 let zeros dtype shape = F.zeros (Lazy.force context) dtype shape
 let scalar dtype v = F.scalar (Lazy.force context) dtype v
 let eye ?m ?k dtype n = F.eye (Lazy.force context) ?m ?k dtype n
-let identity dtype n = F.identity (Lazy.force context) dtype n
 
 let arange dtype start stop step =
   F.arange (Lazy.force context) dtype start stop step

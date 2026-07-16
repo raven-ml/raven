@@ -524,7 +524,7 @@ let test_generic_and_mutable () =
 
 let integration_loss (params : Integration.t) =
   Nx.add
-    (Nx.astype Nx.float64 (Nx.sum (Nx.mul params.weight params.weight)))
+    (Nx.cast Nx.float64 (Nx.sum (Nx.mul params.weight params.weight)))
     (Nx.sum (Nx.mul params.bias params.bias))
 
 let test_rune_and_vega_integration () =

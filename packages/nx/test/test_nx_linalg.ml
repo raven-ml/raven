@@ -521,7 +521,7 @@ let test_pinv_hermitian_complex () =
       |]
   in
   let pinv_a = Nx.pinv ~hermitian:true a in
-  let identity = Nx.identity Nx.complex128 2 in
+  let identity = Nx.eye Nx.complex128 2 in
   let product = Nx.matmul a pinv_a in
   check_nx ~epsilon:1e-5 "pinv hermitian complex identity" identity product;
   let recon = Nx.matmul a (Nx.matmul pinv_a a) in

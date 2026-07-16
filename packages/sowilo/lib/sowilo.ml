@@ -5,11 +5,11 @@
 
 (* Type conversion and preprocessing *)
 
-let to_float img = Nx.div_s (Nx.astype Nx.float32 img) 255.0
+let to_float img = Nx.div_s (Nx.cast Nx.float32 img) 255.0
 
 let to_uint8 img =
-  let clipped = Nx.clip ~min:0.0 ~max:1.0 img in
-  Nx.astype Nx.uint8 (Nx.mul_s clipped 255.0)
+  let clipped = Nx.clamp ~min:0.0 ~max:1.0 img in
+  Nx.cast Nx.uint8 (Nx.mul_s clipped 255.0)
 
 let normalize ~mean ~std img =
   let shape = Nx.shape img in

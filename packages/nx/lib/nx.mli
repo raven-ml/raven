@@ -159,20 +159,7 @@ val strides : ('a, 'b) t -> int array
 
     Raises [Invalid_argument] if [t] does not have computable strides (e.g.
     after certain non-contiguous view operations). Use {!is_c_contiguous} or
-    call {!contiguous} first.
-
-    See also {!stride}. *)
-
-val stride : int -> ('a, 'b) t -> int
-(** [stride i t] is the byte stride of dimension [i].
-
-    Raises [Invalid_argument] if [i] is out of bounds or [t] does not have
-    computable strides.
-
-    See also {!strides}. *)
-
-val dims : ('a, 'b) t -> int array
-(** [dims t] is {!shape}. *)
+    call {!contiguous} first. *)
 
 val dim : int -> ('a, 'b) t -> int
 (** [dim i t] is the size of dimension [i].
@@ -185,14 +172,11 @@ val ndim : ('a, 'b) t -> int
 val itemsize : ('a, 'b) t -> int
 (** [itemsize t] is the number of bytes per element. *)
 
-val size : ('a, 'b) t -> int
-(** [size t] is the total number of elements. *)
-
 val numel : ('a, 'b) t -> int
-(** [numel t] is {!size}. *)
+(** [numel t] is the total number of elements in [t]. *)
 
 val nbytes : ('a, 'b) t -> int
-(** [nbytes t] is [size t * itemsize t]. *)
+(** [nbytes t] is [numel t * itemsize t]. *)
 
 val offset : ('a, 'b) t -> int
 (** [offset t] is the element offset of [t] in its underlying buffer. *)
@@ -313,10 +297,7 @@ val eye : ?m:int -> ?k:int -> ('a, 'b) dtype -> int -> ('a, 'b) t
                                                [0, 0, 0]]
     ]}
 
-    See also {!identity}, {!diag}. *)
-
-val identity : ('a, 'b) dtype -> int -> ('a, 'b) t
-(** [identity dtype n] is [eye dtype n]. *)
+    See also {!diag}. *)
 
 val diag : ?k:int -> ('a, 'b) t -> ('a, 'b) t
 (** [diag ?k v] extracts or constructs a diagonal.
@@ -610,7 +591,7 @@ val reshape : int array -> ('a, 'b) t -> ('a, 'b) t
 (** [reshape shape t] is a view of [t] with the given [shape].
 
     At most one dimension may be [-1]; it is inferred from the total number of
-    elements. The product of [shape] must equal {!size} [t].
+    elements. The product of [shape] must equal {!numel} [t].
 
     Raises [Invalid_argument] if [shape] is incompatible or contains more than
     one [-1].
@@ -744,7 +725,7 @@ val unsqueeze : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t
       - : int array = [|1; 3; 1|]
     ]}
 
-    See also {!squeeze}, {!expand_dims}. *)
+    See also {!squeeze}. *)
 
 val squeeze_axis : int -> ('a, 'b) t -> ('a, 'b) t
 (** [squeeze_axis i t] removes dimension [i] if its size is 1.
@@ -757,9 +738,6 @@ val unsqueeze_axis : int -> ('a, 'b) t -> ('a, 'b) t
 (** [unsqueeze_axis i t] inserts a dimension of size 1 at position [i].
 
     See also {!unsqueeze}. *)
-
-val expand_dims : int list -> ('a, 'b) t -> ('a, 'b) t
-(** [expand_dims axes t] is {!unsqueeze} [~axes t]. *)
 
 val transpose : ?axes:int list -> ('a, 'b) t -> ('a, 'b) t
 (** [transpose ?axes t] permutes the dimensions of [t].
@@ -1010,9 +988,6 @@ val cast : ('c, 'd) dtype -> ('a, 'b) t -> ('c, 'd) t
     ]}
 
     See also {!contiguous}, {!copy}. *)
-
-val astype : ('a, 'b) dtype -> ('c, 'd) t -> ('a, 'b) t
-(** [astype dtype t] is {!cast}. *)
 
 val contiguous : ('a, 'b) t -> ('a, 'b) t
 (** [contiguous t] is [t] if it is already C-contiguous, or a fresh contiguous
@@ -1546,9 +1521,6 @@ val lerp : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
       - : (float, float32_elt) t = [2, 3.5]
     ]} *)
 
-val lerp_scalar_weight : ('a, 'b) t -> ('a, 'b) t -> 'a -> ('a, 'b) t
-(** [lerp_scalar_weight a b w] is like {!lerp} with a scalar weight. *)
-
 val isinf : ('a, 'b) t -> (bool, bool_elt) t
 (** [isinf t] is [true] where [t] is positive or negative infinity, [false]
     elsewhere. Non-float dtypes always return all [false].
@@ -1672,12 +1644,7 @@ val where : (bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 
 val clamp : ?min:'a -> ?max:'a -> ('a, 'b) t -> ('a, 'b) t
 (** [clamp ?min ?max t] clamps elements to \[[min], [max]\]. Either bound may be
-    omitted.
-
-    See also {!clip}. *)
-
-val clip : ?min:'a -> ?max:'a -> ('a, 'b) t -> ('a, 'b) t
-(** [clip ?min ?max t] is {!clamp}. *)
+    omitted. *)
 
 (** {1:bitwise Bitwise operations} *)
 
@@ -1692,9 +1659,6 @@ val bitwise_and : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 
 val bitwise_not : ('a, 'b) t -> ('a, 'b) t
 (** [bitwise_not t] is the element-wise bitwise NOT. *)
-
-val invert : ('a, 'b) t -> ('a, 'b) t
-(** [invert t] is {!bitwise_not}. *)
 
 val lshift : ('a, 'b) t -> int -> ('a, 'b) t
 (** [lshift t n] left-shifts each element by [n] bits.

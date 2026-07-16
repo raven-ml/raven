@@ -110,7 +110,7 @@ let hsv_to_rgb img =
   Nx.concatenate ~axis:c_axis [ r; g; b ]
 
 let adjust_brightness factor img =
-  Nx.clip ~min:0.0 ~max:1.0 (Nx.mul_s img factor)
+  Nx.clamp ~min:0.0 ~max:1.0 (Nx.mul_s img factor)
 
 let adjust_contrast factor img =
   let shape = Nx.shape img in
@@ -119,7 +119,7 @@ let adjust_contrast factor img =
   let axes = List.init (rank - 1) Fun.id in
   let mean = Nx.mean ~axes ~keepdims:true img in
   let shifted = Nx.sub img mean in
-  Nx.clip ~min:0.0 ~max:1.0 (Nx.add mean (Nx.mul_s shifted factor))
+  Nx.clamp ~min:0.0 ~max:1.0 (Nx.add mean (Nx.mul_s shifted factor))
 
 let adjust_saturation factor img =
   let hsv = rgb_to_hsv img in
@@ -141,7 +141,7 @@ let adjust_saturation factor img =
       (List.init rank (fun ax -> if ax = c_axis then Nx.R (2, 3) else Nx.A))
       hsv
   in
-  let s' = Nx.clip ~min:0.0 ~max:1.0 (Nx.mul_s s factor) in
+  let s' = Nx.clamp ~min:0.0 ~max:1.0 (Nx.mul_s s factor) in
   hsv_to_rgb (Nx.concatenate ~axis:c_axis [ h; s'; v ])
 
 let adjust_hue delta img =

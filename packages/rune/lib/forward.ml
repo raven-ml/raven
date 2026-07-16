@@ -516,7 +516,7 @@ let handler (tangents : Tensor_map.t) =
                       in
                       let out_2d, was_1d =
                         if Array.length (T.shape out) = 1 then
-                          (T.expand_dims [ -1 ] out, true)
+                          (T.unsqueeze ~axes:[ -1 ] out, true)
                         else (out, false)
                       in
                       let prod = T.matmul da_op out_2d in

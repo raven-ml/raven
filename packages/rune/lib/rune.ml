@@ -380,7 +380,7 @@ let hvp' (type a b c d) (f : (a, b) Nx.t -> (c, d) Nx.t) (x : (a, b) Nx.t)
 
 let check_grads ?(eps = 1e-4) ?(tol = 1e-2) (module P : Ptree.S)
     (f : P.t -> ('c, 'd) Nx.t) (params : P.t) : (unit, string) result =
-  let scalar_f64 t = Nx.item [] (Nx.reshape [||] (Nx.astype Nx.float64 t)) in
+  let scalar_f64 t = Nx.item [] (Nx.reshape [||] (Nx.cast Nx.float64 t)) in
   let g = grad (module P) f params in
   (* Two deterministic directions: all-ones, and a params-derived direction so
      the two are independent for non-constant params. *)

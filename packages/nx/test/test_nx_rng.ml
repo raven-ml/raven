@@ -102,7 +102,7 @@ let test_bernoulli () =
   let t = Rng.run ~seed:42 (fun () -> bernoulli ~p shape) in
 
   equal ~msg:"bernoulli produces correct shape" (array int) shape (Nx.shape t);
-  let t_int = astype uint8 t in
+  let t_int = cast uint8 t in
   (* Check proportion roughly matches p *)
   let values = Nx.to_array t_int in
   let ones =

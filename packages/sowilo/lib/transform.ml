@@ -21,8 +21,8 @@ let compute_nearest_indices ~size_in ~size_out =
     let scale = float size_in /. float size_out in
     let coords = float_range size_out in
     let src = Nx.sub_s (Nx.mul_s (Nx.add_s coords 0.5) scale) 0.5 in
-    let src_clipped = Nx.clip ~min:0.0 ~max:(float (size_in - 1)) src in
-    Nx.astype Nx.int32 (Nx.round src_clipped)
+    let src_clipped = Nx.clamp ~min:0.0 ~max:(float (size_in - 1)) src in
+    Nx.cast Nx.int32 (Nx.round src_clipped)
 
 let compute_linear_axis ~size_in ~size_out =
   if size_out = 1 || size_in = 1 then
@@ -32,11 +32,11 @@ let compute_linear_axis ~size_in ~size_out =
   else
     let scale = float (size_in - 1) /. float (size_out - 1) in
     let src = Nx.mul_s (float_range size_out) scale in
-    let idx0 = src |> Nx.floor |> Nx.astype Nx.int32 in
+    let idx0 = src |> Nx.floor |> Nx.cast Nx.int32 in
     let one = Nx.scalar_like idx0 Int32.(of_int 1) in
     let max_idx = Nx.scalar_like idx0 Int32.(of_int (size_in - 1)) in
     let idx1 = Nx.minimum (Nx.add idx0 one) max_idx in
-    let delta = Nx.sub src (Nx.astype Nx.float32 idx0) in
+    let delta = Nx.sub src (Nx.cast Nx.float32 idx0) in
     (idx0, idx1, delta)
 
 let resize : type a b.
@@ -58,7 +58,7 @@ let resize : type a b.
       let x_idx = compute_nearest_indices ~size_in:in_w ~size_out:out_w in
       img |> Nx.take ~axis:h_ax y_idx |> Nx.take ~axis:w_ax x_idx
   | Bilinear ->
-      let img_f = Nx.astype Nx.float32 img in
+      let img_f = Nx.cast Nx.float32 img in
       let y0, y1, dy = compute_linear_axis ~size_in:in_h ~size_out:out_h in
       let x0, x1, dx = compute_linear_axis ~size_in:in_w ~size_out:out_w in
       let top = Nx.take ~axis:h_ax y0 img_f in
@@ -86,7 +86,7 @@ let resize : type a b.
       let blended =
         Nx.add (Nx.mul one_dy top_interp) (Nx.mul dy_b bottom_interp)
       in
-      Nx.astype (Nx.dtype img) blended
+      Nx.cast (Nx.dtype img) blended
 
 let crop ~y ~x ~height ~width img =
   let shape = Nx.shape img in

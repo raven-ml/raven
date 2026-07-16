@@ -105,7 +105,7 @@ let test_zeros_max_size () =
 (* ───── Eye Identity Tests ───── *)
 
 let test_identity_1x1_int32 () =
-  let t = Nx.identity Nx.int32 1 in
+  let t = Nx.eye Nx.int32 1 in
   check_t "identity 1x1" [| 1; 1 |] [| 1l |] t
 
 let test_eye_3x4_float32 () =
@@ -230,11 +230,11 @@ let test_strides_2x3_float32 () =
 
 let test_stride_dim0_2x3_float32 () =
   let t = Nx.create Nx.float32 [| 2; 3 |] (Array.init 6 float_of_int) in
-  equal ~msg:"stride dim 0" int 12 (Nx.stride 0 t)
+  equal ~msg:"stride dim 0" int 12 ((Nx.strides t).(0))
 
 let test_stride_dim1_2x3_float32 () =
   let t = Nx.create Nx.float32 [| 2; 3 |] (Array.init 6 float_of_int) in
-  equal ~msg:"stride dim 1" int 4 (Nx.stride 1 t)
+  equal ~msg:"stride dim 1" int 4 ((Nx.strides t).(1))
 
 let test_strides_2x3_int64 () =
   let t = Nx.create Nx.int64 [| 2; 3 |] (Array.init 6 Int64.of_int) in
@@ -262,7 +262,7 @@ let test_dim_0_2x3 () =
 
 let test_dims_2x3 () =
   let t = Nx.create Nx.float32 [| 2; 3 |] (Array.init 6 float_of_int) in
-  equal ~msg:"dims" (array int) [| 2; 3 |] (Nx.dims t)
+  equal ~msg:"dims" (array int) [| 2; 3 |] (Nx.shape t)
 
 let test_nbytes_float32 () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
@@ -278,11 +278,11 @@ let test_nbytes_empty () =
 
 let test_size_2x3 () =
   let t = Nx.create Nx.float32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
-  equal ~msg:"size 2x3" int 6 (Nx.size t)
+  equal ~msg:"size 2x3" int 6 (Nx.numel t)
 
 let test_size_scalar () =
   let t = Nx.scalar Nx.float32 10.0 in
-  equal ~msg:"size scalar" int 1 (Nx.size t)
+  equal ~msg:"size scalar" int 1 (Nx.numel t)
 
 let test_offset_basic () =
   let t = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
@@ -520,22 +520,22 @@ let test_to_array () =
 
 let test_astype_float32_to_int32 () =
   let t = Nx.create Nx.float32 [| 3 |] [| 1.1; 2.9; -3.3 |] in
-  let u = Nx.astype Nx.int32 t in
+  let u = Nx.cast Nx.int32 t in
   check_t "astype to int32" [| 3 |] [| 1l; 2l; -3l |] u
 
 let test_astype_int32_to_float32 () =
   let t = Nx.create Nx.int32 [| 3 |] [| 1l; 2l; 3l |] in
-  let u = Nx.astype Nx.float32 t in
+  let u = Nx.cast Nx.float32 t in
   check_t "astype to float32" [| 3 |] [| 1.0; 2.0; 3.0 |] u
 
 let test_astype_float32_to_int16 () =
   let t = Nx.create Nx.float32 [| 4 |] [| 1.0; 2.5; 3.9; 255.0 |] in
-  let u = Nx.astype Nx.int16 t in
+  let u = Nx.cast Nx.int16 t in
   check_t "astype to int16" [| 4 |] [| 1; 2; 3; 255 |] u
 
 let test_astype_int64_to_float32 () =
   let t = Nx.create Nx.int64 [| 3 |] [| 1000L; 2000L; 3000L |] in
-  let u = Nx.astype Nx.float32 t in
+  let u = Nx.cast Nx.float32 t in
   check_t "astype int64 to float32" [| 3 |] [| 1000.0; 2000.0; 3000.0 |] u
 
 (* Test Suite Organization *)

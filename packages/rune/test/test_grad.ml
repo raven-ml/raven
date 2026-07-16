@@ -60,7 +60,7 @@ let test_mixed_dtype_single_pass () =
      2w (float32), d/dscale = 2 scale (float64). *)
   let f p =
     Nx.add
-      (Nx.astype f64 (Nx.sum (Nx.mul p.w p.w)))
+      (Nx.cast f64 (Nx.sum (Nx.mul p.w p.w)))
       (Nx.sum (Nx.mul p.scale p.scale))
   in
   let g = Rune.grad (module Params) f (params ()) in
@@ -71,7 +71,7 @@ let test_gradient_descent_converges () =
   (* Minimize sum (w * w) + sum (scale * scale): both go to zero. *)
   let f p =
     Nx.add
-      (Nx.astype f64 (Nx.sum (Nx.mul p.w p.w)))
+      (Nx.cast f64 (Nx.sum (Nx.mul p.w p.w)))
       (Nx.sum (Nx.mul p.scale p.scale))
   in
   let step p =

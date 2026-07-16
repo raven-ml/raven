@@ -310,6 +310,11 @@ thread.
 
 ### Nx
 
+- Remove redundant property and conversion aliases: `size` (use `numel`),
+  `dims` (use `shape`), `astype` (use `cast`), `clip` (use `clamp`), `invert`
+  (use `bitwise_not`), `expand_dims` (use `unsqueeze ~axes`), `identity` (use
+  `eye`), `stride i t` (use `(strides t).(i)`), and `lerp_scalar_weight` (use
+  `lerp` with a `scalar_like` weight).
 - Remove the duplicate `cmp*` comparison family (`cmplt`, `cmpne`, `cmpeq`,
   `cmpgt`, `cmple`, `cmpge`). Use the named spellings `less`, `not_equal`,
   `equal`, `greater`, `less_equal`, `greater_equal` instead.

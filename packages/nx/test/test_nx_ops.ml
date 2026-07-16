@@ -198,7 +198,7 @@ let rounding_edge_cases =
   [
     test "clip" (fun () ->
         let t = Nx.create Nx.float32 [| 5 |] [| -1.; 2.; 5.; 8.; 10. |] in
-        let result = Nx.clip ~min:0. ~max:7. t in
+        let result = Nx.clamp ~min:0. ~max:7. t in
         check_t "clip" [| 5 |] [| 0.; 2.; 5.; 7.; 7. |] result);
   ]
 
@@ -243,7 +243,7 @@ let cumulative_tests =
 let bitwise_edge_cases =
   [
     test "invert"
-      (test_unary_op ~op:Nx.invert ~op_name:"invert" ~dtype:Nx.int32
+      (test_unary_op ~op:Nx.bitwise_not ~op_name:"invert" ~dtype:Nx.int32
          ~shape:[| 3 |] ~input:[| 5l; 0l; 7l |] ~expected:[| -6l; -1l; -8l |]);
   ]
 

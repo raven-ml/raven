@@ -50,7 +50,7 @@ let test_constants_are_not_differentiated () =
   let f x =
     let _, s, _ = Nx.svd c in
     let first = Nx.reshape [||] (Nx.shrink [| (0, 1) |] s) in
-    Nx.mul (Nx.sum (Nx.mul x x)) (Nx.astype f32 first)
+    Nx.mul (Nx.sum (Nx.mul x x)) (Nx.cast f32 first)
   in
   ignore (Rune.grad' f x)
 
@@ -63,7 +63,7 @@ let test_unsupported_op_raises_when_tracked () =
         (Rune.grad'
            (fun x ->
              let _, s, _ = Nx.svd x in
-             Nx.sum (Nx.astype f32 s))
+             Nx.sum (Nx.cast f32 s))
            x))
 
 let test_grad_requires_scalar () =

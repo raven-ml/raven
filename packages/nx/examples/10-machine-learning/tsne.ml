@@ -7,7 +7,7 @@ open Nx
 
 (* Pairwise squared distances: [n, d] -> [n, n] *)
 let pairwise_sq data =
-  let diff = sub (expand_dims [ 1 ] data) (expand_dims [ 0 ] data) in
+  let diff = sub (unsqueeze ~axes:[ 1 ] data) (unsqueeze ~axes:[ 0 ] data) in
   sum ~axes:[ 2 ] (square diff)
 
 (* Off-diagonal mask: 1 everywhere except the diagonal. *)
@@ -64,7 +64,7 @@ let () =
   let mask = off_diag n in
 
   for iter = 1 to max_iter do
-    let y_diff = sub (expand_dims [ 1 ] !y) (expand_dims [ 0 ] !y) in
+    let y_diff = sub (unsqueeze ~axes:[ 1 ] !y) (unsqueeze ~axes:[ 0 ] !y) in
     let y_dsq = sum ~axes:[ 2 ] (square y_diff) in
     let inv_d = mul (div (scalar Float64 1.0) (add_s y_dsq 1.0)) mask in
     let q_sum = Float.max (item [] (sum inv_d)) 1e-30 in
@@ -75,7 +75,7 @@ let () =
     (* Gradient: 4 sum_j (p_ij - q_ij)(y_i - y_j)(1+||y_i-y_j||^2)^{-1} *)
     let mult = mul (sub p_eff q) inv_d in
     let grad =
-      mul_s (sum ~axes:[ 1 ] (mul (expand_dims [ 2 ] mult) y_diff)) 4.0
+      mul_s (sum ~axes:[ 1 ] (mul (unsqueeze ~axes:[ 2 ] mult) y_diff)) 4.0
     in
 
     let momentum = if iter <= 100 then 0.5 else 0.8 in

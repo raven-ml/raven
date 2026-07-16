@@ -110,18 +110,6 @@ module Make (B : Backend_intf.S) = struct
     let itemsize = itemsize x in
     Array.map (fun s -> s * itemsize) (View.strides view)
 
-  let stride i x =
-    let view = B.view x in
-    let itemsize = itemsize x in
-    let elem_strides = View.strides view in
-    let ndim = View.ndim view in
-    let i = if i < 0 then i + ndim else i in
-    if i < 0 || i >= ndim then
-      err "stride" "axis %d out of bounds for %dD tensor" i ndim
-    else elem_strides.(i) * itemsize
-
-  let dims x = View.shape (B.view x)
-
   let dim i x =
     let shape = View.shape (B.view x) in
     let ndim = Array.length shape in
@@ -505,7 +493,6 @@ module Make (B : Backend_intf.S) = struct
       (broadcast_to (shape x)
          (B.full (B.context x) dt [||] (Dtype.minus_one dt)))
 
-  let invert x = bitwise_not x
   let sin x = unaryop B.sin x
   let cos x = unaryop B.cos x
   let sqrt x = unaryop B.sqrt x
@@ -595,11 +582,6 @@ module Make (B : Backend_intf.S) = struct
 
   let lerp start_tensor end_tensor weight =
     add start_tensor (mul (sub end_tensor start_tensor) weight)
-
-  let lerp_scalar_weight start_tensor end_tensor weight_val =
-    lerp start_tensor end_tensor
-      (full (B.context start_tensor) (dtype start_tensor) (shape start_tensor)
-         weight_val)
 
   let shift_op ~op ~apply x shift_val =
     let dt = dtype x in
@@ -1255,8 +1237,6 @@ module Make (B : Backend_intf.S) = struct
         if col >= 0 && col < cols then arr.((i * cols) + col) <- one
       done;
       create ctx dtype [| rows; cols |] arr
-
-  let identity ctx dtype n = eye ctx ~m:n ~k:0 dtype n
 
   let diag ?(k = 0) v =
     let v_shape = shape v in

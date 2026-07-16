@@ -16,7 +16,7 @@ dune exec nx/examples/04-reshaping-and-broadcasting/main.exe
 - Stacking arrays vertically and horizontally: `vstack`, `hstack`
 - Broadcasting: how `keepdims` enables operations on different-shaped arrays
 - Building outer products via broadcasting
-- Adding and removing dimensions with `expand_dims` and `squeeze`
+- Adding and removing dimensions with `unsqueeze` and `squeeze`
 
 ## Key Functions
 
@@ -27,7 +27,7 @@ dune exec nx/examples/04-reshaping-and-broadcasting/main.exe
 | `transpose t`         | Reverse all axes (swap rows and columns)               |
 | `vstack ts`           | Stack arrays vertically (along axis 0)                 |
 | `hstack ts`           | Stack arrays horizontally (along axis 1)               |
-| `expand_dims axes t`  | Insert size-1 dimensions at specified positions        |
+| `unsqueeze ~axes t`   | Insert size-1 dimensions at specified positions        |
 | `squeeze t`           | Remove all size-1 dimensions                           |
 | `mean ~keepdims:true` | Reduce while keeping axis as size 1 (for broadcasting) |
 

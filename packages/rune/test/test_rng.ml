@@ -80,7 +80,7 @@ let test_randint_range () =
 let test_bernoulli_probability () =
   let a =
     to_arr
-      (Nx.astype f32 (Rune.Rng.bernoulli (Rune.Rng.key 6) ~p:0.3 [| 10_000 |]))
+      (Nx.cast f32 (Rune.Rng.bernoulli (Rune.Rng.key 6) ~p:0.3 [| 10_000 |]))
   in
   equal ~msg:"fraction of ones near p" (float 0.02) 0.3 (mean a)
 
@@ -131,9 +131,9 @@ let test_jit_uniform_bit_parity () =
 
 let test_jit_int_samplers_bit_parity () =
   let k = Rune.Rng.key 9 in
-  let fr key = Nx.astype f32 (Rune.Rng.randint key ~high:9 [| 64 |] 3) in
+  let fr key = Nx.cast f32 (Rune.Rng.randint key ~high:9 [| 64 |] 3) in
   check_bits ~msg:"randint" (fr k) (Rune.jit (module Key) fr k);
-  let fb key = Nx.astype f32 (Rune.Rng.bernoulli key ~p:0.3 [| 64 |]) in
+  let fb key = Nx.cast f32 (Rune.Rng.bernoulli key ~p:0.3 [| 64 |]) in
   check_bits ~msg:"bernoulli" (fb k) (Rune.jit (module Key) fb k)
 
 (* The threefry bits agree exactly; cos/log/sqrt in Box-Muller land within
@@ -182,7 +182,7 @@ let test_grad_dropout_mask_is_constant () =
   let x = vec32 [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0; 7.0; 8.0 |] in
   let forward_mask = ref None in
   let f x =
-    let m = Nx.astype f32 (Rune.Rng.bernoulli key ~p:0.5 [| 8 |]) in
+    let m = Nx.cast f32 (Rune.Rng.bernoulli key ~p:0.5 [| 8 |]) in
     forward_mask := Some m;
     Nx.sum (Nx.mul x m)
   in

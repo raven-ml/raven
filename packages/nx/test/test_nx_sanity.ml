@@ -58,7 +58,7 @@ let creation_tests =
         Nx.eye Nx.float32 3
         |> check_t "eye" [| 3; 3 |] [| 1.; 0.; 0.; 0.; 1.; 0.; 0.; 0.; 1. |]);
     test "identity" (fun () ->
-        Nx.identity Nx.float32 3
+        Nx.eye Nx.float32 3
         |> check_t "identity" [| 3; 3 |]
              [| 1.; 0.; 0.; 0.; 1.; 0.; 0.; 0.; 1. |]);
     test "copy" (fun () ->
@@ -109,11 +109,11 @@ let property_access_tests =
         equal ~msg:"stride 1" int 4 strides.(1));
     test "stride" (fun () ->
         let t = Nx.create Nx.float32 shape_2x3 test_array in
-        equal ~msg:"stride 0" int 12 (Nx.stride 0 t);
-        equal ~msg:"stride 1" int 4 (Nx.stride 1 t));
+        equal ~msg:"stride 0" int 12 ((Nx.strides t).(0));
+        equal ~msg:"stride 1" int 4 ((Nx.strides t).(1)));
     test "dims" (fun () ->
         let t = Nx.create Nx.float32 shape_2x3 test_array in
-        let d = Nx.dims t in
+        let d = Nx.shape t in
         equal ~msg:"dims length" int 2 (Array.length d);
         equal ~msg:"dims[0]" int 2 d.(0);
         equal ~msg:"dims[1]" int 3 d.(1));
@@ -129,7 +129,7 @@ let property_access_tests =
         equal ~msg:"itemsize" int 4 (Nx.itemsize t));
     test "size" (fun () ->
         let t = Nx.create Nx.float32 shape_2x3 test_array in
-        equal ~msg:"size" int 6 (Nx.size t));
+        equal ~msg:"size" int 6 (Nx.numel t));
     test "numel" (fun () ->
         let t = Nx.create Nx.float32 shape_2x3 test_array in
         equal ~msg:"numel" int 6 (Nx.numel t));
@@ -381,7 +381,7 @@ let element_wise_unary_tests =
         Nx.trunc a |> check_t "trunc" [| 4 |] [| 3.; 3.; -3.; -3. |]);
     test "clip" (fun () ->
         let a = Nx.create Nx.float32 [| 5 |] [| -2.; 0.; 5.; 10.; 12. |] in
-        Nx.clip ~min:2.0 ~max:8.0 a
+        Nx.clamp ~min:2.0 ~max:8.0 a
         |> check_t "clip" [| 5 |] [| 2.0; 2.0; 5.0; 8.0; 8.0 |]);
     test "clamp" (fun () ->
         let a = Nx.create Nx.float32 [| 5 |] [| -2.; 0.; 5.; 10.; 12. |] in
@@ -396,7 +396,7 @@ let element_wise_unary_tests =
     test "lerp_scalar_weight" (fun () ->
         let start_t = Nx.zeros Nx.float32 [| 3 |] in
         let end_t = Nx.full Nx.float32 [| 3 |] 10.0 in
-        Nx.lerp_scalar_weight start_t end_t 0.3
+        Nx.lerp start_t end_t (Nx.scalar_like start_t 0.3)
         |> check_t "lerp_scalar_weight" [| 3 |] [| 3.0; 3.0; 3.0 |]);
   ]
 
@@ -419,7 +419,7 @@ let bitwise_tests =
         Nx.bitwise_not a |> check_t "bitwise_not" [| 3 |] [| -1l; -2l; 0l |]);
     test "invert" (fun () ->
         let a = Nx.create Nx.int32 [| 3 |] [| 0l; 1l; -1l |] in
-        Nx.invert a |> check_t "invert" [| 3 |] [| -1l; -2l; 0l |]);
+        Nx.bitwise_not a |> check_t "invert" [| 3 |] [| -1l; -2l; 0l |]);
     test "lshift" (fun () ->
         let a = Nx.create Nx.int32 [| 3 |] [| 1l; 2l; 4l |] in
         Nx.lshift a 2 |> check_t "lshift" [| 3 |] [| 4l; 8l; 16l |]);
@@ -548,7 +548,7 @@ let shape_manipulation_tests =
         |> check_t "unsqueeze_axis" [| 1; 3 |] [| 1.; 1.; 1. |]);
     test "expand_dims" (fun () ->
         let a = Nx.ones Nx.float32 [| 3 |] in
-        Nx.expand_dims [ 0 ] a
+        Nx.unsqueeze ~axes:[ 0 ] a
         |> check_t "expand_dims" [| 1; 3 |] [| 1.; 1.; 1. |]);
     test "transpose" (fun () ->
         let a = Nx.create Nx.float32 shape_2x3 test_array in
@@ -728,7 +728,7 @@ let type_conversion_tests =
         check_t "cast values" [| 3 |] [| 1l; 2l; 3l |] b);
     test "astype" (fun () ->
         let a = Nx.create Nx.float32 [| 2 |] [| 3.14; 2.71 |] in
-        let b = Nx.astype Nx.int32 a in
+        let b = Nx.cast Nx.int32 a in
         equal ~msg:"astype dtype" bool true (Nx.dtype b = Nx.int32));
     test "to_bigarray" (fun () ->
         let a = Nx.create Nx.float32 [| 3 |] [| 1.; 2.; 3. |] in

@@ -732,8 +732,8 @@ let handler (tape : Tape.t) =
                         if ta then begin
                           let out_2d, grad_b_2d =
                             if Array.length (T.shape g) = 1 then
-                              ( T.expand_dims [ -1 ] out,
-                                T.expand_dims [ -1 ] grad_b )
+                              ( T.unsqueeze ~axes:[ -1 ] out,
+                                T.unsqueeze ~axes:[ -1 ] grad_b )
                             else (out, grad_b)
                           in
                           let grad_a_full =

@@ -128,7 +128,7 @@ let gen_posdef_f64 ~max_n =
   let n = (Nx.shape a).(0) in
   let at = Nx.transpose a in
   let ata = Nx.matmul at a in
-  let eps_i = Nx.mul_s (Nx.identity Nx.float64 n) 0.1 in
+  let eps_i = Nx.mul_s (Nx.eye Nx.float64 n) 0.1 in
   Nx.add ata eps_i
 
 (* 1D float32 for sorting *)
