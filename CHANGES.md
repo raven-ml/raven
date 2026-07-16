@@ -310,6 +310,10 @@ thread.
 
 ### Nx
 
+- Remove the `?out` parameter from the backend `fft`/`ifft`/`rfft`/`irfft`
+  operations. It was the only destination-passing parameter in the backend
+  interface and the frontend never passed it; the FFT ops now allocate their
+  result like every other compute operation.
 - `einsum` failures now raise `Invalid_argument` with an `einsum:`-prefixed
   message like every other frontend error, instead of bare `Failure`.
 - Remove the unused scalar-arithmetic surface from `Nx_core.Dtype`: `add`,

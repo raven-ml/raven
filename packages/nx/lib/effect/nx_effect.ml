@@ -669,27 +669,23 @@ let matmul a b =
 
 (* FFT operations *)
 
-let fft ?out t ~axes =
+let fft t ~axes =
   try Effect.perform (E_fft { t; axes })
-  with Effect.Unhandled _ ->
-    T (Nx_backend.fft ?out:(Option.map unwrap out) (unwrap t) ~axes)
+  with Effect.Unhandled _ -> T (Nx_backend.fft (unwrap t) ~axes)
 
-let ifft ?out t ~axes =
+let ifft t ~axes =
   try Effect.perform (E_ifft { t; axes })
-  with Effect.Unhandled _ ->
-    T (Nx_backend.ifft ?out:(Option.map unwrap out) (unwrap t) ~axes)
+  with Effect.Unhandled _ -> T (Nx_backend.ifft (unwrap t) ~axes)
 
-let rfft (type a c) ?out (t : (float, a) t) ~(dtype : (Complex.t, c) Dtype.t)
-    ~axes : (Complex.t, c) t =
+let rfft (type a c) (t : (float, a) t) ~(dtype : (Complex.t, c) Dtype.t) ~axes
+    : (Complex.t, c) t =
   try Effect.perform (E_rfft { t; dtype; axes })
-  with Effect.Unhandled _ ->
-    T (Nx_backend.rfft ?out:(Option.map unwrap out) (unwrap t) ~dtype ~axes)
+  with Effect.Unhandled _ -> T (Nx_backend.rfft (unwrap t) ~dtype ~axes)
 
-let irfft (type a c) ?out ?s (t : (Complex.t, a) t)
-    ~(dtype : (float, c) Dtype.t) ~axes : (float, c) t =
+let irfft (type a c) ?s (t : (Complex.t, a) t) ~(dtype : (float, c) Dtype.t)
+    ~axes : (float, c) t =
   try Effect.perform (E_irfft { t; dtype; axes; s })
-  with Effect.Unhandled _ ->
-    T (Nx_backend.irfft ?out:(Option.map unwrap out) ?s (unwrap t) ~dtype ~axes)
+  with Effect.Unhandled _ -> T (Nx_backend.irfft ?s (unwrap t) ~dtype ~axes)
 
 (* Linear algebra *)
 

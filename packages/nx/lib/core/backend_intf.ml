@@ -513,39 +513,29 @@ module type S = sig
       {b Frontend guarantees:} [axes] contains valid, non-negative axis indices.
       Input tensors have compatible complex or real dtypes. *)
 
-  val fft :
-    ?out:(Complex.t, 'b) t ->
-    (Complex.t, 'b) t ->
-    axes:int array ->
-    (Complex.t, 'b) t
-  (** [fft ?out t ~axes] computes the forward DFT along [axes]. *)
+  val fft : (Complex.t, 'b) t -> axes:int array -> (Complex.t, 'b) t
+  (** [fft t ~axes] computes the forward DFT along [axes]. *)
 
-  val ifft :
-    ?out:(Complex.t, 'b) t ->
-    (Complex.t, 'b) t ->
-    axes:int array ->
-    (Complex.t, 'b) t
-  (** [ifft ?out t ~axes] computes the inverse DFT along [axes]. *)
+  val ifft : (Complex.t, 'b) t -> axes:int array -> (Complex.t, 'b) t
+  (** [ifft t ~axes] computes the inverse DFT along [axes]. *)
 
   val rfft :
-    ?out:(Complex.t, 'b) t ->
     (float, 'a) t ->
     dtype:(Complex.t, 'b) Dtype.t ->
     axes:int array ->
     (Complex.t, 'b) t
-  (** [rfft ?out t ~dtype ~axes] computes the real-input DFT along [axes].
+  (** [rfft t ~dtype ~axes] computes the real-input DFT along [axes].
 
       Exploits conjugate symmetry to return only the non-redundant half of the
       spectrum along the last transformed axis. *)
 
   val irfft :
-    ?out:(float, 'b) t ->
     ?s:int array ->
     (Complex.t, 'a) t ->
     dtype:(float, 'b) Dtype.t ->
     axes:int array ->
     (float, 'b) t
-  (** [irfft ?out ?s t ~dtype ~axes] computes the inverse real-input DFT along
+  (** [irfft ?s t ~dtype ~axes] computes the inverse real-input DFT along
       [axes].
 
       Takes conjugate-symmetric complex input, returns real output. [s]

@@ -839,14 +839,10 @@ let contiguous_strides shape elem_size =
 
 (* ───── Fourier Transforms Using PocketFFT ───── *)
 
-let fft (type a b) ?out (x : (a, b) t) ~axes : (a, b) t =
+let fft (type a b) (x : (a, b) t) ~axes : (a, b) t =
   let x' = materialize x in
   let out_shape = shape x' in
-  let out =
-    match out with
-    | Some o -> o
-    | None -> create_tensor x.context x.dtype out_shape
-  in
+  let out = create_tensor x.context x.dtype out_shape in
 
   let shape_arr = out_shape in
   let elem_size = Dtype.itemsize x.dtype in
@@ -873,14 +869,10 @@ let fft (type a b) ?out (x : (a, b) t) ~axes : (a, b) t =
 
   out
 
-let ifft (type a b) ?out (x : (a, b) t) ~axes : (a, b) t =
+let ifft (type a b) (x : (a, b) t) ~axes : (a, b) t =
   let x' = materialize x in
   let out_shape = shape x' in
-  let out =
-    match out with
-    | Some o -> o
-    | None -> create_tensor x.context x.dtype out_shape
-  in
+  let out = create_tensor x.context x.dtype out_shape in
 
   let shape_arr = out_shape in
   let elem_size = Dtype.itemsize x.dtype in
@@ -907,7 +899,7 @@ let ifft (type a b) ?out (x : (a, b) t) ~axes : (a, b) t =
 
   out
 
-let rfft (type a b c d) ?out (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes :
+let rfft (type a b c d) (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes :
     (c, d) t =
   let x' = materialize x in
 
@@ -922,11 +914,7 @@ let rfft (type a b c d) ?out (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes :
      in
      out_shape.(axis_idx) <- (in_shape.(axis_idx) / 2) + 1);
 
-  let out =
-    match out with
-    | Some o -> o
-    | None -> create_tensor x.context dtype out_shape
-  in
+  let out = create_tensor x.context dtype out_shape in
 
   let strides_in = contiguous_strides in_shape (Dtype.itemsize x.dtype) in
   let strides_out = contiguous_strides out_shape (Dtype.itemsize dtype) in
@@ -954,8 +942,8 @@ let rfft (type a b c d) ?out (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes :
 
   out
 
-let irfft (type a b c d) ?out ?s (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes
-    : (c, d) t =
+let irfft (type a b c d) ?s (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes :
+    (c, d) t =
   let x' = materialize x in
 
   (* Calculate output shape for irfft *)
@@ -975,11 +963,7 @@ let irfft (type a b c d) ?out ?s (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes
      in
      out_shape.(axis_idx) <- size);
 
-  let out =
-    match out with
-    | Some o -> o
-    | None -> create_tensor x.context dtype out_shape
-  in
+  let out = create_tensor x.context dtype out_shape in
 
   let strides_in = contiguous_strides in_shape (Dtype.itemsize x.dtype) in
   let strides_out = contiguous_strides out_shape (Dtype.itemsize dtype) in

@@ -1952,16 +1952,16 @@ let matmul (type a b) (a : (a, b) t) (b : (a, b) t) : (a, b) t =
       invalid_arg "matmul: not implemented for small unboxed ints");
   out
 
-let fft ?out:_ _ ~axes:_ =
+let fft _ ~axes:_ =
   invalid_arg "fft: not implemented"
 
-let ifft ?out:_ _ ~axes:_ =
+let ifft _ ~axes:_ =
   invalid_arg "ifft: not implemented"
 
-let rfft ?out:_ _ ~dtype:_ ~axes:_ =
+let rfft _ ~dtype:_ ~axes:_ =
   invalid_arg "rfft: not implemented"
 
-let irfft ?out:_ ?s:_ _ ~dtype:_ ~axes:_ =
+let irfft ?s:_ _ ~dtype:_ ~axes:_ =
   invalid_arg "irfft: not implemented"
 
 let cholesky ~upper:_ _ =
