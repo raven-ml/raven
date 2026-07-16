@@ -13,7 +13,7 @@ dune exec nx/examples/04-reshaping-and-broadcasting/main.exe
 - Reshaping flat arrays into multi-dimensional frames with `reshape`
 - Flattening back to 1D with `flatten`
 - Transposing rows and columns
-- Stacking arrays vertically and horizontally: `vstack`, `hstack`
+- Joining arrays with `stack` (new axis) and `concatenate` (existing axis)
 - Broadcasting: how `keepdims` enables operations on different-shaped arrays
 - Building outer products via broadcasting
 - Adding and removing dimensions with `unsqueeze` and `squeeze`
@@ -25,8 +25,8 @@ dune exec nx/examples/04-reshaping-and-broadcasting/main.exe
 | `reshape shape t`     | Change array shape (total elements must match)         |
 | `flatten t`           | Collapse all dimensions into 1D                        |
 | `transpose t`         | Reverse all axes (swap rows and columns)               |
-| `vstack ts`           | Stack arrays vertically (along axis 0)                 |
-| `hstack ts`           | Stack arrays horizontally (along axis 1)               |
+| `stack ~axis ts`      | Join arrays along a new axis                           |
+| `concatenate ~axis ts`| Join arrays along an existing axis                     |
 | `unsqueeze ~axes t`   | Insert size-1 dimensions at specified positions        |
 | `squeeze t`           | Remove all size-1 dimensions                           |
 | `mean ~keepdims:true` | Reduce while keeping axis as size 1 (for broadcasting) |
@@ -89,7 +89,7 @@ why `keepdims:true` is essential for reductions used in arithmetic.
 
 1. Reshape the signal into `[4; 3]` instead of `[3; 4]` and compare with the
    transpose of the original frames.
-2. Stack three 1D arrays of different values with `vstack`, then compute
+2. Stack three 1D arrays of different values with `stack`, then compute
    row-wise means using `mean ~axes:[1]`.
 3. Compute an outer product of two vectors of different lengths (e.g., 5 and 3)
    using `reshape` and broadcasting.

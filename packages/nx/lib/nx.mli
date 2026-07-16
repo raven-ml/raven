@@ -874,7 +874,7 @@ val concatenate : ?axis:int -> ('a, 'b) t list -> ('a, 'b) t
                                                [5, 6]]
     ]}
 
-    See also {!stack}, {!vstack}, {!hstack}. *)
+    See also {!stack}. *)
 
 val stack : ?axis:int -> ('a, 'b) t list -> ('a, 'b) t
 (** [stack ?axis ts] joins tensors along a {e new} axis. All tensors must have
@@ -898,47 +898,6 @@ val stack : ?axis:int -> ('a, 'b) t list -> ('a, 'b) t
     ]}
 
     See also {!concatenate}. *)
-
-val vstack : ('a, 'b) t list -> ('a, 'b) t
-(** [vstack ts] stacks vertically (along axis 0). 1-D tensors are treated as row
-    vectors (shape [[1; n]]).
-
-    Raises [Invalid_argument] if shapes are incompatible.
-
-    {@ocaml[
-      # let a = create int32 [| 3 |] [| 1l; 2l; 3l |] in
-        let b = create int32 [| 3 |] [| 4l; 5l; 6l |] in
-        vstack [ a; b ]
-      - : (int32, int32_elt) t = int32 [2; 3] [[1, 2, 3],
-                                               [4, 5, 6]]
-    ]}
-
-    See also {!hstack}, {!dstack}, {!concatenate}. *)
-
-val hstack : ('a, 'b) t list -> ('a, 'b) t
-(** [hstack ts] stacks horizontally. 1-D tensors are concatenated directly;
-    higher-D tensors concatenate along axis 1.
-
-    Raises [Invalid_argument] if shapes are incompatible.
-
-    {@ocaml[
-      # let a = create int32 [| 2; 1 |] [| 1l; 2l |] in
-        let b = create int32 [| 2; 1 |] [| 3l; 4l |] in
-        hstack [ a; b ]
-      - : (int32, int32_elt) t = int32 [2; 2] [[1, 3],
-                                               [2, 4]]
-    ]}
-
-    See also {!vstack}, {!dstack}, {!concatenate}. *)
-
-val dstack : ('a, 'b) t list -> ('a, 'b) t
-(** [dstack ts] stacks depth-wise (along axis 2). Tensors are reshaped to at
-    least 3-D before concatenation: 1-D [[n]] → [[1; n; 1]], 2-D [[m; n]] →
-    [[m; n; 1]].
-
-    Raises [Invalid_argument] if the resulting shapes are incompatible.
-
-    See also {!vstack}, {!hstack}, {!concatenate}. *)
 
 val broadcast_arrays : ('a, 'b) t list -> ('a, 'b) t list
 (** [broadcast_arrays ts] broadcasts every tensor to their common shape. Returns
@@ -1327,9 +1286,6 @@ val add : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 val add_s : ('a, 'b) t -> 'a -> ('a, 'b) t
 (** [add_s t s] adds scalar [s] to each element of [t]. *)
 
-val radd_s : 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [radd_s s t] is [add_s t s]. *)
-
 val sub : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [sub a b] is the element-wise difference [a - b]. *)
 
@@ -1344,9 +1300,6 @@ val mul : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 
 val mul_s : ('a, 'b) t -> 'a -> ('a, 'b) t
 (** [mul_s t s] multiplies each element by scalar [s]. *)
-
-val rmul_s : 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [rmul_s s t] is [mul_s t s]. *)
 
 val div : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [div a b] is the element-wise quotient [a / b].
@@ -1602,17 +1555,11 @@ val maximum : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 val maximum_s : ('a, 'b) t -> 'a -> ('a, 'b) t
 (** [maximum_s t s] is the element-wise maximum of [t] and scalar [s]. *)
 
-val rmaximum_s : 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [rmaximum_s s t] is [maximum_s t s]. *)
-
 val minimum : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [minimum a b] is the element-wise minimum of [a] and [b]. *)
 
 val minimum_s : ('a, 'b) t -> 'a -> ('a, 'b) t
 (** [minimum_s t s] is the element-wise minimum of [t] and scalar [s]. *)
-
-val rminimum_s : 'a -> ('a, 'b) t -> ('a, 'b) t
-(** [rminimum_s s t] is [minimum_s t s]. *)
 
 val logical_and : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
 (** [logical_and a b] is the element-wise logical AND. Non-zero is [true]. *)
@@ -1802,14 +1749,6 @@ module Infix : sig
 
   val ( **@ ) : ('a, 'b) t -> int -> ('a, 'b) t
   (** [t **@ n] is {!matrix_power} [t n]. *)
-
-  (** {2:infix_concat Concatenation} *)
-
-  val ( @= ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-  (** [a @= b] is {!vstack} [[a; b]]. *)
-
-  val ( @|| ) : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
-  (** [a @|| b] is {!hstack} [[a; b]]. *)
 
   (** {2:infix_index Indexing} *)
 

@@ -229,8 +229,6 @@ let () =
   Printf.printf "concat axis 1: %dx%d\n" (dim 0 d) (dim 1 d)
 ```
 
-Shorthands: `vstack` (axis 0), `hstack` (axis 1), `dstack` (axis 2).
-
 ### stack
 
 Join tensors along a **new** axis:

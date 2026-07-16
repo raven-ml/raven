@@ -166,7 +166,7 @@ let element_wise_binary_tests =
         Nx.add_s a 5.0 |> check_t "add_s" shape_2x3 [| 8.; 8.; 8.; 8.; 8.; 8. |]);
     test "radd_s" (fun () ->
         let a = Nx.full Nx.float32 shape_2x3 3.0 in
-        Nx.radd_s 5.0 a
+        Nx.add_s a 5.0
         |> check_t "radd_s" shape_2x3 [| 8.; 8.; 8.; 8.; 8.; 8. |]);
     test "sub" (fun () ->
         let a = Nx.full Nx.float32 shape_2x3 5.0 in
@@ -189,7 +189,7 @@ let element_wise_binary_tests =
         |> check_t "mul_s" shape_2x3 [| 12.; 12.; 12.; 12.; 12.; 12. |]);
     test "rmul_s" (fun () ->
         let a = Nx.full Nx.float32 shape_2x3 4.0 in
-        Nx.rmul_s 3.0 a
+        Nx.mul_s a 3.0
         |> check_t "rmul_s" shape_2x3 [| 12.; 12.; 12.; 12.; 12.; 12. |]);
     test "div" (fun () ->
         let a = Nx.full Nx.float32 shape_2x3 6.0 in
@@ -235,7 +235,7 @@ let element_wise_binary_tests =
         |> check_t "maximum_s" shape_2x3 [| 5.; 5.; 5.; 5.; 5.; 5. |]);
     test "rmaximum_s" (fun () ->
         let a = Nx.full Nx.float32 shape_2x3 3.0 in
-        Nx.rmaximum_s 5.0 a
+        Nx.maximum_s a 5.0
         |> check_t "rmaximum_s" shape_2x3 [| 5.; 5.; 5.; 5.; 5.; 5. |]);
     test "minimum" (fun () ->
         let a = Nx.full Nx.float32 shape_2x3 3.0 in
@@ -248,7 +248,7 @@ let element_wise_binary_tests =
         |> check_t "minimum_s" shape_2x3 [| 3.; 3.; 3.; 3.; 3.; 3. |]);
     test "rminimum_s" (fun () ->
         let a = Nx.full Nx.float32 shape_2x3 5.0 in
-        Nx.rminimum_s 3.0 a
+        Nx.minimum_s a 3.0
         |> check_t "rminimum_s" shape_2x3 [| 3.; 3.; 3.; 3.; 3.; 3. |]);
   ]
 
@@ -692,17 +692,20 @@ let array_combination_tests =
     test "vstack" (fun () ->
         let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
         let b = Nx.create Nx.float32 [| 1; 2 |] [| 5.; 6. |] in
-        let c = Nx.vstack [ a; b ] in
+        let c = Nx.concatenate ~axis:0 [ a; b ] in
         check_t "vstack values" [| 3; 2 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] c);
     test "hstack" (fun () ->
         let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
         let b = Nx.create Nx.float32 [| 2; 1 |] [| 5.; 6. |] in
-        let c = Nx.hstack [ a; b ] in
+        let c = Nx.concatenate ~axis:1 [ a; b ] in
         check_t "hstack values" [| 2; 3 |] [| 1.; 2.; 5.; 3.; 4.; 6. |] c);
     test "dstack" (fun () ->
         let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
         let b = Nx.create Nx.float32 [| 2; 2 |] [| 5.; 6.; 7.; 8. |] in
-        let c = Nx.dstack [ a; b ] in
+        let c =
+          Nx.concatenate ~axis:2
+            [ Nx.reshape [| 2; 2; 1 |] a; Nx.reshape [| 2; 2; 1 |] b ]
+        in
         check_t "dstack values" [| 2; 2; 2 |]
           [| 1.; 5.; 2.; 6.; 3.; 7.; 4.; 8. |]
           c);

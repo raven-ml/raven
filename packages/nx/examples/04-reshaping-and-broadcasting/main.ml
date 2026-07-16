@@ -23,8 +23,10 @@ let () =
   (* --- Stacking arrays --- *)
   let a = create float64 [| 3 |] [| 1.0; 2.0; 3.0 |] in
   let b = create float64 [| 3 |] [| 4.0; 5.0; 6.0 |] in
-  Printf.printf "vstack [a; b]:\n%s\n" (data_to_string (vstack [ a; b ]));
-  Printf.printf "hstack [a; b]: %s\n\n" (data_to_string (hstack [ a; b ]));
+  Printf.printf "stack [a; b] (new axis):\n%s\n"
+    (data_to_string (stack [ a; b ]));
+  Printf.printf "concatenate [a; b]: %s\n\n"
+    (data_to_string (concatenate ~axis:0 [ a; b ]));
 
   (* --- Broadcasting: subtract column means to center data --- *)
   let data =

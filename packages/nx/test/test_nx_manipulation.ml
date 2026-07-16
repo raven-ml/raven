@@ -479,7 +479,10 @@ let test_swapaxes_invalid () =
 let test_dstack_1d () =
   let t1 = Nx.create Nx.float32 [| 2 |] [| 1.0; 2.0 |] in
   let t2 = Nx.create Nx.float32 [| 2 |] [| 3.0; 4.0 |] in
-  let d = Nx.dstack [ t1; t2 ] in
+  let d =
+    Nx.concatenate ~axis:2
+      [ Nx.reshape [| 1; 2; 1 |] t1; Nx.reshape [| 1; 2; 1 |] t2 ]
+  in
   check_t "dstack 1d" [| 1; 2; 2 |] [| 1.0; 3.0; 2.0; 4.0 |] d
 
 let test_vstack_invalid () =
@@ -487,21 +490,22 @@ let test_vstack_invalid () =
   let t2 = Nx.create Nx.float32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
   check_invalid_arg "vstack invalid"
     "concatenate: dimension 1, size 3\226\137\1602" (fun () ->
-      Nx.vstack [ t1; t2 ])
+      Nx.concatenate ~axis:0 [ t1; t2 ])
 
 let test_hstack_invalid () =
   let t1 = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let t2 = Nx.create Nx.float32 [| 3; 2 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
   check_invalid_arg "hstack invalid"
     "concatenate: dimension 0, size 3\226\137\1602" (fun () ->
-      Nx.hstack [ t1; t2 ])
+      Nx.concatenate ~axis:1 [ t1; t2 ])
 
 let test_dstack_invalid () =
   let t1 = Nx.create Nx.float32 [| 2; 2 |] [| 1.0; 2.0; 3.0; 4.0 |] in
   let t2 = Nx.create Nx.float32 [| 2; 3 |] [| 1.0; 2.0; 3.0; 4.0; 5.0; 6.0 |] in
   check_invalid_arg "dstack invalid"
     "concatenate: dimension 1, size 3\226\137\1602" (fun () ->
-      Nx.dstack [ t1; t2 ])
+      Nx.concatenate ~axis:2
+        [ Nx.reshape [| 2; 2; 1 |] t1; Nx.reshape [| 2; 3; 1 |] t2 ])
 
 (* Test Suite Organization *)
 

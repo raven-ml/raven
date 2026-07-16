@@ -424,13 +424,11 @@ module Make (B : Backend_intf.S) = struct
 
   let add a b = binop B.add a b
   let add_s t s = add t (scalar_like t s)
-  let radd_s s t = add (scalar_like t s) t
   let sub a b = binop B.sub a b
   let sub_s t s = sub t (scalar_like t s)
   let rsub_s s t = sub (scalar_like t s) t
   let mul a b = binop B.mul a b
   let mul_s t s = mul t (scalar_like t s)
-  let rmul_s s t = mul (scalar_like t s) t
   let div a b = binop B.div a b
   let div_s t s = div t (scalar_like t s)
   let rdiv_s s t = div (scalar_like t s) t
@@ -439,10 +437,8 @@ module Make (B : Backend_intf.S) = struct
   let rpow_s s t = pow (scalar_like t s) t
   let maximum a b = binop B.max a b
   let maximum_s t s = maximum t (scalar_like t s)
-  let rmaximum_s s t = maximum (scalar_like t s) t
   let minimum a b = binop B.min a b
   let minimum_s t s = minimum t (scalar_like t s)
-  let rminimum_s s t = minimum (scalar_like t s) t
   let mod_ a b = binop B.mod_ a b
   let mod_s t s = mod_ t (scalar_like t s)
   let rmod_s s t = mod_ (scalar_like t s) t
@@ -1164,49 +1160,6 @@ module Make (B : Backend_intf.S) = struct
       let new_shape = Array.make n 1 in
       Array.blit s 0 new_shape 0 nd;
       reshape new_shape x
-
-  let vstack ts =
-    match ts with
-    | [] -> invalid_arg "vstack: tensor list cannot be empty"
-    | _ ->
-        concatenate ~axis:0
-          (List.map
-             (fun x ->
-               if ndim x = 0 then reshape [| 1; 1 |] x
-               else if ndim x = 1 then reshape [| 1; numel x |] x
-               else x)
-             ts)
-
-  let hstack ts =
-    match ts with
-    | [] -> invalid_arg "hstack: tensor list cannot be empty"
-    | _ ->
-        if List.for_all (fun x -> ndim x <= 1) ts then
-          concatenate ~axis:0
-            (List.map (fun x -> if ndim x = 0 then reshape [| 1 |] x else x) ts)
-        else
-          concatenate ~axis:1
-            (List.map
-               (fun x ->
-                 if ndim x = 0 then reshape [| 1; 1 |] x
-                 else if ndim x = 1 then reshape [| numel x; 1 |] x
-                 else x)
-               ts)
-
-  let dstack ts =
-    match ts with
-    | [] -> invalid_arg "dstack: tensor list cannot be empty"
-    | _ ->
-        concatenate ~axis:2
-          (List.map
-             (fun x ->
-               let s = shape x in
-               let nd = Array.length s in
-               if nd = 0 then reshape [| 1; 1; 1 |] x
-               else if nd = 1 then reshape [| 1; s.(0); 1 |] x
-               else if nd = 2 then reshape [| s.(0); s.(1); 1 |] x
-               else x)
-             ts)
 
   let broadcast_arrays ts =
     match ts with
@@ -4256,8 +4209,6 @@ module Make (B : Backend_intf.S) = struct
     let ( *@ ) a b = matmul a b
     let ( /@ ) = solve
     let ( **@ ) = matrix_power
-    let ( @= ) a b = concatenate ~axis:0 [ a; b ]
-    let ( @|| ) a b = concatenate ~axis:1 [ a; b ]
     let ( .%{} ) x indices = get indices x
     let ( .%{}<- ) x indices value = set indices x value
     let ( .${} ) x slice_def = slice slice_def x

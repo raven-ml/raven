@@ -310,6 +310,13 @@ thread.
 
 ### Nx
 
+- Remove the numpy stack shorthands `vstack`, `hstack`, and `dstack`, along
+  with the `Nx.Infix` concatenation operators `( @= )` and `( @|| )`. Use
+  `concatenate`/`stack` directly, reshaping 1-D inputs as needed.
+- Remove the commutative reverse-scalar aliases `radd_s`, `rmul_s`,
+  `rmaximum_s`, and `rminimum_s`; use `add_s`, `mul_s`, `maximum_s`, and
+  `minimum_s` (the operands commute). The non-commutative `rsub_s`, `rdiv_s`,
+  `rpow_s`, and `rmod_s` remain.
 - Remove redundant property and conversion aliases: `size` (use `numel`),
   `dims` (use `shape`), `astype` (use `cast`), `clip` (use `clamp`), `invert`
   (use `bitwise_not`), `expand_dims` (use `unsqueeze ~axes`), `identity` (use

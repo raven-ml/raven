@@ -50,7 +50,7 @@ let () =
 
   (* Build design matrix: [x, 1] for y = m*x + c *)
   let x_col = reshape [| 6; 1 |] x_data in
-  let design = hstack [ x_col; ones float64 [| 6; 1 |] ] in
+  let design = concatenate ~axis:1 [ x_col; ones float64 [| 6; 1 |] ] in
   let y_col = reshape [| 6; 1 |] y_data in
 
   let coeffs, _residuals, _rank, _sv = lstsq design y_col in

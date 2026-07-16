@@ -62,7 +62,7 @@ m *@ m_inv    (* ≈ identity matrix *)
 Build a design matrix [x, 1] and solve for slope and intercept:
 
 ```ocaml
-let design = hstack [ x_col; ones float64 [| 6; 1 |] ] in
+let design = concatenate ~axis:1 [ x_col; ones float64 [| 6; 1 |] ] in
 let coeffs, _, _, _ = lstsq design y_col in
 (* m ≈ 1.97, c ≈ 1.03 *)
 ```
