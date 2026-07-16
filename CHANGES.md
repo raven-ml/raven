@@ -310,6 +310,12 @@ thread.
 
 ### Nx
 
+- Remove the unused validity-mask machinery from `Nx_core.View`: the `?mask`
+  argument of `View.create` and the `mask`, `is_valid`, `linear_index`,
+  `pad`, `strides_opt`, `can_get_strides`, and `is_materializable` functions.
+  No view ever carried a mask (eager `pad` copies into a fresh buffer), so
+  every view now has well-defined strides and `View.strides` is total.
+  `View.create` validates the length of explicit `?strides` eagerly.
 - Fix `float8_e4m3` conversions: the top binade was broken (256–448 saturated
   to 448 on write and decoded as 240 or NaN on read) and values below `2^-6`
   underflowed to zero instead of using the format's subnormals down to

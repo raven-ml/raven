@@ -108,28 +108,17 @@ module Make (B : Backend_intf.S) = struct
   let strides x =
     let view = B.view x in
     let itemsize = itemsize x in
-    match View.strides_opt view with
-    | Some elem_strides -> Array.map (fun s -> s * itemsize) elem_strides
-    | None ->
-        err "strides"
-          "view has non-materializable layout, call contiguous() to get a \
-           standard layout"
+    Array.map (fun s -> s * itemsize) (View.strides view)
 
   let stride i x =
     let view = B.view x in
     let itemsize = itemsize x in
-    match View.strides_opt view with
-    | Some elem_strides ->
-        let ndim = View.ndim view in
-        let i = if i < 0 then i + ndim else i in
-        if i < 0 || i >= ndim then
-          err "stride" "axis %d out of bounds for %dD tensor" i ndim
-        else elem_strides.(i) * itemsize
-    | None ->
-        err "stride"
-          "stride for dimension %d, tensor does not have defined strides, call \
-           contiguous() first or check has_strides()"
-          i
+    let elem_strides = View.strides view in
+    let ndim = View.ndim view in
+    let i = if i < 0 then i + ndim else i in
+    if i < 0 || i >= ndim then
+      err "stride" "axis %d out of bounds for %dD tensor" i ndim
+    else elem_strides.(i) * itemsize
 
   let dims x = View.shape (B.view x)
 
@@ -1755,12 +1744,7 @@ module Make (B : Backend_intf.S) = struct
     let ba = data t in
     if numel t <> 1 then
       err "unsafe_get" "expected scalar result, got %d elements" (numel t);
-    match View.strides_opt (B.view t) with
-    | Some _ -> Nx_buffer.get ba (offset t)
-    | None ->
-        if Nx_buffer.length ba = 1 then Nx_buffer.get ba 0
-        else
-          invalid_arg "unsafe_get: cannot read from non-composable scalar view"
+    Nx_buffer.get ba (offset t)
 
   let unsafe_set indices value x =
     set indices x (scalar (B.context x) (dtype x) value)
@@ -4106,13 +4090,7 @@ module Make (B : Backend_intf.S) = struct
         pp_element fmt (Nx_buffer.unsafe_get buffer (View.offset view))
       else fprintf fmt "<empty scalar>"
     else
-      let strides =
-        match View.strides_opt view with
-        | Some s -> s
-        | None ->
-            invalid_arg
-              "pp_data: cannot print tensor with non-materializable view"
-      in
+      let strides = View.strides view in
       let base_offset = View.offset view in
       let sep fmt axis first =
         if not first then (
@@ -4195,12 +4173,10 @@ module Make (B : Backend_intf.S) = struct
     fprintf fmt "  Shape: %s@," (Shape.to_string (View.shape view));
     fprintf fmt "  Dtype: %a@," pp_dtype (dtype x);
     fprintf fmt "  Strides: %s@,"
-      (match View.strides_opt view with
-      | Some s ->
-          "["
-          ^ String.concat "; " (Array.to_list (Array.map string_of_int s))
-          ^ "]"
-      | None -> "<non-materializable>");
+      ("["
+      ^ String.concat "; "
+          (Array.to_list (Array.map string_of_int (View.strides view)))
+      ^ "]");
     fprintf fmt "  Offset: %d@," (View.offset view);
     fprintf fmt "  Size: %d@," (View.numel view);
     fprintf fmt "  Data: %a@," pp_data x

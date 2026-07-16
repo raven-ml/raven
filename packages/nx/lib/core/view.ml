@@ -13,7 +13,6 @@ type t = {
   shape : int array;
   strides : int array;
   offset : int;
-  mask : (int * int) array option;
   layout : layout;
 }
 
@@ -40,9 +39,7 @@ let compute_strides shape_array =
 let canonicalize_strides _shape_array strides = strides
 
 (* Check if strides represent a contiguous layout *)
-let is_c_contiguous_strides shape_arr strides mask =
-  mask = None
-  &&
+let is_c_contiguous_strides shape_arr strides =
   let expected = compute_strides shape_arr in
   let expected_canonical = canonicalize_strides shape_arr expected in
   Array.length strides = Array.length expected_canonical
@@ -60,7 +57,6 @@ let stride axis v =
   Array.unsafe_get v.strides axis
 
 let offset v = v.offset
-let mask v = v.mask
 let is_c_contiguous v = v.layout = C_contiguous
 
 let dim axis v =
@@ -74,62 +70,31 @@ let numel v = prod v.shape
 
 (* ───── View Creation ───── *)
 
-let create ?(offset = 0) ?strides ?mask shape =
+let create ?(offset = 0) ?strides shape =
   let is_zero_size = Array.exists (( = ) 0) shape in
   let current_shape =
     if is_zero_size then Array.map (fun s -> max s 0) shape else shape
   in
   let current_strides =
     match strides with
-    | Some s -> canonicalize_strides current_shape s
+    | Some s ->
+        if Array.length s <> Array.length current_shape then
+          err "create" "strides length %d != shape length %d" (Array.length s)
+            (Array.length current_shape);
+        canonicalize_strides current_shape s
     | None -> compute_strides current_shape
   in
   let current_offset = if is_zero_size then 0 else offset in
-  let current_mask =
-    if is_zero_size then None
-    else
-      match mask with
-      | Some m
-        when Array.for_all2 (fun (b, e) s -> b = 0 && e = s) m current_shape ->
-          None
-      | _ -> mask
-  in
   let new_layout =
-    if is_c_contiguous_strides current_shape current_strides current_mask then
-      C_contiguous
+    if is_c_contiguous_strides current_shape current_strides then C_contiguous
     else Strided
   in
   {
     shape = current_shape;
     strides = current_strides;
     offset = current_offset;
-    mask = current_mask;
     layout = new_layout;
   }
-
-(* ───── Offset & Validation ───── *)
-
-let linear_index view indices =
-  let ndim = Array.length view.shape in
-  if Array.length indices <> ndim then
-    err "linear_index" "rank mismatch: indices[%d] vs ndim %d"
-      (Array.length indices) ndim;
-  let physical_offset = ref view.offset in
-  Array.iteri
-    (fun i idx ->
-      physical_offset := !physical_offset + (idx * view.strides.(i)))
-    indices;
-  !physical_offset
-
-let is_valid view indices =
-  match view.mask with
-  | None -> true
-  | Some mask_array ->
-      if Array.length indices <> Array.length mask_array then false
-      else
-        Array.for_all2
-          (fun idx (b, e) -> idx >= b && idx < e)
-          indices mask_array
 
 (* ───── View Manipulation ───── *)
 
@@ -160,24 +125,7 @@ let expand view new_shape =
                 i s ns)
           new_arr
       in
-      let mask =
-        match view.mask with
-        | None -> None
-        | Some m ->
-            Some
-              (Array.mapi
-                 (fun i (b, e) ->
-                   if old_arr.(i) = 1 && new_arr.(i) <> 1 then
-                     if b = 0 && e = 1 then (0, new_arr.(i))
-                     else
-                       err "expand"
-                         "masked singleton bounds [%d,%d] incompatible with \
-                          expansion"
-                         b e
-                   else (b, e))
-                 m)
-      in
-      create ~offset:view.offset ?mask ~strides new_shape
+      create ~offset:view.offset ~strides new_shape
 
 let permute view axes =
   let n = ndim view in
@@ -196,10 +144,7 @@ let permute view axes =
 
   let new_shape = Array.init n (fun i -> view.shape.(axes.(i))) in
   let new_strides = Array.init n (fun i -> view.strides.(axes.(i))) in
-  let new_mask =
-    Option.map (fun m -> Array.init n (fun i -> m.(axes.(i)))) view.mask
-  in
-  create ~offset:view.offset ?mask:new_mask ~strides:new_strides new_shape
+  create ~offset:view.offset ~strides:new_strides new_shape
 
 let reshape view new_shape =
   (* Early return if shapes are identical *)
@@ -216,10 +161,6 @@ let reshape view new_shape =
         (Shape.to_string new_arr)
     else if Array.exists (( = ) 0) old_arr || Array.exists (( = ) 0) new_arr
     then create ~offset:0 new_shape
-      (* Check for masks - these complicate reshape *)
-    else if view.mask <> None then
-      invalid_arg
-        "reshape: cannot reshape views with masks, call contiguous() first"
       (* Fast path for C-contiguous views *)
     else if view.layout = C_contiguous then create ~offset:view.offset new_shape
     else if
@@ -358,77 +299,6 @@ let reshape view new_shape =
                 (Shape.to_string old_arr) (Shape.to_string new_arr) stride_str
                 expected_str)
 
-(* helper used by [pad] and [shrink] *)
-let unsafe_resize view arg new_mask_opt =
-  let ndim = Array.length view.shape in
-  if Array.length arg <> ndim then
-    err "unsafe_resize" "argument length %d != ndim %d" (Array.length arg) ndim;
-
-  let strides = view.strides in
-
-  let new_shape = Array.map (fun (a, b) -> b - a) arg in
-  let new_offset = ref view.offset in
-  Array.iteri
-    (fun i (a, _) -> new_offset := !new_offset + (a * strides.(i)))
-    arg;
-
-  let final_mask =
-    let shift_and_combine_mask old_mask_dim_bounds new_mask_dim_bounds
-        offset_for_dim =
-      let old_b, old_e = old_mask_dim_bounds in
-      let new_b, new_e = new_mask_dim_bounds in
-      let shifted_old_b = max 0 (old_b - offset_for_dim) in
-      let shifted_old_e = max 0 (old_e - offset_for_dim) in
-      (max shifted_old_b new_b, min shifted_old_e new_e)
-    in
-    match (view.mask, new_mask_opt) with
-    | None, None -> None
-    | Some old_m, None ->
-        Some
-          (Array.mapi
-             (fun i (old_b, old_e) ->
-               let a, _ = arg.(i) in
-               let new_dim_size = new_shape.(i) in
-               (max 0 (old_b - a), min new_dim_size (old_e - a)))
-             old_m)
-    | None, Some new_m -> Some new_m
-    | Some old_m, Some new_m ->
-        Some
-          (Array.mapi
-             (fun i (old_b_i, old_e_i) ->
-               let new_m_b_i, new_m_e_i = new_m.(i) in
-               let a_i, _ = arg.(i) in
-               shift_and_combine_mask (old_b_i, old_e_i) (new_m_b_i, new_m_e_i)
-                 a_i)
-             old_m)
-  in
-  create ~offset:!new_offset ?mask:final_mask ~strides new_shape
-
-let pad view arg =
-  let ndim = Array.length view.shape in
-  if Array.length arg <> ndim then
-    err "pad" "padding length %d != ndim %d" (Array.length arg) ndim;
-  if Array.for_all (fun (b, e) -> b = 0 && e = 0) arg then view
-  else if Array.exists (fun (b, e) -> b < 0 || e < 0) arg then
-    invalid_arg "pad: negative padding values, use shrink or slice instead"
-  else
-    let shape_arr = view.shape in
-    let zvarg =
-      Array.mapi
-        (fun i s ->
-          let pad_before, pad_after = arg.(i) in
-          (-pad_before, s + pad_after))
-        shape_arr
-    in
-    let mask_for_pad =
-      Array.mapi
-        (fun i s_old ->
-          let pad_before, _pad_after = arg.(i) in
-          (pad_before, pad_before + s_old))
-        shape_arr
-    in
-    unsafe_resize view zvarg (Some mask_for_pad)
-
 let shrink view arg =
   let ndim = Array.length view.shape in
   if Array.length arg <> ndim then
@@ -440,7 +310,13 @@ let shrink view arg =
       (fun (b, e) s -> b < 0 || e < 0 || b > s || e > s || b >= e)
       arg shape_arr
   then invalid_arg "shrink: bounds must be within shape and start < end"
-  else unsafe_resize view arg None
+  else
+    let new_shape = Array.map (fun (a, b) -> b - a) arg in
+    let new_offset = ref view.offset in
+    Array.iteri
+      (fun i (a, _) -> new_offset := !new_offset + (a * view.strides.(i)))
+      arg;
+    create ~offset:!new_offset ~strides:view.strides new_shape
 
 let flip view flip_axes_bools =
   let ndim = Array.length view.shape in
@@ -454,61 +330,12 @@ let flip view flip_axes_bools =
 
   let new_offset = ref view.offset in
   let new_strides = Array.copy strides in
-  let new_mask =
-    match view.mask with Some m -> Some (Array.copy m) | None -> None
-  in
   Array.iteri
     (fun i do_flip ->
       if do_flip then
         let s_i = shape_arr.(i) in
         if s_i > 0 then (
           new_offset := !new_offset + ((s_i - 1) * strides.(i));
-          new_strides.(i) <- -new_strides.(i);
-          match new_mask with
-          | Some m_arr ->
-              let b, e = m_arr.(i) in
-              m_arr.(i) <- (s_i - e, s_i - b)
-          | None -> ()))
+          new_strides.(i) <- -new_strides.(i)))
     flip_axes_bools;
-  create ~offset:!new_offset ?mask:new_mask ~strides:new_strides view.shape
-
-let simplify view =
-  (* Only simplify things that don't change the user-visible shape *)
-
-  (* 1. Canonicalize mask that covers entire dimensions *)
-  let mask =
-    match view.mask with
-    | Some m when Array.for_all2 (fun (b, e) s -> b = 0 && e = s) m view.shape
-      ->
-        None (* Mask covers everything, remove it *)
-    | m -> m
-  in
-
-  (* Just return with simplified mask if changed *)
-  if mask <> view.mask then
-    let new_layout =
-      if mask = None && is_c_contiguous_strides view.shape view.strides mask
-      then C_contiguous
-      else Strided
-    in
-    { view with mask; layout = new_layout }
-  else view
-
-let can_get_strides_simplified simplified =
-  match simplified.mask with
-  | None -> true
-  | Some mask_array ->
-      Array.for_all2
-        (fun (b, e) s -> b = 0 && e = s)
-        mask_array simplified.shape
-
-let can_get_strides view = simplify view |> can_get_strides_simplified
-
-let strides_opt view =
-  let simplified = simplify view in
-  if can_get_strides_simplified simplified then Some (strides simplified)
-  else None
-
-let is_materializable view =
-  let simplified = simplify view in
-  can_get_strides_simplified simplified
+  create ~offset:!new_offset ~strides:new_strides view.shape

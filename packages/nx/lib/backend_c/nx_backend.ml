@@ -351,23 +351,13 @@ let to_host t = t.buffer
 let context t = t.context
 let shape t = View.shape t.view
 
-let strides t =
-  match View.strides_opt t.view with
-  | Some s -> s
-  | None -> invalid_arg "strides: cannot get strides for view"
-
+let strides t = View.strides t.view
 let offset t = View.offset t.view
 let is_contiguous t = View.is_c_contiguous t.view
 
-(* Check if a tensor can be efficiently operated on *)
-let can_get_strides t = View.can_get_strides t.view
-
-(* Convert tensor to FFI representation if possible *)
+(* Convert tensor to FFI representation *)
 let to_ffi_tensor t =
-  if not (can_get_strides t) then
-    invalid_arg "to_ffi_tensor: tensor has non-materializable view"
-  else
-    { data = t.buffer; shape = shape t; strides = strides t; offset = offset t }
+  { data = t.buffer; shape = shape t; strides = strides t; offset = offset t }
 
 (* Create a new tensor with given shape *)
 let create_tensor ctx dtype shape_arr =
@@ -403,18 +393,10 @@ let materialize t =
     caml_assign t_ffi out_ffi;
     out
 
-(* Ensure tensor is materializable for C operations *)
+(* Materialize broadcast views (zero strides) before C operations *)
 let ensure_materializable t =
-  if not (can_get_strides t) then
-    (* Broadcast views or complex chains need materialization *)
-    materialize t
-  else
-    (* Check for zero strides (broadcast dimensions) *)
-    let strides_arr = strides t in
-    if Array.exists (( = ) 0) strides_arr then
-      (* Has broadcast dimensions - need to materialize *)
-      materialize t
-    else t
+  let strides_arr = strides t in
+  if Array.exists (( = ) 0) strides_arr then materialize t else t
 
 (* Generic binary operation - allocates output and returns it *)
 let binary_op op_name ffi_op x y =
@@ -709,16 +691,12 @@ let threefry key counter =
 (* ───── Element Access Ops ───── *)
 
 let gather data indices ~axis =
-  (* Ensure inputs are materializable. Preserve broadcasted strides for indices
-     to enable C fast paths (e.g., memcpy row gather). *)
+  (* Keep indices' strides as-is (possibly broadcast) to enable C fast paths
+     (e.g., memcpy row gather). *)
   let data' = ensure_materializable data in
-  (* Do not materialize indices unless we cannot get strides *)
-  let indices' =
-    if can_get_strides indices then indices else ensure_materializable indices
-  in
   let out = buffer () (dtype data) (shape indices) in
   let data_ffi = to_ffi_tensor data' in
-  let indices_ffi = to_ffi_tensor indices' in
+  let indices_ffi = to_ffi_tensor indices in
   let out_ffi = to_ffi_tensor out in
   caml_gather data_ffi indices_ffi out_ffi axis;
   out
