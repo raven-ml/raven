@@ -1,8 +1,8 @@
    0 Ops.CONST           :            dtypes.int                               []                               32
-   1 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(0, device='CPU')
+   1 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(0, dtypes.float, device='CPU')
    2 Ops.RANGE           : 2          dtypes.int                               ['32']                           (2, AxisType.LOOP)
    3 Ops.INDEX           : 2          dtypes.float                             [1, 2]                           None
-   4 Ops.BUFFER          :            dtypes.float                             ['32']                           ParamArg(0, addrspace=AddrSpace.REG)
+   4 Ops.BUFFER          :            dtypes.float                             ['32']                           ParamArg(0, dtypes.float, addrspace=AddrSpace.REG)
    5 Ops.AFTER           : 2          dtypes.float                             [4, 2]                           None
    6 Ops.CONST           :            dtypes.int                               []                               0
    7 Ops.INDEX           : 2          dtypes.float                             [5, '0']                         None
@@ -106,7 +106,7 @@
  105 Ops.INDEX           : 0,2        dtypes.float                             [104, '0']                       None
  106 Ops.LOAD            : 0,2        dtypes.float                             [105]                            None
  107 Ops.CONST           :            dtypes.int                               []                               32768
- 108 Ops.PARAM           :            dtypes.float                             ['32768']                        ParamArg(1, device='CPU')
+ 108 Ops.PARAM           :            dtypes.float                             ['32768']                        ParamArg(1, dtypes.float, device='CPU')
  109 Ops.SHL             : 2          dtypes.int                               [2, '10']                        None
  110 Ops.ADD             : 0,2        dtypes.int                               [109, 103]                       None
  111 Ops.INDEX           : 0,2        dtypes.float                             [108, 110]                       None

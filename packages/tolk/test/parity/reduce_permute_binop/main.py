@@ -13,7 +13,7 @@ from tinygrad.dtype import dtypes  # noqa: E402
 def build():
     a = mk_param(0, 10, 10, 10)
     b = mk_param(1, 10, 10)
-    red = UOp(Ops.REDUCE, dtypes.float32, (a,), (Ops.ADD, (0,)))
+    red = a._rop(Ops.ADD, (0,))
     permed = UOp(Ops.PERMUTE, dtypes.float32, (red,), (1, 0))
     return wrap_sink(permed + b)
 

@@ -1,18 +1,18 @@
    0 Ops.CONST           :            dtypes.int                               []                               64
-   1 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(0, device='CPU')
+   1 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(0, dtypes.float, device='CPU')
    2 Ops.SPECIAL         :            dtypes.int                               ['64']                           gidx0
    3 Ops.INDEX           :            dtypes.float                             [1, 2]                           None
    4 Ops.CONST           :            dtypes.int                               []                               1
-   5 Ops.BUFFER          :            dtypes.float                             ['1']                            ParamArg(2, addrspace=AddrSpace.REG)
+   5 Ops.BUFFER          :            dtypes.float                             ['1']                            ParamArg(2, dtypes.float, addrspace=AddrSpace.REG)
    6 Ops.CONST           :            dtypes.int                               []                               0
    7 Ops.INDEX           :            dtypes.float                             [5, '0']                         None
    8 Ops.CONST           :            dtypes.float                             []                               0.0
    9 Ops.STORE           :            dtypes.void                              [7, '0.0']                       None
   10 Ops.CONST           :            dtypes.int                               []                               16
-  11 Ops.BUFFER          :            dtypes.float                             ['1']                            ParamArg(0, addrspace=AddrSpace.REG)
+  11 Ops.BUFFER          :            dtypes.float                             ['1']                            ParamArg(0, dtypes.float, addrspace=AddrSpace.REG)
   12 Ops.INDEX           :            dtypes.float                             [11, '0']                        None
   13 Ops.STORE           :            dtypes.void                              [12, '0.0']                      None
-  14 Ops.BUFFER          :            dtypes.float                             ['1']                            ParamArg(1, addrspace=AddrSpace.REG)
+  14 Ops.BUFFER          :            dtypes.float                             ['1']                            ParamArg(1, dtypes.float, addrspace=AddrSpace.REG)
   15 Ops.INDEX           :            dtypes.float                             [14, '0']                        None
   16 Ops.STORE           :            dtypes.void                              [15, '0.0']                      None
   17 Ops.CONST           :            dtypes.int                               []                               4
@@ -21,7 +21,7 @@
   20 Ops.INDEX           : 0          dtypes.float                             [19, '0']                        None
   21 Ops.LOAD            : 0          dtypes.float                             [20]                             None
   22 Ops.CONST           :            dtypes.int                               []                               4096
-  23 Ops.PARAM           :            dtypes.float                             ['4096']                         ParamArg(1, device='CPU')
+  23 Ops.PARAM           :            dtypes.float                             ['4096']                         ParamArg(1, dtypes.float, device='CPU')
   24 Ops.SPECIAL         :            dtypes.int                               ['16']                           lidx0
   25 Ops.CONST           :            dtypes.int                               []                               8
   26 Ops.SHL             :            dtypes.int                               [24, '8']                        None
@@ -49,7 +49,7 @@
   48 Ops.AFTER           : 103        dtypes.float                             [5, 9, 47]                       None
   49 Ops.INDEX           : 103        dtypes.float                             [48, '0']                        None
   50 Ops.LOAD            : 103        dtypes.float                             [49]                             None
-  51 Ops.BUFFER          :            dtypes.float                             ['16']                           ParamArg(0, addrspace=AddrSpace.LOCAL)
+  51 Ops.BUFFER          :            dtypes.float                             ['16']                           ParamArg(0, dtypes.float, addrspace=AddrSpace.LOCAL)
   52 Ops.INDEX           :            dtypes.float                             [51, 24]                         None
   53 Ops.AFTER           :            dtypes.float                             [14, 35]                         None
   54 Ops.INDEX           :            dtypes.float                             [53, '0']                        None

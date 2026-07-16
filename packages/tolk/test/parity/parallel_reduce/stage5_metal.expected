@@ -1,9 +1,9 @@
    0 Ops.CONST           :            dtypes.int                               []                               -1
-   1 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(1)
+   1 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(1, dtypes.float)
    2 Ops.CONST           :            dtypes.int                               []                               0
    3 Ops.INDEX           :            dtypes.float                             [1, '0']                         None
    4 Ops.CONST           :            dtypes.int                               []                               1
-   5 Ops.BUFFER          :            dtypes.float                             ['1']                            ParamArg(0, addrspace=AddrSpace.REG)
+   5 Ops.BUFFER          :            dtypes.float                             ['1']                            ParamArg(0, dtypes.float, addrspace=AddrSpace.REG)
    6 Ops.INDEX           :            dtypes.float                             [5, '0']                         None
    7 Ops.CONST           :            dtypes.float                             []                               0.0
    8 Ops.STORE           :            dtypes.void                              [6, '0.0']                       None
@@ -12,12 +12,12 @@
   11 Ops.AFTER           : 0          dtypes.float                             [5, 8, 10]                       None
   12 Ops.INDEX           : 0          dtypes.float                             [11, '0']                        None
   13 Ops.LOAD            : 0          dtypes.float                             [12]                             None
-  14 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(0)
+  14 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(0, dtypes.float)
   15 Ops.INDEX           : 0          dtypes.float                             [14, 10]                         None
   16 Ops.LOAD            : 0          dtypes.float                             [15]                             None
   17 Ops.ADD             : 0          dtypes.float                             [13, 16]                         None
   18 Ops.STORE           : 0          dtypes.void                              [12, 17]                         None
-  19 Ops.BUFFER          :            dtypes.float                             ['1']                            ParamArg(1, addrspace=AddrSpace.REG)
+  19 Ops.BUFFER          :            dtypes.float                             ['1']                            ParamArg(1, dtypes.float, addrspace=AddrSpace.REG)
   20 Ops.INDEX           :            dtypes.float                             [19, '0']                        None
   21 Ops.STORE           :            dtypes.void                              [20, '0.0']                      None
   22 Ops.AFTER           : 0          dtypes.float                             [19, 21, 10]                     None
@@ -32,7 +32,7 @@
   31 Ops.INDEX           :            dtypes.float                             [30, '0']                        None
   32 Ops.LOAD            :            dtypes.float                             [31]                             None
   33 Ops.STORE           :            dtypes.void                              [3, 32]                          None
-  34 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(2)
+  34 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(2, dtypes.float)
   35 Ops.INDEX           :            dtypes.float                             [34, '0']                        None
   36 Ops.AFTER           :            dtypes.float                             [19, 29]                         None
   37 Ops.INDEX           :            dtypes.float                             [36, '0']                        None

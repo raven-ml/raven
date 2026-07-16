@@ -33,7 +33,7 @@ def build():
         return comp.shrink(((i, i + 1), (0, 8))).reshape((8,))
 
     mul = sel(1) * sel(2)
-    red = UOp(Ops.REDUCE, dtypes.float32, (mul,), (Ops.ADD, (0,)))
+    red = mul._rop(Ops.ADD, (0,))
     return wrap_sink(red)
 
 

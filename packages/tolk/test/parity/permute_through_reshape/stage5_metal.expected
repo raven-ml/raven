@@ -1,5 +1,5 @@
    0 Ops.CONST           :            dtypes.int                               []                               256
-   1 Ops.PARAM           :            dtypes.float                             ['256']                          ParamArg(0, device='CPU')
+   1 Ops.PARAM           :            dtypes.float                             ['256']                          ParamArg(0, dtypes.float, device='CPU')
    2 Ops.CONST           :            dtypes.int                               []                               16
    3 Ops.SPECIAL         :            dtypes.int                               ['16']                           lidx0
    4 Ops.CONST           :            dtypes.int                               []                               4
@@ -9,13 +9,13 @@
    8 Ops.SHL             :            dtypes.int                               [6, '2']                         None
    9 Ops.ADD             :            dtypes.int                               [5, 8]                           None
   10 Ops.SHRINK          :            dtypes.float                             [1, 9, '4']                      None
-  11 Ops.PARAM           :            dtypes.float                             ['256']                          ParamArg(1, device='CPU')
+  11 Ops.PARAM           :            dtypes.float                             ['256']                          ParamArg(1, dtypes.float, device='CPU')
   12 Ops.CONST           :            dtypes.int                               []                               6
   13 Ops.SHL             :            dtypes.int                               [6, '6']                         None
   14 Ops.ADD             :            dtypes.int                               [3, 13]                          None
   15 Ops.INDEX           :            dtypes.float                             [11, 14]                         None
   16 Ops.LOAD            :            dtypes.float                             [15]                             None
-  17 Ops.PARAM           :            dtypes.float                             ['256']                          ParamArg(2, device='CPU')
+  17 Ops.PARAM           :            dtypes.float                             ['256']                          ParamArg(2, dtypes.float, device='CPU')
   18 Ops.INDEX           :            dtypes.float                             [17, 14]                         None
   19 Ops.LOAD            :            dtypes.float                             [18]                             None
   20 Ops.ADD             :            dtypes.float                             [16, 19]                         None

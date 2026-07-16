@@ -22,7 +22,11 @@ sys.path.insert(
     ),
 )
 
-from tinygrad.uop.ops import UOp, Ops, KernelInfo, AxisType, ParamArg
+# Disable ANSI color in the reference — auto-generated kernel names embed ANSI
+# escape codes per axis type that would otherwise leak into rendered source.
+os.environ["NO_COLOR"] = "1"
+
+from tinygrad.uop.ops import UOp, Ops, KernelInfo, AxisType
 from tinygrad.dtype import dtypes
 from tinygrad.helpers import Target
 from tinygrad.schedule.rangeify import get_kernel_graph
@@ -103,7 +107,7 @@ def mk_shape(*dims):
     """Encode a shape as a VECTORIZE of index consts (or single const for 1-D)."""
     if len(dims) == 1:
         return UOp.const(dtypes.int, dims[0])
-    return UOp.vectorize(*(UOp.const(dtypes.int, d) for d in dims))
+    return UOp.stack(*(UOp.const(dtypes.int, d) for d in dims))
 
 
 def mk_param(slot, *shape, dtype=dtypes.float32):
@@ -142,7 +146,7 @@ def build_mulacc():
     a = mk_param(0, 256)
     b = mk_param(1, 256)
     mul = a * b
-    red = UOp(Ops.REDUCE, dtypes.float32, (mul,), (Ops.ADD, (0,)))
+    red = mul._rop(Ops.ADD, (0,))
     return wrap_sink(red)
 
 
@@ -179,7 +183,7 @@ def build_diamond():
 def build_reduce_unary():
     """c = neg(sqrt(sum(a))), shape [16] -> scalar."""
     a = mk_param(0, 16)
-    red = UOp(Ops.REDUCE, dtypes.float32, (a,), (Ops.ADD, (0,)))
+    red = a._rop(Ops.ADD, (0,))
     sq = UOp(Ops.SQRT, dtypes.float32, (red,))
     neg = UOp(Ops.NEG, dtypes.float32, (sq,))
     return wrap_sink(neg)
@@ -189,7 +193,7 @@ def build_reduce_reshape_binop():
     """c = a.sum(0).reshape(10) + b, shape [10, 10] -> [10]."""
     a = mk_param(0, 10, 10)
     b = mk_param(1, 10)
-    red = UOp(Ops.REDUCE, dtypes.float32, (a,), (Ops.ADD, (0,)))
+    red = a._rop(Ops.ADD, (0,))
     reshaped = UOp(Ops.RESHAPE, dtypes.float32, (red, mk_shape(10)))
     return wrap_sink(reshaped + b)
 
@@ -198,7 +202,7 @@ def build_reduce_permute_binop():
     """c = a.sum(0).permute(1,0) + b, shape [10,10,10]."""
     a = mk_param(0, 10, 10, 10)
     b = mk_param(1, 10, 10)
-    red = UOp(Ops.REDUCE, dtypes.float32, (a,), (Ops.ADD, (0,)))
+    red = a._rop(Ops.ADD, (0,))
     permed = UOp(Ops.PERMUTE, dtypes.float32, (red,), (1, 0))
     return wrap_sink(permed + b)
 
@@ -258,7 +262,7 @@ def build_reduce_shrink():
     """c = a.sum(1)[:16] + b, shape [32,32], b=[16]."""
     a = mk_param(0, 32, 32)
     b = mk_param(1, 16)
-    red = UOp(Ops.REDUCE, dtypes.float32, (a,), (Ops.ADD, (1,)))
+    red = a._rop(Ops.ADD, (1,))
     reshaped = UOp(Ops.RESHAPE, dtypes.float32, (red, mk_shape(32)))
     shrunk = reshaped.shrink(((0, 16),))
     return wrap_sink(shrunk + b)

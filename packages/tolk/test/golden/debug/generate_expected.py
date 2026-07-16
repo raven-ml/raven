@@ -22,7 +22,11 @@ sys.path.insert(
     ),
 )
 
-from tinygrad.uop.ops import UOp, Ops, KernelInfo, AxisType, ParamArg
+# Disable ANSI color in the reference — auto-generated kernel names embed ANSI
+# escape codes per axis type that would otherwise leak into print_uops output.
+os.environ["NO_COLOR"] = "1"
+
+from tinygrad.uop.ops import UOp, Ops, KernelInfo, AxisType
 from tinygrad.uop.render import print_uops
 from tinygrad.dtype import dtypes
 from tinygrad.codegen import full_rewrite_to_sink
@@ -45,15 +49,14 @@ def capture_print_uops(uops):
 
 
 def build_elementwise_add(name, opts_to_apply, ptr_size=-1):
-    ptr = dtypes.float32.ptr(size=ptr_size)
-    p0 = UOp(Ops.PARAM, ptr, (), ParamArg(0))
-    p1 = UOp(Ops.PARAM, ptr, (), ParamArg(1))
-    p2 = UOp(Ops.PARAM, ptr, (), ParamArg(2))
+    p0 = UOp.param(0, dtypes.float32, shape=(ptr_size,))
+    p1 = UOp.param(1, dtypes.float32, shape=(ptr_size,))
+    p2 = UOp.param(2, dtypes.float32, shape=(ptr_size,))
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
-    ld_a = p0.index(r0, ptr=True).load()
-    ld_b = p1.index(r0, ptr=True).load()
+    ld_a = p0.index(r0).load()
+    ld_b = p1.index(r0).load()
     add = ld_a + ld_b
-    st = p2.index(r0, ptr=True).store(add)
+    st = p2.index(r0).store(add)
     end = st.end(r0)
     return UOp.sink(end, arg=KernelInfo(
         name=name, axis_types=(AxisType.GLOBAL,), opts_to_apply=opts_to_apply))

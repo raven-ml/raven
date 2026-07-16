@@ -19,28 +19,28 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from helpers import ALL_BACKENDS, dump  # noqa: E402
 
-from tinygrad.uop.ops import UOp, Ops, KernelInfo, AxisType, ParamArg  # noqa: E402
+from tinygrad.uop.ops import UOp, Ops, KernelInfo, AxisType  # noqa: E402
 from tinygrad.dtype import dtypes  # noqa: E402
 
 BACKENDS = {k: v for k, v in ALL_BACKENDS.items() if k in ("cpu", "cuda")}
 
 
 def kernel():
-    out = UOp(Ops.PARAM, dtypes.float.ptr(289536), (), ParamArg(0))
+    out = UOp.param(0, dtypes.float, shape=(289536,))
     col = UOp.range(768, 2, AxisType.LOOP)
     chunk = UOp.range(29, 3, AxisType.LOOP)
     tok_i = UOp.range(13, 1, AxisType.LOOP)
     r = UOp.range(1733, 0, AxisType.REDUCE)
-    vocab = chunk * UOp.const(dtypes.weakint, 1733) + r
-    toks = UOp(Ops.PARAM, dtypes.int.ptr(13), (), ParamArg(1))
-    wte = UOp(Ops.PARAM, dtypes.float.ptr(38597376), (), ParamArg(2))
+    vocab = chunk * UOp.const(dtypes.index, 1733) + r
+    toks = UOp.param(1, dtypes.int, shape=(13,))
+    wte = UOp.param(2, dtypes.float, shape=(38597376,))
     gate = vocab.cast(dtypes.int) != toks.index(tok_i)
     body = gate.where(UOp.const(dtypes.float, 0.0),
-                      wte.index(vocab * UOp.const(dtypes.weakint, 768) + col))
-    red = UOp(Ops.REDUCE, dtypes.float, (body, r), (Ops.ADD, ()))
-    out_idx = (col * UOp.const(dtypes.weakint, 29) + chunk
-               + tok_i * UOp.const(dtypes.weakint, 22272))
-    st = out.index(out_idx, ptr=True).store(red).end(tok_i, col, chunk)
+                      wte.index(vocab * UOp.const(dtypes.index, 768) + col))
+    red = UOp(Ops.REDUCE, dtypes.float, (body, r), (Ops.ADD, 0))
+    out_idx = (col * UOp.const(dtypes.index, 29) + chunk
+               + tok_i * UOp.const(dtypes.index, 22272))
+    st = out.index(out_idx).store(red).end(tok_i, col, chunk)
     return UOp.sink(
         st,
         arg=KernelInfo(name="token_gather_collapse", opts_to_apply=()),

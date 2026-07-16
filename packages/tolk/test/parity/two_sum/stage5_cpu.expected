@@ -1,7 +1,7 @@
    0 Ops.CONST           :            dtypes.int                               []                               64
-   1 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(0, device='CPU')
+   1 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(0, dtypes.float, device='CPU')
    2 Ops.STACK           :            dtypes.void                              []                               None
-   3 Ops.PARAM           :            dtypes.int                               [2]                              ParamArg(2, vmin_vmax=(0, 1), name='core_id', addrspace=AddrSpace.ALU)
+   3 Ops.PARAM           :            dtypes.int                               [2]                              ParamArg(2, dtypes.int, vmin_vmax=(0, 1), name='core_id', addrspace=AddrSpace.ALU)
    4 Ops.CONST           :            dtypes.int                               []                               5
    5 Ops.SHL             :            dtypes.int                               [3, '5']                         None
    6 Ops.CONST           :            dtypes.int                               []                               32
@@ -9,7 +9,7 @@
    8 Ops.ADD             : 2          dtypes.int                               [5, 7]                           None
    9 Ops.INDEX           : 2          dtypes.float                             [1, 8]                           None
   10 Ops.CONST           :            dtypes.int                               []                               1
-  11 Ops.BUFFER          :            dtypes.float                             ['1']                            ParamArg(0, addrspace=AddrSpace.REG)
+  11 Ops.BUFFER          :            dtypes.float                             ['1']                            ParamArg(0, dtypes.float, addrspace=AddrSpace.REG)
   12 Ops.AFTER           : 2          dtypes.float                             [11, 7]                          None
   13 Ops.CONST           :            dtypes.int                               []                               0
   14 Ops.INDEX           : 2          dtypes.float                             [12, '0']                        None
@@ -20,7 +20,7 @@
   19 Ops.INDEX           : 0,2        dtypes.float                             [18, '0']                        None
   20 Ops.LOAD            : 0,2        dtypes.float                             [19]                             None
   21 Ops.CONST           :            dtypes.int                               []                               4096
-  22 Ops.PARAM           :            dtypes.float                             ['4096']                         ParamArg(1, device='CPU')
+  22 Ops.PARAM           :            dtypes.float                             ['4096']                         ParamArg(1, dtypes.float, device='CPU')
   23 Ops.CONST           :            dtypes.int                               []                               6
   24 Ops.SHL             : 0,2        dtypes.int                               [17, '6']                        None
   25 Ops.ADD             : 0,2        dtypes.int                               [8, 24]                          None
@@ -32,7 +32,7 @@
   31 Ops.AFTER           : 2          dtypes.float                             [11, 30]                         None
   32 Ops.INDEX           : 2          dtypes.float                             [31, '0']                        None
   33 Ops.LOAD            : 2          dtypes.float                             [32]                             None
-  34 Ops.BUFFER          :            dtypes.float                             ['1']                            ParamArg(1, addrspace=AddrSpace.REG)
+  34 Ops.BUFFER          :            dtypes.float                             ['1']                            ParamArg(1, dtypes.float, addrspace=AddrSpace.REG)
   35 Ops.AFTER           : 2          dtypes.float                             [34, 7]                          None
   36 Ops.INDEX           : 2          dtypes.float                             [35, '0']                        None
   37 Ops.STORE           : 2          dtypes.void                              [36, '0.0']                      None

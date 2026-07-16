@@ -1,12 +1,12 @@
    0 Ops.CONST           :            dtypes.int                               []                               -1
-   1 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(2)
+   1 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(2, dtypes.float)
    2 Ops.CONST           :            dtypes.int                               []                               256
    3 Ops.SPECIAL         :            dtypes.int                               ['256']                          gidx0
    4 Ops.INDEX           :            dtypes.float                             [1, 3]                           None
-   5 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(0)
+   5 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(0, dtypes.float)
    6 Ops.INDEX           :            dtypes.float                             [5, 3]                           None
    7 Ops.LOAD            :            dtypes.float                             [6]                              None
-   8 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(1)
+   8 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(1, dtypes.float)
    9 Ops.INDEX           :            dtypes.float                             [8, 3]                           None
   10 Ops.LOAD            :            dtypes.float                             [9]                              None
   11 Ops.ADD             :            dtypes.float                             [7, 10]                          None

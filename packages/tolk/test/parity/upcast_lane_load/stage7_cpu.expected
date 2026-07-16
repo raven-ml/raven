@@ -1,13 +1,13 @@
 typedef float float4 __attribute__((aligned(16),ext_vector_type(4)));
-void E_192_192_12_4n1(float* restrict data0_1769472, float* restrict data1_1769472, const int data2_) {
-  for (int Lidx0 = 0; Lidx0 < 192; Lidx0++) {
+void E_288_192_8_4n1(float* restrict data0_1769472, float* restrict data1_1769472, const int data2_) {
+  for (int Lidx0 = 0; Lidx0 < 288; Lidx0++) {
     for (int Lidx1 = 0; Lidx1 < 192; Lidx1++) {
-      int alu0 = ((data2_*192)+Lidx0+(Lidx1*9216));
+      int alu0 = ((data2_*288)+Lidx0+(Lidx1*9216));
       float val0 = (*(data1_1769472+(alu0+2304)));
       float val1 = (*(data1_1769472+(alu0+4608)));
       float val2 = (*(data1_1769472+(alu0+6912)));
       float val3 = (*(data1_1769472+alu0));
-      *((float4*)((data0_1769472+((data2_*147456)+(Lidx0*768)+(Lidx1<<2))))) = (float4){val3,val0,val1,val2};
+      *((float4*)((data0_1769472+((data2_*221184)+(Lidx0*768)+(Lidx1<<2))))) = (float4){val3,val0,val1,val2};
     }
   }
 }

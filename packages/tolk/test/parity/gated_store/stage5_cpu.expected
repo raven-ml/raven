@@ -1,12 +1,12 @@
    0 Ops.CONST           :            dtypes.int                               []                               -1
-   1 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(2)
+   1 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(2, dtypes.float)
    2 Ops.STACK           :            dtypes.void                              []                               None
-   3 Ops.PARAM           :            dtypes.int                               [2]                              ParamArg(3, vmin_vmax=(0, 255), name='core_id', addrspace=AddrSpace.ALU)
+   3 Ops.PARAM           :            dtypes.int                               [2]                              ParamArg(3, dtypes.int, vmin_vmax=(0, 255), name='core_id', addrspace=AddrSpace.ALU)
    4 Ops.INDEX           :            dtypes.float                             [1, 3]                           None
-   5 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(0)
+   5 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(0, dtypes.float)
    6 Ops.INDEX           :            dtypes.float                             [5, 3]                           None
    7 Ops.LOAD            :            dtypes.float                             [6]                              None
-   8 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(1)
+   8 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(1, dtypes.float)
    9 Ops.INDEX           :            dtypes.float                             [8, 3]                           None
   10 Ops.LOAD            :            dtypes.float                             [9]                              None
   11 Ops.ADD             :            dtypes.float                             [7, 10]                          None

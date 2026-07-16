@@ -1,10 +1,10 @@
 === kernel 0 ===
    0 Ops.CONST           :            dtypes.int                               []                               4
-   1 Ops.PARAM           :            dtypes.float                             ['4']                            ParamArg(0, device=('CPU:0', 'CPU:1'))
+   1 Ops.PARAM           :            dtypes.float                             ['4']                            ParamArg(0, dtypes.float, device=('CPU:0', 'CPU:1'))
    2 Ops.SPECIAL         :            dtypes.int                               ['4']                            lidx0
    3 Ops.INDEX           :            dtypes.float                             [1, 2]                           None
    4 Ops.CONST           :            dtypes.int                               []                               32
-   5 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(1, device=('CPU:0', 'CPU:1'))
+   5 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(1, dtypes.float, device=('CPU:0', 'CPU:1'))
    6 Ops.CONST           :            dtypes.int                               []                               3
    7 Ops.SHL             :            dtypes.int                               [2, '3']                         None
    8 Ops.SHRINK          :            dtypes.float                             [5, 7, '4']                      None
@@ -12,9 +12,9 @@
   10 Ops.CONST           :            dtypes.int                               []                               0
   11 Ops.INDEX           :            dtypes.float                             [9, '0']                         None
   12 Ops.CONST           :            dtypes.int                               []                               64
-  13 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(2, device=('CPU:0', 'CPU:1'))
+  13 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(2, dtypes.float, device=('CPU:0', 'CPU:1'))
   14 Ops.STACK           :            dtypes.void                              []                               None
-  15 Ops.PARAM           :            dtypes.int                               [14]                             ParamArg(3, vmin_vmax=(0, 1), name='_device_num', addrspace=AddrSpace.ALU)
+  15 Ops.PARAM           :            dtypes.int                               [14]                             ParamArg(3, dtypes.int, vmin_vmax=(0, 1), name='_device_num', addrspace=AddrSpace.ALU)
   16 Ops.CONST           :            dtypes.int                               []                               5
   17 Ops.SHL             :            dtypes.int                               [15, '5']                        None
   18 Ops.ADD             :            dtypes.int                               [7, 17]                          None
@@ -69,7 +69,7 @@
   67 Ops.SINK            :            dtypes.void                              [66]                             KernelInfo(name='r_4_8n2', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UNROLL, axis=0, arg=0), Opt(op=OptOps.LOCAL, axis=0, arg=4)), opts_to_apply=None, estimates=None, beam=0)
 === kernel 1 ===
    0 Ops.CONST           :            dtypes.int                               []                               32
-   1 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(0, device=('CPU:0', 'CPU:1'))
+   1 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(0, dtypes.float, device=('CPU:0', 'CPU:1'))
    2 Ops.CONST           :            dtypes.int                               []                               4
    3 Ops.SPECIAL         :            dtypes.int                               ['4']                            lidx0
    4 Ops.CONST           :            dtypes.int                               []                               3
@@ -79,15 +79,15 @@
    8 Ops.SHL             :            dtypes.int                               [7, '2']                         None
    9 Ops.ADD             :            dtypes.int                               [5, 8]                           None
   10 Ops.SHRINK          :            dtypes.float                             [1, 9, '4']                      None
-  11 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(1, device=('CPU:0', 'CPU:1'))
+  11 Ops.PARAM           :            dtypes.float                             ['32']                           ParamArg(1, dtypes.float, device=('CPU:0', 'CPU:1'))
   12 Ops.SHRINK          :            dtypes.float                             [11, 9, '4']                     None
   13 Ops.LOAD            :            dtypes.float                             [12]                             None
   14 Ops.CONST           :            dtypes.int                               []                               0
   15 Ops.INDEX           :            dtypes.float                             [13, '0']                        None
   16 Ops.CONST           :            dtypes.int                               []                               64
-  17 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(2, device=('CPU:0', 'CPU:1'))
+  17 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(2, dtypes.float, device=('CPU:0', 'CPU:1'))
   18 Ops.STACK           :            dtypes.void                              []                               None
-  19 Ops.PARAM           :            dtypes.int                               [18]                             ParamArg(4, vmin_vmax=(0, 1), name='_device_num', addrspace=AddrSpace.ALU)
+  19 Ops.PARAM           :            dtypes.int                               [18]                             ParamArg(4, dtypes.int, vmin_vmax=(0, 1), name='_device_num', addrspace=AddrSpace.ALU)
   20 Ops.CONST           :            dtypes.int                               []                               5
   21 Ops.SHL             :            dtypes.int                               [19, '5']                        None
   22 Ops.ADD             :            dtypes.int                               [5, 21]                          None
@@ -96,7 +96,7 @@
   25 Ops.LOAD            :            dtypes.float                             [24]                             None
   26 Ops.INDEX           :            dtypes.float                             [25, '0']                        None
   27 Ops.ADD             :            dtypes.float                             [15, 26]                         None
-  28 Ops.PARAM           :            dtypes.float                             ['4']                            ParamArg(3, device=('CPU:0', 'CPU:1'))
+  28 Ops.PARAM           :            dtypes.float                             ['4']                            ParamArg(3, dtypes.float, device=('CPU:0', 'CPU:1'))
   29 Ops.INDEX           :            dtypes.float                             [28, 3]                          None
   30 Ops.LOAD            :            dtypes.float                             [29]                             None
   31 Ops.SUB             :            dtypes.float                             [27, 30]                         None

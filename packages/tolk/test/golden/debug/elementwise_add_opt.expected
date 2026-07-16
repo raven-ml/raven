@@ -1,18 +1,18 @@
 === lower ===
    0 Ops.CONST           :            dtypes.int                               []                               256
-   1 Ops.PARAM           :            dtypes.float                             ['256']                          ParamArg(2)
+   1 Ops.PARAM           :            dtypes.float                             ['256']                          ParamArg(2, dtypes.float)
    2 Ops.STACK           :            dtypes.void                              []                               None
-   3 Ops.PARAM           :            dtypes.int                               [2]                              ParamArg(3, vmin_vmax=(0, 63), name='core_id', addrspace=AddrSpace.ALU)
+   3 Ops.PARAM           :            dtypes.int                               [2]                              ParamArg(3, dtypes.int, vmin_vmax=(0, 63), name='core_id', addrspace=AddrSpace.ALU)
    4 Ops.CONST           :            dtypes.int                               []                               2
    5 Ops.SHL             :            dtypes.int                               [3, '2']                         None
    6 Ops.CONST           :            dtypes.int                               []                               4
    7 Ops.SHRINK          :            dtypes.float                             [1, 5, '4']                      None
-   8 Ops.PARAM           :            dtypes.float                             ['256']                          ParamArg(0)
+   8 Ops.PARAM           :            dtypes.float                             ['256']                          ParamArg(0, dtypes.float)
    9 Ops.SHRINK          :            dtypes.float                             [8, 5, '4']                      None
   10 Ops.LOAD            :            dtypes.float                             [9]                              None
   11 Ops.CONST           :            dtypes.int                               []                               0
   12 Ops.INDEX           :            dtypes.float                             [10, '0']                        None
-  13 Ops.PARAM           :            dtypes.float                             ['256']                          ParamArg(1)
+  13 Ops.PARAM           :            dtypes.float                             ['256']                          ParamArg(1, dtypes.float)
   14 Ops.SHRINK          :            dtypes.float                             [13, 5, '4']                     None
   15 Ops.LOAD            :            dtypes.float                             [14]                             None
   16 Ops.INDEX           :            dtypes.float                             [15, '0']                        None

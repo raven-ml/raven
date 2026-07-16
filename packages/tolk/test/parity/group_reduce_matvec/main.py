@@ -14,7 +14,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from helpers import ALL_BACKENDS, dump  # noqa: E402
 
-from tinygrad.uop.ops import UOp, Ops, KernelInfo, AxisType, ParamArg  # noqa: E402
+from tinygrad.uop.ops import UOp, Ops, KernelInfo, AxisType  # noqa: E402
 from tinygrad.codegen.opt import Opt, OptOps  # noqa: E402
 from tinygrad.dtype import dtypes  # noqa: E402
 
@@ -23,15 +23,15 @@ BACKENDS = {k: v for k, v in ALL_BACKENDS.items() if k in ("cuda", "opencl")}
 
 def kernel():
     N, K = 256, 64
-    pW = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
-    pX = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(1))
-    pY = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(2))
+    pW = UOp.param(0, dtypes.float32, shape=(-1,))
+    pX = UOp.param(1, dtypes.float32, shape=(-1,))
+    pY = UOp.param(2, dtypes.float32, shape=(-1,))
     rj = UOp.range(N, 0, AxisType.GLOBAL)
     rk = UOp.range(K, 1, AxisType.REDUCE)
-    ld_w = pW.index(rj * K + rk, ptr=True).load()
-    ld_x = pX.index(rk, ptr=True).load()
-    red = UOp(Ops.REDUCE, dtypes.float32, (ld_w * ld_x, rk), (Ops.ADD, ()))
-    st = pY.index(rj, ptr=True).store(red)
+    ld_w = pW.index(rj * K + rk).load()
+    ld_x = pX.index(rk).load()
+    red = UOp(Ops.REDUCE, dtypes.float32, (ld_w * ld_x, rk), (Ops.ADD, 0))
+    st = pY.index(rj).store(red)
     end = st.end(rj)
     return UOp.sink(
         end,

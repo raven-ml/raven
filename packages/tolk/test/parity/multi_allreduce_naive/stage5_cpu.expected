@@ -1,10 +1,10 @@
 === kernel 0 ===
    0 Ops.CONST           :            dtypes.int                               []                               16
-   1 Ops.PARAM           :            dtypes.float                             ['16']                           ParamArg(0, device=('CPU:0', 'CPU:1'))
+   1 Ops.PARAM           :            dtypes.float                             ['16']                           ParamArg(0, dtypes.float, device=('CPU:0', 'CPU:1'))
    2 Ops.RANGE           : 1          dtypes.int                               ['16']                           (1, AxisType.LOOP)
    3 Ops.INDEX           : 1          dtypes.float                             [1, 2]                           None
    4 Ops.CONST           :            dtypes.int                               []                               128
-   5 Ops.PARAM           :            dtypes.float                             ['128']                          ParamArg(1, device=('CPU:0', 'CPU:1'))
+   5 Ops.PARAM           :            dtypes.float                             ['128']                          ParamArg(1, dtypes.float, device=('CPU:0', 'CPU:1'))
    6 Ops.INDEX           : 1          dtypes.float                             [5, 2]                           None
    7 Ops.LOAD            : 1          dtypes.float                             [6]                              None
    8 Ops.ADD             : 1          dtypes.int                               [2, '16']                        None
@@ -46,18 +46,18 @@
   44 Ops.SINK            :            dtypes.void                              [43]                             KernelInfo(name='r_16_8', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UNROLL, axis=0, arg=0),), opts_to_apply=None, estimates=None, beam=0)
 === kernel 1 ===
    0 Ops.CONST           :            dtypes.int                               []                               16
-   1 Ops.PARAM           :            dtypes.float                             ['16']                           ParamArg(0, device=('CPU:0', 'CPU:1'))
+   1 Ops.PARAM           :            dtypes.float                             ['16']                           ParamArg(0, dtypes.float, device=('CPU:0', 'CPU:1'))
    2 Ops.CONST           :            dtypes.int                               []                               4
    3 Ops.RANGE           : 0          dtypes.int                               ['4']                            (0, AxisType.LOOP)
    4 Ops.CONST           :            dtypes.int                               []                               2
    5 Ops.SHL             : 0          dtypes.int                               [3, '2']                         None
    6 Ops.SHRINK          : 0          dtypes.float                             [1, 5, '4']                      None
-   7 Ops.PARAM           :            dtypes.float                             ['16']                           ParamArg(1, device=('CPU:0', 'CPU:1'))
+   7 Ops.PARAM           :            dtypes.float                             ['16']                           ParamArg(1, dtypes.float, device=('CPU:0', 'CPU:1'))
    8 Ops.SHRINK          : 0          dtypes.float                             [7, 5, '4']                      None
    9 Ops.LOAD            : 0          dtypes.float                             [8]                              None
   10 Ops.CONST           :            dtypes.int                               []                               0
   11 Ops.INDEX           : 0          dtypes.float                             [9, '0']                         None
-  12 Ops.PARAM           :            dtypes.float                             ['16']                           ParamArg(2, device=('CPU:0', 'CPU:1'))
+  12 Ops.PARAM           :            dtypes.float                             ['16']                           ParamArg(2, dtypes.float, device=('CPU:0', 'CPU:1'))
   13 Ops.SHRINK          : 0          dtypes.float                             [12, 5, '4']                     None
   14 Ops.LOAD            : 0          dtypes.float                             [13]                             None
   15 Ops.INDEX           : 0          dtypes.float                             [14, '0']                        None

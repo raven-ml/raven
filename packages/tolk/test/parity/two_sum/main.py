@@ -12,8 +12,8 @@ from tinygrad.dtype import dtypes  # noqa: E402
 
 def build():
     a = mk_param(0, 64, 64)
-    red0 = UOp(Ops.REDUCE, dtypes.float32, (a,), (Ops.ADD, (0,)))
-    red1 = UOp(Ops.REDUCE, dtypes.float32, (a,), (Ops.ADD, (1,)))
+    red0 = a._rop(Ops.ADD, (0,))
+    red1 = a._rop(Ops.ADD, (1,))
     reshaped0 = UOp(Ops.RESHAPE, dtypes.float32,
                     (red0, shape_to_shape_arg((64,))))
     reshaped1 = UOp(Ops.RESHAPE, dtypes.float32,

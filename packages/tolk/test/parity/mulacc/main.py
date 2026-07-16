@@ -14,7 +14,7 @@ def build():
     a = mk_param(0, 256)
     b = mk_param(1, 256)
     mul = a * b
-    red = UOp(Ops.REDUCE, dtypes.float32, (mul,), (Ops.ADD, (0,)))
+    red = mul._rop(Ops.ADD, (0,))
     return wrap_sink(red)
 
 

@@ -1,5 +1,5 @@
    0 Ops.CONST           :            dtypes.int                               []                               1769472
-   1 Ops.PARAM           :            dtypes.float                             ['1769472']                      ParamArg(0, device='CPU')
+   1 Ops.PARAM           :            dtypes.float                             ['1769472']                      ParamArg(0, dtypes.float, device='CPU')
    2 Ops.CONST           :            dtypes.int                               []                               12
    3 Ops.SPECIAL         :            dtypes.int                               ['12']                           gidx0
    4 Ops.CONST           :            dtypes.int                               []                               6
@@ -21,7 +21,7 @@
   20 Ops.ADD             :            dtypes.int                               [10, 19]                         None
   21 Ops.CONST           :            dtypes.int                               []                               4
   22 Ops.SHRINK          :            dtypes.float                             [1, 20, '4']                     None
-  23 Ops.PARAM           :            dtypes.float                             ['1769472']                      ParamArg(1, device='CPU')
+  23 Ops.PARAM           :            dtypes.float                             ['1769472']                      ParamArg(1, dtypes.float, device='CPU')
   24 Ops.CONST           :            dtypes.int                               []                               3
   25 Ops.SHL             :            dtypes.int                               [12, '3']                        None
   26 Ops.ADD             :            dtypes.int                               [16, 25]                         None

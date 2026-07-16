@@ -1,6 +1,6 @@
 === kernel 0 ===
    0 Ops.CONST           :            dtypes.int                               []                               64
-   1 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(0, device='CPU')
+   1 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(0, dtypes.float, device='CPU')
    2 Ops.CONST           :            dtypes.int                               []                               16
    3 Ops.RANGE           : 0          dtypes.int                               ['16']                           (0, AxisType.LOOP)
    4 Ops.CONST           :            dtypes.int                               []                               2
@@ -8,7 +8,7 @@
    6 Ops.CONST           :            dtypes.int                               []                               4
    7 Ops.SHRINK          : 0          dtypes.float                             [1, 5, '4']                      None
    8 Ops.CONST           :            dtypes.int                               []                               128
-   9 Ops.PARAM           :            dtypes.float                             ['128']                          ParamArg(1, device='CPU')
+   9 Ops.PARAM           :            dtypes.float                             ['128']                          ParamArg(1, dtypes.float, device='CPU')
   10 Ops.SHRINK          : 0          dtypes.float                             [9, 5, '4']                      None
   11 Ops.LOAD            : 0          dtypes.float                             [10]                             None
   12 Ops.STORE           : 0          dtypes.void                              [7, 11]                          None
@@ -17,7 +17,7 @@
   15 Ops.SINK            :            dtypes.void                              [14]                             KernelInfo(name='E_16_4', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None, beam=0)
 === kernel 1 ===
    0 Ops.CONST           :            dtypes.int                               []                               64
-   1 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(0, device='CPU')
+   1 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(0, dtypes.float, device='CPU')
    2 Ops.CONST           :            dtypes.int                               []                               16
    3 Ops.RANGE           : 0          dtypes.int                               ['16']                           (0, AxisType.LOOP)
    4 Ops.CONST           :            dtypes.int                               []                               2
@@ -25,7 +25,7 @@
    6 Ops.CONST           :            dtypes.int                               []                               4
    7 Ops.SHRINK          : 0          dtypes.float                             [1, 5, '4']                      None
    8 Ops.CONST           :            dtypes.int                               []                               128
-   9 Ops.PARAM           :            dtypes.float                             ['128']                          ParamArg(1, device='CPU')
+   9 Ops.PARAM           :            dtypes.float                             ['128']                          ParamArg(1, dtypes.float, device='CPU')
   10 Ops.ADD             : 0          dtypes.int                               [5, '64']                        None
   11 Ops.SHRINK          : 0          dtypes.float                             [9, 10, '4']                     None
   12 Ops.LOAD            : 0          dtypes.float                             [11]                             None
@@ -35,7 +35,7 @@
   16 Ops.SINK            :            dtypes.void                              [15]                             KernelInfo(name='E_16_4n1', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None, beam=0)
 === kernel 2 ===
    0 Ops.CONST           :            dtypes.int                               []                               64
-   1 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(0, device='CPU')
+   1 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(0, dtypes.float, device='CPU')
    2 Ops.CONST           :            dtypes.int                               []                               16
    3 Ops.RANGE           : 0          dtypes.int                               ['16']                           (0, AxisType.LOOP)
    4 Ops.CONST           :            dtypes.int                               []                               2
@@ -43,7 +43,7 @@
    6 Ops.CONST           :            dtypes.int                               []                               4
    7 Ops.SHRINK          : 0          dtypes.float                             [1, 5, '4']                      None
    8 Ops.CONST           :            dtypes.int                               []                               128
-   9 Ops.PARAM           :            dtypes.float                             ['128']                          ParamArg(1, device='CPU')
+   9 Ops.PARAM           :            dtypes.float                             ['128']                          ParamArg(1, dtypes.float, device='CPU')
   10 Ops.SHRINK          : 0          dtypes.float                             [9, 5, '4']                      None
   11 Ops.LOAD            : 0          dtypes.float                             [10]                             None
   12 Ops.STORE           : 0          dtypes.void                              [7, 11]                          None
@@ -52,7 +52,7 @@
   15 Ops.SINK            :            dtypes.void                              [14]                             KernelInfo(name='E_16_4n2', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None, beam=0)
 === kernel 3 ===
    0 Ops.CONST           :            dtypes.int                               []                               64
-   1 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(0, device='CPU')
+   1 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(0, dtypes.float, device='CPU')
    2 Ops.CONST           :            dtypes.int                               []                               16
    3 Ops.RANGE           : 0          dtypes.int                               ['16']                           (0, AxisType.LOOP)
    4 Ops.CONST           :            dtypes.int                               []                               2
@@ -60,7 +60,7 @@
    6 Ops.CONST           :            dtypes.int                               []                               4
    7 Ops.SHRINK          : 0          dtypes.float                             [1, 5, '4']                      None
    8 Ops.CONST           :            dtypes.int                               []                               128
-   9 Ops.PARAM           :            dtypes.float                             ['128']                          ParamArg(1, device='CPU')
+   9 Ops.PARAM           :            dtypes.float                             ['128']                          ParamArg(1, dtypes.float, device='CPU')
   10 Ops.ADD             : 0          dtypes.int                               [5, '64']                        None
   11 Ops.SHRINK          : 0          dtypes.float                             [9, 10, '4']                     None
   12 Ops.LOAD            : 0          dtypes.float                             [11]                             None
@@ -70,19 +70,19 @@
   16 Ops.SINK            :            dtypes.void                              [15]                             KernelInfo(name='E_16_4n3', axis_types=(), dont_use_locals=False, applied_opts=(Opt(op=OptOps.UPCAST, axis=0, arg=4),), opts_to_apply=None, estimates=None, beam=0)
 === kernel 4 ===
    0 Ops.CONST           :            dtypes.int                               []                               64
-   1 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(0, device=('CPU:0', 'CPU:1'))
+   1 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(0, dtypes.float, device=('CPU:0', 'CPU:1'))
    2 Ops.CONST           :            dtypes.int                               []                               16
    3 Ops.RANGE           : 0          dtypes.int                               ['16']                           (0, AxisType.LOOP)
    4 Ops.CONST           :            dtypes.int                               []                               2
    5 Ops.SHL             : 0          dtypes.int                               [3, '2']                         None
    6 Ops.CONST           :            dtypes.int                               []                               4
    7 Ops.SHRINK          : 0          dtypes.float                             [1, 5, '4']                      None
-   8 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(1, device=('CPU:0', 'CPU:1'))
+   8 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(1, dtypes.float, device=('CPU:0', 'CPU:1'))
    9 Ops.SHRINK          : 0          dtypes.float                             [8, 5, '4']                      None
   10 Ops.LOAD            : 0          dtypes.float                             [9]                              None
   11 Ops.CONST           :            dtypes.int                               []                               0
   12 Ops.INDEX           : 0          dtypes.float                             [10, '0']                        None
-  13 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(2, device=('CPU:0', 'CPU:1'))
+  13 Ops.PARAM           :            dtypes.float                             ['64']                           ParamArg(2, dtypes.float, device=('CPU:0', 'CPU:1'))
   14 Ops.SHRINK          : 0          dtypes.float                             [13, 5, '4']                     None
   15 Ops.LOAD            : 0          dtypes.float                             [14]                             None
   16 Ops.INDEX           : 0          dtypes.float                             [15, '0']                        None

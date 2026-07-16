@@ -26,12 +26,12 @@ def build():
     b = mk_param(1, K, N, dtype=dtypes.float16)
     # dot: a.reshape(M,1,K) * b.permute(1,0).reshape(1,N,K), summed over K.
     ar = UOp(Ops.RESHAPE, a.dtype, (a, shape_to_shape_arg((M, 1, K))))
-    ae = UOp(Ops.EXPAND, a.dtype, (ar, shape_to_shape_arg((M, N, K))))
+    ae = ar.expand((M, N, K))
     bt = UOp(Ops.PERMUTE, b.dtype, (b,), (1, 0))
     br = UOp(Ops.RESHAPE, bt.dtype, (bt, shape_to_shape_arg((1, N, K))))
-    be = UOp(Ops.EXPAND, bt.dtype, (br, shape_to_shape_arg((M, N, K))))
+    be = br.expand((M, N, K))
     mul = (ae * be).cast(dtypes.float32)
-    red = UOp(Ops.REDUCE, dtypes.float32, (mul,), (Ops.ADD, (2,)))
+    red = mul._rop(Ops.ADD, (2,))
     return wrap_sink(red)
 
 

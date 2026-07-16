@@ -21,7 +21,12 @@ sys.path.insert(
     ),
 )
 
-from tinygrad.uop.ops import UOp, Ops, KernelInfo, AxisType, ParamArg
+# Disable ANSI color in the reference — auto-generated kernel names embed ANSI
+# escape codes per axis type, which would leak into rendered source and the
+# KernelInfo.name used to look up model kernels.
+os.environ["NO_COLOR"] = "1"
+
+from tinygrad.uop.ops import UOp, Ops, KernelInfo, AxisType
 from tinygrad.dtype import dtypes, Invalid
 from tinygrad.helpers import Target
 from tinygrad.codegen import full_rewrite_to_sink, line_rewrite, pm_linearize_cleanups
@@ -102,74 +107,74 @@ def ki(name="test", **kwargs):
 
 def build_elementwise_add():
     """c[i] = a[i] + b[i], 1 Global range."""
-    p0 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
-    p1 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(1))
-    p2 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(2))
+    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
+    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
+    p2 = UOp.param(2, dtypes.float32, shape=(-1,))
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
-    ld_a = p0.index(r0, ptr=True).load()
-    ld_b = p1.index(r0, ptr=True).load()
+    ld_a = p0.index(r0).load()
+    ld_b = p1.index(r0).load()
     add = ld_a + ld_b
-    st = p2.index(r0, ptr=True).store(add)
+    st = p2.index(r0).store(add)
     end = st.end(r0)
     return UOp.sink(end, arg=ki("elementwise_add", axis_types=(AxisType.GLOBAL,)))
 
 
 def build_sum_reduce():
     """b[0] = sum(a[i]), 1 Reduce range."""
-    p0 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
-    p1 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(1))
+    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
+    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
     r0 = UOp.range(256, 0, AxisType.REDUCE)
-    ld = p0.index(r0, ptr=True).load()
-    red = UOp(Ops.REDUCE, dtypes.float32, (ld, r0), (Ops.ADD, ()))
+    ld = p0.index(r0).load()
+    red = UOp(Ops.REDUCE, dtypes.float32, (ld, r0), (Ops.ADD, 0))
     c0 = UOp.const(dtypes.int, 0)
-    st = p1.index(c0, ptr=True).store(red)
+    st = p1.index(c0).store(red)
     return UOp.sink(st, arg=ki("sum_reduce", axis_types=(AxisType.REDUCE,)))
 
 
 def build_max_reduce():
     """b[0] = max(a[i]), 1 Reduce range."""
-    p0 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
-    p1 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(1))
+    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
+    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
     r0 = UOp.range(64, 0, AxisType.REDUCE)
-    ld = p0.index(r0, ptr=True).load()
-    red = UOp(Ops.REDUCE, dtypes.float32, (ld, r0), (Ops.MAX, ()))
+    ld = p0.index(r0).load()
+    red = UOp(Ops.REDUCE, dtypes.float32, (ld, r0), (Ops.MAX, 0))
     c0 = UOp.const(dtypes.int, 0)
-    st = p1.index(c0, ptr=True).store(red)
+    st = p1.index(c0).store(red)
     return UOp.sink(st, arg=ki("max_reduce", axis_types=(AxisType.REDUCE,)))
 
 
 def build_dot_product():
     """c[0] = sum_k(a[k] * b[k]), 1 Reduce range."""
-    p0 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
-    p1 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(1))
-    p2 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(2))
+    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
+    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
+    p2 = UOp.param(2, dtypes.float32, shape=(-1,))
     r0 = UOp.range(128, 0, AxisType.REDUCE)
-    ld_a = p0.index(r0, ptr=True).load()
-    ld_b = p1.index(r0, ptr=True).load()
+    ld_a = p0.index(r0).load()
+    ld_b = p1.index(r0).load()
     mul = ld_a * ld_b
-    red = UOp(Ops.REDUCE, dtypes.float32, (mul, r0), (Ops.ADD, ()))
+    red = UOp(Ops.REDUCE, dtypes.float32, (mul, r0), (Ops.ADD, 0))
     c0 = UOp.const(dtypes.int, 0)
-    st = p2.index(c0, ptr=True).store(red)
+    st = p2.index(c0).store(red)
     return UOp.sink(st, arg=ki("dot_product", axis_types=(AxisType.REDUCE,)))
 
 
 def build_matmul_small():
     """C[i*4+j] = sum_k(A[i*4+k] * B[k*4+j]), M=N=K=4."""
     M, N, K = 4, 4, 4
-    pA = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
-    pB = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(1))
-    pC = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(2))
+    pA = UOp.param(0, dtypes.float32, shape=(-1,))
+    pB = UOp.param(1, dtypes.float32, shape=(-1,))
+    pC = UOp.param(2, dtypes.float32, shape=(-1,))
     ri = UOp.range(M, 0, AxisType.GLOBAL)
     rj = UOp.range(N, 1, AxisType.GLOBAL)
     rk = UOp.range(K, 2, AxisType.REDUCE)
     a_idx = ri * K + rk
     b_idx = rk * N + rj
     c_idx = ri * N + rj
-    ld_a = pA.index(a_idx, ptr=True).load()
-    ld_b = pB.index(b_idx, ptr=True).load()
+    ld_a = pA.index(a_idx).load()
+    ld_b = pB.index(b_idx).load()
     mul = ld_a * ld_b
-    red = UOp(Ops.REDUCE, dtypes.float32, (mul, rk), (Ops.ADD, ()))
-    st = pC.index(c_idx, ptr=True).store(red)
+    red = UOp(Ops.REDUCE, dtypes.float32, (mul, rk), (Ops.ADD, 0))
+    st = pC.index(c_idx).store(red)
     end = st.end(ri, rj)
     return UOp.sink(
         end,
@@ -183,16 +188,16 @@ def build_matmul_small():
 def build_elementwise_2d():
     """c[i*16+j] = a[i*16+j] + b[i*16+j], 2 Global ranges."""
     ROWS, COLS = 8, 16
-    p0 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
-    p1 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(1))
-    p2 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(2))
+    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
+    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
+    p2 = UOp.param(2, dtypes.float32, shape=(-1,))
     ri = UOp.range(ROWS, 0, AxisType.GLOBAL)
     rj = UOp.range(COLS, 1, AxisType.GLOBAL)
     flat = ri * COLS + rj
-    ld_a = p0.index(flat, ptr=True).load()
-    ld_b = p1.index(flat, ptr=True).load()
+    ld_a = p0.index(flat).load()
+    ld_b = p1.index(flat).load()
     add = ld_a + ld_b
-    st = p2.index(flat, ptr=True).store(add)
+    st = p2.index(flat).store(add)
     end = st.end(ri, rj)
     return UOp.sink(
         end, arg=ki("elementwise_2d", axis_types=(AxisType.GLOBAL, AxisType.GLOBAL))
@@ -202,14 +207,14 @@ def build_elementwise_2d():
 def build_reduce_rows():
     """b[i] = sum_j(a[i*32+j]), 1 Global + 1 Reduce range."""
     ROWS, COLS = 8, 32
-    p0 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
-    p1 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(1))
+    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
+    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
     ri = UOp.range(ROWS, 0, AxisType.GLOBAL)
     rj = UOp.range(COLS, 1, AxisType.REDUCE)
     flat = ri * COLS + rj
-    ld = p0.index(flat, ptr=True).load()
-    red = UOp(Ops.REDUCE, dtypes.float32, (ld, rj), (Ops.ADD, ()))
-    st = p1.index(ri, ptr=True).store(red)
+    ld = p0.index(flat).load()
+    red = UOp(Ops.REDUCE, dtypes.float32, (ld, rj), (Ops.ADD, 0))
+    st = p1.index(ri).store(red)
     end = st.end(ri)
     return UOp.sink(
         end, arg=ki("reduce_rows", axis_types=(AxisType.GLOBAL, AxisType.REDUCE))
@@ -218,29 +223,29 @@ def build_reduce_rows():
 
 def build_multi_output():
     """b[i] = a[i] + 1.0; c[i] = a[i] * 2.0, 1 Global range, 2 stores."""
-    p0 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
-    p1 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(1))
-    p2 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(2))
+    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
+    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
+    p2 = UOp.param(2, dtypes.float32, shape=(-1,))
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
-    ld_a = p0.index(r0, ptr=True).load()
-    st1 = p1.index(r0, ptr=True).store(ld_a + UOp.const(dtypes.float32, 1.0))
+    ld_a = p0.index(r0).load()
+    st1 = p1.index(r0).store(ld_a + UOp.const(dtypes.float32, 1.0))
     e1 = st1.end(r0)
-    st2 = p2.index(r0, ptr=True).store(ld_a * UOp.const(dtypes.float32, 2.0))
+    st2 = p2.index(r0).store(ld_a * UOp.const(dtypes.float32, 2.0))
     e2 = st2.end(r0)
     return UOp.sink(e1, e2, arg=ki("multi_output", axis_types=(AxisType.GLOBAL,)))
 
 
 def build_gated_store():
     """c[i] = a[i] + b[i] with store gated by i < 200, range size=256."""
-    p0 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
-    p1 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(1))
-    p2 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(2))
+    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
+    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
+    p2 = UOp.param(2, dtypes.float32, shape=(-1,))
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
-    ld_a = p0.index(r0, ptr=True).load()
-    ld_b = p1.index(r0, ptr=True).load()
+    ld_a = p0.index(r0).load()
+    ld_b = p1.index(r0).load()
     add = ld_a + ld_b
-    gate = r0 < UOp.const(dtypes.int, 200)
-    st = p2.index(r0, ptr=True).store(
+    gate = r0 < UOp.const(dtypes.index, 200)
+    st = p2.index(r0).store(
         gate.where(add, UOp(Ops.CONST, dtypes.float32, (), Invalid))
     )
     end = st.end(r0)
@@ -255,84 +260,84 @@ GPU_RENDERERS = ["cuda", "metal", "opencl"]
 
 def build_no_optimize():
     """Same as elementwise_add but with optimize=false and unique name."""
-    p0 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
-    p1 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(1))
-    p2 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(2))
+    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
+    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
+    p2 = UOp.param(2, dtypes.float32, shape=(-1,))
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
-    ld_a = p0.index(r0, ptr=True).load()
-    ld_b = p1.index(r0, ptr=True).load()
+    ld_a = p0.index(r0).load()
+    ld_b = p1.index(r0).load()
     add = ld_a + ld_b
-    st = p2.index(r0, ptr=True).store(add)
+    st = p2.index(r0).store(add)
     end = st.end(r0)
     return UOp.sink(end, arg=ki("no_optimize", axis_types=(AxisType.GLOBAL,)))
 
 
 def build_elementwise_where():
     """c[i] = (a[i] > 0) ? a[i] : 0.0 (ReLU pattern), 1 Global range."""
-    p0 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
-    p1 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(1))
+    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
+    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
-    ld = p0.index(r0, ptr=True).load()
+    ld = p0.index(r0).load()
     zero = UOp.const(dtypes.float32, 0.0)
     cond = zero.alu(Ops.CMPLT, ld)  # 0.0 < a[i] => a[i] > 0
     val = cond.where(ld, zero)
-    st = p1.index(r0, ptr=True).store(val)
+    st = p1.index(r0).store(val)
     end = st.end(r0)
     return UOp.sink(end, arg=ki("elementwise_where", axis_types=(AxisType.GLOBAL,)))
 
 
 def build_elementwise_cast_f16():
     """c[i] = (float32)a_f16[i] + b[i], 1 Global range, mixed dtypes."""
-    p0 = UOp(Ops.PARAM, dtypes.half.ptr(), (), ParamArg(0))
-    p1 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(1))
-    p2 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(2))
+    p0 = UOp.param(0, dtypes.half, shape=(-1,))
+    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
+    p2 = UOp.param(2, dtypes.float32, shape=(-1,))
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
-    ld_a = p0.index(r0, ptr=True).load()
-    cast_a = UOp(Ops.CAST, dtypes.float32, (ld_a,))
-    ld_b = p1.index(r0, ptr=True).load()
+    ld_a = p0.index(r0).load()
+    cast_a = ld_a.cast(dtypes.float32)
+    ld_b = p1.index(r0).load()
     add = cast_a + ld_b
-    st = p2.index(r0, ptr=True).store(add)
+    st = p2.index(r0).store(add)
     end = st.end(r0)
     return UOp.sink(end, arg=ki("elementwise_cast_f16", axis_types=(AxisType.GLOBAL,)))
 
 
 def build_elementwise_sqrt():
     """c[i] = sqrt(a[i]), 1 Global range, exercises unary SQRT through pipeline."""
-    p0 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
-    p1 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(1))
+    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
+    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
-    ld = p0.index(r0, ptr=True).load()
+    ld = p0.index(r0).load()
     sq = UOp(Ops.SQRT, dtypes.float32, (ld,))
-    st = p1.index(r0, ptr=True).store(sq)
+    st = p1.index(r0).store(sq)
     end = st.end(r0)
     return UOp.sink(end, arg=ki("elementwise_sqrt", axis_types=(AxisType.GLOBAL,)))
 
 
 def build_parallel_reduce():
     """b[0] = sum(a[i]); c[0] = sum(a[i]*a[i]), 1 Reduce range, 2 stores."""
-    p0 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
-    p1 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(1))
-    p2 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(2))
+    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
+    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
+    p2 = UOp.param(2, dtypes.float32, shape=(-1,))
     r0 = UOp.range(128, 0, AxisType.REDUCE)
-    ld = p0.index(r0, ptr=True).load()
-    red1 = UOp(Ops.REDUCE, dtypes.float32, (ld, r0), (Ops.ADD, ()))
-    red2 = UOp(Ops.REDUCE, dtypes.float32, (ld * ld, r0), (Ops.ADD, ()))
+    ld = p0.index(r0).load()
+    red1 = UOp(Ops.REDUCE, dtypes.float32, (ld, r0), (Ops.ADD, 0))
+    red2 = UOp(Ops.REDUCE, dtypes.float32, (ld * ld, r0), (Ops.ADD, 0))
     c0 = UOp.const(dtypes.int, 0)
-    st1 = p1.index(c0, ptr=True).store(red1)
-    st2 = p2.index(c0, ptr=True).store(red2)
+    st1 = p1.index(c0).store(red1)
+    st2 = p2.index(c0).store(red2)
     return UOp.sink(st1, st2, arg=ki("parallel_reduce", axis_types=(AxisType.REDUCE,)))
 
 
 def build_elementwise_int32():
     """c[i] = a[i] + b[i] (all int32), 1 Global range."""
-    p0 = UOp(Ops.PARAM, dtypes.int32.ptr(), (), ParamArg(0))
-    p1 = UOp(Ops.PARAM, dtypes.int32.ptr(), (), ParamArg(1))
-    p2 = UOp(Ops.PARAM, dtypes.int32.ptr(), (), ParamArg(2))
+    p0 = UOp.param(0, dtypes.int32, shape=(-1,))
+    p1 = UOp.param(1, dtypes.int32, shape=(-1,))
+    p2 = UOp.param(2, dtypes.int32, shape=(-1,))
     r0 = UOp.range(256, 0, AxisType.GLOBAL)
-    ld_a = p0.index(r0, ptr=True).load()
-    ld_b = p1.index(r0, ptr=True).load()
+    ld_a = p0.index(r0).load()
+    ld_b = p1.index(r0).load()
     add = ld_a + ld_b
-    st = p2.index(r0, ptr=True).store(add)
+    st = p2.index(r0).store(add)
     end = st.end(r0)
     return UOp.sink(end, arg=ki("elementwise_int32", axis_types=(AxisType.GLOBAL,)))
 

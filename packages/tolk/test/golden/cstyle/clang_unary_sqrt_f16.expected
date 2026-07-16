@@ -1,4 +1,4 @@
-void test(half* restrict data0_-1, half* restrict data1_-1) {
+void test(__fp16* restrict data0_-1, __fp16* restrict data1_-1) {
   __fp16 val0 = (*(data0_-1+0));
   *(data1_-1+0) = __builtin_sqrtf(val0);
 }

@@ -1,12 +1,12 @@
    0 Ops.CONST           :            dtypes.int                               []                               128
-   1 Ops.PARAM           :            dtypes.float                             ['128']                          ParamArg(0, device='CPU')
+   1 Ops.PARAM           :            dtypes.float                             ['128']                          ParamArg(0, dtypes.float, device='CPU')
    2 Ops.STACK           :            dtypes.void                              []                               None
-   3 Ops.PARAM           :            dtypes.int                               [2]                              ParamArg(2, vmin_vmax=(1, 127), name='start_pos', addrspace=AddrSpace.ALU)
+   3 Ops.PARAM           :            dtypes.int                               [2]                              ParamArg(2, dtypes.int, vmin_vmax=(1, 127), name='start_pos', addrspace=AddrSpace.ALU)
    4 Ops.CONST           :            dtypes.int                               []                               1
    5 Ops.ADD             :            dtypes.int                               [3, '1']                         None
    6 Ops.RANGE           : 0          dtypes.int                               [5]                              (0, AxisType.LOOP)
    7 Ops.INDEX           : 0          dtypes.float                             [1, 6]                           None
-   8 Ops.PARAM           :            dtypes.float                             ['128']                          ParamArg(1, device='CPU')
+   8 Ops.PARAM           :            dtypes.float                             ['128']                          ParamArg(1, dtypes.float, device='CPU')
    9 Ops.INDEX           : 0          dtypes.float                             [8, 6]                           None
   10 Ops.LOAD            : 0          dtypes.float                             [9]                              None
   11 Ops.NEG             : 0          dtypes.float                             [10]                             None

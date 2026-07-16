@@ -1,9 +1,9 @@
    0 Ops.CONST           :            dtypes.int                               []                               1
-   1 Ops.PARAM           :            dtypes.float                             ['1']                            ParamArg(0, device='CPU')
+   1 Ops.PARAM           :            dtypes.float                             ['1']                            ParamArg(0, dtypes.float, device='CPU')
    2 Ops.CONST           :            dtypes.int                               []                               0
    3 Ops.INDEX           :            dtypes.float                             [1, '0']                         None
    4 Ops.CONST           :            dtypes.int                               []                               24
-   5 Ops.PARAM           :            dtypes.float                             ['24']                           ParamArg(1, device='CPU')
+   5 Ops.PARAM           :            dtypes.float                             ['24']                           ParamArg(1, dtypes.float, device='CPU')
    6 Ops.CONST           :            dtypes.int                               []                               8
    7 Ops.CONST           :            dtypes.int                               []                               4
    8 Ops.SHRINK          :            dtypes.float                             [5, '8', '4']                    None

@@ -7,21 +7,21 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from helpers import dump_stage7_program  # noqa: E402
 
-from tinygrad.uop.ops import UOp, Ops, KernelInfo, AxisType, ParamArg  # noqa: E402
+from tinygrad.uop.ops import UOp, Ops, KernelInfo, AxisType  # noqa: E402
 from tinygrad.dtype import dtypes  # noqa: E402
 
 
 def kernel():
     sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
-    a = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
+    a = UOp.param(0, dtypes.float32, shape=(-1,))
     ten = UOp.const(dtypes.int, 10)
     five = UOp.const(dtypes.int, 5)
     ridx0 = UOp(Ops.RANGE, dtypes.int, (ten,), (0, AxisType.LOOP))
     ridx1 = UOp(Ops.RANGE, dtypes.int, (five,), (1, AxisType.LOOP))
     combined = ridx0 + ridx1
-    idx_ld = a.index(combined, ptr=True)
+    idx_ld = a.index(combined)
     ld = UOp(Ops.LOAD, dtypes.float32, (idx_ld,))
-    idx_st = a.index(combined, ptr=True)
+    idx_st = a.index(combined)
     store = UOp(Ops.STORE, dtypes.void, (idx_st, ld))
     end1 = UOp(Ops.END, dtypes.void, (ridx1,))
     end0 = UOp(Ops.END, dtypes.void, (ridx0,))

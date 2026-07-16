@@ -1,5 +1,5 @@
    0 Ops.CONST           :            dtypes.int                               []                               128
-   1 Ops.PARAM           :            dtypes.float                             ['128']                          ParamArg(0, device='CPU')
+   1 Ops.PARAM           :            dtypes.float                             ['128']                          ParamArg(0, dtypes.float, device='CPU')
    2 Ops.CONST           :            dtypes.int                               []                               32
    3 Ops.SPECIAL         :            dtypes.int                               ['32']                           lidx0
    4 Ops.CONST           :            dtypes.int                               []                               1
@@ -7,7 +7,7 @@
    6 Ops.CONST           :            dtypes.int                               []                               2
    7 Ops.SHRINK          :            dtypes.float                             [1, 5, '2']                      None
    8 Ops.CONST           :            dtypes.int                               []                               512
-   9 Ops.PARAM           :            dtypes.fp8e4m3                           ['512']                          ParamArg(1, device='CPU')
+   9 Ops.PARAM           :            dtypes.fp8e4m3                           ['512']                          ParamArg(1, dtypes.fp8e4m3, device='CPU')
   10 Ops.SHR             :            dtypes.int                               [3, '2']                         None
   11 Ops.CONST           :            dtypes.int                               []                               5
   12 Ops.SHL             :            dtypes.int                               [10, '5']                        None
@@ -48,7 +48,7 @@
   47 Ops.INDEX           :            dtypes.fp8e4m3                           [44, '2']                        None
   48 Ops.INDEX           :            dtypes.fp8e4m3                           [44, '3']                        None
   49 Ops.STACK           :            dtypes.fp8e4m3                           [21, 22, 23, 24, 29, 30, 31, 32, 37, 38, 39, 40, 45, 46, 47, 48] None
-  50 Ops.PARAM           :            dtypes.fp8e4m3                           ['256']                          ParamArg(2, device='CPU')
+  50 Ops.PARAM           :            dtypes.fp8e4m3                           ['256']                          ParamArg(2, dtypes.fp8e4m3, device='CPU')
   51 Ops.SHL             :            dtypes.int                               [14, '5']                        None
   52 Ops.ADD             :            dtypes.int                               [51, 10]                         None
   53 Ops.INDEX           :            dtypes.fp8e4m3                           [50, 52]                         None

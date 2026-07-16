@@ -1,5 +1,5 @@
    0 Ops.CONST           :            dtypes.int                               []                               -1
-   1 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(2)
+   1 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(2, dtypes.float)
    2 Ops.CONST           :            dtypes.int                               []                               4
    3 Ops.SPECIAL         :            dtypes.int                               ['4']                            gidx0
    4 Ops.SPECIAL         :            dtypes.int                               ['4']                            gidx1
@@ -8,7 +8,7 @@
    7 Ops.ADD             :            dtypes.int                               [3, 6]                           None
    8 Ops.INDEX           :            dtypes.float                             [1, 7]                           None
    9 Ops.CONST           :            dtypes.int                               []                               1
-  10 Ops.BUFFER          :            dtypes.float                             ['1']                            ParamArg(0, addrspace=AddrSpace.REG)
+  10 Ops.BUFFER          :            dtypes.float                             ['1']                            ParamArg(0, dtypes.float, addrspace=AddrSpace.REG)
   11 Ops.CONST           :            dtypes.int                               []                               0
   12 Ops.INDEX           :            dtypes.float                             [10, '0']                        None
   13 Ops.CONST           :            dtypes.float                             []                               0.0
@@ -17,11 +17,11 @@
   16 Ops.AFTER           : 2          dtypes.float                             [10, 14, 15]                     None
   17 Ops.INDEX           : 2          dtypes.float                             [16, '0']                        None
   18 Ops.LOAD            : 2          dtypes.float                             [17]                             None
-  19 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(0)
+  19 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(0, dtypes.float)
   20 Ops.ADD             : 2          dtypes.int                               [6, 15]                          None
   21 Ops.INDEX           : 2          dtypes.float                             [19, 20]                         None
   22 Ops.LOAD            : 2          dtypes.float                             [21]                             None
-  23 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(1)
+  23 Ops.PARAM           :            dtypes.float                             ['-1']                           ParamArg(1, dtypes.float)
   24 Ops.SHL             : 2          dtypes.int                               [15, '2']                        None
   25 Ops.ADD             : 2          dtypes.int                               [3, 24]                          None
   26 Ops.INDEX           : 2          dtypes.float                             [23, 25]                         None

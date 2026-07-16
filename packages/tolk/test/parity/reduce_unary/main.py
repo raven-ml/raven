@@ -12,7 +12,7 @@ from tinygrad.dtype import dtypes  # noqa: E402
 
 def build():
     a = mk_param(0, 16)
-    red = UOp(Ops.REDUCE, dtypes.float32, (a,), (Ops.ADD, (0,)))
+    red = a._rop(Ops.ADD, (0,))
     sq = UOp(Ops.SQRT, dtypes.float32, (red,))
     neg = UOp(Ops.NEG, dtypes.float32, (sq,))
     return wrap_sink(neg)

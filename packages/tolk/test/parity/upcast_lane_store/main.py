@@ -29,7 +29,7 @@ def build():
     w = mk_param(1, 2304, 768)
     b = mk_param(2, 2304)
     xe = x.reshape((1, 768)).expand((2304, 768))
-    red = UOp(Ops.REDUCE, dtypes.float32, (w * xe,), (Ops.ADD, (1,)))
+    red = (w * xe)._rop(Ops.ADD, (1,))
     return wrap_sink(red + b)
 
 

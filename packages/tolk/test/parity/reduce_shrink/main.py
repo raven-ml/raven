@@ -13,7 +13,7 @@ from tinygrad.dtype import dtypes  # noqa: E402
 def build():
     a = mk_param(0, 32, 32)
     b = mk_param(1, 16)
-    red = UOp(Ops.REDUCE, dtypes.float32, (a,), (Ops.ADD, (1,)))
+    red = a._rop(Ops.ADD, (1,))
     reshaped = UOp(Ops.RESHAPE, dtypes.float32,
                    (red, shape_to_shape_arg((32,))))
     shrunk = reshaped.shrink(((0, 16),))

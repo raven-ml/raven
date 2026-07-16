@@ -7,21 +7,21 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from helpers import dump  # noqa: E402
 
-from tinygrad.uop.ops import UOp, Ops, KernelInfo, AxisType, ParamArg  # noqa: E402
+from tinygrad.uop.ops import UOp, Ops, KernelInfo, AxisType  # noqa: E402
 from tinygrad.dtype import dtypes  # noqa: E402
 
 
 def kernel():
-    p0 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
-    p1 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(1))
-    p2 = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(2))
+    p0 = UOp.param(0, dtypes.float32, shape=(-1,))
+    p1 = UOp.param(1, dtypes.float32, shape=(-1,))
+    p2 = UOp.param(2, dtypes.float32, shape=(-1,))
     r0 = UOp.range(128, 0, AxisType.REDUCE)
-    ld = p0.index(r0, ptr=True).load()
-    red1 = UOp(Ops.REDUCE, dtypes.float32, (ld, r0), (Ops.ADD, ()))
-    red2 = UOp(Ops.REDUCE, dtypes.float32, (ld * ld, r0), (Ops.ADD, ()))
+    ld = p0.index(r0).load()
+    red1 = UOp(Ops.REDUCE, dtypes.float32, (ld, r0), (Ops.ADD, 0))
+    red2 = UOp(Ops.REDUCE, dtypes.float32, (ld * ld, r0), (Ops.ADD, 0))
     c0 = UOp.const(dtypes.weakint, 0)
-    st1 = p1.index(c0, ptr=True).store(red1)
-    st2 = p2.index(c0, ptr=True).store(red2)
+    st1 = p1.index(c0).store(red1)
+    st2 = p2.index(c0).store(red2)
     return UOp.sink(
         st1, st2,
         arg=KernelInfo(

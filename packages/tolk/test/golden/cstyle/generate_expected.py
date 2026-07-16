@@ -23,7 +23,7 @@ sys.path.insert(
     ),
 )
 
-from tinygrad.uop.ops import UOp, Ops, KernelInfo, AxisType, ParamArg
+from tinygrad.uop.ops import UOp, Ops, KernelInfo, AxisType
 from tinygrad.dtype import dtypes, AddrSpace
 from tinygrad.helpers import Target
 from tinygrad.codegen.opt import tc
@@ -71,25 +71,26 @@ def write_expected(name, content):
 # These correspond to the OCaml make_* functions in test_renderer.ml.
 #
 # Key differences from kernel-level UOps:
-# - INDEX uses ptr=True so dtype is PtrDType (required by renderer)
+# - Buffers are PARAMs carrying their element dtype; pointer-ness comes from
+#   AddrSpace, not a PtrDType. INDEX takes the buffer plus index sources.
 # - RANGE has a single source (upper bound), not (start, end)
 # - RANGE arg is (axis_index, AxisType) tuple
-# - LOCAL buffers use Ops.BUFFER with a LOCAL pointer dtype.
+# - LOCAL buffers are placeholders in AddrSpace.LOCAL.
 
 
 def build_simple_add_f32():
     """Two loads, one add, one store (float32)."""
     sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
-    a = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
-    b = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(1))
-    c = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(2))
+    a = UOp.param(0, dtypes.float32, shape=(-1,))
+    b = UOp.param(1, dtypes.float32, shape=(-1,))
+    c = UOp.param(2, dtypes.float32, shape=(-1,))
     idx = UOp.const(dtypes.int, 0)
-    idx_a = a.index(idx, ptr=True)
+    idx_a = a.index(idx)
     ld_a = UOp(Ops.LOAD, dtypes.float32, (idx_a,))
-    idx_b = b.index(idx, ptr=True)
+    idx_b = b.index(idx)
     ld_b = UOp(Ops.LOAD, dtypes.float32, (idx_b,))
     add = ld_a + ld_b
-    idx_c = c.index(idx, ptr=True)
+    idx_c = c.index(idx)
     store = UOp(Ops.STORE, dtypes.void, (idx_c, add))
     return [sink, a, b, c, idx, idx_a, ld_a, idx_b, ld_b, add, idx_c, store]
 
@@ -97,16 +98,16 @@ def build_simple_add_f32():
 def build_simple_mul_i32():
     """Integer multiply."""
     sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
-    a = UOp(Ops.PARAM, dtypes.int32.ptr(), (), ParamArg(0))
-    b = UOp(Ops.PARAM, dtypes.int32.ptr(), (), ParamArg(1))
-    c = UOp(Ops.PARAM, dtypes.int32.ptr(), (), ParamArg(2))
+    a = UOp.param(0, dtypes.int32, shape=(-1,))
+    b = UOp.param(1, dtypes.int32, shape=(-1,))
+    c = UOp.param(2, dtypes.int32, shape=(-1,))
     idx = UOp.const(dtypes.int, 0)
-    idx_a = a.index(idx, ptr=True)
+    idx_a = a.index(idx)
     ld_a = UOp(Ops.LOAD, dtypes.int32, (idx_a,))
-    idx_b = b.index(idx, ptr=True)
+    idx_b = b.index(idx)
     ld_b = UOp(Ops.LOAD, dtypes.int32, (idx_b,))
     mul = ld_a * ld_b
-    idx_c = c.index(idx, ptr=True)
+    idx_c = c.index(idx)
     store = UOp(Ops.STORE, dtypes.void, (idx_c, mul))
     return [sink, a, b, c, idx, idx_a, ld_a, idx_b, ld_b, mul, idx_c, store]
 
@@ -114,12 +115,12 @@ def build_simple_mul_i32():
 def build_loop():
     """For loop with load/store."""
     sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
-    a = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
+    a = UOp.param(0, dtypes.float32, shape=(-1,))
     ten = UOp.const(dtypes.int, 10)
     ridx = UOp(Ops.RANGE, dtypes.int, (ten,), (0, AxisType.LOOP))
-    idx_ld = a.index(ridx, ptr=True)
+    idx_ld = a.index(ridx)
     ld = UOp(Ops.LOAD, dtypes.float32, (idx_ld,))
-    idx_st = a.index(ridx, ptr=True)
+    idx_st = a.index(ridx)
     store = UOp(Ops.STORE, dtypes.void, (idx_st, ld))
     end = UOp(Ops.END, dtypes.void, (ridx,))
     return [sink, a, ten, ridx, idx_ld, ld, idx_st, store, end]
@@ -128,33 +129,32 @@ def build_loop():
 def build_gated_load():
     """Gated load with alt value."""
     sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
-    a = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
-    b = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(1))
+    a = UOp.param(0, dtypes.float32, shape=(-1,))
+    b = UOp.param(1, dtypes.float32, shape=(-1,))
     idx = UOp.const(dtypes.int, 0)
     gate = UOp.const(dtypes.bool, True)
     alt = UOp.const(dtypes.float32, 0.0)
-    idx_a = a.index(idx, ptr=True)
+    idx_a = a.index(idx)
     ld = UOp(Ops.LOAD, dtypes.float32, (idx_a, alt, gate))
-    idx_b = b.index(idx, ptr=True)
+    idx_b = b.index(idx)
     store = UOp(Ops.STORE, dtypes.void, (idx_b, ld))
     return [sink, a, b, idx, gate, alt, idx_a, ld, idx_b, store]
 
 
 def build_shared_memory():
     """Shared memory + barrier."""
-    local_ptr = dtypes.float32.ptr(size=256, addrspace=AddrSpace.LOCAL)
     sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
-    a = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
+    a = UOp.param(0, dtypes.float32, shape=(-1,))
     temp = UOp.placeholder((256,), dtypes.float32, 0, AddrSpace.LOCAL)
     idx = UOp.const(dtypes.int, 0)
     zero = UOp.const(dtypes.float32, 0.0)
-    idx_local = temp.index(idx, ptr=True)
+    idx_local = temp.index(idx)
     store_local = UOp(Ops.STORE, dtypes.void, (idx_local, zero))
     barrier = UOp(Ops.BARRIER, dtypes.void, (store_local,))
-    after = UOp(Ops.AFTER, local_ptr, (temp, barrier))
-    idx_local2 = after.index(idx, ptr=True)
+    after = temp.after(barrier)
+    idx_local2 = after.index(idx)
     ld = UOp(Ops.LOAD, dtypes.float32, (idx_local2,))
-    idx_global = a.index(idx, ptr=True)
+    idx_global = a.index(idx)
     store_global = UOp(Ops.STORE, dtypes.void, (idx_global, ld))
     return [sink, a, temp, idx, zero, idx_local, store_local, barrier, after, idx_local2, ld, idx_global, store_global]
 
@@ -162,17 +162,17 @@ def build_shared_memory():
 def build_where_select():
     """Ternary where."""
     sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
-    a = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
-    b = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(1))
-    c = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(2))
+    a = UOp.param(0, dtypes.float32, shape=(-1,))
+    b = UOp.param(1, dtypes.float32, shape=(-1,))
+    c = UOp.param(2, dtypes.float32, shape=(-1,))
     idx = UOp.const(dtypes.int, 0)
-    idx_a = a.index(idx, ptr=True)
+    idx_a = a.index(idx)
     ld_a = UOp(Ops.LOAD, dtypes.float32, (idx_a,))
-    idx_b = b.index(idx, ptr=True)
+    idx_b = b.index(idx)
     ld_b = UOp(Ops.LOAD, dtypes.float32, (idx_b,))
     cond = UOp.const(dtypes.bool, True)
     where = cond.where(ld_a, ld_b)
-    idx_c = c.index(idx, ptr=True)
+    idx_c = c.index(idx)
     store = UOp(Ops.STORE, dtypes.void, (idx_c, where))
     return [sink, a, b, c, idx, idx_a, ld_a, idx_b, ld_b, cond, where, idx_c, store]
 
@@ -180,13 +180,13 @@ def build_where_select():
 def build_cast_f16_to_f32():
     """Float16 to Float32 cast."""
     sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
-    a = UOp(Ops.PARAM, dtypes.half.ptr(), (), ParamArg(0))
-    b = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(1))
+    a = UOp.param(0, dtypes.half, shape=(-1,))
+    b = UOp.param(1, dtypes.float32, shape=(-1,))
     idx = UOp.const(dtypes.int, 0)
-    idx_a = a.index(idx, ptr=True)
+    idx_a = a.index(idx)
     ld = UOp(Ops.LOAD, dtypes.half, (idx_a,))
-    cast = UOp(Ops.CAST, dtypes.float32, (ld,))
-    idx_b = b.index(idx, ptr=True)
+    cast = ld.cast(dtypes.float32)
+    idx_b = b.index(idx)
     store = UOp(Ops.STORE, dtypes.void, (idx_b, cast))
     return [sink, a, b, idx, idx_a, ld, cast, idx_b, store]
 
@@ -194,15 +194,15 @@ def build_cast_f16_to_f32():
 def build_nested_loops():
     """Two nested loops."""
     sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
-    a = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
+    a = UOp.param(0, dtypes.float32, shape=(-1,))
     ten = UOp.const(dtypes.int, 10)
     five = UOp.const(dtypes.int, 5)
     ridx0 = UOp(Ops.RANGE, dtypes.int, (ten,), (0, AxisType.LOOP))
     ridx1 = UOp(Ops.RANGE, dtypes.int, (five,), (1, AxisType.LOOP))
     combined = ridx0 + ridx1
-    idx_ld = a.index(combined, ptr=True)
+    idx_ld = a.index(combined)
     ld = UOp(Ops.LOAD, dtypes.float32, (idx_ld,))
-    idx_st = a.index(combined, ptr=True)
+    idx_st = a.index(combined)
     store = UOp(Ops.STORE, dtypes.void, (idx_st, ld))
     end1 = UOp(Ops.END, dtypes.void, (ridx1,))
     end0 = UOp(Ops.END, dtypes.void, (ridx0,))
@@ -212,17 +212,17 @@ def build_nested_loops():
 def build_multi_param():
     """4 params, add two and store."""
     sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
-    a = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
-    b = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(1))
-    c = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(2))
-    d = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(3))
+    a = UOp.param(0, dtypes.float32, shape=(-1,))
+    b = UOp.param(1, dtypes.float32, shape=(-1,))
+    c = UOp.param(2, dtypes.float32, shape=(-1,))
+    d = UOp.param(3, dtypes.float32, shape=(-1,))
     idx = UOp.const(dtypes.int, 0)
-    idx_a = a.index(idx, ptr=True)
+    idx_a = a.index(idx)
     ld_a = UOp(Ops.LOAD, dtypes.float32, (idx_a,))
-    idx_b = b.index(idx, ptr=True)
+    idx_b = b.index(idx)
     ld_b = UOp(Ops.LOAD, dtypes.float32, (idx_b,))
     add = ld_a + ld_b
-    idx_d = d.index(idx, ptr=True)
+    idx_d = d.index(idx)
     store = UOp(Ops.STORE, dtypes.void, (idx_d, add))
     return [sink, a, b, c, d, idx, idx_a, ld_a, idx_b, ld_b, add, idx_d, store]
 
@@ -230,13 +230,13 @@ def build_multi_param():
 def build_unary_sqrt_f32():
     """Sqrt on float32."""
     sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
-    a = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
-    b = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(1))
+    a = UOp.param(0, dtypes.float32, shape=(-1,))
+    b = UOp.param(1, dtypes.float32, shape=(-1,))
     idx = UOp.const(dtypes.int, 0)
-    idx_a = a.index(idx, ptr=True)
+    idx_a = a.index(idx)
     ld = UOp(Ops.LOAD, dtypes.float32, (idx_a,))
     sq = UOp(Ops.SQRT, dtypes.float32, (ld,))
-    idx_b = b.index(idx, ptr=True)
+    idx_b = b.index(idx)
     store = UOp(Ops.STORE, dtypes.void, (idx_b, sq))
     return [sink, a, b, idx, idx_a, ld, sq, idx_b, store]
 
@@ -244,13 +244,13 @@ def build_unary_sqrt_f32():
 def build_unary_sqrt_f16():
     """Sqrt on float16 — exercises half-precision intrinsic paths."""
     sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
-    a = UOp(Ops.PARAM, dtypes.half.ptr(), (), ParamArg(0))
-    b = UOp(Ops.PARAM, dtypes.half.ptr(), (), ParamArg(1))
+    a = UOp.param(0, dtypes.half, shape=(-1,))
+    b = UOp.param(1, dtypes.half, shape=(-1,))
     idx = UOp.const(dtypes.int, 0)
-    idx_a = a.index(idx, ptr=True)
+    idx_a = a.index(idx)
     ld = UOp(Ops.LOAD, dtypes.half, (idx_a,))
     sq = UOp(Ops.SQRT, dtypes.half, (ld,))
-    idx_b = b.index(idx, ptr=True)
+    idx_b = b.index(idx)
     store = UOp(Ops.STORE, dtypes.void, (idx_b, sq))
     return [sink, a, b, idx, idx_a, ld, sq, idx_b, store]
 
@@ -258,14 +258,14 @@ def build_unary_sqrt_f16():
 def build_special_dims():
     """GPU special dimensions (group_id, local_id)."""
     sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
-    a = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
+    a = UOp.param(0, dtypes.float32, shape=(-1,))
     bound = UOp.const(dtypes.int, 32)
     gid = UOp(Ops.SPECIAL, dtypes.int, (bound,), "gidx0")
     lid = UOp(Ops.SPECIAL, dtypes.int, (bound,), "lidx0")
     combined = gid + lid
-    idx_a = a.index(combined, ptr=True)
+    idx_a = a.index(combined)
     ld = UOp(Ops.LOAD, dtypes.float32, (idx_a,))
-    idx_st = a.index(combined, ptr=True)
+    idx_st = a.index(combined)
     store = UOp(Ops.STORE, dtypes.void, (idx_st, ld))
     return [sink, a, bound, gid, lid, combined, idx_a, ld, idx_st, store]
 
@@ -273,13 +273,13 @@ def build_special_dims():
 def build_bitcast_f32_to_i32():
     """Bitcast float32 to int32."""
     sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
-    a = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
-    b = UOp(Ops.PARAM, dtypes.int32.ptr(), (), ParamArg(1))
+    a = UOp.param(0, dtypes.float32, shape=(-1,))
+    b = UOp.param(1, dtypes.int32, shape=(-1,))
     idx = UOp.const(dtypes.int, 0)
-    idx_a = a.index(idx, ptr=True)
+    idx_a = a.index(idx)
     ld = UOp(Ops.LOAD, dtypes.float32, (idx_a,))
-    bc = UOp(Ops.BITCAST, dtypes.int32, (ld,))
-    idx_b = b.index(idx, ptr=True)
+    bc = ld.bitcast(dtypes.int32)
+    idx_b = b.index(idx)
     store = UOp(Ops.STORE, dtypes.void, (idx_b, bc))
     return [sink, a, b, idx, idx_a, ld, bc, idx_b, store]
 
@@ -287,11 +287,11 @@ def build_bitcast_f32_to_i32():
 def build_conditional():
     """If/Endif control flow."""
     sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
-    a = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
+    a = UOp.param(0, dtypes.float32, shape=(-1,))
     idx = UOp.const(dtypes.int, 0)
     cond = UOp.const(dtypes.bool, True)
     if_op = UOp(Ops.IF, dtypes.void, (cond,))
-    idx_a = a.index(idx, ptr=True)
+    idx_a = a.index(idx)
     one = UOp.const(dtypes.float32, 1.0)
     store = UOp(Ops.STORE, dtypes.void, (idx_a, one))
     endif = UOp(Ops.ENDIF, dtypes.void, (if_op,))
@@ -302,14 +302,14 @@ def build_const_inf_nan():
     """Special float constants: infinity and NaN."""
     import math
     sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
-    a = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
+    a = UOp.param(0, dtypes.float32, shape=(-1,))
     idx0 = UOp.const(dtypes.int, 0)
     idx1 = UOp.const(dtypes.int, 1)
     inf_val = UOp.const(dtypes.float32, math.inf)
     nan_val = UOp.const(dtypes.float32, math.nan)
-    idx_a0 = a.index(idx0, ptr=True)
+    idx_a0 = a.index(idx0)
     store0 = UOp(Ops.STORE, dtypes.void, (idx_a0, inf_val))
-    idx_a1 = a.index(idx1, ptr=True)
+    idx_a1 = a.index(idx1)
     store1 = UOp(Ops.STORE, dtypes.void, (idx_a1, nan_val))
     return [sink, a, idx0, idx1, inf_val, nan_val, idx_a0, store0, idx_a1, store1]
 
@@ -317,23 +317,23 @@ def build_const_inf_nan():
 def build_vectorize_index():
     """Vectorize 4 floats, then index element 2."""
     sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
-    a = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
-    b = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(1))
+    a = UOp.param(0, dtypes.float32, shape=(-1,))
+    b = UOp.param(1, dtypes.float32, shape=(-1,))
     idx0 = UOp.const(dtypes.int, 0)
     idx1 = UOp.const(dtypes.int, 1)
     idx2 = UOp.const(dtypes.int, 2)
     idx3 = UOp.const(dtypes.int, 3)
-    ia0 = a.index(idx0, ptr=True)
-    ia1 = a.index(idx1, ptr=True)
-    ia2 = a.index(idx2, ptr=True)
-    ia3 = a.index(idx3, ptr=True)
+    ia0 = a.index(idx0)
+    ia1 = a.index(idx1)
+    ia2 = a.index(idx2)
+    ia3 = a.index(idx3)
     v0 = UOp(Ops.LOAD, dtypes.float32, (ia0,))
     v1 = UOp(Ops.LOAD, dtypes.float32, (ia1,))
     v2 = UOp(Ops.LOAD, dtypes.float32, (ia2,))
     v3 = UOp(Ops.LOAD, dtypes.float32, (ia3,))
-    vec = UOp.vectorize(v0, v1, v2, v3)
+    vec = UOp.stack(v0, v1, v2, v3)
     lane = vec.index(idx2).simplify()
-    idx_b = b.index(idx0, ptr=True)
+    idx_b = b.index(idx0)
     store = UOp(Ops.STORE, dtypes.void, (idx_b, lane))
     return [sink, a, b, idx0, idx1, idx2, idx3,
             ia0, ia1, ia2, ia3, v0, v1, v2, v3,
@@ -343,21 +343,21 @@ def build_vectorize_index():
 def build_vectorize_index_scalarized():
     """Scalarized equivalent for backends that cannot render STACK lane extract."""
     sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
-    a = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
-    b = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(1))
+    a = UOp.param(0, dtypes.float32, shape=(-1,))
+    b = UOp.param(1, dtypes.float32, shape=(-1,))
     idx0 = UOp.const(dtypes.int, 0)
     idx1 = UOp.const(dtypes.int, 1)
     idx2 = UOp.const(dtypes.int, 2)
     idx3 = UOp.const(dtypes.int, 3)
-    ia0 = a.index(idx0, ptr=True)
-    ia1 = a.index(idx1, ptr=True)
-    ia2 = a.index(idx2, ptr=True)
-    ia3 = a.index(idx3, ptr=True)
+    ia0 = a.index(idx0)
+    ia1 = a.index(idx1)
+    ia2 = a.index(idx2)
+    ia3 = a.index(idx3)
     v0 = UOp(Ops.LOAD, dtypes.float32, (ia0,))
     v1 = UOp(Ops.LOAD, dtypes.float32, (ia1,))
     v2 = UOp(Ops.LOAD, dtypes.float32, (ia2,))
     v3 = UOp(Ops.LOAD, dtypes.float32, (ia3,))
-    idx_b = b.index(idx0, ptr=True)
+    idx_b = b.index(idx0)
     store = UOp(Ops.STORE, dtypes.void, (idx_b, v2))
     return [sink, a, b, idx0, idx1, idx2, idx3,
             ia0, ia1, ia2, ia3, v0, v1, v2, v3, idx_b, store]

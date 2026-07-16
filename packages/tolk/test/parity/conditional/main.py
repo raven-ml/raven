@@ -7,17 +7,17 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from helpers import dump_stage7_program  # noqa: E402
 
-from tinygrad.uop.ops import UOp, Ops, KernelInfo, ParamArg  # noqa: E402
+from tinygrad.uop.ops import UOp, Ops, KernelInfo  # noqa: E402
 from tinygrad.dtype import dtypes  # noqa: E402
 
 
 def kernel():
     sink = UOp(Ops.SINK, dtypes.void, (), arg=KernelInfo())
-    a = UOp(Ops.PARAM, dtypes.float32.ptr(), (), ParamArg(0))
+    a = UOp.param(0, dtypes.float32, shape=(-1,))
     idx = UOp.const(dtypes.int, 0)
     cond = UOp.const(dtypes.bool, True)
     if_op = UOp(Ops.IF, dtypes.void, (cond,))
-    idx_a = a.index(idx, ptr=True)
+    idx_a = a.index(idx)
     one = UOp.const(dtypes.float32, 1.0)
     store = UOp(Ops.STORE, dtypes.void, (idx_a, one))
     endif = UOp(Ops.ENDIF, dtypes.void, (if_op,))

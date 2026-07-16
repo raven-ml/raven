@@ -76,7 +76,7 @@ __kernel void r_2_2_2_2_2n3(__global float* data0_8, __global float* data1_16, _
   float alu14 = ((val1.x*val2.x)-(val1.y*val2.y));
   float alu15 = ((val1.z*val2.z)-(val1.w*val2.w));
   float alu16 = ((val1.z*val2.w)+(val1.w*val2.z));
-  *((__global float4*)((data0_8+alu0))) = (float4)((((alu14*alu4)+(alu15*alu6)+(alu13*alu2)+(alu16*alu8))*0.5f),((((alu14*alu10)+(alu15*alu11)+(alu13*alu9)+(alu16*alu12))*0.5f)+((float)(-INFINITY))),(((alu3*alu4)+(alu5*alu6)+(alu1*alu2)+(alu7*alu8))*0.5f),(((alu3*alu10)+(alu5*alu11)+(alu1*alu9)+(alu7*alu12))*0.5f));
+  *((__global float4*)((data0_8+alu0))) = (float4)((((alu14*alu4)+(alu13*alu2)+(alu15*alu6)+(alu16*alu8))*0.5f),((((alu14*alu10)+(alu13*alu9)+(alu15*alu11)+(alu16*alu12))*0.5f)+((float)(-INFINITY))),(((alu3*alu4)+(alu1*alu2)+(alu5*alu6)+(alu7*alu8))*0.5f),(((alu3*alu10)+(alu1*alu9)+(alu5*alu11)+(alu7*alu12))*0.5f));
 }
 ---
 __kernel void r_4_2n6(__global float* data0_4, __global float* data1_8) {

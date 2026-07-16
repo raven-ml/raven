@@ -21,7 +21,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from helpers import ALL_BACKENDS, dump_tensor, wrap_sink  # noqa: E402
 
-from tinygrad.uop.ops import UOp, Ops, shape_to_shape_arg  # noqa: E402
+from tinygrad.uop.ops import UOp, Ops  # noqa: E402
 from tinygrad.dtype import dtypes  # noqa: E402
 
 BACKENDS = {k: v for k, v in ALL_BACKENDS.items() if k in ("cpu", "cuda")}
@@ -32,10 +32,9 @@ def build():
     a = UOp.param(0, dtypes.float32, shape=(4, 8), device=DEVICES, axis=0)
     b = UOp.param(1, dtypes.float32, shape=(8, 8), device=DEVICES)
     h = a.alu(Ops.ADD, b)
-    red = UOp(Ops.REDUCE, dtypes.float32, (h,), (Ops.MAX, (1,)))
+    red = h._rop(Ops.MAX, (1,))
     keep = red.reshape((8, 1))
-    exp = UOp(Ops.EXPAND, dtypes.float32,
-              (keep, shape_to_shape_arg((8, 8))))
+    exp = keep.expand((8, 8))
     return wrap_sink(h.alu(Ops.SUB, exp))
 
 

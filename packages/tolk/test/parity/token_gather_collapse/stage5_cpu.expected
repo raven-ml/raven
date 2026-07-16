@@ -1,5 +1,5 @@
    0 Ops.CONST           :            dtypes.int                               []                               289536
-   1 Ops.PARAM           :            dtypes.float                             ['289536']                       ParamArg(0)
+   1 Ops.PARAM           :            dtypes.float                             ['289536']                       ParamArg(0, dtypes.float)
    2 Ops.CONST           :            dtypes.int                               []                               768
    3 Ops.CONST           :            dtypes.int                               []                               13
    4 Ops.RANGE           : 1          dtypes.int                               ['13']                           (1, AxisType.LOOP)
@@ -13,8 +13,8 @@
   12 Ops.ADD             : 1,2,3      dtypes.int                               [9, 11]                          None
   13 Ops.INDEX           : 1,2,3      dtypes.float                             [1, 12]                          None
   14 Ops.CONST           :            dtypes.int                               []                               38597376
-  15 Ops.PARAM           :            dtypes.float                             ['38597376']                     ParamArg(2)
-  16 Ops.PARAM           :            dtypes.int                               ['13']                           ParamArg(1)
+  15 Ops.PARAM           :            dtypes.float                             ['38597376']                     ParamArg(2, dtypes.float)
+  16 Ops.PARAM           :            dtypes.int                               ['13']                           ParamArg(1, dtypes.int)
   17 Ops.INDEX           : 1          dtypes.int                               [16, 4]                          None
   18 Ops.LOAD            : 1          dtypes.int                               [17]                             None
   19 Ops.MUL             : 1          dtypes.int                               [18, '768']                      None

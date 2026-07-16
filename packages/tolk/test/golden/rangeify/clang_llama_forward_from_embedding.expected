@@ -88,7 +88,7 @@ void r_2_2_2_2_2(float* restrict data0_8, float* restrict data1_16, float* restr
     float alu14 = ((val5[0]*val0[0])-(val5[1]*val0[1]));
     float alu15 = ((val5[2]*val0[2])-(val5[3]*val0[3]));
     float alu16 = ((val5[2]*val0[3])+(val5[3]*val0[2]));
-    *((float4*)((data0_8+alu8))) = (float4){(((alu14*alu4)+(alu15*alu5)+(alu13*alu0)+(alu16*alu1))*0.5f),((((alu14*alu6)+(alu15*alu7)+(alu13*alu2)+(alu16*alu3))*0.5f)+((float)(-__builtin_inff()))),(((alu10*alu4)+(alu11*alu5)+(alu9*alu0)+(alu12*alu1))*0.5f),(((alu10*alu6)+(alu11*alu7)+(alu9*alu2)+(alu12*alu3))*0.5f)};
+    *((float4*)((data0_8+alu8))) = (float4){(((alu14*alu4)+(alu13*alu0)+(alu15*alu5)+(alu16*alu1))*0.5f),((((alu14*alu6)+(alu13*alu2)+(alu15*alu7)+(alu16*alu3))*0.5f)+((float)(-__builtin_inff()))),(((alu10*alu4)+(alu9*alu0)+(alu11*alu5)+(alu12*alu1))*0.5f),(((alu10*alu6)+(alu9*alu2)+(alu11*alu7)+(alu12*alu3))*0.5f)};
   }
 }
 ---

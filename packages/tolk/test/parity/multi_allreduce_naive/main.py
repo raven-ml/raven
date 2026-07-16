@@ -31,7 +31,7 @@ DEVICES = ("CPU:0", "CPU:1")
 
 def build():
     a = UOp.param(0, dtypes.float32, shape=(8, 16), device=DEVICES, axis=0)
-    red = UOp(Ops.REDUCE, dtypes.float32, (a,), (Ops.ADD, (0,)))
+    red = a._rop(Ops.ADD, (0,))
     return wrap_sink(red)
 
 

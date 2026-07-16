@@ -24,7 +24,7 @@ def build():
     a = mk_param(0, 128)
     v = UOp.variable("start_pos", 1, 127)
     shrunk = a.shrink(((0, v + 1),))
-    red = UOp(Ops.REDUCE, dtypes.float32, (shrunk,), (Ops.ADD, (0,)))
+    red = shrunk._rop(Ops.ADD, (0,))
     return wrap_sink(red)
 
 
