@@ -18,26 +18,28 @@ let beam () = Helpers.getenv "BEAM" 0
 let beam_estimate () = Helpers.getenv "BEAM_ESTIMATE" 1
 let noopt () = Helpers.getenv "NOOPT" 0
 
-(* Allocate raw buffers for beam search from the kernel's Param nodes. *)
+let prod = List.fold_left ( * ) 1
+
+(* Allocate raw buffers for beam search from the kernel's global buffer Param
+   nodes. Address space distinguishes buffer params from symbolic ALU params;
+   the element dtype is the node dtype and the element count is the shape
+   product. *)
 let buffer_params ast =
   U.backward_slice ast
   |> List.filter_map (fun u ->
-       match U.as_param u, U.dtype u with
-       | Some { param; _ }, Dtype.Ptr pty when param.slot >= 0 ->
-           Some (param.slot, pty)
+       match U.as_param u with
+       | Some { param; _ }
+         when param.slot >= 0 && param.addrspace = Dtype.Global ->
+           Some (param.slot, U.dtype u, prod (U.max_shape u))
        | _ -> None)
-  |> List.sort (fun (a, _) (b, _) -> Int.compare a b)
+  |> List.sort (fun (a, _, _) (b, _, _) -> Int.compare a b)
 
 let make_beam_search device beam_width =
   Option.map
     (fun dev k ->
       let rawbufs =
         List.map
-          (fun (_, pty) ->
-            Device.create_buffer
-              ~size:(Dtype.Ptr.size pty)
-              ~dtype:(Dtype.Val (Dtype.Ptr.base pty))
-              dev)
+          (fun (_, dtype, size) -> Device.create_buffer ~size ~dtype dev)
           (buffer_params (Postrange.ast k))
       in
       Search.beam_search
