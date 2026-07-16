@@ -2662,52 +2662,13 @@ val fold_item : ('a -> 'b -> 'a) -> 'a -> ('b, 'c) t -> 'a
 (** [fold_item f init t] folds [f] over the scalar elements of [t] in row-major
     order, starting with [init]. *)
 
-val map : (('a, 'b) t -> ('a, 'b) t) -> ('a, 'b) t -> ('a, 'b) t
-(** [map f t] applies tensor function [f] to each element of [t], presented as a
-    scalar tensor.
-
-    See also {!map_item}. *)
-
-val iter : (('a, 'b) t -> unit) -> ('a, 'b) t -> unit
-(** [iter f t] applies tensor function [f] to each element of [t], presented as
-    a scalar tensor.
-
-    See also {!iter_item}. *)
-
-val fold : ('a -> ('b, 'c) t -> 'a) -> 'a -> ('b, 'c) t -> 'a
-(** [fold f init t] folds tensor function [f] over the elements of [t], each
-    presented as a scalar tensor.
-
-    See also {!fold_item}. *)
-
 (** {1:pp Formatting} *)
 
 val pp_data : Format.formatter -> ('a, 'b) t -> unit
 (** [pp_data fmt t] formats the data of [t]. *)
 
-val format_to_string : (Format.formatter -> 'a -> unit) -> 'a -> string
-(** [format_to_string pp x] is the string produced by [pp]. *)
-
-val print_with_formatter : (Format.formatter -> 'a -> unit) -> 'a -> unit
-(** [print_with_formatter pp x] prints [x] to stdout using [pp]. *)
-
 val data_to_string : ('a, 'b) t -> string
 (** [data_to_string t] is the data of [t] as a string. *)
-
-val print_data : ('a, 'b) t -> unit
-(** [print_data t] prints the data of [t] to stdout. *)
-
-val pp_dtype : Format.formatter -> ('a, 'b) dtype -> unit
-(** [pp_dtype fmt dt] formats [dt]. *)
-
-val dtype_to_string : ('a, 'b) dtype -> string
-(** [dtype_to_string dt] is [dt] as a string. *)
-
-val shape_to_string : int array -> string
-(** [shape_to_string s] formats [s] as ["[2x3x4]"]. *)
-
-val pp_shape : Format.formatter -> int array -> unit
-(** [pp_shape fmt s] formats shape [s]. *)
 
 val pp : Format.formatter -> ('a, 'b) t -> unit
 (** [pp fmt t] formats [t] for debugging (dtype, shape, and data). *)

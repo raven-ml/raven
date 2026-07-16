@@ -310,6 +310,13 @@ thread.
 
 ### Nx
 
+- Remove the per-element tensor-form `map`, `iter`, and `fold` (each scalar
+  presented as a scalar tensor); use the faster `map_item`, `iter_item`, and
+  `fold_item`, which pass raw scalars.
+- Remove the formatting helpers `format_to_string`, `print_with_formatter`,
+  `print_data`, `pp_dtype`, `dtype_to_string`, `shape_to_string`, and
+  `pp_shape`. `pp`, `pp_data`, `print`, `to_string`, and `data_to_string`
+  remain.
 - Remove the numpy stack shorthands `vstack`, `hstack`, and `dstack`, along
   with the `Nx.Infix` concatenation operators `( @= )` and `( @|| )`. Use
   `concatenate`/`stack` directly, reshaping 1-D inputs as needed.

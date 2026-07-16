@@ -876,7 +876,7 @@ let display_formatting_tests =
           (String.contains str '1'));
     test "print_data" (fun () ->
         let a = Nx.ones Nx.float32 [| 2; 2 |] in
-        Nx.print_data a);
+        Format.printf "%a@." Nx.pp_data a);
     test "pp" (fun () ->
         let a = Nx.ones Nx.float32 [| 2; 2 |] in
         let str = Format.asprintf "%a" Nx.pp a in
@@ -894,39 +894,39 @@ let higher_order_tests =
   [
     test "map" (fun () ->
         let a = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
-        let b = Nx.map (fun x -> Nx.mul_s x 2.0) a in
+        let b = Nx.map_item (fun v -> v *. 2.0) a in
         check_t "map double" [| 2; 3 |] [| 2.; 4.; 6.; 8.; 10.; 12. |] b);
     test "map preserves shape" (fun () ->
         let a =
           Nx.create Nx.float32 [| 3; 2; 2 |]
             [| 1.; 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9.; 10.; 11.; 12. |]
         in
-        let b = Nx.map (fun x -> Nx.add_s x 1.0) a in
+        let b = Nx.map_item (fun v -> v +. 1.0) a in
         check_t "map values" [| 3; 2; 2 |]
           [| 2.; 3.; 4.; 5.; 6.; 7.; 8.; 9.; 10.; 11.; 12.; 13. |]
           b);
     test "iter" (fun () ->
         let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
         let sum = ref (Nx.scalar Nx.float32 0.0) in
-        Nx.iter (fun x -> sum := Nx.add !sum x) a;
+        Nx.iter_item (fun v -> sum := Nx.add_s !sum v) a;
         equal ~msg:"iter sum" (float 0.01) 10.0 (Nx.item [] !sum));
     test "fold" (fun () ->
         let a = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
         let sum =
-          Nx.fold (fun acc x -> Nx.add acc x) (Nx.scalar Nx.float32 0.0) a
+          Nx.fold_item (fun acc v -> Nx.add_s acc v) (Nx.scalar Nx.float32 0.0) a
         in
         equal ~msg:"fold sum" (float 0.01) 21.0 (Nx.item [] sum));
     test "fold product" (fun () ->
         let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
         let prod =
-          Nx.fold (fun acc x -> Nx.mul acc x) (Nx.scalar Nx.float32 1.0) a
+          Nx.fold_item (fun acc v -> Nx.mul_s acc v) (Nx.scalar Nx.float32 1.0) a
         in
         equal ~msg:"fold product" (float 0.01) 24.0 (Nx.item [] prod));
     test "fold max" (fun () ->
         let a = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 5.; 3.; 2.; 6.; 4. |] in
         let max_val =
-          Nx.fold
-            (fun acc x -> Nx.maximum acc x)
+          Nx.fold_item
+            (fun acc v -> Nx.maximum_s acc v)
             (Nx.scalar Nx.float32 neg_infinity)
             a
         in

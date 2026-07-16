@@ -4086,15 +4086,7 @@ module Make (B : Backend_intf.S) = struct
     Format.pp_print_flush Format.std_formatter ()
 
   let data_to_string x = format_to_string pp_data x
-  let print_data x = print_with_formatter pp_data x
   let pp_dtype fmt dtype = Format.fprintf fmt "%s" (Dtype.to_string dtype)
-  let dtype_to_string dtype = Dtype.to_string dtype
-
-  let shape_to_string shape =
-    Printf.sprintf "[%s]"
-      (Array.map string_of_int shape |> Array.to_list |> String.concat "x")
-
-  let pp_shape fmt shape = Format.fprintf fmt "%s" (shape_to_string shape)
 
   let pp fmt x =
     let open Format in
@@ -4142,33 +4134,6 @@ module Make (B : Backend_intf.S) = struct
     let acc = ref init in
     for i = 0 to sz - 1 do
       acc := f !acc (Nx_buffer.unsafe_get src i)
-    done;
-    !acc
-
-  let map f x =
-    let dt = dtype x in
-    let sh = shape x in
-    let result = empty (B.context x) dt sh in
-    let total = size x in
-    for i = 0 to total - 1 do
-      let idx = Shape.unravel_index i sh |> Array.to_list in
-      set idx result (f (get idx x))
-    done;
-    result
-
-  let iter f x =
-    let sh = shape x in
-    let total = size x in
-    for i = 0 to total - 1 do
-      f (get (Shape.unravel_index i sh |> Array.to_list) x)
-    done
-
-  let fold f init x =
-    let sh = shape x in
-    let total = size x in
-    let acc = ref init in
-    for i = 0 to total - 1 do
-      acc := f !acc (get (Shape.unravel_index i sh |> Array.to_list) x)
     done;
     !acc
 

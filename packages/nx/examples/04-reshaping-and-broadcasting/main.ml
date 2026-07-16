@@ -6,6 +6,10 @@
 open Nx
 open Nx.Infix
 
+let shape_to_string s =
+  Printf.sprintf "[%s]"
+    (String.concat "x" (List.map string_of_int (Array.to_list s)))
+
 let () =
   (* --- Reshape: flat signal → frames --- *)
   let signal = arange_f float64 0.0 12.0 1.0 in

@@ -11,6 +11,10 @@
    of the map and gradients are taken with respect to them. *)
 type params = { w : Nx.float32_t; b : Nx.float32_t }
 
+let shape_to_string s =
+  Printf.sprintf "[%s]"
+    (String.concat "x" (List.map string_of_int (Array.to_list s)))
+
 module Params = struct
   type t = params
 
@@ -70,9 +74,9 @@ let () =
       batch
   in
   Printf.printf "per-sample dw: %s\n"
-    (Nx.shape_to_string (Nx.shape per_sample.w));
+    (shape_to_string (Nx.shape per_sample.w));
   Printf.printf "per-sample db: %s\n\n"
-    (Nx.shape_to_string (Nx.shape per_sample.b));
+    (shape_to_string (Nx.shape per_sample.b));
 
   (* The same thing, one example at a time. *)
   let row i t = Nx.slice [ Nx.I i ] t in

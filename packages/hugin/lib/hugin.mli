@@ -13,7 +13,7 @@
 
     {[
     let x = Nx.linspace Float32 0. 6.28 100 in
-    let y = Nx.map (fun v -> Float.sin v) x in
+    let y = Nx.map_item (fun v -> Float.sin v) x in
     Hugin.line ~x ~y () |> Hugin.title "Sine wave"
     |> Hugin.render_png "sine.png"
     ]} *)
