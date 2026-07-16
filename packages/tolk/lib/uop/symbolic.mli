@@ -27,7 +27,9 @@ val symbolic_simple : Upat.Pattern_matcher.t
     ALU collapsing, cast and bitcast folding over constants, [pow] of
     small integer exponents, [bool]-typed arithmetic rewriting into
     logical connectives, and propagation of {!Const.Invalid} through
-    unary and binary ALU ops. *)
+    unary and binary ALU ops and through [where] conditions (an invalid
+    condition poisons the [where]; a gated-invalid condition lifts its
+    gate out). *)
 
 val pm_fold_lane_stack : Upat.Pattern_matcher.t
 (** [pm_fold_lane_stack] folds a [Stack] of per-lane [Index] extracts of a
@@ -73,18 +75,19 @@ val pm_drop_and_clauses : Upat.Pattern_matcher.t
     on ranges used by the gated index. *)
 
 val pm_remove_invalid : Upat.Pattern_matcher.t
-(** [pm_remove_invalid] replaces non-index {!Const.Invalid} constants with
-    zero after load insertion. Weak-index invalid sentinels are preserved so
-    masked indexes still carry their gate. *)
+(** [pm_remove_invalid] replaces every {!Const.Invalid} constant with a zero of
+    its dtype. It runs in the final rewrite, after index dtypes are lowered and
+    masked loads and stores have been folded into gated forms, so any remaining
+    {!Const.Invalid} is a value that is never read. *)
 
 val pm_move_where_on_load : Upat.Pattern_matcher.t
 (** [pm_move_where_on_load] moves eligible [where] guards around value-typed
     indexes into the index validity predicate. *)
 
 val pm_lower_index_dtype : Upat.Pattern_matcher.t
-(** [pm_lower_index_dtype] lowers weak integer indexing expressions to
-    concrete integer math while preserving the weak integer interface with
-    outer casts. *)
+(** [pm_lower_index_dtype] lowers {!Dtype.index} indexing expressions to
+    concrete integer math ([int32] or [int64] by range), wrapping the result
+    back in an outer cast so the index-typed interface is preserved. *)
 
 val parse_valid : Uop.t -> (Uop.t * bool * int) option
 (** [parse_valid v] parses a validity clause. It returns
