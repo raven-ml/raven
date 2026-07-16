@@ -101,6 +101,11 @@ let const_debug_string c =
   | Const.Float f -> python_float_string f
   | Const.Invalid -> "Invalid"
 
+let const_repr_string c =
+  match Const.view c with
+  | Const.Float f -> Printf.sprintf "ConstFloat(%s)" (python_float_string f)
+  | _ -> const_debug_string c
+
 let device_repr_string = function
   | Single d -> python_quote d
   | Multi ds -> tuple_string (List.map python_quote ds)
@@ -114,16 +119,8 @@ let device_arg_string = function
 let int_pair_string (a, b) =
   tuple_string [ string_of_int a; string_of_int b ]
 
-let metadata_debug_string (m : metadata) =
-  dataclass_string "Metadata"
-    [
-      "name", python_quote m.name;
-      "caller", python_quote m.caller;
-      "backward", python_bool m.backward;
-    ]
-
 let param_arg_debug_string (p : param_arg) =
-  let fields = ref [ string_of_int p.slot ] in
+  let fields = ref [ string_of_int p.slot; dtype_debug_string p.dtype ] in
   let add name render = function
     | None -> ()
     | Some value -> fields := !fields @ [ name ^ "=" ^ render value ]
@@ -142,19 +139,19 @@ let reduce_arg_debug_string (r : reduce_arg) =
   tuple_string
     [ "Ops." ^ Ops.name r.op; tuple_string (List.map string_of_int r.axes) ]
 
-let estimate_debug_string = function
+let rec estimate_debug_string = function
   | Int n -> string_of_int n
-  | Sym u -> "%" ^ string_of_int (tag u)
+  | Sym u -> uop_repr_debug_string u
 
-let estimates_debug_string (e : estimates) =
+and estimates_debug_string (e : estimates) =
   Printf.sprintf "Estimates(ops=%s, lds=%s, mem=%s)"
     (estimate_debug_string e.ops)
     (estimate_debug_string e.lds)
     (estimate_debug_string e.mem)
 
-let opt_op_string name = "OptOps." ^ name
+and opt_op_string name = "OptOps." ^ name
 
-let opt_debug_string = function
+and opt_debug_string = function
   | Tc { axis; tc_select; tc_opt; use_tc } ->
       dataclass_string "Opt"
         [
@@ -224,7 +221,7 @@ let opt_debug_string = function
           "arg", string_of_int with_axis;
         ]
 
-let stage_opts_debug_string (o : stage_opts) =
+and stage_opts_debug_string (o : stage_opts) =
   dataclass_string "BufferizeOpts"
     [
       "device", option_string device_repr_string o.device;
@@ -232,7 +229,7 @@ let stage_opts_debug_string (o : stage_opts) =
       "removable", python_bool o.removable;
     ]
 
-let kernel_info_debug_string (k : kernel_info) =
+and kernel_info_debug_string (k : kernel_info) =
   dataclass_string "KernelInfo"
     [
       "name", python_quote k.name;
@@ -246,59 +243,89 @@ let kernel_info_debug_string (k : kernel_info) =
       "beam", string_of_int k.beam;
     ]
 
-let call_info_debug_string (c : call_info) =
-  Printf.sprintf "CallInfo(%s, %s, %s, %s, %s)"
+and call_info_debug_string (c : call_info) =
+  Printf.sprintf "CallInfo(%s, %s, %s, %s)"
     (if Option.is_some c.grad_fxn then "<function>" else "None")
-    (tuple_string (List.map metadata_debug_string c.metadata))
     (option_string python_quote c.name)
     (python_bool c.precompile)
     (python_bool c.precompile_backward)
 
-let launch_dim_debug_string = function
+and launch_dim_debug_string = function
   | Launch_int n -> string_of_int n
   | Launch_float f -> python_float_string f
-  | Launch_sym u -> "%" ^ string_of_int (tag u)
+  | Launch_sym u -> uop_repr_debug_string u
 
-let rec uop_repr_debug_string ?(indent = 0) u =
-  let arg =
-    match arg u with
-    | Arg.Empty -> "None"
-    | Arg.Int n -> string_of_int n
-    | Arg.Ints xs -> tuple_string (List.map string_of_int xs)
-    | Arg.Bools xs -> tuple_string (List.map python_bool xs)
-    | Arg.String s -> python_quote s
-    | Arg.Value c -> const_debug_string c
-    | Arg.Op op -> "Ops." ^ Ops.name op
-    | Arg.Range_info { axis; sub; kind } ->
-        tuple_string
-          (string_of_int axis
-          :: (List.map string_of_int sub @ [ axis_type_repr kind ]))
-    | Arg.Param_arg p -> param_arg_debug_string p
-    | Arg.Reduce_arg r -> reduce_arg_debug_string r
-    | Arg.Device d -> device_arg_string d
-    | Arg.Op_device (op, device) ->
-        tuple_string [ "Ops." ^ Ops.name op; device_repr_string device ]
-    | Arg.Stage_info opts -> stage_opts_debug_string opts
-    | Arg.Opts opts -> tuple_string (List.map opt_debug_string opts)
-    | Arg.Kernel_info info -> kernel_info_debug_string info
-    | Arg.Call_info info -> call_info_debug_string info
-    | Arg.Program_info _ -> "<program>"
-    | Arg.Wmma_info _ -> "<wmma>"
-    | Arg.Shaped_wmma_info _ -> "<shaped_wmma>"
+and uop_repr_debug_string root =
+  let cache = Ref_tbl.create 64 in
+  let rec dfs u =
+    Array.iter
+      (fun s ->
+        match Ref_tbl.find_opt cache s with
+        | None ->
+            Ref_tbl.replace cache s (Ref_tbl.length cache, ref 1, ref false);
+            dfs s
+        | Some (_, refs, _) -> incr refs)
+      (src u)
   in
-  let srcs =
-    Array.to_list (src u)
-    |> List.map (fun s ->
-      "\n" ^ String.make (indent + 2) ' '
-      ^ uop_repr_debug_string ~indent:(indent + 2) s ^ ",")
-    |> String.concat ""
+  dfs root;
+  let arg_field u =
+    match op u with
+    | Ops.Cast | Ops.Bitcast -> dtype_debug_string (dtype u)
+    | _ -> (
+        match arg u with
+        | Arg.Empty -> "None"
+        | Arg.Int n -> string_of_int n
+        | Arg.Ints xs -> tuple_string (List.map string_of_int xs)
+        | Arg.Bools xs -> tuple_string (List.map python_bool xs)
+        | Arg.String s -> python_quote s
+        | Arg.Value c -> const_repr_string c
+        | Arg.Op o -> "Ops." ^ Ops.name o
+        | Arg.Range_info { axis; sub; kind } ->
+            tuple_string
+              (string_of_int axis
+              :: (List.map string_of_int sub @ [ axis_type_repr kind ]))
+        | Arg.Param_arg p -> param_arg_debug_string p
+        | Arg.Reduce_arg r -> reduce_arg_debug_string r
+        | Arg.Device d -> device_arg_string d
+        | Arg.Op_device (o, device) ->
+            tuple_string [ "Ops." ^ Ops.name o; device_repr_string device ]
+        | Arg.Stage_info opts -> stage_opts_debug_string opts
+        | Arg.Opts opts -> tuple_string (List.map opt_debug_string opts)
+        | Arg.Kernel_info info -> kernel_info_debug_string info
+        | Arg.Call_info info -> call_info_debug_string info
+        | Arg.Program_info info -> program_info_debug_string info
+        | Arg.Wmma_info info -> wmma_info_debug_string info)
   in
-  Printf.sprintf "UOp(Ops.%s, %s, arg=%s, src=(%s))"
-    (Ops.name (op u))
-    (dtype_debug_string (dtype u))
-    arg srcs
+  let rec go u d =
+    let idx, refs, visited =
+      match Ref_tbl.find_opt cache u with
+      | Some entry -> entry
+      | None ->
+          let entry = (0, ref 0, ref false) in
+          Ref_tbl.replace cache u entry;
+          entry
+    in
+    if !visited then Printf.sprintf "%sx%d" (String.make d ' ') idx
+    else begin
+      visited := true;
+      let srcs =
+        Array.to_list (src u)
+        |> List.map (fun s -> "\n" ^ go s (d + 2) ^ ",")
+        |> String.concat ""
+      in
+      Printf.sprintf "%s%sUOp(Ops.%s, %s, arg=%s%s, src=(%s))"
+        (String.make d ' ')
+        (if !refs > 1 then Printf.sprintf "x%d:=" idx else "")
+        (Ops.name (op u))
+        (dtype_debug_string (dtype u))
+        (arg_field u)
+        (match node_tag u with Some t -> ", tag=" ^ t | None -> "")
+        srcs
+    end
+  in
+  go root 0
 
-let program_info_debug_string (p : program_info) =
+and program_info_debug_string (p : program_info) =
   dataclass_string "ProgramInfo"
     [
       "name", python_quote p.name;
@@ -315,7 +342,7 @@ let program_info_debug_string (p : program_info) =
       "aux", tuple_string (List.map python_quote p.aux);
     ]
 
-let wmma_info_debug_string (w : wmma_info) =
+and wmma_info_debug_string (w : wmma_info) =
   let pair (a, b) = tuple_string [ string_of_int a; string_of_int b ] in
   let pairs xs = tuple_string (List.map pair xs) in
   let a, b, c = w.upcast_axes in
@@ -324,21 +351,13 @@ let wmma_info_debug_string (w : wmma_info) =
       python_quote w.name;
       tuple_string
         (List.map string_of_int (let x, y, z = w.dims in [ x; y; z ]));
-      Dtype.Val.repr (Dtype.Val.of_scalar w.dtype_in);
-      Dtype.Val.repr (Dtype.Val.of_scalar w.dtype_out);
+      dtype_debug_string w.dtype_in;
+      dtype_debug_string w.dtype_out;
       python_quote w.device;
       string_of_int w.threads;
       tuple_string [ pairs a; pairs b; pairs c ];
       tuple_string (List.map string_of_int w.reduce_axes);
     ]
-
-let shaped_wmma_info_debug_string (w : shaped_wmma_info) =
-  Printf.sprintf "ShapeWMMAInfo(%s, %s, threads=%d)"
-    (tuple_string
-       (List.map string_of_int
-          (let x, y, z = w.dims in [ x; y; z ])))
-    (python_quote w.device)
-    w.threads
 
 let arg_debug_string = function
   | Arg.Empty -> "None"
@@ -363,7 +382,6 @@ let arg_debug_string = function
   | Arg.Call_info info -> call_info_debug_string info
   | Arg.Program_info info -> program_info_debug_string info
   | Arg.Wmma_info info -> wmma_info_debug_string info
-  | Arg.Shaped_wmma_info info -> shaped_wmma_info_debug_string info
 
 let range_debug_key r =
   match as_range r with
@@ -398,6 +416,7 @@ let source_debug_string index s =
 
 let uop_arg_debug_string u =
   match op u, arg u with
+  | (Ops.Cast | Ops.Bitcast), _ -> dtype_debug_string (dtype u)
   | _, Arg.String s -> s
   | _ -> arg_debug_string (arg u)
 
@@ -509,6 +528,11 @@ let expr_to_string ?(simplify = true) u =
     | Ops.Where -> Printf.sprintf "(%s if %s else %s)" (s1 u) (s0 u) (s2 u)
     | Ops.Cdiv -> Printf.sprintf "cdiv(%s, %s)" (s0 u) (s1 u)
     | Ops.Cmod -> Printf.sprintf "cmod(%s, %s)" (s0 u) (s1 u)
+    | (Ops.Reshape | Ops.Expand | Ops.Permute | Ops.Pad | Ops.Shrink | Ops.Flip)
+      as mop ->
+        Printf.sprintf "%s.%s(%s)" (s0 u)
+          (String.lowercase_ascii (Ops.name mop))
+          (render_marg u)
     | o when Option.is_some (binary_sym o) ->
         let sym = Option.get (binary_sym o) in
         let left = s0 u and right = s1 u in
@@ -533,6 +557,24 @@ let expr_to_string ?(simplify = true) u =
         let srcs = src u |> Array.to_list |> List.map go in
         "{" ^ String.concat "," srcs ^ "}"
     | _ -> uop_repr_debug_string u
+  and render_marg u =
+    let wrap = function
+      | [] -> "()"
+      | [ p ] -> "(" ^ p ^ ",)"
+      | ps -> "(" ^ String.concat "," ps ^ ")"
+    in
+    match marg u with
+    | Marg_permute perm -> tuple_string (List.map string_of_int perm)
+    | Marg_flip flags ->
+        tuple_string
+          (List.concat
+             (List.mapi (fun i f -> if f then [ string_of_int i ] else []) flags))
+    | Marg_shape shapes -> wrap (List.map go shapes)
+    | Marg_bounds bounds ->
+        wrap
+          (List.map
+             (fun (lo, hi) -> Printf.sprintf "(%s, %s)" (go lo) (go hi))
+             bounds)
   in
   go u
 
