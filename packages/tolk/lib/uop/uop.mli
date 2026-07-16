@@ -1097,6 +1097,14 @@ val toposort : ?gate:(t -> bool) -> ?enter_calls:bool -> t -> t list
     {!Ops.Function} bodies (i.e. [src.(0)]) are not entered, but their
     argument children are. *)
 
+val topovisit : (t -> 'a) -> (int, 'a) Hashtbl.t -> t -> 'a
+(** [topovisit visitor cache root] folds over the DAG rooted at [root] in
+    dependency order, leaves first, applying [visitor] to each node exactly
+    once and memoizing the result in [cache] (keyed by {!tag}). A subtree
+    whose root is already in [cache] is not re-descended, so successive calls
+    sharing one [cache] short-circuit shared work across roots. Returns the
+    result computed for [root]. *)
+
 val backward_slice : t -> t list
 (** [backward_slice root] is [toposort root] without [root] itself. *)
 

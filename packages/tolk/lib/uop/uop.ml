@@ -1177,6 +1177,23 @@ let toposort ?(gate = fun _ -> true) ?(enter_calls = true) root =
   done;
   List.rev !order
 
+let topovisit visitor cache root =
+  let stack = Stack.create () in
+  Stack.push (root, false) stack;
+  while not (Stack.is_empty stack) do
+    let node, visited = Stack.pop stack in
+    if Hashtbl.mem cache (tag node) then ()
+    else if not visited then begin
+      Stack.push (node, true) stack;
+      let srcs = src node in
+      for i = Array.length srcs - 1 downto 0 do
+        Stack.push (srcs.(i), false) stack
+      done
+    end
+    else Hashtbl.replace cache (tag node) (visitor node)
+  done;
+  Hashtbl.find cache (tag root)
+
 let backward_slice root =
   List.filter (fun u -> not (u == root)) (toposort root)
 
