@@ -481,11 +481,6 @@ module Program_cache = struct
   let add_const b c = add_atom b (Const.to_string c)
   let add_opt b opt = add_atom b (Uop.Opt.to_string opt)
 
-  let add_metadata b (md : Uop.metadata) =
-    add_atom b md.name;
-    add_atom b md.caller;
-    add_bool b md.backward
-
   let add_param_arg b (p : Uop.param_arg) =
     add_int b p.slot;
     add_option (add_pair add_int add_int) b p.vmin_vmax;
@@ -522,7 +517,6 @@ module Program_cache = struct
 
   let add_call_info b (info : Uop.call_info) =
     add_bool b (Option.is_some info.grad_fxn);
-    add_list add_metadata b info.metadata;
     add_option add_atom b info.name;
     add_bool b info.precompile;
     add_bool b info.precompile_backward;
@@ -552,8 +546,8 @@ module Program_cache = struct
   let add_wmma_info b (info : Uop.wmma_info) =
     add_atom b info.name;
     add_triple add_int add_int add_int b info.dims;
-    add_atom b (Dtype.scalar_to_string info.dtype_in);
-    add_atom b (Dtype.scalar_to_string info.dtype_out);
+    add_atom b (Dtype.to_string info.dtype_in);
+    add_atom b (Dtype.to_string info.dtype_out);
     add_atom b info.device;
     add_int b info.threads;
     add_triple
@@ -562,11 +556,6 @@ module Program_cache = struct
       (add_list (add_pair add_int add_int))
       b info.upcast_axes;
     add_list add_int b info.reduce_axes
-
-  let add_shaped_wmma_info b (info : Uop.shaped_wmma_info) =
-    add_triple add_int add_int add_int b info.dims;
-    add_atom b info.device;
-    add_int b info.threads
 
   let rec add_arg add_uop b = function
     | Uop.Arg.Empty -> add_atom b "empty"
@@ -596,10 +585,10 @@ module Program_cache = struct
     | Uop.Arg.Param_arg p ->
         add_atom b "param";
         add_param_arg b p
-    | Uop.Arg.Reduce_arg { op; axes } ->
+    | Uop.Arg.Reduce_arg { op; num_axes } ->
         add_atom b "reduce";
         add_op b op;
-        add_list add_int b axes
+        add_int b num_axes
     | Uop.Arg.Device device ->
         add_atom b "device";
         add_device b device
@@ -625,9 +614,6 @@ module Program_cache = struct
     | Uop.Arg.Wmma_info info ->
         add_atom b "wmma";
         add_wmma_info b info
-    | Uop.Arg.Shaped_wmma_info info ->
-        add_atom b "shaped_wmma";
-        add_shaped_wmma_info b info
 
   let uop_tree_key u =
     let rec key memo u =

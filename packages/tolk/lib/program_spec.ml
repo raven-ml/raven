@@ -33,22 +33,32 @@ let slot_of_define (u : U.t) =
   | Ops.Buffer, U.Arg.Param_arg param -> slot_of_param param
   | _ -> None
 
-(* Trace a pointer expression to its originating buffer slot. *)
-let rec trace_to_buffer_slot (u : U.t) : int option =
+(* Trace a pointer expression back to its originating buffer node. *)
+let rec trace_to_buffer_uop (u : U.t) : U.t option =
   match slot_of_define u with
-  | Some _ as slot -> slot
+  | Some _ -> Some u
   | None ->
       match U.op u with
   | Ops.Index ->
       (match U.as_index u with
-       | Some v -> trace_to_buffer_slot v.ptr
+       | Some v -> trace_to_buffer_uop v.ptr
        | None -> None)
   | Ops.Cast | Ops.Bitcast | Ops.After | Ops.Shrink ->
       (match U.src u with
-       | [| s |] -> trace_to_buffer_slot s
-       | srcs when Array.length srcs > 0 -> trace_to_buffer_slot srcs.(0)
+       | [| s |] -> trace_to_buffer_uop s
+       | srcs when Array.length srcs > 0 -> trace_to_buffer_uop srcs.(0)
        | _ -> None)
   | _ -> None
+
+let trace_to_buffer_slot (u : U.t) : int option =
+  Option.bind (trace_to_buffer_uop u) slot_of_define
+
+(* Lane count: the product of each shape dimension's upper bound, mirroring
+   tinygrad's [max_numel]. Shapeless nodes carry a single lane. *)
+let max_numel u =
+  match U.shape_opt u with
+  | Some dims -> List.fold_left (fun acc d -> acc * U.vmax d) 1 dims
+  | None -> 1
 
 module Estimates = struct
   type estimate = Int of int | Symbolic of U.t
@@ -98,6 +108,12 @@ module Estimates = struct
     | Int a, Symbolic b ->
         Symbolic (U.alu_binary ~op:Ops.Mul ~lhs:(U.const_int a) ~rhs:b)
 
+  (* Concrete lower of two estimates. Symbolic operands are left uncapped:
+     the [Int | Symbolic] model has no symbolic minimum, so the accumulated
+     (over-)estimate stands rather than fabricating a bound. *)
+  let min_estimate a b =
+    match (a, b) with Int a, Int b -> Int (min a b) | _ -> a
+
   let estimate_of_size u =
     match U.const_int_value u with
     | Some n -> Int n
@@ -137,17 +153,11 @@ module Estimates = struct
          | None -> ())
     | _ -> ()
 
-  let is_reg_access ptr =
-    match U.dtype ptr with
-    | Dtype.Ptr p -> Dtype.Ptr.addrspace p = Reg
-    | Dtype.Val _ -> false
+  let is_reg_access ptr = U.addrspace ptr = Some Dtype.Reg
 
-  let value_itemsize u = Dtype.itemsize (U.dtype u)
-
-  let access_itemsize u =
-    match U.dtype u with
-    | Dtype.Ptr p -> Dtype.Val.itemsize (Dtype.Ptr.base p)
-    | Dtype.Val v -> Dtype.Val.itemsize v
+  (* Bytes touched by a single access to [u]: one lane per shape element,
+     each the width of the scalar element type. *)
+  let access_bytes u = max_numel u * Dtype.itemsize (U.dtype u)
 
   let of_program (program : program) =
     let ignored = U.Tbl.create 64 in
@@ -155,35 +165,45 @@ module Estimates = struct
     let ops = ref (Int 0) in
     let lds = ref (Int 0) in
     let mem = Hashtbl.create 16 in
+    let caps = Hashtbl.create 16 in
     let mults = ref (Int 1) in
     let mult_stack = Stack.create () in
     let add_ops n = ops := add_estimate !ops (mul_estimate !mults (Int n)) in
     let add_lds n = lds := add_estimate !lds (mul_estimate !mults (Int n)) in
-    let add_mem param_idx op bytes =
-      let key = (param_idx, op) in
-      let prev = match Hashtbl.find_opt mem key with
-        | Some v -> v
-        | None -> Int 0
-      in
-      Hashtbl.replace mem key (add_estimate prev (mul_estimate !mults (Int bytes)))
+    let add_mem buf op bytes =
+      match slot_of_define buf with
+      | None -> ()
+      | Some slot ->
+          let key = (slot, op) in
+          let prev =
+            match Hashtbl.find_opt mem key with Some v -> v | None -> Int 0
+          in
+          Hashtbl.replace mem key
+            (add_estimate prev (mul_estimate !mults (Int bytes)));
+          (* Re-reads of a buffer count each byte at most once, so accumulated
+             traffic is capped at the buffer's own footprint. *)
+          if not (Hashtbl.mem caps slot) then
+            Hashtbl.replace caps slot
+              (Int (max_numel buf * Dtype.itemsize (U.dtype buf)))
     in
     List.iter (fun u ->
       begin match U.op u with
       | Ops.Load ->
           (match U.as_load u with
            | Some lv ->
-               if not (is_reg_access lv.src) then add_lds (value_itemsize u);
+               if not (is_reg_access lv.src) then add_lds (access_bytes u);
                Option.iter
-                 (fun idx -> add_mem idx Ops.Load (access_itemsize lv.src))
-                 (trace_to_buffer_slot lv.src)
+                 (fun buf -> add_mem buf Ops.Load (access_bytes lv.src))
+                 (trace_to_buffer_uop lv.src)
            | None -> ())
       | Ops.Store ->
           (match U.as_store u with
            | Some sv ->
-               if not (is_reg_access sv.dst) then add_lds (value_itemsize sv.value);
+               if not (is_reg_access sv.dst) then
+                 add_lds (max_numel u * Dtype.itemsize (U.dtype sv.value));
                Option.iter
-                 (fun idx -> add_mem idx Ops.Store (access_itemsize sv.dst))
-                 (trace_to_buffer_slot sv.dst)
+                 (fun buf -> add_mem buf Ops.Store (access_bytes sv.dst))
+                 (trace_to_buffer_uop sv.dst)
            | None -> ())
       | _ -> ()
       end;
@@ -214,15 +234,27 @@ module Estimates = struct
                mults := mul_estimate !mults (Int (Stdlib.( + ) hi 1))
            | _ -> ())
       | Ops.Mulacc when not (U.Tbl.mem ignored u) ->
-          add_ops (2 * Dtype.count (U.dtype u))
+          add_ops (2 * max_numel u)
       | op when Ops.Group.is_alu op && not (U.Tbl.mem ignored u) ->
-          add_ops (Dtype.count (U.dtype u))
+          add_ops (max_numel u)
       | Ops.Wmma when not (U.Tbl.mem ignored u) ->
-          add_ops 2
+          (match U.as_wmma u with
+           | Some { info; _ } ->
+               let m, n, k = info.dims in
+               add_ops (2 * m * n * k / info.threads)
+           | None -> add_ops 2)
       | _ -> ())
       program;
     let mem =
-      Hashtbl.fold (fun _ v acc -> add_estimate acc v) mem (Int 0)
+      Hashtbl.fold
+        (fun (slot, _op) accessed acc ->
+          let capped =
+            match Hashtbl.find_opt caps slot with
+            | Some cap -> min_estimate accessed cap
+            | None -> accessed
+          in
+          add_estimate acc capped)
+        mem (Int 0)
     in
     { ops = !ops; lds = !lds; mem }
 end
@@ -259,12 +291,10 @@ let collect_vars (program : program) =
   List.iter (fun u ->
     match U.op u, U.arg u with
     | ( Ops.Param,
-        U.Arg.Param_arg { name = Some name; vmin_vmax = Some (lo, hi); _ } )
-      ->
-        (match U.dtype u with
-         | Dtype.Val _ as dtype ->
-             raw := { node = u; var = { name; lo; hi; dtype } } :: !raw
-         | Dtype.Ptr _ -> ())
+        U.Arg.Param_arg
+          { name = Some name; vmin_vmax = Some (lo, hi); addrspace = Dtype.Alu;
+            _ } ) ->
+        raw := { node = u; var = { name; lo; hi; dtype = U.dtype u } } :: !raw
     | _ -> ())
     program;
   let sorted =

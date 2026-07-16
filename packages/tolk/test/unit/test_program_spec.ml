@@ -10,25 +10,17 @@ open Tolk_uop
 module U = Uop
 module E = Program_spec.Estimates
 
-let global_ptr dt = Dtype.Ptr.create dt ~addrspace:Global ~size:(-1)
-let shape dims =
-  let dims = List.map (fun n -> U.const (Const.int Dtype.Val.weakint n)) dims in
-  U.stack ~dtype:Dtype.Val.weakint dims
-
 let param slot dt =
-  U.param ~slot ~dtype:(Dtype.Ptr (global_ptr dt)) ~shape:(shape [ 1 ])
-    ~addrspace:Global ()
+  U.param ~slot ~dtype:dt ~shape:(U.const_int 1) ~addrspace:Dtype.Global ()
 
 let buffer slot dt =
-  U.replace (param slot dt) ~op:Ops.Buffer ()
+  U.buffer ~slot ~dtype:dt ~shape:(U.const_int 1) ~addrspace:Dtype.Global ()
 
-let i32 n = U.const (Const.int Dtype.Val.int32 n)
-let f32 x = U.const (Const.float Dtype.Val.float32 x)
+let i32 n = U.const (Const.int Dtype.int32 n)
+let f32 x = U.const (Const.float Dtype.float32 x)
 let define_var name lo hi =
-  U.replace
-    (U.variable ~name ~min_val:lo ~max_val:hi ~dtype:Dtype.Val.int32 ())
-    ~src:[| shape [] |] ()
-let index ptr idx = U.index ~ptr ~idxs:[idx] ~as_ptr:true ()
+  U.variable ~name ~min_val:lo ~max_val:hi ~dtype:Dtype.int32 ()
+let index ptr idx = U.index ~ptr ~idxs:[ idx ] ()
 let load src = U.load ~src ()
 let store dst value = U.store ~dst ~value ()
 let add lhs rhs = U.alu_binary ~op:Ops.Add ~lhs ~rhs
@@ -39,9 +31,7 @@ let neg src = U.alu_unary ~op:Ops.Neg ~src
 let mulacc a b c = U.alu_ternary ~op:Ops.Mulacc ~a ~b ~c
 let range size = U.range ~size ~axis:0 ~kind:Axis_type.Loop ()
 let special dim size =
-  U.special ~name:(Gpu_dim.to_special_name dim) ~size
-    ~dtype:(Dtype.val_of (U.dtype size))
-    ()
+  U.special ~name:(Gpu_dim.to_special_name dim) ~size ~dtype:(U.dtype size) ()
 
 let spec_of ?estimates ?aux program =
   Program_spec.of_program ~name:"kern" ~src:"" ~device:"CPU" ?estimates ?aux
@@ -59,8 +49,8 @@ let () =
       group "Extraction"
         [
           test "reads and writes are deduplicated" (fun () ->
-            let p0 = param 0 Dtype.Val.float32 in
-            let p1 = param 1 Dtype.Val.float32 in
+            let p0 = param 0 Dtype.float32 in
+            let p1 = param 1 Dtype.float32 in
             let c0 = i32 0 in
             let idx1 = index p0 c0 in
             let idx2 = index p1 c0 in
@@ -73,7 +63,7 @@ let () =
             equal (list int) [ 0 ] (Program_spec.outs spec);
             equal (list int) [ 1 ] (Program_spec.ins spec));
           test "buffer tracing passes through cast and after" (fun () ->
-            let p0 = param 0 Dtype.Val.float32 in
+            let p0 = param 0 Dtype.float32 in
             let c0 = i32 0 in
             let idx = index p0 c0 in
             let dep = U.barrier () in
@@ -83,8 +73,8 @@ let () =
             let spec = spec_of [ p0; c0; idx; dep; sequenced; casted; ld ] in
             equal (list int) [ 0 ] (Program_spec.ins spec));
           test "buffer args are treated as globals" (fun () ->
-            let b0 = buffer 0 Dtype.Val.float32 in
-            let b1 = buffer 1 Dtype.Val.float32 in
+            let b0 = buffer 0 Dtype.float32 in
+            let b1 = buffer 1 Dtype.float32 in
             let c0 = i32 0 in
             let out_idx = index b0 c0 in
             let in_idx = index b1 c0 in
@@ -169,8 +159,8 @@ let () =
                 end);
           test "program_info mirrors extracted metadata" (fun () ->
             let m = define_var "m" 1 32 in
-            let p0 = param 0 Dtype.Val.float32 in
-            let p1 = param 1 Dtype.Val.float32 in
+            let p0 = param 0 Dtype.float32 in
+            let p1 = param 1 Dtype.float32 in
             let c0 = i32 0 in
             let groups = mul m (i32 4) in
             let gid = special (Gpu_dim.Group_id 0) groups in
@@ -264,7 +254,7 @@ let () =
             let est = E.of_program [ c8; idx; a; body ] in
             expect_int_estimate "ops" 8 est.ops);
           test "load/store tracks lds and memory bytes" (fun () ->
-            let p0 = param 0 Dtype.Val.float32 in
+            let p0 = param 0 Dtype.float32 in
             let c0 = i32 0 in
             let idx = index p0 c0 in
             let ld = load idx in
@@ -273,7 +263,7 @@ let () =
             expect_int_estimate "lds" 8 est.lds;
             expect_int_estimate "mem" 8 est.mem);
           test "index arithmetic excluded from FLOPs" (fun () ->
-            let p0 = param 0 Dtype.Val.float32 in
+            let p0 = param 0 Dtype.float32 in
             let c0 = i32 0 in
             let c1 = i32 1 in
             let idx_expr = add c0 c1 in
@@ -281,5 +271,18 @@ let () =
             let ld = load idx in
             let est = E.of_program [ p0; c0; c1; idx_expr; idx; ld ] in
             expect_int_estimate "ops" 0 est.ops);
+          test "repeated reads cap memory at buffer size" (fun () ->
+            let p0 = param 0 Dtype.float32 in
+            let c0 = i32 0 in
+            let c10 = i32 10 in
+            let r = range c10 in
+            let idx = index p0 c0 in
+            let ld = load idx in
+            let end_ = U.end_ ~value:ld ~ranges:[ r ] in
+            let est = E.of_program [ p0; c0; c10; r; idx; ld; end_ ] in
+            (* The loop reads the 4-byte buffer ten times: lds counts every
+               access, but mem counts the buffer footprint only once. *)
+            expect_int_estimate "lds" 40 est.lds;
+            expect_int_estimate "mem" 4 est.mem);
         ];
     ]
