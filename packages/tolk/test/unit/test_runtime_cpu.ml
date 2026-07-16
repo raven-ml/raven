@@ -147,6 +147,14 @@ let imported_program_runs () =
       run_spec device spec [ dst; src ];
       equal (list int) [ 41 ] (read_i32_buffer dst))
 
+(* Coverage gaps accepted as not unit-testable at this level:
+   - the bfloat16 compiler probe (Compiler_cpu.supports_bf16) is gated on the
+     host clang version;
+   - the AArch64 CALL26/JUMP26 trampoline only fires for branch targets beyond
+     +/-128 MiB, unreachable with kernel-sized images;
+   - the no-core_id/global>1 dispatch guard (threads forced to 1) is not
+     observable through the compile path, which emits global>1 only alongside a
+     core_id variable. *)
 let main () =
   run "Cpu_runtime"
     [
@@ -184,6 +192,35 @@ let main () =
             let dst = create_i32_buffer device [ 0; 0; 0; 0 ] in
             run_spec device spec [ dst ];
             equal (list int) [ 0; 1; 2; 3 ] (read_i32_buffer dst));
+          test "external_ptr wraps caller memory zero-copy" (fun () ->
+            let device = cpu "external-ptr" in
+            (* Caller-owned backing storage: a normal buffer's memory, whose
+               address stands in for memory tolk does not own (e.g. an nx
+               buffer wrapped zero-copy by rune's jit). *)
+            let backing = create_i32_buffer device [ 41 ] in
+            let ptr = Device.Buffer.addr backing in
+            let spec =
+              { Device.Buffer_spec.default with external_ptr = Some ptr }
+            in
+            let external_ =
+              Device.create_buffer ~size:1 ~dtype:Dtype.int32 ~spec device
+            in
+            Device.Buffer.ensure_allocated external_;
+            (* alloc hands [ptr] back verbatim: no copy, no fresh allocation. *)
+            is_true ~msg:"external buffer aliases caller memory"
+              (Nativeint.equal ptr (Device.Buffer.addr external_));
+            (* An in-place kernel over the external buffer mutates the caller's
+               memory directly, visible through the backing buffer. *)
+            let prog =
+              Device.compile_program device ~name:"cpu_external_add_one"
+                (increment_program ())
+            in
+            run_spec device prog [ external_; external_ ];
+            equal (list int) [ 42 ] (read_i32_buffer backing);
+            (* Freeing the external buffer must neither free nor cache the caller
+               memory (LRU skip): the backing buffer stays valid afterwards. *)
+            Device.Buffer.deallocate external_;
+            equal (list int) [ 42 ] (read_i32_buffer backing));
           test "buffer views copy at byte offsets" (fun () ->
             let device = cpu "views-copy" in
             let base = create_i32_buffer device [ 1; 2; 3; 4 ] in
