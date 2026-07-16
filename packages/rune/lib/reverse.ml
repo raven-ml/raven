@@ -165,7 +165,7 @@ let handler (tape : Tape.t) =
           Some
             (fun k ->
               let out = max a b in
-              let mask g = T.cast (T.dtype g) (T.cmpgt a b) in
+              let mask g = T.cast (T.dtype g) (T.greater a b) in
               pull2 k out a b
                 (fun g -> T.mul g (mask g))
                 (fun g -> T.mul g (T.sub (T.ones_like (mask g)) (mask g))))
@@ -173,7 +173,7 @@ let handler (tape : Tape.t) =
           Some
             (fun k ->
               let out = min a b in
-              let mask g = T.cast (T.dtype g) (T.cmplt a b) in
+              let mask g = T.cast (T.dtype g) (T.less a b) in
               pull2 k out a b
                 (fun g -> T.mul g (mask g))
                 (fun g -> T.mul g (T.sub (T.ones_like (mask g)) (mask g))))
@@ -527,8 +527,8 @@ let handler (tape : Tape.t) =
                       in
                       let active =
                         match op with
-                        | `Max -> T.cmpgt out shifted
-                        | _ -> T.cmplt out shifted
+                        | `Max -> T.greater out shifted
+                        | _ -> T.less out shifted
                       in
                       T.mul g (T.cast dt active)))
       (* Gather / scatter *)

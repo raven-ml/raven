@@ -366,11 +366,11 @@ let test_half_compare_where (type b) name (dt : (float, b) Nx.dtype) () =
   check_data
     (name ^ " cmpgt")
     [| true; false; false; false |]
-    (Nx.cmpgt a b);
+    (Nx.greater a b);
   check_data (name ^ " equal") [| false; false; true; false |] (Nx.equal a b);
   check_data ~eps:0.0 (name ^ " where")
     [| 1.0; -1.0; 3.0; 2.0 |]
-    (Nx.where (Nx.cmpgt a b) a b);
+    (Nx.where (Nx.greater a b) a b);
   check_data ~eps:0.0
     (name ^ " maximum")
     [| 1.0; -1.0; 3.0; 2.0 |]

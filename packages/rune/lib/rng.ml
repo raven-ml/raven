@@ -110,4 +110,4 @@ let randint k ?(high = 10) shape low =
 let bernoulli k ~p shape =
   if p < 0.0 || p > 1.0 then
     invalid_arg "Rune.Rng.bernoulli: p must be in [0, 1]";
-  Nx.cmplt (uniform k Nx.float32 shape) (Nx.scalar Nx.float32 p)
+  Nx.less (uniform k Nx.float32 shape) (Nx.scalar Nx.float32 p)

@@ -310,6 +310,9 @@ thread.
 
 ### Nx
 
+- Remove the duplicate `cmp*` comparison family (`cmplt`, `cmpne`, `cmpeq`,
+  `cmpgt`, `cmple`, `cmpge`). Use the named spellings `less`, `not_equal`,
+  `equal`, `greater`, `less_equal`, `greater_equal` instead.
 - Declare the licenses of the vendored components in `nx.opam`: the package
   now advertises `ISC AND LGPL-2.1-or-later WITH OCaml-LGPL-linking-exception
   AND BSD-3-Clause AND (MIT OR Unlicense)` covering camlzip, pocketfft, and

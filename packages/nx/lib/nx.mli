@@ -1577,56 +1577,38 @@ val isfinite : ('a, 'b) t -> (bool, bool_elt) t
 
 (** {1:comparison Comparison and logic} *)
 
-val cmplt : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [cmplt a b] is [true] where [a < b], [false] elsewhere. *)
-
 val less : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [less a b] is {!cmplt}. *)
+(** [less a b] is [true] where [a < b], [false] elsewhere. *)
 
 val less_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
 (** [less_s t s] is [true] where [t < s]. *)
 
-val cmpne : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [cmpne a b] is [true] where [a ≠ b], [false] elsewhere. *)
-
 val not_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [not_equal a b] is {!cmpne}. *)
+(** [not_equal a b] is [true] where [a ≠ b], [false] elsewhere. *)
 
 val not_equal_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
 (** [not_equal_s t s] is [true] where [t ≠ s]. *)
 
-val cmpeq : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [cmpeq a b] is [true] where [a = b], [false] elsewhere. *)
-
 val equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [equal a b] is {!cmpeq}. *)
+(** [equal a b] is [true] where [a = b], [false] elsewhere. *)
 
 val equal_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
 (** [equal_s t s] is [true] where [t = s]. *)
 
-val cmpgt : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [cmpgt a b] is [true] where [a > b], [false] elsewhere. *)
-
 val greater : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [greater a b] is {!cmpgt}. *)
+(** [greater a b] is [true] where [a > b], [false] elsewhere. *)
 
 val greater_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
 (** [greater_s t s] is [true] where [t > s]. *)
 
-val cmple : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [cmple a b] is [true] where [a ≤ b], [false] elsewhere. *)
-
 val less_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [less_equal a b] is {!cmple}. *)
+(** [less_equal a b] is [true] where [a ≤ b], [false] elsewhere. *)
 
 val less_equal_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
 (** [less_equal_s t s] is [true] where [t ≤ s]. *)
 
-val cmpge : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [cmpge a b] is [true] where [a ≥ b], [false] elsewhere. *)
-
 val greater_equal : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-(** [greater_equal a b] is {!cmpge}. *)
+(** [greater_equal a b] is [true] where [a ≥ b], [false] elsewhere. *)
 
 val greater_equal_s : ('a, 'b) t -> 'a -> (bool, bool_elt) t
 (** [greater_equal_s t s] is [true] where [t ≥ s]. *)
@@ -1683,7 +1665,7 @@ val where : (bool, bool_elt) t -> ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
           create float32 [| 4 |] [| -1.; 2.; -3.; 4. |]
         in
         where
-          (cmpgt x (scalar float32 0.))
+          (greater x (scalar float32 0.))
           x (scalar float32 0.)
       - : (float, float32_elt) t = [0, 2, 0, 4]
     ]} *)
@@ -1779,22 +1761,22 @@ module Infix : sig
   (** {2:infix_cmp Comparisons} *)
 
   val ( < ) : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-  (** [a < b] is {!cmplt} [a b]. *)
+  (** [a < b] is {!less} [a b]. *)
 
   val ( <> ) : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-  (** [a <> b] is {!cmpne} [a b]. *)
+  (** [a <> b] is {!not_equal} [a b]. *)
 
   val ( = ) : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-  (** [a = b] is {!cmpeq} [a b]. *)
+  (** [a = b] is {!equal} [a b]. *)
 
   val ( > ) : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-  (** [a > b] is {!cmpgt} [a b]. *)
+  (** [a > b] is {!greater} [a b]. *)
 
   val ( <= ) : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-  (** [a <= b] is {!cmple} [a b]. *)
+  (** [a <= b] is {!less_equal} [a b]. *)
 
   val ( >= ) : ('a, 'b) t -> ('a, 'b) t -> (bool, bool_elt) t
-  (** [a >= b] is {!cmpge} [a b]. *)
+  (** [a >= b] is {!greater_equal} [a b]. *)
 
   (** {2:infix_scalar_cmp Scalar comparisons} *)
 

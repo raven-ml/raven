@@ -127,7 +127,7 @@ let handler (tangents : Tensor_map.t) =
             (fun k ->
               let out = max a b in
               lift2 k out a b (fun da db ->
-                  let mask = T.cast (dtype out) (T.cmpgt a b) in
+                  let mask = T.cast (dtype out) (T.greater a b) in
                   T.add (T.mul da mask)
                     (T.mul db (T.sub (T.ones_like mask) mask))))
       | E_min { a; b } ->
@@ -135,7 +135,7 @@ let handler (tangents : Tensor_map.t) =
             (fun k ->
               let out = min a b in
               lift2 k out a b (fun da db ->
-                  let mask = T.cast (dtype out) (T.cmplt a b) in
+                  let mask = T.cast (dtype out) (T.less a b) in
                   T.add (T.mul da mask)
                     (T.mul db (T.sub (T.ones_like mask) mask))))
       | E_atan2 { a; b } ->
@@ -373,8 +373,8 @@ let handler (tangents : Tensor_map.t) =
                       in
                       let active_mask =
                         match op with
-                        | `Max -> T.cmpgt out shifted
-                        | _ -> T.cmplt out shifted
+                        | `Max -> T.greater out shifted
+                        | _ -> T.less out shifted
                       in
                       (* Positions where the extremum does not improve keep a
                          zero tangent rather than carrying the previous
