@@ -413,35 +413,8 @@ let const_nan_like u =
   if Dtype.is_float v then Some (Uop.const (Const.of_scalar v (`Float Float.nan)))
   else None
 
-let is_int_uop u = Dtype.is_int (Uop.dtype u)
-
-let range_kind_is_reduce r =
-  match Uop.as_range r with
-  | Some { kind; _ } ->
-      Axis_type.equal kind Axis_type.Reduce
-      || Axis_type.equal kind Axis_type.Group_reduce
-      || Axis_type.equal kind Axis_type.Unroll
-  | None -> false
-
-let depends_on_reduce_range u =
-  List.exists range_kind_is_reduce (Uop.ranges u)
-
-let depends_on_nonreduce_range u =
-  List.exists
-    (fun r -> not (range_kind_is_reduce r))
-    (Uop.ranges u)
-
-
 let rec gcd_int a b =
   if b = 0 then abs a else gcd_int b (a mod b)
-
-let floor_div x y =
-  if y = 0 then 0
-  else
-    let q = x / y and r = x mod y in
-    if r <> 0 && ((r < 0) <> (y < 0)) then q - 1 else q
-
-let floor_mod x y = x - (floor_div x y * y)
 
 let int_bounds (v : Dtype.t) =
   match Dtype.min v, Dtype.max v with
@@ -453,12 +426,6 @@ let overflows u (v : Dtype.t) =
   match int_bounds v with
   | Some (lo, hi) -> Uop.vmin u < lo || Uop.vmax u > hi
   | None -> true
-
-let rec contains_param_slot slot u =
-  (match Uop.as_param u with
-   | Some { param; _ } -> param.slot = slot
-   | None -> false)
-  || Array.exists (contains_param_slot slot) (Uop.src u)
 
 let const_as_int c =
   match Const.view c with
