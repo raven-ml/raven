@@ -181,10 +181,11 @@ static inline float half_to_float(uint16_t h) {
   return u.f;
 }
 
-/* FP8 E4M3 conversions (OCP MX spec: no infinity, 0x7F is NaN) */
+/* FP8 E4M3 conversions (OCP "fn" variant: no infinities, S.1111.111 is NaN,
+   exponent 15 is otherwise normal up to the max finite 448, subnormals scale
+   by 2^-6). Finite overflow and infinities saturate to the max finite. */
 static inline uint8_t float_to_fp8_e4m3(float f) {
-  if (isnan(f)) return 0x7F; /* NaN */
-  /* E4M3 has no infinity — clamp to max finite */
+  if (isnan(f)) return 0x7F;
   if (isinf(f)) return signbit(f) ? 0xFE : 0x7E;
 
   union {
@@ -193,67 +194,54 @@ static inline uint8_t float_to_fp8_e4m3(float f) {
   } u = {.f = f};
   uint32_t sign = (u.i >> 31) << 7;
   int exp = ((u.i >> 23) & 0xFF) - 127;
-  uint32_t mant = u.i & 0x7FFFFF;
 
-  if (exp > 7) return sign | 0x7E;  /* Clamp to max finite (448.0 or -448.0) */
-  if (exp < -8) return sign;        /* Underflow to +/-0 */
-
-  /* Normalize mantissa for rounding (add implicit 1) */
-  mant |= (1 << 23);
-
-  /* Shift to 3-bit mantissa position (23 - 3 = 20 bits shift) */
-  uint32_t mant_shifted = mant >> 20;
-  uint32_t round_bit = (mant >> 19) & 1;
-  uint32_t sticky_bits = mant & ((1 << 19) - 1);
-
-  /* Round to nearest, ties to even */
-  if (round_bit && (sticky_bits || (mant_shifted & 1))) {
-    mant_shifted += 1;
-    if (mant_shifted >= (1 << 4)) { /* Overflow from rounding */
-      mant_shifted >>= 1;
-      exp += 1;
-      if (exp > 7) return sign | 0x7E;
-    }
+  if (exp >= -6) { /* Normal range */
+    uint32_t sig = u.i & 0x7FFFFF;
+    /* Round the 23-bit significand to 3 bits, nearest, ties to even. */
+    uint32_t q = sig >> 20;
+    uint32_t rem = sig & 0xFFFFF;
+    if (rem > 0x80000 || (rem == 0x80000 && (q & 1))) q++;
+    /* A rounding carry propagates into the exponent field. */
+    uint32_t bits = ((uint32_t)(exp + 7) << 3) + q;
+    if (bits >= 0x7F) return sign | 0x7E; /* Saturate past 448 */
+    return sign | bits;
   }
 
-  uint8_t exp_bits = (exp + 7) & 0xF;  /* Bias 7 for E4M3 */
-  uint8_t mant_bits = mant_shifted & 0x7;
-
-  return sign | (exp_bits << 3) | mant_bits;
+  /* Subnormal or zero: denormalize to the 2^-6 scale, keeping all shifted-out
+     bits for the rounding decision. */
+  uint32_t sig = (u.i & 0x7FFFFF) | 0x800000; /* Implicit one */
+  int shift = 20 + (-6 - exp);
+  if (shift > 24) return sign; /* Below half the min subnormal 2^-9 */
+  uint32_t q = sig >> shift;
+  uint32_t rem = sig & ((1u << shift) - 1);
+  uint32_t half = 1u << (shift - 1);
+  if (rem > half || (rem == half && (q & 1))) q++;
+  /* q == 8 after rounding is the min normal; the bit pattern lines up. */
+  return sign | q;
 }
 
 static inline float fp8_e4m3_to_float(uint8_t fp8) {
-  uint32_t sign = (fp8 >> 7) ? 0x80000000 : 0;
+  bool negative = (fp8 & 0x80) != 0;
   uint32_t exp = (fp8 >> 3) & 0xF;
   uint32_t mant = fp8 & 0x7;
 
-  if (exp == 0xF) {
-    /* E4M3 has no infinity; exp=15 with mant!=0 is NaN, mant==0 is max finite */
-    if (mant != 0) return NAN;
-    exp = 0x86;      /* 7 + 127 */
-    mant = 0x700000;
-  } else if (exp == 0) {
-    if (mant == 0) return sign ? -0.0f : 0.0f;
-    /* No subnormals in E4M3; treat as min normal */
-    exp = 0x7F - 7;
-  } else {
-    exp = exp - 7 + 127;
-    exp <<= 23;
-    mant <<= 20;
-  }
+  /* No infinities: exponent 15 is normal except S.1111.111. */
+  if (exp == 0xF && mant == 0x7) return NAN;
 
-  union {
-    float f;
-    uint32_t i;
-  } u;
-  u.i = sign | exp | mant;
-  return u.f;
+  float v;
+  if (exp == 0) {
+    v = ldexpf((float)mant, -9); /* Subnormal: mant/8 * 2^-6 */
+  } else {
+    v = ldexpf(1.0f + (float)mant / 8.0f, (int)exp - 7);
+  }
+  return negative ? -v : v;
 }
 
-/* FP8 E5M2 conversions (IEEE-like: has infinity and subnormals) */
+/* FP8 E5M2 conversions (IEEE-like: has infinities and subnormals). Finite
+   overflow rounds to infinity. */
 static inline uint8_t float_to_fp8_e5m2(float f) {
-  if (isnan(f)) return 0x7F;                       /* NaN */
-  if (isinf(f)) return signbit(f) ? 0xFC : 0x7C;  /* +/-Inf */
+  if (isnan(f)) return 0x7F;
+  if (isinf(f)) return signbit(f) ? 0xFC : 0x7C;
 
   union {
     float f;
@@ -261,41 +249,30 @@ static inline uint8_t float_to_fp8_e5m2(float f) {
   } u = {.f = f};
   uint32_t sign = (u.i >> 31) << 7;
   int exp = ((u.i >> 23) & 0xFF) - 127;
-  uint32_t mant = u.i & 0x7FFFFF;
 
-  if (exp > 15) return sign | 0x7C;   /* Clamp to Inf */
-  if (exp < -25) return sign;         /* Underflow to 0 */
-
-  bool subnormal = (exp < -14);
-  if (subnormal) {
-    /* Denormalize */
-    mant |= (1 << 23); /* Implicit 1 */
-    int shift = -14 - exp;
-    mant >>= shift;
-    exp = 0;
-  } else {
-    mant |= (1 << 23);
+  if (exp >= -14) { /* Normal range */
+    uint32_t sig = u.i & 0x7FFFFF;
+    /* Round the 23-bit significand to 2 bits, nearest, ties to even. */
+    uint32_t q = sig >> 21;
+    uint32_t rem = sig & 0x1FFFFF;
+    if (rem > 0x100000 || (rem == 0x100000 && (q & 1))) q++;
+    /* A rounding carry propagates into the exponent field. */
+    uint32_t bits = ((uint32_t)(exp + 15) << 2) + q;
+    if (bits >= 0x7C) return sign | 0x7C; /* Overflow to Inf */
+    return sign | bits;
   }
 
-  /* Round to 2-bit mantissa (shift 21 bits) */
-  uint32_t mant_shifted = mant >> 21;
-  uint32_t round_bit = (mant >> 20) & 1;
-  uint32_t sticky_bits = mant & ((1 << 20) - 1);
-
-  /* Round nearest, ties even */
-  if (round_bit && (sticky_bits || (mant_shifted & 1))) {
-    mant_shifted += 1;
-    if (mant_shifted >= (1 << 3)) { /* Overflow */
-      mant_shifted = 0;
-      exp += 1;
-      if (exp >= 0x1F) return sign | 0x7C; /* To Inf */
-    }
-  }
-
-  uint8_t exp_bits = subnormal ? 0 : ((exp + 15) & 0x1F); /* Bias 15 */
-  uint8_t mant_bits = mant_shifted & 0x3;
-
-  return sign | (exp_bits << 2) | mant_bits;
+  /* Subnormal or zero: denormalize to the 2^-14 scale, keeping all
+     shifted-out bits for the rounding decision. */
+  uint32_t sig = (u.i & 0x7FFFFF) | 0x800000; /* Implicit one */
+  int shift = 21 + (-14 - exp);
+  if (shift > 24) return sign; /* Below half the min subnormal 2^-16 */
+  uint32_t q = sig >> shift;
+  uint32_t rem = sig & ((1u << shift) - 1);
+  uint32_t half = 1u << (shift - 1);
+  if (rem > half || (rem == half && (q & 1))) q++;
+  /* q == 4 after rounding is the min normal; the bit pattern lines up. */
+  return sign | q;
 }
 
 static inline float fp8_e5m2_to_float(uint8_t fp8) {

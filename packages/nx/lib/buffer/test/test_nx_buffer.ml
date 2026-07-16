@@ -147,6 +147,71 @@ let test_fill () =
   equal ~msg:"fill[0]" (float 1e-6) 7.0 (get buf 0);
   equal ~msg:"fill[3]" (float 1e-6) 7.0 (get buf 3)
 
+(* Conversion semantics: store a float through the packed representation and
+   read it back. These vectors pin round-to-nearest-even, saturation, NaN and
+   subnormal handling; the JavaScript stubs mirror the same algorithms. *)
+let store_get k v =
+  let buf = create k 1 in
+  set buf 0 v;
+  get buf 0
+
+let test_bfloat16_semantics () =
+  let rt = store_get bfloat16 in
+  equal ~msg:"bf16 1.0" (float 0.0) 1.0 (rt 1.0);
+  (* 1 + 2^-8 is halfway between 1 and 1 + 2^-7: ties to even, down. *)
+  equal ~msg:"bf16 tie to even down" (float 0.0) 1.0 (rt 1.00390625);
+  (* 1 + 2^-7 + 2^-8 is halfway with an odd mantissa: ties to even, up. *)
+  equal ~msg:"bf16 tie to even up" (float 0.0) 1.015625 (rt 1.01171875);
+  equal ~msg:"bf16 inf" (float 0.0) Float.infinity (rt Float.infinity);
+  (* Max finite float32 is beyond the max finite bfloat16: rounds to inf. *)
+  equal ~msg:"bf16 overflow" (float 0.0) Float.infinity (rt 3.4028234e38);
+  equal ~msg:"bf16 nan" bool true (Float.is_nan (rt Float.nan))
+
+let test_float8_e4m3_semantics () =
+  let rt = store_get float8_e4m3 in
+  equal ~msg:"e4m3 1.0" (float 0.0) 1.0 (rt 1.0);
+  (* Exponent 15 is a normal binade in e4m3fn: 256..448 are representable. *)
+  equal ~msg:"e4m3 256" (float 0.0) 256.0 (rt 256.0);
+  equal ~msg:"e4m3 max finite" (float 0.0) 448.0 (rt 448.0);
+  equal ~msg:"e4m3 300 rounds to 288" (float 0.0) 288.0 (rt 300.0);
+  (* No infinities: finite overflow and infinities saturate to 448. *)
+  equal ~msg:"e4m3 overflow saturates" (float 0.0) 448.0 (rt 512.0);
+  equal ~msg:"e4m3 inf saturates" (float 0.0) 448.0 (rt Float.infinity);
+  equal ~msg:"e4m3 -inf saturates" (float 0.0) (-448.0) (rt Float.neg_infinity);
+  (* Subnormals: min subnormal is 2^-9. *)
+  equal ~msg:"e4m3 min subnormal" (float 0.0) 0x1p-9 (rt 0x1p-9);
+  equal ~msg:"e4m3 subnormal rounds up" (float 0.0) 0x1p-9 (rt 0x1.8p-10);
+  (* Half the min subnormal ties to even: zero. *)
+  equal ~msg:"e4m3 underflow" (float 0.0) 0.0 (rt 0x1p-10);
+  equal ~msg:"e4m3 nan" bool true (Float.is_nan (rt Float.nan))
+
+let test_float8_e5m2_semantics () =
+  let rt = store_get float8_e5m2 in
+  equal ~msg:"e5m2 1.0" (float 0.0) 1.0 (rt 1.0);
+  equal ~msg:"e5m2 max finite" (float 0.0) 57344.0 (rt 57344.0);
+  equal ~msg:"e5m2 below tie stays finite" (float 0.0) 57344.0 (rt 61439.0);
+  (* 61440 is halfway between 57344 and 65536: ties to even, to inf. *)
+  equal ~msg:"e5m2 tie overflows to inf" (float 0.0) Float.infinity (rt 61440.0);
+  equal ~msg:"e5m2 inf" (float 0.0) Float.infinity (rt Float.infinity);
+  (* Subnormals: min subnormal is 2^-16. *)
+  equal ~msg:"e5m2 min subnormal" (float 0.0) 0x1p-16 (rt 0x1p-16);
+  (* 1.5 * 2^-16 is halfway between 2^-16 and 2^-15: ties to even, up. *)
+  equal ~msg:"e5m2 subnormal tie to even" (float 0.0) 0x1p-15 (rt 0x1.8p-16);
+  (* Half the min subnormal ties to even: zero. *)
+  equal ~msg:"e5m2 underflow" (float 0.0) 0.0 (rt 0x1p-17);
+  equal ~msg:"e5m2 nan" bool true (Float.is_nan (rt Float.nan))
+
+let test_int4_clamping () =
+  equal ~msg:"int4 clamps high" int 7 (store_get int4 9);
+  equal ~msg:"int4 clamps low" int (-8) (store_get int4 (-9));
+  equal ~msg:"uint4 clamps high" int 15 (store_get uint4 99);
+  equal ~msg:"uint4 clamps low" int 0 (store_get uint4 (-1))
+
+let test_uint64_roundtrip () =
+  equal ~msg:"uint64 all ones" int64 (-1L) (store_get uint64 (-1L));
+  equal ~msg:"uint64 max int64 + 1" int64 Int64.min_int
+    (store_get uint64 Int64.min_int)
+
 (* Int4 packs two elements per byte: the bytes blits move whole bytes, so
    element offsets must be even and map to byte offset [off / 2]. *)
 let test_int4_bytes_blit_roundtrip () =
@@ -263,6 +328,14 @@ let () =
         [
           test "kind round-trip" test_kind_roundtrip;
           test "kind sizes" test_kind_sizes;
+        ];
+      group "semantics"
+        [
+          test "bfloat16" test_bfloat16_semantics;
+          test "float8 e4m3" test_float8_e4m3_semantics;
+          test "float8 e5m2" test_float8_e5m2_semantics;
+          test "int4 clamping" test_int4_clamping;
+          test "uint64 roundtrip" test_uint64_roundtrip;
         ];
       group "operations"
         [

@@ -310,6 +310,18 @@ thread.
 
 ### Nx
 
+- Fix `float8_e4m3` conversions: the top binade was broken (256–448 saturated
+  to 448 on write and decoded as 240 or NaN on read) and values below `2^-6`
+  underflowed to zero instead of using the format's subnormals down to
+  `2^-9`. `float8_e5m2` subnormal rounding now keeps the sticky bits, so
+  round-to-nearest-even resolves ties correctly. Both conversions apply to
+  buffer element access and every C kernel operating on float8 tensors.
+- The js_of_ocaml stubs for extended dtypes now compute the same values as
+  the C implementation. Previously on JavaScript, `Nx_buffer.kind` returned
+  the wrong dtype for every buffer, creating a bfloat16/float8/bool buffer
+  raised, bfloat16 stores truncated instead of rounding, int4 stores raised
+  on out-of-range values instead of clamping, uint64 element access threw,
+  and the bytes blits read garbage.
 - Fix int4/uint4 offset arithmetic in `Nx_buffer.blit_from_bytes` and
   `blit_to_bytes`: source and destination offsets disagreed about nibble
   packing (one side counted a byte per element, the other rounded the byte

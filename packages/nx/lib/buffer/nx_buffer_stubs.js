@@ -14,102 +14,155 @@
    - uint32/uint64: Unsigned 32/64-bit integers
 
    The implementation extends the standard Ml_Bigarray class with
-   Ml_Nx_buffer to handle get/set/fill operations for these types. */
+   Ml_Nx_buffer to handle get/set/fill operations for these types.
+
+   The numeric conversions mirror nx_buffer_stubs.h bit for bit (round to
+   nearest, ties to even; NaN and saturation handling) so that programs
+   compute the same values under js_of_ocaml as natively, except for NaN
+   payload bits, which JavaScript canonicalizes. */
 
 //Provides: caml_unpackBfloat16
-function caml_unpackBfloat16(bytes) {
+function caml_unpackBfloat16(bits) {
   /* bfloat16 is the upper 16 bits of a float32 */
   var buffer = new ArrayBuffer(4);
   var view = new DataView(buffer);
-  view.setUint16(2, bytes, false); /* big-endian, upper 16 bits */
-  view.setUint16(0, 0, false);    /* lower 16 bits are zero */
+  view.setUint32(0, (bits & 0xffff) << 16, false);
   return view.getFloat32(0, false);
 }
 
 //Provides: caml_packBfloat16
 function caml_packBfloat16(num) {
-  /* Convert to float32 and take upper 16 bits */
   var buffer = new ArrayBuffer(4);
   var view = new DataView(buffer);
   view.setFloat32(0, num, false);
-  return view.getUint16(2, false);
-}
-
-//Provides: caml_unpackFp8_e4m3
-function caml_unpackFp8_e4m3(byte) {
-  var sign = (byte >> 7) & 0x1;
-  var exp = (byte >> 3) & 0xf;
-  var mantissa = byte & 0x7;
-
-  if (exp === 0 && mantissa === 0) return sign ? -0.0 : 0.0;
-
-  /* Convert to float32 format */
-  exp = exp - 7 + 127; /* Remove E4M3 bias, add float32 bias */
-  var bits = (sign << 31) | (exp << 23) | (mantissa << 20);
-
-  var buffer = new ArrayBuffer(4);
-  var view = new DataView(buffer);
-  view.setUint32(0, bits, false);
-  return view.getFloat32(0, false);
+  var bits = view.getUint32(0, false);
+  /* NaN first: the rounding bias below could carry a small NaN significand
+     into the exponent and turn it into inf. */
+  if ((bits & 0x7fffffff) > 0x7f800000) {
+    return ((bits >>> 16) | 0x0040) & 0xffff;
+  }
+  /* Round to nearest even */
+  var rounding_bias = ((bits >>> 16) & 1) + 0x7fff;
+  return ((bits + rounding_bias) >>> 16) & 0xffff;
 }
 
 //Provides: caml_packFp8_e4m3
 function caml_packFp8_e4m3(num) {
+  /* OCP "fn" variant: no infinities, S.1111.111 is NaN, exponent 15 is
+     otherwise normal up to the max finite 448, subnormals scale by 2^-6.
+     Finite overflow and infinities saturate to the max finite. */
+  if (num !== num) return 0x7f;
+  if (num === Infinity) return 0x7e;
+  if (num === -Infinity) return 0xfe;
+
   var buffer = new ArrayBuffer(4);
   var view = new DataView(buffer);
   view.setFloat32(0, num, false);
   var bits = view.getUint32(0, false);
+  var sign = ((bits >>> 31) << 7) & 0xff;
+  var exp = ((bits >>> 23) & 0xff) - 127;
 
-  var sign = (bits >> 31) & 0x1;
-  var exp = ((bits >> 23) & 0xff) - 127; /* Extract and unbias exponent */
-  var mantissa = (bits >> 20) & 0x7;     /* Take top 3 bits of mantissa */
+  if (exp >= -6) {
+    /* Normal range: round the 23-bit significand to 3 bits, ties to even. */
+    var sig = bits & 0x7fffff;
+    var q = sig >>> 20;
+    var rem = sig & 0xfffff;
+    if (rem > 0x80000 || (rem === 0x80000 && (q & 1))) q++;
+    /* A rounding carry propagates into the exponent field. */
+    var out = ((exp + 7) << 3) + q;
+    if (out >= 0x7f) return sign | 0x7e; /* Saturate past 448 */
+    return sign | out;
+  }
 
-  /* Clamp exponent to E4M3 range [-6, 8] with bias 7 */
-  exp = exp + 7; /* Apply E4M3 bias */
-  if (exp <= 0) exp = 0;
-  if (exp >= 15) exp = 15;
-
-  return (sign << 7) | ((exp & 0xf) << 3) | (mantissa & 0x7);
+  /* Subnormal or zero: denormalize to the 2^-6 scale, keeping all
+     shifted-out bits for the rounding decision. */
+  var sig2 = (bits & 0x7fffff) | 0x800000;
+  var shift = 20 + (-6 - exp);
+  if (shift > 24) return sign; /* Below half the min subnormal 2^-9 */
+  var q2 = sig2 >>> shift;
+  var rem2 = sig2 & ((1 << shift) - 1);
+  var half = 1 << (shift - 1);
+  if (rem2 > half || (rem2 === half && (q2 & 1))) q2++;
+  /* q2 == 8 after rounding is the min normal; the bit pattern lines up. */
+  return sign | q2;
 }
 
-//Provides: caml_unpackFp8_e5m2
-function caml_unpackFp8_e5m2(byte) {
-  var sign = (byte >> 7) & 0x1;
-  var exp = (byte >> 2) & 0x1f;
-  var mantissa = byte & 0x3;
-
-  if (exp === 0 && mantissa === 0) return sign ? -0.0 : 0.0;
-
-  /* Convert to float32 format */
-  exp = exp - 15 + 127; /* Remove E5M2 bias, add float32 bias */
-  var bits = (sign << 31) | (exp << 23) | (mantissa << 21);
-
-  var buffer = new ArrayBuffer(4);
-  var view = new DataView(buffer);
-  view.setUint32(0, bits, false);
-  return view.getFloat32(0, false);
+//Provides: caml_unpackFp8_e4m3
+function caml_unpackFp8_e4m3(byte) {
+  var negative = (byte & 0x80) !== 0;
+  var exp = (byte >>> 3) & 0xf;
+  var mant = byte & 0x7;
+  /* No infinities: exponent 15 is normal except S.1111.111. */
+  if (exp === 0xf && mant === 0x7) return NaN;
+  var v;
+  if (exp === 0) {
+    v = mant * Math.pow(2, -9); /* Subnormal: mant/8 * 2^-6 */
+  } else {
+    v = (1 + mant / 8) * Math.pow(2, exp - 7);
+  }
+  return negative ? -v : v;
 }
 
 //Provides: caml_packFp8_e5m2
 function caml_packFp8_e5m2(num) {
+  /* IEEE-like: has infinities and subnormals. Finite overflow rounds to
+     infinity. */
+  if (num !== num) return 0x7f;
+  if (num === Infinity) return 0x7c;
+  if (num === -Infinity) return 0xfc;
+
   var buffer = new ArrayBuffer(4);
   var view = new DataView(buffer);
   view.setFloat32(0, num, false);
   var bits = view.getUint32(0, false);
+  var sign = ((bits >>> 31) << 7) & 0xff;
+  var exp = ((bits >>> 23) & 0xff) - 127;
 
-  var sign = (bits >> 31) & 0x1;
-  var exp = ((bits >> 23) & 0xff) - 127; /* Extract and unbias exponent */
-  var mantissa = (bits >> 21) & 0x3;     /* Take top 2 bits of mantissa */
+  if (exp >= -14) {
+    /* Normal range: round the 23-bit significand to 2 bits, ties to even. */
+    var sig = bits & 0x7fffff;
+    var q = sig >>> 21;
+    var rem = sig & 0x1fffff;
+    if (rem > 0x100000 || (rem === 0x100000 && (q & 1))) q++;
+    /* A rounding carry propagates into the exponent field. */
+    var out = ((exp + 15) << 2) + q;
+    if (out >= 0x7c) return sign | 0x7c; /* Overflow to Inf */
+    return sign | out;
+  }
 
-  /* Clamp exponent to E5M2 range [-14, 15] with bias 15 */
-  exp = exp + 15; /* Apply E5M2 bias */
-  if (exp <= 0) exp = 0;
-  if (exp >= 31) exp = 31;
-
-  return (sign << 7) | ((exp & 0x1f) << 2) | (mantissa & 0x3);
+  /* Subnormal or zero: denormalize to the 2^-14 scale, keeping all
+     shifted-out bits for the rounding decision. */
+  var sig2 = (bits & 0x7fffff) | 0x800000;
+  var shift = 21 + (-14 - exp);
+  if (shift > 24) return sign; /* Below half the min subnormal 2^-16 */
+  var q2 = sig2 >>> shift;
+  var rem2 = sig2 & ((1 << shift) - 1);
+  var half = 1 << (shift - 1);
+  if (rem2 > half || (rem2 === half && (q2 & 1))) q2++;
+  /* q2 == 4 after rounding is the min normal; the bit pattern lines up. */
+  return sign | q2;
 }
 
-/* Extended kind enumeration matching our C implementation */
+//Provides: caml_unpackFp8_e5m2
+function caml_unpackFp8_e5m2(byte) {
+  var negative = (byte & 0x80) !== 0;
+  var exp = (byte >>> 2) & 0x1f;
+  var mant = byte & 0x3;
+  if (exp === 0x1f) {
+    if (mant !== 0) return NaN;
+    return negative ? -Infinity : Infinity;
+  }
+  var v;
+  if (exp === 0) {
+    v = mant * Math.pow(2, -16); /* Subnormal: mant/4 * 2^-14 */
+  } else {
+    v = (1 + mant / 4) * Math.pow(2, exp - 15);
+  }
+  return negative ? -v : v;
+}
+
+/* Extended kind enumeration continuing the js_of_ocaml runtime kinds
+   (0=Float32 .. 13=Float16), matching the C NX_BA_* enumeration. */
 var NX_BA_BFLOAT16 = 14;
 var NX_BA_BOOL = 15;
 var NX_BA_INT4 = 16;
@@ -122,34 +175,21 @@ var NX_BA_UINT64 = 21;
 //Provides: caml_nx_buffer_size_per_element
 //Requires: caml_ba_get_size_per_element
 function caml_nx_buffer_size_per_element(kind) {
-  /* Handle standard types first */
+  /* Typed-array slots per logical element, like
+     caml_ba_get_size_per_element. */
   if (kind < 14) {
     return caml_ba_get_size_per_element(kind);
   }
-
-  /* Handle extended types */
   switch (kind) {
-    case 14: /* NX_BA_BFLOAT16 */
+    case 21: /* NX_BA_UINT64: lo/hi pairs, like the standard Int64 */
       return 2;
-    case 15: /* NX_BA_BOOL */
-      return 1;
-    case 16: /* NX_BA_INT4 */
-    case 17: /* NX_BA_UINT4 */
-      return 1; /* Packed 2 per byte */
-    case 18: /* NX_BA_FP8_E4M3 */
-    case 19: /* NX_BA_FP8_E5M2 */
-      return 1;
-    case 20: /* NX_BA_UINT32 */
-      return 4;
-    case 21: /* NX_BA_UINT64 */
-      return 8;
     default:
       return 1;
   }
 }
 
 //Provides: caml_nx_buffer_create_data
-//Requires: caml_ba_create_buffer, caml_nx_buffer_size_per_element
+//Requires: caml_ba_create_buffer
 //Requires: caml_invalid_argument
 function caml_nx_buffer_create_data(kind, size) {
   /* Handle standard types */
@@ -157,39 +197,24 @@ function caml_nx_buffer_create_data(kind, size) {
     return caml_ba_create_buffer(kind, size);
   }
 
-  /* For extended types, use appropriate typed arrays */
-  var view;
   switch (kind) {
     case 14: /* NX_BA_BFLOAT16 */
-      view = Uint16Array;
-      break;
+      return new Uint16Array(size);
     case 15: /* NX_BA_BOOL */
-      view = Uint8Array;
-      break;
+    case 18: /* NX_BA_FP8_E4M3 */
+    case 19: /* NX_BA_FP8_E5M2 */
+      return new Uint8Array(size);
     case 16: /* NX_BA_INT4 */
     case 17: /* NX_BA_UINT4 */
       /* Pack 2 values per byte */
-      view = Uint8Array;
-      size = Math.ceil(size / 2);
-      break;
-    case 18: /* NX_BA_FP8_E4M3 */
-    case 19: /* NX_BA_FP8_E5M2 */
-      view = Uint8Array;
-      break;
+      return new Uint8Array(Math.ceil(size / 2));
     case 20: /* NX_BA_UINT32 */
-      view = Uint32Array;
-      break;
-    case 21: /* NX_BA_UINT64 */
-      if (typeof BigUint64Array === "undefined") {
-        caml_invalid_argument("Bigarray.create: uint64 not supported");
-      }
-      view = BigUint64Array;
-      break;
+      return new Uint32Array(size);
+    case 21: /* NX_BA_UINT64: lo/hi pairs, like the standard Int64 */
+      return new Int32Array(size * 2);
     default:
       caml_invalid_argument("Bigarray.create: unsupported extended kind");
   }
-
-  return new view(size);
 }
 
 //Provides: Ml_Nx_buffer
@@ -197,6 +222,7 @@ function caml_nx_buffer_create_data(kind, size) {
 //Requires: caml_unpackBfloat16, caml_packBfloat16
 //Requires: caml_unpackFp8_e4m3, caml_packFp8_e4m3
 //Requires: caml_unpackFp8_e5m2, caml_packFp8_e5m2
+//Requires: caml_int64_create_lo_hi, caml_int64_lo32, caml_int64_hi32
 class Ml_Nx_buffer extends Ml_Bigarray {
   get(ofs) {
     /* Handle standard types */
@@ -214,14 +240,12 @@ class Ml_Nx_buffer extends Ml_Bigarray {
         var byte = this.data[Math.floor(ofs / 2)];
         var val;
         if (ofs % 2 === 0) {
-          val = (byte & 0x0f);
-          /* Sign extend */
-          if (val & 0x08) val |= 0xfffffff0;
+          val = byte & 0x0f;
         } else {
           val = (byte >> 4) & 0x0f;
-          /* Sign extend */
-          if (val & 0x08) val |= 0xfffffff0;
         }
+        /* Sign extend */
+        if (val & 0x08) val -= 16;
         return val;
       }
       case 17: { /* NX_BA_UINT4 */
@@ -239,7 +263,10 @@ class Ml_Nx_buffer extends Ml_Bigarray {
       case 20: /* NX_BA_UINT32 */
         return this.data[ofs] | 0;
       case 21: /* NX_BA_UINT64 */
-        return BigInt.asIntN(64, this.data[ofs]);
+        return caml_int64_create_lo_hi(
+          this.data[ofs * 2 + 0],
+          this.data[ofs * 2 + 1]
+        );
       default:
         return this.data[ofs];
     }
@@ -259,10 +286,9 @@ class Ml_Nx_buffer extends Ml_Bigarray {
       case 15: /* NX_BA_BOOL */
         this.data[ofs] = v ? 1 : 0;
         break;
-      case 16: { /* NX_BA_INT4 */
-        if (v < -8 || v > 7) {
-          caml_invalid_argument("Bigarray.set: int4 value out of range [-8, 7]");
-        }
+      case 16: { /* NX_BA_INT4: clamp to [-8, 7], like the C stub */
+        if (v > 7) v = 7;
+        if (v < -8) v = -8;
         var byte_idx = Math.floor(ofs / 2);
         var byte = this.data[byte_idx];
         if (ofs % 2 === 0) {
@@ -272,10 +298,9 @@ class Ml_Nx_buffer extends Ml_Bigarray {
         }
         break;
       }
-      case 17: { /* NX_BA_UINT4 */
-        if (v < 0 || v > 15) {
-          caml_invalid_argument("Bigarray.set: uint4 value out of range [0, 15]");
-        }
+      case 17: { /* NX_BA_UINT4: clamp to [0, 15], like the C stub */
+        if (v > 15) v = 15;
+        if (v < 0) v = 0;
         var byte_idx = Math.floor(ofs / 2);
         var byte = this.data[byte_idx];
         if (ofs % 2 === 0) {
@@ -295,7 +320,8 @@ class Ml_Nx_buffer extends Ml_Bigarray {
         this.data[ofs] = v >>> 0;
         break;
       case 21: /* NX_BA_UINT64 */
-        this.data[ofs] = BigInt.asUintN(64, v);
+        this.data[ofs * 2 + 0] = caml_int64_lo32(v);
+        this.data[ofs * 2 + 1] = caml_int64_hi32(v);
         break;
       default:
         this.data[ofs] = v;
@@ -318,11 +344,15 @@ class Ml_Nx_buffer extends Ml_Bigarray {
       case 15: /* NX_BA_BOOL */
         this.data.fill(v ? 1 : 0);
         break;
-      case 16: /* NX_BA_INT4 */
-      case 17: /* NX_BA_UINT4 */
-        /* For int4/uint4, pack 2 values per byte */
-        var packed = (v & 0x0f) | ((v & 0x0f) << 4);
-        this.data.fill(packed);
+      case 16: /* NX_BA_INT4: clamp to [-8, 7], like the C stub */
+        if (v > 7) v = 7;
+        if (v < -8) v = -8;
+        this.data.fill(((v & 0x0f) << 4) | (v & 0x0f));
+        break;
+      case 17: /* NX_BA_UINT4: clamp to [0, 15], like the C stub */
+        if (v > 15) v = 15;
+        if (v < 0) v = 0;
+        this.data.fill(((v & 0x0f) << 4) | (v & 0x0f));
         break;
       case 18: /* NX_BA_FP8_E4M3 */
         this.data.fill(caml_packFp8_e4m3(v));
@@ -333,9 +363,15 @@ class Ml_Nx_buffer extends Ml_Bigarray {
       case 20: /* NX_BA_UINT32 */
         this.data.fill(v >>> 0);
         break;
-      case 21: /* NX_BA_UINT64 */
-        this.data.fill(BigInt.asUintN(64, v));
+      case 21: { /* NX_BA_UINT64 */
+        var lo = caml_int64_lo32(v);
+        var hi = caml_int64_hi32(v);
+        for (var i = 0; i < this.data.length; i += 2) {
+          this.data[i] = lo;
+          this.data[i + 1] = hi;
+        }
         break;
+      }
       default:
         this.data.fill(v);
         break;
@@ -348,15 +384,17 @@ class Ml_Nx_buffer extends Ml_Bigarray {
 //Requires: caml_ba_get_size, caml_nx_buffer_size_per_element
 //Requires: caml_invalid_argument
 function caml_nx_buffer_create_unsafe(kind, layout, dims, data) {
-  var size_per_element = caml_nx_buffer_size_per_element(kind);
+  var num_elts = caml_ba_get_size(dims);
 
-  /* For int4/uint4, adjust size calculation */
+  /* Int4/uint4 pack two elements per byte */
   if (kind === 16 || kind === 17) {
-    var num_elts = caml_ba_get_size(dims);
     if (Math.ceil(num_elts / 2) !== data.length) {
       caml_invalid_argument("length doesn't match dims (int4/uint4)");
     }
-  } else if (caml_ba_get_size(dims) * size_per_element !== data.length) {
+  } else if (
+    num_elts * caml_nx_buffer_size_per_element(kind) !==
+    data.length
+  ) {
     caml_invalid_argument("length doesn't match dims");
   }
 
@@ -369,7 +407,7 @@ function caml_nx_buffer_create_unsafe(kind, layout, dims, data) {
   if (
     layout === 0 && /* c_layout */
     dims.length === 1 && /* Array1 */
-    size_per_element === 1 &&
+    caml_nx_buffer_size_per_element(kind) === 1 &&
     kind !== 13 /* float16 */
   ) {
     return new Ml_Bigarray_c_1_1(kind, layout, dims, data);
@@ -514,10 +552,13 @@ function caml_nx_buffer_kind(ba) {
 }
 
 //Provides: caml_nx_buffer_blit
-//Requires: caml_ba_blit
+//Requires: caml_ba_blit, caml_invalid_argument
 function caml_nx_buffer_blit(src, dst) {
   if (src.kind >= 14 && dst.kind >= 14 && src.kind === dst.kind) {
     /* For extended types, raw data copy */
+    if (src.data.length !== dst.data.length) {
+      caml_invalid_argument("Nx_buffer.blit: arrays have different dimensions");
+    }
     dst.data.set(src.data);
     return 0;
   }
@@ -535,19 +576,21 @@ function caml_nx_buffer_fill(ba, v) {
 }
 
 //Provides: caml_nx_buffer_blit_from_bytes
+//Requires: caml_bytes_unsafe_get
 function caml_nx_buffer_blit_from_bytes(bytes, src_off, dst, dst_off, len) {
   var dst_data = new Uint8Array(dst.data.buffer, dst.data.byteOffset);
   for (var i = 0; i < len; i++) {
-    dst_data[dst_off + i] = bytes[src_off + i];
+    dst_data[dst_off + i] = caml_bytes_unsafe_get(bytes, src_off + i);
   }
   return 0;
 }
 
 //Provides: caml_nx_buffer_blit_to_bytes
+//Requires: caml_bytes_unsafe_set
 function caml_nx_buffer_blit_to_bytes(src, src_off, bytes, dst_off, len) {
   var src_data = new Uint8Array(src.data.buffer, src.data.byteOffset);
   for (var i = 0; i < len; i++) {
-    bytes[dst_off + i] = src_data[src_off + i];
+    caml_bytes_unsafe_set(bytes, dst_off + i, src_data[src_off + i]);
   }
   return 0;
 }
