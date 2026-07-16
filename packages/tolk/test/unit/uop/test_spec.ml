@@ -30,22 +30,20 @@ let with_env name value f =
        | None -> Unix.putenv name "");
       raise exn
 
-let global_i32_ptr ?(size = 16) () =
-  Dtype.Ptr.create Dtype.Val.int32 ~addrspace:Dtype.Global ~size
-
 let global_i32_param ?(slot = 0) ?(size = 16) () =
-  Uop.param ~slot ~dtype:(Dtype.Ptr (global_i32_ptr ~size ())) ()
+  Uop.param ~slot ~dtype:Dtype.int32
+    ~shape:(Uop.stack [ Uop.const_int size ]) ~addrspace:Dtype.Global ()
 
-let global_i32_param_with_shape ?(slot = 0) ?(size = 16) shape =
-  Uop.param ~slot ~dtype:(Dtype.Ptr (global_i32_ptr ~size ()))
-    ~shape:(Uop.stack (List.map Uop.const_int shape)) ()
+let global_i32_param_with_shape ?(slot = 0) shape =
+  Uop.param ~slot ~dtype:Dtype.int32
+    ~shape:(Uop.stack (List.map Uop.const_int shape)) ~addrspace:Dtype.Global ()
 
-let i32 n = Uop.const (Const.int Dtype.Val.int32 n)
+let i32 n = Uop.const (Const.int Dtype.int32 n)
 
 let weak n = Uop.const_int n
 
 let stack srcs ~dtype =
-  Uop.replace (Uop.const_int 0) ~op:Ops.Stack ~dtype:(Dtype.Val dtype)
+  Uop.replace (Uop.const_int 0) ~op:Ops.Stack ~dtype
     ~src:(Array.of_list srcs) ~arg:Uop.Arg.Empty ()
 
 let load_with_gate ~idx ~alt ~gate =
@@ -128,25 +126,22 @@ let empty_stack_void () =
   is_true ~msg:"empty void stack accepted" (accepts Spec.shared_spec s)
 
 let stack_sources_match () =
-  let s = stack [ i32 1; i32 2 ] ~dtype:Dtype.Val.int32 in
+  let s = stack [ i32 1; i32 2 ] ~dtype:Dtype.int32 in
   is_true ~msg:"stack accepted" (accepts Spec.shared_spec s)
 
-let stack_accepts_vector_dtype_with_scalar_children () =
-  let s = stack [ i32 1; i32 2 ] ~dtype:(Dtype.Val.vec 4 Dtype.Val.int32) in
-  is_true ~msg:"stack validates child shapes only, matching tinygrad"
-    (accepts Spec.shared_spec s)
+let stack_rejects_mismatched_child_dtype () =
+  let s = stack [ i32 1; i32 2 ] ~dtype:Dtype.float32 in
+  is_true ~msg:"stack children must match the stack dtype"
+    (rejected Spec.shared_spec s)
 
-let stack_accepts_mixed_dtype_same_shape () =
-  let s =
-    stack [ i32 1; Uop.const_float 2.0 ]
-      ~dtype:Dtype.Val.int32
-  in
-  is_true ~msg:"stack validates child shapes only, matching tinygrad"
-    (accepts Spec.shared_spec s)
+let stack_rejects_mixed_dtype () =
+  let s = stack [ i32 1; Uop.const_float 2.0 ] ~dtype:Dtype.int32 in
+  is_true ~msg:"stack children must share the stack dtype"
+    (rejected Spec.shared_spec s)
 
 let stack_rejects_mixed_child_counts () =
-  let pair = stack [ i32 1; i32 2 ] ~dtype:Dtype.Val.int32 in
-  let s = stack [ pair; i32 3 ] ~dtype:Dtype.Val.int32 in
+  let pair = stack [ i32 1; i32 2 ] ~dtype:Dtype.int32 in
+  let s = stack [ pair; i32 3 ] ~dtype:Dtype.int32 in
   is_true ~msg:"mixed child vector counts rejected"
     (rejected Spec.shared_spec s)
 
@@ -192,30 +187,27 @@ let index_rejects_gate_source () =
 
 let special_accepts_raw_name () =
   let special =
-    Uop.special ~name:"thread0" ~size:(i32 8) ~dtype:Dtype.Val.int32 ()
+    Uop.special ~name:"thread0" ~size:(weak 8) ~dtype:Dtype.index ()
   in
-  is_true ~msg:"Special raw name is accepted like tinygrad"
-    (accepts Spec.shared_spec special)
+  is_true ~msg:"index Special raw name is accepted"
+    (accepts Spec.tensor_spec special)
 
-let special_requires_matching_weakint_or_int32_dtype () =
-  let ok =
-    Uop.special ~name:"lidx0" ~size:(i32 8) ~dtype:Dtype.Val.int32 ()
+let special_dtype_by_stage () =
+  let idx_special =
+    Uop.special ~name:"lidx0" ~size:(weak 8) ~dtype:Dtype.index ()
   in
-  is_true ~msg:"int32 Special accepted" (accepts Spec.shared_spec ok);
-  let weak_ok = Uop.special ~name:"lidx0" ~size:(i32 8) () in
-  is_true ~msg:"default Special casts bound to weakint"
-    (accepts Spec.shared_spec weak_ok);
-  let mismatch =
-    Uop.replace ok ~src:[| weak 8 |] ()
+  is_true ~msg:"index Special accepted by tensor spec"
+    (accepts Spec.tensor_spec idx_special);
+  let i32_special =
+    Uop.special ~name:"lidx0" ~size:(i32 8) ~dtype:Dtype.int32 ()
   in
+  is_true ~msg:"int32 Special accepted by program spec"
+    (accepts Spec.program_spec i32_special);
+  let mismatch = Uop.replace idx_special ~src:[| i32 8 |] () in
   is_true ~msg:"Special result and size dtype must match"
-    (rejected Spec.shared_spec mismatch);
-  let int64_size = Uop.const (Const.int Dtype.Val.int64 8) in
-  let int64_special =
-    Uop.special ~name:"lidx0" ~size:int64_size ~dtype:Dtype.Val.int64 ()
-  in
-  is_true ~msg:"Special only accepts weakint or int32"
-    (rejected Spec.shared_spec int64_special)
+    (rejected Spec.tensor_spec mismatch);
+  is_true ~msg:"index Special rejected by program spec"
+    (rejected Spec.program_spec idx_special)
 
 let group_rejects_value_source () =
   let noop0 = Uop.noop ~dtype:Dtype.void () in
@@ -244,7 +236,7 @@ let end_rejects_non_range_tail () =
 let range_rejects_bad_layouts () =
   let r =
     Uop.range ~size:(i32 4) ~axis:0 ~kind:Axis_type.Global
-      ~dtype:Dtype.Val.int32 ()
+      ~dtype:Dtype.int32 ()
   in
   let missing_arg = Uop.replace r ~arg:Uop.Arg.Empty () in
   is_true ~msg:"Range requires Range_info"
@@ -253,20 +245,13 @@ let range_rejects_bad_layouts () =
   is_true ~msg:"Range dtype must match size dtype"
     (rejected Spec.shared_spec mismatch)
 
-let barrier_wait_boundaries () =
+let barrier_boundaries () =
   let barrier = Uop.barrier ~srcs:[ i32 1 ] () in
-  is_true ~msg:"Barrier is shared while tinygrad keeps it there"
+  is_true ~msg:"Barrier accepted in shared_spec"
     (accepts Spec.shared_spec barrier);
   let bad_barrier = Uop.replace barrier ~dtype:Dtype.int32 () in
   is_true ~msg:"Barrier must be void"
-    (rejected Spec.shared_spec bad_barrier);
-  let wait = Uop.wait ~src:(i32 1) ~wait_for:(i32 2) in
-  is_true ~msg:"Wait has no tinygrad spec rule in shared_spec"
-    (rejected Spec.shared_spec wait);
-  is_true ~msg:"Wait has no tinygrad spec rule in program_spec"
-    (rejected Spec.program_spec wait);
-  is_true ~msg:"Wait has no tinygrad spec rule in full_spec"
-    (rejected Spec.full_spec wait)
+    (rejected Spec.shared_spec bad_barrier)
 
 let group_after_bad_layouts () =
   let grouped =
@@ -278,7 +263,7 @@ let group_after_bad_layouts () =
   let bad_group_src =
     Uop.replace grouped ~src:[| Uop.barrier () |] ()
   in
-  is_true ~msg:"Group source family follows tinygrad"
+  is_true ~msg:"Group source must be group/store/noop/ins/end"
     (rejected Spec.shared_spec bad_group_src);
   let bad_after_empty =
     Uop.replace (i32 1) ~op:Ops.After ~src:[||] ()
@@ -314,7 +299,7 @@ let copy_accepts_lowered_range_sources () =
   let src = i32 1 in
   let r =
     Uop.range ~size:(i32 4) ~axis:0 ~kind:Axis_type.Global
-      ~dtype:Dtype.Val.int32 ()
+      ~dtype:Dtype.int32 ()
   in
   let c =
     Uop.replace (Uop.copy ~src ~device:(Uop.Single "CPU") ())
@@ -437,21 +422,21 @@ let reduce_arg_required () =
   let lowered =
     Uop.reduce ~src:(i32 1)
       ~ranges:[ Uop.range ~size:(weak 4) ~axis:0 ~kind:Axis_type.Reduce () ]
-      ~op:Ops.Add ~dtype:Dtype.Val.int32
+      ~op:Ops.Add ~dtype:Dtype.int32
   in
-  is_true ~msg:"lowered reduce accepted in kernel"
-    (accepts Spec.kernel_spec lowered)
+  is_true ~msg:"lowered reduce accepted by tensor spec"
+    (accepts Spec.tensor_spec lowered)
 
 let tensor_reduce_accepts_lowered_integer_tail () =
   let r =
-    Uop.reduce ~src:(i32 1) ~ranges:[] ~op:Ops.Add ~dtype:Dtype.Val.int32
+    Uop.reduce ~src:(i32 1) ~ranges:[] ~op:Ops.Add ~dtype:Dtype.int32
   in
   is_true ~msg:"tensor spec accepts axes-empty reduce"
     (accepts Spec.tensor_spec r);
   let lowered =
     Uop.reduce ~src:(i32 1)
       ~ranges:[ Uop.range ~size:(weak 4) ~axis:0 ~kind:Axis_type.Reduce () ]
-      ~op:Ops.Add ~dtype:Dtype.Val.int32
+      ~op:Ops.Add ~dtype:Dtype.int32
   in
   is_true ~msg:"tensor spec accepts lowered integer tail"
     (accepts Spec.tensor_spec lowered);
@@ -614,18 +599,19 @@ let stage_rejects_bad_layouts () =
     (rejected Spec.tensor_spec bad_arg)
 
 let bind_accepts_alu_param_const () =
-  let var = Uop.variable ~name:"n" ~min_val:0 ~max_val:4 () in
+  let var =
+    Uop.variable ~name:"n" ~min_val:0 ~max_val:4 ~dtype:Dtype.index ()
+  in
   let b = Uop.bind ~var ~value:(weak 3) in
-  is_true ~msg:"ALU Param bound to weakint const accepted"
+  is_true ~msg:"ALU Param bound to index const accepted"
     (accepts Spec.tensor_spec b)
 
 let bind_rejects_alu_param_stack () =
-  let dtype = Dtype.Val.vec 2 Dtype.Val.weakint in
   let var =
-    Uop.param ~slot:(-1) ~dtype:(Dtype.Val dtype) ~name:"shape"
+    Uop.param ~slot:(-1) ~dtype:Dtype.index ~name:"shape"
       ~vmin_vmax:(0, 8) ~addrspace:Dtype.Alu ()
   in
-  let value = stack [ weak 1; weak 2 ] ~dtype in
+  let value = stack [ weak 1; weak 2 ] ~dtype:Dtype.index in
   let b = Uop.bind ~var ~value in
   is_true ~msg:"Bind requires a scalar Const value"
     (rejected Spec.tensor_spec b)
@@ -639,7 +625,7 @@ let bind_rejects_non_alu_param () =
 let bind_rejects_dtype_mismatch () =
   let var =
     Uop.variable ~name:"n" ~min_val:0 ~max_val:4
-      ~dtype:Dtype.Val.int32 ()
+      ~dtype:Dtype.int32 ()
   in
   let b = Uop.bind ~var ~value:(weak 3) in
   is_true ~msg:"Bind dtype mismatch rejected"
@@ -764,16 +750,14 @@ let full_spec_accepts_intermediate_forms () =
   is_true ~msg:"full_spec accepts value INDEX lane selection"
     (accepts Spec.full_spec value_index)
 
-(* Kernel spec *)
-
-let kernel_rejects_if_endif () =
+let tensor_rejects_if_endif () =
   let p = global_i32_param () in
   let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] ~as_ptr:true () in
   let if_ = Uop.if_ ~cond:(Uop.const_bool true) ~idx_for_dedup:idx in
   let endif = Uop.endif ~if_ in
-  is_true ~msg:"If rejected by kernel_spec" (rejected Spec.kernel_spec if_);
-  is_true ~msg:"Endif rejected by kernel_spec"
-    (rejected Spec.kernel_spec endif)
+  is_true ~msg:"If rejected by tensor_spec" (rejected Spec.tensor_spec if_);
+  is_true ~msg:"Endif rejected by tensor_spec"
+    (rejected Spec.tensor_spec endif)
 
 (* Program spec *)
 
@@ -782,7 +766,7 @@ let program_rejects_invalid_const () =
     (rejected Spec.program_spec (Uop.invalid ()))
 
 let program_rejects_weakint () =
-  is_true ~msg:"Weakint const rejected in program_spec"
+  is_true ~msg:"index const rejected in program_spec"
     (rejected Spec.program_spec (Uop.const_int 1))
 
 let program_buffer_rules () =
@@ -803,15 +787,10 @@ let program_buffer_rules () =
   is_true ~msg:"Global Buffer rejected in program_spec"
     (rejected Spec.program_spec global)
 
-let program_rejects_vector_shape_mismatch () =
-  let bad = stack [ i32 1; i32 2 ] ~dtype:(Dtype.Val.vec 4 Dtype.Val.int32) in
-  is_true ~msg:"Program vector dtype count must match shape"
-    (rejected Spec.program_spec bad)
-
 let program_range_forms () =
   let int_range =
     Uop.range ~size:(i32 4) ~axis:0 ~kind:Axis_type.Global
-      ~dtype:Dtype.Val.int32 ()
+      ~dtype:Dtype.int32 ()
   in
   let weak_range =
     Uop.range ~size:(weak 4) ~axis:0 ~kind:Axis_type.Global ()
@@ -862,10 +841,7 @@ let program_bitcast_index_same_dtype_is_plain_index () =
 let program_rejects_real_bitcast_index_load () =
   let p = global_i32_param () in
   let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] ~as_ptr:true () in
-  let local_ptr =
-    Dtype.Ptr.create Dtype.Val.int32 ~addrspace:Dtype.Local ~size:16
-  in
-  let bitcast = Uop.bitcast ~src:idx ~dtype:(Dtype.Ptr local_ptr) in
+  let bitcast = Uop.bitcast ~src:idx ~dtype:Dtype.float32 in
   let ld = Uop.load ~src:bitcast () in
   is_true ~msg:"real Bitcast(Index) load rejected"
     (rejected_list Spec.program_spec [ idx; bitcast; ld ])
@@ -917,7 +893,7 @@ let program_oob_enabled_accepts_minmax_in_bounds_load () =
   let p = global_i32_param ~size:16 () in
   let n =
     Uop.variable ~name:"n" ~min_val:0 ~max_val:15
-      ~dtype:Dtype.Val.int32 ()
+      ~dtype:Dtype.int32 ()
   in
   let idx = Uop.index ~ptr:p ~idxs:[n] ~as_ptr:true () in
   let ld = Uop.load ~src:idx () in
@@ -926,7 +902,7 @@ let program_oob_enabled_accepts_minmax_in_bounds_load () =
   is_true ~msg:"CHECK_OOB=1 accepts min/max-proven in-bounds load" true
 
 let program_oob_uses_explicit_buffer_shape () =
-  let p = global_i32_param_with_shape ~size:16 [ 8 ] in
+  let p = global_i32_param_with_shape [ 8 ] in
   let idx = Uop.index ~ptr:p ~idxs:[(i32 9)] ~as_ptr:true () in
   let ld = Uop.load ~src:idx () in
   is_true ~msg:"CHECK_OOB=1 validates against buffer max_numel"
@@ -953,7 +929,7 @@ let program_oob_symbolic_false_gate_accepts_out_of_bounds_load () =
   let p = global_i32_param ~size:16 () in
   let n =
     Uop.variable ~name:"n" ~min_val:0 ~max_val:16
-      ~dtype:Dtype.Val.int32 ()
+      ~dtype:Dtype.int32 ()
   in
   let gate = Uop.alu_binary ~op:Ops.Cmplt ~lhs:n ~rhs:(i32 0) in
   let idx = Uop.index ~ptr:p ~idxs:[(i32 16)] ~as_ptr:true () in
@@ -966,7 +942,7 @@ let program_oob_symbolic_store_remains_rejected () =
   let p = global_i32_param ~size:16 () in
   let n =
     Uop.variable ~name:"n" ~min_val:(-1) ~max_val:16
-      ~dtype:Dtype.Val.int32 ()
+      ~dtype:Dtype.int32 ()
   in
   let idx = Uop.index ~ptr:p ~idxs:[n] ~as_ptr:true () in
   let st = Uop.store ~dst:idx ~value:(i32 1) () in
@@ -978,7 +954,7 @@ let program_oob_masked_symbolic_bounds_are_accepted () =
   let p = global_i32_param ~size:16 () in
   let n =
     Uop.variable ~name:"n" ~min_val:(-1) ~max_val:16
-      ~dtype:Dtype.Val.int32 ()
+      ~dtype:Dtype.int32 ()
   in
   let ge_zero = Uop.alu_binary ~op:Ops.Cmplt ~lhs:(i32 (-1)) ~rhs:n in
   let lt_size = Uop.alu_binary ~op:Ops.Cmplt ~lhs:n ~rhs:(i32 16) in
@@ -994,7 +970,7 @@ let program_oob_masked_symbolic_lower_bound_only_rejected () =
   let p = global_i32_param ~size:16 () in
   let n =
     Uop.variable ~name:"n" ~min_val:(-1) ~max_val:16
-      ~dtype:Dtype.Val.int32 ()
+      ~dtype:Dtype.int32 ()
   in
   let gate = Uop.alu_binary ~op:Ops.Cmplt ~lhs:(i32 (-1)) ~rhs:n in
   let idx = Uop.index ~ptr:p ~idxs:[n] ~as_ptr:true () in
@@ -1095,11 +1071,8 @@ let program_rejects_loose_after_layout () =
 
 let program_rejects_if_dedup_source_matrix () =
   let p = global_i32_param () in
-  let local_ptr =
-    Dtype.Ptr.create Dtype.Val.int32 ~addrspace:Dtype.Local ~size:16
-  in
   let idx = Uop.index ~ptr:p ~idxs:[(i32 0)] ~as_ptr:true () in
-  let bad_bitcast = Uop.bitcast ~src:idx ~dtype:(Dtype.Ptr local_ptr) in
+  let bad_bitcast = Uop.bitcast ~src:idx ~dtype:Dtype.float32 in
   let bad_after = Uop.after ~src:idx ~deps:[ Uop.noop ~dtype:Dtype.void () ] in
   let bad_buffer =
     Uop.buffer ~slot:0 ~dtype:Dtype.int32 ~addrspace:Dtype.Local ()
@@ -1131,7 +1104,7 @@ let program_rejects_bad_endif_layouts () =
 let program_end_range_boundaries () =
   let int_range =
     Uop.range ~size:(i32 4) ~axis:0 ~kind:Axis_type.Global
-      ~dtype:Dtype.Val.int32 ()
+      ~dtype:Dtype.int32 ()
   in
   let weak_range =
     Uop.range ~size:(weak 4) ~axis:0 ~kind:Axis_type.Global ()
@@ -1181,10 +1154,9 @@ let () =
           test "Buffer ALU addrspace rejected" buffer_rejects_alu_addrspace;
           test "Empty Stack void accepted" empty_stack_void;
           test "Stack source contract" stack_sources_match;
-          test "Stack oversized dtype accepted"
-            stack_accepts_vector_dtype_with_scalar_children;
-          test "Stack mixed dtype accepted"
-            stack_accepts_mixed_dtype_same_shape;
+          test "Stack rejects mismatched child dtype"
+            stack_rejects_mismatched_child_dtype;
+          test "Stack rejects mixed child dtype" stack_rejects_mixed_dtype;
           test "Stack mixed child counts rejected"
             stack_rejects_mixed_child_counts;
           test "Where with bool cond" where_bool_cond;
@@ -1194,16 +1166,14 @@ let () =
           test "ALU operand scalars match" alu_operand_scalars_match;
           test "Index accepts integer offsets" index_accepts_integer_offsets;
           test "Index rejects gate source" index_rejects_gate_source;
-          test "Special unparseable name rejected"
-            special_accepts_raw_name;
-          test "Special dtype contract"
-            special_requires_matching_weakint_or_int32_dtype;
+          test "Special raw name accepted" special_accepts_raw_name;
+          test "Special dtype by stage" special_dtype_by_stage;
           test "Group value source rejected" group_rejects_value_source;
           test "After value first source rejected"
             after_rejects_value_first_source;
           test "End non-range tail rejected" end_rejects_non_range_tail;
           test "Range bad layouts rejected" range_rejects_bad_layouts;
-          test "Barrier/Wait boundaries" barrier_wait_boundaries;
+          test "Barrier boundaries" barrier_boundaries;
           test "Group/After bad layouts rejected" group_after_bad_layouts;
         ];
       group "tensor_spec"
@@ -1239,18 +1209,13 @@ let () =
           test "Bind rejects dtype mismatch" bind_rejects_dtype_mismatch;
           test "Movement validates shape contracts"
             movement_validates_shape_contracts;
-        ];
-      group "kernel_spec"
-        [
-          test "If/Endif rejected" kernel_rejects_if_endif;
+          test "If/Endif rejected" tensor_rejects_if_endif;
         ];
       group "program_spec"
         [
           test "Invalid const rejected" program_rejects_invalid_const;
           test "Weakint rejected" program_rejects_weakint;
           test "Buffer addrspace rules" program_buffer_rules;
-          test "Vector shape mismatch rejected"
-            program_rejects_vector_shape_mismatch;
           test "Range forms" program_range_forms;
           test "Tensor-only ops rejected" program_rejects_tensor_only_ops;
           test "Plain load accepted" program_accepts_plain_load;

@@ -7,12 +7,11 @@
 
 (** Memory access validation for UOp specs.
 
-    This module mirrors tinygrad's [uop/validate.py] boundary for
-    out-of-bounds checking. It contains deterministic checks only: disabled
-    [CHECK_OOB] accepts memory accesses, image pointers bypass bounds checks,
-    buffer sizes come from explicit shape metadata when present, and simple
-    boolean gates can refine symbolic index bounds. General solver-backed
-    validation is intentionally absent. *)
+    Deterministic out-of-bounds checking only: with [CHECK_OOB] disabled every
+    memory access is accepted, image accesses (three-dimensional buffers whose
+    last dimension is four) bypass bounds checks, buffer sizes come from the
+    access target's shape, and simple boolean gates can refine symbolic index
+    bounds. General solver-backed validation is intentionally absent. *)
 
 val is_index_source : Uop.t -> bool
 (** [is_index_source src] is [true] iff [src] is a memory-source node,
@@ -25,6 +24,6 @@ val validate_index_source : ?gate:Uop.t -> Uop.t -> bool
 
     Accepted sources are {!Ops.Index}, {!Ops.Shrink}, or one {!Ops.Cast} over
     either form. When [CHECK_OOB] is enabled, the underlying index must be
-    statically in bounds, bypassed by tinygrad's hard-to-model forms, protected
-    by a statically false gate, or proven in bounds by the deterministic gate
-    refinement implemented here. *)
+    statically in bounds, bypassed by a hard-to-model form (a bitcast or stack
+    in the index expression), protected by a statically false gate, or proven in
+    bounds by the deterministic gate refinement implemented here. *)

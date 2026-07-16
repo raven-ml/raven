@@ -86,59 +86,59 @@ val shared_spec : t
 (** Rules that hold at every stage: {!Ops.Sink}, {!Ops.Noop},
     {!Ops.Const}, local/register {!Ops.Buffer}, {!Ops.Stack}, ALU and casts,
     {!Ops.Range}, {!Ops.Index}, {!Ops.End}, grouped side effects, ordering
-    {!Ops.After}, backend escapes, specials, machine instructions, memory
-    access, and {!Ops.Wmma}. {!Ops.Special} follows tinygrad's shared rule:
-    the result and size child have the same dtype, which must be [weakint] or
-    [int32].
+    {!Ops.After}, backend escapes, pattern literals, conditional {!Ops.Wait},
+    machine instructions, memory access, and {!Ops.Wmma}.
 
-    {!Ops.Load} and {!Ops.Store} follow the current tinygrad gate layout:
-    loads are [(idx)] or [(idx, alt, gate)] and stores are [(idx, value)]
-    or [(idx, value, gate)]. Gates must be bool values on the load/store,
-    not on {!Ops.Index}. With [CHECK_OOB] set in the process environment,
-    memory access validation is delegated to the UOp validation layer: it uses
-    deterministic {!Uop.vmin}/{!Uop.vmax} bounds, explicit shape-derived buffer
-    sizes, image-dtype and hard-to-model bypasses, invalid-index sentinels,
-    statically false gates, and simple boolean gate refinements. Memory sources
-    may be {!Ops.Index}, {!Ops.Shrink}, or one {!Ops.Cast} over those sources;
-    bitcasts over indexes are not memory sources. There is no general z3
-    fallback in this OCaml layer, so masked accesses that need solver-strength
+    An ALU result and each of its operands share a dtype, except that a
+    weakly-typed operand ([weakint] or [weakfloat]) matches any result dtype;
+    {!Ops.Where} and the comparison ops follow the same weak-operand rule, and
+    shift distances may additionally be [uint32]. Integer division and modulo
+    are accepted only for integer results. {!Ops.Stack} requires every element
+    to share the stack's dtype. {!Ops.Cast} and {!Ops.Bitcast} carry their
+    target dtype in the node argument.
+
+    {!Ops.Load} and {!Ops.Store} use the gate layout where loads are [(idx)] or
+    [(idx, alt, gate)] and stores are [(idx, value)] or [(idx, value, gate)].
+    Gates must be bool values on the load/store, not on {!Ops.Index}. With
+    [CHECK_OOB] set in the process environment, memory access validation is
+    delegated to the UOp validation layer: it uses deterministic
+    {!Uop.vmin}/{!Uop.vmax} bounds, explicit shape-derived buffer sizes, image
+    accesses and hard-to-model bypasses, invalid-index sentinels, statically
+    false gates, and simple boolean gate refinements. Memory sources may be
+    {!Ops.Index}, {!Ops.Shrink}, or one {!Ops.Cast} over those sources;
+    bitcasts over indexes are not memory sources. There is no general solver
+    fallback in this layer, so masked accesses that need solver-strength
     arithmetic reasoning remain unproven. *)
 
 val tensor_spec : t
-(** Tensor-graph spec. Accepts tensor-level devices, global buffers,
-    calls/functions/tuples, scalar constant binds,
-    copy/allreduce/multi-device ops, movement ops, reductions with tensor axes
-    or lowered integer tail sources, staging, and program packaging on top of
-    {!shared_spec}. {!Ops.Slice} is an explicit {!full_spec} intermediate,
-    not a tensor-stage node. Concrete device payloads reject positional
-    selectors and empty multi-device groups; sharding axes must point into the
-    source shape of a multi-device value. *)
-
-val kernel_spec : t
-(** Kernel-AST spec. Accepts kernel-level structural ops
-    ({!Ops.Shaped_wmma},
-    lowered {!Ops.Reduce} nodes with empty axes and range sources), all
-    movement ops, and {!shared_spec}. Control-flow {!Ops.If}/{!Ops.Endif}
-    nodes are program-stage only. *)
+(** Tensor-graph spec. Accepts, on top of {!shared_spec}, float-only unary
+    math ({!Ops.Sin}, {!Ops.Log2}, {!Ops.Exp2}, {!Ops.Sqrt},
+    {!Ops.Reciprocal}), tensor-level devices, global buffers whose shape source
+    is [index]-typed, scalar constant binds, calls/functions/tuples,
+    index-typed {!Ops.Special} and index arithmetic feeding movement ops,
+    movement ops, reductions over an integer tail, copy/allreduce/multi-device
+    ops, staging, and program packaging. {!Ops.Slice} is an explicit
+    {!full_spec} intermediate, not a tensor-stage node. Concrete device
+    payloads reject positional selectors and empty multi-device groups;
+    sharding axes must point into the source shape of a multi-device value. *)
 
 val program_spec : t
 (** Linearized-program spec. Accepts {!shared_spec} plus program-only
-    rejection rules: no weakint values, movement ops only for
-    the special index-like {!Ops.Shrink} form, only local/register
-    {!Ops.Buffer} nodes, no invalid constants, no vector dtype whose shape
-    does not match its lane count, and {!Ops.If}/{!Ops.Endif} with bool
-    conditions and {!Ops.Cast}, {!Ops.Index}, or {!Ops.Shrink} dedup
-    sources. Two-source alternate loads are rejected before shared memory
-    rules so gated loads must use [(idx, alt, gate)]. {!Ops.Wait} is not
-    accepted by the current tinygrad parity specs. *)
+    rejection rules: no [index], [weakint], or [weakfloat] values, movement ops
+    only for the special index-like {!Ops.Shrink} form, only local/register
+    {!Ops.Buffer} nodes, no invalid constants, and {!Ops.If}/{!Ops.Endif} with
+    bool conditions and {!Ops.Cast}, {!Ops.Index}, or {!Ops.Shrink} dedup
+    sources. {!Ops.Special} is [int32]-typed at this stage. Two-source
+    alternate loads are rejected before shared memory rules so gated loads must
+    use [(idx, alt, gate)]. *)
 
 val full_spec : t
-(** [full_spec] is the explicit intermediate validator formed from
-    tinygrad's transitional full-spec forms plus {!tensor_spec} and
-    {!program_spec}. It accepts known intermediate {!Ops.Slice},
-    {!Ops.Call} over slice bodies, loose {!Ops.After}/{!Ops.End},
-    expander raw memory access, and
-    transitional scalar {!Ops.Bind} nodes. It has no catch-all rule. *)
+(** [full_spec] is the explicit intermediate validator formed from the
+    transitional full-spec forms plus {!tensor_spec} and {!program_spec}. It
+    accepts rewrite-error markers, known intermediate {!Ops.Slice},
+    {!Ops.Call} over slice bodies, loose {!Ops.After}/{!Ops.End}, expander raw
+    memory access, and transitional scalar {!Ops.Bind} nodes. It has no
+    catch-all rule. *)
 
 (** {1:verify Verification} *)
 

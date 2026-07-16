@@ -20,37 +20,15 @@ let ( ++ ) = List.append
 
 (* Dtype helpers *)
 
-let scalar_of u =
-  match Uop.dtype u with
-  | Dtype.Val v -> Some (Dtype.Val.scalar v)
-  | Dtype.Ptr _ -> None
-
-let val_of u =
-  match Uop.dtype u with
-  | Dtype.Val v -> Some v
-  | Dtype.Ptr _ -> None
-
-let ptr_of u =
-  match Uop.dtype u with
-  | Dtype.Ptr p -> Some p
-  | Dtype.Val _ -> None
-
 let is_void u = Dtype.equal (Uop.dtype u) Dtype.void
-let is_bool u = scalar_of u = Some Dtype.Bool
-let is_weakint u = scalar_of u = Some Dtype.Weakint
+let is_bool u = Dtype.equal (Uop.dtype u) Dtype.bool
+let is_index u = Dtype.equal (Uop.dtype u) Dtype.index
+let is_weak u = Dtype.is_weak (Uop.dtype u)
 let is_int u = Dtype.is_int (Uop.dtype u)
-let same_scalar a b = scalar_of a = scalar_of b
-let base_of u = Dtype.val_of (Uop.dtype u)
-let same_base a b = Dtype.Val.equal (base_of a) (base_of b)
 let same_dtype a b = Dtype.equal (Uop.dtype a) (Uop.dtype b)
+let matches_or_weak u s = same_dtype u s || is_weak s
+let int32_or_index u = Dtype.equal (Uop.dtype u) Dtype.int32 || is_index u
 let arg_empty u = match Uop.arg u with Uop.Arg.Empty -> true | _ -> false
-
-let int_or_weakint u =
-  is_weakint u
-  ||
-  match Uop.dtype u with
-  | Dtype.Val v -> Dtype.Val.is_int v
-  | Dtype.Ptr _ -> false
 
 let option_for_all p = function
   | None -> true
@@ -77,7 +55,7 @@ let valid_sharding_axis shape axis device =
       | _ -> false
 
 let valid_shape_child u =
-  int_or_weakint u
+  is_int u
   || (Uop.op u = Ops.Stack && is_void u && Array.length (Uop.src u) = 0)
   || (Uop.op u = Ops.Noop && is_void u && Array.length (Uop.src u) = 0)
 
@@ -98,20 +76,12 @@ let valid_global_buffer u =
       && option_for_all valid_device_payload buffer.device
       && valid_shape_child shape
       && valid_sharding_axis shape buffer.axis buffer.device
-      && is_weakint shape
+      && is_index shape
 
 let is_const_invalid u =
   match Uop.op u, Uop.arg u with
   | Ops.Const, Uop.Arg.Value c -> Const.view c = Const.Invalid
   | _ -> false
-
-let scalars_all_match u =
-  let s = scalar_of u in
-  Array.for_all (fun src -> scalar_of src = s) (Uop.src u)
-
-let bases_all_match u =
-  let b = base_of u in
-  Array.for_all (fun src -> Dtype.Val.equal (base_of src) b) (Uop.src u)
 
 let tail_srcs p u =
   let srcs = Uop.src u in
@@ -127,24 +97,14 @@ let shape_equal a b =
 
 let stack_ok u =
   let srcs = Uop.src u in
-  Array.length srcs = 0 || Array.for_all (shape_equal srcs.(0)) srcs
+  Array.length srcs = 0
+  || (Array.for_all (shape_equal srcs.(0)) srcs
+      && Array.for_all (same_dtype u) srcs)
 
 let movement_shape_ok u =
   try ignore (Uop.shape u); true with Invalid_argument _ -> false
 
 let end_ok u = tail_srcs (fun s -> Uop.op s = Ops.Range) u
-
-let weakint_or_int32 u =
-  match Uop.dtype u with
-  | Dtype.Val v ->
-      Dtype.Val.equal v Dtype.Val.weakint
-      || Dtype.Val.equal v Dtype.Val.int32
-  | Dtype.Ptr _ -> false
-
-let valid_special u size =
-  Option.is_some (Uop.as_special u)
-  && same_dtype u size
-  && weakint_or_int32 u
 
 let valid_full_slice u =
   match Uop.as_slice u, Uop.src u with
@@ -155,7 +115,7 @@ let valid_full_slice u =
           | Ops.Buffer | Ops.Param | Ops.Stage | Ops.After -> true
           | _ -> false)
       && Uop.op offset = Ops.Const
-      && is_weakint offset
+      && is_index offset
   | _ -> false
 
 let call_info_arg u =
@@ -194,23 +154,16 @@ let call_ok u body =
 let function_ok u body =
   call_info_arg u && Uop.op body = Ops.Tuple && Uop.ranges body = []
 
-let stage_ok u = Option.is_some (Uop.as_stage u) && tail_srcs int_or_weakint u
+let stage_ok u = Option.is_some (Uop.as_stage u) && tail_srcs is_int u
 
 let valid_reduce_op op = Ops.Group.mem op Ops.Group.reduce
 
-let tensor_reduce_arg u =
-  match Uop.Arg.as_reduce_arg (Uop.arg u), Uop.src u with
-  | Some { op; axes }, srcs ->
-      valid_reduce_op op
-      && List.for_all (fun axis -> axis >= 0) axes
-      && Array.length srcs > 0
-      && tail_srcs int_or_weakint u
-  | _ -> false
+let reduce_tail_ok s = is_index s || Dtype.equal (Uop.dtype s) Dtype.int32
 
-let kernel_reduce_arg u =
-  match Uop.arg u with
-  | Uop.Arg.Reduce_arg { op; axes = [] } -> valid_reduce_op op
-  | _ -> false
+let reduce_arg_ok u =
+  match Uop.Arg.as_reduce_arg (Uop.arg u) with
+  | Some { op; _ } -> valid_reduce_op op && tail_srcs reduce_tail_ok u
+  | None -> false
 
 let copy_arg_device u =
   match Uop.arg u with
@@ -236,23 +189,13 @@ let local_reg_buffer u =
       (match buffer.addrspace with Dtype.Local | Dtype.Reg -> true | _ -> false)
   | None -> false
 
-let shape_matches_dtype_count u =
-  let count = Dtype.count (Uop.dtype u) in
-  if count <= 1 then true
-  else
-    try
-      match Uop.shape u with
-      | [ d ] -> Uop.vmin d = count && Uop.vmax d = count
-      | _ -> false
-    with Invalid_argument _ -> false
-
 let alu_param u =
   match Uop.as_param u with
   | Some { param = { addrspace = Dtype.Alu; _ }; _ } ->
-      int_or_weakint u
+      is_int u
   | _ -> false
 
-let bind_value u = Uop.op u = Ops.Const && weakint_or_int32 u
+let bind_value u = Uop.op u = Ops.Const && int32_or_index u
 
 let bind_ok u var value =
   arg_empty u
@@ -317,8 +260,8 @@ let shared_spec : t =
     op Ops.Noop =?> (fun _ _ -> true);
 
     op ~src:[] Ops.Const
-    =?> (fun u _ -> match Uop.arg u, val_of u with
-      | Uop.Arg.Value c, Some v -> Dtype.Val.equal (Const.dtype c) v
+    =?> (fun u _ -> match Uop.arg u with
+      | Uop.Arg.Value c -> Dtype.equal (Const.dtype c) (Uop.dtype u)
       | _ -> false);
 
     op Ops.Param =?> (fun u _ -> valid_param u);
@@ -333,25 +276,28 @@ let shared_spec : t =
     op ~src:[ var "c"; var "t"; var "e" ] Ops.Where
     =?> (fun u bs ->
       is_bool (bs $ "c")
-      && same_dtype u (bs $ "t")
-      && same_dtype u (bs $ "e"));
+      && matches_or_weak u (bs $ "t")
+      && matches_or_weak u (bs $ "e"));
 
     ops ~dtype:Dtype.bool ~src:[ var "x"; var "y" ]
       Ops.Group.comparison
-    =?> (fun _ bs -> same_base (bs $ "x") (bs $ "y"));
+    =?> (fun _ bs ->
+      let x = bs $ "x" and y = bs $ "y" in
+      same_dtype x y || is_weak x || is_weak y);
 
     ops ~src:[ var "x"; var "y" ] [ Ops.Shl; Ops.Shr ]
     =?> (fun u bs ->
       let x = bs $ "x" and y = bs $ "y" in
       let rhs_ok =
-        same_dtype x y || Dtype.equal (Uop.dtype y) Dtype.uint32
+        same_dtype x y || Dtype.equal (Uop.dtype y) Dtype.uint32 || is_weak y
       in
       same_dtype u x && rhs_ok);
 
     ops [ Ops.Cdiv; Ops.Cmod; Ops.Floordiv; Ops.Floormod ]
-    =?> (fun u _ -> is_int u && bases_all_match u);
+    =??> (fun u _ -> if is_int u then None else Some false);
 
-    ops Ops.Group.alu =?> (fun u _ -> bases_all_match u);
+    ops Ops.Group.alu
+    =?> (fun u _ -> Array.for_all (matches_or_weak u) (Uop.src u));
 
     ops ~src:[ any ] [ Ops.Cast; Ops.Bitcast ]
     =?> (fun u _ -> arg_empty u);
@@ -362,21 +308,21 @@ let shared_spec : t =
       && Option.is_some (Uop.as_range u));
 
     op ~allow_any_len:true ~src:[ any ] Ops.Index
-    =?> (fun u _ -> tail_srcs int_or_weakint u);
+    =?> (fun u _ -> tail_srcs is_int u);
 
     op ~allow_any_len:true ~src:[ any ] Ops.End
     =?> (fun u _ -> end_ok u);
 
     op_src ~dtype:(exact_dtype Dtype.void)
-      ~src:(repeat (ops [ Ops.Group; Ops.Store; Ops.Noop; Ops.Ins ]))
+      ~src:(repeat (ops [ Ops.Group; Ops.Store; Ops.Noop; Ops.Ins; Ops.End ]))
       Ops.Group
     =?> (fun _ _ -> true);
 
     op_src
       ~src:(prefix [
         ops (Ops.Group.movement @
-             [ Ops.Param; Ops.Buffer; Ops.Contiguous; Ops.After; Ops.Multi;
-               Ops.Bitcast; Ops.Ins ])
+             [ Ops.Param; Ops.Buffer; Ops.Contiguous; Ops.Index; Ops.After;
+               Ops.Multi; Ops.Bitcast; Ops.Ins ])
       ])
       Ops.After
     =?> (fun _ _ -> true);
@@ -384,11 +330,13 @@ let shared_spec : t =
     op Ops.Custom =?> (fun _ _ -> true);
     op Ops.Customi =?> (fun _ _ -> true);
 
+    op Ops.Pyliteral =?> (fun _ _ -> true);
+
     op ~allow_any_len:true ~dtype:Dtype.void Ops.Barrier
     =?> (fun _ _ -> true);
 
-    op ~src:[ var "x" ] Ops.Special
-    =?> (fun u bs -> valid_special u (bs $ "x"));
+    op ~dtype:Dtype.void ~src:[ var "x" ] Ops.Wait
+    =?> (fun _ bs -> is_bool (bs $ "x"));
 
     op Ops.Ins =?> (fun _ _ -> true);
 
@@ -418,60 +366,19 @@ let shared_spec : t =
     =?> (fun u _ -> Option.is_some (Uop.as_wmma u));
   ]
 
-(* Shared codegen spec — valid in kernel and program stages. *)
-
-let shared_codegen_spec : t = []
-
-(* Movement spec — shared by tensor-stage movement ops. *)
-
-let movement_spec : t =
-  let open Upat in
-  make [
-    ops ~src:[ any; any ] [ Ops.Reshape; Ops.Expand ]
-    =?> (fun u _ -> movement_shape_ok u);
-
-    ops ~src:[ any; any; any ] [ Ops.Pad; Ops.Shrink ]
-    =?> (fun u _ ->
-      let srcs = Uop.src u in
-      shape_equal srcs.(1) srcs.(2) && movement_shape_ok u);
-
-    op ~src:[ any ] Ops.Permute
-    =?> (fun u _ ->
-      Option.is_some (Uop.Arg.as_ints (Uop.arg u))
-      && movement_shape_ok u);
-
-    op ~src:[ any ] Ops.Flip
-    =?> (fun u _ ->
-      Option.is_some (Uop.Arg.as_bools (Uop.arg u))
-      && movement_shape_ok u);
-  ]
-
-(* Kernel spec. *)
-
-let kernel_spec : t =
-  let open Upat in
-  let kernel_only = make [
-    op ~src:[ any; any; any ] Ops.Shaped_wmma
-    =?> (fun u _ -> Option.is_some (Uop.as_shaped_wmma u));
-
-    op ~allow_any_len:true ~src:[ any ] Ops.Reduce
-    =?> (fun u _ -> kernel_reduce_arg u && tail_srcs int_or_weakint u);
-
-    op ~allow_any_len:true ~src:[ var "x" ] Ops.Stage
-    =?> (fun u _ -> stage_ok u);
-  ] in
-  kernel_only ++ movement_spec ++ shared_codegen_spec ++ shared_spec
-
 (* Tensor spec. *)
 
 let tensor_spec : t =
   let open Upat in
   let tensor_only = make [
-    any =??> (fun u _ ->
-      if Option.is_some (Uop.node_tag u) then Some false else None);
+    ops ~src:[ any ] [ Ops.Sin; Ops.Log2; Ops.Exp2; Ops.Sqrt; Ops.Reciprocal ]
+    =?> (fun u _ -> Dtype.is_float (Uop.dtype u));
 
     op Ops.Buffer =??> (fun u _ ->
       if valid_global_buffer u then Some true else None);
+
+    op ~src:[ var "var"; var "value" ] Ops.Bind
+    =?> (fun u bs -> bind_ok u (bs $ "var") (bs $ "value"));
 
     op ~dtype:Dtype.void Ops.Custom_function
     =?> (fun u _ -> Option.is_some (Uop.Arg.as_string (Uop.arg u)));
@@ -495,21 +402,34 @@ let tensor_spec : t =
     op ~src:[ var "t" ] Ops.Gettuple
     =?> (fun u bs -> valid_gettuple u (bs $ "t"));
 
-    op ~dtype:Dtype.void Ops.Linear =?> (fun _ _ -> true);
+    op ~src:[ var "x" ] Ops.Special
+    =?> (fun u bs ->
+      let x = bs $ "x" in
+      Option.is_some (Uop.as_special u) && same_dtype u x && is_index x);
 
-    ops ~dtype:Dtype.weakint [ Ops.Add; Ops.Mul; Ops.Cdiv; Ops.Floordiv ]
+    ops ~dtype:Dtype.index [ Ops.Add; Ops.Mul; Ops.Cdiv; Ops.Floordiv ]
     =?> (fun _ _ -> true);
 
-    op Ops.Mselect =?> (fun u _ -> mselect_ok u);
+    ops ~src:[ any; any ] [ Ops.Reshape; Ops.Expand ]
+    =?> (fun u _ -> movement_shape_ok u);
 
-    op Ops.Mstack =?> (fun u _ -> mstack_ok u);
+    ops ~src:[ any; any; any ] [ Ops.Pad; Ops.Shrink ]
+    =?> (fun u _ ->
+      let srcs = Uop.src u in
+      shape_equal srcs.(1) srcs.(2) && movement_shape_ok u);
 
-    op ~src:[ var "var"; var "value" ] Ops.Bind
-    =?> (fun u bs -> bind_ok u (bs $ "var") (bs $ "value"));
+    op ~src:[ any ] Ops.Permute
+    =?> (fun u _ ->
+      Option.is_some (Uop.Arg.as_ints (Uop.arg u))
+      && movement_shape_ok u);
 
-    ops ~allow_any_len:true ~src:[ var "x" ]
-      [ Ops.Detach; Ops.Contiguous; Ops.Contiguous_backward ]
-    =?> (fun u bs -> same_dtype u (bs $ "x"));
+    op ~src:[ any ] Ops.Flip
+    =?> (fun u _ ->
+      Option.is_some (Uop.Arg.as_bools (Uop.arg u))
+      && movement_shape_ok u);
+
+    op ~allow_any_len:true ~src:[ any ] Ops.Reduce
+    =?> (fun u _ -> reduce_arg_ok u);
 
     op ~allow_any_len:true ~src:[ var "x" ] Ops.Copy
     =?> (fun u bs -> copy_ok u (bs $ "x"));
@@ -519,13 +439,24 @@ let tensor_spec : t =
 
     op Ops.Multi =?> (fun u _ -> multi_ok u);
 
-    op ~allow_any_len:true ~src:[ any ] Ops.Reduce
-    =?> (fun u _ -> tensor_reduce_arg u);
+    op Ops.Mselect =?> (fun u _ -> mselect_ok u);
+
+    op Ops.Mstack =?> (fun u _ -> mstack_ok u);
+
+    ops ~allow_any_len:true ~src:[ var "x" ]
+      [ Ops.Detach; Ops.Contiguous; Ops.Contiguous_backward ]
+    =?> (fun u bs -> same_dtype u (bs $ "x"));
 
     op ~allow_any_len:true ~src:[ var "x" ] Ops.Stage
     =?> (fun u _ -> stage_ok u);
-    op ~dtype:Dtype.void Ops.Source =?> (fun _ _ -> true);
-    op ~dtype:Dtype.void Ops.Binary =?> (fun _ _ -> true);
+
+    op ~dtype:Dtype.void Ops.Linear =?> (fun _ _ -> true);
+
+    op ~dtype:Dtype.void ~src:[] Ops.Source =?> (fun _ _ -> true);
+
+    op ~dtype:Dtype.uint8 ~src:[] Ops.Binary
+    =?> (fun u _ -> Option.is_some (Uop.Arg.as_string (Uop.arg u)));
+
     op ~dtype:Dtype.void ~src:[ op Ops.Sink ] Ops.Program
     =?> (fun _ _ -> true);
     op ~dtype:Dtype.void ~src:[ op Ops.Sink; op Ops.Linear ] Ops.Program
@@ -538,7 +469,7 @@ let tensor_spec : t =
       Ops.Program
     =?> (fun _ _ -> true);
   ] in
-  tensor_only ++ movement_spec ++ shared_spec
+  tensor_only ++ shared_spec
 
 (* Program spec. *)
 
@@ -546,7 +477,7 @@ let program_spec : t =
   let open Upat in
   let program_only = make [
     ops Ops.Group.all =??> (fun u _ ->
-      if is_weakint u then Some false else None);
+      if is_index u || is_weak u then Some false else None);
 
     op ~src:[ ops [ Ops.Param; Ops.Buffer; Ops.After ]; any; op Ops.Const ]
       Ops.Shrink
@@ -559,11 +490,6 @@ let program_spec : t =
     op Ops.Const =??> (fun u _ ->
       if is_const_invalid u then Some false else None);
 
-    ops Ops.Group.all =??> (fun u _ ->
-      match Uop.op u with
-      | Ops.Ins | Ops.Noop -> None
-      | _ -> if shape_matches_dtype_count u then None else Some false);
-
     op ~src:[ any; any ] Ops.Load =?> (fun _ _ -> false);
 
     op ~allow_any_len:true ~src:[ any ] Ops.End
@@ -575,14 +501,23 @@ let program_spec : t =
 
     op ~dtype:Dtype.void ~src:[ op Ops.If ] Ops.Endif
     =?> (fun _ _ -> true);
+
+    op ~src:[ var "x" ] Ops.Special
+    =?> (fun u bs ->
+      let x = bs $ "x" in
+      Option.is_some (Uop.as_special u) && same_dtype u x
+      && Dtype.equal (Uop.dtype x) Dtype.int32);
   ] in
-  program_only ++ shared_codegen_spec ++ shared_spec
+  program_only ++ shared_spec
 
 (* Full spec — explicit intermediate forms plus tensor and program specs. *)
 
 let full_only_spec : t =
   let open Upat in
   make [
+    op ~dtype:Dtype.void Ops.Rewrite_error
+    =?> (fun u _ -> Option.is_some (Uop.Arg.as_string (Uop.arg u)));
+
     op Ops.Slice =?> (fun u _ -> valid_full_slice u);
 
     op ~allow_any_len:true ~dtype:Dtype.void ~src:[ op Ops.Slice ] Ops.Call
@@ -597,14 +532,7 @@ let full_only_spec : t =
     ops [ Ops.Load; Ops.Store ] =?> (fun _ _ -> true);
 
     op ~src:[ any; any ] Ops.Bind
-    =?> (fun u _ ->
-      arg_empty u
-      &&
-      match Uop.dtype u with
-      | Dtype.Val v ->
-          Dtype.Val.equal v Dtype.Val.int32
-          || Dtype.Val.equal v Dtype.Val.weakint
-      | Dtype.Ptr _ -> false);
+    =?> (fun u _ -> arg_empty u && int32_or_index u);
   ]
 
 let full_spec : t =
