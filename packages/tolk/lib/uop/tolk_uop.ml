@@ -12,6 +12,7 @@ module Const = Const
 module Uop = Uop
 module Render = Render
 module Upat = Upat
+module Movement = Movement
 module Validate = Validate
 module Spec = Spec
 module Symbolic = Symbolic

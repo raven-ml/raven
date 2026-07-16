@@ -50,7 +50,6 @@ type t =
   (** {2 Math} *)
 
   | Wmma  (** Tensor-core matrix multiply-accumulate. *)
-  | Shaped_wmma  (** Shape-aware {!Wmma}. *)
   | Cast  (** Value-preserving type conversion. *)
   | Bitcast  (** Bit-preserving reinterpretation. *)
   | Exp2  (** Base-2 exponential. *)
@@ -114,7 +113,11 @@ type t =
   | Multi  (** Distributes a value across devices. *)
   | Reduce  (** Reduction by [Add], [Mul], or [Max]. *)
   | Allreduce  (** Cross-device reduction. *)
-(** One flat tag per tinygrad uop kind. *)
+
+  (** {2 Pattern compiler IR} *)
+
+  | Pyliteral  (** Carries a literal payload for custom pattern predicates. *)
+(** One flat tag per uop kind. *)
 
 val equal : t -> t -> bool
 (** [equal a b] is [true] iff [a] and [b] are the same constructor. *)
@@ -156,7 +159,7 @@ module Group : sig
   (** [unary @ binary @ ternary]. *)
 
   val broadcastable : t list
-  (** Broadcastable ops: {!Group}, binary, and ternary ops. *)
+  (** Broadcastable ops: binary and ternary ops. *)
 
   val elementwise : t list
   (** Elementwise ops: {!alu}, {!Cast}, and {!Bitcast}. *)
@@ -165,7 +168,8 @@ module Group : sig
   (** Defines: {!Buffer} and {!Param}. *)
 
   val irreducible : t list
-  (** Irreducible leaves: {!Special}, {!Param}, {!Range}, and {!Const}. *)
+  (** Irreducible leaves: {!Special}, {!Param}, {!Range}, {!Const}, and
+      {!Getaddr}. *)
 
   val movement : t list
   (** Movement ops: {!Shrink}, {!Reshape}, {!Permute}, {!Expand}, {!Pad},

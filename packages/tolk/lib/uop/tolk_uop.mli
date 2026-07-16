@@ -55,6 +55,8 @@
 
     - {!Upat} — pattern DSL and matcher for writing rewrite rules over
       {!Uop.t}.
+    - {!Movement} — movement-op cleanup rewrites (merge and drop redundant
+      reshapes, permutes, and stacks).
     - {!Validate} — deterministic memory-access validation used by
       {!Spec}.
     - {!Spec} — stage specifications used to validate that a DAG is
@@ -69,6 +71,7 @@ module Const = Const
 module Uop = Uop
 module Render = Render
 module Upat = Upat
+module Movement = Movement
 module Validate = Validate
 module Spec = Spec
 module Symbolic = Symbolic

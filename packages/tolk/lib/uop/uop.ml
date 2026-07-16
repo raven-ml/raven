@@ -72,6 +72,7 @@ type metadata = { name : string; caller : string; backward : bool }
 
 type param_arg = {
   slot : int;
+  dtype : Dtype.t;
   vmin_vmax : (int * int) option;
   name : string option;
   addrspace : Dtype.addr_space;
@@ -79,7 +80,7 @@ type param_arg = {
   device : device option;
 }
 
-type reduce_arg = { op : Ops.t; axes : int list }
+type reduce_arg = { op : Ops.t; num_axes : int }
 
 type estimate = Int of int | Sym of t
 
@@ -99,7 +100,6 @@ and grad_fxn = grad_output:t -> call:t -> t option list
 
 and call_info = {
   grad_fxn : grad_fxn option;
-  metadata : metadata list;
   name : string option;
   precompile : bool;
   precompile_backward : bool;
@@ -124,18 +124,12 @@ and program_info = {
 and wmma_info = {
   name : string;
   dims : int * int * int;
-  dtype_in : Dtype.scalar;
-  dtype_out : Dtype.scalar;
+  dtype_in : Dtype.t;
+  dtype_out : Dtype.t;
   device : string;
   threads : int;
   upcast_axes : (int * int) list * (int * int) list * (int * int) list;
   reduce_axes : int list;
-}
-
-and shaped_wmma_info = {
-  dims : int * int * int;
-  device : string;
-  threads : int;
 }
 
 and arg =
@@ -157,7 +151,6 @@ and arg =
   | Call_info of call_info
   | Program_info of program_info
   | Wmma_info of wmma_info
-  | Shaped_wmma_info of shaped_wmma_info
 
 and node = {
   op : Ops.t;
@@ -209,7 +202,6 @@ module Arg = struct
     | Call_info of call_info
     | Program_info of program_info
     | Wmma_info of wmma_info
-    | Shaped_wmma_info of shaped_wmma_info
 
   let equal a b = match a, b with
     | Empty, Empty -> true
@@ -223,7 +215,7 @@ module Arg = struct
         a.axis = b.axis && a.sub = b.sub && Axis_type.equal a.kind b.kind
     | Param_arg x, Param_arg y -> x = y
     | Reduce_arg x, Reduce_arg y ->
-        Ops.equal x.op y.op && x.axes = y.axes
+        Ops.equal x.op y.op && x.num_axes = y.num_axes
     | Device x, Device y -> x = y
     | Op_device (opx, dx), Op_device (opy, dy) ->
         Ops.equal opx opy && dx = dy
@@ -235,13 +227,12 @@ module Arg = struct
          | Option.None, Option.None -> true
          | Option.Some a, Option.Some b -> a == b
          | _ -> false)
-        && x.metadata = y.metadata && x.name = y.name
+        && x.name = y.name
         && x.precompile = y.precompile
         && x.precompile_backward = y.precompile_backward
         && x.aux = y.aux
     | Program_info x, Program_info y -> x = y
     | Wmma_info x, Wmma_info y -> x = y
-    | Shaped_wmma_info x, Shaped_wmma_info y -> x = y
     | _ -> false
 
   let compare = Stdlib.compare
@@ -308,9 +299,9 @@ end)
 let side_metadata : metadata list Side_metadata_tbl.t =
   Side_metadata_tbl.create 64
 
-let default_param_arg ?vmin_vmax ?name ?(addrspace = Dtype.Global) ?axis ?device
-    slot =
-  { slot; vmin_vmax; name; addrspace; axis; device }
+let default_param_arg ~dtype ?vmin_vmax ?name ?(addrspace = Dtype.Global) ?axis
+    ?device slot =
+  { slot; dtype; vmin_vmax; name; addrspace; axis; device }
 
 let sanitize_function_name name =
   let len = String.length name in
@@ -387,6 +378,25 @@ let children u = Array.to_list (src u)
 let equal a b = a.Hashcons.tag = b.Hashcons.tag
 let compare a b = Int.compare a.Hashcons.tag b.Hashcons.tag
 
+(* The set of ops appearing among a node's direct children, deduplicated.
+   Memoised across rewrite passes: pattern-matcher early-reject consults it on
+   every candidate, and nodes are immutable so the set is stable. *)
+let child_ops_cache : Ops.t list Ref_tbl.t = Ref_tbl.create 1024
+
+let child_ops u =
+  match Ref_tbl.find_opt child_ops_cache u with
+  | Some ops -> ops
+  | None ->
+      let ops =
+        Array.fold_left
+          (fun acc s ->
+            let o = op s in
+            if List.exists (Ops.equal o) acc then acc else o :: acc)
+          [] (src u)
+      in
+      Ref_tbl.add child_ops_cache u ops;
+      ops
+
 let int64_as_native n =
   if Int64.compare n (Int64.of_int min_int) >= 0
      && Int64.compare n (Int64.of_int max_int) <= 0
@@ -399,13 +409,10 @@ let saturate_int64 n =
   else Int64.to_int n
 
 let const_int_bounds dtype n =
-  match dtype with
-  | Dtype.Val v
-    when Dtype.Val.is_unsigned v && Int64.compare n 0L < 0 ->
-      max_int, max_int
-  | _ ->
-      let n = saturate_int64 n in
-      n, n
+  if Dtype.is_unsigned dtype && Int64.compare n 0L < 0 then max_int, max_int
+  else
+    let n = saturate_int64 n in
+    n, n
 
 let program_var_name u =
   match op u, arg u with
@@ -439,7 +446,7 @@ type range_view = {
 }
 type end_view = { value : t; ranges : t list }
 type if_view = { cond : t; idx_for_dedup : t }
-type reduce_view = { src : t; ranges : t list; op : Ops.t; axes : int list }
+type reduce_view = { src : t; ranges : t list; op : Ops.t; num_axes : int }
 type allreduce_view = { src : t; device : device; op : Ops.t }
 type stage_view = { src : t; ranges : t list; opts : stage_opts }
 type slice_view = { src : t; offset : t; size : int }
@@ -447,7 +454,6 @@ type wait_view = { src : t; wait_for : t }
 type param_view = { param : param_arg; shape : t }
 type buffer_view = { buffer : param_arg; shape : t }
 type wmma_view = { a : t; b : t; c : t; info : wmma_info }
-type shaped_wmma_view = { a : t; b : t; acc : t; info : shaped_wmma_info }
 type call_view = { body : t; args : t list; info : call_info }
 type special_view = { name : string; size : t }
 type bind_view = { var : t; value : t }
@@ -498,8 +504,8 @@ let as_if u =
 
 let as_reduce u =
   match op u, arg u, Array.to_list (src u) with
-  | Ops.Reduce, Arg.Reduce_arg { op; axes }, src :: ranges ->
-      Option.Some { src; ranges; op; axes }
+  | Ops.Reduce, Arg.Reduce_arg { op; num_axes }, src :: ranges ->
+      Option.Some { src; ranges; op; num_axes }
   | _ -> Option.None
 
 let as_allreduce u =
@@ -541,12 +547,6 @@ let as_wmma u =
   match op u, arg u, Array.to_list (src u) with
   | Ops.Wmma, Arg.Wmma_info info, [ a; b; c ] ->
       Option.Some { a; b; c; info }
-  | _ -> Option.None
-
-let as_shaped_wmma u =
-  match op u, arg u, Array.to_list (src u) with
-  | Ops.Shaped_wmma, Arg.Shaped_wmma_info info, [ a; b; acc ] ->
-      Option.Some { a; b; acc; info }
   | _ -> Option.None
 
 let as_call u =
@@ -658,7 +658,7 @@ let mk_tagged ~op ~dtype ~src ~arg ~node_tag =
 
 (* Smart constructors *)
 
-let void_dtype = Dtype.Val Dtype.Val.void
+let void_dtype = Dtype.void
 
 let sink ?kernel_info srcs =
   let arg = match kernel_info with
@@ -695,13 +695,14 @@ let param ~slot ~dtype ?shape ?device ?vmin_vmax ?name ?addrspace ?axis () =
   let shape = shape_to_shape_arg shape in
   mk ~op:Ops.Param ~dtype ~src:[| shape |]
     ~arg:(Arg.Param_arg
-            (default_param_arg ?vmin_vmax ?name ?addrspace ?axis ?device slot))
+            (default_param_arg ~dtype ?vmin_vmax ?name ?addrspace ?axis ?device
+               slot))
 
 let buffer ~slot ~dtype ?shape ?name ?addrspace ?axis ?device () =
   let shape = shape_to_shape_arg shape in
   mk ~op:Ops.Buffer ~dtype ~src:[| shape |]
     ~arg:(Arg.Param_arg
-            (default_param_arg ?name ?addrspace ?axis ?device slot))
+            (default_param_arg ~dtype ?name ?addrspace ?axis ?device slot))
 
 (* Buffer slots come from one process-wide counter: buffers hash-cons on
    (slot, dtype, shape, device), so reusing a slot would collapse two distinct
@@ -721,16 +722,9 @@ let stage ~src ~ranges ~opts =
     ~src:(Array.of_list (src :: ranges))
     ~arg:(Arg.Stage_info opts)
 
-let variable ~name ~min_val ~max_val ?(dtype = Dtype.Val.weakint) () =
-  let count = Dtype.Val.count dtype in
-  let shape =
-    if count > 1 then
-      mk ~op:Ops.Const ~dtype:(Dtype.Val Dtype.Val.weakint) ~src:[||]
-        ~arg:(Arg.Value (Const.int Dtype.Val.weakint count))
-    else mk ~op:Ops.Stack ~dtype:void_dtype ~src:[||] ~arg:Arg.Empty
-  in
-  param ~slot:(-1) ~dtype:(Dtype.Val dtype) ~name
-    ~shape ~vmin_vmax:(min_val, max_val)
+let variable ~name ~min_val ~max_val ?(dtype = Dtype.index) () =
+  let shape = mk ~op:Ops.Stack ~dtype:void_dtype ~src:[||] ~arg:Arg.Empty in
+  param ~slot:(-1) ~dtype ~name ~shape ~vmin_vmax:(min_val, max_val)
     ~addrspace:Dtype.Alu ()
 
 let bind ~var ~value =
@@ -752,28 +746,17 @@ let bind ~var ~value =
   else invalid_arg "Uop.bind: value outside variable bounds"
 
 let const ?(srcs = []) v =
-  let dtype = Dtype.Val (Const.dtype v) in
-  mk ~op:Ops.Const ~dtype ~src:(Array.of_list srcs) ~arg:(Arg.Value v)
+  mk ~op:Ops.Const ~dtype:(Const.dtype v) ~src:(Array.of_list srcs)
+    ~arg:(Arg.Value v)
 
-let invalid ?(dtype = Dtype.Val.weakint) () =
-  const (Const.invalid ~dtype ())
-
-let const_int n = const (Const.int Dtype.Val.weakint n)
-let const_float x = const (Const.float Dtype.Val.float32 x)
+let invalid ?(dtype = Dtype.index) () = const (Const.invalid ~dtype ())
+let const_int n = const (Const.int Dtype.index n)
+let const_float x = const (Const.float Dtype.weakfloat x)
 let const_bool b = const (Const.bool b)
+let zero_like u = const (Const.of_scalar (dtype u) (`Int 0L))
+let const_like u n = const (Const.of_scalar (dtype u) (`Int (Int64.of_int n)))
 
-let zero_like u =
-  let dt = dtype u in
-  match dt with
-  | Dtype.Val v -> const (Const.of_scalar v (`Int 0L))
-  | Dtype.Ptr _ -> invalid_arg "Uop.zero_like: pointer has no zero"
-
-let const_like u n =
-  match dtype u with
-  | Dtype.Val v -> const (Const.of_scalar v (`Int (Int64.of_int n)))
-  | Dtype.Ptr _ -> invalid_arg "Uop.const_like: pointer has no const"
-
-let index ~ptr ~idxs ?(as_ptr = false) () =
+let index ~ptr ~idxs () =
   let const_int_value u =
     match op u, arg u with
     | Ops.Const, Arg.Value c -> (
@@ -785,40 +768,22 @@ let index ~ptr ~idxs ?(as_ptr = false) () =
         | Const.Int _ | Const.Bool _ | Const.Float _ | Const.Invalid -> None)
     | _ -> None
   in
-  match as_ptr, idxs, op ptr with
-  | false, [ idx ], Ops.Stack -> (
+  (* A buffer or vector indexes to a scalar element, whose dtype is the same
+     scalar dtype the source already carries. A constant index into a stack
+     selects the lane directly. *)
+  match idxs, op ptr with
+  | [ idx ], Ops.Stack -> (
       match const_int_value idx with
-      | Some i ->
-          let src = src ptr in
-          if i >= 0 && i < Array.length src then src.(i)
-          else
-            mk ~op:Ops.Index
-              ~dtype:(Dtype.Val (Dtype.Val.scalarize (Dtype.val_of (dtype ptr))))
-              ~src:[| ptr; idx |] ~arg:Arg.Empty
-      | None ->
-          let dtype =
-            Dtype.Val (Dtype.Val.scalarize (Dtype.val_of (dtype ptr)))
-          in
-          mk ~op:Ops.Index ~dtype ~src:[| ptr; idx |] ~arg:Arg.Empty)
+      | Some i when i >= 0 && i < Array.length (src ptr) -> (src ptr).(i)
+      | Some _ | None ->
+          mk ~op:Ops.Index ~dtype:(dtype ptr) ~src:[| ptr; idx |] ~arg:Arg.Empty)
   | _ ->
-  let dtype =
-    if as_ptr then dtype ptr
-    else match dtype ptr with
-      | Dtype.Ptr p -> Dtype.Val (Dtype.Ptr.value p)
-      | Dtype.Val _ when op ptr = Ops.Stage -> dtype ptr
-      | Dtype.Val v -> Dtype.Val (Dtype.Val.scalarize v)
-  in
-  mk ~op:Ops.Index ~dtype ~src:(Array.of_list (ptr :: idxs)) ~arg:Arg.Empty
+      mk ~op:Ops.Index ~dtype:(dtype ptr) ~src:(Array.of_list (ptr :: idxs))
+        ~arg:Arg.Empty
 
 let load ~src ?dtype:load_dtype ?alt ?gate () =
-  let dtype =
-    match load_dtype with
-    | Some dtype -> dtype
-    | None ->
-        match dtype src with
-        | Dtype.Ptr p -> Dtype.Val (Dtype.Ptr.value p)
-        | Dtype.Val _ -> invalid_arg "Uop.load: expected pointer src"
-  in
+  (* The indexed source already carries the element dtype. *)
+  let dtype = match load_dtype with Some dtype -> dtype | None -> dtype src in
   let srcs = match alt, gate with
     | Option.None, Option.None -> [| src |]
     | Option.Some a, Option.Some g -> [| src; a; g |]
@@ -848,15 +813,7 @@ let alu_binary ~op ~lhs ~rhs =
   if not (Ops.Group.is_binary op) then
     invalid_arg
       (Printf.sprintf "Uop.alu_binary: %s is not binary" (Ops.name op));
-  let dt =
-    if Ops.Group.is_comparison op then
-      match dtype lhs with
-      | Dtype.Val v ->
-          Dtype.Val (if Dtype.Val.count v = 1 then Dtype.Val.bool
-                      else Dtype.Val.vec (Dtype.Val.count v) Dtype.Val.bool)
-      | Dtype.Ptr _ -> invalid_arg "Uop.alu_binary: comparison on pointer"
-    else dtype lhs
-  in
+  let dt = if Ops.Group.is_comparison op then Dtype.bool else dtype lhs in
   mk ~op ~dtype:dt ~src:[| lhs; rhs |] ~arg:Arg.Empty
 
 let alu_ternary ~op ~a ~b ~c =
@@ -870,15 +827,13 @@ let alu_ternary ~op ~a ~b ~c =
   in
   mk ~op ~dtype:dt ~src:[| a; b; c |] ~arg:Arg.Empty
 
+let valid ~src ~cond =
+  let inv = const (Const.invalid ~dtype:(dtype src) ()) in
+  alu_ternary ~op:Ops.Where ~a:cond ~b:src ~c:inv
+
 let cast ~src ~dtype:target_dtype =
-  let src_count = Dtype.count (dtype src) in
-  let adjusted_dtype =
-    if Dtype.count target_dtype = 1 && src_count <> 1 then
-      Dtype.vec src_count target_dtype
-    else target_dtype
-  in
-  if Dtype.equal (dtype src) adjusted_dtype then src
-  else mk ~op:Ops.Cast ~dtype:adjusted_dtype ~src:[| src |] ~arg:Arg.Empty
+  if Dtype.equal (dtype src) target_dtype then src
+  else mk ~op:Ops.Cast ~dtype:target_dtype ~src:[| src |] ~arg:Arg.Empty
 
 let bitcast ~src ~dtype:target_dtype =
   if Dtype.equal (dtype src) target_dtype then src
@@ -886,20 +841,17 @@ let bitcast ~src ~dtype:target_dtype =
 
 let stack ?dtype:dtype_opt srcs =
   let dt = match dtype_opt, srcs with
-    | Option.Some dt, _ -> Dtype.Val (Dtype.Val.scalarize dt)
-    | Option.None, [] ->
-        void_dtype
-    | Option.None, first :: _ ->
-        (match dtype first with
-         | Dtype.Val _ as dt -> dt
-         | Dtype.Ptr _ as dt -> dt)
+    | Option.Some dt, _ -> dt
+    | Option.None, [] -> void_dtype
+    | Option.None, first :: _ -> dtype first
   in
   mk ~op:Ops.Stack ~dtype:dt ~src:(Array.of_list srcs) ~arg:Arg.Empty
 
 let slice ~src ~offset ~size ~dtype =
   mk ~op:Ops.Slice ~dtype ~src:[| src; offset |] ~arg:(Arg.Int size)
 
-let getaddr ~src = mk ~op:Ops.Getaddr ~dtype:(dtype src) ~src:[| src |] ~arg:Arg.Empty
+let getaddr ~src =
+  mk ~op:Ops.Getaddr ~dtype:Dtype.uint64 ~src:[| src |] ~arg:Arg.Empty
 
 let broadcast u n =
   if n <= 1 then u
@@ -907,9 +859,9 @@ let broadcast u n =
     let srcs = List.init n (fun _ -> u) in
     stack srcs
 
-let range ~size ~axis ~kind ?(sub = []) ?(dtype = Dtype.Val.weakint)
+let range ~size ~axis ~kind ?(sub = []) ?(dtype = Dtype.index)
     ?(parents = []) () =
-  mk ~op:Ops.Range ~dtype:(Dtype.Val dtype)
+  mk ~op:Ops.Range ~dtype
     ~src:(Array.of_list (size :: parents))
     ~arg:(Arg.Range_info { axis; sub; kind })
 
@@ -934,22 +886,14 @@ let wait ~src ~wait_for =
   mk ~op:Ops.Wait ~dtype:void_dtype
     ~src:[| src; wait_for |] ~arg:Arg.Empty
 
-let special ~name ~size ?(dtype = Dtype.Val.weakint) () =
-  let node_dtype = Dtype.Val dtype in
-  mk ~op:Ops.Special ~dtype:node_dtype
-    ~src:[| cast ~src:size ~dtype:node_dtype |] ~arg:(Arg.String name)
+let special ~name ~size ?(dtype = Dtype.index) () =
+  mk ~op:Ops.Special ~dtype
+    ~src:[| cast ~src:size ~dtype |] ~arg:(Arg.String name)
 
 let reduce ~src ~ranges ~op ~dtype =
-  mk ~op:Ops.Reduce ~dtype:(Dtype.Val dtype)
+  mk ~op:Ops.Reduce ~dtype
     ~src:(Array.of_list (src :: ranges))
-    ~arg:(Arg.Reduce_arg { op; axes = [] })
-
-let reduce_axis ~src ~op ~axes =
-  match axes with
-  | [] -> src
-  | _ ->
-      mk ~op:Ops.Reduce ~dtype:(dtype src) ~src:[| src |]
-        ~arg:(Arg.Reduce_arg { op; axes })
+    ~arg:(Arg.Reduce_arg { op; num_axes = 0 })
 
 let allreduce ~src ~device ~op =
   mk ~op:Ops.Allreduce ~dtype:(dtype src)
@@ -1076,8 +1020,11 @@ let rec has_buffer_identity u =
 let reshape ~src ~shape =
   mk ~op:Ops.Reshape ~dtype:(dtype src) ~src:[| src; shape |] ~arg:Arg.Empty
 
-let expand ~src ~shape =
-  mk ~op:Ops.Expand ~dtype:(dtype src) ~src:[| src; shape |] ~arg:Arg.Empty
+let expand ~src ~dims =
+  (* EXPAND prepends [dims] as new leading axes; expanding by an empty shape
+     (an empty stack) is a no-op. *)
+  if op dims = Ops.Stack && Array.length (src dims) = 0 then src
+  else mk ~op:Ops.Expand ~dtype:(dtype src) ~src:[| src; dims |] ~arg:Arg.Empty
 
 let pad ~src ~offset ~size =
   mk ~op:Ops.Pad ~dtype:(dtype src)
@@ -1149,27 +1096,22 @@ let set ~target ~value ?(extras = []) () =
   let st = store ~dst:target ~value () in
   after ~src:target ~deps:(st :: extras)
 
-let shaped_wmma ~a ~b ~acc ~dims ~device ~threads ~dtype =
-  mk ~op:Ops.Shaped_wmma ~dtype ~src:[| a; b; acc |]
-    ~arg:(Arg.Shaped_wmma_info { dims; device; threads })
-
 let wmma ~a ~b ~c ~info ~dtype =
-  mk ~op:Ops.Wmma ~dtype:(Dtype.Val dtype) ~src:[| a; b; c |]
-    ~arg:(Arg.Wmma_info info)
+  mk ~op:Ops.Wmma ~dtype ~src:[| a; b; c |] ~arg:(Arg.Wmma_info info)
 
 let custom ~fmt ~args =
   mk ~op:Ops.Custom ~dtype:void_dtype
     ~src:(Array.of_list args) ~arg:(Arg.String fmt)
 
 let custom_inline ~fmt ~args ~dtype =
-  mk ~op:Ops.Customi ~dtype:(Dtype.Val dtype)
+  mk ~op:Ops.Customi ~dtype
     ~src:(Array.of_list args) ~arg:(Arg.String fmt)
 
 let source s =
   mk ~op:Ops.Source ~dtype:void_dtype ~src:[||] ~arg:(Arg.String s)
 
 let binary s =
-  mk ~op:Ops.Binary ~dtype:void_dtype ~src:[||] ~arg:(Arg.String s)
+  mk ~op:Ops.Binary ~dtype:Dtype.uint8 ~src:[||] ~arg:(Arg.String s)
 
 let rewrite_error ~src ~msg =
   mk ~op:Ops.Rewrite_error ~dtype:void_dtype ~src ~arg:(Arg.String msg)
@@ -1273,6 +1215,7 @@ let runtime_realization_state u =
    A child at or after this index is an ended range and does not
    propagate into this node's in-scope range set. *)
 let range_start_idx = function
+  | Ops.Linear -> Option.Some 0
   | Ops.Stage | Ops.Reduce | Ops.End | Ops.Call | Ops.Function
   | Ops.Copy -> Option.Some 1
   | Ops.Slice -> Option.Some 2
@@ -1536,21 +1479,21 @@ and compute_min_max u =
      dtypes (bool/float are out of this analysis's domain) so callers
      treat those as "unknown". *)
   let dtype_bounds () =
-    match dtype u with
-    | Dtype.Val v when Dtype.Val.is_int v ->
-        (match Dtype.min (Dtype.Val v), Dtype.max (Dtype.Val v) with
-         | `SInt a, `SInt b -> saturate_int64 a, saturate_int64 b
-         | `UInt a, `UInt b ->
-             (* Unsigned dtypes store their max as a raw 64-bit bit
-                pattern in int64; treating it as signed would give a
-                spurious negative. Saturate to max_int for widths that
-                overflow OCaml's native int. *)
-             let lo = saturate_int64 a in
-             let hi = if Int64.compare b 0L >= 0 then saturate_int64 b else max_int in
-             lo, hi
-         | _ -> min_int, max_int)
-    | Dtype.Val v when Dtype.Val.is_bool v -> 0, 1
-    | _ -> min_int, max_int
+    let dt = dtype u in
+    if Dtype.is_int dt then
+      match Dtype.min dt, Dtype.max dt with
+      | `SInt a, `SInt b -> saturate_int64 a, saturate_int64 b
+      | `UInt a, `UInt b ->
+          (* Unsigned dtypes store their max as a raw 64-bit bit
+             pattern in int64; treating it as signed would give a
+             spurious negative. Saturate to max_int for widths that
+             overflow OCaml's native int. *)
+          let lo = saturate_int64 a in
+          let hi = if Int64.compare b 0L >= 0 then saturate_int64 b else max_int in
+          lo, hi
+      | _ -> min_int, max_int
+    else if Dtype.is_bool dt then 0, 1
+    else min_int, max_int
   in
   let sat_add a b =
     if b > 0 && a > max_int - b then max_int
@@ -1594,8 +1537,7 @@ and compute_min_max u =
     | Ops.Add -> Option.Some (sat_add s0_lo s1_lo, sat_add s0_hi s1_hi)
     | Ops.Sub -> Option.Some (sat_sub s0_lo s1_hi, sat_sub s0_hi s1_lo)
     | Ops.And
-      when (match dtype u with Dtype.Val v -> Dtype.Val.is_int v | _ -> false)
-           && s1_lo = s1_hi && s1_lo >= 0 ->
+      when Dtype.is_int (dtype u) && s1_lo = s1_hi && s1_lo >= 0 ->
         let hi = if s0_lo < 0 then s1_hi else min s0_hi s1_hi in
         Option.Some (0, hi)
     | Ops.Mul ->
@@ -1683,22 +1625,16 @@ and compute_min_max u =
           if s0_lo = s0_hi && s0_lo = s1_lo && s1_lo = s1_hi then 0 else 1
         in
         Option.Some (lo, hi)
-    | Ops.Or
-      when (match dtype u with Dtype.Val v -> Dtype.Val.is_bool v | _ -> false) ->
+    | Ops.Or when Dtype.is_bool (dtype u) ->
         let b_or a b = if a <> 0 || b <> 0 then 1 else 0 in
         Option.Some (b_or s0_lo s1_lo, b_or s0_hi s1_hi)
-    | Ops.And
-      when (match dtype u with Dtype.Val v -> Dtype.Val.is_bool v | _ -> false) ->
+    | Ops.And when Dtype.is_bool (dtype u) ->
         let b_and a b = if a <> 0 && b <> 0 then 1 else 0 in
         Option.Some (b_and s0_lo s1_lo, b_and s0_hi s1_hi)
     | _ -> Option.None
   in
-  let is_int_dtype =
-    match dtype u with Dtype.Val v -> Dtype.Val.is_int v | _ -> false
-  in
-  let is_float_dtype =
-    match dtype u with Dtype.Val v -> Dtype.Val.is_float v | _ -> false
-  in
+  let is_int_dtype = Dtype.is_int (dtype u) in
+  let is_float_dtype = Dtype.is_float (dtype u) in
   let binary_result =
     if is_float_dtype then Option.None
     else if Ops.Group.is_binary (op u) && Array.length (src u) >= 2 then
@@ -1735,18 +1671,13 @@ and compute_min_max u =
       else Array.fold_left (fun (lo, hi) s ->
         let sl, sh = min_max s in min lo sl, max hi sh)
         (max_int, min_int) srcs
-  | Ops.Index
-    when Array.length (src u) > 0 && not (Dtype.is_ptr (dtype (src u).(0))) ->
-      min_max (src u).(0)
+  | Ops.Index when Array.length (src u) > 0 -> min_max (src u).(0)
   | Ops.Cast when Array.length (src u) > 0 ->
       (* CAST to bool/unsigned is not monotone; only tighten for floats
          and signed ints (including weakint). *)
+      let dt = dtype u in
       let monotone =
-        match dtype u with
-        | Dtype.Val v ->
-            Dtype.Val.is_float v
-            || (Dtype.Val.is_int v && not (Dtype.Val.is_unsigned v))
-        | _ -> false
+        Dtype.is_float dt || (Dtype.is_int dt && not (Dtype.is_unsigned dt))
       in
       if monotone then
         let s_lo, s_hi = min_max (src u).(0) in
@@ -1831,14 +1762,6 @@ let require_reshape op src_shape target =
   | _ ->
       if not (equal (dim_prod src_shape) (dim_prod target)) then ()
 
-let require_expand op src_shape target =
-  require_movement_len op src_shape target;
-  require_non_negative_shape op target;
-  List.iter2
-    (fun old_dim new_dim ->
-      if not (equal old_dim new_dim || dim_is_one old_dim) then
-        invalid_shape op "dimension is neither unchanged nor broadcast from one")
-    src_shape target
 
 let require_permute op rank order =
   let sorted = List.sort Int.compare order in
@@ -1905,9 +1828,7 @@ let rec lenient_broadcast_shape shapes =
 let rec as_shape u =
   match op u with
   | Ops.Stack -> Array.to_list (src u)
-  | Ops.Const ->
-      let count = Dtype.count (dtype u) in
-      List.init count (fun _ -> u)
+  | Ops.Const -> [ u ]
   | _ -> [ u ]
 
 let marg u =
@@ -1972,10 +1893,19 @@ and compute_shape_opt u =
     if Array.length srcs = 0 then None else shape_opt srcs.(0)
   in
   match op u with
-  | Ops.If | Ops.Barrier | Ops.Custom | Ops.Customi | Ops.Sink
-  | Ops.Rewrite_error | Ops.Endif | Ops.Linear | Ops.Program | Ops.Source
-  | Ops.Ins | Ops.Tuple | Ops.Call | Ops.Function | Ops.Custom_function ->
+  | Ops.If | Ops.Barrier | Ops.Sink | Ops.Rewrite_error | Ops.Endif
+  | Ops.Group | Ops.Linear | Ops.Program | Ops.Source | Ops.Tuple
+  | Ops.Call | Ops.Function | Ops.Custom_function ->
       None
+  | Ops.Ins ->
+      (* Scalar shape; the vector width is carried in the instruction
+         encoding, not the shape. *)
+      if Dtype.equal (dtype u) void_dtype then None else Some []
+  | Ops.Custom | Ops.Customi ->
+      if Dtype.equal (dtype u) void_dtype then None
+      else
+        let shapes = Array.to_list srcs |> List.filter_map shape_opt in
+        if shapes = [] then None else Some (lenient_broadcast_shape shapes)
   | Ops.Noop ->
       if Array.length srcs = 0 then None else shape_opt srcs.(0)
   | Ops.Gettuple ->
@@ -2013,32 +1943,18 @@ and compute_shape_opt u =
         Some (index_shapes @ dropped)
   | Ops.Stack ->
       if Array.length srcs = 0 then Some []
-      else
-        (match dtype u with
-         | Dtype.Ptr _ -> shape_opt srcs.(0)
-         | Dtype.Val _ -> Some (const_int (Array.length srcs) :: shape srcs.(0)))
-  | Ops.Const ->
-      let count = Dtype.count (dtype u) in
-      Some (if count > 1 then [ const_int count ] else [])
-  | Ops.Getaddr | Ops.Bind | Ops.Range | Ops.Special | Ops.Binary -> Some []
-  | Ops.Buffer ->
-      (match Array.to_list srcs, dtype u with
-       | shape :: _, _ when op shape <> Ops.Noop -> Some (as_shape shape)
-       | _, Dtype.Ptr p when Dtype.Ptr.is_image p ->
-           Some (List.map const_int (Dtype.Image.shape p))
-       | _, Dtype.Ptr p -> Some [ const_int (Dtype.Ptr.size p) ]
-       | _, Dtype.Val v ->
-           let count = Dtype.Val.count v in
-           Some (if count > 1 then [ const_int count ] else []))
-  | Ops.Param ->
-      (match Array.to_list srcs, dtype u with
-       | shape :: _, _ when op shape <> Ops.Noop -> Some (as_shape shape)
-       | _, Dtype.Ptr p when Dtype.Ptr.is_image p ->
-           Some (List.map const_int (Dtype.Image.shape p))
-       | _, Dtype.Ptr p -> Some [ const_int (Dtype.Ptr.size p) ]
-       | _, Dtype.Val v ->
-           let count = Dtype.Val.count v in
-           Some (if count > 1 then [ const_int count ] else []))
+      else Some (const_int (Array.length srcs) :: shape srcs.(0))
+  | Ops.Const -> Some []
+  | Ops.Getaddr | Ops.Bind | Ops.Range | Ops.Special -> Some []
+  | Ops.Binary ->
+      (* One dimension per compiled byte. *)
+      (match arg u with
+       | Arg.String s -> Some [ const_int (String.length s) ]
+       | _ -> Some [])
+  | Ops.Buffer | Ops.Param ->
+      (match Array.to_list srcs with
+       | shape :: _ when op shape <> Ops.Noop -> Some (as_shape shape)
+       | _ -> Some [])
   | Ops.Slice ->
       if Array.length srcs > 0 && op srcs.(0) = Ops.Index then Some []
       else
@@ -2080,18 +1996,15 @@ and compute_shape_opt u =
             | _ -> None)
         | _ -> None
       else None
-  | Ops.Shaped_wmma ->
-      if Array.length srcs >= 3 then shape_opt srcs.(2) else None
   | Ops.Mstack | Ops.Mselect | Ops.Detach | Ops.Contiguous
   | Ops.Contiguous_backward | Ops.After | Ops.Load | Ops.Copy
   | Ops.Allreduce | Ops.Store | Ops.End ->
       first_shape ()
   | Ops.Reduce ->
+      (* The reduced axes are the leading [num_axes] of the source shape. *)
       (match as_reduce u with
-       | Some { src; axes = []; _ } -> Some (shape src)
-       | Some { src; axes; _ } ->
-           let src_shape = shape src in
-           Some (List.filteri (fun i _ -> not (List.mem i axes)) src_shape)
+       | Some { src; num_axes; _ } ->
+           Some (List.filteri (fun i _ -> i >= num_axes) (shape src))
        | None -> None)
   | Ops.Bitcast ->
       (match first_shape () with
@@ -2104,6 +2017,10 @@ and compute_shape_opt u =
              (match List.rev ps with
               | [] -> Some ps
               | last :: rev_prefix ->
+                  (match const_int_value last with
+                   | Some n when n * input_size mod output_size <> 0 ->
+                       invalid_shape Ops.Bitcast "unsupported size in bitcast"
+                   | _ -> ());
                   Some
                     (List.rev rev_prefix
                      @ [ dim_div (dim_mul last (const_int input_size))
@@ -2120,44 +2037,8 @@ and compute_shape_opt u =
       end
       else None
   | Ops.Expand ->
-      if Array.length srcs >= 2 then begin
-        let target = as_shape srcs.(1) in
-        let src_shape = shape srcs.(0) in
-        (try require_expand Ops.Expand src_shape target
-         with Invalid_argument msg ->
-           invalid_arg
-             (Printf.sprintf "%s src=%s target=%s child=%s child_srcs=%s node=%s"
-                msg
-                (String.concat ","
-                   (List.map (fun s ->
-                        Printf.sprintf "%d:%s" (tag s) (Ops.name (op s)))
-                      src_shape))
-                (String.concat ","
-                   (List.map (fun s ->
-                        Printf.sprintf "%d:%s" (tag s) (Ops.name (op s)))
-                      target))
-                (Printf.sprintf "%d:%s" (tag srcs.(0))
-                   (Ops.name (op srcs.(0))))
-                (Array.to_list (src srcs.(0))
-                |> List.map (fun child ->
-                       let grand =
-                         Array.to_list (src child)
-                         |> List.map (fun grand ->
-                                Printf.sprintf "%d:%s/%d" (tag grand)
-                                  (Ops.name (op grand))
-                                  (try List.length (shape grand)
-                                   with Invalid_argument _ -> -1))
-                         |> String.concat ","
-                       in
-                       Printf.sprintf "%d:%s/%d" (tag child)
-                         (Ops.name (op child))
-                         (try List.length (shape child)
-                          with Invalid_argument _ -> -1)
-                         ^ "[" ^ grand ^ "]")
-                |> String.concat ";")
-                (Printf.sprintf "%d:%s" (tag u) (Ops.name (op u)))));
-        Some target
-      end
+      (* EXPAND prepends its argument dims to the source shape. *)
+      if Array.length srcs >= 2 then Some (as_shape srcs.(1) @ shape srcs.(0))
       else None
   | Ops.Permute ->
       (match Arg.as_ints (arg u), first_shape () with
@@ -2264,6 +2145,17 @@ and compute_axis u =
           [] srcs
       in
       (match axes with [] -> None | a :: _ -> Some a)
+  | Ops.Stack ->
+      (* Stack adds a leading axis, so a sharded source's axis shifts up. *)
+      let axes =
+        Array.fold_left
+          (fun acc s ->
+            match axis s with
+            | None -> acc
+            | Some a -> if List.mem a acc then acc else a :: acc)
+          [] srcs
+      in
+      (match axes with [] -> None | a :: _ -> Some (a + 1))
   | _ when Array.length srcs = 0 -> None
   | Ops.Shrink -> (
       match axis srcs.(0) with
@@ -2279,8 +2171,8 @@ and compute_axis u =
           else None)
   | Ops.Reduce -> (
       match axis srcs.(0), as_reduce u with
-      | Some ax, Some { axes; _ } ->
-          if List.mem ax axes then None else Some ax
+      | Some src_axis, Some { num_axes; _ } ->
+          if src_axis < num_axes then None else Some (src_axis - num_axes)
       | ax, _ -> ax)
   | Ops.Reshape -> (
       match axis srcs.(0), device_of u with
@@ -2314,6 +2206,15 @@ and compute_axis u =
           in
           find 0 order
       | ax, _ -> ax)
+  | Ops.Expand -> (
+      (* Prepended dims shift the sharded axis up. *)
+      match axis srcs.(0) with
+      | None -> None
+      | Some src_axis ->
+          let n_dims =
+            if Array.length srcs >= 2 then List.length (as_shape srcs.(1)) else 0
+          in
+          Some (src_axis + n_dims))
   | _ -> axis srcs.(0)
 
 let shard_shape u =
@@ -2505,34 +2406,51 @@ let contiguous_view_offset u =
   in
   Option.map fst (walk u)
 
+let reduce_axis ~src ~op ~axes =
+  let shp = shape src in
+  let axes = List.sort_uniq Int.compare axes in
+  match axes with
+  | [] -> src
+  | _ ->
+      (* Reducing a size-1 axis just drops it, so only genuinely reduced axes
+         drive the REDUCE: they are permuted to the front and their count is
+         stored in the arg, then the result is reshaped back to the kept axes. *)
+      let reduce_axes =
+        List.filter (fun x -> not (dim_is_one (List.nth shp x))) axes
+      in
+      let out_shape = List.filteri (fun i _ -> not (List.mem i axes)) shp in
+      (match reduce_axes with
+       | [] -> reshape ~src ~shape:(shape_arg out_shape)
+       | _ ->
+           let rest =
+             List.filter
+               (fun i -> not (List.mem i reduce_axes))
+               (List.init (List.length shp) Fun.id)
+           in
+           let permuted = permute ~src ~order:(reduce_axes @ rest) in
+           let red =
+             mk ~op:Ops.Reduce ~dtype:(dtype src) ~src:[| permuted |]
+               ~arg:(Arg.Reduce_arg { op; num_axes = List.length reduce_axes })
+           in
+           if axes = reduce_axes then red
+           else reshape ~src:red ~shape:(shape_arg out_shape))
+
 let rec const_of_dtype ?shape:target_shape dtype value =
   let ret =
     match value with
     | Const_scalar value -> const (Const.of_scalar dtype value)
     | Const_invalid -> const (Const.invalid ~dtype ())
     | Const_tuple values ->
-        let count = Dtype.Val.count dtype in
-        let len = List.length values in
-        if len <> count then
-          invalid_arg
-            (Printf.sprintf "Uop.const_of_dtype: tuple length %d mismatches %s"
-               len (Dtype.Val.to_string dtype));
-        let scalar_dtype = Dtype.Val.scalarize dtype in
-        let src =
-          Array.of_list
-            (List.map (const_of_dtype scalar_dtype) values)
-        in
-        mk ~op:Ops.Stack ~dtype:(Dtype.Val dtype) ~src ~arg:Arg.Empty
+        let src = Array.of_list (List.map (const_of_dtype dtype) values) in
+        mk ~op:Ops.Stack ~dtype ~src ~arg:Arg.Empty
   in
   match target_shape with
   | None -> ret
   | Some target_arg ->
       let target = as_shape target_arg in
+      (* A scalar constant broadcasts to [target] by prepending it. *)
       if target = [] || dims_equal (shape ret) target then ret
-      else
-        let ones = List.map (fun _ -> dim_one) target in
-        expand ~src:(reshape ~src:ret ~shape:(shape_arg ones))
-          ~shape:target_arg
+      else expand ~src:ret ~dims:target_arg
 
 let rec const_factor u =
   match op u with
@@ -2570,9 +2488,7 @@ let rec divides u n =
       if Array.exists Option.is_none divided then Option.None
       else
         let srcs = Array.to_list (Array.map Option.get divided) in
-        (match dtype u with
-         | Dtype.Val dt -> Option.Some (stack ~dtype:dt srcs)
-         | Dtype.Ptr _ -> Option.Some (stack srcs))
+        Option.Some (stack ~dtype:(dtype u) srcs)
   | Ops.Add ->
       let a = (src u).(0) and b = (src u).(1) in
       (match divides a n, divides b n with
@@ -2587,18 +2503,6 @@ let rec divides u n =
            (match divides b n with
             | Option.Some qb -> Option.Some (alu_binary ~op:Ops.Mul ~lhs:a ~rhs:qb)
             | Option.None -> Option.None))
-  | Ops.Shl -> (
-      let a = (src u).(0) and b = (src u).(1) in
-      match const_int_value b with
-      | Some shift when shift >= 0 && shift < Sys.int_size - 2 ->
-          let factor = 1 lsl shift in
-          if factor mod n = 0 then
-            let q = factor / n in
-            if q = 1 then Some a
-            else Some (alu_binary ~op:Ops.Mul ~lhs:a ~rhs:(const_like u q))
-          else if n mod factor = 0 then divides a (n / factor)
-          else None
-      | _ -> None)
   | _ -> Option.None
 
 let pop_const u =
@@ -2975,6 +2879,197 @@ let int_floor_div a b =
   if r <> 0 && ((a < 0) <> (b < 0)) then q - 1 else q
 
 let int_floor_mod a b = a - (int_floor_div a b * b)
+
+(* Constant folding execution for scalar ALU ops over typed constants. With
+   [truncate_output] the folded value is narrowed to the target dtype (a no-op
+   for the weak and index dtypes); at symbolic fold sites the caller passes
+   [false] to keep full host precision until emission. *)
+
+let const_as_float c =
+  match Const.view c with
+  | Const.Float f -> Some f
+  | Const.Int n -> Some (Int64.to_float n)
+  | Const.Bool b -> Some (if b then 1.0 else 0.0)
+  | Const.Invalid -> None
+
+let const_as_int c =
+  match Const.view c with
+  | Const.Int n -> Some (Int64.to_int n)
+  | Const.Bool b -> Some (if b then 1 else 0)
+  | Const.Float _ | Const.Invalid -> None
+
+let const_of_target ?(truncate_output = false) ~(target : Dtype.t) v =
+  let sv : Dtype.storage_scalar =
+    match v with
+    | `Bool b -> `Bool b
+    | `Int n -> `Int (Int64.of_int n)
+    | `Float f -> `Float f
+  in
+  let sv =
+    if truncate_output && not (Dtype.equal target Dtype.void) then
+      Dtype.truncate target sv
+    else sv
+  in
+  Some (Const.of_scalar target sv)
+
+let any_invalid args = List.exists (fun c -> Const.view c = Const.Invalid) args
+
+let exec_unary ?(truncate_output = false) op (target : Dtype.t) c =
+  if Dtype.is_float target then
+    match const_as_float c with
+    | None -> None
+    | Some x ->
+        let r = match op with
+          | Ops.Neg -> Some (-.x)
+          | Ops.Exp2 -> Some (try 2.0 ** x with _ -> Float.infinity)
+          | Ops.Log2 ->
+              Some
+                (if x > 0.0 then log x /. log 2.0
+                 else if x = 0.0 then Float.neg_infinity
+                 else Float.nan)
+          | Ops.Sqrt -> Some (if x >= 0.0 then sqrt x else Float.nan)
+          | Ops.Reciprocal ->
+              Some
+                (if x <> 0.0 then 1.0 /. x
+                 else Float.copy_sign Float.infinity x)
+          | Ops.Sin ->
+              Some (if not (Float.is_finite x) then Float.nan else sin x)
+          | Ops.Trunc -> Some (Float.trunc x)
+          | _ -> None
+        in
+        (match r with
+         | None -> None
+         | Some f -> const_of_target ~truncate_output ~target (`Float f))
+  else
+    match const_as_int c with
+    | None -> None
+    | Some x ->
+        let r = match op with
+          | Ops.Neg -> Some (-x)
+          | Ops.Trunc -> Some x
+          | _ -> None
+        in
+        (match r with
+         | None -> None
+         | Some n -> const_of_target ~truncate_output ~target (`Int n))
+
+let exec_binary ?(truncate_output = false) op (target : Dtype.t) a b =
+  if Dtype.is_bool target then
+    match op with
+    | Ops.Cmplt | Ops.Cmpne | Ops.Cmpeq ->
+        (match op with
+         (* CMPEQ/CMPNE follow IEEE for floats (nan <> nan, 0.0 = -0.0);
+            for ints/bool the structural [Const.equal] is value equality. *)
+         | Ops.Cmpeq ->
+             (match Const.view a, Const.view b with
+              | Const.Float x, Const.Float y -> Some (Const.bool (x = y))
+              | _ -> Some (Const.bool (Const.equal a b)))
+         | Ops.Cmpne ->
+             (match Const.view a, Const.view b with
+              | Const.Float x, Const.Float y -> Some (Const.bool (x <> y))
+              | _ -> Some (Const.bool (not (Const.equal a b))))
+         (* CMPLT compares ints exactly; floats compare under IEEE. *)
+         | Ops.Cmplt ->
+             (match const_as_int a, const_as_int b with
+              | Some x, Some y -> Some (Const.bool (x < y))
+              | _ ->
+                  (match const_as_float a, const_as_float b with
+                   | Some x, Some y -> Some (Const.bool (x < y))
+                   | _ -> None))
+         | _ -> None)
+    | Ops.And | Ops.Or | Ops.Xor ->
+        (match const_as_int a, const_as_int b with
+         | Some x, Some y ->
+             let r = match op with
+               | Ops.And -> x land y
+               | Ops.Or -> x lor y
+               | Ops.Xor -> x lxor y
+               | _ -> 0
+             in
+             Some (Const.bool (r <> 0))
+         | _ -> None)
+    | _ -> None
+  else if Dtype.is_float target then
+    match const_as_float a, const_as_float b with
+    | Some x, Some y ->
+        let r = match op with
+          | Ops.Add -> Some (x +. y)
+          | Ops.Sub -> Some (x -. y)
+          | Ops.Mul -> Some (x *. y)
+          | Ops.Fdiv ->
+              Some (if y = 0.0 then Float.copy_sign Float.infinity x else x /. y)
+          | Ops.Max -> Some (max x y)
+          | Ops.Pow ->
+              (try
+                 let p = x ** y in
+                 if Float.is_nan p || not (Float.is_finite p) then
+                   if x > 0.0 && not (Float.is_finite y) then
+                     if abs_float x > 1.0 = (y > 0.0) then Some Float.infinity
+                     else Some 0.0
+                   else Some Float.nan
+                 else Some p
+               with _ -> Some Float.nan)
+          | _ -> None
+        in
+        (match r with
+         | None -> None
+         | Some f -> const_of_target ~truncate_output ~target (`Float f))
+    | _ -> None
+  else
+    match const_as_int a, const_as_int b with
+    | Some x, Some y ->
+        let r = match op with
+          | Ops.Add -> Some (x + y)
+          | Ops.Sub -> Some (x - y)
+          | Ops.Mul -> Some (x * y)
+          | Ops.Cdiv -> Some (if y = 0 then 0 else x / y)
+          | Ops.Cmod -> Some (if y = 0 then x else x - (x / y) * y)
+          | Ops.Floordiv -> Some (int_floor_div x y)
+          | Ops.Floormod -> Some (int_floor_mod x y)
+          | Ops.Max -> Some (max x y)
+          | Ops.Xor -> Some (x lxor y)
+          | Ops.Or -> Some (x lor y)
+          | Ops.And -> Some (x land y)
+          | Ops.Shl -> Some (x lsl y)
+          | Ops.Shr -> Some (x asr y)
+          | _ -> None
+        in
+        (match r with
+         | None -> None
+         | Some n -> const_of_target ~truncate_output ~target (`Int n))
+    | _ -> None
+
+let exec_ternary ?(truncate_output = false) op (target : Dtype.t) a b c =
+  match op with
+  | Ops.Where ->
+      (match Const.view a with
+       | Const.Bool true -> Some b
+       | Const.Bool false -> Some c
+       | Const.Int n -> Some (if n <> 0L then b else c)
+       | _ -> None)
+  | Ops.Mulacc ->
+      if Dtype.is_float target then
+        (match const_as_float a, const_as_float b, const_as_float c with
+         | Some x, Some y, Some z ->
+             const_of_target ~truncate_output ~target (`Float ((x *. y) +. z))
+         | _ -> None)
+      else
+        (match const_as_int a, const_as_int b, const_as_int c with
+         | Some x, Some y, Some z ->
+             const_of_target ~truncate_output ~target (`Int ((x * y) + z))
+         | _ -> None)
+  | _ -> None
+
+let exec_alu ?(truncate_output = true) op (target : Dtype.t) args =
+  let is_binary = Ops.Group.is_binary op in
+  if is_binary && any_invalid args then Some (Const.invalid ~dtype:target ())
+  else
+    match args with
+    | [ a ] when Ops.Group.is_unary op -> exec_unary ~truncate_output op target a
+    | [ a; b ] when is_binary -> exec_binary ~truncate_output op target a b
+    | [ a; b; c ] when Ops.Group.is_ternary op ->
+        exec_ternary ~truncate_output op target a b c
+    | _ -> None
 
 let rec infer_int var_vals u =
   match const_int_value (simplify u) with

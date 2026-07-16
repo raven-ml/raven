@@ -151,6 +151,10 @@ type metadata = {
 
 type param_arg = {
   slot : int;  (** Parameter slot. [-1] denotes a symbolic variable. *)
+  dtype : Dtype.t;
+      (** Scalar element dtype of the parameter or buffer. Equal to the node's
+          dtype; carried in the arg so index-lowering rewrites can re-infer the
+          node dtype without desynchronising from the parameter. *)
   vmin_vmax : (int * int) option;
       (** Symbolic lower and upper bounds, when known. *)
   name : string option;  (** Symbolic or debug name, when known. *)
@@ -160,7 +164,7 @@ type param_arg = {
   axis : int option;  (** Sharding axis, when applicable. *)
   device : device option;  (** Concrete or multi-device placement. *)
 }
-(** Tinygrad-shaped payload for {!Ops.Param} and {!Ops.Buffer}. *)
+(** Payload for {!Ops.Param} and {!Ops.Buffer}. *)
 
 type realization_state =
   | Never_realized
@@ -178,10 +182,13 @@ type realization_state =
 
 type reduce_arg = {
   op : Ops.t;  (** Reduction operation. *)
-  axes : int list;  (** Tensor axes reduced before range lowering. *)
+  num_axes : int;
+      (** Number of leading axes reduced. The reduced axes are permuted to
+          the front of the source, so this counts them rather than naming
+          them. *)
 }
-(** Tinygrad-shaped payload for {!Ops.Reduce}. Empty [axes] denotes the
-    lowered kernel form whose reduced ranges are carried in {!src}. *)
+(** Payload for {!Ops.Reduce}. [num_axes = 0] denotes the lowered kernel form
+    whose reduced ranges are carried in {!src}. *)
 
 type const_value =
   | Const_scalar of Dtype.storage_scalar
@@ -228,7 +235,6 @@ type grad_fxn = grad_output:t -> call:t -> t option list
 
 type call_info = {
   grad_fxn : grad_fxn option;  (** Custom gradient callback, if any. *)
-  metadata : metadata list;  (** Stack of call-site annotations. *)
   name : string option;  (** Optional callable name for debugging. *)
   precompile : bool;
       (** [true] to precompile the forward callee. *)
@@ -312,8 +318,8 @@ val program_vals : program_info -> var_vals:(string * int) list -> int option li
 type wmma_info = {
   name : string;  (** Tensor-core primitive name. *)
   dims : int * int * int;  (** Matrix dimensions [(M, N, K)]. *)
-  dtype_in : Dtype.scalar;  (** Input operand scalar type. *)
-  dtype_out : Dtype.scalar;  (** Output operand scalar type. *)
+  dtype_in : Dtype.t;  (** Input operand scalar type. *)
+  dtype_out : Dtype.t;  (** Output operand scalar type. *)
   device : string;  (** Target device name. *)
   threads : int;  (** Warp thread count. *)
   upcast_axes :
@@ -323,13 +329,6 @@ type wmma_info = {
 }
 (** Configuration of a kernel-stage tensor-core matrix-multiply
     accumulate ({!Ops.Wmma}). *)
-
-type shaped_wmma_info = {
-  dims : int * int * int;  (** Matrix dimensions [(M, N, K)]. *)
-  device : string;  (** Target device name. *)
-  threads : int;  (** Warp thread count. *)
-}
-(** Configuration of a tensor-stage {!Ops.Shaped_wmma}. *)
 
 (** {1:arg Arg}
 
@@ -355,7 +354,7 @@ module Arg : sig
     | Range_info of { axis : int; sub : int list; kind : Axis_type.t }
     | Param_arg of param_arg
     | Reduce_arg of reduce_arg
-        (** For [Reduce]: reduction op plus tensor axes. *)
+        (** For [Reduce]: reduction op plus leading-axis count. *)
     | Device of device
         (** For [Copy]: device placement. *)
     | Op_device of Ops.t * device
@@ -367,7 +366,6 @@ module Arg : sig
     | Call_info of call_info
     | Program_info of program_info
     | Wmma_info of wmma_info
-    | Shaped_wmma_info of shaped_wmma_info
 
   val equal : t -> t -> bool
   (** [equal a b] is structural equality on payloads. {!Call_info}
@@ -446,6 +444,11 @@ exception Bottom_up_gate
 val children : t -> t list
 (** [children u] is [Array.to_list (src u)]. *)
 
+val child_ops : t -> Ops.t list
+(** [child_ops u] is the deduplicated set of operation tags appearing among
+    [u]'s direct children. Memoised on the node across calls: it backs the
+    pattern matcher's early-reject, which consults it on every candidate. *)
+
 (** {1:predicates Predicates} *)
 
 val equal : t -> t -> bool
@@ -493,11 +496,11 @@ type if_view = { cond : t; idx_for_dedup : t }
 (** View of an {!Ops.If} node: condition and the index used to
     deduplicate guards over the same region. *)
 
-type reduce_view = { src : t; ranges : t list; op : Ops.t; axes : int list }
+type reduce_view = { src : t; ranges : t list; op : Ops.t; num_axes : int }
 (** View of an {!Ops.Reduce} node: body, lowered loop ranges reduced
-    over, reduction op, and tensor axes. Tensor-stage reductions have
-    [ranges = []] and non-empty [axes]; lowered kernel reductions have
-    [axes = []] and carry source ranges after [src]. *)
+    over, reduction op, and leading-axis count. Tensor-stage reductions have
+    [ranges = []] and [num_axes > 0]; lowered kernel reductions have
+    [num_axes = 0] and carry source ranges after [src]. *)
 
 type allreduce_view = { src : t; device : device; op : Ops.t }
 (** View of an {!Ops.Allreduce} node: body, device group, and
@@ -527,10 +530,6 @@ type buffer_view = { buffer : param_arg; shape : t }
 
 type wmma_view = { a : t; b : t; c : t; info : wmma_info }
 (** View of an {!Ops.Wmma} node: operands and hardware configuration. *)
-
-type shaped_wmma_view = { a : t; b : t; acc : t; info : shaped_wmma_info }
-(** View of an {!Ops.Shaped_wmma} node: tensor-stage matmul-accumulate
-    inputs plus dimensions/device/threads. *)
 
 type call_view = { body : t; args : t list; info : call_info }
 (** View of an {!Ops.Call} or {!Ops.Function} node: callee body,
@@ -596,9 +595,6 @@ val as_buffer : t -> buffer_view option
 
 val as_wmma : t -> wmma_view option
 (** [as_wmma u] matches {!Ops.Wmma}. *)
-
-val as_shaped_wmma : t -> shaped_wmma_view option
-(** [as_shaped_wmma u] matches {!Ops.Shaped_wmma}. *)
 
 val as_call : t -> call_view option
 (** [as_call u] matches both {!Ops.Call} and {!Ops.Function}. *)
@@ -673,10 +669,10 @@ val param :
     [shape] defaults to {!shape_to_shape_arg} [None]. Shared. *)
 
 val variable :
-  name:string -> min_val:int -> max_val:int -> ?dtype:Dtype.Val.t -> unit -> t
+  name:string -> min_val:int -> max_val:int -> ?dtype:Dtype.t -> unit -> t
 (** [variable ~name ~min_val ~max_val ?dtype ()] is a symbolic
     {!Ops.Param} in {!Dtype.Alu} address space. [dtype] defaults to
-    {!Dtype.Val.weakint}. Shared. *)
+    {!Dtype.index}. Shared. *)
 
 val buffer :
   slot:int -> dtype:Dtype.t -> ?shape:t -> ?name:string ->
@@ -717,31 +713,28 @@ val const : ?srcs:t list -> Const.t -> t
     scheduling dependencies and is empty at kernel stage. Dtype is
     that of [v]. Shared. *)
 
-val const_of_dtype : ?shape:t -> Dtype.Val.t -> const_value -> t
-(** [const_of_dtype ?shape dtype value] is a tinygrad-shaped constant node
-    for [value] at [dtype]. Scalar values produce a {!Ops.Const}; if
-    [dtype] is vectorized, the result is a vector-typed scalar-broadcast
-    constant. Tuple values must have length [Dtype.Val.count dtype] and
-    produce a {!Ops.Stack} of scalar constants with dtype [dtype].
+val const_of_dtype : ?shape:t -> Dtype.t -> const_value -> t
+(** [const_of_dtype ?shape dtype value] is a constant node for [value] at
+    [dtype]. Scalar values produce a {!Ops.Const}. Tuple values produce a
+    {!Ops.Stack} of scalar constants with lane dtype [dtype]; the tuple length
+    is the lane count.
 
     If [shape] is supplied and is not scalar, the result is reshaped from
-    singleton dimensions and expanded to [shape], matching tinygrad's
-    shaped constant path.
+    singleton dimensions and expanded to [shape]. *)
 
-    Raises [Invalid_argument] if a tuple length does not match [dtype]. *)
-
-val invalid : ?dtype:Dtype.Val.t -> unit -> t
+val invalid : ?dtype:Dtype.t -> unit -> t
 (** [invalid ?dtype ()] is the [Invalid] sentinel expressed as a
-    [Const]. [dtype] defaults to {!Dtype.Val.weakint}. Shared. *)
+    [Const]. [dtype] defaults to {!Dtype.index}. Shared. *)
 
 val const_int : int -> t
-(** [const_int n] is a {!Dtype.Val.weakint} integer constant. Shared. *)
+(** [const_int n] is a {!Dtype.index} integer constant, used for shape
+    dimensions and loop indices. Shared. *)
 
 val const_float : float -> t
-(** [const_float x] is a {!Dtype.Val.float32} float constant. Shared. *)
+(** [const_float x] is a {!Dtype.weakfloat} float constant. Shared. *)
 
 val const_bool : bool -> t
-(** [const_bool b] is a {!Dtype.Val.bool} boolean constant. Shared. *)
+(** [const_bool b] is a {!Dtype.bool} boolean constant. Shared. *)
 
 val zero_like : t -> t
 (** [zero_like u] is a [Const] zero with [u]'s value dtype.
@@ -765,19 +758,17 @@ val const_like : t -> int -> t
 
     {!Ops.Store}: [src = \[| dst; value |\]] or [\[| dst; value; gate |\]]. *)
 
-val index : ptr:t -> idxs:t list -> ?as_ptr:bool -> unit -> t
-(** [index ~ptr ~idxs ?as_ptr ()] indexes pointer or value [ptr] by [idxs].
-    When [as_ptr] is [true] the result keeps [ptr]'s pointer dtype; otherwise
-    pointers yield their pointed-to element dtype and values yield scalar or
-    vector lane selections. Kernel. *)
+val index : ptr:t -> idxs:t list -> unit -> t
+(** [index ~ptr ~idxs ()] indexes [ptr] by [idxs], selecting an element. The
+    result dtype is [ptr]'s scalar dtype (a buffer or vector already carries
+    its element type). A constant index into a {!Ops.Stack} selects the lane
+    node directly. Kernel. *)
 
 val load : src:t -> ?dtype:Dtype.t -> ?alt:t -> ?gate:t -> unit -> t
-(** [load ~src ?dtype ?alt ?gate ()] loads from pointer [src]. [alt] is
-    the value substituted when [gate] is false. [alt] and [gate] must be
-    supplied together. Result dtype is [dtype] when specified, and
-    otherwise the pointed-to value dtype. Kernel.
-
-    @raise Invalid_argument if [src] is not a pointer. *)
+(** [load ~src ?dtype ?alt ?gate ()] loads the element addressed by [src]. The
+    result dtype is [dtype] when specified, and otherwise [src]'s dtype, which
+    the indexed source already carries. [alt] is the value substituted when
+    [gate] is false. [alt] and [gate] must be supplied together. Kernel. *)
 
 val store : dst:t -> value:t -> ?gate:t -> unit -> t
 (** [store ~dst ~value ?gate ()] stores [value] through pointer [dst],
@@ -806,6 +797,11 @@ val alu_ternary : op:Ops.t -> a:t -> b:t -> c:t -> t
 
     @raise Invalid_argument if [op] is not in {!Ops.Group.ternary}. *)
 
+val valid : src:t -> cond:t -> t
+(** [valid ~src ~cond] is [where cond src invalid]: it masks [src] to the
+    {!Const.invalid} sentinel of [src]'s dtype wherever [cond] is false.
+    Used to gate index expressions. Dtype is inherited from [src]. *)
+
 val cast : src:t -> dtype:Dtype.t -> t
 (** [cast ~src ~dtype] converts [src] to [dtype] with the usual
     numeric-conversion semantics. When [dtype] is scalar and [src] is
@@ -820,7 +816,7 @@ val bitcast : src:t -> dtype:Dtype.t -> t
 
 (** {2:ctors_vec Vector manipulation} *)
 
-val stack : ?dtype:Dtype.Val.t -> t list -> t
+val stack : ?dtype:Dtype.t -> t list -> t
 (** [stack ?dtype srcs] packs scalar [srcs] into a {!Ops.Stack} value.
     Non-empty stacks carry the scalar lane dtype; the lane count is represented
     by the number of sources and the resulting shape, as in tinygrad.
@@ -828,7 +824,7 @@ val stack : ?dtype:Dtype.Val.t -> t list -> t
 
 val getaddr : src:t -> t
 (** [getaddr ~src] is a {!Ops.Getaddr} node extracting the address of
-    [src]. *)
+    [src]. Its dtype is {!Dtype.uint64}. *)
 
 val broadcast : t -> int -> t
 (** [broadcast u n] repeats [u] into an [n]-wide {!Ops.Stack}. Returns
@@ -848,11 +844,11 @@ val broadcast : t -> int -> t
 
 val range :
   size:t -> axis:int -> kind:Axis_type.t -> ?sub:int list ->
-  ?dtype:Dtype.Val.t -> ?parents:t list -> unit -> t
+  ?dtype:Dtype.t -> ?parents:t list -> unit -> t
 (** [range ~size ~axis ~kind ?sub ?dtype ?parents ()] is a loop variable
     over \[[0];[size-1]\] bound to schedule [axis] with semantic [kind]
     (see {!Axis_type}). [sub] defaults to [[]]. [dtype] defaults to
-    {!Dtype.Val.weakint}. [parents] defaults to [[]] and lists the outer
+    {!Dtype.index}. [parents] defaults to [[]] and lists the outer
     {!range} nodes this loop must be emitted under, used as
     control-flow ordering dependencies. Shared. *)
 
@@ -877,32 +873,34 @@ val wait : src:t -> wait_for:t -> t
 (** [wait ~src ~wait_for] sequences [src] on [wait_for] with
     [src = \[| src; wait_for |\]]. Void dtype. Kernel. *)
 
-val special : name:string -> size:t -> ?dtype:Dtype.Val.t -> unit -> t
+val special : name:string -> size:t -> ?dtype:Dtype.t -> unit -> t
 (** [special ~name ~size ?dtype ()] is a backend-provided hardware index
     named [name] and bounded by [size], ranging over \[[0];[size-1]\].
-    [size] is cast to [dtype]. [dtype] defaults to {!Dtype.Val.weakint}.
+    [size] is cast to [dtype]. [dtype] defaults to {!Dtype.index}.
     Kernel. *)
 
 (** {2:ctors_reduce Reduction}
 
-    Tensor-stage {!Ops.Reduce}: [src = \[| body |\]],
-    [arg = Reduce_arg { op; axes }].
+    Tensor-stage {!Ops.Reduce}: [src = \[| body |\]] where [body] has the
+    reduced axes permuted to the front, [arg = Reduce_arg { op; num_axes }].
 
     Lowered/kernel {!Ops.Reduce}: [src = \[| body; range0; range1; ... |\]],
-    [arg = Reduce_arg { op; axes = [] }].
+    [arg = Reduce_arg { op; num_axes = 0 }].
 
     {!Ops.Allreduce}: [src = \[| body |\]], [arg = Op_device (r, device)]. *)
 
 val reduce :
-  src:t -> ranges:t list -> op:Ops.t -> dtype:Dtype.Val.t -> t
+  src:t -> ranges:t list -> op:Ops.t -> dtype:Dtype.t -> t
 (** [reduce ~src ~ranges ~op ~dtype] reduces [src] using [op] over the
     loop [ranges], producing a value of [dtype]. The payload has
-    [axes = []]. Kernel. *)
+    [num_axes = 0]. Kernel. *)
 
 val reduce_axis : src:t -> op:Ops.t -> axes:int list -> t
 (** [reduce_axis ~src ~op ~axes] reduces tensor [src] over tensor [axes]
-    using [op]. Dtype is inherited from [src]. Returns [src] unchanged when
-    [axes] is empty. Tensor. *)
+    using [op]. The genuinely reduced axes (those not of size one) are
+    permuted to the front and reduced as a leading block; size-one axes are
+    dropped by reshape. Dtype is inherited from [src]. Returns [src]
+    unchanged when [axes] is empty. Tensor. *)
 
 val allreduce : src:t -> device:device -> op:Ops.t -> t
 (** [allreduce ~src ~device ~op] reduces [src] using [op] across
@@ -930,8 +928,8 @@ val copy : src:t -> device:device -> unit -> t
 
 (** {2:ctors_movement Movement}
 
-    Tensor-stage only. {!Ops.Reshape} and {!Ops.Expand}:
-    [src = \[| input; shape |\]]. {!Ops.Pad} and {!Ops.Shrink}:
+    Tensor-stage only. {!Ops.Reshape}: [src = \[| input; shape |\]];
+    {!Ops.Expand}: [src = \[| input; dims |\]]. {!Ops.Pad} and {!Ops.Shrink}:
     [src = \[| input; offset; size |\]], where [offset] is the per-axis
     start offset and [size] is the resulting per-axis output size. *)
 
@@ -940,9 +938,12 @@ val reshape : src:t -> shape:t -> t
     [shape] without changing the total count. Dtype is inherited from
     [src]. Tensor. *)
 
-val expand : src:t -> shape:t -> t
-(** [expand ~src ~shape] broadcasts [src] to [shape]. Dtype is
-    inherited from [src]. Tensor. *)
+val expand : src:t -> dims:t -> t
+(** [expand ~src ~dims] prepends [dims] as new leading axes of [src]: the
+    result shape is [dims] followed by [src]'s shape. This is the primitive
+    add-leading-dims op; whole-shape broadcasting is composed at the tensor
+    level from reshape, expand, and permute. Returns [src] unchanged when
+    [dims] is the empty shape. Dtype is inherited from [src]. Tensor. *)
 
 val pad : src:t -> offset:t -> size:t -> t
 (** [pad ~src ~offset ~size] pads [src] with zeros to the per-axis output
@@ -1018,16 +1019,8 @@ val set : target:t -> value:t -> ?extras:t list -> unit -> t
 
 (** {2:ctors_tc Tensor-core} *)
 
-val shaped_wmma :
-  a:t -> b:t -> acc:t ->
-  dims:int * int * int -> device:string -> threads:int ->
-  dtype:Dtype.t -> t
-(** [shaped_wmma ~a ~b ~acc ~dims ~device ~threads ~dtype] is a
-    shape-aware tensor-core matrix-multiply-accumulate with dimensions
-    [dims = (M, N, K)]. Lowered to {!wmma} during scheduling. Tensor. *)
-
 val wmma :
-  a:t -> b:t -> c:t -> info:wmma_info -> dtype:Dtype.Val.t -> t
+  a:t -> b:t -> c:t -> info:wmma_info -> dtype:Dtype.t -> t
 (** [wmma ~a ~b ~c ~info ~dtype] is a concrete tensor-core
     matrix-multiply-accumulate. See {!wmma_info} for the per-device
     configuration. Kernel. *)
@@ -1040,7 +1033,7 @@ val custom : fmt:string -> args:t list -> t
     it. Void dtype. Kernel. *)
 
 val custom_inline :
-  fmt:string -> args:t list -> dtype:Dtype.Val.t -> t
+  fmt:string -> args:t list -> dtype:Dtype.t -> t
 (** [custom_inline ~fmt ~args ~dtype] is like {!custom} but produces a
     value of [dtype] rather than an effect. Kernel. *)
 
@@ -1050,7 +1043,8 @@ val source : string -> t
 
 val binary : string -> t
 (** [binary bytes] carries compiled machine-code [bytes] as its arg.
-    Void dtype, no [src]. Used as a child of {!program}. Program. *)
+    {!Dtype.uint8} dtype with one shape dimension per byte, no [src].
+    Used as a child of {!program}. Program. *)
 
 val rewrite_error : src:t array -> msg:string -> t
 (** [rewrite_error ~src ~msg] records a rewrite failure. [src] is
@@ -1189,13 +1183,17 @@ val marg : t -> marg
     payload does not match its movement layout. *)
 
 val shape : t -> t list
-(** [shape u] is [u]'s tinygrad-style symbolic shape.
+(** [shape u] is [u]'s symbolic shape.
 
     For {!Ops.Gettuple} through a {!Ops.Function}, shape expressions from
     the function body have internal {!Ops.Param} nodes substituted by the
     corresponding function call arguments by parameter slot.
 
     Raises [Invalid_argument] if [u] has no tensor shape. *)
+
+val shape_opt : t -> t list option
+(** [shape_opt u] is [Some (shape u)] when [u] has a shape and [None] when it
+    does not, never raising. Memoised like {!shape}. *)
 
 val max_shape : t -> int list
 (** [max_shape u] is {!shape} with every symbolic dimension replaced by
@@ -1410,6 +1408,21 @@ val simplify_ref : (t -> t) ref
 (** Mutable hook backing {!simplify}. {!Symbolic} assigns it on
     module initialisation to break the dependency cycle between [Uop]
     and the symbolic rewriter. *)
+
+val exec_alu : ?truncate_output:bool -> Ops.t -> Dtype.t -> Const.t list -> Const.t option
+(** [exec_alu ?truncate_output op target args] folds ALU op [op] applied to
+    constant [args], producing a constant of [target] dtype, or [None] when the
+    op or operand shapes are not foldable. Any binary op with an {!Const.invalid}
+    operand folds to {!Const.invalid} regardless of dtype.
+
+    [truncate_output] defaults to [true]: the folded value is narrowed to
+    [target]'s value domain (a no-op for {!Dtype.weakint}, {!Dtype.index}, and
+    {!Dtype.weakfloat}, which have no finite width). Symbolic fold sites pass
+    [false] to keep full host precision, deferring narrowing to emission.
+
+    Bool comparisons follow IEEE for floats (nan differs from nan, [0.0] equals
+    [-0.0]); integer division and modulo use C-truncating ({!Ops.Cdiv},
+    {!Ops.Cmod}) or flooring ({!Ops.Floordiv}, {!Ops.Floormod}) semantics. *)
 
 (** {1:sint Symbolic integers}
 

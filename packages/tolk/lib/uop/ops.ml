@@ -37,7 +37,6 @@ type t =
   | Store
   (* 4 -- math *)
   | Wmma
-  | Shaped_wmma
   | Cast
   | Bitcast
   | Exp2
@@ -97,6 +96,8 @@ type t =
   | Multi
   | Reduce
   | Allreduce
+  (* 7 -- pattern compiler IR *)
+  | Pyliteral
 
 let equal : t -> t -> bool = ( = )
 let compare : t -> t -> int = Stdlib.compare
@@ -126,7 +127,6 @@ let name = function
   | Load -> "LOAD"
   | Store -> "STORE"
   | Wmma -> "WMMA"
-  | Shaped_wmma -> "SHAPED_WMMA"
   | Cast -> "CAST"
   | Bitcast -> "BITCAST"
   | Exp2 -> "EXP2"
@@ -184,6 +184,7 @@ let name = function
   | Multi -> "MULTI"
   | Reduce -> "REDUCE"
   | Allreduce -> "ALLREDUCE"
+  | Pyliteral -> "PYLITERAL"
 
 let pp fmt op = Format.pp_print_string fmt (name op)
 
@@ -226,10 +227,10 @@ module Group = struct
 
   let ternary = [ Where; Mulacc ]
   let alu = unary @ binary @ ternary
-  let broadcastable = [ Group ] @ binary @ ternary
+  let broadcastable = binary @ ternary
   let elementwise = [ Cast; Bitcast ] @ alu
   let defines = [ Buffer; Param ]
-  let irreducible = [ Special; Param; Range; Const ]
+  let irreducible = [ Special; Param; Range; Const; Getaddr ]
   let movement = [ Shrink; Reshape; Permute; Expand; Pad; Flip ]
   let commutative = [ Add; Mul; Max; Cmpne; Cmpeq; Xor; Or; And ]
   let associative = [ Add; Mul; Max; Or; And ]
@@ -263,7 +264,6 @@ module Group = struct
       Load;
       Store;
       Wmma;
-      Shaped_wmma;
       Cast;
       Bitcast;
       Exp2;
@@ -321,6 +321,7 @@ module Group = struct
       Multi;
       Reduce;
       Allreduce;
+      Pyliteral;
     ]
 
   let is_unary = function
@@ -335,16 +336,13 @@ module Group = struct
 
   let is_ternary = function Where | Mulacc -> true | _ -> false
   let is_alu op = is_unary op || is_binary op || is_ternary op
-
-  let is_broadcastable op =
-    is_binary op || is_ternary op || equal op Group
-
+  let is_broadcastable op = is_binary op || is_ternary op
   let is_elementwise op = is_alu op || equal op Cast || equal op Bitcast
 
   let is_define = function Param | Buffer -> true | _ -> false
 
   let is_irreducible = function
-    | Const | Special | Range | Param -> true
+    | Const | Special | Range | Param | Getaddr -> true
     | _ -> false
 
   let is_movement = function
