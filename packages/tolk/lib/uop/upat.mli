@@ -41,9 +41,9 @@ type t
 (** The type for patterns. *)
 
 type dtype_pat
-(** The type for dtype constraints. Constructors that accept [?dtype:Dtype.t]
-    follow tinygrad matching: exact dtype or matching scalar identity. Use
-    {!exact_dtype} when vector width and pointer metadata must also match. *)
+(** The type for dtype constraints. A constraint matches a node's dtype either
+    exactly ({!exact_dtype}) or against any alternative in a set
+    ({!any_dtype}). *)
 
 type src_pat
 (** The type for source-child constraints. *)
@@ -81,10 +81,6 @@ val var : string -> t
 val exact_dtype : Dtype.t -> dtype_pat
 (** [exact_dtype dt] matches exactly [dt]. *)
 
-val scalar_dtype : Dtype.t -> dtype_pat
-(** [scalar_dtype s] matches exactly [s]. Dtypes are scalar, so this is
-    equivalent to {!exact_dtype}. *)
-
 val any_dtype : dtype_pat list -> dtype_pat
 (** [any_dtype ps] matches when any dtype pattern in [ps] matches. *)
 
@@ -108,9 +104,6 @@ val is_any : t list -> t
 val var_dtype : string -> dtype_pat -> t
 (** [var_dtype name dt] is {!var} restricted by the explicit dtype pattern
     [dt]. *)
-
-val var_scalar : string -> Dtype.t -> t
-(** [var_scalar name s] is [var_dtype name (scalar_dtype s)]. *)
 
 val op :
   ?loc:pos ->
@@ -160,7 +153,7 @@ val op_src :
   Ops.t -> t
 (** [op_src] is the explicit-source-pattern variant of {!op}. Use
     {!fixed}, {!prefix}, {!perms}, or {!repeat} to describe child matching,
-    and {!exact_dtype}, {!scalar_dtype}, or {!any_dtype} for dtype matching. *)
+    and {!exact_dtype} or {!any_dtype} for dtype matching. *)
 
 val ops_src :
   ?loc:pos ->

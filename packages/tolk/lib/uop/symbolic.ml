@@ -1185,7 +1185,7 @@ let symbolic_simple : Upat.Pattern_matcher.t =
      => fun bs -> fold_add_divmod_recombine (bs $ "x"));
 
     (* (x:u64 & 0xFFFFFFFF).cast(u32) -> x.cast(u32). *)
-    (let x = var_scalar "x" Dtype.Uint64 in
+    (let x = var_dtype "x" (exact_dtype Dtype.Uint64) in
      let mask = cvar ~name:"m" ~dtype:Dtype.uint64 () in
      cast ~dtype:Dtype.uint32 (alu [ x; mask ] Ops.And) => fun bs ->
        match const_int_v (bs $ "m") with
@@ -1194,8 +1194,8 @@ let symbolic_simple : Upat.Pattern_matcher.t =
        | _ -> None);
 
     (* ((a:u64 * 2^32) | y:u32.cast(u64)).cast(u32) -> y *)
-    (let a = var_scalar "a" Dtype.Uint64
-     and y = var_scalar "y" Dtype.Uint32
+    (let a = var_dtype "a" (exact_dtype Dtype.Uint64)
+     and y = var_dtype "y" (exact_dtype Dtype.Uint32)
      and k = cvar ~name:"k" ~dtype:Dtype.uint64 () in
      let spliced =
        alu [ alu [ a; k ] Ops.Mul; cast ~dtype:Dtype.uint64 y ] Ops.Or
@@ -1204,8 +1204,8 @@ let symbolic_simple : Upat.Pattern_matcher.t =
        if is_const_int_eq (bs $ "k") (1 lsl 32) then Some (bs $ "y") else None);
 
     (* ((a:u64 << 32) | y:u32.cast(u64)).cast(u32) -> y *)
-    (let a = var_scalar "a" Dtype.Uint64
-     and y = var_scalar "y" Dtype.Uint32
+    (let a = var_dtype "a" (exact_dtype Dtype.Uint64)
+     and y = var_dtype "y" (exact_dtype Dtype.Uint32)
      and k = cvar ~name:"k" () in
      let spliced =
        alu [ alu [ a; k ] Ops.Shl; cast ~dtype:Dtype.uint64 y ] Ops.Or
@@ -1214,8 +1214,8 @@ let symbolic_simple : Upat.Pattern_matcher.t =
        if is_const_int_eq (bs $ "k") 32 then Some (bs $ "y") else None);
 
     (* cdiv(((a:u64 * 2^32) | _:u32.cast(u64)), 2^32) -> a *)
-    (let a = var_scalar "a" Dtype.Uint64
-     and y = var_scalar "y" Dtype.Uint32
+    (let a = var_dtype "a" (exact_dtype Dtype.Uint64)
+     and y = var_dtype "y" (exact_dtype Dtype.Uint32)
      and k1 = cvar ~name:"k1" ~dtype:Dtype.uint64 ()
      and k2 = cvar ~name:"k2" ~dtype:Dtype.uint64 () in
      let spliced =
@@ -1228,8 +1228,8 @@ let symbolic_simple : Upat.Pattern_matcher.t =
        else None);
 
     (* ((a:u64 << 32) | _:u32.cast(u64)) >> 32 -> a *)
-    (let a = var_scalar "a" Dtype.Uint64
-     and y = var_scalar "y" Dtype.Uint32
+    (let a = var_dtype "a" (exact_dtype Dtype.Uint64)
+     and y = var_dtype "y" (exact_dtype Dtype.Uint32)
      and k1 = cvar ~name:"k1" ()
      and k2 = cvar ~name:"k2" () in
      let spliced =
@@ -1249,7 +1249,7 @@ let symbolic_simple : Upat.Pattern_matcher.t =
      alu [ base; y ] Ops.Floormod => fun bs -> Some (bs $ "base"));
 
     (* x (bool) and c -> x if c else c *)
-    (let x = var_scalar "x" Dtype.Bool in
+    (let x = var_dtype "x" (exact_dtype Dtype.Bool) in
      let c = cvar ~name:"c" () in
      alu [ x; c ] Ops.And => fun bs ->
        let x = bs $ "x" and c = bs $ "c" in
@@ -1259,7 +1259,7 @@ let symbolic_simple : Upat.Pattern_matcher.t =
        | None -> None);
 
     (* x (bool) or c -> c if c else x *)
-    (let x = var_scalar "x" Dtype.Bool in
+    (let x = var_dtype "x" (exact_dtype Dtype.Bool) in
      let c = cvar ~name:"c" () in
      alu [ x; c ] Ops.Or => fun bs ->
        let x = bs $ "x" and c = bs $ "c" in
@@ -1272,17 +1272,17 @@ let symbolic_simple : Upat.Pattern_matcher.t =
     (rewrite1 (fun x -> ops ~src:[ x; x ] Ops.Group.idempotent) (fun x -> Some x));
 
     (* !!x -> x *)
-    (let x = var_scalar "x" Dtype.Bool in
+    (let x = var_dtype "x" (exact_dtype Dtype.Bool) in
      let inner = op ~src:[ x; false_ ] Ops.Cmpeq in
      op ~src:[ inner; false_ ] Ops.Cmpeq
      => fun bs -> Some (bs $ "x"));
 
     (* where(cond, true, false) -> cond *)
-    (let cond = var_scalar "cond" Dtype.Bool in
+    (let cond = var_dtype "cond" (exact_dtype Dtype.Bool) in
      where cond true_ false_ => fun bs -> Some (bs $ "cond"));
 
     (* where(cond, false, true) -> !cond *)
-    (let cond = var_scalar "cond" Dtype.Bool in
+    (let cond = var_dtype "cond" (exact_dtype Dtype.Bool) in
      where cond false_ true_ => fun bs -> Some (Uop.O.not_ (bs $ "cond")));
 
     (* where(x == y, 1, 0) -> where(x != y, 0, 1) *)
@@ -1304,7 +1304,7 @@ let symbolic_simple : Upat.Pattern_matcher.t =
     (* CAST(bool -> int) != const. Since cast(False)=0 and cast(True)=1,
        compare the uncast bool directly for [0], its negation for [1],
        and [true] for any other scalar integer constant. *)
-    (let x = var_scalar "x" Dtype.Bool and c = cvar ~name:"c" () in
+    (let x = var_dtype "x" (exact_dtype Dtype.Bool) and c = cvar ~name:"c" () in
      let cast_x = cast ~name:"cast" x in
      alu [ cast_x; c ] Ops.Cmpne => fun bs ->
        let cast_x = bs $ "cast" in
@@ -1438,12 +1438,12 @@ let symbolic_simple : Upat.Pattern_matcher.t =
        | _ -> None);
 
     (* bool MUL -> AND (so downstream rules don't miscompute bool arithmetic). *)
-    (let x = var_scalar "x" Dtype.Bool and y = var_scalar "y" Dtype.Bool in
+    (let x = var_dtype "x" (exact_dtype Dtype.Bool) and y = var_dtype "y" (exact_dtype Dtype.Bool) in
      O.(x * y) => fun bs ->
        Some (Uop.alu_binary ~op:Ops.And ~lhs:(bs $ "x") ~rhs:(bs $ "y")));
 
     (* bool ADD -> OR *)
-    (let x = var_scalar "x" Dtype.Bool and y = var_scalar "y" Dtype.Bool in
+    (let x = var_dtype "x" (exact_dtype Dtype.Bool) and y = var_dtype "y" (exact_dtype Dtype.Bool) in
      O.(x + y) => fun bs ->
        Some (Uop.alu_binary ~op:Ops.Or ~lhs:(bs $ "x") ~rhs:(bs $ "y")));
 
@@ -1480,7 +1480,7 @@ let symbolic_simple : Upat.Pattern_matcher.t =
          Some (Uop.O.where (Uop.alu_binary ~op:Ops.And ~lhs:a ~rhs:b) c d)));
 
     (* bool max(x, y) -> x | y. *)
-    (let x = var_scalar "x" Dtype.Bool and y = var_scalar "y" Dtype.Bool in
+    (let x = var_dtype "x" (exact_dtype Dtype.Bool) and y = var_dtype "y" (exact_dtype Dtype.Bool) in
      alu [ x; y ] Ops.Max => fun bs ->
        Some (Uop.alu_binary ~op:Ops.Or ~lhs:(bs $ "x") ~rhs:(bs $ "y")));
   ] ++ Movement.mop_cleanup)
@@ -1658,7 +1658,7 @@ let symbolic : Upat.Pattern_matcher.t =
   in
   let phase_2_rules = [
     (* x | !x -> True *)
-    (let x = var_scalar "x" Dtype.Bool in
+    (let x = var_dtype "x" (exact_dtype Dtype.Bool) in
      let neg_x = op ~src:[ x; false_ ] Ops.Cmpeq in
      alu [ x; neg_x ] Ops.Or => fun _ -> Some (Uop.const_bool true));
 
@@ -1713,7 +1713,7 @@ let symbolic : Upat.Pattern_matcher.t =
        Some Uop.O.(y + (x * (c + Uop.const_like c 1))));
 
     (* y * (x + c) -> (y*x) + (y*c)  (distribution, int only). *)
-    (let x = var_scalar "x" Dtype.Index
+    (let x = var_dtype "x" (exact_dtype Dtype.Index)
      and y = cvar ~name:"y" () and c = cvar ~name:"c" () in
      O.(y * (x + c)) => fun bs ->
        let x = bs $ "x" and y = bs $ "y" and c = bs $ "c" in
@@ -1768,7 +1768,7 @@ let symbolic : Upat.Pattern_matcher.t =
   @ two_stage_associative_rules
   @ [
     (* c0*x < c1 for positive int c0, c1: rewrites to x < ceil(c1/c0). *)
-    (let x = var_scalar "x" Dtype.Index
+    (let x = var_dtype "x" (exact_dtype Dtype.Index)
      and c0 = cvar ~name:"c0" ()
      and c1 = cvar ~name:"c1" () in
      O.((c0 * x) < c1) => fun bs ->
@@ -1781,7 +1781,7 @@ let symbolic : Upat.Pattern_matcher.t =
 
     (* c0*x < c1 for negative c0 (not -1), c1 <= 0: rewrites to
        -x < -floor(-c1/-c0). *)
-    (let x = var_scalar "x" Dtype.Index
+    (let x = var_dtype "x" (exact_dtype Dtype.Index)
      and c0 = cvar ~name:"c0" ()
      and c1 = cvar ~name:"c1" () in
      O.((c0 * x) < c1) => fun bs ->
@@ -1796,7 +1796,7 @@ let symbolic : Upat.Pattern_matcher.t =
     (* (x//d) < c  for d > 0:
        - if c > 0: x < c*d
        - else:     x < c*d - (d-1) *)
-    (let x = var_scalar "x" Dtype.Index
+    (let x = var_dtype "x" (exact_dtype Dtype.Index)
      and d = cvar ~name:"d" ()
      and c = cvar ~name:"c" () in
      O.((x // d) < c) => fun bs ->
@@ -1806,7 +1806,7 @@ let symbolic : Upat.Pattern_matcher.t =
            let bound = if cv > 0 then cv * dv else cv * dv - (dv - 1) in
            Some Uop.O.(x < Uop.const_like x bound)
        | _ -> None);
-    (let x = var_scalar "x" Dtype.Index
+    (let x = var_dtype "x" (exact_dtype Dtype.Index)
      and d = cvar ~name:"d" ()
      and c = cvar ~name:"c" () in
      O.(cdiv x d < c) => fun bs ->
@@ -1837,12 +1837,12 @@ let symbolic : Upat.Pattern_matcher.t =
          Some Uop.O.((x * y) * c1));
 
     (* x*(-1) < y*(-1)  ->  y < x. *)
-    (let x = var_scalar "x" Dtype.Index and y = var "y" in
+    (let x = var_dtype "x" (exact_dtype Dtype.Index) and y = var "y" in
      O.(alu [ x; neg_one ] Ops.Mul < alu [ y; neg_one ] Ops.Mul) => fun bs ->
        Some Uop.O.((bs $ "y") < (bs $ "x")));
 
     (* Generic lt folding: lifts a common factor out of an ADD-split LHS. *)
-    (let x = var_scalar "x" Dtype.Index
+    (let x = var_dtype "x" (exact_dtype Dtype.Index)
      and c = cvar ~name:"c" () in
      O.(x < c) => fun bs ->
        match const_int_v (bs $ "c") with
@@ -1850,7 +1850,7 @@ let symbolic : Upat.Pattern_matcher.t =
        | _ -> None);
 
     (* Canonicalise a simplex with positive coefficients > 0. *)
-    (let x = var_scalar "x" Dtype.Index in
+    (let x = var_dtype "x" (exact_dtype Dtype.Index) in
      op ~src:[ O.(x < one); true_ ] Ops.Cmpne => fun bs ->
        match canonicalize_simplex (bs $ "x") with
        | None -> None
@@ -1895,7 +1895,7 @@ let symbolic : Upat.Pattern_matcher.t =
 
     (* Binary op on two int64 sources narrows to int32 math when no operand
        or result overflows int32, then casts the result back to int64. *)
-    (let x = var_scalar "x" Dtype.Int64 and y = var_scalar "y" Dtype.Int64 in
+    (let x = var_dtype "x" (exact_dtype Dtype.Int64) and y = var_dtype "y" (exact_dtype Dtype.Int64) in
      ops ~src:[ x; y ] ~name:"u" Ops.Group.binary => fun bs ->
        let u = bs $ "u" and x = bs $ "x" and y = bs $ "y" in
        let i32 = Dtype.int32 in
@@ -1909,7 +1909,7 @@ let symbolic : Upat.Pattern_matcher.t =
     (* Narrowing cast chain: [x.cast(a).cast(b)] where [x], [a], [b] are
        ints, [a]'s range covers [x.vmin..x.vmax]. Collapse to
        [x.cast(b)]. *)
-    (let x = var_scalar "x" Dtype.Index in
+    (let x = var_dtype "x" (exact_dtype Dtype.Index) in
      cast ~name:"b" (cast ~name:"a" x) => fun bs ->
        let x = bs $ "x" and a = bs $ "a" and b = bs $ "b" in
        if not (Dtype.is_int (Uop.dtype x) && Dtype.is_int (Uop.dtype a))
@@ -1927,13 +1927,13 @@ let symbolic : Upat.Pattern_matcher.t =
        Some Uop.O.(neg x + neg c));
 
     (* cond.not.where(t, f) -> cond.where(f, t) when f is not Invalid. *)
-    (let cond = var_scalar "cond" Dtype.Bool in
+    (let cond = var_dtype "cond" (exact_dtype Dtype.Bool) in
      let inner_not = op ~src:[ cond; false_ ] Ops.Cmpeq in
      where inner_not (var "t") (var "f") => fun bs ->
        let c = bs $ "cond" and t = bs $ "t" and f = bs $ "f" in
        if is_invalid_const f then None
        else Some (Uop.O.where c f t));
-    (let cond = var_scalar "cond" Dtype.Bool in
+    (let cond = var_dtype "cond" (exact_dtype Dtype.Bool) in
      let inner_not = op ~src:[ cond; true_ ] Ops.Cmpne in
      where inner_not (var "t") (var "f") => fun bs ->
        let c = bs $ "cond" and t = bs $ "t" and f = bs $ "f" in
@@ -2023,7 +2023,7 @@ let symbolic : Upat.Pattern_matcher.t =
          with Not_all_const -> None);
 
     (* (x + c).cast(int) -> x.cast + c.cast. *)
-    (let x = var_scalar "x" Dtype.Index and c = cvar ~name:"c" () in
+    (let x = var_dtype "x" (exact_dtype Dtype.Index) and c = cvar ~name:"c" () in
      cast ~name:"cast" (alu [ x; c ] Ops.Add) => fun bs ->
        let cast = bs $ "cast"
        and x = bs $ "x" and c = bs $ "c" in
@@ -2528,7 +2528,7 @@ let sym : Upat.Pattern_matcher.t =
        (fun x y -> Some Uop.O.(neg x + neg y)));
 
     (* (x + y) * c  ->  x*c + y*c  (int only; floats hit NaN issues). *)
-    (let x = var_scalar "x" Dtype.Index
+    (let x = var_dtype "x" (exact_dtype Dtype.Index)
      and y = var "y" and c = cvar ~name:"c" () in
      O.((x + y) * c) => fun bs ->
        let x = bs $ "x" and y = bs $ "y" and c = bs $ "c" in

@@ -7,8 +7,6 @@
 
 type dtype_pat =
   | Dtype of Dtype.t
-  | Exact_dtype of Dtype.t
-  | Scalar_dtype of Dtype.t
   | Any_dtype of dtype_pat list
 
 type pos = string * int * int * int
@@ -57,8 +55,7 @@ let mk ?alts ?ops ?dtype ?src ?(arg = Any_arg) ?tag ?name ?early_reject
 
 (* Constructors *)
 
-let exact_dtype dtype = Exact_dtype dtype
-let scalar_dtype scalar = Scalar_dtype scalar
+let exact_dtype dtype = Dtype dtype
 let any_dtype dtypes = Any_dtype dtypes
 
 let fixed pats = Fixed pats
@@ -70,7 +67,6 @@ let any = mk ()
 let var name = mk ~name ()
 let is_any pats = mk ~alts:pats ()
 let var_dtype name dtype = mk ~name ~dtype ()
-let var_scalar name scalar = var_dtype name (scalar_dtype scalar)
 let tag s pat = { pat with tag = Some [ s ] }
 let tags ss pat = { pat with tag = Some ss }
 let early_reject ops pat = { pat with early_reject = Some ops }
@@ -111,7 +107,7 @@ let const_float x = const (Const.float Dtype.weakfloat x)
    dtypes. *)
 let const_bool b =
   with_loc
-    (mk ~ops:[ Ops.Const ] ~dtype:(Scalar_dtype Dtype.Bool)
+    (mk ~ops:[ Ops.Const ] ~dtype:(Dtype Dtype.bool)
        ~arg:(Has_const (Const.bool b)) ())
 
 let cvar ?loc ?name ?dtype ?arg () =
@@ -284,8 +280,6 @@ let match_arg pat uop_arg =
 let rec match_dtype pat uop_dtype =
   match pat with
   | Dtype d -> Dtype.equal d uop_dtype
-  | Exact_dtype d -> Dtype.equal d uop_dtype
-  | Scalar_dtype s -> Dtype.equal uop_dtype s
   | Any_dtype dtypes -> List.exists (fun dtype -> match_dtype dtype uop_dtype) dtypes
 
 let permutations l =
