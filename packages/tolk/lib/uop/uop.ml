@@ -804,7 +804,15 @@ let alu_unary ~op ~src =
   if not (Ops.Group.is_unary op) then
     invalid_arg
       (Printf.sprintf "Uop.alu_unary: %s is not unary" (Ops.name op));
-  mk ~op ~dtype:(dtype src) ~src:[| src |] ~arg:Arg.Empty
+  (* The transcendental ops produce a float even from an integer argument. *)
+  let dt =
+    match op with
+    | Ops.Sin | Ops.Log2 | Ops.Exp2 | Ops.Sqrt | Ops.Reciprocal ->
+        if Dtype.equal (dtype src) Dtype.weakint then Dtype.weakfloat
+        else Dtype.least_upper_float (dtype src)
+    | _ -> dtype src
+  in
+  mk ~op ~dtype:dt ~src:[| src |] ~arg:Arg.Empty
 
 let alu_binary ~op ~lhs ~rhs =
   if not (Ops.Group.is_binary op) then

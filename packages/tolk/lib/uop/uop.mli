@@ -777,7 +777,11 @@ val store : dst:t -> value:t -> ?gate:t -> unit -> t
 
 val alu_unary : op:Ops.t -> src:t -> t
 (** [alu_unary ~op ~src] is a unary ALU node. Dtype is inherited from
-    [src]. Shared.
+    [src], except that the transcendental ops ({!Ops.Sin}, {!Ops.Log2},
+    {!Ops.Exp2}, {!Ops.Sqrt}, {!Ops.Reciprocal}) promote an integer argument
+    to floating point: their result dtype is {!Dtype.weakfloat} for a
+    {!Dtype.weakint} argument, and {!Dtype.least_upper_float} of the argument
+    dtype otherwise. Shared.
 
     @raise Invalid_argument if [op] is not in {!Ops.Group.unary}. *)
 
