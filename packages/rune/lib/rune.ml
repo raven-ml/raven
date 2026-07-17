@@ -454,10 +454,6 @@ let while_loop (module C : Ptree.S) ~(cond : C.t -> (bool, Nx.bool_elt) Nx.t)
   let rec go c = if Nx.item [] (cond c) then go (body c) else c in
   go init
 
-(* Random number generation *)
-
-module Rng = Rng
-
 (* Just-in-time compilation *)
 
 exception Jit_error = Jit.Jit_error

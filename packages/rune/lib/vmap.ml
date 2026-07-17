@@ -166,6 +166,15 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
         Some (fun k -> elt2 k cmple a b)
     | E_threefry { key; ctr } when batched st key || batched st ctr ->
         Some (fun k -> elt2 k threefry key ctr)
+    (* The mapped-axis index is the per-lane iota [0 .. batch_size-1], carried
+       as a batched scalar so that a key folded with it (Nx.Rng.fold_in_axis)
+       decorrelates the lanes. *)
+    | E_axis_index ->
+        Some
+          (fun k ->
+            let idx = T.arange Nx.int32 0 st.batch_size 1 in
+            mark st idx;
+            continue k idx)
     (* Elementwise unary *)
     | E_neg { t_in } when batched st t_in -> Some (fun k -> elt1 k neg t_in)
     | E_sin { t_in } when batched st t_in -> Some (fun k -> elt1 k sin t_in)

@@ -1,1 +1,1 @@
-type t = { key : Rune.Rng.key } [@@deriving ptree]
+type t = { key : Nx.Rng.key } [@@deriving ptree]

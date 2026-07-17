@@ -404,7 +404,7 @@ let test_pmap_donate_on_cuda () =
    Random123 function as the eager C kernel. *)
 
 module Key = struct
-  type t = Rune.Rng.key
+  type t = Nx.Rng.key
 
   let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t = f t
 
@@ -429,18 +429,18 @@ let raises_jit_error f =
 
 let test_rng_uniform_bit_parity_on_cuda () =
   require_cuda ();
-  let f key = Rune.Rng.uniform key Nx.float32 [| 1000 |] in
-  let k = Rune.Rng.key 42 in
+  let f key = Nx.Rng.uniform key Nx.float32 [| 1000 |] in
+  let k = Nx.Rng.key 42 in
   let g = Rune.jit ~device:"CUDA" (module Key) f in
   check_bits ~msg:"eager == cuda jit, bitwise" (f k) (g k);
   check_bits ~msg:"replay" (f k) (g k)
 
 let test_rng_int_samplers_bit_parity_on_cuda () =
   require_cuda ();
-  let k = Rune.Rng.key 9 in
-  let fr key = Nx.cast f32 (Rune.Rng.randint key ~high:9 [| 64 |] 3) in
+  let k = Nx.Rng.key 9 in
+  let fr key = Nx.cast f32 (Nx.Rng.randint key ~high:9 [| 64 |] 3) in
   check_bits ~msg:"randint" (fr k) (Rune.jit ~device:"CUDA" (module Key) fr k);
-  let fb key = Nx.cast f32 (Rune.Rng.bernoulli key ~p:0.3 [| 64 |]) in
+  let fb key = Nx.cast f32 (Nx.Rng.bernoulli key ~p:0.3 [| 64 |]) in
   check_bits ~msg:"bernoulli" (fb k)
     (Rune.jit ~device:"CUDA" (module Key) fb k)
 
@@ -448,19 +448,19 @@ let test_rng_int_samplers_bit_parity_on_cuda () =
    float32 ulps of eager (GPU transcendental codegen). *)
 let test_rng_normal_matches_eager_on_cuda () =
   require_cuda ();
-  let f key = Rune.Rng.normal key Nx.float32 [| 1000 |] in
-  let k = Rune.Rng.key 42 in
+  let f key = Nx.Rng.normal key Nx.float32 [| 1000 |] in
+  let k = Nx.Rng.key 42 in
   check_arr ~msg:"normal" (to_arr (f k)) (Rune.jit ~device:"CUDA" (module Key) f k)
 
 let test_rng_fold_in_driven_steps_on_cuda () =
   require_cuda ();
-  let root = Rune.Rng.key 3 in
+  let root = Nx.Rng.key 3 in
   let g =
     Rune.jit ~device:"CUDA"
       (module Key)
-      (fun key -> Rune.Rng.uniform key Nx.float32 [| 8 |])
+      (fun key -> Nx.Rng.uniform key Nx.float32 [| 8 |])
   in
-  let outs = Array.init 5 (fun i -> to_arr (g (Rune.Rng.fold_in root i))) in
+  let outs = Array.init 5 (fun i -> to_arr (g (Nx.Rng.fold_in root i))) in
   for i = 0 to 4 do
     for j = i + 1 to 4 do
       is_true ~msg:(Printf.sprintf "steps %d and %d differ" i j)
@@ -468,7 +468,7 @@ let test_rng_fold_in_driven_steps_on_cuda () =
     done
   done;
   is_true ~msg:"reproducible from the root"
-    (to_arr (g (Rune.Rng.fold_in root 3)) = outs.(3))
+    (to_arr (g (Nx.Rng.fold_in root 3)) = outs.(3))
 
 let test_rng_constant_key_raises_on_cuda () =
   require_cuda ();

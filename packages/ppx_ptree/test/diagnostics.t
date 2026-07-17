@@ -7,7 +7,7 @@
         "ppx_ptree: metadata type [string] must be annotated [@ptree.ignore]"]
 
   $ ./pp.exe -impl cases/unknown_qualified.ml 2>&1 | grep 'ppx_ptree:'
-        "ppx_ptree: cannot infer a traversal for qualified type [Rune.Rng.key]; annotate it [@ptree.leaf], [@ptree.ignore], or [@ptree.using M]"]
+        "ppx_ptree: cannot infer a traversal for qualified type [Nx.Rng.key]; annotate it [@ptree.leaf], [@ptree.ignore], or [@ptree.using M]"]
 
   $ ./pp.exe -impl cases/conflicting_attributes.ml 2>&1 | grep 'ppx_ptree:'
         "ppx_ptree: a type position may have only one of [@ptree.leaf], [@ptree.ignore], and [@ptree.using]"]

@@ -293,11 +293,11 @@ let test_dropout_keyed_deterministic () =
   let x = vec (Array.init 100 (fun i -> float_of_int (i + 1))) in
   let apply key = Dropout.apply ~rate:0.5 ~training:true ~key x in
   check_arr ~eps:0.0 ~msg:"same key, same mask"
-    (Nx.to_array (apply (Rune.Rng.key 7)))
-    (apply (Rune.Rng.key 7));
+    (Nx.to_array (apply (Nx.Rng.key 7)))
+    (apply (Nx.Rng.key 7));
   is_true ~msg:"different keys, different masks"
-    (Nx.to_array (apply (Rune.Rng.key 7))
-    <> Nx.to_array (apply (Rune.Rng.key 8)))
+    (Nx.to_array (apply (Nx.Rng.key 7))
+    <> Nx.to_array (apply (Nx.Rng.key 8)))
 
 let test_dropout_keyed_statistics () =
   let n = 10_000 in
@@ -305,7 +305,7 @@ let test_dropout_keyed_statistics () =
   let x = Nx.ones Nx.float32 [| n |] in
   let y =
     Nx.to_array
-      (Dropout.apply ~rate ~training:true ~key:(Rune.Rng.key 11) x)
+      (Dropout.apply ~rate ~training:true ~key:(Nx.Rng.key 11) x)
   in
   let scaled = 1.0 /. (1.0 -. rate) in
   let kept = ref 0 in
@@ -327,7 +327,7 @@ let test_dropout_keyed_statistics () =
 
 let test_dropout_keyed_eval_identity () =
   let x = vec [| 1.0; -2.0; 3.0; 0.0 |] in
-  let y = Dropout.apply ~rate:0.9 ~training:false ~key:(Rune.Rng.key 0) x in
+  let y = Dropout.apply ~rate:0.9 ~training:false ~key:(Nx.Rng.key 0) x in
   check_arr ~eps:0.0 ~msg:"eval mode ignores the key" (Nx.to_array x) y
 
 (* Under jit: the keyed form compiles, the keyless form is refused loudly. *)
@@ -339,7 +339,7 @@ let test_dropout_keyless_jit_raises () =
     (fun () -> ignore (f (vec [| 1.0; 2.0; 3.0 |])))
 
 module Keyed_x = struct
-  type t = { x : Nx.float32_t; key : Rune.Rng.key }
+  type t = { x : Nx.float32_t; key : Nx.Rng.key }
 
   let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
     { x = f t.x; key = f t.key }
@@ -358,7 +358,7 @@ let test_dropout_keyed_jit_matches_eager () =
     Dropout.apply ~rate:0.5 ~training:true ~key x
   in
   let f = Rune.jit (module Keyed_x) apply in
-  let k = Rune.Rng.key 21 and k' = Rune.Rng.key 22 in
+  let k = Nx.Rng.key 21 and k' = Nx.Rng.key 22 in
   check_arr ~eps:0.0 ~msg:"jit == eager, same key"
     (Nx.to_array (apply { Keyed_x.x; key = k }))
     (f { Keyed_x.x; key = k });
@@ -384,7 +384,7 @@ module Mlp = struct
 end
 
 module Mlp_in = struct
-  type t = { p : Mlp.t; key : Rune.Rng.key }
+  type t = { p : Mlp.t; key : Nx.Rng.key }
 
   let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
     { p = Mlp.map f t.p; key = f t.key }
@@ -430,7 +430,7 @@ let mlp_update p grads =
 let test_dropout_jitted_training_steps () =
   let steps = 4 in
   let trajectory seed =
-    let root = Rune.Rng.key seed in
+    let root = Nx.Rng.key seed in
     let f =
       Rune.jit2
         (module Mlp_in)
@@ -443,7 +443,7 @@ let test_dropout_jitted_training_steps () =
     in
     let p = ref (mlp_init ()) in
     Array.init steps (fun i ->
-        let out = f { Mlp_in.p = !p; key = Rune.Rng.fold_in root i } in
+        let out = f { Mlp_in.p = !p; key = Nx.Rng.fold_in root i } in
         p := out.Mlp_out.p;
         Nx.item [] out.Mlp_out.loss)
   in
@@ -492,7 +492,7 @@ let test_dropout_bf16_sandwich () =
   let objective w =
     let h = Nx.matmul (Nx.cast Nx.bfloat16 x) (Nx.cast Nx.bfloat16 w) in
     let h =
-      Dropout.apply ~rate:0.5 ~training:true ~key:(Rune.Rng.key 3) h
+      Dropout.apply ~rate:0.5 ~training:true ~key:(Nx.Rng.key 3) h
     in
     Nx.mean (Nx.cast Nx.float32 h)
   in

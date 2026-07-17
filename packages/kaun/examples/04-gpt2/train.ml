@@ -19,7 +19,7 @@
    order - [--dropout RATE] (default 0, the reference protocol's dropout-free
    graph) enables the GPT-2 dropout sites in [Gpt2.logits]; the per-step mask
    key is one more int32 leaf of the jitted step's inputs — keys must be
-   inputs, never captures — derived as [Rune.Rng.fold_in root step] from
+   inputs, never captures — derived as [Nx.Rng.fold_in root step] from
    [--seed], so a run is reproducible from its seed alone
 
    Per step it emits the loss (shortest round-trip float64 repr of the fp32
@@ -180,7 +180,7 @@ let map2_key f a b =
 (* Single-device step input: the parameters plus the optional dropout key; the
    fixed batch stays captured by the objective. *)
 module Keyed_in = struct
-  type t = { params : Gpt2.t; key : Rune.Rng.key option }
+  type t = { params : Gpt2.t; key : Nx.Rng.key option }
 
   let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
     { params = Gpt2.Params.map f t.params; key = Option.map f t.key }
@@ -206,7 +206,7 @@ module Scaled_in = struct
   type t = {
     params : Gpt2.t;
     ls : Vega.Loss_scale.t;
-    key : Rune.Rng.key option;
+    key : Nx.Rng.key option;
   }
 
   let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
@@ -288,7 +288,7 @@ module Step_in = struct
     params : Gpt2.t;
     inputs : (int32, Nx.int32_elt) Nx.t;
     targets : (int32, Nx.int32_elt) Nx.t;
-    key : Rune.Rng.key option;
+    key : Nx.Rng.key option;
   }
 
   let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t =
@@ -538,8 +538,8 @@ let () =
   (* The per-step mask key, [fold_in]-derived from the root seed so the run is
      reproducible; it enters the jitted step as an input leaf, never a
      capture. *)
-  let root = Rune.Rng.key !seed in
-  let key_at i = if rate = 0.0 then None else Some (Rune.Rng.fold_in root i) in
+  let root = Nx.Rng.key !seed in
+  let key_at i = if rate = 0.0 then None else Some (Nx.Rng.fold_in root i) in
   (* [step i] maps parameters to updated parameters and the pre-update loss;
      the float16 variant additionally threads its loss-scale state, hidden in
      the closure. *)

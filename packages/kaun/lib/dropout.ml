@@ -12,7 +12,7 @@ let apply ~rate ~training ?key x =
     let keep = 1.0 -. rate in
     let bits =
       match key with
-      | Some key -> Rune.Rng.bernoulli key ~p:keep (Nx.shape x)
+      | Some key -> Nx.Rng.bernoulli key ~p:keep (Nx.shape x)
       | None -> Nx.bernoulli ~p:keep (Nx.shape x)
     in
     let mask = Nx.cast (Nx.dtype x) bits in

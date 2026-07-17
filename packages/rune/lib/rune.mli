@@ -301,71 +301,15 @@ val check_grads :
     rather than exhaustively. Use float64 parameters for reliable results;
     float32 may need a looser [tol]. *)
 
-(** {1:rng Random number generation} *)
+(** {1:rng Random number generation}
 
-(** Explicit splittable PRNG keys.
-
-    Randomness is a pure function of a key: a sampler applied to the same key,
-    dtype, and shape returns the same values — eagerly, under {!val-jit}, and
-    on every device. {!Rng.uniform}, {!Rng.randint} and {!Rng.bernoulli} are
-    bit-identical everywhere; {!Rng.normal} agrees up to the device's
-    transcendental rounding. A key is an ordinary [[|2|]] int32 tensor, so it
-    goes wherever tensors go: a leaf of a parameter structure, an input of a
-    jitted function, a mapped axis of {!val-vmap}.
-
-    Fresh randomness comes from fresh keys, never from calling a sampler
-    twice: {!Rng.split} a key into independent subkeys and hand one to each
-    consumer, or {!Rng.fold_in} a step counter to derive per-step keys from a
-    root.
-
-    {[
-    let root = Rune.Rng.key 42 in
-    let step = Rune.jit (module P) (fun p -> ... Rune.Rng.uniform p.key ...) in
-    for i = 0 to steps - 1 do
-      ignore (step { params with key = Rune.Rng.fold_in root i })
-    done
-    ]} *)
-module Rng : sig
-  type key = (int32, Nx.int32_elt) Nx.t
-  (** The type for PRNG keys: an [[|2|]] int32 tensor holding the generator's
-      state. Keys are values — thread them explicitly, and never reuse one for
-      two draws that must be independent. *)
-
-  val key : int -> key
-  (** [key seed] is the key for [seed]. Equal seeds give equal keys. *)
-
-  val split : ?n:int -> key -> key array
-  (** [split ?n k] is [n] independent subkeys derived from [k] (default [2]).
-      Deterministic: splitting the same key yields the same subkeys. The
-      subkeys are statistically independent of each other; derive one subkey
-      per consumer instead of reusing [k]. *)
-
-  val fold_in : key -> int -> key
-  (** [fold_in k data] is the subkey of [k] indexed by [data]: distinct [data]
-      values give independent keys. Use it to derive per-step keys from a root
-      key and a loop counter. *)
-
-  val uniform : key -> (float, 'b) Nx.dtype -> int array -> (float, 'b) Nx.t
-  (** [uniform k dtype shape] samples uniformly from [\[0, 1)]. Pure: the same
-      key, dtype and shape always produce the same values. *)
-
-  val normal : key -> (float, 'b) Nx.dtype -> int array -> (float, 'b) Nx.t
-  (** [normal k dtype shape] samples the standard normal distribution
-      (Box-Muller over two {!uniform} draws). *)
-
-  val randint :
-    key -> ?high:int -> int array -> int -> (int32, Nx.int32_elt) Nx.t
-  (** [randint k ?high shape low] samples integers uniformly from
-      [\[low, high)]. [high] defaults to [10].
-
-      Raises [Invalid_argument] if [low >= high]. *)
-
-  val bernoulli : key -> p:float -> int array -> (bool, Nx.bool_elt) Nx.t
-  (** [bernoulli k ~p shape] samples booleans that are [true] with probability
-      [p].
-
-      Raises [Invalid_argument] if [p] is outside [\[0, 1\]]. *)
-end
+    Random number generation lives entirely in {!Nx.Rng}: keys, the explicit
+    samplers ({!Nx.Rng.uniform}, {!Nx.Rng.normal}, …) and the implicit scope
+    ({!Nx.Rng.run}). A key is an ordinary [[|2|]] int32 tensor, so it traces,
+    batches and compiles like any tensor — thread it as an input of a jitted
+    function and derive per-call keys with {!Nx.Rng.split} or
+    {!Nx.Rng.fold_in}. The transforms answer the generator's effects but add no
+    RNG vocabulary of their own. *)
 
 (** {1:jit Just-in-time compilation} *)
 
@@ -374,9 +318,10 @@ exception Jit_error of string
     tensor (for example [Nx.item] on a value that depends on the inputs, or a
     data-dependent branch), it assigned to a tensor it closes over (captures
     are compile-time constants), it drew random values from a key that does
-    not depend on the inputs ([Nx.rand] and friends, or a captured {!Rng.key}
-    — the draw would be a compile-time constant replayed on every call; pass
-    the key as an input instead), or it used an operation the compiler does
+    not depend on the inputs ([Nx.rand] and friends, or a captured
+    {!Nx.Rng.key} — the draw would be a compile-time constant replayed on every
+    call; pass the key as an input instead), or it used an operation the
+    compiler does
     not support (FFT, linear algebra, complex, int4 and uint4 tensors,
     assigning into a view). *)
 

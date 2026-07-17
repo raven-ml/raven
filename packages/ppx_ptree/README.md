@@ -33,7 +33,7 @@ Use attributes when syntax alone cannot express the intended role:
 
 Attributes on record labels apply to the whole field. Put an attribute on a
 core type to annotate a nested component, for example
-`(Rune.Rng.key [@ptree.leaf]) option`.
+`(Nx.Rng.key [@ptree.leaf]) option`.
 
 Variants and dynamic tree representations are intentionally out of scope.
 Container constructors and lengths, as well as ignored values, must remain

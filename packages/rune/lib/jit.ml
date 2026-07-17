@@ -35,7 +35,7 @@
    raise [Jit_error] as well. Threefry (the RNG primitive) compiles, but only
    when its key depends on the traced inputs: a constant key would burn one draw
    into the program and silently replay it on every call, so it raises
-   [Jit_error] pointing at [Rune.Rng] key threading. *)
+   [Jit_error] pointing at [Nx.Rng] key threading. *)
 
 open Nx_effect
 module F = Tolk_frontend
@@ -898,9 +898,9 @@ let handler st =
                    "Rune.jit: random number generation from a constant key \
                     inside jit: the key does not depend on the jitted \
                     function's inputs, so every call would replay the same \
-                    values. Use Rune.Rng and pass the key as an input of the \
-                    jitted function (derive per-call keys with Rune.Rng.split \
-                    or Rune.Rng.fold_in); implicit RNG (Nx.rand and friends) \
+                    values. Use Nx.Rng and pass the key as an input of the \
+                    jitted function (derive per-call keys with Nx.Rng.split \
+                    or Nx.Rng.fold_in); implicit RNG (Nx.rand and friends) \
                     is not supported inside jit")
             else ret k ND.int32 (threefry_graph kt (go ctr)))
     | E_unfold { t_in; kernel_size; stride; dilation; padding } ->

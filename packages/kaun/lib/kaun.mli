@@ -24,7 +24,7 @@
 
     Random initialization and shuffling draw from the implicit RNG scope; wrap
     the program in {!Nx.Rng.run} for reproducibility. Randomness inside a
-    jitted training step ({!Dropout}) instead takes an explicit {!Rune.Rng}
+    jitted training step ({!Dropout}) instead takes an explicit {!Nx.Rng}
     key threaded through the step's inputs. *)
 
 (** {1:layers Layers}
@@ -64,7 +64,7 @@ module Pool = Pool
 (** 2-D max and average pooling. *)
 
 module Dropout = Dropout
-(** Dropout with an explicit [~training] flag and optional {!Rune.Rng} key. *)
+(** Dropout with an explicit [~training] flag and optional {!Nx.Rng} key. *)
 
 module Init = Init
 (** Weight initializers (Glorot, He, LeCun, variance scaling). *)

@@ -149,10 +149,10 @@ let make cfg =
     ln_f = Layer_norm.init ~dim:cfg.n_embd;
   }
 
-(* Forward pass. Training passes [?dropout] — a rate and a [Rune.Rng] key — to
+(* Forward pass. Training passes [?dropout] — a rate and a [Nx.Rng] key — to
    enable the canonical GPT-2 dropout sites: the embedding sum and each block's
    post-attention and post-MLP projections. Every site's mask derives from the
-   one key by [Rune.Rng.fold_in], so a single per-step key drives them all;
+   one key by [Nx.Rng.fold_in], so a single per-step key drives them all;
    under [Rune.jit] that key must be an input leaf of the step. Inference (the
    default) applies none. *)
 
@@ -160,7 +160,7 @@ let drop dropout i x =
   match dropout with
   | None -> x
   | Some (rate, key) ->
-      Dropout.apply ~rate ~training:true ~key:(Rune.Rng.fold_in key i) x
+      Dropout.apply ~rate ~training:true ~key:(Nx.Rng.fold_in key i) x
 
 let block_apply cfg ?dropout b x =
   let eps = cfg.layer_norm_eps in
@@ -183,7 +183,7 @@ let logits cfg ?dropout p ids =
   (* Per-consumer subkeys: index 0 feeds the embedding dropout, index i + 1
      block i (which folds again per site). *)
   let sub i =
-    Option.map (fun (rate, key) -> (rate, Rune.Rng.fold_in key i)) dropout
+    Option.map (fun (rate, key) -> (rate, Nx.Rng.fold_in key i)) dropout
   in
   let pos = Nx.reshape [| 1; seq |] (Nx.arange Nx.int32 0 seq 1) in
   let x =
