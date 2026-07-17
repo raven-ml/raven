@@ -12,14 +12,16 @@ anchors point at the tinygrad clone.
   accordingly). Pre-dates the campaign. Find where the reference sources its
   count (`os.cpu_count()` vs performance cores) and mirror it in the CPU
   threading path (gpudims/runtime).
-- **Multi-device shrink failures** (fix in flight): shape descriptors built
-  as `weakint` instead of `index` (`test/parity/helpers.ml` `mk_shape`,
-  `lib/callify.ml` `int_`) let shape stacks enter the range map, deriving a
-  conditional buffer extent (`multi_shard_elementwise` codegen divergence);
-  `Uop.require_shrink` rejects symbolically-unbounded offsets that the
-  reference accepts via `resolve(0<=o)` default-true (ops.py:412), crashing
-  `multi_allreduce_ring`. Root fix: index-typed shape descriptors +
-  resolve-semantics offset validation.
+- **Param shape emission divergence** (systemic, ~32 parity cases):
+  shapeless params emit a `NOOP` shape child where the reference dumps
+  expect `-1` (elementwise_add, reduce_rows, multi_param, multi_output,
+  sum_reduce, matmul_small, …). Cases building shaped params
+  (contiguous_add, symbolic_shrink) pass, so the divergence is in the
+  default/sentinel shape path of param construction or its printing.
+- **test_schedule_rangeify reduce_axis failures** (4): "rewrite cycle
+  detected" and direct-source indexing failures on reduce_axis-involved
+  cases (including symbolic-shrink-then-reduce_axis). Reduce-payload
+  churn suspected; needs an owner with the suite runnable.
 
 ## Deferred parity divergences (each with a known blocker)
 
