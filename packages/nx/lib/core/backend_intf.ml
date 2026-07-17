@@ -64,7 +64,16 @@ let () =
       passes pre-broadcasted, pre-validated inputs and receives the result
       tensor.
     - Movement operations manipulate view metadata (shape, strides, offset)
-      without copying data when possible. *)
+      without copying data when possible.
+
+    {1 Extended backend operations}
+
+    The mandatory contract is exactly the operations declared below. The effect
+    layer ([nx.effect]) implements all of them and adds an extended tier that
+    Rune relies on but a conforming backend need not provide: [const_scalar]
+    (materialize a scalar without a host round-trip), [to_device], [psum], and
+    the [Deferred] tensor handle (a device-resident result forced to host on
+    first data access). Those live outside this module type. *)
 module type S = sig
   (** {1 Types} *)
 
@@ -76,7 +85,12 @@ module type S = sig
   (** Backend execution context.
 
       Carries backend-specific state such as memory pools, device handles,
-      command queues, or computation graphs. *)
+      command queues, or computation graphs.
+
+      Constructing a context is engine-scoped and deliberately outside this
+      contract: each engine exposes its own constructor with whatever parameters
+      it needs. The C engine constructs from [unit]; a device-bearing engine
+      supplies a parameterized constructor (e.g. device index, memory limits). *)
 
   (** {1 Tensor Properties} *)
 
@@ -91,10 +105,14 @@ module type S = sig
   (** [context t] returns the execution context that owns [t]. *)
 
   val to_host : ('a, 'b) t -> ('a, 'b) Nx_buffer.t
-  (** [to_host t] returns [t]'s data as a flat, C-contiguous host buffer.
+  (** [to_host t] returns [t]'s underlying storage buffer, shared with [t]:
+      mutations through the buffer are visible through [t] and vice versa.
 
-      Use {!view} to interpret the logical structure. CPU backends may return a
-      direct reference (zero-copy); GPU backends copy from device to host. *)
+      The buffer is {e not} necessarily contiguous nor sized to the logical
+      element count. Interpret it through {!view} (offset and strides): for a
+      strided view it may exceed the tensor's logical extent and be laid out
+      non-contiguously. CPU backends return the storage directly (zero-copy);
+      device backends copy it out to host memory. *)
 
   (** {1 Tensor Creation} *)
 
@@ -368,15 +386,22 @@ module type S = sig
 
   (** {1 Movement Operations}
 
-      Movement operations manipulate view metadata (shape, strides, offset)
-      without copying data when possible. They return new tensor handles sharing
-      the underlying buffer.
+      Two kinds live here. {e Pure-view} movement — {!expand}, {!reshape},
+      {!permute}, {!shrink}, {!flip} — only rewrites view metadata (shape,
+      strides, offset) and returns a handle sharing the input's buffer, with no
+      copy ({!reshape} is the one exception: it copies when the existing strides
+      cannot express the new shape). {e Materializing assembly} — {!pad} and
+      {!cat} — cannot be expressed as a view and must allocate a fresh buffer and
+      copy: {!pad} widens each dimension around a fill value, and {!cat} is the
+      contract's only variable-arity operation, joining a list of tensors along
+      an axis.
 
       {b Frontend guarantees:} all parameters are validated (axes in range,
       shapes compatible, bounds within limits).
 
-      {b Backend must:} return a tensor with the correct view metadata. May
-      share the underlying buffer (zero-copy) or allocate if necessary. *)
+      {b Backend must:} return a tensor with the correct view metadata, sharing
+      the underlying buffer for pure-view operations and allocating for
+      assembly. *)
 
   val expand : ('a, 'b) t -> int array -> ('a, 'b) t
   (** [expand t shape] broadcasts dimensions of size 1 to match [shape] by
@@ -450,12 +475,23 @@ module type S = sig
     (int32, Dtype.int32_elt) t ->
     (int32, Dtype.int32_elt) t ->
     (int32, Dtype.int32_elt) t
-  (** [threefry key counter] applies the Threefry-2x32 hash function.
+  (** [threefry key counter] applies the Threefry-2x32 counter-based hash.
+
+      This is normative, not merely illustrative: the algorithm is Threefry-2x32
+      run for 20 rounds, with the standard rotation constants and key schedule of
+      that construction. A given [(key, counter)] pair must therefore produce
+      bit-identical output in every backend and under every lowering — eager and
+      jit results are held equal by rune's [test_rng.ml].
 
       {b Frontend guarantees:} [key] and [counter] are int32 tensors with
       compatible shapes. *)
 
-  (** {1 Indexed Access Operations} *)
+  (** {1 Indexed Access Operations}
+
+      Index tensors are uniformly [int32] across the whole contract: {!argmax},
+      {!argmin}, and {!argsort} produce [int32], and {!gather}/{!scatter} consume
+      it. Axes longer than 2{^31} - 1 (the [int32] maximum) are therefore
+      unsupported, and the limit is not checked. *)
 
   val gather :
     ('a, 'b) t -> (int32, Dtype.int32_elt) t -> axis:int -> ('a, 'b) t

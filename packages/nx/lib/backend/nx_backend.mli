@@ -21,8 +21,11 @@
 
 include Nx_core.Backend_intf.S
 
-(* TODO: [create_context : unit -> context] won't work for backends that need
-   parameters (e.g. GPU device index, memory limits). We'll likely need
-   [create_context : ?config:config -> unit -> context] or similar, with a
-   default config for each backend. *)
 val create_context : unit -> context
+(** [create_context ()] builds a fresh execution context for this engine.
+
+    Context construction is intentionally not part of
+    {!Nx_core.Backend_intf.S}: it is engine-scoped, so each engine exposes its
+    own constructor with whatever parameters it needs. The C engine takes none
+    and constructs from [unit]; a device-bearing engine supplies its own
+    parameterized constructor (e.g. device index, memory limits). *)
