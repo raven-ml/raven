@@ -156,8 +156,15 @@ let compute_shapes root =
                | _ -> None)
           | Ops.Slice ->
               Option.map (fun (v : U.slice_view) -> [ v.size ]) (U.as_slice n)
-          | Ops.Reshape | Ops.Expand ->
+          | Ops.Reshape ->
               (match src1 n with Some sh -> const_ints sh | None -> None)
+          | Ops.Expand ->
+              (* EXPAND's argument is the leading axes it prepends, not the
+                 whole shape: the full shape is [arg_dims @ source_dims]. *)
+              (match src1 n, Option.bind (src0 n) shape with
+               | Some sh, Some src_dims ->
+                   Option.map (fun prepend -> prepend @ src_dims) (const_ints sh)
+               | _ -> None)
           | Ops.Pad ->
               (match U.children n with
                | [ _src; _offset; size ] -> const_ints size
