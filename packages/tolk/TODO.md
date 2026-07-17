@@ -13,14 +13,13 @@ anchors point at the tinygrad clone.
 
 ## Deferred parity divergences (each with a known blocker)
 
-- **Bare-view aliasing**: contiguous folds materialize a fresh buffer + copy;
-  the reference returns a buffer-identity view (callify.py
-  `contiguous_mops_to_view`). Runtime cost: one allocation + copy kernel per
-  occurrence per execution (replays every call under jit) plus double
-  residency. Blocker: the tag side-table re-tags rewrite results
-  (`propagate_tags` on_rebuild) and re-wraps the bare view into a
-  materialized copy. Needs the tag-machinery rework plus an end-to-end
-  realize test asserting `x[a:b].realize()` aliases its source.
+- **Leading-dim view folds**: last-axis contiguous views fold to schedule-free
+  aliases (matching the reference), but callify's local
+  `contiguous_view_offset`/`make_slice` bails when a leading dim is not kept
+  in full, so e.g. a 2-D row slice still materializes a copy. The exported
+  `Uop.contiguous_view_offset` already handles leading dims — align the fold
+  to it and delete the partial local reimplementation. Schedule-shape change
+  (kernel counts drop), so verify against the golden suites.
 - **BITCAST/COPY fold extension** (callify): same tag blocker; the COPY arm
   additionally needs the disk-copy push rules tolk does not port.
 - **expand_bitcast** (rangeify): differing-itemsize bitcast reshaping
