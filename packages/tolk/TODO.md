@@ -106,6 +106,12 @@ anchors point at the tinygrad clone.
 
 ## Misc
 
+- **`Buffer.copy_between`/`transfer` bridge is load-bearing for rune**: rune's
+  single-device jit keeps its devices out of the global registry (only pmap
+  registers), so `copy_from` — whose engine runner resolves the destination
+  device by name through the registry — cannot serve it. Do not remove the
+  allocator bridge without giving rune a registry-free copy path.
+
 - `Uop.program_vals` raises bare `Not_found` for an unbound variable; the
   reference raises a descriptive error naming the variable and its user.
 - `pm_clean_up_group_sink` exists as a codegen-local matcher; if the
