@@ -2274,7 +2274,7 @@ let has_const_nonfinite uops =
       | _ -> false)
     uops
 
-let amd_ocml_decl op dtype =
+let amd_ocml_decl op scalar =
   let method_name, attr =
     match op with
     | Ops.Exp2 -> ("exp2", "pure")

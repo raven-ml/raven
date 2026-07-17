@@ -5,7 +5,10 @@
   SPDX-License-Identifier: MIT AND ISC
   ---------------------------------------------------------------------------*)
 
+(* Capture before [open Tolk_uop] shadows it with the uop movement module. *)
+module Movement_ops = Movement
 open Tolk_uop
+module Movement = Movement_ops
 module D = Dtype
 module T = Tensor
 
