@@ -604,9 +604,54 @@ let symbolic_tests =
           equal int ~msg:"second value hits the schedule cache" 1 !lowered);
     ]
 
+(* A contiguous view of a realized buffer realizes as an alias of that buffer —
+   the source memory viewed at the slice offset, with no copy — mirroring the
+   reference, where such a view resolves lazily to [base.view(offset)]. *)
+let aliasing_tests =
+  let module Device = Tolk.Device in
+  let buffer_of t =
+    match Run.buffer_of_node (T.uop t) with
+    | Some b -> b
+    | None -> fail "tensor has no backing buffer after realize"
+  in
+  group "aliasing"
+    [
+      test "contiguous slice aliases its source buffer" (fun () ->
+          let x = vec [| 0.; 1.; 2.; 3.; 4.; 5.; 6.; 7. |] in
+          ignore (Run.realize x);
+          let xbuf = buffer_of x in
+          let y = Op.getitem x [ Mv.R (Some 2, Some 6, None) ] in
+          ignore (Run.realize y);
+          let ybuf = buffer_of y in
+          (* Same underlying allocation, viewed at the slice's byte offset (2
+             elements * 4 bytes), as a distinct view — not a fresh buffer. *)
+          equal int
+            ~msg:"slice shares the source allocation"
+            (Device.Buffer.base_id xbuf) (Device.Buffer.base_id ybuf);
+          equal int ~msg:"view starts at the slice offset" (2 * 4)
+            (Device.Buffer.offset ybuf);
+          if Device.Buffer.id xbuf = Device.Buffer.id ybuf then
+            fail "slice must be a distinct view, not the base buffer itself";
+          check_floats [| 2.; 3.; 4.; 5. |] y);
+      test "explicit contiguous on a slice still aliases" (fun () ->
+          let x = vec [| 0.; 1.; 2.; 3.; 4.; 5.; 6.; 7. |] in
+          ignore (Run.realize x);
+          let xbuf = buffer_of x in
+          let y = El.contiguous (Op.getitem x [ Mv.R (Some 3, Some 7, None) ]) in
+          ignore (Run.realize y);
+          let ybuf = buffer_of y in
+          equal int
+            ~msg:"contiguous view shares the source allocation"
+            (Device.Buffer.base_id xbuf) (Device.Buffer.base_id ybuf);
+          equal int ~msg:"view starts at the slice offset" (3 * 4)
+            (Device.Buffer.offset ybuf);
+          check_floats [| 3.; 4.; 5.; 6. |] y);
+    ]
+
 let () =
   run "Tolk_frontend_run"
     [
+      aliasing_tests;
       elementwise_tests;
       select_tests;
       dynamic_select_tests;

@@ -70,6 +70,33 @@ let register node buf =
 let buffer_of_node node =
   Option.map snd (Hashtbl.find_opt storage (U.tag node))
 
+(* Resolve a node that is a contiguous view of a realized buffer to that buffer
+   viewed at its element offset — an alias, with no copy. Returns [None] when
+   the view is non-contiguous, its offset is not statically known, or its base
+   buffer has not been realized. A whole-buffer view resolves to the base buffer
+   itself, so an already-materialised node keeps its exact identity. *)
+let view_buffer node =
+  match U.contiguous_view_offset node with
+  | None -> None
+  | Some offset ->
+      Option.map
+        (fun src ->
+          let numel = List.fold_left ( * ) 1 (U.max_shape node) in
+          let dtype = U.dtype node in
+          if
+            offset = 0
+            && numel = Tolk.Device.Buffer.size src
+            && D.equal dtype (Tolk.Device.Buffer.dtype src)
+          then src
+          else
+            let v =
+              Tolk.Device.Buffer.view src ~size:numel ~dtype
+                ~offset:(offset * D.itemsize dtype)
+            in
+            Tolk.Device.Buffer.ensure_allocated v;
+            v)
+        (buffer_of_node (U.buf_uop node))
+
 let buffer_nodes () =
   Hashtbl.fold
     (fun _ (node, _) acc ->
@@ -170,10 +197,17 @@ let realize_buffers ts =
           register node buf;
           Some buf
       | None ->
-          (* Nothing was scheduled: either the tensor is already materialised
-             (its node has buffer identity), or its graph folded to a constant
-             expression that needs no storage and stays lazy. *)
-          buffer_of_node (U.buf_uop out))
+          (* Nothing was scheduled: the tensor is a contiguous view of a
+             realized buffer (the callify fold leaves it a bare view, aliasing
+             its source), is already materialised, or folded to a constant. A
+             view aliases its source buffer at the element offset; record it
+             under the tensor's own node so later reads resolve without
+             recomputing. *)
+          (match view_buffer (T.uop t) with
+           | Some buf ->
+               Hashtbl.replace storage (U.tag (T.uop t)) (T.uop t, buf);
+               Some buf
+           | None -> buffer_of_node (U.buf_uop out)))
     ts outs
 
 let realize_many ts = ignore (realize_buffers ts)
@@ -186,12 +220,17 @@ let buffer_of t =
   match buffer_of_node (T.uop t) with
   | Some buf -> buf
   | None -> (
-      match List.hd (realize_buffers [ t ]) with
+      (* A contiguous view of a realized buffer aliases it directly, so resolve
+         it without a round-trip through the scheduler. *)
+      match view_buffer (T.uop t) with
       | Some buf -> buf
-      | None ->
-          failwith
-            "Run.buffer_of: tensor folded to a constant expression with no \
-             storage")
+      | None -> (
+          match List.hd (realize_buffers [ t ]) with
+          | Some buf -> buf
+          | None ->
+              failwith
+                "Run.buffer_of: tensor folded to a constant expression with no \
+                 storage"))
 
 let data t = Tolk.Device.Buffer.as_bytes (buffer_of t)
 
