@@ -345,7 +345,9 @@ let buffer_nbytes b =
 let plannable_device_name dev =
   not
     (String.starts_with ~prefix:"DISK" dev
-    || String.starts_with ~prefix:"TINYFS" dev)
+    || String.starts_with ~prefix:"TINYFS" dev
+    || String.starts_with ~prefix:"CL" dev
+    || String.starts_with ~prefix:"WEBGPU" dev)
 
 let plannable_buffer held b =
   match U.as_buffer b, U.device_of b with
@@ -394,7 +396,7 @@ let memory_lane copy_bufs b =
 let create_arena_buffer ~device ~nbytes =
   let slot = fresh_internal_buffer_slot () in
   U.buffer ~slot ~dtype:Dtype.int8
-    ~shape:(U.const (Const.int Dtype.Val.weakint nbytes))
+    ~shape:(U.const (Const.int Dtype.weakint nbytes))
     ~device ()
 
 let memory_plan_rewrite linear held_bufs =
@@ -505,7 +507,7 @@ let memory_plan_rewrite linear held_bufs =
                  let arena = Hashtbl.find arenas lane in
                  let offset =
                    U.const
-                     (Const.int Dtype.Val.weakint
+                     (Const.int Dtype.index
                         (Hashtbl.find offsets tag))
                  in
                  let slice =

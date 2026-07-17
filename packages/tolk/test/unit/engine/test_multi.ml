@@ -81,7 +81,7 @@ let sharded x shape devices axis =
 
 let realize ~device ~binding sink =
   let to_program = Codegen.to_program device (Device.renderer device) in
-  let call, buffer_map = Allocations.transform_to_call sink in
+  let call, buffer_map = Callify.transform_to_call sink in
   let linear, var_vals =
     Schedule.create_linear_with_vars
       ~get_kernel_graph:Rangeify.get_kernel_graph call

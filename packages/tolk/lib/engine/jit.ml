@@ -61,9 +61,6 @@ let call_args call =
 let call_body call =
   match U.as_call call with Some { body; _ } -> Some body | None -> None
 
-let call_metadata call =
-  match U.as_call call with Some { info; _ } -> info.metadata | None -> []
-
 (* Validation token: inputs must keep their size, dtype, and device across
    replays. *)
 type input_info = {
@@ -117,7 +114,6 @@ let create_graph_call batch =
   let info : U.call_info =
     {
       grad_fxn = None;
-      metadata = List.concat_map call_metadata batch;
       name = None;
       precompile = false;
       precompile_backward = false;

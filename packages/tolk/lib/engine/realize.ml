@@ -230,6 +230,23 @@ let buffer_copy ~device ~total_sz ~dest_device ~src_device =
    Tolk currently has no disk buffer runtime, so host bounce remains the
    fallback when allocator transfer is unavailable. *)
 
+(* [Device.Buffer.copy_from] is the host/device copy entry point the device and
+   frontend layers call. The device layer keeps no executor of its own to avoid
+   depending on the engine; the executor is installed here once when this module
+   initializes, routing those copies through the same path as scheduled COPY
+   calls. *)
+let () =
+  Device.Buffer.install_copy_runner (fun ~dst ~src ->
+    Device.Buffer.ensure_allocated dst;
+    Device.Buffer.ensure_allocated src;
+    let device = Device.get (Device.Buffer.device dst) in
+    let runner =
+      buffer_copy ~device ~total_sz:(Device.Buffer.nbytes dst)
+        ~dest_device:(Device.Buffer.device dst)
+        ~src_device:(Device.Buffer.device src)
+    in
+    ignore (Runner.call runner [ dst; src ] [] ~wait:false ~timeout:None))
+
 (* XXX: EncDec — hardware encode/decode (HEVC).  Out of scope. *)
 
 (* Program and runtime caches

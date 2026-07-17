@@ -54,7 +54,7 @@ let concrete_sum value =
 
 let realize_output device ~to_program ~buf_node ~value =
   let sink, out = symbolic_sum_sink ~buf_node ~value in
-  let call, buffer_map = Allocations.transform_to_call sink in
+  let call, buffer_map = Callify.transform_to_call sink in
   let linear, var_vals =
     Schedule.create_linear_with_vars
       ~get_kernel_graph:Rangeify.get_kernel_graph call
@@ -88,7 +88,7 @@ let symbolic_neg_sink ~buf_node ~value =
 
 let realize_neg_output device ~to_program ~buf_node ~value =
   let sink, out = symbolic_neg_sink ~buf_node ~value in
-  let call, buffer_map = Allocations.transform_to_call sink in
+  let call, buffer_map = Callify.transform_to_call sink in
   let linear, var_vals =
     Schedule.create_linear_with_vars
       ~get_kernel_graph:Rangeify.get_kernel_graph call

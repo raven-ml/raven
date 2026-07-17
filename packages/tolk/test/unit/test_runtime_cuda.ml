@@ -145,7 +145,7 @@ let wrap_graph linear =
   U.linear [ U.replace call ~src:[| cf |] () ]
 
 let schedule_graph_linear device ~to_program sink =
-  let call, buffer_map = Allocations.transform_to_call sink in
+  let call, buffer_map = Callify.transform_to_call sink in
   let linear, var_vals =
     Schedule.create_linear_with_vars
       ~get_kernel_graph:Rangeify.get_kernel_graph call

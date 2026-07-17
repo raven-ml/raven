@@ -23,7 +23,8 @@ module C = Const
 
 (* Helpers *)
 
-let int_ n = U.const (C.int D.Val.weakint n)
+let int_ n = U.const (C.int D.weakint n)
+let index_ n = U.const (C.int D.index n)
 let shape_prod = List.fold_left ( * ) 1
 let dtype_or_void n = U.dtype n
 
@@ -43,17 +44,11 @@ let concrete_shape n =
     loop [] dims
   with Invalid_argument _ -> None
 
-let ptr_size_shape n =
-  match U.dtype n with
-  | D.Ptr p ->
-      let size = D.Ptr.size p in
-      if size >= 0 then Some [ size ] else None
-  | D.Val _ -> None
-
-let replacement_addrspace dtype =
-  match dtype with
-  | D.Ptr p -> D.Ptr.addrspace p
-  | D.Val _ -> D.Global
+(* Address space of an input buffer replaced by a PARAM: the node's own
+   address space, defaulting to global for nodes that carry none (a BIND, a
+   plain scalar). *)
+let replacement_addrspace node =
+  match U.addrspace node with Some a -> a | None -> D.Global
 
 let is_op op n = Ops.equal (U.op n) op
 
@@ -148,15 +143,15 @@ let compute_shapes root =
                | Some { shape; _ } ->
                    (match const_ints shape with
                     | Some _ as s -> s
-                    | None -> ptr_size_shape n)
-               | _ -> ptr_size_shape n)
+                    | None -> None)
+               | _ -> None)
           | Ops.Param ->
               (match (U.as_param n : U.param_view option) with
                | Some { shape; _ } ->
                    (match const_ints shape with
                     | Some _ as s -> s
-                    | None -> ptr_size_shape n)
-               | _ -> ptr_size_shape n)
+                    | None -> None)
+               | _ -> None)
           | Ops.Slice ->
               Option.map (fun (v : U.slice_view) -> [ v.size ]) (U.as_slice n)
           | Ops.Reshape | Ops.Expand ->
@@ -379,21 +374,33 @@ let make_slice shapes src =
       let base = base src in
       let size = match shapes src with
         | Some s -> shape_prod s | None -> 0 in
-      (* Chain Slice offsets when the base is already a view. *)
-      let offset, buf =
+      (* Chain onto an existing view in byte units so a dtype change between
+         the outer view and the underlying buffer stays correct; a byte offset
+         that is not a whole number of underlying elements cannot collapse to a
+         plain slice. *)
+      let chained =
         match U.as_slice base with
-        | Some { offset = slice_off; src = slice_src; _ } ->
-            (match U.const_int_value slice_off with
-             | Some slice_off -> offset + slice_off, slice_src
-             | None -> offset, base)
-        | None -> offset, base
+        | Some { offset = slice_off; src = slice_src; _ } -> (
+            match U.const_int_value slice_off with
+            | Some slice_off ->
+                let inner_itemsize = D.itemsize (U.dtype slice_src) in
+                let byte_offset =
+                  (slice_off * inner_itemsize) + (offset * D.itemsize (U.dtype src))
+                in
+                if byte_offset mod inner_itemsize <> 0 then None
+                else Some (byte_offset / inner_itemsize, slice_src)
+            | None -> Some (offset, base))
+        | None -> Some (offset, base)
       in
-      let slice_dtype = dtype_or_void src in
-      let slice =
-        U.slice ~src:buf ~size ~offset:(int_ offset) ~dtype:slice_dtype
-      in
-      let shape = match shapes src with Some s -> s | None -> [] in
-      Some (U.reshape ~src:slice ~shape:(shape_node shape))
+      (match chained with
+       | None -> None
+       | Some (offset, buf) ->
+           let slice_dtype = dtype_or_void src in
+           let slice =
+             U.slice ~src:buf ~size ~offset:(index_ offset) ~dtype:slice_dtype
+           in
+           let shape = match shapes src with Some s -> s | None -> [] in
+           Some (U.reshape ~src:slice ~shape:(shape_node shape)))
 
 (* CONTIGUOUS(movement-ops(BUFFER)) → CONTIGUOUS(SLICE) when the
    movement ops collapse to a contiguous range. *)
@@ -416,9 +423,9 @@ let contiguous_mops_to_slice ctx node =
            if trivial_reshape then None
            else if ctx.shapes node = None then None (* symbolic shapes *)
            else
-             (* XXX: should check that the device allocator supports
-                offset views.  All current tolk devices (CPU, Metal)
-                do, so we skip the check for now. *)
+             (* Devices that cannot take offset views are excluded upstream of
+                here by the memory planner's device filter, so no per-device
+                check is needed at this point. *)
              (match make_slice ctx.shapes src with
               | None -> None
               | Some view ->
@@ -491,7 +498,7 @@ let revert_store_to_contiguous ctx node =
            in
            let target = find_target node in
            (match U.op target with
-            | Ops.Buffer -> None
+            | Ops.Buffer | Ops.Slice -> None
             | _ ->
                 let c = U.contiguous ~src () in
                 (match get_tags ctx node with
@@ -575,7 +582,7 @@ let pm_replace_buf ctx node =
       | Some sh -> shape_node sh
       | None -> U.shape_to_shape_arg None
     in
-    let addrspace = replacement_addrspace dtype in
+    let addrspace = replacement_addrspace b in
     match U.as_bind b, ctx.shapes b with
     | Some { var; _ }, _ ->
         (* A bound variable keeps its name and range so the kernel graph can
@@ -675,7 +682,7 @@ let transform_to_call (big_sink : U.t) : U.t * (int, U.t) Hashtbl.t =
     |> List.map snd
   in
   let info =
-    { U.grad_fxn = None; metadata = []; name = None; precompile = false;
+    { U.grad_fxn = None; name = None; precompile = false;
       precompile_backward = false; aux = None } in
   let ret = U.call ~body ~args ~info in
   (ret, ctx.buffer_map)

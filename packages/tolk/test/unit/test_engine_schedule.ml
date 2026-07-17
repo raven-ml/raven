@@ -145,7 +145,7 @@ let val_buffer () =
 
 let transform_to_call_of_bound_variable ~value =
   let sink, bound = symbolic_shrink_sink ~buf_node:(val_buffer ()) ~value in
-  let call, _ = Allocations.transform_to_call sink in
+  let call, _ = Callify.transform_to_call sink in
   match U.as_call call with
   | Some { body; args; _ } -> (body, args, bound)
   | None -> fail "expected transform_to_call to produce a CALL"
@@ -177,7 +177,7 @@ let schedule_cache_key_strips_bind_value () =
 
 let create_linear_with_vars_extracts_bind_through_call () =
   let sink, _ = symbolic_shrink_sink ~buf_node:(val_buffer ()) ~value:5 in
-  let call, _ = Allocations.transform_to_call sink in
+  let call, _ = Callify.transform_to_call sink in
   let _linear, var_vals =
     Schedule.create_linear_with_vars
       ~get_kernel_graph:Rangeify.get_kernel_graph call
