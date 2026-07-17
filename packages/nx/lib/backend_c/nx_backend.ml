@@ -987,7 +987,20 @@ let irfft (type a b c d) ?s (x : (a, b) t) ~(dtype : (c, d) Dtype.t) ~axes :
 
 (* ───── Linear Algebra Operations ───── *)
 
+(* Numeric LAPACK failures reach us as tagged [Invalid_argument]/[Failure]
+   messages from the C stubs; lift the ones we recognize to [Linalg_error] so
+   callers can match on the failure kind. Precondition messages (bad shape or
+   dtype) fall through unchanged. *)
+let reraise_linalg ~op f =
+  try f () with
+  | Invalid_argument msg
+    when String.ends_with ~suffix:"not positive-definite" msg ->
+      raise (Backend_intf.Linalg_error { op; kind = `Not_positive_definite })
+  | Failure msg when String.ends_with ~suffix:"decomposition failed" msg ->
+      raise (Backend_intf.Linalg_error { op; kind = `No_convergence })
+
 let cholesky ~upper x =
+  reraise_linalg ~op:"cholesky" @@ fun () ->
   (* Ensure input is materializable *)
   let x' = ensure_materializable x in
 
@@ -1005,6 +1018,7 @@ let cholesky ~upper x =
   out
 
 let qr ~reduced x =
+  reraise_linalg ~op:"qr" @@ fun () ->
   let x' = ensure_materializable x in
   let x_shape = shape x in
   let m = x_shape.(Array.length x_shape - 2) in

@@ -310,6 +310,13 @@ thread.
 
 ### Nx
 
+- Add `Nx.Linalg_error`, a typed exception for numeric linear-algebra failures,
+  carrying the failing operation and a `kind`
+  (`` `Not_positive_definite ``, `` `Singular ``, `` `No_convergence ``). A
+  non-positive-definite `cholesky` now raises `Linalg_error` (previously an
+  untyped `Invalid_argument "cholesky: not positive-definite"`) and a failed
+  `qr` raises it with `` `No_convergence ``. Precondition violations (non-square
+  input, wrong dtype) still raise `Invalid_argument`.
 - Make the backend contract's `scatter` take required `~mode` and
   `~unique_indices` labels instead of optionals, adopting the rule that
   backend-contract operations carry no optional arguments (user-facing defaults

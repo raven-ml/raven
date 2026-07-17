@@ -6,6 +6,8 @@
 module F = Nx_core.Make_frontend (Nx_effect)
 include F
 
+exception Linalg_error = Nx_core.Backend_intf.Linalg_error
+
 let context = Lazy.from_fun Nx_effect.create_context
 
 module Ptree = Ptree

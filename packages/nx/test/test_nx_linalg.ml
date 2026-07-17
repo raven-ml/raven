@@ -1309,7 +1309,13 @@ let test_cholesky_upper () =
 let test_cholesky_non_posdef () =
   let a = Nx.create Nx.float32 [| 2; 2 |] [| 1.; 2.; 3.; 4. |] in
   raises ~msg:"cholesky non posdef"
-    (Invalid_argument "cholesky: not positive-definite") (fun () ->
+    (Nx.Linalg_error { op = "cholesky"; kind = `Not_positive_definite })
+    (fun () -> ignore (Nx.cholesky a))
+
+let test_cholesky_non_square () =
+  let a = Nx.create Nx.float32 [| 2; 3 |] [| 1.; 2.; 3.; 4.; 5.; 6. |] in
+  raises ~msg:"cholesky non square"
+    (Invalid_argument "cholesky: coefficient matrix must be square") (fun () ->
       ignore (Nx.cholesky a))
 
 let test_qr_mode () =
@@ -1634,6 +1640,7 @@ let advanced_decomposition_tests =
   [
     test "cholesky upper" test_cholesky_upper;
     test "cholesky non posdef" test_cholesky_non_posdef;
+    test "cholesky non square" test_cholesky_non_square;
     test "qr mode" test_qr_mode;
     test "svd full matrices" test_svd_full_matrices;
     test "svdvals" test_svdvals;

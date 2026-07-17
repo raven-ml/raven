@@ -3,6 +3,35 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*)
 
+exception
+  Linalg_error of {
+    op : string;
+    kind : [ `Not_positive_definite | `Singular | `No_convergence ];
+  }
+(** Raised by a linear-algebra operation when the numeric computation fails
+    (as opposed to a precondition violation such as a non-square or wrong-dtype
+    input, which raises [Invalid_argument] or [Failure]).
+
+    [op] names the operation that failed (e.g. ["cholesky"]). [kind] classifies
+    the failure:
+    - [`Not_positive_definite]: a factorization requiring a positive-definite
+      matrix was given one that is not (Cholesky).
+    - [`Singular]: a solve was given a singular coefficient matrix.
+    - [`No_convergence]: an iterative decomposition did not converge (QR, SVD,
+      eigen routines). *)
+
+let () =
+  Printexc.register_printer (function
+    | Linalg_error { op; kind } ->
+        let detail =
+          match kind with
+          | `Not_positive_definite -> "matrix is not positive-definite"
+          | `Singular -> "matrix is singular"
+          | `No_convergence -> "algorithm failed to converge"
+        in
+        Some (Printf.sprintf "Nx.Linalg_error(%s): %s" op detail)
+    | _ -> None)
+
 (** Backend interface for Nx tensor operations.
 
     This module type defines the contract between Nx's frontend and its
@@ -561,18 +590,27 @@ module type S = sig
       where required, matching dimensions for solves).
 
       {b Backend must:} allocate and return result tensors. Typically delegates
-      to LAPACK. *)
+      to LAPACK.
+
+      Numeric failures (a matrix that is not positive-definite, a decomposition
+      that fails to converge) raise {!Linalg_error}. Precondition violations
+      that slip past the frontend (unsupported dtype, degenerate shape) keep
+      their [Invalid_argument] or [Failure] form. *)
 
   val cholesky : upper:bool -> ('a, 'b) t -> ('a, 'b) t
   (** [cholesky ~upper t] computes the Cholesky factorization of a
       positive-definite matrix. Returns [L] (lower) or [U] (upper) such that
       [A = L·Lᵀ] or [A = Uᵀ·U].
 
-      @raise Failure if not positive-definite. *)
+      @raise Linalg_error
+        with kind [`Not_positive_definite] if [t] is not positive-definite. *)
 
   val qr : reduced:bool -> ('a, 'b) t -> ('a, 'b) t * ('a, 'b) t
   (** [qr ~reduced t] returns [(Q, R)] where [Q] is orthogonal and [R] is upper
-      triangular. [reduced = true] returns economy-size factorization. *)
+      triangular. [reduced = true] returns economy-size factorization.
+
+      @raise Linalg_error
+        with kind [`No_convergence] if the factorization does not converge. *)
 
   val svd :
     full_matrices:bool ->
@@ -580,7 +618,10 @@ module type S = sig
     ('a, 'b) t * (float, Dtype.float64_elt) t * ('a, 'b) t
   (** [svd ~full_matrices t] returns [(U, S, Vᴴ)]. [S] is a 1D float64 vector of
       singular values in descending order. [full_matrices = false] returns thin
-      SVD. *)
+      SVD.
+
+      May raise {!Linalg_error} with kind [`No_convergence] if the underlying
+      routine does not converge. *)
 
   val eig :
     vectors:bool ->
@@ -588,14 +629,20 @@ module type S = sig
     (Complex.t, Dtype.complex64_elt) t
     * (Complex.t, Dtype.complex64_elt) t option
   (** [eig ~vectors t] computes eigenvalues (and optionally eigenvectors) of a
-      square matrix. Returns complex64 results. *)
+      square matrix. Returns complex64 results.
+
+      May raise {!Linalg_error} with kind [`No_convergence] if the eigenvalue
+      iteration does not converge. *)
 
   val eigh :
     vectors:bool ->
     ('a, 'b) t ->
     (float, Dtype.float64_elt) t * ('a, 'b) t option
   (** [eigh ~vectors t] computes eigenvalues (and optionally eigenvectors) of a
-      symmetric/Hermitian matrix. Eigenvalues are float64. *)
+      symmetric/Hermitian matrix. Eigenvalues are float64.
+
+      May raise {!Linalg_error} with kind [`No_convergence] if the eigenvalue
+      iteration does not converge. *)
 
   val triangular_solve :
     upper:bool ->
@@ -608,5 +655,8 @@ module type S = sig
       [Aᵀ·x = b] where [A] is triangular.
 
       [upper]: [A] is upper triangular. [transpose]: solve [Aᵀ·x = b].
-      [unit_diag]: assume diagonal is all ones. *)
+      [unit_diag]: assume diagonal is all ones.
+
+      May raise {!Linalg_error} with kind [`Singular] if [A] is singular (a zero
+      on the diagonal when [unit_diag] is false). *)
 end

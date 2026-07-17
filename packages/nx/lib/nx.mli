@@ -1945,6 +1945,18 @@ val argsort :
 
 (** {1:linalg Linear algebra} *)
 
+exception
+  Linalg_error of {
+    op : string;
+    kind : [ `Not_positive_definite | `Singular | `No_convergence ];
+  }
+(** Raised by a linear-algebra operation when the numeric computation fails,
+    carrying the operation name and a failure [kind]. Precondition violations
+    (non-square input, wrong dtype) raise [Invalid_argument] instead.
+
+    This is {!Nx_core.Backend_intf.Linalg_error}; catching it here catches the
+    exception raised by the backend. *)
+
 (** {2:linalg_products Products} *)
 
 val dot : ('a, 'b) t -> ('a, 'b) t -> ('a, 'b) t
@@ -2108,8 +2120,9 @@ val cholesky : ?upper:bool -> ('a, 'b) t -> ('a, 'b) t
     [a = Uᵀ U]; otherwise (default) returns the lower-triangular factor [L] such
     that [a = L Lᵀ].
 
-    Raises [Invalid_argument] if [a] is not positive-definite or the dtype is
-    not floating-point or complex.
+    Raises {!Linalg_error} with kind [`Not_positive_definite] if [a] is not
+    positive-definite. Raises [Invalid_argument] if [a] is not square or the
+    dtype is not floating-point or complex.
 
     See also {!solve}. *)
 
@@ -2117,7 +2130,9 @@ val qr : ?mode:[ `Complete | `Reduced ] -> ('a, 'b) t -> ('a, 'b) t * ('a, 'b) t
 (** [qr ?mode a] is [(Q, R)] where [a = Q R], [Q] is orthogonal, and [R] is
     upper-triangular. [mode] defaults to [`Reduced].
 
-    Raises [Invalid_argument] if the dtype is not floating-point or complex.
+    Raises {!Linalg_error} with kind [`No_convergence] if the factorization does
+    not converge. Raises [Invalid_argument] if the dtype is not floating-point
+    or complex.
 
     See also {!svd}. *)
 
