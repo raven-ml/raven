@@ -1,6 +1,6 @@
 (executable
  (name bench_rune)
- (libraries nx rune thumper))
+ (libraries nx rune thumper unix))
 
 ; Not attached to runtest on purpose: run with `dune build @bench`
 ; (or `dune exec packages/rune/bench/bench_rune.exe -- --explore`).

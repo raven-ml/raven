@@ -29,3 +29,14 @@ persamplegrads/per-sample_grads_ew	wall_time	1.727881e-03	1.697501e-03	1.756642e
 persamplegrads/per-sample_mlp_w3_grads	alloc_words	1.156400e+04	1.156400e+04	1.156400e+04	0.000000e+00	19	0
 persamplegrads/per-sample_mlp_w3_grads	cpu_time	4.653756e-02	4.492290e-02	5.147427e-02	7.038798e-02	19	2
 persamplegrads/per-sample_mlp_w3_grads	wall_time	2.332524e-03	2.248935e-03	2.560471e-03	6.678080e-02	19	3
+
+# machine: 3b8ae6dbe74c4269
+# cpu: Apple M1 Max
+# ocaml: 5.5.0
+
+jitfootprint/elementwise_first-call	alloc_words	5.530190e+05	5.441490e+05	5.686760e+05	2.217555e-02	15	2
+jitfootprint/elementwise_first-call	cpu_time	5.683843e-03	5.439091e-03	6.189724e-03	6.603217e-02	15	0
+jitfootprint/elementwise_first-call	wall_time	4.272036e-02	4.227358e-02	4.336269e-02	1.274695e-02	15	0
+jitfootprint/lorenz_n10_first-call	alloc_words	1.643258e+07	1.641363e+07	1.648703e+07	2.233490e-03	13	2
+jitfootprint/lorenz_n10_first-call	cpu_time	5.764041e-02	5.677300e-02	5.821460e-02	1.250512e-02	13	0
+jitfootprint/lorenz_n10_first-call	wall_time	9.479288e-02	9.415247e-02	9.569196e-02	8.120248e-03	13	3
