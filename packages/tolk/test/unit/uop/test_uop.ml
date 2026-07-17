@@ -94,7 +94,6 @@ let ops_tinygrad_order () =
       "LOAD";
       "STORE";
       "WMMA";
-      "SHAPED_WMMA";
       "CAST";
       "BITCAST";
       "EXP2";
@@ -152,6 +151,7 @@ let ops_tinygrad_order () =
       "MULTI";
       "REDUCE";
       "ALLREDUCE";
+      "PYLITERAL";
     ]
   in
   is_true ~msg:"Ops.Group.all matches tinygrad order"
@@ -193,10 +193,10 @@ let group_algebra () =
     (reduce = [ Ops.Add; Ops.Mul; Ops.Max ]);
   is_true ~msg:"Defines are Buffer and Param"
     (defines = [ Ops.Buffer; Ops.Param ]);
-  is_true ~msg:"Irreducible includes Param, not Bind"
-    (irreducible = [ Ops.Special; Ops.Param; Ops.Range; Ops.Const ]);
-  is_true ~msg:"broadcastable includes Group"
-    (is_broadcastable Ops.Group);
+  is_true ~msg:"Irreducible includes Param and Getaddr, not Bind"
+    (irreducible = [ Ops.Special; Ops.Param; Ops.Getaddr; Ops.Range; Ops.Const ]);
+  is_true ~msg:"broadcastable excludes Group"
+    (not (is_broadcastable Ops.Group));
   is_true ~msg:"Cdiv and Cmod are binary"
     (is_binary Ops.Cdiv && is_binary Ops.Cmod);
   is_true ~msg:"floor div/mod are binary"
@@ -371,13 +371,13 @@ let integer_bounds_parity () =
   equal_bounds ~msg:"FLOORMOD over empty numerator is zero"
     (Uop.alu_binary ~op:Ops.Floormod ~lhs:empty_range ~rhs:two)
     (0, 0);
-  let int64_max = Uop.const (Const.int64 Dtype.Val.int64 Int64.max_int) in
+  let int64_max = Uop.const (Const.int64 Dtype.int64 Int64.max_int) in
   equal_bounds ~msg:"wide signed max constant saturates to native max"
     int64_max (max_int, max_int);
-  let int64_min = Uop.const (Const.int64 Dtype.Val.int64 Int64.min_int) in
+  let int64_min = Uop.const (Const.int64 Dtype.int64 Int64.min_int) in
   equal_bounds ~msg:"wide signed min constant saturates to native min"
     int64_min (min_int, min_int);
-  let uint64_max = Uop.const (Const.int64 Dtype.Val.uint64 Int64.minus_one) in
+  let uint64_max = Uop.const (Const.int64 Dtype.uint64 Int64.minus_one) in
   equal_bounds ~msg:"raw uint64 max constant saturates to native max"
     uint64_max (max_int, max_int);
   let uint64_param = Uop.param ~slot:7 ~dtype:Dtype.uint64 () in
@@ -385,7 +385,7 @@ let integer_bounds_parity () =
     uint64_param (0, max_int);
   let wrapping_const =
     Uop.const
-      (Const.int64 Dtype.Val.weakint (Int64.add Int64.min_int 5L))
+      (Const.int64 Dtype.weakint (Int64.add Int64.min_int 5L))
   in
   let overflow_rejected =
     try
@@ -406,16 +406,13 @@ let stack_stage_slice_constructors () =
   let opts : Uop.stage_opts =
     { device = None; addrspace = Dtype.Global; removable = false }
   in
-  let ptr_dtype =
-    Dtype.Ptr.create Dtype.Val.int32 ~addrspace:Dtype.Global ~size:16
-  in
   let staged = Uop.stage ~src:a ~ranges:[] ~opts in
   is_true ~msg:"stage uses Stage op" (Uop.op staged = Ops.Stage);
   is_true ~msg:"stage inherits source dtype"
     (Dtype.equal (Uop.dtype staged) (Uop.dtype a));
   let sliced =
     Uop.slice ~src:staged ~offset:(Uop.const_int 4) ~size:8
-      ~dtype:(Dtype.Ptr ptr_dtype)
+      ~dtype:Dtype.int32
   in
   is_true ~msg:"slice uses Slice op" (Uop.op sliced = Ops.Slice);
   is_true ~msg:"slice has symbolic offset source"
@@ -429,38 +426,23 @@ let uop_constructor_parity_shortcuts () =
     (Dtype.equal (Uop.dtype casted) Dtype.float32);
   equal (list int) ~msg:"stack cast keeps vector shape" [ 2 ]
     (List.map Uop.vmax (Uop.shape casted));
-  is_true ~msg:"cast to adjusted same dtype returns source"
-    (Uop.cast ~src:stacked ~dtype:Dtype.weakint == stacked);
+  is_true ~msg:"cast to same dtype returns source"
+    (Uop.cast ~src:stacked ~dtype:Dtype.index == stacked);
   is_true ~msg:"bitcast to same dtype returns source"
     (Uop.bitcast ~src:stacked ~dtype:(Uop.dtype stacked) == stacked);
-  let ptr =
-    Uop.buffer ~slot:0
-      ~dtype:
-        (Dtype.Ptr
-           (Dtype.Ptr.create Dtype.Val.int32 ~addrspace:Dtype.Global ~size:4))
-      ()
-  in
-  is_true ~msg:"pointer bitcast to same dtype returns source"
-    (Uop.bitcast ~src:ptr ~dtype:(Uop.dtype ptr) == ptr);
+  let buf = Uop.buffer ~slot:0 ~dtype:Dtype.int32 () in
+  is_true ~msg:"buffer bitcast to same dtype returns source"
+    (Uop.bitcast ~src:buf ~dtype:(Uop.dtype buf) == buf);
   is_true ~msg:"INDEX of stack with one const lane returns lane"
     (Uop.index ~ptr:stacked ~idxs:[ Uop.const_int 1 ] () == b);
-  let invalid_vec =
-    Uop.invalid ~dtype:(Dtype.Val.vec 4 Dtype.Val.weakint) ()
-  in
-  let invalid_lane =
-    Uop.index ~ptr:invalid_vec ~idxs:[ Uop.const_int 2 ] ()
-  in
-  is_true ~msg:"INDEX of vector const is scalar typed"
-    (Uop.op invalid_lane = Ops.Index
-     && Dtype.equal (Uop.dtype invalid_lane) Dtype.weakint);
   is_true ~msg:"empty end returns value"
     (Uop.end_ ~value:a ~ranges:[] == a);
-  let wait = Uop.wait ~src:a ~wait_for:b in
+  let wait = Uop.wait ~src:a in
   is_true ~msg:"wait uses Wait op" (Uop.op wait = Ops.Wait);
+  is_true ~msg:"wait is void typed"
+    (Dtype.equal (Uop.dtype wait) Dtype.void);
   (match Uop.as_wait wait with
-   | Some { src; wait_for } ->
-       is_true ~msg:"wait view keeps source" (src == a);
-       is_true ~msg:"wait view keeps dependency" (wait_for == b)
+   | Some { src } -> is_true ~msg:"wait view keeps source" (src == a)
    | None -> is_true ~msg:"wait view is present" false);
   let contiguous = Uop.contiguous ~src:stacked () in
   is_true ~msg:"deviceless contiguous returns source"
@@ -469,82 +451,50 @@ let uop_constructor_parity_shortcuts () =
   is_true ~msg:"contiguous buffer identity is useless"
     (Uop.contiguous ~src:buffer () == buffer)
 
-let const_vector_parity_constructors () =
+let const_scalar_payload_constructors () =
   let open Uop in
-  let vec_i32 = Dtype.Val.vec 3 Dtype.Val.int32 in
-  let tuple =
-    const_of_dtype vec_i32
-      (Const_tuple
-         [
-           Const_scalar (`Int 1L);
-           Const_scalar (`Int 2L);
-           Const_scalar (`Int 3L);
-         ])
-  in
-  is_true ~msg:"tuple constant is a Stack" (op tuple = Ops.Stack);
-  is_true ~msg:"tuple constant preserves vector dtype"
-    (Dtype.equal (dtype tuple) (Dtype.Val vec_i32));
-  let lanes = src tuple in
-  is_true ~msg:"tuple constant has one scalar const per lane"
-    (Array.length lanes = 3);
-  (match op lanes.(1), arg lanes.(1) with
-   | Ops.Const, Arg.Value c ->
-       is_true ~msg:"tuple lane is scalar int32"
-         (Dtype.Val.equal (Const.dtype c) Dtype.Val.int32);
-       is_true ~msg:"tuple lane keeps value" (Const.view c = Const.Int 2L)
-   | _ -> is_true ~msg:"tuple lane shape" false);
-  let vec_f32 = Dtype.Val.vec 4 Dtype.Val.float32 in
-  let broadcast =
-    const_of_dtype vec_f32 (Const_scalar (`Int 2L))
-  in
-  is_true ~msg:"scalar broadcast vector constant remains Const"
-    (op broadcast = Ops.Const);
-  is_true ~msg:"scalar broadcast constant has vector dtype"
-    (Dtype.equal (dtype broadcast) (Dtype.Val vec_f32));
-  (match arg broadcast with
+  let scalar = const_of_dtype Dtype.int32 (Const_scalar (`Int 2L)) in
+  is_true ~msg:"scalar const is a Const" (op scalar = Ops.Const);
+  is_true ~msg:"scalar const keeps its dtype"
+    (Dtype.equal (dtype scalar) Dtype.int32);
+  (match arg scalar with
    | Arg.Value c ->
-       is_true ~msg:"broadcast payload is coerced to float"
+       is_true ~msg:"scalar const keeps value" (Const.view c = Const.Int 2L)
+   | _ -> is_true ~msg:"scalar const payload" false);
+  let coerced = const_of_dtype Dtype.float32 (Const_scalar (`Int 2L)) in
+  is_true ~msg:"scalar const coerced to requested dtype"
+    (Dtype.equal (dtype coerced) Dtype.float32);
+  (match arg coerced with
+   | Arg.Value c ->
+       is_true ~msg:"int payload is coerced to float"
          (match Const.view c with Const.Float 2.0 -> true | _ -> false)
-   | _ -> is_true ~msg:"broadcast payload" false);
-  let lane = index ~ptr:broadcast ~idxs:[ const_int 2 ] () in
-  is_true ~msg:"INDEX vector const projects scalar dtype"
-    (op lane = Ops.Index && Dtype.equal (dtype lane) Dtype.float32);
-  let nan = const_of_dtype Dtype.Val.float32 (Const_scalar (`Float Float.nan)) in
+   | _ -> is_true ~msg:"coerced payload" false);
+  let nan = const_of_dtype Dtype.float32 (Const_scalar (`Float Float.nan)) in
   (match arg nan with
    | Arg.Value c ->
        is_true ~msg:"nan payload is canonical NaN"
          (match Const.view c with Const.Float f -> Float.is_nan f | _ -> false);
        is_true ~msg:"nan const equals itself" (Const.equal c c)
    | _ -> is_true ~msg:"nan payload" false);
-  let neg_zero = const_of_dtype Dtype.Val.float32 (Const_scalar (`Float (-0.0))) in
-  let pos_zero = const_of_dtype Dtype.Val.float32 (Const_scalar (`Float 0.0)) in
+  let neg_zero = const_of_dtype Dtype.float32 (Const_scalar (`Float (-0.0))) in
+  let pos_zero = const_of_dtype Dtype.float32 (Const_scalar (`Float 0.0)) in
   (match arg neg_zero, arg pos_zero with
    | Arg.Value a, Arg.Value b ->
        is_true ~msg:"-0.0 and 0.0 stay distinct"
          (not (Const.equal a b))
    | _ -> is_true ~msg:"zero payloads" false);
-  let invalid_vec =
-    const_of_dtype (Dtype.Val.vec 2 Dtype.Val.weakint) Const_invalid
-  in
-  let invalid_lane = index ~ptr:invalid_vec ~idxs:[ const_int 1 ] () in
-  is_true ~msg:"INDEX invalid vector const projects scalar dtype"
-    (op invalid_lane = Ops.Index && Dtype.equal (dtype invalid_lane) Dtype.weakint);
-  let mismatch_rejected =
-    try
-      ignore
-        (const_of_dtype vec_i32
-           (Const_tuple [ Const_scalar (`Int 1L); Const_scalar (`Int 2L) ]));
-      false
-    with Invalid_argument _ -> true
-  in
-  is_true ~msg:"tuple constant length mismatch is rejected"
-    mismatch_rejected
+  let invalid = const_of_dtype Dtype.weakint Const_invalid in
+  is_true ~msg:"invalid const is a Const" (op invalid = Ops.Const);
+  (match arg invalid with
+   | Arg.Value c ->
+       is_true ~msg:"invalid payload is Invalid"
+         (match Const.view c with Const.Invalid -> true | _ -> false)
+   | _ -> is_true ~msg:"invalid payload" false)
 
 let call_constructor_parity () =
   let info =
     {
       Uop.grad_fxn = None;
-      metadata = [];
       name = Some "call";
       precompile = false;
       precompile_backward = false;
@@ -784,20 +734,6 @@ let property_helpers_parity () =
   in
   is_true ~msg:"Contiguous view offset composes through reshape"
     (Uop.contiguous_view_offset reshaped_rows = Some 10);
-  let identity_expand = Uop.expand ~src:matrix ~shape:matrix_shape in
-  is_true ~msg:"Contiguous view offset accepts identity expand"
-    (Uop.contiguous_view_offset identity_expand = Some 0);
-  let broadcast_source =
-    Uop.buffer ~slot:3 ~dtype:Dtype.int32
-      ~shape:(Uop.stack [ Uop.const_int 1; Uop.const_int 5 ])
-      ()
-  in
-  let broadcast_expand =
-    Uop.expand ~src:broadcast_source
-      ~shape:(Uop.stack [ Uop.const_int 3; Uop.const_int 5 ])
-  in
-  is_true ~msg:"Contiguous view offset rejects broadcast expand"
-    (Uop.contiguous_view_offset broadcast_expand = None);
   let zero_pad =
     Uop.pad ~src:matrix
       ~offset:(Uop.stack [ Uop.const_int 0; Uop.const_int 0 ])
@@ -853,7 +789,6 @@ let property_helpers_parity () =
   let info =
     {
       Uop.grad_fxn = None;
-      metadata = [];
       name = Some "shape_fn";
       precompile = false;
       precompile_backward = false;
@@ -877,7 +812,7 @@ let property_helpers_parity () =
          (dim == actual_dim)
    | _ -> fail "expected one substituted function result dimension");
   let shaped_const =
-    Uop.const_of_dtype ~shape:shape2 Dtype.Val.float32
+    Uop.const_of_dtype ~shape:shape2 Dtype.float32
       (Const_scalar (`Int 1L))
   in
   is_true ~msg:"Shaped const expands non-scalar shape"
@@ -886,36 +821,197 @@ let property_helpers_parity () =
     [ 2; 4 ] (shape_ints shaped_const)
 
 let reduce_layouts () =
-  let body = Uop.const (Const.float Dtype.Val.float32 1.0) in
-  let tensor_reduce = Uop.reduce_axis ~src:body ~op:Ops.Add ~axes:[ 0; 2 ] in
+  let shaped =
+    Uop.buffer ~slot:0 ~dtype:Dtype.float32
+      ~shape:
+        (Uop.stack [ Uop.const_int 2; Uop.const_int 3; Uop.const_int 4 ])
+      ()
+  in
+  (* Reducing the leading axes needs no size-one drop, so the tensor reduce is
+     a bare REDUCE whose reduced axes are permuted to the front and counted. *)
+  let tensor_reduce = Uop.reduce_axis ~src:shaped ~op:Ops.Add ~axes:[ 0; 1 ] in
+  is_true ~msg:"tensor reduce is a bare REDUCE"
+    (Uop.op tensor_reduce = Ops.Reduce);
   (match Uop.as_reduce tensor_reduce with
-   | Some { src; ranges; op; axes } ->
-       is_true ~msg:"tensor reduce keeps body source" (src == body);
+   | Some { ranges; op; num_axes; _ } ->
        is_true ~msg:"tensor reduce has no lowered ranges" (ranges = []);
        is_true ~msg:"tensor reduce arg op" (Ops.equal op Ops.Add);
-       is_true ~msg:"tensor reduce axes" (axes = [ 0; 2 ])
+       is_true ~msg:"tensor reduce counts the reduced axes" (num_axes = 2)
    | None -> is_true ~msg:"tensor reduce view" false);
+  equal (list int) ~msg:"tensor reduce drops reduced dims"
+    [ 4 ] (shape_ints tensor_reduce);
+  (* A size-one reduced axis is dropped by reshape rather than reduced, so no
+     REDUCE node survives. *)
+  let with_unit =
+    Uop.buffer ~slot:1 ~dtype:Dtype.float32
+      ~shape:
+        (Uop.stack [ Uop.const_int 2; Uop.const_int 1; Uop.const_int 4 ])
+      ()
+  in
+  let unit_reduce = Uop.reduce_axis ~src:with_unit ~op:Ops.Add ~axes:[ 1 ] in
+  is_true ~msg:"size-one reduce drops to a reshape"
+    (Uop.op unit_reduce = Ops.Reshape && Uop.as_reduce unit_reduce = None);
+  equal (list int) ~msg:"size-one reduce keeps remaining dims"
+    [ 2; 4 ] (shape_ints unit_reduce);
   is_true ~msg:"empty-axis tensor reduce is passthrough"
-    (Uop.reduce_axis ~src:body ~op:Ops.Add ~axes:[] == body);
+    (Uop.reduce_axis ~src:shaped ~op:Ops.Add ~axes:[] == shaped);
   let range =
     Uop.range ~size:(Uop.const_int 4) ~axis:0 ~kind:Axis_type.Reduce ()
   in
   let lowered =
-    Uop.reduce ~src:body ~ranges:[ range ] ~op:Ops.Add
-      ~dtype:Dtype.Val.float32
+    Uop.reduce ~src:shaped ~ranges:[ range ] ~op:Ops.Add
+      ~dtype:Dtype.float32
   in
   (match Uop.as_reduce lowered with
-   | Some { src; ranges; op; axes } ->
-       is_true ~msg:"lowered reduce keeps body source" (src == body);
+   | Some { src; ranges; op; num_axes } ->
+       is_true ~msg:"lowered reduce keeps body source" (src == shaped);
        is_true ~msg:"lowered reduce exposes ranges" (ranges = [ range ]);
        is_true ~msg:"lowered reduce arg op" (Ops.equal op Ops.Add);
-       is_true ~msg:"lowered reduce has empty axes" (axes = [])
+       is_true ~msg:"lowered reduce has zero axis count" (num_axes = 0)
    | None -> is_true ~msg:"lowered reduce view" false);
   (match Uop.arg lowered with
-   | Uop.Arg.Reduce_arg { op; axes } ->
+   | Uop.Arg.Reduce_arg { op; num_axes } ->
        is_true ~msg:"lowered reduce carries Reduce_arg"
-         (Ops.equal op Ops.Add && axes = [])
+         (Ops.equal op Ops.Add && num_axes = 0)
    | _ -> is_true ~msg:"lowered reduce payload" false)
+
+let binary_and_getaddr_dtypes () =
+  let bin = Uop.binary "code" in
+  is_true ~msg:"BINARY is uint8" (Dtype.equal (Uop.dtype bin) Dtype.uint8);
+  equal (list int) ~msg:"BINARY has one shape dim per byte" [ 4 ]
+    (shape_ints bin);
+  let addr = Uop.getaddr ~src:(Uop.const_int 1) in
+  is_true ~msg:"GETADDR is uint64"
+    (Dtype.equal (Uop.dtype addr) Dtype.uint64)
+
+let void_and_value_op_shapes () =
+  let a = Uop.const_int 1 in
+  is_true ~msg:"CUSTOM effect has no shape"
+    (Uop.shape_opt (Uop.custom ~fmt:"nop" ~args:[]) = None);
+  is_true ~msg:"GROUP has no shape"
+    (Uop.shape_opt (Uop.group [ a; Uop.const_int 2 ]) = None);
+  is_true ~msg:"void INS has no shape"
+    (Uop.shape_opt (Uop.ins ~mnemonic:"nop" ~operands:[] ()) = None);
+  (match
+     Uop.shape_opt
+       (Uop.ins ~mnemonic:"mov" ~operands:[ a ] ~dtype:Dtype.int32 ())
+   with
+   | Some [] -> ()
+   | _ -> fail "typed INS should have scalar shape");
+  let vec = Uop.stack [ Uop.const_int 1; Uop.const_int 2 ] in
+  let inlined = Uop.custom_inline ~fmt:"x" ~args:[ vec ] ~dtype:Dtype.int32 in
+  is_true ~msg:"CUSTOM_INLINE is Customi" (Uop.op inlined = Ops.Customi);
+  equal (list int) ~msg:"CUSTOM_INLINE shape follows its operands" [ 2 ]
+    (shape_ints inlined)
+
+let stack_prepends_leading_dim () =
+  let vec =
+    Uop.stack [ Uop.const_int 5; Uop.const_int 6; Uop.const_int 7 ]
+  in
+  equal (list int) ~msg:"STACK prepends a lane-count dimension" [ 3 ]
+    (shape_ints vec);
+  let matrix =
+    Uop.stack
+      [ vec; Uop.stack [ Uop.const_int 8; Uop.const_int 9; Uop.const_int 10 ] ]
+  in
+  equal (list int) ~msg:"nested STACK prepends the outer lane count" [ 2; 3 ]
+    (shape_ints matrix)
+
+let prepend_expand () =
+  let base =
+    Uop.buffer ~slot:0 ~dtype:Dtype.int32
+      ~shape:(Uop.stack [ Uop.const_int 4; Uop.const_int 5 ]) ()
+  in
+  let expanded = Uop.expand ~src:base ~dims:(Uop.stack [ Uop.const_int 3 ]) in
+  is_true ~msg:"EXPAND is an Expand op" (Uop.op expanded = Ops.Expand);
+  equal (list int) ~msg:"EXPAND prepends leading dims" [ 3; 4; 5 ]
+    (shape_ints expanded);
+  is_true ~msg:"empty EXPAND dims is identity"
+    (Uop.expand ~src:base ~dims:(Uop.stack []) == base)
+
+let bitcast_size_change () =
+  let bytes3 =
+    Uop.buffer ~slot:0 ~dtype:Dtype.int8
+      ~shape:(Uop.stack [ Uop.const_int 3 ]) ()
+  in
+  let raised =
+    try
+      ignore (Uop.shape (Uop.bitcast ~src:bytes3 ~dtype:Dtype.int32));
+      false
+    with Invalid_argument _ -> true
+  in
+  is_true ~msg:"bitcast with an indivisible trailing dim raises" raised;
+  let bytes4 =
+    Uop.buffer ~slot:1 ~dtype:Dtype.int8
+      ~shape:(Uop.stack [ Uop.const_int 4 ]) ()
+  in
+  let widened = Uop.bitcast ~src:bytes4 ~dtype:Dtype.int32 in
+  equal (list int) ~msg:"bitcast rescales the trailing dim to the wider itemsize"
+    [ 1 ] (shape_ints widened)
+
+let child_ops_reports_child_op_set () =
+  let node =
+    Uop.sink
+      [
+        Uop.const_int 1;
+        Uop.const_int 2;
+        Uop.variable ~name:"x" ~min_val:0 ~max_val:4 ();
+      ]
+  in
+  let ops = Uop.child_ops node in
+  is_true ~msg:"child_ops dedups child ops to a set"
+    (List.length ops = 2
+    && List.exists (Ops.equal Ops.Const) ops
+    && List.exists (Ops.equal Ops.Param) ops);
+  is_true ~msg:"child_ops is stable across calls" (Uop.child_ops node = ops)
+
+let exec_alu_folds_and_absorbs () =
+  let c n = Const.int Dtype.int32 n in
+  (match Uop.exec_alu Ops.Add Dtype.int32 [ c 2; c 3 ] with
+   | Some r -> is_true ~msg:"Add folds constants" (Const.view r = Const.Int 5L)
+   | None -> is_true ~msg:"Add folds constants" false);
+  (match
+     Uop.exec_alu Ops.Add Dtype.int32 [ c 2; Const.invalid ~dtype:Dtype.int32 () ]
+   with
+   | Some r ->
+       is_true ~msg:"an Invalid operand absorbs the fold"
+         (match Const.view r with Const.Invalid -> true | _ -> false)
+   | None -> is_true ~msg:"Invalid absorbs the fold" false);
+  let byte n = Const.int Dtype.uint8 n in
+  (match Uop.exec_alu ~truncate_output:true Ops.Add Dtype.uint8 [ byte 255; byte 1 ]
+   with
+   | Some r ->
+       is_true ~msg:"truncated add wraps to the dtype width"
+         (Const.view r = Const.Int 0L)
+   | None -> is_true ~msg:"truncated add folds" false);
+  (match
+     Uop.exec_alu ~truncate_output:false Ops.Add Dtype.uint8 [ byte 255; byte 1 ]
+   with
+   | Some r ->
+       is_true ~msg:"untruncated add keeps the full value"
+         (Const.view r = Const.Int 256L)
+   | None -> is_true ~msg:"untruncated add folds" false)
+
+let alu_unary_promotes_transcendentals () =
+  let weak = Uop.const (Const.int Dtype.weakint 4) in
+  is_true ~msg:"SIN of weakint promotes to weakfloat"
+    (Dtype.equal (Uop.dtype (Uop.alu_unary ~op:Ops.Sin ~src:weak))
+       Dtype.weakfloat);
+  let typed = Uop.const (Const.int Dtype.int32 4) in
+  is_true ~msg:"SQRT of an int promotes to a float"
+    (Dtype.is_float (Uop.dtype (Uop.alu_unary ~op:Ops.Sqrt ~src:typed)));
+  let f = Uop.const (Const.float Dtype.float32 1.0) in
+  is_true ~msg:"LOG2 of a float keeps its dtype"
+    (Dtype.equal (Uop.dtype (Uop.alu_unary ~op:Ops.Log2 ~src:f)) Dtype.float32);
+  is_true ~msg:"NEG of an int keeps its dtype"
+    (Dtype.equal (Uop.dtype (Uop.alu_unary ~op:Ops.Neg ~src:typed)) Dtype.int32);
+  let raised =
+    try
+      ignore (Uop.alu_unary ~op:Ops.Add ~src:typed);
+      false
+    with Invalid_argument _ -> true
+  in
+  is_true ~msg:"alu_unary rejects a non-unary op" raised
 
 let runtime_realization_state_parity () =
   let shape = Uop.stack [ Uop.const_int 4 ] in
@@ -1053,10 +1149,9 @@ let cache_info_semantic_key_parity () =
       aux;
     }
   in
-  let call_info ?(metadata = []) ?aux () : Uop.call_info =
+  let call_info ?aux () : Uop.call_info =
     {
       grad_fxn = None;
-      metadata;
       name = Some "fn";
       precompile = false;
       precompile_backward = false;
@@ -1091,13 +1186,6 @@ let cache_info_semantic_key_parity () =
   let metadata : Uop.metadata =
     { name = "trace"; caller = "cache"; backward = false }
   in
-  let call_with_arg_metadata =
-    Uop.call ~body:sink ~args:[]
-      ~info:(call_info ~metadata:[ metadata ] ())
-  in
-  is_true ~msg:"CallInfo.metadata participates in semantic_key"
-    (Uop.semantic_key call_without_aux
-     <> Uop.semantic_key call_with_arg_metadata);
   let side_metadata = Uop.with_metadata [ metadata ] call_without_aux in
   is_true ~msg:"side metadata remains outside semantic_key"
     (Uop.semantic_key call_without_aux = Uop.semantic_key side_metadata)
@@ -1116,7 +1204,6 @@ let remove_all_tags_parity () =
   let info : Uop.call_info =
     {
       grad_fxn = None;
-      metadata = [];
       name = None;
       precompile = false;
       precompile_backward = false;
@@ -1190,10 +1277,6 @@ let program_constructor_prefix_layouts () =
     (rejects (fun () -> Uop.program ~sink ~linear ~binary ~info ()))
 
 let program_info_from_sink_parity () =
-  let ptr_dtype =
-    Dtype.Ptr
-      (Dtype.Ptr.create Dtype.Val.float32 ~addrspace:Dtype.Global ~size:16)
-  in
   let core_id =
     Uop.param ~slot:0 ~dtype:Dtype.weakint ~name:"core_id"
       ~vmin_vmax:(0, 3) ~addrspace:Dtype.Alu ()
@@ -1202,10 +1285,10 @@ let program_info_from_sink_parity () =
     Uop.param ~slot:1 ~dtype:Dtype.weakint ~name:"n"
       ~vmin_vmax:(2, 8) ~addrspace:Dtype.Alu ()
   in
-  let input = Uop.param ~slot:2 ~dtype:ptr_dtype () in
-  let output = Uop.param ~slot:3 ~dtype:ptr_dtype () in
-  let input_idx = Uop.index ~ptr:input ~idxs:[n] ~as_ptr:true () in
-  let output_idx = Uop.index ~ptr:output ~idxs:[n] ~as_ptr:true () in
+  let input = Uop.param ~slot:2 ~dtype:Dtype.float32 () in
+  let output = Uop.param ~slot:3 ~dtype:Dtype.float32 () in
+  let input_idx = Uop.index ~ptr:input ~idxs:[n] () in
+  let output_idx = Uop.index ~ptr:output ~idxs:[n] () in
   let loaded = Uop.load ~src:input_idx () in
   let stored = Uop.store ~dst:output_idx ~value:loaded () in
   let group_dim =
@@ -1279,9 +1362,9 @@ let debug_prints_toposort_like_tinygrad () =
   let b = Uop.const_int 2 in
   let add = Uop.alu_binary ~op:Ops.Add ~lhs:a ~rhs:b in
   let expected =
-    "   0 Ops.CONST           :            dtypes.weakint                           []                               1\n\
-     \   1 Ops.CONST           :            dtypes.weakint                           []                               2\n\
-     \   2 Ops.ADD             :            dtypes.weakint                           ['1', '2']                       None\n"
+    "   0 Ops.CONST           :            dtypes.index                             []                               1\n\
+     \   1 Ops.CONST           :            dtypes.index                             []                               2\n\
+     \   2 Ops.ADD             :            dtypes.index                             ['1', '2']                       None\n"
   in
   equal string expected (Render.uops_to_string add)
 
@@ -1291,33 +1374,28 @@ let debug_prints_ranges_and_supplied_list_sources () =
   in
   let expr = Uop.O.(r + Uop.const_int 1) in
   let expected_toposort =
-    "   0 Ops.CONST           :            dtypes.weakint                           []                               4\n\
-     \   1 Ops.RANGE           : 0          dtypes.weakint                           ['4']                            (0, AxisType.LOOP)\n\
-     \   2 Ops.CONST           :            dtypes.weakint                           []                               1\n\
-     \   3 Ops.ADD             : 0          dtypes.weakint                           [1, '1']                         None\n"
+    "   0 Ops.CONST           :            dtypes.index                             []                               4\n\
+     \   1 Ops.RANGE           : 0          dtypes.index                             ['4']                            (0, AxisType.LOOP)\n\
+     \   2 Ops.CONST           :            dtypes.index                             []                               1\n\
+     \   3 Ops.ADD             : 0          dtypes.index                             [1, '1']                         None\n"
   in
   equal string expected_toposort (Render.uops_to_string expr);
   let expected_list =
-    "   0 Ops.ADD             : 0          dtypes.weakint                           [1, '--']                        None\n\
-     \   1 Ops.RANGE           : 0          dtypes.weakint                           ['--']                           (0, AxisType.LOOP)\n"
+    "   0 Ops.ADD             : 0          dtypes.index                             [1, '--']                        None\n\
+     \   1 Ops.RANGE           : 0          dtypes.index                             ['--']                           (0, AxisType.LOOP)\n"
   in
   equal string expected_list (Render.uops_list_to_string [ expr; r ])
 
 let debug_prints_tinygrad_dtype_reprs () =
   let vec = Uop.stack [ Uop.const_int 1; Uop.const_int 2 ] in
-  let ptr = Uop.buffer ~slot:0
-      ~dtype:
-        (Dtype.Ptr
-           (Dtype.Ptr.create Dtype.Val.int32 ~addrspace:Dtype.Global ~size:16))
-      ()
-  in
-  let image = Uop.noop ~dtype:(Dtype.imageh [ 2; 3 ]) () in
-  is_true ~msg:"stack dtype repr"
-    (contains (Render.uops_to_string vec) "dtypes.weakint");
-  is_true ~msg:"pointer dtype repr"
-    (contains (Render.uops_to_string ptr) "dtypes.int.ptr(16)");
-  is_true ~msg:"image dtype repr"
-    (contains (Render.uops_to_string image) "dtypes.imageh((2, 3))")
+  let buffer = Uop.buffer ~slot:0 ~dtype:Dtype.float32 () in
+  let long = Uop.buffer ~slot:1 ~dtype:Dtype.int64 () in
+  is_true ~msg:"index dtype repr"
+    (contains (Render.uops_to_string vec) "dtypes.index");
+  is_true ~msg:"scalar float dtype repr"
+    (contains (Render.uops_to_string buffer) "dtypes.float");
+  is_true ~msg:"scalar long dtype repr"
+    (contains (Render.uops_to_string long) "dtypes.long")
 
 let debug_prints_float_and_special_args_like_tinygrad () =
   let float_one = Uop.const_float 1.0 in
@@ -1394,7 +1472,6 @@ let debug_prints_rich_args_dataclass_style () =
   let info =
     {
       Uop.grad_fxn = None;
-      metadata = [ { name = "meta"; caller = "caller"; backward = false } ];
       name = Some "fn";
       precompile = true;
       precompile_backward = false;
@@ -1407,10 +1484,10 @@ let debug_prints_rich_args_dataclass_style () =
   in
   is_true ~msg:"ParamArg repr"
     (contains out
-       "ParamArg(-1, vmin_vmax=(1, 9), name='n', addrspace=AddrSpace.ALU)");
+       "ParamArg(-1, dtypes.index, vmin_vmax=(1, 9), name='n', addrspace=AddrSpace.ALU)");
   is_true ~msg:"Buffer ParamArg repr"
     (contains out
-       "ParamArg(2, name='buf', addrspace=AddrSpace.LOCAL)");
+       "ParamArg(2, dtypes.int, name='buf', addrspace=AddrSpace.LOCAL)");
   is_true ~msg:"Stage repr"
     (contains out
        "BufferizeOpts(device=0, addrspace=AddrSpace.LOCAL, removable=False)");
@@ -1425,29 +1502,28 @@ let debug_prints_rich_args_dataclass_style () =
     (contains out
        "ProgramInfo(name='prog', global_size=(1, 2.0), local_size=None");
   is_true ~msg:"ProgramInfo vars use UOp repr"
-    (contains out "vars=(UOp(Ops.PARAM, dtypes.weakint, arg=ParamArg");
-  is_true ~msg:"Metadata repr"
-    (contains out
-       "Metadata(name='meta', caller='caller', backward=False)");
+    (contains out "vars=(UOp(Ops.PARAM, dtypes.index, arg=ParamArg");
   is_true ~msg:"CallInfo repr"
-    (contains out
-       "CallInfo(None, (Metadata(name='meta', caller='caller', backward=False),), 'fn', True, False)")
+    (contains out "CallInfo(None, 'fn', True, False)")
 
 let debug_prints_reduce_arg_tuple () =
-  let body = Uop.const (Const.float Dtype.Val.float32 1.0) in
+  let body =
+    Uop.buffer ~slot:0 ~dtype:Dtype.float32
+      ~shape:(Uop.stack [ Uop.const_int 4 ]) ()
+  in
   let tensor_reduce = Uop.reduce_axis ~src:body ~op:Ops.Add ~axes:[ 0 ] in
   let range =
     Uop.range ~size:(Uop.const_int 4) ~axis:0 ~kind:Axis_type.Reduce ()
   in
   let lowered =
     Uop.reduce ~src:body ~ranges:[ range ] ~op:Ops.Add
-      ~dtype:Dtype.Val.float32
+      ~dtype:Dtype.float32
   in
   let out = Render.uops_list_to_string [ tensor_reduce; lowered ] in
   is_true ~msg:"tensor reduce arg repr"
-    (contains out "(Ops.ADD, (0,))");
+    (contains out "(Ops.ADD, 1)");
   is_true ~msg:"lowered reduce arg repr"
-    (contains out "(Ops.ADD, ())")
+    (contains out "(Ops.ADD, 0)")
 
 let debug_print_ignores_side_metadata () =
   let base = Uop.const_int 9 in
@@ -1603,8 +1679,8 @@ let custom_early_reject_skips_callback () =
 let upat_dtype_matches_scalar_of_vector () =
   let v = Uop.stack [ Uop.const_int 1; Uop.const_int 2 ] in
   let cmp = Uop.O.(v < v) in
-  let p = Upat.var_scalar "x" Dtype.Bool in
-  is_true ~msg:"bool pattern matches bool vector dtype"
+  let p = Upat.var_dtype "x" (Upat.exact_dtype Dtype.Bool) in
+  is_true ~msg:"bool pattern matches bool comparison dtype"
     (Upat.match_ p cmp <> [])
 
 let upat_explicit_source_patterns () =
@@ -1641,7 +1717,10 @@ let upat_explicit_source_patterns () =
     (Upat.match_ (Upat.is_any [ Upat.const_int 0; Upat.const_int 3 ]) c <> [])
 
 let upat_matches_reduce_arg () =
-  let body = Uop.const (Const.float Dtype.Val.float32 1.0) in
+  let body =
+    Uop.buffer ~slot:0 ~dtype:Dtype.float32
+      ~shape:(Uop.stack [ Uop.const_int 4 ]) ()
+  in
   let red = Uop.reduce_axis ~src:body ~op:Ops.Add ~axes:[ 0 ] in
   is_true ~msg:"dedicated reduce op predicate matches"
     (Upat.match_
@@ -1821,7 +1900,6 @@ let graph_rewrite_skips_call_body_by_default () =
   let info =
     {
       Uop.grad_fxn = None;
-      metadata = [];
       name = None;
       precompile = false;
       precompile_backward = false;
@@ -1879,13 +1957,13 @@ let after_closes_ranges_from_dependencies () =
   is_true ~msg:"dependency-ended range is not live"
     (not (List.exists (Uop.equal r) (Uop.ranges sequenced)))
 
-let linear_preserves_live_ranges () =
+let linear_closes_ranges () =
   let r =
     Uop.range ~size:(Uop.const_int 4) ~axis:0 ~kind:Axis_type.Loop ()
   in
   let lin = Uop.linear [ r ] in
-  is_true ~msg:"Linear does not close ranges"
-    (List.exists (Uop.equal r) (Uop.ranges lin))
+  is_true ~msg:"Linear closes all of its source ranges"
+    (not (List.exists (Uop.equal r) (Uop.ranges lin)))
 
 (* Symbolic integers. [Uop.resolve]/[smax]/[smin]/[sprod]/[broadcast_shape]
    lean on the symbolic simplifier, which installs itself into
@@ -2016,14 +2094,25 @@ let () =
             stack_stage_slice_constructors;
           test "UOp constructor parity shortcuts"
             uop_constructor_parity_shortcuts;
-          test "tinygrad vector constant constructors"
-            const_vector_parity_constructors;
+          test "scalar constant payload constructors"
+            const_scalar_payload_constructors;
           test "tinygrad call constructor parity"
             call_constructor_parity;
           test "tinygrad property helper parity" property_helpers_parity;
           test "tinygrad runtime realization state parity"
             runtime_realization_state_parity;
           test "Reduce layouts" reduce_layouts;
+          test "BINARY and GETADDR dtypes" binary_and_getaddr_dtypes;
+          test "void and value op shapes" void_and_value_op_shapes;
+          test "STACK prepends a leading dim" stack_prepends_leading_dim;
+          test "EXPAND prepends leading dims" prepend_expand;
+          test "BITCAST size change" bitcast_size_change;
+          test "child_ops reports the child op set"
+            child_ops_reports_child_op_set;
+          test "exec_alu folds and absorbs invalids"
+            exec_alu_folds_and_absorbs;
+          test "alu_unary promotes transcendentals"
+            alu_unary_promotes_transcendentals;
           test "semantic tag and side metadata"
             semantic_tag_and_side_metadata;
           test "info function name parity"
@@ -2101,7 +2190,7 @@ let () =
         [
           test "After closes dependency ranges"
             after_closes_ranges_from_dependencies;
-          test "Linear preserves live ranges" linear_preserves_live_ranges;
+          test "Linear closes ranges" linear_closes_ranges;
         ];
       group "Symbolic integers"
         [
