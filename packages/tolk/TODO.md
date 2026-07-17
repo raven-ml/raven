@@ -4,25 +4,6 @@ Known gaps, deferred parity items, and follow-ups from the 2026-07 parity
 campaign (reference: `_tinygrad` @ 7eb197b1b). Maintainer notes — reference
 anchors point at the tinygrad clone.
 
-## Open bugs
-
-- **CPU core-count divergence** (`upcast_lane_load`/`upcast_lane_store`
-  stage5_cpu): tolk derives 8 threads where the reference derives 12 on the
-  same host (`core_id` range (0,7) vs (0,11), shard strides scale
-  accordingly). Pre-dates the campaign. Find where the reference sources its
-  count (`os.cpu_count()` vs performance cores) and mirror it in the CPU
-  threading path (gpudims/runtime).
-- **Param shape emission divergence** (systemic, ~32 parity cases):
-  shapeless params emit a `NOOP` shape child where the reference dumps
-  expect `-1` (elementwise_add, reduce_rows, multi_param, multi_output,
-  sum_reduce, matmul_small, …). Cases building shaped params
-  (contiguous_add, symbolic_shrink) pass, so the divergence is in the
-  default/sentinel shape path of param construction or its printing.
-- **test_schedule_rangeify reduce_axis failures** (4): "rewrite cycle
-  detected" and direct-source indexing failures on reduce_axis-involved
-  cases (including symbolic-shrink-then-reduce_axis). Reduce-payload
-  churn suspected; needs an owner with the suite runnable.
-
 ## Deferred parity divergences (each with a known blocker)
 
 - **Bare-view aliasing**: contiguous folds materialize a fresh buffer + copy;
