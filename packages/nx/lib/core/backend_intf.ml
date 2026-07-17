@@ -87,10 +87,11 @@ module type S = sig
       Carries backend-specific state such as memory pools, device handles,
       command queues, or computation graphs.
 
-      Constructing a context is engine-scoped and deliberately outside this
-      contract: each engine exposes its own constructor with whatever parameters
-      it needs. The C engine constructs from [unit]; a device-bearing engine
-      supplies a parameterized constructor (e.g. device index, memory limits). *)
+      Construction is deliberately outside this contract, but its shape is not
+      engine-specific: the virtual-library interface pins
+      [create_context : unit -> context] for every engine, and no engine varies
+      that signature. An engine with tunables chooses its own defaults; device
+      selection never enters through this seam. *)
 
   (** {1 Tensor Properties} *)
 

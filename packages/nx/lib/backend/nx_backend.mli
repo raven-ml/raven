@@ -25,7 +25,7 @@ val create_context : unit -> context
 (** [create_context ()] builds a fresh execution context for this engine.
 
     Context construction is intentionally not part of
-    {!Nx_core.Backend_intf.S}: it is engine-scoped, so each engine exposes its
-    own constructor with whatever parameters it needs. The C engine takes none
-    and constructs from [unit]; a device-bearing engine supplies its own
-    parameterized constructor (e.g. device index, memory limits). *)
+    {!Nx_core.Backend_intf.S}, but this virtual-library interface pins its
+    signature to [unit -> context] for every engine — no engine may vary it. An
+    engine with tunables chooses its own defaults; device selection never enters
+    through this seam. *)
