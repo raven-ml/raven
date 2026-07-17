@@ -367,8 +367,10 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | E_cholesky { t_in; _ } when batched st t_in -> err_no_rule "cholesky"
     | E_qr { t_in; _ } when batched st t_in -> err_no_rule "qr"
     | E_svd { t_in; _ } when batched st t_in -> err_no_rule "svd"
-    | E_eig { t_in; _ } when batched st t_in -> err_no_rule "eig"
-    | E_eigh { t_in; _ } when batched st t_in -> err_no_rule "eigh"
+    | E_eigvals { t_in } when batched st t_in -> err_no_rule "eigvals"
+    | E_eig { t_in } when batched st t_in -> err_no_rule "eig"
+    | E_eigvalsh { t_in } when batched st t_in -> err_no_rule "eigvalsh"
+    | E_eigh { t_in } when batched st t_in -> err_no_rule "eigh"
     | E_triangular_solve { a; b; _ } when batched st a || batched st b ->
         err_no_rule "triangular_solve"
     (* Custom rules: vmap batches the forward function. The call runs in a

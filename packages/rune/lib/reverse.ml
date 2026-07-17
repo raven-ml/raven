@@ -794,14 +794,18 @@ let handler (tape : Tape.t) =
           Some
             (fun k ->
               no_rule k "svd" (tracked t_in) (fun () -> svd ~full_matrices t_in))
-      | E_eig { t_in; vectors } ->
+      | E_eigvals { t_in } ->
           Some
             (fun k ->
-              no_rule k "eig" (tracked t_in) (fun () -> eig ~vectors t_in))
-      | E_eigh { t_in; vectors } ->
+              no_rule k "eigvals" (tracked t_in) (fun () -> eigvals t_in))
+      | E_eig { t_in } ->
+          Some (fun k -> no_rule k "eig" (tracked t_in) (fun () -> eig t_in))
+      | E_eigvalsh { t_in } ->
           Some
             (fun k ->
-              no_rule k "eigh" (tracked t_in) (fun () -> eigh ~vectors t_in))
+              no_rule k "eigvalsh" (tracked t_in) (fun () -> eigvalsh t_in))
+      | E_eigh { t_in } ->
+          Some (fun k -> no_rule k "eigh" (tracked t_in) (fun () -> eigh t_in))
       (* Custom rules. The forward function runs in the enclosing context: this
          handler replaces its internals with the user's rule, while enclosing
          transformations see the forward computation itself. *)

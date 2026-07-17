@@ -1080,57 +1080,79 @@ let svd (type a b) ~full_matrices (x : (a, b) t) :
   caml_svd x_ffi u_ffi s_ffi vt_ffi full_matrices;
   (u, s, vt)
 
-let eig (type a b) ~vectors (x : (a, b) t) :
-    (Complex.t, Dtype.complex64_elt) t
-    * (Complex.t, Dtype.complex64_elt) t option =
+(* The C stub [caml_eig] takes [symmetric] and [vectors] flags. The values-only
+   variants pass [vectors = false] (the cheaper LAPACK path) and hand the stub a
+   1-element dummy for the vectors buffer it still expects. *)
+
+let eigvals (type a b) (x : (a, b) t) : (Complex.t, Dtype.complex64_elt) t =
   let x' = ensure_materializable x in
   let x_shape = shape x in
   let n = x_shape.(Array.length x_shape - 1) in
+  let batch_shape = Array.sub x_shape 0 (Array.length x_shape - 2) in
+  let vals_shape = Array.append batch_shape [| n |] in
 
-  (* Eigenvalues and eigenvectors are always complex128 *)
+  let vals = create_tensor x.context Dtype.Complex128 vals_shape in
+  let vecs = create_tensor x.context Dtype.Complex128 [| 1 |] in
+
+  let x_ffi = to_ffi_tensor x' in
+  let vals_ffi = to_ffi_tensor vals in
+  let vecs_ffi = to_ffi_tensor vecs in
+
+  caml_eig x_ffi vals_ffi vecs_ffi false false;
+  vals
+
+let eig (type a b) (x : (a, b) t) :
+    (Complex.t, Dtype.complex64_elt) t * (Complex.t, Dtype.complex64_elt) t =
+  let x' = ensure_materializable x in
+  let x_shape = shape x in
+  let n = x_shape.(Array.length x_shape - 1) in
   let batch_shape = Array.sub x_shape 0 (Array.length x_shape - 2) in
   let vals_shape = Array.append batch_shape [| n |] in
   let vecs_shape = x_shape in
 
   let vals = create_tensor x.context Dtype.Complex128 vals_shape in
-  let vecs =
-    if vectors then create_tensor x.context Dtype.Complex128 vecs_shape
-    else
-      (* Create dummy tensor for C interface *)
-      create_tensor x.context Dtype.Complex128 [| 1 |]
-  in
+  let vecs = create_tensor x.context Dtype.Complex128 vecs_shape in
 
   let x_ffi = to_ffi_tensor x' in
   let vals_ffi = to_ffi_tensor vals in
   let vecs_ffi = to_ffi_tensor vecs in
 
-  caml_eig x_ffi vals_ffi vecs_ffi false vectors;
-  if vectors then (vals, Some vecs) else (vals, None)
+  caml_eig x_ffi vals_ffi vecs_ffi false true;
+  (vals, vecs)
 
-let eigh (type a b) ~vectors (x : (a, b) t) :
-    (float, Dtype.float64_elt) t * (a, b) t option =
+let eigvalsh (type a b) (x : (a, b) t) : (float, Dtype.float64_elt) t =
   let x' = ensure_materializable x in
   let x_shape = shape x in
-
-  (* For symmetric/hermitian matrices, eigenvalues are always float64 *)
   let batch_shape = Array.sub x_shape 0 (Array.length x_shape - 2) in
   let n = x_shape.(Array.length x_shape - 1) in
   let vals_shape = Array.append batch_shape [| n |] in
 
   let vals = create_tensor x.context Dtype.Float64 vals_shape in
-  let vecs =
-    if vectors then create_tensor x.context x.dtype x_shape
-    else
-      (* Create dummy tensor for C interface *)
-      create_tensor x.context x.dtype [| 1 |]
-  in
+  let vecs = create_tensor x.context x.dtype [| 1 |] in
 
   let x_ffi = to_ffi_tensor x' in
   let vals_ffi = to_ffi_tensor vals in
   let vecs_ffi = to_ffi_tensor vecs in
 
-  caml_eig x_ffi vals_ffi vecs_ffi true vectors;
-  if vectors then (vals, Some vecs) else (vals, None)
+  caml_eig x_ffi vals_ffi vecs_ffi true false;
+  vals
+
+let eigh (type a b) (x : (a, b) t) : (float, Dtype.float64_elt) t * (a, b) t =
+  let x' = ensure_materializable x in
+  let x_shape = shape x in
+  let batch_shape = Array.sub x_shape 0 (Array.length x_shape - 2) in
+  let n = x_shape.(Array.length x_shape - 1) in
+  let vals_shape = Array.append batch_shape [| n |] in
+
+  let vals = create_tensor x.context Dtype.Float64 vals_shape in
+  let vecs = create_tensor x.context x.dtype x_shape in
+
+  let x_ffi = to_ffi_tensor x' in
+  let vals_ffi = to_ffi_tensor vals in
+  let vecs_ffi = to_ffi_tensor vecs in
+
+  caml_eig x_ffi vals_ffi vecs_ffi true true;
+  (vals, vecs)
 
 let triangular_solve ~upper ~transpose ~unit_diag a b =
   let a' = ensure_materializable a in

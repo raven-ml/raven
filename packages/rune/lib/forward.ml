@@ -538,14 +538,18 @@ let handler (tangents : Tensor_map.t) =
           Some
             (fun k ->
               no_rule k "svd" (active t_in) (fun () -> svd ~full_matrices t_in))
-      | E_eig { t_in; vectors } ->
+      | E_eigvals { t_in } ->
           Some
             (fun k ->
-              no_rule k "eig" (active t_in) (fun () -> eig ~vectors t_in))
-      | E_eigh { t_in; vectors } ->
+              no_rule k "eigvals" (active t_in) (fun () -> eigvals t_in))
+      | E_eig { t_in } ->
+          Some (fun k -> no_rule k "eig" (active t_in) (fun () -> eig t_in))
+      | E_eigvalsh { t_in } ->
           Some
             (fun k ->
-              no_rule k "eigh" (active t_in) (fun () -> eigh ~vectors t_in))
+              no_rule k "eigvalsh" (active t_in) (fun () -> eigvalsh t_in))
+      | E_eigh { t_in } ->
+          Some (fun k -> no_rule k "eigh" (active t_in) (fun () -> eigh t_in))
       (* Custom rules. *)
       | Custom.E_custom_jvp (Custom.Jvp_call { tree; params; f; jvp }) ->
           Some

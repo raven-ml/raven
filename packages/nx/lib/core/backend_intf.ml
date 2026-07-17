@@ -659,23 +659,39 @@ module type S = sig
       May raise {!Linalg_error} with kind [`No_convergence] if the underlying
       routine does not converge. *)
 
-  val eig :
-    vectors:bool ->
-    ('a, 'b) t ->
-    (Complex.t, Dtype.complex64_elt) t
-    * (Complex.t, Dtype.complex64_elt) t option
-  (** [eig ~vectors t] computes eigenvalues (and optionally eigenvectors) of a
-      square matrix. Returns complex64 results.
+  val eigvals : ('a, 'b) t -> (Complex.t, Dtype.complex64_elt) t
+  (** [eigvals t] computes the eigenvalues of a general square matrix. Returns
+      complex64 results.
+
+      This is the values-only variant: it drives the cheaper LAPACK path that
+      does not accumulate eigenvectors. Use {!eig} when the vectors are needed.
 
       May raise {!Linalg_error} with kind [`No_convergence] if the eigenvalue
       iteration does not converge. *)
 
-  val eigh :
-    vectors:bool ->
+  val eig :
     ('a, 'b) t ->
-    (float, Dtype.float64_elt) t * ('a, 'b) t option
-  (** [eigh ~vectors t] computes eigenvalues (and optionally eigenvectors) of a
-      symmetric/Hermitian matrix. Eigenvalues are float64.
+    (Complex.t, Dtype.complex64_elt) t * (Complex.t, Dtype.complex64_elt) t
+  (** [eig t] computes the eigenvalues and eigenvectors of a general square
+      matrix, returned as [(values, vectors)]. Both are complex64.
+
+      May raise {!Linalg_error} with kind [`No_convergence] if the eigenvalue
+      iteration does not converge. *)
+
+  val eigvalsh : ('a, 'b) t -> (float, Dtype.float64_elt) t
+  (** [eigvalsh t] computes the eigenvalues of a symmetric/Hermitian matrix.
+      Eigenvalues are float64.
+
+      This is the values-only variant: it drives the cheaper LAPACK path that
+      does not accumulate eigenvectors. Use {!eigh} when the vectors are needed.
+
+      May raise {!Linalg_error} with kind [`No_convergence] if the eigenvalue
+      iteration does not converge. *)
+
+  val eigh : ('a, 'b) t -> (float, Dtype.float64_elt) t * ('a, 'b) t
+  (** [eigh t] computes the eigenvalues and eigenvectors of a symmetric/Hermitian
+      matrix, returned as [(values, vectors)]. Eigenvalues are float64;
+      eigenvectors carry the input dtype.
 
       May raise {!Linalg_error} with kind [`No_convergence] if the eigenvalue
       iteration does not converge. *)

@@ -1975,10 +1975,10 @@ let qr ~reduced:_ _ = invalid_arg "qr: not implemented"
 let svd ~full_matrices:_ _ =
   invalid_arg "svd: not implemented"
 
-let eig ~vectors:_ _ = invalid_arg "eig: not implemented"
-
-let eigh ~vectors:_ _ =
-  invalid_arg "eigh: not implemented"
+let eigvals _ = invalid_arg "eigvals: not implemented"
+let eig _ = invalid_arg "eig: not implemented"
+let eigvalsh _ = invalid_arg "eigvalsh: not implemented"
+let eigh _ = invalid_arg "eigh: not implemented"
 
 let triangular_solve ~upper:_ ~transpose:_ ~unit_diag:_ _ _ =
   invalid_arg "triangular_solve: not implemented"

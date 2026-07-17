@@ -942,7 +942,9 @@ let handler st =
     | E_cholesky _ -> Some (fun k -> refuse k "cholesky")
     | E_qr _ -> Some (fun k -> refuse k "qr")
     | E_svd _ -> Some (fun k -> refuse k "svd")
+    | E_eigvals _ -> Some (fun k -> refuse k "eigvals")
     | E_eig _ -> Some (fun k -> refuse k "eig")
+    | E_eigvalsh _ -> Some (fun k -> refuse k "eigvalsh")
     | E_eigh _ -> Some (fun k -> refuse k "eigh")
     | E_triangular_solve _ -> Some (fun k -> refuse k "triangular_solve")
     | E_psum _ ->

@@ -295,18 +295,21 @@ type _ Effect.t +=
       full_matrices : bool;
     }
       -> (('a, 'b) t * (float, Dtype.float64_elt) t * ('a, 'b) t) Effect.t
+  | E_eigvals : {
+      t_in : ('a, 'b) t;
+    }
+      -> (Complex.t, Dtype.complex64_elt) t Effect.t
   | E_eig : {
       t_in : ('a, 'b) t;
-      vectors : bool;
     }
       -> ((Complex.t, Dtype.complex64_elt) t
-         * (Complex.t, Dtype.complex64_elt) t option)
+         * (Complex.t, Dtype.complex64_elt) t)
          Effect.t
+  | E_eigvalsh : { t_in : ('a, 'b) t } -> (float, Dtype.float64_elt) t Effect.t
   | E_eigh : {
       t_in : ('a, 'b) t;
-      vectors : bool;
     }
-      -> ((float, Dtype.float64_elt) t * ('a, 'b) t option) Effect.t
+      -> ((float, Dtype.float64_elt) t * ('a, 'b) t) Effect.t
   | E_triangular_solve : {
       a : ('a, 'b) t;
       b : ('a, 'b) t;
@@ -688,17 +691,25 @@ let svd ~full_matrices t_in =
     let u, s, vt = Nx_backend.svd ~full_matrices (unwrap t_in) in
     (T u, T s, T vt)
 
-let eig ~vectors t_in =
-  try Effect.perform (E_eig { t_in; vectors })
-  with Effect.Unhandled _ ->
-    let vals, vecs_opt = Nx_backend.eig ~vectors (unwrap t_in) in
-    (T vals, Option.map (fun v -> T v) vecs_opt)
+let eigvals t_in =
+  try Effect.perform (E_eigvals { t_in })
+  with Effect.Unhandled _ -> T (Nx_backend.eigvals (unwrap t_in))
 
-let eigh ~vectors t_in =
-  try Effect.perform (E_eigh { t_in; vectors })
+let eig t_in =
+  try Effect.perform (E_eig { t_in })
   with Effect.Unhandled _ ->
-    let vals, vecs_opt = Nx_backend.eigh ~vectors (unwrap t_in) in
-    (T vals, Option.map (fun v -> T v) vecs_opt)
+    let vals, vecs = Nx_backend.eig (unwrap t_in) in
+    (T vals, T vecs)
+
+let eigvalsh t_in =
+  try Effect.perform (E_eigvalsh { t_in })
+  with Effect.Unhandled _ -> T (Nx_backend.eigvalsh (unwrap t_in))
+
+let eigh t_in =
+  try Effect.perform (E_eigh { t_in })
+  with Effect.Unhandled _ ->
+    let vals, vecs = Nx_backend.eigh (unwrap t_in) in
+    (T vals, T vecs)
 
 let triangular_solve ~upper ~transpose ~unit_diag a b =
   try Effect.perform (E_triangular_solve { a; b; upper; transpose; unit_diag })

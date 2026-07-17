@@ -3085,28 +3085,24 @@ module Make (B : Backend_intf.S) = struct
   let eig a =
     check_square ~op:"eig" a;
     check_float_or_complex ~op:"eig" a;
-    match B.eig ~vectors:true a with
-    | vals, Some vecs -> (vals, vecs)
-    | _ -> invalid_arg "eig: result, expected eigenvectors"
+    B.eig a
 
   let eigh ?uplo a =
     check_square ~op:"eigh" a;
     check_real ~op:"eigh" a;
     let _ = uplo in
-    match B.eigh ~vectors:true a with
-    | vals, Some vecs -> (vals, vecs)
-    | _ -> invalid_arg "eigh: result, expected eigenvectors"
+    B.eigh a
 
   let eigvals a =
     check_square ~op:"eigvals" a;
     check_float_or_complex ~op:"eigvals" a;
-    fst (B.eig ~vectors:false a)
+    B.eigvals a
 
   let eigvalsh ?uplo a =
     check_square ~op:"eigvalsh" a;
     check_real ~op:"eigvalsh" a;
     let _ = uplo in
-    fst (B.eigh ~vectors:false a)
+    B.eigvalsh a
 
   let norm (type a b) ?ord ?axes ?keepdims (x : (a, b) t) =
     let keepdims = Option.value keepdims ~default:false in
@@ -3211,7 +3207,7 @@ module Make (B : Backend_intf.S) = struct
     check_float_or_complex ~op:"matrix_rank" a;
     let s =
       match hermitian with
-      | Some true -> abs (fst (B.eigh ~vectors:false a))
+      | Some true -> abs (B.eigvalsh a)
       | _ -> svdvals a
     in
     let max_s = max s |> unsafe_get [] in
@@ -3313,21 +3309,19 @@ module Make (B : Backend_intf.S) = struct
       pinv_from_factors u s vh
     in
     match hermitian with
-    | Some true -> (
-        match B.eigh ~vectors:true a with
-        | vals, Some vecs ->
-            let abs_vals = abs vals in
-            let sign_vals = sign vals in
-            let o = ones (B.context vals) (dtype vals) (shape vals) in
-            let z = zeros (B.context vals) (dtype vals) (shape vals) in
-            let sign_fixed = where (cmpeq sign_vals z) o sign_vals in
-            let vh =
-              mul
-                (expand_dims [ -1 ] (cast dtype_a sign_fixed))
-                (matrix_transpose vecs)
-            in
-            pinv_from_factors vecs abs_vals vh
-        | _ -> pinv_via_svd ())
+    | Some true ->
+        let vals, vecs = B.eigh a in
+        let abs_vals = abs vals in
+        let sign_vals = sign vals in
+        let o = ones (B.context vals) (dtype vals) (shape vals) in
+        let z = zeros (B.context vals) (dtype vals) (shape vals) in
+        let sign_fixed = where (cmpeq sign_vals z) o sign_vals in
+        let vh =
+          mul
+            (expand_dims [ -1 ] (cast dtype_a sign_fixed))
+            (matrix_transpose vecs)
+        in
+        pinv_from_factors vecs abs_vals vh
     | _ -> pinv_via_svd ()
 
   let lstsq ?rcond a b =

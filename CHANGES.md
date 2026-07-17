@@ -310,6 +310,13 @@ thread.
 
 ### Nx
 
+- Split the backend contract's `eig`/`eigh` (each a `vectors:bool -> ... option`
+  returning an optional vectors component) into four total functions matching
+  the public API: `eigvals`/`eigvalsh` return values only, `eig`/`eigh` return a
+  non-optional `(values, vectors)` pair. The values-only variants drive the
+  cheaper LAPACK no-vectors path. Removes a representable invalid state (a
+  runtime flag steering an option) from the contract. `Nx.eig`/`eigh`/`eigvals`/
+  `eigvalsh` are unchanged.
 - Add `Nx.Linalg_error`, a typed exception for numeric linear-algebra failures,
   carrying the failing operation and a `kind`
   (`` `Not_positive_definite ``, `` `Singular ``, `` `No_convergence ``). A
