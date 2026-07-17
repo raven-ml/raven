@@ -1,0 +1,7 @@
+(executable
+ (name bench_runtime)
+ (libraries unix tolk tolk.uop tolk.frontend thumper.clock))
+
+; Not attached to any bench/test alias: built with `dune build` and run
+; directly. Times execution-only replays, so no cache env is needed. Backend
+; defaults to CPU; set DEV=METAL (etc.) to run on another device.
