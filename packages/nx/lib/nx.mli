@@ -486,58 +486,101 @@ module Ptree = Ptree
     instance. *)
 
 module Rng : sig
-  (** Splittable RNG keys and implicit key management.
+  (** One splittable random generator with two front-ends.
 
-      Keys are deterministic integers that can be split to derive independent
-      subkeys. {!run} and {!with_key} install an effect handler that provides
-      implicit key threading via {!next_key}; outside any handler a domain-local
-      auto-seeded generator is used as a convenient fallback. *)
+      Randomness is drawn from a Threefry generator whose state is a {e key}.
+      Two ways to use it:
+
+      - {b Explicit keys} ({!uniform}, {!normal}, …) are pure functions of a
+        key: the same key, dtype and shape give the same values — eagerly,
+        under {!Rune.val-jit}, and on every device. They are order-independent,
+        so results survive refactoring, and they compose with the transforms.
+        Fresh randomness comes from fresh keys: {!split} a key into independent
+        subkeys, or {!fold_in} a counter to derive per-step keys.
+      - {b The implicit scope} ({!run}, {!with_key}) threads keys for you, so
+        the keyless samplers ([Nx.rand], [Nx.randn], …) need no key argument.
+        Each draw pulls a fresh subkey, so successive draws never correlate.
+        Results depend on draw order but are reproducible for a fixed program.
+
+      The two front-ends share one generator: [Nx.rand] is exactly
+      {!uniform} applied to a subkey drawn from the scope. Under a transform
+      that traces, batches or replicates (jit/vmap/pmap) thread an explicit
+      key; elsewhere the scope is enough. *)
+
+  type key = (int32, int32_elt) t
+  (** The type for keys: a transparent [[|2|]] int32 tensor holding the
+      generator's state. Being an ordinary tensor, a key goes wherever tensors
+      go — a leaf of a parameter structure, an input of a jitted function, a
+      mapped axis of {!Rune.val-vmap}. Read its words with {!to_array}. *)
 
   (** {1:keys Keys} *)
 
-  type key
-  (** The type for RNG keys. Construct with {!key} and read back with
-      {!to_int}. *)
-
   val key : int -> key
-  (** [key seed] is a normalized 31-bit non-negative key derived from [seed]. *)
+  (** [key seed] is the key for [seed]. Equal seeds give equal keys. *)
 
   val split : ?n:int -> key -> key array
-  (** [split ?n k] deterministically derives [n] subkeys from [k].
-
-      [n] defaults to [2]. *)
+  (** [split ?n k] is [n] independent subkeys derived from [k] ([n] defaults to
+      [2]). Deterministic, and the subkeys are independent of each other; derive
+      one subkey per consumer instead of reusing [k]. *)
 
   val fold_in : key -> int -> key
-  (** [fold_in k data] mixes [data] into [k] and returns the derived key. *)
+  (** [fold_in k data] is the subkey of [k] indexed by [data]: distinct [data]
+      values give independent keys. Use it to derive per-step keys from a root
+      key and a loop counter. *)
 
-  val to_int : key -> int
-  (** [to_int k] is [k] as an integer. *)
+  val fold_in_axis : key -> key
+  (** [fold_in_axis k] folds the current mapped-axis index into [k], giving one
+      independent key per lane under {!Rune.val-vmap} or per device under
+      {!Rune.pmap}. Outside a transform there is a single lane and it is
+      [fold_in k 0]. Decorrelates lanes without a manual split-and-stack. *)
 
-  (** {1:implicit Implicit key management} *)
+  (** {1:samplers Explicit samplers} *)
 
-  val next_key : unit -> key
-  (** [next_key ()] returns a fresh subkey from the current RNG scope.
+  val uniform :
+    key ->
+    ?low:float ->
+    ?high:float ->
+    (float, 'b) dtype ->
+    int array ->
+    (float, 'b) t
+  (** [uniform k dtype shape] samples uniformly from [\[low, high)] ([low]
+      defaults to [0], [high] to [1]). Pure: the same arguments always produce
+      the same values. *)
 
-      Inside a {!run} or {!with_key} block, each call returns a
-      deterministically derived key. Outside any scope, falls back to a
-      domain-local auto-seeded generator (convenient but non-reproducible).
+  val normal : key -> (float, 'b) dtype -> int array -> (float, 'b) t
+  (** [normal k dtype shape] samples the standard normal distribution (mean 0,
+      variance 1) via the Box-Muller transform over two {!uniform} draws. *)
 
-      Two calls to [next_key ()] always return different keys. *)
+  val randint :
+    key -> ?high:int -> int array -> int -> (int32, int32_elt) t
+  (** [randint k ?high shape low] samples integers uniformly from
+      [\[low, high)]. [high] defaults to [10].
+
+      Raises [Invalid_argument] if [low >= high]. *)
+
+  val bernoulli : key -> p:float -> int array -> (bool, bool_elt) t
+  (** [bernoulli k ~p shape] samples booleans that are [true] with probability
+      [p].
+
+      Raises [Invalid_argument] if [p] is outside [\[0, 1\]]. *)
+
+  (** {1:implicit Implicit scope} *)
 
   val run : seed:int -> (unit -> 'a) -> 'a
-  (** [run ~seed f] executes [f] in an RNG scope seeded by [seed].
-
-      Every {!next_key} call within [f] returns a deterministically derived key.
-      The same [seed] and the same sequence of [next_key] calls produce the same
-      keys. Scopes nest: an inner [run] replaces the outer scope for its
-      duration. *)
+  (** [run ~seed f] runs [f] in a scope seeded by [seed]. The keyless samplers
+      inside [f] draw from it; the same [seed] and the same draw sequence give
+      the same values. Scopes nest: an inner [run] replaces the outer one for
+      its duration. *)
 
   val with_key : key -> (unit -> 'a) -> 'a
-  (** [with_key k f] executes [f] in an RNG scope initialized from [k].
+  (** [with_key k f] is {!run} initialized from an existing key [k] rather than
+      a seed: useful when you hold a key from a {!split} and want to open a
+      scope for a sub-computation. *)
 
-      This is the explicit-key equivalent of [run]: useful when you have an
-      existing key from a split and want to establish a scope for a
-      sub-computation (e.g. in layer composition). *)
+  val split_off : unit -> key
+  (** [split_off ()] draws a fresh subkey from the current scope (a domain-local
+      auto-seeded generator outside any scope). Two calls always return
+      different keys. This is what the keyless samplers call. *)
 end
 
 val rand : ('a, 'b) dtype -> int array -> ('a, 'b) t

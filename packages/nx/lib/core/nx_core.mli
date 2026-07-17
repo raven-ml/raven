@@ -20,8 +20,5 @@ module View = View
 module Backend_intf = Backend_intf
 (** Backend interface used by frontend functors. *)
 
-module Rng = Rng
-(** RNG key utilities. *)
-
 module Make_frontend = Frontend.Make
 (** Frontend functor parameterized by a backend implementation. *)

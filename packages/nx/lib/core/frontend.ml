@@ -2019,6 +2019,173 @@ module Make (B : Backend_intf.S) = struct
 
   (* ───── Random Number Generation ───── *)
 
+  (* One splittable Threefry-2x32 generator with two front-ends over it: the
+     explicit samplers below take a key and are pure functions of it
+     (order-independent, transform-safe), and the keyless [rand]/[randn]/…
+     draw a fresh subkey from the ambient scope and call the same samplers.
+     A key is a transparent [|2|] int32 tensor, so it flows wherever tensors
+     go — a parameter-tree leaf, a jit input, a mapped axis. *)
+  module Rng = struct
+    type key = (int32, int32_elt) t
+
+    let shape_string s =
+      String.concat "," (Array.to_list (Array.map string_of_int s))
+
+    let check_key name k =
+      if shape k <> [| 2 |] then
+        invalid_arg
+          (Printf.sprintf
+             "Nx.Rng.%s: a key is an int32 tensor of shape [2], got shape [%s]"
+             name
+             (shape_string (shape k)))
+
+    let check_shape name shape' =
+      if Array.exists (fun d -> d < 0) shape' then
+        invalid_arg
+          (Printf.sprintf
+             "Nx.Rng.%s: invalid shape [%s], dimensions must be non-negative"
+             name (shape_string shape'))
+
+    (* The low and high 32-bit words of [seed] as the key's two lanes. *)
+    let key ctx seed =
+      create ctx Dtype.int32 [| 2 |]
+        [| Int32.of_int (seed asr 32); Int32.of_int seed |]
+
+    (* One Threefry application over [n] independent blocks: the key broadcast
+       across the rows of an [n; 2] counter whose row [i] holds [(2i, 2i+1)]. *)
+    let blocks name k n =
+      check_key name k;
+      let ctx = B.context k in
+      let kb = contiguous (broadcast_to [| n; 2 |] (reshape [| 1; 2 |] k)) in
+      let ctr = reshape [| n; 2 |] (arange ctx Dtype.int32 0 (2 * n) 1) in
+      B.threefry kb ctr
+
+    let split ?(n = 2) k =
+      if n < 1 then invalid_arg "Nx.Rng.split: n must be at least 1";
+      let bits = blocks "split" k n in
+      Array.init n (fun i -> contiguous (slice [ I i ] bits))
+
+    let fold_in k data =
+      check_key "fold_in" k;
+      let ctx = B.context k in
+      let ctr =
+        create ctx Dtype.int32 [| 2 |]
+          [| Int32.of_int (data asr 32); Int32.of_int data |]
+      in
+      B.threefry (contiguous k) ctr
+
+    (* [fold_in] of a scalar index tensor rather than a host int: the counter
+       [(0, idx)] is [(0, 1)] scaled by [idx], so a batched [idx] (under vmap)
+       yields a batched, per-lane key. Backs [Nx.Rng.fold_in_axis]. *)
+    let fold_in_index k idx =
+      check_key "fold_in_axis" k;
+      let ctx = B.context k in
+      let template = create ctx Dtype.int32 [| 2 |] [| 0l; 1l |] in
+      let ctr = mul template (cast Dtype.int32 idx) in
+      B.threefry (contiguous k) ctr
+
+    (* Signed int32 bits -> [0, 1): add 2^31 then divide by 2^32. *)
+    let uniform (type b) k ?(low = 0.0) ?(high = 1.0)
+        (dtype : (float, b) Dtype.t) shape : (float, b) t =
+      check_shape "uniform" shape;
+      let ctx = B.context k in
+      let n = array_prod shape in
+      if n = 0 then zeros ctx dtype shape
+      else
+        let bits = shrink [| (0, n) |] (flatten (blocks "uniform" k n)) in
+        let f32 = cast Dtype.float32 bits in
+        let u =
+          div
+            (add f32 (scalar ctx Dtype.float32 2147483648.0))
+            (scalar ctx Dtype.float32 4294967296.0)
+        in
+        let scaled =
+          if low = 0.0 && high = 1.0 then u
+          else
+            add
+              (mul u (scalar ctx Dtype.float32 (high -. low)))
+              (scalar ctx Dtype.float32 low)
+        in
+        reshape shape (cast dtype scaled)
+
+    (* Box-Muller over two uniform draws from independent subkeys:
+       z = cos(2 pi u1) * sqrt(-2 ln (max (1 - u2) 1e-7)). *)
+    let normal (type b) k (dtype : (float, b) Dtype.t) shape : (float, b) t =
+      check_shape "normal" shape;
+      let ctx = B.context k in
+      if array_prod shape = 0 then zeros ctx dtype shape
+      else
+        let ks = split k in
+        let u1 = uniform ks.(0) Dtype.float32 shape in
+        let u2 = uniform ks.(1) Dtype.float32 shape in
+        let angle = mul u1 (scalar ctx Dtype.float32 (2.0 *. Float.pi)) in
+        let u2_safe =
+          maximum (sub (ones_like u2) u2) (scalar ctx Dtype.float32 1e-7)
+        in
+        let r =
+          mul (cos angle)
+            (sqrt (mul (scalar ctx Dtype.float32 (-2.0)) (log u2_safe)))
+        in
+        cast dtype r
+
+    let randint k ?(high = 10) shape low =
+      if low >= high then
+        invalid_arg
+          (Printf.sprintf "Nx.Rng.randint: invalid range, low=%d >= high=%d" low
+             high);
+      let ctx = B.context k in
+      let u = uniform k Dtype.float32 shape in
+      cast Dtype.int32
+        (add
+           (mul u (scalar ctx Dtype.float32 (float_of_int (high - low))))
+           (scalar ctx Dtype.float32 (float_of_int low)))
+
+    let bernoulli k ~p shape =
+      if p < 0.0 || p > 1.0 then
+        invalid_arg "Nx.Rng.bernoulli: p must be in [0, 1]";
+      let ctx = B.context k in
+      cmplt (uniform k Dtype.float32 shape) (scalar ctx Dtype.float32 p)
+
+    (* Implicit scope: [split_off] performs [E_next_key]; [run]/[with_key]
+       answer it by [fold_in root counter] with an incrementing counter — the
+       same [fold_in] the explicit path uses, so the two front-ends share one
+       stream. Outside any scope a domain-local auto-seeded key is split. *)
+    type _ Effect.t += E_next_key : key Effect.t
+
+    let make_handler root =
+      let counter = ref 0 in
+      let open Effect.Deep in
+      {
+        retc = Fun.id;
+        exnc = raise;
+        effc =
+          (fun (type a) (eff : a Effect.t) ->
+            match eff with
+            | E_next_key ->
+                Some
+                  (fun (k : (a, _) continuation) ->
+                    let i = !counter in
+                    incr counter;
+                    continue k (fold_in root i))
+            | _ -> None);
+      }
+
+    let run ctx ~seed f = Effect.Deep.match_with f () (make_handler (key ctx seed))
+    let with_key k f = Effect.Deep.match_with f () (make_handler k)
+    let fallback = Domain.DLS.new_key (fun () -> ref None)
+
+    let split_off ctx =
+      try Effect.perform E_next_key
+      with Effect.Unhandled _ ->
+        let cell = Domain.DLS.get fallback in
+        let state =
+          match !cell with Some s -> s | None -> key ctx (Random.bits ())
+        in
+        let keys = split state in
+        cell := Some keys.(0);
+        keys.(1)
+  end
+
   let validate_random_float_params op dtype shape =
     if not (Dtype.is_float dtype) then
       err op
@@ -2031,67 +2198,24 @@ module Make (B : Backend_intf.S) = struct
 
   let rand ctx dtype shape =
     validate_random_float_params "rand" dtype shape;
-    let key = Rng.next_key () in
-    let n = array_prod shape in
-    if n = 0 then zeros ctx dtype shape
-    else
-      (* Threefry: each value needs 2 int32s for key and counter *)
-      let key_t =
-        create ctx Dtype.int32 [| n; 2 |]
-          (Array.init (n * 2) (fun i ->
-               Int32.of_int (Rng.to_int (Rng.fold_in key i))))
-      in
-      let counter =
-        create ctx Dtype.int32 [| n; 2 |]
-          (Array.init (n * 2) (fun i -> Int32.of_int i))
-      in
-      let bits = B.threefry key_t counter in
-      let bits_flat = flatten bits in
-      let bits_needed =
-        if n < size bits_flat then shrink [| (0, n) |] bits_flat else bits_flat
-      in
-      (* Signed int32 → [0, 1): add 2^31 then divide by 2^32 *)
-      let f32 = cast Dtype.float32 bits_needed in
-      let normalized =
-        div
-          (add f32 (scalar ctx Dtype.float32 2147483648.0))
-          (scalar ctx Dtype.float32 4294967296.0)
-      in
-      reshape shape (cast dtype normalized)
+    cast dtype (Rng.uniform (Rng.split_off ctx) Dtype.float32 shape)
 
   let randn ctx dtype shape =
     validate_random_float_params "randn" dtype shape;
-    if array_prod shape = 0 then zeros ctx dtype shape
-    else
-      (* Box-Muller: z = cos(2π u1) · sqrt(-2 ln(u2)) *)
-      let u1 = rand ctx Dtype.float32 shape in
-      let u2 = rand ctx Dtype.float32 shape in
-      let angle = mul u1 (scalar ctx Dtype.float32 (2.0 *. Float.pi)) in
-      let u2_safe =
-        maximum (sub (ones_like u2) u2) (scalar ctx Dtype.float32 1e-7)
-      in
-      let result =
-        mul (cos angle)
-          (sqrt (mul (scalar ctx Dtype.float32 (-2.0)) (log u2_safe)))
-      in
-      cast dtype result
+    cast dtype (Rng.normal (Rng.split_off ctx) Dtype.float32 shape)
 
   let randint ctx dtype ?(high = 10) shape low =
     if low >= high then err "randint" "range, low=%d >= high=%d" low high;
     if not (Dtype.is_int dtype) then
       invalid_arg "randint: dtype, only integer dtypes supported";
-    let u = rand ctx Dtype.float32 shape in
-    astype dtype
-      (add
-         (mul u (scalar ctx Dtype.float32 (float_of_int (high - low))))
-         (scalar ctx Dtype.float32 (float_of_int low)))
+    astype dtype (Rng.randint (Rng.split_off ctx) ~high shape low)
 
   let bernoulli ctx ~p shape =
     if p < 0.0 || p > 1.0 then invalid_arg "bernoulli: p must be in [0, 1]";
     if Array.exists (fun x -> x < 0) shape then
       err "bernoulli" "invalid shape %s, dimensions must be non-negative"
         (Shape.to_string shape);
-    cmplt (rand ctx Dtype.float32 shape) (scalar ctx Dtype.float32 p)
+    Rng.bernoulli (Rng.split_off ctx) ~p shape
 
   let permutation ctx n =
     if n <= 0 then invalid_arg "permutation: n must be positive";

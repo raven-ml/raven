@@ -7,5 +7,4 @@ module Dtype = Dtype
 module Shape = Shape
 module View = View
 module Backend_intf = Backend_intf
-module Rng = Rng
 module Make_frontend = Frontend.Make

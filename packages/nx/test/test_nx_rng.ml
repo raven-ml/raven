@@ -6,14 +6,17 @@
 open Nx
 open Windtrap
 
+(* A key is a transparent [|2|] int32 tensor; compare keys by their words. *)
+let key_words k = Nx.to_array k
+
 let test_key_creation () =
   let key1 = Rng.key 42 in
   let key2 = Rng.key 42 in
   let key3 = Rng.key 43 in
-  equal ~msg:"same seed produces same key" int (Rng.to_int key1)
-    (Rng.to_int key2);
+  equal ~msg:"same seed produces same key" bool true
+    (key_words key1 = key_words key2);
   equal ~msg:"different seeds produce different keys" bool true
-    (Rng.to_int key1 <> Rng.to_int key3)
+    (key_words key1 <> key_words key3)
 
 let test_key_splitting () =
   let key = Rng.key 42 in
@@ -25,13 +28,12 @@ let test_key_splitting () =
 
   (* Check keys are different *)
   equal ~msg:"split keys are different" bool true
-    (Rng.to_int keys.(0) <> Rng.to_int keys.(1));
+    (key_words keys.(0) <> key_words keys.(1));
 
   (* Check deterministic *)
   let keys2 = Rng.split key in
-  equal ~msg:"split is deterministic" int
-    (Rng.to_int keys.(0))
-    (Rng.to_int keys2.(0))
+  equal ~msg:"split is deterministic" bool true
+    (key_words keys.(0) = key_words keys2.(0))
 
 let test_fold_in () =
   let key = Rng.key 42 in
@@ -40,9 +42,9 @@ let test_fold_in () =
   let key1_again = Rng.fold_in key 1 in
 
   equal ~msg:"fold_in with different data produces different keys" bool true
-    (Rng.to_int key1 <> Rng.to_int key2);
-  equal ~msg:"fold_in is deterministic" int (Rng.to_int key1)
-    (Rng.to_int key1_again)
+    (key_words key1 <> key_words key2);
+  equal ~msg:"fold_in is deterministic" bool true
+    (key_words key1 = key_words key1_again)
 
 let test_rand () =
   let shape = [| 3; 4 |] in

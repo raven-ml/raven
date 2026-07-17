@@ -13,7 +13,14 @@ let context = Lazy.from_fun Nx_effect.create_context
 module Ptree = Ptree
 
 module Rng = struct
-  include Nx_core.Rng
+  include F.Rng
+
+  let key seed = F.Rng.key (Lazy.force context) seed
+  let run ~seed f = F.Rng.run (Lazy.force context) ~seed f
+  let split_off () = F.Rng.split_off (Lazy.force context)
+
+  let fold_in_axis k =
+    F.Rng.fold_in_index k (Nx_effect.axis_index (Nx_effect.context k))
 end
 
 (* Re-export extended type aliases *)

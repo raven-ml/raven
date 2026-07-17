@@ -280,6 +280,7 @@ type _ Effect.t +=
     }
       -> (float, 'c) t Effect.t
   | E_psum : { t_in : ('a, 'b) t } -> ('a, 'b) t Effect.t
+  | E_axis_index : (int32, Dtype.int32_elt) t Effect.t
   | E_cholesky : { t_in : ('a, 'b) t; upper : bool } -> ('a, 'b) t Effect.t
   | E_qr : {
       t_in : ('a, 'b) t;
@@ -626,6 +627,14 @@ let scatter ~mode ~unique_indices data_template ~indices ~updates ~axis =
 let threefry key ctr =
   try Effect.perform (E_threefry { key; ctr })
   with Effect.Unhandled _ -> T (Nx_backend.threefry (unwrap key) (unwrap ctr))
+
+(* The index of the current lane along the innermost mapped axis. The vmap/pmap
+   handler answers with a per-lane (batched) or per-device index; with no
+   handler there is a single lane, index 0. [Nx.Rng.fold_in_axis] folds it into
+   a key to decorrelate lanes. *)
+let axis_index ctx =
+  try Effect.perform E_axis_index
+  with Effect.Unhandled _ -> const_scalar ctx 0l Dtype.int32
 
 (* Window operations *)
 

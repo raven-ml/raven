@@ -310,6 +310,17 @@ thread.
 
 ### Nx
 
+- Unify random number generation on one splittable Threefry generator, reached
+  through `Nx.Rng`. The explicit samplers `Nx.Rng.uniform`/`normal`/`randint`/
+  `bernoulli` are pure, order-independent functions of a key; the implicit scope
+  `Nx.Rng.run`/`with_key` still drives the keyless `Nx.rand`/`randn`/… with no
+  key argument, and now shares the explicit stream by construction (`Nx.rand` is
+  `Nx.Rng.uniform` on a subkey). A key is now a transparent `[|2|]` int32 tensor
+  (previously an opaque host int), so it flows as a parameter-tree leaf, a jit
+  input and a `vmap`/`pmap` axis; `Nx.Rng.fold_in_axis` derives a per-lane key
+  under a transform. `Nx.Rng.to_int` is removed — read a key with `Nx.to_array`.
+  Breaking: the same seed now yields different `Nx.rand`/`randn`/… values.
+  Migration: re-bless any exact-value goldens; keyless call sites are unchanged.
 - Split the backend contract's `eig`/`eigh` (each a `vectors:bool -> ... option`
   returning an optional vectors component) into four total functions matching
   the public API: `eigvals`/`eigvalsh` return values only, `eig`/`eigh` return a
@@ -348,8 +359,6 @@ thread.
   every input; ravel the inputs first to recover it.
 - Remove `squeeze_axis` and `unsqueeze_axis`; use `squeeze ~axes:[ i ]` and
   `unsqueeze ~axes:[ i ]`.
-- Make `Rng.key` abstract. Construct keys with `Rng.key` and read them back with
-  `Rng.to_int`.
 - Remove the per-element tensor-form `map`, `iter`, and `fold` (each scalar
   presented as a scalar tensor); use the faster `map_item`, `iter_item`, and
   `fold_item`, which pass raw scalars.
@@ -529,15 +538,17 @@ thread.
 - The `rune` bench suite now covers `jit`: a `Jit` group times compiled
   execution of the MLP forward pass and the deep elementwise chain against
   their eager equivalents, with compilation hoisted out of the measured region.
-- Add `Rune.Rng`: jax-style explicit splittable PRNG keys (`key`, `split`,
-  `fold_in`, `uniform`, `normal`, `randint`, `bernoulli`). Samplers are pure
-  functions of key, dtype, and shape — same values eagerly, under `jit`, and
-  on every device (bit-identical for `uniform`/`randint`/`bernoulli`).
+- Random number generation lives in `Nx.Rng`: `rune` no longer declares a `Rng`
+  module or a `type key`. The unified splittable keys and samplers are reached
+  as `Nx.Rng.*`; rune's transforms only answer the generator's effects (jit
+  lowers threefry, `vmap` batches per-lane keys with `Nx.Rng.fold_in_axis`),
+  adding no RNG vocabulary of their own. Migration: rename `Rune.Rng.*` to
+  `Nx.Rng.*`.
 - `jit` now compiles random number generation: threefry lowers to the
   compiler's primitive with bit-exact parity to eager execution. A key that
   does not depend on the jitted function's inputs (`Nx.rand` and friends, or
   a captured key) raises `Jit_error` at trace time instead of silently
-  replaying one frozen draw per call — thread a `Rune.Rng` key through the
+  replaying one frozen draw per call — thread an `Nx.Rng` key through the
   inputs.
 - `jit` compilations now persist across processes: compiled kernels are
   stored on disk (`$XDG_CACHE_HOME/tolk/rune_jit`) keyed on the traced
