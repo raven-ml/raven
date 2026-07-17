@@ -1,0 +1,3 @@
+(library
+ (name tolk_bench_graphs)
+ (libraries tolk tolk.uop tolk_parity_helpers))

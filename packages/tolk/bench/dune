@@ -1,0 +1,23 @@
+(executable
+ (name bench_tolk)
+ (libraries tolk tolk.uop thumper tolk_bench_graphs))
+
+; Not attached to runtest on purpose: run with `dune build @bench`
+; (or the exe directly for lab work — never `dune exec`, which sets
+; INSIDE_DUNE and redirects `--bless` output).
+;
+; SCACHE=0 disables the schedule engine's semantic-key cache so repeated
+; timed passes measure cold work; it is read once at module init.
+
+(rule
+ (alias bench)
+ ; Serialize bench rules across the workspace: concurrent suites contend
+ ; for cores and distort measurements.
+ (locks %{project_root}/bench)
+ (action
+  (setenv
+   SCACHE
+   0
+   (progn
+    (run %{exe:bench_tolk.exe} -q)
+    (diff? tolk.thumper tolk.thumper.corrected)))))

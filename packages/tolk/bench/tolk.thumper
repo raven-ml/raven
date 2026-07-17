@@ -1,0 +1,57 @@
+# thumper baseline
+# version: 2
+# suite_name: tolk
+
+# machine: 3b8ae6dbe74c4269
+# cpu: Apple M1 Max
+# ocaml: 5.5.0
+# git: 56ee24c5
+# dirty: true
+# command: _build/default/packages/tolk/bench/bench_tolk.exe --tag lab --bless --baseline packages/tolk/bench/tolk.thumper
+
+elementwise/codegen	alloc_words	2.527100e+05	2.526820e+05	2.527420e+05	1.187131e-04	15	1
+elementwise/codegen	cpu_time	6.153210e-04	6.064958e-04	6.226970e-04	1.316480e-02	15	0
+elementwise/codegen	wall_time	6.176576e-04	6.085742e-04	6.252481e-04	1.349769e-02	15	0
+elementwise/linearize	alloc_words	9.000000e+03	9.000000e+03	9.000000e+03	0.000000e+00	15	0
+elementwise/linearize	cpu_time	2.572811e-05	2.565730e-05	2.579242e-05	2.625922e-03	15	0
+elementwise/linearize	wall_time	2.584735e-05	2.576527e-05	2.591652e-05	2.925931e-03	15	0
+elementwise/rangeify	alloc_words	9.493200e+04	9.493100e+04	9.493500e+04	2.106771e-05	15	0
+elementwise/rangeify	cpu_time	1.615584e-04	1.600175e-04	1.628758e-04	8.846111e-03	15	0
+elementwise/rangeify	wall_time	1.623275e-04	1.606060e-04	1.637245e-04	9.605719e-03	15	0
+elementwise/render	alloc_words	2.126600e+04	2.126600e+04	2.126600e+04	0.000000e+00	15	0
+elementwise/render	cpu_time	4.347327e-05	4.317358e-05	4.400729e-05	9.588668e-03	15	0
+elementwise/render	wall_time	4.358183e-05	4.325247e-05	4.413237e-05	1.009481e-02	15	0
+elementwise/schedule	alloc_words	4.644000e+03	4.642000e+03	4.645000e+03	3.229974e-04	24	0
+elementwise/schedule	cpu_time	1.005330e-05	9.976614e-06	1.015956e-05	9.098757e-03	24	2
+elementwise/schedule	wall_time	1.016779e-05	1.000752e-05	1.056126e-05	2.723030e-02	24	1
+matmul_small/codegen	alloc_words	6.922567e+06	6.922046e+06	6.923738e+06	1.222090e-04	15	1
+matmul_small/codegen	cpu_time	1.393875e-02	1.364463e-02	1.409246e-02	1.606430e-02	15	0
+matmul_small/codegen	wall_time	1.395638e-02	1.368115e-02	1.413201e-02	1.615243e-02	15	0
+matmul_small/linearize	alloc_words	1.099850e+05	1.099850e+05	1.099850e+05	0.000000e+00	15	0
+matmul_small/linearize	cpu_time	4.774639e-04	4.707705e-04	4.861791e-04	1.613590e-02	15	0
+matmul_small/linearize	wall_time	4.783630e-04	4.712225e-04	4.874226e-04	1.693283e-02	15	0
+matmul_small/rangeify	alloc_words	9.496200e+04	9.496000e+04	9.496700e+04	3.685685e-05	15	0
+matmul_small/rangeify	cpu_time	1.727719e-04	1.716909e-04	1.733987e-04	4.942448e-03	15	0
+matmul_small/rangeify	wall_time	1.733367e-04	1.720878e-04	1.741661e-04	5.994975e-03	15	0
+matmul_small/render	alloc_words	1.843200e+05	1.843200e+05	1.843200e+05	0.000000e+00	17	0
+matmul_small/render	cpu_time	4.936962e-04	4.806559e-04	5.007826e-04	2.038371e-02	17	1
+matmul_small/render	wall_time	4.957787e-04	4.815004e-04	5.035304e-04	2.221753e-02	17	1
+matmul_small/schedule	alloc_words	4.558000e+03	4.558000e+03	4.559000e+03	1.096972e-04	16	0
+matmul_small/schedule	cpu_time	1.018288e-05	1.002669e-05	1.030339e-05	1.358667e-02	16	2
+matmul_small/schedule	wall_time	1.021238e-05	1.005366e-05	1.034155e-05	1.409492e-02	16	3
+reduce/codegen	alloc_words	3.748450e+05	3.748010e+05	3.748770e+05	1.013752e-04	17	1
+reduce/codegen	cpu_time	8.418498e-04	8.263136e-04	8.515204e-04	1.497110e-02	17	1
+reduce/codegen	wall_time	8.467584e-04	8.276650e-04	8.769643e-04	2.911059e-02	17	2
+reduce/linearize	alloc_words	9.830000e+03	9.830000e+03	9.830000e+03	0.000000e+00	15	0
+reduce/linearize	cpu_time	2.693597e-05	2.674937e-05	2.706095e-05	5.783667e-03	15	1
+reduce/linearize	wall_time	2.700101e-05	2.676030e-05	2.716184e-05	7.435746e-03	15	0
+reduce/rangeify	alloc_words	4.537400e+04	4.537300e+04	4.537500e+04	2.203905e-05	15	0
+reduce/rangeify	cpu_time	8.080002e-05	8.042839e-05	8.228776e-05	1.150604e-02	15	0
+reduce/rangeify	wall_time	8.097700e-05	8.055815e-05	8.247179e-05	1.181595e-02	15	0
+reduce/render	alloc_words	2.230400e+04	2.230400e+04	2.230400e+04	0.000000e+00	28	0
+reduce/render	cpu_time	4.531778e-05	4.523348e-05	4.538692e-05	1.692931e-03	28	4
+reduce/render	wall_time	4.541633e-05	4.522166e-05	4.553519e-05	3.451753e-03	28	3
+reduce/schedule	alloc_words	3.868000e+03	3.867000e+03	3.868000e+03	1.292658e-04	26	2
+reduce/schedule	cpu_time	8.570199e-06	8.497393e-06	8.628090e-06	7.625085e-03	26	3
+reduce/schedule	wall_time	8.587041e-06	8.509261e-06	8.716960e-06	1.209377e-02	26	0
+
