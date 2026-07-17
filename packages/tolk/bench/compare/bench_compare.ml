@@ -135,7 +135,7 @@ let measure w =
                device_srcs));
     ]
   in
-  (rows, (workload, n_kernels, first_kernel_src))
+  (rows, (workload, size, n_kernels, first_kernel_src))
 
 (* JSON emission *)
 
@@ -168,15 +168,15 @@ let write_file path contents =
 
 let () =
   let out_dir = if Array.length Sys.argv > 1 then Sys.argv.(1) else "." in
-  let results = List.map measure Graphs.all in
+  let results = List.map measure (Graphs.all @ Graphs.scaling) in
   let rows = List.concat_map fst results in
   let timings =
     "[\n  " ^ String.concat ",\n  " (List.map row_json rows) ^ "\n]\n"
   in
   write_file (Filename.concat out_dir "tolk.json") timings;
-  let verify_entry (workload, n_kernels, src) =
-    Printf.sprintf {|  "%s": {"n_kernels":%d,"first_kernel_src":"%s"}|}
-      (escape workload) n_kernels (escape src)
+  let verify_entry (workload, size, n_kernels, src) =
+    Printf.sprintf {|  "%s/%s": {"n_kernels":%d,"first_kernel_src":"%s"}|}
+      (escape workload) (escape size) n_kernels (escape src)
   in
   let verify =
     "{\n"

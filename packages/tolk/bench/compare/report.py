@@ -21,6 +21,7 @@ Run from the repo root:  uv run packages/tolk/bench/compare/report.py [dir]
 
 import json
 import os
+import re
 import sys
 
 # tolk stage -> None (tolk-only) or the reference stage it joins against.
@@ -123,6 +124,93 @@ def write_tsv(table, path):
             ]) + "\n")
 
 
+# Per-node growth over ~2.3x per doubling is the superlinearity threshold from
+# the plan; normalised to a size ratio it flags at 1.15 (2.3 / 2).
+SUPERLINEAR = 1.15
+
+
+def numeric_size(size):
+    m = re.search(r"(\d+)", size)
+    return int(m.group(1)) if m else None
+
+
+def growth(ms_j, ms_i, n_j, n_i):
+    if ms_i in (None, 0) or ms_j is None or n_i == 0:
+        return None
+    return (ms_j / ms_i) / (n_j / n_i)
+
+
+def scaling_curves(table):
+    sizes = {}
+    for r in table:
+        sizes.setdefault(r["workload"], set()).add(r["size"])
+    return [wl for wl in dict.fromkeys(r["workload"] for r in table)
+            if len(sizes[wl]) > 1]
+
+
+def print_scaling(table):
+    laddered = scaling_curves(table)
+    if not laddered:
+        return []
+    print("\nScaling curves (ms vs size; growth = per-node ms ratio over the "
+          f"previous point, normalised to size ratio; SUPER = > {SUPERLINEAR}):")
+    out = []
+    for wl in laddered:
+        rows = [r for r in table if r["workload"] == wl]
+        stages = list(dict.fromkeys(r["stage"] for r in rows))
+        for stage in stages:
+            pts = sorted((r for r in rows if r["stage"] == stage),
+                         key=lambda r: numeric_size(r["size"]))
+            print(f"\n{wl} / {stage}")
+            header = ["size", "n", "tolk_ms", "tg_ms", "tolk_grow",
+                      "tg_grow", "flag"]
+            lines = [header]
+            prev = None
+            for r in pts:
+                n = numeric_size(r["size"])
+                tg = growth(r["tolk_ms"], prev["tolk_ms"], n,
+                            numeric_size(prev["size"])) if prev else None
+                gg = growth(r["tg_ms"], prev["tg_ms"], n,
+                            numeric_size(prev["size"])) if prev else None
+                flag = "SUPER" if (tg and tg > SUPERLINEAR) or \
+                    (gg and gg > SUPERLINEAR) else ""
+                lines.append([
+                    r["size"], str(n), fmt_ms(r["tolk_ms"]),
+                    fmt_ms(r["tg_ms"]),
+                    f"{tg:.2f}" if tg is not None else "-",
+                    f"{gg:.2f}" if gg is not None else "-", flag])
+                out.append({"workload": wl, "size": r["size"], "n": n,
+                            "stage": stage, "tolk_ms": r["tolk_ms"],
+                            "tg_ms": r["tg_ms"], "tolk_grow": tg,
+                            "tg_grow": gg, "super": bool(flag)})
+                prev = r
+            widths = [max(len(row[i]) for row in lines)
+                      for i in range(len(header))]
+            for i, row in enumerate(lines):
+                print("  " + "  ".join(c.ljust(widths[j])
+                                       for j, c in enumerate(row)))
+                if i == 0:
+                    print("  " + "  ".join("-" * widths[j]
+                                           for j in range(len(header))))
+    return out
+
+
+def write_scaling_tsv(rows, path):
+    cols = ["workload", "size", "n", "stage", "tolk_ms", "tg_ms",
+            "tolk_grow", "tg_grow", "super"]
+    with open(path, "w") as f:
+        f.write("\t".join(cols) + "\n")
+        for r in rows:
+            f.write("\t".join([
+                r["workload"], r["size"], str(r["n"]), r["stage"],
+                f"{r['tolk_ms']:.6f}",
+                f"{r['tg_ms']:.6f}" if r["tg_ms"] is not None else "",
+                f"{r['tolk_grow']:.4f}" if r["tolk_grow"] is not None else "",
+                f"{r['tg_grow']:.4f}" if r["tg_grow"] is not None else "",
+                "1" if r["super"] else "0",
+            ]) + "\n")
+
+
 def verify_same_graph(tolk_v, tg_v):
     ok = True
     print("\nSame-graph verification (tolk vs reference):")
@@ -164,6 +252,12 @@ def main():
     tsv_path = os.path.join(out_dir, "compare.tsv")
     write_tsv(table, tsv_path)
     print(f"\nwrote {tsv_path}")
+
+    scaling_rows = print_scaling(table)
+    if scaling_rows:
+        scaling_path = os.path.join(out_dir, "scaling.tsv")
+        write_scaling_tsv(scaling_rows, scaling_path)
+        print(f"\nwrote {scaling_path}")
 
     ok = verify_same_graph(tolk_v, tg_v)
     if not ok:

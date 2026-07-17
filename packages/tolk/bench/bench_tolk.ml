@@ -76,6 +76,49 @@ let workload_benches w =
             programs);
     ]
 
+(* Scaling gate over each headline workload's size ladder. [alloc_words] across
+   sizes is the superlinearity detector — an O(n^2) pass shows up as super-linear
+   allocation growth before wall-time noise matters — and rangeify is where that
+   risk lives, so it is the tagged tripwire, across three ladder points per
+   workload. schedule is microsecond-scale (gated by the fixed workloads) and
+   codegen is the priciest pass; both stay present but untagged so the tight gate
+   holds near the ~2 min budget. Every stage/size is in the suite for on-demand
+   runs; the tags only pick the tight subset. *)
+let rangeify_lab_max = function "lorenz" -> 50 | _ -> 10
+
+(* Trailing integer of a size descriptor ("n50" -> 50, "h10" -> 10). *)
+let size_int s =
+  let i = ref (String.length s) in
+  while !i > 0 && s.[!i - 1] >= '0' && s.[!i - 1] <= '9' do
+    decr i
+  done;
+  int_of_string (String.sub s !i (String.length s - !i))
+
+let scaling_group w =
+  let bench ~lab ~setup name f =
+    Thumper.bench_with_setup ~tags:(if lab then [ "lab" ] else []) ~setup name f
+  in
+  let n = size_int (Graphs.size w) in
+  let name = Graphs.name w in
+  Thumper.group
+    (Printf.sprintf "%s/%s" name (Graphs.size w))
+    [
+      bench ~lab:(n <= rangeify_lab_max name)
+        ~setup:(fun () -> Graphs.sink w) "rangeify" (fun sink ->
+          keep (Rangeify.get_kernel_graph sink));
+      bench ~lab:false ~setup:(fun () -> rangeify_of w) "schedule" (fun kg ->
+          let linear = Schedule.create_schedule kg in
+          keep (Schedule.memory_plan_rewrite linear []));
+      bench ~lab:false ~setup:(fun () -> kernels_of w) "codegen" (fun ks ->
+          List.iter
+            (fun k -> keep (Codegen.full_rewrite_to_sink ~optimize ren k))
+            ks);
+    ]
+
+let scaling_benches =
+  List.map (fun n -> scaling_group (Graphs.lorenz n)) Graphs.lorenz_ladder
+  @ List.map (fun h -> scaling_group (Graphs.rnn h)) Graphs.rnn_ladder
+
 let () =
   Thumper.run "tolk"
     ~budgets:
@@ -83,4 +126,4 @@ let () =
         Thumper.Budget.no_slower_than ~metric:Thumper.Metric.wall_time 0.05;
         Thumper.Budget.no_more_alloc_than 0.01;
       ]
-    (List.map workload_benches Graphs.all)
+    (List.map workload_benches Graphs.all @ scaling_benches)

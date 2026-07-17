@@ -39,5 +39,29 @@ val matmul_small : t
 (** [a @ b] for a 128x128 by 128x128 float32 matrix product, expressed as a
     broadcast-multiply reduced over the contraction axis. *)
 
+val lorenz : int -> t
+(** [lorenz n_steps] is an Euler-integrated Lorenz attractor unrolled for
+    [n_steps]. The state [(x, y, z)] is three small float32 vectors; each step
+    applies [dx = σ(y-x)], [dy = x(ρ-z)-y], [dz = xy-βz] and the update
+    [state += dt·d]. Every step's outputs feed the next through shared
+    subgraphs, producing a deep straight-line DAG that fuses into one reduce
+    kernel. The size descriptor is [nN]. *)
+
+val rnn : int -> t
+(** [rnn horizon] is a forward-only recurrence unrolled for [horizon] steps.
+    Each step forms [h ← x@W + h@U] (affine; no autodiff) over modest matrices
+    and accumulates a squared-magnitude scalar loss. Matmuls and reduces
+    dominate the graph. The size descriptor is [hH]. *)
+
+val lorenz_ladder : int list
+(** Step counts sweept by {!lorenz}: [[ 10; 25; 50; 100; 200 ]]. *)
+
+val rnn_ladder : int list
+(** Horizons sweept by {!rnn}: [[ 2; 5; 10; 20 ]]. *)
+
 val all : t list
-(** [[ elementwise; reduce; matmul_small ]]. *)
+(** [[ elementwise; reduce; matmul_small ]]: the fixed-size reference
+    workloads. *)
+
+val scaling : t list
+(** {!lorenz} and {!rnn} at every ladder point, for the comparative sweep. *)

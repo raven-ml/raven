@@ -94,23 +94,76 @@ def build_reduce():
     return wrap_sink(x._rop(Ops.ADD, (1,)))
 
 
-def build_matmul_small():
-    m = n = k = 128
-    a = mk_param(0, m, k)
-    b = mk_param(1, k, n)
+def matmul(a, b, m, k, n):
     ar = UOp(Ops.RESHAPE, dtypes.float32, (a, shape_to_shape_arg((m, 1, k))))
     ae = ar.expand((m, n, k))
     bt = UOp(Ops.PERMUTE, dtypes.float32, (b,), (1, 0))
     br = UOp(Ops.RESHAPE, dtypes.float32, (bt, shape_to_shape_arg((1, n, k))))
     be = br.expand((m, n, k))
-    red = (ae * be)._rop(Ops.ADD, (2,))
-    return wrap_sink(red)
+    return (ae * be)._rop(Ops.ADD, (2,))
+
+
+def build_matmul_small():
+    m = n = k = 128
+    a = mk_param(0, m, k)
+    b = mk_param(1, k, n)
+    return wrap_sink(matmul(a, b, m, k, n))
+
+
+# Headline scaling workloads — mirror graphs.ml op for op. Subtraction is the
+# frontend form a-b = a + b*(-1); tinygrad lowers python `-` to exactly that, so
+# `a - b` here matches the OCaml `add a (mul b neg_one)`.
+
+LORENZ_WIDTH = 64
+LORENZ_LADDER = [10, 25, 50, 100, 200]
+RNN_BATCH = RNN_DIM = 32
+RNN_LADDER = [2, 5, 10, 20]
+
+
+def build_lorenz(n_steps):
+    w = LORENZ_WIDTH
+
+    def bcast(v):
+        return UOp.const(dtypes.float32, v, shape=(w,))
+
+    sigma, rho, beta, dt = bcast(10.0), bcast(28.0), bcast(2.5), bcast(0.0625)
+    x = mk_param(0, w)
+    y = mk_param(1, w)
+    z = mk_param(2, w)
+    for _ in range(n_steps):
+        dx = sigma * (y - x)
+        dy = x * (rho - z) - y
+        dz = x * y - beta * z
+        x, y, z = x + dt * dx, y + dt * dy, z + dt * dz
+    state = (x + y) + z
+    return wrap_sink(state._rop(Ops.ADD, (0,)))
+
+
+def build_rnn(horizon):
+    b, d = RNN_BATCH, RNN_DIM
+    w_in = mk_param(0, d, d)
+    w_rec = mk_param(1, d, d)
+    h = mk_param(2, b, d)
+    acc = None
+    for t in range(horizon):
+        x = mk_param(3 + t, b, d)
+        h = matmul(x, w_in, b, d, d) + matmul(h, w_rec, b, d, d)
+        loss = (h * h)._rop(Ops.ADD, (0, 1))
+        acc = loss if acc is None else acc + loss
+    out = acc if acc is not None else (h * h)._rop(Ops.ADD, (0, 1))
+    return wrap_sink(out)
 
 
 WORKLOADS = [
     ("elementwise", "256x256", build_elementwise),
     ("reduce", "512x512", build_reduce),
     ("matmul_small", "128x128x128", build_matmul_small),
+] + [
+    ("lorenz", f"n{n}", (lambda n: lambda: build_lorenz(n))(n))
+    for n in LORENZ_LADDER
+] + [
+    ("rnn", f"h{h}", (lambda h: lambda: build_rnn(h))(h))
+    for h in RNN_LADDER
 ]
 
 
@@ -200,7 +253,7 @@ def main():
     for name, size, build in WORKLOADS:
         r, (vname, v) = measure(name, size, build)
         rows.extend(r)
-        verify[vname] = v
+        verify[f"{vname}/{size}"] = v
     with open(os.path.join(out_dir, "tinygrad.json"), "w") as f:
         json.dump(rows, f, indent=2)
         f.write("\n")
