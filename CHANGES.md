@@ -46,6 +46,36 @@ thread.
 
 ### Tolk (new)
 
+- Full parity refresh against the reference compiler: dtypes are now a flat
+  scalar enum (`Dtype.Val`/`Ptr`/`Image` and vector widths are gone — vector
+  width comes from a value's shape, pointer provenance from its address
+  space), reduces carry an op and leading-axes count, expands prepend leading
+  dims with `Uop.broadcast_to` as the same-rank broadcast, and `dtypes.index`
+  types shapes and loop bounds. Every generated kernel is verified
+  byte-identical to the reference across the parity, codegen, renderer,
+  kernel-graph, and debug golden suites.
+- Fix kernel search on CPU: waited calls now report elapsed wall-clock time,
+  so BEAM can rank CPU kernels — previously every candidate tied at infinity
+  and selection was arbitrary.
+- Fix kernel cost estimates: vector lanes count toward op/load/store volumes
+  again, repeated reads of one buffer cap at its footprint, and tensor-core
+  flops count the full matmul volume — beam decisions were skewed on all
+  three.
+- Fix multi-device scheduling: sharded elementwise graphs no longer hang
+  kernel lowering, and ring allreduce no longer crashes on gated chunk
+  reassembly.
+- Scalar operands adopt their paired tensor's dtype: `float16_t + s` stays
+  float16 instead of silently upcasting to float32, matching the reference's
+  mixed-precision behavior.
+- `Buffer.copy_from` is the canonical buffer copy, routed through the engine;
+  `copyin`/`copyout`/`transfer` remain as the low-level allocator bridge.
+- `State.safe_load` reads fp8 tensors (`F8_E4M3`, `F8_E5M2`), and
+  `load_state_dict` only reconciles the exact scalar-to-one-vector shape
+  pair, so stray unit-dimension mismatches fail loudly.
+- Clang kernels declare half-precision buffers as `__fp16*`, matching the
+  reference's C dialect.
+- The renderer drops its unused pre-matcher hook, and `Renderer.make`'s
+  emulated-floats option takes flat dtype pairs.
 - CPU jit: bfloat16 kernels no longer fail with `Compiler.Compile_error` on
   hosts whose clang predates `__bf16` support (clang < 15 on x86-64). The
   CPU device now probes the compiler once and falls back to the float32
