@@ -11,14 +11,12 @@ open Tolk
 open Tolk_uop
 module U = Uop
 
-let idx n = U.const (Const.int Dtype.weakint n)
-
 let make_kernel ~name ~opts_to_apply ~ptr_size =
-  let shape = if ptr_size < 0 then None else Some (idx ptr_size) in
-  let p0 = U.param ~slot:0 ~dtype:Dtype.float32 ?shape () in
-  let p1 = U.param ~slot:1 ~dtype:Dtype.float32 ?shape () in
-  let p2 = U.param ~slot:2 ~dtype:Dtype.float32 ?shape () in
-  let r0 = U.range ~size:(idx 256) ~axis:0 ~kind:Axis_type.Global () in
+  let shape = U.const_int ptr_size in
+  let p0 = U.param ~slot:0 ~dtype:Dtype.float32 ~shape () in
+  let p1 = U.param ~slot:1 ~dtype:Dtype.float32 ~shape () in
+  let p2 = U.param ~slot:2 ~dtype:Dtype.float32 ~shape () in
+  let r0 = U.range ~size:(U.const_int 256) ~axis:0 ~kind:Axis_type.Global () in
   let ld_a = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ()) () in
   let ld_b = U.load ~src:(U.index ~ptr:p1 ~idxs:[r0] ()) () in
   let add = U.alu_binary ~op:Ops.Add ~lhs:ld_a ~rhs:ld_b in

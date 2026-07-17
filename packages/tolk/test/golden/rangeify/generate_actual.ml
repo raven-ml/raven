@@ -19,7 +19,7 @@ module D = Dtype
 
 (* Emit a shape-encoding node from a concrete int list. *)
 let mk_shape b (dims : int list) : U.t =
-  let ids = List.map (fun s -> U.const (C.int D.weakint s)) dims in
+  let ids = List.map U.const_int dims in
   match ids with
   | [ d ] -> d
   | ds ->
@@ -331,7 +331,7 @@ let build_llama_output_projection b =
   wrap_sink b [ result ]
 
 let f32 x = U.const (C.float D.float32 x)
-let wi x = U.const (C.int D.weakint x)
+let wi x = U.const_int x
 
 let linear b ~x ~weight ~out_dim ~in_dim =
   let x3 = U.reshape ~src:x ~shape:(mk_shape b [ 2; 1; in_dim ]) in
@@ -407,8 +407,8 @@ let build_llama_attention_scores ?(kernel_name = "") b =
     let co0 = (x0 * f1) + (x1 * f0) in
     let ro0 = (x0 * f0) - (x1 * f1) in
     let ro1 = (x2 * f2) - (x3 * f3) in
-    let first0 = (ro0 * k00) + (ro1 * k02) + (co0 * k01) in
-    let first1 = (ro0 * k10) + (ro1 * k12) + (co0 * k11) in
+    let first0 = (ro0 * k00) + (co0 * k01) + (ro1 * k02) in
+    let first1 = (ro0 * k10) + (co0 * k11) + (ro1 * k12) in
     let co1 = (x2 * f3) + (x3 * f2) in
     (scale (first0 + (co1 * k03)), scale (first1 + (co1 * k13)))
   in
@@ -420,7 +420,8 @@ let build_llama_attention_scores ?(kernel_name = "") b =
     score01_base + f32 neg_infinity
   in
   let base = r * wi 4 in
-  let dst = U.index ~ptr:out ~idxs:[ base ] () in
+  let lane_ofs = U.stack [ wi 0; wi 1; wi 2; wi 3 ] in
+  let dst = U.index ~ptr:out ~idxs:[ base + lane_ofs ] () in
   let value = U.stack [ score00; score01; score10; score11 ] in
   U.end_ ~value:(U.store ~dst ~value ()) ~ranges:[ r ]
   |> scheduled_kernel ~name:kernel_name [ out; q; freqs; k ]
