@@ -276,12 +276,12 @@ let handler (tangents : Tensor_map.t) =
       | E_reduce_sum { t_in; axes } ->
           Some
             (fun k ->
-              lift1 k (reduce_sum ~axes t_in) t_in (fun dx ->
+              lift1 k (reduce ~op:`Sum ~axes t_in) t_in (fun dx ->
                   T.sum dx ~axes:(Array.to_list axes)))
       | E_reduce_max { t_in; axes } ->
           Some
             (fun k ->
-              let out = reduce_max ~axes t_in in
+              let out = reduce ~op:`Max ~axes t_in in
               lift1 k out t_in (fun dx ->
                   let shape_in = T.shape t_in in
                   let out_bc =
@@ -295,7 +295,7 @@ let handler (tangents : Tensor_map.t) =
       | E_reduce_min { t_in; axes } ->
           Some
             (fun k ->
-              let out = reduce_min ~axes t_in in
+              let out = reduce ~op:`Min ~axes t_in in
               lift1 k out t_in (fun dx ->
                   let shape_in = T.shape t_in in
                   let out_bc =
@@ -309,7 +309,7 @@ let handler (tangents : Tensor_map.t) =
       | E_reduce_prod { t_in; axes } ->
           Some
             (fun k ->
-              let out = reduce_prod ~axes t_in in
+              let out = reduce ~op:`Prod ~axes t_in in
               lift1 k out t_in (fun dx ->
                   let shape_in = T.shape t_in in
                   let out_bc =
@@ -395,14 +395,14 @@ let handler (tangents : Tensor_map.t) =
                   | `Add -> tan_or_zeros data_template
                   | `Set ->
                       let mask =
-                        scatter
+                        scatter ~mode:`Set ~unique_indices
                           (T.ones_like data_template)
                           ~indices ~updates:(T.zeros_like updates) ~axis
                       in
                       T.mul (tan_or_zeros data_template) mask
                 in
                 let d_updates =
-                  scatter ~mode
+                  scatter ~mode ~unique_indices
                     (T.zeros_like data_template)
                     ~indices ~updates:(tan_or_zeros updates) ~axis
                 in

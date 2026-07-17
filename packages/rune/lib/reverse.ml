@@ -358,7 +358,7 @@ let handler (tape : Tape.t) =
           Some
             (fun k ->
               let shape_in = T.shape t_in in
-              pull1 k (reduce_sum ~axes t_in) t_in (fun g ->
+              pull1 k (reduce ~op:`Sum ~axes t_in) t_in (fun g ->
                   let kept =
                     T.shape
                       (T.sum t_in ~axes:(Array.to_list axes) ~keepdims:true)
@@ -367,7 +367,7 @@ let handler (tape : Tape.t) =
       | E_reduce_max { t_in; axes } ->
           Some
             (fun k ->
-              let out = reduce_max ~axes t_in in
+              let out = reduce ~op:`Max ~axes t_in in
               let shape_in = T.shape t_in in
               let broadcast_kept x =
                 let kept =
@@ -383,7 +383,7 @@ let handler (tape : Tape.t) =
       | E_reduce_min { t_in; axes } ->
           Some
             (fun k ->
-              let out = reduce_min ~axes t_in in
+              let out = reduce ~op:`Min ~axes t_in in
               let shape_in = T.shape t_in in
               let broadcast_kept x =
                 let kept =
@@ -399,7 +399,7 @@ let handler (tape : Tape.t) =
       | E_reduce_prod { t_in; axes } ->
           Some
             (fun k ->
-              let out = reduce_prod ~axes t_in in
+              let out = reduce ~op:`Prod ~axes t_in in
               let shape_in = T.shape t_in in
               let broadcast_kept x =
                 let kept =
@@ -415,8 +415,8 @@ let handler (tape : Tape.t) =
             (fun k ->
               pull1 k (sort ~axis ~descending t_in) t_in (fun g ->
                   let indices = argsort ~axis ~descending t_in in
-                  scatter ~mode:`Add (T.zeros_like t_in) ~indices ~updates:g
-                    ~axis))
+                  scatter ~mode:`Add ~unique_indices:false
+                    (T.zeros_like t_in) ~indices ~updates:g ~axis))
       (* Scans *)
       | E_associative_scan { t_in; axis; op } ->
           Some
@@ -522,8 +522,8 @@ let handler (tape : Tape.t) =
           Some
             (fun k ->
               pull1 k (gather data indices ~axis) data (fun g ->
-                  scatter ~mode:`Add (T.zeros_like data) ~indices ~updates:g
-                    ~axis))
+                  scatter ~mode:`Add ~unique_indices:false
+                    (T.zeros_like data) ~indices ~updates:g ~axis))
       | E_scatter
           { data_template; indices; updates; axis; mode; unique_indices } ->
           Some
@@ -550,7 +550,7 @@ let handler (tape : Tape.t) =
                             | `Add -> g
                             | `Set ->
                                 let mask =
-                                  scatter
+                                  scatter ~mode:`Set ~unique_indices
                                     (T.ones_like data_template)
                                     ~indices ~updates:(T.zeros_like updates)
                                     ~axis

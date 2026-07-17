@@ -81,13 +81,13 @@ let handler ppf =
         Some (fun k -> obs k "contiguous" (contiguous t_in))
     | E_copy { t_in } -> Some (fun k -> obs k "copy" (copy t_in))
     | E_reduce_sum { t_in; axes } ->
-        Some (fun k -> obs k "reduce_sum" (reduce_sum ~axes t_in))
+        Some (fun k -> obs k "reduce_sum" (reduce ~op:`Sum ~axes t_in))
     | E_reduce_max { t_in; axes } ->
-        Some (fun k -> obs k "reduce_max" (reduce_max ~axes t_in))
+        Some (fun k -> obs k "reduce_max" (reduce ~op:`Max ~axes t_in))
     | E_reduce_min { t_in; axes } ->
-        Some (fun k -> obs k "reduce_min" (reduce_min ~axes t_in))
+        Some (fun k -> obs k "reduce_min" (reduce ~op:`Min ~axes t_in))
     | E_reduce_prod { t_in; axes } ->
-        Some (fun k -> obs k "reduce_prod" (reduce_prod ~axes t_in))
+        Some (fun k -> obs k "reduce_prod" (reduce ~op:`Prod ~axes t_in))
     | E_associative_scan { t_in; axis; op } ->
         Some
           (fun k -> obs k "associative_scan" (associative_scan ~axis ~op t_in))
