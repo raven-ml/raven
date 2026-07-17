@@ -273,60 +273,54 @@ let handler (tangents : Tensor_map.t) =
           Some (fun k -> lift1 k (contiguous t_in) t_in Fun.id)
       | E_copy { t_in } -> Some (fun k -> lift1 k (copy t_in) t_in Fun.id)
       (* Reductions *)
-      | E_reduce_sum { t_in; axes; keepdims } ->
+      | E_reduce_sum { t_in; axes } ->
           Some
             (fun k ->
-              lift1 k (reduce_sum ~axes ~keepdims t_in) t_in (fun dx ->
-                  T.sum dx ~axes:(Array.to_list axes) ~keepdims))
-      | E_reduce_max { t_in; axes; keepdims } ->
+              lift1 k (reduce_sum ~axes t_in) t_in (fun dx ->
+                  T.sum dx ~axes:(Array.to_list axes)))
+      | E_reduce_max { t_in; axes } ->
           Some
             (fun k ->
-              let out = reduce_max ~axes ~keepdims t_in in
+              let out = reduce_max ~axes t_in in
               lift1 k out t_in (fun dx ->
                   let shape_in = T.shape t_in in
                   let out_bc =
-                    if keepdims then T.broadcast_to shape_in out
-                    else
-                      let kept =
-                        T.max t_in ~axes:(Array.to_list axes) ~keepdims:true
-                      in
-                      T.broadcast_to shape_in kept
+                    let kept =
+                      T.max t_in ~axes:(Array.to_list axes) ~keepdims:true
+                    in
+                    T.broadcast_to shape_in kept
                   in
                   let mask = T.cast (dtype out) (T.equal t_in out_bc) in
-                  T.sum (T.mul dx mask) ~axes:(Array.to_list axes) ~keepdims))
-      | E_reduce_min { t_in; axes; keepdims } ->
+                  T.sum (T.mul dx mask) ~axes:(Array.to_list axes)))
+      | E_reduce_min { t_in; axes } ->
           Some
             (fun k ->
-              let out = reduce_min ~axes ~keepdims t_in in
+              let out = reduce_min ~axes t_in in
               lift1 k out t_in (fun dx ->
                   let shape_in = T.shape t_in in
                   let out_bc =
-                    if keepdims then T.broadcast_to shape_in out
-                    else
-                      let kept =
-                        T.min t_in ~axes:(Array.to_list axes) ~keepdims:true
-                      in
-                      T.broadcast_to shape_in kept
+                    let kept =
+                      T.min t_in ~axes:(Array.to_list axes) ~keepdims:true
+                    in
+                    T.broadcast_to shape_in kept
                   in
                   let mask = T.cast (dtype out) (T.equal t_in out_bc) in
-                  T.sum (T.mul dx mask) ~axes:(Array.to_list axes) ~keepdims))
-      | E_reduce_prod { t_in; axes; keepdims } ->
+                  T.sum (T.mul dx mask) ~axes:(Array.to_list axes)))
+      | E_reduce_prod { t_in; axes } ->
           Some
             (fun k ->
-              let out = reduce_prod ~axes ~keepdims t_in in
+              let out = reduce_prod ~axes t_in in
               lift1 k out t_in (fun dx ->
                   let shape_in = T.shape t_in in
                   let out_bc =
-                    if keepdims then T.broadcast_to shape_in out
-                    else
-                      let kept =
-                        T.prod t_in ~axes:(Array.to_list axes) ~keepdims:true
-                      in
-                      T.broadcast_to shape_in kept
+                    let kept =
+                      T.prod t_in ~axes:(Array.to_list axes) ~keepdims:true
+                    in
+                    T.broadcast_to shape_in kept
                   in
                   T.sum
                     (T.mul (T.div out_bc t_in) dx)
-                    ~axes:(Array.to_list axes) ~keepdims))
+                    ~axes:(Array.to_list axes)))
       (* Sorting: a sort is a gather at the argsort indices. *)
       | E_sort { t_in; axis; descending } ->
           Some

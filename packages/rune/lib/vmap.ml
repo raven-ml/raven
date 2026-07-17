@@ -267,28 +267,28 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
             mark st out;
             continue k out)
     (* Reductions and scans *)
-    | E_reduce_sum { t_in; axes; keepdims } when batched st t_in ->
+    | E_reduce_sum { t_in; axes } when batched st t_in ->
         Some
           (fun k ->
-            let out = reduce_sum ~axes:(Array.map taxis axes) ~keepdims t_in in
+            let out = reduce_sum ~axes:(Array.map taxis axes) t_in in
             mark st out;
             continue k out)
-    | E_reduce_max { t_in; axes; keepdims } when batched st t_in ->
+    | E_reduce_max { t_in; axes } when batched st t_in ->
         Some
           (fun k ->
-            let out = reduce_max ~axes:(Array.map taxis axes) ~keepdims t_in in
+            let out = reduce_max ~axes:(Array.map taxis axes) t_in in
             mark st out;
             continue k out)
-    | E_reduce_min { t_in; axes; keepdims } when batched st t_in ->
+    | E_reduce_min { t_in; axes } when batched st t_in ->
         Some
           (fun k ->
-            let out = reduce_min ~axes:(Array.map taxis axes) ~keepdims t_in in
+            let out = reduce_min ~axes:(Array.map taxis axes) t_in in
             mark st out;
             continue k out)
-    | E_reduce_prod { t_in; axes; keepdims } when batched st t_in ->
+    | E_reduce_prod { t_in; axes } when batched st t_in ->
         Some
           (fun k ->
-            let out = reduce_prod ~axes:(Array.map taxis axes) ~keepdims t_in in
+            let out = reduce_prod ~axes:(Array.map taxis axes) t_in in
             mark st out;
             continue k out)
     | E_associative_scan { t_in; axis; op } when batched st t_in ->

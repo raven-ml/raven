@@ -736,31 +736,31 @@ let handler st =
               (F.Elementwise.where (go condition) (go if_true) (go if_false)))
     (* Reductions. The accumulator dtype is pinned to the input's so results
        match eager execution. *)
-    | E_reduce_sum { t_in; axes; keepdims } ->
+    | E_reduce_sum { t_in; axes } ->
         Some
           (fun k ->
             let t = go t_in in
             ret k (dt t_in)
-              (F.Reduce.sum ~axis:(Array.to_list axes) ~keepdim:keepdims
+              (F.Reduce.sum ~axis:(Array.to_list axes) ~keepdim:false
                  ~dtype:(F.Tensor.val_dtype t) t))
-    | E_reduce_prod { t_in; axes; keepdims } ->
+    | E_reduce_prod { t_in; axes } ->
         Some
           (fun k ->
             let t = go t_in in
             ret k (dt t_in)
-              (F.Reduce.prod ~axis:(Array.to_list axes) ~keepdim:keepdims
+              (F.Reduce.prod ~axis:(Array.to_list axes) ~keepdim:false
                  ~dtype:(F.Tensor.val_dtype t) t))
-    | E_reduce_max { t_in; axes; keepdims } ->
+    | E_reduce_max { t_in; axes } ->
         Some
           (fun k ->
             ret k (dt t_in)
-              (F.Reduce.max ~axis:(Array.to_list axes) ~keepdim:keepdims
+              (F.Reduce.max ~axis:(Array.to_list axes) ~keepdim:false
                  (go t_in)))
-    | E_reduce_min { t_in; axes; keepdims } ->
+    | E_reduce_min { t_in; axes } ->
         Some
           (fun k ->
             ret k (dt t_in)
-              (F.Reduce.min ~axis:(Array.to_list axes) ~keepdim:keepdims
+              (F.Reduce.min ~axis:(Array.to_list axes) ~keepdim:false
                  (go t_in)))
     | E_argmax { t_in; axis; keepdims } ->
         Some

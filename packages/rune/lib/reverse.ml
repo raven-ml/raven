@@ -354,72 +354,58 @@ let handler (tape : Tape.t) =
           Some (fun k -> pull1 k (contiguous t_in) t_in Fun.id)
       | E_copy { t_in } -> Some (fun k -> pull1 k (copy t_in) t_in Fun.id)
       (* Reductions *)
-      | E_reduce_sum { t_in; axes; keepdims } ->
+      | E_reduce_sum { t_in; axes } ->
           Some
             (fun k ->
               let shape_in = T.shape t_in in
-              pull1 k (reduce_sum ~axes ~keepdims t_in) t_in (fun g ->
-                  let g =
-                    if keepdims then g
-                    else
-                      let kept =
-                        T.shape
-                          (T.sum t_in ~axes:(Array.to_list axes) ~keepdims:true)
-                      in
-                      T.reshape kept g
-                  in
-                  T.broadcast_to shape_in g))
-      | E_reduce_max { t_in; axes; keepdims } ->
-          Some
-            (fun k ->
-              let out = reduce_max ~axes ~keepdims t_in in
-              let shape_in = T.shape t_in in
-              let broadcast_kept x =
-                if keepdims then T.broadcast_to shape_in x
-                else
+              pull1 k (reduce_sum ~axes t_in) t_in (fun g ->
                   let kept =
                     T.shape
-                      (T.max t_in ~axes:(Array.to_list axes) ~keepdims:true)
+                      (T.sum t_in ~axes:(Array.to_list axes) ~keepdims:true)
                   in
-                  T.broadcast_to shape_in (T.reshape kept x)
+                  T.broadcast_to shape_in (T.reshape kept g)))
+      | E_reduce_max { t_in; axes } ->
+          Some
+            (fun k ->
+              let out = reduce_max ~axes t_in in
+              let shape_in = T.shape t_in in
+              let broadcast_kept x =
+                let kept =
+                  T.shape (T.max t_in ~axes:(Array.to_list axes) ~keepdims:true)
+                in
+                T.broadcast_to shape_in (T.reshape kept x)
               in
               pull1 k out t_in (fun g ->
                   let mask =
                     T.cast (dtype out) (T.equal t_in (broadcast_kept out))
                   in
                   T.mul (broadcast_kept g) mask))
-      | E_reduce_min { t_in; axes; keepdims } ->
+      | E_reduce_min { t_in; axes } ->
           Some
             (fun k ->
-              let out = reduce_min ~axes ~keepdims t_in in
+              let out = reduce_min ~axes t_in in
               let shape_in = T.shape t_in in
               let broadcast_kept x =
-                if keepdims then T.broadcast_to shape_in x
-                else
-                  let kept =
-                    T.shape
-                      (T.min t_in ~axes:(Array.to_list axes) ~keepdims:true)
-                  in
-                  T.broadcast_to shape_in (T.reshape kept x)
+                let kept =
+                  T.shape (T.min t_in ~axes:(Array.to_list axes) ~keepdims:true)
+                in
+                T.broadcast_to shape_in (T.reshape kept x)
               in
               pull1 k out t_in (fun g ->
                   let mask =
                     T.cast (dtype out) (T.equal t_in (broadcast_kept out))
                   in
                   T.mul (broadcast_kept g) mask))
-      | E_reduce_prod { t_in; axes; keepdims } ->
+      | E_reduce_prod { t_in; axes } ->
           Some
             (fun k ->
-              let out = reduce_prod ~axes ~keepdims t_in in
+              let out = reduce_prod ~axes t_in in
               let shape_in = T.shape t_in in
               let broadcast_kept x =
-                if keepdims then T.broadcast_to shape_in x
-                else
-                  let kept =
-                    T.shape
-                      (T.prod t_in ~axes:(Array.to_list axes) ~keepdims:true)
-                  in
-                  T.broadcast_to shape_in (T.reshape kept x)
+                let kept =
+                  T.shape (T.prod t_in ~axes:(Array.to_list axes) ~keepdims:true)
+                in
+                T.broadcast_to shape_in (T.reshape kept x)
               in
               pull1 k out t_in (fun g ->
                   T.mul (broadcast_kept g) (T.div (broadcast_kept out) t_in)))

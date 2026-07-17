@@ -130,25 +130,21 @@ type _ Effect.t +=
   | E_reduce_sum : {
       t_in : ('a, 'b) t;
       axes : int array;
-      keepdims : bool;
     }
       -> ('a, 'b) t Effect.t
   | E_reduce_max : {
       t_in : ('a, 'b) t;
       axes : int array;
-      keepdims : bool;
     }
       -> ('a, 'b) t Effect.t
   | E_reduce_min : {
       t_in : ('a, 'b) t;
       axes : int array;
-      keepdims : bool;
     }
       -> ('a, 'b) t Effect.t
   | E_reduce_prod : {
       t_in : ('a, 'b) t;
       axes : int array;
-      keepdims : bool;
     }
       -> ('a, 'b) t Effect.t
   | E_argmax : {
@@ -486,10 +482,10 @@ let op_psum t_in =
 let reduce ~op ~axes t_in =
   let eff =
     match op with
-    | `Sum -> E_reduce_sum { t_in; axes; keepdims = false }
-    | `Prod -> E_reduce_prod { t_in; axes; keepdims = false }
-    | `Max -> E_reduce_max { t_in; axes; keepdims = false }
-    | `Min -> E_reduce_min { t_in; axes; keepdims = false }
+    | `Sum -> E_reduce_sum { t_in; axes }
+    | `Prod -> E_reduce_prod { t_in; axes }
+    | `Max -> E_reduce_max { t_in; axes }
+    | `Min -> E_reduce_min { t_in; axes }
   in
   try Effect.perform eff
   with Effect.Unhandled _ -> T (Nx_backend.reduce ~op ~axes (unwrap t_in))
