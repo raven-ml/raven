@@ -117,7 +117,17 @@ let pm_no_index =
   PM.make
     [
       ops ~name:"x" ~dtype:Dtype.index (Ops.Const :: Ops.Group.alu)
-      => (fun bs -> Some (U.replace (bs $ "x") ~dtype:Dtype.int32 ()));
+      => (fun bs ->
+      let x = bs $ "x" in
+      let arg =
+        match U.arg x with
+        | U.Arg.Value c -> (
+            match Const.view c with
+            | Const.Int v -> U.Arg.Value (Const.int64 Dtype.int32 v)
+            | _ -> U.arg x)
+        | a -> a
+      in
+      Some (U.replace x ~dtype:Dtype.int32 ~arg ()));
       op ~name:"c" ~dtype:Dtype.index ~src:[ var "x" ] Ops.Cast
       => (fun bs -> Some (U.cast ~src:(bs $ "x") ~dtype:Dtype.int32));
     ]
