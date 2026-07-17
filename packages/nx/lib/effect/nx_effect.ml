@@ -613,8 +613,7 @@ let gather data indices ~axis =
   with Effect.Unhandled _ ->
     T (Nx_backend.gather (unwrap data) (unwrap indices) ~axis)
 
-let scatter ?(mode = `Set) ?(unique_indices = false) data_template ~indices
-    ~updates ~axis =
+let scatter ~mode ~unique_indices data_template ~indices ~updates ~axis =
   try
     Effect.perform
       (E_scatter { data_template; indices; updates; axis; mode; unique_indices })

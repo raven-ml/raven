@@ -310,6 +310,11 @@ thread.
 
 ### Nx
 
+- Make the backend contract's `scatter` take required `~mode` and
+  `~unique_indices` labels instead of optionals, adopting the rule that
+  backend-contract operations carry no optional arguments (user-facing defaults
+  live on the frontend). `Nx.scatter` keeps its `?mode`/`?unique_indices`
+  defaults.
 - Collapse the backend contract's four reductions (`reduce_sum`, `reduce_prod`,
   `reduce_max`, `reduce_min`) into a single `reduce ~op ~axes`, matching
   `associative_scan`. The op always returns the result with the reduced axes

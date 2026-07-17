@@ -1568,7 +1568,7 @@ let gather (type a b) (data : (a, b) t)
   | _ -> invalid_arg "gather: unsupported dtype");
   out
 
-let scatter ?(mode = `Set) ?(unique_indices = false) (type a b)
+let scatter (type a b) ~(mode : [ `Set | `Add ]) ~(unique_indices : bool)
     (data_template : (a, b) t)
     ~(indices : (int32, Dtype.int32_elt) t)
     ~(updates : (a, b) t)

@@ -696,8 +696,7 @@ let gather data indices ~axis =
   caml_gather data_ffi indices_ffi out_ffi axis;
   out
 
-let scatter ?(mode = `Set) ?(unique_indices = false) data_template ~indices
-    ~updates ~axis =
+let scatter ~mode ~unique_indices data_template ~indices ~updates ~axis =
   (* Ensure inputs are materializable *)
   let template' = ensure_materializable data_template in
   let indices' = ensure_materializable indices in

@@ -437,19 +437,23 @@ module type S = sig
       Index values are in range for [data]'s size along [axis]. *)
 
   val scatter :
-    ?mode:[ `Set | `Add ] ->
-    ?unique_indices:bool ->
+    mode:[ `Set | `Add ] ->
+    unique_indices:bool ->
     ('a, 'b) t ->
     indices:(int32, Dtype.int32_elt) t ->
     updates:('a, 'b) t ->
     axis:int ->
     ('a, 'b) t
-  (** [scatter ?mode ?unique_indices template ~indices ~updates ~axis] places
+  (** [scatter ~mode ~unique_indices template ~indices ~updates ~axis] places
       [updates] into a tensor shaped like [template] along [axis].
 
-      [`Set] (default) uses the last update for duplicate indices. [`Add]
-      accumulates every update into the template's value. [unique_indices =
-      true] hints that indices are unique.
+      [`Set] uses the last update for duplicate indices; [`Add] accumulates
+      every update into the template's value. [unique_indices = true] hints that
+      indices are unique.
+
+      Backend-contract operations take no optional arguments: user-facing
+      defaults (here [`Set] and [false]) live on the frontend, which passes both
+      labels explicitly.
 
       {b Frontend guarantees:} [rank indices = rank updates]. [axis] is valid.
       [template] has the desired output shape.
