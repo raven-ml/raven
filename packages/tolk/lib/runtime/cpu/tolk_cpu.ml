@@ -327,11 +327,12 @@ let create name =
         | None -> 1
       in
       if loaded.unloaded then invalid_arg "CPU program has been unloaded";
+      let st = if wait then Unix.gettimeofday () else 0. in
       Cpu_queue.exec state ~entry:loaded.entry ~bufs ~vals ~threads
         ~core_id_index;
       if wait then begin
         Cpu_queue.synchronize state;
-        None
+        Some (Unix.gettimeofday () -. st)
       end else
         None
     in

@@ -192,6 +192,26 @@ let main () =
             let dst = create_i32_buffer device [ 0; 0; 0; 0 ] in
             run_spec device spec [ dst ];
             equal (list int) [ 0; 1; 2; 3 ] (read_i32_buffer dst));
+          test "wait returns positive elapsed time" (fun () ->
+            (* BEAM search selects kernels by this timing; [None] would collapse
+               every candidate to infinity. Assert a real, positive measurement
+               reaches the caller through the same path search.ml uses. *)
+            let device = cpu "wait-timing" in
+            let spec =
+              Device.compile_program device ~name:"timed_add_one"
+                (increment_program ())
+            in
+            let dst = create_i32_buffer device [ 0 ] in
+            let src = create_i32_buffer device [ 41 ] in
+            let car = Realize.Compiled_runner.create ~device spec in
+            (match
+               Realize.Compiled_runner.call car [ dst; src ] [] ~wait:true
+                 ~timeout:None
+             with
+            | Some t -> is_true ~msg:"elapsed time is positive" (t > 0.)
+            | None -> fail "CPU call ~wait:true returned no timing");
+            Device.synchronize device;
+            equal (list int) [ 42 ] (read_i32_buffer dst));
           test "external_ptr wraps caller memory zero-copy" (fun () ->
             let device = cpu "external-ptr" in
             (* Caller-owned backing storage: a normal buffer's memory, whose
