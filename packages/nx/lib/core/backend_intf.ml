@@ -87,11 +87,11 @@ module type S = sig
       Carries backend-specific state such as memory pools, device handles,
       command queues, or computation graphs.
 
-      Construction is deliberately outside this contract, but its shape is not
-      engine-specific: the virtual-library interface pins
-      [create_context : unit -> context] for every engine, and no engine varies
-      that signature. An engine with tunables chooses its own defaults; device
-      selection never enters through this seam. *)
+      Construction is absent from this module type: [S] describes operations
+      over an existing context, and the frontend never builds one. Engines that
+      implement the [nx.backend] virtual library additionally provide
+      [create_context : unit -> context] (see [backend/nx_backend.mli], and the
+      open question its TODO records). *)
 
   (** {1 Tensor Properties} *)
 
