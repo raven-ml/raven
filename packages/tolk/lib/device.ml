@@ -289,6 +289,25 @@ module Buffer = struct
     let tmp = Bytes.create (nbytes src) in
     copyout src tmp;
     copyin dst tmp
+
+  (* Buffer-to-buffer copy is a scheduled device operation, not a device-layer
+     primitive: the executor lives in the engine, which installs it here once
+     at initialization.  Keeping a single installer avoids a cyclic dependency
+     between this module and the engine while letting [copy_from] present a
+     stable contract. *)
+  let copy_runner : (dst:t -> src:t -> unit) ref =
+    ref (fun ~dst:_ ~src:_ ->
+      invalid_arg
+        "Device.Buffer.copy_from: no copy runner installed; link the realize \
+         engine to route buffer copies")
+
+  let install_copy_runner f = copy_runner := f
+
+  let copy_from ~dst ~src =
+    if size dst <> size src then invalid_arg "buffer copy size mismatch";
+    if not (Dtype.equal (dtype dst) (dtype src)) then
+      invalid_arg "buffer copy dtype mismatch";
+    !copy_runner ~dst ~src
 end
 
 (* Compiled devices *)

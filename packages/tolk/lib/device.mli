@@ -247,16 +247,25 @@ module Buffer : sig
   (** [add_ref b cnt] increments the base buffer's UOp reference count by [cnt]
       and returns [b]. *)
 
-  (** {1:data_transfer Data transfer} *)
+  (** {1:data_transfer Data transfer}
+
+      {!copy_from} is the canonical way to move data between buffers. The
+      primitives below expose a buffer's allocator directly and exist for the
+      execution engine to service copies; prefer {!copy_from} in application
+      code. *)
 
   val copyin : t -> bytes -> unit
-  (** [copyin b src] copies [src] into [b].
+  (** [copyin b src] writes the raw bytes [src] into [b]'s backing store through
+      its allocator. Low-level host-to-device primitive; application code should
+      move data with {!copy_from}.
 
       Raises [Invalid_argument] if [Bytes.length src <> nbytes b] or if [b] is
       not allocated. *)
 
   val copyout : t -> bytes -> unit
-  (** [copyout b dst] copies the contents of [b] into [dst].
+  (** [copyout b dst] reads the raw bytes of [b] from its backing store into
+      [dst] through its allocator. Low-level device-to-host primitive;
+      application code should move data with {!copy_from}.
 
       Raises [Invalid_argument] if [Bytes.length dst <> nbytes b] or if [b] is
       not allocated. *)
@@ -267,10 +276,12 @@ module Buffer : sig
   *)
 
   val transfer : dst:t -> src:t -> bool
-  (** [transfer ~dst ~src] copies [src] into [dst] via [dst]'s allocator
-      transfer hook when {!supports_transfer} is [true]. Returns [true] when
-      native transfer was used and [false] when no transfer hook is available.
-      Both buffers are allocated if transfer is used.
+  (** [transfer ~dst ~src] copies [src] into [dst] through [dst]'s allocator
+      device-to-device transfer hook when {!supports_transfer} is [true],
+      returning [true] when the native transfer ran and [false] when no hook is
+      available. Both buffers are allocated if the transfer runs. Low-level
+      same-backend primitive that {!copy_from} uses as a fast path; application
+      code should use {!copy_from}.
 
       Raises [Invalid_argument] if [dst] and [src] differ in size or dtype. *)
 
@@ -280,6 +291,19 @@ module Buffer : sig
 
       Raises [Invalid_argument] if [size dst <> size src] or
       [dtype dst <> dtype src]. *)
+
+  val copy_from : dst:t -> src:t -> unit
+  (** [copy_from ~dst ~src] copies the contents of [src] into [dst], allocating
+      either buffer as needed. This is the canonical way to move data between
+      buffers, including across devices: the copy is scheduled and executed as a
+      device operation rather than a host-side byte shuffle.
+
+      Raises [Invalid_argument] if [dst] and [src] differ in size or dtype. *)
+
+  val install_copy_runner : (dst:t -> src:t -> unit) -> unit
+  (** [install_copy_runner f] provides the implementation used by {!copy_from}.
+      The execution engine installs it once during initialization; until then
+      {!copy_from} raises [Invalid_argument]. Not for application use. *)
 
   val addr : t -> nativeint
   (** [addr b] is the device address of [b]. Allocates [b] if needed. *)
