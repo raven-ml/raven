@@ -28,6 +28,12 @@
  (package tolk)
  (libraries unix tolk tolk.uop windtrap))
 
+(test
+ (name test_schedule_scaling)
+ (modules test_schedule_scaling)
+ (package tolk)
+ (libraries unix tolk tolk.uop tolk.frontend windtrap))
+
 (tests
  (names test_runtime_metal)
  (modules test_runtime_metal)
