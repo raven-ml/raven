@@ -16,6 +16,10 @@ type t
 val name : t -> string
 (** [name w] is [w]'s short identifier, used as the benchmark-case prefix. *)
 
+val size : t -> string
+(** [size w] is [w]'s shape descriptor (e.g. ["256x256"]), used to label a
+    comparison row. *)
+
 val sink : t -> Tolk_uop.Uop.t
 (** [sink w] is the tensor-level [Sink] for [w], ready for
     {!Tolk.Rangeify.get_kernel_graph}. *)

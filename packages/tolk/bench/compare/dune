@@ -1,0 +1,7 @@
+(executable
+ (name bench_compare)
+ (libraries tolk tolk.uop tolk.cpu thumper.clock tolk_bench_graphs))
+
+; Not attached to any bench/test alias: built with `dune build` and run
+; directly. Run with SCACHE=0 CCACHE=0 so repeated passes and the stage-7
+; compile measure cold work (both are read once at module init).

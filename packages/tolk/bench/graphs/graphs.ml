@@ -6,9 +6,10 @@
 open Tolk_uop
 module U = Uop
 
-type t = { name : string; sink : Uop.t }
+type t = { name : string; size : string; sink : Uop.t }
 
 let name t = t.name
+let size t = t.size
 let sink t = t.sink
 
 let kernels kg =
@@ -28,12 +29,12 @@ let elementwise =
   let c = Helpers.mk_param ~idx:2 [ 256; 256 ] in
   let bc = U.alu_binary ~op:Ops.Mul ~lhs:b ~rhs:c in
   let r = U.alu_binary ~op:Ops.Add ~lhs:a ~rhs:bc in
-  { name = "elementwise"; sink = Helpers.wrap_sink [ r ] }
+  { name = "elementwise"; size = "256x256"; sink = Helpers.wrap_sink [ r ] }
 
 let reduce =
   let x = Helpers.mk_param ~idx:0 [ 512; 512 ] in
   let r = U.reduce_axis ~src:x ~op:Ops.Add ~axes:[ 1 ] in
-  { name = "reduce"; sink = Helpers.wrap_sink [ r ] }
+  { name = "reduce"; size = "512x512"; sink = Helpers.wrap_sink [ r ] }
 
 let matmul_small =
   let m, n, k = (128, 128, 128) in
@@ -46,6 +47,6 @@ let matmul_small =
   let be = U.broadcast_to ~src:br ~shape:(Helpers.mk_shape [ m; n; k ]) in
   let mul = U.alu_binary ~op:Ops.Mul ~lhs:ae ~rhs:be in
   let red = U.reduce_axis ~src:mul ~op:Ops.Add ~axes:[ 2 ] in
-  { name = "matmul_small"; sink = Helpers.wrap_sink [ red ] }
+  { name = "matmul_small"; size = "128x128x128"; sink = Helpers.wrap_sink [ red ] }
 
 let all = [ elementwise; reduce; matmul_small ]
