@@ -921,6 +921,14 @@ let reduce_min (type a b) ~axes ~keepdims (a : (a, b) t) : (a, b) t =
   | _ -> invalid_arg "buffer: unsupported dtype");
   out
 
+let reduce (type a b) ~(op : [ `Sum | `Prod | `Max | `Min ]) ~axes
+    (a : (a, b) t) : (a, b) t =
+  match op with
+  | `Sum -> reduce_sum ~axes ~keepdims:false a
+  | `Prod -> reduce_prod ~axes ~keepdims:false a
+  | `Max -> reduce_max ~axes ~keepdims:false a
+  | `Min -> reduce_min ~axes ~keepdims:false a
+
 let associative_scan (type a b) ~(axis : int)
     ~(op : [ `Sum | `Prod | `Max | `Min ]) (x : (a, b) t) : (a, b) t =
   let in_shape = shape x.view in

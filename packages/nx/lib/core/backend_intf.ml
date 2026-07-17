@@ -290,18 +290,17 @@ module type S = sig
       {b Frontend guarantees:} [axes] contains valid, non-negative, deduplicated
       axis indices. *)
 
-  val reduce_sum : axes:int array -> keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
-  (** [reduce_sum ~axes ~keepdims x] sums elements of [x] along [axes]. *)
+  val reduce :
+    op:[ `Sum | `Prod | `Max | `Min ] ->
+    axes:int array ->
+    ('a, 'b) t ->
+    ('a, 'b) t
+  (** [reduce ~op ~axes x] aggregates elements of [x] along [axes]: [`Sum] adds,
+      [`Prod] multiplies, [`Max]/[`Min] take the running extremum.
 
-  val reduce_prod : axes:int array -> keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
-  (** [reduce_prod ~axes ~keepdims x] multiplies elements of [x] along [axes].
-  *)
-
-  val reduce_max : axes:int array -> keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
-  (** [reduce_max ~axes ~keepdims x] finds the maximum of [x] along [axes]. *)
-
-  val reduce_min : axes:int array -> keepdims:bool -> ('a, 'b) t -> ('a, 'b) t
-  (** [reduce_min ~axes ~keepdims x] finds the minimum of [x] along [axes]. *)
+      The result always drops the reduced axes (the [keepdims:false] shape). The
+      frontend reinserts size-1 axes when the caller requests kept dimensions,
+      so the backend never handles [keepdims]. *)
 
   val argmax :
     axis:int -> keepdims:bool -> ('a, 'b) t -> (int32, Dtype.int32_elt) t

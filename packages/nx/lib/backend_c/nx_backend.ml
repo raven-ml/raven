@@ -519,11 +519,18 @@ let where cond if_true if_false =
     caml_where cond_ffi if_true_ffi if_false_ffi out_ffi;
     out
 
-(* Reduction Ops - allocates output and returns it *)
-let reduce_op _op_name ffi_op ~axes ~keepdims x =
+(* Reduction Ops - allocates output and returns it. The result always drops the
+   reduced axes (keepdims=false); the frontend reinserts size-1 axes. *)
+let reduce ~op ~axes x =
+  let ffi_op =
+    match op with
+    | `Sum -> caml_reduce_sum
+    | `Prod -> caml_reduce_prod
+    | `Max -> caml_reduce_max
+    | `Min -> caml_reduce_min
+  in
   let input_shape = shape x in
   let ndim = Array.length input_shape in
-
   if ndim = 0 then begin
     let out = buffer () (dtype x) [||] in
     Nx_buffer.set out.buffer 0 (Nx_buffer.get x.buffer 0);
@@ -534,26 +541,14 @@ let reduce_op _op_name ffi_op ~axes ~keepdims x =
       Array.map (fun ax -> if ax < 0 then ax + ndim else ax) axes
     in
     let out_shape =
-      Shape.reduce_output_shape input_shape normalized_axes keepdims
+      Shape.reduce_output_shape input_shape normalized_axes false
     in
     let out = buffer () (dtype x) out_shape in
     let x' = ensure_materializable x in
     let x_ffi = to_ffi_tensor x' in
     let out_ffi = to_ffi_tensor out in
-    ffi_op x_ffi out_ffi normalized_axes keepdims;
+    ffi_op x_ffi out_ffi normalized_axes false;
     out
-
-let reduce_sum ~axes ~keepdims x =
-  reduce_op "reduce_sum" caml_reduce_sum ~axes ~keepdims x
-
-let reduce_max ~axes ~keepdims x =
-  reduce_op "reduce_max" caml_reduce_max ~axes ~keepdims x
-
-let reduce_prod ~axes ~keepdims x =
-  reduce_op "reduce_prod" caml_reduce_prod ~axes ~keepdims x
-
-let reduce_min ~axes ~keepdims x =
-  reduce_op "reduce_min" caml_reduce_min ~axes ~keepdims x
 
 let associative_scan ~axis ~op x =
   let x_shape = shape x in

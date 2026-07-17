@@ -310,6 +310,11 @@ thread.
 
 ### Nx
 
+- Collapse the backend contract's four reductions (`reduce_sum`, `reduce_prod`,
+  `reduce_max`, `reduce_min`) into a single `reduce ~op ~axes`, matching
+  `associative_scan`. The op always returns the result with the reduced axes
+  removed; the frontend reinserts size-1 axes for `~keepdims:true`, so backends
+  no longer implement `keepdims`. `Nx.sum`/`max`/`min`/`prod` are unchanged.
 - Split the backend contract's `div` into `fdiv` (IEEE 754 float/complex
   division) and `idiv` (truncated integer division), matching the effect
   layer's existing dtype dispatch. Backend implementors now provide two

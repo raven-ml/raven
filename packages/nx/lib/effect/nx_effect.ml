@@ -407,10 +407,6 @@ let unary_op eff cpu_op t_in =
   try Effect.perform (eff ())
   with Effect.Unhandled _ -> T (cpu_op (unwrap t_in))
 
-let reduce_op eff cpu_op ~axes ~keepdims t_in =
-  try Effect.perform (eff ())
-  with Effect.Unhandled _ -> T (cpu_op ~axes ~keepdims (unwrap t_in))
-
 let movement_op eff cpu_op t_in arg =
   try Effect.perform (eff ())
   with Effect.Unhandled _ -> T (cpu_op (unwrap t_in) arg)
@@ -484,25 +480,16 @@ let op_psum t_in =
 
 (* Reduction operations *)
 
-let reduce_sum ~axes ~keepdims t_in =
-  reduce_op
-    (fun () -> E_reduce_sum { t_in; axes; keepdims })
-    Nx_backend.reduce_sum ~axes ~keepdims t_in
-
-let reduce_max ~axes ~keepdims t_in =
-  reduce_op
-    (fun () -> E_reduce_max { t_in; axes; keepdims })
-    Nx_backend.reduce_max ~axes ~keepdims t_in
-
-let reduce_min ~axes ~keepdims t_in =
-  reduce_op
-    (fun () -> E_reduce_min { t_in; axes; keepdims })
-    Nx_backend.reduce_min ~axes ~keepdims t_in
-
-let reduce_prod ~axes ~keepdims t_in =
-  reduce_op
-    (fun () -> E_reduce_prod { t_in; axes; keepdims })
-    Nx_backend.reduce_prod ~axes ~keepdims t_in
+let reduce ~op ~axes t_in =
+  let eff =
+    match op with
+    | `Sum -> E_reduce_sum { t_in; axes; keepdims = false }
+    | `Prod -> E_reduce_prod { t_in; axes; keepdims = false }
+    | `Max -> E_reduce_max { t_in; axes; keepdims = false }
+    | `Min -> E_reduce_min { t_in; axes; keepdims = false }
+  in
+  try Effect.perform eff
+  with Effect.Unhandled _ -> T (Nx_backend.reduce ~op ~axes (unwrap t_in))
 
 let argmax ~axis ~keepdims t_in =
   try Effect.perform (E_argmax { t_in; axis; keepdims })

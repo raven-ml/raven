@@ -639,7 +639,7 @@ module Make (B : Backend_intf.S) = struct
 
   (* ───── Reduction Operations ───── *)
 
-  let reduce_op backend_op ?axes ?(keepdims = false) x =
+  let reduce_op op ?axes ?(keepdims = false) x =
     let input_shape = shape x in
     let rank = Array.length input_shape in
     let axes_to_reduce =
@@ -654,14 +654,16 @@ module Make (B : Backend_intf.S) = struct
         if ax < 0 || ax >= rank then
           err "reduce" "axis %d out of bounds for %dD tensor" ax rank)
       axes_to_reduce;
-    backend_op ~axes:axes_to_reduce ~keepdims x
+    let reduced = B.reduce ~op ~axes:axes_to_reduce x in
+    (* The backend drops the reduced axes; reinsert them as size 1 on request. *)
+    if keepdims then
+      reshape (Shape.reduce_output_shape input_shape axes_to_reduce true) reduced
+    else reduced
 
-  let sum ?axes ?(keepdims = false) x = reduce_op B.reduce_sum ?axes ~keepdims x
-  let max ?axes ?(keepdims = false) x = reduce_op B.reduce_max ?axes ~keepdims x
-  let min ?axes ?(keepdims = false) x = reduce_op B.reduce_min ?axes ~keepdims x
-
-  let prod ?axes ?(keepdims = false) x =
-    reduce_op B.reduce_prod ?axes ~keepdims x
+  let sum ?axes ?(keepdims = false) x = reduce_op `Sum ?axes ~keepdims x
+  let max ?axes ?(keepdims = false) x = reduce_op `Max ?axes ~keepdims x
+  let min ?axes ?(keepdims = false) x = reduce_op `Min ?axes ~keepdims x
+  let prod ?axes ?(keepdims = false) x = reduce_op `Prod ?axes ~keepdims x
 
   let associative_scan ~axis op x =
     let x_shape = shape x in
