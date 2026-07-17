@@ -6,7 +6,7 @@
 (* Persistent compilation cache for jitted traces.
 
    A compiled trace is a deterministic function of the traced computation —
-   the PARAM-normalized CALL body produced by [Allocations.transform_to_call]
+   the PARAM-normalized CALL body produced by [Callify.transform_to_call]
    — and of the compilation environment: this executable (scheduling and
    codegen live in the binary), the device and its kernel compiler, and the
    codegen knobs that change lowering output. [key] digests exactly those;
