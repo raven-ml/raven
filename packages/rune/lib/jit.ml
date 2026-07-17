@@ -81,27 +81,6 @@ let tolk_dtype : type a b. (a, b) ND.t -> TD.t = function
   | ND.Complex64 -> unsupported "a complex tensor"
   | ND.Complex128 -> unsupported "a complex tensor"
 
-let tolk_val_dtype : type a b. (a, b) ND.t -> TD.Val.t = function
-  | ND.Float16 -> TD.Val.float16
-  | ND.Float32 -> TD.Val.float32
-  | ND.Float64 -> TD.Val.float64
-  | ND.BFloat16 -> TD.Val.bfloat16
-  | ND.Float8_e4m3 -> TD.Val.fp8e4m3
-  | ND.Float8_e5m2 -> TD.Val.fp8e5m2
-  | ND.Int8 -> TD.Val.int8
-  | ND.UInt8 -> TD.Val.uint8
-  | ND.Int16 -> TD.Val.int16
-  | ND.UInt16 -> TD.Val.uint16
-  | ND.Int32 -> TD.Val.int32
-  | ND.UInt32 -> TD.Val.uint32
-  | ND.Int64 -> TD.Val.int64
-  | ND.UInt64 -> TD.Val.uint64
-  | ND.Bool -> TD.Val.bool
-  | ND.Int4 -> unsupported "an int4 tensor"
-  | ND.UInt4 -> unsupported "a uint4 tensor"
-  | ND.Complex64 -> unsupported "a complex tensor"
-  | ND.Complex128 -> unsupported "a complex tensor"
-
 let scalar_of : type a b. (a, b) ND.t -> a -> F.Tensor.scalar =
  fun dt v ->
   match dt with
@@ -547,7 +526,7 @@ let fold_graph st t_in ~output_size ~kernel_size ~stride ~dilation ~padding =
   let it = window_index_tensor st idx lead (kernel_prod * nwin) in
   let template =
     F.Creation.zeros
-      ~dtype:(tolk_val_dtype (Nx_effect.dtype t_in))
+      ~dtype:(tolk_dtype (Nx_effect.dtype t_in))
       (lead @ [ numel spatial_padded ])
   in
   let scat =
@@ -621,7 +600,7 @@ let handler st =
                into consuming kernels instead of being stored into a one-element
                buffer by a kernel of its own. *)
             let tt =
-              F.Creation.full ~buffer:false ~dtype:(tolk_val_dtype dtype) []
+              F.Creation.full ~buffer:false ~dtype:(tolk_dtype dtype) []
                 (scalar_of dtype value)
             in
             let ph = Nx_effect.const_scalar st.st_ctx value dtype in
@@ -1434,7 +1413,7 @@ let trace_compile ~device:dev ~zero_copy ~const_cache ?multi
       (List.map (fun (_, _, _, _, c) -> c) out_conts
       @ List.map (fun (_, _, _, c) -> c) wb_conts)
   in
-  let call, buffer_map = Tolk.Allocations.transform_to_call sink in
+  let call, buffer_map = Tolk.Callify.transform_to_call sink in
   (* Persistent compile cache: a hit replaces scheduling and kernel compilation
      with an import of the stored compiled linear, rebound to this trace's fresh
      buffer nodes. Multi-device placements are not cached. *)

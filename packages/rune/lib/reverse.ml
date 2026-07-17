@@ -151,7 +151,7 @@ let handler (tape : Tape.t) =
       | E_fdiv { a; b } ->
           Some
             (fun k ->
-              pull2 k (div a b) a b
+              pull2 k (fdiv a b) a b
                 (fun g -> T.div g b)
                 (fun g -> T.mul (T.neg g) (T.div a (T.mul b b))))
       | E_pow { a; b } ->

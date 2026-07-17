@@ -112,7 +112,7 @@ let handler (tangents : Tensor_map.t) =
       | E_fdiv { a; b } ->
           Some
             (fun k ->
-              lift2 k (div a b) a b (fun da db ->
+              lift2 k (fdiv a b) a b (fun da db ->
                   T.sub (T.div da b) (T.mul (T.div a (T.mul b b)) db)))
       | E_pow { a; b } ->
           Some

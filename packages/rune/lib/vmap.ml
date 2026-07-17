@@ -137,9 +137,9 @@ let rec handler : type r. state -> (r, r) Effect.Deep.handler =
     | E_mul { a; b } when batched st a || batched st b ->
         Some (fun k -> elt2 k mul a b)
     | E_fdiv { a; b } when batched st a || batched st b ->
-        Some (fun k -> elt2 k div a b)
+        Some (fun k -> elt2 k fdiv a b)
     | E_idiv { a; b } when batched st a || batched st b ->
-        Some (fun k -> elt2 k div a b)
+        Some (fun k -> elt2 k idiv a b)
     | E_pow { a; b } when batched st a || batched st b ->
         Some (fun k -> elt2 k pow a b)
     | E_mod { a; b } when batched st a || batched st b ->
