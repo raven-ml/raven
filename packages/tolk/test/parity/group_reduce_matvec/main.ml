@@ -21,8 +21,8 @@ let kernel () =
   let pw = U.param ~slot:0 ~dtype:Helpers.global_fptr ~shape:(U.const_int (-1)) () in
   let px = U.param ~slot:1 ~dtype:Helpers.global_fptr ~shape:(U.const_int (-1)) () in
   let py = U.param ~slot:2 ~dtype:Helpers.global_fptr ~shape:(U.const_int (-1)) () in
-  let rj = U.range ~size:(Helpers.idx n) ~axis:0 ~kind:Axis_type.Global () in
-  let rk = U.range ~size:(Helpers.idx k) ~axis:1 ~kind:Axis_type.Reduce () in
+  let rj = U.range ~size:(U.const_int n) ~axis:0 ~kind:Axis_type.Global () in
+  let rk = U.range ~size:(U.const_int k) ~axis:1 ~kind:Axis_type.Reduce () in
   let open U.O in
   let ld_w =
     U.load ~src:(U.index ~ptr:pw ~idxs:[ (rj * int_ k) + rk ] ()) ()

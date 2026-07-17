@@ -7,11 +7,11 @@ let kernel () =
   let p0 = U.param ~slot:0 ~dtype:Helpers.global_fptr ~shape:(U.const_int (-1)) () in
   let p1 = U.param ~slot:1 ~dtype:Helpers.global_fptr ~shape:(U.const_int (-1)) () in
   let p2 = U.param ~slot:2 ~dtype:Helpers.global_fptr ~shape:(U.const_int (-1)) () in
-  let r0 = U.range ~size:(Helpers.idx 256) ~axis:0 ~kind:Axis_type.Global () in
+  let r0 = U.range ~size:(U.const_int 256) ~axis:0 ~kind:Axis_type.Global () in
   let ld_a = U.load ~src:(U.index ~ptr:p0 ~idxs:[r0] ()) () in
   let ld_b = U.load ~src:(U.index ~ptr:p1 ~idxs:[r0] ()) () in
   let add = U.alu_binary ~op:Ops.Add ~lhs:ld_a ~rhs:ld_b in
-  let gate = U.alu_binary ~op:Ops.Cmplt ~lhs:r0 ~rhs:(Helpers.idx 200) in
+  let gate = U.alu_binary ~op:Ops.Cmplt ~lhs:r0 ~rhs:(U.const_int 200) in
   let value = U.O.where gate add (U.invalid ~dtype:Dtype.float32 ()) in
   let st =
     U.store

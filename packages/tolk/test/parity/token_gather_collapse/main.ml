@@ -29,11 +29,11 @@ let iparam ~slot size =
 let kernel () =
   let open U.O in
   let out = fparam ~slot:0 289536 in
-  let col = U.range ~size:(Helpers.idx 768) ~axis:2 ~kind:Axis_type.Loop () in
-  let chunk = U.range ~size:(Helpers.idx 29) ~axis:3 ~kind:Axis_type.Loop () in
-  let tok_i = U.range ~size:(Helpers.idx 13) ~axis:1 ~kind:Axis_type.Loop () in
-  let r = U.range ~size:(Helpers.idx 1733) ~axis:0 ~kind:Axis_type.Reduce () in
-  let vocab = (chunk * Helpers.idx 1733) + r in
+  let col = U.range ~size:(U.const_int 768) ~axis:2 ~kind:Axis_type.Loop () in
+  let chunk = U.range ~size:(U.const_int 29) ~axis:3 ~kind:Axis_type.Loop () in
+  let tok_i = U.range ~size:(U.const_int 13) ~axis:1 ~kind:Axis_type.Loop () in
+  let r = U.range ~size:(U.const_int 1733) ~axis:0 ~kind:Axis_type.Reduce () in
+  let vocab = (chunk * U.const_int 1733) + r in
   let toks = iparam ~slot:1 13 in
   let wte = fparam ~slot:2 38597376 in
   let gate =
@@ -44,10 +44,10 @@ let kernel () =
   let body =
     U.alu_ternary ~op:Ops.Where ~a:gate
       ~b:(U.const (Const.float Dtype.float32 0.0))
-      ~c:(U.index ~ptr:wte ~idxs:[ (vocab * Helpers.idx 768) + col ] ())
+      ~c:(U.index ~ptr:wte ~idxs:[ (vocab * U.const_int 768) + col ] ())
   in
   let red = U.reduce ~src:body ~ranges:[ r ] ~op:Ops.Add ~dtype:Dtype.float32 in
-  let out_idx = (col * Helpers.idx 29) + chunk + (tok_i * Helpers.idx 22272) in
+  let out_idx = (col * U.const_int 29) + chunk + (tok_i * U.const_int 22272) in
   let st =
     U.store ~dst:(U.index ~ptr:out ~idxs:[ out_idx ] ()) ~value:red ()
   in

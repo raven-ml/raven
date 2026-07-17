@@ -31,7 +31,7 @@ let build () =
      which renders differently and is unrelated to the gather fold. *)
   let out =
     Elementwise.add
-      (Reduce.sum ~axis:[ -2 ] ~dtype:D.Val.float32
+      (Reduce.sum ~axis:[ -2 ] ~dtype:D.float32
          (Elementwise.where one_hot w (Tensor.i 0)))
       (Tensor.f 1.0)
   in

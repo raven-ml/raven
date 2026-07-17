@@ -8,9 +8,9 @@ let kernel () =
   let pA = U.param ~slot:0 ~dtype:Helpers.global_fptr ~shape:(U.const_int (-1)) () in
   let pB = U.param ~slot:1 ~dtype:Helpers.global_fptr ~shape:(U.const_int (-1)) () in
   let pC = U.param ~slot:2 ~dtype:Helpers.global_fptr ~shape:(U.const_int (-1)) () in
-  let ri = U.range ~size:(Helpers.idx m) ~axis:0 ~kind:Axis_type.Global () in
-  let rj = U.range ~size:(Helpers.idx n) ~axis:1 ~kind:Axis_type.Global () in
-  let rk = U.range ~size:(Helpers.idx k) ~axis:2 ~kind:Axis_type.Reduce () in
+  let ri = U.range ~size:(U.const_int m) ~axis:0 ~kind:Axis_type.Global () in
+  let rj = U.range ~size:(U.const_int n) ~axis:1 ~kind:Axis_type.Global () in
+  let rk = U.range ~size:(U.const_int k) ~axis:2 ~kind:Axis_type.Reduce () in
   let open U.O in
   let a_idx = (ri * int_ k) + rk in
   let b_idx = (rk * int_ n) + rj in

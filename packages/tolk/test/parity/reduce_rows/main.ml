@@ -7,8 +7,8 @@ let kernel () =
   let rows, cols = (8, 32) in
   let p0 = U.param ~slot:0 ~dtype:Helpers.global_fptr ~shape:(U.const_int (-1)) () in
   let p1 = U.param ~slot:1 ~dtype:Helpers.global_fptr ~shape:(U.const_int (-1)) () in
-  let ri = U.range ~size:(Helpers.idx rows) ~axis:0 ~kind:Axis_type.Global () in
-  let rj = U.range ~size:(Helpers.idx cols) ~axis:1 ~kind:Axis_type.Reduce () in
+  let ri = U.range ~size:(U.const_int rows) ~axis:0 ~kind:Axis_type.Global () in
+  let rj = U.range ~size:(U.const_int cols) ~axis:1 ~kind:Axis_type.Reduce () in
   let open U.O in
   let flat = (ri * int_ cols) + rj in
   let ld = U.load ~src:(U.index ~ptr:p0 ~idxs:[flat] ()) () in

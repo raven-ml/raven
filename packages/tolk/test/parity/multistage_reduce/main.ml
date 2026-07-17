@@ -8,7 +8,7 @@ module D = Dtype
 let build () =
   let a = Helpers.mk_param ~idx:0 [ 32; 32; 32 ] in
   let red1 = U.reduce_axis ~src:a ~op:Ops.Add ~axes:[ 2 ] in
-  let zero = U.const (C.float D.Val.float32 0.0) in
+  let zero = U.const (C.float D.float32 0.0) in
   let zero_reshaped =
     U.reshape ~src:zero ~shape:(Helpers.mk_shape [ 1; 1 ])
   in
