@@ -299,6 +299,7 @@ type state = {
   wb_seen : unit Tbl.t;
   mutable consts : (U.t * packed) list; (* reverse order *)
   mutable writebacks : packed list; (* reverse order *)
+  mutable axis_index : U.t option; (* pmap: per-device index buffer, once *)
 }
 
 let shape_of x = NV.shape (Nx_effect.view x)
@@ -931,6 +932,29 @@ let handler st =
           (fun k ->
             discontinue k
               (Jit_error "Rune.jit: psum is only meaningful under vmap"))
+    (* The mapped-axis index. Under pmap it is the device's own index, bound as
+       a per-device scalar input buffer (each device's buffer holds its index)
+       exactly as sharded input slices are bound. A key folded with it
+       ([Nx.Rng.fold_in_axis]) therefore decorrelates the devices while keeping
+       the key's global (scalar-broadcast) shape, so downstream samplers are
+       unchanged. A buffer value (not a symbolic offset) survives the sharding,
+       allreduce, and grad rewrites intact. Single device jit has one lane: fall
+       through to the eager index 0. *)
+    | E_axis_index -> (
+        match st.st_multi with
+        | None -> None
+        | Some _ ->
+            Some
+              (fun k ->
+                let node =
+                  match st.axis_index with
+                  | Some node -> node
+                  | None ->
+                      let node = make_node st TD.int32 1 in
+                      st.axis_index <- Some node;
+                      node
+                in
+                ret k ND.int32 (buffer_tensor node [||])))
     | _ -> None
   in
   { retc = Fun.id; exnc = raise; effc }
@@ -1228,6 +1252,7 @@ let trace_compile ~device:dev ~zero_copy ~const_cache ?multi
       wb_seen = Tbl.create 4;
       consts = [];
       writebacks = [];
+      axis_index = None;
     }
   in
   (* One placeholder per distinct leaf; one input record per leaf visit, in
@@ -1521,6 +1546,24 @@ let trace_compile ~device:dev ~zero_copy ~const_cache ?multi
           | Tolk.Realize.Multi mbuf ->
               Tolk.Realize.Buffers.seed_multi binding node mbuf))
     st.consts;
+  (* The per-device axis index ([Nx.Rng.fold_in_axis] under pmap): one scalar
+     buffer per device holding that device's own index. *)
+  (match (st.axis_index, multi) with
+  | Some node, Some (spec, _) ->
+      Hashtbl.replace reserved (U.tag node) ();
+      let bufs =
+        List.mapi
+          (fun i d ->
+            let buf = Tolk.Device.create_buffer ~size:1 ~dtype:TD.int32 d in
+            let idx = Nx_buffer.create Nx_buffer.int32 1 in
+            Nx_buffer.unsafe_set idx 0 (Int32.of_int i);
+            copyin_tensor scratch buf (Nx_effect.from_host st.st_ctx idx);
+            buf)
+          spec.md_devs
+      in
+      Tolk.Realize.Buffers.seed_multi binding node
+        (Tolk.Device.Multi_buffer.of_bufs bufs)
+  | _ -> ());
   (* Resolve each output to the buffer node realization assigned it. An output
      whose node is a graph buffer under identity wrappers (an input or constant
      returned unchanged: [U.contiguous] elides itself on buffer-identity

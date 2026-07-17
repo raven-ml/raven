@@ -25,6 +25,33 @@ module Key = struct
   let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t = f t
 end
 
+(* A (data, key) pair: the data is batch-sharded across devices, the key is
+   replicated. Used to expose per-device draws under pmap. *)
+module Pair = struct
+  type t = Nx.float32_t * Nx.Rng.key
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (x, k) = (f x, f k)
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (x1, k1)
+      (x2, k2) =
+    (f x1 x2, f k1 k2)
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) (x, k) =
+    f x;
+    f k
+end
+
+module Draw = struct
+  type t = Nx.float32_t
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) t = f t
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) a b =
+    f a b
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t = f t
+end
+
 let raises_jit_error f =
   raises_match
     (fun exn -> match exn with Rune.Jit_error _ -> true | _ -> false)
@@ -261,22 +288,34 @@ let test_vmap_fold_in_axis_decorrelates () =
   is_true ~msg:"lanes are decorrelated"
     (to_arr (Nx.slice [ Nx.I 0 ] out) <> to_arr (Nx.slice [ Nx.I 1 ] out))
 
-(* Pmap: a replicated key replicates the samples. Per-device decorrelation
-   (fold_in of a device index) is future work; today every device of the
-   tuple draws the same values from a replicated key. *)
+(* Pmap: [fold_in_axis] folds each device's own index into the replicated key,
+   so the devices draw decorrelated streams with no manual split. Multiplying
+   the draw by a batch-sharded operand exposes every device's shard — device
+   [i] draws exactly what [fold_in key i] draws for its slice. *)
 
-let test_pmap_replicated_key_smoke () =
-  let k = Nx.Rng.key 42 in
-  let g =
-    Rune.pmap
-      ~devices:[ "CPU:1"; "CPU:2" ]
-      ~in_axes:[ None ]
-      (module Key)
-      (fun key -> Nx.Rng.uniform key Nx.float32 [| 8 |])
+let test_pmap_fold_in_axis_decorrelates () =
+  let key = Nx.Rng.key 42 in
+  let check devices =
+    let n = List.length devices in
+    let g =
+      Rune.pmap2 ~devices ~in_axes:[ Some 0; None ] (module Pair) (module Draw)
+        (fun (rows, key) ->
+          Nx.mul rows (Nx.Rng.uniform (Nx.Rng.fold_in_axis key) f32 [| n; 8 |]))
+    in
+    let out = g (Nx.ones f32 [| n; 8 |], key) in
+    for i = 0 to n - 1 do
+      check_bits
+        ~msg:(Printf.sprintf "%d devices: device %d draws fold_in key %d" n i i)
+        (Nx.slice [ Nx.I i ]
+           (Nx.Rng.uniform (Nx.Rng.fold_in key i) f32 [| n; 8 |]))
+        (Nx.slice [ Nx.I i ] out)
+    done;
+    is_true
+      ~msg:(Printf.sprintf "%d devices: streams are decorrelated" n)
+      (to_arr (Nx.slice [ Nx.I 0 ] out) <> to_arr (Nx.slice [ Nx.I 1 ] out))
   in
-  check_bits ~msg:"replicated key, replicated samples"
-    (Nx.Rng.uniform k Nx.float32 [| 8 |])
-    (g k)
+  check [ "CPU:1"; "CPU:2" ];
+  check [ "CPU:1"; "CPU:2"; "CPU:3"; "CPU:4" ]
 
 let tests =
   [
@@ -325,8 +364,8 @@ let tests =
           test_fold_in_axis_eager_is_lane_zero;
         test "vmap fold_in_axis decorrelates lanes"
           test_vmap_fold_in_axis_decorrelates;
-        test "pmap replicates samples from a replicated key"
-          test_pmap_replicated_key_smoke;
+        test "pmap fold_in_axis decorrelates devices"
+          test_pmap_fold_in_axis_decorrelates;
       ];
   ]
 

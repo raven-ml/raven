@@ -31,6 +31,21 @@ module Single_f32 = struct
   let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) t = f t
 end
 
+(* A (batch, key) pair: the batch is sharded, the key replicated. *)
+module Batch_key = struct
+  type t = Nx.float32_t * Nx.Rng.key
+
+  let map (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (x, k) = (f x, f k)
+
+  let map2 (f : 'a 'b. ('a, 'b) Nx.t -> ('a, 'b) Nx.t -> ('a, 'b) Nx.t) (x1, k1)
+      (x2, k2) =
+    (f x1 x2, f k1 k2)
+
+  let iter (f : 'a 'b. ('a, 'b) Nx.t -> unit) (x, k) =
+    f x;
+    f k
+end
+
 let arange n = Array.init n (fun i -> float_of_int (i + 1) /. 7.0)
 let m46 () = Nx.create f32 [| 4; 6 |] (arange 24)
 let m86 () = Nx.create f32 [| 8; 6 |] (arange 48)
@@ -373,6 +388,44 @@ let test_grad_over_pmap_runs_eagerly () =
   let dx = Rune.grad (module Single_f32) (fun x -> g x) x in
   check_arr ~msg:"grad over pmap" [| 2.0; 4.0; 6.0; 8.0 |] dx
 
+(* Dropout under pmap + grad: [fold_in_axis] folds each device's own index into
+   a replicated key, so the per-device dropout masks decorrelate. The gradient
+   of [sum (x * mask)] w.r.t. [x] recovers the mask (a tape constant), one shard
+   per device — so with identical input rows the two devices produce different
+   gradients, each equal to the mask [fold_in key i] draws for its slice. This
+   is the data-parallel dropout the DP-MLP step would use. *)
+
+let test_pmap_dropout_grad_decorrelates () =
+  let key = Nx.Rng.key 7 in
+  let mask_grad (x, key) =
+    snd
+      (Rune.value_and_grad (module Single_f32)
+         (fun x ->
+           let m =
+             Nx.cast f32
+               (Nx.Rng.bernoulli (Nx.Rng.fold_in_axis key) ~p:0.5 [| 2; 16 |])
+           in
+           Nx.sum (Nx.mul x m))
+         x)
+  in
+  let g =
+    Rune.pmap2 ~devices:devs2 ~in_axes:[ Some 0; None ] (module Batch_key)
+      (module Single_f32)
+      mask_grad
+  in
+  let masks = g (Nx.ones f32 [| 2; 16 |], key) in
+  for i = 0 to 1 do
+    check_arr ~eps:0.0
+      ~msg:(Printf.sprintf "device %d mask is fold_in key %d" i i)
+      (to_arr
+         (Nx.slice [ Nx.I i ]
+            (Nx.cast f32
+               (Nx.Rng.bernoulli (Nx.Rng.fold_in key i) ~p:0.5 [| 2; 16 |]))))
+      (Nx.slice [ Nx.I i ] masks)
+  done;
+  is_true ~msg:"per-device dropout masks are decorrelated"
+    (to_arr (Nx.slice [ Nx.I 0 ] masks) <> to_arr (Nx.slice [ Nx.I 1 ] masks))
+
 (* The DP microbench: a 2-layer MLP train step (value_and_grad + SGD inside
    pmap2), params replicated, batch sharded over 2 devices. The 10-step loss
    trajectory matches single-device jit at the same effective batch. *)
@@ -552,6 +605,8 @@ let tests =
     group "composition"
       [
         test "grad over pmap runs eagerly" test_grad_over_pmap_runs_eagerly;
+        test "dropout under pmap+grad decorrelates masks"
+          test_pmap_dropout_grad_decorrelates;
       ];
     group "training"
       [
