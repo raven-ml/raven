@@ -23,6 +23,7 @@
   clang_parallel_reduce.actual
   clang_reduce_rows.actual
   clang_sum_reduce.actual
+  clang_lorenz_fold.actual
   cuda_dot_product.actual
   cuda_elementwise_2d.actual
   cuda_elementwise_add.actual
@@ -43,6 +44,7 @@
   cuda_parallel_reduce.actual
   cuda_reduce_rows.actual
   cuda_sum_reduce.actual
+  cuda_lorenz_fold.actual
   metal_dot_product.actual
   metal_elementwise_2d.actual
   metal_elementwise_add.actual
@@ -63,6 +65,7 @@
   metal_parallel_reduce.actual
   metal_reduce_rows.actual
   metal_sum_reduce.actual
+  metal_lorenz_fold.actual
   opencl_dot_product.actual
   opencl_elementwise_2d.actual
   opencl_elementwise_add.actual
@@ -82,7 +85,8 @@
   opencl_no_optimize.actual
   opencl_parallel_reduce.actual
   opencl_reduce_rows.actual
-  opencl_sum_reduce.actual)
+  opencl_sum_reduce.actual
+  opencl_lorenz_fold.actual)
  (action
   (run ./generate_actual.exe .)))
 
@@ -113,6 +117,7 @@
    (diff clang_parallel_reduce.expected clang_parallel_reduce.actual)
    (diff clang_reduce_rows.expected clang_reduce_rows.actual)
    (diff clang_sum_reduce.expected clang_sum_reduce.actual)
+   (diff clang_lorenz_fold.expected clang_lorenz_fold.actual)
    (diff cuda_dot_product.expected cuda_dot_product.actual)
    (diff cuda_elementwise_2d.expected cuda_elementwise_2d.actual)
    (diff cuda_elementwise_add.expected cuda_elementwise_add.actual)
@@ -135,6 +140,7 @@
    (diff cuda_parallel_reduce.expected cuda_parallel_reduce.actual)
    (diff cuda_reduce_rows.expected cuda_reduce_rows.actual)
    (diff cuda_sum_reduce.expected cuda_sum_reduce.actual)
+   (diff cuda_lorenz_fold.expected cuda_lorenz_fold.actual)
    (diff metal_dot_product.expected metal_dot_product.actual)
    (diff metal_elementwise_2d.expected metal_elementwise_2d.actual)
    (diff metal_elementwise_add.expected metal_elementwise_add.actual)
@@ -159,6 +165,7 @@
    (diff metal_parallel_reduce.expected metal_parallel_reduce.actual)
    (diff metal_reduce_rows.expected metal_reduce_rows.actual)
    (diff metal_sum_reduce.expected metal_sum_reduce.actual)
+   (diff metal_lorenz_fold.expected metal_lorenz_fold.actual)
    (diff opencl_dot_product.expected opencl_dot_product.actual)
    (diff opencl_elementwise_2d.expected opencl_elementwise_2d.actual)
    (diff opencl_elementwise_add.expected opencl_elementwise_add.actual)
@@ -182,4 +189,5 @@
    (diff opencl_no_optimize.expected opencl_no_optimize.actual)
    (diff opencl_parallel_reduce.expected opencl_parallel_reduce.actual)
    (diff opencl_reduce_rows.expected opencl_reduce_rows.actual)
-   (diff opencl_sum_reduce.expected opencl_sum_reduce.actual))))
+   (diff opencl_sum_reduce.expected opencl_sum_reduce.actual)
+   (diff opencl_lorenz_fold.expected opencl_lorenz_fold.actual))))

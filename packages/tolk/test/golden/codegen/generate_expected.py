@@ -342,6 +342,31 @@ def build_elementwise_int32():
     return UOp.sink(end, arg=ki("elementwise_int32", axis_types=(AxisType.GLOBAL,)))
 
 
+def build_lorenz_fold():
+    """Short Euler Lorenz fold. Reuses a constant-scaled difference that the
+    next step negates, exercising the negation/const-fold canonicalization."""
+    px = UOp.param(0, dtypes.float32, shape=(-1,))
+    py = UOp.param(1, dtypes.float32, shape=(-1,))
+    pz = UOp.param(2, dtypes.float32, shape=(-1,))
+    po = UOp.param(3, dtypes.float32, shape=(-1,))
+    r0 = UOp.range(16, 0, AxisType.GLOBAL)
+    x = px.index(r0).load()
+    y = py.index(r0).load()
+    z = pz.index(r0).load()
+    sigma = UOp.const(dtypes.float32, 10.0)
+    rho = UOp.const(dtypes.float32, 28.0)
+    beta = UOp.const(dtypes.float32, 2.5)
+    dt = UOp.const(dtypes.float32, 0.0625)
+    for _ in range(3):
+        dx = sigma * (y - x)
+        dy = x * (rho - z) - y
+        dz = x * y - beta * z
+        x, y, z = x + dt * dx, y + dt * dy, z + dt * dz
+    st = po.index(r0).store((x + y) + z)
+    end = st.end(r0)
+    return UOp.sink(end, arg=ki("lorenz_fold", axis_types=(AxisType.GLOBAL,)))
+
+
 _LLAMA_MODEL_SINKS = None
 
 
@@ -435,6 +460,7 @@ TEST_CASES = [
     ("elementwise_sqrt", build_elementwise_sqrt, None, True),
     ("parallel_reduce", build_parallel_reduce, None, True),
     ("elementwise_int32", build_elementwise_int32, None, True),
+    ("lorenz_fold", build_lorenz_fold, None, True),
     ("llama_embedding", build_llama_embedding, None, True),
     ("llama_rmsnorm", build_llama_rmsnorm, None, True),
     ("llama_ffn_gate", build_llama_ffn_gate, None, True),
@@ -444,8 +470,11 @@ TEST_CASES = [
 
 
 def main():
+    only = os.environ.get("ONLY")
     total = 0
     for case_name, builder, backends, optimize in TEST_CASES:
+        if only is not None and case_name != only:
+            continue
         print(f"\n{case_name} (optimize={optimize}):")
         sink = builder()
         targets = backends if backends else list(RENDERERS.keys())

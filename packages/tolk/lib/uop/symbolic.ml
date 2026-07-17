@@ -1920,11 +1920,15 @@ let symbolic : Upat.Pattern_matcher.t =
              Some (Uop.cast ~src:x ~dtype:(Uop.dtype b))
          | _ -> None));
 
-    (* -1 * (x + c) -> -x + -c. *)
+    (* -1 * (x + c) -> x*-1 + c*-1. Distributing as a multiply (not a NEG)
+       lets a scaled operand's constant factor fold through the two-stage
+       associative rule, so the un-scaled term stays the shared node. *)
     (let x = var "x" and c = cvar ~name:"c" () in
      O.(neg_one * (x + c)) => fun bs ->
        let x = bs $ "x" and c = bs $ "c" in
-       Some Uop.O.(neg x + neg c));
+       let neg u = Uop.alu_binary ~op:Ops.Mul ~lhs:u ~rhs:(Uop.const_like u (-1)) in
+       let nx = neg x and nc = neg c in
+       Some Uop.O.(nx + nc));
 
     (* cond.not.where(t, f) -> cond.where(f, t) when f is not Invalid. *)
     (let cond = var_dtype "cond" (exact_dtype Dtype.Bool) in
@@ -2523,9 +2527,17 @@ let sym : Upat.Pattern_matcher.t =
          in
          Some (Uop.replace root ~src:(Array.of_list flat) ()));
 
-    (* -1 * (x + y) -> -x + -y (general, on all numeric types). *)
+    (* -1 * (x + y) -> x*-1 + y*-1 (general, on all numeric types). As a
+       multiply rather than a NEG, a scaled operand's constant factor folds
+       through the two-stage associative rule, keeping the un-scaled term
+       shared. *)
     (rewrite2 (fun x y -> O.(neg_one * (x + y)))
-       (fun x y -> Some Uop.O.(neg x + neg y)));
+       (fun x y ->
+         let neg u =
+           Uop.alu_binary ~op:Ops.Mul ~lhs:u ~rhs:(Uop.const_like u (-1))
+         in
+         let nx = neg x and ny = neg y in
+         Some Uop.O.(nx + ny)));
 
     (* (x + y) * c  ->  x*c + y*c  (int only; floats hit NaN issues). *)
     (let x = var_dtype "x" (exact_dtype Dtype.Index)

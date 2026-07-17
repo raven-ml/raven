@@ -1,0 +1,21 @@
+void lorenz_fold(float* restrict data0_-1, float* restrict data1_-1, float* restrict data2_-1, float* restrict data3_-1, const int data4_) {
+  float val0 = (*(data0_-1+data4_));
+  float val1 = (*(data1_-1+data4_));
+  float val2 = (*(data2_-1+data4_));
+  float alu0 = (val1-val0);
+  float alu1 = (val0+(alu0*0.625f));
+  float alu2 = ((val0*(28.0f-val2))-val1);
+  float alu3 = (val1+(0.0625f*alu2));
+  float alu4 = ((val0*val1)+(val2*-2.5f));
+  float alu5 = (val2+(0.0625f*alu4));
+  float alu6 = ((alu0*-0.625f)-val0);
+  float alu7 = (alu3+alu6);
+  float alu8 = (alu1+(alu7*0.625f));
+  float alu9 = ((alu4*-0.0625f)-val2);
+  float alu10 = ((alu2*-0.0625f)-val1);
+  float alu11 = ((alu1*(28.0f+alu9))+alu10);
+  float alu12 = (alu3+(0.0625f*alu11));
+  float alu13 = ((alu1*alu3)+(alu5*-2.5f));
+  float alu14 = (alu5+(0.0625f*alu13));
+  *(data3_-1+data4_) = (alu8+((alu12+alu6+(alu7*-0.625f))*0.625f)+alu12+(0.0625f*((alu8*(28.0f+alu9+(alu13*-0.0625f)))+alu10+(alu11*-0.0625f)))+alu14+(0.0625f*((alu8*alu12)+(alu14*-2.5f))));
+}

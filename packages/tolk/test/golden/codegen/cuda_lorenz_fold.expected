@@ -1,0 +1,25 @@
+#define INFINITY (__int_as_float(0x7f800000))
+#define NAN (__int_as_float(0x7fffffff))
+template <class T, class F> __device__ __forceinline__ T tg_bitcast(F v) { union U { F f; T t; }; U u; u.f = v; return u.t; }
+extern "C" __global__ void __launch_bounds__(1) lorenz_fold(float* data0_-1, float* data1_-1, float* data2_-1, float* data3_-1) {
+  int gidx0 = blockIdx.x; /* 16 */
+  float val0 = (*(data0_-1+gidx0));
+  float val1 = (*(data1_-1+gidx0));
+  float val2 = (*(data2_-1+gidx0));
+  float alu0 = (val1-val0);
+  float alu1 = (val0+(alu0*0.625f));
+  float alu2 = ((val0*(28.0f-val2))-val1);
+  float alu3 = (val1+(0.0625f*alu2));
+  float alu4 = ((val0*val1)+(val2*-2.5f));
+  float alu5 = (val2+(0.0625f*alu4));
+  float alu6 = ((alu0*-0.625f)-val0);
+  float alu7 = (alu3+alu6);
+  float alu8 = (alu1+(alu7*0.625f));
+  float alu9 = ((alu4*-0.0625f)-val2);
+  float alu10 = ((alu2*-0.0625f)-val1);
+  float alu11 = ((alu1*(28.0f+alu9))+alu10);
+  float alu12 = (alu3+(0.0625f*alu11));
+  float alu13 = ((alu1*alu3)+(alu5*-2.5f));
+  float alu14 = (alu5+(0.0625f*alu13));
+  *(data3_-1+gidx0) = (alu8+((alu12+alu6+(alu7*-0.625f))*0.625f)+alu12+(0.0625f*((alu8*(28.0f+alu9+(alu13*-0.0625f)))+alu10+(alu11*-0.0625f)))+alu14+(0.0625f*((alu8*alu12)+(alu14*-2.5f))));
+}

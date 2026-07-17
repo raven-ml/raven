@@ -46,6 +46,12 @@ thread.
 
 ### Tolk (new)
 
+- Codegen distributes the negation of a sum as a multiply by `-1` over its
+  terms, so a later-negated constant-scaled subexpression folds its sign into
+  the constant factor (`c*x` negated becomes `(-c)*x`) rather than re-negating
+  the scaled product. Deep element-wise chains that reuse a scaled difference
+  (e.g. an Euler Lorenz step) now lower to a single canonical form instead of
+  keeping a redundant negate.
 - Fix a compile-time blowup in schedule creation: `Rangeify.get_kernel_graph`
   re-derived tensor shapes without memoisation and rescanned the whole graph
   history once per kernel, so compile time grew super-linearly in graph size

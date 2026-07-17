@@ -280,6 +280,35 @@ let make_elementwise_int32 () =
   let e = U.end_ ~value:st ~ranges:[ r0 ] in
   U.sink ~kernel_info:(kernel_info ~axis_types:[ Axis_type.Global ] "elementwise_int32") [ e ]
 
+(* A short Euler Lorenz fold. Each step reuses a constant-scaled difference
+   [dt*sigma*(y-x)] that the next step negates, so the codegen simplifier must
+   fold the negation into the constant factor (keeping the un-scaled difference
+   shared) rather than negating the scaled product. *)
+let make_lorenz_fold () =
+  let px = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
+  let py = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
+  let pz = U.param ~slot:2 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
+  let po = U.param ~slot:3 ~dtype:global_fptr ~shape:(U.const_int (-1)) () in
+  let r0 = U.range ~size:(U.const_int 16) ~axis:0 ~kind:Axis_type.Global () in
+  let load p = U.load ~src:(U.index ~ptr:p ~idxs:[ r0 ] ()) () in
+  let f v = U.const (Const.float Dtype.float32 v) in
+  let mul a b = U.alu_binary ~op:Ops.Mul ~lhs:a ~rhs:b in
+  let add a b = U.alu_binary ~op:Ops.Add ~lhs:a ~rhs:b in
+  let neg_one = f (-1.0) in
+  let sub a b = add a (mul b neg_one) in
+  let sigma = f 10.0 and rho = f 28.0 and beta = f 2.5 and dt = f 0.0625 in
+  let step (x, y, z) =
+    let dx = mul sigma (sub y x) in
+    let dy = sub (mul x (sub rho z)) y in
+    let dz = sub (mul x y) (mul beta z) in
+    (add x (mul dt dx), add y (mul dt dy), add z (mul dt dz))
+  in
+  let rec fold i st = if i = 0 then st else fold (i - 1) (step st) in
+  let x, y, z = fold 3 (load px, load py, load pz) in
+  let st = U.store ~dst:(U.index ~ptr:po ~idxs:[ r0 ] ()) ~value:(add (add x y) z) () in
+  let e = U.end_ ~value:st ~ranges:[ r0 ] in
+  U.sink ~kernel_info:(kernel_info ~axis_types:[ Axis_type.Global ] "lorenz_fold") [ e ]
+
 let make_llama_rmsnorm backend =
   let p0 = U.param ~slot:0 ~dtype:global_fptr ~shape:(U.const_int 2) () in
   let p1 = U.param ~slot:1 ~dtype:global_fptr ~shape:(U.const_int 16) () in
@@ -607,6 +636,8 @@ let test_cases =
     { name = "parallel_reduce"; kernel = fixed (make_parallel_reduce ());
       backends = all_renderers; optimize = true };
     { name = "elementwise_int32"; kernel = fixed (make_elementwise_int32 ());
+      backends = all_renderers; optimize = true };
+    { name = "lorenz_fold"; kernel = fixed (make_lorenz_fold ());
       backends = all_renderers; optimize = true };
     { name = "llama_embedding"; kernel = make_llama_embedding;
       backends = all_renderers; optimize = true };
