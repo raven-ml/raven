@@ -392,7 +392,7 @@ let checkpoint_of_params original (p : Gpt2.t) =
       tensor (key "attn.c_attn.weight")
         (Nx.concatenate ~axis:1 [ b.attn.q.w; b.attn.k.w; b.attn.v.w ]);
       tensor (key "attn.c_attn.bias")
-        (Nx.concatenate
+        (Nx.concatenate ~axis:0
            [
              bias (key "attn.q") b.attn.q.b;
              bias (key "attn.k") b.attn.k.b;
