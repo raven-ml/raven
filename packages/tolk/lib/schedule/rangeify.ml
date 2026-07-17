@@ -656,33 +656,40 @@ let earliest_rewrites =
          | Some { dst = target; value; _ } -> fix_store_hazard ~target ~value
          | _ -> None);
       (* Two STOREs of the same value into the same buffer: keep the first. *)
-      (fun n -> match U.op n, src_tail n with
-         | Ops.After, [ store2 ] ->
-             let a1 = src0 n in
-             if U.op a1 <> Ops.After then None
-             else
-               (match U.as_store store2, src_tail a1 with
-                | Some { dst = d2; value = v2; _ }, [ store1 ] when d2 == a1 ->
-                    (match U.as_store store1 with
-                     | Some { dst = d1; value = v1; _ }
-                       when d1 == src0 a1 && v1 == v2 -> Some a1
-                     | _ -> None)
-                | _ -> None)
+      (fun n -> match U.op n with
+         | Ops.After -> (
+             match src_tail n with
+             | [ store2 ] ->
+                 let a1 = src0 n in
+                 if U.op a1 <> Ops.After then None
+                 else
+                   (match U.as_store store2, src_tail a1 with
+                    | Some { dst = d2; value = v2; _ }, [ store1 ]
+                      when d2 == a1 ->
+                        (match U.as_store store1 with
+                         | Some { dst = d1; value = v1; _ }
+                           when d1 == src0 a1 && v1 == v2 -> Some a1
+                         | _ -> None)
+                    | _ -> None)
+             | _ -> None)
          | _ -> None);
       (* A buffer storing its own already-stored contents back into itself. *)
-      (fun n -> match U.op n, src_tail n with
-         | Ops.After, [ store ] ->
-             let buf = src0 n in
-             (match U.as_store store with
-              | Some { dst; value = a1; _ }
-                when dst == buf && U.op a1 = Ops.After && src0 a1 == buf ->
-                  (match src_tail a1 with
-                   | [ store1 ] ->
-                       (match U.as_store store1 with
-                        | Some { dst = d1; _ } when d1 == buf -> Some a1
-                        | _ -> None)
-                   | _ -> None)
-              | _ -> None)
+      (fun n -> match U.op n with
+         | Ops.After -> (
+             match src_tail n with
+             | [ store ] ->
+                 let buf = src0 n in
+                 (match U.as_store store with
+                  | Some { dst; value = a1; _ }
+                    when dst == buf && U.op a1 = Ops.After && src0 a1 == buf ->
+                      (match src_tail a1 with
+                       | [ store1 ] ->
+                           (match U.as_store store1 with
+                            | Some { dst = d1; _ } when d1 == buf -> Some a1
+                            | _ -> None)
+                       | _ -> None)
+                  | _ -> None)
+             | _ -> None)
          | _ -> None);
       (fun n -> match U.as_store n with
          | Some { dst; value; _ } when U.op dst = Ops.Bitcast ->
