@@ -131,7 +131,21 @@ let broadcast_shape_expr shapes =
                  else d)
                (int_ 1) shapes))
 
+(* [shape_of] and [shape_expr_of] recurse into every child, so on a shared DAG
+   a naive walk re-descends the same subgraph once per path and blows up
+   exponentially. Both are pure functions of a hash-consed node, so memoise on
+   node identity — mirroring the node-keyed caches in [Uop]. *)
+let shape_of_cache : int list option U.Ref_tbl.t = U.Ref_tbl.create 256
+
 let rec shape_of n =
+  match U.Ref_tbl.find_opt shape_of_cache n with
+  | Some r -> r
+  | None ->
+      let r = compute_shape_of n in
+      U.Ref_tbl.add shape_of_cache n r;
+      r
+
+and compute_shape_of n =
   match U.op n with
   | Ops.Param | Ops.Buffer ->
       (match U.children n with shape :: _ -> shape_of_node shape | [] -> None)
@@ -181,7 +195,17 @@ let rec shape_of n =
       broadcast_shape child_shapes
   | _ -> None
 
+let shape_expr_of_cache : U.t list option U.Ref_tbl.t = U.Ref_tbl.create 256
+
 let rec shape_expr_of n =
+  match U.Ref_tbl.find_opt shape_expr_of_cache n with
+  | Some r -> r
+  | None ->
+      let r = compute_shape_expr_of n in
+      U.Ref_tbl.add shape_expr_of_cache n r;
+      r
+
+and compute_shape_expr_of n =
   match U.op n with
   | Ops.Param | Ops.Buffer ->
       (match U.children n with
@@ -1525,7 +1549,12 @@ let split_store n =
                 U.Ref_tbl.replace ctx.buf_shapes ptr (List.map Option.get dims)
           | _ -> ()
         in
-        let nodes = U.toposort n in
+        (* Stop at [After]: nodes behind a buffer boundary belong to already
+           split upstream kernels, which the kernel rewrite prunes anyway.
+           Walking into them would rescan the whole graph history per kernel. *)
+        let nodes =
+          U.toposort ~enter_calls:false ~gate:(fun x -> U.op x <> Ops.After) n
+        in
         ctx.slot <-
           List.fold_left
             (fun acc nd ->

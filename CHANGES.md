@@ -46,6 +46,12 @@ thread.
 
 ### Tolk (new)
 
+- Fix a compile-time blowup in schedule creation: `Rangeify.get_kernel_graph`
+  re-derived tensor shapes without memoisation and rescanned the whole graph
+  history once per kernel, so compile time grew super-linearly in graph size
+  and deep element-wise folds (e.g. a 100-step Lorenz integration) stalled
+  indefinitely. Shape derivation is now cached and kernel splitting stays within
+  a single kernel, so compilation scales linearly.
 - Constant-folding an integer `Floordiv`/`Floormod` by zero no longer raises;
   it folds to `0` / the dividend, matching the existing `Cdiv`/`Cmod` guards.
 - Fix jitted random-number generation: the call transformation sized staging
