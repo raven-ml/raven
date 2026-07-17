@@ -46,6 +46,8 @@ thread.
 
 ### Tolk (new)
 
+- Constant-folding an integer `Floordiv`/`Floormod` by zero no longer raises;
+  it folds to `0` / the dividend, matching the existing `Cdiv`/`Cmod` guards.
 - Full parity refresh against the reference compiler: dtypes are now a flat
   scalar enum (`Dtype.Val`/`Ptr`/`Image` and vector widths are gone — vector
   width comes from a value's shape, pointer provenance from its address
@@ -565,6 +567,12 @@ thread.
 
 ### Rune
 
+- `pmap` now decorrelates per-device randomness: under `Rune.pmap`/`pmap2`,
+  `Nx.Rng.fold_in_axis key` folds each device's own index into the key, so a
+  replicated key yields an independent draw per device (device `i` draws
+  `Nx.Rng.fold_in key i`). Data-parallel dropout masks now differ across
+  devices instead of replicating. Previously every device drew the identical
+  values from a replicated key.
 - The `rune` bench suite now covers `jit`: a `Jit` group times compiled
   execution of the MLP forward pass and the deep elementwise chain against
   their eager equivalents, with compilation hoisted out of the measured region.
