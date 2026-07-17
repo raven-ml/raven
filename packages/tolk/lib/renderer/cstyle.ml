@@ -219,7 +219,7 @@ and language = {
   float4 : string option;
   float4_style : string * string;
   gep_arr_threshold : int;
-  type_map : Dtype.scalar -> string option;
+  type_map : Dtype.t -> string option;
   infinity : string;
   nan : string;
   code_for_op : code_for_op;
@@ -237,7 +237,7 @@ and language = {
 
 let c_scalar_to_string = function
   | Dtype.Void -> "void"
-  | Dtype.Weakint | Dtype.Int32 -> "int"
+  | Dtype.Weakint | Dtype.Int32 | Dtype.Index -> "int"
   | Dtype.Bool -> "bool"
   | Dtype.Int8 -> "signed char"
   | Dtype.Int16 -> "short"
@@ -256,49 +256,66 @@ let c_scalar_to_string = function
   | Dtype.Fp8e5m2 -> "float8_e5m2"
   | Dtype.Fp8e4m3fnuz -> "float8_e4m3fnuz"
   | Dtype.Fp8e5m2fnuz -> "float8_e5m2fnuz"
+  | Dtype.Weakfloat -> "float"
 
 let clean_vector_base s = String.map (fun c -> if c = ' ' then '_' else c) s
 
-let render_canonical_val (v : Dtype.Val.t) =
-  let base = c_scalar_to_string (Dtype.Val.scalar v) in
-  if Dtype.Val.count v > 1 then
-    clean_vector_base base ^ string_of_int (Dtype.Val.count v)
-  else base
+(* Vector width and address space.
 
-let render_dtype_val (r : ctx) (v : Dtype.Val.t) =
-  let scalar = Dtype.Val.scalar v in
-  let base =
-    match r.lang.type_map scalar with
-    | Some s -> s
-    | None -> c_scalar_to_string scalar
-  in
-  if Dtype.Val.count v > 1 then
-    clean_vector_base base ^ string_of_int (Dtype.Val.count v)
-  else base
+   A node's dtype names only its scalar element type. The lane count is the
+   product of its shape, and pointer-ness comes from the address space, not the
+   dtype. *)
 
-let render_dtype (r : ctx) (dt : Dtype.t) =
-  match dt with
-  | Dtype.Ptr p ->
-      let prefix =
-        let a = Dtype.Ptr.addrspace p in
-        if a = Dtype.Local && r.lang.smem_prefix_for_cast then r.lang.smem_prefix
-        else if a = Dtype.Global then r.lang.buffer_prefix
-        else ""
-      in
-      prefix ^ render_dtype_val r (Dtype.Ptr.base p) ^ "*"
-  | Dtype.Val v -> render_dtype_val r v
+let is_image_shape = function
+  | Some [ _; _; last ] -> U.const_int_value last = Some 4
+  | Some _ | None -> false
 
-let stack_dtype u =
-  match U.op u, U.dtype u with
-  | Ops.Stack, Dtype.Val v when Dtype.Val.count v = 1 ->
+let addrspace_of u = Option.value (U.addrspace u) ~default:Dtype.Alu
+
+(* Lane count contributed structurally by a node's own op: a Stack packs one
+   lane per source, every other node is scalar until its shape says otherwise. *)
+let stack_count u =
+  match U.op u with
+  | Ops.Stack ->
       let n = Array.length (U.src u) in
-      if n <= 1 then U.dtype u
-      else Dtype.Val (Dtype.Val.vec n (Dtype.Val.scalarize v))
-  | _ -> U.dtype u
+      if n <= 1 then 1 else n
+  | _ -> 1
 
 let max_numel u =
-  try List.fold_left (fun acc d -> acc * U.vmax d) 1 (U.shape u)
-  with Invalid_argument _ -> Dtype.count (stack_dtype u)
+  match U.shape_opt u with
+  | Some _ -> prod (U.max_shape u)
+  | None -> stack_count u
+
+(* Render scalar [dtype] at vector width [sz], decorated for [addrspace]
+   (a pointer for Global/Local, or when [override_ptr]) and image [shape]. *)
+let render_dtype_c (lang : language) ?(sz = 1) ?(addrspace = Dtype.Alu)
+    ?(mutable_ = true) ?(override_ptr = false) ?(shape = None)
+    (dtype : Dtype.t) : string =
+  if is_image_shape shape then
+    if mutable_ then "write_only image2d_t" else "read_only image2d_t"
+  else
+    let prefix =
+      match addrspace with
+      | Dtype.Global -> lang.buffer_prefix
+      | Dtype.Local when lang.smem_prefix_for_cast -> lang.smem_prefix
+      | Dtype.Local | Dtype.Reg | Dtype.Alu -> ""
+    in
+    let suffix =
+      match addrspace with
+      | Dtype.Global | Dtype.Local -> "*"
+      | Dtype.Reg | Dtype.Alu -> if override_ptr then "*" else ""
+    in
+    let base =
+      match lang.type_map dtype with
+      | Some s -> s
+      | None -> c_scalar_to_string dtype
+    in
+    if sz > 1 then prefix ^ clean_vector_base base ^ string_of_int sz ^ suffix
+    else prefix ^ base ^ suffix
+
+(* Scalar value type (width 1, no pointer decoration). *)
+let render_dtype (ctx : ctx) (dtype : Dtype.t) : string =
+  render_dtype_c ctx.lang dtype
 
 (* Memoized: an unmemoized walk revisits shared subgraphs and goes
    exponential on wide unrolled ALU chains. *)
@@ -313,26 +330,26 @@ let rec expr_numel u =
       n
 
 and compute_expr_numel u =
-  let dtype_count = Dtype.count (stack_dtype u) in
+  let base_count = stack_count u in
   match U.op u with
   | Ops.Stack ->
       let srcs = U.src u in
-      if Array.length srcs = 0 then dtype_count else Array.length srcs
-  | Ops.Index | Ops.Shrink -> max dtype_count (max_numel u)
+      if Array.length srcs = 0 then base_count else Array.length srcs
+  | Ops.Index | Ops.Shrink -> max base_count (max_numel u)
   | Ops.Load ->
       let srcs = U.src u in
-      if Array.length srcs = 0 then dtype_count
+      if Array.length srcs = 0 then base_count
       else
         let access_count = expr_numel srcs.(0) in
-        if access_count > 1 then access_count else dtype_count
+        if access_count > 1 then access_count else base_count
   | Ops.Cast | Ops.Bitcast | Ops.Noop | Ops.After ->
       let srcs = U.src u in
-      if Array.length srcs = 0 then dtype_count
-      else max dtype_count (expr_numel srcs.(0))
+      if Array.length srcs = 0 then base_count
+      else max base_count (expr_numel srcs.(0))
   | op when Ops.Group.is_alu op ->
       U.src u |> Array.to_list |> List.map expr_numel
-      |> List.fold_left max dtype_count
-  | _ -> dtype_count
+      |> List.fold_left max base_count
+  | _ -> base_count
 
 let base_render_numel u =
   match U.op u, U.src u with
@@ -352,37 +369,11 @@ let scalar_view_source_is_value u =
   | None | Some Dtype.Alu -> true
   | Some (Dtype.Global | Dtype.Local | Dtype.Reg) -> false
 
-let render_value_dtype ctx u =
-  match U.dtype u with
-  | Dtype.Val dtype ->
-      let count = render_numel ctx u in
-      if count <= 1 then U.dtype u
-      else Dtype.Val (Dtype.Val.vec count (Dtype.Val.scalarize dtype))
-  | Dtype.Ptr _ -> U.dtype u
-
+(* Value type of [u] as declared: its scalar dtype at the rendered lane count,
+   decorated for its address space and shape. *)
 let render_type ctx u =
-  match U.dtype u with
-  | Dtype.Val dtype ->
-      let count = render_numel ctx u in
-      let dtype =
-        if count <= 1 then dtype
-        else Dtype.Val.vec count (Dtype.Val.scalarize dtype)
-      in
-      render_dtype_val ctx dtype
-  | Dtype.Ptr ptr -> render_dtype ctx (Dtype.Ptr ptr)
-
-let render_param_ptr_dtype ?(canonical = false) (ctx : ctx) p =
-  let prefix =
-    let a = Dtype.Ptr.addrspace p in
-    if a = Dtype.Local && ctx.lang.smem_prefix_for_cast then ctx.lang.smem_prefix
-    else if a = Dtype.Global then ctx.lang.buffer_prefix
-    else ""
-  in
-  let base =
-    if canonical then render_canonical_val (Dtype.Ptr.base p)
-    else render_dtype_val ctx (Dtype.Ptr.base p)
-  in
-  prefix ^ base ^ "*"
+  render_dtype_c ctx.lang ~sz:(render_numel ctx u)
+    ~addrspace:(addrspace_of u) ~shape:(U.shape_opt u) (U.dtype u)
 
 let render_cast (r : ctx) (dt : Dtype.t) (v : string) =
   strf "(%s)(%s)" (render_dtype r dt) v
@@ -401,26 +392,15 @@ let lookup (ctx : ctx) (u : U.t) : string =
   try U.Tbl.find ctx.r u with Not_found -> ""
 
 let render_buffer (ctx : ctx) (u : U.t) =
-  let render ~addrspace ~base ~size =
-    let prefix =
-      match addrspace with
-      | Dtype.Local -> ctx.lang.smem_align ^ ctx.lang.smem_prefix
-      | Dtype.Reg | Dtype.Global | Dtype.Alu -> ""
-    in
-    Some
-      (strf "%s%s %s[%d];" prefix
-         (render_dtype_val ctx base)
-         (lookup ctx u) size)
+  let prefix =
+    match addrspace_of u with
+    | Dtype.Local -> ctx.lang.smem_align ^ ctx.lang.smem_prefix
+    | Dtype.Reg | Dtype.Global | Dtype.Alu -> ""
   in
-  match U.dtype u, U.as_buffer u with
-  | Dtype.Ptr p, _ ->
-      render ~addrspace:(Dtype.Ptr.addrspace p) ~base:(Dtype.Ptr.base p)
-        ~size:(Dtype.Ptr.size p)
-  | Dtype.Val base, Some { buffer; shape } -> (
-      match U.const_int_value shape with
-      | Some size -> render ~addrspace:buffer.addrspace ~base ~size
-      | None -> None)
-  | Dtype.Val _, None -> None
+  Some
+    (strf "%s%s %s[%d];" prefix
+       (render_dtype ctx (U.dtype u))
+       (lookup ctx u) (max_numel u))
 
 let render_index (ctx : ctx) ~ptr ~idxs =
   let flat_index_string () =
@@ -514,17 +494,18 @@ let render_index (ctx : ctx) ~ptr ~idxs =
   if U.addrspace ptr = Some Dtype.Alu then begin
     match idxs with
     | [ idx ] -> (
-    match const_view_of_uop idx with
-    | Some c -> (
-        match Const.view c with
-        | Const.Int i ->
-            let i = Int64.to_int i in
-            let base = lookup ctx ptr in
-            if Dtype.count (U.dtype ptr) > ctx.lang.gep_arr_threshold then
-              strf "%s[%d]" base i
-            else strf "%s.%s" base (vec_elem_letter i)
-        | _ -> invalid_arg "render_index: ALU index must be integer CONST")
-    | None -> invalid_arg "render_index: ALU index must be CONST")
+        match const_view_of_uop idx with
+        | Some c -> (
+            match Const.view c with
+            | Const.Int i ->
+                let i = Int64.to_int i in
+                let base = lookup ctx ptr in
+                if max_numel ptr > ctx.lang.gep_arr_threshold then
+                  strf "%s[%d]" base i
+                else strf "%s.%s" base (vec_elem_letter i)
+            (* Non-constant lane access is C array subscript on the value. *)
+            | _ -> strf "(%s)[%s]" (lookup ctx ptr) (lookup ctx idx))
+        | None -> strf "(%s)[%s]" (lookup ctx ptr) (lookup ctx idx))
     | _ -> invalid_arg "render_index: ALU index must be scalar"
   end else
     let base = lookup ctx ptr in
@@ -535,95 +516,49 @@ let render_index (ctx : ctx) ~ptr ~idxs =
     then base
     else strf "(%s+%s)" base idx
 
-let access_ptr_dtype ~ptr access_dt =
-  match access_dt with
-  | Dtype.Val v -> Dtype.Ptr (Dtype.Ptr.with_base v ptr)
-  | Dtype.Ptr _ -> access_dt
-
-let access_cast_dtype u access_dt =
-  match U.dtype u with
-  | Dtype.Ptr p -> access_ptr_dtype ~ptr:p access_dt
-  | Dtype.Val _ ->
-      let addrspace = Option.value (U.addrspace u) ~default:Dtype.Reg in
-      let base = Dtype.val_of access_dt in
-      Dtype.Ptr (Dtype.Ptr.create base ~addrspace ~size:(-1))
-
-let render_access (ctx : ctx) ~access_dt (u : U.t) =
+(* [render_access ~access_scalar ~access_width u] dereferences the address
+   expression [u] (an INDEX/SHRINK node). [access_scalar]/[access_width] describe
+   the value moved through the access; when it is wider than one lane or its
+   scalar differs from the pointer's, the address is cast to a matching pointer
+   before the dereference. *)
+let render_access (ctx : ctx) ~access_scalar ~access_width (u : U.t) =
   let expr_count = expr_numel u in
   let access_count =
-    if expr_count > 1 then expr_count else max (Dtype.count access_dt) (max_numel u)
+    if expr_count > 1 then expr_count else max access_width (max_numel u)
   in
-  let render_vector_index_load ptrs vec =
-    let n = Array.length ptrs in
-    let scalar = Dtype.Val.scalarize (Dtype.val_of access_dt) in
-    let dtype = if n <= 1 then scalar else Dtype.Val.vec n scalar in
-    let ctor =
-      match ctx.lang.float4 with
-      | Some f ->
-          replace_first ~needle:"float4"
-            ~replacement:(render_dtype ctx (Dtype.Val dtype))
-            f
-      | None -> render_dtype ctx (Dtype.Val dtype)
-    in
-    let l, rr = ctx.lang.float4_style in
-    let index_lane i =
-      let base = lookup ctx vec in
-      if expr_numel vec <= 1 then base
-      else if access_count > ctx.lang.gep_arr_threshold then strf "%s[%d]" base i
-      else strf "%s.%s" base (vec_elem_letter i)
-    in
-    let items =
-      Array.to_list ptrs
-      |> List.mapi (fun i ptr -> strf "*(%s+%s)" (lookup ctx ptr) (index_lane i))
-    in
-    strf "%s%s%s%s" ctor l (String.concat "," items) rr
-  in
-  match U.as_index u with
-  | Some { ptr; idxs = [ vec ] }
-    when U.op ptr = Ops.Stack && Array.length (U.src ptr) = access_count
-         && access_count > 1 ->
-      render_vector_index_load (U.src ptr) vec
-  | _ ->
-  let access_dt =
-    if access_count = Dtype.count access_dt then access_dt
-    else
-      Dtype.Val
-        (Dtype.Val.vec access_count
-           (Dtype.Val.scalarize (Dtype.val_of access_dt)))
+  let ptr_scalar =
+    if Array.length (U.src u) > 0 then U.dtype (U.src u).(0) else U.dtype u
   in
   let cast =
-    access_count > 1 ||
-    match U.dtype u, U.src u with
-    | Dtype.Ptr p, srcs when Array.length srcs >= 2 ->
-        let ptr = srcs.(0) in
-        not (Dtype.Val.equal (Dtype.Ptr.base p) (Dtype.val_of access_dt))
-        || not (Dtype.equal (U.dtype u) (U.dtype ptr))
-    | _ -> false
+    access_count > 1
+    || not (Dtype.equal access_scalar ptr_scalar)
+    || not (Dtype.equal (U.dtype u) ptr_scalar)
   in
   if cast then
-    strf "*((%s)(%s))" (render_dtype ctx (access_cast_dtype u access_dt))
+    strf "*((%s)(%s))"
+      (render_dtype_c ctx.lang ~sz:access_count ~addrspace:(addrspace_of u)
+         ~override_ptr:true ~shape:(U.shape_opt u) access_scalar)
       (lookup ctx u)
   else strf "*%s" (lookup ctx u)
 
+(* Images are the tinygrad convention of a rank-3 shape whose last axis is 4
+   (RGBA); the buffer carries no pointer dtype, so image-ness is read from the
+   pointer's shape. *)
 let image_index u =
   match U.as_index u with
-  | Some { ptr; idxs } -> (
-      match U.dtype ptr with
-      | Dtype.Ptr p when Dtype.Ptr.is_image p ->
-          let idx =
-            match idxs with
-            | [ idx ] -> idx
-            | [ y; x ] -> U.stack [ y; x ]
-            | _ -> invalid_arg "image_index: expected one int2 or two scalars"
-          in
-          Some (ptr, idx, p)
-      | _ -> None)
-  | None -> None
+  | Some { ptr; idxs } when is_image_shape (U.shape_opt ptr) ->
+      let idx =
+        match idxs with
+        | [ idx ] -> idx
+        | [ y; x ] -> U.stack [ y; x ]
+        | _ -> invalid_arg "image_index: expected one int2 or two scalars"
+      in
+      Some (ptr, idx)
+  | _ -> None
 
 let image_coord (ctx : ctx) idx =
-  match U.op idx, U.src idx, U.dtype idx with
-  | Ops.Stack, lanes, Dtype.Val dtype
-    when Array.length lanes = 2 && Dtype.Val.is_int dtype ->
+  match U.op idx, U.src idx with
+  | Ops.Stack, lanes when Array.length lanes = 2 && Dtype.is_int (U.dtype idx) ->
       let y = lookup ctx lanes.(0) in
       let x = lookup ctx lanes.(1) in
       Some (strf "(int2)(%s,%s)" x y)
@@ -635,7 +570,7 @@ let check_image_support ctx =
 let render_image_load ctx node src alt gate =
   match image_index src with
   | None -> None
-  | Some (buf, idx, _p) ->
+  | Some (buf, idx) ->
       check_image_support ctx;
       let coord =
         match image_coord ctx idx with
@@ -654,20 +589,16 @@ let render_image_load ctx node src alt gate =
         | None, Some _ -> invalid_arg "gated image load requires alt value"
         | Some _, None -> invalid_arg "image load alt requires gated index"
       in
-      Some
-        (match U.dtype node with
-         | Dtype.Val dtype when Dtype.Val.equal dtype Dtype.Val.float32 ->
-             value
-         | Dtype.Val dtype ->
-             invalid_arg
-               (strf "image load must produce float, got %s"
-                  (Dtype.Val.to_string dtype))
-         | Dtype.Ptr _ -> invalid_arg "image load must produce a value")
+      if Dtype.equal (U.dtype node) Dtype.float32 then Some value
+      else
+        invalid_arg
+          (strf "image load must produce float, got %s"
+             (Dtype.to_string (U.dtype node)))
 
 let render_image_store ctx dst value gate =
   match image_index dst with
   | None -> None
-  | Some (buf, idx, p) ->
+  | Some (buf, idx) ->
       check_image_support ctx;
       let coord =
         match image_coord ctx idx with
@@ -678,16 +609,11 @@ let render_image_store ctx dst value gate =
                  (Dtype.to_string (U.dtype idx)))
       in
       let value =
-        match Dtype.Ptr.image_kind p, U.dtype value with
-        | (Some Dtype.Imageh | Some Dtype.Imagef), Dtype.Val dtype
-          when Dtype.Val.equal dtype Dtype.Val.float32 ->
-            lookup ctx value
-        | Some _, Dtype.Val dtype ->
-            invalid_arg
-              (strf "image store must write float, got %s"
-                 (Dtype.Val.to_string dtype))
-        | None, _ -> invalid_arg "image store requires an image dtype"
-        | Some _, Dtype.Ptr _ -> invalid_arg "image store must write a value"
+        if Dtype.equal (U.dtype value) Dtype.float32 then lookup ctx value
+        else
+          invalid_arg
+            (strf "image store must write float, got %s"
+               (Dtype.to_string (U.dtype value)))
       in
       let write =
         strf "write_imagef(%s, %s, %s);" (lookup ctx buf) coord value
@@ -698,11 +624,8 @@ let render_image_store ctx dst value gate =
          | Some gate -> strf "if (%s) %s" (lookup ctx gate) write)
 
 let bitcast_passthrough_for_pointer_addrspace (ctx : ctx) (x : U.t) =
-  match U.dtype x, U.src x with
-  | Dtype.Ptr p, [| src |]
-    when Dtype.Ptr.addrspace p = Dtype.Global
-         || Dtype.Ptr.addrspace p = Dtype.Local ->
-      Some (lookup ctx src)
+  match U.addrspace x, U.src x with
+  | Some (Dtype.Global | Dtype.Local), [| src |] -> Some (lookup ctx src)
   | _ -> None
 
 (* Base rewrite rules *)
@@ -745,7 +668,7 @@ let render_float (ctx : ctx) (dt : Dtype.t) f =
     strf "(%s)" (render_cast ctx dt ("-" ^ ctx.lang.infinity))
   else
     let lit = float_lit f in
-    match Dtype.scalar dt with
+    match dt with
     | Dtype.Float32 -> strf "%sf" lit
     | Dtype.Float64 -> lit
     | Dtype.Float16 | Dtype.Bfloat16 | Dtype.Fp8e4m3 | Dtype.Fp8e5m2
@@ -754,7 +677,7 @@ let render_float (ctx : ctx) (dt : Dtype.t) f =
     | _ -> lit
 
 let render_int (ctx : ctx) (dt : Dtype.t) n =
-  match Dtype.scalar dt with
+  match dt with
   | Dtype.Int64 -> strf "%Ldl" n
   | Dtype.Uint64 -> strf "%sul" (uint64_decimal n)
   | Dtype.Uint32 -> strf "%Ldu" (truncate_uint32 n)
@@ -819,13 +742,11 @@ let base_rewrite : ctx rule list =
       fun ctx bs _ ->
         let x = bs $ "x" in
         let srcs = U.src x in
-        let dtype = stack_dtype x in
+        let vtype = render_type ctx x in
         let ctor =
           match ctx.lang.float4 with
-          | Some f ->
-              let dt = render_dtype ctx dtype in
-              replace_first ~needle:"float4" ~replacement:dt f
-          | None -> render_dtype ctx dtype
+          | Some f -> replace_first ~needle:"float4" ~replacement:vtype f
+          | None -> vtype
         in
         let l, rr = ctx.lang.float4_style in
         let items =
@@ -885,7 +806,7 @@ let base_rewrite : ctx rule list =
         let src = (U.src x).(0) in
         let rec uniform_const_base n =
           match U.op n with
-          | Ops.Const when Dtype.count (U.dtype n) = 1 -> Some n
+          | Ops.Const when max_numel n = 1 -> Some n
           | Ops.Reshape | Ops.Expand | Ops.Permute -> uniform_const_base (U.src n).(0)
           | _ -> None
         in
@@ -902,7 +823,7 @@ let base_rewrite : ctx rule list =
 	        let x = bs $ "x" in
 	        let rec uniform_const_base n =
 	          match U.op n with
-	          | Ops.Const when Dtype.count (U.dtype n) = 1 -> Some n
+	          | Ops.Const when max_numel n = 1 -> Some n
 	          | Ops.Reshape | Ops.Expand | Ops.Permute ->
 	              uniform_const_base (U.src n).(0)
 	          | _ -> None
@@ -915,9 +836,9 @@ let base_rewrite : ctx rule list =
 	            | Some i ->
 	                let base = lookup ctx ptr in
 	                let width = render_numel ctx ptr in
-	                if Dtype.count (U.dtype ptr) = 1 && width <= 1 then
+	                if max_numel ptr = 1 && width <= 1 then
 	                  Some base
-	                else if Dtype.count (U.dtype ptr) > ctx.lang.gep_arr_threshold then
+	                else if max_numel ptr > ctx.lang.gep_arr_threshold then
 	                  Some (strf "%s[%d]" base i)
 	                else Some (strf "%s.%s" base (vec_elem_letter i)))
 	        | Ops.Index, Some v, _ -> (
@@ -943,16 +864,19 @@ let base_rewrite : ctx rule list =
         | Some { src; alt = Some alt_u; gate = Some gate } ->
             Some
               (strf "(%s?%s:%s)" (lookup ctx gate)
-                 (render_access ctx ~access_dt:(render_value_dtype ctx x) src)
+                 (render_access ctx ~access_scalar:(U.dtype x)
+                   ~access_width:(render_numel ctx x) src)
                  (lookup ctx alt_u))
         | Some { src; alt = Some _; gate = None } ->
             Some
               (strf "(%s)"
-                 (render_access ctx ~access_dt:(render_value_dtype ctx x) src))
+                 (render_access ctx ~access_scalar:(U.dtype x)
+                   ~access_width:(render_numel ctx x) src))
         | Some { src; alt = None; gate = _ } ->
             Some
               (strf "(%s)"
-                 (render_access ctx ~access_dt:(render_value_dtype ctx x) src))
+                 (render_access ctx ~access_scalar:(U.dtype x)
+                   ~access_width:(render_numel ctx x) src))
         | None -> None );
     (* Image STORE: write_imagef(buf, (int2)(x,y), value); *)
     ( op ~name:"x" Ops.Store,
@@ -969,7 +893,8 @@ let base_rewrite : ctx rule list =
         | Some v ->
             let store =
               strf "%s = %s;"
-                (render_access ctx ~access_dt:(stack_dtype v.value) v.dst)
+                (render_access ctx ~access_scalar:(U.dtype v.value)
+                   ~access_width:(render_numel ctx v.value) v.dst)
                 (lookup ctx v.value)
             in
             Some
@@ -1048,28 +973,27 @@ let base_code_for_op : code_for_op =
 (* no_vectorized_alu: split a vector ALU node into scalar indexes + STACK.
    Ported lazily; we only need the surface behavior here for bools and WHERE. *)
 let no_vectorized_alu (u : U.t) : U.t option =
-  let dt = U.dtype u in
-  if Dtype.count dt <= 1 then None
+  let n = max_numel u in
+  if n <= 1 then None
   else
-    let n = Dtype.count dt in
-    let scalar_dt = Dtype.scalarize dt in
+    let scalar_dt = U.dtype u in
     let lanes =
       List.init n (fun i ->
         let scalar_srcs =
           Array.to_list (U.src u)
           |> List.map (fun s ->
-                 if Dtype.count (U.dtype s) = n then
+                 if max_numel s = n then
                    U.index ~ptr:s ~idxs:[ U.const_int i ] ()
                  else s)
         in
         U.replace u ~src:(Array.of_list scalar_srcs) ~dtype:scalar_dt ())
     in
-    Some (U.stack ~dtype:(Dtype.Val.scalarize (Dtype.val_of dt)) lanes)
+    Some (U.stack ~dtype:(U.dtype u) lanes)
 
 let extra_pm : U.t -> U.t option =
  fun node ->
   let dt = U.dtype node in
-  let is_vec = Dtype.count dt > 1 in
+  let is_vec = max_numel node > 1 in
   let is_bool_result = Dtype.is_bool dt && is_vec in
   match U.op node with
   | o when is_bool_result &&
@@ -1087,10 +1011,10 @@ let extra_pm : U.t -> U.t option =
 (* create_non_native_float_pats: promote ALU ops on non-native floats through
    float32.  Matches tinygrad's create_non_native_float_pats. *)
 let create_non_native_float_pats ?(casting = true)
-    (dts : Dtype.scalar list) : U.t -> U.t option =
+    (dts : Dtype.t list) : U.t -> U.t option =
  fun node ->
   let f32 = Dtype.float32 in
-  let is_nn dt = List.mem (Dtype.scalar dt) dts in
+  let is_nn dt = List.mem dt dts in
   let cast_f32 src = U.cast ~src ~dtype:f32 in
   let dt = U.dtype node in
   match U.op node with
@@ -1108,11 +1032,8 @@ let create_non_native_float_pats ?(casting = true)
         Array.to_list (U.src node)
         |> List.map (fun c -> if is_nn (U.dtype c) then cast_f32 c else c)
       in
-      let promoted_dt =
-        Dtype.Val (Dtype.Val.vec (Dtype.count dt) (Dtype.Val.float32))
-      in
       let promoted =
-        U.replace node ~src:(Array.of_list new_children) ~dtype:promoted_dt ()
+        U.replace node ~src:(Array.of_list new_children) ~dtype:f32 ()
       in
       Some (U.cast ~src:promoted ~dtype:dt)
   | o when Ops.Group.is_binary o && Dtype.is_bool dt ->
@@ -1128,18 +1049,18 @@ let create_non_native_float_pats ?(casting = true)
       else
         let src = srcs.(0) in
         let sdt = U.dtype src in
-        if is_nn dt && Dtype.scalar sdt <> Dtype.Float32 then
+        if is_nn dt && not (Dtype.equal sdt Dtype.float32) then
           Some (U.cast ~src:(cast_f32 src) ~dtype:dt)
-        else if is_nn sdt && Dtype.scalar dt <> Dtype.Float32 then
+        else if is_nn sdt && not (Dtype.equal dt Dtype.float32) then
           Some (U.cast ~src:(cast_f32 src) ~dtype:dt)
         else None
   | _ -> None
 
 (* Software bf16 ↔ f32 cast via bit manipulation. *)
 let cast_float_to_bf16 (x : U.t) : U.t =
-  let u32 = Dtype.Val.uint32 in
+  let u32 = Dtype.uint32 in
   let c_u32 n = U.const (Const.int u32 n) in
-  let bits = U.bitcast ~src:x ~dtype:(Dtype.Val u32) in
+  let bits = U.bitcast ~src:x ~dtype:u32 in
   let neg_bits =
     U.alu_binary ~op:Ops.And
       ~lhs:(U.alu_unary ~op:Ops.Neg ~src:bits)
@@ -1175,28 +1096,27 @@ let cast_float_to_bf16 (x : U.t) : U.t =
     U.alu_binary ~op:Ops.Shr ~lhs:result ~rhs:(c_u32 16)
   in
   U.bitcast
-    ~src:(U.cast ~src:shifted ~dtype:(Dtype.of_scalar Dtype.Uint16))
-    ~dtype:(Dtype.Val Dtype.Val.bfloat16)
+    ~src:(U.cast ~src:shifted ~dtype:Dtype.uint16)
+    ~dtype:Dtype.bfloat16
 
 let pm_manual_bf16_cast (node : U.t) : U.t option =
   match U.op node, U.src node with
   | Ops.Cast, [| src |]
-    when Dtype.scalar (U.dtype node) = Dtype.Float32
-         && Dtype.scalar (U.dtype src) = Dtype.Bfloat16 ->
+    when Dtype.equal (U.dtype node) Dtype.float32
+         && Dtype.equal (U.dtype src) Dtype.bfloat16 ->
       let bits =
         U.cast
-          ~src:
-            (U.bitcast ~src ~dtype:(Dtype.Val Dtype.Val.uint16))
-          ~dtype:(Dtype.of_scalar Dtype.Uint32)
+          ~src:(U.bitcast ~src ~dtype:Dtype.uint16)
+          ~dtype:Dtype.uint32
       in
       let shifted =
         U.alu_binary ~op:Ops.Shl ~lhs:bits
-          ~rhs:(U.const (Const.int Dtype.Val.uint32 16))
+          ~rhs:(U.const (Const.int Dtype.uint32 16))
       in
-      Some (U.bitcast ~src:shifted ~dtype:(Dtype.Val Dtype.Val.float32))
+      Some (U.bitcast ~src:shifted ~dtype:Dtype.float32)
   | Ops.Cast, [| src |]
-    when Dtype.scalar (U.dtype node) = Dtype.Bfloat16
-         && Dtype.scalar (U.dtype src) = Dtype.Float32 ->
+    when Dtype.equal (U.dtype node) Dtype.bfloat16
+         && Dtype.equal (U.dtype src) Dtype.float32 ->
       Some (cast_float_to_bf16 src)
   | _ -> None
 
@@ -1206,12 +1126,7 @@ let prefix_of (u : U.t) : string =
   match U.op u with
   | Ops.Wmma -> "wmma"
   | Ops.Const -> "const"
-  | Ops.Buffer -> (
-      match U.dtype u with
-      | Dtype.Ptr p -> (
-          match Dtype.Ptr.addrspace p with
-          | Dtype.Local | Dtype.Global | Dtype.Alu | Dtype.Reg -> "buf")
-      | Dtype.Val _ -> "buf")
+  | Ops.Buffer -> "buf"
   | Ops.Cast | Ops.Bitcast | Ops.Stack -> "cast"
   | Ops.Index -> "bidx"
   | Ops.Load -> "val"
@@ -1264,17 +1179,6 @@ let writable_params (uops : U.t list) : unit U.Ref_tbl.t =
 
 let sub_str i = if i >= 0 then string_of_int i else "m" ^ string_of_int (-i)
 
-let effective_param_dtype u dt =
-  match U.as_param u, dt with
-  | Some { param; shape }, Dtype.Val base when param.addrspace <> Dtype.Alu -> (
-      match U.const_int_value shape with
-      | Some size ->
-          Some
-            (Dtype.Ptr
-               (Dtype.Ptr.create base ~addrspace:param.addrspace ~size))
-      | None -> None)
-  | _ -> Some dt
-
 let param_shape_dim_name dim =
   match U.const_int_value dim with
   | Some n -> string_of_int n
@@ -1284,28 +1188,23 @@ let param_shape_dim_name dim =
       | _ -> strf "sym%d" (U.tag dim))
 
 let param_shape_names u =
-  match U.as_param u, U.dtype u with
-  | Some { shape; _ }, _ when U.op shape <> Ops.Noop ->
+  match U.as_param u with
+  | Some { shape; _ } when U.op shape <> Ops.Noop ->
       List.map param_shape_dim_name (U.as_shape shape)
-  | _, Dtype.Ptr p -> [ string_of_int (Dtype.Ptr.size p) ]
   | _ -> []
+
+(* A parameter is a buffer (rendered as a pointer) unless it lives in the
+   scalar ALU space, which denotes a symbolic runtime variable. *)
+let param_is_buffer (param : U.param_arg) = param.addrspace <> Dtype.Alu
 
 let name_param (u : U.t) : string =
   match U.as_param u with
-  | Some { param; _ } -> (
-      match effective_param_dtype u (U.dtype u) with
-      | Some (Dtype.Ptr _) ->
-          strf "data%d_%s" param.slot (String.concat "_" (param_shape_names u))
-      | Some (Dtype.Val _) when param.addrspace = Dtype.Alu ->
-          if param.slot >= 0 then strf "data%d_" param.slot
-          else Option.value param.name ~default:(strf "data%d_" param.slot)
-      | _ -> strf "data%d" param.slot)
+  | Some { param; _ } ->
+      if param_is_buffer param then
+        strf "data%d_%s" param.slot (String.concat "_" (param_shape_names u))
+      else if param.slot >= 0 then strf "data%d_" param.slot
+      else Option.value param.name ~default:(strf "data%d_" param.slot)
   | None -> "data"
-
-let render_param_dtype u dt =
-  match effective_param_dtype u dt with
-  | Some dt -> dt
-  | None -> dt
 
 let name_range v =
   let base = strf "%sidx%d" (Axis_type.letter v.U.kind) v.U.axis in
@@ -1320,8 +1219,7 @@ let should_inline ~expand_ssa ~child_count (u : U.t) : bool =
   let cc =
     try U.Tbl.find child_count u with Not_found -> 0
   in
-  let dt = U.dtype u in
-  if U.op u = Ops.Cast && Dtype.vcount dt <> 1 then false
+  if U.op u = Ops.Cast && max_numel u <> 1 then false
   else
     match U.op u with
     | Ops.Const | Ops.Index | Ops.Shrink | Ops.Customi -> true
@@ -1403,7 +1301,7 @@ let render_uops (ctx : ctx) (uops : U.t list) : render_result =
          Param sources: structural, nothing to render. *)
       | Ops.Stack
         when Array.length (U.src u) = 0
-             && Dtype.equal (U.dtype u) (Dtype.Val Dtype.Val.void) ->
+             && Dtype.equal (U.dtype u) (Dtype.void) ->
           ()
       | Ops.After ->
           let srcs = U.src u in
@@ -1535,7 +1433,7 @@ let render_uops (ctx : ctx) (uops : U.t list) : render_result =
                        strf "%s %s = %s" (render_type ctx u) (U.Tbl.find r u)
                          rendered
                    | _
-                     when Dtype.equal (U.dtype u) (Dtype.Val Dtype.Val.void) ->
+                     when Dtype.equal (U.dtype u) (Dtype.void) ->
                        rendered
                    | _ ->
                        strf "%s %s = %s;" (render_type ctx u) (U.Tbl.find r u)
@@ -1556,19 +1454,17 @@ let render_uops (ctx : ctx) (uops : U.t list) : render_result =
 
 let buf_param ctx (u, nm, (dt, mut)) =
   if U.op u <> Ops.Param then invalid_arg "buf_param: expected Param";
-  let dt = render_param_dtype u dt in
-  match dt with
-  | Dtype.Ptr p when Dtype.Ptr.is_image p ->
-      strf "%s image2d_t %s" (if mut then "write_only" else "read_only") nm
-  | Dtype.Ptr p ->
-      let canonical =
-        match U.dtype u with Dtype.Ptr _ -> true | Dtype.Val _ -> false
-      in
-      let ptr = render_param_ptr_dtype ~canonical ctx p in
-      strf "%s%s %s" ptr ctx.lang.buffer_suffix nm
-  | Dtype.Val v when Dtype.Val.equal v Dtype.Val.int32 ->
-      strf "%s %s" ctx.lang.arg_int_prefix nm
-  | _ -> strf "%s %s" (render_dtype ctx dt) nm
+  match addrspace_of u with
+  | Dtype.Global ->
+      (* Global buffers render as pointers (or image handles when the shape is
+         an image), applying the language's [type_map] like any other value. *)
+      strf "%s%s %s"
+        (render_dtype_c ctx.lang ~sz:1 ~addrspace:Dtype.Global ~mutable_:mut
+           ~shape:(U.shape_opt u) dt)
+        ctx.lang.buffer_suffix nm
+  | Dtype.Local | Dtype.Reg | Dtype.Alu ->
+      if Dtype.equal dt Dtype.int32 then strf "%s %s" ctx.lang.arg_int_prefix nm
+      else strf "%s %s" (render_dtype ctx dt) nm
 
 let collect_lane_demand uops =
   let tbl = U.Tbl.create 32 in
@@ -1613,13 +1509,7 @@ let default_render_kernel (ctx : ctx) ~function_name ~kernel ~bufs
   in
   let body =
     let image_sampler =
-      if
-        List.exists
-          (fun (_u, _nm, (dt, _mut)) ->
-            match dt with
-            | Dtype.Ptr p -> Dtype.Ptr.is_image p
-            | Dtype.Val _ -> false)
-          bufs
+      if List.exists (fun (u, _nm, _) -> is_image_shape (U.shape_opt u)) bufs
       then
         "const sampler_t smp = CLK_NORMALIZED_COORDS_FALSE | CLK_ADDRESS_CLAMP | CLK_FILTER_NEAREST;\n"
       else ""
@@ -1680,7 +1570,7 @@ let make_language
 
 (* ClangRenderer *)
 
-let clang_type_map : Dtype.scalar -> string option = function
+let clang_type_map : Dtype.t -> string option = function
   | Dtype.Bool -> Some "_Bool"
   | Dtype.Float16 -> Some "__fp16"
   | _ -> None
@@ -1689,10 +1579,10 @@ let clang_code_for_op : code_for_op =
  fun op args dt ->
   match op, args with
   | Ops.Sqrt, [ x ] ->
-      if Dtype.scalar dt = Dtype.Float64 then strf "__builtin_sqrt(%s)" x
+      if dt = Dtype.Float64 then strf "__builtin_sqrt(%s)" x
       else strf "__builtin_sqrtf(%s)" x
   | Ops.Trunc, [ x ] ->
-      if Dtype.scalar dt = Dtype.Float64 then strf "__builtin_trunc(%s)" x
+      if dt = Dtype.Float64 then strf "__builtin_trunc(%s)" x
       else strf "__builtin_truncf(%s)" x
   | Ops.Fdiv, [ a; b ] -> strf "(%s/%s)" a b
   | Ops.Exp2, _ | Ops.Log2, _ | Ops.Sin, _ | Ops.Reciprocal, _ ->
@@ -1702,17 +1592,17 @@ let clang_code_for_op : code_for_op =
 let clang_extra_matcher (node : U.t) : U.t option =
   match U.op node, U.src node with
   | Ops.Cast, [| src |]
-    when (Dtype.scalar (U.dtype src) = Dtype.Float64
-          || Dtype.scalar (U.dtype src) = Dtype.Bfloat16)
-         && (Dtype.scalar (U.dtype node) = Dtype.Float16
-             || Dtype.scalar (U.dtype node) = Dtype.Bfloat16)
-         && Dtype.scalar (U.dtype src) <> Dtype.scalar (U.dtype node) ->
+    when ((U.dtype src) = Dtype.Float64
+          || (U.dtype src) = Dtype.Bfloat16)
+         && ((U.dtype node) = Dtype.Float16
+             || (U.dtype node) = Dtype.Bfloat16)
+         && (U.dtype src) <> (U.dtype node) ->
       Some
         (U.cast
            ~src:
-             (U.cast ~src ~dtype:(Dtype.of_scalar Dtype.Float32))
+             (U.cast ~src ~dtype:(Dtype.float32))
            ~dtype:(U.dtype node))
-  | (Ops.Sqrt | Ops.Trunc), _ when Dtype.count (U.dtype node) > 1 ->
+  | (Ops.Sqrt | Ops.Trunc), _ when max_numel node > 1 ->
       no_vectorized_alu node
   | _ ->
       (match create_non_native_float_pats [ Dtype.Bfloat16 ] node with
@@ -1766,39 +1656,39 @@ let used_alu_dtypes uops =
           end)
         (U.src u))
     uops;
-  let add dtype acc =
-    match dtype with
-    | Some dtype when not (Dtype.Val.equal dtype Dtype.Val.void) ->
-        if List.exists (Dtype.Val.equal dtype) acc then acc else dtype :: acc
-    | Some _ -> acc
-    | None -> acc
+  let add pair acc =
+    match pair with
+    | Some (scalar, width) when not (Dtype.equal scalar Dtype.void) ->
+        if List.exists (fun (s, w) -> Dtype.equal s scalar && w = width) acc
+        then acc
+        else (scalar, width) :: acc
+    | Some _ | None -> acc
   in
   let dtype_for u =
     if U.Tbl.mem metadata_only u then None
     else
-      match U.addrspace u, stack_dtype u with
-      | (Some Dtype.Alu | None), Dtype.Val dtype ->
-          Some (Dtype.Val.vec (render_width u) (Dtype.Val.scalarize dtype))
-      | Some (Dtype.Reg | Dtype.Global | Dtype.Local), _
-      | (Some Dtype.Alu | None), Dtype.Ptr _ ->
-          None
+      match U.addrspace u with
+      | Some Dtype.Alu | None ->
+          let scalar = U.dtype u in
+          if Dtype.equal scalar Dtype.void then None
+          else Some (scalar, render_width u)
+      | Some (Dtype.Reg | Dtype.Global | Dtype.Local) -> None
   in
   List.rev (List.fold_left (fun acc u -> add (dtype_for u) acc) [] uops)
 
 let used_vector_dtypes uops =
-  List.filter (fun dtype -> Dtype.Val.count dtype > 1) (used_alu_dtypes uops)
+  List.filter (fun (_, count) -> count > 1) (used_alu_dtypes uops)
 
-let clang_vector_prefix lang dtype =
+let clang_vector_prefix lang (scalar, count) =
   let ctx = { lang; r = U.Tbl.create 0; lane_demand = U.Tbl.create 0 } in
-  let scalar = Dtype.Val.scalarize dtype in
   let alignment =
-    if getenv "ALIGNED" 1 = 0 || Dtype.Val.scalar dtype = Dtype.Bool then 1
-    else floor_power_of_two (Dtype.Val.itemsize dtype)
+    if getenv "ALIGNED" 1 = 0 || Dtype.equal scalar Dtype.bool then 1
+    else floor_power_of_two (Dtype.itemsize scalar * count)
   in
   strf "typedef %s %s __attribute__((aligned(%d),ext_vector_type(%d)));"
-    (render_dtype ctx (Dtype.Val scalar))
-    (render_dtype ctx (Dtype.Val dtype))
-    alignment (Dtype.Val.count dtype)
+    (render_dtype ctx scalar)
+    (render_dtype_c lang ~sz:count scalar)
+    alignment count
 
 let clang_preamble lang uops =
   List.map (clang_vector_prefix lang) (used_vector_dtypes uops)
@@ -1818,18 +1708,22 @@ let clang_language : language =
     ()
 
 let fixed_abi_arg ctx buf_idx val_idx (u, _nm, (dt, _mut)) =
-  let dt = render_param_dtype u dt in
-  match dt with
-  | Dtype.Ptr _ ->
-      let arg = strf "(%s)bufs[%d]" (render_dtype ctx dt) buf_idx in
+  match addrspace_of u with
+  | Dtype.Global ->
+      let ptr =
+        render_dtype_c ctx.lang ~sz:1 ~addrspace:Dtype.Global
+          ~shape:(U.shape_opt u) dt
+      in
+      let arg = strf "(%s)bufs[%d]" ptr buf_idx in
       (arg, buf_idx + 1, val_idx)
-  | Dtype.Val v when Dtype.Val.equal v Dtype.Val.int32 ->
-      let arg = strf "(int)vals[%d]" val_idx in
-      (arg, buf_idx, val_idx + 1)
-  | _ ->
-      invalid_arg
-        (strf "fixed_abi_arg: unsupported parameter dtype %s"
-           (Dtype.to_string dt))
+  | Dtype.Local | Dtype.Reg | Dtype.Alu ->
+      if Dtype.equal dt Dtype.int32 then
+        let arg = strf "(int)vals[%d]" val_idx in
+        (arg, buf_idx, val_idx + 1)
+      else
+        invalid_arg
+          (strf "fixed_abi_arg: unsupported parameter dtype %s"
+             (Dtype.to_string dt))
 
 let clang_fixed_abi_render_kernel ctx ~function_name ~kernel ~bufs ~uops
     ~prefix =
@@ -1856,7 +1750,7 @@ let clang_fixed_abi_language : language =
 
 (* OpenCLRenderer *)
 
-let opencl_type_map : Dtype.scalar -> string option = function
+let opencl_type_map : Dtype.t -> string option = function
   | Dtype.Int8 -> Some "char"
   | Dtype.Uint8 -> Some "uchar"
   | Dtype.Uint32 -> Some "uint"
@@ -1878,9 +1772,8 @@ let opencl_bf16_const_rule : ctx rule =
   ( op ~name:"x" Ops.Const,
     fun _ctx bs _ ->
       let x = bs $ "x" in
-      match const_view_of_uop x, U.dtype x with
-      | Some c, Dtype.Val v
-        when Dtype.Val.scalar v = Dtype.Bfloat16 -> (
+      match const_view_of_uop x with
+      | Some c when Dtype.equal (U.dtype x) Dtype.bfloat16 -> (
           match Const.view c with
           | Const.Float f -> Some (strf "%uu" (float_to_bf16_bits f))
           | _ -> None)
@@ -1911,7 +1804,7 @@ let opencl_extra_matcher (node : U.t) : U.t option =
 
 let has_dtype_scalar scalar uops =
   List.exists
-    (fun u -> Dtype.scalar (U.dtype u) = scalar)
+    (fun u -> (U.dtype u) = scalar)
     uops
 
 let opencl_preamble _ctx uops =
@@ -1965,7 +1858,7 @@ let opencl_language : language =
 
 (* MetalRenderer *)
 
-let metal_type_map : Dtype.scalar -> string option = function
+let metal_type_map : Dtype.t -> string option = function
   | Dtype.Bfloat16 -> Some "bfloat"
   | _ -> None
 
@@ -2002,8 +1895,8 @@ let metal_code_for_op : code_for_op =
 let metal_extra_matcher (node : U.t) : U.t option =
   match U.op node with
   | (Ops.Sqrt | Ops.Exp2 | Ops.Log2 | Ops.Sin)
-    when Dtype.scalar (U.dtype node) = Dtype.Bfloat16 ->
-      let f32 = Dtype.of_scalar Dtype.Float32 in
+    when (U.dtype node) = Dtype.Bfloat16 ->
+      let f32 = Dtype.float32 in
       let new_children =
         Array.to_list (U.src node)
         |> List.map (fun c -> U.cast ~src:c ~dtype:f32)
@@ -2014,13 +1907,12 @@ let metal_extra_matcher (node : U.t) : U.t option =
       Some (U.cast ~src:promoted ~dtype:(U.dtype node))
   | _ -> extra_pm node
 
-let wmma_nodes uops : (U.wmma_info * Dtype.scalar) list =
+let wmma_nodes uops : (U.wmma_info * Dtype.t) list =
   List.filter_map
     (fun u ->
-      match U.as_wmma u, U.dtype u with
-      | Some ({ info; _ } : U.wmma_view), Dtype.Val dtype ->
-          Some (info, Dtype.Val.scalar dtype)
-      | _ -> None)
+      match U.as_wmma u with
+      | Some ({ info; _ } : U.wmma_view) -> Some (info, U.dtype u)
+      | None -> None)
     uops
 
 let dedup_by_key key values =
@@ -2041,18 +1933,10 @@ let metal_wmma_helpers lang uops =
   |> dedup_by_key (fun ((info : U.wmma_info), dtype_out) ->
          (info.name, info.dtype_in, dtype_out))
   |> List.map (fun ((info : U.wmma_info), dtype_out) ->
-         let in_dt =
-           Dtype.Val.vec 2 (Dtype.Val.of_scalar info.dtype_in)
-         in
-         let out_dt = Dtype.Val.vec 2 (Dtype.Val.of_scalar dtype_out) in
-         let dstr_in = render_dtype ctx (Dtype.Val in_dt) in
-         let dstr_out = render_dtype ctx (Dtype.Val out_dt) in
-         let scalar_in =
-           render_dtype ctx (Dtype.Val (Dtype.Val.of_scalar info.dtype_in))
-         in
-         let scalar_out =
-           render_dtype ctx (Dtype.Val (Dtype.Val.of_scalar dtype_out))
-         in
+         let dstr_in = render_dtype_c lang ~sz:2 info.dtype_in in
+         let dstr_out = render_dtype_c lang ~sz:2 dtype_out in
+         let scalar_in = render_dtype ctx info.dtype_in in
+         let scalar_out = render_dtype ctx dtype_out in
          strf
            "%s __%s(%s a, %s b, %s c){\n\
            \  simdgroup_%s8x8 mat_a, mat_b; simdgroup_%s8x8 mat_c;\n\
@@ -2091,14 +1975,14 @@ let metal_language : language =
 
 (* CUDARenderer *)
 
-let cuda_type_map : Dtype.scalar -> string option = function
+let cuda_type_map : Dtype.t -> string option = function
   | Dtype.Bfloat16 -> Some "nv_bfloat16"
   | Dtype.Fp8e4m3 -> Some "__nv_fp8_e4m3"
   | Dtype.Fp8e5m2 -> Some "__nv_fp8_e5m2"
   | _ -> None
 
 let is_half_or_bf16 dt =
-  match Dtype.scalar dt with
+  match dt with
   | Dtype.Float16 | Dtype.Bfloat16 -> true
   | _ -> false
 
@@ -2152,34 +2036,32 @@ let cuda_extra_matcher (node : U.t) : U.t option =
   | None -> (
       match U.op node, U.src node with
       | Ops.Cast, [| src |]
-        when (Dtype.scalar (U.dtype node) = Dtype.Fp8e4m3
-              || Dtype.scalar (U.dtype node) = Dtype.Fp8e5m2)
-             && (Dtype.scalar (U.dtype src) = Dtype.Fp8e4m3
-                 || Dtype.scalar (U.dtype src) = Dtype.Fp8e5m2)
-             && Dtype.scalar (U.dtype node) <> Dtype.scalar (U.dtype src) ->
+        when ((U.dtype node) = Dtype.Fp8e4m3
+              || (U.dtype node) = Dtype.Fp8e5m2)
+             && ((U.dtype src) = Dtype.Fp8e4m3
+                 || (U.dtype src) = Dtype.Fp8e5m2)
+             && (U.dtype node) <> (U.dtype src) ->
           Some
             (U.cast
-               ~src:(U.cast ~src ~dtype:(Dtype.of_scalar Dtype.Float32))
+               ~src:(U.cast ~src ~dtype:(Dtype.float32))
                ~dtype:(U.dtype node))
       | _ -> extra_pm node)
 
 let vector_elem_names n = List.init n vec_elem_letter
 
-let cuda_vector_prefix lang dtype =
+let cuda_vector_prefix lang (scalar, count) =
   let ctx = { lang; r = U.Tbl.create 0; lane_demand = U.Tbl.create 0 } in
-  let vec = render_dtype ctx (Dtype.Val dtype) in
-  let scal =
-    render_dtype ctx (Dtype.Val (Dtype.Val.scalarize dtype))
-  in
-  let names = vector_elem_names (Dtype.Val.count dtype) in
+  let vec = render_dtype_c lang ~sz:count scalar in
+  let scal = render_dtype ctx scalar in
+  let names = vector_elem_names count in
   let elems = String.concat ", " names in
   let header = String.concat ", " (List.map (fun x -> scal ^ " " ^ x) names) in
   strf
     "struct __align__(%d) %s { %s %s; }; __device__ %s make_%s(%s) { %s r={%s}; return r; }"
-    (Dtype.Val.itemsize dtype) vec scal elems vec vec header vec elems
+    (Dtype.itemsize scalar * count) vec scal elems vec vec header vec elems
 
-let cuda_needs_vector_prefix dtype =
-  match Dtype.Val.scalar dtype, Dtype.Val.count dtype with
+let cuda_needs_vector_prefix (scalar, count) =
+  match scalar, count with
   | (Dtype.Float16 | Dtype.Bfloat16), (4 | 8) -> true
   | (Dtype.Fp8e4m3 | Dtype.Fp8e5m2), (2 | 4 | 8 | 16) -> true
   | _ -> false
@@ -2190,15 +2072,14 @@ let cuda_wmma_type_name = function
   | Dtype.Bfloat16 -> "bf16"
   | Dtype.Fp8e4m3 -> "e4m3"
   | Dtype.Fp8e5m2 -> "e5m2"
-  | scalar -> Dtype.scalar_to_string scalar
+  | scalar -> Dtype.to_string scalar
 
 let cuda_wmma_out_type_name = function
   | Dtype.Float32 -> "f32"
   | Dtype.Float16 -> "f16"
-  | scalar -> Dtype.scalar_to_string scalar
+  | scalar -> Dtype.to_string scalar
 
 let cuda_wmma_helpers lang uops =
-  let ctx = { lang; r = U.Tbl.create 0; lane_demand = U.Tbl.create 0 } in
   wmma_nodes uops
   |> dedup_by_key (fun ((info : U.wmma_info), dtype_out) ->
          ( info.name,
@@ -2217,16 +2098,11 @@ let cuda_wmma_helpers lang uops =
          in
          let wmma_dtypes =
            List.map2
-             (fun dtype size ->
-               render_dtype ctx
-                 (Dtype.Val
-                    (Dtype.Val.vec size (Dtype.Val.of_scalar dtype))))
+             (fun dtype size -> render_dtype_c lang ~sz:size dtype)
              [ info.dtype_in; info.dtype_in; dtype_out ]
              upcast_sizes
          in
-         let itemsize scalar =
-           Dtype.Val.itemsize (Dtype.Val.of_scalar scalar)
-         in
+         let itemsize scalar = Dtype.itemsize scalar in
          let n_operands =
            List.map2
              (fun dtype size -> size * itemsize dtype / 4)
@@ -2276,7 +2152,7 @@ let cuda_wmma_helpers lang uops =
 let cuda_preamble _ctx uops =
   let used_dtypes = used_alu_dtypes uops in
   let has_used_scalar scalar =
-    List.exists (fun dt -> Dtype.Val.scalar dt = scalar) used_dtypes
+    List.exists (fun (s, _) -> Dtype.equal s scalar) used_dtypes
   in
   let prefix =
     [
@@ -2288,10 +2164,8 @@ let cuda_preamble _ctx uops =
   let prefix =
     if
       List.exists
-        (fun dt ->
-          match Dtype.Val.scalar dt with
-          | Dtype.Fp8e4m3 | Dtype.Fp8e5m2 -> true
-          | _ -> false)
+        (fun (s, _) ->
+          match s with Dtype.Fp8e4m3 | Dtype.Fp8e5m2 -> true | _ -> false)
         used_dtypes
     then prefix @ [ "#include <cuda_fp8.h>" ]
     else prefix
@@ -2331,7 +2205,7 @@ let cuda_language : language =
 (* HIPRenderer (AMD) — minimal surface; full WMMA handling is deferred to
    the kernel preamble generator like in tinygrad. *)
 
-let amd_type_map : Dtype.scalar -> string option = function
+let amd_type_map : Dtype.t -> string option = function
   | Dtype.Bfloat16 -> Some "hip_bfloat16"
   | Dtype.Fp8e4m3 -> Some "hip_fp8"
   | Dtype.Fp8e5m2 -> Some "hip_bf8"
@@ -2342,14 +2216,14 @@ let amd_is_cdna = function
   | Gpu_target.RDNA3 | Gpu_target.RDNA4 -> false
 
 let amd_fp8_index dt =
-  match Dtype.scalar dt with
+  match dt with
   | Dtype.Fp8e4m3 -> Some 0
   | Dtype.Fp8e5m2 -> Some 1
   | _ -> None
 
 let ocml_call name (dt : Dtype.t) x =
   let bits =
-    match Dtype.scalar dt with
+    match dt with
     | Dtype.Float16 -> 16
     | Dtype.Float64 -> 64
     | _ -> 32
@@ -2377,19 +2251,17 @@ let amd_code_for_workitem name : string =
         "(__ockl_get_group_id(%d)*__ockl_get_local_size(%d)+__ockl_get_local_id(%d))"
         a a a
 
-let amd_vector_prefix lang dtype =
+let amd_vector_prefix lang (scalar, count) =
   let ctx = { lang; r = U.Tbl.create 0; lane_demand = U.Tbl.create 0 } in
-  let vec = render_dtype ctx (Dtype.Val dtype) in
-  let scal =
-    render_dtype ctx (Dtype.Val (Dtype.Val.scalarize dtype))
-  in
-  let names = vector_elem_names (Dtype.Val.count dtype) in
+  let vec = render_dtype_c lang ~sz:count scalar in
+  let scal = render_dtype ctx scalar in
+  let names = vector_elem_names count in
   let header = String.concat ", " (List.map (fun x -> scal ^ " " ^ x) names) in
   let elems = String.concat ", " names in
   strf
     "typedef %s %s __attribute__((ext_vector_type(%d)));\n\
      static inline __attribute__((device)) %s make_%s(%s) { return { %s }; }"
-    scal vec (Dtype.Val.count dtype) vec vec header elems
+    scal vec count vec vec header elems
 
 let has_const_nonfinite uops =
   List.exists
@@ -2412,9 +2284,8 @@ let amd_ocml_decl op dtype =
     | Ops.Trunc -> ("trunc", "")
     | _ -> invalid_arg "amd_ocml_decl: unsupported op"
   in
-  let scalar = Dtype.Val.scalarize dtype in
-  let bits = Dtype.Val.bitsize scalar in
-  let dtn = render_canonical_val scalar in
+  let bits = Dtype.bitsize scalar in
+  let dtn = c_scalar_to_string scalar in
   strf "extern \"C\" __attribute__((device%s)) %s __ocml_%s_f%d(%s);"
     (if attr = "" then "" else ", " ^ attr)
     dtn method_name bits dtn
@@ -2424,12 +2295,11 @@ let amd_ocml_decls uops =
   List.rev
     (List.fold_left
        (fun acc u ->
-         match U.op u, stack_dtype u with
-         | (Ops.Exp2 | Ops.Log2 | Ops.Sqrt | Ops.Sin | Ops.Trunc as op),
-           Dtype.Val dtype -> (
-             match Dtype.Val.scalar dtype with
-             | Dtype.Float16 | Dtype.Float32 | Dtype.Float64 ->
-                 add (amd_ocml_decl op dtype) acc
+         match U.op u with
+         | (Ops.Exp2 | Ops.Log2 | Ops.Sqrt | Ops.Sin | Ops.Trunc) as op -> (
+             match U.dtype u with
+             | (Dtype.Float16 | Dtype.Float32 | Dtype.Float64) as scalar ->
+                 add (amd_ocml_decl op scalar) acc
              | _ -> acc)
          | _ -> acc)
        [] uops)
@@ -2460,11 +2330,11 @@ let amd_fp8_cast_rule : ctx rule =
       let x = bs $ "x" in
       match U.src x with
       | [| src |] -> (
-          match amd_fp8_index (U.dtype x), Dtype.scalar (U.dtype src) with
+          match amd_fp8_index (U.dtype x), (U.dtype src) with
           | Some fp8, Dtype.Float32 ->
               Some (strf "f32_to_fp8(%s, %d)" (lookup ctx src) fp8)
           | _ -> (
-              match Dtype.scalar (U.dtype x), amd_fp8_index (U.dtype src) with
+              match (U.dtype x), amd_fp8_index (U.dtype src) with
               | Dtype.Float32, Some 0 ->
                   Some
                     (strf
@@ -2512,29 +2382,29 @@ let amd_non_native_float_scalars =
   ]
 
 let amd_bf16_const_cast node =
-  match U.op node, U.dtype node, const_view_of_uop node with
-  | Ops.Const, Dtype.Val dtype, Some c
-    when Dtype.Val.scalar dtype = Dtype.Bfloat16 -> (
+  match U.op node, const_view_of_uop node with
+  | Ops.Const, Some c when Dtype.equal (U.dtype node) Dtype.bfloat16 -> (
       match Const.view c with
       | Const.Float f ->
-          Some (cast_float_to_bf16 (U.const (Const.float Dtype.Val.float32 f)))
+          Some (cast_float_to_bf16 (U.const (Const.float Dtype.float32 f)))
       | Const.Bool _ | Const.Int _ | Const.Invalid -> None)
   | _ -> None
 
+(* fp8 WMMA inputs are packed into uint64 lanes before the MFMA call: an
+   8-wide fp8 operand feeding a float-accumulating WMMA is bitcast to uint64. *)
 let amd_fp8_wmma_bitcast node =
-  match U.as_wmma node, U.dtype node with
-  | Some v, Dtype.Val dtype
-    when Dtype.Val.equal dtype (Dtype.Val.vec 4 Dtype.Val.float32)
-         && (Dtype.equal (stack_dtype v.a)
-               (Dtype.Val (Dtype.Val.vec 8 Dtype.Val.fp8e4m3))
-             || Dtype.equal (stack_dtype v.a)
-                  (Dtype.Val (Dtype.Val.vec 8 Dtype.Val.fp8e5m2))) ->
+  match U.as_wmma node with
+  | Some v
+    when Dtype.equal (U.dtype node) Dtype.float32
+         && max_numel v.a = 8
+         && (Dtype.equal (U.dtype v.a) Dtype.fp8e4m3
+             || Dtype.equal (U.dtype v.a) Dtype.fp8e5m2) ->
       Some
         (U.wmma
            ~a:(U.bitcast ~src:v.a ~dtype:Dtype.uint64)
            ~b:(U.bitcast ~src:v.b ~dtype:Dtype.uint64)
-           ~c:v.c ~info:v.info ~dtype)
-  | Some _, _ | None, _ -> None
+           ~c:v.c ~info:v.info ~dtype:(U.dtype node))
+  | Some _ | None -> None
 
 let amd_extra_matcher arch node =
   match create_non_native_float_pats amd_non_native_float_scalars node with
@@ -2559,7 +2429,7 @@ let amd_type_map_name = function
   | Dtype.Float16 -> "f16"
   | Dtype.Fp8e4m3 -> "_fp8_fp8"
   | Dtype.Fp8e5m2 -> "_bf8_bf8"
-  | scalar -> Dtype.scalar_to_string scalar
+  | scalar -> Dtype.to_string scalar
 
 let amd_cdna_type_map_name dims scalar =
   match dims, scalar with
@@ -2604,16 +2474,15 @@ let amd_wmma_prefixes arch uops =
   List.rev
     (List.fold_left
        (fun acc u ->
-         match U.as_wmma u, U.dtype u with
-         | Some v, Dtype.Val dtype ->
-             add v.info (Dtype.Val.scalar dtype) acc
-         | _ -> acc)
+         match U.as_wmma u with
+         | Some v -> add v.info (U.dtype u) acc
+         | None -> acc)
        [] uops)
 
 let amd_preamble arch _lang uops =
   let used_dtypes = used_alu_dtypes uops in
   let has_used_scalar scalar =
-    List.exists (fun dt -> Dtype.Val.scalar dt = scalar) used_dtypes
+    List.exists (fun (s, _) -> Dtype.equal s scalar) used_dtypes
   in
   let prefix =
     if has_const_nonfinite uops then
@@ -2654,7 +2523,7 @@ let amd_preamble arch _lang uops =
           | Ops.Const, _ -> Option.is_some (amd_fp8_index (U.dtype u))
           | Ops.Cast, [| src |] ->
               Option.is_some (amd_fp8_index (U.dtype u))
-              && Dtype.scalar (U.dtype src) = Dtype.Float32
+              && (U.dtype src) = Dtype.Float32
           | _ -> false)
         uops
     then
@@ -2702,7 +2571,7 @@ let intel_bf16_cast_rule : ctx rule =
       if Array.length srcs = 0 then None
       else
         let src = srcs.(0) in
-        match Dtype.scalar (U.dtype x), Dtype.scalar (U.dtype src) with
+        match (U.dtype x), (U.dtype src) with
         | Dtype.Bfloat16, Dtype.Float32 ->
             Some
               (strf "intel_convert_bfloat16_as_ushort(%s)" (lookup ctx src))
@@ -2745,10 +2614,10 @@ let code_ops_clang =
     ]
 
 let supports_not scalars dt =
-  not (List.mem (Dtype.scalar dt) scalars)
+  not (List.mem (dt) scalars)
 
 let supports_opencl_dtype (arch : Gpu_target.opencl) dt =
-  match Dtype.scalar dt with
+  match dt with
   | Dtype.Float16 -> contains_substring arch "cl_khr_fp16"
   | Dtype.Float64 -> contains_substring arch "cl_khr_fp64"
   | Dtype.Fp8e4m3 | Dtype.Fp8e5m2 | Dtype.Fp8e4m3fnuz
@@ -2757,7 +2626,7 @@ let supports_opencl_dtype (arch : Gpu_target.opencl) dt =
   | _ -> true
 
 let supports_qcom_dtype dt =
-  match Dtype.scalar dt with
+  match dt with
   | Dtype.Float16 ->
       Helpers.getenv "IMAGE" 0 <> 0 && Helpers.getenv "FLOAT16" 0 <> 0
   | Dtype.Bfloat16 | Dtype.Float64 | Dtype.Fp8e4m3 | Dtype.Fp8e5m2
@@ -2766,7 +2635,7 @@ let supports_qcom_dtype dt =
   | _ -> true
 
 let supports_clang_dtype ~native_bf16 arch dt =
-  match Dtype.scalar dt with
+  match dt with
   | Dtype.Bfloat16 -> (
       match arch with
       | Gpu_target.X86_64 | Gpu_target.Arm64 -> native_bf16
@@ -2781,7 +2650,7 @@ let clang_emulated_floats ~native_bf16 arch =
   else [ (Dtype.Bfloat16, Dtype.Float32) ]
 
 let supports_metal_dtype arch dt =
-  match Dtype.scalar dt with
+  match dt with
   | Dtype.Bfloat16 -> (
       match arch with
       | Gpu_target.Apple family -> family >= 6
@@ -2792,7 +2661,7 @@ let supports_metal_dtype arch dt =
   | _ -> true
 
 let supports_cuda_dtype arch dt =
-  match Dtype.scalar dt with
+  match dt with
   | Dtype.Bfloat16 -> (
       match arch with
       | Gpu_target.SM75 -> false
@@ -2805,7 +2674,7 @@ let supports_cuda_dtype arch dt =
   | _ -> true
 
 let supports_amd_dtype arch dt =
-  match Dtype.scalar dt with
+  match dt with
   | Dtype.Fp8e4m3 | Dtype.Fp8e5m2 -> (
       match arch with
       | Gpu_target.CDNA4 -> true

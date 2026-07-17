@@ -81,10 +81,9 @@ type t = {
   aux : Tolk_uop.Uop.t list -> string list;
   code_for_op : code_op list;
   supported_ops : Decomp_op.supported_ops;
-  pre_matcher : (Tolk_uop.Uop.t -> Tolk_uop.Uop.t option) option;
   extra_matcher : (Tolk_uop.Uop.t -> Tolk_uop.Uop.t option) option;
   supports_dtype : Tolk_uop.Dtype.t -> bool;
-  emulated_floats : (Tolk_uop.Dtype.scalar * Tolk_uop.Dtype.scalar) list;
+  emulated_floats : (Tolk_uop.Dtype.t * Tolk_uop.Dtype.t) list;
 }
 
 (* Accessors *)
@@ -106,13 +105,12 @@ let render t = t.render
 let aux t = t.aux
 let code_for_op t = t.code_for_op
 let supported_ops t = t.supported_ops
-let pre_matcher t = t.pre_matcher
 let extra_matcher t = t.extra_matcher
 
 (* dtype support — checks whether the backend natively supports a given dtype
    and lists float types that need emulation (promoted to a wider float). *)
 let supports_dtype t dt = t.supports_dtype dt
-let emulated_float_dtypes t : (Tolk_uop.Dtype.scalar * Tolk_uop.Dtype.scalar) list =
+let emulated_float_dtypes t : (Tolk_uop.Dtype.t * Tolk_uop.Dtype.t) list =
   t.emulated_floats
 
 (* Construction *)
@@ -128,7 +126,7 @@ let make ?(tensor_cores = []) ?(supports_float4 = true)
     ?(global_max = [ 0x8FFFFFFF; 0x8FFFFFFF; 0x8FFFFFFF ])
     ?global_prod_max
     ?(local_max = [ 0x8FFFFFFF; 0x8FFFFFFF; 0x8FFFFFFF ])
-    ?(code_for_op = []) ?supported_ops ?compiler ?pre_matcher ?extra_matcher
+    ?(code_for_op = []) ?supported_ops ?compiler ?extra_matcher
     ?(supports_dtype = fun _ -> true) ?(aux = fun _ -> [])
     ?(emulated_floats = [])
     ~name ~device ~has_local ~has_shared ~shared_max ~render () =
@@ -158,7 +156,6 @@ let make ?(tensor_cores = []) ?(supports_float4 = true)
     aux;
     code_for_op;
     supported_ops;
-    pre_matcher;
     extra_matcher;
     supports_dtype;
     emulated_floats;

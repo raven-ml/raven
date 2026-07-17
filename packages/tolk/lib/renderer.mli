@@ -141,14 +141,10 @@ val supports_dtype : t -> Tolk_uop.Dtype.t -> bool
 (** [supports_dtype r dt] is [true] iff the backend natively supports [dt].
     When [false], the decomposition pass emulates [dt] using supported types. *)
 
-val emulated_float_dtypes : t -> (Tolk_uop.Dtype.scalar * Tolk_uop.Dtype.scalar) list
+val emulated_float_dtypes : t -> (Tolk_uop.Dtype.t * Tolk_uop.Dtype.t) list
 (** [emulated_float_dtypes r] is the list of [(from, to)] dtype pairs for
     float emulation. Each [from] float is promoted to [to] (typically f32).
     Empty for backends that natively support all float types. *)
-
-val pre_matcher : t -> (Tolk_uop.Uop.t -> Tolk_uop.Uop.t option) option
-(** [pre_matcher r] is an optional device-specific rewrite rule applied
-    before decompositions. *)
 
 val extra_matcher : t -> (Tolk_uop.Uop.t -> Tolk_uop.Uop.t option) option
 (** [extra_matcher r] is an optional device-specific rewrite rule composed
@@ -189,11 +185,10 @@ val make :
   ?code_for_op:code_op list ->
   ?supported_ops:Decomp_op.supported_ops ->
   ?compiler:Compiler.t ->
-  ?pre_matcher:(Tolk_uop.Uop.t -> Tolk_uop.Uop.t option) ->
   ?extra_matcher:(Tolk_uop.Uop.t -> Tolk_uop.Uop.t option) ->
   ?supports_dtype:(Tolk_uop.Dtype.t -> bool) ->
   ?aux:(Tolk_uop.Uop.t list -> string list) ->
-  ?emulated_floats:(Tolk_uop.Dtype.scalar * Tolk_uop.Dtype.scalar) list ->
+  ?emulated_floats:(Tolk_uop.Dtype.t * Tolk_uop.Dtype.t) list ->
   name:string ->
   device:string ->
   has_local:bool ->
